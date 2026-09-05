@@ -23,14 +23,22 @@
 import { sendWs, onMessage } from './ws.js';
 import { t } from './i18n.js';
 import { showToast } from './modal.js';
+import { isBgAgentId } from './utils.js';
 
 /** Kinds the user may stop/restart (AgentControl §4 operable bucket). */
 export const OPERABLE_KINDS = new Set(['Delegate', 'SubTask', 'Ephemeral']);
 
-/** Read-only kinds get greyed buttons with a reason tooltip. */
-export function managePolicy(kind) {
+/** Read-only kinds get greyed buttons with a reason tooltip.
+ *  Project 会话卡死修复：新 Project 系统的 Flow 会话（node- 前缀与 dispatcher- 前缀，
+ *  会话 id 可区分——dag- 旧 flow 会话不在此列）有观察桥取消通道（后端
+ *  AgentControl cancel / WS cancelAgent 已放行），stop 可操作；restart 对
+ *  单次会话无意义（cancel + 重新触发），retry 恒隐。 */
+export function managePolicy(kind, sessionId) {
   if (kind === 'Team') return { operable: false, reason: t('manage.readonlyTeam') };
-  if (kind === 'Flow') return { operable: false, reason: t('manage.readonlyFlow') };
+  if (kind === 'Flow') {
+    if (isBgAgentId(sessionId)) return { operable: true, projectFlow: true, reason: '' };
+    return { operable: false, reason: t('manage.readonlyFlow') };
+  }
   if (kind === 'Root') return { operable: false, reason: t('manage.readonlyTeam') };
   return { operable: true, reason: '' };
 }
@@ -148,10 +156,11 @@ export function bindManageActions(bar, getSessionId) {
 }
 
 /** State-linked visibility + permission matrix.
- *  entry.meta: { status, kind, stuck: {idleSecs, action}|null, retries, startedAt } */
-export function syncManageControls(bar, meta) {
+ *  entry.meta: { status, kind, stuck: {idleSecs, action}|null, retries, startedAt }
+ *  sessionId（可选）：node-/dispatcher- 单次会话的 stop-only 放行判定键。 */
+export function syncManageControls(bar, meta, sessionId) {
   if (!bar) return;
-  const policy = managePolicy(meta.kind || '');
+  const policy = managePolicy(meta.kind || '', sessionId);
   const status = meta.status || '';
   const processing = isProcessingStatus(status);
   const retryable = isRetryableStatus(status);
@@ -174,7 +183,8 @@ export function syncManageControls(bar, meta) {
   bar.stopBtn.title = t('manage.stop');
   bar.retryBtn.title = t('manage.retry');
   bar.stopBtn.style.display = processing ? 'flex' : 'none';
-  bar.retryBtn.style.display = retryable ? 'flex' : 'none';
+  // 单次会话（node-/dispatcher-）：cancel + 重新触发取代 restart——retry 恒隐。
+  bar.retryBtn.style.display = policy.projectFlow ? 'none' : (retryable ? 'flex' : 'none');
 
   // Retries chip (agentRetryStatus count) — visible once > 0.
   if (bar.retriesEl) {

@@ -8,6 +8,7 @@ import { escapeHtml } from './utils.js';
 import { t } from './i18n.js';
 import { onMessage, sendWs } from './ws.js';
 import { brand } from './brand.js';
+import { lookupAvatar, rememberAvatarProfile, lastKnownAvatarProfile, forgetAvatarProfile } from './avatarCache.js';
 // NOTE: dropbox.js is dynamically imported at the click site - P2-4 cycle cut
 // (neblink <-> dropbox mutual import).
 
@@ -37,6 +38,52 @@ let neblinkState = {
   deviceCode: ''
 };
 
+// ── NL 号（Username）入口说明 ────────────────────────────
+// 2026-09-05 10:54 裁定：NL 号 = 官网 Username，客户端不提供修改入口——
+// 原 [U3] NL 号自定义 UI（查看/修改/available 实时检测，走 PUT
+// /api/users/me/neblink-id）已整体移除；Username 统一经官网账号中心设置，
+// 旧 neblink-id 端点同 release 退役（friend-search-contract §4.7）。
+// contacts 列表/搜索卡片的 username 展示保持（friendsApi 契约归一）。
+
+// ── 头像双态判定（共享）─────────────────────────────────
+// 设置页头像区（sidebar.js renderSettings 的账号区）与 Activity Bar 头像
+// （activityBar.js renderAvatar）共用同一套「登录且账号头像可用 → 显示照片，
+// 否则显示 logo」判定。逻辑唯一来源在此，两侧只消费视图状态。
+// 失败 URL latch：记住加载失败过的头像 URL（如无代理时账号头像不可达），
+// 否则轮询刷新会反复显示坏 <img>，onerror 回落 logo 永远粘不住。
+let avatarFailedUrl = '';
+
+/** Record an avatar URL that failed to load (called from <img> onerror). */
+export function noteAvatarFailure(url) {
+  if (url) avatarFailedUrl = url;
+}
+
+/** Shared dual-state avatar view: { loggedIn, url, showPhoto }.
+ *  Placeholder/fake URLs are filtered the same way for every consumer.
+ *  2026-09-05 本地缓存优先（avatarCache.js）：命中即以 dataURL 直出——两个
+ *  消费端（Activity Bar + 设置页）零请求即时渲染，消灭「登录了没头像」闪失；
+ *  仅当源标记（avatarUrl 本身）变化或 TTL 过期才由缓存层后台回源。渲染路径
+ *  从不等待网络。离线兜底：本会话拿不到 status（如启动即离线）时回落缓存里
+ *  的 last-known 登录快照，跨刷新不丢头像（登出时 forgetAvatarProfile 清除）。 */
+export function avatarViewState() {
+  const url = neblinkState.device?.avatarUrl || '';
+  const validAvatarUrl = url && url.startsWith('http') && !url.includes('example.com') ? url : '';
+  let displayUrl = validAvatarUrl;
+  let loggedIn = !!neblinkState.loggedIn;
+  if (validAvatarUrl) {
+    const cached = lookupAvatar(validAvatarUrl);
+    if (cached) displayUrl = cached;
+    rememberAvatarProfile(loggedIn, validAvatarUrl); // value-change short-circuited inside
+  } else if (!neblinkState.device) {
+    // No live status this session (offline boot / gateway restarting) — fall
+    // back to the last-known snapshot instead of flashing the logo.
+    const known = lastKnownAvatarProfile();
+    if (known) { loggedIn = true; displayUrl = known.dataUrl; }
+  }
+  const showPhoto = loggedIn && !!displayUrl && avatarFailedUrl !== validAvatarUrl;
+  return { loggedIn, url: showPhoto ? displayUrl : '', showPhoto };
+}
+
 /** Read-only accessor for the current NebLink state (used by the Activity Bar). */
 export function getNeblinkState() {
   return neblinkState;
@@ -60,7 +107,10 @@ export async function fetchNeblinkStatus() {
     if (!resp.ok) return;
     const data = await resp.json();
     neblinkState.loggedIn = !!data.loggedIn;
-    // Normalize local device fields to match peer field names
+    // Normalize local device fields to match peer field names.
+    // githubLogin is deliberately NOT mapped: the client is Logto-only now
+    // (login-chain unification 2026-09-01) and the field had no consumer in
+    // web/ — it only ever carried the legacy GitHub-enroll handle.
     const d = data.device;
     neblinkState.device = d ? {
       deviceId: d.id,
@@ -68,8 +118,7 @@ export async function fetchNeblinkStatus() {
       platform: d.platform,
       capabilities: d.capabilities || {},
       userDescription: d.userDescription || '',
-      avatarUrl: d.avatarUrl || '',
-      githubLogin: d.githubLogin || ''
+      avatarUrl: d.avatarUrl || ''
     } : null;
     neblinkState.peers = data.peers || [];
   } catch (e) {
@@ -167,8 +216,8 @@ export function neblinkSettingsHTML() {
     return `<div class="neblink-login-section">
       <div class="neblink-logged-out">
         <picture>
-          <source media="(prefers-color-scheme: dark)" srcset="css/logo-dark.png">
-          <img class="neblink-logged-out-logo" src="css/logo-bright.png" alt="">
+          <source media="(prefers-color-scheme: dark)" srcset="css/logo-dark-4.png">
+          <img class="neblink-logged-out-logo" src="css/logo-bright-4.png" alt="">
         </picture>
         <div class="neblink-logged-out-text">未登录，设备互联不可用</div>
         <div class="neblink-logged-out-hint">点击左上角头像登录</div>
@@ -236,6 +285,11 @@ export function neblinkSettingsHTML() {
   const peerHint = peers.length === 0
     ? `<div class="cfg-hint" style="margin-top:6px">${t('neblink.noPeersHint') || 'No other devices found. Ensure the device link service is configured on both devices.'}</div>`
     : '';
+
+  // NL 号入口已移除（作者 2026-09-05 裁定：NL 号统一 = 官网 Username，官网
+  // 已有修改功能，客户端不再重复提供）——原「查看 + 修改 + live 可用性检测」
+  // 区块连同 friendsApi 的 setNeblinkId/neblinkIdAvailable 一并删除；旧
+  // neblink-id 端点同 release 退役（friend-search-contract §4.7）。
 
   return `
     <div class="neblink-logged-in">
@@ -443,7 +497,7 @@ export function bindNeblinkEvents(rerender) {
   // Logout button — clears the device credential + disables NebLink via
   // POST /api/neblink/logout, then refreshes status so the settings panel
   // and the avatar both return to the logged-out state.
-  const logoutBtn = document.getElementById('neblink-logout-btn');
+  const logoutBtn = /** @type {HTMLButtonElement|null} */ (document.getElementById('neblink-logout-btn'));
   if (logoutBtn) {
     logoutBtn.addEventListener('click', async () => {
       logoutBtn.disabled = true;
@@ -454,10 +508,13 @@ export function bindNeblinkEvents(rerender) {
           headers: { 'Authorization': 'Bearer ' + getAuthToken() },
         });
       } catch (e) { /* non-critical — refresh state either way */ }
+      forgetAvatarProfile(); // drop the last-known snapshot: a logged-out user must not resurrect offline
       await fetchNeblinkStatus();
       rerender();
     });
   }
+
+  // NL 号入口已移除（09-05 裁定）——原 edit/cancel/input/save 绑定随区块删除。
 
   // Peer update buttons
   document.querySelectorAll('.neblink-peer-update-btn').forEach(btn => {

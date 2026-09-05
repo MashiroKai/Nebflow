@@ -10,12 +10,16 @@ import nebflow.agent.AgentCore
 import nebflow.agent.SharedResources
 import nebflow.core.AtomicJson
 import nebflow.core.Branding
+import nebflow.core.CanvasTabs
+import nebflow.core.CanvasTabStore
 import nebflow.core.PathUtil
 import nebflow.core.daemon.{DaemonConfig, DaemonService, DaemonStore}
 import nebflow.core.entity.{EntityLoader, NodeRoute}
 import nebflow.core.flow.{FlowTreeRegistry, TreeCommand}
 import nebflow.core.presets.{ModelPreset, PresetFile, PresetStore}
+import nebflow.core.project.{ProjectRuntimeRegistry, ProjectStore}
 import nebflow.core.skill.SkillService
+import nebflow.core.tools.NodeTools
 // FreezeScheduleConfig encoder givens (workSchedule runtime-authoritative PATCH)
 import nebflow.core.schedule.FreezeSchedule.given
 import nebflow.core.task.{FileTaskStore, TaskStore}
@@ -222,8 +226,169 @@ class RestApiRoutes(
       withAuth(req) {
         ConfigService.getConfig.flatMap { cfg =>
           ConfigService.isConfigured.flatMap { configured =>
-            Ok(Json.obj("config" -> cfg.asJson, "configured" -> configured.asJson))
+            // P0（2026-08-30）：freezeState 进 REST 通道——前端刷新/重连若走
+            // REST 拉配置（而非仅依赖 WS serverConfig 推送），也能读到当前
+            // 冻结态（含 skip 语义：skipped=true/frozen=false）。
+            for
+              wsCfg <- sharedResources.freezeScheduleRef.get
+              skipUntil <- sharedResources.freezeSkipUntilRef.get
+              resp <- Ok(
+                Json.obj(
+                  "config" -> cfg.asJson,
+                  "configured" -> configured.asJson,
+                  "freezeState" -> nebflow.core.schedule.FreezeSchedule
+                    .freezeStateNode(wsCfg, skipUntil, System.currentTimeMillis())
+                    .asJson
+                )
+              )
+            yield resp
           }
+        }
+      }
+
+    // ── Canvas tabs 服务端持久化（F1 根治，2026-08-30）────────────────────
+    // 作者报告「JVM 重启后标签页丢失」——浏览器 localStorage 不可靠（Safari
+    // 无痕/多窗口 removeItem 竞态/清理）。服务端存档 ~/.nebflow/canvas_tabs.json
+    // 与 sessionStore 同生命周期，JVM 重启保留；前端 restoreTabs 优先拉这里。
+    // 契约（与 Frontend 同步）：GET → 200 {v:2,tabs:[...]} 或 404（无存档）；
+    // PUT body {v:2,tabs:[...]} → 200 {ok:true}；非法输入 400 / 超限 413 不落盘。
+    case req @ GET -> Root / "canvas-tabs" =>
+      withAuth(req) {
+        new CanvasTabStore(PathUtil.dataRoot / "canvas_tabs.json").load().flatMap {
+          case Some(json) => Ok(json)
+          case None => NotFound(Json.obj("error" -> "no canvas tabs archive".asJson))
+        }
+      }
+
+    case req @ PUT -> Root / "canvas-tabs" =>
+      withAuth(req) {
+        // 读 body 有界：take(max+1) 后超限即 413，防大 payload 拉爆内存。
+        val maxBytes = CanvasTabs.MaxBodyBytes
+        req.body.take(maxBytes.toLong + 1).compile.toVector.flatMap { bytes =>
+          CanvasTabs.parseBody(bytes.toArray, maxBytes) match
+            case Left((status, msg)) =>
+              val st = org.http4s.Status.fromInt(status).getOrElse(Status.BadRequest)
+              IO.pure(Response[IO](status = st).withEntity(Json.obj("error" -> msg.asJson)))
+            case Right(json) =>
+              new CanvasTabStore(PathUtil.dataRoot / "canvas_tabs.json")
+                .save(json) *> Ok(Json.obj("ok" -> true.asJson))
+                .handleErrorWith { e =>
+                  logger.error(s"canvas tabs save failed: ${e.getMessage}") *>
+                    IO.pure(
+                      Response[IO](status = Status.InternalServerError)
+                        .withEntity(Json.obj("error" -> s"save failed: ${e.getMessage}".asJson))
+                    )
+                }
+        }
+      }
+
+    // ── Project + Flow Map REST（#28 阶段 0，前端 Project 面板 + Flow Map 视图数据源）──
+    // 契约（同步 Frontend，与 NodeList 工具同 shape）：
+    //   GET /projects → 200 {projects:[{name, workspace, agentFile, description, createdAt}]}
+    //                   （归档项目不在列——ProjectStore.list 源头过滤，迁移方案 v2 §6.1）
+    //   GET /projects/<name>/flow-map → 200 {nodes:[...], worktrees:[...], meta:{...}}
+    //                   （2026-09-05 载荷收敛：节点条目=元数据 only——无 result 全文/摘要，
+    //                   hasResult 标记 + description/taskPreview；结果全文按需取 ↓）
+    //   GET/PUT /projects/<name>/agent.md → 200 {content} / {saved:true}
+    //   POST /projects/<name>/archive → 200 {archived:true, archivedAt}（§6.1 显式人工
+    //                   归档：仅 project.json 打标记，零删除零移动；幂等；单程无取消）
+    // 未挂载/不存在 → 404 {error}; 需 auth（withAuth）。
+    // 注意：routes 挂载在 Router("/api" -> ...) 下，路径必须写相对段
+    // （Root / "projects"），写 "api" 会双前缀 /api/api（QA P1②）。
+    case req @ GET -> Root / "projects" =>
+      withAuth(req) {
+        ProjectStore.list().map { projects =>
+          Json.obj(
+            "projects" -> projects.map(p =>
+              Json.obj(
+                "name" -> p.name.asJson,
+                "workspace" -> p.workspace.asJson,
+                "agentFile" -> p.agentFile.asJson,
+                "description" -> p.description.asJson,
+                "createdAt" -> p.createdAt.asJson
+              )
+            ).asJson
+          )
+        }.flatMap(Ok(_))
+      }
+
+    // POST /projects/<name>/archive — 归档（迁移方案 v2 §6.1）：显式人工动作唯一入口
+    // （面板按钮/明确指令）。语义：仅 project.json 打归档标记（零删除零移动，workspace
+    // 原样）；列表出口过滤（list 源头）→ 面板即时消失；startupMount 同源跳过 → 重启
+    // 不自动挂载；运行中 ProjectActor/会话不强制拆除（registry 与 Mail 路由不受影响）。
+    // 幂等：重复归档不重写。单程：本批无取消归档 API（手工删两键可恢复）。
+    case req @ POST -> Root / "projects" / name / "archive" =>
+      withAuth(req) {
+        ProjectStore.archive(name).flatMap {
+          case Left(err) => NotFound(Json.obj("error" -> err.asJson))
+          case Right(at) => Ok(Json.obj("archived" -> true.asJson, "archivedAt" -> at.asJson))
+        }
+      }
+
+    case req @ GET -> Root / "projects" / name / "flow-map" =>
+      withAuth(req) {
+        ProjectRuntimeRegistry.get(name).flatMap {
+          case None => NotFound(Json.obj("error" -> s"project '$name' not mounted".asJson))
+          case Some(rt) => NodeTools.buildNodeListPayload(rt).flatMap(Ok(_))
+        }
+      }
+
+    // GET /projects/<name>/flow-map/nodes/<nodeId>/result — 节点结果全文按需单点取
+    // （2026-09-04 作者反馈「归档详情窗节点结果要能完整显示」；2026-09-05 载荷收敛后
+    // 这是结果全文的两条按需通道之一，另一条 = NodeList(detail=<nodeId>) 工具参数，
+    // 同源：FlowMapStore 内存 result = 加载时从 per-node 文件 results/<nodeId>.md
+    // 水合的全文）。快照/WS 事件统一走 NodePayload.buildNodeJson 的元数据 only 载荷
+    // （无 result 键），hasResult 标记驱动前端按需拉取。FlowMapStore.findNode 活动
+    // 区优先、归档区兜底。未挂载/节点不存在 → 404 {error}（前端静默回退）。
+    case req @ GET -> Root / "projects" / name / "flow-map" / "nodes" / nodeId / "result" =>
+      withAuth(req) {
+        ProjectRuntimeRegistry.get(name).flatMap {
+          case None => NotFound(Json.obj("error" -> s"project '$name' not mounted".asJson))
+          case Some(rt) =>
+            rt.store.findNode(nodeId).flatMap {
+              case None => NotFound(Json.obj("error" -> s"node '$nodeId' not found".asJson))
+              case Some(n) => Ok(Json.obj(
+                "id" -> n.id.asJson,
+                "name" -> n.name.asJson,
+                "status" -> n.status.asJson,
+                "result" -> n.result.asJson
+              ))
+            }
+        }
+      }
+
+    // GET /projects/<name>/agent.md — 项目 agent 指令读取（#27「点击查看」；仿 team rules.md）。
+    // E.3 双轨移除（裁定 13）：只读工作区根 AGENTS.md（canonical）——旧位
+    // `.nebflow/Agent.md` 优先逻辑删除，迁移由 ProjectStore.load 统一执行
+    // （本路由先 load 再读，旧位真文件/symlink 在 load 时已落根）。响应形状
+    // {content} 不变（前端零改动）。URL 不变。
+    case req @ GET -> Root / "projects" / name / "agent.md" =>
+      withAuth(req) {
+        ProjectStore.load(name).flatMap {
+          case None => NotFound(Json.obj("error" -> s"project '$name' not found".asJson))
+          case Some(pd) =>
+            val p = os.Path(pd.workspace, PathUtil.dataRoot) / "AGENTS.md"
+            if os.exists(p) then Ok(Json.obj("content" -> os.read(p).asJson))
+            else NotFound(Json.obj("error" -> s"project '$name' has no AGENTS.md".asJson))
+        }
+      }
+
+    // PUT /projects/<name>/agent.md — 保存。E.3 双轨移除（裁定 13）：只落工作区根
+    // AGENTS.md（canonical）；旧位优先/穿透写逻辑删除（旧位由 ProjectStore.load
+    // 迁移——本路由先 load，同请求内迁移先行完成）。响应形状 {saved:true} 不变。
+    case req @ PUT -> Root / "projects" / name / "agent.md" =>
+      withAuth(req) {
+        ProjectStore.load(name).flatMap {
+          case None => NotFound(Json.obj("error" -> s"project '$name' not found".asJson))
+          case Some(pd) =>
+            req.as[Json].flatMap { body =>
+              val content = body.hcursor.downField("content").as[String].getOrElse("")
+              IO.blocking {
+                val p = os.Path(pd.workspace, PathUtil.dataRoot) / "AGENTS.md"
+                os.makeDir.all(p / os.up)
+                AtomicJson.writeSync(p, content)
+              } *> Ok(Json.obj("saved" -> true.asJson))
+            }
         }
       }
 
@@ -329,37 +494,17 @@ class RestApiRoutes(
         }
       }
 
-    // Agents — three-layer aggregation (global + team + flow)
+    // Agents — global layer only（2026-09-05 08:40 作者裁定：面板数据源收敛）。
+    // 旧三层聚合（global+team+flow）的 team/flow 两层是面板污染源——team/flow
+    // 入口已随 sidebar flag 封存，域 agent 不应出现在全局面板。global 层以
+    // agent.json 存在为准（EntityLoader.loadAgentFromDir 无 agent.json 即 None
+    // 丢弃），天然只回 keeper 定义；.archived / 惰性残留目录不出现（面板收敛
+    // spec 钉死）。layer 字段保留恒 "global"（agentManager.js 的 layer 过滤
+    // 兼容；scope 字段仅旧 team/flow 条目携带，随两层删除自然消失）。
     case req @ GET -> Root / "agents" =>
       withAuth(req) {
         for
           globalAgents <- EntityLoader.listAgents()
-          teams <- EntityLoader.listTeams()
-          teamAgentEntries <- teams.toList.traverse { (teamName, _) =>
-            IO.blocking {
-              val dir = PathUtil.dataRoot / "teams" / teamName / "agents"
-              if os.exists(dir) then
-                os.list(dir)
-                  .filter(os.isDir)
-                  .flatMap(d => EntityLoader.loadAgentFromDir(d))
-                  .map(a => (teamName, a))
-                  .toList
-              else Nil
-            }
-          }
-          flows <- EntityLoader.listFlows()
-          flowAgentEntries <- flows.toList.traverse { (flowName, _) =>
-            IO.blocking {
-              val dir = PathUtil.dataRoot / "flows" / flowName / "agents"
-              if os.exists(dir) then
-                os.list(dir)
-                  .filter(os.isDir)
-                  .flatMap(d => EntityLoader.loadAgentFromDir(d))
-                  .map(a => (flowName, a))
-                  .toList
-              else Nil
-            }
-          }
           globalList = globalAgents.values.toList.map { a =>
             Json.obj(
               "name" -> a.name.asJson,
@@ -369,28 +514,7 @@ class RestApiRoutes(
               "layer" -> "global".asJson
             )
           }
-          teamList = teamAgentEntries.flatten.map { (scope, a) =>
-            Json.obj(
-              "name" -> a.name.asJson,
-              "description" -> a.description.asJson,
-              "displayName" -> a.name.asJson,
-              "category" -> "team".asJson,
-              "layer" -> "team".asJson,
-              "scope" -> scope.asJson
-            )
-          }
-          flowList = flowAgentEntries.flatten.map { (scope, a) =>
-            Json.obj(
-              "name" -> a.name.asJson,
-              "description" -> a.description.asJson,
-              "displayName" -> a.name.asJson,
-              "category" -> "flow".asJson,
-              "layer" -> "flow".asJson,
-              "scope" -> scope.asJson
-            )
-          }
-          all = globalList ++ teamList ++ flowList
-          result <- Ok(Json.obj("agents" -> all.asJson))
+          result <- Ok(Json.obj("agents" -> globalList.asJson))
         yield result
       }
 
@@ -1129,6 +1253,32 @@ class RestApiRoutes(
               case Some(q)         => fs.lookupUser(q).flatMap(friendResult)
       }
 
+    /** [U3] 自定义 NebLink 号。body: {neblinkId} → 200 {neblinkId}；上游 409
+      * taken / 422 invalid 由 NeblinkClient 折叠为 Left → 网关 502 + error 透传
+      * （web 端以 available 预检 + 本地正则兜底，409/422 仅竞态兜底面）。 */
+    case req @ PUT -> Root / "users" / "me" / "neblink-id" =>
+      withAuth(req) {
+        sharedResources.friendService match
+          case None => NotFound(Json.obj("error" -> "NebLink not enabled".asJson))
+          case Some(fs) =>
+            req.as[Json].flatMap { body =>
+              val id = body.hcursor.downField("neblinkId").as[String].getOrElse("").trim
+              if id.isEmpty then BadRequest(Json.obj("error" -> "Missing neblinkId".asJson))
+              else fs.setNeblinkId(id).flatMap(friendResult)
+            }
+      }
+
+    /** [U3] 号可用性实时检测（供 NL 号自定义 UI 即时反馈）。?q=... → {available, reason?} */
+    case req @ GET -> Root / "users" / "me" / "neblink-id" / "available" =>
+      withAuth(req) {
+        sharedResources.friendService match
+          case None => NotFound(Json.obj("error" -> "NebLink not enabled".asJson))
+          case Some(fs) =>
+            req.params.get("q") match
+              case None | Some("") => BadRequest(Json.obj("error" -> "Missing q".asJson))
+              case Some(q)         => fs.neblinkIdAvailable(q).flatMap(friendResult)
+      }
+
   }
 
   /** Uniform A2A endpoint result mapping: upstream Left → 502 with error body. */
@@ -1715,6 +1865,45 @@ class RestApiRoutes(
         }
         result <- Ok(Json.obj("skills" -> entries.asJson))
       yield result
+
+    // ── Plugins（阶段 2b §B.3：面板审批清单 + CLI 对等）─────────────
+
+    // GET /plugins — 注册表全量（含 untrusted / 拒载原因 + 审批清单数据）。
+    // 审批清单区块（§B.3）：元信息 / skills 摘要（前 20 行）/ mcp（env 只出键名，
+    // 值打码）/ org.nebflow/tools 申请 / 信任状态与 digest。
+    case GET -> Root / "plugins" =>
+      for
+        (plugins, rejected) <- nebflow.core.plugin.PluginRegistry.listWithRejected()
+        entries = plugins.sortBy(_.name).map(nebflow.core.plugin.PluginRegistry.approvalManifest)
+        rejectedEntries = rejected.sortBy(_._1).map { case (n, r) => Json.obj("name" -> n.asJson, "reason" -> r.asJson) }
+        result <- Ok(Json.obj("plugins" -> entries.asJson, "rejected" -> rejectedEntries.asJson))
+      yield result
+
+    // GET /plugins/catalog — 分发器目录段同源（trusted only；前端调试/预览用）
+    case GET -> Root / "plugins" / "catalog" =>
+      nebflow.core.plugin.PluginRegistry.renderCatalog().flatMap { catalog =>
+        Ok(Json.obj("catalog" -> catalog.asJson))
+      }
+
+    // POST /plugins/:name/approve — 审批：当前目录 digest 写入 trust 表（下个
+    // spawn/分配即时生效）。名字段白名单校验（拒绝路径穿越形态）。
+    case POST -> Root / "plugins" / name / "approve" =>
+      if !isValidAgentName(name) then BadRequest(Json.obj("error" -> "Invalid plugin name".asJson))
+      else
+        nebflow.core.plugin.PluginRegistry.approve(name).flatMap {
+          case Right(msg) => Ok(Json.obj("ok" -> true.asJson, "message" -> msg.asJson))
+          case Left(err) => BadRequest(Json.obj("error" -> err.asJson))
+        }
+
+    // POST /plugins/:name/revoke — 撤审：trust 表条目删除 → 回落 untrusted
+    // （默认拒绝）；运行中 plugin MCP 在下个信任重验 tick 停用（§B.5）。
+    case POST -> Root / "plugins" / name / "revoke" =>
+      if !isValidAgentName(name) then BadRequest(Json.obj("error" -> "Invalid plugin name".asJson))
+      else
+        nebflow.core.plugin.PluginRegistry.revoke(name).flatMap {
+          case Right(msg) => Ok(Json.obj("ok" -> true.asJson, "message" -> msg.asJson))
+          case Left(err) => BadRequest(Json.obj("error" -> err.asJson))
+        }
 
     // GET /flows/list — list all flow definitions (name, description, node count, maxLoop)
     case GET -> Root / "flows" / "list" =>
@@ -2658,6 +2847,16 @@ class RestApiRoutes(
                         .flatMap {
                           case Right(tokens) =>
                             ms.identity.flatMap { identity =>
+                              // C2 (2026-09-01 login-chain fix): id_token picture
+                              // → device identity avatarUrl immediately (Logto
+                              // users get an avatar without waiting for the
+                              // enroll response; neblink-server avatar sync is
+                              // the C1 half, this is the client-side half).
+                              val pictureWrite = tokens.picture match
+                                case Some(pic) if pic.nonEmpty =>
+                                  ms.updateDeviceInfo(avatarUrl = Some(pic))
+                                case _ => IO.unit
+                              pictureWrite *>
                               LogtoDeviceFlow
                                 .register(LogtoDeviceFlow.jdkSend)(
                                   serverUrl,

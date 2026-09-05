@@ -15,7 +15,11 @@
 //   node scripts/check-js-types.mjs              # check (CI)
 //   node scripts/check-js-types.mjs --update     # regenerate baseline after intentional fixes
 //
-// tsc resolution: local node_modules first, then npx -y -p typescript@5.5.
+// tsc resolution: local node_modules/typescript ONLY (typescript is pinned as
+// a devDependency). The old `npx -y -p typescript@5.5` fallback was removed:
+// in sandboxed environments it hits EPERM on the npm cache and silently
+// produced untrustworthy (false-PASS) gate results. Without local tsc this
+// script now fails loudly with a `npm install` hint.
 
 import { execFileSync } from 'node:child_process';
 import { existsSync, readFileSync, writeFileSync } from 'node:fs';
@@ -37,11 +41,19 @@ const ZERO_ERROR_FILES = [
 
 function runTsc() {
   const args = ['-p', 'jsconfig.json', '--pretty', 'false'];
+  if (!existsSync(TSC_LOCAL)) {
+    // No silent npx fallback: an unresolvable tsc must fail the gate loudly.
+    // (npx fallback removed 2026-09-05 — see header comment.)
+    console.error(
+      'checkJs gate: TypeScript not found at node_modules/typescript.\n' +
+      '  Fix: npm install   (typescript is a pinned devDependency)\n' +
+      '  This gate no longer falls back to npx: that path silently produced\n' +
+      '  untrustworthy results when the npm cache was not writable.'
+    );
+    process.exit(2);
+  }
   try {
-    if (existsSync(TSC_LOCAL)) {
-      return execFileSync(process.execPath, [TSC_LOCAL, ...args], { cwd: ROOT, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] });
-    }
-    return execFileSync('npx', ['-y', '-p', 'typescript@5.5', 'tsc', ...args], { cwd: ROOT, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] });
+    return execFileSync(process.execPath, [TSC_LOCAL, ...args], { cwd: ROOT, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] });
   } catch (e) {
     // tsc exits 2 when errors are found — stdout still carries the report.
     if (e.stdout != null) return e.stdout;

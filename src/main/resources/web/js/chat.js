@@ -375,6 +375,16 @@ const EVENT_TYPE_LABELS = {
   follow_up: 'Follow-up', parallel: 'Parallel',
 };
 
+/** Node 完成通知状态段（NODE · 项目 · 节点 · 状态）：状态显示为全大写值
+ *  （COMPLETED / FAILED / CANCELED）；未知状态原样大写。 */
+const NODE_STATUS_LABELS = {
+  completed: 'COMPLETED', failed: 'FAILED', cancelled: 'CANCELED',
+};
+
+function nodeStatusLabel(eventType) {
+  return NODE_STATUS_LABELS[eventType] || String(eventType).toUpperCase();
+}
+
 /** Build the source label text, optionally combining with sender and eventType.
  *  e.g. source='mail', sender='Manager', eventType='result' → 'Mail · Manager · Result'
  *  sender is optional (backward compatible): absent → 'SOURCE · EventType'.
@@ -383,6 +393,23 @@ const EVENT_TYPE_LABELS = {
  *  e.g. 'nebflow-project/Backend · Result'. */
 export function injectedSourceLabel(source, eventType, sender, sourceTeam) {
   if (!source && !sourceTeam) return '';
+  // Node 完成通知专用格式（唯一 Node 类注入消息，source="node" 仅 NodeEngine
+  // deliverToNebula 发出）：NODE · <项目名> · <节点名> · <状态>。后端把项目名
+  // 与节点名打包在 sender = "<projectName>/<nodeName>"（路径约定，同 sourceTeam
+  // team/agent 惯例）；旧历史行 sender="node"（无 '/'）→ 优雅降级为
+  // 'NODE · <状态>'。状态段走全大写 nodeStatusLabel（COMPLETED/FAILED/CANCELED）。
+  // 不改其他消息类型格式。
+  if (source === 'node') {
+    const parts = ['NODE'];
+    if (sender) {
+      const sep = sender.indexOf('/');
+      if (sep > 0 && sep < sender.length - 1) {
+        parts.push(sender.slice(0, sep), sender.slice(sep + 1));
+      }
+    }
+    if (eventType) parts.push(nodeStatusLabel(eventType));
+    return parts.join(' · ');
+  }
   const parts = [];
   if (sourceTeam) {
     parts.push(sender ? `${sourceTeam}/${sender}` : sourceTeam);
@@ -1350,39 +1377,52 @@ export function renderSystemBubble(text) {
 }
 
 // ---------- Compaction status card ----------
-// Live-rendered status card for the compactStart → compactComplete/Failed
-// lifecycle: one card that morphs in place (spinning → done/failed) instead
-// of two plain notice bubbles. History restore is unchanged — the persisted
-// system text still renders as quiet notice cards after a refresh.
+// Status card for the compactStart → compactComplete/Failed lifecycle: one
+// card that morphs in place (spinning → done/failed) instead of two plain
+// notice bubbles. buildCompactCardRow is the SINGLE source of the card DOM —
+// the live lifecycle and the history-replay restore (persistence.js) both
+// build their cards through it, so a refreshed history shows the same card
+// component as the live view.
 const compactCheckSvg = '<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6 9 17l-5-5"/></svg>';
 const compactFailSvg = '<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M18 6 6 18M6 6l12 12"/></svg>';
+
+/** Build one compaction card row. kind: 'active' (spinner) | 'done' (check)
+ *  | 'error' (cross). label is plain text and is escaped here. startTs rides
+ *  on the card as data-start-ts (live only — replay has no start time). */
+export function buildCompactCardRow(kind, label, startTs = 0) {
+  const row = document.createElement('div');
+  row.className = 'row notice';
+  const card = document.createElement('div');
+  card.className = 'compact-card';
+  card.dataset.state = kind;
+  if (startTs) card.dataset.startTs = String(startTs);
+  const icon = kind === 'done'
+    ? `<span class="compact-card-icon ok">${compactCheckSvg}</span>`
+    : kind === 'error'
+      ? `<span class="compact-card-icon err">${compactFailSvg}</span>`
+      : '<span class="compact-card-spinner"></span>';
+  card.innerHTML = icon + `<span class="compact-card-label">${escapeHtml(label)}</span>`;
+  row.appendChild(card);
+  return row;
+}
 
 function findActiveCompactCard(view) {
   return view?.dom?.chat?.querySelector('.compact-card[data-state="active"]') || null;
 }
 
-function appendCompactCard(view, state, innerHtml, startTs) {
+function appendCompactCard(view, state, label, startTs) {
   const chat = view?.dom?.chat;
   if (!chat) return null;
-  const row = document.createElement('div');
-  row.className = 'row notice';
-  const card = document.createElement('div');
-  card.className = 'compact-card';
-  card.dataset.state = state;
-  if (startTs) card.dataset.startTs = startTs;
-  card.innerHTML = innerHtml;
-  row.appendChild(card);
+  const row = buildCompactCardRow(state, label, startTs);
   chat.appendChild(row);
   smartScroll();
-  return card;
+  return row.querySelector('.compact-card');
 }
 
 export function renderCompactStartCard(view = activeView) {
   if (!view?.dom?.chat) return;
   if (findActiveCompactCard(view)) return; // one active card at a time
-  appendCompactCard(view, 'active',
-    `<span class="compact-card-spinner"></span><span class="compact-card-label">${escapeHtml(t('chat.compactingCard'))}</span>`,
-    Date.now());
+  appendCompactCard(view, 'active', t('chat.compactingCard'), Date.now());
 }
 
 export function renderCompactDoneCard(view = activeView, { before, after, detail } = {}) {
@@ -1391,28 +1431,26 @@ export function renderCompactDoneCard(view = activeView, { before, after, detail
   const elapsed = startTs ? Math.max(1, Math.round((Date.now() - startTs) / 1000)) : 0;
   let label = t('chat.compacted', { before, after, detail: detail || '' });
   if (elapsed) label += t('chat.compactElapsed', { seconds: elapsed });
-  const inner = `<span class="compact-card-icon ok">${compactCheckSvg}</span><span class="compact-card-label">${escapeHtml(label)}</span>`;
   if (active) {
     active.dataset.state = 'done';
     delete active.dataset.startTs;
-    active.innerHTML = inner;
+    active.innerHTML = `<span class="compact-card-icon ok">${compactCheckSvg}</span><span class="compact-card-label">${escapeHtml(label)}</span>`;
   } else {
     // No active card (view was restored/switched mid-compaction) — append a
     // card directly in its final state.
-    appendCompactCard(view, 'done', inner, 0);
+    appendCompactCard(view, 'done', label, 0);
   }
   smartScroll();
 }
 
 export function renderCompactFailCard(view = activeView, text) {
   const active = findActiveCompactCard(view);
-  const inner = `<span class="compact-card-icon err">${compactFailSvg}</span><span class="compact-card-label">${escapeHtml(text)}</span>`;
   if (active) {
     active.dataset.state = 'error';
     delete active.dataset.startTs;
-    active.innerHTML = inner;
+    active.innerHTML = `<span class="compact-card-icon err">${compactFailSvg}</span><span class="compact-card-label">${escapeHtml(text)}</span>`;
   } else {
-    appendCompactCard(view, 'error', inner, 0);
+    appendCompactCard(view, 'error', text, 0);
   }
   smartScroll();
 }
@@ -1580,6 +1618,60 @@ export function showOptions(container, questions, onConfirm, doneLabel, onCancel
     q.innerHTML = item.question;
     wrapper.appendChild(q);
 
+    // 工作区选择卡（dirPicker=true，2026-09-05 作者裁定）：问题下方渲染「选择工作区」
+    // 大目标——内联 SVG 描边文件夹图标（emoji 清理批先例，禁 emoji）。点击目标或卡片
+    // 空白区整体 → WS pickWorkspaceDir → 后端系统目录对话框；下方候选 chips 降级为
+    // 次级提示；Other… 手输路径兜底保留（标准 option-btn/textarea 机制不动）。
+    let dirPick = null;
+    if (item.dirPicker) {
+      const target = document.createElement('button');
+      target.type = 'button';
+      target.className = 'ws-pick-target';
+      target.innerHTML = WS_FOLDER_SVG +
+        '<span class="ws-pick-texts"><span class="ws-pick-title">' + escapeHtml(t('workspacePicker.pickTitle')) + '</span>' +
+        '<span class="ws-pick-hint">' + escapeHtml(t('workspacePicker.pickHint')) + '</span></span>';
+      const echo = document.createElement('div');
+      echo.className = 'ws-pick-echo';
+      echo.style.display = 'none';
+      wrapper.appendChild(target);
+      wrapper.appendChild(echo);
+      dirPick = { busy: false };
+      const startPick = () => {
+        if (dirPick.busy) return;
+        if (!askSessionId || !requestId) return; // 无 requestId 的残卡不可发起（事件无主）
+        dirPick.busy = true;
+        target.classList.add('picking');
+        target.querySelector('.ws-pick-title').textContent = t('workspacePicker.picking');
+        sendWs({ type: 'pickWorkspaceDir', sessionId: askSessionId, requestId });
+        dirPickCards.set(requestId, {
+          sessionId: askSessionId,
+          requestId,
+          complete(path) {
+            dirPick.busy = false;
+            answers[qi] = path;
+            echo.style.display = '';
+            echo.textContent = '-> ' + t('workspacePicker.pickedEcho', { path });
+            target.classList.remove('picking');
+            dirPickCards.delete(requestId);
+            checkAllAnswered();
+            if (!confirmBtn.disabled) confirmBtn.click(); // 自动作答 askUser（继续创建流程）
+          },
+          setIdle() {
+            dirPick.busy = false;
+            target.classList.remove('picking');
+            target.querySelector('.ws-pick-title').textContent = t('workspacePicker.pickTitle');
+          },
+        });
+      };
+      target.addEventListener('click', (e) => { e.stopPropagation(); startPick(); });
+      // 卡片整体可点击（作者原话「卡片整体可点击、醒目大目标」）：除按钮/输入框外的
+      // 空白点击都触发选择。
+      wrapper.addEventListener('click', (e) => {
+        if ((/** @type {Element} */ (e.target)).closest('button, textarea, input')) return;
+        startPick();
+      });
+    }
+
     const optsDiv = document.createElement('div');
     optsDiv.className = 'option-opts';
     const hasOptions = item.options && item.options.length > 0;
@@ -1598,6 +1690,8 @@ export function showOptions(container, questions, onConfirm, doneLabel, onCancel
         if (!isStr && typeof opt.cls === 'string' && opt.cls) btn.classList.add(opt.cls);
         if (isMulti) {
           btn.dataset.label = label;
+          // dirPicker 卡：候选目录降级为次级提示 chips（视觉弱化，机制不变）
+          if (item.dirPicker) btn.classList.add('ws-pick-candidate');
           const preview = typeof opt === 'object' && opt !== null ? opt.preview : null;
           if (preview) btn.classList.add('has-preview');
           btn.innerHTML = '<span class="option-check"></span>' + (preview ? buildOptionPreview(preview) : '') + '<span class="option-text">' +
@@ -1610,6 +1704,8 @@ export function showOptions(container, questions, onConfirm, doneLabel, onCancel
           };
         } else {
           btn.dataset.label = label;
+          // dirPicker 卡：候选目录降级为次级提示 chips（视觉弱化，机制不变）
+          if (item.dirPicker) btn.classList.add('ws-pick-candidate');
           const preview = typeof opt === 'object' && opt !== null ? opt.preview : null;
           if (preview) btn.classList.add('has-preview');
           if (preview) {
@@ -1740,7 +1836,9 @@ export function showOptions(container, questions, onConfirm, doneLabel, onCancel
   cancelBtn.textContent = t('chat.cancel');
   cancelBtn.onclick = () => {
     if (askSessionId) askCardRegistry.delete(askSessionId);
-    box.querySelectorAll('.option-btn, .option-confirm').forEach(el => { el.disabled = true; });
+    if (requestId) dirPickCards.delete(requestId); // 工作区选择卡事件一并失主
+    // option buttons are <button>/<a> form controls; narrow for .disabled.
+    box.querySelectorAll('.option-btn, .option-confirm').forEach(el => { (/** @type {HTMLButtonElement} */ (el)).disabled = true; });
     cancelBtn.disabled = true;
     confirmBtn.disabled = true;
     if (askSessionId) clearAskDrafts(askSessionId);
@@ -1755,7 +1853,8 @@ export function showOptions(container, questions, onConfirm, doneLabel, onCancel
     // Lock the card: drop it from the Canvas answer registry (E6: late
     // _nfAskAnswer postMessages find no entry and are silently discarded).
     if (askSessionId) askCardRegistry.delete(askSessionId);
-    box.querySelectorAll('.option-btn').forEach(el => { el.disabled = true; });
+    if (requestId) dirPickCards.delete(requestId); // 工作区选择卡事件一并失主
+    box.querySelectorAll('.option-btn').forEach(el => { (/** @type {HTMLButtonElement} */ (el)).disabled = true; });
     cancelBtn.disabled = true;
     confirmBtn.disabled = true;
     confirmBtn.style.display = 'none';
@@ -1810,6 +1909,32 @@ export function showOptions(container, questions, onConfirm, doneLabel, onCancel
     confirmBtn.disabled = !questions.every((_, qi) => !shouldShow(qi) || answers[qi] !== null);
   }
 }
+
+// ---------- Workspace dir picker（ProjectCreate「选择工作区」卡，workspace-picker 批次） ----------
+// 大目标点击 → WS pickWorkspaceDir → 后端系统目录对话框（macOS NSOpenPanel /
+// Windows JFileChooser）。结果经 workspaceDirPicked 事件（TERMINAL 路由）回到这张卡：
+//   path → 卡片回显路径 + 自动作答 askUser（继续创建流程）；
+//   cancelled → 卡片回待选态（可再次点击 / Other… 手输，不取消 ProjectCreate）；
+//   fallback（headless/对话框异常）→ 自动打开应用内目录浏览器（Route C 兜底）。
+const WS_FOLDER_SVG = '<svg viewBox="0 0 24 24" width="34" height="34" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 7a2 2 0 0 1 2-2h4l2.2 2.5H19a2 2 0 0 1 2 2V17a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2Z"/><path d="M3 11h18"/></svg>';
+const dirPickCards = new Map(); // requestId -> 卡片 api（complete/setIdle）
+onMessage('workspaceDirPicked', (msg) => {
+  const entry = msg && msg.requestId ? dirPickCards.get(msg.requestId) : null;
+  if (!entry) return; // 迟到/已答卡的事件无主即弃
+  if (msg.fallback) {
+    import('./workspacePicker.js').then(({ openPicker }) => {
+      openPicker({
+        sessionId: entry.sessionId,
+        onPick: (p) => entry.complete(p),
+        onCancel: () => entry.setIdle(),
+      });
+    }).catch(() => entry.setIdle()); // 模块加载失败也不悬挂卡片
+  } else if (msg.cancelled) {
+    entry.setIdle();
+  } else if (typeof msg.path === 'string' && msg.path) {
+    entry.complete(msg.path);
+  }
+});
 
 // ---------- AskUser ----------
 /** Open an AskUser comparison page in Canvas (direction C §2.1 canvas field).
@@ -1934,6 +2059,7 @@ export function closeAskUserCard(sessionId, requestId) {
   for (const box of boxes) {
     if (box.querySelector('.option-answer')) continue; // already answered/locked
     box.querySelectorAll('.option-btn, .option-confirm, .option-cancel').forEach(el => { el.disabled = true; });
+    dirPickCards.delete(requestId); // 工作区选择卡：chat-input 直答后事件一并失主
     const confirmBtn = box.querySelector('.option-confirm');
     const cancelBtn = box.querySelector('.option-cancel');
     if (confirmBtn) confirmBtn.style.display = 'none';
@@ -1957,6 +2083,98 @@ export function closeAskUserCard(sessionId, requestId) {
     return true;
   }
   return false;
+}
+
+// ---------- AskUser history replay ----------
+/** History-replay twin of renderAskUser: rebuilds the SAME option-box card
+ *  through the SAME showOptions component (question wrappers, descriptions,
+ *  previews, Other textarea, confirm/cancel row), then applies the terminal
+ *  lock state — the exact end-state of the live confirm path — so a restored
+ *  answered card is structurally identical to the live one. persistence.js
+ *  calls this from restoreFromBackendHistory / restoreFromStorage; unanswered
+ *  trailing cards are re-rendered interactively by main.js (renderAskUser).
+ *  answerText: the persisted user answer that followed the askUser entry
+ *  (answer slots joined with '\n' by the gateway askUserAnswer recording),
+ *  or null when no answer was recorded. The '__cancelled__' sentinel
+ *  reproduces the live cancel end-state: everything disabled, buttons
+ *  visible, no answer line. */
+export function renderAskUserHistory(bubble, items, answerText) {
+  if (!Array.isArray(items) || items.length === 0) return;
+  try {
+    showOptions(bubble, items, null, null, null, undefined, undefined);
+  } catch (e) {
+    console.error('[askUser] history render failed:', e);
+    bubble.textContent = t('chat.failedRender');
+    return;
+  }
+  const box = bubble.querySelector('.option-box');
+  if (!box) return;
+  box.classList.remove('ob-fade-in'); // settled card — no creation animation on replay
+  const cancelled = answerText === '__cancelled__';
+  if (answerText && !cancelled) markAnsweredPick(box, items, answerText);
+  // Lock — same end-state as the live confirm path (confirmBtn.onclick) or
+  // cancel path (cancelBtn.onclick) depending on the recorded answer.
+  box.querySelectorAll('.option-btn, .option-confirm, .option-cancel').forEach(el => { el.disabled = true; });
+  if (!cancelled) {
+    const confirmBtn = box.querySelector('.option-confirm');
+    const cancelBtn = box.querySelector('.option-cancel');
+    if (confirmBtn) confirmBtn.style.display = 'none';
+    if (cancelBtn) cancelBtn.style.display = 'none';
+    const ansDiv = document.createElement('div');
+    ansDiv.className = 'option-answer';
+    ansDiv.textContent = '-> ' + formatHistoryAnswer(answerText);
+    box.appendChild(ansDiv);
+  }
+}
+
+/** Mark the picked option buttons from a persisted answer string so the
+ *  restored card shows the same picked state the user left it in. Answer
+ *  slots are joined with '\n' (gateway askUserAnswer recording); a slot is a
+ *  JSON array string for multi-select questions. A slot matching no preset
+ *  label is the Other free text — restored into the textarea with the Other
+ *  button picked, exactly as the live card looked at confirm time. */
+function markAnsweredPick(box, items, answerText) {
+  const slots = answerText.split('\n');
+  const wrappers = box.querySelectorAll('.option-q-wrapper');
+  items.forEach((item, qi) => {
+    const slot = slots[qi];
+    if (slot == null || slot === '') return;
+    const wrapper = wrappers[qi];
+    if (!wrapper) return;
+    let labels = null;
+    if (slot.startsWith('[')) {
+      try { const parsed = JSON.parse(slot); if (Array.isArray(parsed)) labels = parsed; } catch { /* plain text */ }
+    }
+    const texts = labels || [slot];
+    const btns = Array.from(wrapper.querySelectorAll('.option-btn'));
+    // Preset options carry data-label (both single and multi branches); the
+    // Other button never does (multi marks it data-other, single marks nothing).
+    let matched = false;
+    // Declared type needed: the closure assigns otherBtn, but CFA only sees
+    // the `= null` initializer and narrows later reads to never.
+    let /** @type {Element|null} */ otherBtn = null;
+    btns.forEach(btn => {
+      if (btn.dataset.label === undefined) { otherBtn = btn; return; }
+      if (texts.includes(btn.dataset.label)) { btn.classList.add('picked'); matched = true; }
+    });
+    if (!matched && otherBtn) {
+      otherBtn.classList.add('picked');
+      const input = wrapper.querySelector('.option-custom-input');
+      if (input) { input.value = slot; input.style.display = ''; }
+    }
+  });
+}
+
+/** Format a persisted answer string the way the live confirm path renders
+ *  its option-answer line: multi-select slots as '[a, b]', slots joined
+ *  with ', '. */
+function formatHistoryAnswer(answerText) {
+  return (answerText || '').split('\n').filter(Boolean).map(slot => {
+    if (slot.startsWith('[')) {
+      try { const arr = JSON.parse(slot); if (Array.isArray(arr)) return '[' + arr.join(', ') + ']'; } catch { /* plain text */ }
+    }
+    return slot;
+  }).join(', ');
 }
 
 // ---------- Permission prompt ----------

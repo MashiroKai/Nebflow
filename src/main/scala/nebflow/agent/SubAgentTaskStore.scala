@@ -131,6 +131,30 @@ class SubAgentTaskStore(baseDir: os.Path):
       writeTasksSync(parentSessionId, readTasksSync(parentSessionId).filterNot(_.taskId == taskId))
     }
 
+  /**
+   * V1 (2026-09-03): mark every in-flight task of a parent session cancelled.
+   * Called by deleteSession's cascade-stop — the parent (and its children with
+   * it) is being deleted, so no result can ever be delivered; the terminal
+   * record keeps the task store truthful AND keeps the V2 startup sweep from
+   * later "recovering" tasks whose parent session no longer exists. Returns
+   * the cancelled task ids (for the delete log).
+   */
+  def cancelRunningForParent(parentSessionId: String, reason: String): IO[List[String]] =
+    withLock {
+      val now = System.currentTimeMillis()
+      val existing = readTasksSync(parentSessionId)
+      val inFlight = existing.filter(t => t.status == "running" || t.status == "restarting")
+      if inFlight.isEmpty then Nil
+      else
+        val updated = existing.map { t =>
+          if t.status == "running" || t.status == "restarting" then
+            t.copy(status = "cancelled", lastError = Some(reason), completedAt = Some(now))
+          else t
+        }
+        writeTasksSync(parentSessionId, updated)
+        inFlight.map(_.taskId)
+    }
+
   /** Find all tasks in "running" status (for startup recovery). */
   def findRunningTasks: IO[List[SubAgentTask]] = IO
     .blocking {

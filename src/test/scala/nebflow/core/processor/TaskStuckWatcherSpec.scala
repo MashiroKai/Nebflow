@@ -6,7 +6,7 @@ import cats.syntax.all.*
 import fs2.Stream
 import munit.CatsEffectSuite
 import nebflow.actor.{ActorRef, ActorSystem, Behavior, Behaviors}
-import nebflow.agent.{AgentCommand, AgentKind, AgentLibrary, AgentRecord, AgentStatus, SharedResources}
+import nebflow.agent.{AgentCommand, AgentEvent, AgentKind, AgentLibrary, AgentRecord, AgentStatus, SharedResources}
 import nebflow.core.FileChangeTracker
 import nebflow.core.compact.HistoryArchiver
 import nebflow.core.task.FileTaskStore
@@ -44,6 +44,12 @@ class TaskStuckWatcherSpec extends CatsEffectSuite:
   private def mkRecordingActor(record: Ref[IO, List[AgentCommand]]): Behavior[AgentCommand] =
     def loop: Behavior[AgentCommand] =
       Behaviors.receiveMessage[AgentCommand](cmd => record.update(_ :+ cmd).as(loop))
+    loop
+
+  /** 记录收到的所有 AgentEvent 的测试 actor（充当观察桥 supervisor）。 */
+  private def mkRecordingEvt(record: Ref[IO, List[AgentEvent]]): Behavior[AgentEvent] =
+    def loop: Behavior[AgentEvent] =
+      Behaviors.receiveMessage[AgentEvent](evt => record.update(_ :+ evt).as(loop))
     loop
 
   private def mkResources(system: ActorSystem, tmp: os.Path): IO[SharedResources] =
@@ -495,6 +501,158 @@ class TaskStuckWatcherSpec extends CatsEffectSuite:
     finally
       lbLogger.detachAppender(appender)
       system.stopAll.attempt.void.unsafeRunSync()
+  }
+
+  // ── Project flow 会话（node-/dispatcher-）卡死恢复（let-it-crash）──────────
+
+  /** kind=Flow + supervisorRef=观察桥 + parentRef=None 的卡死分发器/节点形态。 */
+  private def stuckProjectFlow(
+      system: ActorSystem,
+      sid: String,
+      bridgeRef: nebflow.actor.ActorRef[AgentEvent],
+      threshold: Long
+  ): IO[AgentRecord] =
+    for
+      ref <- system.spawn(mkRecordingActor(Ref.unsafe(Nil)), s"$sid-agent")
+      now = System.currentTimeMillis()
+    yield AgentRecord(
+      sessionId = sid,
+      ref = ref,
+      kind = AgentKind.Flow,
+      rootSessionId = "root-1",
+      parentRef = None,
+      startedAt = now - 20 * 60 * 1000L,
+      status = AgentStatus.Processing,
+      lastActivityMs = now - threshold - 1000,
+      supervisorRef = Some(bridgeRef)
+    )
+
+  test("Project dispatcher 会话卡死 → 广播 restart + 第 1 次即硬取消在飞 LLM，绝不发 raw Stop") {
+    val system = ActorSystem("test-dispatcher-stuck")
+    for
+      _ <- IO(system)
+      tmp <- IO(os.temp.dir())
+      resources <- mkResources(system, tmp)
+      agentReceived <- Ref.of[IO, List[AgentCommand]](Nil)
+      agentRef <- system.spawn(mkRecordingActor(agentReceived), "dispatcher-agent")
+      bridgeReceived <- Ref.of[IO, List[AgentEvent]](Nil)
+      bridgeRef <- system.spawn(mkRecordingEvt(bridgeReceived), "dispatcher-bridge")
+      wsHub = new WsHub()
+      receivedWs <- Ref.of[IO, List[io.circe.Json]](Nil)
+      _ <- wsHub.register(json => receivedWs.update(_ :+ json))
+      now = System.currentTimeMillis()
+      threshold = 10 * 60 * 1000L
+      stuck = AgentRecord(
+        sessionId = "dispatcher-ab12cd34",
+        ref = agentRef,
+        kind = AgentKind.Flow,
+        rootSessionId = "root-1",
+        parentRef = None,
+        startedAt = now - 20 * 60 * 1000L,
+        status = AgentStatus.Processing,
+        lastActivityMs = now - threshold - 1000,
+        supervisorRef = Some(bridgeRef)
+      )
+      _ <- resources.agentRegistry.set(Map("dispatcher-ab12cd34" -> stuck))
+      (_, halt) <- nebflow.llm.LlmInterface.registerInflight(Some("dispatcher-ab12cd34"))
+      stopCounts <- cats.effect.Ref.of[IO, Map[String, Int]](Map.empty)
+      _ <- TaskStuckWatcher.scan(resources, wsHub, threshold, stopCounts)
+      aborted <- halt.get.timeoutTo(1.second, IO.pure(Left(new RuntimeException("not aborted"))))
+      _ <- IO.sleep(200.millis)
+      wsEvents <- receivedWs.get
+      agentCmds <- agentReceived.get
+      bridgeEvts <- bridgeReceived.get
+    yield
+      // 广播：action=restart（前端可见「卡死，自动恢复中」）
+      assert(wsEvents.size == 1, s"expected one taskStuck broadcast, got $wsEvents")
+      val ev = wsEvents.head
+      assertEquals(ev.hcursor.get[String]("type").toOption, Some("taskStuck"))
+      assertEquals(ev.hcursor.get[String]("kind").toOption, Some("Flow"))
+      assertEquals(ev.hcursor.get[String]("action").toOption, Some("restart"))
+      assertEquals(ev.hcursor.get[String]("sessionId").toOption, Some("dispatcher-ab12cd34"))
+      // 第 1 次扫描即硬取消（flow 会话无 supervisor 重启预算可消耗）
+      aborted match
+        case Left(e: nebflow.llm.StuckAbort) => assert(e.sessionId == "dispatcher-ab12cd34")
+        case other => fail(s"expected Left(StuckAbort), got $other")
+      // 铁律：不发 raw Stop——单次会话 Stop 杀 actor 而不发终态事件（桥收不到）
+      assert(agentCmds.isEmpty, s"flow session must NOT receive raw Stop, got $agentCmds")
+      // 未到 giveUp 阈值：桥不收 Cancelled
+      assert(bridgeEvts.isEmpty, s"bridge must not receive events before giveUp, got $bridgeEvts")
+  }
+
+  test("Project flow 会话连续 4 轮仍卡 → giveUp：桥收 Cancelled + 清 stopCounts") {
+    val system = ActorSystem("test-flow-giveup")
+    for
+      _ <- IO(system)
+      tmp <- IO(os.temp.dir())
+      resources <- mkResources(system, tmp)
+      agentReceived <- Ref.of[IO, List[AgentCommand]](Nil)
+      agentRef <- system.spawn(mkRecordingActor(agentReceived), "node-agent-gu")
+      bridgeReceived <- Ref.of[IO, List[AgentEvent]](Nil)
+      bridgeRef <- system.spawn(mkRecordingEvt(bridgeReceived), "node-bridge-gu")
+      wsHub = new WsHub()
+      threshold = 10 * 60 * 1000L
+      stuck <- stuckProjectFlow(system, "node-aaaa1111", bridgeRef, threshold)
+      _ <- resources.agentRegistry.set(Map("node-aaaa1111" -> stuck))
+      stopCounts <- cats.effect.Ref.of[IO, Map[String, Int]](Map.empty)
+      _ <- TaskStuckWatcher.scan(resources, wsHub, threshold, stopCounts) // 1
+      _ <- TaskStuckWatcher.scan(resources, wsHub, threshold, stopCounts) // 2
+      _ <- TaskStuckWatcher.scan(resources, wsHub, threshold, stopCounts) // 3
+      _ <- TaskStuckWatcher.scan(resources, wsHub, threshold, stopCounts) // 4 ≥ StopAttempts+2 → giveUp
+      _ <- IO.sleep(200.millis)
+      bridgeEvts <- bridgeReceived.get
+      agentCmds <- agentReceived.get
+      counts <- stopCounts.get
+    yield
+      val cancelled = bridgeEvts.collect { case c: AgentEvent.Cancelled => c }
+      assertEquals(cancelled.size, 1, s"bridge must receive exactly one Cancelled, got: $bridgeEvts")
+      assertEquals(cancelled.head.sessionId, "node-aaaa1111")
+      assert(cancelled.head.reason.contains("stuck"), s"reason must carry stuck context: ${cancelled.head.reason}")
+      // 全程零 raw Stop（即便 giveUp 也走桥 Cancelled）
+      assert(agentCmds.isEmpty, s"flow session must never receive raw Stop, got $agentCmds")
+      // 双保险清计数已执行
+      assert(!counts.contains("node-aaaa1111"), s"stopCounts must be cleared after giveUp, got: $counts")
+  }
+
+  test("旧 flow 系统 dag- 会话（无 supervisorRef）维持 notice-only——不硬取消、不发 Cancelled") {
+    val system = ActorSystem("test-dag-notice")
+    for
+      _ <- IO(system)
+      tmp <- IO(os.temp.dir())
+      resources <- mkResources(system, tmp)
+      agentReceived <- Ref.of[IO, List[AgentCommand]](Nil)
+      agentRef <- system.spawn(mkRecordingActor(agentReceived), "dag-agent")
+      wsHub = new WsHub()
+      receivedWs <- Ref.of[IO, List[io.circe.Json]](Nil)
+      _ <- wsHub.register(json => receivedWs.update(_ :+ json))
+      now = System.currentTimeMillis()
+      threshold = 10 * 60 * 1000L
+      stuckDag = AgentRecord(
+        sessionId = "dag-myflow-step1",
+        ref = agentRef,
+        kind = AgentKind.Flow,
+        rootSessionId = "root-1",
+        parentRef = None,
+        startedAt = now - 20 * 60 * 1000L,
+        status = AgentStatus.Processing,
+        lastActivityMs = now - threshold - 1000
+        // supervisorRef = None（FlowDagExecutor 注册现状）
+      )
+      _ <- resources.agentRegistry.set(Map("dag-myflow-step1" -> stuckDag))
+      (_, halt) <- nebflow.llm.LlmInterface.registerInflight(Some("dag-myflow-step1"))
+      stopCounts <- cats.effect.Ref.of[IO, Map[String, Int]](Map.empty)
+      _ <- TaskStuckWatcher.scan(resources, wsHub, threshold, stopCounts)
+      _ <- IO.sleep(200.millis)
+      notAborted <- halt.tryGet
+      wsEvents <- receivedWs.get
+      agentCmds <- agentReceived.get
+    yield
+      // 无取消通道 → 不硬取消（dag 会话的取消走 cancelFlow / RunningFlowRegistry）
+      assertEquals(notAborted, None, s"dag session must not be hard-cancelled, got $notAborted")
+      // 仅 notice（根 agent 分支广播）
+      assert(wsEvents.size == 1, s"expected one taskStuck notice, got $wsEvents")
+      assertEquals(wsEvents.head.hcursor.get[String]("action").toOption, Some("attention"))
+      assert(agentCmds.isEmpty, s"dag session must not receive commands, got $agentCmds")
   }
 
 end TaskStuckWatcherSpec

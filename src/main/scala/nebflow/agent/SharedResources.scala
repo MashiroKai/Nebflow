@@ -9,7 +9,6 @@ import nebflow.core.daemon.DaemonService
 import nebflow.core.hooks.{HookEngine, HooksConfig}
 import nebflow.core.scheduler.{ScheduledTaskService, ScheduledTaskStore}
 import nebflow.core.task.TaskStore
-import nebflow.core.telemetry.TelemetryReporter
 import nebflow.core.tools.FileLockManager
 import nebflow.core.workspace.KnowledgeStore
 import nebflow.core.{FileChangeTracker, PathUtil, UsageRecordStore}
@@ -45,7 +44,6 @@ case class SharedResources(
   hookEngine: HookEngine = HookEngine.noop,
   bridgeManager: Option[BridgeManager] = None,
   scheduledTaskStore: ScheduledTaskStore = new ScheduledTaskStore(PathUtil.dataRoot / "scheduled-tasks"),
-  telemetry: Option[TelemetryReporter] = None,
   neblinkService: Option[NeblinkService] = None,
   /** A2A 好友与消息服务（spec §11 客户端）。由 GatewayMain 在 NeblinkClient
     * 初始化后创建，注入 REST 路由 + relay tunnel + WS 事件回调。 */
@@ -108,5 +106,14 @@ case class SharedResources(
   /** Bash 卡死防护阈值（#391）：GatewayMain 从 nebflow.json 顶层键 fail-safe
     * 读取（bashAutoBackgroundMs/bashBackgroundHardTimeoutMs/bashStuckWindowSec），
     * 经 AgentCore 注入 ToolContext → BashTool。带默认值 → 既有测试构造零改动。 */
-  bashResilience: nebflow.shared.BashResilienceConfig = nebflow.shared.BashResilienceConfig()
+  bashResilience: nebflow.shared.BashResilienceConfig = nebflow.shared.BashResilienceConfig(),
+  /** 阶段 2a 沙箱配置（§G.1）：GatewayMain 从 nebflow.json sandbox 节 fail-safe
+    * 加载（absent → enabled=true 默认）。经 AgentCore 派生 ToolContext.sandbox——
+    * 但闸门激活还需会话级 SessionContext.sandboxEnabled=true（仅 project 节点/
+    * 分发器 spawn 置位），故存量测试的默认构造不受影响。 */
+  sandboxConfig: nebflow.core.sandbox.SandboxConfig = nebflow.core.sandbox.SandboxConfig(),
+  /** 阶段 2b Plugins（§B.5）：plugin 级 MCP 生命周期管理器（引用计数 + 信任运行时
+    * 联动）。独立于全局 mcpManager（不复用 enable/disable 面，§B.5）；默认实例
+    * 同步构造（Ref.unsafe 先例）——存量测试构造零改动，节点无分配时不触碰。 */
+  pluginMcp: nebflow.core.plugin.PluginMcpManager = nebflow.core.plugin.PluginMcpManager.unsafe()
 )

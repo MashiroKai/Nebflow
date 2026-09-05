@@ -45,10 +45,10 @@ object AgentControlTool extends Tool:
 Actions:
 - **list**: table of all live background agents (kind, status, stuck?, uptime, idle time, retry count, task). Use this FIRST when a sub-agent is silent or you suspect it is stuck — "stuck?" marks Processing agents with no activity for >10min (same threshold as the automatic watcher).
 - **status**: full detail for one agent (pass sessionId from list): state, timings, task prompt excerpt, retry count, last error. Also detects orphan task files (actor gone but task still marked running).
-- **cancel**: terminate an agent's current task. The parent session receives a "cancelled" notification and any wait barrier is released — nobody waits forever. Allowed kinds: Delegate, SubTask, Ephemeral, and Team members (permission-scoped — see Safety rules).
+- **cancel**: terminate an agent's current task. The parent session receives a "cancelled" notification and any wait barrier is released — nobody waits forever. Allowed kinds: Delegate, SubTask, Ephemeral, Project node/dispatcher sessions (node-*/dispatcher-*, settles via the session bridge), and Team members (permission-scoped — see Safety rules).
 - **restart**: kill the stuck turn and resume from the last persisted checkpoint (same mechanism as crash recovery — completed work is kept). Allowed kinds: Delegate (ephemeral) and SubTask (both consume the supervisor's restart budget, 2 per 5min; exceeding it fails the task), and Team members (Stop + re-activation from persisted history — no supervisor budget consumed).
 
-Safety rules: you cannot cancel/restart yourself, Root/plan sessions (self-preservation guard), or Flow workers (flow cancellation goes through cancelFlow / RunningFlowRegistry). Delegate/SubTask/Ephemeral sessions under your own root session are always controllable. Team members are manageable by their team's Manager (subtree scope — own team members and their sub-agents) and by Nebula (global scope); other callers are read-only for Team. Killing a team MANAGER (cancel/restart) additionally requires confirm=true plus a non-empty reason — a killed Manager leaves its members running but coordinator-less (members remain manageable by Nebula); every such kill is recorded in the audit log.
+Safety rules: you cannot cancel/restart yourself, Root/plan sessions (self-preservation guard), or legacy dag-* Flow workers (flow cancellation goes through cancelFlow / RunningFlowRegistry). Project node/dispatcher sessions (node-*/dispatcher-*) support cancel only (single-shot — no restart; cancel the dispatcher and re-trigger Task(project=...)). Delegate/SubTask/Ephemeral sessions under your own root session are always controllable. Team members are manageable by their team's Manager (subtree scope — own team members and their sub-agents) and by Nebula (global scope); other callers are read-only for Team. Killing a team MANAGER (cancel/restart) additionally requires confirm=true plus a non-empty reason — a killed Manager leaves its members running but coordinator-less (members remain manageable by Nebula); every such kill is recorded in the audit log.
 
 When to use:
 - A delegated task has been silent far longer than expected → list, then status the suspicious session.
@@ -97,18 +97,40 @@ When to use:
   val CancelableKinds: Set[AgentKind] = Set(AgentKind.Delegate, AgentKind.SubTask, AgentKind.Ephemeral)
   private val RestartableKinds: Set[AgentKind] = Set(AgentKind.Delegate, AgentKind.SubTask)
 
+  /** 新 Project 系统的 Flow 会话（Project 节点 node-* / 任务分发器 dispatcher-*）。
+    * 旧 flow 系统的 dag-* 会话不在此列（其取消走 cancelFlow / RunningFlowRegistry）。
+    * 前缀权威定义：NodeEngine.SessionPrefix / ProjectActor.DispatcherSessionPrefix。 */
+  def isProjectFlowSession(sessionId: String): Boolean =
+    sessionId.startsWith(nebflow.core.project.NodeEngine.SessionPrefix) ||
+      sessionId.startsWith(nebflow.core.project.ProjectActor.DispatcherSessionPrefix)
+
+  /** 面板/工具共用的 cancel 白名单：无条件 kind 白名单 + 新 Project flow 会话
+    * （须有 supervisor 取消通道——观察桥的 Cancelled 分支；dag- 旧 flow 会话
+    * 无此通道，保持只读）。 */
+  def cancelable(rec: AgentRecord): Boolean =
+    CancelableKinds.contains(rec.kind) ||
+      (rec.kind == AgentKind.Flow && isProjectFlowSession(rec.sessionId) && rec.supervisorRef.isDefined)
+
   private def kindRejection(
-      kind: AgentKind,
+      rec: AgentRecord,
       action: String,
       callerIsDirectParent: Boolean = false,
       callerIsRoot: Boolean = false
   ): Option[String] =
-    kind match
+    rec.kind match
       case AgentKind.Flow =>
-        Some(
-          "Flow workers follow the DAG lifecycle — cancelling one directly would break the flow state machine. " +
-            "Use flow-level cancellation instead (cancelFlow(instanceId) / RunningFlowRegistry)."
-        )
+        if action == "cancel" && isProjectFlowSession(rec.sessionId) && rec.supervisorRef.isDefined then
+          None // 观察桥 Cancelled 通道：node → engine cancelNode（结果不投递）；dispatcher → 清 registry + 停 agent
+        else if isProjectFlowSession(rec.sessionId) then
+          Some(
+            s"Session '${rec.sessionId}' is a single-shot Project session — restart is not supported. " +
+              "Cancel it and re-trigger the work (Task(project=...) for the dispatcher / NodeEdit for nodes)."
+          )
+        else
+          Some(
+            "Flow workers follow the DAG lifecycle — cancelling one directly would break the flow state machine. " +
+              "Use flow-level cancellation instead (cancelFlow(instanceId) / RunningFlowRegistry; NodeCancel for Project nodes)."
+          )
       case AgentKind.Team =>
         // v2 升级链父重启（§5.3.3）：直接父（Manager/owner）对自有 Team 成员
         // restart/cancel 放行——升级链的决策载体。
@@ -216,7 +238,9 @@ When to use:
             else
               val confirm = input("confirm").flatMap(_.asBoolean).getOrElse(false)
               withGuardedRecord(resources, ctx, sessionId, "cancel", confirm, reason)((rec, _) =>
-                doCancel(resources, rec, reason, by = callerLabel(ctx))
+                // notifyWs = 调用者 WS 出口：node-* 会话取消补发面板终态帧
+                // （Sub-Agents 面板取消实时刷新修复）。
+                doCancel(resources, rec, reason, by = callerLabel(ctx), notifyWs = ctx.wsSend)
               )
           case "restart" =>
             if sessionId.isEmpty then IO.pure(Left(ToolError("restart requires sessionId (run list first to get one)")))
@@ -253,7 +277,7 @@ When to use:
       // v2 升级链父重启（§5.3.3）：直接父 = 调用者会话 == 目标记录的 parentSessionId
       // （Manager/owner 管理自有 Team 成员；Delegate/SubTask 的父同理）。
       val callerIsDirectParent = rec.parentSessionId.nonEmpty && rec.parentSessionId == callerSessionId
-      kindRejection(rec.kind, action, callerIsDirectParent, callerIsRoot = rootBucket) match
+      kindRejection(rec, action, callerIsDirectParent, callerIsRoot = rootBucket) match
         case Some(msg) => IO.pure(Left(ToolError(msg)))
         case None =>
           if rec.kind == AgentKind.Team then
@@ -380,6 +404,12 @@ When to use:
         anchorsOpt match
           case None         => true // root bucket caller — global view
           case Some(anchors) => anchors.contains(sid) || chainReaches(registry, sid, anchors, 8)
+      // V2 (2026-09-03): orphan scope — a crash-survivor task has no registry
+      // row of its own; scope it by its PARENT session instead.
+      orphanInScope = (parentSid: String) =>
+        anchorsOpt match
+          case None         => true
+          case Some(anchors) => anchors.contains(parentSid) || chainReaches(registry, parentSid, anchors, 8)
       runningTasks <- resources.subAgentTaskStore.findRunningTasks
       taskMap = runningTasks.map(t => t.taskId -> t).toMap
       now = System.currentTimeMillis()
@@ -397,10 +427,11 @@ When to use:
             else "-"
           // Block 2（§C1）：root 桶调用者（Nebula）对 Team 全局 cancel/restart——
           // Team 行不再标 read-only；Manager 子树视图（anchorsOpt 定义）内 Team
-          // 由直接父分支放行，同样不标。其余只读 kind 照标。
+          // 由直接父分支放行，同样不标。其余只读 kind 照标（新 Project flow 会话
+          // node-/dispatcher- 有观察桥取消通道，不标）。
           val teamManageable = rec.kind == AgentKind.Team && anchorsOpt.isEmpty
           val readOnly =
-            if !CancelableKinds.contains(rec.kind) && !teamManageable then " （read-only）" else ""
+            if !cancelable(rec) && !teamManageable then " （read-only）" else ""
           val taskLabel = (task.map(_.description).getOrElse("") + readOnly).trim
           // issue #31 Fix D: barrier snapshot — phantom visibility. outstanding>0
           // on an idle session with no in-flight work = a batch member hung / died
@@ -426,25 +457,52 @@ When to use:
         }
     yield
       val header = List("sessionId", "kind", "agent", "parent", "status", "stuck?", "loop", "barrier", "up", "idle", "retries", "task")
-      val table = (header :: rows).map(r => "| " + r.mkString(" | ") + " |").mkString("\n")
+      // V2 (2026-09-03): orphan rows — tasks with status=running but NO live
+      // registry entry (previous process crashed mid-task; the registry is
+      // memory-only). This join-free listing is the only surface where the
+      // orphan stays visible between the crash and the next startup sweep.
+      val orphanRows = runningTasks
+        .filter(t => !registry.contains(t.taskId))
+        .filter(t => orphanInScope(t.parentSessionId))
+        .map { t =>
+          List(
+            t.taskId,
+            if t.source == "subtask" then "SubTask" else "Delegate",
+            t.agentName,
+            if t.parentSessionId.nonEmpty then t.parentSessionId.take(16) else "-",
+            "orphan(running)",
+            "crash",
+            "-",
+            "-",
+            fmtMillis(math.max(0L, now - t.spawnedAt)),
+            fmtMillis(math.max(0L, now - t.spawnedAt)),
+            t.retryCount.toString,
+            (t.description + " [orphan: no live actor — lost to a process crash; swept at next startup]").take(60)
+          )
+        }
+      val table = (header :: rows ++ orphanRows).map(r => "| " + r.mkString(" | ") + " |").mkString("\n")
       val scopeNote =
         if anchorsOpt.isDefined then
           "\nScope: your team subtree only (own members + their sub-agents) — root sessions and other teams' agents are hidden."
           else ""
+      val orphanNote =
+        if orphanRows.nonEmpty then
+          "\norphan(running) = task survived a process crash: no live actor exists, its result was lost. The startup sweep terminalizes these and notifies the parent session on next restart."
+          else ""
       val summary =
-        if rows.isEmpty then "No live background agents in your scope (registry is empty or outside your subtree)."
+        if rows.isEmpty && orphanRows.isEmpty then "No live background agents in your scope (registry is empty or outside your subtree)."
         else
-          s"""Background agents (${rows.size}):
+          s"""Background agents (${rows.size + orphanRows.size}):
              |
              |$table
              |
-             |stuck? = Processing with no activity for >${Defaults.StuckThresholdMs / 60000}min (same threshold as the automatic watcher).
+             |stuck? = Processing with no activity for >${Defaults.StuckThresholdMs / 60000}min (same threshold as the automatic watcher).$orphanNote
              |loop = streak/rounds (loop-guard): streak = consecutive rounds failing the same call (warn@3); rounds = non-progressing
              |       rounds this turn (escalates at 70% turn budget / 8). Non-zero = loop suspicion — check status, consider restart.
              |barrier = outstandingSubagents/heldResults (issue #31): outstanding>0 while idle with no in-flight work = phantom slot
              |          (a batch member hung or died without a terminal event — held results never inject until restart).
-             |Cancelable kinds: Delegate / SubTask / Ephemeral. Restartable: Delegate(ephemeral) / SubTask.
-             |Team members: the team's Manager (direct parent) or Nebula (global; killing a team MANAGER requires confirm=true + reason — audited). Flow/Root are read-only.$scopeNote""".stripMargin
+             |Cancelable kinds: Delegate / SubTask / Ephemeral, and Project node/dispatcher sessions (node-*/dispatcher-*, cancel settles via the session bridge). Restartable: Delegate(ephemeral) / SubTask.
+             |Team members: the team's Manager (direct parent) or Nebula (global; killing a team MANAGER requires confirm=true + reason — audited). Legacy dag-* Flow workers and Root are read-only.$scopeNote""".stripMargin
       Right(summary)
 
   private def doStatus(resources: SharedResources, ctx: ToolContext, sessionId: String): IO[Either[ToolError, String]] =
@@ -512,7 +570,7 @@ When to use:
             // anchors 命中）——对 Team 目标分别对应 callerIsRoot / 直接父放行，
             // manage 行不得再用无 caller 语境的 kindRejection 恒显 read-only。
             val teamRestartable = rec.kind == AgentKind.Team
-            val manage = kindRejection(rec.kind, "cancel", callerIsDirectParent = !callerIsRoot, callerIsRoot = callerIsRoot) match
+            val manage = kindRejection(rec, "cancel", callerIsDirectParent = !callerIsRoot, callerIsRoot = callerIsRoot) match
               case Some(_) => "manageable: no (read-only kind)"
               case None =>
                 "manageable: cancel" +
@@ -538,22 +596,53 @@ When to use:
   /** Cancel 终止任务终态（区别于 Interrupt 停当前 turn）。public：WS cancelAgent
     * handler（子 agent 管理面板）复用同链路——supervisorRef 优先（Cancelled →
     * notifyParentAndStop，barrier 正确释放），无 supervisor 走降级兜底
-    * （Stop + 自补通知 + taskStore cancelled + registry 移除）。 */
-  def doCancel(resources: SharedResources, rec: AgentRecord, reason: String, by: String = "the user panel"): IO[Either[ToolError, String]] =
+    * （Stop + 自补通知 + taskStore cancelled + registry 移除）。
+    *
+    * notifyWs：面板实时终态帧出口（Sub-Agents 面板取消实时刷新修复）——node-*
+    * Project 会话经此补发 agentDone 同构帧（dispatcher-* 不在此发：其观察桥
+    * 拆除点 ProjectActor 统一补发，覆盖含 Failed/watcher giveUp 的全部路径，
+    * 避免双发）。工具路径传 ctx.wsSend、面板路径传连接 wsSend；None = 静默
+    * （既有测试/无 WS 语境零改动）。 */
+  def doCancel(
+      resources: SharedResources,
+      rec: AgentRecord,
+      reason: String,
+      by: String = "the user panel",
+      notifyWs: Option[io.circe.Json => IO[Unit]] = None
+  ): IO[Either[ToolError, String]] =
     val reasonSuffix = if reason.nonEmpty then s" — $reason" else ""
     rec.supervisorRef match
       case Some(sup) =>
         // 正路：supervisor 处理 Cancelled → notifyParentAndStop("cancelled")
         // （父 ExternalEvent source 保持 delegate/subtask → barrier 释放）。
+        // Project flow 会话（node-/dispatcher-）的 supervisor 是会话观察桥：
+        // Cancelled → 清 registry + 停 agent（node 另经 engine cancelNode 落
+        // status=cancelled，结果不投递）——无父通知/任务文件语义。
         (sup ! AgentEvent.Cancelled(rec.sessionId, reason)).flatMap { _ =>
-          IO.pure(
-            Right(
-              s"Cancel sent to supervisor for '${rec.sessionId}'. The parent session will receive a cancelled " +
-                s"notification and the task file will be marked cancelled. Terminal state settles " +
-                s"asynchronously (if the agent completes at the same moment, whichever terminal event is " +
-                s"processed first wins)."
+          val panelFrame =
+            if rec.kind == AgentKind.Flow && rec.sessionId.startsWith(nebflow.core.project.NodeEngine.SessionPrefix)
+            then
+              notifyWs.fold(IO.unit)(ws =>
+                nebflow.core.node.NodeRunner
+                  .emitSubagentPanelDone(ws, rec.sessionId, rec.rootSessionId)
+                  .handleErrorWith(_ => IO.unit)
+              )
+            else IO.unit
+          panelFrame *>
+            IO.pure(
+              Right(
+                if rec.kind == AgentKind.Flow then
+                  s"Cancel sent for Project session '${rec.sessionId}' — it will be unregistered and the agent stopped" +
+                    (if rec.sessionId.startsWith(nebflow.core.project.NodeEngine.SessionPrefix) then
+                       "; the node settles to status=cancelled and its result is NOT delivered"
+                     else "") + "."
+                else
+                  s"Cancel sent to supervisor for '${rec.sessionId}'. The parent session will receive a cancelled " +
+                    s"notification and the task file will be marked cancelled. Terminal state settles " +
+                    s"asynchronously (if the agent completes at the same moment, whichever terminal event is " +
+                    s"processed first wins)."
+              )
             )
-          )
         }
       case None =>
         // 降级路径（spec §3.2 兜底）：Ephemeral（bridge death-watch 兜底回收）或

@@ -1,6 +1,7 @@
 package nebflow.core.tools
 
 import cats.effect.IO
+import nebflow.core.sandbox.{FileSandbox, SandboxPolicy}
 import io.circe.JsonObject
 import io.circe.syntax.*
 
@@ -111,18 +112,47 @@ Usage:
   def call(input: JsonObject, ctx: ToolContext): IO[Either[ToolError, String]] = IO.blocking {
     val pattern = input("pattern").flatMap(_.asString).getOrElse("")
     val pathOpt = input("path").flatMap(_.asString)
+    // 阶段 2a 沙箱（§A.2/§A.8-8）：相对路径与缺省根按节点 sandbox.root 解析——
+    // 修掉默认根=JVM user.dir 的现状；沙箱关时保持旧行为（user.dir）。
     val workDir = System.getProperty("user.dir")
-    val searchRoot = pathOpt match
+    val baseDir: os.Path =
+      if ctx.sandbox.enabled then ctx.sandbox.root
+      else os.Path(workDir)
+    val rawSearchRoot = pathOpt match
       case Some(p) if p.startsWith("/") || (p.length >= 2 && p.charAt(1) == ':') => p
-      case Some(p) => nebflow.core.PathUtil.resolvePath(p, os.Path(workDir)).toString
-      case None => workDir
+      case Some(p) => nebflow.core.PathUtil.resolvePath(p, baseDir).toString
+      case None => baseDir.toString
 
     val mode = input("output_mode").flatMap(_.asString).getOrElse("files_with_matches")
     val limit = input("head_limit").flatMap(_.asNumber).flatMap(_.toInt).getOrElse(DEFAULT_HEAD_LIMIT)
     val offset = input("offset").flatMap(_.asNumber).flatMap(_.toInt).getOrElse(0)
     val effectiveLimit = if limit == 0 then Int.MaxValue else limit
-    val workDirPath = os.Path(workDir)
+    val workDirPath = baseDir
 
+    // §A.3 读闸门：搜索根 canonicalize + readableRoots contain；rg 从 canonical
+    // 根起跑（检查对象=执行对象）。rg 默认不跟随 symlink 下钻（无 --follow）→
+    // 遍历不逃逸（§A.8-4）。
+    FileSandbox.checkReadRoot(ctx, os.Path(rawSearchRoot)) match
+      case Left(err) => Left(err)
+      case Right(canonicalRoot) =>
+        // 凭据红线遍历排除（沙箱开时）：搜索根在 ~/.nebflow/agents 子树内 →
+        // rg 排除 agent 私有记忆（memory.md）——文件级负向规则管不住目录遍历。
+        val memExcludes =
+          if ctx.sandbox.enabled then SandboxPolicy.memoryGlobExcludes(canonicalRoot.wrapped) else Nil
+        runGrep(pattern, canonicalRoot.toString, mode, offset, effectiveLimit, workDir, workDirPath, input, memExcludes)
+  }
+
+  private def runGrep(
+    pattern: String,
+    searchRoot: String,
+    mode: String,
+    offset: Int,
+    effectiveLimit: Int,
+    workDir: String,
+    workDirPath: os.Path,
+    input: JsonObject,
+    memoryExcludes: List[String] = Nil
+  ): Either[ToolError, String] =
     val args = scala.collection.mutable.ListBuffer[String](
       "--color=never",
       "--hidden",
@@ -152,6 +182,10 @@ Usage:
     input("glob").flatMap(_.asString).foreach(g => args ++= List("--glob", g))
     input("type").flatMap(_.asString).foreach(t => args ++= List("--type", t))
 
+    // agent 私有记忆排除必须落在所有用户 glob 之后——rg glob 规则 last-match-wins，
+    // 排除若先于用户 include glob 会被其覆盖（如 glob="*.md" 重新放行 memory.md）
+    args ++= memoryExcludes
+
     if pattern.startsWith("-") then args ++= List("-e", pattern)
     else args += pattern
 
@@ -167,7 +201,6 @@ Usage:
         else if stdoutStr.trim.isEmpty then Right("No matches found.")
         else
           val allLines = stdoutStr.trim.split("\n")
-          val needsColon = mode == "content" || mode == "count"
 
           mode match
             case "content" =>
@@ -204,7 +237,7 @@ Usage:
               Right(stdoutStr.trim)
           end match
     end match
-  }
+  end runGrep
 
   private def formatPagination(totalLines: Int, offset: Int, limit: Int): String =
     val truncated = totalLines > offset + limit

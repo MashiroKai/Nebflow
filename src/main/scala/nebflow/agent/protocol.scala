@@ -54,29 +54,7 @@ object AgentCommand:
     delivery: Option[String] = None
   ) extends AgentCommand
 
-  /**
-   * Cancel-batch (user ruling 2026-08-26 08:33): the user cancelled a task
-   * owned by this session — replaces the old always-immediate [任务取消]
-   * injection for the root orchestrator. Root (Nebula) BUFFERS these:
-   * idle = no turn at all (flushed as a block on the next activity),
-   * processing = debounced window (AgentActor.CancelBatchDebounceMs) so rapid
-   * cancellations merge into ONE packaged notice. Non-root agents keep the
-   * immediate-injection behavior (converted to ImmediateInput on receipt).
-   * `at` is the cancellation epoch-millis — the package renders in cancel
-   * order (append order == chronological).
-   */
-  case class TaskCancelNotice(
-    taskId: String,
-    subject: String,
-    description: String,
-    reason: String,
-    at: Long
-  ) extends AgentCommand
 
-  /** Cancel-batch internal: debounce window expired — flush the buffered
-    * cancellation notices as ONE packaged ImmediateInput. No-op when the
-    * buffer was already flushed by an activity-driven enrich. */
-  case class FlushCancelNotices() extends AgentCommand
   case class Interrupt() extends AgentCommand
 
   case class AskUser(
@@ -111,7 +89,7 @@ object AgentCommand:
     thinking: Option[String] = None,
     thinkingSignature: Option[String] = None,
     /** Block 3 循环检测器 L0（supervision trio §D3）：LoopGuard Warn 提醒——
-      * 下一轮以 user system-reminder 消息注入（同 saveTurnDriftReminder 形态），
+      * 下一轮以 user system-reminder 消息注入，
       * 零成本给模型自纠机会。 */
     loopReminder: Option[String] = None,
     /** Block 3：本轮 evaluate 产出的计数器快照——pipeToolExecutions 的计数器在
@@ -127,6 +105,15 @@ object AgentCommand:
   ) extends AgentCommand
 
   case class CompactionComplete(result: Either[String, List[Message]]) extends AgentCommand
+
+  /**
+   * F2 (2026-08-30, compact-injection-shield batch 2): sent to self at spawn
+   * (before any external delivery) — load the persisted injection queues
+   * (CompactionQueueStore) into the execution context. A crash mid-compaction
+   * otherwise loses every ImmediateInput/ExternalEvent queued during the
+   * window; replay restores them so the next turn injects them.
+   */
+  case object RecoverPersistedQueues extends AgentCommand
 
   case class TriggerCompaction(
     mode: String,
@@ -157,28 +144,6 @@ object AgentCommand:
 
   /** Frontend → agent: update safety mode for this session. */
   case class SetSafetyMode(mode: nebflow.core.SafetyMode) extends AgentCommand
-
-  // ============================================================
-  // Plan mode commands
-  // ============================================================
-
-  /** WebSocketRoutes → agent: start plan mode with the given task. */
-  case class StartPlan(task: String) extends AgentCommand
-
-  /** Plan adapter → agent: plan agent completed a turn, carrying the plan text. */
-  case class PlanTurnComplete(planText: String) extends AgentCommand
-
-  /** Plan adapter → agent: plan agent failed or terminated. */
-  case class PlanFailed(error: String) extends AgentCommand
-
-  /** Frontend → agent: user approved the plan. */
-  case object PlanApproved extends AgentCommand
-
-  /** Frontend → agent: user sent feedback to adjust the plan. */
-  case class PlanFeedback(text: String) extends AgentCommand
-
-  /** Frontend → agent: user cancelled plan mode. */
-  case object PlanCancelled extends AgentCommand
 
   case class ResumeTurn(
     turnStartMessageCount: Int,
@@ -482,6 +447,10 @@ enum AgentStreamEvent:
   case TextDelta(text: String)
   case ToolStart(label: String)
   case ToolEnd(label: String, summary: String, content: String, isError: Boolean, input: Option[JsonObject] = None)
+  /** 工具执行期心跳（审计 20260903 子项①）：toolStart→toolEnd 之间每
+    * Defaults.ToolHeartbeatSec 秒发一条，喂活前端 busy timer——前台长工具
+    * 执行零事件段不再触发前端 630s 纯静默超时误杀。 */
+  case ToolHeartbeat(label: String)
   case AgentStart(agentName: String, agentType: String, taskDescription: Option[String] = None)
   case AgentEnd(agentName: String)
   case Thinking
@@ -523,8 +492,10 @@ enum AgentStreamEvent:
       escalation: Option[EscalationInfo] = None
   )
 
-  /** 冻结调度：恢复（出冻结段自动恢复 / 用户输入唤醒 / 交互豁免路径不会发出本事件）。 */
-  case Resumed
+  /** 冻结调度：恢复（出冻结段自动恢复 / 用户输入唤醒 / 交互豁免路径不会发出本事件）。
+    * nextChangeAt = 恢复时刻的下一翻转点（工作态 = 下一冻结开始时刻，供前端
+    * 展示「下一段 HH:mm 再冻结」；None = 无未来翻转点，如配置关闭）。 */
+  case Resumed(nextChangeAt: Option[Long] = None)
 
   def toJson(agentId: String, isSubagent: Boolean = true, sessionId: Option[String] = None): Json =
     // For subagent events, inject nodeSessionId so the frontend can persist
@@ -548,6 +519,10 @@ enum AgentStreamEvent:
         if isSubagent then
           Json.obj("type" -> "agentToolStart".asJson, "agentId" -> agentId.asJson, "label" -> label.asJson)
         else Json.obj("type" -> "toolStart".asJson, "sessionId" -> sessionId.asJson, "label" -> label.asJson)
+      case ToolHeartbeat(label) =>
+        if isSubagent then
+          Json.obj("type" -> "agentToolHeartbeat".asJson, "agentId" -> agentId.asJson, "label" -> label.asJson)
+        else Json.obj("type" -> "toolHeartbeat".asJson, "sessionId" -> sessionId.asJson, "label" -> label.asJson)
       case ToolEnd(label, summary, content, isError, input) =>
         val base =
           if isSubagent then
@@ -694,7 +669,10 @@ enum AgentStreamEvent:
         val base =
           if isSubagent then Json.obj("type" -> "agentFrozen".asJson, "agentId" -> agentId.asJson)
           else Json.obj("type" -> "frozen".asJson, "sessionId" -> sessionId.asJson)
-        val withResume = resumeAtMillis.fold(base)(t => base.deepMerge(Json.obj("resumeAt" -> t.asJson)))
+        // 冻结中显式布尔（现象 2 契约补全 2026-08-30）：前端输入栏禁用状态机
+        // 直接读字段而非推断事件类型——事件语义与状态字段解耦，便于统一处理。
+        val withFrozen = base.deepMerge(Json.obj("frozen" -> true.asJson))
+        val withResume = resumeAtMillis.fold(withFrozen)(t => withFrozen.deepMerge(Json.obj("resumeAt" -> t.asJson)))
         // reason 缺省='schedule'（默认参数），旧前端/旧后端双向兼容；错误族前端按 reason 区分两族视觉
         val reasonStr = reason match
           case FreezeReason.Schedule        => "schedule"
@@ -717,9 +695,14 @@ enum AgentStreamEvent:
             )
           )
         )
-      case Resumed =>
-        if isSubagent then Json.obj("type" -> "agentResumed".asJson, "agentId" -> agentId.asJson)
-        else Json.obj("type" -> "resumed".asJson, "sessionId" -> sessionId.asJson))
+      case Resumed(nextChangeAt) =>
+        val base =
+          if isSubagent then Json.obj("type" -> "agentResumed".asJson, "agentId" -> agentId.asJson)
+          else Json.obj("type" -> "resumed".asJson, "sessionId" -> sessionId.asJson)
+        // 解冻显式布尔 + 下一翻转点（None 省略，旧载荷 byte-stable）
+        val withFrozen = base.deepMerge(Json.obj("frozen" -> false.asJson))
+        nextChangeAt.fold(withFrozen)(t => withFrozen.deepMerge(Json.obj("nextChangeAt" -> t.asJson)))
+      )
   end toJson
 end AgentStreamEvent
 
@@ -760,13 +743,14 @@ enum AgentStatus:
 case class CompactionResult(before: Int, after: Int)
 
 /**
- * Compaction execution phase. Two-stage model:
- *  - Save:    tools available, agent writes durable memory/skills with Write/Edit,
- *             ends the turn (toolCalls.isEmpty) → transitions to Compact.
- *  - Compact: tools disabled, single text-only summary turn (existing behavior).
+ * Compaction execution phase. Single-stage model (2026-08-31 redesign):
+ *  - Compact: tools disabled, single text-only summary turn.
+ * The former Save stage (two-stage model) was removed — compaction only
+ * compresses; memory maintenance happens outside the compaction round
+ * (event-time writes + periodic consolidation).
  */
 enum CompactionPhase:
-  case Save, Compact
+  case Compact
 
 case class CompactionJob(
   subagentId: String,
@@ -775,7 +759,7 @@ case class CompactionJob(
   replyTo: Option[ActorRef[AgentEvent]] = None,
   resumeAfterCompact: Boolean = true,
   postCompactInstruction: Option[String] = None,
-  phase: CompactionPhase = CompactionPhase.Compact // default Compact → existing call sites unchanged
+  phase: CompactionPhase = CompactionPhase.Compact // single-stage: always Compact
 )
 
 case class TurnContext(
@@ -783,6 +767,9 @@ case class TurnContext(
   systemPrefix: String,
   projectRoot: Option[String],
   rulesMd: Option[String],
+  /** §E.2: workspace-root AGENTS.md（每 turn 重读盘；仅 project 会话，gating 见
+    * ContextRefresher.agentsMdEnabledFor）。默认 None 保构造点兼容。 */
+  agentsMd: Option[String] = None,
   thinkingConfig: nebflow.llm.ThinkingConfig,
   branchChange: Option[SystemReminder] = None,
   currentBranch: Option[String] = None,
@@ -805,6 +792,9 @@ case class SessionContext(
   language: Option[String] = None,
   projectRoot: Option[String] = None,
   rulesMd: Option[String] = None,
+  /** §E.2: workspace-root AGENTS.md spawn 快照（消费权威在 refreshTurn 每 turn
+    * 重读盘的 TurnContext.agentsMd）。默认 None 保序列化/构造点兼容。 */
+  agentsMd: Option[String] = None,
   folderId: Option[String] = None,
   chatWidth: Int = 0,
   gitBranch: Option[String] = None,
@@ -826,6 +816,12 @@ case class SessionContext(
   expectsMail: Boolean = false,
   /** Total mail turns completed in this session. */
   mailTurnCount: Int = 0,
+  /** 阶段 2a 沙箱会话开关（§A.6/H-5①）：true 时 AgentCore 从 projectRoot 派生
+    * ToolContext.sandbox（root=worktree 或 workspace；分发器=project workspace）。
+    * 仅 project 节点（NodeEngine）与分发器（ProjectActor）spawn 置位；Nebula/
+    * team/flow/Delegate 等双轨会话默认 false=旧行为（§A.7 Nebula 天然豁免，
+    * 双轨期不动旧体系），2c 收敛后统一。 */
+  sandboxEnabled: Boolean = false,
   /** Last experience extraction timestamp. */
   lastExperienceAt: Option[Long] = None,
   /**
@@ -852,9 +848,9 @@ case class SessionContext(
    */
   userFacingNode: Boolean = false,
   /**
-   * D11 交互豁免（freeze-schedule spec v1.1）：用户在场等待的交互会话（plan
-   * agent 等）不参与冻结——冻结它们省下的 token 远低于浪费的用户等待时间。
-   * PlanAgent.spawn 传 true；其余 spawn 点默认 false 零改动。ask 轮的豁免走
+   * D11 交互豁免（freeze-schedule spec v1.1）：用户在场等待的交互会话
+   * 不参与冻结——冻结它们省下的 token 远低于浪费的用户等待时间。
+   * 其余 spawn 点默认 false 零改动。ask 轮的豁免走
    * gate 内的 askMode.isDefined 检查，不经此字段。
    */
   freezeExempt: Boolean = false
@@ -998,17 +994,7 @@ case class CompactionState(
   compactionFailures: Int = 0,
   lastCompactionFailureAt: Long = 0L,
   latestUsage: Option[TokenUsage] = None,
-  lastModel: Option[String] = None,
-  /** P0-1（2026-08-22 Write-only 循环批）：Save 阶段累计工具轮数——超预算
-    * 强制转 Compact（正常 memory 维护 2-5 轮；上限 AgentActor.SaveMaxToolRounds）。
-    * 内存态（AgentState 不持久化），压缩跨阶段完成或 agent 重建自然归零。 */
-  saveToolRounds: Int = 0,
-  /** P0-1：Save 阶段最近 Write 的 (file_path, content-hash)——同元组连续
-    * N 次写入 = 零进展（生产形态：/tmp/wbv-verify.mjs 24 连 (no changes)）。 */
-  saveWriteHistory: List[(String, String)] = Nil,
-  /** P1-4：Save 阶段任务漂移计数——Write/Edit 落点在 memory/skill 路径集外
-    * 累计；一级注入强化 reminder，二级强制转 Compact。 */
-  saveDriftStrikes: Int = 0
+  lastModel: Option[String] = None
 )
 
 case class AgentSessionInfo(
@@ -1017,23 +1003,6 @@ case class AgentSessionInfo(
   taskDescription: String,
   status: String = "running",
   createdAt: Long = System.currentTimeMillis()
-)
-
-// ============================================================
-// Plan mode
-// ============================================================
-
-/**
- * Tracks active plan mode state on the main agent.
- *
- * @param planAgentRef   ref to the plan sub-agent (for forwarding feedback)
- * @param currentPlanText  latest plan text from the plan agent's last turn
- * @param taskDescription  the original user task, for context injection on approve
- */
-case class PlanModeState(
-  planAgentRef: ActorRef[AgentCommand],
-  currentPlanText: String = "",
-  taskDescription: String = ""
 )
 
 /**
@@ -1054,7 +1023,6 @@ case class AgentState(
   execution: ExecutionContext,
   compaction: CompactionState,
   agentSessions: List[AgentSessionInfo],
-  planMode: Option[PlanModeState],
   /**
    * Last built systemStable string — reused on non-lifecycle turns.
    *
@@ -1070,16 +1038,6 @@ case class AgentState(
   cachedSystemStable: Option[String],
   /** Dynamic values at the time systemStable was last built (change detection). */
   stableSnapshot: Option[SystemStableSnapshot],
-  /**
-   * Cancel-batch buffer (user ruling 2026-08-26 08:33) — TOP-LEVEL on
-   * purpose: ExecutionContext is rebuilt at every turn boundary
-   * (ExecutionContext.idle), an execution-scoped buffer would be silently
-   * wiped there. In-memory only (same lifecycle as the rest of AgentState):
-   * a restart drops un-flushed notices — acceptable, the panel's
-   * taskListUpdate already converged the visible state. Append order ==
-   * chronological cancel order.
-   */
-  cancelNotices: List[AgentCommand.TaskCancelNotice],
   /** Block 3 循环检测器计数器（supervision trio §D1）：顶层——S3 跨 turn 保留
     * （turn 边界只清 S1 与 R 连续重复计数，见 LoopGuard.evaluate 的 turnKey 判定）。 */
   loopCounters: nebflow.core.processor.LoopGuard.Counters,
@@ -1113,6 +1071,7 @@ object AgentState:
     contextWindow: Int = nebflow.shared.Defaults.ContextWindow,
     projectRoot: Option[String] = None,
     rulesMd: Option[String] = None,
+    agentsMd: Option[String] = None,
     folderId: Option[String] = None,
     safetyMode: String = "confirm-edits",
     gitBranch: Option[String] = None,
@@ -1122,6 +1081,7 @@ object AgentState:
     freezeExempt: Boolean = false,
     isFlowNode: Boolean = false,
     userFacingNode: Boolean = false,
+    sandboxEnabled: Boolean = false,
     loopTurnKey: Long = 0L
   ): AgentState =
     val interaction = (pendingAskUser, pendingPermission) match
@@ -1140,6 +1100,7 @@ object AgentState:
         folderId = folderId,
         projectRoot = projectRoot,
         rulesMd = rulesMd,
+        agentsMd = agentsMd,
         gitBranch = gitBranch,
         safetyMode = safetyMode,
         expectsMail = expectsMail,
@@ -1147,15 +1108,14 @@ object AgentState:
         isSubTaskWorker = isSubTaskWorker,
         freezeExempt = freezeExempt,
         isFlowNode = isFlowNode,
-        userFacingNode = userFacingNode
+        userFacingNode = userFacingNode,
+        sandboxEnabled = sandboxEnabled
       ),
       ExecutionContext(messages, status, turnIdx, 0L, interaction),
       CompactionState(pendingCompaction, compactionFailures, 0L, latestUsage),
       Nil,
       None,
       None,
-      None,
-      Nil, // cancelNotices (cancel-batch)
       nebflow.core.processor.LoopGuard.Counters.Empty,
       loopTurnKey
     )
@@ -1200,7 +1160,9 @@ extension (s: AgentState)
   def askMode: Option[String] = s.session.askMode
   def language: Option[String] = s.session.language
   def projectRoot: Option[String] = s.session.projectRoot
+  def sandboxEnabled: Boolean = s.session.sandboxEnabled
   def rulesMd: Option[String] = s.session.rulesMd
+  def agentsMd: Option[String] = s.session.agentsMd
   def folderId: Option[String] = s.session.folderId
   def gitBranch: Option[String] = s.session.gitBranch
   def safetyMode: String = s.session.safetyMode
@@ -1296,8 +1258,6 @@ extension (s: AgentState)
   def withSafetyMode(mode: String): AgentState =
     s.copy(session = s.session.copy(safetyMode = mode))
 
-  def withPlanMode(pm: Option[PlanModeState]): AgentState = s.copy(planMode = pm)
-
   // --- Cache v2: systemStable + dynamic snapshot (lifecycle-node updates) ---
 
   /** Store the rebuilt systemStable and the dynamic snapshot it was built from. */
@@ -1371,5 +1331,10 @@ case class ConsumeResult(
   thinking: Option[String] = None,
   thinkingSignature: Option[String] = None,
   model: Option[String] = None,
-  contextWindow: Option[Int] = None
+  contextWindow: Option[Int] = None,
+  /** 当轮 LLM 请求 id（审计 20260903 方案 B）：pipeLlmCall 生成并同时传给
+    * LlmLogWriter（router JSONL 的 request_id）与本字段；工具执行轮经
+    * pipeToolExecutions 流入 ToolContext.requestId，实现工具日志与 router
+    * 日志精确对齐。Retry 重跑同一 cr 时 id 不变（同一 LLM 响应）。 */
+  requestId: Option[String] = None
 )

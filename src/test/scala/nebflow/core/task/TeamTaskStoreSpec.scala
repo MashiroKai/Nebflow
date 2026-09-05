@@ -115,15 +115,22 @@ class TeamTaskStoreSpec extends CatsEffectSuite:
       assert(noop.map(_.status).contains(TaskStatus.Failed))
       assert(r1.isLeft && r2.isLeft && r3.isLeft, "failed must not transition to any non-failed state")
 
-  test("team matrix rejects session-only statuses: needs_confirmation / dismissed / cancelled"):
+  test("legacy status wire names decode leniently (任务工具重做: needs_confirmation→completed, dismissed/cancelled→failed)"):
     for
       _ <- reset()
-      key = teamKey("mtx-session-only")
-      id <- mkTeamTask("mtx-session-only")
-      r1 <- store.update(key, id, TaskUpdateInput(status = Some(TaskStatus.NeedsConfirmation))).attempt
-      r2 <- store.update(key, id, TaskUpdateInput(status = Some(TaskStatus.Dismissed))).attempt
-      r3 <- store.update(key, id, TaskUpdateInput(status = Some(TaskStatus.Cancelled))).attempt
-    yield assert(r1.isLeft && r2.isLeft && r3.isLeft, "team tasks have no needs_confirmation/dismissed/cancelled")
+      key = teamKey("legacy-decode")
+      dir = tempRoot / "tasks" / "teams" / "legacy-decode"
+      _ = os.makeDir.all(dir)
+      _ = os.write(dir / "1.json", """{"id":"1","subject":"nc","description":"d","status":"needs_confirmation","events":[]}""")
+      _ = os.write(dir / "2.json", """{"id":"2","subject":"d","description":"d","status":"dismissed","events":[]}""")
+      _ = os.write(dir / "3.json", """{"id":"3","subject":"c","description":"d","status":"cancelled","events":[]}""")
+      nc <- store.get(key, "1")
+      dm <- store.get(key, "2")
+      cx <- store.get(key, "3")
+    yield
+      assertEquals(nc.map(_.status), Some(TaskStatus.Completed), "needs_confirmation → completed")
+      assertEquals(dm.map(_.status), Some(TaskStatus.Failed), "dismissed → failed")
+      assertEquals(cx.map(_.status), Some(TaskStatus.Failed), "cancelled → failed")
 
   test("created team task carries scope=team + teamId"):
     for
@@ -232,7 +239,7 @@ class TeamTaskStoreSpec extends CatsEffectSuite:
 
   // ── backward compat (§4.1 red line) ─────────────────────────────────
 
-  test("legacy session JSON without scope/teamId decodes to scope=session, five-state intact"):
+  test("legacy session JSON without scope/teamId decodes to scope=session, four-state intact"):
     for
       _ <- reset()
       sid = "legacy-sess"
@@ -243,10 +250,9 @@ class TeamTaskStoreSpec extends CatsEffectSuite:
         """{"id":"1","subject":"legacy","description":"d","status":"pending","blocks":[],"blockedBy":[],"createdAt":"2026-01-01T00:00:00Z","updatedAt":"2026-01-01T00:00:00Z","events":[]}"""
       )
       t <- store.get(sid, "1")
-      // five-state path still works: pending → in_progress → needs_confirmation (with note) → completed via complete()
+      // four-state path: pending → in_progress → completed (agent marks directly)
       _ <- store.update(sid, "1", TaskUpdateInput(status = Some(TaskStatus.InProgress)))
-      _ <- store.update(sid, "1", TaskUpdateInput(status = Some(TaskStatus.NeedsConfirmation), note = Some("done")))
-      _ <- store.complete(sid, "1", "user")
+      _ <- store.complete(sid, "1", "agent")
       t2 <- store.get(sid, "1")
     yield
       assertEquals(t.map(_.scope), Some("session"), "absent scope key decodes to 'session'")
@@ -263,5 +269,49 @@ class TeamTaskStoreSpec extends CatsEffectSuite:
       assert(r1.isLeft, ".. traversal rejected")
       assert(r2.isLeft, "empty team name rejected")
       assert(r3.isLeft, "slash rejected")
+
+  // NOTE: unique scope keys ("attribution-*") — FileTaskStore.hwmRef is a
+  // process-level per-scope cache that survives tempRoot swaps, so reusing a
+  // key owned by another suite (ToolsSpec's default team "alpha") poisons its
+  // high-water mark (qa FAIL 2026-08-30: smoke IDs shifted to #3).
+  test("create stamps assignee from the input (team-domain member attribution)"):
+    for
+      _ <- reset()
+      id <- store.create("team:attribution-create", TaskCreateInput(subject = "s", description = "d", assignee = Some("Backend")))
+      t <- store.get("team:attribution-create", id)
+    yield assertEquals(t.map(_.assignee), Some(Some("Backend")))
+
+  test("legacy team JSON without assignee decodes to None (zero-migration)"):
+    for
+      _ <- reset()
+      dir = tempRoot / "tasks" / "teams" / "attribution-legacy"
+      _ = os.makeDir.all(dir)
+      _ = os.write(
+        dir / "1.json",
+        """{"id":"1","subject":"legacy-team","description":"d","status":"pending","scope":"team","teamId":"attribution-legacy","blocks":[],"blockedBy":[],"events":[]}"""
+      )
+      t <- store.get("team:attribution-legacy", "1")
+    yield
+      assertEquals(t.map(_.assignee), Some(None), "absent assignee key decodes to None")
+      assertEquals(t.map(_.teamId), Some(Some("attribution-legacy")))
+
+  test("update reassigns assignee (trim), blank clears, absent keeps; event recorded on change"):
+    for
+      _ <- reset()
+      id <- store.create("team:attribution-update", TaskCreateInput(subject = "s", description = "d", assignee = Some("Backend")))
+      // trim on set
+      _ <- store.update("team:attribution-update", id, TaskUpdateInput(assignee = Some("  Frontend  ")))
+      t1 <- store.get("team:attribution-update", id)
+      // absent keeps
+      _ <- store.update("team:attribution-update", id, TaskUpdateInput(status = Some(TaskStatus.InProgress)))
+      t2 <- store.get("team:attribution-update", id)
+      // blank clears + event
+      _ <- store.update("team:attribution-update", id, TaskUpdateInput(assignee = Some(" ")))
+      t3 <- store.get("team:attribution-update", id)
+    yield
+      assertEquals(t1.map(_.assignee), Some(Some("Frontend")), "value is trimmed")
+      assertEquals(t2.map(_.assignee), Some(Some("Frontend")), "absent assignee keeps existing")
+      assertEquals(t3.map(_.assignee), Some(None), "blank clears")
+      assert(t3.exists(_.events.exists(_.kind == "assignee")), "reassignment recorded as an event")
 
 end TeamTaskStoreSpec

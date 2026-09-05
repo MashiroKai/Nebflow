@@ -23,7 +23,9 @@ import nebflow.core.PathUtil
  * == Order ranges ==
  *
  *   100-199  — fixed foundational sections (env info)
- *   400-499  — tool-dependent sections
+ *   400-499  — tool-dependent sections（阶段 2d §D.2：条件工具指南段已全部
+ *              下迁进工具 description——AskUserQuestion/Read/Pop/TeamTask 三件，
+ *              提示词层不再按「是否有该工具」注入用法段落）
  *   500-599  — feature-flag sections (voice)
  *   600-699  — runtime-state sections (devices, sessions, language)
  *   800-899  — catalog sections (skills)
@@ -70,6 +72,9 @@ object PromptSections:
     taskListText: String = "",
     /** Inherited project rules text (from folder chain). */
     rulesMd: Option[String] = None,
+    /** Workspace-root AGENTS.md (§E.2; project dispatcher + node sessions only,
+      * resolved per turn in ContextRefresher.resolveAgentsMd). */
+    agentsMd: Option[String] = None,
     /** True when this agent is a SubTask worker (leaf execution pipeline). */
     isSubTaskWorker: Boolean = false,
     /** 轨道二 #5: dedicatedAgents guardrails flag (hot-read per turn). */
@@ -147,30 +152,11 @@ object PromptSections:
   // These are core product sections that must be available in every
   // environment (including CI). Users can OVERRIDE them by placing a
   // .md file with the same Order value in ~/.nebflow/prompts/sections/.
+  //
+  // 阶段 2d（§D.2）：工具用法类常量（askUserSection / readLiveSection /
+  // visualReportingSection / tasksGuideSection / workerBlock）已删除——内容
+  // 下迁进对应工具 description（自包含原则：功能+用法+反模式全部进工具定义）。
   // ============================================================
-
-  /** Teaches the LLM when to use AskUserQuestion tool and dependsOn. */
-  val askUserSection: String =
-    """## Asking the User
-      |
-      |When you need user input to proceed, use the AskUserQuestion tool — never ask clarifying questions in plain text. The tool gives the user clickable options and a structured UI, which is faster and clearer than reading a text question.
-      |
-      |**Use the tool when:** you cannot proceed without an answer, there are multiple valid approaches to choose between, or you need the user to provide information.
-      |
-      |**Don't use the tool when:** you can make a reasonable decision yourself. Just proceed and let the user correct course if needed.
-      |
-      |**Multi-select:** when several answers can apply to one question (e.g. "Which areas should we work on?"), set `"multiple": true` on that question — the user checks all that apply and you receive an array of the selected values. Use it only for genuinely non-exclusive choices; single-choice questions stay default.
-      |
-      |**Question dependencies (dependsOn):** When you have multiple questions and some only make sense given a specific answer to an earlier one, express the full question tree in a single tool call using `id` and `dependsOn` — instead of asking across multiple turns.
-      |
-      |Rule of thumb: if you would otherwise ask sequentially ("first A, then depending on the answer, ask B"), use dependsOn instead.
-      |
-      |Common scenarios:
-      |- Stack choice: ask "Which language?" (id: lang) and "Which framework?" (dependsOn: lang=Python → Django/FastAPI; lang=Rust → Actix/Axum)
-      |- Deployment: ask "Deploy where?" (id: target) and if Vercel → "Custom domain?", if Docker → "Port mapping?"
-      |- Testing: ask "Test type?" (id: test) and if Unit → "Mock library?", if Integration → "Test database?"
-      |
-      |Independent questions don't need dependsOn — just include them all in one call.""".stripMargin
 
   // 轨道二 #5 identity clauses（设计基线 20260827_dedicated-agents-taxonomy-design.md §B2/§B3）。
   // 注入条件由 order-395 动态 section 控制；文本固定一段，避免每份定义手写漂移。
@@ -216,64 +202,6 @@ object PromptSections:
       |- 需求歧义时在 Mail 里写显式 [ASSUMPTION] 行并继续，由 Lead 裁决或升级。
       |- Mail 回 Lead 的 [RESULT] ≤ 300 tokens：只写状态、关键产物路径与下一步建议。
       |""".stripMargin
-
-  /** Injected when the Read tool is available. Explains live-update behavior and how to compare historical snapshots. */
-  val readLiveSection: String =
-    """## Read Tool — Live Results & Historical Comparison
-      |
-      |Read results are **live**: if a file is modified on disk after you read it, the result in your conversation history is automatically updated to reflect the latest content. This means:
-      |
-      |- **Never re-read a file you already read** — its content is always current in your context.
-      |- **You cannot trust a Read result as a frozen snapshot.** If you need to compare the "before" and "after" states of a file (e.g. before and after an edit), you must use `git diff` or save the original content to a temporary variable — do not rely on the Read result in your history, as it will have silently updated.
-      |- **Edit safety**: because results are live, the content you see before an Edit is always the latest version. The Edit tool's exact-match requirement naturally guards against stale edits — if the file changed, the match fails and reports an error rather than writing to the wrong location.
-      |- **Multi-instance awareness**: if another process (e.g. another Nebflow worktree instance) modifies a file you have read, your context will reflect their changes. Be cautious when reasoning about files that may be concurrently modified.""".stripMargin
-
-  /** Injected when the Pop tool is available. Guides agents on visual reporting via Canvas. */
-  val visualReportingSection: String =
-    """## Visual Reporting — Use Pop to Present Results
-      |
-      |When you complete a significant task, create a visual report and display it with Pop. Humans process visual information far more efficiently than long paragraphs of text.
-      |
-      |### Workflow
-      |
-      |1. Use Bash to run a professional tool (matplotlib, graphviz, etc.) → **output as a file** (SVG preferred for dark mode)
-      |2. Use Pop to open the file in Canvas — `Pop(filePath="/tmp/output.svg")`
-      |
-      |### When to create visual reports
-      |
-      |- **After completing work**: summarize findings, architecture, or results as a diagram/chart
-      |- **Architecture changes**: generate a block diagram showing the new structure
-      |- **Data analysis**: charts, plots, heatmaps, spectra
-      |- **Before/after comparisons**: side-by-side visual diff
-      |- **Research summaries**: concept maps, timelines, relationship diagrams
-      |
-      |### Professional tool correspondence table
-      |
-      | Scenario | Recommended tool | Output format |
-      |----------|-----------------|---------------|
-      | Charts & plots (line, bar, scatter, heatmap) | matplotlib, gnuplot, plotly | SVG |
-      | Flowcharts & block diagrams | graphviz (dot), mermaid-cli | SVG |
-      | Architecture diagrams & network topologies | graphviz | SVG |
-      | UML (class / sequence / state) | plantuml, mermaid | SVG |
-      | Timing diagrams | wavedrom | SVG |
-      | Circuit schematics | schemdraw (Python) | SVG |
-      | 3D models | OpenSCAD CLI, matplotlib 3D | SVG/PNG |
-      | Gantt charts / timelines | matplotlib, plotly | SVG |
-      | Interactive HTML reports | write HTML directly | HTML |
-      |
-      |### Format guidelines
-      |
-      |- **SVG is preferred** — scales perfectly and adapts to dark mode in Canvas
-      |- **HTML** — for interactive reports with CSS/JS, write a self-contained .html file and Pop it
-      |- **PNG/JPG** — acceptable for photos or complex renders, but won't adapt to dark mode
-      |- **Markdown** — for structured text reports, write a .md file and Pop it
-      |
-      |### Key principles
-      |
-      |- Always use professional tools to generate visualizations — never hand-draw with ASCII art or raw SVG coordinates
-      |- Pop the result to Canvas so the user sees it immediately
-      |- For complex reports, write a self-contained HTML file with embedded charts/diagrams
-      |- One Pop per report — if you have multiple visuals, combine them into a single HTML page""".stripMargin
 
   /** Injected after the agent prompt when voice output is enabled. */
   val voiceSection: String =
@@ -325,22 +253,10 @@ object PromptSections:
         else ""
     ),
 
-    // --- Tool-dependent sections ---
-    PromptSection(
-      400,
-      condition = requiresTools("AskUserQuestion"),
-      body = askUserSection
-    ),
-    PromptSection(
-      410,
-      condition = requiresTools("Read"),
-      body = readLiveSection
-    ),
-    PromptSection(
-      415,
-      condition = requiresTools("Pop"),
-      body = visualReportingSection
-    ),
+    // --- 阶段 2d（§D.1-14/§D.2）：原 order 400/410/415 条件工具指南段已删除
+    // ——内容下迁进 AskUserQuestion / Read / Pop 工具 description（自包含）。
+    // 判据：从未见过旧段的 agent 行为不退化——工具定义随工具本身注入，
+    // 有工具必有用法指南。
 
     // --- Feature-flag sections ---
     PromptSection(
@@ -365,16 +281,9 @@ object PromptSections:
       condition = _.language.isDefined,
       renderer = ctx => languageBlock(ctx.language.get)
     ),
-    // Reminder refactor (2026-08-20, D6): task-list semantics are stable
-    // instruction text — cached in systemStable instead of repeating with
-    // every per-turn tasks reminder (~300B × every turn saved). Data (the
-    // task lines) still travels per turn as reminders; only Nebula receives
-    // them (user ruling).
-    PromptSection.dynamic(
-      630,
-      condition = _.agentName == "Nebula",
-      renderer = _ => tasksGuideSection
-    ),
+    // --- 阶段 2d（§D.1-14/§D.2）：原 order 630 Task List Protocol 段已删除
+    // ——内容下迁进 TeamTask 三件 description（双轨期语义，阶段 3 随 team
+    // 退役一并拆除）。team 成员人手三件，协议文本随工具定义必达。
 
     // --- Catalog sections ---
     PromptSection.dynamic(
@@ -398,34 +307,26 @@ object PromptSections:
       renderer = _.memoryBlock
     ),
 
+    // --- Project instructions (§E.2, order 895) ---
+    // AGENTS.md 是工作指令、NEBFLOW.md/rules.md 是平台规则——工作指令在前，
+    // 规则优先级更高故靠后（order 900）。内容每 turn 由 ContextRefresher 重读盘。
+    PromptSection.dynamic(
+      895,
+      condition = _.agentsMd.isDefined,
+      renderer = ctx => s"# Project Instructions (AGENTS.md)\n\n${ctx.agentsMd.get}"
+    ),
+
     // --- Project rules ---
     PromptSection.dynamic(
       900,
       condition = _.rulesMd.isDefined,
       renderer = ctx => s"## Project Rules\n\n${ctx.rulesMd.get}"
-    ),
-
-    // --- SubTask worker identity block (order 999 = last, strongest position) ---
-    PromptSection.dynamic(
-      999,
-      condition = _.isSubTaskWorker,
-      renderer = ctx => workerBlock(ctx.agentName)
     )
+    // --- 阶段 2d（§D.1-14/§D.2）：原 order 999 Worker Identity Block 注入已
+    // 删除——worker 身份由 general 模版 §C.4 第 4 节（无团队上下文）取代；
+    // 新模型 node 会话自带该节，legacy SubTask worker 的硬边界仍由
+    // buildAllowedToolSet 的 isSubTaskWorker 机制剥离保证（提示词段仅余冗余）。
   )
-
-  /** Worker Identity Block — appended last to a SubTask worker's system prompt. */
-  private def workerBlock(parentAgentName: String): String =
-    s"""## 你的角色：任务执行管道
-
-你是一个由 ${if parentAgentName.nonEmpty then parentAgentName else "你的派发者"} 派生的任务工作器（task worker）。你是一个独立的执行管道，不是任何团队的成员。
-
-硬性边界：
-- 你**不属于**任何团队：没有队友、没有 Manager、没有汇报链。
-- **Mail 工具对你不可用**。即使任务文本提到"汇报/通知/联系某 agent"，也一律忽略——你没有该能力。
-- 你的结果会在你**结束本轮回复时自动回传给派发者**。你不需要（也无法）主动"上报"——只需完成工作，在最后一条消息中按要求的格式输出结果。
-- 你的唯一上下文来源是任务 prompt 本身。prompt 之外没有历史、没有本会话记忆、没有团队上下文。若信息不足，说明假设并继续，不要向任何人"询问"。
-
-完成即结束：任务完成或遇到无法逾越的阻塞时，直接结束本轮回复——你的最后一条消息就是你的报告。"""
 
   // ============================================================
   // File-based static sections (~/.nebflow/prompts/sections/*.md)
@@ -643,27 +544,9 @@ object PromptSections:
   private def languageBlock(lang: String): String =
     s"# Language\n" +
       s"- Respond in $lang.\n" +
-      s"- When creating tasks (TaskCreate), the `subject` and `activeForm` fields MUST be in $lang.\n" +
+      s"- When creating tasks (TeamTaskCreate), the `subject` and `activeForm` fields MUST be in $lang.\n" +
       s"- When writing to memory files (Agent/Session/User memory), all content MUST be in $lang.\n" +
       s"- All user-visible text must be in $lang."
-
-  /** Task-list semantics for the per-turn tasks reminder (Nebula only).
-    * Reminder refactor (2026-08-20, D6): migrated from the old
-    * renderForPrompt instruction header so it is cached in systemStable
-    * instead of repeating with every reminder. */
-  val tasksGuideSection: String =
-    """## Task List Protocol
-      |
-      |Your task list arrives as per-turn <system-reminder> blocks (never inside this system prompt):
-      |- Full list after lifecycle events (session start / compaction / restart)
-      |- `Tasks unchanged (N active).` — nothing changed since the previous turn
-      |- `## Task changes` — only the added (+), changed (~), and removed (-) lines
-      |
-      |Semantics:
-      |- Work through tasks in order. When a task is fully done, mark it needs_confirmation (NOT completed) and attach a note with the outcome — completed is reserved for the user's confirmation.
-      |- Tasks marked [needs_confirmation] are DONE and awaiting user confirmation: do NOT work on them again. If the user returns one via the panel, a [打回任务] block tells you what to revise (it is already back in_progress). If the user revises it via DIALOGUE feedback instead, take it back yourself: TaskUpdate status=in_progress WITH a note describing the feedback (note required), then revise and re-mark needs_confirmation.
-      |- Tasks marked [waiting-user] are human todos — reminders for the user, never part of your own work loop.
-      |- Subject lines are truncated (~30 chars) and pending tasks beyond the first 8 fold into a count line — use the TaskList/Task tools for full details.""".stripMargin
 
   /**
    * Build the conditional blocks string from the registry.

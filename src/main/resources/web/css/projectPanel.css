@@ -1,0 +1,187 @@
+/* projectPanel.css — Project 标签页卡片样式（#27 方向调整：参考 team 面板设计）。
+   复用 .team-card 视觉基座（flowCss.js 注入），此处只定义项目专属字段。 */
+
+.project-card .project-fields {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 10px 14px 12px;
+  border-top: 1px solid var(--color-border);
+  margin-top: 10px;
+}
+
+.project-field {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+
+.project-field-label {
+  /* Fixed column so the values line up: 工作区 / AGENTS.md / 运行中 agent are
+     different widths and a ragged left edge on the value column reads as
+     three unrelated rows instead of one field table. */
+  flex: 0 0 76px;
+  font: 500 11px/1.4 -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+  color: var(--color-text-muted);
+}
+
+.project-field-value {
+  font: 400 12px/1.4 -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+  color: var(--color-text);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.project-field-value.mono {
+  font-family: var(--font-mono, monospace);
+  color: var(--color-text-muted);
+}
+
+/* Running-agent count: a number that ticks with WS events — tabular figures
+   keep the row from jittering when it goes 9 → 10. */
+.project-field-value.tabular {
+  font-variant-numeric: tabular-nums;
+  font-weight: 500;
+}
+
+/* Description wraps instead of ellipsing — it is prose, not a path. */
+.project-field-value.desc {
+  white-space: normal;
+  color: var(--color-text-muted);
+  line-height: 1.5;
+}
+
+/* AGENTS.md entry — a text affordance, not another icon button: the row
+   already carries the label, so the action reads as a link. */
+.project-link-btn {
+  border: none;
+  background: transparent;
+  padding: 0;
+  font: 500 12px/1.4 -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+  color: rgb(var(--sapphire) / 1);
+  cursor: pointer;
+  transition: opacity 150ms ease;
+}
+.project-link-btn:hover { opacity: 0.75; text-decoration: underline; }
+.project-link-btn:focus { outline: none; }
+.project-link-btn:focus-visible { box-shadow: 0 0 0 2px var(--glass-control-border); border-radius: 4px; }
+
+.project-open-btn {
+  flex: 0 0 auto;
+  width: 26px;
+  height: 26px;
+  border: 1px solid var(--color-border);
+  border-radius: 7px;
+  background: transparent;
+  color: var(--color-text-muted);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  margin-left: 4px;
+  transition: color 150ms ease, border-color 150ms ease, background 150ms ease;
+}
+
+.project-open-btn:hover {
+  color: rgb(var(--sapphire) / 1);
+  border-color: rgb(var(--sapphire) / 0.45);
+  background: rgb(var(--sapphire) / 0.08);
+}
+
+.project-open-btn svg { width: 15px; height: 15px; }
+
+/* 归档按钮（迁移方案 v2 §6.1）：卡片头部显式人工归档入口，尺寸/形态对齐
+   .project-open-btn（26×26 icon 按钮，位于 header 摘要右侧）。归档可逆
+   （可取消归档）→ 不用 danger 红语义；静态 ghost、hover 全玻璃材质，
+   走 sapphire.css Pattern A（同 .session-delete 等 icon 控件族，2026-09-05）。 */
+.project-archive-btn {
+  flex: 0 0 auto;
+  width: 26px;
+  height: 26px;
+  border: 1px solid transparent;
+  border-radius: 7px;
+  background: transparent;
+  color: var(--color-text-muted);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  transition: background 150ms ease, color 150ms ease, border-color 150ms ease, box-shadow 150ms ease;
+}
+.project-archive-btn svg { width: 15px; height: 15px; }
+
+/* ── Flow Map 就地视图（同标签页切换，projectTab.openFlowMapInPlace）────────── */
+
+/* 顶部导航条：左上角「← 项目名」单元素返回入口（20260905 作者报告合并：
+   原「返回项目列表」文本按钮与项目名合并；整元素可点回列表，名字 ellipsis） */
+.flowmap-nav-bar {
+  display: flex;
+  align-items: center;
+  flex: 0 0 auto;
+  padding: 10px 14px;
+  border-bottom: 1px solid var(--color-border);
+  background: var(--glass-bg);
+}
+
+.flowmap-back-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  max-width: min(100%, 420px); /* 长项目名不撑横 nav-bar，超出由名字 span ellipsis 承接 */
+  min-width: 0;
+  border: 1px solid var(--color-border);
+  border-radius: 8px;
+  background: transparent;
+  color: var(--color-text);
+  font: 500 12px/1 -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+  padding: 6px 10px;
+  cursor: pointer;
+  transition: color 150ms ease, border-color 150ms ease, background 150ms ease;
+}
+.flowmap-back-btn:hover {
+  color: rgb(var(--sapphire) / 1);
+  border-color: rgb(var(--sapphire) / 0.45);
+  background: rgb(var(--sapphire) / 0.08);
+}
+.flowmap-back-btn svg { width: 14px; height: 14px; flex: 0 0 auto; }
+.flowmap-back-btn .flowmap-back-name {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* Flow Map 渲染体：撑满 nav-bar 以下空间，内部由 flowMapTab 渲染
+   (.flowmap-card flex:1 填满；.dag-empty height:100% 居中)
+   v3：position:relative 作为归档悬浮层（悬浮钮/面板/详情）的定位上下文
+   （规格 20260903_flowmap-archive-panel-spec.md §4.1）。 */
+.flowmap-view-body {
+  position: relative;
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+/* ── 空 Flow Map 项目：无节点 → 不可点 ─────────────────── */
+
+.project-card.is-empty { opacity: 0.9; }
+
+.team-card-title.empty {
+  cursor: default;
+  color: var(--color-text-muted);
+}
+
+.project-empty-tag {
+  font: 500 10px/1 -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+  color: var(--color-text-muted);
+  margin-left: 6px;
+  padding: 2px 6px;
+  border-radius: 4px;
+  background: var(--color-frame-hover);
+  white-space: nowrap;
+  vertical-align: 2px;
+}

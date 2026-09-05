@@ -37,12 +37,16 @@ end PreCompactionHook
 
 object PreCompactionHooks:
 
+  /**
+   * 2026-08-31 memory-system redesign: team agents have no memory anymore —
+   * ManagerProgressHook / WorkerSkillHook (which appended progress/skill
+   * entries into team memory.md) are retired. Only the Root hook
+   * (NebulaMemoryHook, merged-write User.md) remains active.
+   */
   def forProfile(profile: CompactionProfile): PreCompactionHook =
     profile match
       case CompactionProfile.Root => NebulaMemoryHook
-      case CompactionProfile.Manager => ManagerProgressHook
-      case CompactionProfile.Worker => WorkerSkillHook
-      case CompactionProfile.Legacy => NoOpHook
+      case _ => NoOpHook
 
 /** No-op hook for Legacy/unprofiled agents. */
 object NoOpHook extends PreCompactionHook:

@@ -49,15 +49,19 @@ import {
   showDeleteFolderModal,
   showAgentModal, hideAgentModal, initModals
 } from './modal.js';
-import { send, handleSlash, addFileAttachment, initInput, initGlobalFileDrop, injectUserMessage, enterAskMode, cancelAskMode, registerSkillCommands, drainMessageQueue, restoreQueue } from './input.js';import { saveMsg, loadMsgs, restoreFromStorage, restoreFromBackendHistory, migrateLegacyIfNeeded, emergencyCacheCleanup } from './persistence.js';
+import { send, handleSlash, addFileAttachment, initInput, initGlobalFileDrop, injectUserMessage, enterAskMode, cancelAskMode, registerSkillCommands, drainMessageQueue, restoreQueue } from './input.js';import { saveMsg, loadMsgs, restoreFromStorage, restoreFromBackendHistory, migrateLegacyIfNeeded, emergencyCacheCleanup, findLastRealMessage, saveAskMsgDedup } from './persistence.js';
 import { initMicOrb } from './micOrb.js';
-import { renderTaskList } from './taskList.js';
+// taskList.js 引用已随旧任务区退役移除（2026-09-05 10:54 裁定）：面板渲染
+// 由 taskList.js 自包含节点订阅驱动，session 切换重渲走 sidebar.js。
 import { renderWithRegistry, cleanupCardIframes } from './cardRegistry.js';
 import { escapeHtml, isBgAgentId } from './utils.js';
 import { showMemoryButton, handleMemoryData, handleMemoryChanged, initMemory, clearMemoryCache } from './memory.js';
 import { handleRulesData, handleRulesSaved, handleRulesDeleted, handleBrowseResult, initRulesModal, initPathPicker } from './sidebar.js';
 import { t, getLocale } from './i18n.js';
 import { applyLocaleToHtml } from './i18n.js';
+// #27 Project 标签页 + Flow Map 标签页（方向调整：均为 Canvas 标签页形态）
+import { registerCanvasPanelButton } from './canvas.js';
+import { openProjectsTab } from './projectTab.js';
 import { initScheduledTask, refreshScheduledTasks } from './scheduled-task.js';
 import { initDaemons } from './daemons.js';
 import { initChatSearch } from './chatSearch.js';
@@ -69,15 +73,24 @@ import { handleFlowAgentHistory, openStepPopup as openFlowStepPopup } from './fl
 import { handleBgAgentHistory, openStepPopup as openBgAgentPopup, cleanupBgAgentView } from './bgAgentPopup.js';
 import { fmtUptime, isFailedSnapshotStatus } from './managePanel.js';
 import { initNeblink } from './neblink.js';
+import { initUpdateCheck } from './updateCheck.js';
 import { initDropbox } from './dropbox.js';
 import { initContacts } from './contacts.js';
 import { initMessages } from './messages.js';
 import { formatLiveDuration } from './chat.js';
 import { collapseTurn, failTurn } from './turnGroup.js';
-import * as planMode from './planMode.js';
 import { initCanvas, restoreTabs, closeCanvas, openCanvas } from './canvas.js';
 import { initLightbox } from './lightbox.js';
-import * as flowCanvas from './flowCanvas.js';
+// Side-effect import: flowAnim.js is the rAF orbit driver for Flow Map /
+// flow-run node dots (.solar-node). It used to ride in via the legacy
+// flow-canvas module (deleted 2026-09-05 旧 UI 退役); anchor it here so
+// Flow Map's orbit animation stays alive from boot.
+import './flowAnim.js';
+// Side-effect import: agentManager.js keeps the sealed agents panel +
+// per-agent detail tabs alive (canvas-tab-restore for persisted 'agents'
+// tabs); plugins.js owns the activity-bar entry now (2026-09-04 件 B).
+import './agentManager.js';
+import { openPlugins } from './plugins.js';
 import { initColResizers } from './colResizer.js';
 import { initActivityBar, toggleSideBar } from './activityBar.js';
 
@@ -457,6 +470,17 @@ function freezeWindowState() {
 // mic/attach/send/stop controls all get disabled; only the skip control stays
 // interactive. `disabled` (not readonly) so the inert textarea fires no keydown
 // and can never send. Un-frees by removing the attributes.
+
+// The system-freeze targets the MAIN composer (#input-bar = chatViews.primary's
+// input bar). During a sub-agent event dispatch ws.js momentarily routes the
+// module-global activeView to the popup view (or null); a freeze driven by the
+// schedule window must still free/freeze the visible main composer, so never
+// rely on the transient activeView here — resolve the primary view (which owns
+// #input-bar) with an activeView fallback for pre-boot (before primary is built).
+function freezeTargetView() {
+  if (chatViews.primary && chatViews.primary.dom && chatViews.primary.dom.inputBar) return chatViews.primary;
+  return activeView;
+}
 function setFrozenBarState(v, frozen) {
   const bar = v && v.dom && v.dom.inputBar;
   if (!bar) return;
@@ -474,7 +498,7 @@ function setFrozenBarState(v, frozen) {
 }
 
 function applyLocalFreeze() {
-  const v = activeView;
+  const v = freezeTargetView();
   const bar = v && v.dom && v.dom.inputBar;
   if (!bar || !v.sessionId) return;
   const win = freezeWindowState();
@@ -482,8 +506,10 @@ function applyLocalFreeze() {
   const busy = state.busySessionIds.has(v.sessionId);   // woken mid-window: working
   // A user who clicked "跳过本次" voided the current window (08-25 ruling:
   // skip is not permanent — it expires at the window end, so the next window
-  // re-freezes). skipFrozenUntil mirrors the backend freezeSkipUntilRef.
-  const skipped = win && skipFrozenUntil > Date.now();
+  // re-freezes). skipActiveForWindow() merges the in-memory mirror with the
+  // authoritative backend freezeState.skipped (which survives a reload — that
+  // mirror is lost on refresh). See skip-active note below.
+  const skipped = skipActiveForWindow(win);
   if (win && !parked && !busy && !skipped) {
     if (!bar.classList.contains('frozen')) {
       bar.classList.add('frozen');
@@ -513,6 +539,20 @@ setInterval(applyLocalFreeze, 60000);
 // is what makes the UI recover immediately, independent of the backend.
 let skipFrozenUntil = 0;
 
+// Is the CURRENT schedule window (win = freezeWindowState()) voided by a skip?
+// Two signals — the in-session local mirror (skipFrozenUntil, set by the button
+// click, survives immediate UI recovery) and the authoritative backend snapshot
+// (state.freezeState.skipped, survives a reload where the mirror is lost). The
+// snapshot is time-bounded by nextChangeAt (the skipped window's end) so a stale
+// skip expires when that window ends and the next schedule window re-freezes.
+function skipActiveForWindow(win) {
+  if (!win) return false;
+  if (skipFrozenUntil > Date.now()) return true;
+  const fs = state.freezeState;
+  if (fs && fs.skipped && (fs.nextChangeAt == null || fs.nextChangeAt > Date.now())) return true;
+  return false;
+}
+
 function skipCurrentFreeze() {
   // Record the window end so applyLocalFreeze won't re-freeze the rest of this
   // window. Guarded: when no local window is found (e.g. the backend parked via
@@ -524,7 +564,7 @@ function skipCurrentFreeze() {
   sendWs({ type: 'skipFreeze' });
   // Immediate local UI unwind: un-freeze the active input bar (skip only the
   // schedule-frozen state — never the amber error-recovery family).
-  const v = activeView;
+  const v = freezeTargetView();
   const bar = v && v.dom && v.dom.inputBar;
   if (bar) {
     if (!bar.classList.contains('frozen-error')) {
@@ -556,6 +596,23 @@ onMessage('agentFrozen', (msg, view) => {
     state.sessionBgAgents[sid][aid].freezeReason = normalizeReason(msg.reason);
     if (view) renderBgAgentDropdown();
   }
+  // R4-a (wait-timeout-fix, audit 20260903 Q2-A): a sub-agent freeze parks the
+  // ROOT session's turn at its outstanding-subagent barrier — busy stays true
+  // with zero activity events, so the root sessionBusyTimeout would false-fire
+  // at streamTimeoutMs+30s, send interrupt and kill a turn that is merely
+  // waiting for the barrier (「冻结期间响应超时」 across a multi-hour freeze).
+  // Mirror the 'frozen' handler (F8/F4): clear the root session's timer;
+  // agentResumed → next activity event re-arms it (existing contract).
+  if (state.sessionBusyTimeouts[sid]) {
+    clearTimeout(state.sessionBusyTimeouts[sid]);
+    delete state.sessionBusyTimeouts[sid];
+  }
+  // 现象2 fix (2026-08-30): a schedule freeze is SYSTEM-wide — when any
+  // background agent parks, the foreground input must disable too (if the
+  // schedule window is active). applyLocalFreeze reads the authoritative
+  // freezeWindowState(); outside a schedule window it's a no-op (a lone
+  // loop/error freeze of one agent must NOT disable the whole input).
+  applyLocalFreeze();
 });
 
 onMessage('agentResumed', (msg, view) => {
@@ -568,6 +625,10 @@ onMessage('agentResumed', (msg, view) => {
     state.sessionBgAgents[sid][aid].freezeReason = null;
     if (view) renderBgAgentDropdown();
   }
+  // 现象2 fix: when background agents wake, re-evaluate the foreground freeze
+  // (window may have ended, or a skip voided it — recompute so the input
+  // un-freezes immediately instead of waiting for the 60s tick).
+  applyLocalFreeze();
 });
 
 // Error-recovery escalation (frozen-error-recovery plan §5.3.2): auto-recovery
@@ -909,6 +970,38 @@ onMessage('usageUpdate', (msg, view) => {
 });
 
 onMessage('done', (msg, view) => {
+  // Node sessions (node-*) / dispatcher sessions (dispatcher-*) end with
+  // session-level 'done' (not 'agentDone') — parentRef=None agents finish with
+  // a session-level done (finishTurn: isSubagent = parentRef.isDefined).
+  // Cleanup of their Sub-Agents rows happens here: the agentDone delete path
+  // never fires for them. (node- rows: #28 可观测接线 now SHOWS them while
+  // Processing — cleanup still terminal; dispatcher- same contract.)
+  const doneSid = msg.sessionId;
+  if (doneSid && (String(doneSid).startsWith('node-') || String(doneSid).startsWith('dispatcher-'))) {
+    const touchedRoots = [];
+    for (const [root, agents] of Object.entries(state.sessionBgAgents || {})) {
+      let touched = false;
+      for (const [key, entry] of Object.entries(agents)) {
+        if (key === doneSid || (entry && entry.sessionId === doneSid)) { delete agents[key]; touched = true; }
+      }
+      if (Object.keys(agents).length === 0) delete state.sessionBgAgents[root];
+      if (touched) touchedRoots.push(root);
+    }
+    // 取消/终态实时收尾（2026-09-03）：行已删，立即刷新归属桶徽标 + 打开中的
+    // 面板——此前只删状态不渲染，面板行滞留到下次交互/刷新才消失。此刻活跃
+    // 视图是拦截器切入的弹窗视图（ws.js bg/flow interceptor），须临时切到归属
+    // 视图渲染再还原（与 agentDone 2s 收尾同款模式）；后端取消链路补发的
+    // agentDone 帧先经 ws.js 转换为会话级 done 到达此处。
+    for (const root of touchedRoots) {
+      const targetView = findViewBySessionId(root);
+      if (targetView) {
+        const savedView = activeView;
+        setActiveView(targetView);
+        updateBgAgentIndicator();
+        setActiveView(savedView);
+      }
+    }
+  }
   clearBusyFor(msg);
   const sid = msg.sessionId || state.activeSessionId;
   // Defensive: clear attention when turn ends (in case answer callback didn't fire)
@@ -1163,6 +1256,33 @@ onMessage('askUser', (msg, view) => {
     clearTimeout(state.sessionBusyTimeouts[sid]);
     delete state.sessionBusyTimeouts[sid];
   }
+  // 刷新存活 (2026-09-03): replayed frames — the hub snapshot re-sent by the
+  // backend right after the initial historyPage of a session (re)subscribe
+  // (browser refresh, WS reconnect, session switch). This is state
+  // re-delivery of a card the backend still considers pending, NOT a new ask:
+  //  - the history-restored card carries no data-request-id (UiMessage.AskUser
+  //    persists only {type, items}), so the chat-input close frame
+  //    (askUserAnswered{requestId}) and #12 precise answer routing cannot find
+  //    it — rebind by re-rendering with the live requestId;
+  //  - a duplicate replay would stack cards — remove THIS ask's unanswered
+  //    cards first (answered/locked cards and other pending asks stay).
+  // Answered-before-replay cannot race: the hub snapshot only lists slots
+  // still pending, so an answered ask is never replayed.
+  if (msg.replayed) {
+    if (view) {
+      view.dom.chat.querySelectorAll('.row.ai .option-box').forEach(box => {
+        const rid = box.dataset.requestId || '';
+        const answered = !!box.querySelector('.option-answer');
+        if (!answered && (!rid || rid === msg.requestId)) box.closest('.row.ai').remove();
+      });
+      const rdata = renderAskUser(msg.items, msg.sessionId, msg.agentName, msg.requestId);
+      if (rdata) saveAskMsgDedup(rdata, msg.sessionId, msg.requestId);
+    } else if (sid) {
+      // Non-active session: persist (deduped) so it can be restored on session switch
+      saveAskMsgDedup({ type: 'askUser', items: msg.items, agentName: msg.agentName, requestId: msg.requestId }, sid, msg.requestId);
+    }
+    return;
+  }
   if (view) {
     // Defensive: finalize any in-flight AI bubble before rendering the question.
     // Normally roundComplete (sent before askUser by the backend) handles this,
@@ -1335,12 +1455,14 @@ onMessage('sessionList', (msg, view) => {
   // resetChatForActiveSession (called inside renderSessionSidebar when activeId changes).
   if (!restoredSessionId && activeId) {
     restoredSessionId = activeId;
-    // Restore flow canvas now that we have a valid session ID
-    flowCanvas.autoRestore();
   }
   migrateLegacyIfNeeded();
   // Request agent list on first connect (no tab to trigger it now)
   if (!state.selectedAgent) sendWs({ type: 'listAgents' });
+  // 现象2 fix: if serverConfig (workSchedule) arrived BEFORE the active view was
+  // established, applyLocalFreeze no-oped on it. Now that the active session is
+  // set, re-evaluate so a freeze window active at boot still disables the input.
+  applyLocalFreeze();
 });
 
 // --- History pagination indicators ---
@@ -1407,8 +1529,17 @@ onMessage('historyPage', (msg, view) => {
     restoreFromBackendHistory(msg.messages, { busyTail: isStillBusy });
 
     // Detect if the agent is waiting for AskUser — in that case it's NOT actively streaming.
+    // Issue #43 (2026-09-03): agent-injected user bubbles (delegate results,
+    // Mail, flow/node notifications) legitimately queue AFTER a still-pending
+    // askUser entry — requiring askUser to be the literal LAST message made
+    // the pending detection fail exactly when results arrived during the
+    // wait, and the restored card stayed locked with no way to answer.
+    // findLastRealMessage (shared with persistence.js, spec-covered) scans
+    // backward over injected bubbles; a non-injected user message after the
+    // askUser means an answer was recorded (card click or chat-input
+    // passthrough) — the ask is no longer pending.
     const histMsgs = msg.messages;
-    const lastHistMsg = histMsgs && histMsgs[histMsgs.length - 1];
+    const lastHistMsg = findLastRealMessage(histMsgs) || undefined;
     const isAskUserPending = lastHistMsg && lastHistMsg.type === 'askUser'
       && Array.isArray(lastHistMsg.items) && lastHistMsg.items.length > 0;
     const isAskPermissionPending = lastHistMsg && lastHistMsg.type === 'askPermission'
@@ -1664,28 +1795,25 @@ function bgAgentKindFromSession(sessionId) {
   if (raw.startsWith('subtask-')) return 'SubTask';
   if (raw.startsWith('dag-')) return 'Flow';
   if (raw.startsWith('ephemeral-')) return 'Ephemeral';
+  // #28 可观测接线: Project 节点/分发器后端注册为 AgentKind.Flow → 面板 kind
+  // 徽章显示 Flow（与快照 kind 一致）。
+  if (raw.startsWith('node-')) return 'Flow';
+  if (raw.startsWith('dispatcher-')) return 'Flow';
   return '';
 }
 
-/** Resolve which session bucket a background task belongs to for the UI.
- *  A task executed by a background (sub)agent carries the agent's OWN
- *  sessionId (delegate-/subtask- prefix), not the top-level session the user
- *  is viewing — so without this the task lands in a bucket updateBgTasksUI
- *  never reads and is neither counted nor shown. sessionBgAgents is keyed by
- *  the root session (agentStart carries rootSessionId) and each entry holds
- *  info.sessionId = the agent's node session, so reverse-look-up that mapping
- *  to route a sub-agent's background task into the owning root bucket.
- *  Backend-provided msg.rootSessionId wins when present. */
-function bgTaskRootFor(sessionId) {
-  if (!sessionId) return '';
-  for (const [root, agents] of Object.entries(state.sessionBgAgents || {})) {
-    if (!agents) continue;
-    for (const entry of Object.values(agents)) {
-      if ((entry.sessionId || '') === sessionId) return root;
-    }
-  }
-  return sessionId;
-}
+/** Background-task bucket keying (2026-09-05 fix): every backend
+ *  backgroundTaskUpdate envelope now carries rootSessionId (ToolContext.rootSessionId,
+ *  falling back to the executor's own sessionId), and the BgTaskRegistry snapshot
+ *  (activeBgTasks) is grouped by the same key — the frontend keys directly on it.
+ *  The old heuristic reverse-lookup (bgTaskRootFor, added 2026-08-25) walked
+ *  state.sessionBgAgents to map delegate-/subtask- sessions back to their root,
+ *  but silently mis-keyed whenever that mapping was absent (host restart, page
+ *  refresh, agent already finished) — tasks landed in orphan buckets and the
+ *  owning window's badge went stale (count>0 with an empty dropdown). Deleted:
+ *  the authoritative key makes the heuristic both unnecessary and harmful.
+ *  Defensive fallback for envelopes lacking rootSessionId (old backend /
+ *  REST-invoked tools): key on msg.sessionId as-is. */
 
 /** Row state machine (spec §3): done > stuck > frozen > error > idle > active. */
 function bgRowState(info) {
@@ -1779,10 +1907,14 @@ function renderBgAgentDropdown() {
     return '<div class="bg-task-row' + (rowState === 'done' ? ' done' : '') + '" role="listitem" tabindex="0" ' + clickAttr + '>' +
       '<span class="bg-task-status ' + dotClass + '" aria-hidden="true"></span>' +
       '<div class="bg-task-info">' +
-        '<div class="bg-task-line">' +
+        // Meta slots (state / kind / uptime) on the FIRST line — fixed set,
+        // never wraps the name (user ruling 21: agent name is ALWAYS the
+        // second line, visually separated from the labels).
+        '<div class="bg-task-line bg-task-meta">' +
           '<span class="bg-task-state bg-state-' + rowState + '">' + escapeHtml(statusLabel) + '</span>' +
-          kindPart + namePart + uptimePart + retriesPart +
+          kindPart + retriesPart + uptimePart +
         '</div>' +
+        '<div class="bg-task-line bg-task-name-line">' + namePart + '</div>' +
         stuckPart + toolPart +
       '</div>' +
     '</div>';
@@ -1799,7 +1931,8 @@ function renderBgAgentDropdown() {
         // switches activeView to the popup view whose fakeDom has no dropdown.
         const dropdown = activeView.dom.bgagentDropdownEl;
         // team-<sid> wraps the agent's bare session id (its ui.json key) —
-        // strip it, matching the Flow/Team panel entry (flowTeams.js).
+        // strip it, matching how the retired Team panel used to open these
+        // popups; live team-agent events keep flowing into the same view.
         const sessionId = rawSessionId.replace(/^team-/, '');
         if (isBgAgentId(rawSessionId)) {
           // delegate-*/subtask-* → bg-agent popup (ephemeral sessions,
@@ -1884,6 +2017,12 @@ onMessage('agentStart', (msg, view) => {
   if (!sid) return;
   const aid = msg.agentId || msg.name;
   if (view) view.stream.activeAgentId = aid;
+  // #28 可观测接线: node-*/dispatcher-* 会话（Project Flow Map 节点 / 任务分发
+  // 器）进 Sub-Agents 面板, 与 Delegate/SubTask 同一可观测性标准。旧实现在此
+  // 过滤 node-*（当时节点事件缺 rootSessionId 归属 → 行落错桶且无法清理 →
+  // 幽灵行; 根因是后端 wsSend 未接线, 已后端修复——事件带 rootSessionId,
+  // 终态行由下方 done handler 按 sessionId 清理——parentRef=None 的 agent
+  // 以会话级 done 收尾, 不走 agentDone 路径）。
   if (!state.sessionBgAgents[sid]) state.sessionBgAgents[sid] = {};
   // Cross-keyspace dedupe: snapshot-restored entries (activeAgents handler)
   // key on the bare sessionId (getActiveAgents pins agentId == sessionId),
@@ -1953,6 +2092,12 @@ onMessage('agentToolStart', (msg, view) => {
 });
 
 onMessage('agentToolEnd', (msg, view) => { resetStreamTimeout(msg.sessionId); });
+// 审计 20260903 子项①：工具执行期心跳——长工具执行（toolStart→toolEnd 之间零
+// 事件段）由后端每 30s 推送心跳重置 busy timer，前端 630s 纯静默超时不再误杀
+// 正在干活的 turn。agentToolHeartbeat（子代理原事件）与 toolHeartbeat（主会话
+// /转换后）都重置对应会话计时器（与 agentToolEnd 既有重置面一致）。
+onMessage('toolHeartbeat', (msg, view) => { resetStreamTimeout(msg.sessionId); });
+onMessage('agentToolHeartbeat', (msg, view) => { resetStreamTimeout(msg.rootSessionId || msg.sessionId); });
 onMessage('agentEnd', (msg, view) => { resetStreamTimeout(msg.sessionId); });
 
 onMessage('agentThinking', (msg, view) => { resetStreamTimeout(msg.sessionId); clearBgStuck(msg); });
@@ -2029,74 +2174,13 @@ onMessage('agentDone', (msg, view) => {
   if (view) view.stream.activeAgentId = null;
 });
 
-// --- Flow events → canvas DAG visualization ---
+// --- Session switch → explorer / task list refresh ---
 window.addEventListener('nebflow-session-change', (e) => {
-  flowCanvas.onSessionChange(e.detail.sessionId);
   refreshExplorer(e.detail.sessionId);
   refreshScheduledTasks(e.detail.sessionId);
   if (e.detail.sessionId) sendWs({ type: 'getTaskList', sessionId: e.detail.sessionId });
   // ⑩ the frozen input-bar visual follows the newly activated session.
   applyLocalFreeze();
-});
-
-onMessage('treeBranchMounted', () => {
-  flowCanvas.refresh();
-});
-onMessage('treeBranchUnmounted', () => {
-  flowCanvas.refresh();
-});
-onMessage('treeBranchUpdated', () => {
-  flowCanvas.refresh();
-});
-
-onMessage('flowMail', (msg) => {
-  flowCanvas.onFlowMail(msg);
-});
-
-onMessage('mailQueued', (msg) => {
-  flowCanvas.onMailQueued(msg);
-});
-
-onMessage('mailDequeued', (msg) => {
-  flowCanvas.onMailDequeued(msg);
-});
-
-// ── Flow agent status tracking ────────────────────────────
-// agentStart/agentDone carry nodeSessionId (set by FlowAgentActivator's wsSend wrapper).
-// ws.js intercepts them into the popup ChatView, but we also need to update
-// the flow canvas status pills.
-// Team agent events carry nodeSessionId = "team-<sessionId>"; strip the prefix
-// so agentStatus keys match the bare sessionId from /api/teams/mounted
-// (flowTeams.statusOf / flowCanvas.autoRestore look up by bare sid).
-onMessage('agentStart', (msg) => {
-  const sid = msg.nodeSessionId ? msg.nodeSessionId.replace(/^team-/, '') : null;
-  if (sid) flowCanvas.onAgentStart(sid);
-});
-onMessage('agentDone', (msg) => {
-  const sid = msg.nodeSessionId ? msg.nodeSessionId.replace(/^team-/, '') : null;
-  if (sid) flowCanvas.onAgentDone(sid);
-});
-
-onMessage('flowStarted', (msg) => {
-  flowCanvas.onFlowStarted(msg);
-});
-
-onMessage('flowNodesAdded', (msg) => {
-  flowCanvas.onFlowNodesAdded(msg);
-});
-
-onMessage('flowProgress', (msg) => {
-  flowCanvas.onFlowProgress(msg);
-});
-
-onMessage('flowCompleted', (msg) => {
-  flowCanvas.onFlowCompleted(msg);
-});
-
-// Team Manager task list live refresh (2026-08-25 team-manager-task-tool).
-// no sessionId — the teams panel owns the rendered state via flowCanvas.
-onMessage('teamTaskListUpdate', (msg) => {
-  flowCanvas.onTeamTaskListUpdate(msg);
 });
 
 // --- Compaction events (per-session) ---
@@ -2237,9 +2321,6 @@ onMessage('serverConfig', (msg, view) => {
   if (msg.tools) {
     state.availableTools = msg.tools;
   }
-  if (msg.mcpServers) {
-    state.mcpServers = msg.mcpServers;
-  }
   // !== undefined (not truthiness): the schedule node must sync even when
   // falsy-but-present ({enabled:false,...}) so the settings panel always
   // echoes server truth (freeze-consistency fix 2026-08-27).
@@ -2254,6 +2335,13 @@ onMessage('serverConfig', (msg, view) => {
       import('./sidebar.js').then(({ renderSettings }) => renderSettings());
     }
   }
+  // 现象 2 契约（2026-08-30）：freezeState 节点随 serverConfig 广播（WS 连接
+  // 初始态/配置热更/skipFreeze 后）。skipped 是 skip 语义的持久来源——刷新后
+  // applyLocalFreeze 靠它保持「被跳过的窗口不冻结」，而非依赖会丢失的内存镜像。
+  if (msg.freezeState !== undefined) {
+    state.freezeState = msg.freezeState;
+    applyLocalFreeze();
+  }
   if (msg.stt) {
     state.stt = msg.stt;
     // STT config echo — re-render the settings panel so the status indicator
@@ -2265,10 +2353,9 @@ onMessage('serverConfig', (msg, view) => {
   }
 });
 
-// MCP server list updated (after background init completes)
-onMessage('mcpServersUpdate', (msg, view) => {
-  if (msg.mcpServers) state.mcpServers = msg.mcpServers;
-});
+// MCP server list updates are no longer consumed by the frontend
+// (09-05 五项裁定①：MCP 概念由 Plugins 系统全面取代，设置页入口移除)。
+// The backend still broadcasts mcpServersUpdate for other consumers.
 
 onMessage('configData', (msg, view) => {
   state.configText = msg.config || '';
@@ -2434,14 +2521,13 @@ onMessage('sessionBusy', (msg, view) => {
   applyLocalFreeze();
 });
 
-// --- Task list ---
-onMessage('taskListUpdate', (msg, view) => {
-  resetStreamTimeout(msg.sessionId);
-  if (msg.sessionId) state.sessionTasks[msg.sessionId] = msg.tasks;
-  if (view) {
-    renderTaskList(msg.tasks, undefined, msg.sessionId);
-  }
-});
+// --- Task list handlers (retired 2026-09-05 10:54 裁定) ---
+// 旧任务区退役：taskListUpdate / teamTaskListUpdate 的前端 handler 整体移除，
+// 任务面板 = 纯 Flow Map 节点视图（渲染在 taskList.js，节点事件自包含订阅）。
+// 后端帧照发（scala 零触碰）：taskListUpdate 已出 ws.js TERMINAL 表——非活跃
+// 会话帧被入口过滤器丢弃；活跃会话帧无订阅者 = no-op。安全冗余说明：handler
+// 原附带的 resetStreamTimeout 喂活由工具心跳链覆盖（toolHeartbeat/
+// agentToolHeartbeat，审计 20260903），无监督盲区。
 
 // --- Background task indicator in header ---
 let _bgTimer = null;
@@ -2459,14 +2545,14 @@ function renderBgDropdown() {
   const tasks = state.sessionBgTasks[activeView?.sessionId] || [];
   const listEl = activeView.dom.bgDropdownListEl;
   const dropdown = activeView.dom.bgDropdownEl;
-  if (!listEl || !dropdown) return;
+  if (!listEl || !dropdown) return 0;
   listEl.innerHTML = '';
   // Show running AND cancelling tasks (cancelling tasks stay visible until backend confirms)
   const visible = tasks.filter(t => t.status === 'running' || t.status === 'cancelling');
   if (visible.length === 0) {
     dropdown.classList.add('hidden');
     stopBgTimer();
-    return;
+    return 0;
   }
   const now = Date.now();
   visible.forEach(task => {
@@ -2530,6 +2616,7 @@ function renderBgDropdown() {
     row.appendChild(cancelBtn);
     listEl.appendChild(row);
   });
+  return visible.length;
 }
 
 function startBgTimer() {
@@ -2552,19 +2639,27 @@ function stopBgTimer() {
   if (_bgTimer) { clearInterval(_bgTimer); _bgTimer = null; }
 }
 
-function updateBgTasksUI() {
+function updateBgTasksUI(targetView) {
+  // targetView (2026-09-05 fix): refresh a SPECIFIC view's badge, not blindly
+  // activeView. Sub-agent background-task events are routed by ws.js to a null
+  // view (no popup open) or the popup ChatView — both left the owning root
+  // window's badge stale (count frozen at its last value while the bucket had
+  // already drained → "count>0 but the dropdown is empty"). Same bug class the
+  // bg-agent indicator fixed in updateBgAgentIndicator(targetSid).
+  const view = targetView || activeView;
+  if (!view || !view.dom) return;
   // Background tasks only — running flows are tracked separately on the
   // flow canvas (getRunningFlows), not in this indicator.
-  const tasks = state.sessionBgTasks[activeView?.sessionId] || [];
+  const tasks = state.sessionBgTasks[view.sessionId] || [];
   const now = Date.now();
   const active = tasks.filter(task =>
     task.status === 'running' || task.status === 'cancelling' ||
     (task.finishedAt && (now - task.finishedAt < 3000))
   );
   const totalCount = active.length;
-  const el = activeView.dom.bgIndicatorEl;
-  const countEl = activeView.dom.bgCountEl;
-  const dropdown = activeView.dom.bgDropdownEl;
+  const el = view.dom.bgIndicatorEl;
+  const countEl = view.dom.bgCountEl;
+  const dropdown = view.dom.bgDropdownEl;
   if (!el || !countEl) return;
   if (totalCount > 0) {
     el.classList.remove('hidden');
@@ -2575,9 +2670,18 @@ function updateBgTasksUI() {
     stopBgTimer();
   }
   if (dropdown && !dropdown.classList.contains('hidden')) {
-    renderBgDropdown();
-    startBgTimer();
+    const n = renderBgDropdown();
+    if (n > 0) startBgTimer(); else stopBgTimer();
   }
+}
+
+/** Refresh the badge of the view that DISPLAYS the session owning `sid`'s
+ *  background tasks (2026-09-05 fix). Safe to call for hidden/absent views —
+ *  their badges catch up on session switch (sidebar.js calls updateBgTasksUI). */
+function refreshBgBadgeFor(sid) {
+  const v = sid ? findViewBySessionId(sid) : null;
+  if (v) updateBgTasksUI(v);
+  else if (activeView && activeView.sessionId === sid) updateBgTasksUI(activeView);
 }
 state.updateBgTasksUI = updateBgTasksUI;
 
@@ -2590,9 +2694,15 @@ Object.values(chatViews).forEach(v => {
     e.stopPropagation();
     setActiveView(v);
     if (dropdown.classList.contains('hidden')) {
-      renderBgDropdown();
-      dropdown.classList.remove('hidden');
-      startBgTimer();
+      // renderBgDropdown returns the visible-row count and hides itself when
+      // the bucket has no running/cancelling tasks — only re-show when there
+      // is something to show (previously an unconditional classList.remove
+      // resurrected an empty dropdown under a stale count badge, 2026-09-05).
+      const n = renderBgDropdown();
+      if (n > 0) {
+        dropdown.classList.remove('hidden');
+        startBgTimer();
+      }
     } else {
       dropdown.classList.add('hidden');
       stopBgTimer();
@@ -2613,19 +2723,25 @@ document.addEventListener('click', (e) => {
 });
 
 onMessage('backgroundTaskUpdate', (msg, view) => {
-  // A background-task event emitted by a background (sub)agent carries the
-  // agent's OWN sessionId (delegate-/subtask- prefix) in msg.sessionId, not
-  // the top-level session the user is viewing — route it to the owning root
-  // bucket so it's counted and shown in that window (bug fix 2026-08-25).
-  const sid = msg.rootSessionId || bgTaskRootFor(msg.sessionId) || msg.sessionId;
+  // Authoritative keying (2026-09-05 fix): every backend envelope carries
+  // rootSessionId (root session for sub-agent tasks, own session for root
+  // tasks) — bucket directly on it. Defensive fallback for envelopes without
+  // the key (old backend / REST-invoked tools): raw msg.sessionId. The old
+  // bgTaskRootFor heuristic (08-25) reverse-mapped via state.sessionBgAgents
+  // and silently orphaned tasks whenever that mapping was missing.
+  const sid = msg.rootSessionId || msg.sessionId;
   if (!sid) return;
   if (!state.sessionBgTasks[sid]) state.sessionBgTasks[sid] = [];
   const tasks = state.sessionBgTasks[sid];
   const idx = tasks.findIndex(t => t.taskId === msg.taskId);
+  // 'cancelled' is terminal too: AgentActor.killSessionShellProcesses emits
+  // status="cancelled" on restart/Stop — treating it as non-terminal left
+  // ghost entries in the bucket forever (never shown, never removed).
+  const isTerminal = msg.status === 'completed' || msg.status === 'failed' || msg.status === 'cancelled';
   if (idx >= 0) {
     tasks[idx].status = msg.status;
     if (msg.description && !tasks[idx].description) tasks[idx].description = msg.description;
-    if (msg.status === 'completed' || msg.status === 'failed') {
+    if (isTerminal) {
       tasks[idx].finishedAt = Date.now();
     }
     if (msg.heartbeat) tasks[idx].heartbeat = msg.heartbeat;
@@ -2636,27 +2752,27 @@ onMessage('backgroundTaskUpdate', (msg, view) => {
       status: msg.status,
       startedAt: msg.startedAt || Date.now(),
       heartbeat: msg.heartbeat || null,
-      finishedAt: (msg.status === 'completed' || msg.status === 'failed') ? Date.now() : undefined
+      finishedAt: isTerminal ? Date.now() : undefined
     });
   }
-  // Remove completed/failed tasks after a brief delay so user sees the count update
-  if (msg.status === 'completed' || msg.status === 'failed') {
+  // Remove terminal tasks after a brief delay so user sees the count update.
+  // Refresh the OWNING view's badge (findViewBySessionId(sid)), not the
+  // ws.js-routed activeView: sub-agent events arrive with view=null (no popup)
+  // or a popup ChatView, and skipping/retargeting the refresh is what froze
+  // the root window's count while the bucket drained (the reported
+  // "count>0 but empty dropdown" fork).
+  if (isTerminal) {
     const taskId = msg.taskId;
-    const v = activeView; // capture before setTimeout
     setTimeout(() => {
       const existing = state.sessionBgTasks[sid];
       if (existing) {
         state.sessionBgTasks[sid] = existing.filter(t => t.taskId !== taskId);
-        if (v && v.mounted) {
-          const saved = activeView;
-          setActiveView(v);
-          updateBgTasksUI();
-          setActiveView(saved);
-        }
+        const v = findViewBySessionId(sid);
+        if (v && v.mounted) updateBgTasksUI(v);
       }
     }, 3000);
   }
-  if (view) updateBgTasksUI();
+  refreshBgBadgeFor(sid);
 });
 
 // --- /ask command ---
@@ -2705,12 +2821,6 @@ onMessage('skillList', (msg, view) => {
   registerSkillCommands(state.skills);
 });
 
-onMessage('teamList', (msg) => {
-  state.teams = msg.teams || [];
-  state.flows = msg.flows || [];
-  flowCanvas.refresh();
-});
-
 onMessage('skillError', (msg, view) => {
   if (view) renderSystemBubble(msg.message || 'Skill error');
 });
@@ -2740,42 +2850,10 @@ onMessage('rulesDeleted', (msg, view) => handleRulesDeleted(msg));
 // --- Browse Result (path picker) ---
 onMessage('browseResult', (msg, view) => handleBrowseResult(msg));
 
-// --- Update check ---
-onMessage('updateCheckResult', (msg, view) => {
-  const statusEl = document.getElementById('update-status');
-  const actionEl = document.getElementById('update-action');
-  if (!statusEl) return;
-  if (msg.error) {
-    statusEl.textContent = t('settings.updateError');
-    return;
-  }
-  if (msg.hasUpdate) {
-    statusEl.textContent = t('settings.updateAvailable', { version: msg.latestVersion });
-    actionEl.style.display = 'block';
-  } else {
-    statusEl.textContent = t('settings.upToDate');
-    actionEl.style.display = 'none';
-  }
-});
-
-onMessage('updateStarted', () => {
-  const statusEl = document.getElementById('update-status');
-  if (statusEl) statusEl.textContent = t('settings.updating');
-});
-
-onMessage('updateCompleted', (msg, view) => {
-  const btn = document.getElementById('btn-do-update');
-  const statusEl = document.getElementById('update-status');
-  if (btn) { btn.textContent = t('settings.checkUpdate'); btn.disabled = false; }
-  if (statusEl) {
-    if (msg.success) {
-      statusEl.textContent = '✓ ' + t('settings.upToDate');
-      document.getElementById('update-action').style.display = 'none';
-    } else {
-      statusEl.textContent = '✗ ' + (msg.error || t('settings.updateError'));
-    }
-  }
-});
+// Update check chain (updateCheckResult/updateStarted/updateCompleted) moved
+// to updateCheck.js — it also owns the silent auto-check scheduling and the
+// settings-btn green dot (09-05 五项裁定⑤). initUpdateCheck() is called in
+// the boot section below.
 
 
 // ---------- 4. Cross-module wiring ----------
@@ -2820,15 +2898,6 @@ onMessage('forkComplete', (msg, view) => {
       bgAgentDropdown.classList.add('hidden');
       const bgAgentIndicator = document.getElementById('bgagent-indicator');
       if (bgAgentIndicator) bgAgentIndicator.setAttribute('aria-expanded', 'false');
-      e.preventDefault();
-      return;
-    }
-
-    const flowsDropdown = document.getElementById('flows-dropdown');
-    if (flowsDropdown && !flowsDropdown.classList.contains('hidden')) {
-      flowsDropdown.classList.add('hidden');
-      const flowsIndicator = document.getElementById('flows-indicator');
-      if (flowsIndicator) flowsIndicator.setAttribute('aria-expanded', 'false');
       e.preventDefault();
       return;
     }
@@ -2940,7 +3009,7 @@ onMessage('forkComplete', (msg, view) => {
   // that overlaps (§8 A2). These elements are never toggled by layout() so
   // observing them cannot cause a feedback loop.
   ['sidebar-toggle', 'header-model-info', 'memory-btn',
-    'bg-indicator', 'bgagent-indicator', 'flows-indicator', 'canvas-toggle-btn']
+    'bg-indicator', 'bgagent-indicator', 'canvas-toggle-btn']
     .forEach(id => { const el = document.getElementById(id); if (el) ro.observe(el); });
   layout();
 })();
@@ -2987,6 +3056,8 @@ initMemory();
 initExplorer();
 initCanvas();
 initColResizers();
+// #27: Project 标签页按钮（取代 Team/Flow 主导位置）——打开发布 projects 标签页
+registerCanvasPanelButton('projects', 'projects-btn', () => openProjectsTab());
 
 // Remove UI initialization lock — all layout setup is done.
 // Double-rAF ensures the browser has painted at least one frame with
@@ -3006,36 +3077,33 @@ document.getElementById('canvas-toggle-btn')?.addEventListener('click', () => {
     openCanvas();
   }
 });
-document.getElementById('teams-btn')?.addEventListener('click', () => flowCanvas.openTeams({ manual: true }));
-document.getElementById('flows-btn')?.addEventListener('click', () => flowCanvas.openFlows());
+// Teams/Flows legacy panel buttons are gone (2026-09-05 旧 UI 退役) — the
+// plugins (agents-btn) and projects (projects-btn) entries are bound by
+// canvas.js registerCanvasPanelButton (plugins.js / main.js).
 // Restore queued messages from localStorage (survives browser refresh)
 restoreQueue();
-// Restore Canvas tabs from localStorage (survives browser refresh).
-// If no saved tabs (e.g. cache cleared), auto-open Teams panel.
-if (!restoreTabs()) {
-  flowCanvas.openTeams();
-}
+// Restore Canvas tabs (server persisted, falls back to localStorage).
+// 2026-09-04 件 A/件 B：空白启动 fallback 由 openTeams 改道 openPlugins——
+// Team/Flow 旧入口已隐藏封存，首次启动不应把用户带进被封存面板；「插件」页
+// 是智能体入口的继任默认页。restoreTabs 异步语义不变（F1, 2026-08-30）。
+restoreTabs().then((restored) => {
+  if (!restored) openPlugins();
+});
 // Auto-restore is triggered from sessionList handler (needs activeSessionId)
 initScheduledTask();
 initDaemons();
 initChatSearch();
 initUsageDashboard();
 initNeblink();
+initUpdateCheck();
 initDropbox();
 initContacts();
 initMessages();
-planMode.init();
 
 // Preload Monaco Editor during idle time so first file open is instant.
 // Monaco (~2MB from CDN) is the main cause of first-open lag.
 const _idleCb = window.requestIdleCallback || ((fn) => setTimeout(fn, 2000));
 _idleCb(() => import('./monacoEditor.js').then(({ preloadMonaco }) => preloadMonaco().catch(() => {})));
-
-// ---------- Plan mode event handlers ----------
-onMessage('planStart', (msg, view) => planMode.onPlanStart(msg, view));
-onMessage('planReady', (msg, view) => planMode.onPlanReady(msg, view));
-onMessage('planEnd', (msg, view) => planMode.onPlanEnd(msg, view));
-onMessage('_planAgent', (msg) => planMode.onPlanAgentEvent(msg));
 
 // ---------- Safety mode dropdown ----------
 (function initSafetyToggle() {
@@ -3176,44 +3244,41 @@ onReconnect(() => {
 });
 
 // ---------- Reconnect: sync background tasks ----------
-// Backend responds with active tasks grouped by sessionId.
-// We remove any locally-tracked tasks that are no longer active on the backend
-// (they completed during the disconnect), and keep tasks the backend confirms.
+// Backend responds with active tasks grouped by ROOT session id (BgTaskRegistry
+// stores rootSessionId since 2026-09-05 — same key the realtime envelopes use).
+// Full-truth replace (2026-09-05 fix): the old subtract-only reconcile removed
+// tasks the backend no longer knew but never ADDED tasks started while
+// disconnected, and refreshed only the active view — stale counts survived
+// host restarts on every non-active view. Backend BgTaskRegistry is the sole
+// authority (local + remote tasks both register), so the snapshot now REPLACES
+// local state outright; local-only embellishments (optimistic 'cancelling'
+// flag, heartbeat, startedAt) are carried over for kept tasks.
 onMessage('activeBgTasks', (msg) => {
   const backendTasks = msg.tasks || {};
-  // Backend groups background tasks by the executing agent's sessionId, which
-  // for a background (sub)agent is a delegate-/subtask- session, not the
-  // root session the user is viewing. Remap to root buckets before
-  // reconciling so sub-agent background tasks are counted under the owning
-  // window (mirrors bgTaskRootFor on the live backgroundTaskUpdate path).
-  const byRoot = {};
+  const prevAll = state.sessionBgTasks || {};
+  const next = {};
   for (const [sid, tasks] of Object.entries(backendTasks)) {
-    const root = bgTaskRootFor(sid);
-    if (!byRoot[root]) byRoot[root] = [];
-    byRoot[root].push(...tasks);
+    next[sid] = (tasks || []).map(t => {
+      const prev = (prevAll[sid] || []).find(x => x.taskId === t.taskId);
+      return {
+        taskId: t.taskId,
+        description: t.description,
+        status: (prev && prev.status === 'cancelling' && t.status === 'running') ? 'cancelling' : t.status,
+        startedAt: t.startedAt || (prev ? prev.startedAt : Date.now()),
+        heartbeat: (prev && prev.heartbeat) || t.heartbeat || null,
+        finishedAt: prev ? prev.finishedAt : undefined
+      };
+    });
   }
-  // Remove locally-tracked tasks that the backend no longer knows about
-  for (const sid of Object.keys(state.sessionBgTasks)) {
-    const backendSessionTasks = byRoot[sid] || [];
-    const backendIds = new Set(backendSessionTasks.map(t => t.taskId));
-    const before = state.sessionBgTasks[sid].length;
-    state.sessionBgTasks[sid] = state.sessionBgTasks[sid].filter(t => backendIds.has(t.taskId));
-    // If we removed tasks, also clean up finishedAt entries
-    if (state.sessionBgTasks[sid].length < before) {
-      const removed = before - state.sessionBgTasks[sid].length;
-      // Silently clean — no UI update needed since these were already "running"
-      // indicators that will disappear on next render
-    }
-    if (state.sessionBgTasks[sid].length === 0) {
-      delete state.sessionBgTasks[sid];
-    }
+  state.sessionBgTasks = next;
+  // Refresh every view whose bucket changed (cleared OR repopulated) — the
+  // active view's badge alone left sibling views frozen at pre-restart counts.
+  const touched = new Set([...Object.keys(prevAll), ...Object.keys(next)]);
+  for (const sid of touched) {
+    const v = findViewBySessionId(sid);
+    if (v) updateBgTasksUI(v);
   }
-  // Also clean stale sub-agent indicators — any session that has sub-agents
-  // tracked locally but no longer has an active agent on the backend
-  // can't be reliably detected here (sub-agents use actor system, not BgTaskRegistry).
-  // The agentDone fix (global sessionBgAgents) already handles missed events.
-  // Refresh the UI for the active view
-  if (activeView) updateBgTasksUI();
+  if (activeView) updateBgTasksUI(activeView);
 });
 
 // ---------- Reconnect: sync background sub-agents ----------
@@ -3230,6 +3295,9 @@ onMessage('activeAgents', (msg) => {
   for (const a of agents) {
     const sid = a.rootSessionId || a.sessionId;
     if (!sid || !a.agentId) continue;
+    // #28 可观测接线: 不再过滤 node-* —— 节点/分发器会话与 Delegate/SubTask
+    // 同一快照重建路径（旧 ghost-row 根因已后端修复: 事件现携带 rootSessionId,
+    // 终态由 done handler 清理, 快照只报运行中的 registry 条目）。
     if (!state.sessionBgAgents[sid]) state.sessionBgAgents[sid] = {};
     state.sessionBgAgents[sid][a.agentId] = {
       name: a.agentName || a.agentId,

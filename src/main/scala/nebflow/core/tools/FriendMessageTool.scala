@@ -24,10 +24,11 @@ import java.time.format.DateTimeFormatter
  * 多命中/零命中一律返回候选列表让模型自行纠错（同 turn 内最便宜的修复点）。
  *
  * 接线：GatewayMain 启动时 FriendMessageTool.initialize(friendService)
- * （RemoteExecutor.initialize 同款单例模式）。授权（作者特批 2026-08-28）：
- * 仅全局 agents/Nebula/agent.json tools 显式声明注入，其他 agent 零注入——
- * 声明制，无机制层注入。
- */
+ * （RemoteExecutor.initialize 同款单例模式）。授权（阶段 2d，设计 D.1-11）：
+ * 机制固定唯一——仅 Nebula 的静态集 NebulaOrchestrationTools 携带（2c 起从
+ * 声明制迁机制固定）；agent.json tools 声明不再授能（buildAllowedToolSet 对
+ * base 一律剥离本工具名，"*" 亦然——the tool name IS the permission
+ * boundary）。 */
 object FriendMessageTool extends Tool:
 
   private val TimeFormat = DateTimeFormatter.ofPattern("HH:mm:ss")
@@ -52,7 +53,7 @@ object FriendMessageTool extends Tool:
     "properties" -> Json.obj(
       "to" -> Json.obj(
         "type"        -> "string".asJson,
-        "description" -> "Friend's NebLink ID or display name.".asJson
+        "description" -> "Friend's username or display name.".asJson
       ),
       "message" -> Json.obj(
         "type"        -> "string".asJson,
@@ -67,19 +68,21 @@ object FriendMessageTool extends Tool:
     val q = query.trim
     val candidatesHint =
       if friends.isEmpty then "The friend list is empty (no accepted friendships)."
-      else s"Available friends: ${friends.map(f => s"${f.name} (${f.neblinkId})").mkString(", ")}"
+      else s"Available friends: ${friends.map(f => s"${f.displayName} (${f.username})").mkString(", ")}"
 
     if q.isEmpty then Left(ToolError(s"'to' is empty. $candidatesHint"))
     else
-      val byId = friends.filter(_.neblinkId.equalsIgnoreCase(q))
+      // 契约词汇同步（NL 号 = Username）：byId 即按 username 精确匹配（值域
+      // 与旧 neblinkId 字段一致，仅字段更名，语义不变）。
+      val byId = friends.filter(_.username.equalsIgnoreCase(q))
       byId match
         case single :: Nil => Right(single)
         case _ =>
-          val byName = friends.filter(_.name.equalsIgnoreCase(q))
+          val byName = friends.filter(_.displayName.equalsIgnoreCase(q))
           byName match
             case single :: Nil => Right(single)
             case multi =>
-              val byPrefix = friends.filter(_.name.toLowerCase.startsWith(q.toLowerCase))
+              val byPrefix = friends.filter(_.displayName.toLowerCase.startsWith(q.toLowerCase))
               val hits     = (multi ++ byPrefix).distinct
               hits match
                 case single :: Nil => Right(single)
@@ -87,7 +90,7 @@ object FriendMessageTool extends Tool:
                   Left(
                     ToolError(
                       if many.isEmpty then s"Friend '$q' not found. $candidatesHint"
-                      else s"Friend '$q' is ambiguous (${many.size} matches). Candidates: ${many.map(f => s"${f.name} (${f.neblinkId})").mkString(", ")} — use the exact NebLink ID."
+                      else s"Friend '$q' is ambiguous (${many.size} matches). Candidates: ${many.map(f => s"${f.displayName} (${f.username})").mkString(", ")} — use the exact username."
                     )
                   )
   end resolveFriend
@@ -96,7 +99,7 @@ object FriendMessageTool extends Tool:
     * (Scala 3: multi-line matches inside nested flatMap braces are fragile). */
   private def sendTo(fs: FriendService, friend: FriendSummary, message: String): IO[Either[ToolError, String]] =
     fs.sendAsAgent(friend.userId, message).map {
-      case Right(_)  => Right(s"已发送给 ${friend.name}（${LocalTime.now().format(TimeFormat)}）")
+      case Right(_)  => Right(s"已发送给 ${friend.displayName}（${LocalTime.now().format(TimeFormat)}）")
       case Left(err) => Left(ToolError(err))
     }
 

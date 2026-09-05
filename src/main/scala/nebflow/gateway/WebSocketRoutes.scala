@@ -14,7 +14,6 @@ import nebflow.core.flow.{FlowTreeActor, FlowTreeRegistry, TeamSessionRegistry}
 import nebflow.core.mcp.McpManager
 import nebflow.core.schedule.FreezeSchedule.given
 import nebflow.core.skill.SkillService
-import nebflow.core.telemetry.{TaskInferencer, TelemetryReporter}
 import nebflow.core.tools.{ToolContext, ToolRegistry}
 import nebflow.core.{PathUtil, *}
 import nebflow.llm.*
@@ -187,7 +186,15 @@ class WebSocketRoutes(
           safetyMode = metaOpt.map(_.safetyMode)
             .getOrElse(nebflow.core.SafetyMode.toString(globalMode)),
           gitBranch = metaOpt.flatMap(_.gitBranch),
-          rootSessionId = sessionId
+          rootSessionId = sessionId,
+          // Nebula 会话沙箱启用（2026-09-05 作者裁定 13:09）：写根=~/.nebflow
+          // 数据根（root 特判在 AgentCore，按 SandboxPolicy.isNebulaRootSession
+          // 取 PathUtil.dataRoot）。判定基准=WS 根会话 ∧ agent==Nebula——此处
+          // 是 depth=0 全仓唯一 spawn 点，agentDef.name 是 agent 身份权威
+          // （metaOpt.agentName 是可缺省的会话元数据）。其余 WS 根会话
+          // （standalone 非 Nebula 聊天 / team Manager / flow 入口）保持
+          // sandboxEnabled=false 现状零变化；沙箱 root 推导仍归 AgentCore。
+          sandboxEnabled = agentDef.name == "Nebula"
         ),
         s"agent-$sessionId"
       )
@@ -248,6 +255,31 @@ class WebSocketRoutes(
     sharedResources.interactionHubRef.get.flatMap {
       case Some(hub) => (hub ! nebflow.agent.InteractionHubCommand.UnregisterRoot(sessionId)).void
       case None => IO.unit
+    }
+
+  /** 刷新存活 (2026-09-03): re-send a root session's still-pending AskUser
+    * cards to THIS connection. Called after the initial historyPage of a
+    * session (re)subscribe — see the getHistory hook. Resolves the root
+    * session id first (team/flow node sessions have no hub slots of their
+    * own; their asks live under the root), then snapshots via the hub and
+    * re-renders each card byte-identical to the first send plus
+    * `replayed: true` (the frontend dedup key). Failure-tolerant: a hub
+    * hiccup degrades to "no replay", the history restore chain still applies.
+    */
+  private def replayPendingAsks(sessionId: String, wsSend: io.circe.Json => IO[Unit]): IO[Unit] =
+    sharedResources.interactionHubRef.get.flatMap {
+      case None => IO.unit
+      case Some(hub) =>
+        resolveRootSessionId(sessionId).flatMap { rootSid =>
+          hub
+            .?[List[io.circe.Json]](reply =>
+              nebflow.agent.InteractionHubCommand.ListPendingAsks(rootSid, reply)
+            )
+            .flatMap(_.traverse_(frame => wsSend(frame)))
+            .handleErrorWith { e =>
+              logger.warn(s"Pending-ask replay failed for session $sessionId: ${e.getMessage}")
+            }
+        }
     }
 
   /** P2: seed the root session's permission-policy bucket from persisted meta. */
@@ -317,6 +349,39 @@ class WebSocketRoutes(
             )
           case None => (agents, IO.unit)
       }.flatten
+
+  /** #38 Layer C (2026-09-01): team 成员会话删除闭环。
+    *
+    * 此前 deleteSession 只停 root agent（removeRootAgent）+ 删磁盘文件；
+    * team 成员 actor（qa-backend 等，注册于 TeamSessionRegistry.actorMap）
+    * 完全存活——state.messages 持 ~10MB，下一次活动（Mail/flow dispatch）
+    * 触发 persistIfSession 2s 防抖 → <id>.json 以 10MB 重建 → 删除复活
+    * （观测：deleteSession 后 ~12s 历史灌回）。修复：删除前停成员 actor +
+    * 清 TeamSessionRegistry 三处映射（actorMap / AgentRegistry / sessionMap）。
+    */
+  private def stopTeamSessionActors(sessionId: String): IO[Unit] =
+    for
+      actorOpt <- TeamSessionRegistry.getRunningActor(sessionId)
+      _ <- actorOpt match
+        case Some(ref) =>
+          logger.info(s"deleteSession: stopping team member actor for $sessionId")
+          // 注意：`ref ! msg` 本身返回 IO[Unit]（offer 的描述）——直接使用，
+          // 不能包 IO(...)（嵌套 IO[IO[Unit]]，内层 offer 永不执行——与 V1
+          // 级联修复同类 bug，#38 停成员 stop 曾因此静默无效）。
+          ref ! AgentCommand.Stop(s"session $sessionId deleted")
+        case None => IO.unit
+      _ <- TeamSessionRegistry.unregisterActor(sessionId, sharedResources)
+      pairOpt <- TeamSessionRegistry.instanceAndAgentOfSession(sessionId)
+      _ <- pairOpt match
+        case Some((inst, agent)) => TeamSessionRegistry.unregisterAgent(inst, agent, sessionId)
+        case None                => IO.unit
+    yield ()
+
+  /** V1 (2026-09-03): Delegate/SubTask/Ephemeral 子代理级联停止——实现抽在
+    * SessionChildCascade（deleteSession/batchDelete 两条路径与单测共用同一实现），
+    * 取舍理由见该对象 doc。 */
+  private def stopChildDelegateActors(sessionId: String): IO[Unit] =
+    SessionChildCascade.stopChildDelegateActors(sharedResources, sessionId).void
 
   /**
    * P2: translate a frontend interaction answer (permissionAnswer/askUserAnswer)
@@ -432,14 +497,14 @@ class WebSocketRoutes(
 
   /**
    * Public API for bridge card-action callbacks to send specific AgentCommands
-   * (e.g. Interrupt, PlanApproved) to a session's agent.
+   * (e.g. Interrupt) to a session's agent.
    */
   def handleBridgeAgentCommand(sessionId: String, command: AgentCommand): IO[Unit] =
     if sessionId.isEmpty then IO.unit
     else ensureAgent(sessionId)(ref => ref ! command)
 
   def routes: HttpRoutes[IO] =
-    WebSocketRoutes.uploadsRoutes(token) <+> WebSocketRoutes.jsRoutes <+> WebSocketRoutes.assetsRoutes <+> HttpRoutes.of[IO] {
+    WebSocketRoutes.uploadsRoutes(token) <+> WebSocketRoutes.jsRoutes <+> WebSocketRoutes.assetsRoutes <+> WebSocketRoutes.nfFileRoutes(token) <+> HttpRoutes.of[IO] {
     case req @ GET -> Root / "ws" =>
       // Cookie takes priority to avoid token leakage in browser history/logs/Referer.
       // Query param kept as fallback for cross-origin or first-load scenarios.
@@ -477,6 +542,8 @@ class WebSocketRoutes(
             }
           _ <- logger.info("WebSocket client connected")
           thinkingCfg <- sharedResources.thinkingConfigRef.get
+          workScheduleCfg <- sharedResources.freezeScheduleRef.get
+          skipUntil <- sharedResources.freezeSkipUntilRef.get
           sttSvc <- sttServiceRef.get
           toolsList = ToolRegistry.ALL_TOOLS.map(t =>
             io.circe.Json.obj("name" -> t.name.asJson, "description" -> t.description.asJson)
@@ -492,6 +559,15 @@ class WebSocketRoutes(
                   "streamTimeoutMs" -> (Defaults.StreamTimeoutSec.toLong * 1000).asJson,
                   "version" -> nebflow.Version.string.asJson,
                   "thinking" -> thinkingCfg.asJson,
+                  "workSchedule" -> workScheduleCfg.asJson,
+                  // 现象 2 契约（2026-08-30）：连接初始态即携带全局冻结状态——
+                  // 页面加载时若已在冻结窗口（且无活跃 agent 产生 frozen 事件），
+                  // 前端输入栏禁用状态机必须能直接读到当前冻结态。
+                  "freezeState" -> nebflow.core.schedule.FreezeSchedule.freezeStateNode(
+                    workScheduleCfg,
+                    skipUntil,
+                    System.currentTimeMillis()
+                  ).asJson,
                   "stt" -> SttService.serverConfigNode(sttSvc),
                   "tools" -> toolsList.asJson,
                   "mcpServers" -> mcpServers.asJson
@@ -533,131 +609,12 @@ class WebSocketRoutes(
       if !Auth.validateToken(provided, token) then Forbidden("Invalid token")
       else handleInject(req)
 
-    // --- Task archive (C2) ---
-    // GET /api/nf-tasks?folderId=&since=&status=&keyword=&limit=
-    // Cross-session task archive for the frontend archive view. Reads the
-    // tasks/_index.json aggregate (refreshed incrementally by task tools);
-    // folderName/group come from the index join. Empty result is 200 + [].
-    case req @ GET -> Root / "api" / "nf-tasks" =>
-      val provided = extractToken(req)
-      if !Auth.validateToken(provided, token) then Forbidden("Invalid token")
-      else
-        val folderId = req.params.get("folderId").getOrElse("")
-        val sinceOpt = req.params.get("since").flatMap(nebflow.core.tools.TaskQueryTool.parseSince)
-        val status = req.params.get("status").getOrElse("")
-        val keyword = req.params.get("keyword").getOrElse("").toLowerCase
-        val limit = req.params.get("limit").flatMap(_.toIntOption).getOrElse(100).max(1).min(500)
-        // #37 archive gap: description/notes/events now travel on index entries.
-        // ensureUpgraded backfills a pre-#37 index once (full rebuild, real
-        // session joins); afterwards it's a cheap no-op guard.
-        val joinFor: String => IO[nebflow.core.task.TaskArchive.SessionJoin] = sid =>
-          sessionStore
-            .getSessionMeta(sid)
-            .map {
-              case Some(meta) =>
-                nebflow.core.task.TaskArchive.SessionJoin(
-                  meta.folderId,
-                  meta.folderId.flatMap(sessionStore.getFolderName),
-                  Some(meta.name)
-                )
-              case None => nebflow.core.task.TaskArchive.Unclassified
-            }
-            .handleErrorWith(_ => IO.pure(nebflow.core.task.TaskArchive.Unclassified))
-        nebflow.core.task.TaskArchive.ensureUpgraded(joinFor).flatMap { entries =>
-          val filtered = entries
-            .filter(e => folderId.isEmpty || e.folderId.contains(folderId))
-            .filter(e => status.isEmpty || e.status == status)
-            .filter(e => keyword.isEmpty || e.subject.toLowerCase.contains(keyword))
-            .filter { e =>
-              sinceOpt.forall { cutoff =>
-                val anchor = e.completedAt.orElse(e.createdAt).getOrElse("")
-                scala.util.Try(java.time.Instant.parse(anchor).toEpochMilli).toOption.exists(_ >= cutoff)
-              }
-            }
-            .sortBy(e => e.completedAt.orElse(e.updatedAt).getOrElse(""))(Ordering[String].reverse)
-            .take(limit)
-          val arr = filtered.map { e =>
-            io.circe.Json.obj(
-              "sessionId" -> e.sessionId.asJson,
-              "sessionName" -> e.sessionName.asJson,
-              "taskId" -> e.taskId.asJson,
-              "subject" -> e.subject.asJson,
-              "status" -> e.status.asJson,
-              "folderId" -> e.folderId.asJson,
-              "folderName" -> e.folderName.asJson,
-              "group" -> e.folderName.getOrElse("未分类").asJson,
-              "createdAt" -> e.createdAt.asJson,
-              "updatedAt" -> e.updatedAt.asJson,
-              "completedAt" -> e.completedAt.asJson,
-              "noteCount" -> e.noteCount.asJson,
-              "hasLinks" -> e.hasLinks.asJson,
-              "cancelReason" -> e.cancelReason.asJson,
-              "description" -> e.description.asJson,
-              "notes" -> e.notes.asJson,
-              "events" -> e.events.asJson
-            )
-          }
-          Ok(io.circe.Json.arr(arr*), org.http4s.headers.`Content-Type`(org.http4s.MediaType.application.json))
-        }
-
-    // --- Local file serving for card iframes ---
-    // GET /api/nf-file?path=xxx&token=xxx — serves whitelisted media files from disk.
-    // Used by card iframes to display local images/videos/audio without base64 embedding.
-    // Supports Range requests for video seeking.
-    case req @ GET -> Root / "api" / "nf-file" =>
-      val provided = extractToken(req)
-      if !Auth.validateToken(provided, token) then Forbidden("Invalid token")
-      else
-        val rawPath = req.params.get("path").getOrElse("")
-        if rawPath.isEmpty then BadRequest("Missing 'path' parameter")
-        else
-          // Resolve and validate path
-          val expanded = if rawPath.startsWith("~") then sys.props("user.home") + rawPath.substring(1) else rawPath
-          val path = java.nio.file.Paths.get(expanded).normalize()
-          val ext = path.toString.lastIndexOf('.') match
-            case -1 => ""
-            case i => path.toString.substring(i + 1).toLowerCase
-          // Only allow whitelisted media extensions
-          val allowedExt = Set(
-            "png",
-            "jpg",
-            "jpeg",
-            "gif",
-            "svg",
-            "webp",
-            "ico",
-            "bmp",
-            "avif",
-            "tiff",
-            "tif",
-            "mp4",
-            "webm",
-            "ogg",
-            "ogv",
-            "mov",
-            "mp3",
-            "wav",
-            "oga",
-            "flac",
-            "aac",
-            "m4a",
-            "woff",
-            "woff2",
-            "ttf",
-            "otf",
-            "pdf",
-            "docx",
-            "xlsx",
-            "xlsm",
-            "pptx",
-            "epub"
-          )
-          if !allowedExt.contains(ext) then BadRequest("File type not allowed")
-          else if !java.nio.file.Files.exists(path) || !java.nio.file.Files.isRegularFile(path) then NotFound()
-          else StaticFile.fromPath(fs2.io.file.Path(path.toString), Some(req)).getOrElseF(NotFound())
-        end if
-      end if
-
+    // GET /api/nf-file — local file serving for card iframes moved to the
+    // companion as nfFileRoutes(token) (standalone, unit-testable, same
+    // pattern as uploadsRoutes/jsRoutes); mounted ahead of this match above.
+    // 2026-09-03 Canvas interactive-HTML fix: the whitelist (NfFileAllowedExt)
+    // now also covers the text asset types (js/css/json) a multi-file HTML
+    // deliverable references from the Canvas HTML viewer.
     case GET -> Root =>
       // P1 single switch point: when the esbuild dist is packed on the
       // classpath (sbt -Dnebflow.webdist=1 assembly), "/" serves the bundled
@@ -834,6 +791,7 @@ class WebSocketRoutes(
     for
       thinkingCfg <- sharedResources.thinkingConfigRef.get
       workScheduleCfg <- sharedResources.freezeScheduleRef.get
+      skipUntil <- sharedResources.freezeSkipUntilRef.get
       sttSvc <- sttServiceRef.get
       mcpServers <- mcpManager.listServers.map(_.map { case (id, enabled) =>
         io.circe.Json.obj("id" -> id.asJson, "enabled" -> enabled.asJson)
@@ -845,6 +803,15 @@ class WebSocketRoutes(
           "version" -> nebflow.Version.string.asJson,
           "thinking" -> thinkingCfg.asJson,
           "workSchedule" -> workScheduleCfg.asJson,
+          // 现象 2 契约（2026-08-30）：全局冻结态节点（enabled/frozen/skipped/
+          // nextChangeAt）——WS 连接初始态、配置热更、skipFreeze 后均随广播刷新，
+          // 前端输入栏禁用状态机以此为准（含 skip 语义，避免按 workSchedule 自行
+          // 推算时误判被跳过的窗口仍冻结）。
+          "freezeState" -> nebflow.core.schedule.FreezeSchedule.freezeStateNode(
+            workScheduleCfg,
+            skipUntil,
+            System.currentTimeMillis()
+          ).asJson,
           "stt" -> SttService.serverConfigNode(sttSvc),
           "tools" -> toolsList.asJson,
           "mcpServers" -> mcpServers.asJson
@@ -963,6 +930,34 @@ class WebSocketRoutes(
       )
     }
 
+  /** '~' 前缀展开（仅前缀语义；非 ~ 开头原样返回）——wsBrowse 路径入参用。 */
+  private def expandTilde(path: String): String =
+    val home = sys.props("user.home")
+    if path == "~" then home
+    else if path.startsWith("~/") then home + path.drop(1)
+    else path
+
+  /** 应用内工作区浏览器（Route C 兜底）的目录列表响应帧。
+    * home 供前端把 home 前缀折叠为「主目录」面包屑；err 非 null → 前端在弹窗
+    * 内联展示错误（路径非法/不可读）。 */
+  private def wsBrowseEvent(
+      evType: String,
+      path: String,
+      parent: Option[String],
+      entries: List[String],
+      err: Option[String]
+  ): Json = {
+    val fields = scala.collection.mutable.ListBuffer(
+      "type" -> Json.fromString(evType),
+      "path" -> Json.fromString(path),
+      "home" -> Json.fromString(sys.props("user.home")),
+      "entries" -> Json.arr(entries.map(Json.fromString)*)
+    )
+    parent.foreach(p => fields += "parent" -> Json.fromString(p))
+    err.foreach(e => fields += "error" -> Json.fromString(e))
+    Json.obj(fields.toList*)
+  }
+
   private val MaxMessageSize = 10 * 1024 * 1024 // 10MB (base64 images can be large)
 
   /** Public facade for REST API to call into the same message handler. */
@@ -994,6 +989,69 @@ class WebSocketRoutes(
                   List(UiMessage.User(answerText, timestamp = System.currentTimeMillis()))
                 ) *>
                   forwardInteractionAnswer(requestId, askSessionId, io.circe.Json.obj("answers" -> answers.asJson))
+              case _ => IO.unit
+
+          // ── 工作区目录选择链（2026-09-05 作者裁定，workspace-picker 批次）──
+          // ProjectCreate「选择工作区」卡片点击 → 后端原生目录对话框（Route A）；
+          // headless/异常时 WorkspaceDirPicker 回 fallback 事件 → 前端降级应用内
+          // 浏览器（Route C，wsBrowse.list / wsBrowse.mkdir）。
+          // 关键：WS 帧串行（evalMap），对话框阻塞必须 `.start` 独立 fiber，
+          // 否则冻结整条连接（卡片后续 askUserAnswer 无法处理）。
+          case "pickWorkspaceDir" =>
+            val hc = parse(text).toOption.getOrElse(io.circe.Json.Null).hcursor
+            (hc.downField("sessionId").as[String].toOption, hc.downField("requestId").as[String].toOption) match
+              case (Some(sid), Some(rid)) =>
+                WorkspaceDirPicker.pick(sid, rid, wsSend).start.void
+              case _ =>
+                logger.warn(s"pickWorkspaceDir: missing sessionId/requestId — dropped")
+
+          case "wsBrowse.list" =>
+            val hc = parse(text).toOption.getOrElse(io.circe.Json.Null).hcursor
+            hc.downField("path").as[String].toOption.filter(_.nonEmpty) match
+              case None => IO.unit
+              case Some(raw) =>
+                IO.blocking {
+                  scala.util.Try(os.Path(expandTilde(raw), os.Path(sys.props("user.home")))).toOption match
+                    case None => (raw, None, List.empty[String], "invalid path")
+                    case Some(dir) =>
+                      if !os.isDir(dir) then (dir.toString, None, Nil, "not a directory")
+                      else
+                        val entries = os.list(dir)
+                          .filter(os.isDir)
+                          .map(_.last)
+                          .filterNot(_.startsWith("."))
+                          .toList.sorted
+                        // 根目录无上级（segmentCount==0）；其余经 os.up 规范化
+                        val parent = if dir.segmentCount > 0 then Some((dir / os.up).toString) else None
+                        (dir.toString, parent, entries, null: String)
+                }.flatMap { case (path, parent, entries, err) =>
+                    wsSend(wsBrowseEvent("wsBrowseList", path, parent, entries, Option(err)))
+                }.handleErrorWith { e =>
+                  wsSend(wsBrowseEvent("wsBrowseList", raw, None, Nil, Some(e.getMessage)))
+                }
+
+          case "wsBrowse.mkdir" =>
+            val hc = parse(text).toOption.getOrElse(io.circe.Json.Null).hcursor
+            (hc.downField("path").as[String].toOption, hc.downField("name").as[String].toOption.map(_.trim)) match
+              case (Some(raw), Some(name)) if name.nonEmpty && name != "." && name != ".." && !name.contains('/') && !name.contains('\\') =>
+                IO.blocking {
+                  val base = os.Path(expandTilde(raw), os.Path(sys.props("user.home")))
+                  os.makeDir(base / name)
+                  base / name
+                }.flatMap { created =>
+                  wsSend(Json.obj(
+                    "type" -> Json.fromString("wsBrowseMkdir"),
+                    "path" -> Json.fromString(created.toString),
+                    "ok" -> Json.fromBoolean(true)
+                  ))
+                }.handleErrorWith { e =>
+                  wsSend(Json.obj(
+                    "type" -> Json.fromString("wsBrowseMkdir"),
+                    "path" -> Json.fromString(raw),
+                    "ok" -> Json.fromBoolean(false),
+                    "error" -> Json.fromString(Option(e.getMessage).getOrElse("mkdir failed"))
+                  ))
+                }
               case _ => IO.unit
 
           case "permissionAnswer" =>
@@ -1034,26 +1092,6 @@ class WebSocketRoutes(
                 logger.warn(
                   s"Permission answer DROPPED: 'approved' missing or not a boolean (requestId=$requestId, session=$permSessionId) — a malformed reply must not become a deny (#12)"
                 )
-
-          case "planApprove" =>
-            val planSessionId = parse(text).flatMap(_.hcursor.downField("sessionId").as[String]).toOption.getOrElse("")
-            logger.info(s"Plan approved for session $planSessionId") *>
-              ensureAgent(planSessionId)(ref => ref ! AgentCommand.PlanApproved)
-
-          case "planFeedback" =>
-            val json = parse(text).toOption.getOrElse(io.circe.Json.Null)
-            val fbSessionId = json.hcursor.downField("sessionId").as[String].getOrElse("")
-            val fbText = json.hcursor.downField("text").as[String].getOrElse("")
-            if fbSessionId.nonEmpty && fbText.nonEmpty then
-              logger.info(s"Plan feedback for session $fbSessionId: ${fbText.take(60)}") *>
-                ensureAgent(fbSessionId)(ref => ref ! AgentCommand.PlanFeedback(fbText))
-            else IO.unit
-
-          case "planCancel" =>
-            val cancelSessionId =
-              parse(text).flatMap(_.hcursor.downField("sessionId").as[String]).toOption.getOrElse("")
-            logger.info(s"Plan cancelled for session $cancelSessionId") *>
-              ensureAgent(cancelSessionId)(ref => ref ! AgentCommand.PlanCancelled)
 
           case "interrupt" =>
             val intSessionId = parse(text).flatMap(_.hcursor.downField("sessionId").as[String]).toOption.getOrElse("")
@@ -1103,15 +1141,18 @@ class WebSocketRoutes(
                         "error" ->
                           s"No live agent with sessionId='$cSessionId' (registry is in-memory; stale ids vanish after restart)".asJson
                       )
-                    case Some(rec) if !nebflow.core.tools.AgentControlTool.CancelableKinds.contains(rec.kind) =>
+                    case Some(rec) if !nebflow.core.tools.AgentControlTool.cancelable(rec) =>
                       cancelReply(
                         ok = false,
-                        "error" -> s"Kind ${rec.kind} is read-only (cancelable: Delegate / SubTask / Ephemeral)".asJson
+                        "error" -> s"Kind ${rec.kind} is read-only (cancelable: Delegate / SubTask / Ephemeral / Project node-dispatcher sessions)".asJson
                       )
                     case Some(rec) =>
                       val reason = if cReason.nonEmpty then cReason else "cancelled from panel"
+                      // notifyWs = 本连接 wsSend：node-* 会话取消补发 agentDone
+                      // 面板帧（Sub-Agents 面板取消实时刷新修复；dispatcher-*
+                      // 由观察桥拆除点补发，不在此重发）。
                       nebflow.core.tools.AgentControlTool
-                        .doCancel(sharedResources, rec, reason)
+                        .doCancel(sharedResources, rec, reason, notifyWs = Some(wsSend))
                         .flatMap {
                           case Right(msg) => cancelReply(ok = true, "message" -> msg.asJson)
                           case Left(err)  => cancelReply(ok = false, "error" -> err.message.asJson)
@@ -1161,6 +1202,15 @@ class WebSocketRoutes(
                       // 镜像 processing——cancelCurrentTurn + restartStateFor + 续跑）
                       (rec.ref ! nebflow.agent.AgentCommand.RestartAgent(nebflow.agent.RestartLevel.Soft)) *>
                         prReply(ok = true, "message" -> "Root restart (soft) sent; frozen turn will resume from checkpoint".asJson)
+                    case Some(rec) if rec.kind == nebflow.agent.AgentKind.Flow =>
+                      // Project flow 会话（node-/dispatcher-）：单次会话，supervisor
+                      // 是观察桥（不 respawn）——restart 语义不成立，且 raw Stop 会
+                      // 杀 agent 而不发终态事件（node engine fiber 挂死）。拒绝并指路。
+                      prReply(
+                        ok = false,
+                        "error" ->
+                          "Project node/dispatcher sessions are single-shot — restart not supported. Cancel it and re-trigger the work.".asJson
+                      )
                     case Some(rec) if rec.supervisorRef.isDefined =>
                       // Delegate/SubTask：Stop → BackoffSupervisor respawn（断点续跑）
                       (rec.ref ! nebflow.agent.AgentCommand.Stop(s"parent-restart")) *>
@@ -1243,14 +1293,6 @@ class WebSocketRoutes(
                   ensureAgent(compactSessionId)(ref =>
                     ref ! AgentCommand.TriggerCompaction("full", postCompactInstruction = instruction)
                   )
-              case "plan" =>
-                val planSessionId =
-                  parse(text).flatMap(_.hcursor.downField("sessionId").as[String]).toOption.getOrElse("")
-                val planTask = parse(text).flatMap(_.hcursor.downField("task").as[String]).toOption.getOrElse("")
-                if planSessionId.nonEmpty && planTask.nonEmpty then
-                  logger.info(s"Plan mode started: ${planTask.take(60)}") *>
-                    ensureAgent(planSessionId)(ref => ref ! AgentCommand.StartPlan(planTask))
-                else IO.unit
               case "fork" =>
                 val forkSessionId =
                   parse(text).flatMap(_.hcursor.downField("sessionId").as[String]).toOption.getOrElse("")
@@ -1413,7 +1455,8 @@ class WebSocketRoutes(
 
           case "setToolResultTtl" =>
             // #341 WS 尾巴：payload {type, config:{enabled,ttlMinutes,
-            // keepRecent,minChars}}（全量替换，四字段必填）。STRICT 校验（负
+            // keepRecent}}（全量替换，三字段必填；minChars 已移除，旧负载
+            // 携带该字段静默忽略）。STRICT 校验（负数/非整数/超界/缺字段 →
             // 数/非整数/超界/缺字段 → 拒绝并 warn，回 configUpdateFailed——与
             // boot 时 fail-safe load 不同：交互面必须把错误亮给用户）。
             // 成功 → nebflow.json toolResultTtl 节 read-merge + AtomicJson
@@ -1450,7 +1493,7 @@ class WebSocketRoutes(
                     sharedResources.toolResultTtlRef.set(cfg) *>
                       logger.info(
                         s"Tool result TTL set: enabled=${cfg.enabled} ttlMinutes=${cfg.ttlMinutes} " +
-                          s"keepRecent=${cfg.keepRecent} minChars=${cfg.minChars}"
+                          s"keepRecent=${cfg.keepRecent}"
                       ) *>
                       wsSend(io.circe.Json.obj(
                         "type" -> "toolResultTtlSaved".asJson,
@@ -1535,20 +1578,12 @@ class WebSocketRoutes(
           case "switchSession" =>
             val sessionId = parse(text).flatMap(_.hcursor.downField("sessionId").as[String]).getOrElse("")
             if sessionId.nonEmpty then
-              // Emit session_end for the session being left
-              sessionStore.getActiveId.flatMap { oldId =>
-                if oldId.nonEmpty && oldId != sessionId then emitSessionEnd(oldId)
-                else IO.unit
-              } *>
-                sessionService
-                  .switchSession(sessionId)
-                  .flatMap { _ =>
-                    val telStart = sharedResources.telemetry.fold(IO.unit)(
-                      _.record("session_start", io.circe.JsonObject("session_id" -> sessionId.asJson))
-                    )
-                    sendAgentSessionList(wsSend, sessionId) *>
-                      sendMemoryStatus(wsSend, sessionId) *> telStart
-                  }
+              sessionService
+                .switchSession(sessionId)
+                .flatMap { _ =>
+                  sendAgentSessionList(wsSend, sessionId) *>
+                    sendMemoryStatus(wsSend, sessionId)
+                }
                   .handleErrorWith { e =>
                     wsSend(io.circe.Json.obj("type" -> "error".asJson, "message" -> e.getMessage.asJson))
                   }
@@ -1563,16 +1598,13 @@ class WebSocketRoutes(
             sessionService
               .createSession(name, agentName = agentName, folderId = folderId)
               .flatMap { meta =>
-                val tel = sharedResources.telemetry
-                val telStart =
-                  tel.fold(IO.unit)(_.record("session_start", io.circe.JsonObject("session_id" -> meta.id.asJson)))
                 // Send unified session list (all agents)
                 val sendList = agentName match
                   case Some(an) =>
                     sendAgentSessionListByName(wsSend, an)
                   case None =>
                     sessionService.sendSessionList(wsSend, "Nebula")
-                sendList *> telStart
+                sendList
               }
               .handleErrorWith { e =>
                 wsSend(io.circe.Json.obj("type" -> "error".asJson, "message" -> e.getMessage.asJson))
@@ -1586,13 +1618,11 @@ class WebSocketRoutes(
                 .getSessionMeta(sessionId)
                 .flatMap { metaOpt =>
                   val agentName = metaOpt.flatMap(_.agentName).getOrElse("Nebula")
-                  // Emit session_end telemetry before cleanup
-                  emitSessionEnd(sessionId).handleErrorWith(_ => IO.unit) *>
-                    // Clean up text buffers for deleted session to prevent memory leak
-                    sessionTextBuffers.update(_ - sessionId) *>
+                  // Clean up text buffers for deleted session to prevent memory leak
+                  sessionTextBuffers.update(_ - sessionId) *>
                     sessionThinkingBuffers.update(_ - sessionId) *>
                     sessionTurnStarts.update(_ - sessionId) *>
-                    removeRootAgent(sessionId) *> sessionService
+                    stopTeamSessionActors(sessionId) *> stopChildDelegateActors(sessionId) *> removeRootAgent(sessionId) *> sessionService
                       .deleteSession(sessionId)
                       .flatMap { _ =>
                         sendAgentSessionListByName(wsSend, agentName)
@@ -1616,6 +1646,8 @@ class WebSocketRoutes(
                       sessionTextBuffers.update(_ - sid) *>
                         sessionThinkingBuffers.update(_ - sid) *>
                         sessionTurnStarts.update(_ - sid) *>
+                        stopTeamSessionActors(sid) *>
+                        stopChildDelegateActors(sid) *>
                         removeRootAgent(sid) *>
                         sessionService.deleteSession(sid)
                     }
@@ -1931,39 +1963,6 @@ class WebSocketRoutes(
               }
             else IO.unit
 
-          // ===== Dismiss Task (user clears completed/failed tasks) =====
-
-          case "dismissTask" =>
-            val dtSessionId = parse(text).flatMap(_.hcursor.downField("sessionId").as[String]).getOrElse("")
-            val dtTaskId = parse(text).flatMap(_.hcursor.downField("taskId").as[String]).getOrElse("")
-            if dtSessionId.nonEmpty && dtTaskId.nonEmpty then
-              sharedResources.taskStore.dismiss(dtSessionId, dtTaskId).attempt.flatMap {
-                case Right(Some(_)) =>
-                  // Return updated task list (without dismissed tasks)
-                  sharedResources.taskStore.listVisible(dtSessionId).flatMap { tasks =>
-                    wsSend(
-                      io.circe.Json.obj(
-                        "type" -> "taskListUpdate".asJson,
-                        "sessionId" -> dtSessionId.asJson,
-                        "tasks" -> tasks.asJson
-                      )
-                    )
-                  }
-                case Right(None) =>
-                  wsSend(io.circe.Json.obj("type" -> "error".asJson, "message" -> s"Task not found: $dtTaskId".asJson))
-                case Left(err) =>
-                  // IllegalStateException — active task cannot be dismissed
-                  wsSend(
-                    io.circe.Json.obj(
-                      "type" -> "taskError".asJson,
-                      "error" -> s"Cannot dismiss: ${err.getMessage}".asJson,
-                      "taskId" -> dtTaskId.asJson
-                    )
-                  )
-              }
-            else IO.unit
-            end if
-
           // ===== Complete Task (user clicks the todos-panel circle, todo-panel §7.1) =====
 
           case "completeTask" =>
@@ -1993,50 +1992,6 @@ class WebSocketRoutes(
                       "type" -> "taskError".asJson,
                       "error" -> s"Cannot complete: ${err.getMessage}".asJson,
                       "taskId" -> ctTaskId.asJson
-                    )
-                  )
-              }
-            else IO.unit
-            end if
-
-          // ===== Cancel Task (user cancels an active agent task, task-cancel #35) =====
-          // Contract (frontend taskList.js requestCancel): frame shape
-          // {type:"cancelTask", sessionId, taskId, reason} — reason is always
-          // sent (default "Cancelled by user"/"用户主动取消"). Success →
-          // authoritative taskListUpdate (cancelled rows are filtered by
-          // listVisible AND by the frontend isVisible — double convergence);
-          // the owning session's agent is notified with a [任务取消] injection
-          // block (stop in-flight work). Failure → taskError frame
-          // {"type":"taskError","error","taskId"} — the frontend rolls the
-          // optimistically-removed row back (pendingCancel map, 契约#1).
-
-          case "cancelTask" =>
-            val ckJson = parse(text).toOption.getOrElse(io.circe.Json.Null)
-            val ckSessionId = ckJson.hcursor.downField("sessionId").as[String].getOrElse("")
-            val ckTaskId = ckJson.hcursor.downField("taskId").as[String].getOrElse("")
-            val ckReason = ckJson.hcursor.downField("reason").as[String].getOrElse("")
-            if ckSessionId.nonEmpty && ckTaskId.nonEmpty then
-              sharedResources.taskStore.cancel(ckSessionId, ckTaskId, ckReason).attempt.flatMap {
-                case Right(Some(task)) =>
-                  // Authoritative list push — cancelled tasks vanish from the panel.
-                  sharedResources.taskStore.listVisible(ckSessionId).flatMap { tasks =>
-                    wsSend(
-                      io.circe.Json.obj(
-                        "type" -> "taskListUpdate".asJson,
-                        "sessionId" -> ckSessionId.asJson,
-                        "tasks" -> tasks.asJson
-                      )
-                    ) *> refreshTaskArchive(ckSessionId) *> notifyTaskCancelled(ckSessionId, task, ckReason)
-                  }
-                case Right(None) =>
-                  wsSend(io.circe.Json.obj("type" -> "error".asJson, "message" -> s"Task not found: $ckTaskId".asJson))
-                case Left(err) =>
-                  // IllegalStateException — human todo / terminal source state
-                  wsSend(
-                    io.circe.Json.obj(
-                      "type" -> "taskError".asJson,
-                      "error" -> s"Cannot cancel: ${err.getMessage}".asJson,
-                      "taskId" -> ckTaskId.asJson
                     )
                   )
               }
@@ -2110,22 +2065,7 @@ class WebSocketRoutes(
                 _ <- IO.raiseUnless(canonicalBase.startsWith(canonicalRoot))(
                   new RuntimeException("path outside project root")
                 )
-                entries <- IO.blocking {
-                  if os.exists(basePath) && os.isDir(basePath) then
-                    os.list(basePath)
-                      .sortBy { p =>
-                        (if os.isDir(p) then 0 else 1, p.last.toLowerCase)
-                      }
-                      .map { p =>
-                        val isDir = os.isDir(p)
-                        io.circe.Json.obj(
-                          "name" -> p.last.asJson,
-                          "type" -> (if isDir then "dir" else "file").asJson,
-                          "size" -> (if !isDir then os.size(p) else 0L).asJson
-                        )
-                      }
-                  else Nil
-                }
+                entries <- IO.blocking(WebSocketRoutes.listDirEntries(basePath))
               yield (basePath.toString, entries))
                 .flatMap { case (resolvedPath, entries) =>
                   wsSend(
@@ -2223,7 +2163,15 @@ class WebSocketRoutes(
             // Agent-created files (e.g. /tmp/output.svg) should always be readable.
             val json = parse(text).toOption.getOrElse(io.circe.Json.Null)
             val hc = json.hcursor
-            val popFilePath = hc.downField("path").as[String].getOrElse("")
+            val popFilePathRaw = hc.downField("path").as[String].getOrElse("")
+            // Expand a leading `~` (home shorthand) to the absolute home dir —
+            // historical Pop records may store `~/...`; only the server (which
+            // knows user.home) can resolve it to an absolute path.
+            val userHome = System.getProperty("user.home", "")
+            val popFilePath =
+              if popFilePathRaw == "~" then userHome
+              else if popFilePathRaw.startsWith("~/") then userHome + popFilePathRaw.drop(1)
+              else popFilePathRaw
             if popFilePath.nonEmpty then
               (for
                 _ <- IO.raiseUnless(popFilePath.startsWith("/"))(
@@ -2652,6 +2600,9 @@ class WebSocketRoutes(
                         io.circe.Json.obj(
                           "type" -> "backgroundTaskUpdate".asJson,
                           "sessionId" -> cancelSessionId.asJson,
+                          // 权威分键（2026-09-05）：前端按 rootSessionId 分桶，回显
+                          // 取消请求携带的会话（即前端桶键），保证移除帧落同一桶。
+                          "rootSessionId" -> cancelSessionId.asJson,
                           "taskId" -> jobId.asJson,
                           "description" -> "".asJson,
                           "status" -> "completed".asJson
@@ -2666,6 +2617,7 @@ class WebSocketRoutes(
                     io.circe.Json.obj(
                       "type" -> "backgroundTaskUpdate".asJson,
                       "sessionId" -> cancelSessionId.asJson,
+                      "rootSessionId" -> cancelSessionId.asJson,
                       "taskId" -> jobId.asJson,
                       "description" -> "".asJson,
                       "status" -> "failed".asJson
@@ -2729,6 +2681,22 @@ class WebSocketRoutes(
                       )
                     )
                 })
+                // 刷新存活 (2026-09-03): after the initial history page of a
+                // session (re)subscribe — browser refresh, WS reconnect
+                // (frontend onReconnect re-fetches history) or session switch —
+                // re-send the hub's still-pending AskUser cards. Ordered AFTER
+                // historyPage on the same outbound queue so the replayed frames
+                // are never wiped by the initial-load DOM clear. Pagination
+                // fetches (beforeIndex set) prepend older messages and must not
+                // trigger a replay. The hub is the single authority: an ask
+                // answered before this point is not in the snapshot. The frames
+                // carry the live requestId — the frontend dedups against the
+                // history-restored (requestId-less) card and rebinds the answer
+                // channel (chat-input close + #12 precise routing).
+                .flatMap { _ =>
+                  if beforeIndex.isEmpty then replayPendingAsks(sessionId, wsSend)
+                  else IO.unit
+                }
                 .handleErrorWith { e =>
                   wsSend(
                     io.circe.Json
@@ -3063,7 +3031,9 @@ class WebSocketRoutes(
                   case "user" => MemoryStore.saveUserMemory(content)
                   case "agent" =>
                     teamName match
-                      case Some(tn) => MemoryStore.saveTeamAgentMemory(tn, agentName, content)
+                      // 2026-08-31 裁定①: team agents have no memory — refuse to
+                      // resurrect deleted team memory.md files via the modal.
+                      case Some(_) => IO.unit
                       case None => MemoryStore.saveAgentMemory(agentName, content)
                   case _ => IO.unit
                 save *> wsSend(io.circe.Json.obj("type" -> "memorySaved".asJson, "scope" -> scope.asJson))
@@ -3103,17 +3073,15 @@ class WebSocketRoutes(
             val result = IO
               .blocking {
                 try
-                  val url = "https://api.github.com/repos/MashiroKai/Nebflow/releases/latest"
-                  val extract = (j: io.circe.Json) =>
-                    for
-                      tag <- j.hcursor.downField("tag_name").as[String].toOption
-                      name <- j.hcursor.downField("name").as[String].toOption
-                    yield (tag, name)
+                  // #29: 仓库 private 后 GH API 未认证不可用——版本检查读 COS
+                  // latest-version.txt（stable 通道，与旧 releases/latest 同语义）。
+                  val url = "https://nebflow-releases-1411212853.cos.ap-nanjing.myqcloud.com/latest-version.txt"
                   val conn = java.net.URI.create(url).toURL.openConnection()
                   conn.setConnectTimeout(5000)
                   conn.setReadTimeout(5000)
-                  val raw = new String(conn.getInputStream.readAllBytes(), java.nio.charset.StandardCharsets.UTF_8)
-                  io.circe.parser.parse(raw).toOption.flatMap(extract)
+                  val raw = new String(conn.getInputStream.readAllBytes(), java.nio.charset.StandardCharsets.UTF_8).trim
+                  if raw.nonEmpty then Some((raw, raw)) // (tag, releaseName)——COS 无 release 名，版本号兜底
+                  else None
                 catch case _: Exception => None
               }
               .flatMap {
@@ -3689,44 +3657,45 @@ class WebSocketRoutes(
                            )
                            .handleErrorWith(e => logger.warn(s"Failed to record user UiMessage: ${e.getMessage}"))
                        else IO.unit) *> {
-                        // Track turn count + session start time for telemetry
-                        sessionTurnCounts
-                          .update(m => m.updated(msgSessionId, m.getOrElse(msgSessionId, 0) + 1))
-                          .handleErrorWith(_ => IO.unit) *>
-                          sessionStartTimes
-                            .update { m =>
-                              if m.contains(msgSessionId) then m
-                              else m.updated(msgSessionId, System.currentTimeMillis())
-                            }
-                            .handleErrorWith(_ => IO.unit) *> {
-                            // Telemetry: message_sent (structural features only, no content)
-                            sharedResources.telemetry.fold(IO.unit)(
-                              _.record(
-                                "message_sent",
-                                JsonObject.fromIterable(
-                                  List(
-                                    "session_id" -> msgSessionId.asJson,
-                                    "prompt_length" -> content.length.asJson,
-                                    "language_hint" -> (if content.exists(_ > 0x4e00) then "chinese"
-                                                        else "english").asJson,
-                                    "has_code_block" -> content.contains("```").asJson
+                              // 任务工具重做（2026-08-30）：打回语义退役——
+                              // taskRefs/refs(refType=task) 的 processTaskReturns
+                              // 路径整体移除。#303 D1: resolve non-task refs
+                              // (file/document/html-element) into [引用: …]
+                              // injection blocks; refType=task fail-open 跳过。
+                              processRefs(json, blocks).flatMap { _ =>
+                                val blocksList = blocks.toList
+                                // 刷新存活 (2026-09-03): the typeless browser send
+                                // (input.js normal Enter path) must honor the 第六件
+                                // (2026-08-30) input-passthrough contract as well.
+                                // The check used to live only in handleUserText —
+                                // reachable via WS immediateInput/userMessage, i.e.
+                                // the busy→queue→drain path. After a page refresh the
+                                // frontend busy flag is gone, so the typed text lands
+                                // on THIS branch and was queued as a NEW turn while a
+                                // pending ask blocked the session — the refreshed
+                                // input box could never answer (the #43-domain gap).
+                                // Hub hit → the text IS the answer (the user bubble is
+                                // already appended above); miss → normal dispatch,
+                                // byte-identical behavior. Ref/attachment-carrying
+                                // frames keep the default dispatch: their payloads
+                                // are structured returns, not free-text answers.
+                                val frameHasRefsPayload =
+                                  json.hcursor.downField("taskRefs").as[List[io.circe.Json]].fold(_ => false, _.nonEmpty) ||
+                                    json.hcursor.downField("refs").as[List[io.circe.Json]].fold(_ => false, _.nonEmpty)
+                                // NOTE: `blocks` always contains the content text itself
+                                // (ContentBlock.Text(content) above), so it can't
+                                // discriminate — guard on the frame's structured
+                                // payloads instead (refs fields + attachments).
+                                if attachments.isEmpty && !frameHasRefsPayload then
+                                  askPassthroughOrDispatch(
+                                    msgSessionId,
+                                    content,
+                                    clientMessageId,
+                                    blocksList,
+                                    chatWidth,
+                                    source = "typeless"
                                   )
-                                )
-                              ).handleErrorWith(_ => IO.unit)
-                            ) *> {
-                              // todo-panel v2 §6.2 (C16/C21): process the optional
-                              // taskRefs field BEFORE dispatching — each ref returns
-                              // a needs_confirmation task to in_progress (durable
-                              // feedback note + returnCount) and appends a
-                              // [打回任务] injection block so the session agent
-                              // (= task owner, C21) sees the revision context.
-                              // #303 D2: also routes refs[refType='task'] here
-                              // (引用=打回 v1.1).
-                              processTaskReturns(msgSessionId, content, json, blocks, wsSend).flatMap { _ =>
-                                // #303 D1: resolve non-task refs (file/document/
-                                // html-element) into [引用: …] injection blocks.
-                                processRefs(json, blocks).flatMap { _ =>
-                                  val blocksList = blocks.toList
+                                else
                                   ensureAgent(msgSessionId)(ref =>
                                     ref ! AgentCommand
                                       .UserInput(
@@ -3737,10 +3706,7 @@ class WebSocketRoutes(
                                         chatWidth
                                       )
                                   )
-                                }
                               }
-                              }
-                          }
                       }
                   }
                   ) // end IO.uncancelable
@@ -3765,6 +3731,54 @@ class WebSocketRoutes(
     * dispatch gate 拦截排队（B5 系统输入排队语义），不唤醒不解冻。前端在
     * 冻结态禁用输入栏，此处不再调 skipCurrentFreezeWindow 保持语义干净。
     */
+  /** 刷新存活 (2026-09-03): shared tail of the input-box send paths — probe the
+    * hub for a pending AskUser card; a hit delivers the text as the tool result
+    * (第六件 2026-08-30 semantics), a miss falls through to the normal dispatch
+    * byte-identically. Used by BOTH the typeless browser send and the
+    * immediateInput/userMessage path inside [[handleUserText]].
+    *
+    * @param passthroughAlreadyRecorded
+    *   true when the caller already persisted the user bubble (typeless branch
+    *   appends UiMessage.User before deciding); the hub never appends, so this
+    *   only documents ownership — kept for symmetry with handleUserText, which
+    *   appends on the hit path itself.
+    */
+  private def askPassthroughOrDispatch(
+      sessionId: String,
+      content: String,
+      clientMessageId: Option[String],
+      blocks: List[ContentBlock],
+      chatWidth: Int,
+      source: String
+  ): IO[Unit] =
+    if sessionId.nonEmpty && content.nonEmpty then
+      sharedResources.interactionHubRef.get.flatMap {
+        case Some(hub) =>
+          resolveRootSessionId(sessionId).flatMap { rootSid =>
+            Deferred[IO, Boolean].flatMap { answered =>
+              (hub ! nebflow.agent.InteractionHubCommand.AnswerViaChatInput(rootSid, content, answered)) *>
+                // QC: bounded wait — a hub crash / swallowed forkTurn must not
+                // park this gateway fiber forever; on timeout fall back to
+                // the normal dispatch path (message still reaches the agent).
+                answered.get.timeout(1.second).handleError(_ => false)
+            }.flatMap {
+              case true =>
+                logger.info(
+                  s"User text ($source) → AskUser passthrough for session $sessionId (${content.length} chars)"
+                )
+              case false =>
+                ensureAgent(sessionId)(ref =>
+                  ref ! AgentCommand.UserInput(content, None, clientMessageId, Some(blocks).filter(_.nonEmpty), chatWidth)
+                )
+            }
+          }
+        case None =>
+          ensureAgent(sessionId)(ref =>
+            ref ! AgentCommand.UserInput(content, None, clientMessageId, Some(blocks).filter(_.nonEmpty), chatWidth)
+          )
+      }
+    else IO.unit
+
   private def handleUserText(sessionId: String, content: String, source: String): IO[Unit] =
     if sessionId.nonEmpty && content.nonEmpty then
       // 第六件 QC (2026-08-30): the passthrough probe is WS-input-box ONLY —
@@ -3828,57 +3842,6 @@ class WebSocketRoutes(
       ) *>
       ensureAgent(sessionId)(ref => ref ! AgentCommand.ImmediateInput(content))
 
-  /**
-    * task-cancel #35: keep the task archive index in sync after a WS-path
-    * task mutation — the tools refresh it via TaskToolHelper.emitTaskListUpdate,
-    * but WS handlers (cancelTask/completeTask/dismissTask) send their own
-    * taskListUpdate and must refresh here. Best-effort: index staleness is
-    * logged, never fails the already-successful cancel frame.
-    */
-  private def refreshTaskArchive(sessionId: String): IO[Unit] =
-    sessionStore
-      .getSessionMeta(sessionId)
-      .map {
-        case Some(meta) =>
-          val j = nebflow.core.task.TaskArchive.SessionJoin(
-            meta.folderId,
-            meta.folderId.flatMap(sessionStore.getFolderName),
-            Some(meta.name)
-          )
-          (_: String) => j
-        case None => (_: String) => nebflow.core.task.TaskArchive.Unclassified
-      }
-      .flatMap(join => nebflow.core.task.TaskArchive.refreshSession(sessionId, join))
-      .handleErrorWith(e =>
-        logger.warn(s"Task archive refresh failed for $sessionId: ${e.getMessage}") *> IO.unit
-      )
-  end refreshTaskArchive
-
-  /**
-    * task-cancel #35: notify the owning session's agent that one of its tasks
-    * was cancelled by the user — an injection block mirroring the [打回任务]
-    * return block (source="task-cancel" so the UI labels it as a system
-    * injection). The agent is expected to stop in-flight work related to the
-    * task (it is terminal now). ensureAgent spawns the root agent when the
-    * session exists but has no live agent — the same routing used for user
-    * messages. Best-effort: routing failures are logged, never fail the
-    * cancelTask frame that already succeeded.
-    */
-  private def notifyTaskCancelled(
-    sessionId: String,
-    task: nebflow.core.task.Task,
-    reason: String
-  ): IO[Unit] =
-    val reasonStr = if reason.trim.nonEmpty then reason.trim else "（未附原因）"
-    // Cancel-batch (user ruling 2026-08-26 08:33): the structured notice rides
-    // to the agent — root (Nebula) buffers (idle = zero turns, debounced
-    // while processing); non-root agents get the immediate stop-work
-    // injection (AgentActor converts the notice). Text packaging lives in
-    // AgentActor.packageCancelNotices — single source for both shapes.
-    ensureAgent(sessionId)(ref =>
-      ref ! AgentCommand.TaskCancelNotice(task.id, task.subject, task.description, reasonStr, System.currentTimeMillis())
-    )
-  end notifyTaskCancelled
 
   /**
     * 冻结「跳过本次」唯一入口（2026-08-25 22:28 裁定）：前端冻结按钮发
@@ -3902,7 +3865,19 @@ class WebSocketRoutes(
             s"Freeze window skipped (skipFreeze; skipUntil=${until.map(u => new java.util.Date(u).toString).getOrElse("none")})"
           ) *>
             sharedResources.freezeSkipUntilRef.set(until) *>
-            nebflow.core.processor.FreezeScheduler.scan(sharedResources)
+              // P0（2026-08-30）：skip 持久化——重启/刷新后重连仍可见 skipped=true
+              // （此前仅内存 Ref，后端进程重启即丢 → 输入框重新冻结）。best-effort：
+              // 写盘失败不阻塞解冻（scan/broadcast 照常），warn 留痕。
+              nebflow.core.schedule.FreezeSchedule
+                .persistSkip(nebflow.core.PathUtil.dataRoot, until)
+                .handleErrorWith(e =>
+                  logger.warn(s"Failed to persist freeze skip: ${e.getMessage}")
+                ) *>
+              nebflow.core.processor.FreezeScheduler.scan(sharedResources) *>
+            // 现象 2 契约（2026-08-30）：跳过 → 立即广播全局冻结态——前端输入栏
+            // 状态机从 serverConfig.freezeState 读 frozen=false，不等任何 agent
+            // 的 resumed 事件（无活跃 agent 时也要即时解除禁用）。
+            broadcastServerConfig
         else IO.unit
     yield ()
   end skipCurrentFreezeWindow
@@ -3960,92 +3935,12 @@ class WebSocketRoutes(
     "Movies"
   )
 
-  /** #303 D1/D2 (v1.1 引用=打回): taskId extraction tolerant of both string
-    * and number encodings (legacy taskRefs carry string; defensive for number). */
-  private def taskIdOf(c: io.circe.ACursor): String =
-    c.downField("taskId").as[String].getOrElse(c.downField("taskId").as[Long].map(_.toString).getOrElse(""))
-
-  /** todo-panel v2 §6.2 (C16/C17/C21): process the optional `taskRefs` array
-    * on a default-branch user message — the user RETURN flow. For each ref:
-    * validate the session, return the needs_confirmation task to in_progress
-    * (returnCount+1, feedback appended to notes, events recorded), and append
-    * a [打回任务] injection block built from the PRE-return snapshot (the
-    * agent's latest outcome note). Per-ref failures emit taskError frames and
-    * never block the message itself or the other refs. After processing, the
-    * authoritative task list is pushed so every panel converges.
-    *
-    * #303 D2 (v1.1 引用=打回): reads BOTH the legacy `taskRefs` shape
-    * ({taskId, sessionId} — old history/refresh path, D3 regression) AND the
-    * unified `refs` shape (refType='task' with source.taskId/source.sessionId
-    * — taskList.js requestReturn now produces this, spec §5.4). Both route to
-    * the same return flow; refType ≠ task is handled by processRefs instead. */
-  private def processTaskReturns(
-    msgSessionId: String,
-    content: String,
-    frame: io.circe.Json,
-    blocks: scala.collection.mutable.ListBuffer[ContentBlock],
-    wsSend: io.circe.Json => IO[Unit]
-  ): IO[Unit] =
-    val legacyTaskRefs: List[(String, String)] =
-      frame.hcursor.downField("taskRefs").as[List[io.circe.Json]].getOrElse(Nil)
-        .map(j => (taskIdOf(j.hcursor), j.hcursor.downField("sessionId").as[String].getOrElse(msgSessionId)))
-    val refTaskRefs: List[(String, String)] =
-      frame.hcursor.downField("refs").as[List[io.circe.Json]].getOrElse(Nil)
-        .filter(j => j.hcursor.downField("refType").as[String].getOrElse("") == "task")
-        .map { j =>
-          val src = j.hcursor.downField("source")
-          (taskIdOf(src), src.downField("sessionId").as[String].getOrElse(msgSessionId))
-        }
-    // QC follow-up (#303): dedupe by (taskId, refSession) — a double-pushed
-    // ref for the same task must fire the return flow once (the second
-    // `return` would IllegalStateException into a spurious taskError frame).
-    val taskRefs = nebflow.gateway.RefResolver.dedupeTaskRefs(legacyTaskRefs ++ refTaskRefs)
-    if taskRefs.isEmpty then IO.unit // absent/empty — zero behavior change (v1 path)
-    else
-      def taskError(taskId: String, msg: String): IO[Unit] =
-        wsSend(io.circe.Json.obj(
-          "type" -> "taskError".asJson,
-          "error" -> msg.asJson,
-          "taskId" -> taskId.asJson
-        ))
-
-      taskRefs.traverse_ { (taskId, refSession) =>
-        if taskId.isEmpty then IO.unit
-        else if refSession != msgSessionId then
-          // §6.2a: cross-session injection guard
-          taskError(taskId, s"Cross-session task reference rejected: $taskId")
-        else
-          sharedResources.taskStore.get(msgSessionId, taskId).flatMap {
-            case None => taskError(taskId, s"Task not found: $taskId")
-            case Some(snapshot) =>
-              sharedResources.taskStore.`return`(msgSessionId, taskId, content).attempt.flatMap {
-                case Right(Some(_)) =>
-                  // Injection block from the PRE-return snapshot (§6.2c): the
-                  // last note is the agent's outcome summary, NOT the feedback.
-                  blocks += ContentBlock.Text(
-                    nebflow.core.task.Task.returnInjectionBlock(taskId, snapshot, content)
-                  )
-                  IO.unit
-                case Right(None) => IO.unit // raced delete — nothing to return
-                case Left(err) =>
-                  taskError(taskId, s"Cannot return: ${err.getMessage}")
-              }
-          }
-      } *> sharedResources.taskStore.listVisible(msgSessionId).flatMap { tasks =>
-        // §6.2 step 3: push the authoritative list so returned rows converge
-        // to in_progress on every connected client.
-        wsSend(io.circe.Json.obj(
-          "type" -> "taskListUpdate".asJson,
-          "sessionId" -> msgSessionId.asJson,
-          "tasks" -> tasks.asJson
-        ))
-      }
-
   /** #303 D1/D5: resolve unified refs (refType ≠ task) into [引用: …]
     * injection blocks appended to the user message (spec §2.3 ③). Pointer
     * semantics — source + anchor only, never content (D5, ≤ ~100 token).
-    * Task refs route to processTaskReturns (引用=打回, D2); unknown refTypes
-    * are skipped fail-open (never block the message or the other refs). */
+    * refType=task refs are gone (任务工具重做 2026-08-30, 打回退役) — they
+    * fall through as unknown and are skipped fail-open (never block the
+    * message or the other refs). */
   private def processRefs(
     frame: io.circe.Json,
     blocks: scala.collection.mutable.ListBuffer[ContentBlock]
@@ -4195,85 +4090,6 @@ class WebSocketRoutes(
   private val sessionTurnStarts: Ref[IO, Map[String, Long]] =
     Ref.unsafe[IO, Map[String, Long]](Map.empty)
 
-  // ---- Per-session telemetry tracking ----
-
-  /** Per-session tool call counts: sessionId -> (toolName -> count). */
-  private val sessionToolProfile: Ref[IO, Map[String, Map[String, Int]]] =
-    Ref.unsafe[IO, Map[String, Map[String, Int]]](Map.empty)
-
-  /** Per-session turn count (user messages). */
-  private val sessionTurnCounts: Ref[IO, Map[String, Int]] =
-    Ref.unsafe[IO, Map[String, Int]](Map.empty)
-
-  /** Per-session start time (first activity). */
-  private val sessionStartTimes: Ref[IO, Map[String, Long]] =
-    Ref.unsafe[IO, Map[String, Long]](Map.empty)
-
-  /** Per-session model used (last model). */
-  private val sessionModels: Ref[IO, Map[String, String]] =
-    Ref.unsafe[IO, Map[String, String]](Map.empty)
-
-  /** Per-session all models used (accumulated). */
-  private val sessionAllModels: Ref[IO, Map[String, Set[String]]] =
-    Ref.unsafe[IO, Map[String, Set[String]]](Map.empty)
-
-  /** Per-session response times in milliseconds (per turn). */
-  private val sessionResponseTimes: Ref[IO, Map[String, List[Long]]] =
-    Ref.unsafe[IO, Map[String, List[Long]]](Map.empty)
-
-  /** Record a tool call for a session's telemetry profile. */
-  private def recordToolForTelemetry(sessionId: String, toolName: String): IO[Unit] =
-    sessionToolProfile.update { m =>
-      val profile = m.getOrElse(sessionId, Map.empty)
-      m.updated(sessionId, profile.updated(toolName, profile.getOrElse(toolName, 0) + 1))
-    } *> sessionStartTimes.update { m =>
-      if m.contains(sessionId) then m else m.updated(sessionId, System.currentTimeMillis())
-    }
-
-  /** Emit a session_end event and clean up telemetry state for a session. */
-  private def emitSessionEnd(sessionId: String): IO[Unit] =
-    sharedResources.telemetry match
-      case None => cleanupSessionTelemetry(sessionId)
-      case Some(reporter) =>
-        for
-          profile <- sessionToolProfile.get.map(_.getOrElse(sessionId, Map.empty))
-          turns <- sessionTurnCounts.get.map(_.getOrElse(sessionId, 0))
-          startTime <- sessionStartTimes.get.map(_.get(sessionId))
-          model <- sessionModels.get.map(_.get(sessionId).getOrElse(""))
-          allModels <- sessionAllModels.get.map(_.getOrElse(sessionId, Set.empty))
-          responseTimes <- sessionResponseTimes.get.map(_.getOrElse(sessionId, Nil))
-          _ <- cleanupSessionTelemetry(sessionId)
-          durationSec = startTime.map(s => (System.currentTimeMillis() - s) / 1000).getOrElse(0L)
-          inferredTask = TaskInferencer.infer(profile, turns)
-          avgResponseMs = if responseTimes.nonEmpty then responseTimes.sum / responseTimes.size else 0L
-          maxResponseMs = responseTimes.maxOption.getOrElse(0L)
-          props = JsonObject.fromIterable(
-            List(
-              "session_id" -> sessionId.asJson,
-              "duration_sec" -> durationSec.asJson,
-              "turn_count" -> turns.asJson,
-              "tool_profile" -> TaskInferencer.toolProfileJson(profile).asJson,
-              "inferred_task" -> inferredTask.asJson,
-              "model_used" -> model.asJson,
-              "models_used" -> allModels.toList.asJson,
-              "avg_response_time_ms" -> avgResponseMs.asJson,
-              "max_response_time_ms" -> maxResponseMs.asJson,
-              "response_times" -> responseTimes.asJson
-            )
-          )
-          _ <- reporter.record("session_end", props)
-          _ <- reporter.flush
-        yield ()
-
-  /** Clean up per-session telemetry tracking state. */
-  private def cleanupSessionTelemetry(sessionId: String): IO[Unit] =
-    sessionToolProfile.update(_ - sessionId) *>
-      sessionTurnCounts.update(_ - sessionId) *>
-      sessionStartTimes.update(_ - sessionId) *>
-      sessionModels.update(_ - sessionId) *>
-      sessionAllModels.update(_ - sessionId) *>
-      sessionResponseTimes.update(_ - sessionId)
-
   private def makeRecordingWsSend(
     sessionId: String,
     underlying: io.circe.Json => IO[Unit]
@@ -4309,13 +4125,7 @@ class WebSocketRoutes(
         else IO.unit
 
       case "toolStart" =>
-        val label = hc.downField("label").as[String].getOrElse("")
-        // Track tool usage for telemetry
-        val toolName = label.takeWhile(_ != '(').trim
-        val trackTool =
-          if toolName.nonEmpty then recordToolForTelemetry(sessionId, toolName).handleErrorWith(_ => IO.unit)
-          else IO.unit
-        trackTool *> sessionTurnStarts
+        sessionTurnStarts
           .update(m => if m.contains(sessionId) then m else m.updated(sessionId, System.currentTimeMillis()))
         // Flush accumulated text + thinking before tool execution, matching frontend finishAi() behavior.
         // Without this, text output before a tool call stays in the in-memory buffer and is lost
@@ -4377,32 +4187,14 @@ class WebSocketRoutes(
 
       case "done" =>
         val model = hc.downField("model").as[Option[String]].getOrElse(None)
-        // Track model for telemetry
-        val trackModel = model match
-          case Some(m) =>
-            sessionModels.update(_.updated(sessionId, m)) *>
-              sessionAllModels.update { map =>
-                val set = map.getOrElse(sessionId, Set.empty)
-                map.updated(sessionId, set + m)
-              }
-          case None => IO.unit
-        trackModel *> sessionTurnStarts
+        sessionTurnStarts
           .modify { m =>
             val start = m.getOrElse(sessionId, 0L)
             (m - sessionId, start)
           }
           .flatMap { startTime =>
             val durationMs = if startTime > 0 then Some(System.currentTimeMillis() - startTime) else None
-            // Track response time for telemetry
-            val trackResponseTime = durationMs match
-              case Some(ms) =>
-                sessionResponseTimes.update { map =>
-                  val times = map.getOrElse(sessionId, Nil)
-                  map.updated(sessionId, times :+ ms)
-                }
-              case None => IO.unit
-            trackResponseTime *>
-              sessionTextBuffers
+            sessionTextBuffers
                 .modify { m =>
                   val text = m.getOrElse(sessionId, "")
                   (m - sessionId, text)
@@ -4752,19 +4544,11 @@ class WebSocketRoutes(
   // Callback helpers
   // ============================================================
 
-  /** Extract token from query param (localStorage), Authorization header, or cookie. */
+  /** Extract token from query param (localStorage), Authorization header, or cookie.
+    * Logic lives on the companion (pure, shared with nfFileRoutes); this
+    * instance alias keeps every existing call site unchanged. */
   private def extractToken(req: org.http4s.Request[IO]): String =
-    val fromParam = req.params.get("token").getOrElse("")
-    if fromParam.nonEmpty then fromParam
-    else
-      val fromHeader = req.headers
-        .get[org.http4s.headers.Authorization]
-        .collectFirst { case org.http4s.headers.Authorization(org.http4s.Credentials.Token(_, t)) =>
-          t
-        }
-        .getOrElse("")
-      if fromHeader.nonEmpty then fromHeader
-      else req.cookies.find(_.name == "nebflow_token").map(_.content).getOrElse("")
+    WebSocketRoutes.extractToken(req)
 
   /**
    * POST /api/callbacks/inject
@@ -4829,6 +4613,108 @@ end WebSocketRoutes
 
 object WebSocketRoutes:
 
+  /** Extract token from query param (localStorage), Authorization header, or
+    * cookie. Pure — shared by every authenticated route through the
+    * class-side alias. */
+  private[gateway] def extractToken(req: org.http4s.Request[IO]): String =
+    val fromParam = req.params.get("token").getOrElse("")
+    if fromParam.nonEmpty then fromParam
+    else
+      val fromHeader = req.headers
+        .get[org.http4s.headers.Authorization]
+        .collectFirst { case org.http4s.headers.Authorization(org.http4s.Credentials.Token(_, t)) =>
+          t
+        }
+        .getOrElse("")
+      if fromHeader.nonEmpty then fromHeader
+      else req.cookies.find(_.name == "nebflow_token").map(_.content).getOrElse("")
+
+  /** Extension whitelist for GET /api/nf-file (local files served to
+    * card/canvas iframes).
+    *
+    * 2026-09-03 Canvas interactive-HTML fix: beyond the media types it now
+    * covers the text asset types a multi-file HTML deliverable references —
+    * `js` (companion data/script modules), `mjs`, `css`, `json`. Without
+    * them the Canvas HTML viewer renders the document shell, but the page's
+    * own boot script dies on the first missing module, BEFORE binding any
+    * event listeners — the reported "renders but nothing is clickable"
+    * failure (prototype.html:455 `const SNAP = window.FM_SNAPSHOT` →
+    * :487 seedFromSnapshot() throws on the 400'd script).
+    *
+    * Security posture unchanged: the route stays token-gated end to end, and
+    * anything running inside the srcdoc canvas iframe already executes with
+    * app-origin script privileges (viewers/html.js sandbox: allow-scripts +
+    * allow-same-origin), so serving js/css/json does not widen the trust
+    * boundary — content source remains locally opened, user-initiated
+    * deliverables.
+    *
+    * Pure + testable on purpose (same pattern as uploadsRoutes). */
+  val NfFileAllowedExt: Set[String] = Set(
+    "png",
+    "jpg",
+    "jpeg",
+    "gif",
+    "svg",
+    "webp",
+    "ico",
+    "bmp",
+    "avif",
+    "tiff",
+    "tif",
+    "mp4",
+    "webm",
+    "ogg",
+    "ogv",
+    "mov",
+    "mp3",
+    "wav",
+    "oga",
+    "flac",
+    "aac",
+    "m4a",
+    "woff",
+    "woff2",
+    "ttf",
+    "otf",
+    "pdf",
+    "docx",
+    "xlsx",
+    "xlsm",
+    "pptx",
+    "epub",
+    "js",
+    "mjs",
+    "css",
+    "json"
+  )
+
+  /** Serves whitelisted local files from disk for card iframes
+    * (GET /api/nf-file?path=xxx&token=xxx). Supports Range requests for
+    * video seeking. Standalone (zero class deps) so it is directly
+    * unit-testable (NfFileRoutesSpec); composed ahead of the instance
+    * routes like uploadsRoutes. */
+  def nfFileRoutes(token: String): HttpRoutes[IO] = HttpRoutes.of[IO] {
+    case req @ GET -> Root / "api" / "nf-file" =>
+      val provided = extractToken(req)
+      if !Auth.validateToken(provided, token) then Forbidden("Invalid token")
+      else
+        val rawPath = req.params.get("path").getOrElse("")
+        if rawPath.isEmpty then BadRequest("Missing 'path' parameter")
+        else
+          // Resolve and validate path
+          val expanded = if rawPath.startsWith("~") then sys.props("user.home") + rawPath.substring(1) else rawPath
+          val path = java.nio.file.Paths.get(expanded).normalize()
+          val ext = path.toString.lastIndexOf('.') match
+            case -1 => ""
+            case i => path.toString.substring(i + 1).toLowerCase
+          // Only allow whitelisted extensions
+          if !NfFileAllowedExt.contains(ext) then BadRequest("File type not allowed")
+          else if !java.nio.file.Files.exists(path) || !java.nio.file.Files.isRegularFile(path) then NotFound()
+          else StaticFile.fromPath(fs2.io.file.Path(path.toString), Some(req)).getOrElseF(NotFound())
+        end if
+      end if
+  }
+
   /**
     * 第六件 QC (2026-08-30): which input sources may probe the AskUser
     * chat-input passthrough. ONLY the WS input-box family does — the headless
@@ -4875,6 +4761,42 @@ object WebSocketRoutes:
       else if canonicalBase == canonicalRoot then Left("cannot delete project root")
       else Right(basePath)
     catch case e: Exception => Left(Option(e.getMessage).getOrElse(e.toString))
+
+  /**
+   * Explorer listDir — pure, testable listing core with per-entry fault
+   * isolation (2026-09-02). The bare os.isDir/os.size calls used to throw out
+   * of the whole listing when a directory contained a dangling symlink (e.g.
+   * project .nebflow/flowmap-anim → worktrees/flowmap-anim whose target is
+   * gone): one bad entry produced dirListing{error} and the frontend rendered
+   * the directory as un-openable. Now each entry stats independently — a
+   * stat failure degrades THAT entry to type=file, size=0, broken=true
+   * (readFile on it already fails gracefully via fileContent{error}; the
+   * extra `broken` field is optional and today's frontend simply ignores it).
+   * os.isDir keeps its followLinks semantics; dirs sort first, then name —
+   * ordering identical to the pre-fix implementation.
+   */
+  private[gateway] def listDirEntries(basePath: os.Path): Seq[Json] =
+    if os.exists(basePath) && os.isDir(basePath) then
+      os.list(basePath)
+        .map { p =>
+          val stat = scala.util.Try {
+            val isDir = os.isDir(p)
+            if isDir then (isDir, 0L) else (isDir, os.size(p))
+          }.toOption
+          stat match
+            case Some((isDir, size)) => (p.last, isDir, size, false)
+            case None                => (p.last, false, 0L, true)
+        }
+        .sortBy { case (name, isDir, _, _) => (if isDir then 0 else 1, name.toLowerCase) }
+        .map { case (name, isDir, size, broken) =>
+          io.circe.Json.obj(
+            "name"   -> name.asJson,
+            "type"   -> (if isDir then "dir" else "file").asJson,
+            "size"   -> size.asJson,
+            "broken" -> broken.asJson
+          )
+        }
+    else Nil
 
   /**
    * Resolve + guard + perform one move (mirror of movePath's checks).
@@ -4927,9 +4849,12 @@ object WebSocketRoutes:
     * L1 rebrand: the frontend brand contract. window.__BRAND__ is the only
     * brand source web/ may read; fields are append-only across rebrand
     * batches (initial contract: productName, lowerName, domain; L3 batch 3
-    * appended homeDirName for the frontend's own legacy-path messaging).
-    * `domain` carries the placeholder value — display-only, never consumed
-    * to build a URL.
+    * appended homeDirName for the frontend's own legacy-path messaging;
+    * 2026-09-01 login-chain fix appended profileUrl — the frontend's ONLY
+    * URL input, consumed by activityBar.js to build the profile link).
+    * `domain` carries the debug value (neblink.space) or the publish value
+    * (nebflow.space via env override) — display-only, never consumed to
+    * build a URL.
     *
     * circe handles JSON string escaping; the serialized blob additionally
     * escapes the forward slash of "</" because it is inlined inside a
@@ -4941,6 +4866,7 @@ object WebSocketRoutes:
       Branding.lowerName,
       Branding.domain,
       Branding.homeDirName,
+      Branding.profileUrl,
     )};</script>"""
   end brandScriptTag
 
@@ -4950,7 +4876,8 @@ object WebSocketRoutes:
     productName: String,
     lowerName: String,
     domain: String,
-    homeDirName: String
+    homeDirName: String,
+    profileUrl: String
   ): String =
     Json
       .obj(
@@ -4958,6 +4885,7 @@ object WebSocketRoutes:
         "lowerName"   -> Json.fromString(lowerName),
         "domain"      -> Json.fromString(domain),
         "homeDirName" -> Json.fromString(homeDirName),
+        "profileUrl"  -> Json.fromString(profileUrl),
       )
       .noSpaces
       .replace("</", "<\\/")

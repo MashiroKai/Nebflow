@@ -1,6 +1,7 @@
 package nebflow.core.tools
 
 import cats.effect.IO
+import nebflow.core.sandbox.{FileSandbox, SandboxPolicy}
 import io.circe.JsonObject
 import io.circe.syntax.*
 
@@ -65,23 +66,67 @@ object GlobTool extends Tool:
   def call(input: JsonObject, ctx: ToolContext): IO[Either[ToolError, String]] = IO.blocking {
     val rawPattern = input("pattern").flatMap(_.asString).getOrElse("")
     val pathOpt = input("path").flatMap(_.asString)
+    // 阶段 2a 沙箱（§A.2/§A.8-8）：相对路径与缺省根按节点 sandbox.root 解析——
+    // 修掉默认根=JVM user.dir 的现状；沙箱关时保持旧行为（user.dir）。
     val workDir = System.getProperty("user.dir")
+    val baseDir: os.Path =
+      if ctx.sandbox.enabled then ctx.sandbox.root
+      else os.Path(workDir)
 
     // Resolve search directory
     val (baseFromPattern, relPattern) = extractBaseDir(rawPattern)
     val explicitPath = pathOpt.map { p =>
       if p.startsWith("/") || (p.length >= 2 && p.charAt(1) == ':') then os.Path(p)
-      else nebflow.core.PathUtil.resolvePath(p, os.Path(workDir))
+      else nebflow.core.PathUtil.resolvePath(p, baseDir)
     }
-    val workDirPath = os.Path(workDir)
-    val searchRootPath =
+    val workDirPath = baseDir
+    // pattern 静态前缀 → 搜索根（20260903 Glob 修复）：静态前缀（首个 glob 字符
+    // 前的目录部分，如 "src/main/resources/web/js"）含 "/" 时旧实现走 os-lib 单段
+    // `/` 拼接 → InvalidSegment 崩（description 鼓励的 "src/**/*.ts" 写法自身必崩，
+    // 当日 5 崩实锤）→ 改 os.RelPath 多段构造（项目先例 TransferFileTool ×6 /
+    // PathUtil.resolvePath:99）。注意：os.RelPath 把 ".." 解析为 Up 段（允许逃逸，
+    // 中段 ".." 被 NIO normalize 静默折叠），与旧行为（拒）不符 → 构造前显式拒绝
+    // ".." 段并给可行动文案。"．" 段由 RelPath 归一（放宽无害——搜索根仍受
+    // §A.3 沙箱读闸门 canonicalize + readableRoots 约束）。
+    val searchRootEither: Either[ToolError, os.Path] =
       if baseFromPattern.startsWith("/") || (baseFromPattern.length >= 2 && baseFromPattern.charAt(1) == ':') then
-        os.Path(baseFromPattern)
+        Right(os.Path(baseFromPattern))
       else if baseFromPattern.nonEmpty then
-        val base = explicitPath.getOrElse(workDirPath)
-        base / baseFromPattern
-      else explicitPath.getOrElse(workDirPath)
+        if baseFromPattern.split('/').contains("..") then
+          Left(ToolError(
+            s"Invalid glob pattern: static directory prefix '$baseFromPattern' must not contain '..' segments — " +
+              "search stays within the search root; adjust the pattern's directory prefix. (GLOB_PATTERN)"))
+        else
+          val base = explicitPath.getOrElse(workDirPath)
+          try Right(base / os.RelPath(baseFromPattern))
+          catch
+            case e: Exception =>
+              Left(ToolError(
+                s"Invalid glob pattern: static directory prefix '$baseFromPattern' is not a usable relative path " +
+                  s"(${Option(e.getMessage).getOrElse(e.getClass.getSimpleName)}). (GLOB_PATTERN)"))
+      else Right(explicitPath.getOrElse(workDirPath))
 
+    // §A.3 读闸门：搜索根 canonicalize + readableRoots contain；rg 从 canonical
+    // 根起跑（检查对象=执行对象）。rg 默认不跟随 symlink 下钻（无 --follow），
+    // 遍历逃逸由该默认承担（§A.8-4）。
+    searchRootEither.flatMap { searchRootPath =>
+      FileSandbox.checkReadRoot(ctx, searchRootPath) match
+        case Left(err) => Left(err)
+        case Right(canonicalRoot) =>
+          // 凭据红线遍历排除（沙箱开时）：搜索根在 ~/.nebflow/agents 子树内 →
+          // rg 排除 agent 私有记忆（memory.md）——文件级负向规则管不住目录遍历。
+          val memExcludes =
+            if ctx.sandbox.enabled then SandboxPolicy.memoryGlobExcludes(canonicalRoot.wrapped) else Nil
+          runGlob(relPattern, canonicalRoot, workDir, memExcludes)
+    }
+  }
+
+  private def runGlob(
+    relPattern: String,
+    searchRootPath: os.Path,
+    workDir: String,
+    memoryExcludes: List[String] = Nil
+  ): Either[ToolError, String] =
     // Use ripgrep for file listing — much faster than Java NIO Files.walk
     // --no-ignore: match old behavior (Files.walk ignores .gitignore, so should we)
     // --hidden: include hidden files, consistent with GrepTool
@@ -106,6 +151,8 @@ object GlobTool extends Tool:
       "--glob",
       "!.jj"
     )
+    // agent 私有记忆排除（后置 glob 规则优先级更高——rg last-match-wins）
+    args ++= memoryExcludes
 
     // Search from the resolved root
     args += searchRootPath.toString
@@ -136,6 +183,5 @@ object GlobTool extends Tool:
               output + "\n\n(Results are truncated. Consider using a more specific path or pattern.)"
             else output
           )
-    end match
-  }
+  end runGlob
 end GlobTool

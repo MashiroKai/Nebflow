@@ -10,7 +10,7 @@
 import { ChatView, setActiveView, activeView, chatViews } from './chatView.js';
 import { sendWs, onMessage, setBgAgentStepInterceptor } from './ws.js';
 import { restoreFromBackendHistory } from './persistence.js';
-import { isBgAgentId } from './utils.js';
+import { isBgAgentId, truncateMiddle } from './utils.js';
 import state from './state.js';
 import { key } from './branding.js';
 import { t } from './i18n.js';
@@ -418,11 +418,14 @@ function updateFooterStatus(entry) {
   // Phase text (#343): granular activity — thinking / tool / responding.
   const phaseEl = entry.footerEl.querySelector('.fa-phase');
   if (phaseEl) {
+    // 2026-09-03 toolline truncate fix: truncate at the RENDER layer only —
+    // meta.toolLabel keeps the full label; the tooltip below shows it whole.
+    const fullLabel = entry.meta.toolLabel || '';
     const phaseMap = {
       running: 'Working…',
       thinking: 'Thinking…',
       responding: 'Responding…',
-      tool: entry.meta.toolLabel ? `Using tool: ${entry.meta.toolLabel}` : 'Running tool…',
+      tool: fullLabel ? `Using tool: ${truncateMiddle(fullLabel, 96, 24)}` : 'Running tool…',
       done: 'Done',
       failed: 'Failed',
       stuck: 'Stuck',
@@ -430,10 +433,13 @@ function updateFooterStatus(entry) {
     };
     const text = phaseMap[status] || '';
     phaseEl.textContent = text;
+    // Unified panel spec §7: long text → single-line ellipsis + title with
+    // the full text (hover tooltip). Non-tool phases are short — no tooltip.
+    phaseEl.title = (status === 'tool' && fullLabel) ? `Using tool: ${fullLabel}` : '';
     phaseEl.style.display = text ? '' : 'none';
   }
   // Management cluster: state-linked buttons + permission matrix.
-  syncManageControls(entry.manageBar, entry.meta);
+  syncManageControls(entry.manageBar, entry.meta, currentStepId);
 }
 
 // ── cancelAgent result linkage (stop button, @179a009e) ────────────────

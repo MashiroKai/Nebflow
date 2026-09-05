@@ -95,6 +95,9 @@ function convertAgentEvent(msg) {
       return { type: 'toolStart', sessionId: sid, label: msg.label || '' };
     case 'agentToolEnd':
       return { type: 'toolEnd', sessionId: sid, label: msg.label || '', summary: msg.summary || '', content: msg.content || '', isError: msg.isError || false, input: msg.input || null };
+    case 'agentToolHeartbeat':
+      // 审计 20260903 子项①：工具执行期心跳——转换为标准事件喂活 busy timer。
+      return { type: 'toolHeartbeat', sessionId: sid, label: msg.label || '' };
     case 'agentDone':
       return { type: 'done', sessionId: sid, model: msg.model, contextWindow: msg.contextWindow, inputTokens: msg.inputTokens, compactThreshold: msg.compactThreshold, outputTokens: msg.outputTokens };
     case 'usageUpdate':
@@ -132,7 +135,7 @@ const handlers = {};
 const GLOBAL_MSG_TYPES = new Set([
   'sessionList', 'serverConfig', 'agentList', 'agentSessionList',
   'agentSystemPrompt', 'agentSystemPromptSaved',
-  'mcpServersUpdate', 'configData', 'configUpdated', 'configUpdateFailed',
+  'configData', 'configUpdated', 'configUpdateFailed',
   'toolResultTtl', 'toolResultTtlSaved', 'modelOptions',
   'memoryData', 'memorySaved', 'memoryStatus', 'memoryChanged',
   'rulesData', 'rulesSaved', 'rulesDeleted', 'rulesStatus',
@@ -140,15 +143,27 @@ const GLOBAL_MSG_TYPES = new Set([
   'updateCheckResult', 'updateStarted', 'updateCompleted',
   'remoteUpdateResult', 'peerListChanged',
   'activeBgTasks', 'activeAgents',
-  'mailQueued', 'mailDequeued',
   'dropbox-message', 'dropbox-file-response', 'dropbox-file-complete', 'dropbox-history', 'dropboxError',
-  'friend_event'
+  'friend_event',
+  // Project 域节点广播（#28 0b 契约 §2）：{type,project,nodeId,node}，无 sessionId，
+  // 是全应用级广播。入 GLOBAL 使 onmessage 路由不把他们当会话内事件（不 setActiveView
+  // 为 primary），保持当前视图；多个 onMessage 订阅者（projectTab / flowMapTab）都收。
+  'nodeCreated', 'nodeUpdated', 'nodeCompleted', 'nodeRemoved',
+  // 应用内工作区浏览器（workspace-picker Route C 兜底）响应帧：无 sessionId 的
+  // 弹窗私有请求-响应。必须 GLOBAL——无 sessionId 时 GLOBAL 保视图不换（:457 语义），
+  // TERMINAL 会把 activeView 换成 primary。
+  'wsBrowseList', 'wsBrowseMkdir',
 ]);
 const TERMINAL_MSG_TYPES = new Set([
   'done', 'error', 'interrupted', 'maxTokens', 'sessionBusy',
   'compactStart', 'compactComplete', 'compactFailed',
-  'backgroundTaskUpdate', 'taskListUpdate',
+  // taskListUpdate 已移出（2026-09-05 10:54 裁定：旧任务区退役）——非活跃
+  // 会话帧被入口过滤器丢弃，活跃会话帧无订阅者 no-op（后端照发，零触碰）。
+  'backgroundTaskUpdate',
   'askUser', 'askPermission', 'askUserAnswered',
+  // 工作区目录选择结果（workspace-picker 批次）：{sessionId, requestId, path|
+  // cancelled|fallback}——askUser 交互家族同语义（带 sessionId，视图路由同 askUser）。
+  'workspaceDirPicked',
   'frozen', 'resumed', 'agentFrozen', 'agentResumed',
   'errorEscalated', // error-recovery escalation → parent/user decision card
   'taskStuck', // sub-agent management panel (2026-08-22): stuck visibility for any session
@@ -158,14 +173,22 @@ const TERMINAL_MSG_TYPES = new Set([
 const STREAM_MSG_TYPES = new Set([
   'thinkingDelta', 'textDelta', 'textDone',
   'toolCallDetected', 'toolCallStart', 'toolCallChunk', 'toolStart', 'toolEnd',
+  'toolHeartbeat', // 审计 20260903 子项①：工具执行期心跳（喂活 busy timer）——
+  'agentToolHeartbeat', // 非 active 会话也必须过过滤器才能到 resetStreamTimeout。
   'toolArgDelta',
   'roundComplete',
   'agentStart', 'agentTextDelta', 'agentToolCallDetected',
   'agentToolStart', 'agentToolEnd', 'agentEnd',
   'agentThinking', 'agentRetryStatus', 'agentDone',
-  'treeBranchMounted', 'treeBranchUnmounted', 'treeBranchUpdated',
-  'flowMail', 'flowStarted', 'flowNodesAdded', 'flowProgress', 'flowCompleted', 'teamList',
-  'teamTaskListUpdate', // Team Manager task panel (2026-08-25): no sessionId — route to the teams panel.
+  // 任务工具重做 (2026-08-30): team 域任务帧（{team, tasks}，无 sessionId）——
+  // 裁定② 统一进 Nebula 会话任务列表面板（taskList.js 合并渲染）。
+  // teamTaskListUpdate 已移出（2026-09-05 10:54 裁定：旧任务区退役）——
+  // 无 sessionId 帧直达分发但无订阅者 = no-op（后端照发，零触碰）。
+  // Legacy flow-canvas events (flowMail/flowStarted/flowNodesAdded/
+  // flowProgress/flowCompleted/teamList/treeBranch*) removed 2026-09-05
+  // 旧 UI 退役 — the backend may still broadcast them; unknown types with no
+  // registered handler are dispatched to an empty handler list (no-op), and
+  // off-session frames are dropped by the entry filter above.
   // #308 actual model: sub-agent usageUpdate (sessionId = nodeSessionId) must
   // survive the entry filter below to reach the popup live-refresh path.
   // Without this, the event is silently dropped for non-active sessions.
@@ -270,12 +293,15 @@ let authParamFallback = false;
 let authProbePromise = null;
 let authProbeSettled = false;
 
-// Probe target: GET /api/nf-tasks - lightweight (reads the task index),
-// authenticated via extractToken (param → Authorization header → cookie), so
-// a bare same-origin fetch exercises exactly the cookie path the WS handshake
-// relies on. Verified: 403 without credentials, 200 with a valid cookie.
+// Probe target: GET /api/nf-file (no path param) — authenticated via
+// extractToken (param → Authorization header → cookie), so a bare
+// same-origin fetch exercises exactly the cookie path the WS handshake
+// relies on. Semantics: invalid cookie → 403 (fallback to token param);
+// valid cookie → 400 BadRequest (missing 'path') — the probe only branches
+// on 401/403, so 400 reads as "cookie auth works".
+// (曾用 /api/nf-tasks?limit=1 — 任务工具重做 2026-08-30 删除该路由后改此。)
 function probeCookieAuth() {
-  return fetch('/api/nf-tasks?limit=1', {
+  return fetch('/api/nf-file', {
     credentials: 'same-origin',
     cache: 'no-store',
     signal: AbortSignal.timeout(3000),
@@ -546,20 +572,6 @@ export function connect() {
           catch (e) { console.error('[ws] handler error for', msg.type, ':', e.message); }
         }
         setActiveView(savedView); // restore pre-message view (BUG 6)
-        return;
-      }
-
-      // ── Plan mode: intercept only agentTextDelta ───────────────────
-      // We accumulate plan text for the card, but let all other plan agent
-      // events (agentStart, agentToolStart, agentDone, etc.) flow through
-      // normal dispatch so the plan agent shows as a sub-agent with its
-      // bg-agent indicator and tool activity.
-      if (msg.agentId && state.planAgentId === msg.agentId && msg.type === 'agentTextDelta') {
-        const planList = handlers['_planAgent'];
-        if (planList) for (const h of planList.slice()) {
-          try { h(msg); }
-          catch (e) { console.error('[ws] plan handler error:', e.message); }
-        }
         return;
       }
 

@@ -13,6 +13,7 @@ import { createIconsIn } from './utils.js';
 import { t } from './i18n.js';
 import { makeReference } from './reference.js';
 import { appendRefToActiveView } from './input.js';
+import { showSidePanel } from './activityBar.js';
 
 // ── State ──────────────────────────────────────────────────────────────
 
@@ -655,6 +656,23 @@ onMessage('fileContent', (msg) => {
   }
   if (msg.error) {
     console.warn('readFile error:', msg.error);
+    // F3 (2026-08-30 作者裁定 + 方案 §8.4 F3): readFile 失败不再静默丢弃——保留
+    // 「文件不可读」骨架标签（标题 + 提示），让用户可感知而非标签无声消失。
+    // 若该路径已有打开标签（后台刷新失败），canvas 端保留原内容不覆盖。
+    pendingPinned.delete(msg.path);
+    const isBackground = pendingRefresh.delete(msg.path);
+    const filePath = msg.path;
+    window.dispatchEvent(new CustomEvent('workspace-open-item', { detail: {
+      id: `file:${filePath}`,
+      title: filePath ? filePath.split('/').pop() : filePath,
+      itemType: 'code',
+      content: '',
+      absPath: msg.absPath || filePath,
+      path: filePath,
+      error: msg.error,
+      pinned: false,
+      background: isBackground,
+    }}));
     return;
   }
   // Open in canvas
@@ -929,9 +947,9 @@ function showContextMenu(x, y, path, isDir) {
   } else {
     ctxMenuEl.innerHTML = `
       ${path ? `<button data-action="reference" class="reference">${t('explorer.reference')}</button><hr>` : ''}
-      <button data-action="new-file">New File</button>
-      <button data-action="new-folder">New Folder</button>
-      ${path ? `<hr><button data-action="delete" class="danger">Delete</button>` : ''}
+      <button data-action="new-file">${t('explorer.newFile')}</button>
+      <button data-action="new-folder">${t('explorer.newFolder')}</button>
+      ${path ? `<hr><button data-action="delete" class="danger">${t('explorer.delete')}</button>` : ''}
     `;
   }
   document.body.appendChild(ctxMenuEl);
@@ -1051,6 +1069,29 @@ function refreshDirOf(path) {
       loadDir(dirPath, children, depth);
     }
   }
+}
+
+/**
+ * Point the file explorer at `path` and reveal it (Project card → 工作区
+ * 「在文件浏览器中打开」, §3.5).
+ *
+ * Same three steps the folder-picker callback performs (persistRoot → drop
+ * expanded state → renderTree), plus revealing the Files panel: the picker
+ * runs from inside the panel, this runs from a Canvas tab where the Side Bar
+ * may be collapsed or showing another panel. showSidePanel (not a synthetic
+ * #files-btn click) because the icon toggles the bar CLOSED when Files is
+ * already the active panel.
+ * @param {string} path — absolute workspace path
+ */
+export function openExplorerAt(path) {
+  if (!path) return;
+  persistRoot(path);
+  expandedDirs.clear();
+  loadingDirs.clear();
+  pendingLoads.clear();
+  clearSelection();
+  showSidePanel('files');
+  renderTree();
 }
 
 export function refreshExplorer(sessionId) {

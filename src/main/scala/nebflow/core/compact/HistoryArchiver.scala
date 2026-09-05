@@ -24,6 +24,11 @@ trait HistoryArchiver:
    *   - before.json : raw messages before compaction
    *   - after.json  : raw messages after compaction
    *
+   * Landing spot: `<sessionsRoot>/<sessionId>/compaction/<ts>-*` — grouped by
+   * session under the data-root `sessions/` directory (2026-09-02 迁移：此前写
+   * 项目目录 `archives/<shortSid>/`，污染 repo 工作区；现对齐
+   * CompactionQueueStore 的按会话归组规范 `sessions/<sessionId>/`)。
+   *
    * Returns Right(archive) on success; callers must treat failure as non-blocking.
    */
   def archiveCompaction(
@@ -40,7 +45,9 @@ end HistoryArchiver
 
 object HistoryArchiver:
 
-  def fileSystem(root: os.Path): HistoryArchiver = new:
+  /** @param sessionsRoot the data-root `sessions/` directory (e.g.
+   *        `PathUtil.dataRoot / "sessions"` — see GatewayMain wiring). */
+  def fileSystem(sessionsRoot: os.Path): HistoryArchiver = new:
 
     def archiveCompaction(
       sessionId: String,
@@ -52,10 +59,9 @@ object HistoryArchiver:
       extra: Map[String, String]
     ): IO[Either[String, CompactionArchive]] = IO.blocking {
       try
-        val shortSid = sessionId.take(8)
         val now = Instant.now()
         val ts = formatTimestamp(now)
-        val dir = root / "archives" / shortSid
+        val dir = sessionsRoot / sessionId / "compaction"
         os.makeDir.all(dir)
 
         val prefix = s"$ts"

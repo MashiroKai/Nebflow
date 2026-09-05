@@ -200,7 +200,7 @@ class CompactionDemo extends munit.FunSuite:
     println(s"  Original messages : ${messages.size}")
     println(s"  Estimated tokens  : $estimatedTokens")
     println(s"  Auto-trigger      : ${estimatedTokens > threshold}")
-    println(s"  Archive location  : target/demo-archives/archives/demo-session/")
+    println(s"  Archive location  : target/demo-archives/demo-session/compaction/")
     println("  Modes demonstrated: FastMicroCompact (rule-driven) + Full (LLM summary)")
     println("\n  All compaction safeguards active:")
     println("    - Message order preserved")

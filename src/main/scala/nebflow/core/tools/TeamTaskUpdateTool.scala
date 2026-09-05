@@ -7,7 +7,8 @@ import io.circe.{Json, JsonObject}
 import nebflow.core.task.*
 
 /**
- * Team Manager task tool — update (spec 20260825_team-manager-task-tool-spec.md
+ * Team task tool — update. 任务工具重做 (2026-08-30): injected into every team
+ * member (progress-display).
  * §2.3). Four-state team matrix (pending → in_progress → completed / failed;
  * terminal states are no-op only) — the Manager is the owner and sets
  * `completed` directly (no user-confirmation lane; C15 constrains only the
@@ -20,7 +21,7 @@ object TeamTaskUpdateTool extends Tool:
   val name = "TeamTaskUpdate"
 
   val description =
-    """Update a team task — status, dependencies, details, or notes (Manager owner).
+    """Update a team task — status, dependencies, details, or notes (任务工具重做 2026-08-30: any team member).
 ## When to Use
 - Advance team work: mark `in_progress` when a member starts, `completed` when done (attach a `note` summarizing the outcome + artifact locations), `failed` when blocked/aborted (attach a `note` with the reason).
 - Manage dependencies: `addBlockedBy` = task IDs that must finish before this one; `addBlocks` = task IDs this one blocks; `removeBlockedBy`/`removeBlocks` undo them. Circular dependencies are detected and rejected.
@@ -31,12 +32,15 @@ object TeamTaskUpdateTool extends Tool:
 - `pending` may go directly to `completed` or `failed`.
 - Terminal states (`completed`/`failed`) cannot transition to any other state; re-open a failed task by creating a new one.
 - No needs_confirmation / dismissed / cancelled in the team domain.
+- Work through your tasks in order; when a task is fully done mark it `completed` (attach a note with the outcome), if it cannot be finished mark it `failed` (attach a note explaining why). Tasks marked [waiting-user] are human todos — never part of your own work loop.
+- Tasks auto-expire: completed/failed clear after 6h, pending/in_progress after 2d — keep the list current.
 
 ## Parameters
 - **taskId**: The team task ID to update.
 - **status**: "pending" | "in_progress" | "completed" | "failed"
 - **addBlocks / addBlockedBy / removeBlocks / removeBlockedBy**: dependency changes (arrays of team task IDs)
 - **subject / description / activeForm**: detail edits
+- **assignee**: Reassign the responsible member (the panel's team→member→task group key). A member name sets it; an empty string clears it.
 - **note**: Append a durable outcome note (what was done, key results, commit/file paths). Recommended whenever marking completed/failed.
 - **noteLinks**: Clickable references attached to the note (file paths, URLs, task IDs).
 
@@ -104,6 +108,10 @@ Set dependency:  {"taskId": "6", "addBlockedBy": ["7"]}"""
           "type" -> "array".asJson,
           "items" -> Json.obj("type" -> "string".asJson),
           "description" -> "Clickable references attached to the note (file paths, URLs, task IDs)".asJson
+        ),
+        "assignee" -> Json.obj(
+          "type" -> "string".asJson,
+          "description" -> "Reassign the responsible member (team→member→task group key); empty string clears it".asJson
         )
       ),
       "required" -> Json.arr("taskId".asJson)
@@ -159,7 +167,8 @@ Set dependency:  {"taskId": "6", "addBlockedBy": ["7"]}"""
                     removeBlocks = input("removeBlocks").flatMap(_.as[List[String]].toOption),
                     removeBlockedBy = input("removeBlockedBy").flatMap(_.as[List[String]].toOption),
                     note = input("note").flatMap(_.asString),
-                    noteLinks = input("noteLinks").flatMap(_.as[List[String]].toOption)
+                    noteLinks = input("noteLinks").flatMap(_.as[List[String]].toOption),
+                    assignee = input("assignee").flatMap(_.asString)
                   )
                   store
                     .update(scopeKey, rawTaskId, updates)

@@ -34,9 +34,8 @@ export function fmtRelTime(ts) {
 }
 
 // ── Pending mail-queue counts (per agent session) ──────────
-// Updated by mailQueued/mailDequeued WS events (flowCanvas.js) and by the
-// mailbox viewer's Cancel action (flowViewers.js). Read by flowTeams.js to
-// render the pending badge on team cards.
+// Updated by the mailbox viewer's Cancel action (flowViewers.js) and —
+// historically — by the legacy flow-canvas mail events (retired 2026-09-05).
 const mailPendingCounts = new Map(); // agentSessionId → pending count
 
 export function setMailPending(sessionId, count) {
@@ -54,22 +53,26 @@ export function teamPendingCount(agents) {
 }
 
 /** Stable overlay container inside an active flow-related tab — survives renderAll.
- *  Checks both 'teams' and 'flows' tab panes since either could be active. */
+ *  Prefers the ACTIVE canvas pane (covers flow-run / flow-map / projects tabs too),
+ *  then the teams/flows panes, then body. Anchoring to the visible pane is required:
+ *  a viewer opened from any flow-related tab must land on-screen, not tucked into a
+ *  hidden 0×0 teams pane. */
 export function overlayRoot() {
-  for (const tabId of ['teams', 'flows']) {
-    const pane = document.querySelector(`.canvas-tab-pane[data-tab-id="${tabId}"]`);
-    if (pane) {
-      let root = pane.querySelector('#flow-overlay-root');
-      if (!root) {
-        root = document.createElement('div');
-        root.id = 'flow-overlay-root';
-        root.style.position = 'absolute';
-        root.style.inset = '0';
-        root.style.pointerEvents = 'none';
-        pane.appendChild(root);
-      }
-      return root;
+  const active = document.querySelector('.canvas-tab-pane.active');
+  const candidate = active
+    || document.querySelector('.canvas-tab-pane[data-tab-id="teams"]')
+    || document.querySelector('.canvas-tab-pane[data-tab-id="flows"]');
+  if (candidate) {
+    let root = candidate.querySelector('#flow-overlay-root');
+    if (!root) {
+      root = document.createElement('div');
+      root.id = 'flow-overlay-root';
+      root.style.position = 'absolute';
+      root.style.inset = '0';
+      root.style.pointerEvents = 'none';
+      candidate.appendChild(root);
     }
+    return root;
   }
   return document.body;
 }

@@ -75,13 +75,40 @@ object ModelChainConfig:
 
 end ModelChainConfig
 
+/** One MCP server entry of the `mcpServers` map (mcp.json / nebflow.json).
+  *
+  * R3 (wait-timeout-fix, 2026-09-03 作者裁定②): `timeoutMs` — OPTIONAL
+  * per-server tool-call ceiling in milliseconds, applied to `tools/call` only
+  * (never to `initialize`/`tools/list`, which keep their fixed 30s
+  * infrastructure-probe timeout). Semantics:
+  *   - absent / null  → NO call timeout (default): the tool runs to
+  *     completion like any built-in slow tool (Bash/Read); a truly wedged
+  *     call is caught by the session-level backstops (no-progress ceiling /
+  *     TaskStuckWatcher), replacing the removed blanket 120s client hard top.
+  *   - set (e.g. 45000) → every tool of THIS server is capped at 45s; on
+  *     expiry the call fails with the same error semantics as before
+  *     (TimeoutException → ToolError "Error: timeout…" → next LLM turn).
+  * Field naming follows the existing `stuckThresholdMs` convention
+  * (milliseconds, camelCase). Decoder is derived — fully backward compatible
+  * (existing configs without the field decode unchanged).
+  */
 case class McpServerConfig(
   command: Option[String] = None,
   args: Option[List[String]] = None,
   env: Option[Map[String, String]] = None,
   url: Option[String] = None,
   headers: Option[Map[String, String]] = None,
-  enabled: Option[Boolean] = None
+  enabled: Option[Boolean] = None,
+  timeoutMs: Option[Long] = None,
+  /**
+   * stdio 子进程工作目录。插件 MCP（协议符合度批，Agent Plugins 1.0.0 §11.1-7
+   * 「默认以插件根为子进程工作目录」）：插件装载校验把 cwd 归一为
+   * ${PLUGIN_ROOT}/${PLUGIN_DATA} 占位形式，PluginMcpManager.acquire 启动前
+   * 展开为绝对路径并注入缺省（= 插件根）。全局 nebflow.json MCP 配置此前无此
+   * 字段（decoder 派生，缺省 None = 沿用进程 cwd，零行为变化）；若显式配置，
+   * 相对路径按进程 cwd 解析（ProcessBuilder 自然语义）。
+   */
+  cwd: Option[String] = None
 )
 
 object McpServerConfig:
@@ -178,18 +205,21 @@ case class NebflowServiceConfig(
     * （键名保留前端契约，语义=冻结时段，支持跨午夜）——FreezeSchedule.load
     * fail-safe 解析（非法配置视为关闭）。updateConfig 深合并保留未提及顶层键。 */
   workSchedule: Option[io.circe.Json] = None,
-  /** Bash 卡死防护阈值（#391）：bashAutoBackgroundMs（默认 300s 转后台）、
-    * bashBackgroundHardTimeoutMs（默认 30min 硬超时起点）、bashStuckWindowSec
-    * （默认 120s 停滞窗口）、bashHealthCheckIntervalSec（默认 30s 健康检查间隔，
-    * 测试/冒烟可注入小值加速验证）。None → Defaults 值。 */
-  bashAutoBackgroundMs: Option[Long] = None,
+  /** Bash 卡死防护（#26 前台直跑）：bashBackgroundHardTimeoutMs（默认 30min
+    * 硬超时起点）、bashStuckWindowSec（默认 120s 停滞窗口）、
+    * bashHealthCheckIntervalSec（默认 30s 健康检查间隔，测试/冒烟可注入小值
+    * 加速验证）——只服务显式 run_in_background 后台任务。None → Defaults 值。 */
   bashBackgroundHardTimeoutMs: Option[Long] = None,
   bashStuckWindowSec: Option[Int] = None,
   bashHealthCheckIntervalSec: Option[Int] = None,
   /** 工具结果 TTL 清理（#341，docs/Nebflow/20260820_tool-result-ttl.md）：顶层
     * toolResultTtl 节原样 JSON——ToolResultTtlConfig.load fail-safe 解析（非法
     * 配置视为关闭）。默认关（enabled=false）。request-only 清理，会话文件不动。 */
-  toolResultTtl: Option[io.circe.Json] = None
+  toolResultTtl: Option[io.circe.Json] = None,
+  /** 阶段 2a 沙箱（§G.1）：顶层 sandbox 节原样 JSON——SandboxConfig.load
+    * fail-safe 解析（absent/非法 → enabled=true 默认）。enabled=false 一键回
+    * 旧行为（代码路径保留一个版本周期，§G.1 回滚）。 */
+  sandbox: Option[io.circe.Json] = None
 )
 
 object NebflowServiceConfig:

@@ -4,10 +4,10 @@
 //   • Avatar — the NebLink login entry. Tap when logged out → opens the
 //     NebLink login modal (Logto OIDC, Authorization Code + PKCE; legacy
 //     device flow as fallback). Tap when logged in →
-//     opens the profile page on nebflow.space in a new tab.
+//     opens the account profile page (brand.getProfileUrl) in a new tab.
 //   • Side Bar panel switch buttons (Files; future panels register the same way).
 //   • (spacer)
-//   • Teams / Flows / Agents (Canvas tabs) and Settings.
+//   • Projects / Plugins (Canvas tabs) and Settings.
 //
 // This module also owns the Side Bar panel registry: the single source of
 // truth for Side Bar visibility + the active panel. Panel buttons, the header
@@ -19,10 +19,10 @@
 // stays visible when the sidebar is collapsed.
 
 import { openSettingsPanel, closeSettingsPanel, isSettingsPanelActive } from './sidebar.js';
-import { fetchNeblinkStatus, getNeblinkState, startDeviceFlow, pollDeviceFlow, cancelDeviceFlow, startPkceLogin, pollPkceState, cancelPkceFlow } from './neblink.js';
-import { openAgents } from './agentManager.js';
+import { fetchNeblinkStatus, getNeblinkState, startDeviceFlow, pollDeviceFlow, cancelDeviceFlow, startPkceLogin, pollPkceState, cancelPkceFlow, avatarViewState, noteAvatarFailure } from './neblink.js';
+import { setUpdateDot } from './updateCheck.js';
 import { createIconsIn, escapeHtml } from './utils.js';
-import { brand } from './brand.js';
+import { getProfileUrl } from './brand.js';
 import { t } from './i18n.js';
 import { key } from './branding.js';
 
@@ -35,7 +35,6 @@ export function initActivityBar() {
 
   initSidePanels();
   bindSettingsButton();
-  bindAgentsButton();
   bindAvatar();
 
   // Refresh NebLink state now and periodically (only while the page is visible)
@@ -98,6 +97,22 @@ export function setSideBarCollapsed(collapsed) {
 /** ⌘B / header #sidebar-toggle entry point. */
 export function toggleSideBar() {
   setSideBarCollapsed(!isSideBarCollapsed());
+}
+
+/**
+ * Show a Side Bar panel without the icon-button toggle semantics.
+ *
+ * onPanelButtonClick collapses the bar when you re-click the ACTIVE panel
+ * (VSCode behaviour) — correct for the icon, wrong for a programmatic
+ * "reveal this panel" (Project card → open workspace in the file explorer):
+ * revealing must never collapse the bar the user is about to read.
+ * @param {string} id — registered side panel id (e.g. 'files')
+ */
+export function showSidePanel(id) {
+  if (!sidePanels.has(id)) return;
+  activePanelId = id;
+  localStorage.setItem(LS_PANEL, id);
+  setSideBarCollapsed(false);
 }
 
 function onPanelButtonClick(id) {
@@ -221,6 +236,9 @@ function bindSettingsButton() {
     if (isSettingsPanelActive()) {
       closeSettingsPanel();
     } else {
+      // Opening settings is the green-dot clear point (updateCheck.js lights
+      // it on a silent auto check; the user has now seen the About section).
+      setUpdateDot(false);
       openSettingsPanel();
     }
   });
@@ -237,13 +255,9 @@ function observeSettingsModal() {
 }
 
 // ── Agents ───────────────────────────────────────────────
-// Agents is a Canvas tab (same pattern as Teams/Flows). The button's active
-// state is synced by agentManager.js via canvas-tab-closed / restore events.
-function bindAgentsButton() {
-  const btn = document.getElementById('agents-btn');
-  if (!btn) return;
-  btn.addEventListener('click', () => openAgents());
-}
+// Agents is a Canvas tab (same pattern as Teams/Flows). Its button click and
+// pressed state are owned by canvas.js registerCanvasPanelButton (registered
+// from agentManager.js) — the 4-state toggle machine shared with Teams/Flows.
 
 // ── Avatar / login ───────────────────────────────────────
 function bindAvatar() {
@@ -253,8 +267,13 @@ function bindAvatar() {
     const st = getNeblinkState();
     if (st.pairing) return; // pairing in progress — ignore
     if (st.loggedIn) {
-      // Logged in → open the profile page on the product domain
-      window.open(`https://${brand.domain}/profile`, '_blank');
+      // Logged in → open the account profile page. The URL comes from the
+      // brand contract (injected profileUrl, fallback in brand.js) — building
+      // it from brand.domain shipped a dead https://neblink.example/profile
+      // link, since domain is a display-only placeholder.
+      // 'noopener': the profile page must not get a window.opener handle back
+      // into the app window.
+      window.open(getProfileUrl(), '_blank', 'noopener');
     } else {
       // Not logged in → open the NebLink login modal (PKCE, device-flow fallback)
       showLoginModal();
@@ -346,6 +365,60 @@ export function openLoginModal() {
   showLoginModal();
 }
 
+// ── Popup-blocker resilience ─────────────────────────────
+// Browsers only allow window.open inside the synchronous user-gesture stack.
+// The login flow must await the gateway (PKCE / device-flow start) before it
+// knows the authorize URL, so a plain window.open after the await is blocked.
+// Pattern: reserve an about:blank window synchronously in the click handler,
+// then navigate it once the URL arrives. If the reservation itself returns
+// null (blocker), fall back to a toast with a manual glass-control link.
+
+/** @type {Window|null} */
+let reservedPopup = null;
+
+/** Reserve a blank popup. Must be called synchronously in the gesture stack. */
+function reservePopup() {
+  try {
+    reservedPopup = window.open('about:blank', '_blank');
+  } catch (e) {
+    reservedPopup = null;
+  }
+  return reservedPopup;
+}
+
+/** Navigate the reserved popup to url (or close it when url is null). */
+function navigateReserved(url) {
+  const w = reservedPopup;
+  reservedPopup = null;
+  if (!w) return false;
+  try {
+    if (url) { w.location.href = url; return true; }
+    w.close();
+  } catch (e) { /* cross-origin or already closed - ignore */ }
+  return false;
+}
+
+/** Blocked fallback: toast with a manual glass-control link to url. */
+function popupBlockedFallback(url) {
+  const toast = document.createElement('div');
+  toast.className = 'nebflow-toast nebflow-toast-info';
+  const msg = document.createElement('span');
+  msg.textContent = t('login.popupBlocked');
+  const a = document.createElement('a');
+  a.className = 'glass-control nebflow-toast-link';
+  a.href = url;
+  a.target = '_blank';
+  a.rel = 'noopener';
+  a.textContent = t('login.openPage');
+  toast.append(msg, a);
+  document.body.appendChild(toast);
+  requestAnimationFrame(() => toast.classList.add('show'));
+  setTimeout(() => {
+    toast.classList.remove('show');
+    setTimeout(() => toast.remove(), 300);
+  }, 8000);
+}
+
 /**
  * Centered glass modal driving the NebLink login.
  * States: starting → waiting (PKCE browser login) → success | error, with a
@@ -428,7 +501,10 @@ function showLoginModal() {
       if (flowInfo?.authorizeUrl) window.open(flowInfo.authorizeUrl, '_blank');
       else if (flowInfo?.verificationUri) window.open(flowInfo.verificationUri, '_blank');
     });
-    modal.querySelector('#login-retry')?.addEventListener('click', () => startFlow());
+    modal.querySelector('#login-retry')?.addEventListener('click', () => {
+      reservePopup(); // synchronous gesture reservation for the retry
+      startFlow();
+    });
   };
 
   const startFlow = async () => {
@@ -453,9 +529,9 @@ function showLoginModal() {
         flowInfo = pkce;
         st.flowState = 'waiting';
         render('waiting');
-        // Auto-open the login page; the in-modal button is the fallback
-        // in case the popup was blocked.
-        window.open(pkce.authorizeUrl, '_blank');
+        // Navigate the popup reserved in the click gesture; the in-modal
+        // button stays as a second fallback if both were blocked.
+        if (!navigateReserved(pkce.authorizeUrl)) popupBlockedFallback(pkce.authorizeUrl);
         pollPkceState(onSuccess, onError);
         return;
       }
@@ -467,7 +543,9 @@ function showLoginModal() {
       st.userCode = flowInfo.userCode;
       st.flowState = 'waiting';
       render('waiting-device', { userCode: flowInfo.userCode });
-      if (flowInfo.verificationUri) window.open(flowInfo.verificationUri, '_blank');
+      if (flowInfo.verificationUri && !navigateReserved(flowInfo.verificationUri)) {
+        popupBlockedFallback(flowInfo.verificationUri);
+      }
       pollDeviceFlow(
         flowInfo.deviceCode,
         flowInfo.interval || 3,
@@ -478,19 +556,21 @@ function showLoginModal() {
     } catch (e) {
       finished = true;
       setPairing(false);
+      navigateReserved(null); // release the reserved popup on failure
       render('error', { message: e.message || '启动登录失败' });
     }
   };
 
+  // Reserve the popup synchronously inside the click gesture stack — the
+  // async startFlow below cannot open one without being blocked.
+  reservePopup();
   startFlow();
 }
 
 // ── State refresh → avatar styling ───────────────────────
-// Error latch: remember avatar URLs that failed to load (e.g. account avatars
-// unreachable without a proxy). Without this, the 10s refresh poll re-shows
-// the broken <img> every cycle (src unchanged → no retry → broken-image icon)
-// and the onerror fallback to the logo never sticks.
-let avatarFailedUrl = '';
+// Dual-state decision (photo vs logo) + the failed-URL latch live in
+// neblink.js (avatarViewState / noteAvatarFailure) — shared with the settings
+// page avatar section so both entries can never drift apart.
 
 async function refresh() {
   await fetchNeblinkStatus();
@@ -501,22 +581,15 @@ function renderAvatar() {
   const avatar = document.getElementById('activity-avatar');
   if (!avatar) return;
   const st = getNeblinkState();
-  const loggedIn = !!st.loggedIn;
-  const avatarUrl = st.device?.avatarUrl || '';
+  const { url: validAvatarUrl, showPhoto } = avatarViewState();
   const logoEl = avatar.querySelector('.activity-avatar-logo');
   const photoEl = avatar.querySelector('.activity-avatar-photo');
   const letterEl = avatar.querySelector('.activity-avatar-letter');
 
-  // Logged in WITH an account avatar → show the photo.
-  // Logged in WITHOUT an avatar (no account data yet) → fall back to the logo.
-  // Logged out → show the logo.
-  // Filter obviously fake/placeholder URLs
-  const validAvatarUrl = avatarUrl && avatarUrl.startsWith('http') && !avatarUrl.includes('example.com') ? avatarUrl : '';
-  const showPhoto = loggedIn && validAvatarUrl && avatarFailedUrl !== validAvatarUrl;
   if (photoEl) {
     photoEl.hidden = !showPhoto;
     photoEl.onerror = () => {
-      avatarFailedUrl = validAvatarUrl; // latch: stop re-showing the broken image
+      noteAvatarFailure(validAvatarUrl); // latch: stop re-showing the broken image
       photoEl.hidden = true;
       if (logoEl) logoEl.hidden = false;
     };
@@ -526,9 +599,9 @@ function renderAvatar() {
   if (letterEl) letterEl.hidden = true; // account avatar replaces the letter
 
   // State styling: paired (logged in) / pairing / logged out.
-  avatar.classList.toggle('paired', loggedIn);
+  avatar.classList.toggle('paired', !!st.loggedIn);
   avatar.classList.toggle('pairing', !!st.pairing);
   avatar.title = st.pairing
     ? 'Pairing…'
-    : (loggedIn ? '个人主页' : '登录');
+    : (st.loggedIn ? '个人主页' : '登录');
 }

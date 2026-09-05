@@ -9,7 +9,7 @@ import { renderUserBubble, renderSystemBubble, setBusy, renderAttachmentPreview,
 import { renderMarkdownWithMath, escapeHtml, smartScroll } from './utils.js';
 import { saveMsg } from './persistence.js';
 import { saveInputDraft } from './sidebar.js';
-import { renderTaskList } from './taskList.js';
+// renderTaskList 未使用 import 已随旧任务区退役移除（2026-09-05 裁定）
 import { t } from './i18n.js';
 import { getLocale } from './i18n.js';
 import { renderQueueBar } from './chatQueue.js';
@@ -28,6 +28,15 @@ const LARGE_TEXT_THRESHOLD = 1000;
 // and the 400KB-2MB loss window is mathematically closed (a char-based cap
 // cannot guarantee this: CJK text is 3 bytes/char).
 const LARGE_TEXT_MAX_BYTES = 300_000;
+// Pure-paste inline threshold: pasting into an EMPTY (or whitespace-only)
+// input at or below this size keeps the text as the message BODY — the agent
+// receives the full content in turn 1 with zero tool calls. Above it the
+// legacy file-attachment conversion applies (rules 2/3 unchanged). Byte-based,
+// consistent with LARGE_TEXT_MAX_BYTES. 64KB = top of the sanctioned 32-64KB
+// band: covers nearly all source-file pastes, stays ~1/5 of the attachment
+// byte cap (300_000) and far under the 10MB WS frame cap, so message text,
+// drafts, input history and persisted bubbles all keep comfortable margin.
+const INLINE_PASTE_MAX_BYTES = 64 * 1024;
 
 /** Show a transient banner at the top of the viewport. */
 function showAttachmentBanner(message) {
@@ -211,22 +220,6 @@ export function cancelAskMode() {
   activeView.dom.input.placeholder = t('input.placeholder');
 }
 
-// ---------- Plan Mode ----------
-export function enterPlanMode() {
-  if (activeView.stream.planMode) return;
-  activeView.stream.planMode = true;
-  updateInputIndicator();
-  activeView.dom.input.placeholder = t('input.planPlaceholder');
-  activeView.dom.input.focus();
-}
-
-export function cancelPlanMode() {
-  if (!activeView.stream.planMode) return;
-  activeView.stream.planMode = false;
-  updateInputIndicator();
-  activeView.dom.input.placeholder = t('input.placeholder');
-}
-
 function updateAskIndicator() {
   updateInputIndicator();
 }
@@ -236,21 +229,9 @@ function updateInputIndicator() {
   const skillEl = document.getElementById('skill-indicator');
   const skillLabel = document.getElementById('skill-indicator-label');
   const compactEl = document.getElementById('compact-indicator');
-  const planEl = document.getElementById('plan-indicator');
   const input = activeView.dom.input;
-  // Plan/Ask/Skill/Compact mode — all mutually exclusive
-  if (activeView.stream.planMode) {
-    if (planEl) planEl.classList.add('show');
-    if (askEl) askEl.classList.remove('show');
-    if (skillEl) skillEl.classList.remove('show');
-    if (compactEl) compactEl.classList.remove('show');
-    input.style.paddingLeft = '';
-    if (planEl) {
-      const w = planEl.offsetWidth + 12;
-      input.style.paddingLeft = Math.max(w, 48) + 'px';
-    }
-  } else if (activeView.stream.askMode) {
-    if (planEl) planEl.classList.remove('show');
+  // Ask/Skill/Compact mode — all mutually exclusive
+  if (activeView.stream.askMode) {
     if (askEl) askEl.classList.add('show');
     if (skillEl) skillEl.classList.remove('show');
     if (compactEl) compactEl.classList.remove('show');
@@ -260,7 +241,6 @@ function updateInputIndicator() {
       input.style.paddingLeft = Math.max(w, 48) + 'px';
     }
   } else if (activeView.skillMode) {
-    if (planEl) planEl.classList.remove('show');
     if (askEl) askEl.classList.remove('show');
     if (skillEl) {
       if (skillLabel) skillLabel.textContent = activeView.skillModeSource === 'flow' ? 'FLOW' : (activeView.skillModeName || 'SKILL');
@@ -272,7 +252,6 @@ function updateInputIndicator() {
     }
     if (compactEl) compactEl.classList.remove('show');
   } else if (activeView.compactMode) {
-    if (planEl) planEl.classList.remove('show');
     if (askEl) askEl.classList.remove('show');
     if (skillEl) skillEl.classList.remove('show');
     if (compactEl) compactEl.classList.add('show');
@@ -280,7 +259,6 @@ function updateInputIndicator() {
     const w = compactEl.offsetWidth + 12;
     input.style.paddingLeft = Math.max(w, 48) + 'px';
   } else {
-    if (planEl) planEl.classList.remove('show');
     if (askEl) askEl.classList.remove('show');
     if (skillEl) skillEl.classList.remove('show');
     if (compactEl) compactEl.classList.remove('show');
@@ -324,7 +302,6 @@ export function enterCompactMode() {
   // Cancel other modes if active
   if (activeView.stream.askMode) cancelAskMode();
   if (activeView.skillMode) cancelSkillMode();
-  if (activeView.stream.planMode) cancelPlanMode();
   activeView.compactMode = true;
   updateInputIndicator();
   activeView.dom.input.placeholder = t('input.compactPlaceholder');
@@ -534,22 +511,6 @@ export function send() {
     sendWs({ type: 'skill', skillName, input: text, sessionId: v.sessionId });
     renderSkillBubble(skillName, text);
     saveMsg({type:'user', text, attachments: (v.pendingAttachments||[]).map(a=>({type:a.type,name:a.name,preview:a.preview}))});
-    input.value = '';
-    input.style.height = 'auto';
-    saveInputDraft(v.sessionId);
-    setTimeout(() => { v.isSending = false; }, 300);
-    return;
-  }
-  // If in plan mode, send as plan command
-  if (v.stream.planMode) {
-    cancelPlanMode();
-    if (!text || !state.ws || state.ws.readyState !== WebSocket.OPEN) {
-      v.isSending = false;
-      return;
-    }
-    v.isSending = true;
-    sendWs({type:'command', command:'plan', sessionId: v.sessionId, task: text});
-    renderSystemBubble('Plan mode started — analyzing...');
     input.value = '';
     input.style.height = 'auto';
     saveInputDraft(v.sessionId);
@@ -1203,6 +1164,12 @@ export function initInput(view) {
       // Large text paste → auto-convert to file attachment via existing mechanism
       const pastedText = e.clipboardData.getData('text/plain') || '';
       if (pastedText.length > LARGE_TEXT_THRESHOLD) {
+        // Pure-paste inline: empty input + paste ≤ INLINE_PASTE_MAX_BYTES →
+        // let the browser insert the text; send() then delivers it as the
+        // message content. No attachment, no Read tool call downstream.
+        if (!input.value.trim() && new Blob([pastedText]).size <= INLINE_PASTE_MAX_BYTES) {
+          return; // browser default paste — content becomes the message body
+        }
         const blob = new Blob([pastedText], { type: 'text/plain' });
         if (blob.size > LARGE_TEXT_MAX_BYTES) {
           // Above the cap: keep inline (browser default paste) + toast, never
@@ -1368,6 +1335,10 @@ export function initInput(view) {
   let voiceActive = false;
   let voiceAnchor = 0;       // position where current voice segment starts
   let voiceInterimLen = 0;   // length of interim text currently displayed
+  // Snapshot of input.value at the last voice write / user edit. The diff
+  // baseline that lets us re-anchor the live draft slot after user edits
+  // (2026-09-02 duplicate-fix; see the input listener below).
+  let voiceBaseline = '';
 
   // Shared callbacks for dictation mode.
   function makeVoiceCallbacks() {
@@ -1378,6 +1349,7 @@ export function initInput(view) {
         const after = input.value.substring(voiceAnchor + voiceInterimLen);
         input.value = before + text + after;
         voiceInterimLen = text.length;
+        voiceBaseline = input.value;
         input.focus();
         input.setSelectionRange(voiceAnchor + text.length, voiceAnchor + text.length);
         input.style.height = 'auto';
@@ -1391,6 +1363,7 @@ export function initInput(view) {
         input.value = before + insert + after;
         voiceInterimLen = 0;
         voiceAnchor = before.length + insert.length;
+        voiceBaseline = input.value;
         input.setSelectionRange(voiceAnchor, voiceAnchor);
         input.style.height = 'auto';
         input.style.height = Math.min(input.scrollHeight, 200) + 'px';
@@ -1400,6 +1373,49 @@ export function initInput(view) {
       },
     };
   }
+
+  // Keep the voice draft slot honest across user edits while the mic is live
+  // (2026-09-02 duplicate-fix). The continuous Web Speech session stays open
+  // long after the user stops talking — Chrome auto-restarts on silence — so
+  // moving the caret / deleting text between utterances shifts the value UNDER
+  // the [voiceAnchor, voiceAnchor+voiceInterimLen) arithmetic. The next
+  // interim/final then rewrote a STALE range: the same fragment landed twice,
+  // or old text resurfaced at the wrong place. Programmatic .value writes
+  // (the voice callbacks) never fire 'input', so everything reaching this
+  // listener while voiceActive is a real user edit. Cases:
+  //   1. empty slot  → the caret is the truth: next draft grows at the caret.
+  //   2. edit entirely before the slot → shift the anchor by the length delta.
+  //      Edit entirely after → anchor unchanged.
+  //   3. edit touching the draft → the machine draft is invalidated; collapse
+  //      the slot to empty at the caret. Chrome's redraft re-inserts once, at
+  //      the right place — never two copies.
+  input.addEventListener('input', () => {
+    if (!voiceActive) return;
+    if (voiceInterimLen === 0) {
+      voiceAnchor = input.selectionStart ?? input.value.length;
+    } else {
+      const oldV = voiceBaseline;
+      const newV = input.value;
+      let p = 0;
+      const min = Math.min(oldV.length, newV.length);
+      while (p < min && oldV[p] === newV[p]) p++;
+      let s = 0;
+      while (s < min - p && oldV[oldV.length - 1 - s] === newV[newV.length - 1 - s]) s++;
+      const editEndOld = oldV.length - s; // edit region in OLD coords: [p, editEndOld)
+      const delta = newV.length - oldV.length;
+      const slotEnd = voiceAnchor + voiceInterimLen;
+      if (editEndOld <= voiceAnchor) {
+        voiceAnchor += delta; // edit before the draft — draft slid by delta
+      } else if (p >= slotEnd) {
+        // edit after the draft — slot untouched
+      } else {
+        // edit inside the draft — draft invalidated
+        voiceInterimLen = 0;
+        voiceAnchor = input.selectionStart ?? input.value.length;
+      }
+    }
+    voiceBaseline = input.value;
+  });
 
   // Update voice UI — the orb reflects the state via notifyVoiceState; the
   // legacy .recording class is kept for any external consumers (no visual
@@ -1437,6 +1453,7 @@ export function initInput(view) {
         voiceAnchor++;
       }
     }
+    voiceBaseline = input.value;
     voiceBtn.classList.add('recording');
     input.classList.add('voice-dictating');
     input.focus();
@@ -1452,6 +1469,7 @@ export function initInput(view) {
       const after = input.value.substring(voiceAnchor + voiceInterimLen);
       input.value = before + after;
       voiceInterimLen = 0;
+      voiceBaseline = input.value;
     }
     // Show the "processing" orb state while the captured audio transcribes
     // (spec §9 pure-front-end addition — voiceEngine emits no processing state
@@ -1512,15 +1530,6 @@ export function initInput(view) {
         e.stopPropagation();
         setActiveView(view);
         cancelCompactMode();
-        input.focus();
-      });
-    }
-    const planCancel = document.getElementById('plan-indicator-cancel');
-    if (planCancel) {
-      planCancel.addEventListener('click', (e) => {
-        e.stopPropagation();
-        setActiveView(view);
-        cancelPlanMode();
         input.focus();
       });
     }

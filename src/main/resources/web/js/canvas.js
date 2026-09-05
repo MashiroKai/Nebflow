@@ -17,12 +17,22 @@
 import { key } from './branding.js';
 import { t } from './i18n.js';
 import { makeReference } from './reference.js';
-import { addElementRefToggle } from './viewers/shared.js';
+import { authHeaders } from './flowHelpers.js'; // Bearer token for REST withAuth (/api/canvas-tabs)
 
 const MIN_CANVAS_WIDTH = 320;
 const MAX_CANVAS_WIDTH = 1200;
 const LS_KEY = key('col_widths');
 const LS_TABS_KEY = key('canvas_tabs');
+// F1 (2026-08-30 作者裁定 + 方案 §8.4 F1): 服务端作为权威标签存档，localStorage 仅作降级缓存。
+// 根治 Safari 无痕/多窗口清空 localStorage 导致的标签重启丢失。
+const TABS_API = '/api/canvas-tabs';
+// F1: 服务端 PUT 防抖计时器——openTab/closeTab/setActiveTab/pinTab 都调 persistTabs，
+// 防抖合并连续操作成一次 PUT。
+let serverPersistTimer = null;
+// F1: 本次页面加载已派发过 readFile 的文件路径集合。restoreFromData（本地）与
+// reconcileFromServer（服务端）会先后处理同一批 file 标签，用此集合去重，
+// 避免同一文件被发两次 readFile（重复请求/重复打开）。
+const requestedFilePaths = new Set();
 
 // Track pending close timeout so openCanvas can cancel it (rapid toggle safety).
 let closeTimeout = null;
@@ -151,7 +161,8 @@ function showCanvasRefMenu(x, y, entry) {
   btn.addEventListener('click', () => {
     hideCanvasRefMenu();
     // Dynamic import to avoid a static edge back into input.js (which would
-    // close the modal→taskList→taskArchive→canvas→input cycle).
+    // close the modal→taskList→canvas→input cycle — historically via
+    // taskArchive.js, removed in the 2026-08-30 task redesign).
     import('./input.js').then(({ appendRefToActiveView }) => appendRefToActiveView(ref));
   });
   menu.appendChild(btn);
@@ -283,6 +294,7 @@ export function openCanvas(title = '') {
   const canvasTarget = computeOpenWidth();
   document.documentElement.style.setProperty('--canvas-width', canvasTarget + 'px');
   document.body.classList.add('canvas-open');
+  syncCanvasPanelButtons();
 }
 
 /** Close the canvas panel (hide visually — tabs are preserved).
@@ -308,6 +320,7 @@ export function closeCanvas() {
 
   // Remove body class — CSS animates flex-basis + opacity back to 0.
   document.body.classList.remove('canvas-open');
+  syncCanvasPanelButtons();
 
   // Tabs are preserved — closing Canvas just hides the panel visually.
   closeTimeout = setTimeout(() => {
@@ -319,6 +332,60 @@ export function closeCanvas() {
  *  @returns {boolean} */
 export function isCanvasOpen() {
   return document.body.classList.contains('canvas-open');
+}
+
+// ── Activity Bar panel buttons (Teams / Flows / Agents) ────
+// Author's 2026-08-30 spec: each button drives its Canvas tab through a
+// 4-state machine:
+//   1. tab missing              -> openFn() (creates + activates the tab)
+//   2. tab open + Canvas open + currently displayed -> closeTab (toggle off;
+//      closing the last tab keeps the existing auto-close-Canvas semantics)
+//   3. tab open + Canvas open + another tab shown   -> setActiveTab
+//   4. tab open + Canvas closed -> openCanvas + setActiveTab
+// Pressed state (.active / aria-pressed) strictly mirrors "this tab IS the
+// visible Canvas content": Canvas closed or another tab displayed -> never
+// pressed, even when the tab still exists.
+/** @type {Map<string, {buttonId: string}>} */
+const panelButtons = new Map();
+/** @type {Set<string>} buttonIds whose click handler is already bound. */
+const boundPanelButtons = new Set();
+
+/**
+ * Register an Activity Bar button as a Canvas panel toggle.
+ * @param {string} tabId    — the Canvas tab id this button controls
+ * @param {string} buttonId — the Activity Bar button element id
+ * @param {() => void} openFn — opens the panel (state 1 entry point)
+ */
+export function registerCanvasPanelButton(tabId, buttonId, openFn) {
+  if (!tabId || !buttonId || typeof openFn !== 'function') return;
+  panelButtons.set(tabId, { buttonId });
+  const btn = document.getElementById(buttonId);
+  if (btn && !boundPanelButtons.has(buttonId)) {
+    boundPanelButtons.add(buttonId);
+    btn.addEventListener('click', () => onCanvasPanelButtonClick(tabId, openFn));
+  }
+  syncCanvasPanelButtons();
+}
+
+/** @param {string} tabId @param {() => void} openFn */
+function onCanvasPanelButtonClick(tabId, openFn) {
+  if (!tabs.has(tabId)) { openFn(); return; }                       // state 1
+  if (!isCanvasOpen()) { openCanvas(); setActiveTab(tabId); return; } // state 4
+  if (activeTabId === tabId) { closeTab(tabId); return; }           // state 2 (toggle off)
+  setActiveTab(tabId);                                              // state 3
+}
+
+/** Mirror "tab is the visible Canvas content" onto the registered buttons. */
+function syncCanvasPanelButtons() {
+  if (panelButtons.size === 0) return;
+  const open = isCanvasOpen();
+  for (const [tabId, def] of panelButtons) {
+    const btn = document.getElementById(def.buttonId);
+    if (!btn) continue;
+    const on = open && tabs.has(tabId) && activeTabId === tabId;
+    btn.classList.toggle('active', on);
+    btn.setAttribute('aria-pressed', on ? 'true' : 'false');
+  }
 }
 
 // ── Tab management ─────────────────────────────────────────
@@ -459,11 +526,11 @@ export function closeTab(id) {
     entry.tabEl.remove();
     tabs.delete(id);
     for (const [k, v] of previewTabs) { if (v === id) previewTabs.delete(k); }
-    if (tabs.size === 0) {
-      // User closed the last tab — clear saved data so it doesn't restore
-      localStorage.removeItem(LS_TABS_KEY);
-      console.log('[closeTab] last tab closed — cleared localStorage');
-    }
+    // F2 (2026-08-30 作者裁定 + 方案 §8.4 F2): 关闭最后一个标签不再清空共享存档。
+    // localStorage 是全浏览器共享的，多窗口下本窗口关最后一个标签即清空全局存档，
+    // 其他仍开着的窗口重载后全部标签丢失（多窗口竞态）。语义改为「本窗口会话级清空」——
+    // 共享存档保留，重启后从服务端/本地存档恢复。persistTabs 在 tabs.size===0 时早退，
+    // 也不会向服务端写清空。
     persistTabs();
 
     if (activeTabId === id) {
@@ -474,6 +541,7 @@ export function closeTab(id) {
         closeCanvas();
       }
     }
+    syncCanvasPanelButtons();
   };
 
   // Use transitionend if supported, fallback to timeout
@@ -565,6 +633,7 @@ export function setActiveTab(id) {
   }
   document.dispatchEvent(new CustomEvent('canvas-tab-switched', { detail: { id } }));
   persistTabs();
+  syncCanvasPanelButtons();
 
   // Live-refresh file tabs on activation (debounced, dirty-safe).
   const entry = tabs.get(id);
@@ -723,10 +792,46 @@ function renderUrlPane(pane, url) {
   });
 
   pane.append(bar, iframe, hint);
+}
 
-  // #303 C5-A1: cross-origin URL page — element selection is unavailable;
-  // the toggle stays clickable and explains via toast (S4) instead of acting.
-  addElementRefToggle(pane, { mode: 'crossorigin' });
+// F3 (2026-08-30 作者裁定 + 方案 §8.4 F3): 「文件不可读」骨架标签的内容渲染。
+// 用设计系统 CSS 变量，避免硬编码颜色；纯提示文案不进 Monaco 编辑器。
+// 区分两类错误：路径非法/格式错误（path must be absolute / not a regular
+// file / exceeds）vs 文件不存在或被清理（file not found）——避免「文件明明
+// 在却说被清理」的矛盾提示。
+function readErrorHint(errorMsg) {
+  const m = (errorMsg || '').toLowerCase();
+  if (m.includes('must be absolute') || m.includes('not a regular file') ||
+      m.includes('exceeds') || m.includes('path is')) {
+    return t('canvas.unreadablePathHint');
+  }
+  return t('canvas.unreadableHint');
+}
+function renderFilePlaceholder(paneEl, errorMsg, absPath) {
+  paneEl.innerHTML = '';
+  const wrap = document.createElement('div');
+  wrap.className = 'file-unreadable';
+  wrap.style.cssText = [
+    'display:flex',
+    'flex-direction:column',
+    'gap:8px',
+    'align-items:flex-start',
+    'justify-content:center',
+    'height:100%',
+    'padding:24px',
+    'color:var(--color-text-muted)',
+    'font-size:14px',
+  ].join(';');
+  const iconRow = document.createElement('div');
+  iconRow.textContent = t('canvas.unreadableTitle');
+  iconRow.style.cssText = 'font-weight:600;color:var(--color-text);font-size:15px;';
+  const path = document.createElement('div');
+  path.textContent = absPath || '';
+  path.style.cssText = 'font-family:var(--font-mono,monospace);font-size:12px;word-break:break-all;';
+  const hint = document.createElement('div');
+  hint.textContent = `${readErrorHint(errorMsg)}${errorMsg ? ' ' + errorMsg : ''}`;
+  wrap.append(iconRow, path, hint);
+  paneEl.appendChild(wrap);
 }
 
 /** Open a file or workspace item in a Canvas tab.
@@ -757,6 +862,22 @@ export async function openWorkspaceItem(item) {
     if (!urlEntry) return;
     renderUrlPane(urlEntry.paneEl, item.url);
     urlEntry._lastRefreshAt = Date.now();
+    return;
+  }
+
+  // F3 (2026-08-30 作者裁定 + 方案 §8.4 F3): readFile 失败的「文件不可读」骨架标签。
+  if (item.error) {
+    // 已有该路径标签（后台刷新失败）→ 保留原内容，不覆盖成错误提示。
+    if (tabs.has(id)) {
+      if (!item.background) setActiveTab(id);
+      return;
+    }
+    const placeholderTitle = title || (absPath ? absPath.split('/').pop() : id);
+    const entry = openTab(id, placeholderTitle, { type: 'code', pinned: !!pinned, absPath: absPath || id });
+    if (!entry) return;
+    renderFilePlaceholder(entry.paneEl, item.error, absPath || id);
+    entry._lastRefreshAt = Date.now();
+    if (!item.background) setActiveTab(id);
     return;
   }
 
@@ -1007,6 +1128,10 @@ function persistTabs() {
       // has no renderer for type 'url'). Losing URL tabs across a reload is
       // acceptable per spec.
       if (t.type === 'url') continue;
+      // Skip retired panel tabs (2026-09-05 旧 UI 退役): the legacy
+      // Teams/Flows panels no longer exist client-side — persisting them
+      // would re-open dead panes on every reload.
+      if (t.type === 'teams' || t.type === 'flows') continue;
       serializable.push({
         id: t.id,
         title: t.title,
@@ -1016,6 +1141,8 @@ function persistTabs() {
         closable: t.closable !== false,  // default true
       });
     }
+    const payload = { v: 2, tabs: serializable };
+    // localStorage 仅作降级缓存（Safari 无痕/清空后仍可从服务端恢复）。
     localStorage.setItem(LS_TABS_KEY, JSON.stringify({
       v: 2,  // schema version — v1 (pre-unified-persistence) lacked closable
              // and skipped no-absPath tabs; restoreTabs discards non-v2 data
@@ -1023,115 +1150,202 @@ function persistTabs() {
       activeTabId: activeTabId,
     }));
     console.log('[persistTabs] saved', serializable.length, 'tabs', serializable.map(t => t.id));
+    // F1 (2026-08-30 作者裁定 + 方案 §8.4 F1): 服务端权威存档，防抖 PUT。
+    scheduleServerPersist(payload);
   } catch (e) { /* storage full — non-critical */ }
 }
 
-/** Restore tabs from localStorage on page load.
+// F1: 防抖合并连续操作成一次服务端 PUT。500ms 窗口内多次 persistTabs 只发一次。
+function scheduleServerPersist(payload) {
+  if (serverPersistTimer) clearTimeout(serverPersistTimer);
+  serverPersistTimer = setTimeout(() => {
+    serverPersistTimer = null;
+    fetch(TABS_API, {
+      method: 'PUT',
+      // withAuth (RestApiRoutes) only accepts Bearer/query token — NOT cookie.
+      // Without the header the PUT 403s and the service archive never persists.
+      headers: { 'Content-Type': 'application/json', ...authHeaders() },
+      body: JSON.stringify(payload),
+    })
+      .then((r) => { if (!r.ok) console.warn('[canvas-tabs] server persist failed:', r.status); })
+      .catch((e) => console.warn('[canvas-tabs] server persist error:', e));
+  }, 500);
+}
+
+// F1: 解析并校验 v2 标签存档（兼容 localStorage JSON 字符串与服务端对象）。
+// 不合法 → null（交由服务端/回退路径处理，不清空本地缓存）。
+function parseTabsData(raw) {
+  try {
+    const data = typeof raw === 'string' ? JSON.parse(raw) : raw;
+    if (!data || data.v !== 2 || !Array.isArray(data.tabs)) return null;
+    return data;
+  } catch (e) {
+    return null;
+  }
+}
+
+// 打开一个面板标签（无 absPath），并派发 canvas-tab-restore 让对应模块渲染内容。
+// 先全部钉住再回退未钉的，避免批量恢复时 openTab 的预览替换行为互相顶掉。
+function openPanelTab(tab) {
+  const entry = openTab(tab.id, tab.title, {
+    type: tab.type || 'generic',
+    closable: true,
+    pinned: true,
+  });
+  if (!entry) return null;
+  if (tab.pinned === false) {
+    entry.pinned = false;
+    entry.tabEl.classList.add('preview');
+    previewTabs.set(previewKeyOf(entry.type, entry.absPath), entry.id);
+  }
+  window.dispatchEvent(new CustomEvent('canvas-tab-restore', {
+    detail: { id: tab.id, type: tab.type }
+  }));
+  return entry;
+}
+
+// 批量发送文件标签的 readFile 恢复请求（WS 未就绪时延迟到 onopen）。
+// 这是 restoreFromData / reconcileFromServer 共用的文件恢复通道。
+// 用 requestedFilePaths 去重：本地恢复已派发的路径，服务端 reconcile 不再重复发。
+function sendFileRestoreRequests(fileTabs) {
+  if (fileTabs.length === 0) return;
+  // 只发送「未派发过」且「标签尚未打开」的文件，避免本地/服务端双通道重复请求。
+  const fresh = fileTabs.filter((t) => (
+    !requestedFilePaths.has(t.absPath) && !tabs.has(`file:${t.absPath}`)
+  ));
+  if (fresh.length === 0) return;
+  fresh.forEach((t) => requestedFilePaths.add(t.absPath));
+  // Defer WS import to avoid circular dependency.
+  Promise.all([import('./ws.js'), import('./state.js')]).then(([{ sendWs, onReconnect }, stateMod]) => {
+    const state = stateMod.default;
+    const doSend = () => {
+      fresh.forEach((tab) => {
+        // Mark this path as pinned so explorer's fileContent handler picks it up.
+        window.dispatchEvent(new CustomEvent('explorer-preload-pinned', {
+          detail: { path: tab.absPath, pinned: tab.pinned !== false }
+        }));
+        sendWs({ type: 'pop.readFile', path: tab.absPath, sessionId: undefined });
+      });
+      console.log('[restoreTabs] sent readFile for', fresh.length, 'file tabs');
+    };
+    // Page-load race: restore runs before the first WS connect, and sendWs
+    // silently drops messages when the socket isn't OPEN. If not connected
+    // yet, defer to the first onopen via onReconnect.
+    if (state.ws && state.ws.readyState === WebSocket.OPEN) {
+      doSend();
+    } else {
+      console.log('[restoreTabs] WS not open — deferring file tab restore to onopen');
+      let sent = false;
+      onReconnect(() => {
+        if (sent) return;
+        sent = true;
+        doSend();
+      });
+    }
+  });
+}
+
+// 从一份合法的 v2 tabs 数据执行两阶段恢复（面板同步 + 文件异步）。
+// 返回「是否恢复了任何内容」（有面板/文件标签即 true）。
+function restoreFromData(data) {
+  if (!data || !data.tabs || data.tabs.length === 0) return false;
+  // Retired panel types (legacy Teams/Flows, 2026-09-05) never re-open —
+  // old server/localStorage archives may still carry them; drop silently.
+  const panelTabs = data.tabs.filter(t => !t.absPath && t.type !== 'flow-run' &&
+    t.type !== 'teams' && t.type !== 'flows');
+  const fileTabs = data.tabs.filter(t => t.absPath);
+  console.log('[restoreTabs] restoring', panelTabs.length, 'panel tabs,', fileTabs.length, 'file tabs');
+
+  // Phase 1 — panel tabs, synchronous.
+  const unpinnedRestored = [];
+  for (const tab of panelTabs) {
+    const entry = openPanelTab(tab);
+    if (!entry) continue;
+    if (tab.pinned === false) unpinnedRestored.push(entry);
+  }
+  for (const entry of unpinnedRestored) {
+    entry.pinned = false;
+    entry.tabEl.classList.add('preview');
+    previewTabs.set(previewKeyOf(entry.type, entry.absPath), entry.id);
+  }
+  if (unpinnedRestored.length > 0) persistTabs();
+
+  // Phase 2 — file tabs, async via readFile WS.
+  if (fileTabs.length > 0) sendFileRestoreRequests(fileTabs);
+  if (data.activeTabId) setActiveTab(data.activeTabId);
+  return true;
+}
+
+// F1: 服务端数据到达后，与服务端对齐（服务端权威）。只补开本地缺的标签，不强制关闭
+// 本地已开的（避免破坏用户当前打开的标签）；刷新本地缓存。
+function reconcileFromServer(serverData) {
+  if (!serverData || !Array.isArray(serverData.tabs) || serverData.tabs.length === 0) return false;
+  const present = new Set([...tabs.keys()]);
+  const panelToOpen = [];
+  const fileToOpen = [];
+  for (const tab of serverData.tabs) {
+    if (tab.type === 'flow-run') continue;
+    // Retired legacy panel tabs (Teams/Flows) — server archive may still
+    // carry them; never re-open (2026-09-05 旧 UI 退役).
+    if (tab.type === 'teams' || tab.type === 'flows') continue;
+    if (present.has(tab.id)) continue;  // 已开（本地恢复成功）→ 跳过
+    if (tab.absPath) fileToOpen.push(tab);
+    else panelToOpen.push(tab);
+  }
+  let openedAny = false;
+  for (const tab of panelToOpen) {
+    if (!openPanelTab(tab)) continue;
+    openedAny = true;
+  }
+  if (fileToOpen.length > 0) {
+    sendFileRestoreRequests(fileToOpen);
+    openedAny = true;
+  }
+  // 刷新本地缓存（服务端权威）。
+  try {
+    localStorage.setItem(LS_TABS_KEY, JSON.stringify({
+      v: 2, tabs: serverData.tabs, activeTabId,
+    }));
+  } catch (e) { /* storage full — non-critical */ }
+  return openedAny;
+}
+
+/** Restore tabs on page load — server persisted (authoritative), falls back to localStorage.
+ *  F1 (2026-08-30 作者裁定 + 方案 §8.4 F1): 服务端存档为权威，localStorage 仅降级缓存。
  *  Two-phase restore:
  *  1. Panel tabs without absPath (Teams/Flows) are re-opened synchronously —
  *     they re-render from live state via the 'canvas-tab-restore' event.
  *  2. File tabs are re-opened asynchronously by sending a readFile WS message
  *     for each absPath. The existing fileContent → workspace-open-item
  *     pipeline handles rendering.
- *  Finally the last active tab is re-activated. */
+ *  Finally the last active tab is re-activated.
+ *  Returns a Promise<boolean> — true if any tab was restored; false means main.js
+ *  should fall back to opening the Teams panel. */
 export function restoreTabs() {
-  try {
-    const raw = localStorage.getItem(LS_TABS_KEY);
-    console.log('[restoreTabs] localStorage:', raw);
-    if (!raw) {
-      console.log('[restoreTabs] no saved tabs — nothing to restore');
-      return false;
-    }
-    const data = JSON.parse(raw);
-    // Schema guard: discard pre-v2 leftovers (saved by the old version that
-    // skipped no-absPath tabs, often an empty/incomplete list). The next
-    // persistTabs call re-saves in the current format.
-    if (data.v !== 2) {
-      console.log('[restoreTabs] legacy/incomplete schema (v=' + data.v + ') — discarding');
-      localStorage.removeItem(LS_TABS_KEY);
-      return false;
-    }
-    if (!data.tabs || data.tabs.length === 0) {
-      console.log('[restoreTabs] saved tab list is empty — nothing to restore');
-      return false;
-    }
+  return new Promise((resolve) => {
+    let didLocal = false;
+    try {
+      const raw = localStorage.getItem(LS_TABS_KEY);
+      console.log('[restoreTabs] localStorage:', raw);
+      const localData = parseTabsData(raw);
+      didLocal = restoreFromData(localData);
+    } catch (e) { /* corrupt data — ignore */ }
 
-    // flow-run tabs are runtime instances — never restore them (defensive;
-    // persistTabs already excludes them, but old saved data may not).
-    const panelTabs = data.tabs.filter(t => !t.absPath && t.type !== 'flow-run');
-    const fileTabs = data.tabs.filter(t => t.absPath);
-    console.log('[restoreTabs] restoring', panelTabs.length, 'panel tabs,', fileTabs.length, 'file tabs');
-
-    // Phase 1 — panel tabs, synchronous.
-    // openTab replaces the current preview tab when opening a new unpinned
-    // tab, so open everything as pinned first, then revert the unpinned
-    // ones to preview state afterwards.
-    const unpinnedRestored = [];
-    for (const tab of panelTabs) {
-      const entry = openTab(tab.id, tab.title, {
-        type: tab.type || 'generic',
-        // All tabs are closable in the current design. Ignore any stale
-        // closable:false saved by older versions (e.g. the Teams tab before
-        // it became closeable) — otherwise the restored tab silently loses
-        // its close button and openTeams() won't rebuild it.
-        closable: true,
-        pinned: true,
-      });
-      if (!entry) continue;
-      if (tab.pinned === false) unpinnedRestored.push(entry);
-      // Let flowCanvas render the pane content for this panel tab.
-      window.dispatchEvent(new CustomEvent('canvas-tab-restore', {
-        detail: { id: tab.id, type: tab.type }
-      }));
-    }
-    for (const entry of unpinnedRestored) {
-      entry.pinned = false;
-      entry.tabEl.classList.add('preview');
-      // last unpinned tab in each group becomes that group's preview tab
-      previewTabs.set(previewKeyOf(entry.type, entry.absPath), entry.id);
-    }
-    if (unpinnedRestored.length > 0) persistTabs();
-
-    // Phase 2 — file tabs, async via readFile WS.
-    // Defer WS import to avoid circular dependency.
-    if (fileTabs.length > 0) {
-      Promise.all([import('./ws.js'), import('./state.js')]).then(([{ sendWs, onReconnect }, stateMod]) => {
-        const state = stateMod.default;
-        const sendFileRequests = () => {
-          fileTabs.forEach((tab) => {
-            // Send readFile to get content — the response triggers the
-            // explorer's fileContent handler which opens the tab.
-            // For binary files (images, PDFs) the viewer fetches via /api/nf-file.
-            // Mark this path as pinned so explorer's fileContent handler picks it up
-            window.dispatchEvent(new CustomEvent('explorer-preload-pinned', {
-              detail: { path: tab.absPath, pinned: tab.pinned !== false }
-            }));
-            sendWs({ type: 'pop.readFile', path: tab.absPath, sessionId: undefined });
-          });
-          console.log('[restoreTabs] sent readFile for', fileTabs.length, 'file tabs');
-          // Re-activate the last active tab if it already exists (panel tab).
-          // File tabs activate themselves as their readFile responses arrive.
-          if (data.activeTabId) setActiveTab(data.activeTabId);
-        };
-        // Page-load race: restoreTabs runs before the first WS connect, and
-        // sendWs silently drops messages when the socket isn't OPEN. If not
-        // connected yet, defer to the first onopen via onReconnect.
-        if (state.ws && state.ws.readyState === WebSocket.OPEN) {
-          sendFileRequests();
+    // F1 (2026-08-30 作者裁定 + 方案 §8.4 F1): 服务端为权威存档。无论本地是否恢复成功，
+    // 都拉取服务端并合并/覆盖——这是根治 Safari 无痕/多窗口清空 localStorage 导致标签
+    // 重启丢失的关键：存档介质移出浏览器、落到服务端磁盘。服务端 404/网络失败时回退本地。
+    fetch(TABS_API, { headers: { ...authHeaders() } })
+      .then((r) => (r.ok ? r.json() : null))
+      .then((serverData) => {
+        const parsed = parseTabsData(serverData);
+        if (parsed && parsed.tabs.length > 0) {
+          const didServer = reconcileFromServer(parsed);
+          resolve(didLocal || didServer);
         } else {
-          console.log('[restoreTabs] WS not open — deferring file tab restore to onopen');
-          let sent = false;
-          onReconnect(() => {
-            if (sent) return;
-            sent = true;
-            sendFileRequests();
-          });
+          // 无服务端存档（404/空）或网络失败 → 回退本地结果。
+          resolve(didLocal);
         }
-      });
-    } else if (data.activeTabId) {
-      setActiveTab(data.activeTabId);
-    }
-    return true;
-  } catch (e) { /* corrupt data — ignore */ }
-  return false;
+      })
+      .catch(() => resolve(didLocal));
+  });
 }

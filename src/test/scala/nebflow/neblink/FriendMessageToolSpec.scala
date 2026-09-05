@@ -23,12 +23,12 @@ class FriendMessageToolSpec extends CatsEffectSuite:
   // ── 解析三态（纯函数，直接测 resolveFriend） ─────────────
 
   private val friends = List(
-    FriendSummary(userId = "u1", neblinkId = "lin@example.com", name = "林小满"),
-    FriendSummary(userId = "u2", neblinkId = "wangxuan", name = "王选"),
-    FriendSummary(userId = "u3", neblinkId = "linlin@example.com", name = "林小林")
+    FriendSummary(userId = "u1", username = "lin@example.com", displayName = "林小满"),
+    FriendSummary(userId = "u2", username = "wangxuan", displayName = "王选"),
+    FriendSummary(userId = "u3", username = "linlin@example.com", displayName = "林小林")
   )
 
-  test("resolveFriend level 1: neblinkId exact match (case-insensitive)") {
+  test("resolveFriend level 1: username exact match (case-insensitive)") {
     val hit = FriendMessageTool.resolveFriend("LIN@EXAMPLE.COM", friends)
     assertEquals(hit.map(_.userId), Right("u1"))
   }
@@ -49,16 +49,16 @@ class FriendMessageToolSpec extends CatsEffectSuite:
     val err = FriendMessageTool.resolveFriend("林小", friends).left.toOption
     assert(err.isDefined, "ambiguous prefix must fail")
     val msg  = err.get.message
-    val hits = friends.filter(_.name.startsWith("林小"))
-    hits.foreach { f => assert(msg.contains(f.name), s"candidates must list ${f.name}") }
-    assert(msg.contains("NebLink ID"), "must suggest using the exact NebLink ID")
+    val hits = friends.filter(_.displayName.startsWith("林小"))
+    hits.foreach { f => assert(msg.contains(f.displayName), s"candidates must list ${f.displayName}") }
+    assert(msg.contains("username"), "must suggest using the exact username")
   }
 
   test("resolveFriend zero hit lists available friends") {
     val err = FriendMessageTool.resolveFriend("不存在", friends).left.toOption
     assert(err.isDefined)
     assert(err.get.message.contains("not found"))
-    friends.foreach { f => assert(err.get.message.contains(f.name), s"available list must contain ${f.name}") }
+    friends.foreach { f => assert(err.get.message.contains(f.displayName), s"available list must contain ${f.displayName}") }
   }
 
   test("resolveFriend empty query rejected") {

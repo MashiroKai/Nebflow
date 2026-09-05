@@ -128,6 +128,9 @@ object PopTool extends Tool:
   val description: String =
     """Opens a file or URL in the Canvas panel as a new tab. Files are displayed using the appropriate viewer (Monaco editor for code, markdown renderer, image viewer, PDF viewer, etc.). URLs are displayed in an embedded iframe.
 
+## Visual reporting workflow
+When you complete a significant task, present results visually with Pop — humans process visual information far more efficiently than long paragraphs. Use a professional tool via Bash to generate the output as a file (SVG preferred — scales perfectly and adapts to dark mode), then Pop it: charts/plots → matplotlib/gnuplot/plotly; flowcharts & architecture diagrams → graphviz; UML → plantuml/mermaid; timing → wavedrom. Anti-pattern: never hand-draw diagrams with ASCII art or raw SVG coordinates. Pop the result to Canvas immediately after generating it; for complex reports write a self-contained .html file with embedded charts and Pop that.
+
 ## When to use
 
 - You just created or modified a file and want to show it to the user.

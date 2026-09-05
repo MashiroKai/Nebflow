@@ -70,7 +70,11 @@ function shortModel(ref) {
 }
 
 // ── API ────────────────────────────────────────────────────
-async function fetchAgents() {
+// Fetchers + the skills/flows write-back are exported: plugins.js (the
+// agents entry's successor page, 2026-09-04) reuses the exact same data
+// paths instead of duplicating contracts. Single write path for
+// subscriptions stays here.
+export async function fetchAgents() {
   try {
     const resp = await fetch('/api/agents', { headers: authHeaders() });
     if (!resp.ok) return [];
@@ -79,7 +83,7 @@ async function fetchAgents() {
   } catch (e) { return []; }
 }
 
-async function fetchAgentDetail(name) {
+export async function fetchAgentDetail(name) {
   try {
     const resp = await fetch(`/api/agents/${encodeURIComponent(name)}`, { headers: authHeaders() });
     if (!resp.ok) return null;
@@ -87,7 +91,7 @@ async function fetchAgentDetail(name) {
   } catch (e) { return null; }
 }
 
-async function fetchAgentModel(name) {
+export async function fetchAgentModel(name) {
   try {
     const resp = await fetch(`/api/agents/${encodeURIComponent(name)}/model`, { headers: authHeaders() });
     if (!resp.ok) return null;
@@ -95,7 +99,7 @@ async function fetchAgentModel(name) {
   } catch (e) { return null; }
 }
 
-async function fetchSkills() {
+export async function fetchSkills() {
   try {
     const resp = await fetch('/api/skills', { headers: authHeaders() });
     if (!resp.ok) return [];
@@ -104,7 +108,7 @@ async function fetchSkills() {
   } catch (e) { return []; }
 }
 
-async function fetchFlows() {
+export async function fetchFlows() {
   try {
     const resp = await fetch('/api/flows/list', { headers: authHeaders() });
     if (!resp.ok) return [];
@@ -114,7 +118,7 @@ async function fetchFlows() {
 }
 
 /** PUT agent skills/flows config (persisted to agent.json). */
-async function setAgentSkillsFlows(name, field, value) {
+export async function setAgentSkillsFlows(name, field, value) {
   try {
     await fetch(`/api/agents/${encodeURIComponent(name)}`, {
       method: 'PUT',
@@ -161,8 +165,7 @@ function renderAgentCard(a) {
 
 /** Open (or focus) the Agents Canvas tab and render the agent list. */
 export function openAgents() {
-  const btn = document.getElementById('agents-btn');
-  btn?.classList.add('active');
+  /* Button pressed state is owned by canvas.js registerCanvasPanelButton. */
   /* Canvas closed + tab already exists: expand the panel before activating
      (same invisible-click bug as Teams/Flows, 2026-08-29). */
   if (!isCanvasOpen()) openCanvas();
@@ -295,8 +298,11 @@ async function populateModelTag(name) {
 
 // ── Canvas detail tab ──────────────────────────────────────
 
-/** Open a Canvas tab showing the agent detail page. */
-async function openAgentDetail(name, pin = false) {
+/** Open a Canvas tab showing the agent detail page.
+ *  Exported for plugins.js: the plugins page's subscription-map rows deep-
+ *  link here for full per-agent editing (tools / prompt / flows). The detail
+ *  tab is per-agent content, NOT the sealed standalone list entry. */
+export async function openAgentDetail(name, pin = false) {
   const tabId = `agent:${name}`;
   openTab(tabId, name, { type: 'agent', pinned: pin });
   const pane = getTabPane(tabId);
@@ -408,30 +414,30 @@ function renderAgentDetail(pane, name, detail, model, presetData) {
       </div>
 
       <div class="agent-detail-section">
-        <div class="agent-detail-label">Tools</div>
+        <div class="agent-detail-label">${t('agentManager.tools')}</div>
         ${toolsHtml}
       </div>
 
       <div class="agent-detail-section">
-        <div class="agent-detail-label">Skills</div>
+        <div class="agent-detail-label">${t('agentManager.skills')}</div>
         <div class="agent-detail-sub-hint">已选 skill 的 name+description 注入此 agent 的 system prompt</div>
         <div class="agent-detail-skills-grid" id="agent-detail-skills-grid"><span class="agent-detail-chips-loading">Loading…</span></div>
       </div>
 
       <div class="agent-detail-section">
-        <div class="agent-detail-label">Flows</div>
+        <div class="agent-detail-label">${t('agentManager.flows')}</div>
         <div class="agent-detail-sub-hint">此 agent 可通过 FlowTrigger(flow=…) 触发的 flow</div>
         <div class="agent-detail-flows-grid" id="agent-detail-flows-grid"><span class="agent-detail-chips-loading">Loading…</span></div>
       </div>
 
       <div class="agent-detail-section" id="agent-detail-prompt-section">
         <div class="agent-detail-label-row">
-          <span class="agent-detail-label">System Prompt</span>
-          <button class="agent-detail-prompt-toggle" id="agent-detail-prompt-toggle" title="View source">${CODE_ICON_SVG}</button>
+          <span class="agent-detail-label">${t('agentManager.systemPrompt')}</span>
+          <button class="agent-detail-prompt-toggle" id="agent-detail-prompt-toggle" title="${t('agentManager.viewSource')}">${CODE_ICON_SVG}</button>
         </div>
         <div class="agent-detail-prompt-render canvas-md-viewer" id="agent-detail-prompt-render"></div>
         <textarea class="agent-detail-prompt-edit" data-agent="${esc(name)}" style="display:none">${esc(prompt)}</textarea>
-        <button class="agent-detail-save-btn" id="agent-detail-save-prompt" style="display:none">Save</button>
+        <button class="agent-detail-save-btn" id="agent-detail-save-prompt" style="display:none">${t('agentManager.save')}</button>
       </div>
     </div>`;
 
@@ -462,7 +468,7 @@ function renderAgentDetail(pane, name, detail, model, presetData) {
   const setPromptMode = (src) => {
     sourceMode = src;
     promptToggle.innerHTML = src ? EYE_ICON_SVG : CODE_ICON_SVG;
-    promptToggle.title = src ? 'View rendered' : 'View source';
+    promptToggle.title = src ? t('agentManager.viewRendered') : t('agentManager.viewSource');
     promptRender.style.display = src ? 'none' : '';
     promptEdit.style.display = src ? '' : 'none';
     saveBtn.style.display = src ? '' : 'none';
@@ -571,16 +577,15 @@ export function isAgentsTabOpen() {
   return hasTab('agents');
 }
 
-// Keep the Activity Bar button's active state in sync with the tab lifecycle
-// (same pattern as Teams/Flows in flowCanvas.js).
-document.addEventListener('canvas-tab-closed', (e) => {
-  if (e.detail?.id === 'agents') {
-    document.getElementById('agents-btn')?.classList.remove('active');
-  }
-});
+// 2026-09-04 作者裁定：独立「智能体」面板入口移除，#agents-btn 由 plugins.js
+// 接管（改挂「插件」页）。本模块保留为封存实现：
+//   • openAgents / renderAgentManager / openAgentDetail 函数全部保留（隐藏
+//     入口 ≠ 删除），openAgentDetail 被插件页订阅映射行深链复用；
+//   • 不再 registerCanvasPanelButton——活动栏按钮的按下态同步归 plugins.js；
+//   • canvas-tab-restore 仍监听 'agents'：旧会话持久化的智能体标签页刷新后
+//     照常渲染（保留函数只藏入口，不悬挂已存在的标签页）。
 window.addEventListener('canvas-tab-restore', (e) => {
   if (e.detail?.id === 'agents') {
-    document.getElementById('agents-btn')?.classList.add('active');
     renderAgentManager();
   }
 });

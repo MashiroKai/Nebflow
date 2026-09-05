@@ -8,14 +8,13 @@ $ProgressPreference = "SilentlyContinue"
 $ProductName = "Nebflow"
 $LowerName = "nebflow"
 $CosBucket = "nebflow-releases-1411212853"
-$GhOrg = "MashiroKai"
-$GhRepo = "Nebflow"
 $HomeDir = ".nebflow"
 $ConfigFile = "nebflow.json"
 $WrapperName = "nebflow"
 $CosBaseCn = "https://$CosBucket.cos.ap-nanjing.myqcloud.com"
-$GhRepoUrl = "https://github.com/$GhOrg/$GhRepo"
-$GhApiUrl = "https://api.github.com/repos/$GhOrg/$GhRepo"
+# 仓库已转 private（#29，2026-09-01）：GitHub Releases 未认证下载 404——
+# Nebflow jar 下载/版本解析统一走 COS（单一源）。第三方依赖
+# （Temurin JDK/Git for Windows/ripgrep）与仓库 private 无关，仍走各自公共源。
 
 # Parse flags
 $Channel = if ($env:CHANNEL) { $env:CHANNEL } else { "stable" }
@@ -36,15 +35,8 @@ if ($Channel -eq "beta") {
             $BetaVersion = (Invoke-WebRequest -Uri "$CosBaseCn/latest-beta-version.txt" -UseBasicParsing -TimeoutSec 10).Content.Trim()
         } catch {}
         if (-not $BetaVersion) {
-            try {
-                $releases = Invoke-RestMethod -Uri "$GhApiUrl/releases" -TimeoutSec 15
-                $beta = $releases | Where-Object { $_.prerelease -eq $true } | Select-Object -First 1
-                if ($beta) { $BetaVersion = $beta.tag_name -replace '^v', '' }
-            } catch {}
-        }
-        if (-not $BetaVersion) {
-            Write-Host "ERROR: Could not find a beta release." -ForegroundColor Red
-            Write-Host "       Visit ${GhRepoUrl}/releases to check availability." -ForegroundColor Yellow
+            Write-Host "ERROR: Could not find a beta release (COS version file unreachable)." -ForegroundColor Red
+            Write-Host "       Check $CosBaseCn/latest-beta-version.txt" -ForegroundColor Yellow
             exit 1
         }
         $Version = $BetaVersion
@@ -58,14 +50,8 @@ if ($Channel -eq "beta") {
             $LatestVersion = (Invoke-WebRequest -Uri "$CosBaseCn/latest-version.txt" -UseBasicParsing -TimeoutSec 10).Content.Trim()
         } catch {}
         if (-not $LatestVersion) {
-            try {
-                $release = Invoke-RestMethod -Uri "$GhApiUrl/releases/latest" -TimeoutSec 15
-                $LatestVersion = $release.tag_name -replace '^v', ''
-            } catch {}
-        }
-        if (-not $LatestVersion) {
-            Write-Host "ERROR: Could not resolve latest version." -ForegroundColor Red
-            Write-Host "       Visit ${GhRepoUrl}/releases to check availability." -ForegroundColor Yellow
+            Write-Host "ERROR: Could not resolve latest version (COS version file unreachable)." -ForegroundColor Red
+            Write-Host "       Check $CosBaseCn/latest-version.txt" -ForegroundColor Yellow
             exit 1
         }
         $Version = $LatestVersion
@@ -75,7 +61,6 @@ if ($Channel -eq "beta") {
 $InstallDir = if ($env:INSTALL_DIR) { $env:INSTALL_DIR } else { "$env:LOCALAPPDATA\$ProductName" }
 $JarName = "$LowerName-assembly-$Version.jar"
 $CosUrl = "$CosBaseCn/$JarName"
-$GhUrl = "$GhRepoUrl/releases/download/v$Version/$JarName"
 
 Write-Host ""
 Write-Host "  ███╗   ██╗███████╗██████╗ ███████╗██╗      ██████╗ ██╗    ██╗" -ForegroundColor Cyan
@@ -354,25 +339,15 @@ if (Test-Path $jarPath) {
         }
     }
 
-    if ($Region -eq "cn") {
-        # China: COS first (fast domestic CDN), GitHub fallback
-        try {
-            Invoke-WebRequest -Uri $CosUrl -OutFile $jarPath -UseBasicParsing -TimeoutSec 30
-        } catch {
-            Write-Host "       COS unavailable, trying GitHub..." -ForegroundColor Yellow
-            Invoke-WebRequest -Uri $GhUrl -OutFile $jarPath -UseBasicParsing -TimeoutSec 120
-        }
-    } else {
-        # Global: GitHub first (fast via public release repo), COS fallback
-        try {
-            Invoke-WebRequest -Uri $GhUrl -OutFile $jarPath -UseBasicParsing -TimeoutSec 30
-        } catch {
-            Write-Host "       GitHub unavailable, trying COS mirror..." -ForegroundColor Yellow
-            Invoke-WebRequest -Uri $CosUrl -OutFile $jarPath -UseBasicParsing -TimeoutSec 120
-        }
+    # #29: 仓库 private 后 GitHub Releases 未认证 404——COS 单一源
+    try {
+        Invoke-WebRequest -Uri $CosUrl -OutFile $jarPath -UseBasicParsing -TimeoutSec 120
+    } catch {
+        Write-Host "ERROR: Download failed from COS. Check $CosUrl" -ForegroundColor Red
+        exit 1
     }
     $size = [math]::Round((Get-Item $jarPath).Length / 1MB, 1)
-    Write-Host "       Downloaded ($size MB) from $($Region) source" -ForegroundColor Green
+    Write-Host "       Downloaded ($size MB) from COS" -ForegroundColor Green
 }
 
 # --- Install ripgrep (rg) for search support ---

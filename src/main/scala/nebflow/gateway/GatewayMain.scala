@@ -14,7 +14,7 @@ import nebflow.core.mcp.*
 import nebflow.core.scheduler.{ScheduledTaskService, ScheduledTaskStore}
 import nebflow.core.skill.SkillService
 import nebflow.core.task.FileTaskStore
-import nebflow.core.telemetry.TelemetryReporter
+import nebflow.core.project.{ProjectRuntimeRegistry, ProjectStore}
 import nebflow.core.tools.{FriendMessageTool, RemoteExecutor, ToolLoader, ToolRegistry}
 import nebflow.llm.*
 import nebflow.neblink.*
@@ -322,6 +322,10 @@ object GatewayMain extends IOApp.Simple:
                             nebflow.core.compact.ToolResultTtlConfig.load(config.toolResultTtl)
                           val toolResultTtlRef: Ref[IO, nebflow.core.compact.ToolResultTtlConfig] =
                             Ref.unsafe(toolResultTtlCfg)
+                          // 阶段 2a 沙箱（§G.1）：fail-safe 加载 + 启动 probe 一次缓存
+                          // （§A.4-4）。probe 阻塞 <1s；失败默认 fail-closed。
+                          val sandboxCfg = nebflow.core.sandbox.SandboxConfig.load(config.sandbox)
+                          nebflow.core.sandbox.SandboxRuntime.init(sandboxCfg)
                       logger.info(s"nebflow v${nebflow.Version.string}") *>
                         (if !isConfigured then logger.info("No LLM provider configured — open the web UI to set up")
                          else presetLabel match
@@ -350,7 +354,10 @@ object GatewayMain extends IOApp.Simple:
                                   contextWindow = contextWindow,
                                   agentLibrary = agentLibrary,
                                   taskStore = FileTaskStore,
-                                  historyArchiver = nebflow.core.compact.HistoryArchiver.fileSystem(os.pwd),
+                                  // 压缩报告落盘（2026-09-02 迁移）：sessions/<sessionId>/compaction/
+                                  // （按会话归组，对齐 CompactionQueueStore 规范）——不再写项目目录 archives/
+                                  historyArchiver =
+                                    nebflow.core.compact.HistoryArchiver.fileSystem(PathUtil.dataRoot / "sessions"),
                                   fileLockManager = fileLockMgr,
                                   sessionModelOverrides = sessionModelOverrides,
                                   providerRegistry = registry,
@@ -361,20 +368,15 @@ object GatewayMain extends IOApp.Simple:
                                   freezeScheduleRef = freezeScheduleRef,
                                   toolResultTtlRef = toolResultTtlRef,
                                   bashResilience = nebflow.shared.BashResilienceConfig(
-                                    autoBackgroundMs = config.bashAutoBackgroundMs
-                                      .getOrElse(nebflow.shared.Defaults.BashAutoBackgroundMs),
                                     hardTimeoutMs = config.bashBackgroundHardTimeoutMs
                                       .getOrElse(nebflow.shared.Defaults.BashBackgroundHardTimeoutMs),
                                     stuckWindowSec =
                                       config.bashStuckWindowSec.getOrElse(nebflow.shared.Defaults.BashStuckWindowSec),
                                     healthCheckIntervalSec = config.bashHealthCheckIntervalSec
                                       .getOrElse(nebflow.shared.Defaults.BgHealthCheckIntervalSec)
-                                  )
+                                  ),
+                                  sandboxConfig = sandboxCfg
                                 )
-                                // Initialize telemetry (opt-out aware, fire-and-forget on failure)
-                                val telemetryIO = TelemetryReporter.create().handleErrorWith { e =>
-                                  logger.warn(s"Telemetry init failed: ${e.getMessage}").as(None)
-                                }
                                 // P2: spawn the global InteractionHub and publish its ref.
                                 // Every agent's permission/AskUser requests and every frontend
                                 // interaction answer route through this single actor.
@@ -383,13 +385,75 @@ object GatewayMain extends IOApp.Simple:
                                     hubRef =>
                                       sharedResources.interactionHubRef.set(Some(hubRef))
                                   }
-                                hubSetup *> telemetryIO.flatMap { telemetry =>
-                                  val sharedResourcesWithTelemetry = sharedResources.copy(telemetry = telemetry)
+                                // 任务 TTL 启动扫描（任务工具重做 2026-08-30）：扫
+                                // tasks/ 全目录（session+team）物理删除过期任务——
+                                // 判据=磁盘持久化的 createdAt/completedAt，重启后
+                                // 仍生效。Best-effort，永不阻塞启动。
+                                val taskTtlSweep: IO[Unit] =
+                                  FileTaskStore.purgeAllExpired().attempt.flatMap {
+                                    case Right(_) => IO.unit
+                                    case Left(e) =>
+                                      logger.warn(s"Task TTL sweep failed: ${e.getMessage}").void
+                                  }
+                                // V2 (2026-09-03) 孤儿 delegate 启动收殓：崩溃时在飞的
+                                // SubTask/Delegate 任务——部分结果抢救 + 父会话 F2 队列
+                                // 通知（correlationId 幂等）+ 任务记录终态化。挂在启动
+                                // 装配点（任何会话 actor spawn 之前 → 队列文件单写者），
+                                // 多次重启幂等（终态化后 findRunningTasks 不再命中）。
+                                // Best-effort：永不阻塞启动。
+                                val subagentCrashSweep: IO[Unit] =
+                                  nebflow.agent.SubAgentStartupRecovery
+                                    .recoverOrphans(sharedResources.subAgentTaskStore, sessionStore)
+                                    .attempt.flatMap {
+                                      case Right(ids) if ids.nonEmpty =>
+                                        logger.info(s"Subagent crash sweep: ${ids.size} orphan task(s) recovered").void
+                                      case _ => IO.unit
+                                    }
+                                // wsHub 提前到 startupMount 之前创建：启动挂载的项目
+                                // engine 需要持有一个真实广播 wsSend（节点/分发器 agent
+                                // 事件 + nodeUpdated/nodeCompleted 等 Flow Map 事件）。
+                                // 此前 wsHub 在挂载后才构造 → mountAll 传 None → engine
+                                // wsSendFn 为 no-op，节点/分发器事件永远到不了前端
+                                // （#28 可观测缺口根因之一）。wsHub 本身无依赖，提前
+                                // 构造零副作用（无连接时 broadcast 空转）。
+                                val wsHub = new WsHub()
+                                // #37 启动自动挂载（0b 契约「阶段 1 补自动挂载」）：磁盘已有
+                                // 项目 → 幂等挂载（rootSessionId = 顶层 Nebula 主会话 id，
+                                // 启动期无会话上下文直接传顶层根）。免重启后人工重挂——
+                                // 与 ProjectCreate 幂等挂载（运行时主动路径）互补。
+                                val startupMount: IO[Unit] =
+                                  for
+                                    rootSid <- sessionStore
+                                      .listSessionsByAgent("Nebula")
+                                      .map(_.headOption.map(_.id).getOrElse(""))
+                                    projects <- ProjectStore.list()
+                                    mounted <- ProjectRuntimeRegistry.mountAll(
+                                      projects,
+                                      rootSid,
+                                      actorSystem,
+                                      sharedResources,
+                                      // #28 可观测接线：启动挂载传入真实广播 wsSend——
+                                      // engine 的节点/分发器事件经 wsHub 到达前端 subagent
+                                      // 面板（此前 None → no-op，事件静默丢失）。
+                                      Some((json: io.circe.Json) => wsHub.broadcast(json))
+                                    )
+                                    _ <- if mounted > 0 then
+                                      logger.info(
+                                        s"Startup mount: $mounted project(s) mounted (rootSessionId=$rootSid)"
+                                      )
+                                    else IO.unit
+                                  yield ()
+                                // #28 阶段 0：Project Flow Map 终态节点 TTL 扫描
+                                // （24h 显示消失 → 移归档 + WS nodeRemoved；Node
+                                // 运行本身不设超时）。周期给所有已挂载 ProjectActor
+                                // 发 TtlTick；无项目时空转。
+                                val projectTtlScanner: IO[Unit] =
+                                  nebflow.core.project.ProjectActor.ttlScanner(30.seconds).start.void
+                                hubSetup *> taskTtlSweep *> subagentCrashSweep *> startupMount *> projectTtlScanner *> {
+                                  val sharedResourcesLive = sharedResources
                                   val sessionService = new SessionService(sessionStore)
                                   val agentService = new AgentService(agentLibrary)
                                   val configService = ConfigService
-
-                                  val wsHub = new WsHub()
 
                                   // --- Bridge Manager (plugins: telegram, etc.) ---
                                   val bridgeInjectRef: Ref[IO, Option[(String, String, Option[String]) => IO[Unit]]] =
@@ -540,7 +604,7 @@ object GatewayMain extends IOApp.Simple:
                                         nebflow.dropbox.DropboxService.create(neblinkService, wsHub).flatMap {
                                           dropboxService =>
                                             val sharedResourcesWithBridge =
-                                              sharedResourcesWithTelemetry.copy(
+                                              sharedResourcesLive.copy(
                                                 bridgeManager = Some(bridgeManager),
                                                 neblinkService = Some(neblinkService),
                                                 friendService = clientWithFriends.map(_._2),
@@ -666,10 +730,6 @@ object GatewayMain extends IOApp.Simple:
                                                       _ <- logger.info(
                                                         s"access URL: $baseUrl (token in ~/.nebflow/auth.json)"
                                                       )
-                                                      // Telemetry: app_start
-                                                      _ <- telemetry.fold(IO.unit)(
-                                                        _.record("app_start", io.circe.JsonObject.empty)
-                                                      )
                                                       // Register bridge as WsHub listener for agent events
                                                       _ <- wsHub.register(json =>
                                                         val sessionId =
@@ -705,6 +765,28 @@ object GatewayMain extends IOApp.Simple:
                                                           interval = nebflow.shared.Defaults.FreezeCheckIntervalSec.seconds
                                                         )
                                                         .start
+                                                      // --- P0（2026-08-30）：skip 持久化恢复 ---
+                                                      // 重启前「跳过本次」若未到期（skipUntil > now），恢复进内存
+                                                      // ref——WS/REST 的 freezeState.skipped 随即可见，输入栏不再
+                                                      // 重新冻结；已过期则清理盘上残留（跳过非永久，下一段照常）。
+                                                      _ <- nebflow.core.schedule.FreezeSchedule
+                                                        .loadSkipUntil(nebflow.core.PathUtil.dataRoot)
+                                                        .flatMap {
+                                                          case Some(t) if t > System.currentTimeMillis() =>
+                                                            sharedResourcesWithDaemon.freezeSkipUntilRef.set(Some(t)) *>
+                                                              logger.info(
+                                                                s"Freeze skip restored from disk (skipUntil=$t)"
+                                                              )
+                                                          case Some(_) =>
+                                                            nebflow.core.schedule.FreezeSchedule
+                                                              .persistSkip(nebflow.core.PathUtil.dataRoot, None)
+                                                              .handleErrorWith(e =>
+                                                                logger.warn(
+                                                                  s"Failed to clean expired freeze skip: ${e.getMessage}"
+                                                                )
+                                                              )
+                                                          case None => IO.unit
+                                                        }
                                                       _ <-
                                                         if GatewayConfig.noBrowser ||
                                                           nebflow.core.HeadlessMode.enabled
@@ -753,7 +835,6 @@ object GatewayMain extends IOApp.Simple:
                                                       // FS2 streams keep burning tokens during JVM drain.
                                                       nebflow.llm.LlmInterface.cancelAllInflight() *>
                                                       neblinkClient.traverse_(_.logout) *>
-                                                      telemetry.fold(IO.unit)(_.shutdown) *>
                                                       mcpManager.stopAll() *>
                                                       releaseBackend
                                                   )
@@ -762,7 +843,7 @@ object GatewayMain extends IOApp.Simple:
                                         } // end neblinkService setup block
                                     } // end neblinkService
                                   } // end bridgeManager
-                                } // end telemetry.flatMap
+                                } // end main setup scope
                               } // end fileLockMgr
                             } // end dispatcher.use
                           } // end fileTracker

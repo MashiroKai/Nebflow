@@ -6,8 +6,8 @@ import io.circe.{Json, JsonObject}
 import nebflow.core.task.*
 
 /**
- * Team Manager task tool — create (spec 20260825_team-manager-task-tool-spec.md
- * §2.2). Owner = the team's Manager (isTeamLead injection); the team name is
+ * Team task tool — create. 任务工具重做 (2026-08-30): injected into EVERY team
+ * member (progress-display semantics); the team name is
  * taken from ToolContext.teamName (team-agent spawn injection) — there is NO
  * teamName parameter, so a tool call can never write to another team (no
  * cross-team write surface, spec §2.2). Non-team contexts are hard-rejected.
@@ -28,13 +28,15 @@ object TeamTaskCreateTool extends Tool:
 - **subject**: Brief, actionable title in imperative form (e.g. "Fix focus chain memory leak")
 - **description**: What needs to be done (e.g. "Identify the retain cycle in ReminderListView and add a regression test")
 - **activeForm** (optional): Present continuous form shown in the panel (e.g. "Fixing focus chain memory leak")
+- **assignee** (optional): The member responsible for this task — group key for the panel's team→member→task layout. Defaults to YOU (the caller) when omitted; a Manager assigns work to a member by passing their name.
 - **blockedBy** (optional): IDs of team tasks that must complete BEFORE this one can start (declared dependency at creation; cycle-detected)
 
 ## Semantics
 - The task starts with status `pending`. Use TeamTaskUpdate to advance it.
 - Team name is inferred from your context (you belong to exactly one team) — no cross-team writes possible.
 - Returns the new task ID, e.g. `Task created: Fix focus chain memory leak (ID: 7)`.
-- Changes are broadcast to the team panel via `teamTaskListUpdate`."""
+- Changes are broadcast to the team panel via `teamTaskListUpdate`.
+- Tasks auto-expire: completed/failed clear after 6h, pending/in_progress after 2d — create only tasks that will be worked within that horizon."""
 
   val inputSchema = JsonObject.fromIterable(
     List(
@@ -51,6 +53,10 @@ object TeamTaskCreateTool extends Tool:
         "activeForm" -> Json.obj(
           "type" -> "string".asJson,
           "description" -> "Present continuous form shown in the panel".asJson
+        ),
+        "assignee" -> Json.obj(
+          "type" -> "string".asJson,
+          "description" -> "Member responsible for this task (team→member→task group key). Defaults to you (the caller) when omitted".asJson
         ),
         "blockedBy" -> Json.obj(
           "type" -> "array".asJson,
@@ -80,10 +86,20 @@ object TeamTaskCreateTool extends Tool:
           case None => IO.pure(Left(ToolError("No task store available")))
           case Some(store) =>
             val scopeKey = TaskStore.teamScopeKey(teamName)
+            // Member attribution (作者规格④ team→成员→任务): explicit
+            // `assignee` wins; default = the caller itself (progress-display
+            // semantics — a member creates and owns its own task; a Manager
+            // assigns by passing the target member's name).
+            val assignee = input("assignee")
+              .flatMap(_.asString)
+              .map(_.trim)
+              .filter(_.nonEmpty)
+              .orElse(ctx.agentDef.map(_.name).filter(_.nonEmpty))
             val createInput = TaskCreateInput(
               subject = input("subject").flatMap(_.asString).getOrElse(""),
               description = input("description").flatMap(_.asString).getOrElse(""),
-              activeForm = input("activeForm").flatMap(_.asString)
+              activeForm = input("activeForm").flatMap(_.asString),
+              assignee = assignee
             )
             val blockedBy = input("blockedBy").flatMap(_.as[List[String]].toOption).getOrElse(Nil)
             for

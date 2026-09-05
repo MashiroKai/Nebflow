@@ -19,6 +19,13 @@
   --amber-glow: 255 180 90;
   --amber-dark: 255 168 60;
 
+  /* Unified panel design (20260830 spec §6.2, author-ruled counter colors):
+     flow counter yellow; --accent-agent-light deepens the sapphire badge in
+     the light theme only (dark keeps --sapphire, 0825 frozen). Triplet form
+     so rgb(var(--token) / alpha) tint composition works like --sapphire.
+     (2026-09-05 旧 UI 退役：黄色 flow 计数徽章变量已随旧徽章删除。) */
+  --accent-agent-light: 70 99 156;
+
   /* Glass surface — light: transparent, deep frost */
   --glass-bg: rgba(255, 255, 255, 0.55);
   --glass-blur: 24px;
@@ -159,7 +166,8 @@
 .canvas-close-btn,
 .reminder-create-btn,
 .cfg-eye-btn,
-.agent-detail-prompt-toggle {
+.agent-detail-prompt-toggle,
+.project-archive-btn {
   border: 1px solid transparent;
   transition: background 0.15s, color 0.15s, border-color 0.15s,
               box-shadow 0.15s, opacity 0.15s, transform 0.1s;
@@ -174,7 +182,8 @@
 .canvas-close-btn:hover,
 .reminder-create-btn:hover,
 .cfg-eye-btn:hover,
-.agent-detail-prompt-toggle:hover {
+.agent-detail-prompt-toggle:hover,
+.project-archive-btn:hover {
   background: var(--glass-control-bg-hover);
   -webkit-backdrop-filter: blur(var(--glass-control-blur)) saturate(1.2);
   backdrop-filter: blur(var(--glass-control-blur)) saturate(1.2);

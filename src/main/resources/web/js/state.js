@@ -94,6 +94,12 @@ export default {
   frozenSessions: new Set(),
   // serverConfig echo of the workSchedule node: { enabled, segments:[{start,end}] }
   workSchedule: null,
+  // serverConfig echo of the global freeze state node (现象2 契约 2026-08-30):
+  // { enabled, frozen, skipped, nextChangeAt, segments } — authoritative for the
+  // input-bar freeze state machine. skipped=true means the current freeze window
+  // was voided by skipFreeze and must stay un-frozen even after a reload (the
+  // in-memory skipFrozenUntil mirror is lost on refresh — this is the durable source).
+  freezeState: null,
   // Error recovery (frozen-error-recovery plan §4): per-session state for the
   // amber "error family". sessionId -> { reason, retryCount, detail, resumeAt,
   // escalation? }. Distinct from frozenSessions (which is the park set for both
@@ -103,9 +109,11 @@ export default {
   // serverConfig echo of the stt node: { sttConfigured, endpoint?, model? } — the
   // apiKey is NEVER echoed (server-side only). null/absent = free browser path.
   stt: null,
-  // Tool result TTL echo (#341): { enabled, ttlMinutes, keepRecent, minChars } —
-  // fetched via getToolResultTtl, refreshed by toolResultTtl/toolResultTtlSaved
-  // frames. null = not fetched yet (panel renders backend defaults).
+  // Tool result TTL echo (#341): { enabled, ttlMinutes, keepRecent } — fetched
+  // via getToolResultTtl, refreshed by toolResultTtl/toolResultTtlSaved
+  // frames. null = not fetched yet (panel renders backend defaults). An old
+  // backend echo may still carry minChars (removed by author ruling
+  // 2026-09-01); the panel simply ignores unknown fields.
   toolResultTtl: null,
 
   // Timestamp of the last textDelta/thinkingDelta received (ms).
@@ -135,8 +143,8 @@ export default {
   // and consumed by the done handler to reconstruct correct per-bubble messages.
   sessionPendingAiMessages: {},
 
-  // Task list cache per session
-  sessionTasks: {},
+  // sessionTasks / teamTasks 已随旧任务区退役移除（2026-09-05 10:54 裁定：
+  // 任务面板 = 纯 Flow Map 节点视图，节点缓存在 taskList.js nodeCache 自包含）。
 
   // Agent panel
   agentsData: [],
@@ -169,7 +177,11 @@ export default {
   serverVersion: '',
 
   serverThinking: null,
-  mcpServers: [],
+
+  // App update state (updateCheck.js) — fed by updateCheckResult; drives the
+  // settings-btn green dot and the About-section echo after a re-render.
+  updateAvailable: false,
+  latestVersion: '',
 
   // Batch selection (like VS Code Explorer)
   batchMode: false,
@@ -178,7 +190,6 @@ export default {
 
   // Skill list (from server)
   skills: [],
-  flows: [],
 
   // Per-session thinking buffer: sessionId -> accumulated thinking text
   sessionThinkingBuffers: {},
@@ -222,11 +233,6 @@ export default {
   updateSafetyToggle: null,
   COMPACT_THRESHOLD: 0.90,
   updateHeaderModelInfo: null,
-
-  // Plan mode: agentId of the active plan agent (null when not in plan mode)
-  planAgentId: null,
-  // Plan mode: sessionId that triggered plan mode
-  planSessionId: null,
 
   // Persistent notifications (survive session switches)
   notifications: [],

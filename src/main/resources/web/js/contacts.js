@@ -1,5 +1,6 @@
 // contacts.js — Contacts panel (friends-messaging-spec §3.1).
-// Search-by-NebLink-ID (submit-style, no incremental search), 「新的朋友」
+// Search by Username or email (submit-style, no incremental search; 含 @ 判
+// 邮箱、否则 Username——双识别语义上移服务端，前端单框单 q)，「新的朋友」
 // request inbox (incoming + outgoing), friend list. Badges: pending incoming
 // count on #contacts-btn (pure-badge model, [U3]).
 import { t } from './i18n.js';
@@ -8,7 +9,7 @@ import { getNeblinkState } from './neblink.js';
 import { setActivityBadge, openLoginModal } from './activityBar.js';
 import { onMessage } from './ws.js';
 import * as api from './friendsApi.js';
-import { openChatWithFriend } from './messages.js';
+import { openChatWithFriend, fmtTime } from './messages.js';
 import { showPopupMenu } from './contextMenu.js';
 
 let friends = [];
@@ -16,9 +17,26 @@ let incoming = [];
 let outgoing = [];
 let requestsExpanded = false;
 let lastSearchAt = 0;
-let searchResult = null;   // null | {found:false} | {found:true,...}
-let verifyFor = null;      // neblinkId awaiting verification-note input
-let sentTo = new Set();    // neblinkIds with a pending outgoing request (this load)
+let searchResult = null;   // null | {found:false} | 契约搜索结果（归一内部形态，含 relation_status）
+let verifyFor = null;      // username awaiting verification-note input
+let sentTo = new Set();    // usernames sent this session（乐观回显；服务端态 = relation_status）
+let searching = false;     // search in flight → button loading state
+let searchQ = '';          // preserved across re-renders (panel rebuilds on state change)
+
+// ── 红点语义（0904 批次，微信常识）：未看过的请求才亮。展开「新的朋友」
+// 即视为已看（与查看后即清的微信口径一致），新 friend_event 再亮；同意/
+// 拒绝后条目离开 pending，自然熄灭。seen 集合持久化 localStorage。
+const LS_SEEN_REQ = 'fm_seen_requests';
+function loadSeenRequests() {
+  try { return new Set(JSON.parse(localStorage.getItem(LS_SEEN_REQ) || '[]')); } catch { return new Set(); }
+}
+function saveSeenRequests(set) {
+  try { localStorage.setItem(LS_SEEN_REQ, JSON.stringify([...set])); } catch { /* non-critical */ }
+}
+function unseenIncomingCount() {
+  const seen = loadSeenRequests();
+  return incoming.filter(r => r.status === 'pending' && !seen.has(r.requestId)).length;
+}
 
 // #290 §1.2 WeChat-style blacklist: blocked friends stay in the list, greyed.
 // The server (neblink-server list_friendships) currently excludes blocked
@@ -66,8 +84,8 @@ async function refresh() {
 }
 
 function updateBadge() {
-  const n = incoming.filter(r => r.status === 'pending').length;
-  setActivityBadge('contacts-btn', loggedIn() ? n : 0, t('contacts.ariaRequests', { n }));
+  const n = loggedIn() ? unseenIncomingCount() : 0;
+  setActivityBadge('contacts-btn', n, t('contacts.ariaRequests', { n }));
 }
 
 // ── Render ───────────────────────────────────────────────
@@ -110,8 +128,9 @@ function render() {
 
   body.appendChild(buildSearch());
 
-  // 「新的朋友」entry
-  const pendingN = incoming.filter(r => r.status === 'pending').length;
+  // 「新的朋友」entry — badge counts UNSEEN pending requests (WeChat-style:
+  // viewing the inbox clears the dot; a new request re-lights it).
+  const pendingN = unseenIncomingCount();
   const nf = el('div', 'fm-nf-entry');
   nf.setAttribute('role', 'button');
   nf.setAttribute('tabindex', '0');
@@ -122,7 +141,16 @@ function render() {
   if (pendingN > 0) nf.appendChild(el('span', 'fm-row-badge', String(pendingN)));
   nf.appendChild(el('span', 'fm-nf-chevron', ''));
   nf.querySelector('.fm-nf-chevron').innerHTML = `<i data-lucide="${requestsExpanded ? 'chevron-down' : 'chevron-right'}"></i>`;
-  const toggleReq = () => { requestsExpanded = !requestsExpanded; render(); };
+  const toggleReq = () => {
+    requestsExpanded = !requestsExpanded;
+    if (requestsExpanded) {
+      // Viewing the inbox = seen (WeChat-style red-dot semantics).
+      const seen = loadSeenRequests();
+      for (const r of incoming) if (r.status === 'pending') seen.add(r.requestId);
+      saveSeenRequests(seen);
+    }
+    render();
+  };
   nf.addEventListener('click', toggleReq);
   nf.addEventListener('keydown', (e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); toggleReq(); } });
   body.appendChild(nf);
@@ -226,24 +254,33 @@ function buildSearch() {
   input.type = 'text';
   input.placeholder = t('contacts.searchPlaceholder');
   input.autocomplete = 'off';
+  input.value = searchQ; // preserved across panel re-renders
+  input.addEventListener('input', () => { searchQ = input.value; });
   const btn = el('button', 'glass-control fm-search-btn', t('contacts.search'));
   const submit = async () => {
     const q = input.value.trim();
-    if (!q) return;
+    if (!q || searching) return;
     const now = Date.now();
     if (now - lastSearchAt < 1000) return; // anti-crawl min interval
     lastSearchAt = now;
     verifyFor = null;
+    searching = true;
+    render(); // button → loading state (input value survives via searchQ)
     try {
-      searchResult = await api.lookupUser(q);
-    } catch { searchResult = { found: false }; }
+      searchResult = await api.searchUser(searchQ.trim());
+    } catch { searchResult = { found: false }; }  // 422/429/网络/窗口期 404 → 未找到卡兜底
+    searching = false;
     render();
   };
   btn.addEventListener('click', submit);
   input.addEventListener('keydown', (e) => { if (e.key === 'Enter') { e.preventDefault(); submit(); } });
+  if (searching) {
+    btn.disabled = true;
+    btn.textContent = t('contacts.searching');
+  }
   wrap.appendChild(input);
   wrap.appendChild(btn);
-  if (searchResult) wrap.appendChild(buildResultCard());
+  if (searchResult && !searching) wrap.appendChild(buildResultCard());
   return wrap;
 }
 
@@ -251,49 +288,126 @@ function buildResultCard() {
   const card = el('div', 'fm-result-card');
   const r = searchResult;
   if (!r.found) {
+    // 未找到态：主文案 + 常识提示（对方可能未设置用户名 / 输入有误）
     card.appendChild(el('div', 'fm-empty', t('contacts.notFound')));
+    card.appendChild(el('div', 'fm-empty-hint', t('contacts.notFoundHint')));
     return card;
   }
-  card.appendChild(avatarEl(r, 36));
+  // 契约 v1.0 搜索结果（friendsApi 归一后内部扁平形态）：username 可空、
+  // displayName 永不空（服务端 fallback 链镜像）、relation_status 六态。
+  card.appendChild(avatarEl({ avatarUrl: r.avatar, name: r.displayName }, 36));
   const meta = el('div', 'fm-row-meta');
-  meta.appendChild(el('div', 'fm-row-name', r.name || r.neblinkId));
-  meta.appendChild(el('div', 'fm-row-sub', r.neblinkId));
+  meta.appendChild(el('div', 'fm-row-name', r.displayName || r.username));
+  meta.appendChild(el('div', 'fm-row-sub', r.username));
   card.appendChild(meta);
 
-  if (r.self) {
+  // ── relation_status 六态 → 按钮态（契约 §4.1 逐态映射；值缺失按 addable
+  // 兜底，窗口期/载荷残缺时不渲染成死卡）。可加性判断以服务端 relation_status
+  // 为唯一事实源（本端不再做好友/在途推断）；唯一保留的本地乐观态是本次
+  // 会话刚发出的请求（sentTo），服务端列表刷新前给出即时反馈。
+  const rs = r.relation_status || 'addable';
+  const username = r.username || '';
+
+  if (rs === 'self') {
     card.appendChild(el('span', 'fm-status-text', t('contacts.self')));
     return card;
   }
-  const alreadyFriend = friends.some(f => f.neblinkId.toLowerCase() === (r.neblinkId || '').toLowerCase());
-  const pending = sentTo.has((r.neblinkId || '').toLowerCase());
-  if (alreadyFriend || pending) {
-    card.appendChild(el('span', 'fm-status-text', t('contacts.pendingVerification')));
+
+  if (rs === 'already_friends') {
+    // 已好友 → 「发消息」（复用好友行同款 openChatWithFriend 链路）
+    const msgBtn = el('button', 'glass-control fm-msg-btn', t('contacts.sendMessage'));
+    msgBtn.addEventListener('click', () => {
+      const fr = friends.find(f => f.userId === r.userId)
+        || { userId: r.userId, neblinkId: username, name: r.displayName, avatarUrl: r.avatar };
+      openChatWithFriend(fr);
+    });
+    card.appendChild(msgBtn);
     return card;
   }
-  if (verifyFor === r.neblinkId) {
-    // Verification-note input (WeChat-style, ≤50 chars, optional)
+
+  if (rs === 'outgoing_pending' || (rs === 'addable' && sentTo.has(username.toLowerCase()))) {
+    // 我方出站待处理 → 「等待对方处理」（sentTo 为乐观回显，非服务端态）
+    card.appendChild(el('span', 'fm-status-text', t('contacts.outgoingPending')));
+    return card;
+  }
+
+  if (rs === 'incoming_pending') {
+    // 对方入站待我处理 → 「回应请求」accept/decline（requestId 从已加载的
+    // 请求列表取；列表落后时后台 refresh，按钮态随重渲染回归）
+    const rq = incoming.find(x => x.from?.userId === r.userId && (x.status || 'pending') === 'pending');
+    if (!rq) { refresh(); return card; }
+    card.appendChild(el('span', 'fm-status-text', t('contacts.respondRequest')));
+    const accept = el('button', 'glass-control fm-req-accept', t('contacts.accept'));
+    accept.addEventListener('click', async () => {
+      accept.disabled = true;
+      try { await api.acceptFriendRequest(rq.requestId); } catch { /* keep */ }
+      searchResult = null;
+      await refresh();
+      window.dispatchEvent(new CustomEvent('fm-friends-changed'));
+    });
+    const decline = el('button', 'fm-req-decline', t('contacts.decline'));
+    decline.addEventListener('click', async () => {
+      decline.disabled = true;
+      try { await api.declineFriendRequest(rq.requestId); } catch { /* keep */ }
+      searchResult = null;
+      await refresh();
+    });
+    const btns = el('span', 'fm-req-btns');
+    btns.appendChild(accept);
+    btns.appendChild(decline);
+    card.appendChild(btns);
+    return card;
+  }
+
+  if (rs === 'blocked_by_me') {
+    // 我拉黑对方（调用者私有信息可安全显示）→ 禁用添加 + 「取消拉黑」入口
+    card.appendChild(el('span', 'fm-status-text fm-blocked-tag', t('contacts.blocked')));
+    const ub = el('button', 'glass-control fm-unblock-btn', t('contacts.unblock'));
+    ub.addEventListener('click', async () => {
+      ub.disabled = true;
+      try {
+        await api.unblockFriend(r.userId);
+        saveBlockedCache(loadBlockedCache().filter(b => b.userId !== r.userId));
+      } catch (err) { window.__showToast?.(err.message || t('messages.networkError'), 'error'); }
+      searchResult = null;
+      await refresh();
+      window.dispatchEvent(new CustomEvent('fm-friends-changed'));
+    });
+    card.appendChild(ub);
+    return card;
+  }
+
+  // addable（默认兜底）：无关系/可发起（含被对方拉黑，不可区分 §5.4）——
+  // 微信式验证消息流（≤50 字，可选，Enter 直发）
+  if (verifyFor === username) {
     const box = el('div', 'fm-verify-box');
     const input = document.createElement('input');
     input.className = 'fm-verify-input';
     input.maxLength = 50;
     input.placeholder = t('contacts.verifyMessagePlaceholder');
     const sendBtn = el('button', 'glass-control', t('messages.send'));
-    sendBtn.addEventListener('click', async () => {
+    const doSend = async () => {
       sendBtn.disabled = true;
       try {
-        await api.sendFriendRequest(r.neblinkId, input.value.trim());
-        sentTo.add(r.neblinkId.toLowerCase());
+        await api.sendFriendRequest(username, input.value.trim());
+        sentTo.add(username.toLowerCase());
       } catch { /* keep state */ }
       verifyFor = null;
       render();
-    });
+    };
+    sendBtn.addEventListener('click', doSend);
+    // Enter 直发 + 取消回退（微信常识：附言后点发送；不想发可退出）
+    input.addEventListener('keydown', (e) => { if (e.key === 'Enter') { e.preventDefault(); doSend(); } });
+    const cancelBtn = el('button', 'glass-control fm-verify-cancel', t('contacts.cancelVerify'));
+    cancelBtn.addEventListener('click', () => { verifyFor = null; render(); });
     box.appendChild(input);
     box.appendChild(sendBtn);
+    box.appendChild(cancelBtn);
     card.appendChild(box);
     setTimeout(() => input.focus(), 0);
   } else {
     const addBtn = el('button', 'glass-control fm-add-btn', t('contacts.addFriend'));
-    addBtn.addEventListener('click', () => { verifyFor = r.neblinkId; render(); });
+    addBtn.addEventListener('click', () => { verifyFor = username; render(); });
     card.appendChild(addBtn);
   }
   return card;
@@ -320,8 +434,10 @@ function requestRow(rq, dir) {
   row.appendChild(avatarEl(person || {}, 36));
   const meta = el('div', 'fm-row-meta');
   meta.appendChild(el('div', 'fm-row-name', person?.name || person?.neblinkId || ''));
+  // 验证消息优先展示（微信常识），无附言回退号；行尾另附请求时间
   meta.appendChild(el('div', 'fm-row-sub', rq.note || person?.neblinkId || ''));
   row.appendChild(meta);
+  if (rq.createdAt) row.appendChild(el('span', 'fm-req-time', fmtTime(rq.createdAt)));
 
   const status = rq.status || 'pending';
   if (status !== 'pending') {
@@ -330,7 +446,7 @@ function requestRow(rq, dir) {
     return row;
   }
   if (dir === 'out') {
-    row.appendChild(el('span', 'fm-status-text', t('contacts.pendingVerification')));
+    row.appendChild(el('span', 'fm-status-text', t('contacts.outgoingPending')));
     return row;
   }
   const accept = el('button', 'glass-control fm-req-accept', t('contacts.accept'));

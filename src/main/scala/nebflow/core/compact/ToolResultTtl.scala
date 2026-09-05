@@ -24,7 +24,10 @@ import nebflow.shared.*
  *   4. it falls outside the keepRecent window of compactable results — this
  *      also makes mid-turn safety constructive: the current turn's results
  *      are always the most recent ones
- *   5. its content exceeds minChars
+ *
+ * (Author ruling 2026-09-01: the minChars size floor was removed — small
+ * results cost nothing to keep, and once a result is old + out-of-window
+ * there is no reason to exempt it. Cleaning is purely age ∧ window.)
  *
  * Scope: re-runnable tools only (same set as FastMicroCompact) — the
  * placeholder tells the model it can re-run the tool. Mail/SubTask results
@@ -81,7 +84,6 @@ object ToolResultTtl:
               case tr: ContentBlock.ToolResult
                   if candidateSet.contains(tr.toolUseId) &&
                     !keepSet.contains(tr.toolUseId) &&
-                    tr.content.length > cfg.minChars &&
                     (ts <= 0 || ts <= ttlCutoff) =>
                 changed = true
                 msgChanged = true
@@ -129,16 +131,14 @@ end ToolResultTtl
 final case class ToolResultTtlConfig(
   enabled: Boolean = false,
   ttlMinutes: Int = 60,
-  keepRecent: Int = 5,
-  minChars: Int = 2000
+  keepRecent: Int = 5
 ):
   /** Normalized validity for load-time fail-safe. */
   def sanitized: ToolResultTtlConfig =
     ToolResultTtlConfig(
       enabled = enabled,
       ttlMinutes = math.max(1, ttlMinutes),
-      keepRecent = math.max(0, keepRecent),
-      minChars = math.max(0, minChars)
+      keepRecent = math.max(0, keepRecent)
     )
 
 object ToolResultTtlConfig:
@@ -149,8 +149,7 @@ object ToolResultTtlConfig:
         enabled <- c.downField("enabled").as[Option[Boolean]].map(_.getOrElse(false))
         ttlMinutes <- c.downField("ttlMinutes").as[Option[Int]].map(_.getOrElse(60))
         keepRecent <- c.downField("keepRecent").as[Option[Int]].map(_.getOrElse(5))
-        minChars <- c.downField("minChars").as[Option[Int]].map(_.getOrElse(2000))
-      yield ToolResultTtlConfig(enabled, ttlMinutes, keepRecent, minChars)
+      yield ToolResultTtlConfig(enabled, ttlMinutes, keepRecent)
     }
 
   given io.circe.Encoder[ToolResultTtlConfig] = io.circe.generic.semiauto.deriveEncoder
@@ -167,9 +166,10 @@ object ToolResultTtlConfig:
    * #341 WS 尾巴（setToolResultTtl）：STRICT validation — unlike the fail-safe
    * [[load]] (boot-time, clamps garbage to disabled), the interactive setter
    * must REJECT malformed input so the user sees the error instead of a
-   * silently-transformed config. Full-object contract: all four fields
+   * silently-transformed config. Full-object contract: all three fields
    * required (the settings panel always sends the complete config); numbers
-   * must be integers within sane bounds.
+   * must be integers within sane bounds. Legacy payloads carrying a
+   * minChars field are tolerated (extra field ignored).
    */
   def parseStrict(json: Json): Either[String, ToolResultTtlConfig] =
     val obj = json.asObject.toRight("config must be a JSON object")
@@ -189,7 +189,6 @@ object ToolResultTtlConfig:
         .flatMap(_.as[Boolean].left.map(_ => "field \"enabled\" must be a boolean"))
       ttlMinutes <- intField("ttlMinutes", min = 1, max = 43200)
       keepRecent <- intField("keepRecent", min = 0, max = 200)
-      minChars <- intField("minChars", min = 0, max = 5000000)
-    yield ToolResultTtlConfig(enabled, ttlMinutes, keepRecent, minChars)
+    yield ToolResultTtlConfig(enabled, ttlMinutes, keepRecent)
 
 end ToolResultTtlConfig

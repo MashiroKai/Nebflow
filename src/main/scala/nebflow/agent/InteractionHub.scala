@@ -25,8 +25,10 @@ import nebflow.core.NebflowLogger
  *
  * The hub has no external state dependencies (two in-memory Refs). If it
  * crashes, the actor system restarts it; in-flight pending requests are lost
- * and the requesting agents fall back to their 5-minute permission timeout
- * (AskUser replyTo is dropped — bounded by the actor system restart).
+ * and the requesting agents keep waiting (R1, wait-timeout-fix: there is no
+ * permission timeout anymore — same exposure as AskUser's unbounded wait).
+ * The stuck turn remains user-cancellable via Interrupt, which is the
+ * guaranteed exit; the restarted hub serves FUTURE requests.
  */
 object InteractionHub:
   private val logger = NebflowLogger.forName("nebflow.agent.interaction")
@@ -64,6 +66,9 @@ object InteractionHub:
               // removal (P1 lesson: reply-slot lifecycle lives in ONE place).
               ctx.forkTurn(handleChatInputAnswer(pending, rootWsSend, rootSessionId, text, reply)) *>
                 IO.pure(behavior)
+            case InteractionHubCommand.ListPendingAsks(rootSessionId, reply) =>
+              // 刷新存活 (2026-09-03): read-only snapshot for reconnect replay.
+              ctx.forkTurn(handleListPendingAsks(pending, rootSessionId, reply)) *> IO.pure(behavior)
         }
       IO.pure(behavior)
     }
@@ -112,8 +117,9 @@ object InteractionHub:
         case None =>
           // F4 (#433): the target root session is unreachable (deleted /
           // zombie / never had a client). Rendering into it would park the
-          // card in a graveyard no one watches — invisible = unanswerable =
-          // guaranteed 5-minute timeout denial. Fan the card out to ALL other
+          // card in a graveyard no one watches — invisible = unanswerable
+          // (and since R1, wait-timeout-fix, there is no timeout that would
+          // eventually deny it). Fan the card out to ALL other
           // registered roots instead, flagged `fallback: true` so the frontend
           // shows a global actionable toast rather than routing the card into
           // a session it cannot open. Answers still match by requestId, so a
@@ -170,6 +176,53 @@ object InteractionHub:
     )
 
   // ============================================================
+  // 刷新存活 (2026-09-03): reconnect replay — read-only pending snapshot.
+  //
+  // A pending AskUser already survives a page refresh through the history
+  // restore chain (#43), but that chain loses the requestId binding
+  // (UiMessage.AskUser persists only {type, items}) and disappears entirely
+  // when the askUser entry falls outside the first history page. The gateway
+  // calls ListPendingAsks when a client (re)subscribes to a session (initial
+  // history load) and re-sends the cards — the hub stays the single authority:
+  // an ask answered between snapshot and render is simply not in the snapshot.
+  //
+  // Read-only: the pending map is untouched. The replayed frame is state
+  // re-delivery, NOT a re-ask — answering a card that was replayed twice
+  // consumes the slot exactly once (second answer hits "unknown requestId",
+  // card already locked locally).
+  // ============================================================
+  private def handleListPendingAsks(
+    pending: Ref[IO, Map[String, PendingRequest]],
+    rootSessionId: String,
+    reply: ActorRef[List[Json]]
+  ): IO[Unit] =
+    pending.get.map { m =>
+      m.toList
+        .collect {
+          case (rid, p) if p.rootSessionId == rootSessionId && p.kind == InteractionKind.AskUser => (rid, p)
+        }
+        .sortBy(_._2.createdAt)
+        .map { case (rid, p) =>
+          renderAskUser(
+            InteractionRequest(
+              requestId = rid,
+              kind = p.kind,
+              payload = p.payload,
+              reply = p.reply,
+              rootSessionId = p.rootSessionId,
+              sourceAgent = p.sourceAgent,
+              sourceSession = p.sourceSession
+            )
+          ).deepMerge(Json.obj("replayed" -> Json.fromBoolean(true)))
+        }
+    }.flatTap(list =>
+      if list.nonEmpty then
+        logger.info(s"ListPendingAsks root=$rootSessionId → ${list.size} pending ask(s) replayed")
+      else IO.unit
+    ).flatMap(list => (reply ! list).void)
+
+
+  // ============================================================
   // Answer: complete the reply target (multi-slot by requestId)
   // ============================================================
 
@@ -184,8 +237,9 @@ object InteractionHub:
             if answerCompletes(p, ans) then (m - ans.requestId, complete(p, ans))
             else
               // #12: a malformed answer must NOT consume the card — eating it
-              // would strand the pending deferred on its 5-minute timeout with
-              // the card gone (user cannot re-answer what they cannot see).
+              // would strand the pending deferred forever with
+              // the card gone (user cannot re-answer what they cannot see;
+              // and since R1, wait-timeout-fix, no timeout would ever release it).
               (
                 m,
                 logMissing(ans, s"answer shape does not match kind=${p.kind} of requestId=${ans.requestId} — card RETAINED")
@@ -338,3 +392,14 @@ object InteractionHubCommand:
       text: String,
       reply: cats.effect.Deferred[IO, Boolean]
   ) extends InteractionHubCommand
+
+  /** 刷新存活 (2026-09-03): gateway → hub — snapshot the still-pending AskUser
+    * cards for `rootSessionId` (oldest first), each rendered exactly like the
+    * first send plus `replayed: true`. The gateway re-sends them when a client
+    * (re)subscribes to the session (initial history load after browser refresh
+    * / WS reconnect / session switch) so the card and its requestId binding
+    * survive regardless of history pagination. Read-only: never touches the
+    * pending map or the reply slots.
+    */
+  final case class ListPendingAsks(rootSessionId: String, reply: ActorRef[List[Json]])
+      extends InteractionHubCommand

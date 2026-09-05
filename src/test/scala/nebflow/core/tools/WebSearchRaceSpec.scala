@@ -35,7 +35,10 @@ class WebSearchRaceSpec extends CatsEffectSuite:
     // already complete, the race winner is nondeterministic and `done` won
     // at ~152ms, turning the fast failure into the terminal Left. 500ms
     // gives a 3x+ margin under CI scheduling stalls; munitIOTimeout is 15s.
-    val slowSuccess = IO.sleep(500.millis) *> IO.pure(Right(ok360))
+    // 2026-08-30: raised to 2s after the local host (load avg 10+ during
+    // peak) failed P1-1 4x in a row at 500ms — the deschedule window is
+    // load-dependent and 500ms is not enough under sustained high load.
+    val slowSuccess = IO.sleep(2.seconds) *> IO.pure(Right(ok360))
     WebSearchTool.raceFirstSuccess(List(fastFail, slowSuccess)).map { r =>
       assert(r.isRight, s"fast failure must not poison the batch, got: $r")
       assertEquals(r.toOption.get._1.name, "360")

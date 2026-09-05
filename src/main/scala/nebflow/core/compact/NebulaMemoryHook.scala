@@ -2,7 +2,7 @@ package nebflow.core.compact
 
 import cats.effect.IO
 import nebflow.agent.SharedResources
-import nebflow.core.{NebflowLogger, UsagePattern, UsageTracker}
+import nebflow.core.NebflowLogger
 import nebflow.shared.*
 
 /**
@@ -10,8 +10,10 @@ import nebflow.shared.*
  *
  * Replaces DreamMode's idle timer: instead of a 5-minute polling cycle,
  * durable facts are extracted from the conversation right before it is
- * compacted. Extracted facts are appended to `~/.nebflow/User.md` via
- * `DreamMode.updateMemory`.
+ * compacted. Extracted facts are MERGED into `~/.nebflow/User.md` via
+ * `DreamMode.updateMemory` (2026-08-31 merged-write model — facts land in a
+ * stable `## Dream Extract` section by category, deduplicated; no more
+ * timestamped append sections, no more `## 使用模式` rewrite).
  */
 object NebulaMemoryHook extends PreCompactionHook:
   private val logger = NebflowLogger.forName("nebflow.prehook.nebula")
@@ -27,13 +29,18 @@ object NebulaMemoryHook extends PreCompactionHook:
     else
       for
         facts <- extractFacts(messages, agentName, sessionId, resources)
-        pattern <- UsageTracker.analyzePattern()
         _ <-
           if facts.nonEmpty then
             DreamMode
-              .updateMemory(facts, pattern)
+              .updateMemory(facts)
               .handleErrorWith(e => logger.warn(s"Memory update failed: ${e.getMessage}"))
+              .void
           else IO.unit
+        // 生命周期触发（§6.2-2.5）：压缩抽取完成后置位整理提醒信号 —— 消费方
+        // ContextRefresher.buildMemoryBlock 在压缩后的首个 Nebula 注入里带
+        // 「T2/T3 清扫提示」。仅置位一行，不改本 hook 的抽取/合并清扫逻辑
+        // （先提示后机制，plan §2.2-2）。
+        _ = nebflow.agent.MemoryHygieneSignal.markCompacted()
       yield ()
 
   private def extractFacts(

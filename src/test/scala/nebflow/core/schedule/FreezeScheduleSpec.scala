@@ -2,6 +2,7 @@ package nebflow.core.schedule
 
 import io.circe.parser.parse
 import io.circe.syntax.*
+import cats.effect.unsafe.implicits.global
 import FreezeSchedule.given
 import munit.FunSuite
 
@@ -381,6 +382,103 @@ class FreezeScheduleSpec extends FunSuite:
     assert(FreezeSchedule.mergeValidate(existing, parse("""{"enabled":"yes"}""").toOption.get).isLeft)
     assert(FreezeSchedule.mergeValidate(existing, parse("""{"segments":"nope"}""").toOption.get).isLeft)
     assert(FreezeSchedule.mergeValidate(existing, parse("""not-json""").toOption.getOrElse(io.circe.Json.Null)).isLeft)
+  }
+
+  // ── freezeStateNode（现象 2 契约 2026-08-30）────────────────
+
+  private def node(cfg: FreezeScheduleConfig, skipUntil: Option[Long], now: Long): io.circe.Json =
+    FreezeSchedule.freezeStateNode(cfg, skipUntil, now)
+
+  private def nodeField(j: io.circe.Json, f: String): Option[io.circe.Json] =
+    j.hcursor.downField(f).focus
+
+  test("freezeStateNode: enabled + in-window → frozen=true, nextChangeAt=窗口结束, segments 携带") {
+    val j = node(twoSegment, None, at(10, 0))
+    assertEquals(nodeField(j, "enabled").flatMap(_.asBoolean), Some(true))
+    assertEquals(nodeField(j, "frozen").flatMap(_.asBoolean), Some(true))
+    assertEquals(nodeField(j, "skipped").flatMap(_.asBoolean), Some(false))
+    assertEquals(nodeField(j, "nextChangeAt").flatMap(_.asNumber).flatMap(_.toLong), Some(at(12, 0)))
+    // 段信息：与 workSchedule 一致（前端「下一段 HH:mm」展示直接读节点，无需另解析）
+    assertEquals(nodeField(j, "segments").flatMap(_.asArray).map(_.size), Some(2))
+  }
+
+  test("freezeStateNode: enabled + outside window → frozen=false, nextChangeAt=下一冻结开始") {
+    val j = node(twoSegment, None, at(13, 0))
+    assertEquals(nodeField(j, "enabled").flatMap(_.asBoolean), Some(true))
+    assertEquals(nodeField(j, "frozen").flatMap(_.asBoolean), Some(false))
+    assertEquals(nodeField(j, "skipped").flatMap(_.asBoolean), Some(false))
+    assertEquals(nodeField(j, "nextChangeAt").flatMap(_.asNumber).flatMap(_.toLong), Some(at(14, 0)))
+  }
+
+  test("freezeStateNode: skipped window → frozen=false, skipped=true, nextChangeAt 保持窗口结束") {
+    // skipUntil 落在窗口内 → applySkip 把 frozen 翻 false；nextChangeAt 保持 raw 窗口结束
+    val j = node(twoSegment, Some(at(11, 0)), at(10, 0))
+    assertEquals(nodeField(j, "enabled").flatMap(_.asBoolean), Some(true))
+    assertEquals(nodeField(j, "frozen").flatMap(_.asBoolean), Some(false))
+    assertEquals(nodeField(j, "skipped").flatMap(_.asBoolean), Some(true))
+    assertEquals(nodeField(j, "nextChangeAt").flatMap(_.asNumber).flatMap(_.toLong), Some(at(12, 0)))
+  }
+
+  test("freezeStateNode: disabled → frozen=false, skipped=false, nextChangeAt=null") {
+    val j = node(FreezeScheduleConfig(enabled = false, segments = List(FreezeSegment("09:00", "12:00"))), None, at(10, 0))
+    assertEquals(nodeField(j, "enabled").flatMap(_.asBoolean), Some(false))
+    assertEquals(nodeField(j, "frozen").flatMap(_.asBoolean), Some(false))
+    assertEquals(nodeField(j, "skipped").flatMap(_.asBoolean), Some(false))
+    assertEquals(nodeField(j, "nextChangeAt").map(_.isNull), Some(true))
+  }
+
+  test("freezeStateNode: 跨午夜段 in-window → frozen=true（黑名单语义）") {
+    val j = node(overnight, None, at(2, 0))
+    assertEquals(nodeField(j, "frozen").flatMap(_.asBoolean), Some(true))
+    assertEquals(nodeField(j, "skipped").flatMap(_.asBoolean), Some(false))
+  }
+
+  // ── skip 持久化（P0 2026-08-30：skip 状态非持久化——「点跳过→刷新/重启→
+  // 输入框重新冻结」；修=独立文件 freeze-skip.json，启动恢复、到期清理）────
+
+  test("skip persist round-trip: write → load 原值; None → 删除残留") {
+    val root = os.temp.dir(prefix = "nb-skip-persist-")
+    try
+      val t = at(11, 0)
+      FreezeSchedule.persistSkip(root, Some(t)).unsafeRunSync()
+      assertEquals(FreezeSchedule.loadSkipUntil(root).unsafeRunSync(), Some(t))
+      assertEquals(os.exists(FreezeSchedule.skipPersistPath(root)), true)
+      FreezeSchedule.persistSkip(root, None).unsafeRunSync()
+      assertEquals(FreezeSchedule.loadSkipUntil(root).unsafeRunSync(), None)
+      assertEquals(os.exists(FreezeSchedule.skipPersistPath(root)), false)
+    finally os.remove.all(root)
+  }
+
+  test("skip persist: 损坏/缺失文件 → None 不炸（fail-safe 加载）") {
+    val root = os.temp.dir(prefix = "nb-skip-persist-")
+    try
+      os.write(FreezeSchedule.skipPersistPath(root), "not-json{{{")
+      assertEquals(FreezeSchedule.loadSkipUntil(root).unsafeRunSync(), None)
+    finally os.remove.all(root)
+  }
+
+  test("skip persist: load 不过滤过期——>now 判断与清理由调用方（GatewayMain）负责") {
+    // 语义钉：loadSkipUntil 返回原始值；「过期 → 丢弃+删盘」是启动加载方
+    // （t > now 判断）的职责，持久化层不隐式改变「跳过非永久」语义。
+    val root = os.temp.dir(prefix = "nb-skip-persist-")
+    try
+      val expired = at(9, 0) // 相对 at(10, 0) 已过期
+      FreezeSchedule.persistSkip(root, Some(expired)).unsafeRunSync()
+      assertEquals(FreezeSchedule.loadSkipUntil(root).unsafeRunSync(), Some(expired))
+    finally os.remove.all(root)
+  }
+
+  test("skip persist: persistSkip 写盘文件内容为 {skipUntil: epoch}") {
+    val root = os.temp.dir(prefix = "nb-skip-persist-")
+    try
+      val t = at(11, 0)
+      FreezeSchedule.persistSkip(root, Some(t)).unsafeRunSync()
+      val parsed = parse(os.read(FreezeSchedule.skipPersistPath(root))).toOption
+      assertEquals(
+        parsed.flatMap(_.hcursor.downField("skipUntil").as[Long].toOption),
+        Some(t)
+      )
+    finally os.remove.all(root)
   }
 
   // ── codec round-trip ──────────────────────────────────────

@@ -18,6 +18,7 @@ import { key } from './branding.js';
 import { t } from './i18n.js';
 import { buildManageBar, bindManageActions, syncManageControls } from './managePanel.js';
 import { isErrorReason, errorTileText, errorIcon } from './errorRecovery.js';
+import { truncateMiddle } from './utils.js';
 
 // ── Per-agent state ───────────────────────────────────────
 // nodeSessionId → { view: ChatView, container: div, meta: {}, historyLoaded: bool }
@@ -238,11 +239,19 @@ const POPUP_CSS = `<style id="flow-agent-popup-css">
   background: #d4a030; opacity: 1;
   animation: fa-pulse 0.9s ease-in-out infinite;
 }
+/* 2026-09-03 toolline truncate fix: the phase line carries "Using tool: …"
+   with an unbounded backend label. It must shrink like .fa-task (min-width:0
+   + nowrap/ellipsis) instead of flex-shrink:0 — otherwise a long label
+   pushes the right-side manage cluster (uptime/retries/buttons) past the
+   modal's clipped edge. Hover tooltip shows the FULL label (set in JS). */
 .flow-agent-footer .fa-phase {
-  flex-shrink: 0;
   font: 500 11px -apple-system, BlinkMacSystemFont, sans-serif;
   color: var(--color-text-muted);
   margin-left: 2px;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 @keyframes fa-pulse { 0%,100% { opacity: 1; } 50% { opacity: 0.35; } }
 .flow-agent-footer .fa-task {
@@ -864,11 +873,14 @@ function updateFooterStatus(entry) {
   // Phase text (#343): granular activity — thinking / tool / responding.
   const phaseEl = entry.footerEl.querySelector('.fa-phase');
   if (phaseEl) {
+    // 2026-09-03 toolline truncate fix: truncate at the RENDER layer only —
+    // meta.toolLabel keeps the full label; the tooltip below shows it whole.
+    const fullLabel = entry.meta.toolLabel || '';
     const phaseMap = {
       running: 'Working…',
       thinking: 'Thinking…',
       responding: 'Responding…',
-      tool: entry.meta.toolLabel ? `Using tool: ${entry.meta.toolLabel}` : 'Running tool…',
+      tool: fullLabel ? `Using tool: ${truncateMiddle(fullLabel, 96, 24)}` : 'Running tool…',
       done: 'Done',
       failed: 'Failed',
       stuck: 'Stuck',
@@ -876,10 +888,13 @@ function updateFooterStatus(entry) {
     };
     const text = phaseMap[status] || '';
     phaseEl.textContent = text;
+    // Unified panel spec §7: long text → single-line ellipsis + title with
+    // the full text (hover tooltip). Non-tool phases are short — no tooltip.
+    phaseEl.title = (status === 'tool' && fullLabel) ? `Using tool: ${fullLabel}` : '';
     phaseEl.style.display = text ? '' : 'none';
   }
   // Management cluster: state-linked buttons + permission matrix.
-  syncManageControls(entry.manageBar, entry.meta);
+  syncManageControls(entry.manageBar, entry.meta, currentStepId);
 }
 
 // ── Stuck visibility (taskStuck broadcast, whitelisted 2026-08-22) ──────

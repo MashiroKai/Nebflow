@@ -314,51 +314,6 @@ export const FLOW_CSS = `
 }
 .team-flow-row.expanded .team-flow-chevron { transform: rotate(90deg); }
 
-/* ── Team Tasks section (2026-08-25 team-manager-task-tool) ── */
-
-.team-tasks-divider {
-  border-top: 1px dashed var(--glass-border);
-  margin: 0 14px; opacity: 0.5;
-}
-.team-tasks-section { padding: 0 14px 14px; }
-.team-tasks-header {
-  font: 600 10px -apple-system, sans-serif; color: var(--color-text-muted);
-  text-transform: uppercase; letter-spacing: 0.06em;
-  margin: 10px 0 6px;
-}
-.team-tasks { display: flex; flex-direction: column; gap: 3px; }
-.team-task-row {
-  display: flex; align-items: center; gap: 8px;
-  padding: 5px 8px; border-radius: 8px; min-width: 0;
-  transition: background 0.15s;
-}
-.team-task-row:hover { background: rgba(128, 128, 128, 0.05); }
-.task-status-badge {
-  font: 600 10px -apple-system, sans-serif; flex-shrink: 0;
-  padding: 2px 8px; border-radius: 10px; white-space: nowrap;
-  border: 1px solid var(--color-text-muted); color: var(--color-text-muted);
-}
-.task-status-badge.badge-in_progress { border-color: var(--color-primary, #07c160); color: var(--color-primary, #07c160); }
-.task-status-badge.badge-completed { border-color: var(--color-success, #4caf50); color: var(--color-success, #4caf50); }
-.task-status-badge.badge-failed { border-color: var(--color-error, #f44336); color: var(--color-error, #f44336); }
-.team-task-subject {
-  font: 500 12px -apple-system, sans-serif; color: var(--color-text);
-  flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
-}
-.team-task-time {
-  font: 400 11px -apple-system, sans-serif; color: var(--color-text-muted);
-  flex-shrink: 0; white-space: nowrap;
-}
-.task-dep-badge {
-  font: 500 10px -apple-system, sans-serif; color: var(--color-text-muted);
-  padding: 1px 6px; border-radius: 8px; flex-shrink: 0; white-space: nowrap;
-  background: rgba(128, 128, 128, 0.10);
-}
-.task-dep-badge.task-dep-badge-block { opacity: 0.8; }
-.team-tasks-empty {
-  font: 400 11px -apple-system, sans-serif; color: var(--color-text-muted);
-  opacity: 0.6; padding: 2px 8px 8px;
-}
 
 /* Expanded DAG inline area */
 .team-flow-dag {
@@ -508,7 +463,7 @@ export const FLOW_CSS = `
 .ring-1 { width: 6px; height: 6px; }
 .ring-2 { width: 14px; height: 14px; }
 .ring-3 { width: 24px; height: 24px; }
-.solar-dot-wrap { position: absolute; top: 50%; left: 50%; width: 0; height: 0; }
+.solar-dot-wrap { position: absolute; top: 50%; left: 50%; width: 0; height: 0; will-change: transform; }
 .solar-dot {
   position: absolute; width: 3px; height: 3px;
   background: var(--color-text); border-radius: 50%; top: -1.5px;
@@ -517,29 +472,36 @@ export const FLOW_CSS = `
 .ring-2 .solar-dot { left: 6px; }
 .ring-3 .solar-dot { left: 11px; }
 
-/* Initial angles — three dots spread around the orbit */
+/* Initial angles — three dots spread around the orbit. These are BOTH the
+   resting positions (pending / completed / static) and the loop endpoints:
+   the rAF driver (flowAnim.js) rotates each dot exactly 360° per revolution,
+   so every loop ends where it began — no seam. */
 .ring-1 .solar-dot-wrap { transform: rotate(0deg); }
 .ring-2 .solar-dot-wrap { transform: rotate(120deg); }
 .ring-3 .solar-dot-wrap { transform: rotate(240deg); }
 
-/* Running: rings spin at different speeds, middle reversed (V4 core) */
-.solar-node.running .ring-1 .solar-dot-wrap { animation: solar-spin 3s linear infinite; }
-.solar-node.running .ring-2 .solar-dot-wrap { animation: solar-spin 4.5s linear infinite reverse; animation-delay: -3s; }
-.solar-node.running .ring-3 .solar-dot-wrap { animation: solar-spin 6s linear infinite; animation-delay: -4s; }
-@keyframes solar-spin { to { transform: rotate(360deg); } }
+/* Running rotation is owned by flowAnim.js (time-based rAF, inline
+   transforms). CSS keyframes could not (a) guarantee loop endpoints — an
+   implicit "from" of the base transform made ring-2/3 sweep only 120-240deg
+   per loop then snap back — nor (b) coast to the loop endpoint and fade when
+   a node completes. will-change on .solar-dot-wrap keeps the per-frame
+   transform on the compositor. */
 
 /* Status variants */
 .solar-node.pending .solar-ring { border-style: dashed; opacity: 0.4; }
 .solar-node.pending .solar-dot { opacity: 0.3; }
 .solar-node.pending .solar-node-label { opacity: 0.4; }
-.solar-node.completed .solar-dot-wrap { animation: none; }
 .solar-node.completed .solar-node-label { opacity: 0.6; }
 .solar-node.failed .solar-ring { border-color: var(--color-error, #e5484d); opacity: 0.5; }
+/* blocked（20260902 反馈路径设计 §4.2）：需动作的警示态——琥珀环，非 failed 的终结红。
+   --amber 三元组由 sapphire.css 按亮暗主题定义（亮 255 152 0 / 暗 255 168 60），双主题自适应。 */
+.solar-node.blocked .solar-ring { border-color: rgb(var(--amber, 255 152 0) / 0.75); opacity: 0.6; }
 
-/* Status icon (✓ / ✗) — inline in the sub line */
+/* Status icon (✓ / ✗ / ⚑) — inline in the sub line */
 .solar-node-status { font: 700 10px -apple-system, sans-serif; margin-left: 4px; }
 .solar-node-status.ok { color: #4caf50; }
 .solar-node-status.err { color: #f44336; }
+.solar-node-status.warn { color: rgb(var(--amber, 255 152 0)); }
 
 /* Node label — primary line shows the nodeId (unique per node); the agent
  * name, when different, moves to the sub line. max-width:100% keeps text
@@ -698,3 +660,17 @@ export const FLOW_CSS = `
 .flow-def-view-btn:hover { background: rgba(91,127,191,0.08); }
 </style>
 `;
+
+/** 确保 FLOW_CSS 已存在于文档中（head 级、全局一份、幂等）。
+ *
+ *  旧做法是每个面板各往自己的 tab pane 里插一份 `<style id="team-canvas-style">`，
+ *  除了重复 id，还带来两个真实缺陷（#27 面板渲染可靠性）：
+ *   ① 恢复出来的 pane（canvas-tab-restore）若没走到渲染路径就一份样式都没有——
+ *      `.flow-viewer-overlay { pointer-events: auto }` 缺席时，overlayRoot 的内联
+ *      `pointer-events:none` 无人抵消，viewer 里的按钮整片点不到（elementFromPoint 命中 pane）；
+ *   ② 注入所在的标签页一关，`<style>` 随 pane 一起被移除，其它面板样式跟着失效。
+ *  head 注入把样式与 pane 生命周期解耦，任何面板任何时机都成立。 */
+export function ensureFlowCss() {
+  if (document.getElementById('team-canvas-style')) return;
+  document.head.insertAdjacentHTML('beforeend', FLOW_CSS);
+}

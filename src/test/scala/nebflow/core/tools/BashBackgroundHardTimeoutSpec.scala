@@ -41,53 +41,57 @@ class BashBackgroundHardTimeoutSpec extends CatsEffectSuite:
   test("B-1+B-4: background sleep 3600 killed by injected hard timeout + stuck window") {
     for
       shell <- ShellSession.forSession("bg-hard-1")
-      _ <- shell.executeBackground(
+      // 异常路径销毁守卫（残留治理 2026-09-05）：pollCompleted 超时/断言失败时
+      // destroySession 也要跑（kill() 杀后台任务进程树）——sleep 3600 不能漏到测试外
+      res <- (shell.executeBackground(
         "sleep 3600",
         jobIdOverride = Some("b1"),
         hardTimeoutMs = 4000,
         stuckWindowSec = 2,
         healthCheckIntervalSec = 1
-      )
-      res <- pollCompleted(shell, "b1", 20000)
+      ) *> pollCompleted(shell, "b1", 20000))
+        .guarantee(ShellSession.destroySession("bg-hard-1").attempt.void)
       _ <- IO(assertTimeout(res))
-      _ <- ShellSession.destroySession("bg-hard-1")
     yield ()
   }
 
   test("B-2: CPU-busy background task survives idle exemption AND hard-timeout stall guard") {
     for
       shell <- ShellSession.forSession("bg-hard-2")
-      _ <- shell.executeBackground(
-        "python3 -c 'while True: pass'",
-        jobIdOverride = Some("b2"),
-        hardTimeoutMs = 3000,
-        stuckWindowSec = 2,
-        healthCheckIntervalSec = 1
-      )
-      // 等 > hardTimeout(3s) + stuckWindow(2s)，CPU 忙 → 不杀
-      _ <- IO.sleep(6500.millis)
-      health <- shell.getBackgroundJobHealth("b2")
-      _ <- IO(assert(health.exists(_.isAlive), s"CPU-busy task must not be killed: $health"))
-      _ <- shell.cancelBackgroundJob("b2")
-      _ <- ShellSession.destroySession("bg-hard-2")
+      // 永不自终止的 python busy loop：断言失败/中断路径必须守卫销毁（残留治理 2026-09-05）
+      _ <- (for
+        _ <- shell.executeBackground(
+          "python3 -c 'while True: pass'",
+          jobIdOverride = Some("b2"),
+          hardTimeoutMs = 3000,
+          stuckWindowSec = 2,
+          healthCheckIntervalSec = 1
+        )
+        // 等 > hardTimeout(3s) + stuckWindow(2s)，CPU 忙 → 不杀
+        _ <- IO.sleep(6500.millis)
+        health <- shell.getBackgroundJobHealth("b2")
+        _ <- IO(assert(health.exists(_.isAlive), s"CPU-busy task must not be killed: $health"))
+      yield ())
+        .guarantee(
+          shell.cancelBackgroundJob("b2").attempt.void *>
+            ShellSession.destroySession("bg-hard-2").attempt.void
+        )
     yield ()
   }
 
   test("B-3: output-then-stall background task killed after hard timeout + stuck window") {
     for
       shell <- ShellSession.forSession("bg-hard-3")
-      _ <- shell.executeBackground(
+      // 异常路径销毁守卫（残留治理 2026-09-05）：同 B-1
+      res <- (shell.executeBackground(
         "python3 -c 'import sys; sys.stdout.write(\"x\"*1000); import time; time.sleep(3600)'",
         jobIdOverride = Some("b3"),
         hardTimeoutMs = 4000,
         stuckWindowSec = 2,
         healthCheckIntervalSec = 1
-      )
-      // 先等进程吐出输出（health 记录 outputLineCount ≥ 1）
-      _ <- IO.sleep(2000.millis)
-      res <- pollCompleted(shell, "b3", 20000)
+      ) *> IO.sleep(2000.millis) *> pollCompleted(shell, "b3", 20000))
+        .guarantee(ShellSession.destroySession("bg-hard-3").attempt.void)
       _ <- IO(assertTimeout(res))
-      _ <- ShellSession.destroySession("bg-hard-3")
     yield ()
   }
 

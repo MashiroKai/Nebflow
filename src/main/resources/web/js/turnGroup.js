@@ -1,13 +1,34 @@
 // turnGroup.js — #346 WeChat-style turn-level collapse of intermediate process.
 //
-// On `done` the turn's process rows (thinking rows, tool cards, intermediate
-// text segments) are gathered into a `.turn-group` and collapsed behind a
-// one-line summary bar: `✻ phrase, model · tool count` (v1.2: model name is
+// On `done` the turn's process rows (thinking rows, tool cards, injected
+// events) are gathered into ONE `.turn-group` container and collapsed behind
+// a one-line summary bar: `✻ phrase · model · 工具 N 次` (v1.2: model name is
 // visible summary text; timestamp stays in the title tooltip). Failed turns
 // (`error`/`interrupted`/`timeout`/`maxTokens`) are grouped but NEVER
 // collapsed — no summary bar (spec A5: the element does not exist), rows
 // stay visible for troubleshooting. Streaming path is untouched: rows
 // append directly to the chat as today; gathering happens once, at terminal.
+//
+// 2026-09-03 ruling — collapse keeps LLM text visible: ONLY tool blocks +
+// tool results + injected events collapse. EVERY assistant text row (ai text,
+// whatever its position in the turn) stays flat and visible — text is never
+// moved into (or out of) the group.
+//
+// 2026-09-05 ruling (author report 08:48: a multi-round turn showed TWO
+// badges — one per LLM round, same phrase, split tool counts) — ONE group per
+// TURN, not per contiguous run. A turn interleaving LLM text with several
+// tool rounds:
+//   文字A → 工具1 → 文字B → 工具2 → 最终回复
+// aggregates ALL its collapsible rows (工具1+工具2+injected events) into a
+// single `.turn-group`; the summary bar counts the WHOLE turn's tool cards
+// (工具 N 次, N = every .tool-card of the turn). The group lands immediately
+// before the turn's final reply row (badge-before-answer — same position the
+// badges occupied pre-fix, now exactly one). Intermediate text rows render
+// flat in front of the group, chronological order preserved; expanding the
+// bar reveals the turn's tools in their original order. The pre-2026-09-05
+// "one group per contiguous run" behavior was the design-evolution gap: the
+// run model (e50ec989) predates the turn-closure semantics (9a8359f8) and
+// leaked per-LLM-round grouping into the UI.
 //
 // Zero protocol/backend changes (spec D1): success vs failure is executed
 // here from the terminal events main.js already receives; history reload
@@ -52,12 +73,24 @@ function isAgentRow(row) {
   return row.classList.contains('ai') && !!row.querySelector('.bubble.ai');
 }
 
-/** True for rows that belong to the agent's intermediate process — agent work
- *  PLUS injected messages (ruling 2026-08-25). */
-function isProcessRow(row) {
+/** True for rows that belong to the collapsible process — agent work MINUS
+ *  assistant text (2026-09-03 ruling: tool blocks + tool results + injected
+ *  events only; LLM text replies always stay visible in place). */
+function isCollapsibleRow(row) {
   if (!row.classList.contains('row')) return false;
   if (isInjectedRow(row)) return true;
-  return isAgentRow(row);
+  if (row.classList.contains('tool') || row.classList.contains('card-content')) return true;
+  if (row.classList.contains('thinking-row')) return true;
+  return false; // ai text rows (and everything else) never collapse
+}
+
+/** All collapsible rows of the turn scope, original order preserved
+ *  (2026-09-05 turn-level aggregation). Interleaved assistant text rows NO
+ *  LONGER split the turn into per-run groups — every tool block / tool
+ *  result / injected event of the turn goes into the single turn group; the
+ *  text rows stay flat outside it (2026-09-03 ruling). */
+function collectCollapsible(rows) {
+  return rows.filter(isCollapsibleRow);
 }
 
 /** True when the scope contains at least one agent-produced row (tool /
@@ -80,13 +113,18 @@ function findFinalRow(scope) {
   return null;
 }
 
-/** Build the group DOM around the given process rows (DOM moves, no
- *  rebuild — listeners and scroll memory survive). Returns null when there
- *  is nothing to group (E5 zero-process; E6 thinking-only = final product).
- *  `withSummary` controls whether a summary bar element is created — failed
- *  groups pass false: spec A5 asserts `.turn-summary` does NOT exist there. */
-function buildGroup(chat, processRows, finalRow, meta, withSummary = true) {
-  const steps = processRows.filter(r => r !== finalRow);
+/** Build THE turn group around the turn's collapsible rows (2026-09-05:
+ *  one group per turn — `steps` is every collapsible row of the turn, not
+ *  one contiguous run). DOM moves only, no rebuild — listeners and scroll
+ *  memory survive. The group lands immediately before `finalRow` (the turn's
+ *  final text reply, never part of the group since the 2026-09-03 ruling):
+ *  badge-before-answer, the position the pre-fix badges occupied — now
+ *  exactly one. Without a final row the group takes the tail position of the
+ *  turn's rows. Returns null when there is nothing to group (E5 zero-process;
+ *  E6 thinking-only = final product). `withSummary` controls whether a
+ *  summary bar element is created — failed groups pass false: spec A5
+ *  asserts `.turn-summary` does NOT exist there. */
+function buildGroup(chat, steps, finalRow, meta, withSummary = true) {
   if (steps.length === 0) return null;
   // E6: a lone thinking row with no text reply IS the user's only readable
   // content — never hide it.
@@ -111,15 +149,19 @@ function buildGroup(chat, processRows, finalRow, meta, withSummary = true) {
   }
   group.appendChild(stepsEl);
 
-  chat.insertBefore(group, processRows[0]);
+  const anchor = finalRow || steps[steps.length - 1].nextSibling;
+  if (anchor && anchor.parentNode === chat) chat.insertBefore(group, anchor);
+  else chat.appendChild(group);
   steps.forEach(r => stepsEl.appendChild(r));
   return { group, steps: stepsEl, summary, text };
 }
 
 /** Fill the summary bar: frozen status-line phrase (✻ …, duration embedded)
- *  + model name + tool count — all visible text (v1.2 user ruling 2026-08-21
- *  12:08: model moves from tooltip to summary text; footer keeps only
- *  time + copy). Timestamp stays in the title tooltip. */
+ *  + model name + WHOLE-TURN tool count — all visible text (v1.2 user ruling
+ *  2026-08-21 12:08: model moves from tooltip to summary text; footer keeps
+ *  only time + copy. 2026-09-05: the count aggregates every .tool-card of
+ *  the turn — multi-round tool loops report one aggregated N). Timestamp
+ *  stays in the title tooltip. */
 function fillSummary(built, meta) {
   const toolCount = built.steps.querySelectorAll('.tool-card').length;
   const phrase = meta.phrase || (meta.durationMs != null ? pickThinkingPhrase(meta.durationMs, meta.seed) : '');
@@ -133,6 +175,33 @@ function fillSummary(built, meta) {
   bindCollapsibleToggle(built.summary, () => built.steps, (expanded) => {
     built.group.dataset.turnState = expanded ? 'done-expanded' : 'done';
   });
+}
+
+/**
+ * Banner dedupe (2026-09-04 user ruling): the decorative stats bar stacks
+ * one-per-turn in multi-turn sessions — the whole session must show only the
+ * LATEST turn's bar(s). Render-level only: superseded bars STAY in the DOM
+ * (collapse structure and E10 message-search expand keep working; #403
+ * closed groups keep byte-stable innerHTML) and are hidden by CSS through a
+ * marker class on the GROUP element — never on its children, so the closed-
+ * group innerHTML identity asserted by turn-collapse-keep-text 验收 b is
+ * untouched. `keep` = the groups whose bars stay visible (the live turn just
+ * completed, or the last banner-bearing history segment); every other
+ * summary-bearing group gets `turn-banner-superseded`.
+ *
+ * @param {HTMLElement} chat
+ * @param {HTMLElement[]} keep
+ */
+function applyLatestBannerOnly(chat, keep) {
+  const keepSet = new Set(keep);
+  // chat.children is typed Element[], but the turn-group nodes here are the
+  // same HTMLElements `keep` carries — narrow so keepSet.has(g) typechecks.
+  const groups = /** @type {HTMLElement[]} */ (Array.from(chat.children)
+    .filter(el => el.classList && el.classList.contains('turn-group')));
+  for (const g of groups) {
+    if (!g.querySelector('.turn-summary')) continue; // failed groups carry no bar
+    g.classList.toggle('turn-banner-superseded', !keepSet.has(g));
+  }
 }
 
 /**
@@ -191,21 +260,21 @@ function turnScope(chat) {
 }
 
 /**
- * Done path: gather this turn's process rows and collapse immediately
- * (synchronous, no linger — v1.1 user ruling). Returns the group or null.
+ * Done path: gather the turn's collapsible rows into ONE group and collapse
+ * immediately (synchronous, no linger — v1.1 user ruling; 2026-09-05 turn
+ * aggregation). Text replies stay flat in front of the group (2026-09-03
+ * ruling). Returns the group, or null.
  */
 export function collapseTurn(view, meta = {}) {
   const chat = view.dom.chat;
   const scope = turnScope(chat);
+  const finalRow = findFinalRow(scope);
   let built = null;
   if (hasAgentWork(scope)) { // lone injection / no agent work → nothing to collapse
-    const processRows = scope.filter(isProcessRow);
-    if (processRows.length > 0) { // E5
-      built = buildGroup(chat, processRows, findFinalRow(scope), meta);
-    }
+    built = buildGroup(chat, collectCollapsible(scope), finalRow, meta); // E5/E6 → null
   }
   if (built) {
-    fillSummary(built, meta);
+    fillSummary(built, meta); // whole-turn tool count (2026-09-05 aggregation)
     built.group.dataset.turnState = 'done';
     built.steps.style.display = 'none';
     built.summary.setAttribute('aria-expanded', 'false');
@@ -213,6 +282,10 @@ export function collapseTurn(view, meta = {}) {
     if (chat.scrollHeight - chat.scrollTop - chat.clientHeight < 80) {
       chat.scrollTop = chat.scrollHeight;
     }
+    // Banner dedupe (2026-09-04): this turn's bar replaces all earlier
+    // turns' bars visually. A turn that built no bar (E5 text-only, lone
+    // injection) leaves the previous latest bar in place.
+    applyLatestBannerOnly(chat, [built.group]);
   }
   markClosed(chat); // #403: LLM ended — the turn is closed even when there
                     // was nothing to group (E5/E6); later arrivals are a new turn.
@@ -220,19 +293,18 @@ export function collapseTurn(view, meta = {}) {
 }
 
 /**
- * Failed path: group for structural consistency but keep everything visible;
- * the summary bar is permanently hidden (no collapse entry — spec D2).
+ * Failed path: group the turn's collapsible rows for structural consistency
+ * (ONE group — 2026-09-05 aggregation) but keep everything visible; the
+ * summary bar is permanently hidden (no collapse entry — spec D2).
  */
 export function failTurn(view) {
   const chat = view.dom.chat;
   const scope = turnScope(chat);
+  const finalRow = findFinalRow(scope);
   let built = null;
   if (hasAgentWork(scope)) {
-    const processRows = scope.filter(isProcessRow);
-    if (processRows.length > 0) {
-      // A5: failed groups carry NO summary element (not merely hidden).
-      built = buildGroup(chat, processRows, findFinalRow(scope), {}, false);
-    }
+    // A5: failed groups carry NO summary element (not merely hidden).
+    built = buildGroup(chat, collectCollapsible(scope), finalRow, {}, false);
   }
   if (built) {
     built.group.dataset.turnState = 'failed';
@@ -299,8 +371,15 @@ export function buildTurnGroupsForHistory(chat, opts = {}) {
   const { busyTail = false } = opts;
   const rows = Array.from(chat.children).filter(el => el.classList && el.classList.contains('row'));
   let segStart = 0;
+  // Banner dedupe (2026-09-04): remember the LAST segment that produced
+  // summary bars — its bars stay visible, all earlier segments' bars are
+  // hidden after the rebuild (identical semantics to the live path).
+  let lastBannerGroups = null;
   const flush = (end) => {
-    if (end > segStart) groupSegment(chat, rows.slice(segStart, end));
+    if (end > segStart) {
+      const banners = groupSegment(chat, rows.slice(segStart, end));
+      if (banners.length) lastBannerGroups = banners;
+    }
   };
   rows.forEach((r, i) => {
     // Turn boundary = non-injected user row (injected messages are process).
@@ -325,13 +404,14 @@ export function buildTurnGroupsForHistory(chat, opts = {}) {
   } else {
     markClosed(chat);
   }
+  if (lastBannerGroups) applyLatestBannerOnly(chat, lastBannerGroups);
 }
 
 function groupSegment(chat, seg) {
-  if (!hasAgentWork(seg)) return; // lone injection / no agent work — leave flat
-  const processRows = seg.filter(isProcessRow);
-  if (processRows.length === 0) return;
+  if (!hasAgentWork(seg)) return []; // lone injection / no agent work — leave flat
   const finalRow = findFinalRow(seg);
+  const steps = collectCollapsible(seg);
+  if (steps.length === 0) return []; // E5: nothing collapsible (text-only turn)
   // E4 P0: success = some Ai row in the segment carries a done-badge
   // (SessionRecorder backfills durationMs on done — the implicit marker).
   // v1.2: footers are time + copy only, so phrase/model ride on the badge's
@@ -344,18 +424,22 @@ function groupSegment(chat, seg) {
     title: historyBadgeTitle(seg, badge),
     sessionId: chat.dataset?.sessionId || '',
   } : {};
+  // 2026-09-05: ONE group per turn/segment — every collapsible row of the
+  // segment gathers into it (live/rebuild parity with the turn aggregation).
   // A5: failed segments build the group WITHOUT a summary element.
-  const built = buildGroup(chat, processRows, finalRow, meta, success);
-  if (!built) return;
+  // 2026-09-03: assistant text rows stay flat in front of the group.
+  const built = buildGroup(chat, steps, finalRow, meta, success);
+  if (!built) return [];
   if (success) {
     fillSummary(built, meta);
     built.group.dataset.turnState = 'done';
     built.steps.style.display = 'none';
     built.summary.setAttribute('aria-expanded', 'false');
-  } else {
-    built.group.dataset.turnState = 'failed';
-    built.group.classList.add('turn-failed');
+    return [built.group];
   }
+  built.group.dataset.turnState = 'failed';
+  built.group.classList.add('turn-failed');
+  return [];
 }
 
 /** The turn's implicit done-marker: an AI footer badge carrying a duration

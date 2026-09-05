@@ -66,6 +66,27 @@ object Defaults:
   /** HTTP readTimeout for LLM provider connections (must be >= LlmTimeoutMs). */
   val LlmReadTimeoutSec: Int = 600
 
+  /**
+   * 工具执行期 WS 心跳间隔（s，审计 20260903 §2.5 子项①）：工具执行
+   * （toolStart→toolEnd 之间）每此间隔发一条 toolHeartbeat WS 事件喂活前端
+   * busy timer——前台长工具执行零事件段不再触发前端 630s 纯静默超时误杀
+   * （实测 56/359 turn 超 630s）。间隔须明显小于前端 timer 预算
+   * （StreamTimeoutSec+30s buffer），30s 与 RemoteExecutor 活动心跳、
+   * BgHeartbeatIntervalSec 同频。AgentCore.pipeToolExecutions 消费。
+   */
+  val ToolHeartbeatSec: Int = 30
+
+  /**
+   * Timeout 类失败的软回避窗口（ms，审计 20260903 §2.3 子项③）：首 token/
+   * 流间隙超时只跳过本次请求并把该 provider 软回避此窗口——不 markDown、
+   * 不进健康状态、无需探测恢复（窗口到期自然可用）。「慢 ≠ 死」：markDown
+   * 保留给 Auth/404/配额等确证死亡。取值 45s：实测 flap 恢复 p50<10s、
+   * p90<20s，45s ≈ 5×p90 抖动恢复；窗口内 all-Down 门最坏等待 45+5s
+   * （waitForAnyUp 5s tick）远小于其 120s 超时，不会误触发
+   * AllProvidersDownTimeout。interface.scala 错误分支消费。
+   */
+  val TimeoutAvoidWindowMs: Long = 45_000L
+
   /** Bash tool max timeout in ms. */
   val BashMaxTimeoutMs: Long = 3_600_000L
 
@@ -97,15 +118,14 @@ object Defaults:
    */
   val BgIdleTimeoutSec: Int = 300
 
-  // ---- Bash 卡死防护（#391，2026-08-25 用户裁定：5 分钟自动转后台）----
-
-  /**
-   * 前台命令自动转后台阈值（ms）。用户 08-25 裁定：前台命令运行超过此阈值
-   * （默认 300s/5min）自动转后台——不杀进程、turn 释放、完成时异步通知。
-   * 恢复 #319 前的 registerBackgroundJob 骨架；sleep 类命令同样转后台
-   * （sleep-like 豁免只保留在 no-progress ceiling / idle timeout 语义中）。
-   */
-  val BashAutoBackgroundMs: Long = 300_000L
+  // ---- Bash 卡死防护（#26，2026-08-30 用户裁定：恢复前台直跑语义）----
+  // 08-25 #391「5 分钟自动转后台」已推翻：前台命令不再自动转后台、不设命令级
+  // 超时——前台一直跑到结束（或显式 timeout / 停滞检测杀）。卡死兜底 =
+  // TaskStuckWatcher（agent turn 10min 零活动 → restart 杀进程树）+ 前台
+  // no-progress ceiling（shell.scala，10min 零输出零 CPU 停滞杀）。下方
+  // hardTimeout/stuckWindow/healthCheck 只服务显式 run_in_background 后台任务
+  // （显式后台不占 turn 活动，TaskStuckWatcher 兜不到，需自身兜底——评估建议
+  // #26 保留机制 B）。
 
   /**
    * 后台命令硬超时（ms）：运行超过此阈值（默认 30min）后进入停滞观察期——
@@ -149,6 +169,19 @@ object Defaults:
    */
   val MailDedupWindowMs: Long = 30 * 60 * 1000L
 
+  /**
+   * V13 (2026-09-03): replay-scoping window for the mail dedup. The dedup
+   * ledger consult now happens ONLY for deliveries inside this window after
+   * the recipient session's activation (AgentRecord.startedAt) — the only
+   * moment the restart-recovery re-fire (MailTool activateAgent → re-fire
+   * disk head) can inject a true duplicate. Outside the window every delivery
+   * injects even if the fingerprint is fresh — a legitimate same-content
+   * re-send (10min polling text, re-pasted instruction) is never eaten.
+   * Long enough to cover any activation→re-fire→drain scheduling delay,
+   * short enough that the false-suppress exposure shrinks 30min → 60s.
+   */
+  val MailDedupReplayWindowMs: Long = 60 * 1000L
+
   // ---- Task stuck detection (P0 阶段 3) ----
 
   /**
@@ -186,9 +219,9 @@ object Defaults:
   val ErrorEscalateAfterMs: Long = 10 * 60 * 1000L
 end Defaults
 
-/** Bash 卡死防护阈值配置（#391，nebflow.json 顶层键可覆盖，默认值见 Defaults）。 */
+/** Bash 卡死防护配置（#26：前台直跑语义；hardTimeout/stuckWindow/healthCheck
+ * 只服务显式 run_in_background 后台任务。nebflow.json 顶层键可覆盖。 */
 case class BashResilienceConfig(
-  autoBackgroundMs: Long = Defaults.BashAutoBackgroundMs,
   hardTimeoutMs: Long = Defaults.BashBackgroundHardTimeoutMs,
   stuckWindowSec: Int = Defaults.BashStuckWindowSec,
   healthCheckIntervalSec: Int = Defaults.BgHealthCheckIntervalSec

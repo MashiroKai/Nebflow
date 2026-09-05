@@ -264,7 +264,7 @@ object LogtoConfig:
     * only; the legacy device-flow chain keeps its neblink-server proxy
     * fallback and is scheduled for removal (beta.54). */
   val embeddedDefault: LogtoConfig = LogtoConfig(
-    endpoint = "https://auth.neblink.space",
+    endpoint = "https://auth.nebflow.space",
     clientId = "",
     pkceClientId = Some("csxh16cas0x03bgk6w7ej")
   )
@@ -307,26 +307,36 @@ end NeblinkConfig
 
 // ===== A2A 好友与消息域类型（spec §6.1 REST 响应，客户端侧解码） =====
 
-/** 好友/搜索结果卡（/api/users/lookup 与 /api/friends 共用形态）。 */
+/** 好友/搜索结果卡（/api/users/lookup 与 /api/friends 共用形态）。
+  * blocked：#290 §1.2 拉黑行透传（仅 GET /api/friends 的 friends 数组携带，
+  * absent = 未拉黑）——此前该字段被网关丢弃，web 端只能靠 localStorage 镜像。 */
+/** 好友/请求/会话共用的档案对象。字段即 friend-search-contract v1.0 契约词汇
+ *  （NL 号 = Username，作者 2026-09-05 裁定）：username 可空语义由 String 折叠
+ *  ""（未设置 NL 号）；displayName 必填（服务端永不为 null，见 Decoder 镜像
+ *  fallback 链）；avatar 可 null。since/blocked 为信封字段（camelCase 维持）。 */
 case class FriendSummary(
   userId: String,
-  neblinkId: String,
-  name: String,
-  avatarUrl: Option[String] = None,
-  since: Option[Long] = None
+  username: String,
+  displayName: String,
+  avatar: Option[String] = None,
+  since: Option[Long] = None,
+  blocked: Option[Boolean] = None
 )
 
-/** 收到的好友请求（incoming 分组）。 */
+/** 收到的好友请求（incoming 分组）。createdAt：请求时间透传（#290 0904 批次
+  * UI 打磨——申请行时间显示；旧上游无此字段时为 None）。 */
 case class FriendRequestSummary(
   requestId: String,
   from: FriendSummary,
-  note: Option[String] = None
+  note: Option[String] = None,
+  createdAt: Option[Long] = None
 )
 
 /** 发出的好友请求（outgoing 分组）。 */
 case class OutgoingRequestSummary(
   requestId: String,
-  to: FriendSummary
+  to: FriendSummary,
+  createdAt: Option[Long] = None
 )
 
 case class FriendListResponse(
@@ -356,17 +366,106 @@ case class ConversationCursor(conversationId: String, lastReadMessageId: Long, u
 object FriendCodecs:
   import io.circe.Decoder
   import io.circe.Encoder
+  import io.circe.HCursor
   import io.circe.generic.semiauto.*
 
-  given Decoder[FriendSummary] = deriveDecoder
-  given Decoder[FriendRequestSummary] = deriveDecoder
-  given Decoder[OutgoingRequestSummary] = deriveDecoder
+  // ── 容错解码（2026-09-04 审计修复：契约不对齐会毁掉整个列表） ──
+  // Rust 侧 wire 形态（neblink-server model.rs）与早先 spec 形态有三处偏差：
+  //  ① FriendRequestEntry/Outgoing 用 #[serde(flatten)] 把 profile 铺平
+  //     （无 from/to 嵌套）——deriveDecoder 的非 Option `from` 字段直接
+  //     DecodingFailure → 整个 GET /api/friends 折叠为空列表；
+  //  ② FriendPublic.neblink_id/name 均为 Option（存量 GitHub 账号 NULL）——
+  //     null 打到非 Option String 上同样整表失败；
+  //  ③ 请求条目带 created_at（新增透传）。
+  // 自定义 Decoder 同时吃两种形态（flat 优先兜底嵌套缺席），空值折叠为 ""，
+  // 单行坏数据不再毁整表；web 端本就有 `||` 回退显示。网关对 web 的出参
+  // 契约（from/to 嵌套）由 Encoder 保持不变。
+  //
+  // Username 契约切换（friend-search-contract v1.0 + §8，作者 2026-09-05 裁定：
+  // NL 号 = 官网 Username；统一切换、无双写别名期 §4.7）：解码以契约四字段
+  // username / display_name / avatar 为准（字面 snake_case，§4.0），旧字段
+  // neblinkId/name/avatarUrl 仅作窗口期回退（§4.7 发布窗口自愈，非别名期）。
+  // lookup 本身为纯 Json 透传不经此 Decoder，此处护的是 /api/friends 列表链。
+  // 注意不能用 get[Option].orElse：circe 的 Option 解码对「字段缺席」也
+  // 成功返回 None，orElse 永远不可达——必须以 focus 区分缺席/为 null。
+
+  /** 字段回退读：primary 缺席或为 null → fallback；都缺席 → None。 */
+  private def strOr(c: HCursor, primary: String, fallback: String): Option[String] =
+    def pick(name: String): Option[String] =
+      c.downField(name).focus.flatMap(v => if v.isNull then None else v.asString)
+    pick(primary).orElse(pick(fallback))
+
+  /** display_name 必填语义（契约 §4.0/§3.1：服务端永不为 null，服务端 fallback
+   *  链 name→username→user_id）。客户端镜像同链后折叠 ""（单行容错不毁整表，
+   *  2026-09-04 审计口径）：display_name → name（窗口期旧字段）→ username →
+   *  neblinkId → userId → ""。 */
+  private def displayNameOf(c: HCursor): String =
+    strOr(c, "display_name", "name")
+      .orElse(strOr(c, "username", "neblinkId"))
+      .orElse(c.downField("userId").focus.flatMap(v => if v.isNull then None else v.asString))
+      .getOrElse("")
+
+  private[neblink] def flatFriendSummary(c: HCursor): Decoder.Result[FriendSummary] =
+    c.get[String]("userId").map(userId =>
+      FriendSummary(
+        userId,
+        strOr(c, "username", "neblinkId").getOrElse(""),
+        displayNameOf(c),
+        strOr(c, "avatar", "avatarUrl"),
+        c.get[Option[Long]]("since").getOrElse(None),
+        c.get[Option[Boolean]]("blocked").getOrElse(None)
+      ))
+
+  given Decoder[FriendSummary] = Decoder.instance { c =>
+    for
+      userId  <- c.get[String]("userId")
+      since   <- c.get[Option[Long]]("since")
+      blocked <- c.get[Option[Boolean]]("blocked")
+    yield FriendSummary(
+      userId,
+      strOr(c, "username", "neblinkId").getOrElse(""),
+      displayNameOf(c),
+      strOr(c, "avatar", "avatarUrl"),
+      since, blocked)
+  }
+
+  given Decoder[FriendRequestSummary] = Decoder.instance { c =>
+    for
+      requestId <- c.get[String]("requestId")
+      from      <- c.downField("from").as[FriendSummary].orElse(flatFriendSummary(c))
+      note      <- c.get[Option[String]]("note")
+      createdAt <- c.get[Option[Long]]("createdAt")
+    yield FriendRequestSummary(requestId, from, note, createdAt)
+  }
+
+  given Decoder[OutgoingRequestSummary] = Decoder.instance { c =>
+    for
+      requestId <- c.get[String]("requestId")
+      to        <- c.downField("to").as[FriendSummary].orElse(flatFriendSummary(c))
+      createdAt <- c.get[Option[Long]]("createdAt")
+    yield OutgoingRequestSummary(requestId, to, createdAt)
+  }
+
   given Decoder[FriendListResponse] = deriveDecoder
   given Decoder[MessageSummary] = deriveDecoder
   given Decoder[ConversationSummary] = deriveDecoder
   // Encoders for gateway REST responses (client decodes server JSON; gateway
   // re-encodes the same domain objects for the frontend UI).
-  given Encoder[FriendSummary] = deriveEncoder
+  /** 出参契约钉死（friend-search-contract v1.0 §4.0/§4.5）：档案四字段字面
+   *  snake_case（username / display_name / avatar；relation_status 由
+   *  /api/users/search 独有），信封字段维持 camelCase（userId/since/blocked，
+   *  以及上层 requestId/note/createdAt 由 deriveEncoder 保持）。网关对 web 的
+   *  /api/friends、/api/conversations 内嵌档案经此 Encoder 统一切换。 */
+  given Encoder[FriendSummary] = Encoder.instance { f =>
+    Json.obj(
+      "userId"       -> f.userId.asJson,
+      "username"     -> f.username.asJson,
+      "display_name" -> f.displayName.asJson,
+      "avatar"       -> f.avatar.asJson,
+      "since"        -> f.since.asJson,
+      "blocked"      -> f.blocked.asJson
+    )
+  }
   given Encoder[FriendRequestSummary] = deriveEncoder
   given Encoder[OutgoingRequestSummary] = deriveEncoder
   given Encoder[FriendListResponse] = deriveEncoder

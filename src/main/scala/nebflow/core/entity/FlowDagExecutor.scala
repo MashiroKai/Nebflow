@@ -8,7 +8,8 @@ import nebflow.actor.*
 import nebflow.agent.*
 import nebflow.core.NebflowLogger
 import nebflow.core.flow.{NodeStatus, VerdictFamily}
-import nebflow.core.tools.{FileHistory, FlowReportStore, ReadTracker}
+import nebflow.core.node.NodeRunner
+import nebflow.core.tools.FlowReportStore
 import nebflow.shared.{Message, MessageRole}
 
 import scala.concurrent.duration.*
@@ -1132,8 +1133,6 @@ object FlowDagExecutor:
         else json.deepMerge(Json.obj("nodeSessionId" -> sessionId.asJson))
       rawWsSend(withNode)
     for
-      readTracker <- ReadTracker.create
-      fileHistory <- FileHistory.create()
       resultDeferred <- Deferred[IO, Either[FailOutcome, List[Message]]]
       // Bridge actor: receives AgentEvent, completes the Deferred, self-stops.
       // The deferred MUST be completed synchronously inside the receive action:
@@ -1161,37 +1160,38 @@ object FlowDagExecutor:
         },
         s"bridge-${nodeId.take(10)}-${sessionId.take(8)}"
       )
-      ref <- actorSystem.spawn(
-        AgentActor(
+      ref <- NodeRunner.spawnAgentActor(
+        actorSystem,
+        NodeRunner.SpawnParams(
           agentDef = agentDef,
           resources = resources,
-          wsSend = routedWsSend,
+          sessionId = sessionId,
+          sessionName = s"$flowName/$nodeId",
           depth = 1,
           parentRef = parentAgentRef,
-          sessionId = Some(sessionId),
-          sessionName = Some(s"$flowName/$nodeId"),
-          initialMessages = initialMessages,
-          readTracker = Some(readTracker),
-          fileHistory = Some(fileHistory),
-          contextWindow = resources.contextWindow,
-          expectsMail = false,
+          wsSend = routedWsSend,
+          projectRoot = None, // flow 节点沿用 agent 自身 projectRoot（现状一致）
+          safetyMode = "confirm-edits",
           rootSessionId = effectiveRootSessionId,
-          // #406: one-shot flow nodes are leaves — FlowExecute/FlowTrigger/
-          // SubTask/Delegate stripped by buildAllowedToolSet (isFlowNode rule).
+          initialMessages = initialMessages,
           isFlowNode = true,
+          expectsMail = false,
           // 轨道二 #5: raw declaration; stripping + clause variant gate on the
           // dedicatedAgents flag at each turn (hot-read, no respawn needed).
-          userFacingNode = userFacing
-        ),
-        s"dagnode-${nodeId.take(10)}-${sessionId.take(8)}"
+          userFacingNode = userFacing,
+          actorName = s"dagnode-${nodeId.take(10)}-${sessionId.take(8)}"
+        )
       )
       // P1: register flow node agents in the unified AgentRegistry — this was
       // previously missing entirely, so permission answers routed to a ghost
       // root agent and were silently dropped (D2 for dag-* sessions).
-      _ <- resources.agentRegistry.update(
-        _ + (
-          sessionId -> AgentRecord(sessionId, ref, AgentKind.Flow, effectiveRootSessionId, parentAgentRef)
-        )
+      _ <- NodeRunner.registerAgent(
+        resources,
+        id = sessionId,
+        ref = ref,
+        kind = AgentKind.Flow,
+        rootSessionId = effectiveRootSessionId,
+        parentRef = parentAgentRef
       )
       // Send input with the bridge actor as replyTo
       _ <- (ref ! AgentCommand.UserInput(

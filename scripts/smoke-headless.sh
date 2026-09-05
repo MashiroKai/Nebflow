@@ -16,7 +16,15 @@ cleanup() {
   lsof -nP -tiTCP:$PORT -sTCP:LISTEN 2>/dev/null | xargs kill -KILL 2>/dev/null
   pgrep -f -- "--port $PORT" | xargs kill -KILL 2>/dev/null
 }
+# 信号路径必须显式 exit：zsh 的 trap 处理完信号会从断点继续跑脚本，
+# 只有 exit(128+N) 才真正终止（exit 又会触发 EXIT trap，cleanup 幂等无害）。
+# 残留治理 2026-09-05——裸 EXIT trap 在信号退出路径不触发，隔离实例 sbt
+# 进程会漏到脚本外；Ctrl+C(SIGINT)=130 / 被 kill(SIGTERM)=143。
+on_int()  { cleanup; exit 130; }
+on_term() { cleanup; exit 143; }
 trap cleanup EXIT
+trap on_int INT
+trap on_term TERM
 
 # --- isolated instance with real provider config (copy from main home) ---
 rm -rf "$HOME_DIR"; mkdir -p "$HOME_DIR"

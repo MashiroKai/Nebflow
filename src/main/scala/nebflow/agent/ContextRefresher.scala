@@ -109,6 +109,70 @@ object ContextRefresher:
       case (None, Some(f)) => Some(f)
       case (Some(p), Some(f)) => Some(s"$p\n\n---\n\n$f")
 
+  // ============================================================
+  // AGENTS.md 注入（§E.2，project-architecture phase2 设计 §E）
+  // ============================================================
+
+  private val logger = nebflow.core.NebflowLogger.forName("nebflow.agent")
+
+  /** E.2 长度护栏：>16KB（16*1024 字节）截断 + 尾注（提示词膨胀防护）。 */
+  val AgentsMdMaxBytes: Int = 16 * 1024
+
+  /** E.2 接收面 gating：注入对象 = project 分发器 + 全部 node 会话；Nebula 与
+    * 双轨 team/flow 会话不注入。
+    *
+    * 基准取舍（任务书建议 projectRoot.isDefined ± converged 名单，均否决留档）：
+    *  - projectRoot.isDefined 不可作主基准：WebSocketRoutes.doSpawnRootAgent 把
+    *    全部 WS 根会话（含 Nebula）的 projectRoot fallback 到 ~/.nebflow/projects
+    *    ——Nebula 恒 Some，单基准会误注入。
+    *  - converged 名单（project-dispatcher + general）不可作叠加/主基准：node
+    *    会话 agent 名 = NodeDef.agent 任意声明值（NodeEngine loadAgent(node.agent)），
+    *    名单覆盖不了「全部 node 会话」。
+    *  - 采用 sandboxEnabled（spawn 形态信号）：全仓唯二置位点 NodeEngine（节点
+    *    spawn）+ ProjectActor（分发器 spawn）＝接收面本身（2a §A.6 spec 钉死
+    *    「仅 project 节点/分发器置位」）；Nebula/team/flow/Delegate/SubTask 默认
+    *    false → 不注入。projectRoot 非空作读取源 + 空串护栏。
+    *  - [2026-09-05 Nebula 沙箱启用批] 第三置位点 WebSocketRoutes.doSpawnRootAgent
+    *    （Nebula 根会话）落地后，sandboxEnabled 不再独占「project 会话」语义
+    *    （Nebula fallback projectRoot 恒 Some → 两条件恒真、必误注入）——追加
+    *    agentName 排除：name=="Nebula" 的会话不注入（AGENTS.md 接收面维持
+    *    project 分发器 + node 会话不变）。默认参数 "" 保持既有两参调用与 spec
+    *    兼容（"" != "Nebula" 语义不变）。
+    * 公开供 spec 断言（参照 skillCatalogEnabledFor 同文件先例）。 */
+  def agentsMdEnabledFor(sandboxEnabled: Boolean, projectRoot: Option[String], agentName: String = ""): Boolean =
+    sandboxEnabled && projectRoot.exists(_.nonEmpty) && agentName != "Nebula"
+
+  /** E.2 读取：`<projectRoot>/AGENTS.md`，每 turn 重读盘（对齐 rulesMd 同机制）。
+    * 旧位 `.nebflow/Agent.md` 残留 → 仅 WARN + 回落读根文件——迁移动作本体在
+    * ProjectStore.load（E.3），此处置严禁文件搬家（每 turn 读路径带写副作用会
+    * 放大竞态面）；挂载即迁移，残留只出现在 load 不可达的异常态，WARN 暴露即可。
+    * >16KB 按字节截断 + 尾注 `[AGENTS.md truncated]`（截断切点若落在多字节
+    * UTF-8 序列内，残码由解码器替换，不回写盘面）。路径解析失败（脏 projectRoot
+    * 字符串）→ None，不中断 turn。 */
+  def resolveAgentsMd(projectRoot: Option[String]): IO[Option[String]] =
+    projectRoot.filter(_.trim.nonEmpty) match
+      case None => IO.pure(None)
+      case Some(root) =>
+        IO.blocking {
+          scala.util.Try(os.Path(root)).toOption.flatMap { base =>
+            val legacy = base / ".nebflow" / "Agent.md"
+            if os.exists(legacy) then
+              logger.warnSync(
+                s"[agents-md] '$legacy' still present (migration runs at ProjectStore.load) — reading workspace-root AGENTS.md"
+              )
+            val p = base / "AGENTS.md"
+            if os.exists(p) then
+              val bytes = java.nio.file.Files.readAllBytes(p.toNIO)
+              val text =
+                if bytes.length > AgentsMdMaxBytes then
+                  new String(bytes, 0, AgentsMdMaxBytes, java.nio.charset.StandardCharsets.UTF_8) +
+                    "\n\n[AGENTS.md truncated]"
+                else new String(bytes, java.nio.charset.StandardCharsets.UTF_8)
+              Option(text.trim).filter(_.nonEmpty)
+            else None
+          }
+        }
+
   /**
    * Always returns the projects directory: ~/.nebflow/projects/<folderName>/
    *  This is where project-level config lives (NEBFLOW.md, agents/, flows/).
@@ -245,29 +309,35 @@ object ContextRefresher:
    * Memory injection gate — pure so both branches are spec-covered
    * (HeadlessModeSpec); the refreshTurn touchpoint binds HeadlessMode.enabled.
    *
-   * Headless (NEBFLOW_HEADLESS=1, benchmark mode) skips the WHOLE memory
-   * block: User/Agent memory accumulates across runs, and injecting
-   * previous-run state into a fresh benchmark session breaks determinism.
-   * With headless off the legacy gate (SubTask workers excluded; Nebula and
-   * team agents eligible) is unchanged.
+   * 2026-08-31 memory-system redesign (裁定①): ONLY Nebula carries memory.
+   * Team agents have no memory anymore (User.md + team memory.md injection
+   * removed); standalone agents never did. Headless (NEBFLOW_HEADLESS=1,
+   * benchmark mode) skips memory entirely — previous-run state must not leak
+   * into a fresh benchmark session.
    */
   def shouldInjectMemory(
     isWorker: Boolean,
-    isTeamAgent: Boolean,
     agentName: String,
     headless: Boolean = HeadlessMode.enabled
   ): Boolean =
-    !headless && !isWorker && (isTeamAgent || agentName == "Nebula")
+    !headless && !isWorker && agentName == "Nebula"
 
   /**
    * Build a memory block string for system prompt injection.
    *
    * Reads memory levels and formats them into a single Markdown block:
-   *   - User memory    (~/.nebflow/User.md)                              — global
-   *   - Agent memory   (~/.nebflow/agents/<name>/memory.md)               — Nebula
-   *     or (~/.nebflow/teams/<team>/agents/<name>/memory.md)              — Team agents
+   *   - User memory    (~/.nebflow/User.md)                 — global
+   *   - Agent memory   (~/.nebflow/agents/Nebula/memory.md)  — Nebula
+   *
+   * 2026-08-31 裁定①: team agents no longer carry memory — the gate
+   * (shouldInjectMemory) only admits Nebula, so teamName is always None here.
    *
    * Only levels that exist on disk are included.
+   *
+   * §6.2-2.5（2026-09-05 批次二机制五）：构建时顺带消费生命周期信号并按已加载
+   * 内容计算字节（零额外 IO）——命中触发源或任一文件超 80% 软线时在记忆块尾部
+   * 追加整理提醒（>80% 为即时任务措辞；纯渲染见 renderMemoryBlock）。
+   * 注入侧仍不加截断（§3.3 裁定）——提醒是提示，不是截断。
    */
   def buildMemoryBlock(
     agentName: String,
@@ -276,22 +346,78 @@ object ContextRefresher:
     val agentMemory = teamName match
       case Some(tn) => MemoryStore.loadTeamAgentMemory(tn, agentName)
       case None => MemoryStore.loadAgentMemory(agentName)
+    renderMemoryBlock(
+      MemoryStore.loadUserMemory,
+      agentMemory,
+      MemoryHygieneSignal.takePending()
+    )
+  end buildMemoryBlock
 
+  /** 纯渲染（spec 直测面）：两记忆内容 + (restartPending, compactPending) 信号 →
+    * 记忆块全文。文件字节直接由已加载内容计算（无第二次读盘）。 */
+  def renderMemoryBlock(
+    userContent: Option[String],
+    agentContent: Option[String],
+    lifecycleSignal: (Boolean, Boolean)
+  ): String =
     val sections = List(
-      MemoryStore.loadUserMemory
-        .map(content => s"## User Memory\n\n$content"),
-      agentMemory
-        .map(content => s"## Agent Memory\n\n$content")
+      userContent.map(content => s"## User Memory\n\n$content"),
+      agentContent.map(content => s"## Agent Memory\n\n$content")
     ).flatten
 
-    if sections.isEmpty then ""
-    else
-      s"""# Memory
+    val base =
+      if sections.isEmpty then ""
+      else
+        s"""# Memory
+           |
+           |Your memory is below. Entries with →id have detail files at `~/.nebflow/memory/{id}.md` — read them when the scenario matches.
+           |
+           |${sections.mkString("\n\n")}""".stripMargin
+
+    val notice = memoryHygieneNotice(userContent, agentContent, lifecycleSignal)
+    if notice.isEmpty then base
+    else if base.isEmpty then notice
+    else base + "\n\n---\n\n" + notice
+  end renderMemoryBlock
+
+  /** 生命周期整理提醒（§6.2-2.5）：任一文件 >80% 软线 → 即时任务措辞（当轮安排
+    * 整理，不等周日）；否则重启/压缩事件命中 → 轻量清扫提示；两者皆无 → 空串。 */
+  def memoryHygieneNotice(
+    userContent: Option[String],
+    agentContent: Option[String],
+    lifecycleSignal: (Boolean, Boolean)
+  ): String =
+    val bytesOf = (s: Option[String]) => s.map(_.getBytes(java.nio.charset.StandardCharsets.UTF_8).length.toLong).getOrElse(0L)
+    val userBytes = bytesOf(userContent)
+    val agentBytes = bytesOf(agentContent)
+    val (restartPending, compactPending) = lifecycleSignal
+
+    val userOver = userBytes > nebflow.service.MemoryBudget.UserSoftBytes
+    val agentOver = agentBytes > nebflow.service.MemoryBudget.AgentSoftBytes
+
+    if userOver || agentOver then
+      val lines = List(
+        Option.when(userOver)(
+          s"- ~/.nebflow/User.md: $userBytes bytes (soft line ${nebflow.service.MemoryBudget.UserSoftBytes}, hard ${nebflow.service.MemoryBudget.UserHardBytes})"),
+        Option.when(agentOver)(
+          s"- ~/.nebflow/agents/Nebula/memory.md: $agentBytes bytes (soft line ${nebflow.service.MemoryBudget.AgentSoftBytes}, hard ${nebflow.service.MemoryBudget.AgentHardBytes})")
+      ).flatten
+      s"""## Memory hygiene — IMMEDIATE TASK
          |
-         |Your memory is below. Entries with →id have detail files at `~/.nebflow/memory/{id}.md` — read them when the scenario matches.
+         |A memory file is over the 80% budget line:
+         |${lines.mkString("\n")}
          |
-         |${sections.mkString("\n\n")}""".stripMargin
-  end buildMemoryBlock
+         |Schedule a consolidation pass THIS TURN (memory-consolidation skill), do not wait for the weekly audit: over-budget memory taxes every future session, and the write-side gate will start rejecting appends at the hard line. Trim stale T2 batch sections, superseded rulings and unpromoted Dream entries first (取代而非追加; replace_section for section-level cleanup).""".stripMargin
+    else if restartPending || compactPending then
+      val cause = (restartPending, compactPending) match
+        case (true, true)  => "The host just restarted AND your memory was just compacted"
+        case (true, false) => "The host just restarted"
+        case _             => "Your memory was just compacted"
+      s"""## Memory hygiene
+         |
+         |$cause. Restart/compaction closes out T2 status entries (pending-reboot lists, batch ledgers) and ages T3 Dream entries. If you noticed stale state while resuming, run a quick consolidation pass (memory-consolidation skill) — trim closed-out entries instead of letting them accumulate to the budget line.""".stripMargin
+    else ""
+  end memoryHygieneNotice
 
   // ============================================================
   // Main entry point
@@ -365,7 +491,12 @@ object ContextRefresher:
       else withModel.tools
     withModel.copy(
       tools = tools,
-      flowContract = if running.flowContract.nonEmpty then running.flowContract else withModel.flowContract
+      flowContract = if running.flowContract.nonEmpty then running.flowContract else withModel.flowContract,
+      // 阶段 2b Plugins（§B.4 第 3/4 步）：node 分配是 spawn 时运行时注入
+      // （NodeEngine 写入 pluginMcpServers/pluginTools，不落 agent.json）——
+      // 每 turn 热重载不得冲掉（flowContract 同款保活先例）。
+      pluginMcpServers = if running.pluginMcpServers.nonEmpty then running.pluginMcpServers else withModel.pluginMcpServers,
+      pluginTools = if running.pluginTools.nonEmpty then running.pluginTools else withModel.pluginTools
     )
 
   def refreshTurn(
@@ -412,28 +543,45 @@ object ContextRefresher:
         case None => IO.pure(None)
       folderRules = resolveRules(state, resources)
       rulesMd = mergeRules(projectRules, folderRules)
+      // E.2 AGENTS.md 注入（每 turn 重读盘，对齐 rulesMd 同机制）。读取基准 =
+      // SessionContext.projectRoot（NodeEngine/ProjectActor spawn 写入的
+      // workspace/worktree 路径，§A.6 唯一权威）——node/分发器会话无 folderId，
+      // 上方 folderId 派生的 projectRoot 对它们恒 None，不可作基准（gating 取舍
+      // 见 agentsMdEnabledFor；agentName 排除 = Nebula 根会话沙箱启用后
+      // sandboxEnabled 信号失真的补丁，2026-09-05 批）。随 systemStable 在
+      // lifecycle 节点生效。
+      agentsMd <-
+        if agentsMdEnabledFor(state.sandboxEnabled, state.projectRoot, globalDef.name) then
+          resolveAgentsMd(state.projectRoot)
+        else IO.pure(None)
       thinkingConfig <- resources.thinkingConfigRef.get
       (branchReminder, currentBranch) <- checkBranchChange(projectRoot, state.gitBranch)
-      skillCatalog <- SkillService.buildPerAgentCatalog(globalDef.skills)
+      // D.1-12（阶段 2d）：skill 目录注入新模型停注——node/general 会话不再
+      // 注入 skill 目录段（§B.4 plugin 全文注入取代「目录+自读」，裁定 8/9）。
+      // Nebula 保留（skill-creator alwaysVisible：Nebula 用目录造 skill）；
+      // legacy 会话保留至阶段 3。refreshTurn 是每轮（含首条消息）的唯一生产点，
+      // 置空后 order 800 section（condition=nonEmpty）自然不渲染。
+      skillCatalog <-
+        if skillCatalogEnabledFor(globalDef.name) then SkillService.buildPerAgentCatalog(globalDef.skills)
+        else IO.pure("")
       flowCatalog <-
         if isWorker then IO.pure("")
         else SkillService.buildPerAgentFlowCatalog(globalDef.flows)
       teamCatalog <-
         if isWorker then IO.pure("")
         else buildTeamCatalogForSession(state.sessionId)
-      // Memory: only Nebula (standalone, name="Nebula") and team agents get memory.
-      // Team agents get memory; standalone agents (Coder/Explorer/etc) don't.
-      // SubTask workers get none — clean context, prompt is the only input.
+      // Memory: only Nebula (2026-08-31 裁定①). Team agents, standalone
+      // agents and SubTask workers get no memory block — clean context.
       // Headless (NEBFLOW_HEADLESS=1): none at all — benchmark determinism.
-      isTeamAgent = teamNameOpt.isDefined
       memoryBlock =
-        if shouldInjectMemory(isWorker, isTeamAgent, globalDef.name) then buildMemoryBlock(globalDef.name, teamNameOpt)
+        if shouldInjectMemory(isWorker, globalDef.name) then buildMemoryBlock(globalDef.name, teamNameOpt)
         else ""
     yield TurnContext(
       globalDef,
       systemPrefix,
       projectRoot,
       rulesMd,
+      agentsMd,
       thinkingConfig,
       branchReminder,
       currentBranch,
@@ -450,6 +598,13 @@ object ContextRefresher:
     agentDef: AgentDef
   ): IO[Option[String]] =
     resolveProjectRoot(state.folderId, resources, agentDef.name)
+
+  /** D.1-12（阶段 2d）：skill 目录注入开关——收敛三角色中仅 Nebula 保留
+    * （skill-creator alwaysVisible，Nebula 用它造 skill）；general（node 会话
+    * 模版）与 project-dispatcher 停注（plugin 全文注入取代「目录+自读」，
+    * 裁定 8/9）；legacy agent 保留至阶段 3。公开供 spec 断言。 */
+  def skillCatalogEnabledFor(agentName: String): Boolean =
+    !AgentCore.ConvergedAgentNames.contains(agentName) || agentName == "Nebula"
 
   /**
    * Build Team catalog for system prompt injection.

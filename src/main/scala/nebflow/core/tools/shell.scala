@@ -39,9 +39,7 @@ case class BackgroundJobHealth(
 
 /** Background job managed by cats-effect Fiber + Deferred */
 private case class BackgroundJob(
-  // #391 机制 A：fiber 类型用存在类型 ?——executeBackground 的 Unit fiber 与
-  // registerBackgroundJob 的 Either[Throwable, ProcessResult] fiber 共用（后者
-  // 让 background_job_id 查询拿到真实结果）。cancel/join.void 对 ? 均可用。
+  // fiber 类型用存在类型 ?——cancel/join.void 对 ? 均可用。
   fiber: Fiber[IO, Throwable, ?],
   heartbeatFiber: Option[Fiber[IO, Throwable, Unit]],
   healthCheckFiber: Option[Fiber[IO, Throwable, Unit]],
@@ -67,7 +65,11 @@ final class ShellSession private (
   private val cleanupFiber: Fiber[IO, Throwable, Unit],
   private val lastAccessed: Ref[IO, Long],
   private val isAlive: Ref[IO, Boolean],
-  private val lifecycleMutex: Mutex[IO]
+  private val lifecycleMutex: Mutex[IO],
+  /** 阶段 2a 沙箱（§A.4）：会话持有的策略——BashSeatbelt 包装 + 初 cwd 的依据。
+    * None/off = 旧行为（初 cwd=user.dir，无包装）。会话内不可变（root 会话级
+    * 不可变，§A.2）。 */
+  private val sandbox: Option[nebflow.core.sandbox.SandboxPolicy] = None
 ):
 
   private val SessionTTL = 30.minutes.toMillis
@@ -216,64 +218,7 @@ final class ShellSession private (
       yield res
     }
 
-  /**
-   * Register an externally-started fiber as a background job so it can be cancelled
-   * via cancelBackgroundJob. Used for auto-backgrounded commands (#391 机制 A).
-   *
-   * The fiber must produce the command's REAL result (Either[Throwable, ProcessResult])
-   * — the watcher completes the queryable deferred with it AND fires on_complete
-   * (the makeNotifyCallback chain: agent ExternalEvent + WS + BgTaskRegistry unregister),
-   * so an auto-backgrounded command behaves exactly like an explicit run_in_background
-   * job: queryable via background_job_id, cancellable, health-checked.
-   */
-  def registerBackgroundJob(
-    jobId: String,
-    fiber: Fiber[IO, Throwable, Either[Throwable, ProcessResult]],
-    command: String,
-    health: JobHealth,
-    on_complete: Option[Either[Throwable, ProcessResult] => IO[Unit]] = None,
-    // #391 机制 B：后台硬超时 + 停滞窗口阈值（转后台任务同样受兜底约束）。
-    hardTimeoutMs: Long = Defaults.BashBackgroundHardTimeoutMs,
-    stuckWindowSec: Int = Defaults.BashStuckWindowSec,
-    // 测试注入用：health check 采样间隔（生产默认 30s）。
-    healthCheckIntervalSec: Int = Defaults.BgHealthCheckIntervalSec
-  ): IO[Unit] =
-    lifecycleMutex.lock.surround {
-      for
-        _ <- checkAlive *> touch
-        deferred <- Deferred[IO, Either[Throwable, ProcessResult]]
-        // Watcher: when the fiber finishes naturally, complete the deferred with the
-        // REAL result (background_job_id queries see the output) and fire on_complete.
-        _ <- (fiber.joinWithNever.attempt.flatMap {
-          case Right(inner) =>
-            deferred.complete(inner).void *> on_complete.fold(IO.unit)(cb => cb(inner).void)
-          case Left(t) =>
-            deferred.complete(Left(t)).void *> on_complete.fold(IO.unit)(cb => cb(Left(t)).void)
-        }).start
-        hcFiber <- startJobHealthCheck(
-          jobId,
-          deferred,
-          health,
-          isRegisteredJob = true,
-          command = command,
-          hardTimeoutMs = hardTimeoutMs,
-          stuckWindowSec = stuckWindowSec,
-          checkIntervalSec = healthCheckIntervalSec
-        )
-        job = BackgroundJob(
-          fiber = fiber,
-          heartbeatFiber = None,
-          healthCheckFiber = hcFiber,
-          deferred = deferred,
-          command = command,
-          health = health
-        )
-        _ <- backgroundJobs.update(_ + (jobId -> job))
-      yield ()
-    }
-
-  /**
-   * Cancel a background job by its ID.
+  /** Cancel a background job by its ID.
    * Kills the underlying process (if still alive), cancels all fibers, and removes the job.
    * Returns true if the job was found and cancelled, false if already gone/completed.
    */
@@ -371,7 +316,7 @@ final class ShellSession private (
     // argument parser, causing commands with quotes, &&, ||, or newlines
     // to be mangled.
     val bashPath = if isWindows then windowsBashPath else "bash"
-    val pb =
+    val plain: ProcessBuilder =
       if isWindows then
         // Bundled MinGit bash (Team #11): MinGit has no bin/bash.exe wrapper
         // that would assemble the MSYS environment, so run it as a LOGIN
@@ -385,6 +330,17 @@ final class ShellSession private (
           bundled
         else new ProcessBuilder(bashPath, "-s")
       else new ProcessBuilder(bashPath, "-c", command)
+    // 阶段 2a 沙箱（§A.4-3）：macOS 上经 Seatbelt 包装——/usr/bin/sandbox-exec
+    // 硬编码绝对路径 + /bin/bash（防 PATH 注入），策略随 fork/exec 传播到全部
+    // 子进程树。后端不可用（probe 失败）时 wrap=None → 裸跑：fail-closed 拦截
+    // 在 BashTool 入口（SANDBOX_UNAVAILABLE），显式降级时带 [unsandboxed] 前缀，
+    // 均不会静默走到这里。
+    val pb: ProcessBuilder =
+      if !isWindows && sandbox.exists(_.enabled) then
+        nebflow.core.sandbox.SandboxRuntime.current.wrap(List("bash", "-c", command), sandbox.get) match
+          case Some(wrapped) => new ProcessBuilder(wrapped*)
+          case None => plain
+      else plain
     // Empty or invalid working directory causes failures. Fall back to user home.
     val safeCwd =
       if cwd == null || cwd.isEmpty || !new File(cwd).exists() then
@@ -800,15 +756,10 @@ final class ShellSession private (
   /**
    * Start a health check fiber that periodically verifies the OS process is alive.
    *
-   * - Normal background job (executeBackground): the backgroundExecute fiber manages
-   *   the process lifecycle and completes the deferred when the process exits.
-   *   If the process crashes, backgroundExecute unblocks naturally (proc.waitFor()
-   *   returns), so we just log and do nothing.
-   *
-   * - Registered job (registerBackgroundJob): used for auto-backgrounded commands.
-   *   The watcher fiber uses fiber.joinWithNever, which may never complete if the
-   *   task fiber is stuck on a blocking op. If the process dies, we must complete
-   *   the deferred here to unblock cleanup.
+   * Normal background job (executeBackground): the backgroundExecute fiber manages
+   * the process lifecycle and completes the deferred when the process exits.
+   * If the process crashes, backgroundExecute unblocks naturally (proc.waitFor()
+   * returns), so we just log and do nothing.
    *
    * Idle timeout: if the process has been alive but produced no output for
    * BgIdleTimeoutSec, it is forcibly killed and the deferred is completed with
@@ -817,7 +768,8 @@ final class ShellSession private (
    * recovery path for delegate/subtask agents that would otherwise be blocked
    * forever by a stuck background command.
    *
-   * #391 机制 B（2026-08-25 用户裁定「输出零增长且 CPU 零消耗才杀」）：
+   * #391 机制 B（2026-08-25 用户裁定「输出零增长且 CPU 零消耗才杀」；
+   * #26 2026-08-30 保留——只服务显式 run_in_background 后台任务）：
    * - B1 idle CPU 豁免：idle 判定期间 CPU 有消耗（≥ CpuActiveThresholdNanos /
    *   采样窗口）→ 不算 idle，不杀（避免误杀 CPU 忙的合法任务，如无输出编译）。
    * - B2 硬超时兜底：运行 > hardTimeoutMs（默认 30min）后进入停滞观察——输出
@@ -829,7 +781,6 @@ final class ShellSession private (
     jobId: String,
     deferred: Deferred[IO, Either[Throwable, ProcessResult]],
     health: JobHealth,
-    isRegisteredJob: Boolean = false,
     command: String = "",
     hardTimeoutMs: Long = Defaults.BashBackgroundHardTimeoutMs,
     stuckWindowSec: Int = Defaults.BashStuckWindowSec,
@@ -861,21 +812,9 @@ final class ShellSession private (
             val proc = health.processRef.get()
             if proc == null then loop(lastLines, lastCpu, stuckStartMs) // process not yet started
             else if !proc.isAlive() then
-              if isRegisteredJob && health.deadNotified.compareAndSet(false, true) then
-                // Only complete deferred for registered (auto-backgrounded) jobs,
-                // where the watcher fiber may not detect the death
-                NebflowLogger
-                  .forName("nebflow.shell")
-                  .info(s"Job $jobId process died unexpectedly (exit: ${proc.exitValue()}) — completing deferred") *>
-                  deferred
-                    .complete(
-                      Left(new RuntimeException("Process died unexpectedly (exit code: " + proc.exitValue() + ")"))
-                    )
-                    .attempt
-                    .void
-              else
-                // Normal job: backgroundExecute will handle completion via waitFor()
-                IO.unit
+              // 进程意外死亡：backgroundExecute 经 proc.waitFor() 自然返回完成，
+              // 此处无需处理（deferred 由 backgroundExecute 完成）。
+              IO.unit
             else
               // Process still alive — B1/B2 checks
               val isSleepLike = SleepCommandRe.findFirstIn(command).isDefined
@@ -1077,13 +1016,17 @@ object ShellSession:
     sessions.get.flatMap(s => s.values.toList.traverse_(_.kill())).unsafeRunAndForget()
   }
 
-  def forSession(sessionId: String, initialDir: Option[String] = None): IO[ShellSession] =
-    createMutex.flatMap(_.lock.surround(doGetOrCreate(sessionId, initialDir)))
+  def forSession(
+    sessionId: String,
+    initialDir: Option[String] = None,
+    sandbox: Option[nebflow.core.sandbox.SandboxPolicy] = None
+  ): IO[ShellSession] =
+    createMutex.flatMap(_.lock.surround(doGetOrCreate(sessionId, initialDir, sandbox)))
 
-  private  def doGetOrCreate(sessionId: String, initialDir: Option[String]): IO[ShellSession] =
+  private  def doGetOrCreate(sessionId: String, initialDir: Option[String], sandbox: Option[nebflow.core.sandbox.SandboxPolicy]): IO[ShellSession] =
     def replace(old: ShellSession): IO[ShellSession] =
       old.cancelCleanupFiber() *> old.kill() *> sessions.update(_ - sessionId) *>
-        ShellSession.create(sessionId, initialDir).flatMap { newS =>
+        ShellSession.create(sessionId, initialDir, sandbox).flatMap { newS =>
           sessions.update(_ + (sessionId -> newS)).as(newS)
         }
     sessions.get.flatMap { m =>
@@ -1103,7 +1046,7 @@ object ShellSession:
               }
           }
         case None =>
-          ShellSession.create(sessionId, initialDir).flatMap { newS =>
+          ShellSession.create(sessionId, initialDir, sandbox).flatMap { newS =>
             sessions.update(_ + (sessionId -> newS)).as(newS)
           }
     }
@@ -1138,7 +1081,11 @@ object ShellSession:
       }.flatten
     }
 
-  private[tools] def create(sessionId: String, initialDir: Option[String] = None): IO[ShellSession] =
+  private[tools] def create(
+    sessionId: String,
+    initialDir: Option[String] = None,
+    sandbox: Option[nebflow.core.sandbox.SandboxPolicy] = None
+  ): IO[ShellSession] =
     for
       dirRef <- Ref.of[IO, String](
         initialDir.getOrElse {
@@ -1155,7 +1102,7 @@ object ShellSession:
       accessRef <- Clock[IO].realTime.map(_.toMillis).flatMap(Ref.of[IO, Long])
       aliveRef <- Ref.of[IO, Boolean](true)
       mutex <- Mutex[IO]
-    yield new ShellSession(sessionId, dirRef, jobsRef, procsRef, fiber, accessRef, aliveRef, mutex)
+    yield new ShellSession(sessionId, dirRef, jobsRef, procsRef, fiber, accessRef, aliveRef, mutex, sandbox)
 
   private def startCleanupFiber(jobsRef: Ref[IO, Map[String, BackgroundJob]]): IO[Fiber[IO, Throwable, Unit]] =
     def loop: IO[Unit] =

@@ -1,7 +1,9 @@
 package nebflow.core.schedule
 
+import cats.effect.IO
 import io.circe.syntax.*
 import io.circe.{Decoder, Encoder, Json}
+import nebflow.core.AtomicJson
 
 /**
  * 冻结调度（freeze-schedule，spec v1.2）：冻结时段模型 + 纯函数判定。
@@ -173,6 +175,26 @@ object FreezeSchedule:
   def evalWithSkip(cfg: FreezeScheduleConfig, skipUntil: Option[Long], now: Long): FreezeWindow =
     applySkip(eval(cfg, now), skipUntil, now)
 
+  /** 全局冻结状态节点（现象 2 契约补全 2026-08-30）：serverConfig 广播携带，
+    * 前端输入栏禁用/冻结提示的状态机直接读它（WS 连接初始态、配置热更、skipFreeze
+    * 后均即时刷新）。字段：
+    *   enabled      — 配置是否开启
+    *   frozen       — 当前是否处于冻结窗口（含 skip 语义：被跳过的窗口 = false）
+    *   skipped      — 当前窗口是否被 skipFreeze 跳过（配置开启且窗口本应冻结）
+    *   nextChangeAt — 下一翻转点 epoch ms（工作态=下一冻结开始；None=无翻转）
+    *   segments     — 冻结段列表（供前端展示「下一段 HH:mm」，与 workSchedule 一致）
+    */
+  def freezeStateNode(cfg: FreezeScheduleConfig, skipUntil: Option[Long], now: Long): io.circe.Json =
+    val raw = eval(cfg, now)
+    val window = applySkip(raw, skipUntil, now)
+    io.circe.Json.obj(
+      "enabled" -> cfg.enabled.asJson,
+      "frozen" -> window.frozen.asJson,
+      "skipped" -> (cfg.enabled && raw.frozen && !window.frozen).asJson,
+      "nextChangeAt" -> window.nextChangeAt.asJson,
+      "segments" -> cfg.segments.asJson
+    )
+
   /** 用户消息到达时计算 skipUntil：当前冻结窗口的结束时刻（eval 的 nextChangeAt，
     * 即下一次真实翻转点）；全天冻结无翻转点（None）时兜底为下一个午夜——跳过
     * 今天剩余时段，明天照常冻结。 */
@@ -182,6 +204,36 @@ object FreezeSchedule:
       Some(
         java.time.Instant.ofEpochMilli(now).atZone(zone).toLocalDate.plusDays(1).atStartOfDay(zone).toInstant.toEpochMilli
       )
+    }
+
+  // ============================================================
+  // skip 持久化（2026-08-30 P0：skip 状态非持久化——「点跳过 → 刷新/重启 →
+  // 输入框重新冻结」）。skipUntil 虽是运行时态（时间戳），但必须跨进程重启存活。
+  // 独立文件 <dataRoot>/freeze-skip.json，不与 nebflow.json 配置面交互——
+  // toggle off/on 走 setWorkSchedule（改 cfg.enabled），与 skip 天然独立不冲突。
+  // 持久化不改变「跳过非永久」语义：到期由 applySkip 的 >now 判断自然失效；
+  // 启动加载时过期值由调用方清理。内容 {"skipUntil": <epoch millis>}。
+  // ============================================================
+
+  def skipPersistPath(root: os.Path): os.Path = root / "freeze-skip.json"
+
+  /** 写盘（Some → 原子写）或删盘（None → 移除残留）。调用方 best-effort。 */
+  def persistSkip(root: os.Path, skipUntil: Option[Long]): IO[Unit] =
+    skipUntil match
+      case Some(t) => AtomicJson.write(skipPersistPath(root), Json.obj("skipUntil" -> t.asJson).noSpaces)
+      case None =>
+        IO.blocking {
+          if os.exists(skipPersistPath(root)) then os.remove(skipPersistPath(root))
+        }
+
+  /** 启动加载：读盘原始值（不过滤过期——调用方按 >now 判断）。缺失/损坏 → None。 */
+  def loadSkipUntil(root: os.Path): IO[Option[Long]] =
+    IO.blocking {
+      val p = skipPersistPath(root)
+      if os.exists(p) then
+        io.circe.parser.parse(os.read(p)).toOption
+          .flatMap(_.hcursor.downField("skipUntil").as[Long].toOption)
+      else None
     }
 
   /**

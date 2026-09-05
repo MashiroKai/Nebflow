@@ -2,6 +2,7 @@ package nebflow.core.tools
 
 import cats.effect.IO
 import cats.syntax.all.*
+import nebflow.core.sandbox.FileSandbox
 import io.circe.JsonObject
 import io.circe.syntax.*
 
@@ -26,7 +27,7 @@ Usage:
 - This tool will overwrite the existing file if there is one at the provided path.
 - Recommended: read the existing file first so the new content is informed by current state.
 - ALWAYS prefer editing existing files in the codebase. NEVER write new files unless explicitly required.
-- Prefer the Edit or MultiEdit tool for modifying existing files — they only send the diff. Only use this tool to create new files or for complete rewrites.
+- Prefer the Edit tool for modifying existing files — it only sends the diff. Only use this tool to create new files or for complete rewrites.
 - Only use emojis if the user explicitly requests it. Avoid writing emojis to files unless asked.
 - Do not use Bash (echo, cat heredoc) to create files — use this tool instead."""
 
@@ -66,12 +67,14 @@ Usage:
   def call(input: JsonObject, ctx: ToolContext): IO[Either[ToolError, String]] =
     val filePathStr = input("file_path").flatMap(_.asString).getOrElse("")
     val contentOpt = input("content").flatMap(_.asString)
-    if !nebflow.core.PathUtil.isAbsolute(filePathStr) then
-      IO.pure(Left(ToolError(s"Path must be absolute, got: $filePathStr")))
-    else
-      contentOpt match
-        case Some(content) => doWrite(Paths.get(filePathStr), content, ctx)
-        case None => IO.pure(Left(ToolError("Field 'content' must be a string")))
+    contentOpt match
+      case Some(content) =>
+        // 阶段 2a 沙箱（§A.3）：写闸门——返回 fresh canonical 路径执行（TOCTOU
+        // 消灭）。沙箱关时保持旧行为（要求绝对路径，无根校验）。
+        FileSandbox.checkWrite(ctx, filePathStr) match
+          case Left(err) => IO.pure(Left(err))
+          case Right(filePath) => doWrite(filePath, content, ctx)
+      case None => IO.pure(Left(ToolError("Field 'content' must be a string")))
 
   private def doWrite(
     filePath: Path,

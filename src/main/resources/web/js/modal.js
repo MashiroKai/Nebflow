@@ -125,8 +125,11 @@ let pendingConfirmCallback = null;
  * @param {string} title — dialog title
  * @param {string} message — dialog body text
  * @param {Function} onConfirm — called when user clicks Confirm
+ * @param {object} [opts] 可选项 { tone?: 'danger'|'neutral' } — 'neutral'（可逆动作，
+ *   如项目归档）→ 确认钮走 glass-control 中性材质（#delete-box.confirm-neutral）；
+ *   默认 'danger' 保留红色语义。状态在每次打开时重设，无残留。
  */
-export function showConfirm(title, message, onConfirm) {
+export function showConfirm(title, message, onConfirm, opts = {}) {
   const { modalBox, deleteBox, deleteTitle, deleteMsg, modalOverlay } = state.dom;
   if (!deleteBox) { onConfirm?.(); return; }
   modalBox.style.display = 'none';
@@ -137,10 +140,16 @@ export function showConfirm(title, message, onConfirm) {
   pendingBatchDelete = false;
   pendingFolderDelete = false;
   state.pendingDeleteId = null;
+  deleteBox.classList.toggle('confirm-neutral', opts.tone === 'neutral');
   modalOverlay.classList.add('on');
 }
 
 // --- Generic toast notification ---
+// 2026-09-03 glass redesign (author ruling): type semantics moved from the
+// color accent strip to a leading glyph icon (color-only distinction; glyph
+// colors live in modal.css). Signature and lifecycle unchanged — callers
+// keep passing (message, type).
+const TOAST_ICONS = { error: '\u2715', info: '!', success: '\u2713' };
 /**
  * Show a brief Nebflow-styled toast notification.
  * @param {string} message — text to display
@@ -149,7 +158,14 @@ export function showConfirm(title, message, onConfirm) {
 export function showToast(message, type = 'error') {
   const toast = document.createElement('div');
   toast.className = 'nebflow-toast nebflow-toast-' + type;
-  toast.textContent = message;
+  const icon = document.createElement('span');
+  icon.className = 'nebflow-toast-icon';
+  icon.setAttribute('aria-hidden', 'true');
+  icon.textContent = TOAST_ICONS[type] || TOAST_ICONS.info;
+  const msg = document.createElement('span');
+  msg.className = 'nebflow-toast-msg';
+  msg.textContent = message;
+  toast.append(icon, msg);
   document.body.appendChild(toast);
   requestAnimationFrame(() => toast.classList.add('show'));
   setTimeout(() => {

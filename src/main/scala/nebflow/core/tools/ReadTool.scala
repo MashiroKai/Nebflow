@@ -2,9 +2,10 @@ package nebflow.core.tools
 
 import cats.effect.IO
 import cats.syntax.all.*
+import nebflow.core.sandbox.FileSandbox
 import io.circe.JsonObject
 import io.circe.syntax.*
-import nebflow.shared.ContentBlock
+import nebflow.shared.{ContentBlock, Defaults}
 
 import java.nio.file.{Files, Path, Paths}
 import java.util.Base64
@@ -31,13 +32,20 @@ object ReadTool extends Tool:
 
   val name = "Read"
 
-  /** Read controls its own output via the limit parameter — exempt from guard. */
-  override val maxResultSizeChars: Int = Int.MaxValue
+  /** Read output is guarded like any other tool: >50K chars → persisted to
+    * disk with a preview (ToolResultGuard). Read's own 512KB/2000-line safety
+    * limits remain as the tool-level net. For large files use offset/limit
+    * to paginate — a single Read may return at most the default cap.
+    * (2026-09-01 #38: was Int.MaxValue — exempting Read was the single biggest
+    * context-bloat vector, incl. agents re-reading persisted tool-results.) */
+  override val maxResultSizeChars: Int = Defaults.DefaultMaxResultSizeChars
 
   val description =
     """Reads a file from the local filesystem. Reading a non-existent file returns an error, which is fine.
 
 You can access any file on the machine. If the user provides a path, assume it is valid.
+
+Live results: read results are live — if a file is modified on disk after you read it, the result in your conversation history is automatically updated to reflect the latest content. Never re-read a file you already read (its content is always current); never trust a Read result as a frozen snapshot. To compare the before/after states of a file (e.g. around an edit), use `git diff` or save the original content to a temporary variable. Edit safety: because results are live, the content you see before an Edit is always the latest version — Edit's exact-match requirement naturally guards against stale edits (if the file changed, the match fails with an error rather than writing to the wrong location). Multi-instance awareness: if another process (e.g. another Nebflow worktree instance) modifies a file you have read, your context reflects their changes — be cautious when reasoning about concurrently modified files.
 
 Parameters:
 - file_path (required): Absolute path to the file.
@@ -101,47 +109,49 @@ Guidelines:
 
   def call(input: JsonObject, ctx: ToolContext): IO[Either[ToolError, String]] =
     val filePathStr = input("file_path").flatMap(_.asString).getOrElse("")
-    if !nebflow.core.PathUtil.isAbsolute(filePathStr) then
-      IO.pure(Left(ToolError(s"Path must be absolute, got: $filePathStr")))
-    else
-      val filePath = Paths.get(filePathStr)
-      val fileName = filePath.getFileName.toString
+    // 阶段 2a 沙箱（§A.3）：读闸门——canonical 路径执行；root 内 symlink 指外
+    // 经 canonicalize 解析出去向而被拒（§A.8-3）。沙箱关时旧行为；沙箱开时相对
+    // 路径按节点 root 解析（§A.8-8，非 JVM user.dir）。
+    FileSandbox.checkRead(ctx, filePathStr) match
+      case Left(err) => IO.pure(Left(err))
+      case Right(filePath) =>
+        val fileName = filePath.getFileName.toString
 
-      imageMimeType(fileName) match
-        case Some(mediaType) =>
-          // Image file — return description; actual image bytes extracted by extractImages
-          IO.blocking {
-            if !Files.exists(filePath) then Left(ToolError(s"File does not exist: $filePath"))
-            else if Files.isDirectory(filePath) then
-              Left(
-                ToolError(s"Path is a directory, not a file: $filePath. Use Bash with ls to list directory contents.")
-              )
-            else if Files.size(filePath) > MAX_IMAGE_BYTES then
-              val sizeMb = Files.size(filePath).toDouble / 1024 / 1024
-              Left(
-                ToolError(
-                  s"Image too large: $fileName (${f"$sizeMb%.1f"}MB, limit ${MAX_IMAGE_BYTES / 1024 / 1024}MB)."
+        imageMimeType(fileName) match
+          case Some(mediaType) =>
+            // Image file — return description; actual image bytes extracted by extractImages
+            IO.blocking {
+              if !Files.exists(filePath) then Left(ToolError(s"File does not exist: $filePath"))
+              else if Files.isDirectory(filePath) then
+                Left(
+                  ToolError(s"Path is a directory, not a file: $filePath. Use Bash with ls to list directory contents.")
                 )
-              )
-            else
-              val bytes = Files.readAllBytes(filePath)
-              prepareImage(bytes, mediaType, fileName) match
-                case TooLarge(detail) => Left(ToolError(detail))
-                case Prepared(_, preparedMime, note) =>
-                  val sizeKb = bytes.length.toDouble / 1024
-                  val noteStr = note.fold("")(n => s" | $n")
-                  Right(s"[image: $fileName | $preparedMime | ${f"$sizeKb%.0f"}KB$noteStr]")
-          }.flatMap {
-            case Right(desc) =>
-              for _ <- ctx.readTracker.traverse_(_.recordRead(filePath, false))
-              yield Right(desc)
-            case Left(err) => IO.pure(Left(err))
-          }
-        case None =>
-          // Text file (including SVG) — existing behavior
-          readTextFile(input, filePath)
-      end match
-    end if
+              else if Files.size(filePath) > MAX_IMAGE_BYTES then
+                val sizeMb = Files.size(filePath).toDouble / 1024 / 1024
+                Left(
+                  ToolError(
+                    s"Image too large: $fileName (${f"$sizeMb%.1f"}MB, limit ${MAX_IMAGE_BYTES / 1024 / 1024}MB)."
+                  )
+                )
+              else
+                val bytes = Files.readAllBytes(filePath)
+                prepareImage(bytes, mediaType, fileName) match
+                  case TooLarge(detail) => Left(ToolError(detail))
+                  case Prepared(_, preparedMime, note) =>
+                    val sizeKb = bytes.length.toDouble / 1024
+                    val noteStr = note.fold("")(n => s" | $n")
+                    Right(s"[image: $fileName | $preparedMime | ${f"$sizeKb%.0f"}KB$noteStr]")
+            }.flatMap {
+              case Right(desc) =>
+                for _ <- ctx.readTracker.traverse_(_.recordRead(filePath, false))
+                yield Right(desc)
+              case Left(err) => IO.pure(Left(err))
+            }
+          case None =>
+            // Text file (including SVG) — existing behavior
+            readTextFile(input, filePath)
+        end match
+    end match
   end call
 
   private def readTextFile(input: JsonObject, filePath: Path): IO[Either[ToolError, String]] =

@@ -583,8 +583,28 @@ export function createMsgCopyButton(text) {
 
 /** Check whether a session/agent ID belongs to a background sub-agent
  *  (Delegate sub-agent: "delegate-<agent>-<uuid8>"; SubTask worker:
- *  "subtask-<uuid8>" - backend naming protocol). Single point of truth so
- *  future prefixes only need one change. Used for bg-agent popup routing. */
+ *  "subtask-<uuid8>"; Project node: "node-<uuid8>"; Project dispatcher:
+ *  "dispatcher-<uuid8>" - backend naming protocol). Single point of truth so
+ *  future prefixes only need one change. Used for bg-agent popup routing.
+ *  #28 可观测接线: node-/dispatcher- 会话进 subagent 面板（Processing 状态 +
+ *  工具调用过程, 与 Delegate/SubTask 同一可观测性标准）。 */
 export function isBgAgentId(id) {
-  return typeof id === 'string' && (id.startsWith('delegate-') || id.startsWith('subtask-'));
+  return typeof id === 'string' && (
+    id.startsWith('delegate-') || id.startsWith('subtask-') ||
+    id.startsWith('node-') || id.startsWith('dispatcher-')
+  );
+}
+
+/** Mid-segment truncation for tool labels (2026-09-03 footer toolline fix):
+ *  keep head + '…' + tail within `max` chars. Labels are `Tool(param)` — the
+ *  head carries the tool name + param lead, the tail carries the filename /
+ *  verb end of the param; both ends identify the call, the middle (long
+ *  directory prefixes, URL queries) is the expendable part. Pure string
+ *  function — no DOM, safe to assert in node. */
+export function truncateMiddle(str, max = 96, tailKeep = 24) {
+  const s = String(str ?? '');
+  if (s.length <= max) return s;
+  const headLen = max - tailKeep - 1; // 1 = the '…' itself
+  if (headLen < 1) return s.slice(0, max);
+  return s.slice(0, headLen) + '…' + (tailKeep > 0 ? s.slice(-tailKeep) : '');
 }

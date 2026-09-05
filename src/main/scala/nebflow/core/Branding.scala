@@ -70,9 +70,18 @@ object Branding:
   /** Full name — about dialog, first mention in docs. */
   val fullName: String = get("fullName")
 
-  /** Primary domain. PLACEHOLDER (D4) — display-only until rename day;
-    * must not be consumed to build any runtime or build-time URL this period. */
-  val domain: String = get("domain")
+  /**
+   * Primary domain. 双域机制（2026-09-01 登录链修复，作者拍板）：默认 = 调试域
+   * neblink.space（brand.conf 真值）；发布环境设 `NEBFLOW_BRAND_DOMAIN=nebflow.space`
+   * 自动替换（env 覆盖，复用 L3 dualEnv 双前缀读取）。display-only 语义：
+   * 前端 profile 链接必须消费 `profileUrl`，禁止用 domain 构建 URL。
+   */
+  val domain: String = env("BRAND_DOMAIN").getOrElse(get("domain"))
+
+  /** Profile 页 URL——前端 profile 链接的唯一来源（activityBar.js 消费它拼
+    * URL，与 domain 解耦）。双域机制同上：默认调试 neblink.space，发布 env
+    * `NEBFLOW_PROFILE_URL=https://nebflow.space/profile` 自动替换。 */
+  val profileUrl: String = env("PROFILE_URL").getOrElse(get("profileUrl"))
 
   /** Install script URL (current true value). */
   val installUrl: String = get("installUrl")

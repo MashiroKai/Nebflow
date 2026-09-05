@@ -1,13 +1,13 @@
 {
   "generatedBy": "scripts/check-js-types.mjs --update",
-  "total": 351,
+  "total": 313,
   "files": {
     "src/main/resources/web/js/activityBar.js": {
       "TS2345": 1,
       "TS2339": 9
     },
     "src/main/resources/web/js/agentManager.js": {
-      "TS2339": 4
+      "TS2339": 3
     },
     "src/main/resources/web/js/bgAgentPopup.js": {
       "TS2339": 1
@@ -20,7 +20,6 @@
       "TS2322": 1
     },
     "src/main/resources/web/js/chat.js": {
-      "TS2339": 6,
       "TS2345": 2,
       "TS1016": 1,
       "TS2525": 3
@@ -40,7 +39,7 @@
       "TS2339": 10
     },
     "src/main/resources/web/js/explorer.js": {
-      "TS2339": 31,
+      "TS2339": 27,
       "TS2554": 2
     },
     "src/main/resources/web/js/flowAgentPopup.js": {
@@ -50,7 +49,7 @@
       "TS2339": 9
     },
     "src/main/resources/web/js/flowDag.js": {
-      "TS2339": 3
+      "TS2339": 2
     },
     "src/main/resources/web/js/flowHelpers.js": {
       "TS2345": 1,
@@ -63,17 +62,17 @@
       "TS2339": 5
     },
     "src/main/resources/web/js/i18n.js": {
-      "TS2339": 5
+      "TS2339": 6
     },
     "src/main/resources/web/js/input.js": {
-      "TS2339": 8,
+      "TS2339": 3,
       "TS2353": 1
     },
     "src/main/resources/web/js/lightbox.js": {
       "TS2339": 1
     },
     "src/main/resources/web/js/main.js": {
-      "TS2339": 16,
+      "TS2339": 15,
       "TS2554": 3,
       "TS2345": 1
     },
@@ -81,11 +80,10 @@
       "TS2339": 8
     },
     "src/main/resources/web/js/modal.js": {
-      "TS2339": 7
+      "TS2339": 5
     },
     "src/main/resources/web/js/monacoEditor.js": {
-      "TS2339": 11,
-      "TS2349": 2
+      "TS2339": 11
     },
     "src/main/resources/web/js/neblink.js": {
       "TS2339": 10
@@ -93,9 +91,6 @@
     "src/main/resources/web/js/notificationBanner.js": {
       "TS2304": 1,
       "TS1005": 1,
-      "TS2339": 1
-    },
-    "src/main/resources/web/js/onboarding.js": {
       "TS2339": 1
     },
     "src/main/resources/web/js/planMode.js": {
@@ -107,19 +102,11 @@
       "TS2339": 8
     },
     "src/main/resources/web/js/sidebar.js": {
-      "TS2339": 108,
+      "TS2339": 101,
       "TS2345": 1
-    },
-    "src/main/resources/web/js/taskArchive.js": {
-      "TS2339": 1,
-      "TS2362": 3,
-      "TS2363": 3
     },
     "src/main/resources/web/js/viewers/docx.js": {
       "TS2339": 4
-    },
-    "src/main/resources/web/js/viewers/html.js": {
-      "TS2339": 2
     },
     "src/main/resources/web/js/viewers/shared.js": {
       "TS2339": 13

@@ -500,11 +500,23 @@ Usage:
               errors.update(_ :+ Option(ex.getMessage).map(_.take(120)).getOrElse(ex.getClass.getSimpleName))
           } *> countdown).start
         }
-        outcome <- IO.race(success.get, done.get)
+        // Race waits for the first terminal signal: a success (Left branch)
+        // OR every run finishing (done, Right branch). The winner is
+        // NONDETERMINISTIC when the main fiber is descheduled past the slowest
+        // run — both Deferreds complete before IO.race even starts, and the
+        // internal winner can be `done` even though a success was recorded.
+        // Discarding the outcome would resurrect the fast-fail poison (a
+        // completed success thrown away for an error aggregate). So the race
+        // result is only a wake-up signal: success.tryGet is authoritative —
+        // if a success ever landed, it WINS over the error aggregate (qa
+        // backend FAIL 2026-08-30: P1-1 red 4x on load avg 10+; fixed here,
+        // not by widening test sleeps).
+        _ <- IO.race(success.get, done.get)
         _ <- fibers.traverse_(_.cancel)
-        result <- outcome match
-          case Left(res) => IO.pure(Right(res))
-          case Right(_)  => errors.get.map(errs => Left(errs.mkString("\n")))
+        result <- success.tryGet.flatMap {
+          case Some(res) => IO.pure(Right(res))
+          case None      => errors.get.map(errs => Left(errs.mkString("\n")))
+        }
       yield result
 
   def call(input: JsonObject, ctx: ToolContext): IO[Either[ToolError, String]] =

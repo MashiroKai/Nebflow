@@ -79,18 +79,25 @@ class McpManager private (
     }
 
   private def connectServer(id: String, cfg: McpServerConfig): IO[Unit] =
+    // R3 (wait-timeout-fix): per-server optional tool-call ceiling from the
+    // server's `timeoutMs` config field — None (absent) = unbounded, replacing
+    // the removed blanket 120s client hard top.
+    val callTimeout = cfg.timeoutMs.map(_.millis)
     (cfg.command, cfg.url) match
       case (Some(cmd), _) =>
-        StdioTransport(cmd, cfg.args.getOrElse(Nil), cfg.env.getOrElse(Map.empty))
-          .flatMap(transport => connectWithTransport(id, transport))
+        // cwd（协议符合度批）：插件 MCP 经 PluginMcpManager 展开为绝对路径；
+        // 全局配置 None → 继承进程 cwd（既有行为）。相对值按进程 cwd 解析。
+        StdioTransport(cmd, cfg.args.getOrElse(Nil), cfg.env.getOrElse(Map.empty),
+          cfg.cwd.map(c => os.Path(c, os.pwd)))
+          .flatMap(transport => connectWithTransport(id, transport, callTimeout))
       case (_, Some(url)) =>
         val transport = new HttpTransport(url, cfg.headers.getOrElse(Map.empty))
-        connectWithTransport(id, transport)
+        connectWithTransport(id, transport, callTimeout)
       case _ =>
         IO.raiseError(new RuntimeException(s"MCP server '$id' must have either command or url"))
 
-  private def connectWithTransport(id: String, transport: McpTransport): IO[Unit] =
-    val client = new McpClient(id, transport)
+  private def connectWithTransport(id: String, transport: McpTransport, callTimeout: Option[FiniteDuration]): IO[Unit] =
+    val client = new McpClient(id, transport, callTimeout = callTimeout)
     for
       _ <- client.initialize()
       tools <- client.listTools()

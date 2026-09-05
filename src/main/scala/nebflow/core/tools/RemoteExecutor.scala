@@ -28,9 +28,6 @@ class RemoteExecutor(
 
   private val logger = NebflowLogger.forName("nebflow.remote-executor")
 
-  /** Foreground remote calls that exceed this are automatically moved to background. */
-  private val AutoBgThreshold = 30.seconds
-
   /** Timeout for synchronous remote calls without ToolContext (fallback path). */
   private val SyncTimeout = 120.seconds
 
@@ -77,7 +74,7 @@ class RemoteExecutor(
     def runOnPeer(peer: PeerInfo): IO[Either[ToolError, String]] =
       if peer.address.isEmpty then IO.pure(Left(ToolError(s"Device '${peer.deviceName}' has no address.")))
       else if isBackground && ctxOpt.isDefined then executeRemoteBackground(peer, toolName, params, ctxOpt.get)
-      else if ctxOpt.isDefined then executeForegroundWithAutoBackground(peer, toolName, params, ctxOpt.get)
+      else if ctxOpt.isDefined then executeForegroundSync(peer, toolName, params, ctxOpt.get)
       else executeViaBestPath(peer, toolName, params, SyncTimeout)
 
     neblinkService.peers.flatMap { peers =>
@@ -121,7 +118,13 @@ class RemoteExecutor(
       _ <- logger.info(s"Remote background task $jobId started on ${peer.deviceName}: $firstLine")
       // 1. Emit "running" to frontend + register in global registry
       _ <- emitBgTaskStarted(ctx, jobId, description)
-      _ <- BgTaskRegistry.register(jobId, ctx.sessionId.getOrElse(""), description, "remote")
+      _ <- BgTaskRegistry.register(
+             jobId,
+             ctx.sessionId.getOrElse(""),
+             description,
+             "remote",
+             ctx.rootSessionId.orElse(ctx.sessionId).getOrElse("")
+           )
       // 2. Start heartbeat so frontend shows progress (remote tasks have no process-level health)
       doneRef <- IO.ref(false)
       _ <- startRemoteHeartbeat(ctx, jobId, description, doneRef)
@@ -134,12 +137,20 @@ class RemoteExecutor(
   end executeRemoteBackground
 
   /**
-   * Execute a remote command in the foreground with an auto-background threshold.
-   * Mirrors BashTool's executeForegroundWithAutoBackground: if the HTTP call
-   * completes within the threshold, return the result directly; otherwise,
-   * the HTTP call continues running and the agent is notified on completion.
+   * Execute a remote command in the foreground until it completes.
+   *
+   * #26（2026-08-30 用户裁定「Bash 工具不再自动转后台」）：删除 30s 自动转后台
+   * ——远程前台调用一直等到 HTTP 返回（或 BgTimeout 网络超时兜底），返回真实
+   * 输出，不产生「[Remote command moved to background]」占位。
+   *
+   * 远程执行无本地进程树、无进程级进展探测（HTTP 等待中无法区分「命令在跑」
+   * 与「设备无响应」），因此：
+   * - 本地活动心跳（每 30s touch agent lastActivityMs）保持 turn 活动——
+   *   防 TaskStuckWatcher 把正常远程长命令误判卡死 restart
+   * - 真挂起（设备无响应）由 BgTimeout（3600s 网络超时）兜底——远程固有局限：
+   *   无法像本地 Bash 一样用输出/CPU 停滞检测，网络层超时是唯一防线
    */
-  private def executeForegroundWithAutoBackground(
+  private def executeForegroundSync(
     peer: PeerInfo,
     toolName: String,
     params: JsonObject,
@@ -151,63 +162,24 @@ class RemoteExecutor(
     val description = s"[${peer.deviceName}] ${params("description").flatMap(_.asString).getOrElse(firstLine)}"
 
     for
-      resultRef <- IO.ref[Option[Either[ToolError, String]]](None)
-      signal <- Deferred[IO, Unit]
-      thresholdWon <- IO.ref(false)
-      jobId <- IO.randomUUID.map(_.toString.take(8))
+      // 活动心跳：等待期间每 30s 刷新 lastActivityMs（防 TaskStuckWatcher 误杀）。
+      hbFiber <- (IO.sleep(30.seconds) *> touchAgentActivity(ctx)).foreverM.start
+      r <- executeViaBestPath(peer, toolName, remoteParams, BgTimeout)
+      _ <- hbFiber.cancel
+    yield r
+  end executeForegroundSync
 
-      // HTTP call — never cancelled, runs to completion on the remote device
-      commandFiber <- (for
-        r <- executeViaBestPath(peer, toolName, remoteParams, BgTimeout)
-        _ <- resultRef.set(Some(r))
-        _ <- signal.complete(()).void
-      yield ()).start
-
-      // Threshold timer
-      thresholdFiber <- (for
-        _ <- IO.sleep(AutoBgThreshold)
-        _ <- thresholdWon.set(true)
-        _ <- signal.complete(()).void
-      yield ()).start
-
-      // Wait for whichever finishes first
-      _ <- signal.get
-      didWin <- thresholdWon.get
-      resultOpt <- resultRef.get
-
-      _ <-
-        if didWin then
-          // Command still running — convert to background
-          logger.info(
-            s"Remote command on ${peer.deviceName} exceeded ${AutoBgThreshold.toSeconds}s, moving to background (job $jobId)"
-          ) *>
-            emitBgTaskStarted(ctx, jobId, description) *>
-            BgTaskRegistry.register(jobId, ctx.sessionId.getOrElse(""), description, "remote") *>
-            (for
-              doneRef <- IO.ref(false)
-              _ <- startRemoteHeartbeat(ctx, jobId, description, doneRef)
-              _ <- commandFiber.joinWithNever
-              r <- resultRef.get
-              _ <- r match
-                case Some(Right(output)) =>
-                  notifyRemoteBgResult(ctx, jobId, description, Right(output))
-                case Some(Left(err)) =>
-                  notifyRemoteBgResult(ctx, jobId, description, Left(err.message))
-                case None => IO.unit
-              _ <- doneRef.set(true)
-            yield ()).start.void
-        else thresholdFiber.cancel
-    yield
-      if !didWin then resultOpt.getOrElse(Left(ToolError("[Unexpected: no result from remote command]")))
-      else
-        Right(
-          s"[Remote command moved to background] Job ID: $jobId\n" +
-            s"The command has been running on ${peer.deviceName} for over ${AutoBgThreshold.toSeconds}s " +
-            "and will continue in the background. You will be automatically notified when it finishes — " +
-            "continue with other work or finish your turn."
-        )
-    end for
-  end executeForegroundWithAutoBackground
+  /** 刷新 agent registry 的 lastActivityMs（远程等待期间保持 turn 活动）。 */
+  private def touchAgentActivity(ctx: ToolContext): IO[Unit] =
+    (ctx.sharedResources, ctx.sessionId) match
+      case (Some(res), Some(sid)) =>
+        val now = System.currentTimeMillis()
+        res.agentRegistry.modify { m =>
+          m.get(sid) match
+            case Some(rec) => (m.updated(sid, rec.copy(lastActivityMs = now)), ())
+            case None => (m, ())
+        }
+      case _ => IO.unit
 
   /** Launch the HTTP call in a detached fiber; notify agent + frontend when done. */
   private def startRemoteBgFiber(
@@ -263,6 +235,7 @@ class RemoteExecutor(
               io.circe.Json.obj(
                 "type" -> "backgroundTaskUpdate".asJson,
                 "sessionId" -> ctx.sessionId.asJson,
+                "rootSessionId" -> ctx.rootSessionId.orElse(ctx.sessionId).asJson,
                 "taskId" -> jobId.asJson,
                 "description" -> description.asJson,
                 "status" -> "running".asJson,
@@ -287,6 +260,7 @@ class RemoteExecutor(
         io.circe.Json.obj(
           "type" -> "backgroundTaskUpdate".asJson,
           "sessionId" -> ctx.sessionId.asJson,
+          "rootSessionId" -> ctx.rootSessionId.orElse(ctx.sessionId).asJson,
           "taskId" -> jobId.asJson,
           "description" -> description.asJson,
           "status" -> "running".asJson,
@@ -306,6 +280,7 @@ class RemoteExecutor(
         io.circe.Json.obj(
           "type" -> "backgroundTaskUpdate".asJson,
           "sessionId" -> ctx.sessionId.asJson,
+          "rootSessionId" -> ctx.rootSessionId.orElse(ctx.sessionId).asJson,
           "taskId" -> jobId.asJson,
           "description" -> description.asJson,
           "status" -> status.asJson

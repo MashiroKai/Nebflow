@@ -29,7 +29,7 @@ object Guardrails:
 
   /**
    * T1 flow-node leaf workers 默认剥离的用户向工具集。即使 agent.json 显式
-   * 声明也不生效（同 Issue/NebulaExclusiveTools 的机制层语义）。
+   * 声明也不生效（同 NebulaExclusiveTools 的机制层语义）。
    */
   val FlowWorkerStrippedTools: Set[String] = Set("Pop", "AskUserQuestion")
 

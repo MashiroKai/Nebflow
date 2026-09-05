@@ -1,0 +1,819 @@
+/* flowMap.css — Project Flow Map 标签页（#27 方向调整：Canvas 标签页形态）。
+   复用 flow-run 面板显示设计（FLOW_CSS 注入 .solar-card/.solar-node 等），
+   此处只定义流图标签页专属的 header / 加载态 / 节点字段样式。 */
+
+/* Flow Map 标签页顶部：项目名 + 摘要 */
+.flowmap-card-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 12px 18px;
+  padding-right: 56px; /* §5.8b 2026-09-04 修订：让出右上悬浮钮（16+40）+ 徽章区，摘要尾字不再被遮 */
+  border-bottom: 1px solid var(--color-border);
+  flex: 0 0 auto;
+}
+
+.flowmap-card-title {
+  font: 600 16px/1.2 -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+  letter-spacing: -0.02em;
+  color: var(--color-text);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.flowmap-summary {
+  font: 400 12px/1.4 -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+  color: var(--color-text-muted);
+  white-space: nowrap;
+  overflow: hidden;      /* D3 让位 + 窄 host 收缩：摘要截断不溢出，防撑出 host 横向滚动（A20.2） */
+  text-overflow: ellipsis;
+}
+
+.flowmap-loading {
+  padding: 48px 24px;
+  text-align: center;
+  font: 400 13px/1.5 -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+  color: var(--color-text-muted);
+}
+
+/* Flow Map 卡片：填满标签页并允许滚动 */
+.flowmap-card {
+  flex: 1;
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+  margin: 0;
+  border-radius: 0;
+  border: none;
+  background: var(--color-bg);
+}
+
+/* ── 固定视口 + 相机（v1 交互壳规格 §2.1/§3.1：零滚动条，滚轮=CAD 式缩放）──
+   .fm-viewport 取代旧 .solar-scroll（overflow:auto 滚动范式退场）：overflow:hidden
+   固定视口，相机 transform 由 flowMapTab.js 单点写在世界（.solar-canvas）上。
+   就地视图宿主（.flowmap-view-body flex column 有界）：视口 flex:1 随卡填充；
+   legacy 独立标签页宿主（.team-scroll flex-wrap 无高度约束）：视口自带确定高度。 */
+.fm-viewport {
+  position: relative;
+  overflow: hidden;
+  flex: 1 1 auto;
+  min-height: 0;
+  user-select: none;
+  -webkit-user-select: none;
+  touch-action: none; /* 指针拖拽平移（C4）不被浏览器手势劫持 */
+}
+.flowmap-card .fm-viewport { height: clamp(420px, calc(100vh - 230px), 780px); }
+.flowmap-view-body .fm-viewport { height: auto; }
+
+/* 相机宿主（世界）：缩放以画布中心为 CSS origin——与 margin:0 auto 居中、
+   WS 重排 width/height 0.4s 过渡、animateGTranslate 同曲线补偿全部兼容，
+   「世界中心点屏幕位置不变」在任何 scale 下成立（CAD 锚点数学的前提）。 */
+.flowmap-card .solar-canvas {
+  transform-origin: 50% 50%;
+  will-change: transform;
+}
+/* fit/focus 相机动画（280ms）走此类；wheel/拖拽零动画（直接操作，§4）。
+   内联 width/height 过渡一并声明：transform 过渡期间不丢既有的重排过渡。 */
+.flowmap-card .solar-canvas.fm-cam-anim {
+  transition: transform 0.28s cubic-bezier(0.33, 0, 0.2, 1),
+    width 0.4s cubic-bezier(0.645, 0.045, 0.355, 1),
+    height 0.4s cubic-bezier(0.645, 0.045, 0.355, 1);
+}
+
+/* 节点卡片（复用 .solar-node，扩展字段）
+   .solar-node 是给 flow-run 设计的固定 124×88 盒子；flow-map 的节点多了徽标行、
+   TTL、result 摘要，内容超过 88px 后 flex 子项会被压缩——实测节点名
+   (.solar-node-label) 被压成 0 高，卡片上只剩一条灰色 result 条（自验截图取证）。
+   这里把高度改成"以内容为准、不低于原高度"，并禁止子项收缩。
+   选择器写成 .solar-node.fm-node：FLOW_CSS 是运行时注入 head 的 <style>，排在
+   本文件的 <link> 之后，同特异度下后者胜——单靠 .fm-node 压不住 height:88px。 */
+.solar-node.fm-node {
+  display: flex; flex-direction: column; gap: 3px; cursor: pointer;
+  height: auto; min-height: 88px;
+}
+.fm-node > * { flex: 0 0 auto; }
+.fm-node:hover { filter: brightness(1.04); }
+
+.fm-node-head { display: flex; align-items: center; gap: 6px; margin-bottom: 2px; }
+
+/* worktree 徽标：在 worktree 内工作的节点 */
+.fm-worktree-badge {
+  font: 600 9px/1 -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+  letter-spacing: 0.02em;
+  padding: 2px 5px;
+  border-radius: 4px;
+  background: rgb(var(--sapphire) / 0.15);
+  color: rgb(var(--sapphire) / 1);
+  border: 1px solid rgb(var(--sapphire) / 0.3);
+  text-transform: uppercase;
+}
+
+/* 配置徽标行（skill / mcp / preset）：卡片宽度有限（内容 ~104px），
+   徽标压缩展示、超长省略号截断；完整值在 title 与点击详情里可看。 */
+.fm-cfg-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 3px;
+  margin-top: 1px;
+}
+.fm-cfg-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  max-width: 100%;
+  font: 500 9px/1.2 -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+  padding: 1.5px 5px;
+  border-radius: 4px;
+  border: 1px solid;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.fm-cfg-key {
+  font-weight: 700;
+  text-transform: uppercase;
+  opacity: 0.85;
+}
+.fm-cfg-skill   { background: rgb(45 212 191 / 0.12); color: rgb(45 212 191 / 1);   border-color: rgb(45 212 191 / 0.35); }
+.fm-cfg-mcp     { background: rgb(192 132 252 / 0.12); color: rgb(192 132 252 / 1); border-color: rgb(192 132 252 / 0.35); }
+.fm-cfg-preset  { background: rgb(251 191 36 / 0.12);  color: rgb(251 191 36 / 1);  border-color: rgb(251 191 36 / 0.35); }
+
+/* 详情 viewer 配置行：key 着色 + 值常规色（复用 .flow-def-source 灰字基线） */
+.flow-node-cfg-line {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 12px;
+  opacity: 1;
+}
+.flow-node-cfg {
+  font: 500 11px/1.5 -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+  color: var(--color-text);
+  word-break: break-all;
+}
+.flow-node-cfg-key {
+  display: inline-block;
+  font: 600 9px/1.5 -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+  padding: 1px 5px;
+  margin-right: 4px;
+  border-radius: 4px;
+  background: var(--color-frame-hover);
+  color: var(--color-text-muted);
+}
+
+/* TTL 倒计时（终态节点显示） */
+.fm-ttl {
+  font: 400 10px/1 -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+  font-variant-numeric: tabular-nums;
+  color: var(--color-text-muted);
+  margin-left: 4px;
+}
+
+/* barrier 提示（多入边合并节点） */
+.fm-barrier-hint {
+  font: 400 10px/1 -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+  color: rgb(var(--sapphire) / 0.9);
+}
+
+/* 卡片描述行（2026-09-05 载荷收敛：description/taskPreview 取代 result 摘要；
+   .fm-result-summary 为旧类名兼容保留）——新出现时轻微淡入 */
+.fm-result-summary,
+.fm-desc {
+  font: 400 10px/1.4 -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+  color: var(--color-text-muted);
+  margin-top: 2px;
+  padding: 3px 6px;
+  border-radius: 5px;
+  background: var(--color-frame-hover);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  animation: fm-fade-in 0.3s ease;
+  /* 卡片内容宽 104px（124 − 左右各 10 padding）；写死 132px 会左右各溢出 4px
+     （qa minor 取证）。100% 让摘要贴着卡片内沿收边，超长照旧省略号截断。 */
+  max-width: 100%;
+}
+
+.fm-result-summary.running,
+.fm-desc.running {
+  color: rgb(var(--sapphire) / 0.85);
+  background: rgb(var(--sapphire) / 0.08);
+}
+
+/* blocked 节点（20260902 反馈路径设计 §4.2）：需要分发器/人动作的警示态——
+   琥珀描边 + 轻琥珀底光 + result 摘要琥珀化，区别于 failed 的终结红。
+   --amber 在 sapphire.css 按亮暗主题定义（亮 255 152 0 / 暗 255 168 60），双主题免适配。 */
+.solar-node.fm-node.blocked {
+  border-color: rgb(var(--amber) / 0.55);
+  box-shadow: 0 0 0 1px rgb(var(--amber) / 0.22), 0 2px 14px rgb(var(--amber) / 0.10);
+}
+.solar-node.fm-node.blocked .fm-result-summary,
+.solar-node.fm-node.blocked .fm-desc {
+  background: rgb(var(--amber) / 0.10);
+  color: rgb(var(--amber) / 0.95);
+}
+
+/* 详情窗 blocked 结构化反馈面板（设计 §4.3，flowViewers.openNodeResultViewer）：
+   category 标签 + detail + suggestion + 「已被阻断 N 轮」，result 原文折叠可展开。 */
+.flow-blocked-panel {
+  border: 1px solid rgb(var(--amber) / 0.4);
+  background: rgb(var(--amber) / 0.07);
+  border-radius: 10px;
+  padding: 10px 12px;
+  margin: 10px 0;
+}
+.flow-blocked-head { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.flow-blocked-badge {
+  font: 700 11px/1.4 -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+  color: rgb(var(--amber));
+  letter-spacing: 0.02em;
+}
+.flow-blocked-category {
+  font: 600 10px/1.4 ui-monospace, SFMono-Regular, monospace;
+  padding: 2px 7px;
+  border-radius: 999px;
+  border: 1px solid rgb(var(--amber) / 0.5);
+  background: rgb(var(--amber) / 0.14);
+  color: rgb(var(--amber));
+}
+.flow-blocked-count {
+  font: 500 11px/1.4 -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+  color: var(--color-text-muted);
+  margin-left: auto;
+}
+.flow-blocked-row { margin-top: 8px; }
+.flow-blocked-label {
+  display: inline-block;
+  font: 600 9px/1.5 -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+  padding: 1px 5px;
+  border-radius: 4px;
+  background: rgb(var(--amber) / 0.14);
+  color: rgb(var(--amber));
+}
+.flow-blocked-text {
+  font: 400 12px/1.55 -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+  color: var(--color-text);
+  white-space: pre-wrap;
+  word-break: break-word;
+  margin-top: 3px;
+}
+.flow-blocked-raw { margin-top: 10px; }
+.flow-blocked-raw > summary {
+  cursor: pointer;
+  font: 500 11px/1.5 -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+  color: var(--color-text-muted);
+  user-select: none;
+}
+.flow-blocked-raw > summary:hover { color: var(--color-text); }
+.flow-blocked-raw[open] > summary { margin-bottom: 6px; }
+.flow-blocked-raw .flow-agent-block-readonly {
+  max-height: 300px;
+  overflow-y: auto;
+  white-space: pre-wrap;
+  border: 1px solid var(--color-border);
+  border-radius: 8px;
+  padding: 8px 10px;
+}
+
+/* 边的投递语义（§2.7）。flow-run 的 .flow-edge.active 是"正在流动"的行军蚁；
+   在项目图里上游 completed 意味着结果**已经**投递过去了——继续跑动画会读成
+   "还在流"。三档区分：已投递=实线加重、等待上游出结果=行军蚁、其余=静止细线。
+   写成 .flow-edge.fm-edge 提高特异度：FLOW_CSS 是运行时注入 head 的 <style>，
+   排在本文件 <link> 之后，同特异度下后者胜。 */
+.flow-edge.fm-edge.delivered {
+  stroke: rgb(var(--sapphire) / 0.75);
+  stroke-width: 2;
+  stroke-dasharray: none;
+  animation: none;
+}
+.flow-edge.fm-edge.inflight {
+  stroke: var(--color-text-muted);
+  stroke-width: 1.5;
+  stroke-dasharray: 5 4;
+  animation: flow-dash 1.2s linear infinite;
+  opacity: 0.7;
+}
+.flow-edge.fm-edge.idle {
+  stroke: var(--color-border);
+  stroke-width: 1.5;
+  stroke-dasharray: none;
+  animation: none;
+}
+.fm-edge-arrow.delivered { fill: rgb(var(--sapphire) / 0.75); opacity: 1; }
+.fm-edge-arrow.inflight { fill: var(--color-text-muted); opacity: 0.6; }
+
+@media (prefers-reduced-motion: reduce) {
+  .flow-edge.fm-edge.inflight { animation: none; }
+}
+
+/* ══ WS 实时更新：增量 diff 渲染的过渡动画 ═══════════════════
+   事件驱动增量路径（flowMapTab.js）靠这些过渡实现：新节点淡入、消失节点淡出、
+   布局重排时节点滑到新位置、边端点 rAF 跟随 + 状态色平滑变化。选择器带 .fm-node
+   / .flowmap-card 前缀隔离，不影响 flow-run 面板的同名人元素。 */
+
+/* 节点卡片：位移（left/top，4s 布局重排节奏）+ 出入场（opacity/transform）。
+   easeInOutCubic 与 flowMapTab.js 的 rAF 插值同曲线，边和节点同步滑动。 */
+.solar-node.fm-node {
+  transition:
+    opacity 0.35s ease,
+    transform 0.3s cubic-bezier(0.33, 0, 0.2, 1),
+    left 0.4s cubic-bezier(0.645, 0.045, 0.355, 1),
+    top 0.4s cubic-bezier(0.645, 0.045, 0.355, 1),
+    filter 0.15s ease;
+}
+.fm-node.fm-enter { opacity: 0; transform: scale(0.85); }
+.fm-node.fm-exit { opacity: 0; transform: scale(0.8); pointer-events: none; }
+
+/* 状态切换平滑过渡：环/点/标签的透明度与描边色（pending→running→completed）。
+   终态轨道点不再用 CSS 处理——@keyframes solar-spin 已随 rAF 重构（flowAnim.js）
+   删除，旋转/收尾（running→completed/cancelled/failed 先滑行到循环端点再淡出）
+   全部由 rAF 以 inline transform/opacity 驱动并自动续接相位；CSS animation 若与
+   inline transform 同属性会互相覆盖，故此处不得再声明 .solar-dot-wrap 动画。 */
+.fm-node .solar-ring,
+.fm-node .solar-dot,
+.fm-node .solar-node-label {
+  transition: opacity 0.35s ease, border-color 0.35s ease;
+}
+
+/* 状态图标随 head 重建时轻微浮现（图标本体已按裁定①从 ✓/✗/⚑/— 字符改为
+   flowMapTab.js 内联 SVG 描边，颜色经 currentColor 沿用 flowCss.js 色板） */
+.solar-node-status { animation: fm-fade-in 0.3s ease; }
+/* SVG 状态图标尺寸对齐旧 10px 字形；作用域限 .fm-node——flow-run 面板
+   （flowDag.js）同名字符字形不受影响。 */
+.fm-node .solar-node-status { display: inline-flex; align-items: center; }
+.fm-node .solar-node-status svg { width: 10px; height: 10px; display: block; }
+
+/* 边：状态档位（idle/inflight/delivered）颜色与线宽平滑变化 */
+.flow-edge.fm-edge { transition: stroke 0.35s ease, stroke-width 0.35s ease, opacity 0.35s ease; }
+.fm-edge-arrow { transition: fill 0.35s ease, opacity 0.35s ease; }
+
+/* 画布尺寸：节点增删触发重排时宽度连续过渡（margin:0 auto 居中偏移随之连续，
+   配合节点 left 过渡整图不横跳；相机 transform-origin=中心故任意 scale 下同样成立）。
+   仅限 flow-map 卡片，flow-run 不动。相机动画期由 .fm-cam-anim 并入 transform 过渡。 */
+.flowmap-card .solar-canvas {
+  transition: width 0.4s cubic-bezier(0.645, 0.045, 0.355, 1),
+    height 0.4s cubic-bezier(0.645, 0.045, 0.355, 1);
+}
+
+@keyframes fm-fade-in { from { opacity: 0; } to { opacity: 1; } }
+
+/* 节点定位高亮（2026-09-02 任务列表节点条目点击跳转）：状态环闪烁两轮。
+   绿色 = 运行/注意力色（--color-primary），亮暗主题同源。 */
+.fm-node.fm-node-flash { animation: fm-node-flash 1.05s ease 2; }
+@keyframes fm-node-flash {
+  0%, 100% { box-shadow: 0 0 0 0 rgba(7, 193, 96, 0); }
+  45% { box-shadow: 0 0 0 7px rgba(7, 193, 96, 0.35); }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .solar-node.fm-node { transition: opacity 0.35s ease; }
+  .flowmap-card .solar-canvas { transition: none; }
+  .fm-result-summary, .fm-desc, .solar-node-status { animation: none; }
+  .fm-node.fm-node-flash { animation: none; box-shadow: 0 0 0 4px rgba(7, 193, 96, 0.3); }
+}
+
+/* ══ deps 依赖连接（deps 设计 §1.4，20260903）════════════════
+   视觉三重编码（不依赖单一色觉通道，亮暗主题经 CSS 变量自适应）：
+   ① 虚线线型 stroke-dasharray: 3 4（类型编码——与输出边实线区分）
+   ② 三档颜色（状态）：满足=--color-success / 等待=--color-warning / 未满足=--color-border
+   ③ 空心小箭头（第二类型编码——与输出边实心圆点区分）。
+   写成 .flow-edge.fm-edge.fm-edge-deps 三段特异度：压过上方 .flow-edge.fm-edge 三态规则。 */
+.flow-edge.fm-edge.fm-edge-deps {
+  stroke-dasharray: 3 4;
+  stroke-width: 1.5;
+  animation: none;
+}
+.flow-edge.fm-edge.fm-edge-deps.deps-met { stroke: var(--color-success); }
+.flow-edge.fm-edge.fm-edge-deps.deps-wait { stroke: var(--color-warning); }
+.flow-edge.fm-edge.fm-edge-deps.deps-unmet { stroke: var(--color-border); }
+/* 空心箭头：fill:none + 描边；r 走 CSS（SVG2 geometry property，Chromium 支持），
+   比输出边实心圆点（r=3 实心 fill）多一层类型区分。 */
+.fm-edge-arrow.fm-edge-deps-arrow {
+  fill: none;
+  stroke: var(--color-border);
+  stroke-width: 1;
+  r: 3.5px;
+  opacity: 0.9;
+}
+.fm-edge-arrow.fm-edge-deps-arrow.deps-met { stroke: var(--color-success); opacity: 1; }
+.fm-edge-arrow.fm-edge-deps-arrow.deps-wait { stroke: var(--color-warning); }
+
+/* 「等待谁」脚注（deps 设计 §1.4）：pending/wiring 且持有 in/deps 的卡片显示等待对象
+   （名(id) / 归档降级 i18n「已归档」纯文字，裁定①原 ✦ 字符下线）；flex 两段——
+   SVG 沙漏图标（替代 ⏳）不参与截断，文字段单独 ellipsis 单行截断在卡内，
+   hover title 看全量。 */
+.fm-wait-note {
+  display: flex;
+  /* 卡是 column-flex + align-items:center——脚注会收缩到 max-content 宽把盒子
+     撑出卡界（视觉截断了、盒宽没截断）。stretch 压回卡内容宽，文字段才真正截断。 */
+  align-self: stretch;
+  align-items: center;
+  gap: 3px;
+  margin-top: 4px;
+  font: 400 10px ui-monospace, SFMono-Regular, Menlo, monospace;
+  color: var(--color-text-muted);
+  min-width: 0;
+}
+.fm-wait-note-icon { flex: 0 0 auto; width: 9px; height: 9px; }
+.fm-wait-note-text {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* 六档图例条（输出边三态 × 依赖边三态）：solar-card 底部，i18n flowmap.legend.* */
+.flowmap-legend {
+  display: flex;
+  gap: 14px;
+  row-gap: 6px;
+  flex-wrap: wrap;
+  align-items: center;
+  padding: 8px 4px 2px;
+  font: 400 11px -apple-system, BlinkMacSystemFont, sans-serif;
+  color: var(--color-text-muted);
+}
+.fm-legend-item { display: inline-flex; align-items: center; gap: 6px; }
+.fm-legend-swatch {
+  display: inline-block;
+  width: 22px;
+  height: 0;
+  border-top: 2px solid var(--color-border);
+}
+.fm-legend-swatch.out.delivered { border-top-color: rgb(var(--sapphire) / 0.75); border-top-style: solid; }
+.fm-legend-swatch.out.inflight { border-top-color: var(--color-text-muted); border-top-style: dashed; }
+.fm-legend-swatch.out.idle { border-top-color: var(--color-border); border-top-style: solid; }
+.fm-legend-swatch.deps { border-top-style: dashed; }
+.fm-legend-swatch.deps.deps-met { border-top-color: var(--color-success); }
+.fm-legend-swatch.deps.deps-wait { border-top-color: var(--color-warning); }
+.fm-legend-swatch.deps.deps-unmet { border-top-color: var(--color-border); }
+
+/* ═══════════════════════════════════════════════════════════════════
+   v3 整链归档（规格 20260903_flowmap-archive-panel-spec.md）
+   悬浮层（fm-float-layer）+ 归档悬浮钮（fm-fab，元素选择器 .canvas-ref-select
+   同语言）+ 归档面板（mailbox 链条目）+ 右侧详情面板（z 70 / dock-left）+
+   链未齐终态保留卡（fm-node.terminal）+ hover 联动（fm-adj）。
+   层级表（§5.8b）：悬浮钮 45 < 归档面板 60 < 详情面板 70 < toast（modal.css 10000）。
+   ═══════════════════════════════════════════════════════════════════ */
+
+/* 悬浮层定位上下文：legacy 路径宿主 = .canvas-tab-pane（split.css 已 relative）；
+   就地视图宿主 = .flowmap-view-body（projectPanel.css 已 relative）。层本身不拦截
+   点击（pointer-events:none），子悬浮件各自开启。 */
+.fm-float-layer {
+  --fm-panel-shadow: 0 8px 32px rgba(0, 0, 0, 0.16);
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  z-index: 40;
+}
+@media (prefers-color-scheme: dark) {
+  .fm-float-layer { --fm-panel-shadow: 0 10px 36px rgba(0, 0, 0, 0.45); }
+}
+.fm-float-layer > * { pointer-events: auto; }
+
+/* ── 归档悬浮钮（§4：画布内右上角 40px 圆形玻璃钮，opacity .6 → hover 1）── */
+.fm-fab {
+  position: absolute; top: 16px; right: 16px;
+  width: 40px; height: 40px; border-radius: 50%;
+  border: 1px solid var(--glass-control-border);
+  background: var(--glass-control-bg);
+  -webkit-backdrop-filter: blur(var(--glass-control-blur)) saturate(1.2);
+  backdrop-filter: blur(var(--glass-control-blur)) saturate(1.2);
+  box-shadow:
+    inset 0 1px 0 var(--glass-control-highlight),
+    inset 0 -1px 0 var(--glass-control-underedge);
+  display: flex; align-items: center; justify-content: center;
+  cursor: pointer; z-index: 45;
+  color: var(--color-text); opacity: 0.6;
+  transition: all 0.2s ease;
+  padding: 0;
+}
+.fm-fab svg { width: 18px; height: 18px; display: block; }
+.fm-fab:hover {
+  background: var(--glass-control-bg-hover);
+  opacity: 1; transform: scale(1.05);
+}
+/* 面板开 = active：sapphire 染色（.canvas-ref-select.active 同式，§4.2） */
+.fm-fab.active {
+  opacity: 1; color: var(--color-primary);
+  border-color: rgb(var(--sapphire) / 0.35);
+  background: rgb(var(--sapphire) / 0.12);
+  transform: none;
+}
+.fm-fab:focus-visible { outline: none; box-shadow: 0 0 0 2px rgb(var(--sapphire) / 0.55); }
+
+/* 计数徽章（§4.3：team-mail-badge 构型；计数 = 面板链条目数，TTL 清理同步减） */
+.fm-archive-badge {
+  position: absolute; top: -5px; right: -5px;
+  min-width: 16px; height: 16px; padding: 0 4px; border-radius: 8px;
+  background: rgb(var(--sapphire)); color: #fff;
+  font: 500 10px/16px -apple-system, BlinkMacSystemFont, sans-serif; text-align: center;
+  box-shadow: 0 0 0 2px var(--color-bg); pointer-events: none;
+  font-variant-numeric: tabular-nums;
+}
+.fm-archive-badge.hidden { display: none; }
+.fm-archive-badge.pulse { animation: fm-badge-pulse 0.15s ease; }
+@keyframes fm-badge-pulse { 50% { transform: scale(1.18); } }
+
+/* ── 归档面板（§5：锚定悬浮钮下缘、无遮罩、玻璃、链条目倒序）── */
+.fm-archive-panel {
+  position: absolute; top: 64px; right: 16px;      /* 悬浮钮（16+40）下缘 +8px */
+  width: 380px; max-width: calc(100% - 32px); /* host 口径（§5.8b 2026-09-04 修订；原 100vw 视口口径窄视口下左裁） */
+  max-height: min(70vh, 560px);
+  display: flex; flex-direction: column;
+  background: var(--glass-bg);
+  -webkit-backdrop-filter: blur(var(--glass-blur)) saturate(1.15);
+  backdrop-filter: blur(var(--glass-blur)) saturate(1.15);
+  border: 1px solid var(--glass-border); border-radius: 18px;
+  box-shadow: var(--fm-panel-shadow);
+  z-index: 60;
+  transform-origin: calc(100% - 20px) 0;           /* §6.1 原点 = 悬浮钮圆心 */
+  opacity: 0; transform: scale(0.94) translateY(-6px);
+  transition: opacity 0.22s cubic-bezier(0.33, 0, 0.2, 1), transform 0.22s cubic-bezier(0.33, 0, 0.2, 1);
+  pointer-events: none;
+}
+/* hidden 属性必须压过 display:flex（C4 现场修正） */
+.fm-archive-panel[hidden] { display: none; }
+.fm-archive-panel.open { opacity: 1; transform: scale(1) translateY(0); pointer-events: auto; }
+.fm-archive-panel.closing { transition-duration: 0.16s; transition-timing-function: ease; }
+.fm-panel-head {
+  display: flex; align-items: center; gap: 8px; flex: 0 0 auto;
+  padding: 11px 14px; border-bottom: 1px solid var(--color-border);
+}
+.fm-panel-title { font: 600 13px/1.3 -apple-system, BlinkMacSystemFont, sans-serif; }
+.fm-panel-count { font: 400 11px/1.3 -apple-system, BlinkMacSystemFont, sans-serif; color: var(--color-text-muted); }
+.fm-panel-close {
+  margin-left: auto; border: none; background: transparent; cursor: pointer;
+  font: 400 16px/1 -apple-system, BlinkMacSystemFont, sans-serif; color: var(--color-text-muted);
+  opacity: 0.5; padding: 0 4px; transition: opacity 0.15s;
+}
+.fm-panel-close:hover { opacity: 1; }
+.fm-panel-close:focus-visible { outline: none; box-shadow: 0 0 0 2px rgb(var(--sapphire) / 0.55); border-radius: 4px; }
+.fm-panel-body {
+  flex: 1; overflow-y: auto; padding: 12px 14px;
+  scrollbar-width: thin; scrollbar-color: var(--color-frame-border) transparent;
+}
+.fm-panel-empty {
+  text-align: center; padding: 40px 0; font: 400 12px/1.5 -apple-system, BlinkMacSystemFont, sans-serif;
+  color: var(--color-text-muted); opacity: 0.65;
+}
+
+/* 链条目（§5.3：flow-mail-row 构型；条目 = 链）*/
+.fm-entry {
+  border: 1px solid rgba(128, 128, 128, 0.12); border-radius: 8px;
+  background: rgba(128, 128, 128, 0.06); margin-bottom: 8px; padding: 10px 12px;
+  cursor: pointer; user-select: none; -webkit-user-select: none;
+  transition: background 0.15s, border-color 0.15s;
+}
+.fm-entry:hover { background: rgba(128, 128, 128, 0.1); border-color: rgba(128, 128, 128, 0.18); }
+.fm-entry:focus-visible { outline: none; box-shadow: 0 0 0 2px rgb(var(--sapphire) / 0.55); }
+.fm-entry.expanded { background: rgba(128, 128, 128, 0.1); border-color: rgba(91, 127, 191, 0.25); }
+.fm-entry.flash { animation: fm-entry-flash 0.5s ease 1; }
+@keyframes fm-entry-flash {
+  0% { background: rgba(91, 127, 191, 0.28); }
+  100% { background: rgba(128, 128, 128, 0.06); }
+}
+.fm-entry-row1 { display: flex; align-items: center; gap: 6px; min-width: 0; }
+.fm-entry-st { flex: 0 0 auto; display: inline-flex; }
+.fm-entry-st svg { width: 12px; height: 12px; display: block; }
+.fm-entry-st.completed { color: var(--color-success); }
+.fm-entry-st.failed { color: var(--color-error); }
+.fm-entry-st.cancelled { color: var(--color-text-muted); }
+.fm-entry-st.active { color: rgb(var(--sapphire)); }
+.fm-entry-name {
+  flex: 0 1 auto; min-width: 0; font: 500 12px/1.4 -apple-system, BlinkMacSystemFont, sans-serif;
+  color: var(--color-text); overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.fm-entry-nodes {
+  flex: 0 0 auto; font: 500 10px/1 -apple-system, BlinkMacSystemFont, sans-serif;
+  color: var(--color-text-muted); border: 1px solid rgba(128, 128, 128, 0.18);
+  border-radius: 6px; padding: 2px 5px; font-variant-numeric: tabular-nums;
+}
+.fm-entry-time {
+  flex: 0 0 auto; margin-left: auto; font: 400 11px/1.4 -apple-system, BlinkMacSystemFont, sans-serif;
+  color: var(--color-text-muted); font-variant-numeric: tabular-nums;
+}
+/* TTL 即将过期标签（§5.9：剩余 <60min 才显示，克制）*/
+.fm-entry-ttl {
+  flex: 0 0 auto; font: 400 10px/1 -apple-system, BlinkMacSystemFont, sans-serif;
+  color: var(--color-warning); opacity: 0.85;
+}
+.fm-entry-chev {
+  flex: 0 0 auto; display: inline-flex; color: var(--color-text-muted);
+  opacity: 0.7; transition: transform 0.18s ease;
+}
+.fm-entry-chev svg { width: 10px; height: 10px; display: block; }
+.fm-entry.expanded .fm-entry-chev { transform: rotate(90deg); }
+.fm-entry-preview {
+  margin-top: 3px; font: 400 11px/1.45 -apple-system, BlinkMacSystemFont, sans-serif;
+  color: var(--color-text-muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+/* 链内成员列表（§5.5：展开后逐节点条目，点击 → 右侧详情）*/
+.fm-entry-members { display: none; margin-top: 8px; border-top: 1px solid rgba(128, 128, 128, 0.12); padding-top: 8px; }
+.fm-entry.expanded .fm-entry-members { display: block; }
+.fm-member {
+  display: block; width: 100%; text-align: left;
+  border: 1px solid rgba(128, 128, 128, 0.1); border-radius: 7px;
+  background: rgba(128, 128, 128, 0.03); margin-bottom: 6px; padding: 7px 9px;
+  cursor: pointer; transition: background 0.15s, border-color 0.15s;
+}
+.fm-member:last-child { margin-bottom: 0; }
+.fm-member:hover { background: rgba(128, 128, 128, 0.09); border-color: rgba(128, 128, 128, 0.16); }
+.fm-member:focus-visible { outline: none; box-shadow: 0 0 0 2px rgb(var(--sapphire) / 0.55); }
+.fm-member-row { display: flex; align-items: center; gap: 6px; min-width: 0; }
+.fm-member-name {
+  flex: 0 1 auto; min-width: 0; font: 500 11.5px/1.4 -apple-system, BlinkMacSystemFont, sans-serif;
+  color: var(--color-text); overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.fm-member-agent {
+  flex: 1 1 auto; min-width: 20px; font: 400 10.5px/1.4 -apple-system, BlinkMacSystemFont, sans-serif;
+  color: var(--color-text-muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; text-align: right;
+}
+.fm-member-time {
+  flex: 0 0 auto; font: 400 10.5px/1.4 -apple-system, BlinkMacSystemFont, sans-serif;
+  color: var(--color-text-muted); font-variant-numeric: tabular-nums;
+}
+.fm-member-go { flex: 0 0 auto; display: inline-flex; color: var(--color-text-muted); opacity: 0.55; }
+.fm-member-go svg { width: 10px; height: 10px; display: block; }
+.fm-member-preview {
+  margin-top: 2px; font: 400 10.5px/1.45 -apple-system, BlinkMacSystemFont, sans-serif;
+  color: var(--color-text-muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+
+/* ── 右侧详情面板（§5.8 + §5.8b：z 70 浮前 + 宽视口 dock-left 并排零重叠）── */
+.fm-detail {
+  position: absolute; top: 64px; right: 16px; bottom: 16px;
+  width: 360px; max-width: calc(100% - 32px); /* host 口径（§5.8b 2026-09-04 修订；原 100vw 视口口径窄视口下左裁） */
+  display: flex; flex-direction: column;
+  background: var(--glass-bg);
+  -webkit-backdrop-filter: blur(var(--glass-blur)) saturate(1.15);
+  backdrop-filter: blur(var(--glass-blur)) saturate(1.15);
+  border: 1px solid var(--glass-border); border-radius: 18px;
+  box-shadow: var(--fm-panel-shadow);
+  z-index: 70;
+  opacity: 0; transform: translateX(24px);
+  transition: opacity 0.22s cubic-bezier(0.33, 0, 0.2, 1),
+    transform 0.22s cubic-bezier(0.33, 0, 0.2, 1),
+    right 0.22s cubic-bezier(0.33, 0, 0.2, 1);
+  pointer-events: none;
+}
+.fm-detail[hidden] { display: none; }
+.fm-detail.open { opacity: 1; transform: translateX(0); pointer-events: auto; }
+.fm-detail.closing { transition-duration: 0.16s; transition-timing-function: ease; }
+/* 面板同开 → 详情左靠（380 + 8 + 16 = 404），矩形零重叠（§5.8b）。
+   2026-09-04 修订（作者拍板）：并排判定改 host 口径——updateDetailDock 按
+   host.clientWidth >= 780（380 卡片 + 8 间距 + 360 dock + 16+16 边距）切
+   dock-left，删除原 @media(max-width:799px) 视口口径控制。host ~470px 定宽
+   分栏（常见布局）时 dock 为同位 overlay 形态且完整可见，不再悬出视图体。 */
+.fm-detail.dock-left { right: 404px; }
+.fm-detail-head {
+  display: flex; align-items: center; gap: 8px; flex: 0 0 auto;
+  padding: 11px 14px; border-bottom: 1px solid var(--color-border); min-width: 0;
+}
+.fm-detail-st { flex: 0 0 auto; display: inline-flex; }
+.fm-detail-st svg { width: 12px; height: 12px; display: block; }
+.fm-detail-st.completed { color: var(--color-success); }
+.fm-detail-st.failed { color: var(--color-error); }
+.fm-detail-st.cancelled { color: var(--color-text-muted); }
+.fm-detail-st.active { color: rgb(var(--sapphire)); }
+.fm-detail-title {
+  flex: 0 1 auto; min-width: 0; font: 600 13px/1.3 -apple-system, BlinkMacSystemFont, sans-serif;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.fm-detail-close {
+  margin-left: auto; flex: 0 0 auto; border: none; background: transparent; cursor: pointer;
+  font: 400 16px/1 -apple-system, BlinkMacSystemFont, sans-serif; color: var(--color-text-muted);
+  opacity: 0.5; padding: 0 4px; transition: opacity 0.15s;
+}
+.fm-detail-close:hover { opacity: 1; }
+.fm-detail-close:focus-visible { outline: none; box-shadow: 0 0 0 2px rgb(var(--sapphire) / 0.55); border-radius: 4px; }
+.fm-detail-body {
+  flex: 1; min-height: 0; overflow-y: auto; padding: 12px 14px;
+  display: flex; flex-direction: column; /* 结果区独占剩余高度并区内滚动（20260904 全文显示） */
+  scrollbar-width: thin; scrollbar-color: var(--color-frame-border) transparent;
+}
+/* flex 列内 meta/blocked/task/标题不收缩（挤压守卫）；结果区 .fm-detail-result 例外 */
+.fm-detail-body > * { flex: 0 0 auto; }
+.fm-detail-meta {
+  font: 400 11px/1.7 -apple-system, BlinkMacSystemFont, sans-serif;
+  color: var(--color-text-muted); margin-bottom: 10px; word-break: break-all;
+}
+.fm-detail-meta b { font-weight: 500; color: var(--color-text-dim); }
+.fm-detail-sec {
+  font: 600 11px/1.4 -apple-system, BlinkMacSystemFont, sans-serif;
+  color: var(--color-text-dim); margin: 10px 0 4px;
+}
+.fm-detail-task {
+  font: 400 11.5px/1.55 -apple-system, BlinkMacSystemFont, sans-serif; color: var(--color-text-muted);
+  white-space: pre-wrap; word-break: break-word;
+  border: 1px solid rgba(128, 128, 128, 0.12); border-radius: 8px; background: rgba(128, 128, 128, 0.05);
+  padding: 8px 10px; max-height: 140px; overflow-y: auto; scrollbar-width: thin;
+}
+.fm-detail-result {
+  font: 400 11.5px/1.55 -apple-system, BlinkMacSystemFont, sans-serif;
+  color: var(--color-text); word-break: break-word; overflow-wrap: anywhere;
+  /* 独立滚动（20260904 作者反馈「节点结果要能完整显示」）：结果区吃满 body 剩余高度，
+   * 超出即区内滚动、滚动被 contain 在区内（不外链动摇详情窗本体——.fm-detail 为
+   * absolute 定位契约不变）。min-height 96px 为极矮视口保底：不足 96px 时结果区不再
+   * 收缩，由 body 的 overflow-y:auto 兜底滚动。短结果 flex-basis auto 不产生空盒。 */
+  flex: 1 1 auto; min-height: 96px;
+  overflow-y: auto; overscroll-behavior: contain;
+  scrollbar-width: thin; scrollbar-color: var(--color-frame-border) transparent;
+}
+/* markdown 正文（flow-mail-content 同语言）*/
+.fm-md p { margin: 4px 0; }
+.fm-md p:first-child { margin-top: 0; }
+.fm-md p:last-child { margin-bottom: 0; }
+.fm-md ul, .fm-md ol { margin: 4px 0 4px 18px; }
+.fm-md li { margin: 2px 0; }
+.fm-md code {
+  background: var(--color-frame-hover); padding: 1px 4px; border-radius: 3px;
+  font: 400 0.9em ui-monospace, SFMono-Regular, Menlo, monospace; word-break: break-all;
+}
+.fm-md pre { background: var(--color-frame-hover); padding: 8px 12px; border-radius: 8px; overflow-x: auto; margin: 6px 0; }
+.fm-md pre code { background: none; padding: 0; word-break: normal; }
+.fm-md blockquote { border-left: 3px solid var(--color-border); margin: 6px 0; padding-left: 10px; color: var(--color-text-muted); }
+.fm-md h1, .fm-md h2, .fm-md h3, .fm-md h4, .fm-md h5, .fm-md h6 { margin: 8px 0 4px; font-weight: 600; }
+.fm-md h3, .fm-md h4 { font-size: 12.5px; }
+.fm-md h5, .fm-md h6 { font-size: 12px; }
+.fm-md table { display: block; overflow-x: auto; border-collapse: collapse; margin: 6px 0; font-size: 11.5px; }
+.fm-md th, .fm-md td { border: 1px solid var(--color-border); padding: 3px 7px; }
+.fm-md th { background: var(--color-frame-hover); }
+.fm-md a { color: rgb(var(--sapphire)); }
+.fm-md hr { border: none; border-top: 1px solid var(--color-border); margin: 8px 0; }
+.fm-md strong { font-weight: 600; }
+.fm-md .md-empty { font-style: italic; color: var(--color-text-muted); opacity: 0.7; }
+
+/* ── v3 链未齐终态保留卡（§3.2）：opacity .78 后退一层、静态环染终态色、
+   标签降 dim；hover 回 1——一眼区分「还在跑的」与「已完成待整链归档的」── */
+.solar-node.fm-node.terminal { opacity: 0.78; }
+.solar-node.fm-node.terminal:hover { opacity: 1; }
+.solar-node.fm-node.terminal .solar-dot { opacity: 0.35; }
+.solar-node.fm-node.terminal .solar-node-label { color: var(--color-text-dim); }
+.solar-node.fm-node.terminal.completed .solar-ring { border-color: var(--color-success); opacity: 0.55; }
+.solar-node.fm-node.terminal.failed .solar-ring { border-color: var(--color-error); opacity: 0.55; }
+.solar-node.fm-node.terminal.cancelled .solar-ring { border-color: var(--color-text-muted); opacity: 0.55; }
+
+/* hover 联动加亮（§5.6）：条目/成员 hover → 可见下游卡 .fm-adj */
+.solar-node.fm-node.fm-adj {
+  transform: scale(1.03);
+  filter: brightness(1.03);
+  border-color: rgb(var(--sapphire) / 0.5);
+}
+
+/* ══ L1 hover 局部强调（v1 交互壳规格 §3.2 N1：focus+context 三级渐进中间级）══
+   自身 .fm-hi（scale 1.12 + 投影抬升）、直接邻居 .fm-nb（1.06 + 描边提色）、
+   其余 .fm-dim（opacity .15）；边按端点 .fm-edge-hi（加粗提亮）/ .fm-edge-dim（.06）。
+   过渡复用既有节点 transform/opacity 与边 stroke/width/opacity 过渡，零新增动画。
+   本块排在 .fm-adj/.terminal 之后：dim 需压过 terminal 的 .78 透明度（同特异度后胜）。 */
+.solar-node.fm-node.fm-hi {
+  transform: scale(1.12);
+  border-color: rgb(var(--sapphire) / 0.45);
+  box-shadow: 0 6px 22px rgba(0, 0, 0, 0.12), 0 2px 8px rgba(0, 0, 0, 0.08);
+  z-index: 2;
+}
+.solar-node.fm-node.fm-nb {
+  transform: scale(1.06);
+  border-color: rgb(var(--sapphire) / 0.35);
+}
+.solar-node.fm-node.fm-dim { opacity: 0.15; }
+.flow-edge.fm-edge.fm-edge-hi { stroke-width: 2.5; opacity: 1; stroke: rgb(var(--sapphire) / 0.85); }
+.fm-edge-arrow.fm-edge-hi { opacity: 1; fill: rgb(var(--sapphire) / 0.85); }
+.flow-edge.fm-edge.fm-edge-dim { opacity: 0.06; }
+.fm-edge-arrow.fm-edge-dim { opacity: 0.08; }
+
+/* 连线 hover 入口（20260905 作者报告「连线 hover 变淡看不清」修复②）：边层整体
+   保持 pointer-events:none（FLOW_CSS 基础规则），仅边路径/箭头本身开启命中，
+   作用域限 .flowmap-card（flow-run 面板同结构不受影响）。命中交给 flowMapTab.js
+   bindHover 委托 → applyEdgeHover（只加亮不淡化）。fill:none 的路径 visiblePainted
+   = 仅描边命中；箭头圆点 fill 命中。deps 箭头的空心（fill:none + stroke）同规则
+   走描边命中。 */
+.flowmap-card .solar-edges path.flow-edge,
+.flowmap-card .solar-edges .fm-edge-arrow { pointer-events: visiblePainted; }
+
+/* 退场优先于 hover 强调（链齐退场瞬间 hover 残留类不得改变退场终态——
+   重申同值规则，靠源顺序压过上方 .fm-hi/.fm-nb 的 transform 与 .fm-dim 的 opacity） */
+.solar-node.fm-node.fm-exit { opacity: 0; transform: scale(0.8); pointer-events: none; }
+
+/* 图例：链未齐终态保留卡项（v3 取代锚点图例；A2 反向断言：无任何锚点项）*/
+.fm-legend-swatch.terminal {
+  width: 14px; height: 10px; border-top: none;
+  border: 1px solid var(--color-success); border-radius: 3px; opacity: 0.8;
+}
+
+/* ── 降级（§6.4：prefers-reduced-motion → opacity-only ≤10ms，脉冲/闪烁禁用）── */
+@media (prefers-reduced-motion: reduce) {
+  .fm-archive-panel, .fm-detail { transition: opacity 0.01s linear; transform: none; }
+  .fm-archive-panel.open, .fm-detail.open { transform: none; }
+  .fm-archive-badge.pulse, .fm-entry.flash { animation: none; }
+  .fm-entry-chev { transition: none; }
+  .solar-node.fm-node.fm-adj { transform: none; }
+  /* 相机/hover 降级：位移类强调取消（仅剩透明度），相机动画直达 */
+  .solar-node.fm-node.fm-hi, .solar-node.fm-node.fm-nb { transform: none; }
+  .flowmap-card .solar-canvas.fm-cam-anim { transition: none; }
+}

@@ -7,6 +7,7 @@ import io.circe.parser.decode
 import io.circe.syntax.*
 import io.circe.{Decoder, Encoder, Json}
 import nebflow.core.{AtomicJson, PathUtil}
+import nebflow.core.flow.TurnStateStore
 import nebflow.shared.{*, given}
 
 // Re-export SessionMeta from shared package for backward compatibility
@@ -850,11 +851,16 @@ class SessionStore(sessionsDir: os.Path, tasksDir: os.Path):
             // Remove uploaded attachments directory
             val ud = PathUtil.dataRoot / "uploads" / id
             if os.exists(ud) then os.remove.all(ud)
+            // #38 Layer C (2026-09-01): tool-results 目录（M3 落盘的超大结果
+            // 全文）随会话删除——此前残留，重启后 recoverOrphans 无从知道，
+            // 但磁盘上永久占着空间；一并删除保证「删干净」。
+            val trd = PathUtil.dataRoot / "tool-results" / id
+            if os.exists(trd) then os.remove.all(trd)
           } *> deleteUiMessages(id) *> appendSemaphores.update(
             _ - id
           ) *> (if wasActive && newActiveId.nonEmpty then
                   loadSessionMessages(newActiveId).flatMap(msgs => activeMessagesRef.set(msgs))
-                else IO.unit) *> saveIndex
+                else IO.unit) *> TurnStateStore.clear(id) *> saveIndex
       }
 
   def markUnread(id: String): IO[Unit] =

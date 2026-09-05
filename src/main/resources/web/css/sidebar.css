@@ -742,30 +742,11 @@
   vertical-align: 1px;
 }
 
-/* Toggle switch */
-.toggle {
-  width: 36px;
-  height: 20px;
-  background: var(--color-frame-border);
-  border-radius: 10px;
-  position: relative;
-  cursor: pointer;
-  transition: background 0.2s;
-}
-.toggle.on { background: #22c55e; }
-.toggle::after {
-  content: '';
-  position: absolute;
-  top: 2px;
-  left: 2px;
-  width: 16px;
-  height: 16px;
-  border-radius: 50%;
-  background: #fff;
-  transition: left 0.2s;
-}
-.toggle.on::after { left: 18px; }
-.toggle.disabled { opacity: 0.45; pointer-events: none; }
+/* (2026-09-05 sidebar-restructure) The legacy hand-rolled `.toggle` switch
+   (div + hand-mixed #22c55e/#fff) is retired — every settings-page switch now
+   renders the shared nb-toggle component (js/toggle.js); its styles live in
+   the «nb-toggle — shared switch component» section at the bottom of this
+   file (glass-control material + sapphire accent, both themes auto-adapt). */
 /* Config editor */
 .config-editor-wrap {
   margin-top: 8px;
@@ -811,7 +792,65 @@
   line-height: 1.6;
 }
 
-/* ── Config Cards (Providers, MCP Servers) ─────────────────────────────── */
+/* ── Settings avatar entry (Account section — 09-05 五项裁定④) ──────────
+   Dual state: logged out → product logo (bright/dark via <picture>);
+   logged in with account avatar → photo. Same decision source as the
+   Activity Bar avatar (neblink.js avatarViewState). Tokens only. */
+.settings-avatar-entry {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  width: 100%;
+  padding: 8px;
+  background: var(--color-frame-input-bg);
+  border: 1px solid var(--color-frame-input-border);
+  border-radius: 8px;
+  cursor: pointer;
+  text-align: left;
+  font: inherit;
+  color: inherit;
+  transition: border-color 0.15s, background 0.15s;
+}
+.settings-avatar-entry:hover { border-color: rgba(91, 127, 191, 0.35); }
+.settings-avatar-frame {
+  position: relative;
+  width: 40px;
+  height: 40px;
+  border-radius: 50%;
+  overflow: hidden;
+  flex-shrink: 0;
+  background: var(--color-frame-hover);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+.settings-avatar-logo {
+  width: 30px;
+  height: 30px;
+  object-fit: contain;
+  /* Pixel-art logo v4: 30px = whole 7.5px blocks at 224px source scale —
+     keep pixelated so stems stay even (same rule as .activity-avatar-logo). */
+  image-rendering: pixelated;
+  pointer-events: none;
+}
+.settings-avatar-photo {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  border-radius: 50%;
+  object-fit: cover;
+  pointer-events: none;
+}
+/* Author display rules must not defeat the hidden attribute. */
+.settings-avatar-logo[hidden],
+.settings-avatar-photo[hidden] { display: none; }
+.settings-avatar-text {
+  font-size: 13px;
+  color: var(--color-text);
+}
+
+/* ── Config Cards (Providers) ──────────────────────────────────────────── */
 .cfg-card {
   background: var(--color-frame-input-bg);
   border: 1px solid var(--color-frame-input-border);
@@ -1965,4 +2004,492 @@
 .seg-remove:focus-visible {
   outline: 2px solid rgb(var(--sapphire) / 0.5);
   outline-offset: 1px;
+}
+
+/* ---------- Appearance section: micOrb palette presets (v8.3.0) ----------
+   Reuses settings-row / cfg-select / cfg-hint / cfg-btn / toggle baselines;
+   only layout helpers + swatches are new. No new color tokens. */
+.orb-state-map-title {
+  font-size: 12.5px;
+  padding: 8px 0 2px;
+}
+.orb-state-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 3px 0;
+}
+.orb-state-row .orb-state-name {
+  flex: 1;
+  font-size: 12.5px;
+  color: var(--color-frame-text);
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.orb-swatches {
+  display: inline-flex;
+  gap: 3px;
+  flex: none;
+}
+.orb-swatches i {
+  width: 10px;
+  height: 10px;
+  border-radius: 3px;
+  border: 1px solid rgba(128, 128, 128, 0.35);
+  display: inline-block;
+}
+.orb-custom-controls {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+  padding: 6px 0;
+}
+.orb-slot-label {
+  flex: 1;
+  font-size: 12px;
+  color: var(--color-frame-text-muted);
+  min-width: 0;
+}
+.orb-slot-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 3px 0;
+}
+.orb-slot-row .orb-slot-label { flex: 1; }
+.orb-slot-color {
+  width: 30px;
+  height: 24px;
+  padding: 0;
+  border: 1px solid var(--color-frame-border-light);
+  border-radius: 6px;
+  background: none;
+  cursor: pointer;
+  flex: none;
+}
+.orb-slot-hex { width: 82px; flex: none; font-family: ui-monospace, Menlo, monospace; font-size: 12px; }
+.orb-warn {
+  color: #d9a53a;
+  font-size: 11px;
+  padding: 1px 0 3px 8px;
+}
+.orb-theme-seg {
+  display: inline-flex;
+  border: 1px solid var(--color-frame-border-light);
+  border-radius: 8px;
+  overflow: hidden;
+  flex: none;
+}
+.orb-theme-btn {
+  border: 0;
+  background: transparent;
+  color: var(--color-frame-text-muted);
+  font-size: 11.5px;
+  padding: 4px 10px;
+  cursor: pointer;
+  font-family: inherit;
+}
+.orb-theme-btn.on {
+  background: var(--color-frame-hover);
+  color: var(--color-frame-text);
+}
+.orb-preview-wrap {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 8px 0 2px;
+}
+.orb-preview-canvas {
+  width: 84px;
+  height: 84px;
+  display: block;
+}
+
+/* ── Plugins page (2026-09-04 重设计：统一插件系统 + 每插件一开关) ─────
+   Canvas tab #plugins-content. One card per plugin = identity + description
+   summary + composition annotations (skills/MCP/tools as annotation chips,
+   NOT separate sections) + the enable switch (the page's only control).
+   Agent summary rows deep-link to the per-agent detail editor.
+   COLOR DISCIPLINE (2026-09-04 visual-review FAIL lesson: hand-made rgba
+   greens at :2265 didn't adapt to dark): every color below comes from the
+   Sapphire token system — glass-control material vars, rgb(var(--sapphire)
+   / α) tints, --amber warning family, frame text tokens. Zero hand-made
+   rgba/hex values in this section. */
+#plugins-content {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  padding: 16px 20px 24px;
+  scrollbar-color: var(--color-frame-border) transparent;
+}
+#plugins-content > .plugins-section,
+#plugins-content .plugins-topbar {
+  max-width: 720px;
+  margin-left: auto;
+  margin-right: auto;
+}
+.plugins-loading {
+  font: 400 12px -apple-system, sans-serif;
+  color: var(--color-frame-text-muted);
+  padding: 24px 12px;
+  text-align: center;
+}
+.plugins-topbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 10px;
+}
+.plugins-title {
+  font: 600 14px -apple-system, sans-serif;
+  color: var(--color-frame-text);
+  letter-spacing: -0.01em;
+}
+.plugins-section { margin-bottom: 18px; }
+.plugins-section-title {
+  font: 600 11px -apple-system, sans-serif;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  color: var(--color-frame-text-muted);
+  padding: 4px 2px 6px;
+  user-select: none;
+}
+.plugins-section-hint {
+  font: 400 10px -apple-system, sans-serif;
+  color: var(--color-frame-text-dim);
+  padding: 0 2px 8px;
+}
+.plugins-none {
+  font: 400 10px -apple-system, sans-serif;
+  color: var(--color-frame-text-dim);
+  font-style: italic;
+}
+
+/* Plugin cards — glass-control material; .on adds a sapphire whisper edge */
+.plugins-card-list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.plugins-card {
+  background: var(--glass-control-bg);
+  -webkit-backdrop-filter: blur(var(--glass-control-blur)) saturate(1.2);
+  backdrop-filter: blur(var(--glass-control-blur)) saturate(1.2);
+  border: 1px solid var(--glass-control-border);
+  border-radius: 10px;
+  box-shadow:
+    inset 0 1px 0 var(--glass-control-highlight),
+    inset 0 -1px 0 var(--glass-control-underedge),
+    0 1px 3px var(--glass-control-glow);
+  padding: 10px 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  transition: border-color 0.15s;
+}
+.plugins-card.on { border-color: rgb(var(--sapphire) / 0.28); }
+.plugins-card.rejected { opacity: 0.75; }
+.plugins-card-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.plugins-card-id {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+}
+.plugins-card-name {
+  font: 600 12px ui-monospace, SFMono-Regular, monospace;
+  color: var(--color-frame-text);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.plugins-card-meta {
+  font: 400 10px -apple-system, sans-serif;
+  color: var(--color-frame-text-dim);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.plugins-card-state {
+  flex-shrink: 0;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+/* The enable switch — now the shared nb-toggle component (js/toggle.js);
+   styles live in the «nb-toggle» section below. The pill stays panel-local. */
+.plugins-state-pill {
+  font: 500 9px -apple-system, sans-serif;
+  padding: 1px 7px;
+  border-radius: 8px;
+  border: 1px solid transparent;
+  white-space: nowrap;
+  color: var(--color-frame-text-muted);
+  background: color-mix(in srgb, var(--color-frame-text-muted) 12%, transparent);
+}
+.plugins-state-pill.on {
+  color: rgb(var(--sapphire));
+  background: rgb(var(--sapphire) / 0.1);
+  border-color: rgb(var(--sapphire) / 0.22);
+}
+.plugins-card-desc {
+  font: 400 11px -apple-system, sans-serif;
+  color: var(--color-frame-text-muted);
+  line-height: 1.45;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+/* Composition annotations — chips, not sections. skills/MCP/tools only
+   describe what the plugin contains; the switch acts on the whole. */
+.plugins-card-composition {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  align-items: center;
+}
+.plugins-comp {
+  font: 500 9px ui-monospace, SFMono-Regular, monospace;
+  padding: 1px 7px;
+  border-radius: 8px;
+  border: 1px solid var(--glass-control-border);
+  background: var(--glass-control-bg);
+  color: var(--color-frame-text-muted);
+  white-space: nowrap;
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.plugins-comp-toggle {
+  cursor: pointer;
+  transition: color 0.15s, border-color 0.15s;
+}
+.plugins-comp-toggle:hover {
+  color: rgb(var(--sapphire));
+  border-color: rgb(var(--sapphire) / 0.3);
+}
+.plugins-comp-toggle.open {
+  color: rgb(var(--sapphire));
+  border-color: rgb(var(--sapphire) / 0.35);
+}
+.plugins-card-hint {
+  font: 400 10px -apple-system, sans-serif;
+  line-height: 1.4;
+  color: rgb(var(--amber));
+  background: rgb(var(--amber) / 0.08);
+  border: 1px solid rgb(var(--amber) / 0.25);
+  border-radius: 7px;
+  padding: 5px 8px;
+}
+.plugins-card-hint.dim {
+  color: var(--color-frame-text-dim);
+  background: transparent;
+  border: none;
+  padding: 0 2px;
+  cursor: help;
+}
+.plugins-rejected-pill {
+  flex-shrink: 0;
+  font: 500 9px -apple-system, sans-serif;
+  padding: 1px 7px;
+  border-radius: 8px;
+  color: rgb(var(--amber));
+  background: rgb(var(--amber) / 0.1);
+  border: 1px solid rgb(var(--amber) / 0.25);
+  white-space: nowrap;
+}
+/* Expandable per-skill previews (composition annotation's detail view) */
+.plugins-skill-expand {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.plugins-skill-item {
+  background: var(--glass-etched-bg);
+  border: 1px solid var(--glass-etched-border);
+  border-radius: 8px;
+  padding: 6px 8px;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+.plugins-skill-item-head {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  min-width: 0;
+}
+.plugins-skill-item-id {
+  flex-shrink: 0;
+  font: 600 10px ui-monospace, SFMono-Regular, monospace;
+  color: rgb(var(--sapphire));
+}
+.plugins-skill-item-desc {
+  min-width: 0;
+  font: 400 10px -apple-system, sans-serif;
+  color: var(--color-frame-text-muted);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.plugins-skill-preview {
+  margin: 0;
+  font: 400 9px ui-monospace, SFMono-Regular, monospace;
+  color: var(--color-frame-text-dim);
+  background: var(--glass-etched-bg);
+  border: 1px solid var(--glass-etched-border);
+  border-radius: 6px;
+  padding: 6px 8px;
+  max-height: 96px;
+  overflow-y: auto;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+/* Agent summary rows — name + description + preset/model 现状; the whole
+   row deep-links to the per-agent detail editor. Read-only by design:
+   no subscription chips, no inline config selects. */
+.plugins-agent-list {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.plugins-agent-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  background: var(--glass-control-bg);
+  -webkit-backdrop-filter: blur(var(--glass-control-blur)) saturate(1.2);
+  backdrop-filter: blur(var(--glass-control-blur)) saturate(1.2);
+  border: 1px solid var(--glass-control-border);
+  border-radius: 10px;
+  box-shadow:
+    inset 0 1px 0 var(--glass-control-highlight),
+    inset 0 -1px 0 var(--glass-control-underedge);
+  padding: 8px 12px;
+  cursor: pointer;
+  transition: background 0.15s;
+}
+.plugins-agent-row:hover { background: var(--glass-control-bg-hover); }
+.plugins-agent-row:focus-visible {
+  outline: 2px solid rgb(var(--sapphire) / 0.5);
+  outline-offset: 1px;
+}
+.plugins-agent-name {
+  flex-shrink: 0;
+  width: 120px;
+  font: 600 12px -apple-system, sans-serif;
+  color: var(--color-frame-text);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  transition: color 0.15s;
+}
+.plugins-agent-row:hover .plugins-agent-name { color: rgb(var(--sapphire)); }
+.plugins-agent-desc {
+  flex: 1;
+  min-width: 0;
+  font: 400 11px -apple-system, sans-serif;
+  color: var(--color-frame-text-muted);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.plugins-agent-meta {
+  flex-shrink: 0;
+  display: flex;
+  gap: 4px;
+  align-items: center;
+}
+.plugins-agent-meta-pill {
+  font: 500 9px ui-monospace, SFMono-Regular, monospace;
+  color: var(--color-frame-text-muted);
+  background: var(--color-frame-border);
+  padding: 1px 6px;
+  border-radius: 4px;
+  max-width: 140px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.plugins-agent-chevron {
+  flex-shrink: 0;
+  color: var(--color-frame-text-dim);
+  transition: color 0.15s, transform 0.15s;
+}
+.plugins-agent-row:hover .plugins-agent-chevron {
+  color: rgb(var(--sapphire));
+  transform: translateX(1px);
+}
+
+/* ── nb-toggle — shared switch component (js/toggle.js) ──────────────────
+   2026-09-05 插件面板体验批。One class for every panel that renders a
+   switch: the Plugins page adopts it now; the Settings page adopts it in
+   the sidebar-restructure batch (replacing the legacy .toggle / .cfg-toggle
+   pair). Contract: markup from toggleHTML(options) — a real <button> with
+   role="switch", so Space/Enter click is native; knob drawn by ::after.
+   TOKEN DISCIPLINE: track = glass-control material, accent = sapphire
+   family, motion = the app-wide 0.15s control-transition convention,
+   enter/exit = the shared --panel-ease curve. Zero hand-made color values;
+   both themes auto-adapt (sapphire.css / base.css dark blocks). */
+.nb-toggle {
+  position: relative;
+  width: 36px;
+  height: 20px;
+  padding: 0;
+  border-radius: 10px;
+  flex-shrink: 0;
+  cursor: pointer;
+  background: var(--glass-control-bg);
+  -webkit-backdrop-filter: blur(var(--glass-control-blur)) saturate(1.2);
+  backdrop-filter: blur(var(--glass-control-blur)) saturate(1.2);
+  border: 1px solid var(--glass-control-border);
+  box-shadow:
+    inset 0 1px 0 var(--glass-control-highlight),
+    inset 0 -1px 0 var(--glass-control-underedge);
+  transition: background 0.15s, border-color 0.15s;
+}
+.nb-toggle::after {
+  content: '';
+  position: absolute;
+  top: 2px;
+  left: 2px;
+  width: 16px;
+  height: 16px;
+  border-radius: 50%;
+  background: var(--color-frame-text-muted);
+  transition: transform 0.15s ease, background 0.15s;
+}
+.nb-toggle.on {
+  background: rgb(var(--sapphire) / 0.35);
+  border-color: rgb(var(--sapphire) / 0.5);
+}
+.nb-toggle.on::after {
+  transform: translateX(16px);
+  background: rgb(var(--sapphire));
+}
+.nb-toggle:focus-visible {
+  outline: 2px solid rgb(var(--sapphire) / 0.5);
+  outline-offset: 1px;
+}
+.nb-toggle:disabled { opacity: 0.5; cursor: default; }
+
+/* New plugin card entering the list via live registry sync (plugins.js
+   poller) — short slide+fade on the shared panel ease; the class is removed
+   on animationend so repeat inserts retrigger cleanly. */
+.plugins-card.plugins-card-entering {
+  animation: plugins-card-enter 0.25s var(--panel-ease, ease);
+}
+@keyframes plugins-card-enter {
+  from { opacity: 0; transform: translateY(-4px); }
+  to   { opacity: 1; transform: none; }
 }

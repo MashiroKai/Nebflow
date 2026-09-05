@@ -14,8 +14,10 @@ project/project/
 .DS_Store
 Thumbs.db
 
-# Nebflow runtime
-.nebflow/
+# Nebflow runtime（.nebflow/ 整体忽略，唯 Spec/ 为 skills→plugins 映射标准源，可跟踪）
+# dispatcher-ctx 批照 memory-plan 配方：runtime 全忽略，仅 Spec/ 入 track（spec 随分支走）
+.nebflow/*
+!.nebflow/Spec/
 .nebflow-qc.log
 
 # Internal / development-only
@@ -70,3 +72,8 @@ build/
 
 # P1 web build tooling
 node_modules/
+
+# sbt 沙箱重定向目录（工作树内测试运行产物）
+.sbt/
+.ivy2/
+.coursier/

@@ -6,6 +6,7 @@ import io.circe.{Json, JsonObject}
 import nebflow.actor.*
 import nebflow.agent.*
 import nebflow.core.NebflowLogger
+import nebflow.core.node.NodeRunner
 import nebflow.core.presets.PresetStore
 import nebflow.shared.{ContentBlock, Message, MessageRole}
 
@@ -384,85 +385,54 @@ Multiple Delegate calls in one response run concurrently — use this to paralle
     safetyMode: String = "confirm-edits",
     rootSessionId: String = ""
   ): IO[Either[ToolError, String]] =
+    val childDepth = parentDepth + 1
+    val subagentId = s"delegate-${agentName}-${java.util.UUID.randomUUID().toString.take(8)}"
+    val childWsSend = routeWsSend(wsSend, parentSessionId, subagentId)
+    val resolvedRoot = if rootSessionId.nonEmpty then rootSessionId else parentSessionId.getOrElse(subagentId)
+    val params = NodeRunner.SpawnParams(
+      agentDef = agentDef,
+      resources = resources,
+      sessionId = subagentId,
+      sessionName = description,
+      depth = childDepth,
+      parentRef = parentRef,
+      wsSend = childWsSend,
+      projectRoot = Some(projectRoot),
+      safetyMode = safetyMode,
+      rootSessionId = resolvedRoot
+    )
     for
-      readTracker <- ReadTracker.create
-      fileHistory <- FileHistory.create()
-      childDepth = parentDepth + 1
-      subagentId = s"delegate-${agentName}-${java.util.UUID.randomUUID().toString.take(8)}"
-      childWsSend = routeWsSend(wsSend, parentSessionId, subagentId)
-      subagentRef <- system.spawn(
-        AgentActor(
-          agentDef = agentDef,
-          resources = resources,
-          wsSend = childWsSend,
-          depth = childDepth,
-          parentRef = parentRef,
-          sessionId = Some(subagentId),
-          sessionName = Some(description),
-          initialMessages = Nil, // #28: clean context — cross-agent spawn only
-          readTracker = Some(readTracker),
-          fileHistory = Some(fileHistory),
-          contextWindow = resources.contextWindow,
-          projectRoot = Some(projectRoot),
-          safetyMode = safetyMode,
-          rootSessionId = if rootSessionId.nonEmpty then rootSessionId else parentSessionId.getOrElse(subagentId)
-        ),
-        subagentId
-      )
+      subagentRef <- NodeRunner.spawnAgentActor(system, params)
       // P2: BackoffSupervisor is the background adapter — auto-restarts on crash,
       // handles AgentEvent.Cancelled (AgentControl cancel path)
-      adapterRef <- system.spawn(
-        BackoffSupervisor(
-          childRef = subagentRef,
-          childSpawnFn = (sys: ActorSystem, recoveredMessages: List[Message]) =>
-            sys.spawn(
-              AgentActor(
-                agentDef = agentDef,
-                resources = resources,
-                wsSend = childWsSend,
-                depth = childDepth,
-                parentRef = parentRef,
-                sessionId = Some(subagentId),
-                sessionName = Some(description),
-                initialMessages = recoveredMessages,
-                contextWindow = resources.contextWindow,
-                projectRoot = Some(projectRoot),
-                safetyMode = safetyMode,
-                rootSessionId = if rootSessionId.nonEmpty then rootSessionId else parentSessionId.getOrElse(subagentId)
-              ),
-              subagentId
-            ),
-          childName = subagentId,
-          parentRef = parentRef,
-          description = description,
-          agentName = agentName,
-          subagentId = subagentId,
-          parentSessionId = parentSessionId.getOrElse(""),
-          resources = resources,
-          initialPrompt = prompt,
-          source = "delegate",
-          wsSend = Some(childWsSend)
-        ),
-        s"$subagentId-adapter"
+      adapterRef <- NodeRunner.spawnSupervisedAdapter(
+        system = system,
+        params = params,
+        childRef = subagentRef,
+        childName = subagentId,
+        description = description,
+        agentName = agentName,
+        subagentId = subagentId,
+        parentSessionId = parentSessionId.getOrElse(""),
+        initialPrompt = prompt,
+        source = "delegate",
+        wsSend = Some(childWsSend)
       )
       _ = logger.info(s"Spawned supervised background sub-agent: $subagentId (depth=$childDepth, agent=$agentName)")
-      _ <- resources.agentRegistry.update(
-        _ + (
-          subagentId -> AgentRecord(
-            subagentId,
-            subagentRef,
-            AgentKind.Delegate,
-            if rootSessionId.nonEmpty then rootSessionId else parentSessionId.getOrElse(subagentId),
-            parentRef,
-            // AgentControl：startedAt/lastActivityMs 驱动 list 的 up/idle 列与
-            // 卡死判定；supervisorRef 是 cancel 的直达通道（BackoffSupervisor
-            // 处理 AgentEvent.Cancelled）。
-            startedAt = System.currentTimeMillis(),
-            lastActivityMs = System.currentTimeMillis(),
-            supervisorRef = Some(adapterRef),
-            parentSessionId = parentSessionId.getOrElse("")
-          )
-        )
+      _ <- NodeRunner.registerAgent(
+        resources,
+        id = subagentId,
+        ref = subagentRef,
+        kind = AgentKind.Delegate,
+        rootSessionId = resolvedRoot,
+        parentRef = parentRef,
+        // AgentControl：startedAt/lastActivityMs 驱动 list 的 up/idle 列与
+        // 卡死判定；supervisorRef 是 cancel 的直达通道（BackoffSupervisor
+        // 处理 AgentEvent.Cancelled）。
+        startedAt = System.currentTimeMillis(),
+        lastActivityMs = System.currentTimeMillis(),
+        supervisorRef = Some(adapterRef),
+        parentSessionId = parentSessionId.getOrElse("")
       )
       // P3.1: persist task metadata for crash recovery
       _ <- resources.subAgentTaskStore
@@ -516,54 +486,44 @@ Do NOT duplicate this agent's work — avoid working with the same files or topi
     safetyMode: String = "confirm-edits",
     rootSessionId: String = ""
   ): IO[Either[ToolError, String]] =
+    val childDepth = parentDepth + 1
+    val subagentId = s"delegate-${agentName}-${java.util.UUID.randomUUID().toString.take(8)}"
+    val childWsSend = routeWsSend(wsSend, parentSessionId, subagentId)
+    val resolvedRoot = if rootSessionId.nonEmpty then rootSessionId else parentSessionId.getOrElse(subagentId)
+    val params = NodeRunner.SpawnParams(
+      agentDef = agentDef,
+      resources = resources,
+      sessionId = subagentId,
+      sessionName = description,
+      depth = childDepth,
+      parentRef = parentRef,
+      wsSend = childWsSend,
+      projectRoot = Some(projectRoot),
+      safetyMode = safetyMode,
+      rootSessionId = resolvedRoot
+    )
     for
-      readTracker <- ReadTracker.create
-      fileHistory <- FileHistory.create()
-      childDepth = parentDepth + 1
-      subagentId = s"delegate-${agentName}-${java.util.UUID.randomUUID().toString.take(8)}"
-      childWsSend = routeWsSend(wsSend, parentSessionId, subagentId)
-      subagentRef <- system.spawn(
-        AgentActor(
-          agentDef = agentDef,
-          resources = resources,
-          wsSend = childWsSend,
-          depth = childDepth,
-          parentRef = parentRef,
-          sessionId = Some(subagentId),
-          sessionName = Some(description),
-          initialMessages = Nil, // #28: clean context — cross-agent spawn only
-          readTracker = Some(readTracker),
-          fileHistory = Some(fileHistory),
-          contextWindow = resources.contextWindow,
-          projectRoot = Some(projectRoot),
-          safetyMode = safetyMode,
-          rootSessionId = if rootSessionId.nonEmpty then rootSessionId else parentSessionId.getOrElse(subagentId)
-        ),
-        subagentId
-      )
+      subagentRef <- NodeRunner.spawnAgentActor(system, params)
       address = subagentRef.path.toString
       adapterRef <- system.spawn(
         persistentAdapter(subagentRef, parentRef, description, agentName, subagentId, address, resources),
         s"$subagentId-adapter"
       )
       _ = logger.info(s"Spawned persistent sub-agent: $subagentId (depth=$childDepth, agent=$agentName, addr=$address)")
-      _ <- resources.agentRegistry.update(
-        _ + (
-          subagentId -> AgentRecord(
-            subagentId,
-            subagentRef,
-            AgentKind.Delegate,
-            if rootSessionId.nonEmpty then rootSessionId else parentSessionId.getOrElse(subagentId),
-            parentRef,
-            // AgentControl：persistent 的 cancel 走 persistentAdapter 的
-            // Cancelled 分支（ExternalEvent + SessionUpdate("cancelled") +
-            // registry 移除 + child Stop）；restart 不支持（无 supervisor）。
-            startedAt = System.currentTimeMillis(),
-            lastActivityMs = System.currentTimeMillis(),
-            supervisorRef = Some(adapterRef),
-            parentSessionId = parentSessionId.getOrElse("")
-          )
-        )
+      _ <- NodeRunner.registerAgent(
+        resources,
+        id = subagentId,
+        ref = subagentRef,
+        kind = AgentKind.Delegate,
+        rootSessionId = resolvedRoot,
+        parentRef = parentRef,
+        // AgentControl：persistent 的 cancel 走 persistentAdapter 的
+        // Cancelled 分支（ExternalEvent + SessionUpdate("cancelled") +
+        // registry 移除 + child Stop）；restart 不支持（无 supervisor）。
+        startedAt = System.currentTimeMillis(),
+        lastActivityMs = System.currentTimeMillis(),
+        supervisorRef = Some(adapterRef),
+        parentSessionId = parentSessionId.getOrElse("")
       )
       _ <- parentRef.fold(IO.unit)(ref => ref ! AgentCommand.SessionStarted(address, agentName, taskDescription))
       // G3: blocks carry attachments with the prompt text as the first Text

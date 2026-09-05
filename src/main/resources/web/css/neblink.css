@@ -185,3 +185,6 @@
 }
 #neblink-btn:hover { color: var(--color-text); background: var(--color-bg); }
 #neblink-btn.hidden { display: none; }
+
+/* （NL 号（[U3]）自定义 UI 样式已随 2026-09-05 10:54 裁定的入口移除一并删除
+   —— 客户端不提供修改入口，Username 经官网账号中心设置。） */

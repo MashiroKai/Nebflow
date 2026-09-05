@@ -220,10 +220,12 @@ body.sidebar-collapsed #activity-bar {
 .activity-avatar:hover { background: var(--color-frame-hover); transform: scale(1.04); }
 .activity-avatar:active { transform: scale(0.97); }
 .activity-avatar-logo {
-  width: 22px;
-  height: 22px;
+  width: 24px;
+  height: 24px;
   object-fit: contain;
-  /* Pixel-art logo (224x224 source): keep crisp nearest-neighbor edges. */
+  /* Pixel-art logo v4 (224x224 source = 8 grid units, art block = 2 units).
+     24px keeps every art block a whole 6px, so pixelated stays even —
+     22px would split blocks into 5.5px and render ragged stems. */
   image-rendering: pixelated;
   pointer-events: none;
 }
@@ -310,13 +312,34 @@ body.sidebar-collapsed #activity-bar {
 /* Spacer pushes settings to the bottom of the bar. */
 .activity-spacer { flex: 1; }
 
+/* Update-available dot on the settings button (updateCheck.js silent auto
+   checks). Success token only — no hand-mixed colors (视觉评审先例). The
+   halo ring keeps it legible on hover/active backgrounds in both themes. */
+.settings-update-dot {
+  position: absolute;
+  top: 5px;
+  right: 5px;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--color-success);
+  box-shadow: 0 0 0 2px var(--color-nav-bg);
+  pointer-events: none;
+}
+
+/* 2026-09-05 旧 UI 退役：legacy-pop/legacy-item（旧面板二级入口 popover）
+   样式段已随 #legacy-btn/#legacy-pop DOM 删除。 */
+
 /* ── NebLink logged-out hint (Settings panel) ── */
 .neblink-logged-out {
   display: flex; flex-direction: column; align-items: center;
   gap: 8px; padding: 8px 0;
 }
 .neblink-logged-out-logo {
-  width: 36px; height: 30px; opacity: 0.7;
+  /* Square box on the 8-unit grid (32/8 = 4px unit, 8px art block) — the
+     source canvas is square with transparent top/bottom padding, so a
+     non-square box only wasted the contain fit. */
+  width: 32px; height: 32px; opacity: 0.7;
   object-fit: contain;
   image-rendering: pixelated;
 }

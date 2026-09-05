@@ -2,7 +2,6 @@ package nebflow.core
 
 import munit.CatsEffectSuite
 import nebflow.agent.ContextRefresher
-import nebflow.core.telemetry.TelemetryReporter
 import nebflow.core.tools.AskUserQuestionTool
 
 /**
@@ -41,19 +40,21 @@ class HeadlessModeSpec extends CatsEffectSuite:
 
   test("shouldInjectMemory: headless=true skips memory even for eligible agents") {
     // Both shapes that would inject memory in interactive mode — Nebula
-    // standalone and team agents — produce no memory block when headless:
-    // no cross-run state leaks into a benchmark session.
-    assert(!ContextRefresher.shouldInjectMemory(isWorker = false, isTeamAgent = false, agentName = "Nebula", headless = true))
-    assert(!ContextRefresher.shouldInjectMemory(isWorker = false, isTeamAgent = true, agentName = "Backend", headless = true))
+    // standalone (the ONLY memory-bearing agent since 2026-08-31 裁定①) —
+    // produce no memory block when headless: no cross-run state leaks into a
+    // benchmark session.
+    assert(!ContextRefresher.shouldInjectMemory(isWorker = false, agentName = "Nebula", headless = true))
+    assert(!ContextRefresher.shouldInjectMemory(isWorker = true, agentName = "Nebula", headless = true))
   }
 
-  test("shouldInjectMemory: headless=false keeps the legacy gate unchanged") {
-    // Eligible: Nebula standalone, team agents
-    assert(ContextRefresher.shouldInjectMemory(isWorker = false, isTeamAgent = false, agentName = "Nebula", headless = false))
-    assert(ContextRefresher.shouldInjectMemory(isWorker = false, isTeamAgent = true, agentName = "Backend", headless = false))
-    // Legacy exclusions unchanged: SubTask workers, standalone non-Nebula
-    assert(!ContextRefresher.shouldInjectMemory(isWorker = true, isTeamAgent = true, agentName = "Backend", headless = false))
-    assert(!ContextRefresher.shouldInjectMemory(isWorker = false, isTeamAgent = false, agentName = "Coder", headless = false))
+  test("shouldInjectMemory: headless=false injects ONLY for Nebula") {
+    // Eligible since 2026-08-31 裁定①: Nebula (non-worker, non-headless) only.
+    assert(ContextRefresher.shouldInjectMemory(isWorker = false, agentName = "Nebula", headless = false))
+    // Team agents no longer inject memory (was eligible pre-redesign)
+    assert(!ContextRefresher.shouldInjectMemory(isWorker = false, agentName = "Backend", headless = false))
+    // Exclusions unchanged: SubTask workers, standalone non-Nebula
+    assert(!ContextRefresher.shouldInjectMemory(isWorker = true, agentName = "Nebula", headless = false))
+    assert(!ContextRefresher.shouldInjectMemory(isWorker = false, agentName = "Coder", headless = false))
   }
 
   // ============================================================
@@ -75,16 +76,4 @@ class HeadlessModeSpec extends CatsEffectSuite:
 
   test("askGuard: default binding follows the frozen HeadlessMode.enabled") {
     assertEquals(AskUserQuestionTool.askGuard().isDefined, HeadlessMode.enabled)
-  }
-
-  // ============================================================
-  // Touchpoint 3 — telemetry disabled (TelemetryReporter)
-  // ============================================================
-
-  test("TelemetryReporter.create returns None — disabled means no reporter") {
-    // isEnabled is false in the current build and NEBFLOW_HEADLESS is unset
-    // here, so create short-circuits before any client-id/queue I/O. The
-    // headless=true arm of the same gate (an additional or-condition on the
-    // frozen val) is exercised by E2E smoke, not settable in-JVM.
-    TelemetryReporter.create().map(r => assert(r.isEmpty, s"expected None, got $r"))
   }

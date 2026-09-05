@@ -15,7 +15,9 @@ object ToolRegistry:
       "Read" -> ReadTool,
       "Write" -> WriteTool,
       "Edit" -> EditTool,
-      "MultiEdit" -> MultiEditTool,
+      // MultiEdit 已从注册表移除（阶段 2c §C.1/裁定 5：通用 agent 8 件之外；
+      // 能力由 Edit 的 replace_all 覆盖）。MultiEditTool 类保留（非物理删除），
+      // spec 与未来 plugin 扩展（§B.6 白名单扩展）仍可引用。
       // Search
       "Glob" -> GlobTool,
       "Grep" -> GrepTool,
@@ -27,15 +29,15 @@ object ToolRegistry:
       "Curl" -> CurlTool,
       // Canvas file display
       "Pop" -> PopTool,
+      // Chat-stream HTML card (sandboxed iframe) — 解封恢复（2026-09-05 08:40
+      // 作者裁定，NebulaOrchestrationTools +Card）：commit 793f62c1（2026-08-11）
+      // 曾整体删除，本批恢复后端工具与注册；前端 iframe 消费面另批恢复。
+      "Card" -> CardTool,
       // User interaction
       "AskUserQuestion" -> AskUserQuestionTool,
-      // Task management
-      "TaskCreate" -> TaskCreateTool,
-      "TaskUpdate" -> TaskUpdateTool,
-      "TaskQuery" -> TaskQueryTool,
-      // Team Manager task tools (2026-08-25 team-manager-task-tool): Manager
-      // owner (Create/Update/List) + Nebula read-only (List). Injected at the
-      // mechanism layer via buildAllowedToolSet isTeamLead / Nebula grants.
+      // Team task tools (任务工具重做 2026-08-30: 任务=进展展示，工具只配
+      // team——category=team 机制层注入全体成员；session 域 TaskCreate/Update/
+      // Query 已退役，TTL 清理见 TaskStore)
       "TeamTaskCreate" -> TeamTaskCreateTool,
       "TeamTaskUpdate" -> TeamTaskUpdateTool,
       "TeamTaskList" -> TeamTaskListTool,
@@ -58,18 +60,37 @@ object ToolRegistry:
       // Cross-device file transfer
       "TransferFile" -> TransferFileTool,
       // A2A 一期: agent sends a message to one of the user's NebLink friends
-      // (#290). Authorization: Nebula-only via agent.json tools declaration
-      // (author ruling 2026-08-28) — no mechanism-layer injection.
+      // (#290). Authorization (阶段 2d, D.1-11): mechanism-fixed for Nebula
+      // only (NebulaOrchestrationTools, 2c 起) — agent.json declaration
+      // channel removed (buildAllowedToolSet strips the name from base).
       "SendFriendMessage" -> FriendMessageTool,
       // Load Team/Flow from disk (validate + mount)
       "Load" -> LoadTool,
       // Flow agent result reporting (verdict + output for DAG switch routing)
-      "FlowReport" -> FlowReportTool
+      "FlowReport" -> FlowReportTool,
+      // #28 阶段 0：Project + Node 模型工具集（分发器白名单声明；全局注册使
+      // agent.json tools 可解析）。NodeEdit/NodeList/NodeCancel = 分发器用；
+      // ProjectCreate = Nebula 用（建项目 + 工作区脚手架；workspace 缺省/不可用
+      // 时弹 AskUser 式路径面板复用 pending 机制）；Task = Nebula 侧
+      // 项目任务触发（阶段 2 迁移第一步，与 Mail(→project) 同内核、入口不同）。
+      "NodeEdit" -> NodeEditTool,
+      "NodeList" -> NodeListTool,
+      "NodeCancel" -> NodeCancelTool,
+      "ProjectCreate" -> ProjectCreateTool,
+      "Task" -> TaskTool,
+      // 阶段 2c（§C.2）：Nebula 专用记忆维护工具——target 白名单硬编码
+      // User.md + agents/Nebula/memory.md（H-1①：工具内建路径校验，非沙箱
+      // 对象）。Nebula-only 注入见 AgentCore.NebulaExclusiveTools。
+      "MemoryEdit" -> MemoryEditTool
     )
     tools.putAll(builtins.asJava)
   }
 
   def TOOL_MAP: Map[String, Tool] = tools.asScala.toMap
+
+  /** 动态注册名快照（阶段 2b：plugin MCP allowedSet 追加源；轻量——不经
+    * augmentSchema，纯键名）。 */
+  def registeredToolNames: List[String] = tools.keys.asScala.toList
 
   def ALL_TOOLS: List[ToolDefinition] = tools.asScala.values.map { t =>
     val schema = RemoteExecutor.augmentSchema(t.name, t.inputSchema)

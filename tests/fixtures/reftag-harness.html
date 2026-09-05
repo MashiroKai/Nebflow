@@ -1,0 +1,188 @@
+<!doctype html>
+<!-- reftag-harness.html — test page for tests/reftag-redesign.spec.mjs
+     (引用块标签精简重设计 — 单行紧凑 chip, author ruling 2026-09-02 21:59).
+
+     Loads the REAL production stylesheet chain (base.css tokens + sapphire.css
+     glass vars + input.css .att-ref block) and the REAL /js/reference.js
+     factory+renderer, mounts an input-bar-like stage and renders mock refs
+     through makeReference() + renderRefBlock(mode:'input') — the exact
+     production assembly path (chat.js renderAttachmentPreview calls the same
+     two functions; the mock only replaces the attachment loop).
+
+     Exposes window.__reftagTest for the spec:
+       sets               named ref sets (mixed 4-type / overflow w/ long title)
+       render(names)      mount a ref set, returns the built Reference objects
+       chips()            per-chip geometry/text snapshot for assertions
+       container()        attachment-preview overflow probe
+       clickAt(i)         toggle chip i (preview state)
+       metaTextAt(i)      the chip's hidden meta line text
+     Served by the in-spec static server at /harness. -->
+<html>
+<head>
+<meta charset="utf-8">
+<title>reftag harness</title>
+<!-- Real app stylesheets: base.css = theme tokens + body bg, sapphire.css =
+     glass/sapphire vars, input.css = the .att-ref block under test. -->
+<link rel="stylesheet" href="/css/base.css">
+<link rel="stylesheet" href="/css/sapphire.css">
+<link rel="stylesheet" href="/css/input.css">
+<style>
+  html, body { margin: 0; padding: 0; }
+  /* Chat backdrop stand-in so the glass input panel has content to frost. */
+  .backdrop { position: fixed; inset: 0; padding: 16px 24px; }
+  .backdrop .bubble { max-width: 430px; padding: 8px 12px; border-radius: 14px;
+    font-size: 13px; line-height: 1.55; margin-bottom: 10px;
+    background: rgb(128 128 128 / 0.10); }
+  .backdrop .bubble.right { margin-left: auto; max-width: 380px; }
+  #stage { position: relative; width: 620px; margin: 150px auto 0; }
+  /* #input-bar/#input-wrap/#attachment-preview styles all come from the real
+     input.css — this is the chips' real home. Only layout shims here: */
+  #input-bar { display: block; }
+  #input-wrap { display: block; padding: 2px 6px 6px; }
+  #input { width: 100%; border: none; background: transparent; outline: none;
+    resize: none; font: 400 13px -apple-system, BlinkMacSystemFont, sans-serif;
+    color: var(--color-text); }
+  /* 消息卡挂载区（20260903 追加）：340px = .att-ref-bubble 同宽，真实卡片视觉 */
+  #message-stage { width: 340px; margin: 14px auto 0; }
+</style>
+</head>
+<body>
+<div class="backdrop">
+  <div class="bubble">引用块标签精简重设计验收：同时挂文件 / Canvas / 任务 / HTML 元素混合引用，观察 chip 是否单行紧凑、互不溢出。</div>
+  <div class="bubble right">好的，hover 可见完整元信息，点击 chip 展开预览行。</div>
+</div>
+<div id="stage">
+  <div id="input-bar">
+    <div id="input-wrap">
+      <div id="attachment-preview"></div>
+      <textarea id="input" rows="1" placeholder="Type a message..."></textarea>
+    </div>
+  </div>
+</div>
+<!-- 20260903 追加：消息内引用卡（.att-ref-card，用户气泡附件卡）的挂载点 ——
+     文件名重复 bug 的实际发生面（徽章=被污染的 typeLabel + 辅助行带文件名）。 -->
+<div id="message-stage"></div>
+<!-- Ready flag pre-seeded in a classic script: the spec's waitForFunction
+     predicate reads a boolean (never throws) while the module below is
+     still importing. -->
+<script>window.__reftagTest = { ready: false };</script>
+<script type="module">
+  const { renderRefBlock, makeReference } = await import('/js/reference.js');
+
+  // Mock 引用输入 —— 与真实入口（explorer 右键 / canvas refForTab / 任务打回 /
+  // html viewer 选区）产出同构的字段形状；经真实 makeReference 归一。
+  const MOCK_INPUTS = {
+    file: {
+      refType: 'file',
+      source: { kind: 'workspace', path: '/Users/dev/Claude code/Nebflow/src/main/scala/nebflow/cluster/DispatcherActor.scala' },
+      anchor: { kind: 'range', lineStart: 12, lineEnd: 48 },
+    },
+    document: {
+      refType: 'document',
+      source: { kind: 'canvas', path: '/Users/dev/Documents/papers/NIMA-D-26-00151.pdf', fileName: 'NIMA-D-26-00151.pdf', title: 'NIMA-D-26-00151.pdf', mimeType: 'application/pdf' },
+      anchor: { kind: 'page', pageStart: 3, pageEnd: 7 },
+    },
+    task: {
+      refType: 'task',
+      source: { kind: 'task', taskId: 312, sessionId: 'sess_9f2c', title: '压缩迁移：会话历史滚动压缩窗口' },
+      anchor: { kind: 'none' },
+    },
+    html: {
+      refType: 'html-element',
+      source: { kind: 'web', url: 'https://nebflow.space/docs/global-reference', title: 'Global Reference — Nebflow Docs' },
+      anchor: { kind: 'element', selector: '#spec > section.quota > table', tag: 'table', text: '配额表：每会话上限…' },
+    },
+    longfile: {
+      refType: 'file',
+      source: { kind: 'workspace', path: '/Users/dev/Documents/20260902_超长标题截断省略号验证_这是一个非常非常长的文件名用来验证固定宽度下省略号生效.txt' },
+      anchor: { kind: 'none' },
+    },
+    // ── 20260903 文件名重复修复回归输入 ──
+    // canvas 标签页把「显示标题」当 fileName（canvas.js refInputForTab: name =
+    // tab.title || basename）——标题无扩展名时 extLabel 曾把整个名字当「扩展名」，
+    // typeLabel/消息卡徽章 = 完整文件名，与标题重复（09-03 截图实证）。
+    canvasTitleFile: {
+      refType: 'file',
+      source: { kind: 'canvas', path: '/Users/dev/Claude code/Nebflow/20260903_pr41-close-draft.md',
+                fileName: 'PR #41 致谢关闭文案草稿', title: 'PR #41 致谢关闭文案草稿' },
+      anchor: { kind: 'none' },
+    },
+    // 60+ 字符无扩展名长标题：固定尺寸断言（28px 不撑高）+ 徽章/辅助行核验
+    longTitleFile: {
+      refType: 'file',
+      source: { kind: 'canvas', path: '/Users/dev/Claude code/Nebflow/docs/notes/20260903_超长文件名验证_这是一个超过六十个字符的引用块标题用来断言固定尺寸且不随内容变化的中文名称数据备份稿二.md',
+                fileName: '20260903_超长文件名验证_这是一个超过六十个字符的引用块标题用来断言固定尺寸且不随内容变化的中文名称数据备份稿二',
+                title: '20260903_超长文件名验证_这是一个超过六十个字符的引用块标题用来断言固定尺寸且不随内容变化的中文名称数据备份稿二' },
+      anchor: { kind: 'none' },
+    },
+  };
+  const SETS = {
+    mixed: ['file', 'document', 'task', 'html'],
+    overflow: ['file', 'document', 'task', 'html', 'longfile'],
+  };
+
+  const preview = document.getElementById('attachment-preview');
+  function render(names) {
+    preview.innerHTML = '';
+    const refs = [];
+    names.forEach((k) => {
+      const ref = makeReference(MOCK_INPUTS[k]);
+      preview.appendChild(renderRefBlock(ref, { mode: 'input' }, () => {}));
+      refs.push(ref);
+    });
+    return refs;
+  }
+
+  Object.assign(window.__reftagTest, {
+    sets: SETS,
+    render,
+    /** Per-chip geometry/text snapshot for spec assertions. */
+    chips: () => [...preview.querySelectorAll(':scope > .att-ref')].map((w) => {
+      const label = w.querySelector('.att-ref-label');
+      return {
+        refType: w.dataset.refType,
+        title: label.textContent,
+        height: w.getBoundingClientRect().height,
+        chipW: w.getBoundingClientRect().width,
+        labelClient: label.clientWidth,
+        labelScroll: label.scrollWidth,
+        ellipsis: getComputedStyle(label).textOverflow,
+        whiteSpace: getComputedStyle(label).whiteSpace,
+        icon: w.querySelector('.att-ref-icon').innerHTML,
+        tooltip: w.title,
+        expanded: w.classList.contains('expanded'),
+      };
+    }),
+    container: () => ({ clientW: preview.clientWidth, scrollW: preview.scrollWidth }),
+    clickAt: (i) => preview.querySelectorAll(':scope > .att-ref')[i].click(),
+    metaTextAt: (i) => preview.querySelectorAll(':scope > .att-ref')[i].querySelector('.att-ref-meta').textContent,
+    metaVisibleAt: (i) => getComputedStyle(preview.querySelectorAll(':scope > .att-ref')[i].querySelector('.att-ref-meta')).display !== 'none',
+    // ── 20260903 追加：消息内引用卡（mode:'message'）渲染 + 快照 ──
+    renderCard: (key) => {
+      const ref = makeReference(MOCK_INPUTS[key]);
+      const holder = document.getElementById('message-stage');
+      holder.innerHTML = '';
+      const bubble = document.createElement('div');
+      bubble.className = 'bubble user att-bubble att-ref-bubble';
+      bubble.appendChild(renderRefBlock(ref, { mode: 'message' }));
+      holder.appendChild(bubble);
+      return ref;
+    },
+    card: () => {
+      const card = document.querySelector('#message-stage .att-ref-card');
+      if (!card) return null;
+      const q = (sel) => card.querySelector(sel);
+      return {
+        refType: card.dataset.refType,
+        title: q('.att-ref-card-title')?.textContent ?? '',
+        badge: q('.att-ref-card-badge')?.textContent ?? '',
+        source: q('.att-ref-card-source')?.textContent ?? null,
+        sourceAbsent: !q('.att-ref-card-source'),
+        text: card.textContent,
+      };
+    },
+  });
+  window.__reftagTest.ready = true;
+</script>
+</body>
+</html>
