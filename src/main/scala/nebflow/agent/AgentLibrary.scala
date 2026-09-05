@@ -109,9 +109,12 @@ class AgentLibrary(
           // Nebula-exclusive tools (#404, ruling 2026-08-25) are also dropped
           // for non-Nebula agents: buildAllowedToolSet strips them at runtime,
           // so persisting the declaration would only confuse the panel.
+          // 2026-09-05 dream 准入例外：剥离集走 exclusiveToolsFor 单点——
+          // dream 声明 MemoryEdit 保存时不再被剥掉（否则准入形同虚设；
+          // 动作面仍限修订动作，append 由 MemoryEditTool 拒绝）。
           val defn = loadFromDir(agentsDir / name).getOrElse(AgentDef(name = name, description = ""))
           val fixed = AgentCore.fixedToolsFor(defn)
-          val nebulaExclusive = if defn.name == "Nebula" then Set.empty[String] else AgentCore.NebulaExclusiveTools
+          val nebulaExclusive = AgentCore.exclusiveToolsFor(defn.name)
           val configurable = tools.filterNot(t => t == "*" || fixed.contains(t) || nebulaExclusive.contains(t))
           val updated = parsed.deepMerge(io.circe.Json.obj("tools" -> configurable.asJson))
           os.write.over(jsonPath, updated.noSpaces)
