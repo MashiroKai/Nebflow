@@ -198,7 +198,9 @@ function initCanvasThemeWatcher() {
     const css = buildThemeVarsCSS();
     if (!css) return;
     const vars = css.replace(':root{', '').replace('}', '').trim();
-    document.querySelectorAll('.canvas-tab-pane iframe[data-nf-canvas-html]').forEach(iframe => {
+    // selector matches only <iframe> elements → HTMLIFrameElement at runtime.
+    /** @type {NodeListOf<HTMLIFrameElement>} */
+    (document.querySelectorAll('.canvas-tab-pane iframe[data-nf-canvas-html]')).forEach(iframe => {
       try {
         if (iframe.contentWindow) iframe.contentWindow.postMessage({ _nfThemeVars: vars }, '*');
       } catch (e) { /* cross-origin */ }
@@ -324,7 +326,9 @@ function bindZoomBridge() {
   window.addEventListener('message', (e) => {
     const d = e.data;
     if (!d || (!d._nfZoomWheel && !d._nfZoomKey)) return;
-    const frames = document.querySelectorAll('iframe[data-nf-canvas-html]');
+    // selector matches only <iframe> elements → HTMLIFrameElement at runtime.
+    const frames = /** @type {NodeListOf<HTMLIFrameElement>} */
+      (document.querySelectorAll('iframe[data-nf-canvas-html]'));
     for (const iframe of frames) {
       if (!iframe.contentWindow || iframe.contentWindow !== e.source) continue;
       const pane = iframe.closest('.canvas-tab-pane');

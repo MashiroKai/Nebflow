@@ -271,13 +271,15 @@ class NodePluginChainSpec extends CatsEffectSuite:
           "plugins" -> Json.arr(Json.fromString("echo-mcp"))), ctx)
         _ = assert(created.isRight, s"NodeEdit must succeed: $created")
         // MCP 启动 + 引用记账（acquire 在 spawn 前完成——工具先于 LLM 请求注册）
-        _ <- waitUntil(15.seconds)(
+        // 已知 flake（满载偶红、单跑绿，checkjs-gate-fix 批 2026-09-05 加宽）：
+        // 满载下 python3 子进程冷启 + MCP 握手可超过原 15s；回收窗口同理。
+        _ <- waitUntil(30.seconds)(
           IO.blocking(nebflow.core.tools.ToolRegistry.ALL_TOOLS.map(_.name))
             .map(_.exists(_.startsWith("mcp__plugin_echo-mcp_srv__"))))
         sessionRunning <- res.pluginMcp.runningServers
         _ <- waitUntil(30.seconds)(rt.store.snapshot.map(
           _.nodes.values.exists(n => n.name == "mcpped" && n.status == NodeLifecycle.Completed)))
-        _ <- waitUntil(10.seconds)(res.pluginMcp.sessionHolds.map(_.isEmpty))
+        _ <- waitUntil(30.seconds)(res.pluginMcp.sessionHolds.map(_.isEmpty))
         toolsAfter <- IO.blocking(nebflow.core.tools.ToolRegistry.ALL_TOOLS.map(_.name))
         runningAfter <- res.pluginMcp.runningServers
         reqOpt = capture.values.headOption
