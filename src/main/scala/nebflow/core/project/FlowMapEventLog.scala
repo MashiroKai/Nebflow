@@ -26,7 +26,10 @@ import nebflow.core.PathUtil
 object FlowMapEventLog:
   val FileName = "flow-map-events.jsonl"
 
-  /** 追加一条审计事件。workspace 为项目工作区绝对路径；IO.blocking 隔离磁盘写。 */
+  /** 追加一条审计事件。workspace 为项目工作区绝对路径；IO.blocking 隔离磁盘写。
+    * dispatch-notify 批（2026-09-05）：新增事件 type `dispatch-notify`（节点终态
+    * 回流分发器通知——triggered / budget-exhausted 两形态，写点在 DispatchNotify，
+    * 追加式注册同 bg-wait/trigger-starved 先例）。 */
   def append(workspace: String, project: String, nodeId: String, typ: String, summary: String): IO[Unit] =
     val line = Json
       .obj(

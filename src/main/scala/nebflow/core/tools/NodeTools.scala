@@ -243,6 +243,12 @@ object NodeTools:
         )
       )
 
+/** notifyDispatcher 参数载体（dispatch-notify 批 2026-09-05）：call() 解析的
+  * （flag, provided）经 implicit 从 call() 词法作用域自动填入 createNode/proceed/
+  * editNode——三者的既有调用点零文本改动（在飞批 trigger-chain-fix 占用了这些
+  * 调用点行，碰撞规避；implicit 参数解析为 Scala 标准机制，非 hack）。 */
+final case class NodeEditNotify(flag: Boolean, provided: Boolean)
+
 object NodeEditTool extends Tool:
   val name = "NodeEdit"
 
@@ -267,6 +273,7 @@ object NodeEditTool extends Tool:
 - **release** (optional, default false): release a HELD node (the ONLY way out of held) — a STANDALONE action: combining it with task/description/in/deps/out/abandon/hold/worktree/preset refuses the whole call (no half-release-half-rewire; release first, then issue a separate NodeEdit to rewire). held → completed: the downstream delivery chain runs (deliverOut → deps settlement); display TTL restarts from release; completedAt keeps the held moment (when the work actually finished).
 - **note** (optional, ONLY together with release=true): user supplementary text — atomically appended to the out target node's task ("== 用户补充（放行时注入） ==" section) so the downstream input carries it. Any other combination refuses.
 - **abandon** (optional, default false): abandon a terminal (blocked/completed/failed/cancelled), wiring/pending, HELD, or a STALE RUNNING node whose session is dead (no live execution fiber, e.g. after an instance restart) → status=cancelled + display TTL (audit-logged). The dispatcher's give-up action for blocked nodes, the topology-cleanup exit for retired wiring/pending nodes, the clean-up exit for abandoned hold chains (held has no live session — no interruption side effects), and the reaping exit for dead-session running nodes. A LIVE running node is refused (mis-kill protection) — use NodeCancel for running nodes instead.
+- **notifyDispatcher** (optional, default false): dispatch-notify backflow flag — when this node reaches a terminal state (currently completion; failed/blocked reserved), the project dispatcher gets a new session triggered with the node's result reference (name/terminal/reason code; full result read via NodeList detail), so it can continue planning (extend topology / build merge-node sink / conclude / no-op). Independent signal channel — does NOT occupy the out edge. Settable/withdrawable while wiring/pending/running (refused on terminal/held). Nodes created BY the dispatcher default to false (must be explicitly enabled — convergence guarantee).
 
 ## Retired parameters (rejected — capability model is plugins, not agents)
 - **agent**: NOT accepted. Every node executes the general agent; professional capability comes from plugins. Passing "agent" is rejected (point it at plugins).
@@ -309,6 +316,7 @@ object NodeEditTool extends Tool:
         "preset" -> Json.obj("type" -> "string".asJson),
         "hold" -> Json.obj("type" -> "boolean".asJson, "description" -> "Human-gate: node completes to HELD (result saved+announced to Nebula, no downstream delivery) awaiting release=true. Requires a node-id out (not \"Nebula\"). wiring/pending/running only".asJson),
         "merge" -> Json.obj("type" -> "boolean".asJson, "description" -> "Merge/collection node (batch landing sink, create-only): triggers only when ALL upstreams completed (in-barrier); an upstream failure converts this node to blocked (category=upstream-incomplete) instead of the collect placeholder-start. Must NOT carry 'worktree' — a merge node lands on the workspace root repo (sandbox root = workspace, .git writable); task should embed the upstream branch/worktree list + landing command set".asJson),
+        "notifyDispatcher" -> Json.obj("type" -> "boolean".asJson, "description" -> "dispatch-notify backflow: on terminal state (completion wired) trigger a dispatcher session with this node's result reference (independent signal channel, no out-edge cost). Settable/withdrawable while wiring/pending/running".asJson),
         "release" -> Json.obj("type" -> "boolean".asJson, "description" -> "Release a HELD node → completed, delivery chain runs. STANDALONE action — any other edit parameter in the same call refuses (release first, then rewire separately)".asJson),
         "note" -> Json.obj("type" -> "string".asJson, "description" -> "User supplementary text, ONLY with release=true — appended to the out target's task (carried into downstream input)".asJson),
         "abandon" -> Json.obj("type" -> "boolean".asJson, "description" -> "Abandon a TERMINAL (blocked/completed/failed/cancelled), wiring/pending, HELD, or dead-session running node → cancelled + display TTL".asJson)
@@ -342,6 +350,11 @@ object NodeEditTool extends Tool:
     val mergeProvided = input("merge").flatMap(_.asBoolean).isDefined
     val release = input("release").flatMap(_.asBoolean).getOrElse(false)
     val note = input("note").flatMap(_.asString)
+    // notifyDispatcher（dispatch-notify 批 2026-09-05）：Option 保留「显式传入」信号
+    // （缺省 = 不改动，同 hold 三参形态）。载体经 implicit 传入 createNode/proceed/
+    // editNode——三者的既有调用点零改动（碰撞规避：在飞批占用了这些调用点行）。
+    val notifyProvided = input("notifyDispatcher").flatMap(_.asBoolean)
+    implicit val notifyFlag: NodeEditNotify = NodeEditNotify(notifyProvided.getOrElse(false), notifyProvided.isDefined)
     val inJson = input("in")
     val depsJson = input("deps")
     val outJson = input("out")
@@ -426,7 +439,7 @@ object NodeEditTool extends Tool:
                                 preset.isDefined ||
                                 abandon || inJson.isDefined || depsJson.isDefined ||
                                 holdProvided.isDefined || release || note.isDefined || pluginsProvided ||
-                                mergeProvided
+                                mergeProvided || notifyProvided.isDefined
                             if abandon then
                               IO.pure(Left(ToolError(s"Node '$nodename' is archived (display TTL expired) — abandon is not applicable; it already ages out of views on its own.")))
                             else if mergeProvided then
@@ -506,7 +519,7 @@ object NodeEditTool extends Tool:
     outJson: Option[Json],
     hold: Boolean = false,
     merge: Boolean = false
-  ): IO[Either[ToolError, String]] =
+  )(implicit notify: NodeEditNotify): IO[Either[ToolError, String]] =
     // 执行统一 general（2026-09-05 插件架构对齐）：新建节点不再接受 agent 参数，
     // 专业能力由 plugins 差异化；NodeDef.agent 字段保留（存量兼容读 + spawn 读取）。
     val agentName = "general"
@@ -593,7 +606,7 @@ object NodeEditTool extends Tool:
     out: Option[String],
     hold: Boolean = false,
     merge: Boolean = false
-  ): IO[Either[ToolError, String]] =
+  )(implicit notify: NodeEditNotify): IO[Either[ToolError, String]] =
     val nodeId = s"n-${java.util.UUID.randomUUID().toString.take(8)}"
     for
       // 引用存在性 + 环检测（in 上游 → 本节点；deps 上游 → 本节点；本节点 → out 目标）。
@@ -646,6 +659,9 @@ object NodeEditTool extends Tool:
             deps = deps,
             hold = hold,
             merge = merge,
+            // dispatch-notify 回流标志（创建期按需开启；缺省 false=分发器新建节点
+            // 不继承——收敛保证见 DispatchNotify）
+            notifyDispatcher = notify.flag,
             out = None,
             status = if task.isDefined && ins.isEmpty then NodeLifecycle.Pending else NodeLifecycle.Wiring,
             createdAt = now,
@@ -807,7 +823,7 @@ object NodeEditTool extends Tool:
     depsJson: Option[Json],
     outJson: Option[Json],
     ctx: ToolContext
-  ): IO[Either[ToolError, String]] =
+  )(implicit notify: NodeEditNotify): IO[Either[ToolError, String]] =
     // ── 动作分支（20260903 暂停/人在回路设计 §2.5 校验③④ + 决策④）──
     // release 与 abandon 互斥；note 仅与 release 同用；release 是独立动作，
     // 与任何其他编辑参数同传 → 整调用拒绝（防半放行半改线；改线需求 =
@@ -829,7 +845,8 @@ object NodeEditTool extends Tool:
           inJson.isDefined -> "'in'", depsJson.isDefined -> "'deps'",
           outJson.isDefined -> "'out'", worktree.isDefined -> "'worktree'",
           preset.isDefined -> "'preset'",
-          hold -> "'hold'", pluginsOpt.isDefined -> "'plugins'"
+          hold -> "'hold'", pluginsOpt.isDefined -> "'plugins'",
+          notify.provided -> "'notifyDispatcher'"
         ).collect { case (true, name) => name }
       if conflicts.nonEmpty then
         IO.pure(Left(ToolError(
@@ -955,6 +972,11 @@ object NodeEditTool extends Tool:
                             (node.status == NodeLifecycle.Wiring || node.status == NodeLifecycle.Pending || node.status == NodeLifecycle.Running)
                           val holdOutOk = !hold ||
                             finalOut.exists(t => t != "Nebula")
+                          // notifyDispatcher 校验（dispatch-notify 批）：设置/撤销域同 hold
+                          // ——wiring/pending/running（完成时行为开关，不属输入冻结域）；
+                          // 终态/held 拒（held 出口=release，blocked 出口=重激活）。
+                          val notifyStatusOk = !notify.provided ||
+                            (node.status == NodeLifecycle.Wiring || node.status == NodeLifecycle.Pending || node.status == NodeLifecycle.Running)
                           val earlyReject: Option[ToolError] =
                             validateDescription(description, creating = false).orElse(
                             if finalIn.isEmpty && finalDeps.isEmpty && finalOut.isEmpty then
@@ -968,6 +990,9 @@ object NodeEditTool extends Tool:
                             else if !holdOutOk then
                               Some(ToolError(
                                 "hold=true requires a node-target out edge — out=\"Nebula\" nodes deliver to Nebula directly, nothing to hold."))
+                            else if !notifyStatusOk then
+                              Some(ToolError(
+                                s"notifyDispatcher can only be set or withdrawn before completion (wiring/pending/running) — node '${node.name}' is ${node.status} (result already delivered or held). Use release/abandon for held nodes; re-activation is the exit for blocked."))
                             else None
                             )
                           // 前置拒绝集统一闸（description 校验 + 零连接 + deps 校验 + hold 校验）
@@ -1066,6 +1091,18 @@ object NodeEditTool extends Tool:
                                             s.nodes.get(node.id) match
                                               case Some(fresh) if fresh.status == NodeLifecycle.Wiring || fresh.status == NodeLifecycle.Pending || fresh.status == NodeLifecycle.Running =>
                                                 s.copy(nodes = s.nodes.updated(node.id, fresh.copy(hold = hold)))
+                                              case _ => s
+                                          }.void
+                                        else IO.unit
+                                      // notifyDispatcher 设置/撤销写回（dispatch-notify 批）：
+                                      // 校验已在 earlyReject 拦截（终态/held → 拒）；running 合法
+                                      // （完成时行为开关）。事务内现读 fresh（R2 纪律）+ 状态双重保险。
+                                      _ <-
+                                        if notify.provided then
+                                          rt.store.mutate { s =>
+                                            s.nodes.get(node.id) match
+                                              case Some(fresh) if fresh.status == NodeLifecycle.Wiring || fresh.status == NodeLifecycle.Pending || fresh.status == NodeLifecycle.Running =>
+                                                s.copy(nodes = s.nodes.updated(node.id, fresh.copy(notifyDispatcher = notify.flag)))
                                               case _ => s
                                           }.void
                                         else IO.unit
@@ -1197,6 +1234,7 @@ object NodeEditTool extends Tool:
                                       s"Node '${node.name}' updated" +
                                         (if didReactivate then s" — reactivated from blocked (round ${node.blockCount} preserved)" else "") +
                                         (if holdProvided.isDefined then s" — hold → $hold" else "") +
+                                        (if notify.provided then s" — notifyDispatcher → ${notify.flag}" else "") +
                                         (newOut.map(t => s" — out → $t").getOrElse("") + (if adds.nonEmpty then s" — in += ${adds.mkString(",")}" else "")) +
                                         (if depsProvided && depsChanged then s" — deps → [${newDeps.mkString(",")}]" else "")
                                     )
