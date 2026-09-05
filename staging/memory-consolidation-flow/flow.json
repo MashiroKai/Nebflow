@@ -1,0 +1,13 @@
+{
+  "name": "memory-consolidation",
+  "description": "Memory audit pipeline — scanner-only since 2026-09-05 (memory-management plan §4/§6.2-2.1): audits the two Nebula memory files, produces an entry-level report with the nine-metric header, and returns it to Nebula, who executes MemoryEdit personally. No node writes memory directly (职权红线). Use when memory grows large, after major code changes, or via the weekly Schedule trigger (Sunday 21:30).",
+  "entry": "scanner",
+  "maxLoop": 1,
+  "nodes": {
+    "scanner": {
+      "agent": "scanner",
+      "input": "$task",
+      "onComplete": "$return"
+    }
+  }
+}
