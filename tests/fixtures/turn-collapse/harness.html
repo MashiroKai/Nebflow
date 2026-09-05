@@ -9,6 +9,9 @@
        window.__liveTurn()        → 文字A→工具1→文字B→注入→工具2→最终回复,
                                     then collapseTurn() exactly like the
                                     main.js `done` handler does.
+       window.__multiRoundTurn()  → 2026-09-05 double-badge repro: MemoryEdit×5
+                                    → text → Task×4 → text → final (one turn,
+                                    two LLM tool rounds → ONE badge, count 9).
        window.__postClosureTurn() → an external injection arriving AFTER the
                                     closure cursor + a follow-up turn and its
                                     collapseTurn() (#403 2026-08-26 ruling).
@@ -113,6 +116,39 @@
     // 全部 run-group 溶解后按 failed 重收。必须在 __liveTurn 之后调用。
     window.__refailTurn = async () => {
       turnMod.failTurn(view);
+      await raf2();
+    };
+
+    // 2026-09-05 双 badge 回归场景（作者 08:48 截图复刻）：一个 turn 内两轮
+    // LLM 工具循环——MemoryEdit×5 → 中间文字A → Task×4 → 中间文字B → 最终
+    // 回复。修复前按连续 run 分组成两个 badge（工具 5 次 / 工具 4 次）；修复
+    // 后必须恰一个 badge，计数=全轮合计 9。
+    window.__multiRoundTurn = async () => {
+      chatMod.renderUserBubble('把记忆里的项目进展全部更新一遍，然后派子任务收集数据', [], Date.now());
+      // 第一轮 LLM：MemoryEdit ×5
+      for (let i = 1; i <= 5; i++) {
+        chatMod.renderTool(`MemoryEdit\n  ("progress-${i}.md")`, 'updated', `patch body ${i}`, false, `{"file_path":"progress-${i}.md"}`, 'harness-session');
+      }
+      // 中间文字A（roundComplete finalize 形态：无 duration badge）
+      chatMod.appendAiText('第一轮记忆更新完成，接着派 4 个子任务并行收集数据。');
+      chatMod.finishAi();
+      // 第二轮 LLM：Task ×4
+      for (let i = 1; i <= 4; i++) {
+        chatMod.renderTool(`Task\n  (worker-${i})`, 'started', `delegate ${i}`, false, `{"name":"worker-${i}"}`, 'harness-session');
+      }
+      // 中间文字B
+      chatMod.appendAiText('子任务全部派出，等待回收结果后汇总。');
+      chatMod.finishAi();
+      // 最终回复（done：带 duration badge）
+      chatMod.appendAiText('全部完成：记忆已更新，4 路数据收集任务已启动并回收。');
+      chatMod.finishAi(205000, 'zhipu/GLM-5.3-Flash');
+      turnMod.collapseTurn(view, {
+        durationMs: 205000,
+        model: 'zhipu/GLM-5.3-Flash',
+        phrase: '✻ 买了张去星辰的车票，3m 25s 到站',
+        title: '08:45',
+        sessionId: 'harness-session',
+      });
       await raf2();
     };
 

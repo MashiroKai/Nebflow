@@ -1,18 +1,18 @@
 // turn-banner-dedupe.spec.mjs — 2026-09-04 user ruling (turn 统计标语条去重).
 //
 // Ruling: the decorative per-turn stats bar (`.turn-summary` — ✻ phrase ·
-// model · 工具 N 次) stacked one-per-run-group in multi-turn sessions. The
-// session must show only the LATEST turn's bar(s): a newly completed turn's
-// bars replace all earlier turns' bars visually; history replay renders only
-// the last banner. Render-level ONLY — superseded bars stay in the DOM
-// (collapse structure + E10 search-expand intact) hidden via a marker class
-// on the GROUP element, because closed groups' innerHTML must stay
-// byte-stable (#403 invariant, asserted by turn-collapse-keep-text 验收 b).
+// model · 工具 N 次) stacked one-per-turn in multi-turn sessions. The session
+// must show only the LATEST turn's bar: a newly completed turn's bar replaces
+// all earlier turns' bars visually; history replay renders only the last
+// banner. Render-level ONLY — superseded bars stay in the DOM (collapse
+// structure + E10 search-expand intact) hidden via a marker class on the
+// GROUP element, because closed groups' innerHTML must stay byte-stable
+// (#403 invariant, asserted by turn-collapse-keep-text 验收 b).
 //
-// Boundary (documented deviation, spec-safe): the LATEST TURN keeps all of
-// its run-group bars (turn-collapse-keep-text 验收 a asserts per-run bars and
-// clicks the first one) — with single-run turns (the common case) the
-// session therefore shows exactly one bar. 落盘数据与后端零改动；过程文字
+// 2026-09-05 note (turn 级单组化): a turn builds exactly ONE group/bar even
+// with multiple LLM tool rounds (turn-collapse-keep-text 验收 a asserts the
+// aggregated single bar), so the session shows at most one visible bar —
+// the dedupe mechanism itself is unchanged. 落盘数据与后端零改动；过程文字
 // （thinking/tool/injected/AI text）渲染路径一字不动。
 //
 // Drives the REAL render modules through tests/fixtures/turn-collapse/
@@ -105,14 +105,14 @@ function bannerCensus(page) {
 }
 
 test.describe('banner dedupe — live multi-turn path', () => {
-  test('second turn hides the first turn bars; exactly one visible bar with the latest stats', async ({ browser }) => {
+  test('second turn hides the first turn bar; exactly one visible bar with the latest stats', async ({ browser }) => {
     const { context, page, pageErrors } = await newPage(browser);
     await page.evaluate(() => window.__liveTurn());
 
-    // Turn 1 (2 run-groups): both bars visible — current turn keeps its runs.
+    // Turn 1 (single turn group, 2026-09-05): exactly one bar.
     let c = await bannerCensus(page);
-    expect(c.total).toBe(2);
-    expect(c.visibleTexts.length).toBe(2);
+    expect(c.total).toBe(1);
+    expect(c.visibleTexts.length).toBe(1);
 
     const innerHTMLBefore = await page.evaluate(() =>
       Array.from(document.querySelectorAll('.turn-group')).map(g => g.innerHTML));
@@ -122,14 +122,14 @@ test.describe('banner dedupe — live multi-turn path', () => {
 
     // Turn 2 done: exactly ONE visible bar — turn 2's own stats.
     c = await bannerCensus(page);
-    expect(c.total).toBe(3);            // superseded bars stay in the DOM
+    expect(c.total).toBe(2);            // superseded bars stay in the DOM
     expect(c.visibleTexts.length).toBe(1);
-    expect(c.hidden).toBe(2);
-    expect(c.markedGroups).toBe(2);     // marker on the GROUP element…
+    expect(c.hidden).toBe(1);
+    expect(c.markedGroups).toBe(1);     // marker on the GROUP element…
     const marked = await page.evaluate(() =>
       Array.from(document.querySelectorAll('.turn-group.turn-banner-superseded'))
         .map(g => !!g.querySelector('.turn-summary')));
-    expect(marked).toEqual([true, true]);
+    expect(marked).toEqual([true]);
     // …and the visible bar belongs to turn 2 (phrase + model + tool count).
     expect(c.visibleTexts[0]).toBe('✻ 快速确认 2 秒 · test-model · 工具 1 次');
 
@@ -138,7 +138,6 @@ test.describe('banner dedupe — live multi-turn path', () => {
     const innerHTMLAfter = await page.evaluate(() =>
       Array.from(document.querySelectorAll('.turn-group')).map(g => g.innerHTML));
     expect(innerHTMLAfter[0]).toBe(innerHTMLBefore[0]);
-    expect(innerHTMLAfter[1]).toBe(innerHTMLBefore[1]);
 
     // 过程文字红线: every assistant text row still visible, original order.
     const texts = await page.evaluate(() =>
@@ -174,10 +173,11 @@ test.describe('banner dedupe — live multi-turn path', () => {
     expect(r.expanded).toBe(true);
     expect(r.after).toBe('');
 
-    // Steps are visible; the superseded bar is NOT.
+    // Steps are visible; the superseded bar is NOT. (2026-09-05: turn 1's
+    // single group holds BOTH its tool rows — assert all of them visible.)
     const c = await bannerCensus(page);
     expect(c.visibleTexts.length).toBe(1);
-    expect(await page.locator('.turn-group').first().locator('.turn-steps .row.tool').evaluate(el => el.offsetHeight > 0)).toBe(true);
+    expect(await page.locator('.turn-group').first().locator('.turn-steps .row.tool').evaluateAll(els => els.length > 0 && els.every(el => el.offsetHeight > 0))).toBe(true);
     expect(await page.locator('.turn-group').first().locator('.turn-summary').evaluate(el => el.offsetHeight === 0)).toBe(true);
 
     await context.close();
@@ -194,7 +194,7 @@ test.describe('banner dedupe — live multi-turn path', () => {
     await page.evaluate(() => window.__textOnlyTurn());
     expect(pageErrors).toEqual([]);
     let c = await bannerCensus(page);
-    expect(c.total).toBe(3);              // no fourth bar appeared
+    expect(c.total).toBe(2);              // no third bar appeared
     expect(c.visibleTexts).toEqual(['✻ 快速确认 2 秒 · test-model · 工具 1 次']);
 
     // Same guarantee through the history path: last turn is text-only.
@@ -278,8 +278,9 @@ test.describe('banner dedupe — history replay path (restoreFromBackendHistory 
 
     // The open turn completes (live terminal on top of a rebuilt session):
     // its bar becomes the only visible one; the history bar is superseded.
-    // (The flat tail [ai text, tool] + the new injected/tool land in ONE
-    // contiguous collapsible run → one group carrying both tool cards.)
+    // (The flat tail [ai text, tool] + the new injected/tool all gather into
+    // the turn's ONE group — 2026-09-05 aggregation — carrying both tool
+    // cards in the count.)
     await page.evaluate(() => window.__postClosureTurn());
     expect(pageErrors).toEqual([]);
     c = await bannerCensus(page);
