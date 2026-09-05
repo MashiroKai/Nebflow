@@ -175,7 +175,8 @@ class Phase2dSkillCatalogSpec extends CatsEffectSuite:
         rt <- mountProject(s"p2d-$tag", ws, system, res)
         ctx = mkCtx(res, system, ws.toString)
         created <- nodeEdit(nodeInput(s"p2d-$tag", s"n-$tag",
-          "agent" -> io.circe.Json.fromString(agentName),
+          // 2026-09-05 agent 退役：节点执行统一 general，无 agent 参数可传。
+          "description" -> io.circe.Json.fromString("catalog probe"),
           "task" -> io.circe.Json.fromString("catalog probe"),
           "out" -> io.circe.Json.fromString("Nebula")), ctx)
         _ = assert(created.isRight, s"NodeEdit must succeed: $created")
@@ -207,13 +208,10 @@ class Phase2dSkillCatalogSpec extends CatsEffectSuite:
     assert(!stable.contains("Skills live at"), s"general node session must NOT carry the per-agent skill catalog (order 800 停注), got:\n${stable.take(1200)}")
     assert(!stable.contains("catalog-probe"), "fixture skill must not leak into node session prompt")
 
-  test("D.1-12: legacy agent 会话保留 per-agent skill 目录（双轨期对照）"):
-    val (_, program) = runNodeAndCapture(s"p2d-legacy-${scala.util.Random.nextInt(100000)}", "test-agent")
-    val reqOpt = program.unsafeRunSync()
-    val req = reqOpt.getOrElse(fail("no LlmRequest captured for legacy node"))
-    val stable = req.systemStable.getOrElse(fail("systemStable missing"))
-    assert(stable.contains("Skills live at"), "legacy agent keeps the per-agent catalog until 阶段 3")
-    assert(stable.contains("catalog-probe"), "declared skill entry present")
+  // 2026-09-05 agent 退役：原「legacy agent 会话保留 per-agent skill 目录（双轨期
+  // 对照）」wire 级测试随 NodeEdit agent 参数一并退役——节点执行统一 general，
+  // 无法再经 NodeEdit 以 legacy agent spawn 会话。legacy 角色的目录注入开关语义
+  // 仍由上方 skillCatalogEnabledFor 逐角色断言覆盖（保留至阶段 3 的裁定不变）。
 
   test("D.2 wire 层判据: general 节点收到的工具定义自含用法指南（删段不退化）"):
     val (_, program) = runNodeAndCapture(s"p2d-wire-${scala.util.Random.nextInt(100000)}", "general")

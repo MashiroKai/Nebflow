@@ -313,8 +313,9 @@ test('紧凑布局与文字截断：层级纵向 V_SPACING=150、竖直贝塞尔
 
   // 裁定④：长节点名/长 result 不撑破卡片（ellipsis 截断，卡宽 124 不变）
   const longName = '超长节点名称用来验证省略号截断行为'.repeat(6);
-  const longResult = '这是一段非常长的运行结果内容用于验证摘要条省略。'.repeat(10);
-  const N4 = nodeJson({ id: 'n4', name: longName, agent: 'coder', status: 'pending', in: [], out: 'Nebula', result: longResult });
+  const longDesc = '这是一段非常长的节点描述内容用于验证摘要条省略。'.repeat(10);
+  // 2026-09-05 载荷收敛：卡片描述行 = .fm-desc（description/taskPreview），result 不进载荷
+  const N4 = nodeJson({ id: 'n4', name: longName, agent: 'coder', status: 'pending', in: [], out: 'Nebula', description: longDesc });
   serverFm.nodes.push(structuredClone(N4)); // 服务端权威快照同步演化
   await inject(page, { type: 'nodeCreated', project: 'alpha', nodeId: 'n4', node: structuredClone(N4) });
   await expect(page.locator('.fm-node[data-node-id="n4"]')).toHaveCount(1);
@@ -323,7 +324,7 @@ test('紧凑布局与文字截断：层级纵向 V_SPACING=150、竖直贝塞尔
     const card = document.querySelector('.fm-node[data-node-id="n4"]');
     const label = card.querySelector('.solar-node-label');
     const sub = card.querySelector('.solar-node-sub');
-    const res = card.querySelector('.fm-result-summary');
+    const res = card.querySelector('.fm-desc');
     return {
       cardW: card.offsetWidth,
       // 「不撑破卡片」口径：溢出内容被卡截住（scrollWidth 不超出卡盒），文字行内部

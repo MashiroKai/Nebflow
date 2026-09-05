@@ -1,6 +1,12 @@
 // fixture.mjs — Flow Map 整链归档 v3 产品 Playwright spec 的数据夹具。
 //
-// 数据形态 = 产品真实载荷（NodePayload.buildNodeJson 单序列化点，ProjectTypes.scala）：
+// node() 构造器保留 result 字段——本夹具自 2026-09-05 载荷收敛起承担双重角色：
+// ①结果全文仓（REST result 端点 mock 的数据源）；②旧载荷形态参考（存量 spec
+// flowmap-archive-panel 直接以本形态喂快照，前端 compat 路径覆盖）。
+// 新载荷形态（NodePayload.buildNodeJson，2026-09-05 收敛）= 本形态剥 result 本体、
+// 置 hasResult 标记 + description（创建必写）；需要新形态的 spec（如
+// flowmap-archive-result-full）自行在 payloadNodes() 里做「剥 result → hasResult」
+// 映射，本文件不改数据。
 //   { id, name, agent, skill, mcp, preset, status, in, out, hasWorktree, worktree,
 //     result, retries, blockCount, createdAt, completedAt, ttlLeftSec, deps? }
 // 与原型 snapshot-data.js（静态 mock）的关键差异：无 task 字段（链名第①级自然

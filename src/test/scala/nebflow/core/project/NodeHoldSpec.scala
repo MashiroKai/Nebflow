@@ -53,6 +53,11 @@ class NodeHoldSpec extends CatsEffectSuite:
     """{"name":"test-agent","description":"hold regression agent","tools":[],"category":"standalone"}"""
   )
   os.write.over(tempRoot / "agents" / "test-agent" / "system.md", "# test-agent\n")
+  // 2026-09-05 agent 退役：新建节点执行统一 general——fixture 侧补 general agent
+  os.makeDir.all(tempRoot / "agents" / "general")
+  os.write.over(tempRoot / "agents" / "general" / "agent.json",
+    """{"name":"general","description":"general executor","tools":[],"category":"standalone"}""")
+  os.write.over(tempRoot / "agents" / "general" / "system.md", "# general\n")
 
   override def afterAll(): Unit =
     PathUtil.setDataRoot(originalRoot)
@@ -226,7 +231,7 @@ class NodeHoldSpec extends CatsEffectSuite:
       ctx = mkCtx(res, system, ws.toString)
       _ <- seedWiring(rt, "n-b", "node-b")
       bId <- idOf(rt, "node-b")
-      _ <- nodeEdit(nodeInput("hold-t1", "hold-a", "agent" -> Json.fromString("test-agent"),
+      _ <- nodeEdit(nodeInput("hold-t1", "hold-a", "description" -> Json.fromString("test node purpose"),
         "task" -> Json.fromString("hold-result-ALPHA"), "out" -> Json.fromString(bId),
         "hold" -> Json.fromBoolean(true)), ctx)
       _ <- waitStatus(rt, "hold-a", Set(NodeLifecycle.Held))
@@ -279,10 +284,10 @@ class NodeHoldSpec extends CatsEffectSuite:
       ctx = mkCtx(res, system, ws.toString)
       _ <- seedWiring(rt, "n-merge", "merge-b")
       mergeId <- idOf(rt, "merge-b")
-      _ <- nodeEdit(nodeInput("hold-t2", "hold-a", "agent" -> Json.fromString("test-agent"),
+      _ <- nodeEdit(nodeInput("hold-t2", "hold-a", "description" -> Json.fromString("test node purpose"),
         "task" -> Json.fromString("hold-result-BRAVO"), "out" -> Json.fromString(mergeId),
         "hold" -> Json.fromBoolean(true)), ctx)
-      _ <- nodeEdit(nodeInput("hold-t2", "normal-c", "agent" -> Json.fromString("test-agent"),
+      _ <- nodeEdit(nodeInput("hold-t2", "normal-c", "description" -> Json.fromString("test node purpose"),
         "task" -> Json.fromString("normal-result-CHARLIE"), "out" -> Json.fromString(mergeId)), ctx)
       _ <- waitStatus(rt, "hold-a", Set(NodeLifecycle.Held))
       aId <- idOf(rt, "hold-a")
@@ -326,7 +331,7 @@ class NodeHoldSpec extends CatsEffectSuite:
       ctx = mkCtx(res, system, ws.toString)
       _ <- seedWiring(rt, "n-consumer", "consumer-b", task = Some("base-task-DELTA"))
       bId <- idOf(rt, "consumer-b")
-      _ <- nodeEdit(nodeInput("hold-t3", "hold-a", "agent" -> Json.fromString("test-agent"),
+      _ <- nodeEdit(nodeInput("hold-t3", "hold-a", "description" -> Json.fromString("test node purpose"),
         "task" -> Json.fromString("hold-result-ECHO"), "out" -> Json.fromString(bId),
         "hold" -> Json.fromBoolean(true)), ctx)
       _ <- waitStatus(rt, "hold-a", Set(NodeLifecycle.Held))
@@ -365,7 +370,7 @@ class NodeHoldSpec extends CatsEffectSuite:
       ctx = mkCtx(res, system, ws.toString)
       _ <- seedWiring(rt, "n-b4", "node-b4")
       bId <- idOf(rt, "node-b4")
-      _ <- nodeEdit(nodeInput("hold-t4", "hold-blocked", "agent" -> Json.fromString("test-agent"),
+      _ <- nodeEdit(nodeInput("hold-t4", "hold-blocked", "description" -> Json.fromString("test node purpose"),
         "task" -> Json.fromString("blocked-please"), "out" -> Json.fromString(bId),
         "hold" -> Json.fromBoolean(true)), ctx)
       _ <- waitStatus(rt, "hold-blocked", Set(NodeLifecycle.Blocked))
@@ -403,7 +408,7 @@ class NodeHoldSpec extends CatsEffectSuite:
       ctx = mkCtx(res, system, ws.toString)
       _ <- seedWiring(rt, "n-b5", "node-b5")
       bId <- idOf(rt, "node-b5")
-      _ <- nodeEdit(nodeInput("hold-t5", "hold-a", "agent" -> Json.fromString("test-agent"),
+      _ <- nodeEdit(nodeInput("hold-t5", "hold-a", "description" -> Json.fromString("test node purpose"),
         "task" -> Json.fromString("hold-result-FOXTROT"), "out" -> Json.fromString(bId),
         "hold" -> Json.fromBoolean(true)), ctx)
       _ <- waitStatus(rt, "hold-a", Set(NodeLifecycle.Held))
@@ -451,11 +456,11 @@ class NodeHoldSpec extends CatsEffectSuite:
       rt <- mountProject("hold-t6", ws, system, res)
       ctx = mkCtx(res, system, ws.toString)
       // N1: hold=true + out=Nebula（create）→ 拒
-      n1 <- nodeEdit(nodeInput("hold-t6", "n1-nebula", "agent" -> Json.fromString("test-agent"),
+      n1 <- nodeEdit(nodeInput("hold-t6", "n1-nebula", "description" -> Json.fromString("test node purpose"),
         "task" -> Json.fromString("n1"), "out" -> Json.fromString("Nebula"),
         "hold" -> Json.fromBoolean(true)), ctx)
       // 正常入口节点跑完 → completed
-      _ <- nodeEdit(nodeInput("hold-t6", "n2-done", "agent" -> Json.fromString("test-agent"),
+      _ <- nodeEdit(nodeInput("hold-t6", "n2-done", "description" -> Json.fromString("test node purpose"),
         "task" -> Json.fromString("n2-task"), "out" -> Json.fromString("Nebula")), ctx)
       _ <- waitStatus(rt, "n2-done", Set(NodeLifecycle.Completed))
       // N2: completed 上设置 hold → 拒
@@ -498,11 +503,11 @@ class NodeHoldSpec extends CatsEffectSuite:
       ctx = mkCtx(res, system, ws.toString)
       _ <- seedWiring(rt, "n-b7", "node-b7") // hold 要求节点 out（规则①：out=Nebula 无 hold 意义）
       bId <- idOf(rt, "node-b7")
-      _ <- nodeEdit(nodeInput("hold-t7", "dup-a", "agent" -> Json.fromString("test-agent"),
+      _ <- nodeEdit(nodeInput("hold-t7", "dup-a", "description" -> Json.fromString("test node purpose"),
         "task" -> Json.fromString("dup-dispatch-TASK"), "out" -> Json.fromString(bId),
         "hold" -> Json.fromBoolean(true)), ctx)
       _ <- waitStatus(rt, "dup-a", Set(NodeLifecycle.Held))
-      dup <- nodeEdit(nodeInput("hold-t7", "dup-b", "agent" -> Json.fromString("test-agent"),
+      dup <- nodeEdit(nodeInput("hold-t7", "dup-b", "description" -> Json.fromString("test node purpose"),
         "task" -> Json.fromString("dup-dispatch-TASK"), "out" -> Json.fromString("Nebula")), ctx)
       _ <- system.stopAll.handleErrorWith(_ => IO.unit)
     yield
@@ -523,7 +528,7 @@ class NodeHoldSpec extends CatsEffectSuite:
       ctx = mkCtx(res, system, ws.toString)
       _ <- seedWiring(rt, "n-b8", "node-b8")
       bId8 <- idOf(rt, "node-b8")
-      _ <- nodeEdit(nodeInput("hold-t8", "hold-a", "agent" -> Json.fromString("test-agent"),
+      _ <- nodeEdit(nodeInput("hold-t8", "hold-a", "description" -> Json.fromString("test node purpose"),
         "task" -> Json.fromString("hold-result-HOTEL"), "out" -> Json.fromString(bId8),
         "hold" -> Json.fromBoolean(true)), ctx)
       _ <- waitStatus(rt, "hold-a", Set(NodeLifecycle.Held))
@@ -565,7 +570,7 @@ class NodeHoldSpec extends CatsEffectSuite:
       _ <- seedWiring(rt, "n-new", "new-c")
       oldId <- idOf(rt, "old-b")
       newId <- idOf(rt, "new-c")
-      _ <- nodeEdit(nodeInput("hold-t9", "hold-a", "agent" -> Json.fromString("test-agent"),
+      _ <- nodeEdit(nodeInput("hold-t9", "hold-a", "description" -> Json.fromString("test node purpose"),
         "task" -> Json.fromString("hold-result-GOLF"), "out" -> Json.fromString(oldId),
         "hold" -> Json.fromBoolean(true)), ctx)
       _ <- waitStatus(rt, "hold-a", Set(NodeLifecycle.Held))
@@ -610,7 +615,7 @@ class NodeHoldSpec extends CatsEffectSuite:
       ctx = mkCtx(res, system, ws.toString)
       _ <- seedWiring(rt, "n-b10", "node-b10")
       bId10 <- idOf(rt, "node-b10")
-      _ <- nodeEdit(nodeInput("hold-t10", "hold-a", "agent" -> Json.fromString("test-agent"),
+      _ <- nodeEdit(nodeInput("hold-t10", "hold-a", "description" -> Json.fromString("test node purpose"),
         "task" -> Json.fromString("hold-result-INDIA"), "out" -> Json.fromString(bId10),
         "hold" -> Json.fromBoolean(true)), ctx)
       _ <- waitStatus(rt, "hold-a", Set(NodeLifecycle.Held))

@@ -41,7 +41,7 @@ class ProjectDispatcherSingletonSpec extends CatsEffectSuite:
   // 类级：隔离 dataRoot + 预置 project-dispatcher / test-agent 定义
   PathUtil.setDataRoot(tempRoot)
   os.remove.all(tempRoot)
-  for agent <- List("test-agent", "project-dispatcher") do
+  for agent <- List("test-agent", "project-dispatcher", "general") do
     os.makeDir.all(tempRoot / "agents" / agent)
     os.write.over(
       tempRoot / "agents" / agent / "agent.json",
@@ -287,7 +287,7 @@ class ProjectDispatcherSingletonSpec extends CatsEffectSuite:
       _ <- (actorRef ! ProjectActor.ProjectCommand.TriggerDispatcher("任务甲", "nebula-root")).void
       _ <- waitUntil(20.seconds)(dispatcherEntries(resources).map(_.nonEmpty)) // turn 1 gated 在飞
       // blocked 节点 → FeedbackRouter(auto) → ReenterDispatcher → 活跃会话 → 注入排队
-      _ <- nodeEdit(nodeInput("singleton-reentry", "blk-node", "agent" -> Json.fromString("test-agent"),
+      _ <- nodeEdit(nodeInput("singleton-reentry", "blk-node", "description" -> Json.fromString("test node purpose"),
         "task" -> Json.fromString("will-block-S"), "out" -> Json.fromString("Nebula")), ctx)
       _ <- waitStatus(rt, "blk-node", Set(NodeLifecycle.Blocked))
       _ <- IO.sleep(1.second) // ProjectActor 处理完 ReenterDispatcher 注入

@@ -21,8 +21,10 @@ import scala.concurrent.duration.*
  * WS 事件推送覆盖回归（子任务：Flow Map 节点变化事件推送补全）。
  *
  * 断言前端 4 事件通道（nodeCreated / nodeUpdated / nodeCompleted / nodeRemoved）覆盖
- * 增/删/改/wiring 全部变化，且事件 payload 与 NodeList 同构
- * （{id,name,agent,skill,mcp,preset,status,in,out,hasWorktree,worktree,result,retries,createdAt,completedAt,ttlLeftSec}）：
+ * 增/删/改/wiring 全部变化，且事件 payload 与 NodeList 同构（2026-09-05 载荷收敛后：
+ * {id,name,agent,skill,mcp,preset,description,status,in,out,hasWorktree,worktree,retries,
+ * createdAt,completedAt,ttlLeftSec} 基集合 + 条件字段 hasResult/taskPreview/deps/
+ * blockedFeedback/hold/plugins；result 全文与摘要不进默认载荷——按需读取契约）：
  *
  * 1. wiring 变更事件：create 带 in（barrier 合并）→ 上游 out 改指发 nodeUpdated；
  *    create 带 out → 目标 in 追加发 nodeUpdated（此前只有 nodeCreated，改写节点无事件）。
@@ -45,6 +47,11 @@ class NodeEventPushSpec extends CatsEffectSuite:
     """{"name":"test-agent","description":"event-push regression agent","tools":[],"category":"standalone"}"""
   )
   os.write.over(tempRoot / "agents" / "test-agent" / "system.md", "# test-agent\n")
+  // 2026-09-05 agent 退役：新建节点执行统一 general——fixture 侧补 general agent
+  os.makeDir.all(tempRoot / "agents" / "general")
+  os.write.over(tempRoot / "agents" / "general" / "agent.json",
+    """{"name":"general","description":"general executor","tools":[],"category":"standalone"}""")
+  os.write.over(tempRoot / "agents" / "general" / "system.md", "# general\n")
 
   override def afterAll(): Unit =
     PathUtil.setDataRoot(originalRoot)
@@ -102,10 +109,14 @@ class NodeEventPushSpec extends CatsEffectSuite:
     Json.obj(("project" -> Json.fromString(project)) :: ("nodename" -> Json.fromString(nodename)) :: extra.toList*)
 
   /** NodeList 载荷节点条目的字段集（事件 payload 必须同构——与 NodePayload.buildNodeJson
-    * 单一序列化点对齐；skill/mcp/preset 为子任务 C 节点配置三字段；blockCount 为
-    * blocked 反馈重入字段（§4.1，恒带）；blockedFeedback 仅 blocked 态才有 → 不入本集合）。 */
+    * 单一序列化点对齐；skill/mcp/preset 为节点配置字段；description 恒带（存量无值 null）；
+    * blockCount 恒带（§4.1）；**result 全文/摘要不进默认载荷**（2026-09-05 载荷收敛），
+    * hasResult 仅 result 非空节点带（条件序列化）→ 不入本基集合，按断言场景合并。
+    * blockedFeedback / deps / hold / plugins 同为条件字段 → 不入基集合）。 */
   private val NodeListKeys: Set[String] =
-    Set("id", "name", "agent", "skill", "mcp", "preset", "status", "in", "out", "hasWorktree", "worktree", "result", "retries", "blockCount", "createdAt", "completedAt", "ttlLeftSec")
+    Set("id", "name", "agent", "skill", "mcp", "preset", "description", "status", "in", "out", "hasWorktree", "worktree", "retries", "blockCount", "createdAt", "completedAt", "ttlLeftSec")
+  /** 有结果节点（终态）的载荷键集 = 基集合 + hasResult。 */
+  private val NodeListKeysWithResult: Set[String] = NodeListKeys + "hasResult"
 
   /** 记录 (type, nodeId) 事件的挂载。 */
   private def mountRecording(
@@ -152,7 +163,7 @@ class NodeEventPushSpec extends CatsEffectSuite:
       _ <- seed(rt,
         "n-a" -> NodeDef(id = "n-a", name = "A", agent = "test-agent", status = NodeLifecycle.Wiring, createdAt = now),
         "n-b" -> NodeDef(id = "n-b", name = "B", agent = "test-agent", status = NodeLifecycle.Wiring, createdAt = now))
-      r <- nodeEdit(nodeInput("acc-ev1", "M", "agent" -> Json.fromString("test-agent"),
+      r <- nodeEdit(nodeInput("acc-ev1", "M", "description" -> Json.fromString("test node purpose"),
         "task" -> Json.fromString("merge"), "in" -> Json.arr(Json.fromString("n-a")),
         "out" -> Json.fromString("n-b")), ctx)
       evs <- events.get
@@ -246,7 +257,7 @@ class NodeEventPushSpec extends CatsEffectSuite:
       res <- mkResources(system, tempRoot, new RecordingLlm)
       (rt, events) <- mountRecording("acc-ev4", ws, system, res)
       ctx = mkCtx(res, system, ws.toString)
-      r <- nodeEdit(nodeInput("acc-ev4", "调研-同构", "agent" -> Json.fromString("test-agent"),
+      r <- nodeEdit(nodeInput("acc-ev4", "调研-同构", "description" -> Json.fromString("test node purpose"),
         "task" -> Json.fromString("homomorphic"), "out" -> Json.fromString("Nebula")), ctx)
       _ <- IO.sleep(3.seconds)
       evs <- events.get
@@ -261,7 +272,9 @@ class NodeEventPushSpec extends CatsEffectSuite:
       assertEquals(updated.get.asObject.map(_.keys.toSet), Some(NodeListKeys), "nodeUpdated payload keys must equal NodeList keys")
       val completed = evs.find((t, _, _) => t == "nodeCompleted").map(_._3)
       assert(completed.isDefined, s"nodeCompleted must be emitted, got: ${evs.map((t, id, _) => (t, id))}")
-      assertEquals(completed.get.asObject.map(_.keys.toSet), Some(NodeListKeys), "nodeCompleted payload keys must equal NodeList keys")
+      // 2026-09-05 载荷收敛：completed 节点有结果 → 基集合 + hasResult；result 全文/摘要不进载荷
+      assertEquals(completed.get.asObject.map(_.keys.toSet), Some(NodeListKeysWithResult), "nodeCompleted payload keys must equal NodeList keys + hasResult (no result text in payload)")
+      assert(!completed.get.asObject.exists(obj => obj.keys.exists(_ == "result")), "completed payload must NOT carry result (slim payload contract)")
   }
 
   // ── 5. TTL 移除：nodeRemoved 携带节点身份（TtlTick 全路径）──
@@ -299,7 +312,8 @@ class NodeEventPushSpec extends CatsEffectSuite:
       assertEquals(p.hcursor.get[String]("agent").toOption, Some("test-agent"))
       assertEquals(p.hcursor.get[String]("status").toOption, Some(NodeLifecycle.Completed))
       assertEquals(p.hcursor.downField("out").as[Option[String]].toOption, Some(Some("Nebula")))
-      assertEquals(p.asObject.map(_.keys.toSet), Some(NodeListKeys), "nodeRemoved payload keys must equal NodeList keys")
+      // 有结果节点 → 基集合 + hasResult（2026-09-05 载荷收敛，result 本体不进载荷）
+      assertEquals(p.asObject.map(_.keys.toSet), Some(NodeListKeysWithResult), "nodeRemoved payload keys must equal NodeList keys + hasResult")
       assert(!evs.exists((t, id, _) => t == "nodeRemoved" && id == "n-stay"), "non-expired node must NOT emit nodeRemoved")
   }
 

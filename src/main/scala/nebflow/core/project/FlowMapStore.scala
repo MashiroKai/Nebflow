@@ -1,6 +1,7 @@
 package nebflow.core.project
 
 import cats.effect.{IO, Ref}
+import io.circe.Json
 import io.circe.parser.parse as jsonParse
 import io.circe.syntax.*
 import nebflow.core.{AtomicJson, NebflowLogger, PathUtil}
@@ -106,13 +107,64 @@ class FlowMapStore private (
 
   // ── 持久化 ─────────────────────────────────────────────
 
+  /** 持久化层拆分（2026-09-05 Flow Map 精简批）：内存 Ref / 投递链始终持有**全文**
+    * （buildInput / deliverOut / 重投扫描零改动），落盘时拆两半——
+    *   - 全文 → per-node 文件 `<workspace>/.nebflow/results/<nodeId>.md`（先写文件
+    *     再写 JSON：崩溃窗口内「文件已存在、JSON 尚带全文」→ 下次加载按
+    *     「文件存在即回读」水合，不丢不半）；
+    *   - JSON（flow-map.json / flow-map-archive.json）→ result 收敛为 ≤
+    *     ResultSummaryCap 字符摘要 + `resultFile` 指针（对工具/人工可读）。
+    * 这治掉了「节点结果全文灌进 flow-map.json」的载荷污染（宿主实测 630KB 活动区
+    * + 1.35MB 归档区，结果占 ~47 万字符）。 */
   private def persistState(s: FlowMapState): IO[Unit] =
-    IO.blocking(AtomicJson.writeSync(statePath, s.asJson.noSpaces))
+    IO.blocking {
+      writeResultFiles(s.nodes)
+      AtomicJson.writeSync(statePath, slimNodeResults(s.asJson).noSpaces)
+    }
 
   private def persistArchive(a: FlowMapArchive): IO[Unit] =
     IO.blocking {
-      if a.nodes.nonEmpty then AtomicJson.writeSync(archivePath, a.asJson.noSpaces)
+      if a.nodes.nonEmpty then
+        writeResultFiles(a.nodes)
+        AtomicJson.writeSync(archivePath, slimNodeResults(a.asJson).noSpaces)
     }
+
+  /** 结果全文落 per-node 文件（幂等：内容相同跳过写）。 */
+  private def writeResultFiles(nodes: Map[String, NodeDef]): Unit =
+    val withResult = nodes.values.filter(n => n.result.exists(_.trim.nonEmpty))
+    if withResult.nonEmpty then
+      os.makeDir.all(resultsDir)
+      withResult.foreach { n =>
+        val full = n.result.get
+        val p = resultsDir / s"${n.id}.md"
+        if !os.exists(p) || os.read(p) != full then os.write.over(p, full)
+      }
+
+  private def resultsDir: os.Path = statePath / os.up / FlowMapStore.ResultsDirName
+
+  /** 落盘 JSON 手术：result 非空节点 → result=摘要 + 注入 resultFile 指针。
+    * circe 派生解码忽略未知键 → resultFile 只活在磁盘 JSON，不进 NodeDef 内存模型。 */
+  private def slimNodeResults(json: Json): Json =
+    json.asObject match
+      case Some(obj) =>
+        val slimmed = obj("nodes").flatMap(_.asObject) match
+          case Some(nodesObj) =>
+            io.circe.JsonObject.fromMap(obj.toMap.updated("nodes", nodesObj.mapValues(slimNodeResult).asJson))
+          case None => obj
+        Json.fromJsonObject(slimmed)
+      case None => json
+
+  private def slimNodeResult(n: Json): Json =
+    n.asObject match
+      case Some(nobj) =>
+        nobj("result").flatMap(_.asString) match
+          case Some(r) if r.trim.nonEmpty =>
+            val id = nobj("id").flatMap(_.asString).getOrElse("")
+            Json.fromJsonObject(io.circe.JsonObject.fromMap(
+              nobj.toMap.updated("result", FlowMapStore.summarizeResult(r).asJson)
+                .updated("resultFile", s"${FlowMapStore.ResultsDirName}/$id.md".asJson)))
+          case _ => n
+      case None => n
 
   /** 加载净化：历史数据存在 out 被写成**字符串** "null" 的行（parseOut 归一化修复
     * 之前 LLM 以字符串 "null" 断开接线被当字面 target id 存盘；实证归档
@@ -130,6 +182,36 @@ class FlowMapStore private (
           "deprecated since phase 2b (ruling H-11①): display only, NodeEdit no longer accepts them; allocate plugins instead"))
     if legacy.nonEmpty then logger.warnSync(s"flow-map '$project': ${legacy.size} node(s) with legacy skill/mcp values (display only)")
 
+  /** 结果水合 + 存量污染自动迁移（2026-09-05 精简批，幂等可回滚）：
+    * 对每个 result 非空节点——
+    *   1. `results/<id>.md` 缺失 → 以 JSON 内 result 值落文件（存量迁移写；短结果
+    *      顺手物化，统一「全文单源在文件」）；
+    *   2. 内存 result 回读文件全文（水合——投递链/重投扫描/详情端点同源全文，
+    *      NodeEngine 零改动）；
+    *   3. JSON result > ResultSummaryCap 且文件是本次迁移写的 → 判定存量污染，
+    *      迁移标志置位（open 据此在首次收敛落盘前做 .bak 备份）。
+    * .bak 只在首次迁移写、不覆盖既有备份（回滚锚点恒为迁移前状态）。 */
+  private def hydrateAndMigrate(nodes: Map[String, NodeDef], sourcePath: os.Path): (Map[String, NodeDef], Boolean) =
+    val migrated = scala.collection.mutable.ListBuffer.empty[String]
+    val hydrated = nodes.map { case (id, n) =>
+      n.result match
+        case Some(r) if r.trim.nonEmpty =>
+          val p = resultsDir / s"$id.md"
+          if !os.exists(p) then
+            if r.length > FlowMapStore.ResultSummaryCap then migrated += id
+            os.makeDir.all(resultsDir)
+            os.write.over(p, r)
+          val full = os.read(p)
+          id -> n.copy(result = Some(full))
+        case _ => id -> n
+    }
+    val needsBackup = migrated.nonEmpty && os.exists(sourcePath) && !os.exists(os.Path(sourcePath.toString + ".bak"))
+    if needsBackup then
+      os.copy(sourcePath, os.Path(sourcePath.toString + ".bak"), replaceExisting = false)
+      logger.warnSync(
+        s"flow-map '$project': legacy result pollution migrated (${migrated.size} node(s)) — original JSON backed up to ${sourcePath.last}.bak")
+    (hydrated, migrated.nonEmpty)
+
   private def loadInitial(): IO[FlowMapState] =
     IO.blocking {
       if os.exists(statePath) then
@@ -137,23 +219,37 @@ class FlowMapStore private (
           case Right(s) =>
             val normalized = s.copy(nodes = s.nodes.transform((_, n) => normalizeOut(n)))
             warnLegacySkillMcp(normalized)
-            normalized
+            val (hydratedNodes, _) = hydrateAndMigrate(normalized.nodes, statePath)
+            normalized.copy(nodes = hydratedNodes)
           case Left(e) =>
             logger.warnSync(s"flow-map.json corrupt: $e — starting empty")
             FlowMapState(project = project, updatedAt = System.currentTimeMillis())
       else FlowMapState(project = project, updatedAt = System.currentTimeMillis())
     }
 
-  private def loadArchive(): IO[FlowMapArchive] =
+  private def loadArchive(): IO[(FlowMapArchive, Boolean)] =
     IO.blocking {
       if os.exists(archivePath) then
         jsonParse(os.read(archivePath)).flatMap(_.as[FlowMapArchive]) match
-          case Right(a) => a.copy(nodes = a.nodes.transform((_, n) => normalizeOut(n)))
-          case Left(_) => FlowMapArchive(project = project)
-      else FlowMapArchive(project = project)
+          case Right(a) =>
+            val normalized = a.copy(nodes = a.nodes.transform((_, n) => normalizeOut(n)))
+            val (hydratedNodes, migrated) = hydrateAndMigrate(normalized.nodes, archivePath)
+            (normalized.copy(nodes = hydratedNodes), migrated)
+          case Left(_) => (FlowMapArchive(project = project), false)
+      else (FlowMapArchive(project = project), false)
     }
 
 object FlowMapStore:
+  /** per-node 结果文件目录名（相对 workspace/.nebflow/）。 */
+  val ResultsDirName: String = "results"
+
+  /** 落盘 JSON 内 result 摘要截断上限（与原 NodePayload 载荷摘要规则同口径）。 */
+  val ResultSummaryCap: Int = 500
+
+  /** 摘要规则单点：>Cap take(Cap)+"…"（原 ≤500 载荷摘要语义平移到持久化层）。 */
+  def summarizeResult(r: String): String =
+    if r.length > ResultSummaryCap then r.take(ResultSummaryCap) + "…" else r
+
   /** 打开（或初始化）项目的 Flow Map store。workspace 为项目工作区绝对路径。 */
   def open(project: String, workspace: String): IO[FlowMapStore] =
     val base = os.Path(workspace, PathUtil.dataRoot) / ".nebflow"
@@ -163,9 +259,13 @@ object FlowMapStore:
       s <- IO.blocking(os.makeDir.all(base))
       store = new FlowMapStore(project, statePath, archivePath, Ref.unsafe[IO, FlowMapState](FlowMapState(project = project, updatedAt = 0L)), Ref.unsafe[IO, FlowMapArchive](FlowMapArchive(project = project)))
       initial <- store.loadInitial()
-      arch <- store.loadArchive()
+      (arch, archiveMigrated) <- store.loadArchive()
       _ <- store.state.set(initial)
       _ <- store.archive.set(arch)
-      // 首写：确保 flow-map.json 存在（验收①「只有 flow-map.json 被 store 写」）
+      // 首写：确保 flow-map.json 存在（验收①「只有 flow-map.json 被 store 写」）；
+      // 同时完成存量 JSON 的摘要收敛（水合后内存全文 → 落盘自动拆分）。
       _ <- store.persistState(initial)
+      // 归档区迁移收敛：归档 JSON 平日只在 archive mutation 时重写——存量污染在
+      // open 时立即收敛一次（幂等；无迁移时零写入）。
+      _ <- if archiveMigrated then store.persistArchive(arch) else IO.unit
     yield store

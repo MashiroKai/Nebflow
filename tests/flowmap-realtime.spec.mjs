@@ -31,20 +31,22 @@ const MIME = {
 const ROOT_SID = 'fm-root-session';
 const T0 = Date.now();
 
-// 初始快照：n1(completed) → n2(running)
+// 初始快照：n1(completed) → n2(running)。
+// 2026-09-05 载荷收敛：快照/事件载荷元数据 only——无 result 键；hasResult 标记 +
+// description（创建必写）为卡片展示层。
 const N1 = {
   id: 'n1', name: '研究', agent: 'researcher', status: 'completed',
   in: [], out: 'n2', hasWorktree: false, worktree: null,
-  result: '选题确定', retries: 0, createdAt: T0, completedAt: T0, ttlLeftSec: 300,
+  description: '选题调研与定题', hasResult: true, retries: 0, createdAt: T0, completedAt: T0, ttlLeftSec: 300,
 };
 const N2 = {
   id: 'n2', name: '写作', agent: 'writer', status: 'running',
   in: ['n1'], out: 'Nebula', hasWorktree: false, worktree: null,
-  result: null, retries: 0, createdAt: T0, completedAt: null, ttlLeftSec: null,
+  description: '初稿撰写节点', retries: 0, createdAt: T0, completedAt: null, ttlLeftSec: null,
 };
 const FM_A = () => ({ nodes: [structuredClone(N1), structuredClone(N2)], worktrees: [], meta: { project: 'alpha', updatedAt: Date.now() } });
 const nodeJson = (over) => ({
-  hasWorktree: false, worktree: null, result: null, retries: 0,
+  hasWorktree: false, worktree: null, hasResult: false, retries: 0,
   createdAt: T0, completedAt: null, ttlLeftSec: null, ...over,
 });
 
@@ -197,20 +199,24 @@ test('Flow Map 实时更新：新节点淡入 / 接线重绘 / 完成过渡 / �
   const probeEarly = await page.evaluate(() => document.querySelector('.fm-node[data-node-id="n1"]')?.dataset.probe);
   expect(probeEarly).toBe('keep');
 
-  // 2) nodeCompleted n2：状态平滑过渡（class/dataset 原地更新 + result 摘要浮现）
-  patchServer('n2', { status: 'completed', result: '初稿完成', completedAt: Date.now(), ttlLeftSec: 300 });
+  // 2) nodeCompleted n2：状态平滑过渡（class/dataset 原地更新）。2026-09-05 载荷
+  //    收敛：完成帧不带 result 本体（hasResult 标记）——卡片描述行展示 description，
+  //    全文经详情窗按需拉取（由 flowmap-archive-result-full spec 承载）。
+  patchServer('n2', { status: 'completed', hasResult: true, completedAt: Date.now(), ttlLeftSec: 300 });
   await inject(page, {
     type: 'nodeCompleted', project: 'alpha', nodeId: 'n2',
-    node: nodeJson({ ...N2, in: ['n3'], status: 'completed', result: '初稿完成', completedAt: Date.now(), ttlLeftSec: 300 }),
+    node: nodeJson({ ...N2, in: ['n3'], status: 'completed', hasResult: true, completedAt: Date.now(), ttlLeftSec: 300 }),
   });
   await expect(body.locator('.fm-node[data-node-id="n2"][data-status="completed"]')).toHaveCount(1);
-  await expect(body.locator('.fm-node[data-node-id="n2"] .fm-result-summary')).toContainText('初稿完成');
+  // 卡片描述行 = description（创建必写元数据）；result 摘要行不复存在
+  await expect(body.locator('.fm-node[data-node-id="n2"] .fm-desc')).toContainText('初稿撰写节点');
+  await expect(body.locator('.fm-node[data-node-id="n2"] .fm-result-summary')).toHaveCount(0);
 
   // 边状态档位跟随上游：n3 完成 → 它发出的边 n3=>n2 转 delivered（idle→delivered 平滑变色调）
-  patchServer('n3', { status: 'completed', result: '已评审', completedAt: Date.now(), ttlLeftSec: 300 });
+  patchServer('n3', { status: 'completed', hasResult: true, completedAt: Date.now(), ttlLeftSec: 300 });
   await inject(page, {
     type: 'nodeCompleted', project: 'alpha', nodeId: 'n3',
-    node: nodeJson({ ...N3, status: 'completed', result: '已评审', completedAt: Date.now(), ttlLeftSec: 300 }),
+    node: nodeJson({ ...N3, status: 'completed', hasResult: true, completedAt: Date.now(), ttlLeftSec: 300 }),
   });
   await expect(body.locator('path[data-edge-id="n3=>n2"].delivered')).toHaveCount(1);
   await expect(body.locator('circle[data-edge-id="n3=>n2"].delivered')).toHaveCount(1);

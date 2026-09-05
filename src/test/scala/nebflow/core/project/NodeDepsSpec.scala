@@ -44,6 +44,11 @@ class NodeDepsSpec extends CatsEffectSuite:
     """{"name":"test-agent","description":"deps regression agent","tools":[],"category":"standalone"}"""
   )
   os.write.over(tempRoot / "agents" / "test-agent" / "system.md", "# test-agent\n")
+  // 2026-09-05 agent 退役：新建节点执行统一 general——fixture 侧补 general agent
+  os.makeDir.all(tempRoot / "agents" / "general")
+  os.write.over(tempRoot / "agents" / "general" / "agent.json",
+    """{"name":"general","description":"general executor","tools":[],"category":"standalone"}""")
+  os.write.over(tempRoot / "agents" / "general" / "system.md", "# general\n")
 
   override def afterAll(): Unit =
     PathUtil.setDataRoot(originalRoot)
@@ -207,12 +212,12 @@ class NodeDepsSpec extends CatsEffectSuite:
       rt <- mountProject("deps-t1", ws, system, res)
       ctx = mkCtx(res, system, ws.toString)
       // A 入口运行中（out=Nebula 仅满足连接下限；deps 单侧持有，A 不知道被 B 依赖）
-      _ <- nodeEdit(nodeInput("deps-t1", "src-a", "agent" -> Json.fromString("test-agent"),
+      _ <- nodeEdit(nodeInput("deps-t1", "src-a", "description" -> Json.fromString("test node purpose"),
         "task" -> Json.fromString("produce-A"), "out" -> Json.fromString("Nebula")), ctx)
       _ <- waitStatus(rt, "src-a", Set(NodeLifecycle.Running))
       // B 声明 deps=[A]（有 task 无 in → Pending；入口启动被 startNode 内 deps 闸门拦下）
       aId <- idOf(rt, "src-a")
-      _ <- nodeEdit(nodeInput("deps-t1", "after-a", "agent" -> Json.fromString("test-agent"),
+      _ <- nodeEdit(nodeInput("deps-t1", "after-a", "description" -> Json.fromString("test node purpose"),
         "task" -> Json.fromString("run-after-a"), "deps" -> Json.fromString(aId),
         "out" -> Json.fromString("Nebula")), ctx)
       partial <- rt.store.snapshot.map(_.nodes.values.find(_.name == "after-a"))
@@ -258,17 +263,17 @@ class NodeDepsSpec extends CatsEffectSuite:
       rt <- mountProject("deps-t2", ws, system, res)
       ctx = mkCtx(res, system, ws.toString)
       // B：deps 上游（entry，慢——制造 running 窗口；out=Nebula，deps 单侧持有不回写）
-      _ <- nodeEdit(nodeInput("deps-t2", "dep-b", "agent" -> Json.fromString("test-agent"),
+      _ <- nodeEdit(nodeInput("deps-t2", "dep-b", "description" -> Json.fromString("test node purpose"),
         "task" -> Json.fromString("dep-b-slow"), "out" -> Json.fromString("Nebula")), ctx)
       _ <- waitStatus(rt, "dep-b", Set(NodeLifecycle.Running))
       // A：in 上游（entry，快——先于 C 创建完成）
-      _ <- nodeEdit(nodeInput("deps-t2", "src-a", "agent" -> Json.fromString("test-agent"),
+      _ <- nodeEdit(nodeInput("deps-t2", "src-a", "description" -> Json.fromString("test node purpose"),
         "task" -> Json.fromString("src-a-fast"), "out" -> Json.fromString("Nebula")), ctx)
       _ <- waitStatus(rt, "src-a", Set(NodeLifecycle.Completed))
       aId <- idOf(rt, "src-a")
       bId <- idOf(rt, "dep-b")
       // C：in=[A] + deps=[B]（A 已完成 → D1 in-delivery 归零 barrier → startNode 被 deps 闸门拦下）
-      _ <- nodeEdit(nodeInput("deps-t2", "merge-c", "agent" -> Json.fromString("test-agent"),
+      _ <- nodeEdit(nodeInput("deps-t2", "merge-c", "description" -> Json.fromString("test node purpose"),
         "task" -> Json.fromString("merge-both"), "in" -> Json.fromString(aId),
         "deps" -> Json.fromString(bId), "out" -> Json.fromString("Nebula")), ctx)
       cId <- idOf(rt, "merge-c")
@@ -320,7 +325,7 @@ class NodeDepsSpec extends CatsEffectSuite:
         "n-e2e-b" -> NodeDef(id = "n-e2e-b", name = "node-b", agent = "test-agent",
           status = NodeLifecycle.Wiring, out = Some("Nebula"), createdAt = System.currentTimeMillis()))))
       bE2e <- idOf(rt, "node-b")
-      _ <- nodeEdit(nodeInput("deps-t3", "node-a", "agent" -> Json.fromString("test-agent"),
+      _ <- nodeEdit(nodeInput("deps-t3", "node-a", "description" -> Json.fromString("test node purpose"),
         "task" -> Json.fromString("work"), "out" -> Json.fromString(bE2e)), ctx)
       // running 节点编辑被冻结（校验三）——等 A 终态后再测 deps 环检
       _ <- waitStatus(rt, "node-a", Set(NodeLifecycle.Completed))
@@ -352,12 +357,12 @@ class NodeDepsSpec extends CatsEffectSuite:
       // ── 变体 1：活动区接线（上游 completed 仍在活动区）──
       rt1 <- mountProject("deps-t4-active", ws1, system, res)
       ctx1 = mkCtx(res, system, ws1.toString)
-      _ <- nodeEdit(nodeInput("deps-t4-active", "done-a", "agent" -> Json.fromString("test-agent"),
+      _ <- nodeEdit(nodeInput("deps-t4-active", "done-a", "description" -> Json.fromString("test node purpose"),
         "task" -> Json.fromString("done-a"), "out" -> Json.fromString("Nebula")), ctx1)
       _ <- waitStatus(rt1, "done-a", Set(NodeLifecycle.Completed))
       aId1 <- idOf(rt1, "done-a")
       // 上游已 completed 后接 deps 边 → D1-deps 立即触发
-      _ <- nodeEdit(nodeInput("deps-t4-active", "late-b", "agent" -> Json.fromString("test-agent"),
+      _ <- nodeEdit(nodeInput("deps-t4-active", "late-b", "description" -> Json.fromString("test node purpose"),
         "task" -> Json.fromString("after-a-work"), "deps" -> Json.fromString(aId1),
         "out" -> Json.fromString("Nebula")), ctx1)
       _ <- waitStatus(rt1, "late-b", Set(NodeLifecycle.Completed))
@@ -365,7 +370,7 @@ class NodeDepsSpec extends CatsEffectSuite:
       // ── 变体 2：归档后接线（completed 上游已 TTL 归档——findNode 归档兜底）──
       rt2 <- mountProject("deps-t4-archived", ws2, system, res)
       ctx2 = mkCtx(res, system, ws2.toString)
-      _ <- nodeEdit(nodeInput("deps-t4-archived", "done-a", "agent" -> Json.fromString("test-agent"),
+      _ <- nodeEdit(nodeInput("deps-t4-archived", "done-a", "description" -> Json.fromString("test node purpose"),
         "task" -> Json.fromString("done-a"), "out" -> Json.fromString("Nebula")), ctx2)
       _ <- waitStatus(rt2, "done-a", Set(NodeLifecycle.Completed))
       aId2 <- idOf(rt2, "done-a")
@@ -375,7 +380,7 @@ class NodeDepsSpec extends CatsEffectSuite:
       swept <- rt2.store.sweepExpired(System.currentTimeMillis())
       archived <- rt2.store.archiveSnapshot
       // 上游已归档后接 deps 边 → findNode 归档兜底 → D1-deps 立即触发（「归档上游可触发」裁定）
-      _ <- nodeEdit(nodeInput("deps-t4-archived", "late-c", "agent" -> Json.fromString("test-agent"),
+      _ <- nodeEdit(nodeInput("deps-t4-archived", "late-c", "description" -> Json.fromString("test node purpose"),
         "task" -> Json.fromString("after-archived-work"), "deps" -> Json.fromString(aId2),
         "out" -> Json.fromString("Nebula")), ctx2)
       _ <- waitStatus(rt2, "late-c", Set(NodeLifecycle.Completed))
@@ -414,14 +419,14 @@ class NodeDepsSpec extends CatsEffectSuite:
         "n-in-waiter" -> NodeDef(id = "n-in-waiter", name = "in-waiter", agent = "test-agent",
           status = NodeLifecycle.Wiring, out = Some("Nebula"), createdAt = System.currentTimeMillis()))))
       c2Id <- idOf(rt, "in-waiter")
-      _ <- nodeEdit(nodeInput("deps-t5", "src-a2", "agent" -> Json.fromString("test-agent"),
+      _ <- nodeEdit(nodeInput("deps-t5", "src-a2", "description" -> Json.fromString("test node purpose"),
         "task" -> Json.fromString("boom-a2"), "out" -> Json.fromString(c2Id)), ctx)
       // 实验组：A（entry, boom-a）+ B deps=[A]
-      _ <- nodeEdit(nodeInput("deps-t5", "src-a", "agent" -> Json.fromString("test-agent"),
+      _ <- nodeEdit(nodeInput("deps-t5", "src-a", "description" -> Json.fromString("test node purpose"),
         "task" -> Json.fromString("boom-a"), "out" -> Json.fromString("Nebula")), ctx)
       _ <- waitStatus(rt, "src-a", Set(NodeLifecycle.Running))
       aId <- idOf(rt, "src-a")
-      _ <- nodeEdit(nodeInput("deps-t5", "dep-waiter", "agent" -> Json.fromString("test-agent"),
+      _ <- nodeEdit(nodeInput("deps-t5", "dep-waiter", "description" -> Json.fromString("test node purpose"),
         "task" -> Json.fromString("dep-waiter-work"), "deps" -> Json.fromString(aId),
         "out" -> Json.fromString("Nebula")), ctx)
       // 双双失败
@@ -458,22 +463,22 @@ class NodeDepsSpec extends CatsEffectSuite:
       rt <- mountProject("deps-t6", ws, system, res)
       ctx = mkCtx(res, system, ws.toString)
       // task-only（无 out）→ 拒：悬空新节点废弃（校验五 out 强制）
-      r1 <- nodeEdit(nodeInput("deps-t6", "lonely", "agent" -> Json.fromString("test-agent"),
+      r1 <- nodeEdit(nodeInput("deps-t6", "lonely", "description" -> Json.fromString("test node purpose"),
         "task" -> Json.fromString("no connection at all")), ctx)
       s1 <- rt.store.snapshot
       // 对照：仅 out=Nebula（无 task/in）→ 拒：out-only 中继废弃（in 侧下限 (task ∨ in)）
-      r2 <- nodeEdit(nodeInput("deps-t6", "nebula-only", "agent" -> Json.fromString("test-agent"),
+      r2 <- nodeEdit(nodeInput("deps-t6", "nebula-only", "description" -> Json.fromString("test node purpose"),
         "out" -> Json.fromString("Nebula")), ctx)
       // 对照：仅 deps（无 out）→ 拒：deps 不计入连接（须带 out）
-      _ <- nodeEdit(nodeInput("deps-t6", "up", "agent" -> Json.fromString("test-agent"),
+      _ <- nodeEdit(nodeInput("deps-t6", "up", "description" -> Json.fromString("test node purpose"),
         "task" -> Json.fromString("up-work"), "out" -> Json.fromString("Nebula")), ctx)
       upId <- idOf(rt, "up")
-      r3 <- nodeEdit(nodeInput("deps-t6", "deps-only", "agent" -> Json.fromString("test-agent"),
+      r3 <- nodeEdit(nodeInput("deps-t6", "deps-only", "description" -> Json.fromString("test node purpose"),
         "deps" -> Json.fromString(upId)), ctx)
       // 合法域：task+out（入口）与 in+out（wiring）→ 过
-      r4 <- nodeEdit(nodeInput("deps-t6", "entry-ok", "agent" -> Json.fromString("test-agent"),
+      r4 <- nodeEdit(nodeInput("deps-t6", "entry-ok", "description" -> Json.fromString("test node purpose"),
         "task" -> Json.fromString("entry-work"), "out" -> Json.fromString("Nebula")), ctx)
-      r5 <- nodeEdit(nodeInput("deps-t6", "wire-ok", "agent" -> Json.fromString("test-agent"),
+      r5 <- nodeEdit(nodeInput("deps-t6", "wire-ok", "description" -> Json.fromString("test node purpose"),
         "in" -> Json.fromString(upId), "out" -> Json.fromString("Nebula")), ctx)
       s2 <- rt.store.snapshot
       _ <- system.stopAll.handleErrorWith(_ => IO.unit)
@@ -505,14 +510,14 @@ class NodeDepsSpec extends CatsEffectSuite:
       rt <- mountProject("deps-t7", ws, system, res)
       ctx = mkCtx(res, system, ws.toString)
       // 慢上游（7b/7c 的 deps 目标，测试窗口内保持 running）
-      _ <- nodeEdit(nodeInput("deps-t7", "slow-up", "agent" -> Json.fromString("test-agent"),
+      _ <- nodeEdit(nodeInput("deps-t7", "slow-up", "description" -> Json.fromString("test node purpose"),
         "task" -> Json.fromString("slow-up"), "out" -> Json.fromString("Nebula")), ctx)
       slowId <- idOf(rt, "slow-up")
-      upId <- nodeEdit(nodeInput("deps-t7", "up", "agent" -> Json.fromString("test-agent"),
+      upId <- nodeEdit(nodeInput("deps-t7", "up", "description" -> Json.fromString("test node purpose"),
         "task" -> Json.fromString("up-work"), "out" -> Json.fromString("Nebula")), ctx) *> idOf(rt, "up")
       // 7a：持 out 的 wiring 节点断开 out → 拒（校验六-a：断开一律拒绝）。setup 补
       // in=[slow-up] 适配创建新规范（原 out-only 创建已非法），r7a 断言一字未动
-      _ <- nodeEdit(nodeInput("deps-t7", "only-out", "agent" -> Json.fromString("test-agent"),
+      _ <- nodeEdit(nodeInput("deps-t7", "only-out", "description" -> Json.fromString("test node purpose"),
         "in" -> Json.fromString(slowId), "out" -> Json.fromString("Nebula")), ctx)
       r7a <- nodeEdit(nodeInput("deps-t7", "only-out", "out" -> Json.Null), ctx)
       // 7b：仅持 deps 的 wiring 节点清空 deps → 拒（校验六零连接下限不变）。存量式
@@ -522,12 +527,12 @@ class NodeDepsSpec extends CatsEffectSuite:
           deps = List(slowId), status = NodeLifecycle.Wiring, createdAt = System.currentTimeMillis()))))
       r7b <- nodeEdit(nodeInput("deps-t7", "only-deps", "deps" -> Json.arr()), ctx)
       // 7c 合法对照：多连接并持，清空 deps 仍剩 in+out → 成功（setup 补 in 适配创建新规范）
-      _ <- nodeEdit(nodeInput("deps-t7", "out-and-deps", "agent" -> Json.fromString("test-agent"),
+      _ <- nodeEdit(nodeInput("deps-t7", "out-and-deps", "description" -> Json.fromString("test node purpose"),
         "in" -> Json.fromString(slowId), "out" -> Json.fromString("Nebula"), "deps" -> Json.fromString(slowId)), ctx)
       r7c <- nodeEdit(nodeInput("deps-t7", "out-and-deps", "deps" -> Json.Null), ctx)
       odAfter <- idOf(rt, "out-and-deps").flatMap(nodeById(rt, _).map(_.getOrElse(fail("must exist"))))
       // 7d 对照（新规范翻转）：in + out 并持，断开 out → 拒（校验六-a 取代旧「剩 in 即过」）
-      _ <- nodeEdit(nodeInput("deps-t7", "in-and-out", "agent" -> Json.fromString("test-agent"),
+      _ <- nodeEdit(nodeInput("deps-t7", "in-and-out", "description" -> Json.fromString("test node purpose"),
         "in" -> Json.fromString(upId), "out" -> Json.fromString("Nebula")), ctx)
       ioId <- idOf(rt, "in-and-out")
       r7d <- nodeEdit(nodeInput("deps-t7", "in-and-out", "out" -> Json.Null), ctx)
@@ -559,7 +564,7 @@ class NodeDepsSpec extends CatsEffectSuite:
       rt <- mountProject("deps-t8", ws, system, res)
       ctx = mkCtx(res, system, ws.toString)
       // slow-a 入口运行中（制造 running 窗口）
-      _ <- nodeEdit(nodeInput("deps-t8", "slow-a", "agent" -> Json.fromString("test-agent"),
+      _ <- nodeEdit(nodeInput("deps-t8", "slow-a", "description" -> Json.fromString("test node purpose"),
         "task" -> Json.fromString("slow-a"), "out" -> Json.fromString("Nebula")), ctx)
       _ <- waitStatus(rt, "slow-a", Set(NodeLifecycle.Running))
       slowId <- idOf(rt, "slow-a")
@@ -576,7 +581,7 @@ class NodeDepsSpec extends CatsEffectSuite:
       // running abandon 仍拒绝（走 NodeCancel）
       rRun <- nodeEdit(nodeInput("deps-t8", "slow-a", "abandon" -> Json.fromBoolean(true)), ctx)
       // 被退役的 deps 等待者：W2 deps=[slow-a] wiring → abandon → slow-a 完成后不触发
-      _ <- nodeEdit(nodeInput("deps-t8", "w2-dep", "agent" -> Json.fromString("test-agent"),
+      _ <- nodeEdit(nodeInput("deps-t8", "w2-dep", "description" -> Json.fromString("test node purpose"),
         "task" -> Json.fromString("never-should-run"), "deps" -> Json.fromString(slowId),
         "out" -> Json.fromString("Nebula")), ctx)
       w2Id <- idOf(rt, "w2-dep")

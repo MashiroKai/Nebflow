@@ -287,6 +287,8 @@ class RestApiRoutes(
     //   GET /projects → 200 {projects:[{name, workspace, agentFile, description, createdAt}]}
     //                   （归档项目不在列——ProjectStore.list 源头过滤，迁移方案 v2 §6.1）
     //   GET /projects/<name>/flow-map → 200 {nodes:[...], worktrees:[...], meta:{...}}
+    //                   （2026-09-05 载荷收敛：节点条目=元数据 only——无 result 全文/摘要，
+    //                   hasResult 标记 + description/taskPreview；结果全文按需取 ↓）
     //   GET/PUT /projects/<name>/agent.md → 200 {content} / {saved:true}
     //   POST /projects/<name>/archive → 200 {archived:true, archivedAt}（§6.1 显式人工
     //                   归档：仅 project.json 打标记，零删除零移动；幂等；单程无取消）
@@ -332,11 +334,12 @@ class RestApiRoutes(
       }
 
     // GET /projects/<name>/flow-map/nodes/<nodeId>/result — 节点结果全文按需单点取
-    // （2026-09-04 作者反馈「归档详情窗节点结果要能完整显示」）。快照/WS 事件统一走
-    // NodePayload.buildNodeJson 的 result ≤500 字符摘要（契约零改动：载荷字段集断言、
-    // NodeList 工具语义、WS 广播体积均不动），全文只在详情窗打开时经本端点取——
-    // FlowMapStore.findNode 活动区优先、归档区兜底（两区磁盘均全文保留）。
-    // 未挂载/节点不存在 → 404 {error}（前端静默回退摘要显示）。
+    // （2026-09-04 作者反馈「归档详情窗节点结果要能完整显示」；2026-09-05 载荷收敛后
+    // 这是结果全文的两条按需通道之一，另一条 = NodeList(detail=<nodeId>) 工具参数，
+    // 同源：FlowMapStore 内存 result = 加载时从 per-node 文件 results/<nodeId>.md
+    // 水合的全文）。快照/WS 事件统一走 NodePayload.buildNodeJson 的元数据 only 载荷
+    // （无 result 键），hasResult 标记驱动前端按需拉取。FlowMapStore.findNode 活动
+    // 区优先、归档区兜底。未挂载/节点不存在 → 404 {error}（前端静默回退）。
     case req @ GET -> Root / "projects" / name / "flow-map" / "nodes" / nodeId / "result" =>
       withAuth(req) {
         ProjectRuntimeRegistry.get(name).flatMap {

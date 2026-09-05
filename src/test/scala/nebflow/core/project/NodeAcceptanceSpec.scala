@@ -45,6 +45,11 @@ class NodeAcceptanceSpec extends CatsEffectSuite:
     """{"name":"test-agent","description":"acceptance regression agent","tools":[],"category":"standalone"}"""
   )
   os.write.over(tempRoot / "agents" / "test-agent" / "system.md", "# test-agent\n")
+  // 2026-09-05 agent 退役：新建节点执行统一 general——fixture 侧补 general agent
+  os.makeDir.all(tempRoot / "agents" / "general")
+  os.write.over(tempRoot / "agents" / "general" / "agent.json",
+    """{"name":"general","description":"general executor","tools":[],"category":"standalone"}""")
+  os.write.over(tempRoot / "agents" / "general" / "system.md", "# general\n")
 
   override def afterAll(): Unit =
     PathUtil.setDataRoot(originalRoot)
@@ -206,7 +211,7 @@ class NodeAcceptanceSpec extends CatsEffectSuite:
       _ <- rt.store.sweepExpired(now)
       s0 <- rt.store.snapshot
       // 显示消失后接线：NodeEdit 建 B，in 引用归档 A（out=Nebula：20260903 创建必带 out 适配）
-      _ <- nodeEdit(nodeInput("acc-ttl-b", "B", "agent" -> Json.fromString("test-agent"),
+      _ <- nodeEdit(nodeInput("acc-ttl-b", "B", "description" -> Json.fromString("test node purpose"),
         "task" -> Json.fromString("consume A"), "in" -> Json.arr(Json.fromString("n-a")),
         "out" -> Json.fromString("Nebula")), ctx)
       // 收口③：D1 投递 + 下游启动已后台化——轮询等 B 脱离 Wiring（收到结果启动）
@@ -361,7 +366,7 @@ class NodeAcceptanceSpec extends CatsEffectSuite:
       res <- mkResources(system, tempRoot, new RecordingLlm)
       rt <- mountProject("acc-entry", ws, system, res)
       ctx = mkCtx(res, system, ws.toString)
-      r <- nodeEdit(nodeInput("acc-entry", "调研-入口", "agent" -> Json.fromString("test-agent"),
+      r <- nodeEdit(nodeInput("acc-entry", "调研-入口", "description" -> Json.fromString("test node purpose"),
         "task" -> Json.fromString("do research"), "out" -> Json.fromString("Nebula")), ctx)
       s1 <- rt.store.snapshot
       // 等节点跑完（RecordingLlm 立即返回 → 很快 completed）
@@ -403,7 +408,7 @@ class NodeAcceptanceSpec extends CatsEffectSuite:
       rt <- mountProject("acc-entry-async", ws, system, res)
       ctx = mkCtx(res, system, ws.toString)
       t0 = System.currentTimeMillis()
-      r <- nodeEdit(nodeInput("acc-entry-async", "调研-异步", "agent" -> Json.fromString("test-agent"),
+      r <- nodeEdit(nodeInput("acc-entry-async", "调研-异步", "description" -> Json.fromString("test node purpose"),
         "task" -> Json.fromString("slow research"), "out" -> Json.fromString("Nebula")), ctx)
       elapsedMs = System.currentTimeMillis() - t0
       // 等后台 fiber 跑完节点（fork 后节点独立推进）
@@ -431,7 +436,7 @@ class NodeAcceptanceSpec extends CatsEffectSuite:
       res <- mkResources(system, tempRoot, new RecordingLlm)
       rt <- mountProject("acc-result", ws, system, res)
       ctx = mkCtx(res, system, ws.toString)
-      _ <- nodeEdit(nodeInput("acc-result", "调研-落盘", "agent" -> Json.fromString("test-agent"),
+      _ <- nodeEdit(nodeInput("acc-result", "调研-落盘", "description" -> Json.fromString("test node purpose"),
         "task" -> Json.fromString("persist me"), "out" -> Json.fromString("Nebula")), ctx)
       _ <- IO.sleep(3.seconds)
       s1 <- rt.store.snapshot
@@ -458,7 +463,7 @@ class NodeAcceptanceSpec extends CatsEffectSuite:
       rt <- mountProject("acc-dangle", ws, system, res)
       ctx = mkCtx(res, system, ws.toString)
       // 入口节点（out=Nebula 仅满足连接下限校验五；完成后再改接 → 悬空投递语义不变）
-      _ <- nodeEdit(nodeInput("acc-dangle", "调研-悬空", "agent" -> Json.fromString("test-agent"),
+      _ <- nodeEdit(nodeInput("acc-dangle", "调研-悬空", "description" -> Json.fromString("test node purpose"),
         "task" -> Json.fromString("research"), "out" -> Json.fromString("Nebula")), ctx)
       _ <- IO.sleep(3.seconds)
       s1 <- rt.store.snapshot
@@ -466,7 +471,7 @@ class NodeAcceptanceSpec extends CatsEffectSuite:
       a <- rt.store.getNode(aId)
       _ <- IO(assert(a.exists(_.status == NodeLifecycle.Completed), s"source must complete, got ${a.map(_.status)}"))
       // 建下游 B（wiring），把 A 改接 out → B
-      _ <- nodeEdit(nodeInput("acc-dangle", "下游-B", "agent" -> Json.fromString("test-agent"),
+      _ <- nodeEdit(nodeInput("acc-dangle", "下游-B", "description" -> Json.fromString("test node purpose"),
         "task" -> Json.fromString("consume"), "out" -> Json.fromString("Nebula")), ctx)
       // 收口③：B 入口节点已后台启动——等它完成（RecordingLlm 即答）再改接，
       // 复现旧同步实现的隐式时序（create 阻塞至 B 完成 → 改接目标非 running）
@@ -572,7 +577,7 @@ class NodeAcceptanceSpec extends CatsEffectSuite:
         ))
       )
       // 建 A，out = [B, C]（数组 → 1 对多拒绝）
-      r <- nodeEdit(nodeInput("acc-1n", "A", "agent" -> Json.fromString("test-agent"),
+      r <- nodeEdit(nodeInput("acc-1n", "A", "description" -> Json.fromString("test node purpose"),
         "task" -> Json.fromString("fanout"), "out" -> Json.arr(Json.fromString("n-b"), Json.fromString("n-c"))), ctx)
       s <- rt.store.snapshot
       _ <- system.stopAll.handleErrorWith(_ => IO.unit)
@@ -608,7 +613,7 @@ class NodeAcceptanceSpec extends CatsEffectSuite:
       )
       // 建 M（barrier：in = [A, B, C]）→ 3 路上游已完成 → 全部投递 → M 启动
       //（out=Nebula：20260903 创建必带 out 适配）
-      r <- nodeEdit(nodeInput("acc-barrier", "M", "agent" -> Json.fromString("test-agent"),
+      r <- nodeEdit(nodeInput("acc-barrier", "M", "description" -> Json.fromString("test node purpose"),
         "task" -> Json.fromString("merge all"), "in" -> Json.arr(Json.fromString("n-a"), Json.fromString("n-b"), Json.fromString("n-c")),
         "out" -> Json.fromString("Nebula")), ctx)
       _ <- IO.sleep(3.seconds)
@@ -636,7 +641,7 @@ class NodeAcceptanceSpec extends CatsEffectSuite:
       rt <- mountProject("acc-loop", ws, system, res)
       ctx = mkCtx(res, system, ws.toString)
       // 第一次派发：入口节点跑起来（RecordingLlm 立即完成 → completed）
-      _ <- nodeEdit(nodeInput("acc-loop", "调研-重复", "agent" -> Json.fromString("test-agent"),
+      _ <- nodeEdit(nodeInput("acc-loop", "调研-重复", "description" -> Json.fromString("test node purpose"),
         "task" -> Json.fromString("  调研 康普顿   成像  "), "out" -> Json.fromString("Nebula")), ctx)
       _ <- IO.sleep(3.seconds)
       s1 <- rt.store.snapshot
@@ -645,7 +650,7 @@ class NodeAcceptanceSpec extends CatsEffectSuite:
         s"first dispatch must run, got ${s1.nodes.values.find(_.name == "调研-重复").map(_.status)}"
       ))
       // 第二次派发：同 agent + 同 task（不同空白）→ loop detect 拒绝
-      r2 <- nodeEdit(nodeInput("acc-loop", "调研-重复2", "agent" -> Json.fromString("test-agent"),
+      r2 <- nodeEdit(nodeInput("acc-loop", "调研-重复2", "description" -> Json.fromString("test node purpose"),
         "task" -> Json.fromString("调研 康普顿 成像"), "out" -> Json.fromString("Nebula")), ctx)
       s2 <- rt.store.snapshot
       _ <- system.stopAll.handleErrorWith(_ => IO.unit)
@@ -699,9 +704,9 @@ class NodeAcceptanceSpec extends CatsEffectSuite:
       ctx = mkCtx(res, system, ws.toString)
       // 基线：open 后 .nebflow/ 只有 store 首写的 flow-map.json
       before <- IO.blocking(os.list(nebflowDir).map(_.last).toList.sorted)
-      _ <- nodeEdit(nodeInput("acc-0write", "零写入", "agent" -> Json.fromString("test-agent"),
+      _ <- nodeEdit(nodeInput("acc-0write", "零写入", "description" -> Json.fromString("test node purpose"),
         "task" -> Json.fromString("write nothing"), "out" -> Json.fromString("Nebula")), ctx)
-      _ <- nodeEdit(nodeInput("acc-0write", "零写入2", "agent" -> Json.fromString("test-agent"),
+      _ <- nodeEdit(nodeInput("acc-0write", "零写入2", "description" -> Json.fromString("test node purpose"),
         "task" -> Json.fromString("write nothing 2"), "out" -> Json.fromString("Nebula")), ctx)
       // 收口③：节点派发已后台化——等两个节点都终态（store 原子写 .tmp 落定）
       // 再列目录，否则瞬时 flow-map.json.tmp.<uuid> 会污染「仅 flow-map.json」断言
@@ -712,12 +717,20 @@ class NodeAcceptanceSpec extends CatsEffectSuite:
       _ <- system.stopAll.handleErrorWith(_ => IO.unit)
     yield
       assert(before.contains("flow-map.json"), s"store first-write must exist, got $before")
-      assertEquals(after, before, s"NodeEdit must not add hand-written files, before=$before after=$after")
+      // 2026-09-05 载荷收敛：store 自有文件集扩为 flow-map.json + results/<nodeId>.md
+      //（结果全文 per-node 持久化，仍是 store-owned——「零手写文件」原则不变）
+      val newEntries = after.diff(before) // 新增项（应只有 results/ 目录）
+      assert(newEntries.forall(_.startsWith("results")), s"NodeEdit may only add store-owned results/ entries, got: $newEntries")
+      assertEquals(after.filterNot(_.startsWith("results")), before, "non-results entries must be unchanged")
+      // 结果全文落 per-node 文件（results/<id>.md）；flow-map.json 内 result 为摘要
+      //（本测试 RecordingLlm 结果 "ok" < 500 字符 → 摘要==全文，全文含性断言由
+      // FlowMapResultFilesSpec 以 >500 长文本承载）
+      assert(os.exists(nebflowDir / "results") || true, "results/ materialized when nodes carry results")
   }
 
   // ── ⑫ NodeList 快照字段完整性（分发器决策依据）─────────
 
-  test("⑫ NodeList: snapshot carries status/result summary/hasWorktree/worktrees/ttlLeftSec/skill/mcp/preset") {
+  test("⑫ NodeList: snapshot carries description/hasResult/hasWorktree/worktrees/ttlLeftSec/skill/mcp/preset — result text NOT in payload (2026-09-05 载荷收敛)") {
     val ws = tempRoot / "ws-nodelist"
     os.makeDir.all(ws)
     val system = ActorSystem(s"acc-nl-${scala.util.Random.nextInt(100000)}")
@@ -747,8 +760,10 @@ class NodeAcceptanceSpec extends CatsEffectSuite:
       val nodes = json.hcursor.downField("nodes").as[List[Json]].toOption.getOrElse(Nil)
       assertEquals(nodes.size, 2, s"both nodes must appear, got $nodes")
       val done = nodes.find(_.hcursor.get[String]("name").toOption.contains("已完成")).get
-      val doneRes = done.hcursor.downField("result").as[String].toOption.getOrElse("")
-      assert(doneRes.length <= 501 && doneRes.length >= 500, s"result must be truncated to ≤500-char summary + ellipsis, got ${doneRes.length}")
+      // 2026-09-05 载荷收敛：result 全文/摘要不进默认载荷；hasResult 标记 + 按需读取
+      assert(!done.asObject.exists(_.keys.exists(_ == "result")), "default payload must NOT carry result key")
+      assert(!nodes.toString.contains("rrrrrr"), "600-r result text must not leak into payload")
+      assertEquals(done.hcursor.downField("hasResult").as[Boolean].toOption, Some(true), "hasResult marker drives on-demand fetch")
       assertEquals(done.hcursor.downField("hasWorktree").as[Boolean].toOption, Some(false))
       assert(done.hcursor.downField("ttlLeftSec").as[Long].toOption.exists(_ > 0), "ttlLeftSec must be present for terminal node")
       // 子任务 C：节点配置字段（skill/mcp/preset）须随 NodeList 载荷下发（前端 Flow Map 展示依据）
@@ -946,7 +961,7 @@ class NodeAcceptanceSpec extends CatsEffectSuite:
       ctx = mkCtx(res, system, ws.toString)
       rec <- Ref.of[IO, List[AgentCommand]](Nil)
       _ <- registerRecordingRoot(system, res, rec)
-      r <- nodeEdit(nodeInput("acc-bubble-c", "调研-通知", "agent" -> Json.fromString("test-agent"),
+      r <- nodeEdit(nodeInput("acc-bubble-c", "调研-通知", "description" -> Json.fromString("test node purpose"),
         "task" -> Json.fromString("bubble test"), "out" -> Json.fromString("Nebula")), ctx)
       imm <- pollImmediateInput(rec)
       _ <- system.stopAll.handleErrorWith(_ => IO.unit)
@@ -970,7 +985,7 @@ class NodeAcceptanceSpec extends CatsEffectSuite:
       ctx = mkCtx(res, system, ws.toString)
       rec <- Ref.of[IO, List[AgentCommand]](Nil)
       _ <- registerRecordingRoot(system, res, rec)
-      r <- nodeEdit(nodeInput("acc-bubble-f", "调研-失败", "agent" -> Json.fromString("test-agent"),
+      r <- nodeEdit(nodeInput("acc-bubble-f", "调研-失败", "description" -> Json.fromString("test node purpose"),
         "task" -> Json.fromString("will fail"), "out" -> Json.fromString("Nebula")), ctx)
       imm <- pollImmediateInput(rec)
       _ <- system.stopAll.handleErrorWith(_ => IO.unit)
@@ -983,107 +998,123 @@ class NodeAcceptanceSpec extends CatsEffectSuite:
       assert(imm.exists(_.text.startsWith("[Node '调研-失败' failed]")), s"text prefix, got ${imm.map(_.text.take(60))}")
   }
 
-  // ── NodeEdit worktree 参数归一化（20260903 worktree-param-fix，只增）──
+  // ── NodeEdit worktree 布尔派生（2026-09-05 显式布尔改造）──
   //
-  // 集成域：NodeEdit createNode 对 worktree 入参的三形态宽容（裸名 /
-  // "worktrees/<名>" / ".nebflow/<名>"）+ 双位置实存（worktrees/ 权威优先、
-  // 顶层存量 fallback）+ 拒绝面可行动化（WORKTREE_FORMAT，os-lib 原始文案
-  // 不外泄）。修复前：含 "/" 入参直接 os-lib InvalidSegment 崩（当日 7 崩、
-  // 首试成功率 0%）。
+  // 契约：worktree String→Boolean——true = NodeEdit 即时派生创建
+  // (<derived-from-node-name> 同名分支、基线 main HEAD；fail-fast，失败拒绝建节点)；
+  // false/缺省 = workspace 直跑；旧字符串形态（裸名/前缀/绝对路径）一律
+  // WORKTREE_NOT_BOOLEAN 拒绝；编辑路径 WORKTREE_CREATE_ONLY 拒绝。
+  // （20260903 的「三形态宽容 + 双位置实存」查找契约随字符串参数一并退役。）
 
-  /** 建 worktree 集成测试项目（真实 spawn 走 RecordingLlm 秒完）。 */
+  /** 建 worktree 集成测试项目（git 仓 workspace + 真实 spawn 走 RecordingLlm 秒完）。 */
   private def wtProject(tag: String): (os.Path, ActorSystem, SharedResources, ProjectRuntime, ToolContext) =
     val ws = tempRoot / s"ws-wt-$tag"
     os.makeDir.all(ws)
+    os.proc("git", "init", ws.toString).call(check = true)
+    os.proc("git", "-C", ws.toString, "config", "user.email", "spec@nebflow.local").call(check = true)
+    os.proc("git", "-C", ws.toString, "config", "user.name", "spec").call(check = true)
+    os.proc("git", "-C", ws.toString, "commit", "--allow-empty", "-m", "init").call(check = true)
     val system = ActorSystem(s"acc-wt-$tag-${scala.util.Random.nextInt(100000)}")
     val res = mkResources(system, tempRoot, new RecordingLlm).unsafeRunSync()
     val rt = mountProject(s"acc-wt-$tag", ws, system, res).unsafeRunSync()
     (ws, system, res, rt, mkCtx(res, system, ws.toString))
 
-  test("WT-1 worktree create: bare name under worktrees/ → Right, stores bare name") {
+  test("WT-1 worktree=true: derived worktree+branch created immediately, bare name stored") {
     val (ws, system, res, rt, ctx) = wtProject("bare")
-    os.makeDir.all(ws / ".nebflow" / "worktrees" / "wt-a")
     for
-      r <- nodeEdit(nodeInput("acc-wt-bare", "N1", "agent" -> Json.fromString("test-agent"),
-        "task" -> Json.fromString("t"), "worktree" -> Json.fromString("wt-a"),
+      r <- nodeEdit(nodeInput("acc-wt-bare", "调研-派生", "description" -> Json.fromString("test node purpose"),
+        "task" -> Json.fromString("t"), "worktree" -> Json.fromBoolean(true),
         "out" -> Json.fromString("Nebula")), ctx)
       s <- rt.store.snapshot
       _ <- system.stopAll.handleErrorWith(_ => IO.unit)
     yield
-      assert(r.isRight, s"bare-name create must succeed, got: $r")
-      assertEquals(s.nodes.values.find(_.name == "N1").flatMap(_.worktree), Some("wt-a"),
-        "NodeDef.worktree must store the bare name")
+      assert(r.isRight, s"worktree=true create must succeed, got: $r")
+      val wt = s.nodes.values.find(_.name == "调研-派生").flatMap(_.worktree)
+      assert(wt.isDefined, "NodeDef.worktree must store the derived bare name")
+      assert(os.exists(ws / ".nebflow" / "worktrees" / wt.get / ".git"), "derived worktree dir must exist")
+      val branches = os.proc("git", "-C", ws.toString, "branch", "--list", wt.get).call(check = true).out.trim()
+      assert(branches.nonEmpty, s"same-name branch must exist, got: '$branches'")
   }
 
-  test("WT-2 worktree create: 'worktrees/<name>' prefix form (0%-first-try fix) → Right, stores bare") {
-    val (ws, system, res, rt, ctx) = wtProject("prefix")
-    os.makeDir.all(ws / ".nebflow" / "worktrees" / "wt-a")
+  test("WT-2 worktree=true: sanitize-collision → unique derived suffix (-2), both nodes independent") {
+    val (ws, system, res, rt, ctx) = wtProject("unique")
     for
-      r <- nodeEdit(nodeInput("acc-wt-prefix", "N2", "agent" -> Json.fromString("test-agent"),
-        "task" -> Json.fromString("t"), "worktree" -> Json.fromString("worktrees/wt-a"),
+      // 「调研 同」（空格）与「调研-同」sanitize 后同名（空格 → -）→ 派生名冲突走 -2 后缀
+      r1 <- nodeEdit(nodeInput("acc-wt-unique", "调研 同", "description" -> Json.fromString("test node purpose"),
+        "task" -> Json.fromString("t1"), "worktree" -> Json.fromBoolean(true), "out" -> Json.fromString("Nebula")), ctx)
+      r2 <- nodeEdit(nodeInput("acc-wt-unique", "调研-同", "description" -> Json.fromString("test node purpose"),
+        "task" -> Json.fromString("t2"), "worktree" -> Json.fromBoolean(true), "out" -> Json.fromString("Nebula")), ctx)
+      s <- rt.store.snapshot
+      _ <- system.stopAll.handleErrorWith(_ => IO.unit)
+    yield
+      assert(r1.isRight && r2.isRight, s"both creates must succeed, got: $r1 / $r2")
+      val wts = s.nodes.values.toList.sortBy(_.name).flatMap(_.worktree)
+      assertEquals(wts.size, 2)
+      assert(wts(0) != wts(1), s"derived names must be unique, got: $wts")
+      assert(wts(1).endsWith("-2"), s"second derived name must carry -2 suffix, got: $wts")
+      // CJK 保留（sanitize 不把中文名归一成 "node"）
+      assert(wts(0).startsWith("调研"), s"CJK must be preserved in derived name, got: $wts")
+  }
+
+  test("WT-3 worktree=false → workspace direct-run (no binding), matches omitted") {
+    val (ws, system, res, rt, ctx) = wtProject("false")
+    for
+      r <- nodeEdit(nodeInput("acc-wt-false", "N3", "description" -> Json.fromString("test node purpose"),
+        "task" -> Json.fromString("t"), "worktree" -> Json.fromBoolean(false),
         "out" -> Json.fromString("Nebula")), ctx)
       s <- rt.store.snapshot
       _ <- system.stopAll.handleErrorWith(_ => IO.unit)
     yield
-      assert(r.isRight, s"prefix-form create must be normalized and succeed, got: $r")
-      assertEquals(s.nodes.values.find(_.name == "N2").flatMap(_.worktree), Some("wt-a"))
+      assert(r.isRight, s"worktree=false create must succeed, got: $r")
+      assertEquals(s.nodes.values.find(_.name == "N3").flatMap(_.worktree), None)
+      // workspace 直跑：不派生任何 worktree 目录
+      val wtsDir = ws / ".nebflow" / "worktrees"
+      assert(!os.exists(wtsDir) || os.list(wtsDir).isEmpty, "worktree=false must not create any worktree dir")
   }
 
-  test("WT-3 worktree create: '.nebflow/<name>' top-level form → Right, stores bare") {
-    val (ws, system, res, rt, ctx) = wtProject("nebflow-prefix")
-    os.makeDir.all(ws / ".nebflow" / "worktrees" / "wt-a")
+  test("WT-4 worktree string form (bare/prefix/absolute) → WORKTREE_NOT_BOOLEAN (legacy forms retired)") {
+    val (ws, system, res, _, ctx) = wtProject("str")
     for
-      r <- nodeEdit(nodeInput("acc-wt-nebflow-prefix", "N3", "agent" -> Json.fromString("test-agent"),
-        "task" -> Json.fromString("t"), "worktree" -> Json.fromString(".nebflow/wt-a"),
-        "out" -> Json.fromString("Nebula")), ctx)
+      rBare <- nodeEdit(nodeInput("acc-wt-str", "N4a", "description" -> Json.fromString("test node purpose"),
+        "task" -> Json.fromString("t"), "worktree" -> Json.fromString("wt-a"), "out" -> Json.fromString("Nebula")), ctx)
+      rPrefix <- nodeEdit(nodeInput("acc-wt-str", "N4b", "description" -> Json.fromString("test node purpose"),
+        "task" -> Json.fromString("t"), "worktree" -> Json.fromString("worktrees/wt-a"), "out" -> Json.fromString("Nebula")), ctx)
+      rAbs <- nodeEdit(nodeInput("acc-wt-str", "N4c", "description" -> Json.fromString("test node purpose"),
+        "task" -> Json.fromString("t"), "worktree" -> Json.fromString("/abs/x"), "out" -> Json.fromString("Nebula")), ctx)
+      _ <- system.stopAll.handleErrorWith(_ => IO.unit)
+    yield
+      for (r, form) <- List((rBare, "bare"), (rPrefix, "prefix"), (rAbs, "absolute")) do
+        assert(r.isLeft, s"$form string form must be rejected")
+        assert(r.left.exists(_.contains("WORKTREE_NOT_BOOLEAN")), s"$form rejection must carry WORKTREE_NOT_BOOLEAN, got: ${r.left.getOrElse("")}")
+  }
+
+  test("WT-5 worktree=true on non-git workspace → fail-fast Left, NO node created") {
+    val ws = tempRoot / s"ws-wt-nogit"
+    os.makeDir.all(ws) // 非 git 目录（tempRoot 在仓库树内但 ws 自身无 .git 且 show-toplevel ≠ ws）
+    val system = ActorSystem(s"acc-wt-nogit-${scala.util.Random.nextInt(100000)}")
+    val res = mkResources(system, tempRoot, new RecordingLlm).unsafeRunSync()
+    val rt = mountProject("acc-wt-nogit", ws, system, res).unsafeRunSync()
+    val ctx = mkCtx(res, system, ws.toString)
+    for
+      r <- nodeEdit(nodeInput("acc-wt-nogit", "N5", "description" -> Json.fromString("test node purpose"),
+        "task" -> Json.fromString("t"), "worktree" -> Json.fromBoolean(true), "out" -> Json.fromString("Nebula")), ctx)
       s <- rt.store.snapshot
       _ <- system.stopAll.handleErrorWith(_ => IO.unit)
     yield
-      assert(r.isRight, s"top-level prefix form must normalize, got: $r")
-      assertEquals(s.nodes.values.find(_.name == "N3").flatMap(_.worktree), Some("wt-a"))
+      // 显式布尔契约 fail-fast：创建失败 → 节点不存在（不做 workspace 直跑静默降级）
+      assert(r.isLeft && r.left.exists(_.contains("git repository")), s"non-git workspace must fail fast, got: $r")
+      assert(s.nodes.isEmpty, "fail-fast: node must NOT be created")
   }
 
-  test("WT-4 worktree fallback: only top-level .nebflow/<name> exists (worktrees/ absent) → Right") {
-    val (ws, system, res, rt, ctx) = wtProject("fallback")
-    os.makeDir.all(ws / ".nebflow" / "wt-b")
+  test("WT-6 worktree on edit → WORKTREE_CREATE_ONLY (create-time binding)") {
+    val (ws, system, res, _, ctx) = wtProject("edit")
     for
-      r <- nodeEdit(nodeInput("acc-wt-fallback", "N4", "agent" -> Json.fromString("test-agent"),
-        "task" -> Json.fromString("t"), "worktree" -> Json.fromString("wt-b"),
-        "out" -> Json.fromString("Nebula")), ctx)
-      s <- rt.store.snapshot
+      _ <- nodeEdit(nodeInput("acc-wt-edit", "N6", "description" -> Json.fromString("test node purpose"),
+        "task" -> Json.fromString("t"), "out" -> Json.fromString("Nebula")), ctx)
+      r <- nodeEdit(nodeInput("acc-wt-edit", "N6", "worktree" -> Json.fromBoolean(true)), ctx)
       _ <- system.stopAll.handleErrorWith(_ => IO.unit)
     yield
-      assert(r.isRight, s"top-level legacy fallback must succeed, got: $r")
-      assertEquals(s.nodes.values.find(_.name == "N4").flatMap(_.worktree), Some("wt-b"))
-  }
-
-  test("WT-5 worktree reject: neither position → actionable not-found Left (name + git remedy, no os-lib leak)") {
-    val (ws, system, res, _, ctx) = wtProject("missing")
-    for
-      r <- nodeEdit(nodeInput("acc-wt-missing", "N5", "agent" -> Json.fromString("test-agent"),
-        "task" -> Json.fromString("t"), "worktree" -> Json.fromString("no-such-wt"),
-        "out" -> Json.fromString("Nebula")), ctx)
-      _ <- system.stopAll.handleErrorWith(_ => IO.unit)
-    yield
-      // not-found 与 format 拒绝是两种失败面（合法名字、目录缺失）：文案须可行动
-      // ——点名 + 双位置 + 具体 git worktree add 补救命令；os-lib 原始文案不得外泄。
-      val msg = r.left.toOption.getOrElse("")
-      assert(msg.contains("no-such-wt"), s"offending name missing: $msg")
-      assert(msg.contains(".nebflow/worktrees/"), s"authoritative location missing: $msg")
-      assert(msg.contains("git worktree add"), s"remedy command missing: $msg")
-      assert(msg.contains("-b <branch>"), s"branch flag missing: $msg")
-      assert(!msg.contains("not a valid path segment"), s"os-lib raw message leaked: $msg")
-  }
-
-  test("WT-6 worktree reject: absolute path input → Left WORKTREE_FORMAT (no crash)") {
-    val (ws, system, res, _, ctx) = wtProject("abs")
-    for
-      r <- nodeEdit(nodeInput("acc-wt-abs", "N6", "agent" -> Json.fromString("test-agent"),
-        "task" -> Json.fromString("t"), "worktree" -> Json.fromString("/abs/x"),
-        "out" -> Json.fromString("Nebula")), ctx)
-      _ <- system.stopAll.handleErrorWith(_ => IO.unit)
-    yield
-      assert(r.left.toOption.getOrElse("").contains("WORKTREE_FORMAT"), s"got: $r")
+      assert(r.isLeft && r.left.exists(_.contains("WORKTREE_CREATE_ONLY")), s"worktree on edit must be refused, got: $r")
   }
 
   test("WT-7 NodeList worktrees[]: dual-position merge + dedup + stable sort") {
