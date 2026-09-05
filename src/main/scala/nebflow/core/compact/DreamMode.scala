@@ -38,6 +38,12 @@ import java.security.MessageDigest
  * if the merged file would exceed the User.md hard budget the merge is
  * SKIPPED with a WARN log (the hook must not bypass the budget the MemoryEdit
  * tool enforces).
+ *
+ * dream-agent batch (2026-09-05): snapshot-before-write guard — the hook's save
+ * path goes through MemorySnapshot.snapshotBeforeWrite like every MemoryEdit
+ * action (User.md is outside the ~/.nebflow git tracking layer; the pre-write
+ * snapshot is the only fine-grained rollback anchor). Snapshot failure skips
+ * the merge (SnapshotBlocked) — the hook must not write unbacked.
  */
 object DreamMode:
   private val logger = NebflowLogger.forName("nebflow.dream")
@@ -118,6 +124,8 @@ object DreamMode:
     case Merged(newBytes: Long, evicted: Int, added: Int)
     /** Over User.md hard budget — merge SKIPPED (file untouched), WARN logged. */
     case BudgetBlocked(newBytes: Long)
+    /** Pre-write snapshot failed — merge SKIPPED fail-closed (nothing written). */
+    case SnapshotBlocked(reason: String)
     /** Nothing to do (no parseable facts / merge is a no-op). */
     case Noop
 
@@ -153,12 +161,19 @@ object DreamMode:
                 "Consolidate memory first; facts not written. (MEMORYEDIT_BUDGET)")
             MergeResult.BudgetBlocked(newBytes)
           case _ =>
-            os.write.over(memPath, merged.content, createFolders = true)
-            writeTimestamps(merged.timestamps)
-            logger.info(
-              s"Dream: merged ${merged.added} facts into $memPath " +
-                s"(T3 evicted ${merged.evicted.size}: ttl=${merged.evictedTtl} fifo=${merged.evictedFifo}; section now ${merged.entryCount} entries, $newBytes bytes)")
-            MergeResult.Merged(newBytes, merged.evicted.size, merged.added)
+            // 快照先行（dream-agent 批）：写前备份磁盘真身；失败 → fail-closed
+            // 跳过合并（hook 不写无备份的覆盖）。快照读的是磁盘当前态，不吃行缓存。
+            nebflow.service.MemorySnapshot.snapshotBeforeWrite(memPath) match
+              case Left(reason) =>
+                logger.warn(s"Dream: merge SKIPPED — pre-write snapshot failed ($reason). Nothing written. (MEMORYEDIT_SNAPSHOT)")
+                MergeResult.SnapshotBlocked(reason)
+              case Right(_) =>
+                os.write.over(memPath, merged.content, createFolders = true)
+                writeTimestamps(merged.timestamps)
+                logger.info(
+                  s"Dream: merged ${merged.added} facts into $memPath " +
+                    s"(T3 evicted ${merged.evicted.size}: ttl=${merged.evictedTtl} fifo=${merged.evictedFifo}; section now ${merged.entryCount} entries, $newBytes bytes)")
+                MergeResult.Merged(newBytes, merged.evicted.size, merged.added)
   }
 
   private def nowMs(): Long = System.currentTimeMillis()

@@ -11,7 +11,7 @@ import java.util.concurrent.ConcurrentHashMap
 import scala.jdk.CollectionConverters.*
 
 import nebflow.core.project.{ProjectMemory, ProjectStore}
-import nebflow.service.{MemoryBudget, MemoryStore}
+import nebflow.service.{MemoryBudget, MemorySnapshot, MemoryStore}
 
 /**
  * MemoryEdit（阶段 2c agent 收敛，设计文档 §C.2）——Nebula 专用记忆维护工具，
@@ -77,7 +77,10 @@ object MemoryEditTool extends Tool:
 - append/update validate the POST-WRITE file size before saving. Hard budget: User.md 50KB, agent memory.md 30KB, project memory.md 10KB (per project) — exceeding it is rejected (MEMORYEDIT_BUDGET) with the largest sections listed: consolidate first, then write.
 - Over the 80% soft line (User.md 40KB / memory.md 24KB / project 8KB) the write succeeds but the result carries a WARN — schedule a consolidation pass, don't wait for the weekly audit.
 - replace_section is exempt by design: it is the consolidation (shrinking) channel; gating it would remove the only way back under budget. The Dream extraction hook shares the same gate on its side.
-- Injection is NEVER truncated (ruling 2026-09-05 §3.3): over-budget memory silently taxes every future session — the write-side gate is the only enforcement, so honor the WARN."""
+- Injection is NEVER truncated (ruling 2026-09-05 §3.3): over-budget memory silently taxes every future session — the write-side gate is the only enforcement, so honor the WARN.
+## Snapshot (write guard, 2026-09-05 dream batch)
+- EVERY action snapshots the current on-disk file to `~/.nebflow/memory-backups/<ts>/` BEFORE saving (memory files are outside the ~/.nebflow git tracking layer — the snapshot is the only fine-grained rollback anchor). Last 20 snapshots per file are kept.
+- If the snapshot fails the action is aborted with nothing written (MEMORYEDIT_SNAPSHOT) — fail-closed, fix and retry."""
 
   val inputSchema: JsonObject = JsonObject(
     "type" -> "object".asJson,
@@ -241,6 +244,25 @@ object MemoryEditTool extends Tool:
       case MemoryBudget.Warn(_, _, _) => base.map(_ + "\n\n" + MemoryBudget.warnNotice(budgetDim(targetId), bytesOf(newContent), path.toString))
       case _                          => base
 
+  // ------------------------------------------------------------------
+  // 快照先行（dream-agent 批 2026-09-05）：落盘前先备份当前磁盘真身到
+  // memory-backups/，备份失败 → 整体中止（fail-closed）。记忆文件不在
+  // ~/.nebflow git 跟踪层（.gitignore `/*` + `**/memory.md` 实测排除），无备份
+  // 的覆盖不可回滚——快照是唯一细粒度回滚锚，四动作一律先过（在 per-file 锁内
+  // 执行，快照-写入窗口与并发 MemoryEdit 互斥）。NebflowBackup 日备是 24h 灾备
+  // 层，与本闸互补不替代。
+  // ------------------------------------------------------------------
+
+  private def saveGuarded(t: Target, action: String, newContent: String): Either[ToolError, Unit] =
+    MemorySnapshot.snapshotBeforeWrite(t.path) match
+      case Left(reason) =>
+        Left(ToolError(
+          s"MemoryEdit: $action aborted — pre-write snapshot failed ($reason). " +
+            "Nothing was written; check space/permissions on the memory-backups directory, then retry. (MEMORYEDIT_SNAPSHOT)"))
+      case Right(_) =>
+        t.save(newContent).unsafeRunSync()
+        Right(())
+
   /** 结果文本：动作 + 文件 + 变更摘要 + 生效提示（§C.2 结果语义）。 */
   private def ok(action: String, path: os.Path, detail: String): Either[ToolError, String] =
     Right(
@@ -320,8 +342,9 @@ object MemoryEditTool extends Tool:
                     budgetExceeded("append", target, t, newContent) match
                       case Some(rejection) => Left(rejection)
                       case None =>
-                        t.save(newContent).unsafeRunSync()
-                        okWithBudget("append (file end)", t.path, s"+ ${add.mkString(" ⏎ ")}", target, newContent)
+                        saveGuarded(t, "append", newContent).flatMap { _ =>
+                          okWithBudget("append (file end)", t.path, s"+ ${add.mkString(" ⏎ ")}", target, newContent)
+                        }
                   case Some(sec) =>
                     findSection(lines, sec) match
                       case None =>
@@ -333,8 +356,9 @@ object MemoryEditTool extends Tool:
                         budgetExceeded("append", target, t, newContent) match
                           case Some(rejection) => Left(rejection)
                           case None =>
-                            t.save(newContent).unsafeRunSync()
-                            okWithBudget(s"append (section '$sec')", t.path, s"+ ${add.mkString(" ⏎ ")}", target, newContent)
+                            saveGuarded(t, "append", newContent).flatMap { _ =>
+                              okWithBudget(s"append (section '$sec')", t.path, s"+ ${add.mkString(" ⏎ ")}", target, newContent)
+                            }
 
               case "update" =>
                 val lines = readLines(t.load)
@@ -345,16 +369,19 @@ object MemoryEditTool extends Tool:
                   budgetExceeded("update", target, t, newContent) match
                     case Some(rejection) => Left(rejection)
                     case None =>
-                      t.save(newContent).unsafeRunSync()
-                      okWithBudget("update", t.path, s"- ${old.trim.take(80)}\n+ ${rep.mkString(" ⏎ ")}", target, newContent)
+                      saveGuarded(t, "update", newContent).flatMap { _ =>
+                        okWithBudget("update", t.path, s"- ${old.trim.take(80)}\n+ ${rep.mkString(" ⏎ ")}", target, newContent)
+                      }
                 }
 
               case "remove" =>
                 val lines = readLines(t.load)
                 locate(lines, section, matchStr.getOrElse("")).flatMap { abs =>
                   val old = lines(abs)
-                  t.save(lines.patch(abs, Nil, 1).mkString("\n") + "\n").unsafeRunSync()
-                  ok("remove", t.path, s"- ${old.trim.take(80)}")
+                  val newContent = lines.patch(abs, Nil, 1).mkString("\n") + "\n"
+                  saveGuarded(t, "remove", newContent).flatMap { _ =>
+                    ok("remove", t.path, s"- ${old.trim.take(80)}")
+                  }
                 }
 
               case "replace_section" =>
@@ -368,9 +395,11 @@ object MemoryEditTool extends Tool:
                     val (b0, b1)  = sectionBodyRange(lines, h)
                     val oldBody   = lines.slice(b0, b1)
                     val add       = normalizeContent(content.getOrElse(""))
-                    t.save(lines.patch(b0, add, b1 - b0).mkString("\n") + "\n").unsafeRunSync()
-                    ok(s"replace_section '$sec'", t.path,
-                      s"replaced ${oldBody.count(isEntry)} entries with ${add.count(isEntry)} entries")
+                    val newContent = lines.patch(b0, add, b1 - b0).mkString("\n") + "\n"
+                    saveGuarded(t, "replace_section", newContent).flatMap { _ =>
+                      ok(s"replace_section '$sec'", t.path,
+                        s"replaced ${oldBody.count(isEntry)} entries with ${add.count(isEntry)} entries")
+                    }
 
               case other =>
                 Left(ToolError(
