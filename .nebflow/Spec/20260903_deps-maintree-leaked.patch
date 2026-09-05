@@ -1,0 +1,195 @@
+# =====================================================================
+# 主仓 deps 泄漏内容取证快照（还原前存档）
+# =====================================================================
+#
+# 泄漏来源：
+#   主仓 /Users/dev/Claude code/Nebflow（main 分支）工作区 3 个文件含
+#   deps-edge 轨道内容。泄漏自早期被杀的 deps 会话（重派2 n-4f749677
+#   死于传输中断；该死亡会话曾在主仓直接施工）。
+#   hunk 鉴别结论引自上游收尾节点 n-2297da8b（「收尾-子代理面板取消
+#   实时刷新提交」，已完成）：3 文件泄漏内容全部为 deps 语义、与面板
+#   修复无关。
+#
+# 快照时间：
+#   2026-09-03 04:50:30 CST (date 输出：Thu Sep  3 04:50:30 CST 2026)
+#   3 文件开工时 mtime（stat）：
+#     FlowMapStore.scala   Sep  3 02:18:56 2026
+#     NodeEngine.scala     Sep  3 02:19:16 2026
+#     ProjectTypes.scala   Sep  3 02:18:48 2026
+#   （与分发器 2026-09-03 侦察快照 02:18:48–02:19:16 一致）
+#
+# 涉及文件与 hunk 概述（git diff --stat：3 files changed, +59/-15）：
+#   1. src/main/scala/nebflow/core/project/FlowMapStore.scala  (17±, 1 hunk)
+#      wouldCreateCycle 重写：注释更新为 deps 语义；新增局部 successors()
+#      ——out 目标 ∪ { m | m.deps.contains(id) }（deps 反向边展开）；
+#      reachable 由单链递归改为对 successors 逐个递归。
+#   2. src/main/scala/nebflow/core/project/NodeEngine.scala  (50±, 3 hunks)
+#      hunk1: startNode 注释块扩展（deps 闸门设计说明）；
+#      hunk2: startNode 增加 deps 闸门（deps.traverse + ups.forall
+#             completed 判定，未满足静默返回）+ wiring 空节点防御
+#             条件加 node.deps.isEmpty；
+#      hunk3: completeNode 尾部 deliverOut 后挂 settleDeps(completed)
+#             + 新增私有方法 settleDeps（反向扫描活动区，对以 completed
+#             为 deps 的每个依赖者调 startNode）。
+#   3. src/main/scala/nebflow/core/project/ProjectTypes.scala  (7±, 2 hunks)
+#      hunk1: NodeDef 新增 deps: List[String] = Nil 字段（下游单侧持有，
+#             旧 flow-map.json 零迁移）；
+#      hunk2: NodePayload 条件序列化：deps.nonEmpty 时注入 "deps" 键。
+#
+# 还原方式：
+#   git checkout -- src/main/scala/nebflow/core/project/FlowMapStore.scala \
+#                  src/main/scala/nebflow/core/project/NodeEngine.scala \
+#                  src/main/scala/nebflow/core/project/ProjectTypes.scala
+#   （逐个精确路径，仅此 3 文件；主仓零 add/commit/push）
+#   在飞会话「实施-deps依赖连接·重派4」（n-b794ac96）在
+#   .nebflow/worktrees/deps-edge（分支 deps-edge）独立施工，与本泄漏
+#   无关；本清理为其尾部合并回 main 清障。
+# =====================================================================
+
+diff --git a/src/main/scala/nebflow/core/project/FlowMapStore.scala b/src/main/scala/nebflow/core/project/FlowMapStore.scala
+index e6b51cf8..3e6c54dd 100644
+--- a/src/main/scala/nebflow/core/project/FlowMapStore.scala
++++ b/src/main/scala/nebflow/core/project/FlowMapStore.scala
+@@ -61,19 +61,24 @@ class FlowMapStore private (
+       _ <- persistArchive(newArc)
+     yield newArc
+
+-  /** 环检测：设 from.out = to（或给 to 加 in=from）是否成环。
+-    * to 的传递下游（沿 out 边，跳过 Nebula）可达 from → 成环。 */
++  /** 环检测：设 from.out = to（或给 to 加 in=from / to.deps += from）是否成环。
++    * to 的传递下游（沿 out 边 + deps 反向边，跳过 Nebula）可达 from → 成环。
++    * deps 边是下游单侧持有（上游 out 不动）→ DFS 后继集合必须显式扩展：
++    * out 目标（覆盖 in 双写镜像）∪ { m | m.deps.contains(start) }（deps 反向展开，
++    * deps 设计 §1.2 校验二）——in+deps 混合环全部被拒。 */
+   def wouldCreateCycle(from: String, to: String): IO[Boolean] =
+     if to == "Nebula" || to.isEmpty then IO.pure(false)
+     else
+       state.get.map { s =>
++        def successors(id: String): List[String] =
++          (
++            s.nodes.get(id).flatMap(_.out).filter(_ != "Nebula").toList ++
++              s.nodes.values.filter(_.deps.contains(id)).map(_.id)
++          ).distinct
+         def reachable(start: String, visited: Set[String]): Boolean =
+           if start == from then true
+           else if visited.contains(start) then false
+-          else
+-            s.nodes.get(start).flatMap(_.out).filter(_ != "Nebula") match
+-              case Some(nxt) => reachable(nxt, visited + start)
+-              case None => false
++          else successors(start).exists(nxt => reachable(nxt, visited + start))
+         reachable(to, Set.empty)
+       }
+
+diff --git a/src/main/scala/nebflow/core/project/NodeEngine.scala b/src/main/scala/nebflow/core/project/NodeEngine.scala
+index 6848be53..8e31b765 100644
+--- a/src/main/scala/nebflow/core/project/NodeEngine.scala
++++ b/src/main/scala/nebflow/core/project/NodeEngine.scala
+@@ -109,7 +109,16 @@ class NodeEngine(
+               }
+         yield ()
+
+-  /** 启动节点（§2.1 创建即运行：入口节点由 NodeEdit 调；下游由投递 barrier 归零调）。 */
++  /** 启动节点（§2.1 创建即运行：入口节点由 NodeEdit 调；下游由投递 barrier 归零调；
++    * deps 下游由 settleDeps 完成信号调）。
++    *
++    * deps 闸门（deps 设计 §1.3，单权威）：任一依赖上游未 completed → 静默返回
++    * （保持 pending/wiring 可见）。判定是状态查询（声明式、幂等，findNode 归档
++    * 兜底——TTL 归档不影响「完成」事实），非 deliveredTo 式事件累计，不加记账
++    * 字段。单闸门自动保护全部启动入口：deliverOut/deliverOutTo/D1 补投递/重激活
++    * 链/入口启动/settleDeps——任何绕过 deps 的启动都被拦在最后一关。
++    * failed/cancelled/blocked 均 ∉ completed → 不触发下游（与 in 边 failed 的
++    * collect 结算刻意不同：in = 带错继续，deps = 停住可见）。 */
+   def startNode(nodeId: String): IO[Unit] =
+     store.getNode(nodeId).flatMap {
+       case None => IO.unit
+@@ -119,12 +128,18 @@ class NodeEngine(
+           case NodeLifecycle.Running | NodeLifecycle.Completed | NodeLifecycle.Failed | NodeLifecycle.Cancelled | NodeLifecycle.Blocked =>
+             IO.unit // 已终态/运行中，幂等跳过
+           case _ =>
+-            // 防御：wiring 空节点（无 task 无 in）不空跑（防浪费 token）
+-            if node.status == NodeLifecycle.Wiring && node.task.isEmpty && node.in.isEmpty then IO.unit
+-            else
+-              buildInput(node).flatMap { input =>
+-                spawnAndRun(node, input)
+-              }
++            node.deps.traverse(id => store.findNode(id)).flatMap { ups =>
++              val depsOk = ups.forall(_.exists(_.status == NodeLifecycle.Completed))
++              // 防御：wiring 空节点（无 task 无 in 无 deps）不空跑（防浪费 token）。
++              // 裁定①后降级为纵深防御：NodeEdit 校验五/六已禁止零连接创建与改接，
++              // 守卫只兜历史遗留数据与校验层外瞬态。
++              if !depsOk then IO.unit
++              else if node.status == NodeLifecycle.Wiring && node.task.isEmpty && node.in.isEmpty && node.deps.isEmpty then IO.unit
++              else
++                buildInput(node).flatMap { input =>
++                  spawnAndRun(node, input)
++                }
++            }
+     }
+
+   /** 构造节点输入：自身 task 上下文 + 各上游 result（=== Node <name> === 头，§2.7）+
+@@ -298,11 +313,30 @@ class NodeEngine(
+             case Some(completed) =>
+               emitEvent("nodeCompleted", nodeId, NodePayload.buildNodeJson(completed, now)) *>
+                 logger.info(s"Node '${completed.name}' completed (result ${resultText.length} chars)") *>
+-                deliverOut(completed, resultText)
++                deliverOut(completed, resultText) *>
++                // deps 反向结算（deps 设计 §1.3）：同一完成 fiber 顺序推进（与 deliverOut
++                // 内 startNode 同款语义）。同一上游既 in 又 deps 时，in 结算先行触发的
++                // startNode 使这里的第二次调用被幂等跳过——结果投递优先、完成信号冗余无害。
++                settleDeps(completed)
+             case None =>
+               logger.warn(s"Node '$nodeId' vanished before completion — result not persisted")
+         yield ()
+
++  /** deps 完成信号 → 触发下游（deps 设计 §1.3）：反向扫描活动区，对以 completed 节点
++    * 为 deps 的每个依赖者调 startNode——闸门在 startNode 内（deps 未全满足 / in 未
++    * 归零都静默返回），此处只管触发时机。只扫活动区：pending 依赖者必在活动区（归档
++    * 区只有终态节点）；被依赖上游的「完成」判定由闸门经 findNode 归档兜底覆盖。
++    * failed/cancelled/blocked 不走此路径（completeNode 专属）→ deps 下游保持
++    * pending/wiring 可见（NodeList 可诊断，分发器自行处置）。 */
++  private def settleDeps(completed: NodeDef): IO[Unit] =
++    store.snapshot.flatMap { s =>
++      s.nodes.values
++        .filter(_.deps.contains(completed.id))
++        .filterNot(d => NodeLifecycle.Terminal.contains(d.status) || d.status == NodeLifecycle.Running)
++        .toList
++        .traverse_(d => startNode(d.id))
++    }
++
+   /** blocked 终态化（设计 §2.1 四条动作序列，与 completeNode 同构）：
+     * ① 事务内现读 fresh（R2 纪律）→ status=Blocked / result=渲染串 / blockedFeedback /
+     *    blockCount+1 / completedAt=now / ttlExpireAt=None（永不过期=待办语义 §1.4）；
+
+diff --git a/src/main/scala/nebflow/core/project/ProjectTypes.scala b/src/main/scala/nebflow/core/project/ProjectTypes.scala
+index 05ee9ee6..16aaaaa6 100644
+--- a/src/main/scala/nebflow/core/project/ProjectTypes.scala
++++ b/src/main/scala/nebflow/core/project/ProjectTypes.scala
+@@ -49,6 +49,10 @@ case class NodeDef(
+   task: Option[String] = None,
+   in: List[String] = Nil,
+   out: Option[String] = None,
++  /** 依赖连接（deps 设计 §1.1，下游单侧持有、不回写上游）：只等上游「完成信号」
++    * （status==completed），上游 result 不注入本节点输入（buildInput 零改动）。
++    * 旧 flow-map.json 无 deps 键 → withDefaults 解码为 Nil，加载零迁移。 */
++  deps: List[String] = Nil,
+   deliveredTo: List[String] = Nil,
+   status: String = NodeLifecycle.Wiring,
+   result: Option[String] = None,
+@@ -96,6 +100,7 @@ object NodePayload:
+       "completedAt" -> node.completedAt.asJson,
+       "ttlLeftSec" -> ttlLeft.asJson
+     )
++    val depsFields = if node.deps.nonEmpty then List("deps" -> node.deps.asJson) else Nil
+     val feedbackFields = node.blockedFeedback.toList.map { bf =>
+       "blockedFeedback" -> Json.obj(
+         "category" -> bf.category.asJson,
+@@ -103,7 +108,7 @@ object NodePayload:
+         "suggestion" -> bf.suggestion.asJson
+       )
+     }
+-    Json.obj((baseFields ++ feedbackFields)*)
++    Json.obj((baseFields ++ depsFields ++ feedbackFields)*)
+
+ /** Flow Map 活动区（§2.6，磁盘 flow-map.json）。 */
+ case class FlowMapState(

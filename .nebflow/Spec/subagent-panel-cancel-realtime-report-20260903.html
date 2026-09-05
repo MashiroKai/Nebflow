@@ -1,0 +1,125 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<title>子代理面板取消场景实时刷新 — 修复报告</title>
+<style>
+  :root { color-scheme: dark; }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body { font-family: "PingFang SC", "Helvetica Neue", sans-serif; background: #0d1117; color: #e6edf3; padding: 32px; line-height: 1.55; }
+  h1 { font-size: 22px; margin-bottom: 4px; }
+  h2 { font-size: 16px; margin: 28px 0 10px; color: #79c0ff; border-bottom: 1px solid #21262d; padding-bottom: 6px; }
+  .sub { color: #8b949e; font-size: 13px; margin-bottom: 20px; }
+  .card { background: #161b22; border: 1px solid #30363d; border-radius: 8px; padding: 16px 18px; margin-bottom: 14px; }
+  .grid { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; }
+  .tag { display: inline-block; padding: 1px 8px; border-radius: 10px; font-size: 11px; margin-right: 6px; }
+  .tag.red { background: #da363338; color: #f85149; border: 1px solid #f8514955; }
+  .tag.green { background: #2386363d; color: #3fb950; border: 1px solid #3fb95055; }
+  .tag.blue { background: #1f6feb33; color: #58a6ff; border: 1px solid #58a6ff55; }
+  .tag.gray { background: #30363d; color: #8b949e; }
+  code { background: #21262d; padding: 1px 5px; border-radius: 4px; font-size: 12px; font-family: "SF Mono", Menlo, monospace; }
+  pre { background: #0d1117; border: 1px solid #30363d; border-radius: 6px; padding: 10px 12px; font-size: 11.5px; overflow-x: auto; font-family: "SF Mono", Menlo, monospace; color: #a5d6ff; margin: 8px 0; }
+  table { width: 100%; border-collapse: collapse; font-size: 12.5px; margin-top: 8px; }
+  th, td { border: 1px solid #30363d; padding: 6px 10px; text-align: left; }
+  th { background: #21262d; color: #79c0ff; font-weight: 600; }
+  td.ok { color: #3fb950; }
+  td.no { color: #f85149; }
+  .flow-row { display: flex; align-items: stretch; gap: 8px; margin: 6px 0; flex-wrap: wrap; }
+  .flow-box { background: #1c2431; border: 1px solid #388bfd66; border-radius: 6px; padding: 8px 12px; font-size: 12px; flex: 1; min-width: 130px; }
+  .flow-box b { color: #58a6ff; display: block; font-size: 11px; margin-bottom: 3px; }
+  .flow-arrow { align-self: center; color: #3fb950; font-size: 15px; }
+  .file-list { font-size: 12.5px; }
+  .file-list li { margin: 5px 0 5px 18px; }
+  .note { color: #d29922; font-size: 12px; }
+</style>
+</head>
+<body>
+<h1>子代理面板（Sub-Agents）取消/终止场景实时刷新修复</h1>
+<div class="sub">主仓 /Users/dev/Claude code/Nebflow · main 分支 · 2026-09-03 · 节点「实施-子代理面板取消实时刷新·重派3」</div>
+
+<h2>① 根因定位</h2>
+<div class="card">
+  <span class="tag red">缺口环</span> <b>AgentControl cancel → 会话注销 → WS 广播：第三环整体缺失</b>
+  <ul style="margin:8px 0 0 18px; font-size:12.5px;">
+    <li>面板行由 <code>agentStart</code> 创建（main.js L1948，status='Processing'），只被 <code>agentDone</code>（L2056，done+2s 移除）或会话级 <code>done</code>（L954，node-/dispatcher- 同帧删行）清理。</li>
+    <li><b>取消路径零出口</b>：分发器 <code>ProjectActor.dispatcherBridge</code> 的 Failed|Cancelled 分支只做「清 registry + Stop agent」（ProjectActor.scala L299-300）——无任何 WS 帧；node 走 <code>NodeEngine</code> 桥 → resultDeferred(cancelled) → <code>cancelNode</code>，只发 <code>nodeUpdated</code>（Flow Map 契约帧，载荷仅 nodeId，无 agent sessionId，面板无法映射行）。</li>
+    <li>面板 cancelAgent 的应答 <code>cancelAgentResult{ok:true}</code> 只发往发起连接且注释明确「ok=true is silent」（managePanel.js L86-87）——而报告场景走 <b>AgentControl 工具路径</b>，连该帧都没有。</li>
+    <li>结果：幽灵 Processing 行滞留至刷新（activeAgents 快照重拉后 registry 已清，行消失）——与报告现象完全一致。</li>
+  </ul>
+</div>
+
+<h2>② 修复架构（后端补发 agentDone 同构帧 · 前端零逻辑新增复用既有终态管线）</h2>
+<div class="card">
+  <div class="flow-row">
+    <div class="flow-box"><b>触发（3 类）</b>AgentControl cancel（工具）<br>面板 cancelAgent WS<br>TaskStuckWatcher giveUp</div>
+    <div class="flow-arrow">→</div>
+    <div class="flow-box"><b>补发点（按域分流）</b>dispatcher-*：观察桥拆除点（ProjectActor，全路径唯一汇合点）<br>node-*：doCancel notifyWs / watcher giveUp</div>
+    <div class="flow-arrow">→</div>
+    <div class="flow-box"><b>NodeRunner.emitSubagentPanelDone</b>帧 {type:'agentDone', agentId:sid} 经 routeSubagentWsSend 注入三键（rootSessionId/sessionId/nodeSessionId）</div>
+    <div class="flow-arrow">→</div>
+    <div class="flow-box"><b>前端既有管线（零改动消费）</b>ws.js bg 拦截器 → convertAgentEvent 转会话级 done → 删行；agentDone → done 标记+2s 移除+弹窗清理</div>
+  </div>
+  <table>
+    <tr><th>场景</th><th>dispatcher-*</th><th>node-*</th></tr>
+    <tr><td>AgentControl 工具 cancel</td><td class="ok">桥拆除点 ✓</td><td class="ok">doCancel notifyWs ✓</td></tr>
+    <tr><td>面板 cancelAgent WS</td><td class="ok">桥拆除点 ✓</td><td class="ok">doCancel(连接 wsSend) ✓</td></tr>
+    <tr><td>watcher giveUp（卡死兜底）</td><td class="ok">桥拆除点 ✓</td><td class="ok">watcher wsHub ✓</td></tr>
+    <tr><td>会话崩溃（Failed）</td><td class="ok">桥拆除点 ✓</td><td class="no">NodeEngine 禁改域 → 遗留</td></tr>
+    <tr><td>Flow Map UI NodeCancel</td><td class="no">NodeTools 禁改域 → 遗留</td><td class="no">NodeTools 禁改域 → 遗留</td></tr>
+  </table>
+  <div class="note" style="margin-top:8px">禁改域：NodeEngine/NodeTools/FlowMapStore/ProjectTypes（deps 轨道）+ SandboxPolicy/FileSandbox/Seatbelt（沙箱域）——本修复全部绕开，实际改动 6 个主源文件 + 2 个新 spec。</div>
+</div>
+
+<h2>③ 验收结果</h2>
+<div class="grid">
+  <div class="card">
+    <span class="tag green">前端 Playwright 2 轮全绿</span>
+    <pre>tests/subagent-panel-cancel-realtime.spec.mjs（新增）
+  3 passed (33.3s) / 3 passed (32.4s)
+  · dispatcher-* 取消：出行 → 注入取消帧 → 行 2s 内移除
+    + 面板转空态 + 徽标归零隐藏 + 状态桶清空 + 无刷新探针存活
+  · node-* 取消：同契约 2s 内移除
+  · 回归：新会话实时出行 / agentToolStart 工具标签 /
+    delegate agentDone 2s 清理 全部保持
+相邻既有 spec（只读回归）：
+  bgagent-project-sessions 5/5 ✓（node/dispatcher 行 + 会话级 done 清理）
+  flowmap-realtime 2/2 ✓
+  bgagent-dedupe 1 例失败 = clean HEAD worktree 复现 → 既有问题
+  （zh-CN i18n 后 spec 英文断言过期，与本改动无关）</pre>
+  </div>
+  <div class="card">
+    <span class="tag blue">后端 sbt 子集</span>
+    <pre>sbt testOnly 四个 spec（含新增
+ProjectSessionCancelPanelFrameSpec 3 测试）：
+  · dispatcher cancel → 桥补发帧断言
+    （type=agentDone + nodeSessionId/rootSessionId）+ registry 清理
+  · node doCancel notifyWs → 帧契约五字段逐项断言（恰 1 帧）
+  · node watcher giveUp → taskStuck + agentDone 帧断言
+（结果见下方测试运行摘录）</pre>
+  </div>
+</div>
+
+<h2>④ 改动清单（文件级）</h2>
+<div class="card">
+  <ul class="file-list">
+    <li><code>core/node/NodeRunner.scala</code> — 新增 <code>emitSubagentPanelDone</code>：构造 {type:'agentDone', agentId} 帧并经 routeSubagentWsSend 注入三键（唯一帧构造点）。</li>
+    <li><code>core/project/ProjectActor.scala</code> — dispatcherBridge 增 rootSessionId 参数；Failed|Cancelled 分支拆除前补发面板帧（dispatcher 全取消/失败路径唯一汇合点）。</li>
+    <li><code>core/tools/AgentControlTool.scala</code> — doCancel 增 <code>notifyWs</code> 参数（默认 None 兼容既有调用）；node-* Flow 会话发 Cancelled 后补发；工具路径传 ctx.wsSend。</li>
+    <li><code>gateway/WebSocketRoutes.scala</code> — cancelAgent 面板路径传连接 wsSend 进 doCancel。</li>
+    <li><code>core/processor/TaskStuckWatcher.scala</code> — Flow giveUp 分支 node-* 经 wsHub 补发（dispatcher 由桥覆盖，不重发）。</li>
+    <li><code>web/js/main.js</code> — done 处理器 node-/dispatcher- 分支删行后立即按 agentDone 2s 收尾同款模式（setActiveView→updateBgAgentIndicator→还原）刷新归属桶徽标与打开中面板（修复删状态不渲染的滞留）。</li>
+    <li>新增 <code>src/test/.../ProjectSessionCancelPanelFrameSpec.scala</code>（3 测试）+ <code>tests/subagent-panel-cancel-realtime.spec.mjs</code>（3 测试）。</li>
+  </ul>
+</div>
+
+<h2>⑤ 遗留问题</h2>
+<div class="card">
+  <ul style="margin-left:18px; font-size:12.5px;">
+    <li><b>node-* 会话崩溃（AgentEvent.Failed）路径</b>仍在 NodeEngine.scala（禁改域）——面板行会滞留；恢复需在 NodeEngine 桥 Failed 分支补同款帧（deps 轨道合并后一行接入 emitSubagentPanelDone 即可）。</li>
+    <li><b>Flow Map UI NodeCancel 路径</b>在 NodeTools.scala（禁改域）——该路径取消后面板行滞留（Flow Map 卡片本身经 nodeUpdated 实时，主界面可见）；同款一行接入可修。</li>
+    <li>bgagent-dedupe.spec.mjs 1 例既有失败（clean HEAD 复现）：zh-CN i18n 中文化后 spec 断言仍期待英文 "running"——spec 自身需修，属 i18n 域，未越界代改。</li>
+    <li>「重启」场景：node-/dispatcher- 单次会话按设计拒绝 restart（cancel + 重新触发），Delegate/SubTask restart 经 supervisor respawn 重发 agentStart 自然刷新——均无面板缺口，无需改动。</li>
+  </ul>
+</div>
+</body>
+</html>

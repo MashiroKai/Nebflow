@@ -1,0 +1,735 @@
+<!DOCTYPE html>
+<html lang="zh-CN" data-theme="dark">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Nebflow · 麦克风液态光球 · v6 重做（Siri 液态晶莹球）</title>
+<style>
+/* ============================================================
+   Nebflow Mic Bubble — v6.0 重做（自包含单文件）
+   ============================================================
+   前史：v2 空心被打回 → v3 实心但「少了泡泡的清透感，光斑过大」
+   → v4 清透但「浅色浑浊」→ v5 浅色独立调参（盲调，未经视觉验证）。
+   用户 08-25 23:58 裁定：「麦克风 · 液态光球 重做，用kimi」。
+   v6 = 不基于 v5 修补，材质整体重写：
+     ① 结构收敛：v4/v5 的 11 层 additive 叠加（光斑/壳层/核心/背光
+        层层相加 → 层次互糊，浅色浑浊的结构性根因）→ 8 个克制组件。
+     ② Siri 流动感：域扭曲 simplex 流体（domain-warped noise）做内部
+        蓝紫大理石纹流动，取代角向渐变旋转（v2-v5 的"转圈"感）。
+     ③ 晶莹感：pow5 噪声细丝（细亮纹，非面状光斑）+ 紧致高光点
+        （pow 90/140，白心 ~2px@48px）+ 小型底部焦散。
+     ④ 浅色独立分支：显式 isLight uniform（不再用 bgLuminance 启发式
+        混灰）——浅色=提饱和宝石色 + 饱和深边（fresnel 向深色混，
+        玻璃弹珠在白底上的全反射暗边），绝不向白/灰稀释。
+     ⑤ 边缘语义分主题：深色=fresnel 发光边（Siri  luminous 感）；
+        浅色=饱和宝石边。光晕 halo 深色专属，浅色=0（白底光晕=浑浊）。
+   调色板（orb-blue #78A0DC / orb-violet #8C7DD6 / orb-deep #334080）保持。
+   材质规范见同目录 mic-bubble-spec.md §5.1（v6.0 重写）。
+   ============================================================ */
+:root{
+  --bg:#13161c; --bg-soft:#171b23; --card:#1a1f27; --border:rgba(255,255,255,0.07);
+  --text:#e8eaed; --text-muted:#81838a; --text-dim:#7b7e88;
+  --primary:#07c160; --error:#f44336;
+  /* mic-orb family —— sapphire 衍生（见 spec §5.1） */
+  --orb-blue:#78A0DC; --orb-violet:#8C7DD6; --orb-deep:#334080;
+  --sapphire:91 127 191; --sapphire-glow:120 160 220;
+  --glass-bg:rgba(255,255,255,0.05); --glass-bg-hover:rgba(255,255,255,0.10);
+  --glass-border:rgba(255,255,255,0.08); --glass-hi:rgba(255,255,255,0.08);
+  --glass-undere:rgba(0,0,0,0.25); --blur:10px;
+  --mono:"SF Mono","JetBrains Mono","Cascadia Code",ui-monospace,monospace;
+  --ease:cubic-bezier(0.16,1,0.3,1);
+}
+[data-theme="light"]{
+  --bg:#f5f6f8; --bg-soft:#eef0f3; --card:#ffffff; --border:rgba(27,30,38,0.10);
+  --text:#1b1e26; --text-muted:#717379; --text-dim:#aaacb3;
+  --glass-bg:rgba(255,255,255,0.45); --glass-bg-hover:rgba(255,255,255,0.65);
+  --glass-border:rgba(255,255,255,0.40); --glass-hi:rgba(255,255,255,0.50);
+  --glass-undere:rgba(0,0,0,0.08);
+}
+/* v6 浅色主题：canvas 外发光完全关闭（白底光晕=浑浊根因之一，shader 内 halo 也已浅色=0） */
+[data-theme="light"] .hero-orb-wrap canvas,
+[data-theme="light"] .micbubble canvas{ box-shadow:none; }
+[data-theme="light"] .css-orb{
+  background:radial-gradient(120% 120% at 32% 28%, #a6c0f0 0%, #8C7DD6 48%, #2a3766 100%);
+  box-shadow:inset 0 0 8px rgba(255,255,255,0.30), inset -3px -5px 12px rgba(40,50,90,0.16),
+    0 2px 6px rgba(40,50,90,0.12);
+}
+*{margin:0;padding:0;box-sizing:border-box;}
+body{
+  font-family:-apple-system,BlinkMacSystemFont,"PingFang SC","Microsoft YaHei",system-ui,sans-serif;
+  background:var(--bg); color:var(--text);
+  min-height:100vh; padding:36px clamp(16px,5vw,72px) 72px; line-height:1.45;
+  -webkit-font-smoothing:antialiased; transition:background .3s,color .3s;
+}
+body::before,body::after{
+  content:""; position:fixed; z-index:-1; border-radius:50%; filter:blur(90px); pointer-events:none;
+  opacity:.22; transition:opacity .3s;
+}
+body::before{ width:560px;height:560px; background:radial-gradient(circle,rgb(var(--sapphire-glow)/0.30),transparent 70%); top:-140px; left:-100px; }
+body::after{ width:440px;height:440px; background:radial-gradient(circle,rgba(140,125,214,0.20),transparent 70%); bottom:-160px; right:-60px; }
+
+.header{ max-width:1180px; margin:0 auto 16px; }
+.header h1{ font-size:clamp(20px,3vw,28px); font-weight:600; letter-spacing:-.2px; }
+.header h1 .accent{ background:linear-gradient(90deg,var(--orb-blue),var(--orb-violet)); -webkit-background-clip:text; background-clip:text; color:transparent; }
+.header p{ color:var(--text-muted); font-size:14px; margin-top:6px; max-width:900px; }
+.header p b{ color:var(--text); font-weight:600; }
+.theme-toggle{
+  float:right; margin-top:-4px;
+  background:var(--glass-bg); border:1px solid var(--glass-border); color:var(--text);
+  padding:8px 14px; border-radius:10px; font-size:13px; cursor:pointer;
+  -webkit-backdrop-filter:blur(var(--blur)) saturate(1.2); backdrop-filter:blur(var(--blur)) saturate(1.2);
+  box-shadow:inset 0 1px 0 var(--glass-hi), inset 0 -1px 0 var(--glass-undere), 0 1px 3px rgba(0,0,0,.2);
+  transition:background .15s,transform .15s;
+}
+.theme-toggle:hover{ background:var(--glass-bg-hover); }
+.theme-toggle:active{ transform:scale(.97); }
+.status-pill{
+  display:inline-flex; align-items:center; gap:7px; margin-top:10px;
+  font-size:12px; color:var(--text-muted);
+  background:var(--glass-bg); border:1px solid var(--glass-border); border-radius:20px; padding:5px 12px;
+  -webkit-backdrop-filter:blur(8px); backdrop-filter:blur(8px);
+}
+.status-pill i{ width:8px; height:8px; border-radius:50%; background:var(--primary); box-shadow:0 0 8px var(--primary); }
+.status-pill.off i{ background:var(--text-dim); box-shadow:none; }
+
+/* ---------- hero : 材质细节展示 ---------- */
+.hero{
+  max-width:1180px; margin:20px auto 14px;
+  background:var(--card); border:1px solid var(--border); border-radius:18px;
+  padding:26px 28px; display:flex; gap:34px; align-items:center; flex-wrap:wrap;
+}
+.hero-orb-wrap{ position:relative; width:150px; height:150px; flex-shrink:0; margin:6px auto; }
+.hero-orb-wrap canvas, .hero-orb-wrap .css-orb{ width:150px; height:150px; display:block; border-radius:50%; }
+.hero-orb-wrap canvas{
+  box-shadow:0 0 18px rgba(120,160,220,0.28), 0 0 40px rgba(120,160,220,0.12);
+}
+.hero-annot{ flex:1; min-width:300px; }
+.hero-annot h3{ font-size:14px; font-weight:600; margin-bottom:10px; }
+.hero-annot .layer{
+  display:flex; align-items:center; gap:10px; padding:6px 0; font-size:12.5px; color:var(--text-muted);
+  border-bottom:1px dashed var(--border);
+}
+.hero-annot .layer:last-child{ border-bottom:none; }
+.hero-annot .layer b{ width:96px; font-weight:600; color:var(--text); font-size:12px; flex-shrink:0; }
+.hero-annot .layer .sw{ width:14px; height:14px; border-radius:50%; flex-shrink:0;
+  box-shadow:inset 0 0 0 1px rgba(255,255,255,.12); }
+.hero-annot .layer code{ font-family:var(--mono); font-size:10.5px; color:rgb(var(--sapphire-glow)); }
+
+/* ---------- grid ---------- */
+.grid{ max-width:1180px; margin:0 auto; display:grid; grid-template-columns:repeat(auto-fit,minmax(340px,1fr)); gap:22px; }
+.card{ background:var(--card); border:1px solid var(--border); border-radius:18px; padding:20px; transition:border-color .2s, box-shadow .2s; }
+.card:hover{ border-color:rgb(var(--sapphire)/0.30); box-shadow:0 6px 24px rgba(0,0,0,0.14); }
+.card .badge{ float:right; font-size:10px; font-weight:600; letter-spacing:.4px; padding:3px 9px; border-radius:20px; }
+.badge-core{ background:rgba(140,125,214,0.16); color:var(--orb-violet); }
+
+/* ---------- stage : mini input bar ---------- */
+.stage{ margin:14px 0 16px; padding:20px 16px; background:var(--bg-soft); border:1px solid var(--border); border-radius:14px; display:flex; align-items:center; justify-content:center; min-height:150px; }
+.mini-bar{
+  width:100%; max-width:380px; display:flex; align-items:center; gap:10px;
+  background:var(--glass-bg); border:1px solid var(--glass-border); border-radius:24px; padding:7px 9px;
+  -webkit-backdrop-filter:blur(var(--blur)) saturate(1.2); backdrop-filter:blur(var(--blur)) saturate(1.2);
+  box-shadow:inset 0 1px 0 var(--glass-hi), inset 0 -1px 0 var(--glass-undere), 0 2px 10px rgba(0,0,0,.10);
+  transition:border-color .3s, background .3s, box-shadow .3s;
+}
+.mini-input{ flex:1; height:38px; display:flex; align-items:center; padding:0 6px; font-size:12.5px; color:var(--text-muted); gap:6px; min-width:0; }
+.mini-input .caret{ width:1.5px; height:15px; background:var(--primary); margin-left:2px; animation:caret 1.1s steps(2) infinite; }
+@keyframes caret{ 0%{opacity:0} 50%{opacity:1} }
+.mini-send{
+  width:34px; height:34px; border-radius:50%; flex-shrink:0;
+  background:rgba(7,193,96,0.42); display:flex; align-items:center; justify-content:center;
+  -webkit-backdrop-filter:blur(8px) saturate(1.3); backdrop-filter:blur(8px) saturate(1.3);
+  border:1px solid rgba(7,193,96,0.15);
+  box-shadow:inset 0 1px 0 rgba(255,255,255,.35), inset 0 -1px 0 rgba(0,0,0,.08), 0 1px 4px rgba(7,193,96,.2);
+}
+.mini-send svg{ width:15px; height:15px; stroke:#fff; stroke-width:2.5; fill:none; stroke-linecap:round; stroke-linejoin:round; }
+
+/* ============================================================
+   MIC ORB —— 核心结构
+   <button.micbubble> > canvas#orb（WebGL 液态光球）/ .css-orb（降级）
+   + .frost-ring（冻结霜环，CSS 叠加）
+   ============================================================ */
+.micbubble{
+  position:relative; width:54px; height:54px; border:none; padding:0; flex-shrink:0;
+  background:transparent; cursor:pointer; display:flex; align-items:center; justify-content:center;
+  -webkit-tap-highlight-color:transparent; border-radius:50%;
+}
+.micbubble canvas, .micbubble .css-orb{ width:48px; height:48px; display:block; border-radius:50%;
+  transition:opacity .3s, filter .3s; }
+.micbubble canvas{
+  box-shadow:0 0 10px rgba(120,160,220,0.25), 0 0 22px rgba(120,160,220,0.10);
+}
+.micbubble.listening canvas{ width:54px; height:54px; transition:width .25s var(--ease), height .25s var(--ease); }
+.micbubble.frozen canvas, .micbubble.frozen .css-orb{ opacity:.72; filter:saturate(.35); }
+.micbubble.frozen{ cursor:not-allowed; }
+
+/* 冻结霜环 —— 3px，与 #input-bar.frozen 同族（input.css L153-158） */
+.frost-ring{
+  position:absolute; inset:0; border-radius:50%; pointer-events:none; opacity:0; transition:opacity .3s;
+}
+.micbubble.frozen .frost-ring{
+  opacity:1;
+  box-shadow:0 0 0 3px rgb(var(--sapphire)/0.12), 0 0 20px rgb(var(--sapphire-glow)/0.28);
+}
+
+/* ---------- info ---------- */
+.info{ padding:0 2px; }
+.info .name{ font-size:15px; font-weight:600; display:flex; align-items:center; gap:8px; }
+.info .name .k{ font-size:10px; color:var(--text-dim); font-weight:500; font-family:var(--mono); }
+.info .desc{ font-size:12.5px; color:var(--text-muted); margin:5px 0 10px; line-height:1.5; }
+.info .desc b{ color:var(--text); font-weight:600; }
+.info .source{
+  display:inline-flex; align-items:center; gap:6px;
+  font-family:var(--mono); font-size:10.5px; color:rgb(var(--sapphire-glow));
+  background:rgb(var(--sapphire)/0.10); border:1px solid rgb(var(--sapphire)/0.25);
+  border-radius:20px; padding:3px 10px;
+}
+.info .source.red{ color:#ff8a80; background:rgba(244,67,54,0.10); border-color:rgba(244,67,54,0.25); }
+.info .interact{ font-size:12px; color:var(--text-dim); margin-top:8px; }
+.info .interact b{ color:var(--primary); font-weight:600; }
+
+/* ---------- footer ---------- */
+.footer{
+  max-width:1180px; margin:22px auto 0; font-size:12px; color:var(--text-muted); line-height:1.7;
+  background:var(--card); border:1px solid var(--border); border-radius:14px; padding:16px 20px;
+}
+.footer b{ color:var(--text); font-weight:600; }
+.footer code{ font-family:var(--mono); font-size:11px; color:rgb(var(--sapphire-glow)); }
+.footer .row{ padding:3px 0; }
+
+/* ============================================================
+   CSS 液态降级材质（WebGL 不可用 / prefers-reduced-motion 静止帧）
+   与 shader 同源视觉（v6：大理石纹 + 细丝 + 收敛高光 + 分主题边缘）
+   ============================================================ */
+.css-orb{
+  position:relative; border-radius:50%;
+  background:
+    radial-gradient(120% 120% at 32% 28%, var(--orb-violet) 0%, var(--orb-blue) 45%, var(--orb-deep) 100%);
+  box-shadow:
+    inset 0 0 8px rgba(255,255,255,0.10),
+    inset -3px -5px 14px rgba(20,26,60,0.42),
+    0 0 14px rgba(120,160,220,0.28),
+    0 2px 8px rgba(0,0,0,0.22);
+}
+.css-orb::before{  /* 壳层微亮 + 收敛小高光 */
+  content:""; position:absolute; inset:0; border-radius:50%;
+  background:
+    radial-gradient(72% 62% at 50% 42%, rgba(255,255,255,0.07) 0%, transparent 62%),
+    radial-gradient(12% 9% at 62% 30%, rgba(255,255,255,0.85) 0%, rgba(255,255,255,0.20) 52%, transparent 78%);
+}
+.css-orb::after{  /* 流体细丝 + 内核透光 + 底部焦散（屏幕混合，克制） */
+  content:""; position:absolute; inset:0; border-radius:50%;
+  background:
+    radial-gradient(40% 30% at 34% 58%, rgba(255,255,255,0.14) 0%, transparent 62%),
+    radial-gradient(10% 8% at 28% 56%, rgba(255,255,255,0.34) 0%, transparent 72%),
+    radial-gradient(30% 22% at 52% 88%, rgba(120,160,220,0.20) 0%, transparent 70%),
+    radial-gradient(6% 6% at 64% 66%, rgba(255,255,255,0.42) 0%, transparent 78%);
+  mix-blend-mode:screen; animation:css-flow 9s ease-in-out infinite;
+}
+@keyframes css-flow{
+  0%,100%{ transform:translate(0,0) scale(1); opacity:.85; }
+  33%{ transform:translate(6%,-5%) scale(1.06); opacity:1; }
+  66%{ transform:translate(-5%,6%) scale(.97); opacity:.8; }
+}
+.micbubble.listening .css-orb{ animation:css-blob 1.4s ease-in-out infinite; }
+.micbubble.listening .css-orb::after{ animation-duration:3.2s; }
+@keyframes css-blob{
+  0%,100%{ border-radius:50% 50% 50% 50% / 50% 50% 50% 50%; }
+  30%{ border-radius:56% 44% 47% 53% / 53% 46% 54% 47%; }
+  60%{ border-radius:46% 54% 55% 45% / 47% 55% 45% 53%; }
+}
+.micbubble.frozen .css-orb{ filter:saturate(.35); opacity:.72; animation:none; }
+.micbubble.frozen .css-orb::after{ animation:none; }
+
+@media (prefers-reduced-motion: reduce){
+  *{ animation-duration:.01s !important; animation-iteration-count:1 !important; }
+}
+</style>
+</head>
+<body>
+
+<div class="header">
+  <button class="theme-toggle" id="themeToggle">切换到浅色</button>
+  <h1>麦克风 · 液态光球 <span class="accent">v6 · Siri 液态晶莹球</span></h1>
+  <p><b>v6 重做</b>（用户 08-25 23:58「重做，用kimi」）——不基于 v5 修补。v4/v5 的 11 层 additive 叠加是「层次互糊、浅色浑浊」的<b>结构性根因</b>，本轮材质整体重写：收敛为 <b>8 个克制组件</b>；内部改<b>域扭曲流体</b>（domain-warped noise 大理石纹流动 = Siri 液态感）；晶莹感靠 <b>pow5 细亮丝 + 紧致高光点</b>（非面状光斑）；浅色走<b>显式 isLight 独立分支</b>——提饱和宝石色 + 饱和深边，<b>绝不向白/灰稀释</b>，halo 深色专属。本轮由 design-engineer 以 kimi 视觉能力<b>亲自截图看图迭代</b>（修复前 5 轮盲调的流程根因）。</p>
+  <div class="status-pill" id="renderPill"><i></i><span id="renderStatus">WebGL 渲染中…</span></div>
+</div>
+
+<!-- ================= hero : 材质细节 ================= -->
+<div class="hero">
+  <div class="hero-orb-wrap">
+    <canvas id="heroOrb" width="300" height="300" aria-label="液态光球材质展示"></canvas>
+    <div class="css-orb" style="display:none"></div>
+  </div>
+  <div class="hero-annot">
+    <h3>液态光球材质 · 组件结构（spec §5.1 · v6.0 重写：11 层 → 8 组件）</h3>
+    <div class="layer"><b>C1 液态轮廓</b><span class="sw" style="background:radial-gradient(circle at 50% 42%,#c3d2f0,#5573b8 65%)"></span><span>噪声调制有机半径，实心 alpha + 边缘 ~10% 羽化</span><code>r0=mix(.80,.94,noise)</code></div>
+    <div class="layer"><b>C2 域扭曲流体</b><span class="sw" style="background:linear-gradient(120deg,#8C7DD6,#78A0DC)"></span><span>domain-warped simplex → 蓝紫大理石纹流动（Siri 液态感，取代角向转圈）</span><code>p=uv+0.30·warp</code></div>
+    <div class="layer"><b>C3 晶莹细丝</b><span class="sw" style="background:radial-gradient(circle,#eaf1fd 0%,transparent 70%)"></span><span>pow5 锐化噪声 → 细亮纹（光在流体中的折射丝，非面状光斑）</span><code>+ice·pow(f2,5)·.30</code></div>
+    <div class="layer"><b>C4 体积明暗</b><span class="sw" style="background:radial-gradient(circle at 32% 30%,#d7e2f8,#334080 78%)"></span><span>球面法线×左上光源（暗部保持明亮不死黑）</span><code>N·L · shade .62/.50–1.06</code></div>
+    <div class="layer"><b>C5 内核透光</b><span class="sw" style="background:radial-gradient(circle,#dce9fb,#7fa4dd 60%)"></span><span>克制的内核发光（光从内部透出，0.22/0.14 收敛）</span><code>core·pulse·.22</code></div>
+    <div class="layer"><b>C6 分主题边缘</b><span class="sw" style="background:conic-gradient(from 0deg,#334080,#8C7DD6,#334080)"></span><span>深色=fresnel 发光边（Siri luminous）；浅色=饱和宝石深边（白底全反射暗边）</span><code>fres^2.4 分支</code></div>
+    <div class="layer"><b>C7 收敛高光</b><span class="sw" style="background:radial-gradient(circle,#ffffff 0%,transparent 70%)"></span><span>紧致镜面小点（pow90/140，白心 ~2px@48px）+ 小型底部焦散</span><code>pow(N·H,90..140)</code></div>
+    <div class="layer"><b>C8 光晕·深色专属</b><span class="sw" style="background:radial-gradient(circle,rgba(120,160,220,.5),transparent 75%)"></span><span>halo 深色 0.22 / 浅色 0（白底光晕=浑浊根因，彻底关闭）</span><code>halo·(1-isLight)</code></div>
+    <div class="layer"><b>形变/冻结</b><span class="sw" style="background:conic-gradient(from 0deg,#8C7DD6,#78A0DC,#8C7DD6)"></span><span>listening 音量驱动 UV 扰动；冻结=去饱和+降亮+静止</span><code>hover·.1·sin · sat .35</code></div>
+  </div>
+</div>
+
+<div class="grid">
+
+  <!-- ========== 1. idle 静止 ========== -->
+  <div class="card" data-state="idle">
+    <span class="badge badge-core">基础本体 · 静止</span>
+    <div class="stage"><div class="mini-bar">
+      <button class="micbubble" aria-label="空闲，点击开始说话">
+        <span class="frost-ring"></span>
+        <canvas class="orb-canvas" data-state="idle" width="96" height="96"></canvas>
+        <div class="css-orb" style="display:none"></div>
+      </button>
+      <div class="mini-input"><span>Type a message…</span><span class="caret"></span></div>
+      <div class="mini-send"><svg viewBox="0 0 24 24"><path d="m22 2-7 20-4-9-9-4Z"/><path d="M22 2 11 13"/></svg></div>
+    </div></div>
+    <div class="info">
+      <div class="name">空闲 <span class="k">idle</span></div>
+      <div class="desc"><b>Siri 液态晶莹球</b>静止待命：实心体积（alpha 内部=1）+ 域扭曲蓝紫流体缓慢流动 + 晶莹细丝与内核透光。深色=fresnel 发光边 + 柔和 halo；浅色=饱和宝石色 + 深边定义，<b>清透不浑浊</b>。±2% 呼吸。</div>
+      <div class="source">默认态 · 无额外数据源</div>
+      <div class="interact"><b>点击</b> → 进入「听写中」</div>
+    </div>
+  </div>
+
+  <!-- ========== 2. listening 听写中（音量形变） ========== -->
+  <div class="card" data-state="listening">
+    <span class="badge badge-core">基础本体 · 震动</span>
+    <div class="stage"><div class="mini-bar">
+      <button class="micbubble listening" aria-label="正在聆听，点击停止">
+        <span class="frost-ring"></span>
+        <canvas class="orb-canvas" data-state="listening" width="108" height="108"></canvas>
+        <div class="css-orb" style="display:none"></div>
+      </button>
+      <div class="mini-input"><span style="color:var(--primary)">正在聆听…</span><span class="caret"></span></div>
+      <div class="mini-send"><svg viewBox="0 0 24 24"><path d="m22 2-7 20-4-9-9-4Z"/><path d="M22 2 11 13"/></svg></div>
+    </div></div>
+    <div class="info">
+      <div class="name">听写中 <span class="k">listening</span></div>
+      <div class="desc">流体球随语音<b>振幅有机形变</b>（UV 正弦扰动，位移 ∝ RMS）+ 内部流动加快 + 微 hue 偏青。形变映射见 spec §5.3。此卡用模拟 RMS 演示。</div>
+      <div class="source">voiceEngine.onState('listening') · 振幅 = onMicChunk RMS（现成）</div>
+      <div class="interact"><b>再点一下</b> → 停止</div>
+    </div>
+  </div>
+
+</div>
+
+<div class="footer">
+  <div class="row"><b>v6.0 重做（用户 08-25 23:58「麦克风 · 液态光球 重做，用kimi」）</b>：不基于 v5 修补。① <b>结构收敛</b>：v4/v5 的 11 层 additive 叠加（壳层/背光/核心/光斑层层相加）是层次互糊与浅色浑浊的结构性根因 → 重写为 8 个克制组件，每个组件职责单一、强度收敛。② <b>Siri 液态感</b>：内部着色从「角向渐变转圈」改为<b>域扭曲 simplex 流体</b>（<code>p=uv+0.30·vec2(snoise,snoise)</code>，双层频率 1.5/3.2）→ 蓝紫大理石纹自然流动。③ <b>晶莹感</b>：<code>pow(f2,5)</code> 细亮丝（浅色 0.22/深色 0.30）+ 紧致高光 <code>pow(N·H, 90深/140浅)</code>（白心 ~2px@48px，比 v4 的 4px 再收一半）+ 小型底部焦散（0.30r0 范围、0.20/0.14 强度）。④ <b>浅色独立分支</b>：显式 <code>isLight</code> uniform（JS 从 data-theme 直读，不再用 bgLuminance 启发式）——浅色=饱和度 ×1.28 + 暗部下压 0.50 + fresnel 向 <code>c3·1.1</code> 混 0.42（玻璃弹珠在白底上的全反射深边=定义感来源）+ 高光更小更亮（140/0.85）；<b>全程零灰白稀释</b>。⑤ <b>halo 深色专属</b>：浅色 shader 内 halo=0 且 CSS box-shadow 发光也关闭。⑥ <b>混合修正</b>：输出改非预乘 alpha（v2-v5 的 <code>rgb·a</code> 预乘输出 + SRC_ALPHA 混合 = 边缘双重变暗 bug，一并修复）。</div>
+  <div class="row"><b>视觉闭环（本轮流程修复）</b>：前 5 轮 design-engineer 从未真正看到渲染结果（v5 连 Read 图都被拒）= 盲调。本轮 vision preset = kimi/k3-256k，渲染 → 截图（深/浅）→ 亲自看图自评 → 调参 → 再看，迭代至观感达标再交付。自评记录见交付回报与 spec §11。</div>
+  <div class="row"><b>技术路线（v2 裁定保持）</b>：<b>WebGL shader 为生产主路径</b>——~110 行 GLSL，48px 单球渲染 < 0.3ms/帧，RAF 常驻成本可忽略；同时可见最多 2 球 = 2 个 WebGL context（浏览器上限 8-16，安全）。<code>CSS 液态分层</code>作为 WebGL 不可用 / prefers-reduced-motion 降级。</div>
+  <div class="row"><b>状态叠加层</b>（busy 绿光晕 / bg-agents 蓝轨道 / processing / error / offline）本轮不动，基础气泡本体质感确认后下一轮叠加——9 态枚举用户已认可，数据源全部现成（spec §9 保留）。frozen 材质（去饱和+霜环+「跳过本次」按钮）实现按 spec §3.1 保持。</div>
+  <div class="row"><b>动效可达性</b>：<code>prefers-reduced-motion: reduce</code> 下降级为静止帧（RAF 停 + timeScale=0）。URL 参数 <code>?theme=light|dark</code> 可指定初始主题（截图验收用）。</div>
+</div>
+
+<script>
+(function(){
+  'use strict';
+
+  /* ==========================================================
+     OrbRenderer v6 —— jarvis WebGL 路线（React Bits shader 骨架）
+     v6.0 材质整体重写：8 组件（见 spec §5.1）
+     uniforms: hue/hover/rot（状态）+ isLight（显式主题分支）
+             + sat/lum/timeScale（冻结降级）
+     ========================================================== */
+  var VS = [
+    'precision highp float;',
+    'attribute vec2 position; attribute vec2 uv;',
+    'varying vec2 vUv;',
+    'void main(){ vUv=uv; gl_Position=vec4(position,0.0,1.0); }'
+  ].join('\n');
+
+  var FS = [
+    'precision highp float;',
+    'uniform float iTime; uniform vec3 iResolution;',
+    'uniform float hue; uniform float hover; uniform float rot;',
+    'uniform float hoverIntensity; uniform float isLight;',
+    'uniform float sat; uniform float lum; uniform float timeScale;',
+    'varying vec2 vUv;',
+    'vec3 rgb2yiq(vec3 c){',
+    '  float y=dot(c,vec3(0.299,0.587,0.114));',
+    '  float i=dot(c,vec3(0.596,-0.274,-0.322));',
+    '  float q=dot(c,vec3(0.211,-0.523,0.312));',
+    '  return vec3(y,i,q);',
+    '}',
+    'vec3 yiq2rgb(vec3 c){',
+    '  return vec3(c.x+0.956*c.y+0.621*c.z, c.x-0.272*c.y-0.647*c.z, c.x-1.106*c.y+1.703*c.z);',
+    '}',
+    'vec3 adjustHue(vec3 color,float hueDeg){',
+    '  float hueRad=hueDeg*3.14159265/180.0;',
+    '  vec3 yiq=rgb2yiq(color);',
+    '  float cosA=cos(hueRad), sinA=sin(hueRad);',
+    '  float i=yiq.y*cosA-yiq.z*sinA;',
+    '  float q=yiq.y*sinA+yiq.z*cosA;',
+    '  yiq.y=i; yiq.z=q;',
+    '  return yiq2rgb(yiq);',
+    '}',
+    'vec3 hash33(vec3 p3){',
+    '  p3=fract(p3*vec3(0.1031,0.11369,0.13787));',
+    '  p3+=dot(p3,p3.yxz+19.19);',
+    '  return -1.0+2.0*fract(vec3(p3.x+p3.y,p3.x+p3.z,p3.y+p3.z)*p3.zyx);',
+    '}',
+    'float snoise3(vec3 p){',
+    '  const float K1=0.333333333; const float K2=0.166666667;',
+    '  vec3 i=floor(p+(p.x+p.y+p.z)*K1);',
+    '  vec3 d0=p-(i-(i.x+i.y+i.z)*K2);',
+    '  vec3 e=step(vec3(0.0),d0-d0.yzx);',
+    '  vec3 i1=e*(1.0-e.zxy);',
+    '  vec3 i2=1.0-e.zxy*(1.0-e);',
+    '  vec3 d1=d0-(i1-K2);',
+    '  vec3 d2=d0-(i2-K1);',
+    '  vec3 d3=d0-0.5;',
+    '  vec4 h=max(0.6-vec4(dot(d0,d0),dot(d1,d1),dot(d2,d2),dot(d3,d3)),0.0);',
+    '  vec4 n=h*h*h*h*vec4(dot(d0,hash33(i)),dot(d1,hash33(i+i1)),dot(d2,hash33(i+i2)),dot(d3,hash33(i+1.0)));',
+    '  return dot(vec4(31.316),n);',
+    '}',
+    '/* mic-orb palette —— spec §5.1（sapphire 家族衍生） */',
+    'const vec3 C_BLUE  =vec3(0.471,0.627,0.863); /* orb-blue   #78A0DC */',
+    'const vec3 C_VIOLET=vec3(0.549,0.490,0.839); /* orb-violet #8C7DD6 */',
+    'const vec3 C_DEEP  =vec3(0.200,0.251,0.502); /* orb-deep   #334080 */',
+    'const vec3 C_ICE   =vec3(0.845,0.905,0.985); /* icy highlight */',
+    'vec4 draw(vec2 uv){',
+    '  float t=iTime*timeScale;',
+    '  vec3 c1=adjustHue(C_BLUE,hue);',
+    '  vec3 c2=adjustHue(C_VIOLET,hue);',
+    '  vec3 c3=adjustHue(C_DEEP,hue);',
+    '  float len=length(uv);',
+    '',
+    '  /* C1 液态轮廓：噪声调制有机半径 + 实心 alpha + 边缘羽化 */',
+    '  float nEdge=snoise3(vec3(uv*0.9,t*0.4))*0.5+0.5;',
+    '  float r0=mix(0.80,0.94,nEdge);',
+    '  float bodyA=1.0-smoothstep(r0,r0*1.10,len);',
+    '',
+    '  /* C2 域扭曲流体：warp 后双层噪声 → 蓝紫大理石纹流动（Siri 液态感） */',
+    '  vec2 w=vec2(snoise3(vec3(uv*1.3+vec2(0.0,t*0.10),t*0.30)),',
+    '              snoise3(vec3(uv*1.3+vec2(5.2,-t*0.08),t*0.30)));',
+    '  vec2 p=uv+0.30*w;',
+    '  float f1=snoise3(vec3(p*1.5,t*0.40))*0.5+0.5;',
+    '  float f2=snoise3(vec3(p*3.2+vec2(2.7),t*0.55))*0.5+0.5;',
+    '  vec3 col=mix(c3*1.22,c1*1.04,smoothstep(0.20,0.80,f1));',
+    '  col=mix(col,c2,smoothstep(0.35,0.85,f1*0.5+f2*0.5)*0.55);',
+    '',
+    '  /* C3 晶莹细丝：pow5 锐化 → 细亮纹（非面状光斑） */',
+    '  col+=C_ICE*pow(f2,5.0)*mix(0.38,0.30,isLight);',
+    '',
+    '  /* C4 体积明暗：球面法线×左上光源（屏幕坐标 uv.y 向上=视觉上，Ld.y 取正；暗部不死黑） */',
+    '  float R=r0*0.985;',
+    '  float z=sqrt(max(R*R-len*len,0.0));',
+    '  vec3 N=normalize(vec3(uv,z));',
+    '  vec3 Ld=normalize(vec3(-0.42,0.50,0.66));',
+    '  float diff=clamp(dot(N,Ld),0.0,1.0);',
+    '  float shade=mix(mix(0.62,0.62,isLight),1.12,pow(diff,0.9));',
+    '  col*=shade;',
+    '',
+    '  /* C5 内核透光：克制发光芯（光从内部透出） */',
+    '  float core=1.0-smoothstep(0.0,r0*0.58,len);',
+    '  float pulse=0.88+0.12*snoise3(vec3(uv*2.2,t*0.8));',
+    '  col+=mix(c1,C_ICE,0.4)*core*pulse*mix(0.28,0.20,isLight);',
+    '',
+    '  /* C6 分主题边缘：深色=fresnel 发光边；浅色=饱和宝石深边（全反射暗边） */',
+    '  float fres=pow(1.0-clamp(N.z,0.0,1.0),2.4);',
+    '  vec3 rimBright=mix(c1,C_ICE,0.5);',
+    '  col+=rimBright*fres*(1.0-isLight)*0.50;',
+    '  col=mix(col,c3*1.10,fres*isLight*0.42);',
+    '  col+=rimBright*fres*isLight*0.10;',
+    '',
+    '  /* C7 收敛高光：紧致镜面小点 + 微晕 + 小型底部焦散 */',
+    '  vec3 H=normalize(Ld+vec3(0.0,0.0,1.0));',
+    '  float ndh=clamp(dot(N,H),0.0,1.0);',
+    '  col+=vec3(1.0,0.99,0.97)*pow(ndh,mix(90.0,140.0,isLight))*mix(0.75,0.85,isLight);',
+    '  col+=C_ICE*pow(ndh,8.0)*0.10;',
+    '  float ca=1.0-smoothstep(0.0,r0*0.30,distance(uv,vec2(0.10,-0.42)*r0));',
+    '  col+=mix(c1,C_ICE,0.3)*ca*ca*mix(0.20,0.14,isLight);',
+    '',
+    '  /* 浅色：整体微抬亮度 + 提饱和（宝石色，绝不向白/灰稀释） */',
+    '  col*=mix(1.0,1.10,isLight);',
+    '  float g0=dot(col,vec3(0.299,0.587,0.114));',
+    '  col=mix(col,mix(vec3(g0),col,1.28),isLight);',
+    '  col=clamp(col,0.0,1.0);',
+    '',
+    '  /* C8 光晕：深色专属（浅色=0，白底光晕=浑浊根因） */',
+    '  float halo=exp(-max(len-r0*1.02,0.0)*10.0)*(1.0-bodyA);',
+    '  float haloA=halo*0.22*(1.0-isLight);',
+    '  vec3 haloCol=mix(c1,c2,0.5)*1.1;',
+    '  vec3 outCol=mix(col,haloCol,clamp(haloA*1.5,0.0,1.0)*(1.0-bodyA));',
+    '  float a=clamp(bodyA+haloA,0.0,1.0);',
+    '',
+    '  /* 冻结：去饱和 + 降亮（含光晕） */',
+    '  float gg=dot(outCol,vec3(0.299,0.587,0.114));',
+    '  outCol=mix(vec3(gg),outCol,sat)*lum;',
+    '  return vec4(clamp(outCol,0.0,1.0),a);',
+    '}',
+    'vec4 mainImage(vec2 fragCoord){',
+    '  vec2 center=iResolution.xy*0.5;',
+    '  float size=min(iResolution.x,iResolution.y);',
+    '  vec2 uv=(fragCoord-center)/size*2.0;',
+    '  float angle=rot;',
+    '  float s=sin(angle), c=cos(angle);',
+    '  uv=vec2(c*uv.x-s*uv.y,s*uv.x+c*uv.y);',
+    '  /* 音量驱动有机形变（listening） */',
+    '  float tt=iTime*timeScale;',
+    '  uv.x+=hover*hoverIntensity*0.1*sin(uv.y*9.0+tt);',
+    '  uv.y+=hover*hoverIntensity*0.1*sin(uv.x*9.0+tt);',
+    '  return draw(uv);',
+    '}',
+    'void main(){',
+    '  vec2 fragCoord=vUv*iResolution.xy;',
+    '  vec4 col=mainImage(fragCoord);',
+    '  /* v6：非预乘输出（v2-v5 预乘+SRC_ALPHA 混合=边缘双重变暗，修复） */',
+    '  gl_FragColor=vec4(col.rgb,col.a);',
+    '}'
+  ].join('\n');
+
+  function OrbRenderer(canvas, opts){
+    this.canvas = canvas;
+    this.opts = opts || {};
+    this.dpr = Math.min(window.devicePixelRatio || 1, 2);
+    this.size = this.opts.size || 48;
+    canvas.width = Math.round(this.size * this.dpr);
+    canvas.height = Math.round(this.size * this.dpr);
+
+    var gl = this.gl = canvas.getContext('webgl', { alpha:true, premultipliedAlpha:false })
+      || canvas.getContext('experimental-webgl', { alpha:true, premultipliedAlpha:false });
+    if (!gl) { this.failed = true; return; }
+
+    this.startTime = performance.now();
+    this.lastTime = 0;
+    this.params = { hue:0, hover:0.08, rot:0, sat:1, lum:1, timeScale:1 };
+    this.target = { hue:0, hover:0.08, rotSpeed:0.05, scale:1, sat:1, lum:1, timeScale:1 };
+    this.state = 'idle';
+    this.volume = 0;
+
+    this.stateCfg = {
+      idle:      { hue:0,   hover:0.08, rotSpeed:0.05, scale:1.0, sat:1,   lum:1 },
+      listening: { hue:-18, hover:'volume', rotSpeed:0.30, scale:1.08, sat:1, lum:1 },
+      frozen:    { hue:0,   hover:0.0,  rotSpeed:0,    scale:1.0, sat:0.35, lum:0.72 }
+    };
+
+    this.initShaders(gl);
+    this.initBuffers(gl);
+    this.render = this.render.bind(this);
+    this.running = true;
+    this.render();
+  }
+
+  OrbRenderer.prototype.initShaders = function(gl){
+    var compile = function(type, src){
+      var sh = gl.createShader(type);
+      gl.shaderSource(sh, src);
+      gl.compileShader(sh);
+      if (!gl.getShaderParameter(sh, gl.COMPILE_STATUS)) {
+        console.error('[orb] shader compile error:', gl.getShaderInfoLog(sh));
+      }
+      return sh;
+    };
+    var prog = gl.createProgram();
+    gl.attachShader(prog, compile(gl.VERTEX_SHADER, VS));
+    gl.attachShader(prog, compile(gl.FRAGMENT_SHADER, FS));
+    gl.linkProgram(prog);
+    if (!gl.getProgramParameter(prog, gl.LINK_STATUS)) {
+      console.error('[orb] program link error:', gl.getProgramInfoLog(prog));
+    }
+    this.program = prog;
+    gl.useProgram(prog);
+    this.u = {
+      iTime:          gl.getUniformLocation(prog,'iTime'),
+      iResolution:    gl.getUniformLocation(prog,'iResolution'),
+      hue:            gl.getUniformLocation(prog,'hue'),
+      hover:          gl.getUniformLocation(prog,'hover'),
+      rot:            gl.getUniformLocation(prog,'rot'),
+      hoverIntensity: gl.getUniformLocation(prog,'hoverIntensity'),
+      isLight:        gl.getUniformLocation(prog,'isLight'),
+      sat:            gl.getUniformLocation(prog,'sat'),
+      lum:            gl.getUniformLocation(prog,'lum'),
+      timeScale:      gl.getUniformLocation(prog,'timeScale')
+    };
+    gl.enable(gl.BLEND);
+    gl.blendFunc(gl.SRC_ALPHA, gl.ONE_MINUS_SRC_ALPHA);
+  };
+
+  OrbRenderer.prototype.initBuffers = function(gl){
+    var verts = new Float32Array([
+      -1,-1, 0,0,  1,-1, 1,0,  -1,1, 0,1,
+       1, 1, 1,1
+    ]);
+    this.buf = gl.createBuffer();
+    gl.bindBuffer(gl.ARRAY_BUFFER, this.buf);
+    gl.bufferData(gl.ARRAY_BUFFER, verts, gl.STATIC_DRAW);
+    var stride = 16;
+    var posLoc = gl.getAttribLocation(this.program,'position');
+    gl.enableVertexAttribArray(posLoc);
+    gl.vertexAttribPointer(posLoc,2,gl.FLOAT,false,stride,0);
+    var uvLoc = gl.getAttribLocation(this.program,'uv');
+    gl.enableVertexAttribArray(uvLoc);
+    gl.vertexAttribPointer(uvLoc,2,gl.FLOAT,false,stride,8);
+  };
+
+  OrbRenderer.prototype.setState = function(name){
+    var cfg = this.stateCfg[name] || this.stateCfg.idle;
+    this.state = name;
+    this.target.hue = cfg.hue;
+    this.target.rotSpeed = cfg.rotSpeed;
+    this.target.scale = cfg.scale;
+    this.target.sat = cfg.sat;
+    this.target.lum = cfg.lum;
+    this.target.timeScale = (name === 'frozen') ? 0 : 1;
+    if (cfg.hover !== 'volume') this.target.hover = cfg.hover;
+    this.resume();
+  };
+
+  OrbRenderer.prototype.setVolume = function(v){
+    this.volume = Math.max(0, Math.min(1, v));
+    if (this.state === 'listening') {
+      this.target.hover = this.volume;
+    }
+  };
+
+  OrbRenderer.prototype.setTheme = function(isLight){
+    var gl = this.gl;
+    gl.useProgram(this.program);
+    gl.uniform1f(this.u.isLight, isLight ? 1 : 0);
+  };
+
+  OrbRenderer.prototype.pause = function(){
+    this.running = false;
+  };
+  OrbRenderer.prototype.resume = function(){
+    if (!this.running) { this.running = true; this.lastTime = 0; this.render(); }
+  };
+
+  OrbRenderer.prototype.render = function(){
+    if (!this.gl || this.failed) return;
+    var gl = this.gl;
+    var now = performance.now();
+    var time = (now - this.startTime) / 1000;
+    var dt = this.lastTime ? (time - this.lastTime) : 0.016;
+    this.lastTime = time;
+
+    var lerp = 0.06;
+    this.params.hue += (this.target.hue - this.params.hue) * lerp;
+    this.params.hover += (this.target.hover - this.params.hover) * 0.1;
+    this.params.rot += dt * this.target.rotSpeed;
+    this.params.sat += (this.target.sat - this.params.sat) * 0.08;
+    this.params.lum += (this.target.lum - this.params.lum) * 0.08;
+    this.params.timeScale += (this.target.timeScale - this.params.timeScale) * 0.08;
+
+    gl.viewport(0, 0, this.canvas.width, this.canvas.height);
+    gl.useProgram(this.program);
+    gl.uniform1f(this.u.iTime, time);
+    gl.uniform3f(this.u.iResolution, this.canvas.width, this.canvas.height, 1);
+    gl.uniform1f(this.u.hue, this.params.hue);
+    gl.uniform1f(this.u.hover, this.params.hover);
+    gl.uniform1f(this.u.rot, this.params.rot);
+    gl.uniform1f(this.u.hoverIntensity, 1.0);
+    gl.uniform1f(this.u.sat, this.params.sat);
+    gl.uniform1f(this.u.lum, this.params.lum);
+    gl.uniform1f(this.u.timeScale, this.params.timeScale);
+    gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4);
+
+    /* 呼吸（listening 之外也用；frozen 静止） */
+    if (this.params.timeScale > 0.01) {
+      var breath = 1 + Math.sin(time * 0.8) * 0.02;
+      this.canvas.style.transform = 'scale(' + (this.target.scale * breath).toFixed(4) + ')';
+    }
+
+    if (this.running) requestAnimationFrame(this.render);
+  };
+
+  /* ==========================================================
+     音量模拟（mockup 无真实 mic）：说话包络 ≈ 音节节律 × 慢起伏 + 抖动
+     ========================================================== */
+  function fakeRms(t){
+    var syll = 0.5 + 0.5 * Math.sin(t * Math.PI * 2 * 3.2 + Math.sin(t * 1.7) * 2);
+    var swell = 0.55 + 0.45 * Math.sin(t * Math.PI * 2 * 0.23);
+    var jitter = 0.92 + 0.08 * Math.sin(t * 23.7);
+    return Math.min(1, Math.max(0.02, syll * swell * jitter));
+  }
+
+  /* ==========================================================
+     装配
+     ========================================================== */
+  var reduced = window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+  var webglOK = false;
+
+  /* URL 参数指定初始主题（截图验收用）：?theme=light|dark */
+  var urlTheme = new URLSearchParams(location.search).get('theme');
+  if (urlTheme === 'light' || urlTheme === 'dark') {
+    document.documentElement.setAttribute('data-theme', urlTheme);
+  }
+  function isLightTheme(){
+    return document.documentElement.getAttribute('data-theme') === 'light';
+  }
+  function syncToggleLabel(){
+    tt.textContent = isLightTheme() ? '切换到深色' : '切换到浅色';
+  }
+
+  var orbs = [];
+  function setupOrb(canvas, state){
+    var orb = new OrbRenderer(canvas, { size: state === 'listening' ? 54 : 48 });
+    if (orb.failed) { canvas.style.display = 'none'; return null; }
+    webglOK = true;
+    orb.setState(state);
+    orb.setTheme(isLightTheme());
+    orbs.push(orb);
+    return orb;
+  }
+
+  var heroOrb = new OrbRenderer(document.getElementById('heroOrb'), { size: 150 });
+  if (heroOrb.failed) {
+    document.getElementById('heroOrb').style.display = 'none';
+    document.querySelector('.hero-orb-wrap .css-orb').style.display = 'block';
+  } else { webglOK = true; heroOrb.setState('idle'); heroOrb.setTheme(isLightTheme()); orbs.push(heroOrb); }
+
+  document.querySelectorAll('canvas.orb-canvas').forEach(function(c){
+    setupOrb(c, c.getAttribute('data-state'));
+  });
+
+  /* WebGL 全失败 → 全体 CSS 降级 */
+  if (!webglOK) {
+    document.querySelectorAll('canvas.orb-canvas, #heroOrb').forEach(function(c){ c.style.display='none'; });
+    document.querySelectorAll('.css-orb').forEach(function(c){ c.style.display='block'; });
+  }
+
+  /* 状态 pill */
+  var pill = document.getElementById('renderPill');
+  var pillText = document.getElementById('renderStatus');
+  if (webglOK) {
+    pillText.textContent = reduced ? 'WebGL 渲染 · 已降级为静止帧（prefers-reduced-motion）' : 'WebGL 渲染中 · v6 Siri 液态晶莹球';
+  } else {
+    pillText.textContent = 'WebGL 不可用 · CSS 液态分层降级';
+    pill.className = 'status-pill off';
+  }
+
+  /* listening 音量联动（模拟 RMS 驱动 setVolume） */
+  var listenOrb = orbs.find(function(o){ return o && o.state === 'listening'; });
+  if (listenOrb && !reduced) {
+    (function drive(){
+      var t = (performance.now() - listenOrb.startTime) / 1000;
+      listenOrb.setVolume(fakeRms(t));
+      setTimeout(drive, 100);
+    })();
+  }
+
+  /* reduced-motion：静止帧（渲染一次后停 RAF） */
+  if (reduced) {
+    orbs.forEach(function(o){
+      setTimeout(function(){ o.pause(); }, 600);
+    });
+  }
+
+  /* 主题切换 */
+  var tt = document.getElementById('themeToggle');
+  tt.addEventListener('click', function(){
+    document.documentElement.setAttribute('data-theme', isLightTheme() ? 'dark' : 'light');
+    syncToggleLabel();
+    orbs.forEach(function(o){ o.setTheme(isLightTheme()); });
+  });
+  syncToggleLabel();
+})();
+</script>
+</body>
+</html>
