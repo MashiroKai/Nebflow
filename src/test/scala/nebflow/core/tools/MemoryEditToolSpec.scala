@@ -337,4 +337,99 @@ class MemoryEditToolSpec extends FunSuite:
     val top = MemoryBudget.topSections(content)
     assert(top.contains("Beta") && top.contains("Alpha") && top.contains("Gamma"))
     assert(!top.contains("Delta"), "top-3 只列三节")
+
+  // ===== project 目标（project-memory 批 2026-09-05 §2）：注册表路由 + 项目预算 =====
+
+  /** 注册一个项目到临时 home 注册表（ProjectStore 的磁盘契约：projects/<name>/project.json），
+    * workspace 独立子目录（与其它测试的 User.md/agents 互不串扰）。返回 workspace 路径。 */
+  private def seedProject(name: String): os.Path =
+    val ws = home / "ws" / name
+    os.makeDir.all(ws / ".nebflow")
+    val pdir = home / "projects" / name
+    os.makeDir.all(pdir)
+    os.write.over(
+      pdir / "project.json",
+      s"""{"name":"$name","workspace":"${ws.toString}","agentFile":"${(ws / "AGENTS.md").toString}","createdAt":1}""")
+    ws
+
+  test("project target resolves via registry and writes <workspace>/.nebflow/memory.md"):
+    val ws = seedProject("pmem-basic")
+    val memFile = ws / ".nebflow" / "memory.md"
+    val res = call("target" -> "project:pmem-basic".asJson, "action" -> "append".asJson,
+      "content" -> "- 项目状态：预算闸已落地（2026-09-05）".asJson)
+    assert(res.isRight, s"expected ok, got ${res.left.toOption.map(_.message)}")
+    assert(os.read(memFile).contains("- 项目状态：预算闸已落地（2026-09-05）"), "written to the project workspace memory file")
+
+  test("project target: append/update/remove/replace_section all usable (same entry discipline)"):
+    val ws = seedProject("pmem-actions")
+    val memFile = ws / ".nebflow" / "memory.md"
+    // 节 append 需既有节（memory-mech 语义：无节 → NO_SECTION）——先 seed 节标题
+    os.write.over(memFile, "## 口径\n\n")
+    assert(call("target" -> "project:pmem-actions".asJson, "action" -> "append".asJson,
+      "section" -> "口径".asJson, "content" -> "- 口径甲".asJson).isRight)
+    assert(call("target" -> "project:pmem-actions".asJson, "action" -> "append".asJson,
+      "section" -> "口径".asJson, "content" -> "- 口径乙".asJson).isRight)
+    assert(call("target" -> "project:pmem-actions".asJson, "action" -> "update".asJson,
+      "match" -> "口径甲".asJson, "content" -> "- 口径甲 v2".asJson).isRight)
+    assert(call("target" -> "project:pmem-actions".asJson, "action" -> "remove".asJson,
+      "match" -> "口径乙".asJson).isRight)
+    assert(call("target" -> "project:pmem-actions".asJson, "action" -> "replace_section".asJson,
+      "section" -> "口径".asJson, "content" -> "- 口径定稿".asJson).isRight)
+    val content = os.read(memFile)
+    assert(content.contains("## 口径") && content.contains("- 口径定稿"))
+    assert(!content.contains("口径乙") && !content.contains("口径甲 v2"))
+    // 单条目纪律在 project 目标同样生效
+    val drift = call("target" -> "project:pmem-actions".asJson, "action" -> "append".asJson,
+      "content" -> "- 多行\n漂移行".asJson)
+    assert(drift.left.toOption.get.message.contains("MEMORYEDIT_ENTRY_FORMAT"))
+
+  test("project target: unknown project → MEMORYEDIT_TARGET with registry pointer"):
+    val res = call("target" -> "project:no-such-project".asJson, "action" -> "append".asJson,
+      "content" -> "- x".asJson)
+    val msg = res.left.toOption.get.message
+    assert(msg.contains("MEMORYEDIT_TARGET"))
+    assert(msg.contains("no-such-project") && msg.contains("registry"), "error names the project + resolution source")
+
+  test("project target: path-traversal / invalid names rejected before any filesystem probe"):
+    for bad <- Seq("project:", "project:../escape", "project:a/b", "project:a\\b", "project:.", "project:..") do
+      val res = call("target" -> bad.asJson, "action" -> "append".asJson, "content" -> "- x".asJson)
+      val msg = res.left.toOption.get.message
+      assert(msg.contains("MEMORYEDIT_TARGET"), s"target '$bad' must be rejected")
+    assert(!os.exists(home / "escape"), "no escaped write surface")
+
+  test("project budget (10KB/8KB): within → no WARN"):
+    val ws = seedProject("pmem-budget-ok")
+    os.write.over(ws / ".nebflow" / "memory.md", "x" * 1000)
+    val res = call("target" -> "project:pmem-budget-ok".asJson, "action" -> "append".asJson,
+      "content" -> "- 项目预算内条目".asJson)
+    assert(res.isRight)
+    assert(!res.toOption.get.contains("MEMORYEDIT_BUDGET_WARN"), "预算内不附 WARN")
+
+  test("project budget: over 8KB soft line → write succeeds WITH WARN"):
+    val ws = seedProject("pmem-budget-warn")
+    os.write.over(ws / ".nebflow" / "memory.md", "x" * 8300) // 8,300B > 8,192B 软线，< 10,240B 硬顶
+    val res = call("target" -> "project:pmem-budget-warn".asJson, "action" -> "append".asJson,
+      "content" -> "- 项目软警条目".asJson)
+    assert(res.isRight, "软警区放行")
+    assert(res.toOption.get.contains("MEMORYEDIT_BUDGET_WARN"), "结果附软警 WARN")
+    assert(os.read(ws / ".nebflow" / "memory.md").contains("- 项目软警条目"), "放行 = 实际落盘")
+
+  test("project budget: over 10KB hard cap → REJECTED, file untouched (constants independent of global)"):
+    val ws = seedProject("pmem-budget-hard")
+    os.write.over(ws / ".nebflow" / "memory.md", "x" * 10300) // 10,300B > 10,240B 硬顶
+    val res = call("target" -> "project:pmem-budget-hard".asJson, "action" -> "append".asJson,
+      "content" -> "- 项目超限条目".asJson)
+    val msg = res.left.toOption.get.message
+    assert(msg.contains("MEMORYEDIT_BUDGET"), "超硬顶结构化拒绝")
+    assert(msg.contains((ws / ".nebflow" / "memory.md").toString), "拒绝消息带项目记忆文件真实路径")
+    assert(msg.contains("10240"), "按项目硬顶 10,240B 计算百分比（非全局 50KB/30KB）")
+    assert(!os.read(ws / ".nebflow" / "memory.md").contains("- 项目超限条目"), "拒绝 = 零写入")
+
+  test("project budget: replace_section stays open over budget (consolidation channel)"):
+    val ws = seedProject("pmem-budget-fix")
+    os.write.over(ws / ".nebflow" / "memory.md", "## Bulk\n\n" + "x" * 10300)
+    val res = call("target" -> "project:pmem-budget-fix".asJson, "action" -> "replace_section".asJson,
+      "section" -> "Bulk".asJson, "content" -> "- 整理后唯一条目".asJson)
+    assert(res.isRight, "超限项目的收缩通道必须畅通")
+    assert(os.read(ws / ".nebflow" / "memory.md").contains("- 整理后唯一条目"))
 end MemoryEditToolSpec

@@ -205,7 +205,11 @@ class NodeEngine(
 
   /** 构造节点输入：自身 task 上下文 + 各上游 result（=== Node <name> === 头，§2.7）+
     * blocked 声明协议脚注（设计 §1.5 原文，单点注入覆盖所有节点——节点 agent 是通用
-    * 全局 agent，system prompt 不含约定，必须随输入注入）。 */
+    * 全局 agent，system prompt 不含约定，必须随输入注入）。
+    * project-memory 批（2026-09-05 §3）：首部注入【本项目】记忆块（分发器所建
+    * 节点自动携带项目状态/口径上下文）——渲染三态单点 ProjectMemory.injectionBlock
+    * （预算内全文 / 软警全文+WARN / 超限头部+统计；缺失/空 → 不注）。全局记忆
+    * 注入面（ContextRefresher）不含项目记忆——瘦身边界不变。 */
   private def buildInput(node: NodeDef): IO[String] =
     val ownTask = node.task.getOrElse("")
     node.in.traverse { upId =>
@@ -214,8 +218,11 @@ class NodeEngine(
           up.result.map(res => s"=== Node ${up.name} ===\n$res")
         case None => None
       }
-    }.map(_.flatten).map { upstream =>
-      (List(ownTask).filter(_.nonEmpty) ++ upstream).mkString("\n\n") + "\n\n" + NodeEngine.ProtocolFootnote
+    }.flatMap { upstream =>
+      ProjectMemory.injectionBlock(workspace, projectName).map { memBlock =>
+        val base = (List(ownTask).filter(_.nonEmpty) ++ upstream).mkString("\n\n") + "\n\n" + NodeEngine.ProtocolFootnote
+        if memBlock.isEmpty then base else memBlock + "\n\n" + base
+      }
     }
 
   private def spawnAndRun(node: NodeDef, inputText: String): IO[Unit] =
