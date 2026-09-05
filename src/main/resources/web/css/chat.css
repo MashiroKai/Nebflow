@@ -2009,15 +2009,18 @@
   font-size: 12px;
 }
 
-/* ── #346 turn-level collapse: summary bar ───────────────────────────────
-   Muted text form (same design language as the #345 thinking label): no
-   background, no glass, no hover fill — chevron + text brighten on hover. */
-.turn-group { margin: 2px 0; }
-.turn-summary {
+/* ── #346 v2 turn-level collapse: persistent stats header ────────────────
+   Decompression model (2026-09-05 23:44 ruling): rows never move — the
+   header lands at the turn top and the stripped pieces (thinking + tool
+   rows) are toggled via .nf-tucked below. Same muted design language as the
+   #345 thinking label: no background, no glass, no hover fill — chevron +
+   text brighten on hover. */
+.turn-header {
   display: flex;
   align-items: center;
   gap: 4px;
   max-width: 85%;
+  margin: 2px 0;
   padding: 3px 12px;
   font-size: 12px;
   font-weight: 500;
@@ -2031,30 +2034,48 @@
   transition: opacity 0.15s ease;
   animation: turnSummaryIn 0.15s ease-out;
 }
-.turn-summary:hover { opacity: 1; }
-.turn-summary:focus-visible {
+.turn-header:hover { opacity: 1; }
+.turn-header:focus-visible {
   outline: 2px solid rgb(var(--sapphire) / 0.6);
   outline-offset: 1px;
   border-radius: 4px;
 }
-.turn-summary-text {
+.turn-header-text {
   overflow: hidden;
   text-overflow: ellipsis;
 }
-.turn-group[data-turn-state="failed"] .turn-summary { display: none; }
 /* Banner dedupe (2026-09-04): a session renders only its LATEST turn's
-   stats bar; superseded turns' bars keep their DOM (collapse structure, E10
-   search-expand) but stop stacking visually. The marker rides on the GROUP
-   element so closed groups' innerHTML stays byte-stable (#403 invariant,
-   turn-collapse-keep-text 验收 b). */
-.turn-group.turn-banner-superseded > .turn-summary { display: none; }
-.turn-steps { /* rows keep their own spacing; container is plain */ }
+   stats header; superseded turns' headers keep their DOM (E10 search-expand
+   keeps working) but stop stacking visually. The marker rides on the HEADER
+   element — rows are untouched, so closed turns stay byte-stable (#403
+   invariant). */
+.turn-header.turn-banner-superseded { display: none; }
+/* Static tucked state for the stripped middle blocks (thinking + tool rows).
+   max-height 0 + collapsed margins so no gap remains; the expand/collapse
+   transition itself is driven by the Web Animations API in turnGroup.js
+   (max-height 0→natural + opacity + ~5px settle, 320ms ease-out, 50ms
+   stagger) — this class only owns the END state. */
+.row.nf-tucked {
+  max-height: 0 !important;
+  margin-top: 0 !important;
+  margin-bottom: 0 !important;
+  padding-top: 0 !important;
+  padding-bottom: 0 !important;
+  border-top-width: 0 !important;
+  border-bottom-width: 0 !important;
+  opacity: 0;
+  overflow: hidden;
+  transform: translateY(-5px);
+  pointer-events: none;
+  visibility: hidden;
+}
 @keyframes turnSummaryIn {
   from { opacity: 0; }
   to { opacity: 0.9; }
 }
 @media (prefers-reduced-motion: reduce) {
-  .turn-summary { animation-duration: 0.01s; transition-duration: 0.01s; }
+  .turn-header { animation-duration: 0.01s; transition-duration: 0.01s; }
+  .row.nf-tucked { transition-duration: 0.01s; }
 }
 
 /* Streaming cursor */

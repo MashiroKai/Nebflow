@@ -9,7 +9,7 @@ import { t } from './i18n.js';
 import { renderMarkdownWithMath, escapeHtml, smartScroll, buildToolDetail, buildDelegatePromptHtml, attachToolClick, esc, localizeToolLabel, localizeToolSummary, renderHighlightedContent, createMsgCopyButton } from './utils.js';
 import { renderWithRegistry, cleanupCardIframes } from './cardRegistry.js';
 import { createDurationBadgeElement, formatHm, toggleTimeFormat, applyPopCard, buildInjectedRow, bindCollapsibleToggle, renderAskUserHistory, buildCompactCardRow } from './chat.js';
-import { buildTurnGroupsForHistory } from './turnGroup.js';
+import { buildTurnSummariesForHistory } from './turnGroup.js';
 import { renderRefBlock, normalizeTaskRef } from './reference.js';
 
 // ---------- AI message badge (no duration) ----------
@@ -455,6 +455,9 @@ export function restoreFromStorage(opts = {}) {
       // Inline render to avoid triggering saveMsg again
       const row = document.createElement('div');
       row.className = 'row tool';
+      // #346 v2 stats: tool input rides the row for the turn header's
+      // 读写 <K> 文件 count (same contract as chat.js renderTool).
+      if (m.input) { try { row.dataset.nfInput = typeof m.input === 'string' ? m.input : JSON.stringify(m.input); } catch {} }
       const card = document.createElement('div');
       card.className = 'tool-card';
       // Card tool: render standard tool card + separate card iframe below
@@ -633,7 +636,7 @@ export function restoreFromStorage(opts = {}) {
       chat.appendChild(row);
     }
   });
-  buildTurnGroupsForHistory(chat, { busyTail: !!opts.busyTail }); // #346 E4: rebuild turn groups from flat rows
+  buildTurnSummariesForHistory(chat, { busyTail: !!opts.busyTail }); // #346 E4: re-derive turn headers from flat rows
   chat.scrollTop = chat.scrollHeight;
   if (activeView) activeView.stream.scrollSnapped = true;
   // Schedule deferred scrolls to catch async iframe height changes from card rendering.
@@ -764,6 +767,9 @@ export function restoreFromBackendHistory(msgs, opts = {}) {
     } else if (m.type === 'tool') {
       const row = document.createElement('div');
       row.className = 'row tool';
+      // #346 v2 stats: tool input rides the row for the turn header's
+      // 读写 <K> 文件 count (same contract as chat.js renderTool).
+      if (m.input) { try { row.dataset.nfInput = typeof m.input === 'string' ? m.input : JSON.stringify(m.input); } catch {} }
       const card = document.createElement('div');
       card.className = 'tool-card';
       // Card tool: render standard tool card + separate card iframe below
@@ -950,7 +956,7 @@ export function restoreFromBackendHistory(msgs, opts = {}) {
     }
   });
   chat.appendChild(fragment);
-  buildTurnGroupsForHistory(chat, { busyTail }); // #346 E4: rebuild turn groups from flat rows
+  buildTurnSummariesForHistory(chat, { busyTail }); // #346 E4: re-derive turn headers from flat rows
   // Scroll to bottom: immediate sync (for stable initial position before any async iframe load)
   // followed by deferred rAF (catches late layout changes from streaming state restoration, etc.).
   // Caller can set scrollToBottom=false (e.g. scroll-up pagination preserves position).
