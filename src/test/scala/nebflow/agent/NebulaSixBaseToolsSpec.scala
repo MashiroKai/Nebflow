@@ -41,7 +41,15 @@ class NebulaSixBaseToolsSpec extends FunSuite:
 
   override def beforeEach(context: munit.BeforeEach): Unit =
     savedDataRoot = Some(PathUtil.dataRoot)
-    val pinned = os.home / s".nb-sixtools-dataroot-${System.nanoTime()}"
+    // 逃生门（SandboxSpec 同款）：os.home 不可写时（沙箱工作区会话）由
+    // NB_SANDBOX_SPEC_DATAROOT 显式注入 pinned 根。宿主/CI 无此环境变量，
+    // 行为与原实现完全一致。
+    val pinned = sys.env.get("NB_SANDBOX_SPEC_DATAROOT") match
+      case Some(dir) =>
+        val p = os.Path(dir) / s".nb-sixtools-run-${System.nanoTime()}"
+        os.makeDir.all(p)
+        p
+      case None => os.home / s".nb-sixtools-dataroot-${System.nanoTime()}"
     os.makeDir.all(pinned / "projects")
     PathUtil.setDataRoot(pinned)
     pinnedDataRoot = Some(pinned)
