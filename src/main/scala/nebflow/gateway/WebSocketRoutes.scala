@@ -2529,6 +2529,9 @@ class WebSocketRoutes(
                         io.circe.Json.obj(
                           "type" -> "backgroundTaskUpdate".asJson,
                           "sessionId" -> cancelSessionId.asJson,
+                          // 权威分键（2026-09-05）：前端按 rootSessionId 分桶，回显
+                          // 取消请求携带的会话（即前端桶键），保证移除帧落同一桶。
+                          "rootSessionId" -> cancelSessionId.asJson,
                           "taskId" -> jobId.asJson,
                           "description" -> "".asJson,
                           "status" -> "completed".asJson
@@ -2543,6 +2546,7 @@ class WebSocketRoutes(
                     io.circe.Json.obj(
                       "type" -> "backgroundTaskUpdate".asJson,
                       "sessionId" -> cancelSessionId.asJson,
+                      "rootSessionId" -> cancelSessionId.asJson,
                       "taskId" -> jobId.asJson,
                       "description" -> "".asJson,
                       "status" -> "failed".asJson
