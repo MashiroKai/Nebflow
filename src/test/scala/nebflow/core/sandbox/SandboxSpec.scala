@@ -96,7 +96,7 @@ class SandboxSpec extends CatsEffectSuite:
   // SandboxPolicy：单一策略源 + canonicalize（§A.2）
   // ------------------------------------------------------------------
 
-  test("A.2: writableRoots 派生自 policy——含 root、/private/tmp、/tmp、java.io.tmpdir，canonical 去重") {
+  test("A.2: writableRoots 派生自 policy——含 root、数据根、/private/tmp、/tmp、java.io.tmpdir，canonical 去重") {
     val tmp = os.Path(Files.createTempDirectory("nb-sbx-policy"))
     val p = policyIn(tmp)
     val roots = SandboxPolicy.writableRoots(p)
@@ -105,6 +105,11 @@ class SandboxSpec extends CatsEffectSuite:
     assert(!roots.contains(os.Path("/tmp")), s"/tmp 应已归一进 /private/tmp: $roots")
     val tmpdir = SandboxPolicy.canonicalize(Paths.get(sys.props("java.io.tmpdir")))
     assert(roots.map(_.toString).contains(tmpdir.toString), s"java.io.tmpdir must be writable: $roots")
+    // 2026-09-05 数据根入可写面（作者 20:24 裁定）：PathUtil.dataRoot 必须在
+    // 可写根（beforeEach 已钉 dataRoot——断言即「跟随数据根推导、不硬编码」的
+    // 机制证明；nebflowDataRoot 与 root 同源，Nebula 会话 root=dataRoot 去重）
+    assert(roots.exists(_.toString == SandboxPolicy.canonicalize(PathUtil.dataRoot.wrapped).toString),
+      s"dataRoot must be writable: $roots")
     // 写 ⊆ 读不变量
     val readable = SandboxPolicy.readableRoots(p)
     roots.foreach(r => assert(readable.contains(r), s"writable must be readable: $r"))
@@ -123,21 +128,24 @@ class SandboxSpec extends CatsEffectSuite:
     assertEquals(nested.toString, (realTmp / "sub" / "new.txt").toString)
   }
 
-  test("A.2: readExtras 含系统目录与 ~/.nebflow 白名单九子目录，不含根层凭据") {
+  test("A.2: readExtras 含系统目录与 ~/.nebflow 白名单九子目录；数据根整体进读写两面（写⊆读，白名单条目冗余保留）") {
     val p = policyIn(os.Path(Files.createTempDirectory("nb-sbx-extras")))
     val extras = SandboxPolicy.readableRoots(p)
     assert(extras.contains(os.Path("/usr")))
     assert(extras.contains(os.Path("/private/etc")))
-    // 九个白名单子目录（H-12① 三目录 + 读白名单补全六目录）
+    // 九个白名单子目录（H-12① 三目录 + 读白名单补全六目录）——readExtras 原样
+    // 保留：数据根入写面后被 contains 包含关系整体覆盖，条目冗余但无害
     val expected = List("skills", "prompts", "docs", "tool-results", "uploads", "logs", "sessions", "projects", "agents")
     expected.foreach { d =>
       val dir = PathUtil.dataRoot / d
       assert(extras.exists(_.toString == SandboxPolicy.canonicalize(dir.wrapped).toString),
         s"~/.nebflow/$d must be readable: $extras")
     }
-    // ~/.nebflow 根层不在读面（auth.json 等凭据拒读）
-    assert(!extras.exists(_.toString == SandboxPolicy.canonicalize(PathUtil.dataRoot.wrapped).toString),
-      s"~/.nebflow 根层不得进读面: $extras")
+    // 2026-09-05 数据根入可写面批（取代原「根层不得进读面」）：数据根整体进读面
+    // 是写⊆读不变量的直接后果；auth.json 等根层凭据随之可读（整目录放行即终态，
+    // 残留风险=纪律约束，WFROOT± 用例钉死）
+    assert(extras.exists(_.toString == SandboxPolicy.canonicalize(PathUtil.dataRoot.wrapped).toString),
+      s"~/.nebflow 数据根必须进读面（写⊆读）: $extras")
   }
 
   // ------------------------------------------------------------------
@@ -254,11 +262,11 @@ class SandboxSpec extends CatsEffectSuite:
       case Right(out) => assert(!out.contains("leak.txt"), s"Grep 不得命中 symlink 外部: $out")
       case Left(err) => fail(s"Grep 应成功（无命中也是成功态）: ${err.message}")
 
-    // 搜索根本身指向 readableRoots 之外（~/.nebflow 根层）→ SANDBOX_DENIED。
-    // 注：不能用 tempdir 当「外部」——/private/var 在读面内，语义上可读；
-    // 也不能再用 dataRoot/agents（读白名单补全后已可读）。
+    // 搜索根本身指向 readableRoots 之外（os.home——数据根的父目录，不在任何
+    // 读写面；2026-09-05 数据根入可写面批后 ~/.nebflow 整体可读，不能再当
+    // 「外部」样本，也不能用 tempdir——/private/var 在读面内）→ SANDBOX_DENIED。
     val deny = GlobTool.call(
-      JsonObject("pattern" -> "*.txt".asJson, "path" -> PathUtil.dataRoot.toString.asJson),
+      JsonObject("pattern" -> "*.txt".asJson, "path" -> os.home.toString.asJson),
       ctx
     ).unsafeRunSync()
     deny match
@@ -341,27 +349,39 @@ class SandboxSpec extends CatsEffectSuite:
   // ~/.nebflow 白名单（H-12①）：三子目录可读、根层拒读写、不在可写根
   // ------------------------------------------------------------------
 
-  test("H-12①: ~/.nebflow/skills 可读；根层 auth.json 读写均拒") {
-    val tmp = os.Path(Files.createTempDirectory("nb-sbx-nf"))
-    val policy = policyIn(tmp)
-    val ctx = ToolContext(projectRoot = tmp.toString, sandbox = policy)
+  // ------------------------------------------------------------------
+  // 2026-09-05 数据根入可写面（作者 20:24 裁定）：锚点 (a) 正向 + (b) 反向
+  // ------------------------------------------------------------------
 
-    // skills 子目录可读（readExtras 派生自 dataRoot——测试隔离下用同一 dataRoot 断言）
-    val skillsRead = FileSandbox.checkRead(ctx, (PathUtil.dataRoot / "skills" / "x" / "SKILL.md").toString)
-    assert(skillsRead.isRight, s"skills 应可读: ${skillsRead.left.map(_.message)}")
+  test("WFROOT+: 数据根整目录可写——projects/<测试名>/tmpfile 与 User.md 写放行（锚点 a）") {
+    val tmp = os.Path(Files.createTempDirectory("nb-sbx-wfroot"))
+    val ctx = ctxIn(tmp)
+    // (a) 数据根子路径写放行（真实落盘 + 读回）：projects/<测试名>/tmpfile 形态
+    // ——项目仓 git commit / docs 归档场景的最小等价物
+    val projDir = PathUtil.dataRoot / "projects" / "wfroot-write-test"
+    FileSandbox.checkWrite(ctx, (projDir / "tmpfile").toString) match
+      case Right(fresh) =>
+        Files.createDirectories(fresh.getParent)
+        Files.write(fresh, "wfroot-ok".getBytes(StandardCharsets.UTF_8))
+        assert(Files.readString(fresh) == "wfroot-ok", "数据根内写必须真实落盘")
+      case Left(err) => fail(s"数据根子路径写必须放行: ${err.message}")
+    // (a) User.md 同款路径（记忆主文件——残留风险钉死：从此节点可直写）
+    assert(FileSandbox.checkWrite(ctx, (PathUtil.dataRoot / "User.md").toString).isRight,
+      "User.md 随数据根整目录放行可写（残留风险=纪律约束）")
+    // 定义层写放行（plugin/agent 定义层直改场景——beforeEach fixture 既有文件）
+    assert(FileSandbox.checkWrite(ctx, (PathUtil.dataRoot / "agents" / "Nebula.md").toString).isRight,
+      "定义层文件应随数据根可写")
+  }
 
-    // 根层凭据拒读
-    FileSandbox.checkRead(ctx, (PathUtil.dataRoot / "auth.json").toString) match
+  test("WFROOT-: 沙箱根外普通系统路径写仍拒——~/Desktop、/etc（锚点 b）") {
+    val tmp = os.Path(Files.createTempDirectory("nb-sbx-wfroot-neg"))
+    val ctx = ctxIn(tmp)
+    FileSandbox.checkWrite(ctx, (os.home / "Desktop" / "nb-wfroot-deny.txt").toString) match
       case Left(err) => assert(err.message.startsWith("SANDBOX_DENIED"), err.message)
-      case Right(_) => fail("~/.nebflow/auth.json 必须拒读")
-
-    // 根层与 skills 均不在可写根（agent 只在 project 内写）
-    FileSandbox.checkWrite(ctx, (PathUtil.dataRoot / "skills" / "w.txt").toString) match
+      case Right(_) => fail("~/Desktop 写必须仍拒（数据根不等于 home）")
+    FileSandbox.checkWrite(ctx, "/etc/hosts") match
       case Left(err) => assert(err.message.startsWith("SANDBOX_DENIED"), err.message)
-      case Right(_) => fail("~/.nebflow/skills 不在可写根")
-    FileSandbox.checkWrite(ctx, (PathUtil.dataRoot / "auth.json").toString) match
-      case Left(err) => assert(err.message.startsWith("SANDBOX_DENIED"), err.message)
-      case Right(_) => fail("~/.nebflow/auth.json 必须拒写")
+      case Right(_) => fail("/etc/hosts 写必须仍拒（/private/etc 只在读面，不在写面）")
   }
 
   // ------------------------------------------------------------------
@@ -402,23 +422,26 @@ class SandboxSpec extends CatsEffectSuite:
       case Left(err) => fail(s"tool-results ReadTool 必须读通: ${err.message}")
   }
 
-  test("READLIST-: 根层凭据逐个仍 SANDBOX_DENIED（vps.env/auth.json/nebflow.json + 通配样本；User.md 已入 §4.2-B 审计白名单故移出本列）") {
+  test("WFROOT±: 根层凭据随整目录放行——读通+写放行（vps.env/auth.json/nebflow.json+通配样本；残留风险=纪律约束）") {
     val tmp = os.Path(Files.createTempDirectory("nb-sbx-cred"))
     val ctx = ctxIn(tmp)
-    val denied = List(
+    val credFiles = List(
       "vps.env", "auth.json", "nebflow.json",
       "model-presets.json", "stt-config.json",
       "host-credentials.txt", // *credentials* 通配样本
       "deploy.env" // *.env 通配样本
     )
-    denied.foreach { f =>
-      FileSandbox.checkRead(ctx, (PathUtil.dataRoot / f).toString) match
-        case Left(err) => assert(err.message.startsWith("SANDBOX_DENIED"), err.message)
-        case Right(_) => fail(s"~/.nebflow/$f 凭据层必须拒读")
+    // 2026-09-05 数据根入可写面批：不加新 deny、不建新配置面——整目录放行即
+    // 终态，根层凭据读写两面均随 dataRoot 放行（原逐个拒读断言被本裁定取代）
+    credFiles.foreach { f =>
+      assert(FileSandbox.checkRead(ctx, (PathUtil.dataRoot / f).toString).isRight,
+        s"~/.nebflow/$f 随整目录放行可读（残留风险=纪律约束）")
     }
-    // §4.2-B：User.md 不再拒读（ AUDIT-RO 用例专测），此处仅防回归式提醒
+    assert(FileSandbox.checkWrite(ctx, (PathUtil.dataRoot / "vps.env").toString).isRight,
+      "凭据写面同样随整目录放行（裁定终态；残留风险=纪律约束）")
+    // User.md 读通不变（§4.2-B 审计白名单 → 现被 dataRoot 覆盖，双保险）
     assert(FileSandbox.checkRead(ctx, (PathUtil.dataRoot / "User.md").toString).isRight,
-      "User.md = 审计只读白名单，不得回落为拒读")
+      "User.md 必须可读")
   }
 
   test("READLIST-: agents/ 目录开读但 memory.md 负向规则拒读（Coder 同规保留）+ Reason 行；§4.2-B 唯一例外 = Nebula memory.md 精确放行") {
@@ -440,7 +463,7 @@ class SandboxSpec extends CatsEffectSuite:
       case Right(_) => fail("~/.nebflow/agents/Coder/memory.md 私有记忆必须拒读")
   }
 
-  test("AUDIT-RO: §4.2-B 两记忆文件双向——读通（User.md 根层 + Nebula memory.md），写仍拒") {
+  test("AUDIT-RO: §4.2-B 两记忆文件读通（User.md 根层 + Nebula memory.md）；写随数据根整目录放行（原「写仍拒」被 2026-09-05 写面裁定取代）") {
     val tmp = os.Path(Files.createTempDirectory("nb-sbx-auditro"))
     val ctx = ctxIn(tmp)
     // 读通：User.md（根层精确文件）+ agents/Nebula/memory.md
@@ -448,15 +471,11 @@ class SandboxSpec extends CatsEffectSuite:
       "User.md 必须进审计只读读面")
     assert(FileSandbox.checkRead(ctx, (PathUtil.dataRoot / "agents" / "Nebula" / "memory.md").toString).isRight,
       "Nebula memory.md 必须进审计只读读面")
-    // 根层其余凭据仍拒（例外是文件级精确匹配，不是根层放行）
-    FileSandbox.checkRead(ctx, (PathUtil.dataRoot / "auth.json").toString) match
-      case Left(err) => assert(err.message.startsWith("SANDBOX_DENIED"), err.message)
-      case Right(_)  => fail("auth.json 仍必须拒读——例外仅覆盖两记忆文件")
-    // 写仍拒（只读例外：readableRoots 扩，writableRoots 零变化）
+    // 写随数据根整目录放行（2026-09-05 数据根入可写面批：残留风险=纪律约束，
+    // 批次报告钉死；负向规则例外集同源 → Nebula memory.md 写闸同样豁免）
     List("User.md", "agents/Nebula/memory.md").foreach { rel =>
-      FileSandbox.checkWrite(ctx, (PathUtil.dataRoot / os.RelPath(rel)).toString) match
-        case Left(err) => assert(err.message.startsWith("SANDBOX_DENIED"), err.message)
-        case Right(_)  => fail(s"~/.nebflow/$rel 写面必须仍然拒绝（审计例外严格只读）")
+      assert(FileSandbox.checkWrite(ctx, (PathUtil.dataRoot / os.RelPath(rel)).toString).isRight,
+        s"~/.nebflow/$rel 随数据根整目录放行可写（残留风险=纪律约束）")
     }
     // 路径契约：auditReadableFiles 与 MemoryStore 权威路径零漂移
     assertEquals(
@@ -466,63 +485,100 @@ class SandboxSpec extends CatsEffectSuite:
       "audit paths must mirror MemoryStore paths")
   }
 
-  test("AUDIT-RO MUT: 变异验红双向——负向例外剔除即拒（readDeniedWith 空集）；读白名单条目剔除即拒（readExtras copy）") {
+  test("AUDIT-RO MUT: 变异验红——负向例外剔除即拒读写（readDeniedWith 空集，读/写双闸同承重）；数据根换钉即拒旧根（nebflowDataRoot 承重）") {
     val tmp = os.Path(Files.createTempDirectory("nb-sbx-auditmut"))
     val ctx = ctxIn(tmp)
     val nebulaMem = (PathUtil.dataRoot / "agents" / "Nebula" / "memory.md").toString
     val nebulaMemCanonical = SandboxPolicy.canonicalize(java.nio.file.Paths.get(nebulaMem))
-    // 基线绿
+    // 基线绿（读 + 写——写随数据根整目录放行）
     assert(FileSandbox.checkRead(ctx, nebulaMem).isRight, "基线：Nebula memory.md 应可读")
+    assert(FileSandbox.checkWrite(ctx, nebulaMem).isRight, "基线：Nebula memory.md 应可写（数据根写面）")
     // 变异 A（红）：负向规则例外集置空 = 旧规则（一切 agents/**/memory.md 拒）承重
+    // ——读拒（既有）且写拒（本批写闸消费同一规则，红线不随写面扩大）
     assert(SandboxPolicy.readDeniedWith(nebulaMemCanonical, Set.empty),
-      "变异：例外集为空时 Nebula memory.md 必须重新命中负向规则")
-    // 变异 B（红）：readExtras 剔除 auditReadableFiles 条目 → User.md 拒读
-    val userMdCanonical = SandboxPolicy.canonicalize((PathUtil.dataRoot / "User.md").wrapped)
-    val stripped = ctx.sandbox.copy(readExtras = ctx.sandbox.readExtras.filterNot(p =>
-      p.wrapped == userMdCanonical || p.wrapped == nebulaMemCanonical))
-    FileSandbox.checkRead(ctxIn(tmp, stripped), (PathUtil.dataRoot / "User.md").toString) match
-      case Left(err) => assert(err.message.startsWith("SANDBOX_DENIED"), err.message)
-      case Right(_)  => fail("变异后 User.md 必须变红（审计白名单条目承重）")
-    // 恢复（绿）
-    assert(FileSandbox.checkRead(ctx, nebulaMem).isRight, "恢复后 Nebula memory.md 应复绿")
-    assert(FileSandbox.checkRead(ctx, (PathUtil.dataRoot / "User.md").toString).isRight, "恢复后 User.md 应复绿")
+      "变异：例外集为空时 Nebula memory.md 必须重新命中负向规则（读）")
+    // 变异 B（红）：数据根换钉（setDataRoot → 第二 pinned 根）——旧根整体退出
+    // 读写两面（nebflowDataRoot 推导承重的机制证明：隔离实例换 HOME 后写不穿
+    // 旧根）。原「readExtras 条目剔除即拒」变异在数据根整目录放行后失效（条目
+    // 被 contains 覆盖转冗余，见 SUBSUME 用例），承重面迁移到数据根本身。
+    // 注：policy.readExtras 是 forRoot 构造时快照（含旧根审计白名单路径），旧根
+    // 白名单内文件换钉后仍循快照可读——选不在快照内的旧根根层凭据做旧根退出
+    // 读面的探针。
+    val secondRoot = pinnedDataRoot match
+      case Some(p) => p / os.up / s"nb-sbx-second-${System.nanoTime()}"
+      case None    => os.home / s"nb-sbx-second-${System.nanoTime()}"
+    val oldRoot = pinnedDataRoot.getOrElse(secondRoot / os.up)
+    os.makeDir.all(secondRoot)
+    os.write.over(secondRoot / "marker.txt", "second")
+    PathUtil.setDataRoot(secondRoot)
+    try
+      FileSandbox.checkRead(ctx, (oldRoot / "auth.json").toString) match
+        case Left(err) => assert(err.message.startsWith("SANDBOX_DENIED"), err.message)
+        case Right(_) => fail("换钉后旧根 auth.json 必须退出读面（数据根推导承重）")
+      FileSandbox.checkWrite(ctx, nebulaMem) match
+        case Left(err) => assert(err.message.startsWith("SANDBOX_DENIED"), err.message)
+        case Right(_) => fail("换钉后旧根 Nebula memory.md 必须退出写面（例外集随新根推导 + 数据根推导承重）")
+      // 新钉根内的文件可写（可写面跟随 dataRoot）
+      assert(FileSandbox.checkWrite(ctx, (secondRoot / "marker.txt").toString).isRight,
+        "换钉后新根文件必须可写（可写面跟随数据根）")
+    finally
+      // 还原（绿）：恢复原 pinned 根
+      pinnedDataRoot.foreach(PathUtil.setDataRoot)
+      os.remove.all(secondRoot)
+    assert(FileSandbox.checkRead(ctx, nebulaMem).isRight, "恢复后 Nebula memory.md 应复绿（读）")
+    assert(FileSandbox.checkWrite(ctx, nebulaMem).isRight, "恢复后 Nebula memory.md 应复绿（写）")
   }
 
-  test("READLIST-: memory.md 不进可写根（写闸不受白名单影响）") {
+  test("WFROOT-: agents/**/memory.md 非 Nebula 份写仍拒（锚点 d：红线延续，数据根入写面不被写闸扩大击穿）；Nebula 份随整目录放行") {
     val tmp = os.Path(Files.createTempDirectory("nb-sbx-memw"))
     val ctx = ctxIn(tmp)
-    FileSandbox.checkWrite(ctx, (PathUtil.dataRoot / "agents" / "Nebula" / "memory.md").toString) match
+    // 非 Nebula 份：写拒 + Reason 行（FileSandbox 写闸消费同一 readDenied 规则
+    // ——同一既有红线读/写双闸延续，非本批新增 deny）
+    FileSandbox.checkWrite(ctx, (PathUtil.dataRoot / "agents" / "Coder" / "memory.md").toString) match
+      case Left(err) =>
+        assert(err.message.startsWith("SANDBOX_DENIED"), err.message)
+        assert(err.message.contains("private-memory deny rule"), s"应含 Reason 解释行: ${err.message}")
+      case Right(_) => fail("team agent 私有记忆必须拒写（数据根入写面不扩大红线）")
+    // Nebula 份：负向规则例外集同源豁免 → 落数据根写面放行（残留风险=纪律约束）
+    assert(FileSandbox.checkWrite(ctx, (PathUtil.dataRoot / "agents" / "Nebula" / "memory.md").toString).isRight,
+      "Nebula memory.md 随数据根整目录放行可写（残留风险=纪律约束）")
+    // root 内 symlink 间接路径同样拦截（写闸 canonical+fresh 双查）
+    val tmp2 = os.Path(Files.createTempDirectory("nb-sbx-memw-sym"))
+    os.symlink(tmp2 / "alias.md", PathUtil.dataRoot / "agents" / "Coder" / "memory.md")
+    FileSandbox.checkWrite(ctxIn(tmp2), (tmp2 / "alias.md").toString) match
       case Left(err) => assert(err.message.startsWith("SANDBOX_DENIED"), err.message)
-      case Right(_) => fail("agent 私有记忆必须拒写")
+      case Right(_) => fail("symlink 间接写 team agent 私有记忆必须被拒")
   }
 
-  test("MUT: 变异验红——readExtras 剔除 tool-results 条目即拒读，恢复条目复绿") {
+  test("SUBSUME: 数据根整目录放行后 readExtras 九子目录条目转冗余——剔除条目仍可读（contains 覆盖钉死，防误判承重项）") {
     val tmp = os.Path(Files.createTempDirectory("nb-sbx-mut"))
     val ctx = ctxIn(tmp)
     val trFile = (PathUtil.dataRoot / "tool-results" / "tr-001" / "result.json").toString
     // 基线绿
     assert(FileSandbox.checkRead(ctx, trFile).isRight, "基线：tool-results 应可读")
-    // 变异（红）：等价于源码删除该白名单条目——从派生源 readExtras 剔除后
-    // readableRoots 不再含 tool-results，拒读
+    // 变异：等价于源码删除该白名单条目——剔除后仍可读（2026-09-05 数据根入可写
+    // 面批：可读性真承重项 = readableRoots 里的数据根，子目录条目被 contains
+    // 覆盖转冗余；本断言如实钉死该事实，防未来误把条目当承重面）
     val trCanonical = os.Path(SandboxPolicy.canonicalize((PathUtil.dataRoot / "tool-results").wrapped))
     val mutated = ctx.sandbox.copy(readExtras = ctx.sandbox.readExtras.filterNot(_.toString == trCanonical.toString))
-    FileSandbox.checkRead(ctxIn(tmp, mutated), trFile) match
-      case Left(err) => assert(err.message.startsWith("SANDBOX_DENIED"), err.message)
-      case Right(_) => fail("变异后 tool-results 必须变红（白名单条目承重）")
-    // 恢复（绿）：policy 恢复原样 → 复绿
+    assert(FileSandbox.checkRead(ctxIn(tmp, mutated), trFile).isRight,
+      "剔除白名单条目后仍应可读（数据根整目录覆盖，条目冗余）")
+    // 恢复（绿）
     assert(FileSandbox.checkRead(ctx, trFile).isRight, "恢复后 tool-results 应复绿")
   }
 
   test("MSG: SANDBOX_DENIED 文案的 Readable roots 动态反映新白名单（无硬编码清单）") {
     val tmp = os.Path(Files.createTempDirectory("nb-sbx-msg2"))
-    val res = FileSandbox.checkRead(ctxIn(tmp), (PathUtil.dataRoot / "vps.env").toString)
+    // 2026-09-05 数据根入可写面批后根层凭据已随整目录放行可读——拒读探针改用
+    // 仍被负向规则一票拒绝的 team agent 私有记忆（拒绝文案同样带全量 roots）
+    val res = FileSandbox.checkRead(ctxIn(tmp), (PathUtil.dataRoot / "agents" / "Coder" / "memory.md").toString)
     res match
       case Left(err) =>
         val rootsSeg = err.message.split("Readable roots: ")(1)
         List("tool-results", "uploads", "logs", "sessions", "projects", "agents", "skills").foreach { d =>
           assert(rootsSeg.contains(d), s"文案 Readable roots 应含 $d: ${err.message}")
         }
-      case Right(_) => fail("vps.env 必须拒读（该用例验证拒读文案的 roots 动态性）")
+      case Right(_) => fail("Coder memory.md 必须拒读（该用例验证拒读文案的 roots 动态性）")
   }
 
   test("READLIST+: Grep/Glob 遍历面——agents 根搜索可跑但扫不出 memory.md；tool-results 正常命中") {
@@ -760,33 +816,43 @@ class SandboxSpec extends CatsEffectSuite:
     FileSandbox.checkRead(ctx, (PathUtil.dataRoot / "agents" / "Coder" / "memory.md").toString) match
       case Left(err) => assert(err.message.startsWith("SANDBOX_DENIED"), err.message)
       case Right(_) => fail("agents/**/memory.md 在 Nebula 策略下必须仍拒读")
-    // Nebula 自身 memory.md 同规（memory-mech 批的审计只读例外落地前，负向规则
-    // 原样；衔接点见报告）
+    // Nebula 自身 memory.md：§4.2-B 审计只读例外（2026-09-05 memory-mech 批）已
+    // 落地——负向规则精确豁免该路径，可读。[main 存量红修复] 原断言写于例外落地
+    // 前（「审计例外未落地前仍拒读」），与 AUDIT-RO 用例直接矛盾，基线实测红；
+    // 本批对齐为可读。数据根入写面后写亦放行（WFROOT- 用例钉死，残留风险=纪律约束）。
     FileSandbox.checkRead(ctx, (PathUtil.dataRoot / "agents" / "Nebula" / "memory.md").toString) match
-      case Left(_) => ()
-      case Right(_) => fail("agents/Nebula/memory.md 在 Nebula 策略下必须仍拒读（审计例外未落地前）")
+      case Right(_) => ()
+      case Left(err) => fail(s"Nebula memory.md 应循审计例外可读: ${err.message}")
   }
 
-  test("Nebula 会话沙箱已知边界（如实钉死）：root=dataRoot 使数据根根层文件进读面（写⊆读不变量）") {
-    // root=dataRoot ⇒ readableRoots 含 dataRoot 本身 ⇒ 根层凭据（auth.json 等）
-    // 在 Nebula 会话读面内。这是「写根=~/.nebflow 全域」裁定的直接机制后果
-    // （nebflow.json/daemons.json 补丁场景必须能碰根层；可写必可读）。既有读
-    // 白名单与负向规则机制零收窄零删除——本断言如实钉死 Nebula 会话的边界形态，
-    // 节点/分发器会话（root=projectRoot）不受影响（下一条对照断言）。
+  test("Nebula 会话沙箱对照（2026-09-05 数据根入写面后）：两会话形态根层同进读面；node 会话 root/worktree 写根语义零变化") {
     val policy = policyIn(PathUtil.dataRoot)
     val ctx = ctxIn(PathUtil.dataRoot, policy)
+    // Nebula 策略（root=dataRoot）：根层文件在读面
     FileSandbox.checkRead(ctx, (PathUtil.dataRoot / "auth.json").toString) match
-      case Right(_) => () // 已知边界：Nebula 会话根层凭据可读（作者信任边界内）
+      case Right(_) => () // root=dataRoot ⇒ 根层进读面（写⊆读；作者信任边界内）
       case Left(err) => fail(s"Nebula 策略 root=dataRoot 下根层文件在读面（写⊆读）: ${err.message}")
-    // 对照：node 会话策略形态（root=worktree，数据根仅白名单子目录可读）下
-    // auth.json 仍拒读——既有行为零回归
-    val nodeRoot = os.home / s".nb-sbx-node-root-${System.nanoTime()}"
+    // 对照：node 会话策略形态（root=worktree 等价物）——数据根入写面后根层凭据
+    // 同样进读面（写⊆读不变量的读面后果，本批裁定预期，非回归）。[main 存量红
+    // 修复] 原 nodeRoot 直接落 os.home 下——沙箱会话内 os.home 不可写（基线实测
+    // Operation not permitted），改走 homeLikeRoot 逃生门（既不在系统读面、也非
+    // policy root/tmp 的目录）。
+    val nodeRoot = homeLikeRoot(s"node-root-${System.nanoTime()}")
     os.makeDir.all(nodeRoot)
-    val nodePolicy = policyIn(nodeRoot)
-    val nodeCtx = ctxIn(nodeRoot, nodePolicy)
-    FileSandbox.checkRead(nodeCtx, (PathUtil.dataRoot / "auth.json").toString) match
+    val nodeCtx = ctxIn(nodeRoot)
+    // node 会话：数据根可读 + 可写（本批核心语义）
+    assert(FileSandbox.checkRead(nodeCtx, (PathUtil.dataRoot / "auth.json").toString).isRight,
+      "node 会话数据根应随整目录放行可读")
+    assert(FileSandbox.checkWrite(nodeCtx, (PathUtil.dataRoot / "auth.json").toString).isRight,
+      "node 会话数据根应随整目录放行可写")
+    // node 会话自身 root 写语义零回归（worktree 写根不受数据根扩充影响）
+    assert(FileSandbox.checkWrite(nodeCtx, (nodeRoot / "w.txt").toString).isRight,
+      "node 会话自身 root 内写必须照常放行")
+    // node 会话自身 root 外、数据根外的写仍拒（worktree 语义不因数据根扩大）
+    FileSandbox.checkWrite(nodeCtx, (os.home / "nb-sbx-node-outside-deny.txt").toString) match
       case Left(err) => assert(err.message.startsWith("SANDBOX_DENIED"), err.message)
-      case Right(_) => fail("node 会话策略下数据根根层凭据必须仍拒读")
+      case Right(_) => fail("node 会话 root 外（且数据根外）写必须仍拒")
+    os.remove.all(nodeRoot)
   }
 
   test("Nebula 会话沙箱 Seatbelt 真执行（沙箱可用时）：Bash 写数据根内成功、写外被 OS 拒") {
