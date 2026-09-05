@@ -77,7 +77,6 @@ import { initContacts } from './contacts.js';
 import { initMessages } from './messages.js';
 import { formatLiveDuration } from './chat.js';
 import { collapseTurn, failTurn } from './turnGroup.js';
-import * as planMode from './planMode.js';
 import { initCanvas, restoreTabs, closeCanvas, openCanvas } from './canvas.js';
 import { initLightbox } from './lightbox.js';
 import * as flowCanvas from './flowCanvas.js';
@@ -3191,18 +3190,11 @@ initNeblink();
 initDropbox();
 initContacts();
 initMessages();
-planMode.init();
 
 // Preload Monaco Editor during idle time so first file open is instant.
 // Monaco (~2MB from CDN) is the main cause of first-open lag.
 const _idleCb = window.requestIdleCallback || ((fn) => setTimeout(fn, 2000));
 _idleCb(() => import('./monacoEditor.js').then(({ preloadMonaco }) => preloadMonaco().catch(() => {})));
-
-// ---------- Plan mode event handlers ----------
-onMessage('planStart', (msg, view) => planMode.onPlanStart(msg, view));
-onMessage('planReady', (msg, view) => planMode.onPlanReady(msg, view));
-onMessage('planEnd', (msg, view) => planMode.onPlanEnd(msg, view));
-onMessage('_planAgent', (msg) => planMode.onPlanAgentEvent(msg));
 
 // ---------- Safety mode dropdown ----------
 (function initSafetyToggle() {
