@@ -39,23 +39,24 @@ class Phase2dToolRefactorSpec extends FunSuite:
 
   // ===== D.1-1：三角色静态集收口，工具面逐件不变 =====
 
-  test("D.1-1: Nebula fixed set == §C.1 恰十五件、零 Issue、零旧体系四件（逐件不变）"):
+  test("D.1-1: Nebula fixed set == §C.1 恰十七件、零 Issue、零旧体系四件（逐件不变）"):
     val fixed = AgentCore.fixedToolsFor(mkDef("Nebula"))
     val expected =
       Set("Task", "ProjectCreate", "NodeList", "AgentControl",
         "SendFriendMessage",
-        "Bash", "Read", "Glob", "Grep",                       // 基础四件（2026-09-05 解禁；无 Write/Edit）
+        "Bash", "Read", "Glob", "Grep", "Write", "Edit",       // 基础六件（08:40 解禁四件；13:11 裁定补齐 Write/Edit）
         "Card",                                               // 可视化（2026-09-05 解封恢复）
         "AskUserQuestion", "Pop",
         "Schedule", "TransferFile",
         "MemoryEdit")
     assertEquals(fixed, expected,
-      "Nebula 静态集恰十五件（2026-09-05 08:40 作者裁定：+基础四件/+Card 解封/−Mail/Delegate/FlowTrigger/FlowExecute 旧体系退役；2026-09-04 终裁：Issue/CheckIssues 退役）")
+      "Nebula 静态集恰十七件（08:40 作者裁定：+基础四件/+Card 解封/−Mail/Delegate/FlowTrigger/FlowExecute 旧体系退役；13:11 作者裁定：+Write/Edit 补齐基础六件；2026-09-04 终裁：Issue/CheckIssues 退役）")
     assert(!fixed.contains("Issue"), "Nebula fixedTools 零 Issue（2026-09-04 终裁退役）")
     Set("Mail", "Delegate", "FlowTrigger", "FlowExecute").foreach { t =>
       assert(!fixed.contains(t), s"旧体系四件已从 Nebula 固定面退役（2026-09-05 裁定）: $t")
     }
-    assert(!fixed.contains("Write") && !fixed.contains("Edit"), "基础四件解禁不夹带 Write/Edit（2026-09-05 裁定）")
+    assert(fixed.contains("Write") && fixed.contains("Edit"),
+      "基础六件补齐含 Write/Edit（2026-09-05 13:11 裁定：基础六件为全体 agent 统一默认工具集）")
 
   test("D.1-1: dispatcher fixed set == Node 三件 + 读四件（逐件不变）"):
     assertEquals(
@@ -90,12 +91,12 @@ class Phase2dToolRefactorSpec extends FunSuite:
   test("D.1-1: buildAllowedToolSet 三角色交付面 == 静态集（LLM 面，注册表过滤后）"):
     val nebulaDelivered = CoreProbe.allowed(mkDef("Nebula"))
     assert(nebulaDelivered.contains("MemoryEdit") && nebulaDelivered.contains("NodeList"))
-    // 2026-09-05 08:40 作者裁定：基础四件解禁（Read/Bash 机制固定携带），
-    // Write/Edit 仍不给。
+    // 2026-09-05 08:40 作者裁定：基础四件解禁（Read/Bash 机制固定携带）；
+    // 13:11 作者裁定：+Write/Edit 补齐基础六件（全体 agent 统一默认工具集）。
     assert(nebulaDelivered.contains("Read") && nebulaDelivered.contains("Bash"),
       "Nebula 携带基础四件（2026-09-05 解禁）")
-    assert(!nebulaDelivered.contains("Write") && !nebulaDelivered.contains("Edit"),
-      "Nebula 仍无 Write/Edit（基础四件解禁不夹带）")
+    assert(nebulaDelivered.contains("Write") && nebulaDelivered.contains("Edit"),
+      "Nebula 补齐 Write/Edit（2026-09-05 13:11 裁定：基础六件为全体 agent 统一默认）")
     val generalDelivered = CoreProbe.allowed(mkDef("general"), isFlowNode = true)
     assertEquals(generalDelivered, AgentCore.GeneralFixedTools, "general 节点形态交付面 == 静态 8 件")
     val dispatcherDelivered = CoreProbe.allowed(mkDef("project-dispatcher"), isFlowNode = true)
