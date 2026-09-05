@@ -262,7 +262,7 @@ class NodeEngine(
           IO.pure(Left(s"Node '${fresh.name}' became terminal (status=${fresh.status}) while the message was being appended — " +
             "refused: create a new node instead (NODE_TERMINAL_NO_MESSAGE)"))
         case None =>
-          IO.pure(Left(s"Node '$nodeId' vanished before the message was appended (NODE_NOT_FOUND)"))
+          IO.pure(Left(s"Node '${node.id}' vanished before the message was appended (NODE_NOT_FOUND)"))
     }
 
   /** WS nodeCreated（NodeEdit 创建后）。payload 与 NodeList 同构。 */
