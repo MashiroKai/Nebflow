@@ -87,6 +87,28 @@ class AgentsMdInjectionSpec extends CatsEffectSuite:
     assert(!ContextRefresher.agentsMdEnabledFor(sandboxEnabled = true, projectRoot = Some("")))
   }
 
+  test("gate: Nebula sandboxed root session (2026-09-05 sandbox batch) -> no inject") {
+    // Nebula 会话沙箱启用后（第三置位点 WebSocketRoutes.doSpawnRootAgent），
+    // sandboxEnabled=true ∧ projectRoot=Some(fallback ~/.nebflow/projects) 恒成立
+    // ——若无 agentName 排除必误注入。AGENTS.md 接收面维持 project 分发器 +
+    // node 会话，Nebula 根会话按名字排除。
+    assert(
+      !ContextRefresher.agentsMdEnabledFor(
+        sandboxEnabled = true,
+        projectRoot = Some("/x/.nebflow/projects"),
+        agentName = "Nebula"
+      )
+    )
+    // 默认参数 ""（既有两参调用形态）语义不变：非 Nebula 名照旧放行
+    assert(
+      ContextRefresher.agentsMdEnabledFor(
+        sandboxEnabled = true,
+        projectRoot = Some("/ws/a"),
+        agentName = "project-dispatcher"
+      )
+    )
+  }
+
   // ── ③ 长度护栏 ──────────────────────────────────────────────────
 
   private def wsWithAgentsMd(name: String, content: String): os.Path =

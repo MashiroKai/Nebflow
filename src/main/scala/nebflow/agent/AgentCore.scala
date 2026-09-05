@@ -914,7 +914,20 @@ private[agent] trait AgentCore:
       // ToolContext.projectRoot 的既有 folderId 语义保持不动（防回归），只修沙箱根。
       sandboxPolicy =
         if state.sandboxEnabled then
-          val sandboxRootStr = state.projectRoot.filter(_.nonEmpty).getOrElse(effectiveProjectRoot)
+          // Nebula 根会话（2026-09-05 作者裁定 13:09）：写根=~/.nebflow 数据根
+          // （PathUtil.dataRoot，与读白名单 nebflowReadExtras 同源——NEBFLOW_HOME/
+          // --home 重定向自动跟随），让 Nebula 直接处理定义层（agents/plugins/
+          // skills/prompts/flows）与运维配置（*.json 补丁）与记忆运维。推导见
+          // SandboxPolicy.sessionRoot（isNebulaRootSession 判据：depth==0 排除
+          // NodeDef.agent="Nebula" 的节点会话——它们 root 留在 projectRoot，
+          // §A.6 零回归）。
+          val sandboxRootStr = nebflow.core.sandbox.SandboxPolicy.sessionRoot(
+            state.sandboxEnabled,
+            state.depth,
+            effectiveDef.name,
+            state.projectRoot,
+            effectiveProjectRoot
+          )
           try nebflow.core.sandbox.SandboxPolicy.forRoot(os.Path(sandboxRootStr), resources.sandboxConfig)
           catch
             case e: Exception =>
