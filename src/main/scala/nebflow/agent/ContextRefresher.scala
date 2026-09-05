@@ -474,23 +474,17 @@ object ContextRefresher:
    *
    *  - modelOverride (#291: Delegate/SubTask `preset` param) — wins over
    *    disk/panel edits for the actor's lifetime;
-   *  - flowContract + the FlowReport tool append (#406: FlowDagExecutor
-   *    injects both per node via `baseDef.copy(...)`). FlowReport is only
-   *    fixed-injected for category=flow agents; dynamic flows reuse
-   *    standalone/team agents (e.g. Explorer) whose disk def lacks it, so a
-   *    bare reload silently strips the verdict tool and the node can never
-   *    report a structured verdict (strictVerdict switch nodes then FAIL).
+   *  - flowContract (FlowDagExecutor injects it per node via
+   *    `baseDef.copy(...)`; the contract data survives reloads so the
+   *    executor's verdict/slot resolution stays consistent). The FlowReport
+   *    tool re-append that used to accompany it retired 2026-09-06 with the
+   *    tool itself.
    */
   private def applyRuntimeOverrides(running: AgentDef, fresh: AgentDef): AgentDef =
     val withModel = running.modelOverride match
       case Some(cfg) => fresh.copy(model = Some(cfg), preset = running.preset, modelOverride = Some(cfg))
       case None => fresh
-    val tools =
-      if running.tools.contains("FlowReport") && !withModel.tools.contains("FlowReport") then
-        withModel.tools :+ "FlowReport"
-      else withModel.tools
     withModel.copy(
-      tools = tools,
       flowContract = if running.flowContract.nonEmpty then running.flowContract else withModel.flowContract,
       // 阶段 2b Plugins（§B.4 第 3/4 步）：node 分配是 spawn 时运行时注入
       // （NodeEngine 写入 pluginMcpServers/pluginTools，不落 agent.json）——
@@ -564,9 +558,11 @@ object ContextRefresher:
       skillCatalog <-
         if skillCatalogEnabledFor(globalDef.name) then SkillService.buildPerAgentCatalog(globalDef.skills)
         else IO.pure("")
-      flowCatalog <-
-        if isWorker then IO.pure("")
-        else SkillService.buildPerAgentFlowCatalog(globalDef.flows)
+      // flowCatalog 停注（2026-09-06 工具面裁撤批）：FlowTrigger 退役后 flows
+      // 白名单目录失去消费工具——生产点置空，order 808 section（condition=
+      // nonEmpty）自然不渲染（与 skillCatalog D.1-12 同款先例）；TurnContext
+      // 字段保留至阶段 3。
+      flowCatalog = ""
       teamCatalog <-
         if isWorker then IO.pure("")
         else buildTeamCatalogForSession(state.sessionId)

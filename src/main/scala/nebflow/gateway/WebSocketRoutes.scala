@@ -2957,13 +2957,19 @@ class WebSocketRoutes(
             else IO.unit
 
           case "updateAgentTools" =>
-            val json = parse(text).toOption.getOrElse(io.circe.Json.Null)
-            val agentName = json.hcursor.downField("name").as[String].getOrElse("")
-            val tools = json.hcursor.downField("tools").as[List[String]].getOrElse(List("*"))
-            if agentName.nonEmpty then
-              agentService.updateTools(agentName, tools) *>
-                wsSend(io.circe.Json.obj("type" -> "agentSystemPromptSaved".asJson, "name" -> agentName.asJson))
-            else IO.unit
+            // Retired 2026-09-06 (tool-face batch): agent.json tools write-back
+            // is closed. Loud rejection (no silent no-op) so any stale client
+            // sees the retirement instead of assuming the edit landed.
+            val agentName = parse(text).toOption
+              .flatMap(_.hcursor.downField("name").as[String].toOption)
+              .getOrElse("")
+            logger.warn(s"Rejected updateAgentTools for '$agentName' — write-back retired 2026-09-06 (stage 2d tool-face batch)")
+            wsSend(
+              io.circe.Json.obj(
+                "type" -> "error".asJson,
+                "message" -> s"updateAgentTools retired: per-agent tools are mechanism/plugin-managed since 2026-09-06; agent.json is no longer written from the panel".asJson
+              )
+            )
 
           case "createAgentSession" =>
             val agentName = parse(text).flatMap(_.hcursor.downField("name").as[String]).getOrElse("")
@@ -4488,56 +4494,40 @@ class WebSocketRoutes(
     sessionId: String,
     wsSend: io.circe.Json => IO[Unit]
   ): IO[Unit] =
-    // Check if it's a flow first — if so, instruct the agent to trigger it
-    // via FlowTrigger (agent-mediated: the agent can refine the prompt).
-    EntityLoader.loadFlow(skillName).flatMap {
-      case Some(_) =>
-        val safeInput = input.replace("\"", "\\\"").replace("\n", " ")
-        ensureAgent(sessionId) { ref =>
-          ref ! AgentCommand.SkillActivate(
-            skillName,
-            input,
-            sessionId,
-            s"""Trigger the "$skillName" flow:
-               |FlowTrigger(flow="$skillName", prompt="$safeInput")
-               |Wait for the flow's result and report it when it arrives.""".stripMargin,
-            ""
-          )
-        }
-      case None =>
-        // Not a flow — try skill file
-        SkillService.listSkills().flatMap { skills =>
-          skills.find(_.name == skillName) match
-            case Some(skillInfo) =>
-              SkillService.loadSkill(skillInfo.filePath).flatMap {
-                case Some(content) =>
-                  ensureAgent(sessionId) { ref =>
-                    ref ! AgentCommand.SkillActivate(
-                      skillName,
-                      input,
-                      sessionId,
-                      content.content,
-                      content.baseDir
-                    )
-                  }
-                case None =>
-                  wsSend(
-                    io.circe.Json.obj(
-                      "type" -> "skillError".asJson,
-                      "sessionId" -> sessionId.asJson,
-                      "message" -> s"Skill '$skillName' content not found".asJson
-                    )
-                  )
+    // Flow-name routing removed 2026-09-06 (tool-face batch): flows are no
+    // longer triggerable from skill activation (FlowTrigger retired). Names
+    // resolve through the skill catalog only.
+    SkillService.listSkills().flatMap { skills =>
+      skills.find(_.name == skillName) match
+        case Some(skillInfo) =>
+          SkillService.loadSkill(skillInfo.filePath).flatMap {
+            case Some(content) =>
+              ensureAgent(sessionId) { ref =>
+                ref ! AgentCommand.SkillActivate(
+                  skillName,
+                  input,
+                  sessionId,
+                  content.content,
+                  content.baseDir
+                )
               }
             case None =>
               wsSend(
                 io.circe.Json.obj(
                   "type" -> "skillError".asJson,
                   "sessionId" -> sessionId.asJson,
-                  "message" -> s"Skill '$skillName' not found".asJson
+                  "message" -> s"Skill '$skillName' content not found".asJson
                 )
               )
-        }
+          }
+        case None =>
+          wsSend(
+            io.circe.Json.obj(
+              "type" -> "skillError".asJson,
+              "sessionId" -> sessionId.asJson,
+              "message" -> s"Skill '$skillName' not found".asJson
+            )
+          )
     }
 
   // ============================================================

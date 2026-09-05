@@ -16,7 +16,7 @@ import nebflow.core.compact.HistoryArchiver
 import nebflow.core.flow.NodeStatus
 import nebflow.core.flow.RunningFlowRegistry
 import nebflow.core.task.FileTaskStore
-import nebflow.core.tools.{FileLockManager, FlowReportStore, FlowReportTool, ToolContext, ToolError}
+import nebflow.core.tools.{FileLockManager, FlowReportStore, FlowReportData, ToolContext}
 import nebflow.gateway.{RateLimiter, SessionStore}
 import nebflow.llm.{ModelCandidate, ProviderHealthMonitor, ThinkingConfig}
 import nebflow.shared.{ContentBlock, LlmHandle, LlmRequest, LlmResponse, Message, MessageRole, StreamChunk, ToolCall}
@@ -25,121 +25,23 @@ import java.util.UUID
 import scala.concurrent.duration.*
 
 /**
- * R8-P1 structured verdict contract:
+ * R8-P1 structured verdict contract (2026-09-06 口径更新):
  *
- *  Tool level — FlowReportTool.call validates against the node's
- *   FlowNodeContract (injected via AgentDef.flowContract): verdict membership,
- *   slot presence/types, no undeclared slots. Violations → ToolError (agent
- *   self-corrects in-turn); valid calls store canonical verdict + slots.
- *
- *  Executor level — strictVerdict flows:
- *   - switch node ending WITHOUT a FlowReport verdict fails the node with an
+ *  Engine level — strictVerdict flows:
+ *   - switch node ending WITHOUT a verdict fails the node with an
  *     error listing the expected case keys (second line of defense);
  *   - Switch.lenient=true re-enables the legacy guess pipeline per switch;
  *   - strictVerdict=false (default) keeps legacy behavior unchanged;
- *   - a valid FlowReport verdict routes the switch; slots flow downstream
- *     via $<nodeId>.slots.<field>.
+ *   - a stored verdict routes the switch; slots flow downstream via
+ *     $<nodeId>.slots.<field>.
+ *
+ *  2026-09-06 工具面裁撤批：FlowReportTool（工具层 contract 验证 + store 写入）
+ *  已退役删除——fakes 改为直写 [[FlowReportStore]]（引擎消费面零变化），原
+ *  tool-level 5 条 tests 与「invalid verdict → ToolError → self-corrects」
+ *  随工具退役（被测对象不复存在）。FlowNodeContract.describe 的产出语义仍由
+ *  下面的 describe test 锁定。
  */
 class StrictVerdictSpec extends CatsEffectSuite:
-
-  // ==========================================================
-  // Tool-level contract validation (no executor)
-  // ==========================================================
-
-  private def contractCtx(sessionId: String, contract: Option[FlowNodeContract]): ToolContext =
-    ToolContext(
-      projectRoot = "",
-      sessionId = Some(sessionId),
-      agentDef = Some(
-        AgentDef(name = "worker", description = "", category = "flow", flowContract = contract)
-      )
-    )
-
-  private val switchContract =
-    Some(FlowNodeContract(caseKeys = Set("pass", "revise"), slots = Map("topics" -> "string", "issues" -> "array")))
-
-  private def reportInput(verdict: String, output: String, slots: Option[Json]): io.circe.JsonObject =
-    io.circe.JsonObject.fromIterable(
-      List(
-        Some("verdict" -> Json.fromString(verdict)),
-        Some("output" -> Json.fromString(output)),
-        slots.map(s => "slots" -> s)
-      ).flatten
-    )
-
-  test("FlowReport invalid verdict rejected with expected keys listed") {
-    val sid = s"svc-${UUID.randomUUID().toString.take(6)}"
-    FlowReportTool
-      .call(reportInput("unknown", "out", None), contractCtx(sid, switchContract))
-      .map { result =>
-        assert(result.isLeft, s"invalid verdict must be rejected, got: $result")
-        val msg = result.swap.toOption.get.message
-        assert(msg.contains("verdict must be one of"), s"error lists the enum: $msg")
-        assert(msg.contains("pass"), s"error mentions 'pass': $msg")
-        assert(msg.contains("revise"), s"error mentions 'revise': $msg")
-      }
-  }
-
-  test("FlowReport verdict case-insensitively canonicalized to declared key") {
-    val sid = s"svc-${UUID.randomUUID().toString.take(6)}"
-    for
-      result <- FlowReportTool.call(
-        reportInput("  PASS ", "out", Some(Json.obj("topics" -> "t".asJson, "issues" -> Json.arr("a".asJson)))),
-        contractCtx(sid, switchContract)
-      )
-      stored <- FlowReportStore.get(sid)
-      _ <- FlowReportStore.remove(sid)
-    yield
-      assert(result.isRight, s"case-insensitive pass must be accepted: $result")
-      assertEquals(stored.map(_.verdict), Some("pass"), "canonical declared key stored")
-      assertEquals(stored.flatMap(_.slots("topics")), Some("t".asJson), "string slot stored")
-      assertEquals(stored.flatMap(_.slots("issues")), Some(Json.arr("a".asJson)), "array slot stored")
-  }
-
-  test("FlowReport slot type mismatch rejected") {
-    val sid = s"svc-${UUID.randomUUID().toString.take(6)}"
-    FlowReportTool
-      .call(
-        reportInput("pass", "out", Some(Json.obj("topics" -> 42.asJson, "issues" -> Json.arr()))),
-        contractCtx(sid, switchContract)
-      )
-      .map { result =>
-        assert(result.isLeft, "number where string declared must be rejected")
-        val msg = result.swap.toOption.get.message
-        assert(msg.contains("slots.topics must be of type string"), s"names the offending slot: $msg")
-      }
-  }
-
-  test("FlowReport missing declared slot and undeclared slot both rejected") {
-    val sid = s"svc-${UUID.randomUUID().toString.take(6)}"
-    // topics missing entirely; extra undeclared key present
-    FlowReportTool
-      .call(
-        reportInput("pass", "out", Some(Json.obj("issues" -> Json.arr(), "bonus" -> "x".asJson))),
-        contractCtx(sid, switchContract)
-      )
-      .map { result =>
-        assert(result.isLeft)
-        val msg = result.swap.toOption.get.message
-        assert(msg.contains("slots.topics is declared as string but missing"), s"$msg")
-        assert(msg.contains("slots.bonus is not declared"), s"$msg")
-      }
-  }
-
-  test("FlowReport without contract keeps legacy behavior (any verdict, slots pass-through)") {
-    val sid = s"svc-${UUID.randomUUID().toString.take(6)}"
-    for
-      result <- FlowReportTool.call(
-        reportInput("whatever", "out", Some(Json.obj("any" -> "thing".asJson))),
-        contractCtx(sid, None)
-      )
-      stored <- FlowReportStore.get(sid)
-      _ <- FlowReportStore.remove(sid)
-    yield
-      assert(result.isRight, s"no contract → accept: $result")
-      assertEquals(stored.map(_.verdict), Some("whatever"))
-      assertEquals(stored.flatMap(_.slots("any")), Some("thing".asJson))
-  }
 
   test("contract describe block lists verdict enum and slot schema") {
     val text = FlowNodeContract(caseKeys = Set("pass", "revise"), slots = Map("topics" -> "string")).describe
@@ -155,7 +57,7 @@ class StrictVerdictSpec extends CatsEffectSuite:
   private def answerAfter(delay: FiniteDuration, text: String): Stream[IO, StreamChunk] =
     Stream.eval(IO.sleep(delay)) >> Stream(StreamChunk.TextDelta(text), StreamChunk.Done(None, None))
 
-  /** Plain-text answerer — never calls FlowReport. */
+  /** Plain-text answerer — never reports a verdict. */
   private class PlainTextLlm(text: String, delay: FiniteDuration = 50.millis) extends LlmHandle[IO]:
     def send(req: LlmRequest): IO[LlmResponse] =
       IO.raiseError(new RuntimeException("send not expected in this test"))
@@ -165,18 +67,14 @@ class StrictVerdictSpec extends CatsEffectSuite:
     ): Stream[IO, StreamChunk] = answerAfter(delay, text)
 
   /**
-   * Stateful fake: per-session request counter. Request n (up to the script
-   * length) → FlowReport tool call; then → plain text. Makes a flow node
-   * actually call the (real) FlowReport tool through the real tool pipeline.
-   * firstVerdict optionally injects one bad call to exercise self-correction.
+   * Verdict reporter: on the session's first request, writes the verdict +
+   * slots straight into FlowReportStore (the post-retirement stand-in for the
+   * retired FlowReport tool — the engine's consumption path is unchanged),
+   * then answers plain text so the node completes.
    */
-  private class CountingFlowReportLlm(
-    verdict: String,
-    slots: Json,
-    capture: Ref[IO, Map[String, List[Message]]],
-    firstVerdict: Option[String] = None // optional bad verdict tried before self-correcting
-  ) extends LlmHandle[IO]:
-    private val counts: Ref[IO, Map[String, Int]] = Ref.unsafe(Map.empty)
+  private class StoreReportingLlm(verdict: String, slots: Json, capture: Ref[IO, Map[String, List[Message]]])
+      extends LlmHandle[IO]:
+    private val reported = Ref.unsafe[IO, Set[String]](Set.empty)
     def send(req: LlmRequest): IO[LlmResponse] =
       IO.raiseError(new RuntimeException("send not expected in this test"))
     def sendStream(
@@ -184,30 +82,16 @@ class StrictVerdictSpec extends CatsEffectSuite:
       onAttempt: Option[nebflow.shared.FallbackAttempt => IO[Unit]] = None
     ): Stream[IO, StreamChunk] =
       Stream.eval(capture.update(m => m.updated(req.sessionId, req.messages))) >>
-        Stream
-          .eval(
-            counts.modify(m =>
-              val n = m.getOrElse(req.sessionId, 0) + 1
-              (m.updated(req.sessionId, n), n)
-            )
-          )
-          .flatMap { n =>
-            val v = if n == 1 then firstVerdict.getOrElse(verdict) else verdict
-            if n <= (if firstVerdict.isDefined then 2 else 1) then
-              Stream(
-                StreamChunk.ToolCallChunk(
-                  ToolCall(
-                    id = s"call-$n",
-                    name = "FlowReport",
-                    input = io.circe.JsonObject.fromIterable(
-                      List("verdict" -> Json.fromString(v), "output" -> Json.fromString("reported output"), "slots" -> slots)
-                    )
-                  )
-                ),
-                StreamChunk.Done(Some("tool_use"), None)
+        Stream.eval(reported.get.flatMap { seen =>
+          if !seen(req.sessionId) then
+            reported.update(_ + req.sessionId) *>
+              FlowReportStore.set(
+                req.sessionId,
+                FlowReportData(verdict, "reported output", slots.asObject.getOrElse(io.circe.JsonObject.empty))
               )
-            else Stream(StreamChunk.TextDelta("done"), StreamChunk.Done(None, None))
-        }
+          else IO.unit
+        }) >>
+        Stream(StreamChunk.TextDelta("done"), StreamChunk.Done(None, None))
 
   private def mkResources(system: ActorSystem, tmp: os.Path, llm: LlmHandle[IO]): IO[SharedResources] =
     for
@@ -283,7 +167,7 @@ class StrictVerdictSpec extends CatsEffectSuite:
       strictVerdict = strict
     )
 
-  test("strict flow: switch node without FlowReport verdict fails with expected keys") {
+  test("strict flow: switch node without verdict fails with expected keys") {
     val llm = new PlainTextLlm("I think this passes: VERDICT: pass")
     withFlowEnv(llm) { (resources, system) =>
       val instId = s"sv1-${UUID.randomUUID().toString.take(6)}"
@@ -333,10 +217,10 @@ class StrictVerdictSpec extends CatsEffectSuite:
     }
   }
 
-  test("strict flow: FlowReport verdict routes the switch and slots resolve downstream") {
+  test("strict flow: stored verdict routes the switch and slots resolve downstream") {
     val slots = Json.obj("topics" -> "quantum dots; perovskite; SiC".asJson)
     val capture = Ref.unsafe[IO, Map[String, List[Message]]](Map.empty)
-    val llm = new CountingFlowReportLlm("pass", slots, capture)
+    val llm = new StoreReportingLlm("pass", slots, capture)
     withFlowEnv(llm) { (resources, system) =>
       val instId = s"sv4-${UUID.randomUUID().toString.take(6)}"
       // n1 declares a topics slot; n2's input template references it
@@ -355,7 +239,7 @@ class StrictVerdictSpec extends CatsEffectSuite:
         .timeout(30.seconds)
         .flatMap { result =>
           capture.get.map { captured =>
-            assert(result.isRight, s"valid FlowReport must route pass→n2: $result")
+            assert(result.isRight, s"valid verdict must route pass→n2: $result")
             // n2's LLM request must contain the RESOLVED slot value, not the template
             val n2Msgs: List[Message] =
               captured.toList.collect { case (sid, msgs) if sid.contains("n2") => msgs }.flatten
@@ -368,38 +252,6 @@ class StrictVerdictSpec extends CatsEffectSuite:
               s"n2 must receive resolved $$n1 slots value, got: $userTexts"
             )
             assert(!userTexts.contains("$n1.slots.topics"), "template must be resolved, not passed raw")
-          }
-        }
-    }
-  }
-
-  test("invalid FlowReport verdict → ToolError → agent self-corrects in the same node") {
-    val slots = Json.obj()
-    val capture = Ref.unsafe[IO, Map[String, List[Message]]](Map.empty)
-    val llm = new CountingFlowReportLlm("pass", slots, capture, firstVerdict = Some("COMPLETELY-OFF"))
-    withFlowEnv(llm) { (resources, system) =>
-      val instId = s"sv5-${UUID.randomUUID().toString.take(6)}"
-      FlowDagExecutor
-        .execute(switchFlow(strict = true, lenient = false), "work", resources, system, None, instId)
-        .timeout(30.seconds)
-        .flatMap { result =>
-          capture.get.map { captured =>
-            assert(result.isRight, s"self-correction must complete the flow: $result")
-            // The rejected call's ToolError must have come back to the agent
-            // (it travels as a ToolResult block, not a Text block)
-            val allText = captured.values.flatten.flatMap { m =>
-              m.content.fold(t => t, blocks =>
-                blocks.map {
-                  case ContentBlock.Text(t)             => t
-                  case ContentBlock.ToolResult(_, c, _) => c
-                  case other                            => other.toString
-                }.mkString
-              ) :: Nil
-            }.mkString("\n")
-            assert(
-              allText.contains("verdict must be one of"),
-              s"agent must have seen the contract ToolError: ${allText.take(300)}"
-            )
           }
         }
     }

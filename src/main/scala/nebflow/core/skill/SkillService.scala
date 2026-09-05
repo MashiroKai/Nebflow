@@ -245,24 +245,10 @@ object SkillService:
              |$entries""".stripMargin
       }
 
-  /**
-   * Build a flow catalog containing only the flows declared by the agent.
-   * Empty list → empty string (no injection).
-   */
-  def buildPerAgentFlowCatalog(flowNames: List[String]): IO[String] =
-    if flowNames.isEmpty then IO.pure("")
-    else
-      flowNames.traverse(name => EntityLoader.loadFlow(name)).map { opts =>
-        val visible = opts.flatten.filter(_.description.nonEmpty)
-        if visible.isEmpty then ""
-        else
-          val entries = visible.map(f => s"- ${f.name}: ${f.description.take(200)}").mkString("\n")
-          s"""# Available Flows
-             |
-             |Trigger via FlowTrigger(flow="<name>", prompt="<task input>"). The flow runs in the background; its result is delivered to you when it completes.
-             |
-             |$entries""".stripMargin
-      }
+  // buildPerAgentFlowCatalog retired 2026-09-06 (tool-face batch): the
+  // FlowTrigger tool it advertised is gone, so the per-agent flows whitelist
+  // catalog has no consumer. ContextRefresher now injects an empty
+  // flowCatalog section (same pattern as the D.1-12 skill-catalog stop).
 
   // ============================================================
   // Public API
