@@ -677,20 +677,20 @@ export default {
   'time.yesterday': 'Yesterday',
 
   // === Task list ===
-  // Task redesign (2026-08-30): progress-display semantics — only
-  // pending+in_progress render; needs_confirmation/cancel/return/archive
-  // keys removed with their retired paths.
+  // Task panel = pure Flow Map node view (2026-09-05 10:54 ruling): the old
+  // task area is retired; sectionProgress/pendingShort/globalSource keys
+  // removed with their retired paths. Node-view keys kept.
   'task.expand': 'Expand',
   'task.collapse': 'Collapse',
-  // #15 pure-progress visualization (§15.11): single task zone, todo/confirm
-  // keys removed with their retired paths.
-  'task.sectionProgress': 'Tasks',
+  // progressEmpty: empty-state fallback key (builder kept, not wired into
+  // the main path — the panel collapses when there are no nodes)
   'task.progressEmpty': 'No active tasks',
   'task.justNow': 'Just now',
-  'task.pendingShort': 'Queued',
   'task.statsProgress': '{progress} tasks',
   'task.inProgressShort': 'In progress',
-  'task.globalSource': 'Nebula (global)',
+  'task.nodePending': 'Pending',
+  'task.nodeHeld': 'Held',
+  'task.nodeBlocked': 'Blocked',
   'ref.cardAria': 'Reference',
   'ref.expand': 'Expand',
   'ref.collapse': 'Collapse',
