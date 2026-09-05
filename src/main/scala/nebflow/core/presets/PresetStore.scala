@@ -115,32 +115,55 @@ class PresetStore(
   /** Load the preset file, initializing it from the global chain on first use. */
   def load(): PresetFile =
     if !os.exists(configPath) then
-      val init = initFromFile()
-      save(init)
-      init
-    else
-      val raw = os.read(configPath)
-      decode[PresetFile](raw) match
-        case Right(f) if f.presets.isEmpty =>
-          // Empty presets file — re-initialize (e.g. user deleted all presets)
+      // 首载物化竞态防护（trigger-chain-fix fork 化前置硬化）：触发链并行化后并
+      // 发节点 spawn 成为常态——check-then-act 下多 fiber 同时 !exists → 并发 save
+      // → os.move.over 换名碰撞（实测 FileAlreadyExistsException，spawn 失败）。
+      // 类级 synchronized 双检：init 全局串行，败方落入常规读路径。
+      PresetStore.synchronized {
+        if !os.exists(configPath) then
           val init = initFromFile()
           save(init)
           init
-        case Right(f) =>
-          // Validate/repair defaultPreset if it dangles or carries no chain
-          repair(f)
-        case Left(err) =>
-          logger.warnSync(s"Failed to parse model-presets.json: ${err.getMessage}; re-initializing")
-          val init = initFromFile()
-          save(init)
-          init
+        else loadExisting()
+      }
+    else loadExisting()
+
+  private def loadExisting(): PresetFile =
+    val raw = os.read(configPath)
+    decode[PresetFile](raw) match
+      case Right(f) if f.presets.isEmpty =>
+        // Empty presets file — re-initialize (e.g. user deleted all presets)
+        val init = initFromFile()
+        save(init)
+        init
+      case Right(f) =>
+        // Validate/repair defaultPreset if it dangles or carries no chain
+        repair(f)
+      case Left(err) =>
+        logger.warnSync(s"Failed to parse model-presets.json: ${err.getMessage}; re-initializing")
+        val init = initFromFile()
+        save(init)
+        init
 
   /** Atomically write the preset file (temp + rename). */
   def save(f: PresetFile): Unit =
     os.makeDir.all(configPath / os.up)
     val tmp = configPath / os.up / s".model-presets.${System.nanoTime()}.tmp"
     os.write(tmp, f.asJson.noSpaces)
-    os.move.over(tmp, configPath)
+    // 并发 save 换名碰撞重试（trigger-chain-fix）：并发 repair/init 双写时
+    // move.over 对已出现的目标抛 FileAlreadyExistsException——tmp 名含 nanoTime
+    // 互不覆盖，短退避重试即收敛；重试耗尽后原样上抛（真异常不留观感）。
+    var attempt = 0
+    var done = false
+    while !done && attempt < 5 do
+      try
+        os.move.over(tmp, configPath)
+        done = true
+      catch
+        case _: java.nio.file.FileAlreadyExistsException =>
+          attempt += 1
+          Thread.sleep(5L * attempt)
+    if !done then os.move.over(tmp, configPath)
 
   /**
    * Resolve an agent's model configuration given its preset reference and
