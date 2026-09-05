@@ -14,7 +14,7 @@ import nebflow.core.PathUtil
 import nebflow.core.compact.HistoryArchiver
 import nebflow.core.flow.{NodeStatus, RunningFlowRegistry}
 import nebflow.core.task.FileTaskStore
-import nebflow.core.tools.FileLockManager
+import nebflow.core.tools.{FileLockManager, FlowReportData, FlowReportStore}
 import nebflow.gateway.{RateLimiter, SessionStore}
 import nebflow.llm.{ModelCandidate, ProviderHealthMonitor, ThinkingConfig}
 import nebflow.shared.{ContentBlock, LlmHandle, LlmRequest, LlmResponse, Message, MessageRole, StreamChunk, ToolCall}
@@ -40,9 +40,12 @@ class BarrierSpec extends CatsEffectSuite:
     Stream.eval(IO.sleep(delay)) >> Stream(StreamChunk.TextDelta(text), StreamChunk.Done(None, None))
 
   /**
-   * Verify-node fake: each verify session calls FlowReport once with the
-   * next verdict from the queue (then answers text); all other nodes answer
-   * plain text after their configured delay. Captures all requests.
+   * Verify-node fake: each verify session reports the next verdict from the
+   * queue once (then answers text); all other nodes answer plain text after
+   * their configured delay. Captures all requests.
+   *
+   * 2026-09-06 工具面裁撤批：FlowReport 工具退役——fake 改为直写
+   * [[FlowReportStore]]（引擎消费面零变化），barrier/switch 语义断言全保留。
    */
   private class VerifyLlm(
     verdictQueue: Ref[IO, List[String]],
@@ -60,24 +63,13 @@ class BarrierSpec extends CatsEffectSuite:
         Stream.eval(IO(nodeIdOf(req.sessionId))).flatMap {
           case "verify" =>
             Stream.eval(answered.get.flatMap(a => if a(req.sessionId) then IO.pure(false) else answered.update(_ + req.sessionId).as(true))).flatMap {
-              case true => // first request of this verify session → FlowReport
+              case true => // first request of this verify session → report the queued verdict
                 Stream.eval(verdictQueue.modify {
                   case v :: rest => (rest, v)
                   case Nil       => (Nil, "pass")
-                }).flatMap { verdict =>
-                  Stream(
-                    StreamChunk.ToolCallChunk(
-                      ToolCall(
-                        id = "call-1",
-                        name = "FlowReport",
-                        input = io.circe.JsonObject.fromIterable(
-                          List("verdict" -> Json.fromString(verdict), "output" -> Json.fromString("verified"))
-                        )
-                      )
-                    ),
-                    StreamChunk.Done(Some("tool_use"), None)
-                  )
-                }
+                }).evalTap { verdict =>
+                  FlowReportStore.set(req.sessionId, FlowReportData(verdict, "verified"))
+                } >> Stream(StreamChunk.TextDelta("done"), StreamChunk.Done(None, None))
               case false => Stream(StreamChunk.TextDelta("done"), StreamChunk.Done(None, None))
             }
           case "r1" => answerAfter(200.millis, "R1-OUT")

@@ -7,11 +7,11 @@ import nebflow.shared.AgentModelConfig
  *
  * Built by FlowDagExecutor from the node's flow.json declaration — case keys
  * of its Switch onComplete + the `outputs` slot schema — and attached to the
- * spawned agent's AgentDef. Consumed in two places:
- *  - AgentCore.buildToolList appends [[describe]] to the FlowReport tool
- *    description, so the agent knows its verdict enum up front;
- *  - FlowReportTool.call validates verdict membership and slot types at call
- *    time, returning a ToolError the agent can self-correct in the same turn.
+ * spawned agent's AgentDef. Historical consumers (both retired with the
+ * FlowReport tool, 2026-09-06 工具面裁撤批): the buildToolList describe
+ * append and the FlowReportTool.call contract validation. The contract data
+ * itself is still injected by the engine (zero-touch line) and kept for
+ * stage-3 engine-side data migration.
  */
 case class FlowNodeContract(
   caseKeys: Set[String] = Set.empty, // non-empty ⇔ this node routes via a Switch
