@@ -186,8 +186,10 @@ function fillSummary(built, meta) {
  */
 function applyLatestBannerOnly(chat, keep) {
   const keepSet = new Set(keep);
-  const groups = Array.from(chat.children)
-    .filter(el => el.classList && el.classList.contains('turn-group'));
+  // chat.children is typed Element[], but the turn-group nodes here are the
+  // same HTMLElements `keep` carries — narrow so keepSet.has(g) typechecks.
+  const groups = /** @type {HTMLElement[]} */ (Array.from(chat.children)
+    .filter(el => el.classList && el.classList.contains('turn-group')));
   for (const g of groups) {
     if (!g.querySelector('.turn-summary')) continue; // failed groups carry no bar
     g.classList.toggle('turn-banner-superseded', !keepSet.has(g));
