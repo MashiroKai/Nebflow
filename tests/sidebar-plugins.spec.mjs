@@ -237,12 +237,12 @@ test('B1: unified plugin cards + agent summary rows; no subscription/config bloc
         cardDesc: txt(q('.plugins-card[data-plugin="e2e-hello"] .plugins-card-desc')),
         comps: qa('.plugins-card[data-plugin="e2e-hello"] .plugins-comp').map(txt),
         statePill: txt(q('.plugins-card[data-plugin="e2e-hello"] .plugins-state-pill')),
-        switchOff: q('.plugins-card[data-plugin="e2e-hello"] .plugins-switch')?.getAttribute('aria-checked'),
+        switchOff: q('.plugins-card[data-plugin="e2e-hello"] [data-plugin-switch]')?.getAttribute('aria-checked'),
         // expandable skill previews
         expandHiddenBefore: q('[data-expand-for="skills-e2e-hello"]')?.hidden,
         // rejected card
         rejectedPill: txt(q('.plugins-card[data-plugin="broken-plugin"] .plugins-rejected-pill')),
-        rejectedNoSwitch: !q('.plugins-card[data-plugin="broken-plugin"] .plugins-switch'),
+        rejectedNoSwitch: !q('.plugins-card[data-plugin="broken-plugin"] [data-plugin-switch]'),
         // old forms must be gone
         noSubChecks: qa('.plugins-sub-check').length,
         noPresetSelects: qa('.plugins-preset-select').length,
@@ -349,31 +349,33 @@ test('B3: switch fires the trust contract — approve/revoke POSTs, registry res
 
   // off → on: POST approve, then the page re-fetches the registry (mock flips
   // state) and the card re-renders on.
-  await page.click('.plugins-card[data-plugin="e2e-hello"] .plugins-switch');
+  await page.click('.plugins-card[data-plugin="e2e-hello"] [data-plugin-switch]');
   await page.waitForFunction(() =>
-    document.querySelector('.plugins-card[data-plugin="e2e-hello"] .plugins-switch')?.classList.contains('on'),
+    document.querySelector('.plugins-card[data-plugin="e2e-hello"] [data-plugin-switch]')?.classList.contains('on'),
     { timeout: 5000 });
   const onState = await page.evaluate(() => ({
-    ariaChecked: document.querySelector('.plugins-card[data-plugin="e2e-hello"] .plugins-switch')?.getAttribute('aria-checked'),
+    ariaChecked: document.querySelector('.plugins-card[data-plugin="e2e-hello"] [data-plugin-switch]')?.getAttribute('aria-checked'),
     pill: document.querySelector('.plugins-card[data-plugin="e2e-hello"] .plugins-state-pill')?.textContent.trim(),
   }));
   expect(onState.ariaChecked, 'switch aria-checked=true after approve').toBe('true');
   expect(onState.pill, 'state pill flips to 已启用').toBe('已启用');
 
   // on → off: POST revoke, card re-renders off.
-  await page.click('.plugins-card[data-plugin="e2e-hello"] .plugins-switch');
+  await page.click('.plugins-card[data-plugin="e2e-hello"] [data-plugin-switch]');
   await page.waitForFunction(() =>
-    !document.querySelector('.plugins-card[data-plugin="e2e-hello"] .plugins-switch')?.classList.contains('on'),
+    !document.querySelector('.plugins-card[data-plugin="e2e-hello"] [data-plugin-switch]')?.classList.contains('on'),
     { timeout: 5000 });
 
   // Content-changed path: trust flips back to untrusted with the digest-changed
-  // reason → card renders off + the 内容已变更 hint.
+  // reason → card renders off + the 内容已变更 hint. (The manual refresh
+  // button was removed 2026-09-05 — the same render pipeline is triggered
+  // directly here; the live poller drives the equivalent refresh in prod.)
   pluginState.contentChanged = true;
   pluginState.approved = true;
-  await page.click('#plugins-refresh');
+  await page.evaluate(async () => { const m = await import('/js/plugins.js'); m.renderPlugins(); });
   await page.waitForSelector('.plugins-card[data-plugin="e2e-hello"].changed', { timeout: 5000 });
   const changed = await page.evaluate(() => ({
-    on: document.querySelector('.plugins-card[data-plugin="e2e-hello"] .plugins-switch')?.classList.contains('on'),
+    on: document.querySelector('.plugins-card[data-plugin="e2e-hello"] [data-plugin-switch]')?.classList.contains('on'),
     hint: document.querySelector('.plugins-card[data-plugin="e2e-hello"] .plugins-card-hint')?.textContent.trim(),
   }));
   expect(changed.on, 'changed digest renders the switch off').toBe(false);

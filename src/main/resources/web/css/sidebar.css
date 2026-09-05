@@ -2167,29 +2167,6 @@
   color: var(--color-frame-text);
   letter-spacing: -0.01em;
 }
-.plugins-refresh-btn {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  width: 26px;
-  height: 26px;
-  border-radius: 7px;
-  color: var(--color-frame-text-muted);
-  background: var(--glass-control-bg);
-  -webkit-backdrop-filter: blur(var(--glass-control-blur)) saturate(1.2);
-  backdrop-filter: blur(var(--glass-control-blur)) saturate(1.2);
-  border: 1px solid var(--glass-control-border);
-  box-shadow:
-    inset 0 1px 0 var(--glass-control-highlight),
-    inset 0 -1px 0 var(--glass-control-underedge);
-  cursor: pointer;
-  transition: background 0.15s, color 0.15s, border-color 0.15s;
-}
-.plugins-refresh-btn:hover {
-  background: var(--glass-control-bg-hover);
-  border-color: var(--glass-control-border);
-  color: var(--color-frame-text);
-}
 .plugins-section { margin-bottom: 18px; }
 .plugins-section-title {
   font: 600 11px -apple-system, sans-serif;
@@ -2266,6 +2243,8 @@
   align-items: center;
   gap: 8px;
 }
+/* The enable switch — now the shared nb-toggle component (js/toggle.js);
+   styles live in the «nb-toggle» section below. The pill stays panel-local. */
 .plugins-state-pill {
   font: 500 9px -apple-system, sans-serif;
   padding: 1px 7px;
@@ -2280,45 +2259,6 @@
   background: rgb(var(--sapphire) / 0.1);
   border-color: rgb(var(--sapphire) / 0.22);
 }
-/* The enable switch — the page's only control. Sapphire accent when on. */
-.plugins-switch {
-  position: relative;
-  width: 30px;
-  height: 17px;
-  border-radius: 9px;
-  padding: 0;
-  flex-shrink: 0;
-  cursor: pointer;
-  background: var(--glass-control-bg);
-  border: 1px solid var(--glass-control-border);
-  box-shadow:
-    inset 0 1px 0 var(--glass-control-highlight),
-    inset 0 -1px 0 var(--glass-control-underedge);
-  transition: background 0.15s, border-color 0.15s;
-}
-.plugins-switch .plugins-switch-knob {
-  position: absolute;
-  top: 1px;
-  left: 1px;
-  width: 13px;
-  height: 13px;
-  border-radius: 50%;
-  background: var(--color-frame-text-muted);
-  transition: left 0.15s ease, background 0.15s;
-}
-.plugins-switch.on {
-  background: rgb(var(--sapphire) / 0.35);
-  border-color: rgb(var(--sapphire) / 0.5);
-}
-.plugins-switch.on .plugins-switch-knob {
-  left: 14px;
-  background: rgb(var(--sapphire));
-}
-.plugins-switch:focus-visible {
-  outline: 2px solid rgb(var(--sapphire) / 0.5);
-  outline-offset: 1px;
-}
-.plugins-switch:disabled { opacity: 0.5; cursor: default; }
 .plugins-card-desc {
   font: 400 11px -apple-system, sans-serif;
   color: var(--color-frame-text-muted);
@@ -2508,4 +2448,67 @@
 .plugins-agent-row:hover .plugins-agent-chevron {
   color: rgb(var(--sapphire));
   transform: translateX(1px);
+}
+
+/* ── nb-toggle — shared switch component (js/toggle.js) ──────────────────
+   2026-09-05 插件面板体验批。One class for every panel that renders a
+   switch: the Plugins page adopts it now; the Settings page adopts it in
+   the sidebar-restructure batch (replacing the legacy .toggle / .cfg-toggle
+   pair). Contract: markup from toggleHTML(options) — a real <button> with
+   role="switch", so Space/Enter click is native; knob drawn by ::after.
+   TOKEN DISCIPLINE: track = glass-control material, accent = sapphire
+   family, motion = the app-wide 0.15s control-transition convention,
+   enter/exit = the shared --panel-ease curve. Zero hand-made color values;
+   both themes auto-adapt (sapphire.css / base.css dark blocks). */
+.nb-toggle {
+  position: relative;
+  width: 36px;
+  height: 20px;
+  padding: 0;
+  border-radius: 10px;
+  flex-shrink: 0;
+  cursor: pointer;
+  background: var(--glass-control-bg);
+  -webkit-backdrop-filter: blur(var(--glass-control-blur)) saturate(1.2);
+  backdrop-filter: blur(var(--glass-control-blur)) saturate(1.2);
+  border: 1px solid var(--glass-control-border);
+  box-shadow:
+    inset 0 1px 0 var(--glass-control-highlight),
+    inset 0 -1px 0 var(--glass-control-underedge);
+  transition: background 0.15s, border-color 0.15s;
+}
+.nb-toggle::after {
+  content: '';
+  position: absolute;
+  top: 2px;
+  left: 2px;
+  width: 16px;
+  height: 16px;
+  border-radius: 50%;
+  background: var(--color-frame-text-muted);
+  transition: transform 0.15s ease, background 0.15s;
+}
+.nb-toggle.on {
+  background: rgb(var(--sapphire) / 0.35);
+  border-color: rgb(var(--sapphire) / 0.5);
+}
+.nb-toggle.on::after {
+  transform: translateX(16px);
+  background: rgb(var(--sapphire));
+}
+.nb-toggle:focus-visible {
+  outline: 2px solid rgb(var(--sapphire) / 0.5);
+  outline-offset: 1px;
+}
+.nb-toggle:disabled { opacity: 0.5; cursor: default; }
+
+/* New plugin card entering the list via live registry sync (plugins.js
+   poller) — short slide+fade on the shared panel ease; the class is removed
+   on animationend so repeat inserts retrigger cleanly. */
+.plugins-card.plugins-card-entering {
+  animation: plugins-card-enter 0.25s var(--panel-ease, ease);
+}
+@keyframes plugins-card-enter {
+  from { opacity: 0; transform: translateY(-4px); }
+  to   { opacity: 1; transform: none; }
 }

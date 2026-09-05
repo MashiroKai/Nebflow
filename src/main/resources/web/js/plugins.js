@@ -16,6 +16,20 @@
 //   • 独立 MCP（state.mcpServers）展示从本页移除；设置页入口亦随 0905
 //     设置清理批移除（MCP 概念由本插件系统全面取代）——前端已不消费
 //     state.mcpServers / mcpServersUpdate，底层 MCP 机制保留。
+// 2026-09-05 插件面板体验批（零 scala，纯前端）：
+//   • 手动刷新按钮移除（按钮元素 + 对应 i18n 键一并清除）——列表
+//     实时性由轻量轮询承担。
+//   • 实时自动同步：面板可见（document.visibilityState=visible）且激活
+//     （canvas 开启 + plugins tab 为 active pane）时，每 6s GET /api/plugins；
+//     registry 名称集 diff——新插件按排序位插入卡片（plugins-card-entering
+//     短动画）；消失的插件回退整页重渲（renderPlugins 同一管线）；仅信任
+//     状态变化时逐卡原地更新，零全列表重绘。智能体区块不参与轮询（轻量，
+//     只轮插件注册表一个端点）。
+//   • 启停原地状态切换：开关点击乐观翻转（switch/pill 即时反馈）→ POST
+//     approve/revoke → 成功后后台拉 registry 逐卡原地收敛（UI ≡ backend，
+//     无全列表重绘）；失败回滚乐观态 + toast 报错。全程无 page reload。
+//   • 开关换用共享组件 js/toggle.js（nb-toggle：插件面板与设置页统一契约，
+//     role=switch + 键盘可操作 + 全局 token 双主题自适应）。
 // No new backend contract is invented anywhere; every endpoint above is
 // pre-existing and verified in RestApiRoutes.scala (§B.3 面板审批清单) and
 // PluginRegistry.scala (approvalManifest).
@@ -23,6 +37,7 @@
 import { openTab, getTabPane, hasTab, setActiveTab, isCanvasOpen, openCanvas, registerCanvasPanelButton } from './canvas.js';
 import { t } from './i18n.js';
 import { escapeHtml } from './utils.js';
+import { toggleHTML, bindToggle, setToggleState } from './toggle.js';
 import { fetchAgents, fetchAgentModel, openAgentDetail } from './agentManager.js';
 
 // ── Helpers ────────────────────────────────────────────────
@@ -199,11 +214,12 @@ function renderPluginCard(manifest) {
       </div>
       <div class="plugins-card-state">
         <span class="plugins-state-pill${on ? ' on' : ''}">${esc(on ? t('plugins.stateOn') : t('plugins.stateOff'))}</span>
-        <button type="button" class="plugins-switch${on ? ' on' : ''}" role="switch"
-          aria-checked="${on ? 'true' : 'false'}" aria-label="${esc(t('plugins.switchLabel'))}"
-          data-plugin-switch="${esc(manifest.name)}" title="${esc(switchTitle)}">
-          <span class="plugins-switch-knob"></span>
-        </button>
+        ${toggleHTML({
+          on,
+          label: t('plugins.switchLabel'),
+          title: switchTitle,
+          attrs: `data-plugin-switch="${esc(manifest.name)}"`,
+        })}
       </div>
     </div>
     ${manifest.description ? `<div class="plugins-card-desc">${esc(manifest.description)}</div>` : ''}
@@ -281,9 +297,6 @@ export function renderPlugins() {
     content.innerHTML = `
       <div class="plugins-topbar">
         <span class="plugins-title">${esc(t('activity.plugins'))}</span>
-        <button class="plugins-refresh-btn" id="plugins-refresh" title="${esc(t('plugins.refresh'))}">
-          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="23 4 23 10 17 10"/><polyline points="1 20 1 14 7 14"/><path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"/></svg>
-        </button>
       </div>
       ${listHtml}`;
 
@@ -294,39 +307,237 @@ export function renderPlugins() {
   });
 }
 
-/** Enable/disable one plugin via the trust endpoints, then re-render —
- *  the registry (GET /api/plugins) is the single source of truth for card
- *  state, so a refresh (not a local flip) keeps UI ≡ backend semantics. */
-async function setPluginEnabled(name, enable) {
+/** Optimistic in-place flip of one card's switch + pill (no re-render).
+ *  Used on click; the same helper rolled back (= set the OPPOSITE state)
+ *  when the POST fails. */
+function flipCardState(card, enable) {
+  const sw = card.querySelector('[data-plugin-switch]');
+  if (sw) {
+    setToggleState(sw, enable);
+    sw.disabled = true; // in-flight guard — released by state convergence
+  }
+  const pill = card.querySelector('.plugins-state-pill');
+  if (pill) {
+    pill.textContent = t(enable ? 'plugins.stateOn' : 'plugins.stateOff');
+    pill.classList.toggle('on', enable);
+  }
+}
+
+/** Release the in-flight guard after a terminal state (converged or rolled
+ *  back) so the switch is clickable again. */
+function releaseSwitch(card) {
+  const sw = card.querySelector('[data-plugin-switch]');
+  if (sw) sw.disabled = false;
+}
+
+/** Enable/disable one plugin via the trust endpoints. Optimistic UI first
+ *  (click already flipped the card), then converge from the registry —
+ *  GET /api/plugins stays the single source of truth, applied IN PLACE
+ *  (per-card state sync, never a full-list redraw). On failure: roll the
+ *  optimistic flip back + toast. No page reload anywhere on this path. */
+async function setPluginEnabled(name, enable, card) {
   const path = `/api/plugins/${encodeURIComponent(name)}/${enable ? 'approve' : 'revoke'}`;
   try {
     const resp = await api(path, { method: 'POST' });
     const body = await resp.json().catch(() => ({}));
     if (!resp.ok || body.error) throw new Error(body.error || `HTTP ${resp.status}`);
+    const registry = await fetchPluginRegistry().catch(() => null);
+    if (registry) applyRegistryStates(registry); // re-enables the switch too
+    else releaseSwitch(card); // registry unreachable — keep optimistic state
   } catch (e) {
+    flipCardState(card, !enable); // roll back the optimistic flip
+    releaseSwitch(card);
     window.__showToast?.(String(e?.message || e), 'error');
   }
-  renderPlugins(); // even after an error — re-sync with the registry
 }
 
-/** Bind interactions: refresh, per-plugin switches, skill-expand toggles,
- *  agent summary rows → per-agent detail tab. */
-function bindPluginsEvents(content) {
-  content.querySelector('#plugins-refresh')?.addEventListener('click', () => renderPlugins());
+// ── Live registry sync (poller + post-toggle convergence) ────────────────
 
-  // The one control on the page: per-plugin enable switch.
-  content.querySelectorAll('[data-plugin-switch]').forEach(btn => {
-    btn.addEventListener('click', () => {
-      if (btn.disabled) return;
-      btn.disabled = true;
-      setPluginEnabled(btn.dataset.pluginSwitch, !btn.classList.contains('on'));
-    });
+/** Registry order used by the full render: trusted plugins first (sorted by
+ *  name), then rejected entries (sorted by name) — one flat card list. */
+function registryOrder(registry) {
+  const plugins = (registry.plugins || []).slice().sort((a, b) => a.name.localeCompare(b.name));
+  const rejected = (registry.rejected || []).slice().sort((a, b) => a.name.localeCompare(b.name));
+  return { plugins, rejected };
+}
+
+/** Update one card's DOM in place to match its manifest (trust state, pill,
+ *  hints). Preserves node identity, listeners and the expanded skill block —
+ *  this is how state changes avoid any list redraw. */
+function applyPluginCardState(card, manifest) {
+  const { on, changed, reason } = trustInfo(manifest);
+  card.classList.toggle('on', on);
+  card.classList.toggle('changed', changed);
+  const sw = card.querySelector('[data-plugin-switch]');
+  if (sw) {
+    setToggleState(sw, on);
+    sw.disabled = false;
+    sw.title = on
+      ? t('plugins.switchDisableTitle')
+      : (changed ? t('plugins.switchReenableTitle') : t('plugins.switchEnableTitle'));
+  }
+  const pill = card.querySelector('.plugins-state-pill');
+  if (pill) {
+    pill.textContent = t(on ? 'plugins.stateOn' : 'plugins.stateOff');
+    pill.classList.toggle('on', on);
+  }
+  // Amber re-approval hint (digest changed) and the dim off-hint.
+  let hint = card.querySelector('.plugins-card-hint:not(.dim)');
+  if (changed) {
+    if (!hint) {
+      hint = document.createElement('div');
+      hint.className = 'plugins-card-hint';
+      card.insertBefore(hint, card.querySelector('.plugins-skill-expand'));
+    }
+    hint.textContent = t('plugins.changedHint');
+  } else hint?.remove();
+  let dim = card.querySelector('.plugins-card-hint.dim');
+  if (!on && !changed && reason) {
+    if (!dim) {
+      dim = document.createElement('div');
+      dim.className = 'plugins-card-hint dim';
+      card.insertBefore(dim, card.querySelector('.plugins-skill-expand'));
+    }
+    dim.textContent = t('plugins.offHint');
+    dim.title = reason;
+  } else dim?.remove();
+}
+
+/** Insert a card element at its registry position (trusted block sorted by
+ *  name, then rejected block sorted by name). Returns the inserted element. */
+function insertCardSorted(list, cardHtml, name, isRejected) {
+  const tpl = document.createElement('template');
+  tpl.innerHTML = cardHtml.trim();
+  const el = tpl.content.firstElementChild;
+  const groupOf = (c) => (c.classList.contains('rejected') ? 1 : 0);
+  const group = isRejected ? 1 : 0;
+  for (const existing of list.querySelectorAll('.plugins-card')) {
+    const g = groupOf(existing) - group;
+    if (g > 0 || (g === 0 && (existing.dataset.plugin || '').localeCompare(name) > 0)) {
+      list.insertBefore(el, existing);
+      return el;
+    }
+  }
+  list.appendChild(el);
+  return el;
+}
+
+/** Converge the visible list with a fresh registry — the ONLY sync entry:
+ *  • trust-state drift → per-card in-place update (no redraw);
+ *  • brand-new trusted plugins → inserted at sorted position with a short
+ *    enter animation;
+ *  • new rejected entries → inserted (informational cards);
+ *  • disappeared plugins → full re-render fallback (renderPlugins, same
+ *    pipeline as the initial load).
+ *  Returns the list of newly inserted trusted card elements (may be []). */
+function applyRegistryStates(registry) {
+  const content = pluginsContentEl();
+  const list = content?.querySelector('#plugins-section-plugins .plugins-card-list');
+  if (!list) return [];
+
+  const { plugins, rejected } = registryOrder(registry);
+  const cardsByName = new Map(
+    [...list.querySelectorAll('.plugins-card')].map(c => [c.getAttribute('data-plugin') || '', c]));
+
+  // 1) State-only drift on cards already in the DOM → in-place update.
+  for (const m of plugins) {
+    const card = cardsByName.get(m.name);
+    if (!card || card.classList.contains('rejected')) continue;
+    const ti = trustInfo(m);
+    const domOn = card.querySelector('[data-plugin-switch]')?.classList.contains('on') ?? false;
+    if (domOn !== ti.on || card.classList.contains('changed') !== ti.changed) {
+      applyPluginCardState(card, m);
+    } else {
+      releaseSwitch(card); // states agree — just make sure the switch is live
+    }
+  }
+
+  // 2) Disappeared plugins (or rejected↔trusted transitions) → full re-render.
+  const regNames = new Set(plugins.map(p => p.name));
+  const rejectedNames = new Set(rejected.map(r => r.name));
+  for (const [name, card] of cardsByName) {
+    const wasRejected = card.classList.contains('rejected');
+    const stillThere = wasRejected ? rejectedNames.has(name) : regNames.has(name);
+    if (!stillThere) { renderPlugins(); return []; }
+  }
+
+  // 3) New cards → insert at sorted position; trusted ones get the enter
+  //    animation (removed on animationend so repeats retrigger).
+  const inserted = [];
+  for (const m of plugins) {
+    if (cardsByName.has(m.name)) continue;
+    const el = insertCardSorted(list, renderPluginCard(m), m.name, false);
+    bindCardEvents(el);
+    el.classList.add('plugins-card-entering');
+    el.addEventListener('animationend', () => el.classList.remove('plugins-card-entering'), { once: true });
+    inserted.push(el);
+  }
+  for (const r of rejected) {
+    if (cardsByName.has(r.name)) continue;
+    const el = insertCardSorted(list, renderRejectedCard(r), r.name, true);
+    el.classList.add('plugins-card-entering');
+    el.addEventListener('animationend', () => el.classList.remove('plugins-card-entering'), { once: true });
+  }
+  return inserted;
+}
+
+// ── Poller: keep the list live while the panel is visible & active ───────
+// Double gate (author ruling 2026-09-05): the tab must be the ACTIVE canvas
+// pane AND the document must be visible. Interval 6s — light (one GET), and
+// applyRegistryStates no-ops on identical registries, so a steady backend
+// costs zero DOM churn.
+const PLUGINS_POLL_MS = 6000;
+let pluginsPollTimer = null;
+
+function pluginsPanelActive() {
+  if (document.visibilityState !== 'visible') return false;
+  if (!isCanvasOpen()) return false;
+  const pane = getTabPane('plugins');
+  return !!(pane && pane.isConnected && pane.classList.contains('active'));
+}
+
+async function pluginsPollTick() {
+  if (!pluginsPanelActive()) return;
+  try {
+    const registry = await fetchPluginRegistry();
+    if (!pluginsPanelActive()) return; // tab closed mid-flight
+    applyRegistryStates(registry);
+  } catch { /* transient — next tick retries */ }
+}
+
+function startPluginsPolling() {
+  if (pluginsPollTimer !== null) return;
+  pluginsPollTimer = setInterval(pluginsPollTick, PLUGINS_POLL_MS);
+  // Re-visible after sleep/switch → sync immediately instead of waiting a tick.
+  document.addEventListener('visibilitychange', () => {
+    if (document.visibilityState === 'visible') pluginsPollTick();
   });
+}
 
-  // Composition annotation: expand/collapse skill previews.
-  content.querySelectorAll('.plugins-comp-toggle').forEach(btn => {
+/** Bind one plugin card's interactions (switch + skill-expand toggles).
+ *  Shared by the full render and the live-sync insert path. Idempotent via
+ *  WeakSets (not expando properties — checkJs zero-new-errors discipline). */
+const boundPluginSwitches = new WeakSet();
+const boundCompToggles = new WeakSet();
+
+function bindCardEvents(card) {
+  const sw = card.querySelector('[data-plugin-switch]');
+  if (sw && !boundPluginSwitches.has(sw)) {
+    boundPluginSwitches.add(sw);
+    sw.addEventListener('click', () => {
+      if (sw.disabled) return;
+      const name = sw.dataset.pluginSwitch;
+      const enable = !sw.classList.contains('on');
+      const cardEl = sw.closest('.plugins-card');
+      flipCardState(cardEl, enable); // optimistic — converged/rolled back async
+      setPluginEnabled(name, enable, cardEl);
+    });
+  }
+  card.querySelectorAll('.plugins-comp-toggle').forEach(btn => {
+    if (boundCompToggles.has(btn)) return;
+    boundCompToggles.add(btn);
     btn.addEventListener('click', () => {
-      const block = content.querySelector(`[data-expand-for="${CSS.escape(btn.dataset.expand)}"]`);
+      const block = card.querySelector(`[data-expand-for="${CSS.escape(btn.dataset.expand)}"]`);
       if (!block) return;
       const show = block.hidden;
       block.hidden = !show;
@@ -334,6 +545,14 @@ function bindPluginsEvents(content) {
       btn.classList.toggle('open', show);
     });
   });
+}
+
+/** Bind interactions: per-plugin switches (optimistic in-place toggling),
+ *  skill-expand toggles, agent summary rows → per-agent detail tab.
+ *  (The manual refresh button was removed 2026-09-05 — the poller keeps the
+ *  list live; see startPluginsPolling.) */
+function bindPluginsEvents(content) {
+  content.querySelectorAll('.plugins-card').forEach(bindCardEvents);
 
   // Agent summary row → per-agent detail tab (full editor: tools/prompt/flows).
   content.querySelectorAll('[data-detail-agent]').forEach(el => {
@@ -349,6 +568,9 @@ function bindPluginsEvents(content) {
 // panel's old toggle — now drives this Plugins page (4-state pressed
 // machine in canvas.js unchanged).
 registerCanvasPanelButton('plugins', 'agents-btn', () => openPlugins());
+
+// Live list sync while the panel is visible & active (see PLUGINS_POLL_MS).
+startPluginsPolling();
 
 window.addEventListener('canvas-tab-restore', (/** @type {CustomEvent} */ e) => {
   // canvas.js dispatches this as a CustomEvent with { id, type } detail.
