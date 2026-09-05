@@ -516,6 +516,30 @@ const FM_WAIT_ICON =
   + ' stroke-width="1.3" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">'
   + '<path d="M3 1.5h6M3 10.5h6M3.8 2.6h4.4L6 6 3.8 2.6ZM3.8 9.4h4.4L6 6 3.8 9.4Z"/></svg>';
 
+// ── 特殊节点标识（badge 批 2026-09-05）：解析与渲染分离（便于 fixture 验证）──
+// 三类标识彼此可辨（文字 + 配色双通道，裁定①禁 emoji 故纯文字胶囊）：
+//   merge   结构属性——数据契约 `"merge": true`，缺省/缺失 = 非 merge；
+//   loop    结构属性——前瞻防御，机制侧可能暂不产出该字段，缺字段不 crash；
+//   pending 状态徽标——既有 status=pending（待作者确认/派发）。
+// 判定严格 `=== true`：payload 缺字段/类型漂移一律静默降级为无徽标，零 console 噪音。
+/** @returns {string[]} 命中的标识键，顺序 merge → loop → pending（结构先于状态）。 */
+export function nodeFlagKeys(n) {
+  if (!n || typeof n !== 'object') return [];
+  const keys = [];
+  if (n.merge === true) keys.push('merge');
+  if (n.loop === true) keys.push('loop');
+  if ((n.status || 'pending') === 'pending') keys.push('pending');
+  return keys;
+}
+const FM_FLAG_CLS = { merge: 'fm-flag-merge', loop: 'fm-flag-loop', pending: 'fm-flag-pending' };
+/** 徽标 HTML：head 行胶囊，与 .fm-worktree-badge 同语言（文案 i18n flowmap.flag.*）。 */
+export function flagBadgesHtml(n) {
+  return nodeFlagKeys(n).map((k) => {
+    const label = esc(t(`flowmap.flag.${k}`));
+    return `<span class="fm-flag-badge ${FM_FLAG_CLS[k]}" title="${label}">${label}</span>`;
+  }).join('');
+}
+
 // ── 节点卡片（复用 solar 视觉）────────────────────────────
 function nodeHtml(n, pos, originX, nameOf) {
   const st = n.status || 'pending';
@@ -529,6 +553,9 @@ function nodeHtml(n, pos, originX, nameOf) {
     : st === 'cancelled' ? fmSvgIcon('cancelled', FM_STATUS_SVG.cancelled, 1.5) : '';
   const worktreeBadge = n.hasWorktree || n.worktree
     ? `<span class="fm-worktree-badge" title="${esc(n.worktree || '')}">wt</span>` : '';
+  // 特殊节点标识（badge 批）：merge/loop/pending 徽标进 head 行（wt 徽标同区，
+  // 复用该行既有 flex+gap；不新增卡内纵行——88px 卡纵向不可加行，同 node-flowmap-slim 口径）
+  const flags = flagBadgesHtml(n);
   // 载荷收敛（2026-09-05）：卡片不再显示 result 摘要（默认载荷无 result）——
   // 改显示 description（创建必写的一行描述）；存量节点无 description → 回退
   // taskPreview（载荷条件字段，task 首行 ≤80 截断）。结果全文经详情窗按需拉取。
@@ -561,7 +588,7 @@ function nodeHtml(n, pos, originX, nameOf) {
         <div class="solar-ring ring-2"><div class="solar-dot-wrap"><div class="solar-dot"></div></div></div>
         <div class="solar-ring ring-3"><div class="solar-dot-wrap"><div class="solar-dot"></div></div></div>
       </div>
-      <div class="fm-node-head">${worktreeBadge}${statusIcon}</div>
+      <div class="fm-node-head">${worktreeBadge}${flags}${statusIcon}</div>
       <div class="solar-node-label" title="${esc(n.name)}">${esc(n.name)}</div>
       <div class="solar-node-sub">${esc(subTitle)}</div>
       ${st === 'pending' && (n.in || []).length > 1 ? `<div class="fm-barrier-hint">barrier ×${(n.in || []).length}</div>` : ''}
@@ -885,7 +912,9 @@ function animateNodeExit(el) {
  *  in barrier 提示同款（deps 设计 §1.4）：pending/wiring 且有 deps 显示等待脚注，
  *  deps 集变化即重渲。2026-09-05 载荷收敛：签名带 description/taskPreview（卡片
  *  展示字段），不再含 result（载荷无 result）。Agent 退役（node-flowmap-slim）：
- *  agent 不再上卡，签名改带 preset/plugins（副行展示字段，变更即重渲）。 */
+ *  agent 不再上卡，签名改带 preset/plugins（副行展示字段，变更即重渲）。badge 批
+ *  （2026-09-05）：merge/loop 徽标字段入签名——WS 载荷带上该字段时增量路径即重渲；
+ *  pending 徽标随 st（已在签名）变化。 */
 function nodeContentKey(n) {
   if (!n) return '∅';
   const st = n.status || 'pending';
@@ -896,6 +925,8 @@ function nodeContentKey(n) {
     (n.plugins || []).join(','),
     n.hasWorktree || n.worktree ? 1 : 0,
     n.worktree || '',
+    n.merge === true ? 1 : 0,
+    n.loop === true ? 1 : 0,
     st === 'pending' && (n.in || []).length > 1 ? (n.in || []).length : 0,
     st === 'pending' || st === 'wiring' ? (n.deps || []).length : 0,
     n.description || n.taskPreview || '',
