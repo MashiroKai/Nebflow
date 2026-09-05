@@ -112,14 +112,14 @@ export function openPicker(opts = {}) {
   };
 
   overlay.addEventListener('click', (e) => { if (e.target === overlay) close(null); }); // 点遮罩 = 取消
-  overlay.querySelector('.wsp-close').onclick = () => close(null);
-  overlay.querySelector('.wsp-cancel').onclick = () => close(null);
-  overlay.querySelector('.wsp-pick').onclick = () => close(ctx.current);
-  overlay.querySelector('.wsp-up').onclick = () => {
+  /** @type {HTMLElement} */ (overlay.querySelector('.wsp-close')).onclick = () => close(null);
+  /** @type {HTMLElement} */ (overlay.querySelector('.wsp-cancel')).onclick = () => close(null);
+  /** @type {HTMLElement} */ (overlay.querySelector('.wsp-pick')).onclick = () => close(ctx.current);
+  /** @type {HTMLElement} */ (overlay.querySelector('.wsp-up')).onclick = () => {
     const crumbs = buildCrumbs(ctx.current, ctx.home);
     if (crumbs.length > 1) navigate(crumbs[crumbs.length - 2].path);
   };
-  overlay.querySelector('.wsp-mkdir').onclick = () => startMkdir();
+  /** @type {HTMLElement} */ (overlay.querySelector('.wsp-mkdir')).onclick = () => startMkdir();
 
   /** 渲染面包屑（逐级可点）。 */
   function renderCrumbs() {

@@ -67,3 +67,8 @@ interface Window {
 interface Window {
   __stopThinkingTimer?: () => void;
 }
+
+/** NebLink settings-panel refresh interval handle (set/cleared by sidebar.js). */
+interface Window {
+  _neblinkRefreshTimer?: number | null;
+}

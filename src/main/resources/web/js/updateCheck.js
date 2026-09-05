@@ -103,7 +103,7 @@ export function initUpdateCheck() {
   });
 
   onMessage('updateCompleted', (msg) => {
-    const btn = document.getElementById('btn-do-update');
+    const btn = /** @type {HTMLButtonElement|null} */ (document.getElementById('btn-do-update'));
     const statusEl = document.getElementById('update-status');
     if (btn) { btn.textContent = t('settings.checkUpdate'); btn.disabled = false; }
     if (msg.success) {
