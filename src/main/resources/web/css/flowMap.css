@@ -782,10 +782,19 @@
   border-color: rgb(var(--sapphire) / 0.35);
 }
 .solar-node.fm-node.fm-dim { opacity: 0.15; }
-.flow-edge.fm-edge.fm-edge-hi { stroke-width: 2.5; opacity: 1; }
-.fm-edge-arrow.fm-edge-hi { opacity: 1; }
+.flow-edge.fm-edge.fm-edge-hi { stroke-width: 2.5; opacity: 1; stroke: rgb(var(--sapphire) / 0.85); }
+.fm-edge-arrow.fm-edge-hi { opacity: 1; fill: rgb(var(--sapphire) / 0.85); }
 .flow-edge.fm-edge.fm-edge-dim { opacity: 0.06; }
 .fm-edge-arrow.fm-edge-dim { opacity: 0.08; }
+
+/* 连线 hover 入口（20260905 作者报告「连线 hover 变淡看不清」修复②）：边层整体
+   保持 pointer-events:none（FLOW_CSS 基础规则），仅边路径/箭头本身开启命中，
+   作用域限 .flowmap-card（flow-run 面板同结构不受影响）。命中交给 flowMapTab.js
+   bindHover 委托 → applyEdgeHover（只加亮不淡化）。fill:none 的路径 visiblePainted
+   = 仅描边命中；箭头圆点 fill 命中。deps 箭头的空心（fill:none + stroke）同规则
+   走描边命中。 */
+.flowmap-card .solar-edges path.flow-edge,
+.flowmap-card .solar-edges .fm-edge-arrow { pointer-events: visiblePainted; }
 
 /* 退场优先于 hover 强调（链齐退场瞬间 hover 残留类不得改变退场终态——
    重申同值规则，靠源顺序压过上方 .fm-hi/.fm-nb 的 transform 与 .fm-dim 的 opacity） */

@@ -312,13 +312,23 @@ function rebuildAdjacency(canvas, fm, edgesMap) {
   adjByCanvas.set(canvas, { nbrs, ends });
 }
 
-/** 应用 hover 强调态（hoverId=null 还原 L0）。自身 .fm-hi（1.12）、邻居 .fm-nb
+/** 清 hover 强调类（节点 + 边一起清，L0 还原唯一出口）。修复（20260905 作者报告
+ *  「连线 hover 变淡看不清」主因）：原实现还原路径只清节点类、提前 return 跳过
+ *  边类——节点 hover 结束后全部非邻接边永久卡在 .fm-edge-dim（opacity .06），
+ *  整图连线「特别淡」。现在节点/边类同清，L0 恢复完整。 */
+function clearHoverClasses(canvas) {
+  canvas.querySelectorAll('.fm-hi, .fm-nb, .fm-dim')
+    .forEach((el) => el.classList.remove('fm-hi', 'fm-nb', 'fm-dim'));
+  canvas.querySelectorAll('.fm-edge-hi, .fm-edge-dim')
+    .forEach((el) => el.classList.remove('fm-edge-hi', 'fm-edge-dim'));
+}
+
+/** 应用节点 hover 强调态（hoverId=null 还原 L0）。自身 .fm-hi（1.12）、邻居 .fm-nb
  *  （1.06）、其余 .fm-dim；边按端点分 .fm-edge-hi / .fm-edge-dim（N1 参数）。 */
 function applyHover(canvas, hoverId) {
   const adj = adjByCanvas.get(canvas);
   if (!adj) return;
-  canvas.querySelectorAll('.fm-hi, .fm-nb, .fm-dim')
-    .forEach((el) => el.classList.remove('fm-hi', 'fm-nb', 'fm-dim'));
+  clearHoverClasses(canvas);
   if (!hoverId) return;
   const set = adj.nbrs.get(hoverId);
   for (const n of canvas.querySelectorAll('.fm-node')) {
@@ -335,26 +345,70 @@ function applyHover(canvas, hoverId) {
   }
 }
 
-/** hover 事件绑定（画布级委托，全量渲染后一次；增量路径画布存活不重绑）。 */
+/** 连线本体 hover 强调（20260905 作者报告「连线 hover 变淡」次因修复：边此前无
+ *  hover 入口——边层 pointer-events:none + 委托只认 .fm-node）。语义：被 hover 边
+ *  + 共端点邻接边 .fm-edge-hi（加粗提亮）、两端节点 .fm-nb（轻强调）；其余一切
+ *  保持 L0 原样——连线 hover 只加亮、严禁淡化（.fm-dim/.fm-edge-dim 全程不落）。 */
+function applyEdgeHover(canvas, edgeId) {
+  const adj = adjByCanvas.get(canvas);
+  if (!adj) return;
+  clearHoverClasses(canvas);
+  const ends = adj.ends.get(edgeId);
+  if (!ends) return;
+  const [ea, eb] = ends; // 端点恒为 2 个（rebuildAdjacency：new Set([a, b])）
+  for (const p of canvas.querySelectorAll('[data-edge-id]')) {
+    if (p.classList.contains('fm-edge-exit')) continue;
+    const e = adj.ends.get(p.getAttribute('data-edge-id'));
+    if (e && (e.has(ea) || e.has(eb))) p.classList.add('fm-edge-hi'); // 被 hover 边 + 共端点邻接边
+  }
+  for (const n of canvas.querySelectorAll('.fm-node')) {
+    if (n.classList.contains('fm-exit')) continue;
+    if (ends.has(n.getAttribute('data-node-id'))) n.classList.add('fm-nb');
+  }
+}
+
+/** hover 事件绑定（画布级委托，全量渲染后一次；增量路径画布存活不重绑）。
+ *  节点与连线两入口：pointerover 目标命中 .fm-node 走节点邻域语义（N1），
+ *  命中 [data-edge-id]（边路径/箭头，pointer-events 已在 flowMap.css 开启）
+ *  走连线加亮语义；两者互斥切换，80ms 宽限跨缝隙不闪烁。 */
 function bindHover(canvas) {
   if (canvas.dataset.fmHoverBound === '1') return;
   canvas.dataset.fmHoverBound = '1';
-  let hovered = null;
+  let hovered = null; // 节点 hover：data-node-id
+  let hoverEdge = null; // 连线 hover：data-edge-id
   let graceTimer = 0;
+  const restore = () => { hovered = null; hoverEdge = null; applyHover(canvas, null); };
   canvas.addEventListener('pointerover', (e) => {
-    const el = e.target.closest?.('.fm-node');
-    if (!el || el.classList.contains('fm-exit')) return;
-    const id = el.getAttribute('data-node-id');
-    if (id === hovered) { clearTimeout(graceTimer); return; }
-    hovered = id;
-    clearTimeout(graceTimer);
-    applyHover(canvas, id);
+    const nEl = e.target.closest?.('.fm-node');
+    if (nEl && !nEl.classList.contains('fm-exit')) {
+      const id = nEl.getAttribute('data-node-id');
+      if (id === hovered) { clearTimeout(graceTimer); return; }
+      hovered = id; hoverEdge = null;
+      clearTimeout(graceTimer);
+      applyHover(canvas, id);
+      return;
+    }
+    const eEl = e.target.closest?.('[data-edge-id]');
+    if (eEl && !eEl.classList.contains('fm-edge-exit')) {
+      const id = eEl.getAttribute('data-edge-id');
+      if (id === hoverEdge) { clearTimeout(graceTimer); return; }
+      hoverEdge = id; hovered = null;
+      clearTimeout(graceTimer);
+      applyEdgeHover(canvas, id);
+    }
   });
   canvas.addEventListener('pointerout', (e) => {
-    const el = e.target.closest?.('.fm-node');
-    if (!el || el.getAttribute('data-node-id') !== hovered) return;
-    clearTimeout(graceTimer);
-    graceTimer = setTimeout(() => { hovered = null; applyHover(canvas, null); }, 80); // N2 宽限
+    const nEl = e.target.closest?.('.fm-node');
+    if (nEl && nEl.getAttribute('data-node-id') === hovered) {
+      clearTimeout(graceTimer);
+      graceTimer = setTimeout(restore, 80); // N2 宽限
+      return;
+    }
+    const eEl = e.target.closest?.('[data-edge-id]');
+    if (eEl && eEl.getAttribute('data-edge-id') === hoverEdge) {
+      clearTimeout(graceTimer);
+      graceTimer = setTimeout(restore, 80); // 连线间缝隙同宽限
+    }
   });
 }
 
