@@ -742,30 +742,11 @@
   vertical-align: 1px;
 }
 
-/* Toggle switch */
-.toggle {
-  width: 36px;
-  height: 20px;
-  background: var(--color-frame-border);
-  border-radius: 10px;
-  position: relative;
-  cursor: pointer;
-  transition: background 0.2s;
-}
-.toggle.on { background: #22c55e; }
-.toggle::after {
-  content: '';
-  position: absolute;
-  top: 2px;
-  left: 2px;
-  width: 16px;
-  height: 16px;
-  border-radius: 50%;
-  background: #fff;
-  transition: left 0.2s;
-}
-.toggle.on::after { left: 18px; }
-.toggle.disabled { opacity: 0.45; pointer-events: none; }
+/* (2026-09-05 sidebar-restructure) The legacy hand-rolled `.toggle` switch
+   (div + hand-mixed #22c55e/#fff) is retired — every settings-page switch now
+   renders the shared nb-toggle component (js/toggle.js); its styles live in
+   the «nb-toggle — shared switch component» section at the bottom of this
+   file (glass-control material + sapphire accent, both themes auto-adapt). */
 /* Config editor */
 .config-editor-wrap {
   margin-top: 8px;
