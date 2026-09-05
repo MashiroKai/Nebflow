@@ -811,7 +811,65 @@
   line-height: 1.6;
 }
 
-/* ── Config Cards (Providers, MCP Servers) ─────────────────────────────── */
+/* ── Settings avatar entry (Account section — 09-05 五项裁定④) ──────────
+   Dual state: logged out → product logo (bright/dark via <picture>);
+   logged in with account avatar → photo. Same decision source as the
+   Activity Bar avatar (neblink.js avatarViewState). Tokens only. */
+.settings-avatar-entry {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  width: 100%;
+  padding: 8px;
+  background: var(--color-frame-input-bg);
+  border: 1px solid var(--color-frame-input-border);
+  border-radius: 8px;
+  cursor: pointer;
+  text-align: left;
+  font: inherit;
+  color: inherit;
+  transition: border-color 0.15s, background 0.15s;
+}
+.settings-avatar-entry:hover { border-color: rgba(91, 127, 191, 0.35); }
+.settings-avatar-frame {
+  position: relative;
+  width: 40px;
+  height: 40px;
+  border-radius: 50%;
+  overflow: hidden;
+  flex-shrink: 0;
+  background: var(--color-frame-hover);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+.settings-avatar-logo {
+  width: 30px;
+  height: 30px;
+  object-fit: contain;
+  /* Pixel-art logo v4: 30px = whole 7.5px blocks at 224px source scale —
+     keep pixelated so stems stay even (same rule as .activity-avatar-logo). */
+  image-rendering: pixelated;
+  pointer-events: none;
+}
+.settings-avatar-photo {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  border-radius: 50%;
+  object-fit: cover;
+  pointer-events: none;
+}
+/* Author display rules must not defeat the hidden attribute. */
+.settings-avatar-logo[hidden],
+.settings-avatar-photo[hidden] { display: none; }
+.settings-avatar-text {
+  font-size: 13px;
+  color: var(--color-text);
+}
+
+/* ── Config Cards (Providers) ──────────────────────────────────────────── */
 .cfg-card {
   background: var(--color-frame-input-bg);
   border: 1px solid var(--color-frame-input-border);

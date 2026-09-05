@@ -13,9 +13,9 @@
 //   • 智能体区块收缩为摘要行：名称/描述/preset 现状，点击进既有 agent
 //     详情编辑（openAgentDetail 深链复用）；订阅 chips（PUT skills 写回）
 //     与平铺 config row 移除——插件不再逐 agent 配置，每个插件一个开关。
-//   • 独立 MCP（state.mcpServers）展示从本页移除；其配置管理入口在设置页
-//     （renderSettings 的 settings.mcpServers 区，sidebar.js）——只移展示，
-//     不动底层 MCP 机制。
+//   • 独立 MCP（state.mcpServers）展示从本页移除；设置页入口亦随 0905
+//     设置清理批移除（MCP 概念由本插件系统全面取代）——前端已不消费
+//     state.mcpServers / mcpServersUpdate，底层 MCP 机制保留。
 // No new backend contract is invented anywhere; every endpoint above is
 // pre-existing and verified in RestApiRoutes.scala (§B.3 面板审批清单) and
 // PluginRegistry.scala (approvalManifest).

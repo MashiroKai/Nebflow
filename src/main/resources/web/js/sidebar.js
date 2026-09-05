@@ -17,7 +17,8 @@ import { clearMemoryCache } from './memory.js';
 import { chatViews, setActiveView, activeView } from './chatView.js';
 import { cleanupCardIframes } from './cardRegistry.js';
 import { t, getLocale, setLocale, getAvailableLocales } from './i18n.js';
-import { fetchNeblinkStatus, neblinkSettingsHTML, bindNeblinkEvents } from './neblink.js';
+import { fetchNeblinkStatus, neblinkSettingsHTML, bindNeblinkEvents, avatarViewState, noteAvatarFailure } from './neblink.js';
+import { notifyManualUpdateCheck } from './updateCheck.js';
 import { preloadModelCapabilities, renderVisionBadge } from './modelCapabilities.js';
 import * as presets from './presets.js';
 import { renderAppearanceSection, bindAppearanceEvents } from './orbSettingsUI.js';
@@ -26,6 +27,12 @@ import { renderAppearanceSection, bindAppearanceEvents } from './orbSettingsUI.j
 // 仅 UI 门控——orbSettingsUI/orbPresets/micOrb 代码与配置读取逻辑全部保留，
 // 用户本地已存自定义配置照常生效；翻回 true 即恢复配置区。
 const ORB_SETTINGS_VISIBLE = false;
+
+// 2026-09-05 作者裁定（设置页清理批②）：新手运行指导入口隐藏封存。与
+// SIDEBAR_LEGACY_ENTRIES 同款 flag 形态——false = 渲染与绑定整体门控；
+// 按钮/绑定代码与 i18n 键 settings.rerunOnboarding 保留不删（隐藏 ≠ 删除），
+// 翻回 true 即原样回归。onboarding 本体与 /onboarding slash 命令零触碰。
+const SHOW_RERUN_ONBOARDING = false;
 
 const eyeSvg = '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/></svg>';
 const eyeOffSvg = '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M17.94 17.94A10.07 10.07 0 0 1 12 20c-7 0-11-8-11-8a18.45 18.45 0 0 1 5.06-5.94"/><path d="M9.9 4.24A9.12 9.12 0 0 1 12 4c7 0 11 8 11 8a18.5 18.5 0 0 1-2.16 3.19"/><line x1="1" y1="1" x2="23" y2="23"/></svg>';
@@ -719,7 +726,6 @@ export function renderSettings() {
   const cfg = state.parsedConfig || {};
   const llm = cfg.llm || {};
   const providers = llm.providers || {};
-  const mcpServers = state.mcpServers || [];
   const providerNames = Object.keys(providers);
   // Build language selector options
   const locales = getAvailableLocales();
@@ -729,6 +735,19 @@ export function renderSettings() {
   ).join('');
 
   content.innerHTML = `
+    <div class="settings-section">
+      <div class="settings-section-title">${t('settings.account')}</div>
+      <button class="settings-avatar-entry" id="settings-avatar-entry" type="button">
+        <span class="settings-avatar-frame">
+          <picture>
+            <source media="(prefers-color-scheme: dark)" srcset="css/logo-dark-4.png">
+            <img class="settings-avatar-logo" src="css/logo-bright-4.png" alt="">
+          </picture>
+          <img class="settings-avatar-photo" alt="" hidden>
+        </span>
+        <span class="settings-avatar-text"></span>
+      </button>
+    </div>
     <div class="settings-section">
       <div class="settings-section-title">${t('neblink.title')}</div>
       ${neblinkSettingsHTML()}
@@ -778,16 +797,9 @@ export function renderSettings() {
       <button class="cfg-btn cfg-btn-add" id="btn-add-preset">${t('settings.addPreset')}</button>
     </div>
     <div class="settings-section">
-      <div class="settings-section-title">${t('settings.mcpServers')}</div>
-      <div id="mcp-server-list">
-        ${mcpServers.map(s => renderMcpServerCard(s.id, s.enabled)).join('')}
-        ${mcpServers.length === 0 ? `<div class="cfg-empty">${t('settings.noMcp')}</div>` : ''}
-      </div>
-    </div>
-    <div class="settings-section">
       <div class="settings-section-title">${t('settings.advanced')}</div>
       <button class="cfg-btn" id="btn-toggle-json">${t('settings.editRawJson')}</button>
-      <button class="cfg-btn" id="btn-rerun-onboarding" style="margin-left:8px">${t('settings.rerunOnboarding')}</button>
+      ${SHOW_RERUN_ONBOARDING ? `<button class="cfg-btn" id="btn-rerun-onboarding" style="margin-left:8px">${t('settings.rerunOnboarding')}</button>` : ''}
     </div>
     <div class="settings-section" id="json-editor-section" style="display:${state.settingsShowJson ? 'block' : 'none'}">
       <div class="config-editor-wrap">
@@ -807,13 +819,22 @@ export function renderSettings() {
           <button class="cfg-btn cfg-btn-sm" id="btn-check-update">${t('settings.checkUpdate')}</button>
           <span id="update-status" style="margin-left:8px;font-size:12px;color:var(--color-text-secondary)"></span>
         </div>
-        <div id="update-action" style="display:none;margin-top:8px">
+        <div id="update-action" style="display:${state.updateAvailable ? 'block' : 'none'};margin-top:8px">
           <button class="cfg-btn cfg-btn-primary" id="btn-do-update">${t('settings.updateNow')}</button>
           <button class="cfg-btn cfg-btn-sm" id="btn-dismiss-update" style="margin-left:6px">${t('settings.updateLater')}</button>
         </div>
       </div>
     </div>`;
 
+  // Silent auto checks (updateCheck.js) record their outcome in state so a
+  // panel (re)render shows the same "update available" detail the manual
+  // path would — same chain, one source of truth.
+  if (state.updateAvailable) {
+    const statusEl = document.getElementById('update-status');
+    if (statusEl) statusEl.textContent = t('settings.updateAvailable', { version: state.latestVersion });
+  }
+
+  renderSettingsAvatar();
   bindSettingsEvents(content, cfg);
   bindNeblinkEvents(() => renderSettings());
 
@@ -843,6 +864,8 @@ export function renderSettings() {
         neblinkDiv.replaceWith(wrapper.firstElementChild);
         bindNeblinkEvents(() => renderSettings());
       }
+      // Keep the avatar section in lockstep with login/avatar changes.
+      renderSettingsAvatar();
     });
   };
   refreshNeblink();
@@ -877,15 +900,34 @@ function renderProviderCard(name, p) {
     </div>`;
 }
 
-function renderMcpServerCard(name, enabled) {
-  const on = enabled !== false;
-  return `
-    <div class="cfg-card" data-mcp="${escapeHtml(name)}">
-      <div class="cfg-card-header">
-        <span class="cfg-card-title">${escapeHtml(name)}</span>
-        <button class="cfg-toggle ${on ? 'on' : ''}" data-mcp="${escapeHtml(name)}" data-enabled="${on}" title="${t('settings.toggleMcp')}"></button>
-      </div>
-    </div>`;
+// ── Settings avatar section (09-05 五项裁定④) ─────────────
+// Dual state driven by the SAME decision as the Activity Bar avatar
+// (neblink.js avatarViewState): logged in with a usable account avatar →
+// photo; otherwise the product logo. Click behavior is not reimplemented:
+// the entry forwards to #activity-avatar's native click (activityBar.js
+// bindAvatar — login modal when logged out, profile page when logged in),
+// so both entries stay byte-identical by construction.
+function renderSettingsAvatar() {
+  const entry = document.getElementById('settings-avatar-entry');
+  if (!entry) return;
+  const { url: validAvatarUrl, showPhoto, loggedIn } = avatarViewState();
+  const logoEl = entry.querySelector('.settings-avatar-logo');
+  const photoEl = entry.querySelector('.settings-avatar-photo');
+  const textEl = entry.querySelector('.settings-avatar-text');
+  if (photoEl) {
+    photoEl.hidden = !showPhoto;
+    photoEl.onerror = () => {
+      noteAvatarFailure(validAvatarUrl); // shared failed-URL latch
+      const view = avatarViewState();
+      if (photoEl) photoEl.hidden = true;
+      if (logoEl) logoEl.hidden = view.showPhoto;
+    };
+    if (showPhoto && photoEl.getAttribute('src') !== validAvatarUrl) photoEl.setAttribute('src', validAvatarUrl);
+  }
+  if (logoEl) logoEl.hidden = showPhoto;
+  if (textEl) textEl.textContent = loggedIn
+    ? t('settings.accountSignedIn')
+    : t('settings.accountSignIn');
 }
 
 // ---------- Preset management section (P3) ----------
@@ -1349,19 +1391,6 @@ function bindSettingsEvents(content, cfg) {
     });
   });
 
-  // --- MCP Servers toggle ---
-  content.querySelectorAll('.cfg-toggle[data-mcp]').forEach(btn => {
-    btn.addEventListener('click', (e) => {
-      e.stopPropagation();
-      const serverId = btn.dataset.mcp;
-      const newEnabled = btn.dataset.enabled !== 'true';
-      sendWs({type: 'toggleMcpServer', serverId, enabled: newEnabled});
-      // Optimistic UI update
-      btn.dataset.enabled = String(newEnabled);
-      btn.classList.toggle('on', newEnabled);
-    });
-  });
-
   // --- Advanced JSON editor ---
   document.getElementById('btn-toggle-json')?.addEventListener('click', () => {
     state.settingsShowJson = !state.settingsShowJson;
@@ -1369,12 +1398,15 @@ function bindSettingsEvents(content, cfg) {
     if (sec) sec.style.display = state.settingsShowJson ? 'block' : 'none';
   });
 
-  // Re-run onboarding: reset the marker to pending and reload — the boot
-  // sequence picks it up and shows the wizard (or returning-user prompt).
-  document.getElementById('btn-rerun-onboarding')?.addEventListener('click', () => {
-    sendWs({ type: 'setOnboardingState', state: 'pending' });
-    setTimeout(() => location.reload(), 300);
-  });
+  // Re-run onboarding (sealed behind SHOW_RERUN_ONBOARDING — 09-05 裁定②):
+  // reset the marker to pending and reload — the boot sequence picks it up
+  // and shows the wizard (or returning-user prompt).
+  if (SHOW_RERUN_ONBOARDING) {
+    document.getElementById('btn-rerun-onboarding')?.addEventListener('click', () => {
+      sendWs({ type: 'setOnboardingState', state: 'pending' });
+      setTimeout(() => location.reload(), 300);
+    });
+  }
 
   document.getElementById('btn-save-config')?.addEventListener('click', () => {
     const cfg = document.getElementById('config-editor').value;
@@ -1390,6 +1422,13 @@ function bindSettingsEvents(content, cfg) {
     sendWs({type: 'getConfig'});
   });
 
+  // --- Settings avatar section (dual state; click = Activity Bar avatar) ---
+  document.getElementById('settings-avatar-entry')?.addEventListener('click', () => {
+    // Forward to the canonical entry — bindAvatar's handler owns the
+    // logged-out → login modal / logged-in → profile behavior.
+    document.getElementById('activity-avatar')?.click();
+  });
+
   // --- Check for updates ---
   document.getElementById('btn-check-update')?.addEventListener('click', () => {
     const statusEl = document.getElementById('update-status');
@@ -1397,6 +1436,10 @@ function bindSettingsEvents(content, cfg) {
     statusEl.textContent = t('settings.checking');
     statusEl.style.display = '';
     actionEl.style.display = 'none';
+    // Flag BEFORE the WS roundtrip: updateCheckResult routes by this flag —
+    // a manual check keeps its About-section echo even if a scheduled auto
+    // check fires meanwhile (auto cycles are skipped while the flag is up).
+    notifyManualUpdateCheck();
     sendWs({type: 'checkUpdate'});
   });
 
