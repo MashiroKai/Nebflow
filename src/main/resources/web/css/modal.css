@@ -18,7 +18,13 @@
   justify-content: center;
   z-index: 310;
 }
-#modal-overlay { z-index: 300; }
+/* Confirm/generic modal layer — TOP of the overlay stack (dialog-unify
+   2026-09-05): confirms can be triggered from inside ANY panel (settings
+   310, daemon popover 300, cfg-modal 10000, onboarding 320). #modal-overlay
+   and #settings-overlay are body-level siblings, so a plain z-index compare
+   decides paint order — no stacking-context traps. Below only the toast
+   (10000, bottom-right corner, no overlap with the centered dialog). */
+#modal-overlay { z-index: 11000; }
 #agent-overlay.on,
 #modal-overlay.on,
 #memory-overlay.on,
