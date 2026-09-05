@@ -39,18 +39,23 @@ class Phase2dToolRefactorSpec extends FunSuite:
 
   // ===== D.1-1：三角色静态集收口，工具面逐件不变 =====
 
-  test("D.1-1: Nebula fixed set == §C.1 恰十四件、零 Issue（逐件不变）"):
+  test("D.1-1: Nebula fixed set == §C.1 恰十五件、零 Issue、零旧体系四件（逐件不变）"):
     val fixed = AgentCore.fixedToolsFor(mkDef("Nebula"))
     val expected =
       Set("Task", "ProjectCreate", "NodeList", "AgentControl",
-        "Mail", "SendFriendMessage",
-        "Delegate", "FlowTrigger", "FlowExecute",
+        "SendFriendMessage",
+        "Bash", "Read", "Glob", "Grep",                       // 基础四件（2026-09-05 解禁；无 Write/Edit）
+        "Card",                                               // 可视化（2026-09-05 解封恢复）
         "AskUserQuestion", "Pop",
         "Schedule", "TransferFile",
         "MemoryEdit")
     assertEquals(fixed, expected,
-      "Nebula 静态集恰十四件（2026-09-04 终裁：Issue/CheckIssues 退役，报 issue 走 gh cli 由节点代劳；+Issue parity carry 已删）")
+      "Nebula 静态集恰十五件（2026-09-05 08:40 作者裁定：+基础四件/+Card 解封/−Mail/Delegate/FlowTrigger/FlowExecute 旧体系退役；2026-09-04 终裁：Issue/CheckIssues 退役）")
     assert(!fixed.contains("Issue"), "Nebula fixedTools 零 Issue（2026-09-04 终裁退役）")
+    Set("Mail", "Delegate", "FlowTrigger", "FlowExecute").foreach { t =>
+      assert(!fixed.contains(t), s"旧体系四件已从 Nebula 固定面退役（2026-09-05 裁定）: $t")
+    }
+    assert(!fixed.contains("Write") && !fixed.contains("Edit"), "基础四件解禁不夹带 Write/Edit（2026-09-05 裁定）")
 
   test("D.1-1: dispatcher fixed set == Node 三件 + 读四件（逐件不变）"):
     assertEquals(
@@ -85,8 +90,12 @@ class Phase2dToolRefactorSpec extends FunSuite:
   test("D.1-1: buildAllowedToolSet 三角色交付面 == 静态集（LLM 面，注册表过滤后）"):
     val nebulaDelivered = CoreProbe.allowed(mkDef("Nebula"))
     assert(nebulaDelivered.contains("MemoryEdit") && nebulaDelivered.contains("NodeList"))
-    assert(!nebulaDelivered.contains("Read") && !nebulaDelivered.contains("Bash"),
-      "Nebula 无文件工具（§C.1 裁定 2/3）")
+    // 2026-09-05 08:40 作者裁定：基础四件解禁（Read/Bash 机制固定携带），
+    // Write/Edit 仍不给。
+    assert(nebulaDelivered.contains("Read") && nebulaDelivered.contains("Bash"),
+      "Nebula 携带基础四件（2026-09-05 解禁）")
+    assert(!nebulaDelivered.contains("Write") && !nebulaDelivered.contains("Edit"),
+      "Nebula 仍无 Write/Edit（基础四件解禁不夹带）")
     val generalDelivered = CoreProbe.allowed(mkDef("general"), isFlowNode = true)
     assertEquals(generalDelivered, AgentCore.GeneralFixedTools, "general 节点形态交付面 == 静态 8 件")
     val dispatcherDelivered = CoreProbe.allowed(mkDef("project-dispatcher"), isFlowNode = true)

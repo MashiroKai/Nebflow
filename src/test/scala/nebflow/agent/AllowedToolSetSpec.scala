@@ -164,7 +164,9 @@ class AllowedToolSetSpec extends FunSuite:
   test("Delegate is Nebula-exclusive; SubTask is the team-member delegation tool"):
     val nebula = mkDef("Nebula", List("Read", "Delegate"))
     val teamAgent = mkDef("backend", List("Read", "SubTask"))
-    assert(CoreProbe.allowed(nebula).contains("Delegate"), "Nebula keeps Delegate")
+    // 2026-09-05 08:40 作者裁定：旧体系对 Nebula 完全退役——Delegate 声明
+    // （converged 面声明本就失效）与机制固定携带一并移除。
+    assert(!CoreProbe.allowed(nebula).contains("Delegate"), "Nebula no longer carries Delegate (2026-09-05 旧体系退役)")
     assert(!CoreProbe.allowed(nebula).contains("SubTask"), "Nebula does not need SubTask (unless listed)")
     assert(!CoreProbe.allowed(teamAgent).contains("Delegate"), "non-Nebula never gets Delegate")
     assert(CoreProbe.allowed(teamAgent).contains("SubTask"), "team agent with SubTask listed keeps it")
@@ -238,8 +240,9 @@ class AllowedToolSetSpec extends FunSuite:
   test("Nebula is not affected by the team SubTask injection"):
     val nebula = mkDef("Nebula", List("Read", "Delegate"))
     val allowed = CoreProbe.allowed(nebula)
-    assert(!allowed.contains("SubTask"), "Nebula (standalone category) unchanged — uses Delegate")
-    assert(allowed.contains("Delegate"), "Nebula keeps Delegate")
+    assert(!allowed.contains("SubTask"), "Nebula (standalone category) unchanged — no SubTask")
+    // 2026-09-05 08:40 作者裁定：Delegate 已从 Nebula 固定面移除。
+    assert(!allowed.contains("Delegate"), "Nebula no longer keeps Delegate (2026-09-05 旧体系退役)")
 
   // ===== Flow agents: Mail structurally disabled (08-14 P0 root cause) =====
 
@@ -286,12 +289,13 @@ class AllowedToolSetSpec extends FunSuite:
       CoreProbe.allowed(teamMember).contains("FlowTrigger"),
       "FlowTrigger availability follows the flows whitelist, not the Nebula filter"
     )
+    // 2026-09-05 08:40 作者裁定：旧体系对 Nebula 完全退役——FlowTrigger 已从
+    // Nebula 固定面移除（双轨期「机制固定携带」口径废止；legacy team/flow
+    // 成员路径不变）。
     val nebula = mkDef("Nebula", List("Read")).copy(flows = List("code-review"))
-    assert(CoreProbe.allowed(nebula).contains("FlowTrigger"), "Nebula with flows keeps it")
-    // 阶段 2c（§C.1 双轨期过渡组）：FlowTrigger 对 Nebula 机制固定——不再依赖
-    // flows 声明（旧 agent.json flows:["*"] 退役为 no-op）。
+    assert(!CoreProbe.allowed(nebula).contains("FlowTrigger"), "Nebula no longer gets FlowTrigger even with flows (2026-09-05 旧体系退役)")
     val nebulaNoFlows = mkDef("Nebula", Nil)
-    assert(CoreProbe.allowed(nebulaNoFlows).contains("FlowTrigger"), "Nebula gets FlowTrigger without flows declaration (阶段 2c 固定)")
+    assert(!CoreProbe.allowed(nebulaNoFlows).contains("FlowTrigger"), "Nebula fixed set has no FlowTrigger (2026-09-05 旧体系退役)")
 
   test("SubTask workers never get FlowTrigger even with flows declared"):
     val worker = mkDef("backend", List("*")).copy(flows = List("code-review"))
@@ -318,11 +322,14 @@ class AllowedToolSetSpec extends FunSuite:
     val allowed = CoreProbe.allowed(defn)
     assert(allowed.contains("FlowExecute"), "wildcard team member keeps FlowExecute")
 
-  test("Nebula (root) gets FlowExecute without declaration"):
+  test("Nebula no longer gets FlowExecute (2026-09-05 旧体系退役)"):
+    // 原口径「Nebula (root) gets FlowExecute without declaration」随
+    // 2026-09-05 08:40 作者裁定废止：旧 Team/Flow 体系对 Nebula 完全退役，
+    // FlowExecute/Delegate 均不在 Nebula 固定面。
     val nebula = mkDef("Nebula", List("Read", "Delegate"))
     val allowed = CoreProbe.allowed(nebula)
-    assert(allowed.contains("FlowExecute"), "Nebula gets FlowExecute at the mechanism layer")
-    assert(allowed.contains("Delegate"), "Nebula keeps Delegate")
+    assert(!allowed.contains("FlowExecute"), "Nebula no longer carries FlowExecute (2026-09-05 旧体系退役)")
+    assert(!allowed.contains("Delegate"), "Nebula no longer carries Delegate (2026-09-05 旧体系退役)")
 
   test("standalone agents do NOT get FlowExecute auto-injected"):
     val solo = mkDef("solo", List("Read", "Grep"))
@@ -458,7 +465,7 @@ class AllowedToolSetSpec extends FunSuite:
     val nebulaExplicit = mkDef("Nebula", List("Read", "Issue"))
     val nebulaAllowed = CoreProbe.allowed(nebulaExplicit)
     assert(!nebulaAllowed.contains("Issue"), "Nebula：Issue 声明无效（已退役，不再 parity carry）")
-    assert(!nebulaAllowed.contains("Read"), "Nebula：文件工具声明依旧无效（§C.1 裁定 2/3）")
+    assert(nebulaAllowed.contains("Read"), "Nebula：Read 机制固定携带（2026-09-05 基础四件解禁；声明对 converged 面本就无效）")
 
   test("Issue stripped from non-Nebula via wildcard too"):
     val omni = mkDef("omni", List("*"))
@@ -469,13 +476,15 @@ class AllowedToolSetSpec extends FunSuite:
     assert(!CoreProbe.allowed(nebula).contains("Issue"), "Nebula fixedTools 零 Issue（parity carry 已删）")
 
   test("Nebula gets the §C.1 fixed toolset mechanism-fixed — no declaration needed (阶段 2c)"):
-    // 阶段 2c agent 收敛（§C.1 角色-工具静态矩阵）：Nebula 工具面 = 固定十四件
-    // （编排触发/通信/双轨期过渡/用户面/平台/记忆），机制注入不可配置。裸定义
-    // （空 tools）必须携带完整矩阵——面板编辑/定义失误无法解除调度器武装。
+    // 阶段 2c agent 收敛（§C.1 角色-工具静态矩阵）：Nebula 工具面 = 固定集
+    // （2026-09-05 08:40 作者裁定恰十五件：编排触发/通信/基础四件/可视化/
+    // 用户面/平台/记忆），机制注入不可配置。裸定义（空 tools）必须携带完整
+    // 矩阵——面板编辑/定义失误无法解除调度器武装。
     val orchestration = Set(
       "Task", "ProjectCreate", "NodeList", "AgentControl", // 编排触发（NodeList=2c 新增观测面）
-      "Mail", "SendFriendMessage",                         // 通信（SendFriendMessage 2c 起机制固定）
-      "Delegate", "FlowTrigger", "FlowExecute",            // 双轨期过渡（保留至阶段 3）
+      "SendFriendMessage",                                 // 通信（好友功能非旧体系，保留）
+      "Bash", "Read", "Glob", "Grep",                      // 基础四件（2026-09-05 解禁）
+      "Card",                                              // 可视化（2026-09-05 解封恢复）
       "Pop", "AskUserQuestion",                            // 用户面
       "Schedule", "TransferFile",                          // 平台
       "MemoryEdit"                                         // 记忆（§C.2 新工具）
@@ -485,22 +494,36 @@ class AllowedToolSetSpec extends FunSuite:
     orchestration.foreach(t =>
       assert(allowed.contains(t), s"mechanism-fixed orchestration tool missing: $t")
     )
-    assert(!allowed.contains("Issue"), "恰十四件、零 Issue（2026-09-04 终裁：Issue/CheckIssues 退役）")
+    assert(!allowed.contains("Issue"), "恰十五件、零 Issue（2026-09-04 终裁：Issue/CheckIssues 退役）")
+    Set("Mail", "Delegate", "FlowTrigger", "FlowExecute").foreach { t =>
+      assert(!allowed.contains(t), s"旧体系四件已从 Nebula 固定面退役（2026-09-05 08:40 作者裁定）: $t")
+    }
 
-  test("Nebula 显式移除六件文件工具（§C.1 裁定 2/3）——声明也无效"):
-    // 阶段 2c：Nebula 不读不写不跑命令。8684acd 文件声明与机制注入一并退役；
-    // 收敛三定义的 tools 声明整体失效（ConvergedAgentNames base=∅）——即使
-    // agent.json 显式列出 Read/Write 也不给。
+  test("Nebula 文件工具面（2026-09-05 裁定）：基础四件机制固定、Write/Edit 声明也无效"):
+    // 2026-09-05 08:40 作者裁定：+基础四件 Bash/Read/Glob/Grep 解禁（从
+    // BaseTools 取四件，严禁夹带 Write/Edit）。converged 定义 tools 声明整体
+    // 失效（base=∅）不变——文件工具声明依旧 no-op，携带只来自机制注入。
     val legacyDeclared = mkDef("Nebula", List("Read", "Write", "Edit", "Glob", "Grep", "Bash"))
     val allowed = CoreProbe.allowed(legacyDeclared)
-    val six = Set("Read", "Write", "Edit", "Glob", "Grep", "Bash")
-    six.foreach(t => assert(!allowed.contains(t), s"Nebula must NOT have file tool: $t"))
+    val base4 = Set("Read", "Glob", "Grep", "Bash")
+    base4.foreach(t => assert(allowed.contains(t), s"Nebula must have base file tool: $t"))
+    assert(!allowed.contains("Write"), "Nebula must NOT have Write（基础四件解禁不夹带）")
+    assert(!allowed.contains("Edit"), "Nebula must NOT have Edit")
     assert(!allowed.contains("MultiEdit"), "MultiEdit removed from ToolRegistry (阶段 2c)")
     // Web 系同样不在 §C.1 矩阵
     val webDeclared = mkDef("Nebula", List("WebSearch", "WebFetch", "Curl"))
     val webAllowed = CoreProbe.allowed(webDeclared)
     assert(!webAllowed.contains("WebSearch") && !webAllowed.contains("WebFetch") && !webAllowed.contains("Curl"),
       "Nebula: Web 系声明无效")
+
+  test("Card 仅授 Nebula（2026-09-05 解封）——legacy team/flow/catch-all 均不授"):
+    // Card 恢复自 793f62c1 删除（2026-09-05 08:40 作者裁定）。授能面 =
+    // NebulaOrchestrationTools 单一来源；legacy 路径（双轨期保留）不携带。
+    assert(AgentCore.legacyFixedTools(mkDef("member", Nil).copy(category = "team")).contains("Mail"),
+      "legacy team 成员照旧携带 Mail（双轨期保留面，本断言证明该路径活跃）")
+    assert(!AgentCore.legacyFixedTools(mkDef("member", Nil).copy(category = "team")).contains("Card"), "legacy team 成员不授 Card")
+    assert(!AgentCore.legacyFixedTools(mkDef("leaf", Nil).copy(category = "flow")).contains("Card"), "legacy flow 节点不授 Card")
+    assert(!AgentCore.legacyFixedTools(mkDef("standalone-x", Nil)).contains("Card"), "legacy catch-all（BaseTools）不授 Card")
 
   test("project-dispatcher 固定工具集（§C.1）：Node 三件 + 读四件，声明无效"):
     val declared = mkDef("project-dispatcher", List("Write", "Edit", "AskUserQuestion"))
