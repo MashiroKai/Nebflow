@@ -920,13 +920,16 @@ private[agent] trait AgentCore:
           // skills/prompts/flows）与运维配置（*.json 补丁）与记忆运维。推导见
           // SandboxPolicy.sessionRoot（isNebulaRootSession 判据：depth==0 排除
           // NodeDef.agent="Nebula" 的节点会话——它们 root 留在 projectRoot，
-          // §A.6 零回归）。
+          // §A.6 零回归）。[2026-09-05 21:05 裁定] worktree 节点经显式
+          // sandboxRoot=工作区根继承项目沙箱（不收窄到 worktree 自身），优先于
+          // projectRoot；分发器/未接线节点 sandboxRoot=None 旧行为零变化。
           val sandboxRootStr = nebflow.core.sandbox.SandboxPolicy.sessionRoot(
             state.sandboxEnabled,
             state.depth,
             effectiveDef.name,
             state.projectRoot,
-            effectiveProjectRoot
+            effectiveProjectRoot,
+            state.sandboxRoot
           )
           try nebflow.core.sandbox.SandboxPolicy.forRoot(os.Path(sandboxRootStr), resources.sandboxConfig)
           catch

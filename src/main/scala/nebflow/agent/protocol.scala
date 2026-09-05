@@ -822,6 +822,13 @@ case class SessionContext(
     * team/flow/Delegate 等双轨会话默认 false=旧行为（§A.7 Nebula 天然豁免，
     * 双轨期不动旧体系），2c 收敛后统一。 */
   sandboxEnabled: Boolean = false,
+  /** 显式沙箱根（2026-09-05 21:05 作者裁定——worktree 节点继承项目沙箱）：
+    * NodeEngine spawn 点传入项目工作区根，worktree 节点沙箱 root 收敛为工作区
+    * 根而非 worktree 目录自身（主仓 .git/worktrees/<name>/ 元数据可直写，git
+    * commit 走通）；节点 cwd / projectRoot 工具语义不动，只放宽写边界。None =
+    * 沿用 projectRoot 推导（分发器/未接线节点旧行为逐字节不变）。推导权威在
+    * SandboxPolicy.sessionRoot。 */
+  sandboxRoot: Option[String] = None,
   /** Last experience extraction timestamp. */
   lastExperienceAt: Option[Long] = None,
   /**
@@ -1082,6 +1089,7 @@ object AgentState:
     isFlowNode: Boolean = false,
     userFacingNode: Boolean = false,
     sandboxEnabled: Boolean = false,
+    sandboxRoot: Option[String] = None,
     loopTurnKey: Long = 0L
   ): AgentState =
     val interaction = (pendingAskUser, pendingPermission) match
@@ -1109,7 +1117,8 @@ object AgentState:
         freezeExempt = freezeExempt,
         isFlowNode = isFlowNode,
         userFacingNode = userFacingNode,
-        sandboxEnabled = sandboxEnabled
+        sandboxEnabled = sandboxEnabled,
+        sandboxRoot = sandboxRoot
       ),
       ExecutionContext(messages, status, turnIdx, 0L, interaction),
       CompactionState(pendingCompaction, compactionFailures, 0L, latestUsage),
@@ -1161,6 +1170,7 @@ extension (s: AgentState)
   def language: Option[String] = s.session.language
   def projectRoot: Option[String] = s.session.projectRoot
   def sandboxEnabled: Boolean = s.session.sandboxEnabled
+  def sandboxRoot: Option[String] = s.session.sandboxRoot
   def rulesMd: Option[String] = s.session.rulesMd
   def agentsMd: Option[String] = s.session.agentsMd
   def folderId: Option[String] = s.session.folderId
