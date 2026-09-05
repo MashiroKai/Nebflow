@@ -14,8 +14,13 @@ import nebflow.core.project.{ProjectMemory, ProjectStore}
 import nebflow.service.{MemoryBudget, MemorySnapshot, MemoryStore}
 
 /**
- * MemoryEdit（阶段 2c agent 收敛，设计文档 §C.2）——Nebula 专用记忆维护工具，
+ * MemoryEdit（阶段 2c agent 收敛，设计文档 §C.2）——记忆维护工具，
  * 替代 Nebula 的 Read/Write/Edit 记忆通道（裁定 2：移除 Nebula 的 Write/Edit）。
+ * 授能面（2026-09-05 作者签准，修订 2026-08-31 裁定①）：Nebula 固定携带；
+ * dream 受限准入——限修订动作（remove/update/replace_section），append 一律
+ * 拒绝（DREAM_APPEND_DENIED，「dream 禁写新记忆」铁律由本工具动作面强制，
+ * 见 call 的 dreamDenied 拦截）。剥离/授能面见 AgentCore.DreamAdmittedTools
+ * 与 exclusiveToolsFor（两道闸独立）。
  *
  * 接口语义（§C.2 原文 + project-memory 批扩展 2026-09-05）：
  *   target : "user" | "agent" | "project:<name>"
@@ -71,6 +76,7 @@ object MemoryEditTool extends Tool:
 - Entries are markdown list lines ("- ..."); convention: `- <fact>（→<id> detail at ~/.nebflow/memory/<id>.md）`.
 - `section` matches a "## Heading" line exactly (the "## " prefix is optional in the parameter).
 - No whole-file rewrite exists by design — memory cannot be wiped in one call.
+- Identity: Nebula may use all four actions. dream is admitted for revision actions only (remove/update/replace_section) — append is denied (DREAM_APPEND_DENIED): dream must not create new memories (2026-09-05 author-approved iron rule, enforced at this tool's dispatch layer).
 - append/update `content` must be ONE entry: a single line starting with "- ". Multi-line content is rejected (MEMORYEDIT_ENTRY_FORMAT) — drifted non-entry lines would be invisible to update/remove forever. Use replace_section for a multi-line section body.
 - Concurrency: same-file MemoryEdit calls are serialized per file within this process (a read-modify-write is atomic against other MemoryEdit calls). Cross-process writers and direct saves to these files from other subsystems are NOT locked — do not race them.
 ## Budget (write-side enforcement, 2026-09-05 memory-management ruling)
@@ -315,8 +321,25 @@ object MemoryEditTool extends Tool:
         case ("update", Some(c)) => singleEntryGuard("update", c)
         case _                   => None
 
+      // dream 动作面白名单（2026-09-05 作者签准，修订 2026-08-31 裁定①）：
+      // identity==dream 仅放行 remove/update/replace_section，append 一律拒绝
+      // ——「dream 禁写新记忆」铁律由工具面强制。拦截点=动作分发前最早处：
+      // 被拒不触发 resolveTarget（project 目标的注册表读）/per-file 锁/预算
+      // 校验/写前快照等任何副作用。身份来源=ctx.agentDef（AgentCore 工具执行
+      // 链 Some(effectiveDef) 注入，AgentCore.scala toolCtx 构造处）；None
+      // （REST 直调/spec harness）非 dream，行为零变化。禁用全局状态猜身份。
+      val dreamDenied: Option[ToolError] =
+        if ctx.agentDef.exists(_.name == "dream") && action == "append" then
+          Some(ToolError(
+            "MemoryEdit: dream is admitted for revision actions only (remove/update/replace_section) — " +
+              "append is denied: dream 禁写新记忆（2026-09-05 作者签准铁律，工具面强制）。" +
+              "Revise existing entries via update/remove/replace_section; report new-memory candidates to Nebula instead. " +
+              "(DREAM_APPEND_DENIED)"))
+        else None
+
       val outcome: Either[ToolError, String] =
-        resolveTarget(target).flatMap { t =>
+        if dreamDenied.isDefined then Left(dreamDenied.get)
+        else resolveTarget(target).flatMap { t =>
           // per-file 锁（QC nit 3）：整段读-改-写（readLines → 计算 → save）持锁串行，
           // 并发 MemoryEdit 对同一文件不再互相丢更新。
           lockFor(t.path).synchronized {
