@@ -107,7 +107,14 @@ class FriendApiRoutesSpec extends CatsEffectSuite:
     )
     server.createContext(
       "/api/users/lookup",
-      ex => respond(ex, 200, """{"found":true,"neblinkId":"lin@example.com","name":"林小满"}""")
+      ex =>
+        // Username 统一（作者 2026-09-05 裁定）契约钉点：q 含 "newform" 时上游
+        // 返回新契约形态（username/displayName/avatar），验证网关纯透传不变；
+        // 其余 q 走旧形态（neblink-server 新 lookup 端点就绪前的兼容锚）。
+        val q = Option(ex.getRequestURI.getQuery).getOrElse("")
+        if q.contains("newform") then
+          respond(ex, 200, """{"found":true,"userId":"u-nf","username":"newform","displayName":"新形态","avatar":"https://example.com/a.png","email":"nf@example.com"}""")
+        else respond(ex, 200, """{"found":true,"neblinkId":"lin@example.com","name":"林小满"}""")
     )
     // [U3] NL 号自定义 + 可用性检测（0904 批次新增代理路由的上游形态）
     server.createContext(
@@ -330,6 +337,24 @@ class FriendApiRoutesSpec extends CatsEffectSuite:
       client.login("d1", "dev", "macos", Nil) *> runWith(Some(fs))(
         authed(Request[IO](Method.GET, Uri.unsafeFromString("/users/lookup")))
       ).map(resp => assertEquals(resp.status, Status.BadRequest))
+    }
+  }
+
+  test("GET /users/lookup passes through new-form (username/displayName/avatar) payload unchanged") {
+    // Username 统一形态 A：网关对 lookup 纯透传——上游新契约字段原样到达 web，
+    // 网关不做字段映射/丢弃（双识别语义在 neblink-server，归一在 JS 侧）。
+    withMockServer { (_, client, fs) =>
+      client.login("d1", "dev", "macos", Nil) *> runWith(Some(fs))(
+        authed(Request[IO](Method.GET, Uri.unsafeFromString("/users/lookup?q=newform")))
+      ).flatMap { resp =>
+        assertEquals(resp.status, Status.Ok)
+        resp.as[Json].map { body =>
+          assertEquals(body.hcursor.downField("username").as[String].toOption, Some("newform"))
+          assertEquals(body.hcursor.downField("displayName").as[String].toOption, Some("新形态"))
+          assertEquals(body.hcursor.downField("avatar").as[String].toOption, Some("https://example.com/a.png"))
+          assertEquals(body.hcursor.downField("found").as[Boolean].toOption, Some(true))
+        }
+      }
     }
   }
 

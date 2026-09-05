@@ -110,7 +110,7 @@ export default {
   'agentFile.hint': 'This file is the project workspace agent instructions (AGENTS.md at the workspace root); edit and save it.',
 
   // === Friends & messages (A2A) ===
-  'contacts.searchPlaceholder': 'nebflow ID / Email',
+  'contacts.searchPlaceholder': 'Username / Email',
   'contacts.search': 'Search',
   'contacts.notFound': 'User not found',
   'contacts.addFriend': 'Add',
@@ -123,7 +123,7 @@ export default {
   'contacts.accepted': 'Added',
   'contacts.declined': 'Declined',
   'contacts.sentRequests': 'Sent',
-  'contacts.empty': 'No contacts yet — search by nebflow ID or email',
+  'contacts.empty': 'No contacts yet — search by Username or email',
   'contacts.verifyMessagePlaceholder': 'Add a message (optional)',
   'contacts.ariaRequests': '{n} friend requests',
   'contacts.menuDelete': 'Delete friend',
@@ -156,7 +156,7 @@ export default {
   'messages.ariaUnread': '{n} unread messages',
   'messages.copy': 'Copy',
   'contacts.searching': 'Searching…',
-  'contacts.notFoundHint': 'The user may not have set a NebLink ID yet, or the ID may be wrong',
+  'contacts.notFoundHint': 'The user may not have set a Username yet, or the input may be wrong',
   'contacts.cancelVerify': 'Cancel',
   'header.memory': 'Memory',
   'header.bgTasks': 'Background tasks',

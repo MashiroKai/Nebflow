@@ -1,5 +1,6 @@
 // contacts.js — Contacts panel (friends-messaging-spec §3.1).
-// Search-by-NebLink-ID (submit-style, no incremental search), 「新的朋友」
+// Search by Username or email (submit-style, no incremental search; 含 @ 判
+// 邮箱、否则 Username——双识别语义上移服务端，前端单框单 q)，「新的朋友」
 // request inbox (incoming + outgoing), friend list. Badges: pending incoming
 // count on #contacts-btn (pure-badge model, [U3]).
 import { t } from './i18n.js';
@@ -17,8 +18,8 @@ let outgoing = [];
 let requestsExpanded = false;
 let lastSearchAt = 0;
 let searchResult = null;   // null | {found:false} | {found:true,...}
-let verifyFor = null;      // neblinkId awaiting verification-note input
-let sentTo = new Set();    // neblinkIds with a pending outgoing request (this load)
+let verifyFor = null;      // username awaiting verification-note input
+let sentTo = new Set();    // usernames with a pending outgoing request (this load)
 let searching = false;     // search in flight → button loading state
 let searchQ = '';          // preserved across re-renders (panel rebuilds on state change)
 
@@ -287,28 +288,30 @@ function buildResultCard() {
   const card = el('div', 'fm-result-card');
   const r = searchResult;
   if (!r.found) {
-    // 未找到态：主文案 + 常识提示（对方可能未设置 NL 号 / 号码有误）
+    // 未找到态：主文案 + 常识提示（对方可能未设置用户名 / 输入有误）
     card.appendChild(el('div', 'fm-empty', t('contacts.notFound')));
     card.appendChild(el('div', 'fm-empty-hint', t('contacts.notFoundHint')));
     return card;
   }
-  card.appendChild(avatarEl(r, 36));
+  // lookup 新契约 {username, displayName, avatar}（friendsApi 归一后统一形态）
+  card.appendChild(avatarEl({ avatarUrl: r.avatar, name: r.displayName }, 36));
   const meta = el('div', 'fm-row-meta');
-  meta.appendChild(el('div', 'fm-row-name', r.name || r.neblinkId));
-  meta.appendChild(el('div', 'fm-row-sub', r.neblinkId));
+  meta.appendChild(el('div', 'fm-row-name', r.displayName || r.username));
+  meta.appendChild(el('div', 'fm-row-sub', r.username));
   card.appendChild(meta);
 
   if (r.self) {
     card.appendChild(el('span', 'fm-status-text', t('contacts.self')));
     return card;
   }
-  const alreadyFriend = friends.some(f => f.neblinkId.toLowerCase() === (r.neblinkId || '').toLowerCase());
-  const pending = sentTo.has((r.neblinkId || '').toLowerCase());
+  // wire 对象（好友行/在途请求）的 neblinkId 字段值即 username——同值域比较
+  const alreadyFriend = friends.some(f => (f.neblinkId || '').toLowerCase() === (r.username || '').toLowerCase());
+  const pending = sentTo.has((r.username || '').toLowerCase());
   if (alreadyFriend || pending) {
     card.appendChild(el('span', 'fm-status-text', t('contacts.pendingVerification')));
     return card;
   }
-  if (verifyFor === r.neblinkId) {
+  if (verifyFor === r.username) {
     // Verification-note input (WeChat-style, ≤50 chars, optional)
     const box = el('div', 'fm-verify-box');
     const input = document.createElement('input');
@@ -319,8 +322,8 @@ function buildResultCard() {
     const doSend = async () => {
       sendBtn.disabled = true;
       try {
-        await api.sendFriendRequest(r.neblinkId, input.value.trim());
-        sentTo.add(r.neblinkId.toLowerCase());
+        await api.sendFriendRequest(r.username, input.value.trim());
+        sentTo.add(r.username.toLowerCase());
       } catch { /* keep state */ }
       verifyFor = null;
       render();
@@ -337,7 +340,7 @@ function buildResultCard() {
     setTimeout(() => input.focus(), 0);
   } else {
     const addBtn = el('button', 'glass-control fm-add-btn', t('contacts.addFriend'));
-    addBtn.addEventListener('click', () => { verifyFor = r.neblinkId; render(); });
+    addBtn.addEventListener('click', () => { verifyFor = r.username; render(); });
     card.appendChild(addBtn);
   }
   return card;
