@@ -34,7 +34,17 @@ class SandboxSpec extends CatsEffectSuite:
 
   override def beforeEach(context: munit.BeforeEach): Unit =
     savedDataRoot = Some(PathUtil.dataRoot)
-    val pinned = os.home / s".nb-sbx-dataroot-${System.nanoTime()}"
+    // 逃生门（沙箱工作区会话）：os.home 不可写时由 NB_SANDBOX_SPEC_DATAROOT 显式
+    // 注入 pinned 根（指向既不在系统读面也不在写面的目录，语义不变——宿主/CI
+    // 无此环境变量，行为与原实现完全一致）。
+    val pinnedBase = sys.env.get("NB_SANDBOX_SPEC_DATAROOT") match
+      case Some(dir) => os.Path(dir)
+      case None      => os.home / s".nb-sbx-dataroot-${System.nanoTime()}"
+    val pinned = if sys.env.contains("NB_SANDBOX_SPEC_DATAROOT") then
+      val p = pinnedBase / s"run-${System.nanoTime()}"
+      os.makeDir.all(p)
+      p
+    else pinnedBase
     os.makeDir.all(pinned / "skills" / "fixture-skill")
     os.write.over(pinned / "skills" / "fixture-skill" / "SKILL.md", "fixture skill body")
     os.makeDir.all(pinned / "prompts")
@@ -152,10 +162,19 @@ class SandboxSpec extends CatsEffectSuite:
   // §A.8-2：.. 逃逸拒；词法冗余归一放行
   // ------------------------------------------------------------------
 
+  /** 沙箱工作区会话逃生门（见 beforeEach 注释）：宿主/CI = os.home（不在任何
+    * 读写面，「项目根/外部目标」语义成立）；注入 NB_SANDBOX_SPEC_DATAROOT 时
+    * 落到注入根下（由测试驱动方指定在既非系统读面、也非 policy root/tmp 的
+    * 目录，语义等价）。 */
+  private def homeLikeRoot(tag: String): os.Path =
+    sys.env.get("NB_SANDBOX_SPEC_DATAROOT") match
+      case Some(dir) => os.Path(dir) / s".nb-sbx-$tag"
+      case None      => os.home / s".nb-sbx-$tag"
+
   test("A.8-2: <root>/../escape.txt 拒；<root>//sub//new.txt 归一后放行且返回 fresh 路径") {
     // root 用 home 下目录（模拟真实 project root）——tmpdir 本身在 java.io.tmpdir
     // 可写根内，<tmpdir>/../escape 会落回 tmpdir 而合法可写，不能当项目根用。
-    val tmp = os.home / s".nb-sbx-root-${System.nanoTime()}"
+    val tmp = homeLikeRoot(s"root-${System.nanoTime()}")
     os.makeDir.all(tmp)
     val ctx = ctxIn(tmp)
     FileSandbox.checkWrite(ctx, s"$tmp/../escape.txt") match
@@ -173,9 +192,10 @@ class SandboxSpec extends CatsEffectSuite:
   // ------------------------------------------------------------------
 
   /** home 下的外部目标（home 不在任何 read/writable root——/private/var 等
-    * tempdir 落点反而 readable/writable，不能当「外部」用）。先清残留再建。 */
+    * tempdir 落点反而 readable/writable，不能当「外部」用）。先清残留再建。
+    * 逃生门见 homeLikeRoot。 */
   private def outsideDir(tag: String): os.Path =
-    val d = os.home / s".nb-sbx-outside-$tag"
+    val d = homeLikeRoot(s"outside-$tag")
     os.remove.all(d)
     os.makeDir.all(d)
     d
@@ -361,7 +381,9 @@ class SandboxSpec extends CatsEffectSuite:
     val tmp = os.Path(Files.createTempDirectory("nb-sbx-readlist"))
     val ctx = ctxIn(tmp)
     newReadDirs.foreach { case (dir, file) =>
-      val res = FileSandbox.checkRead(ctx, (PathUtil.dataRoot / dir / file).toString)
+      // file 可能含子路径段（tr-001/result.json）——逐段拼接（os-lib 拒含 / 的单段）
+      val p = file.split('/').foldLeft(PathUtil.dataRoot / dir)(_ / _)
+      val res = FileSandbox.checkRead(ctx, p.toString)
       assert(res.isRight, s"~/.nebflow/$dir 必须可读: ${res.left.map(_.message)}")
     }
     // 深层子路径同样可读（projects/proj-a/AGENTS.md）
@@ -380,11 +402,11 @@ class SandboxSpec extends CatsEffectSuite:
       case Left(err) => fail(s"tool-results ReadTool 必须读通: ${err.message}")
   }
 
-  test("READLIST-: 根层凭据逐个仍 SANDBOX_DENIED（vps.env/auth.json/nebflow.json/User.md + 通配样本）") {
+  test("READLIST-: 根层凭据逐个仍 SANDBOX_DENIED（vps.env/auth.json/nebflow.json + 通配样本；User.md 已入 §4.2-B 审计白名单故移出本列）") {
     val tmp = os.Path(Files.createTempDirectory("nb-sbx-cred"))
     val ctx = ctxIn(tmp)
     val denied = List(
-      "vps.env", "auth.json", "nebflow.json", "User.md",
+      "vps.env", "auth.json", "nebflow.json",
       "model-presets.json", "stt-config.json",
       "host-credentials.txt", // *credentials* 通配样本
       "deploy.env" // *.env 通配样本
@@ -394,23 +416,76 @@ class SandboxSpec extends CatsEffectSuite:
         case Left(err) => assert(err.message.startsWith("SANDBOX_DENIED"), err.message)
         case Right(_) => fail(s"~/.nebflow/$f 凭据层必须拒读")
     }
+    // §4.2-B：User.md 不再拒读（ AUDIT-RO 用例专测），此处仅防回归式提醒
+    assert(FileSandbox.checkRead(ctx, (PathUtil.dataRoot / "User.md").toString).isRight,
+      "User.md = 审计只读白名单，不得回落为拒读")
   }
 
-  test("READLIST-: agents/ 目录开读但 memory.md 文件级例外拒读（Nebula 与 team agent 同规）+ Reason 行") {
+  test("READLIST-: agents/ 目录开读但 memory.md 负向规则拒读（Coder 同规保留）+ Reason 行；§4.2-B 唯一例外 = Nebula memory.md 精确放行") {
     val tmp = os.Path(Files.createTempDirectory("nb-sbx-mem"))
     val ctx = ctxIn(tmp)
     // 同目录非记忆文件可读
     assert(FileSandbox.checkRead(ctx, (PathUtil.dataRoot / "agents" / "Nebula" / "system.md").toString).isRight)
     assert(FileSandbox.checkRead(ctx, (PathUtil.dataRoot / "agents" / "Nebula" / "agent.json").toString).isRight)
     assert(FileSandbox.checkRead(ctx, (PathUtil.dataRoot / "agents" / "Coder" / "agent.json").toString).isRight)
-    // 私有记忆拒读（Nebula 断言样本 + 通配同规样本）
-    List("agents/Nebula/memory.md", "agents/Coder/memory.md").foreach { rel =>
-      FileSandbox.checkRead(ctx, (PathUtil.dataRoot / os.RelPath(rel)).toString) match
-        case Left(err) =>
-          assert(err.message.startsWith("SANDBOX_DENIED"), err.message)
-          assert(err.message.contains("private-memory deny rule"), s"应含 Reason 解释行: ${err.message}")
-        case Right(_) => fail(s"~/.nebflow/$rel 私有记忆必须拒读")
+    // §4.2-B 审计只读例外（2026-09-05）：Nebula 本人的 memory.md 精确放行
+    assert(
+      FileSandbox.checkRead(ctx, (PathUtil.dataRoot / "agents" / "Nebula" / "memory.md").toString).isRight,
+      "Nebula memory.md = audit-read-only exception, must be readable")
+    // 其余 agents/**/memory.md 负向规则不变（team agent 同规拒读 + Reason 行）
+    FileSandbox.checkRead(ctx, (PathUtil.dataRoot / "agents" / "Coder" / "memory.md").toString) match
+      case Left(err) =>
+        assert(err.message.startsWith("SANDBOX_DENIED"), err.message)
+        assert(err.message.contains("private-memory deny rule"), s"应含 Reason 解释行: ${err.message}")
+      case Right(_) => fail("~/.nebflow/agents/Coder/memory.md 私有记忆必须拒读")
+  }
+
+  test("AUDIT-RO: §4.2-B 两记忆文件双向——读通（User.md 根层 + Nebula memory.md），写仍拒") {
+    val tmp = os.Path(Files.createTempDirectory("nb-sbx-auditro"))
+    val ctx = ctxIn(tmp)
+    // 读通：User.md（根层精确文件）+ agents/Nebula/memory.md
+    assert(FileSandbox.checkRead(ctx, (PathUtil.dataRoot / "User.md").toString).isRight,
+      "User.md 必须进审计只读读面")
+    assert(FileSandbox.checkRead(ctx, (PathUtil.dataRoot / "agents" / "Nebula" / "memory.md").toString).isRight,
+      "Nebula memory.md 必须进审计只读读面")
+    // 根层其余凭据仍拒（例外是文件级精确匹配，不是根层放行）
+    FileSandbox.checkRead(ctx, (PathUtil.dataRoot / "auth.json").toString) match
+      case Left(err) => assert(err.message.startsWith("SANDBOX_DENIED"), err.message)
+      case Right(_)  => fail("auth.json 仍必须拒读——例外仅覆盖两记忆文件")
+    // 写仍拒（只读例外：readableRoots 扩，writableRoots 零变化）
+    List("User.md", "agents/Nebula/memory.md").foreach { rel =>
+      FileSandbox.checkWrite(ctx, (PathUtil.dataRoot / os.RelPath(rel)).toString) match
+        case Left(err) => assert(err.message.startsWith("SANDBOX_DENIED"), err.message)
+        case Right(_)  => fail(s"~/.nebflow/$rel 写面必须仍然拒绝（审计例外严格只读）")
     }
+    // 路径契约：auditReadableFiles 与 MemoryStore 权威路径零漂移
+    assertEquals(
+      SandboxPolicy.auditReadableFiles.map(_.toString),
+      List(nebflow.service.MemoryStore.userMemoryPath.toString,
+        nebflow.service.MemoryStore.agentMemoryPath("Nebula").toString),
+      "audit paths must mirror MemoryStore paths")
+  }
+
+  test("AUDIT-RO MUT: 变异验红双向——负向例外剔除即拒（readDeniedWith 空集）；读白名单条目剔除即拒（readExtras copy）") {
+    val tmp = os.Path(Files.createTempDirectory("nb-sbx-auditmut"))
+    val ctx = ctxIn(tmp)
+    val nebulaMem = (PathUtil.dataRoot / "agents" / "Nebula" / "memory.md").toString
+    val nebulaMemCanonical = SandboxPolicy.canonicalize(java.nio.file.Paths.get(nebulaMem))
+    // 基线绿
+    assert(FileSandbox.checkRead(ctx, nebulaMem).isRight, "基线：Nebula memory.md 应可读")
+    // 变异 A（红）：负向规则例外集置空 = 旧规则（一切 agents/**/memory.md 拒）承重
+    assert(SandboxPolicy.readDeniedWith(nebulaMemCanonical, Set.empty),
+      "变异：例外集为空时 Nebula memory.md 必须重新命中负向规则")
+    // 变异 B（红）：readExtras 剔除 auditReadableFiles 条目 → User.md 拒读
+    val userMdCanonical = SandboxPolicy.canonicalize((PathUtil.dataRoot / "User.md").wrapped)
+    val stripped = ctx.sandbox.copy(readExtras = ctx.sandbox.readExtras.filterNot(p =>
+      p.wrapped == userMdCanonical || p.wrapped == nebulaMemCanonical))
+    FileSandbox.checkRead(ctxIn(tmp, stripped), (PathUtil.dataRoot / "User.md").toString) match
+      case Left(err) => assert(err.message.startsWith("SANDBOX_DENIED"), err.message)
+      case Right(_)  => fail("变异后 User.md 必须变红（审计白名单条目承重）")
+    // 恢复（绿）
+    assert(FileSandbox.checkRead(ctx, nebulaMem).isRight, "恢复后 Nebula memory.md 应复绿")
+    assert(FileSandbox.checkRead(ctx, (PathUtil.dataRoot / "User.md").toString).isRight, "恢复后 User.md 应复绿")
   }
 
   test("READLIST-: memory.md 不进可写根（写闸不受白名单影响）") {
@@ -521,7 +596,11 @@ class SandboxSpec extends CatsEffectSuite:
     // 恢复真实后端注册（GatewayMain 语义），避免污染其他 spec
     SandboxRuntime.backend = SandboxBackend.Unavailable
     // [verify-fix] 还原被钉住的 dataRoot（见 beforeEach 注释）
-    pinnedDataRoot.foreach(os.remove.all)
+    pinnedDataRoot.foreach { p =>
+      os.remove.all(p)
+      // 逃生门模式：外层注入根也一并清理（保留注入根自身，供下轮复用）
+      if sys.env.contains("NB_SANDBOX_SPEC_DATAROOT") then os.remove.all(p / os.up)
+    }
     savedDataRoot.foreach(PathUtil.setDataRoot)
     pinnedDataRoot = None
     savedDataRoot = None

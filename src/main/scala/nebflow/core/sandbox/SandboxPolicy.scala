@@ -24,8 +24,13 @@ import nebflow.core.PathUtil
  * /private/etc /private/var + ~/.nebflow 白名单子目录（skills/prompts/docs +
  * 系统运行数据目录 tool-results/uploads/logs/sessions/projects/agents——节点读
  * 自己的工具结果缓存/上传附件/日志/会话/项目元数据/agent 定义是正常工作需求）。
- * ~/.nebflow 根层（auth.json/vps.env/nebflow.json/User.md 等凭据与私有态）不在
- * 任何白名单——读写均拒；agents/ 目录开读后 agents/**/memory.md（agent 私有
+ * §4.2-B 审计只读例外（2026-09-05 memory-management 批次二机制四，作者裁定：
+ * 全局白名单加两路径）：~/.nebflow/User.md + ~/.nebflow/agents/Nebula/memory.md
+ * 两个【精确文件路径】进读面（审计节点直读记忆真身，替代日志重建通道）——
+ * 严格只读（只进 readableRoots，写面零变化），且 agents/**/memory.md 负向规则
+ * 对其余一切 agent 记忆不变（readDenied 只精确豁免 Nebula 一个）。
+ * ~/.nebflow 根层其余文件（auth.json/vps.env/nebflow.json 等凭据与私有态）不在
+ * 任何白名单——读写均拒；agents/ 目录开读后其余 agents/**/memory.md（agent 私有
  * 记忆）由 readDenied 负向规则一票拒读（优先于白名单）；~/.nebflow 整体不在
  * 可写根（裁定 3：agent 只在 project 内写）。
  *
@@ -64,18 +69,44 @@ object SandboxPolicy:
     List("skills", "prompts", "docs", "tool-results", "uploads", "logs", "sessions", "projects", "agents")
       .map(s => PathUtil.dataRoot / s)
 
+  /**
+   * §4.2-B 审计只读例外（2026-09-05 批次二机制四）：两个记忆文件的【精确路径】
+   * 进读面——审计类节点 Read 直读记忆真身（日志重建通道 A 的稳态替代）。
+   * 只精确放行这两个文件：读面以 contains(file, file)=equals 成立；写面零变化
+   * （本列表只进 readableRoots）；与 MemoryStore.userMemoryPath/agentMemoryPath
+   * 的路径契约由 SandboxSpec 断言（防漂移）。def 而非 val：跟随 setDataRoot。
+   */
+  def auditReadableFiles: List[os.Path] =
+    List(
+      PathUtil.dataRoot / "User.md",
+      PathUtil.dataRoot / "agents" / "Nebula" / "memory.md"
+    )
+
   /** agents 子树根（负向规则锚点）。 */
   private def agentsReadRoot: os.Path = PathUtil.dataRoot / "agents"
 
   /**
    * 文件级读负向规则（凭据红线，优先于 readableRoots——FileSandbox 先查本函数）：
-   * agents/ 子树内一切 memory.md（agent 私有记忆，Nebula 与 team agent 同规）。
-   * agents/ 目录级开读后，此例外保证「目录开读、记忆仍拒」两个断言同时成立。
+   * agents/ 子树内一切 memory.md（agent 私有记忆，Nebula 与 team agent 同规）——
+   * 【唯一例外】§4.2-B 审计只读放行的 Nebula memory.md 精确路径（auditReadableFiles，
+   * canonical 域比较）。其余 agents/**/memory.md 负向规则不变。
    * 输入必须是 canonical 路径（与 readableRoots 同一 canonical 域比较）。
    */
   def readDenied(canonical: Path): Boolean =
+    // 例外集随调用点动态解析（def 语义与 readableRoots 一致，setDataRoot 生效）
+    val exceptions = auditReadableFiles
+      .filter(_.toString.endsWith("memory.md"))
+      .map(p => canonicalize(p.wrapped))
+      .toSet
+    readDeniedWith(canonical, exceptions)
+
+  /** 可注入例外集形态（spec 变异验红面：空集 = 旧行为，Nebula memory.md 也拒读）。 */
+  def readDeniedWith(canonical: Path, auditExceptions: Set[Path]): Boolean =
     val agents = os.Path(canonicalize(agentsReadRoot.wrapped))
-    canonical.startsWith(agents.wrapped) && canonical.getFileName.toString == "memory.md"
+    val underAgentsMemory =
+      canonical.startsWith(agents.wrapped) && canonical.getFileName.toString == "memory.md"
+    if underAgentsMemory then !auditExceptions.contains(canonical)
+    else false
 
   /**
    * Grep/Glob 遍历排除（红线覆盖遍历面）：搜索根落在 agents 子树内时，rg 追加
@@ -86,7 +117,7 @@ object SandboxPolicy:
     val agents = os.Path(canonicalize(agentsReadRoot.wrapped))
     if canonicalRoot.startsWith(agents.wrapped) then List("--glob", "!memory.md") else Nil
 
-  def defaultReadExtras: List[os.Path] = systemReadExtras ++ nebflowReadExtras
+  def defaultReadExtras: List[os.Path] = systemReadExtras ++ nebflowReadExtras ++ auditReadableFiles
 
   /**
    * 从节点 projectRoot + 配置构造会话策略（AgentCore 每次 spawn 调一次）。
