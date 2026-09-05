@@ -1,23 +1,33 @@
-// flowmap-archive-result-full.spec.mjs — 归档详情窗节点结果全文显示验收（20260904）。
+// flowmap-archive-result-full.spec.mjs — 归档详情窗节点结果全文显示验收
+//（20260904 全文完整显示 + 2026-09-05 载荷收敛改造）。
 //
 // 作者反馈「节点结果要能完整显示」。截断点定位（见 20260904_archive-panel-result-full-report.md）：
 // 截断不在前端渲染链——NodePayload.buildNodeJson（ProjectTypes.scala）把 result 统一
-// 截为 ≤500 字符摘要（快照/WS 事件/NodeList 工具共用单一序列化点）。修复 = 新增只读
-// 端点 GET /api/projects/<name>/flow-map/nodes/<nodeId>/result（活动区优先归档区兜底，
-// 全文）+ 前端详情窗 ≥500 字符时按需取全文换装（渲染代守卫竞态）+ 结果区独立滚动
-// （max-height:60vh + overflow-y:auto，overscroll-behavior:contain）。
+// 截为 ≤500 字符摘要（快照/WS 事件/NodeList 工具共用单一序列化点）。修复 = 只读端点
+// GET /api/projects/<name>/flow-map/nodes/<nodeId>/result（活动区优先归档区兜底，全文）
+// + 前端详情窗按需取全文换装（渲染代守卫竞态）+ 结果区独立滚动
+//（max-height:60vh + overflow-y:auto，overscroll-behavior:contain）。
+//
+// 2026-09-05 载荷收敛改写：默认载荷（快照/WS 事件）不再携带 result 本体——只有
+// hasResult 布尔标记 + description（创建必写）；结果全文仅两条按需通道（REST result
+// 端点 / NodeList detail 参数）。因此：
+//   · 载荷模拟改为「剥 result、置 hasResult」新形态（生产 NodePayload 同构）；
+//   · 详情打开 = hasResult 即无条件按需拉取（不再有「摘要 ≥500 才可能截断」判据，
+//     新载荷根本没有摘要）；
+//   · R2 由「短结果零请求」改写为「无结果成员零请求」——hasResult 缺/false 的成员
+//     点开零请求、结果区落 noResult 占位（契约不扰的最小影响面证明）。
 //
 // 用例：
-//   R1 长结果全文：5000+ 字符样例（载荷态=生产 501 字符摘要）→ 详情打开后换装全文；
-//     断言 DOM 文本=原文（逐字符相等、无省略号截断、markdown 管线 <p> 输出）；
+//   R1 长结果全文：5000+ 字符样例（载荷态=hasResult:true 无正文）→ 详情打开后按需
+//     换装全文；断言 DOM 文本=原文（逐字符相等、无省略号截断、markdown 管线 <p> 输出）；
 //     结果区可滚动（scrollHeight > clientHeight）；滚动到底后末尾文本 Range boundingBox
 //     落在详情窗可视区内（区域滚动不动摇详情窗本体定位）。
-//   R2 短结果零按需请求：摘要 <500 字符的成员点开，结果端点零请求、摘要原样——
-//     契约不扰（快照/事件摘要语义不变的最小影响面证明）。
-//   R3 迟到响应竞态守卫：延迟端点响应 + 快速换节点 → 迟到全文被渲染代守卫丢弃，
-//     不得串扰后开节点的内容。
+//   R2 无结果成员零按需请求：c3b 特殊置无结果（hasResult:false）→ 详情打开零请求、
+//     结果区 md-empty「暂无结果」占位——按需通道只服务 hasResult 节点。
+//   R3 迟到响应竞态守卫：延迟端点响应 + 快速换节点（TARGET→c1c）→ 迟到全文被渲染代
+//     守卫丢弃，不得串扰后开节点的内容。
 // 夹具/route 拦截与 flowmap-archive-panel.spec.mjs 同构（零端口，localhost:1）；
-// 既有产品 spec / 静态护栏零改动（只增不删）。
+// fixture.mjs 的 result 字段仅作端点 mock 数据源（全文仓），载荷层已剥。
 //
 // Run: node node_modules/@playwright/test/cli.js test tests/flowmap-archive-result-full.spec.mjs --workers=1
 
@@ -46,9 +56,25 @@ const FULL = Array.from({ length: 200 }, (_, i) =>
 ).join('') + '终行标记ZQX20260904END：本句为全文唯一终止行，专用于滚动到底后末尾文本可见性断言。';
 const HEAD = FULL.slice(0, 12);
 const TAIL = '终行标记ZQX20260904END'; // 全文唯一（上文编号句无此串）→ 定位必命中末行
-// 生产 NodePayload 摘要口径（ProjectTypes.scala：>500 → take(500)+「…」）
-const cap500 = (s) => (s.length > 500 ? s.slice(0, 500) + '…' : s);
 const TARGET = 'c1b'; // C1 链成员（面板展开 → 成员行点击样例）
+const NO_RESULT_NODE = 'c3b'; // R2：特殊置无结果的归档成员（C3 链，completed）
+
+/** 生产 NodePayload 载荷模拟（2026-09-05 收敛形态）：剥 result 本体 → hasResult 标记。
+ *  TARGET 注入长全文仓（仅端点侧可见）；c3b 特殊置无结果（fixture 原有短结果删除）。 */
+function payloadNodes() {
+  return allNodes().map((n) => {
+    const c = structuredClone(n);
+    if (c.id === TARGET) c.result = FULL;
+    if (c.id === NO_RESULT_NODE) delete c.result;
+    const has = !!c.result;
+    const { result, ...rest } = c;
+    return { ...rest, hasResult: has };
+  });
+}
+
+/** 载荷层无结果节点集（端点 mock 对它们返回 result:null——生产端 hasResult=false
+ *  的节点其 result 端点本就为空）。 */
+const PAYLOAD_NO_RESULT = new Set(payloadNodes().filter((n) => !n.hasResult).map((n) => n.id));
 
 async function bootApp(page) {
   await page.addInitScript(() => {
@@ -92,16 +118,8 @@ async function bootApp(page) {
   await page.waitForTimeout(300);
 }
 
-/** 节点表：TARGET 挂 10000 字符长结果；REST 快照按生产口径统一截 500（后端契约模拟）。 */
-function payloadNodes() {
-  return allNodes().map((n) => {
-    const c = structuredClone(n);
-    if (c.id === TARGET) c.result = FULL;
-    return { ...c, result: c.result == null ? null : cap500(String(c.result)) };
-  });
-}
-
-/** 结果全文端点 mock（delayMs=0 即时；counter 按 nodeId 记请求数）。 */
+/** 结果全文端点 mock（结果全文仓 = fixture 原文 + TARGET 长样例；payload 无结果节点
+ *  返回 null。delayMs=0 即时；counter 按 nodeId 记请求数）。 */
 async function mockResultEndpoint(page, { delayMs = 0, counter } = {}) {
   await page.route('**/api/projects/alpha/flow-map/nodes/*/result', async (route) => {
     const url = new URL(route.request().url());
@@ -110,8 +128,9 @@ async function mockResultEndpoint(page, { delayMs = 0, counter } = {}) {
     if (counter) counter.set(id, (counter.get(id) || 0) + 1);
     if (delayMs) await new Promise((r) => setTimeout(r, delayMs));
     const n = allNodes().find((x) => x.id === id);
+    const full = id === TARGET ? FULL : (PAYLOAD_NO_RESULT.has(id) ? null : (n?.result ?? null));
     await route.fulfill({
-      json: { id, name: n?.name || id, status: n?.status || 'completed', result: id === TARGET ? FULL : (n?.result ?? null) },
+      json: { id, name: n?.name || id, status: n?.status || 'completed', result: full },
     });
   });
 }
@@ -144,7 +163,7 @@ async function openTargetDetail(page) {
 
 // ═══════════ R1 · 长结果全文换装 + 独立滚动 + 末尾可见 ═══════════
 
-test('R1 长结果：摘要换装全文（长度=原文，无截断）+ 结果区独立滚动 + 滚到底末尾可见', async ({ page }) => {
+test('R1 长结果：hasResult 按需换装全文（长度=原文，无截断）+ 结果区独立滚动 + 滚到底末尾可见', async ({ page }) => {
   const errors = [];
   page.on('pageerror', (e) => errors.push(e.message));
   await bootApp(page);
@@ -153,7 +172,7 @@ test('R1 长结果：摘要换装全文（长度=原文，无截断）+ 结果�
   await openTargetDetail(page);
 
   const box = page.locator('.fm-detail-result');
-  // 全文换装到达：textContent 长度 = 原文长度（载荷摘要 501 → 全文 10000+）。
+  // 全文换装到达：textContent 长度 = 原文长度（载荷无正文 → 按需全文 10000+）。
   // marked 在 </p> 后恒补一个尾部换行（渲染产物非文本流）→ 归一化后比对。
   await expect.poll(async () => (((await box.textContent()) || '').replace(/\n+$/, '')).length, { timeout: 8000 })
     .toBe(FULL.length);
@@ -208,9 +227,9 @@ test('R1 长结果：摘要换装全文（长度=原文，无截断）+ 结果�
   expect(errors).toEqual([]);
 });
 
-// ═══════════ R2 · 短结果零按需请求（最小影响面契约不扰）═══════════
+// ═══════════ R2 · 无结果成员零按需请求（最小影响面契约不扰）═══════════
 
-test('R2 短结果：结果端点零请求、摘要原样显示', async ({ page }) => {
+test('R2 无结果成员：结果端点零请求、结果区 noResult 占位', async ({ page }) => {
   const counter = new Map();
   await bootApp(page);
   await mockApi(page);
@@ -221,16 +240,19 @@ test('R2 短结果：结果端点零请求、摘要原样显示', async ({ page 
   await page.waitForSelector('.flowmap-view-body .fm-node', { timeout: 8000 });
   await page.waitForTimeout(250);
   await page.click('[data-testid="archive-toggle"]');
-  const entry = page.locator('[data-testid="archive-entry"][data-chain-id="chain-c1a"]');
+  const entry = page.locator('[data-testid="archive-entry"][data-chain-id="chain-c3a"]');
   await expect(entry).toHaveCount(1);
   await entry.click();
-  // c1c 摘要远短于 500 → 不触发全文升级
-  await page.locator('.fm-member[data-node="c1c"]').click();
+  // c3b hasResult:false → 无按需拉取判据，零请求
+  await page.locator(`.fm-member[data-node="${NO_RESULT_NODE}"]`).click();
   await expect(page.locator('[data-testid="detail-panel"]')).toBeVisible();
   await page.waitForTimeout(600);
-  expect(counter.get('c1c') || 0).toBe(0);
-  const txt = ((await page.locator('.fm-detail-result').textContent()) || '').trim();
-  expect(txt).toBe('回归 PASS：控制台无 404。'); // fixture 原文经 markdown 管线（**加粗** 渲染为 strong）
+  expect(counter.get(NO_RESULT_NODE) || 0).toBe(0);
+  // 结果区落 noResult 占位（md-empty「暂无结果」，非 '…' 拉取中占位、非全文）
+  const box = page.locator('.fm-detail-result');
+  expect(await box.locator('.md-empty').count()).toBe(1);
+  const txt = ((await box.textContent()) || '').trim();
+  expect(txt).toBe('暂无结果');
 });
 
 // ═══════════ R3 · 迟到响应竞态守卫（渲染代丢弃，不串扰）═══════════
@@ -256,8 +278,9 @@ test('R3 竞态守卫：延迟全文响应 + 快速换节点 → 迟到全文被
   await page.locator('.fm-detail-close').click();
   await expect(page.locator('[data-testid="detail-panel"]')).toBeHidden();
   await page.locator('.fm-member[data-node="c1c"]').click();
-  await page.waitForTimeout(2000); // 迟到响应早已到达（1.2s）
-  // c1c 详情保持自身内容：迟到全文未串扰（若渲染代守卫失效，此处已被 FULL 覆盖）
+  await page.waitForTimeout(2000); // 双方响应均已到达（1.2s）
+  // c1c 详情保持自身内容（hasResult → 自身按需拉取照常换装）：TARGET 迟到全文未串扰
+  // （若渲染代守卫失效，此处已被 FULL 覆盖）
   const txt = ((await page.locator('.fm-detail-result').textContent()) || '').trim();
   expect(txt).toBe('回归 PASS：控制台无 404。');
   expect(txt.includes(TAIL)).toBe(false);

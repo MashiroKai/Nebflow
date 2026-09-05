@@ -51,6 +51,11 @@ class NodeCleanupLivenessSpec extends CatsEffectSuite:
     """{"name":"test-agent","description":"cleanup-liveness regression agent","tools":[],"category":"standalone"}"""
   )
   os.write.over(tempRoot / "agents" / "test-agent" / "system.md", "# test-agent\n")
+  // 2026-09-05 agent 退役：新建节点执行统一 general——fixture 侧补 general agent
+  os.makeDir.all(tempRoot / "agents" / "general")
+  os.write.over(tempRoot / "agents" / "general" / "agent.json",
+    """{"name":"general","description":"general executor","tools":[],"category":"standalone"}""")
+  os.write.over(tempRoot / "agents" / "general" / "system.md", "# general\n")
 
   override def afterAll(): Unit =
     PathUtil.setDataRoot(originalRoot)
@@ -261,7 +266,7 @@ class NodeCleanupLivenessSpec extends CatsEffectSuite:
       wiringId <- idOf(rt, "w-wire")
       payWiring <- payloadOf(rt, wiringId)
       // 真实活 running（延迟 LLM 保持窗口）
-      _ <- nodeEdit(nodeInput("cln-live", "slow-live", "agent" -> Json.fromString("test-agent"),
+      _ <- nodeEdit(nodeInput("cln-live", "slow-live", "description" -> Json.fromString("test node purpose"),
         "task" -> Json.fromString("slow-live"), "out" -> Json.fromString("Nebula")), ctx)
       _ <- waitStatus(rt, "slow-live", Set(NodeLifecycle.Running))
       liveId <- idOf(rt, "slow-live")
@@ -291,7 +296,7 @@ class NodeCleanupLivenessSpec extends CatsEffectSuite:
       res <- mkResources(system, tempRoot, llm.handle)
       rt <- mountProject("cln-protect", ws, system, res)
       ctx = mkCtx(res, system, ws.toString)
-      _ <- nodeEdit(nodeInput("cln-protect", "slow-p", "agent" -> Json.fromString("test-agent"),
+      _ <- nodeEdit(nodeInput("cln-protect", "slow-p", "description" -> Json.fromString("test node purpose"),
         "task" -> Json.fromString("slow-p"), "out" -> Json.fromString("Nebula")), ctx)
       _ <- waitStatus(rt, "slow-p", Set(NodeLifecycle.Running))
       liveId <- idOf(rt, "slow-p")

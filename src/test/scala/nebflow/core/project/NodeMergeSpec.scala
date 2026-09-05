@@ -61,6 +61,15 @@ class NodeMergeSpec extends CatsEffectSuite:
     """{"name":"merge-agent","description":"merge landing agent","tools":["Bash"],"category":"standalone"}"""
   )
   os.write.over(tempRoot / "agents" / "merge-agent" / "system.md", "# merge-agent\n")
+  // general：统一执行 agent（flowmap-slim 批语义：createNode 固定校验并落库
+  // "general"——every node executes the general agent；合并节点落地 = stub LLM
+  // 回 Bash tool_use → general.tools 必须含 Bash，否则落地命令被工具面拦下）
+  os.makeDir.all(tempRoot / "agents" / "general")
+  os.write.over(
+    tempRoot / "agents" / "general" / "agent.json",
+    """{"name":"general","description":"unified executor agent","tools":["Bash"],"category":"standalone"}"""
+  )
+  os.write.over(tempRoot / "agents" / "general" / "system.md", "# general\n")
 
   // 沙箱后端初始化（GatewayMain 同款单点）。环境约束：本测试 JVM 运行在宿主沙箱
   // 进程树内（workspace-root 会话跑 sbt）——嵌套 sandbox-exec probe 必败（实测
@@ -312,13 +321,16 @@ class NodeMergeSpec extends CatsEffectSuite:
       rt <- mountProject("merge-t0", ws, system, res)
       ctx = mkCtx(res, system, ws.toString)
       // N1: merge=true + worktree → 拒（merge 校验插在 hold 校验之后、agent/
-      // worktree 实存校验之前——用不存在的 worktree 名也会先被 merge 校验拦下）
+      // worktree 布尔派生之前——worktree 布尔化（flowmap-slim 批）后传 true 同样
+      // 先被 merge 校验拦下）
       n1 <- nodeEdit(nodeInput("merge-t0", "m1", "agent" -> CJson.fromString("test-agent"),
-        "task" -> CJson.fromString("merge"), "out" -> CJson.fromString("Nebula"),
-        "merge" -> CJson.fromBoolean(true), "worktree" -> CJson.fromString("nope")), ctx)
+        "task" -> CJson.fromString("merge"), "description" -> CJson.fromString("merge node refuse worktree"),
+        "out" -> CJson.fromString("Nebula"),
+        "merge" -> CJson.fromBoolean(true), "worktree" -> CJson.fromBoolean(true)), ctx)
       // N2: merge=true 落库（无 worktree）
       n2 <- nodeEdit(nodeInput("merge-t0", "m2", "agent" -> CJson.fromString("test-agent"),
-        "task" -> CJson.fromString("merge-task"), "out" -> CJson.fromString("Nebula"),
+        "task" -> CJson.fromString("merge-task"), "description" -> CJson.fromString("merge landing sink"),
+        "out" -> CJson.fromString("Nebula"),
         "merge" -> CJson.fromBoolean(true)), ctx)
       m2 <- byName(rt, "m2")
       // N2b: 合并节点不随创建自动启动（E2E 实测缺陷修复：task 只是落地指令集，
@@ -364,14 +376,17 @@ class NodeMergeSpec extends CatsEffectSuite:
       // 生产顺序：合并节点先建（task + out=Nebula + merge=true → pending）
       _ <- nodeEdit(nodeInput("merge-s1", "merge-x", "agent" -> CJson.fromString("merge-agent"),
         "task" -> CJson.fromString(mergeTask("task-a", "task-b")),
+        "description" -> CJson.fromString("batch landing sink s1"),
         "out" -> CJson.fromString("Nebula"), "merge" -> CJson.fromBoolean(true)), ctx)
       mergeXId <- idOf(rt, "merge-x") // out 目标契约 = 节点 id（deliverOut 按 id 查找）
       // 任务节点逐个 out→merge（setOut 反向补 in 边）
       _ <- nodeEdit(nodeInput("merge-s1", "task-a", "agent" -> CJson.fromString("test-agent"),
         "task" -> CJson.fromString("produce artifact a (feat/task-a)"),
+        "description" -> CJson.fromString("s1 upstream a"),
         "out" -> CJson.fromString(mergeXId)), ctx)
       _ <- nodeEdit(nodeInput("merge-s1", "task-b", "agent" -> CJson.fromString("test-agent"),
         "task" -> CJson.fromString("produce artifact b (feat/task-b)"),
+        "description" -> CJson.fromString("s1 upstream b"),
         "out" -> CJson.fromString(mergeXId)), ctx)
       _ <- waitStatus(rt, "task-a", Set(NodeLifecycle.Completed))
       _ <- waitStatus(rt, "task-b", Set(NodeLifecycle.Completed))
@@ -423,14 +438,17 @@ class NodeMergeSpec extends CatsEffectSuite:
       ctx = mkCtx(res, system, ws.toString)
       _ <- nodeEdit(nodeInput("merge-s2", "merge-y", "agent" -> CJson.fromString("merge-agent"),
         "task" -> CJson.fromString(mergeTask("task-a", "task-b")),
+        "description" -> CJson.fromString("batch landing sink s2"),
         "out" -> CJson.fromString("Nebula"), "merge" -> CJson.fromBoolean(true)), ctx)
       mergeYId <- idOf(rt, "merge-y")
       // A 将自报 BLOCKED；先建 A 并等 blocked，再建 B（确定性接线）
       _ <- nodeEdit(nodeInput("merge-s2", "task-a", "agent" -> CJson.fromString("test-agent"),
-        "task" -> CJson.fromString("blocked-please"), "out" -> CJson.fromString(mergeYId)), ctx)
+        "task" -> CJson.fromString("blocked-please"), "description" -> CJson.fromString("s2 upstream a"),
+        "out" -> CJson.fromString(mergeYId)), ctx)
       _ <- waitStatus(rt, "task-a", Set(NodeLifecycle.Blocked))
       _ <- nodeEdit(nodeInput("merge-s2", "task-b", "agent" -> CJson.fromString("test-agent"),
-        "task" -> CJson.fromString("produce artifact b"), "out" -> CJson.fromString(mergeYId)), ctx)
+        "task" -> CJson.fromString("produce artifact b"), "description" -> CJson.fromString("s2 upstream b"),
+        "out" -> CJson.fromString(mergeYId)), ctx)
       _ <- waitStatus(rt, "task-b", Set(NodeLifecycle.Completed))
       _ <- IO.sleep(500.millis) // 若（不该发生的）触发，给窗口显形
       merge <- byName(rt, "merge-y")
@@ -476,15 +494,18 @@ class NodeMergeSpec extends CatsEffectSuite:
       ctx = mkCtx(res, system, ws.toString)
       _ <- nodeEdit(nodeInput("merge-s3", "merge-z", "agent" -> CJson.fromString("merge-agent"),
         "task" -> CJson.fromString(mergeTask("task-a", "task-b")),
+        "description" -> CJson.fromString("batch landing sink s3"),
         "out" -> CJson.fromString("Nebula"), "merge" -> CJson.fromBoolean(true)), ctx)
       mergeZId <- idOf(rt, "merge-z")
       // A 将注入失败（boom-please → fail fast → failed）；等 conversion 落定
       _ <- nodeEdit(nodeInput("merge-s3", "task-a", "agent" -> CJson.fromString("test-agent"),
-        "task" -> CJson.fromString("boom-please"), "out" -> CJson.fromString(mergeZId)), ctx)
+        "task" -> CJson.fromString("boom-please"), "description" -> CJson.fromString("s3 upstream a"),
+        "out" -> CJson.fromString(mergeZId)), ctx)
       _ <- waitStatus(rt, "task-a", Set(NodeLifecycle.Failed))
       _ <- waitStatus(rt, "merge-z", Set(NodeLifecycle.Blocked))
       _ <- nodeEdit(nodeInput("merge-s3", "task-b", "agent" -> CJson.fromString("test-agent"),
-        "task" -> CJson.fromString("produce artifact b"), "out" -> CJson.fromString(mergeZId)), ctx)
+        "task" -> CJson.fromString("produce artifact b"), "description" -> CJson.fromString("s3 upstream b"),
+        "out" -> CJson.fromString(mergeZId)), ctx)
       _ <- waitStatus(rt, "task-b", Set(NodeLifecycle.Completed))
       _ <- IO.sleep(300.millis)
       merge <- byName(rt, "merge-z")
@@ -532,15 +553,18 @@ class NodeMergeSpec extends CatsEffectSuite:
       ctx = mkCtx(res, system, ws.toString)
       _ <- nodeEdit(nodeInput("merge-s4", "merge-w", "agent" -> CJson.fromString("merge-agent"),
         "task" -> CJson.fromString(mergeTask("task-a", "task-b")),
+        "description" -> CJson.fromString("batch landing sink s4"),
         "out" -> CJson.fromString("Nebula"), "merge" -> CJson.fromBoolean(true)), ctx)
       mergeWId <- idOf(rt, "merge-w")
       // A：hold=true 人工闸点（先建并等 held，确定性先于 B 接线）
       _ <- nodeEdit(nodeInput("merge-s4", "task-a", "agent" -> CJson.fromString("test-agent"),
-        "task" -> CJson.fromString("produce artifact a"), "out" -> CJson.fromString(mergeWId),
+        "task" -> CJson.fromString("produce artifact a"), "description" -> CJson.fromString("s4 upstream a"),
+        "out" -> CJson.fromString(mergeWId),
         "hold" -> CJson.fromBoolean(true)), ctx)
       _ <- waitStatus(rt, "task-a", Set(NodeLifecycle.Held))
       _ <- nodeEdit(nodeInput("merge-s4", "task-b", "agent" -> CJson.fromString("test-agent"),
-        "task" -> CJson.fromString("produce artifact b"), "out" -> CJson.fromString(mergeWId)), ctx)
+        "task" -> CJson.fromString("produce artifact b"), "description" -> CJson.fromString("s4 upstream b"),
+        "out" -> CJson.fromString(mergeWId)), ctx)
       _ <- waitStatus(rt, "task-b", Set(NodeLifecycle.Completed))
       _ <- IO.sleep(300.millis)
       preMerge <- byName(rt, "merge-w")

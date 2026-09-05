@@ -475,9 +475,13 @@ function nodeHtml(n, pos, originX, nameOf) {
     : st === 'cancelled' ? fmSvgIcon('cancelled', FM_STATUS_SVG.cancelled, 1.5) : '';
   const worktreeBadge = n.hasWorktree || n.worktree
     ? `<span class="fm-worktree-badge" title="${esc(n.worktree || '')}">wt</span>` : '';
-  const result = n.result
-    ? `<div class="fm-result-summary" title="${esc(n.result)}">${esc(n.result.slice(0, 46))}${n.result.length > 46 ? '…' : ''}</div>`
-    : (st === 'running' ? `<div class="fm-result-summary running">${esc(t('flowmap.cardRunning'))}</div>` : '');
+  // 载荷收敛（2026-09-05）：卡片不再显示 result 摘要（默认载荷无 result）——
+  // 改显示 description（创建必写的一行描述）；存量节点无 description → 回退
+  // taskPreview（载荷条件字段，task 首行 ≤80 截断）。结果全文经详情窗按需拉取。
+  const descText = n.description || n.taskPreview || '';
+  const desc = descText
+    ? `<div class="fm-desc" title="${esc(descText)}">${esc(descText.slice(0, 46))}${descText.length > 46 ? '…' : ''}</div>`
+    : (st === 'running' ? `<div class="fm-desc running">${esc(t('flowmap.cardRunning'))}</div>` : '');
   // 等待脚注（deps 设计 §1.4）：pending/wiring 且持有 in/deps → 列出全部等待对象
   //（in = 等结果投递，deps = 等完成信号；上游已归档 → i18n 纯文字诚实降级，
   //  原 ⏳ 图标按裁定①换内联 SVG 沙漏，文字单独 ellipsis 截断）
@@ -501,7 +505,7 @@ function nodeHtml(n, pos, originX, nameOf) {
       <div class="solar-node-sub">${esc(n.agent)}</div>
       ${st === 'pending' && (n.in || []).length > 1 ? `<div class="fm-barrier-hint">barrier ×${(n.in || []).length}</div>` : ''}
       ${waitNote}
-      ${result}
+      ${desc}
     </div>`;
 }
 
@@ -818,7 +822,8 @@ function animateNodeExit(el) {
 /** 节点卡片「内容」签名：参与 nodeHtml 渲染且增量期间会变化的字段。v3 起终态
  *  保留卡加入签名（terminal class + title 标注随状态切换原地重建）。deps 段与
  *  in barrier 提示同款（deps 设计 §1.4）：pending/wiring 且有 deps 显示等待脚注，
- *  deps 集变化即重渲。 */
+ *  deps 集变化即重渲。2026-09-05 载荷收敛：签名带 description/taskPreview（卡片
+ *  展示字段），不再含 result（载荷无 result）。 */
 function nodeContentKey(n) {
   if (!n) return '∅';
   const st = n.status || 'pending';
@@ -830,7 +835,7 @@ function nodeContentKey(n) {
     n.worktree || '',
     st === 'pending' && (n.in || []).length > 1 ? (n.in || []).length : 0,
     st === 'pending' || st === 'wiring' ? (n.deps || []).length : 0,
-    n.result || '',
+    n.description || n.taskPreview || '',
   ].join('|');
 }
 
