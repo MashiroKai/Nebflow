@@ -263,9 +263,8 @@ object NodeEditTool extends Tool:
 - **plugins** (optional, replace-on-provide like deps): plugin package name(s) allocated to this node (phase 2b) — a plugin = skills + mcp.json (either alone is valid). Allocation injects the plugin's skills full-text into the node's first message, starts its MCP servers (tools named mcp__plugin_<plugin>_<server>__<tool>), and grants its declared builtin tools. Names must exist in the Plugin Catalog (see your prompt) AND be approved — unapproved (untrusted) allocation is refused (trust gate default-deny). This is THE capability mechanism: there is no per-node agent choice (execution runs the general agent; differentiate nodes with plugins).
 - **worktree** (optional, boolean, create-time only): true = an isolated git worktree is created for this node at <workspace>/.nebflow/worktrees/<derived-name> (derived from the node name, sanitized; same-name branch; baseline = main HEAD at creation) — creation happens immediately in this call (fail-fast: a failure rejects the whole NodeEdit). false / omitted = run directly in the workspace. On edits the parameter is refused (create-time binding only; existing nodes keep theirs).
 - **preset** (optional): node configuration preset.
-- **maxRetries** (optional, default 1).
 - **hold** (optional, default false): human-gate flag (human-in-the-loop) — when this node completes it does NOT deliver downstream and does NOT settle deps: status becomes HELD (result saved in full; never expires; stays on the main map), the full result is announced to Nebula, and the chain waits for NodeEdit(release=true). Requires out to be a NODE id — out="Nebula" is refused (Nebula-bound results deliver directly, nothing to hold). Settable/withdrawable while wiring/pending/running (a running node may be gated: the switch takes effect at completion); refused on completed/terminal/held.
-- **release** (optional, default false): release a HELD node (the ONLY way out of held) — a STANDALONE action: combining it with task/description/in/deps/out/abandon/hold/worktree/preset/maxRetries refuses the whole call (no half-release-half-rewire; release first, then issue a separate NodeEdit to rewire). held → completed: the downstream delivery chain runs (deliverOut → deps settlement); display TTL restarts from release; completedAt keeps the held moment (when the work actually finished).
+- **release** (optional, default false): release a HELD node (the ONLY way out of held) — a STANDALONE action: combining it with task/description/in/deps/out/abandon/hold/worktree/preset refuses the whole call (no half-release-half-rewire; release first, then issue a separate NodeEdit to rewire). held → completed: the downstream delivery chain runs (deliverOut → deps settlement); display TTL restarts from release; completedAt keeps the held moment (when the work actually finished).
 - **note** (optional, ONLY together with release=true): user supplementary text — atomically appended to the out target node's task ("== 用户补充（放行时注入） ==" section) so the downstream input carries it. Any other combination refuses.
 - **abandon** (optional, default false): abandon a terminal (blocked/completed/failed/cancelled), wiring/pending, HELD, or a STALE RUNNING node whose session is dead (no live execution fiber, e.g. after an instance restart) → status=cancelled + display TTL (audit-logged). The dispatcher's give-up action for blocked nodes, the topology-cleanup exit for retired wiring/pending nodes, the clean-up exit for abandoned hold chains (held has no live session — no interruption side effects), and the reaping exit for dead-session running nodes. A LIVE running node is refused (mis-kill protection) — use NodeCancel for running nodes instead.
 
@@ -308,7 +307,6 @@ object NodeEditTool extends Tool:
         ).asJson, "description" -> "Plugin package name(s) allocated to this node (§B.4) — THE capability mechanism (no per-node agent): skills injected into the first message + plugin MCP servers + builtin tool grants. Replace-on-provide (like deps). Names must exist in the Plugin Catalog AND be approved (trust gate default-deny) — unapproved allocation is refused".asJson),
         "worktree" -> Json.obj("type" -> "boolean".asJson, "description" -> "Create-time only: true = isolated git worktree auto-created at .nebflow/worktrees/<derived-from-node-name> (same-name branch, baseline = main HEAD; failure rejects the NodeEdit). false/omitted = workspace direct-run. Refused on edits".asJson),
         "preset" -> Json.obj("type" -> "string".asJson),
-        "maxRetries" -> Json.obj("type" -> "integer".asJson),
         "hold" -> Json.obj("type" -> "boolean".asJson, "description" -> "Human-gate: node completes to HELD (result saved+announced to Nebula, no downstream delivery) awaiting release=true. Requires a node-id out (not \"Nebula\"). wiring/pending/running only".asJson),
         "merge" -> Json.obj("type" -> "boolean".asJson, "description" -> "Merge/collection node (batch landing sink, create-only): triggers only when ALL upstreams completed (in-barrier); an upstream failure converts this node to blocked (category=upstream-incomplete) instead of the collect placeholder-start. Must NOT carry 'worktree' — a merge node lands on the workspace root repo (sandbox root = workspace, .git writable); task should embed the upstream branch/worktree list + landing command set".asJson),
         "release" -> Json.obj("type" -> "boolean".asJson, "description" -> "Release a HELD node → completed, delivery chain runs. STANDALONE action — any other edit parameter in the same call refuses (release first, then rewire separately)".asJson),
@@ -333,7 +331,6 @@ object NodeEditTool extends Tool:
     val description = input("description").flatMap(_.asString)
     val worktree = input("worktree")
     val preset = input("preset").flatMap(_.asString)
-    val maxRetries = input("maxRetries").flatMap(_.asNumber).flatMap(_.toInt)
     val abandon = input("abandon").flatMap(_.asBoolean).getOrElse(false)
     // hold 三参（20260903 暂停/人在回路设计 §2.5）：Option 保留「显式传入」信号——
     // hold=false 显式传入 = 撤销闸点（缺省 = 不改动）；release/note 布尔/文本语义。
@@ -411,7 +408,7 @@ object NodeEditTool extends Tool:
               case Right(rt) =>
                 rt.store.snapshot.flatMap { s =>
                   s.nodes.values.find(_.name == nodename) match
-                    case Some(existing) => editNode(rt, existing, task, description, abandon, holdProvided, hold, release, note, worktree.flatMap(_.asBoolean), preset, maxRetries, pluginsOpt, inJson, depsJson, outJson, ctx)
+                    case Some(existing) => editNode(rt, existing, task, description, abandon, holdProvided, hold, release, note, worktree.flatMap(_.asBoolean), preset, pluginsOpt, inJson, depsJson, outJson, ctx)
                     case None =>
                       // 归档节点编辑兜底（fix b「已存在边+归档上游不补投递」修复 20260903）：
                       // 活动区按名未命中 → 归档区按名兜底。归档节点只支持 out 改接（悬空
@@ -426,7 +423,7 @@ object NodeEditTool extends Tool:
                           case Some(archived) =>
                             val forbidden =
                               task.isDefined || description.isDefined || worktree.isDefined ||
-                                preset.isDefined || maxRetries.isDefined ||
+                                preset.isDefined ||
                                 abandon || inJson.isDefined || depsJson.isDefined ||
                                 holdProvided.isDefined || release || note.isDefined || pluginsProvided ||
                                 mergeProvided
@@ -444,10 +441,10 @@ object NodeEditTool extends Tool:
                             else if forbidden then
                               IO.pure(Left(ToolError(
                                 s"Node '$nodename' is archived — only 'out' rewiring is supported (result re-delivery); task/description/in/deps/config/hold edits are not.")))
-                            else editNode(rt, archived, task, description, abandon, holdProvided, hold, release, note, worktree.flatMap(_.asBoolean), preset, maxRetries, pluginsOpt, inJson, depsJson, outJson, ctx)
+                            else editNode(rt, archived, task, description, abandon, holdProvided, hold, release, note, worktree.flatMap(_.asBoolean), preset, pluginsOpt, inJson, depsJson, outJson, ctx)
                           case None =>
                             if abandon then IO.pure(Left(ToolError(s"Node '$nodename' not found — abandon requires an existing node")))
-                            else createNode(rt, nodename, task, description, worktree.flatMap(_.asBoolean), preset, maxRetries, pluginsForCall, inJson, depsJson, outJson, hold, merge)
+                            else createNode(rt, nodename, task, description, worktree.flatMap(_.asBoolean), preset, pluginsForCall, inJson, depsJson, outJson, hold, merge)
                       }
                   }
               }
@@ -503,7 +500,6 @@ object NodeEditTool extends Tool:
     description: Option[String],
     worktree: Option[Boolean],
     preset: Option[String],
-    maxRetries: Option[Int],
     plugins: List[String],
     inJson: Option[Json],
     depsJson: Option[Json],
@@ -578,9 +574,9 @@ object NodeEditTool extends Tool:
                         IO.blocking(createWorktreeFor(ws, nodename)).flatMap {
                           case Left(err) => IO.pure(Left(ToolError(
                             s"worktree=true auto-creation failed for node '$nodename' — node NOT created (fail-fast). git said: $err")))
-                          case Right(bare) => proceed(rt, nodename, agentName, task, description, Some(bare), preset, maxRetries, plugins, ins, deps, out, hold, merge)
+                          case Right(bare) => proceed(rt, nodename, agentName, task, description, Some(bare), preset, plugins, ins, deps, out, hold, merge)
                         }
-                    case _ => proceed(rt, nodename, agentName, task, description, None, preset, maxRetries, plugins, ins, deps, out, hold, merge)
+                    case _ => proceed(rt, nodename, agentName, task, description, None, preset, plugins, ins, deps, out, hold, merge)
               }
 
   private def proceed(
@@ -591,7 +587,6 @@ object NodeEditTool extends Tool:
     description: Option[String],
     worktree: Option[String],
     preset: Option[String],
-    maxRetries: Option[Int],
     plugins: List[String],
     ins: List[String],
     deps: List[String],
@@ -653,8 +648,6 @@ object NodeEditTool extends Tool:
             merge = merge,
             out = None,
             status = if task.isDefined && ins.isEmpty then NodeLifecycle.Pending else NodeLifecycle.Wiring,
-            retries = 0,
-            maxRetries = maxRetries.getOrElse(1),
             createdAt = now,
             plugins = plugins
           )
@@ -809,7 +802,6 @@ object NodeEditTool extends Tool:
     note: Option[String],
     worktree: Option[Boolean],
     preset: Option[String],
-    maxRetries: Option[Int],
     pluginsOpt: Option[List[String]],
     inJson: Option[Json],
     depsJson: Option[Json],
@@ -836,7 +828,7 @@ object NodeEditTool extends Tool:
           task.isDefined -> "'task'", description.isDefined -> "'description'",
           inJson.isDefined -> "'in'", depsJson.isDefined -> "'deps'",
           outJson.isDefined -> "'out'", worktree.isDefined -> "'worktree'",
-          preset.isDefined -> "'preset'", maxRetries.isDefined -> "'maxRetries'",
+          preset.isDefined -> "'preset'",
           hold -> "'hold'", pluginsOpt.isDefined -> "'plugins'"
         ).collect { case (true, name) => name }
       if conflicts.nonEmpty then
@@ -1228,7 +1220,7 @@ object NodeListTool extends Tool:
 - **detail** (optional): a node id — returns that ONE node's full record instead of the whole map: metadata + task + result FULL TEXT (payloads carry no result text; this is the on-demand read channel, same source as the REST result endpoint).
 
 ## Returns
-Default: {nodes: [{id, name, agent, skill, mcp, preset, description, status, in, out, hasWorktree, worktree, hasResult (conditional), taskPreview (legacy no-description fallback), retries, createdAt, completedAt, ttlLeftSec}], worktrees: [...], meta: {project, updatedAt}} — metadata only, NO result text (Flow Map slim-payload contract: results live in per-node files, read on demand).
+Default: {nodes: [{id, name, agent, skill, mcp, preset, description, status, in, out, hasWorktree, worktree, hasResult (conditional), taskPreview (legacy no-description fallback), createdAt, completedAt, ttlLeftSec}], worktrees: [...], meta: {project, updatedAt}} — metadata only, NO result text (Flow Map slim-payload contract: results live in per-node files, read on demand).
 With detail=<nodeId>: the same node shape + task + result (full text)."""
   val inputSchema = JsonObject.fromIterable(
     List(

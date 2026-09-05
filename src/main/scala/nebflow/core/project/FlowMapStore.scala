@@ -52,6 +52,21 @@ class FlowMapStore private (
       _ <- persistState(newState)
     yield newState
 
+  /** 事务变更（带结果版，trigger-chain-fix 批）：f 同时产出 (新状态, 结果值)，
+    * 结果与状态转移在同一原子操作内生成——调用方据此区分「本事务做了转移」与
+    * 「条件不满足未转移」（CAS 翻转守卫：startNode 翻转后状态是 Running，事后
+    * 补查无法区分「本 fiber 翻转」与「读到他者翻转」，必须在事务内判定）。
+    * f 在 Ref CAS 自旋下可能重入多次——f 必须纯（结果值只依赖输入状态，无副作用）。 */
+  def mutateWithResult[A](f: FlowMapState => (FlowMapState, A)): IO[(FlowMapState, A)] =
+    for
+      r <- state.modify { s =>
+        val (ns, a) = f(s)
+        val ns2 = ns.copy(updatedAt = System.currentTimeMillis())
+        (ns2, (ns2, a))
+      }
+      _ <- persistState(r._1)
+    yield r
+
   /** 归档区事务（TTL 移除时用）。 */
   def mutateArchive(f: FlowMapArchive => FlowMapArchive): IO[FlowMapArchive] =
     for

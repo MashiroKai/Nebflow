@@ -120,8 +120,6 @@ class NodeGhostRowSpec extends CatsEffectSuite:
           in = Nil,
           out = Some("Nebula"),
           status = NodeLifecycle.Pending,
-          retries = 0,
-          maxRetries = 1,
           createdAt = now
         )))
       )
