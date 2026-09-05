@@ -12,8 +12,10 @@ import nebflow.core.tools.ToolRegistry
  *   - a concrete tools list → those tools + fixed tools (base + category-specific)
  *   - "*" → all registered tools
  *   - BaseTools (Read/Write/Edit/Glob/Grep/Bash) are mechanism-fixed for ALL
- *     agents including Nebula (2026-08-28 00:55 用户裁定, reverses #438);
- *     agent.json declarations coexist idempotently
+ *     agents EXCEPT Nebula (2026-09-05 23:34 作者裁定：Nebula 回归纯编排——
+ *     Bash/Write/Edit 从 Nebula 集移除，Nebula 只携读三件 Read/Glob/Grep；
+ *     六件全体默认对 general/legacy 侧不变)；agent.json declarations coexist
+ *     idempotently
  *   - Issue is retired (2026-09-04 终裁: Issue/CheckIssues 退役, issue reporting
  *     via gh cli by nodes) — unregistered everywhere: no fixed set carries it,
  *     no schema is offered, calls fail with "No such tool available"
@@ -480,13 +482,14 @@ class AllowedToolSetSpec extends FunSuite:
 
   test("Nebula gets the §C.1 fixed toolset mechanism-fixed — no declaration needed (阶段 2c)"):
     // 阶段 2c agent 收敛（§C.1 角色-工具静态矩阵）：Nebula 工具面 = 固定集
-    // （08:40 作者裁定改版 + 13:11 作者裁定 +Write/Edit 补齐恰十七件：编排触发/
-    // 通信/基础六件/可视化/用户面/平台/记忆），机制注入不可配置。裸定义（空
-    // tools）必须携带完整矩阵——面板编辑/定义失误无法解除调度器武装。
+    // （2026-09-05 23:34 作者裁定：Nebula 回归纯编排——Bash/Write/Edit 移除，
+    // 恰十四件：编排触发/通信/读三件/可视化/用户面/平台/记忆），机制注入不可
+    // 配置。裸定义（空 tools）必须携带完整矩阵——面板编辑/定义失误无法解除
+    // 调度器武装。
     val orchestration = Set(
       "Task", "ProjectCreate", "NodeList", "AgentControl", // 编排触发（NodeList=2c 新增观测面）
       "SendFriendMessage",                                 // 通信（好友功能非旧体系，保留）
-      "Bash", "Read", "Glob", "Grep", "Write", "Edit",     // 基础六件（08:40 解禁四件；13:11 补齐 Write/Edit）
+      "Read", "Glob", "Grep",                              // 读三件（08:40 解禁四件；23:34 收走写手）
       "Card",                                              // 可视化（2026-09-05 解封恢复）
       "Pop", "AskUserQuestion",                            // 用户面
       "Schedule", "TransferFile",                          // 平台
@@ -497,20 +500,27 @@ class AllowedToolSetSpec extends FunSuite:
     orchestration.foreach(t =>
       assert(allowed.contains(t), s"mechanism-fixed orchestration tool missing: $t")
     )
-    assert(!allowed.contains("Issue"), "恰十七件、零 Issue（2026-09-04 终裁：Issue/CheckIssues 退役）")
+    assert(!allowed.contains("Issue"), "恰十四件、零 Issue（2026-09-04 终裁：Issue/CheckIssues 退役）")
     Set("Mail", "Delegate", "FlowTrigger", "FlowExecute").foreach { t =>
       assert(!allowed.contains(t), s"旧体系四件已从 Nebula 固定面退役（2026-09-05 08:40 作者裁定）: $t")
     }
+    // 钉死断言（2026-09-05 23:34 作者裁定）：Nebula 机制集不含 Bash、不含
+    // Write、不含 Edit——变异验红锚
+    assert(!allowed.contains("Bash"), "Nebula 无写手：Bash 已移除（23:34 裁定）")
+    assert(!allowed.contains("Write"), "Nebula 无写手：Write 已移除（23:34 裁定）")
+    assert(!allowed.contains("Edit"), "Nebula 无写手：Edit 已移除（23:34 裁定）")
 
-  test("Nebula 文件工具面（2026-09-05 裁定）：基础六件机制固定、声明依然无效"):
-    // 08:40 作者裁定：+基础四件 Bash/Read/Glob/Grep 解禁；13:11 作者裁定：
-    // +Write/Edit 补齐——基础六件=BaseTools 整集为所有 agent 统一默认工具集。
-    // converged 定义 tools 声明整体失效（base=∅）不变——文件工具声明依旧
-    // no-op，携带只来自机制注入。
+  test("Nebula 文件工具面（2026-09-05 23:34 裁定）：读三件机制固定、写手声明依然无效"):
+    // 23:34 作者裁定：Nebula 回归纯编排——Bash/Write/Edit 移出机制集，文件
+    // 面只余读三件 Read/Glob/Grep；general/BaseTools 六件默认注入不变（Nebula
+    // 唯一例外）。converged 定义 tools 声明整体失效（base=∅）不变——声明
+    // Write/Edit/Bash 依旧 no-op（既不因声明授能，机制集也不再携带）。
     val legacyDeclared = mkDef("Nebula", List("Read", "Write", "Edit", "Glob", "Grep", "Bash"))
     val allowed = CoreProbe.allowed(legacyDeclared)
-    val base6 = AgentCore.BaseTools
-    base6.foreach(t => assert(allowed.contains(t), s"Nebula must have base tool: $t"))
+    Set("Read", "Glob", "Grep").foreach(t => assert(allowed.contains(t), s"Nebula must have read tool: $t"))
+    Set("Bash", "Write", "Edit").foreach { t =>
+      assert(!allowed.contains(t), s"Nebula: writer tool not granted (23:34 裁定): $t")
+    }
     assert(!allowed.contains("MultiEdit"), "MultiEdit removed from ToolRegistry (阶段 2c)")
     // Web 系同样不在 §C.1 矩阵
     val webDeclared = mkDef("Nebula", List("WebSearch", "WebFetch", "Curl"))

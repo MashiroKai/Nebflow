@@ -2071,24 +2071,26 @@ object AgentCore:
     * 渲染待前端批）、−旧体系四件（Mail/Delegate/FlowTrigger/FlowExecute——旧
     * Team/Flow 体系对 Nebula 完全退役，Task 是唯一项目触发入口，节点结果沿
     * out 边自动回流；工具类与注册表注册全部保留——team/flow 双轨期
-    * legacyFixedTools 对成员仍授能，零触碰）。2026-09-05 13:11 作者裁定：基础
-    * 六件 Read/Glob/Edit/Write/Grep/Bash 作为所有 agent 的统一默认工具集，
-    * Nebula 也不例外——+Write/+Edit 补齐为恰十七件（08:40 批「严禁夹带
-    * Write/Edit」限制同时被推翻；同日 13:09 裁定的沙箱写根=~/.nebflow 是
-    * Write/Edit 的安全前提，见 SandboxPolicy.sessionRoot）。
+    * legacyFixedTools 对成员仍授能，零触碰）。2026-09-05 13:11 作者裁定曾把
+    * 基础六件 Read/Glob/Edit/Write/Grep/Bash 定为全体 agent 统一默认
+    * （Nebula 补齐 Write/Edit 至恰十七件）；2026-09-05 23:34 作者裁定
+    * （「把你的 bash 和编辑工具收起来」）推翻 Nebula 例外：Bash/Write/Edit
+    * 三件从本集移除、Nebula 回归纯编排——general/BaseTools 六件默认注入
+    * 不变，Nebula 是唯一例外（编排件+读三件+MemoryEdit，恰十四件）。
     * 分组与矩阵行一一对应：
     *   - 编排触发：Task / ProjectCreate / NodeList（§C.1：dispatcher 描述承诺的
     *     Nebula 侧只读观测面）/ AgentControl（list/status/cancel/restart）
     *   - 通信：SendFriendMessage（好友功能非旧体系，保留机制固定）
-    *   - 基础六件：Bash / Read / Glob / Grep / Write / Edit（=BaseTools 整集，
-    *     13:11 裁定起全体 agent 统一默认）
+    *   - 读三件：Read / Glob / Grep（读代码读现状；无写手——一切执行走
+    *     Project 派发）
     *   - 可视化：Card（2026-09-05 解封，commit 793f62c1 曾整体删除）
     *   - 用户面：AskUserQuestion / Pop；平台：Schedule / TransferFile
     *   - 记忆：MemoryEdit（§C.2，白名单硬编码 User.md + agents/Nebula/memory.md）
-    * 显式不含：Mail/Delegate/FlowTrigger/FlowExecute（旧体系退役）、Web 系、
+    * 显式不含：Bash/Write/Edit（2026-09-05 23:34 裁定移除——Nebula 无写手）、
+    * Mail/Delegate/FlowTrigger/FlowExecute（旧体系退役）、Web 系、
     * TeamTask*、SubTask、NodeEdit/NodeCancel。Issue/CheckIssues 已整体
     * 退役（2026-09-04 作者终裁：报 issue 走 gh cli 由节点代劳，定义层已归档
-    * .archived-tools-2d/）。本集即 Nebula 工具面唯一来源：恰十七件、零 Issue、
+    * .archived-tools-2d/）。本集即 Nebula 工具面唯一来源：恰十四件、零 Issue、
     * 零旧体系四件。 */
   val NebulaOrchestrationTools = Set(
     // 编排触发
@@ -2098,14 +2100,10 @@ object AgentCore:
     "AgentControl",
     // 通信（好友功能非旧体系）
     "SendFriendMessage",
-    // 基础六件（08:40 解禁 Bash/Read/Glob/Grep；13:11 作者裁定补齐 Write/
-    // Edit——基础六件为全体 agent 统一默认工具集）
-    "Bash",
+    // 读三件（08:40 解禁；23:34 裁定收走写手——Bash/Write/Edit 不在本集）
     "Read",
     "Glob",
     "Grep",
-    "Write",
-    "Edit",
     // 可视化（2026-09-05 解封恢复，前端消费面另批）
     "Card",
     // 用户面
@@ -2191,16 +2189,17 @@ object AgentCore:
       case _ =>
         agentDef.name match
           case "Nebula" =>
-            // 静态集收口：恰十七件、零 Issue、零旧体系四件。终裁记录：
+            // 静态集收口：恰十四件、零 Issue、零旧体系四件。终裁记录：
             // （2026-09-04 作者裁定）Issue/CheckIssues 退役，报 issue 走 gh cli
             // 由节点代劳；定义层已归档（agent.json CheckIssues 声明删除、
             // ~/.nebflow/tools/ 下 issue/check-issues/screenshot 归档
             // .archived-tools-2d/）。2c 的 + "Issue" parity carry 至此删除。
             // （2026-09-05 08:40 作者裁定）+基础四件 Bash/Read/Glob/Grep、+Card
             // 解封、−Mail/Delegate/FlowTrigger/FlowExecute 旧体系退役。
-            // （2026-09-05 13:11 作者裁定）+Write/Edit 补齐——基础六件 Read/
-            // Glob/Edit/Write/Grep/Bash 为所有 agent 的统一默认工具集，Nebula
-            // 也不例外——本集即 Nebula 工具面唯一来源。
+            // （2026-09-05 23:34 作者裁定：Nebula 回归纯编排）13:11 的
+            // +Write/Edit 补齐被推翻——Bash/Write/Edit 三件移出本集；
+            // general/BaseTools 六件默认注入不变，Nebula 为唯一例外
+            // （编排件+读三件+MemoryEdit）——本集即 Nebula 工具面唯一来源。
             AgentCore.NebulaOrchestrationTools
           case "project-dispatcher" => AgentCore.DispatcherFixedTools
           case "general"            => AgentCore.GeneralFixedTools
