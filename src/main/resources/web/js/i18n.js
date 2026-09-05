@@ -90,16 +90,9 @@ export function applyLocaleToHtml() {
     'memory-content-input': ['placeholder', 'memory.placeholder'],
     'daemon-btn': ['title', 'daemons.title'],
     'bgagent-indicator': ['title', 'subagents.indicatorTitle'],
-    'flows-indicator': ['title', 'flows.indicatorTitle'],
     // ── UI remnant localization (activity bar / explorer / header / modals) ──
     'activity-avatar': ['title', 'activity.login'],
     'usage-btn': ['title', 'activity.usage'],
-    'teams-btn': ['title', 'activity.teams'],
-    'flows-btn': ['title', 'activity.flows'],
-    'legacy-btn': ['title', 'activity.legacy'],
-    'legacy-pop-title': ['text', 'activity.legacy'],
-    'legacy-item-teams': ['text', 'activity.teams'],
-    'legacy-item-flows': ['text', 'activity.flows'],
     'projects-btn': ['title', 'project.title'],
     // 2026-09-04 件 B：#agents-btn 改挂「插件」页（原「智能体」入口移除，
     // key 换成 activity.plugins；activity.agents 保留给封存面板恢复的旧标签页）。
@@ -190,10 +183,6 @@ export function applyLocaleToHtml() {
   // Sub-agents dropdown header (scoped by ancestor, unlike the class-first match above)
   const bgAgentHeader = document.querySelector('#bgagent-dropdown .bg-dropdown-header');
   if (bgAgentHeader) bgAgentHeader.textContent = t('subagents.panelTitle');
-
-  // Running flows dropdown header
-  const flowsHeader = document.querySelector('#flows-dropdown .bg-dropdown-header');
-  if (flowsHeader) flowsHeader.textContent = t('flows.panelTitle');
 
   // Reminder panel title (scheduled tasks)
   const reminderPanelTitle = document.querySelector('.reminder-panel-title');

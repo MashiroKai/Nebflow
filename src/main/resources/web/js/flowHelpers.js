@@ -34,9 +34,8 @@ export function fmtRelTime(ts) {
 }
 
 // ── Pending mail-queue counts (per agent session) ──────────
-// Updated by mailQueued/mailDequeued WS events (flowCanvas.js) and by the
-// mailbox viewer's Cancel action (flowViewers.js). Read by flowTeams.js to
-// render the pending badge on team cards.
+// Updated by the mailbox viewer's Cancel action (flowViewers.js) and —
+// historically — by the legacy flow-canvas mail events (retired 2026-09-05).
 const mailPendingCounts = new Map(); // agentSessionId → pending count
 
 export function setMailPending(sessionId, count) {

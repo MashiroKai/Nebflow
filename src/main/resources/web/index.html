@@ -55,7 +55,7 @@
   <script>/* Classic script: cannot import branding.js. Read the brand-namespaced key first, fall back to the legacy nebflow_ spelling. */var __b=(window.__BRAND__&&window.__BRAND__.lowerName)||'nebflow';if(localStorage.getItem(__b+'_sidebar_collapsed')==='true'||localStorage.getItem('nebflow_sidebar_collapsed')==='true')document.body.classList.add('sidebar-collapsed');window.__sidebarRestore={collapsed:document.body.classList.contains('sidebar-collapsed'),panel:localStorage.getItem(__b+'_sidebar_active_panel')||localStorage.getItem('nebflow_sidebar_active_panel')||'files'};</script>
   <!-- Activity Bar — vertical icon strip (independent glass card).
        Top: avatar (tap to log in to NebLink), then the Side Bar panel
-       switch buttons (Files). Bottom: Teams/Flows/Agents + Settings.
+       switch buttons (Files). Bottom: Projects / Plugins / Settings.
        Device management lives in the Settings panel (NebLink section). -->
   <div id="activity-bar">
     <button id="activity-avatar" class="activity-avatar" title="Login">
@@ -71,13 +71,10 @@
     <button id="files-btn" class="activity-btn active" data-panel-btn="files" title="Files" aria-pressed="true"><i data-lucide="files"></i></button>
     <button id="usage-btn" class="activity-btn" title="Usage Dashboard" aria-haspopup="dialog"><i data-lucide="bar-chart-3"></i></button>
     <div class="activity-spacer"></div>
-    <!-- v5 §3.5: Project 按钮取代 Team/Flow 按钮位置（取代语义，非并列）。
-         试点期旧体系仍在跑，所以旧面板不删——收进「旧面板」二级入口，阶段 3 移除。
-         teams-btn / flows-btn 保留原 id 且留在 DOM 内：canvas.js 的
-         registerCanvasPanelButton 按 id 绑定点击并同步 pressed 态，换 id 或移出
-         DOM 会让旧面板静默失联（点了没反应）。 -->
+    <!-- 2026-09-05 旧 UI 退役：v5 §3.5 二级入口（#legacy-btn/#legacy-pop 与
+         teams-btn/flows-btn）已整体删除（作者裁定「直接删除，不是封存」）；
+         Projects 按钮沿用 Team/Flow 让出的槽位。 -->
     <button id="projects-btn" class="activity-btn" title="Projects"><i data-lucide="folder-kanban"></i></button>
-    <button id="legacy-btn" class="activity-btn" title="Legacy panels" aria-haspopup="menu" aria-expanded="false" aria-controls="legacy-pop"><i data-lucide="archive"></i></button>
     <!-- 2026-09-04 件 B：原「智能体」独立面板入口移除，按钮改挂「插件」页
          （plugins.js 接管注册，id/按下态机制不变；i18n 标题走 activity.plugins）。 -->
     <button id="agents-btn" class="activity-btn" title="Plugins"><i data-lucide="puzzle"></i></button>
@@ -185,10 +182,6 @@
           <span class="bgagent-dot"></span>
           <span class="bgagent-count">0</span>
         </div>
-        <div id="flows-indicator" class="hidden" role="button" tabindex="0" aria-haspopup="true" aria-expanded="false" aria-controls="flows-dropdown">
-          <span class="flows-dot"></span>
-          <span class="flows-count">0</span>
-        </div>
         <button id="canvas-toggle-btn" class="panel-toggle-btn" title="Canvas">
           <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="18" height="18" rx="2"/><path d="M15 3v18"/></svg>
         </button>
@@ -205,10 +198,6 @@
     <div id="bgagent-dropdown" class="hidden">
       <div class="bg-dropdown-header" aria-live="polite">Sub-agents</div>
       <div class="bg-dropdown-list" role="list"></div>
-    </div>
-    <div id="flows-dropdown" class="hidden">
-      <div class="bg-dropdown-header" aria-live="polite">Running flows</div>
-      <div class="flows-dropdown-list" role="list"></div>
     </div>
     <div id="bg-dropdown" class="hidden">
       <div class="bg-dropdown-header">Background tasks</div>
@@ -417,23 +406,8 @@
     </div>
   </div>
 
-  <!-- Legacy panels popover (v5 §3.5). Lives at body level, NOT inside
-       #activity-bar: the bar is a rounded glass card with overflow:hidden AND
-       a backdrop-filter — the filter makes it the containing block even for
-       position:fixed children, so a popover nested in the bar is clipped to a
-       48px column (verified: panel present in the DOM, invisible on screen).
-       activityBar.js anchors it to #legacy-btn on open.
-       teams-btn / flows-btn keep their original ids: canvas.js binds the
-       Teams/Flows panels by id, document-wide.
-       2026-09-04 作者裁定（件 A）：Team/Flow 旧入口隐藏封存——#legacy-btn /
-       #legacy-pop 由 activityBar.js 的 SIDEBAR_LEGACY_ENTRIES flag（默认
-       false）置 hidden；按钮留在 DOM 内（canvas.js 按 id 绑定 + i18n map
-       引用，移除会悬挂）。翻回 true 即恢复。 -->
-  <div class="legacy-pop glass" id="legacy-pop" role="menu" aria-labelledby="legacy-btn" hidden>
-    <div class="legacy-pop-title" id="legacy-pop-title">Legacy panels</div>
-    <button id="teams-btn" class="legacy-item" role="menuitem" title="Teams"><i data-lucide="users"></i><span class="legacy-item-label" id="legacy-item-teams">Teams</span></button>
-    <button id="flows-btn" class="legacy-item" role="menuitem" title="Flows"><i data-lucide="workflow"></i><span class="legacy-item-label" id="legacy-item-flows">Flows</span></button>
-  </div>
+  <!-- 2026-09-05 旧 UI 退役：body 级 legacy-pop 容器（含 teams-btn/flows-btn）
+       已删除——旧面板入口非封存而是摘除（作者裁定）。 -->
   <script src="vendor/lucide.min.js"></script>
   <script src="vendor/lottie.min.js"></script>
   <script src="vendor/marked.min.js"></script>
