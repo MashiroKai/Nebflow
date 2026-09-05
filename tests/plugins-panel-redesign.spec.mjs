@@ -94,6 +94,17 @@ test.describe('plugins panel redesign — switch state machine (real backend)', 
     await rest('POST', `/api/plugins/${name}/revoke`); // 404/400 when never approved — fine
   }
 
+  /** 2026-09-05 体验批：开关是乐观原地翻转——click 后 class 立即变化，不再
+   *  隐含 POST 已完成（旧行为 = POST 后全列表重渲，on ⟹ POST done）。在途
+   *  期间开关带 disabled 闩，收敛/回滚时释放；等闩释放 = 等后端事务落地，
+   *  之后的 catalog 断言才与后端状态同步。 */
+  async function waitSwitchSettled(page, name) {
+    await page.waitForFunction((plugin) => {
+      const sw = document.querySelector(`.plugins-card[data-plugin="${plugin}"] [data-plugin-switch]`);
+      return !!sw && !sw.disabled;
+    }, name, { timeout: 10000 });
+  }
+
   /** Load the real shell against the isolated instance; the boot fallback
    *  opens the plugins page. Returns after the plugin card is visible. */
   async function loadPluginsPage(page, colorScheme = 'dark') {
@@ -111,7 +122,7 @@ test.describe('plugins panel redesign — switch state machine (real backend)', 
   async function cardState(page, name) {
     return page.evaluate((plugin) => {
       const card = document.querySelector(`.plugins-card[data-plugin="${plugin}"]`);
-      const sw = card?.querySelector('.plugins-switch');
+      const sw = card?.querySelector('[data-plugin-switch]');
       return {
         exists: !!card,
         on: sw?.classList.contains('on') ?? null,
@@ -132,11 +143,13 @@ test.describe('plugins panel redesign — switch state machine (real backend)', 
     expect(st.pill, 'state pill 未启用').toBe('未启用');
     expect(await catalogContains(ALPHA), 'untrusted plugin must NOT be in the catalog').toBe(false);
 
-    // The page's only control: click → POST approve → registry resync → on.
-    await page.click(`.plugins-card[data-plugin="${ALPHA}"] .plugins-switch`);
+    // The page's only control: click → optimistic flip → POST approve →
+    // in-place registry convergence → on (settled = POST done).
+    await page.click(`.plugins-card[data-plugin="${ALPHA}"] [data-plugin-switch]`);
     await page.waitForFunction(
-      (plugin) => document.querySelector(`.plugins-card[data-plugin="${plugin}"] .plugins-switch`)?.classList.contains('on'),
+      (plugin) => document.querySelector(`.plugins-card[data-plugin="${plugin}"] [data-plugin-switch]`)?.classList.contains('on'),
       ALPHA, { timeout: 10000 });
+    await waitSwitchSettled(page, ALPHA);
 
     st = await cardState(page, ALPHA);
     expect(st.ariaChecked, 'aria-checked=true when trusted').toBe('true');
@@ -165,10 +178,11 @@ test.describe('plugins panel redesign — switch state machine (real backend)', 
     expect(await catalogContains(ALPHA), 'changed plugin must NOT be in the catalog').toBe(false);
 
     // Re-enable = approve the NEW content → trusted again.
-    await page.click(`.plugins-card[data-plugin="${ALPHA}"] .plugins-switch`);
+    await page.click(`.plugins-card[data-plugin="${ALPHA}"] [data-plugin-switch]`);
     await page.waitForFunction(
-      (plugin) => document.querySelector(`.plugins-card[data-plugin="${plugin}"] .plugins-switch`)?.classList.contains('on'),
+      (plugin) => document.querySelector(`.plugins-card[data-plugin="${plugin}"] [data-plugin-switch]`)?.classList.contains('on'),
       ALPHA, { timeout: 10000 });
+    await waitSwitchSettled(page, ALPHA);
     expect(await catalogContains(ALPHA), 're-approved (new digest) plugin back in the catalog').toBe(true);
 
     await revokeQuietly(ALPHA);
@@ -184,11 +198,12 @@ test.describe('plugins panel redesign — switch state machine (real backend)', 
     expect(betaPre.on, 'precondition: beta switch on').toBe(true);
     expect(await catalogContains(BETA), 'precondition: beta in the catalog').toBe(true);
 
-    // Click → POST revoke → registry resync → off + out of the catalog.
-    await page.click(`.plugins-card[data-plugin="${BETA}"] .plugins-switch`);
+    // Click → optimistic flip → POST revoke → in-place convergence → off.
+    await page.click(`.plugins-card[data-plugin="${BETA}"] [data-plugin-switch]`);
     await page.waitForFunction(
-      (plugin) => !document.querySelector(`.plugins-card[data-plugin="${plugin}"] .plugins-switch`)?.classList.contains('on'),
+      (plugin) => !document.querySelector(`.plugins-card[data-plugin="${plugin}"] [data-plugin-switch]`)?.classList.contains('on'),
       BETA, { timeout: 10000 });
+    await waitSwitchSettled(page, BETA);
 
     const st = await cardState(page, BETA);
     expect(st.ariaChecked, 'aria-checked=false after revoke').toBe('false');
