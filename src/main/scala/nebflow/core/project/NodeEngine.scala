@@ -957,6 +957,12 @@ class NodeEngine(
   private val starveRounds: Ref[IO, Map[String, Int]] =
     Ref.unsafe[IO, Map[String, Int]](Map.empty)
 
+  /** mount-stalled 单发记账（mount-enforce 批）：当前停滞期已发过事件的节点 id 集。
+    * 每轮 sweep 全量替换为当轮停滞集——节点恢复（被补触发/合法等待）即自动出集，
+    * 再次停滞 = 新停滞期再发一次。 */
+  private val stallNotified: Ref[IO, Set[String]] =
+    Ref.unsafe[IO, Set[String]](Set.empty)
+
   /** 资格回扫（根因报告 §6.2，TtlTick 30s 驱动，ProjectActor 挂点）：对活动区
     * pending/wiring 节点做声明式启动资格重估，一次性关死「有资格但没人叫」的悬
     * 挂族（孤儿 barrier、D1 缺口、投递丢失、触发消费错位——案例 B 收口C 96min
@@ -1016,11 +1022,66 @@ class NodeEngine(
             s"in=[${n.in.mkString(",")}] all delivered, non-terminal) — startNode attempts not taking effect; " +
             "check detached trigger logs")
       }
+      // 第 3 步：挂载停滞兜底闸（mount-enforce 批 20260905，作者裁定「节点一旦挂载
+      // 必须一定生效——不存在挂着但永不启动的合法形态」）：可触发点（入口=创建时 /
+      // barrier=全部上游终态时）后 60s 仍 pending/wiring → mount-stalled 事件留痕
+      // （含节点 id+等待原因）。补触发不另起机制——第 1/2 步既有骨架即接管（孤儿
+      // barrier 自愈投递 + 资格回扫 fork 启动）；上游 failed/cancelled 卡 barrier 的
+      // 形态补触发不可达，事件即其可见性载体（分发器巡检处置）。合法等待不误伤：
+      // running/wiring/held 上游 = 可触发点未到，不判停滞（mountStallReason 单点口径）。
+      // 判定与资格回扫同源快照（actives，fork 启动前）——本 tick 被补触发的节点同样
+      // 先落停滞事件：事件记录的是回扫起点的停滞事实，repair 与留痕同 tick 完成，
+      // 互不吞没（若用 fork 后快照，fork 翻转会赢得竞速吞掉事件）。
+      nowMs <- IO(System.currentTimeMillis())
+      stallChecks <- actives.traverse(n => mountStallReason(n, nowMs).map(reason => n.id -> reason))
+      stalledNow = stallChecks.collect { case (id, Some(reason)) => id -> reason }
+      prevStall <- stallNotified.get
+      stallToEmit = stalledNow.filter { case (id, _) => !prevStall.contains(id) }
+      _ <- stallNotified.set(stalledNow.map(_._1).toSet)
+      _ <- stallToEmit.traverse_ { case (id, reason) =>
+        FlowMapEventLog.append(workspace, projectName, id, "mount-stalled", reason) *>
+          logger.warn(s"[$projectName] node $id mount-stalled: $reason")
+      }
       actions = healed.map(_._2) ++ qualified.map(n => s"start ${n.name}(${n.id})")
       _ <- if actions.nonEmpty then
         logger.info(s"[$projectName] settle sweep: ${actions.mkString("; ")}")
       else IO.unit
     yield ()
+
+  /** 挂载停滞判定（mount-enforce 批 §3）：Some(reason)=已过可触发点 60s 仍未触发。
+    * 可触发点口径：入口节点（无 in 无 deps）自 createdAt 起；barrier 节点自全部上游
+    * （in ∪ deps）到达终态起（四终态 completed/blocked/failed/cancelled 写点均落
+    * completedAt——已核实）。barrier 感知（合法等待不判停滞）：
+    *   - 任一上游 running/wiring = 被真实上游正确闸住（作者明示合法形态）；
+    *   - 任一上游 held = 人工闸门等待（held 显式非终态，可触发点同样未到）；
+    *   - 上游引用悬空（校验生效前遗留数据）= 保守不判。
+    * 全部上游终态后仍 pending/wiring 超 60s = 停滞；reason 携带各上游终态明细 +
+    * barrier 残缺清单，供事件流直接定位等待原因。 */
+  private def mountStallReason(n: NodeDef, now: Long): IO[Option[String]] =
+    (n.in ++ n.deps).distinct.traverse(upId => store.findNode(upId)).flatMap { ups =>
+      if ups.exists(_.isEmpty) then IO.pure(None)
+      else
+        val us = ups.flatten
+        val allTerminal = us.forall(u => NodeLifecycle.Terminal.contains(u.status))
+        if !allTerminal then IO.pure(None)
+        else
+          // 入口节点（无上游）可触发点 = createdAt；barrier 节点 = 最晚上游终态时刻
+          val t0 = if us.isEmpty then n.createdAt
+                   else us.flatMap(_.completedAt).maxOption.getOrElse(n.createdAt)
+          val stalledSec = (now - t0) / 1000L
+          if stalledSec <= NodeEngine.MountStalledMs / 1000L then IO.pure(None)
+          else
+            val upDesc = if us.isEmpty then "entry node (no upstreams; triggerable since creation)"
+                         else us.map(u => s"'${u.name}'(${u.id}):${u.status}").mkString(", ")
+            val barrierDesc = n.in.filterNot(n.deliveredTo.contains) match
+              case Nil => "in-barrier cleared"
+              case missing => s"in-barrier undelivered=[${missing.mkString(",")}]"
+            IO.pure(Some(
+              s"mount stalled: ${stalledSec}s past triggerable point, still status=${n.status}, " +
+                s"$barrierDesc, no running/wiring upstream (upstreams: $upDesc) — settle sweep " +
+                "takeover attempted; if still stuck a terminal (failed/cancelled) upstream is blocking " +
+                "the barrier — dispatcher intervention required"))
+    }
 
   /** blocked 终态化（设计 §2.1 四条动作序列，与 completeNode 同构）：
     * ① 事务内现读 fresh（R2 纪律）→ status=Blocked / result=渲染串 / blockedFeedback /
@@ -1312,8 +1373,11 @@ class NodeEngine(
     * 通报（无 nodeId=fire-and-forget，对齐 escalate 通道：状态通报不是结果投递）。
     * 语义收益：不触发合并（占位结算被旁路）+ 不永久 pending 悬挂（blocked 可见
     * 终态，分发器 NodeList 可巡检）+ 已完成上游的结算保留（修复上游 → 重激活合并
-    * 节点 → 既有重激活重投链自动补齐 barrier）。 */
-  private def mergeBlockedByUpstreamFailure(target: NodeDef, failed: NodeDef, err: String): IO[Unit] =
+    * 节点 → 既有重激活重投链自动补齐 barrier）。
+    * public（mount-enforce 批）：第二挂接点 = NodeTools 创建期 D1 保留投递——
+    * 合并节点创建时 in 引用已 failed 的上游（创建顺序翻转后合法形态），failed
+    * 错误文本不作输入投递，同语义转 blocked 不悬挂。 */
+  def mergeBlockedByUpstreamFailure(target: NodeDef, failed: NodeDef, err: String): IO[Unit] =
     val feedback = MergeNodePolicy.upstreamFailureFeedback(failed, err)
     for
       now <- IO(System.currentTimeMillis())
@@ -1551,6 +1615,12 @@ object NodeEngine:
     * 非终态无会话（fork 启动未生效）才落事件——每饥饿期单发（计数恰等于阈值时），
     * 避免每 tick 刷屏。 */
   val StarvedRounds: Int = 2
+
+  /** mount-stalled 停滞阈值（mount-enforce 批 20260905，作者裁定「节点一旦挂载必须
+    * 一定生效」）：可触发点后 60s 仍未触发（仍 pending/wiring 且无 running/wiring
+    * 上游）→ mount-stalled 事件留痕（含节点 id+等待原因）+ settleSweep 既有资格回扫
+    * 接管补触发。双保险的时间维度信号（轮次维度由 trigger-starved 承担）。 */
+  val MountStalledMs: Long = 60_000L
 
   /** startNode 翻转竞发的败方信号（trigger-chain-fix）：startNode 单点吞掉——
     * 败方安静退出，赢家持有节点生命周期（会话、cancelSig、终态分发）。 */
