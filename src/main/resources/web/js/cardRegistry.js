@@ -130,7 +130,7 @@ window.addEventListener('message', (e) => {
   // width observer knows to re-arm it when the card re-flows.
   if (e.data && e.data._nfCardFused) {
     const fused = document.querySelector(`iframe[data-nf-card-id="${e.data.id}"]`);
-    if (fused) fused._nfFused = true;
+    if (fused) (/** @type {{_nfFused?: boolean}} */ (fused))._nfFused = true;
     return;
   }
   if (!e.data || !e.data._nfCardH) return;
@@ -277,7 +277,7 @@ function renderHtmlCard(container, html, title) {
     const w = Math.round(wrap.getBoundingClientRect().width);
     if (Math.abs(w - lastWrapW) <= 2) return;
     lastWrapW = w;
-    if (iframe._nfFused) {
+    if (/** @type {{_nfFused?: boolean}} */ (iframe)._nfFused) {
       try { iframe.contentWindow.postMessage({ _nfCardRemeasure: true, id }, '*'); } catch (err) { /* dead frame */ }
     }
   });
