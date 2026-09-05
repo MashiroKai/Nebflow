@@ -115,10 +115,13 @@
 /* ── Flow Map 就地视图（同标签页切换，projectTab.openFlowMapInPlace）────────── */
 
 /* 顶部导航条：左上角「← 项目名」单元素返回入口（20260905 作者报告合并：
-   原「返回项目列表」文本按钮与项目名合并；整元素可点回列表，名字 ellipsis） */
+   原「返回项目列表」文本按钮与项目名合并；整元素可点回列表，名字 ellipsis）。
+   2026-09-06 顶栏合并批：摘要迁入本行右侧（.flowmap-nav-summary），两行并一行；
+   无 flex-wrap 不换行——返回钮与摘要双 ellipsis 收缩（见下）。 */
 .flowmap-nav-bar {
   display: flex;
   align-items: center;
+  gap: 12px;
   flex: 0 0 auto;
   padding: 10px 14px;
   border-bottom: 1px solid var(--color-border);
@@ -129,7 +132,7 @@
   display: inline-flex;
   align-items: center;
   gap: 6px;
-  max-width: min(100%, 420px); /* 长项目名不撑横 nav-bar，超出由名字 span ellipsis 承接 */
+  max-width: min(60%, 420px); /* 顶栏合并批：100%→60% 给右侧摘要让位，超出由名字 span ellipsis 承接 */
   min-width: 0;
   border: 1px solid var(--color-border);
   border-radius: 8px;
@@ -151,6 +154,20 @@
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+/* nav-bar 右侧摘要槽（顶栏合并批）：字号/色板继承 flowMap.css .flowmap-summary
+   （就地路径 ensureFlowCss 保证已注入），此处只承担行内布局——吃满剩余宽、右对齐、
+   自身 ellipsis 收缩与返回钮并列双截断，不换行不撑横。 */
+.flowmap-nav-summary {
+  flex: 1;
+  min-width: 0;
+  text-align: right;
+}
+/* 极窄兜底（<340px）：摘要整体让位，保住「← 项目名」返回入口可用性 */
+@media (max-width: 339px) {
+  .flowmap-nav-summary { display: none; }
+  .flowmap-back-btn { max-width: 100%; }
 }
 
 /* Flow Map 渲染体：撑满 nav-bar 以下空间，内部由 flowMapTab 渲染

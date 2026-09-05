@@ -196,7 +196,9 @@ function archiveProject(name) {
 }
 
 /** 同标签页进入 Flow Map 视图：不新开标签页，当前 projects 标签页就地切换。
- *  pane 结构：.flowmap-nav-bar（左上角「← 项目名」单元素返回入口，点击回列表）
+ *  pane 结构：.flowmap-nav-bar（左上角「← 项目名」单元素返回入口，点击回列表；
+ *  右侧 .flowmap-summary 摘要槽——2026-09-06 顶栏合并批，两行并一行，摘要内容由
+ *  flowMapTab.renderFlowMap/renderFlowMapDiff 按 pane 口径查找写入）
  *  + .flowmap-view-body（Flow Map 渲染体）。
  *  Flow Map 的 fetch/渲染/TTL 由 flowMapTab 负责（renderFlowMapInto），这里只管
  *  视图骨架与返回导航；body 挂 .flowmap-view-body 类供 flowMapTab 的 TTL ticker 定位。
@@ -218,6 +220,7 @@ function openFlowMapInPlace(projectName, highlightNodeId) {
         <button class="flowmap-back-btn" data-back-to-projects type="button" title="${esc(projectName)}" aria-label="${esc(t('project.backToProjects'))}">
           <i data-lucide="arrow-left"></i><span class="flowmap-back-name">${esc(projectName)}</span>
         </button>
+        <span class="flowmap-summary flowmap-nav-summary" aria-live="polite"></span>
       </div>
       <div class="flowmap-view-body" data-fm-project="${esc(projectName)}"></div>`;
     pane.querySelector('[data-back-to-projects]').addEventListener('click', (e) => {
