@@ -109,6 +109,12 @@ export default {
   'flowmap.archive.ttlPurged': '24h TTL cleanup: {n} chain(s) removed from archive',
   'flowmap.chain.archivedToast': 'Chain "{chain}" archived ({n} nodes together)',
   'flowmap.chain.retainedToast': 'Node completed — chain "{chain}" incomplete ({done}/{total}); terminal card retained on map',
+  // Special-node flag badges (badge batch 2026-09-05): head-row capsule labels;
+  // appended at the tail of the flowmap block to minimize merge-conflict surface
+  // with other locales branches in this batch
+  'flowmap.flag.merge': 'Merge',
+  'flowmap.flag.loop': 'Loop',
+  'flowmap.flag.pending': 'Awaiting',
   'agentFile.hint': 'This file is the project workspace agent instructions (AGENTS.md at the workspace root); edit and save it.',
 
   // === Friends & messages (A2A) ===
