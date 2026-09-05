@@ -19,6 +19,13 @@
   --amber-glow: 255 180 90;
   --amber-dark: 255 168 60;
 
+  /* Brand green — the switch/toggle accent (2026-09-06 客户端 UI 修整批,
+     author-ruled). Same hue as --color-primary (#07c160, base.css) but in
+     RGB-triplet form so rgb(var(--brand-green) / α) tint composition works
+     exactly like --sapphire. One source for both themes — the brand hue does
+     not adapt to dark/light, so no dark-block override (unlike --amber). */
+  --brand-green: 7 193 96;
+
   /* Unified panel design (20260830 spec §6.2, author-ruled counter colors):
      flow counter yellow; --accent-agent-light deepens the sapphire badge in
      the light theme only (dark keeps --sapphire, 0825 frozen). Triplet form
