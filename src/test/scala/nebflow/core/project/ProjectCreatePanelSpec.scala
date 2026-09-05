@@ -287,6 +287,7 @@ class ProjectCreatePanelSpec extends CatsEffectSuite:
       )
       assert(items.head.question.contains(candRoot.toString), "question must name the candidate root")
       assert(items.head.allowOther, "free-input fallback (Other) must stay enabled")
+      assert(items.head.dirPicker, "workspace card must carry dirPicker=true (系统文件夹选择框大目标，2026-09-05 作者裁定)")
       val askFrame = fs.find(_.hcursor.downField("type").as[String].toOption.contains("askUser")).get
       val frameLabels = askFrame.hcursor.downField("items").as[List[Json]].toOption.get.head
         .hcursor.downField("options").as[List[Json]].toOption.get
