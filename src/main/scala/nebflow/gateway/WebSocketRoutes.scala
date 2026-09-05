@@ -186,7 +186,15 @@ class WebSocketRoutes(
           safetyMode = metaOpt.map(_.safetyMode)
             .getOrElse(nebflow.core.SafetyMode.toString(globalMode)),
           gitBranch = metaOpt.flatMap(_.gitBranch),
-          rootSessionId = sessionId
+          rootSessionId = sessionId,
+          // Nebula 会话沙箱启用（2026-09-05 作者裁定 13:09）：写根=~/.nebflow
+          // 数据根（root 特判在 AgentCore，按 SandboxPolicy.isNebulaRootSession
+          // 取 PathUtil.dataRoot）。判定基准=WS 根会话 ∧ agent==Nebula——此处
+          // 是 depth=0 全仓唯一 spawn 点，agentDef.name 是 agent 身份权威
+          // （metaOpt.agentName 是可缺省的会话元数据）。其余 WS 根会话
+          // （standalone 非 Nebula 聊天 / team Manager / flow 入口）保持
+          // sandboxEnabled=false 现状零变化；沙箱 root 推导仍归 AgentCore。
+          sandboxEnabled = agentDef.name == "Nebula"
         ),
         s"agent-$sessionId"
       )
