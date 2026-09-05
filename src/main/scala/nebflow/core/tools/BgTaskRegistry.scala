@@ -19,13 +19,23 @@ object BgTaskRegistry:
     sessionId: String,
     description: String,
     startedAtMs: Long,
-    kind: String // "local" | "remote"
+    kind: String, // "local" | "remote"
+    /** 顶层根会话 id（2026-09-05 计数/列表分叉修复）：前端 backgroundTaskUpdate
+      * 信封与 activeBgTasks 快照共用本键分桶。空 = 无 agent 上下文（REST 直调等）
+      * 或旧调用方未传 → activeTasksJson 回退按 sessionId 分组。 */
+    rootSessionId: String = ""
   )
 
   private val tasks: Ref[IO, Map[String, ActiveTask]] = Ref.unsafe(Map.empty)
 
-  def register(jobId: String, sessionId: String, description: String, kind: String): IO[Unit] =
-    tasks.update(_ + (jobId -> ActiveTask(jobId, sessionId, description, System.currentTimeMillis(), kind)))
+  def register(
+    jobId: String,
+    sessionId: String,
+    description: String,
+    kind: String,
+    rootSessionId: String = ""
+  ): IO[Unit] =
+    tasks.update(_ + (jobId -> ActiveTask(jobId, sessionId, description, System.currentTimeMillis(), kind, rootSessionId)))
 
   def unregister(jobId: String): IO[Unit] =
     tasks.update(_ - jobId)
@@ -42,12 +52,13 @@ object BgTaskRegistry:
           (kept, removed.values.toList)
         }
 
-  /** Returns active tasks grouped by sessionId, as JSON for the frontend. */
+  /** Returns active tasks grouped by root session id (rootSessionId, falling
+    * back to sessionId when absent), as JSON for the frontend. */
   def activeTasksJson: IO[io.circe.Json] =
     tasks.get
       .map { m =>
         m.values
-          .groupBy(_.sessionId)
+          .groupBy(t => if t.rootSessionId.nonEmpty then t.rootSessionId else t.sessionId)
           .map { case (sid, taskSet) =>
             sid -> taskSet.map { t =>
               io.circe.Json.obj(

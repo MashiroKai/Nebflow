@@ -118,7 +118,13 @@ class RemoteExecutor(
       _ <- logger.info(s"Remote background task $jobId started on ${peer.deviceName}: $firstLine")
       // 1. Emit "running" to frontend + register in global registry
       _ <- emitBgTaskStarted(ctx, jobId, description)
-      _ <- BgTaskRegistry.register(jobId, ctx.sessionId.getOrElse(""), description, "remote")
+      _ <- BgTaskRegistry.register(
+             jobId,
+             ctx.sessionId.getOrElse(""),
+             description,
+             "remote",
+             ctx.rootSessionId.orElse(ctx.sessionId).getOrElse("")
+           )
       // 2. Start heartbeat so frontend shows progress (remote tasks have no process-level health)
       doneRef <- IO.ref(false)
       _ <- startRemoteHeartbeat(ctx, jobId, description, doneRef)
@@ -229,6 +235,7 @@ class RemoteExecutor(
               io.circe.Json.obj(
                 "type" -> "backgroundTaskUpdate".asJson,
                 "sessionId" -> ctx.sessionId.asJson,
+                "rootSessionId" -> ctx.rootSessionId.orElse(ctx.sessionId).asJson,
                 "taskId" -> jobId.asJson,
                 "description" -> description.asJson,
                 "status" -> "running".asJson,
@@ -253,6 +260,7 @@ class RemoteExecutor(
         io.circe.Json.obj(
           "type" -> "backgroundTaskUpdate".asJson,
           "sessionId" -> ctx.sessionId.asJson,
+          "rootSessionId" -> ctx.rootSessionId.orElse(ctx.sessionId).asJson,
           "taskId" -> jobId.asJson,
           "description" -> description.asJson,
           "status" -> "running".asJson,
@@ -272,6 +280,7 @@ class RemoteExecutor(
         io.circe.Json.obj(
           "type" -> "backgroundTaskUpdate".asJson,
           "sessionId" -> ctx.sessionId.asJson,
+          "rootSessionId" -> ctx.rootSessionId.orElse(ctx.sessionId).asJson,
           "taskId" -> jobId.asJson,
           "description" -> description.asJson,
           "status" -> status.asJson

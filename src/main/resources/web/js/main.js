@@ -1799,25 +1799,18 @@ function bgAgentKindFromSession(sessionId) {
   return '';
 }
 
-/** Resolve which session bucket a background task belongs to for the UI.
- *  A task executed by a background (sub)agent carries the agent's OWN
- *  sessionId (delegate-/subtask- prefix), not the top-level session the user
- *  is viewing — so without this the task lands in a bucket updateBgTasksUI
- *  never reads and is neither counted nor shown. sessionBgAgents is keyed by
- *  the root session (agentStart carries rootSessionId) and each entry holds
- *  info.sessionId = the agent's node session, so reverse-look-up that mapping
- *  to route a sub-agent's background task into the owning root bucket.
- *  Backend-provided msg.rootSessionId wins when present. */
-function bgTaskRootFor(sessionId) {
-  if (!sessionId) return '';
-  for (const [root, agents] of Object.entries(state.sessionBgAgents || {})) {
-    if (!agents) continue;
-    for (const entry of Object.values(agents)) {
-      if ((entry.sessionId || '') === sessionId) return root;
-    }
-  }
-  return sessionId;
-}
+/** Background-task bucket keying (2026-09-05 fix): every backend
+ *  backgroundTaskUpdate envelope now carries rootSessionId (ToolContext.rootSessionId,
+ *  falling back to the executor's own sessionId), and the BgTaskRegistry snapshot
+ *  (activeBgTasks) is grouped by the same key — the frontend keys directly on it.
+ *  The old heuristic reverse-lookup (bgTaskRootFor, added 2026-08-25) walked
+ *  state.sessionBgAgents to map delegate-/subtask- sessions back to their root,
+ *  but silently mis-keyed whenever that mapping was absent (host restart, page
+ *  refresh, agent already finished) — tasks landed in orphan buckets and the
+ *  owning window's badge went stale (count>0 with an empty dropdown). Deleted:
+ *  the authoritative key makes the heuristic both unnecessary and harmful.
+ *  Defensive fallback for envelopes lacking rootSessionId (old backend /
+ *  REST-invoked tools): key on msg.sessionId as-is. */
 
 /** Row state machine (spec §3): done > stuck > frozen > error > idle > active. */
 function bgRowState(info) {
@@ -2622,14 +2615,14 @@ function renderBgDropdown() {
   const tasks = state.sessionBgTasks[activeView?.sessionId] || [];
   const listEl = activeView.dom.bgDropdownListEl;
   const dropdown = activeView.dom.bgDropdownEl;
-  if (!listEl || !dropdown) return;
+  if (!listEl || !dropdown) return 0;
   listEl.innerHTML = '';
   // Show running AND cancelling tasks (cancelling tasks stay visible until backend confirms)
   const visible = tasks.filter(t => t.status === 'running' || t.status === 'cancelling');
   if (visible.length === 0) {
     dropdown.classList.add('hidden');
     stopBgTimer();
-    return;
+    return 0;
   }
   const now = Date.now();
   visible.forEach(task => {
@@ -2693,6 +2686,7 @@ function renderBgDropdown() {
     row.appendChild(cancelBtn);
     listEl.appendChild(row);
   });
+  return visible.length;
 }
 
 function startBgTimer() {
@@ -2715,19 +2709,27 @@ function stopBgTimer() {
   if (_bgTimer) { clearInterval(_bgTimer); _bgTimer = null; }
 }
 
-function updateBgTasksUI() {
+function updateBgTasksUI(targetView) {
+  // targetView (2026-09-05 fix): refresh a SPECIFIC view's badge, not blindly
+  // activeView. Sub-agent background-task events are routed by ws.js to a null
+  // view (no popup open) or the popup ChatView — both left the owning root
+  // window's badge stale (count frozen at its last value while the bucket had
+  // already drained → "count>0 but the dropdown is empty"). Same bug class the
+  // bg-agent indicator fixed in updateBgAgentIndicator(targetSid).
+  const view = targetView || activeView;
+  if (!view || !view.dom) return;
   // Background tasks only — running flows are tracked separately on the
   // flow canvas (getRunningFlows), not in this indicator.
-  const tasks = state.sessionBgTasks[activeView?.sessionId] || [];
+  const tasks = state.sessionBgTasks[view.sessionId] || [];
   const now = Date.now();
   const active = tasks.filter(task =>
     task.status === 'running' || task.status === 'cancelling' ||
     (task.finishedAt && (now - task.finishedAt < 3000))
   );
   const totalCount = active.length;
-  const el = activeView.dom.bgIndicatorEl;
-  const countEl = activeView.dom.bgCountEl;
-  const dropdown = activeView.dom.bgDropdownEl;
+  const el = view.dom.bgIndicatorEl;
+  const countEl = view.dom.bgCountEl;
+  const dropdown = view.dom.bgDropdownEl;
   if (!el || !countEl) return;
   if (totalCount > 0) {
     el.classList.remove('hidden');
@@ -2738,9 +2740,18 @@ function updateBgTasksUI() {
     stopBgTimer();
   }
   if (dropdown && !dropdown.classList.contains('hidden')) {
-    renderBgDropdown();
-    startBgTimer();
+    const n = renderBgDropdown();
+    if (n > 0) startBgTimer(); else stopBgTimer();
   }
+}
+
+/** Refresh the badge of the view that DISPLAYS the session owning `sid`'s
+ *  background tasks (2026-09-05 fix). Safe to call for hidden/absent views —
+ *  their badges catch up on session switch (sidebar.js calls updateBgTasksUI). */
+function refreshBgBadgeFor(sid) {
+  const v = sid ? findViewBySessionId(sid) : null;
+  if (v) updateBgTasksUI(v);
+  else if (activeView && activeView.sessionId === sid) updateBgTasksUI(activeView);
 }
 state.updateBgTasksUI = updateBgTasksUI;
 
@@ -2753,9 +2764,15 @@ Object.values(chatViews).forEach(v => {
     e.stopPropagation();
     setActiveView(v);
     if (dropdown.classList.contains('hidden')) {
-      renderBgDropdown();
-      dropdown.classList.remove('hidden');
-      startBgTimer();
+      // renderBgDropdown returns the visible-row count and hides itself when
+      // the bucket has no running/cancelling tasks — only re-show when there
+      // is something to show (previously an unconditional classList.remove
+      // resurrected an empty dropdown under a stale count badge, 2026-09-05).
+      const n = renderBgDropdown();
+      if (n > 0) {
+        dropdown.classList.remove('hidden');
+        startBgTimer();
+      }
     } else {
       dropdown.classList.add('hidden');
       stopBgTimer();
@@ -2776,19 +2793,25 @@ document.addEventListener('click', (e) => {
 });
 
 onMessage('backgroundTaskUpdate', (msg, view) => {
-  // A background-task event emitted by a background (sub)agent carries the
-  // agent's OWN sessionId (delegate-/subtask- prefix) in msg.sessionId, not
-  // the top-level session the user is viewing — route it to the owning root
-  // bucket so it's counted and shown in that window (bug fix 2026-08-25).
-  const sid = msg.rootSessionId || bgTaskRootFor(msg.sessionId) || msg.sessionId;
+  // Authoritative keying (2026-09-05 fix): every backend envelope carries
+  // rootSessionId (root session for sub-agent tasks, own session for root
+  // tasks) — bucket directly on it. Defensive fallback for envelopes without
+  // the key (old backend / REST-invoked tools): raw msg.sessionId. The old
+  // bgTaskRootFor heuristic (08-25) reverse-mapped via state.sessionBgAgents
+  // and silently orphaned tasks whenever that mapping was missing.
+  const sid = msg.rootSessionId || msg.sessionId;
   if (!sid) return;
   if (!state.sessionBgTasks[sid]) state.sessionBgTasks[sid] = [];
   const tasks = state.sessionBgTasks[sid];
   const idx = tasks.findIndex(t => t.taskId === msg.taskId);
+  // 'cancelled' is terminal too: AgentActor.killSessionShellProcesses emits
+  // status="cancelled" on restart/Stop — treating it as non-terminal left
+  // ghost entries in the bucket forever (never shown, never removed).
+  const isTerminal = msg.status === 'completed' || msg.status === 'failed' || msg.status === 'cancelled';
   if (idx >= 0) {
     tasks[idx].status = msg.status;
     if (msg.description && !tasks[idx].description) tasks[idx].description = msg.description;
-    if (msg.status === 'completed' || msg.status === 'failed') {
+    if (isTerminal) {
       tasks[idx].finishedAt = Date.now();
     }
     if (msg.heartbeat) tasks[idx].heartbeat = msg.heartbeat;
@@ -2799,27 +2822,27 @@ onMessage('backgroundTaskUpdate', (msg, view) => {
       status: msg.status,
       startedAt: msg.startedAt || Date.now(),
       heartbeat: msg.heartbeat || null,
-      finishedAt: (msg.status === 'completed' || msg.status === 'failed') ? Date.now() : undefined
+      finishedAt: isTerminal ? Date.now() : undefined
     });
   }
-  // Remove completed/failed tasks after a brief delay so user sees the count update
-  if (msg.status === 'completed' || msg.status === 'failed') {
+  // Remove terminal tasks after a brief delay so user sees the count update.
+  // Refresh the OWNING view's badge (findViewBySessionId(sid)), not the
+  // ws.js-routed activeView: sub-agent events arrive with view=null (no popup)
+  // or a popup ChatView, and skipping/retargeting the refresh is what froze
+  // the root window's count while the bucket drained (the reported
+  // "count>0 but empty dropdown" fork).
+  if (isTerminal) {
     const taskId = msg.taskId;
-    const v = activeView; // capture before setTimeout
     setTimeout(() => {
       const existing = state.sessionBgTasks[sid];
       if (existing) {
         state.sessionBgTasks[sid] = existing.filter(t => t.taskId !== taskId);
-        if (v && v.mounted) {
-          const saved = activeView;
-          setActiveView(v);
-          updateBgTasksUI();
-          setActiveView(saved);
-        }
+        const v = findViewBySessionId(sid);
+        if (v && v.mounted) updateBgTasksUI(v);
       }
     }, 3000);
   }
-  if (view) updateBgTasksUI();
+  refreshBgBadgeFor(sid);
 });
 
 // --- /ask command ---
@@ -3343,44 +3366,41 @@ onReconnect(() => {
 });
 
 // ---------- Reconnect: sync background tasks ----------
-// Backend responds with active tasks grouped by sessionId.
-// We remove any locally-tracked tasks that are no longer active on the backend
-// (they completed during the disconnect), and keep tasks the backend confirms.
+// Backend responds with active tasks grouped by ROOT session id (BgTaskRegistry
+// stores rootSessionId since 2026-09-05 — same key the realtime envelopes use).
+// Full-truth replace (2026-09-05 fix): the old subtract-only reconcile removed
+// tasks the backend no longer knew but never ADDED tasks started while
+// disconnected, and refreshed only the active view — stale counts survived
+// host restarts on every non-active view. Backend BgTaskRegistry is the sole
+// authority (local + remote tasks both register), so the snapshot now REPLACES
+// local state outright; local-only embellishments (optimistic 'cancelling'
+// flag, heartbeat, startedAt) are carried over for kept tasks.
 onMessage('activeBgTasks', (msg) => {
   const backendTasks = msg.tasks || {};
-  // Backend groups background tasks by the executing agent's sessionId, which
-  // for a background (sub)agent is a delegate-/subtask- session, not the
-  // root session the user is viewing. Remap to root buckets before
-  // reconciling so sub-agent background tasks are counted under the owning
-  // window (mirrors bgTaskRootFor on the live backgroundTaskUpdate path).
-  const byRoot = {};
+  const prevAll = state.sessionBgTasks || {};
+  const next = {};
   for (const [sid, tasks] of Object.entries(backendTasks)) {
-    const root = bgTaskRootFor(sid);
-    if (!byRoot[root]) byRoot[root] = [];
-    byRoot[root].push(...tasks);
+    next[sid] = (tasks || []).map(t => {
+      const prev = (prevAll[sid] || []).find(x => x.taskId === t.taskId);
+      return {
+        taskId: t.taskId,
+        description: t.description,
+        status: (prev && prev.status === 'cancelling' && t.status === 'running') ? 'cancelling' : t.status,
+        startedAt: t.startedAt || (prev ? prev.startedAt : Date.now()),
+        heartbeat: (prev && prev.heartbeat) || t.heartbeat || null,
+        finishedAt: prev ? prev.finishedAt : undefined
+      };
+    });
   }
-  // Remove locally-tracked tasks that the backend no longer knows about
-  for (const sid of Object.keys(state.sessionBgTasks)) {
-    const backendSessionTasks = byRoot[sid] || [];
-    const backendIds = new Set(backendSessionTasks.map(t => t.taskId));
-    const before = state.sessionBgTasks[sid].length;
-    state.sessionBgTasks[sid] = state.sessionBgTasks[sid].filter(t => backendIds.has(t.taskId));
-    // If we removed tasks, also clean up finishedAt entries
-    if (state.sessionBgTasks[sid].length < before) {
-      const removed = before - state.sessionBgTasks[sid].length;
-      // Silently clean — no UI update needed since these were already "running"
-      // indicators that will disappear on next render
-    }
-    if (state.sessionBgTasks[sid].length === 0) {
-      delete state.sessionBgTasks[sid];
-    }
+  state.sessionBgTasks = next;
+  // Refresh every view whose bucket changed (cleared OR repopulated) — the
+  // active view's badge alone left sibling views frozen at pre-restart counts.
+  const touched = new Set([...Object.keys(prevAll), ...Object.keys(next)]);
+  for (const sid of touched) {
+    const v = findViewBySessionId(sid);
+    if (v) updateBgTasksUI(v);
   }
-  // Also clean stale sub-agent indicators — any session that has sub-agents
-  // tracked locally but no longer has an active agent on the backend
-  // can't be reliably detected here (sub-agents use actor system, not BgTaskRegistry).
-  // The agentDone fix (global sessionBgAgents) already handles missed events.
-  // Refresh the UI for the active view
-  if (activeView) updateBgTasksUI();
+  if (activeView) updateBgTasksUI(activeView);
 });
 
 // ---------- Reconnect: sync background sub-agents ----------

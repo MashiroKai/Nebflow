@@ -639,6 +639,10 @@ object AgentActor extends AgentCore with AgentSession:
             io.circe.Json.obj(
               "type" -> "backgroundTaskUpdate".asJson,
               "sessionId" -> state.sessionId.asJson,
+              // 权威分键（2026-09-05 计数/列表分叉修复）：与 BashTool/RemoteExecutor
+              // 发射点一致携带 rootSessionId，restart/Stop 清场帧按根会话分桶直达
+              // 归属视图（前端已删 bgTaskRootFor 启发式逆向分键）。
+              "rootSessionId" -> state.rootSessionId.asJson,
               "taskId" -> t.jobId.asJson,
               "description" -> t.description.asJson,
               "status" -> "cancelled".asJson
