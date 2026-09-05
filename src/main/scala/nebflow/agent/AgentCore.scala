@@ -2102,13 +2102,16 @@ object AgentCore:
     * Edit）自动变 no-op，无需定义层先行迁移。 */
   val ConvergedAgentNames = Set("Nebula", "project-dispatcher", "general")
 
-  /** 分发器固定工具集（§C.1）：Node 三件（List/Edit/Cancel）+ 读四件（Read/
-    * Glob/Grep/Bash，读现状 + git worktree 管理）。不给 Write/Edit（分发器只
-    * 分解不产内容）、不给 AskUserQuestion（单次会话不阻塞等用户，§C.3）。 */
+  /** 分发器固定工具集（§C.1）：Node 四件（List/Edit/Cancel/Message）+ 读四件
+    * （Read/Glob/Grep/Bash，读现状 + git worktree 管理）。不给 Write/Edit（分发器只
+    * 分解不产内容）、不给 AskUserQuestion（单次会话不阻塞等用户，§C.3）。
+    * NodeMessage（20260905 机制批，作者裁定）第八件：向已分发节点注入补充消息
+    * （running=turn 边界注入 / wiring/pending/held=任务追加 / 终态拒绝）。 */
   val DispatcherFixedTools = Set(
     "NodeList",
     "NodeEdit",
     "NodeCancel",
+    "NodeMessage",
     "Read",
     "Glob",
     "Grep",
