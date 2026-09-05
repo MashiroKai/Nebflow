@@ -108,6 +108,11 @@ export default {
   'flowmap.archive.ttlPurged': '24h 到期清理：{n} 条链已从归档移除',
   'flowmap.chain.archivedToast': '链「{chain}」整链归档（{n} 节点一起进归档）',
   'flowmap.chain.retainedToast': '节点已完成 · 链「{chain}」未齐（{done}/{total}）· 终态卡保留主图',
+  // 特殊节点标识徽标（badge 批 2026-09-05）：head 行胶囊文案；追加锚在 flowmap 块
+  // 尾部，最小化与同批其他 locales 支的合并冲突面
+  'flowmap.flag.merge': '合并',
+  'flowmap.flag.loop': '循环',
+  'flowmap.flag.pending': '待确认',
   'agentFile.hint': '此文件是项目工作区根的 agent 指令（AGENTS.md），可编辑并保存。',
 
   // === Friends & messages (A2A) ===
