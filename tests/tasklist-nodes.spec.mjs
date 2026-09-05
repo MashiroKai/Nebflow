@@ -2,16 +2,21 @@
 // 节点作为条目显示在任务列表中，纯前端；v2 迭代同步：绿色小圈 spinner + 简约化 +
 // team 区块解耦（.task-node-* 独立命名空间））。
 //
-// 覆盖：
-//   T1 渲染：WS 节点事件驱动的条目（节点名 + 状态 glyph + 状态词 + 相对时间 +
-//      agent 标注 + 项目分组头），五状态 glyph 映射正确；v2 视觉断言（running
-//      品牌绿 12px 转动圆环、状态词 muted、行密度 13px/3px 对齐任务行、节点行
-//      不携带任务域类）
+// 2026-09-05 作者裁定更新（taskpanel-audit 批）：状态词映射改为
+// wiring/pending→待处理、running→进行中、held→待放行、blocked→阻塞、
+// completed→已完成、failed→失败、cancelled→已取消（held 为 20260903 hold
+// 闸门新状态，升为正式徽章——琥珀虚线方框；blocked——琥珀实心点）；头部统计
+// 计节点（节点=真实工作单元）；无旧任务时不再渲染「暂无任务」空态。逐处：
+//   T1 五状态断言全部更新 + 新增 held/blocked 徽章断言 + 统计计节点断言 +
+//      无旧任务时不出现 progress 空态断言
+//   T6 未知状态改用 'draft'（blocked 已是已知状态，不再是降级路径）
+//   T7 新增：旧任务与节点并存（统计=合计、双区块并存、无空态）
+//
+// 其余覆盖：
 //   T2 状态更新：nodeUpdated/nodeCompleted 原地反映（绿圈 → 终态色点）
 //   T3 移除：nodeRemoved 条目消失
 //   T4 交互：点击条目 → projects 标签页就地打开该项目 Flow Map 并高亮该节点
 //   T5 快照对齐 + 防回滚：快照在途期间的 WS 增量不被旧快照滚回
-//   T6 未知状态优雅降级：后续新状态（如 blocked）→ 中性点、无状态词、不崩
 //
 // 事件帧 = 后端契约帧 {type, project, nodeId, node}（20260901_project-node-contract
 // §2），走真实 ws.js 分发路径注入（s.ws.onmessage），前端管线全真。
@@ -43,6 +48,9 @@ const N_REV = nodeJson({ id: 'n-rev', name: 'code-review', agent: 'qa-frontend',
 const N_DOC = nodeJson({ id: 'n-doc', name: 'write-docs', agent: 'Docs', status: 'wiring' });
 const N_PEND = nodeJson({ id: 'n-pend', name: 'gen-report', agent: 'czt-writer', status: 'pending' });
 const N_FIX = nodeJson({ id: 'n-fix', name: 'fix-imports', agent: 'Backend', status: 'failed', completedAt: T0 - 120_000, ttlLeftSec: 180 });
+// 2026-09-05 裁定：held（hold 闸门挂起）与 blocked 升为正式徽章
+const N_HELD = nodeJson({ id: 'n-held', name: 'hold-gate', agent: 'Frontend', status: 'held', completedAt: T0 - 30_000 });
+const N_BLOCKED = nodeJson({ id: 'n-blocked', name: 'await-dispatch', agent: 'Backend', status: 'blocked' });
 
 async function bootApp(page) {
   await page.addInitScript(() => {
@@ -114,7 +122,7 @@ async function renderPanel(page, tasks = []) {
   await page.waitForTimeout(100);
 }
 
-test('T1 节点条目渲染：五状态徽章/状态词/时间/project·agent 标注/项目分组', async ({ page }) => {
+test('T1 节点条目渲染：七状态徽章/状态词/时间/project·agent 标注/项目分组/统计计节点', async ({ page }) => {
   const pageErrors = [];
   page.on('pageerror', (e) => pageErrors.push(e.message));
 
@@ -125,8 +133,10 @@ test('T1 节点条目渲染：五状态徽章/状态词/时间/project·agent �
   await inject(page, { type: 'nodeCreated', project: 'alpha', nodeId: 'n-run', node: { ...N_RUN } });
   await inject(page, { type: 'nodeCreated', project: 'alpha', nodeId: 'n-rev', node: { ...N_REV } });
   await inject(page, { type: 'nodeCreated', project: 'alpha', nodeId: 'n-fix', node: { ...N_FIX } });
+  await inject(page, { type: 'nodeCreated', project: 'alpha', nodeId: 'n-held', node: { ...N_HELD } });
   await inject(page, { type: 'nodeCreated', project: 'beta', nodeId: 'n-doc', node: { ...N_DOC } });
   await inject(page, { type: 'nodeCreated', project: 'beta', nodeId: 'n-pend', node: { ...N_PEND } });
+  await inject(page, { type: 'nodeCreated', project: 'beta', nodeId: 'n-blocked', node: { ...N_BLOCKED } });
 
   const panel = page.locator('#task-list');
   await expect(panel).toHaveClass(/has-tasks/);
@@ -135,6 +145,12 @@ test('T1 节点条目渲染：五状态徽章/状态词/时间/project·agent �
   await expect(panel.locator('.task-section-nodes .task-node-section-title')).toHaveText('Flow Map');
   await expect(panel.locator('.task-node-group-header', { hasText: 'alpha' })).toHaveCount(1);
   await expect(panel.locator('.task-node-group-header', { hasText: 'beta' })).toHaveCount(1);
+
+  // 头部统计计节点（2026-09-05 裁定：节点=真实工作单元）：7 节点 + 0 旧任务 = 7
+  await expect(panel.locator('.task-stats')).toHaveText('7 任务');
+  // 无旧任务 → progress 区块整体不渲染（无「任务 / 暂无任务」误导空态）
+  await expect(panel.locator('.task-section-progress')).toHaveCount(0);
+  await expect(panel.locator('.task-empty')).toHaveCount(0);
 
   // running：品牌绿小圈（--color-primary #07C160，非任务行蓝色 sapphire）+ 12px
   const runRow = panel.locator('.task-node[data-node-key="alpha:n-run"]');
@@ -147,7 +163,8 @@ test('T1 节点条目渲染：五状态徽章/状态词/时间/project·agent �
     .evaluate((el) => ({ w: el.offsetWidth, h: el.offsetHeight }));
   expect(spinSize.w).toBe(12); // 缩小到 12px 节奏（= pending 小方框，宁小勿大）
   expect(spinSize.h).toBe(12); // offsetWidth/Height 不含 transform——转圈中的 AABB 会随角度变大
-  await expect(runRow.locator('.task-node-word')).toHaveText('运行中');
+  // 2026-09-05 裁定：running → 进行中（复用 task.inProgressShort）
+  await expect(runRow.locator('.task-node-word')).toHaveText('进行中');
   const wordColor = await runRow.locator('.task-node-word')
     .evaluate((el) => getComputedStyle(el).color);
   expect(wordColor).not.toBe('rgb(7, 193, 96)'); // 状态词 muted（颜色信号归 glyph）
@@ -169,15 +186,28 @@ test('T1 节点条目渲染：五状态徽章/状态词/时间/project·agent �
   await expect(fixRow.locator('.task-node-dot-failed')).toHaveCount(1);
   await expect(fixRow.locator('.task-node-word')).toHaveText('失败');
 
-  // wiring：等待语义（静默小方框 + 等待词）
+  // held（2026-09-05 裁定）：琥珀虚线方框 + 待放行
+  const heldRow = panel.locator('.task-node[data-node-key="alpha:n-held"]');
+  await expect(heldRow.locator('.task-node-box-held')).toHaveCount(1);
+  await expect(heldRow.locator('.task-node-word')).toHaveText('待放行');
+  const heldColor = await heldRow.locator('.task-node-box-held')
+    .evaluate((el) => getComputedStyle(el).borderTopColor);
+  expect(heldColor).toBe('rgba(255, 152, 0, 0.9)'); // --amber 亮色主题（rgb(255 152 0 / 0.9) 序列化）
+
+  // wiring：待处理（2026-09-05 裁定，原「等待」）
   const docRow = panel.locator('.task-node[data-node-key="beta:n-doc"]');
   await expect(docRow.locator('.task-node-box')).toHaveCount(1);
-  await expect(docRow.locator('.task-node-word')).toHaveText('等待');
+  await expect(docRow.locator('.task-node-word')).toHaveText('待处理');
 
-  // pending：排队中
+  // pending：待处理（2026-09-05 裁定，原「排队中」）
   const pendRow = panel.locator('.task-node[data-node-key="beta:n-pend"]');
   await expect(pendRow.locator('.task-node-box')).toHaveCount(1);
-  await expect(pendRow.locator('.task-node-word')).toHaveText('排队中');
+  await expect(pendRow.locator('.task-node-word')).toHaveText('待处理');
+
+  // blocked（2026-09-05 裁定）：琥珀实心点 + 阻塞
+  const blockedRow = panel.locator('.task-node[data-node-key="beta:n-blocked"]');
+  await expect(blockedRow.locator('.task-node-dot-blocked')).toHaveCount(1);
+  await expect(blockedRow.locator('.task-node-word')).toHaveText('阻塞');
 
   expect(pageErrors).toEqual([]);
 });
@@ -299,18 +329,44 @@ test('T6 未知节点状态优雅降级：中性点、无状态词、不崩', as
 
   await bootApp(page);
   await renderPanel(page);
-  // 后续会有 blocked 等新状态——前端现在还不知道它，必须中性降级而非崩/空白
+  // 2026-09-05 裁定后 blocked/held 已是已知状态（正式徽章）——降级路径改用
+  // 尚不存在的假想状态 'draft'：前端不认识它时必须中性降级而非崩/空白
   await inject(page, {
-    type: 'nodeCreated', project: 'alpha', nodeId: 'n-blocked',
-    node: nodeJson({ id: 'n-blocked', name: 'await-gate', agent: 'Backend', status: 'blocked' }),
+    type: 'nodeCreated', project: 'alpha', nodeId: 'n-draft',
+    node: nodeJson({ id: 'n-draft', name: 'future-node', agent: 'Backend', status: 'draft' }),
   });
 
-  const row = page.locator('#task-list .task-node[data-node-key="alpha:n-blocked"]');
+  const row = page.locator('#task-list .task-node[data-node-key="alpha:n-draft"]');
   await expect(row).toHaveCount(1);
-  await expect(row.locator('.task-node-label')).toHaveText('await-gate');
+  await expect(row.locator('.task-node-label')).toHaveText('future-node');
   await expect(row.locator('.task-node-dot-neutral')).toHaveCount(1); // 中性默认样式
   await expect(row.locator('.task-node-word')).toHaveCount(0); // 未知状态不出状态词
   await expect(row.locator('.task-node-spin')).toHaveCount(0);
+
+  expect(pageErrors).toEqual([]);
+});
+
+test('T7 旧任务与节点并存：统计=合计、双区块并存、无空态（2026-09-05 裁定）', async ({ page }) => {
+  const pageErrors = [];
+  page.on('pageerror', (e) => pageErrors.push(e.message));
+
+  await bootApp(page);
+  // 1 条 in_progress 旧任务（taskListUpdate 契约帧）
+  await renderPanel(page, [{
+    id: 't-1', subject: 'legacy task', description: '', status: 'in_progress',
+    taskKind: 'agent', createdAt: new Date(T0).toISOString(), updatedAt: new Date(T0).toISOString(),
+  }]);
+  await inject(page, { type: 'nodeCreated', project: 'alpha', nodeId: 'n-run', node: { ...N_RUN } });
+  await inject(page, { type: 'nodeCreated', project: 'alpha', nodeId: 'n-rev', node: { ...N_REV } });
+
+  const panel = page.locator('#task-list');
+  // 统计 = 1 旧任务 + 2 节点 = 3
+  await expect(panel.locator('.task-stats')).toHaveText('3 任务');
+  // 双区块并存：progress 区有行、节点区在下方
+  await expect(panel.locator('.task-section-progress .task-item')).toHaveCount(1);
+  await expect(panel.locator('.task-section-nodes .task-node')).toHaveCount(2);
+  // 两区块都有内容 → 无空态
+  await expect(panel.locator('.task-empty')).toHaveCount(0);
 
   expect(pageErrors).toEqual([]);
 });

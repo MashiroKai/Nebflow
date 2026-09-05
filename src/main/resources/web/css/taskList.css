@@ -347,12 +347,22 @@
   border: 1.5px solid color-mix(in srgb, var(--color-text-muted, #888) 40%, transparent);
 }
 
-/* 终态：实心色点；未知状态（blocked 等新状态落地前）：中性半透明点优雅降级 */
+/* 终态：实心色点；未知状态：中性半透明点优雅降级 */
 .task-node-dot { border-radius: 50%; }
 .task-node-dot-completed { background: var(--color-success, #4caf50); }
 .task-node-dot-failed { background: var(--color-error, #f44336); }
 .task-node-dot-cancelled { background: var(--color-warning, #ff9800); }
 .task-node-dot-neutral { background: color-mix(in srgb, var(--color-text-muted, #888) 45%, transparent); }
+
+/* held（待放行，2026-09-05 裁定）：hold 闸门挂起——排队方框形态 + 琥珀虚线
+   （警示色相；--amber 与 flowmap.css .fm-node.blocked 同源，sapphire.css 双主题定义） */
+.task-node-box-held {
+  border-color: rgb(var(--amber, 255 152 0) / 0.9);
+  border-style: dashed;
+}
+
+/* blocked（阻塞，2026-09-05 裁定）：琥珀实心点——警示态，区别于 failed 终结红 */
+.task-node-dot-blocked { background: rgb(var(--amber, 255 152 0) / 0.95); }
 
 .task-node-text { flex: 1; min-width: 0; }
 
