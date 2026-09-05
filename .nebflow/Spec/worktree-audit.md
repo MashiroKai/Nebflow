@@ -4,6 +4,7 @@
 - 审计方式：**只读**——所有被审计 worktree 仅执行 `git --no-optional-locks status/log/diff` 级命令；未 add/checkout/stash/clean 任何 worktree；未 kill 任何进程；未 push/merge/删除任何分支或 worktree
 - 质询背景：作者 2026-09-05 11:03「.nebflow 里 worktree 非常多，是不是没人合并导致很多任务做了但没应用」
 - 实测基数：主仓 `git worktree list` = **33 项**（main + 仓外 6 + `.nebflow/worktrees/` 下 26；分发器口径 32，实测多 1：devport-governance/ruling-audit 等当日新建）。本地分支共 47 个 ref
+- **终态刷新（2026-09-05 20:4x 清扫批）**：作者指令 20:27「worktree 全量清扫——已合并的一律删除」。本文件**第七节为清扫后终态**（三清单 + L1–L5 下落核验 + 宿主命令全集，commit-ready）；第一~六节保留为 11:30 审计快照（历史证据，多项已被晚间清理消化，以第七节现场复核为准）
 
 ---
 
@@ -227,3 +228,112 @@ git worktree remove ".nebflow/worktrees/ruling-audit" && git branch -d ruling-au
 4. 全部清理动作待作者/落地流程执行，本审计零写入零信号。
 
 *报告由只读审计生成；证据命令均可复现（git rev-list / --no-optional-locks status / lsof cwd）。*
+
+---
+
+## 七、2026-09-05 20:4x 清扫批——worktree 全量清扫终态（commit-ready）
+
+- 触发：作者指令 2026-09-05 20:27「worktree 全量清扫——已合并的一律删除」；执行节点 = worktree-cleanup（`.nebflow/worktrees/worktree-cleanup`）
+- 现场复核：2026-09-05 20:4x；全程 `git --no-optional-locks` 只读；唯一写入 = 本文档在工作区内落盘 + 单次 EPERM 取证（`touch 主仓 .git` → `Operation not permitted`）。**本节点未删除任何 worktree/分支，未执行 7.6 任何命令——删除一律走宿主命令清单**
+- 基数刷新（vs 11:30 快照）：`git worktree list` = **19 项**（main + 仓外 6 + `.nebflow/worktrees/` 下 12，含本节点自身）；本地分支 ref 33 个；11:30 的 26 软链形态已变更为**实体目录**（`ls -la .nebflow/worktrees/` 实测无软链/残链）；ruling-audit 空壳 worktree 与分支 ref 已消失；phase2b-plugins 分支 ref 已消失；11:30 所列 L1–L5、今日 13 支队列（已完 8 支）、已并残留 5 支（phase2c-agent-convergence / plugin-panel-redesign / proc-residue-governance / qc-2d-refactor / seed-defaults-converge）的 worktree 与分支 ref 均已不在现场
+- main 基准：a8328477；全部祖先关系经 `git merge-base --is-ancestor <branch> main` 实测，ahead 经 `git rev-list --count main..<branch>` 实测
+
+### 7.1 L1–L5 下落核验（防「抢救」变「误删」）——全部已落地 ✅
+
+| 项 | 核验点 | 结果 | 证据（main @a8328477） |
+|---|---|---|---|
+| L1 bgtask-count-fix | BgTaskRegistry rootSessionId 分组；旧启发式 bgTaskRootFor 清除 | ✅ 已落地 | `BgTaskRegistry.scala:26,36,38,55,61` rootSessionId 字段 + 按根会话 groupBy；`bgTaskRootFor` 全库仅存「已删除」说明性注释（web/js/main.js:1809,2730、AgentActor.scala:644、BashTool.scala:740、BgTaskRegistrySpec.scala:14），无函数定义 |
+| L2 checkjs-gate-fix | package.json typescript devDep；check-js-types.mjs 无 npx -y 回退 | ✅ 已落地 | devDependencies.typescript = 5.5.4；scripts/check-js-types.mjs:19 注明「The old \`npx -y -p typescript@5.5\` fallback was removed」 |
+| L3 plan-mode-retire | PlanWaitingBufferSpec.scala 清除 | ✅ 已落地 | `git ls-tree -r main` 全树无 PlanWaitingBuffer 任何文件 |
+| L4 plugin-protocol | PluginRegistry.scala + 插件协议提交史 | ✅ 已落地 | `core/plugin/PluginRegistry.scala` + `PluginRegistrySpec.scala` 在 main；提交史 600cf66d「Merge plugin-protocol: 插件系统协议完善」、e7b3b569、e323bdfb/054a6acf、3dd36276 |
+| L5 workspace-picker | main web/ 有 ws-pick-target | ✅ 已落地 | web/css/chat.css:2465,2482,2487 `.ws-pick-target` |
+
+**结论**：五支漏网产物均已落 main——worktree/分支的消失属清理而非误删，无需任何抢救动作。11:30 列的已并残留五支与今日队列已完 8 支消失亦同（skill2plugins=3dd36276、插件面板批=e323bdfb 等可在 main log 实证）。
+
+### 7.2 清单 A——删除类（分支内容完全在 main、无独有内容）【每项状态：待宿主执行】
+
+| # | 对象 | 类型 | 证据（20:4x 实测） | 状态 |
+|---|---|---|---|---|
+| A1 | `/private/tmp/nb-node-agentfile` | worktree | feat/node-agentfile 已并（is-ancestor 通过，ahead=0）；脏=3 个 untracked 逐个定性：`http.log`=09-01 静态 server 访问日志（纯日志）；`qa-agentfile-blindspots.mjs`、`verify-agentfile.mjs`=#27 agentfile 契约收尾 QA 的 Playwright 脚本（BASE 127.0.0.1:8324，任务域临时产物，可复现）→维持删除类；remove 需 `--force`（untracked 阻断普通 remove） | 待宿主执行 |
+| A2 | `feat/node-agentfile` | branch | ahead=0 | 待宿主执行 |
+| A3 | `~/Claude code/.nb-worktrees/nb-window-shell` | worktree | feat/window-shell 已并（ahead=0），目录净（status 空） | 待宿主执行 |
+| A4 | `feat/window-shell` | branch | ahead=0 | 待宿主执行 |
+| A5 | `feat/task-progress-2` | branch-only ref | ahead=0，is-ancestor 通过 | 待宿主执行 |
+| A6 | `feat/turn-collapse-delegate` | branch-only ref | ahead=0 | 待宿主执行 |
+| A7 | `feat/turn-collapse-delegate2` | branch-only ref | ahead=0 | 待宿主执行 |
+| A8 | `fix/paste-attachment-loss` | branch-only ref | ahead=0 | 待宿主执行 |
+| A9 | `red-baseline` | branch-only ref | ahead=0 | 待宿主执行 |
+
+七支 A 类分支全部实测 ahead=0，`branch -d` 预期直接通过（已验证祖先关系）；兜底路径见 7.6 附注。
+
+### 7.3 清单 B——绝对不动（红线：在飞/待落地）
+
+| # | 对象 | 现场实测 | 保护原因 |
+|---|---|---|---|
+| B1 | `.nebflow/worktrees/bgtask-completion-gate` | 脏 9（6 M + 3 新增 Spec，+339/−83），节点 running；分支本体已并 main | 在飞；WIP=批产物。正是 L1 故障模式活体——落地闸门未走完前删 = 连产物删 |
+| B2 | `.nebflow/worktrees/trigger-chain-fix` | **非净**（勘误见 7.7）：脏 10（8 M + 新增 `TriggerChainSpec.scala` + `.nebflow/Spec/20260905_pending-…无终态根因分析.md`，+225/−48），节点 running | 在飞，WIP=批产物 |
+| B3 | `.nebflow/worktrees/sandbox-nebflow-root` | 净，节点 running；分支已并 main | 今日沙箱可写根批在飞 |
+| B4 | `.nebflow/worktrees/node-message-tool` | 脏 8（7 M + 新增 `NodeMessageSpec.scala`，+258/−13），节点 cancelled；分支已并 main | NodeMessage 批产物待批处置，禁擅自删 |
+| B5 | 监督 Actor 化批 | 现场无对应 worktree、无分支 ref、Flow Map 无节点 | **空引用**：该保护项当前无实体，无需动作，仅记录 |
+
+### 7.4 清单 C——不删、进拍板清单（有独有内容或裁定悬置，禁擅自删）
+
+| # | 对象 | 现场实测 | 独有内容 | 建议 |
+|---|---|---|---|---|
+| C1 | `.nebflow/worktrees/devport-governance` + `devport-governance` | 净；HEAD 533a2a0a 旧基线；分支 **0 自有 commit**（空壳） | 无 | 废弃类；作者点头即转 A 类双删 |
+| C2 | `.nebflow/worktrees/friend-chain-ui` + `friend-chain-ui` | 分支已并；worktree vs HEAD 脏 **13 文件 +243/−447**（含删自产 spec tests/friend-chain-ui.spec.mjs −365）；index 另持过期 staged 快照（14 文件 +36/−1045，与工作区内容交错） | L6 未提交迭代 | 需作者裁定「收增量 or 弃」；裁定前禁删 |
+| C3 | `~/Claude code/.nb-worktrees/nb-437-ci` + `feat/ci-desktop-verify` | 净；ahead=6（git cherry 全 +，非 squash 等价） | L7 桌测 CI 链 | 需作者裁定并/弃 |
+| C4 | `pr-41-search-jump` | branch-only，ahead=1（e843c998，cherry +） | L8 | 需作者裁定 |
+| C5 | `pr-44-send-btn` | branch-only，ahead=1（2f95bea6，cherry +） | L9 | 需作者裁定 |
+| C6 | `Nebflow-archive-mesh-sync`（仓外）+ `archive/mesh-sync-with-session-sync` | 净，ahead=408，最后活动 06-26 | 旧架构存档 | 需作者裁定存档去留 |
+| C7 | `Nebflow-pekko-only`（仓外）+ `refactor/Pekko-Only` | 净，ahead=651，07-12 | 未并重构 | 需作者裁定（弃则 -D，续则重派） |
+| C8 | `Nebflow-refactor`（仓外）+ `refactor/actor-io-layered` | 净，ahead=627，07-12 | 未并重构 | 同上 |
+| C9 | `.nebflow/worktrees/deadchain-archive-fix` + `deadchain-archive-fix` | 净，ahead=1（588eee83） | 调查 harness；作者已裁定零改码不并 | 收尾确认后清 worktree；分支建议暂留 |
+| C10 | `.nebflow/worktrees/dialog-unify` + `dialog-unify` | 分支已并；脏 6（chat.css/modal.css/daemons.js/locales×2 5 M + 新增 tests/dialog-unify.spec.mjs；tracked +31/−16） | 疑似 L1–L5 同款漏网新例 | 先定性是否属今晚落地队列，再收/弃 |
+| C11 | `.nebflow/worktrees/flowmap-nodecard` + `flowmap-nodecard` | 分支已并；脏 6（flowMap.css/flowMapArchive.js/flowMapTab.js/locales×2/测试改，+37/−12） | 同上 | 同上 |
+| C12 | `.nebflow/worktrees/memory-plan` + `memory-plan` | 分支已并；脏 1（.gitignore +2/−1） | 同上 | 同上 |
+| C13 | `.nebflow/worktrees/dream-memory-edit` + `dream-memory-edit` | worktree 净；分支 ahead=1（3f7bd31d，cherry +）整支未并 | 整支产物 | 需作者裁定并/弃 |
+| C14 | `docs/desktop-trust-and-icp-filing-plan` | branch-only，ahead=2（1f3ce56f、73547375，cherry +），**今日新发现** | 文档计划支 | 需作者裁定并/弃 |
+
+### 7.5 清单 D——永久保留
+
+`main`；`beta`（ahead=25，发版线）；`release`（ahead=1，发版线）；`archive/nebflow-v1`（19）、`archive/nebflow-v2`（6）、`archive/rust-main`（123）、`rust-standalone`（137）——历史存档与 Rust 线。另 `worktree-cleanup`（本批载体）在 7.6 ④ 自清后不复存在。
+
+### 7.6 宿主命令全集（**全部待宿主执行**，本节点零执行；顺序=先文档后删除）
+
+> 沙箱取证：本节点对主仓 `.git` 单次写入探测返回 `touch: …/Nebflow/.git/nb-eperm-probe-20260905: Operation not permitted`（EPERM）；worktree 的 git 元数据实体在主仓 `.git/worktrees/worktree-cleanup`，故本批文档 commit 同样无法在沙箱完成——① 亦整段交宿主。执行目录：`/Users/dev/Claude code/Nebflow`。合并与 push 按项目纪律等用户明确指示。
+
+```bash
+cd "/Users/dev/Claude code/Nebflow"
+
+# ── ① D段·本批文档落地（audit 终态已写好于 worktree-cleanup 工作区，未 add/commit——沙箱 EPERM）
+git --no-optional-locks -C ".nebflow/worktrees/worktree-cleanup" add .nebflow/Spec/worktree-audit.md
+git --no-optional-locks -C ".nebflow/worktrees/worktree-cleanup" commit -m "docs(spec): worktree-audit 刷新为 2026-09-05 20:4x 清扫批终态（三清单+L1-L5 下落+宿主命令全集）"
+git merge --no-ff worktree-cleanup -m "Merge worktree-cleanup: worktree 全量清扫批终态文档"
+
+# ── ② A段·删除类（7.2 全项；先删 worktree 再删分支）
+git worktree remove "/Users/dev/Claude code/.nb-worktrees/nb-window-shell"
+git worktree remove --force /private/tmp/nb-node-agentfile   # --force：3 个 untracked QA 临时产物（http.log / qa-agentfile-blindspots.mjs / verify-agentfile.mjs，定性见 7.2 A1）
+git branch -d feat/window-shell feat/node-agentfile feat/task-progress-2 feat/turn-collapse-delegate feat/turn-collapse-delegate2 fix/paste-attachment-loss red-baseline
+
+# ── ③ C段·收尾
+git worktree prune
+ls -la .nebflow/worktrees/ | grep -v '^d'   # 残链复查：20:4x 实测无软链（全实体目录），预期仅 total 行
+
+# ── ④ D段·自身收尾（① merge 完成后执行）
+git worktree remove ".nebflow/worktrees/worktree-cleanup"
+git branch -d worktree-cleanup
+```
+
+> **A段兜底**：若任一 `branch -d` 被拒（七项均实测 ahead=0，理论不会），先 `git rev-list --count main..<branch>` + `git cherry main <branch>` 复核；cherry 确证等价（全 `-`）后方可 `-D`；若出现 `+`（真实独有提交）立即停止、回落拍板清单。
+> **merge 兜底**：若执行时 main 已前移致 ① 冲突——worktree-audit.md 为本批独改文件正常自动并；冲突则取 worktree-cleanup 侧（本批为最新终态）。
+
+### 7.7 勘误与对照（分发基准 20:40 vs 现场复核）
+
+| 项 | 分发基准 | 现场实测 | 影响 |
+|---|---|---|---|
+| trigger-chain-fix | 「净（在飞 running）」 | **脏 10**（8 M + 2 ??，含 TriggerChainSpec.scala 与 pending 根因分析 doc） | 无清单归属影响（本即 B 类保护），仅勘误 |
+| friend-chain-ui | 脏约13（+243/−447，含删自产 spec） | 13 文件 +243/−447 ✓（另 index 持过期 staged 快照 +36/−1045） | 一致；C2 |
+| 其余各项 | — | worktree 形态（6 仓外 + 12 worktrees/）、ahead 计数（L7=6、pr-41/44=1、docs/desktop-trust=2、beta=25、release=1、archive 19/6/123/137）、devport 空壳 0 commit、B1/B3/B4 脏况、nb-node-agentfile 3 untracked | 全部复核一致 |
+
+*第七节由只读清扫批节点生成（2026-09-05 20:4x）；证据命令均可复现（--no-optional-locks worktree list / status / merge-base --is-ancestor / rev-list --count / cherry / ls-tree / grep）。*
