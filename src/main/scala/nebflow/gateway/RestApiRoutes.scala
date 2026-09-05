@@ -491,37 +491,17 @@ class RestApiRoutes(
         }
       }
 
-    // Agents — three-layer aggregation (global + team + flow)
+    // Agents — global layer only（2026-09-05 08:40 作者裁定：面板数据源收敛）。
+    // 旧三层聚合（global+team+flow）的 team/flow 两层是面板污染源——team/flow
+    // 入口已随 sidebar flag 封存，域 agent 不应出现在全局面板。global 层以
+    // agent.json 存在为准（EntityLoader.loadAgentFromDir 无 agent.json 即 None
+    // 丢弃），天然只回 keeper 定义；.archived / 惰性残留目录不出现（面板收敛
+    // spec 钉死）。layer 字段保留恒 "global"（agentManager.js 的 layer 过滤
+    // 兼容；scope 字段仅旧 team/flow 条目携带，随两层删除自然消失）。
     case req @ GET -> Root / "agents" =>
       withAuth(req) {
         for
           globalAgents <- EntityLoader.listAgents()
-          teams <- EntityLoader.listTeams()
-          teamAgentEntries <- teams.toList.traverse { (teamName, _) =>
-            IO.blocking {
-              val dir = PathUtil.dataRoot / "teams" / teamName / "agents"
-              if os.exists(dir) then
-                os.list(dir)
-                  .filter(os.isDir)
-                  .flatMap(d => EntityLoader.loadAgentFromDir(d))
-                  .map(a => (teamName, a))
-                  .toList
-              else Nil
-            }
-          }
-          flows <- EntityLoader.listFlows()
-          flowAgentEntries <- flows.toList.traverse { (flowName, _) =>
-            IO.blocking {
-              val dir = PathUtil.dataRoot / "flows" / flowName / "agents"
-              if os.exists(dir) then
-                os.list(dir)
-                  .filter(os.isDir)
-                  .flatMap(d => EntityLoader.loadAgentFromDir(d))
-                  .map(a => (flowName, a))
-                  .toList
-              else Nil
-            }
-          }
           globalList = globalAgents.values.toList.map { a =>
             Json.obj(
               "name" -> a.name.asJson,
@@ -531,28 +511,7 @@ class RestApiRoutes(
               "layer" -> "global".asJson
             )
           }
-          teamList = teamAgentEntries.flatten.map { (scope, a) =>
-            Json.obj(
-              "name" -> a.name.asJson,
-              "description" -> a.description.asJson,
-              "displayName" -> a.name.asJson,
-              "category" -> "team".asJson,
-              "layer" -> "team".asJson,
-              "scope" -> scope.asJson
-            )
-          }
-          flowList = flowAgentEntries.flatten.map { (scope, a) =>
-            Json.obj(
-              "name" -> a.name.asJson,
-              "description" -> a.description.asJson,
-              "displayName" -> a.name.asJson,
-              "category" -> "flow".asJson,
-              "layer" -> "flow".asJson,
-              "scope" -> scope.asJson
-            )
-          }
-          all = globalList ++ teamList ++ flowList
-          result <- Ok(Json.obj("agents" -> all.asJson))
+          result <- Ok(Json.obj("agents" -> globalList.asJson))
         yield result
       }
 
