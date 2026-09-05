@@ -615,6 +615,8 @@ export default {
   'chat.thinkingInProgress': 'Thinking…',
   'chat.turnSummaryTools': '{n} tool calls',
   'chat.turnSummaryToolsOne': '1 tool call',
+  'chat.turnHeaderThinking': 'thought for {d}',
+  'chat.turnHeaderFiles': '{n} files',
   'chat.thinking.0': 'Drifting through the cosmos...',
   'chat.thinking.1': 'Gazing into the deep...',
   'chat.thinking.2': 'Sailing the stellar winds...',

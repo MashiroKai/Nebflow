@@ -620,6 +620,8 @@ export default {
   'chat.thinkingInProgress': '思考中…',
   'chat.turnSummaryTools': '工具 {n} 次',
   'chat.turnSummaryToolsOne': '工具 1 次',
+  'chat.turnHeaderThinking': '思考 {d}',
+  'chat.turnHeaderFiles': '读写 {n} 文件',
   'chat.thinking.0': '星海漫游中...',
   'chat.thinking.1': '凝望深空中...',
   'chat.thinking.2': '星际航行中...',
