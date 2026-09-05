@@ -809,10 +809,14 @@ class NodeEngine(
       case Some("Nebula") =>
         deliverToNebula(s"[Node '${node.name}' failed]\n$err", node.name, "failed", Some(node.id))
       case Some(targetId) =>
-        // collect 结算：占位符标记 + 计数归零继续（§2.4 默认 collect）
+        // collect 结算：占位符标记 + 计数归零继续（§2.4 默认 collect）。
+        // 合并节点例外（merge-node 批 20260905 §触发语义，MergeNodePolicy 单点）：
+        // 占位结算会让合并在不完整输入上启动 → 改转 blocked 可见终态不悬挂。
         for
           targetOpt <- store.findNode(targetId)
           _ <- targetOpt match
+            case Some(target) if MergeNodePolicy.haltsOnFailure(target) =>
+              mergeBlockedByUpstreamFailure(target, node, err)
             case Some(target) =>
               store.mutate { s =>
                 val t = s.nodes.get(targetId)
@@ -828,6 +832,43 @@ class NodeEngine(
               }
             case None => IO.unit
         yield ()
+
+  /** 合并节点因上游失败转 blocked（merge-node 批 §触发语义②；与 blockedNode 同构
+    * 但**不经 FeedbackRouter**）：① 事务内现读 fresh（R2 纪律，haltsOnFailure 只认
+    * wiring/pending）→ status=Blocked / result=渲染串 / blockedFeedback=合成反馈 /
+    * completedAt=now / ttlExpireAt=None（待办语义）。blockCount 不增（非节点自报
+    * 轮次，重入主责在失败上游侧，MergeNodePolicy.upstreamFailureFeedback）。
+    * ② emitEvent nodeUpdated + FlowMapEventLog "merge-blocked" + deliverToNebula
+    * 通报（无 nodeId=fire-and-forget，对齐 escalate 通道：状态通报不是结果投递）。
+    * 语义收益：不触发合并（占位结算被旁路）+ 不永久 pending 悬挂（blocked 可见
+    * 终态，分发器 NodeList 可巡检）+ 已完成上游的结算保留（修复上游 → 重激活合并
+    * 节点 → 既有重激活重投链自动补齐 barrier）。 */
+  private def mergeBlockedByUpstreamFailure(target: NodeDef, failed: NodeDef, err: String): IO[Unit] =
+    val feedback = MergeNodePolicy.upstreamFailureFeedback(failed, err)
+    for
+      now <- IO(System.currentTimeMillis())
+      s <- store.mutate { st =>
+        st.nodes.get(target.id) match
+          case Some(fresh) if MergeNodePolicy.haltsOnFailure(fresh) =>
+            st.copy(nodes = st.nodes.updated(target.id, fresh.copy(
+              status = NodeLifecycle.Blocked,
+              result = Some(MergeNodePolicy.renderBlocked(feedback)),
+              blockedFeedback = Some(feedback),
+              completedAt = Some(now),
+              ttlExpireAt = None)))
+          case _ => st // 状态已变（并发终态化）→ 拒写（R2 竞态纪律）
+      }
+      _ <- s.nodes.get(target.id) match
+        case Some(bn) if bn.status == NodeLifecycle.Blocked =>
+          val summary = s"merge node blocked: upstream '${failed.name}' (${failed.id}) failed — ${err.take(140)}"
+          emitEvent("nodeUpdated", target.id, NodePayload.buildNodeJson(bn, now)) *>
+            logger.warn(s"Node '${bn.name}' $summary") *>
+            FlowMapEventLog.append(workspace, projectName, target.id, "merge-blocked", summary) *>
+            deliverToNebula(
+              s"[Node '${bn.name}' blocked — 上游 '${failed.name}' failed，合并未执行]\n${err.take(800)}",
+              bn.name, NodeLifecycle.Blocked)
+        case _ => IO.unit
+    yield ()
 
   /** out=Nebula：ImmediateInput 投 Nebula 根会话（source="node"，复用 flow 气泡语义）。
     * 气泡 header 契约（前端 chat.js injectedSourceLabel node 分支）：
