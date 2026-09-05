@@ -84,6 +84,16 @@ case class NodeDef(
     * 落地收口在工作区根仓执行 → 必须不配 worktree（沙箱根=workspace，.git 可写）。
     * 旧 flow-map.json 无此键 → withDefaults 解码为 false（零迁移）= 旧行为。 */
   merge: Boolean = false,
+  /** dispatch-notify 回流标志（2026-09-05 批）：true = 节点到达终态（先接线
+    * completion）后触发项目分发器新会话（带原因码的独立信号通道，不占 out 边；
+    * 防循环/预算/去重见 DispatchNotify）。NodeEdit 按需开启，默认关——分发器
+    * 因通知新建的节点不继承本标志（显式开启才通知，保证收敛）。
+    * 旧 flow-map.json 无此键 → withDefaults 解码为 false（零迁移）= 旧行为。 */
+  notifyDispatcher: Boolean = false,
+  /** dispatch-notify 投递记账（at-least-once：tell-then-mark，V8 nebulaDeliveredAt
+    * 同款）：通知触发后落时间戳；空 = 未触发/未标记（重启后由 TtlTick 补投扫描
+    * 重触发）。旧 flow-map.json 无此键 → withDefaults 解码为 None（零迁移）。 */
+  notifySentAt: Option[Long] = None,
   deliveredTo: List[String] = Nil,
   /** V8 (2026-09-03): out=Nebula 投递记账——deliverToNebula 成功 offer 后落时间戳。
     * 与 deliveredTo（in barrier 判定，节点间沿边去重）完全分离，barrier 语义零改动；
@@ -187,7 +197,11 @@ object NodePayload:
       // plugins 条件序列化（阶段 2b §B.4 第 3 步 + H-3①用户可见性；与 deps 同构）：
       // 非 Nil 才带——无分配节点的 payload 字段集零变化。
       val pluginFields = if node.plugins.nonEmpty then List("plugins" -> node.plugins.asJson) else Nil
-      Json.obj((baseFields ++ hasResultFields ++ taskPreviewFields ++ depsFields ++ feedbackFields ++ holdFields ++ pluginFields)*)
+      // notifyDispatcher 条件序列化（dispatch-notify 批 2026-09-05；与 hold 同构）：
+      // true 才带——未开启节点的 payload 字段集零变化（NodeList 上分发器可辨哪些
+      // 节点会回流通知）。
+      val notifyFields = if node.notifyDispatcher then List("notifyDispatcher" -> node.notifyDispatcher.asJson) else Nil
+      Json.obj((baseFields ++ hasResultFields ++ taskPreviewFields ++ depsFields ++ feedbackFields ++ holdFields ++ pluginFields ++ notifyFields)*)
 
 /** Flow Map 活动区（§2.6，磁盘 flow-map.json）。 */
 case class FlowMapState(
