@@ -246,14 +246,26 @@ object ProjectActor:
     * 双段拼装（插件能力目录 capability 优先 + 预设场景目录），本类只留挂接。 */
   private def pluginCatalogText(): IO[String] = nebflow.core.plugin.DispatcherContextCatalog.render()
 
+  /** 项目记忆注入段（project-memory 批 2026-09-05 §3）：本项目 workspace
+    * `.nebflow/memory.md` 的渲染块——预算内全文、软警区全文+WARN 脚注、超硬顶
+    * 头部+统计（三态渲染单点在 ProjectMemory.injectionBlock）。文件缺失/空 →
+    * ""（调用方不注空段）。
+    * 注入语义=「派发项目任务 → 该项目记忆自动注入」：只挂 spawn 形态两 prompt
+    * （newTaskPrompt/reentryPrompt）；注入活跃会话形态（taskInjectionText/
+    * reentryInjectionText）不重复注入——会话 spawn 时已带当次记忆快照，turn
+    * 边界间的增量由 NodeList 现读与节点 out 结果承接（最小改动纪律）。
+    * 全局注入（ContextRefresher）不含项目记忆——瘦身边界（§3 默认注入只含全局）。 */
+  private def projectMemoryText(project: ProjectDef): IO[String] =
+    ProjectMemory.injectionBlock(project.workspace, project.name)
+
   /** 新任务形态 prompt（spawnDispatcher 双形态之一，现状文案保留）。 */
-  private def newTaskPrompt(project: ProjectDef, snapshot: FlowMapState, taskText: String, pluginCatalog: String): String =
+  private def newTaskPrompt(project: ProjectDef, snapshot: FlowMapState, taskText: String, pluginCatalog: String, projectMemory: String): String =
     s"""你是项目「${project.name}」的任务分发器。当前 Flow Map 快照（NodeList 数据源）：
        |```json
        |${snapshot.asJson.noSpaces}
        |```
        |
-       |${if pluginCatalog.nonEmpty then pluginCatalog + "\n" else ""}任务：$taskText
+       |${if pluginCatalog.nonEmpty then pluginCatalog + "\n" else ""}${if projectMemory.nonEmpty then projectMemory + "\n" else ""}任务：$taskText
        |
        |先 NodeList 读现状，再按需用 NodeEdit 建节点/接线/改接。所有 Node 工具调用必须带 project=${project.name} 参数。无需回报——拓扑与状态已落 Flow Map。""".stripMargin
 
@@ -270,7 +282,7 @@ object ProjectActor:
 
   /** 重入调整形态 prompt（spawnDispatcher 双形态之二，设计 §2.2 原文照抄——
     * 含节点名/id/blockCount/反馈三字段/Flow Map 快照注入/四动作选择/abandon 说明/「无需回报」）。 */
-  private def reentryPrompt(project: ProjectDef, snapshot: FlowMapState, node: NodeDef, feedback: BlockedFeedback, blockCount: Int, pluginCatalog: String): String =
+  private def reentryPrompt(project: ProjectDef, snapshot: FlowMapState, node: NodeDef, feedback: BlockedFeedback, blockCount: Int, pluginCatalog: String, projectMemory: String): String =
     s"""你是项目「${project.name}」的任务分发器——本轮是【节点反馈重入调整】，不是新任务。
        |
        |节点 ${node.name}（${node.id}）报告 blocked（第 $blockCount 轮）：
@@ -283,7 +295,7 @@ object ProjectActor:
        |${snapshot.asJson.noSpaces}
        |```
        |
-       |${if pluginCatalog.nonEmpty then pluginCatalog + "\n" else ""}${reentryActions(project)}""".stripMargin
+       |${if pluginCatalog.nonEmpty then pluginCatalog + "\n" else ""}${if projectMemory.nonEmpty then projectMemory + "\n" else ""}${reentryActions(project)}""".stripMargin
 
   /** 注入现有会话的新任务文本（单例化裁定：标注「新任务到达」来源；与进行中
     * 工作按 turn 串行——处理中排 pendingUserInputs，turn 边界消费）。 */
@@ -388,7 +400,9 @@ object ProjectActor:
       case None =>
         cfg.engine.store.snapshot.flatMap { snapshot =>
           pluginCatalogText().flatMap { catalog =>
-            spawnDispatcher(cfg, active, same, newTaskPrompt(cfg.project, snapshot, taskText, catalog), rootSessionId, "", taskText)
+            projectMemoryText(cfg.project).flatMap { memory =>
+              spawnDispatcher(cfg, active, same, newTaskPrompt(cfg.project, snapshot, taskText, catalog, memory), rootSessionId, "", taskText)
+            }
           }
         }
     }
@@ -427,8 +441,10 @@ object ProjectActor:
           case None =>
             cfg.engine.store.snapshot.flatMap { snapshot =>
               pluginCatalogText().flatMap { catalog =>
-                spawnDispatcher(cfg, active, same, reentryPrompt(cfg.project, snapshot, node, feedback, blockCount, catalog), rootSessionId,
-                  s" (reentry round $blockCount: ${node.name})", reentryTaskText(node, feedback, blockCount))
+                projectMemoryText(cfg.project).flatMap { memory =>
+                  spawnDispatcher(cfg, active, same, reentryPrompt(cfg.project, snapshot, node, feedback, blockCount, catalog, memory), rootSessionId,
+                    s" (reentry round $blockCount: ${node.name})", reentryTaskText(node, feedback, blockCount))
+                }
               }
             }
         }
