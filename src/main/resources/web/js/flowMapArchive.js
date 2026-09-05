@@ -61,7 +61,8 @@ function statusClass(st) {
  * @typedef {Object} ChainMember
  * @property {string} id
  * @property {string=} name
- * @property {string=} agent
+ * @property {string=} preset 节点预设名（NodePayload；未配置 → 前端空态「默认预设」）
+ * @property {string[]=} plugins 分配插件名列表（NodePayload，条件序列化——非空才带）
  * @property {string=} status
  * @property {string=} description 一行描述（创建必写；2026-09-05 载荷收敛第一层）
  * @property {boolean=} hasResult 节点持有结果全文（载荷不含 result 本体——按需拉取标记）
@@ -494,17 +495,23 @@ function updateBadge(/** @type {LayerCtx} */ ctx, /** @type {boolean} */ pulse) 
   }
 }
 
-/** @param {ChainMember} m @returns {string} 成员行（§5.5：状态/名称/agent/时间/›） */
+/** @param {ChainMember} m @returns {string} 成员行（§5.5：状态/名称/元数据/时间/›） */
 function memberHtml(m) {
   const st = String(m.status || '');
   // 载荷收敛（2026-09-05）：预览行 = description（回退 taskPreview）——载荷无 result
   const preview = String(m.description || m.taskPreview || '').slice(0, 60);
+  // Agent 退役（node-flowmap-slim）：元数据槽 = preset 常显（未配置 → 空态「默认预设」），
+  // plugins 有则并列（` · ` 分隔；超长 ellipsis 收边）。复用原 agent 槽位样式（改名义
+  // .fm-member-meta，flowMap.css 同规则改名），存量节点零 preset/plugins → 空态兜底。
+  const presetText = String(m.preset || '') || t('flowmap.presetDefault');
+  const pluginsText = Array.isArray(m.plugins) ? m.plugins.join(', ') : '';
+  const metaText = pluginsText ? `${presetText} · ${pluginsText}` : presetText;
   return `
     <div class="fm-member" role="button" tabindex="0" data-node="${esc(m.id)}" title="${esc(String(m.name || ''))} · ${esc(t('flowmap.archive.openMemberHint'))}">
       <div class="fm-member-row">
         <span class="fm-entry-st ${statusClass(st)}">${ST_SVG[/** @type {'completed'} */ (st)] || ''}</span>
         <span class="fm-member-name">${esc(String(m.name || m.id))}</span>
-        <span class="fm-member-agent">${esc(String(m.agent || ''))}</span>
+        <span class="fm-member-meta" title="${esc(metaText)}">${esc(metaText)}</span>
         <span class="fm-member-time">${esc(fmtTime(m.completedAt))}</span>
         <span class="fm-member-go">${CHEV_SVG}</span>
       </div>
@@ -683,8 +690,12 @@ function renderDetail(/** @type {LayerCtx} */ ctx, /** @type {ChainMember} */ n)
   const chainLine = chain
     ? `${esc(t('flowmap.archive.chain'))}：${esc(chain.title)}（${esc(t('flowmap.archive.nodes', { n: String(chain.nodeCount) }))} · ${esc(chain.members.every((m) => TERMINAL_STATUSES.has(String(m.status || ''))) ? t('flowmap.archive.chainArchived') : t('flowmap.archive.chainRetained'))}）`
     : '';
+  // Agent 退役（node-flowmap-slim）：meta 首行粗体 = preset（未配置 → 空态「默认
+  // 预设」），plugins 有则并列其後——同节点卡副行口径。
+  const presetText = String(n.preset || '') || t('flowmap.presetDefault');
+  const pluginsText = Array.isArray(n.plugins) ? n.plugins.join(', ') : '';
   const metaRows = [
-    `<b>${esc(String(n.agent || ''))}</b> · ${esc(statusLabel(st))} · ${esc(n.id)}`,
+    `<b>${esc(presetText)}</b>${pluginsText ? ` · ${esc(pluginsText)}` : ''} · ${esc(statusLabel(st))} · ${esc(n.id)}`,
     `${esc(t('flowmap.archive.created'))} ${esc(fmtTime(n.createdAt))}${n.completedAt ? ` · ${esc(t('flowmap.archive.completed'))} ${esc(fmtTime(n.completedAt))}` : ''}`,
     chainLine,
   ].filter(Boolean).join('<br>');

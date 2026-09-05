@@ -546,9 +546,16 @@ function nodeHtml(n, pos, originX, nameOf) {
     ? `<div class="fm-wait-note" title="${esc(`${t('flowmap.waitingFor')}: ${waitParts.join(' · ')}`)}">`
       + `${FM_WAIT_ICON}<span class="fm-wait-note-text">${esc(t('flowmap.waitingFor'))}: ${esc(waitParts.join(' · '))}</span></div>`
     : '';
+  // Agent 退役（node-flowmap-slim：节点恒 general，卡上无信息量）——副行改显节点
+  // 元数据：preset 常显（未配置 → 克制空态「默认预设」），plugins 有则以
+  // `preset · p1, p2` 同行合显、无则零空态段。单行口径与归档成员行/详情窗 meta
+  // 一致；88px 固定卡纵向不可加行（独占行实测溢出加剧），复用 .solar-node-sub。
+  const presetText = n.preset || t('flowmap.presetDefault');
+  const pluginsText = (n.plugins || []).join(', ');
+  const subTitle = pluginsText ? `${presetText} · ${pluginsText}` : presetText;
   return `
-    <div class="solar-node fm-node ${cls}${term ? ' terminal' : ''}" data-node-id="${esc(n.id)}" data-agent="${esc(n.agent)}"
-         data-status="${esc(st)}" tabindex="0" title="${esc(n.name)} · ${esc(n.agent)}${term ? `（${esc(t('flowmap.terminalTag'))}）` : ''}" style="left:${left.toFixed(1)}px;top:${top.toFixed(1)}px">
+    <div class="solar-node fm-node ${cls}${term ? ' terminal' : ''}" data-node-id="${esc(n.id)}"
+         data-status="${esc(st)}" tabindex="0" title="${esc(n.name)} · ${esc(subTitle)}${term ? `（${esc(t('flowmap.terminalTag'))}）` : ''}" style="left:${left.toFixed(1)}px;top:${top.toFixed(1)}px">
       <div class="solar-orbit">
         <div class="solar-ring ring-1"><div class="solar-dot-wrap"><div class="solar-dot"></div></div></div>
         <div class="solar-ring ring-2"><div class="solar-dot-wrap"><div class="solar-dot"></div></div></div>
@@ -556,7 +563,7 @@ function nodeHtml(n, pos, originX, nameOf) {
       </div>
       <div class="fm-node-head">${worktreeBadge}${statusIcon}</div>
       <div class="solar-node-label" title="${esc(n.name)}">${esc(n.name)}</div>
-      <div class="solar-node-sub">${esc(n.agent)}</div>
+      <div class="solar-node-sub">${esc(subTitle)}</div>
       ${st === 'pending' && (n.in || []).length > 1 ? `<div class="fm-barrier-hint">barrier ×${(n.in || []).length}</div>` : ''}
       ${waitNote}
       ${desc}
@@ -877,14 +884,16 @@ function animateNodeExit(el) {
  *  保留卡加入签名（terminal class + title 标注随状态切换原地重建）。deps 段与
  *  in barrier 提示同款（deps 设计 §1.4）：pending/wiring 且有 deps 显示等待脚注，
  *  deps 集变化即重渲。2026-09-05 载荷收敛：签名带 description/taskPreview（卡片
- *  展示字段），不再含 result（载荷无 result）。 */
+ *  展示字段），不再含 result（载荷无 result）。Agent 退役（node-flowmap-slim）：
+ *  agent 不再上卡，签名改带 preset/plugins（副行展示字段，变更即重渲）。 */
 function nodeContentKey(n) {
   if (!n) return '∅';
   const st = n.status || 'pending';
   return [
     st,
     n.name || '',
-    n.agent || '',
+    n.preset || '',
+    (n.plugins || []).join(','),
     n.hasWorktree || n.worktree ? 1 : 0,
     n.worktree || '',
     st === 'pending' && (n.in || []).length > 1 ? (n.in || []).length : 0,
@@ -914,7 +923,6 @@ function transplantNodeContent(el, n, pos, originX, nameOf) {
   });
   el.className = fresh.className;
   if (fresh.dataset.status !== undefined) el.dataset.status = fresh.dataset.status;
-  if (fresh.dataset.agent !== undefined) el.dataset.agent = fresh.dataset.agent;
 }
 
 function applyNodeDiff(canvas, prevFm, fm, positions, width, projectName) {
