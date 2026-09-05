@@ -14,8 +14,12 @@ project/project/
 .DS_Store
 Thumbs.db
 
-# Nebflow runtime
-.nebflow/
+# Nebflow runtime（Spec 例外：契约对齐文档入库）
+# 注：.nebflow/ → .nebflow/* + !.nebflow/Spec/ 使 .nebflow/Spec/ 可跟踪。
+# ⚠️ 此 hunk 与 memory-plan / merge-node / dispatcher-ctx 三批同文件改动交叠，
+# 宿主按各自基于 main 的配方重放（friend-contract-align 批次注明）。
+.nebflow/*
+!.nebflow/Spec/
 .nebflow-qc.log
 
 # Internal / development-only

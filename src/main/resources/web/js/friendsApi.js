@@ -1,15 +1,21 @@
 // friendsApi.js — A2A friends/messaging REST adapter (friends-messaging-arch §6.1).
 //
-// PRIMARY mode (default): calls the gateway's real REST endpoints
-// (/api/friends*, /api/conversations*, /api/users/lookup — RestApiRoutes
-// withNeblink+withAuth, contract pinned by FriendApiRoutesSpec).
+// PRIMARY mode (default, 直连): calls the gateway's real REST endpoints
+// (/api/users/search, /api/friends*, /api/conversations* — RestApiRoutes
+// withNeblink+withAuth). Wire contract = friend-search-contract v1.0+§8
+// (作者 2026-09-05 裁定：NL 号 = 官网 Username；统一切换、无双写别名期 §4.7)：
+// 档案四字段字面 snake_case（username / display_name / avatar / relation_status），
+// 信封字段维持 camelCase（userId/requestId/conversationId/createdAt/...）。
+// 联调依赖 = 服务端部署窗口（neblink-server 新端点 + beta.55 同窗口发版；
+// 窗口期直连搜索 404 → 未找到卡，属 §4.7 预期）。
 //
 // Debug-only mock mode (kept as an escape hatch for offline UI work — P3):
 //   localStorage 'fm_api_mock' = '1'   or   URL ?fmMock=1
 //   Optional deterministic seed for tests:
 //   localStorage 'fm_api_mock_seed' = JSON {self, users, friends, incoming,
 //     outgoing, conversations, messages} — see normalizeSeed() for shapes.
-//   WITHOUT the flag the real path is always used.
+//   WITHOUT the flag the real path is always used. Mock 按同一契约实现
+//   （新端点/新字段/六态 relation_status），与直连共享同一 public API 面。
 //
 // Error surface (P3): 401/403 → window 'fm-auth-required' event (login
 // guidance); network failure → 'fm-network-error' (toast). Callers still get
@@ -67,10 +73,12 @@ let M = null;
 function normalizeSeed(raw) {
   const s = raw || {};
   return {
-    self: s.self || { userId: 'me', neblinkId: 'me@example.com', name: 'Me', avatarUrl: '' },
-    // lookup directory: all users searchable by neblinkId (exact, case-insensitive)
+    self: s.self || { userId: 'me', username: 'me', email: 'me@example.com', displayName: 'Me', avatar: '' },
+    // search directory: 契约双键（username OR email）NOCASE 精确。新旧两种
+    // user 形态都吃：新 {userId,username,email,displayName,avatar}；旧
+    // {userId,neblinkId,name,avatarUrl}（str accessor 回退读，旧 seed 不改即用）。
     users: s.users || [],
-    friends: s.friends || [],       // [{userId,neblinkId,name,avatarUrl,since}]
+    friends: s.friends || [],       // [{userId,neblinkId,name,avatarUrl,since,blocked?}]（内部 wire 形态）
     incoming: s.incoming || [],     // [{requestId,from:{userId,neblinkId,name,avatarUrl},note,status}]
     outgoing: s.outgoing || [],     // [{requestId,to:{...},note,status}]
     conversations: s.conversations || [], // [{conversationId,friend:{userId,neblinkId,name,avatarUrl},lastMessage,unreadCount}]
@@ -78,6 +86,72 @@ function normalizeSeed(raw) {
     _msgSeq: 1000,
     _reqSeq: 100,
   };
+}
+
+// ── Username 契约 v1.0（friend-search-contract §4；作者 2026-09-05 裁定：
+// NL 号 = 官网 Username）── 搜索唯一入口 = GET /api/users/search?q=（双键
+// username OR email NOCASE 精确；miss 恒 {"found":false} 防枚举，两维度无
+// 差别；relation_status 六态见 relationOf）。wire 档案四字段 = {userId,
+// username, display_name, avatar}（snake_case 字面，信封 camelCase 维持）。
+// 本文件是唯一 wire↔内部形态边界：搜索结果归一为内部扁平字段（username/
+// displayName/avatar + relation_status 原样透传）；列表链归一为内部 wire
+// 对象（neblinkId/name/avatarUrl，值域即 username/display_name/avatar）——
+// 消费方零散字段读不动（§4.7 单点归一，无双写别名期指 wire 而言）。
+const uName = (u) => u.username ?? u.neblinkId ?? '';
+const uDisplay = (u) => u.displayName ?? u.name ?? '';
+const uAvatar = (u) => u.avatar ?? u.avatarUrl ?? '';
+const uEmail = (u) => u.email ?? (/^[^\s@]+@[^\s@]+$/.test(u.neblinkId || '') ? u.neblinkId : '');
+
+/** 契约双键匹配：q 对 username 与 email 同时 NOCASE 精确比较（服务端 §4.1
+ *  语义镜像；不分维度分支）。 */
+function matchUser(m, s) {
+  if (!s) return null;
+  const norm = s.toLowerCase();
+  return m.users.find(u => uName(u).toLowerCase() === norm || uEmail(u).toLowerCase() === norm) || null;
+}
+
+/** 契约 wire 档案 {userId, username, display_name, avatar, ...} → 内部 wire
+ *  对象 {userId, neblinkId, name, avatarUrl}（值域=同一人；无 snake_case 键
+ *  的对象原样透传——内部/mock 形态单点判定安全）。 */
+function personFromWire(p) {
+  if (!p || typeof p !== 'object') return p;
+  if (p.username === undefined && p.display_name === undefined && p.avatar === undefined) return p;
+  return { userId: p.userId, neblinkId: p.username ?? '', name: p.display_name ?? '', avatarUrl: p.avatar ?? '' };
+}
+
+/** 搜索响应归一：契约 {found:true, user:{username,display_name,avatar},
+ *  relation_status} → 内部扁平 {found, userId?, username, displayName,
+ *  avatar, relation_status}。miss 恒 {found:false}（无 user/relation_status
+ *  冗余键，防枚举形状一致 §4.1/§5.1）。 */
+function normalizeSearch(raw) {
+  if (!raw || typeof raw !== 'object' || raw.found !== true) return { found: false };
+  const u = raw.user && typeof raw.user === 'object' ? raw.user : {};
+  return {
+    found: true,
+    userId: u.userId,
+    username: u.username ?? '',
+    displayName: u.display_name ?? '',
+    avatar: u.avatar ?? '',
+    relation_status: raw.relation_status,
+  };
+}
+
+/** mock relation_status 六态判定（契约 §4.1；镜像服务端可加性语义——被对方
+ *  拉黑不可区分，落入 addable §5.4）。 */
+function relationOf(m, u) {
+  if (u.userId === m.self.userId) return 'self';
+  const fr = m.friends.find(f => f.userId === u.userId);
+  if (fr && fr.blocked) return 'blocked_by_me';
+  if (fr) return 'already_friends';
+  if (m.outgoing.some(r => r.to?.userId === u.userId && (r.status || 'pending') === 'pending')) return 'outgoing_pending';
+  if (m.incoming.some(r => r.from?.userId === u.userId && (r.status || 'pending') === 'pending')) return 'incoming_pending';
+  return 'addable';
+}
+
+/** 搜索命中 → wire 人对象（outgoing/requestRow/accept 等下游消费
+ *  neblinkId/name/avatarUrl 字段）。 */
+function wirePerson(u) {
+  return { userId: u.userId, neblinkId: uName(u), name: uDisplay(u), avatarUrl: uAvatar(u) };
 }
 
 function mockStore() {
@@ -89,7 +163,7 @@ function mockStore() {
   } catch { /* fall through to default */ }
   if (!seed) {
     seed = {
-      users: [{ userId: 'u-lin', neblinkId: 'lin@example.com', name: '林小满', avatarUrl: '' }],
+      users: [{ userId: 'u-lin', username: 'lin', email: 'lin@example.com', displayName: '林小满', avatar: '' }],
       friends: [{ userId: 'u-lin', neblinkId: 'lin@example.com', name: '林小满', avatarUrl: '', since: new Date().toISOString() }],
       conversations: [{
         conversationId: 'c-lin',
@@ -114,39 +188,63 @@ const delay = () => new Promise(r => setTimeout(r, Number((() => { try { return 
 
 // ── Public API (same surface in both modes) ─────────────
 
-/** GET /api/users/lookup?q= → {found, neblinkId?, name?, avatarUrl?, self?} */
-export async function lookupUser(q) {
-  if (!MOCK) return req('GET', `/api/users/lookup?q=${encodeURIComponent(q)}`);
+/** GET /api/users/search?q= → 契约 v1.0（§4.1）：{found:true, user:{username,
+ *  display_name, avatar}, relation_status} | {found:false}（miss 恒等形状，
+ *  username/email 两维度无差别防枚举 §5.1）。双键 NOCASE 精确语义在服务端；
+ *  空白 q 服务端亦回 found:false；>256 字符 422 invalid_query、超频 429
+ *  rate_limited 走 req() 错误面（err.status/err.data），调用方 catch 兜底
+ *  未找到卡（窗口期服务端未部署 = 404，同一兜底路径，§4.7 预期）。 */
+export async function searchUser(q) {
+  if (!MOCK) return normalizeSearch(await req('GET', `/api/users/search?q=${encodeURIComponent(q)}`));
   await delay();
   const m = mockStore();
-  const norm = String(q || '').trim().toLowerCase();
-  if (norm && norm === m.self.neblinkId.toLowerCase()) {
-    return { found: true, self: true, neblinkId: m.self.neblinkId, name: m.self.name, avatarUrl: m.self.avatarUrl };
-  }
-  const hit = m.users.find(u => u.neblinkId.toLowerCase() === norm);
-  return hit
-    ? { found: true, neblinkId: hit.neblinkId, name: hit.name, avatarUrl: hit.avatarUrl || '', userId: hit.userId }
-    : { found: false };
+  const s = String(q || '').trim();
+  if (s.length > 256) throw mockError('invalid_query', 422);
+  if (!s) return { found: false };
+  const norm = s.toLowerCase();
+  // self 命中：username / email 任一自身标识（relation_status='self' §4.1）
+  const isSelf = [uName(m.self), uEmail(m.self)].some(v => v && v.toLowerCase() === norm);
+  const hit = isSelf ? m.self : matchUser(m, s);
+  if (!hit) return { found: false };
+  return {
+    found: true,
+    userId: hit.userId,
+    username: uName(hit),
+    displayName: uDisplay(hit) || uName(hit) || hit.userId || '',  // display_name 永不空 fallback 链镜像（§3.1）
+    avatar: uAvatar(hit),
+    relation_status: relationOf(m, hit),
+  };
 }
 
-/** GET /api/friends → {friends, incoming, outgoing} */
+/** GET /api/friends → {friends, incoming, outgoing}。直接链路：上游契约档案
+ *  {userId, username, display_name, avatar, since, blocked}（§4.5）经
+ *  personFromWire 归一为内部 wire 对象；信封字段 since/blocked 原样保留。
+ *  mock 链路本就内部形态，原样返回。 */
 export async function getFriends() {
-  if (!MOCK) return req('GET', '/api/friends');
+  if (!MOCK) {
+    const data = await req('GET', '/api/friends');
+    return {
+      friends: (data.friends || []).map(f => ({ ...personFromWire(f), since: f.since, blocked: f.blocked })),
+      incoming: (data.incoming || []).map(r => ({ ...r, from: personFromWire(r.from) })),
+      outgoing: (data.outgoing || []).map(r => ({ ...r, to: personFromWire(r.to) })),
+    };
+  }
   await delay();
   const m = mockStore();
   return { friends: [...m.friends], incoming: [...m.incoming], outgoing: [...m.outgoing] };
 }
 
-/** POST /api/friends/requests {query, note?} → {requestId} (201) */
+/** POST /api/friends/requests {query, note?} → {requestId} (201)。
+ *  形状不变（§4.4）；query 语义 = username OR email 双键精确（服务端）。 */
 export async function sendFriendRequest(query, note) {
   if (!MOCK) return req('POST', '/api/friends/requests', { query, ...(note ? { note } : {}) });
   await delay();
   const m = mockStore();
-  const norm = String(query || '').trim().toLowerCase();
-  const hit = m.users.find(u => u.neblinkId.toLowerCase() === norm);
+  const hit = matchUser(m, String(query || '').trim());
   if (!hit) throw mockError('not found', 404);
   const requestId = 'rq-' + (++m._reqSeq);
-  m.outgoing.push({ requestId, to: { ...hit }, note: note || '', status: 'pending' });
+  // outgoing/requestRow/acceptFriendRequest 消费 wire 形态——新契约命中归一后再入队
+  m.outgoing.push({ requestId, to: wirePerson(hit), note: note || '', status: 'pending' });
   return { requestId };
 }
 
@@ -178,9 +276,13 @@ export async function declineFriendRequest(requestId) {
   return {};
 }
 
-/** GET /api/conversations → [{conversationId, friend, lastMessage, unreadCount}] */
+/** GET /api/conversations → [{conversationId, friend, lastMessage, unreadCount}]。
+ *  直接链路：内嵌 friend 契约档案经 personFromWire 归一（§4.5 切换面）。 */
 export async function getConversations() {
-  if (!MOCK) return req('GET', '/api/conversations');
+  if (!MOCK) {
+    const convs = await req('GET', '/api/conversations');
+    return (Array.isArray(convs) ? convs : []).map(c => ({ ...c, friend: personFromWire(c.friend) }));
+  }
   await delay();
   return mockStore().conversations.map(c => ({ ...c }));
 }
@@ -257,30 +359,10 @@ export async function markConversationRead(conversationId, lastReadMessageId) {
   if (conv) conv.unreadCount = 0;
 }
 
-/** PUT /api/users/me/neblink-id {neblinkId} → 200 {neblinkId} ([U3] 号自定义).
- *  Upstream 409 taken / 422 invalid collapse to 502 + error string via the
- *  gateway — the UI pre-validates (regex + available check) so these only
- *  surface as rare races. */
-export async function setNeblinkId(neblinkId) {
-  if (!MOCK) return req('PUT', '/api/users/me/neblink-id', { neblinkId });
-  await delay();
-  const m = mockStore();
-  m.self.neblinkId = neblinkId;
-  return { neblinkId };
-}
-
-/** GET /api/users/me/neblink-id/available?q= → {available, reason?} ([U3]).
- *  reason: 'taken' | 'invalid'; 20/min shared with lookup (server limiter). */
-export async function neblinkIdAvailable(q) {
-  if (!MOCK) return req('GET', `/api/users/me/neblink-id/available?q=${encodeURIComponent(q)}`);
-  await delay();
-  const m = mockStore();
-  const v = String(q || '').trim();
-  if (!/^[a-zA-Z0-9]{3,32}$/.test(v)) return { available: false, reason: 'invalid' };
-  // Server semantics: uniqueness excludes SELF (own current id stays available).
-  const taken = m.users.some(u => (u.neblinkId || '').toLowerCase() === v.toLowerCase());
-  return taken ? { available: false, reason: 'taken' } : { available: true };
-}
+// 旧端点同 release 移除（friend-search-contract §4.7）：GET /api/users/lookup、
+// PUT /api/users/me/neblink-id、GET /api/users/me/neblink-id/available 的客户端
+// 调用已全部摘除（setNeblinkId/neblinkIdAvailable 随 NL 号自定义 UI 一并删除——
+// 10:54 裁定：客户端不提供修改入口，Username 经官网账号中心设置）。
 
 /** Test/mock helper: inject an inbound message as if a friend_event arrived. */
 export function mockInjectMessage(conversationId, msg) {
