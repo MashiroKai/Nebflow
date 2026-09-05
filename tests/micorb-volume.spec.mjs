@@ -1,16 +1,20 @@
 // micorb-volume.spec.mjs — regression spec for the micOrb listening-state
 // voice-responsive deformation (v8.4.0; author request 2026-09-03: 听写中
 // 音量越大形变越大，波形有机、不要整齐正弦; v8.4.2 2026-09-05 口径: 波纹
-// 加密 k{3,5,8}→{5,8,13}、amp 0.032→0.016、波峰柔化 weights/jitterDepth).
+// 加密 k{3,5,8}→{5,8,13}、amp 0.032→0.016、波峰柔化 weights/jitterDepth;
+// v8.4.3 2026-09-05 口径: 更平缓——weights [0.62,0.27,0.11] 全包络衰减加陡、
+// jitter rate 0.80/1.30/2.30 (×~1.6 慢呼吸)、τ 150/480ms 缓入缓出; amp 与
+// uVol 主通道不动，音量可辨由 T1 + T4b 直接幅值比 + T5 像素差三重保证).
 //
 // Verifies (levels injected through renderer.setVoiceLevel — the test seam
 // over the mic sources; NO microphone needed):
 //   T1 幅度单调跟随 — synthetic level steps 0.15→0.5→0.9: the smoothed
 //      uVol amplitude (renderer.voiceLevel) follows monotonically and
-//      settles inside a ±0.06 band of each target (attack τ=110ms).
+//      settles inside a ±0.06 band of each target (attack τ=150ms since
+//      v8.4.3).
 //      Also proves the production setVolume alias lands on the same raw.
 //   T2 电平归零回落 — from a settled 0.9, zeroing the level decays the
-//      amplitude back to the base (≤0.04 after 1.4s; release τ=340ms).
+//      amplitude back to the base (≤0.04 after 2.2s; release τ=480ms).
 //   T3 非 listening 态注入不生效 — injecting 0.9 in every non-listening
 //      state leaves the amplitude at ≤0.02 (target forced to 0); the
 //      listening control in the same session still rises (mechanism alive).
@@ -126,7 +130,7 @@ test('T1: 幅度单调跟随 — synthetic level steps drive the uVol amplitude 
 
   // Production feed path (voiceEngine → setVolume alias) lands identically.
   await page.evaluate(() => window.__volTest.injectAlias(0.7));
-  await page.waitForTimeout(700); // v8.4.1: release τ=340ms → 700ms to settle inside the ±0.06 band (400ms left ~0.061 residual)
+  await page.waitForTimeout(900); // v8.4.3: release τ=480ms → 900ms leaves 0.731 (Δ=0.031, inside ±0.06; 700ms left ~0.047)
   const viaAlias = await page.evaluate('window.__volTest.snapVoice()');
   expect(viaAlias.raw).toBe(0.7);
   expect(Math.abs(viaAlias.level - 0.7)).toBeLessThanOrEqual(0.06);
@@ -138,7 +142,7 @@ test('T2: 电平归零回落 — zeroed level decays back to the base amplitude 
   expect(loud.level).toBeGreaterThan(0.8);
 
   await page.evaluate(() => window.__volTest.inject(0));
-  await page.waitForTimeout(1400); // e^(-1400/340) ≈ 0.016 → level ≈ 0.015 (v8.4.1 τ_release)
+  await page.waitForTimeout(2200); // v8.4.3: e^(-2200/480) ≈ 0.010 → level ≈ 0.009 (τ_release 480ms)
   const rest = await page.evaluate('window.__volTest.snapVoice()');
   expect(rest.raw).toBe(0);
   expect(rest.level, 'released to the fixed base amplitude').toBeLessThanOrEqual(0.04);
@@ -165,7 +169,14 @@ test('T3: 非 listening 态注入电平不生效 — all 8 other states force th
 /* ---- T4 helpers: waveform-shape analysis of the shared source of truth -- */
 
 /** Sample voiceWaveAt profiles at several times; time-averaged angular-DFT
- *  spectrum metrics + the raw profiles for correlation checks. */
+ *  spectrum metrics + the raw profiles for correlation checks.
+ *  v8.4.3: the jitter rates slowed ×~1.6 (periods now 2.7/4.8/7.9s), so a
+ *  short sample window no longer averages the jitter cycle — the estimator
+ *  gains a visible bias (9 samples/3.35s read 0.858 vs the 0.819 converged
+ *  value). The window is extended to 30 samples over ~23.3s ≈ 3 full cycles
+ *  of the slowest jitter so "time-averaged" means what it says. The first 9
+ *  times keep their original values — the T4(b) correlation indices
+ *  (profiles[0]/[3]/[6], gaps 1.07s/2.41s) are unchanged. */
 async function waveMetrics(page, times) {
   return page.evaluate((times) => {
     const w = window.__volTest.voiceWaveAt;
@@ -190,13 +201,14 @@ async function waveMetrics(page, times) {
     const avg = energy.map((e) => e / profiles.length);
     const emax = Math.max(...avg);
     const etot = avg.reduce((s, x) => s + x, 0);
-    // v8.4.2: floor stays 0.03*emax — the k=13 share 0.14 puts its
-    // time-averaged energy at ~6.5% of the top bin (0.14²/0.55²), above the
-    // floor with >2× margin; off-bins are numerically ~0 (integer k → zero
-    // leakage), so exactly {5,8,13} is detected. The floor remains far below
-    // the neat-sine control (>99% in one bin) — criterion discriminative.
-    // (Bin range 12→14: v8.4.2's k=13 needs bin 13.)
-    const strongBins = avg.map((e, i) => ({ k: i + 1, e })).filter((x) => x.e >= 0.03 * emax).map((x) => x.k);
+    // 判据修订（第三轮）: floor 0.03·emax → 0.015·emax. v8.4.3 steepens the
+    // whole spectral envelope (weights 0.62/0.27/0.11), so the k=13 bin's
+    // share of the top bin drops to (0.11/0.62)² ≈ 3.1% — still >2× above
+    // the 0.015 floor, while off-bins stay numerically ~0 (integer k → zero
+    // leakage), so exactly {5,8,13} is detected. The floor remains ~66×
+    // below the neat-sine control (>99% in one bin) — criterion still
+    // discriminative. (Bin range 12→14: k=13 needs bin 13.)
+    const strongBins = avg.map((e, i) => ({ k: i + 1, e })).filter((x) => x.e >= 0.015 * emax).map((x) => x.k);
     const top3 = avg.map((e, i) => ({ k: i + 1, e })).sort((a, b) => b.e - a.e).slice(0, 3).map((x) => x.k);
     return { profiles, topShare: emax / etot, strongBins, top3 };
   }, times);
@@ -212,11 +224,28 @@ function pearson(a, b) {
 }
 
 test('T4: 非整齐正弦 — multi-harmonic spectrum, evolving shape, 2π-continuous rim', async ({ page }) => {
-  const TIMES = [0.3, 0.75, 1.0, 1.37, 1.9, 2.4, 2.71, 3.2, 3.65];
+  const TIMES = [
+    0.3, 0.75, 1.0, 1.37, 1.9, 2.4, 2.71, 3.2, 3.65,          // original 9 (T4b correlation indices ride on these)
+    ...Array.from({ length: 21 }, (_, i) => +(4.4 + i * 0.96).toFixed(3)), // v8.4.3: extend to ~23.3s ≈ 3 slowest-jitter cycles
+  ];
   const m = await waveMetrics(page, TIMES);
 
   // (a) 单频拒绝: time-averaged energy spread across the designed bins.
-  expect(m.topShare, `time-averaged top DFT bin share ${m.topShare.toFixed(3)} must be < 0.75`).toBeLessThan(0.75);
+  // ── 判据修订（第三轮）───────────────────────────────────────────────
+  // topShare gate 0.75 → 0.85. The gate's PURPOSE is unchanged (reject the
+  // "neat sine" look: energy must stay multi-harmonic). v8.4.3 deliberately
+  // steepens the whole high-frequency decay envelope (author: 波峰要更圆，
+  // 消除锯齿感) — ANY real steepening of a 3-harmonic set raises the top
+  // bin's share: 0.726 (v8.4.2) → ~0.82 (v8.4.3, converged time-average over
+  // the ≥3-cycle window; observed 0.813-0.828 across window shifts). The
+  // 0.75 line made the requested smoothing
+  // mathematically unreachable (v8.4.2 already sat 0.024 under it), so the
+  // gate moves to 0.85 — still 14+ points under the >0.99 neat-sine control,
+  // and now PAIRED with a direct volume-distinguishability assertion (T4b:
+  // loud/quiet main-wave amplitude ratio) so the revision cannot trade away
+  // the author's "音量大小区别仍要能看出来" requirement. Rollback: restore
+  // 0.75 here + weights [0.55,0.31,0.14] in micOrb.js VOICE_WAVE.
+  expect(m.topShare, `time-averaged top DFT bin share ${m.topShare.toFixed(3)} must be < 0.85 (判据修订（第三轮）: was 0.75)`).toBeLessThan(0.85);
   expect(m.strongBins, 'exactly the 3 designed wavenumbers {5,8,13} carry energy').toEqual([5, 8, 13]);
   expect(m.top3, 'dominant bins ordered by weight: 5, 8, 13').toEqual([5, 8, 13]);
 
@@ -253,6 +282,32 @@ test('T4: 非整齐正弦 — multi-harmonic spectrum, evolving shape, 2π-conti
     return worst;
   });
   expect(seam, 'rim profile is 2π-continuous (no angular seam)').toBeLessThan(1e-6);
+});
+
+/* ---- T4b: direct volume-distinguishability metric (v8.4.3 pairing) ----- */
+
+test('T4b: 音量可辨直接度量 — 三档主波幅值比 (判据修订（第三轮）配套锚)', async ({ page }) => {
+  // The rendered rim displacement is LINEAR in the smoothed level: disp =
+  // uVol · amp · wave(θ,t), with amp and the wave field untouched by v8.4.3.
+  // So the settled level ratio IS the main-wave amplitude ratio — the direct
+  // "音量大小区别要能看出来" metric the T4 topShare revision is paired with.
+  // Quiet/normal/loud = 0.15/0.5/0.9 (attack τ=150ms → 900ms settles each).
+  await page.evaluate(() => window.__volTest.apply('listening'));
+  const settle = async (v) => {
+    await page.evaluate((v) => window.__volTest.inject(v), v);
+    await page.waitForTimeout(900);
+    return page.evaluate('window.__volTest.snapVoice()');
+  };
+  const quiet = await settle(0.15);
+  const normal = await settle(0.5);
+  const loud = await settle(0.9);
+  expect(quiet.level, 'quiet settles near 0.15').toBeGreaterThan(0.09);
+  expect(normal.level, 'normal above quiet').toBeGreaterThan(quiet.level + 0.2);
+  expect(loud.level, 'loud above normal').toBeGreaterThan(normal.level + 0.2);
+  const ratio = loud.level / quiet.level;
+  expect(ratio, `loud/quiet main-wave amplitude ratio ${ratio.toFixed(2)} must be ≥ 4 (≫ JND; v8.4.3 target ~6, linear in uVol)`).toBeGreaterThanOrEqual(4);
+  const ratioMid = normal.level / quiet.level;
+  expect(ratioMid, `normal/quiet ratio ${ratioMid.toFixed(2)} must be ≥ 2 (three-step ladder, each step visible)`).toBeGreaterThanOrEqual(2);
 });
 
 /* ---- T5 helpers: composited-pixel diff between two screenshots ---------- */
@@ -419,8 +474,9 @@ test('T7: F1 红线数值断言 — 波形输出时间连续（同 dt 步进序�
   // 补充形变【输出】侧：按固定帧步 dt=0.05 网格采样波形，相邻帧差必须落在
   // 解析 Lipschitz 界内——任何逐帧时间重置/量化回归都会产生 O(1) 跳变而爆界。
   // 界推导：|dw/dt| ≤ Σ w_i·(|drift_i| + depth·jitterRate_i)
-  //   （|sin'|≤1 且 jit∈[1−depth,1]；v8.4.2 常数 → L = 6.6463）
-  // 断言阈 = 2×L×dt ≈ 0.665：正常运行实测 << 界（相位不对齐），重置跳变 ~O(1) 必爆。
+  //   （|sin'|≤1 且 jit∈[1−depth,1]；v8.4.3 常数 → L = 6.21800：
+  //    0.62·(4.7+0.18·0.80) + 0.27·(6.9+0.18·1.30) + 0.11·(11.3+0.18·2.30)）
+  // 断言阈 = 2×L×dt ≈ 0.622：正常运行实测 << 界（相位不对齐），重置跳变 ~O(1) 必爆。
   const DT = 0.05, SPAN = 60; // 1200 步，覆盖全部漂移/抖动周期
   const r = await page.evaluate(({ DT, SPAN }) => {
     const w = window.__volTest.voiceWaveAt;
@@ -439,7 +495,7 @@ test('T7: F1 红线数值断言 — 波形输出时间连续（同 dt 步进序�
     for (let i = 0; i < 144; i++) peak = Math.max(peak, Math.abs(w((i / 144) * Math.PI * 2, 12.34)));
     return { worst, worstAt, peak };
   }, { DT, SPAN });
-  const bound = 2 * 6.6463 * DT; // 2× Lipschitz × dt
+  const bound = 2 * 6.218 * DT; // 2× Lipschitz × dt (v8.4.3 constants)
   expect(r.worst, `waveform step |Δw| over dt=${DT} is ${r.worst.toFixed(4)} at t=${r.worstAt.t.toFixed(2)}s — must stay continuous (F1 red line: no per-frame time reset/jump; bound ${bound.toFixed(3)})`).toBeLessThan(bound);
   expect(r.peak, 'waveform stays bounded by Σweights (no divergence)').toBeLessThanOrEqual(1.0000001);
 });
