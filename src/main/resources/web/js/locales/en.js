@@ -45,6 +45,8 @@ export default {
   'project.archiveFail': 'Failed to archive "{name}"',
   'flowmap.title': 'Flow Map',
   'flowmap.cardRunning': 'Running…',
+  // Node card agent retirement (node-flowmap-slim): restrained empty state when no preset
+  'flowmap.presetDefault': 'Default preset',
   'flowmap.loading': 'Loading Flow Map…',
   'flowmap.loadFail': 'Failed to load Flow Map',
   'flowmap.empty': 'No nodes yet — project idle',
