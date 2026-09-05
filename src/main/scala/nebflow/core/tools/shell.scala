@@ -134,7 +134,13 @@ final class ShellSession private (
     hardTimeoutMs: Long = Defaults.BashBackgroundHardTimeoutMs,
     stuckWindowSec: Int = Defaults.BashStuckWindowSec,
     // 测试注入用：health check 采样间隔（生产默认 30s）。
-    healthCheckIntervalSec: Int = Defaults.BgHealthCheckIntervalSec
+    healthCheckIntervalSec: Int = Defaults.BgHealthCheckIntervalSec,
+    // 节点完成闸批（作者 2026-09-05 18:29 裁定）：persistent=true = 服务型
+    // （长驻 server）——豁免 B1 idle 杀与 B2 硬超时+停滞杀（idle server 零 CPU
+    // 被 5min idle 杀、30min 被硬超时杀对 server 全是误杀）。用户自担：仍可
+    // cancel_background_job 显式取消、killSessionProcesses/kill 照常清理、
+    // WS 心跳指示器照常可见。心跳保持（可见性不受豁免影响）。
+    persistent: Boolean = false
   ): IO[String] =
     lifecycleMutex.lock.surround {
       for
@@ -146,15 +152,17 @@ final class ShellSession private (
         hbFiber <- on_heartbeat match
           case Some(cb) => startHeartbeat(jobId, deferred, health, cb)
           case None => IO.pure(None)
-        hcFiber <- startJobHealthCheck(
-          jobId,
-          deferred,
-          health,
-          command = command,
-          hardTimeoutMs = hardTimeoutMs,
-          stuckWindowSec = stuckWindowSec,
-          checkIntervalSec = healthCheckIntervalSec
-        )
+        hcFiber <-
+          if persistent then IO.pure(None) // 服务型：不启 B1/B2 看护 fiber（豁免杀）
+          else startJobHealthCheck(
+            jobId,
+            deferred,
+            health,
+            command = command,
+            hardTimeoutMs = hardTimeoutMs,
+            stuckWindowSec = stuckWindowSec,
+            checkIntervalSec = healthCheckIntervalSec
+          )
         job = BackgroundJob(
           fiber,
           hbFiber,
@@ -776,6 +784,9 @@ final class ShellSession private (
    *   零增长且 CPU 增量 < 阈值 连续 ≥ stuckWindowSec（默认 120s）→ killProcessTree
    *   + TimeoutException。总时长不重置：硬超时后必须持续证明活着（有进展才重置
    *   停滞计数）。持续吐日志/烧 CPU 的卡死任务（盲区 5）由此兜底。
+   *
+   * persistent=true（节点完成闸批）不进入本看护——executeBackground 直接跳过
+   * 启动本 fiber（服务型豁免 B1/B2，见其参数注释）。
    */
   private def startJobHealthCheck(
     jobId: String,
