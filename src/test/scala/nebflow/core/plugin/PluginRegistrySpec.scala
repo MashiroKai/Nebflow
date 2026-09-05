@@ -40,7 +40,7 @@ class PluginRegistrySpec extends CatsEffectSuite:
   private def writeManifest(dir: os.Path, name: String, extra: String = ""): Unit =
     os.write.over(
       dir / "plugin.json",
-      s"""{"$$schema":"https://agent-plugins.org/schema/1.0.0","name":"$name","version":"1.0.0","description":"$name fixture plugin"$extra}"""
+      s"""{"$$schema":"${PluginRegistry.CanonicalSchema}","name":"$name","version":"1.0.0","description":"$name fixture plugin"$extra}"""
     )
 
   private def writeSkill(dir: os.Path, skill: String, body: String): Unit =
@@ -67,7 +67,8 @@ class PluginRegistrySpec extends CatsEffectSuite:
   private val full = pluginDir("full")
   writeManifest(full, "full")
   writeSkill(full, "howto", "read ${SKILL_DIR}/refs/spec.md for details")
-  os.write.over(full / "mcp.json", """{"mcpServers":{"fetch":{"command":"python3","args":["-c","print(1)"]}}}""")
+  os.write.over(full / "mcp.json",
+    s"""{"$$schema":"${PluginRegistry.CanonicalMcpSchema}","mcpServers":{"fetch":{"type":"stdio","command":"python3","args":["-c","print(1)"]}}}""")
   writeTools(full, List("WebSearch", "WebFetch"))
 
   private val skillsOnly = pluginDir("skills-only")
@@ -76,14 +77,16 @@ class PluginRegistrySpec extends CatsEffectSuite:
 
   private val mcpOnly = pluginDir("mcp-only")
   writeManifest(mcpOnly, "mcp-only")
-  os.write.over(mcpOnly / "mcp.json", """{"mcpServers":{"srv":{"command":"python3","args":["-c","print(1)"]}}}""")
+  os.write.over(mcpOnly / "mcp.json",
+    s"""{"$$schema":"${PluginRegistry.CanonicalMcpSchema}","mcpServers":{"srv":{"type":"stdio","command":"python3","args":["-c","print(1)"]}}}""")
 
   private val empty = pluginDir("empty")
   writeManifest(empty, "empty")
 
   private val badTools = pluginDir("bad-tools")
   writeManifest(badTools, "bad-tools")
-  os.write.over(badTools / "mcp.json", """{"mcpServers":{"srv":{"command":"python3"}}}""")
+  os.write.over(badTools / "mcp.json",
+    s"""{"$$schema":"${PluginRegistry.CanonicalMcpSchema}","mcpServers":{"srv":{"type":"stdio","command":"python3"}}}""")
   writeTools(badTools, List("Task")) // 编排类工具永不进白名单（§B.6）
 
   private val messy = pluginDir("messy")

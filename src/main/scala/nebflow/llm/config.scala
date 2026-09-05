@@ -99,7 +99,16 @@ case class McpServerConfig(
   url: Option[String] = None,
   headers: Option[Map[String, String]] = None,
   enabled: Option[Boolean] = None,
-  timeoutMs: Option[Long] = None
+  timeoutMs: Option[Long] = None,
+  /**
+   * stdio 子进程工作目录。插件 MCP（协议符合度批，Agent Plugins 1.0.0 §11.1-7
+   * 「默认以插件根为子进程工作目录」）：插件装载校验把 cwd 归一为
+   * ${PLUGIN_ROOT}/${PLUGIN_DATA} 占位形式，PluginMcpManager.acquire 启动前
+   * 展开为绝对路径并注入缺省（= 插件根）。全局 nebflow.json MCP 配置此前无此
+   * 字段（decoder 派生，缺省 None = 沿用进程 cwd，零行为变化）；若显式配置，
+   * 相对路径按进程 cwd 解析（ProcessBuilder 自然语义）。
+   */
+  cwd: Option[String] = None
 )
 
 object McpServerConfig:

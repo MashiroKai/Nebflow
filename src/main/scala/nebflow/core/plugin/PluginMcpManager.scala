@@ -3,7 +3,7 @@ package nebflow.core.plugin
 import cats.effect.{IO, Ref}
 import cats.effect.unsafe.implicits.global
 import cats.syntax.all.*
-import nebflow.core.NebflowLogger
+import nebflow.core.{NebflowLogger, PathUtil}
 import nebflow.core.mcp.McpManager
 import nebflow.llm.McpServerConfig
 
@@ -40,20 +40,22 @@ class PluginMcpManager private (
     * 任一 server 启动失败 → 本批已启动者立即回滚停用 + Left（failNode 语义，§B.5）。
     */
   def acquire(sessionId: String, plugins: List[PluginRegistry.PluginDef]): IO[Either[String, PluginMcpManager.Grant]] =
-    val wanted: Map[String, (String, String, McpServerConfig)] =
+    val wanted: Map[String, (String, String, String, McpServerConfig)] =
       plugins.flatMap(p => p.mcpServers.map { case (s, cfg) =>
-        PluginMcpManager.serverIdFor(p.name, s) -> (p.name, p.digest, cfg)
+        PluginMcpManager.serverIdFor(p.name, s) -> (p.name, p.dir, p.digest, cfg)
       }).toMap
     if wanted.isEmpty then IO.pure(Right(PluginMcpManager.Grant(Nil)))
     else
       for
         existing <- serverRefs.get
         toStart = wanted.filter { case (sid, _) => !existing.contains(sid) }
-        started <- toStart.toList.traverse { case (sid, (_, _, cfg)) =>
-          mcp.startServer(sid, cfg)
-            .timeout(15.seconds)
-            .attempt
-            .map(sid -> _)
+        started <- toStart.toList.traverse { case (sid, (_, pdir, _, cfg)) =>
+          runtimeConfig(pdir, cfg).flatMap { eff =>
+            mcp.startServer(sid, eff)
+              .timeout(15.seconds)
+              .attempt
+              .map(sid -> _)
+          }
         }
         failures = started.collect { case (sid, Left(err)) => sid -> err }
         result <-
@@ -70,7 +72,7 @@ class PluginMcpManager private (
             // 引用记账：server 条目（含 digest 记账）+ session 持有集并入
             serverRefs.update { m =>
               wanted.foldLeft(m) { (acc, entry) =>
-                val (sid, (pname, digest, _)) = entry
+                val (sid, (pname, _, digest, _)) = entry
                 acc.get(sid) match
                   case Some(e) => acc.updated(sid, e.copy(holders = e.holders + sessionId))
                   case None    => acc.updated(sid, PluginMcpManager.ServerEntry(pname, Set(sessionId), digest))
@@ -78,6 +80,26 @@ class PluginMcpManager private (
             } *> sessionRefs.update(m => m + (sessionId -> (m.getOrElse(sessionId, Set.empty) ++ wanted.keys.toSet))) *>
               IO.pure(Right(PluginMcpManager.Grant(wanted.keys.toList)))
       yield result
+
+  /** §9 占位符展开 + 环境注入（协议符合度批）：
+    * - PLUGIN_ROOT = 插件根绝对路径；PLUGIN_DATA = <dataRoot>/plugin-data/<plugin>/
+    *   （§9.1 客户端必须在启动前创建、可写、跨更新保留——makeDir.all 幂等）。
+    * - 展开：args 元素、env 值、cwd（单次非递归替换）；command 不展开（§9.2）。
+    * - cwd 缺省 → 插件根（§11.1-7 子进程默认工作目录 = 插件根）。 */
+  private def runtimeConfig(pluginDir: String, cfg: McpServerConfig): IO[McpServerConfig] =
+    IO.blocking {
+      val pluginData = PathUtil.dataRoot / "plugin-data" / java.nio.file.Paths.get(pluginDir).getFileName.toString
+      os.makeDir.all(pluginData)
+      def expand(s: String): String =
+        s.replace("${PLUGIN_ROOT}", pluginDir).replace("${PLUGIN_DATA}", pluginData.toString)
+      val injectedEnv = cfg.env.getOrElse(Map.empty).map { case (k, v) => k -> expand(v) } +
+        ("PLUGIN_ROOT" -> pluginDir) + ("PLUGIN_DATA" -> pluginData.toString)
+      cfg.copy(
+        args = cfg.args.map(_.map(expand)),
+        env = Some(injectedEnv),
+        cwd = Some(cfg.cwd.map(expand).getOrElse(pluginDir))
+      )
+    }
 
   /** release：会话终态回收（completed/failed/cancelled/blocked 全终态统一调用，
     * §B.4 第 5 步）。该会话持有的全部 server 计数 -1；归零 → 停 server
