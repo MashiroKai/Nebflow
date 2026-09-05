@@ -1,0 +1,8 @@
+{
+  "$schema": "https://agent-plugins.org/schema/1.0.0",
+  "name": "nebflow-pipelines",
+  "version": "1.0.0",
+  "description": "Nebflow 工程闸门流水线纪律包——合并、发版、代码质量审查。内含 skills：merge-pipeline（分支扫描→就绪评估→合并执行→失败回滚）、release-pipeline（VERSION 单源 semver、--no-ff 合并、tag 纪律、三平台打包验证）、review（三维评分 check-fix 循环审查：先理解再行动/能删则删/保持简单）。无 mcp.json、无工具扩展。",
+  "capability": "工程闸门流水线纪律：节点获得合并/发版/三维评分审查的执行与把关能力（分支扫描→就绪评估→合并回滚、semver 发版、check-fix 审查循环）",
+  "author": "Nebula distill"
+}

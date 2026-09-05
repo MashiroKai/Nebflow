@@ -1,0 +1,8 @@
+{
+  "$schema": "https://agent-plugins.org/schema/1.0.0",
+  "name": "website",
+  "version": "1.0.0",
+  "description": "Nebflow 官网（nebflow.space）开发包——Next.js 前端、视觉设计、部署发布。内含 skills：website-frontend（Next.js 16/React 19/Tailwind v4、i18n 动态路由、API Route Handlers、性能规范）、website-design（设计 tokens 复用、排版/动效规范、Pop 目检、三端响应式）、deploy-website（Vercel CLI 生产部署与双域发布）。无 mcp.json、无工具扩展。",
+  "capability": "Nebflow 官网开发与发布：节点获得 Next.js/Tailwind 前端实现、设计 tokens 复用与三端响应式排版能力、Vercel 生产部署双域发布能力",
+  "author": "Nebula distill"
+}

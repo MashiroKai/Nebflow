@@ -1,0 +1,59 @@
+diff --git a/src/main/scala/nebflow/core/plugin/PluginRegistry.scala b/src/main/scala/nebflow/core/plugin/PluginRegistry.scala
+index 201993fd..eb348cb3 100644
+--- a/src/main/scala/nebflow/core/plugin/PluginRegistry.scala
++++ b/src/main/scala/nebflow/core/plugin/PluginRegistry.scala
+@@ -72,6 +72,9 @@ object PluginRegistry:
+     name: String,
+     version: String,
+     description: String,
++    /** 能力向单行句（dispatcher-ctx 批 2026-09-05）：「该插件让节点具备什么能力」。
++      * 可选——absent/空白回落 None，目录渲染回落 description。 */
++    capability: Option[String] = None,
+     author: String,
+     skills: List[PluginSkill],
+     mcpServers: Map[String, McpServerConfig],
+@@ -241,7 +244,7 @@ object PluginRegistry:
+         // 目录名 ≠ manifest name → 以 manifest 为准并告警（防止引用歧义）
+         if pname != name0 then warnings += s"manifest name '$pname' differs from directory name '$name0' — using manifest name"
+         // 未知 manifest 字段 → 宽容忽略 + 告警（§B.8-5 前向兼容：2b 后新增字段不炸旧版）
+-        val knownManifestKeys = Set("$schema", "name", "version", "description", "author", "extensions")
++        val knownManifestKeys = Set("$schema", "name", "version", "description", "capability", "author", "extensions")
+         json.asObject.foreach { obj =>
+           obj.keys.filterNot(knownManifestKeys.contains).foreach(k =>
+             warnings += s"ignored unknown manifest field '$k' (forward-compat: skipped)")
+@@ -249,6 +252,10 @@ object PluginRegistry:
+         val version = c.downField("version").as[String].toOption.getOrElse("")
+         if version.isEmpty then warnings += "manifest has no version field"
+         val description = c.downField("description").as[String].toOption.getOrElse("")
++        // capability（可选）：宽容解析——absent/非字符串/空白 → None（§B.8-5 同向：
++        // 旧版 Nebflow 读到该字段也只是 unknown-field 告警，不炸）
++        val capability = c.downField("capability").as[Option[String]].toOption.flatten
++          .map(_.trim).filter(_.nonEmpty)
+         val author = c.downField("author").as[String].toOption.getOrElse("")
+ 
+         // skills/（一级：<skill>/SKILL.md；id = <plugin>/<skill>）
+@@ -337,6 +344,7 @@ object PluginRegistry:
+           name = pname,
+           version = version,
+           description = description,
++          capability = capability,
+           author = author,
+           skills = skills,
+           mcpServers = mcpServers,
+diff --git a/src/main/scala/nebflow/core/project/ProjectActor.scala b/src/main/scala/nebflow/core/project/ProjectActor.scala
+index d6306ae2..1f026b63 100644
+--- a/src/main/scala/nebflow/core/project/ProjectActor.scala
++++ b/src/main/scala/nebflow/core/project/ProjectActor.scala
+@@ -229,8 +229,10 @@ object ProjectActor:
+   /** Plugin Catalog 段（阶段 2b §B.4 第 2 步）：分发器 prompt 组装的注入源。
+     * 受信 plugin 目录（untrusted 不出现，§B.3）；flag 关 / 无受信插件 → ""。
+     * 对齐 skillCatalog order 800 注入先例——用注入目录段而非新增查询工具
+-    * （分发器单次会话、目录规模小，不多造工具）。 */
+-  private def pluginCatalogText(): IO[String] = nebflow.core.plugin.PluginRegistry.renderCatalog()
++    * （分发器单次会话、目录规模小，不多造工具）。
++    * dispatcher-ctx 批（2026-09-05）：目录渲染收口到 DispatcherContextCatalog
++    * 双段拼装（插件能力目录 capability 优先 + 预设场景目录），本类只留挂接。 */
++  private def pluginCatalogText(): IO[String] = nebflow.core.plugin.DispatcherContextCatalog.render()
+ 
+   /** 新任务形态 prompt（spawnDispatcher 双形态之一，现状文案保留）。 */
+   private def newTaskPrompt(project: ProjectDef, snapshot: FlowMapState, taskText: String, pluginCatalog: String): String =

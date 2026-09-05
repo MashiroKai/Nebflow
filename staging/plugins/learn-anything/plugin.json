@@ -1,0 +1,8 @@
+{
+  "$schema": "https://agent-plugins.org/schema/1.0.0",
+  "name": "learn-anything",
+  "version": "1.0.0",
+  "description": "通用学习导师包——项目驱动 + Mastery Learning 陪学。内含 skills：learn-anything-skill（学习计划/笔记整理/课后复盘/项目任务书/掌握度检查，导师+项目教练双模式，资料缺失时主动检索权威来源）。无 mcp.json、无工具扩展。",
+  "capability": "项目驱动学习陪练：节点获得学习计划制定/掌握度检查/项目任务书设计的导师式教学能力（资料缺失时主动检索权威来源）",
+  "author": "Nebula distill"
+}

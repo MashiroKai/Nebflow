@@ -1,0 +1,8 @@
+{
+  "$schema": "https://agent-plugins.org/schema/1.0.0",
+  "name": "academic-research",
+  "version": "1.0.0",
+  "description": "学术调研生产包——调研报告工作流与付费论文 PDF 获取。内含 skills：academic-survey（编排调研 Agent+校验 Agent 迭代循环，产出严谨学术调研报告）、academic-pdf-fallback-chain（Unpaywall OA→OSTI/arXiv→DoH 直连→远程 webReader 的 PDF 获取 fallback 链，含反爬与残留文件陷阱处置）。论文审阅另配 thesis-review 插件、素材积累另配 phd-note 插件。无 mcp.json、无工具扩展。",
+  "capability": "学术调研生产与论文获取：节点获得调研编排+校验迭代的报告生产纪律、多级 PDF 获取 fallback 链（OA→预印本→DoH 直连）执行能力",
+  "author": "Nebula distill"
+}

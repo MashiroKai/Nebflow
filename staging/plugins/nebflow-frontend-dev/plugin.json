@@ -1,0 +1,8 @@
+{
+  "$schema": "https://agent-plugins.org/schema/1.0.0",
+  "name": "nebflow-frontend-dev",
+  "version": "1.0.0",
+  "description": "Nebflow 客户端前端开发域知识包——web/ 无构建 vanilla JS 实现规范、用户视觉硬裁定、UI/UX 范式案例库。内含 skills：nebflow-frontend（web/ 结构、Sapphire Glass 设计系统、截图驱动验证流、响应式三档）、visual-style（用户裁定硬规则：毛玻璃/玻璃质感/中度字重，最高优先级）、design-system（功能类型→成熟范式→Nebflow 适配规则案例库，DESIGN-LESSON 沉淀载体）。自验方法论另配 nebflow-qa 插件。无 mcp.json、无工具扩展。",
+  "capability": "Nebflow 前端开发域知识：节点获得 vanilla JS 无构建实现规范、用户视觉硬裁定执行（毛玻璃/中度字重）与成熟范式案例库匹配能力",
+  "author": "Nebula distill"
+}
