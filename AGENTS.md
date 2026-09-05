@@ -3,7 +3,7 @@
 项目级 agent 指令（取代 team rules.md）。分发器任务文本可引用本文件；Node 是 leaf（无记忆、无 Mail 身份、ephemeral），结果沿 out 边投递。
 
 ## 项目
-Nebflow 是一个开源（Apache 2.0）AI Agent 编排平台。本仓为 **Scala 版**（main 分支），Rust 版由 nebflow-rust 独立负责，两个项目不要有耦合。
+Nebflow 是一个开源（MIT）AI Agent 编排平台。本仓为 **Scala 版**（main 分支），Rust 版由 nebflow-rust 独立负责，两个项目不要有耦合。
 
 ## 工作区
 `/Users/dev/Claude code/Nebflow`（主仓；`.nebflow/` 已 gitignore，不落 repo）
