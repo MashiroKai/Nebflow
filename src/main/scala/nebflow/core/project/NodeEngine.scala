@@ -11,7 +11,9 @@ import nebflow.core.PathUtil
 import nebflow.core.entity.EntityLoader
 import nebflow.core.node.NodeRunner
 import nebflow.core.plugin.{PluginMcpManager, PluginRegistry, PluginsConfig}
+import nebflow.core.presets.PresetStore
 import nebflow.core.skill.SkillService
+import nebflow.core.tools.PresetResolver
 import nebflow.shared.Message
 
 /**
@@ -227,24 +229,43 @@ class NodeEngine(
           // （SkillService.loadSkill 单点复用）组装 <injected-plugins> 块；
           // ③ MCP server 启动 + 引用记账（PluginMcpManager，启动失败 → failNode）。
           // 三步全部发生在状态翻转（status=Running）之前——失败路径零 running 残留。
-          prepareNodePlugins(node).flatMap {
+          // §E.3 preset 消费（协议符合度批接通，2b 遗留）：同样翻转前 failNode。
+          nodePresetDef(node, entry).flatMap {
             case Left(err) => failNode(nodeId, err)
-            case Right(prepared) =>
-              val sessionId = s"node-${java.util.UUID.randomUUID().toString.take(8)}"
-              val inputWithPlugins =
-                if prepared.injectedBlock.isEmpty then inputText
-                else inputText + "\n\n" + prepared.injectedBlock
-              resources.pluginMcp.acquire(sessionId, prepared.mcpPlugins).flatMap {
+            case Right(baseDef) =>
+              prepareNodePlugins(node).flatMap {
                 case Left(err) => failNode(nodeId, err)
-                case Right(grant) =>
-                  // 回收兜底（§B.4 第 5 步）：completed/failed/cancelled/blocked 全
-                  // 终态汇合点=runWithAgent 完成；异常中止路径由 guarantee 补位。
-                  // release 幂等（PluginMcpManager 内 no-op 语义），双保险不重复卸载。
-                  runWithAgent(node, entry, inputWithPlugins, sessionId, prepared, grant)
-                    .guarantee(resources.pluginMcp.release(sessionId))
+                case Right(prepared) =>
+                  val sessionId = s"node-${java.util.UUID.randomUUID().toString.take(8)}"
+                  val inputWithPlugins =
+                    if prepared.injectedBlock.isEmpty then inputText
+                    else inputText + "\n\n" + prepared.injectedBlock
+                  resources.pluginMcp.acquire(sessionId, prepared.mcpPlugins).flatMap {
+                    case Left(err) => failNode(nodeId, err)
+                    case Right(grant) =>
+                      // 回收兜底（§B.4 第 5 步）：completed/failed/cancelled/blocked 全
+                      // 终态汇合点=runWithAgent 完成；异常中止路径由 guarantee 补位。
+                      // release 幂等（PluginMcpManager 内 no-op 语义），双保险不重复卸载。
+                      runWithAgent(node, baseDef, inputWithPlugins, sessionId, prepared, grant)
+                        .guarantee(resources.pluginMcp.release(sessionId))
+                  }
               }
           }
     yield ()
+
+  /** §E.3 preset 消费接通（协议符合度批补齐，2b 遗留）：node.preset →
+    * PresetResolver 单点解析（Delegate/SubTask #291 先例同款）——预设链写入
+    * AgentDef.model/preset/modelOverride，modelOverride 经 ContextRefresher
+    * 每 turn 热重载保活。解析失败（不存在/空链，错误含可用预设清单）= 节点级
+    * 失败，状态翻转前 failNode（与插件准备同纪律：失败路径零 running 残留）。
+    * node.preset 缺省 → 原 AgentDef 原样透传（旧行为零变化）。 */
+  private def nodePresetDef(node: NodeDef, entry: nebflow.core.entity.AgentEntry): IO[Either[String, nebflow.agent.AgentDef]] =
+    IO.blocking {
+      PresetResolver.applyPreset(PresetStore(), entry.toAgentDef, node.preset).left.map { err =>
+        s"Node '${node.name}' preset '${node.preset.getOrElse("")}' unresolved: $err " +
+          "(§E.3 node.preset consumption — presets live in model-presets.json)"
+      }
+    }
 
   /** node.plugins → 可分配能力（§B.4 第 4 步 ①②，feature flag §G.2 开关）：
     * flag off / 无分配 → 空 preparation（旧行为零变化）；解析失败 → Left
@@ -316,7 +337,7 @@ class NodeEngine(
 
   private def runWithAgent(
     node: NodeDef,
-    entry: nebflow.core.entity.AgentEntry,
+    baseDef: nebflow.agent.AgentDef, // §E.3 preset 消费：已过 PresetResolver 的 AgentDef（协议符合度批）
     inputText: String,
     sessionId: String,
     prepared: NodeEngine.PluginPreparation,
@@ -379,7 +400,7 @@ class NodeEngine(
       // 不落 agent.json）。bridge actor 已由投递可靠性批次迁移至 spawnAgentActor
       // 之后（升级 ctx.watch 会话死亡兜底）——旧内联位置删除，本行仅保留 2b 的
       // agentDef 扩展语义。
-      agentDef = entry.toAgentDef.copy(
+      agentDef = baseDef.copy(
         pluginMcpServers = grant.serverIds,
         pluginTools = prepared.builtinTools
       )
