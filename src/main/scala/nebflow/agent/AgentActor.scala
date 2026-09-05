@@ -548,7 +548,11 @@ object AgentActor extends AgentCore with AgentSession:
     userFacingNode: Boolean = false,
     /** 阶段 2a 沙箱（§A.6）：project 节点/分发器 spawn 置 true——AgentCore 据此
       * 从 projectRoot 派生 ToolContext.sandbox。默认 false=旧行为（双轨豁免面）。 */
-    sandboxEnabled: Boolean = false
+    sandboxEnabled: Boolean = false,
+    /** 显式沙箱根（2026-09-05 21:05 作者裁定——worktree 节点继承项目沙箱）：
+      * NodeEngine 传项目工作区根，沙箱 root 不再收窄到 worktree 目录自身。None =
+      * 沿用 projectRoot 推导（旧行为）。 */
+    sandboxRoot: Option[String] = None
   ): Behavior[AgentCommand] =
     Behaviors.setup { ctx =>
       val effectiveRootSessionId =
@@ -600,7 +604,8 @@ object AgentActor extends AgentCore with AgentSession:
             freezeExempt = freezeExempt,
             isFlowNode = isFlowNode,
             userFacingNode = userFacingNode,
-            sandboxEnabled = sandboxEnabled
+            sandboxEnabled = sandboxEnabled,
+            sandboxRoot = sandboxRoot
           )
         )(using ctx)
       )

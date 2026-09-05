@@ -57,6 +57,11 @@ object NodeRunner:
     /** 阶段 2a 沙箱（§A.6）：project 节点/分发器置 true——AgentCore 从
       * projectRoot 派生 SandboxPolicy（root=worktree 或 workspace）。 */
     sandboxEnabled: Boolean = false,
+    /** 显式沙箱根（2026-09-05 21:05 作者裁定——worktree 节点继承项目沙箱）：
+      * NodeEngine 传项目工作区根，worktree 节点沙箱 root = 工作区根而非 worktree
+      * 自身（主仓 .git/worktrees/<name>/ 元数据可直写）。None = 沿用 projectRoot
+      * 推导（旧行为）。 */
+    sandboxRoot: Option[String] = None,
     /** restart 重建传 false（旧 childSpawnFn 的 AgentActor 不带
       * readTracker/fileHistory，保持行为零变化）。 */
     withTracking: Boolean = true
@@ -88,7 +93,8 @@ object NodeRunner:
           isFlowNode = p.isFlowNode,
           expectsMail = p.expectsMail,
           userFacingNode = p.userFacingNode,
-          sandboxEnabled = p.sandboxEnabled
+          sandboxEnabled = p.sandboxEnabled,
+          sandboxRoot = p.sandboxRoot
         ),
         actorName
       )

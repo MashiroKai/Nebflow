@@ -434,7 +434,13 @@ class NodeEngine(
           isFlowNode = true, // leaf 剥离（与 flow 节点一致：无 Node 工具/展示类）
           // 阶段 2a 沙箱（§A.6）：dev/修复节点 root=<workspace>/.nebflow/<wt>、
           // merge 节点 root=workspace——物理隔离，最小权限。
-          sandboxEnabled = true
+          sandboxEnabled = true,
+          // [2026-09-05 21:05 作者裁定——worktree 节点继承项目沙箱]：沙箱根=
+          // 项目工作区根（不收窄到 worktree 自身）——主仓 .git/worktrees/<name>/
+          // 元数据在工作区内，git commit / worktree remove 直写不再 EPERM。
+          // 独立信号传入（sessionRoot 显式 sandboxRoot 优先于 projectRoot），
+          // 不按路径形态硬猜 workspace 布局；cwd/projectRoot 工具语义不动。
+          sandboxRoot = Some(workspace)
         )
       )
       // Bridge actor：捕获 Completed/Failed/Cancelled → Deferred（同步 complete，
