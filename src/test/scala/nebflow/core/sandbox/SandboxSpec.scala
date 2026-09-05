@@ -583,4 +583,160 @@ class SandboxSpec extends CatsEffectSuite:
     assertEquals(res, None)
   }
 
+  // ------------------------------------------------------------------
+  // Nebula 根会话沙箱（2026-09-05 作者裁定 13:09：写根=~/.nebflow 数据根，
+  // 让 Nebula 直接处理定义层与运维配置）。判定基准 = WS 根会话 ∧ agent==Nebula
+  // （SandboxPolicy.isNebulaRootSession：sandboxEnabled ∧ depth==0 ∧ name）；
+  // root 推导 = SandboxPolicy.sessionRoot（Nebula → PathUtil.dataRoot，与其余
+  // 会话 projectRoot 语义隔离）。
+  // ------------------------------------------------------------------
+
+  test("Nebula 根会话判据：sandboxEnabled ∧ depth==0 ∧ name==Nebula 三分量缺一不可") {
+    // Nebula WS 根会话（唯一命中形态）
+    assert(SandboxPolicy.isNebulaRootSession(sandboxEnabled = true, depth = 0, agentName = "Nebula"))
+    // 其余 WS 根会话（standalone 非 Nebula 聊天 / team Manager / flow 入口）不命中
+    assert(!SandboxPolicy.isNebulaRootSession(sandboxEnabled = true, depth = 0, agentName = "general"))
+    assert(!SandboxPolicy.isNebulaRootSession(sandboxEnabled = true, depth = 0, agentName = "Manager"))
+    // NodeDef.agent="Nebula" 声明的节点会话（depth=1）不命中——root 必须留在
+    // projectRoot/worktree（§A.6 节点写根语义零回归）
+    assert(!SandboxPolicy.isNebulaRootSession(sandboxEnabled = true, depth = 1, agentName = "Nebula"))
+    assert(!SandboxPolicy.isNebulaRootSession(sandboxEnabled = true, depth = 1, agentName = "project-dispatcher"))
+    // 未启用（feature flag / 未置位）不命中
+    assert(!SandboxPolicy.isNebulaRootSession(sandboxEnabled = false, depth = 0, agentName = "Nebula"))
+  }
+
+  test("Nebula 会话沙箱 root==PathUtil.dataRoot（数据根）且跟随 setDataRoot 重定向——隔离安全机制证明") {
+    // beforeEach 已把 dataRoot 钉到 os.home 下一次性目录（NEBFLOW_HOME 重定向的
+    // 等价形态）：本断言即「root 跟随数据根推导、绝不硬编码 os.home」的机制证明
+    // ——隔离实例（NEBFLOW_HOME=/tmp/...）下 root 必然落在隔离 HOME，不可能写
+    // 真 ~/.nebflow。
+    val pinned = PathUtil.dataRoot
+    assert(pinned.toString.startsWith(os.home.toString) && pinned.toString.contains(".nb-sbx-dataroot-"),
+      s"前置：dataRoot 应已被钉到一次性目录: $pinned")
+    // Nebula 根会话 → 数据根
+    assertEquals(
+      SandboxPolicy.sessionRoot(sandboxEnabled = true, depth = 0, agentName = "Nebula",
+        projectRoot = Some((pinned / "projects").toString), fallbackProjectRoot = "/fallback"),
+      pinned.toString
+    )
+    // 节点会话（depth=1，即使 agent 名叫 Nebula）→ projectRoot（零回归）
+    assertEquals(
+      SandboxPolicy.sessionRoot(sandboxEnabled = true, depth = 1, agentName = "Nebula",
+        projectRoot = Some("/ws/a/.nebflow/wt-x"), fallbackProjectRoot = "/fallback"),
+      "/ws/a/.nebflow/wt-x"
+    )
+    // 分发器会话（depth=1）→ projectRoot（零回归）
+    assertEquals(
+      SandboxPolicy.sessionRoot(sandboxEnabled = true, depth = 1, agentName = "project-dispatcher",
+        projectRoot = Some("/ws/a"), fallbackProjectRoot = "/fallback"),
+      "/ws/a"
+    )
+    // 非 Nebula WS 根会话（sandboxEnabled=false 现状）→ fallback 既有语义（零回归）
+    assertEquals(
+      SandboxPolicy.sessionRoot(sandboxEnabled = false, depth = 0, agentName = "general",
+        projectRoot = None, fallbackProjectRoot = "/fallback"),
+      "/fallback"
+    )
+  }
+
+  test("Nebula 会话沙箱：写根内配置文件放行（daemons.json 补丁形态：追加后读回验证）") {
+    // 模拟 AgentCore 特判产物：root=dataRoot 的开启态策略
+    val policy = policyIn(PathUtil.dataRoot)
+    assertEquals(policy.root.toString, PathUtil.dataRoot.toString, "Nebula 策略 root 必须是数据根")
+    val ctx = ctxIn(PathUtil.dataRoot, policy)
+    val target = PathUtil.dataRoot / "daemons.json"
+    os.write.over(target, "{\"keepalive\":{}}\n")
+    FileSandbox.checkWrite(ctx, target.toString) match
+      case Right(fresh) =>
+        // 补丁形态：追加一行 → 读回验证（调用方必须用返回的 fresh 路径执行写）
+        val freshOs = os.Path(fresh)
+        os.write.append(freshOs, "{\"patched\":true}\n")
+        val content = os.read(freshOs)
+        assert(content.contains("keepalive") && content.contains("patched"), s"读回验证失败: $content")
+      case Left(err) => fail(s"Nebula 写根内配置文件必须放行: ${err.message}")
+  }
+
+  test("Nebula 会话沙箱：写根外路径拒（SANDBOX_DENIED，FileSandbox 层）") {
+    val policy = policyIn(PathUtil.dataRoot)
+    val ctx = ctxIn(PathUtil.dataRoot, policy)
+    // 数据根外的用户目录文件（os.home 本身不在 writableRoots：root=dataRoot +
+    // tempRoots，home 不含其中）
+    FileSandbox.checkWrite(ctx, (os.home / "nb-sbx-outside-should-deny.txt").toString) match
+      case Left(err) =>
+        assert(err.message.startsWith("SANDBOX_DENIED"), err.message)
+        assert(err.message.contains("Writable roots:"), err.message)
+      case Right(_) => fail("数据根外写必须被拒")
+  }
+
+  test("Nebula 会话沙箱读面：白名单可读 + agents/**/memory.md 负向规则不被 root 面扩大击穿") {
+    val policy = policyIn(PathUtil.dataRoot)
+    val ctx = ctxIn(PathUtil.dataRoot, policy)
+    // 白名单九目录之一（skills fixture）可读
+    FileSandbox.checkRead(ctx, (PathUtil.dataRoot / "skills" / "fixture-skill" / "SKILL.md").toString) match
+      case Right(_) => ()
+      case Left(err) => fail(s"读白名单子目录应可读: ${err.message}")
+    // 凭据红线：agents/**/memory.md 负向规则一票优先——root=dataRoot 使 agents/
+    // 整体落进 root 读面，但 readDenied 先于 readableRoots 判定，仍拒（红线不被
+    // root 面扩大击穿的关键回归断言）
+    FileSandbox.checkRead(ctx, (PathUtil.dataRoot / "agents" / "Coder" / "memory.md").toString) match
+      case Left(err) => assert(err.message.startsWith("SANDBOX_DENIED"), err.message)
+      case Right(_) => fail("agents/**/memory.md 在 Nebula 策略下必须仍拒读")
+    // Nebula 自身 memory.md 同规（memory-mech 批的审计只读例外落地前，负向规则
+    // 原样；衔接点见报告）
+    FileSandbox.checkRead(ctx, (PathUtil.dataRoot / "agents" / "Nebula" / "memory.md").toString) match
+      case Left(_) => ()
+      case Right(_) => fail("agents/Nebula/memory.md 在 Nebula 策略下必须仍拒读（审计例外未落地前）")
+  }
+
+  test("Nebula 会话沙箱已知边界（如实钉死）：root=dataRoot 使数据根根层文件进读面（写⊆读不变量）") {
+    // root=dataRoot ⇒ readableRoots 含 dataRoot 本身 ⇒ 根层凭据（auth.json 等）
+    // 在 Nebula 会话读面内。这是「写根=~/.nebflow 全域」裁定的直接机制后果
+    // （nebflow.json/daemons.json 补丁场景必须能碰根层；可写必可读）。既有读
+    // 白名单与负向规则机制零收窄零删除——本断言如实钉死 Nebula 会话的边界形态，
+    // 节点/分发器会话（root=projectRoot）不受影响（下一条对照断言）。
+    val policy = policyIn(PathUtil.dataRoot)
+    val ctx = ctxIn(PathUtil.dataRoot, policy)
+    FileSandbox.checkRead(ctx, (PathUtil.dataRoot / "auth.json").toString) match
+      case Right(_) => () // 已知边界：Nebula 会话根层凭据可读（作者信任边界内）
+      case Left(err) => fail(s"Nebula 策略 root=dataRoot 下根层文件在读面（写⊆读）: ${err.message}")
+    // 对照：node 会话策略形态（root=worktree，数据根仅白名单子目录可读）下
+    // auth.json 仍拒读——既有行为零回归
+    val nodeRoot = os.home / s".nb-sbx-node-root-${System.nanoTime()}"
+    os.makeDir.all(nodeRoot)
+    val nodePolicy = policyIn(nodeRoot)
+    val nodeCtx = ctxIn(nodeRoot, nodePolicy)
+    FileSandbox.checkRead(nodeCtx, (PathUtil.dataRoot / "auth.json").toString) match
+      case Left(err) => assert(err.message.startsWith("SANDBOX_DENIED"), err.message)
+      case Right(_) => fail("node 会话策略下数据根根层凭据必须仍拒读")
+  }
+
+  test("Nebula 会话沙箱 Seatbelt 真执行（沙箱可用时）：Bash 写数据根内成功、写外被 OS 拒") {
+    assume(SandboxBackend.Seatbelt.probe(), "sandbox-exec 不可用则跳过（非 macOS/CI 环境）")
+    val policy = policyIn(PathUtil.dataRoot)
+    val ctx = ctxIn(PathUtil.dataRoot, policy).copy(sessionId = Some("nb-sbx-nebula-seatbelt"))
+    SandboxRuntime.backend = new SandboxBackend.Seatbelt()
+    val target = PathUtil.dataRoot / "daemons.json"
+    os.write.over(target, "{\"keepalive\":{}}\n")
+    // ① 写数据根内（daemons.json 补丁形态）：沙箱内真执行 + 读回验证
+    BashTool.call(
+      JsonObject("command" -> s"""echo '{"patched":true}' >> ${target.toString}""".asJson),
+      ctx
+    ).unsafeRunSync() match
+      case Right(out) =>
+        assert(os.read(target).contains("patched"), s"写根内 Bash 追加应落盘: $out")
+      case Left(err) => fail(s"Seatbelt 下写根内 Bash 必须成功: ${err.message}")
+    // ② 写数据根外：OS 层拒绝（last-match-wins：deny file-write* 无 allow 覆盖）
+    val outside = os.home / "nb-sbx-seatbelt-outside.txt"
+    os.remove.all(outside) // 先清残留，断言写被拒后文件不存在
+    BashTool.call(
+      JsonObject("command" -> s"echo x > $outside".asJson),
+      ctx
+    ).unsafeRunSync() match
+      case Left(_) => () // ShellSession 报执行失败即取证（Operation not permitted 形态）
+      case Right(out) =>
+        if !os.exists(outside) then () // 输出形态各异，以文件未落盘为准
+        else fail(s"写根外 Bash 必须 OS 拒绝（文件不应落盘）: $out")
+    assert(!os.exists(outside), "写根外文件不得落盘")
+  }
+
 end SandboxSpec

@@ -132,9 +132,15 @@ object ContextRefresher:
     *    spawn）+ ProjectActor（分发器 spawn）＝接收面本身（2a §A.6 spec 钉死
     *    「仅 project 节点/分发器置位」）；Nebula/team/flow/Delegate/SubTask 默认
     *    false → 不注入。projectRoot 非空作读取源 + 空串护栏。
+    *  - [2026-09-05 Nebula 沙箱启用批] 第三置位点 WebSocketRoutes.doSpawnRootAgent
+    *    （Nebula 根会话）落地后，sandboxEnabled 不再独占「project 会话」语义
+    *    （Nebula fallback projectRoot 恒 Some → 两条件恒真、必误注入）——追加
+    *    agentName 排除：name=="Nebula" 的会话不注入（AGENTS.md 接收面维持
+    *    project 分发器 + node 会话不变）。默认参数 "" 保持既有两参调用与 spec
+    *    兼容（"" != "Nebula" 语义不变）。
     * 公开供 spec 断言（参照 skillCatalogEnabledFor 同文件先例）。 */
-  def agentsMdEnabledFor(sandboxEnabled: Boolean, projectRoot: Option[String]): Boolean =
-    sandboxEnabled && projectRoot.exists(_.nonEmpty)
+  def agentsMdEnabledFor(sandboxEnabled: Boolean, projectRoot: Option[String], agentName: String = ""): Boolean =
+    sandboxEnabled && projectRoot.exists(_.nonEmpty) && agentName != "Nebula"
 
   /** E.2 读取：`<projectRoot>/AGENTS.md`，每 turn 重读盘（对齐 rulesMd 同机制）。
     * 旧位 `.nebflow/Agent.md` 残留 → 仅 WARN + 回落读根文件——迁移动作本体在
@@ -480,9 +486,11 @@ object ContextRefresher:
       // SessionContext.projectRoot（NodeEngine/ProjectActor spawn 写入的
       // workspace/worktree 路径，§A.6 唯一权威）——node/分发器会话无 folderId，
       // 上方 folderId 派生的 projectRoot 对它们恒 None，不可作基准（gating 取舍
-      // 见 agentsMdEnabledFor）。随 systemStable 在 lifecycle 节点生效。
+      // 见 agentsMdEnabledFor；agentName 排除 = Nebula 根会话沙箱启用后
+      // sandboxEnabled 信号失真的补丁，2026-09-05 批）。随 systemStable 在
+      // lifecycle 节点生效。
       agentsMd <-
-        if agentsMdEnabledFor(state.sandboxEnabled, state.projectRoot) then
+        if agentsMdEnabledFor(state.sandboxEnabled, state.projectRoot, globalDef.name) then
           resolveAgentsMd(state.projectRoot)
         else IO.pure(None)
       thinkingConfig <- resources.thinkingConfigRef.get

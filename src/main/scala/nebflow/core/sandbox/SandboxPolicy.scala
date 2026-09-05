@@ -31,6 +31,16 @@ import nebflow.core.PathUtil
  *
  * enabled=false（nebflow.json sandbox.enabled=false 或非 project 会话）即回旧行为
  * （§G.1 回滚语义）：所有闸门短路过行，工具表现与沙箱引入前完全一致。
+ *
+ * Nebula 根会话（2026-09-05 作者裁定 13:09：Nebula 会话沙箱启用 + 写根
+ * =~/.nebflow 数据根，让 Nebula 直接处理定义层与运行时配置）：置位点 =
+ * WebSocketRoutes.doSpawnRootAgent（depth=0 全仓唯一 spawn 点）；root =
+ * PathUtil.dataRoot——与 nebflowReadExtras 同一数据根推导（NEBFLOW_HOME /
+ * CLI --home / setDataRoot 重定向自动跟随，绝不硬编码 os.home）。AgentCore 的
+ * sandboxPolicy 构造按 isNebulaRootSession 特判取 dataRoot；节点/分发器会话
+ * 仍取 projectRoot 零变化。旁路语义：AGENTS.md 注入 gating（ContextRefresher
+ * .agentsMdEnabledFor）按 agentName 排除 Nebula——sandboxEnabled 信号自本批起
+ * 不再独占「project 会话」语义。
  */
 case class SandboxPolicy(
   /** canonical 后的沙箱根。 */
@@ -87,6 +97,48 @@ object SandboxPolicy:
     if canonicalRoot.startsWith(agents.wrapped) then List("--glob", "!memory.md") else Nil
 
   def defaultReadExtras: List[os.Path] = systemReadExtras ++ nebflowReadExtras
+
+  /**
+   * Nebula 根会话判定（2026-09-05 作者裁定 13:09）：sandboxEnabled ∧ depth==0 ∧
+   * agentName=="Nebula"。
+   *
+   * 三个分量缺一不可的取舍：
+   *  - depth==0：WS 根会话（WebSocketRoutes.doSpawnRootAgent 全仓唯一 depth=0
+   *    spawn 点）。排除 NodeDef.agent="Nebula" 声明的节点会话（depth=1，root
+   *    必须留在 projectRoot/worktree——节点写根语义 §A.6 零回归）。
+   *  - agentName=="Nebula"：排除 standalone 非 Nebula 聊天 / team Manager / flow
+   *    入口等其余 WS 根会话（它们 sandboxEnabled 保持 false，双保险）。名字判据
+   *    与 shouldInjectMemory/skillCatalogEnabledFor 同款先例（agentLibrary 以名
+   *    为唯一键，"Nebula" 键即 Nebula 本体）。
+   *  - sandboxEnabled：总开关（spawn 置位 × nebflow.json feature flag），本判定
+   *    不绕过 §G.1 回滚语义。
+   *
+   * 公开供 spec 断言（agentsMdEnabledFor 同文件先例）；AgentCore root 推导与
+   * 本函数是 Nebula 沙箱根的唯一裁决点。
+   */
+  def isNebulaRootSession(sandboxEnabled: Boolean, depth: Int, agentName: String): Boolean =
+    sandboxEnabled && depth == 0 && agentName == "Nebula"
+
+  /**
+   * 会话沙箱根推导（AgentCore sandboxPolicy 构造唯一调用点）：Nebula 根会话 →
+   * PathUtil.dataRoot（数据根，与 nebflowReadExtras 同源——NEBFLOW_HOME /
+   * CLI --home / setDataRoot 重定向自动跟随，绝不硬编码 os.home）；其余会话 →
+   * projectRoot（节点 worktree / 分发器 workspace，§A.6 唯一权威；空回落
+   * effectiveProjectRoot 既有语义不变）。
+   *
+   * 公开供 spec 断言：root 跟随 setDataRoot 的断言即「隔离实例写真 ~/.nebflow
+   * 不可能」的机制证明（spec beforeEach 钉 dataRoot 到一次性目录，断言 root ==
+   * 钉住目录）。
+   */
+  def sessionRoot(
+    sandboxEnabled: Boolean,
+    depth: Int,
+    agentName: String,
+    projectRoot: Option[String],
+    fallbackProjectRoot: String
+  ): String =
+    if isNebulaRootSession(sandboxEnabled, depth, agentName) then PathUtil.dataRoot.toString
+    else projectRoot.filter(_.nonEmpty).getOrElse(fallbackProjectRoot)
 
   /**
    * 从节点 projectRoot + 配置构造会话策略（AgentCore 每次 spawn 调一次）。
