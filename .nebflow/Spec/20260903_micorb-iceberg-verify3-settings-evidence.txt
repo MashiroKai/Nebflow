@@ -1,0 +1,8 @@
+PASS  S1 base dropdown = 9 presets (no ash), default ocean — nebula,ocean,aurora,sunset,emerald,magma,dawn,neon,iceberg
+PASS  S2 mapping table has 9 state rows — idle,listening,processing,nebula-busy,bg-agents,frozen,frozen-error,mic-error,offline
+PASS  S3 every state row offers 9 presets + ash
+PASS  S4 iceberg selectable in frozen row
+PASS  S5 emerald selectable (base + any row)
+PASS  S6a frozen→iceberg: resolution target = iceberg light board (immediate) — #9AD6F2,#2FA8CC,#082543 (light theme)
+PASS  S6b target stable after 1.3s, state stays frozen (no harness offline flip) — state=frozen board=#9AD6F2,#2FA8CC,#082543
+=== RESULT: 7 PASS / 0 FAIL ===
