@@ -7,7 +7,7 @@
 //     opens the account profile page (brand.getProfileUrl) in a new tab.
 //   • Side Bar panel switch buttons (Files; future panels register the same way).
 //   • (spacer)
-//   • Teams / Flows / Agents (Canvas tabs) and Settings.
+//   • Projects / Plugins (Canvas tabs) and Settings.
 //
 // This module also owns the Side Bar panel registry: the single source of
 // truth for Side Bar visibility + the active panel. Panel buttons, the header
@@ -19,7 +19,8 @@
 // stays visible when the sidebar is collapsed.
 
 import { openSettingsPanel, closeSettingsPanel, isSettingsPanelActive } from './sidebar.js';
-import { fetchNeblinkStatus, getNeblinkState, startDeviceFlow, pollDeviceFlow, cancelDeviceFlow, startPkceLogin, pollPkceState, cancelPkceFlow } from './neblink.js';
+import { fetchNeblinkStatus, getNeblinkState, startDeviceFlow, pollDeviceFlow, cancelDeviceFlow, startPkceLogin, pollPkceState, cancelPkceFlow, avatarViewState, noteAvatarFailure } from './neblink.js';
+import { setUpdateDot } from './updateCheck.js';
 import { createIconsIn, escapeHtml } from './utils.js';
 import { getProfileUrl } from './brand.js';
 import { t } from './i18n.js';
@@ -35,7 +36,6 @@ export function initActivityBar() {
   initSidePanels();
   bindSettingsButton();
   bindAvatar();
-  bindLegacyPanels();
 
   // Refresh NebLink state now and periodically (only while the page is visible)
   // so the avatar reflects logged-in / pairing state.
@@ -45,76 +45,6 @@ export function initActivityBar() {
   observeSettingsModal();
 
   if (typeof lucide !== 'undefined') createIconsIn(document.getElementById('activity-bar'));
-}
-
-// ── Legacy panels (Teams / Flows) — v5 §3.5 二级入口 ──────
-// The Project button owns the old Team/Flow slot; the legacy panels stay
-// reachable during the pilot behind one "旧面板" entry and disappear in 阶段 3.
-// The Teams/Flows buttons themselves are untouched (same ids, same
-// registerCanvasPanelButton wiring) — this only decides when they are VISIBLE,
-// so the old panels keep working exactly as before.
-//
-// 2026-09-04 作者裁定：Team/Flow 旧入口隐藏封存（阶段 3 提前落地）。模块级
-// feature flag——默认 false =「团队」「流程」入口整体撤下（#legacy-btn 归档
-// 按钮一并隐藏，它是两个旧入口的唯一父入口）；翻回 true 即恢复，popover 与
-// 两个按钮原样回归。面板本体（openTeams/openFlows、teams/flows Canvas tabs、
-// registerCanvasPanelButton 绑定）代码全部保留不删——隐藏 ≠ 删除，深链与
-// 程序化打开（canvas-tab-restore 恢复旧标签页）不受影响。
-const SIDEBAR_LEGACY_ENTRIES = false;
-
-function bindLegacyPanels() {
-  const btn = document.getElementById('legacy-btn');
-  const pop = document.getElementById('legacy-pop');
-  if (!btn || !pop) return;
-
-  // Sealed (2026-09-04): hide the sole parent entry + popover, skip all
-  // wiring. Elements stay in the DOM — canvas.js binds teams-btn/flows-btn
-  // by id document-wide, and the i18n map styles them; neither may break.
-  if (!SIDEBAR_LEGACY_ENTRIES) {
-    btn.hidden = true;
-    btn.removeAttribute('aria-controls');
-    btn.setAttribute('aria-hidden', 'true');
-    pop.hidden = true;
-    return;
-  }
-
-  const setOpen = (open) => {
-    if (open) anchorLegacyPop(btn, pop);
-    pop.hidden = !open;
-    btn.setAttribute('aria-expanded', open ? 'true' : 'false');
-    btn.classList.toggle('active', open);
-  };
-  const close = () => setOpen(false);
-
-  btn.addEventListener('click', (e) => {
-    e.stopPropagation();
-    setOpen(pop.hidden);
-  });
-  // Selecting a legacy panel closes the popover — the panel it opens is the
-  // feedback, a popover left hanging over the Canvas is not.
-  pop.addEventListener('click', (e) => {
-    if (/** @type {HTMLElement} */ (e.target).closest('.legacy-item')) close();
-    e.stopPropagation();
-  });
-  document.addEventListener('click', () => { if (!pop.hidden) close(); });
-  document.addEventListener('keydown', (e) => { if (e.key === 'Escape' && !pop.hidden) close(); });
-  window.addEventListener('resize', () => { if (!pop.hidden) anchorLegacyPop(btn, pop); });
-}
-
-/** Place the body-level popover next to its Activity Bar button, clamped to
- *  the viewport (the bar can sit near the bottom edge on short windows). */
-function anchorLegacyPop(btn, pop) {
-  const b = btn.getBoundingClientRect();
-  // Measure while hidden: display:none has no box, so un-hide off-screen first.
-  const wasHidden = pop.hidden;
-  if (wasHidden) { pop.style.visibility = 'hidden'; pop.hidden = false; }
-  const h = pop.offsetHeight;
-  const w = pop.offsetWidth;
-  if (wasHidden) { pop.hidden = true; pop.style.visibility = ''; }
-  const top = Math.min(Math.max(8, b.top + b.height / 2 - h / 2), window.innerHeight - h - 8);
-  const left = Math.min(b.right + 10, window.innerWidth - w - 8);
-  pop.style.top = `${Math.round(top)}px`;
-  pop.style.left = `${Math.round(left)}px`;
 }
 
 // ── Side Bar panel registry ──────────────────────────────
@@ -306,6 +236,9 @@ function bindSettingsButton() {
     if (isSettingsPanelActive()) {
       closeSettingsPanel();
     } else {
+      // Opening settings is the green-dot clear point (updateCheck.js lights
+      // it on a silent auto check; the user has now seen the About section).
+      setUpdateDot(false);
       openSettingsPanel();
     }
   });
@@ -635,11 +568,9 @@ function showLoginModal() {
 }
 
 // ── State refresh → avatar styling ───────────────────────
-// Error latch: remember avatar URLs that failed to load (e.g. account avatars
-// unreachable without a proxy). Without this, the 10s refresh poll re-shows
-// the broken <img> every cycle (src unchanged → no retry → broken-image icon)
-// and the onerror fallback to the logo never sticks.
-let avatarFailedUrl = '';
+// Dual-state decision (photo vs logo) + the failed-URL latch live in
+// neblink.js (avatarViewState / noteAvatarFailure) — shared with the settings
+// page avatar section so both entries can never drift apart.
 
 async function refresh() {
   await fetchNeblinkStatus();
@@ -650,22 +581,15 @@ function renderAvatar() {
   const avatar = document.getElementById('activity-avatar');
   if (!avatar) return;
   const st = getNeblinkState();
-  const loggedIn = !!st.loggedIn;
-  const avatarUrl = st.device?.avatarUrl || '';
+  const { url: validAvatarUrl, showPhoto } = avatarViewState();
   const logoEl = avatar.querySelector('.activity-avatar-logo');
   const photoEl = avatar.querySelector('.activity-avatar-photo');
   const letterEl = avatar.querySelector('.activity-avatar-letter');
 
-  // Logged in WITH an account avatar → show the photo.
-  // Logged in WITHOUT an avatar (no account data yet) → fall back to the logo.
-  // Logged out → show the logo.
-  // Filter obviously fake/placeholder URLs
-  const validAvatarUrl = avatarUrl && avatarUrl.startsWith('http') && !avatarUrl.includes('example.com') ? avatarUrl : '';
-  const showPhoto = loggedIn && validAvatarUrl && avatarFailedUrl !== validAvatarUrl;
   if (photoEl) {
     photoEl.hidden = !showPhoto;
     photoEl.onerror = () => {
-      avatarFailedUrl = validAvatarUrl; // latch: stop re-showing the broken image
+      noteAvatarFailure(validAvatarUrl); // latch: stop re-showing the broken image
       photoEl.hidden = true;
       if (logoEl) logoEl.hidden = false;
     };
@@ -675,9 +599,9 @@ function renderAvatar() {
   if (letterEl) letterEl.hidden = true; // account avatar replaces the letter
 
   // State styling: paired (logged in) / pairing / logged out.
-  avatar.classList.toggle('paired', loggedIn);
+  avatar.classList.toggle('paired', !!st.loggedIn);
   avatar.classList.toggle('pairing', !!st.pairing);
   avatar.title = st.pairing
     ? 'Pairing…'
-    : (loggedIn ? '个人主页' : '登录');
+    : (st.loggedIn ? '个人主页' : '登录');
 }
