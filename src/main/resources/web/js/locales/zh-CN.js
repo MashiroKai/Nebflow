@@ -848,6 +848,8 @@ export default {
   'daemons.stop': '停止',
   'daemons.restart': '重启',
   'daemons.restartFirst': '先启动',
+  'daemons.deleteTitle': '删除心跳进程',
+  'daemons.deleteConfirm': '删除心跳进程「{name}」？',
   // === Explorer（文件浏览器多选） ===
   'explorer.selectedCount': '已选 {count} 项',
   'explorer.delete': '删除',

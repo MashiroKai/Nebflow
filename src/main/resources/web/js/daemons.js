@@ -496,19 +496,22 @@ function buildRow(d, animate = false) {
 
       if (act === 'delete') {
         const name = daemons.find(x => x.id === id)?.name || id;
-        if (!window.confirm(`Delete daemon "${name}"?`)) return;
-        btn.disabled = true;
-        const resp = await apiCall('DELETE', `/api/daemons/${encodeURIComponent(id)}`);
-        if (resp) {
-          // Optimistic removal — no full re-render
-          daemons = daemons.filter(x => x.id !== id);
-          const body = document.querySelector('#daemon-panel .daemon-panel-body');
-          row.remove();
-          if (body && daemons.length === 0) body.appendChild(buildEmptyState());
-        } else {
-          btn.disabled = false;
-          fetchDaemons();
-        }
+        // dialog-unify 2026-09-05: unified glass confirm (was bare native
+        // window.confirm) — same #delete-box family as every other flow.
+        window.__showConfirm?.(t('daemons.deleteTitle'), t('daemons.deleteConfirm', { name }), async () => {
+          btn.disabled = true;
+          const resp = await apiCall('DELETE', `/api/daemons/${encodeURIComponent(id)}`);
+          if (resp) {
+            // Optimistic removal — no full re-render
+            daemons = daemons.filter(x => x.id !== id);
+            const body = document.querySelector('#daemon-panel .daemon-panel-body');
+            row.remove();
+            if (body && daemons.length === 0) body.appendChild(buildEmptyState());
+          } else {
+            btn.disabled = false;
+            fetchDaemons();
+          }
+        });
         return;
       }
 
