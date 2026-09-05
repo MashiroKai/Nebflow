@@ -922,6 +922,34 @@ class WebSocketRoutes(
       )
     }
 
+  /** '~' 前缀展开（仅前缀语义；非 ~ 开头原样返回）——wsBrowse 路径入参用。 */
+  private def expandTilde(path: String): String =
+    val home = sys.props("user.home")
+    if path == "~" then home
+    else if path.startsWith("~/") then home + path.drop(1)
+    else path
+
+  /** 应用内工作区浏览器（Route C 兜底）的目录列表响应帧。
+    * home 供前端把 home 前缀折叠为「主目录」面包屑；err 非 null → 前端在弹窗
+    * 内联展示错误（路径非法/不可读）。 */
+  private def wsBrowseEvent(
+      evType: String,
+      path: String,
+      parent: Option[String],
+      entries: List[String],
+      err: Option[String]
+  ): Json = {
+    val fields = scala.collection.mutable.ListBuffer(
+      "type" -> Json.fromString(evType),
+      "path" -> Json.fromString(path),
+      "home" -> Json.fromString(sys.props("user.home")),
+      "entries" -> Json.arr(entries.map(Json.fromString)*)
+    )
+    parent.foreach(p => fields += "parent" -> Json.fromString(p))
+    err.foreach(e => fields += "error" -> Json.fromString(e))
+    Json.obj(fields.toList*)
+  }
+
   private val MaxMessageSize = 10 * 1024 * 1024 // 10MB (base64 images can be large)
 
   /** Public facade for REST API to call into the same message handler. */
@@ -953,6 +981,69 @@ class WebSocketRoutes(
                   List(UiMessage.User(answerText, timestamp = System.currentTimeMillis()))
                 ) *>
                   forwardInteractionAnswer(requestId, askSessionId, io.circe.Json.obj("answers" -> answers.asJson))
+              case _ => IO.unit
+
+          // ── 工作区目录选择链（2026-09-05 作者裁定，workspace-picker 批次）──
+          // ProjectCreate「选择工作区」卡片点击 → 后端原生目录对话框（Route A）；
+          // headless/异常时 WorkspaceDirPicker 回 fallback 事件 → 前端降级应用内
+          // 浏览器（Route C，wsBrowse.list / wsBrowse.mkdir）。
+          // 关键：WS 帧串行（evalMap），对话框阻塞必须 `.start` 独立 fiber，
+          // 否则冻结整条连接（卡片后续 askUserAnswer 无法处理）。
+          case "pickWorkspaceDir" =>
+            val hc = parse(text).toOption.getOrElse(io.circe.Json.Null).hcursor
+            (hc.downField("sessionId").as[String].toOption, hc.downField("requestId").as[String].toOption) match
+              case (Some(sid), Some(rid)) =>
+                WorkspaceDirPicker.pick(sid, rid, wsSend).start.void
+              case _ =>
+                logger.warn(s"pickWorkspaceDir: missing sessionId/requestId — dropped")
+
+          case "wsBrowse.list" =>
+            val hc = parse(text).toOption.getOrElse(io.circe.Json.Null).hcursor
+            hc.downField("path").as[String].toOption.filter(_.nonEmpty) match
+              case None => IO.unit
+              case Some(raw) =>
+                IO.blocking {
+                  scala.util.Try(os.Path(expandTilde(raw), os.Path(sys.props("user.home")))).toOption match
+                    case None => (raw, None, List.empty[String], "invalid path")
+                    case Some(dir) =>
+                      if !os.isDir(dir) then (dir.toString, None, Nil, "not a directory")
+                      else
+                        val entries = os.list(dir)
+                          .filter(os.isDir)
+                          .map(_.last)
+                          .filterNot(_.startsWith("."))
+                          .toList.sorted
+                        // 根目录无上级（segmentCount==0）；其余经 os.up 规范化
+                        val parent = if dir.segmentCount > 0 then Some((dir / os.up).toString) else None
+                        (dir.toString, parent, entries, null: String)
+                }.flatMap { case (path, parent, entries, err) =>
+                    wsSend(wsBrowseEvent("wsBrowseList", path, parent, entries, Option(err)))
+                }.handleErrorWith { e =>
+                  wsSend(wsBrowseEvent("wsBrowseList", raw, None, Nil, Some(e.getMessage)))
+                }
+
+          case "wsBrowse.mkdir" =>
+            val hc = parse(text).toOption.getOrElse(io.circe.Json.Null).hcursor
+            (hc.downField("path").as[String].toOption, hc.downField("name").as[String].toOption.map(_.trim)) match
+              case (Some(raw), Some(name)) if name.nonEmpty && name != "." && name != ".." && !name.contains('/') && !name.contains('\\') =>
+                IO.blocking {
+                  val base = os.Path(expandTilde(raw), os.Path(sys.props("user.home")))
+                  os.makeDir(base / name)
+                  base / name
+                }.flatMap { created =>
+                  wsSend(Json.obj(
+                    "type" -> Json.fromString("wsBrowseMkdir"),
+                    "path" -> Json.fromString(created.toString),
+                    "ok" -> Json.fromBoolean(true)
+                  ))
+                }.handleErrorWith { e =>
+                  wsSend(Json.obj(
+                    "type" -> Json.fromString("wsBrowseMkdir"),
+                    "path" -> Json.fromString(raw),
+                    "ok" -> Json.fromBoolean(false),
+                    "error" -> Json.fromString(Option(e.getMessage).getOrElse("mkdir failed"))
+                  ))
+                }
               case _ => IO.unit
 
           case "permissionAnswer" =>

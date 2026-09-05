@@ -1215,7 +1215,7 @@ object ProjectCreateTool extends Tool:
     """Create a Project (Nebula use) — project definition + workspace .nebflow/ scaffolding.
 ## When to Use
 - **Known workspace path** (the user told you, or you know it): pass `workspace` (absolute path; `name`/`description` optional) — direct create: writes projects/<name>/project.json, workspace root AGENTS.md template, workspace/.nebflow/ + .gitignore scaffolding, and mounts the project (FlowMapStore + ProjectActor ready).
-- **Unknown workspace path**: omit `workspace` — an AskUserQuestion-style panel pops up on the user's window listing candidate paths (first-level directories under ~/Claude code/ not already used as project workspaces). The user picks one or types a custom absolute path (the built-in "Other…" free input), and creation proceeds automatically with the choice.
+- **Unknown workspace path**: omit `workspace` — an AskUserQuestion-style card pops up on the user's window with a prominent "选择工作区" (pick workspace) target. Clicking it opens the REAL OS folder browser (native directory dialog on macOS/Windows) where the user browses, can create folders, and confirms; the chosen path flows back into the card and creation proceeds automatically. If the native dialog is unavailable (headless JVM) or fails, the card automatically falls back to an in-app folder browser. Candidate paths (first-level directories under ~/Claude code/ not already used as project workspaces) remain on the card as secondary one-click hints, and the built-in "Other…" free input accepts a custom absolute path.
 - `name` defaults to the workspace path's basename when omitted.
 ## After Creation
 - Dispatch work with Task(project=<name>, task=...) — the project is mounted and triggerable immediately.
@@ -1459,9 +1459,9 @@ object ProjectCreateTool extends Tool:
               taken <- ProjectStore.list().map(_.flatMap(p => normalizeWorkspace(p.workspace)).toSet)
               candidates = scanCandidates(candidatesRoot, taken)
               question =
-                s"ProjectCreate 需要项目工作区路径 — 候选为 $candidatesRoot 下尚未用作项目工作区的目录。" +
-                  "点选其一，或选 Other… 输入其他绝对路径（支持 ~）。"
-              item = AskItem(question, candidates.map(c => AskOption(c, None)))
+                s"ProjectCreate 需要项目工作区路径 — 点击上方「选择工作区」打开系统文件夹选择框（可浏览层级、新建文件夹）；" +
+                  s"候选为 $candidatesRoot 下尚未用作项目工作区的目录，可点选；或选 Other… 手输绝对路径（支持 ~）。"
+              item = AskItem(question, candidates.map(c => AskOption(c, None)), dirPicker = true)
               requestId = java.util.UUID.randomUUID().toString.take(8)
               answers <- agentRef
                 .?(
