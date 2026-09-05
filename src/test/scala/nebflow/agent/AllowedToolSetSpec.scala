@@ -477,13 +477,13 @@ class AllowedToolSetSpec extends FunSuite:
 
   test("Nebula gets the §C.1 fixed toolset mechanism-fixed — no declaration needed (阶段 2c)"):
     // 阶段 2c agent 收敛（§C.1 角色-工具静态矩阵）：Nebula 工具面 = 固定集
-    // （2026-09-05 08:40 作者裁定恰十五件：编排触发/通信/基础四件/可视化/
-    // 用户面/平台/记忆），机制注入不可配置。裸定义（空 tools）必须携带完整
-    // 矩阵——面板编辑/定义失误无法解除调度器武装。
+    // （08:40 作者裁定改版 + 13:11 作者裁定 +Write/Edit 补齐恰十七件：编排触发/
+    // 通信/基础六件/可视化/用户面/平台/记忆），机制注入不可配置。裸定义（空
+    // tools）必须携带完整矩阵——面板编辑/定义失误无法解除调度器武装。
     val orchestration = Set(
       "Task", "ProjectCreate", "NodeList", "AgentControl", // 编排触发（NodeList=2c 新增观测面）
       "SendFriendMessage",                                 // 通信（好友功能非旧体系，保留）
-      "Bash", "Read", "Glob", "Grep",                      // 基础四件（2026-09-05 解禁）
+      "Bash", "Read", "Glob", "Grep", "Write", "Edit",     // 基础六件（08:40 解禁四件；13:11 补齐 Write/Edit）
       "Card",                                              // 可视化（2026-09-05 解封恢复）
       "Pop", "AskUserQuestion",                            // 用户面
       "Schedule", "TransferFile",                          // 平台
@@ -494,21 +494,20 @@ class AllowedToolSetSpec extends FunSuite:
     orchestration.foreach(t =>
       assert(allowed.contains(t), s"mechanism-fixed orchestration tool missing: $t")
     )
-    assert(!allowed.contains("Issue"), "恰十五件、零 Issue（2026-09-04 终裁：Issue/CheckIssues 退役）")
+    assert(!allowed.contains("Issue"), "恰十七件、零 Issue（2026-09-04 终裁：Issue/CheckIssues 退役）")
     Set("Mail", "Delegate", "FlowTrigger", "FlowExecute").foreach { t =>
       assert(!allowed.contains(t), s"旧体系四件已从 Nebula 固定面退役（2026-09-05 08:40 作者裁定）: $t")
     }
 
-  test("Nebula 文件工具面（2026-09-05 裁定）：基础四件机制固定、Write/Edit 声明也无效"):
-    // 2026-09-05 08:40 作者裁定：+基础四件 Bash/Read/Glob/Grep 解禁（从
-    // BaseTools 取四件，严禁夹带 Write/Edit）。converged 定义 tools 声明整体
-    // 失效（base=∅）不变——文件工具声明依旧 no-op，携带只来自机制注入。
+  test("Nebula 文件工具面（2026-09-05 裁定）：基础六件机制固定、声明依然无效"):
+    // 08:40 作者裁定：+基础四件 Bash/Read/Glob/Grep 解禁；13:11 作者裁定：
+    // +Write/Edit 补齐——基础六件=BaseTools 整集为所有 agent 统一默认工具集。
+    // converged 定义 tools 声明整体失效（base=∅）不变——文件工具声明依旧
+    // no-op，携带只来自机制注入。
     val legacyDeclared = mkDef("Nebula", List("Read", "Write", "Edit", "Glob", "Grep", "Bash"))
     val allowed = CoreProbe.allowed(legacyDeclared)
-    val base4 = Set("Read", "Glob", "Grep", "Bash")
-    base4.foreach(t => assert(allowed.contains(t), s"Nebula must have base file tool: $t"))
-    assert(!allowed.contains("Write"), "Nebula must NOT have Write（基础四件解禁不夹带）")
-    assert(!allowed.contains("Edit"), "Nebula must NOT have Edit")
+    val base6 = AgentCore.BaseTools
+    base6.foreach(t => assert(allowed.contains(t), s"Nebula must have base tool: $t"))
     assert(!allowed.contains("MultiEdit"), "MultiEdit removed from ToolRegistry (阶段 2c)")
     // Web 系同样不在 §C.1 矩阵
     val webDeclared = mkDef("Nebula", List("WebSearch", "WebFetch", "Curl"))
