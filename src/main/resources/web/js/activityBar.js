@@ -19,7 +19,8 @@
 // stays visible when the sidebar is collapsed.
 
 import { openSettingsPanel, closeSettingsPanel, isSettingsPanelActive } from './sidebar.js';
-import { fetchNeblinkStatus, getNeblinkState, startDeviceFlow, pollDeviceFlow, cancelDeviceFlow, startPkceLogin, pollPkceState, cancelPkceFlow } from './neblink.js';
+import { fetchNeblinkStatus, getNeblinkState, startDeviceFlow, pollDeviceFlow, cancelDeviceFlow, startPkceLogin, pollPkceState, cancelPkceFlow, avatarViewState, noteAvatarFailure } from './neblink.js';
+import { setUpdateDot } from './updateCheck.js';
 import { createIconsIn, escapeHtml } from './utils.js';
 import { getProfileUrl } from './brand.js';
 import { t } from './i18n.js';
@@ -306,6 +307,9 @@ function bindSettingsButton() {
     if (isSettingsPanelActive()) {
       closeSettingsPanel();
     } else {
+      // Opening settings is the green-dot clear point (updateCheck.js lights
+      // it on a silent auto check; the user has now seen the About section).
+      setUpdateDot(false);
       openSettingsPanel();
     }
   });
@@ -635,11 +639,9 @@ function showLoginModal() {
 }
 
 // ── State refresh → avatar styling ───────────────────────
-// Error latch: remember avatar URLs that failed to load (e.g. account avatars
-// unreachable without a proxy). Without this, the 10s refresh poll re-shows
-// the broken <img> every cycle (src unchanged → no retry → broken-image icon)
-// and the onerror fallback to the logo never sticks.
-let avatarFailedUrl = '';
+// Dual-state decision (photo vs logo) + the failed-URL latch live in
+// neblink.js (avatarViewState / noteAvatarFailure) — shared with the settings
+// page avatar section so both entries can never drift apart.
 
 async function refresh() {
   await fetchNeblinkStatus();
@@ -650,22 +652,15 @@ function renderAvatar() {
   const avatar = document.getElementById('activity-avatar');
   if (!avatar) return;
   const st = getNeblinkState();
-  const loggedIn = !!st.loggedIn;
-  const avatarUrl = st.device?.avatarUrl || '';
+  const { url: validAvatarUrl, showPhoto } = avatarViewState();
   const logoEl = avatar.querySelector('.activity-avatar-logo');
   const photoEl = avatar.querySelector('.activity-avatar-photo');
   const letterEl = avatar.querySelector('.activity-avatar-letter');
 
-  // Logged in WITH an account avatar → show the photo.
-  // Logged in WITHOUT an avatar (no account data yet) → fall back to the logo.
-  // Logged out → show the logo.
-  // Filter obviously fake/placeholder URLs
-  const validAvatarUrl = avatarUrl && avatarUrl.startsWith('http') && !avatarUrl.includes('example.com') ? avatarUrl : '';
-  const showPhoto = loggedIn && validAvatarUrl && avatarFailedUrl !== validAvatarUrl;
   if (photoEl) {
     photoEl.hidden = !showPhoto;
     photoEl.onerror = () => {
-      avatarFailedUrl = validAvatarUrl; // latch: stop re-showing the broken image
+      noteAvatarFailure(validAvatarUrl); // latch: stop re-showing the broken image
       photoEl.hidden = true;
       if (logoEl) logoEl.hidden = false;
     };
@@ -675,9 +670,9 @@ function renderAvatar() {
   if (letterEl) letterEl.hidden = true; // account avatar replaces the letter
 
   // State styling: paired (logged in) / pairing / logged out.
-  avatar.classList.toggle('paired', loggedIn);
+  avatar.classList.toggle('paired', !!st.loggedIn);
   avatar.classList.toggle('pairing', !!st.pairing);
   avatar.title = st.pairing
     ? 'Pairing…'
-    : (loggedIn ? '个人主页' : '登录');
+    : (st.loggedIn ? '个人主页' : '登录');
 }

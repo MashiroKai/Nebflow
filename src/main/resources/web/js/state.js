@@ -182,7 +182,11 @@ export default {
   serverVersion: '',
 
   serverThinking: null,
-  mcpServers: [],
+
+  // App update state (updateCheck.js) — fed by updateCheckResult; drives the
+  // settings-btn green dot and the About-section echo after a re-render.
+  updateAvailable: false,
+  latestVersion: '',
 
   // Batch selection (like VS Code Explorer)
   batchMode: false,
