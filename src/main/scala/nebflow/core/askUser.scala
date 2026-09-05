@@ -27,7 +27,12 @@ case class AskItem(
   /** true = 多选题（可勾选多个选项，答案为数组）；缺省 false = 单选，行为不变 */
   multiple: Boolean = false,
   /** 可选：问题出现时自动 Pop 到 Canvas 面板的对比页绝对路径（方向 C §2.1） */
-  canvas: Option[String] = None
+  canvas: Option[String] = None,
+  /** true = 工作区目录选择卡（2026-09-05 作者裁定）：前端渲染「选择工作区」大目标，
+    * 点击 → WS pickWorkspaceDir → 后端原生目录对话框（macOS NSOpenPanel /
+    * Windows JFileChooser）或 headless/异常时自动降级应用内浏览器。选项列表
+    * 降级为次级提示 chips，Other… 手输路径兜底保留。缺省 false = 行为字节不变。 */
+  dirPicker: Boolean = false
 )
 
 case class AskOption(
