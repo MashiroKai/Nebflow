@@ -65,6 +65,13 @@ case class NodeDef(
     * 不结算，status→held（非终态）+ 结果全文通知 Nebula，等待 NodeEdit release。
     * 旧 flow-map.json 无此键 → withDefaults 解码为 false（零迁移）= 旧行为。 */
   hold: Boolean = false,
+  /** 合并节点标记（merge-node 批 20260905，方案 .nebflow/Spec/merge-node-plan.md）：
+    * true = 批次产物落地收口节点——全部上游 completed 才触发（既有 in-barrier 语义）；
+    * 上游 failed 时**不做 collect 占位结算**，转 blocked 可见终态不悬挂
+    * （MergeNodePolicy 单点语义，NodeEngine.deliverFailed 唯一挂接）。
+    * 落地收口在工作区根仓执行 → 必须不配 worktree（沙箱根=workspace，.git 可写）。
+    * 旧 flow-map.json 无此键 → withDefaults 解码为 false（零迁移）= 旧行为。 */
+  merge: Boolean = false,
   deliveredTo: List[String] = Nil,
   /** V8 (2026-09-03): out=Nebula 投递记账——deliverToNebula 成功 offer 后落时间戳。
     * 与 deliveredTo（in barrier 判定，节点间沿边去重）完全分离，barrier 语义零改动；
