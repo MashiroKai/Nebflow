@@ -51,7 +51,8 @@ import {
 } from './modal.js';
 import { send, handleSlash, addFileAttachment, initInput, initGlobalFileDrop, injectUserMessage, enterAskMode, cancelAskMode, registerSkillCommands, drainMessageQueue, restoreQueue } from './input.js';import { saveMsg, loadMsgs, restoreFromStorage, restoreFromBackendHistory, migrateLegacyIfNeeded, emergencyCacheCleanup, findLastRealMessage, saveAskMsgDedup } from './persistence.js';
 import { initMicOrb } from './micOrb.js';
-import { renderTaskList, sessionShowsTeamTasks } from './taskList.js';
+// taskList.js 引用已随旧任务区退役移除（2026-09-05 10:54 裁定）：面板渲染
+// 由 taskList.js 自包含节点订阅驱动，session 切换重渲走 sidebar.js。
 import { renderWithRegistry, cleanupCardIframes } from './cardRegistry.js';
 import { escapeHtml, isBgAgentId } from './utils.js';
 import { showMemoryButton, handleMemoryData, handleMemoryChanged, initMemory, clearMemoryCache } from './memory.js';
@@ -2520,28 +2521,13 @@ onMessage('sessionBusy', (msg, view) => {
   applyLocalFreeze();
 });
 
-// --- Task list ---
-onMessage('taskListUpdate', (msg, view) => {
-  resetStreamTimeout(msg.sessionId);
-  if (msg.sessionId) state.sessionTasks[msg.sessionId] = msg.tasks;
-  if (view) {
-    renderTaskList(msg.tasks, undefined, msg.sessionId);
-  }
-});
-
-// --- Team task list (裁定②: unified into the Nebula session task panel) ---
-// Frame shape {type, team, tasks} — NO sessionId (TaskToolHelper.
-// emitTeamTaskListUpdate); team tasks live in their own store directory and
-// never enter state.sessionTasks. taskList.js merges them into the panel
-// when the rendered session is a Nebula session (sessionShowsTeamTasks).
-onMessage('teamTaskListUpdate', (msg) => {
-  if (!msg.team) return;
-  state.teamTasks[msg.team] = Array.isArray(msg.tasks) ? msg.tasks : [];
-  const sid = state.activeSessionId;
-  if (sid && sessionShowsTeamTasks(sid)) {
-    renderTaskList(state.sessionTasks[sid] || [], undefined, sid);
-  }
-});
+// --- Task list handlers (retired 2026-09-05 10:54 裁定) ---
+// 旧任务区退役：taskListUpdate / teamTaskListUpdate 的前端 handler 整体移除，
+// 任务面板 = 纯 Flow Map 节点视图（渲染在 taskList.js，节点事件自包含订阅）。
+// 后端帧照发（scala 零触碰）：taskListUpdate 已出 ws.js TERMINAL 表——非活跃
+// 会话帧被入口过滤器丢弃；活跃会话帧无订阅者 = no-op。安全冗余说明：handler
+// 原附带的 resetStreamTimeout 喂活由工具心跳链覆盖（toolHeartbeat/
+// agentToolHeartbeat，审计 20260903），无监督盲区。
 
 // --- Background task indicator in header ---
 let _bgTimer = null;
