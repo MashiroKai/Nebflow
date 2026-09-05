@@ -22,6 +22,7 @@ let verifyFor = null;      // username awaiting verification-note input
 let sentTo = new Set();    // usernames sent this session（乐观回显；服务端态 = relation_status）
 let searching = false;     // search in flight → button loading state
 let searchQ = '';          // preserved across re-renders (panel rebuilds on state change)
+let searchError = false;   // 请求失败分态（≠「未找到」；09-06 作者令三态：空结果/加载中/失败）
 
 // ── 红点语义（0904 批次，微信常识）：未看过的请求才亮。展开「新的朋友」
 // 即视为已看（与查看后即清的微信口径一致），新 friend_event 再亮；同意/
@@ -247,8 +248,12 @@ async function unblockFriend(f) {
 }
 
 // ── Search (submit-style, 1s min interval) ───────────────
+// 0906 布局修复（作者反馈「结果在同一行，把其他内容挤到一边」）：搜索块
+// .fm-search-block 为列布局——输入行 .fm-search 只承载 input+按钮，结果区
+// （命中卡/未找到/加载/失败）作为其下方的独立整宽块，永不做行内 flex 子项。
 function buildSearch() {
-  const wrap = el('div', 'fm-search');
+  const block = el('div', 'fm-search-block');
+  const row = el('div', 'fm-search');
   const input = document.createElement('input');
   input.className = 'fm-search-input';
   input.type = 'text';
@@ -265,10 +270,17 @@ function buildSearch() {
     lastSearchAt = now;
     verifyFor = null;
     searching = true;
+    searchError = false;
     render(); // button → loading state (input value survives via searchQ)
     try {
       searchResult = await api.searchUser(searchQ.trim());
-    } catch { searchResult = { found: false }; }  // 422/429/网络/窗口期 404 → 未找到卡兜底
+      searchError = false;
+    } catch {
+      // 失败分态（09-06 作者令）：422/429/网络/窗口期 404 → 「搜索失败」卡，
+      // 不再伪装成「未找到该用户」（此前与空结果混态，误导性强）。
+      searchResult = null;
+      searchError = true;
+    }
     searching = false;
     render();
   };
@@ -278,56 +290,93 @@ function buildSearch() {
     btn.disabled = true;
     btn.textContent = t('contacts.searching');
   }
-  wrap.appendChild(input);
-  wrap.appendChild(btn);
-  if (searchResult && !searching) wrap.appendChild(buildResultCard());
-  return wrap;
+  block.appendChild(row);
+  row.appendChild(input);
+  row.appendChild(btn);
+  if (searching) {
+    block.appendChild(buildSearching());
+  } else if (searchError) {
+    block.appendChild(buildSearchError());
+  } else if (searchResult) {
+    block.appendChild(buildResultCard());
+  }
+  return block;
+}
+
+// 加载态：区域级三点脉冲（+按钮「搜索中…」双反馈；禁静默空白）
+function buildSearching() {
+  const card = el('div', 'fm-result-card fm-searching');
+  card.setAttribute('role', 'status');
+  card.setAttribute('aria-label', t('contacts.searching'));
+  card.appendChild(el('i'));
+  card.appendChild(el('i'));
+  card.appendChild(el('i'));
+  return card;
+}
+
+// 请求失败态：明确反馈，不冒充「未找到」
+function buildSearchError() {
+  const card = el('div', 'fm-result-card fm-search-error');
+  card.setAttribute('role', 'alert');
+  card.appendChild(el('div', 'fm-empty', t('contacts.searchError')));
+  return card;
 }
 
 function buildResultCard() {
   const card = el('div', 'fm-result-card');
   const r = searchResult;
   if (!r.found) {
-    // 未找到态：主文案 + 常识提示（对方可能未设置用户名 / 输入有误）
+    // 空结果态：主文案 + 常识提示（对方可能未设置用户名 / 输入有误）
     card.appendChild(el('div', 'fm-empty', t('contacts.notFound')));
     card.appendChild(el('div', 'fm-empty-hint', t('contacts.notFoundHint')));
     return card;
   }
   // 契约 v1.0 搜索结果（friendsApi 归一后内部扁平形态）：username 可空、
   // displayName 永不空（服务端 fallback 链镜像）、relation_status 六态。
-  card.appendChild(avatarEl({ avatarUrl: r.avatar, name: r.displayName }, 36));
+  // 分层结构（微信式）：头像 / 显示名 / @Username。
+  const person = el('div', 'fm-result-person');
+  person.appendChild(avatarEl({ avatarUrl: r.avatar, name: r.displayName }, 40));
   const meta = el('div', 'fm-row-meta');
   meta.appendChild(el('div', 'fm-row-name', r.displayName || r.username));
-  meta.appendChild(el('div', 'fm-row-sub', r.username));
-  card.appendChild(meta);
+  if (r.username) {
+    // email 形态（旧 seed 回退）不加 @ 前缀；Username 契约形态加 @
+    meta.appendChild(el('div', 'fm-row-sub', r.username.includes('@') ? r.username : `@${r.username}`));
+  }
+  person.appendChild(meta);
+  card.appendChild(person);
 
-  // ── relation_status 六态 → 按钮态（契约 §4.1 逐态映射；值缺失按 addable
-  // 兜底，窗口期/载荷残缺时不渲染成死卡）。可加性判断以服务端 relation_status
-  // 为唯一事实源（本端不再做好友/在途推断）；唯一保留的本地乐观态是本次
-  // 会话刚发出的请求（sentTo），服务端列表刷新前给出即时反馈。
+  // ── relation_status 六态 → 状态文案 + 动作区（契约 §4.1 逐态映射；值缺失按
+  // addable 兜底，窗口期/载荷残缺时不渲染成死卡）。可加性判断以服务端
+  // relation_status 为唯一事实源（本端不再做好友/在途推断）；唯一保留的本地
+  // 乐观态是本次会话刚发出的请求（sentTo），服务端列表刷新前给出即时反馈。
   const rs = r.relation_status || 'addable';
   const username = r.username || '';
+  const foot = el('div', 'fm-result-foot');
 
   if (rs === 'self') {
-    card.appendChild(el('span', 'fm-status-text', t('contacts.self')));
+    foot.appendChild(el('span', 'fm-status-text', t('contacts.self')));
+    card.appendChild(foot);
     return card;
   }
 
   if (rs === 'already_friends') {
-    // 已好友 → 「发消息」（复用好友行同款 openChatWithFriend 链路）
+    // 已好友 → 状态「已是好友」+「发消息」（复用好友行同款 openChatWithFriend 链路）
+    foot.appendChild(el('span', 'fm-status-text', t('contacts.alreadyFriends')));
     const msgBtn = el('button', 'glass-control fm-msg-btn', t('contacts.sendMessage'));
     msgBtn.addEventListener('click', () => {
       const fr = friends.find(f => f.userId === r.userId)
         || { userId: r.userId, neblinkId: username, name: r.displayName, avatarUrl: r.avatar };
       openChatWithFriend(fr);
     });
-    card.appendChild(msgBtn);
+    foot.appendChild(msgBtn);
+    card.appendChild(foot);
     return card;
   }
 
   if (rs === 'outgoing_pending' || (rs === 'addable' && sentTo.has(username.toLowerCase()))) {
     // 我方出站待处理 → 「等待对方处理」（sentTo 为乐观回显，非服务端态）
-    card.appendChild(el('span', 'fm-status-text', t('contacts.outgoingPending')));
+    foot.appendChild(el('span', 'fm-status-text', t('contacts.outgoingPending')));
+    card.appendChild(foot);
     return card;
   }
 
@@ -336,7 +385,7 @@ function buildResultCard() {
     // 请求列表取；列表落后时后台 refresh，按钮态随重渲染回归）
     const rq = incoming.find(x => x.from?.userId === r.userId && (x.status || 'pending') === 'pending');
     if (!rq) { refresh(); return card; }
-    card.appendChild(el('span', 'fm-status-text', t('contacts.respondRequest')));
+    foot.appendChild(el('span', 'fm-status-text', t('contacts.respondRequest')));
     const accept = el('button', 'glass-control fm-req-accept', t('contacts.accept'));
     accept.addEventListener('click', async () => {
       accept.disabled = true;
@@ -352,16 +401,15 @@ function buildResultCard() {
       searchResult = null;
       await refresh();
     });
-    const btns = el('span', 'fm-req-btns');
-    btns.appendChild(accept);
-    btns.appendChild(decline);
-    card.appendChild(btns);
+    foot.appendChild(accept);
+    foot.appendChild(decline);
+    card.appendChild(foot);
     return card;
   }
 
   if (rs === 'blocked_by_me') {
     // 我拉黑对方（调用者私有信息可安全显示）→ 禁用添加 + 「取消拉黑」入口
-    card.appendChild(el('span', 'fm-status-text fm-blocked-tag', t('contacts.blocked')));
+    foot.appendChild(el('span', 'fm-status-text fm-blocked-tag', t('contacts.blocked')));
     const ub = el('button', 'glass-control fm-unblock-btn', t('contacts.unblock'));
     ub.addEventListener('click', async () => {
       ub.disabled = true;
@@ -373,7 +421,8 @@ function buildResultCard() {
       await refresh();
       window.dispatchEvent(new CustomEvent('fm-friends-changed'));
     });
-    card.appendChild(ub);
+    foot.appendChild(ub);
+    card.appendChild(foot);
     return card;
   }
 
@@ -405,11 +454,12 @@ function buildResultCard() {
     box.appendChild(cancelBtn);
     card.appendChild(box);
     setTimeout(() => input.focus(), 0);
-  } else {
-    const addBtn = el('button', 'glass-control fm-add-btn', t('contacts.addFriend'));
-    addBtn.addEventListener('click', () => { verifyFor = username; render(); });
-    card.appendChild(addBtn);
+    return card;
   }
+  const addBtn = el('button', 'glass-control fm-add-btn', t('contacts.addFriend'));
+  addBtn.addEventListener('click', () => { verifyFor = username; render(); });
+  foot.appendChild(addBtn);
+  card.appendChild(foot);
   return card;
 }
 
