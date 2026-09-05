@@ -5,6 +5,7 @@ import io.circe.syntax.*
 import io.circe.JsonObject
 import cats.effect.unsafe.implicits.global
 import munit.FunSuite
+import nebflow.agent.AgentDef
 import nebflow.core.PathUtil
 import nebflow.service.{MemoryBudget, MemoryStore}
 
@@ -475,4 +476,114 @@ class MemoryEditToolSpec extends FunSuite:
     val res = call("target" -> "user".asJson, "action" -> "remove".asJson, "match" -> "不可丢条目".asJson)
     assert(res.left.toOption.get.message.contains("MEMORYEDIT_SNAPSHOT"), "结构化快照失败码")
     assert(os.read(userFile).contains("- 不可丢条目"), "fail-closed：目标零写入")
+
+  // ---------------------------------------------------------------
+  // dream 受限准入（2026-09-05 作者签准，修订 2026-08-31 裁定①）：
+  // 记忆写面 = Nebula + dream；dream 限修订动作（remove/update/replace_section），
+  // append 一律拒绝（DREAM_APPEND_DENIED——「dream 禁写新记忆」铁律工具面强制）。
+  // 身份来源 = ToolContext.agentDef（AgentCore 工具执行链 Some(effectiveDef)）。
+  // 授能/剥离面断言在 AgentConvergenceSpec（过滤面）。
+  // ---------------------------------------------------------------
+
+  /** 带身份调用（生产链上 agentDef 恒为 Some(effectiveDef)，AgentCore toolCtx）。 */
+  private def callAs(identity: String, params: (String, Json)*): Either[ToolError, String] =
+    val input = JsonObject.fromIterable(params.map((k, v) => k -> v))
+    MemoryEditTool.call(input, ToolContext(
+      projectRoot = home.toString,
+      agentDef = Some(AgentDef(name = identity, description = "")))).unsafeRunSync()
+
+  /** dream 节前置：重置快照根为目录（既有 fail-closed 测会把它留成文件——
+    * 快照闸 fail-closed 语义正确，本节各测需要健康快照根）。幂等。 */
+  private def resetBackups(): Unit = os.remove.all(home / "memory-backups")
+
+  private def countBackupDirs(): Int =
+    val root = home / "memory-backups"
+    if os.isDir(root) then os.list(root).count(os.isDir(_)) else 0
+
+  // ===== 断言1：dream append → 拒绝（DREAM_APPEND_DENIED），零副作用 =====
+
+  test("dream append → DREAM_APPEND_DENIED（信息含「dream 禁写新记忆」），零写入零快照"):
+    resetBackups()
+    seedUser("- 既有条目\n")
+    val backupsBefore = countBackupDirs()
+    val res = callAs("dream", "target" -> "user".asJson, "action" -> "append".asJson,
+      "content" -> "- dream 试图新增的记忆（必须被拒）".asJson)
+    val msg = res.left.toOption.get.message
+    assert(msg.contains("DREAM_APPEND_DENIED"), s"结构化错误码: $msg")
+    assert(msg.contains("dream 禁写新记忆"), "错误信息含铁律原文")
+    assert(msg.contains("update") && msg.contains("replace_section"), "错误信息给出可行动出路（修订动作）")
+    assert(!os.read(userFile).contains("试图新增"), "拒绝 = 零写入")
+    assertEquals(countBackupDirs(), backupsBefore, "append 被拒不触发写前快照（无副作用）")
+
+  test("dream append 拦截先于预算闸——超硬顶也报 DREAM_APPEND_DENIED 而非 MEMORYEDIT_BUDGET"):
+    seedUser("x" * 51300) // > 50KB 硬顶：若拦截晚于预算校验会先报 MEMORYEDIT_BUDGET
+    val res = callAs("dream", "target" -> "user".asJson, "action" -> "append".asJson,
+      "content" -> "- 超限新记忆".asJson)
+    val msg = res.left.toOption.get.message
+    assert(msg.contains("DREAM_APPEND_DENIED"), "动作分发前拦截，先于预算校验")
+    assert(!msg.contains("MEMORYEDIT_BUDGET"), "预算闸未被触发（拦截位置在最早点）")
+    // 三个 target 面一律拒（铁律不区分目标文件）
+    seedAgent("- 甲")
+    val agentTarget = callAs("dream", "target" -> "agent".asJson, "action" -> "append".asJson,
+      "content" -> "- x".asJson)
+    assert(agentTarget.left.toOption.get.message.contains("DREAM_APPEND_DENIED"))
+
+  // ===== 断言2：dream remove → 通过且快照产生（③：快照闸身份无关自动覆盖）=====
+
+  test("dream remove → 通过且快照产生（快照内容=写前真身）"):
+    resetBackups()
+    seedAgent("- dream 可删的过时条目 stale-xyz\n- 保留条目\n")
+    val res = callAs("dream", "target" -> "agent".asJson, "action" -> "remove".asJson,
+      "match" -> "stale-xyz".asJson)
+    assert(res.isRight, s"dream 修订动作放行: ${res.left.toOption.map(_.message)}")
+    assert(!os.read(agentFile).contains("stale-xyz"), "条目已删")
+    assert(os.read(agentFile).contains("- 保留条目"), "其余条目不动")
+    assert(os.read(latestBackupOf(agentFile)) == "- dream 可删的过时条目 stale-xyz\n- 保留条目\n",
+      "快照产生且内容=写前真身（快照闸身份无关，dream 自动覆盖）")
+
+  test("dream replace_section → 放行"):
+    resetBackups()
+    seedUser("## Bulk\n\n- 旧一\n- 旧二\n")
+    val res = callAs("dream", "target" -> "user".asJson, "action" -> "replace_section".asJson,
+      "section" -> "Bulk".asJson, "content" -> "- dream 整理后唯一条目".asJson)
+    assert(res.isRight)
+    assert(os.read(userFile).contains("- dream 整理后唯一条目"))
+
+  // ===== ③：预算闸身份无关自动覆盖——dream update 超预算同样 MEMORYEDIT_BUDGET =====
+
+  test("dream update → 预算内放行；超硬顶同样 MEMORYEDIT_BUDGET（预算闸身份无关）"):
+    resetBackups()
+    seedUser("- 小条目\n")
+    val ok = callAs("dream", "target" -> "user".asJson, "action" -> "update".asJson,
+      "match" -> "小条目".asJson, "content" -> "- dream 已修订条目".asJson)
+    assert(ok.isRight, s"dream update（修订动作）放行: $ok")
+    assert(os.read(userFile).contains("- dream 已修订条目"))
+
+    seedUser("x" * 50600 + "\n- 小条目") // 贴硬顶下方，update 推高越顶
+    val over = callAs("dream", "target" -> "user".asJson, "action" -> "update".asJson,
+      "match" -> "小条目".asJson, "content" -> ("- dream 替换" + "y" * 4096).asJson)
+    val msg = over.left.toOption.get.message
+    assert(msg.contains("MEMORYEDIT_BUDGET"), "dream update 超预算同样 MEMORYEDIT_BUDGET（无 dream 例外）")
+    assert(!os.read(userFile).contains("dream 替换"), "预算拒绝 = 零写入")
+
+  // ===== 断言3：Nebula 全动作不受影响（显式身份断言；过滤面见 AgentConvergenceSpec）=====
+
+  test("Nebula 全四动作不受影响（agentDef=Nebula 显式走一遍）"):
+    resetBackups()
+    seedUser("## Sec\n\n- 旧条目\n")
+    assert(callAs("Nebula", "target" -> "user".asJson, "action" -> "append".asJson,
+      "content" -> "- Nebula 追加条目".asJson).isRight, "Nebula append 照常")
+    assert(callAs("Nebula", "target" -> "user".asJson, "action" -> "update".asJson,
+      "match" -> "旧条目".asJson, "content" -> "- 旧条目已更新".asJson).isRight, "Nebula update 照常")
+    // replace_section 按语义清空节体（前两步的条目随之消失）——remove 目标在
+    // 区段替换后重新 append（无 section = 文件尾 = 末节体内）
+    assert(callAs("Nebula", "target" -> "user".asJson, "action" -> "replace_section".asJson,
+      "section" -> "Sec".asJson, "content" -> "- 区段定稿".asJson).isRight, "Nebula replace_section 照常")
+    assert(callAs("Nebula", "target" -> "user".asJson, "action" -> "append".asJson,
+      "content" -> "- 临时移除目标条目".asJson).isRight, "Nebula append（区段替换后）照常")
+    assert(callAs("Nebula", "target" -> "user".asJson, "action" -> "remove".asJson,
+      "match" -> "临时移除目标条目".asJson).isRight, "Nebula remove 照常")
+    val content = os.read(userFile)
+    assert(content.contains("- 区段定稿"), "落盘链完整")
+    assert(!content.contains("临时移除目标条目"), "remove 已生效")
 end MemoryEditToolSpec

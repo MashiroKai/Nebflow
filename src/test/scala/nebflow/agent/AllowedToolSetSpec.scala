@@ -25,7 +25,10 @@ import nebflow.core.tools.ToolRegistry
  *   - SubTask is team-only (user ruling 2026-08-24: auto-injected at the
  *     mechanism layer — manual agent.json declarations are error-prone)
  *   - FlowReport is flow-only
- *   - non-Nebula agents never get Nebula-exclusive tools (Schedule, Delegate, MemoryEdit)
+ *   - non-Nebula agents never get Nebula-exclusive tools (Schedule, Delegate,
+ *     MemoryEdit) — exception: dream is admitted for MemoryEdit (2026-09-05
+ *     author ruling, AgentCore.DreamAdmittedTools; append still denied at the
+ *     tool's action layer, DREAM_APPEND_DENIED)
  *   - FlowTrigger is whitelist-driven: present iff agentDef.flows is non-empty
  *     (not Nebula-exclusive); SubTask workers never get it
  *   - SubTask workers (isSubTaskWorker=true) are leaf agents: no Mail /
