@@ -13,13 +13,15 @@ import nebflow.core.PathUtil
  * type ∈ blocked / held / reentry-triggered / reactivated / abandoned / escalated /
  *   cooldown-on / released / reaped / merge-blocked /
  *   settle-sweep / trigger-starved / start-aborted（trigger-chain-fix 批）/
- *   bg-wait / bg-wait-timeout / bg-released（bgtask-completion-gate 批）。
+ *   bg-wait / bg-wait-timeout / bg-released（bgtask-completion-gate 批）/
+ *   mount-stalled（mount-enforce 批：可触发点后 60s 仍未触发的挂载停滞留痕，
+ *   summary 含等待原因——上游终态明细 + barrier 残缺清单）。
  * 注册式扩展：append API 无 schema 变更，新事件类型 = 本清单加一词 + 写入点调用。
  *
  * 0 schema 迁移（独立文件不碰 flow-map.json 契约）、append-only、重启保留、grep 友好。
  * 写入点：NodeEngine.blockedNode（blocked）/ heldNode（held）/ mergeBlockedByUpstream
  * Failure（merge-blocked）/ runWithAgent 翻转异常中止（start-aborted）/ settleRunnable
- * Sweep（settle-sweep、trigger-starved）/ reapStaleRunning（reaped）、
+ * Sweep（settle-sweep、trigger-starved、mount-stalled）/ reapStaleRunning（reaped）、
  * FeedbackRouter（reentry-triggered / escalated / cooldown-on）、NodeEditTool 重激活与
  * abandon 两分支（reactivated / abandoned）。
  */

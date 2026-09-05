@@ -280,7 +280,7 @@ object NodeEditTool extends Tool:
 - **skill** / **mcp**: NOT accepted (superseded by plugins in phase 2b). Existing flow-map nodes keep their old values for display only.
 
 ## Semantics
-- nodename missing → create (description required; 'out' is mandatory — a downstream node id or "Nebula"; plus an input side: task (entry semantics) or in. Dangling nodes and out-only relay nodes are rejected — EMPTY_NODE_CONNECTION).
+- nodename missing → create (description required; 'out' is mandatory — a downstream node id or "Nebula"; plus an input side: task (entry semantics) or in. Dangling nodes and out-only relay nodes are rejected — EMPTY_NODE_CONNECTION. merge=true additionally REQUIRES 'in' with ≥1 existing upstream id — a zero-upstream merge can never fire and is rejected (NODE_MERGE_REQUIRES_UPSTREAM): create the upstream node(s) first, then this merge node with in=<ids>).
 - nodename exists → edit: in appends barrier inputs; deps replaces the whole dependency list (when provided); out sets/replaces (rewire); description replaces (when provided). Disconnecting (out=null on a node that has an out edge) is rejected — rewire to a new target instead.
 - Connection policy (20260903 收紧): creation requires BOTH an out edge (node id or "Nebula") AND an input side (task or in — task counts as the in-side connection, so entry nodes (task + out, no in) are legal and run on create; in and task may coexist). Missing out, or out with neither task nor in → EMPTY_NODE_CONNECTION. Disconnecting to a no-out state on edit → EMPTY_NODE_CONNECTION (rewire, don't disconnect). Legacy dangling nodes (out=null created before this policy) stay editable: edit their task/description/in/deps freely, rewire their out to a target and the retained result auto-delivers.
 - Blocked node edit: changing task/description (or in/out) on a blocked node reactivates it — status returns to wiring/pending, deliveredTo cleared, blockCount preserved (round history kept), completed upstream results re-delivered, then the node reruns with the new input. No-op if nothing actually changed.
@@ -315,7 +315,7 @@ object NodeEditTool extends Tool:
         "worktree" -> Json.obj("type" -> "boolean".asJson, "description" -> "Create-time only: true = isolated git worktree auto-created at .nebflow/worktrees/<derived-from-node-name> (same-name branch, baseline = main HEAD; failure rejects the NodeEdit). false/omitted = workspace direct-run. Refused on edits".asJson),
         "preset" -> Json.obj("type" -> "string".asJson),
         "hold" -> Json.obj("type" -> "boolean".asJson, "description" -> "Human-gate: node completes to HELD (result saved+announced to Nebula, no downstream delivery) awaiting release=true. Requires a node-id out (not \"Nebula\"). wiring/pending/running only".asJson),
-        "merge" -> Json.obj("type" -> "boolean".asJson, "description" -> "Merge/collection node (batch landing sink, create-only): triggers only when ALL upstreams completed (in-barrier); an upstream failure converts this node to blocked (category=upstream-incomplete) instead of the collect placeholder-start. Must NOT carry 'worktree' — a merge node lands on the workspace root repo (sandbox root = workspace, .git writable); task should embed the upstream branch/worktree list + landing command set".asJson),
+        "merge" -> Json.obj("type" -> "boolean".asJson, "description" -> "Merge/collection node (batch landing sink, create-only): triggers only when ALL upstreams completed (in-barrier); an upstream failure converts this node to blocked (category=upstream-incomplete) instead of the collect placeholder-start. Must NOT carry 'worktree' — a merge node lands on the workspace root repo (sandbox root = workspace, .git writable); task should embed the upstream branch/worktree list + landing command set. REQUIRES 'in' (≥1 existing upstream id) on create — zero-upstream merge is rejected (NODE_MERGE_REQUIRES_UPSTREAM): create the upstreams first, then this node with in=<ids>".asJson),
         "notifyDispatcher" -> Json.obj("type" -> "boolean".asJson, "description" -> "dispatch-notify backflow: on terminal state (completion wired) trigger a dispatcher session with this node's result reference (independent signal channel, no out-edge cost). Settable/withdrawable while wiring/pending/running".asJson),
         "release" -> Json.obj("type" -> "boolean".asJson, "description" -> "Release a HELD node → completed, delivery chain runs. STANDALONE action — any other edit parameter in the same call refuses (release first, then rewire separately)".asJson),
         "note" -> Json.obj("type" -> "string".asJson, "description" -> "User supplementary text, ONLY with release=true — appended to the out target's task (carried into downstream input)".asJson),
@@ -563,6 +563,19 @@ object NodeEditTool extends Tool:
               IO.pure(Left(ToolError(
                 "merge=true (batch landing sink) must NOT carry 'worktree' — a merge node lands on the workspace " +
                   "root repo; its sandbox root must be the workspace itself so .git is writable. Drop 'worktree'.")))
+            // merge 校验②（mount-enforce 批 20260905，作者裁定「节点不允许空挂载」）：
+            // merge=true 必须 ≥1 上游（in 非空）——合并节点靠上游 completed 投递清
+            // in-barrier 触发（deliverOut→startNode），零上游=可触发点永不到达=空挂
+            // pending 永不生效（实证 n-371cf932：merge=true、in=[] 悬挂 10+min，靠
+            // 人工 abandon+重建救援）。合法创建顺序：先建上游节点，再建合并节点并
+            // in=<上游 id>（in 声明自动改接各上游 out → 本节点）。
+            else if merge && ins.isEmpty then
+              IO.pure(Left(ToolError(
+                "merge=true (batch landing sink) requires at least one upstream: declare 'in' with existing upstream node id(s). " +
+                  "A merge node triggers only when its in-barrier clears via upstream completed delivery — with zero upstreams " +
+                  "it can never fire (empty mount = pending forever). Create the upstream node(s) first, then create this merge " +
+                  "node with in=<upstream-id(s)> (the in declaration rewires each upstream's out to this node). " +
+                  "(NODE_MERGE_REQUIRES_UPSTREAM)")))
             else
               // 1. agent 存在性（新建恒 "general"——库缺 general = 环境残缺，fail-fast）
               EntityLoader.loadAgent(agentName).flatMap {
@@ -703,13 +716,20 @@ object NodeEditTool extends Tool:
                 // 运行中上游不投递（barrier 等待语义——completeNode 时 deliverOut 自然投）。
                 // 后台化（收口③）：deliverOutTo 内 startNode 同步等下游节点终态，
                 // 直接调用会阻塞 NodeEdit 工具 fiber（见 runDetached 注释）。
+                // merge 分流（mount-enforce 批）：合并节点创建时 in 引用已 failed 的
+                // 上游（创建顺序翻转后的合法形态）——failed 错误文本≠产物，不作输入
+                // 投递，走 MergeNodePolicy 转 blocked 可见终态不悬挂（与 deliverFailed
+                // 运行期路径同语义单点 mergeBlockedByUpstreamFailure）；非 merge 下游
+                // 的 failed 错误投递语义保持不变。
                 NodeTools.runDetached(rt, s"deliver retained upstream results -> $nodeId")(
                   ins.traverse_ { upId =>
                     rt.store.findNode(upId).flatMap {
                       // R1（blocked 反馈重入设计 §6）：blocked 是终态且 result=反馈渲染串，
                       // 但反馈串不是可投结果——D1 显式排除 blocked（failed 错误投递语义保持不变）
                       case Some(up) if up.result.isDefined && up.status != NodeLifecycle.Blocked && NodeLifecycle.Terminal.contains(up.status) =>
-                        rt.engine.deliverOutTo(up, nodeId, up.result.get)
+                        if s.nodes(nodeId).merge && up.status == NodeLifecycle.Failed then
+                          rt.engine.mergeBlockedByUpstreamFailure(s.nodes(nodeId), up, up.result.get)
+                        else rt.engine.deliverOutTo(up, nodeId, up.result.get)
                       case _ => IO.unit
                     }
                   }
