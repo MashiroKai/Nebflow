@@ -72,6 +72,9 @@ object PluginRegistry:
     name: String,
     version: String,
     description: String,
+    /** 能力向单行句（dispatcher-ctx 批 2026-09-05）：「该插件让节点具备什么能力」。
+      * 可选——absent/空白回落 None，目录渲染回落 description。 */
+    capability: Option[String] = None,
     author: String,
     skills: List[PluginSkill],
     mcpServers: Map[String, McpServerConfig],
@@ -241,7 +244,7 @@ object PluginRegistry:
         // 目录名 ≠ manifest name → 以 manifest 为准并告警（防止引用歧义）
         if pname != name0 then warnings += s"manifest name '$pname' differs from directory name '$name0' — using manifest name"
         // 未知 manifest 字段 → 宽容忽略 + 告警（§B.8-5 前向兼容：2b 后新增字段不炸旧版）
-        val knownManifestKeys = Set("$schema", "name", "version", "description", "author", "extensions")
+        val knownManifestKeys = Set("$schema", "name", "version", "description", "capability", "author", "extensions")
         json.asObject.foreach { obj =>
           obj.keys.filterNot(knownManifestKeys.contains).foreach(k =>
             warnings += s"ignored unknown manifest field '$k' (forward-compat: skipped)")
@@ -249,6 +252,10 @@ object PluginRegistry:
         val version = c.downField("version").as[String].toOption.getOrElse("")
         if version.isEmpty then warnings += "manifest has no version field"
         val description = c.downField("description").as[String].toOption.getOrElse("")
+        // capability（可选）：宽容解析——absent/非字符串/空白 → None（§B.8-5 同向：
+        // 旧版 Nebflow 读到该字段也只是 unknown-field 告警，不炸）
+        val capability = c.downField("capability").as[Option[String]].toOption.flatten
+          .map(_.trim).filter(_.nonEmpty)
         val author = c.downField("author").as[String].toOption.getOrElse("")
 
         // skills/（一级：<skill>/SKILL.md；id = <plugin>/<skill>）
@@ -337,6 +344,7 @@ object PluginRegistry:
           name = pname,
           version = version,
           description = description,
+          capability = capability,
           author = author,
           skills = skills,
           mcpServers = mcpServers,
