@@ -76,6 +76,10 @@ object ToolRegistry:
       "NodeEdit" -> NodeEditTool,
       "NodeList" -> NodeListTool,
       "NodeCancel" -> NodeCancelTool,
+      // NodeMessage（20260905 机制批，作者裁定）：分发器向已分发节点注入补充
+      // 消息（running=turn 边界注入 / 未启动=任务追加 / 终态拒绝）。仅分发器
+      // 工具面（AgentCore.DispatcherFixedTools 第八件），Nebula/general 不加。
+      "NodeMessage" -> NodeMessageTool,
       "ProjectCreate" -> ProjectCreateTool,
       "Task" -> TaskTool,
       // 阶段 2c（§C.2）：Nebula 专用记忆维护工具——target 白名单硬编码

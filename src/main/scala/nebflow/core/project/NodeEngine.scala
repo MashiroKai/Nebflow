@@ -77,6 +77,15 @@ class NodeEngine(
   /** 运行中节点 → cancel 信号（NodeCancel 用）。 */
   private val running: Ref[IO, Map[String, Deferred[IO, Unit]]] = Ref.unsafe[IO, Map[String, Deferred[IO, Unit]]](Map.empty)
 
+  /** NodeMessage 注入链（20260905 机制批，作者裁定②）：running 节点 nodeId →
+    * sessionId 活映射。runWithAgent 在飞登记时与 running 表同步置位、清理段
+    * 同步移除——sendNodeMessage 据此定位节点会话 actor 发 ImmediateInput
+    * （turn 边界 drain 既有基建：pendingImmediateInputs + TurnBoundaryDrains
+    * .drainHead + CompactionQueueStore 压缩窗口保全，全部复用零重造）。
+    * 无映射 = 会话已终结（裁定②竞态兜底入口：回退记录追加「注入未达」）。 */
+  private[project] val nodeSessions: Ref[IO, Map[String, String]] =
+    Ref.unsafe[IO, Map[String, String]](Map.empty)
+
   /** 缺口4（2026-09-04 重复投递去重）：同 (identity, status) 60s 窗口内重复
     * Nebula 通知抑制——进程内时间窗 map（固定窗，顺路淘汰过期条目）。与 V8
     * nebulaDeliveredAt 账本**正交**：账本管跨重启 at-least-once（持久化，管
@@ -126,6 +135,128 @@ class NodeEngine(
     store.findNode(nodeId).flatMap {
       case Some(n) => emitEvent("nodeRemoved", nodeId, NodePayload.buildNodeJson(n, System.currentTimeMillis()))
       case None    => emitEvent("nodeRemoved", nodeId, Json.obj("id" -> nodeId.asJson))
+    }
+
+  // ── NodeMessage（20260905 机制批，作者裁定六条语义）──────────────────
+  //
+  // 向已分发节点注入补充消息，按节点状态三路由：
+  //   running（裁定②）     → 复用既有 immediate 注入机制（ImmediateInput →
+  //                          pendingImmediateInputs → turn 边界 drainHead /
+  //                          idle 即开新 turn；CompactionQueueStore 压缩窗口
+  //                          保全）——注入文本带 [NODE-MESSAGE] 可识别前缀
+  //                          （来源 = 分发器 NodeMessage + 节点名 + 时间戳），
+  //                          与用户任务文本、节点结果投递明确区分。竞态兜底：
+  //                          状态检查与入队间会话终结（nodeSessions/registry
+  //                          查无映射）→ 回退任务记录追加并标注「注入未达」。
+  //   wiring/pending/held
+  //   （裁定③，非终态无
+  //    活动会话）          → 补充内容持久追加进节点 task（== 分发器补充
+  //                          （NodeMessage <时间戳>） == 分节，NodeEdit release
+  //                          note 先例同款）——节点启动时 buildInput 沿 task
+  //                          读到。事务内 fresh 状态守卫：并发启动窗口（状态已
+  //                          变 running）→ 重走一次 running 路由（单次重试）；
+  //                          并发终态化 → NODE_TERMINAL_NO_MESSAGE。
+  //   终态（裁定④）        → 拒绝 NODE_TERMINAL_NO_MESSAGE（completed/failed/
+  //                          cancelled/blocked；blocked 亦拒——应新建节点而非
+  //                          倒改）。
+  // 留痕（裁定⑤）：每条消息（含注入成功/未达/追加）一律追加 FlowMapEventLog
+  // （type=node-message，append-only 持久可追溯）；Flow Map 默认载荷零膨胀
+  // （不加标记不加键——载荷精简裁定「能不加就不加」）。
+  def sendNodeMessage(nodeId: String, message: String): IO[Either[String, String]] =
+    val text = message.trim
+    if text.isEmpty then
+      IO.pure(Left(s"'message' must be non-empty (trim) — nothing to inject (NODE_MESSAGE_EMPTY)"))
+    else
+      store.findNode(nodeId).flatMap {
+        case None =>
+          IO.pure(Left(s"Node '$nodeId' not found in project '$projectName' (active or archived) — " +
+            s"check NodeList for the current topology (NODE_NOT_FOUND)"))
+        case Some(n) if NodeLifecycle.Terminal.contains(n.status) =>
+          IO.pure(Left(s"Node '${n.name}' is terminal (status=${n.status}) — messages are refused: " +
+            "a finished node is never retro-edited; create a new node instead (NODE_TERMINAL_NO_MESSAGE)"))
+        case Some(n) if n.status == NodeLifecycle.Running =>
+          injectRunning(n, text)
+        case Some(n) =>
+          appendToTaskRoute(n, text, retried = false)
+      }
+
+  /** 裁定② running 路由：活会话 → ImmediateInput（source="system"，text 带
+    * [NODE-MESSAGE] 前缀头）；查无会话（nodeSessions/registry 无映射 = 会话
+    * 在检查与入队间已终结）→ 裁定②竞态兜底：任务记录追加 + 「注入未达」标注。
+    * 注入为 fire-and-forget tell（与 Mail/revalidate 先例同语义）——投递本身
+    * 不可回执，事件日志恒记录注入尝试（留痕不丢）。 */
+  private def injectRunning(node: NodeDef, text: String): IO[Either[String, String]] =
+    nodeSessions.get.map(_.get(node.id)).flatMap {
+      case Some(sid) =>
+        resources.agentRegistry.get.flatMap { reg =>
+          reg.get(sid) match
+            case Some(record) =>
+              val head = NodeEngine.nodeMessageHeader(node.name)
+              (record.ref ! AgentCommand.ImmediateInput(
+                text = s"$head\n\n$text",
+                source = Some("system")
+              )).void *>
+                FlowMapEventLog.append(workspace, projectName, node.id, NodeEngine.NodeMessageEventType,
+                  s"injected -> live session $sid: $text") *>
+                  logger.info(s"NodeMessage -> node '${node.name}' (${node.id}) injected at turn boundary (session $sid, ${text.length} chars)").as(
+                    Right(s"Message delivered to running node '${node.name}' — it will be injected at the next turn boundary ([NODE-MESSAGE] header). " +
+                      "Trace: flow-map-events.jsonl (node-message/injected)."))
+            case None =>
+              // registry 已清 = 会话正在拆除（runWithAgent 清理段）→ 未达兜底
+              appendUndelivered(node, text, sid)
+        }
+      case None => appendUndelivered(node, text, "-")
+    }
+
+  /** 裁定②竞态兜底：注入不可达 → 记录追加「注入未达」（纯留痕写——只对节点
+    * 存在性守卫，不挑剔状态；会话已终结时状态可能已翻终态，留痕必须不丢）。 */
+  private def appendUndelivered(node: NodeDef, text: String, sid: String): IO[Either[String, String]] =
+    store.mutate { st =>
+      st.nodes.get(node.id) match
+        case Some(fresh) =>
+          st.copy(nodes = st.nodes.updated(node.id, fresh.copy(task = Some(
+            fresh.task.getOrElse("") + s"\n\n${NodeEngine.nodeMessageSection(undelivered = true)}\n$text"))))
+        case None => st
+    }.flatMap { s =>
+      s.nodes.get(node.id).traverse_(emitUpdated) *>
+        FlowMapEventLog.append(workspace, projectName, node.id, NodeEngine.NodeMessageEventType,
+          s"not-delivered (session $sid already gone) -> recorded on task: $text") *>
+        logger.warn(s"NodeMessage -> node '${node.name}' (${node.id}) session '$sid' gone before delivery — recorded on task as undelivered").as(
+          Right(s"Node '${node.name}' session ended before the message could be injected — the message was recorded on the node's task " +
+            "as「注入未达」(trace preserved, nothing lost). If the node reruns (NodeEdit reactivation) it will read it; " +
+            "otherwise create a new node to carry the instruction."))
+    }
+
+  /** 裁定③ wiring/pending/held 路由：持久追加 task（节点启动时随 buildInput
+    * 读到）。单事务 fresh 状态守卫：仍 ∈ {wiring, pending, held} → 追加写成；
+    * 并发启动（running）→ 单次重试走 running 路由；并发终态化 → 裁定④拒绝。 */
+  private def appendToTaskRoute(node: NodeDef, text: String, retried: Boolean): IO[Either[String, String]] =
+    store.mutate { st =>
+      st.nodes.get(node.id) match
+        case Some(fresh) if fresh.status == NodeLifecycle.Wiring || fresh.status == NodeLifecycle.Pending || fresh.status == NodeLifecycle.Held =>
+          st.copy(nodes = st.nodes.updated(node.id, fresh.copy(task = Some(
+            fresh.task.getOrElse("") + s"\n\n${NodeEngine.nodeMessageSection(undelivered = false)}\n$text"))))
+        case _ => st // 状态已变 → 本事务不写（下方复核分流）
+    }.flatMap { s =>
+      s.nodes.get(node.id) match
+        case Some(fresh) if fresh.status == NodeLifecycle.Wiring || fresh.status == NodeLifecycle.Pending || fresh.status == NodeLifecycle.Held =>
+          // mutate 原子性：返回快照即本事务后状态——状态仍 ∈ 追加集 ⟺ 本事务写成
+          emitUpdated(fresh) *>
+            FlowMapEventLog.append(workspace, projectName, node.id, NodeEngine.NodeMessageEventType,
+              s"appended to task (status=${fresh.status}): $text").as(
+              Right(s"Message appended to node '${fresh.name}' task (status=${fresh.status}) as「分发器补充（NodeMessage）」— " +
+                "the node will read it as part of its task when it starts. Trace: flow-map-events.jsonl (node-message/appended)."))
+        case Some(fresh) if fresh.status == NodeLifecycle.Running && !retried =>
+          // 并发启动窗口：pending 在检查与追加间被投递启动 → 消息应走注入面
+          logger.info(s"NodeMessage -> node '${node.name}' started concurrently during append — rerouting to live injection")
+          injectRunning(fresh, text)
+        case Some(fresh) if fresh.status == NodeLifecycle.Running =>
+          appendUndelivered(fresh, text, "rerun-race")
+        case Some(fresh) =>
+          IO.pure(Left(s"Node '${fresh.name}' became terminal (status=${fresh.status}) while the message was being appended — " +
+            "refused: create a new node instead (NODE_TERMINAL_NO_MESSAGE)"))
+        case None =>
+          IO.pure(Left(s"Node '$nodeId' vanished before the message was appended (NODE_NOT_FOUND)"))
     }
 
   /** WS nodeCreated（NodeEdit 创建后）。payload 与 NodeList 同构。 */
@@ -242,7 +373,7 @@ class NodeEngine(
     * 节点自动携带项目状态/口径上下文）——渲染三态单点 ProjectMemory.injectionBlock
     * （预算内全文 / 软警全文+WARN / 超限头部+统计；缺失/空 → 不注）。全局记忆
     * 注入面（ContextRefresher）不含项目记忆——瘦身边界不变。 */
-  private def buildInput(node: NodeDef): IO[String] =
+  private[project] def buildInput(node: NodeDef): IO[String] =
     val ownTask = node.task.getOrElse("")
     node.in.traverse { upId =>
       store.findNode(upId).map {
@@ -418,6 +549,9 @@ class NodeEngine(
         if m.contains(nodeId) then (m, ())
         else (m + (nodeId -> cancelSig), ())
       }
+      // NodeMessage 注入链登记（20260905 机制批）：与 running 表同点置位——
+      // sendNodeMessage 经本映射定位会话 actor；清理见下方对称移除。
+      _ <- nodeSessions.update(_ + (nodeId -> sessionId))
       // 状态 → running + startedAt（WS nodeUpdated，NodeList 同构 payload）。
       // 竞态修复（与终态化同族）：running 迁移落在事务内现读的 fresh 节点上——
       // getNode 快照经 EntityLoader 加载 agent 期间可能已落后，陈旧 copy 写回会
@@ -465,19 +599,21 @@ class NodeEngine(
           // CAS 败方：按 sig 身份只回滚自己的登记（不得误删赢家的条目），抛
           // StartRaceLost 终止本 fiber 的 for 推导（否则败方继续 spawn = 双会话，
           // M1 demo 实证 6 路并发 6 会话）。异常由 startNode 的 handleErrorWith
-          // 精准吞掉——对全部调用方呈安静败方语义。
+          // 精准吞掉——对全部调用方呈安静败方语义。nodeSessions 对称移除
+          //（NodeMessage 注入链，防泄漏僵尸映射）。
           running.modify {
             case m if m.get(nodeId).exists(_.eq(cancelSig)) => (m - nodeId, ())
             case m => (m, ())
-          } *>
+          } *> nodeSessions.update(_ - nodeId) *>
             IO.raiseError(NodeEngine.StartRaceLost(nodeId))
         case NodeEngine.FlipOutcome.Aborted(reason) =>
           // 真异常中止：按身份回滚 + start-aborted 事件（原语义「回滚在飞登记并
           // 中止」保留，异常信号从「仅错误上抛」扩展为「事件 + 上抛」双通道）。
+          // nodeSessions 对称移除（NodeMessage 注入链，防泄漏僵尸映射）。
           running.modify {
             case m if m.get(nodeId).exists(_.eq(cancelSig)) => (m - nodeId, ())
             case m => (m, ())
-          } *>
+          } *> nodeSessions.update(_ - nodeId) *>
             FlowMapEventLog.append(workspace, projectName, nodeId, "start-aborted",
               s"start aborted: $reason") *>
             IO.raiseError(new RuntimeException(
@@ -599,6 +735,9 @@ class NodeEngine(
       _ <- system.stop(ref).handleErrorWith(_ => IO.unit)
       _ <- system.stop(bridgeRef).handleErrorWith(_ => IO.unit)
       _ <- running.update(_ - nodeId)
+      // NodeMessage 注入链对称移除（与 running 表同点清理——此后 sendNodeMessage
+      // 查无映射即走「注入未达」兜底，不再向死会话投递）。
+      _ <- nodeSessions.update(_ - nodeId)
       // 终态处理：写 result/status/ttl + 投递（§2.7）——传 nodeId，终态化内部
       // 事务内现读 fresh 节点（不沿本 fiber 启动时捕获的陈旧快照）
       _ <- eventResult match
@@ -1365,6 +1504,30 @@ object NodeEngine:
   /** release note 注入段标记（20260903 暂停/人在回路设计 §2.4）：releaseNode 把
     * 用户补充以本标记为头追加进 out 目标 task，buildInput 天然携带进下游输入。 */
   val ReleaseNoteMarker: String = "== 用户补充（放行时注入） =="
+
+  // ── NodeMessage（20260905 机制批，作者裁定六条语义）──────────────────
+
+  /** 裁定②：running 注入文本的可识别前缀——与用户任务文本、节点结果投递明确
+    * 区分（分发器 NodeMessage + 节点名 + 时间戳来源标注）。 */
+  val NodeMessagePrefix: String = "[NODE-MESSAGE]"
+
+  /** 裁定⑤：消息留痕事件类型（FlowMapEventLog append-only JSONL）。 */
+  val NodeMessageEventType: String = "node-message"
+
+  /** running 注入文本头（前缀 + 来源标注单点）。 */
+  def nodeMessageHeader(nodeName: String): String = {
+    val ts = java.time.LocalDateTime.now().format(java.time.format.DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss"))
+    s"$NodeMessagePrefix 来源：任务分发器 NodeMessage · 节点 $nodeName · $ts"
+  }
+
+  /** 裁定③：任务追加分节头（NodeEdit release note 先例同款形态；裁定原文
+    * 「== 分发器补充（NodeMessage <时间戳>） ==」）。undelivered=true 时追加
+    * 「注入未达」标注（裁定②竞态兜底——留痕不丢）。 */
+  def nodeMessageSection(undelivered: Boolean): String = {
+    val ts = java.time.LocalDateTime.now().format(java.time.format.DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss"))
+    val base = s"== 分发器补充（NodeMessage $ts） =="
+    if undelivered then base + "\n（注入未达：会话在消息投递前已终结，仅记录不注入——留痕不丢）" else base
+  }
 
   /** 节点 id 前缀（sessionId = "node-<uuid>"）。 */
   val SessionPrefix = "node-"

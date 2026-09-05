@@ -524,10 +524,10 @@ class AllowedToolSetSpec extends FunSuite:
     assert(!AgentCore.legacyFixedTools(mkDef("leaf", Nil).copy(category = "flow")).contains("Card"), "legacy flow 节点不授 Card")
     assert(!AgentCore.legacyFixedTools(mkDef("standalone-x", Nil)).contains("Card"), "legacy catch-all（BaseTools）不授 Card")
 
-  test("project-dispatcher 固定工具集（§C.1）：Node 三件 + 读四件，声明无效"):
+  test("project-dispatcher 固定工具集（§C.1 + NodeMessage 20260905 机制批）：Node 四件 + 读四件，声明无效"):
     val declared = mkDef("project-dispatcher", List("Write", "Edit", "AskUserQuestion"))
     val allowed = CoreProbe.allowed(declared, isFlowNode = true) // 分发器会话 spawn 即 isFlowNode=true
-    Set("NodeList", "NodeEdit", "NodeCancel", "Read", "Glob", "Grep", "Bash").foreach { t =>
+    Set("NodeList", "NodeEdit", "NodeCancel", "NodeMessage", "Read", "Glob", "Grep", "Bash").foreach { t =>
       assert(allowed.contains(t), s"dispatcher fixed tool missing: $t")
     }
     assert(!allowed.contains("Write"), "dispatcher 不给 Write（只分解不产内容，§C.1）")
