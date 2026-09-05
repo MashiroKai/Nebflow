@@ -1,0 +1,8 @@
+{
+  "$schema": "https://agent-plugins.org/schema/1.0.0",
+  "name": "thesis-review",
+  "version": "1.0.0",
+  "description": "学术论文审阅包——中英双语、学位/期刊、Word/LaTeX/PDF 格式的系统审阅。内含 skills：thesis-review（文字/规范/逻辑/科学四层面错误与强烈建议识别，输出标注文档+审阅总结）。单 skill 插件：566 行自足工作流，组合即超注入体量红线。无 mcp.json、无工具扩展。",
+  "capability": "学术论文系统审阅：节点获得文字/规范/逻辑/科学四层面错误与强烈建议的识别能力，输出标注文档+审阅总结（中英双语、Word/LaTeX/PDF）",
+  "author": "Nebula distill"
+}

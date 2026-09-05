@@ -1,0 +1,8 @@
+{
+  "$schema": "https://agent-plugins.org/schema/1.0.0",
+  "name": "nebflow-backend-dev",
+  "version": "1.0.0",
+  "description": "Nebflow Scala 后端开发域知识包——技术栈与分层铁律、编码规范、sbt 实践、prompt cache 命中率优化、工具系统设计。内含 skills：nebflow-backend（Scala 3/Pekko/http4s/cats-effect、Actor/IO 分层、最小改动/向后兼容、worktree 纪律）、nebflow-cache（cache 指标/数据源/排查方法/共享前缀维护纪律）、nebflow-tool-dev（工具管线/权限模型/五条设计原则/新建工具流程）。验证域另配 nebflow-qa 插件。无 mcp.json、无工具扩展——纯方法论 skill 包。",
+  "capability": "Nebflow Scala 后端开发域知识：节点获得分层铁律/编码规范/sbt 实践/prompt cache 命中率优化与工具系统设计纪律",
+  "author": "Nebula distill"
+}

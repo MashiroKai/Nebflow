@@ -1,0 +1,8 @@
+{
+  "$schema": "https://agent-plugins.org/schema/1.0.0",
+  "name": "phd-note",
+  "version": "1.0.0",
+  "description": "博士论文素材记录包——研究过程素材归档到 phd-notebook 知识库。内含 skills：phd-note（想法/文献笔记/实验数据/方法/图表随记，对话式口述+文件式提取双方式，为博士论文积累材料）。无 mcp.json、无工具扩展。",
+  "capability": "研究素材归档：节点获得想法/文献/实验数据/方法/图表随记的对话式口述+文件式提取双通道记录能力，沉淀到 phd-notebook 知识库",
+  "author": "Nebula distill"
+}

@@ -1,0 +1,8 @@
+{
+  "$schema": "https://agent-plugins.org/schema/1.0.0",
+  "name": "nebflow-qa",
+  "version": "1.0.0",
+  "description": "Nebflow 验证域知识包——前后端交付验证关卡与验证方法论深化。内含 skills：nebflow-qa-backend（五维审核：compile/test/验收逐项/代码质量/回归）、nebflow-qa-frontend（隔离真实例三步验证、资源可达性、契约一致性）、frontend-verification（自验 harness：wire 探针/契约夹具/Playwright 坑）、isolated-smoke-verification（隔离实例冒烟验证法）、verification-rigor（验红实证/变异安全/spec 载力）。质量评分审查另配 nebflow-pipelines 的 review。无 mcp.json、无工具扩展。",
+  "capability": "交付验证关卡方法论：节点获得前后端五维审核、隔离真实例冒烟、资源可达性校验与验红实证/变异安全的验证纪律",
+  "author": "Nebula distill"
+}

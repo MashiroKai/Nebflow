@@ -1,0 +1,8 @@
+{
+  "$schema": "https://agent-plugins.org/schema/1.0.0",
+  "name": "design-cards",
+  "version": "1.0.0",
+  "description": "卡片与社交图设计制作包——HTML 卡片视觉规范与社交媒体图集生成。内含 skills：card-design（Card/Pop 工具 HTML 输出视觉规范：颜色/字体/圆角/SVG 嵌入/暗色模式）、guizang-social-card-skill（小红书图文/公众号封面图集：杂志风与瑞士国际主义排版，含 references 版式库与校验脚本）。设计规格书另配 design-spec 插件、图表可视化另配 visual-report 插件（跨插件按名配合）。无 mcp.json、无工具扩展。",
+  "capability": "卡片与社交图设计制作：节点获得 HTML 卡片视觉规范执行能力（颜色/字体/暗色模式）与小红书图文/封面图集的杂志风·瑞士排版生成能力",
+  "author": "Nebula distill"
+}
