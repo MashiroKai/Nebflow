@@ -3,7 +3,6 @@
    ═══════════════════════════════════════════════════════════════════════ */
 
 /* ── Overlay (shared) ──────────────────────────────────────────────────── */
-#agent-overlay,
 #modal-overlay,
 #memory-overlay,
 #rules-overlay,
@@ -25,7 +24,6 @@
    decides paint order — no stacking-context traps. Below only the toast
    (10000, bottom-right corner, no overlap with the centered dialog). */
 #modal-overlay { z-index: 11000; }
-#agent-overlay.on,
 #modal-overlay.on,
 #memory-overlay.on,
 #rules-overlay.on,
@@ -36,7 +34,6 @@
 /* ── Shared Modal Glass Card ───────────────────────────────────────────── */
 #modal-box,
 #delete-box,
-#agent-modal,
 #memory-modal,
 #rules-modal,
 #path-picker-modal,
@@ -59,7 +56,6 @@
 @media (prefers-color-scheme: dark) {
   #modal-box,
   #delete-box,
-  #agent-modal,
   #memory-modal,
   #rules-modal,
   #path-picker-modal,
@@ -76,7 +72,6 @@
 /* Top-edge refraction line — sapphire crystal dome */
 #modal-box::before,
 #delete-box::before,
-#agent-modal::before,
 #memory-modal::before,
 #rules-modal::before,
 #path-picker-modal::before,
@@ -113,10 +108,6 @@
 /* ── Shared Input Style (etched into glass surface) ────────────────────── */
 .modal-input,
 #modal-input,
-#agent-name-input,
-#agent-desc-input,
-#agent-system-input,
-#agent-model-input,
 #memory-content-input,
 #rules-input {
   width: 100%;
@@ -133,18 +124,13 @@
   box-sizing: border-box;
   transition: border-color 0.2s ease, box-shadow 0.2s ease;
 }
-#modal-input,
-#agent-name-input {
+#modal-input {
   font-family: inherit;
 }
 
 /* Sapphire focus glow */
 .modal-input:focus,
 #modal-input:focus,
-#agent-name-input:focus,
-#agent-desc-input:focus,
-#agent-system-input:focus,
-#agent-model-input:focus,
 #memory-content-input:focus,
 #rules-input:focus {
   border-color: rgba(91, 127, 191, 0.5) !important;
@@ -156,10 +142,6 @@
 @media (prefers-color-scheme: dark) {
   .modal-input:focus,
   #modal-input:focus,
-  #agent-name-input:focus,
-  #agent-desc-input:focus,
-  #agent-system-input:focus,
-  #agent-model-input:focus,
   #memory-content-input:focus,
   #rules-input:focus {
     border-color: rgba(91, 127, 191, 0.4) !important;
@@ -174,7 +156,6 @@
 /* Neutral / Cancel button */
 #modal-cancel,
 #delete-cancel,
-#agent-modal-actions button,
 #memory-modal-actions button,
 #rules-modal-actions button,
 #path-picker-actions button {
@@ -190,7 +171,6 @@
 }
 #modal-cancel:hover,
 #delete-cancel:hover,
-#agent-modal-actions button:hover,
 #memory-modal-actions button:hover,
 #rules-modal-actions button:hover,
 #path-picker-actions button:hover {
@@ -203,14 +183,12 @@
 }
 
 /* Primary / Save button — sapphire style */
-#agent-modal-save,
 #memory-modal-save,
 #path-picker-select {
   border-color: rgba(91, 127, 191, 0.35) !important;
   color: rgb(91, 127, 191) !important;
   background: rgba(91, 127, 191, 0.06) !important;
 }
-#agent-modal-save:hover,
 #memory-modal-save:hover,
 #path-picker-select:hover {
   background: rgba(91, 127, 191, 0.14) !important;
@@ -350,69 +328,10 @@
   font-size: 14px;
 }
 
-/* ---------- Agent Editor Modal ---------- */
-#agent-modal {
-  display: none;
-  border-radius: 20px;
-  width: 420px;
-  max-height: 80vh;
-  animation: modalIn 0.2s cubic-bezier(0.16, 1, 0.3, 1);
-}
-#agent-modal.show { display: block; }
-#agent-modal-title {
-  font-size: 15px;
-  font-weight: 600;
-  color: var(--color-frame-text-bright);
-  margin-bottom: 14px;
-}
-#agent-modal-body {
-  display: flex;
-  flex-direction: column;
-  gap: 10px;
-}
-#agent-model-input {
-  cursor: pointer;
-  font-family: inherit;
-  font-size: 13px;
-}
-#agent-tools-grid,
-#agent-mcp-grid {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 6px;
-}
-.agent-tool-check {
-  display: flex;
-  align-items: center;
-  gap: 4px;
-  font-size: 11px;
-  color: var(--color-frame-text-dim);
-  cursor: pointer;
-  background: var(--glass-etched-bg);
-  border: 1px solid var(--glass-etched-border);
-  border-radius: 6px;
-  padding: 3px 8px;
-  transition: all 0.2s;
-  user-select: none;
-}
-.agent-tool-check.checked {
-  border-color: rgba(91, 127, 191, 0.5);
-  color: rgb(91, 127, 191);
-  background: rgba(91, 127, 191, 0.06);
-}
-.agent-tool-check input { display: none; }
-.agent-field-label {
-  font-size: 11px;
-  color: var(--color-frame-text-muted);
-  text-transform: uppercase;
-  letter-spacing: 0.5px;
-}
-#agent-modal-actions {
-  display: flex;
-  justify-content: flex-end;
-  gap: 8px;
-  margin-top: 14px;
-}
+/* ---------- Agent Editor Modal — retired 2026-09-06 ----------
+   (#agent-modal DOM removed with the panel capability sections; the shared
+   glass-card/overlay rows above no longer list agent ids. Per-agent editing
+   lives in the Canvas detail tab.) */
 
 /* ---------- Memory Modal ---------- */
 #memory-modal {

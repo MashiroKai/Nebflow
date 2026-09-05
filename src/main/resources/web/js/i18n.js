@@ -83,7 +83,6 @@ export function applyLocaleToHtml() {
     'delete-title': ['text', 'modal.deleteSession'],
     'delete-cancel': ['text', 'modal.cancel'],
     'delete-confirm': ['text', 'modal.deleteConfirm'],
-    'agent-modal-title': ['text', 'modal.agentTitle'],
     'memory-modal-title': ['text', 'memory.title'],
     'memory-modal-cancel': ['text', 'modal.cancel'],
     'memory-modal-save': ['text', 'memory.save'],
@@ -150,22 +149,9 @@ export function applyLocaleToHtml() {
     el.textContent = t(el.dataset.i18n);
   });
 
-  // Agent modal inputs placeholders
-  const placeholders = {
-    'agent-name-input': 'agent.namePlaceholder',
-    'agent-desc-input': 'agent.descPlaceholder',
-    'agent-system-input': 'agent.systemPromptPlaceholder',
-  };
-  for (const [id, key] of Object.entries(placeholders)) {
-    const el = document.getElementById(id);
-    if (el) el.placeholder = t(key);
-  }
-
-  // Agent modal buttons
-  const agentCancel = document.getElementById('agent-modal-cancel');
-  if (agentCancel) agentCancel.textContent = t('modal.cancel');
-  const agentSave = document.getElementById('agent-modal-save');
-  if (agentSave) agentSave.textContent = t('agent.save');
+  // (The agent editor modal's placeholder/button localization was retired
+  // 2026-09-06 with the modal itself — the data-i18n loop above stays for
+  // remaining static markup.)
 
   // Memory tabs
   document.querySelectorAll('.memory-tab').forEach(tab => {
