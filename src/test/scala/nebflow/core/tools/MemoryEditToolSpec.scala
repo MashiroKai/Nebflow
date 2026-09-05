@@ -432,4 +432,47 @@ class MemoryEditToolSpec extends FunSuite:
       "section" -> "Bulk".asJson, "content" -> "- 整理后唯一条目".asJson)
     assert(res.isRight, "超限项目的收缩通道必须畅通")
     assert(os.read(ws / ".nebflow" / "memory.md").contains("- 整理后唯一条目"))
+
+  // ---------------------------------------------------------------
+  // 快照先行（dream-agent 批 2026-09-05）：任何写动作落盘前先有备份
+  // ---------------------------------------------------------------
+
+  private def latestBackupOf(file: os.Path): os.Path =
+    val root = home / "memory-backups"
+    val key = if file.last == "User.md" then "User.md" else "agents__Nebula__memory.md"
+    val mine = os.list(root).filter(os.isDir(_)).filter(d => os.exists(d / key)).sortBy(_.last)
+    mine.last / key
+
+  test("snapshot: update 备份先于写——备份内容 == 写前真身，目标 == 写后内容"):
+    seedAgent("- 旧条目（写前真身）\n")
+    val res = call("target" -> "agent".asJson, "action" -> "update".asJson,
+      "match" -> "旧条目".asJson, "content" -> "- 新条目（写后）".asJson)
+    assert(res.isRight, s"update should succeed: $res")
+    val backup = latestBackupOf(agentFile)
+    assert(os.read(backup) == "- 旧条目（写前真身）\n", "backup must hold PRE-write bytes")
+    assert(os.read(agentFile) == "- 新条目（写后）\n", "target holds post-write bytes")
+    // 同一文件四动作各自快照（remove 也要有份）
+    call("target" -> "agent".asJson, "action" -> "remove".asJson, "match" -> "新条目".asJson)
+    val backup2 = latestBackupOf(agentFile)
+    assert(os.read(backup2).contains("- 新条目（写后）"), "remove 的备份 = remove 前真身")
+
+  test("snapshot: replace_section / append 同样先过快照"):
+    seedUser("## Bulk\n\n- 旧 A\n- 旧 B\n")
+    call("target" -> "user".asJson, "action" -> "replace_section".asJson,
+      "section" -> "## Bulk".asJson, "content" -> "- 整理后条目".asJson)
+    assert(os.exists(latestBackupOf(userFile)), "replace_section 留有备份")
+    val before = os.read(userFile)
+    call("target" -> "user".asJson, "action" -> "append".asJson, "content" -> "- 追加条目".asJson)
+    assert(os.read(latestBackupOf(userFile)) == before, "append 的备份 = append 前真身")
+
+  test("snapshot: fail-closed — 快照失败 → 拒写 + 目标文件原样（MEMORYEDIT_SNAPSHOT）"):
+    seedUser("- 不可丢条目\n")
+    // 把快照根位置变成【文件】→ makeDir.all 必败 → 闸门触发
+    os.makeDir.all(home / "memory-backups")
+    os.write.over(home / "memory-backups" / "blocker", "x") // 根内放文件不碍事；改用整体占位：
+    os.remove.all(home / "memory-backups")
+    os.write.over(home / "memory-backups", "not a directory", createFolders = true)
+    val res = call("target" -> "user".asJson, "action" -> "remove".asJson, "match" -> "不可丢条目".asJson)
+    assert(res.left.toOption.get.message.contains("MEMORYEDIT_SNAPSHOT"), "结构化快照失败码")
+    assert(os.read(userFile).contains("- 不可丢条目"), "fail-closed：目标零写入")
 end MemoryEditToolSpec
