@@ -37,27 +37,35 @@ class AgentConvergenceSpec extends FunSuite:
 
   // ===== §G.3-① Nebula 工具清单 = §C.1 矩阵 =====
 
-  test("Nebula LLM tool list == §C.1 NebulaSet exactly（编排/通信/基础六件/可视化/用户/平台/记忆）"):
+  test("Nebula LLM tool list == §C.1 NebulaSet exactly（编排/通信/读三件/可视化/用户/平台/记忆）"):
     val delivered = CoreProbe.toolList(mkDef("Nebula")).toSet
     val expected = Set(
       "Task", "ProjectCreate", "NodeList", "AgentControl",
       "SendFriendMessage",
-      "Bash", "Read", "Glob", "Grep", "Write", "Edit",       // 基础六件（08:40 解禁四件；13:11 裁定补齐 Write/Edit）
+      "Read", "Glob", "Grep",                                // 读三件（08:40 解禁四件；23:34 裁定收走写手）
       "Card",                                               // 可视化（2026-09-05 解封恢复）
       "AskUserQuestion", "Pop",
       "Schedule", "TransferFile",
       "MemoryEdit"
     )
     assertEquals(delivered, expected,
-      "Nebula 面向 LLM 的工具清单必须逐项等于 §C.1 固定矩阵（08:40 作者裁定改版 + 13:11 作者裁定 +Write/Edit 补齐：恰十七件——基础六件为全体 agent 统一默认工具集；零 Issue）")
+      "Nebula 面向 LLM 的工具清单必须逐项等于 §C.1 固定矩阵（2026-09-05 23:34 作者裁定：Nebula 回归纯编排——Bash/Write/Edit 移除，恰十四件；零 Issue）")
     assert(!delivered.contains("Issue"), "交付面零 Issue（2026-09-04 终裁退役）")
+    // 钉死断言（2026-09-05 23:34 作者裁定）：Nebula 机制集不含 Bash、不含 Write、
+    // 不含 Edit——变异验红锚（机制集加回任一件本组断言即红）
+    assert(!delivered.contains("Bash"), "Nebula 无写手：Bash 已移除（23:34 裁定）")
+    assert(!delivered.contains("Write"), "Nebula 无写手：Write 已移除（23:34 裁定）")
+    assert(!delivered.contains("Edit"), "Nebula 无写手：Edit 已移除（23:34 裁定）")
 
-  test("Nebula 清单含基础六件（13:11 补齐）；零 MultiEdit、零 Web 系、零旧体系四件、零 TeamTask/SubTask/NodeEdit/NodeCancel"):
+  test("Nebula 清单含读三件、零写手（Bash/Write/Edit 均不在）；零 MultiEdit、零 Web 系、零旧体系四件、零 TeamTask/SubTask/NodeEdit/NodeCancel"):
     val delivered = CoreProbe.toolList(mkDef("Nebula")).toSet
-    AgentCore.BaseTools.foreach { t =>
-      assert(delivered.contains(t), s"基础六件必须机制固定（2026-09-05 13:11 裁定）: $t")
+    Set("Read", "Glob", "Grep").foreach { t =>
+      assert(delivered.contains(t), s"读三件必须机制固定（2026-09-05 23:34 裁定）: $t")
     }
-    val forbidden = Set("MultiEdit",
+    Set("Bash", "Write", "Edit").foreach { t =>
+      assert(!delivered.contains(t), s"写手三件不得出现在 Nebula 交付面（23:34 裁定）: $t")
+    }
+    val forbidden = Set("Bash", "Write", "Edit", "MultiEdit",
       "Mail", "Delegate", "FlowTrigger", "FlowExecute",     // 旧体系四件（2026-09-05 裁定退役）
       "WebSearch", "WebFetch", "Curl",
       "TeamTaskCreate", "TeamTaskUpdate", "TeamTaskList", "SubTask",
