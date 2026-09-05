@@ -1667,7 +1667,7 @@ export function showOptions(container, questions, onConfirm, doneLabel, onCancel
       // 卡片整体可点击（作者原话「卡片整体可点击、醒目大目标」）：除按钮/输入框外的
       // 空白点击都触发选择。
       wrapper.addEventListener('click', (e) => {
-        if (e.target.closest('button, textarea, input')) return;
+        if ((/** @type {Element} */ (e.target)).closest('button, textarea, input')) return;
         startPick();
       });
     }
