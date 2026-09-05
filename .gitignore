@@ -14,8 +14,9 @@ project/project/
 .DS_Store
 Thumbs.db
 
-# Nebflow runtime
-.nebflow/
+# Nebflow runtime（.nebflow/ 整体忽略，唯 Spec/ 为 skills→plugins 映射标准源，可跟踪）
+.nebflow/*
+!.nebflow/Spec/
 .nebflow-qc.log
 
 # Internal / development-only
