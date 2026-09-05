@@ -843,6 +843,8 @@ export default {
   'daemons.stop': 'Stop',
   'daemons.restart': 'Restart',
   'daemons.restartFirst': 'Start first',
+  'daemons.deleteTitle': 'Delete Daemon',
+  'daemons.deleteConfirm': 'Delete daemon "{name}"?',
   // === Explorer (file tree multi-select) ===
   'explorer.selectedCount': '{count} selected',
   'explorer.delete': 'Delete',
