@@ -563,20 +563,6 @@ export function connect() {
         return;
       }
 
-      // ── Plan mode: intercept only agentTextDelta ───────────────────
-      // We accumulate plan text for the card, but let all other plan agent
-      // events (agentStart, agentToolStart, agentDone, etc.) flow through
-      // normal dispatch so the plan agent shows as a sub-agent with its
-      // bg-agent indicator and tool activity.
-      if (msg.agentId && state.planAgentId === msg.agentId && msg.type === 'agentTextDelta') {
-        const planList = handlers['_planAgent'];
-        if (planList) for (const h of planList.slice()) {
-          try { h(msg); }
-          catch (e) { console.error('[ws] plan handler error:', e.message); }
-        }
-        return;
-      }
-
       // Dispatch to handlers
       const list = handlers[msg.type];
       if (list) for (const h of list.slice()) {
