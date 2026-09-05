@@ -2516,7 +2516,9 @@
   position: fixed;
   inset: 0;
   z-index: 1000;
-  background: rgba(0, 0, 0, 0.35);
+  /* dialog-unify 2026-09-05: visual ruling — no dimming/blur behind dialogs.
+     Overlay only blocks clicks; the panel carries the glass effect. */
+  background: var(--overlay-bg);
   display: flex;
   align-items: center;
   justify-content: center;
@@ -2652,7 +2654,7 @@
   .ws-pick-target { background: rgba(255,255,255,0.05); border-color: rgba(145,170,210,0.28); }
   .ws-pick-target:hover { box-shadow: 0 0 0 3px rgba(145,170,210,0.10), 0 4px 16px rgba(0,0,0,0.35); }
   .ws-pick-hint { color: rgba(160,185,225,0.55); }
-  .wsp-overlay { background: rgba(0,0,0,0.5); }
+  .wsp-overlay { background: var(--overlay-bg); }
   .wsp-panel { background: rgba(24,28,38,0.92); border-color: rgba(255,255,255,0.08); box-shadow: 0 18px 60px rgba(0,0,0,0.5); }
   .wsp-crumb:hover, .wsp-toolbar button:hover, .wsp-row.wsp-dir:hover { background: rgba(255,255,255,0.06); }
   .wsp-mkdir-row { background: rgba(255,255,255,0.04); }
