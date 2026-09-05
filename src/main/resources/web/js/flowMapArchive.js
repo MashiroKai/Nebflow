@@ -195,6 +195,31 @@ function buildChain(id, members) {
 }
 
 /**
+ * 批次聚簇（§3.5 算法单点）：成员按 createdAt 升序、相邻间隔 ≤CHAIN_BATCH_MS
+ * 归一批。refreshChains（主图归档判定）与 deriveArchivedIds（任务列表主图同源
+ * 过滤，2026-09-05 作者裁定）共用本函数——链判定口径严格同源，消费侧不另写派生。
+ * @param {ChainMember[]} members 全量成员（活动 + 终态，顺序不限）
+ * @returns {{id: string, members: ChainMember[]}[]} 批次数组（批内 createdAt 升序）
+ */
+function clusterBatches(members) {
+  const sorted = members.slice().sort(byCreated);
+  /** @type {{id: string, members: ChainMember[]}[]} */
+  const batches = [];
+  let cur = null;
+  let lastT = -Infinity;
+  for (const n of sorted) {
+    const ct = n.createdAt || 0;
+    if (!cur || ct - lastT > CHAIN_BATCH_MS) {
+      cur = { id: 'chain-' + n.id, members: [] };
+      batches.push(cur);
+    }
+    cur.members.push(n);
+    lastT = ct;
+  }
+  return batches;
+}
+
+/**
  * 链派生 + 归档判定（§7.2 单点函数；P2 triggerId 落地后仅此处换精确口径）。
  * 返回本次新完成（含重建）的链——调用方据此驱动整链同帧退场动画。
  * @param {string} project
@@ -213,23 +238,9 @@ export function refreshChains(project, fmNodes) {
   }
   s.input = input;
 
-  // 批次聚簇（§3.5）：全量节点按 createdAt 升序、相邻间隔 ≤120s 归一批
-  const sorted = Array.from(input.values())
-    .filter((n) => !s.expiredIds.has(n.id))
-    .sort(byCreated);
-  /** @type {{id: string, members: ChainMember[]}[]} */
-  const batches = [];
-  let cur = null;
-  let lastT = -Infinity;
-  for (const n of sorted) {
-    const ct = n.createdAt || 0;
-    if (!cur || ct - lastT > CHAIN_BATCH_MS) {
-      cur = { id: 'chain-' + n.id, members: [] };
-      batches.push(cur);
-    }
-    cur.members.push(n);
-    lastT = ct;
-  }
+  // 批次聚簇（§3.5，单点 clusterBatches）：全量节点剔除 TTL 到期后按 createdAt 归批
+  const batches = clusterBatches(
+    Array.from(input.values()).filter((n) => !s.expiredIds.has(n.id)));
 
   const known = new Map(s.chains.map((c) => [c.id, c]));
   /** @type {Chain[]} */
@@ -273,6 +284,26 @@ export function refreshChains(project, fmNodes) {
   }
   s.chains.sort((a, b) => (b.completedAt || 0) - (a.completedAt || 0) || a.title.localeCompare(b.title));
   return newChains;
+}
+
+/**
+ * 任务列表主图同源过滤（2026-09-05 作者裁定 12:59）：纯派生、零 store 副作用——
+ * 给定单项目节点全集，返回「整链已归档」节点 id 集。批次判定与 refreshChains
+ * 共用 clusterBatches 单点：批内全终态（TERMINAL_STATUSES）→ 整链隐藏（含该链
+ * 已完成成员）；链内任一非终态（含 blocked/held/wiring/pending/running）→ 整链
+ * 保留。与主图可见判定（isVisibleNode）的差异仅 store 记忆面（主图冻结已归档链
+ * 可跨快照保留，本函数只按当前全集派生）——节点全集相同时结果一致。
+ * @param {ChainMember[]=} fmNodes 快照全量节点（活动 + 终态，单项目）
+ * @returns {Set<string>} 已归档（应隐藏）节点 id 集
+ */
+export function deriveArchivedIds(fmNodes) {
+  const archived = new Set();
+  for (const b of clusterBatches(Array.from(fmNodes || []))) {
+    if (b.members.every((m) => TERMINAL_STATUSES.has(String(m.status || '')))) {
+      for (const m of b.members) archived.add(m.id);
+    }
+  }
+  return archived;
 }
 
 /**

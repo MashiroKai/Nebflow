@@ -2417,7 +2417,7 @@ export function resetChatForActiveSession() {
 
   if (!isBusy) pv.dom.input.focus();
 
-  renderTaskList(state.sessionTasks[sid] || [], undefined, sid);
+  renderTaskList([], undefined, sid); // 首参占位——旧任务入参退役（2026-09-05 裁定纯节点视图）
   if (state.updateBgTasksUI) state.updateBgTasksUI();
   if (state.updateBgAgentIndicator) state.updateBgAgentIndicator();
   if (state.updateBypassToggle) state.updateBypassToggle(pv);
@@ -2446,7 +2446,7 @@ export function deleteSession(sessionId) {
   delete state.sessionToolCards[sessionId];
   delete state.sessionPendingTools[sessionId];
   delete state.sessionPendingAiMessages[sessionId];
-  delete state.sessionTasks[sessionId];
+  // state.sessionTasks 已随旧任务区退役移除（2026-09-05 裁定）——无需清理
   delete state.sessionThinkingBuffers[sessionId];
   delete state.sessionBgTasks[sessionId];
   delete state.sessionBgAgents[sessionId];

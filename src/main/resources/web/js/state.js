@@ -143,13 +143,8 @@ export default {
   // and consumed by the done handler to reconstruct correct per-bubble messages.
   sessionPendingAiMessages: {},
 
-  // Task list cache per session
-  sessionTasks: {},
-
-  // Team-domain task cache, keyed by team name (teamTaskListUpdate frames
-  // carry {team, tasks}, no sessionId). 裁定② (2026-08-30): rendered inside
-  // the Nebula session's task panel as the unified progress view.
-  teamTasks: {},
+  // sessionTasks / teamTasks 已随旧任务区退役移除（2026-09-05 10:54 裁定：
+  // 任务面板 = 纯 Flow Map 节点视图，节点缓存在 taskList.js nodeCache 自包含）。
 
   // Agent panel
   agentsData: [],
