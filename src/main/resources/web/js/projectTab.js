@@ -196,7 +196,8 @@ function archiveProject(name) {
 }
 
 /** 同标签页进入 Flow Map 视图：不新开标签页，当前 projects 标签页就地切换。
- *  pane 结构：.flowmap-nav-bar（左上角返回按钮）+ .flowmap-view-body（Flow Map 渲染体）。
+ *  pane 结构：.flowmap-nav-bar（左上角「← 项目名」单元素返回入口，点击回列表）
+ *  + .flowmap-view-body（Flow Map 渲染体）。
  *  Flow Map 的 fetch/渲染/TTL 由 flowMapTab 负责（renderFlowMapInto），这里只管
  *  视图骨架与返回导航；body 挂 .flowmap-view-body 类供 flowMapTab 的 TTL ticker 定位。
  *  highlightNodeId：渲染完成后滚动定位并高亮该节点（任务列表节点条目点击跳转）。
@@ -214,8 +215,8 @@ function openFlowMapInPlace(projectName, highlightNodeId) {
     pane.dataset.flowMapProject = projectName;
     pane.innerHTML = `
       <div class="flowmap-nav-bar">
-        <button class="flowmap-back-btn" data-back-to-projects type="button" title="${esc(t('project.backToProjects'))}" aria-label="${esc(t('project.backToProjects'))}">
-          <i data-lucide="arrow-left"></i><span>${esc(t('project.backToProjects'))}</span>
+        <button class="flowmap-back-btn" data-back-to-projects type="button" title="${esc(projectName)}" aria-label="${esc(t('project.backToProjects'))}">
+          <i data-lucide="arrow-left"></i><span class="flowmap-back-name">${esc(projectName)}</span>
         </button>
       </div>
       <div class="flowmap-view-body" data-fm-project="${esc(projectName)}"></div>`;
