@@ -85,7 +85,10 @@ class McpManager private (
     val callTimeout = cfg.timeoutMs.map(_.millis)
     (cfg.command, cfg.url) match
       case (Some(cmd), _) =>
-        StdioTransport(cmd, cfg.args.getOrElse(Nil), cfg.env.getOrElse(Map.empty))
+        // cwd（协议符合度批）：插件 MCP 经 PluginMcpManager 展开为绝对路径；
+        // 全局配置 None → 继承进程 cwd（既有行为）。相对值按进程 cwd 解析。
+        StdioTransport(cmd, cfg.args.getOrElse(Nil), cfg.env.getOrElse(Map.empty),
+          cfg.cwd.map(c => os.Path(c, os.pwd)))
           .flatMap(transport => connectWithTransport(id, transport, callTimeout))
       case (_, Some(url)) =>
         val transport = new HttpTransport(url, cfg.headers.getOrElse(Map.empty))
