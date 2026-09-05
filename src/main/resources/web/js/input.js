@@ -220,22 +220,6 @@ export function cancelAskMode() {
   activeView.dom.input.placeholder = t('input.placeholder');
 }
 
-// ---------- Plan Mode ----------
-export function enterPlanMode() {
-  if (activeView.stream.planMode) return;
-  activeView.stream.planMode = true;
-  updateInputIndicator();
-  activeView.dom.input.placeholder = t('input.planPlaceholder');
-  activeView.dom.input.focus();
-}
-
-export function cancelPlanMode() {
-  if (!activeView.stream.planMode) return;
-  activeView.stream.planMode = false;
-  updateInputIndicator();
-  activeView.dom.input.placeholder = t('input.placeholder');
-}
-
 function updateAskIndicator() {
   updateInputIndicator();
 }
@@ -245,21 +229,9 @@ function updateInputIndicator() {
   const skillEl = document.getElementById('skill-indicator');
   const skillLabel = document.getElementById('skill-indicator-label');
   const compactEl = document.getElementById('compact-indicator');
-  const planEl = document.getElementById('plan-indicator');
   const input = activeView.dom.input;
-  // Plan/Ask/Skill/Compact mode — all mutually exclusive
-  if (activeView.stream.planMode) {
-    if (planEl) planEl.classList.add('show');
-    if (askEl) askEl.classList.remove('show');
-    if (skillEl) skillEl.classList.remove('show');
-    if (compactEl) compactEl.classList.remove('show');
-    input.style.paddingLeft = '';
-    if (planEl) {
-      const w = planEl.offsetWidth + 12;
-      input.style.paddingLeft = Math.max(w, 48) + 'px';
-    }
-  } else if (activeView.stream.askMode) {
-    if (planEl) planEl.classList.remove('show');
+  // Ask/Skill/Compact mode — all mutually exclusive
+  if (activeView.stream.askMode) {
     if (askEl) askEl.classList.add('show');
     if (skillEl) skillEl.classList.remove('show');
     if (compactEl) compactEl.classList.remove('show');
@@ -269,7 +241,6 @@ function updateInputIndicator() {
       input.style.paddingLeft = Math.max(w, 48) + 'px';
     }
   } else if (activeView.skillMode) {
-    if (planEl) planEl.classList.remove('show');
     if (askEl) askEl.classList.remove('show');
     if (skillEl) {
       if (skillLabel) skillLabel.textContent = activeView.skillModeSource === 'flow' ? 'FLOW' : (activeView.skillModeName || 'SKILL');
@@ -281,7 +252,6 @@ function updateInputIndicator() {
     }
     if (compactEl) compactEl.classList.remove('show');
   } else if (activeView.compactMode) {
-    if (planEl) planEl.classList.remove('show');
     if (askEl) askEl.classList.remove('show');
     if (skillEl) skillEl.classList.remove('show');
     if (compactEl) compactEl.classList.add('show');
@@ -289,7 +259,6 @@ function updateInputIndicator() {
     const w = compactEl.offsetWidth + 12;
     input.style.paddingLeft = Math.max(w, 48) + 'px';
   } else {
-    if (planEl) planEl.classList.remove('show');
     if (askEl) askEl.classList.remove('show');
     if (skillEl) skillEl.classList.remove('show');
     if (compactEl) compactEl.classList.remove('show');
@@ -333,7 +302,6 @@ export function enterCompactMode() {
   // Cancel other modes if active
   if (activeView.stream.askMode) cancelAskMode();
   if (activeView.skillMode) cancelSkillMode();
-  if (activeView.stream.planMode) cancelPlanMode();
   activeView.compactMode = true;
   updateInputIndicator();
   activeView.dom.input.placeholder = t('input.compactPlaceholder');
@@ -543,22 +511,6 @@ export function send() {
     sendWs({ type: 'skill', skillName, input: text, sessionId: v.sessionId });
     renderSkillBubble(skillName, text);
     saveMsg({type:'user', text, attachments: (v.pendingAttachments||[]).map(a=>({type:a.type,name:a.name,preview:a.preview}))});
-    input.value = '';
-    input.style.height = 'auto';
-    saveInputDraft(v.sessionId);
-    setTimeout(() => { v.isSending = false; }, 300);
-    return;
-  }
-  // If in plan mode, send as plan command
-  if (v.stream.planMode) {
-    cancelPlanMode();
-    if (!text || !state.ws || state.ws.readyState !== WebSocket.OPEN) {
-      v.isSending = false;
-      return;
-    }
-    v.isSending = true;
-    sendWs({type:'command', command:'plan', sessionId: v.sessionId, task: text});
-    renderSystemBubble('Plan mode started — analyzing...');
     input.value = '';
     input.style.height = 'auto';
     saveInputDraft(v.sessionId);
@@ -1578,15 +1530,6 @@ export function initInput(view) {
         e.stopPropagation();
         setActiveView(view);
         cancelCompactMode();
-        input.focus();
-      });
-    }
-    const planCancel = document.getElementById('plan-indicator-cancel');
-    if (planCancel) {
-      planCancel.addEventListener('click', (e) => {
-        e.stopPropagation();
-        setActiveView(view);
-        cancelPlanMode();
         input.focus();
       });
     }

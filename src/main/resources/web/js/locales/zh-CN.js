@@ -1022,7 +1022,6 @@ export default {
   'chatQueue.clickCollapse': '点击收起',
   'explorer.loading': '加载中...',
   'explorer.empty': '空',
-  'input.planPlaceholder': '描述要规划的任务...',
   'flowViewers.saving': '保存中…',
   'flowViewers.retry': '重试',
   'flowViewers.save': '保存',

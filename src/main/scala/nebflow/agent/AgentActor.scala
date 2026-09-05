@@ -22,8 +22,8 @@ import scala.concurrent.duration.*
  * Dispatch 发起方分类（freeze-schedule spec D1）：决定 pipeLlmCall gate 的行为。
  * Gated（默认）= 系统续跑（ToolsComplete 续轮 / finishTurnCont / ExternalEvent /
  * CompactionComplete 恢复 / Retry 等）——受冻结时间表约束（#337 黑名单语义）；UserWake = 用户显式
- * 发起（idle UserInput[clientMessageId.isDefined] / AskQuestion / SkillActivate /
- * PlanApproved）——冻结时段也放行（用户输入即唤醒，需求硬指标）。
+ * 发起（idle UserInput[clientMessageId.isDefined] / AskQuestion / SkillActivate）
+ * ——冻结时段也放行（用户输入即唤醒，需求硬指标）。
  */
 sealed trait DispatchCause
 
@@ -346,7 +346,7 @@ object AgentActor extends AgentCore with AgentSession:
    * full-metadata path so its completion target is not stranded), and ALL
    * events batched via buildEventReminder (sub-agent barrier: Delegate/
    * SubTask results stay held while the batch is outstanding — #25/#31).
-   * Non-UserInput commands (SkillActivate/AskQuestion/StartPlan) keep the
+   * Non-UserInput commands (SkillActivate/AskQuestion) keep the
    * full-metadata queue: they stay in pendingUserInputs and are forwarded
    * by the next turn boundary drain (finishTurnCont) — never lost, only
    * deferred.
@@ -540,7 +540,7 @@ object AgentActor extends AgentCore with AgentSession:
      */
     rootSessionId: String = "",
     isSubTaskWorker: Boolean = false,
-    /** D11 交互豁免：freezeExempt 会话不参与冻结（PlanAgent.spawn 传 true）。 */
+    /** D11 交互豁免：freezeExempt 会话不参与冻结。 */
     freezeExempt: Boolean = false,
     /** #406: one-shot FlowExecute node — leaf tools stripped (see SessionContext.isFlowNode). */
     isFlowNode: Boolean = false,
@@ -1084,47 +1084,6 @@ object AgentActor extends AgentCore with AgentSession:
             )
           )
 
-      case AgentCommand.StartPlan(task) =>
-        logAgentEvent(agentDef, depth, state.sessionId, state.sessionName, "plan-start", s"task=${task.take(60)}")
-        val projectRootStr = state.projectRoot.getOrElse(resources.projectRoot.toString)
-        // Plan mode is Nebula's own capability — uses Explorer (read-only) for safe planning.
-        resources.agentLibrary.get("Explorer").flatMap {
-          case Some(explorerDef) =>
-            val planningDef = explorerDef.copy(
-              systemPrompt = PlanAgent.PlanningPrompt + "\n\n" + explorerDef.systemPrompt
-            )
-            PlanAgent
-              .spawn(
-                agentDef = planningDef,
-                task = task,
-                mainAgentRef = ctx.self,
-                system = ctx.system,
-                resources = resources,
-                parentDepth = depth,
-                wsSend = state.wsSend,
-                projectRoot = projectRootStr,
-                parentSessionId = state.sessionId
-              )
-              .map { planAgentRef =>
-                val planState = PlanModeState(planAgentRef = planAgentRef, taskDescription = task)
-                planWaiting(agentDef, resources, depth, parentRef, state.withPlanMode(Some(planState)))
-              }
-          case None =>
-            ctx
-              .forkTurn(
-                state
-                  .wsSend(
-                    Json.obj(
-                      "type" -> "error".asJson,
-                      "sessionId" -> state.sessionId.asJson,
-                      "message" -> "Explorer agent not found — cannot start plan mode".asJson
-                    )
-                  )
-                  .handleErrorWith(_ => IO.unit)
-              )
-              .as(idle(agentDef, resources, depth, parentRef, state))
-        }
-
       case _: AgentCommand.LlmComplete | _: AgentCommand.LlmFailed | _: AgentCommand.ToolsComplete |
           _: AgentCommand.SetPermissionDeferred =>
         IO.pure(idle(agentDef, resources, depth, parentRef, state))
@@ -1272,278 +1231,6 @@ object AgentActor extends AgentCore with AgentSession:
       case _ =>
         IO.pure(idle(agentDef, resources, depth, parentRef, state))
   end idle
-  // ============================================================
-  // Plan waiting state — main agent blocked while plan agent works
-  // ============================================================
-
-  private def planWaiting(
-    agentDef: AgentDef,
-    resources: SharedResources,
-    depth: Int,
-    parentRef: Option[ActorRef[AgentCommand]],
-    state: AgentState
-  )(using ctx: ActorContext[AgentCommand]): Behavior[AgentCommand] =
-    Behaviors.receiveMessage:
-
-      case AgentCommand.PlanTurnComplete(planText) =>
-        val updatedPlanState = state.planMode.map(_.copy(currentPlanText = planText))
-        for _ <- ctx.forkTurn(
-            state
-              .wsSend(
-                Json.obj(
-                  "type" -> "planReady".asJson,
-                  "sessionId" -> state.sessionId.asJson
-                )
-              )
-              .handleErrorWith(_ => IO.unit)
-          )
-        yield planWaiting(agentDef, resources, depth, parentRef, state.withPlanMode(updatedPlanState))
-
-      case AgentCommand.PlanFeedback(text) =>
-        state.planMode match
-          case Some(pm) =>
-            logAgentEvent(
-              agentDef,
-              depth,
-              state.sessionId,
-              state.sessionName,
-              "plan-feedback",
-              s"text=${text.take(60)}"
-            )
-            (pm.planAgentRef ! AgentCommand.UserInput(text)) *>
-              IO.pure(planWaiting(agentDef, resources, depth, parentRef, state))
-          case None =>
-            IO.pure(planWaiting(agentDef, resources, depth, parentRef, state))
-
-      case AgentCommand.PlanApproved =>
-        state.planMode match
-          case Some(pm) =>
-            logAgentEvent(
-              agentDef,
-              depth,
-              state.sessionId,
-              state.sessionName,
-              "plan-approved",
-              s"textLen=${pm.currentPlanText.length}"
-            )
-            for
-              _ <- ctx.system.stop(pm.planAgentRef).handleErrorWith(_ => IO.unit)
-              _ <- ctx.forkTurn(
-                state
-                  .wsSend(
-                    Json.obj(
-                      "type" -> "planEnd".asJson,
-                      "sessionId" -> state.sessionId.asJson,
-                      "reason" -> "approved".asJson
-                    )
-                  )
-                  .handleErrorWith(_ => IO.unit)
-              )
-              // Inject approved plan as user message so the main agent executes it
-              planMsg = Message(
-                MessageRole.User,
-                Left(
-                  s"User requested planning for: ${pm.taskDescription}\n\n" +
-                    s"The plan below has been approved by the user. Execute it now.\n\n" +
-                    s"## Approved Plan\n\n${pm.currentPlanText}\n\n" +
-                    s"Start by creating tasks with TaskCreate to track progress, then execute each step."
-                )
-              )
-              // V7 (2026-09-03): queues buffered during the plan wait drain into
-              // the SAME continuation round, after the approved plan message —
-              // shared F1 helper (barrier-held subagent results stay held,
-              // replyTo-bearing UserInputs stay deferred, exactly as in the
-              // compaction window drain).
-              drain = drainQueuesAfterCompaction(state)
-              newMessages = (state.messages :+ planMsg) ++ drain.appended
-              sessionBusyIO = state.sessionId.fold(IO.unit)(sid => emitSessionBusy(state.wsSend, sid, busy = true))
-              result <- sessionBusyIO *> persistQueues(state.sessionId, drain.exec) *> emitInjectedBubbles(state, drain) *> pipeLlmCall(
-                agentDef,
-                resources,
-                depth,
-                parentRef,
-                state
-                  .withMessages(newMessages)
-                  .copy(execution = drain.exec)
-                  .withPlanMode(None)
-                  .withNextLoopTurn, // Block 3：计划执行 = 新 turn
-                None,
-                DispatchCause.UserWake
-              )
-            yield result
-            end for
-          case None =>
-            exitPlanWindow(agentDef, resources, depth, parentRef, state, "plan-approved-no-plan")
-
-      case AgentCommand.PlanCancelled =>
-        state.planMode match
-          case Some(pm) =>
-            logAgentEvent(agentDef, depth, state.sessionId, state.sessionName, "plan-cancelled", "")
-            (ctx.system.stop(pm.planAgentRef).handleErrorWith(_ => IO.unit) *>
-              ctx.forkTurn(
-                state
-                  .wsSend(
-                    Json.obj(
-                      "type" -> "planEnd".asJson,
-                      "sessionId" -> state.sessionId.asJson,
-                      "reason" -> "cancelled".asJson
-                    )
-                  )
-                  .handleErrorWith(_ => IO.unit)
-              ) *>
-              exitPlanWindow(agentDef, resources, depth, parentRef, state.withPlanMode(None), "plan-cancelled"))
-          case None =>
-            exitPlanWindow(agentDef, resources, depth, parentRef, state, "plan-cancelled-no-plan")
-
-      case AgentCommand.PlanFailed(error) =>
-        logAgentEvent(agentDef, depth, state.sessionId, state.sessionName, "plan-failed", s"err=${error.take(80)}")
-        state.planMode.foreach(pm => ctx.system.stop(pm.planAgentRef).handleErrorWith(_ => IO.unit))
-        ctx.forkTurn(
-          state
-            .wsSend(
-              Json.obj(
-                "type" -> "planEnd".asJson,
-                "sessionId" -> state.sessionId.asJson,
-                "reason" -> "failed".asJson,
-                "error" -> error.asJson
-              )
-            )
-            .handleErrorWith(_ => IO.unit)
-        ) *>
-          ctx.forkTurn(
-            state.sessionId.fold(IO.unit)(sid =>
-              state
-                .wsSend(
-                  Json.obj(
-                    "type" -> "error".asJson,
-                    "sessionId" -> sid.asJson,
-                    "message" -> s"Plan agent failed: $error".asJson
-                  )
-                )
-                .handleErrorWith(_ => IO.unit)
-            )
-          ) *>
-          exitPlanWindow(agentDef, resources, depth, parentRef, state.withPlanMode(None), "plan-failed")
-
-      case AgentCommand.Interrupt() =>
-        state.planMode.foreach(pm => ctx.system.stop(pm.planAgentRef).handleErrorWith(_ => IO.unit))
-        ctx.forkTurn(
-          state
-            .wsSend(
-              Json.obj(
-                "type" -> "planEnd".asJson,
-                "sessionId" -> state.sessionId.asJson,
-                "reason" -> "cancelled".asJson
-              )
-            )
-            .handleErrorWith(_ => IO.unit)
-        ) *>
-          exitPlanWindow(agentDef, resources, depth, parentRef, state.withPlanMode(None), "plan-interrupt")
-
-      case AgentCommand.Stop(_) =>
-        state.planMode.foreach(pm => ctx.system.stop(pm.planAgentRef).handleErrorWith(_ => IO.unit))
-        for _ <- fireLifecycleStopHooks(resources, state)
-        yield Behaviors.stopped
-
-      case AgentCommand.SetSafetyMode(mode) =>
-        val policy = PermissionPolicy(safetyMode = mode)
-        resources.permissionPolicies
-          .update(_ + (state.session.rootSessionId -> policy)) *>
-          IO.pure(
-            planWaiting(
-              agentDef,
-              resources,
-              depth,
-              parentRef,
-              state.withSafetyMode(nebflow.core.SafetyMode.toString(mode))
-            )
-          )
-
-      // V7 (2026-09-03): buffer instead of swallow. The comment above always
-      // said "Buffer user messages while planning" but the code consumed and
-      // dropped — an in-flight Delegate completing (or a user typing) during
-      // the plan wait vanished silently. ExternalEvent → pendingEvents (F2
-      // persisted), ImmediateInput → pendingImmediateInputs (F2 persisted),
-      // UserInput → pendingUserInputs (in-memory, same exclusion as the
-      // processing state). All three drain at the plan window exits via the
-      // shared F1 helper (drainQueuesAfterCompaction) — see exitPlanWindow.
-      case msg: AgentCommand.UserInput =>
-        logAgentEvent(
-          agentDef, depth, state.sessionId, state.sessionName,
-          "plan-wait-buffer-user",
-          s"textLen=${msg.text.length} pending=${state.execution.pendingUserInputs.size + 1}"
-        )
-        IO.pure(
-          planWaiting(agentDef, resources, depth, parentRef,
-            state.copy(execution = state.execution.copy(
-              pendingUserInputs = state.execution.pendingUserInputs :+ msg)))
-        )
-
-      case evt: AgentCommand.ExternalEvent =>
-        val exec = state.execution.copy(pendingEvents = state.execution.pendingEvents :+ evt)
-        persistQueues(state.sessionId, exec) *>
-          IO.pure(planWaiting(agentDef, resources, depth, parentRef, state.copy(execution = exec)))
-
-      case imm: AgentCommand.ImmediateInput =>
-        val exec = state.execution.copy(pendingImmediateInputs = state.execution.pendingImmediateInputs :+ imm)
-        persistQueues(state.sessionId, exec) *>
-          IO.pure(planWaiting(agentDef, resources, depth, parentRef, state.copy(execution = exec)))
-
-      case _ =>
-        // Non-queue commands (MailQueued triggers, notifications, ...) keep the
-        // pre-V7 behavior: the underlying state is durable elsewhere (mail queue
-        // disk file is the source of truth; triggers re-fire on next
-        // activation/turn-end), so dropping the trigger loses nothing.
-        IO.pure(planWaiting(agentDef, resources, depth, parentRef, state))
-
-  end planWaiting
-
-  /**
-   * V7 (2026-09-03): shared drain for every plan-window exit (approved /
-   * cancelled / failed / interrupt). Buffers accumulated during planWaiting
-   * are injected through the SAME F1 helper the compaction window uses
-   * (drainQueuesAfterCompaction — replyTo-bearing UserInputs stay deferred,
-   * sub-agent barrier results stay held while a batch is outstanding), so no
-   * new drain semantics are invented. Inline-appended content (immediate
-   * inputs + replyTo-free user messages + events) opens the next turn;
-   * deferred-only buffers forward their head to self for the full-metadata
-   * idle path (mirrors the compaction-complete resume=false branch).
-   */
-  private def exitPlanWindow(
-    agentDef: AgentDef,
-    resources: SharedResources,
-    depth: Int,
-    parentRef: Option[ActorRef[AgentCommand]],
-    state: AgentState,
-    cause: String
-  )(using ctx: ActorContext[AgentCommand]): IO[Behavior[AgentCommand]] =
-    val drain = drainQueuesAfterCompaction(state)
-    if drain.appended.nonEmpty then
-      for
-        _ <- persistQueues(state.sessionId, drain.exec)
-        _ <- IO(logAgentEvent(
-          agentDef, depth, state.sessionId, state.sessionName,
-          "plan-wait-drain",
-          s"cause=$cause imm=${drain.immMessages.size} user=${drain.userMessages.size} events=${drain.eventCount} " +
-            s"remainingUser=${drain.exec.pendingUserInputs.size} remainingEvents=${drain.exec.pendingEvents.size}"
-        ))
-        _ <- emitInjectedBubbles(state, drain)
-        result <- pipeLlmCall(
-          agentDef, resources, depth, parentRef,
-          state.copy(execution = drain.exec.copy(messages = state.messages ++ drain.appended)).withNextLoopTurn,
-          None
-        )
-      yield result
-    else
-      drain.exec.pendingUserInputs.headOption match
-        case Some(userCmd) =>
-          (ctx.self ! userCmd) *>
-            IO.pure(
-              idle(agentDef, resources, depth, parentRef,
-                state.copy(execution = drain.exec.copy(pendingUserInputs = drain.exec.pendingUserInputs.tail)))
-            )
-        case None =>
-          IO.pure(idle(agentDef, resources, depth, parentRef, state.copy(execution = drain.exec)))
   // ============================================================
   // Processing state
   // ============================================================
@@ -2346,7 +2033,7 @@ object AgentActor extends AgentCore with AgentSession:
                   else
                     // Nothing injected inline — but deferred commands (replyTo-bearing
                     // UserInputs and non-UserInput commands such as SkillActivate /
-                    // AskQuestion / StartPlan, held for full-metadata forwarding) may
+                    // AskQuestion, held for full-metadata forwarding) may
                     // still be parked in pendingUserInputs. Forward the head to self
                     // so the idle handler processes it with full metadata — the
                     // replyTo completion target must NOT be stranded — preserving the
@@ -3475,8 +3162,8 @@ object AgentActor extends AgentCore with AgentSession:
           // 本次冻结窗口）→ evalWithSkip 返回 frozen=false，所有 agent 恢复工作。
           val now = System.currentTimeMillis()
           val window = nebflow.core.schedule.FreezeSchedule.evalWithSkip(cfg, skipUntil, now)
-          // D11 交互豁免：ask 轮（用户在场等回答）与 freezeExempt 会话（plan
-          // agent 等交互场景）不冻结——冻结它们省的 token 远低于浪费的用户等待。
+          // D11 交互豁免：ask 轮（用户在场等回答）与 freezeExempt 会话
+          // （交互场景）不冻结——冻结它们省的 token 远低于浪费的用户等待。
           val interactive = state.askMode.isDefined || state.session.freezeExempt
           if window.frozen && cause == DispatchCause.Gated && !interactive then
             logAgentEvent(
@@ -4048,16 +3735,6 @@ object AgentActor extends AgentCore with AgentSession:
         )
         val queued = state.copy(execution =
           state.execution.copy(pendingMailQueueCount = state.execution.pendingMailQueueCount + 1)
-        )
-        IO.pure(frozen(agentDef, resources, depth, parentRef, queued, replyTo, resumeAt, reason, retryCount, escalation))
-
-      case AgentCommand.StartPlan(task) =>
-        // 排队不唤醒：plan 模式是 idle 语义（spawn plan agent + planWaiting），
-        // 冻结中直接切换会丢掉挂起的续跑 state；排队在恢复后的 turn 边界由
-        // idle handler 全量处理（plan agent 本身 freezeExempt，不受冻结影响）。
-        logAgentEvent(agentDef, depth, state.sessionId, state.sessionName, "freeze-queue-plan", s"task=${task.take(60)}")
-        val queued = state.copy(execution =
-          state.execution.copy(pendingUserInputs = state.execution.pendingUserInputs :+ AgentCommand.StartPlan(task))
         )
         IO.pure(frozen(agentDef, resources, depth, parentRef, queued, replyTo, resumeAt, reason, retryCount, escalation))
 

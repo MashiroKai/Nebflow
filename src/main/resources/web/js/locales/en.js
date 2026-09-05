@@ -1019,7 +1019,6 @@ export default {
   'chatQueue.clickCollapse': 'Click to collapse',
   'explorer.loading': 'Loading...',
   'explorer.empty': 'Empty',
-  'input.planPlaceholder': 'Describe the task to plan...',
   'flowViewers.saving': 'Saving…',
   'flowViewers.retry': 'Retry',
   'flowViewers.save': 'Save',
