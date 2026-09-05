@@ -9,7 +9,8 @@
 //   U5  旧形态 seed（neblinkId/name）兼容——username/displayName 回退读
 //   U6  self 命中：任一自身标识（username / email）→「这是你自己」
 //   U7  未找到态：主文案 + 提示（含「用户名」「尚未设置」字样）
-//   U8  真实链路网络失败态：lookup 请求 abort → 未找到卡 + 错误 toast
+//   U8  真实链路网络失败态：search 请求 abort → 搜索失败卡 + 错误 toast
+//       （失败分态 ≠「未找到」，09-06 作者令三态；曾与空结果混态已拆分）
 //   U9  en 文案抽查：placeholder / notFoundHint = Username 语义
 //   U10 i18n parity + contacts.*/messages.* 键值 NL 号/nebflow 号 字样零残留
 //
@@ -197,7 +198,7 @@ try {
       await p.click('.fm-search-btn');
       await sleep(800);
       const failCard = await p.$eval('.fm-result-card', e => e.textContent).catch(() => '');
-      ok('U8 网络失败 → 未找到卡（keep-last-known 兜底）', failCard.includes('未找到该用户'), failCard.slice(0, 60));
+      ok('U8 网络失败 → 搜索失败卡（失败分态，非「未找到」）', failCard.includes('搜索失败'), failCard.slice(0, 60));
       await ctx.close();
   }
 

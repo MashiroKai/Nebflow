@@ -148,10 +148,18 @@
   gap: 4px;
 }
 
+/* 搜索块（0906 布局修复）：列布局 = 输入行 + 独立整宽结果区。
+   结果卡不再是输入行的 flex 子项——此前会挤占输入框宽度（22px 细条）。 */
+.fm-search-block {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 4px 2px 8px;
+}
+
 .fm-search {
   display: flex;
   gap: 6px;
-  padding: 4px 2px 8px;
 }
 
 .fm-search-input {
@@ -171,25 +179,62 @@
 
 .fm-search-btn { flex-shrink: 0; font-size: 12px; padding: 6px 12px; }
 
+/* 结果区（命中 / 未找到 / 加载 / 失败 共用容器卡）：独立块，整宽 */
 .fm-result-card {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  flex-wrap: wrap;
   padding: 10px;
-  margin: 0 2px 6px;
   border-radius: 12px;
   background: var(--glass-etched-bg);
   border: 1px solid var(--glass-etched-border);
 }
 
+/* 结果人区块（微信式分层）：头像 / 显示名 / @Username 两行 */
+.fm-result-person {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-width: 0;
+}
+
+/* 状态文案 + 动作按钮：独立一行右对齐 */
+.fm-result-foot {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-top: 8px;
+}
+
+/* 卡内空态文案收紧（列表级 .fm-empty 的 24px 竖排距在卡内过大） */
+.fm-result-card .fm-empty { padding: 14px 12px; }
+.fm-result-card .fm-empty-hint { margin: -6px 12px 2px; }
+
+/* 加载态：区域级三点脉冲（reduced-motion 退化静态点） */
+.fm-searching {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 5px;
+  padding: 12px;
+}
+
+.fm-searching i {
+  width: 5px;
+  height: 5px;
+  border-radius: 50%;
+  background: var(--color-text-muted, #888);
+  animation: fm-pulse 1.2s ease-in-out infinite;
+}
+
+.fm-searching i:nth-child(2) { animation-delay: 0.2s; }
+.fm-searching i:nth-child(3) { animation-delay: 0.4s; }
+
 .fm-add-btn { flex-shrink: 0; font-size: 12px; padding: 5px 12px; }
 
 .fm-verify-box {
-  flex-basis: 100%;
   display: flex;
   gap: 6px;
-  margin-top: 4px;
+  margin-top: 8px;
 }
 
 .fm-verify-input {
@@ -537,6 +582,7 @@
   }
   .fm-sending .fm-msg-time { animation: none; opacity: 0.6; }
   .fm-sending .fm-msg-time::after { content: '…'; }
+  .fm-searching i { animation: none; opacity: 0.5; }
   /* A16: chat modal open animation ≤0.01s (overlay fade is sidebar.css's
      cfg-fade-in 0.15s — squash only our instance, shared class untouched). */
   #fm-chat-overlay { animation-duration: 0.01s !important; }
