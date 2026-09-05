@@ -152,6 +152,10 @@ function previewOrb() {
   return preview;
 }
 
+/** Bind-once guard for the system-theme hook below (was a property stashed
+ *  on the function object; a module flag is equivalent and typechecks). */
+let themeHookBound = false;
+
 /** Bind events on a freshly rendered section. `root` is #settings-content
  *  (production) or any container (harnesses). */
 export function bindAppearanceEvents(root) {
@@ -280,8 +284,8 @@ export function bindAppearanceEvents(root) {
 
   // System theme flips must re-render the preview through the right board
   // (registered once; rebinds are cheap no-ops thanks to the guard).
-  if (!bindAppearanceEvents._themeHook) {
-    bindAppearanceEvents._themeHook = true;
+  if (!themeHookBound) {
+    themeHookBound = true;
     if (window.matchMedia) {
       window.matchMedia('(prefers-color-scheme: light)').addEventListener?.('change', () => {
         const p = preview;

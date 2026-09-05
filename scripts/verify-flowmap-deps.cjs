@@ -53,11 +53,18 @@ const ok = (name, cond, extra) => {
   // 静态服务（8097，非 8080；用完即清，kill 前 lsof 核对 PID）
   const server = spawn('python3', ['-m', 'http.server', String(PORT)], { cwd: WEB, stdio: 'ignore' });
   let browser = null;
-  // 信号兜底（残留治理 2026-09-05）：SIGINT/SIGTERM 时 Node 不走 finally——
-  // 显式清理 browser + 静态服务再退出，进程不漏到脚本外
   const killServer = () => { try { server.kill('SIGKILL'); } catch {} };
-  process.on('SIGINT', () => { try { if (browser) browser.close(); } catch {} killServer(); process.exit(130); });
-  process.on('SIGTERM', () => { try { if (browser) browser.close(); } catch {} killServer(); process.exit(143); });
+  // 信号兜底（残留治理 2026-09-05）：SIGINT/SIGTERM 时 Node 不走 finally——
+  // 显式清理 browser + 静态服务再退出，进程不漏到脚本外。
+  // 2026-09-05 修复：browser.close() 是异步 Promise，必须 await 完成后再
+  // process.exit —— 否则 exit 同步先行，chromium 进程树被一起带走（泄漏）。
+  const shutdown = async (code) => {
+    try { if (browser) await browser.close(); } catch { /* already closed */ }
+    killServer();
+    process.exit(code);
+  };
+  process.on('SIGINT', () => { void shutdown(130); });
+  process.on('SIGTERM', () => { void shutdown(143); });
 
   try {
     await new Promise((r) => setTimeout(r, 800));

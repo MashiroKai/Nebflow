@@ -91,13 +91,15 @@ function startFinishing(st) {
  *  finished nodes over to the completion sequence, drop dead state. */
 function reconcile() {
   const seen = new Set();
-  document.querySelectorAll('.solar-node').forEach((el) => {
+  // .solar-node cards are always HTML elements (div); narrow the Element
+  // nodes so OrbitState.el/wraps keep their HTMLElement typing.
+  /** @type {NodeListOf<HTMLElement>} */ (document.querySelectorAll('.solar-node')).forEach((el) => {
     const key = keyOf(el);
     seen.add(key);
     let st = states.get(key);
     if (!st) {
       if (!isRunning(el) || isTerminal(el)) return;
-      const wraps = Array.from(el.querySelectorAll('.solar-dot-wrap'));
+      const wraps = /** @type {HTMLElement[]} */ (Array.from(el.querySelectorAll('.solar-dot-wrap')));
       if (wraps.length !== RING_PHASE.length) return; // not an orbit node
       st = { el, wraps, angle: RING_PHASE.slice(), mode: 'running',
              targets: [null, null, null], opacity: 1, fadeStart: 0 };
@@ -107,7 +109,7 @@ function reconcile() {
     }
     if (st.el !== el) {
       // Element was rebuilt (innerHTML re-render): re-attach, keep the angle.
-      const wraps = Array.from(el.querySelectorAll('.solar-dot-wrap'));
+      const wraps = /** @type {HTMLElement[]} */ (Array.from(el.querySelectorAll('.solar-dot-wrap')));
       if (wraps.length !== RING_PHASE.length) { states.delete(key); return; }
       st.el = el;
       st.wraps = wraps;
@@ -193,7 +195,10 @@ if (typeof document !== 'undefined') {
   const mo = new MutationObserver((muts) => {
     for (const m of muts) {
       if (m.type !== 'childList') continue;
-      if ((m.target.classList && m.target.classList.contains('solar-node')) ||
+      // MutationRecord.target is typed Node; childList records always carry
+      // an Element here (the runtime classList guard below stays anyway).
+      const tgt = /** @type {Element} */ (m.target);
+      if ((tgt.classList && tgt.classList.contains('solar-node')) ||
           [...m.addedNodes].some(isOrbitNode) ||
           [...m.removedNodes].some(isOrbitNode)) {
         scheduleSync();
@@ -206,9 +211,12 @@ if (typeof document !== 'undefined') {
   requestAnimationFrame(() => orbitSync());
 }
 
-// Test hook — exposed for tests/orbit-anim.spec.mjs verification.
+// Test hook — exposed for tests/orbit-anim.spec.mjs verification. The
+// intersection cast declares the test-only global on Window for checkJs
+// (runtime augmentation; no code depends on reading it back statically).
 if (typeof window !== 'undefined') {
-  window.__orbitTest = {
+  const orbitWindow = /** @type {Window & { __orbitTest?: object }} */ (window);
+  orbitWindow.__orbitTest = {
     states: () => Array.from(states.entries()).map(([key, s]) => ({
       key, mode: s.mode, angle: s.angle.slice(), targets: s.targets.slice(),
       opacity: s.opacity,

@@ -1,6 +1,6 @@
 {
   "generatedBy": "scripts/check-js-types.mjs --update",
-  "total": 326,
+  "total": 313,
   "files": {
     "src/main/resources/web/js/activityBar.js": {
       "TS2345": 1,
@@ -20,7 +20,6 @@
       "TS2322": 1
     },
     "src/main/resources/web/js/chat.js": {
-      "TS2339": 6,
       "TS2345": 2,
       "TS1016": 1,
       "TS2525": 3
@@ -66,14 +65,14 @@
       "TS2339": 6
     },
     "src/main/resources/web/js/input.js": {
-      "TS2339": 7,
+      "TS2339": 3,
       "TS2353": 1
     },
     "src/main/resources/web/js/lightbox.js": {
       "TS2339": 1
     },
     "src/main/resources/web/js/main.js": {
-      "TS2339": 16,
+      "TS2339": 15,
       "TS2554": 3,
       "TS2345": 1
     },
@@ -108,9 +107,6 @@
     },
     "src/main/resources/web/js/viewers/docx.js": {
       "TS2339": 4
-    },
-    "src/main/resources/web/js/viewers/html.js": {
-      "TS2339": 2
     },
     "src/main/resources/web/js/viewers/shared.js": {
       "TS2339": 13
