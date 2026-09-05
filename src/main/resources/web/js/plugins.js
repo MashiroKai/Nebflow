@@ -53,15 +53,30 @@ async function fetchPluginRegistry() {
 /** Classify a manifest's trust state for display.
  *  • trusted → switch on.
  *  • untrusted + digest-changed reason → off + 「内容已变更」 hint
- *    （reason 文案为后端单一事实，前端按其稳定短语分类，仅作展示语义）。
- *  • untrusted otherwise（never approved / 其他）→ off + 常规提示。 */
+ *  • untrusted otherwise（never approved / 其他）→ off + 常规提示。
+ *
+ *  TODO(plugin-protocol 线吸收): reason 文案匹配是 legacy 兜底——建议后端在
+ *  approvalManifest 的 trust 块增加结构化 `reasonCode` 字段（建议枚举
+ *  'digest_changed' | 'never_approved' | 'other'），前端优先消费 reasonCode、
+ *  仅在缺失时回落到文案匹配。届时后端 reason 文案可自由改写/本地化，
+ *  不再是前端展示分类的单一事实。（checkjs-gate-fix 批 2026-09-05 登记） */
 function trustInfo(manifest) {
   const trust = manifest.trust || { status: 'untrusted', reason: '' };
   if (trust.status === 'trusted') return { on: true, changed: false, reason: '' };
   const reason = String(trust.reason || '');
-  const changed = /never approved/i.test(reason)
-    ? false
-    : /digest|changed|re-approval/i.test(reason);
+  // Structured code wins when the backend provides it (future reasonCode).
+  const code = String(trust.reasonCode || '').toLowerCase().trim();
+  if (code) {
+    if (code === 'digest_changed' || code === 'changed') return { on: false, changed: true, reason };
+    if (code === 'never_approved') return { on: false, changed: false, reason };
+    return { on: false, changed: false, reason }; // unknown code → generic hint
+  }
+  // Legacy fallback: loose phrase matching over the backend's English copy.
+  // i-flag + synonym stems + 中英双语关键词，文案微调不致翻转展示分类；
+  // 无法识别的文案按「未变更」处理（保守默认，与既有行为一致）。
+  const neverApproved = /never\s+approved|unapproved|no\s+(?:prior\s+)?approval|未(?:曾|经)?(?:批准|审核)|尚未批准/i.test(reason);
+  const digestChanged = /digest|changed|modified|mismatch|hash|re-?approv|内容(?:已)?(?:变更|修改)|重新批准/i.test(reason);
+  const changed = neverApproved ? false : digestChanged;
   return { on: false, changed, reason };
 }
 
@@ -160,7 +175,13 @@ function renderPluginCard(manifest) {
   const skills = Array.isArray(manifest.skills) ? manifest.skills : [];
   const servers = Array.isArray(manifest.mcpServers) ? manifest.mcpServers : [];
   const tools = Array.isArray(manifest.toolsExtension) ? manifest.toolsExtension : [];
-  const expandId = `skills-${esc(manifest.name)}`;
+  // Raw name (no pre-escaping): HTML attribute interpolation escapes at the
+  // template site (data-expand/data-expand-for), and the event handler
+  // CSS.escape()s the dataset value before the attribute-selector lookup.
+  // The old esc()-here + esc()-at-template double escape mangled names with
+  // &/quotes and left the querySelector concatenation one refactor away
+  // from a selector injection.
+  const expandId = `skills-${manifest.name}`;
 
   const metaBits = [];
   if (manifest.version) metaBits.push(`v${manifest.version}`);
@@ -305,7 +326,7 @@ function bindPluginsEvents(content) {
   // Composition annotation: expand/collapse skill previews.
   content.querySelectorAll('.plugins-comp-toggle').forEach(btn => {
     btn.addEventListener('click', () => {
-      const block = content.querySelector(`[data-expand-for="${btn.dataset.expand}"]`);
+      const block = content.querySelector(`[data-expand-for="${CSS.escape(btn.dataset.expand)}"]`);
       if (!block) return;
       const show = block.hidden;
       block.hidden = !show;
@@ -329,7 +350,8 @@ function bindPluginsEvents(content) {
 // machine in canvas.js unchanged).
 registerCanvasPanelButton('plugins', 'agents-btn', () => openPlugins());
 
-window.addEventListener('canvas-tab-restore', (e) => {
+window.addEventListener('canvas-tab-restore', (/** @type {CustomEvent} */ e) => {
+  // canvas.js dispatches this as a CustomEvent with { id, type } detail.
   if (e.detail?.id === 'plugins') {
     renderPlugins();
   }

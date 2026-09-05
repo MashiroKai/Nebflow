@@ -125,7 +125,7 @@ let pendingConfirmCallback = null;
  * @param {string} title — dialog title
  * @param {string} message — dialog body text
  * @param {Function} onConfirm — called when user clicks Confirm
- * @param {object} [opts] — { tone?: 'danger'|'neutral' }: 'neutral'（可逆动作，
+ * @param {object} [opts] 可选项 { tone?: 'danger'|'neutral' } — 'neutral'（可逆动作，
  *   如项目归档）→ 确认钮走 glass-control 中性材质（#delete-box.confirm-neutral）；
  *   默认 'danger' 保留红色语义。状态在每次打开时重设，无残留。
  */

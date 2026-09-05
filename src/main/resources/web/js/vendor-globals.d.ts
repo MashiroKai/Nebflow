@@ -51,7 +51,19 @@ interface Window {
   __showToast?: (message: string, kind?: string) => void;
 }
 
-/** Global confirm dialog (set by modal.js initModals) */
+/** Global confirm dialog (set by modal.js initModals). Signature mirrors
+ *  modal.js showConfirm — including the optional opts (tone: 'danger'
+ *  default | 'neutral'). */
 interface Window {
-  __showConfirm?: (title: string, message: string, onConfirm: () => void) => void;
+  __showConfirm?: (
+    title: string,
+    message: string,
+    onConfirm: () => void,
+    opts?: { tone?: 'danger' | 'neutral' }
+  ) => void;
+}
+
+/** Thinking-placeholder timer stopper (set by main.js, read by chat.js). */
+interface Window {
+  __stopThinkingTimer?: () => void;
 }

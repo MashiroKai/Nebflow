@@ -503,7 +503,10 @@ const FS = [
 class OrbRenderer {
   /**
    * @param {HTMLCanvasElement} canvas
-   * @param {{ size?: number, reducedMotion?: boolean }} [opts]
+   * @param {{ size?: number, reducedMotion?: boolean,
+   *   palette?: { a: number[], b: number[], c: number[] } }} [opts]
+   *   `palette` is an injection seam for harnesses/preview orbs (production
+   *   always resolves it via MicOrb.applyTheme → setPalette).
    */
   constructor(canvas, opts) {
     this.canvas = canvas;
@@ -1010,7 +1013,11 @@ class MicOrb {
    */
   syncVoiceTap() {
     const cloudFeeds = !!(state.stt && state.stt.sttConfigured);
-    const disabled = typeof window !== 'undefined' && window.__MICORB_TAP_DISABLE__ === true;
+    // Test-disable flag — test-only global declared on Window via cast for checkJs.
+    const w = typeof window !== 'undefined'
+      ? /** @type {Window & { __MICORB_TAP_DISABLE__?: boolean }} */ (window)
+      : null;
+    const disabled = w?.__MICORB_TAP_DISABLE__ === true;
     const want = this.state === 'listening' && this.webglOk && !this.reduced && !cloudFeeds && !disabled;
     if (want) this.voiceTap.start();
     else this.voiceTap.stop();

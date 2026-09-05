@@ -1,11 +1,12 @@
 {
   "name": "nebflow-web",
   "private": true,
-  "description": "Nebflow web frontend build tooling (P1 esbuild pipeline). Runtime is vanilla JS served from src/main/resources/web; this package exists ONLY for the production bundle build (scripts/build-web.mjs). Dev workflow needs no npm install.",
+  "description": "Nebflow web frontend build tooling (P1 esbuild pipeline). Runtime is vanilla JS served from src/main/resources/web; this package exists ONLY for the production bundle build (scripts/build-web.mjs) and the checkJs type gate (scripts/check-js-types.mjs). Dev workflow: run `npm install` once so scripts resolve esbuild + typescript locally.",
   "scripts": {
     "build": "node scripts/build-web.mjs"
   },
   "devDependencies": {
-    "esbuild": "0.25.9"
+    "esbuild": "0.25.9",
+    "typescript": "5.5.4"
   }
 }
