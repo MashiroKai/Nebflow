@@ -10,8 +10,8 @@ import nebflow.agent.AgentCore
  * commit 793f62c1（2026-08-11）曾整体删除 CardTool（471 行）+ 前端消费面；
  * 本批恢复后端工具与注册表注册。钉死四点：
  *  1. 注册表含 Card（schema 可被 LLM 发现）
- *  2. Nebula 固定面携带 Card（NebulaOrchestrationTools 十七件之一——13:11
- *     裁定补齐 Write/Edit 后）
+ *  2. Nebula 固定面携带 Card（NebulaOrchestrationTools 十四件之一——2026-09-05
+ *     23:34 作者裁定 Nebula 回归纯编排：Bash/Write/Edit 移除后）
  *  3. dispatcher / general / legacy team / legacy flow / catch-all 均不授 Card
  *     （Card 是 Nebula 专属授能；org.nebflow/tools 插件白名单不含 Card，
  *     BuiltinToolWhitelist 断言钉死插件通道）
