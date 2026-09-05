@@ -26,7 +26,9 @@ import java.nio.charset.StandardCharsets
  * JDK HttpServer mock（模拟 neblink-server）。钉死：
  *  1. auth 门禁（无 token → 403）
  *  2. NebLink 未配置 → 404 "NebLink not enabled"
- *  3. 各端点把上游 JSON 透传给前端（friends/conversations/messages/send/read/lookup）
+ *  3. friends/conversations 出参 = 契约档案四字段 snake_case（username /
+ *     display_name / avatar，信封 camelCase 维持——friend-search-contract
+ *     v1.0 §4.5 切换面）；messages/send/read/lookup 仍为上游透传
  *  4. 路由顺序：/friends/requests 不被 /friends/:id 吞掉
  *
  * 时序注意：munit 的 IO 体在返回后才执行——mock server 的 stop 必须挂在 IO 的
@@ -40,8 +42,11 @@ class FriendApiRoutesSpec extends CatsEffectSuite:
 
   private def startMockServer: (HttpServer, String) =
     val server = HttpServer.create(new InetSocketAddress("127.0.0.1", 0), 0)
+    // 上游 wire = friend-search-contract v1.0（§4.5 统一切换）：档案四字段
+    // 字面 snake_case（username 可 null / display_name 永不为 null / avatar
+    // 可 null），信封字段 camelCase。契约切换非回归（§4.7）。
     val conversationsJson =
-      """[{"conversationId":"c1","friend":{"userId":"u1","neblinkId":"lin@example.com","name":"林小满"},"lastMessage":null,"unreadCount":2}]"""
+      """[{"conversationId":"c1","friend":{"userId":"u1","username":"lin","display_name":"林小满","avatar":null},"lastMessage":null,"unreadCount":2}]"""
     val messagesJson =
       """[{"id":1,"senderId":"u1","kind":"text","body":"hi","createdAt":1234567890}]"""
 
@@ -62,13 +67,14 @@ class FriendApiRoutesSpec extends CatsEffectSuite:
       "/api/device/login",
       ex => respond(ex, 200, """{"token":"tok-1","networkId":"n1","deviceId":"d1","peers":[]}""")
     )
-    // Rust 现行 wire 形态（neblink-server model.rs）：请求条目 #[serde(flatten)]
-    // 铺平（无 from/to 嵌套）、profile 字段可 null、拉黑行带 blocked 标志——
-    // 网关必须容错解码并把 from/to 嵌套出参契约维持给 web（0904 审计修复）。
+    // Rust 契约 wire 形态（neblink-server，friend-search-contract v1.0 §4.5）：
+    // 请求条目 #[serde(flatten)] 铺平（无 from/to 嵌套）、档案字段 username 可
+    // null / display_name 永不为 null、拉黑行带 blocked 标志——网关必须容错
+    // 解码并把 from/to 嵌套 + 档案四字段 snake_case 出参契约维持给 web。
     val friendsJson =
-      """{"friends":[{"userId":"u1","neblinkId":"lin@example.com","name":"林小满","blocked":false},
-         {"userId":"u2","neblinkId":null,"name":null,"blocked":true}],
-         "incoming":[{"requestId":"rq-9","userId":"u-new","neblinkId":"newbie42","name":"新同学","note":"你好","createdAt":1234560000}],
+      """{"friends":[{"userId":"u1","username":"lin","display_name":"林小满","avatar":"https://example.com/a.png","blocked":false},
+         {"userId":"u2","username":null,"display_name":null,"avatar":null,"blocked":true}],
+         "incoming":[{"requestId":"rq-9","userId":"u-new","username":"newbie42","display_name":"新同学","avatar":null,"note":"你好","createdAt":1234560000}],
          "outgoing":[]}""".stripMargin.replaceAll("\\n\\s*", "")
     server.createContext(
       "/api/friends",
@@ -212,12 +218,17 @@ class FriendApiRoutesSpec extends CatsEffectSuite:
         authed(Request[IO](Method.GET, Uri.unsafeFromString("/friends")))
       ).flatMap { resp =>
         assertEquals(resp.status, Status.Ok)
-        resp.as[Json].map(body =>
-          assertEquals(
-            body.hcursor.downField("friends").downArray.downField("userId").as[String].toOption,
-            Some("u1")
-          )
-        )
+        resp.as[Json].map { body =>
+          val row = body.hcursor.downField("friends").downArray
+          assertEquals(row.downField("userId").as[String].toOption, Some("u1"))
+          // 契约出参：档案四字段 snake_case 字面（friend-search-contract §4.5）
+          assertEquals(row.downField("username").as[String].toOption, Some("lin"))
+          assertEquals(row.downField("display_name").as[String].toOption, Some("林小满"))
+          assertEquals(row.downField("avatar").as[String].toOption, Some("https://example.com/a.png"))
+          // 旧 camelCase 档案字段零残留（统一切换，无双写别名期 §4.7）
+          assertEquals(row.downField("name").as[Json].toOption, None)
+          assertEquals(row.downField("avatarUrl").as[Json].toOption, None)
+        }
       }
     }
   }
@@ -230,10 +241,15 @@ class FriendApiRoutesSpec extends CatsEffectSuite:
         assertEquals(resp.status, Status.Ok)
         resp.as[Json].map { body =>
           // 路由顺序：/friends/requests 不被 /friends/:id 吞掉（同时验证
-          // flat → from 嵌套的归一化——Rust flatten 形态不再毁掉解码）
+          // flat → from 嵌套的归一化——Rust flatten 形态不再毁掉解码）；
+          // 信封字段 camelCase 维持（requestId/note/createdAt）
           val incoming = body.hcursor.downField("incoming").as[Vector[Json]].getOrElse(Vector.empty)
           assertEquals(incoming.size, 1)
           assertEquals(incoming.head.hcursor.downField("from").downField("userId").as[String].toOption, Some("u-new"))
+          assertEquals(incoming.head.hcursor.downField("from").downField("username").as[String].toOption, Some("newbie42"))
+          assertEquals(incoming.head.hcursor.downField("from").downField("display_name").as[String].toOption, Some("新同学"))
+          assertEquals(incoming.head.hcursor.downField("requestId").as[String].toOption, Some("rq-9"))
+          assertEquals(incoming.head.hcursor.downField("note").as[String].toOption, Some("你好"))
           assertEquals(incoming.head.hcursor.downField("createdAt").as[Long].toOption, Some(1234560000L))
         }
       }
@@ -249,8 +265,12 @@ class FriendApiRoutesSpec extends CatsEffectSuite:
         resp.as[Json].map { body =>
           val friends = body.hcursor.downField("friends").as[Vector[Json]].getOrElse(Vector.empty)
           assertEquals(friends.size, 2)
-          // null neblinkId/name 折叠为空串，不毁整表；blocked 透传给 web 灰显
-          assertEquals(friends(1).hcursor.downField("neblinkId").as[String].toOption, Some(""))
+          // null username 折叠为空串；display_name 必填语义——镜像服务端
+          // fallback 链（name→username→user_id）折到 userId "u2"，不毁整表；
+          // null avatar 保持 null（§4.0 可 null）；blocked 透传给 web 灰显
+          assertEquals(friends(1).hcursor.downField("username").as[String].toOption, Some(""))
+          assertEquals(friends(1).hcursor.downField("display_name").as[String].toOption, Some("u2"))
+          assertEquals(friends(1).hcursor.downField("avatar").as[Option[String]].toOption, Some(None))
           assertEquals(friends(1).hcursor.downField("blocked").as[Boolean].toOption, Some(true))
         }
       }
@@ -268,6 +288,11 @@ class FriendApiRoutesSpec extends CatsEffectSuite:
           assertEquals(convs.size, 1)
           assertEquals(convs.head.hcursor.downField("conversationId").as[String].toOption, Some("c1"))
           assertEquals(convs.head.hcursor.downField("unreadCount").as[Int].toOption, Some(2))
+          // 内嵌 friend 档案 = 契约四字段 snake_case（§4.5 切换面）
+          val friend = convs.head.hcursor.downField("friend")
+          assertEquals(friend.downField("username").as[String].toOption, Some("lin"))
+          assertEquals(friend.downField("display_name").as[String].toOption, Some("林小满"))
+          assertEquals(friend.downField("avatar").as[Option[String]].toOption, Some(None))
         }
       }
     }

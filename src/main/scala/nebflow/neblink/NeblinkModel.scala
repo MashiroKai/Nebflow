@@ -310,11 +310,15 @@ end NeblinkConfig
 /** 好友/搜索结果卡（/api/users/lookup 与 /api/friends 共用形态）。
   * blocked：#290 §1.2 拉黑行透传（仅 GET /api/friends 的 friends 数组携带，
   * absent = 未拉黑）——此前该字段被网关丢弃，web 端只能靠 localStorage 镜像。 */
+/** 好友/请求/会话共用的档案对象。字段即 friend-search-contract v1.0 契约词汇
+ *  （NL 号 = Username，作者 2026-09-05 裁定）：username 可空语义由 String 折叠
+ *  ""（未设置 NL 号）；displayName 必填（服务端永不为 null，见 Decoder 镜像
+ *  fallback 链）；avatar 可 null。since/blocked 为信封字段（camelCase 维持）。 */
 case class FriendSummary(
   userId: String,
-  neblinkId: String,
-  name: String,
-  avatarUrl: Option[String] = None,
+  username: String,
+  displayName: String,
+  avatar: Option[String] = None,
   since: Option[Long] = None,
   blocked: Option[Boolean] = None
 )
@@ -377,10 +381,11 @@ object FriendCodecs:
   // 单行坏数据不再毁整表；web 端本就有 `||` 回退显示。网关对 web 的出参
   // 契约（from/to 嵌套）由 Encoder 保持不变。
   //
-  // Username 统一（作者 2026-09-05 裁定：NL 号 = 官网 Username）：上游字段
-  // 演进为 username/displayName/avatar 时解码不退化——旧字段缺席或为 null
-  // 时回退读新字段（形态 A「Decoder 双形态兼容」的网关侧最小适配；lookup
-  // 本身为纯 Json 透传不经此 Decoder，此处护的是 /api/friends 列表链）。
+  // Username 契约切换（friend-search-contract v1.0 + §8，作者 2026-09-05 裁定：
+  // NL 号 = 官网 Username；统一切换、无双写别名期 §4.7）：解码以契约四字段
+  // username / display_name / avatar 为准（字面 snake_case，§4.0），旧字段
+  // neblinkId/name/avatarUrl 仅作窗口期回退（§4.7 发布窗口自愈，非别名期）。
+  // lookup 本身为纯 Json 透传不经此 Decoder，此处护的是 /api/friends 列表链。
   // 注意不能用 get[Option].orElse：circe 的 Option 解码对「字段缺席」也
   // 成功返回 None，orElse 永远不可达——必须以 focus 区分缺席/为 null。
 
@@ -390,13 +395,23 @@ object FriendCodecs:
       c.downField(name).focus.flatMap(v => if v.isNull then None else v.asString)
     pick(primary).orElse(pick(fallback))
 
+  /** display_name 必填语义（契约 §4.0/§3.1：服务端永不为 null，服务端 fallback
+   *  链 name→username→user_id）。客户端镜像同链后折叠 ""（单行容错不毁整表，
+   *  2026-09-04 审计口径）：display_name → name（窗口期旧字段）→ username →
+   *  neblinkId → userId → ""。 */
+  private def displayNameOf(c: HCursor): String =
+    strOr(c, "display_name", "name")
+      .orElse(strOr(c, "username", "neblinkId"))
+      .orElse(c.downField("userId").focus.flatMap(v => if v.isNull then None else v.asString))
+      .getOrElse("")
+
   private[neblink] def flatFriendSummary(c: HCursor): Decoder.Result[FriendSummary] =
     c.get[String]("userId").map(userId =>
       FriendSummary(
         userId,
-        strOr(c, "neblinkId", "username").getOrElse(""),
-        strOr(c, "name", "displayName").getOrElse(""),
-        strOr(c, "avatarUrl", "avatar"),
+        strOr(c, "username", "neblinkId").getOrElse(""),
+        displayNameOf(c),
+        strOr(c, "avatar", "avatarUrl"),
         c.get[Option[Long]]("since").getOrElse(None),
         c.get[Option[Boolean]]("blocked").getOrElse(None)
       ))
@@ -408,9 +423,9 @@ object FriendCodecs:
       blocked <- c.get[Option[Boolean]]("blocked")
     yield FriendSummary(
       userId,
-      strOr(c, "neblinkId", "username").getOrElse(""),
-      strOr(c, "name", "displayName").getOrElse(""),
-      strOr(c, "avatarUrl", "avatar"),
+      strOr(c, "username", "neblinkId").getOrElse(""),
+      displayNameOf(c),
+      strOr(c, "avatar", "avatarUrl"),
       since, blocked)
   }
 
@@ -436,7 +451,21 @@ object FriendCodecs:
   given Decoder[ConversationSummary] = deriveDecoder
   // Encoders for gateway REST responses (client decodes server JSON; gateway
   // re-encodes the same domain objects for the frontend UI).
-  given Encoder[FriendSummary] = deriveEncoder
+  /** 出参契约钉死（friend-search-contract v1.0 §4.0/§4.5）：档案四字段字面
+   *  snake_case（username / display_name / avatar；relation_status 由
+   *  /api/users/search 独有），信封字段维持 camelCase（userId/since/blocked，
+   *  以及上层 requestId/note/createdAt 由 deriveEncoder 保持）。网关对 web 的
+   *  /api/friends、/api/conversations 内嵌档案经此 Encoder 统一切换。 */
+  given Encoder[FriendSummary] = Encoder.instance { f =>
+    Json.obj(
+      "userId"       -> f.userId.asJson,
+      "username"     -> f.username.asJson,
+      "display_name" -> f.displayName.asJson,
+      "avatar"       -> f.avatar.asJson,
+      "since"        -> f.since.asJson,
+      "blocked"      -> f.blocked.asJson
+    )
+  }
   given Encoder[FriendRequestSummary] = deriveEncoder
   given Encoder[OutgoingRequestSummary] = deriveEncoder
   given Encoder[FriendListResponse] = deriveEncoder

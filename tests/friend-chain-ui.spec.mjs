@@ -1,5 +1,5 @@
 // friend-chain-ui.spec.mjs — 0904 好友功能链补全 + 界面优化 验收 spec。
-// 覆盖：NL 号自定义 UI（[U3]）· 聊天历史「加载更早消息」（keyset id-window）
+// 覆盖：设置面板 NL 号入口零残留（10:54 裁定移除）· 聊天历史「加载更早消息」（keyset id-window）
 // · 搜索/申请界面打磨（loading/未找到提示/验证消息 Enter+取消/申请时间/红点
 // 未见语义）· 转发链补强（无活跃会话引导 toast；引用块入框→发送→chip）。
 // 全 mock（fm_api_mock seed + route 拦截），隔离静态服务器 :8976。
@@ -78,16 +78,8 @@ async function bootPage({ locale = 'zh-CN', sessions = [{ id: SID, agentName: 'N
   page.on('pageerror', e => console.log('[pageerror]', e.message));
   await page.route('**/api/**', r => r.fulfill({ json: {} }));           // catch-all first
   await page.route('**/api/neblink/status', r => r.fulfill({ json: { loggedIn: true, device: { id: 'd1', name: '本机', platform: 'macos', userDescription: '', avatarUrl: '' }, peers: [] } }));
-  // [U3] NL 号代理 mock：available + PUT
-  await page.route('**/api/users/me/neblink-id/available*', r => {
-    const q = new URL(r.request().url()).searchParams.get('q') || '';
-    const taken = q.trim().toLowerCase() === 'takenid';
-    r.fulfill({ json: taken ? { available: false, reason: 'taken' } : { available: true } });
-  });
-  await page.route('**/api/users/me/neblink-id', r => {
-    if (r.request().method() === 'PUT') r.fulfill({ json: { neblinkId: JSON.parse(r.request().postData() || '{}').neblinkId } });
-    else r.fulfill({ json: {} });
-  });
+  // （[U3] NL 号代理 mock 已删——旧 neblink-id 端点退役 + 设置入口移除，
+  //  2026-09-05 10:54 裁定 / friend-search-contract §4.7。）
   const clientFrames = [];
   let serverWs = null;
   await page.routeWebSocket(/\/ws/, ws => {
@@ -175,7 +167,7 @@ async function bootPage({ locale = 'zh-CN', sessions = [{ id: SID, agentName: 'N
   await page.keyboard.press('Enter');
   await sleep(500);
   cardTxt = await page.$eval('.fm-result-card', e => e.textContent).catch(() => '');
-  ok('T2e Enter 发送验证消息 → 等待验证', cardTxt.includes('等待验证'), cardTxt.slice(0, 40));
+  ok('T2e Enter 发送验证消息 → 等待对方处理', cardTxt.includes('等待对方处理'), cardTxt.slice(0, 40));
 
   // ── T3 加载更早消息（c-p: 220 条，初始窗口 21..220）─────
   await page.click('#messages-btn');
@@ -246,46 +238,25 @@ async function bootPage({ locale = 'zh-CN', sessions = [{ id: SID, agentName: 'N
   const chip1 = await page.$eval('.fm-msg[data-message-id="m-a0"] .fm-msg-forwarded-badge', e => e.textContent).catch(() => null);
   ok('T4c 发送后「已转发」chip 出现', !!chip1, `chip=${chip1}`);
 
-  // ── T5 NL 号自定义 UI ───────────────────────────────────
+  // ── T5 NL 号设置区已移除（2026-09-05 10:54 裁定：NL 号 = 官网 Username，
+  // 客户端不提供修改入口；friend-search-contract §4.7 契约切换非回归）────
   await page.click('.fm-modal-close');
   await sleep(400);
   await page.click('#settings-btn');
   await sleep(700);
-  let nl = await page.evaluate(() => {
+  const nl = await page.evaluate(() => {
     const root = document.getElementById('settings-content');
     return {
-      label: [...root.querySelectorAll('.neblink-section-label')].some(e => e.textContent === 'NL 号'),
-      value: root.querySelector('.neblink-nlid-value')?.textContent || '',
+      label: [...root.querySelectorAll('.neblink-section-label')].some(e => e.textContent === 'NL 号' || e.textContent === 'NebLink ID'),
+      value: !!root.querySelector('.neblink-nlid-value'),
       editBtn: !!root.querySelector('#neblink-nlid-edit'),
+      input: !!root.querySelector('#neblink-nlid-input'),
+      cached: !!localStorage.getItem('neblink_id_custom'),
+      devicesLabel: [...root.querySelectorAll('.neblink-section-label')].some(e => e.textContent.includes('设备')),
+      logout: !!root.querySelector('#neblink-logout-btn'),
     };
   });
-  ok('T5a NL 号区：标签 + 默认邮箱提示 + 修改钮', nl.label && nl.value.includes('默认为注册邮箱') && nl.editBtn, JSON.stringify(nl));
-  await page.click('#neblink-nlid-edit');
-  await sleep(400);
-  await page.fill('#neblink-nlid-input', 'ab!');
-  await sleep(200);
-  let st = await page.$eval('#neblink-nlid-statusline', e => e.textContent).catch(() => '');
-  const saveDisabled1 = await page.$eval('#neblink-nlid-save', e => e.disabled);
-  ok('T5b 非法格式即时判 invalid + 保存禁用', st.includes('格式不符') && saveDisabled1, `st=${st}`);
-  await page.fill('#neblink-nlid-input', 'takenid');
-  await sleep(900); // 防抖 450ms + mock
-  st = await page.$eval('#neblink-nlid-statusline', e => e.textContent);
-  const saveDisabled2 = await page.$eval('#neblink-nlid-save', e => e.disabled);
-  ok('T5c 已占用号 → 该号已被占用 + 保存禁用', st.includes('已被占用') && saveDisabled2, `st=${st}`);
-  await page.fill('#neblink-nlid-input', 'brandnew99');
-  await sleep(900);
-  st = await page.$eval('#neblink-nlid-statusline', e => e.textContent);
-  const saveDisabled3 = await page.$eval('#neblink-nlid-save', e => e.disabled);
-  ok('T5d 可用号 → 该号可用 + 保存启用', st.includes('可用') && !saveDisabled3, `st=${st}`);
-  await page.click('#neblink-nlid-save');
-  await sleep(800);
-  nl = await page.evaluate(() => ({
-    value: document.querySelector('#settings-content .neblink-nlid-value')?.textContent || '',
-    editing: !!document.getElementById('neblink-nlid-input'),
-    cached: localStorage.getItem('neblink_id_custom'),
-    banner: [...document.querySelectorAll('div')].some(d => d.textContent === 'NL 号已更新'),
-  }));
-  ok('T5e 保存成功 → 显示新号 + 缓存 + banner', nl.value === 'brandnew99' && !nl.editing && nl.cached === 'brandnew99' && nl.banner, JSON.stringify(nl));
+  ok('T5 NL 号修改入口零残留 + 设备区完好', !nl.label && !nl.value && !nl.editBtn && !nl.input && !nl.cached && nl.devicesLabel && nl.logout, JSON.stringify(nl));
   await page.close();
 }
 
@@ -327,10 +298,11 @@ async function bootPage({ locale = 'zh-CN', sessions = [{ id: SID, agentName: 'N
     const root = document.getElementById('settings-content');
     return {
       label: [...root.querySelectorAll('.neblink-section-label')].some(e => e.textContent === 'NebLink ID'),
-      value: root.querySelector('.neblink-nlid-value')?.textContent || '',
+      value: !!root.querySelector('.neblink-nlid-value'),
+      devicesLabel: [...root.querySelectorAll('.neblink-section-label')].some(e => e.textContent.includes('Devices')),
     };
   });
-  ok('T7b en NL 号区文案', enNl.label && enNl.value.includes('signup email'), JSON.stringify(enNl));
+  ok('T7b en 设置面板 NL 号区零残留 + 设备区完好', !enNl.label && !enNl.value && enNl.devicesLabel, JSON.stringify(enNl));
   await page.close();
 }
 
@@ -351,7 +323,7 @@ async function shots(colorScheme, tag) {
   await page.click('.fm-nf-entry');
   await sleep(400);
   await page.screenshot({ path: `${SHOTS}/friend-chain-contacts-${tag}.png` });
-  // 设置 NL 号区
+  // 设置面板（NL 号区已移除——截图留存设备区现状）
   await page.click('#settings-btn');
   await sleep(700);
   await page.screenshot({ path: `${SHOTS}/friend-chain-settings-${tag}.png` });

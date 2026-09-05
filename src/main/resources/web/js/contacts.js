@@ -17,9 +17,9 @@ let incoming = [];
 let outgoing = [];
 let requestsExpanded = false;
 let lastSearchAt = 0;
-let searchResult = null;   // null | {found:false} | {found:true,...}
+let searchResult = null;   // null | {found:false} | 契约搜索结果（归一内部形态，含 relation_status）
 let verifyFor = null;      // username awaiting verification-note input
-let sentTo = new Set();    // usernames with a pending outgoing request (this load)
+let sentTo = new Set();    // usernames sent this session（乐观回显；服务端态 = relation_status）
 let searching = false;     // search in flight → button loading state
 let searchQ = '';          // preserved across re-renders (panel rebuilds on state change)
 
@@ -267,8 +267,8 @@ function buildSearch() {
     searching = true;
     render(); // button → loading state (input value survives via searchQ)
     try {
-      searchResult = await api.lookupUser(searchQ.trim());
-    } catch { searchResult = { found: false }; }
+      searchResult = await api.searchUser(searchQ.trim());
+    } catch { searchResult = { found: false }; }  // 422/429/网络/窗口期 404 → 未找到卡兜底
     searching = false;
     render();
   };
@@ -293,26 +293,93 @@ function buildResultCard() {
     card.appendChild(el('div', 'fm-empty-hint', t('contacts.notFoundHint')));
     return card;
   }
-  // lookup 新契约 {username, displayName, avatar}（friendsApi 归一后统一形态）
+  // 契约 v1.0 搜索结果（friendsApi 归一后内部扁平形态）：username 可空、
+  // displayName 永不空（服务端 fallback 链镜像）、relation_status 六态。
   card.appendChild(avatarEl({ avatarUrl: r.avatar, name: r.displayName }, 36));
   const meta = el('div', 'fm-row-meta');
   meta.appendChild(el('div', 'fm-row-name', r.displayName || r.username));
   meta.appendChild(el('div', 'fm-row-sub', r.username));
   card.appendChild(meta);
 
-  if (r.self) {
+  // ── relation_status 六态 → 按钮态（契约 §4.1 逐态映射；值缺失按 addable
+  // 兜底，窗口期/载荷残缺时不渲染成死卡）。可加性判断以服务端 relation_status
+  // 为唯一事实源（本端不再做好友/在途推断）；唯一保留的本地乐观态是本次
+  // 会话刚发出的请求（sentTo），服务端列表刷新前给出即时反馈。
+  const rs = r.relation_status || 'addable';
+  const username = r.username || '';
+
+  if (rs === 'self') {
     card.appendChild(el('span', 'fm-status-text', t('contacts.self')));
     return card;
   }
-  // wire 对象（好友行/在途请求）的 neblinkId 字段值即 username——同值域比较
-  const alreadyFriend = friends.some(f => (f.neblinkId || '').toLowerCase() === (r.username || '').toLowerCase());
-  const pending = sentTo.has((r.username || '').toLowerCase());
-  if (alreadyFriend || pending) {
-    card.appendChild(el('span', 'fm-status-text', t('contacts.pendingVerification')));
+
+  if (rs === 'already_friends') {
+    // 已好友 → 「发消息」（复用好友行同款 openChatWithFriend 链路）
+    const msgBtn = el('button', 'glass-control fm-msg-btn', t('contacts.sendMessage'));
+    msgBtn.addEventListener('click', () => {
+      const fr = friends.find(f => f.userId === r.userId)
+        || { userId: r.userId, neblinkId: username, name: r.displayName, avatarUrl: r.avatar };
+      openChatWithFriend(fr);
+    });
+    card.appendChild(msgBtn);
     return card;
   }
-  if (verifyFor === r.username) {
-    // Verification-note input (WeChat-style, ≤50 chars, optional)
+
+  if (rs === 'outgoing_pending' || (rs === 'addable' && sentTo.has(username.toLowerCase()))) {
+    // 我方出站待处理 → 「等待对方处理」（sentTo 为乐观回显，非服务端态）
+    card.appendChild(el('span', 'fm-status-text', t('contacts.outgoingPending')));
+    return card;
+  }
+
+  if (rs === 'incoming_pending') {
+    // 对方入站待我处理 → 「回应请求」accept/decline（requestId 从已加载的
+    // 请求列表取；列表落后时后台 refresh，按钮态随重渲染回归）
+    const rq = incoming.find(x => x.from?.userId === r.userId && (x.status || 'pending') === 'pending');
+    if (!rq) { refresh(); return card; }
+    card.appendChild(el('span', 'fm-status-text', t('contacts.respondRequest')));
+    const accept = el('button', 'glass-control fm-req-accept', t('contacts.accept'));
+    accept.addEventListener('click', async () => {
+      accept.disabled = true;
+      try { await api.acceptFriendRequest(rq.requestId); } catch { /* keep */ }
+      searchResult = null;
+      await refresh();
+      window.dispatchEvent(new CustomEvent('fm-friends-changed'));
+    });
+    const decline = el('button', 'fm-req-decline', t('contacts.decline'));
+    decline.addEventListener('click', async () => {
+      decline.disabled = true;
+      try { await api.declineFriendRequest(rq.requestId); } catch { /* keep */ }
+      searchResult = null;
+      await refresh();
+    });
+    const btns = el('span', 'fm-req-btns');
+    btns.appendChild(accept);
+    btns.appendChild(decline);
+    card.appendChild(btns);
+    return card;
+  }
+
+  if (rs === 'blocked_by_me') {
+    // 我拉黑对方（调用者私有信息可安全显示）→ 禁用添加 + 「取消拉黑」入口
+    card.appendChild(el('span', 'fm-status-text fm-blocked-tag', t('contacts.blocked')));
+    const ub = el('button', 'glass-control fm-unblock-btn', t('contacts.unblock'));
+    ub.addEventListener('click', async () => {
+      ub.disabled = true;
+      try {
+        await api.unblockFriend(r.userId);
+        saveBlockedCache(loadBlockedCache().filter(b => b.userId !== r.userId));
+      } catch (err) { window.__showToast?.(err.message || t('messages.networkError'), 'error'); }
+      searchResult = null;
+      await refresh();
+      window.dispatchEvent(new CustomEvent('fm-friends-changed'));
+    });
+    card.appendChild(ub);
+    return card;
+  }
+
+  // addable（默认兜底）：无关系/可发起（含被对方拉黑，不可区分 §5.4）——
+  // 微信式验证消息流（≤50 字，可选，Enter 直发）
+  if (verifyFor === username) {
     const box = el('div', 'fm-verify-box');
     const input = document.createElement('input');
     input.className = 'fm-verify-input';
@@ -322,8 +389,8 @@ function buildResultCard() {
     const doSend = async () => {
       sendBtn.disabled = true;
       try {
-        await api.sendFriendRequest(r.username, input.value.trim());
-        sentTo.add(r.username.toLowerCase());
+        await api.sendFriendRequest(username, input.value.trim());
+        sentTo.add(username.toLowerCase());
       } catch { /* keep state */ }
       verifyFor = null;
       render();
@@ -340,7 +407,7 @@ function buildResultCard() {
     setTimeout(() => input.focus(), 0);
   } else {
     const addBtn = el('button', 'glass-control fm-add-btn', t('contacts.addFriend'));
-    addBtn.addEventListener('click', () => { verifyFor = r.username; render(); });
+    addBtn.addEventListener('click', () => { verifyFor = username; render(); });
     card.appendChild(addBtn);
   }
   return card;
@@ -379,7 +446,7 @@ function requestRow(rq, dir) {
     return row;
   }
   if (dir === 'out') {
-    row.appendChild(el('span', 'fm-status-text', t('contacts.pendingVerification')));
+    row.appendChild(el('span', 'fm-status-text', t('contacts.outgoingPending')));
     return row;
   }
   const accept = el('button', 'glass-control fm-req-accept', t('contacts.accept'));

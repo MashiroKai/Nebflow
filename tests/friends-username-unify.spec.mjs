@@ -4,7 +4,7 @@
 // 覆盖：
 //   U1  zh 搜索框 placeholder =「用户名 / 邮箱」（双渠道语义）
 //   U2  按 Username 搜索（不含 @）→ 结果卡渲染 displayName + username
-//   U3  发起好友请求（验证消息 Enter 直发）→ 等待验证；wire query=username
+//   U3  发起好友请求（验证消息 Enter 直发）→ 等待对方处理；wire query=username
 //   U4  按邮箱搜索（含 @）→ email 精确匹配命中
 //   U5  旧形态 seed（neblinkId/name）兼容——username/displayName 回退读
 //   U6  self 命中：任一自身标识（username / email）→「这是你自己」
@@ -71,7 +71,7 @@ async function bootPage({ locale = 'zh-CN', blockLookup = false } = {}) {
   page.on('pageerror', e => console.log('[pageerror]', e.message));
   await page.route('**/api/**', r => r.fulfill({ json: {} }));           // catch-all first
   await page.route('**/api/neblink/status', r => r.fulfill({ json: { loggedIn: true, device: { id: 'd1', name: '本机', platform: 'macos', userDescription: '', avatarUrl: '' }, peers: [] } }));
-  if (blockLookup) await page.route('**/api/users/lookup*', r => r.abort());
+  if (blockLookup) await page.route('**/api/users/search*', r => r.abort());  // 端点切换：search（契约唯一搜索入口）
   let serverWs = null;
   await page.routeWebSocket(/\/ws/, ws => {
     serverWs = ws;
@@ -110,14 +110,15 @@ try {
   ok('U2a Username 搜索命中：displayName 主行', card.includes('小明'), card.slice(0, 60));
   ok('U2b username 副行', card.includes('xiaoming'), card.slice(0, 60));
 
-  // U3 加好友 → 验证消息 → 等待验证；wire query = username
+  // U3 加好友 → 验证消息 → 等待对方处理（契约 §4.1 outgoing_pending 文案，
+  // friend-contract-align 批次统一切换）；wire query = username
   await page.click('.fm-add-btn');
   await sleep(300);
   await page.fill('.fm-verify-input', '求通过');
   await page.keyboard.press('Enter');
   await sleep(600);
   card = await page.$eval('.fm-result-card', e => e.textContent).catch(() => '');
-  ok('U3a 验证消息 Enter 直发 → 等待验证', card.includes('等待验证'), card.slice(0, 60));
+  ok('U3a 验证消息 Enter 直发 → 等待对方处理', card.includes('等待对方处理'), card.slice(0, 60));
   const wire = await page.evaluate(async () => {
     const api = await import('/js/friendsApi.js');
     const d = await api.getFriends();
@@ -181,7 +182,7 @@ try {
       p.on('pageerror', e => console.log('[pageerror]', e.message));
       await p.route('**/api/**', r => r.fulfill({ json: {} }));
       await p.route('**/api/neblink/status', r => r.fulfill({ json: { loggedIn: true, device: { id: 'd1', name: '本机', platform: 'macos', userDescription: '', avatarUrl: '' }, peers: [] } }));
-      await p.route('**/api/users/lookup*', r => r.abort());
+      await p.route('**/api/users/search*', r => r.abort());  // 端点切换：search
       await p.routeWebSocket(/\/ws/, ws => {
         ws.onMessage(() => {});
         ws.send(JSON.stringify({ type: 'configData', configured: true, onboarding: 'done', models: [], defaults: {} }));
