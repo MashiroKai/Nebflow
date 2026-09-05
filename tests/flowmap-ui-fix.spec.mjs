@@ -243,6 +243,107 @@ test('②标题栏单元素「← 项目名」：箭头+名字、无独立返回
   expect(await page.locator('.flowmap-nav-bar').count()).toBe(0);
 });
 
+test('③顶栏合并（2026-09-06）：摘要入 nav-bar 右侧、view-body 无头部条、摘要内容随渲染填入', async ({ page }) => {
+  const pageErrors = [];
+  page.on('pageerror', (e) => pageErrors.push(e.message));
+  await bootApp(page);
+  await page.route('**/api/projects', (r) => r.fulfill({
+    json: { projects: [{ name: 'alpha', workspace: '/w/alpha', agentFile: 'alpha', description: '', createdAt: new Date(T0).toISOString() }] },
+  }));
+  await page.route('**/api/projects/alpha/flow-map', (r) => r.fulfill({ json: FM_ALPHA() }));
+  await openFlowMap(page, 'alpha');
+
+  // nav-bar 内：返回钮 + 摘要槽；摘要文本非空（FM_ALPHA: 2 completed + 1 running）
+  const bar = page.locator('.flowmap-nav-bar');
+  const sum = bar.locator('.flowmap-nav-summary');
+  await expect(sum).toHaveCount(1);
+  const sumInfo = await page.evaluate(() => {
+    const el = document.querySelector('.flowmap-nav-bar .flowmap-summary');
+    const btn = document.querySelector('.flowmap-back-btn');
+    const r = el.getBoundingClientRect();
+    const br = btn.getBoundingClientRect();
+    return {
+      text: el.textContent,
+      rightOfBtn: r.left >= br.right - 1,      // 摘要在返回钮右侧（同一行）
+      sameRow: Math.abs((r.top + r.bottom) - (br.top + br.bottom)) < 4, // 单行：垂直居中对齐
+      align: getComputedStyle(el).textAlign,
+      barOverflow: document.querySelector('.flowmap-nav-bar').scrollWidth
+        > document.querySelector('.flowmap-nav-bar').clientWidth + 1,
+    };
+  });
+  expect(sumInfo.text.trim().length).toBeGreaterThan(0);
+  expect(sumInfo.text).toContain('运行中'); // 1 running
+  expect(sumInfo.rightOfBtn).toBe(true);
+  expect(sumInfo.sameRow).toBe(true);
+  expect(sumInfo.align).toBe('right');
+  expect(sumInfo.barOverflow).toBe(false);
+  // view-body 内不再有头部条（就地路径）；.flowmap-summary 全文档唯一（nav-bar 槽）
+  expect(await page.locator('.flowmap-view-body .flowmap-card-header').count()).toBe(0);
+  expect(await page.locator('.flowmap-card-title').count()).toBe(0);
+  expect(await page.locator('.flowmap-summary').count()).toBe(1);
+  expect(pageErrors).toEqual([]);
+});
+
+test('③360px 窄窗：nav-bar 单行不换行不溢出、返回钮与摘要双 ellipsis 均在', async ({ page }) => {
+  await bootApp(page);
+  await page.route('**/api/projects', (r) => r.fulfill({
+    json: { projects: [{ name: LONG_NAME, workspace: '/w/x', agentFile: 'x', description: '', createdAt: new Date(T0).toISOString() }] },
+  }));
+  await page.route(new RegExp(`/api/projects/${LONG_NAME}/flow-map`), (r) => r.fulfill({ json: FM_LONG() }));
+  await openFlowMap(page, LONG_NAME);
+  await page.setViewportSize({ width: 360, height: 667 });
+  await page.waitForTimeout(500); // host 收缩落定
+
+  const m = await page.evaluate(() => {
+    const bar = document.querySelector('.flowmap-nav-bar');
+    const btn = bar?.querySelector('.flowmap-back-btn');
+    const sum = bar?.querySelector('.flowmap-nav-summary');
+    if (!bar || !btn || !sum) return null;
+    return {
+      barOverflow: bar.scrollWidth > bar.clientWidth + 1,
+      barH: bar.getBoundingClientRect().height,
+      btnVisible: btn.getBoundingClientRect().width > 0,
+      sumVisible: getComputedStyle(sum).display !== 'none' && sum.getBoundingClientRect().width > 0,
+      nameTruncated: (() => { const s = btn.querySelector('.flowmap-back-name'); return s.scrollWidth > s.clientWidth; })(),
+      sumEllipsis: getComputedStyle(sum).textOverflow === 'ellipsis',
+    };
+  });
+  expect(m).toBeTruthy();
+  expect(m.barOverflow).toBe(false);   // 不撑横
+  expect(m.barH).toBeLessThan(60);     // 单行（未换行增高）
+  expect(m.btnVisible).toBe(true);     // 返回钮保住
+  expect(m.sumVisible).toBe(true);     // 360px > 339 兜底线：摘要仍在
+  expect(m.nameTruncated).toBe(true);  // 长名确实在截断
+  expect(m.sumEllipsis).toBe(true);
+});
+
+test('③极窄（320px < 339 兜底线）：摘要 display:none 让位，返回钮全宽可用', async ({ page }) => {
+  await bootApp(page);
+  await page.route('**/api/projects', (r) => r.fulfill({
+    json: { projects: [{ name: LONG_NAME, workspace: '/w/x', agentFile: 'x', description: '', createdAt: new Date(T0).toISOString() }] },
+  }));
+  await page.route(new RegExp(`/api/projects/${LONG_NAME}/flow-map`), (r) => r.fulfill({ json: FM_LONG() }));
+  await openFlowMap(page, LONG_NAME);
+  await page.setViewportSize({ width: 320, height: 568 });
+  await page.waitForTimeout(500);
+
+  const m = await page.evaluate(() => {
+    const bar = document.querySelector('.flowmap-nav-bar');
+    const btn = bar?.querySelector('.flowmap-back-btn');
+    const sum = bar?.querySelector('.flowmap-nav-summary');
+    if (!bar || !btn || !sum) return null;
+    return {
+      sumDisplay: getComputedStyle(sum).display,
+      barOverflow: bar.scrollWidth > bar.clientWidth + 1,
+      btnVisible: btn.getBoundingClientRect().width > 0,
+    };
+  });
+  expect(m).toBeTruthy();
+  expect(m.sumDisplay).toBe('none');   // 极窄兜底：摘要让位
+  expect(m.barOverflow).toBe(false);
+  expect(m.btnVisible).toBe(true);     // 返回入口保住
+});
+
 test('②长项目名：ellipsis 截断 + 不撑横 nav-bar', async ({ page }) => {
   await bootApp(page);
   await page.route('**/api/projects', (r) => r.fulfill({
