@@ -308,6 +308,7 @@ object NodeEditTool extends Tool:
         "preset" -> Json.obj("type" -> "string".asJson),
         "maxRetries" -> Json.obj("type" -> "integer".asJson),
         "hold" -> Json.obj("type" -> "boolean".asJson, "description" -> "Human-gate: node completes to HELD (result saved+announced to Nebula, no downstream delivery) awaiting release=true. Requires a node-id out (not \"Nebula\"). wiring/pending/running only".asJson),
+        "merge" -> Json.obj("type" -> "boolean".asJson, "description" -> "Merge/collection node (batch landing sink, create-only): triggers only when ALL upstreams completed (in-barrier); an upstream failure converts this node to blocked (category=upstream-incomplete) instead of the collect placeholder-start. Must NOT carry 'worktree' — a merge node lands on the workspace root repo (sandbox root = workspace, .git writable); task should embed the upstream branch/worktree list + landing command set".asJson),
         "release" -> Json.obj("type" -> "boolean".asJson, "description" -> "Release a HELD node → completed, delivery chain runs. STANDALONE action — any other edit parameter in the same call refuses (release first, then rewire separately)".asJson),
         "note" -> Json.obj("type" -> "string".asJson, "description" -> "User supplementary text, ONLY with release=true — appended to the out target's task (carried into downstream input)".asJson),
         "abandon" -> Json.obj("type" -> "boolean".asJson, "description" -> "Abandon a TERMINAL (blocked/completed/failed/cancelled), wiring/pending, HELD, or dead-session running node → cancelled + display TTL".asJson)
@@ -338,6 +339,10 @@ object NodeEditTool extends Tool:
     // hold=false 显式传入 = 撤销闸点（缺省 = 不改动）；release/note 布尔/文本语义。
     val holdProvided = input("hold").flatMap(_.asBoolean)
     val hold = holdProvided.getOrElse(false)
+    // merge（merge-node 批 20260905）：create-only 标记——edit 路径不接收（对既有
+    // 节点传 merge 会被静默忽略；归档节点传 merge 走 forbidden 拒绝）。
+    val merge = input("merge").flatMap(_.asBoolean).getOrElse(false)
+    val mergeProvided = input("merge").flatMap(_.asBoolean).isDefined
     val release = input("release").flatMap(_.asBoolean).getOrElse(false)
     val note = input("note").flatMap(_.asString)
     val inJson = input("in")
@@ -409,9 +414,13 @@ object NodeEditTool extends Tool:
                               agent.isDefined || task.isDefined || skill.isDefined || mcp.isDefined ||
                                 worktree.isDefined || preset.isDefined || maxRetries.isDefined ||
                                 abandon || inJson.isDefined || depsJson.isDefined ||
-                                holdProvided.isDefined || release || note.isDefined || pluginsProvided
+                                holdProvided.isDefined || release || note.isDefined || pluginsProvided ||
+                                mergeProvided
                             if abandon then
                               IO.pure(Left(ToolError(s"Node '$nodename' is archived (display TTL expired) — abandon is not applicable; it already ages out of views on its own.")))
+                            else if mergeProvided then
+                              IO.pure(Left(ToolError(
+                                s"Node '$nodename' is archived — 'merge' is a create-only flag and cannot be set on an archived node.")))
                             else if release || note.isDefined || holdProvided.isDefined then
                               IO.pure(Left(ToolError(
                                 s"Node '$nodename' is archived (display TTL expired) — hold/release do not apply: held is a non-terminal state and is never archived; archived nodes are terminal. Only 'out' rewiring is supported.")))
@@ -424,7 +433,7 @@ object NodeEditTool extends Tool:
                             else editNode(rt, archived, agent, task, abandon, holdProvided, hold, release, note, skill, mcp, worktree, preset, maxRetries, pluginsOpt, inJson, depsJson, outJson, ctx)
                           case None =>
                             if abandon then IO.pure(Left(ToolError(s"Node '$nodename' not found — abandon requires an existing node")))
-                            else createNode(rt, nodename, agent, task, skill, mcp, worktree, preset, maxRetries, pluginsForCall, inJson, depsJson, outJson, hold)
+                            else createNode(rt, nodename, agent, task, skill, mcp, worktree, preset, maxRetries, pluginsForCall, inJson, depsJson, outJson, hold, merge)
                       }
                   }
               }
@@ -447,7 +456,8 @@ object NodeEditTool extends Tool:
     inJson: Option[Json],
     depsJson: Option[Json],
     outJson: Option[Json],
-    hold: Boolean = false
+    hold: Boolean = false,
+    merge: Boolean = false
   ): IO[Either[ToolError, String]] =
     val agentName = agent.getOrElse("")
     val inIds = NodeTools.parseIn(inJson)
@@ -480,6 +490,13 @@ object NodeEditTool extends Tool:
         else if hold && out.contains("Nebula") then
           IO.pure(Left(ToolError(
             "hold=true requires a node-target out edge — out=\"Nebula\" nodes deliver to Nebula directly, nothing to hold.")))
+        // merge 校验①（merge-node 批 20260905 §权限选型③）：合并节点不配 worktree
+        // ——落地收口在 workspace 根仓执行，沙箱根必须 = workspace（.git 在根内可写）；
+        // 配 worktree 则沙箱根 = worktree 目录，主仓 .git 在根外 → git 变更 EPERM。
+        else if merge && worktree.isDefined then
+          IO.pure(Left(ToolError(
+            "merge=true (batch landing sink) must NOT carry 'worktree' — a merge node lands on the workspace " +
+              "root repo; its sandbox root must be the workspace itself so .git is writable. Drop 'worktree'.")))
         else
           // 1. agent 存在性
           EntityLoader.loadAgent(agentName).flatMap {
@@ -502,8 +519,8 @@ object NodeEditTool extends Tool:
                         IO.pure(Left(ToolError(
                           s"Worktree '$bare' not found under ${rt.project.workspace}/.nebflow/worktrees/ (nor top-level .nebflow/) — " +
                             s"create it first via: git worktree add ${rt.project.workspace}/.nebflow/worktrees/$bare -b <branch>")))
-                      else proceed(rt, nodename, agentName, task, skill, mcp, Some(bare), preset, maxRetries, plugins, ins, deps, out, hold)
-                case None => proceed(rt, nodename, agentName, task, skill, mcp, worktree, preset, maxRetries, plugins, ins, deps, out, hold)
+                      else proceed(rt, nodename, agentName, task, skill, mcp, Some(bare), preset, maxRetries, plugins, ins, deps, out, hold, merge)
+                case None => proceed(rt, nodename, agentName, task, skill, mcp, worktree, preset, maxRetries, plugins, ins, deps, out, hold, merge)
           }
 
   private def proceed(
@@ -520,7 +537,8 @@ object NodeEditTool extends Tool:
     ins: List[String],
     deps: List[String],
     out: Option[String],
-    hold: Boolean = false
+    hold: Boolean = false,
+    merge: Boolean = false
   ): IO[Either[ToolError, String]] =
     val nodeId = s"n-${java.util.UUID.randomUUID().toString.take(8)}"
     for
@@ -574,6 +592,7 @@ object NodeEditTool extends Tool:
             in = Nil,
             deps = deps,
             hold = hold,
+            merge = merge,
             out = None,
             status = if task.isDefined && ins.isEmpty then NodeLifecycle.Pending else NodeLifecycle.Wiring,
             retries = 0,
@@ -648,13 +667,17 @@ object NodeEditTool extends Tool:
                 // NodeEdit 上直到节点完成（实测单 turn 56min），违背工具契约
                 // 「async, non-blocking」。deps 不构成「可立即运行」——即使误判也被
                 // startNode 内 deps 闸门拦下（deps 设计 §1.2）。
-                (if task.isDefined && ins.isEmpty then
+                // 合并节点例外（merge-node 批 20260905）：merge=true 时 task 只是
+                // 落地指令集，**不构成可立即运行的入口语义**——落地收口必须等齐
+                // 全部上游（in barrier 归零后由上游投递链经 startNode 启动）。
+                // 否则合并节点会在零上游时开跑（S1 E2E 实测捕获）。
+                (if task.isDefined && ins.isEmpty && !merge then
                    NodeTools.runDetached(rt, s"start entry node $nodeId")(rt.engine.startNode(nodeId))
                  else IO.unit)
             }
           createIO.as(Right(
             s"Node '$nodename' ($nodeId) created in project '${rt.project.name}'" +
-              (if task.isDefined && ins.isEmpty then " — entry node started running." else "") +
+              (if task.isDefined && ins.isEmpty && !merge then " — entry node started running." else "") +
               (if deps.nonEmpty then s" deps ← ${deps.mkString(",")}" else "") +
               (out.map(t => s" out → $t").getOrElse(""))
           ))
