@@ -1,25 +1,12 @@
-// turn-single-badge.spec.mjs — 2026-09-05 author ruling (一 turn 一 badge).
+// turn-single-badge.spec.mjs — 2026-09-05 turn 级聚合回归（作者 08:48 复现：
+// 多轮 turn 出现两个 badge）, updated for the #346 v2 "decompression model"
+// (2026-09-05 23:44 ruling).
 //
-// Author report 2026-09-05 08:48 (screenshot): a turn with TWO LLM tool
-// rounds (MemoryEdit×5 → text → Task×4 → final) rendered TWO collapsed
-// badges with identical summary text but split tool counts (工具 5 次 /
-// 工具 4 次) — grouping was per contiguous RUN (per LLM round), not per turn.
-//
-// Ruling (08-25/08-26 semantics baseline, turn-level completion): ONE badge
-// per TURN — every LLM round's tool calls aggregate into the single bar's
-// 工具 N 次 count; the bar lands immediately before the turn's final reply;
-// intermediate LLM text rows stay flat and visible (2026-09-03 ruling); a
-// post-closure external event still opens a NEW turn/group (#403, no
-// fusion); failed turns build no bar (A5); busyTail boundary preserved
-// (efa5e6a6).
-//
-// Summary-text note: the badge's first segment is the frozen decorative
-// status phrase (✻ …, v1.2 ruling 081274ee) sourced from THIS turn's
-// terminal meta — the reported "stale trigger text" suspicion was a
-// misdiagnosis (the phrase is `think.11` from locales, not a trigger-message
-// extraction). These specs therefore assert per-turn freshness (turn 2's
-// bar carries turn 2's phrase/model/count, never turn 1's), not trigger
-// text.
+// A turn interleaving text with several tool rounds (MemoryEdit×5 → text →
+// Task×4 → text → final) gets exactly ONE persistent stats header
+// (`.turn-header`) at the turn top, counting the WHOLE turn: model · 思考 ·
+// 工具 9 次 · 读写 5 文件. v2: rows never move — the header is the only node
+// inserted; expanding reveals the 9 tool cards in their original order.
 //
 // Drives the REAL render modules through tests/fixtures/turn-collapse/
 // harness.html over a throwaway static server (never the 8080 host).
@@ -36,7 +23,7 @@ import { fileURLToPath } from 'node:url';
 
 const REPO_ROOT = path.join(path.dirname(fileURLToPath(import.meta.url)), '..');
 const HARNESS_PATH = '/tests/fixtures/turn-collapse/harness.html';
-const SHOT_DIR = process.env.NB_SINGLE_BADGE_SHOT_DIR || '/tmp/nb-turn-badge-fix/shots';
+const SHOT_DIR = process.env.NB_KEEP_TEXT_SHOT_DIR || path.join(os.homedir(), '.nebflow', 'docs', 'Nebflow');
 
 let port;
 const servers = [];
@@ -98,60 +85,87 @@ async function newPage(browser) {
 const T_A = '第一轮记忆更新完成，接着派 4 个子任务并行收集数据。';
 const T_B = '子任务全部派出，等待回收结果后汇总。';
 const T_FINAL = '全部完成：记忆已更新，4 路数据收集任务已启动并回收。';
-const PHRASE_1 = '✻ 买了张去星辰的车票，3m 25s 到站';
 const MODEL_1 = 'zhipu/GLM-5.3-Flash';
 
-/** Full census of the turn-collapse state for the multi-round turn. */
+/** Full census of the turn-chrome state: one entry per `.turn-header`, with
+ *  the turn scope (header → next user/header) rolled in. */
 function badgeCensus(page) {
   return page.evaluate(() => {
-    const groups = Array.from(document.querySelectorAll('.turn-group'));
+    const chat = document.getElementById('chat');
+    const headers = Array.from(chat.children).filter(k => k.classList.contains('turn-header'));
     return {
-      groupCount: groups.length,
-      bars: groups.map(g => ({
-        text: (g.querySelector('.turn-summary-text')?.textContent || '').trim(),
-        visible: !!g.querySelector('.turn-summary') && g.querySelector('.turn-summary').offsetHeight > 0,
-      })),
-      toolCardsPerGroup: groups.map(g => g.querySelectorAll('.tool-card').length),
-      // badge adjacency: each group must sit immediately before an ai text row
-      nextIsAiText: groups.map(g => {
-        const nx = g.nextElementSibling;
-        return !!nx && nx.classList.contains('row') && nx.classList.contains('ai')
-          && !!nx.querySelector('.bubble.ai');
+      groupCount: headers.length,
+      bars: headers.map(h => {
+        const rows = [];
+        let n = h.nextElementSibling;
+        while (n && !n.classList.contains('turn-header') &&
+               !(n.classList.contains('row') && n.classList.contains('user') && !n.querySelector('.bubble.injected'))) {
+          rows.push(n);
+          n = n.nextElementSibling;
+        }
+        return {
+          text: (h.querySelector('.turn-header-text')?.textContent || '').trim(),
+          visible: h.offsetHeight > 0,
+          toolCards: rows.filter(r => r.classList.contains('tool')).length,
+          tuckedRows: rows.filter(r => r.classList.contains('nf-tucked')).length,
+          // header position: immediately after the turn's user row
+          followsUser: !!h.previousElementSibling?.classList?.contains('user'),
+        };
       }),
       flatTexts: Array.from(document.querySelectorAll('#chat .row.ai'))
-        .filter(r => !r.classList.contains('thinking-row') && !r.closest('.turn-steps'))
+        .filter(r => !r.classList.contains('thinking-row') && !r.classList.contains('nf-tucked'))
         .map(r => ((r.querySelector('.bubble.ai')?.textContent) || '').trim()),
     };
   });
 }
 
-test.describe('one badge per turn — multi-round tool loop (author repro)', () => {
-  test('MemoryEdit×5 → text → Task×4 → text → final: exactly ONE badge, count 9, before the final reply', async ({ browser }) => {
+/** Row-only DOM snapshot (headers excluded): for #403 byte-stability checks.
+ *  The banner-dedupe marker class legitimately changes a closed turn's
+ *  HEADER attributes; the rows themselves must never change. */
+function rowsSnapshot(page) {
+  return page.evaluate(() =>
+    Array.from(document.getElementById('chat').children)
+      .filter(el => !el.classList.contains('turn-header'))
+      .map(el => el.outerHTML).join('\n'));
+}
+
+/** Wait until every tool/thinking row animation has finished — the static
+ *  .nf-tucked class (and natural geometry) only land in finish handlers. */
+async function animationsSettled(page) {
+  await page.waitForFunction(() => {
+    const rows = document.querySelectorAll('#chat .row.tool, #chat .row.thinking-row');
+    return Array.from(rows).flatMap(r => r.getAnimations())
+      .every(a => a.playState !== 'running' && a.playState !== 'pending');
+  }, null, { timeout: 5000 });
+}
+
+test.describe('one header per turn — multi-round tool loop (author repro)', () => {
+  test('MemoryEdit×5 → text → Task×4 → text → final: exactly ONE header, count 9, files 5, at the turn top', async ({ browser }) => {
     const { context, page, pageErrors } = await newPage(browser);
     await page.evaluate(() => window.__multiRoundTurn());
     expect(pageErrors).toEqual([]);
 
     const c = await badgeCensus(page);
-    // 恰一个 badge（修复前：两个 —— 工具 5 次 / 工具 4 次）。
+    // 恰一个 header（修复前：两个 —— 工具 5 次 / 工具 4 次）。
     expect(c.groupCount).toBe(1);
     expect(c.bars.length).toBe(1);
     expect(c.bars[0].visible).toBe(true);
-    // 计数 = 全轮合计 9（5+4），并带本 turn 的 phrase 与 model。
-    expect(c.toolCardsPerGroup).toEqual([9]);
-    expect(c.bars[0].text).toBe(`${PHRASE_1} · ${MODEL_1} · 工具 9 次`);
-    // badge 位置 = 贴最终回复前（与截图现状位置一致但唯一）。
-    expect(c.nextIsAiText).toEqual([true]);
+    // 计数 = 全轮合计 9（5+4）；读写文件 = MemoryEdit 的 5 个去重 file_path
+    // （Task 载荷无文件字段）。
+    expect(c.bars[0].toolCards).toBe(9);
+    expect(c.bars[0].text).toBe(`${MODEL_1} · 工具 9 次 · 读写 5 文件`);
+    // header 位置 = 紧贴 turn 的 user 行后（turn 顶）。
+    expect(c.bars[0].followsUser).toBe(true);
 
-    // 中间文字全部可见（2552fb57 红线）：A、B、最终都在折叠区外，时序不乱。
+    // 中间文字全部可见（红线）：A、B、最终都在收起区外，时序不乱。
     expect(c.flatTexts).toEqual([T_A, T_B, T_FINAL]);
 
-    // 无任何文字段被收进折叠区。
-    expect(await page.locator('.turn-steps .bubble.ai').count()).toBe(0);
-    // 步骤区默认收起，展开后 9 张工具卡按原顺序可见。
-    expect(await page.locator('.turn-steps').first().evaluate(el => el.style.display)).toBe('none');
-    await page.locator('.turn-summary').first().click();
+    // 步骤区默认收起（9 张工具卡全 tucked），展开后按原顺序可见。
+    expect(c.bars[0].tuckedRows).toBe(9);
+    await page.locator('.turn-header').first().click();
+    await animationsSettled(page);
     const tools = await page.evaluate(() =>
-      Array.from(document.querySelectorAll('.turn-steps .row.tool'))
+      Array.from(document.querySelectorAll('#chat .row.tool'))
         .map(r => ({ v: r.offsetHeight > 0, label: r.querySelector('.tool-card')?.textContent || '' })));
     expect(tools.length).toBe(9);
     expect(tools.every(t => t.v)).toBe(true);
@@ -166,38 +180,34 @@ test.describe('one badge per turn — multi-round tool loop (author repro)', () 
     await context.close();
   });
 
-  test('post-closure turn opens its OWN badge — no fusion, no cross-turn summary bleed', async ({ browser }) => {
+  test('post-closure turn opens its OWN header — no fusion, no cross-turn summary bleed', async ({ browser }) => {
     const { context, page, pageErrors } = await newPage(browser);
     await page.evaluate(() => window.__multiRoundTurn());
-    const before = await page.evaluate(() =>
-      Array.from(document.querySelectorAll('.turn-group')).map(g => g.innerHTML));
-    expect(before.length).toBe(1);
+    const domBefore = await rowsSnapshot(page);
 
     await page.evaluate(() => window.__postClosureTurn());
     expect(pageErrors).toEqual([]);
 
     const c = await badgeCensus(page);
-    // 跨 turn 不融合：两个 turn 各一个 badge。
+    // 跨 turn 不融合：两个 turn 各一个 header。
     expect(c.groupCount).toBe(2);
-    expect(c.bars.map(b => b.visible)).toEqual([false, true]); // turn1 bar superseded (9906bca5)
-    // turn1 badge byte-stable（#403 不变量）。
-    const after = await page.evaluate(() =>
-      Array.from(document.querySelectorAll('.turn-group')).map(g => g.innerHTML));
-    expect(after[0]).toBe(before[0]);
-    // 摘要各归各 turn：turn2 的 bar 是 turn2 的 phrase/model/count，
-    // 不含 turn1 的任何字段（计数 9 / phrase1 / model1 都不出现）。
-    expect(c.bars[1].text).toBe('✻ 快速确认 2 秒 · test-model · 工具 1 次');
-    expect(c.toolCardsPerGroup).toEqual([9, 1]);
+    expect(c.bars.map(b => b.visible)).toEqual([false, true]); // turn1 header superseded
+    // turn1 rows byte-stable（#403 不变量）。
+    const domAfter = await rowsSnapshot(page);
+    expect(domAfter.startsWith(domBefore)).toBe(true);
+    // 摘要各归各 turn：turn2 的 header 是 turn2 的 model/count（Bash 无文件
+    // 载荷 → 无读写段），不含 turn1 的任何字段。
+    expect(c.bars[1].text).toBe('test-model · 工具 1 次');
+    expect(c.bars.map(b => b.toolCards)).toEqual([9, 1]);
     expect(c.bars[1].text).not.toContain('工具 9 次');
-    expect(c.bars[1].text).not.toContain(PHRASE_1);
     expect(c.bars[1].text).not.toContain(MODEL_1);
-    // turn1 的 badge 文本仍带着本 turn 的完整摘要（隐藏但 DOM 保留）。
-    expect(c.bars[0].text).toBe(`${PHRASE_1} · ${MODEL_1} · 工具 9 次`);
+    // turn1 的 header 文本仍带着本 turn 的完整摘要（隐藏但 DOM 保留）。
+    expect(c.bars[0].text).toBe(`${MODEL_1} · 工具 9 次 · 读写 5 文件`);
 
     await context.close();
   });
 
-  test('failed multi-round turn re-gathers to ONE group with NO badge (spec A5)', async ({ browser }) => {
+  test('failed multi-round turn re-terminalizes with NO header and everything visible (spec A5)', async ({ browser }) => {
     const { context, page, pageErrors } = await newPage(browser);
     await page.evaluate(() => window.__multiRoundTurn());
     expect(await badgeCensus(page)).toMatchObject({ groupCount: 1 });
@@ -206,20 +216,20 @@ test.describe('one badge per turn — multi-round tool loop (author repro)', () 
     expect(pageErrors).toEqual([]);
 
     const c = await badgeCensus(page);
-    expect(c.groupCount).toBe(1);                    // still ONE group
-    expect(c.bars[0].text).toBe('');                 // A5: the bar does not exist
-    expect(c.toolCardsPerGroup).toEqual([9]);        // all 9 tools still inside
+    expect(c.groupCount).toBe(0);                     // header dissolved
+    expect(await page.locator('.turn-header').count()).toBe(0);
+    expect(await page.locator('.nf-tucked').count()).toBe(0); // nothing tucked
     expect(c.flatTexts).toEqual([T_A, T_B, T_FINAL]); // texts untouched
-    expect(await page.locator('.turn-summary').count()).toBe(0);
-    expect(await page.locator('.turn-group').first().evaluate(el => el.dataset.turnState)).toBe('failed');
-    expect(await page.locator('.turn-steps').first().evaluate(el => el.style.display)).toBe('');
+    // All 9 tool rows back to flat visibility (rows never moved).
+    expect(await page.evaluate(() =>
+      Array.from(document.querySelectorAll('#chat .row.tool')).every(r => r.offsetHeight > 0))).toBe(true);
 
     await context.close();
   });
 });
 
-test.describe('one badge per turn — history rebuild path', () => {
-  test('multi-round history segment gathers into ONE group with the aggregated count', async ({ browser }) => {
+test.describe('one header per turn — history rebuild path', () => {
+  test('multi-round history segment aggregates into ONE header with the whole-turn count', async ({ browser }) => {
     const { context, page, pageErrors } = await newPage(browser);
     const T = 1735689600000;
     await page.evaluate(m => window.__history(m, { busyTail: false }), [
@@ -237,16 +247,15 @@ test.describe('one badge per turn — history rebuild path', () => {
 
     const c = await badgeCensus(page);
     expect(c.groupCount).toBe(1);
-    expect(c.toolCardsPerGroup).toEqual([5]); // 2+3 aggregated
-    expect(c.bars[0].text).toContain('工具 5 次');
-    expect(c.bars[0].text).toContain('zhipu/GLM-5.3-Flash');
-    expect(c.nextIsAiText).toEqual([true]);
+    expect(c.bars[0].toolCards).toBe(5); // 2+3 aggregated
+    expect(c.bars[0].text).toBe('zhipu/GLM-5.3-Flash · 工具 5 次 · 读写 2 文件');
+    expect(c.bars[0].followsUser).toBe(true);
     expect(c.flatTexts).toEqual(['历史中间文字A。', '历史中间文字B。', '历史最终回复。']);
 
     await context.close();
   });
 
-  test('busyTail boundary: a mid-turn multi-round tail stays flat (no premature badge)', async ({ browser }) => {
+  test('busyTail boundary: a mid-turn multi-round tail stays flat (no premature header)', async ({ browser }) => {
     const { context, page, pageErrors } = await newPage(browser);
     const T = 1735689600000;
     await page.evaluate(m => window.__history(m, { busyTail: true }), [
@@ -261,15 +270,17 @@ test.describe('one badge per turn — history rebuild path', () => {
     expect(pageErrors).toEqual([]);
 
     const c = await badgeCensus(page);
-    // 只有已闭合的 turn1 有组+bar；在跑的 tail（已跨一轮工具+文字+工具）不分组。
+    // 只有已闭合的 turn1 有 header；在跑的 tail（已跨一轮工具+文字+工具）不收。
     expect(c.groupCount).toBe(1);
     expect(c.bars[0].text).toContain('m-one');
     expect(c.flatTexts).toEqual(['已闭合回复。', '流式中间文字。']);
     const tailFlat = await page.evaluate(() => {
       const kids = Array.from(document.getElementById('chat').children);
-      // 在跑的 tail 两张工具卡必须是 chat 的直接子级（未入组）且可见。
+      // v2: ALL rows are chat's direct children (nothing is gathered). The
+      // open turn's tail tools are the NOT-tucked ones — exactly 2, visible.
       const tools = kids.filter(k => k.classList && k.classList.contains('tool'));
-      return tools.length === 2 && tools.every(t => t.offsetHeight > 0);
+      const flat = tools.filter(t => !t.classList.contains('nf-tucked'));
+      return tools.length === 3 && flat.length === 2 && flat.every(t => t.offsetHeight > 0);
     });
     expect(tailFlat).toBe(true);
 
