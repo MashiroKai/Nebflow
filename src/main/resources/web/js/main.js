@@ -72,6 +72,7 @@ import { handleFlowAgentHistory, openStepPopup as openFlowStepPopup } from './fl
 import { handleBgAgentHistory, openStepPopup as openBgAgentPopup, cleanupBgAgentView } from './bgAgentPopup.js';
 import { fmtUptime, isFailedSnapshotStatus } from './managePanel.js';
 import { initNeblink } from './neblink.js';
+import { initUpdateCheck } from './updateCheck.js';
 import { initDropbox } from './dropbox.js';
 import { initContacts } from './contacts.js';
 import { initMessages } from './messages.js';
@@ -2379,9 +2380,6 @@ onMessage('serverConfig', (msg, view) => {
   if (msg.tools) {
     state.availableTools = msg.tools;
   }
-  if (msg.mcpServers) {
-    state.mcpServers = msg.mcpServers;
-  }
   // !== undefined (not truthiness): the schedule node must sync even when
   // falsy-but-present ({enabled:false,...}) so the settings panel always
   // echoes server truth (freeze-consistency fix 2026-08-27).
@@ -2414,10 +2412,9 @@ onMessage('serverConfig', (msg, view) => {
   }
 });
 
-// MCP server list updated (after background init completes)
-onMessage('mcpServersUpdate', (msg, view) => {
-  if (msg.mcpServers) state.mcpServers = msg.mcpServers;
-});
+// MCP server list updates are no longer consumed by the frontend
+// (09-05 五项裁定①：MCP 概念由 Plugins 系统全面取代，设置页入口移除)。
+// The backend still broadcasts mcpServersUpdate for other consumers.
 
 onMessage('configData', (msg, view) => {
   state.configText = msg.config || '';
@@ -2903,42 +2900,10 @@ onMessage('rulesDeleted', (msg, view) => handleRulesDeleted(msg));
 // --- Browse Result (path picker) ---
 onMessage('browseResult', (msg, view) => handleBrowseResult(msg));
 
-// --- Update check ---
-onMessage('updateCheckResult', (msg, view) => {
-  const statusEl = document.getElementById('update-status');
-  const actionEl = document.getElementById('update-action');
-  if (!statusEl) return;
-  if (msg.error) {
-    statusEl.textContent = t('settings.updateError');
-    return;
-  }
-  if (msg.hasUpdate) {
-    statusEl.textContent = t('settings.updateAvailable', { version: msg.latestVersion });
-    actionEl.style.display = 'block';
-  } else {
-    statusEl.textContent = t('settings.upToDate');
-    actionEl.style.display = 'none';
-  }
-});
-
-onMessage('updateStarted', () => {
-  const statusEl = document.getElementById('update-status');
-  if (statusEl) statusEl.textContent = t('settings.updating');
-});
-
-onMessage('updateCompleted', (msg, view) => {
-  const btn = document.getElementById('btn-do-update');
-  const statusEl = document.getElementById('update-status');
-  if (btn) { btn.textContent = t('settings.checkUpdate'); btn.disabled = false; }
-  if (statusEl) {
-    if (msg.success) {
-      statusEl.textContent = '✓ ' + t('settings.upToDate');
-      document.getElementById('update-action').style.display = 'none';
-    } else {
-      statusEl.textContent = '✗ ' + (msg.error || t('settings.updateError'));
-    }
-  }
-});
+// Update check chain (updateCheckResult/updateStarted/updateCompleted) moved
+// to updateCheck.js — it also owns the silent auto-check scheduling and the
+// settings-btn green dot (09-05 五项裁定⑤). initUpdateCheck() is called in
+// the boot section below.
 
 
 // ---------- 4. Cross-module wiring ----------
@@ -3188,6 +3153,7 @@ initDaemons();
 initChatSearch();
 initUsageDashboard();
 initNeblink();
+initUpdateCheck();
 initDropbox();
 initContacts();
 initMessages();
