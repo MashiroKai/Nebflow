@@ -137,6 +137,30 @@ object Defaults:
   /** 硬超时后的停滞观察窗口（s）：停滞连续满此值 → killProcessTree + TimeoutException。 */
   val BashStuckWindowSec: Int = 120
 
+  // ---- 节点完成闸（bgtask-completion-gate 批，作者 2026-09-05 18:29 裁定）----
+  // 节点完成判定不仅要求 turn 完成，还要求其等待型后台任务全部完成才投递。
+
+  /**
+   * node- 会话（Project 节点）等待型后台任务的硬超时延长档（ms，默认 4h）：
+   * 30min 档（BashBackgroundHardTimeoutMs）是「超时后才进入停滞观察」的兜底
+   * 上限——节点等待期的合法长任务（全量测试 1.5h 实跑先例）若在 30min 后出现
+   * >2min 的安静阶段（无输出且 <10ms CPU/采样，如依赖拉取）会被 30min 档误杀。
+   * 节点会话延长到 4h；活性不受影响——B1 idle 杀（5min）与停滞杀（120s）不变，
+   * 杀条件仍是「停滞」，超时只是兜底上限。非节点会话维持 30min 档。
+   */
+  val BgGateNodeHardTimeoutMs: Long = 4 * 60 * 60 * 1000L
+
+  /**
+   * 节点完成闸等待总上限兜底（ms，默认 2h）：桥 hold 的单个等待期超过此值 →
+   * 放弃等待、节点 failed（注明超时原因）。防的是异常面（后台完成通知链断裂/
+   * registry 泄漏项）把节点永久悬挂在 running。数小时级依据：单任务硬超时已
+   * 延长至 4h（BgGateNodeHardTimeoutMs），总上限取 2h < 4h——闸兜底先于单任务
+   * 上限触发；串行多任务的合法长链由「每次后台完成复检时重臂」保护（有活动
+   * 就重置）。system prop `nebflow.bgtask.gate.timeoutMs` 可调（CompletionGate
+   * kill-switch 先例；每次调用现读，测试可即时翻转）。 */
+  def BgGateWaitTimeoutMs: Long =
+    sys.props.getOrElse("nebflow.bgtask.gate.timeoutMs", (2 * 60 * 60 * 1000L).toString).toLong
+
   // ---- Tool Result Guard ----
 
   /**
