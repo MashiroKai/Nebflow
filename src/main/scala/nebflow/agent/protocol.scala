@@ -145,28 +145,6 @@ object AgentCommand:
   /** Frontend → agent: update safety mode for this session. */
   case class SetSafetyMode(mode: nebflow.core.SafetyMode) extends AgentCommand
 
-  // ============================================================
-  // Plan mode commands
-  // ============================================================
-
-  /** WebSocketRoutes → agent: start plan mode with the given task. */
-  case class StartPlan(task: String) extends AgentCommand
-
-  /** Plan adapter → agent: plan agent completed a turn, carrying the plan text. */
-  case class PlanTurnComplete(planText: String) extends AgentCommand
-
-  /** Plan adapter → agent: plan agent failed or terminated. */
-  case class PlanFailed(error: String) extends AgentCommand
-
-  /** Frontend → agent: user approved the plan. */
-  case object PlanApproved extends AgentCommand
-
-  /** Frontend → agent: user sent feedback to adjust the plan. */
-  case class PlanFeedback(text: String) extends AgentCommand
-
-  /** Frontend → agent: user cancelled plan mode. */
-  case object PlanCancelled extends AgentCommand
-
   case class ResumeTurn(
     turnStartMessageCount: Int,
     turnIdx: Int
@@ -870,9 +848,9 @@ case class SessionContext(
    */
   userFacingNode: Boolean = false,
   /**
-   * D11 交互豁免（freeze-schedule spec v1.1）：用户在场等待的交互会话（plan
-   * agent 等）不参与冻结——冻结它们省下的 token 远低于浪费的用户等待时间。
-   * PlanAgent.spawn 传 true；其余 spawn 点默认 false 零改动。ask 轮的豁免走
+   * D11 交互豁免（freeze-schedule spec v1.1）：用户在场等待的交互会话
+   * 不参与冻结——冻结它们省下的 token 远低于浪费的用户等待时间。
+   * 其余 spawn 点默认 false 零改动。ask 轮的豁免走
    * gate 内的 askMode.isDefined 检查，不经此字段。
    */
   freezeExempt: Boolean = false
@@ -1027,23 +1005,6 @@ case class AgentSessionInfo(
   createdAt: Long = System.currentTimeMillis()
 )
 
-// ============================================================
-// Plan mode
-// ============================================================
-
-/**
- * Tracks active plan mode state on the main agent.
- *
- * @param planAgentRef   ref to the plan sub-agent (for forwarding feedback)
- * @param currentPlanText  latest plan text from the plan agent's last turn
- * @param taskDescription  the original user task, for context injection on approve
- */
-case class PlanModeState(
-  planAgentRef: ActorRef[AgentCommand],
-  currentPlanText: String = "",
-  taskDescription: String = ""
-)
-
 /**
  * Snapshot of the dynamic values injected into systemStable at its last build
  * (cache-optimization v2). systemStable is rebuilt only at lifecycle nodes
@@ -1062,7 +1023,6 @@ case class AgentState(
   execution: ExecutionContext,
   compaction: CompactionState,
   agentSessions: List[AgentSessionInfo],
-  planMode: Option[PlanModeState],
   /**
    * Last built systemStable string — reused on non-lifecycle turns.
    *
@@ -1154,7 +1114,6 @@ object AgentState:
       ExecutionContext(messages, status, turnIdx, 0L, interaction),
       CompactionState(pendingCompaction, compactionFailures, 0L, latestUsage),
       Nil,
-      None,
       None,
       None,
       nebflow.core.processor.LoopGuard.Counters.Empty,
@@ -1298,8 +1257,6 @@ extension (s: AgentState)
 
   def withSafetyMode(mode: String): AgentState =
     s.copy(session = s.session.copy(safetyMode = mode))
-
-  def withPlanMode(pm: Option[PlanModeState]): AgentState = s.copy(planMode = pm)
 
   // --- Cache v2: systemStable + dynamic snapshot (lifecycle-node updates) ---
 

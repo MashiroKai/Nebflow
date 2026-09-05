@@ -497,7 +497,7 @@ class WebSocketRoutes(
 
   /**
    * Public API for bridge card-action callbacks to send specific AgentCommands
-   * (e.g. Interrupt, PlanApproved) to a session's agent.
+   * (e.g. Interrupt) to a session's agent.
    */
   def handleBridgeAgentCommand(sessionId: String, command: AgentCommand): IO[Unit] =
     if sessionId.isEmpty then IO.unit
@@ -1093,26 +1093,6 @@ class WebSocketRoutes(
                   s"Permission answer DROPPED: 'approved' missing or not a boolean (requestId=$requestId, session=$permSessionId) — a malformed reply must not become a deny (#12)"
                 )
 
-          case "planApprove" =>
-            val planSessionId = parse(text).flatMap(_.hcursor.downField("sessionId").as[String]).toOption.getOrElse("")
-            logger.info(s"Plan approved for session $planSessionId") *>
-              ensureAgent(planSessionId)(ref => ref ! AgentCommand.PlanApproved)
-
-          case "planFeedback" =>
-            val json = parse(text).toOption.getOrElse(io.circe.Json.Null)
-            val fbSessionId = json.hcursor.downField("sessionId").as[String].getOrElse("")
-            val fbText = json.hcursor.downField("text").as[String].getOrElse("")
-            if fbSessionId.nonEmpty && fbText.nonEmpty then
-              logger.info(s"Plan feedback for session $fbSessionId: ${fbText.take(60)}") *>
-                ensureAgent(fbSessionId)(ref => ref ! AgentCommand.PlanFeedback(fbText))
-            else IO.unit
-
-          case "planCancel" =>
-            val cancelSessionId =
-              parse(text).flatMap(_.hcursor.downField("sessionId").as[String]).toOption.getOrElse("")
-            logger.info(s"Plan cancelled for session $cancelSessionId") *>
-              ensureAgent(cancelSessionId)(ref => ref ! AgentCommand.PlanCancelled)
-
           case "interrupt" =>
             val intSessionId = parse(text).flatMap(_.hcursor.downField("sessionId").as[String]).toOption.getOrElse("")
             logger.info("User interrupted") *> ensureAgent(intSessionId)(ref => ref ! AgentCommand.Interrupt())
@@ -1313,14 +1293,6 @@ class WebSocketRoutes(
                   ensureAgent(compactSessionId)(ref =>
                     ref ! AgentCommand.TriggerCompaction("full", postCompactInstruction = instruction)
                   )
-              case "plan" =>
-                val planSessionId =
-                  parse(text).flatMap(_.hcursor.downField("sessionId").as[String]).toOption.getOrElse("")
-                val planTask = parse(text).flatMap(_.hcursor.downField("task").as[String]).toOption.getOrElse("")
-                if planSessionId.nonEmpty && planTask.nonEmpty then
-                  logger.info(s"Plan mode started: ${planTask.take(60)}") *>
-                    ensureAgent(planSessionId)(ref => ref ! AgentCommand.StartPlan(planTask))
-                else IO.unit
               case "fork" =>
                 val forkSessionId =
                   parse(text).flatMap(_.hcursor.downField("sessionId").as[String]).toOption.getOrElse("")
