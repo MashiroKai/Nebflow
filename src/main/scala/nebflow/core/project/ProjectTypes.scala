@@ -62,6 +62,11 @@ case class NodeDef(
   mcp: Option[String] = None,
   worktree: Option[String] = None,
   preset: Option[String] = None,
+  /** task 全文只活在内存（水合）与 per-node 文件——落盘 JSON 不再携带（2026-09-06
+    * 存储瘦身批）：活动区 JSON = ≤500 字符摘要 + `taskFile` 指针，task 全文持久化
+    * 于 `<workspace>/.nebflow/tasks/<nodeId>.md`（加载水合回全文，buildInput/重入/
+    * NodeList detail 消费方零改动）；归档区 JSON 直接剥 task（无重入价值）。
+    * taskFile 指针只活在磁盘 JSON，不进内存模型。 */
   task: Option[String] = None,
   /** 创建必写的简短描述（≤200 字符）。默认 None = 存量兼容（旧数据零迁移）。 */
   description: Option[String] = None,
