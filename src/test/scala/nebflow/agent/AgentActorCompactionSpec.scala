@@ -286,7 +286,7 @@ class AgentActorCompactionSpec extends FunSuite:
   // queue drain. Mixed queues (immediate inputs + user inputs + barrier-
   // drained events) inject ALL into the continuation round — zero loss.
   // replyTo-bearing UserInputs and non-UserInput commands (SkillActivate /
-  // AskQuestion / StartPlan) stay in pendingUserInputs for full-metadata
+  // AskQuestion) stay in pendingUserInputs for full-metadata
   // head-forwarding; barrier-held events stay queued.
   // ============================================================
 
