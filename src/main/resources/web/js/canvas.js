@@ -1128,6 +1128,10 @@ function persistTabs() {
       // has no renderer for type 'url'). Losing URL tabs across a reload is
       // acceptable per spec.
       if (t.type === 'url') continue;
+      // Skip retired panel tabs (2026-09-05 旧 UI 退役): the legacy
+      // Teams/Flows panels no longer exist client-side — persisting them
+      // would re-open dead panes on every reload.
+      if (t.type === 'teams' || t.type === 'flows') continue;
       serializable.push({
         id: t.id,
         title: t.title,
@@ -1245,7 +1249,10 @@ function sendFileRestoreRequests(fileTabs) {
 // 返回「是否恢复了任何内容」（有面板/文件标签即 true）。
 function restoreFromData(data) {
   if (!data || !data.tabs || data.tabs.length === 0) return false;
-  const panelTabs = data.tabs.filter(t => !t.absPath && t.type !== 'flow-run');
+  // Retired panel types (legacy Teams/Flows, 2026-09-05) never re-open —
+  // old server/localStorage archives may still carry them; drop silently.
+  const panelTabs = data.tabs.filter(t => !t.absPath && t.type !== 'flow-run' &&
+    t.type !== 'teams' && t.type !== 'flows');
   const fileTabs = data.tabs.filter(t => t.absPath);
   console.log('[restoreTabs] restoring', panelTabs.length, 'panel tabs,', fileTabs.length, 'file tabs');
 
@@ -1278,6 +1285,9 @@ function reconcileFromServer(serverData) {
   const fileToOpen = [];
   for (const tab of serverData.tabs) {
     if (tab.type === 'flow-run') continue;
+    // Retired legacy panel tabs (Teams/Flows) — server archive may still
+    // carry them; never re-open (2026-09-05 旧 UI 退役).
+    if (tab.type === 'teams' || tab.type === 'flows') continue;
     if (present.has(tab.id)) continue;  // 已开（本地恢复成功）→ 跳过
     if (tab.absPath) fileToOpen.push(tab);
     else panelToOpen.push(tab);

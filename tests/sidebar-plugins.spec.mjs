@@ -146,70 +146,50 @@ async function loadShell(page, locale) {
   await page.waitForSelector('#activity-bar', { timeout: 15000 });
 }
 
-// ══ 件 A — Team/Flow 入口隐藏封存（2026-09-04 原样保留）════════════════
+// ══ 件 A — Team/Flow 旧入口退役（2026-09-05 旧 UI 退役批改写：
+// 原断言「封存但留在 DOM」已失效——作者裁定「直接删除，不是封存」，
+// 入口/popover/按钮整体摘除；详细断言见 tests/legacy-ui-retire.spec.mjs，
+// 此处保留零残留哨兵防止回归。）════════════════
 
-test('A1: legacy Team/Flow entry sealed in the sidebar DOM (zh-CN + en)', async ({ page }) => {
+test('A1: legacy Team/Flow entry retired from the shell (zh-CN + en)', async ({ page }) => {
   for (const locale of ['zh-CN', 'en']) {
     await loadShell(page, locale);
-    const dump = await page.evaluate(() => {
-      const btn = document.getElementById('legacy-btn');
-      const pop = document.getElementById('legacy-pop');
-      const teams = document.getElementById('teams-btn');
-      const flows = document.getElementById('flows-btn');
-      // #legacy-pop is body-level and out of the activity bar's clipping
-      // context — offsetParent is a faithful visibility probe for it.
-      const visible = (el) => !!el && !el.hidden && el.offsetParent !== null && el.style.display !== 'none';
-      // Click the parent entry: a sealed entry must not open the popover.
-      btn?.click();
-      return {
-        btnExists: !!btn,
-        btnHiddenAttr: btn?.hidden === true,
-        btnAriaHidden: btn?.getAttribute('aria-hidden') === 'true',
-        btnAriaControlsRemoved: btn?.getAttribute('aria-controls') === null,
-        btnVisible: visible(btn),
-        popExists: !!pop,
-        popHidden: pop?.hidden === true,
-        popVisibleAfterClick: visible(pop),
-        // Panel bodies preserved in DOM (hidden ≠ deleted; canvas.js binds
-        // teams-btn/flows-btn by id document-wide).
-        teamsInDom: !!teams,
-        flowsInDom: !!flows,
-      };
-    });
-    expect(dump.btnExists, `[${locale}] legacy parent entry must exist`).toBe(true);
-    expect(dump.btnHiddenAttr, `[${locale}] legacy entry hidden attribute`).toBe(true);
-    expect(dump.btnAriaHidden, `[${locale}] legacy entry aria-hidden`).toBe(true);
-    expect(dump.btnAriaControlsRemoved, `[${locale}] stale aria-controls dropped`).toBe(true);
-    expect(dump.btnVisible, `[${locale}] legacy entry must not be visible`).toBe(false);
-    expect(dump.popHidden, `[${locale}] legacy popover hidden`).toBe(true);
-    expect(dump.popVisibleAfterClick, `[${locale}] clicking sealed entry must not open the popover`).toBe(false);
-    expect(dump.teamsInDom, `[${locale}] teams-btn preserved in DOM`).toBe(true);
-    expect(dump.flowsInDom, `[${locale}] flows-btn preserved in DOM`).toBe(true);
+    const dump = await page.evaluate(() => ({
+      btn: !!document.getElementById('legacy-btn'),
+      pop: !!document.getElementById('legacy-pop'),
+      teams: !!document.getElementById('teams-btn'),
+      flows: !!document.getElementById('flows-btn'),
+      flowsIndicator: !!document.getElementById('flows-indicator'),
+      flowsDropdown: !!document.getElementById('flows-dropdown'),
+      // Siblings that share the slot must remain untouched.
+      projects: !!document.getElementById('projects-btn'),
+      agents: !!document.getElementById('agents-btn'),
+      settings: !!document.getElementById('settings-btn'),
+    }));
+    expect(dump.btn, `[${locale}] legacy-btn retired`).toBe(false);
+    expect(dump.pop, `[${locale}] legacy-pop retired`).toBe(false);
+    expect(dump.teams, `[${locale}] teams-btn retired`).toBe(false);
+    expect(dump.flows, `[${locale}] flows-btn retired`).toBe(false);
+    expect(dump.flowsIndicator, `[${locale}] flows-indicator retired`).toBe(false);
+    expect(dump.flowsDropdown, `[${locale}] flows-dropdown retired`).toBe(false);
+    expect(dump.projects, `[${locale}] projects-btn untouched`).toBe(true);
+    expect(dump.agents, `[${locale}] agents-btn untouched`).toBe(true);
+    expect(dump.settings, `[${locale}] settings-btn untouched`).toBe(true);
   }
 });
 
-test('A2: SIDEBAR_LEGACY_ENTRIES flag — flip to true restores (code-level)', async ({ page }) => {
+test('A2: SIDEBAR_LEGACY_ENTRIES flag removed from activityBar.js (code-level)', async ({ page }) => {
   await page.goto(base + '/index.html');
   const src = await page.evaluate(async () => await (await fetch('/js/activityBar.js')).text());
 
-  // (a) module-level flag exists, defaults to false (sealed).
-  expect(src).toMatch(/const SIDEBAR_LEGACY_ENTRIES = false;/);
+  // The sealed-entry flag + binding functions are fully deleted (not archived).
+  expect(src).not.toMatch(/SIDEBAR_LEGACY_ENTRIES/);
+  expect(src).not.toMatch(/bindLegacyPanels/);
+  expect(src).not.toMatch(/anchorLegacyPop/);
 
-  // (b) sealing branch hides the entry + popover and skips wiring.
-  expect(src).toMatch(/if \(!SIDEBAR_LEGACY_ENTRIES\) \{/);
-  expect(src).toContain("btn.hidden = true;");
-  expect(src).toContain("pop.hidden = true;");
-  expect(src).toMatch(/if \(!SIDEBAR_LEGACY_ENTRIES\) \{[\s\S]*?return;/);
-
-  // (c) the restore path is intact behind the guard: original popover
-  //     binding (setOpen wiring + listeners) still present in the function.
-  expect(src).toMatch(/const setOpen = \(open\) => \{/);
-  expect(src).toContain('anchorLegacyPop(btn, pop)');
-  expect(src).toMatch(/btn\.addEventListener\('click'/);
-  expect(src).toMatch(/pop\.addEventListener\('click'/);
-
-  // (d) author ruling comment is on the flag (traceability).
-  expect(src).toMatch(/2026-09-04[\s\S]{0,600}SIDEBAR_LEGACY_ENTRIES/);
+  // Settings + avatar wiring (the rest of the module) stays intact.
+  expect(src).toMatch(/bindSettingsButton\(\)/);
+  expect(src).toMatch(/bindAvatar\(\)/);
 });
 
 // ══ 件 B — 统一插件系统 + 每插件一开关（重设计后形态）══════════════════

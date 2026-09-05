@@ -195,7 +195,6 @@ export default {
 
   // Skill list (from server)
   skills: [],
-  flows: [],
 
   // Per-session thinking buffer: sessionId -> accumulated thinking text
   sessionThinkingBuffers: {},
