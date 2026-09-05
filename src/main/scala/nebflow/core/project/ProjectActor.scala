@@ -158,13 +158,25 @@ object ProjectActor:
     * 清除（与 agentRegistry 同点清理）。pendingInjected = 已注入本会话但 turn
     * 尚未终结的任务数：注入任务以 UserInput(replyTo=观察桥) 进入，每个任务
     * 恰好产出一个 Completed 终态事件——桥见 Completed 时 pendingInjected>0 →
-    * 延迟拆除（-1，后续注入 turn 还要跑）；=0 → 正常拆除（最后一 turn 已终态）。 */
+    * 延迟拆除（-1，后续注入 turn 还要跑）；=0 → 正常拆除（最后一 turn 已终态）。
+    * pendingTaskTexts = 未消费任务的触发任务全文队列（队首=当前在飞 turn 对应
+    * 的触发任务，与 pendingInjected 同步增减、恒等长）：桥 Completed 时原子 pop
+    * 队首作为该 turn 最终输出投递 Nebula 的任务摘要来源（2026-09-05 接线）。 */
   case class ActiveDispatcher(
     sessionId: String,
     agentRef: ActorRef[AgentCommand],
     bridgeRef: ActorRef[AgentEvent],
-    pendingInjected: Int = 0
+    pendingInjected: Int = 0,
+    pendingTaskTexts: List[String] = Nil
   )
+
+  /** 触发任务摘要（投递标注用）：折叠全部空白为单空格（多行任务→单行），超出
+    * DispatcherTaskSummaryChars 截断加省略号。空文本 → None（标注省略 task 段）。 */
+  private def taskSummaryLine(taskText: String): Option[String] =
+    val oneLine = taskText.replaceAll("\\s+", " ").trim
+    if oneLine.isEmpty then None
+    else if oneLine.length <= NodeEngine.DispatcherTaskSummaryChars then Some(oneLine)
+    else Some(oneLine.take(NodeEngine.DispatcherTaskSummaryChars) + "…")
 
   case class ProjectConfig(
     project: ProjectDef,
@@ -307,17 +319,30 @@ object ProjectActor:
         .as(Behaviors.stopped)
     Behaviors.receive[AgentEvent] { (_, event) =>
       event match
-        case AgentEvent.Completed(_, _) =>
+        case AgentEvent.Completed(_, messages) =>
           // 原子裁决：pendingInjected>0 → 计数-1 保活（注入 turn 未跑完）；
           // =0 → 该 Completed 即最后一 turn 终态 → 拆除。modify 全序保证与
           // 注入占位不可交错（占位成功 → 本次必见 >0）。
+          // 2026-09-05 接线：同一 modify 内同步 pop pendingTaskTexts 队首（本
+          // turn 对应的触发任务全文）——每个任务 turn 终态时，该 turn 的最终
+          // assistant 文本自动投递 Nebula 根会话（deliverDispatcherOutputToNebula：
+          // 空文本不投、忙时 ImmediateInput 排队、占位类极简输出照常投）。投递
+          // 失败仅 WARN 不影响拆除裁决（fire-and-forget，无账本无重投）。
           active.modify {
             case Some(a) if a.sessionId == sessionId && a.pendingInjected > 0 =>
-              (Some(a.copy(pendingInjected = a.pendingInjected - 1)), false)
-            case _ => (None, true)
+              (Some(a.copy(pendingInjected = a.pendingInjected - 1, pendingTaskTexts = a.pendingTaskTexts.drop(1))),
+                (false, a.pendingTaskTexts.headOption))
+            case Some(a) if a.sessionId == sessionId =>
+              (None, (true, a.pendingTaskTexts.headOption))
+            case _ => (None, (true, None))
           }.flatMap {
-            case true  => teardown
-            case false => IO.pure(dispatcherBridge(cfg, active, ref, rootSessionId, sessionId))
+            case (teardownNow, taskTextOpt) =>
+              cfg.engine
+                .deliverDispatcherOutputToNebula(messages, taskTextOpt.flatMap(taskSummaryLine))
+                .handleErrorWith(e =>
+                  logger.warn(s"Project '${cfg.project.name}' dispatcher output delivery failed: ${e.getMessage}")) *>
+                (if teardownNow then teardown
+                 else IO.pure(dispatcherBridge(cfg, active, ref, rootSessionId, sessionId)))
           }
         case AgentEvent.Failed(_, _) | AgentEvent.Cancelled(_, _) =>
           // 面板实时终态帧（Sub-Agents 面板取消/终止实时刷新修复）：取消与
@@ -343,8 +368,9 @@ object ProjectActor:
     // 任务注入现有会话（turn 边界生效：处理中排 pendingUserInputs，idle 直接
     // 开新 turn）；无（含占位瞬间会话刚终结）→ spawn 新实例。
     active.modify {
-      case Some(a) => (Some(a.copy(pendingInjected = a.pendingInjected + 1)), Some(a))
-      case None    => (None, None)
+      case Some(a) =>
+        (Some(a.copy(pendingInjected = a.pendingInjected + 1, pendingTaskTexts = a.pendingTaskTexts :+ taskText)), Some(a))
+      case None => (None, None)
     }.flatMap {
       case Some(a) =>
         (a.agentRef ! AgentCommand.UserInput(
@@ -360,7 +386,7 @@ object ProjectActor:
       case None =>
         cfg.engine.store.snapshot.flatMap { snapshot =>
           pluginCatalogText().flatMap { catalog =>
-            spawnDispatcher(cfg, active, same, newTaskPrompt(cfg.project, snapshot, taskText, catalog), rootSessionId, "")
+            spawnDispatcher(cfg, active, same, newTaskPrompt(cfg.project, snapshot, taskText, catalog), rootSessionId, "", taskText)
           }
         }
     }
@@ -381,8 +407,9 @@ object ProjectActor:
         // 单例化裁定 × 反馈协议（§2.2 修订）：重入调整请求同样优先投递活跃
         // 分发器会话（不并行 spawn 重入会话）；会话已不活跃才走 spawn 路径。
         active.modify {
-          case Some(a) => (Some(a.copy(pendingInjected = a.pendingInjected + 1)), Some(a))
-          case None    => (None, None)
+          case Some(a) =>
+            (Some(a.copy(pendingInjected = a.pendingInjected + 1, pendingTaskTexts = a.pendingTaskTexts :+ reentryTaskText(node, feedback, blockCount))), Some(a))
+          case None => (None, None)
         }.flatMap {
           case Some(a) =>
             (a.agentRef ! AgentCommand.UserInput(
@@ -399,11 +426,15 @@ object ProjectActor:
             cfg.engine.store.snapshot.flatMap { snapshot =>
               pluginCatalogText().flatMap { catalog =>
                 spawnDispatcher(cfg, active, same, reentryPrompt(cfg.project, snapshot, node, feedback, blockCount, catalog), rootSessionId,
-                  s" (reentry round $blockCount: ${node.name})")
+                  s" (reentry round $blockCount: ${node.name})", reentryTaskText(node, feedback, blockCount))
               }
             }
         }
     }
+
+  /** 重入任务的触发文本（投递标注摘要来源；一行可读描述而非全文注入 prompt）。 */
+  private def reentryTaskText(node: NodeDef, feedback: BlockedFeedback, blockCount: Int): String =
+    s"[reentry] 节点 ${node.name} blocked 第 $blockCount 轮（${feedback.category}）"
 
   private def spawnDispatcher(
     cfg: ProjectConfig,
@@ -411,7 +442,8 @@ object ProjectActor:
     same: Behavior[ProjectCommand],
     prompt: String,
     rootSessionId: String,
-    tag: String
+    tag: String,
+    firstTaskText: String
   ): IO[Behavior[ProjectCommand]] =
     val project = cfg.project
     EntityLoader.loadAgent(DispatcherAgentName).flatMap {
@@ -479,7 +511,9 @@ object ProjectActor:
           // 单例化登记（顺序铁律）：先占位 activeRef 再发首条 prompt——占位在本
           // actor handler IO 内完成，此后到达的 TriggerDispatcher /
           // ReenterDispatcher 一律注入本会话，无 spawn 竞态窗口。
-          _ <- active.set(Some(ActiveDispatcher(sessionId, ref, bridgeRef)))
+          // pendingTaskTexts 初始化为 [firstTaskText]：首 turn（spawn prompt）
+          // 终态时投递标注用（2026-09-05 接线）。
+          _ <- active.set(Some(ActiveDispatcher(sessionId, ref, bridgeRef, pendingTaskTexts = List(firstTaskText))))
           _ <- (ref ! AgentCommand.UserInput(text = prompt, replyTo = Some(bridgeRef))).void
           _ <- logger.info(s"Project '${project.name}' dispatcher session spawned: $sessionId$tag")
         yield same
