@@ -71,7 +71,7 @@ object PluginRegistry:
 
   /** §5.2 闭合 schema 十字段（其余能力走 extensions 命名空间）。 */
   private val KnownManifestKeys = Set(
-    "$schema", "name", "version", "description", "author",
+    "$schema", "name", "version", "description", "capability", "author",
     "homepage", "repository", "license", "keywords", "extensions")
 
   /** §9.1 客户端必须注入 stdio 子进程的两个占位变量；plugin mcp.json env 声明
@@ -112,6 +112,9 @@ object PluginRegistry:
     name: String,
     version: String,
     description: String,
+    /** 能力向单行句（dispatcher-ctx 批 2026-09-05）：「该插件让节点具备什么能力」。
+      * 可选——absent/空白回落 None，目录渲染回落 description。 */
+    capability: Option[String] = None,
     author: String,
     homepage: String = "",
     repository: String = "",
@@ -411,6 +414,10 @@ object PluginRegistry:
         val description = stringField(c, "description") match
           case Right(v) => v
           case l @ Left(_) => return Left(name0 -> l.swap.toOption.getOrElse(""))
+        // capability（可选）：宽容解析——absent/非字符串/空白 → None（§B.8-5 同向：
+        // 旧版 Nebflow 读到该字段也只是 unknown-field 告警，不炸）
+        val capability = c.downField("capability").as[Option[String]].toOption.flatten
+          .map(_.trim).filter(_.nonEmpty)
         val homepage = stringField(c, "homepage") match
           case Right(v) => v
           case l @ Left(_) => return Left(name0 -> l.swap.toOption.getOrElse(""))
@@ -543,6 +550,7 @@ object PluginRegistry:
           name = pname,
           version = version,
           description = description,
+          capability = capability,
           author = author,
           homepage = homepage,
           repository = repository,
