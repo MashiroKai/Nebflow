@@ -224,6 +224,11 @@ object ProjectActor:
               // 补投。best-effort：扫描失败不影响 TTL sweep。
               // 阶段 2b（§B.5 信任运行时联动）：同 tick 挂 plugin 信任重验——
               // digest 失效的运行中 plugin MCP 立即停用 + 持有会话收系统提醒。
+              // dispatch-notify 补投（2026-09-05 批）：重启后未触发通知（notifySentAt
+              // 为空）30s 内补投——redeliverUnconsumedNebulaResults 同形态周期兜底；
+              // best-effort 失败仅 WARN，不影响后续 TTL sweep。
+              cfg.engine.dispatchNotify.redeliver()
+                .handleErrorWith(e => logger.warn(s"dispatch-notify redelivery scan failed: ${e.getMessage}").void) *>
               cfg.engine.revalidatePluginTrust()
                 .handleErrorWith(e => logger.warn(s"plugin trust revalidation failed: ${e.getMessage}")) *>
                 cfg.engine.redeliverUnconsumedNebulaResults()
