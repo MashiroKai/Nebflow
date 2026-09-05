@@ -67,10 +67,13 @@ let M = null;
 function normalizeSeed(raw) {
   const s = raw || {};
   return {
-    self: s.self || { userId: 'me', neblinkId: 'me@example.com', name: 'Me', avatarUrl: '' },
-    // lookup directory: all users searchable by neblinkId (exact, case-insensitive)
+    self: s.self || { userId: 'me', username: 'me', email: 'me@example.com', displayName: 'Me', avatar: '' },
+    // lookup directory: searchable by email (q 含 @) or username (否则)，均精确
+    // 大小写不敏感。新旧两种 user 形态都吃：新 {userId,username,email,
+    // displayName,avatar}；旧 {userId,neblinkId,name,avatarUrl}（str accessor
+    // 回退读，friend-chain-ui 旧 seed 不改即用）。
     users: s.users || [],
-    friends: s.friends || [],       // [{userId,neblinkId,name,avatarUrl,since}]
+    friends: s.friends || [],       // [{userId,neblinkId,name,avatarUrl,since}] (wire 形态)
     incoming: s.incoming || [],     // [{requestId,from:{userId,neblinkId,name,avatarUrl},note,status}]
     outgoing: s.outgoing || [],     // [{requestId,to:{...},note,status}]
     conversations: s.conversations || [], // [{conversationId,friend:{userId,neblinkId,name,avatarUrl},lastMessage,unreadCount}]
@@ -78,6 +81,58 @@ function normalizeSeed(raw) {
     _msgSeq: 1000,
     _reqSeq: 100,
   };
+}
+
+// ── Username 契约（作者 2026-09-05 裁定：NL 号 = 官网 Username，同一事物）──
+// lookup 结果新契约 {found, self?, userId?, username, displayName, avatar,
+// email}；旧形态 {neblinkId,name,avatarUrl} 在 accessor 层回退读取（网关
+// lookup 为纯透传，字段归一在 JS 侧完成——形态 A，friend-chain-ui Decoder
+// 双形态先例的对应物）。好友/会话等 wire 对象保持 neblinkId 字段不动（其值
+// 即 username，最小改名口径，见 batch 报告）。
+const uName = (u) => u.username ?? u.neblinkId ?? '';
+const uDisplay = (u) => u.displayName ?? u.name ?? '';
+const uAvatar = (u) => u.avatar ?? u.avatarUrl ?? '';
+const uEmail = (u) => u.email ?? (/^[^\s@]+@[^\s@]+$/.test(u.neblinkId || '') ? u.neblinkId : '');
+
+/** 双识别（微信「手机号/邮箱/微信号」→ 本产品「邮箱/Username」）：q 含 @ 按
+ *  邮箱精确匹配，否则按 Username 精确大小写不敏感匹配。 */
+function matchUser(m, s) {
+  if (!s) return null;
+  const norm = s.toLowerCase();
+  const pred = s.includes('@')
+    ? (u) => uEmail(u).toLowerCase() === norm
+    : (u) => uName(u).toLowerCase() === norm;
+  return m.users.find(pred) || null;
+}
+
+function lookupOf(u, extra) {
+  return {
+    found: true,
+    userId: u.userId,
+    username: uName(u),
+    displayName: uDisplay(u),
+    avatar: uAvatar(u),
+    email: uEmail(u),
+    ...extra,
+  };
+}
+
+/** 真实链路响应归一：上游新契约字段直取，旧形态（neblink-server 新 lookup
+ *  端点就绪前）回退映射。legacy 键原样保留（...raw），消费方只读新字段。 */
+function normalizeLookup(raw) {
+  if (!raw || typeof raw !== 'object' || !raw.found) return { found: false };
+  return {
+    ...raw,
+    username: raw.username ?? raw.neblinkId ?? '',
+    displayName: raw.displayName ?? raw.name ?? '',
+    avatar: raw.avatar ?? raw.avatarUrl ?? '',
+  };
+}
+
+/** lookup 命中（新契约形态）→ wire 人对象（outgoing/requestRow/accept 等
+ *  下游消费 neblinkId/name/avatarUrl 字段）。 */
+function wirePerson(u) {
+  return { userId: u.userId, neblinkId: uName(u), name: uDisplay(u), avatarUrl: uAvatar(u) };
 }
 
 function mockStore() {
@@ -89,7 +144,7 @@ function mockStore() {
   } catch { /* fall through to default */ }
   if (!seed) {
     seed = {
-      users: [{ userId: 'u-lin', neblinkId: 'lin@example.com', name: '林小满', avatarUrl: '' }],
+      users: [{ userId: 'u-lin', username: 'lin', email: 'lin@example.com', displayName: '林小满', avatar: '' }],
       friends: [{ userId: 'u-lin', neblinkId: 'lin@example.com', name: '林小满', avatarUrl: '', since: new Date().toISOString() }],
       conversations: [{
         conversationId: 'c-lin',
@@ -114,19 +169,22 @@ const delay = () => new Promise(r => setTimeout(r, Number((() => { try { return 
 
 // ── Public API (same surface in both modes) ─────────────
 
-/** GET /api/users/lookup?q= → {found, neblinkId?, name?, avatarUrl?, self?} */
+/** GET /api/users/lookup?q= → 新契约 {found, self?, userId?, username,
+ *  displayName, avatar, email}。q 含 @ 按邮箱精确匹配，否则按 Username 精确
+ *  大小写不敏感匹配（双识别语义上移 neblink-server——形态 A，网关纯透传，
+ *  调用形态不变；旧形态响应在 normalizeLookup 归一）。self 命中：任一自身
+ *  标识（username/neblinkId/email）命中即视为本人。 */
 export async function lookupUser(q) {
-  if (!MOCK) return req('GET', `/api/users/lookup?q=${encodeURIComponent(q)}`);
+  if (!MOCK) return normalizeLookup(await req('GET', `/api/users/lookup?q=${encodeURIComponent(q)}`));
   await delay();
   const m = mockStore();
-  const norm = String(q || '').trim().toLowerCase();
-  if (norm && norm === m.self.neblinkId.toLowerCase()) {
-    return { found: true, self: true, neblinkId: m.self.neblinkId, name: m.self.name, avatarUrl: m.self.avatarUrl };
-  }
-  const hit = m.users.find(u => u.neblinkId.toLowerCase() === norm);
-  return hit
-    ? { found: true, neblinkId: hit.neblinkId, name: hit.name, avatarUrl: hit.avatarUrl || '', userId: hit.userId }
-    : { found: false };
+  const s = String(q || '').trim();
+  const norm = s.toLowerCase();
+  const selfIds = [uName(m.self), m.self.neblinkId, uEmail(m.self)]
+    .filter(Boolean).map((v) => v.toLowerCase());
+  if (s && selfIds.includes(norm)) return lookupOf(m.self, { self: true });
+  const hit = matchUser(m, s);
+  return hit ? lookupOf(hit) : { found: false };
 }
 
 /** GET /api/friends → {friends, incoming, outgoing} */
@@ -137,16 +195,17 @@ export async function getFriends() {
   return { friends: [...m.friends], incoming: [...m.incoming], outgoing: [...m.outgoing] };
 }
 
-/** POST /api/friends/requests {query, note?} → {requestId} (201) */
+/** POST /api/friends/requests {query, note?} → {requestId} (201)。
+ *  query 双识别同 lookup（邮箱 / Username）。 */
 export async function sendFriendRequest(query, note) {
   if (!MOCK) return req('POST', '/api/friends/requests', { query, ...(note ? { note } : {}) });
   await delay();
   const m = mockStore();
-  const norm = String(query || '').trim().toLowerCase();
-  const hit = m.users.find(u => u.neblinkId.toLowerCase() === norm);
+  const hit = matchUser(m, String(query || '').trim());
   if (!hit) throw mockError('not found', 404);
   const requestId = 'rq-' + (++m._reqSeq);
-  m.outgoing.push({ requestId, to: { ...hit }, note: note || '', status: 'pending' });
+  // outgoing/requestRow/acceptFriendRequest 消费 wire 形态——新契约命中归一后再入队
+  m.outgoing.push({ requestId, to: wirePerson(hit), note: note || '', status: 'pending' });
   return { requestId };
 }
 

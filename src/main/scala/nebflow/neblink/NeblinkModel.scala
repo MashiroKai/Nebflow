@@ -376,14 +376,27 @@ object FriendCodecs:
   // 自定义 Decoder 同时吃两种形态（flat 优先兜底嵌套缺席），空值折叠为 ""，
   // 单行坏数据不再毁整表；web 端本就有 `||` 回退显示。网关对 web 的出参
   // 契约（from/to 嵌套）由 Encoder 保持不变。
+  //
+  // Username 统一（作者 2026-09-05 裁定：NL 号 = 官网 Username）：上游字段
+  // 演进为 username/displayName/avatar 时解码不退化——旧字段缺席或为 null
+  // 时回退读新字段（形态 A「Decoder 双形态兼容」的网关侧最小适配；lookup
+  // 本身为纯 Json 透传不经此 Decoder，此处护的是 /api/friends 列表链）。
+  // 注意不能用 get[Option].orElse：circe 的 Option 解码对「字段缺席」也
+  // 成功返回 None，orElse 永远不可达——必须以 focus 区分缺席/为 null。
+
+  /** 字段回退读：primary 缺席或为 null → fallback；都缺席 → None。 */
+  private def strOr(c: HCursor, primary: String, fallback: String): Option[String] =
+    def pick(name: String): Option[String] =
+      c.downField(name).focus.flatMap(v => if v.isNull then None else v.asString)
+    pick(primary).orElse(pick(fallback))
 
   private[neblink] def flatFriendSummary(c: HCursor): Decoder.Result[FriendSummary] =
     c.get[String]("userId").map(userId =>
       FriendSummary(
         userId,
-        c.get[Option[String]]("neblinkId").getOrElse(None).getOrElse(""),
-        c.get[Option[String]]("name").getOrElse(None).getOrElse(""),
-        c.get[Option[String]]("avatarUrl").getOrElse(None),
+        strOr(c, "neblinkId", "username").getOrElse(""),
+        strOr(c, "name", "displayName").getOrElse(""),
+        strOr(c, "avatarUrl", "avatar"),
         c.get[Option[Long]]("since").getOrElse(None),
         c.get[Option[Boolean]]("blocked").getOrElse(None)
       ))
@@ -391,12 +404,14 @@ object FriendCodecs:
   given Decoder[FriendSummary] = Decoder.instance { c =>
     for
       userId  <- c.get[String]("userId")
-      neblink <- c.get[Option[String]]("neblinkId")
-      name    <- c.get[Option[String]]("name")
-      avatar  <- c.get[Option[String]]("avatarUrl")
       since   <- c.get[Option[Long]]("since")
       blocked <- c.get[Option[Boolean]]("blocked")
-    yield FriendSummary(userId, neblink.getOrElse(""), name.getOrElse(""), avatar, since, blocked)
+    yield FriendSummary(
+      userId,
+      strOr(c, "neblinkId", "username").getOrElse(""),
+      strOr(c, "name", "displayName").getOrElse(""),
+      strOr(c, "avatarUrl", "avatar"),
+      since, blocked)
   }
 
   given Decoder[FriendRequestSummary] = Decoder.instance { c =>
