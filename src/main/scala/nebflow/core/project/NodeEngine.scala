@@ -1,6 +1,6 @@
 package nebflow.core.project
 
-import cats.effect.{Deferred, IO, Ref}
+import cats.effect.{Deferred, Fiber, IO, Ref}
 import cats.syntax.all.*
 import io.circe.Json
 import io.circe.syntax.*
@@ -13,8 +13,10 @@ import nebflow.core.node.NodeRunner
 import nebflow.core.plugin.{PluginMcpManager, PluginRegistry, PluginsConfig}
 import nebflow.core.presets.PresetStore
 import nebflow.core.skill.SkillService
-import nebflow.core.tools.PresetResolver
+import nebflow.core.tools.{BgTaskRegistry, PresetResolver}
 import nebflow.shared.Message
+
+import scala.concurrent.duration.*
 
 /**
  * NodeEngine —— 节点执行内核（#28 阶段 0，方案 §2.7 + §3.1）。
@@ -52,7 +54,11 @@ class NodeEngine(
   emitEvent: (String, String, Json) => IO[Unit],
   /** 产物完整性闸门的 git 执行器（audit 20260905）：默认真实 git 只读命令；
     * spec 注 stub。闸门本体与 kill-switch 见 CompletionGate。 */
-  gateRunner: CompletionGate.GitRunner = CompletionGate.defaultRunner
+  gateRunner: CompletionGate.GitRunner = CompletionGate.defaultRunner,
+  /** 节点完成闸等待总上限兜底（bgtask-completion-gate 批）：单个 bg 等待期超过
+    * 此值 → 节点 failed+注明（防通知链断裂永久悬挂）。默认 Defaults.BgGateWaitTimeoutMs
+    * （system prop nebflow.bgtask.gate.timeoutMs 可调）；spec 注小值验红。 */
+  bgWaitCapMs: Long = nebflow.shared.Defaults.BgGateWaitTimeoutMs
 ):
   private val logger = NebflowLogger.forName("nebflow.node.engine")
 
@@ -668,35 +674,135 @@ class NodeEngine(
       // AgentEvent.Cancelled）都先于死亡到达 bridge——故按 **failed** 语义终态化
       // （failNode 既有链：WARN + deliverFailed；下游 barrier/deps 按既有 failed
       // 语义零改动，不伪造结果投递）。WARN 含 sessionId+nodeId+失败原因。
+      //
+      // ═══ 节点完成闸（bgtask-completion-gate 批，作者 2026-09-05 18:29 裁定）═══
+      // 问题：节点把编译/CI 等长命令跑后台后结束轮次，engine 按「turn 结束=完成」
+      // 终态化节点并把结果传下游——后台任务实际没干完，完成通知注入死会话丢失。
+      // 方案（桥单咽喉 hold）：Completed 分支先查 BgTaskRegistry.waitingFor
+      // (sessionId)（该节点名下等待型后台任务，即「完成时会向本会话注入通知」的
+      // 任务；persistent 服务型已被 registry 过滤）：
+      //   非空 → hold：不 complete、桥保持存活、FlowMapEventLog 留痕（bg-wait，
+      //   先例 held/blocked 语义族但不复用——held=人工 release 放行，bg 等待是
+      //   自动续行）+ 武装兜底计时器（每等待期重臂）。后台任务完成回调经
+      //   AgentCommand.ExternalEvent(source="background-task") 注入仍活着的 agent
+      //   → 新轮次（AgentActor idle 唤醒轮对本桥 supervisorRef 发 Completed——
+      //   粘性完成目标）→ 轮次终 → 又一次 Completed → 此处复检。
+      //   清空 → drainFailures 检查终局记账（超时/停滞杀的 failed 注明，拒绝静默
+      //   completed）→ complete resultDeferred（result=最后一轮文本，agent 已消化
+      //   全部后台通知）。
+      // 三态：无后台任务 → 立即放行（现状零变化）；等待型 → 拦截至全完；
+      // persistent 服务型 → 不等待。兜底面（后台任务不能卡死节点）：
+      //   ①等待期超 bgWaitCapMs → failed 注明（TaskStuckWatcher 对等待期 Idle
+      //     节点不判卡死——Idle 是合法状态，故需自身兜底防通知链断裂悬挂）；
+      //   ②bg 任务被超时/停滞看护杀 → registry 记账 → failed+注明。
+      // bg 等待先于 hold/blocked 分流发生（本桥在 completeNode 之前）——hold 节点
+      // 也是先等后台再 held，语义正确。
       bridgeRef <- system.spawn(
         Behaviors.setup[AgentEvent] { bctx =>
           bctx.watch(ref) *>
-            IO.pure(new Behavior[AgentEvent]:
-              def receive(ctx: ActorContext[AgentEvent], event: AgentEvent): IO[Behavior[AgentEvent]] =
-                event match
-                  case AgentEvent.Completed(_, messages) =>
-                    resultDeferred.complete(Right(messages)).void.as(Behaviors.stopped)
-                  case AgentEvent.Failed(_, err) =>
-                    resultDeferred
-                      .complete(Left(FailOutcome(Option(err.message).getOrElse("unknown error"))))
-                      .void
-                      .as(Behaviors.stopped)
-                  case AgentEvent.Cancelled(_, reason) =>
-                    resultDeferred.complete(Left(FailOutcome(s"cancelled: $reason"))).void.as(Behaviors.stopped)
+            IO {
+              // hold 期状态：留痕单发标记 + 兜底计时器句柄（每等待期重臂）。
+              val holdEmitted = Ref.unsafe[IO, Boolean](false)
+              val waitCapFiber = Ref.unsafe[IO, Option[Fiber[IO, Throwable, Unit]]](None)
+              def disarmCap: IO[Unit] =
+                waitCapFiber.get.flatMap(_.traverse_(_.cancel).void)
+              def armCap(waiting: List[BgTaskRegistry.ActiveTask]): IO[Unit] =
+                disarmCap *>
+                  {
+                    // 兜底计时器：等待期内无任何后台完成复检达 bgWaitCapMs →
+                    // failed 注明。措辞注意：completeNode 以 message.contains
+                    // ("cancelled") 分流 cancelNode，本文案不得含该词。
+                    val capBody: IO[Unit] =
+                      IO.sleep(bgWaitCapMs.millis) *>
+                        FlowMapEventLog.append(
+                          workspace, projectName, nodeId, "bg-wait-timeout",
+                          s"background wait cap (${bgWaitCapMs / 1000}s) hit with ${waiting.size} task(s) pending — finalizing failed") *>
+                        waitCapFiber.set(None) *>
+                        resultDeferred
+                          .complete(Left(FailOutcome(
+                            s"background task wait cap exceeded (${bgWaitCapMs / 1000}s): still waiting for " +
+                              waiting.map(t => s"'${t.description}' (${t.jobId})").mkString(", ") +
+                              " — node finalized as failed by the background-completion gate; " +
+                              "the background job(s) keep running and their completion notification may arrive at a finalized session"
+                          ))).attempt.void
+                    capBody.start.flatMap(f => waitCapFiber.set(Some(f)))
+                  }
+              // 终局记账 → failed 注明文案（含 agent 消化失败通知后的最终输出，
+              // 截断防串膨胀；杀因原文净化同上）。
+              def bgFailureMessage(
+                failures: List[BgTaskRegistry.FailedBgTask],
+                msgs: List[Message]
+              ): String =
+                val causes = failures
+                  .map { f =>
+                    s"'${f.description}' (${f.jobId}): ${f.cause.replace("cancelled", "auto-stopped")}"
+                  }
+                  .mkString("\n  - ")
+                val tail = extractLastAssistantText(msgs)
+                val tailNote =
+                  if tail.trim.nonEmpty then
+                    s"\n\nNode agent final output (after consuming the failure notification):\n${tail.take(2000)}"
+                  else ""
+                s"background task(s) in the node wait set were killed by the background guard (idle/stall watchdog):\n  - $causes$tailNote"
+              lazy val bridge: Behavior[AgentEvent] = new Behavior[AgentEvent]:
+                def receive(ctx: ActorContext[AgentEvent], event: AgentEvent): IO[Behavior[AgentEvent]] =
+                  event match
+                    case AgentEvent.Completed(_, messages) =>
+                      BgTaskRegistry.waitingFor(sessionId).flatMap { waiting =>
+                        if waiting.nonEmpty then
+                          holdEmitted.get.flatMap { already =>
+                            val emitOnce =
+                              IO.whenA(!already)(
+                                FlowMapEventLog.append(
+                                  workspace, projectName, nodeId, "bg-wait",
+                                  s"completion held: ${waiting.size} background task(s) pending: " +
+                                    waiting.map(t => s"'${t.description}'").mkString(", ")) *>
+                                  logger.info(
+                                    s"Node '$nodeName' ($nodeId) turn completed with ${waiting.size} background " +
+                                      "task(s) still running — holding completion until they finish")) *>
+                                holdEmitted.set(true)
+                            emitOnce *> armCap(waiting).as(bridge)
+                          }
+                        else
+                          BgTaskRegistry.drainFailures(sessionId).flatMap { failures =>
+                            if failures.isEmpty then
+                              holdEmitted.get.flatMap { held =>
+                                disarmCap *> holdEmitted.set(false) *>
+                                  IO.whenA(held)(
+                                    FlowMapEventLog.append(
+                                      workspace, projectName, nodeId, "bg-released",
+                                      "all background task(s) finished — completion released")) *>
+                                  resultDeferred.complete(Right(messages)).attempt.void.as(Behaviors.stopped)
+                              }
+                            else
+                              disarmCap *> holdEmitted.set(false) *>
+                                resultDeferred
+                                  .complete(Left(FailOutcome(bgFailureMessage(failures, messages))))
+                                  .attempt.void.as(Behaviors.stopped)
+                          }
+                      }
+                    case AgentEvent.Failed(_, err) =>
+                      resultDeferred
+                        .complete(Left(FailOutcome(Option(err.message).getOrElse("unknown error"))))
+                        .void
+                        .as(Behaviors.stopped)
+                    case AgentEvent.Cancelled(_, reason) =>
+                      resultDeferred.complete(Left(FailOutcome(s"cancelled: $reason"))).void.as(Behaviors.stopped)
 
-              override def onSignal(ctx: ActorContext[AgentEvent], signal: SystemSignal): IO[Behavior[AgentEvent]] =
-                signal match
-                  case SystemSignal.Terminated(_) =>
-                    logger.warn(
-                      s"Node '$nodeName' ($nodeId) session '$sessionId' terminated WITHOUT a terminal event " +
-                        "(crashed or stopped unexpectedly) — finalizing node as failed")
-                    resultDeferred
-                      .complete(Left(FailOutcome(
-                        s"node session '$sessionId' terminated without a terminal event (session crashed or was stopped unexpectedly)")))
-                      .void
-                      .handleErrorWith(_ => IO.unit) // 与正常终态事件竞争时败方静默
-                      .as(Behaviors.stopped)
-            )
+                override def onSignal(ctx: ActorContext[AgentEvent], signal: SystemSignal): IO[Behavior[AgentEvent]] =
+                  signal match
+                    case SystemSignal.Terminated(_) =>
+                      logger.warn(
+                        s"Node '$nodeName' ($nodeId) session '$sessionId' terminated WITHOUT a terminal event " +
+                          "(crashed or stopped unexpectedly) — finalizing node as failed")
+                      resultDeferred
+                        .complete(Left(FailOutcome(
+                          s"node session '$sessionId' terminated without a terminal event (session crashed or was stopped unexpectedly)")))
+                        .void
+                        .handleErrorWith(_ => IO.unit) // 与正常终态事件竞争时败方静默
+                        .as(Behaviors.stopped)
+              bridge
+            }
         },
         s"nodebridge-${sessionId.take(8)}"
       )

@@ -25,18 +25,22 @@ object BashTool extends Tool:
 
 Usage:
 - The working directory persists between commands, but shell state does not persist across Nebflow restarts.
-- Try to maintain your current working directory throughout the session by using absolute paths and avoiding usage of cd.
-- You may specify an optional timeout in milliseconds (max 3600000) to set a hard deadline. If not specified, the command runs in the foreground and is automatically moved to the background after 5 minutes (300s) — the turn is released and you are notified when it finishes. Long-running commands: use run_in_background: true so you can continue other work while it runs.
+- You may specify an optional timeout in milliseconds (max 3600000) to set a hard deadline. If not specified, the command runs in the foreground until it completes (or is killed by the stall guard: no output AND no CPU for 10 minutes). Foreground commands do NOT auto-move to background.
 - Dangerous commands (rm -rf, force push, etc.) are blocked for safety.
 - For git commands: Prefer to create a new commit rather than amending an existing commit.
 - Only create commits when requested by the user.
 
 Background execution (run_in_background):
-- Use for long-running commands (builds, tests, servers, deploys, remote SSH operations, etc.).
+- Use for long-running commands (builds, tests, deploys, remote SSH operations, etc.).
 - **Use `run_in_background: true`, never `&` or `nohup`.** Shell backgrounding (`&`) bypasses Nebflow's task tracking — you won't be notified when it finishes, and the frontend won't show the background indicator.
 - You will be automatically notified when the job finishes. DO NOT poll or use sleep loops.
-- After starting a background job, continue with other work or finish your turn.
-- Foreground commands are automatically moved to the background after 300s (5min) — the process keeps running, the turn is released, and you are notified on completion. Use run_in_background: true for commands you know will take long.
+- After starting a background job, continue with other work or finish your turn — the completion notification arrives as a new turn.
+- Long-running background tasks in Project nodes: the node waits for all waiting-type background jobs to finish before its result is delivered, so the completion output is not lost.
+
+Service-type background jobs (persistent):
+- `persistent: true` (with run_in_background: true) declares a LONG-LIVED SERVER (dev server, watcher, daemon) instead of a finishable task.
+- Waiting-type (default): the system waits for it to complete and you are notified. Hard timeout 30min (4h in Project nodes) + stall guard apply.
+- persistent jobs are EXEMPT from the idle/hard-timeout/stall guards — a server that sits idle is healthy. They run until you cancel them (cancel_background_job: true) or the session ends. You own their lifecycle; the frontend indicator stays visible.
 
 Querying background jobs (background_job_id):
 - Only query when you receive a "stuck" notification or the user asks about a job's status.
@@ -78,6 +82,10 @@ Git safety:
         "run_in_background" -> io.circe.Json.obj(
           "type" -> "boolean".asJson,
           "description" -> "Run the command in the background. You will be automatically notified when it finishes — continue with other work or end your turn, the result will come to you.".asJson
+        ),
+        "persistent" -> io.circe.Json.obj(
+          "type" -> "boolean".asJson,
+          "description" -> "With run_in_background: true — declare this job as a long-lived service (dev server, watcher, daemon) instead of a finishable task. Service jobs are exempt from idle/timeout/stall guards and run until explicitly cancelled; the system does not wait for them.".asJson
         ),
         "background_job_id" -> io.circe.Json.obj(
           "type" -> "string".asJson,
@@ -338,6 +346,9 @@ Git safety:
     val desc = input("description").flatMap(_.asString)
     val bgJobId = input("background_job_id").flatMap(_.asString)
     val cancelBg = input("cancel_background_job").flatMap(_.asBoolean).getOrElse(false)
+    // 节点完成闸批（作者 2026-09-05 18:29 裁定）：persistent=true = 服务型后台
+    // （长驻 server）——豁免 B1/B2 看护杀、不纳入节点等待集。默认 false = 等待型。
+    val persistent = input("persistent").flatMap(_.asBoolean).getOrElse(false)
 
     val sessionId = ctx.sessionId.getOrElse("default")
     // 阶段 2a 沙箱（§A.4-1/3）：会话 shell 初 cwd = 沙箱根（现状初 cwd=JVM
@@ -405,20 +416,29 @@ Git safety:
                   val onHeartbeat = makeHeartbeatCallback(command, desc, ctx)
                   val firstLine = command.split('\n').headOption.getOrElse(command).take(80)
                   val bgDescription = desc.getOrElse(firstLine)
+                  // 等待型任务的完成回调需带闸记账信息（超时杀 → 节点 failed 注明）。
+                  val gateOwned = !persistent && isNodeSession(ctx)
+                  // 交互④：node- 会话（Project 节点）等待型任务的硬超时延长档——
+                  // 30min 档会误杀 30min 后出现安静阶段的合法长任务（1.5h 全量测试
+                  // 实跑先例）；杀条件仍是停滞（B1/B2 不变），超时只是兜底上限。
+                  val hardTimeoutMs =
+                    if !persistent && isNodeSession(ctx) then Defaults.BgGateNodeHardTimeoutMs
+                    else ctx.bashConfig.hardTimeoutMs
                   for
                     jobId <- IO.randomUUID.map(_.toString.take(8))
-                    onComplete = makeNotifyCallback(command, desc, ctx, jobId, tailN)
+                    onComplete = makeNotifyCallback(command, desc, ctx, jobId, tailN, gateOwned)
                     _ <- shell.executeBackground(
                       actualCommand,
                       desc,
                       onComplete,
                       onHeartbeat,
                       Some(jobId),
-                      hardTimeoutMs = ctx.bashConfig.hardTimeoutMs,
+                      hardTimeoutMs = hardTimeoutMs,
                       stuckWindowSec = ctx.bashConfig.stuckWindowSec,
-                      healthCheckIntervalSec = ctx.bashConfig.healthCheckIntervalSec
+                      healthCheckIntervalSec = ctx.bashConfig.healthCheckIntervalSec,
+                      persistent = persistent
                     )
-                    _ <- emitBgTaskStarted(ctx, jobId, bgDescription)
+                    _ <- emitBgTaskStarted(ctx, jobId, bgDescription, persistent)
                   yield Right(
                     s"[Background job started] Job ID: $jobId\nThe command is running in the background. You will be automatically notified when it finishes — continue with other work or finish your turn."
                   )
@@ -681,13 +701,19 @@ Git safety:
   private def trimTrailingWhitespace(s: String): String =
     s.split("\n").map(_.replaceAll("[ \t]+$", "")).mkString("\n")
 
+  /** 节点完成闸批：本调用是否发生在 Project 节点会话（node- 前缀，NodeEngine
+    * spawn 的单发 Flow 会话）。前缀常量单一来源 = NodeEngine.SessionPrefix。 */
+  private def isNodeSession(ctx: ToolContext): Boolean =
+    ctx.sessionId.exists(_.startsWith(nebflow.core.project.NodeEngine.SessionPrefix))
+
   /** Build an on_complete callback that notifies agent + frontend + logs. */
   private def makeNotifyCallback(
     command: String,
     desc: Option[String],
     ctx: ToolContext,
     jobId: String,
-    tailN: Option[Int] = None
+    tailN: Option[Int] = None,
+    gateOwned: Boolean = false
   ): Option[Either[Throwable, ProcessResult] => IO[Unit]] =
     ctx.agentActorRef.map { ref => (result: Either[Throwable, ProcessResult]) =>
       val firstLine = command.split('\n').headOption.getOrElse(command).take(80)
@@ -720,6 +746,22 @@ Git safety:
             s" ($errInfo)"
           )
 
+      // 节点完成闸批：等待集内任务被超时/停滞看护杀掉（TimeoutException = B1
+      // idle 杀 / B2 硬超时+停滞杀的唯一类型）→ 终局记账。agent 仍会收到上面
+      // 的 failed 通知并反应，但节点终态必须「failed+注明」——禁止静默
+      // completed（NodeEngine 桥终态化前 drainFailures 检查）。persistent 不在
+      // 等待集、显式取消（InterruptedException）是 agent 自主决策，均不入账。
+      val gateLedger = result match
+        case Left(e: scala.concurrent.TimeoutException) if gateOwned =>
+          BgTaskRegistry.markFailed(
+            jobId,
+            ctx.sessionId.getOrElse(""),
+            ctx.rootSessionId.orElse(ctx.sessionId).getOrElse(""),
+            description,
+            Option(e.getMessage).getOrElse("killed by background guard")
+          ).handleErrorWith(e2 => logger.warn(s"bg-gate ledger markFailed failed for job $jobId: ${e2.getMessage}"))
+        case _ => IO.unit
+
       // Notify agent via ExternalEvent.
       // ref ! returns IO[Unit] already — do NOT wrap in IO() or it
       // becomes IO[IO[Unit]] (double-wrapped, fires at construction time).
@@ -751,6 +793,7 @@ Git safety:
       // independently — each has its own error recovery so one failure
       // doesn't prevent the other.
       BgTaskRegistry.unregister(jobId) *>
+        gateLedger *>
         logger.info(
           s"Background job $jobId callback: $eventType$exitInfo",
           "sessionId" -> ctx.sessionId.getOrElse("")
@@ -759,13 +802,14 @@ Git safety:
     }
 
   /** Emit a WS event so the frontend shows the background task indicator. */
-  private def emitBgTaskStarted(ctx: ToolContext, jobId: String, description: String): IO[Unit] =
+  private def emitBgTaskStarted(ctx: ToolContext, jobId: String, description: String, persistent: Boolean = false): IO[Unit] =
     BgTaskRegistry.register(
       jobId,
       ctx.sessionId.getOrElse(""),
       description,
       "local",
-      ctx.rootSessionId.orElse(ctx.sessionId).getOrElse("")
+      ctx.rootSessionId.orElse(ctx.sessionId).getOrElse(""),
+      persistent
     ) *>
       (ctx.wsSend.fold(
         logger.debug(s"Cannot notify frontend for background job $jobId: no wsSend (remote execution)")

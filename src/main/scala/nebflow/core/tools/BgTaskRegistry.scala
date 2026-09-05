@@ -10,6 +10,17 @@ import nebflow.core.NebflowLogger
  *
  * Tasks are registered when they start and removed when they complete.
  * The frontend queries this on WS reconnect to recover missed completion events.
+ *
+ * 节点完成闸（bgtask-completion-gate 批，作者 2026-09-05 18:29 裁定）：
+ * 本 registry 同时是节点完成闸的等待集权威——NodeEngine 观察桥在 Completed
+ * 时查 waitingFor(nodeSessionId)，非空则 hold（不终态化节点）直到全部等待型
+ * 后台任务完成回调（ExternalEvent 唤醒续跑轮 → 又一次 Completed → 复检）。
+ * - 纳入等待集 =「完成时会向会话返回通知」的任务：显式 run_in_background
+ *   （BashTool emitBgTaskStarted）+ 远程后台（RemoteExecutor）。
+ * - persistent=true（服务型 server）不纳入（waitingFor 过滤），但仍在册——
+ *   前端 WS 重连快照与实时指示器照常可见。
+ * - 超时/停滞杀的终局原因记账（markFailed/drainFailures）：节点终态化前检查，
+ *   命中 → 节点 failed+注明，禁止静默 completed。
  */
 object BgTaskRegistry:
   private val logger = NebflowLogger.forName("nebflow.bg-registry")
@@ -23,19 +34,38 @@ object BgTaskRegistry:
     /** 顶层根会话 id（2026-09-05 计数/列表分叉修复）：前端 backgroundTaskUpdate
       * 信封与 activeBgTasks 快照共用本键分桶。空 = 无 agent 上下文（REST 直调等）
       * 或旧调用方未传 → activeTasksJson 回退按 sessionId 分组。 */
-    rootSessionId: String = ""
+    rootSessionId: String = "",
+    /** 节点完成闸（bgtask-completion-gate 批）：true = 服务型（长驻 server），
+      * 不纳入节点等待集（节点完成不等它）；false = 等待型，纳入。默认 false
+      * = 等待——绝大多数后台任务是编译/测试/CI，「完成即通知」语义本就要求
+      * 等完再交付；server 是少数派且可显式申报。 */
+    persistent: Boolean = false
+  )
+
+  /** 节点完成闸：等待集内任务被超时/停滞看护杀掉的终局记账。节点终态化前
+    * drainFailures 检查，命中 → failed+注明（拒绝静默 completed）。 */
+  case class FailedBgTask(
+    jobId: String,
+    sessionId: String,
+    rootSessionId: String,
+    description: String,
+    /** 杀因原文（TimeoutException message：idle 超时 / 硬超时+停滞）。 */
+    cause: String,
+    failedAtMs: Long
   )
 
   private val tasks: Ref[IO, Map[String, ActiveTask]] = Ref.unsafe(Map.empty)
+  private val failures: Ref[IO, Map[String, FailedBgTask]] = Ref.unsafe(Map.empty)
 
   def register(
     jobId: String,
     sessionId: String,
     description: String,
     kind: String,
-    rootSessionId: String = ""
+    rootSessionId: String = "",
+    persistent: Boolean = false
   ): IO[Unit] =
-    tasks.update(_ + (jobId -> ActiveTask(jobId, sessionId, description, System.currentTimeMillis(), kind, rootSessionId)))
+    tasks.update(_ + (jobId -> ActiveTask(jobId, sessionId, description, System.currentTimeMillis(), kind, rootSessionId, persistent)))
 
   def unregister(jobId: String): IO[Unit] =
     tasks.update(_ - jobId)
@@ -51,6 +81,31 @@ object BgTaskRegistry:
           val (removed, kept) = m.partition(_._2.sessionId == sid)
           (kept, removed.values.toList)
         }
+
+  /** 节点完成闸等待集查询：某会话名下的活动等待型任务 = 自有任务（sessionId
+    * 相等）+ 以该会话为根的子代理任务（rootSessionId 相等，命名空间不相交：
+    * node-<uuid> 只作为节点自身 sessionId 与其子代理的 rootSessionId 出现）。
+    * persistent=true（服务型）过滤不等待。 */
+  def waitingFor(sessionId: String): IO[List[ActiveTask]] =
+    tasks.get.map { m =>
+      m.values
+        .filter(t => !t.persistent && (t.sessionId == sessionId || t.rootSessionId == sessionId))
+        .toList
+    }
+
+  /** 节点完成闸终局记账：等待型任务被超时/停滞看护杀掉时登记（BashTool 完成回调
+    * Left(TimeoutException) 分支调用；persistent 与显式取消不入账——前者不在等待集，
+    * 后者是 agent 自主决策）。 */
+  def markFailed(jobId: String, sessionId: String, rootSessionId: String, description: String, cause: String): IO[Unit] =
+    failures.update(_ + (jobId -> FailedBgTask(jobId, sessionId, rootSessionId, description, cause, System.currentTimeMillis())))
+
+  /** 节点终态化前检查（NodeEngine 桥）：取走并清空该会话名下的失败记账
+    * （匹配规则同 waitingFor）。consume-on-read：节点恰好终态化一次。 */
+  def drainFailures(sessionId: String): IO[List[FailedBgTask]] =
+    failures.modify { m =>
+      val (hit, kept) = m.partition { case (_, f) => f.sessionId == sessionId || f.rootSessionId == sessionId }
+      (kept, hit.values.toList)
+    }
 
   /** Returns active tasks grouped by root session id (rootSessionId, falling
     * back to sessionId when absent), as JSON for the frontend. */
