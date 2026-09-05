@@ -63,7 +63,10 @@ function statusClass(st) {
  * @property {string=} name
  * @property {string=} agent
  * @property {string=} status
- * @property {string=} result
+ * @property {string=} description 一行描述（创建必写；2026-09-05 载荷收敛第一层）
+ * @property {boolean=} hasResult 节点持有结果全文（载荷不含 result 本体——按需拉取标记）
+ * @property {string=} taskPreview 存量无 description 节点的回退展示（task 首行截断）
+ * @property {string=} result 兼容字段（旧载荷残留；新载荷不再下发）
  * @property {string=} task
  * @property {number=} createdAt
  * @property {number=} completedAt
@@ -463,7 +466,8 @@ function updateBadge(/** @type {LayerCtx} */ ctx, /** @type {boolean} */ pulse) 
 /** @param {ChainMember} m @returns {string} 成员行（§5.5：状态/名称/agent/时间/›） */
 function memberHtml(m) {
   const st = String(m.status || '');
-  const preview = String(m.result || '').slice(0, 60);
+  // 载荷收敛（2026-09-05）：预览行 = description（回退 taskPreview）——载荷无 result
+  const preview = String(m.description || m.taskPreview || '').slice(0, 60);
   return `
     <div class="fm-member" role="button" tabindex="0" data-node="${esc(m.id)}" title="${esc(String(m.name || ''))} · ${esc(t('flowmap.archive.openMemberHint'))}">
       <div class="fm-member-row">
@@ -480,7 +484,8 @@ function memberHtml(m) {
 /** @param {Chain} c @returns {string} 链条目（§5.3：徽章/链名/N 节点/时间/▾ + 摘要 + 成员区） */
 function entryHtml(c) {
   const last = c.members[0];
-  const preview = String(last?.result || '').slice(0, 60);
+  // 载荷收敛（2026-09-05）：预览行 = description（回退 taskPreview）——载荷无 result
+  const preview = String(last?.description || last?.taskPreview || '').slice(0, 60);
   const remain = (c.completedAt || 0) + ARCHIVE_TTL_MS - Date.now();
   const ttlTag = remain > 0 && remain < TTL_TAG_WINDOW
     ? `<span class="fm-entry-ttl" title="${esc(t('flowmap.archive.ttlTitle'))}">${esc(t('flowmap.archive.expiringSoon'))}</span>`
@@ -664,66 +669,86 @@ function renderDetail(/** @type {LayerCtx} */ ctx, /** @type {ChainMember} */ n)
       ${fb.detail ? `<div class="flow-blocked-row"><span class="flow-blocked-label">${esc(t('flowmap.blockedDetail'))}</span><div class="flow-blocked-text">${esc(String(fb.detail))}</div></div>` : ''}
       ${fb.suggestion ? `<div class="flow-blocked-row"><span class="flow-blocked-label">${esc(t('flowmap.blockedSuggestion'))}</span><div class="flow-blocked-text">${esc(String(fb.suggestion))}</div></div>` : ''}
     </div>` : '';
-  const resultText = String(n.result || '');
-  let resultHtml;
-  if (!resultText.trim()) {
-    resultHtml = `<span class="md-empty">${esc(t('flowmap.archive.noResult'))}</span>`;
-  } else if (fb) {
-    resultHtml = `<details class="flow-blocked-raw"><summary>${esc(t('flowmap.blockedRawTitle'))}</summary><div class="flow-agent-block-readonly">${esc(resultText)}</div></details>`;
-  } else {
-    resultHtml = resultInnerHtml(resultText);
-  }
+  // 载荷收敛（2026-09-05）：默认载荷无 result 本体——hasResult 标记驱动按需拉取。
+  // blocked 原文（旧版取 result 渲染串）同改走按需通道（feedback 面板数据源是
+  // blockedFeedback，不受影响）。占位符用纯省略号（不加 i18n 键——零 locales 改动）。
+  const hasResult = !!n.hasResult || !!String(n.result || '');
   const taskText = String(n.task || '');
+  let resultHtml;
+  if (fb) {
+    // blocked：结构化反馈面板在上；原文折叠区先占位，异步按需换装
+    resultHtml = `<details class="flow-blocked-raw"><summary>${esc(t('flowmap.blockedRawTitle'))}</summary><div class="flow-agent-block-readonly">…</div></details>`;
+  } else if (hasResult) {
+    // 正文先占位，upgradeDetailResult 静默换装全文（失败落 noResult）
+    resultHtml = '<span class="md-empty">…</span>';
+  } else {
+    resultHtml = `<span class="md-empty">${esc(t('flowmap.archive.noResult'))}</span>`;
+  }
   ctx.detailBody.innerHTML = `
     <div class="fm-detail-meta">${metaRows}</div>
     ${blockedPanel}
     ${taskText ? `<div class="fm-detail-sec">${esc(t('flowmap.archive.taskLabel'))}</div><div class="fm-detail-task">${esc(taskText)}</div>` : ''}
     <div class="fm-detail-sec">${esc(t('flowmap.archive.resultLabel'))}</div>
     <div class="fm-detail-result fm-md">${resultHtml}</div>`;
-  // 全文升级（20260904 作者反馈「节点结果要能完整显示」）：快照/事件载荷 result 为
-  // ≤500 字符摘要（NodePayload.buildNodeJson 单序列化点，契约零改动），≥500 视为可能
-  // 被截断 → 静默按需取全文换装（失败保持摘要；只替换 .fm-detail-result，不重建详情
-  // 窗）。blocked 原文走 feedback 面板语义，不参与；空结果无从升级。
-  if (!fb && resultText.length >= RESULT_SUMMARY_CAP) upgradeDetailResult(ctx, seq, n.id, resultText);
+  // 按需全文拉取（20260904 全文完整显示 + 20260905 载荷收敛改无条件触发）：
+  // hasResult 即取全文换装（不再依赖「摘要长度 ≥500 才可能截断」的旧判据——
+  // 新载荷根本没有摘要）。只替换 .fm-detail-result，不重建详情窗；响应按
+  // ctx.detailRenderSeq 守卫。blocked 原文换装进 .flow-agent-block-readonly。
+  if (hasResult) upgradeDetailResult(ctx, seq, n.id, fb);
 }
 
-// ── 详情结果全文升级（20260904「归档详情窗节点结果完整显示」）─────────
-/** 载荷摘要截断阈值（NodePayload.buildNodeJson：>500 take(500)+「…」）。 */
-const RESULT_SUMMARY_CAP = 500;
+// ── 详情结果按需全文（20260904「归档详情窗节点结果完整显示」；20260905 载荷收敛
+//    后 hasResult 即无条件拉取——载荷不再携带摘要判据）─────────
 /** 全文缓存（project\x00nodeId → 全文；LRU 30 条防长会话内存膨胀）。 */
 const resultFullCache = new Map();
 const RESULT_FULL_CACHE_CAP = 30;
 
-/** 摘要可能被截断 → 按需取全文（nodeData.fetchNodeResult，活动区/归档区后端单点）
- *  并只换装 .fm-detail-result。响应按 ctx.detailRenderSeq 守卫：换节点/关详情后的
- *  迟到响应丢弃；404/网络异常静默保持摘要显示（升级失败不扰详情窗）。 */
-function upgradeDetailResult(/** @type {LayerCtx} */ ctx, /** @type {number} */ seq, /** @type {string} */ nodeId, /** @type {string} */ summary) {
+/** 按需取全文（nodeData.fetchNodeResult，活动区/归档区后端单点）并换装：
+ *  常规 → 只替换 .fm-detail-result（markdown 渲染单点 resultInnerHtml）；
+ *  blocked（fb=true）→ 换装 .flow-agent-block-readonly（原文折叠区）。
+ *  响应按 ctx.detailRenderSeq 守卫：换节点/关详情后的迟到响应丢弃；404/网络
+ *  异常静默落 noResult（升级失败不扰详情窗）。 */
+function upgradeDetailResult(/** @type {LayerCtx} */ ctx, /** @type {number} */ seq, /** @type {string} */ nodeId, /** @type {boolean} */ blocked) {
   const cacheKey = `${ctx.project}\u0000${nodeId}`;
   const cached = resultFullCache.get(cacheKey);
   if (cached !== undefined) {
     resultFullCache.delete(cacheKey);
     resultFullCache.set(cacheKey, cached); // LRU 触碰
-    applyFullResult(ctx, seq, cached);
+    applyFullResult(ctx, seq, cached, blocked);
     return;
   }
   fetchNodeResult(ctx.project, nodeId)
     .then((full) => {
-      if (typeof full !== 'string' || full.length <= summary.length) return; // 无更长全文
+      if (typeof full !== 'string' || !full.trim()) { applyNoResult(ctx, seq); return; }
       resultFullCache.set(cacheKey, full);
       if (resultFullCache.size > RESULT_FULL_CACHE_CAP) {
         resultFullCache.delete(resultFullCache.keys().next().value); // 最老淘汰
       }
-      applyFullResult(ctx, seq, full);
+      applyFullResult(ctx, seq, full, blocked);
     })
-    .catch(() => { /* 全文不可达：保持摘要（后端未挂载/节点出库/网络故障） */ });
+    .catch(() => { applyNoResult(ctx, seq); /* 全文不可达：落 noResult（后端未挂载/节点出库/网络故障） */ });
 }
 
 /** 全文换装：仅替换结果容器 innerHTML（渲染代守卫），详情窗本体与滚动状态零扰动。 */
-function applyFullResult(/** @type {LayerCtx} */ ctx, /** @type {number} */ seq, /** @type {string} */ full) {
+function applyFullResult(/** @type {LayerCtx} */ ctx, /** @type {number} */ seq, /** @type {string} */ full, /** @type {boolean=} */ blocked) {
   if (seq !== ctx.detailRenderSeq || ctx.detail.hidden) return;
+  if (blocked) {
+    const raw = ctx.detailBody.querySelector('.flow-blocked-raw .flow-agent-block-readonly');
+    if (raw) raw.textContent = full;
+    return;
+  }
   const box = ctx.detailBody.querySelector('.fm-detail-result');
   if (!box) return;
   box.innerHTML = resultInnerHtml(full);
+}
+
+/** 全文不可达兜底：结果区落 noResult（渲染代守卫；仅占位态替换，不覆盖已换装全文）。 */
+function applyNoResult(/** @type {LayerCtx} */ ctx, /** @type {number} */ seq) {
+  if (seq !== ctx.detailRenderSeq || ctx.detail.hidden) return;
+  const box = ctx.detailBody.querySelector('.fm-detail-result');
+  if (box && box.textContent.trim() === '…') {
+    box.innerHTML = `<span class="md-empty">${esc(t('flowmap.archive.noResult'))}</span>`;
+  }
 }
 
 // ── hover 联动（§5.6：条目 → 全员可见下游；成员行 → 该员下游）─────────

@@ -50,6 +50,11 @@ class NodeConnectionPolicySpec extends CatsEffectSuite:
     """{"name":"test-agent","description":"connection policy regression agent","tools":[],"category":"standalone"}"""
   )
   os.write.over(tempRoot / "agents" / "test-agent" / "system.md", "# test-agent\n")
+  // 2026-09-05 agent 退役：新建节点执行统一 general——fixture 侧补 general agent
+  os.makeDir.all(tempRoot / "agents" / "general")
+  os.write.over(tempRoot / "agents" / "general" / "agent.json",
+    """{"name":"general","description":"general executor","tools":[],"category":"standalone"}""")
+  os.write.over(tempRoot / "agents" / "general" / "system.md", "# general\n")
 
   override def afterAll(): Unit =
     PathUtil.setDataRoot(originalRoot)
@@ -178,13 +183,13 @@ class NodeConnectionPolicySpec extends CatsEffectSuite:
       rt <- mountProject("connp-c1", ws, system, res)
       ctx = mkCtx(res, system, ws.toString)
       // 变体 A：有 task 无 out
-      rA <- nodeEdit(nodeInput("connp-c1", "task-no-out", "agent" -> Json.fromString("test-agent"),
+      rA <- nodeEdit(nodeInput("connp-c1", "task-no-out", "description" -> Json.fromString("test node purpose"),
         "task" -> Json.fromString("work without exit")), ctx)
       // 变体 B：有 in 无 out（需已存在上游）
-      _ <- nodeEdit(nodeInput("connp-c1", "up", "agent" -> Json.fromString("test-agent"),
+      _ <- nodeEdit(nodeInput("connp-c1", "up", "description" -> Json.fromString("test node purpose"),
         "task" -> Json.fromString("up-work"), "out" -> Json.fromString("Nebula")), ctx)
       upId <- idOf(rt, "up")
-      rB <- nodeEdit(nodeInput("connp-c1", "in-no-out", "agent" -> Json.fromString("test-agent"),
+      rB <- nodeEdit(nodeInput("connp-c1", "in-no-out", "description" -> Json.fromString("test node purpose"),
         "in" -> Json.fromString(upId)), ctx)
       s <- rt.store.snapshot
       _ <- system.stopAll.handleErrorWith(_ => IO.unit)
@@ -210,7 +215,7 @@ class NodeConnectionPolicySpec extends CatsEffectSuite:
       res <- mkResources(system, tempRoot, llm.handle)
       rt <- mountProject("connp-c2", ws, system, res)
       ctx = mkCtx(res, system, ws.toString)
-      r <- nodeEdit(nodeInput("connp-c2", "entry", "agent" -> Json.fromString("test-agent"),
+      r <- nodeEdit(nodeInput("connp-c2", "entry", "description" -> Json.fromString("test node purpose"),
         "task" -> Json.fromString("entry-runs-at-once"), "out" -> Json.fromString("Nebula")), ctx)
       // startNode 触发证据：agent 收到入口 task 文本（创建即运行）
       _ <- waitUntil(10.seconds)(llm.inputs.get.map(_.exists(_.contains("entry-runs-at-once"))))
@@ -233,7 +238,7 @@ class NodeConnectionPolicySpec extends CatsEffectSuite:
       res <- mkResources(system, tempRoot, llm.handle)
       rt <- mountProject("connp-c3", ws, system, res)
       ctx = mkCtx(res, system, ws.toString)
-      r <- nodeEdit(nodeInput("connp-c3", "to-nebula", "agent" -> Json.fromString("test-agent"),
+      r <- nodeEdit(nodeInput("connp-c3", "to-nebula", "description" -> Json.fromString("test node purpose"),
         "task" -> Json.fromString("exit via nebula"), "out" -> Json.fromString("Nebula")), ctx)
       _ <- waitStatus(rt, "to-nebula", Set(NodeLifecycle.Completed))
       n <- idOf(rt, "to-nebula").flatMap(nodeById(rt, _)).map(_.getOrElse(fail("node must exist")))
@@ -256,12 +261,12 @@ class NodeConnectionPolicySpec extends CatsEffectSuite:
       rt <- mountProject("connp-c4", ws, system, res)
       ctx = mkCtx(res, system, ws.toString)
       // 已完成上游
-      _ <- nodeEdit(nodeInput("connp-c4", "up", "agent" -> Json.fromString("test-agent"),
+      _ <- nodeEdit(nodeInput("connp-c4", "up", "description" -> Json.fromString("test node purpose"),
         "task" -> Json.fromString("up-result"), "out" -> Json.fromString("Nebula")), ctx)
       _ <- waitStatus(rt, "up", Set(NodeLifecycle.Completed))
       upId <- idOf(rt, "up")
       // in+task 并存创建：合法（新规范合法域），in 引用已完成上游 → 投递后启动
-      r <- nodeEdit(nodeInput("connp-c4", "in-and-task", "agent" -> Json.fromString("test-agent"),
+      r <- nodeEdit(nodeInput("connp-c4", "in-and-task", "description" -> Json.fromString("test node purpose"),
         "task" -> Json.fromString("self-sufficient work"), "in" -> Json.fromString(upId),
         "out" -> Json.fromString("Nebula")), ctx)
       _ <- waitStatus(rt, "in-and-task", Set(NodeLifecycle.Completed))
@@ -288,7 +293,7 @@ class NodeConnectionPolicySpec extends CatsEffectSuite:
       res <- mkResources(system, tempRoot, llm.handle)
       rt <- mountProject("connp-c5", ws, system, res)
       ctx = mkCtx(res, system, ws.toString)
-      r <- nodeEdit(nodeInput("connp-c5", "empty", "agent" -> Json.fromString("test-agent")), ctx)
+      r <- nodeEdit(nodeInput("connp-c5", "empty", "description" -> Json.fromString("test node purpose")), ctx)
       s <- rt.store.snapshot
       _ <- system.stopAll.handleErrorWith(_ => IO.unit)
     yield
@@ -352,7 +357,7 @@ class NodeConnectionPolicySpec extends CatsEffectSuite:
       ctx = mkCtx(res, system, ws.toString)
       // legacy 节点合法创建（带 out）→ 完成 → store 直种 out=None 模拟存量悬空形态
       //（新规范下该形态只能来自存量地图，口径⑤ 不回溯）
-      _ <- nodeEdit(nodeInput("connp-c7", "legacy", "agent" -> Json.fromString("test-agent"),
+      _ <- nodeEdit(nodeInput("connp-c7", "legacy", "description" -> Json.fromString("test node purpose"),
         "task" -> Json.fromString("legacy-retained-result"), "out" -> Json.fromString("Nebula")), ctx)
       _ <- waitStatus(rt, "legacy", Set(NodeLifecycle.Completed))
       legacyId <- idOf(rt, "legacy")
@@ -360,7 +365,7 @@ class NodeConnectionPolicySpec extends CatsEffectSuite:
         s.nodes(legacyId).copy(out = None))))
       dangling <- nodeById(rt, legacyId).map(_.getOrElse(fail("legacy must exist")))
       // 下游 consumer（入口创建后完成——补投递只要求 deliveredTo 记账 + 状态合法）
-      _ <- nodeEdit(nodeInput("connp-c7", "consumer", "agent" -> Json.fromString("test-agent"),
+      _ <- nodeEdit(nodeInput("connp-c7", "consumer", "description" -> Json.fromString("test node purpose"),
         "task" -> Json.fromString("consume later"), "out" -> Json.fromString("Nebula")), ctx)
       _ <- waitStatus(rt, "consumer", Set(NodeLifecycle.Completed))
       consumerId <- idOf(rt, "consumer")
@@ -391,14 +396,14 @@ class NodeConnectionPolicySpec extends CatsEffectSuite:
       res <- mkResources(system, tempRoot, llm.handle)
       rt <- mountProject("connp-c8", ws, system, res)
       ctx = mkCtx(res, system, ws.toString)
-      _ <- nodeEdit(nodeInput("connp-c8", "up", "agent" -> Json.fromString("test-agent"),
+      _ <- nodeEdit(nodeInput("connp-c8", "up", "description" -> Json.fromString("test node purpose"),
         "task" -> Json.fromString("up-work"), "out" -> Json.fromString("Nebula")), ctx)
       upId <- idOf(rt, "up")
       // deps-only（无 out）→ 拒：deps 创建同样受「必须带 out」约束
-      rDepsOnly <- nodeEdit(nodeInput("connp-c8", "deps-no-out", "agent" -> Json.fromString("test-agent"),
+      rDepsOnly <- nodeEdit(nodeInput("connp-c8", "deps-no-out", "description" -> Json.fromString("test node purpose"),
         "deps" -> Json.fromString(upId)), ctx)
       // task+deps+out → 合法：deps 清单原样携带（语义零改动）
-      rOk <- nodeEdit(nodeInput("connp-c8", "deps-ok", "agent" -> Json.fromString("test-agent"),
+      rOk <- nodeEdit(nodeInput("connp-c8", "deps-ok", "description" -> Json.fromString("test node purpose"),
         "task" -> Json.fromString("deps waiter work"), "deps" -> Json.fromString(upId),
         "out" -> Json.fromString("Nebula")), ctx)
       n <- idOf(rt, "deps-ok").flatMap(nodeById(rt, _)).map(_.getOrElse(fail("deps-ok must exist")))

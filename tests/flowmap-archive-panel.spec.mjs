@@ -22,6 +22,13 @@
 //      面板覆盖节点的点节点走 nodeClick 兜底（真实点击优先/DOM 派发等价）。
 //   T6（reload 恢复态）仍为既有文档化红（open-flowmap 按钮恢复态缺失），静态
 //   A17a/b + A18a–d 覆盖，见 20260903_archive-panel-v3-fix-report.md §4。
+//
+// 2026-09-05 载荷收敛适配（node-flowmap-slim）：
+//   ① mockApi 补 result 全文端点 mock（详情窗 hasResult 即按需拉全文；legacy 夹具
+//      形态走前端 compat 路径派生 hasResult，不加 mock 则 A9.3 markdown 断言落
+//      noResult 占位失真）；
+//   ② A11 清理空白点击 / A14.1 关闭空白点击改拖后重算（A11.3 拖拽 = 画布 pan，
+//      节点卡整体位移 + 载荷收敛后卡高变化 → 拖前算的 bpOpen 可能落到卡上）。
 
 import { test, expect } from '@playwright/test';
 import { readFileSync } from 'node:fs';
@@ -111,6 +118,18 @@ async function mockApi(page) {
   await page.route('**/api/projects/alpha/flow-map', (r) => r.fulfill({
     json: fmPayload(serverNodes.map((n) => structuredClone(n))),
   }));
+  // 2026-09-05 载荷收敛配套：详情窗对 hasResult 节点无条件按需拉全文（旧载荷形态
+  // 经前端 compat 路径派生 hasResult），本夹具保持 legacy 形态喂快照/事件（面板
+  // 交互回归的语义不变），全文通道由此 mock 供给——不补则详情结果区落 noResult
+  // 占位、A9.3 markdown 断言失真。载荷新形态本身由 flowmap-archive-result-full 覆盖。
+  await page.route('**/api/projects/alpha/flow-map/nodes/*/result', async (route) => {
+    const segs = new URL(route.request().url()).pathname.split('/').filter(Boolean);
+    const id = segs[segs.length - 2]; // …/flow-map/nodes/<id>/result
+    const n = serverNodes.find((x) => x.id === id);
+    await route.fulfill({
+      json: { id, name: n?.name || id, status: n?.status || 'completed', result: n?.result ?? null },
+    });
+  });
 }
 
 /** 走真实 ws.js 分发路径注入一帧（与后端广播等价）。 */
@@ -552,8 +571,12 @@ test('A11–A14 空白点击收起、拖拽豁免、hover 联动、三路关闭�
   }));
   expect.soft(postDrag.open).toBe(true);
   expect.soft(postDrag.detailOpen).toBe(true);
-  // 清理回干净状态（画布真空白点，确保收起）
-  await page.mouse.click(bpOpen.x, bpOpen.y);
+  // 清理回干净状态（画布真空白点，确保收起）。2026-09-05 注：A11.3 的拖拽同时是
+  // 画布 pan（userNav），节点卡整体位移 → 拖前算的 bpOpen 可能落到卡上；载荷收敛后
+  // 卡片行数变化进一步改变几何 → 空白点必须拖后重算（同 bpOpen/bpDrag 开态重算口径）。
+  const bpCleanup = await blankPoint(page);
+  expect.soft(bpCleanup).not.toBeNull();
+  await page.mouse.click(bpCleanup.x, bpCleanup.y);
   await page.waitForTimeout(320);
 
   // [A12.1] hover 跨批引用链条目 → 主图下游卡加亮（x1 in 已归档 c4a）
@@ -592,10 +615,12 @@ test('A11–A14 空白点击收起、拖拽豁免、hover 联动、三路关闭�
   // [A13.3] 焦点归还归档悬浮钮
   expect.soft(st3.focusId).toBe('archive-toggle');
 
-  // [A14.1] 点面板外关闭
+  // [A14.1] 点面板外关闭（pan 后几何已变 → 空白点重算，同 A11 清理口径）
   await page.locator('[data-testid="archive-toggle"]').click();
   await page.waitForTimeout(300);
-  await page.mouse.click(bpOpen.x, bpOpen.y);
+  const bpA14 = await blankPoint(page);
+  expect.soft(bpA14).not.toBeNull();
+  await page.mouse.click(bpA14.x, bpA14.y);
   await page.waitForTimeout(300);
   expect.soft(await page.evaluate(() => document.querySelector('[data-testid="archive-panel"]').classList.contains('open'))).toBe(false);
   // [A14.2] 再点悬浮钮关闭（toggle）
