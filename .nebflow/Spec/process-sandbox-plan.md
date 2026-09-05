@@ -2,8 +2,9 @@
 
 # Nebflow 进程级沙箱实施方案
 
-> 版本：v1.1（2026-08-21）· 状态：**已批准冻结**（D1-D4 用户 2026-08-21 裁定，全按推荐值）
+> 版本：v1.2（2026-09-05）· 状态：**已批准冻结**（D1-D4 用户 2026-08-21 裁定，全按推荐值）+ §5.6 可写面口径（2026-09-05 作者裁定演进）
 > 版本日志：
+> - v1.2（2026-09-05）：数据根入会话可写根（作者 20:24 裁定）——节点写根 = root + ~/.nebflow 数据根 + tempRoots；D4「只读」就此废止（历史记录保留），现行唯一口径见 §5.6
 > - v1.1（2026-08-21）：D1-D4 裁定落定（workspace-write / enforce / 网络放行 / ~/.nebflow 只读），状态 → 已批准冻结，可派发 P0 实施
 > - v1.0（2026-08-21）：初稿（选型/源码分析/策略模型/集成设计/分期/验收/风险）
 > 上游输入：[deepseek-harness-study.md](./deepseek-harness-study.md) Top1 建议（进程沙箱，借鉴度：高）的落地设计
@@ -356,7 +357,25 @@ Windows ACL 限制令牌后端（对标 `sandbox-windows-acl`，`partial` 强制
 | D1 | 默认模式 | **`workspace-write`** | agent 日常改码+构建顺畅；红线场景靠审批卡 |
 | D2 | probe 失败降级 | **`enforce`（fail-closed）** | 与 harness 一致的安全默认；ask 为配置逃生门 |
 | D3 | P1 网络默认 | **`true`（放行）** | pip/npm/curl/git 高频合法；文件白名单挡最大破坏面 |
-| D4 | ~/.nebflow 对 bash | **只读** | JVM 内 Write/Edit 不受影响；P1 多根开关按需评估（默认关） |
+| D4 | ~/.nebflow 对 bash | **只读** | JVM 内 Write/Edit 不受影响；P1 多根开关按需评估（默认关）。**【已废止 2026-09-05 20:24】** 数据根入会话可写根，现行口径见 §5.6 |
+
+## 5.6 可写面口径（现行唯一标准，2026-09-05 20:24 作者裁定）
+
+阶段 2a 落地后沙箱已远超本方案 P0 形态（文件五工具 JVM 围栏 + Bash Seatbelt 双面强制，单一推导点 = `SandboxPolicy.writableRoots()/readableRoots()`）。当前会话可写面口径：
+
+| 会话形态 | root（既有语义零变化） | 可写根全集 |
+|---|---|---|
+| 节点会话 | projectRoot（worktree / workspace） | root + **~/.nebflow 数据根** + tempRoots（/private/tmp、java.io.tmpdir） |
+| 分发器会话 | project workspace | 同上 |
+| Nebula 根会话 | PathUtil.dataRoot（2026-09-05 13:09 裁定） | dataRoot + tempRoots（root 与数据根同径，去重） |
+| enabled=false | — | 全旁路（§G.1 回滚语义，off 短路不变） |
+
+- **数据根推导唯一正源 = `PathUtil.dataRoot`**（NEBFLOW_HOME / CLI `--home` / setDataRoot 重定向自动跟随）；严禁硬编码 os.home——隔离测试实例（`--home /tmp/...`）下可写根落在隔离 HOME，机制上写不穿真 ~/.nebflow
+- **写 ⊆ 读不变量**：数据根同步进 readableRoots；九子目录只读白名单与 §4.2-B 审计只读两文件被整目录放行覆盖属预期（readExtras 原样保留，contains 包含关系下冗余无害，spec SUBSUME 用例钉死）
+- **既有 readDenied 负向规则语义不动**：agents/**/memory.md 非 Nebula 份仍一票拒读，且写闸（FileSandbox.checkWrite）同等消费同一规则——红线不随写面扩大（同一既有规则读/写双闸延续，非新增 deny）
+- **整目录放行即终态**：不加新 deny、不建新配置面。残留风险（批次报告钉死）：凭据文件（vps.env/auth.json/logto-admin-credentials.txt/directmail.env）与记忆主文件（User.md、agents/Nebula/memory.md）从此节点可直写，靠纪律约束
+- 节点价值：项目仓 git commit、plugin/agent 定义层、项目记忆、docs 归档由节点直接落盘，不再逐笔走宿主命令
+- §5.1 WorkspaceWrite 行与 §5.2/D4 的「~/.nebflow 只读」口径就此废止（历史记录保留原文）
 
 ## 11. 结构化任务摘要（Manager 可读）
 
