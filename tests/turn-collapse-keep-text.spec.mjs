@@ -1,13 +1,16 @@
 // turn-collapse-keep-text.spec.mjs — 2026-09-03 ruling regression (工具过程
-// 自动收起——保留 LLM 中间文字回复).
+// 自动收起——保留 LLM 中间文字回复) + 2026-09-05 turn 级单组化修订.
 //
 // Ruling: the collapse set is tool blocks + tool results + injected events
-// ONLY. EVERY assistant text row stays visible at its original position and
-// order — text interleaved with tools splits the collapsible rows into
-// contiguous runs, one `.turn-group` per run:
-//   文字A → [✻ 工具1] → 文字B → [✻ 注入+工具2] → 最终回复
-// Turn-level collapse/closure semantics unchanged (#403 2026-08-26: events
-// arriving after closure open a NEW group).
+// ONLY. EVERY assistant text row stays visible — text is never moved into
+// (or out of) the group. 2026-09-05 ruling (author report: multi-round turn
+// showed one badge PER LLM ROUND): a turn interleaving text with tool rounds
+//   文字A → 工具1 → 文字B → 注入 → 工具2 → 最终回复
+// gathers ALL collapsible rows into ONE `.turn-group` (turn-level
+// aggregation), landed immediately before the final reply; the texts render
+// flat in front of it, chronological order preserved, and the bar counts the
+// WHOLE turn's tools. Turn-level closure semantics unchanged (#403
+// 2026-08-26: events arriving after closure open a NEW group).
 //
 // Drives the REAL render modules (chatView.js / chat.js / turnGroup.js /
 // persistence.js) in a static harness page
@@ -27,7 +30,10 @@ import { fileURLToPath } from 'node:url';
 
 const REPO_ROOT = path.join(path.dirname(fileURLToPath(import.meta.url)), '..');
 const HARNESS_PATH = '/tests/fixtures/turn-collapse/harness.html';
-const SHOT_DIR = path.join(os.homedir(), '.nebflow', 'docs', 'Nebflow');
+// Screenshots land in the docs dir by default (host runs); NB_KEEP_TEXT_SHOT_DIR
+// overrides for sandboxed runs where ~/.nebflow is not writable (banner-dedupe
+// spec precedent: NB_BANNER_SHOT_DIR).
+const SHOT_DIR = process.env.NB_KEEP_TEXT_SHOT_DIR || path.join(os.homedir(), '.nebflow', 'docs', 'Nebflow');
 
 let port;
 const servers = [];
@@ -134,57 +140,57 @@ const T_FINAL = '这是最终回复：中间文字全部保留，工具过程已
 const T_FINAL2 = '新回合的最终回复。';
 
 test.describe('collapse keeps LLM text — live alternating turn (验收 a)', () => {
-  test('文字→工具→文字→注入→工具→最终: texts visible in place, groups hold tools+injected only', async ({ browser }) => {
+  test('文字→工具→文字→注入→工具→最终: ONE turn group, texts visible in front, bar counts whole turn', async ({ browser }) => {
     const { context, page, pageErrors } = await newPage(browser);
     await page.evaluate(() => window.__liveTurn());
     expect(pageErrors).toEqual([]);
 
-    // Two run-groups: [工具1] and [注入+工具2].
-    expect(await page.locator('.turn-group').count()).toBe(2);
+    // 2026-09-05: ONE group for the whole turn (was one per contiguous run).
+    expect(await page.locator('.turn-group').count()).toBe(1);
 
-    // Top-level order preserved: user → 文字A → G1 → 文字B → G2 → 最终.
+    // Top-level order: user → 文字A → 文字B → G(工具1+注入+工具2) → 最终.
+    // Texts stay flat in front of the single group; the group sits right
+    // before the final reply (badge-before-answer).
     expect(await readSeq(page)).toEqual([
       'user',
       `ai:${T_A}`,
-      'group:tool',
       `ai:${T_B}`,
-      'group:injected+tool',
+      'group:tool+injected+tool',
       `ai:${T_FINAL}`,
     ]);
 
-    // All three text replies visible, original order, final LAST.
+    // All three text replies visible, chronological order, final LAST.
     const texts = await visibleTexts(page);
     expect(texts.map(t => t.text)).toEqual([T_A, T_B, T_FINAL]);
     expect(texts.every(t => t.visible)).toBe(true);
 
-    // No assistant text inside any collapse group; both groups collapsed.
+    // No assistant text inside the collapse group; the group is collapsed.
     expect(await page.locator('.turn-steps .bubble.ai').count()).toBe(0);
     for (const steps of await page.locator('.turn-steps').all()) {
       expect(await steps.evaluate(el => el.style.display)).toBe('none');
     }
 
-    // Summary bars carry the per-run tool count (each run hides 1 tool).
+    // The single bar carries the WHOLE-turn tool count (工具1+工具2 = 2).
     const summaries = await page.locator('.turn-summary-text').allTextContents();
-    expect(summaries.length).toBe(2);
-    for (const s of summaries) {
-      expect(s).toContain('工具 1 次');
-      expect(s).toContain('test-model');
-    }
+    expect(summaries.length).toBe(1);
+    expect(summaries[0]).toContain('工具 2 次');
+    expect(summaries[0]).toContain('test-model');
 
-    // Expanding run 1 reveals 工具1 exactly between 文字A and 文字B.
+    // Expanding the bar reveals 工具1+注入+工具2 exactly between 文字B and 最终.
     await page.locator('.turn-summary').first().click();
     await expect(page.locator('.turn-group').first().locator('.turn-steps')).toBeVisible();
     const pos = await page.evaluate(() => {
       const rows = Array.from(document.getElementById('chat').children);
-      const tA = rows[1], g1 = rows[2], tB = rows[3];
+      const tB = rows[2], g1 = rows[3], fin = rows[4];
       return {
-        between: !!(tA.compareDocumentPosition(g1) & Node.DOCUMENT_POSITION_FOLLOWING)
-          && !!(g1.compareDocumentPosition(tB) & Node.DOCUMENT_POSITION_FOLLOWING),
-        toolVisible: g1.querySelector('.row.tool').offsetHeight > 0,
+        between: !!(tB.compareDocumentPosition(g1) & Node.DOCUMENT_POSITION_FOLLOWING)
+          && !!(g1.compareDocumentPosition(fin) & Node.DOCUMENT_POSITION_FOLLOWING),
+        toolsVisible: g1.querySelectorAll('.row.tool').length === 2
+          && Array.from(g1.querySelectorAll('.row.tool')).every(r => r.offsetHeight > 0),
       };
     });
     expect(pos.between).toBe(true);
-    expect(pos.toolVisible).toBe(true);
+    expect(pos.toolsVisible).toBe(true);
 
     await context.close();
   });
@@ -194,31 +200,30 @@ test.describe('collapse keeps LLM text — closure semantics (验收 b)', () => 
   test('#403: external injection after closure opens a NEW group; closed groups untouched', async ({ browser }) => {
     const { context, page, pageErrors } = await newPage(browser);
     await page.evaluate(() => window.__liveTurn());
-    expect(await page.locator('.turn-group').count()).toBe(2);
+    expect(await page.locator('.turn-group').count()).toBe(1);
     const before = await page.evaluate(() =>
       Array.from(document.querySelectorAll('.turn-group')).map(g => g.innerHTML));
 
     await page.evaluate(() => window.__postClosureTurn());
     expect(pageErrors).toEqual([]);
 
-    // Third group appeared; it alone holds the post-closure injected + tool.
-    expect(await page.locator('.turn-group').count()).toBe(3);
+    // Second group appeared (turn 2); it alone holds the post-closure
+    // injected + tool — no fusion with the closed turn-1 group.
+    expect(await page.locator('.turn-group').count()).toBe(2);
     expect(await readSeq(page)).toEqual([
       'user',
       `ai:${T_A}`,
-      'group:tool',
       `ai:${T_B}`,
-      'group:injected+tool',
+      'group:tool+injected+tool',
       `ai:${T_FINAL}`,
       'group:injected+tool',
       `ai:${T_FINAL2}`,
     ]);
 
-    // The two closed groups are byte-identical to before the new turn.
+    // The closed turn-1 group is byte-identical to before the new turn.
     const after = await page.evaluate(() =>
       Array.from(document.querySelectorAll('.turn-group')).map(g => g.innerHTML));
     expect(after[0]).toBe(before[0]);
-    expect(after[1]).toBe(before[1]);
 
     // Every text reply still visible, in order, across both turns.
     const texts = await visibleTexts(page);
@@ -228,17 +233,17 @@ test.describe('collapse keeps LLM text — closure semantics (验收 b)', () => 
     await context.close();
   });
 
-  test('same-turn re-terminal heal: failTurn after done dissolves and re-gathers every run-group', async ({ browser }) => {
+  test('same-turn re-terminal heal: failTurn after done dissolves and re-gathers the turn group', async ({ browser }) => {
     const { context, page, pageErrors } = await newPage(browser);
     await page.evaluate(() => window.__liveTurn());
-    expect(await page.locator('.turn-group').count()).toBe(2);
+    expect(await page.locator('.turn-group').count()).toBe(1);
 
     await page.evaluate(() => window.__refailTurn());
     expect(pageErrors).toEqual([]);
 
-    // Re-gathered as failed: same run split, but NO summary bar (spec A5)
-    // and steps expanded.
-    expect(await page.locator('.turn-group').count()).toBe(2);
+    // Re-gathered as failed: still ONE turn group, but NO summary bar (spec
+    // A5) and steps expanded.
+    expect(await page.locator('.turn-group').count()).toBe(1);
     expect(await page.locator('.turn-summary').count()).toBe(0);
     for (const steps of await page.locator('.turn-steps').all()) {
       expect(await steps.evaluate(el => el.style.display)).toBe('');
@@ -272,20 +277,21 @@ test.describe('collapse keeps LLM text — history rebuild path (验收 b/c)', (
     await page.evaluate(m => window.__history(m, { busyTail: false }), msgs);
     expect(pageErrors).toEqual([]);
 
-    expect(await page.locator('.turn-group').count()).toBe(3);
+    // Turn 1 = ONE group holding 工具A+中途注入+工具B, landed before the
+    // final reply; the post-badge injection opens turn 2 with its own group.
+    expect(await page.locator('.turn-group').count()).toBe(2);
     expect(await readSeq(page)).toEqual([
       'user',
       'ai:历史文字A：先读文件。',
-      'group:tool',
       'ai:历史文字B：继续。',
-      'group:injected+tool',
+      'group:tool+injected+tool',
       'ai:历史最终回复。',
       'group:injected',
       'ai:新回合回复。',
     ]);
 
-    // Mid-turn injection is INSIDE its group; the post-badge injection got
-    // its own group (history side of the #403 closure ruling).
+    // Mid-turn injection is INSIDE its turn group; the post-badge injection
+    // got its own group (history side of the #403 closure ruling).
     expect(await page.locator('.turn-steps .bubble.injected').count()).toBe(2);
     expect(await page.locator('.turn-steps .bubble.ai').count()).toBe(0);
 
