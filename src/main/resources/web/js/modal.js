@@ -1,4 +1,6 @@
-// modal.js — Modal dialog management: new session, delete session, agent config
+// modal.js — Modal dialog management: new session, delete session
+// (The agent editor modal was retired 2026-09-06 with the panel capability
+// sections — per-agent editing lives in the Canvas detail tab, agentManager.js.)
 
 import state from './state.js';
 import { sendWs } from './ws.js';
@@ -208,51 +210,10 @@ function deleteSession(sessionId) {
 }
 
 // ---------- Agent Modal ----------
-
-let currentAgentName = null;
-
-/** Render the tools grid with toggleable chips.
- *  @param {string[]} agentTools — tools currently enabled for this agent */
-function renderToolsGrid(agentTools) {
-  const grid = document.getElementById('agent-tools-grid');
-  if (!grid) return;
-  const allTools = (state.availableTools || []).map(t => typeof t === 'string' ? t : t.name);
-  const isAll = agentTools.includes('*');
-
-  grid.innerHTML = allTools.map(name => {
-    const checked = isAll || agentTools.includes(name);
-    return `<span class="agent-tool-check${checked ? ' checked' : ''}" data-tool="${name}">${name}</span>`;
-  }).join('');
-
-  grid.querySelectorAll('.agent-tool-check').forEach(el => {
-    el.addEventListener('click', () => el.classList.toggle('checked'));
-  });
-}
-
-/** Collect checked tool names from the grid. */
-function getCheckedTools() {
-  const grid = document.getElementById('agent-tools-grid');
-  if (!grid) return ['*'];
-  const checked = [...grid.querySelectorAll('.agent-tool-check.checked')].map(el => el.dataset.tool);
-  return checked;
-}
-
-export function showAgentModal(name, systemMd) {
-  currentAgentName = name;
-  document.getElementById('agent-modal').classList.add('show');
-  document.getElementById('agent-overlay').classList.add('on');
-  document.getElementById('agent-modal-title').textContent = t('agent.editTitle', { name });
-  document.getElementById('agent-system-input').value = systemMd || '';
-
-  // Populate tools from cached agentList data
-  const agent = state.agentsData.find(a => a.name === name) || {};
-  renderToolsGrid(agent.tools || ['*']);
-}
-
-export function hideAgentModal() {
-  document.getElementById('agent-modal').classList.remove('show');
-  document.getElementById('agent-overlay').classList.remove('on');
-}
+// Retired 2026-09-06 (tool-face retirement batch): #agent-modal DOM, the
+// showAgentModal/hideAgentModal flow and the updateAgentTools write-back are
+// gone. System-prompt editing for agents happens in the Canvas detail tab
+// (agentManager.js) via the same updateAgentSystemPrompt WS command.
 
 // ---------- Init all modal handlers ----------
 export function initModals() {
@@ -283,25 +244,6 @@ export function initModals() {
   modalOverlay.onclick = (e) => {
     if (e.target === modalOverlay) hideModals();
   };
-
-  // Agent modal cancel
-  document.getElementById('agent-modal-cancel')?.addEventListener('click', hideAgentModal);
-
-  // Agent overlay click-to-close
-  document.getElementById('agent-overlay')?.addEventListener('click', (e) => {
-    if (e.target.id === 'agent-overlay') hideAgentModal();
-  });
-
-  // Agent modal save — sends system prompt + tools
-  document.getElementById('agent-modal-save')?.addEventListener('click', () => {
-    const name = currentAgentName;
-    const systemMd = document.getElementById('agent-system-input').value;
-    const tools = getCheckedTools();
-    if (!name) return;
-    sendWs({type: 'updateAgentSystemPrompt', name, systemMd});
-    sendWs({type: 'updateAgentTools', name, tools});
-    hideAgentModal();
-  });
 
   // Expose session modal helpers for sidebar cross-module usage
   window.__showDeleteModal = showDeleteModal;
