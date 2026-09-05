@@ -229,8 +229,10 @@ object ProjectActor:
   /** Plugin Catalog 段（阶段 2b §B.4 第 2 步）：分发器 prompt 组装的注入源。
     * 受信 plugin 目录（untrusted 不出现，§B.3）；flag 关 / 无受信插件 → ""。
     * 对齐 skillCatalog order 800 注入先例——用注入目录段而非新增查询工具
-    * （分发器单次会话、目录规模小，不多造工具）。 */
-  private def pluginCatalogText(): IO[String] = nebflow.core.plugin.PluginRegistry.renderCatalog()
+    * （分发器单次会话、目录规模小，不多造工具）。
+    * dispatcher-ctx 批（2026-09-05）：目录渲染收口到 DispatcherContextCatalog
+    * 双段拼装（插件能力目录 capability 优先 + 预设场景目录），本类只留挂接。 */
+  private def pluginCatalogText(): IO[String] = nebflow.core.plugin.DispatcherContextCatalog.render()
 
   /** 新任务形态 prompt（spawnDispatcher 双形态之一，现状文案保留）。 */
   private def newTaskPrompt(project: ProjectDef, snapshot: FlowMapState, taskText: String, pluginCatalog: String): String =
