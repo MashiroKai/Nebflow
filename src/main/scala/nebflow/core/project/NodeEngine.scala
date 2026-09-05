@@ -1068,6 +1068,49 @@ class NodeEngine(
       case None => IO.unit // 根不可达 → 不记账不丢账，下轮扫描重汇总
     }
 
+  /** 分发器会话最终输出投递（2026-09-05 作者裁定「任务分发器的结果没有任何人看见，
+    * 把这个接线给 nebula」）：分发器 turn 终态时由 ProjectActor 观察桥调用——取本
+    * turn 最终 assistant 文本（extractLastAssistantText），注入 Nebula 根会话。
+    * 空文本（无 assistant 文本或纯空白）不投（防御性判空，debug 级留痕）。
+    *
+    * 格式（对照节点投递家族）：text 头部标注行 [Dispatcher '<项目名>' · task:
+    * <触发任务摘要>] + 换行 + 最终输出全文，对照 "[Node '<name>' completed]"
+    * 头部行家族；蓝气泡 source="dispatcher"（DispatcherSourceMarker）走前端
+    * injectedSourceLabel 通用分支 → "Dispatcher · <项目名> · Completed"，
+    * 与 NODE/MAIL 同族蓝气泡标注体系，零前端改动。
+    *
+    * 与节点投递（deliverToNebula）的关系——独立新投递种类，刻意绕过节点投递的
+    * 全部账本机制（绕过去重直投有 deliverStaleSummary 先例）：
+    *  - 不进 V8 nebulaDeliveredAt 账本/重投扫描：分发器输出非节点结果、无持久化
+    *    载体可补投，单次会话单次投递，at-least-once 无对象；
+    *  - 不进 60s 去重窗口：同项目短窗内多次触发任务是各自独立的合法投递（每次
+    *    触发一个新 turn），按 (identity,status) 去重会吞掉合法的第二次；
+    *  - 不走夹具信封排除：分发器输出不是节点结果，夹具家族语义不适用。
+    * 忙时排队自动继承：ImmediateInput 在根会话忙 turn 时入 pendingImmediateInputs
+    * （AgentActor processing 态排队、turn 边界串行 drain），不打断不丢。
+    * 根会话 ref 缺失 → WARN 丢弃（无账本无重投，Flow Map 拓扑仍是事实来源）；
+    * 占位/跳过类极简输出照常投递（无特殊抑制——分发器一条短行也是有效反馈）。 */
+  def deliverDispatcherOutputToNebula(messages: List[Message], taskSummary: Option[String]): IO[Unit] =
+    extractLastAssistantText(messages) match
+      case "" =>
+        logger.debug(s"Dispatcher turn produced no text output (project=$projectName) — nothing to deliver")
+      case finalText =>
+        resources.agentRegistry.get.map(_.get(rootSessionId).map(_.ref)).flatMap {
+          case Some(ref) =>
+            val header = taskSummary.map(_.trim).filter(_.nonEmpty) match
+              case Some(s) => s"[Dispatcher '$projectName' · task: $s]"
+              case None    => s"[Dispatcher '$projectName']"
+            (ref ! AgentCommand.ImmediateInput(
+              s"$header\n$finalText",
+              source = Some(NodeEngine.DispatcherSourceMarker),
+              eventType = Some(NodeLifecycle.Completed),
+              sender = Some(projectName)
+            )).void
+          case None =>
+            logger.warn(
+              s"Root session '$rootSessionId' not found — dispatcher final output not deliverable (project=$projectName, ${finalText.length} chars dropped; no ledger/no redelivery by design)")
+        }
+
   private def extractLastAssistantText(messages: List[Message]): String =
     messages.reverse
       .collectFirst {
@@ -1109,6 +1152,14 @@ object NodeEngine:
     * 扫描与周期扫描竞态、ProjectCreate 合并回报三连投实证 09-03）。进程内
     * 内存窗，与 V8 nebulaDeliveredAt 持久账本正交（账本管跨重启 at-least-once）。 */
   val NebulaDedupWindowMs: Long = 60_000L
+
+  /** 分发器最终输出投递的 source 标记（2026-09-05 接线）：ImmediateInput source
+    * 值。前端 injectedSourceLabel 通用分支对未知 source 首字母大写 → 蓝气泡
+    * "Dispatcher · <项目名> · Completed"（与 NODE/MAIL 同族，零前端改动）。 */
+  val DispatcherSourceMarker = "dispatcher"
+
+  /** 分发器投递任务摘要截断长度（触发任务首行、单行空白折叠，超出截断加省略号）。 */
+  val DispatcherTaskSummaryChars: Int = 100
 
   /** 阶段 2b Plugins：spawn 前解析完成的分配物（§B.4 第 4 步）。
     * empty = flag 关 / 节点无分配 / 无可注入内容——旧行为零变化。 */

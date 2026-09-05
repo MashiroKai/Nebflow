@@ -322,7 +322,11 @@ class NodeBlockedReentrySpec extends CatsEffectSuite:
       _ <- waitUntil(15.seconds)(nebula.get.map(_.nonEmpty))
       _ <- IO.sleep(600.millis) // 若仍会重入，这里会冒出第 3 条重入 prompt
       prompts <- llm.inputs.get
-      escalations <- nebula.get
+      allCaptured <- nebula.get
+      // 2026-09-05 分发器输出接线后，root 还会合法收到分发器 reentry 会话 turn
+      // 终态的 completed 投递（NodeEngine.deliverDispatcherOutputToNebula）——
+      // 升级断言按 eventType=blocked 精确过滤（内容断言不变，仅容纳新投递种类）
+      escalations = allCaptured.filter(_._2 == Some("blocked"))
       node <- rt.store.snapshot.map(_.nodes.values.find(_.name == "loop-node")).map(_.getOrElse(fail("node must exist")))
       audit <- readAuditTypes(ws)
       _ <- system.stopAll.handleErrorWith(_ => IO.unit)
