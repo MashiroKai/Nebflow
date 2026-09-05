@@ -29,6 +29,10 @@ object ToolRegistry:
       "Curl" -> CurlTool,
       // Canvas file display
       "Pop" -> PopTool,
+      // Chat-stream HTML card (sandboxed iframe) — 解封恢复（2026-09-05 08:40
+      // 作者裁定，NebulaOrchestrationTools +Card）：commit 793f62c1（2026-08-11）
+      // 曾整体删除，本批恢复后端工具与注册；前端 iframe 消费面另批恢复。
+      "Card" -> CardTool,
       // User interaction
       "AskUserQuestion" -> AskUserQuestionTool,
       // Team task tools (任务工具重做 2026-08-30: 任务=进展展示，工具只配

@@ -1557,11 +1557,13 @@ private[agent] trait AgentCore:
     // FlowTrigger is whitelist-driven (R1 split, NOT Nebula-exclusive): any
     // agent declaring flows in agent.json gets the tool; everyone else is
     // stripped of it (even via "*" or explicit listing — every call would
-    // fail the whitelist check anyway). 阶段 2c 例外：Nebula 双轨期机制固定
-    // （§C.1 过渡组 Delegate/FlowTrigger/FlowExecute 保留至阶段 3）——不再
-    // 依赖 flows 声明（旧 agent.json 的 flows:["*"] 由此退役为 no-op）。
+    // fail the whitelist check anyway). 2026-09-05 08:40 作者裁定：旧体系对
+    // Nebula 完全退役——2c 双轨期「Nebula 无条件机制固定携带」例外删除；
+    // Nebula 的 legacy flows 声明（agent.json flows:["*"]）也不再触发注入
+    // （&& !isNebula），FlowTrigger 只从 fixedToolsFor 之外的 flows 白名单
+    // 通道授能，且不再授给 Nebula。
     val withFlowTrigger =
-      if agentDef.flows.nonEmpty || isNebula then withBuiltin + "FlowTrigger" else withBuiltin - "FlowTrigger"
+      if agentDef.flows.nonEmpty && !isNebula then withBuiltin + "FlowTrigger" else withBuiltin - "FlowTrigger"
     val nebulaFiltered = if isNebula then withFlowTrigger else withFlowTrigger -- NebulaExclusiveTools
     // Team task tools（任务工具重做 2026-08-30）：TeamTask 三件只配 team——
     // 注入源是 fixedToolsFor 的 category=team 分支（全体成员）。这里只做防
@@ -2005,8 +2007,10 @@ object AgentCore:
    * - Schedule: session-scoped scheduled tasks
    * - Delegate: 调度器/根 agent 专用——指派 standalone agent。
    *   Team 成员委派走 SubTaskTool（self-clone + ephemeral）。
-   *   Flow 触发不在此列——FlowTrigger 由 agent.json flows 白名单驱动注入
-   *   （Nebula 例外见 NebulaOrchestrationTools：阶段 2c 双轨期机制固定）。
+   *   Flow 触发不在此列——FlowTrigger 由 agent.json flows 白名单驱动注入。
+   *   2026-09-05 08:40 作者裁定后 Delegate 已不在 Nebula 固定面
+   *   （NebulaOrchestrationTools 不再携带）——本集对非 Nebula 的防逃逸剥离
+   *   语义防御性保留（legacy team/flow 成员若声明 Delegate 仍被剥）。
    * - AgentControl: 后台 agent 管控（list/status/cancel/restart，spec §4 安全
    *   边界矩阵——危险能力只交给根调度者）。
    * - Issue/CheckIssues（已退役，2026-09-04 作者终裁）：不再在本集——工具整体
@@ -2023,32 +2027,42 @@ object AgentCore:
   )
 
   /** Nebula 固定工具集（阶段 2c agent 收敛，设计文档 §C.1 角色-工具静态矩阵；
-    * 裁定 11：全部机制注入不可配置）。分组与矩阵行一一对应：
+    * 裁定 11：全部机制注入不可配置）。2026-09-05 08:40 作者裁定改版为恰十五件：
+    * +基础文件四件（Bash/Read/Glob/Grep——从 BaseTools 取四件，仍不给 Write/
+    * Edit）+Card 解封恢复（471 行后端工具整体回归，注册表同批恢复；其前端
+    * iframe 消费面本批不恢复，chat 可视渲染待前端批）、−旧体系四件（Mail/
+    * Delegate/FlowTrigger/FlowExecute——旧 Team/Flow 体系对 Nebula 完全退役，
+    * Task 是唯一项目触发入口，节点结果沿 out 边自动回流；工具类与注册表注册
+    * 全部保留——team/flow 双轨期 legacyFixedTools 对成员仍授能，零触碰）。
+    * 分组与矩阵行一一对应：
     *   - 编排触发：Task / ProjectCreate / NodeList（§C.1：dispatcher 描述承诺的
     *     Nebula 侧只读观测面）/ AgentControl（list/status/cancel/restart）
-    *   - 通信：Mail / SendFriendMessage（2c 起由 agent.json 声明制改机制固定）
-    *   - 双轨期过渡：Delegate / FlowTrigger / FlowExecute（旧 standalone/team/
-    *     flow 触达保留至阶段 3，裁定 1；FlowTrigger 对 Nebula 不再依赖 flows 声明）
+    *   - 通信：SendFriendMessage（好友功能非旧体系，保留机制固定）
+    *   - 基础四件：Bash / Read / Glob / Grep（2026-09-05 解禁；Write/Edit 严禁
+    *     夹带——不整体引 BaseTools）
+    *   - 可视化：Card（2026-09-05 解封，commit 793f62c1 曾整体删除）
     *   - 用户面：AskUserQuestion / Pop；平台：Schedule / TransferFile
     *   - 记忆：MemoryEdit（§C.2，白名单硬编码 User.md + agents/Nebula/memory.md）
-    * 显式不含：六件文件工具（BaseTools，裁定 2/3：Nebula 不读不写不跑命令）、
+    * 显式不含：Mail/Delegate/FlowTrigger/FlowExecute（旧体系退役）、Write/Edit、
     * Web 系、TeamTask*、SubTask、NodeEdit/NodeCancel。Issue/CheckIssues 已整体
     * 退役（2026-09-04 作者终裁：报 issue 走 gh cli 由节点代劳，定义层已归档
-    * .archived-tools-2d/）——2c 的 + "Issue" parity carry 已删，本集即 Nebula
-    * 工具面唯一来源：恰十四件、零 Issue。 */
+    * .archived-tools-2d/）。本集即 Nebula 工具面唯一来源：恰十五件、零 Issue、
+    * 零旧体系四件。 */
   val NebulaOrchestrationTools = Set(
     // 编排触发
     "Task",
     "ProjectCreate",
     "NodeList",
     "AgentControl",
-    // 通信
-    "Mail",
+    // 通信（好友功能非旧体系）
     "SendFriendMessage",
-    // 双轨期过渡（阶段 3 拆除）
-    "Delegate",
-    "FlowTrigger",
-    "FlowExecute",
+    // 基础四件（2026-09-05 解禁；不授 Write/Edit）
+    "Bash",
+    "Read",
+    "Glob",
+    "Grep",
+    // 可视化（2026-09-05 解封恢复，前端消费面另批）
+    "Card",
     // 用户面
     "AskUserQuestion",
     "Pop",
@@ -2129,11 +2143,14 @@ object AgentCore:
       case _ =>
         agentDef.name match
           case "Nebula" =>
-            // 静态集收口：恰十四件、零 Issue。终裁记录（2026-09-04 作者裁定）：
-            // Issue/CheckIssues 退役，报 issue 走 gh cli 由节点代劳；定义层已
-            // 归档（agent.json CheckIssues 声明删除、~/.nebflow/tools/ 下
-            // issue/check-issues/screenshot 归档 .archived-tools-2d/）。
-            // 2c 的 + "Issue" parity carry 至此删除——本集即 Nebula 工具面唯一来源。
+            // 静态集收口：恰十五件、零 Issue、零旧体系四件。终裁记录：
+            // （2026-09-04 作者裁定）Issue/CheckIssues 退役，报 issue 走 gh cli
+            // 由节点代劳；定义层已归档（agent.json CheckIssues 声明删除、
+            // ~/.nebflow/tools/ 下 issue/check-issues/screenshot 归档
+            // .archived-tools-2d/）。2c 的 + "Issue" parity carry 至此删除。
+            // （2026-09-05 08:40 作者裁定）+基础四件 Bash/Read/Glob/Grep、+Card
+            // 解封、−Mail/Delegate/FlowTrigger/FlowExecute 旧体系退役——本集
+            // 即 Nebula 工具面唯一来源。
             AgentCore.NebulaOrchestrationTools
           case "project-dispatcher" => AgentCore.DispatcherFixedTools
           case "general"            => AgentCore.GeneralFixedTools
