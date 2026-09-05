@@ -109,7 +109,7 @@ export default {
   'agentFile.hint': '此文件是项目工作区根的 agent 指令（AGENTS.md），可编辑并保存。',
 
   // === Friends & messages (A2A) ===
-  'contacts.searchPlaceholder': 'nebflow 号 / 邮箱',
+  'contacts.searchPlaceholder': '用户名 / 邮箱',
   'contacts.search': '搜索',
   'contacts.notFound': '未找到该用户',
   'contacts.addFriend': '加好友',
@@ -122,7 +122,7 @@ export default {
   'contacts.accepted': '已添加',
   'contacts.declined': '已拒绝',
   'contacts.sentRequests': '我发出的',
-  'contacts.empty': '暂无联系人，搜索 nebflow 号或邮箱添加',
+  'contacts.empty': '暂无联系人，搜索用户名或邮箱添加',
   'contacts.verifyMessagePlaceholder': '发送验证消息（可选）',
   'contacts.ariaRequests': '{n} 个好友请求',
   'contacts.menuDelete': '删除好友',
@@ -134,7 +134,7 @@ export default {
   'contacts.blockTitle': '加入黑名单',
   'contacts.blockConfirm': '加入黑名单后，将不再收到 {name} 的消息与好友请求。',
   'contacts.searching': '搜索中…',
-  'contacts.notFoundHint': '对方可能尚未设置 nebflow 号，或号码有误',
+  'contacts.notFoundHint': '对方可能尚未设置用户名，或输入有误',
   'contacts.cancelVerify': '取消',
   'messages.empty': '暂无会话',
   'messages.systemNowFriends': '你们已成为好友',
