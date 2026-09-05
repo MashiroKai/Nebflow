@@ -76,3 +76,4 @@ node_modules/
 # sbt 沙箱重定向目录（工作树内测试运行产物）
 .sbt/
 .ivy2/
+.coursier/
