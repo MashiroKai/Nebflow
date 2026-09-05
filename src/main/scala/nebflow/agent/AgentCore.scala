@@ -31,16 +31,9 @@ private[agent] trait AgentCore:
   // resubscribe. The guaranteed exit is the user's own cancel (Interrupt →
   // registry back to Idle), not a timer. See AgentCore.awaitPermissionDecision.
 
-  /**
-   * Nebula-exclusive tools: only available when agentName == "Nebula".
-   * - Schedule: session-scoped scheduled tasks
-   * - Delegate: 调度器/根 agent 专用——指派 standalone agent。
-   *   Team 成员委派走 SubTaskTool（self-clone + ephemeral）。
-   *   Flow 触发不在此列——FlowTrigger 由 agent.json flows 白名单驱动注入。
-   * - Issue 已退役（2026-09-04 作者终裁，随 CheckIssues 一并），不再在本集。
-   */
-  private val NebulaExclusiveTools = AgentCore.NebulaExclusiveTools
-
+  // Nebula 专属工具的剥离语义已收口到 AgentCore.exclusiveToolsFor 单点
+  // （2026-09-05 dream 准入例外：MemoryEdit 对 dream 放开，动作面仍限修订）。
+  // 消费点：buildAllowedToolSet 的 nebulaFiltered 与 AgentLibrary 保存侧 strip。
 
   private val lifecycleLog = NebflowLogger.forName("nebflow.agent.lifecycle")
 
@@ -1577,7 +1570,11 @@ private[agent] trait AgentCore:
     // 通道授能，且不再授给 Nebula。
     val withFlowTrigger =
       if agentDef.flows.nonEmpty && !isNebula then withBuiltin + "FlowTrigger" else withBuiltin - "FlowTrigger"
-    val nebulaFiltered = if isNebula then withFlowTrigger else withFlowTrigger -- NebulaExclusiveTools
+    // Nebula 专属剥离（单点语义 AgentCore.exclusiveToolsFor）：Nebula 全保留
+    // （空集）；dream 豁免 MemoryEdit（2026-09-05 作者签准——动作面仍受
+    // MemoryEditTool 的 DREAM_APPEND_DENIED 约束，append 不可用）；其余身份
+    // 剥全集，行为零变化。
+    val nebulaFiltered = withFlowTrigger -- AgentCore.exclusiveToolsFor(agentDef.name)
     // Team task tools（任务工具重做 2026-08-30）：TeamTask 三件只配 team——
     // 注入源是 fixedToolsFor 的 category=team 分支（全体成员）。这里只做防
     // 声明逃逸剥离：非 team agent（standalone/flow/Nebula）即使 agent.json
@@ -2016,7 +2013,9 @@ object AgentCore:
     else "Permission denied by user"
 
   /**
-   * Nebula-exclusive tools: only available when agentName == "Nebula".
+   * Nebula-exclusive tools: stripped from every identity except per
+   * exclusiveToolsFor (Nebula keeps all; dream admitted for MemoryEdit only —
+   * see DreamAdmittedTools below).
    * - Schedule: session-scoped scheduled tasks
    * - Delegate: 调度器/根 agent 专用——指派 standalone agent。
    *   Team 成员委派走 SubTaskTool（self-clone + ephemeral）。
@@ -2029,8 +2028,12 @@ object AgentCore:
    * - Issue/CheckIssues（已退役，2026-09-04 作者终裁）：不再在本集——工具整体
    *   退役，报 issue 走 gh cli 由节点代劳（定义层已归档 .archived-tools-2d/）。
    *   未注册名无 schema、无执行路径，声明即惰性字符串，无须剥离。
-   * - MemoryEdit（阶段 2c §C.1 记忆行）：记忆= Nebula 专属（2026-08-31 裁定①），
-   *   非 Nebula agent 声明了也不给。
+   * - MemoryEdit（阶段 2c §C.1 记忆行）：记忆写面原为 Nebula 专属（2026-08-31
+   *   裁定①）。2026-09-05 作者签准修订：写面 = Nebula + dream——dream 仅准入
+   *   修订动作（remove/update/replace_section），append 在工具执行层拒绝
+   *   （DREAM_APPEND_DENIED，「dream 禁写新记忆」铁律由 MemoryEditTool 强制）。
+   *   准入例外 = DreamAdmittedTools，剥离面经 exclusiveToolsFor 单点生效；
+   *   Schedule/Delegate/AgentControl 对 dream 仍专属、不得放开。
    */
   val NebulaExclusiveTools = Set(
     "Schedule",
@@ -2038,6 +2041,25 @@ object AgentCore:
     "AgentControl",
     "MemoryEdit"
   )
+
+  /** dream 的 MemoryEdit 准入例外（2026-09-05 作者签准，修订 2026-08-31 裁定①）：
+    * 记忆写面 = Nebula + dream，dream 严禁写新记忆——仅放行修订动作（remove/
+    * update/replace_section），append 在工具执行层拒绝（DREAM_APPEND_DENIED）。
+    * 本集只放开【授能/剥离面】；动作面白名单在 MemoryEditTool（两道闸独立，
+    * 摘任一道 spec 即红）。 */
+  val DreamAdmittedTools = Set("MemoryEdit")
+
+  /** 身份 → 应剥离的 Nebula 专属工具集（剥离语义单点，两消费点共用）：
+    * Nebula → 空（专属集全保留）；dream → 原集 − DreamAdmittedTools（仅
+    * MemoryEdit 准入）；其余身份 → 原集（行为零变化）。
+    * 消费点：buildAllowedToolSet 的 nebulaFiltered（runtime 授能剥离）与
+    * AgentLibrary 面板/定义保存侧 strip——dream 声明 MemoryEdit 保存时不再
+    * 被剥掉（否则准入形同虚设）。 */
+  def exclusiveToolsFor(name: String): Set[String] =
+    name match
+      case "Nebula" => Set.empty[String]
+      case "dream"  => NebulaExclusiveTools -- DreamAdmittedTools
+      case _        => NebulaExclusiveTools
 
   /** Nebula 固定工具集（阶段 2c agent 收敛，设计文档 §C.1 角色-工具静态矩阵；
     * 裁定 11：全部机制注入不可配置）。2026-09-05 08:40 作者裁定改版：+基础文件
