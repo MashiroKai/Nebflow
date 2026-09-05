@@ -257,30 +257,9 @@ export async function markConversationRead(conversationId, lastReadMessageId) {
   if (conv) conv.unreadCount = 0;
 }
 
-/** PUT /api/users/me/neblink-id {neblinkId} → 200 {neblinkId} ([U3] 号自定义).
- *  Upstream 409 taken / 422 invalid collapse to 502 + error string via the
- *  gateway — the UI pre-validates (regex + available check) so these only
- *  surface as rare races. */
-export async function setNeblinkId(neblinkId) {
-  if (!MOCK) return req('PUT', '/api/users/me/neblink-id', { neblinkId });
-  await delay();
-  const m = mockStore();
-  m.self.neblinkId = neblinkId;
-  return { neblinkId };
-}
-
-/** GET /api/users/me/neblink-id/available?q= → {available, reason?} ([U3]).
- *  reason: 'taken' | 'invalid'; 20/min shared with lookup (server limiter). */
-export async function neblinkIdAvailable(q) {
-  if (!MOCK) return req('GET', `/api/users/me/neblink-id/available?q=${encodeURIComponent(q)}`);
-  await delay();
-  const m = mockStore();
-  const v = String(q || '').trim();
-  if (!/^[a-zA-Z0-9]{3,32}$/.test(v)) return { available: false, reason: 'invalid' };
-  // Server semantics: uniqueness excludes SELF (own current id stays available).
-  const taken = m.users.some(u => (u.neblinkId || '').toLowerCase() === v.toLowerCase());
-  return taken ? { available: false, reason: 'taken' } : { available: true };
-}
+// NL 号 API（PUT/GET /api/users/me/neblink-id*）已随设置页 NL 号入口移除
+// （作者 2026-09-05 裁定：NL 号统一 = 官网 Username，官网已有修改功能）——
+// 前端唯一消费者（neblink.js 号自定义区）已删，包装不再保留。
 
 /** Test/mock helper: inject an inbound message as if a friend_event arrived. */
 export function mockInjectMessage(conversationId, msg) {
