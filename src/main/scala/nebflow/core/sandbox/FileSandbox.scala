@@ -13,6 +13,9 @@ import nebflow.core.tools.ToolError
  * 五族文件工具（Read/Write/Edit/MultiEdit + Glob/Grep 的搜索根）全部过闸：
  * - 写操作：resolve → writableRoots contain → 此刻 re-resolve（fresh）→ 返回
  *   fresh 路径供工具执行（dsh checkedTarget 模式，消灭 check-then-use TOCTOU）。
+ *   readDenied 负向规则先于 contain 一票优先（agents/**/memory.md 非 Nebula 份
+ *   拒写）——2026-09-05 数据根入可写面后红线不随写面扩大（同一规则读/写双闸
+ *   消费，非新增 deny）。
  * - 读操作：resolve → readableRoots contain → 返回 canonical 路径。
  * - 相对路径：以 ctx.sandbox.root（节点 projectRoot，§A.6）为基准解析——修掉
  *   Glob/Grep 默认根=JVM user.dir 的现状。沙箱关闭时保持旧行为（四件套拒绝
@@ -42,9 +45,21 @@ object FileSandbox:
       // 第二次解析此刻 fresh 执行——第一次检查到这里的窗口内 symlink 可被替换
       // （§A.3 dsh checkedTarget）。
       val fresh = SandboxPolicy.canonicalize(resolved)
-      (writable.find(SandboxPolicy.contains(_, canonical)), writable.find(SandboxPolicy.contains(_, fresh))) match
-        case (Some(_), Some(_)) => Right(fresh)
-        case _ => Left(ToolError(deniedMessage("write", rawPath, fresh, policy)))
+      // 凭据红线负向规则对写闸同等一票优先（2026-09-05 数据根入写面批）：数据根
+      // 整目录可写后，agents/**/memory.md 非 Nebula 份不得因落在可写数据根内而
+      // 变可写——同一既有规则的读/写双闸消费（红线延续，非新增 deny）；例外集与
+      // 读闸同源 = §4.2-B 审计只读白名单（Nebula memory.md 精确路径，其写放行
+      // 由数据根写面承载，属批次报告钉死的残留风险）。canonical+fresh 双查与
+      // contain 检查同构（root 内 symlink 指向私有记忆的间接路径同样拦截）。
+      if SandboxPolicy.readDenied(canonical) || SandboxPolicy.readDenied(fresh) then
+        Left(ToolError(deniedMessage(
+          "write", rawPath, fresh, policy,
+          reason = Some("path matches the private-memory deny rule (agents/**/memory.md is denied; the only exception is the audit-read-only whitelist for Nebula's own memory.md)")
+        )))
+      else
+        (writable.find(SandboxPolicy.contains(_, canonical)), writable.find(SandboxPolicy.contains(_, fresh))) match
+          case (Some(_), Some(_)) => Right(fresh)
+          case _ => Left(ToolError(deniedMessage("write", rawPath, fresh, policy)))
 
   /**
    * 读闸门（Read）。同样返回 canonical 路径——root 内 symlink 指外会在
