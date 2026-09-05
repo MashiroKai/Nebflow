@@ -746,7 +746,7 @@
    (div + hand-mixed #22c55e/#fff) is retired — every settings-page switch now
    renders the shared nb-toggle component (js/toggle.js); its styles live in
    the «nb-toggle — shared switch component» section at the bottom of this
-   file (glass-control material + sapphire accent, both themes auto-adapt). */
+   file (glass-control material + brand-green accent, both themes auto-adapt). */
 /* Config editor */
 .config-editor-wrap {
   margin-top: 8px;
@@ -792,14 +792,15 @@
   line-height: 1.6;
 }
 
-/* ── Settings avatar entry (Account section — 09-05 五项裁定④) ──────────
+/* ── Settings avatar entry (Account section — 09-05 五项裁定④; 2026-09-06
+   修整: 精简为居中单头像，区内文字全部移除——作者令) ──────────────────────
    Dual state: logged out → product logo (bright/dark via <picture>);
    logged in with account avatar → photo. Same decision source as the
    Activity Bar avatar (neblink.js avatarViewState). Tokens only. */
 .settings-avatar-entry {
   display: flex;
   align-items: center;
-  gap: 12px;
+  justify-content: center;
   width: 100%;
   padding: 8px;
   background: var(--color-frame-input-bg);
@@ -845,10 +846,6 @@
 /* Author display rules must not defeat the hidden attribute. */
 .settings-avatar-logo[hidden],
 .settings-avatar-photo[hidden] { display: none; }
-.settings-avatar-text {
-  font-size: 13px;
-  color: var(--color-text);
-}
 
 /* ── Config Cards (Providers) ──────────────────────────────────────────── */
 .cfg-card {
@@ -2437,10 +2434,16 @@
    the sidebar-restructure batch (replacing the legacy .toggle / .cfg-toggle
    pair). Contract: markup from toggleHTML(options) — a real <button> with
    role="switch", so Space/Enter click is native; knob drawn by ::after.
-   TOKEN DISCIPLINE: track = glass-control material, accent = sapphire
-   family, motion = the app-wide 0.15s control-transition convention,
+   TOKEN DISCIPLINE: track = glass-control material, accent = brand green
+   (--brand-green triplet, sapphire.css — author-ruled 2026-09-06; was
+   sapphire), motion = the app-wide 0.15s control-transition convention,
    enter/exit = the shared --panel-ease curve. Zero hand-made color values;
-   both themes auto-adapt (sapphire.css / base.css dark blocks). */
+   both themes auto-adapt (sapphire.css / base.css dark blocks).
+   GEOMETRY (2026-09-06): border-box track 36×20 with 1px border → padding
+   box 34×18; knob 16×16 at top:1px/left:2px, ON translateX(14px). Knob
+   center sits on the track axis in both states (vertical gaps 2px/2px
+   incl. border), side gaps mirror (OFF left 3px == ON right 3px) — no
+   edge-hugging, no overflow. */
 .nb-toggle {
   position: relative;
   width: 36px;
@@ -2461,7 +2464,7 @@
 .nb-toggle::after {
   content: '';
   position: absolute;
-  top: 2px;
+  top: 1px;
   left: 2px;
   width: 16px;
   height: 16px;
@@ -2470,15 +2473,15 @@
   transition: transform 0.15s ease, background 0.15s;
 }
 .nb-toggle.on {
-  background: rgb(var(--sapphire) / 0.35);
-  border-color: rgb(var(--sapphire) / 0.5);
+  background: rgb(var(--brand-green) / 0.35);
+  border-color: rgb(var(--brand-green) / 0.5);
 }
 .nb-toggle.on::after {
-  transform: translateX(16px);
-  background: rgb(var(--sapphire));
+  transform: translateX(14px);
+  background: rgb(var(--brand-green));
 }
 .nb-toggle:focus-visible {
-  outline: 2px solid rgb(var(--sapphire) / 0.5);
+  outline: 2px solid rgb(var(--brand-green) / 0.5);
   outline-offset: 1px;
 }
 .nb-toggle:disabled { opacity: 0.5; cursor: default; }
