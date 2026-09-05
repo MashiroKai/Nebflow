@@ -6,8 +6,9 @@
 
 ### 合并节点创建模板（NodeEdit create）
 
+- **创建顺序（mount-enforce 批 20260905，硬约束）**：**先建上游任务节点，最后建合并节点**。合并节点 `in` 必填（≥1 个已存在的上游节点 id）——零上游合并节点永远等不到触发（空挂），创建直接被拒（NODE_MERGE_REQUIRES_UPSTREAM）。合法流程：①逐个建上游任务节点（`out` 先指 `"Nebula"`）→ ②建合并节点并 `in`=<上游节点 id 清单>——in 声明会自动把各上游的 out 改接到合并节点（多对一接线由引擎完成，无需再改上游）。
 - `agent`: `general`；**不配 `worktree`**（硬约束，NodeEdit 会拒绝 merge+worktree 组合）——合并节点沙箱根 = workspace 本体，主仓 `.git` 在根内可写；配了 worktree 沙箱根变成 worktree 目录，主仓 `.git` 在根外，git 变更一律 EPERM。
-- `merge`: `true`（触发语义引擎侧保证：全部上游 completed 才启动；上游 failed → 合并节点自动转 blocked（category=upstream-incomplete，不合并不悬挂）；上游 blocked → 走既有 blocked 重入协议处置该上游，合并节点原地等待）。
+- `merge`: `true`（触发语义引擎侧保证：全部上游 completed 才启动；上游 failed → 合并节点自动转 blocked（category=upstream-incomplete，不合并不悬挂）——含「创建时上游已 failed」形态；上游 blocked → 走既有 blocked 重入协议处置该上游，合并节点原地等待）。
 - `out`: `Nebula`（落地完成回报）。
 - `task` 必含三要素：**上游清单**（分支名 ↔ worktree 名一一对应）、**落地命令全集**（commit-ready 代执行语义：上游节点只需申报 commit-ready，落地由合并节点代做）、**复核命令 + 完成标准**。模板：
 
