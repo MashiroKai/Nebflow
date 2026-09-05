@@ -10,7 +10,7 @@ import java.util.concurrent.ConcurrentHashMap
 
 import scala.jdk.CollectionConverters.*
 
-import nebflow.service.MemoryStore
+import nebflow.service.{MemoryBudget, MemoryStore}
 
 /**
  * MemoryEdit（阶段 2c agent 收敛，设计文档 §C.2）——Nebula 专用记忆维护工具，
@@ -63,7 +63,12 @@ object MemoryEditTool extends Tool:
 - `section` matches a "## Heading" line exactly (the "## " prefix is optional in the parameter).
 - No whole-file rewrite exists by design — memory cannot be wiped in one call.
 - append/update `content` must be ONE entry: a single line starting with "- ". Multi-line content is rejected (MEMORYEDIT_ENTRY_FORMAT) — drifted non-entry lines would be invisible to update/remove forever. Use replace_section for a multi-line section body.
-- Concurrency: same-file MemoryEdit calls are serialized per file within this process (a read-modify-write is atomic against other MemoryEdit calls). Cross-process writers and direct saves to these files from other subsystems are NOT locked — do not race them."""
+- Concurrency: same-file MemoryEdit calls are serialized per file within this process (a read-modify-write is atomic against other MemoryEdit calls). Cross-process writers and direct saves to these files from other subsystems are NOT locked — do not race them.
+## Budget (write-side enforcement, 2026-09-05 memory-management ruling)
+- append/update validate the POST-WRITE file size before saving. Hard budget: User.md 50KB, agent memory.md 30KB — exceeding it is rejected (MEMORYEDIT_BUDGET) with the largest sections listed: consolidate first, then write.
+- Over the 80% soft line (User.md 40KB / memory.md 24KB) the write succeeds but the result carries a WARN — schedule a consolidation pass, don't wait for the weekly audit.
+- replace_section is exempt by design: it is the consolidation (shrinking) channel; gating it would remove the only way back under budget. The Dream extraction hook shares the same gate on its side.
+- Injection is NEVER truncated (ruling 2026-09-05 §3.3): over-budget memory silently taxes every future session — the write-side gate is the only enforcement, so honor the WARN."""
 
   val inputSchema: JsonObject = JsonObject(
     "type" -> "object".asJson,
@@ -178,6 +183,35 @@ object MemoryEditTool extends Tool:
   private def readLines(load: () => Option[String]): Vector[String] =
     load().getOrElse("").linesIterator.toVector
 
+  // ------------------------------------------------------------------
+  // 预算闸（§6.2-2.2，2026-09-05 memory-management-plan 批次二机制一）：
+  // append/update 落盘前校验【新文件总字节】——超硬顶拒绝（附 top-3 节+整理
+  // 指引），超 80% 放行+结果附 WARN。与 singleEntryGuard 同层的入口校验；
+  // replace_section 不闸（整理/收缩通道，见 description Budget 节）。
+  // DreamMode.updateMemory 共用 MemoryBudget 判据（防 hook 侧绕过）。
+  // ------------------------------------------------------------------
+
+  private def bytesOf(content: String): Long =
+    content.getBytes(java.nio.charset.StandardCharsets.UTF_8).length.toLong
+
+  /** 超硬顶 → Some(结构化拒绝)；其余 None（放行判定交 verdict 成功路径）。 */
+  private def budgetExceeded(action: String, targetId: String, newContent: String): Option[ToolError] =
+    MemoryBudget.verdict(targetId, bytesOf(newContent)) match
+      case MemoryBudget.Exceeded(_, _) =>
+        Some(ToolError(MemoryBudget.exceededMessage(
+          action, targetId, targetPathLabel(targetId), bytesOf(newContent), newContent)))
+      case _ => None
+
+  private def targetPathLabel(targetId: String): String =
+    if targetId == "user" then "~/.nebflow/User.md" else "~/.nebflow/agents/Nebula/memory.md"
+
+  /** 成功结果文本；80% 软警时在生效提示后追加 WARN（放行不拦截）。 */
+  private def okWithBudget(action: String, path: os.Path, detail: String, targetId: String, newContent: String): Either[ToolError, String] =
+    val base = ok(action, path, detail)
+    MemoryBudget.verdict(targetId, bytesOf(newContent)) match
+      case MemoryBudget.Warn(_, _, _) => base.map(_ + "\n\n" + MemoryBudget.warnNotice(targetId, bytesOf(newContent)))
+      case _                          => base
+
   /** 结果文本：动作 + 文件 + 变更摘要 + 生效提示（§C.2 结果语义）。 */
   private def ok(action: String, path: os.Path, detail: String): Either[ToolError, String] =
     Right(
@@ -253,9 +287,12 @@ object MemoryEditTool extends Tool:
                 val add   = normalizeContent(content.getOrElse(""))
                 section match
                   case None =>
-                    val out  = if lines.forall(_.trim.isEmpty) then add else lines ++ add
-                    t.save(out.mkString("\n") + "\n").unsafeRunSync()
-                    ok("append (file end)", t.path, s"+ ${add.mkString(" ⏎ ")}")
+                    val newContent = (if lines.forall(_.trim.isEmpty) then add else lines ++ add).mkString("\n") + "\n"
+                    budgetExceeded("append", target, newContent) match
+                      case Some(rejection) => Left(rejection)
+                      case None =>
+                        t.save(newContent).unsafeRunSync()
+                        okWithBudget("append (file end)", t.path, s"+ ${add.mkString(" ⏎ ")}", target, newContent)
                   case Some(sec) =>
                     findSection(lines, sec) match
                       case None =>
@@ -263,16 +300,24 @@ object MemoryEditTool extends Tool:
                           s"MemoryEdit: no section '## ${canonicalSection(sec)}'. Existing sections: ${existingSectionNames(lines)} (MEMORYEDIT_NO_SECTION)"))
                       case Some(h) =>
                         val (b0, b1) = sectionBodyRange(lines, h)
-                        t.save(lines.patch(b1, add, 0).mkString("\n") + "\n").unsafeRunSync()
-                        ok(s"append (section '$sec')", t.path, s"+ ${add.mkString(" ⏎ ")}")
+                        val newContent = lines.patch(b1, add, 0).mkString("\n") + "\n"
+                        budgetExceeded("append", target, newContent) match
+                          case Some(rejection) => Left(rejection)
+                          case None =>
+                            t.save(newContent).unsafeRunSync()
+                            okWithBudget(s"append (section '$sec')", t.path, s"+ ${add.mkString(" ⏎ ")}", target, newContent)
 
               case "update" =>
                 val lines = readLines(t.load)
                 locate(lines, section, matchStr.getOrElse("")).flatMap { abs =>
                   val old = lines(abs)
                   val rep = normalizeContent(content.getOrElse(""))
-                  t.save(lines.patch(abs, rep, 1).mkString("\n") + "\n").unsafeRunSync()
-                  ok("update", t.path, s"- ${old.trim.take(80)}\n+ ${rep.mkString(" ⏎ ")}")
+                  val newContent = lines.patch(abs, rep, 1).mkString("\n") + "\n"
+                  budgetExceeded("update", target, newContent) match
+                    case Some(rejection) => Left(rejection)
+                    case None =>
+                      t.save(newContent).unsafeRunSync()
+                      okWithBudget("update", t.path, s"- ${old.trim.take(80)}\n+ ${rep.mkString(" ⏎ ")}", target, newContent)
                 }
 
               case "remove" =>

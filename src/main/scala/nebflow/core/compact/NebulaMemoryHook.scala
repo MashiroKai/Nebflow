@@ -34,7 +34,13 @@ object NebulaMemoryHook extends PreCompactionHook:
             DreamMode
               .updateMemory(facts)
               .handleErrorWith(e => logger.warn(s"Memory update failed: ${e.getMessage}"))
+              .void
           else IO.unit
+        // 生命周期触发（§6.2-2.5）：压缩抽取完成后置位整理提醒信号 —— 消费方
+        // ContextRefresher.buildMemoryBlock 在压缩后的首个 Nebula 注入里带
+        // 「T2/T3 清扫提示」。仅置位一行，不改本 hook 的抽取/合并清扫逻辑
+        // （先提示后机制，plan §2.2-2）。
+        _ = nebflow.agent.MemoryHygieneSignal.markCompacted()
       yield ()
 
   private def extractFacts(

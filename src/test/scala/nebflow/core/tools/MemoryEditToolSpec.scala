@@ -6,7 +6,7 @@ import io.circe.JsonObject
 import cats.effect.unsafe.implicits.global
 import munit.FunSuite
 import nebflow.core.PathUtil
-import nebflow.service.MemoryStore
+import nebflow.service.{MemoryBudget, MemoryStore}
 
 import java.nio.file.Files
 
@@ -281,4 +281,60 @@ class MemoryEditToolSpec extends FunSuite:
     val content = os.read(userFile)
     val missing = (1 to 8).count(i => !content.contains(s"- 并发条目 $i"))
     assertEquals(missing, 0, "no lost update: all 8 entries present after concurrent RMW")
+
+  // ===== 预算闸（§6.2-2.2，2026-09-05 批次二机制一）：三态 =====
+
+  test("budget: within budget → append succeeds, no WARN (verdict Within)"):
+    seedUser("x" * 1000) // 1KB，远低于 24KB 软线
+    val res = call("target" -> "user".asJson, "action" -> "append".asJson, "content" -> "- 预算内条目".asJson)
+    assert(res.isRight)
+    assert(!res.toOption.get.contains("MEMORYEDIT_BUDGET_WARN"), "预算内不附 WARN")
+
+  test("budget: over 80% soft line but under hard cap → write succeeds WITH WARN (放行不拦截)"):
+    seedUser("x" * 41000) // 41,000B > 40,960B 软线，< 51,200B 硬顶
+    val res = call("target" -> "user".asJson, "action" -> "append".asJson, "content" -> "- 软警条目".asJson)
+    assert(res.isRight, "80% 以上、硬顶以内必须放行")
+    val text = res.toOption.get
+    assert(text.contains("MEMORYEDIT_BUDGET_WARN"), s"结果必须附软警 WARN: ${text.take(200)}")
+    assert(text.contains("consolidation"), "WARN 指向整理行动")
+    assert(os.read(userFile).contains("- 软警条目"), "放行 = 实际落盘")
+
+  test("budget: over hard cap → append REJECTED (MEMORYEDIT_BUDGET) with top-3 sections + consolidation guidance; file untouched"):
+    seedUser("x" * 51300) // 51,300B > 51,200B 硬顶
+    val res = call("target" -> "user".asJson, "action" -> "append".asJson, "content" -> "- 超限条目".asJson)
+    val msg = res.left.toOption.get.message
+    assert(msg.contains("MEMORYEDIT_BUDGET"), s"超硬顶必须结构化拒绝: $msg")
+    assert(msg.contains("Largest sections"), "拒绝消息附 top-3 最大节定位")
+    assert(msg.contains("Consolidate first") || msg.contains("consolidate"), "拒绝消息附「先整理再写」指引")
+    assert(!os.read(userFile).contains("- 超限条目"), "拒绝 = 零写入")
+
+  test("budget: update path is gated too — growing an entry past the hard cap is rejected"):
+    seedUser("x" * 50600 + "\n- 小条目") // 50,619B 贴着硬顶下方
+    assert(os.read(userFile).getBytes.length < MemoryBudget.UserHardBytes)
+    val res = call("target" -> "user".asJson, "action" -> "update".asJson,
+      "match" -> "小条目".asJson, "content" -> ("- 替换" + "y" * 4096).asJson)
+    val msg = res.left.toOption.get.message
+    assert(msg.contains("MEMORYEDIT_BUDGET"), "update 推高越过硬顶同样拒绝")
+
+  test("budget: agent target gated at its own 30KB hard cap"):
+    seedAgent("x" * 30800) // 30,800B > 30,720B agent 硬顶
+    val res = call("target" -> "agent".asJson, "action" -> "append".asJson, "content" -> "- agent 超限".asJson)
+    assert(res.left.toOption.get.message.contains("MEMORYEDIT_BUDGET"), "agent 30KB 硬顶独立生效")
+
+  test("budget: replace_section is EXEMPT — the consolidation channel stays open over budget"):
+    seedUser("## Bulk\n\n" + "x" * 51300) // 已在硬顶之上（历史上超限的文件必须仍可整理）
+    val res = call("target" -> "user".asJson, "action" -> "replace_section".asJson,
+      "section" -> "## Bulk".asJson, "content" -> "- 整理后唯一条目".asJson)
+    assert(res.isRight, "replace_section 不设闸——超限文件的收缩路径必须畅通")
+    assert(os.read(userFile).contains("- 整理后唯一条目"))
+
+  test("budget: sectionSizes/topSections — sizes are per-## section, sorted desc (error-message helper)"):
+    val content = "# H\n\n前言三行\n\n## Alpha\n\n" + ("a" * 1000) + "\n\n## Beta\n\n" + ("b" * 2000) + "\n\n## Gamma\n\n" + ("c" * 500)
+    val sizes = MemoryBudget.sectionSizes(content)
+    assertEquals(sizes.head._1, "Beta", "最大节在前")
+    assertEquals(sizes(1)._1, "Alpha")
+    assertEquals(sizes(2)._1, "Gamma")
+    val top = MemoryBudget.topSections(content)
+    assert(top.contains("Beta") && top.contains("Alpha") && top.contains("Gamma"))
+    assert(!top.contains("Delta"), "top-3 只列三节")
 end MemoryEditToolSpec
