@@ -15,7 +15,9 @@ project/project/
 Thumbs.db
 
 # Nebflow runtime
-.nebflow/
+# dispatcher-ctx 批照 memory-plan 配方：runtime 全忽略，仅 Spec/ 入 track（spec 随分支走）
+.nebflow/*
+!.nebflow/Spec/
 .nebflow-qc.log
 
 # Internal / development-only
