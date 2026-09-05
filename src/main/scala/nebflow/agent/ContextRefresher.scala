@@ -333,6 +333,11 @@ object ContextRefresher:
    * (shouldInjectMemory) only admits Nebula, so teamName is always None here.
    *
    * Only levels that exist on disk are included.
+   *
+   * §6.2-2.5（2026-09-05 批次二机制五）：构建时顺带消费生命周期信号并按已加载
+   * 内容计算字节（零额外 IO）——命中触发源或任一文件超 80% 软线时在记忆块尾部
+   * 追加整理提醒（>80% 为即时任务措辞；纯渲染见 renderMemoryBlock）。
+   * 注入侧仍不加截断（§3.3 裁定）——提醒是提示，不是截断。
    */
   def buildMemoryBlock(
     agentName: String,
@@ -341,22 +346,78 @@ object ContextRefresher:
     val agentMemory = teamName match
       case Some(tn) => MemoryStore.loadTeamAgentMemory(tn, agentName)
       case None => MemoryStore.loadAgentMemory(agentName)
+    renderMemoryBlock(
+      MemoryStore.loadUserMemory,
+      agentMemory,
+      MemoryHygieneSignal.takePending()
+    )
+  end buildMemoryBlock
 
+  /** 纯渲染（spec 直测面）：两记忆内容 + (restartPending, compactPending) 信号 →
+    * 记忆块全文。文件字节直接由已加载内容计算（无第二次读盘）。 */
+  def renderMemoryBlock(
+    userContent: Option[String],
+    agentContent: Option[String],
+    lifecycleSignal: (Boolean, Boolean)
+  ): String =
     val sections = List(
-      MemoryStore.loadUserMemory
-        .map(content => s"## User Memory\n\n$content"),
-      agentMemory
-        .map(content => s"## Agent Memory\n\n$content")
+      userContent.map(content => s"## User Memory\n\n$content"),
+      agentContent.map(content => s"## Agent Memory\n\n$content")
     ).flatten
 
-    if sections.isEmpty then ""
-    else
-      s"""# Memory
+    val base =
+      if sections.isEmpty then ""
+      else
+        s"""# Memory
+           |
+           |Your memory is below. Entries with →id have detail files at `~/.nebflow/memory/{id}.md` — read them when the scenario matches.
+           |
+           |${sections.mkString("\n\n")}""".stripMargin
+
+    val notice = memoryHygieneNotice(userContent, agentContent, lifecycleSignal)
+    if notice.isEmpty then base
+    else if base.isEmpty then notice
+    else base + "\n\n---\n\n" + notice
+  end renderMemoryBlock
+
+  /** 生命周期整理提醒（§6.2-2.5）：任一文件 >80% 软线 → 即时任务措辞（当轮安排
+    * 整理，不等周日）；否则重启/压缩事件命中 → 轻量清扫提示；两者皆无 → 空串。 */
+  def memoryHygieneNotice(
+    userContent: Option[String],
+    agentContent: Option[String],
+    lifecycleSignal: (Boolean, Boolean)
+  ): String =
+    val bytesOf = (s: Option[String]) => s.map(_.getBytes(java.nio.charset.StandardCharsets.UTF_8).length.toLong).getOrElse(0L)
+    val userBytes = bytesOf(userContent)
+    val agentBytes = bytesOf(agentContent)
+    val (restartPending, compactPending) = lifecycleSignal
+
+    val userOver = userBytes > nebflow.service.MemoryBudget.UserSoftBytes
+    val agentOver = agentBytes > nebflow.service.MemoryBudget.AgentSoftBytes
+
+    if userOver || agentOver then
+      val lines = List(
+        Option.when(userOver)(
+          s"- ~/.nebflow/User.md: $userBytes bytes (soft line ${nebflow.service.MemoryBudget.UserSoftBytes}, hard ${nebflow.service.MemoryBudget.UserHardBytes})"),
+        Option.when(agentOver)(
+          s"- ~/.nebflow/agents/Nebula/memory.md: $agentBytes bytes (soft line ${nebflow.service.MemoryBudget.AgentSoftBytes}, hard ${nebflow.service.MemoryBudget.AgentHardBytes})")
+      ).flatten
+      s"""## Memory hygiene — IMMEDIATE TASK
          |
-         |Your memory is below. Entries with →id have detail files at `~/.nebflow/memory/{id}.md` — read them when the scenario matches.
+         |A memory file is over the 80% budget line:
+         |${lines.mkString("\n")}
          |
-         |${sections.mkString("\n\n")}""".stripMargin
-  end buildMemoryBlock
+         |Schedule a consolidation pass THIS TURN (memory-consolidation skill), do not wait for the weekly audit: over-budget memory taxes every future session, and the write-side gate will start rejecting appends at the hard line. Trim stale T2 batch sections, superseded rulings and unpromoted Dream entries first (取代而非追加; replace_section for section-level cleanup).""".stripMargin
+    else if restartPending || compactPending then
+      val cause = (restartPending, compactPending) match
+        case (true, true)  => "The host just restarted AND your memory was just compacted"
+        case (true, false) => "The host just restarted"
+        case _             => "Your memory was just compacted"
+      s"""## Memory hygiene
+         |
+         |$cause. Restart/compaction closes out T2 status entries (pending-reboot lists, batch ledgers) and ages T3 Dream entries. If you noticed stale state while resuming, run a quick consolidation pass (memory-consolidation skill) — trim closed-out entries instead of letting them accumulate to the budget line.""".stripMargin
+    else ""
+  end memoryHygieneNotice
 
   // ============================================================
   // Main entry point
