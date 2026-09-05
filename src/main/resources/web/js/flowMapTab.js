@@ -843,7 +843,9 @@ function nodeContentKey(n) {
 function transplantNodeContent(el, n, pos, originX, nameOf) {
   const holder = document.createElement('div');
   holder.innerHTML = nodeHtml(n, pos, originX, nameOf);
-  const fresh = holder.firstElementChild;
+  // firstElementChild is typed Element, but the parsed node here is always
+  // the nodeHtml <div> — narrow so fresh.dataset typechecks.
+  const fresh = /** @type {HTMLElement|null} */ (holder.firstElementChild);
   if (!fresh) return;
   const orbit = el.querySelector('.solar-orbit');
   Array.from(el.children).forEach((child) => { if (child !== orbit) child.remove(); });

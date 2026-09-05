@@ -1837,7 +1837,8 @@ export function showOptions(container, questions, onConfirm, doneLabel, onCancel
   cancelBtn.onclick = () => {
     if (askSessionId) askCardRegistry.delete(askSessionId);
     if (requestId) dirPickCards.delete(requestId); // 工作区选择卡事件一并失主
-    box.querySelectorAll('.option-btn, .option-confirm').forEach(el => { el.disabled = true; });
+    // option buttons are <button>/<a> form controls; narrow for .disabled.
+    box.querySelectorAll('.option-btn, .option-confirm').forEach(el => { (/** @type {HTMLButtonElement} */ (el)).disabled = true; });
     cancelBtn.disabled = true;
     confirmBtn.disabled = true;
     if (askSessionId) clearAskDrafts(askSessionId);
@@ -1853,7 +1854,7 @@ export function showOptions(container, questions, onConfirm, doneLabel, onCancel
     // _nfAskAnswer postMessages find no entry and are silently discarded).
     if (askSessionId) askCardRegistry.delete(askSessionId);
     if (requestId) dirPickCards.delete(requestId); // 工作区选择卡事件一并失主
-    box.querySelectorAll('.option-btn').forEach(el => { el.disabled = true; });
+    box.querySelectorAll('.option-btn').forEach(el => { (/** @type {HTMLButtonElement} */ (el)).disabled = true; });
     cancelBtn.disabled = true;
     confirmBtn.disabled = true;
     confirmBtn.style.display = 'none';
@@ -2149,7 +2150,9 @@ function markAnsweredPick(box, items, answerText) {
     // Preset options carry data-label (both single and multi branches); the
     // Other button never does (multi marks it data-other, single marks nothing).
     let matched = false;
-    let otherBtn = null;
+    // Declared type needed: the closure assigns otherBtn, but CFA only sees
+    // the `= null` initializer and narrows later reads to never.
+    let /** @type {Element|null} */ otherBtn = null;
     btns.forEach(btn => {
       if (btn.dataset.label === undefined) { otherBtn = btn; return; }
       if (texts.includes(btn.dataset.label)) { btn.classList.add('picked'); matched = true; }

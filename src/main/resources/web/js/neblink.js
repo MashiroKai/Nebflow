@@ -64,7 +64,7 @@ function scheduleNlIdCheck() {
   if (nlIdTimer) clearTimeout(nlIdTimer);
   const v = nlIdValue.trim();
   const statusline = document.getElementById('neblink-nlid-statusline');
-  const saveBtn = document.getElementById('neblink-nlid-save');
+  const saveBtn = /** @type {HTMLButtonElement|null} */ (document.getElementById('neblink-nlid-save'));
   const setStatus = (html, canSave) => {
     if (statusline) statusline.innerHTML = html;
     if (saveBtn) saveBtn.disabled = !canSave;
@@ -99,7 +99,7 @@ async function saveNeblinkId(rerender) {
   const v = nlIdValue.trim();
   if (!NLID_RE.test(v) || nlIdSaving) return;
   nlIdSaving = true;
-  const saveBtn = document.getElementById('neblink-nlid-save');
+  const saveBtn = /** @type {HTMLButtonElement|null} */ (document.getElementById('neblink-nlid-save'));
   if (saveBtn) { saveBtn.disabled = true; saveBtn.textContent = t('neblink.nlIdSaving'); }
   try {
     const api = await import('./friendsApi.js');
@@ -552,7 +552,7 @@ export function bindNeblinkEvents(rerender) {
   // Logout button — clears the device credential + disables NebLink via
   // POST /api/neblink/logout, then refreshes status so the settings panel
   // and the avatar both return to the logged-out state.
-  const logoutBtn = document.getElementById('neblink-logout-btn');
+  const logoutBtn = /** @type {HTMLButtonElement|null} */ (document.getElementById('neblink-logout-btn'));
   if (logoutBtn) {
     logoutBtn.addEventListener('click', async () => {
       logoutBtn.disabled = true;
