@@ -153,7 +153,7 @@ class NodeEngine(
                   case _ => s
               }.flatMap { s =>
                 val allArrived = s.nodes.get(t).exists(tn2 => tn2.in.forall(upId => tn2.deliveredTo.contains(upId)))
-                if allArrived then startNode(t) else IO.unit
+                if allArrived then forkStart(s"deliver-out-to -> $t")(startNode(t)) else IO.unit
               }
         yield ()
 
@@ -198,10 +198,33 @@ class NodeEngine(
                   // 历史遗留数据（校验生效前落盘的零连接旧节点）与校验层外瞬态。
                   if node.status == NodeLifecycle.Wiring && node.task.isEmpty && node.in.isEmpty && node.deps.isEmpty then IO.unit
                   else buildInput(node).flatMap { input =>
-                    spawnAndRun(node, input)
+                    // 翻转竞发败方终结（trigger-chain-fix CAS 守卫）：spawnAndRun 内
+                    // 翻转 LostRace 败方抛 StartRaceLost——在此单点吞掉，对全部调用
+                    // 方（forkStart/runDetached/直接调用）呈安静败方语义；其他异常
+                    // 原样上抛（forkStart/runDetached 留痕）。
+                    spawnAndRun(node, input).handleErrorWith {
+                      case _: NodeEngine.StartRaceLost => IO.unit
+                    }
                   }
             }
         }
+
+  /** 触发链 fork 化（根因报告 §6.1，trigger-chain-fix 批）：startNode 同步等到被
+    * 启动节点整个会话终态（runWithAgent 内 IO.race(resultDeferred.get, …)），触发
+    * 方在自身 fiber 上被下游会话质押——settleDeps 的 traverse_ 遍历因此把「同上游
+    * N 依赖者」压成深度优先串行链（案例 A：队尾依赖者 pending 数小时，外观 pending
+    * 永动），deliverOut/deliverFailed/deliverOutTo 则把上游完成 fiber 质押给下游
+    * 全链（链深嵌套 SOE 风险面同源）。fork 后上游完成即同时唤醒全部依赖者；启动
+    * 判定、幂等闸门、CAS 翻转守卫全在 startNode/spawnAndRun 内原样把关（同节点
+    * 竞发由翻转守卫裁决，败方安静退出）。错误观测沿用 NodeTools.runDetached 形态
+    * （handleErrorWith 留痕，含触发点上下文）。 */
+  private def forkStart(what: String)(io: IO[Unit]): IO[Unit] =
+    io
+      .handleErrorWith(e =>
+        logger.error(s"[$projectName] detached trigger '$what' failed: ${Option(e.getMessage).getOrElse(e.toString)}")
+      )
+      .start
+      .void
 
   /** 构造节点输入：自身 task 上下文 + 各上游 result（=== Node <name> === 头，§2.7）+
     * blocked 声明协议脚注（设计 §1.5 原文，单点注入覆盖所有节点——节点 agent 是通用
@@ -376,8 +399,16 @@ class NodeEngine(
       // status=Running 翻转——NodeList liveness / abandon / NodeCancel 收殓判定
       // 以「running 表含此节点」为活会话信号，若先翻转后登记，spawn 窗口内的
       // 节点会被误判死会话（false-dead → 可被收殓 = 误杀）。
+      // 条件注册（trigger-chain-fix fork 化硬化）：触发链并行化后，同节点多触发
+      // 方（deliverOut/settleDeps/settleSweep）并发到达本点——盲目覆写会顶掉先到
+      // 者的 cancelSig（NodeCancel 信号永久丢失）。只在空位时注册；翻转赢家在
+      // 翻转成功后重装自己的 sig（FlipDone 分支），最终条目必属活会话 fiber。
+      // liveness 判定只看键存在，不受值选择影响。
       cancelSig <- Deferred[IO, Unit]
-      _ <- running.update(_ + (nodeId -> cancelSig))
+      _ <- running.modify { m =>
+        if m.contains(nodeId) then (m, ())
+        else (m + (nodeId -> cancelSig), ())
+      }
       // 状态 → running + startedAt（WS nodeUpdated，NodeList 同构 payload）。
       // 竞态修复（与终态化同族）：running 迁移落在事务内现读的 fresh 节点上——
       // getNode 快照经 EntityLoader 加载 agent 期间可能已落后，陈旧 copy 写回会
@@ -385,25 +416,63 @@ class NodeEngine(
       // barrier 事务性复核（fix a 启动判定完整性 20260903）：startNode 入口的
       // in ⊆ deliveredTo 检查沿 getNode 快照，快照与翻转之间并发接线（edit 追加
       // in）可增长 in——沿陈旧快照放行 = 以不完整 barrier 提前启动（未等齐）。
-      // 复核与翻转并入同一 mutate 事务：fresh barrier 未齐 → 拒翻转不 spawn
-      //（status 保持原态，等真正等齐时的投递/结算方重试 startNode）。
-      flipped <- store.mutate { s =>
+      // 复核与翻转并入同一事务：fresh barrier 未齐 → 拒翻转不 spawn（status 保持
+      // 原态，等真正等齐时的投递/结算方重试 startNode）。
+      // CAS 翻转守卫（trigger-chain-fix §6.1 前置硬化）：仅 Pending/Wiring 可翻
+      // 转。fork 化后多触发方并发通过①②③闸门（都沿陈旧 Pending 快照），无守卫
+      // 的第二个 mutate 会无视已是 Running 的事实照常覆写 → 双 spawn（第二个覆写
+      // running 表与 startedAt，双会话双计费、cancel 信号错投）。守卫 +
+      // mutateWithResult 事务内三态判定：Done=本 fiber 唯一翻转（继续 spawn）；
+      // LostRace=败方（他者已翻转到 Running——fork 并行化的正常形态，安静回滚，
+      // 不事件不抛错：上游每次完成都产生同节点竞发，事件化=刷屏）；Aborted=真异
+      // 常（消失/barrier 未齐/终态竞合）→ start-aborted 事件落账（§6.3 异常信号
+      // 源，不再只靠异常上抛）+ 错误上抛由调用方留痕。
+      now <- IO(System.currentTimeMillis())
+      (flipped, flipOutcome) <- store.mutateWithResult { s =>
         s.nodes.get(nodeId) match
-          case Some(fresh) if !fresh.in.exists(up => !fresh.deliveredTo.contains(up)) =>
-            s.copy(nodes = s.nodes.updated(nodeId, fresh.copy(
+          case Some(fresh)
+              if (fresh.status == NodeLifecycle.Pending || fresh.status == NodeLifecycle.Wiring)
+                && !fresh.in.exists(up => !fresh.deliveredTo.contains(up)) =>
+            (s.copy(nodes = s.nodes.updated(nodeId, fresh.copy(
               status = NodeLifecycle.Running,
-              startedAt = Some(System.currentTimeMillis()))))
-          case _ => s
+              startedAt = Some(now)))), NodeEngine.FlipOutcome.Done)
+          case Some(fresh) if fresh.status == NodeLifecycle.Running =>
+            (s, NodeEngine.FlipOutcome.LostRace)
+          case Some(fresh) if fresh.in.exists(up => !fresh.deliveredTo.contains(up)) =>
+            (s, NodeEngine.FlipOutcome.Aborted("in-barrier not settled (concurrent rewiring)"))
+          case Some(fresh) =>
+            (s, NodeEngine.FlipOutcome.Aborted(s"state changed to '${fresh.status}' before flip (concurrent finalize)"))
+          case None =>
+            (s, NodeEngine.FlipOutcome.Aborted("node vanished"))
       }
-      _ <- flipped.nodes.get(nodeId) match
-        case Some(runningDef) if runningDef.status == NodeLifecycle.Running =>
-          emitEvent("nodeUpdated", nodeId, NodePayload.buildNodeJson(runningDef, System.currentTimeMillis()))
-        case _ =>
-          // 回滚在飞登记并中止：节点已消失（原语义）或 barrier 未齐（fix a 新增
-          // ——并发接线增长被事务复核拦下；错误由 runDetached 等调用方日志承载）。
-          running.update(_ - nodeId) *>
+      _ <- flipOutcome match
+        case NodeEngine.FlipOutcome.Done =>
+          // 赢家重装自己的 cancelSig：条件注册期间条目可能仍是竞发者的占位——
+          // 最终条目必须属于本活会话 fiber（NodeCancel 信号才能到达本会话）。
+          running.update(m => m + (nodeId -> cancelSig)) *>
+            flipped.nodes.get(nodeId).traverse_(runningDef =>
+              emitEvent("nodeUpdated", nodeId, NodePayload.buildNodeJson(runningDef, System.currentTimeMillis())))
+        case NodeEngine.FlipOutcome.LostRace =>
+          // CAS 败方：按 sig 身份只回滚自己的登记（不得误删赢家的条目），抛
+          // StartRaceLost 终止本 fiber 的 for 推导（否则败方继续 spawn = 双会话，
+          // M1 demo 实证 6 路并发 6 会话）。异常由 startNode 的 handleErrorWith
+          // 精准吞掉——对全部调用方呈安静败方语义。
+          running.modify {
+            case m if m.get(nodeId).exists(_.eq(cancelSig)) => (m - nodeId, ())
+            case m => (m, ())
+          } *>
+            IO.raiseError(NodeEngine.StartRaceLost(nodeId))
+        case NodeEngine.FlipOutcome.Aborted(reason) =>
+          // 真异常中止：按身份回滚 + start-aborted 事件（原语义「回滚在飞登记并
+          // 中止」保留，异常信号从「仅错误上抛」扩展为「事件 + 上抛」双通道）。
+          running.modify {
+            case m if m.get(nodeId).exists(_.eq(cancelSig)) => (m - nodeId, ())
+            case m => (m, ())
+          } *>
+            FlowMapEventLog.append(workspace, projectName, nodeId, "start-aborted",
+              s"start aborted: $reason") *>
             IO.raiseError(new RuntimeException(
-              s"Node '$nodeName' ($nodeId) start aborted — node vanished or in-barrier not settled (concurrent rewiring)"))
+              s"Node '$nodeName' ($nodeId) start aborted — $reason"))
       resultDeferred <- Deferred[IO, Either[FailOutcome, List[Message]]]
       // 阶段 2b Plugins（§B.4 第 4 步 ③）：plugin MCP 前缀来源 + 内建工具授予
       // 进该会话 allowedSet（buildAllowedToolSet 扩展消费；仅运行时 AgentDef，
@@ -615,8 +684,80 @@ class NodeEngine(
           && d.status != NodeLifecycle.Running
           && !NodeLifecycle.Terminal.contains(d.status))
         .toList
-        .traverse_(d => startNode(d.id))
+        // fork 化（§6.1）：traverse_ 遍历体的 startNode 各自 fork——同上游 N 依赖
+        // 者同时获得会话（案例 A 串行链根除），遍历 fiber 不被任何一个下游会话质押。
+        .traverse_(d => forkStart(s"settle-deps -> ${d.name}(${d.id})")(startNode(d.id)))
     }
+
+  /** 依赖者触发饥饿记账（§6.3）：nodeId → 连续「资格满足却未获会话」的回扫轮数。
+    * 节点启动/终态/消失即移除（下一轮重新起算）。 */
+  private val starveRounds: Ref[IO, Map[String, Int]] =
+    Ref.unsafe[IO, Map[String, Int]](Map.empty)
+
+  /** 资格回扫（根因报告 §6.2，TtlTick 30s 驱动，ProjectActor 挂点）：对活动区
+    * pending/wiring 节点做声明式启动资格重估，一次性关死「有资格但没人叫」的悬
+    * 挂族（孤儿 barrier、D1 缺口、投递丢失、触发消费错位——案例 B 收口C 96min
+    * 滞留的根因通道）。两步：
+    *   1. 孤儿 barrier 自愈：in 中「completed+有 result+deliveredTo 未记」的上游
+    *      逐个 deliverOutTo（自带 deliveredTo 去重幂等；语义 = NodeTools fix-b
+    *      补投从「仅 edit 时」提升为周期性；barrier 随之归零者由其内部启动）；
+    *   2. barrier/deps 均满足者 fork startNode（幂等；fork 化后不阻塞 tick）。
+    * 资格口径与 startNode 闸门同源（非终态 + deps 全 completed + in 全归零 + 非
+    * 零接线防御）——合格即应启动；同一节点连续 ≥StarvedRounds 轮合格却仍
+    * pending/wiring（= fork 启动未生效，健康系统不应发生）→ trigger-starved 事
+    * 件单发（附 nodeId+资格明细，防每 tick 刷屏）。
+    * 留痕纪律：本轮实际补投/启动了哪些节点——INFO 一行 + FlowMapEventLog 每动作
+    * 节点一条 settle-sweep 事件，禁止静默自愈。 */
+  def settleRunnableSweep(): IO[Unit] =
+    for
+      s0 <- store.snapshot
+      candidates = s0.nodes.values.filter(n =>
+        n.status == NodeLifecycle.Pending || n.status == NodeLifecycle.Wiring).toList
+      // 第 1 步：孤儿 barrier 自愈（deliverOutTo 自带 deliveredTo 去重，重复扫描幂等）
+      healed <- candidates.traverse { n =>
+        n.in.traverse { upId =>
+          if n.deliveredTo.contains(upId) then IO.pure(None)
+          else
+            store.findNode(upId).flatMap {
+              case Some(up) if up.status == NodeLifecycle.Completed && up.result.exists(_.trim.nonEmpty) =>
+                deliverOutTo(up, n.id, up.result.get)
+                  .as(Some(n.id -> s"orphan barrier healed: redelivered completed upstream '${up.name}' (${up.id})"))
+              case _ => IO.pure(None)
+            }
+        }.map(_.flatten)
+      }.map(_.flatten)
+      _ <- healed.traverse_((id, desc) => FlowMapEventLog.append(workspace, projectName, id, "settle-sweep", desc))
+      // 第 2 步：重读后资格判定（补投可能已归零部分 barrier）+ fork 启动
+      s1 <- store.snapshot
+      actives = s1.nodes.values.filter(n =>
+        n.status == NodeLifecycle.Pending || n.status == NodeLifecycle.Wiring).toList
+      qualified <- actives.filterA { n =>
+        val emptyWiring = n.status == NodeLifecycle.Wiring && n.task.isEmpty && n.in.isEmpty && n.deps.isEmpty
+        val barrierOk = !n.in.exists(up => !n.deliveredTo.contains(up))
+        if emptyWiring || !barrierOk then IO.pure(false)
+        else depsSatisfied(n)
+      }
+      _ <- qualified.traverse_(n => forkStart(s"settle-sweep -> ${n.name}(${n.id})")(startNode(n.id)))
+      _ <- qualified.traverse_(n => FlowMapEventLog.append(workspace, projectName, n.id, "settle-sweep",
+        s"qualified (deps+barrier settled, status=${n.status}) — startNode forked by settle sweep"))
+      // 饥饿记账：合格 → 计数 +1；已启动/终态/消失（不在本轮合格集）→ 移除（重新
+      // 起算）；计数恰达阈值 → trigger-starved 单发（继续增长不再重复发）。
+      starved <- starveRounds.modify { m =>
+        val next = qualified.map(n => n.id -> (m.getOrElse(n.id, 0) + 1)).toMap
+        (next, next.collect { case (id, c) if c == NodeEngine.StarvedRounds => id }.toSet)
+      }
+      _ <- qualified.filter(n => starved.contains(n.id)).traverse_ { n =>
+        FlowMapEventLog.append(workspace, projectName, n.id, "trigger-starved",
+          s"qualified but no session after ${NodeEngine.StarvedRounds} consecutive sweep rounds " +
+            s"(status=${n.status}, deps=[${n.deps.mkString(",")}] all completed, " +
+            s"in=[${n.in.mkString(",")}] all delivered, non-terminal) — startNode attempts not taking effect; " +
+            "check detached trigger logs")
+      }
+      actions = healed.map(_._2) ++ qualified.map(n => s"start ${n.name}(${n.id})")
+      _ <- if actions.nonEmpty then
+        logger.info(s"[$projectName] settle sweep: ${actions.mkString("; ")}")
+      else IO.unit
+    yield ()
 
   /** blocked 终态化（设计 §2.1 四条动作序列，与 completeNode 同构）：
     * ① 事务内现读 fresh（R2 纪律）→ status=Blocked / result=渲染串 / blockedFeedback /
@@ -862,7 +1003,8 @@ class NodeEngine(
               }.flatMap { s =>
                 val tn = s.nodes.get(targetId)
                 val allArrived = tn.exists(tn2 => tn2.in.forall(upId => tn2.deliveredTo.contains(upId)))
-                if allArrived && tn.exists(_.status != NodeLifecycle.Running) then startNode(targetId)
+                if allArrived && tn.exists(_.status != NodeLifecycle.Running) then
+                  forkStart(s"deliver-out -> $targetId")(startNode(targetId))
                 else IO.unit
               }
         yield ()
@@ -891,7 +1033,8 @@ class NodeEngine(
               }.flatMap { s =>
                 val tn = s.nodes.get(targetId)
                 val allArrived = tn.exists(tn2 => tn2.in.forall(upId => tn2.deliveredTo.contains(upId)))
-                if allArrived && tn.exists(_.status != NodeLifecycle.Running) then startNode(targetId)
+                if allArrived && tn.exists(_.status != NodeLifecycle.Running) then
+                  forkStart(s"deliver-failed -> $targetId")(startNode(targetId))
                 else IO.unit
               }
             case None => IO.unit
@@ -1131,6 +1274,25 @@ class NodeEngine(
 object NodeEngine:
   /** 终态节点显示 TTL（24h——2026-09-02 作者裁定；测试档可缩短——ProjectActor 注入）。 */
   val TtlDisplayMs: Long = 24 * 60 * 60 * 1000L
+
+  /** startNode 翻转事务的结局（trigger-chain-fix §6.1 CAS 守卫）：Done=本 fiber
+    * 完成翻转（唯一赢家，继续 spawn）；LostRace=败方（他者已翻转到 Running——
+    * fork 并行化的正常形态，安静回滚不事件）；Aborted=真异常（节点消失/barrier
+    * 未齐/终态竞合）→ start-aborted 事件 + 错误上抛。判定在 mutateWithResult
+    * 事务内产出（翻转后状态恒 Running，事后补查无法区分赢家与败方）。 */
+  enum FlipOutcome:
+    case Done, LostRace
+    case Aborted(reason: String)
+
+  /** trigger-starved 触发阈值（§6.3）：同一节点连续 ≥N 轮资格回扫均满足资格却仍
+    * 非终态无会话（fork 启动未生效）才落事件——每饥饿期单发（计数恰等于阈值时），
+    * 避免每 tick 刷屏。 */
+  val StarvedRounds: Int = 2
+
+  /** startNode 翻转竞发的败方信号（trigger-chain-fix）：startNode 单点吞掉——
+    * 败方安静退出，赢家持有节点生命周期（会话、cancelSig、终态分发）。 */
+  final case class StartRaceLost(nodeId: String)
+      extends RuntimeException(s"start race lost ($nodeId) — winner owns the session")
 
   // ── 投递可靠性批次常量（2026-09-04 四缺口）──────────────────
 
