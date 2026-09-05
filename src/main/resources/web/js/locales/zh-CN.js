@@ -182,18 +182,6 @@ export default {
   'modal.create': '创建',
   'modal.deleteSession': '删除会话',
   'modal.deleteConfirm': '删除',
-  'modal.agentTitle': '编辑智能体',
-  'agent.namePlaceholder': '智能体名称',
-  'agent.descPlaceholder': '这个智能体做什么？',
-  'agent.systemPrompt': '系统提示词',
-  'agent.systemPromptPlaceholder': '系统提示词（Markdown）',
-  'agent.save': '保存',
-  'agent.toolsFixedLabel': '系统固定',
-  'agent.toolsConfigLabel': '可配置',
-  'agent.toolsFixedTip': '由系统固定注入，不可移除',
-  'agent.toolsFixedSpecialty.flow': 'Flow 固定（本类专属）',
-  'agent.toolsFixedSpecialty.team': 'Team 固定（本类专属）',
-  'agent.toolsFixedSpecialty.orchestrator': '编排固定（Nebula 专属）',
   // === 实体图标语义化 + Nebula 独立分区（20260824_entity-icons-visual-spec §6）===
   'agents.group.orchestrator': '编排者',
   'agents.group.standalone': '独立智能体',
@@ -540,8 +528,6 @@ export default {
   'delete.folderTitle': '删除文件夹',
   'delete.folderMsg': '删除文件夹 "{name}"？\n其中的会话将移至根目录。',
 
-  // === Agent modal ===
-  'agent.editTitle': '编辑：{name}',
 
   // === Chat area ===
   'chat.timeout': '响应超时',
@@ -967,7 +953,6 @@ export default {
   'header.newTask': '新建任务',
   'subagents.panelTitle': '子智能体',
   'modal.close': '关闭',
-  'agent.toolsLabel': '工具',
   'rules.cancel': '取消',
   'rules.save': '保存',
   'bypass.confirmEdits': '确认编辑',
@@ -977,8 +962,6 @@ export default {
   'agentManager.noAgents': '未配置智能体',
   'agentManager.saved': '已保存',
   'agentManager.save': '保存',
-  'agentManager.noSkills': '未安装技能',
-  'agentManager.noFlows': '未定义工作流',
   // === 插件页（2026-09-04 重设计：统一插件系统 + 每插件一开关，en/zh 成对） ===
   'plugins.list': '插件',
   'plugins.listHint': '统一插件系统：技能与 MCP 以插件为单位，开关即目录可见性',
@@ -1041,9 +1024,6 @@ export default {
   'flowViewers.inbox': '收件箱',
   'flowViewers.viewTeamDef': '查看团队定义',
   'flowViewers.removeFromQueue': '从队列移除',
-  'agentManager.tools': '工具',
-  'agentManager.skills': '技能',
-  'agentManager.flows': '工作流',
   'agentManager.systemPrompt': '系统提示词',
   'agentManager.viewSource': '查看源码',
   'agentManager.viewRendered': '查看渲染',
