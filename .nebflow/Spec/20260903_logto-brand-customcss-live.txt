@@ -1,0 +1,322 @@
+/* ==========================================================================
+   nebflow × Logto — Sign-in Experience Custom CSS (v1 草稿)
+   --------------------------------------------------------------------------
+   粘贴入口: Console > Sign-in & account > Branding > Custom CSS
+   程序化写入: PATCH /api/sign-in-exp { "customCss": "<本文全文>" }
+                https://docs.logto.io/customization/custom-css
+
+   设计语言对应关系:
+   - 品牌绿  #07c160 (客户端 --color-primary, hover #06ad56)
+   - 毛玻璃控件 blur(10px) saturate(1.2) + 半透白/半透品牌底
+     (sapphire.css glass-control 实测 token 的翻译)
+   - 控件圆角 8px; 按钮 padding-block 10px / padding-inline 16px (站点 login py-2.5 px-4)
+   - 字体栈 -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif
+
+   选择器纪律:
+   - Logto 为 CSS Modules, 类名含 hash → 只用 [class$='xxx'] 尾匹配 /
+     [alt=] / [type=] / 标签选择器 (官方示例同款用法)
+   - 组件源码参考: github.com/logto-io/logto/tree/master/packages/experience/src
+     (docs 建议用 Live Preview + DevTools 复核 hash 类名)
+
+   ⚠️ 版本前提: 以 svhd/logto 部署镜像实测为准
+      确认项回填 (2026-08-27 部署实测):
+      - S2 已解: Logto 前端把主题挂在 <body> 的 CSS Modules hash class 上,
+        形态如 `eAa6M_light` (亮色观测实例) —— 即尾缀 `_light` / `_dark`。
+        故暗色变量采用双层钩子: 首选 body[class$='_dark'] (跟随 Logto 自己的
+        主题态, 含 isDarkModeEnabled 行为), @media (prefers-color-scheme)
+        仅作无 class 场景兜底; body 层定义天然遮蔽 :root 继承, 无冲突。
+      ========================================================================== */
+
+/* ---- 全局 token (nf- 前缀, 避免与 Logto 变量冲突) ------------------------ */
+
+:root {
+  --nf-green: #07c160;
+  --nf-green-hover: #06ad56;        /* 客户端给定 */
+  --nf-radius: 8px;
+
+  /* 毛玻璃 light (sapphire.css 实测值) */
+  --nf-glass-bg: rgba(255, 255, 255, 0.45);
+  --nf-glass-border: rgba(255, 255, 255, 0.40);
+  --nf-glass-highlight: rgba(255, 255, 255, 0.50);
+  --nf-glass-underedge: rgba(0, 0, 0, 0.08);
+
+  --nf-page-bg: #f5f6f8;
+  --nf-surface: #ffffff;
+  --nf-text: #1b1e26;
+  --nf-muted: #8b8e96;
+  --nf-border: #dddddd;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    /* 毛玻璃 dark (sapphire.css 实测值) */
+    --nf-glass-bg: rgba(255, 255, 255, 0.05);
+    --nf-glass-border: rgba(255, 255, 255, 0.08);
+    --nf-glass-highlight: rgba(255, 255, 255, 0.08);
+    --nf-glass-underedge: rgba(0, 0, 0, 0.25);
+
+    --nf-page-bg: #111419;          /* 客户端暗底锚点 */
+    --nf-surface: #171b22;          /* derived: 锚点轻提亮 */
+    --nf-text: #e8eaee;             /* derived */
+    --nf-muted: #9aa0a8;            /* derived */
+    --nf-border: rgba(255, 255, 255, 0.08); /* derived */
+  }
+}
+
+/* S2 实证钩子 (2026-08-27): Logto 把主题态挂在 body 的 hash class 上
+   (亮色观测实例 eAa6M_light) —— 尾缀 _dark 即暗色主题态。
+   body 层定义天然遮蔽上面的 :root/media 兜底, 集合保持全量镜像。 */
+body[class$='_dark'] {
+  --nf-glass-bg: rgba(255, 255, 255, 0.05);
+  --nf-glass-border: rgba(255, 255, 255, 0.08);
+  --nf-glass-highlight: rgba(255, 255, 255, 0.08);
+  --nf-glass-underedge: rgba(0, 0, 0, 0.25);
+
+  --nf-page-bg: #111419;
+  --nf-surface: #171b22;
+  --nf-text: #e8eaee;
+  --nf-muted: #9aa0a8;
+  --nf-border: rgba(255, 255, 255, 0.08);
+}
+
+/* ---------------------------------------------------------------- 字体栈 - */
+
+body,
+form input,
+form button {
+  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+}
+
+body {
+  color: var(--nf-text);
+}
+
+/* ------------------------------------------------------------ 页面底盘 - */
+
+/* 官方示例同款骨架选择器: 外框 viewBox / 主列 main */
+div[class$='viewBox'] {
+  background-color: var(--nf-page-bg);
+}
+
+main[class*='main'] {
+  background-image: none; /* 去默认纹理; 如需极淡星云径向可在此叠 gradient */
+}
+
+/* 内容卡片面 (若部署版本渲染独立卡片容器; 无则无副作用) */
+div[class$='viewBox'] > div,
+main[class*='main'] form {
+  border-radius: var(--nf-radius);
+}
+
+/* ------------------------------------------------------------- 表单输入 - */
+
+/* 输入行外壳: 官方示例用 inputField 尾匹配 */
+form div[class$='inputField'] {
+  border-radius: var(--nf-radius);
+}
+
+form div[class$='inputField'] input,
+form div[class$='inputField'] div[role='combobox'],
+select[class$='countryCodeSelector'] {
+  border-radius: calc(var(--nf-radius) - 2px);
+  background: var(--nf-glass-bg);
+  border: 1px solid var(--nf-border);
+  color: var(--nf-text);
+  backdrop-filter: blur(10px) saturate(1.2);
+  -webkit-backdrop-filter: blur(10px) saturate(1.2);
+  transition: border-color 150ms ease, box-shadow 150ms ease;
+}
+
+form div[class$='inputField'] input::placeholder {
+  color: var(--nf-muted);
+}
+
+/* focus 态: 绿描边 + 极淡绿色光晕 (对应 overlay-brand 语义) */
+form div[class$='inputField'] input:focus {
+  outline: none;
+  border-color: var(--nf-green);
+  box-shadow: 0 0 0 3px rgba(7, 193, 96, 0.16); /* = Logto --color-overlay-brand-focused 同值 */
+}
+
+/* ---------------------------------------------------------- 主按钮 CTA - */
+/* 客户端 .glass-control 标准的「品牌玻璃」变体:
+   bg rgba(7,193,96,.42) + blur + 立体边缘 + 绿边框 .15                       */
+
+button[type='submit'] {
+  min-height: 44px;                  /* Logto Button 自身高度, 显式保底 */
+  padding-block: 10px;               /* 站点 login py-2.5 */
+  padding-inline: 16px;              /* px-4 */
+  border-radius: var(--nf-radius) !important;
+
+  background: rgba(7, 193, 96, 0.42) !important;
+  border: 1px solid rgba(7, 193, 96, 0.15) !important;
+  color: #fff !important;
+  font-weight: 600 !important;
+
+  backdrop-filter: blur(10px) saturate(1.2) !important;
+  -webkit-backdrop-filter: blur(10px) saturate(1.2) !important;
+
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.50),   /* 顶缘高光 */
+    inset 0 -1px 0 rgba(0, 0, 0, 0.08);        /* 底缘阴影 */
+
+  transition: background 200ms ease-in-out, box-shadow 150ms ease;
+}
+
+/* hover/按下采用「方案 A 收口」（2026-08-27 二段裁定）：删除覆盖规则，
+   接受 Logto 自动派生（hover 提亮 / pressed 压深≈#06ae56≈客户端 hover）。 */
+button[type='submit']:disabled {
+  background: rgba(7, 193, 96, 0.20) !important;
+  color: rgba(255, 255, 255, 0.60) !important;
+  backdrop-filter: none !important;
+  -webkit-backdrop-filter: none !important;
+}
+
+/* ------------------------------------------------------- 次级/社交按钮 - */
+/* 中性毛玻璃 (白半透在亮面≈不可见轮廓、暗面成微浮层, 与客户端视觉一致)     */
+
+ul[class$='socialLinkList'] li button,
+ul[class$='socialLinkList'] li a,
+button[class$='secondary'],
+[class$='createAccount'] {
+  border-radius: var(--nf-radius);
+  padding-block: 10px;
+  padding-inline: 16px;
+  color: var(--nf-text);
+
+  background: var(--nf-glass-bg);
+  border: 1px solid var(--nf-glass-border);
+  backdrop-filter: blur(10px) saturate(1.2);
+  -webkit-backdrop-filter: blur(10px) saturate(1.2);
+  box-shadow:
+    inset 0 1px 0 var(--nf-glass-highlight),
+    inset 0 -1px 0 var(--nf-glass-underedge);
+
+  transition: background 200ms ease-in-out, transform 100ms ease;
+}
+
+ul[class$='socialLinkList'] li button:hover,
+ul[class$='socialLinkList'] li a:hover {
+  background: rgba(255, 255, 255, 0.62);
+}
+
+@media (prefers-color-scheme: dark) {
+  ul[class$='socialLinkList'] li button:hover,
+  ul[class$='socialLinkList'] li a:hover {
+    background: rgba(255, 255, 255, 0.10);
+  }
+}
+
+ul[class$='socialLinkList'] li button:active {
+  transform: translateY(0.5px);
+}
+
+/* -------------------------------------------------------------- 文字层 - */
+
+span[class$='tip'],
+p[class$='terms'],
+a[class$='link'],
+[class$='dividerContentLine'],
+label span[class$='headline'] {
+  color: var(--nf-muted);
+}
+
+form a {
+  color: var(--nf-green);
+}
+
+form a:hover {
+  color: var(--nf-green-hover);
+}
+
+/* 分隔线弱化 */
+i[class$='line'],
+hr {
+  border-color: var(--nf-border);
+}
+
+/* 忘记密码等小链接保持克制对比 */
+form button[class$='forgetPassword'],
+form p[class$='footerLinks'] button {
+  color: var(--nf-muted);
+}
+form button[class$='forgetPassword']:hover {
+  color: var(--nf-text);
+}
+
+/* ----------------------------------------------------- logo 对齐润色 - */
+/* 实测 alt 是 "app logo"（一段稿误写 alt='logo' 为死规则，二段修正） */
+
+img[alt='app logo'] {
+  image-rendering: pixelated;   /* 像素风在任何缩放下保持锐边 */
+}
+
+/* ==========================================================================
+   —— 二段加码（2026-08-27 素材到位批）——
+   实测 DOM 骨架（light/dark、登录/注册同构）:
+     div.fBQIM_viewBox                     全页底盘
+       div.o55MA_container.logto_page-container
+         main.yESWI_main.logto_main-content  中央列
+           div.vJ4aC_wrapper                 内容卡片区 ← 玻璃挂点
+             div.*_header.logto_branding-header
+               div.bE4LQ_logoWrapper > img[alt='app logo']
+             form.ksZ9c_form …
+   水印边界: 「Powered By Logto」徽标带 data-logto-signature-guard 注入式
+   双属性 !important 对抗（display 强制回拉），customCss 隐藏不可靠 → 走
+   hideLogtoBranding 配置位实测；若无效即记录为 customCss 能力边界，
+   升级 BYO-UI 才可彻底移除。
+   ========================================================================== */
+
+/* ---- 登录卡片玻璃质感（.glass-control 标准翻译到容器面） ---- */
+
+main[class*='main'] > div[class$='_wrapper'],
+div[class$='_wrapper'][class*='container'] {
+  border-radius: 14px;
+  padding-block: 8px;
+
+  background: var(--nf-glass-bg);
+  border: 1px solid var(--nf-glass-border);
+  backdrop-filter: blur(12px) saturate(1.25);
+  -webkit-backdrop-filter: blur(12px) saturate(1.25);
+
+  box-shadow:
+    inset 0 1px 0 var(--nf-glass-highlight),
+    inset 0 -1px 0 var(--nf-glass-underedge),
+    0 18px 40px rgba(17, 20, 25, 0.10);
+}
+
+body[class$='_dark'] main[class*='main'] > div[class$='_wrapper'],
+body[class$='_dark'] div[class$='_wrapper'][class*='container'] {
+  box-shadow:
+    inset 0 1px 0 var(--nf-glass-highlight),
+    inset 0 -1px 0 var(--nf-glass-underedge),
+    0 22px 48px rgba(0, 0, 0, 0.45);
+}
+
+/* 卡片内标题行距微调（克制，不动字号/字重继承） */
+main[class*='main'] div[class$='_headline'] {
+  letter-spacing: 0.01em;
+}
+
+/* ==========================================================================
+   —— 以下为注释段 (待实测后择一启用) ——
+
+   ◆ [已解决 2026-08-27] 原「S2 替代暗色块」不再需要: 实测确认 body class
+     尾缀 _dark 为主题态, 双钩子(见上方 body[class$='_dark'] 块)已生效。
+
+   ◆ S3 标语注入草案 (仅当 GET /api/sign-in-exp 确认无 slogan 槽时评估):
+     文案主选 EN "Continue to your agents." / 中文 「继续与你的智能体协作。」
+
+   div[class$='viewBox'] main[class*='main'] form::before {
+     content: 'Continue to your agents.';         // 或中文
+     display: block;
+     margin-bottom: 12px;
+     text-align: center;
+     font-size: 14px;
+     letter-spacing: 0.01em;
+     color: var(--nf-muted);
+   }
+
+   ◆ 方案 A 收口 (若放弃 hover=#06ad56 覆盖):
+     删除 button[type='submit']:hover/:active 两组规则即可。
+   ========================================================================== */
