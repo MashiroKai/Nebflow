@@ -49,12 +49,11 @@ object ToolRegistry:
       "Delegate" -> DelegateTool,
       // Background agent inspection & control (list/status/cancel/restart) — Nebula 专用
       "AgentControl" -> AgentControlTool,
-      // Flow DAG pipeline triggering — whitelist-driven via agent.json flows
-      // (injected by buildAllowedToolSet for agents declaring flows)
-      "FlowTrigger" -> FlowTriggerTool,
-      // One-shot dynamic flow execution (#406) — inline DAG, no persistence.
-      // Mechanism-layer injected for Team members + Nebula (fixedToolsFor).
-      "FlowExecute" -> FlowExecuteTool,
+      // FlowTrigger / FlowExecute / FlowReport retired 2026-09-06（工具面裁撤
+      // 批，作者裁定提前执行阶段 2d 子集）：agent 侧 flow 触发/动态编排/verdict
+      // 报告三工具整体退役。Mail(→flow-name) 引擎触发链与 FlowDagRunner 引擎
+      // 本体不受影响（红线：引擎零触碰）；FlowReportStore（FlowDagExecutor 消费
+      // 的 verdict 数据面）抽出为独立文件保留至阶段 3。
       // Team-member task delegation (self-clone + ephemeral worker, no Mail identity)
       "SubTask" -> SubTaskTool,
       // Cross-device file transfer
@@ -66,8 +65,7 @@ object ToolRegistry:
       "SendFriendMessage" -> FriendMessageTool,
       // Load Team/Flow from disk (validate + mount)
       "Load" -> LoadTool,
-      // Flow agent result reporting (verdict + output for DAG switch routing)
-      "FlowReport" -> FlowReportTool,
+      // FlowReport 注册已随 2026-09-06 工具面裁撤批移除（见上注）。
       // #28 阶段 0：Project + Node 模型工具集（分发器白名单声明；全局注册使
       // agent.json tools 可解析）。NodeEdit/NodeList/NodeCancel = 分发器用；
       // ProjectCreate = Nebula 用（建项目 + 工作区脚手架；workspace 缺省/不可用

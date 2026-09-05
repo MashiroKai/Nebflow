@@ -51,7 +51,7 @@ The address depends on your team context:
 - "team/agent" (e.g. "nebflow-project/Backend") — explicit scoped route to a
   specific member, usable from inside a team context.
 
-For spawning standalone agents, use the Delegate tool. For triggering flows, use FlowTrigger.
+For spawning standalone agents, use the Delegate tool.
 
 Images (optional `images` parameter): up to 5 absolute local image paths
 (PNG/JPG/JPEG/GIF/WEBP/BMP) sent as attachments — the recipient sees the images
