@@ -65,6 +65,11 @@ Nebflow 是一个开源（Apache 2.0）AI Agent 编排平台。本仓为 **Scala
 - **禁止运行 `sbt run`**（默认 home + 默认端口 8080 会抢宿主实例）——需要起服务必须带隔离参数（`--home /tmp/qa-* --port 809x`）
 - 需要验证编译用 `sbt compile`，需要验证测试用 `sbt test`——不要启动服务
 
+## 作者预览与端口纪律（2026-09-05 作者令）
+- **通用规则（daemon 固定端口）**：项目开发内容一律走心跳进程（daemon）固定端口——换内容不换端口，禁止为看新改动另起新端口旁路
+- **主仓特殊形态（宿主 8080）**：主仓前端预览入口为宿主 8080（非 daemon 端口），前端改动需宿主重启生效，重启窗口由 Nebula 统一安排
+- **回报纪律（验证生效）**：任何「看效果」回报必须指向实际可访问入口且已验证内容=最新改动（前端改动未重启时必须显式声明「待重启生效」，不得让作者误以为已生效）
+
 ## 架构原则
 - **Keep your Actors out of your cats-effect, and your cats-effect out of your actors**
 - Actor 负责 message passing 和状态管理；cats-effect IO 负责副作用编排。两层不要交叉混用。
@@ -80,7 +85,7 @@ Nebflow 是一个开源（Apache 2.0）AI Agent 编排平台。本仓为 **Scala
 
 ## 前端规范
 - 设计风格必须统一——弹窗、按钮、字体、配色等，能复用已有设计就复用，不要造新轮子
-- 前端修改先 localhost:3000 预览确认再推送
+- 前端修改先预览确认再推送：主仓经宿主 8080（改动需宿主重启生效，重启窗口由 Nebula 统一安排，见「作者预览与端口纪律」）；其他项目走各自 daemon 固定端口——禁止另起新端口旁路
 - **静态资源可达性验收（2026-08-16，P0 Canvas viewers 404 教训）**：任何新引用的 JS/CSS/模块 URL——**包括动态 import 的子模块**——必须在运行实例上实测返回 200。服务端静态路由按目录逐条挂载、http4s DSL 单段匹配，resources/ 里新增**子目录**必须同步加服务端路由；动态 import 链要整条验证
 - **合并关卡（2026-08-16，质量路线 W1）**：前端改动（web/ 下任何文件）合并前必须过 `scripts/verify-web-assets.mjs`（遍历 web/ 全文件对真实实例断言 200，隔离实例跑）；新静态文件不可达 = 红 = 不合
 - **WS 命令链冒烟（2026-08-18，P0 定时任务静默丢失教训）**：涉 WS 命令链批次合并前，另跑 `scripts/smoke-scheduled-task.mjs`（隔离实例，`NEBFLOW_URL`+`NEBFLOW_HOME_DIR` 指向隔离环境）——fire-and-forget 静默失败类回归的哨兵
@@ -99,3 +104,4 @@ Nebflow 是一个开源（Apache 2.0）AI Agent 编排平台。本仓为 **Scala
 - 2026-08-23 ｜ 成员需要跨 team 协作，先报 Manager 确认路由，不得直触对方 team 成员；同 team 内产出者直触 QA 模式不变
 - 2026-08-26 ｜ ~~给 Nebula 的 RESULT/汇报邮件禁用 ask 模式~~ **已被 2026-08-27 裁定取代：Mail ask 模式整体移除**（delivery 只剩 immediate/queue）
 - 2026-09-01 ｜ **QC 429 降级策略**——merge 触发自动 QC 遇 API 429 时，接受人工 QA 覆盖（qa-frontend/qa-backend PASS 即等价覆盖），配额重置后不单独补跑
+- 2026-09-05 ｜ 预览端口纪律——daemon 固定端口/主仓 8080 重启形态/回报须验证生效（详见「作者预览与端口纪律」节）
