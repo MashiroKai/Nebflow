@@ -43,7 +43,17 @@ object BlockedFeedback:
   given Configuration = Configuration.default
   given Codec[BlockedFeedback] = ConfiguredCodec.derived
 
-/** Node 数据模型（§2.1 JSON 示例字段全量）。 */
+/** Node 数据模型（§2.1 JSON 示例字段全量）。
+  *
+  * agent 字段（2026-09-05 插件架构对齐）：**新建节点一律落 "general"**（执行统一
+  * 通用 agent，专业能力由 plugins 差异化——NodeEdit 已不接受 agent 参数）；字段
+  * 保留 = 存量数据兼容读（旧节点 agent 值原样装载、nodeJson 照常输出），引擎
+  * spawn 仍读 NodeDef.agent（spawnAndRun → EntityLoader.loadAgent）。
+  *
+  * description（2026-09-05 创建必写）：简短描述（非空 ≤200 字符，创建时 NodeEdit
+  * 强校验），存 NodeDef 进 Flow Map 默认载荷（NodePayload）——按需读取第一层；
+  * 编辑可 update；存量节点无 description → 前端回退 taskPreview（载荷条件字段，
+  * task 首行 ≤80 字符截断）。 */
 case class NodeDef(
   id: String,
   name: String,
@@ -53,6 +63,8 @@ case class NodeDef(
   worktree: Option[String] = None,
   preset: Option[String] = None,
   task: Option[String] = None,
+  /** 创建必写的简短描述（≤200 字符）。默认 None = 存量兼容（旧数据零迁移）。 */
+  description: Option[String] = None,
   in: List[String] = Nil,
   out: Option[String] = None,
   /** 依赖连接（deps 设计 §1.1，主文档 20260902_flowmap-engine-evolution-design.md）：
@@ -103,11 +115,22 @@ object NodeDef:
 
 /** NodeList 载荷同构的节点 JSON（NodeList 工具 / REST flow-map / WS 事件共用单一序列化点）。
   * WS 事件（nodeCreated/nodeUpdated/nodeRemoved）与快照永远同构，前端增量渲染可直接对齐
-  * 字段集：{id, name, agent, skill, mcp, preset, status, in, out, hasWorktree, worktree,
-  * result(≤500 字符摘要), retries, createdAt, completedAt, ttlLeftSec}。
-  * skill/mcp/preset 为节点配置（子任务 C：Flow Map 卡片徽标与详情展示的数据源）。
-  * deps 为条件字段（非 Nil 才带，与 blockedFeedback 同构——见下方 depsFields 注释）。 */
+  * 字段集：{id, name, agent, skill, mcp, preset, description, status, in, out, hasWorktree,
+  * worktree, retries, createdAt, completedAt, ttlLeftSec}。
+  *
+  * **载荷收敛（2026-09-05 Flow Map 精简批）**：默认载荷只含元数据——**节点结果全文与
+  * 摘要都不进默认载荷**（原 result ≤500 字符摘要键移除；结果全文持久化在 per-node 文件
+  * `results/<nodeId>.md`，经 REST GET /projects/<n>/flow-map/nodes/<id>/result 或
+  * NodeList(detail=<nodeId>) 按需单点取）。条件字段（与 deps/hold/plugins 同构，非命中
+  * 不带——载荷字段集对无此特征的节点零漂移）：
+  *   - hasResult: 节点持有结果全文（前端据此发起按需拉取）；
+  *   - taskPreview: 存量节点无 description 时的回退展示（task 首行 ≤80 字符截断）；
+  *   - deps / blockedFeedback / hold / plugins：既有条件字段语义不变。
+  * skill/mcp/preset 为节点配置（skill/mcp 仅存量兼容展示——2b §B.4/H-11① deprecated）。 */
 object NodePayload:
+  /** taskPreview 截断上限（回退展示第一层，存量节点专用）。 */
+  val TaskPreviewMaxChars: Int = 80
+
   def buildNodeJson(node: NodeDef, now: Long): Json =
     val ttlLeft = node.ttlExpireAt.map(t => Math.max(0L, (t - now) / 1000L))
     val baseFields = List(
@@ -117,12 +140,13 @@ object NodePayload:
       "skill" -> node.skill.asJson,
       "mcp" -> node.mcp.asJson,
       "preset" -> node.preset.asJson,
+      // 创建必写的简短描述（按需读取第一层）；存量无值 → null（前端回退 taskPreview）
+      "description" -> node.description.asJson,
       "status" -> node.status.asJson,
       "in" -> node.in.asJson,
       "out" -> node.out.asJson,
       "hasWorktree" -> node.worktree.isDefined.asJson,
       "worktree" -> node.worktree.asJson,
-      "result" -> node.result.map(r => if r.length > 500 then r.take(500) + "…" else r).asJson,
       "retries" -> node.retries.asJson,
       // blocked 反馈重入（设计 §4.1）：blockCount 恒带；blockedFeedback 仅 blocked 态才有结构化体
       "blockCount" -> node.blockCount.asJson,
@@ -130,6 +154,20 @@ object NodePayload:
       "completedAt" -> node.completedAt.asJson,
       "ttlLeftSec" -> ttlLeft.asJson
     )
+      // hasResult 条件序列化（2026-09-05 载荷收敛）：节点持有结果全文才带——前端据此
+      // 经 REST result 端点按需拉全文；无结果节点载荷字段集零变化。
+      val hasResultFields =
+        if node.result.exists(_.trim.nonEmpty) then List("hasResult" -> true.asJson) else Nil
+      // taskPreview 条件序列化（存量节点回退展示）：无 description 且有 task 才带，
+      // 值 = task 首行 ≤80 字符（有 description 的新节点不带——字段集零漂移）。
+      val taskPreviewFields = node.description match
+        case Some(_) => Nil
+        case None =>
+          node.task.map(_.trim).filter(_.nonEmpty).map { t =>
+            val firstLine = t.linesIterator.next().trim
+            val preview = if firstLine.length > TaskPreviewMaxChars then firstLine.take(TaskPreviewMaxChars) + "…" else firstLine
+            List("taskPreview" -> preview.asJson)
+          }.getOrElse(Nil)
       val feedbackFields = node.blockedFeedback.toList.map { bf =>
         "blockedFeedback" -> Json.obj(
           "category" -> bf.category.asJson,
@@ -147,7 +185,7 @@ object NodePayload:
       // plugins 条件序列化（阶段 2b §B.4 第 3 步 + H-3①用户可见性；与 deps 同构）：
       // 非 Nil 才带——无分配节点的 payload 字段集零变化。
       val pluginFields = if node.plugins.nonEmpty then List("plugins" -> node.plugins.asJson) else Nil
-      Json.obj((baseFields ++ depsFields ++ feedbackFields ++ holdFields ++ pluginFields)*)
+      Json.obj((baseFields ++ hasResultFields ++ taskPreviewFields ++ depsFields ++ feedbackFields ++ holdFields ++ pluginFields)*)
 
 /** Flow Map 活动区（§2.6，磁盘 flow-map.json）。 */
 case class FlowMapState(
