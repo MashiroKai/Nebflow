@@ -1012,35 +1012,51 @@ object AgentActor extends AgentCore with AgentSession:
           end for
         else
           // Single immediate result (no batch in flight) or non-subagent event.
-          for
-            _ <- sessionBusyIO
-            _ <- receiveVisibility(waiting = false)
-            _ <- touchBarrierSnapshot(resources, state.sessionId, newOutstanding, 0)
-            result <- pipeLlmCall(
-              agentDef,
-              resources,
-              depth,
-              parentRef,
-              state
-                .withMessages(
-                  // Reminder refactor (2026-08-20): always carry a source marker —
-                  // external-event turns are system events, not real user input
-                  // (fromUser = Message.source.isEmpty).
-                  state.messages :+ Message(MessageRole.User, Left(injectionText), source = visSource.orElse(Some("external")))
-                )
-                // #25: apply the barrier decrement. Pre-fix this branch
-                // computed newOutstanding and dropped it — a single-result
-                // batch (spawn 1, receive 1, held empty) left the counter
-                // stuck at 1 forever. Invisible while Completed fired
-                // unconditionally at turn end; once the completion debt is
-                // parked (#25) a stuck counter means the debt is NEVER paid
-                // and the waiting supervisor/bridge hangs.
-                .withOutstandingSubagentResults(newOutstanding)
-                .withNextLoopTurn, // Block 3：外部事件唤醒 = 新 turn
-              None
-            )
-          yield result
-          end for
+          // ═══ 节点完成闸（bgtask-completion-gate 批，作者 2026-09-05 18:29 裁定）═══
+          // ExternalEvent 唤醒轮此前 replyTo=None → 续跑轮 AgentEvent.Completed
+          // 无人接收——节点观察桥（完成闸单咽喉）在最后一个后台任务完成通知后
+          // 永远等不到复检事件，节点悬挂到兜底上限。修正：node- 前缀（Project
+          // 节点，kind=Flow）会话以 AgentRecord.supervisorRef（=NodeEngine 观察
+          // 桥，注册即粘性完成目标）作为本唤醒轮的 replyTo。仅 node- 节点启用：
+          // delegate/subtask（BackoffSupervisor 会把 Completed 当任务终态转投父
+          // 会话=重复通知+停 actor）与 dispatcher 桥（pendingInjected 计数契约，
+          // 意外 Completed 会提前拆除）各有既有 Completed 语义，不并入。
+          val continuationReplyTo: IO[Option[ActorRef[AgentEvent]]] =
+            state.sessionId
+              .filter(sid => state.isFlowNode && sid.startsWith(nebflow.core.project.NodeEngine.SessionPrefix))
+              .fold(IO.pure(Option.empty[ActorRef[AgentEvent]]))(sid =>
+                resources.agentRegistry.get.map(_.get(sid).flatMap(_.supervisorRef)))
+          continuationReplyTo.flatMap { contReplyTo =>
+            for
+              _ <- sessionBusyIO
+              _ <- receiveVisibility(waiting = false)
+              _ <- touchBarrierSnapshot(resources, state.sessionId, newOutstanding, 0)
+              result <- pipeLlmCall(
+                agentDef,
+                resources,
+                depth,
+                parentRef,
+                state
+                  .withMessages(
+                    // Reminder refactor (2026-08-20): always carry a source marker —
+                    // external-event turns are system events, not real user input
+                    // (fromUser = Message.source.isEmpty).
+                    state.messages :+ Message(MessageRole.User, Left(injectionText), source = visSource.orElse(Some("external")))
+                  )
+                  // #25: apply the barrier decrement. Pre-fix this branch
+                  // computed newOutstanding and dropped it — a single-result
+                  // batch (spawn 1, receive 1, held empty) left the counter
+                  // stuck at 1 forever. Invisible while Completed fired
+                  // unconditionally at turn end; once the completion debt is
+                  // parked (#25) a stuck counter means the debt is NEVER paid
+                  // and the waiting supervisor/bridge hangs.
+                  .withOutstandingSubagentResults(newOutstanding)
+                  .withNextLoopTurn, // Block 3：外部事件唤醒 = 新 turn
+                contReplyTo
+              )
+            yield result
+            end for
+          }
         end if
 
       case AgentCommand.UpdateGitBranch(branch) =>
