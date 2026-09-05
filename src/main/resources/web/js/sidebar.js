@@ -19,6 +19,7 @@ import { cleanupCardIframes } from './cardRegistry.js';
 import { t, getLocale, setLocale, getAvailableLocales } from './i18n.js';
 import { fetchNeblinkStatus, neblinkSettingsHTML, bindNeblinkEvents, avatarViewState, noteAvatarFailure } from './neblink.js';
 import { notifyManualUpdateCheck } from './updateCheck.js';
+import { toggleHTML, setToggleState } from './toggle.js';
 import { preloadModelCapabilities, renderVisionBadge } from './modelCapabilities.js';
 import * as presets from './presets.js';
 import { renderAppearanceSection, bindAppearanceEvents } from './orbSettingsUI.js';
@@ -354,7 +355,7 @@ function renderWorkScheduleSection() {
   return `
     <div class="settings-row">
       <span class="settings-label">${t('settings.workSchedule')}</span>
-      <div class="toggle ${enabled ? 'on' : ''}" id="toggle-schedule"></div>
+      ${toggleHTML({ on: enabled, id: 'toggle-schedule', label: t('settings.workSchedule') })}
     </div>
     <div id="schedule-editor" style="display:${enabled ? 'block' : 'none'};padding:4px 0 8px;">
       <div class="segment-list" id="segment-list">${segRows}</div>
@@ -475,7 +476,7 @@ function renderTtlSection() {
     <div class="settings-collapse-body" id="ttl-advance-body" ${ttlAdvanceExpanded ? '' : 'hidden'}>
       <div class="settings-row">
         <span class="settings-label">${t('settings.ttlEnabled')}</span>
-        <div class="toggle ${enabled ? 'on' : ''}" id="toggle-ttl-enabled" role="switch" aria-checked="${enabled}" tabindex="0"></div>
+        ${toggleHTML({ on: enabled, id: 'toggle-ttl-enabled', label: t('settings.ttlEnabled') })}
       </div>
       <div class="cfg-hint">${t('settings.ttlEnabledHint')}</div>
       ${rowHtml('settings.ttlMinutesLabel', 'settings.ttlMinutesHint', 'ttl-minutes', cfg.ttlMinutes ?? TTL_DEFAULTS.ttlMinutes)}
@@ -512,18 +513,19 @@ function bindTtlEvents() {
   // ruling — editing mid-states must never affect runtime behavior).
   const sw = document.getElementById('toggle-ttl-enabled');
   if (sw) {
+    // Shared nb-toggle component (js/toggle.js): a real <button>, so Space and
+    // Enter produce native clicks — setToggleState keeps class + aria-checked
+    // in sync (the old div needed manual keydown wiring; removed to avoid
+    // double-toggle).
     const flip = () => {
-      const on = sw.classList.toggle('on');
-      sw.setAttribute('aria-checked', String(on));
+      const on = !sw.classList.contains('on');
+      setToggleState(sw, on);
       ['ttl-minutes', 'ttl-keep-recent'].forEach(id => {
         const inp = ttlInput(id);
         if (inp) inp.disabled = !on;
       });
     };
     sw.addEventListener('click', flip);
-    sw.addEventListener('keydown', (e) => {
-      if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); flip(); }
-    });
   }
 
   // Explicit save (#334 semantics) — local STRICT pre-validation mirrors the
@@ -763,7 +765,7 @@ export function renderSettings() {
       <div class="cfg-hint">${t('settings.thinkingEffortHint')}</div>
       <div class="settings-row">
         <span class="settings-label">${t('settings.llmLog')}</span>
-        <div class="toggle ${state.llmLogEnabled !== false ? 'on' : ''}" id="toggle-llm-log"></div>
+        ${toggleHTML({ on: state.llmLogEnabled !== false, id: 'toggle-llm-log', label: t('settings.llmLog') })}
       </div>
       ${renderWorkScheduleSection()}
       ${renderSttSection()}
@@ -774,7 +776,7 @@ export function renderSettings() {
       </div>
       <div class="settings-row">
         <span class="settings-label">${t('settings.autostart')}</span>
-        <div class="toggle ${state.autostartStatus?.enabled ? 'on' : ''} ${state.autostartStatus && !state.autostartStatus.supported ? 'disabled' : ''}" id="toggle-autostart"></div>
+        ${toggleHTML({ on: !!(state.autostartStatus && state.autostartStatus.enabled), id: 'toggle-autostart', label: t('settings.autostart'), disabled: !!(state.autostartStatus && !state.autostartStatus.supported) })}
       </div>
       <div class="cfg-hint" id="autostart-hint" style="display:${state.autostartStatus && !state.autostartStatus.supported ? 'block' : 'none'};margin-top:-4px">${escapeHtml(state.autostartStatus?.reason || t('settings.autostartUnsupported'))}</div>
     </div>
@@ -1199,8 +1201,8 @@ onMessage('autostartStatusResult', (msg) => {
   };
   const toggle = document.getElementById('toggle-autostart');
   if (toggle) {
-    toggle.classList.toggle('on', state.autostartStatus.enabled);
-    toggle.classList.toggle('disabled', !state.autostartStatus.supported);
+    setToggleState(toggle, state.autostartStatus.enabled);
+    toggle.disabled = !state.autostartStatus.supported; // native button disabled — :disabled styling
   }
   const hint = document.getElementById('autostart-hint');
   if (hint) {
@@ -1237,10 +1239,11 @@ function bindSettingsEvents(content, cfg) {
     sendWs({ type: 'setThinking', thinking: state.thinkingMode });
   });
 
-  // LLM Log toggle
+  // LLM Log toggle — shared nb-toggle component; setToggleState keeps the
+  // class and aria-checked in lockstep.
   document.getElementById('toggle-llm-log')?.addEventListener('click', function() {
-    this.classList.toggle('on');
-    const enabled = this.classList.contains('on');
+    const enabled = !this.classList.contains('on');
+    setToggleState(this, enabled);
     state.llmLogEnabled = enabled;
     sendWs({type: 'setLlmLog', enabled});
   });
@@ -1253,7 +1256,8 @@ function bindSettingsEvents(content, cfg) {
   // 立即解冻/冻结（现象1 Save 链路 S1 已实证 13/13）。段落编辑器（add/remove/
   // 时间输入）仍是文本/数字输入 → 保留显式 Save 按钮（markScheduleDirty）。
   document.getElementById('toggle-schedule')?.addEventListener('click', function() {
-    const enabled = this.classList.toggle('on');
+    const enabled = !this.classList.contains('on');
+    setToggleState(this, enabled);
     const editor = document.getElementById('schedule-editor');
     const offHint = document.getElementById('schedule-off-hint');
     if (editor) editor.style.display = enabled ? 'block' : 'none';
@@ -1268,8 +1272,9 @@ function bindSettingsEvents(content, cfg) {
       scheduleDraft = null;      // toggle 已即时提交，无"待保存"草稿态
       updateScheduleActionRow();
     } else {
-      // 保存失败（enabled=true 且段落非法）→ 回滚 toggle，保持原状态。
-      this.classList.toggle('on', !enabled);
+      // 保存失败（enabled=true 且段落非法）→ 回滚 toggle（setToggleState 同步
+      // class + aria-checked），保持原状态。
+      setToggleState(this, !enabled);
       if (editor) editor.style.display = !enabled ? 'block' : 'none';
       if (offHint) offHint.style.display = !enabled ? 'none' : 'block';
     }

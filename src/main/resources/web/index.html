@@ -53,9 +53,12 @@
   <script>document.documentElement.classList.add('ui-init');</script>
   <script>/* Classic script: cannot import branding.js. Read the brand-namespaced key first, fall back to the legacy nebflow_ spelling. */var __b=(window.__BRAND__&&window.__BRAND__.lowerName)||'nebflow';if(localStorage.getItem(__b+'_sidebar_collapsed')==='true'||localStorage.getItem('nebflow_sidebar_collapsed')==='true')document.body.classList.add('sidebar-collapsed');window.__sidebarRestore={collapsed:document.body.classList.contains('sidebar-collapsed'),panel:localStorage.getItem(__b+'_sidebar_active_panel')||localStorage.getItem('nebflow_sidebar_active_panel')||'files'};</script>
   <!-- Activity Bar — vertical icon strip (independent glass card).
-       Top: avatar (tap to log in to NebLink), then the Side Bar panel
-       switch buttons (Files). Bottom: Projects / Plugins / Settings.
-       Device management lives in the Settings panel (NebLink section). -->
+       Top: avatar (tap to log in to NebLink) + the two communication
+       entries (Contacts → Messages).
+       Bottom: fixed semantic order (2026-09-05 sidebar-restructure spec) —
+       Files → Projects → Plugins (agents-btn mounts the plugins page) →
+       Usage → Settings. Device management lives in the Settings panel
+       (NebLink section). -->
   <div id="activity-bar">
     <button id="activity-avatar" class="activity-avatar" title="Login">
       <picture>
@@ -65,18 +68,19 @@
       <img class="activity-avatar-photo" alt="" hidden>
       <span class="activity-avatar-letter" hidden>N</span>
     </button>
-    <button id="messages-btn" class="activity-btn" data-panel-btn="messages" title="Messages" aria-pressed="false"><i data-lucide="message-circle"></i><span class="activity-badge" id="messages-badge" hidden></span></button>
     <button id="contacts-btn" class="activity-btn" data-panel-btn="contacts" title="Contacts" aria-pressed="false"><i data-lucide="contact-round"></i><span class="activity-badge" id="contacts-badge" hidden></span></button>
-    <button id="files-btn" class="activity-btn active" data-panel-btn="files" title="Files" aria-pressed="true"><i data-lucide="files"></i></button>
-    <button id="usage-btn" class="activity-btn" title="Usage Dashboard" aria-haspopup="dialog"><i data-lucide="bar-chart-3"></i></button>
+    <button id="messages-btn" class="activity-btn" data-panel-btn="messages" title="Messages" aria-pressed="false"><i data-lucide="message-circle"></i><span class="activity-badge" id="messages-badge" hidden></span></button>
     <div class="activity-spacer"></div>
     <!-- 2026-09-05 旧 UI 退役：v5 §3.5 二级入口（#legacy-btn/#legacy-pop 与
          teams-btn/flows-btn）已整体删除（作者裁定「直接删除，不是封存」）；
          Projects 按钮沿用 Team/Flow 让出的槽位。 -->
+    <button id="files-btn" class="activity-btn active" data-panel-btn="files" title="Files" aria-pressed="true"><i data-lucide="files"></i></button>
     <button id="projects-btn" class="activity-btn" title="Projects"><i data-lucide="folder-kanban"></i></button>
     <!-- 2026-09-04 件 B：原「智能体」独立面板入口移除，按钮改挂「插件」页
-         （plugins.js 接管注册，id/按下态机制不变；i18n 标题走 activity.plugins）。 -->
+         （plugins.js 接管注册，id/按下态机制不变；i18n 标题走 activity.plugins）。
+         2026-09-05 重排规格：语义顺序 文件→项目→插件→token→设置。 -->
     <button id="agents-btn" class="activity-btn" title="Plugins"><i data-lucide="puzzle"></i></button>
+    <button id="usage-btn" class="activity-btn" title="Usage Dashboard" aria-haspopup="dialog"><i data-lucide="bar-chart-3"></i></button>
     <button id="settings-btn" class="activity-btn" title="Settings"><i data-lucide="settings"></i></button>
   </div>
 

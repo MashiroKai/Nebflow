@@ -8,6 +8,7 @@ import { escapeHtml } from './utils.js';
 import { t } from './i18n.js';
 import { onMessage, sendWs } from './ws.js';
 import { brand } from './brand.js';
+import { lookupAvatar, rememberAvatarProfile, lastKnownAvatarProfile, forgetAvatarProfile } from './avatarCache.js';
 // NOTE: dropbox.js is dynamically imported at the click site - P2-4 cycle cut
 // (neblink <-> dropbox mutual import).
 
@@ -51,12 +52,29 @@ export function noteAvatarFailure(url) {
 }
 
 /** Shared dual-state avatar view: { loggedIn, url, showPhoto }.
- *  Placeholder/fake URLs are filtered the same way for every consumer. */
+ *  Placeholder/fake URLs are filtered the same way for every consumer.
+ *  2026-09-05 本地缓存优先（avatarCache.js）：命中即以 dataURL 直出——两个
+ *  消费端（Activity Bar + 设置页）零请求即时渲染，消灭「登录了没头像」闪失；
+ *  仅当源标记（avatarUrl 本身）变化或 TTL 过期才由缓存层后台回源。渲染路径
+ *  从不等待网络。离线兜底：本会话拿不到 status（如启动即离线）时回落缓存里
+ *  的 last-known 登录快照，跨刷新不丢头像（登出时 forgetAvatarProfile 清除）。 */
 export function avatarViewState() {
   const url = neblinkState.device?.avatarUrl || '';
   const validAvatarUrl = url && url.startsWith('http') && !url.includes('example.com') ? url : '';
-  const showPhoto = !!neblinkState.loggedIn && !!validAvatarUrl && avatarFailedUrl !== validAvatarUrl;
-  return { loggedIn: !!neblinkState.loggedIn, url: validAvatarUrl, showPhoto };
+  let displayUrl = validAvatarUrl;
+  let loggedIn = !!neblinkState.loggedIn;
+  if (validAvatarUrl) {
+    const cached = lookupAvatar(validAvatarUrl);
+    if (cached) displayUrl = cached;
+    rememberAvatarProfile(loggedIn, validAvatarUrl); // value-change short-circuited inside
+  } else if (!neblinkState.device) {
+    // No live status this session (offline boot / gateway restarting) — fall
+    // back to the last-known snapshot instead of flashing the logo.
+    const known = lastKnownAvatarProfile();
+    if (known) { loggedIn = true; displayUrl = known.dataUrl; }
+  }
+  const showPhoto = loggedIn && !!displayUrl && avatarFailedUrl !== validAvatarUrl;
+  return { loggedIn, url: showPhoto ? displayUrl : '', showPhoto };
 }
 
 /** Read-only accessor for the current NebLink state (used by the Activity Bar). */
@@ -482,6 +500,7 @@ export function bindNeblinkEvents(rerender) {
           headers: { 'Authorization': 'Bearer ' + getAuthToken() },
         });
       } catch (e) { /* non-critical — refresh state either way */ }
+      forgetAvatarProfile(); // drop the last-known snapshot: a logged-out user must not resurrect offline
       await fetchNeblinkStatus();
       rerender();
     });
