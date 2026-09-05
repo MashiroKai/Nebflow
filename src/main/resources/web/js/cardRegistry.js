@@ -44,20 +44,69 @@ function extractThemeVars(themeCSS) {
  *  fills the available card width and responds to window resize.
  *  Height is reported via ResizeObserver so the iframe auto-sizes vertically.
  *  Width reporting is no longer needed — the chain width:100% from chat panel
- *  → row → container → wrap → iframe → nf-wrap handles responsive sizing. */
+ *  → row → container → wrap → iframe → nf-wrap handles responsive sizing.
+ *
+ *  Measurement source: body.scrollHeight (NOT documentElement.scrollHeight).
+ *  <html> is the viewport scroll container — documentElement.scrollHeight is
+ *  max(viewport, content), so short content gets padded up to the iframe's
+ *  default 150px viewport (empty band under the card) and the viewport leaks
+ *  into every measurement. body has overflow:hidden (BFC), so it shrink-wraps
+ *  its content and body.scrollHeight is the natural content height including
+ *  trailing margins, independent of the viewport.
+ *
+ *  Runaway fuse: content whose height genuinely depends on the viewport
+ *  (min-height:100vh-class layouts) has no stable auto height — height H
+ *  makes the viewport H, which makes the content H+tail, which reports
+ *  H+tail, forever ("card scrolls forever, never reaches its bottom").
+ *  Detect the signature — consecutive uniform growth steps (constant delta,
+ *  small, monotonic) — and trip: stop reporting, clamp the body to the last
+ *  height and switch it to internal scrolling so the bottom edge stays
+ *  reachable. The parent re-arms the fuse via _nfCardRemeasure when the card
+ *  width changes (only the parent knows; any viewport-bound anchor inside
+ *  the frame would itself move with the clamp). */
 function buildHeightScript(id) {
   return `<script>
 (function(){
   var id=${id};
+  var last=0,step=0,delta=0,tripped=false;
+  var FUSE_TRIPS=8;
+  function measure(){
+    return document.body.scrollHeight||document.documentElement.scrollHeight;
+  }
   function send(){
+    if(tripped) return;
     try{
-      var h=document.documentElement.scrollHeight||document.body.scrollHeight;
+      var h=measure();
+      if(last>0&&h>last){
+        var d=h-last;
+        if(d<200&&delta>0&&Math.abs(d-delta)<=Math.max(1,0.02*delta)){
+          step++;
+        }else{
+          step=1;
+        }
+        delta=d;
+        if(step>=FUSE_TRIPS){
+          tripped=true;
+          document.body.style.height=h+'px';
+          document.body.style.overflow='auto';
+          parent.postMessage({_nfCardH:h,id:id},"*");
+          parent.postMessage({_nfCardFused:true,id:id},"*");
+          return;
+        }
+      }else{
+        step=1;delta=0;
+      }
+      last=h;
       parent.postMessage({_nfCardH:h,id:id},"*");
     }catch(e){}
   }
-  new ResizeObserver(send).observe(document.body);
-  send();setTimeout(send,100);setTimeout(send,500);setTimeout(send,2000);
   window.addEventListener('message',function(e){
+    if(e.data&&e.data._nfCardRemeasure&&e.data.id===id){
+      tripped=false;last=0;step=0;delta=0;
+      document.body.style.height='';
+      document.body.style.overflow='';
+      setTimeout(send,30);
+    }
     if(e.data&&e.data._nfThemeVars){
       var s=document.getElementById('nf-card-theme');
       if(!s){s=document.createElement('style');s.id='nf-card-theme';document.head.appendChild(s);}
@@ -65,6 +114,8 @@ function buildHeightScript(id) {
       setTimeout(send,50);
     }
   });
+  new ResizeObserver(send).observe(document.body);
+  send();setTimeout(send,100);setTimeout(send,500);setTimeout(send,2000);
 })();
 </script>`;
 }
@@ -74,6 +125,14 @@ const _firstHeightDone = new Set();
 
 /** Listen for height messages from card iframes. */
 window.addEventListener('message', (e) => {
+  // Runaway-fuse trip notice (see buildHeightScript): the frame froze its own
+  // height and switched to internal scrolling. Mark the iframe so the wrap's
+  // width observer knows to re-arm it when the card re-flows.
+  if (e.data && e.data._nfCardFused) {
+    const fused = document.querySelector(`iframe[data-nf-card-id="${e.data.id}"]`);
+    if (fused) fused._nfFused = true;
+    return;
+  }
   if (!e.data || !e.data._nfCardH) return;
   const iframe = document.querySelector(`iframe[data-nf-card-id="${e.data.id}"]`);
   if (iframe) {
@@ -208,6 +267,22 @@ function renderHtmlCard(container, html, title) {
 
   container.appendChild(wrap);
 
+  // Re-arm a fused (viewport-dependent content, see buildHeightScript) card
+  // when its width changes: only the parent knows about re-flows — any
+  // anchor inside the frame would itself move with the fuse clamp. Normal
+  // (non-fused) cards don't need this: their in-frame ResizeObserver picks
+  // up width-driven height changes on its own.
+  let lastWrapW = 0;
+  const widthObserver = new ResizeObserver(() => {
+    const w = Math.round(wrap.getBoundingClientRect().width);
+    if (Math.abs(w - lastWrapW) <= 2) return;
+    lastWrapW = w;
+    if (iframe._nfFused) {
+      try { iframe.contentWindow.postMessage({ _nfCardRemeasure: true, id }, '*'); } catch (err) { /* dead frame */ }
+    }
+  });
+  widthObserver.observe(wrap);
+
   // Lazy loading: defer srcdoc until the iframe is near the viewport.
   // This prevents all card iframes in a session from being created and
   // parsed at once — only visible (+ margin) cards are instantiated.
@@ -294,6 +369,7 @@ function renderHtmlCard(container, html, title) {
     // of leaking them (each leaked iframe keeps its own DOM+JS engine).
     iframe._nfCleanup = () => {
       io.disconnect();
+      widthObserver.disconnect();
       _firstHeightDone.delete(id);
       iframe.removeAttribute('srcdoc');
     };
