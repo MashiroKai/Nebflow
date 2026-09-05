@@ -46,6 +46,11 @@ class NodePluginChainSpec extends CatsEffectSuite:
     """{"name":"test-agent","description":"plugin chain agent","tools":[],"category":"standalone"}"""
   )
   os.write.over(tempRoot / "agents" / "test-agent" / "system.md", "# test-agent\n")
+  // 2026-09-05 agent 退役：新建节点执行统一 general——fixture 侧补 general agent
+  os.makeDir.all(tempRoot / "agents" / "general")
+  os.write.over(tempRoot / "agents" / "general" / "agent.json",
+    """{"name":"general","description":"general executor","tools":[],"category":"standalone"}""")
+  os.write.over(tempRoot / "agents" / "general" / "system.md", "# general\n")
   os.write.over(tempRoot / "nebflow.json", "{}")
 
   // ── plugin fixtures（真实目录 + 审批走 PluginRegistry 单点）──────
@@ -220,7 +225,7 @@ class NodePluginChainSpec extends CatsEffectSuite:
         res <- mkResources(system, tempRoot, new RecordingLlm(capture))
         rt <- mountProject("plc-inject", ws, system, res)
         ctx = mkCtx(res, system, ws.toString)
-        created <- nodeEdit(nodeInput("plc-inject", "injected", "agent" -> Json.fromString("test-agent"),
+        created <- nodeEdit(nodeInput("plc-inject", "injected", "description" -> Json.fromString("test node purpose"),
           "task" -> Json.fromString("use the howto skill"), "out" -> Json.fromString("Nebula"),
           "plugins" -> Json.arr(Json.fromString("inject-skill"))), ctx)
         _ = assert(created.isRight, s"NodeEdit with trusted plugin must succeed: $created")
@@ -266,7 +271,7 @@ class NodePluginChainSpec extends CatsEffectSuite:
         res <- mkResources(system, tempRoot, new RecordingLlm(capture, delay = 1500.millis))
         rt <- mountProject("plc-mcp", ws, system, res)
         ctx = mkCtx(res, system, ws.toString)
-        created <- nodeEdit(nodeInput("plc-mcp", "mcpped", "agent" -> Json.fromString("test-agent"),
+        created <- nodeEdit(nodeInput("plc-mcp", "mcpped", "description" -> Json.fromString("test node purpose"),
           "task" -> Json.fromString("use the echo tool"), "out" -> Json.fromString("Nebula"),
           "plugins" -> Json.arr(Json.fromString("echo-mcp"))), ctx)
         _ = assert(created.isRight, s"NodeEdit must succeed: $created")
@@ -310,7 +315,7 @@ class NodePluginChainSpec extends CatsEffectSuite:
         rt <- mountProject("plc-stale", ws, system, res)
         ctx = mkCtx(res, system, ws.toString)
         // A：入口节点（task，out→Nebula），慢 LLM 下保持 running
-        a <- nodeEdit(nodeInput("plc-stale", "A-slow", "agent" -> Json.fromString("test-agent"),
+        a <- nodeEdit(nodeInput("plc-stale", "A-slow", "description" -> Json.fromString("test node purpose"),
           "task" -> Json.fromString("slow upstream"), "out" -> Json.fromString("Nebula")), ctx)
         _ = assert(a.isRight, s"upstream A create failed: $a")
         aId <- rt.store.snapshot.map(_.nodes.values.find(_.name == "A-slow").map(_.id)).flatMap {
@@ -318,7 +323,7 @@ class NodePluginChainSpec extends CatsEffectSuite:
           case None => IO.raiseError(new RuntimeException("A-slow vanished"))
         }
         // B：wiring（in=[A] 无 task，运行中上游不投递 → 不启动），分配 inject-skill
-        b <- nodeEdit(nodeInput("plc-stale", "B-stale", "agent" -> Json.fromString("test-agent"),
+        b <- nodeEdit(nodeInput("plc-stale", "B-stale", "description" -> Json.fromString("test node purpose"),
           "in" -> Json.arr(Json.fromString(aId)), "out" -> Json.fromString("Nebula"),
           "plugins" -> Json.arr(Json.fromString("inject-skill"))), ctx)
         _ = assert(b.isRight, s"downstream B create failed: $b")
@@ -355,10 +360,10 @@ class NodePluginChainSpec extends CatsEffectSuite:
         res <- mkResources(system, tempRoot, new RecordingLlm(capture))
         rt <- mountProject("plc-val", ws, system, res)
         ctx = mkCtx(res, system, ws.toString)
-        missing <- nodeEdit(nodeInput("plc-val", "v1", "agent" -> Json.fromString("test-agent"),
+        missing <- nodeEdit(nodeInput("plc-val", "v1", "description" -> Json.fromString("test node purpose"),
           "task" -> Json.fromString("t"), "out" -> Json.fromString("Nebula"),
           "plugins" -> Json.arr(Json.fromString("no-such-plugin"))), ctx)
-        untrusted <- nodeEdit(nodeInput("plc-val", "v2", "agent" -> Json.fromString("test-agent"),
+        untrusted <- nodeEdit(nodeInput("plc-val", "v2", "description" -> Json.fromString("test node purpose"),
           "task" -> Json.fromString("t"), "out" -> Json.fromString("Nebula"),
           "plugins" -> Json.arr(Json.fromString("never-approved"))), ctx)
         _ <- system.stopAll.handleErrorWith(_ => IO.unit)
@@ -388,7 +393,7 @@ class NodePluginChainSpec extends CatsEffectSuite:
         rt <- mountProject("plc-off", ws, system, res)
         ctx = mkCtx(res, system, ws.toString)
         // 引用不存在的插件名也被忽略（不校验）——flag off 的回滚语义
-        created <- nodeEdit(nodeInput("plc-off", "ignored", "agent" -> Json.fromString("test-agent"),
+        created <- nodeEdit(nodeInput("plc-off", "ignored", "description" -> Json.fromString("test node purpose"),
           "task" -> Json.fromString("no plugins"), "out" -> Json.fromString("Nebula"),
           "plugins" -> Json.arr(Json.fromString("no-such-plugin"))), ctx)
         _ = assert(created.isRight, s"flag off must ignore plugins param, got: $created")

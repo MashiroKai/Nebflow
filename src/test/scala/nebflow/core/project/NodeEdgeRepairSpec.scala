@@ -54,6 +54,11 @@ class NodeEdgeRepairSpec extends CatsEffectSuite:
     """{"name":"test-agent","description":"edge-repair regression agent","tools":[],"category":"standalone"}"""
   )
   os.write.over(tempRoot / "agents" / "test-agent" / "system.md", "# test-agent\n")
+  // 2026-09-05 agent 退役：新建节点执行统一 general——fixture 侧补 general agent
+  os.makeDir.all(tempRoot / "agents" / "general")
+  os.write.over(tempRoot / "agents" / "general" / "agent.json",
+    """{"name":"general","description":"general executor","tools":[],"category":"standalone"}""")
+  os.write.over(tempRoot / "agents" / "general" / "system.md", "# general\n")
 
   override def afterAll(): Unit =
     PathUtil.setDataRoot(originalRoot)
@@ -219,11 +224,11 @@ class NodeEdgeRepairSpec extends CatsEffectSuite:
         "n-w" -> NodeDef(id = "n-w", name = "w-w", agent = "test-agent",
           status = NodeLifecycle.Wiring, out = Some("Nebula"), createdAt = System.currentTimeMillis()))))
       wId <- idOf(rt, "w-w")
-      _ <- nodeEdit(nodeInput("edge-arch-append", "run-r", "agent" -> Json.fromString("test-agent"),
+      _ <- nodeEdit(nodeInput("edge-arch-append", "run-r", "description" -> Json.fromString("test node purpose"),
         "task" -> Json.fromString("slow-r"), "out" -> Json.fromString(wId)), ctx)
       _ <- waitStatus(rt, "run-r", Set(NodeLifecycle.Running))
       // A 完成后悬空化 + 真实 TTL 归档
-      _ <- nodeEdit(nodeInput("edge-arch-append", "done-a", "agent" -> Json.fromString("test-agent"),
+      _ <- nodeEdit(nodeInput("edge-arch-append", "done-a", "description" -> Json.fromString("test node purpose"),
         "task" -> Json.fromString("done-result-A"), "out" -> Json.fromString("Nebula")), ctx)
       aId <- archiveDangling(rt, "done-a")
       rId <- idOf(rt, "run-r")
@@ -264,16 +269,16 @@ class NodeEdgeRepairSpec extends CatsEffectSuite:
         "n-w" -> NodeDef(id = "n-w", name = "w-w", agent = "test-agent",
           status = NodeLifecycle.Wiring, out = Some("Nebula"), createdAt = System.currentTimeMillis()))))
       wId <- idOf(rt, "w-w")
-      _ <- nodeEdit(nodeInput("edge-arch-deps", "slow-x", "agent" -> Json.fromString("test-agent"),
+      _ <- nodeEdit(nodeInput("edge-arch-deps", "slow-x", "description" -> Json.fromString("test node purpose"),
         "task" -> Json.fromString("slow-x"), "out" -> Json.fromString("Nebula")), ctx)
       xId <- idOf(rt, "slow-x")
       _ <- waitStatus(rt, "slow-x", Set(NodeLifecycle.Running))
       // W 挂 deps（X 运行中 → deps 未满足，W 保持 wiring）
       _ <- nodeEdit(nodeInput("edge-arch-deps", "w-w", "deps" -> Json.fromString(xId)), ctx)
       // A、B 完成后悬空化 + 归档
-      _ <- nodeEdit(nodeInput("edge-arch-deps", "done-a", "agent" -> Json.fromString("test-agent"),
+      _ <- nodeEdit(nodeInput("edge-arch-deps", "done-a", "description" -> Json.fromString("test node purpose"),
         "task" -> Json.fromString("done-result-A"), "out" -> Json.fromString("Nebula")), ctx)
-      _ <- nodeEdit(nodeInput("edge-arch-deps", "done-b", "agent" -> Json.fromString("test-agent"),
+      _ <- nodeEdit(nodeInput("edge-arch-deps", "done-b", "description" -> Json.fromString("test node purpose"),
         "task" -> Json.fromString("done-result-B"), "out" -> Json.fromString("Nebula")), ctx)
       aId <- archiveDangling(rt, "done-a")
       bId <- archiveDangling(rt, "done-b")
@@ -315,7 +320,7 @@ class NodeEdgeRepairSpec extends CatsEffectSuite:
         "n-w" -> NodeDef(id = "n-w", name = "w-w", agent = "test-agent",
           status = NodeLifecycle.Wiring, out = Some("Nebula"), createdAt = System.currentTimeMillis()))))
       wId <- idOf(rt, "w-w")
-      _ <- nodeEdit(nodeInput("edge-arch-wire", "done-a", "agent" -> Json.fromString("test-agent"),
+      _ <- nodeEdit(nodeInput("edge-arch-wire", "done-a", "description" -> Json.fromString("test node purpose"),
         "task" -> Json.fromString("dangling-result-A"), "out" -> Json.fromString("Nebula")), ctx)
       aId <- archiveDangling(rt, "done-a") // 悬空 + 归档
       // fix b：按名编辑归档节点设 out → 补投递（修复前：按名只在活动区找 → 落
@@ -355,7 +360,7 @@ class NodeEdgeRepairSpec extends CatsEffectSuite:
         "n-w" -> NodeDef(id = "n-w", name = "w-w", agent = "test-agent",
           status = NodeLifecycle.Wiring, out = Some("Nebula"), createdAt = System.currentTimeMillis()))))
       wId <- idOf(rt, "w-w")
-      _ <- nodeEdit(nodeInput("edge-active-wire", "done-a", "agent" -> Json.fromString("test-agent"),
+      _ <- nodeEdit(nodeInput("edge-active-wire", "done-a", "description" -> Json.fromString("test node purpose"),
         "task" -> Json.fromString("dangling-result-A"), "out" -> Json.fromString("Nebula")), ctx)
       _ <- waitStatus(rt, "done-a", Set(NodeLifecycle.Completed))
       aId <- idOf(rt, "done-a")
@@ -388,7 +393,7 @@ class NodeEdgeRepairSpec extends CatsEffectSuite:
         "n-w" -> NodeDef(id = "n-w", name = "w-w", agent = "test-agent",
           status = NodeLifecycle.Wiring, out = Some("Nebula"), createdAt = System.currentTimeMillis()))))
       wId <- idOf(rt, "w-w")
-      _ <- nodeEdit(nodeInput("edge-preedge", "done-a", "agent" -> Json.fromString("test-agent"),
+      _ <- nodeEdit(nodeInput("edge-preedge", "done-a", "description" -> Json.fromString("test node purpose"),
         "task" -> Json.fromString("dangling-result-A"), "out" -> Json.fromString("Nebula")), ctx)
       aId <- archiveDangling(rt, "done-a")
       // 播种实证损伤形态（陈旧 out 覆盖时代遗留，同 n-219106db）：下游 in 已含
@@ -432,9 +437,9 @@ class NodeEdgeRepairSpec extends CatsEffectSuite:
         "n-w" -> NodeDef(id = "n-w", name = "w-w", agent = "test-agent",
           status = NodeLifecycle.Wiring, out = Some("Nebula"), createdAt = System.currentTimeMillis()))))
       wId <- idOf(rt, "w-w")
-      _ <- nodeEdit(nodeInput("edge-catchup", "done-a", "agent" -> Json.fromString("test-agent"),
+      _ <- nodeEdit(nodeInput("edge-catchup", "done-a", "description" -> Json.fromString("test node purpose"),
         "task" -> Json.fromString("done-result-A"), "out" -> Json.fromString("Nebula")), ctx)
-      _ <- nodeEdit(nodeInput("edge-catchup", "done-b", "agent" -> Json.fromString("test-agent"),
+      _ <- nodeEdit(nodeInput("edge-catchup", "done-b", "description" -> Json.fromString("test node purpose"),
         "task" -> Json.fromString("done-result-B"), "out" -> Json.fromString("Nebula")), ctx)
       aId <- archiveDangling(rt, "done-a")
       bId <- archiveDangling(rt, "done-b")
@@ -471,7 +476,7 @@ class NodeEdgeRepairSpec extends CatsEffectSuite:
       res <- mkResources(system, tempRoot, llm.handle)
       rt <- mountProject("edge-arch-guard", ws, system, res)
       ctx = mkCtx(res, system, ws.toString)
-      _ <- nodeEdit(nodeInput("edge-arch-guard", "done-a", "agent" -> Json.fromString("test-agent"),
+      _ <- nodeEdit(nodeInput("edge-arch-guard", "done-a", "description" -> Json.fromString("test node purpose"),
         "task" -> Json.fromString("dangling-result-A"), "out" -> Json.fromString("Nebula")), ctx)
       aId <- archiveDangling(rt, "done-a")
       rTask <- nodeEdit(nodeInput("edge-arch-guard", "done-a", "task" -> Json.fromString("new-task")), ctx)
