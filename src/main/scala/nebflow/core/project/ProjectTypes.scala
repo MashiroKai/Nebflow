@@ -136,10 +136,11 @@ object NodeDef:
   * `results/<nodeId>.md`，经 REST GET /projects/<n>/flow-map/nodes/<id>/result 或
   * NodeList(detail=<nodeId>) 按需单点取）。条件字段（与 deps/hold/plugins 同构，非命中
   * 不带——载荷字段集对无此特征的节点零漂移）：
-  *   - hasResult: 节点持有结果全文（前端据此发起按需拉取）；
-  *   - taskPreview: 存量节点无 description 时的回退展示（task 首行 ≤80 字符截断）；
-  *   - deps / blockedFeedback / hold / plugins：既有条件字段语义不变。
-  * skill/mcp/preset 为节点配置（skill/mcp 仅存量兼容展示——2b §B.4/H-11① deprecated）。 */
+ *   - hasResult: 节点持有结果全文（前端据此发起按需拉取）；
+ *   - taskPreview: 存量节点无 description 时的回退展示（task 首行 ≤80 字符截断）；
+ *   - deps / blockedFeedback / hold / plugins / merge：既有条件字段语义不变（merge
+ *     仅 merge 节点带 "merge": true——mount-enforce 批 payload 契约，缺失=非 merge）。
+ * skill/mcp/preset 为节点配置（skill/mcp 仅存量兼容展示——2b §B.4/H-11① deprecated）。 */
 object NodePayload:
   /** taskPreview 截断上限（回退展示第一层，存量节点专用）。 */
   val TaskPreviewMaxChars: Int = 80
@@ -201,7 +202,12 @@ object NodePayload:
       // true 才带——未开启节点的 payload 字段集零变化（NodeList 上分发器可辨哪些
       // 节点会回流通知）。
       val notifyFields = if node.notifyDispatcher then List("notifyDispatcher" -> node.notifyDispatcher.asJson) else Nil
-      Json.obj((baseFields ++ hasResultFields ++ taskPreviewFields ++ depsFields ++ feedbackFields ++ holdFields ++ pluginFields ++ notifyFields)*)
+      // merge 条件序列化（mount-enforce 批 20260905 payload 契约；与 hold 条件字段
+      // 同构）：仅 merge 节点带 "merge": true——缺省/缺失 = 非 merge（前端按缺省
+      // 防御，非 merge 节点 payload 字段集零变化）。loop 为前瞻防御字段：引擎现无
+      // loop 节点概念（grep 核实）→ 暂不产出，前端缺省防御同款兼容。
+      val mergeFields = if node.merge then List("merge" -> node.merge.asJson) else Nil
+      Json.obj((baseFields ++ hasResultFields ++ taskPreviewFields ++ depsFields ++ feedbackFields ++ holdFields ++ pluginFields ++ notifyFields ++ mergeFields)*)
 
 /** Flow Map 活动区（§2.6，磁盘 flow-map.json）。 */
 case class FlowMapState(
