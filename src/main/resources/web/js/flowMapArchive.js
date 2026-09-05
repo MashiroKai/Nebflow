@@ -48,6 +48,10 @@ const ST_SVG = {
   cancelled: '<svg viewBox="0 0 12 12" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M3 6h6"/></svg>',
 };
 const CHEV_SVG = '<svg viewBox="0 0 10 10" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M3.5 2l3.5 3-3.5 3"/></svg>';
+// 关闭叉（替代 ✕ U+2715，2026-09-06 显示优化批：全批禁 emoji 渲染字符）
+const CLOSE_SVG = '<svg viewBox="0 0 12 12" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" aria-hidden="true"><path d="M3 3l6 6M9 3l-6 6"/></svg>';
+// 阻塞旗（替代 ⚑ U+2691，描边风格同 flowMapTab FM_STATUS_SVG.warn）
+const FLAG_SVG = '<svg class="flow-blocked-flag" viewBox="0 0 12 12" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3.5 1.5v9M3.5 2.5H9L7.5 4.75 9 7H3.5"/></svg>';
 const ARCHIVE_ICON = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect width="20" height="5" x="2" y="3" rx="1"/><path d="M4 8v11a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8"/><path d="M10 12h4"/></svg>';
 
 /** 详情/条目状态色 class（terminal 三态有专属 SVG，活动态挂 sapphire 色类）。 */
@@ -392,7 +396,7 @@ const LAYER_HTML = `
       <div class="fm-panel-head">
         <span class="fm-panel-title" title="${esc(t('flowmap.archive.ttlTitle'))}">${esc(t('flowmap.archive.title'))}</span>
         <span class="fm-panel-count"></span>
-        <button class="fm-panel-close" type="button" aria-label="${esc(t('flowmap.archive.close'))}">✕</button>
+        <button class="fm-panel-close" type="button" aria-label="${esc(t('flowmap.archive.close'))}">${CLOSE_SVG}</button>
       </div>
       <div class="fm-panel-body"></div>
     </div>
@@ -400,7 +404,7 @@ const LAYER_HTML = `
       <div class="fm-detail-head">
         <span class="fm-detail-st"></span>
         <span class="fm-detail-title"></span>
-        <button class="fm-detail-close" type="button" aria-label="${esc(t('flowmap.archive.detailClose'))}">✕</button>
+        <button class="fm-detail-close" type="button" aria-label="${esc(t('flowmap.archive.detailClose'))}">${CLOSE_SVG}</button>
       </div>
       <div class="fm-detail-body"></div>
     </div>
@@ -686,6 +690,10 @@ function renderDetail(/** @type {LayerCtx} */ ctx, /** @type {ChainMember} */ n)
     stEl.innerHTML = ST_SVG[/** @type {'completed'} */ (st)] || '';
   }
   ctx.detailTitle.textContent = String(n.name || n.id);
+  // 描述区块（2026-09-06 显示优化批）：description 已在载荷（flowmap-slim 契约，
+  // 节点卡同数据源）——本批只补渲染链：元数据区在前（名/描述/状态/时间），结果
+  // 全文区在后。存量节点无 description → 区块整体不渲染（零 mock、零空态占位）。
+  const descText = String(n.description || '');
   const chain = chainOfNode(ctx.project, n.id);
   const chainLine = chain
     ? `${esc(t('flowmap.archive.chain'))}：${esc(chain.title)}（${esc(t('flowmap.archive.nodes', { n: String(chain.nodeCount) }))} · ${esc(chain.members.every((m) => TERMINAL_STATUSES.has(String(m.status || ''))) ? t('flowmap.archive.chainArchived') : t('flowmap.archive.chainRetained'))}）`
@@ -704,7 +712,7 @@ function renderDetail(/** @type {LayerCtx} */ ctx, /** @type {ChainMember} */ n)
   const blockedPanel = fb ? `
     <div class="flow-blocked-panel">
       <div class="flow-blocked-head">
-        <span class="flow-blocked-badge">⚑ ${esc(t('flowmap.blockedTitle'))}</span>
+        <span class="flow-blocked-badge">${FLAG_SVG}${esc(t('flowmap.blockedTitle'))}</span>
         ${fb.category ? `<span class="flow-blocked-category">${esc(String(fb.category))}</span>` : ''}
         <span class="flow-blocked-count">${esc(t('flowmap.blockedRounds', { n: String(Number(n.blockCount) || 0) }))}</span>
       </div>
@@ -728,6 +736,7 @@ function renderDetail(/** @type {LayerCtx} */ ctx, /** @type {ChainMember} */ n)
   }
   ctx.detailBody.innerHTML = `
     <div class="fm-detail-meta">${metaRows}</div>
+    ${descText ? `<div class="fm-detail-desc">${esc(descText)}</div>` : ''}
     ${blockedPanel}
     ${taskText ? `<div class="fm-detail-sec">${esc(t('flowmap.archive.taskLabel'))}</div><div class="fm-detail-task">${esc(taskText)}</div>` : ''}
     <div class="fm-detail-sec">${esc(t('flowmap.archive.resultLabel'))}</div>

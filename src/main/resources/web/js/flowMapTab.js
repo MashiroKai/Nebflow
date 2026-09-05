@@ -1086,7 +1086,11 @@ function renderFlowMapDiff(container, baseline, fm, projectName) {
   applyNodeDiff(canvas, baseline, fm, positions, width, projectName);
   applyEdgeDiff(g, collectEdges(baseline, prevLayout.positions), collectEdges(fm, positions));
 
-  const summary = container.querySelector('.flowmap-summary');
+  // 摘要增量（2026-09-06 顶栏合并批）：就地视图摘要已迁入 nav-bar（view-body 之外），
+  // 查找提升到 pane 口径；legacy 独立标签页摘要仍在 container 内 card-header——
+  // pane 级 querySelector 两种形态通吃（pane 无 nav-bar 时命中的就是容器内那条）。
+  const paneEl = container.closest('.canvas-tab-pane');
+  const summary = (paneEl || container).querySelector('.flowmap-summary');
   const txt = summaryText(projectName, fm);
   if (summary && summary.textContent !== txt) summary.textContent = txt;
   container.dataset.fmState = 'nodes';
@@ -1148,11 +1152,15 @@ export function renderFlowMap(container, fm, projectName, opts = {}) {
   container.dataset.fmState = state;
   container.dataset.fmVisible = String(nodes.length);
   container.dataset.fmTotal = String(total);
+  // 顶栏合并（2026-09-06）：就地视图（projects 标签页 nav-bar 右侧已有摘要槽）→
+  // 摘要写进 nav-bar，body 内不再渲染头部条（项目名 title 已退役，返回钮承担）；
+  // legacy 独立 flow-map 标签页无 nav-bar → 保留摘要条回落（仅摘要、无 title）。
+  const paneEl = container.closest('.canvas-tab-pane');
+  const navSummary = paneEl ? paneEl.querySelector('.flowmap-nav-bar .flowmap-summary') : null;
   container.innerHTML = `
-    <div class="flowmap-card-header">
-      <div class="flowmap-card-title" title="${esc(projectName)}">${esc(projectName)}</div>
+    ${navSummary ? '' : `<div class="flowmap-card-header">
       <div class="flowmap-summary">${summarizeHeader(projectName, fm)}</div>
-    </div>
+    </div>`}
     ${nodes.length === 0
       ? `<div class="dag-empty"><div class="hint">${esc(emptyMsg)}</div></div>`
       : `<div class="solar-card flowmap-card">
@@ -1165,6 +1173,7 @@ export function renderFlowMap(container, fm, projectName, opts = {}) {
           ${legendHtml()}
         </div>`}
     `;
+  if (navSummary) navSummary.innerHTML = summarizeHeader(projectName, fm);
   renderedFmByContainer.set(container, fm);
   const vp = container.querySelector('.fm-viewport');
   const canvas = container.querySelector('.solar-canvas');
@@ -1229,7 +1238,10 @@ export function renderFlowMapInto(container, projectName, opts = {}) {
   const seq = (seqByProject.get(projectName) || 0) + 1;
   seqByProject.set(projectName, seq);
   const genAtStart = genByProject.get(projectName) || 0;
-  if (!container.querySelector('.flowmap-card-header')) {
+  // 首渲加载态：以 fmState 判定（2026-09-06 顶栏合并后就地视图 body 内不再渲染
+  // card-header，旧「无 header = 未渲染」判据失效）；refetch 不闪 loading。
+  if (!container.dataset.fmState || container.dataset.fmState === 'loading'
+      || container.dataset.fmState === 'error') {
     container.dataset.fmState = 'loading';
     container.innerHTML = `<div class="flowmap-loading">${esc(t('flowmap.loading'))}</div>`;
   }

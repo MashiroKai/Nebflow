@@ -291,16 +291,13 @@ function buildNodeRow(node, project) {
   return row;
 }
 
-/** 节点区块分区装配（独立于 redraw 的 team 分组逻辑）：标题 + 按项目分组。
- *  无节点返回 null（分区整体不渲染）。 */
+/** 节点区块分区装配（独立于 redraw 的 team 分组逻辑）：按项目分组直排。
+ *  2026-09-06 显示优化批：「Flow Map」分区标题元素整体移除（作者 00:35 裁定；
+ *  flowmap.title i18n 键保留——Flow Map 标签页域共用）。无节点返回 null。 */
 function buildNodeSection(nodes) {
   if (!nodes || nodes.length === 0) return null;
   const section = document.createElement('div');
   section.className = 'task-section task-section-nodes';
-  const title = document.createElement('div');
-  title.className = 'task-node-section-title';
-  title.textContent = t('flowmap.title');
-  section.appendChild(title);
   const byProject = new Map();
   for (const it of nodes) {
     if (!byProject.has(it.project)) byProject.set(it.project, []);
