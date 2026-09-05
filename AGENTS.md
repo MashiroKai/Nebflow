@@ -19,7 +19,7 @@ Nebflow 是一个开源（Apache 2.0）AI Agent 编排平台。本仓为 **Scala
 - **工作目录**: `/Users/dev/Claude code/Nebflow`
 - **禁止触碰** `nebflow-rs/` 目录（那是 Rust 版的代码）和 `/tmp/nebflow-rust`（nebflow-rust 的工作目录）
 
-## 协作分工参考（nebflow-project team 已于 2026-09-03 归档迁入 Project 架构；按方向组建节点，领域知识见 nebflow-* skill 组）
+## 协作分工参考（nebflow-project team 已于 2026-09-03 归档迁入 Project 架构；按方向组建节点，领域知识见 nebflow-* 系列插件，映射标准源见 .nebflow/Spec/skills-to-plugins.md）
 - 后端代码（Scala, build, API, flow engine）→ 后端方向
 - 前端代码（JS, CSS, HTML, UI）→ 前端方向
 - 文档（CODEBASE.md, README, API 文档）→ 文档方向
