@@ -692,6 +692,9 @@ object AgentActor extends AgentCore with AgentSession:
       if item.multiple then base += "multiple" -> true.asJson
       // canvas emitted only when present — pre-#380 question payloads stay byte-identical
       item.canvas.foreach(c => base += "canvas" -> c.asJson)
+      // dirPicker emitted only when true — pre-workspace-picker payloads stay byte-identical
+      // (2026-09-05 作者裁定：工作区选择卡；前端据此渲染系统目录选择大目标)
+      if item.dirPicker then base += "dirPicker" -> true.asJson
       Json.obj(base.toList*)
     })
     Json.obj(fields.toList*)
