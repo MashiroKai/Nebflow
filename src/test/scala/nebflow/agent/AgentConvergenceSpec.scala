@@ -65,10 +65,14 @@ class AgentConvergenceSpec extends FunSuite:
 
   // ===== 分发器固定集 =====
 
-  test("dispatcher LLM tool list == Node 三件 + 读四件（isFlowNode spawn 形态）"):
+  test("dispatcher LLM tool list == Node 四件 + 读四件（isFlowNode spawn 形态；NodeMessage 20260905 机制批）"):
     val delivered = CoreProbe.toolList(mkDef("project-dispatcher"), isFlowNode = true).toSet
-    assertEquals(delivered, Set("NodeList", "NodeEdit", "NodeCancel", "Read", "Glob", "Grep", "Bash"),
-      "分发器固定工具集（§C.1）：不给 Write/Edit/AskUserQuestion")
+    assertEquals(delivered, Set("NodeList", "NodeEdit", "NodeCancel", "NodeMessage", "Read", "Glob", "Grep", "Bash"),
+      "分发器固定工具集（§C.1 + NodeMessage 20260905 机制批第八件）：不给 Write/Edit/AskUserQuestion")
+
+  test("NodeMessage 仅分发器（20260905 机制批裁定⑥）：Nebula/general 交付面均不含"):
+    assert(!CoreProbe.toolList(mkDef("Nebula")).toSet.contains("NodeMessage"), "Nebula 不加 NodeMessage")
+    assert(!CoreProbe.toolList(mkDef("general"), isFlowNode = true).toSet.contains("NodeMessage"), "general 不加 NodeMessage")
 
   // ===== general 固定 8 件 =====
 
