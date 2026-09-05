@@ -1,3 +1,22 @@
+// v8.4.2 (2026-09-05): VOICE RIPPLE RETUNE — denser ripples, calmer water
+// (author feedback 2026-09-05: 震动/扭动幅度还是太大，像水面上的波浪——波浪
+// 纹路要多一点，但不要这么尖锐). Parameter layer only, zero structural change:
+//  - wavenumbers {3,5,8} → {5,8,13}: one Fibonacci step up in spatial
+//    frequency — the rim now carries ~5/8/13 ripple lines instead of 3/5/8
+//    ("纹路多一点"). k stay INTEGERS (2π continuity, no atan2 seam); the set
+//    is pairwise-coprime, so no hidden π-symmetry stiffens the profile.
+//  - amp 0.032 → 0.016: uVol=1 max radial displacement ≈4.9% → ≈2.6% of the
+//    body radius. Ripple visibility now comes from DENSITY, not height.
+//  - weights [0.54,0.34,0.12] → [0.55,0.31,0.14]: re-balanced so EVERY
+//    per-harmonic spatial slope w·k·amp drops vs v8.4.1 (−15%/−27%/−5%;
+//    total Σw·k·amp −17.6%, k_max·amp −18.8%) — more lines but softer ones
+//    ("不要这么尖锐"). A flatter top share would have pushed the k=13 slope
+//    back UP, so the 0.14 cap is load-bearing for the softening goal.
+//  - jitterDepth 0.28 → 0.18: narrower amplitude breathing = fewer sudden
+//    crest jumps ("更平静"), organic breathing kept. Drifts/jitter rates/τ
+//    untouched — apparent wave-travel speed drift/k drops ~40% for free at
+//    the higher k, calming the motion without touching the time structure.
+//
 // v8.4.1 (2026-09-04): VOICE DEFORMATION RETUNE — softer response (author
 // feedback 2026-09-04: 幅度太大、太尖锐). Parameter layer only, zero
 // structural change (shader shape, smoothing mechanism, states, presets,
@@ -197,26 +216,31 @@ const PULSE_TABLE = { 'listening': [0.06, 1.6], 'nebula-busy': [0.05, 2.2], 'bg-
    for BOTH the generated GLSL block and the JS mirror voiceWaveAt()).
    ======================================================================== */
 
-/* Organic waveform (author 2026-09-03: 不要整齐的正弦). Three angular
-   harmonics; the wavenumbers k are INTEGERS (3/5/8) because sin(k·θ) must be
-   2π-periodic in θ — a non-integer k would tear a fixed seam into the edge
-   at the atan2 wrap. The "irrational / incommensurate" quality lives in the
-   TEMPORAL dimension: each harmonic drifts at its own speed (4.7 / -6.9 /
-   11.3 rad/s — pairwise non-integer ratios) and its amplitude slowly jitters
-   (rates 1.31 / 2.09 / 3.73 rad/s, depth 0.28 → ×0.72..1.00). The three
-   time bases never re-align, so the waveform shape keeps evolving and no
-   single neat sine is ever visible. The field is additionally multiplied by
-   uVol (smoothed mic level) and rides on top of the pre-existing noise
-   deformation inside draw() (w-field + r0 nEdge wobble). */
+/* Organic waveform (author 2026-09-03: 不要整齐的正弦; 2026-09-05: 纹路多但
+   别尖锐). Three angular harmonics; the wavenumbers k are INTEGERS (5/8/13
+   since v8.4.2 — one Fibonacci step up from 3/5/8 for denser ripples)
+   because sin(k·θ) must be 2π-periodic in θ — a non-integer k would tear a
+   fixed seam into the edge at the atan2 wrap. The "irrational /
+   incommensurate" quality lives in the TEMPORAL dimension: each harmonic
+   drifts at its own speed (4.7 / -6.9 / 11.3 rad/s — pairwise non-integer
+   ratios) and its amplitude slowly jitters (rates 1.31 / 2.09 / 3.73 rad/s,
+   depth 0.18 → ×0.82..1.00). The three time bases never re-align, so the
+   waveform shape keeps evolving and no single neat sine is ever visible. The
+   field is additionally multiplied by uVol (smoothed mic level) and rides on
+   top of the pre-existing noise deformation inside draw() (w-field + r0
+   nEdge wobble). */
 export const VOICE_WAVE = {
-  amp: 0.032, // max radial displacement (uv units) at voiceLevel 1 (v8.4.1: 0.062 → 0.032, ≈4.9% of body radius — author: 幅度太大)
+  amp: 0.016, // max radial displacement (uv units) at voiceLevel 1 (v8.4.2: 0.032 → 0.016, ≈2.6% of body radius — author: 幅度还是太大)
   harmonics: [
-    { k: 3, drift: 4.7,  phase: 0.0, jitterRate: 1.31, jitterPhase: 0.7 },
-    { k: 5, drift: -6.9, phase: 1.7, jitterRate: 2.09, jitterPhase: 2.1 },
-    { k: 8, drift: 11.3, phase: 4.2, jitterRate: 3.73, jitterPhase: 0.3 },
+    { k: 5,  drift: 4.7,  phase: 0.0, jitterRate: 1.31, jitterPhase: 0.7 },
+    { k: 8,  drift: -6.9, phase: 1.7, jitterRate: 2.09, jitterPhase: 2.1 },
+    { k: 13, drift: 11.3, phase: 4.2, jitterRate: 3.73, jitterPhase: 0.3 },
   ],
-  weights: [0.54, 0.34, 0.12], // sums to 1 (v8.4.1: 8th-harmonic share 0.20 → 0.12 given to the base k=3 — author: 太尖锐)
-  jitterDepth: 0.28,
+  // v8.4.2: re-balanced for k 5/8/13 — every per-harmonic spatial slope
+  // w·k·amp drops vs v8.4.1 (−15%/−27%/−5%); a higher k=13 share would raise
+  // the sharpest slope again, so 0.14 is the softening cap.
+  weights: [0.55, 0.31, 0.14], // sums to 1
+  jitterDepth: 0.18, // v8.4.2: 0.28 → 0.18 — calmer crests, breathing kept
 };
 
 /* JS mirror of the generated GLSL displacement field (uVol factored out —
@@ -241,9 +265,9 @@ const VOICE_GLSL = (() => {
     '  /* v8.4.0: organic voice deformation (listening only — uVol is the',
     '     smoothed mic level, forced to 0 in every other state). Multi-',
     '     harmonic radial edge displacement riding on the shared wobble',
-    '     contour: wavenumbers 3/5/8 (2π-continuous around the rim),',
-    '     incommensurate drift + slow per-harmonic amplitude jitter so the',
-    '     shape keeps evolving — never a single neat sine. */',
+    '     contour: wavenumbers 5/8/13 since v8.4.2 (2π-continuous around',
+    '     the rim), incommensurate drift + slow per-harmonic amplitude',
+    '     jitter so the shape keeps evolving — never a single neat sine. */',
     '  if (uVol > 0.001) {',
     '    float lr=length(uv);',
     '    vec2 dir=lr>0.0001?uv/lr:vec2(0.0);',
