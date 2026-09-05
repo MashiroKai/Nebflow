@@ -9,7 +9,7 @@ import { renderUserBubble, renderSystemBubble, setBusy, renderAttachmentPreview,
 import { renderMarkdownWithMath, escapeHtml, smartScroll } from './utils.js';
 import { saveMsg } from './persistence.js';
 import { saveInputDraft } from './sidebar.js';
-import { renderTaskList } from './taskList.js';
+// renderTaskList 未使用 import 已随旧任务区退役移除（2026-09-05 裁定）
 import { t } from './i18n.js';
 import { getLocale } from './i18n.js';
 import { renderQueueBar } from './chatQueue.js';

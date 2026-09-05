@@ -154,7 +154,9 @@ const GLOBAL_MSG_TYPES = new Set([
 const TERMINAL_MSG_TYPES = new Set([
   'done', 'error', 'interrupted', 'maxTokens', 'sessionBusy',
   'compactStart', 'compactComplete', 'compactFailed',
-  'backgroundTaskUpdate', 'taskListUpdate',
+  // taskListUpdate 已移出（2026-09-05 10:54 裁定：旧任务区退役）——非活跃
+  // 会话帧被入口过滤器丢弃，活跃会话帧无订阅者 no-op（后端照发，零触碰）。
+  'backgroundTaskUpdate',
   'askUser', 'askPermission', 'askUserAnswered',
   'frozen', 'resumed', 'agentFrozen', 'agentResumed',
   'errorEscalated', // error-recovery escalation → parent/user decision card
@@ -174,9 +176,8 @@ const STREAM_MSG_TYPES = new Set([
   'agentThinking', 'agentRetryStatus', 'agentDone',
   'treeBranchMounted', 'treeBranchUnmounted', 'treeBranchUpdated',
   'flowMail', 'flowStarted', 'flowNodesAdded', 'flowProgress', 'flowCompleted', 'teamList',
-  // 任务工具重做 (2026-08-30): team 域任务帧（{team, tasks}，无 sessionId）——
-  // 裁定② 统一进 Nebula 会话任务列表面板（taskList.js 合并渲染）。
-  'teamTaskListUpdate',
+  // teamTaskListUpdate 已移出（2026-09-05 10:54 裁定：旧任务区退役）——
+  // 无 sessionId 帧直达分发但无订阅者 = no-op（后端照发，零触碰）。
   // #308 actual model: sub-agent usageUpdate (sessionId = nodeSessionId) must
   // survive the entry filter below to reach the popup live-refresh path.
   // Without this, the event is silently dropped for non-active sessions.
