@@ -15,7 +15,8 @@ project/project/
 Thumbs.db
 
 # Nebflow runtime
-.nebflow/
+.nebflow/*
+!.nebflow/Spec/
 .nebflow-qc.log
 
 # Internal / development-only

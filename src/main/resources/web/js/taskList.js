@@ -343,12 +343,19 @@ function buildRow(task, sessionId) {
 
 // ── Flow Map 节点行（2026-09-02）：复用任务行设计语言 ────────────────────
 
-// 状态词全部复用现有 i18n key（零新增）：wiring→等待 / pending→排队中 /
-// running→运行中 / completed→已完成 / failed→失败 / cancelled→已取消。
+// 状态词映射（2026-09-05 作者裁定：wiring/pending→待处理、running→进行中、
+// held→待放行、blocked→阻塞、completed→已完成、failed→失败、cancelled→已取消）。
+// held 为 20260903 hold 闸门（NodeTools.scala §2.5 #6）落地的新状态，晚于本面板
+// 09-02 整合——此前降级为中性点，现按裁定升为正式徽章。复用既有键
+// running→task.inProgressShort（进行中）、completed→flowmap.done、
+// failed→flowmap.fail、cancelled→flows.status.cancelled；新增三键（zh/en 成对）：
+// task.nodePending / task.nodeHeld / task.nodeBlocked。
 const NODE_WORD_KEY = {
-  wiring: 'flowmap.wait',
-  pending: 'task.pendingShort',
-  running: 'flowmap.run',
+  wiring: 'task.nodePending',
+  pending: 'task.nodePending',
+  running: 'task.inProgressShort',
+  held: 'task.nodeHeld',
+  blocked: 'task.nodeBlocked',
   completed: 'flowmap.done',
   failed: 'flowmap.fail',
   cancelled: 'flows.status.cancelled',
@@ -371,6 +378,14 @@ function buildNodeGlyph(st, cls) {
   g.setAttribute('aria-hidden', 'true');
   if (st === 'running') {
     g.className = 'task-node-spin';
+  } else if (st === 'held') {
+    // held（待放行）：hold 闸门挂起——琥珀虚线方框（排队方框形态 + 警示色相，
+    // 与 Flow Map 节点卡的 --amber 警示语言同源；形态+色相双区分）
+    g.className = 'task-node-box task-node-box-held';
+  } else if (st === 'blocked') {
+    // blocked（阻塞）：琥珀实心点（警示态，区别于 failed 终结红——与
+    // flowmap.css .fm-node.blocked 的 --amber 描边语义一致）
+    g.className = 'task-node-dot task-node-dot-blocked';
   } else if (st === 'completed' || st === 'failed' || st === 'cancelled') {
     g.className = `task-node-dot task-node-dot-${cls}`;
   } else if (st === 'wiring' || st === 'pending') {
@@ -561,7 +576,8 @@ function redraw(visible, container, sessionId, oldById, nodes) {
   const card = document.createElement('div');
   card.className = 'task-card' + (container.dataset.collapsed === '1' ? ' collapsed' : '');
 
-  // ── Header: toggle + stats (C26 — #15 progress-only count) ──
+  // ── Header: toggle + stats (C26 + 2026-09-05 裁定：节点=真实工作单元，
+  //  计数 = 旧任务 + 节点合计——「Flow Map 有活跃节点却显示 0 任务」根因之一) ──
   const header = document.createElement('div');
   header.className = 'task-header';
 
@@ -573,7 +589,7 @@ function redraw(visible, container, sessionId, oldById, nodes) {
 
   const stats = document.createElement('span');
   stats.className = 'task-stats';
-  stats.textContent = t('task.statsProgress', { progress: progress.length });
+  stats.textContent = t('task.statsProgress', { progress: progress.length + nodes.length });
 
   header.appendChild(toggle);
   header.appendChild(stats);
@@ -584,12 +600,14 @@ function redraw(visible, container, sessionId, oldById, nodes) {
   const inner = document.createElement('div');
   inner.className = 'task-body-inner';
 
-  const progressSection = document.createElement('div');
-  progressSection.className = 'task-section task-section-progress';
-  progressSection.appendChild(buildGroupHeader(t('task.sectionProgress'), 'progress'));
-  if (progress.length === 0) {
-    progressSection.appendChild(buildEmpty(t('task.progressEmpty')));
-  } else {
+  // 2026-09-05 裁定：节点=任务主列表（真实工作单元）。progress 区块只在有
+  // 旧任务时渲染——无旧任务时不再出现「任务 / 暂无任务」误导性空态（症状
+  // 另一半）。空态 builder（buildEmpty + task.progressEmpty 键）保留兜底不删
+  // （裁定「不删不破坏」：member 会话等无节点面板与后续区块可复用）。
+  if (progress.length > 0) {
+    const progressSection = document.createElement('div');
+    progressSection.className = 'task-section task-section-progress';
+    progressSection.appendChild(buildGroupHeader(t('task.sectionProgress'), 'progress'));
     // 裁定④ + #15 grouping: ungrouped (session-local) tasks flat first, then
     // team → member → tasks. First-appearance order preserves sortProgress.
     const ungrouped = [];
@@ -618,9 +636,8 @@ function redraw(visible, container, sessionId, oldById, nodes) {
       }
       progressSection.appendChild(teamEl);
     }
+    inner.appendChild(progressSection);
   }
-
-  inner.appendChild(progressSection);
 
   // ── Flow Map 节点条目区（节点区块单一调用点）：装配在 buildNodeSection 内
   // 全程使用 .task-node-* 命名空间，与上方 team 分组段零交叉。team 区块退役时
