@@ -92,8 +92,11 @@ case class NodeDef(
   nebulaDeliveredAt: Option[Long] = None,
   status: String = NodeLifecycle.Wiring,
   result: Option[String] = None,
-  retries: Int = 0,
-  maxRetries: Int = 1,
+  // retries/maxRetries 声明字段已删（trigger-chain-fix §6.4 裁定：落库展示但零
+  // 消费方的假语义不留——接线需 transient/deterministic 失败分类与下游占位结算
+  // 冲突消解，超出最小改动；触发可靠性由 settleSweep + start-aborted/
+  // trigger-starved 信号承担。circe withDefaults 解码忽略未知键，存量
+  // flow-map.json 携带的两键零迁移零破坏）。
   /** 该节点身份累计被 blocked 轮数（防循环计数 §3.1；NodeEdit 重激活不清零）。 */
   blockCount: Int = 0,
   /** 最近一次 blocked 的结构化反馈（§1.4；重激活后保留供历史参照）。 */
@@ -116,7 +119,7 @@ object NodeDef:
 /** NodeList 载荷同构的节点 JSON（NodeList 工具 / REST flow-map / WS 事件共用单一序列化点）。
   * WS 事件（nodeCreated/nodeUpdated/nodeRemoved）与快照永远同构，前端增量渲染可直接对齐
   * 字段集：{id, name, agent, skill, mcp, preset, description, status, in, out, hasWorktree,
-  * worktree, retries, createdAt, completedAt, ttlLeftSec}。
+  * worktree, createdAt, completedAt, ttlLeftSec}。
   *
   * **载荷收敛（2026-09-05 Flow Map 精简批）**：默认载荷只含元数据——**节点结果全文与
   * 摘要都不进默认载荷**（原 result ≤500 字符摘要键移除；结果全文持久化在 per-node 文件
@@ -147,7 +150,6 @@ object NodePayload:
       "out" -> node.out.asJson,
       "hasWorktree" -> node.worktree.isDefined.asJson,
       "worktree" -> node.worktree.asJson,
-      "retries" -> node.retries.asJson,
       // blocked 反馈重入（设计 §4.1）：blockCount 恒带；blockedFeedback 仅 blocked 态才有结构化体
       "blockCount" -> node.blockCount.asJson,
       "createdAt" -> node.createdAt.asJson,
