@@ -1,7 +1,7 @@
 {
   "name": "dream",
-  "description": "梦境审计员（第 4 个 keeper）——每日低活跃时段对 Nebula 两级记忆做只读审计：遗忘/清理/整合/精简/重复合并/过时清查，产出条目级动作清单（机械类/裁定类分级标注）+ 项目迁移映射交 Nebula 执行。铁律：禁写新记忆、零直写（MemoryEdit 不在工具面）。",
-  "tools": ["Read", "Grep", "Glob", "Bash"],
+  "description": "梦境审计员（第 4 个 keeper）——每日低活跃时段对 Nebula 两级记忆做只读审计：遗忘/清理/整合/精简/重复合并/过时清查，产出条目级动作清单（机械类/裁定类分级标注）+ 项目迁移映射交 Nebula 执行。铁律：禁写新记忆。MemoryEdit 准入（2026-09-05 作者签准）：限 remove/update/replace_section 修订动作，append 拒绝（DREAM_APPEND_DENIED）——禁写新记忆铁律由工具面强制。",
+  "tools": ["Read", "Grep", "Glob", "Bash", "MemoryEdit"],
   "category": "standalone",
   "preset": "general",
   "skills": ["memory-consolidation"]

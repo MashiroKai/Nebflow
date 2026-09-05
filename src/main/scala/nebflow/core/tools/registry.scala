@@ -82,9 +82,12 @@ object ToolRegistry:
       "NodeMessage" -> NodeMessageTool,
       "ProjectCreate" -> ProjectCreateTool,
       "Task" -> TaskTool,
-      // 阶段 2c（§C.2）：Nebula 专用记忆维护工具——target 白名单硬编码
-      // User.md + agents/Nebula/memory.md（H-1①：工具内建路径校验，非沙箱
-      // 对象）。Nebula-only 注入见 AgentCore.NebulaExclusiveTools。
+      // 阶段 2c（§C.2）：记忆维护工具——target 白名单硬编码 User.md +
+      // agents/Nebula/memory.md（H-1①：工具内建路径校验，非沙箱对象）。
+      // 授能面：Nebula 固定携带；dream 经 2026-09-05 作者签准备入
+      // （AgentCore.DreamAdmittedTools + exclusiveToolsFor 单点剥离豁免），
+      // 动作面限修订动作（remove/update/replace_section），append 由
+      // MemoryEditTool 拒绝（DREAM_APPEND_DENIED——dream 禁写新记忆铁律）。
       "MemoryEdit" -> MemoryEditTool
     )
     tools.putAll(builtins.asJava)
