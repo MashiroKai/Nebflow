@@ -80,7 +80,11 @@ import { formatLiveDuration } from './chat.js';
 import { collapseTurn, failTurn } from './turnGroup.js';
 import { initCanvas, restoreTabs, closeCanvas, openCanvas } from './canvas.js';
 import { initLightbox } from './lightbox.js';
-import * as flowCanvas from './flowCanvas.js';
+// Side-effect import: flowAnim.js is the rAF orbit driver for Flow Map /
+// flow-run node dots (.solar-node). It used to ride in via the legacy
+// flow-canvas module (deleted 2026-09-05 旧 UI 退役); anchor it here so
+// Flow Map's orbit animation stays alive from boot.
+import './flowAnim.js';
 // Side-effect import: agentManager.js keeps the sealed agents panel +
 // per-agent detail tabs alive (canvas-tab-restore for persisted 'agents'
 // tabs); plugins.js owns the activity-bar entry now (2026-09-04 件 B).
@@ -1450,8 +1454,6 @@ onMessage('sessionList', (msg, view) => {
   // resetChatForActiveSession (called inside renderSessionSidebar when activeId changes).
   if (!restoredSessionId && activeId) {
     restoredSessionId = activeId;
-    // Restore flow canvas now that we have a valid session ID
-    flowCanvas.autoRestore();
   }
   migrateLegacyIfNeeded();
   // Request agent list on first connect (no tab to trigger it now)
@@ -1928,7 +1930,8 @@ function renderBgAgentDropdown() {
         // switches activeView to the popup view whose fakeDom has no dropdown.
         const dropdown = activeView.dom.bgagentDropdownEl;
         // team-<sid> wraps the agent's bare session id (its ui.json key) —
-        // strip it, matching the Flow/Team panel entry (flowTeams.js).
+        // strip it, matching how the retired Team panel used to open these
+        // popups; live team-agent events keep flowing into the same view.
         const sessionId = rawSessionId.replace(/^team-/, '');
         if (isBgAgentId(rawSessionId)) {
           // delegate-*/subtask-* → bg-agent popup (ephemeral sessions,
@@ -2170,68 +2173,13 @@ onMessage('agentDone', (msg, view) => {
   if (view) view.stream.activeAgentId = null;
 });
 
-// --- Flow events → canvas DAG visualization ---
+// --- Session switch → explorer / task list refresh ---
 window.addEventListener('nebflow-session-change', (e) => {
-  flowCanvas.onSessionChange(e.detail.sessionId);
   refreshExplorer(e.detail.sessionId);
   refreshScheduledTasks(e.detail.sessionId);
   if (e.detail.sessionId) sendWs({ type: 'getTaskList', sessionId: e.detail.sessionId });
   // ⑩ the frozen input-bar visual follows the newly activated session.
   applyLocalFreeze();
-});
-
-onMessage('treeBranchMounted', () => {
-  flowCanvas.refresh();
-});
-onMessage('treeBranchUnmounted', () => {
-  flowCanvas.refresh();
-});
-onMessage('treeBranchUpdated', () => {
-  flowCanvas.refresh();
-});
-
-onMessage('flowMail', (msg) => {
-  flowCanvas.onFlowMail(msg);
-});
-
-onMessage('mailQueued', (msg) => {
-  flowCanvas.onMailQueued(msg);
-});
-
-onMessage('mailDequeued', (msg) => {
-  flowCanvas.onMailDequeued(msg);
-});
-
-// ── Flow agent status tracking ────────────────────────────
-// agentStart/agentDone carry nodeSessionId (set by FlowAgentActivator's wsSend wrapper).
-// ws.js intercepts them into the popup ChatView, but we also need to update
-// the flow canvas status pills.
-// Team agent events carry nodeSessionId = "team-<sessionId>"; strip the prefix
-// so agentStatus keys match the bare sessionId from /api/teams/mounted
-// (flowTeams.statusOf / flowCanvas.autoRestore look up by bare sid).
-onMessage('agentStart', (msg) => {
-  const sid = msg.nodeSessionId ? msg.nodeSessionId.replace(/^team-/, '') : null;
-  if (sid) flowCanvas.onAgentStart(sid);
-});
-onMessage('agentDone', (msg) => {
-  const sid = msg.nodeSessionId ? msg.nodeSessionId.replace(/^team-/, '') : null;
-  if (sid) flowCanvas.onAgentDone(sid);
-});
-
-onMessage('flowStarted', (msg) => {
-  flowCanvas.onFlowStarted(msg);
-});
-
-onMessage('flowNodesAdded', (msg) => {
-  flowCanvas.onFlowNodesAdded(msg);
-});
-
-onMessage('flowProgress', (msg) => {
-  flowCanvas.onFlowProgress(msg);
-});
-
-onMessage('flowCompleted', (msg) => {
-  flowCanvas.onFlowCompleted(msg);
 });
 
 // --- Compaction events (per-session) ---
@@ -2887,12 +2835,6 @@ onMessage('skillList', (msg, view) => {
   registerSkillCommands(state.skills);
 });
 
-onMessage('teamList', (msg) => {
-  state.teams = msg.teams || [];
-  state.flows = msg.flows || [];
-  flowCanvas.refresh();
-});
-
 onMessage('skillError', (msg, view) => {
   if (view) renderSystemBubble(msg.message || 'Skill error');
 });
@@ -2970,15 +2912,6 @@ onMessage('forkComplete', (msg, view) => {
       bgAgentDropdown.classList.add('hidden');
       const bgAgentIndicator = document.getElementById('bgagent-indicator');
       if (bgAgentIndicator) bgAgentIndicator.setAttribute('aria-expanded', 'false');
-      e.preventDefault();
-      return;
-    }
-
-    const flowsDropdown = document.getElementById('flows-dropdown');
-    if (flowsDropdown && !flowsDropdown.classList.contains('hidden')) {
-      flowsDropdown.classList.add('hidden');
-      const flowsIndicator = document.getElementById('flows-indicator');
-      if (flowsIndicator) flowsIndicator.setAttribute('aria-expanded', 'false');
       e.preventDefault();
       return;
     }
@@ -3090,7 +3023,7 @@ onMessage('forkComplete', (msg, view) => {
   // that overlaps (§8 A2). These elements are never toggled by layout() so
   // observing them cannot cause a feedback loop.
   ['sidebar-toggle', 'header-model-info', 'memory-btn',
-    'bg-indicator', 'bgagent-indicator', 'flows-indicator', 'canvas-toggle-btn']
+    'bg-indicator', 'bgagent-indicator', 'canvas-toggle-btn']
     .forEach(id => { const el = document.getElementById(id); if (el) ro.observe(el); });
   layout();
 })();
@@ -3158,8 +3091,9 @@ document.getElementById('canvas-toggle-btn')?.addEventListener('click', () => {
     openCanvas();
   }
 });
-// Teams/Flows/Agents(Plugins) button clicks are bound by canvas.js
-// registerCanvasPanelButton (registered from flowCanvas.js / plugins.js).
+// Teams/Flows legacy panel buttons are gone (2026-09-05 旧 UI 退役) — the
+// plugins (agents-btn) and projects (projects-btn) entries are bound by
+// canvas.js registerCanvasPanelButton (plugins.js / main.js).
 // Restore queued messages from localStorage (survives browser refresh)
 restoreQueue();
 // Restore Canvas tabs (server persisted, falls back to localStorage).

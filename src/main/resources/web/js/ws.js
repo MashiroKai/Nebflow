@@ -143,7 +143,6 @@ const GLOBAL_MSG_TYPES = new Set([
   'updateCheckResult', 'updateStarted', 'updateCompleted',
   'remoteUpdateResult', 'peerListChanged',
   'activeBgTasks', 'activeAgents',
-  'mailQueued', 'mailDequeued',
   'dropbox-message', 'dropbox-file-response', 'dropbox-file-complete', 'dropbox-history', 'dropboxError',
   'friend_event',
   // Project 域节点广播（#28 0b 契约 §2）：{type,project,nodeId,node}，无 sessionId，
@@ -179,11 +178,14 @@ const STREAM_MSG_TYPES = new Set([
   'agentStart', 'agentTextDelta', 'agentToolCallDetected',
   'agentToolStart', 'agentToolEnd', 'agentEnd',
   'agentThinking', 'agentRetryStatus', 'agentDone',
-  'treeBranchMounted', 'treeBranchUnmounted', 'treeBranchUpdated',
-  'flowMail', 'flowStarted', 'flowNodesAdded', 'flowProgress', 'flowCompleted', 'teamList',
   // 任务工具重做 (2026-08-30): team 域任务帧（{team, tasks}，无 sessionId）——
   // 裁定② 统一进 Nebula 会话任务列表面板（taskList.js 合并渲染）。
   'teamTaskListUpdate',
+  // Legacy flow-canvas events (flowMail/flowStarted/flowNodesAdded/
+  // flowProgress/flowCompleted/teamList/treeBranch*) removed 2026-09-05
+  // 旧 UI 退役 — the backend may still broadcast them; unknown types with no
+  // registered handler are dispatched to an empty handler list (no-op), and
+  // off-session frames are dropped by the entry filter above.
   // #308 actual model: sub-agent usageUpdate (sessionId = nodeSessionId) must
   // survive the entry filter below to reach the popup live-refresh path.
   // Without this, the event is silently dropped for non-active sessions.
