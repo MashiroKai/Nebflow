@@ -150,12 +150,19 @@ const GLOBAL_MSG_TYPES = new Set([
   // 是全应用级广播。入 GLOBAL 使 onmessage 路由不把他们当会话内事件（不 setActiveView
   // 为 primary），保持当前视图；多个 onMessage 订阅者（projectTab / flowMapTab）都收。
   'nodeCreated', 'nodeUpdated', 'nodeCompleted', 'nodeRemoved',
+  // 应用内工作区浏览器（workspace-picker Route C 兜底）响应帧：无 sessionId 的
+  // 弹窗私有请求-响应。必须 GLOBAL——无 sessionId 时 GLOBAL 保视图不换（:457 语义），
+  // TERMINAL 会把 activeView 换成 primary。
+  'wsBrowseList', 'wsBrowseMkdir',
 ]);
 const TERMINAL_MSG_TYPES = new Set([
   'done', 'error', 'interrupted', 'maxTokens', 'sessionBusy',
   'compactStart', 'compactComplete', 'compactFailed',
   'backgroundTaskUpdate', 'taskListUpdate',
   'askUser', 'askPermission', 'askUserAnswered',
+  // 工作区目录选择结果（workspace-picker 批次）：{sessionId, requestId, path|
+  // cancelled|fallback}——askUser 交互家族同语义（带 sessionId，视图路由同 askUser）。
+  'workspaceDirPicked',
   'frozen', 'resumed', 'agentFrozen', 'agentResumed',
   'errorEscalated', // error-recovery escalation → parent/user decision card
   'taskStuck', // sub-agent management panel (2026-08-22): stuck visibility for any session

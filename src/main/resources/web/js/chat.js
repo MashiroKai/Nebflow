@@ -1618,6 +1618,60 @@ export function showOptions(container, questions, onConfirm, doneLabel, onCancel
     q.innerHTML = item.question;
     wrapper.appendChild(q);
 
+    // 工作区选择卡（dirPicker=true，2026-09-05 作者裁定）：问题下方渲染「选择工作区」
+    // 大目标——内联 SVG 描边文件夹图标（emoji 清理批先例，禁 emoji）。点击目标或卡片
+    // 空白区整体 → WS pickWorkspaceDir → 后端系统目录对话框；下方候选 chips 降级为
+    // 次级提示；Other… 手输路径兜底保留（标准 option-btn/textarea 机制不动）。
+    let dirPick = null;
+    if (item.dirPicker) {
+      const target = document.createElement('button');
+      target.type = 'button';
+      target.className = 'ws-pick-target';
+      target.innerHTML = WS_FOLDER_SVG +
+        '<span class="ws-pick-texts"><span class="ws-pick-title">' + escapeHtml(t('workspacePicker.pickTitle')) + '</span>' +
+        '<span class="ws-pick-hint">' + escapeHtml(t('workspacePicker.pickHint')) + '</span></span>';
+      const echo = document.createElement('div');
+      echo.className = 'ws-pick-echo';
+      echo.style.display = 'none';
+      wrapper.appendChild(target);
+      wrapper.appendChild(echo);
+      dirPick = { busy: false };
+      const startPick = () => {
+        if (dirPick.busy) return;
+        if (!askSessionId || !requestId) return; // 无 requestId 的残卡不可发起（事件无主）
+        dirPick.busy = true;
+        target.classList.add('picking');
+        target.querySelector('.ws-pick-title').textContent = t('workspacePicker.picking');
+        sendWs({ type: 'pickWorkspaceDir', sessionId: askSessionId, requestId });
+        dirPickCards.set(requestId, {
+          sessionId: askSessionId,
+          requestId,
+          complete(path) {
+            dirPick.busy = false;
+            answers[qi] = path;
+            echo.style.display = '';
+            echo.textContent = '-> ' + t('workspacePicker.pickedEcho', { path });
+            target.classList.remove('picking');
+            dirPickCards.delete(requestId);
+            checkAllAnswered();
+            if (!confirmBtn.disabled) confirmBtn.click(); // 自动作答 askUser（继续创建流程）
+          },
+          setIdle() {
+            dirPick.busy = false;
+            target.classList.remove('picking');
+            target.querySelector('.ws-pick-title').textContent = t('workspacePicker.pickTitle');
+          },
+        });
+      };
+      target.addEventListener('click', (e) => { e.stopPropagation(); startPick(); });
+      // 卡片整体可点击（作者原话「卡片整体可点击、醒目大目标」）：除按钮/输入框外的
+      // 空白点击都触发选择。
+      wrapper.addEventListener('click', (e) => {
+        if (e.target.closest('button, textarea, input')) return;
+        startPick();
+      });
+    }
+
     const optsDiv = document.createElement('div');
     optsDiv.className = 'option-opts';
     const hasOptions = item.options && item.options.length > 0;
@@ -1636,6 +1690,8 @@ export function showOptions(container, questions, onConfirm, doneLabel, onCancel
         if (!isStr && typeof opt.cls === 'string' && opt.cls) btn.classList.add(opt.cls);
         if (isMulti) {
           btn.dataset.label = label;
+          // dirPicker 卡：候选目录降级为次级提示 chips（视觉弱化，机制不变）
+          if (item.dirPicker) btn.classList.add('ws-pick-candidate');
           const preview = typeof opt === 'object' && opt !== null ? opt.preview : null;
           if (preview) btn.classList.add('has-preview');
           btn.innerHTML = '<span class="option-check"></span>' + (preview ? buildOptionPreview(preview) : '') + '<span class="option-text">' +
@@ -1648,6 +1704,8 @@ export function showOptions(container, questions, onConfirm, doneLabel, onCancel
           };
         } else {
           btn.dataset.label = label;
+          // dirPicker 卡：候选目录降级为次级提示 chips（视觉弱化，机制不变）
+          if (item.dirPicker) btn.classList.add('ws-pick-candidate');
           const preview = typeof opt === 'object' && opt !== null ? opt.preview : null;
           if (preview) btn.classList.add('has-preview');
           if (preview) {
@@ -1778,6 +1836,7 @@ export function showOptions(container, questions, onConfirm, doneLabel, onCancel
   cancelBtn.textContent = t('chat.cancel');
   cancelBtn.onclick = () => {
     if (askSessionId) askCardRegistry.delete(askSessionId);
+    if (requestId) dirPickCards.delete(requestId); // 工作区选择卡事件一并失主
     box.querySelectorAll('.option-btn, .option-confirm').forEach(el => { el.disabled = true; });
     cancelBtn.disabled = true;
     confirmBtn.disabled = true;
@@ -1793,6 +1852,7 @@ export function showOptions(container, questions, onConfirm, doneLabel, onCancel
     // Lock the card: drop it from the Canvas answer registry (E6: late
     // _nfAskAnswer postMessages find no entry and are silently discarded).
     if (askSessionId) askCardRegistry.delete(askSessionId);
+    if (requestId) dirPickCards.delete(requestId); // 工作区选择卡事件一并失主
     box.querySelectorAll('.option-btn').forEach(el => { el.disabled = true; });
     cancelBtn.disabled = true;
     confirmBtn.disabled = true;
@@ -1848,6 +1908,32 @@ export function showOptions(container, questions, onConfirm, doneLabel, onCancel
     confirmBtn.disabled = !questions.every((_, qi) => !shouldShow(qi) || answers[qi] !== null);
   }
 }
+
+// ---------- Workspace dir picker（ProjectCreate「选择工作区」卡，workspace-picker 批次） ----------
+// 大目标点击 → WS pickWorkspaceDir → 后端系统目录对话框（macOS NSOpenPanel /
+// Windows JFileChooser）。结果经 workspaceDirPicked 事件（TERMINAL 路由）回到这张卡：
+//   path → 卡片回显路径 + 自动作答 askUser（继续创建流程）；
+//   cancelled → 卡片回待选态（可再次点击 / Other… 手输，不取消 ProjectCreate）；
+//   fallback（headless/对话框异常）→ 自动打开应用内目录浏览器（Route C 兜底）。
+const WS_FOLDER_SVG = '<svg viewBox="0 0 24 24" width="34" height="34" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 7a2 2 0 0 1 2-2h4l2.2 2.5H19a2 2 0 0 1 2 2V17a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2Z"/><path d="M3 11h18"/></svg>';
+const dirPickCards = new Map(); // requestId -> 卡片 api（complete/setIdle）
+onMessage('workspaceDirPicked', (msg) => {
+  const entry = msg && msg.requestId ? dirPickCards.get(msg.requestId) : null;
+  if (!entry) return; // 迟到/已答卡的事件无主即弃
+  if (msg.fallback) {
+    import('./workspacePicker.js').then(({ openPicker }) => {
+      openPicker({
+        sessionId: entry.sessionId,
+        onPick: (p) => entry.complete(p),
+        onCancel: () => entry.setIdle(),
+      });
+    }).catch(() => entry.setIdle()); // 模块加载失败也不悬挂卡片
+  } else if (msg.cancelled) {
+    entry.setIdle();
+  } else if (typeof msg.path === 'string' && msg.path) {
+    entry.complete(msg.path);
+  }
+});
 
 // ---------- AskUser ----------
 /** Open an AskUser comparison page in Canvas (direction C §2.1 canvas field).
@@ -1972,6 +2058,7 @@ export function closeAskUserCard(sessionId, requestId) {
   for (const box of boxes) {
     if (box.querySelector('.option-answer')) continue; // already answered/locked
     box.querySelectorAll('.option-btn, .option-confirm, .option-cancel').forEach(el => { el.disabled = true; });
+    dirPickCards.delete(requestId); // 工作区选择卡：chat-input 直答后事件一并失主
     const confirmBtn = box.querySelector('.option-confirm');
     const cancelBtn = box.querySelector('.option-cancel');
     if (confirmBtn) confirmBtn.style.display = 'none';
