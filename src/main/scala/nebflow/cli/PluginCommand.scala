@@ -5,19 +5,23 @@ import io.circe.Json
 import io.circe.syntax.*
 
 /**
- * `nebflow plugin list|approve|revoke`（阶段 2b §B.3 CLI 对等，H-14② 裁定：
- * 面板为主 + CLI 供脚本化，对齐 `claude plugin` 形态）。
+ * `nebflow plugin list|add|approve|revoke`（阶段 2b §B.3 CLI 对等，H-14② 裁定：
+ * 面板为主 + CLI 供脚本化，对齐 `claude plugin` 形态；协议符合度批补 add——
+ * §B.3 外部导入：`plugin add <git-url|本地路径>` → 落为 untrusted 待审）。
  *
- * 全部经 gateway REST（/api/plugins*）——审批写入单点在 PluginRegistry
- * （nebflow.json plugins.trust 手术式改写），CLI 不直接写配置避免与运行实例
- * 的内存态/并发写竞争。
+ * list/approve/revoke 经 gateway REST（/api/plugins*）——审批写入单点在
+ * PluginRegistry（nebflow.json plugins.trust 手术式改写），CLI 不直接写配置
+ * 避免与运行实例的内存态/并发写竞争。add 只做文件级安装（copy/clone 进
+ * plugins/，不写 nebflow.json——注册表 mtime 缓存自感知新目录），同样经
+ * PluginRegistry 单点。
  */
 object PluginCommand extends CliCommand:
   def name = "plugin"
   def description = "Manage plugins (trust gate approval)"
-  def subcommands = List(PluginList, PluginApprove, PluginRevoke)
+  def subcommands = List(PluginList, PluginAdd, PluginApprove, PluginRevoke)
   def examples = List(
     "nebflow plugin list",
+    "nebflow plugin add /path/to/my-plugin",
     "nebflow plugin approve web-research",
     "nebflow plugin revoke web-research"
   )
@@ -56,6 +60,22 @@ object PluginCommand extends CliCommand:
           }
 
   end PluginList
+
+  private object PluginAdd extends CliSubcommand:
+    def name = "add"
+    def description = "Install a plugin from a git URL or local path (lands as untrusted, default-deny)"
+    def params = List(CliParam("source", None, "Git URL or local plugin directory", required = true))
+
+    def run(ctx: CliContext): IO[CliResult] =
+      val source = ctx.positionalArgs.headOption.getOrElse("")
+      if source.isEmpty then IO.pure(CliResult.Error("Plugin source (git URL or local path) required"))
+      else
+        nebflow.core.plugin.PluginRegistry.installFrom(source).map {
+          case Right(msg) => CliResult.text(msg)
+          case Left(err)  => CliResult.Error(err)
+        }
+
+  end PluginAdd
 
   private object PluginApprove extends CliSubcommand:
     def name = "approve"

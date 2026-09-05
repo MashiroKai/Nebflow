@@ -82,7 +82,7 @@ class NodePluginChainSpec extends CatsEffectSuite:
   private val injectSkillDir = tempRoot / "plugins" / "inject-skill"
   os.makeDir.all(injectSkillDir / "skills" / "howto")
   os.write.over(injectSkillDir / "plugin.json",
-    """{"$schema":"https://agent-plugins.org/schema/1.0.0","name":"inject-skill","version":"1.0.0","description":"skill injection fixture"}""")
+    s"""{"$$schema":"${PluginRegistry.CanonicalSchema}","name":"inject-skill","version":"1.0.0","description":"skill injection fixture"}""")
   os.write.over(injectSkillDir / "skills" / "howto" / "SKILL.md",
     """---
       |name: howto
@@ -95,16 +95,18 @@ class NodePluginChainSpec extends CatsEffectSuite:
   private val echoMcpDir = tempRoot / "plugins" / "echo-mcp"
   os.makeDir.all(echoMcpDir)
   os.write.over(echoMcpDir / "plugin.json",
-    """{"$schema":"https://agent-plugins.org/schema/1.0.0","name":"echo-mcp","version":"1.0.0","description":"mcp lifecycle fixture"}""")
+    s"""{"$$schema":"${PluginRegistry.CanonicalSchema}","name":"echo-mcp","version":"1.0.0","description":"mcp lifecycle fixture"}""")
   os.write.over(echoMcpDir / "mcp.json",
-    Json.obj("mcpServers" -> Json.obj("srv" -> Json.obj(
-      "command" -> "python3".asJson, "args" -> List(echoServerFile.toString).asJson))).noSpaces)
+    Json.obj("$schema" -> PluginRegistry.CanonicalMcpSchema.asJson,
+      "mcpServers" -> Json.obj("srv" -> Json.obj(
+        "type" -> "stdio".asJson,
+        "command" -> "python3".asJson, "args" -> List(echoServerFile.toString).asJson))).noSpaces)
 
   // never-approved：本 spec 任何测试都不审批——信任门校验测试的顺序无关 fixture
   private val neverApprovedDir = tempRoot / "plugins" / "never-approved"
   os.makeDir.all(neverApprovedDir / "skills" / "s")
   os.write.over(neverApprovedDir / "plugin.json",
-    """{"$schema":"https://agent-plugins.org/schema/1.0.0","name":"never-approved","version":"1.0.0","description":"default-deny fixture"}""")
+    s"""{"$$schema":"${PluginRegistry.CanonicalSchema}","name":"never-approved","version":"1.0.0","description":"default-deny fixture"}""")
   os.write.over(neverApprovedDir / "skills" / "s" / "SKILL.md",
     """---
       |name: s
@@ -406,6 +408,53 @@ class NodePluginChainSpec extends CatsEffectSuite:
       assertEquals(node.plugins, Nil, "flag off must not store the ignored plugins param")
       val userMsg = reqOpt.flatMap(_.messages.find(_.role == nebflow.shared.MessageRole.User).map(_.textContent)).getOrElse("")
       assert(!userMsg.contains("<injected-plugins>"), "flag off must suppress injection")
+    }
+  }
+
+  // ── §E.3：node.preset 消费接通（协议符合度批，2b 遗留）─────────
+
+  test("§E.3 preset: node.preset → 预设链进会话 LLM 请求（agentModel）；未知 preset → 节点 failed 含可用清单") {
+    val capture = TrieMap[String, LlmRequest]()
+    val ws = tempRoot / "ws-preset"
+    os.makeDir.all(ws)
+    // 预设 fixture：fast 链 = fast-model + fb-fallback（PresetStore 单点解析）
+    os.write.over(tempRoot / "model-presets.json", Json.obj(
+      "defaultPreset" -> "general".asJson,
+      "presets" -> Json.obj(
+        "general" -> Json.obj("name" -> "general".asJson, "preferred" -> "general-model".asJson, "fallbacks" -> List.empty[String].asJson),
+        "fast" -> Json.obj("name" -> "fast".asJson, "preferred" -> "fast-model".asJson, "fallbacks" -> List("fb-fallback").asJson))).noSpaces)
+    val system = ActorSystem(s"plc-preset-${scala.util.Random.nextInt(100000)}")
+    val program =
+      for
+        res <- mkResources(system, tempRoot, new RecordingLlm(capture))
+        rt <- mountProject("plc-preset", ws, system, res)
+        ctx = mkCtx(res, system, ws.toString)
+        ok <- nodeEdit(nodeInput("plc-preset", "preset-ok", "agent" -> Json.fromString("test-agent"),
+          "task" -> Json.fromString("t"), "out" -> Json.fromString("Nebula"),
+          "preset" -> Json.fromString("fast")), ctx)
+        _ = assert(ok.isRight, s"NodeEdit with valid preset must succeed: $ok")
+        _ <- waitUntil(30.seconds)(rt.store.snapshot.map(
+          _.nodes.values.exists(n => n.name == "preset-ok" && n.status == NodeLifecycle.Completed)))
+        bad <- nodeEdit(nodeInput("plc-preset", "preset-bad", "agent" -> Json.fromString("test-agent"),
+          "task" -> Json.fromString("t-preset-missing"), "out" -> Json.fromString("Nebula"),
+          "preset" -> Json.fromString("no-such-preset")), ctx)
+        _ = assert(bad.isRight, s"NodeEdit accepts the preset param (validation is spawn-side §E.3): $bad")
+        _ <- waitUntil(30.seconds)(rt.store.snapshot.map(
+          _.nodes.values.exists(n => n.name == "preset-bad" && n.status == NodeLifecycle.Failed)))
+        badNode <- rt.store.snapshot.map(_.nodes.values.find(_.name == "preset-bad")).flatMap {
+          case Some(n) => IO.pure(n)
+          case None => IO.raiseError(new RuntimeException("preset-bad vanished"))
+        }
+        _ <- system.stopAll.handleErrorWith(_ => IO.unit)
+      yield (capture.values.find(_.sessionId.startsWith("node-")), badNode)
+    program.map { case (reqOpt, badNode) =>
+      val req = reqOpt.getOrElse(fail("no LLM request captured for preset node"))
+      assertEquals(req.agentModel, Some(nebflow.shared.AgentModelConfig(Some("fast-model"), List("fb-fallback"))),
+        s"node.preset must drive the session model chain (§E.3 consumption), got: ${req.agentModel}")
+      assertEquals(badNode.status, NodeLifecycle.Failed, "unresolvable preset must fail the node")
+      val result = badNode.result.getOrElse("")
+      assert(result.contains("preset") && result.contains("unresolved") && result.contains("general"),
+        s"failure must carry §E.3 guidance with available presets, got: $result")
     }
   }
 

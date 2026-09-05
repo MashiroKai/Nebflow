@@ -172,13 +172,16 @@ end StdioTransport
 
 object StdioTransport:
 
-  /** Factory method — creates process inside IO for proper error handling. */
-  def apply(command: String, args: List[String], env: Map[String, String]): IO[StdioTransport] =
+  /** Factory method — creates process inside IO for proper error handling.
+    * cwd（协议符合度批）：Some(dir) → 子进程在该目录运行（插件 MCP §11.1-7
+    * 插件根/占位展开后的绝对路径；全局配置缺省 None = 继承进程 cwd，零变化）。 */
+  def apply(command: String, args: List[String], env: Map[String, String], cwd: Option[os.Path] = None): IO[StdioTransport] =
     IO.blocking {
       val processBuilder = new ProcessBuilder((command :: args)*)
         .redirectInput(ProcessBuilder.Redirect.PIPE)
         .redirectOutput(ProcessBuilder.Redirect.PIPE)
         .redirectError(ProcessBuilder.Redirect.PIPE)
+      cwd.foreach(d => processBuilder.directory(new java.io.File(d.toString)))
       env.foreach { case (k, v) => processBuilder.environment().put(k, v) }
       val proc = processBuilder.start()
       // MCP JSON-RPC uses UTF-8. Explicit charset prevents garbled text on Windows
