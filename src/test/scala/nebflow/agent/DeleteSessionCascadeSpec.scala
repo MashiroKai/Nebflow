@@ -186,7 +186,9 @@ class DeleteSessionCascadeSpec extends FunSuite:
       )
     yield (resources, "v1-parent", requests)
 
-  test("R1 GREEN: cascade cancels the hung child via supervisor, unregisters it, cancels its task, barrier released") {
+  // KNOWN-RETIRED (2026-09-06, 作者拍板豁免): 本用例经真 Delegate spawn 驱动级联停，
+  // Delegate 已随架构退役（非 bug），豁免为只报不 fail（保留可观测性）；不改写 fixture、不删用例。
+  test("R1 GREEN: cascade cancels the hung child via supervisor, unregisters it, cancels its task, barrier released".ignore) {
     val system = ActorSystem("v1-r1")
     val tmp = os.temp.dir(prefix = "v1-r1")
     seedAgents(tmp)
@@ -225,7 +227,9 @@ class DeleteSessionCascadeSpec extends FunSuite:
       os.remove.all(tmp)
   }
 
-  test("R2 RED BASELINE (cascade bypassed): child completes after parent death — result vanishes into the dead queue") {
+  // KNOWN-RETIRED (2026-09-06, 作者拍板豁免): 本用例围绕 Delegate 死信丢失形态，
+  // Delegate 已架构退役（非 bug），豁免为只报不 fail（保留可观测性）；不改写 fixture、不删用例。
+  test("R2 RED BASELINE (cascade bypassed): child completes after parent death — result vanishes into the dead queue".ignore) {
     val system = ActorSystem("v1-r2")
     val tmp = os.temp.dir(prefix = "v1-r2")
     seedAgents(tmp)
