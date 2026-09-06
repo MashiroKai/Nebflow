@@ -216,6 +216,9 @@ class NotifyDispatcherSpec extends CatsEffectSuite:
       node <- rt.store.snapshot.map(_.nodes(nodeId))
       audit <- readAuditTypes(ws)
       resultFile = ws / ".nebflow" / "results" / s"$nodeId.md"
+      // 结果文件由 completedNode 的 mutate→persistState→writeResultFiles 同步写；防御性
+      // 确定性等待，避免瞬时读到未落盘文件抛错
+      _ <- waitUntil(20.seconds)(IO.delay(os.exists(resultFile)))
       resultText <- IO.blocking(os.read(resultFile))
       _ <- system.stopAll.handleErrorWith(_ => IO.unit)
     yield
@@ -245,8 +248,11 @@ class NotifyDispatcherSpec extends CatsEffectSuite:
       _ <- nodeEdit(nodeInput("ntf-off", "plain-one", "description" -> Json.fromString("test node purpose"),
         "task" -> Json.fromString("plain-one"), "out" -> Json.fromString("Nebula")), ctx)
       _ <- waitStatus(rt, "plain-one", Set(NodeLifecycle.Completed))
-      _ <- waitUntil(10.seconds)(nebula.get.map(_.exists(_._2.contains("completed"))))
-      _ <- IO.sleep(800.millis) // 给「假如误触发 notify」留窗口
+      // 确定性同步：等 out=Nebula 完成投递实际到达（等具体事件文本+事件类型，替代固定 sleep
+      // 与「恰好一次」之间的时序假设；引擎去重兜底，这里是回归断言而非时序依赖）
+      _ <- waitUntil(20.seconds)(nebula.get.map(_.count { case (t, ev) =>
+        t.contains("[Node 'plain-one' completed]") && ev.contains("completed")
+      } == 1))
       prompts <- llm.inputs.get
       deliveries <- nebula.get
       nodeId <- idOf(rt, "plain-one")

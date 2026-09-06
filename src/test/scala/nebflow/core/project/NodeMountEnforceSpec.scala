@@ -248,9 +248,12 @@ class NodeMountEnforceSpec extends CatsEffectSuite:
       ctx = mkCtx(res, system, ws.toString)
       _ <- nodeEdit(nodeInput("me-m3", "entry", "description" -> Json.fromString("entry start pin"),
         "task" -> Json.fromString("entry-runs-at-once"), "out" -> Json.fromString("Nebula")), ctx)
-      // 创建即 running（不等待任何上游；startNode 后台 fork 但立即翻转状态）
-      _ <- waitUntil(10.seconds)(rt.store.snapshot.map(
-        _.nodes.values.exists(n => n.name == "entry" && n.status == NodeLifecycle.Running)))
+      // 创建即 running（不等待任何上游；startNode 后台 fork 但立即翻转状态）。
+      // Running 是瞬态：0 延迟 EchoLlm 下节点可在一次 50ms 轮询间隙内跑到 Completed，
+      // 原「等 Running」会偶发超时（节点实际已 completed）。治本=观测条件改为接受
+      // Running|Completed——入口节点语义（不等待上游立即启动）由 final 断言
+      // startedAt + Completed 覆盖，Running 只是手段，不作为可失败观察点。
+      _ <- waitStatus(rt, "entry", Set(NodeLifecycle.Running, NodeLifecycle.Completed))
       _ <- waitStatus(rt, "entry", Set(NodeLifecycle.Completed))
       n <- idOf(rt, "entry").flatMap(id => rt.store.getNode(id)).map(_.getOrElse(fail("entry must exist")))
       _ <- system.stopAll.handleErrorWith(_ => IO.unit)
