@@ -277,16 +277,29 @@ class NodePluginChainSpec extends CatsEffectSuite:
           "task" -> Json.fromString("use the echo tool"), "out" -> Json.fromString("Nebula"),
           "plugins" -> Json.arr(Json.fromString("echo-mcp"))), ctx)
         _ = assert(created.isRight, s"NodeEdit must succeed: $created")
-        // MCP 启动 + 引用记账（acquire 在 spawn 前完成——工具先于 LLM 请求注册）
-        // 已知 flake（满载偶红、单跑绿，checkjs-gate-fix 批 2026-09-05 加宽）：
-        // 满载下 python3 子进程冷启 + MCP 握手可超过原 15s；回收窗口同理。
+        // MCP 启动 + 引用记账（工具注册先于引用记账——startServer 完成时工具即
+        // 可见，serverRefs/sessionRefs 随后才 update）。已知 flake（满载偶红、
+        // 单跑绿，checkjs-gate-fix 批 2026-09-05 加宽）：满载下 python3 子进程
+        // 冷启 + MCP 握手可超过原 15s；回收窗口同理。
         _ <- waitUntil(30.seconds)(
           IO.blocking(nebflow.core.tools.ToolRegistry.ALL_TOOLS.map(_.name))
             .map(_.exists(_.startsWith("mcp__plugin_echo-mcp_srv__"))))
+        // refcount 快照的确定性同步点：工具可见 ≠ 引用记账可见（acquire 先
+        // startServer 后 refs.update）——等 refcount==1 落定再快照
+        _ <- waitUntil(30.seconds)(
+          res.pluginMcp.runningServers.map(_.get("plugin_echo-mcp_srv").contains(1)))
         sessionRunning <- res.pluginMcp.runningServers
         _ <- waitUntil(30.seconds)(rt.store.snapshot.map(
           _.nodes.values.exists(n => n.name == "mcpped" && n.status == NodeLifecycle.Completed)))
         _ <- waitUntil(30.seconds)(res.pluginMcp.sessionHolds.map(_.isEmpty))
+        // 回收链的确定性终点：release 先清 sessionRefs/serverRefs，stopServer
+        // （含 unregisterToolsByPrefix + 进程关闭）在其后异步执行——sessionHolds
+        // 清空 ≠ 回收完成。等真正要断言的终态（工具已注销 + server 已摘除）落定
+        _ <- waitUntil(30.seconds)(
+          IO.blocking(nebflow.core.tools.ToolRegistry.ALL_TOOLS.map(_.name))
+            .map(!_.exists(_.startsWith("mcp__plugin_echo-mcp_srv__"))))
+        _ <- waitUntil(30.seconds)(
+          res.pluginMcp.runningServers.map(!_.contains("plugin_echo-mcp_srv")))
         toolsAfter <- IO.blocking(nebflow.core.tools.ToolRegistry.ALL_TOOLS.map(_.name))
         runningAfter <- res.pluginMcp.runningServers
         reqOpt = capture.values.headOption
