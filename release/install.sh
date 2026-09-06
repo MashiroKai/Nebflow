@@ -287,10 +287,6 @@ install_rg() {
     if [ -f "$rg_local" ]; then
         return 0
     fi
-    local rg_local="${INSTALL_DIR}/rg"
-    if [ -f "$rg_local" ]; then
-        return 0
-    fi
 
     echo "==> Installing ripgrep (rg) for search support..."
     local os arch url rg_ver="14.1.1"
@@ -334,15 +330,19 @@ install_rg() {
 create_wrapper() {
     local wrapper="${INSTALL_DIR}/${WRAPPER_NAME}"
     echo "==> Creating wrapper script..."
-    cat > "${wrapper}" << 'WRAPPER'
+    # Unquoted delimiter: ${LOWER_NAME}/${PRODUCT_NAME} expand NOW (generation
+    # time, from the brand block above); runtime expansions are escaped as \$.
+    # (Bug fix: the old quoted 'WRAPPER' delimiter emitted the variables as
+    # literals, so the wrapper's jar glob never matched -> nebflow CLI dead.)
+    cat > "${wrapper}" << WRAPPER
 #!/bin/bash
-SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
-JAR=$(ls -1 "${SCRIPT_DIR}"/${LOWER_NAME}-assembly-*.jar 2>/dev/null | head -n1)
-if [ -z "$JAR" ]; then
-    echo "ERROR: ${PRODUCT_NAME} JAR not found in ${SCRIPT_DIR}"
+SCRIPT_DIR="\$(cd "\$(dirname "\$0")" && pwd)"
+JAR=\$(ls -1 "\${SCRIPT_DIR}"/${LOWER_NAME}-assembly-*.jar 2>/dev/null | head -n1)
+if [ -z "\$JAR" ]; then
+    echo "ERROR: ${PRODUCT_NAME} JAR not found in \${SCRIPT_DIR}"
     exit 1
 fi
-exec java --add-opens java.base/java.lang=ALL-UNNAMED -jar "$JAR" "$@"
+exec java --add-opens java.base/java.lang=ALL-UNNAMED -jar "\$JAR" "\$@"
 WRAPPER
     chmod +x "${wrapper}"
 }
