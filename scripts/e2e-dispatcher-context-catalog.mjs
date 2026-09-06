@@ -5,7 +5,7 @@
 // 绝非 8080 宿主）+ OpenAI 兼容 stub LLM（内嵌，捕获全部请求）。
 //   1. fixture：装 2 插件（cap-a 受信含 capability / beta-untrusted 从不审批）
 //      + 2 preset（deep-analyze 含 description / general 无 description）
-//   2. Nebula 会话 REST turn → stub 让 Nebula 调 Mail(→e2e-proj)
+//   2. Nebula 会话 REST turn → stub 让 Nebula 调 Task(→e2e-proj)
 //      → ProjectActor.TriggerDispatcher → 分发器 spawn
 //      → newTaskPrompt（插件能力目录 + 预设场景目录）打到 stub
 //   3. 断言：cap-a capability 行出现；beta-untrusted 不出现；
@@ -88,11 +88,13 @@ function streamFor(body) {
   if (isDispatcher || (last?.role === 'tool')) {
     // 分发器上下文请求或工具结果待处理轮 → 终答（防 Mail 工具调用死循环）
     events = [chunk({ role: 'assistant', content: '' }), chunk({ content: 'ok' }), chunk({}, 'stop'), 'data: [DONE]\n\n'];
-  } else if (lastUser && msgText(lastUser).includes('E2E_MAIL_TRIGGER')) {
-    const args = JSON.stringify({ address: 'e2e-proj', message: 'E2E dispatch probe task: 验证分发器上下文目录注入', type: 'PARALLEL' });
+  } else if (lastUser && msgText(lastUser).includes('E2E_DISPATCH_TRIGGER')) {
+    // 工具面收口C 后 Nebula 无 Mail（Mail is team-only，AgentCore 2d）——
+    // 项目触发走一等工具 Task（与 Mail(→project) 同内核 TriggerDispatcher）
+    const args = JSON.stringify({ project: 'e2e-proj', task: 'E2E dispatch probe task: 验证分发器上下文目录注入' });
     events = [
       chunk({ role: 'assistant', content: '' }),
-      chunk({ tool_calls: [{ index: 0, id: 'call_stub_mail', type: 'function', function: { name: 'Mail', arguments: args } }] }),
+      chunk({ tool_calls: [{ index: 0, id: 'call_stub_task', type: 'function', function: { name: 'Task', arguments: args } }] }),
       chunk({}, 'tool_calls'),
       'data: [DONE]\n\n',
     ];
@@ -131,7 +133,7 @@ function buildFixture() {
   const capA = join(HOME, 'plugins', 'cap-a');
   mkdirSync(join(capA, 'skills', 'probe'), { recursive: true });
   writeFileSync(join(capA, 'plugin.json'), JSON.stringify({
-    $schema: 'https://agent-plugins.org/schema/1.0.0', name: 'cap-a', version: '1.0.0',
+    $schema: 'https://agent-plugins.org/schemas/1.0.0/plugin.schema.json', name: 'cap-a', version: '1.0.0',
     description: 'cap-a 结构描述句（有 capability 时不应出现在目录）',
     capability: 'E2E 能力探针：节点获得分发器目录注入链路的验证能力',
   }, null, 2));
@@ -140,7 +142,7 @@ function buildFixture() {
   const beta = join(HOME, 'plugins', 'beta-untrusted');
   mkdirSync(join(beta, 'skills', 'never'), { recursive: true });
   writeFileSync(join(beta, 'plugin.json'), JSON.stringify({
-    $schema: 'https://agent-plugins.org/schema/1.0.0', name: 'beta-untrusted', version: '1.0.0',
+    $schema: 'https://agent-plugins.org/schemas/1.0.0/plugin.schema.json', name: 'beta-untrusted', version: '1.0.0',
     description: '未信任插件（不应出现）',
     capability: '未信任能力句（不应出现）',
   }, null, 2));
@@ -238,10 +240,10 @@ const sess = await api('/sessions', 'POST', { name: 'e2e-dctx', agentName: 'Nebu
 check('create Nebula session', sess.status === 200 && !!(sess.json?.id ?? sess.json?.sessionId), JSON.stringify(sess.json || {}).slice(0, 120));
 const sid = sess.json?.id ?? sess.json?.sessionId;
 const turn = await api(`/sessions/${sid}/turn`, 'POST', {
-  content: 'E2E_MAIL_TRIGGER：请立即调用 Mail 工具，address=e2e-proj，发送消息「E2E dispatch probe task: 验证分发器上下文目录注入」（type=PARALLEL）。除此之外什么都不要做。',
+  content: 'E2E_DISPATCH_TRIGGER：请立即调用 Task 工具，project=e2e-proj，task=「E2E dispatch probe task: 验证分发器上下文目录注入」。除此之外什么都不要做。',
   timeoutSec: 150,
 });
-check('Nebula turn completes (Mail fired inside)', turn.status === 200, `status=${turn.status}`);
+check('Nebula turn completes (Task fired inside)', turn.status === 200, `status=${turn.status}`);
 
 // ── 等分发器 spawn 的 LLM 请求到达 stub ──
 // 匹配必须双标记：'你是项目' + '任务分发器'（newTaskPrompt 首句）。单查
@@ -254,7 +256,7 @@ const isDispatchCtx = (c) => {
 let dispatchReq = null;
 {
   const t0 = Date.now();
-  while (Date.now() - t0 < 30000) {
+  while (Date.now() - t0 < 90000) {
     dispatchReq = captured.find(isDispatchCtx);
     if (dispatchReq) break;
     await sleep(1000);
@@ -301,6 +303,7 @@ if (dispatchReq) {
   writeFileSync('/tmp/dctx-token-evidence.json', JSON.stringify({ plugin: pe, preset: se, pluginSectionText: plugSection, presetSectionText: presetSection }, null, 2));
 } else {
   console.log('— captured requests: ' + captured.length);
+  writeFileSync('/tmp/dctx-e2e-fail-dump.json', JSON.stringify(captured, null, 2));
   for (const c of captured.slice(0, 3)) console.log('  last user: ' + JSON.stringify([...c.messages].reverse().find((m) => m.role === 'user')?.content).slice(0, 160));
 }
 
