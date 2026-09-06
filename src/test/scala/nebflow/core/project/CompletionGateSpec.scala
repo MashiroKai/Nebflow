@@ -28,7 +28,6 @@ import scala.concurrent.duration.*
  *  - 引擎级（stub runner 注入，NodeBlockedReentrySpec 同款 harness）：①态 a →
  *    completed 正常投递 ②态 b → completed ③④滞留 → blocked + blockedFeedback
  *    「产物滞留未申报」+ 不投递 out（④即变异验红用例）⑤blocked 优先于 gate
- *    ⑥hold 优先于 gate ⑦release 闸门（拒 → 保持 held + Left 诊断；清账后放行）
  *    ⑧引擎级 kill-switch。
  */
 class CompletionGateSpec extends CatsEffectSuite:
@@ -448,7 +447,7 @@ class CompletionGateSpec extends CatsEffectSuite:
       (rt, events, system) <- engineScenario("eng-reject", llm, stubRunner(state))
       _ <- waitUntil(20.seconds) {
         rt.store.snapshot.map(_.nodes.values.find(_.name == "gate-a")).flatMap {
-          case Some(n) => IO.pure(n.status == NodeLifecycle.Held || n.status == NodeLifecycle.Blocked || n.status == NodeLifecycle.Completed)
+          case Some(n) => IO.pure(n.status == NodeLifecycle.Blocked || n.status == NodeLifecycle.Completed)
           case None    => IO.pure(false)
         }
       }
@@ -502,79 +501,6 @@ class CompletionGateSpec extends CatsEffectSuite:
     yield
       assertEquals(a.blockedFeedback.map(_.category), Some("task-underspecified"),
         "agent-declared blocked must win over gate (gate 后置)")
-  }
-
-  test("engine ⑥: hold 优先于 gate（hold=true + 脏 + 未申报 → held，等 release 时再闸）") {
-    val llm = new FuncLlm(text => if text.contains("gate-scenario") then IO.pure("held-result") else IO.pure("ok-b"))
-    // hold 校验①：hold=true 必须 out 为节点 id（out=Nebula 被 NodeEdit 拒）→ 种子 B
-    val ws = gitWorkspace("eng-hold")
-    val system = ActorSystem(s"gate-hold-${scala.util.Random.nextInt(100000)}")
-    for
-      state <- Ref.of[IO, StubGit](StubGit(status = List("M h.scala"), ahead = 0))
-      res <- mkResources(system, tempRoot, llm.handle)
-      (rt, events) <- mountEngineOnly("eng-hold", ws, system, res, stubRunner(state))
-      ctx = mkCtx(res, system, ws.toString)
-      _ <- rt.store.mutate(s => s.copy(nodes = s.nodes ++ Map(
-        "n-down-b" -> NodeDef(id = "n-down-b", name = "down-b", agent = "test-agent",
-          status = NodeLifecycle.Wiring, out = Some("Nebula"), createdAt = System.currentTimeMillis()))))
-      created <- nodeEdit(nodeInput("eng-hold", "gate-a", "description" -> Json.fromString("gate scenario node"),
-        "task" -> Json.fromString("gate-scenario"), "worktree" -> Json.fromBoolean(true),
-        "hold" -> Json.fromBoolean(true), "out" -> Json.fromString("n-down-b")), ctx)
-      _ <- waitUntil(20.seconds) {
-        rt.store.snapshot.map(_.nodes.values.find(_.name == "gate-a")).flatMap {
-          case Some(n) => IO.pure(n.status == NodeLifecycle.Held || n.status == NodeLifecycle.Blocked || n.status == NodeLifecycle.Completed)
-          case None    => IO.pure(false)
-        }
-      }
-      a <- rt.store.snapshot.map(_.nodes.values.find(_.name == "gate-a")).map(_.getOrElse(fail("A must exist")))
-      _ <- stop(system)
-    yield
-      assert(created.isRight, s"create must succeed, got: $created")
-      assertEquals(a.status, NodeLifecycle.Held, s"hold split must precede gate; gate re-runs at release (hold=${a.hold}, feedback=${a.blockedFeedback}, result=${a.result.map(_.take(120))})")
-      assertEquals(a.result, Some("held-result"))
-  }
-
-  test("engine ⑦: release 闸门——脏未申报 → Left 拒绝保持 held；stub 清账后重放 → completed") {
-    val llm = new FuncLlm(text => if text.contains("gate-scenario") then IO.pure("held-result") else IO.pure("ok-b"))
-    val ws = gitWorkspace("eng-release")
-    val system = ActorSystem(s"gate-rel-${scala.util.Random.nextInt(100000)}")
-    for
-      state <- Ref.of[IO, StubGit](StubGit(status = List("M r.scala"), ahead = 0))
-      res <- mkResources(system, tempRoot, llm.handle)
-      (rt, events) <- mountEngineOnly("eng-release", ws, system, res, stubRunner(state))
-      ctx = mkCtx(res, system, ws.toString)
-      _ <- rt.store.mutate(s => s.copy(nodes = s.nodes ++ Map(
-        "n-down-b" -> NodeDef(id = "n-down-b", name = "down-b", agent = "test-agent",
-          status = NodeLifecycle.Wiring, out = Some("Nebula"), createdAt = System.currentTimeMillis()))))
-      created <- nodeEdit(nodeInput("eng-release", "gate-a", "description" -> Json.fromString("gate scenario node"),
-        "task" -> Json.fromString("gate-scenario"), "worktree" -> Json.fromBoolean(true),
-        "hold" -> Json.fromBoolean(true), "out" -> Json.fromString("n-down-b")), ctx)
-      _ <- waitUntil(20.seconds) {
-        rt.store.snapshot.map(_.nodes.values.find(_.name == "gate-a")).flatMap {
-          case Some(n) => IO.pure(n.status == NodeLifecycle.Held || n.status == NodeLifecycle.Blocked || n.status == NodeLifecycle.Completed)
-          case None    => IO.pure(false)
-        }
-      }
-      _ <- rt.store.snapshot.map(_.nodes.values.find(_.name == "gate-a")).map {
-        case Some(n) => assertEquals(n.status, NodeLifecycle.Held, s"setup: node must be held (got ${n.status}, created=$created, feedback=${n.blockedFeedback})")
-        case None    => fail("A must exist")
-      }
-      // 第一次 release：脏且未申报 → 拒绝，保持 held
-      refused <- nodeEdit(nodeInput("eng-release", "gate-a", "release" -> Json.fromBoolean(true)), ctx)
-      _ <- IO.sleep(200.millis)
-      a1 <- rt.store.snapshot.map(_.nodes.values.find(_.name == "gate-a")).map(_.getOrElse(fail("A must exist")))
-      // 落地产物（模拟 commit 完成：ahead=1 + clean）→ 重放成功
-      _ <- state.set(StubGit(status = Nil, ahead = 1))
-      ok <- nodeEdit(nodeInput("eng-release", "gate-a", "release" -> Json.fromBoolean(true)), ctx)
-      _ <- waitStatus(rt, "gate-a", Set(NodeLifecycle.Completed))
-      a2 <- rt.store.snapshot.map(_.nodes.values.find(_.name == "gate-a")).map(_.getOrElse(fail("A must exist")))
-      _ <- stop(system)
-    yield
-      assert(refused.isLeft, s"dirty undeclared release must be rejected, got: $refused")
-      assert(refused.left.exists(m => m.contains("release rejected") && m.contains("产物滞留未申报")), s"rejection must carry gate diagnostic, got: $refused")
-      assertEquals(a1.status, NodeLifecycle.Held, "node stays held after rejection")
-      assert(ok.isRight, s"clean release must succeed, got: $ok")
-      assertEquals(a2.status, NodeLifecycle.Completed, "release → completed after artifacts landed")
   }
 
   test("engine ⑧: kill-switch 生效于引擎（disabled → 脏未申报节点照常 completed）") {

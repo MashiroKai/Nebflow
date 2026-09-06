@@ -179,13 +179,6 @@
 .task-node-dot-cancelled { background: var(--color-warning, #ff9800); }
 .task-node-dot-neutral { background: color-mix(in srgb, var(--color-text-muted, #888) 45%, transparent); }
 
-/* held（待放行，2026-09-05 裁定）：hold 闸门挂起——排队方框形态 + 琥珀虚线
-   （警示色相；--amber 与 flowmap.css .fm-node.blocked 同源，sapphire.css 双主题定义） */
-.task-node-box-held {
-  border-color: rgb(var(--amber, 255 152 0) / 0.9);
-  border-style: dashed;
-}
-
 /* blocked（阻塞，2026-09-05 裁定）：琥珀实心点——警示态，区别于 failed 终结红 */
 .task-node-dot-blocked { background: rgb(var(--amber, 255 152 0) / 0.95); }
 

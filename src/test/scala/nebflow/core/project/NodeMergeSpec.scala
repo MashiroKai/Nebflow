@@ -37,8 +37,8 @@ import scala.concurrent.duration.*
  *    mount-enforce 批起含「创建时上游已 failed」形态：创建期 D1 保留投递对
  *    failed 上游分流（错误文本不作输入，走 mergeBlockedByUpstreamFailure 转换），
  *    Nebula 收到 merge-blocked 通报，git 零合并零清理（残留原样保留待处置）。
- *  - S4 上游 held：release 后按 completed 计入（NodeHoldSpec T2 语义衔接），
- *    放行触发合并真实落地。
+ *  - S4 上游 running 时建 merge 节点：in 声明改接后，晚完成的按 completed 计入，
+ *    barrier 归零触发合并真实落地（完成即投递——无人工 hold 闸）。
  *
  * 附 T0：NodeEdit create 校验（merge+worktree 拒绝；零上游 merge 拒绝；merge=true
  * 落库（in=<id> 合法顺序）；归档节点拒设 merge）。
@@ -178,7 +178,7 @@ class NodeMergeSpec extends CatsEffectSuite:
        |git worktree list && git for-each-ref refs/heads
        |END""".stripMargin
 
-  // ── 基建（NodeHoldSpec 同款）─────────────────────────────
+  // ── 基建 ─────────────────────────────────────────────
 
   private def mkResources(system: ActorSystem, tmp: os.Path, llm: LlmHandle[IO]): IO[SharedResources] =
     for
@@ -560,17 +560,16 @@ class NodeMergeSpec extends CatsEffectSuite:
       assert(branches.contains("feat/task-a") && branches.contains("feat/task-b"), "branches intact")
   }
 
-  // ── S4 上游 held → release 按 completed 计入（NodeHoldSpec 衔接）──
+  // ── S4 上游 running 时建 merge 节点 → 晚完成的按 completed 计入 ──
 
-  test("S4: held upstream releases → counts as completed, merge triggers and lands for real") {
+  test("S4: merge node created while upstreams are running — late completions still count, merge lands for real") {
     val ws = tempRoot / "ws-s4"
     initRepo(ws)
     mkWork(ws, "task-a")
     mkWork(ws, "task-b")
     val system = ActorSystem(s"merge-s4-${scala.util.Random.nextInt(100000)}")
-    // 上游 echo 延迟 4s：task-a 保持 running 窗口（hold=true 要求节点型 finalOut
-    // ——创建期不可配 "Nebula"；新合法顺序下：merge-w 经 in 声明改接 a.out 后，
-    // 再于 a 的 running 窗口内开 hold 闸）
+    // 上游 echo 延迟 4s：两上游在 merge 节点创建时仍在 running 窗口（in 声明改接
+    // 两上游 out → merge-w 后，它们完成时 deliverOut 沿新 out 投递）
     val llm = MergeLlm(delayEcho = 4000.millis)
     for
       res <- mkResources(system, tempRoot, llm.handle)
@@ -595,16 +594,12 @@ class NodeMergeSpec extends CatsEffectSuite:
         "out" -> CJson.fromString("Nebula"),
         "in" -> CJson.arr(CJson.fromString(aId), CJson.fromString(bId)),
         "merge" -> CJson.fromBoolean(true)), ctx)
-      // a 仍在 running 窗口：开 hold 人工闸点（finalOut 已是 merge-w 节点 id ✓）
-      holdRes <- nodeEdit(nodeInput("merge-s4", "task-a", "hold" -> CJson.fromBoolean(true)), ctx)
-      _ <- waitStatus(rt, "task-a", Set(NodeLifecycle.Held))
-      _ <- waitStatus(rt, "task-b", Set(NodeLifecycle.Completed))
+      // 两上游仍 running（4s echo 未到）：merge 节点必须停留创建态 wiring（barrier 等待）
       _ <- IO.sleep(300.millis)
       preMerge <- byName(rt, "merge-w")
-      // release → held → completed → deliverOut（out 已被 in 声明改接 merge-w）→
-      // barrier 归零 → 合并真实落地
-      rel <- nodeEdit(nodeInput("merge-s4", "task-a", "release" -> CJson.fromBoolean(true)), ctx)
+      // 两上游完成 → deliverOut（out 已被 in 声明改接 merge-w）→ barrier 归零 → 合并真实落地
       _ <- waitStatus(rt, "task-a", Set(NodeLifecycle.Completed))
+      _ <- waitStatus(rt, "task-b", Set(NodeLifecycle.Completed))
       _ <- waitStatus(rt, "merge-w", Set(NodeLifecycle.Completed), timeout = 60.seconds)
       merge <- byName(rt, "merge-w")
       a <- byName(rt, "task-a")
@@ -614,14 +609,12 @@ class NodeMergeSpec extends CatsEffectSuite:
       wts = worktreeNames(ws)
       _ <- system.stopAll.handleErrorWith(_ => IO.unit)
     yield
-      assert(holdRes.isRight, s"hold switch on running node (node-target out) must succeed, got $holdRes")
-      assert(rel.isRight, s"release must succeed, got $rel")
       assertEquals(preMerge.status, NodeLifecycle.Wiring,
-        s"barrier must hold while A is held (merge node stays at create-state wiring, un-started), got ${preMerge.status}")
-      assert(preMerge.startedAt.isEmpty, "merge node must have no session while its upstream is held")
-      assertEquals(a.status, NodeLifecycle.Completed, "release: held → completed")
-      assertEquals(merge.status, NodeLifecycle.Completed, "released upstream counts in; merge ran")
-      assert(mergeInput.isDefined, "merge input must carry BOTH results (incl. the released one)")
+        s"merge node must stay at create-state wiring while upstreams running, got ${preMerge.status}")
+      assert(preMerge.startedAt.isEmpty, "merge node must have no session while upstreams running")
+      assertEquals(a.status, NodeLifecycle.Completed, "late-completed upstream counts")
+      assertEquals(merge.status, NodeLifecycle.Completed, "both upstreams counted; merge ran")
+      assert(mergeInput.isDefined, "merge input must carry BOTH results")
       assert(log.contains("merge: task-a") && log.contains("merge: task-b"), s"real landing happened, got:\n$log")
       assert(!branches.contains("feat/task-a") && !branches.contains("feat/task-b"), "branches cleaned")
       assert(!wts.exists(p => p.endsWith("task-a") || p.endsWith("task-b")), "worktrees cleaned")

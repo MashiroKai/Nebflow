@@ -10,8 +10,8 @@ import nebflow.core.PathUtil
  *
  * `<workspace>/.nebflow/flow-map-events.jsonl` 追加式 JSONL，每行一事件：
  * `{ts, type, project, nodeId, summary}`，
- * type ∈ blocked / held / reentry-triggered / reactivated / abandoned / escalated /
- *   cooldown-on / released / reaped / merge-blocked /
+ * type ∈ blocked / reentry-triggered / reactivated / abandoned / escalated /
+ *   cooldown-on / reaped / merge-blocked /
  *   settle-sweep / trigger-starved / start-aborted（trigger-chain-fix 批）/
  *   bg-wait / bg-wait-timeout / bg-released（bgtask-completion-gate 批）/
  *   mount-stalled（mount-enforce 批：可触发点后 60s 仍未触发的挂载停滞留痕，
@@ -19,7 +19,7 @@ import nebflow.core.PathUtil
  * 注册式扩展：append API 无 schema 变更，新事件类型 = 本清单加一词 + 写入点调用。
  *
  * 0 schema 迁移（独立文件不碰 flow-map.json 契约）、append-only、重启保留、grep 友好。
- * 写入点：NodeEngine.blockedNode（blocked）/ heldNode（held）/ mergeBlockedByUpstream
+ * 写入点：NodeEngine.blockedNode（blocked）/ mergeBlockedByUpstream
  * Failure（merge-blocked）/ runWithAgent 翻转异常中止（start-aborted）/ settleRunnable
  * Sweep（settle-sweep、trigger-starved、mount-stalled）/ reapStaleRunning（reaped）、
  * FeedbackRouter（reentry-triggered / escalated / cooldown-on）、NodeEditTool 重激活与

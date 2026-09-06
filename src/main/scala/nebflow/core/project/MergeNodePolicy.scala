@@ -17,8 +17,6 @@ package nebflow.core.project
   *   - 上游 failed    → 本 object.haltsOnFailure 命中 → NodeEngine 把合并节点转
   *                      blocked 可见终态（**不做 collect 占位结算**——占位会让合
   *                      并在不完整输入上启动；也不悬挂 pending）
-  *   - 上游 held      → release 后按 completed 计入（releaseNode → deliverOut 既
-  *                      有链路，NodeHoldSpec T2 语义衔接）
   *   - 上游 cancelled → 无投递（cancelNode 本就不结算）；合并节点保持
   *                      wiring/pending 可见，由分发器 NodeList 巡检处置（改接/abandon）
   */
