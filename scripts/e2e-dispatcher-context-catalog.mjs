@@ -5,7 +5,7 @@
 // 绝非 8080 宿主）+ OpenAI 兼容 stub LLM（内嵌，捕获全部请求）。
 //   1. fixture：装 2 插件（cap-a 受信含 capability / beta-untrusted 从不审批）
 //      + 2 preset（deep-analyze 含 description / general 无 description）
-//   2. Nebula 会话 REST turn → stub 让 Nebula 调 Mail(→e2e-proj)
+//   2. Nebula 会话 REST turn → stub 让 Nebula 调 Task(→e2e-proj)
 //      → ProjectActor.TriggerDispatcher → 分发器 spawn
 //      → newTaskPrompt（插件能力目录 + 预设场景目录）打到 stub
 //   3. 断言：cap-a capability 行出现；beta-untrusted 不出现；
@@ -88,11 +88,13 @@ function streamFor(body) {
   if (isDispatcher || (last?.role === 'tool')) {
     // 分发器上下文请求或工具结果待处理轮 → 终答（防 Mail 工具调用死循环）
     events = [chunk({ role: 'assistant', content: '' }), chunk({ content: 'ok' }), chunk({}, 'stop'), 'data: [DONE]\n\n'];
-  } else if (lastUser && msgText(lastUser).includes('E2E_MAIL_TRIGGER')) {
-    const args = JSON.stringify({ address: 'e2e-proj', message: 'E2E dispatch probe task: 验证分发器上下文目录注入', type: 'PARALLEL' });
+  } else if (lastUser && msgText(lastUser).includes('E2E_DISPATCH_TRIGGER')) {
+    // 工具面收口C 后 Nebula 无 Mail（Mail is team-only，AgentCore 2d）——
+    // 项目触发走一等工具 Task（与 Mail(→project) 同内核 TriggerDispatcher）
+    const args = JSON.stringify({ project: 'e2e-proj', task: 'E2E dispatch probe task: 验证分发器上下文目录注入' });
     events = [
       chunk({ role: 'assistant', content: '' }),
-      chunk({ tool_calls: [{ index: 0, id: 'call_stub_mail', type: 'function', function: { name: 'Mail', arguments: args } }] }),
+      chunk({ tool_calls: [{ index: 0, id: 'call_stub_task', type: 'function', function: { name: 'Task', arguments: args } }] }),
       chunk({}, 'tool_calls'),
       'data: [DONE]\n\n',
     ];
@@ -238,10 +240,10 @@ const sess = await api('/sessions', 'POST', { name: 'e2e-dctx', agentName: 'Nebu
 check('create Nebula session', sess.status === 200 && !!(sess.json?.id ?? sess.json?.sessionId), JSON.stringify(sess.json || {}).slice(0, 120));
 const sid = sess.json?.id ?? sess.json?.sessionId;
 const turn = await api(`/sessions/${sid}/turn`, 'POST', {
-  content: 'E2E_MAIL_TRIGGER：请立即调用 Mail 工具，address=e2e-proj，发送消息「E2E dispatch probe task: 验证分发器上下文目录注入」（type=PARALLEL）。除此之外什么都不要做。',
+  content: 'E2E_DISPATCH_TRIGGER：请立即调用 Task 工具，project=e2e-proj，task=「E2E dispatch probe task: 验证分发器上下文目录注入」。除此之外什么都不要做。',
   timeoutSec: 150,
 });
-check('Nebula turn completes (Mail fired inside)', turn.status === 200, `status=${turn.status}`);
+check('Nebula turn completes (Task fired inside)', turn.status === 200, `status=${turn.status}`);
 
 // ── 等分发器 spawn 的 LLM 请求到达 stub ──
 // 匹配必须双标记：'你是项目' + '任务分发器'（newTaskPrompt 首句）。单查
