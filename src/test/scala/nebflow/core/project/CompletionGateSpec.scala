@@ -40,7 +40,7 @@ class CompletionGateSpec extends CatsEffectSuite:
 
   PathUtil.setDataRoot(tempRoot)
   os.remove.all(tempRoot)
-  for agent <- List("test-agent") do
+  for agent <- List("test-agent", "general") do
     os.makeDir.all(tempRoot / "agents" / agent)
     os.write.over(
       tempRoot / "agents" / agent / "agent.json",
@@ -74,6 +74,17 @@ class CompletionGateSpec extends CatsEffectSuite:
     val dir = ws / ".nebflow" / "worktrees" / bare
     os.makeDir.all(dir)
     dir
+
+  /** git 仓 workspace fixture：init + 身份 + 初始空提交（NodeEdit worktree=true
+    * 派生需至少一提交；NodeSchemaSlimSpec 同款）。 */
+  private def gitWorkspace(name: String): os.Path =
+    val ws = tempRoot / s"ws-$name"
+    os.makeDir.all(ws)
+    os.proc("git", "init", ws.toString).call(check = true)
+    os.proc("git", "-C", ws.toString, "config", "user.email", "spec@nebflow.local").call(check = true)
+    os.proc("git", "-C", ws.toString, "config", "user.name", "spec").call(check = true)
+    os.proc("git", "-C", ws.toString, "commit", "--allow-empty", "-m", "init").call(check = true)
+    ws
 
   private class FuncLlm(respond: String => IO[String]):
     val inputs: Ref[IO, List[String]] = Ref.unsafe[IO, List[String]](Nil)
@@ -374,9 +385,7 @@ class CompletionGateSpec extends CatsEffectSuite:
     llm: FuncLlm,
     runner: CompletionGate.GitRunner
   ): IO[(ProjectRuntime, Ref[IO, List[(String, String, Json)]], ActorSystem)] =
-    val ws = tempRoot / s"ws-$name"
-    os.makeDir.all(ws)
-    mkWt(ws, "wt-gate")
+    val ws = gitWorkspace(name)
     val system = ActorSystem(s"gate-$name-${scala.util.Random.nextInt(100000)}")
     for
       res <- mkResources(system, tempRoot, llm.handle)
@@ -386,8 +395,8 @@ class CompletionGateSpec extends CatsEffectSuite:
       _ <- rt.store.mutate(s => s.copy(nodes = s.nodes ++ Map(
         "n-down-b" -> NodeDef(id = "n-down-b", name = "down-b", agent = "test-agent",
           status = NodeLifecycle.Wiring, out = Some("Nebula"), createdAt = System.currentTimeMillis()))))
-      _ <- nodeEdit(nodeInput(name, "gate-a", "agent" -> Json.fromString("test-agent"),
-        "task" -> Json.fromString("gate-scenario"), "worktree" -> Json.fromString("wt-gate"),
+      _ <- nodeEdit(nodeInput(name, "gate-a", "description" -> Json.fromString("gate scenario node"),
+        "task" -> Json.fromString("gate-scenario"), "worktree" -> Json.fromBoolean(true),
         "out" -> Json.fromString("n-down-b")), ctx)
     yield (rt, events, system)
 
@@ -494,9 +503,7 @@ class CompletionGateSpec extends CatsEffectSuite:
   test("engine ⑥: hold 优先于 gate（hold=true + 脏 + 未申报 → held，等 release 时再闸）") {
     val llm = new FuncLlm(text => if text.contains("gate-scenario") then IO.pure("held-result") else IO.pure("ok-b"))
     // hold 校验①：hold=true 必须 out 为节点 id（out=Nebula 被 NodeEdit 拒）→ 种子 B
-    val ws = tempRoot / "ws-eng-hold"
-    os.makeDir.all(ws)
-    mkWt(ws, "wt-gate")
+    val ws = gitWorkspace("eng-hold")
     val system = ActorSystem(s"gate-hold-${scala.util.Random.nextInt(100000)}")
     for
       state <- Ref.of[IO, StubGit](StubGit(status = List("M h.scala"), ahead = 0))
@@ -506,8 +513,8 @@ class CompletionGateSpec extends CatsEffectSuite:
       _ <- rt.store.mutate(s => s.copy(nodes = s.nodes ++ Map(
         "n-down-b" -> NodeDef(id = "n-down-b", name = "down-b", agent = "test-agent",
           status = NodeLifecycle.Wiring, out = Some("Nebula"), createdAt = System.currentTimeMillis()))))
-      created <- nodeEdit(nodeInput("eng-hold", "gate-a", "agent" -> Json.fromString("test-agent"),
-        "task" -> Json.fromString("gate-scenario"), "worktree" -> Json.fromString("wt-gate"),
+      created <- nodeEdit(nodeInput("eng-hold", "gate-a", "description" -> Json.fromString("gate scenario node"),
+        "task" -> Json.fromString("gate-scenario"), "worktree" -> Json.fromBoolean(true),
         "hold" -> Json.fromBoolean(true), "out" -> Json.fromString("n-down-b")), ctx)
       _ <- waitUntil(20.seconds) {
         rt.store.snapshot.map(_.nodes.values.find(_.name == "gate-a")).flatMap {
@@ -525,9 +532,7 @@ class CompletionGateSpec extends CatsEffectSuite:
 
   test("engine ⑦: release 闸门——脏未申报 → Left 拒绝保持 held；stub 清账后重放 → completed") {
     val llm = new FuncLlm(text => if text.contains("gate-scenario") then IO.pure("held-result") else IO.pure("ok-b"))
-    val ws = tempRoot / "ws-eng-release"
-    os.makeDir.all(ws)
-    mkWt(ws, "wt-gate")
+    val ws = gitWorkspace("eng-release")
     val system = ActorSystem(s"gate-rel-${scala.util.Random.nextInt(100000)}")
     for
       state <- Ref.of[IO, StubGit](StubGit(status = List("M r.scala"), ahead = 0))
@@ -537,8 +542,8 @@ class CompletionGateSpec extends CatsEffectSuite:
       _ <- rt.store.mutate(s => s.copy(nodes = s.nodes ++ Map(
         "n-down-b" -> NodeDef(id = "n-down-b", name = "down-b", agent = "test-agent",
           status = NodeLifecycle.Wiring, out = Some("Nebula"), createdAt = System.currentTimeMillis()))))
-      created <- nodeEdit(nodeInput("eng-release", "gate-a", "agent" -> Json.fromString("test-agent"),
-        "task" -> Json.fromString("gate-scenario"), "worktree" -> Json.fromString("wt-gate"),
+      created <- nodeEdit(nodeInput("eng-release", "gate-a", "description" -> Json.fromString("gate scenario node"),
+        "task" -> Json.fromString("gate-scenario"), "worktree" -> Json.fromBoolean(true),
         "hold" -> Json.fromBoolean(true), "out" -> Json.fromString("n-down-b")), ctx)
       _ <- waitUntil(20.seconds) {
         rt.store.snapshot.map(_.nodes.values.find(_.name == "gate-a")).flatMap {

@@ -48,6 +48,14 @@ class NodeSchemaSlimSpec extends CatsEffectSuite:
     """{"name":"general","description":"general executor","tools":[],"category":"standalone"}""")
   os.write.over(tempRoot / "agents" / "general" / "system.md", "# general\n")
   os.write.over(tempRoot / "nebflow.json", "{}")
+  // E2E 引用 preset=qa——Fixture 必须提供该预设（PresetStore 读 dataRoot/model-presets.json；
+  // 缺失时只 seed "general"，qa 必然 resolve 失败 → 节点 preset 段 failNode）。给 qa 一个
+  // 模型链（preferred）即满足 resolveExplicit 的非空链要求（RecordingLlm 忽略了模型配置）。
+  os.write.over(tempRoot / "model-presets.json",
+    """{"defaultPreset":"general","presets":{
+      |"general":{"name":"general","description":"默认方案","preferred":"default-model","fallbacks":[]},
+      |"qa":{"name":"qa","description":"QA 预设","preferred":"qa-model","fallbacks":[]}
+      |}}""".stripMargin)
 
   // skills-only plugin fixture（真实目录 + 审批走 PluginRegistry 单点，NodePluginChainSpec 同款）
   private val slimPluginDir = tempRoot / "plugins" / "slim-e2e"
