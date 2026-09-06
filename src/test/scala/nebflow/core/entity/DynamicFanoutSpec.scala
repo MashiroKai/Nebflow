@@ -16,7 +16,7 @@ import nebflow.core.PathUtil
 import nebflow.core.compact.HistoryArchiver
 import nebflow.core.flow.{NodeStatus, RunningFlowRegistry}
 import nebflow.core.task.FileTaskStore
-import nebflow.core.tools.FileLockManager
+import nebflow.core.tools.{FileLockManager, FlowReportData, FlowReportStore}
 import nebflow.gateway.{RateLimiter, SessionStore}
 import nebflow.llm.{ModelCandidate, ProviderHealthMonitor, ThinkingConfig}
 import nebflow.shared.{ContentBlock, LlmHandle, LlmRequest, LlmResponse, Message, MessageRole, StreamChunk, ToolCall}
@@ -56,10 +56,14 @@ class DynamicFanoutSpec extends CatsEffectSuite:
     Stream.eval(IO.sleep(delay)) >> Stream(StreamChunk.TextDelta(text), StreamChunk.Done(None, None))
 
   /**
-   * Node-keyed fake LLM. "p" (planner) emits one FlowReport with the given
-   * slots on its first request of the session, then plain text; instance
-   * nodes (researcher#N) answer with the per-index behavior; the join answers
+   * Node-keyed fake LLM. "p" (planner) reports the given slots into
+   * FlowReportStore on its first request of the session, then answers plain
+   * text; instance nodes (researcher#N) with instanceSlots report per-index
+   * slots the same way, then run the per-index behavior; the join answers
    * plain text. Captures every request for input-resolution assertions.
+   *
+   * 2026-09-06 工具面裁撤批：FlowReport 工具退役——fakes 直写
+   * [[FlowReportStore]]（引擎消费面零变化），fan-out 语义断言全保留。
    */
   private class PlannerLlm(
     topics: List[Json],
@@ -80,49 +84,31 @@ class DynamicFanoutSpec extends CatsEffectSuite:
           case "p" =>
             Stream
               .eval(answered.get.flatMap(a => if a(req.sessionId) then IO.pure(false) else answered.update(_ + req.sessionId).as(true)))
-              .flatMap {
+              .evalTap {
                 case true =>
                   val slotsObj = JsonObject.fromIterable(if emitTopics then List("topics" -> topics.asJson) else Nil)
-                  Stream(
-                    StreamChunk.ToolCallChunk(
-                      ToolCall(
-                        id = "call-p1",
-                        name = "FlowReport",
-                        input = JsonObject.fromIterable(
-                          List(
-                            "verdict" -> Json.fromString("done"),
-                            "output" -> Json.fromString("PLANNER-OUT"),
-                            "slots" -> slotsObj.asJson
-                          )
-                        )
-                      )
-                    ),
-                    StreamChunk.Done(Some("tool_use"), None)
-                  )
+                  FlowReportStore.set(req.sessionId, FlowReportData("done", "PLANNER-OUT", slotsObj))
+                case _ => IO.unit
+              }
+              .flatMap {
+                case true => Stream(StreamChunk.TextDelta("planner done"), StreamChunk.Done(None, None))
                 case false => Stream(StreamChunk.TextDelta("planner done"), StreamChunk.Done(None, None))
               }
           case inst if inst.startsWith("researcher#") =>
             val idx = inst.split("#").last.toInt
             Stream
               .eval(answered.get.flatMap(a => if a(req.sessionId) then IO.pure(false) else answered.update(_ + req.sessionId).as(true)))
+              .evalTap {
+                case true if instanceSlots.nonEmpty =>
+                  FlowReportStore.set(
+                    req.sessionId,
+                    FlowReportData("done", s"OUT-$idx", JsonObject.fromIterable(instanceSlots.get.toList))
+                  )
+                case _ => IO.unit
+              }
               .flatMap {
                 case true if instanceSlots.nonEmpty =>
-                  Stream(
-                    StreamChunk.ToolCallChunk(
-                      ToolCall(
-                        id = s"call-i$idx",
-                        name = "FlowReport",
-                        input = JsonObject.fromIterable(
-                          List(
-                            "verdict" -> Json.fromString("done"),
-                            "output" -> Json.fromString(s"OUT-$idx"),
-                            "slots" -> instanceSlots.get.asJson
-                          )
-                        )
-                      )
-                    ),
-                    StreamChunk.Done(Some("tool_use"), None)
-                  )
+                  Stream(StreamChunk.TextDelta(s"OUT-$idx"), StreamChunk.Done(None, None))
                 case _ =>
                   instanceBehavior.applyOrElse(idx, (_: Int) => answerAfter(30.millis, s"OUT-$idx"))
               }
@@ -472,7 +458,8 @@ class DynamicFanoutSpec extends CatsEffectSuite:
   test("D9 slot value not an array → fails with clear reason") {
     val capture: Ref[IO, Map[String, List[Message]]] = Ref.unsafe(Map.empty)
     val answered: Ref[IO, Set[String]] = Ref.unsafe(Set.empty)
-    // planner declares topics as string and FlowReport submits a STRING slot → fanout rejects
+    // planner declares topics as string and reports a STRING slot → fanout rejects
+    // (2026-09-06: FlowReport 工具退役，fake 直写 FlowReportStore——engine 校验不变)
     val stringSlotLlm = new LlmHandle[IO]:
       def send(req: LlmRequest): IO[LlmResponse] =
         IO.raiseError(new RuntimeException("send not expected in this test"))
@@ -487,26 +474,20 @@ class DynamicFanoutSpec extends CatsEffectSuite:
                 .eval(
                   answered.get.flatMap(a => if a(req.sessionId) then IO.pure(false) else answered.update(_ + req.sessionId).as(true))
                 )
-                .flatMap {
+                .evalTap {
                   case true =>
-                    Stream(
-                      StreamChunk.ToolCallChunk(
-                        ToolCall(
-                          id = "call-p1",
-                          name = "FlowReport",
-                          input = JsonObject.fromIterable(
-                            List(
-                              "verdict" -> Json.fromString("done"),
-                              "output" -> Json.fromString("PLANNER-OUT"),
-                              "slots" -> JsonObject.fromIterable(List("topics" -> Json.fromString("not-an-array"))).asJson
-                            )
-                          )
-                        )
-                      ),
-                      StreamChunk.Done(Some("tool_use"), None)
+                    FlowReportStore.set(
+                      req.sessionId,
+                      FlowReportData(
+                        "done",
+                        "PLANNER-OUT",
+                        JsonObject.fromIterable(List("topics" -> Json.fromString("not-an-array")))
+                      )
                     )
-                  case false => Stream(StreamChunk.TextDelta("planner done"), StreamChunk.Done(None, None))
+                  case _ => IO.unit
                 }
+                .map { _ => StreamChunk.TextDelta("planner done") }
+                .flatMap(chunk => Stream(chunk, StreamChunk.Done(None, None)))
             case _ => answerAfter(20.millis, "J-DONE")
           }
     withFlowEnv(stringSlotLlm) { (resources, system) =>

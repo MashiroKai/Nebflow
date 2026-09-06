@@ -221,11 +221,11 @@ maxLoop=5 的语义去向：LoopNode 无轮数上限、由 K=5 内容死循环�
 | 域 | 删除项 |
 |---|---|
 | 实体与装载 | teams/ 装载链（TeamLibrary、EntityLoader team 分支）、flows/ 装载链（FlowLibrary、flow.json 解析）；`teams/` `flows/` 目录归档后从白名单装载面移除 |
-| 编排执行 | TeamActor / FlowTreeActor / FlowTreeRegistry / TeamSessionRegistry；FlowDagRunner / FlowDagExecutor（barrier/checkpoint 已由 NodeRunner + FlowMapStore 接管，【v2】§3.1）；FlowTrigger / FlowExecute 工具；FlowReport / FlowReportStore（verdict 语义已死，【v2】v4） |
+| 编排执行 | TeamActor / FlowTreeActor / FlowTreeRegistry / TeamSessionRegistry；FlowDagRunner / FlowDagExecutor（barrier/checkpoint 已由 NodeRunner + FlowMapStore 接管，【v2】§3.1）；FlowTrigger / FlowExecute 工具；FlowReport / FlowReportStore（verdict 语义已死，【v2】v4）。**【2026-09-06 增补】FlowTrigger/FlowExecute/FlowReport 三工具已提前退役**（作者裁定 2026-09-06 00:11 提前执行工具面+自配置面子集，绕开 14 天稳定期判据）——注册摘除+工具文件删除；FlowReportStore（FlowDagExecutor 消费面）抽出独立文件保留至阶段 3 引擎迁移；引擎本体零触碰 |
 | 任务与派发工具 | DelegateTool、SubTaskTool、TeamTaskCreate/List/Update（任务跟踪已被 NodeList 生命周期取代） |
 | Mail 路由 | team 名优先分支、team 内 short-name 路由、team/agent 显式路由、queue 模式（串行链由边表达）；保留 project 路由与 Task 唯一触发语义、Mail(旧 team 名) fallback 安全网（DP7-a） |
-| 注入层 | TeamCatalog 目录注入段、system-prefix-for-teams、manager-prefix、fixedToolsFor 的 team/flow/Nebula legacy 分支、buildAllowedToolSet legacy 路径、PromptSections 中 team 成员条款与任务协议段（【phase2】§D.1 标"阶段 3"各项） |
-| agent 配置面 | agent.json `tools` 字段解析、`mcpServers` 字段与 AgentMcpLoader（【phase2】裁定 11：工具可配置全走 plugins） |
+| 注入层 | TeamCatalog 目录注入段、system-prefix-for-teams、manager-prefix、fixedToolsFor 的 team/flow/Nebula legacy 分支、buildAllowedToolSet legacy 路径、PromptSections 中 team 成员条款与任务协议段（【phase2】§D.1 标"阶段 3"各项）。**【2026-09-06 增补】flowCatalog 目录注入（SkillService.buildPerAgentFlowCatalog）与 FlowTrigger 白名单注入步骤已随工具面裁撤批停注/删除**；AgentCore 叶子剥离分支中的 FlowTrigger/FlowExecute 名同步清除 |
+| agent 配置面 | agent.json `tools` 字段解析、`mcpServers` 字段与 AgentMcpLoader（【phase2】裁定 11：工具可配置全走 plugins）。**【2026-09-06 增补】面板写回通道已提前退役**（WS updateAgentTools 显式拒绝、REST PUT /api/agents/:name 410、AgentLibrary.updateTools/AgentService.updateTools 删除）；存量 agent.json tools/skills/flows 声明**解析保留**（决策 A①，legacy 授能活到阶段 3） |
 | 前端 | 侧边栏 Team/Flow 按钮（阶段 2 已折叠为二级入口，此处移除残留）、Team 面板、旧 flow-run 运行视图路由（Flow Map 标签页已按【图视图】v3.1 接管显示）、任务列表 team 区块（删除清单以 `20260902_tasklist-team-retirement-cleanup.md` 为准，节点区块零伤已解耦） |
 
 ### 4.2 数据迁移
@@ -260,7 +260,7 @@ maxLoop=5 的语义去向：LoopNode 无轮数上限、由 K=5 内容死循环�
 | **M2 批次 2 活跃迁移** | ReminderIsland + html-deck-studio 迁移（ProjectCreate + AGENTS.md + swift-dev 五域/deck 流程 skill 蒸馏）；presentation-prep 归档（检索/规划纪律并入 deck-studio skill，§1.3 v2 判定） | ① 两 project 建成且 AGENTS.md 注入生效（分发器会话可见）；② ReminderIsland 跑 1 个"修复+验证"闭环任务——verify 接线拓扑实战（§3.2 等价物首次实证）；③ html-deck-studio 跑 1 个 deck 全流程（deck 家族收敛为参数化 general 节点的实证）；④ 两 team 归档 | 2.5-3 天 | LoopNode 未落地则验证闭环用 verify 节点+重触发形态（落地后升级 LoopNode，不阻塞） |
 | **M3 批次 3/4 收尾** | sipm-paper 存续任务终态即迁（DP2-a；v2 全部迁移口径：不等下轮审稿意见，「回落不迁」分支删除）；czt-project 存续任务终态即迁（DP3-a；蒸馏+归档去向不变，不等周期收官）；voice-recognition-test 归档改显式人工决定（DP5-a 已否决）；nebflow-rust 立即归档 | ① 9 team 全部归档（或决策保留项有书面理由+复评时点）；② 注入目录 grep 零 team 条目；③ nebflow-rust/voice-recognition-test 归档 commit 各一（git mv 可追溯） | 1-2 天（事件驱动：起点=在途任务自然终态，等挂钟不计入排期） | 决策点已全部拍板（§3.3 v2）；迁移时点=存续任务终态（v2 全部迁移口径） |
 | **M4 flow 收尾 + agents 归档** | entity-creator 改造为 plugin 管理工具（决策点 6）；全局 standalone agents 归档（§1.4 表逐行）；memory-consolidation 切 Nebula+MemoryEdit 实跑 | ① AgentLibrary 装载 = 恰好 3 定义（【phase2】§G.5 验收同款）；② flows/ 目录仅剩 entity-creator（改造完成后归档）；③ memory 清理实跑一轮且 MemoryEdit 越权路径拒绝 | 2-3 天 | **硬依赖 2b（plugins）+ 2c（三定义/MemoryEdit）终态** |
-| **M5 阶段 3 退役删除批** | §4.1 清单逐域删除 + 前端旧面板移除 + 数据归档（§4.2）+ 文档/系统提示更新 | ① §4.3 四条判据全绿（先决）；② 每域独立 commit、全量 spec 绿、编译零残留引用（【phase2】§G.6 验收逐条）；③ 全量测试通过且旧工具调用返回"已退役"提示 | 删除批 3-5 天 + 稳定期 14 天（挂钟） | **硬依赖 2d（条件注入移除先行）**；M1-M4 全终态 |
+| **M5 阶段 3 退役删除批** | §4.1 清单逐域删除 + 前端旧面板移除 + 数据归档（§4.2）+ 文档/系统提示更新 | ① §4.3 四条判据全绿（先决）；② 每域独立 commit、全量 spec 绿、编译零残留引用（【phase2】§G.6 验收逐条）；③ 全量测试通过且旧工具调用返回"已退役"提示 | 删除批 3-5 天 + 稳定期 14 天（挂钟） | **硬依赖 2d（条件注入移除先行）**；M1-M4 全终态。**【2026-09-06 增补】作者裁定 2026-09-06 00:11：工具面+自配置面子集提前执行（FlowTrigger/FlowExecute/FlowReport 三工具、面板三区与写回通道、per-agent tools 扫描），绕开 14 天稳定期判据——提前批逐项核对与钉死断言见 20260906_stage2d-toolface-retirement-report.md；阶段 3 剩余面（引擎本体/FlowReportStore 数据面/legacy fixedTools/存量声明解析）照本表原判据执行** |
 
 **与【phase2】§G 其他轨道的依赖关系**：
 - 本迁移轨道的**归档类动作**（team.json.archived / AGENTS.md 移植 / 目录切换）不依赖任何阶段 2 机制，可立即开始（M1-M3 主体）；

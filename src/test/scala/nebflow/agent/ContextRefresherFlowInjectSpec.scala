@@ -17,18 +17,22 @@ import nebflow.shared.{AgentModelConfig, FallbackAttempt, LlmHandle, LlmRequest,
 /**
  * Regression for #406 flow-node runtime injections surviving the per-turn
  * disk reload. FlowDagExecutor.executeNode spawns flow agents with
- * `baseDef.copy(tools = baseDef.tools :+ "FlowReport", flowContract = ...)`
- * — but ContextRefresher.loadCurrentDef reloads the agent def from disk
- * every turn and, pre-fix, only re-applied modelOverride, silently dropping
- * the FlowReport tool append and flowContract for any agent that EXISTS on
- * disk (standalone/team agents reused by dynamic flows — e.g. Explorer as a
- * flow node). Flow nodes could then never report a structured verdict, so
- * strictVerdict switch nodes (the 64-page-deck QA redo loop) would FAIL.
+ * `baseDef.copy(flowContract = ...)` — but ContextRefresher.loadCurrentDef
+ * reloads the agent def from disk every turn and, pre-fix, only re-applied
+ * modelOverride, silently dropping the flowContract for any agent that
+ * EXISTS on disk (standalone/team agents reused by dynamic flows — e.g.
+ * Explorer as a flow node).
  *
  * The E2E missed this because its isolated home had an EMPTY agents dir:
  * agentLibrary.get → None → caller falls back to the spawn snapshot (which
  * still carries the injection). THIS spec pins the "disk agent exists"
  * branch explicitly.
+ *
+ * 2026-09-06（工具面裁撤批）口径更新：spec 原名 FlowInject，曾同时锁
+ * FlowReport 工具 append 的保活。FlowReport 工具已退役——append 逻辑从
+ * applyRuntimeOverrides 移除（决策 A①：磁盘 tools 声明解析照旧，运行时不再
+ * 追加任何已退役工具名）。本 spec 现锁定：flowContract + modelOverride 的
+ * 热重载保活不变，且 reload 不再发明/保留 FlowReport 名。
  */
 class ContextRefresherFlowInjectSpec extends munit.CatsEffectSuite:
 
@@ -39,7 +43,7 @@ class ContextRefresherFlowInjectSpec extends munit.CatsEffectSuite:
     AgentDef(
       name = "Explorer",
       description = "running def with flow-node injections",
-      tools = List("Read", "Write", "FlowReport"),
+      tools = List("Read", "Write"),
       systemPrompt = "",
       category = "standalone",
       modelOverride = Some(AgentModelConfig(preferred = Some("zhipu/glm-5.3"))),
@@ -90,7 +94,7 @@ class ContextRefresherFlowInjectSpec extends munit.CatsEffectSuite:
     os.write.over(tmp / "agents" / "Explorer" / "agent.json", diskAgentJson)
   }
 
-  test("loadCurrentDef keeps FlowReport + flowContract + modelOverride when disk def exists") {
+  test("loadCurrentDef keeps flowContract + modelOverride when disk def exists") {
     for
       system <- IO(ActorSystem("flow-inject-spec"))
       tmp <- IO(os.temp.dir(prefix = "cf-inject-"))
@@ -99,7 +103,6 @@ class ContextRefresherFlowInjectSpec extends munit.CatsEffectSuite:
       freshOpt <- ContextRefresher.loadCurrentDef(None, resources, injectedDef)
     yield
       val d = freshOpt.getOrElse(fail("loadCurrentDef returned None — disk def not found"))
-      assert(d.tools.contains("FlowReport"), s"FlowReport dropped by reload: ${d.tools}")
       assertEquals(d.flowContract, injectedDef.flowContract, "flowContract dropped by reload")
       assertEquals(d.modelOverride, injectedDef.modelOverride, "modelOverride dropped by reload")
       assertEquals(d.model, injectedDef.modelOverride, "model must be re-applied from modelOverride")
@@ -117,4 +120,21 @@ class ContextRefresherFlowInjectSpec extends munit.CatsEffectSuite:
       val d = freshOpt.getOrElse(fail("loadCurrentDef returned None"))
       assert(!d.tools.contains("FlowReport"), s"FlowReport invented for non-flow def: ${d.tools}")
       assert(d.flowContract.isEmpty, "flowContract invented for non-flow def")
+  }
+
+  test("loadCurrentDef no longer re-appends retired FlowReport after reload (2026-09-06)") {
+    // 退役前：running.tools 带 FlowReport 时热重载会把名字补回。退役后：
+    // append 逻辑移除——名字不得再出现（工具已从注册表摘除，补名只会制造
+    // 惰性字符串噪声）。
+    val retired = injectedDef.copy(tools = List("Read", "Write", "FlowReport"))
+    for
+      system <- IO(ActorSystem("flow-inject-spec-3"))
+      tmp <- IO(os.temp.dir(prefix = "cf-inject-"))
+      _ <- writeDiskAgent(tmp)
+      resources <- mkResources(tmp, system)
+      freshOpt <- ContextRefresher.loadCurrentDef(None, resources, retired)
+    yield
+      val d = freshOpt.getOrElse(fail("loadCurrentDef returned None — disk def not found"))
+      assert(!d.tools.contains("FlowReport"), s"retired FlowReport re-appended by reload: ${d.tools}")
+      assertEquals(d.flowContract, retired.flowContract, "flowContract must still survive the reload")
   }

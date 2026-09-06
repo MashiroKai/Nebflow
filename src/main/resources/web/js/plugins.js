@@ -554,7 +554,9 @@ function bindCardEvents(card) {
 function bindPluginsEvents(content) {
   content.querySelectorAll('.plugins-card').forEach(bindCardEvents);
 
-  // Agent summary row → per-agent detail tab (full editor: tools/prompt/flows).
+  // Agent summary row → per-agent detail tab (summary / preset / system
+  // prompt — the tools/skills/flows capability sections were retired
+  // 2026-09-06 with the tool-face batch).
   content.querySelectorAll('[data-detail-agent]').forEach(el => {
     el.addEventListener('click', () => openAgentDetail(el.dataset.detailAgent));
     el.addEventListener('keydown', (e) => {
