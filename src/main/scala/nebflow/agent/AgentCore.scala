@@ -1991,13 +1991,19 @@ object AgentCore:
    * system-reminder (retryableHint pattern) so the LLM changes approach
    * instead of re-asking endlessly. Every denial is a real user action (the
    * timer-driven auto-deny was removed by R1, wait-timeout-fix).
+   *
+   * 2026-09-06 节点面摘除 AskUser：retryableHint 改为工具名中性（原
+   * "via AskUserQuestion" 摘除）——本函数是全身份共用的纯函数（无会话工具
+   * 面上下文），而 general 节点默认面已不含 AskUserQuestion，劝停提示不得
+   * 指向会话可能不具备的工具；既有上报通道（节点=pending 节点/BLOCKED 回投，
+   * Nebula=直接汇报）对所有身份均成立。
    */
   def denialMessage(toolName: String, n: Int): String =
     if n >= 2 then
       s"Permission denied by user ('$toolName' denied $n times this turn)." +
         "<system-reminder>The user has denied this tool " + n.toString + " times in this turn. " +
         "Repeating the same request will keep being denied. Change the approach, " +
-        "ask the user what they want via AskUserQuestion, or report the blocker " +
+        "raise a clarification through your existing reporting channel, or report the blocker " +
         "instead of retrying.</system-reminder>"
     else "Permission denied by user"
 
@@ -2149,10 +2155,15 @@ object AgentCore:
     "Bash"
   )
 
-  /** 通用模版固定工具集（§C.1/§C.5，裁定 5 原文 8 件）：BaseTools 六件 + 用户
-    * 面 AskUserQuestion/Pop。Web 系不在 8 件内——经 §B.6 plugin 扩展授予；
-    * MultiEdit 已从 ToolRegistry 删除（能力由 Edit replace_all 覆盖）。 */
-  val GeneralFixedTools: Set[String] = BaseTools + "AskUserQuestion" + "Pop"
+  /** 通用模版固定工具集（§C.1/§C.5，裁定 5 原文 8 件；2026-09-06 作者提议 +
+    * Nebula 背书裁定：AskUserQuestion 从 general 节点默认面移除——交互出口
+    * 统一，作者触点只有 Flow Map pending 节点与 Nebula 汇报两条，节点确认点
+    * = 建 pending 节点/BLOCKED 回投）：恰七件 = BaseTools 六件 + Pop。Web 系
+    * 不在默认面内——经 §B.6 plugin 扩展授予；MultiEdit 已从 ToolRegistry 删除
+    * （能力由 Edit replace_all 覆盖）。机制面零改动：AskUserQuestionTool/
+    * InteractionHub/流式特判/Guardrails 剥离语义照旧——Nebula 面与「非 general
+    * 身份显式声明可得」的 legacy 声明路径均不受影响。 */
+  val GeneralFixedTools: Set[String] = BaseTools + "Pop"
 
   /**
    * Fixed tools for a given agent — 阶段 2d（D.1-1）后的唯一注入入口。
