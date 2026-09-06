@@ -1628,10 +1628,11 @@ export function showOptions(container, questions, onConfirm, doneLabel, onCancel
     q.innerHTML = item.question;
     wrapper.appendChild(q);
 
-    // 工作区选择卡（dirPicker=true，2026-09-05 作者裁定）：问题下方渲染「选择工作区」
-    // 大目标——内联 SVG 描边文件夹图标（emoji 清理批先例，禁 emoji）。点击目标或卡片
-    // 空白区整体 → WS pickWorkspaceDir → 后端系统目录对话框；下方候选 chips 降级为
-    // 次级提示；Other… 手输路径兜底保留（标准 option-btn/textarea 机制不动）。
+    // 工作区选择卡（dirPicker=true）：问题下方渲染「选择工作区」大目标——内联 SVG
+    // 描边文件夹图标（禁 emoji）。点击目标或卡片空白区整体 → 应用内目录浏览器
+    // （workspacePicker.js，2026-09-06 作者拍板：复用文件浏览器「选择目录」设计 +
+    // 新建文件夹，不走系统对话框）；下方候选 chips 降级为次级提示；Other… 手输路径
+    // 兜底保留（标准 option-btn/textarea 机制不动）。
     let dirPick = null;
     if (item.dirPicker) {
       const target = document.createElement('button');
@@ -1646,32 +1647,43 @@ export function showOptions(container, questions, onConfirm, doneLabel, onCancel
       wrapper.appendChild(target);
       wrapper.appendChild(echo);
       dirPick = { busy: false };
+      const entry = {
+        sessionId: askSessionId,
+        requestId,
+        complete(path) {
+          dirPick.busy = false;
+          answers[qi] = path;
+          echo.style.display = '';
+          echo.textContent = '-> ' + t('workspacePicker.pickedEcho', { path });
+          target.classList.remove('picking');
+          target.querySelector('.ws-pick-title').textContent = t('workspacePicker.pickTitle');
+          dirPickCards.delete(requestId);
+          checkAllAnswered();
+          if (!confirmBtn.disabled) confirmBtn.click(); // 自动作答 askUser（继续创建流程）
+        },
+        setIdle() {
+          dirPick.busy = false;
+          target.classList.remove('picking');
+          target.querySelector('.ws-pick-title').textContent = t('workspacePicker.pickTitle');
+        },
+      };
+      dirPickCards.set(requestId, entry); // 注册卡片 api（complete/setIdle），confirm/cancel 时清理
       const startPick = () => {
         if (dirPick.busy) return;
         if (!askSessionId || !requestId) return; // 无 requestId 的残卡不可发起（事件无主）
         dirPick.busy = true;
         target.classList.add('picking');
         target.querySelector('.ws-pick-title').textContent = t('workspacePicker.picking');
-        sendWs({ type: 'pickWorkspaceDir', sessionId: askSessionId, requestId });
-        dirPickCards.set(requestId, {
-          sessionId: askSessionId,
-          requestId,
-          complete(path) {
-            dirPick.busy = false;
-            answers[qi] = path;
-            echo.style.display = '';
-            echo.textContent = '-> ' + t('workspacePicker.pickedEcho', { path });
-            target.classList.remove('picking');
-            dirPickCards.delete(requestId);
-            checkAllAnswered();
-            if (!confirmBtn.disabled) confirmBtn.click(); // 自动作答 askUser（继续创建流程）
-          },
-          setIdle() {
-            dirPick.busy = false;
-            target.classList.remove('picking');
-            target.querySelector('.ws-pick-title').textContent = t('workspacePicker.pickTitle');
-          },
-        });
+        // 2026-09-06 作者拍板：复用应用内目录浏览器（workspacePicker.js，含面包屑 /
+        // 上级 / 新建文件夹 / 选中此目录），不走系统目录对话框。openPicker({sessionId,
+        // onPick, onCancel})。
+        import('./workspacePicker.js').then(({ openPicker }) => {
+          openPicker({
+            sessionId: askSessionId,
+            onPick: (p) => entry.complete(p),
+            onCancel: () => entry.setIdle(),
+          });
+        }).catch(() => entry.setIdle()); // 模块加载失败也不悬挂卡片
       };
       target.addEventListener('click', (e) => { e.stopPropagation(); startPick(); });
       // 卡片整体可点击（作者原话「卡片整体可点击、醒目大目标」）：除按钮/输入框外的
@@ -1920,31 +1932,13 @@ export function showOptions(container, questions, onConfirm, doneLabel, onCancel
   }
 }
 
-// ---------- Workspace dir picker（ProjectCreate「选择工作区」卡，workspace-picker 批次） ----------
-// 大目标点击 → WS pickWorkspaceDir → 后端系统目录对话框（macOS NSOpenPanel /
-// Windows JFileChooser）。结果经 workspaceDirPicked 事件（TERMINAL 路由）回到这张卡：
-//   path → 卡片回显路径 + 自动作答 askUser（继续创建流程）；
-//   cancelled → 卡片回待选态（可再次点击 / Other… 手输，不取消 ProjectCreate）；
-//   fallback（headless/对话框异常）→ 自动打开应用内目录浏览器（Route C 兜底）。
+// ---------- Workspace dir picker（ProjectCreate「选择工作区」卡） ----------
+// 2026-09-06 作者拍板：复用应用内目录浏览器（workspacePicker.js，含面包屑导航 /
+// 上级 / 列表 / 新建文件夹 / 选中此目录），不再走系统目录对话框（macOS NSOpenPanel /
+// Windows JFileChooser）。openPicker 的 onPick/onCancel 直接驱动卡片 api 的
+// complete/setIdle；`dirPickCards` 登记卡片 api 供 confirm/cancel 时清理。
 const WS_FOLDER_SVG = '<svg viewBox="0 0 24 24" width="34" height="34" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 7a2 2 0 0 1 2-2h4l2.2 2.5H19a2 2 0 0 1 2 2V17a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2Z"/><path d="M3 11h18"/></svg>';
 const dirPickCards = new Map(); // requestId -> 卡片 api（complete/setIdle）
-onMessage('workspaceDirPicked', (msg) => {
-  const entry = msg && msg.requestId ? dirPickCards.get(msg.requestId) : null;
-  if (!entry) return; // 迟到/已答卡的事件无主即弃
-  if (msg.fallback) {
-    import('./workspacePicker.js').then(({ openPicker }) => {
-      openPicker({
-        sessionId: entry.sessionId,
-        onPick: (p) => entry.complete(p),
-        onCancel: () => entry.setIdle(),
-      });
-    }).catch(() => entry.setIdle()); // 模块加载失败也不悬挂卡片
-  } else if (msg.cancelled) {
-    entry.setIdle();
-  } else if (typeof msg.path === 'string' && msg.path) {
-    entry.complete(msg.path);
-  }
-});
 
 // ---------- AskUser ----------
 /** Open an AskUser comparison page in Canvas (direction C §2.1 canvas field).
