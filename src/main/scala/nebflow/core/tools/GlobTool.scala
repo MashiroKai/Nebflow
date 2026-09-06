@@ -86,8 +86,9 @@ object GlobTool extends Tool:
     // 当日 5 崩实锤）→ 改 os.RelPath 多段构造（项目先例 TransferFileTool ×6 /
     // PathUtil.resolvePath:99）。注意：os.RelPath 把 ".." 解析为 Up 段（允许逃逸，
     // 中段 ".." 被 NIO normalize 静默折叠），与旧行为（拒）不符 → 构造前显式拒绝
-    // ".." 段并给可行动文案。"．" 段由 RelPath 归一（放宽无害——搜索根仍受
-    // §A.3 沙箱读闸门 canonicalize + readableRoots 约束）。
+    // ".." 段并给可行动文案。"．" 段由 RelPath 归一（放宽无害——搜索根仍过
+    // §A.3 沙箱读闸门 canonicalize + readableRoots contain，2026-09-06 读宽批
+    // 后 contain 恒真、负向规则仍生效）。
     val searchRootEither: Either[ToolError, os.Path] =
       if baseFromPattern.startsWith("/") || (baseFromPattern.length >= 2 && baseFromPattern.charAt(1) == ':') then
         Right(os.Path(baseFromPattern))
@@ -106,9 +107,10 @@ object GlobTool extends Tool:
                   s"(${Option(e.getMessage).getOrElse(e.getClass.getSimpleName)}). (GLOB_PATTERN)"))
       else Right(explicitPath.getOrElse(workDirPath))
 
-    // §A.3 读闸门：搜索根 canonicalize + readableRoots contain；rg 从 canonical
-    // 根起跑（检查对象=执行对象）。rg 默认不跟随 symlink 下钻（无 --follow），
-    // 遍历逃逸由该默认承担（§A.8-4）。
+    // §A.3 读闸门：搜索根 canonicalize + readableRoots contain（2026-09-06 读宽
+    // 批后 contain 恒真，检查链保留）；rg 从 canonical 根起跑（检查对象=执行
+    // 对象）。rg 默认不跟随 symlink 下钻（无 --follow），遍历逃逸由该默认承担
+    // （§A.8-4）。
     searchRootEither.flatMap { searchRootPath =>
       FileSandbox.checkReadRoot(ctx, searchRootPath) match
         case Left(err) => Left(err)
