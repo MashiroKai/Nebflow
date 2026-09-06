@@ -167,7 +167,13 @@ case class NodeDef(
     * plugins 参数，replace-on-provide）。插件解析/注入/回收全链见 NodeEngine
     * prepareNodePlugins / runWithAgent。放在末位带默认值——既有位置构造零破坏。
     * 旧 flow-map.json 无此键 → 解码 Nil（零迁移）。 */
-  plugins: List[String] = Nil
+  plugins: List[String] = Nil,
+  /** bg-wait 标注（bgtask-completion-gate 批 + 僵尸收敛批 2026-09-06）：节点完成
+    * 闸在自持等待后台任务时置位（描述 = 当前在途等待型后台任务快照），全部清空 /
+    * 终态化时清除。前端可辨「设计内等待后台任务」（status=running + bgWait 非空）
+    * vs 真僵尸（无活会话且无在途后台任务）——避免把设计内等待误判为 dead-session
+    * running。旧 flow-map.json 无此键 → withDefaults 解码 None（零迁移）。 */
+  bgWait: Option[String] = None
 )
 
 object NodeDef:
@@ -272,7 +278,10 @@ object NodePayload:
             case _ => Nil
           cfg ++ roundField ++ phaseField ++ verdictField
         case None => Nil
-      Json.obj((baseFields ++ hasResultFields ++ taskPreviewFields ++ depsFields ++ feedbackFields ++ pluginFields ++ notifyFields ++ mergeFields ++ loopFields)*)
+      // bgWait 条件序列化（僵尸收敛批 2026-09-06）：仅 bg-wait 自持的 running 节点
+      // 带——命中才产出，未命中节点 payload 字段集零变化（既有条件字段断言零影响）。
+      val bgWaitFields = node.bgWait.toList.map(w => "bgWait" -> w.asJson)
+      Json.obj((baseFields ++ hasResultFields ++ taskPreviewFields ++ depsFields ++ feedbackFields ++ pluginFields ++ notifyFields ++ mergeFields ++ loopFields ++ bgWaitFields)*)
 
 /** Flow Map 活动区（§2.6，磁盘 flow-map.json）。 */
 case class FlowMapState(
