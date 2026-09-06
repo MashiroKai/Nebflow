@@ -69,10 +69,11 @@ class Phase2dToolRefactorSpec extends FunSuite:
       "NodeMessage（20260905 机制批，作者裁定）：分发器七件→八件——向已分发节点注入补充消息"
     )
 
-  test("D.1-1: general fixed set == 裁定 5 八件（逐件不变）"):
+  test("D.1-1: general fixed set == 裁定 5 八件 − AskUser（2026-09-06 节点面摘除，恰七件）"):
     assertEquals(
       AgentCore.fixedToolsFor(mkDef("general")),
-      Set("Read", "Glob", "Edit", "Write", "Grep", "Bash", "AskUserQuestion", "Pop")
+      Set("Read", "Glob", "Edit", "Write", "Grep", "Bash", "Pop"),
+      "AskUserQuestion 从 general 默认面移除（2026-09-06 作者提议 + Nebula 背书：交互出口统一）"
     )
 
   test("D.1-1: legacy 路径不再含三角色 name 分支——catch-all 对三角色名生效"):
@@ -109,7 +110,8 @@ class Phase2dToolRefactorSpec extends FunSuite:
       assert(!nebulaDelivered.contains(t), s"Nebula 交付面零写手（23:34 裁定）: $t")
     }
     val generalDelivered = CoreProbe.allowed(mkDef("general"), isFlowNode = true)
-    assertEquals(generalDelivered, AgentCore.GeneralFixedTools, "general 节点形态交付面 == 静态 8 件")
+    assertEquals(generalDelivered, AgentCore.GeneralFixedTools,
+      "general 节点形态交付面 == 静态集恰七件（2026-09-06 节点面摘除 AskUser）")
     assert(!generalDelivered.contains("NodeMessage"), "NodeMessage 仅分发器（general 不加，20260905 机制批裁定⑥）")
     val dispatcherDelivered = CoreProbe.allowed(mkDef("project-dispatcher"), isFlowNode = true)
     assertEquals(dispatcherDelivered, AgentCore.DispatcherFixedTools, "dispatcher 交付面 == 静态 8 件（含 NodeMessage）")
