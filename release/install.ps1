@@ -1,5 +1,15 @@
-$ErrorActionPreference = "Stop"
+﻿$ErrorActionPreference = "Stop"
 $ProgressPreference = "SilentlyContinue"
+
+# Output-channel hygiene (batch 3): child-process output must not double-garble
+# on non-UTF8 consoles. Capture the ORIGINAL console codepage FIRST - batch 4's
+# bilingual-banner detection uses it to decide whether CJK glyphs are safe
+# (936 start = legacy PS 5.1 window = ASCII-only output).
+$script:OriginalOutputCP = try { [Console]::OutputEncoding.CodePage } catch { 0 }
+try {
+    [Console]::OutputEncoding = [System.Text.Encoding]::UTF8
+    $OutputEncoding = [System.Text.Encoding]::UTF8
+} catch {}
 
 # Nebflow Windows installer - script v2
 # ---------------------------------------------------------------
@@ -27,9 +37,10 @@ $HomeDir = ".nebflow"
 $ConfigFile = "nebflow.json"
 $WrapperName = "nebflow"
 $CosBaseCn = "https://$CosBucket.cos.ap-nanjing.myqcloud.com"
-# 仓库已转 private（#29，2026-09-01）：GitHub Releases 未认证下载 404——
-# Nebflow jar 下载/版本解析统一走 COS（单一源）。第三方依赖
-# （Temurin JDK/Git for Windows/ripgrep）与仓库 private 无关，仍走各自公共源。
+# Repo went private (#29, 2026-09-01): unauthenticated GitHub Releases
+# downloads 404 - Nebflow jar download and version resolution go through COS
+# (single source). Third-party deps (Temurin JDK / Git for Windows / ripgrep)
+# are unrelated to the private repo and keep their public sources.
 
 $ScriptVersion = "2.0.0"
 $RgVersion = "14.1.1"
@@ -119,7 +130,7 @@ if ($args -contains "-VerboseFlag") { $VerbosePref = $true }
 if ($args -contains "-Cn") { $Region = "cn" }
 if ($args -contains "-Global") { $Region = "global" }
 
-# Resolve version — COS version file (single source; GH API private 后不可用)
+# Resolve version - COS version file (single source; GH API unusable since repo went private)
 if ($Channel -eq "beta") {
     Write-Info "Resolving latest beta version..."
     if ($env:VERSION) {
@@ -425,7 +436,7 @@ if (Test-Path $jarPath) {
     }
     Write-Info "Region: $Region (use -Cn or -Global to override)"
 
-    # #29: 仓库 private 后 GitHub Releases 未认证 404——COS 单一源
+    # #29: repo went private - unauthenticated GitHub Releases 404; COS single source
     try {
         Invoke-WebRequest -Uri $CosUrl -OutFile $jarPath -UseBasicParsing -TimeoutSec 600
     } catch {
