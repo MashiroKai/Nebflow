@@ -224,18 +224,19 @@ class ToolLoaderSpec extends CatsEffectSuite:
     yield assertEquals(result, Right[ToolError, String](teamTools.toString))
 
   // --- Agent directory tools (three-layer agent dirs) ---
+  // 2026-09-06 起 per-agent 层（agents/*/tools 与 teams/flows/*/agents/*/tools）
+  // 整体退役——工具面收敛为 global/team/flow 三层；下述用例钉死「不再扫描」语义。
 
-  test("reload registers tools from global agent tools/ subfolders"):
+  test("per-agent tools/ subfolders are no longer scanned (retired 2026-09-06)"):
     for
       _ <- resetState()
       _ <- IO(writeToolConfig(tempRoot / "agents" / "myagent" / "tools", "agent-tool", "agent-tool", "agent-desc"))
       _ <- ToolLoader.reload()
       map = ToolRegistry.TOOL_MAP
     yield
-      assert(map.contains("agent-tool"), "Agent-dir tool should be registered")
-      assertEquals(map("agent-tool").description, "agent-desc")
+      assert(!map.contains("agent-tool"), "agent-dir tool must NOT be registered (per-agent layer retired)")
 
-  test("reload registers tools from nested team/flow agent tools/ subfolders"):
+  test("nested team/flow agent tools/ subfolders are no longer scanned (retired 2026-09-06)"):
     for
       _ <- resetState()
       _ <- IO {
@@ -255,10 +256,10 @@ class ToolLoaderSpec extends CatsEffectSuite:
       _ <- ToolLoader.reload()
       map = ToolRegistry.TOOL_MAP
     yield
-      assert(map.contains("team-agent-tool"), "Team agent-dir tool should be registered")
-      assert(map.contains("flow-agent-tool"), "Flow agent-dir tool should be registered")
+      assert(!map.contains("team-agent-tool") && !map.contains("flow-agent-tool"),
+        "nested agent-dir tools must NOT be registered (per-agent layer retired)")
 
-  test("conflict priority: team scope > agent dir > global"):
+  test("conflict priority: team scope > agent dir (agent dir retired, team > global)"):
     for
       _ <- resetState()
       _ <- IO {
@@ -268,20 +269,17 @@ class ToolLoaderSpec extends CatsEffectSuite:
       }
       _ <- ToolLoader.reload()
       map = ToolRegistry.TOOL_MAP
-    yield assertEquals(map("dup").description, "team-desc", "Team scope tool should override agent-dir tool")
+    yield assertEquals(map("dup").description, "team-desc", "Team scope tool should override global (agent-dir layer retired)")
 
-  test("$TOOL_DIR is resolved to the config directory at load time"):
+  test("agent-dir $TOOL_DIR tools are no longer loaded (retired 2026-09-06)"):
     for
       _ <- resetState()
       agentTools = tempRoot / "agents" / "myagent" / "tools"
       _ <- IO(writeToolConfig(agentTools, "deploy", "deploy", "deploy", "node $TOOL_DIR/deploy.cjs"))
       loaded <- ToolLoader.loadAll()
-      cfg = loaded.collectFirst { case (c, _) if c.name == "deploy" => c }.get
-    yield assertEquals(
-      cfg.command,
-      s"node ${agentTools.toString}/deploy.cjs",
-      "$TOOL_DIR should be replaced with the absolute tools dir"
-    )
+    yield
+      assert(loaded.forall(_._1.name != "deploy"),
+        "agent-dir tool must NOT be loaded (per-agent layer retired)")
 
   test("global tools still work with $TOOL_DIR replacement"):
     for
@@ -366,16 +364,13 @@ class ToolLoaderSpec extends CatsEffectSuite:
       assert(names.contains("good"), "valid subdir tool kept")
       assert(!names.contains("bad"), "invalid subdir tool skipped")
 
-  test("subdirectory layout in agent dir: agents/<a>/tools/<name>/tool.json"):
+  test("agent-dir subdirectory layout is no longer scanned (retired 2026-09-06)"):
     for
       _ <- resetState()
       agentTools = tempRoot / "agents" / "myagent" / "tools"
       _ <- IO(writeSubDirTool(agentTools, "deploy", "deploy", "node $TOOL_DIR/deploy.cjs"))
       loaded <- ToolLoader.loadAll()
-      cfg = loaded.collectFirst { case (c, _) if c.name == "deploy" => c }.get
-    yield assertEquals(
-      cfg.command,
-      s"node ${agentTools.toString}/deploy/deploy.cjs",
-      "$TOOL_DIR should resolve to the agent tool subdirectory"
-    )
+    yield
+      assert(loaded.forall(_._1.name != "deploy"),
+        "agent-dir subdir tool must NOT be loaded (per-agent layer retired)")
 end ToolLoaderSpec
