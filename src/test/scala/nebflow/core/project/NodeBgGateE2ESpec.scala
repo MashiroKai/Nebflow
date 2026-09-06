@@ -185,6 +185,15 @@ class NodeBgGateE2ESpec extends CatsEffectSuite:
       }
       done <- store.snapshot.map(_.nodes.values.find(_.name == "e2e-a")).map(_.getOrElse(fail("node missing")))
       reqs <- llm.requests.get
+      // 投递链确定性同步点：节点终态落盘与 out=Nebula 投递（`ref ! ImmediateInput`
+      // fire-and-forget）不在同一原子步——终态可见 ≠ recorder 已记账。有界轮询
+      // 等投递消息到达再断言（断言语义不变；投递真丢失时此处清晰红）
+      _ <- waitUntil(10.seconds) {
+        recorded.get.map(_.exists {
+          case m: AgentCommand.ImmediateInput => m.text.contains("[Node 'e2e-a' completed]")
+          case _                              => false
+        })
+      }
       imms <- recorded.get.map(_.collect { case m: AgentCommand.ImmediateInput => m })
       // 进程/资源清理纪律（2026-09-05）：节点会话的 ShellSession 携带 cleanup
       // fiber（5min 循环）——destroySession 取消它并清后台任务表，不留测试残渣。
