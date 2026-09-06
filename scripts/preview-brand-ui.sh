@@ -7,6 +7,12 @@
 #            (dark / light) = 8 panels
 #   progress: 3 frames (mid-download / unknown-length spinner / complete)
 #
+# Pixel width discipline (author ruling 2026-09-06, revised): ONE logo
+# pixel = TWO character cells at every level ("##" in mono, 2-column bg
+# block in color levels, 2 spaces when empty; adjacent solid pixels touch
+# with no gap). The ANSI->SVG mapper below walks cell by cell, so the
+# 2-cell pixels need no special casing here.
+#
 # The script sources NOTHING from the network: it extracts the
 # >>> BRAND-UI-BEGIN ... <<< BRAND-UI-END <<< block out of install.sh,
 # force-renders it via NEBFLOW_UI_LEVEL / NEBFLOW_BANNER_THEME overrides,
