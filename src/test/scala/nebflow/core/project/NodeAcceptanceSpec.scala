@@ -719,9 +719,12 @@ class NodeAcceptanceSpec extends CatsEffectSuite:
       assert(before.contains("flow-map.json"), s"store first-write must exist, got $before")
       // 2026-09-05 载荷收敛：store 自有文件集扩为 flow-map.json + results/<nodeId>.md
       //（结果全文 per-node 持久化，仍是 store-owned——「零手写文件」原则不变）
-      val newEntries = after.diff(before) // 新增项（应只有 results/ 目录）
-      assert(newEntries.forall(_.startsWith("results")), s"NodeEdit may only add store-owned results/ entries, got: $newEntries")
-      assertEquals(after.filterNot(_.startsWith("results")), before, "non-results entries must be unchanged")
+      // 2026-09-06 存储瘦身：再扩 tasks/<nodeId>.md（task 全文 per-node 持久化，
+      // 落盘 JSON 只留摘要+taskFile 指针——同为 store-owned，原则不变）
+      val newEntries = after.diff(before) // 新增项（应只有 results/ 与 tasks/ 目录）
+      assert(newEntries.forall(e => e.startsWith("results") || e.startsWith("tasks")),
+        s"NodeEdit may only add store-owned results/tasks entries, got: $newEntries")
+      assertEquals(after.filterNot(e => e.startsWith("results") || e.startsWith("tasks")), before, "non-results/tasks entries must be unchanged")
       // 结果全文落 per-node 文件（results/<id>.md）；flow-map.json 内 result 为摘要
       //（本测试 RecordingLlm 结果 "ok" < 500 字符 → 摘要==全文，全文含性断言由
       // FlowMapResultFilesSpec 以 >500 长文本承载）

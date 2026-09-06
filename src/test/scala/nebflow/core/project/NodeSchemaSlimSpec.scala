@@ -53,7 +53,7 @@ class NodeSchemaSlimSpec extends CatsEffectSuite:
   private val slimPluginDir = tempRoot / "plugins" / "slim-e2e"
   os.makeDir.all(slimPluginDir / "skills" / "howto")
   os.write.over(slimPluginDir / "plugin.json",
-    """{"$schema":"https://agent-plugins.org/schema/1.0.0","name":"slim-e2e","version":"1.0.0","description":"slim payload e2e fixture"}""")
+    """{"$schema":"https://agent-plugins.org/schemas/1.0.0/plugin.schema.json","name":"slim-e2e","version":"1.0.0","description":"slim payload e2e fixture"}""")
   os.write.over(slimPluginDir / "skills" / "howto" / "SKILL.md",
     """---
       |name: howto

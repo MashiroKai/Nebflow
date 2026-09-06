@@ -1304,8 +1304,10 @@ With detail=<nodeId>: the same node shape + task + result (full text)."""
       case Right(rt) =>
         // detail 通道（2026-09-05 载荷收敛配套）：指定 nodeId → 单节点全记录
         // （元数据 + task + 结果全文）。数据源与 REST result 端点同源
-        // （findNode 活动区优先归档兜底；内存 result = 加载时从 per-node 文件
-        // 水合的全文）。payload 键集 = NodeList 同构字段 + task + result。
+        // （findNode 活动区优先归档兜底；内存 result/task = 加载时从 per-node
+        // 文件 results/<id>.md / tasks/<id>.md 水合的全文——落盘 JSON 只存摘要
+        // +指针，detail 聚合即「per-node 文件内容」，单源等价，2026-09-06 存储
+        // 瘦身批）。payload 键集 = NodeList 同构字段 + task + result。
         input("detail").flatMap(_.asString).map(_.trim).filter(_.nonEmpty) match
           case Some(nodeId) =>
             rt.store.findNode(nodeId).map {
