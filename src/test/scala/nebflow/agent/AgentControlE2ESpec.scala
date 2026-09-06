@@ -207,7 +207,11 @@ class AgentControlE2ESpec extends CatsEffectSuite:
 
   // ── C1: cancel 全链路 ──────────────────────────────────────
 
-  test("C1: cancel — list→cancel→parent notified (barrier released)→registry cleaned→task cancelled") {
+  // KNOWN-RETIRED (2026-09-06, 作者拍板豁免): AgentControl/Delegate 为 Nebula 专属
+  // 工具，已随 Delegate 架构退役（ConvergedAgentName 使 agent.json tools 声明失效 +
+  // Delegate 从 Nebula 固定面移除），非 bug。豁免为只报不 fail（.ignore 保留可观测性）；
+  // 不改写 fixture 语义、不删用例。
+  test("C1: cancel — list→cancel→parent notified (barrier released)→registry cleaned→task cancelled".ignore) {
     val system = ActorSystem("ac-e2e-cancel")
     val tmp = os.temp.dir()
     seedNebula(tmp)
@@ -281,7 +285,9 @@ class AgentControlE2ESpec extends CatsEffectSuite:
 
   // ── C2: restart 全链路（断点续跑）──────────────────────────
 
-  test("C2: restart — restarting≤3s → registry respawn 回写≤15s → 续跑含恢复历史 → completed") {
+  // KNOWN-RETIRED (2026-09-06, 作者拍板豁免): Delegate 已架构退役，本用例测退役功能
+  // 非 bug，豁免为只报不 fail（保留可观测性），不改写 fixture、不删用例。
+  test("C2: restart — restarting≤3s → registry respawn 回写≤15s → 续跑含恢复历史 → completed".ignore) {
     val system = ActorSystem("ac-e2e-restart")
     val tmp = os.temp.dir()
     seedNebula(tmp)
