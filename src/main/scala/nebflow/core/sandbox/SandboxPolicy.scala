@@ -23,7 +23,19 @@ import nebflow.core.PathUtil
  *
  * writableRoots()/readableRoots() 是全部根集合的唯一推导点——JVM 围栏
  * （FileSandbox）与 Seatbelt profile（SandboxBackend.Seatbelt）都从这里取根，
- * 永不漂移（§A.1 dsh 教训）。写 ⊆ 读是不变量：任何可写根必须可读。
+ * 永不漂移（§A.1 dsh 教训）。写 ⊆ 读是不变量：任何可写根必须可读（2026-09-06
+ * 读宽后读面全盘，该不变量自动成立）。
+ *
+ * [2026-09-06 作者裁定——读宽写窄对齐业界标准]：会话读面全盘放开——
+ * readableRoots 恒为全盘根（"/"），语义上取代 09-05/06 裁定中「Nebula 读根
+ * 不含主仓」半条（读主仓 docs/assets 等会话根外路径不再 SANDBOX_DENIED）；
+ * 写根部分全部维持。业界共识对齐（Claude Code Seatbelt 整盘可读+仅工作区
+ * 可写；Codex workspace-write 读全盘写 workspace+tmp）：读是低风险面放开，
+ * 写才是损害面收窄。既有读面白名单（readExtras/systemReadExtras/
+ * nebflowReadExtras/auditReadableFiles）被全盘读吸收：定义保留、退出读面
+ * 承重；auditReadableFiles 残留唯一承重 = readDenied 负向规则例外集（Nebula
+ * memory.md 精确豁免）。凭据纪律不变（不建 deny 名单，08-19 裁定维持）；
+ * agents/**/memory.md 非 Nebula 份读/写双闸一票拒红线延续（非新增 deny）。
  *
  * readExtras（系统只读面，§A.2/H-10①/H-12①）：/usr /System /opt/homebrew
  * /private/etc /private/var + ~/.nebflow 白名单子目录（skills/prompts/docs +
@@ -61,7 +73,9 @@ import nebflow.core.PathUtil
 case class SandboxPolicy(
   /** canonical 后的沙箱根。 */
   root: os.Path,
-  /** 只读扩展面（系统工具链 + ~/.nebflow 白名单子目录）。 */
+  /** 只读扩展面（系统工具链 + ~/.nebflow 白名单子目录）。[2026-09-06 读宽批]
+    * readableRoots 全盘化后本字段退出读面承重（全盘读吸收一切白名单条目）；
+    * 定义保留 = forRoot 构造链与 SUBSUME 类变异用例的快照锚点，不删。 */
   readExtras: List[os.Path] = Nil,
   /** additionalRoots（H-5 预留③）：跨仓显式可写根，默认空=关。本批只留配置解析
     * 位，不做 UI/NodeEdit 参数。语义：追加进 writableRoots 与 readableRoots。 */
@@ -79,13 +93,15 @@ object SandboxPolicy:
   /** 关闭态策略：闸门全部旁路。root 仅为占位（不可达——所有闸门先查 enabled）。 */
   val off: SandboxPolicy = SandboxPolicy(os.Path("/"), Nil, Nil, enabled = false)
 
-  /** 系统只读面（§A.2）：够编译器/工具链/系统命令使用。 */
+  /** 系统只读面（§A.2）：够编译器/工具链/系统命令使用。[2026-09-06 读宽批]
+    * 被全盘读吸收（定义保留，退出读面承重）。 */
   def systemReadExtras: List[os.Path] =
     List("/usr", "/System", "/opt/homebrew", "/private/etc", "/private/var").map(os.Path(_))
 
   /** ~/.nebflow 读取白名单（H-12① + 读白名单补全）：skills/prompts/docs 三子目录
     * + 系统运行数据目录 tool-results/uploads/logs/sessions/projects/agents（只读，
-    * 不进可写根）。取 PathUtil.dataRoot（rebrand/测试 setDataRoot 均生效）。 */
+    * 不进可写根）。取 PathUtil.dataRoot（rebrand/测试 setDataRoot 均生效）。
+    * [2026-09-06 读宽批] 被全盘读吸收（定义保留，退出读面承重）。 */
   def nebflowReadExtras: List[os.Path] =
     List("skills", "prompts", "docs", "tool-results", "uploads", "logs", "sessions", "projects", "agents")
       .map(s => PathUtil.dataRoot / s)
@@ -96,6 +112,9 @@ object SandboxPolicy:
    * 只精确放行这两个文件：读面以 contains(file, file)=equals 成立；写面零变化
    * （本列表只进 readableRoots）；与 MemoryStore.userMemoryPath/agentMemoryPath
    * 的路径契约由 SandboxSpec 断言（防漂移）。def 而非 val：跟随 setDataRoot。
+   *
+   * [2026-09-06 读宽批] 全盘读后「进读面」语义被吸收；本列表残留唯一承重 =
+   * readDenied 负向规则的例外集（Nebula memory.md 精确豁免一票拒），定义保留。
    */
   def auditReadableFiles: List[os.Path] =
     List(
@@ -138,6 +157,9 @@ object SandboxPolicy:
     val agents = os.Path(canonicalize(agentsReadRoot.wrapped))
     if canonicalRoot.startsWith(agents.wrapped) then List("--glob", "!memory.md") else Nil
 
+  /** forRoot readExtras 快照原料。[2026-09-06 读宽批] readableRoots 不再消费
+    * readExtras（全盘读吸收），本推导保留供构造链与变异用例；语义 = 建议性
+    * 快照，非承重面。 */
   def defaultReadExtras: List[os.Path] = systemReadExtras ++ nebflowReadExtras ++ auditReadableFiles
 
   /**
@@ -239,11 +261,18 @@ object SandboxPolicy:
       .map(x => os.Path(canonicalize(x.wrapped)))
       .distinct
 
-  /** 可读根（唯一推导）。写 ⊆ 读：extraWritable、数据根与 tempRoots 同时进入读面。 */
+  /**
+   * 可读根（唯一推导）。[2026-09-06 作者裁定——读宽写窄对齐业界标准]：恒为
+   * 全盘根 List("/")——contains 逐段比较对一切绝对路径天然恒真，canonical 域
+   * 比较不变（os.Path("/") 即 canonical 形态）。语义取代 2026-09-05/06 裁定中
+   * 「读根不含主仓」半条；写根部分（writableRoots）维持不变——读宽写窄不对称
+   * 即本批语义核心，写 ⊆ 读不变量自动成立。
+   *
+   * p 参数保留（签名稳定：FileSandbox/GlobTool/GrepTool 调用点零改动；未来若
+   * 引入读面例外可直接从 policy 取），当前推导不消费。
+   */
   def readableRoots(p: SandboxPolicy): List[os.Path] =
-    (p.root :: nebflowDataRoot :: p.extraWritable ::: p.readExtras ::: tempRoots)
-      .map(x => os.Path(canonicalize(x.wrapped)))
-      .distinct
+    List(os.Path("/"))
 
   /**
    * canonicalize：NIO toRealPath 等价语义（§A.2）。

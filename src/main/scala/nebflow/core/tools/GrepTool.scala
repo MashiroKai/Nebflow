@@ -129,8 +129,9 @@ Usage:
     val effectiveLimit = if limit == 0 then Int.MaxValue else limit
     val workDirPath = baseDir
 
-    // §A.3 读闸门：搜索根 canonicalize + readableRoots contain；rg 从 canonical
-    // 根起跑（检查对象=执行对象）。rg 默认不跟随 symlink 下钻（无 --follow）→
+    // §A.3 读闸门：搜索根 canonicalize + readableRoots contain（2026-09-06 读宽
+    // 批后 contain 恒真，检查链保留）；rg 从 canonical 根起跑（检查对象=执行
+    // 对象）。rg 默认不跟随 symlink 下钻（无 --follow）→
     // 遍历不逃逸（§A.8-4）。
     FileSandbox.checkReadRoot(ctx, os.Path(rawSearchRoot)) match
       case Left(err) => Left(err)
