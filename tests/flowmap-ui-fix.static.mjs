@@ -76,8 +76,8 @@ assert('B1d', 'i18n：backToProjects 键 zh/en 成对保留（无增删，locale
 assert('B2a', 'CSS：长项目名 ellipsis 截断（.flowmap-back-name nowrap + ellipsis）',
   /\.flowmap-back-btn \.flowmap-back-name \{[^]*?text-overflow: ellipsis/.test(pcss)
   && /\.flowmap-back-btn \.flowmap-back-name \{[^]*?white-space: nowrap/.test(pcss));
-assert('B2b', 'CSS：按钮 max-width 不撑横 nav-bar（min(100%, 420px)）+ icon 不挤压（flex 0 0 auto）',
-  /\.flowmap-back-btn \{[^]*?max-width: min\(100%, 420px\)/.test(pcss)
+assert('B2b', 'CSS：按钮 max-width 让位摘要（min(60%, 420px)，2026-09-06 顶栏合并）+ icon 不挤压（flex 0 0 auto）',
+  /\.flowmap-back-btn \{[^]*?max-width: min\(60%, 420px\)/.test(pcss)
   && /\.flowmap-back-btn svg \{ width: 14px; height: 14px; flex: 0 0 auto; \}/.test(pcss));
 assert('B2c', 'JS：整元素可点返回（data-back-to-projects click → showProjectsList + stopPropagation 保留）',
   has(ptab, "[data-back-to-projects]").valueOf()
@@ -85,6 +85,23 @@ assert('B2c', 'JS：整元素可点返回（data-back-to-projects click → show
   && has(ptab, 'showProjectsList();'));
 assert('B2d', 'JS：两条渲染路径共用（sameView 快速路径不重建 nav-bar，dataset 项目名一致性成立）',
   has(ptab, "pane.dataset.flowMapProject === projectName"));
+
+// ── ③ 顶栏合并（2026-09-06 显示优化批）：摘要迁入 nav-bar 右侧 ────────────
+console.log('③ 顶栏合并：摘要入 nav-bar 右侧 + card-header 去 title + 窄窗兜底');
+assert('C1a', 'JS：nav-bar 模板含摘要槽 .flowmap-summary.flowmap-nav-summary（返回钮之后）',
+  /<\/button>\s*<span class="flowmap-summary flowmap-nav-summary"/.test(ptab));
+assert('C1b', 'JS：flowMapTab 就地路径摘要写入 nav-bar（pane 口径查找 .flowmap-nav-bar .flowmap-summary）',
+  has(tab, "paneEl.querySelector('.flowmap-nav-bar .flowmap-summary')"));
+assert('C1c', 'JS：card-header 项目名 title 已移除（模板与渲染零残留）',
+  !has(tab, 'flowmap-card-title'));
+assert('C1d', 'JS：增量 diff 摘要查找提升 pane 口径（closest(.canvas-tab-pane)）',
+  /container\.closest\('\.canvas-tab-pane'\)[^]*?\.querySelector\('\.flowmap-summary'\)/.test(tab));
+assert('C2a', 'CSS：摘要槽 flex:1 + min-width:0 + 右对齐（双 ellipsis 收缩不换行）',
+  /\.flowmap-nav-summary \{[^]*?flex: 1;[^]*?min-width: 0;[^]*?text-align: right/.test(pcss));
+assert('C2b', 'CSS：极窄兜底 <340px 摘要 display:none 保返回钮',
+  /@media \(max-width: 339px\)[^]*?\.flowmap-nav-summary \{ display: none; \}/.test(pcss));
+assert('C2c', 'CSS：.flowmap-card-title 规则已随元素退役（零残留）',
+  !/\.flowmap-card-title/.test(css));
 
 console.log(`\n${pass} passed, ${fails.length} failed${fails.length ? ' → ' + fails.join(', ') : ''}`);
 process.exit(fails.length ? 1 : 0);

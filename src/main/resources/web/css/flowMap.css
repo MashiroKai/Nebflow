@@ -2,25 +2,17 @@
    复用 flow-run 面板显示设计（FLOW_CSS 注入 .solar-card/.solar-node 等），
    此处只定义流图标签页专属的 header / 加载态 / 节点字段样式。 */
 
-/* Flow Map 标签页顶部：项目名 + 摘要 */
+/* Flow Map 标签页顶部摘要条（2026-09-06 显示优化批：项目名 title 移除——就地视图
+   项目名由 .flowmap-nav-bar 返回钮承担；本条仅为 legacy 独立标签页回落，摘要右对齐） */
 .flowmap-card-header {
   display: flex;
   align-items: center;
-  justify-content: space-between;
+  justify-content: flex-end;
   gap: 12px;
   padding: 12px 18px;
   padding-right: 56px; /* §5.8b 2026-09-04 修订：让出右上悬浮钮（16+40）+ 徽章区，摘要尾字不再被遮 */
   border-bottom: 1px solid var(--color-border);
   flex: 0 0 auto;
-}
-
-.flowmap-card-title {
-  font: 600 16px/1.2 -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
-  letter-spacing: -0.02em;
-  color: var(--color-text);
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
 }
 
 .flowmap-summary {
@@ -255,7 +247,9 @@
   font: 700 11px/1.4 -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
   color: rgb(var(--amber));
   letter-spacing: 0.02em;
+  display: inline-flex; align-items: center; gap: 4px; /* 内联 SVG 旗（2026-09-06 禁 ⚑ 字符） */
 }
+.flow-blocked-badge .flow-blocked-flag { width: 11px; height: 11px; flex: 0 0 auto; }
 .flow-blocked-category {
   font: 600 10px/1.4 ui-monospace, SFMono-Regular, monospace;
   padding: 2px 7px;
@@ -575,8 +569,10 @@
 .fm-panel-close {
   margin-left: auto; border: none; background: transparent; cursor: pointer;
   font: 400 16px/1 -apple-system, BlinkMacSystemFont, sans-serif; color: var(--color-text-muted);
-  opacity: 0.5; padding: 0 4px; transition: opacity 0.15s;
+  opacity: 0.5; padding: 2px 4px; transition: opacity 0.15s;
+  display: inline-flex; align-items: center; /* 内联 SVG 叉（2026-09-06 禁 ✕ 字符） */
 }
+.fm-panel-close svg { width: 12px; height: 12px; display: block; }
 .fm-panel-close:hover { opacity: 1; }
 .fm-panel-close:focus-visible { outline: none; box-shadow: 0 0 0 2px rgb(var(--sapphire) / 0.55); border-radius: 4px; }
 .fm-panel-body {
@@ -715,8 +711,10 @@
 .fm-detail-close {
   margin-left: auto; flex: 0 0 auto; border: none; background: transparent; cursor: pointer;
   font: 400 16px/1 -apple-system, BlinkMacSystemFont, sans-serif; color: var(--color-text-muted);
-  opacity: 0.5; padding: 0 4px; transition: opacity 0.15s;
+  opacity: 0.5; padding: 2px 4px; transition: opacity 0.15s;
+  display: inline-flex; align-items: center; /* 内联 SVG 叉（2026-09-06 禁 ✕ 字符） */
 }
+.fm-detail-close svg { width: 12px; height: 12px; display: block; }
 .fm-detail-close:hover { opacity: 1; }
 .fm-detail-close:focus-visible { outline: none; box-shadow: 0 0 0 2px rgb(var(--sapphire) / 0.55); border-radius: 4px; }
 .fm-detail-body {
@@ -731,6 +729,14 @@
   color: var(--color-text-muted); margin-bottom: 10px; word-break: break-all;
 }
 .fm-detail-meta b { font-weight: 500; color: var(--color-text-dim); }
+/* 描述区块（2026-09-06 显示优化批）：元数据区之后、结果区之前，左边线引用式 */
+.fm-detail-desc {
+  font: 400 11.5px/1.55 -apple-system, BlinkMacSystemFont, sans-serif;
+  color: var(--color-text);
+  border-left: 2px solid rgb(var(--sapphire) / 0.45);
+  padding: 2px 0 2px 8px; margin: -4px 0 10px;
+  white-space: pre-wrap; word-break: break-word;
+}
 .fm-detail-sec {
   font: 600 11px/1.4 -apple-system, BlinkMacSystemFont, sans-serif;
   color: var(--color-text-dim); margin: 10px 0 4px;
