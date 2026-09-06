@@ -217,34 +217,36 @@ $JarName = "$LowerName-assembly-$Version.jar"
 $CosUrl = "$CosBaseCn/$JarName"
 
 # --- Brand banner (batch 4 redesign): true-color pixel logo -----------------
-# The 7x7 pixel logo was sampled OFFLINE from the brand assets
-# (docs/Nebflow/assets/logo/{dark,bright}.png, 224x224 = 7x7 grid of 32px
-# cells, cell-center NEAREST sampling - same pixelated look as the web UI's
-# image-rendering: pixelated) and is embedded as a mask: G = brand green
-# #07C160, W = white (dark terminals) or black (light terminals). Full
-# untrimmed 7x7 matrix (author ruling 2026-09-06: no 5x6 cropping). No
-# ASCII-art wordmark: the logo blocks carry the brand, the wordmark is
-# plain lowercase text.
+# The pixel logo matrix is the AUTHORITATIVE logo grid taken from the
+# pixil design source (.nebflow/uploads/bright-4.pixil: canvas declared
+# 6x5, layer content = the 4x3 mark below - canvas row 0/4 and col 0/5
+# are transparent padding and are NOT rendered: zero phantom
+# rows/columns, author ruling 2026-09-06 v2 "ratio reshape"). Embedded as
+# a mask: G = brand green #07C160, W = white (dark terminals) or black
+# (light terminals). Cross-checked against the PNG exports: dark/
+# bright.png ink sits on an exact 4x3 grid of 48px cells (origin 16,40
+# inside the 224x224 canvas), dark-4/bright-4.png on an exact 4x3 grid
+# of 56px cells (origin 0,28) - identical shape. The old 7x7 mask was a
+# distorted 32px-lattice sampling of that 4x3 mark (square frame +
+# phantom padding = the aspect mismatch). scripts/check-logo-matrix.py
+# asserts mask == pixil truth (anti-drift). No ASCII-art wordmark: the
+# logo blocks carry the brand, the wordmark is plain lowercase text.
 # Degrade chain: VT truecolor background blocks (PS 7+ / Windows Terminal)
 #   -> 16-color console background (PS 5.1 conhost, zero escape risk)
 #   -> mono # mask (NO_COLOR / CI / redirected output).
-# Width discipline (author ruling 2026-09-06, revised same-day): ONE pixel
-# = TWO character cells at every level - a terminal glyph is ~2x taller
-# than wide, so each pixel spans 2 columns and the logo keeps its source
-# aspect. Mono renders "##" per pixel, color levels render a 2-column
-# background block, empty pixels are 2 plain spaces; adjacent solid pixels
-# touch with no gap (mask row "GG.WWW." -> "####  ######  ", 14 columns).
+# Width discipline (author ruling 2026-09-06): ONE pixel = TWO character
+# cells at every level - a terminal glyph is ~2x taller than wide, so
+# each pixel spans 2 columns and the logo keeps its source aspect (4:3).
+# Mono renders "##" per pixel, color levels render a 2-column background
+# block, empty pixels are 2 plain spaces; adjacent solid pixels touch
+# with no gap (mask row "G.WW" -> "##  ####", 8 columns).
 # Theme: NEBFLOW_BANNER_THEME=dark|light overrides; default dark.
 # Batch 3 invariant holds: this file stays PURE ASCII after the UTF-8 BOM -
 # the CJK slogan is gone for good, escapes are built via [char]27.
 $BannerMask = @(
-    ".......",
-    "GG.WWW.",
-    "GG.WWW.",
-    "..W..W.",
-    "..W..W.",
-    "..W..W.",
-    "......."
+    "G.WW",
+    ".W.W",
+    ".W.W"
 )
 $BannerTheme = "dark"
 if ($env:NEBFLOW_BANNER_THEME -eq "light" -or $env:NEBFLOW_BANNER_THEME -eq "dark") {
@@ -277,11 +279,11 @@ Write-Host ""
 for ($bi = 0; $bi -lt $BannerMask.Count; $bi++) {
     Write-Host -NoNewline "  "
     foreach ($ch in $BannerMask[$bi].ToCharArray()) { Write-LogoPixel ([string]$ch) }
-    if ($bi -eq 2) {
+    if ($bi -eq 1) {
         if ($BannerLevel -eq 3) { Write-Host -NoNewline "  $BannerEsc[1;38;2;7;193;96m$LowerName$BannerEsc[0m" }
         elseif ($BannerLevel -eq 1) { Write-Host -NoNewline "  $LowerName" -ForegroundColor Green }
         else { Write-Host -NoNewline "  $LowerName" }
-    } elseif ($bi -eq 3) {
+    } elseif ($bi -eq 2) {
         $vline = "v$Version installer ($Channel)"
         if ($BannerLevel -eq 3) { Write-Host -NoNewline "  $BannerEsc[2m$vline$BannerEsc[0m" }
         else { Write-Host -NoNewline "  $vline" }
