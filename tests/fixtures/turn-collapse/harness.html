@@ -1,7 +1,8 @@
 <!DOCTYPE html>
 <!-- turn-collapse harness.html — static test harness for the #346 v2
      "decompression model" (2026-09-05 23:44 author ruling: 思考直播回归 +
-     收起/展开语义重做 + 动画).
+     收起/展开语义重做; 2026-09-06 08:19 feedback: 动画层全摘——直落/直剥,
+     总结行换行完整显示, ✻ 设计字句恢复进题头).
 
      Imports the REAL frontend modules (chatView.js / chat.js / turnGroup.js /
      persistence.js — no stubs, no bundling) and replays the exact calls the
@@ -76,25 +77,13 @@
 
     const raf2 = () => new Promise(r => requestAnimationFrame(() => requestAnimationFrame(r)));
 
-    // Wait until every tool/thinking row animation has finished (the tuck
-    // transition is asynchronous — 320ms + stagger — and the static
-    // .nf-tucked class lands only in the finish handler, so scenarios
-    // settle on animation quiescence, keeping consumers deterministic).
-    const settleTucks = async () => {
-      const t0 = Date.now();
-      for (;;) {
-        const rows = chatEl.querySelectorAll('.row.tool, .row.thinking-row');
-        const running = Array.from(rows).flatMap(r => r.getAnimations())
-          .filter(a => a.playState === 'running' || a.playState === 'pending');
-        if (running.length === 0) return;
-        if (Date.now() - t0 > 5000) throw new Error('settleTucks timed out');
-        await new Promise(r => setTimeout(r, 40));
-      }
-    };
+    // No animation layer (2026-09-06): tuck/untuck are synchronous class
+    // flips — two RAFs are enough for layout to settle after a scenario.
 
     // thinking(直播) → 文字A → 工具1 → 文字B → 注入 → 工具2 → 最终回复 + done
     // 收起（对齐 main.js done handler 的 collapseTurn 调用形态：meta 带
-    // durationMs/model/phrase/title——phrase 在 v2 中不再上摘要行）。
+    // durationMs/model/phrase/title——✻ phrase 于 2026-09-06 恢复上摘要行，
+    // 作为题头首段）。
     window.__liveTurn = async () => {
       chatMod.renderUserBubble('帮我整理这份资料的关键结论', [], Date.now());
       // thinking 段（直播展开，2026-09-05 思考直播回归）
@@ -124,7 +113,6 @@
         sessionId: 'harness-session',
       });
       await raf2();
-      await settleTucks();
     };
 
     // 闭合后到达的外部事件开新 turn（#403 2026-08-26 裁定回归）：新 turn 的
@@ -142,7 +130,6 @@
         sessionId: 'harness-session',
       });
       await raf2();
-      await settleTucks();
     };
 
     // 同 turn 重终态治愈（v2 dissolve）：done 后紧跟 error（期间无新行追加），
@@ -183,7 +170,6 @@
         sessionId: 'harness-session',
       });
       await raf2();
-      await settleTucks();
     };
 
     // 思考直播（2026-09-05 回归）：只铺 user + 流式 thinking delta，
@@ -215,7 +201,6 @@
         sessionId: 'harness-session',
       });
       await raf2();
-      await settleTucks();
     };
 
     // E10 钩子：消息搜索命中被收起 turn 时的展开入口。
