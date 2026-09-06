@@ -169,6 +169,8 @@ export default {
   'contacts.searching': 'Searching…',
   'contacts.notFoundHint': 'The user may not have set a Username yet, or the input may be wrong',
   'contacts.cancelVerify': 'Cancel',
+  'contacts.alreadyFriends': 'Already friends',
+  'contacts.searchError': 'Search failed, please try again',
   'header.memory': 'Memory',
   'header.bgTasks': 'Background tasks',
   'input.placeholder': 'Type a message...',

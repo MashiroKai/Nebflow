@@ -7,7 +7,8 @@
 // 档案四字段字面 snake_case（username / display_name / avatar / relation_status），
 // 信封字段维持 camelCase（userId/requestId/conversationId/createdAt/...）。
 // 联调依赖 = 服务端部署窗口（neblink-server 新端点 + beta.55 同窗口发版；
-// 窗口期直连搜索 404 → 未找到卡，属 §4.7 预期）。
+// 窗口期直连搜索 404 → 「搜索失败」卡——0906 失败分态拆分后不再伪装成
+// 「未找到」，联调期以此判别端点未部署）。
 //
 // Debug-only mock mode (kept as an escape hatch for offline UI work — P3):
 //   localStorage 'fm_api_mock' = '1'   or   URL ?fmMock=1
@@ -193,7 +194,7 @@ const delay = () => new Promise(r => setTimeout(r, Number((() => { try { return 
  *  username/email 两维度无差别防枚举 §5.1）。双键 NOCASE 精确语义在服务端；
  *  空白 q 服务端亦回 found:false；>256 字符 422 invalid_query、超频 429
  *  rate_limited 走 req() 错误面（err.status/err.data），调用方 catch 兜底
- *  未找到卡（窗口期服务端未部署 = 404，同一兜底路径，§4.7 预期）。 */
+ *  「搜索失败」卡（0906 失败分态；窗口期服务端未部署 = 404，同一路径）。 */
 export async function searchUser(q) {
   if (!MOCK) return normalizeSearch(await req('GET', `/api/users/search?q=${encodeURIComponent(q)}`));
   await delay();

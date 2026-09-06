@@ -155,7 +155,9 @@ async function bootPage({ seed, locale = 'zh-CN', loggedIn = true, reducedMotion
   await sleep(500);
   const card1 = await page.$eval('.fm-result-card', e => e.textContent).catch(() => '');
   ok('A4a 命中结果卡含昵称+自定义号', card1.includes('林小满') && card1.includes('lin_custom_id'), card1.slice(0, 60));
-  ok('A4b 结果卡不含邮箱文本（R3 隐私）', !card1.includes('@'), card1.slice(0, 60));
+  // R3 隐私口径 = 不泄露邮箱（邮箱模式匹配）；@username 句柄前缀是 UI 装饰，
+  // 0906 结果卡分层后副行渲染 @自定义号（作者目标形态：Username（@username））
+  ok('A4b 结果卡不含邮箱文本（R3 隐私）', !/[^\s@]+@[^\s@]+\.[^\s@]+/.test(card1), card1.slice(0, 60));
   await sleep(1100); // 提交式查询 1s 最小间隔
   await page.fill('.fm-search-input', 'me@example.com');
   await page.click('.fm-search-btn');
