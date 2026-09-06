@@ -436,13 +436,15 @@ class NodePluginChainSpec extends CatsEffectSuite:
         res <- mkResources(system, tempRoot, new RecordingLlm(capture))
         rt <- mountProject("plc-preset", ws, system, res)
         ctx = mkCtx(res, system, ws.toString)
-        ok <- nodeEdit(nodeInput("plc-preset", "preset-ok", "agent" -> Json.fromString("test-agent"),
+        ok <- nodeEdit(nodeInput("plc-preset", "preset-ok",
+          "description" -> Json.fromString("preset ok node"),
           "task" -> Json.fromString("t"), "out" -> Json.fromString("Nebula"),
           "preset" -> Json.fromString("fast")), ctx)
         _ = assert(ok.isRight, s"NodeEdit with valid preset must succeed: $ok")
         _ <- waitUntil(30.seconds)(rt.store.snapshot.map(
           _.nodes.values.exists(n => n.name == "preset-ok" && n.status == NodeLifecycle.Completed)))
-        bad <- nodeEdit(nodeInput("plc-preset", "preset-bad", "agent" -> Json.fromString("test-agent"),
+        bad <- nodeEdit(nodeInput("plc-preset", "preset-bad",
+          "description" -> Json.fromString("preset bad node"),
           "task" -> Json.fromString("t-preset-missing"), "out" -> Json.fromString("Nebula"),
           "preset" -> Json.fromString("no-such-preset")), ctx)
         _ = assert(bad.isRight, s"NodeEdit accepts the preset param (validation is spawn-side §E.3): $bad")

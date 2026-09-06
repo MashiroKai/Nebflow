@@ -103,7 +103,10 @@ class SandboxSpec extends CatsEffectSuite:
     val roots = SandboxPolicy.writableRoots(p)
     assert(roots.exists(_.toString == p.root.toString), s"root must be writable: $roots")
     assert(roots.contains(os.Path("/private/tmp")), s"/private/tmp must be writable: $roots")
-    assert(!roots.contains(os.Path("/tmp")), s"/tmp 应已归一进 /private/tmp: $roots")
+    // 跨平台：darwin 上 /tmp 是符号链（canonicalize→/private/tmp），Linux 上为独立
+    // 真实目录（canonicalize 保持 /tmp）——以 canonical 域断言可写，禁硬编码 darwin 路径。
+    val canonTmp = os.Path(SandboxPolicy.canonicalize(Paths.get("/tmp")))
+    assert(roots.contains(canonTmp), s"/tmp canonical ($canonTmp) must be writable: $roots")
     val tmpdir = SandboxPolicy.canonicalize(Paths.get(sys.props("java.io.tmpdir")))
     assert(roots.map(_.toString).contains(tmpdir.toString), s"java.io.tmpdir must be writable: $roots")
     // 2026-09-05 数据根入可写面（作者 20:24 裁定）：PathUtil.dataRoot 必须在
@@ -117,7 +120,9 @@ class SandboxSpec extends CatsEffectSuite:
   }
 
   test("A.2: canonicalize 解析 symlink（/tmp→/private/tmp）且对已存在部分用内核 realpath 语义") {
-    assertEquals(SandboxPolicy.canonicalize(Paths.get("/tmp")).toString, "/private/tmp")
+    // 跨平台：darwin /tmp 符号链 → realpath=/private/tmp；Linux 为真实目录 → realpath=/tmp。
+    // 以内核 realpath 为基准断言（禁硬编码 darwin 路径）。
+    assertEquals(SandboxPolicy.canonicalize(Paths.get("/tmp")), Paths.get("/tmp").toRealPath())
     // <root>/../escape.txt：root 存在 → realpath 解析 .. → 出 root 的真实形态
     val tmp = os.Path(Files.createTempDirectory("nb-sbx-canon"))
     val escape = SandboxPolicy.canonicalize(Paths.get(s"$tmp/../escape.txt"))
@@ -159,7 +164,9 @@ class SandboxSpec extends CatsEffectSuite:
     res match
       case Left(err) =>
         assert(err.message.startsWith("SANDBOX_DENIED"), err.message)
-        assert(err.message.contains("/private/etc/hosts"), s"应含 canonical 路径: ${err.message}")
+        // 跨平台：darwin /etc 符号链 → canonical=/private/etc/hosts；Linux → /etc/hosts。
+        assert(err.message.contains(SandboxPolicy.canonicalize(Paths.get("/etc/hosts")).toString),
+          s"应含 canonical 路径: ${err.message}")
         assert(err.message.contains(s"outside sandbox root"), err.message)
         assert(err.message.contains("Writable roots:"), err.message)
         assert(err.message.contains("Readable roots:"), err.message)

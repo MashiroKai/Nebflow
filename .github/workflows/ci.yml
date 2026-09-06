@@ -99,6 +99,9 @@ jobs:
           printf '#!/bin/bash\nexec java $SBT_OPTS -XX:+UseParallelGC -jar /tmp/sbt-launch.jar "$@"\n' > /tmp/sbt-bin/sbt
           chmod +x /tmp/sbt-bin/sbt
           echo "/tmp/sbt-bin" >> $GITHUB_PATH
+      - name: Install ripgrep (Glob/Grep runtime dependency)
+        shell: bash
+        run: sudo apt-get update && sudo apt-get install -y ripgrep
       - name: Run tests
         run: sbt test
 
