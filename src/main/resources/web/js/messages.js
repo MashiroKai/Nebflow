@@ -22,6 +22,27 @@ let triggeringConvId = null;    // row may be re-rendered after open (unread cle
 const forwardedIds = new Set(); // session-persistent 「已转发」 chips (§3.3)
 let msgSeq = 0;
 
+// ── 好友信任模式 v1（作者令：信任的好友，新消息自动走既有「转发给 agent」
+// 通道）── 纯客户端本地标记，localStorage 持久化（与 fm_seen_requests /
+// fm_blocked 同一家族）。存 userId 数组（与黑名单缓存同键——userId 比
+// neblinkId/Username 稳定，friend_event 的 senderId 匹配也用它）。零后端改动；
+// 跨设备同步 = v2 候选。本模块是 store 唯一属主，contacts.js 经导出入口读写。
+const LS_TRUSTED = 'fm_trusted';
+function loadTrusted() {
+  try { return new Set(JSON.parse(localStorage.getItem(LS_TRUSTED) || '[]')); } catch { return new Set(); }
+}
+export function isFriendTrusted(userId) {
+  return !!userId && loadTrusted().has(userId);
+}
+export function setFriendTrusted(userId, trusted) {
+  if (!userId) return;
+  const s = loadTrusted();
+  if (trusted) s.add(userId); else s.delete(userId);
+  try { localStorage.setItem(LS_TRUSTED, JSON.stringify([...s])); } catch { /* non-critical */ }
+  // Let an open chat modal refresh its header trust indicator.
+  window.dispatchEvent(new CustomEvent('fm-trust-changed', { detail: { userId, trusted } }));
+}
+
 // ── 历史分页（0904 批次：加载更早消息）────────────────
 // Server keyset is forward-only (store.rs list_messages: id > after ASC LIMIT
 // limit, clamp 1..200 — no before/desc). 「Load older」 therefore walks BACKWARD
@@ -252,6 +273,8 @@ function renderChatModal(conv) {
   title.appendChild(el('span', 'fm-modal-name', conv.friend?.name || ''));
   title.appendChild(el('span', 'fm-modal-id', conv.friend?.neblinkId || ''));
   header.appendChild(title);
+  // 信任模式 v1: 窗头信任状态指示（开启态一眼可辨；开关在好友行右键菜单）。
+  header.appendChild(el('span', 'fm-trust-slot'));
   const fwdBtn = el('button', 'glass-control fm-forward-btn');
   fwdBtn.innerHTML = '<i data-lucide="forward"></i>';
   fwdBtn.title = t('messages.forwardToAgent');
@@ -313,7 +336,23 @@ function renderChatModal(conv) {
   input.addEventListener('keydown', (e) => { if (e.key === 'Enter') { e.preventDefault(); doSend(); } });
 
   applyBlockState(conv);
+  updateTrustBadge(conv);
   createIconsIn(overlay);
+}
+
+// 信任状态指示：trusted → sapphire chip（shield-check + 「已信任」），未信任
+// → 空槽。fm-trust-changed（contacts 右键菜单开关）到达时对开着的窗重打。
+function updateTrustBadge(conv) {
+  const slot = modalEls && modalEls.overlay.querySelector('.fm-trust-slot');
+  if (!slot) return;
+  slot.innerHTML = '';
+  if (!conv || !conv.friend || !isFriendTrusted(conv.friend.userId)) return;
+  const badge = el('span', 'fm-trust-badge');
+  badge.innerHTML = '<i data-lucide="shield-check"></i>';
+  badge.appendChild(el('span', '', t('messages.trusted')));
+  badge.title = t('messages.trustedHint');
+  slot.appendChild(badge);
+  createIconsIn(slot);
 }
 
 function escClose(e) {
@@ -361,7 +400,7 @@ function bubbleEl(m, conv) {
 
   const meta = el('div', 'fm-msg-meta');
   if (out && isAgentSent(m)) meta.appendChild(el('span', 'fm-msg-agent-badge', t('messages.agentBadge')));
-  if (forwardedIds.has(m.id)) meta.appendChild(el('span', 'fm-msg-forwarded-badge', t('messages.forwarded')));
+  if (hasForwarded(m.id)) meta.appendChild(el('span', 'fm-msg-forwarded-badge', t('messages.forwarded')));
   meta.appendChild(el('span', 'fm-msg-time', fmtTime(m.createdAt)));
 
   const actions = el('span', 'fm-msg-actions');
@@ -485,30 +524,77 @@ function appendMessage(m) {
 // (bubble right-click / hover button / header button) share this handler.
 // The 「已转发给 agent」 chip is stamped by the 'fm-refs-sent' event from
 // input.js when the ref actually leaves on the wire (session-level, R5).
-function forwardBubble(wrap, conv) {
-  const body = wrap.dataset.body;
-  if (!body) return;
+// Data-driven core shared by the manual entry (bubble DOM) and the trust-mode
+// auto-forward (raw message object, no DOM needed). Returns true when the ref
+// landed in the ACTIVE chat input; false = no active session view (never
+// silent for the manual path — the caller toasts; auto-forward just skips).
+function forwardToAgent({ body, messageId, direction, createdAtMs }, conv) {
+  if (!body) return false;
   const ref = makeReference({
     refType: 'friend-message',
     source: {
       conversationId: conv.conversationId || '',
-      messageId: wrap.dataset.messageId || '',
+      messageId: messageId || '',
       friendName: conv.friend?.name || '',
       friendNeblinkId: conv.friend?.neblinkId || '',
-      direction: wrap.classList.contains('out') ? 'out' : 'in',
-      date: refDate(wrap.dataset.createdAt),
+      direction: direction === 'out' ? 'out' : 'in',
+      date: refDate(createdAtMs),
     },
     content: { fullText: body.slice(0, 4000) },
   });
-  if (!ref) return;
+  if (!ref) return false;
+  return appendRefToActiveView(ref);
+}
+
+function forwardBubble(wrap, conv) {
+  const ok = forwardToAgent({
+    body: wrap.dataset.body,
+    messageId: wrap.dataset.messageId,
+    direction: wrap.classList.contains('out') ? 'out' : 'in',
+    createdAtMs: wrap.dataset.createdAt,
+  }, conv);
   // No ACTIVE chat view (nothing open in the main window) → appendRef returns
   // false. Never silent: guide the user to open a session first (0904 audit
   // break-point fix — previously a silent no-op).
-  if (!appendRefToActiveView(ref)) {
-    modalToast(t('messages.forwardNoSession'));
-    return;
+  modalToast(ok ? t('messages.forwardToast') : t('messages.forwardNoSession'));
+}
+
+// forwardedIds members arrive as strings (fm-refs-sent detail) while live
+// message ids may be numbers — normalize at the boundary.
+function hasForwarded(id) { return forwardedIds.has(id) || forwardedIds.has(String(id)); }
+
+/** Stamp the 「已转发给 agent」 chip (set + open bubble, if rendered). Idempotent. */
+function stampForwarded(id) {
+  forwardedIds.add(id);
+  forwardedIds.add(String(id));
+  if (!modalEls) return;
+  const wrap = modalEls.flow.querySelector(`.fm-msg[data-message-id="${CSS.escape(String(id))}"]`);
+  const meta = wrap && wrap.querySelector('.fm-msg-meta');
+  if (meta && !meta.querySelector('.fm-msg-forwarded-badge')) {
+    meta.prepend(el('span', 'fm-msg-forwarded-badge', t('messages.forwarded')));
   }
-  modalToast(t('messages.forwardToast'));
+}
+
+// ── 信任模式 v1 自动转发 ── 新到 INCOMING 消息 + 好友 trusted → 复用既有
+// Reference 起草通道（永不自动发送，与手动转发同形态）。门禁顺序：
+// ① 仅好友发来的消息 ② 仍是好友且未拉黑（黑名单优先于信任——blocked 行
+// 不在 friendsCache 里，isStillFriend 一并覆盖删除态） ③ trusted ④ 防重
+// （同消息只转一次，与 forwardedIds 对齐）。起草成功立即打「已转发」角标。
+// 通知形态不变：仅好友消息既有角标三级，无横幅无提示音（08-18 裁定）。
+function maybeAutoForward(m, conv) {
+  if (!m || !conv || !conv.friend) return;
+  if (m.senderId !== conv.friend.userId) return; // incoming only
+  if (!isStillFriend(conv)) return;              // blocked/deleted beats trust
+  if (!isFriendTrusted(conv.friend.userId)) return;
+  if (hasForwarded(m.id)) return;                // same message forwards once
+  if (forwardToAgent({
+    body: m.body || '',
+    messageId: String(m.id ?? ''),
+    direction: 'in',
+    createdAtMs: toEpochMs(m.createdAt),
+  }, conv)) {
+    stampForwarded(m.id);
+  }
 }
 
 /** Date label for the ref meta / injection text layer: YYYY-MM-DD HH:mm. */
@@ -524,15 +610,7 @@ function refDate(createdAtMs) {
 function onRefsSent(e) {
   const ids = (e.detail && e.detail.messageIds) || [];
   if (!ids.length) return;
-  for (const id of ids) forwardedIds.add(id);
-  if (!modalEls) return;
-  for (const id of ids) {
-    const wrap = modalEls.flow.querySelector(`.fm-msg[data-message-id="${CSS.escape(id)}"]`);
-    const meta = wrap && wrap.querySelector('.fm-msg-meta');
-    if (meta && !meta.querySelector('.fm-msg-forwarded-badge')) {
-      meta.prepend(el('span', 'fm-msg-forwarded-badge', t('messages.forwarded')));
-    }
-  }
+  for (const id of ids) stampForwarded(id);
 }
 
 let toastTimer = null;
@@ -611,6 +689,10 @@ async function onFriendEvent(msg) {
         conv.unreadCount = (conv.unreadCount || 0) + 1;
       }
     }
+    // 信任模式 v1：trusted 好友的新到消息自动起草进 agent 输入（单向）。
+    // Note: 全新会话的首条消息走上方 refreshConversations 早退分支，不在此
+    // 自动转发（会话缓存缺失时的已知边界，后续消息正常覆盖）。
+    maybeAutoForward(m, conv);
     resortAndRender();
     updateBadge();
     return;
@@ -640,6 +722,10 @@ export function initMessages() {
   window.addEventListener('fm-friends-changed', async () => {
     await refreshConversations();
     if (modalEls) applyBlockState(currentConv());
+  });
+  // 信任开关在 contacts 右键菜单——开着的聊天窗头指示随之刷新。
+  window.addEventListener('fm-trust-changed', () => {
+    if (modalEls) updateTrustBadge(currentConv());
   });
   // P3 error surface — friendsApi dispatches on auth failure / network error.
   window.addEventListener('fm-auth-required', () => { openLoginModal(); });
