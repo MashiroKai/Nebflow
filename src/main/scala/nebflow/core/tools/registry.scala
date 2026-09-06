@@ -86,7 +86,12 @@ object ToolRegistry:
       // （AgentCore.DreamAdmittedTools + exclusiveToolsFor 单点剥离豁免），
       // 动作面限修订动作（remove/update/replace_section），append 由
       // MemoryEditTool 拒绝（DREAM_APPEND_DENIED——dream 禁写新记忆铁律）。
-      "MemoryEdit" -> MemoryEditTool
+      "MemoryEdit" -> MemoryEditTool,
+      // TaskList（2026-09-06 作者 00:07 提议 + 00:11 首期无前端拍板）：Nebula
+      // 专属编排件——持久任务清单（~/.nebflow/tasks.json 运行时数据层）。
+      // 授能面 = NebulaOrchestrationTools 单一来源（恰十四件，TaskList 批 +1）；
+      // NebulaExclusiveTools 防声明逃逸（dispatcher/general/"*" 一律剥离）。
+      "TaskList" -> TaskListTool
     )
     tools.putAll(builtins.asJava)
   }
