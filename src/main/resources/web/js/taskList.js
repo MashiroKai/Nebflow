@@ -60,8 +60,8 @@ function nodeIsLive(n) {
  *  （2026-09-05 12:59 作者裁定）在此唯一咽喉生效：快照刷新与 WS 增量都汇入
  *  renderTaskList → 本函数——按项目跑与主图同一 clusterBatches 链判定
  *  （deriveArchivedIds，flowMapArchive.js 导出）得 archivedIds，整链全终态
- *  （已归档）节点整链排除（含该链已完成成员）；链内任一非终态（含 blocked/
- *  held）→ 整链保留。过滤后无节点 = 主图空 = 面板收起（既有空态兜底）。 */
+ *  （已归档）节点整链排除（含该链已完成成员）；链内任一非终态（含 blocked）→
+ *  整链保留。过滤后无节点 = 主图空 = 面板收起（既有空态兜底）。 */
 function collectNodes() {
   const out = [];
   for (const [project, byId] of nodeCache) {
@@ -177,17 +177,14 @@ const REDUCED_MOTION = typeof matchMedia === 'function' &&
 // ── Flow Map 节点行（2026-09-02）：复用任务行设计语言 ────────────────────
 
 // 状态词映射（2026-09-05 作者裁定：wiring/pending→待处理、running→进行中、
-// held→待放行、blocked→阻塞、completed→已完成、failed→失败、cancelled→已取消）。
-// held 为 20260903 hold 闸门（NodeTools.scala §2.5 #6）落地的新状态，晚于本面板
-// 09-02 整合——此前降级为中性点，现按裁定升为正式徽章。复用既有键
-// running→task.inProgressShort（进行中）、completed→flowmap.done、
-// failed→flowmap.fail、cancelled→flows.status.cancelled；新增三键（zh/en 成对）：
-// task.nodePending / task.nodeHeld / task.nodeBlocked。
+// blocked→阻塞、completed→已完成、failed→失败、cancelled→已取消）。
+// 复用既有键 running→task.inProgressShort（进行中）、completed→flowmap.done、
+// failed→flowmap.fail、cancelled→flows.status.cancelled；新增两键（zh/en 成对）：
+// task.nodePending / task.nodeBlocked。
 const NODE_WORD_KEY = {
   wiring: 'task.nodePending',
   pending: 'task.nodePending',
   running: 'task.inProgressShort',
-  held: 'task.nodeHeld',
   blocked: 'task.nodeBlocked',
   completed: 'flowmap.done',
   failed: 'flowmap.fail',
@@ -211,10 +208,6 @@ function buildNodeGlyph(st, cls) {
   g.setAttribute('aria-hidden', 'true');
   if (st === 'running') {
     g.className = 'task-node-spin';
-  } else if (st === 'held') {
-    // held（待放行）：hold 闸门挂起——琥珀虚线方框（排队方框形态 + 警示色相，
-    // 与 Flow Map 节点卡的 --amber 警示语言同源；形态+色相双区分）
-    g.className = 'task-node-box task-node-box-held';
   } else if (st === 'blocked') {
     // blocked（阻塞）：琥珀实心点（警示态，区别于 failed 终结红——与
     // flowmap.css .fm-node.blocked 的 --amber 描边语义一致）

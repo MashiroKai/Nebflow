@@ -684,7 +684,6 @@ export default {
   'task.statsProgress': '{progress} tasks',
   'task.inProgressShort': 'In progress',
   'task.nodePending': 'Pending',
-  'task.nodeHeld': 'Held',
   'task.nodeBlocked': 'Blocked',
   'ref.cardAria': 'Reference',
   'ref.expand': 'Expand',
