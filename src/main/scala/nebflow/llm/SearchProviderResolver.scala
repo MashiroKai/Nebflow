@@ -113,7 +113,7 @@ object SearchProviderResolver:
     *     tokens (qwen-openai → {qwen, openai}). Used by the WebSearch
     *     interception path, which resolves from the agent's model chain head
     *     WITHOUT a baseUrl. Token equality (not prefix/substring) keeps
-    *     "qwenty" and "107" clean. */
+    *     "qwenty" and "provider-x" clean. */
   def capabilityFor(providerId: String, baseUrl: String): Option[ProviderSearchKind] =
     val id = providerId.trim.toLowerCase
     val url = baseUrl.trim.toLowerCase
@@ -127,7 +127,7 @@ object SearchProviderResolver:
     else None
 
   /** Tier resolution for a provider (P0: Tier 1 MCP is a future stub — resolve
-    * goes straight to Tier 2 or Tier 3). deepseek / 107 / unknown → Tier 3.
+    * goes straight to Tier 2 or Tier 3). deepseek / provider-x / unknown → Tier 3.
     *
     * P2 (2026-08-25): Tier 2a — a STANDALONE search API (zhipu web_search,
     * per-call billing, independent of model quotas) is resolved separately
@@ -245,7 +245,7 @@ object SearchProviderResolver:
     *   - tools.isDefined — the Tier 2 sub-request arms search via
     *     Some(Nil); tool-less maintenance calls (experience extraction,
     *     memory hook, onboarding probe) stay clean;
-    *   - OpenAI protocol only — Anthropic-protocol candidates (107,
+    *   - OpenAI protocol only — Anthropic-protocol candidates (provider-x,
     *     deepseek) have no P0 injection.
     */
   def searchInjectionFor(
@@ -410,7 +410,7 @@ object SearchProviderResolver:
         // when NO chain member has builtin search (or the chain is empty)
         // do we go Tier 3 directly.
         searchOrderedModel(agentModel) match
-          case None => IO.pure(None) // Tier 3 directly (no chain / deepseek-only / 107 / unknown)
+          case None => IO.pure(None) // Tier 3 directly (no chain / deepseek-only / provider-x / unknown)
           case Some(ordered) =>
             chainHeadProviderId(Some(ordered)).flatMap(capabilityFor(_, "")) match
               case None => IO.pure(None) // no search-capable member in chain → Tier 3
