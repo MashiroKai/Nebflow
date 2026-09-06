@@ -77,3 +77,6 @@ node_modules/
 .sbt/
 .ivy2/
 .coursier/
+
+# upload-deps.sh staging (batch artifacts, never committed)
+deps-staging/
