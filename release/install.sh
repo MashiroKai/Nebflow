@@ -99,38 +99,40 @@ resolve_version() {
 INSTALL_DIR="${INSTALL_DIR:-${HOME}/${HOME_DIR}/bin}"
 
 # >>> BRAND-UI-BEGIN (batch 4 redesign: pixel logo + progress bar) >>>
-# Brand banner: the Nebflow 7x7 pixel logo rendered as terminal color
-# blocks. The matrix was sampled OFFLINE from the brand assets
-# (docs/Nebflow/assets/logo/{dark,bright}.png, 224x224 = a 7x7 grid of 32px
-# cells, cell-center NEAREST sampling - the same pixelated look as the web
-# UI's image-rendering: pixelated) and embedded here as constant data: zero
-# image files, zero python, zero network at runtime. Full untrimmed 7x7
-# matrix (author ruling 2026-09-06: no 5x6 cropping - keeps the source
-# aspect); G = brand green #07C160, W = white (dark terminals) or
-# black (light terminals). No ASCII-art/figlet wordmark: the logo blocks
-# carry the brand, the wordmark is plain lowercase text.
+# Brand banner: the Nebflow pixel logo rendered as terminal color blocks.
+# The matrix is the AUTHORITATIVE logo grid taken from the pixil design
+# source (.nebflow/uploads/bright-4.pixil: canvas declared 6x5, layer
+# content = the 4x3 mark below - canvas row 0/4 and col 0/5 are
+# transparent padding and are NOT rendered: zero phantom rows/columns,
+# author ruling 2026-09-06 v2 "ratio reshape"). Cross-checked against the
+# PNG exports: dark/bright.png ink sits on an exact 4x3 grid of 48px
+# cells (origin 16,40 inside the 224x224 canvas), dark-4/bright-4.png on
+# an exact 4x3 grid of 56px cells (origin 0,28) - identical shape. The
+# old 7x7 mask was a distorted 32px-lattice sampling of that 4x3 mark
+# (square frame + phantom padding = the aspect mismatch). Embedded as
+# constant data: zero image files, zero python, zero network at runtime.
+# scripts/check-logo-matrix.py asserts mask == pixil truth (anti-drift).
+# G = brand green #07C160, W = white (dark terminals) or black (light
+# terminals). No ASCII-art/figlet wordmark: the logo blocks carry the
+# brand, the wordmark is plain lowercase text.
 #
 # Color degrade chain: truecolor (3) -> xterm-256 (2) -> 8-color (1) ->
 # mono # mask (0), every level keeps the shape intact. Width discipline
-# (author ruling 2026-09-06, revised same-day): ONE pixel = TWO character
-# cells at every level - a terminal glyph is ~2x taller than wide, so each
-# pixel spans 2 columns and the logo keeps its source aspect. Mono renders
-# "##" per pixel, color levels render a 2-column background block, empty
+# (author ruling 2026-09-06): ONE pixel = TWO character cells at every
+# level - a terminal glyph is ~2x taller than wide, so each pixel spans
+# 2 columns and the logo keeps its source aspect (4:3). Mono renders "##"
+# per pixel, color levels render a 2-column background block, empty
 # pixels are 2 plain spaces; adjacent solid pixels touch with no gap
-# (e.g. mask row "GG.WWW." -> "####  ######  ", 14 columns per logo row).
+# (e.g. mask row "G.WW" -> "##  ####", 8 columns per logo row).
 #   guards: NO_COLOR / CI / non-TTY / TERM=dumb -> mono (plain text)
 #   theme : NEBFLOW_BANNER_THEME=dark|light overrides; else COLORFGBG's
 #           background field (>=7 means a light background); default dark
 #   level : NEBFLOW_UI_LEVEL=0..3 forces a level (preview/testing)
 
 BANNER_MASK=(
-    "......."
-    "GG.WWW."
-    "GG.WWW."
-    "..W..W."
-    "..W..W."
-    "..W..W."
-    "......."
+    "G.WW"
+    ".W.W"
+    ".W.W"
 )
 
 _ui_level=0
@@ -214,13 +216,13 @@ print_banner() {
     ui_detect
     printf '\n'
     local _i _j _row
-    for _i in 0 1 2 3 4 5 6; do
+    for _i in 0 1 2; do
         _row="${BANNER_MASK[$_i]}"
         printf '  '
         for ((_j=0; _j<${#_row}; _j++)); do _px "${_row:$_j:1}"; done
         case "$_i" in
-            2) printf '  '; _fg_green; printf '%s' "${LOWER_NAME}"; _rst ;;
-            3) printf '  '; _dim; printf 'v%s installer (%s)' "${VERSION:-dev}" "${CHANNEL}"; _rst ;;
+            1) printf '  '; _fg_green; printf '%s' "${LOWER_NAME}"; _rst ;;
+            2) printf '  '; _dim; printf 'v%s installer (%s)' "${VERSION:-dev}" "${CHANNEL}"; _rst ;;
         esac
         printf '\n'
     done
