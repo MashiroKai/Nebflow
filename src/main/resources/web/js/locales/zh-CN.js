@@ -146,6 +146,8 @@ export default {
   'contacts.searching': '搜索中…',
   'contacts.notFoundHint': '对方可能尚未设置用户名，或输入有误',
   'contacts.cancelVerify': '取消',
+  'contacts.alreadyFriends': '已是好友',
+  'contacts.searchError': '搜索失败，请重试',
   'messages.empty': '暂无会话',
   'messages.systemNowFriends': '你们已成为好友',
   'messages.forwardToAgent': '转发给 agent',

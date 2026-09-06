@@ -20,7 +20,8 @@
 //         不命中 → catch-all {} → 断言必红）+ snake_case 消费（addable）
 //     D2  relation_status=already_friends（契约原形 wire）→ 「发消息」
 //     D3  miss 恒 {found:false} → 未找到卡
-//     D4  422 invalid_query → 未找到卡（优雅兜底）
+//     D4  422 invalid_query → 搜索失败卡（失败分态，09-06 作者令；曾兜底为
+//         未找到卡——失败与空结果混态已拆分）
 //     D5  outgoing_pending（直连契约态）→ 等待对方处理
 //     D6  旧端点零残留：全程无 /api/users/lookup、/api/users/me/neblink-id 请求
 //     D7  设置面板 NL 号修改入口零残留（10:54 裁定），设备区仍渲染
@@ -274,7 +275,7 @@ try {
     await sleep(700);
     await search(page, 'toolongquery');
     card = await cardText(page);
-    ok('D4 422 invalid_query → 未找到卡兜底', card.includes('未找到该用户'), card.slice(0, 40));
+    ok('D4 422 invalid_query → 搜索失败卡（失败分态，非「未找到」）', card.includes('搜索失败'), card.slice(0, 40));
 
     // D6 旧端点零残留：全程请求扫描（lookup / neblink-id 设置链）
     const legacy = apiCalls.filter(u => u.includes('/api/users/lookup') || u.includes('neblink-id'));
