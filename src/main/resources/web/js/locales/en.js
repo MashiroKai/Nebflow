@@ -115,6 +115,9 @@ export default {
   'flowmap.flag.merge': 'Merge',
   'flowmap.flag.loop': 'Loop',
   'flowmap.flag.pending': 'Awaiting',
+  // LoopNode running-phase labels (2026-09-06): loop card desc line shows worker/verify
+  'flowmap.loopPhase.worker': 'Producing',
+  'flowmap.loopPhase.verify': 'Verifying',
   'agentFile.hint': 'This file is the project workspace agent instructions (AGENTS.md at the workspace root); edit and save it.',
 
   // === Friends & messages (A2A) ===
