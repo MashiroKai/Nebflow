@@ -1,12 +1,12 @@
-// workspace-picker.spec.mjs — ProjectCreate「选择工作区」卡 + Route C 应用内浏览器 E2E。
+// workspace-picker.spec.mjs — ProjectCreate「选择工作区」卡 + 应用内目录浏览器 E2E。
 //
-// 覆盖面（前端卡片层与弹窗层；后端三态为 WorkspaceDirPickerSpec，sbt）：
+// 覆盖面（前端卡片层与弹窗层；后端为 sbt 编译/资产契约覆盖）：
 //  - T1 卡片渲染：SVG 文件夹图标 + 「选择工作区」大目标 + 候选 chips 次级化；
-//    点击（目标/卡片空白整体）→ pickWorkspaceDir 出站帧
-//  - T2 path 事件 → 卡片回显 + 自动作答 askUser（answers 携带选中路径）
-//  - T3 cancelled 事件 → 回待选态（可再次点击，不自动取消 ProjectCreate）
-//  - T4 fallback 事件 → 应用内浏览器弹窗（fixture 目录树：导航 / 新建文件夹 /
-//    选中确认 → askUserAnswer 携带新建路径）
+//    点击（目标/卡片空白整体）→ 直接打开应用内目录浏览器（workspacePicker.js，
+//    2026-09-06 作者拍板：复用文件浏览器「选择目录」设计 + 新建文件夹，不走系统对话框）
+//  - T2 应用内浏览器弹窗：fixture 目录树导航 / 新建文件夹 / 选中确认 →
+//    askUserAnswer 携带所选路径 + 卡片回显
+//  - T3 弹窗取消 → 卡片回待选态（留再次选择/手输余地）
 //
 // 入站帧注入方式：捕获真实 ws.js 分发入口（state.ws.onmessage 原闭包），
 // 之后以 FakeEvent 调用——走真实 GLOBAL/TERMINAL 路由 + onMessage 订阅链。
@@ -76,7 +76,8 @@ async function setup(page, item = DIR_PICK_ITEM, requestId = RID) {
     renderAskUser([item], 'e2e-ws-picker-session', 'E2E', requestId);
   }, { item, requestId });
 
-  // chat.js 模块顶层已注册 workspaceDirPicked 处理器（app boot 时已 import）
+  // 应用内浏览器（workspacePicker.js）经 wsBrowse.list/mkdir（GLOBAL 路由）驱动，
+  // 注入入站帧需真实 ws.js 分发入口已捕获（app boot 时已 import）。
   if (!(await page.evaluate(() => !!window.__origOnMessage))) {
     // 兜底：极冷页面 socket 尚未握上 → 直接从 ws.js 不可取；此时用重试式注入器
     throw new Error('real ws dispatch entry not captured — isolated instance WS not connected?');
@@ -97,7 +98,7 @@ function lastCard(page) {
 // ============================================================
 
 test.describe('workspace-picker card', () => {
-  test('T1 SVG 图标 + 选择工作区大目标；点击发 pickWorkspaceDir；候选 chips 次级化', async ({ page }) => {
+  test('T1 SVG 图标 + 选择工作区大目标；点击直接打开应用内目录浏览器；候选 chips 次级化', async ({ page }) => {
     await setup(page);
     const box = lastCard(page);
     const target = box.locator('.ws-pick-target');
@@ -110,7 +111,7 @@ test.describe('workspace-picker card', () => {
     expect(svgBox.height).toBeGreaterThanOrEqual(24); // 醒目大图标
     // 标题（zh 或 en 环境均可命中）
     await expect(target.locator('.ws-pick-title')).toHaveText(/选择工作区|Pick Workspace/);
-    await expect(target.locator('.ws-pick-hint')).toContainText(/系统文件夹选择框|system folder/i);
+    await expect(target.locator('.ws-pick-hint')).toContainText(/应用内目录浏览器|in-app folder browser/i);
 
     // 候选 chips 次级化：仍是 option-btn（机制不变）但带 demote 类
     const chips = box.locator('.option-btn.ws-pick-candidate');
@@ -118,68 +119,37 @@ test.describe('workspace-picker card', () => {
     const chipBox = await chips.first().boundingBox();
     expect(chipBox.height).toBeLessThan(40); // 视觉弱化，非主体
 
-    // 点击大目标 → pickWorkspaceDir 出站帧（sessionId/requestId 成对）
+    // 点击大目标 → 直接打开应用内目录浏览器（workspacePicker.js），发 wsBrowse.list 出站帧
     await target.click();
+    await expect(page.locator('.wsp-overlay')).toBeVisible();
     const captured = await page.evaluate(() => window.__captured);
     expect(captured).toEqual([
-      { type: 'pickWorkspaceDir', sessionId: SID, requestId: RID },
+      { type: 'wsBrowse.list', path: '~', sessionId: SID },
     ]);
-    await expect(target).toHaveClass(/picking/); // 选择中态（重复点击被忽略）
+    await expect(target).toHaveClass(/picking/); // 选择中态
 
-    // 手输路径兜底保留：Other… 输入 + 确认可独立作答（单选 Other 按钮无 data-other，按文本定位）
+    // 关闭弹窗（取消）→ 回待选态，再走手输路径兜底：Other… 输入 + 确认可独立作答
+    await page.locator('.wsp-cancel').click();
+    await expect(target).not.toHaveClass(/picking/);
     await box.locator('.option-btn', { hasText: /其他|Other/ }).last().click();
     await box.locator('.option-custom-input').fill('/tmp/manual-path');
     await box.locator('.option-confirm').click();
     const after = await page.evaluate(() => window.__captured);
     expect(after).toEqual([
-      { type: 'pickWorkspaceDir', sessionId: SID, requestId: RID },
+      { type: 'wsBrowse.list', path: '~', sessionId: SID },
       { type: 'askUserAnswer', sessionId: SID, answers: ['/tmp/manual-path'], requestId: RID },
     ]);
   });
 
-  // T2 — path 事件 → 回显 + 自动作答
-  test('T2 path 事件 → 卡片回显选中路径并自动 askUserAnswer', async ({ page }) => {
+  // （旧 T2 path 事件 / T3 cancelled 事件随 workspaceDirPicked 移除已不适用：
+  //  2026-09-06 作者拍板改为直接打开应用内目录浏览器，选中/取消全部经浏览器
+  //  onPick/onCancel 驱动，见下方 T2/T3 浏览器流程测试。）
+
+  // T2 — 应用内浏览器（导航/新建/选中全链）：点击目标直接打开
+  test('T2 应用内浏览器弹窗：fixture 目录树导航+新建文件夹+选中回传', async ({ page }) => {
     await setup(page);
     const box = lastCard(page);
     await box.locator('.ws-pick-target').click();
-    await inject(page, { type: 'workspaceDirPicked', sessionId: SID, requestId: RID, path: '/Users/e2e/项目A' });
-
-    const captured = await page.evaluate(() => window.__captured);
-    expect(captured).toContainEqual({
-      type: 'askUserAnswer', sessionId: SID, answers: ['/Users/e2e/项目A'], requestId: RID,
-    });
-    await expect(box.locator('.ws-pick-echo')).toContainText('/Users/e2e/项目A');
-    await expect(box.locator('.option-answer')).toContainText('/Users/e2e/项目A'); // 卡片已锁 + 回显
-    // 锁卡后 chips 失效
-    await expect(box.locator('.option-btn').first()).toBeDisabled();
-  });
-
-  // T3 — cancelled → 回待选态（不自动取消 ProjectCreate）
-  test('T3 cancelled 事件 → 回待选态可再次点击；不发 askUserAnswer', async ({ page }) => {
-    await setup(page);
-    const box = lastCard(page);
-    const target = box.locator('.ws-pick-target');
-    await target.click();
-    await inject(page, { type: 'workspaceDirPicked', sessionId: SID, requestId: RID, cancelled: true });
-
-    await expect(target).not.toHaveClass(/picking/); // 待选态
-    await expect(target.locator('.ws-pick-title')).toHaveText(/选择工作区|Pick Workspace/);
-    // 可再次点击（第二次出站）
-    await target.click();
-    const captured = await page.evaluate(() => window.__captured);
-    expect(captured).toEqual([
-      { type: 'pickWorkspaceDir', sessionId: SID, requestId: RID },
-      { type: 'pickWorkspaceDir', sessionId: SID, requestId: RID },
-    ]);
-    expect(captured.filter(m => m.type === 'askUserAnswer')).toHaveLength(0);
-  });
-
-  // T4 — fallback → Route C 应用内浏览器（导航/新建/选中全链）
-  test('T4 fallback → 应用内浏览器弹窗：fixture 目录树导航+新建文件夹+选中回传', async ({ page }) => {
-    await setup(page);
-    const box = lastCard(page);
-    await box.locator('.ws-pick-target').click();
-    await inject(page, { type: 'workspaceDirPicked', sessionId: SID, requestId: RID, fallback: true, reason: 'headless-jvm' });
 
     const overlay = page.locator('.wsp-overlay');
     await expect(overlay).toBeVisible();
@@ -226,13 +196,12 @@ test.describe('workspace-picker card', () => {
     await expect(box.locator('.option-answer')).toContainText('/Users/e2e/fixture-root/ws-a/ws-new');
   });
 
-  // T5 — 弹窗取消 → 卡片回待选态（留再次选择/手输余地）
-  test('T5 fallback 后弹窗取消 → 卡片回待选态', async ({ page }) => {
+  // T3 — 弹窗取消 → 卡片回待选态（留再次选择/手输余地）
+  test('T3 弹窗取消 → 卡片回待选态', async ({ page }) => {
     await setup(page);
     const box = lastCard(page);
     const target = box.locator('.ws-pick-target');
     await target.click();
-    await inject(page, { type: 'workspaceDirPicked', sessionId: SID, requestId: RID, fallback: true, reason: 'headless-jvm' });
 
     const overlay = page.locator('.wsp-overlay');
     await expect(overlay).toBeVisible();

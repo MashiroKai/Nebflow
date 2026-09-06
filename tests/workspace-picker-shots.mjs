@@ -15,7 +15,7 @@ mkdirSync(OUT, { recursive: true });
 const SID = 'e2e-ws-picker-session';
 const RID = 'req-wsp-1';
 const ITEM = {
-  question: 'ProjectCreate 需要项目工作区路径 — 点击上方「选择工作区」打开系统文件夹选择框（可浏览层级、新建文件夹）。',
+  question: 'ProjectCreate 需要项目工作区路径 — 点击上方「选择工作区」打开应用内目录浏览器（可逐级浏览、新建文件夹）。',
   dirPicker: true,
   options: [{ label: '/Users/dev/Claude code/alpha-proj' }, { label: '/Users/dev/Claude code/beta-lab' }],
 };
@@ -60,10 +60,9 @@ for (const scheme of ['light', 'dark']) {
   await page.waitForTimeout(250);
   await page.screenshot({ path: join(OUT, `${scheme}-card.png`), fullPage: false });
 
-  // fallback → C 弹窗 + fixture
+  // 2026-09-06 新流程：点击目标 → openPicker 直接打开应用内目录浏览器（无 fallback 中转）。
+  // 不再注入 workspaceDirPicked fallback 事件；打开后由脚本注入 wsBrowseList 渲染列表。
   await page.locator('.ws-pick-target').click();
-  await page.evaluate((m) => window.__origOnMessage({ data: JSON.stringify(m) }),
-    { type: 'workspaceDirPicked', sessionId: SID, requestId: RID, fallback: true, reason: 'headless-jvm' });
   await page.waitForSelector('.wsp-overlay');
   await page.waitForTimeout(120);
   const respond = (path, entries) => page.evaluate(({ m }) => window.__origOnMessage({ data: JSON.stringify(m) }), { m: { type: 'wsBrowseList', path, home: '/Users/dev', entries } });

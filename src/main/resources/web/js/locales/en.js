@@ -1033,8 +1033,8 @@ export default {
   'daemons.delete': 'Delete',
   // === Workspace picker card + in-app directory browser (workspace-picker batch) ===
   'workspacePicker.pickTitle': 'Pick Workspace',
-  'workspacePicker.pickHint': 'Click to open the system folder browser (browse levels, create folders)',
-  'workspacePicker.picking': 'Opening the system browser…',
+  'workspacePicker.pickHint': 'Click to open the in-app folder browser (browse levels, create folders)',
+  'workspacePicker.picking': 'Opening the folder browser…',
   'workspacePicker.pickedEcho': 'Selected: {path}',
   'workspacePicker.browseTitle': 'Pick Workspace',
   'workspacePicker.home': 'Home',
