@@ -2014,7 +2014,10 @@
    header lands at the turn top and the stripped pieces (thinking + tool
    rows) are toggled via .nf-tucked below. Same muted design language as the
    #345 thinking label: no background, no glass, no hover fill — chevron +
-   text brighten on hover. */
+   text brighten on hover.
+   2026-09-06 fixes (author 08:19 feedback): the summary line WRAPS instead
+   of truncating (long summaries stay fully readable — no ellipsis); the
+   leading ✻ phrase (v1-designed copy) is back as the first segment. */
 .turn-header {
   display: flex;
   align-items: center;
@@ -2028,9 +2031,6 @@
   opacity: 0.9;
   cursor: pointer;
   user-select: none;
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
   transition: opacity 0.15s ease;
   animation: turnSummaryIn 0.15s ease-out;
 }
@@ -2040,9 +2040,13 @@
   outline-offset: 1px;
   border-radius: 4px;
 }
+.turn-header .nf-chevron { flex-shrink: 0; }
+/* Long summaries wrap to multiple lines (height auto-grows) — the full text
+   is always visible; no text-overflow / line-clamp swallowing (2026-09-06
+   author ruling: 长总结必须完整可见). */
 .turn-header-text {
-  overflow: hidden;
-  text-overflow: ellipsis;
+  min-width: 0;
+  overflow-wrap: break-word;
 }
 /* Banner dedupe (2026-09-04): a session renders only its LATEST turn's
    stats header; superseded turns' headers keep their DOM (E10 search-expand
@@ -2051,10 +2055,9 @@
    invariant). */
 .turn-header.turn-banner-superseded { display: none; }
 /* Static tucked state for the stripped middle blocks (thinking + tool rows).
-   max-height 0 + collapsed margins so no gap remains; the expand/collapse
-   transition itself is driven by the Web Animations API in turnGroup.js
-   (max-height 0→natural + opacity + ~5px settle, 320ms ease-out, 50ms
-   stagger) — this class only owns the END state. */
+   max-height 0 + collapsed margins so no gap remains. The expand/collapse
+   toggle is INSTANT (the 批② WAAPI transition layer was removed 2026-09-06,
+   author feedback 「动画太卡顿」) — this class owns the whole state. */
 .row.nf-tucked {
   max-height: 0 !important;
   margin-top: 0 !important;
@@ -2065,7 +2068,6 @@
   border-bottom-width: 0 !important;
   opacity: 0;
   overflow: hidden;
-  transform: translateY(-5px);
   pointer-events: none;
   visibility: hidden;
 }
@@ -2075,7 +2077,6 @@
 }
 @media (prefers-reduced-motion: reduce) {
   .turn-header { animation-duration: 0.01s; transition-duration: 0.01s; }
-  .row.nf-tucked { transition-duration: 0.01s; }
 }
 
 /* Streaming cursor */
