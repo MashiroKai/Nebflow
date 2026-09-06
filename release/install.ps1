@@ -168,6 +168,49 @@ $InstallDir = if ($env:INSTALL_DIR) { $env:INSTALL_DIR } else { "$env:LOCALAPPDA
 $JarName = "$LowerName-assembly-$Version.jar"
 $CosUrl = "$CosBaseCn/$JarName"
 
+# --- Brand banner (batch 4): ASCII art + brand green #07C160 ---------------
+# Color degrade chain: truecolor (PS 7+) -> 16-color (PS 5.1 native
+# -ForegroundColor, zero escape-sequence risk) -> no color
+# (NO_COLOR / CI / non-interactive). The CJK slogan is stored as Unicode code
+# points so THIS FILE STAYS PURE ASCII (batch 3 invariant), and is printed
+# only when the environment can render it (D5 detection rule): PS 7+ (UTF-8
+# by default) or a console already on CP 65001 at startup. A CP936-started
+# PS 5.1 window gets the English line only.
+$BannerColorOn = -not ($env:NO_COLOR -or $env:CI -or -not [Environment]::UserInteractive)
+$BannerEsc = $null
+$BannerReset = $null
+$BannerFg = $null
+if ($BannerColorOn -and $PSVersionTable.PSVersion.Major -ge 7) {
+    $BannerEsc = "$([char]27)[38;2;7;193;96m"
+    $BannerReset = "$([char]27)[0m"
+} elseif ($BannerColorOn) {
+    $BannerFg = "Green"
+}
+$BannerShowCjk = ($PSVersionTable.PSVersion.Major -ge 7) -or ($script:OriginalOutputCP -eq 65001)
+
+function Write-BannerLine([string]$line) {
+    if ($BannerEsc) { Write-Host "$BannerEsc$line$BannerReset" }
+    elseif ($BannerFg) { Write-Host $line -ForegroundColor $BannerFg }
+    else { Write-Host $line }
+}
+
+Write-Host ""
+$bannerArt = @(
+    '  _   _  _____  ____   _____  _      ___ '
+    ' | \ | || ____|| __ ) |  ___|| |     / _ \'
+    ' |  \| ||  _|  |  _ \ | |_   | |    | | | |'
+    ' | |\  || |___ | |_) ||  _|  | |___ | |_| |'
+    ' |_| \_||_____||____/ |_|    |_____| \___/ '
+)
+foreach ($bannerLine in $bannerArt) { Write-BannerLine $bannerLine }
+Write-Host ""
+if ($BannerShowCjk) {
+    # U+6240 U+6709 U+5DE5 U+4F5C U+FF0C U+4E00 U+4E2A U+5165 U+53E3 U+3002
+    $cjk = -join @(0x6240, 0x6709, 0x5DE5, 0x4F5C, 0xFF0C, 0x4E00, 0x4E2A, 0x5165, 0x53E3, 0x3002 | ForEach-Object { [char]$_ })
+    Write-Host "  $cjk / One entry. Every agent."
+} else {
+    Write-Host "  One entry. Every agent."
+}
 Write-Host ""
 Write-Host "  $ProductName v$Version Installer ($Channel)" -ForegroundColor DarkGray
 Write-Host ""

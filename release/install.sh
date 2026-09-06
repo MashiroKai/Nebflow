@@ -98,17 +98,40 @@ resolve_version() {
 
 INSTALL_DIR="${INSTALL_DIR:-${HOME}/${HOME_DIR}/bin}"
 
+# Brand banner (batch 4): figlet-style ASCII art + ANSI brand green #07C160.
+# Color degrade chain: truecolor -> 16-color green -> no color.
+#   guards: NO_COLOR convention / CI env / non-TTY -> plain text.
+# Bilingual slogan (D5 detection rule): the CJK line is printed only when the
+# shell locale is UTF-8 (always true on modern macOS/Linux); otherwise the
+# English line only. This is the single guarded non-ASCII spot in this file.
 print_banner() {
-    echo ""
-    echo "  ███╗   ██╗███████╗██████╗ ███████╗██╗      ██████╗ ██╗    ██╗"
-    echo "  ████╗  ██║██╔════╝██╔══██╗██╔════╝██║     ██╔═══██╗██║    ██║"
-    echo "  ██╔██╗ ██║█████╗  ██████╔╝█████╗  ██║     ██║   ██║██║ █╗ ██║"
-    echo "  ██║╚██╗██║██╔══╝  ██╔══██╗██╔══╝  ██║     ██║   ██║██║███╗██║"
-    echo "  ██║ ╚████║███████╗██████╔╝██║     ███████╗╚██████╔╝╚███╔███╔╝"
-    echo "  ╚═╝  ╚═══╝╚══════╝╚═════╝ ╚═╝     ╚══════╝ ╚═════╝  ╚══╝╚══╝"
-    echo ""
-    echo "  ${PRODUCT_NAME} v${VERSION} Installer (${CHANNEL})"
-    echo ""
+    local c="" r=""
+    if [ -t 1 ] && [ -z "${NO_COLOR:-}" ] && [ -z "${CI:-}" ]; then
+        case "${COLORTERM:-}" in
+            truecolor|24bit) c=$'\e[38;2;7;193;96m'; r=$'\e[0m' ;;
+            *)               c=$'\e[32m';            r=$'\e[0m' ;;
+        esac
+    fi
+    local art=(
+        '  _   _  _____  ____   _____  _      ___ '
+        ' | \ | || ____|| __ ) |  ___|| |     / _ \'
+        ' |  \| ||  _|  |  _ \ | |_   | |    | | | |'
+        ' | |\  || |___ | |_) ||  _|  | |___ | |_| |'
+        ' |_| \_||_____||____/ |_|    |_____| \___/ '
+    )
+    local line
+    printf '\n'
+    for line in "${art[@]}"; do printf '%s%s%s\n' "$c" "$line" "$r"; done
+    printf '\n'
+    case "${LC_ALL:-${LANG:-}}" in
+        *UTF-8*|*utf8*|*utf-8*)
+            printf '  所有工作，一个入口。 / One entry. Every agent.\n'
+            ;;
+        *)
+            printf '  One entry. Every agent.\n'
+            ;;
+    esac
+    printf '\n  %s v%s Installer (%s)\n\n' "${PRODUCT_NAME}" "${VERSION}" "${CHANNEL}"
 }
 
 # ---- [1/6] environment ----------------------------------------------------
