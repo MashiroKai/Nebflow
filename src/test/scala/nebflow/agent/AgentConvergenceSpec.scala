@@ -84,12 +84,14 @@ class AgentConvergenceSpec extends FunSuite:
     assert(!CoreProbe.toolList(mkDef("Nebula")).toSet.contains("NodeMessage"), "Nebula 不加 NodeMessage")
     assert(!CoreProbe.toolList(mkDef("general"), isFlowNode = true).toSet.contains("NodeMessage"), "general 不加 NodeMessage")
 
-  // ===== general 固定 8 件 =====
+  // ===== general 固定 7 件（2026-09-06 节点面摘除 AskUser）=====
 
-  test("general LLM tool list == 裁定 5 原文 8 件（isFlowNode 节点形态）"):
+  test("general LLM tool list == 裁定 5 八件 − AskUser = 恰七件（isFlowNode 节点形态）"):
     val delivered = CoreProbe.toolList(mkDef("general"), isFlowNode = true).toSet
-    assertEquals(delivered, Set("Read", "Glob", "Edit", "Write", "Grep", "Bash", "AskUserQuestion", "Pop"),
-      "通用模版固定 8 件（§C.5 顺序语义，非配置）")
+    assertEquals(delivered, Set("Read", "Glob", "Edit", "Write", "Grep", "Bash", "Pop"),
+      "通用模版固定 7 件（§C.5 顺序语义 + 2026-09-06 节点面摘除 AskUser，非配置）")
+    assert(!delivered.contains("AskUserQuestion"),
+      "general 交付面零 AskUserQuestion（2026-09-06 作者提议 + Nebula 背书：交互出口统一）")
 
   // ===== ToolRegistry 面变化 =====
 
