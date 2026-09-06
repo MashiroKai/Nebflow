@@ -162,7 +162,9 @@ test('T1 节点条目渲染：七状态徽章/状态词/时间/project·agent �
   await expect(panel).toHaveClass(/has-tasks/);
 
   // 分区与项目分组头（节点区块自有类，不依赖 team 分组类）
-  await expect(panel.locator('.task-section-nodes .task-node-section-title')).toHaveText('Flow Map');
+  // 2026-09-06 显示优化批：「Flow Map」分区标题整体移除（作者 00:35 裁定）——
+  // 断言其持续缺席作回归哨兵；flowmap.title 键保留（标签页域共用，不在此面板）。
+  await expect(panel.locator('.task-section-nodes .task-node-section-title')).toHaveCount(0);
   await expect(panel.locator('.task-node-group-header', { hasText: 'alpha' })).toHaveCount(1);
   await expect(panel.locator('.task-node-group-header', { hasText: 'beta' })).toHaveCount(1);
 
