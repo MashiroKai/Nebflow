@@ -1,6 +1,22 @@
 #!/bin/bash
 set -e
 
+# Nebflow cross-platform installer (macOS / Linux) — script v2
+# ---------------------------------------------------------------
+# SCRIPT_VERSION : installer version (written into the local install
+#                  manifest for `nebflow update` and diagnostics).
+# Pipeline       : [1/6] env detect -> [2/6] deps (curl/JDK/rg/voice) ->
+#                  [3/6] jar -> [4/6] wrapper+PATH -> [5/6] config ->
+#                  [6/6] done.
+# Idempotent     : safe to re-run; installed/satisfied deps are detected
+#                  and skipped.
+# Flags          : --beta | --channel=beta | --cn | --global | --verbose
+#                  (curl|bash pipe: env CHANNEL=beta / REGION=cn /
+#                  NEBFLOW_VERBOSE=1)
+# Exit codes     : 0 ok | 10 version resolve | 11 java install |
+#                  12 jar download | 13 no curl/wget
+# ---------------------------------------------------------------
+
 # -- Brand values (L2 rebrand): rendered from repo-root brand.conf at -------
 # -- release time (scripts/render-brand.sh); do not edit by hand. -----------
 # The runtime dual-reads legacy names (L3), so rendering NEW values here
@@ -14,8 +30,25 @@ WRAPPER_NAME=nebflow
 COS_BASE_CN="https://${COS_BUCKET}.cos.ap-nanjing.myqcloud.com"
 # 仓库已转 private（#29，2026-09-01）：GitHub Releases 未认证下载 404——
 # Nebflow jar 下载/版本解析统一走 COS（单一源）。第三方依赖
-# （Homebrew/ripgrep/git-for-windows/HuggingFace 模型/favicon 连通性测试）
+# （Homebrew/ripgrep/HuggingFace 模型/favicon 连通性测试）
 # 与仓库 private 无关，仍走各自公共源。
+
+SCRIPT_VERSION="2.0.0"
+RG_VERSION="14.1.1"
+JDK_MAJOR_REQUIRED=17   # runtime floor; fresh installs target OpenJDK 21
+ERR_VERSION=10
+ERR_JAVA=11
+ERR_JAR=12
+ERR_CURL=13
+
+# -- unified log helpers ----------------------------------------------------
+VERBOSE="${NEBFLOW_VERBOSE:-0}"
+log_i()    { echo "[i] $*"; }
+log_ok()   { echo "[ok] $*"; }
+log_warn() { echo "[warn] $*"; }
+log_err()  { echo "[err] $*" >&2; }
+log_v()    { [ "$VERBOSE" = "1" ] && echo "[v] $*" || true; }
+stage_hdr(){ echo ""; echo "==> [$1/6] $2"; }
 
 # Parse flags
 CHANNEL="stable"
@@ -24,168 +57,56 @@ for arg in "$@"; do
         --beta|--channel=beta) CHANNEL="beta" ;;
         --cn) REGION="cn" ;;
         --global) REGION="global" ;;
+        --verbose) VERBOSE=1 ;;
     esac
 done
 
 # Resolve version — COS version file (single source; GH API private 后不可用)
-if [ "$CHANNEL" = "beta" ]; then
-    echo "==> Resolving latest beta version..."
-    if [ -z "$VERSION" ]; then
-        BETA_TAG=$(curl -fsSL --connect-timeout 5 --max-time 10 \
-            "${COS_BASE_CN}/latest-beta-version.txt" 2>/dev/null || true)
-        if [ -z "$BETA_TAG" ]; then
-            echo "ERROR: Could not find a beta release (COS version file unreachable)."
-            echo "       Check ${COS_BASE_CN}/latest-beta-version.txt"
-            exit 1
+resolve_version() {
+    if [ "$CHANNEL" = "beta" ]; then
+        log_i "Resolving latest beta version..."
+        if [ -z "$VERSION" ]; then
+            BETA_TAG=$(curl -fsSL --connect-timeout 5 --max-time 10 \
+                "${COS_BASE_CN}/latest-beta-version.txt" 2>/dev/null || true)
+            if [ -z "$BETA_TAG" ]; then
+                log_err "Could not find a beta release (COS version file unreachable)."
+                log_err "Check ${COS_BASE_CN}/latest-beta-version.txt"
+                exit $ERR_VERSION
+            fi
+            VERSION="$BETA_TAG"
         fi
-        VERSION="$BETA_TAG"
-    fi
-else
-    echo "==> Resolving latest stable version..."
-    if [ -z "$VERSION" ]; then
-        LATEST_VERSION=$(curl -fsSL --connect-timeout 5 --max-time 10 \
-            "${COS_BASE_CN}/latest-version.txt" 2>/dev/null || true)
-        if [ -z "$LATEST_VERSION" ]; then
-            echo "ERROR: Could not resolve latest version (COS version file unreachable)."
-            echo "       Check ${COS_BASE_CN}/latest-version.txt"
-            exit 1
-        fi
-        VERSION="$LATEST_VERSION"
-    fi
-fi
-
-INSTALL_DIR="${INSTALL_DIR:-${HOME}/${HOME_DIR}/bin}"
-JAR_NAME="${LOWER_NAME}-assembly-${VERSION}.jar"
-COS_URL="${COS_BASE_CN}/${JAR_NAME}"
-
-echo ""
-echo "  ███╗   ██╗███████╗██████╗ ███████╗██╗      ██████╗ ██╗    ██╗"
-echo "  ████╗  ██║██╔════╝██╔══██╗██╔════╝██║     ██╔═══██╗██║    ██║"
-echo "  ██╔██╗ ██║█████╗  ██████╔╝█████╗  ██║     ██║   ██║██║ █╗ ██║"
-echo "  ██║╚██╗██║██╔══╝  ██╔══██╗██╔══╝  ██║     ██║   ██║██║███╗██║"
-echo "  ██║ ╚████║███████╗██████╔╝██║     ███████╗╚██████╔╝╚███╔███╔╝"
-echo "  ╚═╝  ╚═══╝╚══════╝╚═════╝ ╚═╝     ╚══════╝ ╚═════╝  ╚══╝╚══╝"
-echo ""
-echo "  ${PRODUCT_NAME} v${VERSION} Installer (${CHANNEL})"
-echo ""
-
-# Check Java version — auto-install if missing or too old
-check_java() {
-    _java_ok() {
-        command -v java &> /dev/null || return 1
-        local v
-        v=$(java -version 2>&1 | awk -F '"' '/version/ {print $2}' | cut -d'.' -f1)
-        [ "$v" = "1" ] && v=$(java -version 2>&1 | awk -F '"' '/version/ {print $2}' | cut -d'.' -f2)
-        [ "$v" -ge 17 ] 2>/dev/null
-    }
-
-    if _java_ok; then
-        echo "    Java: $(java -version 2>&1 | head -n1)"
-        return 0
-    fi
-
-    detect_os
-    echo "==> Java 17+ not found. Installing automatically..."
-
-    case "$OS_FAMILY" in
-        mac)
-            if command -v brew &> /dev/null; then
-                echo "    Installing OpenJDK 21 via Homebrew..."
-                brew install --quiet openjdk@21 2>&1 || {
-                    echo "ERROR: brew install failed. Please install JDK 17+ manually:"
-                    echo "  https://adoptium.net/temurin/releases/?version=21&os=mac"
-                    exit 1
-                }
-                # brew openjdk@21 needs symlink on macOS
-                if [ -d "/opt/homebrew/opt/openjdk@21" ]; then
-                    sudo ln -sfn /opt/homebrew/opt/openjdk@21/libexec/openjdk.jdk /Library/Java/JavaVirtualMachines/openjdk-21.jdk 2>/dev/null || true
-                    export PATH="/opt/homebrew/opt/openjdk@21/bin:$PATH"
-                elif [ -d "/usr/local/opt/openjdk@21" ]; then
-                    sudo ln -sfn /usr/local/opt/openjdk@21/libexec/openjdk.jdk /Library/Java/JavaVirtualMachines/openjdk-21.jdk 2>/dev/null || true
-                    export PATH="/usr/local/opt/openjdk@21/bin:$PATH"
-                fi
-            else
-                echo "    Homebrew not found. Installing Homebrew first..."
-                /bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)" 2>&1 || {
-                    echo "ERROR: Could not install Homebrew. Please install JDK 17+ manually:"
-                    echo "  https://adoptium.net/temurin/releases/?version=21&os=mac"
-                    exit 1
-                }
-                echo "    Installing OpenJDK 21 via Homebrew..."
-                brew install --quiet openjdk@21 2>&1 || {
-                    echo "ERROR: brew install failed. Please install JDK 17+ manually."
-                    exit 1
-                }
-                if [ -d "/opt/homebrew/opt/openjdk@21" ]; then
-                    export PATH="/opt/homebrew/opt/openjdk@21/bin:$PATH"
-                elif [ -d "/usr/local/opt/openjdk@21" ]; then
-                    export PATH="/usr/local/opt/openjdk@21/bin:$PATH"
-                fi
-            fi
-            ;;
-        linux)
-            local installed=false
-            if command -v apt-get &> /dev/null; then
-                echo "    Installing OpenJDK 21 via apt..."
-                sudo apt-get update -qq && sudo apt-get install -y openjdk-21-jdk-headless 2>&1 || true
-                installed=true
-            elif command -v dnf &> /dev/null; then
-                echo "    Installing OpenJDK 21 via dnf..."
-                sudo dnf install -y java-21-openjdk-devel 2>&1 || true
-                installed=true
-            elif command -v yum &> /dev/null; then
-                echo "    Installing OpenJDK 21 via yum..."
-                sudo yum install -y java-21-openjdk-devel 2>&1 || true
-                installed=true
-            elif command -v apk &> /dev/null; then
-                echo "    Installing OpenJDK 21 via apk..."
-                sudo apk add --no-cache openjdk21 2>&1 || true
-                installed=true
-            fi
-
-            if [ "$installed" = false ] || ! _java_ok; then
-                # Fallback: portable Adoptium Tarball
-                echo "    Package manager unavailable or failed. Downloading Temurin JDK 21..."
-                local arch=$(uname -m)
-                local jdk_arch="x64"
-                case "$arch" in
-                    aarch64|arm64) jdk_arch="aarch64" ;;
-                esac
-                local jdk_url="https://api.adoptium.net/v3/binary/latest/21/ga/linux/${jdk_arch}/jdk/hotspot/normal/eclipse"
-                local jdk_dir="${HOME}/${HOME_DIR}/jdk-21"
-                mkdir -p "${HOME}/${HOME_DIR}"
-                local tmp_tar=$(mktemp /tmp/${LOWER_NAME}-jdk-XXXXXX.tar.gz)
-                if curl -fsSL --connect-timeout 10 --max-time 120 "$jdk_url" -o "$tmp_tar"; then
-                    tar xzf "$tmp_tar" -C "${HOME}/${HOME_DIR}" 2>/dev/null
-                    rm -f "$tmp_tar"
-                    local extracted=$(ls -d "${HOME}"/${HOME_DIR}/jdk-21* 2>/dev/null | head -1)
-                    if [ -n "$extracted" ]; then
-                        mv "$extracted" "$jdk_dir" 2>/dev/null || true
-                        export PATH="$jdk_dir/bin:$PATH"
-                        export JAVA_HOME="$jdk_dir"
-                    fi
-                else
-                    rm -f "$tmp_tar"
-                fi
-            fi
-            ;;
-        *)
-            echo "ERROR: Cannot auto-install Java on this platform."
-            echo "  Please install JDK 17+ manually: https://adoptium.net/"
-            exit 1
-            ;;
-    esac
-
-    # Verify installation succeeded
-    if _java_ok; then
-        echo "    Java installed: $(java -version 2>&1 | head -n1)"
     else
-        echo "ERROR: Java auto-install did not succeed."
-        echo "  Please install JDK 17+ manually: https://adoptium.net/"
-        exit 1
+        log_i "Resolving latest stable version..."
+        if [ -z "$VERSION" ]; then
+            LATEST_VERSION=$(curl -fsSL --connect-timeout 5 --max-time 10 \
+                "${COS_BASE_CN}/latest-version.txt" 2>/dev/null || true)
+            if [ -z "$LATEST_VERSION" ]; then
+                log_err "Could not resolve latest version (COS version file unreachable)."
+                log_err "Check ${COS_BASE_CN}/latest-version.txt"
+                exit $ERR_VERSION
+            fi
+            VERSION="$LATEST_VERSION"
+        fi
     fi
+    log_v "Resolved VERSION=${VERSION} (channel=${CHANNEL})"
 }
 
+INSTALL_DIR="${INSTALL_DIR:-${HOME}/${HOME_DIR}/bin}"
+
+print_banner() {
+    echo ""
+    echo "  ███╗   ██╗███████╗██████╗ ███████╗██╗      ██████╗ ██╗    ██╗"
+    echo "  ████╗  ██║██╔════╝██╔══██╗██╔════╝██║     ██╔═══██╗██║    ██║"
+    echo "  ██╔██╗ ██║█████╗  ██████╔╝█████╗  ██║     ██║   ██║██║ █╗ ██║"
+    echo "  ██║╚██╗██║██╔══╝  ██╔══██╗██╔══╝  ██║     ██║   ██║██║███╗██║"
+    echo "  ██║ ╚████║███████╗██████╔╝██║     ███████╗╚██████╔╝╚███╔███╔╝"
+    echo "  ╚═╝  ╚═══╝╚══════╝╚═════╝ ╚═╝     ╚══════╝ ╚═════╝  ╚══╝╚══╝"
+    echo ""
+    echo "  ${PRODUCT_NAME} v${VERSION} Installer (${CHANNEL})"
+    echo ""
+}
+
+# ---- [1/6] environment ----------------------------------------------------
 detect_os() {
     local uname_out="$(uname -s 2>/dev/null)"
     case "$uname_out" in
@@ -193,6 +114,13 @@ detect_os() {
         Linux*)  OS_FAMILY="linux" ;;
         MINGW*|MSYS*|CYGWIN*) OS_FAMILY="windows" ;;
         *)       OS_FAMILY="unknown" ;;
+    esac
+}
+
+detect_arch() {
+    case "$(uname -m)" in
+        arm64|aarch64) ARCH="arm64" ;;
+        *)             ARCH="x64" ;;
     esac
 }
 
@@ -243,31 +171,367 @@ detect_region() {
     fi
 }
 
-# Download with automatic source selection
-download_jar() {
-    local target="${INSTALL_DIR}/${JAR_NAME}"
-    mkdir -p "${INSTALL_DIR}"
-
-    echo "==> Downloading ${JAR_NAME}..."
-
-    # Remove old JAR files (keep user data untouched)
-    local old_jars
-    old_jars=$(ls "${INSTALL_DIR}"/${LOWER_NAME}-assembly-*.jar "${INSTALL_DIR}"/nebflow-assembly-*.jar 2>/dev/null || true)
-    if [ -n "$old_jars" ]; then
-        echo "    Removing old version(s)..."
-        rm -f "${INSTALL_DIR}"/${LOWER_NAME}-assembly-*.jar "${INSTALL_DIR}"/nebflow-assembly-*.jar
+detect_pkg_mgr() {
+    PKG_MGR=""
+    local m
+    for m in apt-get dnf yum apk; do
+        if command -v "$m" > /dev/null 2>&1; then PKG_MGR="$m"; break; fi
+    done
+    if [ -n "$PKG_MGR" ]; then
+        log_i "Package manager: ${PKG_MGR}"
+    else
+        log_v "No known package manager found (apt/dnf/yum/apk)"
     fi
+}
 
+stage_env() {
+    stage_hdr 1 "Checking environment..."
+    detect_os
+    detect_arch
+    log_i "OS: ${OS_FAMILY} (${ARCH})"
+    if [ "$OS_FAMILY" = "unknown" ]; then
+        log_err "Unsupported platform: $(uname -s 2>/dev/null || echo unknown)"
+        exit 1
+    fi
+    if [ "$OS_FAMILY" = "windows" ]; then
+        log_err "Windows detected - use install.ps1 (PowerShell) instead of install.sh."
+        exit 1
+    fi
     detect_region
-    echo "    Region: ${REGION} (use --cn or --global to override)"
+    log_i "Region: ${REGION} (use --cn or --global to override)"
+    if [ "$OS_FAMILY" = "linux" ]; then
+        detect_pkg_mgr
+    fi
+}
 
-    # #29: 仓库 private 后 GitHub Releases 未认证 404——COS 单一源
-    if _download "${COS_URL}" "${target}"; then
+# ---- [2/6] dependencies ---------------------------------------------------
+
+_java_ok() {
+    command -v java &> /dev/null || return 1
+    local v
+    v=$(java -version 2>&1 | awk -F '"' '/version/ {print $2}' | cut -d'.' -f1)
+    [ "$v" = "1" ] && v=$(java -version 2>&1 | awk -F '"' '/version/ {print $2}' | cut -d'.' -f2)
+    [ "$v" -ge "$JDK_MAJOR_REQUIRED" ] 2>/dev/null
+}
+
+java_manual_hint() {
+    log_err "Manual install: https://adoptium.net/temurin/releases/?version=21"
+    log_err "Then re-run this installer."
+}
+
+# Region-gated Homebrew mirror combo (cn): the mirror installer only solves
+# step 1 (bootstrap); brew's own git repos must also point at the TUNA
+# mirror, and the bottle domain redirects package payloads. All three are
+# environment variables consumed by brew at runtime.
+configure_homebrew_mirrors() {
+    if [ "$REGION" = "cn" ]; then
+        export HOMEBREW_BREW_GIT_REMOTE="https://mirrors.tuna.tsinghua.edu.cn/git/homebrew/brew.git"
+        export HOMEBREW_CORE_GIT_REMOTE="https://mirrors.tuna.tsinghua.edu.cn/git/homebrew/homebrew-core.git"
+        export HOMEBREW_BOTTLE_DOMAIN="https://mirrors.tuna.tsinghua.edu.cn/homebrew-bottles"
+        log_v "Homebrew cn mirrors set (brew/core git remotes + bottle domain: TUNA)"
+    fi
+}
+
+ensure_brew() {
+    command -v brew > /dev/null 2>&1 && return 0
+    log_i "Homebrew not found. Installing..."
+    # Xcode CLT is a Homebrew prerequisite; trigger it if absent
+    if ! xcode-select -p > /dev/null 2>&1; then
+        log_warn "Xcode Command Line Tools missing - triggering install (a dialog may appear; re-run this script after it finishes)."
+        xcode-select --install > /dev/null 2>&1 || true
+    fi
+    configure_homebrew_mirrors
+    local used_mirror=0
+    if [ "$REGION" = "cn" ] && command -v git > /dev/null 2>&1; then
+        log_i "Fetching Homebrew installer from TUNA mirror (cn)..."
+        rm -rf /tmp/${LOWER_NAME}-homebrew-install
+        if git clone --depth 1 https://mirrors.tuna.tsinghua.edu.cn/git/homebrew/install.git \
+            /tmp/${LOWER_NAME}-homebrew-install > /dev/null 2>&1; then
+            if bash /tmp/${LOWER_NAME}-homebrew-install/install.sh; then used_mirror=1; fi
+            rm -rf /tmp/${LOWER_NAME}-homebrew-install
+        fi
+    fi
+    if [ "$used_mirror" = "0" ]; then
+        log_i "Fetching official Homebrew installer..."
+        /bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)" || return 1
+    fi
+    # Make brew visible in this session (Apple Silicon vs Intel prefix)
+    if [ -x /opt/homebrew/bin/brew ]; then
+        eval "$(/opt/homebrew/bin/brew shellenv)" 2>/dev/null || export PATH="/opt/homebrew/bin:$PATH"
+    elif [ -x /usr/local/bin/brew ]; then
+        eval "$(/usr/local/bin/brew shellenv)" 2>/dev/null || export PATH="/usr/local/bin:$PATH"
+    fi
+    command -v brew > /dev/null 2>&1
+}
+
+link_brew_jdk() {
+    # brew openjdk@21 needs a symlink into /Library/Java/JavaVirtualMachines
+    local prefix
+    if [ -d "/opt/homebrew/opt/openjdk@21" ]; then
+        prefix="/opt/homebrew"
+    elif [ -d "/usr/local/opt/openjdk@21" ]; then
+        prefix="/usr/local"
+    else
         return 0
     fi
-    echo "ERROR: Download failed from COS. Check ${COS_URL}"
-    exit 1
+    sudo ln -sfn "${prefix}/opt/openjdk@21/libexec/openjdk.jdk" \
+        /Library/Java/JavaVirtualMachines/openjdk-21.jdk 2>/dev/null || true
+    export PATH="${prefix}/opt/openjdk@21/bin:$PATH"
 }
+
+ensure_java_mac() {
+    ensure_brew || {
+        log_err "Could not install Homebrew; cannot install JDK automatically."
+        java_manual_hint
+        exit $ERR_JAVA
+    }
+    log_i "Installing OpenJDK 21 via Homebrew..."
+    if ! brew install --quiet openjdk@21; then
+        log_err "brew install openjdk@21 failed."
+        java_manual_hint
+        exit $ERR_JAVA
+    fi
+    link_brew_jdk
+}
+
+ensure_java_linux_tarball() {
+    # Portable Adoptium tarball fallback (distro packages unavailable/failed)
+    local jdk_arch="x64"
+    [ "$ARCH" = "arm64" ] && jdk_arch="aarch64"
+    local jdk_url="https://api.adoptium.net/v3/binary/latest/21/ga/linux/${jdk_arch}/jdk/hotspot/normal/eclipse"
+    local jdk_dir="${HOME}/${HOME_DIR}/jdk-21"
+    mkdir -p "${HOME}/${HOME_DIR}"
+    local tmp_tar
+    tmp_tar=$(mktemp /tmp/${LOWER_NAME}-jdk-XXXXXX.tar.gz)
+    if curl -fsSL --connect-timeout 10 --max-time 120 "$jdk_url" -o "$tmp_tar"; then
+        tar xzf "$tmp_tar" -C "${HOME}/${HOME_DIR}" 2>/dev/null
+        rm -f "$tmp_tar"
+        local extracted
+        extracted=$(ls -d "${HOME}"/${HOME_DIR}/jdk-21* 2>/dev/null | head -1)
+        if [ -n "$extracted" ]; then
+            mv "$extracted" "$jdk_dir" 2>/dev/null || true
+            export PATH="$jdk_dir/bin:$PATH"
+            export JAVA_HOME="$jdk_dir"
+            return 0
+        fi
+    else
+        rm -f "$tmp_tar"
+    fi
+    return 1
+}
+
+ensure_java_linux() {
+    local installed_any=0
+    case "$PKG_MGR" in
+        apt-get)
+            log_i "Installing OpenJDK 21 via apt..."
+            sudo apt-get update -qq && sudo apt-get install -y openjdk-21-jdk-headless 2>&1 || true
+            installed_any=1
+            ;;
+        dnf)
+            log_i "Installing OpenJDK 21 via dnf..."
+            sudo dnf install -y java-21-openjdk-devel 2>&1 || true
+            installed_any=1
+            ;;
+        yum)
+            log_i "Installing OpenJDK 21 via yum..."
+            sudo yum install -y java-21-openjdk-devel 2>&1 || true
+            installed_any=1
+            ;;
+        apk)
+            log_i "Installing OpenJDK 21 via apk..."
+            sudo apk add --no-cache openjdk21 2>&1 || true
+            installed_any=1
+            ;;
+    esac
+    log_v "pkg-mgr install attempted=${installed_any}"
+    if ! _java_ok; then
+        log_i "Package manager unavailable or failed - falling back to Temurin JDK 21 tarball..."
+        if ! ensure_java_linux_tarball; then
+            log_err "Java auto-install did not succeed."
+            java_manual_hint
+            exit $ERR_JAVA
+        fi
+    fi
+}
+
+ensure_java() {
+    if _java_ok; then
+        log_ok "Java: $(java -version 2>&1 | head -n1)"
+        return 0
+    fi
+    log_i "Java ${JDK_MAJOR_REQUIRED}+ not found. Installing OpenJDK 21..."
+    case "$OS_FAMILY" in
+        mac)   ensure_java_mac ;;
+        linux) ensure_java_linux ;;
+    esac
+    if _java_ok; then
+        log_ok "Java installed: $(java -version 2>&1 | head -n1)"
+    else
+        log_err "Java auto-install did not succeed."
+        java_manual_hint
+        exit $ERR_JAVA
+    fi
+}
+
+ensure_curl() {
+    if command -v curl &> /dev/null; then
+        log_v "curl: $(curl --version 2>/dev/null | head -1 | cut -d' ' -f1-2)"
+        return 0
+    fi
+    if command -v wget &> /dev/null; then
+        log_warn "curl missing - wget found, downloads will use wget."
+        return 0
+    fi
+    log_i "Installing curl..."
+    case "$PKG_MGR" in
+        apt-get) sudo apt-get update -qq && sudo apt-get install -y curl 2>&1 || true ;;
+        dnf)     sudo dnf install -y curl 2>&1 || true ;;
+        yum)     sudo yum install -y curl 2>&1 || true ;;
+        apk)     sudo apk add --no-cache curl 2>&1 || true ;;
+    esac
+    if command -v curl &> /dev/null || command -v wget &> /dev/null; then
+        log_ok "Downloader available."
+    else
+        log_err "Neither curl nor wget is available and none could be installed."
+        exit $ERR_CURL
+    fi
+}
+
+rg_soft_fail() {
+    # Non-fatal: search falls back to a PATH-installed rg at runtime
+    log_warn "rg could not be installed automatically - search support may be degraded."
+    if [ "$OS_FAMILY" = "mac" ]; then
+        log_warn "Manual install: brew install ripgrep"
+    else
+        log_warn "Manual install: ${PKG_MGR:-apt-get} install ripgrep"
+    fi
+    log_warn "Manual download: https://github.com/BurntSushi/ripgrep/releases/tag/v${RG_VERSION}"
+}
+
+_install_rg_tarball() {
+    # $1 = upstream platform suffix (apple-darwin | unknown-linux-musl)
+    local url="https://github.com/BurntSushi/ripgrep/releases/download/${RG_VERSION}/ripgrep-${RG_VERSION}-${1}.tar.gz"
+    local tmp_archive tmp_dir rg_bin
+    tmp_archive=$(mktemp)
+    tmp_dir=$(mktemp -d)
+    log_i "Downloading rg ${RG_VERSION} (${1})..."
+    if ! _download "$url" "$tmp_archive"; then
+        local mirror_url="https://ghproxy.net/${url}"
+        log_i "GitHub unreachable, trying mirror..."
+        if ! _download "$mirror_url" "$tmp_archive"; then
+            rm -rf "$tmp_archive" "$tmp_dir"
+            return 1
+        fi
+    fi
+    # Portable extraction (GNU tar AND bsdtar): unpack, then find the binary
+    if tar xzf "$tmp_archive" -C "$tmp_dir" 2>/dev/null; then
+        rg_bin=$(find "$tmp_dir" -type f -name rg -perm -u+x 2>/dev/null | head -1)
+        [ -z "$rg_bin" ] && rg_bin=$(find "$tmp_dir" -type f -name rg 2>/dev/null | head -1)
+        if [ -n "$rg_bin" ]; then
+            cp "$rg_bin" "${INSTALL_DIR}/rg" && chmod +x "${INSTALL_DIR}/rg"
+        fi
+    fi
+    rm -rf "$tmp_archive" "$tmp_dir"
+    if [ -x "${INSTALL_DIR}/rg" ]; then
+        log_ok "rg installed to ${INSTALL_DIR}/rg"
+        return 0
+    fi
+    return 1
+}
+
+_install_rg_distro() {
+    case "$PKG_MGR" in
+        apt-get) sudo apt-get update -qq && sudo apt-get install -y ripgrep 2>&1 || true ;;
+        dnf)     sudo dnf install -y ripgrep 2>&1 || true ;;
+        yum)     sudo yum install -y ripgrep 2>&1 || true ;;
+        apk)     sudo apk add --no-cache ripgrep 2>&1 || true ;;
+        *)       return 1 ;;
+    esac
+    command -v rg > /dev/null 2>&1
+}
+
+ensure_rg() {
+    if [ -x "${INSTALL_DIR}/rg" ]; then
+        log_ok "rg: cached at ${INSTALL_DIR}/rg"
+        return 0
+    fi
+    if command -v rg &> /dev/null; then
+        log_ok "rg: $(rg --version 2>/dev/null | head -1)"
+        return 0
+    fi
+    log_i "Installing ripgrep (rg) for search support..."
+    local installed=0
+    case "$OS_FAMILY" in
+        mac)
+            if [ "$ARCH" = "arm64" ]; then
+                _install_rg_tarball "aarch64-apple-darwin" && installed=1
+            else
+                _install_rg_tarball "x86_64-apple-darwin" && installed=1
+            fi
+            ;;
+        linux)
+            if [ "$ARCH" = "arm64" ]; then
+                # No official aarch64-linux tarball upstream (verified 404,
+                # 2026-09-06) - use the distro package instead.
+                if _install_rg_distro; then installed=1; log_ok "rg installed via ${PKG_MGR}"; fi
+            else
+                if _install_rg_tarball "x86_64-unknown-linux-musl"; then
+                    installed=1
+                elif _install_rg_distro; then
+                    installed=1; log_ok "rg installed via ${PKG_MGR}"
+                fi
+            fi
+            ;;
+    esac
+    if [ "$installed" = "0" ]; then
+        rg_soft_fail
+    fi
+}
+
+# Download Whisper voice model for offline speech recognition (best-effort)
+install_voice_model() {
+    local model_dir="${HOME}/${HOME_DIR}/voice-models/onnx-community/whisper-base"
+    if [ -f "$model_dir/onnx/encoder_model_quantized.onnx" ]; then
+        log_v "Voice model already installed."
+        return 0
+    fi
+
+    local base
+    if [ "$REGION" = "cn" ]; then
+        base="https://hf-mirror.com/onnx-community/whisper-base/resolve/main"
+    else
+        base="https://huggingface.co/onnx-community/whisper-base/resolve/main"
+    fi
+    log_i "Downloading Whisper voice model (~75MB, one-time)..."
+    mkdir -p "$model_dir/onnx"
+
+    # Config files (small)
+    local f
+    for f in config.json tokenizer.json generation_config.json preprocessor_config.json; do
+        _download "$base/$f" "$model_dir/$f" 2>/dev/null || true
+    done
+
+    # Quantized ONNX models (encoder ~22MB + decoder ~51MB)
+    local ok=true
+    _download "$base/onnx/encoder_model_quantized.onnx" "$model_dir/onnx/encoder_model_quantized.onnx" || ok=false
+    _download "$base/onnx/decoder_model_merged_quantized.onnx" "$model_dir/onnx/decoder_model_merged_quantized.onnx" || ok=false
+    if $ok; then
+        log_ok "Voice model installed."
+    else
+        log_warn "Voice model download failed (voice will use CDN on first use)."
+    fi
+}
+
+stage_deps() {
+    stage_hdr 2 "Checking dependencies..."
+    ensure_curl
+    ensure_java
+    ensure_rg
+    install_voice_model
+}
+
+# ---- [3/6] jar ------------------------------------------------------------
 
 _download() {
     local url="$1" target="$2"
@@ -276,60 +540,49 @@ _download() {
     elif command -v wget &> /dev/null; then
         wget --connect-timeout=10 --timeout=120 -q "${url}" -O "${target}"
     else
-        echo "ERROR: curl or wget is required."
-        exit 1
+        log_err "curl or wget is required."
+        exit $ERR_CURL
     fi
 }
 
-# Install ripgrep (rg) for Glob/Grep search support
-install_rg() {
-    local rg_local="${INSTALL_DIR}/rg"
-    if [ -f "$rg_local" ]; then
+download_jar() {
+    stage_hdr 3 "Downloading ${PRODUCT_NAME} v${VERSION}..."
+    # Version-dependent names are computed here (VERSION resolves in
+    # resolve_version, before this stage runs).
+    JAR_NAME="${LOWER_NAME}-assembly-${VERSION}.jar"
+    COS_URL="${COS_BASE_CN}/${JAR_NAME}"
+    local target="${INSTALL_DIR}/${JAR_NAME}"
+    mkdir -p "${INSTALL_DIR}"
+
+    # Idempotency: same version already in place -> skip (no re-download)
+    if [ -f "${target}" ]; then
+        log_ok "Already up-to-date (v${VERSION})."
         return 0
     fi
 
-    echo "==> Installing ripgrep (rg) for search support..."
-    local os arch url rg_ver="14.1.1"
-    os="$(uname -s | tr '[:upper:]' '[:lower:]')"
-    arch="$(uname -m)"
-    case "$os" in
-        linux)  url="https://github.com/BurntSushi/ripgrep/releases/download/$rg_ver/ripgrep-$rg_ver-x86_64-unknown-linux-musl.tar.gz" ;;
-        darwin)
-            if [ "$arch" = "arm64" ] || [ "$arch" = "aarch64" ]; then
-                url="https://github.com/BurntSushi/ripgrep/releases/download/$rg_ver/ripgrep-$rg_ver-aarch64-apple-darwin.tar.gz"
-            else
-                url="https://github.com/BurntSushi/ripgrep/releases/download/$rg_ver/ripgrep-$rg_ver-x86_64-apple-darwin.tar.gz"
-            fi
-            ;;
-        *) echo "       Skipping rg auto-install on $os" ; return 0 ;;
-    esac
-    local tmp_archive=$(mktemp)
-    echo "       Downloading rg ${rg_ver}..."
-    if _download "$url" "$tmp_archive"; then
-        true
-    else
-        local mirror_url="https://ghproxy.net/${url}"
-        echo "       GitHub timeout, trying mirror..."
-        _download "$mirror_url" "$tmp_archive"
+    # Remove old JAR files (keep user data untouched)
+    local old_jars
+    old_jars=$(ls "${INSTALL_DIR}"/${LOWER_NAME}-assembly-*.jar "${INSTALL_DIR}"/nebflow-assembly-*.jar 2>/dev/null || true)
+    if [ -n "$old_jars" ]; then
+        log_i "Removing old version(s)..."
+        rm -f "${INSTALL_DIR}"/${LOWER_NAME}-assembly-*.jar "${INSTALL_DIR}"/nebflow-assembly-*.jar
     fi
-    if [ -s "$tmp_archive" ]; then
-        tar xzf "$tmp_archive" --to-stdout --wildcards "*/rg" > "$rg_local" 2>/dev/null && chmod +x "$rg_local"
-        rm -f "$tmp_archive"
-        if [ -f "$rg_local" ]; then
-            echo "       rg installed to $rg_local"
-        else
-            echo "       rg extraction failed (tar may not support --wildcards)"
-        fi
-    else
-        rm -f "$tmp_archive"
-        echo "       rg download failed (search will rely on PATH install)"
+
+    # #29: 仓库 private 后 GitHub Releases 未认证 404——COS 单一源
+    if _download "${COS_URL}" "${target}"; then
+        log_ok "Downloaded ${JAR_NAME} from COS."
+        return 0
     fi
+    log_err "Download failed from COS. Check ${COS_URL}"
+    exit $ERR_JAR
 }
+
+# ---- [4/6] wrapper + PATH -------------------------------------------------
 
 # Create wrapper script
 create_wrapper() {
     local wrapper="${INSTALL_DIR}/${WRAPPER_NAME}"
-    echo "==> Creating wrapper script..."
+    log_i "Creating wrapper script..."
     # Unquoted delimiter: ${LOWER_NAME}/${PRODUCT_NAME} expand NOW (generation
     # time, from the brand block above); runtime expansions are escaped as \$.
     # (Bug fix: the old quoted 'WRAPPER' delimiter emitted the variables as
@@ -337,27 +590,16 @@ create_wrapper() {
     cat > "${wrapper}" << WRAPPER
 #!/bin/bash
 SCRIPT_DIR="\$(cd "\$(dirname "\$0")" && pwd)"
+JAVA_BIN="\$(command -v java || echo "\$HOME/${HOME_DIR}/jdk-21/bin/java")"
 JAR=\$(ls -1 "\${SCRIPT_DIR}"/${LOWER_NAME}-assembly-*.jar 2>/dev/null | head -n1)
 if [ -z "\$JAR" ]; then
     echo "ERROR: ${PRODUCT_NAME} JAR not found in \${SCRIPT_DIR}"
     exit 1
 fi
-exec java --add-opens java.base/java.lang=ALL-UNNAMED -jar "\$JAR" "\$@"
+exec "\$JAVA_BIN" --add-opens java.base/java.lang=ALL-UNNAMED -jar "\$JAR" "\$@"
 WRAPPER
     chmod +x "${wrapper}"
-}
-
-# Create config template
-create_config() {
-    local config_dir="${HOME}/${HOME_DIR}"
-    local config_file="${config_dir}/${CONFIG_FILE}"
-    if [ ! -f "${config_file}" ]; then
-        echo "==> Creating default config at ${config_file}..."
-        mkdir -p "${config_dir}"
-        echo '{}' > "${config_file}"
-        echo "    Config created: ${config_file}"
-        echo "    Run '${WRAPPER_NAME}' to start using the CLI."
-    fi
+    log_ok "Wrapper created: ${wrapper}"
 }
 
 # Add install dir to PATH in shell profile
@@ -374,56 +616,78 @@ setup_path() {
         echo "" >> "$profile"
         echo "# Added by ${PRODUCT_NAME} installer" >> "$profile"
         echo "export PATH=\"\$HOME/${HOME_DIR}/bin:\$PATH\"" >> "$profile"
-        echo "    Added ~/${HOME_DIR}/bin to PATH in $profile"
+        log_i "Added ~/${HOME_DIR}/bin to PATH in $profile"
+    else
+        log_v "PATH already configured."
     fi
 }
 
-# Download Whisper voice model for offline speech recognition
-install_voice_model() {
-    local model_dir="${HOME}/${HOME_DIR}/voice-models/onnx-community/whisper-base"
-    if [ -f "$model_dir/onnx/encoder_model_quantized.onnx" ]; then
-        echo "    Voice model already installed."
-        return 0
-    fi
+stage_wrapper() {
+    stage_hdr 4 "Writing launcher and PATH..."
+    create_wrapper
+    setup_path
+}
 
-    detect_region
-    local base
-    if [ "$REGION" = "cn" ]; then
-        base="https://hf-mirror.com/onnx-community/whisper-base/resolve/main"
+# ---- [5/6] config ---------------------------------------------------------
+
+# Create config template
+create_config() {
+    local config_dir="${HOME}/${HOME_DIR}"
+    local config_file="${config_dir}/${CONFIG_FILE}"
+    if [ ! -f "${config_file}" ]; then
+        log_i "Creating default config at ${config_file}..."
+        mkdir -p "${config_dir}"
+        echo '{}' > "${config_file}"
+        log_ok "Config created: ${config_file}"
     else
-        base="https://huggingface.co/onnx-community/whisper-base/resolve/main"
-    fi
-    echo "==> Downloading Whisper voice model (~75MB, one-time)..."
-    mkdir -p "$model_dir/onnx"
-
-    # Config files (small)
-    local f
-    for f in config.json tokenizer.json generation_config.json preprocessor_config.json; do
-        _download "$base/$f" "$model_dir/$f" 2>/dev/null || true
-    done
-
-    # Quantized ONNX models (encoder ~22MB + decoder ~51MB)
-    local ok=true
-    _download "$base/onnx/encoder_model_quantized.onnx" "$model_dir/onnx/encoder_model_quantized.onnx" || ok=false
-    _download "$base/onnx/decoder_model_merged_quantized.onnx" "$model_dir/onnx/decoder_model_merged_quantized.onnx" || ok=false
-    if $ok; then
-        echo "       Voice model installed."
-    else
-        echo "       Voice model download failed (voice will use CDN on first use)."
+        log_v "Config already exists."
     fi
 }
 
-# Run
-check_java
+# Installer manifest (SCRIPT_VERSION + environment) for `nebflow update`
+# and diagnostics. Overwritten on each (re)install.
+write_manifest() {
+    local manifest="${HOME}/${HOME_DIR}/install-manifest.json"
+    mkdir -p "${HOME}/${HOME_DIR}"
+    cat > "${manifest}" << MANIFEST
+{
+  "scriptVersion": "${SCRIPT_VERSION}",
+  "product": "${PRODUCT_NAME}",
+  "version": "${VERSION}",
+  "channel": "${CHANNEL}",
+  "region": "${REGION}",
+  "os": "${OS_FAMILY}",
+  "arch": "${ARCH}",
+  "installDir": "${INSTALL_DIR}",
+  "installedAt": "$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+}
+MANIFEST
+    log_v "Manifest written: ${manifest}"
+}
+
+stage_config() {
+    stage_hdr 5 "Setting up config..."
+    create_config
+    write_manifest
+}
+
+# ---- [6/6] done -----------------------------------------------------------
+
+stage_finish() {
+    stage_hdr 6 "Done!"
+    echo ""
+    echo "[ok] ${PRODUCT_NAME} v${VERSION} installed."
+    echo "     Run: ${WRAPPER_NAME} --help"
+    echo "     Config: ~/${HOME_DIR}/${CONFIG_FILE}"
+    echo "     Please restart your terminal or run: export PATH=\"\$HOME/${HOME_DIR}/bin:\$PATH\""
+}
+
+# ---- pipeline -------------------------------------------------------------
+resolve_version
+print_banner
+stage_env
+stage_deps
 download_jar
-install_rg
-install_voice_model
-create_wrapper
-create_config
-setup_path
-
-echo ""
-echo "==> Done! ${PRODUCT_NAME} v${VERSION} installed."
-echo "    Run: ${WRAPPER_NAME} --help"
-echo "    Config: ~/${HOME_DIR}/${CONFIG_FILE}"
-echo "    Please restart your terminal or run: export PATH=\"\$HOME/${HOME_DIR}/bin:\$PATH\""
+stage_wrapper
+stage_config
+stage_finish
