@@ -1,8 +1,10 @@
 package nebflow.core.tools
 
 import cats.effect.IO
+import cats.syntax.foldable.toFoldableOps
 import io.circe.syntax.*
 import io.circe.{Json, JsonObject}
+import nebflow.agent.SharedResources
 import nebflow.core.scheduler.ScheduledTask
 
 import java.time.{Instant, LocalDate, LocalDateTime, OffsetDateTime, ZoneId, ZonedDateTime}
@@ -11,8 +13,9 @@ object ScheduleTool extends Tool:
   val name = "Schedule"
 
   val description =
-    """Schedule a task to fire at a specified time, optionally recurring. At the scheduled
-time the content is injected into your conversation as an instruction — you then execute it.
+    """Schedule a task to fire at a specified time, optionally recurring — or manage existing
+tasks (list / cancel). At the scheduled time the content is injected into your conversation
+as an instruction — you then execute it.
 
 ## When to Use
 
@@ -22,19 +25,36 @@ time the content is injected into your conversation as an instruction — you th
 - 高峰规避 — avoid peak LLM pricing hours ("at 09:00 tomorrow, run the batch analysis")
 - 用户提醒 — remind the user about something at a future time
 
+## Actions (optional `action` field, default "create")
+
+- **create** (default): schedule new content at triggerAt. If `name` is set, creating with a
+  name that already exists REPLACES the existing task instead of stacking a duplicate
+  (upsert). ALWAYS use a fixed, descriptive name for routine/recurring tasks (e.g.
+  "dream-daily-review") — re-arming the same routine after a restart then converges to a
+  single copy instead of stacking duplicates.
+- **list**: show ALL pending tasks across all sessions — id, name, trigger time, repeat,
+  status (active / PAUSED). Call this before re-arming a routine task: if it already exists,
+  don't create a copy.
+- **cancel**: remove a task by id (works across sessions). A cancelled task never fires and
+  disappears from list immediately.
+
 ## Fields
 
-- **content** (required): Task content — a natural-language instruction describing what you
+- **action** (optional): "create" (default) | "list" | "cancel"
+- **content** (create): Task content — a natural-language instruction describing what you
   should do when the task fires. Write it as a direct command you would execute ("汇报 XX 进度",
   "整理记忆", "review the latest commits"). Include any necessary context (which project, what scope).
-- **triggerAt** (required): When the task should fire. Must be in the future. Accepted formats:
+- **triggerAt** (create): When the task should fire. Must be in the future. Accepted formats:
   1. Epoch milliseconds (UTC), e.g. 1755298800000
   2. ISO 8601 with zone, e.g. "2026-08-16T21:00:00+08:00" (safest — no ambiguity)
   3. ISO 8601 / date without zone, e.g. "2026-08-16T21:00", "2026-08-16 21:00", "2026-08-16" —
      interpreted in the system timezone
   4. Natural language: "21:30" or "at 21:30" (today, or tomorrow if already past),
      "tomorrow" (09:00), "tomorrow at 21:00", "in 30 minutes", "in 2 hours", "in 1 day"
-- **repeat** (optional): Recurrence pattern. One of "hourly", "daily", "weekly". Omit for a one-shot task.
+- **repeat** (create, optional): Recurrence pattern. One of "hourly", "daily", "weekly". Omit for a one-shot task.
+- **name** (create, recommended): Stable identifier for upsert. Same name replaces the old
+  task (across all sessions). Required practice for recurring/routine tasks; omit for one-offs.
+- **id** (cancel): Task id to cancel — from action=list.
 
 ## Notes
 
@@ -43,90 +63,220 @@ time the content is injected into your conversation as an instruction — you th
 - For recurring tasks, the next fire time is computed from the previous triggerAt (not wall clock), maintaining consistent intervals."""
 
   private val validRepeat = Set("hourly", "daily", "weekly")
+  private val validActions = Set("create", "list", "cancel")
 
   val inputSchema = JsonObject.fromIterable(
     List(
       "type" -> "object".asJson,
       "properties" -> Json.obj(
+        "action" -> Json.obj(
+          "type" -> "string".asJson,
+          "enum" -> Json.arr("create".asJson, "list".asJson, "cancel".asJson),
+          "description" -> "create (default) = schedule a task; list = show all pending tasks across sessions; cancel = remove a task by id".asJson
+        ),
         "content" -> Json.obj(
           "type" -> "string".asJson,
-          "description" -> "Task content — what should happen when the task fires".asJson
+          "description" -> "(create) Task content — what should happen when the task fires".asJson
         ),
         "triggerAt" -> Json.obj(
           "type" -> Json.arr("integer".asJson, "string".asJson),
           "description" ->
-            """When the task fires. Epoch ms (integer), ISO 8601 ("2026-08-16T21:00:00+08:00"), or natural language ("tomorrow at 21:00", "in 2 hours", "21:30"). Must be in the future.""".asJson
+            """(create) When the task fires. Epoch ms (integer), ISO 8601 ("2026-08-16T21:00:00+08:00"), or natural language ("tomorrow at 21:00", "in 2 hours", "21:30"). Must be in the future.""".asJson
         ),
         "repeat" -> Json.obj(
           "type" -> "string".asJson,
           "enum" -> Json.arr("hourly".asJson, "daily".asJson, "weekly".asJson),
-          "description" -> "Recurrence pattern. Omit for one-shot.".asJson
+          "description" -> "(create) Recurrence pattern. Omit for one-shot.".asJson
+        ),
+        "name" -> Json.obj(
+          "type" -> "string".asJson,
+          "description" -> "(create) Stable identifier — same name replaces the existing task instead of stacking (upsert). Use a fixed name for routine/recurring tasks.".asJson
+        ),
+        "id" -> Json.obj(
+          "type" -> "string".asJson,
+          "description" -> "(cancel) Task id to cancel — from action=list.".asJson
         )
-      ),
-      "required" -> Json.arr("content".asJson, "triggerAt".asJson)
+      )
+      // required 刻意留空（2026-09-06）：action=list/cancel 不携带 content/triggerAt，
+      // 分 action 的必填校验在 call 内做并给可自愈错误。
     )
   )
 
   def summarize(input: JsonObject): String =
-    val content = input("content").flatMap(_.asString).getOrElse("")
-    val repeat = input("repeat").flatMap(_.asString).getOrElse("once")
-    val triggerAt = input("triggerAt").flatMap(_.asNumber.flatMap(_.toLong)).getOrElse(0L)
-    s"Schedule($repeat @ $triggerAt: $content)"
+    val action = input("action").flatMap(_.asString).getOrElse("create")
+    action match
+      case "list" => "Schedule(list)"
+      case "cancel" =>
+        s"Schedule(cancel ${input("id").flatMap(_.asString).getOrElse("?")})"
+      case _ =>
+        val content = input("content").flatMap(_.asString).getOrElse("")
+        val repeat = input("repeat").flatMap(_.asString).getOrElse("once")
+        val triggerAt = input("triggerAt").flatMap(_.asNumber.flatMap(_.toLong)).getOrElse(0L)
+        val nameTag = input("name").flatMap(_.asString).filter(_.nonEmpty).map(n => s" name=$n").getOrElse("")
+        s"Schedule(create$nameTag $repeat @ $triggerAt: $content)"
 
   def summarizeResult(input: JsonObject, result: String): String =
-    if result.startsWith("Scheduled task") then "scheduled"
-    else "failed"
+    val action = input("action").flatMap(_.asString).getOrElse("create")
+    action match
+      case "list"    => if result.startsWith("Pending") || result.toLowerCase.contains("no pending") then "listed" else "failed"
+      case "cancel"  => if result.startsWith("Cancelled") then "cancelled" else "failed"
+      case _ =>
+        if result.startsWith("Scheduled task") then
+          if result.contains("replaced") then "replaced" else "scheduled"
+        else "failed"
 
   def call(input: JsonObject, ctx: ToolContext): IO[Either[ToolError, String]] =
-    ctx.sharedResources match
-      case None => IO.pure(Left(ToolError("SharedResources not available")))
-      case Some(sr) =>
-        ctx.sessionId match
-          case None => IO.pure(Left(ToolError("No session ID available")))
-          case Some(sessionId) =>
-            val content = input("content").flatMap(_.asString).getOrElse("")
-            val repeat = input("repeat").flatMap(_.asString).filter(validRepeat.contains)
-            val now = System.currentTimeMillis()
+    val action = input("action").flatMap(_.asString).getOrElse("create")
+    if !validActions.contains(action) then
+      IO.pure(Left(ToolError(
+        s"Unknown action \"$action\" — expected one of ${validActions.toList.sorted.mkString(", ")} " +
+          "(omit action for create; use list to inspect, cancel by id)."
+      )))
+    else
+      ctx.sharedResources match
+        case None => IO.pure(Left(ToolError("SharedResources not available")))
+        case Some(sr) =>
+          action match
+            case "list"    => listAction(sr)
+            case "cancel"  => cancelAction(sr, input, ctx)
+            case "create"  =>
+              ctx.sessionId match
+                case None => IO.pure(Left(ToolError("No session ID available")))
+                case Some(sessionId) => createAction(sr, input, ctx, sessionId)
+            case other     => IO.pure(Left(ToolError(s"Unhandled action $other"))) // unreachable (guarded above)
 
-            parseTriggerAt(input("triggerAt"), now, ZoneId.systemDefault()) match
-              case Left(msg) => IO.pure(Left(ToolError(msg)))
-              case Right(triggerAt) =>
-                if content.isBlank then IO.pure(Left(ToolError("content is required and must not be blank")))
-                else if triggerAt <= now then
-                  IO.pure(Left(ToolError(s"triggerAt must be in the future (given $triggerAt = ${formatTime(triggerAt)}, current ${formatTime(now)}).")))
-                else
-                  val task = ScheduledTask.create(sessionId, content, triggerAt, None, repeat)
-                  for
-                    _ <- sr.scheduledTaskStore.addTask(task)
-                    _ <- sr.scheduledTaskService match
-                      case Some(svc) => svc.notifyTaskChange()
-                      case None => IO.unit
-                    // Broadcast to frontend so the reminder panel updates in real-time
-                    _ <- ctx.wsSend match
-                      case Some(send) =>
-                        send(
-                          io.circe.Json.obj(
-                            "type" -> "scheduledTaskCreated".asJson,
-                            "sessionId" -> sessionId.asJson,
-                            "task" -> io.circe.Json.obj(
-                              "id" -> task.id.asJson,
-                              "content" -> task.content.asJson,
-                              "triggerAt" -> task.triggerAt.asJson,
-                              "createdAt" -> task.createdAt.asJson,
-                              "referencePath" -> io.circe.Json.Null,
-                              "repeat" -> task.repeat.asJson
-                            )
-                          )
-                        )
-                      case None => IO.unit
-                  yield Right(
-                    s"Scheduled task ${task.id} for ${formatTime(triggerAt)}" +
-                      repeat.map(r => s" (recurring: $r)").getOrElse("") +
-                      s": ${content.take(80)}"
+  // ---------------------------------------------------------------------------
+  // action = list — all pending tasks across ALL sessions
+  // ---------------------------------------------------------------------------
+
+  private def listAction(sr: SharedResources): IO[Either[ToolError, String]] =
+    sr.scheduledTaskStore.getAllPendingTasks.map { tasks =>
+      if tasks.isEmpty then Right("No pending scheduled tasks.")
+      else
+        val lines = tasks.sortBy(_.triggerAt).map { t =>
+          val status = if t.enabled then "active" else "PAUSED"
+          val nm = t.name.getOrElse("-")
+          s"- ${t.id} | ${formatTime(t.triggerAt)} | ${t.repeat.getOrElse("once")} | $status | name: $nm | ${t.content.take(60)}"
+        }
+        Right(
+          s"Pending scheduled tasks (${tasks.size}) — cancel via Schedule {action:\"cancel\", id:\"<id>\"}:\n" +
+            lines.mkString("\n")
+        )
+    }
+
+  // ---------------------------------------------------------------------------
+  // action = cancel — by id, across sessions
+  // ---------------------------------------------------------------------------
+
+  private def cancelAction(sr: SharedResources, input: JsonObject, ctx: ToolContext): IO[Either[ToolError, String]] =
+    val idOpt = input("id").flatMap(_.asString).map(_.trim).filter(_.nonEmpty)
+    idOpt match
+      case None =>
+        IO.pure(Left(ToolError("cancel requires id — call Schedule {action:\"list\"} first, then pass the task's id.")))
+      case Some(id) =>
+        sr.scheduledTaskStore.findTaskById(id).flatMap {
+          case None =>
+            sr.scheduledTaskStore.getAllPendingTasks.map { pending =>
+              val ids = if pending.isEmpty then "(none)" else pending.map(_.id).mkString(", ")
+              Left(ToolError(
+                s"No scheduled task with id \"$id\". Pending ids: $ids — if this looks stale, call action=list to refresh."
+              ))
+            }
+          case Some(t) =>
+            for
+              _ <- sr.scheduledTaskStore.deleteTask(t.sessionId, id)
+              _ <- sr.scheduledTaskService match
+                case Some(svc) => svc.notifyTaskChange()
+                case None => IO.unit
+              // Broadcast so the frontend reminder panel updates in real-time
+              _ <- ctx.wsSend match
+                case Some(send) =>
+                  send(Json.obj(
+                    "type" -> "scheduledTaskDeleted".asJson,
+                    "id" -> id.asJson,
+                    "sessionId" -> t.sessionId.asJson
+                  ))
+                case None => IO.unit
+            yield Right(
+              s"Cancelled task $id (was ${formatTime(t.triggerAt)}${t.repeat.map(r => s", $r").getOrElse("")}): " +
+                s"${t.content.take(60)} — it will not fire."
+            )
+        }
+
+  // ---------------------------------------------------------------------------
+  // action = create — legacy behavior + name upsert
+  // ---------------------------------------------------------------------------
+
+  private def createAction(
+    sr: SharedResources,
+    input: JsonObject,
+    ctx: ToolContext,
+    sessionId: String
+  ): IO[Either[ToolError, String]] =
+    val content = input("content").flatMap(_.asString).getOrElse("")
+    val repeat = input("repeat").flatMap(_.asString).filter(validRepeat.contains)
+    val taskName = input("name").flatMap(_.asString).map(_.trim).filter(_.nonEmpty)
+    val now = System.currentTimeMillis()
+
+    parseTriggerAt(input("triggerAt"), now, ZoneId.systemDefault()) match
+      case Left(msg) => IO.pure(Left(ToolError(msg)))
+      case Right(triggerAt) =>
+        if content.isBlank then IO.pure(Left(ToolError("content is required and must not be blank (for list/cancel use action=\"list\"/\"cancel\")")))
+        else if triggerAt <= now then
+          IO.pure(Left(ToolError(s"triggerAt must be in the future (given $triggerAt = ${formatTime(triggerAt)}, current ${formatTime(now)}).")))
+        else
+          val task = ScheduledTask.create(sessionId, content, triggerAt, None, repeat, taskName)
+          for
+            removed <- taskName match
+              case Some(n) => sr.scheduledTaskStore.upsertTaskByName(task)
+              case None    => sr.scheduledTaskStore.addTask(task).as(Nil)
+            _ <- sr.scheduledTaskService match
+              case Some(svc) => svc.notifyTaskChange()
+              case None => IO.unit
+            // Broadcast removed (possibly cross-session) so other panels drop them
+            _ <- ctx.wsSend match
+              case Some(send) =>
+                removed.traverse_(old =>
+                  send(Json.obj(
+                    "type" -> "scheduledTaskDeleted".asJson,
+                    "id" -> old.id.asJson,
+                    "sessionId" -> old.sessionId.asJson
+                  ))
+                )
+              case None => IO.unit
+            // Broadcast to frontend so the reminder panel updates in real-time
+            _ <- ctx.wsSend match
+              case Some(send) =>
+                send(
+                  Json.obj(
+                    "type" -> "scheduledTaskCreated".asJson,
+                    "sessionId" -> sessionId.asJson,
+                    "task" -> Json.obj(
+                      "id" -> task.id.asJson,
+                      "content" -> task.content.asJson,
+                      "triggerAt" -> task.triggerAt.asJson,
+                      "createdAt" -> task.createdAt.asJson,
+                      "referencePath" -> Json.Null,
+                      "repeat" -> task.repeat.asJson,
+                      "name" -> task.name.asJson
+                    )
                   )
-                  end for
-                end if
-            end match
+                )
+              case None => IO.unit
+          yield
+            val replacedNote = removed match
+              case Nil => ""
+              case olds =>
+                s" — replaced ${olds.size} existing task(s) with the same name (${olds.map(o => s"${o.id} @ ${formatTime(o.triggerAt)}").mkString(", ")})"
+            val nameNote = taskName.map(n => s" [name: $n]").getOrElse("")
+            Right(
+              s"Scheduled task ${task.id} for ${formatTime(triggerAt)}" +
+                repeat.map(r => s" (recurring: $r)").getOrElse("") +
+                s"$nameNote: ${content.take(80)}$replacedNote"
+            )
+          end for
+        end if
+    end match
 
   // ---------------------------------------------------------------------------
   // triggerAt parsing: epoch-ms integer, ISO 8601, or natural language
