@@ -1,6 +1,21 @@
 $ErrorActionPreference = "Stop"
 $ProgressPreference = "SilentlyContinue"
 
+# Nebflow Windows installer - script v2
+# ---------------------------------------------------------------
+# ScriptVersion : installer version (written into the local install
+#                 manifest for `nebflow update` and diagnostics).
+# Pipeline      : [1/7] java -> [2/7] git -> [3/7] jar -> [4/7] rg ->
+#                 [5/7] voice model -> [6/7] launcher -> [7/7] config.
+# Idempotent    : safe to re-run; installed/satisfied deps are detected
+#                 and skipped.
+# Flags         : -Beta | --channel=beta | -Cn | -Global | -VerboseFlag
+#                 (irm|iex pipe: env CHANNEL=beta / REGION=cn /
+#                 NEBFLOW_VERBOSE=1)
+# Exit codes    : 0 ok | 10 version resolve | 11 java install |
+#                 12 jar download
+# ---------------------------------------------------------------
+
 # -- Brand values (L2 rebrand): rendered from repo-root brand.conf at -------
 # -- release time (scripts/render-brand.sh); do not edit by hand. -----------
 # The runtime dual-reads legacy names (L3), so rendering NEW values here
@@ -16,18 +31,32 @@ $CosBaseCn = "https://$CosBucket.cos.ap-nanjing.myqcloud.com"
 # Nebflow jar 下载/版本解析统一走 COS（单一源）。第三方依赖
 # （Temurin JDK/Git for Windows/ripgrep）与仓库 private 无关，仍走各自公共源。
 
+$ScriptVersion = "2.0.0"
+$RgVersion = "14.1.1"
+$JdkMajorRequired = 17   # runtime floor; fresh installs target OpenJDK 21
+
+# -- unified log helpers ----------------------------------------------------
+$VerbosePref = ($env:NEBFLOW_VERBOSE -eq "1")
+function Write-Info($m)  { Write-Host "[i] $m" }
+function Write-Ok($m)    { Write-Host "[ok] $m" -ForegroundColor Green }
+function Write-Warn2($m) { Write-Host "[warn] $m" -ForegroundColor Yellow }
+function Write-Err2($m)  { Write-Host "[err] $m" -ForegroundColor Red }
+function Write-V($m)     { if ($VerbosePref) { Write-Host "[v] $m" -ForegroundColor DarkGray } }
+function Write-Stage($n, $total, $m) { Write-Host ""; Write-Host "==> [$n/$total] $m" -ForegroundColor Yellow }
+
 # Parse flags
 $Channel = if ($env:CHANNEL) { $env:CHANNEL } else { "stable" }
 $Region = ""
 # Also check command-line args (for direct execution, not via iex)
 if ($args -contains "-Beta") { $Channel = "beta" }
 if ($args -contains "--channel=beta") { $Channel = "beta" }
+if ($args -contains "-VerboseFlag") { $VerbosePref = $true }
 if ($args -contains "-Cn") { $Region = "cn" }
 if ($args -contains "-Global") { $Region = "global" }
 
-# Resolve version — COS version file first (China-friendly), GitHub API fallback
+# Resolve version — COS version file (single source; GH API private 后不可用)
 if ($Channel -eq "beta") {
-    Write-Host "==> Resolving latest beta version..." -ForegroundColor Yellow
+    Write-Info "Resolving latest beta version..."
     if ($env:VERSION) {
         $Version = $env:VERSION
     } else {
@@ -35,14 +64,14 @@ if ($Channel -eq "beta") {
             $BetaVersion = (Invoke-WebRequest -Uri "$CosBaseCn/latest-beta-version.txt" -UseBasicParsing -TimeoutSec 10).Content.Trim()
         } catch {}
         if (-not $BetaVersion) {
-            Write-Host "ERROR: Could not find a beta release (COS version file unreachable)." -ForegroundColor Red
-            Write-Host "       Check $CosBaseCn/latest-beta-version.txt" -ForegroundColor Yellow
-            exit 1
+            Write-Err2 "Could not find a beta release (COS version file unreachable)."
+            Write-Err2 "Check $CosBaseCn/latest-beta-version.txt"
+            exit 10
         }
         $Version = $BetaVersion
     }
 } else {
-    Write-Host "==> Resolving latest stable version..." -ForegroundColor Yellow
+    Write-Info "Resolving latest stable version..."
     if ($env:VERSION) {
         $Version = $env:VERSION
     } else {
@@ -50,31 +79,25 @@ if ($Channel -eq "beta") {
             $LatestVersion = (Invoke-WebRequest -Uri "$CosBaseCn/latest-version.txt" -UseBasicParsing -TimeoutSec 10).Content.Trim()
         } catch {}
         if (-not $LatestVersion) {
-            Write-Host "ERROR: Could not resolve latest version (COS version file unreachable)." -ForegroundColor Red
-            Write-Host "       Check $CosBaseCn/latest-version.txt" -ForegroundColor Yellow
-            exit 1
+            Write-Err2 "Could not resolve latest version (COS version file unreachable)."
+            Write-Err2 "Check $CosBaseCn/latest-version.txt"
+            exit 10
         }
         $Version = $LatestVersion
     }
 }
+Write-V "Resolved VERSION=$Version (channel=$Channel)"
 
 $InstallDir = if ($env:INSTALL_DIR) { $env:INSTALL_DIR } else { "$env:LOCALAPPDATA\$ProductName" }
 $JarName = "$LowerName-assembly-$Version.jar"
 $CosUrl = "$CosBaseCn/$JarName"
 
 Write-Host ""
-Write-Host "  ███╗   ██╗███████╗██████╗ ███████╗██╗      ██████╗ ██╗    ██╗" -ForegroundColor Cyan
-Write-Host "  ████╗  ██║██╔════╝██╔══██╗██╔════╝██║     ██╔═══██╗██║    ██║" -ForegroundColor Cyan
-Write-Host "  ██╔██╗ ██║█████╗  ██████╔╝█████╗  ██║     ██║   ██║██║ █╗ ██║" -ForegroundColor Cyan
-Write-Host "  ██║╚██╗██║██╔══╝  ██╔══██╗██╔══╝  ██║     ██║   ██║██║███╗██║" -ForegroundColor Cyan
-Write-Host "  ██║ ╚████║███████╗██████╔╝██║     ███████╗╚██████╔╝╚███╔███╔╝" -ForegroundColor Cyan
-Write-Host "  ╚═╝  ╚═══╝╚══════╝╚═════╝ ╚═╝     ╚══════╝ ╚═════╝  ╚══╝╚══╝" -ForegroundColor Cyan
-Write-Host ""
 Write-Host "  $ProductName v$Version Installer ($Channel)" -ForegroundColor DarkGray
 Write-Host ""
 
-# --- Check Java ---
-Write-Host "[1/7] Checking Java..." -ForegroundColor Yellow
+# --- [1/7] Java (floor 17; fresh installs get Temurin 21) ---
+Write-Stage 1 7 "Checking Java..."
 
 function Test-Java {
     $savedEAP = $ErrorActionPreference
@@ -88,17 +111,20 @@ function Test-Java {
                 $match2 = [regex]::Match($output, '"1\.(\d+)')
                 if ($match2.Success) { $ver = [int]$match2.Groups[1].Value }
             }
-            if ($ver -ge 17) {
+            if ($ver -ge $JdkMajorRequired) {
                 $ErrorActionPreference = $savedEAP
                 return $ver
             }
         }
     } catch {}
-    # Fallback: check common install paths
+    # Fallback: check common install paths (17 = existing users, 21 = fresh installs)
     $jdkDirs = @(
         "C:\Program Files\Eclipse Adoptium\jdk-17*-hotspot\bin",
+        "C:\Program Files\Eclipse Adoptium\jdk-21*-hotspot\bin",
         "C:\Program Files\Temurin\jdk-17*\bin",
-        "C:\Program Files\Java\jdk-17*\bin"
+        "C:\Program Files\Temurin\jdk-21*\bin",
+        "C:\Program Files\Java\jdk-17*\bin",
+        "C:\Program Files\Java\jdk-21*\bin"
     )
     foreach ($dir in $jdkDirs) {
         $javaExe = Get-Item (Join-Path $dir "java.exe") -ErrorAction SilentlyContinue | Select-Object -First 1
@@ -107,7 +133,7 @@ function Test-Java {
             $match = [regex]::Match($output, '"(\d+)')
             if ($match.Success) {
                 $ver = [int]$match.Groups[1].Value
-                if ($ver -ge 17) {
+                if ($ver -ge $JdkMajorRequired) {
                     # Add to PATH so subsequent commands find it
                     $env:Path = "$($javaExe.DirectoryName);$env:Path"
                     $ErrorActionPreference = $savedEAP
@@ -120,68 +146,75 @@ function Test-Java {
     return 0
 }
 
+function Write-JavaManualHint {
+    Write-Err2 "Manual install: https://adoptium.net/temurin/releases/?version=21 (Windows x64 msi)"
+    Write-Err2 "Then re-run this installer."
+}
+
 $javaVer = Test-Java
-if ($javaVer -ge 17) {
+if ($javaVer -ge $JdkMajorRequired) {
     $savedEAP = $ErrorActionPreference
     $ErrorActionPreference = "Continue"
     $javaLine = & java -version 2>&1 | Select-Object -First 1 | Out-String
     $ErrorActionPreference = $savedEAP
-    Write-Host "       OK: $($javaLine.Trim())" -ForegroundColor Green
+    Write-Ok "Java: $($javaLine.Trim())"
 } else {
-    Write-Host "       Java 17+ not found. Installing..." -ForegroundColor Yellow
+    Write-Info "Java $JdkMajorRequired+ not found. Installing OpenJDK 21..."
 
-    # Download Temurin JDK 17 from mirror
-    $jdkPath = "$env:TEMP\temurin-jdk17.msi"
-    $jdkMirrors = @(
-        "https://mirrors.tuna.tsinghua.edu.cn/Adoptium/17/jdk/x64/windows/OpenJDK17U-jdk_x64_windows_hotspot_17.0.19_10.msi",
-        "https://repo.huaweicloud.com/openjdk/17.0.2/openjdk-17.0.2_windows-x64_bin.msi"
-    )
+    $jdkInstalled = $false
 
-    $jdkDownloaded = $false
-    foreach ($url in $jdkMirrors) {
-        Write-Host "       Downloading JDK 17..." -ForegroundColor DarkGray
-        $ProgressPreference = 'SilentlyContinue'
-        Invoke-WebRequest -Uri $url -OutFile $jdkPath -UseBasicParsing
-        if (Test-Path $jdkPath) {
-            $size = (Get-Item $jdkPath).Length
-            if ($size -gt 10000000) {
-                $jdkDownloaded = $true
-                break
+    # Method 1: winget (cleanest if available)
+    $wingetCmd = Get-Command winget -ErrorAction SilentlyContinue
+    if ($wingetCmd) {
+        Write-Info "Trying winget (EclipseAdoptium.Temurin.21.JDK)..."
+        try {
+            $proc = Start-Process winget -ArgumentList @(
+                "install", "--id", "EclipseAdoptium.Temurin.21.JDK", "-e", "--source", "winget",
+                "--silent", "--accept-package-agreements", "--accept-source-agreements"
+            ) -Wait -PassThru -NoNewWindow 2>&1
+            if ($LASTEXITCODE -eq 0) { $jdkInstalled = $true }
+        } catch {}
+    }
+
+    # Method 2: direct Temurin 21 msi (tsinghua TUNA mirror, domestic-friendly)
+    if (-not $jdkInstalled) {
+        $jdkPath = "$env:TEMP\temurin-jdk21.msi"
+        $jdkUrl = "https://mirrors.tuna.tsinghua.edu.cn/Adoptium/21/jdk/x64/windows/OpenJDK21U-jdk_x64_windows_hotspot_21.0.12.1_1.msi"
+        Write-Info "Downloading Temurin JDK 21 msi (TUNA mirror)..."
+        try {
+            Invoke-WebRequest -Uri $jdkUrl -OutFile $jdkPath -UseBasicParsing -TimeoutSec 600
+            if ((Test-Path $jdkPath) -and ((Get-Item $jdkPath).Length -gt 10000000)) {
+                Write-Info "Installing JDK 21..."
+                $proc = Start-Process msiexec.exe -ArgumentList "/i", $jdkPath, "/quiet", "ADDLOCAL=FeatureMain,FeatureEnvironment,FeatureJarFileRunWith" -Wait -PassThru
+                Remove-Item $jdkPath -Force -ErrorAction SilentlyContinue
+                if ($proc.ExitCode -eq 0) { $jdkInstalled = $true }
+                else { Write-Err2 "JDK msi install failed (exit code $($proc.ExitCode))." }
+            } else {
+                Write-Warn2 "JDK download failed or file incomplete."
             }
-            Remove-Item $jdkPath -Force -ErrorAction SilentlyContinue
+        } catch {
+            Write-Warn2 "JDK download failed: $_"
         }
-        Write-Host "       Mirror failed, trying next..." -ForegroundColor DarkGray
     }
 
-    if (-not $jdkDownloaded) {
-        Write-Host "       Auto-install failed. Please install JDK 17 manually:" -ForegroundColor Red
-        Write-Host "       https://adoptium.net/" -ForegroundColor Yellow
-        exit 1
-    }
-
-    Write-Host "       Installing JDK 17..." -ForegroundColor DarkGray
-    $proc = Start-Process msiexec.exe -ArgumentList "/i", $jdkPath, "/quiet", "ADDLOCAL=FeatureMain,FeatureEnvironment,FeatureJarFileRunWith" -Wait -PassThru
-    Remove-Item $jdkPath -Force -ErrorAction SilentlyContinue
-
-    if ($proc.ExitCode -ne 0) {
-        Write-Host "       JDK install failed (exit code $($proc.ExitCode))." -ForegroundColor Red
-        Write-Host "       Please install JDK 17 manually: https://adoptium.net/" -ForegroundColor Yellow
-        exit 1
+    if (-not $jdkInstalled) {
+        Write-JavaManualHint
+        exit 11
     }
 
     # Refresh PATH in current session
     $env:Path = [Environment]::GetEnvironmentVariable("Path", "Machine") + ";" + [Environment]::GetEnvironmentVariable("Path", "User")
 
     $javaVer = Test-Java
-    if ($javaVer -lt 17) {
-        Write-Host "       JDK installed but not detected. Please restart your terminal and run this script again." -ForegroundColor Red
-        exit 1
+    if ($javaVer -lt $JdkMajorRequired) {
+        Write-Err2 "JDK installed but not detected. Please restart your terminal and run this script again."
+        exit 11
     }
-    Write-Host "       JDK 17 installed." -ForegroundColor Green
+    Write-Ok "JDK 21 installed."
 }
 
-# --- Check Git for Windows (provides bash.exe for Bash tool) ---
-Write-Host "[2/7] Checking Git for Windows..." -ForegroundColor Yellow
+# --- [2/7] Git for Windows (provides bash.exe for Bash tool) ---
+Write-Stage 2 7 "Checking Git for Windows..."
 
 function Test-GitBash {
     $candidates = @(
@@ -203,16 +236,16 @@ function Test-GitBash {
 }
 
 if (Test-GitBash) {
-    Write-Host "       OK: Git Bash found" -ForegroundColor Green
+    Write-Ok "Git Bash found"
 } else {
-    Write-Host "       Git Bash not found. Installing Git for Windows..." -ForegroundColor Yellow
+    Write-Info "Git Bash not found. Installing Git for Windows..."
 
     $gitInstalled = $false
 
     # Method 1: Try winget (cleanest if available)
     $wingetCmd = Get-Command winget -ErrorAction SilentlyContinue
     if ($wingetCmd) {
-        Write-Host "       Trying winget..." -ForegroundColor DarkGray
+        Write-Info "Trying winget..."
         try {
             $proc = Start-Process winget -ArgumentList @(
                 "install", "--id", "Git.Git", "-e", "--source", "winget",
@@ -226,7 +259,7 @@ if (Test-GitBash) {
 
     # Method 2: Direct download with region-aware source selection
     if (-not $gitInstalled) {
-        # Determine region (timezone-based, instant — reused by JAR download later)
+        # Determine region (timezone-based, instant - reused by JAR download later)
         if (-not $Region) {
             $tz = [TimeZoneInfo]::Local.Id
             if ($tz -match "China|Shanghai|Chongqing|Hong_Kong|Taipei|Macau|Urumqi") {
@@ -258,22 +291,24 @@ if (Test-GitBash) {
             )
         }
 
+        $gitDownloaded = $false
         foreach ($url in $gitMirrors) {
-            Write-Host "       Downloading Git for Windows..." -ForegroundColor DarkGray
+            Write-Info "Downloading Git for Windows..."
             try {
                 Invoke-WebRequest -Uri $url -OutFile $gitPath -UseBasicParsing -TimeoutSec 300
                 if (Test-Path $gitPath) {
                     $size = (Get-Item $gitPath).Length
-                    if ($size -gt 50000000) { break }
+                    if ($size -gt 50000000) { $gitDownloaded = $true; break }
                 }
+                Remove-Item $gitPath -Force -ErrorAction SilentlyContinue
             } catch {
                 Remove-Item $gitPath -Force -ErrorAction SilentlyContinue
-                Write-Host "       Mirror failed, trying next..." -ForegroundColor DarkGray
+                Write-Warn2 "Mirror failed, trying next..."
             }
         }
 
-        if (Test-Path $gitPath -and (Get-Item $gitPath).Length -gt 50000000) {
-            Write-Host "       Installing Git for Windows..." -ForegroundColor DarkGray
+        if ($gitDownloaded) {
+            Write-Info "Installing Git for Windows..."
             $proc = Start-Process $gitPath -ArgumentList "/VERYSILENT", "/NORESTART", "/NOCANCEL", "/SP-", "/CLOSEAPPLICATIONS", "/RESTARTAPPLICATIONS" -Wait -PassThru
             Remove-Item $gitPath -Force -ErrorAction SilentlyContinue
 
@@ -281,37 +316,37 @@ if (Test-GitBash) {
             $env:Path = [Environment]::GetEnvironmentVariable("Path", "Machine") + ";" + [Environment]::GetEnvironmentVariable("Path", "User")
 
             if ($proc.ExitCode -eq 0 -and (Test-GitBash)) {
-                Write-Host "       Git for Windows installed." -ForegroundColor Green
+                Write-Ok "Git for Windows installed."
             } else {
-                Write-Host "       Git install may have failed (exit $($proc.ExitCode))." -ForegroundColor Red
-                Write-Host "       Please install manually: https://git-scm.com/download/win" -ForegroundColor Yellow
+                Write-Err2 "Git install may have failed (exit $($proc.ExitCode))."
+                Write-Warn2 "Please install manually: https://git-scm.com/download/win"
             }
         } else {
-            Write-Host "       Git download failed from all mirrors." -ForegroundColor Red
-            Write-Host "       Please install manually: https://git-scm.com/download/win" -ForegroundColor Yellow
-            Write-Host "       (Bash tool requires Git for Windows)" -ForegroundColor Yellow
+            Write-Err2 "Git download failed from all mirrors."
+            Write-Warn2 "Please install manually: https://git-scm.com/download/win"
+            Write-Warn2 "(Bash tool requires Git for Windows)"
         }
     }
 }
 
-# --- Download $ProductName ---
-Write-Host "[3/7] Downloading $ProductName v$Version..." -ForegroundColor Yellow
+# --- [3/7] Download $ProductName ---
+Write-Stage 3 7 "Downloading $ProductName v$Version..."
 
 New-Item -ItemType Directory -Force -Path $InstallDir | Out-Null
 $jarPath = Join-Path $InstallDir $JarName
 
-# Clean up old versions (keep .nebflow user data untouched)
-$oldJars = @(Get-ChildItem (Join-Path $InstallDir "$LowerName-assembly-*.jar") -ErrorAction SilentlyContinue) + @(Get-ChildItem (Join-Path $InstallDir "nebflow-assembly-*.jar") -ErrorAction SilentlyContinue)
-foreach ($old in $oldJars) {
-    if ($old.FullName -ne $jarPath) {
-        Remove-Item $old.FullName -Force -ErrorAction SilentlyContinue
-        Write-Host "       Removed old: $($old.Name)" -ForegroundColor DarkGray
-    }
-}
-
 if (Test-Path $jarPath) {
-    Write-Host "       Already up-to-date (v$Version), skipping download." -ForegroundColor Green
+    Write-Ok "Already up-to-date (v$Version)."
 } else {
+    # Clean up old versions (keep .nebflow user data untouched)
+    $oldJars = @(Get-ChildItem (Join-Path $InstallDir "$LowerName-assembly-*.jar") -ErrorAction SilentlyContinue) + @(Get-ChildItem (Join-Path $InstallDir "nebflow-assembly-*.jar") -ErrorAction SilentlyContinue)
+    foreach ($old in $oldJars) {
+        if ($old.FullName -ne $jarPath) {
+            Remove-Item $old.FullName -Force -ErrorAction SilentlyContinue
+            Write-V "Removed old: $($old.Name)"
+        }
+    }
+
     # Auto-detect region for download source selection
     if (-not $Region) {
         $tz = [TimeZoneInfo]::Local.Id
@@ -338,36 +373,37 @@ if (Test-Path $jarPath) {
             }
         }
     }
+    Write-Info "Region: $Region (use -Cn or -Global to override)"
 
     # #29: 仓库 private 后 GitHub Releases 未认证 404——COS 单一源
     try {
-        Invoke-WebRequest -Uri $CosUrl -OutFile $jarPath -UseBasicParsing -TimeoutSec 120
+        Invoke-WebRequest -Uri $CosUrl -OutFile $jarPath -UseBasicParsing -TimeoutSec 600
     } catch {
-        Write-Host "ERROR: Download failed from COS. Check $CosUrl" -ForegroundColor Red
-        exit 1
+        Write-Err2 "Download failed from COS. Check $CosUrl"
+        exit 12
     }
     $size = [math]::Round((Get-Item $jarPath).Length / 1MB, 1)
-    Write-Host "       Downloaded ($size MB) from COS" -ForegroundColor Green
+    Write-Ok "Downloaded $JarName from COS ($size MB)."
 }
 
-# --- Install ripgrep (rg) for search support ---
-Write-Host "[4/7] Installing ripgrep (rg)..." -ForegroundColor Yellow
+# --- [4/7] ripgrep (rg) for search support ---
+Write-Stage 4 7 "Installing ripgrep (rg)..."
 if (Get-Command "rg" -ErrorAction SilentlyContinue) {
-    Write-Host "       rg already available in PATH." -ForegroundColor Green
+    Write-Ok "rg already available in PATH."
 } elseif (Test-Path (Join-Path $InstallDir "rg.exe")) {
-    Write-Host "       rg already cached." -ForegroundColor Green
+    Write-Ok "rg already cached."
 } else {
-    $rgUrl = "https://github.com/BurntSushi/ripgrep/releases/download/14.1.1/ripgrep-14.1.1-x86_64-pc-windows-msvc.zip"
+    $rgUrl = "https://github.com/BurntSushi/ripgrep/releases/download/$RgVersion/ripgrep-$RgVersion-x86_64-pc-windows-msvc.zip"
     $rgMirrors = @(
-        "https://ghproxy.net/https://github.com/BurntSushi/ripgrep/releases/download/14.1.1/ripgrep-14.1.1-x86_64-pc-windows-msvc.zip"
+        "https://ghproxy.net/https://github.com/BurntSushi/ripgrep/releases/download/$RgVersion/ripgrep-$RgVersion-x86_64-pc-windows-msvc.zip"
     )
     $rgZip = Join-Path $InstallDir "rg.zip"
     try {
-        Write-Host "       Downloading rg 14.1.1..." -ForegroundColor DarkGray
+        Write-Info "Downloading rg $RgVersion..."
         try {
             Invoke-WebRequest -Uri $rgUrl -OutFile $rgZip -UseBasicParsing -TimeoutSec 15
         } catch {
-            Write-Host "       GitHub timeout, trying mirror..." -ForegroundColor DarkGray
+            Write-Info "GitHub timeout, trying mirror..."
             Invoke-WebRequest -Uri $rgMirrors[0] -OutFile $rgZip -UseBasicParsing -TimeoutSec 30
         }
         Add-Type -AssemblyName System.IO.Compression.FileSystem
@@ -375,23 +411,24 @@ if (Get-Command "rg" -ErrorAction SilentlyContinue) {
         $entry = $zip.Entries | Where-Object { $_.Name -eq "rg.exe" } | Select-Object -First 1
         if ($entry) {
             [System.IO.Compression.ZipFileExtensions]::ExtractToFile($entry, (Join-Path $InstallDir "rg.exe"), $true)
-            Write-Host "       rg installed to $InstallDir" -ForegroundColor Green
+            Write-Ok "rg installed to $InstallDir"
         }
         $zip.Dispose()
         Remove-Item $rgZip -Force -ErrorAction SilentlyContinue
     } catch {
-        Write-Host "       rg download failed: $_" -ForegroundColor DarkGray
-        Write-Host "       Search will rely on PATH install." -ForegroundColor DarkGray
+        Write-Warn2 "rg download failed: $_"
+        Write-Warn2 "Search will rely on PATH install."
+        Write-Warn2 "Manual download: https://github.com/BurntSushi/ripgrep/releases/tag/v$RgVersion"
     }
 }
 
-# --- Download Whisper voice model ---
-Write-Host "[5/7] Voice model (Whisper, ~75MB one-time)..." -ForegroundColor Yellow
+# --- [5/7] Whisper voice model (best-effort) ---
+Write-Stage 5 7 "Voice model (Whisper, ~75MB one-time)..."
 $modelDir = Join-Path $env:USERPROFILE "$HomeDir\voice-models\onnx-community\whisper-base"
 $onnxEncPath = Join-Path $modelDir "onnx\encoder_model_quantized.onnx"
 
 if (Test-Path $onnxEncPath) {
-    Write-Host "       Already installed." -ForegroundColor Green
+    Write-V "Already installed."
 } else {
     # Determine mirror
     if (-not $Region) { $Region = "global" }
@@ -413,7 +450,7 @@ if (Test-Path $onnxEncPath) {
     }
 
     # Download quantized ONNX models (encoder ~22MB + decoder ~51MB)
-    Write-Host "       Downloading model..." -ForegroundColor DarkGray
+    Write-Info "Downloading model..."
     $dlOk = $true
     try {
         Invoke-WebRequest -Uri "$hfBase/onnx/encoder_model_quantized.onnx" -OutFile $onnxEncPath -UseBasicParsing -TimeoutSec 120
@@ -423,20 +460,19 @@ if (Test-Path $onnxEncPath) {
         Invoke-WebRequest -Uri "$hfBase/onnx/decoder_model_merged_quantized.onnx" -OutFile $decPath -UseBasicParsing -TimeoutSec 120
     } catch { $dlOk = $false }
     if ($dlOk) {
-        $encSz = [math]::Round((Get-Item $onnxEncPath).Length / 1MB, 1)
-        Write-Host "       Voice model installed ($encSz MB encoder)." -ForegroundColor Green
+        Write-Ok "Voice model installed."
     } else {
-        Write-Host "       Download failed (voice will use CDN on first use)." -ForegroundColor DarkGray
+        Write-Warn2 "Download failed (voice will use CDN on first use)."
     }
 }
 
-# --- Create wrapper scripts ---
-Write-Host "[6/7] Creating launcher..." -ForegroundColor Yellow
+# --- [6/7] Create wrapper scripts ---
+Write-Stage 6 7 "Creating launcher..."
 
 # PowerShell wrapper
 $wrapperPath = Join-Path $InstallDir "$WrapperName.ps1"
 $wrapperContent = @"
-`$jar = @(Get-ChildItem "`$PSScriptRoot\nebflow-assembly-*.jar") + @(Get-ChildItem "`$PSScriptRoot\$LowerName-assembly-*.jar") | Sort-Object Name | Select-Object -Last 1
+`$jar = @(Get-ChildItem "`$PSScriptRoot\$LowerName-assembly-*.jar") + @(Get-ChildItem "`$PSScriptRoot\nebflow-assembly-*.jar") | Sort-Object Name | Select-Object -Last 1
 if (-not `$jar) {
     Write-Host "ERROR: $ProductName JAR not found in `$PSScriptRoot" -ForegroundColor Red
     exit 1
@@ -444,12 +480,13 @@ if (-not `$jar) {
 & java --add-opens java.base/java.lang=ALL-UNNAMED -jar `$jar.FullName `$args
 "@
 Set-Content -Path $wrapperPath -Value $wrapperContent -Encoding UTF8
+Write-Ok "Wrapper created: $wrapperPath"
 
 # CMD wrapper
 $cmdPath = Join-Path $InstallDir "$WrapperName.cmd"
 $cmdContent = @"
 @echo off
-set "PATH=%PATH%;C:\Program Files\Eclipse Adoptium\jdk-17.0.19.10-hotspot\bin;C:\Program Files\Temurin\jdk-17*\bin;C:\Program Files\Java\jdk-17*\bin"
+set "PATH=%PATH%;C:\Program Files\Eclipse Adoptium\jdk-21.0.12.1-hotspot\bin;C:\Program Files\Eclipse Adoptium\jdk-17.0.19.10-hotspot\bin"
 for %%f in ("%~dp0nebflow-assembly-*.jar" "%~dp0$LowerName-assembly-*.jar") do set JAR=%%f
 if "%JAR%"=="" (
     echo ERROR: %~dp0 JAR not found
@@ -463,11 +500,11 @@ Set-Content -Path $cmdPath -Value $cmdContent -Encoding ASCII
 $userPath = [Environment]::GetEnvironmentVariable("Path", "User")
 if ($userPath -notlike "*$InstallDir*") {
     [Environment]::SetEnvironmentVariable("Path", "$userPath;$InstallDir", "User")
-    Write-Host "       Added to PATH" -ForegroundColor Green
+    Write-Ok "Added to PATH"
 }
 
-# --- Config ---
-Write-Host "[7/7] Setting up config..." -ForegroundColor Yellow
+# --- [7/7] Config + install manifest ---
+Write-Stage 7 7 "Setting up config..."
 
 $configDir = Join-Path $env:USERPROFILE "$HomeDir"
 $configFile = Join-Path $configDir "$ConfigFile"
@@ -475,17 +512,35 @@ if (-not (Test-Path $configFile)) {
     New-Item -ItemType Directory -Force -Path $configDir | Out-Null
     $configContent = "{}"
     [System.IO.File]::WriteAllText($configFile, $configContent)
-    Write-Host "       Config created: $configFile" -ForegroundColor Green
-    Write-Host "       Please edit it to set your API key." -ForegroundColor Yellow
+    Write-Ok "Config created: $configFile"
+    Write-Warn2 "Please edit it to set your API key."
 } else {
-    Write-Host "       Config already exists." -ForegroundColor DarkGray
+    Write-V "Config already exists."
 }
+
+# Installer manifest (ScriptVersion + environment) for `nebflow update`
+# and diagnostics. Overwritten on each (re)install.
+if (-not $Region) { $Region = "global" }
+$manifestPath = Join-Path $configDir "install-manifest.json"
+$manifest = @"
+{
+  "scriptVersion": "$ScriptVersion",
+  "product": "$ProductName",
+  "version": "$Version",
+  "channel": "$Channel",
+  "region": "$Region",
+  "os": "windows",
+  "arch": "x64",
+  "installDir": "$($InstallDir.Replace('\', '\\'))",
+  "installedAt": "$((Get-Date).ToUniversalTime().ToString('yyyy-MM-ddTHH:mm:ssZ'))"
+}
+"@
+[System.IO.File]::WriteAllText($manifestPath, $manifest)
+Write-V "Manifest written: $manifestPath"
 
 # --- Done ---
 Write-Host ""
-Write-Host "=====================================" -ForegroundColor Green
-Write-Host "  $ProductName v$Version installed!" -ForegroundColor Green
-Write-Host "=====================================" -ForegroundColor Green
+Write-Host "[ok] $ProductName v$Version installed!" -ForegroundColor Green
 Write-Host ""
 Write-Host "  Commands:" -ForegroundColor White
 Write-Host "    $WrapperName --help" -ForegroundColor Cyan
