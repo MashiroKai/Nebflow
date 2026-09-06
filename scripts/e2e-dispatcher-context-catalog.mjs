@@ -301,6 +301,7 @@ if (dispatchReq) {
   writeFileSync('/tmp/dctx-token-evidence.json', JSON.stringify({ plugin: pe, preset: se, pluginSectionText: plugSection, presetSectionText: presetSection }, null, 2));
 } else {
   console.log('— captured requests: ' + captured.length);
+  writeFileSync('/tmp/dctx-e2e-fail-dump.json', JSON.stringify(captured, null, 2));
   for (const c of captured.slice(0, 3)) console.log('  last user: ' + JSON.stringify([...c.messages].reverse().find((m) => m.role === 'user')?.content).slice(0, 160));
 }
 
