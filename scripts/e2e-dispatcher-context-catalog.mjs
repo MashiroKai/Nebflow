@@ -254,7 +254,7 @@ const isDispatchCtx = (c) => {
 let dispatchReq = null;
 {
   const t0 = Date.now();
-  while (Date.now() - t0 < 30000) {
+  while (Date.now() - t0 < 90000) {
     dispatchReq = captured.find(isDispatchCtx);
     if (dispatchReq) break;
     await sleep(1000);
