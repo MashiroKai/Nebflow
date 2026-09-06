@@ -159,6 +159,27 @@ class InteractionHubSpec extends CatsEffectSuite:
 
   // ===== 第六件 (2026-08-30): chat-input passthrough for pending AskUser =====
 
+  /** 有界轮询同步点（2b93cbe5 / ad0a50ad 加固模式）：hub 的 Request/Answered
+    * 都是 forkTurn 异步 fiber——固定 sleep 后直读观察面（sent / sink Ref）在
+    * 满载调度下有竞态（CI 0.125s 断言竞态先例）。轮询等条件成立（超时清晰红）
+    * 再断言，断言语义不变。 */
+  private def awaitCond(cond: IO[Boolean], timeout: FiniteDuration = 5.seconds, every: FiniteDuration = 25.millis): IO[Unit] =
+    def go(deadline: Long): IO[Unit] =
+      cond.flatMap {
+        case true => IO.unit
+        case false =>
+          if System.currentTimeMillis() >= deadline then
+            IO.raiseError(new AssertionError("awaitCond: condition not met in time"))
+          else IO.sleep(every) >> go(deadline)
+      }
+    go(System.currentTimeMillis() + timeout.toMillis)
+
+  /** 卡片识别（type + requestId 双匹配）——作为「pending 槽已注册」的确定性
+    * 信号：hub 的 handleRequest 先 pending.update 再渲染，卡片进 sent ⟹ 槽在册。 */
+  private def isCard(tpe: String, requestId: String)(j: Json): Boolean =
+    j.hcursor.downField("type").as[String].contains(tpe) &&
+      j.hcursor.downField("requestId").as[String].contains(requestId)
+
   private def askRequest(
       requestId: String,
       gotAnswers: Ref[IO, Option[List[String]]],
@@ -193,10 +214,13 @@ class InteractionHubSpec extends CatsEffectSuite:
       gotAnswers <- Ref.of[IO, Option[List[String]]](None)
       req <- askRequest("pt-1", gotAnswers, system = system)
       _ <- hub ! InteractionHubCommand.Request(req)
-      _ <- IO.sleep(50.millis)
+      // 确定性同步点：卡片渲染可见 ⟹ pending 槽已注册（先注册后渲染）
+      _ <- awaitCond(sent.get.map(_.exists(isCard("askUser", "pt-1"))))
       answered <- Deferred[IO, Boolean]
       _ <- hub ! InteractionHubCommand.AnswerViaChatInput("root-1", "自由输入的回答", answered)
       hit <- answered.get
+      // sink actor 收 `r ! List(text)` 是 fire-and-forget——有界轮询等记账落定
+      _ <- awaitCond(gotAnswers.get.map(_.isDefined))
       answers <- gotAnswers.get
       _ <- IO.sleep(50.millis)
       events <- sent.get
@@ -215,10 +239,12 @@ class InteractionHubSpec extends CatsEffectSuite:
     val system = nebflow.actor.ActorSystem("hub-passthrough-2")
     for
       hub <- mkHub(system)
-      _ <- hub ! InteractionHubCommand.RegisterRoot("root-1", (_: Json) => IO.unit)
+      sent <- Ref.of[IO, List[Json]](Nil)
+      _ <- hub ! InteractionHubCommand.RegisterRoot("root-1", (j: Json) => sent.update(_ :+ j))
       dPerm <- Deferred[IO, Boolean]
       _ <- hub ! InteractionHubCommand.Request(permRequest("pt-perm", dPerm))
-      _ <- IO.sleep(50.millis)
+      // kind filter 必须在卡片确已注册的前提下才被真正检验——等渲染可见再答
+      _ <- awaitCond(sent.get.map(_.exists(isCard("askPermission", "pt-perm"))))
       answered <- Deferred[IO, Boolean]
       _ <- hub ! InteractionHubCommand.AnswerViaChatInput("root-1", "hello", answered)
       hit <- answered.get
@@ -254,20 +280,26 @@ class InteractionHubSpec extends CatsEffectSuite:
       gotB <- Ref.of[IO, Option[List[String]]](None)
       reqA <- askRequest("pt-old", gotA, system = system)
       _ <- hub ! InteractionHubCommand.Request(reqA)
-      _ <- IO.sleep(30.millis)
+      // 同步点：A 渲染可见 ⟹ A 的 pending.update（含 createdAt）已完成
+      _ <- awaitCond(sent.get.map(_.exists(isCard("askUser", "pt-old"))))
+      // 时钟分辨率保险：createdAt 是毫秒粒度，且两 Request 的 forkTurn fiber
+      // 并发执行——确保 B 的注册时间严格晚于 A（同毫秒 tie 会退化成
+      // m.toList 哈希序定 OLDEST，非确定）
+      _ <- IO.sleep(10.millis)
       reqB <- askRequest("pt-new", gotB, system = system)
       _ <- hub ! InteractionHubCommand.Request(reqB)
-      _ <- IO.sleep(50.millis)
+      _ <- awaitCond(sent.get.map(_.exists(isCard("askUser", "pt-new"))))
       answered <- Deferred[IO, Boolean]
       _ <- hub ! InteractionHubCommand.AnswerViaChatInput("root-1", "first answer", answered)
       hit <- answered.get
+      // sink actor fire-and-forget 记账——有界轮询落定再读
+      _ <- awaitCond(gotA.get.map(_.isDefined))
       aAns <- gotA.get
-      _ <- IO.sleep(50.millis)
       // 场景② invariant: the QUEUED (newer) card is untouched — still answerable
       _ <- hub ! InteractionHubCommand.Answered(
         InteractionAnswered("pt-new", "root-1", Json.obj("answers" -> Json.arr(Json.fromString("later pick"))))
       )
-      _ <- IO.sleep(300.millis)
+      _ <- awaitCond(gotB.get.map(_.isDefined))
       bAns <- gotB.get
       _ <- system.stopAll
     yield
@@ -281,21 +313,23 @@ class InteractionHubSpec extends CatsEffectSuite:
     val system = nebflow.actor.ActorSystem("hub-passthrough-5")
     for
       hub <- mkHub(system)
-      _ <- hub ! InteractionHubCommand.RegisterRoot("root-1", (_: Json) => IO.unit)
+      sent <- Ref.of[IO, List[Json]](Nil)
+      _ <- hub ! InteractionHubCommand.RegisterRoot("root-1", (j: Json) => sent.update(_ :+ j))
       gotA <- Ref.of[IO, Option[List[String]]](None)
       reqA <- askRequest("pt-x", gotA, rootSid = "root-other", system = system)
       _ <- hub ! InteractionHubCommand.Request(reqA)
-      _ <- IO.sleep(50.millis)
+      // root-other 未注册 → F4 扇出渲染到 root-1（fallback 卡）——渲染可见
+      // ⟹ 外域卡已在 pending 注册，session 过滤被真正检验
+      _ <- awaitCond(sent.get.map(_.exists(isCard("askUser", "pt-x"))))
       answered <- Deferred[IO, Boolean]
       _ <- hub ! InteractionHubCommand.AnswerViaChatInput("root-1", "wrong window", answered)
       hit <- answered.get
       aAns <- gotA.get
-      _ <- IO.sleep(50.millis)
       // the foreign card is still consumable by its own session
       _ <- hub ! InteractionHubCommand.Answered(
         InteractionAnswered("pt-x", "root-other", Json.obj("answers" -> Json.arr(Json.fromString("right window"))))
       )
-      _ <- IO.sleep(300.millis)
+      _ <- awaitCond(gotA.get.map(_.isDefined))
       aAns2 <- gotA.get
       _ <- system.stopAll
     yield
