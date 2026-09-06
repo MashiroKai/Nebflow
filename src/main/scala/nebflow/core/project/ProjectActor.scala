@@ -247,6 +247,12 @@ object ProjectActor:
                 // trigger-starved 留痕。best-effort 同款（失败不影响 TTL sweep）。
                 cfg.engine.settleRunnableSweep()
                 .handleErrorWith(e => logger.warn(s"settle sweep failed: ${e.getMessage}")) *>
+                // 死会话 running 自动收敛（僵尸收敛批 2026-09-06）：仅对「可证明
+                // 无活会话且无在途后台任务」的 running 节点收敛 failed（非 cancelled
+                // ——cancelled 不投递下游，barrier 永挂）。best-effort 同款
+                //（失败不影响 TTL sweep）。
+                cfg.engine.settleStaleRunningNodes()
+                .handleErrorWith(e => logger.warn(s"dead-session settle failed: ${e.getMessage}")) *>
                 cfg.engine.store.sweepExpired(System.currentTimeMillis()).flatMap { removed =>
                   removed.traverse_(id => cfg.engine.emitRemoved(id))
                 }.as(behavior)

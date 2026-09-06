@@ -136,6 +136,125 @@ class NodeEngine(
         }
     }
 
+  /** bg-wait 标注写点（僵尸收敛批 2026-09-06，作者「首要缺口 = 补显示」）：节点完成
+    * 闸（bgtask-completion-gate 批）在持留等待后台任务时把 node `bgWait` 置为在途
+    * 等待型任务快照、全部清空/终态化时清 None——NodePayload 条件字段随之带/不带，
+    * 前端据此标「等待后台任务」徽标（与真僵尸区分，避免把设计内等待误判成
+    * dead-session running）。仅对 running 节点写（fresh 守卫）；状态已变 → 拒写
+    * （R2 竞态纪律），flow-map.json 不残留过期 bgWait。值未变 → 不写不 event
+    * （幂等：终态化清 None 时若原本就 None，不重复发 nodeUpdated）。 */
+  private def setNodeBgWait(nodeId: String, waiting: List[BgTaskRegistry.ActiveTask]): IO[Unit] =
+    val desc =
+      if waiting.isEmpty then None
+      else Some(s"${waiting.size} background task(s): " + waiting.map(t => s"'${t.description}'").mkString(", "))
+    store.mutate { st =>
+      st.nodes.get(nodeId) match
+        case Some(fresh) if fresh.status == NodeLifecycle.Running && fresh.bgWait != desc =>
+          st.copy(nodes = st.nodes.updated(nodeId, fresh.copy(bgWait = desc)))
+        case _ => st
+    }.flatMap { s =>
+      s.nodes.get(nodeId).filter(_.bgWait == desc).traverse_(emitUpdated)
+    }
+
+  /** 在飞登记三表的对称清理（僵尸收敛批 2026-09-06 清理硬化，根因报告漏洞①）：
+    * running / nodeSessions / agentRegistry 三表在 runWithAgent 内登记后，只能由该
+    * fiber 自己在 race 落定后清理——fiber 崩溃/被外部 cancel/悬死在 race 时三表泄漏
+    * （制造「假活会话」canary → isRunning 恒 true → 误杀防护被击穿，
+    * reapStaleRunning/abandon/NodeCancel 全部拒绝，不可回收僵尸）。本方法作为
+    * runWithAgent 整体 `.guarantee` finalizer：任意退出路径（正常/崩溃/异常/cancel）
+    * 都对称移除。身份感知（防误删竞发赢家）：只在 running 表条目是**本 fiber 的
+    * cancelSig** 时移除（LostRace/Aborted 败方自己的 sig 已被分支移除，此处 no-op；
+    * 赢家条目保留）；nodeSessions 只在映射到本 sessionId 时移除（nodeId 是共享键，
+    * 盲删会误删赢家条目）；agentRegistry 只移除本 sessionId。与既有清理段
+    * （:947-953）同点幂等（先到先清，后到 no-op）。 */
+  private def cleanupRunTables(nodeId: String, sessionId: String, cancelSig: Deferred[IO, Unit]): IO[Unit] =
+    running.modify { m =>
+      if m.get(nodeId).exists(_.eq(cancelSig)) then (m - nodeId, ())
+      else (m, ())
+    } *>
+      nodeSessions.update { m =>
+        if m.get(nodeId).contains(sessionId) then (m - nodeId) else m
+      } *>
+      resources.agentRegistry.update(_ - sessionId)
+
+  /** 死会话 running 节点的自动收敛（僵尸收敛批 2026-09-06；与 NodeCancel-stale /
+    * abandon 的人力收殓区分——本方法走**自动** watchdog 路径）。收敛目标取 **failed**
+    * 而非 reapStaleRunning 的 cancelled：cancelled 不投递下游（cancelNode 不调
+    * deliverFailed/settleDeps），下游 barrier/deps 永不释放——正是「下游永久阻塞」
+    * 这门核心危害；failed 沿 deliverFailed 给下游一个 collect 占位结算（merge 型转
+    * blocked），barrier 归零，下游不再悬挂。fresh 守卫（R2）：只在 `status==Running`
+    * 时收敛——节点已终态/状态已变 → 拒写（并发完成/取消不被本路径覆盖成 failed）。
+    * 审计事件独立（dead-session-reaped），与既有 reaped/abandoned 区分。 */
+  private def autoFailDeadRunning(nodeId: String, err: String): IO[Unit] =
+    for
+      now <- IO(System.currentTimeMillis())
+      s <- store.mutate { st =>
+        st.nodes.get(nodeId) match
+          case Some(fresh) if fresh.status == NodeLifecycle.Running =>
+            st.copy(nodes = st.nodes.updated(nodeId, fresh.copy(
+              status = NodeLifecycle.Failed,
+              result = Some(err),
+              completedAt = Some(now),
+              ttlExpireAt = Some(now + NodeEngine.TtlDisplayMs))))
+          case _ => st // 已终态/消失/状态已变 → 拒写（R2 竞态纪律）
+      }
+      _ <- s.nodes.get(nodeId) match
+        case Some(failed) if failed.status == NodeLifecycle.Failed =>
+          emitEvent("nodeUpdated", nodeId, NodePayload.buildNodeJson(failed, now)) *>
+            logger.warn(s"Node '${failed.name}' auto-finalized failed (dead session): ${err.take(200)}") *>
+            FlowMapEventLog.append(workspace, projectName, nodeId, "dead-session-reaped",
+              s"dead-session node auto-converged to failed: ${err.take(220)}") *>
+            deliverFailed(failed, err)
+        case _ => IO.unit
+    yield ()
+
+  /** 死会话 running 周期对账（僵尸收敛批 2026-09-06；ProjectActor.TtlTick 30s 驱动
+    * ——复用既有心跳点零新调度器，与 settleRunnableSweep 同族）。对每个 status=Running
+    * 节点做死会话判定，死者自动收敛 failed（autoFailDeadRunning）。判定口径（作者
+    * 2026-09-06 裁定：收敛必须以「可证明无活会话 且 无在途后台任务」触发）：
+    *   - 活会话 = nodeSessions(sessionId) 在 agentRegistry 有记录（agent 已 spawn 且
+    *     未清理）——有记录即视为活（保守，宁可漏一期不可误杀）；
+    *   - nodeSessions 无映射 = 会话未登记/登记已清（重启内存清空 / 翻转即崩溃於登记
+    *     前）→ 用 running 表再判：无在飞 fiber（running 表无此节点）才收敛（有 fiber
+    *     却无 nodeSessions 是异常带，保守不收敛）；
+    *   - 记录缺失但过了 spawn 窗口（StaleSpawnGraceMs）→ 判死（fiber 已死未登记
+    *     agent，而非刚启动的 spawn 窗口内）；
+    *   - 「无在途后台任务」= BgTaskRegistry.waitingFor(sessionId) 为空——非空 = 设计
+    *     内等待后台任务（节点按设计保持 running，**不得收敛/提前结算**——作者红线，
+    *     禁把「等待后台任务」当 bug 提前结算）。
+    * 不误杀活会话：registry 有活记录 / waitingFor 非空 → 一律跳过。 */
+  def settleStaleRunningNodes(): IO[Unit] =
+    store.snapshot.flatMap { s =>
+      s.nodes.values.filter(_.status == NodeLifecycle.Running).toList
+        .filterA { n =>
+          val deadSession: IO[Boolean] =
+            nodeSessions.get.map(_.get(n.id)).flatMap {
+              case None =>
+                running.get.map(m => !m.contains(n.id))
+              case Some(sid) =>
+                resources.agentRegistry.get.map { reg =>
+                  val pastSpawnWindow =
+                    n.startedAt.exists(st => System.currentTimeMillis() - st > NodeEngine.StaleSpawnGraceMs)
+                  !reg.contains(sid) && pastSpawnWindow
+                }
+            }
+          deadSession.flatMap {
+            case false => IO.pure(false)
+            case true =>
+              nodeSessions.get.map(_.get(n.id)).flatMap {
+                case Some(sid) => BgTaskRegistry.waitingFor(sid).map(_.isEmpty)
+                case None => IO.pure(true)
+              }
+          }
+        }
+        .flatMap { zombies =>
+          zombies.traverse_ { z =>
+            autoFailDeadRunning(z.id,
+              "node session dead (no live session, no in-flight background task) — auto-converged to failed by dead-session watchdog")
+          }
+        }
+    }
+
   /** WS nodeRemoved（TTL 移除/归档后通知前端移除卡片）。payload = 节点最终态
     * （NodeList 同构——归档区兜底查得，ttlLeftSec=0），不再发空对象。 */
   def emitRemoved(nodeId: String): IO[Unit] =
@@ -604,7 +723,12 @@ class NodeEngine(
           pr
         case _ => PathUtil.resolveNodeProjectRoot(workspace, node.worktree)
     val nodeName = node.name
-    for
+    // 清理硬化（僵尸收敛批 2026-09-06，根因报告漏洞①）：runSig 桥接 guarantee 与
+    // for 内才创建的 cancelSig——finalizer 在任意退出路径（正常/崩溃/异常/cancel）
+    // 读到 cancelSig 执行 cleanupRunTables 三表对称移除（防泄漏「假活 canary」）。
+    // cancelSig 未创建（for 前崩溃）→ None → 无登记可清，no-op。
+    val runSig = Ref.unsafe[IO, Option[Deferred[IO, Unit]]](None)
+    (for
       // 在飞登记先行（清场 c-① liveness 误杀防护 20260903）：running 表先于
       // status=Running 翻转——NodeList liveness / abandon / NodeCancel 收殓判定
       // 以「running 表含此节点」为活会话信号，若先翻转后登记，spawn 窗口内的
@@ -615,6 +739,7 @@ class NodeEngine(
       // 翻转成功后重装自己的 sig（FlipDone 分支），最终条目必属活会话 fiber。
       // liveness 判定只看键存在，不受值选择影响。
       cancelSig <- Deferred[IO, Unit]
+      _ <- runSig.set(Some(cancelSig))
       _ <- running.modify { m =>
         if m.contains(nodeId) then (m, ())
         else (m + (nodeId -> cancelSig), ())
@@ -823,7 +948,11 @@ class NodeEngine(
                                     waiting.map(t => s"'${t.description}'").mkString(", ")) *>
                                   logger.info(
                                     s"Node '$nodeName' ($nodeId) turn completed with ${waiting.size} background " +
-                                      "task(s) still running — holding completion until they finish")) *>
+                                      "task(s) still running — holding completion until they finish") *>
+                                  // bg-wait 标注写点（僵尸收敛批）：首个 hold 期置位
+                                  // bgWait——NodePayload 条件字段随之带，前端可标
+                                  // 「等待后台任务」（与真僵尸区分，作者首要缺口）。
+                                  setNodeBgWait(nodeId, waiting)) *>
                                 holdEmitted.set(true)
                             emitOnce *> armCap(waiting).as(bridge)
                           }
@@ -835,23 +964,27 @@ class NodeEngine(
                                   IO.whenA(held)(
                                     FlowMapEventLog.append(
                                       workspace, projectName, nodeId, "bg-released",
-                                      "all background task(s) finished — completion released")) *>
+                                      "all background task(s) finished — completion released") *>
+                                      setNodeBgWait(nodeId, Nil)) *>
                                   resultDeferred.complete(Right(messages)).attempt.void.as(Behaviors.stopped)
                               }
                             else
                               disarmCap *> holdEmitted.set(false) *>
+                                setNodeBgWait(nodeId, Nil) *>
                                 resultDeferred
                                   .complete(Left(FailOutcome(bgFailureMessage(failures, messages))))
                                   .attempt.void.as(Behaviors.stopped)
                           }
                       }
                     case AgentEvent.Failed(_, err) =>
-                      resultDeferred
-                        .complete(Left(FailOutcome(Option(err.message).getOrElse("unknown error"))))
-                        .void
-                        .as(Behaviors.stopped)
+                      setNodeBgWait(nodeId, Nil) *>
+                        resultDeferred
+                          .complete(Left(FailOutcome(Option(err.message).getOrElse("unknown error"))))
+                          .void
+                          .as(Behaviors.stopped)
                     case AgentEvent.Cancelled(_, reason) =>
-                      resultDeferred.complete(Left(FailOutcome(s"cancelled: $reason"))).void.as(Behaviors.stopped)
+                      setNodeBgWait(nodeId, Nil) *>
+                        resultDeferred.complete(Left(FailOutcome(s"cancelled: $reason"))).void.as(Behaviors.stopped)
 
                 override def onSignal(ctx: ActorContext[AgentEvent], signal: SystemSignal): IO[Behavior[AgentEvent]] =
                   signal match
@@ -859,11 +992,12 @@ class NodeEngine(
                       logger.warn(
                         s"Node '$nodeName' ($nodeId) session '$sessionId' terminated WITHOUT a terminal event " +
                           "(crashed or stopped unexpectedly) — finalizing node as failed")
-                      resultDeferred
-                        .complete(Left(FailOutcome(
-                          s"node session '$sessionId' terminated without a terminal event (session crashed or was stopped unexpectedly)")))
-                        .void
-                        .handleErrorWith(_ => IO.unit) // 与正常终态事件竞争时败方静默
+                      setNodeBgWait(nodeId, Nil) *>
+                        resultDeferred
+                          .complete(Left(FailOutcome(
+                            s"node session '$sessionId' terminated without a terminal event (session crashed or was stopped unexpectedly)")))
+                          .void
+                          .handleErrorWith(_ => IO.unit) // 与正常终态事件竞争时败方静默
                         .as(Behaviors.stopped)
               bridge
             }
@@ -917,7 +1051,14 @@ class NodeEngine(
         case Left(fo) =>
           if fo.message.contains("cancelled") then cancelNode(nodeId)
           else failNode(nodeId, fo.message)
-    yield ()
+    yield ()).guarantee {
+      // 任意退出路径（正常/崩溃/异常/cancel）三表对称移除——与既有清理段
+      // （agentRegistry/running/nodeSessions :947-953）同点幂等（先到先清）。
+      runSig.get.flatMap {
+        case Some(cancelSig) => cleanupRunTables(nodeId, sessionId, cancelSig)
+        case None => IO.unit // cancelSig 未创建 = 未登记任何表 → 无可清
+      }
+    }
 
   // ── LoopNode 执行（LoopNode 批 2026-09-06，主设计 §2.2 状态机 + §2.4 异常路径）──
   //
@@ -1800,6 +1941,13 @@ object NodeEngine:
     * 上游）→ mount-stalled 事件留痕（含节点 id+等待原因）+ settleSweep 既有资格回扫
     * 接管补触发。双保险的时间维度信号（轮次维度由 trigger-starved 承担）。 */
   val MountStalledMs: Long = 60_000L
+
+  /** 死会话自动收敛的 spawn 窗口宽限（僵尸收敛批 2026-09-06）：节点 status 翻
+    * Running 后，agent registry 登记发生在 spawn 之后（runWithAgent :816）——Flipped
+    * 瞬到 registry 登记之间存在微小窗口。自动对账只在「已过该宽限仍未登记 agent」
+    * 时才判定死会话，避免把刚启动（fiber 活着、agent 即将登记）的节点误判收殓。
+    * 宽限取 60s（agent spawn + plugin MCP acquire 量级远小于此）。 */
+  val StaleSpawnGraceMs: Long = 60_000L
 
   /** startNode 翻转竞发的败方信号（trigger-chain-fix）：startNode 单点吞掉——
     * 败方安静退出，赢家持有节点生命周期（会话、cancelSig、终态分发）。 */
