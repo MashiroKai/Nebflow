@@ -26,8 +26,8 @@ import scala.concurrent.duration.*
   * 三者皆不满足（典型：有脏文件且未申报；含 ahead≥1 但残留未申报脏文件）→
   * Reject——调用方（NodeEngine.completeNode）转 blocked（复用既有 BLOCKED 反馈
   * 协议），blockedFeedback 标注「产物滞留未申报」+ 诊断，不走 out 投递、结果不
-  * 丢弃，由分发器/Nebula 按 blocked 重入协议处置。held → release 的 completed
-  * 转移（releaseNode）同样接闸（release 不复用 completeNode，非单一咽喉）。
+  * 丢弃，由分发器/Nebula 按 blocked 重入协议处置。completed 转移唯一经
+  * NodeEngine.completeNode（单咽喉）。
   *
   * 轻量与安全边界：
   *  - git 一律 `--no-optional-locks -C <dir>`（只读不建 index.lock）；默认 runner

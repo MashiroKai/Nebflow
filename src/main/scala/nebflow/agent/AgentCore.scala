@@ -2131,7 +2131,7 @@ object AgentCore:
     * （Read/Glob/Grep/Bash，读现状 + git worktree 管理）。不给 Write/Edit（分发器只
     * 分解不产内容）、不给 AskUserQuestion（单次会话不阻塞等用户，§C.3）。
     * NodeMessage（20260905 机制批，作者裁定）第八件：向已分发节点注入补充消息
-    * （running=turn 边界注入 / wiring/pending/held=任务追加 / 终态拒绝）。 */
+    * （running=turn 边界注入 / wiring/pending=任务追加 / 终态拒绝）。 */
   val DispatcherFixedTools = Set(
     "NodeList",
     "NodeEdit",

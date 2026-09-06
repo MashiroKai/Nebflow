@@ -23,7 +23,7 @@ import scala.concurrent.duration.*
  *  - ②running 注入：活会话 → ImmediateInput（[NODE-MESSAGE] 前缀 + 来源标注
  *    （分发器 NodeMessage + 节点名 + 时间戳））；task 不被改写；竞态兜底——
  *    nodeSessions/registry 查无映射 → 任务记录追加「注入未达」（留痕不丢）
- *  - ③未启动追加：wiring / pending / held → task 追加「== 分发器补充
+ *  - ③未启动追加：wiring / pending → task 追加「== 分发器补充
  *    （NodeMessage <时间戳>） ==」分节（buildInput 启动时沿 task 读到）；
  *    多条消息顺序追加
  *  - ④终态拒绝 ×4 态：completed / failed / cancelled / blocked →
@@ -134,7 +134,7 @@ class NodeMessageSpec extends CatsEffectSuite:
       if os.exists(p) then os.read(p).linesIterator.toList else Nil
     }
 
-  /** wiring/pending 等非运行节点直种（NodeHoldSpec seedWiring 同款）。 */
+  /** wiring/pending 等非运行节点直种（seedWiring 同款）。 */
   private def seedNode(
       rt: ProjectRuntime,
       id: String,
@@ -225,7 +225,7 @@ class NodeMessageSpec extends CatsEffectSuite:
       assertEquals(lines, Nil, "refused calls write zero audit lines")
   }
 
-  // ── ③未启动追加（wiring / pending / held）+ ⑤留痕/载荷 ──
+  // ── ③未启动追加（wiring / pending）+ ⑤留痕/载荷 ──
 
   test("S3-PENDING: wiring+pending nodes get the message appended to task with the section marker; audit line written") {
     val ws = tempRoot / "ws-nmsg-s3"
@@ -248,7 +248,7 @@ class NodeMessageSpec extends CatsEffectSuite:
     yield
       assert(rw.isRight, s"wiring append must succeed, got $rw")
       assert(rp.isRight, s"pending append must succeed, got $rp")
-      // 分节头 + 原任务保留（裁定③格式，NodeEdit release note 先例同款）
+      // 分节头 + 原任务保留（裁定③格式）
       assert(w.task.exists(_.startsWith("base-W")), "original task preserved (append, not replace)")
       assert(w.task.exists(_.contains("== 分发器补充（NodeMessage")), s"section marker present, got task=${w.task}")
       assert(w.task.exists(_.contains("补充指示-W：使用 v2 接口")), "message text present")
@@ -260,25 +260,6 @@ class NodeMessageSpec extends CatsEffectSuite:
       // 裁定⑤留痕：node-message 审计行
       assert(lines.count(_.contains("\"type\":\"node-message\"")) == 2, s"two node-message audit lines expected, got $lines")
       assert(lines.exists(l => l.contains("n-w") && l.contains("appended to task")), "wiring append audited")
-  }
-
-  test("S3-HELD: held node (non-terminal, no live session) gets the task append") {
-    val ws = tempRoot / "ws-nmsg-s3h"
-    os.makeDir.all(ws)
-    val system = ActorSystem(s"nmsg-s3h-${scala.util.Random.nextInt(100000)}")
-    for
-      res <- mkResources(system, tempRoot)
-      rt <- mountProject("nmsg-s3h", ws, system, res)
-      _ <- seedNode(rt, "n-h", "held-h", NodeLifecycle.Held, task = Some("base-H"), result = Some("held result"))
-      rh <- nodeMessage(rt, "n-h", "held 补充：放行前先补测试")
-      h <- rt.store.getNode("n-h").map(_.getOrElse(fail("n-h must exist")))
-      _ <- system.stopAll.handleErrorWith(_ => IO.unit)
-    yield
-      assert(rh.isRight, s"held append must succeed (non-terminal, no live session), got $rh")
-      assertEquals(h.status, NodeLifecycle.Held, "held status unchanged")
-      assertEquals(h.result, Some("held result"), "held result untouched")
-      assert(h.task.exists(_.contains("== 分发器补充（NodeMessage")) && h.task.exists(_.contains("held 补充：放行前先补测试")),
-        s"held node task carries the section, got task=${h.task}")
   }
 
   test("S3-MULTI: two messages append two sequential sections (order preserved)") {

@@ -32,8 +32,8 @@ import scala.concurrent.duration.*
  *   消化失败通知后的最终输出
  * - G5 等待总上限兜底：等待期超 bgWaitCapMs → Failed + 注明（后台任务不能
  *   卡死节点）
- * - G6 held 交互：hold 节点先等后台（bg-wait 留痕）再 held——bg 等待先于
- *   hold 分流发生
+ * - G6 下游 out 交互：节点（out 指向下游节点）先等后台（bg-wait 留痕）再
+ *   finalize completed——bg 等待先于终态投递发生
  * - G7 卡死防护：等待期 agent=Idle，TaskStuckWatcher 不命中（Idle 永不判
  *   卡死铁律）——变异验红：误标 Processing + 预置 giveUp 计数 → 节点被取消（红）
  * - G8 通知轮真卡死的正确行为：桥 Cancelled 通道（TaskStuckWatcher giveUp /
@@ -59,7 +59,7 @@ class NodeBgCompletionGateSpec extends CatsEffectSuite:
     """{"name":"test-agent","description":"bg gate regression agent","tools":[],"category":"standalone"}"""
   )
   os.write.over(tempRoot / "agents" / "test-agent" / "system.md", "# test-agent\n")
-  // 2026-09-05 agent 退役：新建节点执行统一 general——fixture 侧补 general agent（NodeHoldSpec 同款）
+  // 2026-09-05 agent 退役：新建节点执行统一 general——fixture 侧补 general agent
   os.makeDir.all(tempRoot / "agents" / "general")
   os.write.over(tempRoot / "agents" / "general" / "agent.json",
     """{"name":"general","description":"general executor","tools":[],"category":"standalone"}""")
@@ -196,7 +196,7 @@ class NodeBgCompletionGateSpec extends CatsEffectSuite:
   private def nodeInput(project: String, nodename: String, extra: (String, Json)*): Json =
     Json.obj(("project" -> Json.fromString(project)) :: ("nodename" -> Json.fromString(nodename)) :: extra.toList*)
 
-  private def createNode(project: String, ws: os.Path, name: String, task: String, hold: Boolean = false,
+  private def createNode(project: String, ws: os.Path, name: String, task: String,
       extraOut: Option[String] = None, res: SharedResources = null, system: ActorSystem = null): IO[Unit] =
     val ctx = ToolContext(
       projectRoot = ws.toString,
@@ -209,7 +209,7 @@ class NodeBgCompletionGateSpec extends CatsEffectSuite:
       "description" -> Json.fromString("bg gate spec node"),
       "task" -> Json.fromString(task),
       "out" -> Json.fromString(extraOut.getOrElse("Nebula"))
-    ) ++ (if hold then List("hold" -> Json.fromBoolean(true)) else Nil)
+    )
     NodeEditTool
       .call(nodeInput(project, name, extras*).asObject.get, ctx)
       .map(_.left.map(_.message))
@@ -424,9 +424,9 @@ class NodeBgCompletionGateSpec extends CatsEffectSuite:
       assert(events.exists(_.contains("\"bg-wait-timeout\"")), "bg-wait-timeout audit expected")
   }
 
-  // ── G6 held 交互：bg 等待先于 hold 分流 ──────────────────────
+  // ── G6 下游 out 交互：bg 等待先于终态投递 ──────────────────────
 
-  test("G6: hold node waits for bg tasks first (bg-wait), then finalizes as held") {
+  test("G6: node with a downstream out waits for bg tasks first (bg-wait), then finalizes completed") {
     val ws = tempRoot / "ws-g6"
     os.makeDir.all(ws)
     val system = ActorSystem(s"bg-g6-${scala.util.Random.nextInt(100000)}")
@@ -436,30 +436,29 @@ class NodeBgCompletionGateSpec extends CatsEffectSuite:
       _ <- IO(llm.res = res)
       recorded <- registerRecorder(res, system, "nebula-root")
       rt <- mountProject("bg-g6", ws, system, res)
-      // hold=true 校验要求 out 指向节点（out=Nebula 无可 hold 的投递面，NodeEdit 拒）——
-      // seed 下游 wiring 节点（NodeHoldSpec T1 同款）。
+      // seed 下游 wiring 节点——出边指向下游（区别于 G2 的 out=Nebula）
       _ <- rt.store.mutate(st => st.copy(nodes = st.nodes ++ Map(
-        "n-g6-down" -> NodeDef(id = "n-g6-down", name = "holdbg-down", agent = "test-agent",
+        "n-g6-down" -> NodeDef(id = "n-g6-down", name = "bg-down", agent = "test-agent",
           task = None, status = NodeLifecycle.Wiring, out = Some("Nebula"),
           createdAt = System.currentTimeMillis())))).void
-      _ <- createNode("bg-g6", ws, "holdbg-a", "result-HOLDBG", hold = true,
+      _ <- createNode("bg-g6", ws, "down-a", "result-HOLDBG",
         extraOut = Some("n-g6-down"), res = res, system = system)
       (nodeSid, agentRef) <- waitIdle(res)
       jobs <- llm.jobIds.get
       _ <- IO.sleep(300.millis)
-      midRun <- byName(rt, "holdbg-a")
-      // 后台完成 → 放行 → completeNode → hold 分流 → held
+      midRun <- byName(rt, "down-a")
+      // 后台完成 → 放行 → completeNode → completed（无 hold 分流）
       _ <- jobs.traverse_(BgTaskRegistry.unregister)
       _ <- notifyBgCompleted(agentRef, "spec bg task")
-      _ <- waitUntil(20.seconds)(byName(rt, "holdbg-a").map(n => NodeLifecycle.Terminal.contains(n.status) || n.status == NodeLifecycle.Held))
-      done <- byName(rt, "holdbg-a")
+      _ <- waitUntil(20.seconds)(byName(rt, "down-a").map(n => NodeLifecycle.Terminal.contains(n.status)))
+      done <- byName(rt, "down-a")
       events <- readEvents(ws)
       _ <- system.stopAll.handleErrorWith(_ => IO.unit)
     yield
-      assertEquals(midRun.status, NodeLifecycle.Running, "bg wait happens before hold split (node stays running)")
-      assertEquals(done.status, NodeLifecycle.Held, "after bg release the hold split must finalize as held")
+      assertEquals(midRun.status, NodeLifecycle.Running, "bg wait happens before finalize (node stays running)")
+      assertEquals(done.status, NodeLifecycle.Completed, "after bg release the node finalizes as completed")
       assertEquals(done.result, Some("bg-noted"))
-      assert(events.exists(_.contains("\"bg-wait\"")), "bg-wait audit expected before held")
+      assert(events.exists(_.contains("\"bg-wait\"")), "bg-wait audit expected before completed")
   }
 
   // ── G7 卡死防护：等待期 Idle 不被 TaskStuckWatcher 命中 ───────
