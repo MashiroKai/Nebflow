@@ -22,8 +22,9 @@ import scala.concurrent.duration.*
  * - ① 显式开启节点完成 → 分发器会话被触发，通知文本含节点名/终态/原因码；
  *   结果全文可达（results/<id>.md 持久化 + NodeList detail 指引）
  * - ② 未开启节点零触发；out=Nebula 投递零回归
- * - ③ 防循环收敛：同节点去重（notifySentAt 持久标记）；链级预算耗尽 → 节点转
- *   blocked + 升级 Nebula
+ * - ③ 防循环收敛：同节点去重（notifySentAt 持久标记）；链级预算耗尽 → 节点**保持
+ *   completed + 落 notifySentAt 止重扫 + 单条监督通知（notice 语义非 blocked）**；
+ *   预算按回合边界重置，single-flight 仅首次一条
  * - ④ 单一入口组合不双触发：未接线 reason（blocked/failed）接口层零动作
  *   （blocked 重入由 FeedbackRouter 独占）
  * - ⑤ 重启补投：未标记欠账由 redeliver 扫描补投；已标记（持久化）不重触发
@@ -286,7 +287,7 @@ class NotifyDispatcherSpec extends CatsEffectSuite:
       assertEquals(after.notifySentAt.isDefined, true, "marker persisted after first trigger")
   }
 
-  test("③ budget: exhaustion converts node to blocked + escalates Nebula (no reentry)") {
+  test("③ budget: exhaustion keeps node Completed + single supervisor notice (notice, no fake blocked) + no rescan") {
     for
       (store, dn, triggered, escalated, ws) <- mkUnit("budget", budgetMax = 2)
       _ <- seed(store, "n-b1", "budget-one", NodeLifecycle.Completed, notify = true, result = Some("R1"))
@@ -297,22 +298,76 @@ class NotifyDispatcherSpec extends CatsEffectSuite:
       b3 <- store.getNode("n-b3").map(_.get)
       _ <- dn.notifyTerminal(b1, NotifyReason.Completion)
       _ <- dn.notifyTerminal(b2, NotifyReason.Completion)
-      _ <- dn.notifyTerminal(b3, NotifyReason.Completion) // 预算 2 已耗尽 → blocked + 升级
+      _ <- dn.notifyTerminal(b3, NotifyReason.Completion) // 预算 2 已耗尽 → 保持 completed + 单条监督
       calls <- triggered.get
       esc <- escalated.get
       b3After <- store.getNode("n-b3").map(_.getOrElse(fail("b3 must exist")))
       audit <- readAuditTypes(ws)
+      // 止重扫：redeliver 不再重投/重报已标记的 b3（notifySentAt 已落）
+      _ <- dn.redeliver()
+      callsAfterScan <- triggered.get
+      b3AfterScan <- store.getNode("n-b3").map(_.get)
     yield
       assertEquals(calls.size, 2, "budget=2 → exactly 2 triggers")
-      assertEquals(b3After.status, NodeLifecycle.Blocked, "budget-exhausted node must convert to blocked")
-      assertEquals(b3After.ttlExpireAt, None, "converted node stays visible (待办语义)")
-      assert(b3After.blockedFeedback.isDefined, "converted node carries structured feedback")
-      assertEquals(esc.size, 1, "exactly one escalation to Nebula")
-      assert(esc.head.contains("[Node 'budget-three' blocked]"), s"escalation must carry node head, got: ${esc.head}")
-      assert(esc.head.contains("预算耗尽"), "escalation must carry budget reason")
+      assertEquals(b3After.status, NodeLifecycle.Completed, "budget-exhausted node must STAY completed (no fake blocked)")
+      assertEquals(b3After.blockedFeedback, None, "completed node carries NO blocked feedback")
+      assertEquals(b3After.notifySentAt.isDefined, true, "notifySentAt set → exits redeliver candidate set")
+      assertEquals(esc.size, 1, "exactly one supervisor notice")
+      assert(esc.head.contains("预算耗尽"), s"notice must carry budget reason, got: ${esc.head}")
+      assert(!esc.head.contains("[Node 'budget-three' blocked]"), "notice must NOT use blocked semantics (kept completed)")
       assert(audit.exists((t, id) => t == "dispatch-notify" && id == "n-b1"), "trigger audit for b1")
       assert(audit.exists((t, id) => t == "dispatch-notify" && id == "n-b2"), "trigger audit for b2")
       assert(audit.exists((t, id) => t == "dispatch-notify" && id == "n-b3"), "budget-exhausted audit for b3")
+      assertEquals(callsAfterScan.size, 2, "no rescan: budget-exhausted node not re-notified")
+      assertEquals(b3AfterScan.notifySentAt.isDefined, true, "marker persists after scan")
+  }
+
+  test("③ budget round reset: next round inherits fresh budget (not exhausted count)") {
+    for
+      (store, dn, triggered, _, _) <- mkUnit("budget-round-reset", budgetMax = 1)
+      _ <- seed(store, "n-rr1", "rr-one", NodeLifecycle.Completed, notify = true, result = Some("R1"))
+      _ <- seed(store, "n-rr2", "rr-two", NodeLifecycle.Completed, notify = true, result = Some("R2"))
+      rr1 <- store.getNode("n-rr1").map(_.get)
+      rr2 <- store.getNode("n-rr2").map(_.get)
+      _ <- dn.notifyTerminal(rr1, NotifyReason.Completion)  // trigger (budget 1/1)
+      _ <- dn.notifyTerminal(rr2, NotifyReason.Completion)  // exhausted (budget 1/1)
+      count1 <- triggered.get.map(_.size)
+      _ <- dn.redeliver()   // 回合边界 → 预算重置
+      _ <- seed(store, "n-rr3", "rr-three", NodeLifecycle.Completed, notify = true, result = Some("R3"))
+      _ <- seed(store, "n-rr4", "rr-four", NodeLifecycle.Completed, notify = true, result = Some("R4"))
+      rr3 <- store.getNode("n-rr3").map(_.get)
+      rr4 <- store.getNode("n-rr4").map(_.get)
+      _ <- dn.notifyTerminal(rr3, NotifyReason.Completion)  // trigger (fresh budget 0→1)
+      _ <- dn.notifyTerminal(rr4, NotifyReason.Completion)  // exhausted (new round)
+      count2 <- triggered.get.map(_.size)
+    yield
+      assertEquals(count1, 1, "round1 → 1 trigger (budget 1 exhausted)")
+      assertEquals(count2, 2, "round2 → fresh budget, rr3 triggers (not inheriting exhausted count)")
+  }
+
+  test("③ budget single-flight: multiple exhaustions in process → exactly one supervisor notice") {
+    for
+      (store, dn, triggered, escalated, _) <- mkUnit("budget-single-flight", budgetMax = 1)
+      _ <- seed(store, "n-s1", "sf-one", NodeLifecycle.Completed, notify = true, result = Some("R1"))
+      _ <- seed(store, "n-s2", "sf-two", NodeLifecycle.Completed, notify = true, result = Some("R2"))
+      _ <- seed(store, "n-s3", "sf-three", NodeLifecycle.Completed, notify = true, result = Some("R3"))
+      s1 <- store.getNode("n-s1").map(_.get)
+      s2 <- store.getNode("n-s2").map(_.get)
+      s3 <- store.getNode("n-s3").map(_.get)
+      _ <- dn.notifyTerminal(s1, NotifyReason.Completion)  // trigger (budget 1)
+      _ <- dn.notifyTerminal(s2, NotifyReason.Completion)  // exhausted → 监督通知 #1
+      _ <- dn.notifyTerminal(s3, NotifyReason.Completion)  // exhausted → single-flight 抑制（不重报）
+      calls <- triggered.get
+      esc <- escalated.get
+      s2After <- store.getNode("n-s2").map(_.get)
+      s3After <- store.getNode("n-s3").map(_.get)
+    yield
+      assertEquals(calls.size, 1, "budget=1 → 1 trigger")
+      assertEquals(esc.size, 1, "single-flight: only ONE supervisor notice across multiple exhaustions")
+      assertEquals(s2After.status, NodeLifecycle.Completed, "s2 stays completed")
+      assertEquals(s3After.status, NodeLifecycle.Completed, "s3 stays completed")
+      assertEquals(s2After.notifySentAt.isDefined, true, "s2 marked sent")
+      assertEquals(s3After.notifySentAt.isDefined, true, "s3 marked sent")
   }
 
   // ── ④：单一入口组合不双触发（未接线 reason 接口层零动作）─────────
