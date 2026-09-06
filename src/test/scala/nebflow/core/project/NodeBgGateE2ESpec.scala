@@ -44,7 +44,7 @@ class NodeBgGateE2ESpec extends CatsEffectSuite:
     """{"name":"bg-e2e-agent","description":"bg gate e2e agent","tools":["Bash"],"category":"standalone"}"""
   )
   os.write.over(tempRoot / "agents" / "bg-e2e-agent" / "system.md", "# bg-e2e-agent\n")
-  // 2026-09-05 agent 退役：新建节点执行统一 general——fixture 侧补 general agent（NodeHoldSpec 同款）。
+  // 2026-09-05 agent 退役：新建节点执行统一 general——fixture 侧补 general agent。
   // E2E 需真调 Bash：general 声明 tools:["Bash"]（非收敛 agent 声明式授予）。
   os.makeDir.all(tempRoot / "agents" / "general")
   os.write.over(tempRoot / "agents" / "general" / "agent.json",

@@ -15,11 +15,8 @@ import io.circe.syntax.*
 /** 节点生命周期（§2.1）：pending/running/completed/failed/cancelled + wiring 扩展。
   * blocked（20260902 反馈重入设计 §1.1）：turn 正常结束但节点声明无法继续——
   * 停止传播 + 触发重入的终态；永不过期（ttlExpireAt=None，待办语义 §1.4）。
-  * held（20260903 暂停/人在回路设计 §2.1，方案 B「节点 hold」）：节点完成后被
-  * 人工闸门扣住——结果持久保存 + 全文通知 Nebula，但不投递不结算，等待
-  * NodeEdit(release=true) 放行。**非终态**（Terminal 不加 held）——这是全部既有
-  * 机械零修改正确工作的关键：sweepExpired 不扫、整链归档判定天然排除、
-  * deps 闸门不触发、startNode 幂等跳过。 */
+  * hold 机制已于 2026-09-06 提案 A 彻底移除（作者拍板）：节点完成一律走
+  * blocked→gate→completed 原路径——「完成即投递 + 事后回看」，不设人工闸门。 */
 object NodeLifecycle:
   val Wiring = "wiring"
   val Pending = "pending"
@@ -28,7 +25,6 @@ object NodeLifecycle:
   val Failed = "failed"
   val Cancelled = "cancelled"
   val Blocked = "blocked"
-  val Held = "held"
 
   val Terminal: Set[String] = Set(Completed, Failed, Cancelled, Blocked)
 
@@ -78,10 +74,6 @@ case class NodeDef(
     * 自身 task（自足）；failed/cancelled/blocked ∉ completed → 不触发，下游保持
     * pending/wiring 可见。旧 flow-map.json 无此键 → withDefaults 解码为 Nil（零迁移）。 */
   deps: List[String] = Nil,
-  /** 人工闸点（20260903 暂停/人在回路设计 §2.1，方案 B）：true = 完成时不投递
-    * 不结算，status→held（非终态）+ 结果全文通知 Nebula，等待 NodeEdit release。
-    * 旧 flow-map.json 无此键 → withDefaults 解码为 false（零迁移）= 旧行为。 */
-  hold: Boolean = false,
   /** 合并节点标记（merge-node 批 20260905，方案 .nebflow/Spec/merge-node-plan.md）：
     * true = 批次产物落地收口节点——全部上游 completed 才触发（既有 in-barrier 语义）；
     * 上游 failed 时**不做 collect 占位结算**，转 blocked 可见终态不悬挂
@@ -139,11 +131,11 @@ object NodeDef:
   * **载荷收敛（2026-09-05 Flow Map 精简批）**：默认载荷只含元数据——**节点结果全文与
   * 摘要都不进默认载荷**（原 result ≤500 字符摘要键移除；结果全文持久化在 per-node 文件
   * `results/<nodeId>.md`，经 REST GET /projects/<n>/flow-map/nodes/<id>/result 或
-  * NodeList(detail=<nodeId>) 按需单点取）。条件字段（与 deps/hold/plugins 同构，非命中
+  * NodeList(detail=<nodeId>) 按需单点取）。条件字段（与 deps/plugins 同构，非命中
   * 不带——载荷字段集对无此特征的节点零漂移）：
  *   - hasResult: 节点持有结果全文（前端据此发起按需拉取）；
  *   - taskPreview: 存量节点无 description 时的回退展示（task 首行 ≤80 字符截断）；
- *   - deps / blockedFeedback / hold / plugins / merge：既有条件字段语义不变（merge
+ *   - deps / blockedFeedback / plugins / merge：既有条件字段语义不变（merge
  *     仅 merge 节点带 "merge": true——mount-enforce 批 payload 契约，缺失=非 merge）。
  * skill/mcp/preset 为节点配置（skill/mcp 仅存量兼容展示——2b §B.4/H-11① deprecated）。 */
 object NodePayload:
@@ -197,22 +189,19 @@ object NodePayload:
       // 非 Nil 才带——NodeEventPushSpec 的 NodeListKeys 字段集断言零改动（无 deps
       // 的节点 payload 字段集不变），前端增量渲染对缺键天然兼容。
       val depsFields = if node.deps.nonEmpty then List("deps" -> node.deps.asJson) else Nil
-      // hold 条件序列化（20260903 暂停/人在回路设计 §2.1；与 deps 条件字段同构）：
-      // true 才带——无 hold 节点 payload 字段集不变（NodeEventPushSpec 零影响）。
-      val holdFields = if node.hold then List("hold" -> node.hold.asJson) else Nil
       // plugins 条件序列化（阶段 2b §B.4 第 3 步 + H-3①用户可见性；与 deps 同构）：
       // 非 Nil 才带——无分配节点的 payload 字段集零变化。
       val pluginFields = if node.plugins.nonEmpty then List("plugins" -> node.plugins.asJson) else Nil
-      // notifyDispatcher 条件序列化（dispatch-notify 批 2026-09-05；与 hold 同构）：
-      // true 才带——未开启节点的 payload 字段集零变化（NodeList 上分发器可辨哪些
+      // notifyDispatcher 条件序列化（dispatch-notify 批 2026-09-05；与 deps 条件字段
+      // 同构）：true 才带——未开启节点的 payload 字段集零变化（NodeList 上分发器可辨哪些
       // 节点会回流通知）。
       val notifyFields = if node.notifyDispatcher then List("notifyDispatcher" -> node.notifyDispatcher.asJson) else Nil
-      // merge 条件序列化（mount-enforce 批 20260905 payload 契约；与 hold 条件字段
+      // merge 条件序列化（mount-enforce 批 20260905 payload 契约；与 deps 条件字段
       // 同构）：仅 merge 节点带 "merge": true——缺省/缺失 = 非 merge（前端按缺省
       // 防御，非 merge 节点 payload 字段集零变化）。loop 为前瞻防御字段：引擎现无
       // loop 节点概念（grep 核实）→ 暂不产出，前端缺省防御同款兼容。
       val mergeFields = if node.merge then List("merge" -> node.merge.asJson) else Nil
-      Json.obj((baseFields ++ hasResultFields ++ taskPreviewFields ++ depsFields ++ feedbackFields ++ holdFields ++ pluginFields ++ notifyFields ++ mergeFields)*)
+      Json.obj((baseFields ++ hasResultFields ++ taskPreviewFields ++ depsFields ++ feedbackFields ++ pluginFields ++ notifyFields ++ mergeFields)*)
 
 /** Flow Map 活动区（§2.6，磁盘 flow-map.json）。 */
 case class FlowMapState(

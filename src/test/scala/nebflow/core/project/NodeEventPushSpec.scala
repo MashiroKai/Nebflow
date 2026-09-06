@@ -24,7 +24,7 @@ import scala.concurrent.duration.*
  * 增/删/改/wiring 全部变化，且事件 payload 与 NodeList 同构（2026-09-05 载荷收敛后：
  * {id,name,agent,skill,mcp,preset,description,status,in,out,hasWorktree,worktree,
  * createdAt,completedAt,ttlLeftSec} 基集合 + 条件字段 hasResult/taskPreview/deps/
- * blockedFeedback/hold/plugins；result 全文与摘要不进默认载荷——按需读取契约；
+ * blockedFeedback/plugins；result 全文与摘要不进默认载荷——按需读取契约；
  * retries 键随 NodeDef 假语义字段删除移除，trigger-chain-fix 批）：
  *
  * 1. wiring 变更事件：create 带 in（barrier 合并）→ 上游 out 改指发 nodeUpdated；
@@ -113,7 +113,7 @@ class NodeEventPushSpec extends CatsEffectSuite:
     * 单一序列化点对齐；skill/mcp/preset 为节点配置字段；description 恒带（存量无值 null）；
     * blockCount 恒带（§4.1）；**result 全文/摘要不进默认载荷**（2026-09-05 载荷收敛），
     * hasResult 仅 result 非空节点带（条件序列化）→ 不入本基集合，按断言场景合并。
-    * blockedFeedback / deps / hold / plugins 同为条件字段 → 不入基集合）。 */
+    * blockedFeedback / deps / plugins 同为条件字段 → 不入基集合）。 */
   private val NodeListKeys: Set[String] =
     Set("id", "name", "agent", "skill", "mcp", "preset", "description", "status", "in", "out", "hasWorktree", "worktree", "blockCount", "createdAt", "completedAt", "ttlLeftSec")
   /** 有结果节点（终态）的载荷键集 = 基集合 + hasResult。 */

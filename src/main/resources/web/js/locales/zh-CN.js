@@ -679,7 +679,7 @@ export default {
   // === Task list ===
   // 任务面板 = 纯 Flow Map 节点视图（2026-09-05 10:54 裁定）：旧任务区退役，
   // sectionProgress/pendingShort/globalSource 键随退役路径一并清除；节点视图
-  // 键（nodePending/nodeHeld/nodeBlocked/inProgressShort/statsProgress/expand/
+  // 键（nodePending/nodeBlocked/inProgressShort/statsProgress/expand/
   // collapse/justNow/progressEmpty）保留。
   'task.expand': '展开',
   'task.collapse': '收起',
@@ -689,7 +689,6 @@ export default {
   'task.statsProgress': '{progress} 任务',
   'task.inProgressShort': '进行中',
   'task.nodePending': '待处理',
-  'task.nodeHeld': '待放行',
   'task.nodeBlocked': '阻塞',
   'ref.cardAria': '引用',
   'ref.expand': '展开',
