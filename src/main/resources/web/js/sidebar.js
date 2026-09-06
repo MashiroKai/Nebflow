@@ -736,6 +736,9 @@ export function renderSettings() {
     `<option value="${code}" ${code === getLocale() ? 'selected' : ''}>${localeLabels[code] || code}</option>`
   ).join('');
 
+  // 2026-09-06 作者裁定：账号区与设备互联统一为一个区块——设备属于账号，
+  // 登录态头像下方直接放设备列表，未登录态只有 logo + 一句「不可用」说明，
+  // 不再有独立的 neblink settings-section。
   content.innerHTML = `
     <div class="settings-section">
       <div class="settings-section-title">${t('settings.account')}</div>
@@ -748,9 +751,6 @@ export function renderSettings() {
           <img class="settings-avatar-photo" alt="" hidden>
         </span>
       </button>
-    </div>
-    <div class="settings-section">
-      <div class="settings-section-title">${t('neblink.title')}</div>
       ${neblinkSettingsHTML()}
     </div>
     <div class="settings-section">
