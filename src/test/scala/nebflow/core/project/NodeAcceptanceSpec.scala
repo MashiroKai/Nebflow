@@ -320,6 +320,10 @@ class NodeAcceptanceSpec extends CatsEffectSuite:
       // A 完成后缓冲改接：A.out = B
       r <- nodeEdit(nodeInput("acc-rw-b", "A", "out" -> Json.fromString("n-b")), ctx)
       s <- rt.store.snapshot
+      // 缓冲结果补投递在 detached fiber（NodeTools.runDetached → .start）里
+      // 执行——NodeEdit 返回 ≠ deliveredTo 已落账。有界轮询等补投递完成再
+      // 断言（断言语义不变；补投递真丢失时此处清晰红）
+      _ <- waitUntil(10.seconds)(rt.store.getNode("n-b").map(_.exists(_.deliveredTo.contains("n-a"))))
       b <- rt.store.getNode("n-b")
       _ <- system.stopAll.handleErrorWith(_ => IO.unit)
     yield
