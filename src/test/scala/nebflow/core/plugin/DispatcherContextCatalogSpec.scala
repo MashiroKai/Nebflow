@@ -68,7 +68,7 @@ class DispatcherContextCatalogSpec extends CatsEffectSuite:
   // cap-plugin：capability + description（目录应出现 capability、不出现 description）
   private val capPlugin = pluginDir("cap-plugin")
   writeManifest(capPlugin,
-    """{"$schema":"https://agent-plugins.org/schema/1.0.0","name":"cap-plugin","version":"1.0.0",""" +
+    s"""{"$$schema":"${PluginRegistry.CanonicalSchema}","name":"cap-plugin","version":"1.0.0",""" +
       """"description":"结构描述句（内容清单式，目录里不应出现）",""" +
       """"capability":"端到端能力探针：节点获得目录链路验证能力"}""")
   writeSkill(capPlugin, "probe")
@@ -76,21 +76,21 @@ class DispatcherContextCatalogSpec extends CatsEffectSuite:
   // desc-fallback：无 capability → 回落 description
   private val descFallback = pluginDir("desc-fallback")
   writeManifest(descFallback,
-    """{"$schema":"https://agent-plugins.org/schema/1.0.0","name":"desc-fallback","version":"1.0.0",""" +
+    s"""{"$$schema":"${PluginRegistry.CanonicalSchema}","name":"desc-fallback","version":"1.0.0",""" +
       """"description":"回落描述：解析方法论能力包"}""")
   writeSkill(descFallback, "fallback-skill")
 
   // cap-blank：capability 为空白串 → 宽容解析 None → 回落 description
   private val capBlank = pluginDir("cap-blank")
   writeManifest(capBlank,
-    """{"$schema":"https://agent-plugins.org/schema/1.0.0","name":"cap-blank","version":"1.0.0",""" +
+    s"""{"$$schema":"${PluginRegistry.CanonicalSchema}","name":"cap-blank","version":"1.0.0",""" +
       """"description":"空白回落描述句","capability":"   "}""")
   writeSkill(capBlank, "blank-skill")
 
   // untrusted-plugin：skill 齐全但从不审批 → 目录不得出现
   private val untrusted = pluginDir("untrusted-plugin")
   writeManifest(untrusted,
-    """{"$schema":"https://agent-plugins.org/schema/1.0.0","name":"untrusted-plugin","version":"1.0.0",""" +
+    s"""{"$$schema":"${PluginRegistry.CanonicalSchema}","name":"untrusted-plugin","version":"1.0.0",""" +
       """"description":"未信任插件描述（不应出现）"}""")
   writeSkill(untrusted, "never")
 
