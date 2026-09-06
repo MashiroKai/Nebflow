@@ -283,7 +283,7 @@ export function neblinkSettingsHTML() {
   }).join('');
 
   const peerHint = peers.length === 0
-    ? `<div class="cfg-hint" style="margin-top:6px">${t('neblink.noPeersHint') || 'No other devices found. Ensure the device link service is configured on both devices.'}</div>`
+    ? `<div class="cfg-hint" style="margin-top:6px">${t('neblink.noPeersHint') || 'Sign in to nebflow on both devices.'}</div>`
     : '';
 
   // NL 号入口已移除（作者 2026-09-05 裁定：NL 号统一 = 官网 Username，官网
