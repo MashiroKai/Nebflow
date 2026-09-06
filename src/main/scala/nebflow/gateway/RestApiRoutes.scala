@@ -1253,6 +1253,20 @@ class RestApiRoutes(
               case Some(q)         => fs.lookupUser(q).flatMap(friendResult)
       }
 
+    /** 搜索（friend-search-contract §4.1 唯一入口）：username OR email 双键 NOCASE
+      * 精确。?q=... → 命中 {found:true,user:{username,display_name,avatar},
+      * relation_status} / 未命中 {found:false}；透传上游不变形（返回结构与前端
+      * friendsApi.normalizeSearch 归一语义严格一致——纯代理，不字段映射）。 */
+    case req @ GET -> Root / "users" / "search" =>
+      withAuth(req) {
+        sharedResources.friendService match
+          case None => NotFound(Json.obj("error" -> "NebLink not enabled".asJson))
+          case Some(fs) =>
+            req.params.get("q") match
+              case None | Some("") => BadRequest(Json.obj("error" -> "Missing q".asJson))
+              case Some(q)         => fs.searchUser(q).flatMap(friendResult)
+      }
+
     /** [U3] 自定义 NebLink 号。body: {neblinkId} → 200 {neblinkId}；上游 409
       * taken / 422 invalid 由 NeblinkClient 折叠为 Left → 网关 502 + error 透传
       * （web 端以 available 预检 + 本地正则兜底，409/422 仅竞态兜底面）。 */
