@@ -76,7 +76,8 @@ class NodeEngine(
     * 挂接点仅两处：completedNode 尾部直触发 + ProjectActor.TtlTick 周期补投。 */
   private[project] val dispatchNotify: DispatchNotify = DispatchNotify.forEngine(
     store, workspace, projectName, rootSessionId,
-    escalate = (text, nodeName) => deliverToNebula(text, nodeName, NodeLifecycle.Blocked),
+    // notice 语义（非 blocked）：预算耗尽时节点保持 completed，前端不可标 BLOCKED。
+    escalate = (text, nodeName) => deliverToNebula(text, nodeName, DispatchNotify.NoticeEventType),
     emitUpdated = emitUpdated
   )
 
