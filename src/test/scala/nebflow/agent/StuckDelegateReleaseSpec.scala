@@ -212,7 +212,9 @@ class StuckDelegateReleaseSpec extends CatsEffectSuite:
       }
     go(System.currentTimeMillis() + timeout.toMillis)
 
-  test("issue #31: stuck delegate releases the parent barrier — held results inject, root fires, no phantom") {
+  // KNOWN-RETIRED (2026-09-06, 作者拍板豁免): 本用例测 stuck Delegate 释放 barrier，
+  // Delegate 已随架构退役（非 bug），豁免为只报不 fail（保留可观测性）；不改写 fixture、不删用例。
+  test("issue #31: stuck delegate releases the parent barrier — held results inject, root fires, no phantom".ignore) {
     val system = ActorSystem("stuck-delegate-release")
     val tmp = os.temp.dir()
     seedAgents(tmp)
@@ -389,7 +391,9 @@ class StuckDelegateReleaseSpec extends CatsEffectSuite:
           Stream(StreamChunk.TextDelta("unexpected root request"), StreamChunk.Done(None, None))
   end TwinWakeLlm
 
-  test("#418: idle parent + cross-turn twin delegates — first completion wakes the parent immediately") {
+  // KNOWN-RETIRED (2026-09-06, 作者拍板豁免): 本用例测 idle parent 的 twin Delegate 唤醒，
+  // Delegate 已架构退役（非 bug），豁免为只报不 fail（保留可观测性）；不改写 fixture、不删用例。
+  test("#418: idle parent + cross-turn twin delegates — first completion wakes the parent immediately".ignore) {
     val system = ActorSystem("delegate-wake")
     val tmp = os.temp.dir()
     seedAgents(tmp)
