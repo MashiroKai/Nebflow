@@ -1,14 +1,16 @@
 // turn-collapse-keep-text.spec.mjs — #346 v2 "decompression model"
-// (2026-09-05 23:44 author ruling: 思考直播回归 + 收起/展开语义重做 + 动画).
+// (2026-09-05 23:44 author ruling: 思考直播回归 + 收起/展开语义重做;
+// 2026-09-06 08:19 author feedback: 动画太卡顿 → WAAPI 动画层全摘,
+// 直落/直剥; 总结行换行完整显示; ✻ 设计字句恢复进题头).
 //
 // v2 semantics: the turn keeps its ordered row list IN PLACE — collapse is a
-// render-layer transform. A persistent `.turn-header` (model · 思考 Ns ·
-// 工具 M 次 · 读写 K 文件 + chevron) lands at the turn top; ONLY thinking
-// rows + tool-call rows tuck away (`.nf-tucked`). Assistant text rows, card
-// deliverables and injected bubbles stay visible. Expanding restores every
-// middle block to its ORIGINAL position (they never moved) with the grow
-// animation (max-height 0→natural + opacity + ~5px settle, 320ms ease-out,
-// 50ms stagger, document flow pushes the reply — no FLIP).
+// render-layer transform. A persistent `.turn-header` (✻ 字句 · model ·
+// 思考 Ns · 工具 M 次 · 读写 K 文件 + chevron) lands at the turn top; ONLY
+// thinking rows + tool-call rows tuck away (`.nf-tucked`). Assistant text
+// rows, card deliverables and injected bubbles stay visible. Expanding
+// restores every middle block to its ORIGINAL position (they never moved).
+// The toggle is INSTANT — no transition layer (the 批② 320ms/stagger WAAPI
+// animation was removed 2026-09-06, author feedback 「动画太卡顿」).
 //
 // Streaming regression (思考直播回归): thinking streams EXPANDED; only the
 // terminal tuck folds it.
@@ -141,14 +143,20 @@ function rowsSnapshot(page) {
       .map(el => el.outerHTML).join('\n'));
 }
 
-/** Wait until every tool/thinking row animation has finished — the static
- *  .nf-tucked class (and natural geometry) only land in finish handlers. */
-async function animationsSettled(page) {
-  await page.waitForFunction(() => {
+/** Negative animation pin (2026-09-06): after any toggle there must be ZERO
+ *  running/pending SCRIPT-DRIVEN (WAAPI) animations on tool/thinking rows —
+ *  the 批② animation layer is gone, the toggle is an instant class flip.
+ *  (CSS entrance animations like fadeIn are unrelated and excluded.) */
+async function expectNoAnimations(page) {
+  const count = await page.evaluate(() => {
     const rows = document.querySelectorAll('#chat .row.tool, #chat .row.thinking-row');
     return Array.from(rows).flatMap(r => r.getAnimations())
-      .every(a => a.playState !== 'running' && a.playState !== 'pending');
-  }, null, { timeout: 5000 });
+      // CSSAnimations (row fadeIn entrance etc.) are unrelated chrome — the
+      // pin targets script-driven (WAAPI) animations, the removed 批② layer.
+      .filter(a => !(a instanceof CSSAnimation))
+      .filter(a => a.playState === 'running' || a.playState === 'pending').length;
+  });
+  expect(count).toBe(0);
 }
 
 const T_A = '好的，我先检索资料，再逐段汇报进展。';
@@ -198,9 +206,11 @@ test.describe('decompression model — live alternating turn (验收 ②④)', (
     expect(vis.tools).toEqual([false, false]);
     expect(vis.injected).toEqual([true]);
 
-    // The header carries model + 思考 + whole-turn tool count + file count
-    // (Read turnGroup.js → 1 file; WebSearch has no file payload).
+    // The header carries the restored ✻ design phrase + model + 思考 +
+    // whole-turn tool count + file count (Read turnGroup.js → 1 file;
+    // WebSearch has no file payload).
     const headerText = await page.locator('.turn-header-text').first().textContent();
+    expect(headerText).toContain('✻ 整理线索 4 秒'); // v1-designed copy, restored 2026-09-06
     expect(headerText).toContain('test-model');
     expect(headerText).toContain('思考'); // duration is live-measured (< 1s here)
     expect(headerText).toContain('工具 2 次');
@@ -212,35 +222,18 @@ test.describe('decompression model — live alternating turn (验收 ②④)', (
     await context.close();
   });
 
-  test('expand restores every middle block in place with the grow animation; collapse reverses (验收 ③④)', async ({ browser }) => {
+  test('expand restores every middle block in place INSTANTLY; collapse strips instantly (验收 ③④, 2026-09-06 无动画)', async ({ browser }) => {
     const { context, page, pageErrors } = await newPage(browser);
     await page.evaluate(() => window.__liveTurn());
     const before = await readSeq(page);
 
-    // Expand: the WAAPI grow animation must be running on the tucked rows
-    // (max-height + opacity + transform keyframes, document-flow push — no
-    // FLIP on the reply rows).
+    // Expand: instant class flip — no WAAPI animation may be running on the
+    // tucked rows (negative pin for the removed 320ms/stagger layer).
     await page.locator('.turn-header').first().click();
-    const anim = await page.evaluate(() => {
-      const rows = Array.from(document.querySelectorAll('#chat .row.nf-anim-probe, #chat .row.tool, #chat .row.thinking-row'));
-      const anims = rows.flatMap(r => r.getAnimations());
-      const frames = anims.length ? anims[0].effect.getKeyframes() : [];
-      const keys = frames.length ? Object.keys(frames[0]) : [];
-      return {
-        count: anims.length,
-        hasMaxHeight: keys.includes('maxHeight'),
-        hasOpacity: keys.includes('opacity'),
-        hasTransform: keys.includes('transform'),
-      };
-    });
-    expect(anim.count).toBeGreaterThan(0);
-    expect(anim.hasMaxHeight).toBe(true);
-    expect(anim.hasOpacity).toBe(true);
-    expect(anim.hasTransform).toBe(true);
+    await expectNoAnimations(page);
 
-    // Settled state: everything visible in the ORIGINAL order (identical
-    // sequence, no :tucked markers), header unchanged and still visible.
-    await animationsSettled(page);
+    // Settled state (synchronous): everything visible in the ORIGINAL order
+    // (identical sequence, no :tucked markers), header unchanged and visible.
     const after = await readSeq(page);
     expect(after).toEqual(before.map(s => s.replace(':tucked', '')));
     const texts = await visibleTexts(page);
@@ -253,9 +246,9 @@ test.describe('decompression model — live alternating turn (验收 ②④)', (
     expect(await page.locator('.turn-header').first().evaluate(el => el.offsetHeight > 0)).toBe(true);
     expect(await page.locator('.turn-header').first().getAttribute('aria-expanded')).toBe('true');
 
-    // Collapse back: reverse compression ends in the tucked state again.
+    // Collapse back: instant strip ends in the tucked state again.
     await page.locator('.turn-header').first().click();
-    await animationsSettled(page);
+    await expectNoAnimations(page);
     expect(await page.locator('.nf-tucked').count()).toBe(3);
     expect(await readSeq(page)).toEqual(before);
     expect(await page.locator('.turn-header').first().getAttribute('aria-expanded')).toBe('false');
@@ -455,8 +448,11 @@ test.describe('decompression model — history rebuild path (验收 ②⑤)', ()
     }, null, { timeout: 5000 });
 
     // Turn-1 header counts both tools + 2 distinct files (a.md, report.html);
-    // history has no thinking timing → the 思考 segment is omitted.
+    // history has no thinking timing → the 思考 segment is omitted. The ✻
+    // design phrase rides the done badge (seed = message index 6 → think.6,
+    // deterministic) and leads the header (2026-09-06 restoration).
     const h1 = await page.locator('.turn-header-text').nth(0).textContent();
+    expect(h1).toContain('✻ 从这颗星逛到那颗星，溜达了 3s');
     expect(h1).toContain('test-model');
     expect(h1).toContain('工具 2 次');
     expect(h1).toContain('读写 2 文件');

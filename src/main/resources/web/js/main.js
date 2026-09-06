@@ -1093,7 +1093,13 @@ onMessage('done', (msg, view) => {
     // #346: gather this turn's process rows and collapse immediately
     // (synchronous, no linger). The summary freezes the phrase + model
     // (both visible, v1.2); the timestamp rides in the title tooltip.
-    const lastBadge = Array.from(activeView.dom.chat.querySelectorAll('.duration-badge')).pop();
+    // 2026-09-06 footer 补齐批: thinking/tool/agent rows now carry plain
+    // footer badges too — the phrase source must be the last DONE badge
+    // (data-nf-phrase), not the last badge in DOM order (which may now be
+    // an agent row's plain footer appended by finishAgent above).
+    const turnBadges = Array.from(activeView.dom.chat.querySelectorAll('.duration-badge'));
+    const lastBadge = [...turnBadges].reverse().find(b => b.dataset && b.dataset.nfPhrase)
+      || turnBadges[turnBadges.length - 1];
     collapseTurn(activeView, {
       durationMs,
       model: msg.model,
