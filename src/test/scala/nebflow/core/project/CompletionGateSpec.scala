@@ -408,7 +408,9 @@ class CompletionGateSpec extends CatsEffectSuite:
       state <- Ref.of[IO, StubGit](StubGit(status = Nil, ahead = 2))
       (rt, events, system) <- engineScenario("eng-a", llm, stubRunner(state))
       _ <- waitStatus(rt, "gate-a", Set(NodeLifecycle.Completed))
-      _ <- waitStatus(rt, "down-b", Set(NodeLifecycle.Running, NodeLifecycle.Completed))
+      // 确定性同步：等 down-b 实际录入 delivered result（勿等 Running/Completed 状态——
+      // 节点状态翻转先于 LLM 输入记录，等状态是脆弱观察点；应等副作用本身）
+      _ <- waitUntil(20.seconds)(llm.inputs.get.map(_.exists(_.contains("=== Node gate-a ==="))))
       inputs <- llm.inputs.get
       aId <- idOf(rt, "gate-a")
       evs <- events.get
@@ -427,7 +429,9 @@ class CompletionGateSpec extends CatsEffectSuite:
       state <- Ref.of[IO, StubGit](StubGit(status = List("M spec.md", "?? report.md"), ahead = 0))
       (rt, events, system) <- engineScenario("eng-b", llm, stubRunner(state))
       _ <- waitStatus(rt, "gate-a", Set(NodeLifecycle.Completed))
-      _ <- waitStatus(rt, "down-b", Set(NodeLifecycle.Running, NodeLifecycle.Completed))
+      // 确定性同步：等 down-b 实际录入 delivered result（勿等 Running/Completed 状态——
+      // 节点状态翻转先于 LLM 输入记录，等状态是脆弱观察点；应等副作用本身）
+      _ <- waitUntil(20.seconds)(llm.inputs.get.map(_.exists(_.contains("=== Node gate-a ==="))))
       inputs <- llm.inputs.get
       a <- rt.store.snapshot.map(_.nodes.values.find(_.name == "gate-a")).map(_.getOrElse(fail("A must exist")))
       _ <- stop(system)

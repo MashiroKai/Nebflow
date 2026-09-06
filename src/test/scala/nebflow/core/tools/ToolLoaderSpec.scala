@@ -10,7 +10,11 @@ import io.circe.syntax.*
 
 class ToolLoaderSpec extends CatsEffectSuite:
   private val tempRoot: os.Path = os.pwd / "target" / "test-tool-loader"
+  private val originalRoot = PathUtil.dataRoot
   PathUtil.setDataRoot(tempRoot)
+
+  override def afterAll(): Unit =
+    PathUtil.setDataRoot(originalRoot)
 
   private def toolsDir = tempRoot / "tools"
 

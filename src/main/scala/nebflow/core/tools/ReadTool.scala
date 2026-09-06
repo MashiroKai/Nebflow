@@ -109,9 +109,10 @@ Guidelines:
 
   def call(input: JsonObject, ctx: ToolContext): IO[Either[ToolError, String]] =
     val filePathStr = input("file_path").flatMap(_.asString).getOrElse("")
-    // 阶段 2a 沙箱（§A.3）：读闸门——canonical 路径执行；root 内 symlink 指外
-    // 经 canonicalize 解析出去向而被拒（§A.8-3）。沙箱关时旧行为；沙箱开时相对
-    // 路径按节点 root 解析（§A.8-8，非 JVM user.dir）。
+    // 阶段 2a 沙箱（§A.3）：读闸门——canonical 路径执行。[2026-09-06 读宽批]
+    // readableRoots 全盘化后读拒绝唯一来源 = readDenied 负向规则；root 内 symlink
+    // 指外普通文件读放行（写仍拒——§A.8-3 读宽写窄不对称）。沙箱关时旧行为；沙箱
+    // 开时相对路径按节点 root 解析（§A.8-8，非 JVM user.dir）。
     FileSandbox.checkRead(ctx, filePathStr) match
       case Left(err) => IO.pure(Left(err))
       case Right(filePath) =>

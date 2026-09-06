@@ -122,6 +122,18 @@ class FriendApiRoutesSpec extends CatsEffectSuite:
           respond(ex, 200, """{"found":true,"userId":"u-nf","username":"newform","displayName":"新形态","avatar":"https://example.com/a.png","email":"nf@example.com"}""")
         else respond(ex, 200, """{"found":true,"neblinkId":"lin@example.com","name":"林小满"}""")
     )
+    // 搜索（friend-search-contract §4.1 唯一入口）：hit → 契约命中形态（user 卡为
+    // {username, display_name, avatar}，无 userId——按 §4.1 & neblink-server
+    // SearchUserCard 字段集）；"ghost" → miss 恒 {found:false}。网关纯透传验证。
+    server.createContext(
+      "/api/users/search",
+      ex =>
+        val q = Option(ex.getRequestURI.getQuery).getOrElse("")
+        if q.contains("ghost") then
+          respond(ex, 200, """{"found":false}""")
+        else
+          respond(ex, 200, """{"found":true,"user":{"username":"alice42","display_name":"Alice","avatar":"https://example.com/a.png"},"relation_status":"addable"}""")
+    )
     // [U3] NL 号自定义 + 可用性检测（0904 批次新增代理路由的上游形态）
     server.createContext(
       "/api/users/me/neblink-id/available",
@@ -380,6 +392,49 @@ class FriendApiRoutesSpec extends CatsEffectSuite:
           assertEquals(body.hcursor.downField("found").as[Boolean].toOption, Some(true))
         }
       }
+    }
+  }
+
+  test("GET /users/search?q= proxies search result (contract hit shape)") {
+    withMockServer { (_, client, fs) =>
+      client.login("d1", "dev", "macos", Nil) *> runWith(Some(fs))(
+        authed(Request[IO](Method.GET, Uri.unsafeFromString("/users/search?q=alice42")))
+      ).flatMap { resp =>
+        assertEquals(resp.status, Status.Ok)
+        resp.as[Json].map { body =>
+          // 契约命中形态（§4.1）：found + user 卡（username/display_name/avatar）+ relation_status
+          assertEquals(body.hcursor.downField("found").as[Boolean].toOption, Some(true))
+          val user = body.hcursor.downField("user")
+          assertEquals(user.downField("username").as[String].toOption, Some("alice42"))
+          assertEquals(user.downField("display_name").as[String].toOption, Some("Alice"))
+          assertEquals(user.downField("avatar").as[String].toOption, Some("https://example.com/a.png"))
+          assertEquals(body.hcursor.downField("relation_status").as[String].toOption, Some("addable"))
+        }
+      }
+    }
+  }
+
+  test("GET /users/search passes through miss shape unchanged") {
+    // 未命中恒 {found:false}（防枚举 §5.1）——网关纯透传，无 user/relation_status 冗余键。
+    withMockServer { (_, client, fs) =>
+      client.login("d1", "dev", "macos", Nil) *> runWith(Some(fs))(
+        authed(Request[IO](Method.GET, Uri.unsafeFromString("/users/search?q=ghost")))
+      ).flatMap { resp =>
+        assertEquals(resp.status, Status.Ok)
+        resp.as[Json].map { body =>
+          assertEquals(body.hcursor.downField("found").as[Boolean].toOption, Some(false))
+          assertEquals(body.hcursor.downField("user").as[Json].toOption, None)
+          assertEquals(body.hcursor.downField("relation_status").as[Json].toOption, None)
+        }
+      }
+    }
+  }
+
+  test("search without q -> 400") {
+    withMockServer { (_, client, fs) =>
+      client.login("d1", "dev", "macos", Nil) *> runWith(Some(fs))(
+        authed(Request[IO](Method.GET, Uri.unsafeFromString("/users/search")))
+      ).map(resp => assertEquals(resp.status, Status.BadRequest))
     }
   }
 

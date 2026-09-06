@@ -1691,7 +1691,7 @@ object ProjectCreateTool extends Tool:
               taken <- ProjectStore.list().map(_.flatMap(p => normalizeWorkspace(p.workspace)).toSet)
               candidates = scanCandidates(candidatesRoot, taken)
               question =
-                s"ProjectCreate 需要项目工作区路径 — 点击上方「选择工作区」打开系统文件夹选择框（可浏览层级、新建文件夹）；" +
+                s"ProjectCreate 需要项目工作区路径 — 点击上方「选择工作区」打开应用内目录浏览器（可逐级浏览、新建文件夹）；" +
                   s"候选为 $candidatesRoot 下尚未用作项目工作区的目录，可点选；或选 Other… 手输绝对路径（支持 ~）。"
               item = AskItem(question, candidates.map(c => AskOption(c, None)), dirPicker = true)
               requestId = java.util.UUID.randomUUID().toString.take(8)

@@ -1,8 +1,8 @@
-// workspacePicker.js — 应用内工作区目录浏览器（Route C 兜底，workspace-picker 批次）。
+// workspacePicker.js — 应用内目录浏览器（workspace-picker 批次的目录选择件）。
 //
-// 触发：ProjectCreate「选择工作区」卡点击后，后端 headless JVM / 系统对话框异常 →
-// workspaceDirPicked{fallback:true} → chat.js 自动打开本弹窗。也可复用于其他需要
-// 目录选择的场景（openPicker({sessionId, onPick, onCancel})）。
+// 触发：ProjectCreate「选择工作区」卡点击 → chat.js 直接打开本弹窗（2026-09-06
+// 作者拍板：复用应用内目录浏览器，不走系统目录对话框）。也可复用于其他需要目录
+// 选择的场景（openPicker({sessionId, onPick, onCancel})）。
 //
 // 链路：sendWs({type:'wsBrowse.list', path}) → wsBrowseList{path,home,entries,error}
 //       sendWs({type:'wsBrowse.mkdir', path, name}) → wsBrowseMkdir{path,ok,error}
@@ -10,8 +10,9 @@
 // 动态 onMessage 订阅 + 超时兜底（probeCanvasFile 先例）。
 //
 // 交互：面包屑导航（逐级可点，home 折叠为「主目录」）/ 上级 / 新建文件夹（行内输入，
-// 不弹 prompt）/ 点行进目录 / 「选中此目录」确认当前目录 → onPick(path)。
-// 视觉：Sapphire 玻璃 token（.wsp-* 类，样式见 chat.css），亮暗双主题随全局变量。
+// 不弹 prompt，创建成功自动进入新目录）/ 点行进目录 / 「选中此目录」确认当前目录
+// → onPick(path)。视觉：Sapphire 玻璃 token（.wsp-* 类，样式见 chat.css），
+// 亮暗双主题随全局变量。
 
 import { sendWs, onMessage } from './ws.js';
 import { t } from './i18n.js';

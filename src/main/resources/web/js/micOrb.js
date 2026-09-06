@@ -1,3 +1,66 @@
+// v8.4.5 (2026-09-06): VOICE DEFORM COMPRESSION R5 — soft-limited loudness→
+// deform mapping (author feedback 2026-09-06 18:0x: 响亮时变形过度夸张 — at
+// loud levels the orb still grows into an exaggerated spiky star; target:
+// 0.9 ≈ 0.5 圆润、可略强, three levels still distinguishable, low volume
+// unchanged). Screenshot diagnosis (four-level captures, before-shots):
+// the star/spike silhouette at 0.9 is dominated by TWO volume→deform
+// channels, both LINEAR in the injected level:
+//   A) the volume-driven hover warp (v8.2 jarvis port): target.hover =
+//      0.10 + rawVoice·0.90, rendered as uv.x/y += hover·hoverIntensity·0.1·
+//      sin(uv·9+tt) — at 0.9 that is ±0.127uv (±19% of the 0.66 body
+//      radius), 9× the voice-wave displacement (±0.0144uv);
+//   B) the v8.4.0 voice wave: uv += dir·(uVol·amp·wave), ±0.0144uv at 0.9.
+// R5 puts BOTH channels behind ONE smooth limiter (the VOICE_WAVE shape
+// layer — weights/harmonics/k/drift/jitter/amp — is untouched, so T4a/T4b/
+// T7 are unaffected by construction):
+//  - voiceDeformGain(v) = v / (1+(v/0.55)^4)^(1/4): identity below ~0.2
+//    (g(0.15)=0.1498 — 低音量保持现状), soft knee, asymptote 0.55. Measured
+//    ladder: 0.15→0.150 / 0.5→0.439 / 0.9→0.532 / 1.0→0.538 — loud settles
+//    at ≈1.21× normal (略强, not 1.8×), the hard 0.9 star flattens to the
+//    0.5 look.
+//  - Hover channel: target.hover = 0.10 + voiceDeformGain(rawVoice)·0.90 →
+//    warp amplitude at 0.9 = 0.081uv ≈ v8.4.4's 0.5 level (0.077uv);
+//    at 0.15 it is bit-identical to v8.4.4.
+//  - Voice channel: the uVol uniform now carries voiceDeformGain(voiceLevel)
+//    (was the raw smoothed level). GLSL math byte-identical; uVol=0 still
+//    gates the block, so every non-listening state stays bit-identical.
+//    voiceLevel itself (attack/release smoothing, T1/T2/T4b readback) is
+//    NOT compressed — only the deform gain is.
+//  - 体量 cue (轻微放大): the CSS state-scale channel gains a small
+//    volume term, sc·(1+0.05·voiceLevel) → +0.75%/+2.2%/+4.5% at
+//    0.15/0.5/0.9 — loudness reads as a gentle size swell instead of
+//    deformation. Shader/premultiply untouched (CSS transform only).
+//  - T6 annulus margin IMPROVES: worst-case silhouette radius at 0.9 drops
+//    from 0.66+0.127+0.014 ≈ 0.80uv to 0.66+0.081+0.009 ≈ 0.75uv.
+//
+// v8.4.4 (2026-09-06): VOICE RIPPLE SMOOTHING R4 — calmer travel, finer-crest
+// cut WITHOUT top-bin share pressure (author feedback 2026-09-06 17:41: 说话
+// 的时候语音气泡的扭曲还是太严重 — still too warped while speaking, after R3).
+// Parameter layer only, zero structural change; the volume-perception MAIN
+// CHANNEL (amp + uVol linear scaling of the k=5 carrier) is untouched:
+//  - weights [0.62,0.27,0.11] → [0.63,0.28,0.09]: the k=13 bin is the
+//    HIGHEST spatial-curvature term (w·k² = 18.6, above even the k=5
+//    carrier's 15.5) — it is where the fine "毛刺" live. Moving 2 points of
+//    weight off it (1 to k=5, 1 to k=8) cuts k=13 curvature −18% and total
+//    Σw·k² −4.9% while the top-bin DFT share stays FLAT (~0.828 → ~0.828,
+//    third-round 0.85 gate untouched — k13's lost share lands on k8/k5 in
+//    near-equal w² terms). k=13 stays ≥1.3× above the 0.015·emax strongBins
+//    floor (measured 0.020), so the 3-harmonic detection is unchanged.
+//  - drifts 4.7/-6.9/11.3 → 3.8/-5.5/9.0 rad/s (×~0.8): wave-travel speeds
+//    drift/k drop 0.94/0.86/0.87 → 0.76/0.69/0.69 rad/s — the rim swells
+//    and travels instead of writhing ("涌动 not 扭动"). Ratios stay pairwise
+//    non-integer (38/55/90); T4(b) decorrelation re-verified (r1 0.41 /
+//    r2 0.72, both ≪ 0.98).
+//  - jitterDepth 0.18 → 0.14: breathing range ×0.86..1.00 — fewer sudden
+//    per-harmonic crest surges. Jitter RATES unchanged (R3 already slowed
+//    them ×1.6; slowing further risks a static look).
+//  - τ_attack 150ms → 190ms, τ_release 480ms → 560ms: consonant spikes no
+//    longer jolt the rim; loud syllables subside as a surge. Design band
+//    restated: attack 50-190ms / release 200-560ms. All spec settle bands
+//    re-verified numerically (worst T1 alias Δ=0.040 < 0.06).
+//  - amp 0.016, wavenumbers {5,8,13}, phases, jitter rates: UNCHANGED.
+//    T7 Lipschitz L 6.21800 → 4.89450 (drift slowdown + depth cut).
+//
 // v8.4.3 (2026-09-05): VOICE RIPPLE SMOOTHING R3 — rounder crests, slower
 // breathing (author feedback 2026-09-05 23:51: 震动波形还是太尖锐，要更平缓，
 // 但音量大小区别仍要能看出来). Parameter layer only, zero structural change;
@@ -71,8 +134,9 @@
 //    fixed base amplitude; STT and rendering are unaffected.
 //  - Amplitude pipeline: setVoiceLevel(v) injects the raw level; drawFrame
 //    smooths it with frame-rate-independent attack/release exponentials
-//    (τ_attack 150ms / τ_release 480ms since v8.4.3) into voiceLevel =
-//    the uVol uniform.
+//    (τ_attack 190ms / τ_release 560ms since v8.4.4) into voiceLevel.
+//    v8.4.5: the uVol uniform carries voiceDeformGain(voiceLevel) — the
+//    soft-limited deform gain; voiceLevel stays the linear readback.
 //    Non-listening states force the smoothing target to 0, so injected
 //    levels can never leak into any other state (frozen stays frozen).
 //  - Organic waveform: the edge displacement is a 3-harmonic angular field
@@ -246,29 +310,58 @@ const PULSE_TABLE = { 'listening': [0.06, 1.6], 'nebula-busy': [0.05, 2.2], 'bg-
    because sin(k·θ) must be 2π-periodic in θ — a non-integer k would tear a
    fixed seam into the edge at the atan2 wrap. The "irrational /
    incommensurate" quality lives in the TEMPORAL dimension: each harmonic
-   drifts at its own speed (4.7 / -6.9 / 11.3 rad/s — pairwise non-integer
-   ratios) and its amplitude slowly jitters (rates 0.80 / 1.30 / 2.30 rad/s
-   since v8.4.3 — ×~1.6 slower breathing, depth 0.18 → ×0.82..1.00). The three time bases never re-align, so the
+   drifts at its own speed (3.8 / -5.5 / 9.0 rad/s since v8.4.4 — ×~0.8 vs
+   v8.4.3's 4.7/-6.9/11.3, pairwise non-integer ratios) and its amplitude
+   slowly jitters (rates 0.80 / 1.30 / 2.30 rad/s
+   since v8.4.3 — ×~1.6 slower breathing, depth 0.18 → 0.14 in v8.4.4 → ×0.86..1.00). The three time bases never re-align, so the
    waveform shape keeps evolving and no single neat sine is ever visible. The
-   field is additionally multiplied by uVol (smoothed mic level) and rides on
+   field is additionally multiplied by uVol (v8.4.5: the COMPRESSED deform
+   gain voiceDeformGain(voiceLevel) — see VOICE_DEFORM_CAP) and rides on
    top of the pre-existing noise deformation inside draw() (w-field + r0
    nEdge wobble). */
 export const VOICE_WAVE = {
-  amp: 0.016, // max radial displacement (uv units) at voiceLevel 1 (v8.4.2: 0.032 → 0.016, ≈2.6% of body radius — author: 幅度还是太大)
+  amp: 0.016, // radial displacement (uv) at deform gain 1 (v8.4.2: 0.032 → 0.016); v8.4.5: the gain soft-caps (g(0.9)=0.532, g(1)=0.538) so the real max at full volume is ≈0.0086uv ≈1.3% of the body radius
   harmonics: [
     // v8.4.3: jitter rates ×~1.6 slower (0.80/1.30/2.30 rad/s; pairwise-
     // coprime 8/13/23) — slower amplitude breathing, same depth of life.
-    { k: 5,  drift: 4.7,  phase: 0.0, jitterRate: 0.80, jitterPhase: 0.7 },
-    { k: 8,  drift: -6.9, phase: 1.7, jitterRate: 1.30, jitterPhase: 2.1 },
-    { k: 13, drift: 11.3, phase: 4.2, jitterRate: 2.30, jitterPhase: 0.3 },
+    // v8.4.4: drifts ×~0.8 (4.7/-6.9/11.3 → 3.8/-5.5/9.0 rad/s; pairwise
+    // non-integer 38/55/90) — the rim travels calmly instead of writhing.
+    { k: 5,  drift: 3.8,  phase: 0.0, jitterRate: 0.80, jitterPhase: 0.7 },
+    { k: 8,  drift: -5.5, phase: 1.7, jitterRate: 1.30, jitterPhase: 2.1 },
+    { k: 13, drift: 9.0,  phase: 4.2, jitterRate: 2.30, jitterPhase: 0.3 },
   ],
-  // v8.4.3: steepened as a whole spectral envelope (w8/w5 0.56→0.44,
-  // w13/w8 0.45→0.41) — every rippler's spatial curvature w·k² drops
-  // (k8 −13%, k13 −21%), crests read rounder; the k=5 carrier share rises
-  // to keep the volume read strong. Amp untouched (main channel preserved).
-  weights: [0.62, 0.27, 0.11], // sums to 1
-  jitterDepth: 0.18, // v8.4.2: 0.28 → 0.18 — calmer crests, breathing kept
+  // v8.4.4: the k=13 bin carries the HIGHEST per-harmonic spatial curvature
+  // (w·k² = 18.6 in v8.4.3 — above the k=5 carrier's 15.5); 2 weight points
+  // move off it (1→k5, 1→k8): k13 curvature −18%, Σw·k² −4.9%, while the
+  // top-bin DFT share stays FLAT (~0.828 — the third-round 0.85 gate is
+  // untouched; k13's lost w² share lands ~equally on k5/k8). k=13 remains
+  // ≥1.3× above the 0.015·emax strongBins floor → still exactly {5,8,13}.
+  weights: [0.63, 0.28, 0.09], // sums to 1
+  jitterDepth: 0.14, // v8.4.4: 0.18 → 0.14 — fewer sudden crest surges, breathing kept
 };
+
+/* ========================================================================
+   v8.4.5 R5 — amplitude→deform COMPRESSION (single source of truth for
+   every volume→deform gain: the voice-wave uVol uniform AND the v8.2
+   volume-driven hover warp). Author 2026-09-06: 响亮时变形过度夸张 — at 0.9
+   the linear maps let the orb grow into a spiky star; the deform gain must
+   saturate so loud ≈ normal (可略强), while ≤0.15 stays bit-identical.
+   Smooth limiter: g(v) = v·(1+(v/CAP)^4)^(−1/4) — C∞, monotone, identity
+   below ~0.2 (g(0.15)=0.1498), soft knee around CAP/2, asymptote CAP.
+     ladder: g(0.15)=0.150 · g(0.5)=0.439 · g(0.9)=0.532 · g(1.0)=0.538.
+   The wave SHAPE layer (VOICE_WAVE) is untouched — only the gain is.
+   ======================================================================== */
+export const VOICE_DEFORM_CAP = 0.55;
+/** Compressed deform gain for a (clamped [0,1]) voice level. Pure. */
+export function voiceDeformGain(v) {
+  if (!(v > 0)) return 0;
+  const q = v / VOICE_DEFORM_CAP, q2 = q * q;
+  return v / Math.sqrt(Math.sqrt(1 + q2 * q2));
+}
+/* 体量 cue: slight volume-driven scale-up stacked on the CSS state-scale
+   channel (NOT the shader — zero silhouette/premultiply risk). Loud swells
+   gently bigger instead of spiking: +0.75%/+2.2%/+4.5% at 0.15/0.5/0.9. */
+export const VOICE_SCALE_UP = 0.05;
 
 /* JS mirror of the generated GLSL displacement field (uVol factored out —
    this is the unit-amplitude waveform). Tests sample it to assert the
@@ -289,8 +382,10 @@ const VOICE_GLSL = (() => {
   const f = (x) => (Number.isInteger(x) ? x.toFixed(1) : String(x));
   const d = VOICE_WAVE.jitterDepth, base = (1 - d).toFixed(2), depth = d.toFixed(2);
   const lines = [
-    '  /* v8.4.0: organic voice deformation (listening only — uVol is the',
-    '     smoothed mic level, forced to 0 in every other state). Multi-',
+    '  /* v8.4.0: organic voice deformation (listening only — uVol gates the',
+    '     block; v8.4.5: uVol carries the COMPRESSED deform gain',
+    '     voiceDeformGain(voiceLevel), soft-limited so loud ≈ normal — see',
+    '     VOICE_DEFORM_CAP). Multi-',
     '     harmonic radial edge displacement riding on the shared wobble',
     '     contour: wavenumbers 5/8/13 since v8.4.2 (2π-continuous around',
     '     the rim), incommensurate drift + slow per-harmonic amplitude',
@@ -310,13 +405,13 @@ const VOICE_GLSL = (() => {
 })();
 
 /* Attack/release time constants for the voice amplitude (frame-rate
-   independent exponential smoothing, factor = 1-exp(-dt/τ)). v8.4.3
-   (author: 要更平缓): attack 150ms gives a gentler onset, release 480ms a
-   slower, more surging fall (design band restated: attack 50-170ms /
-   release 200-520ms). dt shares the F1 clamp (≤0.05) so a background tab
-   can never jump the amplitude. */
-export const VOICE_TAU_ATTACK = 0.15;
-export const VOICE_TAU_RELEASE = 0.48;
+   independent exponential smoothing, factor = 1-exp(-dt/τ)). v8.4.4
+   (author: 说话时扭曲还是太严重): attack 190ms softens consonant onsets,
+   release 560ms lets loud syllables subside as a surge (design band
+   restated: attack 50-190ms / release 200-560ms). dt shares the F1 clamp
+   (≤0.05) so a background tab can never jump the amplitude. */
+export const VOICE_TAU_ATTACK = 0.19;
+export const VOICE_TAU_RELEASE = 0.56;
 
 /** One smoothing step (pure, exported for node-level assertions).
  *  @param {number} cur current smoothed level
@@ -596,11 +691,15 @@ class OrbRenderer {
     /* v8.2 jarvis port: volume-driven hover / state scale / switch pulse */
     this.volDriven = false;    // whether the current state's hover follows volume
     /* v8.4.0: voice amplitude pipeline — rawVoice is the injected level
-       (setVoiceLevel), voiceLevel the attack/release-smoothed value that
-       drives the uVol uniform. volDriven=false forces the smoothing target
-       to 0, so injected levels can only ever affect the listening state. */
+       (setVoiceLevel), voiceLevel the attack/release-smoothed value;
+       v8.4.5: deformOut = voiceDeformGain(voiceLevel) is the compressed
+       deform gain that drives the uVol uniform (voiceLevel itself stays
+       linear for the T1/T2/T4b readback). volDriven=false forces the
+       smoothing target to 0, so injected levels can only ever affect the
+       listening state. */
     this.rawVoice = 0;
     this.voiceLevel = 0;
+    this.deformOut = 0;
     this.scale = 1.0;
     this.transitionPulse = 0;
     /* v8.2.1 no-flicker: */
@@ -743,6 +842,7 @@ class OrbRenderer {
       this.pulseAmp = 0;
       this.rawVoice = 0;
       this.voiceLevel = 0;
+      this.deformOut = 0; // v8.4.5: keep the uVol uniform gated under reduced motion
       this.drawFrame();
       return;
     }
@@ -798,9 +898,12 @@ class OrbRenderer {
     this.phaseTime += dt * this.params.timeScale;
     if (!this.reducedMotion) {
       this.params.hue += (this.target.hue - this.params.hue) * 0.035;
-      /* v8.2: hover='volume' — listening hover follows mic volume
-         (target = 0.10 + volume·0.90), lerp 0.1 */
-      if (this.volDriven) this.target.hover = 0.10 + this.rawVoice * 0.90;
+      /* v8.2: hover='volume' — listening hover follows mic volume, lerp 0.1.
+         v8.4.5: the level passes through voiceDeformGain (soft limiter)
+         first — the hover warp (±hover·hoverIntensity·0.1uv) is the
+         DOMINANT volume→deform channel and its linear map is what grew the
+         0.9 spiky star; compressed, 0.9 lands at v8.4.4's 0.5 look. */
+      if (this.volDriven) this.target.hover = 0.10 + voiceDeformGain(this.rawVoice) * 0.90;
       this.params.hover += (this.target.hover - this.params.hover) * 0.1;
       this.params.rot += dt * this.target.rotSpeed;
       this.params.sat += (this.target.sat - this.params.sat) * 0.04;
@@ -833,6 +936,11 @@ class OrbRenderer {
          (listening) states; everywhere else it decays to 0 (fixed base
          amplitude), so level injection can never leak into other states. */
       this.voiceLevel = stepVoiceLevel(this.voiceLevel, this.volDriven ? this.rawVoice : 0, dt);
+      /* v8.4.5: compressed deform gain — the uVol uniform carries this, so
+         loud levels saturate toward VOICE_DEFORM_CAP instead of scaling the
+         displacement linearly. deformOut=0 iff voiceLevel=0 → the GLSL
+         uVol>0.001 gate still keeps every other state bit-identical. */
+      this.deformOut = voiceDeformGain(this.voiceLevel);
     }
     const effHover = Math.min(1, this.params.hover + this.transitionPulse * 0.3);
     gl.viewport(0, 0, this.canvas.width, this.canvas.height);
@@ -843,7 +951,7 @@ class OrbRenderer {
     gl.uniform1f(this.u.hover, effHover);
     gl.uniform1f(this.u.rot, this.params.rot);
     gl.uniform1f(this.u.hoverIntensity, this.hoverIntensity);
-    gl.uniform1f(this.u.uVol, this.voiceLevel);
+    gl.uniform1f(this.u.uVol, this.deformOut); // v8.4.5: compressed gain (was raw voiceLevel)
     gl.uniform1f(this.u.sat, this.params.sat);
     gl.uniform3fv(this.u.palA, this.pal.a);
     gl.uniform3fv(this.u.palB, this.pal.b);
@@ -854,8 +962,12 @@ class OrbRenderer {
     gl.uniform1f(this.u.timeScale, 1.0);
     gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4);
     /* v8.2: stateScales apply in every state; the L1 breath still only
-       stacks on idle */
-    let sc = this.scale;
+       stacks on idle. v8.4.5: slight volume-driven scale-up (体量 cue) —
+       loudness reads as a gentle size swell (+0.75%/+2.2%/+4.5% at
+       0.15/0.5/0.9) instead of deformation; CSS transform only, the shader
+       silhouette/premultiply pipeline is untouched. voiceLevel=0 outside
+       listening → zero effect in every other state. */
+    let sc = this.scale * (1 + VOICE_SCALE_UP * this.voiceLevel);
     if (!this.reducedMotion && this.state === 'idle' && this.params.timeScale > 0.01) {
       sc *= 1 + Math.sin(time * 0.8) * 0.02;
     }
