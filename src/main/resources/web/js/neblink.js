@@ -207,21 +207,17 @@ export function neblinkSettingsHTML() {
     </div>`;
   }
 
-  // If not logged in — show a hint pointing to the avatar login entry.
-  // Login happens exclusively through the avatar (device-flow modal);
-  // there is intentionally no login button here.
+  // If not logged in — one-line "unavailable" note only (2026-09-06
+  // unification: avatar + device link are one settings block). The logo is
+  // already rendered by the avatar entry right above (avatarViewState falls
+  // back to the product logo when logged out) and owns the login click, so
+  // there is intentionally no second logo, no login button and no device
+  // section here.
   if (!neblinkState.loggedIn) {
     const pairErr = neblinkState.pairError
       ? `<div class="neblink-error">${escapeHtml(neblinkState.pairError)}</div>` : '';
     return `<div class="neblink-login-section">
-      <div class="neblink-logged-out">
-        <picture>
-          <source media="(prefers-color-scheme: dark)" srcset="css/logo-dark-4.png">
-          <img class="neblink-logged-out-logo" src="css/logo-bright-4.png" alt="">
-        </picture>
-        <div class="neblink-logged-out-text">未登录，设备互联不可用</div>
-        <div class="neblink-logged-out-hint">点击左上角头像登录</div>
-      </div>
+      <div class="neblink-logged-out-hint">${t('neblink.loggedOutHint')}</div>
       ${pairErr}
     </div>`;
   }
@@ -291,9 +287,10 @@ export function neblinkSettingsHTML() {
   // 区块连同 friendsApi 的 setNeblinkId/neblinkIdAvailable 一并删除；旧
   // neblink-id 端点同 release 退役（friend-search-contract §4.7）。
 
+  // Device list sits directly under the avatar inside the unified account
+  // block (2026-09-06) — no inner section label, no standalone block chrome.
   return `
     <div class="neblink-logged-in">
-      <div class="neblink-section-label">${t('neblink.devices')}</div>
       <div class="neblink-peers-list">${deviceRows}</div>
       ${peerHint}
       <button class="neblink-logout-btn" id="neblink-logout-btn">退出登录</button>

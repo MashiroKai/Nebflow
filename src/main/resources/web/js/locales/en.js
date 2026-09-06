@@ -766,11 +766,10 @@ export default {
   'task.repeatWeekly': 'Weekly',
 
   // NebLink
-  'neblink.title': 'Device Link',
-  'neblink.devices': 'Devices',
   'neblink.thisDevice': 'This device',
   'neblink.unknownDevice': 'Unnamed device',
   'neblink.noPeersHint': 'Sign in to nebflow on both devices.',
+  'neblink.loggedOutHint': 'Not signed in — Device Link is unavailable.',
   'neblink.deviceDescHint': 'e.g. Campus network, has Vivado 2023.2',
   'neblink.save': 'Save',
   'neblink.update': 'Update',
