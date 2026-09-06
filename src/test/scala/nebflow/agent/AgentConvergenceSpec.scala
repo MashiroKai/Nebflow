@@ -37,10 +37,11 @@ class AgentConvergenceSpec extends FunSuite:
 
   // ===== §G.3-① Nebula 工具清单 = §C.1 矩阵 =====
 
-  test("Nebula LLM tool list == §C.1 NebulaSet exactly（编排/通信/读三件/可视化/用户/平台/记忆）"):
+  test("Nebula LLM tool list == §C.1 NebulaSet exactly（编排/任务/通信/读三件/可视化/用户/平台/记忆）"):
     val delivered = CoreProbe.toolList(mkDef("Nebula")).toSet
     val expected = Set(
       "Task", "ProjectCreate", "AgentControl",
+      "TaskList",                                           // 任务编排（2026-09-06 TaskList 批：快变状态出记忆）
       "SendFriendMessage",
       "Read", "Glob", "Grep",                                // 读三件（08:40 解禁四件；23:34 裁定收走写手）
       "Card",                                               // 可视化（2026-09-05 解封恢复）
@@ -49,7 +50,7 @@ class AgentConvergenceSpec extends FunSuite:
       "MemoryEdit"
     )
     assertEquals(delivered, expected,
-      "Nebula 面向 LLM 的工具清单必须逐项等于 §C.1 固定矩阵（2026-09-06 00:48 作者裁定：NodeList 摘除——out 边自动投递取代主动查图，恰十三件；2026-09-05 23:34 作者裁定：Nebula 回归纯编排——Bash/Write/Edit 移除；零 Issue）")
+      "Nebula 面向 LLM 的工具清单必须逐项等于 §C.1 固定矩阵（2026-09-06 TaskList 批：+TaskList，作者 00:07 提议 + 00:11 首期无前端拍板，恰十四件；00:48 作者裁定：NodeList 摘除；2026-09-05 23:34 作者裁定：Nebula 回归纯编排；零 Issue）")
     assert(!delivered.contains("Issue"), "交付面零 Issue（2026-09-04 终裁退役）")
     // 钉死断言（2026-09-05 23:34 作者裁定）：Nebula 机制集不含 Bash、不含 Write、
     // 不含 Edit——变异验红锚（机制集加回任一件本组断言即红）
@@ -110,21 +111,22 @@ class AgentConvergenceSpec extends FunSuite:
     val generalDef = CoreProbe.allowed(mkDef("general", List("MemoryEdit")))
     assert(!generalDef.contains("MemoryEdit"), "其他身份（general）仍无 MemoryEdit 授能——剥离语义不变")
 
-  test("dream MemoryEdit 准入（2026-09-05 作者签准）：声明即授能，其余三件 Nebula 专属仍被剥"):
+  test("dream MemoryEdit 准入（2026-09-05 作者签准）：声明即授能，其余 Nebula 专属仍被剥"):
     val declared = CoreProbe.allowed(mkDef("dream", List("MemoryEdit")))
     assert(declared.contains("MemoryEdit"), "dream 声明 MemoryEdit → 授能（exclusiveToolsFor 豁免剥离）")
     val wildcard = CoreProbe.allowed(mkDef("dream", List("*")))
     assert(wildcard.contains("MemoryEdit"), "dream wildcard 同样授能（豁免在剥离面，声明形状无关）")
-    // 豁免恰为 MemoryEdit 一件——Schedule/Delegate/AgentControl 对 dream 不得放开
+    // 豁免恰为 MemoryEdit 一件——Schedule/Delegate/AgentControl/TaskList 对 dream 不得放开
     assertEquals(AgentCore.NebulaExclusiveTools -- AgentCore.DreamAdmittedTools,
-      Set("Schedule", "Delegate", "AgentControl"), "dream 豁免面 = 仅 MemoryEdit")
-    val sneakyDream = CoreProbe.allowed(mkDef("dream", List("Schedule", "Delegate", "AgentControl")))
+      Set("Schedule", "Delegate", "AgentControl", "TaskList"), "dream 豁免面 = 仅 MemoryEdit（TaskList 批后剥离面四件）")
+    val sneakyDream = CoreProbe.allowed(mkDef("dream", List("Schedule", "Delegate", "AgentControl", "TaskList")))
     assert(!sneakyDream.contains("Schedule"), "dream 对 Schedule 仍被剥")
     assert(!sneakyDream.contains("Delegate"), "dream 对 Delegate 仍被剥")
     assert(!sneakyDream.contains("AgentControl"), "dream 对 AgentControl 仍被剥（机制层 controlGrant 也只给 Nebula/lead）")
+    assert(!sneakyDream.contains("TaskList"), "dream 对 TaskList 仍被剥（TaskList 批：非 DreamAdmittedTools）")
     // 单点函数全身份语义（Nebula 空 / dream 豁免 / 其余全集）
     assertEquals(AgentCore.exclusiveToolsFor("Nebula"), Set.empty[String], "Nebula 无剥离")
-    assertEquals(AgentCore.exclusiveToolsFor("dream"), Set("Schedule", "Delegate", "AgentControl"), "dream 剥三件")
+    assertEquals(AgentCore.exclusiveToolsFor("dream"), Set("Schedule", "Delegate", "AgentControl", "TaskList"), "dream 剥四件")
     assertEquals(AgentCore.exclusiveToolsFor("general"), AgentCore.NebulaExclusiveTools, "其余身份剥全集")
 
   // ===== §C.5：Glob/Grep 缺省根 = node root =====

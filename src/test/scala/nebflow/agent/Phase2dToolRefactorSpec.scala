@@ -39,10 +39,11 @@ class Phase2dToolRefactorSpec extends FunSuite:
 
   // ===== D.1-1：三角色静态集收口，工具面逐件不变 =====
 
-  test("D.1-1: Nebula fixed set == §C.1 恰十三件、零 Issue、零写手、零 NodeList、零旧体系四件（逐件不变）"):
+  test("D.1-1: Nebula fixed set == §C.1 恰十四件、零 Issue、零写手、零 NodeList、零旧体系四件（逐件不变）"):
     val fixed = AgentCore.fixedToolsFor(mkDef("Nebula"))
     val expected =
       Set("Task", "ProjectCreate", "AgentControl",
+        "TaskList",                                            // 任务编排（2026-09-06 TaskList 批：快变状态出记忆）
         "SendFriendMessage",
         "Read", "Glob", "Grep",                                // 读三件（08:40 解禁四件；23:34 裁定收走写手）
         "Card",                                               // 可视化（2026-09-05 解封恢复）
@@ -50,7 +51,7 @@ class Phase2dToolRefactorSpec extends FunSuite:
         "Schedule", "TransferFile",
         "MemoryEdit")
     assertEquals(fixed, expected,
-      "Nebula 静态集恰十三件（2026-09-06 00:48 作者裁定：NodeList 摘除——节点结果沿 out 边自动投递，主动查图与裁定职责重叠，dispatcher 自身面不受影响；2026-09-05 23:34 作者裁定：Nebula 回归纯编排——Bash/Write/Edit 移除；08:40 作者裁定：+Card 解封/−Mail/Delegate/FlowTrigger/FlowExecute 旧体系退役；2026-09-04 终裁：Issue/CheckIssues 退役）")
+      "Nebula 静态集恰十四件（2026-09-06 TaskList 批：+TaskList，作者 00:07 提议 + 00:11 首期无前端拍板；00:48 作者裁定：NodeList 摘除——节点结果沿 out 边自动投递，主动查图与裁定职责重叠，dispatcher 自身面不受影响；2026-09-05 23:34 作者裁定：Nebula 回归纯编排——Bash/Write/Edit 移除；08:40 作者裁定：+Card 解封/−Mail/Delegate/FlowTrigger/FlowExecute 旧体系退役；2026-09-04 终裁：Issue/CheckIssues 退役）")
     assert(!fixed.contains("Issue"), "Nebula fixedTools 零 Issue（2026-09-04 终裁退役）")
     assert(!fixed.contains("NodeList"), "Nebula fixedTools 零 NodeList（2026-09-06 00:48 裁定摘除——变异验红锚）")
     Set("Mail", "Delegate", "FlowTrigger", "FlowExecute").foreach { t =>
