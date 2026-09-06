@@ -74,7 +74,7 @@ Write-Host "  $ProductName v$Version Installer ($Channel)" -ForegroundColor Dark
 Write-Host ""
 
 # --- Check Java ---
-Write-Host "[1/5] Checking Java..." -ForegroundColor Yellow
+Write-Host "[1/7] Checking Java..." -ForegroundColor Yellow
 
 function Test-Java {
     $savedEAP = $ErrorActionPreference
@@ -181,7 +181,7 @@ if ($javaVer -ge 17) {
 }
 
 # --- Check Git for Windows (provides bash.exe for Bash tool) ---
-Write-Host "[2/5] Checking Git for Windows..." -ForegroundColor Yellow
+Write-Host "[2/7] Checking Git for Windows..." -ForegroundColor Yellow
 
 function Test-GitBash {
     $candidates = @(
@@ -295,7 +295,7 @@ if (Test-GitBash) {
 }
 
 # --- Download $ProductName ---
-Write-Host "[3/5] Downloading $ProductName v$Version..." -ForegroundColor Yellow
+Write-Host "[3/7] Downloading $ProductName v$Version..." -ForegroundColor Yellow
 
 New-Item -ItemType Directory -Force -Path $InstallDir | Out-Null
 $jarPath = Join-Path $InstallDir $JarName
@@ -351,7 +351,7 @@ if (Test-Path $jarPath) {
 }
 
 # --- Install ripgrep (rg) for search support ---
-Write-Host "[4/5] Installing ripgrep (rg)..." -ForegroundColor Yellow
+Write-Host "[4/7] Installing ripgrep (rg)..." -ForegroundColor Yellow
 if (Get-Command "rg" -ErrorAction SilentlyContinue) {
     Write-Host "       rg already available in PATH." -ForegroundColor Green
 } elseif (Test-Path (Join-Path $InstallDir "rg.exe")) {
@@ -386,7 +386,7 @@ if (Get-Command "rg" -ErrorAction SilentlyContinue) {
 }
 
 # --- Download Whisper voice model ---
-Write-Host "[5/6] Voice model (Whisper, ~75MB one-time)..." -ForegroundColor Yellow
+Write-Host "[5/7] Voice model (Whisper, ~75MB one-time)..." -ForegroundColor Yellow
 $modelDir = Join-Path $env:USERPROFILE "$HomeDir\voice-models\onnx-community\whisper-base"
 $onnxEncPath = Join-Path $modelDir "onnx\encoder_model_quantized.onnx"
 
@@ -431,7 +431,7 @@ if (Test-Path $onnxEncPath) {
 }
 
 # --- Create wrapper scripts ---
-Write-Host "[6/6] Creating launcher..." -ForegroundColor Yellow
+Write-Host "[6/7] Creating launcher..." -ForegroundColor Yellow
 
 # PowerShell wrapper
 $wrapperPath = Join-Path $InstallDir "$WrapperName.ps1"
@@ -467,7 +467,7 @@ if ($userPath -notlike "*$InstallDir*") {
 }
 
 # --- Config ---
-Write-Host "[5/5] Setting up config..." -ForegroundColor Yellow
+Write-Host "[7/7] Setting up config..." -ForegroundColor Yellow
 
 $configDir = Join-Path $env:USERPROFILE "$HomeDir"
 $configFile = Join-Path $configDir "$ConfigFile"
