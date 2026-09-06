@@ -8,13 +8,16 @@ import munit.FunSuite
  * 移除；general/BaseTools 六件默认注入不变，Nebula 是唯一例外）。
  * 【2026-09-06 00:48 作者裁定增补】NodeList 从 NebulaOrchestrationTools 摘除
  * （节点结果沿 out 边自动投递 Nebula，主动查图与裁定职责重叠；dispatcher
- * 自身面不受影响）——本集恰十三件。
+ * 自身面不受影响）——本集彼时恰十三件。
+ * 【2026-09-06 TaskList 批增补】+TaskList（作者 00:07 提议 + 00:11 首期无前端
+ * 拍板：任务=快变状态出记忆、入 tasks.json 运行时数据层）——本集恰十四件。
  * 本文件原为 13:11「基础六件补齐」spec（nebula-toolface@21bc2e74 四件 → 13:11
  * 补齐六件），随 23:34 裁定同点改写断言语义。
  *
  * - ① 读三件 ⊆ Nebula 机制集（fixedToolsFor 静态集 + buildAllowedToolSet
- *   交付面双层）∧ Bash/Write/Edit ∉ Nebula 集 + 恰十三件计数——本文件即
- *   变异验红锚点：机制集加回写手或 NodeList 任一件（或计数漂移）即红。
+ *   交付面双层）∧ Bash/Write/Edit ∉ Nebula 集 + TaskList ∈ Nebula 集 +
+ *   恰十四件计数——本文件即变异验红锚点：机制集加回写手或 NodeList 任一件
+ *   （或摘掉 TaskList、或计数漂移）即红。
  * - ② 六件基础 ⊆ general 机制集（GeneralFixedTools = BaseTools + Pop；
  *   2026-09-06 节点面摘除 AskUser 后恰七件）
  *   ——回归钉死（general 已含六件是断言对象非改动对象；六件全体默认对
@@ -36,7 +39,7 @@ class NebulaSixBaseToolsSpec extends FunSuite:
 
   // ===== ① 读三件 ⊆ Nebula 机制集 ∧ 零写手（变异验红锚点）=====
 
-  test("① 读三件 ⊆ Nebula 机制集（静态集+交付面双层）∧ Bash/Write/Edit 均不在且恰十三件——加回任一写手或 NodeList 即红"):
+  test("① 读三件 ⊆ Nebula 机制集（静态集+交付面双层）∧ Bash/Write/Edit 均不在 ∧ TaskList 在——加回任一写手或 NodeList、摘掉 TaskList 即红"):
     val six = AgentCore.BaseTools
     assert(six == Set("Read", "Write", "Edit", "Glob", "Grep", "Bash"),
       "前置：BaseTools 即基础六件（全体默认不变，Nebula 例外）")
@@ -52,7 +55,10 @@ class NebulaSixBaseToolsSpec extends FunSuite:
     // 钉死断言（2026-09-06 00:48 作者裁定）：Nebula 机制集不含 NodeList——
     // 节点结果沿 out 边自动投递，主动查图与裁定职责重叠（dispatcher 面不受影响）
     assert(!fixed.contains("NodeList"), "Nebula 机制集不含 NodeList（00:48 裁定摘除）")
-    // 交付面（buildAllowedToolSet，注册表过滤后）同样读三件在、写手零
+    // 钉死断言（2026-09-06 TaskList 批）：TaskList ∈ Nebula 机制集——
+    // 快变状态出记忆的专属编排件（摘掉或改名即红）
+    assert(fixed.contains("TaskList"), "Nebula 机制集含 TaskList（TaskList 批 +1）")
+    // 交付面（buildAllowedToolSet，注册表过滤后）同样读三件在、写手零、TaskList 在
     val delivered = CoreProbe.allowed(mkDef("Nebula"))
     Set("Read", "Glob", "Grep").foreach { t =>
       assert(delivered.contains(t), s"Nebula 交付面缺读三件之一: $t")
@@ -61,9 +67,10 @@ class NebulaSixBaseToolsSpec extends FunSuite:
       assert(!delivered.contains(t), s"Nebula 交付面不得含写手三件之一: $t")
     }
     assert(!delivered.contains("NodeList"), "Nebula 交付面零 NodeList（00:48 裁定摘除）")
-    // 摘 NodeList 后恰十三件（编排三件 + 通信 + 读三件 + Card + 用户面二件 +
-    // 平台二件 + MemoryEdit）
-    assertEquals(fixed.size, 13, "Nebula 机制集恰十三件（2026-09-06 00:48 裁定：摘 NodeList；2026-09-05 23:34 裁定：回归纯编排）")
+    assert(delivered.contains("TaskList"), "Nebula 交付面含 TaskList（注册层已挂）")
+    // +TaskList 后恰十四件（编排三件 + 任务编排 + 通信 + 读三件 + Card +
+    // 用户面二件 + 平台二件 + MemoryEdit）
+    assertEquals(fixed.size, 14, "Nebula 机制集恰十四件（2026-09-06 TaskList 批：+TaskList；00:48 裁定：摘 NodeList；23:34 裁定：回归纯编排）")
 
   // ===== ② 六件基础 ⊆ general 机制集（回归钉死）=====
 

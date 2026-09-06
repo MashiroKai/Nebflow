@@ -25,15 +25,16 @@ import nebflow.core.tools.ToolRegistry
  *     available"。flows/skills 声明解析保留（决策 A①，legacy 授能活到阶段 3），
  *     但不再驱动任何工具注入。
  *   - Nebula's orchestration tools are mechanism-fixed (no declaration
- *     needed) — §C.1 静态矩阵恰十三件（2026-09-06 00:48 作者裁定：NodeList
+ *     needed) — §C.1 静态矩阵恰十四件（2026-09-06 00:48 作者裁定：NodeList
  *     摘除——节点结果沿 out 边自动投递，主动查图与裁定职责重叠；dispatcher
- *     自身面不受影响）. Task tools retired (任务工具重做
+ *     自身面不受影响。2026-09-06 TaskList 批：+TaskList——Nebula 专属持久
+ *     任务清单，快变状态出记忆）. Task tools retired (任务工具重做
  *     2026-08-30 — team-only).
  *   - Mail is team-only (auto-injected for team agents, never for flow/standalone)
  *   - SubTask is team-only (user ruling 2026-08-24: auto-injected at the
  *     mechanism layer — manual agent.json declarations are error-prone)
  *   - non-Nebula agents never get Nebula-exclusive tools (Schedule, Delegate,
- *     MemoryEdit) — exception: dream is admitted for MemoryEdit (2026-09-05
+ *     MemoryEdit, TaskList) — exception: dream is admitted for MemoryEdit (2026-09-05
  *     author ruling, AgentCore.DreamAdmittedTools; append still denied at the
  *     tool's action layer, DREAM_APPEND_DENIED)
  *   - SubTask workers (isSubTaskWorker=true) are leaf agents: no Mail /
@@ -511,12 +512,13 @@ class AllowedToolSetSpec extends FunSuite:
   test("Nebula gets the §C.1 fixed toolset mechanism-fixed — no declaration needed (阶段 2c)"):
     // 阶段 2c agent 收敛（§C.1 角色-工具静态矩阵）：Nebula 工具面 = 固定集
     // （2026-09-05 23:34 作者裁定：Nebula 回归纯编排——Bash/Write/Edit 移除；
-    // 2026-09-06 00:48 作者裁定：NodeList 摘除——out 边自动投递取代主动查图，
-    // 恰十三件：编排触发/通信/读三件/可视化/用户面/平台/记忆），机制注入不可
-    // 配置。裸定义（空 tools）必须携带完整矩阵——面板编辑/定义失误无法解除
-    // 调度器武装。
+    // 2026-09-06 00:48 作者裁定：NodeList 摘除——out 边自动投递取代主动查图；
+    // 2026-09-06 TaskList 批：+TaskList——恰十四件：编排触发/任务编排/通信/
+    // 读三件/可视化/用户面/平台/记忆），机制注入不可配置。裸定义（空 tools）
+    // 必须携带完整矩阵——面板编辑/定义失误无法解除调度器武装。
     val orchestration = Set(
       "Task", "ProjectCreate", "AgentControl",             // 编排触发（NodeList 00:48 裁定摘除）
+      "TaskList",                                          // 任务编排（TaskList 批：快变状态出记忆）
       "SendFriendMessage",                                 // 通信（好友功能非旧体系，保留）
       "Read", "Glob", "Grep",                              // 读三件（08:40 解禁四件；23:34 收走写手）
       "Card",                                              // 可视化（2026-09-05 解封恢复）
@@ -529,8 +531,8 @@ class AllowedToolSetSpec extends FunSuite:
     orchestration.foreach(t =>
       assert(allowed.contains(t), s"mechanism-fixed orchestration tool missing: $t")
     )
-    assert(!allowed.contains("Issue"), "恰十三件、零 Issue（2026-09-04 终裁：Issue/CheckIssues 退役）")
-    assert(!allowed.contains("NodeList"), "恰十三件、零 NodeList（2026-09-06 00:48 裁定摘除）")
+    assert(!allowed.contains("Issue"), "恰十四件、零 Issue（2026-09-04 终裁：Issue/CheckIssues 退役）")
+    assert(!allowed.contains("NodeList"), "恰十四件、零 NodeList（2026-09-06 00:48 裁定摘除）")
     Set("Mail", "Delegate", "FlowTrigger", "FlowExecute").foreach { t =>
       assert(!allowed.contains(t), s"旧体系四件已从 Nebula 固定面退役（2026-09-05 08:40 作者裁定）: $t")
     }
@@ -539,6 +541,40 @@ class AllowedToolSetSpec extends FunSuite:
     assert(!allowed.contains("Bash"), "Nebula 无写手：Bash 已移除（23:34 裁定）")
     assert(!allowed.contains("Write"), "Nebula 无写手：Write 已移除（23:34 裁定）")
     assert(!allowed.contains("Edit"), "Nebula 无写手：Edit 已移除（23:34 裁定）")
+
+  // ===== TaskList 工具面隔离（2026-09-06 TaskList 批，硬约束）=====
+  // Nebula 专属编排件：仅 NebulaOrchestrationTools 携带（+1，恰十四件）；
+  // dispatcher（DispatcherFixedTools）/ general（BaseTools+Pop）与一切非
+  // Nebula 身份（含 "*" 声明、dream、SubTask worker、flow 节点）零出现。
+
+  test("TaskList 仅 Nebula（工具面总数=原数目+1 仅此一件）：dispatcher/general 固定面均不含"):
+    // Nebula 面 +1
+    val nebulaFixed = AgentCore.fixedToolsFor(mkDef("Nebula", Nil))
+    assert(nebulaFixed.contains("TaskList"), "Nebula 机制集含 TaskList")
+    // dispatcher 固定集不含（分发器只分解不维护 Nebula 私有任务清单）
+    assert(!AgentCore.DispatcherFixedTools.contains("TaskList"), "dispatcher 固定集零 TaskList")
+    assert(!CoreProbe.allowed(mkDef("project-dispatcher", Nil), isFlowNode = true).contains("TaskList"),
+      "dispatcher 交付面零 TaskList")
+    // general 固定集不含
+    assert(!AgentCore.GeneralFixedTools.contains("TaskList"), "general 固定集零 TaskList")
+    assert(!CoreProbe.allowed(mkDef("general", Nil), isFlowNode = true).contains("TaskList"),
+      "general 交付面零 TaskList")
+
+  test("TaskList 防声明逃逸：非 Nebula 显式声明与 '*' 通配均剥离（NebulaExclusiveTools）"):
+    assert(AgentCore.NebulaExclusiveTools.contains("TaskList"), "TaskList 进 NebulaExclusiveTools（剥离语义单点）")
+    val declared = CoreProbe.allowed(mkDef("sneaky", List("Read", "TaskList")))
+    assert(!declared.contains("TaskList"), "standalone 显式声明无效")
+    val wildcard = CoreProbe.allowed(mkDef("omni", List("*")))
+    assert(!wildcard.contains("TaskList"), "wildcard 剥离")
+    val team = CoreProbe.allowed(mkDef("member", List("*")).copy(category = "team"))
+    assert(!team.contains("TaskList"), "team 成员剥离")
+    val worker = CoreProbe.allowed(mkDef("w", List("*")).copy(category = "team"), isSubTaskWorker = true)
+    assert(!worker.contains("TaskList"), "SubTask worker 剥离")
+    val flow = CoreProbe.allowed(mkDef("f", List("*")).copy(category = "flow"))
+    assert(!flow.contains("TaskList"), "flow 节点剥离")
+    // dream 无豁免（豁免面恰为 MemoryEdit 一件，TaskList 对 dream 照剥）
+    val dream = CoreProbe.allowed(mkDef("dream", List("TaskList")))
+    assert(!dream.contains("TaskList"), "dream 声明 TaskList 无效（非 DreamAdmittedTools）")
 
   test("Nebula 文件工具面（2026-09-05 23:34 裁定）：读三件机制固定、写手声明依然无效"):
     // 23:34 作者裁定：Nebula 回归纯编排——Bash/Write/Edit 移出机制集，文件
