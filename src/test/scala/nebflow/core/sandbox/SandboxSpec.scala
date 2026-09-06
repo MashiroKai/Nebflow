@@ -114,9 +114,12 @@ class SandboxSpec extends CatsEffectSuite:
     // 机制证明；nebflowDataRoot 与 root 同源，Nebula 会话 root=dataRoot 去重）
     assert(roots.exists(_.toString == SandboxPolicy.canonicalize(PathUtil.dataRoot.wrapped).toString),
       s"dataRoot must be writable: $roots")
-    // 写 ⊆ 读不变量
+    // 写 ⊆ 读不变量（2026-09-06 读宽批：readableRoots 恒为全盘根，不变量自动
+    // 成立——承重断言 = readableRoots 恒为 "/" 且 contains 对写根恒真）
     val readable = SandboxPolicy.readableRoots(p)
-    roots.foreach(r => assert(readable.contains(r), s"writable must be readable: $r"))
+    assertEquals(readable, List(os.Path("/")), "读宽：readableRoots 必须恒为全盘根")
+    roots.foreach(r => assert(SandboxPolicy.contains(readable.head.wrapped, r.wrapped),
+      s"writable must be readable: $r"))
   }
 
   test("A.2: canonicalize 解析 symlink（/tmp→/private/tmp）且对已存在部分用内核 realpath 语义") {
@@ -134,24 +137,20 @@ class SandboxSpec extends CatsEffectSuite:
     assertEquals(nested.toString, (realTmp / "sub" / "new.txt").toString)
   }
 
-  test("A.2: readExtras 含系统目录与 ~/.nebflow 白名单九子目录；数据根整体进读写两面（写⊆读，白名单条目冗余保留）") {
+  test("A.2: 读宽（2026-09-06 作者裁定）——readableRoots 恒为全盘根，原系统目录/白名单九子目录/数据根全被吸收") {
     val p = policyIn(os.Path(Files.createTempDirectory("nb-sbx-extras")))
-    val extras = SandboxPolicy.readableRoots(p)
-    assert(extras.contains(os.Path("/usr")))
-    assert(extras.contains(os.Path("/private/etc")))
-    // 九个白名单子目录（H-12① 三目录 + 读白名单补全六目录）——readExtras 原样
-    // 保留：数据根入写面后被 contains 包含关系整体覆盖，条目冗余但无害
-    val expected = List("skills", "prompts", "docs", "tool-results", "uploads", "logs", "sessions", "projects", "agents")
-    expected.foreach { d =>
-      val dir = PathUtil.dataRoot / d
-      assert(extras.exists(_.toString == SandboxPolicy.canonicalize(dir.wrapped).toString),
-        s"~/.nebflow/$d must be readable: $extras")
+    val readable = SandboxPolicy.readableRoots(p)
+    assertEquals(readable, List(os.Path("/")), "读宽：readableRoots 必须恒为全盘根（唯一元素）")
+    // canonical 域比较不变：contains 对任意绝对路径恒真——样本覆盖原读面白名单
+    // 各代表（系统目录、九子目录、数据根本身），防「白名单退出承重后样本路径
+    // 反而读不到」的误回归
+    val samples = List(os.Path("/usr"), os.Path("/private/etc")) ++
+      List("skills", "prompts", "docs", "tool-results", "uploads", "logs", "sessions", "projects", "agents")
+        .map(d => PathUtil.dataRoot / d) :+ PathUtil.dataRoot
+    samples.foreach { s =>
+      assert(SandboxPolicy.contains(readable.head.wrapped, SandboxPolicy.canonicalize(s.wrapped)),
+        s"读宽：$s 必须落在全盘读面内")
     }
-    // 2026-09-05 数据根入可写面批（取代原「根层不得进读面」）：数据根整体进读面
-    // 是写⊆读不变量的直接后果；auth.json 等根层凭据随之可读（整目录放行即终态，
-    // 残留风险=纪律约束，WFROOT± 用例钉死）
-    assert(extras.exists(_.toString == SandboxPolicy.canonicalize(PathUtil.dataRoot.wrapped).toString),
-      s"~/.nebflow 数据根必须进读面（写⊆读）: $extras")
   }
 
   // ------------------------------------------------------------------
@@ -204,7 +203,7 @@ class SandboxSpec extends CatsEffectSuite:
   }
 
   // ------------------------------------------------------------------
-  // §A.8-3：root 内 symlink 指外 → 写拒读拒；root 内深层新文件创建成功
+  // §A.8-3：root 内 symlink 指外 → 写拒读放（2026-09-06 读宽）；root 内深层新文件创建成功
   // ------------------------------------------------------------------
 
   /** home 下的外部目标（home 不在任何 read/writable root——/private/var 等
@@ -216,7 +215,7 @@ class SandboxSpec extends CatsEffectSuite:
     os.makeDir.all(d)
     d
 
-  test("A.8-3: root 内 symlink 指外写/读均拒；深层新文件 checkWrite 放行") {
+  test("A.8-3: root 内 symlink 指外写拒读放（2026-09-06 读宽）；深层新文件 checkWrite 放行") {
     val tmp = os.Path(Files.createTempDirectory("nb-sbx-sym"))
     val outside = outsideDir("sym")
     val outsideFile = outside / "target.txt"
@@ -225,14 +224,15 @@ class SandboxSpec extends CatsEffectSuite:
     os.symlink(link, outsideFile) // os.symlink(链接落点, 指向目标)
 
     val ctx = ctxIn(tmp)
-    // 写拒（canonicalize 解析出 symlink → 越界）
+    // 写拒（canonicalize 解析出 symlink → 越界；写窄零变化）
     FileSandbox.checkWrite(ctx, link.toString) match
       case Left(err) => assert(err.message.startsWith("SANDBOX_DENIED"), err.message)
       case Right(_) => fail(s"指向外部的 symlink 写必须被拒: $link")
-    // 读拒
+    // 读放行（2026-09-06 读宽批翻转：全盘读面下 symlink 指外普通文件可读——
+    // canonicalize 解析去向落入全盘根；与上方写拒构成读宽写窄不对称性取证）
     FileSandbox.checkRead(ctx, link.toString) match
-      case Left(err) => assert(err.message.startsWith("SANDBOX_DENIED"), err.message)
-      case Right(_) => fail(s"指向外部的 symlink 读必须被拒: $link")
+      case Right(_) => () // 读宽：指外 symlink 读放行
+      case Left(err) => fail(s"读宽后指向外部的 symlink 读应放行: ${err.message}")
 
     // root 内深层新文件：放行且真实可写
     val deep = tmp / "a" / "b" / "new.txt"
@@ -270,16 +270,19 @@ class SandboxSpec extends CatsEffectSuite:
       case Right(out) => assert(!out.contains("leak.txt"), s"Grep 不得命中 symlink 外部: $out")
       case Left(err) => fail(s"Grep 应成功（无命中也是成功态）: ${err.message}")
 
-    // 搜索根本身指向 readableRoots 之外（os.home——数据根的父目录，不在任何
-    // 读写面；2026-09-05 数据根入可写面批后 ~/.nebflow 整体可读，不能再当
-    // 「外部」样本，也不能用 tempdir——/private/var 在读面内）→ SANDBOX_DENIED。
-    val deny = GlobTool.call(
-      JsonObject("pattern" -> "*.txt".asJson, "path" -> os.home.toString.asJson),
+    // 搜索根翻转（2026-09-06 读宽批）：会话根外的 home 下小目录（原「readableRoots
+    // 外必拒」样本）→ 放行且真实命中。Glob 遍历面随读宽放开；agents 子树负向
+    // 排除不受读宽影响（READLIST+ 遍历面用例钉死）。逃生门形态见 homeLikeRoot。
+    val wide = homeLikeRoot(s"wide-${System.nanoTime()}")
+    os.makeDir.all(wide)
+    os.write.over(wide / "wide.txt", "wide-ok")
+    GlobTool.call(
+      JsonObject("pattern" -> "*.txt".asJson, "path" -> wide.toString.asJson),
       ctx
-    ).unsafeRunSync()
-    deny match
-      case Left(err) => assert(err.message.startsWith("SANDBOX_DENIED"), err.message)
-      case Right(_) => fail("readableRoots 外的搜索根必须被拒")
+    ).unsafeRunSync() match
+      case Right(out) => assert(out.contains("wide.txt"), s"读宽后根外搜索根应放行且命中: $out")
+      case Left(err) => fail(s"读宽后根外搜索根应放行: ${err.message}")
+    os.remove.all(wide)
     os.remove.all(outside)
   }
 
@@ -390,6 +393,33 @@ class SandboxSpec extends CatsEffectSuite:
     FileSandbox.checkWrite(ctx, "/etc/hosts") match
       case Left(err) => assert(err.message.startsWith("SANDBOX_DENIED"), err.message)
       case Right(_) => fail("/etc/hosts 写必须仍拒（/private/etc 只在读面，不在写面）")
+  }
+
+  // ------------------------------------------------------------------
+  // 读宽写窄（2026-09-06 作者裁定，对齐业界标准）：读面全盘放开 + 写面零变化
+  // 的不对称性锚点。读样本 = 会话根外随意路径（主仓 docs/assets 同形态）+ 系统
+  // 文件；写对照 = 同路径 SANDBOX_DENIED。
+  // ------------------------------------------------------------------
+
+  test("READWIDE: 读宽写窄不对称——会话根外读放行（home 随意路径/系统文件），同路径写仍 SANDBOX_DENIED") {
+    val tmp = os.Path(Files.createTempDirectory("nb-sbx-readwide"))
+    val ctx = ctxIn(tmp)
+    // 会话根外普通文件（home 下随意路径——不在写面）：读放行（读宽核心语义）
+    val outside = homeLikeRoot(s"rw-${System.nanoTime()}")
+    os.makeDir.all(outside)
+    os.write.over(outside / "dark.png", "png-bytes")
+    assert(FileSandbox.checkRead(ctx, (outside / "dark.png").toString).isRight,
+      "读宽：会话根外普通文件必须可读（主仓 docs/Nebflow/assets 同形态）")
+    // 同一路径写仍拒（写窄零变化——不对称性钉死）
+    FileSandbox.checkWrite(ctx, (outside / "dark.png").toString) match
+      case Left(err) => assert(err.message.startsWith("SANDBOX_DENIED"), err.message)
+      case Right(_) => fail("写窄：会话根外同路径写必须仍拒")
+    // 系统文件：读放行 + 写拒对照（/private/etc 只读，写面不含）
+    assert(FileSandbox.checkRead(ctx, "/etc/hosts").isRight, "读宽：/etc/hosts 必须可读")
+    FileSandbox.checkWrite(ctx, "/etc/hosts") match
+      case Left(err) => assert(err.message.startsWith("SANDBOX_DENIED"), err.message)
+      case Right(_) => fail("写窄：/etc/hosts 写必须仍拒")
+    os.remove.all(outside)
   }
 
   // ------------------------------------------------------------------
@@ -505,13 +535,10 @@ class SandboxSpec extends CatsEffectSuite:
     // ——读拒（既有）且写拒（本批写闸消费同一规则，红线不随写面扩大）
     assert(SandboxPolicy.readDeniedWith(nebulaMemCanonical, Set.empty),
       "变异：例外集为空时 Nebula memory.md 必须重新命中负向规则（读）")
-    // 变异 B（红）：数据根换钉（setDataRoot → 第二 pinned 根）——旧根整体退出
-    // 读写两面（nebflowDataRoot 推导承重的机制证明：隔离实例换 HOME 后写不穿
-    // 旧根）。原「readExtras 条目剔除即拒」变异在数据根整目录放行后失效（条目
-    // 被 contains 覆盖转冗余，见 SUBSUME 用例），承重面迁移到数据根本身。
-    // 注：policy.readExtras 是 forRoot 构造时快照（含旧根审计白名单路径），旧根
-    // 白名单内文件换钉后仍循快照可读——选不在快照内的旧根根层凭据做旧根退出
-    // 读面的探针。
+    // 变异 B：数据根换钉（setDataRoot → 第二 pinned 根）——写面跟随新根推导
+    // （隔离实例换 HOME 后写不穿旧根，承重面 = 数据根推导）；读面在 2026-09-06
+    // 读宽批后全盘化，不随换钉变化（旧根文件仍可读——「读宽写窄」不对称性的
+    // 换钉取证形态）。原「旧根退出读面」断言被读宽批取代。
     val secondRoot = pinnedDataRoot match
       case Some(p) => p / os.up / s"nb-sbx-second-${System.nanoTime()}"
       case None    => os.home / s"nb-sbx-second-${System.nanoTime()}"
@@ -520,9 +547,10 @@ class SandboxSpec extends CatsEffectSuite:
     os.write.over(secondRoot / "marker.txt", "second")
     PathUtil.setDataRoot(secondRoot)
     try
+      // 读宽：换钉不影响读面（旧根文件仍可读）
       FileSandbox.checkRead(ctx, (oldRoot / "auth.json").toString) match
-        case Left(err) => assert(err.message.startsWith("SANDBOX_DENIED"), err.message)
-        case Right(_) => fail("换钉后旧根 auth.json 必须退出读面（数据根推导承重）")
+        case Right(_) => () // 读宽：读面全盘化，不随数据根换钉变化
+        case Left(err) => fail(s"读宽后旧根 auth.json 应仍可读（读面不随换钉变化）: ${err.message}")
       FileSandbox.checkWrite(ctx, nebulaMem) match
         case Left(err) => assert(err.message.startsWith("SANDBOX_DENIED"), err.message)
         case Right(_) => fail("换钉后旧根 Nebula memory.md 必须退出写面（例外集随新根推导 + 数据根推导承重）")
@@ -558,34 +586,31 @@ class SandboxSpec extends CatsEffectSuite:
       case Right(_) => fail("symlink 间接写 team agent 私有记忆必须被拒")
   }
 
-  test("SUBSUME: 数据根整目录放行后 readExtras 九子目录条目转冗余——剔除条目仍可读（contains 覆盖钉死，防误判承重项）") {
+  test("SUBSUME: 读宽后 readExtras 白名单整体退出读面承重——剔除全部条目读面不变（readableRoots 恒为 /，字段保留仅为快照锚点）") {
     val tmp = os.Path(Files.createTempDirectory("nb-sbx-mut"))
     val ctx = ctxIn(tmp)
     val trFile = (PathUtil.dataRoot / "tool-results" / "tr-001" / "result.json").toString
     // 基线绿
     assert(FileSandbox.checkRead(ctx, trFile).isRight, "基线：tool-results 应可读")
-    // 变异：等价于源码删除该白名单条目——剔除后仍可读（2026-09-05 数据根入可写
-    // 面批：可读性真承重项 = readableRoots 里的数据根，子目录条目被 contains
-    // 覆盖转冗余；本断言如实钉死该事实，防未来误把条目当承重面）
-    val trCanonical = os.Path(SandboxPolicy.canonicalize((PathUtil.dataRoot / "tool-results").wrapped))
-    val mutated = ctx.sandbox.copy(readExtras = ctx.sandbox.readExtras.filterNot(_.toString == trCanonical.toString))
+    // 变异：剔除全部 readExtras——2026-09-06 读宽批后读面由全盘根承载，白名单
+    // 条目剔除与否不影响读面（防未来误把条目当承重面；字段保留仅为 forRoot
+    // 构造链与变异用例的快照锚点）
+    val mutated = ctx.sandbox.copy(readExtras = Nil)
     assert(FileSandbox.checkRead(ctxIn(tmp, mutated), trFile).isRight,
-      "剔除白名单条目后仍应可读（数据根整目录覆盖，条目冗余）")
+      "剔除全部 readExtras 后仍应可读（读宽：readableRoots 恒为全盘根）")
     // 恢复（绿）
     assert(FileSandbox.checkRead(ctx, trFile).isRight, "恢复后 tool-results 应复绿")
   }
 
-  test("MSG: SANDBOX_DENIED 文案的 Readable roots 动态反映新白名单（无硬编码清单）") {
+  test("MSG: SANDBOX_DENIED 文案的 Readable roots 动态反映 readableRoots 推导（读宽后=全盘根；负向规则拒读探针不变）") {
     val tmp = os.Path(Files.createTempDirectory("nb-sbx-msg2"))
-    // 2026-09-05 数据根入可写面批后根层凭据已随整目录放行可读——拒读探针改用
-    // 仍被负向规则一票拒绝的 team agent 私有记忆（拒绝文案同样带全量 roots）
+    // 拒读探针 = 负向规则一票拒绝的 team agent 私有记忆（读宽批后读面唯一拒绝
+    // 源；拒绝文案同样带全量 roots）
     val res = FileSandbox.checkRead(ctxIn(tmp), (PathUtil.dataRoot / "agents" / "Coder" / "memory.md").toString)
     res match
       case Left(err) =>
         val rootsSeg = err.message.split("Readable roots: ")(1)
-        List("tool-results", "uploads", "logs", "sessions", "projects", "agents", "skills").foreach { d =>
-          assert(rootsSeg.contains(d), s"文案 Readable roots 应含 $d: ${err.message}")
-        }
+        assert(rootsSeg.contains("/"), s"文案 Readable roots 应为全盘根: ${err.message}")
       case Right(_) => fail("Coder memory.md 必须拒读（该用例验证拒读文案的 roots 动态性）")
   }
 

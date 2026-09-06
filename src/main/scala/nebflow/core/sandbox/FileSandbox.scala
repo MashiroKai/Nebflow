@@ -17,6 +17,9 @@ import nebflow.core.tools.ToolError
  *   拒写）——2026-09-05 数据根入可写面后红线不随写面扩大（同一规则读/写双闸
  *   消费，非新增 deny）。
  * - 读操作：resolve → readableRoots contain → 返回 canonical 路径。
+ *   [2026-09-06 读宽批] readableRoots 恒为全盘根（"/"）——contain 对一切绝对
+ *   路径恒真，读拒绝的唯一来源 = readDenied 负向规则（agents/**/memory.md 非
+ *   Nebula 份一票优先）；写闸零变化。
  * - 相对路径：以 ctx.sandbox.root（节点 projectRoot，§A.6）为基准解析——修掉
  *   Glob/Grep 默认根=JVM user.dir 的现状。沙箱关闭时保持旧行为（四件套拒绝
  *   相对路径、Glob/Grep 用 user.dir）。
@@ -62,8 +65,9 @@ object FileSandbox:
           case _ => Left(ToolError(deniedMessage("write", rawPath, fresh, policy)))
 
   /**
-   * 读闸门（Read）。同样返回 canonical 路径——root 内 symlink 指外会在
-   * canonicalize 时解析出去向而越界被拒（§A.8-3 读拒绝）。
+   * 读闸门（Read）。同样返回 canonical 路径。[2026-09-06 读宽批] readableRoots
+   * 全盘化后读放行面 = 整盘：root 内 symlink 指外不再因越界被拒（canonicalize
+   * 仍解析去向，readDenied 负向规则照常一票优先）；写闸越界语义零变化。
    */
   def checkRead(ctx: ToolContext, rawPath: String): Either[ToolError, Path] =
     val policy = ctx.sandbox
@@ -88,9 +92,10 @@ object FileSandbox:
       checkCanonicalRead(policy, root.toString, canonical).map(os.Path(_))
 
   private def checkCanonicalRead(policy: SandboxPolicy, raw: String, canonical: Path): Either[ToolError, Path] =
-    // 凭据红线负向规则一票优先：命中即拒，不看 readableRoots——agents/ 目录
-    // 白名单开读后，agents/**/memory.md（agent 私有记忆）仍拒；唯一例外 =
-    // §4.2-B 审计只读放行的 Nebula memory.md 精确路径（readDenied 内部豁免）。
+    // 凭据红线负向规则一票优先：命中即拒，不看 readableRoots。[2026-09-06 读宽
+    // 批] readableRoots 全盘化后本规则是读拒绝的唯一来源——agents/**/memory.md
+    // （agent 私有记忆）在全盘读面下仍拒；唯一例外 = §4.2-B 审计只读放行的
+    // Nebula memory.md 精确路径（readDenied 内部豁免）。
     if SandboxPolicy.readDenied(canonical) then
       Left(
         ToolError(deniedMessage(
@@ -115,8 +120,9 @@ object FileSandbox:
     else policy.root.wrapped.resolve(p)
 
   /** SANDBOX_DENIED 结构化错误（§A.5 模板）：canonical 路径 + 根列表 + 自纠指引。
-    * 根列表从 readableRoots/writableRoots 动态推导（无硬编码）——白名单扩充自动
-    * 反映进文案。reason：负向规则命中时的解释行（缺省无）。 */
+    * 根列表从 readableRoots/writableRoots 动态推导（无硬编码）。[2026-09-06 读宽
+    * 批] Readable roots 段恒为全盘根 "/"；本错误在写闸 = 越界语义、在读闸 =
+    * 负向规则命中（reason 解释行）。 */
   private def deniedMessage(op: String, raw: String, canonical: Path, policy: SandboxPolicy, reason: Option[String] = None): String =
     val writable = SandboxPolicy.writableRoots(policy).mkString(", ")
     val readable = SandboxPolicy.readableRoots(policy).mkString(", ")
