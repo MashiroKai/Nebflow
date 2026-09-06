@@ -1,4 +1,4 @@
-$ErrorActionPreference = "Stop"
+﻿$ErrorActionPreference = "Stop"
 
 # -- Brand values (L2 rebrand): rendered from repo-root brand.conf at -----
 # -- release time (scripts/render-brand.sh); do not edit by hand. ----------
