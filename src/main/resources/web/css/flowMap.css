@@ -737,6 +737,22 @@
   padding: 2px 0 2px 8px; margin: -4px 0 10px;
   white-space: pre-wrap; word-break: break-word;
 }
+/* ── 详情完整配置 KV 栅格（2026-09-07 节点详情完整配置批）：label 列 auto 自适应
+   最宽标签（zh/en 双语言不设定宽），value 列 minmax(0,1fr) 防长 id/插件名撑出；
+   字号/配色复用 fm-detail-meta 语言，零新 token ── */
+.fm-detail-kv {
+  display: grid; grid-template-columns: auto minmax(0, 1fr);
+  column-gap: 10px; row-gap: 3px; margin: 0 0 2px;
+}
+.fm-detail-kv-label {
+  font: 400 11px/1.6 -apple-system, BlinkMacSystemFont, sans-serif;
+  color: var(--color-text-muted); white-space: nowrap;
+}
+.fm-detail-kv-val {
+  font: 400 11.5px/1.6 -apple-system, BlinkMacSystemFont, sans-serif;
+  color: var(--color-text); word-break: break-word; min-width: 0;
+}
+.fm-detail-kv-val.muted { color: var(--color-text-muted); }
 .fm-detail-sec {
   font: 600 11px/1.4 -apple-system, BlinkMacSystemFont, sans-serif;
   color: var(--color-text-dim); margin: 10px 0 4px;
