@@ -1,5 +1,17 @@
 name: Auto Release
 
+# ============================================================================
+# DESKTOP PACKAGING FROZEN (2026-09-06, script-install-release v2 batch 5)
+# Same sealing as release.yml: the three `package-*` jobs are disabled via
+# `if: false` (NOT deleted; restore = remove one line per job), the `release`
+# job's needs is narrowed to build-jar, and asset collection is jar-only.
+# The workflow_dispatch dry_run mode is KEPT for the certificate-era restore:
+# once the `if: false` lines are removed, dry_run=true exercises the full
+# packaging matrix (build+test+packagers) without tag/release/COS side
+# effects — the pre-flight validator for unsealing.
+# See .nebflow/Spec/desktop-trust-and-icp-filing-plan.md for restore gates.
+# ============================================================================
+
 on:
   push:
     branches: [release]
@@ -93,7 +105,7 @@ jobs:
   package-macos:
     name: Package macOS (${{ matrix.label }})
     needs: build-jar
-    if: needs.build-jar.outputs.skipped == 'false'
+    if: false # [FROZEN 2026-09-06] desktop packaging sealed — see header comment
     strategy:
       fail-fast: false
       matrix:
@@ -132,7 +144,7 @@ jobs:
   package-windows:
     name: Package Windows (x64 msi)
     needs: build-jar
-    if: needs.build-jar.outputs.skipped == 'false'
+    if: false # [FROZEN 2026-09-06] desktop packaging sealed — see header comment
     runs-on: windows-2022
     steps:
       - uses: actions/checkout@v4
@@ -175,7 +187,7 @@ jobs:
   package-linux:
     name: Package Linux (deb + app-image)
     needs: build-jar
-    if: needs.build-jar.outputs.skipped == 'false'
+    if: false # [FROZEN 2026-09-06] desktop packaging sealed — see header comment
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v4
@@ -214,7 +226,8 @@ jobs:
 
   release:
     name: Tag, Release & Mirror
-    needs: [build-jar, package-macos, package-windows, package-linux]
+    # [FROZEN 2026-09-06] needs narrowed to build-jar (package-* jobs sealed)
+    needs: [build-jar]
     if: needs.build-jar.outputs.skipped == 'false' && inputs.dry_run != true
     runs-on: ubuntu-latest
     steps:
@@ -236,14 +249,13 @@ jobs:
           echo "COS_BUCKET=$(bv cosBucket)" >> $GITHUB_ENV
       - name: Collect assets
         run: |
+          # [FROZEN 2026-09-06] jar-only contract (desktop asset patterns
+          # sealed — see header comment; restore = re-add the four find lines
+          # for dmg/msi/deb/app-image)
           mkdir -p release-assets
           find dist -name "${LOWER_NAME}-assembly-*.jar" -exec cp {} release-assets/ \;
-          find dist -name "${PRODUCT_NAME}-*.dmg" -exec cp {} release-assets/ \;
-          find dist -name "${PRODUCT_NAME}-*.msi" -exec cp {} release-assets/ \;
-          find dist -name "${PRODUCT_NAME}-*.deb" -exec cp {} release-assets/ \;
-          find dist -name "${PRODUCT_NAME}-*-app-image.tar.gz" -exec cp {} release-assets/ \;
           ls -lh release-assets/
-          # Empty release = silent failure (5 file patterns above are the contract)
+          # Empty release = silent failure (jar pattern above is the contract)
           if [ -z "$(ls -A release-assets)" ]; then
             echo "::error::no release assets collected — pattern/brand mismatch"
             exit 1
