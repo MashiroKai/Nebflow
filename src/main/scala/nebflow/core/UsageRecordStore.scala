@@ -136,8 +136,8 @@ class UsageRecordStore(baseDir: os.Path):
    * dim: "provider" | "model" | "agent" | "hour" | "day" | absent (totals only)
    * from/to: epoch millis, inclusive lower / exclusive upper. Both optional.
    * provider/model/agent: optional exact-match filters applied BEFORE grouping
-   * (orthogonal to dim — e.g. dim=agent + provider=107 groups by agent within
-   * provider 107's records only). Absent = no filtering on that field.
+   * (orthogonal to dim — e.g. dim=agent + provider=gw-a groups by agent within
+   * provider gw-a's records only). Absent = no filtering on that field.
    */
   def aggregate(
     dim: Option[String],

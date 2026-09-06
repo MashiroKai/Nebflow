@@ -406,7 +406,9 @@ class NodeMessageSpec extends CatsEffectSuite:
     for
       res <- mkResources(system, tempRoot)
       rt <- mountProject("nmsg-s6", ws, system, res)
-      _ <- seedNode(rt, "n-t", "tool-t", NodeLifecycle.Completed, task = Some("t"))
+      // 活节点（pending）用于合法追加路径；终态节点（completed）用于终态拒绝断言。
+      _ <- seedNode(rt, "n-t", "tool-t", NodeLifecycle.Pending, task = Some("t"))
+      _ <- seedNode(rt, "n-t-term", "tool-t-term", NodeLifecycle.Completed, task = Some("t"))
       ctx = mkCtx(res, system, ws.toString)
       // project 参数显式传（分发器协议：所有 Node 工具调用带 project）
       eNotFound <- NodeMessageTool.call(
@@ -416,7 +418,7 @@ class NodeMessageSpec extends CatsEffectSuite:
         Json.obj("project" -> "nmsg-s6".asJson, "nodeId" -> "n-t".asJson, "message" -> "  ".asJson).asObject.get, ctx)
         .map(_.left.map(_.message))
       eTerminal <- NodeMessageTool.call(
-        Json.obj("project" -> "nmsg-s6".asJson, "nodeId" -> "n-t".asJson, "message" -> "late".asJson).asObject.get, ctx)
+        Json.obj("project" -> "nmsg-s6".asJson, "nodeId" -> "n-t-term".asJson, "message" -> "late".asJson).asObject.get, ctx)
         .map(_.left.map(_.message))
       ok <- NodeMessageTool.call(
         Json.obj("project" -> "nmsg-s6".asJson, "nodeId" -> "n-t".asJson, "message" -> "工具面追加".asJson).asObject.get, ctx)
