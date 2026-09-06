@@ -34,10 +34,13 @@ import nebflow.core.NebflowLogger
  *    竞态窗口。
  *  - 投递时机 = tell-then-mark（V8 nebulaDeliveredAt 同款 at-least-once：崩溃在
  *    tell 与 mark 之间 → 重启后补投扫描重触发，宁重复不丢失）。
- *  - 链级通知预算：默认 5 次/进程（DefaultBudget；构造可注入）。耗尽 → 该节点
- *    转 blocked（待办语义，ttlExpireAt=None）+ 升级 Nebula——对齐监督树
- *    「处理不了就升级」；不走 FeedbackRouter（重入恰恰是预算要挡的东西，
- *    与 mergeBlockedByUpstreamFailure「不经 FeedbackRouter」同构）。
+ *  - 链级通知预算（默认 5/进程，构造可注入；2026-09-06 作者拍板改为按回合计数/
+ *    重置）：耗尽 → 该节点**保持 completed**（不再转 blocked——completedNode 已
+ *    先 deliverOut+settleDeps，下游已按完成推进，此时补 blocked 会污染完成事实 +
+ *    切断分发器回流，这是本批缺陷根因）+ 落 notifySentAt 止重扫 + 升级 Nebula
+ *    （single-flight 仅首次一条，notice 语义非 blocked——前端标 BLOCKED 会让作者
+ *    看到「完成节点被标阻塞」）。预算按回合边界重置（TtlTick → redeliver 扫描为
+ *    回合边界），不再让真实项目 >5 个 flag 节点完成即全局耗尽。
  *    预算为进程内计数（FeedbackRouter §3.2 先例：限流器是成本保护不是安全机制，
  *    重启重置可接受——持久去重由 notifySentAt 承担，重开后已通知节点不会重触发）。
  *  - 收敛保证：分发器因通知新建的节点默认不继承 notifyDispatcher（NodeEdit
@@ -52,24 +55,28 @@ final class DispatchNotify(
   store: FlowMapStore,
   workspace: String,
   projectName: String,
-  /** 预算耗尽升级通道（NodeEngine 注入 deliverToNebula(_, _, "blocked")，
-    * 与 FeedbackRouter.escalate 同款）。 */
+  /** 预算耗尽升级通道（NodeEngine 注入 deliverToNebula(_, _, "notice")——notice
+    * 语义非 blocked：预算耗尽时节点保持 completed，前端不可标 BLOCKED）。 */
   escalate: (String, String) => IO[Unit],
-  /** blocked 转换后 WS nodeUpdated（NodeEngine 注入 emitUpdated，前端卡片刷新）。 */
+  /** 预留（2026-09-06 起不再在预算耗尽路径调用——节点不再转 blocked，无需 WS 刷新）。 */
   emitUpdated: NodeDef => IO[Unit],
   /** 触发通道（默认经 ProjectRuntimeRegistry → ProjectActor.TriggerDispatcher；
     * 测试注入 stub 捕获通知文本）。 */
   trigger: String => IO[Unit],
-  /** 链级通知预算（默认 5；测试注入小值验证耗尽路径）。 */
+  /** 链级通知预算（默认 5；每回合边界重置，见 [[redeliver]] 头注）。 */
   budgetMax: Int = DispatchNotify.DefaultBudget
 ):
   private val logger = NebflowLogger.forName("nebflow.project.dispatch-notify")
 
-  /** 进程内通知预算计数（已触发次数）。 */
+  /** 进程内通知预算计数（当前回合已触发次数；回合边界重置）。 */
   private val budgetUsed: Ref[IO, Int] = Ref.unsafe[IO, Int](0)
 
   /** 进程内在飞占位（同节点并发直触发/补投竞态关闭；一次性，通知语义=每节点至多一次）。 */
   private val inFlight: Ref[IO, Set[String]] = Ref.unsafe[IO, Set[String]](Set.empty)
+
+  /** 预算耗尽监督通知 single-flight 守卫（进程内仅首次耗尽向 Nebula 发一条，
+    * 后续耗尽只留痕不重报——避免每 30s 重扫反复轰炸）。 */
+  private val budgetEscalated: Ref[IO, Boolean] = Ref.unsafe[IO, Boolean](false)
 
   /** 单一通知入口（可扩展）：终态节点 → 分发器通知。
     *
@@ -102,7 +109,7 @@ final class DispatchNotify(
                     s"triggered: ${NotifyReason.code(reason)} → dispatcher (node '${node.name}', budget $budgetMax)") *>
                   logger.info(s"Project '$projectName' node '${node.name}' (${node.id}) completed — dispatcher notified (reason=${NotifyReason.code(reason)})")
               case false =>
-                escalateBudgetExhausted(node, reason)
+                escalateBudgetExhausted(node)
             }
         }
     }
@@ -110,9 +117,15 @@ final class DispatchNotify(
   /** 补投扫描（TtlTick 30s 周期挂点）：扫活动区「notifyDispatcher ∧ completed ∧
     * 未标记 ∧ 有结果」节点逐条过单一入口（幂等：入口内占位+标记二次把关）。
     * 返回候选数（>0 时调用方记 info）。重启后本扫描覆盖「终态已落库但通知未
-    * 触发/未标记」的全部欠账。 */
+    * 触发/未标记」的全部欠账。
+    *
+    * == 回合边界重置预算（2026-09-06 作者拍板）==
+    * 每轮扫描开启新一轮预算：先把 budgetUsed 清零——预算不再按进程生命周期全局
+    * 单调计数（那会让真实项目 >5 个 flag 节点完成即耗尽），而是按「分发器回合/
+    * 通知识别链」计数、回合结束（本处=每轮 TtlTick 扫描边界）后重置。深度 ≤1
+    * 纵深防御的本意保留；既已落 notifySentAt 的节点不受重置影响（已出候选集）。 */
   def redeliver(): IO[Int] =
-    store.snapshot.flatMap { s =>
+    budgetUsed.set(0) *> store.snapshot.flatMap { s =>
       val pending = s.nodes.values
         .filter(n =>
           n.notifyDispatcher &&
@@ -123,39 +136,31 @@ final class DispatchNotify(
       pending.traverse_(n => notifyTerminal(n, NotifyReason.Completion)).as(pending.size)
     }
 
-  /** 预算耗尽：节点转 blocked（待办语义）+ 升级 Nebula。
-    * 事务内现读 fresh（R2 纪律）：仍 completed 且开启标志才转换；blockCount 不增
-    * （非节点自报轮次，与 mergeBlockedByUpstreamFailure 同构）；不经 FeedbackRouter
-    * （预算耗尽时重入恰是被挡对象，直投升级通道）。 */
-  private def escalateBudgetExhausted(node: NodeDef, reason: NotifyReason): IO[Unit] =
-    val feedback = BlockedFeedback(
-      category = "other",
-      detail = s"dispatch-notify 通知预算耗尽（${budgetMax} 次/进程）——自动回流停止，升级人工处置",
-      suggestion = "人工处置该节点结果，或确认链路收敛后重新规划（新节点默认不继承 notifyDispatcher）")
-    store.mutate { st =>
-      st.nodes.get(node.id) match
-        case Some(fresh) if fresh.status == NodeLifecycle.Completed && fresh.notifyDispatcher =>
-          st.copy(nodes = st.nodes.updated(node.id, fresh.copy(
-            status = NodeLifecycle.Blocked,
-            result = Some(BlockedReader.render(feedback)),
-            blockedFeedback = Some(feedback),
-            completedAt = fresh.completedAt, // 工作完成时刻保留
-            ttlExpireAt = None)))            // 待办语义（永不显示过期）
-        case _ => st // 状态已变（并发 abandon/重激活）→ 拒写（R2 竞态纪律）
-    }.flatMap { s =>
-      s.nodes.get(node.id) match
-        case Some(bn) if bn.status == NodeLifecycle.Blocked =>
-          val text = s"[Node '${bn.name}' blocked]\n项目「$projectName」节点「${bn.name}」(${bn.id}) 的 dispatch-notify 通知预算耗尽" +
-            s"（${budgetMax} 次/进程）——已转 blocked 并停止自动回流，等待处置。\n" +
-            s"节点结果全文仍可经 NodeList(detail=\"${bn.id}\") 读取。"
-          emitUpdated(bn) *>
-            FlowMapEventLog.append(workspace, projectName, node.id, "dispatch-notify",
-              s"budget exhausted ($budgetMax) → node '${node.name}' converted blocked + escalated to Nebula") *>
-            escalate(text, bn.name) *>
-            logger.warn(s"Project '$projectName' dispatch-notify budget exhausted ($budgetMax) — node '${bn.name}' (${bn.id}) → blocked + escalated")
-        case _ =>
-          logger.warn(s"Project '$projectName' node '${node.name}' changed state before budget-escalation — skipped (fresh-read discipline)").void
-    }
+  /** 预算耗尽（2026-09-06 作者拍板语义修正）：**不再翻转节点状态**——completedNode
+    * 已先 deliverOut+settleDeps，下游已按完成推进，此时把节点转 blocked 会污染
+    * 完成事实 + 切断分发器回流（本批缺陷根因）。改为三动作：
+    *   1. 落 notifySentAt（复用 [[markSent]]）→ 节点退出 [[redeliver]] 候选集
+    *      （notifyDispatcher∧Completed∧notifySentAt.isEmpty∧result.nonEmpty），
+    *      否则保持 completed 会被 TtlTick 每 30s 反复重扫 → 反复 escalate；
+    *   2. 进程内 single-flight：仅首次预算耗尽向 Nebula 发一条非阻塞监督通知
+    *      （notice 语义，非 blocked——eventType=blocked 会让前端标 BLOCKED，
+    *      作者看到「完成节点被标阻塞」）；后续耗尽只留痕不重报；
+    *   3. FlowMapEventLog 审计一条（budget exhausted + kept completed）。
+    * 全部 best-effort（通知失败不拖垮完成链）。 */
+  private def escalateBudgetExhausted(node: NodeDef): IO[Unit] =
+    markSent(node.id) *>
+      budgetEscalated.modify(b => if b then (b, false) else (true, true)).flatMap {
+        case false =>
+          logger.info(
+            s"Project '$projectName' dispatch-notify budget exhausted ($budgetMax) for node '${node.name}' (${node.id}) — node kept completed; supervisor notice already sent (single-flight)")
+        case true =>
+          val text = s"[dispatch-notify] 预算耗尽（${budgetMax} 次/进程）——项目「$projectName」节点「${node.name}」(${node.id}) 已完成但未自动通知分发器，请经 NodeList(detail=\"${node.id}\") 复核。"
+          FlowMapEventLog.append(workspace, projectName, node.id, "dispatch-notify",
+            s"budget exhausted ($budgetMax) → node '${node.name}' kept completed, notifySentAt set, supervisor notice (single-flight)") *>
+            escalate(text, node.name) *>
+            logger.warn(
+              s"Project '$projectName' dispatch-notify budget exhausted ($budgetMax) — node '${node.name}' (${node.id}) kept completed, supervisor notice sent")
+      }
 
   /** notifySentAt 持久标记（活动区优先，归档区兜底——与 markNebulaDelivered 同款双区）。 */
   private def markSent(nodeId: String): IO[Unit] =
@@ -185,6 +190,11 @@ final class DispatchNotify(
 object DispatchNotify:
   /** 链级通知预算默认值（设计约束③建议值）。 */
   val DefaultBudget: Int = 5
+
+  /** 预算耗尽监督通知的 eventType（notice 语义，非 blocked——eventType=blocked
+    * 会让前端标 BLOCKED，作者看到「完成节点被标阻塞」）。NodeEngine 注入 escalate
+    * 闭包按本常量送 deliverToNebula。 */
+  val NoticeEventType: String = "notice"
 
   /** 默认触发通道：ProjectRuntimeRegistry → ProjectActor.TriggerDispatcher
     * （与 Task 工具/Mail(→project) 同链路；rootSessionId 用挂载根——系统发起，
