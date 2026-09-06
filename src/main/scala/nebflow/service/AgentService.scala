@@ -24,8 +24,7 @@ class AgentService(library: AgentLibrary):
   def updateSystemPrompt(name: String, content: String): IO[Unit] =
     library.updateSystemPrompt(name, content)
 
-  /** Update the tools list for an agent (user toggles tools in config modal). */
-  def updateTools(name: String, tools: List[String]): IO[Unit] =
-    library.updateTools(name, tools)
+  // updateTools retired 2026-09-06 (tool-face batch) — agent.json tools
+  // write-back removed; the WS updateAgentTools case now rejects explicitly.
 
 end AgentService

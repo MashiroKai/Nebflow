@@ -215,7 +215,6 @@
 .code-copy-btn,
 #modal-cancel,
 #delete-cancel,
-#agent-modal-actions button,
 #memory-modal-actions button,
 #rules-modal-actions button,
 #path-picker-actions button {
@@ -243,7 +242,6 @@
 .code-copy-btn:not(.copied):hover,
 #modal-cancel:hover,
 #delete-cancel:hover,
-#agent-modal-actions button:hover,
 #memory-modal-actions button:hover,
 #rules-modal-actions button:hover,
 #path-picker-actions button:hover {

@@ -39,10 +39,10 @@ class Phase2dToolRefactorSpec extends FunSuite:
 
   // ===== D.1-1：三角色静态集收口，工具面逐件不变 =====
 
-  test("D.1-1: Nebula fixed set == §C.1 恰十四件、零 Issue、零写手、零旧体系四件（逐件不变）"):
+  test("D.1-1: Nebula fixed set == §C.1 恰十三件、零 Issue、零写手、零 NodeList、零旧体系四件（逐件不变）"):
     val fixed = AgentCore.fixedToolsFor(mkDef("Nebula"))
     val expected =
-      Set("Task", "ProjectCreate", "NodeList", "AgentControl",
+      Set("Task", "ProjectCreate", "AgentControl",
         "SendFriendMessage",
         "Read", "Glob", "Grep",                                // 读三件（08:40 解禁四件；23:34 裁定收走写手）
         "Card",                                               // 可视化（2026-09-05 解封恢复）
@@ -50,8 +50,9 @@ class Phase2dToolRefactorSpec extends FunSuite:
         "Schedule", "TransferFile",
         "MemoryEdit")
     assertEquals(fixed, expected,
-      "Nebula 静态集恰十四件（2026-09-05 23:34 作者裁定：Nebula 回归纯编排——Bash/Write/Edit 移除；08:40 作者裁定：+Card 解封/−Mail/Delegate/FlowTrigger/FlowExecute 旧体系退役；2026-09-04 终裁：Issue/CheckIssues 退役）")
+      "Nebula 静态集恰十三件（2026-09-06 00:48 作者裁定：NodeList 摘除——节点结果沿 out 边自动投递，主动查图与裁定职责重叠，dispatcher 自身面不受影响；2026-09-05 23:34 作者裁定：Nebula 回归纯编排——Bash/Write/Edit 移除；08:40 作者裁定：+Card 解封/−Mail/Delegate/FlowTrigger/FlowExecute 旧体系退役；2026-09-04 终裁：Issue/CheckIssues 退役）")
     assert(!fixed.contains("Issue"), "Nebula fixedTools 零 Issue（2026-09-04 终裁退役）")
+    assert(!fixed.contains("NodeList"), "Nebula fixedTools 零 NodeList（2026-09-06 00:48 裁定摘除——变异验红锚）")
     Set("Mail", "Delegate", "FlowTrigger", "FlowExecute").foreach { t =>
       assert(!fixed.contains(t), s"旧体系四件已从 Nebula 固定面退役（2026-09-05 裁定）: $t")
     }
@@ -83,18 +84,23 @@ class Phase2dToolRefactorSpec extends FunSuite:
     assertEquals(AgentCore.legacyFixedTools(mkDef("project-dispatcher")), AgentCore.BaseTools)
     assertEquals(AgentCore.legacyFixedTools(mkDef("general")), AgentCore.BaseTools)
 
-  test("D.1-1: legacy 双轨期分支原样——team/flow/catch-all 逐件不变"):
+  test("D.1-1: legacy 双轨分支 team/catch-all 逐件不变；flow 分支已随 2026-09-06 裁撤批收 BaseTools"):
+    // 2026-09-06 工具面裁撤批：FlowExecute（team 固定面）与 FlowReport（flow
+    // 固定面）移出——legacy 双轨路径本身保留至阶段 3。
     val team = AgentCore.legacyFixedTools(mkDef("backend").copy(category = "team"))
-    assertEquals(team, AgentCore.BaseTools + "Mail" + "SubTask" + "FlowExecute" ++ AgentCore.TeamTaskTools)
+    assertEquals(team, AgentCore.BaseTools + "Mail" + "SubTask" ++ AgentCore.TeamTaskTools)
     val flow = AgentCore.legacyFixedTools(mkDef("node").copy(category = "flow"))
-    assertEquals(flow, AgentCore.BaseTools + "FlowReport")
+    assertEquals(flow, AgentCore.BaseTools, "flow 固定面零 FlowReport（2026-09-06 裁撤批）")
     val solo = AgentCore.legacyFixedTools(mkDef("Coder"))
     assertEquals(solo, AgentCore.BaseTools,
       "legacy standalone catch-all 保留（Coder/Explorer/design-engineer 依赖，阶段 3 删）")
 
   test("D.1-1: buildAllowedToolSet 三角色交付面 == 静态集（LLM 面，注册表过滤后）"):
     val nebulaDelivered = CoreProbe.allowed(mkDef("Nebula"))
-    assert(nebulaDelivered.contains("MemoryEdit") && nebulaDelivered.contains("NodeList"))
+    // 2026-09-06 00:48 作者裁定：NodeList 摘除——MemoryEdit 在、NodeList 不在
+    // 交付面（out 边自动投递取代主动查图）。
+    assert(nebulaDelivered.contains("MemoryEdit"))
+    assert(!nebulaDelivered.contains("NodeList"), "Nebula 交付面零 NodeList（00:48 裁定）")
     // 2026-09-05 23:34 作者裁定：Nebula 回归纯编排——读三件在、写手三件
     // （Bash/Write/Edit）不在交付面；general/BaseTools 六件默认注入不变。
     assert(nebulaDelivered.contains("Read") && nebulaDelivered.contains("Glob") && nebulaDelivered.contains("Grep"),

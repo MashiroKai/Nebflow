@@ -13,8 +13,10 @@ object ToolLoader:
   private def teamToolsDir(team: String): os.Path = PathUtil.dataRoot / "teams" / team / "tools"
   private def flowToolsDir(flow: String): os.Path = PathUtil.dataRoot / "flows" / flow / "tools"
 
-  /** Layer priority for name conflicts: global < agent < team < flow (higher wins). */
-  private val layerPriority: Map[String, Int] = Map("global" -> 0, "agent" -> 1, "team" -> 2, "flow" -> 3)
+  // Layer priority for name conflicts: global < team < flow (higher wins).
+  // The per-agent layer was retired 2026-09-06 with the panel capability
+  // sections — agents/*/tools/ style directories are no longer scanned.
+  private val layerPriority: Map[String, Int] = Map("global" -> 0, "team" -> 2, "flow" -> 3)
 
   /**
    * Tracks external tool names currently registered in ToolRegistry,
@@ -25,11 +27,12 @@ object ToolLoader:
   )
 
   /**
-   * Reload all external tools from the four layers (global / agent / team /
-   * flow): unregister previously loaded tools, re-read all JSON configs, and
+   * Reload all external tools from the three layers (global / team / flow):
+   * unregister previously loaded tools, re-read all JSON configs, and
    * register fresh ScriptTool instances. On name conflicts a higher-priority
-   * layer (flow > team > agent > global) overrides a lower one; built-in
-   * tools always win.
+   * layer (flow > team > global) overrides a lower one; built-in
+   * tools always win. The per-agent layer (agents/x/tools scans) retired
+   * 2026-09-06 with the panel capability sections.
    * Idempotent — safe to call repeatedly (used by initial load + file watcher).
    */
   def reload(): IO[Unit] =
@@ -114,56 +117,20 @@ object ToolLoader:
     if os.exists(parent) then os.list(parent).filter(os.isDir).map(_.last).toList else Nil
 
   /**
-   * Load all external tool definitions from the four layers, merged by name
-   * with layer priority (global < agent < team < flow). Returns (config,
-   * sourceDir) pairs; sourceDir becomes the ScriptTool's $TOOL_DIR.
+   * Load all external tool definitions from the three layers (global / team /
+   * flow), merged by name with layer priority. Returns (config, sourceDir)
+   * pairs; sourceDir becomes the ScriptTool's $TOOL_DIR. Per-agent tools
+   * scans (agents/x/tools, teams/t/agents/x/tools, flows/f/agents/x/tools)
+   * retired 2026-09-06 with the panel capability sections.
    */
   def loadAll(): IO[List[(ExternalToolConfig, os.Path)]] =
     for
       global <- loadFromDir(toolsDir, layer = "global", scope = None)
-      // Agent-scoped tools: ~/.nebflow/agents/*/tools/
-      globalAgentTools <- loadNestedTools(PathUtil.dataRoot / "agents", layer = "agent")
       teams <- IO.blocking(subdirs(PathUtil.dataRoot / "teams"))
       teamLayer <- teams.traverse(name => loadFromDir(teamToolsDir(name), layer = "team", scope = Some(name)))
-      // Team agent tools: ~/.nebflow/teams/<t>/agents/*/tools/ (skip <t>/tools — loaded above)
-      teamAgentTools <- loadNestedTools(PathUtil.dataRoot / "teams", layer = "agent", excludeDirect = true)
       flows <- IO.blocking(subdirs(PathUtil.dataRoot / "flows"))
       flowLayer <- flows.traverse(name => loadFromDir(flowToolsDir(name), layer = "flow", scope = Some(name)))
-      // Flow agent tools: ~/.nebflow/flows/<f>/agents/*/tools/ (skip <f>/tools — loaded above)
-      flowAgentTools <- loadNestedTools(PathUtil.dataRoot / "flows", layer = "agent", excludeDirect = true)
-    yield mergeByPriority(
-      global ++ globalAgentTools ++ teamLayer.flatten ++ teamAgentTools ++ flowLayer.flatten ++ flowAgentTools
-    )
-
-  /**
-   * Scan baseDir for `tools/` subdirectories of agent directories and load
-   * every *.json tool config found. Two shapes are matched:
-   *   - direct:  baseDir/<agent>/tools/                 (used for ~/.nebflow/agents)
-   *   - nested:  baseDir/<scope>/agents/<agent>/tools/  (used for teams & flows)
-   * With `excludeDirect` the immediate baseDir/<x>/tools dirs are skipped — they
-   * are the team/flow scope tools dirs already loaded separately by loadAll().
-   * Configs are tagged layer "agent"; scope is the path relative to the data root.
-   */
-  private def loadNestedTools(
-    baseDir: os.Path,
-    layer: String,
-    excludeDirect: Boolean = false
-  ): IO[List[(ExternalToolConfig, os.Path)]] =
-    IO.blocking {
-      if !os.exists(baseDir) then Nil
-      else
-        os.walk(baseDir)
-          .filter { p =>
-            os.isDir(p) && p.last == "tools" &&
-            !(excludeDirect && p.segments.length == baseDir.segments.length + 2)
-          }
-          .toList
-    }.flatMap { toolsDirs =>
-      toolsDirs.traverse { toolsDir =>
-        val rel = toolsDir.relativeTo(PathUtil.dataRoot).segments.mkString("/")
-        loadFromDir(toolsDir, layer = layer, scope = Some(rel))
-      }
-    }.map(_.flatten)
+    yield mergeByPriority(global ++ teamLayer.flatten ++ flowLayer.flatten)
 
   // Load a single tool by name (searches all three layers, highest priority wins)
   def load(name: String): IO[Option[ExternalToolConfig]] =

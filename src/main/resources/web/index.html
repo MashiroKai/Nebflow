@@ -307,22 +307,8 @@
       </div>
     </div>
   </div>
-  <!-- Agent Editor Modal (separate overlay) -->
-  <div id="agent-overlay">
-    <div id="agent-modal">
-      <div id="agent-modal-title">Edit Agent</div>
-      <div id="agent-modal-body">
-        <div class="agent-field-label" data-i18n="agent.toolsLabel">Tools</div>
-        <div id="agent-tools-grid"></div>
-        <div class="agent-field-label" data-i18n="agent.systemPrompt">System Prompt</div>
-        <textarea id="agent-system-input" placeholder="System prompt (Markdown)" rows="12" spellcheck="false"></textarea>
-      </div>
-      <div id="agent-modal-actions">
-        <button id="agent-modal-cancel">Cancel</button>
-        <button id="agent-modal-save">Save</button>
-      </div>
-    </div>
-  </div>
+  <!-- Agent Editor Modal — retired 2026-09-06 (tool-face retirement batch):
+       per-agent editing lives in the Canvas detail tab (agentManager.js). -->
   <!-- Memory Editor Modal (three tabs: Folder / Agent / User) -->
   <div id="memory-overlay">
     <div id="memory-modal">
