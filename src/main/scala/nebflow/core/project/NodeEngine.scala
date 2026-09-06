@@ -344,7 +344,12 @@ class NodeEngine(
                     // 翻转 LostRace 败方抛 StartRaceLost——在此单点吞掉，对全部调用
                     // 方（forkStart/runDetached/直接调用）呈安静败方语义；其他异常
                     // 原样上抛（forkStart/runDetached 留痕）。
-                    spawnAndRun(node, input).handleErrorWith {
+                    // LoopNode 路由（LoopNode 批 2026-09-06）：node.loop 启用 → 走
+                    // spawnAndRunLoop（worker/verify 双会话迭代）；否则标准路径。
+                    val runIO =
+                      if node.loop.exists(_.enabled) then spawnAndRunLoop(node, input)
+                      else spawnAndRun(node, input)
+                    runIO.handleErrorWith {
                       case _: NodeEngine.StartRaceLost => IO.unit
                     }
                   }
@@ -424,6 +429,68 @@ class NodeEngine(
                       runWithAgent(node, baseDef, inputWithPlugins, sessionId, prepared, grant)
                         .guarantee(resources.pluginMcp.release(sessionId))
                   }
+              }
+          }
+    yield ()
+
+  /** LoopNode spawn（LoopNode 批 2026-09-06）：与 spawnAndRun 同骨——加载 worker/
+    * verify 两 agent、准备插件、acquire 各会话 MCP grant、翻转 Running、spawn 双会话、
+    * 驱动 loop。终态（PASS/failed/cancelled/blocked/达 K）由 runLoopNode 落终态化，
+    * 会话/MCP/running 清理在 guarantee 内（裁定 B 双销毁不残留）。 */
+  private def spawnAndRunLoop(node: NodeDef, inputText: String): IO[Unit] =
+    val nodeId = node.id
+    val loopCfg = node.loop.get
+    val workerSessionId = s"node-${java.util.UUID.randomUUID().toString.take(8)}"
+    val verifySessionId = s"node-${java.util.UUID.randomUUID().toString.take(8)}"
+    // projectRoot 解析（与 runWithAgent 同源单点：PathUtil.resolveNodeProjectRoot）
+    val projectRoot =
+      node.worktree match
+        case Some(wt) if PathUtil.normalizeWorktree(wt).isLeft =>
+          val pr = PathUtil.resolveNodeProjectRoot(workspace, node.worktree)
+          logger.warnSync(
+            s"Node '${node.name}' (${node.id}) has corrupt worktree value '$wt' — projectRoot fell back to workspace ($pr)")
+          pr
+        case _ => PathUtil.resolveNodeProjectRoot(workspace, node.worktree)
+    for
+      workerAgentOpt <- EntityLoader.loadAgent(node.agent)
+      verifyAgentOpt <- EntityLoader.loadAgent(loopCfg.verify)
+      _ <- (workerAgentOpt, verifyAgentOpt) match
+        case (None, _) => failNode(nodeId, s"worker agent '${node.agent}' not found in global library (loop node)")
+        case (_, None) => failNode(nodeId, s"verify agent '${loopCfg.verify}' not found in global library (loop node)")
+        case (Some(wEntry), Some(vEntry)) =>
+          // worker 侧 preset 消费（§E.3 同款）；verify 侧无单独 preset（LoopConfig 精简，
+          // 与 node.preset 归 worker 的 §2.1 口径一致）。
+          nodePresetDef(node, wEntry).flatMap {
+            case Left(err) => failNode(nodeId, err)
+            case Right(workerBase) =>
+              val verifyBase = vEntry.toAgentDef
+              // worker/verify 均注入 node.plugins（§2.1 verify=通用 agent+plugins，验证域
+              // 分配共享同域能力包）；各 session 独立 acquire MCP grant（引用记账分离）。
+              prepareNodePlugins(node).flatMap {
+                case Left(err) => failNode(nodeId, err)
+                case Right(prepared) =>
+                  for
+                    wGrantE <- resources.pluginMcp.acquire(workerSessionId, prepared.mcpPlugins)
+                    vGrantE <- resources.pluginMcp.acquire(verifySessionId, prepared.mcpPlugins)
+                    _ <- (wGrantE, vGrantE) match
+                      case (Left(err), _) => failNode(nodeId, err)
+                      case (_, Left(err)) => failNode(nodeId, err)
+                      case (Right(wGrant), Right(vGrant)) =>
+                        for
+                          cancelSig <- Deferred[IO, Unit]
+                          _ <- flipToRunning(node, cancelSig, workerSessionId, nodeId, node.name)
+                          worker <- spawnLoopSession(workerBase, prepared, wGrant, workerSessionId, node.name, projectRoot)
+                          verify <- spawnLoopSession(verifyBase, prepared, vGrant, verifySessionId, s"${node.name}-verify", projectRoot)
+                          _ <- runLoopNode(node, worker, verify, inputText, cancelSig)
+                            .guarantee(
+                              destroyLoopSessions(worker, verify) *>
+                                resources.pluginMcp.release(workerSessionId) *>
+                                resources.pluginMcp.release(verifySessionId) *>
+                                running.update(_ - nodeId) *>
+                                nodeSessions.update(_ - nodeId)
+                            )
+                        yield ()
+                  yield ()
               }
           }
     yield ()
@@ -850,6 +917,273 @@ class NodeEngine(
           if fo.message.contains("cancelled") then cancelNode(nodeId)
           else failNode(nodeId, fo.message)
     yield ()
+
+  // ── LoopNode 执行（LoopNode 批 2026-09-06，主设计 §2.2 状态机 + §2.4 异常路径）──
+  //
+  // LoopNode 语义（作者 13 条红线，主设计 §2）：
+  //  - worker/verify 双会话**贯穿节点存续期**（裁定 B 2026-09-03 00:59）：首轮 spawn、
+  //    跨轮同会话注入续跑、终态（PASS 投递 /failed/cancelled/blocked）双会话一并销毁。
+  //  - worker 会话生产 → verify 会话校验：PASS → completeNode（投递 worker 最终产出
+  //    原文，§2.2 裁定建议）。FAIL → 打回 worker（输入恒定，同会话注入返工模板二）
+  //    重跑；达 maxRounds(K) 仍未 PASS → 终态（failNode，§2.5 轮级兜底）。
+  //  - 打回输入恒定：返工输入只含【LoopNode 返工 · 第 N 轮】+ 新意见 + 协议脚注，
+  //    不重复注入产出全文/历史（持久会话模型收益，§2.2 模板二——「重跑≠改需求」）。
+  //  - LoopGuard（turn 级，会话内既有防线）与 maxRounds（轮级）两轴独立：worker/verify
+  //    会话内部 LoopGuard R-text 精确重复 → 会话 L1 终止 → 以执行层 failed 形态上浮 →
+  //    整 Loop failed；轮级由 runLoopNode 的 maxRounds 兜底（本方法）。
+  //  - blocked 分流：worker/verify 产出命中 BlockedReader 锚定 → Loop 级 blockedNode
+  //    （§2.7：FAIL=产出质量问题内部迭代消化；BLOCKED=任务/拓扑问题传播停止+重入）。
+  //
+  // 关键：本方法只编排**已 spawn 的** worker/verify 双会话（spawnAndRunLoop 负责
+  // 翻转+spawn+插件/MCP）；终态会话销毁在 spawnAndRunLoop 的 guarantee 内。
+
+  /** Loop 会话（worker/verify 各一）：持久 agent 会话 + 常驻桥。跨轮同 ActorRef 复用
+    * （裁定 B——上下文贯穿），每轮经 round Ref 等待本轮 Completed。桥常驻存活
+    * （每轮 Completes 本轮 Deferred 后回 idle 等下一轮），终态由 spawnAndRunLoop 停毁。 */
+  private final case class LoopSession(
+    sessionId: String,
+    agentRef: ActorRef[AgentCommand],
+    bridgeRef: ActorRef[AgentEvent],
+    round: Ref[IO, Deferred[IO, Either[String, List[Message]]]]
+  )
+
+  /** Loop 会话常驻桥行为（与 runWithAgent bridge 同构，但**每轮完成不停止**——只
+    * complete 本轮 Deferred、保持存活等下一轮注入）。失败/取消/会话死亡 → complete
+    * Left（本轮即终，spawnAndRunLoop guarantee 统一销毁）。不持会话内状态（状态全在
+    * 共享 round Ref），故每轮简单递归构造新 Behavior 即可（无 lazy val 循环引用）。 */
+  private def loopBridge(
+    round: Ref[IO, Deferred[IO, Either[String, List[Message]]]],
+    sessionId: String,
+    sessionName: String
+  ): Behavior[AgentEvent] =
+    new Behavior[AgentEvent]:
+      def receive(ctx: ActorContext[AgentEvent], event: AgentEvent): IO[Behavior[AgentEvent]] =
+        event match
+          case AgentEvent.Completed(_, messages) =>
+            round.get.flatMap(_.complete(Right(messages)).attempt.void).as(loopBridge(round, sessionId, sessionName))
+          case AgentEvent.Failed(_, err) =>
+            round.get.flatMap(_.complete(Left(Option(err.message).getOrElse("unknown error"))).attempt.void).as(loopBridge(round, sessionId, sessionName))
+          case AgentEvent.Cancelled(_, reason) =>
+            round.get.flatMap(_.complete(Left(s"cancelled: $reason")).attempt.void).as(loopBridge(round, sessionId, sessionName))
+      override def onSignal(ctx: ActorContext[AgentEvent], signal: SystemSignal): IO[Behavior[AgentEvent]] =
+        signal match
+          case SystemSignal.Terminated(_) =>
+            logger.warn(s"Loop session '$sessionId' ($sessionName) terminated WITHOUT a terminal event — finalize round as failed")
+            round.get.flatMap(_.complete(Left(s"loop session '${sessionId}' terminated without a terminal event")).attempt.void).as(loopBridge(round, sessionId, sessionName))
+
+  /** spawn 单个 Loop 会话（agent + 常驻桥 + registry 注册）。MCP grant 由调用方
+    * （spawnAndRunLoop）分别对 worker/verify acquire 后传入（各自独立引用记账）。
+    * baseDef=已过 PresetResolver 的 AgentDef；prepared=已解析的插件分配。 */
+  private def spawnLoopSession(
+    baseDef: AgentDef,
+    prepared: NodeEngine.PluginPreparation,
+    grant: PluginMcpManager.Grant,
+    sessionId: String,
+    sessionName: String,
+    projectRoot: String
+  ): IO[LoopSession] =
+    for
+      initD <- Deferred[IO, Either[String, List[Message]]]
+      round = Ref.unsafe[IO, Deferred[IO, Either[String, List[Message]]]](initD)
+      agentDef = baseDef.copy(pluginMcpServers = grant.serverIds, pluginTools = prepared.builtinTools)
+      ref <- NodeRunner.spawnAgentActor(
+        system,
+        NodeRunner.SpawnParams(
+          agentDef = agentDef,
+          resources = resources,
+          sessionId = sessionId,
+          sessionName = sessionName,
+          depth = 1,
+          parentRef = None,
+          wsSend = NodeRunner.routeSubagentWsSend(wsSendFn, rootSessionId, sessionId),
+          projectRoot = Some(projectRoot),
+          safetyMode = "confirm-edits",
+          rootSessionId = rootSessionId,
+          isFlowNode = true,
+          sandboxEnabled = true,
+          sandboxRoot = Some(workspace)
+        )
+      )
+      bridgeRef <- system.spawn(
+        Behaviors.setup[AgentEvent] { bctx =>
+          bctx.watch(ref) *> IO(loopBridge(round, sessionId, sessionName))
+        },
+        s"loopbridge-${sessionId.take(8)}"
+      )
+      _ <- resources.agentRegistry.update(
+        _ + (sessionId -> AgentRecord(
+          sessionId, ref, AgentKind.Flow, rootSessionId,
+          startedAt = System.currentTimeMillis(),
+          lastActivityMs = System.currentTimeMillis(),
+          supervisorRef = Some(bridgeRef)
+        ))
+      )
+    yield LoopSession(sessionId, ref, bridgeRef, round)
+
+  /** 翻转 + 在飞登记（LoopNode 批复用；与 runWithAgent 内联翻转同语义——CAS 守卫
+    * Done/LostRace/Aborted 三态、running/nodeSessions 条件登记、start-aborted 事件。
+    * 独立实现避免改动既有 runWithAgent（并发分支保护，同文件不同 hunk 收敛）。 */
+  private def flipToRunning(
+    node: NodeDef,
+    cancelSig: Deferred[IO, Unit],
+    sessionId: String,
+    nodeId: String,
+    nodeName: String
+  ): IO[Unit] =
+    for
+      _ <- running.modify { m => if m.contains(nodeId) then (m, ()) else (m + (nodeId -> cancelSig), ()) }
+      _ <- nodeSessions.update(_ + (nodeId -> sessionId))
+      now <- IO(System.currentTimeMillis())
+      (flipped, flipOutcome) <- store.mutateWithResult { s =>
+        s.nodes.get(nodeId) match
+          case Some(fresh)
+              if (fresh.status == NodeLifecycle.Pending || fresh.status == NodeLifecycle.Wiring)
+                && !fresh.in.exists(up => !fresh.deliveredTo.contains(up)) =>
+            (s.copy(nodes = s.nodes.updated(nodeId, fresh.copy(
+              status = NodeLifecycle.Running,
+              startedAt = Some(now)))), NodeEngine.FlipOutcome.Done)
+          case Some(fresh) if fresh.status == NodeLifecycle.Running =>
+            (s, NodeEngine.FlipOutcome.LostRace)
+          case Some(fresh) if fresh.in.exists(up => !fresh.deliveredTo.contains(up)) =>
+            (s, NodeEngine.FlipOutcome.Aborted("in-barrier not settled (concurrent rewiring)"))
+          case Some(fresh) =>
+            (s, NodeEngine.FlipOutcome.Aborted(s"state changed to '${fresh.status}' before flip (concurrent finalize)"))
+          case None =>
+            (s, NodeEngine.FlipOutcome.Aborted("node vanished"))
+      }
+      _ <- flipOutcome match
+        case NodeEngine.FlipOutcome.Done =>
+          running.update(m => m + (nodeId -> cancelSig)) *>
+            flipped.nodes.get(nodeId).traverse_(n =>
+              emitEvent("nodeUpdated", nodeId, NodePayload.buildNodeJson(n, System.currentTimeMillis())))
+        case NodeEngine.FlipOutcome.LostRace =>
+          running.modify { case m if m.get(nodeId).exists(_.eq(cancelSig)) => (m - nodeId, ()); case m => (m, ()) } *>
+            nodeSessions.update(_ - nodeId) *> IO.raiseError(NodeEngine.StartRaceLost(nodeId))
+        case NodeEngine.FlipOutcome.Aborted(reason) =>
+          running.modify { case m if m.get(nodeId).exists(_.eq(cancelSig)) => (m - nodeId, ()); case m => (m, ()) } *>
+            nodeSessions.update(_ - nodeId) *>
+            FlowMapEventLog.append(workspace, projectName, nodeId, "start-aborted",
+              s"start aborted: $reason") *>
+            IO.raiseError(new RuntimeException(s"Node '$nodeName' ($nodeId) start aborted — $reason"))
+    yield ()
+
+  /** 终态双会话销毁（裁定 B）：停 agent + 停桥 + 注销 registry。MCP release 与
+    * running/nodeSessions 清理在 spawnAndRunLoop 的 guarantee 内一并做（此处只管会话）。 */
+  private def destroyLoopSessions(worker: LoopSession, verify: LoopSession): IO[Unit] =
+    resources.agentRegistry.update(_ - worker.sessionId - verify.sessionId) *>
+      system.stop(worker.agentRef).handleErrorWith(_ => IO.unit) *>
+      system.stop(worker.bridgeRef).handleErrorWith(_ => IO.unit) *>
+      system.stop(verify.agentRef).handleErrorWith(_ => IO.unit) *>
+      system.stop(verify.bridgeRef).handleErrorWith(_ => IO.unit).void
+
+  /** runLoopNode 主编排（§2.2 状态机）：worker/verify 双会话迭代。spawnAndRunLoop
+    * 已翻转+spawn+装好两会话后调用；终态（PASS/failed/cancelled/blocked/达 K）落
+    * 终态化后即返回，会话清理由调用方 guarantee 兜底。 */
+  private def runLoopNode(
+    node: NodeDef,
+    worker: LoopSession,
+    verify: LoopSession,
+    workerFirstInput: String,
+    cancelSig: Deferred[IO, Unit]
+  ): IO[Unit] =
+    val nodeId = node.id
+    val loopCfg = node.loop.get
+    val maxRounds = loopCfg.maxRounds
+
+    /** 单会话单轮注入：置新 Deferred → 发 UserInput → race(本轮产出, node cancelSig)。
+      * cancelSig 赢 → Left(cancelled)（整 Loop cancelled），否则返回本轮产物。 */
+    def step(ses: LoopSession, input: String): IO[Either[String, List[Message]]] =
+      for
+        d <- Deferred[IO, Either[String, List[Message]]]
+        _ <- ses.round.set(d)
+        _ <- (ses.agentRef ! AgentCommand.UserInput(text = input, replyTo = Some(ses.bridgeRef))).void
+        r <- IO.race(d.get, cancelSig.get).map {
+          case Left(res) => res
+          case Right(_)  => Left("cancelled by NodeCancel")
+        }
+      yield r
+
+    /** 轮次/阶段状态落库 + WS nodeUpdated（NodePayload 同构载荷，NodeList/前端可见）。 */
+    def goto(nodeId: String, phase: String, round: Int): IO[Unit] =
+      store.mutate { st =>
+        st.nodes.get(nodeId) match
+          case Some(f) if f.loop.isDefined =>
+            st.copy(nodes = st.nodes.updated(nodeId, f.copy(loopPhase = Some(phase), loopRound = round)))
+          case _ => st
+      }.flatMap(s => s.nodes.get(nodeId).traverse_(emitUpdated))
+
+    /** 最近一次 FAIL verdict 摘要落库 + WS（loopLastVerdict，前端打回原因可见）。 */
+    def setVerdict(nodeId: String, summary: String): IO[Unit] =
+      store.mutate { st =>
+        st.nodes.get(nodeId) match
+          case Some(f) if f.loop.isDefined =>
+            st.copy(nodes = st.nodes.updated(nodeId, f.copy(loopLastVerdict = Some(summary))))
+          case _ => st
+      }.flatMap(s => s.nodes.get(nodeId).traverse_(emitUpdated))
+
+    /** 执行层失败/取消分流（§2.4）：cancelled → cancelNode（整 Loop cancelled）；
+      * 其余（LLM 错误/agent 消失/LoopGuard L1 终止该 turn）→ 整 Loop failed（failNode）。 */
+    def failOrCancel(nodeId: String, err: String): IO[Unit] =
+      if err.contains("cancelled") then cancelNode(nodeId) else failNode(nodeId, err)
+
+    /** verify 首轮输入构建（模板三全文：原始任务 + 上游段 + 待验证产出 + 验证清单 +
+      * 验证协议脚注）；轮 N≥2 用模板三短段（持久上下文已持有），见 loopVerifyInput。 */
+    def verifyRound1Input(workerText: String): IO[String] =
+      node.in.traverse { upId =>
+        store.findNode(upId).map {
+          case Some(up) => up.result.map(res => s"=== Node ${up.name} ===\n$res")
+          case None     => None
+        }
+      }.map { upstream =>
+        NodeEngine.loopVerifyInput(1, node.task.getOrElse(""), upstream.flatten.mkString("\n"), workerText, loopCfg.verifyTask)
+      }
+
+    def loopRound(roundNum: Int, lastFail: Option[VerdictReader.Verdict.Fail]): IO[Unit] =
+      if roundNum > maxRounds then
+        // 达 K 轮仍未 PASS → 轮级兜底终态（§2.5 划界：maxRounds 是轮帽，非内容检测）
+        val suffix = lastFail.map(f => s" — last verdict: ${VerdictReader.renderFailSummary(f)}").getOrElse("")
+        failNode(nodeId, s"loop reached maxRounds=${maxRounds} without passing verification$suffix")
+      else
+        val workerInput =
+          if roundNum == 1 then workerFirstInput
+          else
+            val f = lastFail.getOrElse(VerdictReader.Verdict.Fail(Nil, ""))
+            NodeEngine.loopReworkInput(roundNum, f.issues, f.requirements)
+        for
+          _ <- goto(nodeId, NodeEngine.LoopPhaseWorker, roundNum)
+          wOut <- step(worker, workerInput)
+          _ <- wOut match
+            case Left(err) => failOrCancel(nodeId, s"worker round $roundNum: $err")
+            case Right(wMsgs) =>
+              val wText = extractLastAssistantText(wMsgs)
+              BlockedReader.parse(wText) match
+                case Some(fb) => blockedNode(nodeId, fb) // worker 申告无法继续 → Loop 级 blocked
+                case None =>
+                  for
+                    vIn <- if roundNum == 1 then verifyRound1Input(wText)
+                           else IO.pure(NodeEngine.loopVerifyInput(roundNum, "", "", wText, ""))
+                    _ <- goto(nodeId, NodeEngine.LoopPhaseVerify, roundNum)
+                    vOut <- step(verify, vIn)
+                    _ <- vOut match
+                      case Left(err) => failOrCancel(nodeId, s"verify round $roundNum: $err")
+                      case Right(vMsgs) =>
+                        val vText = extractLastAssistantText(vMsgs)
+                        BlockedReader.parse(vText) match
+                          case Some(fb) => blockedNode(nodeId, fb) // verify 申告任务无法验证 → Loop 级 blocked
+                          case None =>
+                            VerdictReader.parse(vText) match
+                              case VerdictReader.Verdict.Pass =>
+                                // PASS：投递 worker 最终产出原文（§2.2 裁定建议 a）
+                                completeNode(nodeId, wText)
+                              case f: VerdictReader.Verdict.Fail =>
+                                // FAIL：打回 worker（同会话注入意见），轮 +1，至 K
+                                setVerdict(nodeId, VerdictReader.renderFailSummary(f)) *>
+                                  loopRound(roundNum + 1, Some(f))
+                  yield ()
+        yield ()
+
+    loopRound(1, None)
+
 
   // ── 终态化（§2.7）─────────────────────────────────────────
   //
@@ -1560,6 +1894,63 @@ object NodeEngine:
       |{"category":"…","detail":"…","suggestion":"…"}
       |category ∈ upstream-incomplete | task-underspecified | agent-mismatch |
       |external-dependency | needs-split | other。可完成时正常输出结果，勿以 BLOCKED 开头。""".stripMargin
+
+  // ── LoopNode（LoopNode 批 2026-09-06，主设计 §2.2/§2.3）──────────────────
+
+  /** loop 运行态阶段值（NodeDef.loopPhase；loopRound 配套）。 */
+  val LoopPhaseWorker: String = "worker"
+  val LoopPhaseVerify: String = "verify"
+
+  /** verify 文法脚注（主设计 §2.3 原文单点注入，模板三末尾）——与 ProtocolFootnote
+    * 同机制，覆盖所有 verify 会话，防「verify 意图 FAIL 但忘写锚定行」被降级放行。 */
+  val VerifyVerdictFootnote: String =
+    """── 验证协议 ──
+      |你的最终输出第一行必须是且只能是：VERDICT: PASS 或 VERDICT: FAIL（大写，冒号后半角）。
+      |判 FAIL 时随后给出 JSON：{"issues":["问题1","问题2"],"requirements":"通过标准"}
+      |issues 必须具体到修改点；可 PASS 时第一行写 VERDICT: PASS，不要附加其他内容。""".stripMargin
+
+  /** verify 清单默认模板（loopSpec.verifyTask 为空时兜底注入）。 */
+  val VerifyDefaultTask: String =
+    "按原始任务与验收基准逐条核对 worker 产出，判断是否达到通过标准；" +
+      "指出必须修改的具体问题（issues 逐条列出），达到标准则判 PASS。"
+
+  /** worker 返工模板二（第 N≥2 轮同会话注入；产出全文/历史不重复注入——持久会话
+    * 上下文已持有，主设计 §2.2 模板二）。 */
+  def loopReworkInput(round: Int, issues: List[String], requirements: String): String =
+    val reqLine =
+      if requirements.trim.nonEmpty then s"== 通过标准 ==\n$requirements" else ""
+    val iss = if issues.nonEmpty then issues.map(i => s"- $i").mkString("\n") else "- （verify 未给出具体意见）"
+    s"""【LoopNode 返工 · 第 $round 轮】
+       |== 验证意见 ==
+       |$iss
+       |$reqLine
+       |
+       |${ProtocolFootnote}""".stripMargin
+
+  /** verify 输入模板三（第 N 轮；首轮全文、第 N≥2 轮新段——持久会话已持有原始任务/
+    * 上游段/验证清单/历轮产出，主设计 §2.2 模板三 + 裁定 B 注记）。 */
+  def loopVerifyInput(
+    round: Int,
+    nodeTask: String,
+    upstreamSection: String,
+    workerOutput: String,
+    verifyTask: String
+  ): String =
+    if round <= 1 then
+      val up = if upstreamSection.nonEmpty then s"\n$upstreamSection" else ""
+      s"""【LoopNode 验证 · 第 $round 轮】
+         |== 原始任务（验收基准） ==
+         |$nodeTask$up
+         |== 待验证产出（worker 第 $round 轮） ==
+         |$workerOutput
+         |== 验证清单 ==
+         |${if verifyTask.trim.nonEmpty then verifyTask else VerifyDefaultTask}
+         |
+         |${VerifyVerdictFootnote}""".stripMargin
+    else
+      s"""【LoopNode 验证 · 第 $round 轮】
+         |== 待验证产出（worker 第 $round 轮） ==
+         |$workerOutput""".stripMargin
 
 /** blocked 声明解析器（设计 §1.3 文法）。独立 object 便于单测。
   *

@@ -527,15 +527,25 @@ export function nodeFlagKeys(n) {
   if (!n || typeof n !== 'object') return [];
   const keys = [];
   if (n.merge === true) keys.push('merge');
-  if (n.loop === true) keys.push('loop');
+  // loop 判定双形态（语义演进）：新建 loop 节点 payload 是配置对象
+  // {maxRounds, verify, enabled}；早前前瞻防御批曾约定布尔 true。两种都算 loop。
+  if (n.loop === true || (n.loop && typeof n.loop === 'object' && !Array.isArray(n.loop))) keys.push('loop');
   if ((n.status || 'pending') === 'pending') keys.push('pending');
   return keys;
 }
 const FM_FLAG_CLS = { merge: 'fm-flag-merge', loop: 'fm-flag-loop', pending: 'fm-flag-pending' };
-/** 徽标 HTML：head 行胶囊，与 .fm-worktree-badge 同语言（文案 i18n flowmap.flag.*）。 */
+/** 徽标 HTML：head 行胶囊，与 .fm-worktree-badge 同语言（文案 i18n flowmap.flag.*）。
+ *  loop 徽标带轮次（LoopNode 批 2026-09-06）：loop 节点运行态显示「loop N/K」—
+ *  复用现有 .fm-flag-loop 胶囊配色，不改卡内纵行（88px 卡纵向不可加行）。
+ *  loopRound>0 才带轮次（pending/终态回退纯「循环」文案）。 */
 export function flagBadgesHtml(n) {
   return nodeFlagKeys(n).map((k) => {
-    const label = esc(t(`flowmap.flag.${k}`));
+    let label = esc(t(`flowmap.flag.${k}`));
+    if (k === 'loop') {
+      const round = n.loopRound || 0;
+      const maxRounds = (n.loop && typeof n.loop === 'object') ? n.loop.maxRounds : undefined;
+      if (round > 0 && maxRounds) label = esc(`loop ${round}/${maxRounds}`);
+    }
     return `<span class="fm-flag-badge ${FM_FLAG_CLS[k]}" title="${label}">${label}</span>`;
   }).join('');
 }
@@ -560,9 +570,16 @@ function nodeHtml(n, pos, originX, nameOf) {
   // 改显示 description（创建必写的一行描述）；存量节点无 description → 回退
   // taskPreview（载荷条件字段，task 首行 ≤80 截断）。结果全文经详情窗按需拉取。
   const descText = n.description || n.taskPreview || '';
+  // LoopNode 运行态（2026-09-06）：running 的 loop 节点 desc 行显相位（worker/verify），
+  // 与 head 行「loop N/K」徽标互补（徽标上轮次、desc 行当前角色）——复用既有 .fm-desc
+  // 行，不新增卡内纵行（88px 卡纵向不可加行）。
+  const loopPhase = (st === 'running' && n.loopPhase && n.loop && typeof n.loop === 'object')
+    ? esc(t(`flowmap.loopPhase.${n.loopPhase === 'verify' ? 'verify' : 'worker'}`)) : '';
   const desc = descText
     ? `<div class="fm-desc" title="${esc(descText)}">${esc(descText.slice(0, 46))}${descText.length > 46 ? '…' : ''}</div>`
-    : (st === 'running' ? `<div class="fm-desc running">${esc(t('flowmap.cardRunning'))}</div>` : '');
+    : (st === 'running'
+        ? `<div class="fm-desc running">${loopPhase || esc(t('flowmap.cardRunning'))}</div>`
+        : '');
   // 等待脚注（deps 设计 §1.4）：pending/wiring 且持有 in/deps → 列出全部等待对象
   //（in = 等结果投递，deps = 等完成信号；上游已归档 → i18n 纯文字诚实降级，
   //  原 ⏳ 图标按裁定①换内联 SVG 沙漏，文字单独 ellipsis 截断）
@@ -926,7 +943,10 @@ function nodeContentKey(n) {
     n.hasWorktree || n.worktree ? 1 : 0,
     n.worktree || '',
     n.merge === true ? 1 : 0,
-    n.loop === true ? 1 : 0,
+    n.loop === true || (n.loop && typeof n.loop === 'object') ? 1 : 0,
+    n.loopRound || 0,
+    n.loopPhase || '',
+    n.loopLastVerdict || '',
     st === 'pending' && (n.in || []).length > 1 ? (n.in || []).length : 0,
     st === 'pending' || st === 'wiring' ? (n.deps || []).length : 0,
     n.description || n.taskPreview || '',
