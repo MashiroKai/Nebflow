@@ -10,6 +10,13 @@
 // −18%、Σw·k² −4.9%，topShare 实测 0.8275 → 0.8276 持平，第三轮 0.85 判据
 // 不动）；drift ×~0.8 (3.8/-5.5/9.0)、jitterDepth 0.14、τ 190/560ms；amp 与
 // uVol 主通道不动。T7 Lipschitz 界 6.21800 → 4.89450（推导见 T7 注释）。
+// v8.4.5 2026-09-06 口径 (作者: 响亮时变形过度夸张——0.9 长成尖刺星形):
+// 全部音量→形变增益通道收进同一个软限幅 voiceDeformGain(v)=v/(1+(v/0.55)⁴)^¼
+// ——uVol uniform 改载压缩增益（波形 VOICE_WAVE 形状层零改动，T4a/T7 构造性
+// 不受影响；voiceLevel 平滑/读出不压缩，T1/T2/T4b 构造性不受影响），v8.2
+// 音量 hover 扭曲通道（0.9 处 ±0.127uv、占主导）同走压缩（0.9→±0.081uv ≈
+// v8.4.4 的 0.5 观感），叠加 CSS 体量轻放大（0.9 +4.5%）。新增 T8 直接锚定
+// 压缩曲线与接线。判据复核（第五轮）见 T4/T4b/T5/T6 各注释——门禁数值未放宽。
 //
 // Verifies (levels injected through renderer.setVoiceLevel — the test seam
 // over the mic sources; NO microphone needed):
@@ -35,7 +42,9 @@
 //          keep the rim 2π-continuous — no seam at the atan2 wrap).
 //   T5 e2e 渲染 + 截图 — listening @0.15 vs @0.9 screenshots differ on
 //      ≥3% of orb pixels (V10-consistent visible response; v8.4.2 复核:
-//      amp 再降后实测仍 ~29%，该指标由 wobble 相位漂移主导，阈值不调);
+//      amp 再降后实测仍 ~29%，该指标由 wobble 相位漂移主导，阈值不调;
+//      v8.4.5 复核: 0.9 形变被压缩至 ≈0.5 水平，但 hover 扭曲 0.15→0.9 仍
+//      2.4×、叠加 CSS 体量差与相位漂移，实测份额见当轮报告，阈值不调);
 //      both frames land in the redirected HOME docs dir under CI/sandbox.
 //   T6 约束保全 — F1: phaseTime monotonic with no jump >0.5 per 50ms across
 //      idle→listening→frozen→processing switches; frozen converges to a
@@ -259,6 +268,15 @@ test('T4: 非整齐正弦 — multi-harmonic spectrum, evolving shape, 2π-conti
   // measured 0.8275 (v8.4.3) → 0.8276 (v8.4.4), flat. Gate stays 0.85,
   // T4b pairing unchanged. Rollback for the R4 tune: weights
   // [0.62,0.27,0.11], drifts 4.7/-6.9/11.3, jitterDepth 0.18, τ 150/480ms.
+  // ── 判据复核（第五轮, v8.4.5）: 判据未修订 ────────────────────────────
+  // R5 compresses the amplitude→deform GAIN (voiceDeformGain) and never
+  // touches VOICE_WAVE — voiceWaveAt (the unit waveform sampled below) is
+  // byte-identical, so topShare/strongBins/top3/correlation/seam are
+  // unchanged BY CONSTRUCTION; the assertions below re-verify that
+  // empirically (topShare re-measured 0.8276 — identical to v8.4.4).
+  // Rollback for the R5 tune: remove the voiceDeformGain mapping (restore
+  // uVol=voiceLevel upload + hover target 0.10+rawVoice·0.90, drop the
+  // VOICE_SCALE_UP term).
   expect(m.topShare, `time-averaged top DFT bin share ${m.topShare.toFixed(3)} must be < 0.85 (判据修订（第三轮）: was 0.75)`).toBeLessThan(0.85);
   expect(m.strongBins, 'exactly the 3 designed wavenumbers {5,8,13} carry energy').toEqual([5, 8, 13]);
   expect(m.top3, 'dominant bins ordered by weight: 5, 8, 13').toEqual([5, 8, 13]);
@@ -301,11 +319,19 @@ test('T4: 非整齐正弦 — multi-harmonic spectrum, evolving shape, 2π-conti
 /* ---- T4b: direct volume-distinguishability metric (v8.4.3 pairing) ----- */
 
 test('T4b: 音量可辨直接度量 — 三档主波幅值比 (判据修订（第三轮）配套锚)', async ({ page }) => {
-  // The rendered rim displacement is LINEAR in the smoothed level: disp =
-  // uVol · amp · wave(θ,t), with amp and the wave field untouched by v8.4.3.
-  // So the settled level ratio IS the main-wave amplitude ratio — the direct
-  // "音量大小区别要能看出来" metric the T4 topShare revision is paired with.
-  // Quiet/normal/loud = 0.15/0.5/0.9 (attack τ=190ms → 900ms settles each).
+  // v8.4.4-: the rendered rim displacement was LINEAR in the smoothed level
+  // (disp = uVol·amp·wave), so the settled level ratio WAS the main-wave
+  // amplitude ratio. v8.4.5 判据复核（第五轮）: the deform gain is now
+  // COMPRESSED by author request (0.9 ≈ 0.5 圆润可略强) — the rendered
+  // displacement ladder is intentionally 0.150/0.439/0.532 (anchored
+  // directly by T8), while THIS test keeps asserting the pre-compression
+  // level ladder (attack/release smoothing is untouched, so the mechanism
+  // that carries loudness information stays verified end-to-end). The
+  // DISPLAYED three-step distinguishability is now carried by: deform gain
+  // ladder (T8) + compressed hover warp (0.15→±0.033uv / 0.5→±0.069uv /
+  // 0.9→±0.081uv) + the CSS 体量 swell (+0.75%/+2.2%/+4.5%) — asserted
+  // pixel-side by T5. Quiet/normal/loud = 0.15/0.5/0.9 (attack τ=190ms →
+  // 900ms settles each).
   await page.evaluate(() => window.__volTest.apply('listening'));
   const settle = async (v) => {
     await page.evaluate((v) => window.__volTest.inject(v), v);
@@ -451,9 +477,12 @@ test('T6: 约束保全 — F1 phase continuity, F5 pulse, premultiplied annulus,
     const ctx = cv.getContext('2d', { willReadFrequently: true });
     ctx.drawImage(img, 0, 0);
     let worst = 0;
-    // Annulus past the max displaced edge: body r0 ≤ 0.66 + voice 0.014
-    // (v8.4.2: 0.9 × amp 0.016; v8.4.1 was 0.029 at amp 0.032) → sample uv
-    // radii 0.78/0.86/0.94 (box fraction r/2), 24 angles each.
+    // Annulus past the max displaced edge: body r0 ≤ 0.66 + voice 0.009
+    // (v8.4.5: deform gain caps at g(0.9)=0.532 → 0.532×amp 0.016; v8.4.4
+    // was 0.014 linear, v8.4.1 was 0.029 at amp 0.032) → sample uv
+    // radii 0.78/0.86/0.94 (box fraction r/2), 24 angles each. The v8.4.5
+    // 体量 swell is a CSS transform (canvas box), it never moves the
+    // shader silhouette in uv space — this annulus stays valid.
     for (const r of [0.78, 0.86, 0.94]) {
       for (let a = 0; a < 24; a++) {
         const u = 0.5 + (r / 2) * Math.cos((a / 24) * 2 * Math.PI);
@@ -513,4 +542,54 @@ test('T7: F1 红线数值断言 — 波形输出时间连续（同 dt 步进序�
   const bound = 2 * 4.8945 * DT; // 2× Lipschitz × dt (v8.4.4 constants)
   expect(r.worst, `waveform step |Δw| over dt=${DT} is ${r.worst.toFixed(4)} at t=${r.worstAt.t.toFixed(2)}s — must stay continuous (F1 red line: no per-frame time reset/jump; bound ${bound.toFixed(3)})`).toBeLessThan(bound);
   expect(r.peak, 'waveform stays bounded by Σweights (no divergence)').toBeLessThanOrEqual(1.0000001);
+});
+
+/* ---- T8: v8.4.5 deform compression — the R5 core acceptance, numeric ---- */
+
+test('T8: 形变压缩映射 — 软限幅曲线 + uniform 接线 (v8.4.5 第五轮核心验收锚)', async ({ page }) => {
+  // The R5 author ask (响亮时变形过度夸张): the loudness→deform gain must
+  // SATURATE so 0.9 renders ≈ the 0.5 look (可略强), low volume stays
+  // bit-identical, and the waveform shape layer (T4a/T7) is untouched.
+  // voiceDeformGain(v) = v·(1+(v/0.55)⁴)^(−1/4) is the single source for
+  // every volume→deform channel (uVol uniform + hover warp). Pure JS,
+  // asserted directly; the uniform wiring is proven via snapVoice.deformOut.
+  const g = await page.evaluate(() => {
+    const f = window.__volTest.voiceDeformGain;
+    const grid = [];
+    for (let v = 0; v <= 1.0001; v += 0.05) grid.push(+f(Math.min(1, +v.toFixed(2))).toFixed(5));
+    return {
+      g0: f(0), gNeg: f(-0.3), g005: f(0.05), g015: f(0.15), g05: f(0.5),
+      g09: f(0.9), g1: f(1), grid,
+    };
+  });
+
+  // (a) 低音量保持现状: identity below ~0.2 (≤0.2% gain loss at 0.15).
+  expect(g.g0, 'silence maps to exactly 0 (uVol gate → bit-identical states)').toBe(0);
+  expect(g.gNeg, 'non-finite/negative input maps to 0').toBe(0);
+  expect(g.g005 / 0.05, `0.05 gain ratio ${(g.g005 / 0.05).toFixed(4)} ≈ 1 (默声现状)`).toBeGreaterThan(0.999);
+  expect(g.g015, `g(0.15)=${g.g015} must stay ≈0.15 (嘘档现状)`).toBeGreaterThan(0.145);
+  expect(g.g015).toBeLessThan(0.155);
+
+  // (b) 单调 + 封顶: non-decreasing grid, asymptote ≤ CAP (0.55) + slack.
+  for (let i = 1; i < g.grid.length; i++) {
+    expect(g.grid[i], `gain monotone at grid ${i} (${g.grid[i - 1]} → ${g.grid[i]})`).toBeGreaterThanOrEqual(g.grid[i - 1]);
+  }
+  expect(g.g1, `g(1)=${g.g1} must saturate ≤ 0.56 (cap 0.55 + 2% slack)`).toBeLessThanOrEqual(0.56);
+
+  // (c) R5 核心: 响亮 ≈ 正常 (可略强, 不再 1.8×) — the displayed deform
+  //     ladder is compressed to 0.439 → 0.532 (×1.21), not 0.5 → 0.9 (×1.8).
+  expect(g.g09, `g(0.9)=${g.g09} must land at ≈0.5 level [0.50, 0.56]`).toBeGreaterThanOrEqual(0.50);
+  expect(g.g09).toBeLessThanOrEqual(0.56);
+  expect(g.g09, 'loud strictly above normal (略强)').toBeGreaterThan(g.g05);
+  expect(g.g09 / g.g05, `loud/normal deform ratio ${(g.g09 / g.g05).toFixed(2)} must be ≤ 1.35 (was 1.8 linear)`).toBeLessThanOrEqual(1.35);
+  expect(g.g05 / g.g015, `normal/quiet deform ratio ${(g.g05 / g.g015).toFixed(2)} must be ≥ 2 (三档阶梯仍开)`).toBeGreaterThanOrEqual(2);
+
+  // (d) 接线: the uVol uniform really carries the compressed gain — settle
+  //     at 0.9 and read back deformOut ≈ g(level) (≈0.53, not 0.9).
+  await page.evaluate(() => window.__volTest.apply('listening'));
+  const loud = await injectAndSettle(page, 0.9, 900);
+  const expectGain = await page.evaluate((lv) => window.__volTest.voiceDeformGain(lv), loud.level);
+  expect(Math.abs(loud.deformOut - expectGain), `uVol uniform carries the compressed gain (deformOut ${loud.deformOut.toFixed(4)} ≈ g(level) ${expectGain.toFixed(4)})`).toBeLessThan(0.01);
+  expect(loud.deformOut, 'settled 0.9 drives uVol ≈ 0.53, not 0.9').toBeLessThan(0.56);
+  expect(loud.deformOut, '…and clearly above the quiet floor').toBeGreaterThan(0.45);
 });

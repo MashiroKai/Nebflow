@@ -10,8 +10,8 @@
      cleared, see the spec's T6).
 
      Exposes window.__volTest helpers: state driving, level injection,
-     smoothed-level readback (the uVol uniform value), phaseTime sampling.
-     Served by the in-spec static server at /volharness. -->
+     smoothed-level + compressed deform-gain readback (v8.4.5), phaseTime
+     sampling. Served by the in-spec static server at /volharness. -->
 <html>
 <head>
 <meta charset="utf-8">
@@ -60,13 +60,15 @@
     inject: (v) => renderer().setVoiceLevel(v),
     /** Production alias must land on the same raw level. */
     injectAlias: (v) => renderer().setVolume(v),
-    /** Full voice-pipeline snapshot (raw = injected, level = uVol uniform). */
+    /** Full voice-pipeline snapshot (raw = injected, level = smoothed
+        voiceLevel readback; deform = compressed uVol uniform value, v8.4.5). */
     snapVoice: () => {
       const r = renderer();
       return {
         state: micOrb.getMicOrb().state,
         raw: r.rawVoice,
         level: r.voiceLevel,
+        deformOut: r.deformOut,
         driven: r.volDriven,
         hover: r.params.hover,
         webglOk: micOrb.getMicOrb().webglOk,
@@ -79,6 +81,8 @@
     phaseTime: () => renderer().phaseTime,
     /** voiceWaveAt re-export for the waveform-shape assertions. */
     voiceWaveAt: micOrb.voiceWaveAt,
+    /** v8.4.5: deform-map re-export for the compression-curve assertions. */
+    voiceDeformGain: micOrb.voiceDeformGain,
   };
   window.__harnessReady = true;
 </script>
