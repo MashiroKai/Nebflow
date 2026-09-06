@@ -337,6 +337,17 @@ class NeblinkClient(
         .map(_.flatMap(body => decode[Json](body).left.map(_.getMessage)))
     }
 
+  /** 搜索：username OR email 双键 NOCASE 精确（neblink-server /api/users/search，
+    * friend-search-contract §4.1——唯一搜索入口，替代已移除的 /api/users/lookup）。
+    * 命中 {found:true,user:{username,display_name,avatar},relation_status}；
+    * 未命中统一 {found:false}；>256 字符 422 invalid_query、超频 429 —— 均由上游折叠，
+    * 网关透传不变形。 */
+  def searchUser(q: String): IO[Either[String, Json]] =
+    withSession { token =>
+      sendRequest("GET", s"${config.url}/api/users/search?q=${java.net.URLEncoder.encode(q, "UTF-8")}", "", Some(token))
+        .map(_.flatMap(body => decode[Json](body).left.map(_.getMessage)))
+    }
+
   /** [U3] 自定义 NebLink 号（PUT /api/users/me/neblink-id）。200 {neblinkId} /
     * 上游 409 taken / 422 invalid 折叠为 Left("HTTP <code>: <body>")。 */
   def setNeblinkId(neblinkId: String): IO[Either[String, Json]] =
