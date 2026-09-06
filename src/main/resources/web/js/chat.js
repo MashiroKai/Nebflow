@@ -973,15 +973,9 @@ export function renderTool(label, summary, content, isError, inputJson, sessionI
   }
   // NebLink tool marker
   if (label && label.startsWith('[NebLink]')) row.classList.add('neblink-row');
-  // v1.2 unified footer (2026-09-06 补齐批): every tool row gets time + copy
-  // (tucked away with the row in a collapsed turn; visible live/expanded).
-  // Card/iframe payloads (___X_HTML___) copy the summary instead of the raw
-  // HTML envelope. Plain footer — no nf-phrase, never a done marker.
-  {
-    const isHtmlCard = !!(content && typeof content === 'string' && /^___\w+_HTML___/.test(content));
-    const copyText = isHtmlCard ? (summary || label || '') : (content || summary || label || '');
-    row.appendChild(createMsgFooterBadge(Date.now(), copyText));
-  }
+  // beta.56 ruling: tool-class bubbles carry NO footer — footers are
+  // message-class only (user / assistant final text / ask / agent / skill /
+  // thinking). Tool rows render header + body only.
   // #346 v2 stats: carry the tool input on the row so the turn header can
   // count 读/写 files (turnGroup computeTurnStats reads dataset.nfInput).
   if (inputJson) { try { row.dataset.nfInput = typeof inputJson === 'string' ? inputJson : JSON.stringify(inputJson); } catch {} }

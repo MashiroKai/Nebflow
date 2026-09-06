@@ -429,11 +429,8 @@ export function restoreFromStorage(opts = {}) {
       if (m.input) { try { row.dataset.nfInput = typeof m.input === 'string' ? m.input : JSON.stringify(m.input); } catch {} }
       const card = document.createElement('div');
       card.className = 'tool-card';
-      // v1.2 unified footer (2026-09-06 补齐批): history tool rows get a
-      // footer too — UiMessage.Tool carries no timestamp, so copy-only.
-      // Card/iframe payloads copy the summary instead of the HTML envelope.
-      const toolFooterCopy = (m.content && typeof m.content === 'string' && !/^___\w+_HTML___/.test(m.content))
-        ? m.content : (m.summary || m.label || '');
+      // beta.56 ruling: tool-class bubbles carry NO footer (message-class
+      // only). Card/iframe payloads render without any copy badge.
       // Card tool: render standard tool card + separate card iframe below
       if (m.content && typeof m.content === 'string' && /^___\w+_HTML___/.test(m.content)) {
         const isError = m.isError;
@@ -447,7 +444,6 @@ export function restoreFromStorage(opts = {}) {
         card.innerHTML = '<span class="icon ' + (isError ? 'err' : 'ok') + '">' + icon + '</span>' +
           '<div class="content"><div class="label">' + lHtml + '</div></div>';
         row.appendChild(card);
-        if (toolFooterCopy) row.appendChild(createAiCopyBadge(0, toolFooterCopy));
         chat.appendChild(row);
         const cardRow = document.createElement('div');
         cardRow.className = 'row card-content';
@@ -475,7 +471,6 @@ export function restoreFromStorage(opts = {}) {
           '<div class="content"><div class="label">' + lHtml + '</div>' +
           (bodyHtml ? '<div class="body">' + bodyHtml + '</div>' : '') + '</div>';
         row.appendChild(card);
-        if (toolFooterCopy) row.appendChild(createAiCopyBadge(0, toolFooterCopy));
         chat.appendChild(row);
         if (hasBody) attachToolClick(card);
       }
@@ -745,11 +740,8 @@ export function restoreFromBackendHistory(msgs, opts = {}) {
       if (m.input) { try { row.dataset.nfInput = typeof m.input === 'string' ? m.input : JSON.stringify(m.input); } catch {} }
       const card = document.createElement('div');
       card.className = 'tool-card';
-      // v1.2 unified footer (2026-09-06 补齐批): history tool rows get a
-      // footer too — UiMessage.Tool carries no timestamp, so copy-only.
-      // Card/iframe payloads copy the summary instead of the HTML envelope.
-      const toolFooterCopy = (m.content && typeof m.content === 'string' && !/^___\w+_HTML___/.test(m.content))
-        ? m.content : (m.summary || m.label || '');
+      // beta.56 ruling: tool-class bubbles carry NO footer (message-class
+      // only). Card/iframe payloads render without any copy badge.
       // Card tool: render standard tool card + separate card iframe below
       if (m.content && typeof m.content === 'string' && /^___\w+_HTML___/.test(m.content)) {
         const isError = m.isError;
@@ -763,7 +755,6 @@ export function restoreFromBackendHistory(msgs, opts = {}) {
         card.innerHTML = '<span class="icon ' + (isError ? 'err' : 'ok') + '">' + icon + '</span>' +
           '<div class="content"><div class="label">' + lHtml + '</div></div>';
         row.appendChild(card);
-        if (toolFooterCopy) row.appendChild(createAiCopyBadge(0, toolFooterCopy));
         fragment.appendChild(row);
         const cardRow = document.createElement('div');
         cardRow.className = 'row card-content';
@@ -776,7 +767,6 @@ export function restoreFromBackendHistory(msgs, opts = {}) {
         // Pop tool: rainbow filename + clickable card (shared with live renderTool)
         if (applyPopCard(card, m.label, m.summary, m.input, isError)) {
           row.appendChild(card);
-          if (toolFooterCopy) row.appendChild(createAiCopyBadge(0, toolFooterCopy));
           fragment.appendChild(row);
         } else {
         const icon = isError ? '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#f44336" stroke-width="3"><path d="M18 6L6 18M6 6l12 12"/></svg>'
@@ -797,7 +787,6 @@ export function restoreFromBackendHistory(msgs, opts = {}) {
           '<div class="content"><div class="label">' + lHtml + '</div>' +
           (bodyHtml ? '<div class="body">' + bodyHtml + '</div>' : '') + '</div>';
         row.appendChild(card);
-        if (toolFooterCopy) row.appendChild(createAiCopyBadge(0, toolFooterCopy));
         fragment.appendChild(row);
         if (hasBody) attachToolClick(card);
         }
