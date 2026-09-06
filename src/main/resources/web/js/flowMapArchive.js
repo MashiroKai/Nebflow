@@ -31,9 +31,15 @@
 
 import { esc, fmtTime } from './flowHelpers.js';
 import { t } from './i18n.js';
-import { showToast } from './modal.js';
 import { renderMarkdownWithMath } from './utils.js';
 import { fetchNodeResult, fetchFlowMapArchive } from './nodeData.js';
+
+// P2-4 cycle cut（同 sidebar.js → modal 先例）：静态链 modal → sidebar → taskList
+// → flowMapArchive → modal 成环（68de01d6 引入 taskList 边后闭合），showToast
+// 转动态 import 破环——toast 本就是 fire-and-forget UI，微任务级延迟无感。
+/** @param {string} msg @param {string} [type] */
+const showToast = (msg, type) =>
+  import('./modal.js').then((m) => m.showToast(msg, type)).catch(() => {});
 
 // ── 常量（规格 §3.5/§5.9）─────────────────────────────────
 /** 终态集合：链齐判定与归档口径（规格 §3.1）。 */
