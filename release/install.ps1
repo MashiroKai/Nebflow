@@ -228,8 +228,12 @@ $CosUrl = "$CosBaseCn/$JarName"
 # Degrade chain: VT truecolor background blocks (PS 7+ / Windows Terminal)
 #   -> 16-color console background (PS 5.1 conhost, zero escape risk)
 #   -> mono # mask (NO_COLOR / CI / redirected output).
-# Width discipline (author ruling 2026-09-06): ONE pixel = ONE character
-# cell at every level, so truecolor/16-color/mono all draw the same shape.
+# Width discipline (author ruling 2026-09-06, revised same-day): ONE pixel
+# = TWO character cells at every level - a terminal glyph is ~2x taller
+# than wide, so each pixel spans 2 columns and the logo keeps its source
+# aspect. Mono renders "##" per pixel, color levels render a 2-column
+# background block, empty pixels are 2 plain spaces; adjacent solid pixels
+# touch with no gap (mask row "GG.WWW." -> "####  ######  ", 14 columns).
 # Theme: NEBFLOW_BANNER_THEME=dark|light overrides; default dark.
 # Batch 3 invariant holds: this file stays PURE ASCII after the UTF-8 BOM -
 # the CJK slogan is gone for good, escapes are built via [char]27.
@@ -253,15 +257,19 @@ if (-not ($env:NO_COLOR -or $env:CI -or [Console]::IsOutputRedirected)) {
 $BannerEsc = "$([char]27)"
 
 function Write-LogoPixel([string]$c) {
-    if ($c -eq ".") { Write-Host -NoNewline " "; return }
+    # One logo pixel = TWO character cells at every level (author ruling
+    # 2026-09-06, revised): "##" in mono, a 2-column bg block in color
+    # levels; a transparent pixel is two plain spaces. Adjacent solid
+    # pixels connect with no separator.
+    if ($c -eq ".") { Write-Host -NoNewline "  "; return }
     if ($BannerLevel -eq 3) {
         $rgb = if ($c -eq "G") { "7;193;96" } elseif ($BannerTheme -eq "dark") { "255;255;255" } else { "0;0;0" }
-        Write-Host -NoNewline "$BannerEsc[48;2;${rgb}m $BannerEsc[0m"
+        Write-Host -NoNewline "$BannerEsc[48;2;${rgb}m  $BannerEsc[0m"
     } elseif ($BannerLevel -eq 1) {
         $bg = if ($c -eq "G") { "Green" } elseif ($BannerTheme -eq "dark") { "White" } else { "Black" }
-        Write-Host -NoNewline " " -BackgroundColor $bg
+        Write-Host -NoNewline "  " -BackgroundColor $bg
     } else {
-        Write-Host -NoNewline "#"
+        Write-Host -NoNewline "##"
     }
 }
 

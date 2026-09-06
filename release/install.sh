@@ -112,9 +112,12 @@ INSTALL_DIR="${INSTALL_DIR:-${HOME}/${HOME_DIR}/bin}"
 #
 # Color degrade chain: truecolor (3) -> xterm-256 (2) -> 8-color (1) ->
 # mono # mask (0), every level keeps the shape intact. Width discipline
-# (author ruling 2026-09-06): ONE pixel = ONE character cell at every
-# level - truecolor blocks, 256/8-color blocks and the mono # mask all
-# render 1 cell per pixel, so the shape never distorts between levels.
+# (author ruling 2026-09-06, revised same-day): ONE pixel = TWO character
+# cells at every level - a terminal glyph is ~2x taller than wide, so each
+# pixel spans 2 columns and the logo keeps its source aspect. Mono renders
+# "##" per pixel, color levels render a 2-column background block, empty
+# pixels are 2 plain spaces; adjacent solid pixels touch with no gap
+# (e.g. mask row "GG.WWW." -> "####  ######  ", 14 columns per logo row).
 #   guards: NO_COLOR / CI / non-TTY / TERM=dumb -> mono (plain text)
 #   theme : NEBFLOW_BANNER_THEME=dark|light overrides; else COLORFGBG's
 #           background field (>=7 means a light background); default dark
@@ -169,29 +172,31 @@ ui_detect() {
 }
 
 # -- low-level painters -------------------------------------------------------
-# One logo pixel = ONE character cell at every color level (author ruling
-# 2026-09-06); transparent pixels are a plain space.
+# One logo pixel = TWO character cells at every color level (author ruling
+# 2026-09-06, revised): "##" in mono, a 2-column bg block in color levels;
+# transparent pixels are two plain spaces. Adjacent solid pixels connect
+# with no separator.
 _px() {  # <G|W|.>
     case "$1" in
-        .) printf ' '; return 0 ;;
+        .) printf '  '; return 0 ;;
     esac
     case "$_ui_level" in
         3)
-            if [ "$1" = "G" ]; then printf '\033[48;2;7;193;96m \033[0m'
-            elif [ "$_ui_theme" = "dark" ]; then printf '\033[48;2;255;255;255m \033[0m'
-            else printf '\033[48;2;0;0;0m \033[0m'; fi
+            if [ "$1" = "G" ]; then printf '\033[48;2;7;193;96m  \033[0m'
+            elif [ "$_ui_theme" = "dark" ]; then printf '\033[48;2;255;255;255m  \033[0m'
+            else printf '\033[48;2;0;0;0m  \033[0m'; fi
             ;;
         2)  # nearest xterm-256: #07C160 -> 35 (#00af5f); white 231; black 16
-            if [ "$1" = "G" ]; then printf '\033[48;5;35m \033[0m'
-            elif [ "$_ui_theme" = "dark" ]; then printf '\033[48;5;231m \033[0m'
-            else printf '\033[48;5;16m \033[0m'; fi
+            if [ "$1" = "G" ]; then printf '\033[48;5;35m  \033[0m'
+            elif [ "$_ui_theme" = "dark" ]; then printf '\033[48;5;231m  \033[0m'
+            else printf '\033[48;5;16m  \033[0m'; fi
             ;;
         1)
-            if [ "$1" = "G" ]; then printf '\033[42m \033[0m'
-            elif [ "$_ui_theme" = "dark" ]; then printf '\033[47m \033[0m'
-            else printf '\033[40m \033[0m'; fi
+            if [ "$1" = "G" ]; then printf '\033[42m  \033[0m'
+            elif [ "$_ui_theme" = "dark" ]; then printf '\033[47m  \033[0m'
+            else printf '\033[40m  \033[0m'; fi
             ;;
-        *)  printf '#' ;;
+        *)  printf '##' ;;
     esac
 }
 
