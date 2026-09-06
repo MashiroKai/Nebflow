@@ -237,14 +237,9 @@
   color: var(--color-text-muted, #888);
 }
 
-/* 分区标题 + 项目分组头（节点自有类；视觉值对齐 team 分组头设计语言） */
-.task-node-section-title {
-  font-size: 11px;
-  font-weight: 500;
-  color: var(--color-text-muted, #888);
-  margin: 8px 2px 2px;
-  cursor: default;
-}
+/* 项目分组头（节点自有类；视觉值对齐 team 分组头设计语言）。
+   2026-09-06 显示优化批：.task-node-section-title（「Flow Map」分区标题）随作者
+   00:35 裁定整体退役——元素与样式同清，flowmap.title 键保留（标签页域共用）。 */
 .task-node-group { margin-top: 4px; }
 .task-node-group-header {
   font-size: 10px;
