@@ -2,9 +2,9 @@
 $ProgressPreference = "SilentlyContinue"
 
 # Output-channel hygiene (batch 3): child-process output must not double-garble
-# on non-UTF8 consoles. Capture the ORIGINAL console codepage FIRST - batch 4's
-# bilingual-banner detection uses it to decide whether CJK glyphs are safe
-# (936 start = legacy PS 5.1 window = ASCII-only output).
+# on non-UTF8 consoles. Force UTF-8 output encoding up front; the original
+# codepage is kept for diagnostics (the batch-4 banner itself is pure ASCII
+# and never depends on the console codepage).
 $script:OriginalOutputCP = try { [Console]::OutputEncoding.CodePage } catch { 0 }
 try {
     [Console]::OutputEncoding = [System.Text.Encoding]::UTF8
@@ -87,15 +87,63 @@ function Write-ChecksumHint($name) {
     if ($h) { Write-Warn2 "       sha256: $h" }
 }
 
+# --- download progress (batch 4 redesign) ------------------------------------
+# Buffered HttpWebRequest copy with a native Write-Progress bar: percentage
+# only when Content-Length is known (unknown length -> byte count only,
+# never a fake percentage). Redirected output (irm|iex pipe): plain log
+# lines, no progress control at all.
+function Save-WithProgress {
+    param([string]$Url, [string]$Path, [string]$Label)
+    $interactive = -not [Console]::IsOutputRedirected
+    if (-not $Label) { $Label = [System.IO.Path]::GetFileName($Path) }
+    if (-not $interactive) { Write-Info "Downloading $Label..." }
+    $req = [System.Net.HttpWebRequest]::Create($Url)
+    $req.Timeout = 600000
+    $req.ReadWriteTimeout = 600000
+    $req.UserAgent = "$ProductName-installer/$ScriptVersion"
+    $resp = $req.GetResponse()
+    try {
+        $total = $resp.ContentLength
+        $inStream = $resp.GetResponseStream()
+        $outStream = [System.IO.File]::Create($Path)
+        $savedPP = $ProgressPreference
+        try {
+            $buf = New-Object byte[] 65536
+            $doneBytes = 0L
+            $ProgressPreference = "Continue"
+            while (($n = $inStream.Read($buf, 0, $buf.Length)) -gt 0) {
+                $outStream.Write($buf, 0, $n)
+                $doneBytes += $n
+                if ($interactive) {
+                    if ($total -gt 0) {
+                        $pct = [math]::Min(100, [int]($doneBytes * 100.0 / $total))
+                        $status = ("{0:N1}/{1:N1} MB" -f ($doneBytes / 1MB), ($total / 1MB))
+                        Write-Progress -Activity "Downloading $Label" -Status $status -PercentComplete $pct
+                    } else {
+                        Write-Progress -Activity "Downloading $Label" -Status ("{0:N1} MB" -f ($doneBytes / 1MB))
+                    }
+                }
+            }
+        } finally {
+            $ProgressPreference = $savedPP
+            $outStream.Dispose()
+        }
+    } finally {
+        $resp.Dispose()
+    }
+    if ($interactive) { Write-Progress -Activity "Downloading $Label" -Completed }
+    else { Write-Ok "Downloaded $Label." }
+}
+
 # Multi-source download with checksum verification (COS first by convention).
-#   Get-FileFromSources -Path <target> -Name <manifest-name> -Urls <url,...>
+#   Get-FileFromSources -Path <target> -Name <manifest-name> -Urls <url,...> [-Label <ui-name>]
 # Returns $true when a source succeeded (checksum ok or unknown).
 function Get-FileFromSources {
-    param([string]$Path, [string]$Name, [string[]]$Urls)
+    param([string]$Path, [string]$Name, [string[]]$Urls, [string]$Label)
     foreach ($url in $Urls) {
         Write-V "Trying source: $url"
         try {
-            Invoke-WebRequest -Uri $url -OutFile $Path -UseBasicParsing -TimeoutSec 600
+            Save-WithProgress -Url $url -Path $Path -Label $(if ($Label) { $Label } else { $Name })
         } catch {
             Remove-Item $Path -Force -ErrorAction SilentlyContinue
             continue
@@ -168,51 +216,65 @@ $InstallDir = if ($env:INSTALL_DIR) { $env:INSTALL_DIR } else { "$env:LOCALAPPDA
 $JarName = "$LowerName-assembly-$Version.jar"
 $CosUrl = "$CosBaseCn/$JarName"
 
-# --- Brand banner (batch 4): ASCII art + brand green #07C160 ---------------
-# Color degrade chain: truecolor (PS 7+) -> 16-color (PS 5.1 native
-# -ForegroundColor, zero escape-sequence risk) -> no color
-# (NO_COLOR / CI / non-interactive). The CJK slogan is stored as Unicode code
-# points so THIS FILE STAYS PURE ASCII (batch 3 invariant), and is printed
-# only when the environment can render it (D5 detection rule): PS 7+ (UTF-8
-# by default) or a console already on CP 65001 at startup. A CP936-started
-# PS 5.1 window gets the English line only.
-$BannerColorOn = -not ($env:NO_COLOR -or $env:CI -or -not [Environment]::UserInteractive)
-$BannerEsc = $null
-$BannerReset = $null
-$BannerFg = $null
-if ($BannerColorOn -and $PSVersionTable.PSVersion.Major -ge 7) {
-    $BannerEsc = "$([char]27)[38;2;7;193;96m"
-    $BannerReset = "$([char]27)[0m"
-} elseif ($BannerColorOn) {
-    $BannerFg = "Green"
-}
-$BannerShowCjk = ($PSVersionTable.PSVersion.Major -ge 7) -or ($script:OriginalOutputCP -eq 65001)
-
-function Write-BannerLine([string]$line) {
-    if ($BannerEsc) { Write-Host "$BannerEsc$line$BannerReset" }
-    elseif ($BannerFg) { Write-Host $line -ForegroundColor $BannerFg }
-    else { Write-Host $line }
-}
-
-Write-Host ""
-$bannerArt = @(
-    '  _   _  _____  ____   _____  _      ___ '
-    ' | \ | || ____|| __ ) |  ___|| |     / _ \'
-    ' |  \| ||  _|  |  _ \ | |_   | |    | | | |'
-    ' | |\  || |___ | |_) ||  _|  | |___ | |_| |'
-    ' |_| \_||_____||____/ |_|    |_____| \___/ '
+# --- Brand banner (batch 4 redesign): true-color pixel logo -----------------
+# The 7x7 pixel logo was sampled OFFLINE from the brand assets
+# (docs/Nebflow/assets/logo/{dark,bright}.png, 224x224 = 7x7 grid of 32px
+# cells, cell-center NEAREST sampling - same pixelated look as the web UI's
+# image-rendering: pixelated) and is embedded as a mask: G = brand green
+# #07C160, W = white (dark terminals) or black (light terminals). Trimmed to
+# the 5x6 visible cells. No ASCII-art wordmark: the logo blocks carry the
+# brand, the wordmark is plain lowercase text.
+# Degrade chain: VT truecolor background blocks (PS 7+ / Windows Terminal)
+#   -> 16-color console background (PS 5.1 conhost, zero escape risk)
+#   -> mono ## mask (NO_COLOR / CI / redirected output).
+# Theme: NEBFLOW_BANNER_THEME=dark|light overrides; default dark.
+# Batch 3 invariant holds: this file stays PURE ASCII after the UTF-8 BOM -
+# the CJK slogan is gone for good, escapes are built via [char]27.
+$BannerMask = @(
+    "GG.WWW",
+    "GG.WWW",
+    "..W..W",
+    "..W..W",
+    "..W..W"
 )
-foreach ($bannerLine in $bannerArt) { Write-BannerLine $bannerLine }
-Write-Host ""
-if ($BannerShowCjk) {
-    # U+6240 U+6709 U+5DE5 U+4F5C U+FF0C U+4E00 U+4E2A U+5165 U+53E3 U+3002
-    $cjk = -join @(0x6240, 0x6709, 0x5DE5, 0x4F5C, 0xFF0C, 0x4E00, 0x4E2A, 0x5165, 0x53E3, 0x3002 | ForEach-Object { [char]$_ })
-    Write-Host "  $cjk / One entry. Every agent."
-} else {
-    Write-Host "  One entry. Every agent."
+$BannerTheme = "dark"
+if ($env:NEBFLOW_BANNER_THEME -eq "light" -or $env:NEBFLOW_BANNER_THEME -eq "dark") {
+    $BannerTheme = $env:NEBFLOW_BANNER_THEME
 }
+$BannerLevel = 0
+if (-not ($env:NO_COLOR -or $env:CI -or [Console]::IsOutputRedirected)) {
+    if ($PSVersionTable.PSVersion.Major -ge 7 -or $env:WT_SESSION) { $BannerLevel = 3 } else { $BannerLevel = 1 }
+}
+$BannerEsc = "$([char]27)"
+
+function Write-LogoPixel([string]$c) {
+    if ($c -eq ".") { Write-Host -NoNewline "  "; return }
+    if ($BannerLevel -eq 3) {
+        $rgb = if ($c -eq "G") { "7;193;96" } elseif ($BannerTheme -eq "dark") { "255;255;255" } else { "0;0;0" }
+        Write-Host -NoNewline "$BannerEsc[48;2;${rgb}m  $BannerEsc[0m"
+    } elseif ($BannerLevel -eq 1) {
+        $bg = if ($c -eq "G") { "Green" } elseif ($BannerTheme -eq "dark") { "White" } else { "Black" }
+        Write-Host -NoNewline "  " -BackgroundColor $bg
+    } else {
+        Write-Host -NoNewline "##"
+    }
+}
+
 Write-Host ""
-Write-Host "  $ProductName v$Version Installer ($Channel)" -ForegroundColor DarkGray
+for ($bi = 0; $bi -lt $BannerMask.Count; $bi++) {
+    Write-Host -NoNewline "  "
+    foreach ($ch in $BannerMask[$bi].ToCharArray()) { Write-LogoPixel ([string]$ch) }
+    if ($bi -eq 1) {
+        if ($BannerLevel -eq 3) { Write-Host -NoNewline "   $BannerEsc[1;38;2;7;193;96m$LowerName$BannerEsc[0m" }
+        elseif ($BannerLevel -eq 1) { Write-Host -NoNewline "   $LowerName" -ForegroundColor Green }
+        else { Write-Host -NoNewline "   $LowerName" }
+    } elseif ($bi -eq 2) {
+        $vline = "v$Version installer ($Channel)"
+        if ($BannerLevel -eq 3) { Write-Host -NoNewline "   $BannerEsc[2m$vline$BannerEsc[0m" }
+        else { Write-Host -NoNewline "   $vline" }
+    }
+    Write-Host ""
+}
 Write-Host ""
 
 # --- [1/7] Java (floor 17; fresh installs get Temurin 21) ---
@@ -481,7 +543,7 @@ if (Test-Path $jarPath) {
 
     # #29: repo went private - unauthenticated GitHub Releases 404; COS single source
     try {
-        Invoke-WebRequest -Uri $CosUrl -OutFile $jarPath -UseBasicParsing -TimeoutSec 600
+        Save-WithProgress -Url $CosUrl -Path $jarPath -Label $JarName
     } catch {
         Write-Err2 "Download failed from COS. Check $CosUrl"
         exit 12
@@ -555,14 +617,15 @@ if (Test-Path $onnxEncPath) {
     }
 
     # Download quantized ONNX models (encoder ~22MB + decoder ~51MB)
+    # [n/6] multi-file counter: 4 config files above + these 2
     Write-Info "Downloading model..."
     $dlOk = $true
     try {
-        Invoke-WebRequest -Uri "$hfBase/onnx/encoder_model_quantized.onnx" -OutFile $onnxEncPath -UseBasicParsing -TimeoutSec 120
+        Save-WithProgress -Url "$hfBase/onnx/encoder_model_quantized.onnx" -Path $onnxEncPath -Label "[5/6] encoder_model_quantized.onnx"
     } catch { $dlOk = $false }
     try {
         $decPath = Join-Path $modelDir "onnx\decoder_model_merged_quantized.onnx"
-        Invoke-WebRequest -Uri "$hfBase/onnx/decoder_model_merged_quantized.onnx" -OutFile $decPath -UseBasicParsing -TimeoutSec 120
+        Save-WithProgress -Url "$hfBase/onnx/decoder_model_merged_quantized.onnx" -Path $decPath -Label "[6/6] decoder_model_merged_quantized.onnx"
     } catch { $dlOk = $false }
     if ($dlOk) {
         Write-Ok "Voice model installed."
