@@ -249,6 +249,13 @@ object NodeTools:
   * 调用点行，碰撞规避；implicit 参数解析为 Scala 标准机制，非 hack）。 */
 final case class NodeEditNotify(flag: Boolean, provided: Boolean)
 
+/** loop 参数载体（LoopNode 批 2026-09-06）：call() 解析的（config, provided）经
+  * implicit 自动填入 createNode/proceed/editNode——调用点零文本改动（与
+  * NodeEditNotify 同机制）。provided=false（未传）= 编辑不改动 / 创建 None；
+  * provided=true 且 config=Some(LoopConfig) = 启用 loop；provided=true 且
+  * config=None = 显式停用 loop（loop=false）。 */
+final case class NodeEditLoop(config: Option[LoopConfig], provided: Boolean)
+
 object NodeEditTool extends Tool:
   val name = "NodeEdit"
 
@@ -319,7 +326,11 @@ object NodeEditTool extends Tool:
         "notifyDispatcher" -> Json.obj("type" -> "boolean".asJson, "description" -> "dispatch-notify backflow: on terminal state (completion wired) trigger a dispatcher session with this node's result reference (independent signal channel, no out-edge cost). Settable/withdrawable while wiring/pending/running".asJson),
         "release" -> Json.obj("type" -> "boolean".asJson, "description" -> "Release a HELD node → completed, delivery chain runs. STANDALONE action — any other edit parameter in the same call refuses (release first, then rewire separately)".asJson),
         "note" -> Json.obj("type" -> "string".asJson, "description" -> "User supplementary text, ONLY with release=true — appended to the out target's task (carried into downstream input)".asJson),
-        "abandon" -> Json.obj("type" -> "boolean".asJson, "description" -> "Abandon a TERMINAL (blocked/completed/failed/cancelled), wiring/pending, HELD, or dead-session running node → cancelled + display TTL".asJson)
+        "abandon" -> Json.obj("type" -> "boolean".asJson, "description" -> "Abandon a TERMINAL (blocked/completed/failed/cancelled), wiring/pending, HELD, or dead-session running node → cancelled + display TTL".asJson),
+        "loop" -> Json.obj("type" -> "boolean".asJson, "description" -> "LoopNode flag (create/edit): true = this node iterates — a WORKER session produces a result, a VERIFY session checks it; PASS → delivered downstream; FAIL → worker re-runs (same session, constant input) up to maxRounds(K). false/omitted = normal single-pass node. A loop node still declares its normal in/out/deps (and may merge/hold) — loop only adds the inner iterate-verify loop".asJson),
+        "maxRounds" -> Json.obj("type" -> "integer".asJson, "description" -> "Loop round cap K (1-50, default 5): re-run the worker up to K times before the verify PASSes; reaching K without PASS terminalizes the node as failed (result states 'loop reached maxRounds'). Only meaningful with loop=true".asJson),
+        "verify" -> Json.obj("type" -> "string".asJson, "description" -> "Verify-agent name (default \"general\"): the session that checks each worker output (general agent + plugins — shares the node's plugins). Must exist in the Agent Catalog. Only with loop=true".asJson),
+        "verifyTask" -> Json.obj("type" -> "string".asJson, "description" -> "Verify checklist template (against the original task / acceptance baseline). Empty → engine default checklist. Only with loop=true".asJson)
       ),
       "required" -> Json.arr("project".asJson, "nodename".asJson)
     )
@@ -355,6 +366,19 @@ object NodeEditTool extends Tool:
     // editNode——三者的既有调用点零改动（碰撞规避：在飞批占用了这些调用点行）。
     val notifyProvided = input("notifyDispatcher").flatMap(_.asBoolean)
     implicit val notifyFlag: NodeEditNotify = NodeEditNotify(notifyProvided.getOrElse(false), notifyProvided.isDefined)
+    // loop 参数（LoopNode 批 2026-09-06）：Option 区分「未传」（编辑不改动 / 创建 None，
+    // provided=false）与「传了」（loop true 启用 / false 停用）。载体经 implicit 传入
+    // createNode/proceed/editNode——调用点零文本改动（与 notifyFlag 同机制）。maxRounds
+    // 缺省 5（与主设计 §2.5 K=5 同参）；verify 缺省 "general"（通用 agent + plugins）。
+    val loopJson = input("loop")
+    val loopProvided = loopJson.exists(j => !j.isNull)
+    val loopEnabled = loopJson.flatMap(_.asBoolean).getOrElse(false)
+    val maxRounds = input("maxRounds").flatMap(_.asNumber).flatMap(_.toInt).getOrElse(5)
+    val verify = input("verify").flatMap(_.asString).getOrElse("general")
+    val verifyTask = input("verifyTask").flatMap(_.asString).getOrElse("")
+    implicit val loopFlag: NodeEditLoop =
+      if !loopProvided then NodeEditLoop(None, provided = false)
+      else NodeEditLoop(if loopEnabled then Some(LoopConfig(maxRounds, verify, verifyTask)) else None, provided = true)
     val inJson = input("in")
     val depsJson = input("deps")
     val outJson = input("out")
@@ -386,6 +410,11 @@ object NodeEditTool extends Tool:
           "The old string form (pre-existing bare name) is no longer accepted. (WORKTREE_NOT_BOOLEAN)")))
     else if pluginsProvided && pluginsParsed.isLeft then
       IO.pure(Left(ToolError(pluginsParsed.swap.toOption.getOrElse("invalid plugins"))))
+    // loop maxRounds 范围校验（LoopNode 批 2026-09-06）：1-50 合理区间（主设计 K=5
+    // 口径，上限防御异常配置）；loop=true 时校验，非 loop 忽略。
+    else if loopEnabled && (maxRounds < 1 || maxRounds > 50) then
+      IO.pure(Left(ToolError(
+        s"'maxRounds' must be between 1 and 50 (got $maxRounds) — the loop round cap K (loop node iteration budget). (NODE_LOOP_MAXROUNDS_RANGE)")))
     // description 校验（创建必写 + 编辑可 update 共用）：trim 非空 + ≤200 字符。
     else if description.exists(d => d.trim.isEmpty) then
       IO.pure(Left(ToolError("'description' must be a non-empty one-line summary of the node's purpose (NODE_DESCRIPTION_REQUIRED)")))
@@ -519,7 +548,7 @@ object NodeEditTool extends Tool:
     outJson: Option[Json],
     hold: Boolean = false,
     merge: Boolean = false
-  )(implicit notify: NodeEditNotify): IO[Either[ToolError, String]] =
+  )(implicit notify: NodeEditNotify, loopFlag: NodeEditLoop): IO[Either[ToolError, String]] =
     // 执行统一 general（2026-09-05 插件架构对齐）：新建节点不再接受 agent 参数，
     // 专业能力由 plugins 差异化；NodeDef.agent 字段保留（存量兼容读 + spawn 读取）。
     val agentName = "general"
@@ -583,26 +612,37 @@ object NodeEditTool extends Tool:
                 case Some(_) =>
                   // 2. worktree 布尔派生（2026-09-05 显式化）：true → 即时创建（裁决 a，
                   //    fail-fast；失败拒绝建节点）；false/缺省 → workspace 直跑（现状）。
-                  worktree match
-                    case Some(true) =>
-                      val ws = os.Path(rt.project.workspace)
-                      // 必须是 git 仓**根**：--show-toplevel 输出与 workspace 一致。
-                      // 只查 rev-parse 退出码会把「嵌在别的 git 仓子目录里的 workspace」
-                      // 误判为 git 仓（worktree add 会挂到外层仓上）。
-                      val repoRoot = os.proc("git", "-C", ws.toString, "rev-parse", "--show-toplevel")
-                        .call(cwd = ws, check = false, mergeErrIntoOut = true)
-                      val isGitRoot = repoRoot.exitCode == 0 && repoRoot.out.trim() == ws.toString
-                      if !isGitRoot then
-                        IO.pure(Left(ToolError(
-                          s"worktree=true requires the project workspace to be a git repository root (${ws} is not) — " +
-                            "run in the workspace instead (omit worktree), or git init the workspace first.")))
-                      else
-                        IO.blocking(createWorktreeFor(ws, nodename)).flatMap {
-                          case Left(err) => IO.pure(Left(ToolError(
-                            s"worktree=true auto-creation failed for node '$nodename' — node NOT created (fail-fast). git said: $err")))
-                          case Right(bare) => proceed(rt, nodename, agentName, task, description, Some(bare), preset, plugins, ins, deps, out, hold, merge)
-                        }
-                    case _ => proceed(rt, nodename, agentName, task, description, None, preset, plugins, ins, deps, out, hold, merge)
+                  val viaWorktree: IO[Either[ToolError, String]] =
+                    worktree match
+                      case Some(true) =>
+                        val ws = os.Path(rt.project.workspace)
+                        // 必须是 git 仓**根**：--show-toplevel 输出与 workspace 一致。
+                        // 只查 rev-parse 退出码会把「嵌在别的 git 仓子目录里的 workspace」
+                        // 误判为 git 仓（worktree add 会挂到外层仓上）。
+                        val repoRoot = os.proc("git", "-C", ws.toString, "rev-parse", "--show-toplevel")
+                          .call(cwd = ws, check = false, mergeErrIntoOut = true)
+                        val isGitRoot = repoRoot.exitCode == 0 && repoRoot.out.trim() == ws.toString
+                        if !isGitRoot then
+                          IO.pure(Left(ToolError(
+                            s"worktree=true requires the project workspace to be a git repository root (${ws} is not) — " +
+                              "run in the workspace instead (omit worktree), or git init the workspace first.")))
+                        else
+                          IO.blocking(createWorktreeFor(ws, nodename)).flatMap {
+                            case Left(err) => IO.pure(Left(ToolError(
+                              s"worktree=true auto-creation failed for node '$nodename' — node NOT created (fail-fast). git said: $err")))
+                            case Right(bare) => proceed(rt, nodename, agentName, task, description, Some(bare), preset, plugins, ins, deps, out, hold, merge)
+                          }
+                      case _ => proceed(rt, nodename, agentName, task, description, None, preset, plugins, ins, deps, out, hold, merge)
+                  // loop verify agent 存在性（§2.6 校验②，0 spawn 拦截）：loop=true 时校验
+                  // verify agent 可装载——缺失即拒（与 worker agent 同纪律，fail-fast）。
+                  loopFlag.config match
+                    case Some(lc) =>
+                      EntityLoader.loadAgent(lc.verify).flatMap {
+                        case None => IO.pure(Left(ToolError(
+                          s"Verify agent '${lc.verify}' not found in global library — loop node requires a valid verify agent (worker '${agentName}', verify '${lc.verify}'). (NODE_LOOP_VERIFY_AGENT)")))
+                        case Some(_) => viaWorktree
+                      }
+                    case None => viaWorktree
               }
 
   private def proceed(
@@ -619,7 +659,7 @@ object NodeEditTool extends Tool:
     out: Option[String],
     hold: Boolean = false,
     merge: Boolean = false
-  )(implicit notify: NodeEditNotify): IO[Either[ToolError, String]] =
+  )(implicit notify: NodeEditNotify, loopFlag: NodeEditLoop): IO[Either[ToolError, String]] =
     val nodeId = s"n-${java.util.UUID.randomUUID().toString.take(8)}"
     for
       // 引用存在性 + 环检测（in 上游 → 本节点；deps 上游 → 本节点；本节点 → out 目标）。
@@ -672,6 +712,10 @@ object NodeEditTool extends Tool:
             deps = deps,
             hold = hold,
             merge = merge,
+            // LoopNode 配置（LoopNode 批 2026-09-06）：loop=true 时 NodeDef.loop=Some(LoopConfig)，
+            // 否则 None（普通节点）。loop 不构成「可立即运行」的输入语义——仍须 task/in 承载
+            // 输入（与 deps 同款：完成信号/迭代语义不是输入），入口/barrier 判定不变。
+            loop = loopFlag.config,
             // dispatch-notify 回流标志（创建期按需开启；缺省 false=分发器新建节点
             // 不继承——收敛保证见 DispatchNotify）
             notifyDispatcher = notify.flag,
@@ -843,7 +887,7 @@ object NodeEditTool extends Tool:
     depsJson: Option[Json],
     outJson: Option[Json],
     ctx: ToolContext
-  )(implicit notify: NodeEditNotify): IO[Either[ToolError, String]] =
+  )(implicit notify: NodeEditNotify, loopFlag: NodeEditLoop): IO[Either[ToolError, String]] =
     // ── 动作分支（20260903 暂停/人在回路设计 §2.5 校验③④ + 决策④）──
     // release 与 abandon 互斥；note 仅与 release 同用；release 是独立动作，
     // 与任何其他编辑参数同传 → 整调用拒绝（防半放行半改线；改线需求 =
@@ -997,6 +1041,13 @@ object NodeEditTool extends Tool:
                           // 终态/held 拒（held 出口=release，blocked 出口=重激活）。
                           val notifyStatusOk = !notify.provided ||
                             (node.status == NodeLifecycle.Wiring || node.status == NodeLifecycle.Pending || node.status == NodeLifecycle.Running)
+                          // loop 校验（LoopNode 批 2026-09-06）：设置/撤销域同 hold——enabled
+                          // 开关是行为开关（loop 迭代仅在 running 期驱动、PASS 完成时经
+                          // completeNode 走 hold/merge/投递），wiring/pending/running 可设；
+                          // 终态/held 拒（held 出口=release，blocked 出口=重激活）。blocked
+                          // 节点 loop 变更走 actualChange → 重激活（下方 reactivate 分支应用）。
+                          val loopStatusOk = !loopFlag.provided ||
+                            (node.status == NodeLifecycle.Wiring || node.status == NodeLifecycle.Pending || node.status == NodeLifecycle.Running)
                           val earlyReject: Option[ToolError] =
                             validateDescription(description, creating = false).orElse(
                             if finalIn.isEmpty && finalDeps.isEmpty && finalOut.isEmpty then
@@ -1013,6 +1064,9 @@ object NodeEditTool extends Tool:
                             else if !notifyStatusOk then
                               Some(ToolError(
                                 s"notifyDispatcher can only be set or withdrawn before completion (wiring/pending/running) — node '${node.name}' is ${node.status} (result already delivered or held). Use release/abandon for held nodes; re-activation is the exit for blocked."))
+                            else if !loopStatusOk then
+                              Some(ToolError(
+                                s"loop can only be set or withdrawn before completion (wiring/pending/running) — node '${node.name}' is ${node.status} (result already delivered or held). Use release/abandon for held nodes; re-activation is the exit for blocked."))
                             else None
                             )
                           // 前置拒绝集统一闸（description 校验 + 零连接 + deps 校验 + hold 校验）
@@ -1026,7 +1080,8 @@ object NodeEditTool extends Tool:
                           val taskChanged = task.exists(t => NodeTools.normalizeTask(t) != node.task.map(NodeTools.normalizeTask).getOrElse(""))
                           val descriptionChanged = description.exists(d => d.trim != node.description.getOrElse(""))
                           val depsChanged = depsProvided && newDeps != node.deps
-                          val actualChange = taskChanged || descriptionChanged || newOut != node.out || adds.nonEmpty || depsChanged
+                          val loopChanged = loopFlag.provided && loopFlag.config != node.loop
+                          val actualChange = taskChanged || descriptionChanged || newOut != node.out || adds.nonEmpty || depsChanged || loopChanged
                           val reactivate = node.status == NodeLifecycle.Blocked && actualChange
                           val appliedTask = task.orElse(node.task)
                           val appliedDeps = if depsProvided then newDeps else node.deps
@@ -1126,6 +1181,19 @@ object NodeEditTool extends Tool:
                                               case _ => s
                                           }.void
                                         else IO.unit
+                                      // loop 设置/撤销写回（LoopNode 批 2026-09-06）：校验已在
+                                      // earlyReject 拦截（终态/held → 拒）；wiring/pending/running 合法
+                                      // （loop 是 running 期行为开关）。事务内现读 fresh（R2 纪律）+
+                                      // 状态双重保险；blocked 重激活在下方 reactivate 分支应用（不再走此）。
+                                      _ <-
+                                        if loopFlag.provided && !reactivate then
+                                          rt.store.mutate { s =>
+                                            s.nodes.get(node.id) match
+                                              case Some(fresh) if fresh.status == NodeLifecycle.Wiring || fresh.status == NodeLifecycle.Pending || fresh.status == NodeLifecycle.Running =>
+                                                s.copy(nodes = s.nodes.updated(node.id, fresh.copy(loop = loopFlag.config)))
+                                              case _ => s
+                                          }.void
+                                        else IO.unit
                                       // blocked 重激活写回（R2 纪律）：事务内现读 fresh，fresh 仍
                                       // Blocked 才写；状态已变（并发 abandon/重激活）→ 拒写不重激活。
                                       didReactivate <-
@@ -1141,6 +1209,7 @@ object NodeEditTool extends Tool:
                                                   task = appliedTask,
                                                   description = description.map(_.trim).orElse(fresh.description),
                                                   deps = appliedDeps,
+                                                  loop = loopFlag.config.orElse(fresh.loop), // loop 变更随重激活应用
                                                   result = None, // blocked 反馈渲染串不复存在（反馈保留在 blockedFeedback）
                                                   deliveredTo = Nil,
                                                   // V8: 重激活 = 该节点身份重跑一轮，out=Nebula 投递
