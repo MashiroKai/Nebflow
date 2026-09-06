@@ -4,9 +4,11 @@
 //
 // A turn interleaving text with several tool rounds (MemoryEdit×5 → text →
 // Task×4 → text → final) gets exactly ONE persistent stats header
-// (`.turn-header`) at the turn top, counting the WHOLE turn: model · 思考 ·
-// 工具 9 次 · 读写 5 文件. v2: rows never move — the header is the only node
-// inserted; expanding reveals the 9 tool cards in their original order.
+// (`.turn-header`) at the turn top, counting the WHOLE turn: ✻ 字句 ·
+// model · 思考 · 工具 9 次 · 读写 5 文件. v2: rows never move — the header
+// is the only node inserted; expanding reveals the 9 tool cards in their
+// original order. 2026-09-06: the toggle is INSTANT (批② WAAPI animation
+// layer removed, author feedback 「动画太卡顿」); the ✻ 设计字句恢复进题头。
 //
 // Drives the REAL render modules through tests/fixtures/turn-collapse/
 // harness.html over a throwaway static server (never the 8080 host).
@@ -129,14 +131,19 @@ function rowsSnapshot(page) {
       .map(el => el.outerHTML).join('\n'));
 }
 
-/** Wait until every tool/thinking row animation has finished — the static
- *  .nf-tucked class (and natural geometry) only land in finish handlers. */
-async function animationsSettled(page) {
-  await page.waitForFunction(() => {
+/** Negative animation pin (2026-09-06): toggles are instant class flips —
+ *  no running/pending SCRIPT-DRIVEN (WAAPI) animation may exist on
+ *  tool/thinking rows (CSS entrance animations like fadeIn excluded). */
+async function expectNoAnimations(page) {
+  const count = await page.evaluate(() => {
     const rows = document.querySelectorAll('#chat .row.tool, #chat .row.thinking-row');
     return Array.from(rows).flatMap(r => r.getAnimations())
-      .every(a => a.playState !== 'running' && a.playState !== 'pending');
-  }, null, { timeout: 5000 });
+      // CSSAnimations (row fadeIn entrance etc.) are unrelated chrome — the
+      // pin targets script-driven (WAAPI) animations, the removed 批② layer.
+      .filter(a => !(a instanceof CSSAnimation))
+      .filter(a => a.playState === 'running' || a.playState === 'pending').length;
+  });
+  expect(count).toBe(0);
 }
 
 test.describe('one header per turn — multi-round tool loop (author repro)', () => {
@@ -151,19 +158,19 @@ test.describe('one header per turn — multi-round tool loop (author repro)', ()
     expect(c.bars.length).toBe(1);
     expect(c.bars[0].visible).toBe(true);
     // 计数 = 全轮合计 9（5+4）；读写文件 = MemoryEdit 的 5 个去重 file_path
-    // （Task 载荷无文件字段）。
+    // （Task 载荷无文件字段）。✻ 设计字句为首段（2026-09-06 恢复）。
     expect(c.bars[0].toolCards).toBe(9);
-    expect(c.bars[0].text).toBe(`${MODEL_1} · 工具 9 次 · 读写 5 文件`);
+    expect(c.bars[0].text).toBe(`✻ 买了张去星辰的车票，3m 25s 到站 · ${MODEL_1} · 工具 9 次 · 读写 5 文件`);
     // header 位置 = 紧贴 turn 的 user 行后（turn 顶）。
     expect(c.bars[0].followsUser).toBe(true);
 
     // 中间文字全部可见（红线）：A、B、最终都在收起区外，时序不乱。
     expect(c.flatTexts).toEqual([T_A, T_B, T_FINAL]);
 
-    // 步骤区默认收起（9 张工具卡全 tucked），展开后按原顺序可见。
+    // 步骤区默认收起（9 张工具卡全 tucked），展开后按原顺序可见（瞬时）。
     expect(c.bars[0].tuckedRows).toBe(9);
     await page.locator('.turn-header').first().click();
-    await animationsSettled(page);
+    await expectNoAnimations(page);
     const tools = await page.evaluate(() =>
       Array.from(document.querySelectorAll('#chat .row.tool'))
         .map(r => ({ v: r.offsetHeight > 0, label: r.querySelector('.tool-card')?.textContent || '' })));
@@ -195,14 +202,14 @@ test.describe('one header per turn — multi-round tool loop (author repro)', ()
     // turn1 rows byte-stable（#403 不变量）。
     const domAfter = await rowsSnapshot(page);
     expect(domAfter.startsWith(domBefore)).toBe(true);
-    // 摘要各归各 turn：turn2 的 header 是 turn2 的 model/count（Bash 无文件
-    // 载荷 → 无读写段），不含 turn1 的任何字段。
-    expect(c.bars[1].text).toBe('test-model · 工具 1 次');
+    // 摘要各归各 turn：turn2 的 header 是 turn2 的 ✻ 字句/model/count（Bash
+    // 无文件载荷 → 无读写段），不含 turn1 的任何字段。
+    expect(c.bars[1].text).toBe('✻ 快速确认 2 秒 · test-model · 工具 1 次');
     expect(c.bars.map(b => b.toolCards)).toEqual([9, 1]);
     expect(c.bars[1].text).not.toContain('工具 9 次');
     expect(c.bars[1].text).not.toContain(MODEL_1);
     // turn1 的 header 文本仍带着本 turn 的完整摘要（隐藏但 DOM 保留）。
-    expect(c.bars[0].text).toBe(`${MODEL_1} · 工具 9 次 · 读写 5 文件`);
+    expect(c.bars[0].text).toBe(`✻ 买了张去星辰的车票，3m 25s 到站 · ${MODEL_1} · 工具 9 次 · 读写 5 文件`);
 
     await context.close();
   });
@@ -248,7 +255,8 @@ test.describe('one header per turn — history rebuild path', () => {
     const c = await badgeCensus(page);
     expect(c.groupCount).toBe(1);
     expect(c.bars[0].toolCards).toBe(5); // 2+3 aggregated
-    expect(c.bars[0].text).toBe('zhipu/GLM-5.3-Flash · 工具 5 次 · 读写 2 文件');
+    // ✻ phrase: seed = msg index 8 → think.8「没什么方向地飘了 3m 25s」(deterministic).
+    expect(c.bars[0].text).toBe('✻ 没什么方向地飘了 3m 25s · zhipu/GLM-5.3-Flash · 工具 5 次 · 读写 2 文件');
     expect(c.bars[0].followsUser).toBe(true);
     expect(c.flatTexts).toEqual(['历史中间文字A。', '历史中间文字B。', '历史最终回复。']);
 

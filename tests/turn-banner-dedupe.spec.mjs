@@ -9,10 +9,11 @@
 // search-expand intact) hidden via a marker class on the HEADER element;
 // rows never move, so a closed turn's DOM stays byte-stable (#403 invariant).
 //
-// v2 note: the ✻ phrase is gone from the header text (superseded by the
-// stats model: model · 思考 · 工具 · 读写); the dedupe mechanism itself is
-// unchanged. 落盘数据与后端零改动；过程行（thinking/tool/injected/AI text）
-// 渲染路径一字不动。
+// v2 note (updated 2026-09-06): the ✻ phrase is back in the header text as
+// the leading segment (restored v1-designed copy, author 08:19 feedback);
+// the toggle is instant — the 批② WAAPI animation layer is removed. The
+// dedupe mechanism itself is unchanged. 落盘数据与后端零改动；过程行
+// （thinking/tool/injected/AI text）渲染路径一字不动。
 //
 // Drives the REAL render modules through tests/fixtures/turn-collapse/
 // harness.html over a throwaway static server (never the 8080 host).
@@ -113,14 +114,19 @@ function rowsSnapshot(page) {
       .map(el => el.outerHTML).join('\n'));
 }
 
-/** Wait until every tool/thinking row animation has finished — the static
- *  .nf-tucked class (and natural geometry) only land in finish handlers. */
-async function animationsSettled(page) {
-  await page.waitForFunction(() => {
+/** Negative animation pin (2026-09-06): toggles are instant class flips —
+ *  no running/pending SCRIPT-DRIVEN (WAAPI) animation may exist on
+ *  tool/thinking rows (CSS entrance animations like fadeIn excluded). */
+async function expectNoAnimations(page) {
+  const count = await page.evaluate(() => {
     const rows = document.querySelectorAll('#chat .row.tool, #chat .row.thinking-row');
     return Array.from(rows).flatMap(r => r.getAnimations())
-      .every(a => a.playState !== 'running' && a.playState !== 'pending');
-  }, null, { timeout: 5000 });
+      // CSSAnimations (row fadeIn entrance etc.) are unrelated chrome — the
+      // pin targets script-driven (WAAPI) animations, the removed 批② layer.
+      .filter(a => !(a instanceof CSSAnimation))
+      .filter(a => a.playState === 'running' || a.playState === 'pending').length;
+  });
+  expect(count).toBe(0);
 }
 
 test.describe('banner dedupe — live multi-turn path', () => {
@@ -148,9 +154,9 @@ test.describe('banner dedupe — live multi-turn path', () => {
       Array.from(document.querySelectorAll('.turn-header.turn-banner-superseded'))
         .map(h => !!h.querySelector('.turn-header-text')));
     expect(marked).toEqual([true]);
-    // …and the visible header belongs to turn 2 (model + tool count; the
-    // Bash tool carries no file payload → no 读写 segment).
-    expect(c.visibleTexts[0]).toBe('test-model · 工具 1 次');
+    // …and the visible header belongs to turn 2 (✻ 设计字句 + model + tool
+    // count; the Bash tool carries no file payload → no 读写 segment).
+    expect(c.visibleTexts[0]).toBe('✻ 快速确认 2 秒 · test-model · 工具 1 次');
 
     // #403 byte-stability: the marker never touches rows — the closed
     // turn-1 rows are identical to before the second turn.
@@ -177,7 +183,7 @@ test.describe('banner dedupe — live multi-turn path', () => {
     const { context, page, pageErrors } = await newPage(browser);
     await page.evaluate(() => window.__liveTurn());
     await page.evaluate(() => window.__postClosureTurn());
-    expect(await bannerCensus(page)).toMatchObject({ visibleTexts: ['test-model · 工具 1 次'] });
+    expect(await bannerCensus(page)).toMatchObject({ visibleTexts: ['✻ 快速确认 2 秒 · test-model · 工具 1 次'] });
 
     // E10 entry point on a tucked tool row inside the FIRST (superseded) turn.
     const r = await page.evaluate(() => {
@@ -191,8 +197,8 @@ test.describe('banner dedupe — live multi-turn path', () => {
     expect(r.after).toBe(false);
 
     // Turn-1 rows are visible; the superseded header is NOT. (turn 1 holds
-    // BOTH its tool rows + the thinking row — all revealed.)
-    await animationsSettled(page);
+    // BOTH its tool rows + the thinking row — all revealed, instantly.)
+    await expectNoAnimations(page);
     const c = await bannerCensus(page);
     expect(c.visibleTexts.length).toBe(1);
     expect(await page.evaluate(() => {
@@ -218,7 +224,7 @@ test.describe('banner dedupe — live multi-turn path', () => {
     expect(pageErrors).toEqual([]);
     let c = await bannerCensus(page);
     expect(c.total).toBe(2);              // no third header appeared
-    expect(c.visibleTexts).toEqual(['test-model · 工具 1 次']);
+    expect(c.visibleTexts).toEqual(['✻ 快速确认 2 秒 · test-model · 工具 1 次']);
 
     // Same guarantee through the history path: last turn is text-only.
     const T = 1735689600000;
@@ -259,10 +265,11 @@ test.describe('banner dedupe — history replay path (restoreFromBackendHistory 
     expect(c.total).toBe(2);               // both headers in DOM…
     expect(c.visibleTexts.length).toBe(1); // …only the LAST turn's renders
     expect(c.markedGroups).toBe(1);
-    // Latest turn's stats: model + its own tool count — none of turn 1's
+    // Latest turn's stats: ✻ phrase (seed = msg index 6 → think.6,
+    // deterministic) + model + its own tool count — none of turn 1's
     // (工具 2 次 / 读写 1 文件). Grep has no file payload → no 读写 segment;
     // history rows carry no thinking timing → no 思考 segment.
-    expect(c.visibleTexts[0]).toBe('zhipu/GLM-5.3-Flash · 工具 1 次');
+    expect(c.visibleTexts[0]).toBe('✻ 从这颗星逛到那颗星，溜达了 1m 9s · zhipu/GLM-5.3-Flash · 工具 1 次');
     expect(c.visibleTexts[0]).not.toContain('工具 2 次');
     expect(c.visibleTexts[0]).not.toContain('读写');
 
@@ -306,7 +313,7 @@ test.describe('banner dedupe — history replay path (restoreFromBackendHistory 
     expect(pageErrors).toEqual([]);
     c = await bannerCensus(page);
     expect(c.total).toBe(2);
-    expect(c.visibleTexts).toEqual(['test-model · 工具 2 次 · 读写 1 文件']);
+    expect(c.visibleTexts).toEqual(['✻ 快速确认 2 秒 · test-model · 工具 2 次 · 读写 1 文件']);
     expect(c.markedGroups).toBe(1);
 
     await context.close();

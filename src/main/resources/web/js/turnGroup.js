@@ -1,5 +1,7 @@
 // turnGroup.js — #346 turn-level collapse, v2 "decompression model"
-// (2026-09-05 23:44 author ruling: 思考直播回归 + 收起/展开语义重做 + 动画).
+// (2026-09-05 23:44 author ruling: 思考直播回归 + 收起/展开语义重做;
+// 2026-09-06 08:19 author feedback: 动画太卡顿 → 动画层全摘, 直落/直剥;
+// 收起态总结行允许换行完整显示; v1 设计标语 ✻ 字句恢复进题头).
 //
 // DATA MODEL — the turn keeps its ordered row list in place:
 //   [text | thinking | tool | card | text …]
@@ -9,20 +11,22 @@
 // its original position by simply un-tucking it. What collapse does:
 //
 //   1. inserts ONE `.turn-header` summary bar at the TOP of the turn scope
-//      (right after the user row): `<model> · 思考 <N>s · 工具 <M> 次 ·
-//      读写 <K> 文件` + a chevron affordance. The bar is PERSISTENT — it
-//      stays in both states; clicking it toggles.
+//      (right after the user row): `✻ 字句 · <model> · 思考 <N>s · 工具 <M>
+//      次 · 读写 <K> 文件` + a chevron affordance. The bar is PERSISTENT — it
+//      stays in both states; clicking it toggles. The leading ✻ phrase is the
+//      v1-designed cosmology copy (think.0–18, duration embedded), restored
+//      2026-09-06 after 批② had dropped it; the bar WRAPS when long (no
+//      ellipsis truncation — the full summary is always readable).
 //   2. tucks ONLY thinking rows + tool-call rows (`.nf-tucked`: max-height 0,
-//      opacity 0, ~5px lift). Assistant text rows, card deliverables
+//      hidden). Assistant text rows, card deliverables
 //      (`.row.card-content`), and injected bubbles stay visible — the
 //      deliverable is shown standalone, never stripped (2026-09-05 ruling:
 //      the ONLY stripped pieces are thinking + tool calls).
 //
-// The v1 phrase bar (✻ cosmology phrase · model · 工具 N 次) is superseded by
-// the stats header; the phrase metadata on duration badges (data-nf-phrase)
-// is left untouched for any other consumer. The 2026-09-04 banner-dedupe
-// ruling survives: only the LATEST turn's header is visible per session
-// (`.turn-banner-superseded` on the header element).
+// The phrase metadata on duration badges (data-nf-phrase) feeds the header
+// again (live path via main.js meta.phrase; history via the done badge). The
+// 2026-09-04 banner-dedupe ruling survives: only the LATEST turn's header is
+// visible per session (`.turn-banner-superseded` on the header element).
 //
 // Numbers are computed FROM THE TURN'S ROW LIST (2026-09-05口径):
 //   工具 <M> 次   = count of `.row.tool` in scope
@@ -43,13 +47,12 @@
 // (done then error, nothing appended between) dissolves the done-chrome via
 // the legacy heal path.
 //
-// ANIMATION (aligned with the author, 2026-09-05): expand = each middle block
-// grows IN PLACE from 0 height (max-height 0→natural + opacity + ~5px settle,
-// 320ms ease-out, 50ms stagger in document order); the reply below is pushed
-// by normal document flow — NO FLIP transforms. Collapse = the reverse
-// compression, staggered bottom-up. Header numbers never re-render on toggle
-// (常驻不闪). Web Animations API drives the transition; the static state
-// lives in the `.nf-tucked` CSS class. prefers-reduced-motion → instant.
+// NO ANIMATION (2026-09-06 08:19 author feedback 「动画太卡顿」): the 批②
+// WAAPI transition layer (320ms max-height grow + opacity + ~5px settle +
+// 50ms stagger, and the reverse compression) is REMOVED wholesale. Expand =
+// the tucked rows reappear in place instantly; collapse = they are stripped
+// instantly. The static state is owned entirely by the `.nf-tucked` CSS
+// class; header numbers never re-render on toggle (常驻不闪).
 //
 // Streaming is untouched: rows append live and stay visible while the turn
 // runs; only the terminal event tucks. Thinking streams EXPANDED again
@@ -134,12 +137,16 @@ function computeTurnStats(scope) {
   return { tools, files: files.size, thinkingMs };
 }
 
-/** Fill the persistent header text: `<model> · 思考 <N>s · 工具 <M> 次 ·
- *  读写 <K> 文件`. Segments with no data are omitted (history turns have no
- *  thinking timing; a text+thinking turn has no tool segment). Written ONCE
- *  per terminal — toggling never rewrites it (数字常驻不闪). */
+/** Fill the persistent header text: `✻ 字句 · <model> · 思考 <N>s · 工具
+ *  <M> 次 · 读写 <K> 文件`. The leading ✻ phrase is the v1-designed
+ *  cosmology copy (2026-09-06 restoration — 批② had dropped it); segments
+ *  with no data are omitted (history turns have no thinking timing; a
+ *  text+thinking turn has no tool segment; a turn without a done badge has
+ *  no phrase). Written ONCE per terminal — toggling never rewrites it
+ *  (数字常驻不闪). */
 function fillHeaderText(textEl, meta, stats) {
   const parts = [];
+  if (meta.phrase) parts.push(meta.phrase);
   if (meta.model) parts.push(meta.model);
   if (stats.thinkingMs > 0) parts.push(t('chat.turnHeaderThinking', { d: formatDuration(stats.thinkingMs) }));
   if (stats.tools > 0) parts.push(t(stats.tools === 1 ? 'chat.turnSummaryToolsOne' : 'chat.turnSummaryTools', { n: stats.tools }));
@@ -147,71 +154,22 @@ function fillHeaderText(textEl, meta, stats) {
   textEl.textContent = parts.join(' · ');
 }
 
-/* ---------- animation (WAAPI; static state in .nf-tucked) ---------- */
+/* ---------- tuck / untuck (instant — the static .nf-tucked class owns the
+   state; no transition layer, 2026-09-06 author feedback 「动画太卡顿」) --- */
 
-const EXPAND_MS = 320;
-const STAGGER_MS = 50;
-
-function reducedMotion() {
-  return !!(window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches);
-}
-
-/** Natural (untucked) outer height for the max-height keyframe. The app is
- *  border-box (base.css `* { box-sizing: border-box }`), so max-height must
- *  include borders; scrollHeight already includes padding. */
-function naturalMaxHeight(row) {
-  const cs = getComputedStyle(row);
-  const borders = (parseFloat(cs.borderTopWidth) || 0) + (parseFloat(cs.borderBottomWidth) || 0);
-  return row.scrollHeight + borders;
-}
-
-/** Collapse compression: reverse order (bottom-up), 50ms stagger. On finish
- *  the static `.nf-tucked` class takes over and the animation is cancelled
- *  (no lingering forwards fill). */
-function tuckRows(rows, animate = true) {
-  const anim = animate && !reducedMotion();
-  const n = rows.length;
-  for (let i = 0; i < n; i++) {
-    const row = rows[n - 1 - i]; // 反向压缩
-    if (row.classList.contains('nf-tucked')) continue;
-    const delay = anim ? i * STAGGER_MS : 0;
-    const duration = anim ? EXPAND_MS : 1;
-    row.style.overflow = 'hidden';
-    const a = row.animate([
-      { maxHeight: naturalMaxHeight(row) + 'px', opacity: '1', transform: 'translateY(0px)', marginTop: getComputedStyle(row).marginTop, marginBottom: getComputedStyle(row).marginBottom },
-      { maxHeight: '0px', opacity: '0', transform: 'translateY(-5px)', marginTop: '0px', marginBottom: '0px' },
-    ], { duration, delay, easing: 'ease-out', fill: 'forwards' });
-    a.onfinish = () => {
-      row.classList.add('nf-tucked');
-      row.style.overflow = '';
-      a.cancel(); // static class now owns the tucked state
-    };
+/** Collapse: strip the rows behind the header. Direct class add — the
+ *  middle blocks disappear in one frame. */
+function tuckRows(rows) {
+  for (const row of rows) {
+    row.classList.add('nf-tucked');
   }
 }
 
-/** Expand growth: document order, 50ms stagger, each block grows in place.
- *  The class is removed synchronously (natural margins become measurable),
- *  the keyframes pin the first frame during the stagger wait (fill
- *  'backwards'), and normal styles resume on finish. */
-function untuckRows(rows, animate = true) {
-  const anim = animate && !reducedMotion();
-  for (let i = 0; i < rows.length; i++) {
-    const row = rows[i]; // 原序生长
-    if (!row.classList.contains('nf-tucked')) continue;
+/** Expand: restore every tucked middle block to its original position
+ *  (rows never moved — decompression model). Direct class remove. */
+function untuckRows(rows) {
+  for (const row of rows) {
     row.classList.remove('nf-tucked');
-    const cs = getComputedStyle(row);
-    const target = naturalMaxHeight(row) + 'px';
-    const delay = anim ? i * STAGGER_MS : 0;
-    const duration = anim ? EXPAND_MS : 1;
-    row.style.overflow = 'hidden';
-    const a = row.animate([
-      { maxHeight: '0px', opacity: '0', transform: 'translateY(-5px)', marginTop: '0px', marginBottom: '0px' },
-      { maxHeight: target, opacity: '1', transform: 'translateY(0px)', marginTop: cs.marginTop, marginBottom: cs.marginBottom },
-    ], { duration, delay, easing: 'ease-out', fill: 'backwards' });
-    a.onfinish = () => {
-      row.style.overflow = '';
-      a.cancel();
-    };
   }
 }
 
@@ -259,11 +217,11 @@ function bindHeaderToggle(header) {
     if (header.dataset.turnState === 'done') {
       header.dataset.turnState = 'done-expanded';
       header.setAttribute('aria-expanded', 'true');
-      untuckRows(tuckable, true);
+      untuckRows(tuckable);
     } else {
       header.dataset.turnState = 'done';
       header.setAttribute('aria-expanded', 'false');
-      tuckRows(tuckable, true);
+      tuckRows(tuckable);
     }
   };
   header.onclick = toggle;
@@ -340,7 +298,6 @@ function dissolveTurnChrome(chat) {
     if (el.classList.contains('turn-header')) { el.remove(); continue; }
     if (el.classList.contains('nf-tucked')) {
       el.classList.remove('nf-tucked');
-      el.style.overflow = '';
     }
   }
 }
@@ -349,8 +306,9 @@ function dissolveTurnChrome(chat) {
 
 /**
  * Done path (v2 decompression model): insert the turn's stats header at the
- * turn top and tuck the thinking + tool rows with the collapse animation.
- * Text rows, card deliverables and injected bubbles stay visible in place.
+ * turn top and tuck the thinking + tool rows (instant strip — no animation,
+ * 2026-09-06). Text rows, card deliverables and injected bubbles stay
+ * visible in place.
  *
  * Boundary defaults: no thinking AND no tools → no header, no tuck (E5
  * text-only / lone injection). Nothing visible left after tucking (E6
@@ -370,7 +328,7 @@ export function collapseTurn(view, meta = {}) {
     header.dataset.turnState = 'done';
     header.setAttribute('aria-expanded', 'false');
     bindHeaderToggle(header);
-    tuckRows(tuckable, true); // reverse-order compression animation
+    tuckRows(tuckable); // instant strip (no animation, 2026-09-06)
     // keep the viewport pinned to the bottom when it was pinned (spec §4.2)
     if (chat.scrollHeight - chat.scrollTop - chat.clientHeight < 80) {
       chat.scrollTop = chat.scrollHeight;
@@ -398,8 +356,8 @@ export function failTurn(view) {
 }
 
 /** E10: message-search hit inside a collapsed turn — expand it first so the
- *  row is visible/focusable. Instant (no animation): the caller scrolls
- *  immediately. Returns true when a turn was expanded. */
+ *  row is visible/focusable. Instant: the caller scrolls immediately.
+ *  Returns true when a turn was expanded. */
 export function expandGroupContaining(el) {
   let header = null;
   let n = el.previousElementSibling;
@@ -413,7 +371,7 @@ export function expandGroupContaining(el) {
   if (!tuckable.some(r => r.classList.contains('nf-tucked'))) return false;
   header.dataset.turnState = 'done-expanded';
   header.setAttribute('aria-expanded', 'true');
-  untuckRows(tuckable, false);
+  untuckRows(tuckable);
   return true;
 }
 
@@ -468,11 +426,13 @@ function summarizeSegment(chat, seg) {
   if (tuckable.length === 0) return []; // E5: nothing to tuck — no header
   if (!seg.some(r => !isTuckableRow(r))) return []; // E6: nothing would remain visible
   // E4 P0: success = some Ai row in the segment carries a done-badge
-  // (data-nf-phrase rides the badge; v2 uses only model + timestamp from it).
+  // (data-nf-phrase rides the badge and is restored into the header as the
+  // leading ✻ 字句 — the v1-designed copy, 2026-09-06).
   const badge = findDoneBadge(seg);
   if (!badge) return []; // failed/unfinished segment: flat, no header
   const meta = {
     model: badge.dataset.nfModel || '',
+    phrase: badge.dataset.nfPhrase || '',
     title: historyBadgeTitle(seg, badge),
   };
   const stats = computeTurnStats(seg);
@@ -480,7 +440,7 @@ function summarizeSegment(chat, seg) {
   header.dataset.turnState = 'done';
   header.setAttribute('aria-expanded', 'false');
   bindHeaderToggle(header);
-  tuckRows(tuckable, false); // history rebuild: static tuck, no animation
+  tuckRows(tuckable); // history rebuild: static tuck
   return [header];
 }
 
