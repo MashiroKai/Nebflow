@@ -132,13 +132,32 @@ class NebulaDeliveryRedeliverySpec extends FunSuite:
       Behaviors.receiveMessage[AgentCommand](msg => recorded.update(_ :+ msg).as(b))
     b
 
+  /** 有界轮询等待投递消息记账（ad0a50ad awaitMsgs 模式）：deliverToNebula 是
+    * `ref ! ImmediateInput` fire-and-forget——扫描返回时消息可能仍在 recorder
+    * 邮箱里未处理，立即直读 recorded 有竞态（R4 CI 偶发 NoSuchElementException
+    * head of empty list @:200；R1@:147 / R5@:218 同根因偶发 size 断言红）。
+    * 等预期投递记录到达后再断言，不改断言语义。 */
+  private def awaitImms(
+      recorded: Ref[IO, List[AgentCommand]],
+      min: Int,
+      timeoutMs: Long = 10_000L
+  ): IO[List[AgentCommand.ImmediateInput]] =
+    def snapshot: IO[List[AgentCommand.ImmediateInput]] =
+      recorded.get.map(_.collect { case m: AgentCommand.ImmediateInput => m })
+    def go(deadline: Long): IO[List[AgentCommand.ImmediateInput]] =
+      snapshot.flatMap { ms =>
+        if ms.size >= min || System.currentTimeMillis() >= deadline then IO.pure(ms)
+        else IO.sleep(50.millis) >> go(deadline)
+      }
+    go(System.currentTimeMillis() + timeoutMs)
+
   test("R1 GREEN: crash-window result (completed, unmarked) is redelivered to Nebula and marked") {
     withFixture("r1") { (store, engine, resources, system, recorded, rootSid, rootRef) =>
       val io = for
         _ <- registerRoot(resources, rootSid, rootRef)
         _ <- store.mutate(s => s.copy(nodes = s.nodes + ("n-done" -> completedNode("n-done", NodeLifecycle.Completed, "V8_CRASH_WINDOW_RESULT"))))
         n1 <- engine.redeliverUnconsumedNebulaResults()
-        msgs <- recorded.get
+        msgs <- awaitImms(recorded, min = 1)
         node <- store.getNode("n-done")
       yield (n1, msgs, node)
       val (n1, msgs, node) = io.unsafeRunSync()
@@ -157,7 +176,7 @@ class NebulaDeliveryRedeliverySpec extends FunSuite:
         _ <- registerRoot(resources, rootSid, rootRef)
         _ <- store.mutate(s => s.copy(nodes = s.nodes + ("n-a" -> completedNode("n-a", NodeLifecycle.Completed, "r2 result"))))
         _ <- engine.redeliverUnconsumedNebulaResults()
-        countAfterFirst <- recorded.get.map(_.size)
+        countAfterFirst <- awaitImms(recorded, min = 1).map(_.size)
         n2 <- engine.redeliverUnconsumedNebulaResults()
         _ <- IO.sleep(200.millis)
         countAfterSecond <- recorded.get.map(_.size)
@@ -192,7 +211,7 @@ class NebulaDeliveryRedeliverySpec extends FunSuite:
         _ <- registerRoot(resources, rootSid, rootRef)
         _ <- store.mutate(s => s.copy(nodes = s.nodes + ("n-fail" -> completedNode("n-fail", NodeLifecycle.Failed, "r4 failure detail"))))
         n <- engine.redeliverUnconsumedNebulaResults()
-        msgs <- recorded.get
+        msgs <- awaitImms(recorded, min = 1)
       yield (n, msgs)
       val (n, msgs) = io.unsafeRunSync()
       assertEquals(clue(n), 1)
@@ -210,7 +229,7 @@ class NebulaDeliveryRedeliverySpec extends FunSuite:
         _ <- store.mutate(s => s.copy(nodes = s.nodes + ("n-manual" -> node.copy(nebulaDeliveredAt = Some(System.currentTimeMillis() - 3600_000L)))))
         // 人工改接投递：已记账也必须再投（用户显式意图——审计确认的既有恢复通道）。
         _ <- engine.deliverOutTo(node, "Nebula", "r5 manual")
-        msgs <- recorded.get
+        msgs <- awaitImms(recorded, min = 1)
         fresh <- store.getNode("n-manual")
       yield (msgs, fresh)
       val (msgs, fresh) = io.unsafeRunSync()
