@@ -131,7 +131,7 @@ function buildFixture() {
   const capA = join(HOME, 'plugins', 'cap-a');
   mkdirSync(join(capA, 'skills', 'probe'), { recursive: true });
   writeFileSync(join(capA, 'plugin.json'), JSON.stringify({
-    $schema: 'https://agent-plugins.org/schema/1.0.0', name: 'cap-a', version: '1.0.0',
+    $schema: 'https://agent-plugins.org/schemas/1.0.0/plugin.schema.json', name: 'cap-a', version: '1.0.0',
     description: 'cap-a 结构描述句（有 capability 时不应出现在目录）',
     capability: 'E2E 能力探针：节点获得分发器目录注入链路的验证能力',
   }, null, 2));
@@ -140,7 +140,7 @@ function buildFixture() {
   const beta = join(HOME, 'plugins', 'beta-untrusted');
   mkdirSync(join(beta, 'skills', 'never'), { recursive: true });
   writeFileSync(join(beta, 'plugin.json'), JSON.stringify({
-    $schema: 'https://agent-plugins.org/schema/1.0.0', name: 'beta-untrusted', version: '1.0.0',
+    $schema: 'https://agent-plugins.org/schemas/1.0.0/plugin.schema.json', name: 'beta-untrusted', version: '1.0.0',
     description: '未信任插件（不应出现）',
     capability: '未信任能力句（不应出现）',
   }, null, 2));
