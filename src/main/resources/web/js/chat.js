@@ -974,8 +974,9 @@ export function renderTool(label, summary, content, isError, inputJson, sessionI
   // NebLink tool marker
   if (label && label.startsWith('[NebLink]')) row.classList.add('neblink-row');
   // beta.56 ruling: tool-class bubbles carry NO footer — footers are
-  // message-class only (user / assistant final text / ask / agent / skill /
-  // thinking). Tool rows render header + body only.
+  // message-class only (user / assistant final text / ask / agent / skill).
+  // Tool rows render header + body only. (2026-09-06 二次裁定: thinking 也
+  // 不属于消息类——中间过程显示，同样无 footer，见 finishThinking。)
   // #346 v2 stats: carry the tool input on the row so the turn header can
   // count 读/写 files (turnGroup computeTurnStats reads dataset.nfInput).
   if (inputJson) { try { row.dataset.nfInput = typeof inputJson === 'string' ? inputJson : JSON.stringify(inputJson); } catch {} }
@@ -2651,12 +2652,10 @@ export function finishThinking() {
       content.style.display = 'none';
     }
     const text = activeView.stream.thinkingText;
-    // v1.2 unified footer (2026-09-06 补齐批): thinking rows get time + copy
-    // too — visible while streaming / when the turn is expanded; tucked away
-    // with the row when the turn collapses. Plain footer (no nf-phrase) so
-    // the history done-marker heuristic never picks it up.
-    const tRow = activeView.stream.currentThinkingBubble.closest('.row');
-    if (tRow) tRow.appendChild(createMsgFooterBadge(Date.now(), text));
+    // 2026-09-06 二次裁定: thinking rows carry NO footer — thinking is
+    // intermediate-process display, not message-class; footers are
+    // message-class only (user / assistant final text / ask / agent /
+    // skill). Corrects f8ea9385's classification.
     activeView.stream.currentThinkingBubble = null;
     activeView.stream.thinkingText = '';
     return text;
