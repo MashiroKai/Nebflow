@@ -157,7 +157,8 @@ class FixtureEnvelopeGuardSpec extends FunSuite:
         _ <- store.mutate(s => s.copy(nodes = s.nodes + (
           "n-genuine" -> node("n-genuine", "cancel-test-12", "真实研究任务：调研 CZT 读出电子学文献", "GENUINE_RESEARCH_RESULT"))))
         n <- engine.redeliverUnconsumedNebulaResults()
-        msgs <- imms(recorded)
+        // 有界轮询：等待投递消息记录到达（offer→actor 处理异步，立即直读有竞态）
+        msgs <- awaitMsgs(recorded, min = 1)
       yield (n, msgs)
       val (n, msgs) = io.unsafeRunSync()
       assertEquals(clue(n), 1, "genuine payload must not be excluded by name alone")
@@ -175,7 +176,8 @@ class FixtureEnvelopeGuardSpec extends FunSuite:
           "n-fam-edge" -> node("n-fam-edge", "cancel-test-11", FixtureTask, "FAMILY_EDGE_FIXTURE")
         )))
         n <- engine.redeliverUnconsumedNebulaResults()
-        msgs <- imms(recorded)
+        // 有界轮询：等待投递消息记录到达（offer→actor 处理异步，立即直读有竞态）
+        msgs <- awaitMsgs(recorded, min = 1)
       yield (n, msgs)
       val (n, msgs) = io.unsafeRunSync()
       assertEquals(clue(n), 1, "only the family-matching fixture is excluded")
