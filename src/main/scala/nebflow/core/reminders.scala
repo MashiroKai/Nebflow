@@ -133,7 +133,10 @@ object SystemReminders:
         .map { t =>
           val when = formatScheduleTime(t.triggerAt, now)
           val repeat = t.repeat.fold("")(r => s" ($r)")
-          s"- [$when] ${t.content.take(60)}$repeat"
+          // id + name（2026-09-06 升级）：给 Nebula 直接的 cancel/upsert 句柄——
+          // 重启后无需先 list 就能辨认既有例行任务（防 re-arm 双份的事故盲区）。
+          val nm = t.name.fold("")(n => s" name: $n")
+          s"- [$when] ${t.content.take(60)}$repeat [id: ${t.id}$nm]"
         }
       if lines.isEmpty then None
       else Some(SystemReminder("schedule", s"Pending schedules (${effective.size}):\n${lines.mkString("\n")}"))
