@@ -5,16 +5,21 @@
 // v8.4.3 2026-09-05 口径: 更平缓——weights [0.62,0.27,0.11] 全包络衰减加陡、
 // jitter rate 0.80/1.30/2.30 (×~1.6 慢呼吸)、τ 150/480ms 缓入缓出; amp 与
 // uVol 主通道不动，音量可辨由 T1 + T4b 直接幅值比 + T5 像素差三重保证).
+// v8.4.4 2026-09-06 口径 (作者: 说话时扭曲还是太严重): 削 k=13 毛刺但不抬
+// topShare——weights [0.63,0.28,0.09]（k13 的 2 点权重均摊回 k5/k8，k13 曲率
+// −18%、Σw·k² −4.9%，topShare 实测 0.8275 → 0.8276 持平，第三轮 0.85 判据
+// 不动）；drift ×~0.8 (3.8/-5.5/9.0)、jitterDepth 0.14、τ 190/560ms；amp 与
+// uVol 主通道不动。T7 Lipschitz 界 6.21800 → 4.89450（推导见 T7 注释）。
 //
 // Verifies (levels injected through renderer.setVoiceLevel — the test seam
 // over the mic sources; NO microphone needed):
 //   T1 幅度单调跟随 — synthetic level steps 0.15→0.5→0.9: the smoothed
 //      uVol amplitude (renderer.voiceLevel) follows monotonically and
-//      settles inside a ±0.06 band of each target (attack τ=150ms since
-//      v8.4.3).
+//      settles inside a ±0.06 band of each target (attack τ=190ms since
+//      v8.4.4).
 //      Also proves the production setVolume alias lands on the same raw.
 //   T2 电平归零回落 — from a settled 0.9, zeroing the level decays the
-//      amplitude back to the base (≤0.04 after 2.2s; release τ=480ms).
+//      amplitude back to the base (≤0.04 after 2.2s; release τ=560ms).
 //   T3 非 listening 态注入不生效 — injecting 0.9 in every non-listening
 //      state leaves the amplitude at ≤0.02 (target forced to 0); the
 //      listening control in the same session still rises (mechanism alive).
@@ -130,7 +135,7 @@ test('T1: 幅度单调跟随 — synthetic level steps drive the uVol amplitude 
 
   // Production feed path (voiceEngine → setVolume alias) lands identically.
   await page.evaluate(() => window.__volTest.injectAlias(0.7));
-  await page.waitForTimeout(900); // v8.4.3: release τ=480ms → 900ms leaves 0.731 (Δ=0.031, inside ±0.06; 700ms left ~0.047)
+  await page.waitForTimeout(900); // v8.4.4: release τ=560ms → 900ms leaves 0.740 (Δ=0.040, inside ±0.06; v8.4.3 τ=480ms left 0.731)
   const viaAlias = await page.evaluate('window.__volTest.snapVoice()');
   expect(viaAlias.raw).toBe(0.7);
   expect(Math.abs(viaAlias.level - 0.7)).toBeLessThanOrEqual(0.06);
@@ -142,7 +147,7 @@ test('T2: 电平归零回落 — zeroed level decays back to the base amplitude 
   expect(loud.level).toBeGreaterThan(0.8);
 
   await page.evaluate(() => window.__volTest.inject(0));
-  await page.waitForTimeout(2200); // v8.4.3: e^(-2200/480) ≈ 0.010 → level ≈ 0.009 (τ_release 480ms)
+  await page.waitForTimeout(2200); // v8.4.4: e^(-2200/560) ≈ 0.020 → level ≈ 0.018 (τ_release 560ms)
   const rest = await page.evaluate('window.__volTest.snapVoice()');
   expect(rest.raw).toBe(0);
   expect(rest.level, 'released to the fixed base amplitude').toBeLessThanOrEqual(0.04);
@@ -208,6 +213,9 @@ async function waveMetrics(page, times) {
     // leakage), so exactly {5,8,13} is detected. The floor remains ~66×
     // below the neat-sine control (>99% in one bin) — criterion still
     // discriminative. (Bin range 12→14: k=13 needs bin 13.)
+    // v8.4.4: weights [0.63,0.28,0.09] → k=13 share of top bin (0.09/0.63)²
+    // ≈ 2.0% (measured 0.020) — ~1.3× above the floor, still comfortably
+    // detected; off-bins unchanged ~0.
     const strongBins = avg.map((e, i) => ({ k: i + 1, e })).filter((x) => x.e >= 0.015 * emax).map((x) => x.k);
     const top3 = avg.map((e, i) => ({ k: i + 1, e })).sort((a, b) => b.e - a.e).slice(0, 3).map((x) => x.k);
     return { profiles, topShare: emax / etot, strongBins, top3 };
@@ -245,6 +253,12 @@ test('T4: 非整齐正弦 — multi-harmonic spectrum, evolving shape, 2π-conti
   // loud/quiet main-wave amplitude ratio) so the revision cannot trade away
   // the author's "音量大小区别仍要能看出来" requirement. Rollback: restore
   // 0.75 here + weights [0.55,0.31,0.14] in micOrb.js VOICE_WAVE.
+  // ── 判据复核（第四轮, v8.4.4）: 判据未修订 ────────────────────────────
+  // R4 cuts the k=13 毛刺 by moving its 2 weight points BACK onto k5/k8 in
+  // near-equal w² terms, so topShare does NOT approach the 0.85 gate:
+  // measured 0.8275 (v8.4.3) → 0.8276 (v8.4.4), flat. Gate stays 0.85,
+  // T4b pairing unchanged. Rollback for the R4 tune: weights
+  // [0.62,0.27,0.11], drifts 4.7/-6.9/11.3, jitterDepth 0.18, τ 150/480ms.
   expect(m.topShare, `time-averaged top DFT bin share ${m.topShare.toFixed(3)} must be < 0.85 (判据修订（第三轮）: was 0.75)`).toBeLessThan(0.85);
   expect(m.strongBins, 'exactly the 3 designed wavenumbers {5,8,13} carry energy').toEqual([5, 8, 13]);
   expect(m.top3, 'dominant bins ordered by weight: 5, 8, 13').toEqual([5, 8, 13]);
@@ -291,7 +305,7 @@ test('T4b: 音量可辨直接度量 — 三档主波幅值比 (判据修订（�
   // uVol · amp · wave(θ,t), with amp and the wave field untouched by v8.4.3.
   // So the settled level ratio IS the main-wave amplitude ratio — the direct
   // "音量大小区别要能看出来" metric the T4 topShare revision is paired with.
-  // Quiet/normal/loud = 0.15/0.5/0.9 (attack τ=150ms → 900ms settles each).
+  // Quiet/normal/loud = 0.15/0.5/0.9 (attack τ=190ms → 900ms settles each).
   await page.evaluate(() => window.__volTest.apply('listening'));
   const settle = async (v) => {
     await page.evaluate((v) => window.__volTest.inject(v), v);
@@ -474,9 +488,10 @@ test('T7: F1 红线数值断言 — 波形输出时间连续（同 dt 步进序�
   // 补充形变【输出】侧：按固定帧步 dt=0.05 网格采样波形，相邻帧差必须落在
   // 解析 Lipschitz 界内——任何逐帧时间重置/量化回归都会产生 O(1) 跳变而爆界。
   // 界推导：|dw/dt| ≤ Σ w_i·(|drift_i| + depth·jitterRate_i)
-  //   （|sin'|≤1 且 jit∈[1−depth,1]；v8.4.3 常数 → L = 6.21800：
-  //    0.62·(4.7+0.18·0.80) + 0.27·(6.9+0.18·1.30) + 0.11·(11.3+0.18·2.30)）
-  // 断言阈 = 2×L×dt ≈ 0.622：正常运行实测 << 界（相位不对齐），重置跳变 ~O(1) 必爆。
+  //   （|sin'|≤1 且 jit∈[1−depth,1]；v8.4.4 常数 → L = 4.89450：
+  //    0.63·(3.8+0.14·0.80) + 0.28·(5.5+0.14·1.30) + 0.09·(9.0+0.14·2.30)；
+  //    v8.4.3 为 6.21800，drift ×0.8 + depth 0.14 收紧了界）
+  // 断言阈 = 2×L×dt ≈ 0.489：正常运行实测 << 界（相位不对齐），重置跳变 ~O(1) 必爆。
   const DT = 0.05, SPAN = 60; // 1200 步，覆盖全部漂移/抖动周期
   const r = await page.evaluate(({ DT, SPAN }) => {
     const w = window.__volTest.voiceWaveAt;
@@ -495,7 +510,7 @@ test('T7: F1 红线数值断言 — 波形输出时间连续（同 dt 步进序�
     for (let i = 0; i < 144; i++) peak = Math.max(peak, Math.abs(w((i / 144) * Math.PI * 2, 12.34)));
     return { worst, worstAt, peak };
   }, { DT, SPAN });
-  const bound = 2 * 6.218 * DT; // 2× Lipschitz × dt (v8.4.3 constants)
+  const bound = 2 * 4.8945 * DT; // 2× Lipschitz × dt (v8.4.4 constants)
   expect(r.worst, `waveform step |Δw| over dt=${DT} is ${r.worst.toFixed(4)} at t=${r.worstAt.t.toFixed(2)}s — must stay continuous (F1 red line: no per-frame time reset/jump; bound ${bound.toFixed(3)})`).toBeLessThan(bound);
   expect(r.peak, 'waveform stays bounded by Σweights (no divergence)').toBeLessThanOrEqual(1.0000001);
 });

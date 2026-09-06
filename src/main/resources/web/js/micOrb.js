@@ -1,3 +1,31 @@
+// v8.4.4 (2026-09-06): VOICE RIPPLE SMOOTHING R4 — calmer travel, finer-crest
+// cut WITHOUT top-bin share pressure (author feedback 2026-09-06 17:41: 说话
+// 的时候语音气泡的扭曲还是太严重 — still too warped while speaking, after R3).
+// Parameter layer only, zero structural change; the volume-perception MAIN
+// CHANNEL (amp + uVol linear scaling of the k=5 carrier) is untouched:
+//  - weights [0.62,0.27,0.11] → [0.63,0.28,0.09]: the k=13 bin is the
+//    HIGHEST spatial-curvature term (w·k² = 18.6, above even the k=5
+//    carrier's 15.5) — it is where the fine "毛刺" live. Moving 2 points of
+//    weight off it (1 to k=5, 1 to k=8) cuts k=13 curvature −18% and total
+//    Σw·k² −4.9% while the top-bin DFT share stays FLAT (~0.828 → ~0.828,
+//    third-round 0.85 gate untouched — k13's lost share lands on k8/k5 in
+//    near-equal w² terms). k=13 stays ≥1.3× above the 0.015·emax strongBins
+//    floor (measured 0.020), so the 3-harmonic detection is unchanged.
+//  - drifts 4.7/-6.9/11.3 → 3.8/-5.5/9.0 rad/s (×~0.8): wave-travel speeds
+//    drift/k drop 0.94/0.86/0.87 → 0.76/0.69/0.69 rad/s — the rim swells
+//    and travels instead of writhing ("涌动 not 扭动"). Ratios stay pairwise
+//    non-integer (38/55/90); T4(b) decorrelation re-verified (r1 0.41 /
+//    r2 0.72, both ≪ 0.98).
+//  - jitterDepth 0.18 → 0.14: breathing range ×0.86..1.00 — fewer sudden
+//    per-harmonic crest surges. Jitter RATES unchanged (R3 already slowed
+//    them ×1.6; slowing further risks a static look).
+//  - τ_attack 150ms → 190ms, τ_release 480ms → 560ms: consonant spikes no
+//    longer jolt the rim; loud syllables subside as a surge. Design band
+//    restated: attack 50-190ms / release 200-560ms. All spec settle bands
+//    re-verified numerically (worst T1 alias Δ=0.040 < 0.06).
+//  - amp 0.016, wavenumbers {5,8,13}, phases, jitter rates: UNCHANGED.
+//    T7 Lipschitz L 6.21800 → 4.89450 (drift slowdown + depth cut).
+//
 // v8.4.3 (2026-09-05): VOICE RIPPLE SMOOTHING R3 — rounder crests, slower
 // breathing (author feedback 2026-09-05 23:51: 震动波形还是太尖锐，要更平缓，
 // 但音量大小区别仍要能看出来). Parameter layer only, zero structural change;
@@ -71,7 +99,7 @@
 //    fixed base amplitude; STT and rendering are unaffected.
 //  - Amplitude pipeline: setVoiceLevel(v) injects the raw level; drawFrame
 //    smooths it with frame-rate-independent attack/release exponentials
-//    (τ_attack 150ms / τ_release 480ms since v8.4.3) into voiceLevel =
+//    (τ_attack 190ms / τ_release 560ms since v8.4.4) into voiceLevel =
 //    the uVol uniform.
 //    Non-listening states force the smoothing target to 0, so injected
 //    levels can never leak into any other state (frozen stays frozen).
@@ -246,9 +274,10 @@ const PULSE_TABLE = { 'listening': [0.06, 1.6], 'nebula-busy': [0.05, 2.2], 'bg-
    because sin(k·θ) must be 2π-periodic in θ — a non-integer k would tear a
    fixed seam into the edge at the atan2 wrap. The "irrational /
    incommensurate" quality lives in the TEMPORAL dimension: each harmonic
-   drifts at its own speed (4.7 / -6.9 / 11.3 rad/s — pairwise non-integer
-   ratios) and its amplitude slowly jitters (rates 0.80 / 1.30 / 2.30 rad/s
-   since v8.4.3 — ×~1.6 slower breathing, depth 0.18 → ×0.82..1.00). The three time bases never re-align, so the
+   drifts at its own speed (3.8 / -5.5 / 9.0 rad/s since v8.4.4 — ×~0.8 vs
+   v8.4.3's 4.7/-6.9/11.3, pairwise non-integer ratios) and its amplitude
+   slowly jitters (rates 0.80 / 1.30 / 2.30 rad/s
+   since v8.4.3 — ×~1.6 slower breathing, depth 0.18 → 0.14 in v8.4.4 → ×0.86..1.00). The three time bases never re-align, so the
    waveform shape keeps evolving and no single neat sine is ever visible. The
    field is additionally multiplied by uVol (smoothed mic level) and rides on
    top of the pre-existing noise deformation inside draw() (w-field + r0
@@ -258,16 +287,20 @@ export const VOICE_WAVE = {
   harmonics: [
     // v8.4.3: jitter rates ×~1.6 slower (0.80/1.30/2.30 rad/s; pairwise-
     // coprime 8/13/23) — slower amplitude breathing, same depth of life.
-    { k: 5,  drift: 4.7,  phase: 0.0, jitterRate: 0.80, jitterPhase: 0.7 },
-    { k: 8,  drift: -6.9, phase: 1.7, jitterRate: 1.30, jitterPhase: 2.1 },
-    { k: 13, drift: 11.3, phase: 4.2, jitterRate: 2.30, jitterPhase: 0.3 },
+    // v8.4.4: drifts ×~0.8 (4.7/-6.9/11.3 → 3.8/-5.5/9.0 rad/s; pairwise
+    // non-integer 38/55/90) — the rim travels calmly instead of writhing.
+    { k: 5,  drift: 3.8,  phase: 0.0, jitterRate: 0.80, jitterPhase: 0.7 },
+    { k: 8,  drift: -5.5, phase: 1.7, jitterRate: 1.30, jitterPhase: 2.1 },
+    { k: 13, drift: 9.0,  phase: 4.2, jitterRate: 2.30, jitterPhase: 0.3 },
   ],
-  // v8.4.3: steepened as a whole spectral envelope (w8/w5 0.56→0.44,
-  // w13/w8 0.45→0.41) — every rippler's spatial curvature w·k² drops
-  // (k8 −13%, k13 −21%), crests read rounder; the k=5 carrier share rises
-  // to keep the volume read strong. Amp untouched (main channel preserved).
-  weights: [0.62, 0.27, 0.11], // sums to 1
-  jitterDepth: 0.18, // v8.4.2: 0.28 → 0.18 — calmer crests, breathing kept
+  // v8.4.4: the k=13 bin carries the HIGHEST per-harmonic spatial curvature
+  // (w·k² = 18.6 in v8.4.3 — above the k=5 carrier's 15.5); 2 weight points
+  // move off it (1→k5, 1→k8): k13 curvature −18%, Σw·k² −4.9%, while the
+  // top-bin DFT share stays FLAT (~0.828 — the third-round 0.85 gate is
+  // untouched; k13's lost w² share lands ~equally on k5/k8). k=13 remains
+  // ≥1.3× above the 0.015·emax strongBins floor → still exactly {5,8,13}.
+  weights: [0.63, 0.28, 0.09], // sums to 1
+  jitterDepth: 0.14, // v8.4.4: 0.18 → 0.14 — fewer sudden crest surges, breathing kept
 };
 
 /* JS mirror of the generated GLSL displacement field (uVol factored out —
@@ -310,13 +343,13 @@ const VOICE_GLSL = (() => {
 })();
 
 /* Attack/release time constants for the voice amplitude (frame-rate
-   independent exponential smoothing, factor = 1-exp(-dt/τ)). v8.4.3
-   (author: 要更平缓): attack 150ms gives a gentler onset, release 480ms a
-   slower, more surging fall (design band restated: attack 50-170ms /
-   release 200-520ms). dt shares the F1 clamp (≤0.05) so a background tab
-   can never jump the amplitude. */
-export const VOICE_TAU_ATTACK = 0.15;
-export const VOICE_TAU_RELEASE = 0.48;
+   independent exponential smoothing, factor = 1-exp(-dt/τ)). v8.4.4
+   (author: 说话时扭曲还是太严重): attack 190ms softens consonant onsets,
+   release 560ms lets loud syllables subside as a surge (design band
+   restated: attack 50-190ms / release 200-560ms). dt shares the F1 clamp
+   (≤0.05) so a background tab can never jump the amplitude. */
+export const VOICE_TAU_ATTACK = 0.19;
+export const VOICE_TAU_RELEASE = 0.56;
 
 /** One smoothing step (pure, exported for node-level assertions).
  *  @param {number} cur current smoothed level
