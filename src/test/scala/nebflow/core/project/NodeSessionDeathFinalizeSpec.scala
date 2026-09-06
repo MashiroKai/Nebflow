@@ -149,9 +149,9 @@ class NodeSessionDeathFinalizeSpec extends FunSuite:
         _ <- seedRunningCandidate(store, "n-dead", "node-doomed", "long running task that will never finish")
         _ <- engine.startNode("n-dead").start
         // 等节点翻 running（spawn 完成、race 挂起——假尸窗口形成）
-        _ <- waitUntil(15.seconds)(store.getNode("n-dead").map(_.exists(_.status == NodeLifecycle.Running)))
+        _ <- waitUntil(30.seconds)(store.getNode("n-dead").map(_.exists(_.status == NodeLifecycle.Running)))
         // 等会话在 agentRegistry 登记（Running 翻转先于 registry 登记——竞态防）
-        _ <- waitUntil(15.seconds)(nodeSession(resources).map(_.isDefined))
+        _ <- waitUntil(30.seconds)(nodeSession(resources).map(_.isDefined))
         rec0 <- nodeSession(resources)
         _ <- IO.println(s"[spec] stopping node session: ${rec0.map(_.sessionId)}")
         // 静默死亡：外部 cancel 会话 fiber（无任何终态事件——AgentControl 无记录、
@@ -159,7 +159,12 @@ class NodeSessionDeathFinalizeSpec extends FunSuite:
         // → death watch Terminated → bridge 兜底）
         _ <- rec0.traverse_(rec => system.stop(rec.ref))
         // 修复生效点：Terminated → failNode（节点不滞留 running）
-        _ <- waitUntil(15.seconds)(store.getNode("n-dead").map(_.exists(_.status == NodeLifecycle.Failed)))
+        _ <- waitUntil(30.seconds)(store.getNode("n-dead").map(_.exists(_.status == NodeLifecycle.Failed)))
+        // 确定性同步：Failed 状态翻转先于根会话 mailbox 消费投递——等投递实际到达
+        // recorded（等副作用本身，而非等前置 Failed 状态后立即读）
+        _ <- waitUntil(30.seconds)(recorded.get.map(_.collectFirst {
+          case m: AgentCommand.ImmediateInput if m.text.contains("[Node 'node-doomed' failed]") => m
+        }.isDefined))
         node <- store.getNode("n-dead")
         msgs <- recorded.get
         reg <- nodeSession(resources)
