@@ -10,17 +10,28 @@ import nebflow.core.PathUtil
  *
  * `<workspace>/.nebflow/flow-map-events.jsonl` 追加式 JSONL，每行一事件：
  * `{ts, type, project, nodeId, summary}`，
- * type ∈ blocked / held / reentry-triggered / reactivated / abandoned / escalated / cooldown-on / released。
+ * type ∈ blocked / held / reentry-triggered / reactivated / abandoned / escalated /
+ *   cooldown-on / released / reaped / merge-blocked /
+ *   settle-sweep / trigger-starved / start-aborted（trigger-chain-fix 批）/
+ *   bg-wait / bg-wait-timeout / bg-released（bgtask-completion-gate 批）/
+ *   mount-stalled（mount-enforce 批：可触发点后 60s 仍未触发的挂载停滞留痕，
+ *   summary 含等待原因——上游终态明细 + barrier 残缺清单）。
+ * 注册式扩展：append API 无 schema 变更，新事件类型 = 本清单加一词 + 写入点调用。
  *
  * 0 schema 迁移（独立文件不碰 flow-map.json 契约）、append-only、重启保留、grep 友好。
- * 写入点：NodeEngine.blockedNode（blocked）/ heldNode（held）/ releaseNode（released）、
+ * 写入点：NodeEngine.blockedNode（blocked）/ heldNode（held）/ mergeBlockedByUpstream
+ * Failure（merge-blocked）/ runWithAgent 翻转异常中止（start-aborted）/ settleRunnable
+ * Sweep（settle-sweep、trigger-starved、mount-stalled）/ reapStaleRunning（reaped）、
  * FeedbackRouter（reentry-triggered / escalated / cooldown-on）、NodeEditTool 重激活与
  * abandon 两分支（reactivated / abandoned）。
  */
 object FlowMapEventLog:
   val FileName = "flow-map-events.jsonl"
 
-  /** 追加一条审计事件。workspace 为项目工作区绝对路径；IO.blocking 隔离磁盘写。 */
+  /** 追加一条审计事件。workspace 为项目工作区绝对路径；IO.blocking 隔离磁盘写。
+    * dispatch-notify 批（2026-09-05）：新增事件 type `dispatch-notify`（节点终态
+    * 回流分发器通知——triggered / budget-exhausted 两形态，写点在 DispatchNotify，
+    * 追加式注册同 bg-wait/trigger-starved 先例）。 */
   def append(workspace: String, project: String, nodeId: String, typ: String, summary: String): IO[Unit] =
     val line = Json
       .obj(

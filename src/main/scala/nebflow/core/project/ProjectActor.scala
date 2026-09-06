@@ -113,6 +113,15 @@ object ProjectRuntimeRegistry:
             ),
             s"project-${project.name.take(20)}"
           )
+          // 僵尸 running 对账（trigger-chain-fix §6.4）：重启窗口持久化 status=
+          // running 且无在飞 fiber（本进程内存 running 表空 = 会话已死）的节点 →
+          // reapStaleRunning 收殓（cancelled + 显示 TTL + reaped 审计，同族第三
+          // 变体「重启后僵尸 running 只能人工 NodeEdit abandon 收殓」根除）；有在
+          // 飞 fiber 的活会话节点 Left 拒绝（误杀防护既有纪律，NodeEngine 硬约束）。
+          _ <- store.snapshot.flatMap { s =>
+            s.nodes.values.filter(_.status == NodeLifecycle.Running).toList
+              .traverse_(n => engine.reapStaleRunning(n.id).void)
+          }
           // V8 (2026-09-03): 挂载即扫——项目在运行时挂载（ProjectCreate 路径）且根
           // 会话已活跃时，滞留的 out=Nebula 结果立即补投，不等首个 30s tick。
           // 启动自动挂载路径根 ref 通常缺失 → 静默跳过，由 TtlTick 周期兜底。
@@ -224,10 +233,20 @@ object ProjectActor:
               // 补投。best-effort：扫描失败不影响 TTL sweep。
               // 阶段 2b（§B.5 信任运行时联动）：同 tick 挂 plugin 信任重验——
               // digest 失效的运行中 plugin MCP 立即停用 + 持有会话收系统提醒。
+              // dispatch-notify 补投（2026-09-05 批）：重启后未触发通知（notifySentAt
+              // 为空）30s 内补投——redeliverUnconsumedNebulaResults 同形态周期兜底；
+              // best-effort 失败仅 WARN，不影响后续 TTL sweep。
+              cfg.engine.dispatchNotify.redeliver()
+                .handleErrorWith(e => logger.warn(s"dispatch-notify redelivery scan failed: ${e.getMessage}").void) *>
               cfg.engine.revalidatePluginTrust()
                 .handleErrorWith(e => logger.warn(s"plugin trust revalidation failed: ${e.getMessage}")) *>
                 cfg.engine.redeliverUnconsumedNebulaResults()
                 .handleErrorWith(e => logger.warn(s"Node redelivery scan failed: ${e.getMessage}").as(0)).void *>
+                // 资格回扫（trigger-chain-fix §6.2）：pending/wiring 启动资格周期
+                // 重估——孤儿 barrier 自愈 + 合格者 fork 启动 + settle-sweep/
+                // trigger-starved 留痕。best-effort 同款（失败不影响 TTL sweep）。
+                cfg.engine.settleRunnableSweep()
+                .handleErrorWith(e => logger.warn(s"settle sweep failed: ${e.getMessage}")) *>
                 cfg.engine.store.sweepExpired(System.currentTimeMillis()).flatMap { removed =>
                   removed.traverse_(id => cfg.engine.emitRemoved(id))
                 }.as(behavior)

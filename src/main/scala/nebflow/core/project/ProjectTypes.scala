@@ -62,6 +62,11 @@ case class NodeDef(
   mcp: Option[String] = None,
   worktree: Option[String] = None,
   preset: Option[String] = None,
+  /** task 全文只活在内存（水合）与 per-node 文件——落盘 JSON 不再携带（2026-09-06
+    * 存储瘦身批）：活动区 JSON = ≤500 字符摘要 + `taskFile` 指针，task 全文持久化
+    * 于 `<workspace>/.nebflow/tasks/<nodeId>.md`（加载水合回全文，buildInput/重入/
+    * NodeList detail 消费方零改动）；归档区 JSON 直接剥 task（无重入价值）。
+    * taskFile 指针只活在磁盘 JSON，不进内存模型。 */
   task: Option[String] = None,
   /** 创建必写的简短描述（≤200 字符）。默认 None = 存量兼容（旧数据零迁移）。 */
   description: Option[String] = None,
@@ -84,6 +89,16 @@ case class NodeDef(
     * 落地收口在工作区根仓执行 → 必须不配 worktree（沙箱根=workspace，.git 可写）。
     * 旧 flow-map.json 无此键 → withDefaults 解码为 false（零迁移）= 旧行为。 */
   merge: Boolean = false,
+  /** dispatch-notify 回流标志（2026-09-05 批）：true = 节点到达终态（先接线
+    * completion）后触发项目分发器新会话（带原因码的独立信号通道，不占 out 边；
+    * 防循环/预算/去重见 DispatchNotify）。NodeEdit 按需开启，默认关——分发器
+    * 因通知新建的节点不继承本标志（显式开启才通知，保证收敛）。
+    * 旧 flow-map.json 无此键 → withDefaults 解码为 false（零迁移）= 旧行为。 */
+  notifyDispatcher: Boolean = false,
+  /** dispatch-notify 投递记账（at-least-once：tell-then-mark，V8 nebulaDeliveredAt
+    * 同款）：通知触发后落时间戳；空 = 未触发/未标记（重启后由 TtlTick 补投扫描
+    * 重触发）。旧 flow-map.json 无此键 → withDefaults 解码为 None（零迁移）。 */
+  notifySentAt: Option[Long] = None,
   deliveredTo: List[String] = Nil,
   /** V8 (2026-09-03): out=Nebula 投递记账——deliverToNebula 成功 offer 后落时间戳。
     * 与 deliveredTo（in barrier 判定，节点间沿边去重）完全分离，barrier 语义零改动；
@@ -92,8 +107,11 @@ case class NodeDef(
   nebulaDeliveredAt: Option[Long] = None,
   status: String = NodeLifecycle.Wiring,
   result: Option[String] = None,
-  retries: Int = 0,
-  maxRetries: Int = 1,
+  // retries/maxRetries 声明字段已删（trigger-chain-fix §6.4 裁定：落库展示但零
+  // 消费方的假语义不留——接线需 transient/deterministic 失败分类与下游占位结算
+  // 冲突消解，超出最小改动；触发可靠性由 settleSweep + start-aborted/
+  // trigger-starved 信号承担。circe withDefaults 解码忽略未知键，存量
+  // flow-map.json 携带的两键零迁移零破坏）。
   /** 该节点身份累计被 blocked 轮数（防循环计数 §3.1；NodeEdit 重激活不清零）。 */
   blockCount: Int = 0,
   /** 最近一次 blocked 的结构化反馈（§1.4；重激活后保留供历史参照）。 */
@@ -116,17 +134,18 @@ object NodeDef:
 /** NodeList 载荷同构的节点 JSON（NodeList 工具 / REST flow-map / WS 事件共用单一序列化点）。
   * WS 事件（nodeCreated/nodeUpdated/nodeRemoved）与快照永远同构，前端增量渲染可直接对齐
   * 字段集：{id, name, agent, skill, mcp, preset, description, status, in, out, hasWorktree,
-  * worktree, retries, createdAt, completedAt, ttlLeftSec}。
+  * worktree, createdAt, completedAt, ttlLeftSec}。
   *
   * **载荷收敛（2026-09-05 Flow Map 精简批）**：默认载荷只含元数据——**节点结果全文与
   * 摘要都不进默认载荷**（原 result ≤500 字符摘要键移除；结果全文持久化在 per-node 文件
   * `results/<nodeId>.md`，经 REST GET /projects/<n>/flow-map/nodes/<id>/result 或
   * NodeList(detail=<nodeId>) 按需单点取）。条件字段（与 deps/hold/plugins 同构，非命中
   * 不带——载荷字段集对无此特征的节点零漂移）：
-  *   - hasResult: 节点持有结果全文（前端据此发起按需拉取）；
-  *   - taskPreview: 存量节点无 description 时的回退展示（task 首行 ≤80 字符截断）；
-  *   - deps / blockedFeedback / hold / plugins：既有条件字段语义不变。
-  * skill/mcp/preset 为节点配置（skill/mcp 仅存量兼容展示——2b §B.4/H-11① deprecated）。 */
+ *   - hasResult: 节点持有结果全文（前端据此发起按需拉取）；
+ *   - taskPreview: 存量节点无 description 时的回退展示（task 首行 ≤80 字符截断）；
+ *   - deps / blockedFeedback / hold / plugins / merge：既有条件字段语义不变（merge
+ *     仅 merge 节点带 "merge": true——mount-enforce 批 payload 契约，缺失=非 merge）。
+ * skill/mcp/preset 为节点配置（skill/mcp 仅存量兼容展示——2b §B.4/H-11① deprecated）。 */
 object NodePayload:
   /** taskPreview 截断上限（回退展示第一层，存量节点专用）。 */
   val TaskPreviewMaxChars: Int = 80
@@ -147,7 +166,6 @@ object NodePayload:
       "out" -> node.out.asJson,
       "hasWorktree" -> node.worktree.isDefined.asJson,
       "worktree" -> node.worktree.asJson,
-      "retries" -> node.retries.asJson,
       // blocked 反馈重入（设计 §4.1）：blockCount 恒带；blockedFeedback 仅 blocked 态才有结构化体
       "blockCount" -> node.blockCount.asJson,
       "createdAt" -> node.createdAt.asJson,
@@ -185,7 +203,16 @@ object NodePayload:
       // plugins 条件序列化（阶段 2b §B.4 第 3 步 + H-3①用户可见性；与 deps 同构）：
       // 非 Nil 才带——无分配节点的 payload 字段集零变化。
       val pluginFields = if node.plugins.nonEmpty then List("plugins" -> node.plugins.asJson) else Nil
-      Json.obj((baseFields ++ hasResultFields ++ taskPreviewFields ++ depsFields ++ feedbackFields ++ holdFields ++ pluginFields)*)
+      // notifyDispatcher 条件序列化（dispatch-notify 批 2026-09-05；与 hold 同构）：
+      // true 才带——未开启节点的 payload 字段集零变化（NodeList 上分发器可辨哪些
+      // 节点会回流通知）。
+      val notifyFields = if node.notifyDispatcher then List("notifyDispatcher" -> node.notifyDispatcher.asJson) else Nil
+      // merge 条件序列化（mount-enforce 批 20260905 payload 契约；与 hold 条件字段
+      // 同构）：仅 merge 节点带 "merge": true——缺省/缺失 = 非 merge（前端按缺省
+      // 防御，非 merge 节点 payload 字段集零变化）。loop 为前瞻防御字段：引擎现无
+      // loop 节点概念（grep 核实）→ 暂不产出，前端缺省防御同款兼容。
+      val mergeFields = if node.merge then List("merge" -> node.merge.asJson) else Nil
+      Json.obj((baseFields ++ hasResultFields ++ taskPreviewFields ++ depsFields ++ feedbackFields ++ holdFields ++ pluginFields ++ notifyFields ++ mergeFields)*)
 
 /** Flow Map 活动区（§2.6，磁盘 flow-map.json）。 */
 case class FlowMapState(

@@ -2009,15 +2009,21 @@
   font-size: 12px;
 }
 
-/* ── #346 turn-level collapse: summary bar ───────────────────────────────
-   Muted text form (same design language as the #345 thinking label): no
-   background, no glass, no hover fill — chevron + text brighten on hover. */
-.turn-group { margin: 2px 0; }
-.turn-summary {
+/* ── #346 v2 turn-level collapse: persistent stats header ────────────────
+   Decompression model (2026-09-05 23:44 ruling): rows never move — the
+   header lands at the turn top and the stripped pieces (thinking + tool
+   rows) are toggled via .nf-tucked below. Same muted design language as the
+   #345 thinking label: no background, no glass, no hover fill — chevron +
+   text brighten on hover.
+   2026-09-06 fixes (author 08:19 feedback): the summary line WRAPS instead
+   of truncating (long summaries stay fully readable — no ellipsis); the
+   leading ✻ phrase (v1-designed copy) is back as the first segment. */
+.turn-header {
   display: flex;
   align-items: center;
   gap: 4px;
   max-width: 85%;
+  margin: 2px 0;
   padding: 3px 12px;
   font-size: 12px;
   font-weight: 500;
@@ -2025,36 +2031,52 @@
   opacity: 0.9;
   cursor: pointer;
   user-select: none;
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
   transition: opacity 0.15s ease;
   animation: turnSummaryIn 0.15s ease-out;
 }
-.turn-summary:hover { opacity: 1; }
-.turn-summary:focus-visible {
+.turn-header:hover { opacity: 1; }
+.turn-header:focus-visible {
   outline: 2px solid rgb(var(--sapphire) / 0.6);
   outline-offset: 1px;
   border-radius: 4px;
 }
-.turn-summary-text {
-  overflow: hidden;
-  text-overflow: ellipsis;
+.turn-header .nf-chevron { flex-shrink: 0; }
+/* Long summaries wrap to multiple lines (height auto-grows) — the full text
+   is always visible; no text-overflow / line-clamp swallowing (2026-09-06
+   author ruling: 长总结必须完整可见). */
+.turn-header-text {
+  min-width: 0;
+  overflow-wrap: break-word;
 }
-.turn-group[data-turn-state="failed"] .turn-summary { display: none; }
 /* Banner dedupe (2026-09-04): a session renders only its LATEST turn's
-   stats bar; superseded turns' bars keep their DOM (collapse structure, E10
-   search-expand) but stop stacking visually. The marker rides on the GROUP
-   element so closed groups' innerHTML stays byte-stable (#403 invariant,
-   turn-collapse-keep-text 验收 b). */
-.turn-group.turn-banner-superseded > .turn-summary { display: none; }
-.turn-steps { /* rows keep their own spacing; container is plain */ }
+   stats header; superseded turns' headers keep their DOM (E10 search-expand
+   keeps working) but stop stacking visually. The marker rides on the HEADER
+   element — rows are untouched, so closed turns stay byte-stable (#403
+   invariant). */
+.turn-header.turn-banner-superseded { display: none; }
+/* Static tucked state for the stripped middle blocks (thinking + tool rows).
+   max-height 0 + collapsed margins so no gap remains. The expand/collapse
+   toggle is INSTANT (the 批② WAAPI transition layer was removed 2026-09-06,
+   author feedback 「动画太卡顿」) — this class owns the whole state. */
+.row.nf-tucked {
+  max-height: 0 !important;
+  margin-top: 0 !important;
+  margin-bottom: 0 !important;
+  padding-top: 0 !important;
+  padding-bottom: 0 !important;
+  border-top-width: 0 !important;
+  border-bottom-width: 0 !important;
+  opacity: 0;
+  overflow: hidden;
+  pointer-events: none;
+  visibility: hidden;
+}
 @keyframes turnSummaryIn {
   from { opacity: 0; }
   to { opacity: 0.9; }
 }
 @media (prefers-reduced-motion: reduce) {
-  .turn-summary { animation-duration: 0.01s; transition-duration: 0.01s; }
+  .turn-header { animation-duration: 0.01s; transition-duration: 0.01s; }
 }
 
 /* Streaming cursor */
@@ -2516,7 +2538,9 @@
   position: fixed;
   inset: 0;
   z-index: 1000;
-  background: rgba(0, 0, 0, 0.35);
+  /* dialog-unify 2026-09-05: visual ruling — no dimming/blur behind dialogs.
+     Overlay only blocks clicks; the panel carries the glass effect. */
+  background: var(--overlay-bg);
   display: flex;
   align-items: center;
   justify-content: center;
@@ -2652,7 +2676,7 @@
   .ws-pick-target { background: rgba(255,255,255,0.05); border-color: rgba(145,170,210,0.28); }
   .ws-pick-target:hover { box-shadow: 0 0 0 3px rgba(145,170,210,0.10), 0 4px 16px rgba(0,0,0,0.35); }
   .ws-pick-hint { color: rgba(160,185,225,0.55); }
-  .wsp-overlay { background: rgba(0,0,0,0.5); }
+  .wsp-overlay { background: var(--overlay-bg); }
   .wsp-panel { background: rgba(24,28,38,0.92); border-color: rgba(255,255,255,0.08); box-shadow: 0 18px 60px rgba(0,0,0,0.5); }
   .wsp-crumb:hover, .wsp-toolbar button:hover, .wsp-row.wsp-dir:hover { background: rgba(255,255,255,0.06); }
   .wsp-mkdir-row { background: rgba(255,255,255,0.04); }

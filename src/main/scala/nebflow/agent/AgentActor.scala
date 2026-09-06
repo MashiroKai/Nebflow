@@ -548,7 +548,11 @@ object AgentActor extends AgentCore with AgentSession:
     userFacingNode: Boolean = false,
     /** 阶段 2a 沙箱（§A.6）：project 节点/分发器 spawn 置 true——AgentCore 据此
       * 从 projectRoot 派生 ToolContext.sandbox。默认 false=旧行为（双轨豁免面）。 */
-    sandboxEnabled: Boolean = false
+    sandboxEnabled: Boolean = false,
+    /** 显式沙箱根（2026-09-05 21:05 作者裁定——worktree 节点继承项目沙箱）：
+      * NodeEngine 传项目工作区根，沙箱 root 不再收窄到 worktree 目录自身。None =
+      * 沿用 projectRoot 推导（旧行为）。 */
+    sandboxRoot: Option[String] = None
   ): Behavior[AgentCommand] =
     Behaviors.setup { ctx =>
       val effectiveRootSessionId =
@@ -600,7 +604,8 @@ object AgentActor extends AgentCore with AgentSession:
             freezeExempt = freezeExempt,
             isFlowNode = isFlowNode,
             userFacingNode = userFacingNode,
-            sandboxEnabled = sandboxEnabled
+            sandboxEnabled = sandboxEnabled,
+            sandboxRoot = sandboxRoot
           )
         )(using ctx)
       )
@@ -1012,35 +1017,51 @@ object AgentActor extends AgentCore with AgentSession:
           end for
         else
           // Single immediate result (no batch in flight) or non-subagent event.
-          for
-            _ <- sessionBusyIO
-            _ <- receiveVisibility(waiting = false)
-            _ <- touchBarrierSnapshot(resources, state.sessionId, newOutstanding, 0)
-            result <- pipeLlmCall(
-              agentDef,
-              resources,
-              depth,
-              parentRef,
-              state
-                .withMessages(
-                  // Reminder refactor (2026-08-20): always carry a source marker —
-                  // external-event turns are system events, not real user input
-                  // (fromUser = Message.source.isEmpty).
-                  state.messages :+ Message(MessageRole.User, Left(injectionText), source = visSource.orElse(Some("external")))
-                )
-                // #25: apply the barrier decrement. Pre-fix this branch
-                // computed newOutstanding and dropped it — a single-result
-                // batch (spawn 1, receive 1, held empty) left the counter
-                // stuck at 1 forever. Invisible while Completed fired
-                // unconditionally at turn end; once the completion debt is
-                // parked (#25) a stuck counter means the debt is NEVER paid
-                // and the waiting supervisor/bridge hangs.
-                .withOutstandingSubagentResults(newOutstanding)
-                .withNextLoopTurn, // Block 3：外部事件唤醒 = 新 turn
-              None
-            )
-          yield result
-          end for
+          // ═══ 节点完成闸（bgtask-completion-gate 批，作者 2026-09-05 18:29 裁定）═══
+          // ExternalEvent 唤醒轮此前 replyTo=None → 续跑轮 AgentEvent.Completed
+          // 无人接收——节点观察桥（完成闸单咽喉）在最后一个后台任务完成通知后
+          // 永远等不到复检事件，节点悬挂到兜底上限。修正：node- 前缀（Project
+          // 节点，kind=Flow）会话以 AgentRecord.supervisorRef（=NodeEngine 观察
+          // 桥，注册即粘性完成目标）作为本唤醒轮的 replyTo。仅 node- 节点启用：
+          // delegate/subtask（BackoffSupervisor 会把 Completed 当任务终态转投父
+          // 会话=重复通知+停 actor）与 dispatcher 桥（pendingInjected 计数契约，
+          // 意外 Completed 会提前拆除）各有既有 Completed 语义，不并入。
+          val continuationReplyTo: IO[Option[ActorRef[AgentEvent]]] =
+            state.sessionId
+              .filter(sid => state.isFlowNode && sid.startsWith(nebflow.core.project.NodeEngine.SessionPrefix))
+              .fold(IO.pure(Option.empty[ActorRef[AgentEvent]]))(sid =>
+                resources.agentRegistry.get.map(_.get(sid).flatMap(_.supervisorRef)))
+          continuationReplyTo.flatMap { contReplyTo =>
+            for
+              _ <- sessionBusyIO
+              _ <- receiveVisibility(waiting = false)
+              _ <- touchBarrierSnapshot(resources, state.sessionId, newOutstanding, 0)
+              result <- pipeLlmCall(
+                agentDef,
+                resources,
+                depth,
+                parentRef,
+                state
+                  .withMessages(
+                    // Reminder refactor (2026-08-20): always carry a source marker —
+                    // external-event turns are system events, not real user input
+                    // (fromUser = Message.source.isEmpty).
+                    state.messages :+ Message(MessageRole.User, Left(injectionText), source = visSource.orElse(Some("external")))
+                  )
+                  // #25: apply the barrier decrement. Pre-fix this branch
+                  // computed newOutstanding and dropped it — a single-result
+                  // batch (spawn 1, receive 1, held empty) left the counter
+                  // stuck at 1 forever. Invisible while Completed fired
+                  // unconditionally at turn end; once the completion debt is
+                  // parked (#25) a stuck counter means the debt is NEVER paid
+                  // and the waiting supervisor/bridge hangs.
+                  .withOutstandingSubagentResults(newOutstanding)
+                  .withNextLoopTurn, // Block 3：外部事件唤醒 = 新 turn
+                contReplyTo
+              )
+            yield result
+            end for
+          }
         end if
 
       case AgentCommand.UpdateGitBranch(branch) =>

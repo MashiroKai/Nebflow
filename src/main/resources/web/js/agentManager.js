@@ -1,7 +1,11 @@
 // agentManager.js — Agent management as a Canvas tab (VSCode Extensions style).
 // The Agents tab lists compact agent cards. Click opens a Canvas detail tab.
+//
+// 2026-09-06 工具面裁撤批（作者裁定提前执行阶段 2d 子集）：Agent 详情页的
+// tools/skills/flows 三区（可配置 chips + 写回）整体退役——能力配置收敛回
+// 定义文件与 plugin 分配。本页保留：摘要头 + Model preset 选择 + System
+// Prompt 编辑器（WS updateAgentSystemPrompt 仍是唯一写通道）。
 
-import state from './state.js';
 import { key } from './branding.js';
 import { sendWs } from './ws.js';
 import { openTab, getTabPane, hasTab, setActiveTab, isCanvasOpen, openCanvas } from './canvas.js';
@@ -23,46 +27,7 @@ function esc(s) {
 // Icons for the System Prompt render/source toggle (mirror fileViewers.js)
 const CODE_ICON_SVG = '<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="16 18 22 12 16 6"/><polyline points="8 6 2 12 8 18"/></svg>';
 const EYE_ICON_SVG = '<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/></svg>';
-// Lock icon for system-fixed tool chips (inline SVG, no emoji per design rules)
-const LOCK_ICON_SVG = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="11" width="18" height="11" rx="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg>';
-// Tools always injected by the system — fallback until the API ships fixedTools
-// (Issue removed 2026-08-25 ruling: orchestrator-only, ships via API fixedTools for Nebula)
-const FIXED_BASE_TOOLS = ['Read', 'Write', 'Edit', 'Glob', 'Grep', 'Bash'];
-const NEBULA_FIXED_TOOLS = [...FIXED_BASE_TOOLS, 'Issue', 'FlowExecute',
-  'AgentControl', 'TaskUpdate', 'Delegate', 'Pop', 'AskUserQuestion',
-  'TaskCreate', 'Mail', 'Schedule', 'TransferFile'];
-function resolveFixedTools(detail) {
-  if (Array.isArray(detail?.fixedTools)) return detail.fixedTools;
-  if (detail?.name === 'Nebula') return NEBULA_FIXED_TOOLS;
-  if (detail?.category === 'team') return [...FIXED_BASE_TOOLS, 'Mail', 'SubTask', 'FlowExecute'];
-  if (detail?.category === 'flow') return [...FIXED_BASE_TOOLS, 'FlowReport'];
-  return FIXED_BASE_TOOLS;
-}
 
-// ── #438 固定工具三类锁样式 (2026-08-27 用户裁定) ──────────────────────────
-// 固定集按归属拆两组展示：「系统固定」(six base tools - identical on every
-// card) + 「<类别>专属」(this agent class's own injected tools). The owner
-// class comes from the AGENT itself (category / orchestrator name), so the
-// grouping needs NO new backend metadata and stays correct through the
-// pending six-base-tool semantic rework (the contract only changes what lands
-// in which bucket, never the two-bucket frame). Cross-card comparison makes
-// "哪类固定给谁" readable at a glance.
-const FIXED_CLASS_LABEL_KEYS = {
-  flow: 'agent.toolsFixedSpecialty.flow',
-  team: 'agent.toolsFixedSpecialty.team',
-};
-/** @param {{name?: string, category?: string} | null} detail */
-function fixedClassLabelKey(detail) {
-  if (detail?.name === 'Nebula' || !detail?.category) return 'agent.toolsFixedSpecialty.orchestrator';
-  return FIXED_CLASS_LABEL_KEYS[detail.category] || 'agent.toolsFixedSpecialty.orchestrator';
-}
-/** Split a fixed-tool list into [base, specialty], preserving list order. */
-function splitFixedTools(fixedTools) {
-  const baseSet = new Set(FIXED_BASE_TOOLS);
-  const base = fixedTools.filter(t => baseSet.has(t));
-  const specialty = fixedTools.filter(t => !baseSet.has(t));
-  return { base, specialty };
-}
 function shortModel(ref) {
   if (!ref) return '';
   const idx = ref.lastIndexOf('/');
@@ -70,10 +35,11 @@ function shortModel(ref) {
 }
 
 // ── API ────────────────────────────────────────────────────
-// Fetchers + the skills/flows write-back are exported: plugins.js (the
-// agents entry's successor page, 2026-09-04) reuses the exact same data
-// paths instead of duplicating contracts. Single write path for
-// subscriptions stays here.
+// Fetchers are exported: plugins.js (the agents entry's successor page,
+// 2026-09-04) reuses the exact same data paths. The skills/flows write-back
+// (setAgentSkillsFlows) was retired 2026-09-06 with the panel's capability
+// sections — agent.json is no longer written from the panel.
+
 export async function fetchAgents() {
   try {
     const resp = await fetch('/api/agents', { headers: authHeaders() });
@@ -97,35 +63,6 @@ export async function fetchAgentModel(name) {
     if (!resp.ok) return null;
     return await resp.json();
   } catch (e) { return null; }
-}
-
-export async function fetchSkills() {
-  try {
-    const resp = await fetch('/api/skills', { headers: authHeaders() });
-    if (!resp.ok) return [];
-    const data = await resp.json();
-    return data.skills || [];
-  } catch (e) { return []; }
-}
-
-export async function fetchFlows() {
-  try {
-    const resp = await fetch('/api/flows/list', { headers: authHeaders() });
-    if (!resp.ok) return [];
-    const data = await resp.json();
-    return data.flows || [];
-  } catch (e) { return []; }
-}
-
-/** PUT agent skills/flows config (persisted to agent.json). */
-export async function setAgentSkillsFlows(name, field, value) {
-  try {
-    await fetch(`/api/agents/${encodeURIComponent(name)}`, {
-      method: 'PUT',
-      headers: { ...authHeaders(), 'Content-Type': 'application/json' },
-      body: JSON.stringify({ [field]: value }),
-    });
-  } catch (e) { /* non-critical */ }
 }
 
 // ── Sidebar list ───────────────────────────────────────────
@@ -300,8 +237,9 @@ async function populateModelTag(name) {
 
 /** Open a Canvas tab showing the agent detail page.
  *  Exported for plugins.js: the plugins page's subscription-map rows deep-
- *  link here for full per-agent editing (tools / prompt / flows). The detail
- *  tab is per-agent content, NOT the sealed standalone list entry. */
+ *  link here for per-agent editing (summary / preset / system prompt — the
+ *  tools/skills/flows capability sections were retired 2026-09-06). The
+ *  detail tab is per-agent content, NOT the sealed standalone list entry. */
 export async function openAgentDetail(name, pin = false) {
   const tabId = `agent:${name}`;
   openTab(tabId, name, { type: 'agent', pinned: pin });
@@ -339,7 +277,6 @@ function renderAgentDetail(pane, name, detail, model, presetData) {
   const displayName = detail?.displayName || detail?.name || name;
   const description = detail?.description || '';
   const extends_ = detail?.extends || '';
-  const tools = detail?.tools || [];
 
   // System prompt
   const prompt = detail?.systemPrompt || '';
@@ -352,45 +289,6 @@ function renderAgentDetail(pane, name, detail, model, presetData) {
   const showDefaultBadge = resolvedFrom
     ? (resolvedFrom === 'default-preset' || resolvedFrom === 'global')
     : !presetName;
-
-  const allTools = (state.availableTools || []).map(t => typeof t === 'string' ? t : t.name);
-  const isAll = tools.includes('*');
-
-  // Split tools into system-fixed (read-only) and user-configurable (toggleable).
-  const fixedTools = resolveFixedTools(detail);
-  const configurableTools = allTools.filter(tname => !fixedTools.includes(tname));
-
-  // #438: two-bucket display - base six (same on every card) + this class's
-  // own specialty tools, labeled by owner class so cards are distinguishable
-  // at a glance. Specialty may be empty -> single base group only.
-  const { base: fixedBase, specialty: fixedSpecialty } = splitFixedTools(fixedTools);
-  const fixedChip = tname =>
-    `<span class="agent-detail-tool-check fixed" title="${esc(t('agent.toolsFixedTip'))}">${LOCK_ICON_SVG}${esc(tname)}</span>`;
-  const specialtyLabelKey = fixedClassLabelKey(detail);
-  const fixedGroupsHtml = [
-    ...(fixedBase.length ? [{
-      key: 'base',
-      label: t('agent.toolsFixedLabel'),
-      chips: fixedBase.map(fixedChip).join(''),
-    }] : []),
-    ...(fixedSpecialty.length ? [{
-      key: 'specialty',
-      label: t(specialtyLabelKey),
-      chips: fixedSpecialty.map(fixedChip).join(''),
-    }] : []),
-  ];
-  const fixedToolsHtml = fixedGroupsHtml.map(g => `
-    <div class="agent-detail-tools-fixed-label${g.key === 'specialty' ? ' agent-detail-tools-specialty-label' : ''}" data-fixed-group="${g.key}">${esc(g.label)}</div>
-    <div class="agent-detail-tools-grid" data-fixed-group-grid="${g.key}">${g.chips}</div>`).join('');
-
-  const toolsHtml = `${fixedToolsHtml}
-    ${fixedTools.length ? `<div class="agent-detail-tools-config-label">${t('agent.toolsConfigLabel')}</div>` : ''}
-    <div class="agent-detail-tools-grid" id="agent-detail-tools-grid">
-      ${configurableTools.map(tname => {
-        const checked = isAll || tools.includes(tname);
-        return `<span class="agent-detail-tool-check${checked ? ' checked' : ''}" data-tool="${esc(tname)}">${esc(tname)}</span>`;
-      }).join('')}
-    </div>`;
 
   pane.innerHTML = `
     <div class="agent-detail">
@@ -411,23 +309,6 @@ function renderAgentDetail(pane, name, detail, model, presetData) {
         </select>
         <div class="agent-detail-preset-chain" id="agent-detail-preset-chain"></div>
         <div class="agent-detail-model-current" id="agent-detail-model-current"></div>
-      </div>
-
-      <div class="agent-detail-section">
-        <div class="agent-detail-label">${t('agentManager.tools')}</div>
-        ${toolsHtml}
-      </div>
-
-      <div class="agent-detail-section">
-        <div class="agent-detail-label">${t('agentManager.skills')}</div>
-        <div class="agent-detail-sub-hint">已选 skill 的 name+description 注入此 agent 的 system prompt</div>
-        <div class="agent-detail-skills-grid" id="agent-detail-skills-grid"><span class="agent-detail-chips-loading">Loading…</span></div>
-      </div>
-
-      <div class="agent-detail-section">
-        <div class="agent-detail-label">${t('agentManager.flows')}</div>
-        <div class="agent-detail-sub-hint">此 agent 可通过 FlowTrigger(flow=…) 触发的 flow</div>
-        <div class="agent-detail-flows-grid" id="agent-detail-flows-grid"><span class="agent-detail-chips-loading">Loading…</span></div>
       </div>
 
       <div class="agent-detail-section" id="agent-detail-prompt-section">
@@ -485,89 +366,6 @@ function renderAgentDetail(pane, name, detail, model, presetData) {
     saveBtn.textContent = t('agentManager.saved');
     setTimeout(() => { saveBtn.textContent = t('agentManager.save'); }, 1500);
   });
-
-  // Bind tool toggle chips — configurable tools only; fixed tools are never sent.
-  const toolsGrid = pane.querySelector('#agent-detail-tools-grid');
-  if (toolsGrid) {
-    const currentConfig = new Set(
-      isAll ? configurableTools : tools.filter(tname => !fixedTools.includes(tname))
-    );
-    toolsGrid.querySelectorAll('.agent-detail-tool-check').forEach(el => {
-      el.addEventListener('click', () => {
-        const tool = el.dataset.tool;
-        el.classList.toggle('checked');
-        if (el.classList.contains('checked')) {
-          currentConfig.add(tool);
-        } else {
-          currentConfig.delete(tool);
-        }
-        sendWs({ type: 'updateAgentTools', name, tools: [...currentConfig] });
-      });
-    });
-  }
-
-  // Load skills/flows catalogs and render toggle chips (async, non-blocking)
-  loadSkillsFlowsSection(pane, name, detail);
-}
-
-/**
- * Render the Skills and Flows chip grids. Each chip toggles membership;
- * changes are persisted via PUT /api/agents/:name (agent.json skills/flows).
- */
-async function loadSkillsFlowsSection(pane, name, detail) {
-  const [skills, flows] = await Promise.all([fetchSkills(), fetchFlows()]);
-  if (!pane.isConnected) return; // tab closed while fetching
-
-  const currentSkills = new Set(detail?.skills || []);
-  const currentFlows = new Set(detail?.flows || []);
-
-  const skillsGrid = pane.querySelector('#agent-detail-skills-grid');
-  if (skillsGrid) {
-    if (skills.length === 0) {
-      skillsGrid.innerHTML = `<span class="agent-detail-chips-empty">${t('agentManager.noSkills')}</span>`;
-    } else {
-      skillsGrid.innerHTML = '';
-      skills.forEach(s => {
-        const checked = currentSkills.has(s.name);
-        const chip = document.createElement('span');
-        chip.className = `agent-detail-skill-check${checked ? ' checked' : ''}`;
-        chip.dataset.name = s.name;
-        chip.title = s.description || s.name;
-        chip.textContent = s.name;
-        chip.addEventListener('click', () => {
-          chip.classList.toggle('checked');
-          if (chip.classList.contains('checked')) currentSkills.add(s.name);
-          else currentSkills.delete(s.name);
-          setAgentSkillsFlows(name, 'skills', [...currentSkills]);
-        });
-        skillsGrid.appendChild(chip);
-      });
-    }
-  }
-
-  const flowsGrid = pane.querySelector('#agent-detail-flows-grid');
-  if (flowsGrid) {
-    if (flows.length === 0) {
-      flowsGrid.innerHTML = `<span class="agent-detail-chips-empty">${t('agentManager.noFlows')}</span>`;
-    } else {
-      flowsGrid.innerHTML = '';
-      flows.forEach(f => {
-        const checked = currentFlows.has(f.name);
-        const chip = document.createElement('span');
-        chip.className = `agent-detail-flow-check${checked ? ' checked' : ''}`;
-        chip.dataset.name = f.name;
-        chip.title = f.description || f.name;
-        chip.textContent = f.name;
-        chip.addEventListener('click', () => {
-          chip.classList.toggle('checked');
-          if (chip.classList.contains('checked')) currentFlows.add(f.name);
-          else currentFlows.delete(f.name);
-          setAgentSkillsFlows(name, 'flows', [...currentFlows]);
-        });
-        flowsGrid.appendChild(chip);
-      });
-    }
-  }
 }
 
 // ── Public ─────────────────────────────────────────────────

@@ -398,7 +398,7 @@ test('A8–A10 链条目展开、成员→右侧详情、层级浮前、主图�
     return {
       count: ms.length,
       order: ms.map((m) => m.querySelector('.fm-member-name').textContent),
-      ok: ms.every((m) => m.querySelector('.fm-entry-st svg') && m.querySelector('.fm-member-name') && m.querySelector('.fm-member-agent') && m.querySelector('.fm-member-time')),
+      ok: ms.every((m) => m.querySelector('.fm-entry-st svg') && m.querySelector('.fm-member-name') && m.querySelector('.fm-member-meta') && m.querySelector('.fm-member-time')),
     };
   });
   expect.soft(members.count).toBe(3);

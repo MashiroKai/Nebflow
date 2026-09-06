@@ -45,6 +45,8 @@ export default {
   'project.archiveFail': 'Failed to archive "{name}"',
   'flowmap.title': 'Flow Map',
   'flowmap.cardRunning': 'Running…',
+  // Node card agent retirement (node-flowmap-slim): restrained empty state when no preset
+  'flowmap.presetDefault': 'Default preset',
   'flowmap.loading': 'Loading Flow Map…',
   'flowmap.loadFail': 'Failed to load Flow Map',
   'flowmap.empty': 'No nodes yet — project idle',
@@ -107,6 +109,12 @@ export default {
   'flowmap.archive.ttlPurged': '24h TTL cleanup: {n} chain(s) removed from archive',
   'flowmap.chain.archivedToast': 'Chain "{chain}" archived ({n} nodes together)',
   'flowmap.chain.retainedToast': 'Node completed — chain "{chain}" incomplete ({done}/{total}); terminal card retained on map',
+  // Special-node flag badges (badge batch 2026-09-05): head-row capsule labels;
+  // appended at the tail of the flowmap block to minimize merge-conflict surface
+  // with other locales branches in this batch
+  'flowmap.flag.merge': 'Merge',
+  'flowmap.flag.loop': 'Loop',
+  'flowmap.flag.pending': 'Awaiting',
   'agentFile.hint': 'This file is the project workspace agent instructions (AGENTS.md at the workspace root); edit and save it.',
 
   // === Friends & messages (A2A) ===
@@ -161,6 +169,8 @@ export default {
   'contacts.searching': 'Searching…',
   'contacts.notFoundHint': 'The user may not have set a Username yet, or the input may be wrong',
   'contacts.cancelVerify': 'Cancel',
+  'contacts.alreadyFriends': 'Already friends',
+  'contacts.searchError': 'Search failed, please try again',
   'header.memory': 'Memory',
   'header.bgTasks': 'Background tasks',
   'input.placeholder': 'Type a message...',
@@ -181,18 +191,6 @@ export default {
   'modal.create': 'Create',
   'modal.deleteSession': 'Delete Session',
   'modal.deleteConfirm': 'Delete',
-  'modal.agentTitle': 'Edit Agent',
-  'agent.namePlaceholder': 'Agent name',
-  'agent.descPlaceholder': 'What does this agent do?',
-  'agent.systemPrompt': 'System Prompt',
-  'agent.systemPromptPlaceholder': 'System prompt (Markdown)',
-  'agent.save': 'Save',
-  'agent.toolsFixedLabel': 'System (fixed)',
-  'agent.toolsConfigLabel': 'Configurable',
-  'agent.toolsFixedTip': 'Always injected by the system — cannot be removed',
-  'agent.toolsFixedSpecialty.flow': 'Flow (class-owned)',
-  'agent.toolsFixedSpecialty.team': 'Team (class-owned)',
-  'agent.toolsFixedSpecialty.orchestrator': 'Orchestration (Nebula-owned)',
   // === Entity icon semantics + Nebula orchestrator section (20260824_entity-icons-visual-spec §6) ===
   'agents.group.orchestrator': 'Orchestrator',
   'agents.group.standalone': 'Standalone Agents',
@@ -426,8 +424,6 @@ export default {
   'settings.editRawJson': 'Edit Raw JSON',
   'settings.reload': 'Reload',
   'settings.account': 'Account',
-  'settings.accountSignedIn': 'Signed in · click to open your profile',
-  'settings.accountSignIn': 'Not signed in · click to log in',
   'settings.about': 'About',
   'settings.connection': 'Connection',
   'settings.connected': 'Connected',
@@ -535,9 +531,6 @@ export default {
   'delete.folderTitle': 'Delete Folder',
   'delete.folderMsg': 'Delete folder "{name}"?\nSessions inside will be moved to root.',
 
-  // === Agent modal ===
-  'agent.editTitle': 'Edit: {name}',
-
   // === Chat area ===
   'chat.timeout': 'Response timed out',
   'chat.retry': 'Retry',
@@ -613,6 +606,8 @@ export default {
   'chat.thinkingInProgress': 'Thinking…',
   'chat.turnSummaryTools': '{n} tool calls',
   'chat.turnSummaryToolsOne': '1 tool call',
+  'chat.turnHeaderThinking': 'thought for {d}',
+  'chat.turnHeaderFiles': '{n} files',
   'chat.thinking.0': 'Drifting through the cosmos...',
   'chat.thinking.1': 'Gazing into the deep...',
   'chat.thinking.2': 'Sailing the stellar winds...',
@@ -771,11 +766,10 @@ export default {
   'task.repeatWeekly': 'Weekly',
 
   // NebLink
-  'neblink.title': 'Device Link',
-  'neblink.devices': 'Devices',
   'neblink.thisDevice': 'This device',
   'neblink.unknownDevice': 'Unnamed device',
-  'neblink.noPeersHint': 'No other devices found. Configure the device link service on both devices.',
+  'neblink.noPeersHint': 'Sign in to nebflow on both devices.',
+  'neblink.loggedOutHint': 'Not signed in — Device Link is unavailable.',
   'neblink.deviceDescHint': 'e.g. Campus network, has Vivado 2023.2',
   'neblink.save': 'Save',
   'neblink.update': 'Update',
@@ -843,6 +837,8 @@ export default {
   'daemons.stop': 'Stop',
   'daemons.restart': 'Restart',
   'daemons.restartFirst': 'Start first',
+  'daemons.deleteTitle': 'Delete Daemon',
+  'daemons.deleteConfirm': 'Delete daemon "{name}"?',
   // === Explorer (file tree multi-select) ===
   'explorer.selectedCount': '{count} selected',
   'explorer.delete': 'Delete',
@@ -958,7 +954,6 @@ export default {
   'header.newTask': 'New Task',
   'subagents.panelTitle': 'Sub-agents',
   'modal.close': 'Close',
-  'agent.toolsLabel': 'Tools',
   'rules.cancel': 'Cancel',
   'rules.save': 'Save',
   'bypass.confirmEdits': 'Confirm edits',
@@ -968,8 +963,6 @@ export default {
   'agentManager.noAgents': 'No agents configured',
   'agentManager.saved': 'Saved',
   'agentManager.save': 'Save',
-  'agentManager.noSkills': 'No skills installed',
-  'agentManager.noFlows': 'No flows defined',
   // === Plugins page (2026-09-04 redesign: unified plugin system + one switch per plugin, en/zh paired) ===
   'plugins.list': 'Plugins',
   'plugins.listHint': 'Unified plugin system: skills and MCP enable per plugin — the switch is catalog visibility',
@@ -1032,9 +1025,6 @@ export default {
   'flowViewers.inbox': 'Inbox',
   'flowViewers.viewTeamDef': 'View team definition',
   'flowViewers.removeFromQueue': 'Remove from queue',
-  'agentManager.tools': 'Tools',
-  'agentManager.skills': 'Skills',
-  'agentManager.flows': 'Flows',
   'agentManager.systemPrompt': 'System Prompt',
   'agentManager.viewSource': 'View source',
   'agentManager.viewRendered': 'View rendered',

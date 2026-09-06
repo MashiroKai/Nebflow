@@ -243,6 +243,12 @@ object NodeTools:
         )
       )
 
+/** notifyDispatcher 参数载体（dispatch-notify 批 2026-09-05）：call() 解析的
+  * （flag, provided）经 implicit 从 call() 词法作用域自动填入 createNode/proceed/
+  * editNode——三者的既有调用点零文本改动（在飞批 trigger-chain-fix 占用了这些
+  * 调用点行，碰撞规避；implicit 参数解析为 Scala 标准机制，非 hack）。 */
+final case class NodeEditNotify(flag: Boolean, provided: Boolean)
+
 object NodeEditTool extends Tool:
   val name = "NodeEdit"
 
@@ -263,18 +269,18 @@ object NodeEditTool extends Tool:
 - **plugins** (optional, replace-on-provide like deps): plugin package name(s) allocated to this node (phase 2b) — a plugin = skills + mcp.json (either alone is valid). Allocation injects the plugin's skills full-text into the node's first message, starts its MCP servers (tools named mcp__plugin_<plugin>_<server>__<tool>), and grants its declared builtin tools. Names must exist in the Plugin Catalog (see your prompt) AND be approved — unapproved (untrusted) allocation is refused (trust gate default-deny). This is THE capability mechanism: there is no per-node agent choice (execution runs the general agent; differentiate nodes with plugins).
 - **worktree** (optional, boolean, create-time only): true = an isolated git worktree is created for this node at <workspace>/.nebflow/worktrees/<derived-name> (derived from the node name, sanitized; same-name branch; baseline = main HEAD at creation) — creation happens immediately in this call (fail-fast: a failure rejects the whole NodeEdit). false / omitted = run directly in the workspace. On edits the parameter is refused (create-time binding only; existing nodes keep theirs).
 - **preset** (optional): node configuration preset.
-- **maxRetries** (optional, default 1).
 - **hold** (optional, default false): human-gate flag (human-in-the-loop) — when this node completes it does NOT deliver downstream and does NOT settle deps: status becomes HELD (result saved in full; never expires; stays on the main map), the full result is announced to Nebula, and the chain waits for NodeEdit(release=true). Requires out to be a NODE id — out="Nebula" is refused (Nebula-bound results deliver directly, nothing to hold). Settable/withdrawable while wiring/pending/running (a running node may be gated: the switch takes effect at completion); refused on completed/terminal/held.
-- **release** (optional, default false): release a HELD node (the ONLY way out of held) — a STANDALONE action: combining it with task/description/in/deps/out/abandon/hold/worktree/preset/maxRetries refuses the whole call (no half-release-half-rewire; release first, then issue a separate NodeEdit to rewire). held → completed: the downstream delivery chain runs (deliverOut → deps settlement); display TTL restarts from release; completedAt keeps the held moment (when the work actually finished).
+- **release** (optional, default false): release a HELD node (the ONLY way out of held) — a STANDALONE action: combining it with task/description/in/deps/out/abandon/hold/worktree/preset refuses the whole call (no half-release-half-rewire; release first, then issue a separate NodeEdit to rewire). held → completed: the downstream delivery chain runs (deliverOut → deps settlement); display TTL restarts from release; completedAt keeps the held moment (when the work actually finished).
 - **note** (optional, ONLY together with release=true): user supplementary text — atomically appended to the out target node's task ("== 用户补充（放行时注入） ==" section) so the downstream input carries it. Any other combination refuses.
 - **abandon** (optional, default false): abandon a terminal (blocked/completed/failed/cancelled), wiring/pending, HELD, or a STALE RUNNING node whose session is dead (no live execution fiber, e.g. after an instance restart) → status=cancelled + display TTL (audit-logged). The dispatcher's give-up action for blocked nodes, the topology-cleanup exit for retired wiring/pending nodes, the clean-up exit for abandoned hold chains (held has no live session — no interruption side effects), and the reaping exit for dead-session running nodes. A LIVE running node is refused (mis-kill protection) — use NodeCancel for running nodes instead.
+- **notifyDispatcher** (optional, default false): dispatch-notify backflow flag — when this node reaches a terminal state (currently completion; failed/blocked reserved), the project dispatcher gets a new session triggered with the node's result reference (name/terminal/reason code; full result read via NodeList detail), so it can continue planning (extend topology / build merge-node sink / conclude / no-op). Independent signal channel — does NOT occupy the out edge. Settable/withdrawable while wiring/pending/running (refused on terminal/held). Nodes created BY the dispatcher default to false (must be explicitly enabled — convergence guarantee).
 
 ## Retired parameters (rejected — capability model is plugins, not agents)
 - **agent**: NOT accepted. Every node executes the general agent; professional capability comes from plugins. Passing "agent" is rejected (point it at plugins).
 - **skill** / **mcp**: NOT accepted (superseded by plugins in phase 2b). Existing flow-map nodes keep their old values for display only.
 
 ## Semantics
-- nodename missing → create (description required; 'out' is mandatory — a downstream node id or "Nebula"; plus an input side: task (entry semantics) or in. Dangling nodes and out-only relay nodes are rejected — EMPTY_NODE_CONNECTION).
+- nodename missing → create (description required; 'out' is mandatory — a downstream node id or "Nebula"; plus an input side: task (entry semantics) or in. Dangling nodes and out-only relay nodes are rejected — EMPTY_NODE_CONNECTION. merge=true additionally REQUIRES 'in' with ≥1 existing upstream id — a zero-upstream merge can never fire and is rejected (NODE_MERGE_REQUIRES_UPSTREAM): create the upstream node(s) first, then this merge node with in=<ids>).
 - nodename exists → edit: in appends barrier inputs; deps replaces the whole dependency list (when provided); out sets/replaces (rewire); description replaces (when provided). Disconnecting (out=null on a node that has an out edge) is rejected — rewire to a new target instead.
 - Connection policy (20260903 收紧): creation requires BOTH an out edge (node id or "Nebula") AND an input side (task or in — task counts as the in-side connection, so entry nodes (task + out, no in) are legal and run on create; in and task may coexist). Missing out, or out with neither task nor in → EMPTY_NODE_CONNECTION. Disconnecting to a no-out state on edit → EMPTY_NODE_CONNECTION (rewire, don't disconnect). Legacy dangling nodes (out=null created before this policy) stay editable: edit their task/description/in/deps freely, rewire their out to a target and the retained result auto-delivers.
 - Blocked node edit: changing task/description (or in/out) on a blocked node reactivates it — status returns to wiring/pending, deliveredTo cleared, blockCount preserved (round history kept), completed upstream results re-delivered, then the node reruns with the new input. No-op if nothing actually changed.
@@ -308,9 +314,9 @@ object NodeEditTool extends Tool:
         ).asJson, "description" -> "Plugin package name(s) allocated to this node (§B.4) — THE capability mechanism (no per-node agent): skills injected into the first message + plugin MCP servers + builtin tool grants. Replace-on-provide (like deps). Names must exist in the Plugin Catalog AND be approved (trust gate default-deny) — unapproved allocation is refused".asJson),
         "worktree" -> Json.obj("type" -> "boolean".asJson, "description" -> "Create-time only: true = isolated git worktree auto-created at .nebflow/worktrees/<derived-from-node-name> (same-name branch, baseline = main HEAD; failure rejects the NodeEdit). false/omitted = workspace direct-run. Refused on edits".asJson),
         "preset" -> Json.obj("type" -> "string".asJson),
-        "maxRetries" -> Json.obj("type" -> "integer".asJson),
         "hold" -> Json.obj("type" -> "boolean".asJson, "description" -> "Human-gate: node completes to HELD (result saved+announced to Nebula, no downstream delivery) awaiting release=true. Requires a node-id out (not \"Nebula\"). wiring/pending/running only".asJson),
-        "merge" -> Json.obj("type" -> "boolean".asJson, "description" -> "Merge/collection node (batch landing sink, create-only): triggers only when ALL upstreams completed (in-barrier); an upstream failure converts this node to blocked (category=upstream-incomplete) instead of the collect placeholder-start. Must NOT carry 'worktree' — a merge node lands on the workspace root repo (sandbox root = workspace, .git writable); task should embed the upstream branch/worktree list + landing command set".asJson),
+        "merge" -> Json.obj("type" -> "boolean".asJson, "description" -> "Merge/collection node (batch landing sink, create-only): triggers only when ALL upstreams completed (in-barrier); an upstream failure converts this node to blocked (category=upstream-incomplete) instead of the collect placeholder-start. Must NOT carry 'worktree' — a merge node lands on the workspace root repo (sandbox root = workspace, .git writable); task should embed the upstream branch/worktree list + landing command set. REQUIRES 'in' (≥1 existing upstream id) on create — zero-upstream merge is rejected (NODE_MERGE_REQUIRES_UPSTREAM): create the upstreams first, then this node with in=<ids>".asJson),
+        "notifyDispatcher" -> Json.obj("type" -> "boolean".asJson, "description" -> "dispatch-notify backflow: on terminal state (completion wired) trigger a dispatcher session with this node's result reference (independent signal channel, no out-edge cost). Settable/withdrawable while wiring/pending/running".asJson),
         "release" -> Json.obj("type" -> "boolean".asJson, "description" -> "Release a HELD node → completed, delivery chain runs. STANDALONE action — any other edit parameter in the same call refuses (release first, then rewire separately)".asJson),
         "note" -> Json.obj("type" -> "string".asJson, "description" -> "User supplementary text, ONLY with release=true — appended to the out target's task (carried into downstream input)".asJson),
         "abandon" -> Json.obj("type" -> "boolean".asJson, "description" -> "Abandon a TERMINAL (blocked/completed/failed/cancelled), wiring/pending, HELD, or dead-session running node → cancelled + display TTL".asJson)
@@ -333,7 +339,6 @@ object NodeEditTool extends Tool:
     val description = input("description").flatMap(_.asString)
     val worktree = input("worktree")
     val preset = input("preset").flatMap(_.asString)
-    val maxRetries = input("maxRetries").flatMap(_.asNumber).flatMap(_.toInt)
     val abandon = input("abandon").flatMap(_.asBoolean).getOrElse(false)
     // hold 三参（20260903 暂停/人在回路设计 §2.5）：Option 保留「显式传入」信号——
     // hold=false 显式传入 = 撤销闸点（缺省 = 不改动）；release/note 布尔/文本语义。
@@ -345,6 +350,11 @@ object NodeEditTool extends Tool:
     val mergeProvided = input("merge").flatMap(_.asBoolean).isDefined
     val release = input("release").flatMap(_.asBoolean).getOrElse(false)
     val note = input("note").flatMap(_.asString)
+    // notifyDispatcher（dispatch-notify 批 2026-09-05）：Option 保留「显式传入」信号
+    // （缺省 = 不改动，同 hold 三参形态）。载体经 implicit 传入 createNode/proceed/
+    // editNode——三者的既有调用点零改动（碰撞规避：在飞批占用了这些调用点行）。
+    val notifyProvided = input("notifyDispatcher").flatMap(_.asBoolean)
+    implicit val notifyFlag: NodeEditNotify = NodeEditNotify(notifyProvided.getOrElse(false), notifyProvided.isDefined)
     val inJson = input("in")
     val depsJson = input("deps")
     val outJson = input("out")
@@ -411,7 +421,7 @@ object NodeEditTool extends Tool:
               case Right(rt) =>
                 rt.store.snapshot.flatMap { s =>
                   s.nodes.values.find(_.name == nodename) match
-                    case Some(existing) => editNode(rt, existing, task, description, abandon, holdProvided, hold, release, note, worktree.flatMap(_.asBoolean), preset, maxRetries, pluginsOpt, inJson, depsJson, outJson, ctx)
+                    case Some(existing) => editNode(rt, existing, task, description, abandon, holdProvided, hold, release, note, worktree.flatMap(_.asBoolean), preset, pluginsOpt, inJson, depsJson, outJson, ctx)
                     case None =>
                       // 归档节点编辑兜底（fix b「已存在边+归档上游不补投递」修复 20260903）：
                       // 活动区按名未命中 → 归档区按名兜底。归档节点只支持 out 改接（悬空
@@ -426,10 +436,10 @@ object NodeEditTool extends Tool:
                           case Some(archived) =>
                             val forbidden =
                               task.isDefined || description.isDefined || worktree.isDefined ||
-                                preset.isDefined || maxRetries.isDefined ||
+                                preset.isDefined ||
                                 abandon || inJson.isDefined || depsJson.isDefined ||
                                 holdProvided.isDefined || release || note.isDefined || pluginsProvided ||
-                                mergeProvided
+                                mergeProvided || notifyProvided.isDefined
                             if abandon then
                               IO.pure(Left(ToolError(s"Node '$nodename' is archived (display TTL expired) — abandon is not applicable; it already ages out of views on its own.")))
                             else if mergeProvided then
@@ -444,10 +454,10 @@ object NodeEditTool extends Tool:
                             else if forbidden then
                               IO.pure(Left(ToolError(
                                 s"Node '$nodename' is archived — only 'out' rewiring is supported (result re-delivery); task/description/in/deps/config/hold edits are not.")))
-                            else editNode(rt, archived, task, description, abandon, holdProvided, hold, release, note, worktree.flatMap(_.asBoolean), preset, maxRetries, pluginsOpt, inJson, depsJson, outJson, ctx)
+                            else editNode(rt, archived, task, description, abandon, holdProvided, hold, release, note, worktree.flatMap(_.asBoolean), preset, pluginsOpt, inJson, depsJson, outJson, ctx)
                           case None =>
                             if abandon then IO.pure(Left(ToolError(s"Node '$nodename' not found — abandon requires an existing node")))
-                            else createNode(rt, nodename, task, description, worktree.flatMap(_.asBoolean), preset, maxRetries, pluginsForCall, inJson, depsJson, outJson, hold, merge)
+                            else createNode(rt, nodename, task, description, worktree.flatMap(_.asBoolean), preset, pluginsForCall, inJson, depsJson, outJson, hold, merge)
                       }
                   }
               }
@@ -503,14 +513,13 @@ object NodeEditTool extends Tool:
     description: Option[String],
     worktree: Option[Boolean],
     preset: Option[String],
-    maxRetries: Option[Int],
     plugins: List[String],
     inJson: Option[Json],
     depsJson: Option[Json],
     outJson: Option[Json],
     hold: Boolean = false,
     merge: Boolean = false
-  ): IO[Either[ToolError, String]] =
+  )(implicit notify: NodeEditNotify): IO[Either[ToolError, String]] =
     // 执行统一 general（2026-09-05 插件架构对齐）：新建节点不再接受 agent 参数，
     // 专业能力由 plugins 差异化；NodeDef.agent 字段保留（存量兼容读 + spawn 读取）。
     val agentName = "general"
@@ -554,6 +563,19 @@ object NodeEditTool extends Tool:
               IO.pure(Left(ToolError(
                 "merge=true (batch landing sink) must NOT carry 'worktree' — a merge node lands on the workspace " +
                   "root repo; its sandbox root must be the workspace itself so .git is writable. Drop 'worktree'.")))
+            // merge 校验②（mount-enforce 批 20260905，作者裁定「节点不允许空挂载」）：
+            // merge=true 必须 ≥1 上游（in 非空）——合并节点靠上游 completed 投递清
+            // in-barrier 触发（deliverOut→startNode），零上游=可触发点永不到达=空挂
+            // pending 永不生效（实证 n-371cf932：merge=true、in=[] 悬挂 10+min，靠
+            // 人工 abandon+重建救援）。合法创建顺序：先建上游节点，再建合并节点并
+            // in=<上游 id>（in 声明自动改接各上游 out → 本节点）。
+            else if merge && ins.isEmpty then
+              IO.pure(Left(ToolError(
+                "merge=true (batch landing sink) requires at least one upstream: declare 'in' with existing upstream node id(s). " +
+                  "A merge node triggers only when its in-barrier clears via upstream completed delivery — with zero upstreams " +
+                  "it can never fire (empty mount = pending forever). Create the upstream node(s) first, then create this merge " +
+                  "node with in=<upstream-id(s)> (the in declaration rewires each upstream's out to this node). " +
+                  "(NODE_MERGE_REQUIRES_UPSTREAM)")))
             else
               // 1. agent 存在性（新建恒 "general"——库缺 general = 环境残缺，fail-fast）
               EntityLoader.loadAgent(agentName).flatMap {
@@ -578,9 +600,9 @@ object NodeEditTool extends Tool:
                         IO.blocking(createWorktreeFor(ws, nodename)).flatMap {
                           case Left(err) => IO.pure(Left(ToolError(
                             s"worktree=true auto-creation failed for node '$nodename' — node NOT created (fail-fast). git said: $err")))
-                          case Right(bare) => proceed(rt, nodename, agentName, task, description, Some(bare), preset, maxRetries, plugins, ins, deps, out, hold, merge)
+                          case Right(bare) => proceed(rt, nodename, agentName, task, description, Some(bare), preset, plugins, ins, deps, out, hold, merge)
                         }
-                    case _ => proceed(rt, nodename, agentName, task, description, None, preset, maxRetries, plugins, ins, deps, out, hold, merge)
+                    case _ => proceed(rt, nodename, agentName, task, description, None, preset, plugins, ins, deps, out, hold, merge)
               }
 
   private def proceed(
@@ -591,14 +613,13 @@ object NodeEditTool extends Tool:
     description: Option[String],
     worktree: Option[String],
     preset: Option[String],
-    maxRetries: Option[Int],
     plugins: List[String],
     ins: List[String],
     deps: List[String],
     out: Option[String],
     hold: Boolean = false,
     merge: Boolean = false
-  ): IO[Either[ToolError, String]] =
+  )(implicit notify: NodeEditNotify): IO[Either[ToolError, String]] =
     val nodeId = s"n-${java.util.UUID.randomUUID().toString.take(8)}"
     for
       // 引用存在性 + 环检测（in 上游 → 本节点；deps 上游 → 本节点；本节点 → out 目标）。
@@ -651,10 +672,11 @@ object NodeEditTool extends Tool:
             deps = deps,
             hold = hold,
             merge = merge,
+            // dispatch-notify 回流标志（创建期按需开启；缺省 false=分发器新建节点
+            // 不继承——收敛保证见 DispatchNotify）
+            notifyDispatcher = notify.flag,
             out = None,
             status = if task.isDefined && ins.isEmpty then NodeLifecycle.Pending else NodeLifecycle.Wiring,
-            retries = 0,
-            maxRetries = maxRetries.getOrElse(1),
             createdAt = now,
             plugins = plugins
           )
@@ -694,13 +716,20 @@ object NodeEditTool extends Tool:
                 // 运行中上游不投递（barrier 等待语义——completeNode 时 deliverOut 自然投）。
                 // 后台化（收口③）：deliverOutTo 内 startNode 同步等下游节点终态，
                 // 直接调用会阻塞 NodeEdit 工具 fiber（见 runDetached 注释）。
+                // merge 分流（mount-enforce 批）：合并节点创建时 in 引用已 failed 的
+                // 上游（创建顺序翻转后的合法形态）——failed 错误文本≠产物，不作输入
+                // 投递，走 MergeNodePolicy 转 blocked 可见终态不悬挂（与 deliverFailed
+                // 运行期路径同语义单点 mergeBlockedByUpstreamFailure）；非 merge 下游
+                // 的 failed 错误投递语义保持不变。
                 NodeTools.runDetached(rt, s"deliver retained upstream results -> $nodeId")(
                   ins.traverse_ { upId =>
                     rt.store.findNode(upId).flatMap {
                       // R1（blocked 反馈重入设计 §6）：blocked 是终态且 result=反馈渲染串，
                       // 但反馈串不是可投结果——D1 显式排除 blocked（failed 错误投递语义保持不变）
                       case Some(up) if up.result.isDefined && up.status != NodeLifecycle.Blocked && NodeLifecycle.Terminal.contains(up.status) =>
-                        rt.engine.deliverOutTo(up, nodeId, up.result.get)
+                        if s.nodes(nodeId).merge && up.status == NodeLifecycle.Failed then
+                          rt.engine.mergeBlockedByUpstreamFailure(s.nodes(nodeId), up, up.result.get)
+                        else rt.engine.deliverOutTo(up, nodeId, up.result.get)
                       case _ => IO.unit
                     }
                   }
@@ -809,13 +838,12 @@ object NodeEditTool extends Tool:
     note: Option[String],
     worktree: Option[Boolean],
     preset: Option[String],
-    maxRetries: Option[Int],
     pluginsOpt: Option[List[String]],
     inJson: Option[Json],
     depsJson: Option[Json],
     outJson: Option[Json],
     ctx: ToolContext
-  ): IO[Either[ToolError, String]] =
+  )(implicit notify: NodeEditNotify): IO[Either[ToolError, String]] =
     // ── 动作分支（20260903 暂停/人在回路设计 §2.5 校验③④ + 决策④）──
     // release 与 abandon 互斥；note 仅与 release 同用；release 是独立动作，
     // 与任何其他编辑参数同传 → 整调用拒绝（防半放行半改线；改线需求 =
@@ -836,8 +864,9 @@ object NodeEditTool extends Tool:
           task.isDefined -> "'task'", description.isDefined -> "'description'",
           inJson.isDefined -> "'in'", depsJson.isDefined -> "'deps'",
           outJson.isDefined -> "'out'", worktree.isDefined -> "'worktree'",
-          preset.isDefined -> "'preset'", maxRetries.isDefined -> "'maxRetries'",
-          hold -> "'hold'", pluginsOpt.isDefined -> "'plugins'"
+          preset.isDefined -> "'preset'",
+          hold -> "'hold'", pluginsOpt.isDefined -> "'plugins'",
+          notify.provided -> "'notifyDispatcher'"
         ).collect { case (true, name) => name }
       if conflicts.nonEmpty then
         IO.pure(Left(ToolError(
@@ -963,6 +992,11 @@ object NodeEditTool extends Tool:
                             (node.status == NodeLifecycle.Wiring || node.status == NodeLifecycle.Pending || node.status == NodeLifecycle.Running)
                           val holdOutOk = !hold ||
                             finalOut.exists(t => t != "Nebula")
+                          // notifyDispatcher 校验（dispatch-notify 批）：设置/撤销域同 hold
+                          // ——wiring/pending/running（完成时行为开关，不属输入冻结域）；
+                          // 终态/held 拒（held 出口=release，blocked 出口=重激活）。
+                          val notifyStatusOk = !notify.provided ||
+                            (node.status == NodeLifecycle.Wiring || node.status == NodeLifecycle.Pending || node.status == NodeLifecycle.Running)
                           val earlyReject: Option[ToolError] =
                             validateDescription(description, creating = false).orElse(
                             if finalIn.isEmpty && finalDeps.isEmpty && finalOut.isEmpty then
@@ -976,6 +1010,9 @@ object NodeEditTool extends Tool:
                             else if !holdOutOk then
                               Some(ToolError(
                                 "hold=true requires a node-target out edge — out=\"Nebula\" nodes deliver to Nebula directly, nothing to hold."))
+                            else if !notifyStatusOk then
+                              Some(ToolError(
+                                s"notifyDispatcher can only be set or withdrawn before completion (wiring/pending/running) — node '${node.name}' is ${node.status} (result already delivered or held). Use release/abandon for held nodes; re-activation is the exit for blocked."))
                             else None
                             )
                           // 前置拒绝集统一闸（description 校验 + 零连接 + deps 校验 + hold 校验）
@@ -1074,6 +1111,18 @@ object NodeEditTool extends Tool:
                                             s.nodes.get(node.id) match
                                               case Some(fresh) if fresh.status == NodeLifecycle.Wiring || fresh.status == NodeLifecycle.Pending || fresh.status == NodeLifecycle.Running =>
                                                 s.copy(nodes = s.nodes.updated(node.id, fresh.copy(hold = hold)))
+                                              case _ => s
+                                          }.void
+                                        else IO.unit
+                                      // notifyDispatcher 设置/撤销写回（dispatch-notify 批）：
+                                      // 校验已在 earlyReject 拦截（终态/held → 拒）；running 合法
+                                      // （完成时行为开关）。事务内现读 fresh（R2 纪律）+ 状态双重保险。
+                                      _ <-
+                                        if notify.provided then
+                                          rt.store.mutate { s =>
+                                            s.nodes.get(node.id) match
+                                              case Some(fresh) if fresh.status == NodeLifecycle.Wiring || fresh.status == NodeLifecycle.Pending || fresh.status == NodeLifecycle.Running =>
+                                                s.copy(nodes = s.nodes.updated(node.id, fresh.copy(notifyDispatcher = notify.flag)))
                                               case _ => s
                                           }.void
                                         else IO.unit
@@ -1205,6 +1254,7 @@ object NodeEditTool extends Tool:
                                       s"Node '${node.name}' updated" +
                                         (if didReactivate then s" — reactivated from blocked (round ${node.blockCount} preserved)" else "") +
                                         (if holdProvided.isDefined then s" — hold → $hold" else "") +
+                                        (if notify.provided then s" — notifyDispatcher → ${notify.flag}" else "") +
                                         (newOut.map(t => s" — out → $t").getOrElse("") + (if adds.nonEmpty then s" — in += ${adds.mkString(",")}" else "")) +
                                         (if depsProvided && depsChanged then s" — deps → [${newDeps.mkString(",")}]" else "")
                                     )
@@ -1228,7 +1278,7 @@ object NodeListTool extends Tool:
 - **detail** (optional): a node id — returns that ONE node's full record instead of the whole map: metadata + task + result FULL TEXT (payloads carry no result text; this is the on-demand read channel, same source as the REST result endpoint).
 
 ## Returns
-Default: {nodes: [{id, name, agent, skill, mcp, preset, description, status, in, out, hasWorktree, worktree, hasResult (conditional), taskPreview (legacy no-description fallback), retries, createdAt, completedAt, ttlLeftSec}], worktrees: [...], meta: {project, updatedAt}} — metadata only, NO result text (Flow Map slim-payload contract: results live in per-node files, read on demand).
+Default: {nodes: [{id, name, agent, skill, mcp, preset, description, status, in, out, hasWorktree, worktree, hasResult (conditional), taskPreview (legacy no-description fallback), createdAt, completedAt, ttlLeftSec}], worktrees: [...], meta: {project, updatedAt}} — metadata only, NO result text (Flow Map slim-payload contract: results live in per-node files, read on demand).
 With detail=<nodeId>: the same node shape + task + result (full text)."""
   val inputSchema = JsonObject.fromIterable(
     List(
@@ -1254,8 +1304,10 @@ With detail=<nodeId>: the same node shape + task + result (full text)."""
       case Right(rt) =>
         // detail 通道（2026-09-05 载荷收敛配套）：指定 nodeId → 单节点全记录
         // （元数据 + task + 结果全文）。数据源与 REST result 端点同源
-        // （findNode 活动区优先归档兜底；内存 result = 加载时从 per-node 文件
-        // 水合的全文）。payload 键集 = NodeList 同构字段 + task + result。
+        // （findNode 活动区优先归档兜底；内存 result/task = 加载时从 per-node
+        // 文件 results/<id>.md / tasks/<id>.md 水合的全文——落盘 JSON 只存摘要
+        // +指针，detail 聚合即「per-node 文件内容」，单源等价，2026-09-06 存储
+        // 瘦身批）。payload 键集 = NodeList 同构字段 + task + result。
         input("detail").flatMap(_.asString).map(_.trim).filter(_.nonEmpty) match
           case Some(nodeId) =>
             rt.store.findNode(nodeId).map {
@@ -1320,6 +1372,73 @@ object NodeCancelTool extends Tool:
               }
           }
     }
+
+/** NodeMessage（20260905 机制批，作者裁定六条语义）——任务分发器向已分发节点
+  * 注入补充消息。仅分发器工具面（AgentCore.DispatcherFixedTools 第八件）；
+  * Nebula/general 不加。六条语义（engine 单点 sendNodeMessage）：
+  * ① 签名 (nodeId, message)：目标=本项目 Flow Map 节点；nodeId 不存在→
+  *   NODE_NOT_FOUND；message 空白→NODE_MESSAGE_EMPTY。
+  * ② running：下一 turn 边界注入（复用 immediate 注入机制），[NODE-MESSAGE]
+  *   前缀（来源=分发器 NodeMessage+节点名+时间戳）；会话已终结→记录追加
+  *   「注入未达」（留痕不丢）。
+  * ③ wiring/pending/held（非终态无活动会话）：持久追加节点任务记录（
+  *   == 分发器补充（NodeMessage <时间戳>） == 分节），启动时随任务读到。
+  * ④ 终态（completed/failed/cancelled/blocked）拒绝 NODE_TERMINAL_NO_MESSAGE
+  *   ——应新建节点而非倒改。
+  * ⑤ 留痕：每条消息追加 FlowMapEventLog（node-message）；Flow Map 默认载荷
+  *   零膨胀。
+  * ⑥ 工具面：仅分发器（本文件注册 + AgentCore 分发器静态集）。 */
+object NodeMessageTool extends Tool:
+  val name = "NodeMessage"
+
+  val description =
+    """Send a supplementary message to an already-dispatched node in a project's Flow Map — the task dispatcher's course-correction tool.
+## When to Use
+- After dispatching: new constraints, corrections, or extra context that must reach a node WITHOUT re-dispatching or editing topology. Routing is automatic by node status.
+- **Dispatcher-only tool** (mechanism-fixed). Do not use for terminal nodes — see below.
+## Parameters
+- **project** (required): project name.
+- **nodeId** (required): target node id (from NodeList).
+- **message** (required, non-empty): the supplementary instruction text.
+## Routing semantics (by target node status)
+- **running**: the message is injected into the node's live session at the NEXT turn boundary (reuses the immediate-input mechanism — it does NOT interrupt the current turn). The injected text carries a recognizable `[NODE-MESSAGE]` header (source: dispatcher NodeMessage + node name + timestamp), clearly distinct from the node's original task and from result deliveries. Race fallback: if the session ends before delivery, the message is recorded on the node's task annotated「注入未达」— the trace is never lost.
+- **wiring / pending / held** (non-terminal, no live session): the message is persistently appended to the node's task record as a `== 分发器补充（NodeMessage <timestamp>） ==` section — the node reads it as part of its task when it starts.
+- **terminal (completed / failed / cancelled / blocked)**: REFUSED (NODE_TERMINAL_NO_MESSAGE). A finished node is never retro-edited — create a new node instead (NodeEdit), even for blocked (blocked exit = NodeEdit reactivation or abandon, not messages).
+## Errors
+- `NODE_NOT_FOUND` — nodeId does not exist in the project (active or archived).
+- `NODE_MESSAGE_EMPTY` — message is blank after trim.
+- `NODE_TERMINAL_NO_MESSAGE` — target is terminal; create a new node instead.
+## Traceability
+Every message (injected / appended / not-delivered) is appended to the project's flow-map-events.jsonl audit log (type=node-message). Flow Map default payloads stay unchanged (no extra keys — the payload-slimming contract holds)."""
+  val inputSchema = JsonObject.fromIterable(
+    List(
+      "type" -> "object".asJson,
+      "properties" -> Json.obj(
+        "project" -> Json.obj("type" -> "string".asJson, "description" -> "Project name (required)".asJson),
+        "nodeId" -> Json.obj("type" -> "string".asJson, "description" -> "Target node id (from NodeList)".asJson),
+        "message" -> Json.obj("type" -> "string".asJson, "description" -> "Supplementary instruction text (non-empty; injected at turn boundary if running, appended to task if not started)".asJson)
+      ),
+      "required" -> Json.arr("project".asJson, "nodeId".asJson, "message".asJson)
+    )
+  )
+
+  def summarize(input: JsonObject): String =
+    val id = input("nodeId").flatMap(_.asString).getOrElse("?")
+    s"NodeMessage($id)"
+
+  def summarizeResult(input: JsonObject, result: String): String = result
+
+  def call(input: JsonObject, ctx: ToolContext): IO[Either[ToolError, String]] =
+    val nodeId = input("nodeId").flatMap(_.asString).getOrElse("")
+    val message = input("message").flatMap(_.asString).getOrElse("")
+    if nodeId.trim.isEmpty then IO.pure(Left(ToolError("Missing 'nodeId' — target node id is required (from NodeList)")))
+    else if message.trim.isEmpty then
+      IO.pure(Left(ToolError("'message' must be non-empty (trim) — nothing to inject (NODE_MESSAGE_EMPTY)")))
+    else
+      NodeTools.resolveProject(input("project").flatMap(_.asString).orElse(ctx.projectName), ctx).flatMap {
+        case Left(err) => IO.pure(Left(ToolError(err)))
+        case Right(rt) => rt.engine.sendNodeMessage(nodeId, message).map(_.left.map(ToolError(_)))
+      }
 
 object ProjectCreateTool extends Tool:
   val name = "ProjectCreate"

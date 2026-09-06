@@ -47,7 +47,7 @@ import {
   showNewSessionModal, hideModals, confirmNewSession,
   showDeleteModal, confirmDeleteSession,
   showDeleteFolderModal,
-  showAgentModal, hideAgentModal, initModals
+  initModals
 } from './modal.js';
 import { send, handleSlash, addFileAttachment, initInput, initGlobalFileDrop, injectUserMessage, enterAskMode, cancelAskMode, registerSkillCommands, drainMessageQueue, restoreQueue } from './input.js';import { saveMsg, loadMsgs, restoreFromStorage, restoreFromBackendHistory, migrateLegacyIfNeeded, emergencyCacheCleanup, findLastRealMessage, saveAskMsgDedup } from './persistence.js';
 import { initMicOrb } from './micOrb.js';
@@ -1093,7 +1093,13 @@ onMessage('done', (msg, view) => {
     // #346: gather this turn's process rows and collapse immediately
     // (synchronous, no linger). The summary freezes the phrase + model
     // (both visible, v1.2); the timestamp rides in the title tooltip.
-    const lastBadge = Array.from(activeView.dom.chat.querySelectorAll('.duration-badge')).pop();
+    // 2026-09-06 footer 补齐批: thinking/tool/agent rows now carry plain
+    // footer badges too — the phrase source must be the last DONE badge
+    // (data-nf-phrase), not the last badge in DOM order (which may now be
+    // an agent row's plain footer appended by finishAgent above).
+    const turnBadges = Array.from(activeView.dom.chat.querySelectorAll('.duration-badge'));
+    const lastBadge = [...turnBadges].reverse().find(b => b.dataset && b.dataset.nfPhrase)
+      || turnBadges[turnBadges.length - 1];
     collapseTurn(activeView, {
       durationMs,
       model: msg.model,
@@ -2307,8 +2313,9 @@ onMessage('agentSessionList', (msg, view) => {
   initHeaderModelInfo();
 });
 
-onMessage('agentSystemPrompt', (msg, view) => showAgentModal(msg.name, msg.systemMd || ''));
-onMessage('agentSystemPromptSaved', () => sendWs({ type: 'listAgents' }));
+// agentSystemPrompt / agentSystemPromptSaved WS handlers retired 2026-09-06
+// with the agent editor modal — agent system prompts are edited in the Canvas
+// detail tab (agentManager.js), which talks updateAgentSystemPrompt directly.
 
 // --- Server config ---
 onMessage('serverConfig', (msg, view) => {

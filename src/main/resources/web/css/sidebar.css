@@ -746,7 +746,7 @@
    (div + hand-mixed #22c55e/#fff) is retired — every settings-page switch now
    renders the shared nb-toggle component (js/toggle.js); its styles live in
    the «nb-toggle — shared switch component» section at the bottom of this
-   file (glass-control material + sapphire accent, both themes auto-adapt). */
+   file (glass-control material + brand-green accent, both themes auto-adapt). */
 /* Config editor */
 .config-editor-wrap {
   margin-top: 8px;
@@ -792,43 +792,58 @@
   line-height: 1.6;
 }
 
-/* ── Settings avatar entry (Account section — 09-05 五项裁定④) ──────────
+/* ── Settings avatar entry (Account section — 09-05 五项裁定④; 2026-09-06
+   增补重设计: 去底板 + Linear/Vercel 式头像直置——作者任务书) ───────────────
    Dual state: logged out → product logo (bright/dark via <picture>);
    logged in with account avatar → photo. Same decision source as the
-   Activity Bar avatar (neblink.js avatarViewState). Tokens only. */
+   Activity Bar avatar (neblink.js avatarViewState).
+   Design: avatar sits directly on the panel — no card/baseboard; a 1px
+   ring defines the boundary; hover reuses the Activity Bar motion language
+   (scale 1.04 / active 0.97) plus a soft accent halo in the same
+   rgba(91,127,191,*) family the rest of the frame uses.
+   Click target = the avatar itself: the <button> shrinks to wrap the frame
+   (auto width, centered); the JS handler is unchanged (forwards to
+   #activity-avatar). Tokens only. */
 .settings-avatar-entry {
-  display: flex;
-  align-items: center;
-  gap: 12px;
-  width: 100%;
-  padding: 8px;
-  background: var(--color-frame-input-bg);
-  border: 1px solid var(--color-frame-input-border);
-  border-radius: 8px;
+  display: block;
+  margin: 2px auto 6px;
+  padding: 6px;
+  background: transparent;
+  border: none;
+  border-radius: 50%;
   cursor: pointer;
-  text-align: left;
   font: inherit;
   color: inherit;
-  transition: border-color 0.15s, background 0.15s;
 }
-.settings-avatar-entry:hover { border-color: rgba(91, 127, 191, 0.35); }
+.settings-avatar-entry:focus-visible {
+  outline: 2px solid rgba(91, 127, 191, 0.65);
+  outline-offset: 2px;
+}
 .settings-avatar-frame {
   position: relative;
-  width: 40px;
-  height: 40px;
+  width: 56px;
+  height: 56px;
   border-radius: 50%;
   overflow: hidden;
   flex-shrink: 0;
-  background: var(--color-frame-hover);
+  background: transparent;
+  border: 1px solid var(--color-frame-input-border);
   display: flex;
   align-items: center;
   justify-content: center;
+  transition: border-color 0.15s, box-shadow 0.15s, transform 0.1s;
 }
+.settings-avatar-entry:hover .settings-avatar-frame {
+  border-color: rgba(91, 127, 191, 0.55);
+  box-shadow: 0 0 0 4px rgba(91, 127, 191, 0.12);
+  transform: scale(1.04);
+}
+.settings-avatar-entry:active .settings-avatar-frame { transform: scale(0.97); }
 .settings-avatar-logo {
-  width: 30px;
-  height: 30px;
+  width: 32px;
+  height: 32px;
   object-fit: contain;
-  /* Pixel-art logo v4: 30px = whole 7.5px blocks at 224px source scale —
+  /* Pixel-art logo v4: 32px = whole 7px blocks at 224px source scale —
      keep pixelated so stems stay even (same rule as .activity-avatar-logo). */
   image-rendering: pixelated;
   pointer-events: none;
@@ -845,10 +860,6 @@
 /* Author display rules must not defeat the hidden attribute. */
 .settings-avatar-logo[hidden],
 .settings-avatar-photo[hidden] { display: none; }
-.settings-avatar-text {
-  font-size: 13px;
-  color: var(--color-text);
-}
 
 /* ── Config Cards (Providers) ──────────────────────────────────────────── */
 .cfg-card {
@@ -1792,127 +1803,8 @@
   vertical-align: middle;
 }
 
-/* Tool toggle chip grid */
-.agent-detail-tools-grid {
-  display: flex; flex-wrap: wrap; gap: 5px;
-}
-.agent-detail-tool-check {
-  font: 500 10px ui-monospace, SFMono-Regular, monospace;
-  padding: 3px 9px;
-  border-radius: 6px;
-  border: 1px solid var(--color-border);
-  color: var(--color-text-muted);
-  background: transparent;
-  cursor: pointer;
-  user-select: none;
-  transition: all 0.15s ease;
-}
-.agent-detail-tool-check:hover {
-  border-color: rgba(91,127,191,0.3);
-  color: var(--color-text);
-}
-.agent-detail-tool-check.checked {
-  border-color: rgba(91,127,191,0.35);
-  background: rgba(91,127,191,0.08);
-  color: rgb(91,127,191);
-}
-/* Fixed (system-injected) tool chips — read-only, not toggleable */
-.agent-detail-tool-check.fixed {
-  opacity: 0.55;
-  cursor: default;
-  pointer-events: none;
-  display: inline-flex;
-  align-items: center;
-  gap: 3px;
-}
-.agent-detail-tool-check.fixed svg {
-  width: 9px;
-  height: 9px;
-  flex-shrink: 0;
-}
-.agent-detail-tools-fixed-label,
-.agent-detail-tools-config-label {
-  font-size: 11px;
-  color: var(--color-text-muted);
-  opacity: 0.7;
-  margin-bottom: 4px;
-}
-.agent-detail-tools-config-label { margin-top: 8px; }
-/* #438: class-owned specialty group - a whisper of sapphire separates it from
-   the universal base group without adding any new color tokens. */
-.agent-detail-tools-specialty-label {
-  margin-top: 7px;
-  color: rgb(var(--sapphire) / 0.85);
-}
-/* ── Skills / Flows toggle chips (P4) ── */
-.agent-detail-sub-hint {
-  font: 400 10px -apple-system, sans-serif;
-  color: var(--color-text-muted); opacity: 0.65;
-  margin: -2px 0 6px;
-}
-.agent-detail-skills-grid,
-.agent-detail-flows-grid {
-  display: flex; flex-wrap: wrap; gap: 5px;
-}
-.agent-detail-skill-check,
-.agent-detail-flow-check {
-  font: 500 10px ui-monospace, SFMono-Regular, monospace;
-  padding: 3px 9px;
-  border-radius: 6px;
-  border: 1px solid var(--color-border);
-  color: var(--color-text-muted);
-  background: transparent;
-  cursor: pointer;
-  user-select: none;
-  transition: all 0.15s ease;
-}
-.agent-detail-skill-check:hover,
-.agent-detail-flow-check:hover {
-  border-color: rgba(91,127,191,0.3);
-  color: var(--color-text);
-}
-.agent-detail-skill-check.checked {
-  border-color: rgba(7,193,96,0.4);
-  background: rgba(7,193,96,0.08);
-  color: var(--color-primary, #07c160);
-}
-.agent-detail-flow-check.checked {
-  border-color: rgba(91,127,191,0.4);
-  background: rgba(91,127,191,0.08);
-  color: rgb(91,127,191);
-}
-.agent-detail-chips-loading,
-.agent-detail-chips-empty {
-  font: 400 11px -apple-system, sans-serif;
-  color: var(--color-text-muted); opacity: 0.6;
-}
-.agent-detail-empty {
-  font: 400 12px -apple-system, sans-serif;
-  color: var(--color-text-muted);
-}
-.agent-detail-tools {
-  display: flex; flex-wrap: wrap; gap: 5px;
-}
-.agent-detail-tool {
-  font: 400 10px ui-monospace, SFMono-Regular, monospace;
-  color: var(--color-text-muted);
-  background: var(--color-surface);
-  border: 1px solid var(--color-border);
-  padding: 2px 8px;
-  border-radius: 6px;
-}
-.agent-detail-prompt {
-  font: 400 12px ui-monospace, SFMono-Regular, monospace;
-  color: var(--color-text-muted);
-  line-height: 1.6;
-  max-height: 400px;
-  overflow-y: auto;
-  white-space: pre-wrap;
-  cursor: pointer;
-  padding: 12px;
-  background: rgba(0,0,0,0.02);
-  border-radius: 8px;
-}
+/* Tool toggle chip grid — retired 2026-09-06 (agent-detail capability
+   sections removed; dead legacy read-only chips below removed with it). */
 
 /* ── Dark Theme ───────────────────────────────────────────────────────── */
 @media (prefers-color-scheme: dark) {
@@ -2437,10 +2329,16 @@
    the sidebar-restructure batch (replacing the legacy .toggle / .cfg-toggle
    pair). Contract: markup from toggleHTML(options) — a real <button> with
    role="switch", so Space/Enter click is native; knob drawn by ::after.
-   TOKEN DISCIPLINE: track = glass-control material, accent = sapphire
-   family, motion = the app-wide 0.15s control-transition convention,
+   TOKEN DISCIPLINE: track = glass-control material, accent = brand green
+   (--brand-green triplet, sapphire.css — author-ruled 2026-09-06; was
+   sapphire), motion = the app-wide 0.15s control-transition convention,
    enter/exit = the shared --panel-ease curve. Zero hand-made color values;
-   both themes auto-adapt (sapphire.css / base.css dark blocks). */
+   both themes auto-adapt (sapphire.css / base.css dark blocks).
+   GEOMETRY (2026-09-06): border-box track 36×20 with 1px border → padding
+   box 34×18; knob 16×16 at top:1px/left:2px, ON translateX(14px). Knob
+   center sits on the track axis in both states (vertical gaps 2px/2px
+   incl. border), side gaps mirror (OFF left 3px == ON right 3px) — no
+   edge-hugging, no overflow. */
 .nb-toggle {
   position: relative;
   width: 36px;
@@ -2461,7 +2359,7 @@
 .nb-toggle::after {
   content: '';
   position: absolute;
-  top: 2px;
+  top: 1px;
   left: 2px;
   width: 16px;
   height: 16px;
@@ -2470,15 +2368,15 @@
   transition: transform 0.15s ease, background 0.15s;
 }
 .nb-toggle.on {
-  background: rgb(var(--sapphire) / 0.35);
-  border-color: rgb(var(--sapphire) / 0.5);
+  background: rgb(var(--brand-green) / 0.35);
+  border-color: rgb(var(--brand-green) / 0.5);
 }
 .nb-toggle.on::after {
-  transform: translateX(16px);
-  background: rgb(var(--sapphire));
+  transform: translateX(14px);
+  background: rgb(var(--brand-green));
 }
 .nb-toggle:focus-visible {
-  outline: 2px solid rgb(var(--sapphire) / 0.5);
+  outline: 2px solid rgb(var(--brand-green) / 0.5);
   outline-offset: 1px;
 }
 .nb-toggle:disabled { opacity: 0.5; cursor: default; }

@@ -18,8 +18,8 @@ import nebflow.shared.{ContentBlock, Message, MessageRole}
  * name. Self-cloning is banned (#28, 2026-08-20): the root orchestrator exists
  * exactly once and must never be spawned — neither as the no-agent default nor
  * via agent="Nebula". Team members delegate via SubTaskTool instead (self-clone
- * + ephemeral worker, no Mail identity). Flow pipelines are triggered via
- * FlowTriggerTool (R1 split, 2026-08-15) — this tool no longer handles flows.
+ * + ephemeral worker, no Mail identity). Flow pipelines are engine-triggered
+ * (Mail to a flow name); the agent-side FlowTrigger tool retired 2026-09-06.
  *
  * Two modes:
  *   - **Background** (default): returns immediately. The sub-agent's result
@@ -99,7 +99,6 @@ Multiple Delegate calls in one response run concurrently — use this to paralle
 - Steps depend on each other (Step B needs Step A's result) — do serially
 - Trivial — faster to just do it yourself
 - Subtasks touch the same files — conflict risk
-- You want a flow pipeline (multi-agent DAG) — use FlowTrigger instead
 
 **Targeting:**
 - `agent` is REQUIRED: it names the standalone agent to spawn (e.g. Coder, Explorer). Self-cloning is not supported — the calling agent must not be re-spawned (issue #28).
@@ -210,15 +209,9 @@ Multiple Delegate calls in one response run concurrently — use this to paralle
     val lifecycle = input("lifecycle").flatMap(_.asString).getOrElse("ephemeral")
     val taskDescription = input("taskDescription").flatMap(_.asString).getOrElse(description)
     val targetAgentName = input("agent").flatMap(_.asString).filter(_.nonEmpty)
-    val flowName = input("flow").flatMap(_.asString).filter(_.nonEmpty)
     val presetName = input("preset").flatMap(_.asString).filter(_.nonEmpty)
 
     if prompt.trim.isEmpty then IO.pure(Left(ToolError("Missing required parameter: prompt")))
-    else if flowName.isDefined then
-      // R1 split: flow triggering moved to FlowTriggerTool — guide old callers.
-      IO.pure(
-        Left(ToolError("Delegate no longer triggers flows. Use FlowTrigger(flow=\"<name>\", prompt=\"...\") instead — Delegate only spawns sub-agents."))
-      )
     else if ctx.depth >= MaxDepth then
       IO.pure(Left(ToolError(s"Maximum sub-agent depth ($MaxDepth) reached. Cannot delegate further.")))
     else if targetAgentName.isEmpty then

@@ -8,6 +8,15 @@ import { esc, authHeaders, fmtTime, fmtRelTime, overlayRoot, setMailPending } fr
 import { t } from './i18n.js';
 import { fetchPresets, setAgentPreset, resolvedChainHtml } from './presets.js';
 
+// ── 内联 SVG/CSS 图标（2026-09-06 显示优化批：legacy viewer 域禁 emoji/符号字符）──
+// 关闭叉（替代 ✕ U+2715）、阻塞旗（替代 ⚑ U+2691）、收件箭头（替代 → U+2192）、
+// 展开 chevron（替代 ▾/▴，旋转由 .flow-mail-row.expanded CSS 承担）、管理圆点
+// （替代 ● U+25CF，.flow-def-tab-badge::before 纯 CSS 绘制）。
+const FV_CLOSE_SVG = '<svg viewBox="0 0 12 12" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" aria-hidden="true"><path d="M3 3l6 6M9 3l-6 6"/></svg>';
+const FV_FLAG_SVG = '<svg class="flow-blocked-flag" viewBox="0 0 12 12" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3.5 1.5v9M3.5 2.5H9L7.5 4.75 9 7H3.5"/></svg>';
+const FV_ARROW_SVG = '<svg viewBox="0 0 12 12" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M2 6h8M7 3l3 3-3 3"/></svg>';
+const FV_EXPAND_HTML = `<span class="flow-mail-expand-text">展开</span><svg class="flow-mail-chev" viewBox="0 0 10 10" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M2.5 3.5 5 6l2.5-2.5"/></svg>`;
+
 /** Render a mail body into safe HTML. The detail area must NEVER be silently
  *  blank (2026-08-26 bug: a record with an empty/undefined `message` rendered
  *  `renderMarkdownWithMath('')` → `''` → the row's detail pane looked empty
@@ -97,7 +106,7 @@ export function openNodeResultViewer(nodeName, agent, status, worktree, result, 
   const blockedPanel = fb ? `
     <div class="flow-blocked-panel">
       <div class="flow-blocked-head">
-        <span class="flow-blocked-badge">⚑ ${esc(t('flowmap.blockedTitle'))}</span>
+        <span class="flow-blocked-badge">${FV_FLAG_SVG}${esc(t('flowmap.blockedTitle'))}</span>
         ${fb.category ? `<span class="flow-blocked-category" title="${esc(t('flowmap.blockedCategory'))}">${esc(fb.category)}</span>` : ''}
         <span class="flow-blocked-count">${esc(t('flowmap.blockedRounds', { n: Number(blocked?.count) || 0 }))}</span>
       </div>
@@ -132,14 +141,15 @@ export function openViewerShell(title, opts = {}) {
     <div class="flow-viewer">
       <div class="flow-viewer-header">
         <span class="flow-viewer-title">${esc(title)}</span>
-        <span class="flow-viewer-close" id="flow-viewer-close">✕</span>
+        <span class="flow-viewer-close" id="flow-viewer-close">${FV_CLOSE_SVG}</span>
       </div>
       <div class="flow-viewer-body" id="flow-viewer-body"></div>
       ${footerHtml}
     </div>`;
   overlayRoot().appendChild(overlay);
   overlay.addEventListener('click', (e) => {
-    if (e.target === overlay || e.target.id === 'flow-viewer-close') closeViewer();
+    // 关闭钮内容已 SVG 化：命中 svg/path 子节点也要关（closest 上行替代 id 相等判定）
+    if (e.target === overlay || (e.target instanceof Element && e.target.closest('#flow-viewer-close'))) closeViewer();
   });
   return overlay.querySelector('#flow-viewer-body');
 }
@@ -199,12 +209,12 @@ function pendingRowHtml(it) {
       <div class="flow-mail-meta">
         <span class="flow-mail-pending-dot"></span>
         <span class="flow-mail-from">${esc(it.from || '?')}</span>
-        <span class="flow-mail-arrow">→</span>
+        <span class="flow-mail-arrow">${FV_ARROW_SVG}</span>
         <span class="flow-mail-to">${esc(it.to || '?')}</span>
         <span class="flow-mail-queue-tag" title="${esc(t('mailDelivery.queueTitle'))}">${esc(t('mailDelivery.queue'))}</span>
         ${typeTag}
         <span class="flow-mail-time">${esc(fmtRelTime(it.timestamp))}</span>
-        <span class="flow-mail-expand">展开 ▾</span>
+        <span class="flow-mail-expand">${FV_EXPAND_HTML}</span>
         <button class="flow-mail-cancel" title="${t('flowViewers.removeFromQueue')}">${t('flows.cancel')}</button>
       </div>
       <div class="flow-mail-content">${mailBodyHtml(it.message)}</div>
@@ -240,8 +250,9 @@ async function loadPendingSection(body, team) {
   list.querySelectorAll('.flow-mail-row.pending').forEach(row => {
     row.addEventListener('click', () => {
       const expanded = row.classList.toggle('expanded');
-      const hint = row.querySelector('.flow-mail-expand');
-      if (hint) hint.textContent = expanded ? '收起 ▴' : '展开 ▾';
+      // 只换文字段；chevron 旋转由 .flow-mail-row.expanded CSS 承担（禁 ▾/▴ 字符）
+      const txt = row.querySelector('.flow-mail-expand-text');
+      if (txt) txt.textContent = expanded ? '收起' : '展开';
     });
   });
   list.querySelectorAll('.flow-mail-cancel').forEach(btn => {
@@ -317,18 +328,19 @@ export async function openMailbox(flowName, team = null) {
       <div class="flow-mail-row" data-idx="${i}">
         <div class="flow-mail-meta">
           <span class="flow-mail-from">${esc(r.from || '?')}</span>
-          <span class="flow-mail-arrow">→</span>
+          <span class="flow-mail-arrow">${FV_ARROW_SVG}</span>
           <span class="flow-mail-to">${esc(r.to || '?')}</span>
           <span class="flow-mail-time">${esc(fmtTime(r.timestamp))}</span>
-          <span class="flow-mail-expand">展开 ▾</span>
+          <span class="flow-mail-expand">${FV_EXPAND_HTML}</span>
         </div>
         <div class="flow-mail-content">${mailBodyHtml(r.message)}</div>
       </div>`).join('');
     historyList.querySelectorAll('.flow-mail-row').forEach(row => {
       row.addEventListener('click', () => {
         const expanded = row.classList.toggle('expanded');
-        const hint = row.querySelector('.flow-mail-expand');
-        if (hint) hint.textContent = expanded ? '收起 ▴' : '展开 ▾';
+        // 只换文字段；chevron 旋转由 .flow-mail-row.expanded CSS 承担（禁 ▾/▴ 字符）
+        const txt = row.querySelector('.flow-mail-expand-text');
+        if (txt) txt.textContent = expanded ? '收起' : '展开';
       });
     });
   } catch (e) { historyList.innerHTML = `<div class="flow-mail-empty">Failed: ${esc(e.message)}</div>`; }
@@ -372,7 +384,7 @@ export async function openDefinition(flowName) {
 
     const flowTabContent = `<div class="flow-def-tab-content active" data-tab-content="flow"><div class="flow-def-section"><h3>${t('flowViewers.teamDescription')}</h3><div class="flow-agent-block-readonly">${esc(fd.description || '')}</div></div></div>`;
     const flowTabBtn = `<button class="flow-def-tab active" data-tab="flow">${t('flowViewers.team')}</button>`;
-    const agentTabBtns = agents.map(a => { const isMgr = (a.name === managerName) || (a.extends === 'FlowManager'); return `<button class="flow-def-tab" data-tab="${esc(a.name)}">${esc(a.name)}${isMgr ? '<span class="flow-def-tab-badge">●</span>' : ''}</button>`; }).join('');
+    const agentTabBtns = agents.map(a => { const isMgr = (a.name === managerName) || (a.extends === 'FlowManager'); return `<button class="flow-def-tab" data-tab="${esc(a.name)}">${esc(a.name)}${isMgr ? '<span class="flow-def-tab-badge" aria-hidden="true"></span>' : ''}</button>`; }).join('');
     const agentTabContents = agents.map((a, i) => `<div class="flow-def-tab-content" data-tab-content="${esc(a.name)}">${agentsHtml[i] || ''}</div>`).join('');
 
     body.innerHTML = `<div class="flow-def-tabs">${flowTabBtn}${agentTabBtns}</div>${flowTabContent}${agentTabContents || ''}`;

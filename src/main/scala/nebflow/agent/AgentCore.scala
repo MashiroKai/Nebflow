@@ -31,16 +31,9 @@ private[agent] trait AgentCore:
   // resubscribe. The guaranteed exit is the user's own cancel (Interrupt →
   // registry back to Idle), not a timer. See AgentCore.awaitPermissionDecision.
 
-  /**
-   * Nebula-exclusive tools: only available when agentName == "Nebula".
-   * - Schedule: session-scoped scheduled tasks
-   * - Delegate: 调度器/根 agent 专用——指派 standalone agent。
-   *   Team 成员委派走 SubTaskTool（self-clone + ephemeral）。
-   *   Flow 触发不在此列——FlowTrigger 由 agent.json flows 白名单驱动注入。
-   * - Issue 已退役（2026-09-04 作者终裁，随 CheckIssues 一并），不再在本集。
-   */
-  private val NebulaExclusiveTools = AgentCore.NebulaExclusiveTools
-
+  // Nebula 专属工具的剥离语义已收口到 AgentCore.exclusiveToolsFor 单点
+  // （2026-09-05 dream 准入例外：MemoryEdit 对 dream 放开，动作面仍限修订）。
+  // 消费点：buildAllowedToolSet 的 nebulaFiltered 与 AgentLibrary 保存侧 strip。
 
   private val lifecycleLog = NebflowLogger.forName("nebflow.agent.lifecycle")
 
@@ -920,13 +913,16 @@ private[agent] trait AgentCore:
           // skills/prompts/flows）与运维配置（*.json 补丁）与记忆运维。推导见
           // SandboxPolicy.sessionRoot（isNebulaRootSession 判据：depth==0 排除
           // NodeDef.agent="Nebula" 的节点会话——它们 root 留在 projectRoot，
-          // §A.6 零回归）。
+          // §A.6 零回归）。[2026-09-05 21:05 裁定] worktree 节点经显式
+          // sandboxRoot=工作区根继承项目沙箱（不收窄到 worktree 自身），优先于
+          // projectRoot；分发器/未接线节点 sandboxRoot=None 旧行为零变化。
           val sandboxRootStr = nebflow.core.sandbox.SandboxPolicy.sessionRoot(
             state.sandboxEnabled,
             state.depth,
             effectiveDef.name,
             state.projectRoot,
-            effectiveProjectRoot
+            effectiveProjectRoot,
+            state.sandboxRoot
           )
           try nebflow.core.sandbox.SandboxPolicy.forRoot(os.Path(sandboxRootStr), resources.sandboxConfig)
           catch
@@ -1558,26 +1554,20 @@ private[agent] trait AgentCore:
     // boundary）。Nebula 的静态集照常携带该工具，行为零变化。
     val declaredBase = base - "SendFriendMessage"
     // Fixed tools are auto-injected based on agent category — they don't
-    // need to be listed in agent.json. Mail is team-only; FlowReport is
-    // flow-only. 阶段 2d（D.1-1）：注入唯一入口 = fixedToolsForDef——收敛三角色
-    // 直接返回静态集常量（收口），team/flow/legacy standalone 走 legacy 分支。
+    // need to be listed in agent.json. Mail is team-only. 阶段 2d（D.1-1）：
+    // 注入唯一入口 = fixedToolsForDef——收敛三角色直接返回静态集常量（收口），
+    // team/flow/legacy standalone 走 legacy 分支。
     val withBuiltin = declaredBase ++ AgentCore.fixedToolsFor(agentDef)
-    // FlowTrigger is whitelist-driven (R1 split, NOT Nebula-exclusive): any
-    // agent declaring flows in agent.json gets the tool; everyone else is
-    // stripped of it (even via "*" or explicit listing — every call would
-    // fail the whitelist check anyway).
+    // FlowTrigger 白名单注入已退役（2026-09-06 工具面裁撤批，作者裁定提前执行
+    // 阶段 2d 子集）：agent.json flows 声明解析保留（决策 A①——legacy 授能中
+    // 声明字段活到阶段 3），但不再驱动任何工具注入；FlowTrigger 工具本身已从
+    // ToolRegistry 摘除。Nebula 的旧体系退役口径（2026-09-05 08:40 裁定）不变。
     val isNebula = agentDef.name == "Nebula"
-    // FlowTrigger is whitelist-driven (R1 split, NOT Nebula-exclusive): any
-    // agent declaring flows in agent.json gets the tool; everyone else is
-    // stripped of it (even via "*" or explicit listing — every call would
-    // fail the whitelist check anyway). 2026-09-05 08:40 作者裁定：旧体系对
-    // Nebula 完全退役——2c 双轨期「Nebula 无条件机制固定携带」例外删除；
-    // Nebula 的 legacy flows 声明（agent.json flows:["*"]）也不再触发注入
-    // （&& !isNebula），FlowTrigger 只从 fixedToolsFor 之外的 flows 白名单
-    // 通道授能，且不再授给 Nebula。
-    val withFlowTrigger =
-      if agentDef.flows.nonEmpty && !isNebula then withBuiltin + "FlowTrigger" else withBuiltin - "FlowTrigger"
-    val nebulaFiltered = if isNebula then withFlowTrigger else withFlowTrigger -- NebulaExclusiveTools
+    // Nebula 专属剥离（单点语义 AgentCore.exclusiveToolsFor）：Nebula 全保留
+    // （空集）；dream 豁免 MemoryEdit（2026-09-05 作者签准——动作面仍受
+    // MemoryEditTool 的 DREAM_APPEND_DENIED 约束，append 不可用）；其余身份
+    // 剥全集，行为零变化。
+    val nebulaFiltered = withBuiltin -- AgentCore.exclusiveToolsFor(agentDef.name)
     // Team task tools（任务工具重做 2026-08-30）：TeamTask 三件只配 team——
     // 注入源是 fixedToolsFor 的 category=team 分支（全体成员）。这里只做防
     // 声明逃逸剥离：非 team agent（standalone/flow/Nebula）即使 agent.json
@@ -1634,14 +1624,13 @@ private[agent] trait AgentCore:
           !t.startsWith("mcp__") || t.startsWith(agentOwnPrefix) || prefixes.exists(t.startsWith) ||
             pluginPrefixes.exists(t.startsWith)
         )
-    // SubTask workers are leaf agents: no Mail / no further delegation, no
-    // FlowTrigger and no FlowExecute (workers don't trigger pipelines nor
-    // open flows — a self-cloned team member would otherwise inherit both
-    // via fixedToolsFor). Delegate is Nebula-exclusive (filtered above for
-    // everyone else); these strips also defend against a worker whose
-    // agent.json explicitly lists the tools.
-    // #406: one-shot FlowExecute nodes are leaves too — FlowExecute/
-    // FlowTrigger/SubTask/Delegate stripped (recursive flow-in-flow guard).
+    // SubTask workers are leaf agents: no Mail / no further delegation (a
+    // self-cloned team member would otherwise inherit Mail via fixedToolsFor).
+    // Delegate is Nebula-exclusive (filtered above for everyone else); these
+    // strips also defend against a worker whose agent.json explicitly lists
+    // the tools. FlowTrigger/FlowExecute names left the strip sets at the
+    // 2026-09-06 retirement (unregistered tools have no schema — the tool
+    // name IS the permission boundary and the registry is now the wall).
     // Mail stays for team-category nodes (they may Mail the caller's team).
     // Team Manager task tools (#D, 2026-08-25): workers/flow nodes never
     // mutate or even read the team task board — a SubTask worker self-cloned
@@ -1650,16 +1639,18 @@ private[agent] trait AgentCore:
     // 隔离, not a flow↔task coupling design).
     val categoryFiltered =
       if isSubTaskWorker then
-        mcpFiltered -- (Set("Mail", "SubTask", "Delegate", "FlowTrigger", "FlowExecute") ++ AgentCore.TeamTaskTools)
+        mcpFiltered -- (Set("Mail", "SubTask", "Delegate") ++ AgentCore.TeamTaskTools)
       else if isFlowNode then
-        val leafStripped = mcpFiltered -- (Set("FlowExecute", "FlowTrigger", "SubTask", "Delegate") ++ AgentCore.TeamTaskTools)
+        val leafStripped = mcpFiltered -- (Set("SubTask", "Delegate") ++ AgentCore.TeamTaskTools)
         // 轨道二 #5（专用化护栏，设计 §C1）：T1 flow worker 默认剥离面向用户
         // 的展示类工具——引擎级剥离而非提示词恳求（deck-v6 实证：提示词约束在
         // 错位人设下会被推翻）。即使 agent.json 显式声明也扣掉；userFacing:true
         // 节点（白名单）豁免。策略=「写文件给下游」≠「Pop 给用户」。
         if guardrailsOn && !userFacingNode then leafStripped -- nebflow.core.Guardrails.FlowWorkerStrippedTools
         else leafStripped
-      // Flow agents have no Mail — flow nodes report via FlowReport, not Mail.
+      // Flow agents have no Mail — flow nodes report their result as plain
+      // text output consumed by the executor (the structured FlowReport
+      // verdict channel retired 2026-09-06).
       // Structurally defends against the 08-14 P0 root cause: a flow agent
       // whose agent.json lists Mail (or uses "*") could block forever on a
       // Mail ask (flow callers cannot receive background notifications).
@@ -1686,16 +1677,11 @@ private[agent] trait AgentCore:
     guardrailsOn: Boolean = false
   ): Option[List[ToolDefinition]] =
     val allowedSet = buildAllowedToolSet(agentDef, depth, isSubTaskWorker, isFlowNode, isTeamLead, userFacingNode, guardrailsOn)
+    // 2026-09-06 工具面裁撤批：FlowReport 的 per-node contract describe 注入
+    // 随工具退役一并移除（contract 数据本体仍在 AgentDef.flowContract，引擎
+    // spawn 注入路径零触碰）。
     Some(ToolRegistry.ALL_TOOLS.flatMap { td =>
       if !allowedSet.contains(td.name) then None
-      // R8-P1: flow node agents get their per-node contract (verdict enum +
-      // slots schema) appended to the FlowReport description, so the agent
-      // knows its allowed values BEFORE the first call instead of discovering
-      // them via ToolError round-trips.
-      else if td.name == "FlowReport" then
-        agentDef.flowContract match
-          case Some(contract) => Some(td.copy(description = td.description + "\n\n" + contract.describe))
-          case None           => Some(td)
       else Some(td)
     })
 
@@ -2005,18 +1991,26 @@ object AgentCore:
    * system-reminder (retryableHint pattern) so the LLM changes approach
    * instead of re-asking endlessly. Every denial is a real user action (the
    * timer-driven auto-deny was removed by R1, wait-timeout-fix).
+   *
+   * 2026-09-06 节点面摘除 AskUser：retryableHint 改为工具名中性（原
+   * "via AskUserQuestion" 摘除）——本函数是全身份共用的纯函数（无会话工具
+   * 面上下文），而 general 节点默认面已不含 AskUserQuestion，劝停提示不得
+   * 指向会话可能不具备的工具；既有上报通道（节点=pending 节点/BLOCKED 回投，
+   * Nebula=直接汇报）对所有身份均成立。
    */
   def denialMessage(toolName: String, n: Int): String =
     if n >= 2 then
       s"Permission denied by user ('$toolName' denied $n times this turn)." +
         "<system-reminder>The user has denied this tool " + n.toString + " times in this turn. " +
         "Repeating the same request will keep being denied. Change the approach, " +
-        "ask the user what they want via AskUserQuestion, or report the blocker " +
+        "raise a clarification through your existing reporting channel, or report the blocker " +
         "instead of retrying.</system-reminder>"
     else "Permission denied by user"
 
   /**
-   * Nebula-exclusive tools: only available when agentName == "Nebula".
+   * Nebula-exclusive tools: stripped from every identity except per
+   * exclusiveToolsFor (Nebula keeps all; dream admitted for MemoryEdit only —
+   * see DreamAdmittedTools below).
    * - Schedule: session-scoped scheduled tasks
    * - Delegate: 调度器/根 agent 专用——指派 standalone agent。
    *   Team 成员委派走 SubTaskTool（self-clone + ephemeral）。
@@ -2029,8 +2023,12 @@ object AgentCore:
    * - Issue/CheckIssues（已退役，2026-09-04 作者终裁）：不再在本集——工具整体
    *   退役，报 issue 走 gh cli 由节点代劳（定义层已归档 .archived-tools-2d/）。
    *   未注册名无 schema、无执行路径，声明即惰性字符串，无须剥离。
-   * - MemoryEdit（阶段 2c §C.1 记忆行）：记忆= Nebula 专属（2026-08-31 裁定①），
-   *   非 Nebula agent 声明了也不给。
+   * - MemoryEdit（阶段 2c §C.1 记忆行）：记忆写面原为 Nebula 专属（2026-08-31
+   *   裁定①）。2026-09-05 作者签准修订：写面 = Nebula + dream——dream 仅准入
+   *   修订动作（remove/update/replace_section），append 在工具执行层拒绝
+   *   （DREAM_APPEND_DENIED，「dream 禁写新记忆」铁律由 MemoryEditTool 强制）。
+   *   准入例外 = DreamAdmittedTools，剥离面经 exclusiveToolsFor 单点生效；
+   *   Schedule/Delegate/AgentControl 对 dream 仍专属、不得放开。
    */
   val NebulaExclusiveTools = Set(
     "Schedule",
@@ -2039,6 +2037,25 @@ object AgentCore:
     "MemoryEdit"
   )
 
+  /** dream 的 MemoryEdit 准入例外（2026-09-05 作者签准，修订 2026-08-31 裁定①）：
+    * 记忆写面 = Nebula + dream，dream 严禁写新记忆——仅放行修订动作（remove/
+    * update/replace_section），append 在工具执行层拒绝（DREAM_APPEND_DENIED）。
+    * 本集只放开【授能/剥离面】；动作面白名单在 MemoryEditTool（两道闸独立，
+    * 摘任一道 spec 即红）。 */
+  val DreamAdmittedTools = Set("MemoryEdit")
+
+  /** 身份 → 应剥离的 Nebula 专属工具集（剥离语义单点，两消费点共用）：
+    * Nebula → 空（专属集全保留）；dream → 原集 − DreamAdmittedTools（仅
+    * MemoryEdit 准入）；其余身份 → 原集（行为零变化）。
+    * 消费点：buildAllowedToolSet 的 nebulaFiltered（runtime 授能剥离）与
+    * AgentLibrary 面板/定义保存侧 strip——dream 声明 MemoryEdit 保存时不再
+    * 被剥掉（否则准入形同虚设）。 */
+  def exclusiveToolsFor(name: String): Set[String] =
+    name match
+      case "Nebula" => Set.empty[String]
+      case "dream"  => NebulaExclusiveTools -- DreamAdmittedTools
+      case _        => NebulaExclusiveTools
+
   /** Nebula 固定工具集（阶段 2c agent 收敛，设计文档 §C.1 角色-工具静态矩阵；
     * 裁定 11：全部机制注入不可配置）。2026-09-05 08:40 作者裁定改版：+基础文件
     * 四件（Bash/Read/Glob/Grep——从 BaseTools 取件）+Card 解封恢复（471 行后端
@@ -2046,41 +2063,42 @@ object AgentCore:
     * 渲染待前端批）、−旧体系四件（Mail/Delegate/FlowTrigger/FlowExecute——旧
     * Team/Flow 体系对 Nebula 完全退役，Task 是唯一项目触发入口，节点结果沿
     * out 边自动回流；工具类与注册表注册全部保留——team/flow 双轨期
-    * legacyFixedTools 对成员仍授能，零触碰）。2026-09-05 13:11 作者裁定：基础
-    * 六件 Read/Glob/Edit/Write/Grep/Bash 作为所有 agent 的统一默认工具集，
-    * Nebula 也不例外——+Write/+Edit 补齐为恰十七件（08:40 批「严禁夹带
-    * Write/Edit」限制同时被推翻；同日 13:09 裁定的沙箱写根=~/.nebflow 是
-    * Write/Edit 的安全前提，见 SandboxPolicy.sessionRoot）。
+    * legacyFixedTools 对成员仍授能，零触碰）。2026-09-05 13:11 作者裁定曾把
+    * 基础六件 Read/Glob/Edit/Write/Grep/Bash 定为全体 agent 统一默认
+    * （Nebula 补齐 Write/Edit 至恰十七件）；2026-09-05 23:34 作者裁定
+    * （「把你的 bash 和编辑工具收起来」）推翻 Nebula 例外：Bash/Write/Edit
+    * 三件从本集移除、Nebula 回归纯编排——general/BaseTools 六件默认注入
+    * 不变，Nebula 是唯一例外（编排件+读三件+MemoryEdit，恰十四件）。
+    * 2026-09-06 00:48 作者裁定再摘 NodeList：节点结果沿 out 边自动投递
+    * Nebula，主动查图与「全量派发 + pending 节点、不维护状态清单」的裁定
+    * 职责重叠——本集恰十三件。
     * 分组与矩阵行一一对应：
-    *   - 编排触发：Task / ProjectCreate / NodeList（§C.1：dispatcher 描述承诺的
-    *     Nebula 侧只读观测面）/ AgentControl（list/status/cancel/restart）
+    *   - 编排触发：Task / ProjectCreate / AgentControl（list/status/cancel/restart）
     *   - 通信：SendFriendMessage（好友功能非旧体系，保留机制固定）
-    *   - 基础六件：Bash / Read / Glob / Grep / Write / Edit（=BaseTools 整集，
-    *     13:11 裁定起全体 agent 统一默认）
+    *   - 读三件：Read / Glob / Grep（读代码读现状；无写手——一切执行走
+    *     Project 派发）
     *   - 可视化：Card（2026-09-05 解封，commit 793f62c1 曾整体删除）
     *   - 用户面：AskUserQuestion / Pop；平台：Schedule / TransferFile
     *   - 记忆：MemoryEdit（§C.2，白名单硬编码 User.md + agents/Nebula/memory.md）
-    * 显式不含：Mail/Delegate/FlowTrigger/FlowExecute（旧体系退役）、Web 系、
+    * 显式不含：Bash/Write/Edit（2026-09-05 23:34 裁定移除——Nebula 无写手）、
+    * NodeList（2026-09-06 00:48 裁定摘除——out 边自动投递取代主动查图；
+    * dispatcher 自身面 DispatcherFixedTools 不受影响）、
+    * Mail/Delegate/FlowTrigger/FlowExecute（旧体系退役）、Web 系、
     * TeamTask*、SubTask、NodeEdit/NodeCancel。Issue/CheckIssues 已整体
     * 退役（2026-09-04 作者终裁：报 issue 走 gh cli 由节点代劳，定义层已归档
-    * .archived-tools-2d/）。本集即 Nebula 工具面唯一来源：恰十七件、零 Issue、
+    * .archived-tools-2d/）。本集即 Nebula 工具面唯一来源：恰十三件、零 Issue、
     * 零旧体系四件。 */
   val NebulaOrchestrationTools = Set(
-    // 编排触发
+    // 编排触发（NodeList 2026-09-06 00:48 裁定摘除）
     "Task",
     "ProjectCreate",
-    "NodeList",
     "AgentControl",
     // 通信（好友功能非旧体系）
     "SendFriendMessage",
-    // 基础六件（08:40 解禁 Bash/Read/Glob/Grep；13:11 作者裁定补齐 Write/
-    // Edit——基础六件为全体 agent 统一默认工具集）
-    "Bash",
+    // 读三件（08:40 解禁；23:34 裁定收走写手——Bash/Write/Edit 不在本集）
     "Read",
     "Glob",
     "Grep",
-    "Write",
-    "Edit",
     // 可视化（2026-09-05 解封恢复，前端消费面另批）
     "Card",
     // 用户面
@@ -2099,13 +2117,16 @@ object AgentCore:
     * Edit）自动变 no-op，无需定义层先行迁移。 */
   val ConvergedAgentNames = Set("Nebula", "project-dispatcher", "general")
 
-  /** 分发器固定工具集（§C.1）：Node 三件（List/Edit/Cancel）+ 读四件（Read/
-    * Glob/Grep/Bash，读现状 + git worktree 管理）。不给 Write/Edit（分发器只
-    * 分解不产内容）、不给 AskUserQuestion（单次会话不阻塞等用户，§C.3）。 */
+  /** 分发器固定工具集（§C.1）：Node 四件（List/Edit/Cancel/Message）+ 读四件
+    * （Read/Glob/Grep/Bash，读现状 + git worktree 管理）。不给 Write/Edit（分发器只
+    * 分解不产内容）、不给 AskUserQuestion（单次会话不阻塞等用户，§C.3）。
+    * NodeMessage（20260905 机制批，作者裁定）第八件：向已分发节点注入补充消息
+    * （running=turn 边界注入 / wiring/pending/held=任务追加 / 终态拒绝）。 */
   val DispatcherFixedTools = Set(
     "NodeList",
     "NodeEdit",
     "NodeCancel",
+    "NodeMessage",
     "Read",
     "Glob",
     "Grep",
@@ -2134,10 +2155,15 @@ object AgentCore:
     "Bash"
   )
 
-  /** 通用模版固定工具集（§C.1/§C.5，裁定 5 原文 8 件）：BaseTools 六件 + 用户
-    * 面 AskUserQuestion/Pop。Web 系不在 8 件内——经 §B.6 plugin 扩展授予；
-    * MultiEdit 已从 ToolRegistry 删除（能力由 Edit replace_all 覆盖）。 */
-  val GeneralFixedTools: Set[String] = BaseTools + "AskUserQuestion" + "Pop"
+  /** 通用模版固定工具集（§C.1/§C.5，裁定 5 原文 8 件；2026-09-06 作者提议 +
+    * Nebula 背书裁定：AskUserQuestion 从 general 节点默认面移除——交互出口
+    * 统一，作者触点只有 Flow Map pending 节点与 Nebula 汇报两条，节点确认点
+    * = 建 pending 节点/BLOCKED 回投）：恰七件 = BaseTools 六件 + Pop。Web 系
+    * 不在默认面内——经 §B.6 plugin 扩展授予；MultiEdit 已从 ToolRegistry 删除
+    * （能力由 Edit replace_all 覆盖）。机制面零改动：AskUserQuestionTool/
+    * InteractionHub/流式特判/Guardrails 剥离语义照旧——Nebula 面与「非 general
+    * 身份显式声明可得」的 legacy 声明路径均不受影响。 */
+  val GeneralFixedTools: Set[String] = BaseTools + "Pop"
 
   /**
    * Fixed tools for a given agent — 阶段 2d（D.1-1）后的唯一注入入口。
@@ -2147,9 +2173,11 @@ object AgentCore:
    * legacy 分支路径——2c 建集、2d 删路，常量即唯一事实源。
    *
    * 双轨期 legacy 路径（legacyFixedTools）保留至阶段 3：
-   * - team 成员：BaseTools + Mail + SubTask + FlowExecute + TeamTask 三件
-   *   （user ruling 2026-08-24 机制层注入 SubTask；#406 扩展 FlowExecute）
-   * - flow 节点：BaseTools + FlowReport（叶子，无 Mail/SubTask）
+   * - team 成员：BaseTools + Mail + SubTask + TeamTask 三件（user ruling
+   *   2026-08-24 机制层注入 SubTask；FlowExecute 随 2026-09-06 工具面裁撤批
+   *   移出固定面）
+   * - flow 节点：BaseTools（FlowReport 随 2026-09-06 裁撤批移出——叶子节点
+   *   文本输出即结果，verdict 通道退役）
    * - legacy standalone：BaseTools catch-all——Coder/Explorer/design-engineer
    *   等存量 agent 的 agent.json 未声明文件工具，依赖此路径（删除即断活
    *   agent 工具面），随阶段 2e/3 归档一并退役。
@@ -2163,16 +2191,17 @@ object AgentCore:
       case _ =>
         agentDef.name match
           case "Nebula" =>
-            // 静态集收口：恰十七件、零 Issue、零旧体系四件。终裁记录：
+            // 静态集收口：恰十四件、零 Issue、零旧体系四件。终裁记录：
             // （2026-09-04 作者裁定）Issue/CheckIssues 退役，报 issue 走 gh cli
             // 由节点代劳；定义层已归档（agent.json CheckIssues 声明删除、
             // ~/.nebflow/tools/ 下 issue/check-issues/screenshot 归档
             // .archived-tools-2d/）。2c 的 + "Issue" parity carry 至此删除。
             // （2026-09-05 08:40 作者裁定）+基础四件 Bash/Read/Glob/Grep、+Card
             // 解封、−Mail/Delegate/FlowTrigger/FlowExecute 旧体系退役。
-            // （2026-09-05 13:11 作者裁定）+Write/Edit 补齐——基础六件 Read/
-            // Glob/Edit/Write/Grep/Bash 为所有 agent 的统一默认工具集，Nebula
-            // 也不例外——本集即 Nebula 工具面唯一来源。
+            // （2026-09-05 23:34 作者裁定：Nebula 回归纯编排）13:11 的
+            // +Write/Edit 补齐被推翻——Bash/Write/Edit 三件移出本集；
+            // general/BaseTools 六件默认注入不变，Nebula 为唯一例外
+            // （编排件+读三件+MemoryEdit）——本集即 Nebula 工具面唯一来源。
             AgentCore.NebulaOrchestrationTools
           case "project-dispatcher" => AgentCore.DispatcherFixedTools
           case "general"            => AgentCore.GeneralFixedTools
@@ -2185,9 +2214,11 @@ object AgentCore:
     agentDef.category match
       // 任务工具重做（2026-08-30）：任务只配 team——TeamTask 三件机制层注入
       // 全体 team 成员（照 #381 SubTask 先例；ctx.teamName 把写域钉死在
-      // 自己的 team，无跨 team 面）。
-      case "team" => BaseTools + "Mail" + "SubTask" + "FlowExecute" ++ AgentCore.TeamTaskTools
-      case "flow" => BaseTools + "FlowReport"
+      // 自己的 team，无跨 team 面）。FlowExecute 移出固定面（2026-09-06
+      // 工具面裁撤批）。
+      case "team" => BaseTools + "Mail" + "SubTask" ++ AgentCore.TeamTaskTools
+      // FlowReport 移出固定面（2026-09-06 裁撤批）——flow 节点文本输出即结果。
+      case "flow" => BaseTools
       case _      => BaseTools
 
 end AgentCore

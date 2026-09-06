@@ -331,23 +331,11 @@ body.sidebar-collapsed #activity-bar {
    样式段已随 #legacy-btn/#legacy-pop DOM 删除。 */
 
 /* ── NebLink logged-out hint (Settings panel) ── */
-.neblink-logged-out {
-  display: flex; flex-direction: column; align-items: center;
-  gap: 8px; padding: 8px 0;
-}
-.neblink-logged-out-logo {
-  /* Square box on the 8-unit grid (32/8 = 4px unit, 8px art block) — the
-     source canvas is square with transparent top/bottom padding, so a
-     non-square box only wasted the contain fit. */
-  width: 32px; height: 32px; opacity: 0.7;
-  object-fit: contain;
-  image-rendering: pixelated;
-}
-.neblink-logged-out-text {
-  font-size: 13px; color: var(--color-text); font-weight: 500;
-}
+/* 2026-09-06 区块统一：未登录态只剩 logo（头像入口渲染）+ 这一句说明，
+   原 .neblink-logged-out 容器/独立 logo/加粗标题行一并退役。 */
 .neblink-logged-out-hint {
   font-size: 12px; color: var(--color-text-muted);
+  text-align: center;
 }
 
 /* ── NebLink logout button (Settings panel, logged-in state) ── */

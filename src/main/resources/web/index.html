@@ -54,7 +54,7 @@
   <script>/* Classic script: cannot import branding.js. Read the brand-namespaced key first, fall back to the legacy nebflow_ spelling. */var __b=(window.__BRAND__&&window.__BRAND__.lowerName)||'nebflow';if(localStorage.getItem(__b+'_sidebar_collapsed')==='true'||localStorage.getItem('nebflow_sidebar_collapsed')==='true')document.body.classList.add('sidebar-collapsed');window.__sidebarRestore={collapsed:document.body.classList.contains('sidebar-collapsed'),panel:localStorage.getItem(__b+'_sidebar_active_panel')||localStorage.getItem('nebflow_sidebar_active_panel')||'files'};</script>
   <!-- Activity Bar — vertical icon strip (independent glass card).
        Top: avatar (tap to log in to NebLink) + the two communication
-       entries (Contacts → Messages).
+       entries (Messages → Contacts).
        Bottom: fixed semantic order (2026-09-05 sidebar-restructure spec) —
        Files → Projects → Plugins (agents-btn mounts the plugins page) →
        Usage → Settings. Device management lives in the Settings panel
@@ -68,8 +68,8 @@
       <img class="activity-avatar-photo" alt="" hidden>
       <span class="activity-avatar-letter" hidden>N</span>
     </button>
-    <button id="contacts-btn" class="activity-btn" data-panel-btn="contacts" title="Contacts" aria-pressed="false"><i data-lucide="contact-round"></i><span class="activity-badge" id="contacts-badge" hidden></span></button>
     <button id="messages-btn" class="activity-btn" data-panel-btn="messages" title="Messages" aria-pressed="false"><i data-lucide="message-circle"></i><span class="activity-badge" id="messages-badge" hidden></span></button>
+    <button id="contacts-btn" class="activity-btn" data-panel-btn="contacts" title="Contacts" aria-pressed="false"><i data-lucide="contact-round"></i><span class="activity-badge" id="contacts-badge" hidden></span></button>
     <div class="activity-spacer"></div>
     <!-- 2026-09-05 旧 UI 退役：v5 §3.5 二级入口（#legacy-btn/#legacy-pop 与
          teams-btn/flows-btn）已整体删除（作者裁定「直接删除，不是封存」）；
@@ -307,22 +307,8 @@
       </div>
     </div>
   </div>
-  <!-- Agent Editor Modal (separate overlay) -->
-  <div id="agent-overlay">
-    <div id="agent-modal">
-      <div id="agent-modal-title">Edit Agent</div>
-      <div id="agent-modal-body">
-        <div class="agent-field-label" data-i18n="agent.toolsLabel">Tools</div>
-        <div id="agent-tools-grid"></div>
-        <div class="agent-field-label" data-i18n="agent.systemPrompt">System Prompt</div>
-        <textarea id="agent-system-input" placeholder="System prompt (Markdown)" rows="12" spellcheck="false"></textarea>
-      </div>
-      <div id="agent-modal-actions">
-        <button id="agent-modal-cancel">Cancel</button>
-        <button id="agent-modal-save">Save</button>
-      </div>
-    </div>
-  </div>
+  <!-- Agent Editor Modal — retired 2026-09-06 (tool-face retirement batch):
+       per-agent editing lives in the Canvas detail tab (agentManager.js). -->
   <!-- Memory Editor Modal (three tabs: Folder / Agent / User) -->
   <div id="memory-overlay">
     <div id="memory-modal">

@@ -164,7 +164,8 @@ export const FLOW_CSS = `
 .flow-viewer { position: relative; width: calc(100% - 48px); max-height: calc(100% - 48px); display: flex; flex-direction: column; background: var(--glass-bg); -webkit-backdrop-filter: blur(var(--glass-blur)) saturate(1.15); backdrop-filter: blur(var(--glass-blur)) saturate(1.15); border: 1px solid var(--glass-border); border-radius: 18px; overflow: hidden; box-shadow: 0px 8px 32px rgba(0,0,0,0.16); }
 .flow-viewer-header { display: flex; align-items: center; gap: 8px; padding: 11px 16px; border-bottom: 1px solid var(--glass-border); flex-shrink: 0; }
 .flow-viewer-title { font: 600 13px -apple-system, sans-serif; color: var(--color-text); }
-.flow-viewer-close { margin-left: auto; cursor: pointer; font-size: 16px; line-height: 1; opacity: 0.5; transition: opacity 0.15s; padding: 0 4px; color: var(--color-text-muted); z-index: 10; }
+.flow-viewer-close { margin-left: auto; cursor: pointer; font-size: 16px; line-height: 1; opacity: 0.5; transition: opacity 0.15s; padding: 0 4px; color: var(--color-text-muted); z-index: 10; display: inline-flex; align-items: center; }
+.flow-viewer-close svg { width: 12px; height: 12px; display: block; }
 .flow-viewer-close:hover { opacity: 1; }
 .flow-viewer .code-copy-btn { right: 40px; }
 .flow-viewer-body { flex: 1; overflow-y: auto; padding: 14px 18px; scrollbar-color: var(--color-frame-border) transparent; }
@@ -181,10 +182,13 @@ export const FLOW_CSS = `
 .flow-mail-row.expanded { background: rgba(128,128,128,0.10); border-color: rgba(91,127,191,0.25); }
 .flow-mail-meta { display: flex; align-items: center; gap: 6px; font: 500 11px -apple-system, sans-serif; flex-wrap: wrap; }
 .flow-mail-from { color: var(--color-primary, #07c160); max-width: 120px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.flow-mail-arrow { color: var(--color-text-muted); opacity: 0.6; flex-shrink: 0; }
+.flow-mail-arrow { color: var(--color-text-muted); opacity: 0.6; flex-shrink: 0; display: inline-flex; align-items: center; }
+.flow-mail-arrow svg { width: 10px; height: 10px; display: block; }
 .flow-mail-to { color: var(--color-text); font-weight: 600; max-width: 120px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .flow-mail-time { margin-left: auto; font: 400 10px -apple-system, sans-serif; color: var(--color-text-muted); opacity: 0.7; flex-shrink: 0; }
-.flow-mail-expand { font: 500 10px -apple-system, sans-serif; color: var(--color-primary, #07c160); opacity: 0.85; flex-shrink: 0; cursor: pointer; user-select: none; }
+.flow-mail-expand { font: 500 10px -apple-system, sans-serif; color: var(--color-primary, #07c160); opacity: 0.85; flex-shrink: 0; cursor: pointer; user-select: none; display: inline-flex; align-items: center; gap: 3px; }
+.flow-mail-expand .flow-mail-chev { width: 9px; height: 9px; display: block; transition: transform 0.15s ease; }
+.flow-mail-row.expanded .flow-mail-expand .flow-mail-chev { transform: rotate(180deg); }
 .flow-mail-content { font: 400 12.5px -apple-system, sans-serif; color: var(--color-text); line-height: 1.55; word-break: break-word; overflow-wrap: anywhere; overflow-x: auto; max-width: 100%; position: relative; }
 .flow-mail-no-body { font: 400 italic 12px -apple-system, sans-serif; color: var(--color-text-muted); opacity: 0.7; }
 .flow-mail-row:not(.expanded) .flow-mail-content { max-height: 3.6em; overflow: hidden; }
@@ -257,7 +261,8 @@ export const FLOW_CSS = `
 .flow-def-tab { padding: 6px 12px; font: 500 12px -apple-system, sans-serif; color: var(--color-text-muted); background: none; border: none; border-bottom: 2px solid transparent; border-radius: 0; cursor: pointer; font-family: inherit; margin-bottom: -1px; transition: color 0.2s, border-color 0.2s; display: inline-flex; align-items: center; gap: 4px; }
 .flow-def-tab:hover { color: var(--color-text); }
 .flow-def-tab.active { color: rgb(91, 127, 191); border-bottom-color: rgb(91, 127, 191); }
-.flow-def-tab-badge { color: var(--color-primary, #07c160); font-size: 8px; line-height: 1; }
+.flow-def-tab-badge { color: var(--color-primary, #07c160); display: inline-flex; align-items: center; }
+.flow-def-tab-badge::before { content: ''; display: block; width: 6px; height: 6px; border-radius: 50%; background: currentColor; }
 .flow-def-tab-content { display: none; } .flow-def-tab-content.active { display: block; }
 
 /* ── Flow rows in team cards ─────────────────────────────── */
@@ -468,9 +473,13 @@ export const FLOW_CSS = `
   position: absolute; width: 3px; height: 3px;
   background: var(--color-text); border-radius: 50%; top: -1.5px;
 }
-.ring-1 .solar-dot { left: 2px; }
-.ring-2 .solar-dot { left: 6px; }
-.ring-3 .solar-dot { left: 11px; }
+/* Dot rides the ring's border midline: dot center radius (left + 1.5px half
+   width) must equal ring width/2 − 0.5px (border-box). Old values 2/6/11 put
+   the center 1.0px OUTSIDE the midline on every ring — dots floated off the
+   orbit line at any rotation phase (作者 20260906 截图反馈). */
+.ring-1 .solar-dot { left: 1px; }  /* midline r = 6/2 − 0.5  = 2.5  = 1 + 1.5 */
+.ring-2 .solar-dot { left: 5px; }  /* midline r = 14/2 − 0.5 = 6.5  = 5 + 1.5 */
+.ring-3 .solar-dot { left: 10px; } /* midline r = 24/2 − 0.5 = 11.5 = 10 + 1.5 */
 
 /* Initial angles — three dots spread around the orbit. These are BOTH the
    resting positions (pending / completed / static) and the loop endpoints:
@@ -628,10 +637,14 @@ export const FLOW_CSS = `
 .flow-orbit-node.failed .flow-ring { border-color: #ff3b30; opacity: 0.6; }
 .flow-orbit-node.failed .flow-orbit-status { color: #ff3b30; }
 
-/* Orbit dots — scoped to flow-orbit-node */
+/* Orbit dots — scoped to flow-orbit-node (currently unreferenced: no JS
+   builds this DOM; kept geometrically correct anyway). top:-2.75px puts the
+   4px dot's center 0.75px above the padding-box top edge = on the ring's
+   1.5px border midline; the old -2px sat the center on the border's inner
+   edge, 0.75px inside the midline. */
 .flow-orbit-node .flow-dot {
   position: absolute; width: 4px; height: 4px; border-radius: 50%;
-  background: var(--color-primary, #5b7fbf); top: -2px; left: 50%; transform: translateX(-50%);
+  background: var(--color-primary, #5b7fbf); top: -2.75px; left: 50%; transform: translateX(-50%);
 }
 .flow-orbit-node.running .flow-dot { box-shadow: 0 0 6px rgba(91,127,191,0.6); }
 

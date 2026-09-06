@@ -29,8 +29,11 @@
 //
 // Style: css/sidebar.css «nb-toggle — shared switch component» section.
 // Sizes/animation/colors are ALL global tokens (--glass-control-* material,
-// rgb(var(--sapphire) / α) accent, 0.15s control-transition convention) —
-// zero hand-made color values, both themes auto-adapt (sapphire.css).
+// rgb(var(--brand-green) / α) accent — author-ruled 2026-09-06, was sapphire;
+// 0.15s control-transition convention) — zero hand-made color values, both
+// themes auto-adapt (sapphire.css). Knob geometry: 16×16 knob on the 34×18
+// padding box at top:1px/left:2px, ON translateX(14px) — centered on the
+// track axis in both states, mirrored 3px side gaps (incl. border).
 
 import { escapeHtml } from './utils.js';
 

@@ -45,6 +45,8 @@ export default {
   'project.archiveFail': '归档「{name}」失败',
   'flowmap.title': 'Flow Map',
   'flowmap.cardRunning': '运行中…',
+  // 节点卡 Agent 退役（node-flowmap-slim）：preset 未配置的克制空态文案
+  'flowmap.presetDefault': '默认预设',
   'flowmap.loading': '加载 Flow Map…',
   'flowmap.loadFail': 'Flow Map 加载失败',
   'flowmap.empty': '暂无节点，项目空闲',
@@ -106,6 +108,11 @@ export default {
   'flowmap.archive.ttlPurged': '24h 到期清理：{n} 条链已从归档移除',
   'flowmap.chain.archivedToast': '链「{chain}」整链归档（{n} 节点一起进归档）',
   'flowmap.chain.retainedToast': '节点已完成 · 链「{chain}」未齐（{done}/{total}）· 终态卡保留主图',
+  // 特殊节点标识徽标（badge 批 2026-09-05）：head 行胶囊文案；追加锚在 flowmap 块
+  // 尾部，最小化与同批其他 locales 支的合并冲突面
+  'flowmap.flag.merge': '合并',
+  'flowmap.flag.loop': '循环',
+  'flowmap.flag.pending': '待确认',
   'agentFile.hint': '此文件是项目工作区根的 agent 指令（AGENTS.md），可编辑并保存。',
 
   // === Friends & messages (A2A) ===
@@ -139,6 +146,8 @@ export default {
   'contacts.searching': '搜索中…',
   'contacts.notFoundHint': '对方可能尚未设置用户名，或输入有误',
   'contacts.cancelVerify': '取消',
+  'contacts.alreadyFriends': '已是好友',
+  'contacts.searchError': '搜索失败，请重试',
   'messages.empty': '暂无会话',
   'messages.systemNowFriends': '你们已成为好友',
   'messages.forwardToAgent': '转发给 agent',
@@ -180,18 +189,6 @@ export default {
   'modal.create': '创建',
   'modal.deleteSession': '删除会话',
   'modal.deleteConfirm': '删除',
-  'modal.agentTitle': '编辑智能体',
-  'agent.namePlaceholder': '智能体名称',
-  'agent.descPlaceholder': '这个智能体做什么？',
-  'agent.systemPrompt': '系统提示词',
-  'agent.systemPromptPlaceholder': '系统提示词（Markdown）',
-  'agent.save': '保存',
-  'agent.toolsFixedLabel': '系统固定',
-  'agent.toolsConfigLabel': '可配置',
-  'agent.toolsFixedTip': '由系统固定注入，不可移除',
-  'agent.toolsFixedSpecialty.flow': 'Flow 固定（本类专属）',
-  'agent.toolsFixedSpecialty.team': 'Team 固定（本类专属）',
-  'agent.toolsFixedSpecialty.orchestrator': '编排固定（Nebula 专属）',
   // === 实体图标语义化 + Nebula 独立分区（20260824_entity-icons-visual-spec §6）===
   'agents.group.orchestrator': '编排者',
   'agents.group.standalone': '独立智能体',
@@ -429,8 +426,6 @@ export default {
   'settings.editRawJson': '编辑原始 JSON',
   'settings.reload': '重新加载',
   'settings.account': '账号',
-  'settings.accountSignedIn': '已登录 · 点击打开个人主页',
-  'settings.accountSignIn': '未登录 · 点击登录',
   'settings.about': '关于',
   'settings.connection': '连接状态',
   'settings.connected': '已连接',
@@ -538,8 +533,6 @@ export default {
   'delete.folderTitle': '删除文件夹',
   'delete.folderMsg': '删除文件夹 "{name}"？\n其中的会话将移至根目录。',
 
-  // === Agent modal ===
-  'agent.editTitle': '编辑：{name}',
 
   // === Chat area ===
   'chat.timeout': '响应超时',
@@ -618,6 +611,8 @@ export default {
   'chat.thinkingInProgress': '思考中…',
   'chat.turnSummaryTools': '工具 {n} 次',
   'chat.turnSummaryToolsOne': '工具 1 次',
+  'chat.turnHeaderThinking': '思考 {d}',
+  'chat.turnHeaderFiles': '读写 {n} 文件',
   'chat.thinking.0': '星海漫游中...',
   'chat.thinking.1': '凝望深空中...',
   'chat.thinking.2': '星际航行中...',
@@ -776,11 +771,10 @@ export default {
   'task.repeatWeekly': '每周',
 
   // NebLink
-  'neblink.title': '设备互联',
-  'neblink.devices': '设备',
   'neblink.thisDevice': '本机',
   'neblink.unknownDevice': '未命名设备',
-  'neblink.noPeersHint': '还没有其他设备。请在两台设备上都配置设备互联服务。',
+  'neblink.noPeersHint': '请在两台设备上都登录 nebflow',
+  'neblink.loggedOutHint': '未登录，设备互联不可用',
   'neblink.deviceDescHint': '如：校园网环境、有 Vivado 2023.2',
   'neblink.save': '保存',
   'neblink.update': '更新',
@@ -848,6 +842,8 @@ export default {
   'daemons.stop': '停止',
   'daemons.restart': '重启',
   'daemons.restartFirst': '先启动',
+  'daemons.deleteTitle': '删除心跳进程',
+  'daemons.deleteConfirm': '删除心跳进程「{name}」？',
   // === Explorer（文件浏览器多选） ===
   'explorer.selectedCount': '已选 {count} 项',
   'explorer.delete': '删除',
@@ -963,7 +959,6 @@ export default {
   'header.newTask': '新建任务',
   'subagents.panelTitle': '子智能体',
   'modal.close': '关闭',
-  'agent.toolsLabel': '工具',
   'rules.cancel': '取消',
   'rules.save': '保存',
   'bypass.confirmEdits': '确认编辑',
@@ -973,8 +968,6 @@ export default {
   'agentManager.noAgents': '未配置智能体',
   'agentManager.saved': '已保存',
   'agentManager.save': '保存',
-  'agentManager.noSkills': '未安装技能',
-  'agentManager.noFlows': '未定义工作流',
   // === 插件页（2026-09-04 重设计：统一插件系统 + 每插件一开关，en/zh 成对） ===
   'plugins.list': '插件',
   'plugins.listHint': '统一插件系统：技能与 MCP 以插件为单位，开关即目录可见性',
@@ -1037,9 +1030,6 @@ export default {
   'flowViewers.inbox': '收件箱',
   'flowViewers.viewTeamDef': '查看团队定义',
   'flowViewers.removeFromQueue': '从队列移除',
-  'agentManager.tools': '工具',
-  'agentManager.skills': '技能',
-  'agentManager.flows': '工作流',
   'agentManager.systemPrompt': '系统提示词',
   'agentManager.viewSource': '查看源码',
   'agentManager.viewRendered': '查看渲染',

@@ -12,9 +12,14 @@ import nebflow.core.PathUtil
 /**
  * 阶段 2a 沙箱（设计文档 §A.2）：单一策略源。
  *
- * root = 节点 projectRoot（worktree 或 workspace，NodeEngine.scala 已算出；分发器
- * = project workspace，H-5①），会话级不可变、构造时即 canonicalize（worktree 布局
- * 可能含 symlink → 采用 canonicalize 代替拒绝，§A.6）。
+ * root = 会话沙箱根（sessionRoot 唯一推导）。[2026-09-05 21:05 作者裁定——worktree
+ * 节点继承项目沙箱]：worktree 节点 root = 所属项目工作区根（不再收窄到 worktree
+ * 目录自身——主仓 .git/worktrees/<name>/ 元数据在工作区内，git commit 可直写），
+ * 由 NodeEngine spawn 点把工作区根作为独立信号（SessionContext.sandboxRoot）传入，
+ * 不按路径形态硬猜 workspace 布局；分发器 = project workspace（H-5①，本就是
+ * 继承态）。root 语义只放宽「可写边界」，节点 cwd / projectRoot 工具语义不动。
+ * 会话级不可变、构造时即 canonicalize（worktree 布局可能含 symlink → 采用
+ * canonicalize 代替拒绝，§A.6）。
  *
  * writableRoots()/readableRoots() 是全部根集合的唯一推导点——JVM 围栏
  * （FileSandbox）与 Seatbelt profile（SandboxBackend.Seatbelt）都从这里取根，
@@ -29,10 +34,16 @@ import nebflow.core.PathUtil
  * 两个【精确文件路径】进读面（审计节点直读记忆真身，替代日志重建通道）——
  * 严格只读（只进 readableRoots，写面零变化），且 agents/**/memory.md 负向规则
  * 对其余一切 agent 记忆不变（readDenied 只精确豁免 Nebula 一个）。
- * ~/.nebflow 根层其余文件（auth.json/vps.env/nebflow.json 等凭据与私有态）不在
- * 任何白名单——读写均拒；agents/ 目录开读后其余 agents/**/memory.md（agent 私有
- * 记忆）由 readDenied 负向规则一票拒读（优先于白名单）；~/.nebflow 整体不在
- * 可写根（裁定 3：agent 只在 project 内写）。
+ * [2026-09-05 20:24 作者裁定——数据根入可写面]：~/.nebflow 数据根整体进会话
+ * 可写根（writableRoots/readableRoots 推导点追加 PathUtil.dataRoot，取代早期
+ * 「裁定 3：agent 只在 project 内写」）——节点直接写项目仓 git commit、
+ * plugin/agent 定义层、项目记忆、docs 归档，不再逐笔走宿主命令。整目录放行即
+ * 终态：不加新 deny、不建新配置面，根层凭据（auth.json/vps.env/nebflow.json
+ * 等）随之可读写（残留风险靠纪律约束，见批次报告）；九子目录白名单与
+ * auditReadableFiles 被 dataRoot 整体覆盖属预期（readExtras 原样保留，contains
+ * 包含关系下冗余无害）。既有 readDenied 负向规则语义不动：agents/**/memory.md
+ * 非 Nebula 份仍一票拒读，且写闸（FileSandbox.checkWrite）同等消费同一规则——
+ * 数据根入写面不扩大红线。
  *
  * enabled=false（nebflow.json sandbox.enabled=false 或非 project 会话）即回旧行为
  * （§G.1 回滚语义）：所有闸门短路过行，工具表现与沙箱引入前完全一致。
@@ -154,8 +165,16 @@ object SandboxPolicy:
    * 会话沙箱根推导（AgentCore sandboxPolicy 构造唯一调用点）：Nebula 根会话 →
    * PathUtil.dataRoot（数据根，与 nebflowReadExtras 同源——NEBFLOW_HOME /
    * CLI --home / setDataRoot 重定向自动跟随，绝不硬编码 os.home）；其余会话 →
-   * projectRoot（节点 worktree / 分发器 workspace，§A.6 唯一权威；空回落
-   * effectiveProjectRoot 既有语义不变）。
+   * 显式 sandboxRoot（worktree 节点继承项目工作区根，2026-09-05 21:05 作者裁定
+   * ——NodeEngine spawn 点直接传入，禁止按路径形态硬猜 workspace 布局）优先，
+   * 缺省回落 projectRoot（分发器 workspace / 未接线节点，§A.6 既有语义零变化），
+   * 再缺省回落 effectiveProjectRoot 既有语义不变。
+   *
+   * 优先级次序（Nebula 特判 > sandboxRoot > projectRoot > fallback）零回归约束：
+   * Nebula 分支在前保证 depth==0 根会话不被节点信号误覆盖（节点会话 depth=1
+   * 不命中 Nebula 判据，两分支天然不相交）；sandboxRoot 仅由 NodeEngine /
+   * ProjectActor 两个 sandboxEnabled=true 置位点传入，其余调用方缺省 None =
+   * 旧行为逐字节不变。
    *
    * 公开供 spec 断言：root 跟随 setDataRoot 的断言即「隔离实例写真 ~/.nebflow
    * 不可能」的机制证明（spec beforeEach 钉 dataRoot 到一次性目录，断言 root ==
@@ -166,10 +185,15 @@ object SandboxPolicy:
     depth: Int,
     agentName: String,
     projectRoot: Option[String],
-    fallbackProjectRoot: String
+    fallbackProjectRoot: String,
+    sandboxRoot: Option[String] = None
   ): String =
     if isNebulaRootSession(sandboxEnabled, depth, agentName) then PathUtil.dataRoot.toString
-    else projectRoot.filter(_.nonEmpty).getOrElse(fallbackProjectRoot)
+    else
+      sandboxRoot
+        .filter(_.nonEmpty)
+        .orElse(projectRoot.filter(_.nonEmpty))
+        .getOrElse(fallbackProjectRoot)
 
   /**
    * 从节点 projectRoot + 配置构造会话策略（AgentCore 每次 spawn 调一次）。
@@ -191,20 +215,33 @@ object SandboxPolicy:
         bashFailIfUnavailable = cfg.bashFailIfUnavailable
       )
 
+  /**
+   * 数据根（运行形态 =~/.nebflow）。2026-09-05 20:24 作者裁定起进会话可写根——
+   * 项目仓 git commit、plugin/agent 定义层、项目记忆、docs 归档由节点直接落盘。
+   * 推导唯一正源 = PathUtil.dataRoot（NEBFLOW_HOME / CLI --home / setDataRoot
+   * 重定向自动跟随），严禁硬编码 os.home：隔离测试实例（--home /tmp/...）下
+   * 可写根落在隔离 HOME，机制上写不穿真 ~/.nebflow。def 而非 val：跟随
+   * setDataRoot 每次重解析（与 nebflowReadExtras/auditReadableFiles 同款语义）。
+   */
+  def nebflowDataRoot: os.Path = PathUtil.dataRoot
+
   /** 临时根：/private/tmp、/tmp（符号链接形态，Seatbelt 需两种拼写）、java.io.tmpdir。 */
   private def tempRoots: List[os.Path] =
     List(os.Path("/private/tmp"), os.Path("/tmp"), os.Path(Paths.get(sys.props.getOrElse("java.io.tmpdir", "/tmp"))))
 
   /**
    * 可写根（唯一推导）。macOS 上 /tmp→/private/tmp 归一后通常剩 root +
-   * /private/tmp + java.io.tmpdir（/private/var/folders/...）去重后的集合。
+   * 数据根 + /private/tmp + java.io.tmpdir（/private/var/folders/...）去重后的
+   * 集合（root=dataRoot 的 Nebula 会话去重后数据根只出现一次）。
    */
   def writableRoots(p: SandboxPolicy): List[os.Path] =
-    (p.root :: p.extraWritable ::: tempRoots).map(x => os.Path(canonicalize(x.wrapped))).distinct
+    (p.root :: nebflowDataRoot :: p.extraWritable ::: tempRoots)
+      .map(x => os.Path(canonicalize(x.wrapped)))
+      .distinct
 
-  /** 可读根（唯一推导）。写 ⊆ 读：extraWritable 与 tempRoots 同时进入读面。 */
+  /** 可读根（唯一推导）。写 ⊆ 读：extraWritable、数据根与 tempRoots 同时进入读面。 */
   def readableRoots(p: SandboxPolicy): List[os.Path] =
-    (p.root :: p.extraWritable ::: p.readExtras ::: tempRoots)
+    (p.root :: nebflowDataRoot :: p.extraWritable ::: p.readExtras ::: tempRoots)
       .map(x => os.Path(canonicalize(x.wrapped)))
       .distinct
 

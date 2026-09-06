@@ -516,6 +516,30 @@ const FM_WAIT_ICON =
   + ' stroke-width="1.3" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">'
   + '<path d="M3 1.5h6M3 10.5h6M3.8 2.6h4.4L6 6 3.8 2.6ZM3.8 9.4h4.4L6 6 3.8 9.4Z"/></svg>';
 
+// ── 特殊节点标识（badge 批 2026-09-05）：解析与渲染分离（便于 fixture 验证）──
+// 三类标识彼此可辨（文字 + 配色双通道，裁定①禁 emoji 故纯文字胶囊）：
+//   merge   结构属性——数据契约 `"merge": true`，缺省/缺失 = 非 merge；
+//   loop    结构属性——前瞻防御，机制侧可能暂不产出该字段，缺字段不 crash；
+//   pending 状态徽标——既有 status=pending（待作者确认/派发）。
+// 判定严格 `=== true`：payload 缺字段/类型漂移一律静默降级为无徽标，零 console 噪音。
+/** @returns {string[]} 命中的标识键，顺序 merge → loop → pending（结构先于状态）。 */
+export function nodeFlagKeys(n) {
+  if (!n || typeof n !== 'object') return [];
+  const keys = [];
+  if (n.merge === true) keys.push('merge');
+  if (n.loop === true) keys.push('loop');
+  if ((n.status || 'pending') === 'pending') keys.push('pending');
+  return keys;
+}
+const FM_FLAG_CLS = { merge: 'fm-flag-merge', loop: 'fm-flag-loop', pending: 'fm-flag-pending' };
+/** 徽标 HTML：head 行胶囊，与 .fm-worktree-badge 同语言（文案 i18n flowmap.flag.*）。 */
+export function flagBadgesHtml(n) {
+  return nodeFlagKeys(n).map((k) => {
+    const label = esc(t(`flowmap.flag.${k}`));
+    return `<span class="fm-flag-badge ${FM_FLAG_CLS[k]}" title="${label}">${label}</span>`;
+  }).join('');
+}
+
 // ── 节点卡片（复用 solar 视觉）────────────────────────────
 function nodeHtml(n, pos, originX, nameOf) {
   const st = n.status || 'pending';
@@ -529,6 +553,9 @@ function nodeHtml(n, pos, originX, nameOf) {
     : st === 'cancelled' ? fmSvgIcon('cancelled', FM_STATUS_SVG.cancelled, 1.5) : '';
   const worktreeBadge = n.hasWorktree || n.worktree
     ? `<span class="fm-worktree-badge" title="${esc(n.worktree || '')}">wt</span>` : '';
+  // 特殊节点标识（badge 批）：merge/loop/pending 徽标进 head 行（wt 徽标同区，
+  // 复用该行既有 flex+gap；不新增卡内纵行——88px 卡纵向不可加行，同 node-flowmap-slim 口径）
+  const flags = flagBadgesHtml(n);
   // 载荷收敛（2026-09-05）：卡片不再显示 result 摘要（默认载荷无 result）——
   // 改显示 description（创建必写的一行描述）；存量节点无 description → 回退
   // taskPreview（载荷条件字段，task 首行 ≤80 截断）。结果全文经详情窗按需拉取。
@@ -546,17 +573,24 @@ function nodeHtml(n, pos, originX, nameOf) {
     ? `<div class="fm-wait-note" title="${esc(`${t('flowmap.waitingFor')}: ${waitParts.join(' · ')}`)}">`
       + `${FM_WAIT_ICON}<span class="fm-wait-note-text">${esc(t('flowmap.waitingFor'))}: ${esc(waitParts.join(' · '))}</span></div>`
     : '';
+  // Agent 退役（node-flowmap-slim：节点恒 general，卡上无信息量）——副行改显节点
+  // 元数据：preset 常显（未配置 → 克制空态「默认预设」），plugins 有则以
+  // `preset · p1, p2` 同行合显、无则零空态段。单行口径与归档成员行/详情窗 meta
+  // 一致；88px 固定卡纵向不可加行（独占行实测溢出加剧），复用 .solar-node-sub。
+  const presetText = n.preset || t('flowmap.presetDefault');
+  const pluginsText = (n.plugins || []).join(', ');
+  const subTitle = pluginsText ? `${presetText} · ${pluginsText}` : presetText;
   return `
-    <div class="solar-node fm-node ${cls}${term ? ' terminal' : ''}" data-node-id="${esc(n.id)}" data-agent="${esc(n.agent)}"
-         data-status="${esc(st)}" tabindex="0" title="${esc(n.name)} · ${esc(n.agent)}${term ? `（${esc(t('flowmap.terminalTag'))}）` : ''}" style="left:${left.toFixed(1)}px;top:${top.toFixed(1)}px">
+    <div class="solar-node fm-node ${cls}${term ? ' terminal' : ''}" data-node-id="${esc(n.id)}"
+         data-status="${esc(st)}" tabindex="0" title="${esc(n.name)} · ${esc(subTitle)}${term ? `（${esc(t('flowmap.terminalTag'))}）` : ''}" style="left:${left.toFixed(1)}px;top:${top.toFixed(1)}px">
       <div class="solar-orbit">
         <div class="solar-ring ring-1"><div class="solar-dot-wrap"><div class="solar-dot"></div></div></div>
         <div class="solar-ring ring-2"><div class="solar-dot-wrap"><div class="solar-dot"></div></div></div>
         <div class="solar-ring ring-3"><div class="solar-dot-wrap"><div class="solar-dot"></div></div></div>
       </div>
-      <div class="fm-node-head">${worktreeBadge}${statusIcon}</div>
+      <div class="fm-node-head">${worktreeBadge}${flags}${statusIcon}</div>
       <div class="solar-node-label" title="${esc(n.name)}">${esc(n.name)}</div>
-      <div class="solar-node-sub">${esc(n.agent)}</div>
+      <div class="solar-node-sub">${esc(subTitle)}</div>
       ${st === 'pending' && (n.in || []).length > 1 ? `<div class="fm-barrier-hint">barrier ×${(n.in || []).length}</div>` : ''}
       ${waitNote}
       ${desc}
@@ -877,16 +911,22 @@ function animateNodeExit(el) {
  *  保留卡加入签名（terminal class + title 标注随状态切换原地重建）。deps 段与
  *  in barrier 提示同款（deps 设计 §1.4）：pending/wiring 且有 deps 显示等待脚注，
  *  deps 集变化即重渲。2026-09-05 载荷收敛：签名带 description/taskPreview（卡片
- *  展示字段），不再含 result（载荷无 result）。 */
+ *  展示字段），不再含 result（载荷无 result）。Agent 退役（node-flowmap-slim）：
+ *  agent 不再上卡，签名改带 preset/plugins（副行展示字段，变更即重渲）。badge 批
+ *  （2026-09-05）：merge/loop 徽标字段入签名——WS 载荷带上该字段时增量路径即重渲；
+ *  pending 徽标随 st（已在签名）变化。 */
 function nodeContentKey(n) {
   if (!n) return '∅';
   const st = n.status || 'pending';
   return [
     st,
     n.name || '',
-    n.agent || '',
+    n.preset || '',
+    (n.plugins || []).join(','),
     n.hasWorktree || n.worktree ? 1 : 0,
     n.worktree || '',
+    n.merge === true ? 1 : 0,
+    n.loop === true ? 1 : 0,
     st === 'pending' && (n.in || []).length > 1 ? (n.in || []).length : 0,
     st === 'pending' || st === 'wiring' ? (n.deps || []).length : 0,
     n.description || n.taskPreview || '',
@@ -914,7 +954,6 @@ function transplantNodeContent(el, n, pos, originX, nameOf) {
   });
   el.className = fresh.className;
   if (fresh.dataset.status !== undefined) el.dataset.status = fresh.dataset.status;
-  if (fresh.dataset.agent !== undefined) el.dataset.agent = fresh.dataset.agent;
 }
 
 function applyNodeDiff(canvas, prevFm, fm, positions, width, projectName) {
@@ -1047,7 +1086,11 @@ function renderFlowMapDiff(container, baseline, fm, projectName) {
   applyNodeDiff(canvas, baseline, fm, positions, width, projectName);
   applyEdgeDiff(g, collectEdges(baseline, prevLayout.positions), collectEdges(fm, positions));
 
-  const summary = container.querySelector('.flowmap-summary');
+  // 摘要增量（2026-09-06 顶栏合并批）：就地视图摘要已迁入 nav-bar（view-body 之外），
+  // 查找提升到 pane 口径；legacy 独立标签页摘要仍在 container 内 card-header——
+  // pane 级 querySelector 两种形态通吃（pane 无 nav-bar 时命中的就是容器内那条）。
+  const paneEl = container.closest('.canvas-tab-pane');
+  const summary = (paneEl || container).querySelector('.flowmap-summary');
   const txt = summaryText(projectName, fm);
   if (summary && summary.textContent !== txt) summary.textContent = txt;
   container.dataset.fmState = 'nodes';
@@ -1109,11 +1152,15 @@ export function renderFlowMap(container, fm, projectName, opts = {}) {
   container.dataset.fmState = state;
   container.dataset.fmVisible = String(nodes.length);
   container.dataset.fmTotal = String(total);
+  // 顶栏合并（2026-09-06）：就地视图（projects 标签页 nav-bar 右侧已有摘要槽）→
+  // 摘要写进 nav-bar，body 内不再渲染头部条（项目名 title 已退役，返回钮承担）；
+  // legacy 独立 flow-map 标签页无 nav-bar → 保留摘要条回落（仅摘要、无 title）。
+  const paneEl = container.closest('.canvas-tab-pane');
+  const navSummary = paneEl ? paneEl.querySelector('.flowmap-nav-bar .flowmap-summary') : null;
   container.innerHTML = `
-    <div class="flowmap-card-header">
-      <div class="flowmap-card-title" title="${esc(projectName)}">${esc(projectName)}</div>
+    ${navSummary ? '' : `<div class="flowmap-card-header">
       <div class="flowmap-summary">${summarizeHeader(projectName, fm)}</div>
-    </div>
+    </div>`}
     ${nodes.length === 0
       ? `<div class="dag-empty"><div class="hint">${esc(emptyMsg)}</div></div>`
       : `<div class="solar-card flowmap-card">
@@ -1126,6 +1173,7 @@ export function renderFlowMap(container, fm, projectName, opts = {}) {
           ${legendHtml()}
         </div>`}
     `;
+  if (navSummary) navSummary.innerHTML = summarizeHeader(projectName, fm);
   renderedFmByContainer.set(container, fm);
   const vp = container.querySelector('.fm-viewport');
   const canvas = container.querySelector('.solar-canvas');
@@ -1190,7 +1238,10 @@ export function renderFlowMapInto(container, projectName, opts = {}) {
   const seq = (seqByProject.get(projectName) || 0) + 1;
   seqByProject.set(projectName, seq);
   const genAtStart = genByProject.get(projectName) || 0;
-  if (!container.querySelector('.flowmap-card-header')) {
+  // 首渲加载态：以 fmState 判定（2026-09-06 顶栏合并后就地视图 body 内不再渲染
+  // card-header，旧「无 header = 未渲染」判据失效）；refetch 不闪 loading。
+  if (!container.dataset.fmState || container.dataset.fmState === 'loading'
+      || container.dataset.fmState === 'error') {
     container.dataset.fmState = 'loading';
     container.innerHTML = `<div class="flowmap-loading">${esc(t('flowmap.loading'))}</div>`;
   }

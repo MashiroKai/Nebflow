@@ -1,31 +1,42 @@
 <!DOCTYPE html>
-<!-- turn-collapse harness.html — static test harness for the 2026-09-03
-     "collapse keeps LLM text" ruling (工具过程自动收起——保留中间文字回复).
+<!-- turn-collapse harness.html — static test harness for the #346 v2
+     "decompression model" (2026-09-05 23:44 author ruling: 思考直播回归 +
+     收起/展开语义重做; 2026-09-06 08:19 feedback: 动画层全摘——直落/直剥,
+     总结行换行完整显示, ✻ 设计字句恢复进题头).
 
      Imports the REAL frontend modules (chatView.js / chat.js / turnGroup.js /
      persistence.js — no stubs, no bundling) and replays the exact calls the
      app makes on WS events / history restore:
 
-       window.__liveTurn()        → 文字A→工具1→文字B→注入→工具2→最终回复,
-                                    then collapseTurn() exactly like the
-                                    main.js `done` handler does.
-       window.__multiRoundTurn()  → 2026-09-05 double-badge repro: MemoryEdit×5
-                                    → text → Task×4 → text → final (one turn,
-                                    two LLM tool rounds → ONE badge, count 9).
-       window.__postClosureTurn() → an external injection arriving AFTER the
-                                    closure cursor + a follow-up turn and its
-                                    collapseTurn() (#403 2026-08-26 ruling).
-       window.__refailTurn()      → same-turn re-terminal heal: failTurn()
-                                    right after __liveTurn's done (no rows
-                                    appended between) — ungroupTail must
-                                    dissolve and re-gather every run-group.
+       window.__liveTurn()          → thinking → 文字A → 工具1 → 文字B → 注入
+                                      → 工具2 → 最终回复, then collapseTurn()
+                                      exactly like the main.js `done` handler.
+       window.__multiRoundTurn()    → MemoryEdit×5 → text → Task×4 → text →
+                                      final (one turn, two LLM tool rounds →
+                                      ONE header, count 9).
+       window.__postClosureTurn()   → an external injection arriving AFTER the
+                                      closure cursor + a follow-up turn and
+                                      its collapseTurn() (#403 2026-08-26).
+       window.__refailTurn()        → same-turn re-terminal heal: failTurn()
+                                      right after __liveTurn's done (no rows
+                                      appended between) — the v2 dissolve
+                                      clears header + tuck marks, rows stay
+                                      put and visible.
+       window.__thinkingStreamStart() → user row + live thinking deltas ONLY
+                                      (streaming state — no finishThinking).
+       window.__thinkingStreamFinish() → finishThinking + text reply + done
+                                      collapseTurn (completes the stream).
+       window.__textOnlyTurn()      → zero-process turn (E5): no header, no
+                                      tuck, previous header stays visible.
        window.__history(msgs, opts) → restoreFromBackendHistory(msgs, opts)
-                                    (the post-refresh path; fixture shape
-                                    matches the real ~/.nebflow session
-                                    ui.json entries).
+                                      (the post-refresh path; fixture shape
+                                      matches the real ~/.nebflow session
+                                      ui.json entries).
 
-     The spec (tests/turn-collapse-keep-text.spec.mjs) serves the repo root
-     over a throwaway static server (never the 8080 host).
+     The specs (tests/turn-collapse-keep-text.spec.mjs,
+     tests/turn-banner-dedupe.spec.mjs, tests/turn-single-badge.spec.mjs)
+     serve the repo root over a throwaway static file server spawned and
+     killed by the spec itself (never the 8080 host).
 -->
 <html lang="zh-CN">
 <head>
@@ -66,10 +77,19 @@
 
     const raf2 = () => new Promise(r => requestAnimationFrame(() => requestAnimationFrame(r)));
 
-    // 文字A→工具1→文字B→注入→工具2→最终回复 + done 收起（对齐 main.js done
-    // handler 的 collapseTurn 调用形态：meta 带 durationMs/model/phrase/title）。
+    // No animation layer (2026-09-06): tuck/untuck are synchronous class
+    // flips — two RAFs are enough for layout to settle after a scenario.
+
+    // thinking(直播) → 文字A → 工具1 → 文字B → 注入 → 工具2 → 最终回复 + done
+    // 收起（对齐 main.js done handler 的 collapseTurn 调用形态：meta 带
+    // durationMs/model/phrase/title——✻ phrase 于 2026-09-06 恢复上摘要行，
+    // 作为题头首段）。
     window.__liveTurn = async () => {
       chatMod.renderUserBubble('帮我整理这份资料的关键结论', [], Date.now());
+      // thinking 段（直播展开，2026-09-05 思考直播回归）
+      chatMod.appendThinkingDelta('先拆解问题：资料分三块，逐块提取结论。');
+      chatMod.appendThinkingDelta('需要检索佐证。');
+      chatMod.finishThinking();
       // 文字A — 中间文字（roundComplete finalize 形态：无 duration badge）
       chatMod.appendAiText('好的，我先检索资料，再逐段汇报进展。');
       chatMod.finishAi();
@@ -83,7 +103,7 @@
       // 工具2
       chatMod.renderTool('Read\n  ("turnGroup.js")', '120 lines', 'file body', false, '{"file_path":"/tmp/turnGroup.js"}', 'harness-session');
       // 最终回复（done：带 duration badge）
-      chatMod.appendAiText('这是最终回复：中间文字全部保留，工具过程已折叠。');
+      chatMod.appendAiText('这是最终回复：中间过程已收起，回复与卡片照常可见。');
       chatMod.finishAi(4200, 'test-model');
       turnMod.collapseTurn(view, {
         durationMs: 4200,
@@ -95,8 +115,8 @@
       await raf2();
     };
 
-    // 闭合后到达的外部事件开新组（#403 2026-08-26 裁定回归）：新 turn 的
-    // 工具+最终回复 + done 收起。必须在 __liveTurn 之后调用。
+    // 闭合后到达的外部事件开新 turn（#403 2026-08-26 裁定回归）：新 turn 的
+    // 注入+工具+最终回复 + done 收起。必须在 __liveTurn 之后调用。
     window.__postClosureTurn = async () => {
       chatMod.renderInjectedBubble('【Schedule】每日站会提醒', 'schedule', Date.now(), 'schedule', '', '', 'immediate');
       chatMod.renderTool('Bash\n  (git status)', 'clean', 'git output', false, '{"command":"git status"}', 'harness-session');
@@ -112,17 +132,17 @@
       await raf2();
     };
 
-    // 同 turn 重终态治愈（ungroupTail）：done 后紧跟 error（期间无新行追加），
-    // 全部 run-group 溶解后按 failed 重收。必须在 __liveTurn 之后调用。
+    // 同 turn 重终态治愈（v2 dissolve）：done 后紧跟 error（期间无新行追加），
+    // header 移除、tuck 标记清除——行从未移动，直接全部可见。必须在
+    // __liveTurn 之后调用。
     window.__refailTurn = async () => {
       turnMod.failTurn(view);
       await raf2();
     };
 
-    // 2026-09-05 双 badge 回归场景（作者 08:48 截图复刻）：一个 turn 内两轮
+    // 2026-09-05 多轮聚合场景（作者 08:48 截图复刻延续）：一个 turn 内两轮
     // LLM 工具循环——MemoryEdit×5 → 中间文字A → Task×4 → 中间文字B → 最终
-    // 回复。修复前按连续 run 分组成两个 badge（工具 5 次 / 工具 4 次）；修复
-    // 后必须恰一个 badge，计数=全轮合计 9。
+    // 回复。恰一个 header，计数=全轮合计 9。
     window.__multiRoundTurn = async () => {
       chatMod.renderUserBubble('把记忆里的项目进展全部更新一遍，然后派子任务收集数据', [], Date.now());
       // 第一轮 LLM：MemoryEdit ×5
@@ -152,12 +172,42 @@
       await raf2();
     };
 
-    // E10 钩子：消息搜索命中折叠组时的展开入口（banner-dedupe spec 用：
-    // 被去重隐藏标语条的组仍可经此展开步骤区）。
+    // 思考直播（2026-09-05 回归）：只铺 user + 流式 thinking delta，
+    // 不 finish——断言流式期间内容可见。
+    window.__thinkingStreamStart = async () => {
+      chatMod.renderUserBubble('看看你怎么想', [], Date.now());
+      chatMod.appendThinkingDelta('第一段思考：问题需要拆解。');
+      chatMod.appendThinkingDelta('第二段思考：逐块核对。');
+      await raf2();
+    };
+
+    // 完成上面的流（中间态）：finishThinking + 文字流开始，但不 finishAi
+    // 不 done——断言 thinking 段结束后内容仍可见（只有终态才收）。
+    window.__thinkingStreamMid = async () => {
+      chatMod.finishThinking();
+      chatMod.appendAiText('思考后的答案。');
+      await raf2();
+    };
+
+    // 完成上面的流（终态）：finishAi 带 badge + 收起。断言 thinking 行随
+    // turn 收起。
+    window.__thinkingStreamFinish = async () => {
+      chatMod.finishAi(3000, 'test-model');
+      turnMod.collapseTurn(view, {
+        durationMs: 3000,
+        model: 'test-model',
+        phrase: '',
+        title: '10:40',
+        sessionId: 'harness-session',
+      });
+      await raf2();
+    };
+
+    // E10 钩子：消息搜索命中被收起 turn 时的展开入口。
     window.__expandContaining = (el) => turnMod.expandGroupContaining(el);
 
-    // E5 纯文字 turn（banner-dedupe spec 用）：零过程行、不产标语条——
-    // 前一条最新标语必须保持可见不被顶掉。
+    // E5 纯文字 turn：零过程行、不产 header——前一条最新 header 必须保持
+    // 可见不被顶掉。
     window.__textOnlyTurn = async () => {
       chatMod.renderUserBubble('纯文字追问', [], Date.now());
       chatMod.appendAiText('纯文字收尾。');

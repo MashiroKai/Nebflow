@@ -736,6 +736,9 @@ export function renderSettings() {
     `<option value="${code}" ${code === getLocale() ? 'selected' : ''}>${localeLabels[code] || code}</option>`
   ).join('');
 
+  // 2026-09-06 作者裁定：账号区与设备互联统一为一个区块——设备属于账号，
+  // 登录态头像下方直接放设备列表，未登录态只有 logo + 一句「不可用」说明，
+  // 不再有独立的 neblink settings-section。
   content.innerHTML = `
     <div class="settings-section">
       <div class="settings-section-title">${t('settings.account')}</div>
@@ -747,11 +750,7 @@ export function renderSettings() {
           </picture>
           <img class="settings-avatar-photo" alt="" hidden>
         </span>
-        <span class="settings-avatar-text"></span>
       </button>
-    </div>
-    <div class="settings-section">
-      <div class="settings-section-title">${t('neblink.title')}</div>
       ${neblinkSettingsHTML()}
     </div>
     <div class="settings-section">
@@ -902,20 +901,20 @@ function renderProviderCard(name, p) {
     </div>`;
 }
 
-// ── Settings avatar section (09-05 五项裁定④) ─────────────
+// ── Settings avatar section (09-05 五项裁定④; 2026-09-06 修整: 头像-only) ──
 // Dual state driven by the SAME decision as the Activity Bar avatar
 // (neblink.js avatarViewState): logged in with a usable account avatar →
-// photo; otherwise the product logo. Click behavior is not reimplemented:
-// the entry forwards to #activity-avatar's native click (activityBar.js
-// bindAvatar — login modal when logged out, profile page when logged in),
-// so both entries stay byte-identical by construction.
+// photo; otherwise the product logo. The entry renders the centered avatar
+// only — all in-area text removed (author 2026-09-06). Click behavior is not
+// reimplemented: the entry forwards to #activity-avatar's native click
+// (activityBar.js bindAvatar — login modal when logged out, profile page when
+// logged in), so both entries stay byte-identical by construction.
 function renderSettingsAvatar() {
   const entry = document.getElementById('settings-avatar-entry');
   if (!entry) return;
-  const { url: validAvatarUrl, showPhoto, loggedIn } = avatarViewState();
+  const { url: validAvatarUrl, showPhoto } = avatarViewState();
   const logoEl = entry.querySelector('.settings-avatar-logo');
   const photoEl = entry.querySelector('.settings-avatar-photo');
-  const textEl = entry.querySelector('.settings-avatar-text');
   if (photoEl) {
     photoEl.hidden = !showPhoto;
     photoEl.onerror = () => {
@@ -927,9 +926,6 @@ function renderSettingsAvatar() {
     if (showPhoto && photoEl.getAttribute('src') !== validAvatarUrl) photoEl.setAttribute('src', validAvatarUrl);
   }
   if (logoEl) logoEl.hidden = showPhoto;
-  if (textEl) textEl.textContent = loggedIn
-    ? t('settings.accountSignedIn')
-    : t('settings.accountSignIn');
 }
 
 // ---------- Preset management section (P3) ----------
