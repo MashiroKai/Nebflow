@@ -1038,8 +1038,8 @@ export default {
   'daemons.delete': '删除',
   // === 工作区选择卡 + 应用内目录浏览器（workspace-picker 批次，2026-09-05） ===
   'workspacePicker.pickTitle': '选择工作区',
-  'workspacePicker.pickHint': '点击打开系统文件夹选择框（可浏览层级、新建文件夹）',
-  'workspacePicker.picking': '正在打开系统选择框…',
+  'workspacePicker.pickHint': '点击打开应用内目录浏览器（可逐级浏览、新建文件夹）',
+  'workspacePicker.picking': '正在打开应用内目录浏览器…',
   'workspacePicker.pickedEcho': '已选择：{path}',
   'workspacePicker.browseTitle': '选择工作区',
   'workspacePicker.home': '主目录',
