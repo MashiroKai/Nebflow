@@ -188,7 +188,10 @@ class DelegateToolSpec extends CatsEffectSuite:
     val summary = DelegateTool.summarize(input)
     assert(!summary.contains("→"), s"summarize should not include arrow without agent: $summary")
 
-  test("flow parameter returns FlowTrigger guidance error (R1 split)"):
+  test("stray flow parameter is ignored — Delegate spawns sub-agents only (2026-09-06 retirement)"):
+    // 2026-09-06 工具面裁撤批：FlowTrigger 已退役，R1 split 时代的「flow=
+    // 引导拒绝」分支随之删除。传入 flow= 不再产生专用错误——它不是合法参数，
+    // 静默忽略后按缺 agent 正常拒绝（自含目录清单）。
     for
       _ <- reset()
       input = JsonObject(
@@ -198,11 +201,10 @@ class DelegateToolSpec extends CatsEffectSuite:
       )
       result <- DelegateTool.call(input, ctxWith())
     yield
-      assert(result.isLeft, "flow= must be rejected — Delegate no longer triggers flows")
-      assert(
-        result.swap.toOption.get.message.contains("FlowTrigger"),
-        s"error must point to FlowTrigger: ${result.swap.toOption.get.message}"
-      )
+      assert(result.isLeft, "missing agent must still reject the call")
+      val msg = result.swap.toOption.get.message
+      assert(msg.contains("Missing required parameter: agent"), s"normal agent-missing path: $msg")
+      assert(!msg.contains("FlowTrigger"), s"FlowTrigger guidance must be gone (retired): $msg")
 
   test("inputSchema no longer includes the flow parameter"):
     val props = DelegateTool.inputSchema("properties").flatMap(_.asObject)

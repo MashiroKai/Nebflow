@@ -47,7 +47,7 @@ import {
   showNewSessionModal, hideModals, confirmNewSession,
   showDeleteModal, confirmDeleteSession,
   showDeleteFolderModal,
-  showAgentModal, hideAgentModal, initModals
+  initModals
 } from './modal.js';
 import { send, handleSlash, addFileAttachment, initInput, initGlobalFileDrop, injectUserMessage, enterAskMode, cancelAskMode, registerSkillCommands, drainMessageQueue, restoreQueue } from './input.js';import { saveMsg, loadMsgs, restoreFromStorage, restoreFromBackendHistory, migrateLegacyIfNeeded, emergencyCacheCleanup, findLastRealMessage, saveAskMsgDedup } from './persistence.js';
 import { initMicOrb } from './micOrb.js';
@@ -2307,8 +2307,9 @@ onMessage('agentSessionList', (msg, view) => {
   initHeaderModelInfo();
 });
 
-onMessage('agentSystemPrompt', (msg, view) => showAgentModal(msg.name, msg.systemMd || ''));
-onMessage('agentSystemPromptSaved', () => sendWs({ type: 'listAgents' }));
+// agentSystemPrompt / agentSystemPromptSaved WS handlers retired 2026-09-06
+// with the agent editor modal — agent system prompts are edited in the Canvas
+// detail tab (agentManager.js), which talks updateAgentSystemPrompt directly.
 
 // --- Server config ---
 onMessage('serverConfig', (msg, view) => {

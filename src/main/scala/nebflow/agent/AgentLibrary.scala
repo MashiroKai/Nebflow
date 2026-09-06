@@ -94,32 +94,11 @@ class AgentLibrary(
     os.write.over(dir / "system.md", content)
   }
 
-  /**
-   * Update the tools list in agent.json. Reads the existing file, filters out
-   * fixed tools (auto-injected by system) and wildcard, writes only the
-   * configurable tools.
-   */
-  def updateTools(name: String, tools: List[String]): IO[Unit] = IO.blocking {
-    val jsonPath = agentsDir / name / "agent.json"
-    if os.exists(jsonPath) then
-      val json = os.read(jsonPath)
-      io.circe.parser.parse(json).toOption match
-        case Some(parsed) =>
-          // Filter out fixed tools and wildcard — they're auto-injected.
-          // Nebula-exclusive tools (#404, ruling 2026-08-25) are also dropped
-          // for non-Nebula agents: buildAllowedToolSet strips them at runtime,
-          // so persisting the declaration would only confuse the panel.
-          // 2026-09-05 dream 准入例外：剥离集走 exclusiveToolsFor 单点——
-          // dream 声明 MemoryEdit 保存时不再被剥掉（否则准入形同虚设；
-          // 动作面仍限修订动作，append 由 MemoryEditTool 拒绝）。
-          val defn = loadFromDir(agentsDir / name).getOrElse(AgentDef(name = name, description = ""))
-          val fixed = AgentCore.fixedToolsFor(defn)
-          val nebulaExclusive = AgentCore.exclusiveToolsFor(defn.name)
-          val configurable = tools.filterNot(t => t == "*" || fixed.contains(t) || nebulaExclusive.contains(t))
-          val updated = parsed.deepMerge(io.circe.Json.obj("tools" -> configurable.asJson))
-          os.write.over(jsonPath, updated.noSpaces)
-        case None => () // skip if unparseable
-  }
+  // updateTools (agent.json tools write-back) retired 2026-09-06 — the panel's
+  // capability sections are gone and the WS/REST write channels now reject.
+  // Per decision A① the tools/skills/flows fields in existing agent.json files
+  // KEEP being parsed (legacy grants stay live until stage 3); only the
+  // write-back path is retired.
 
   /**
    * Update the model configuration in agent.json. Reads the existing file,

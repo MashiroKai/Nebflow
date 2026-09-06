@@ -1819,39 +1819,16 @@ class RestApiRoutes(
 
     // ===== Entity API (Team/Flow/Agent management) =====
 
-    // PUT /agents/:name — update agent's skills/flows
-    case req @ PUT -> Root / "agents" / agentName =>
+    // PUT /agents/:name — RETIRED 2026-09-06 (tool-face batch): the skills/
+    // flows write-back is closed. Loud 410 so any stale client sees the
+    // retirement instead of assuming the edit landed. agent.json skills/flows
+    // declarations are still PARSED (decision A① — legacy grants stay live
+    // until stage 3); only this write path is retired.
+    case PUT -> Root / "agents" / agentName =>
       if !isValidAgentName(agentName) then BadRequest(Json.obj("error" -> "Invalid agent name".asJson))
       else
-        req.as[Json].flatMap { body =>
-          for
-            dirOpt <- EntityLoader.findAgentDir(agentName)
-            result <- dirOpt match
-              case Some(dir) =>
-                IO.blocking {
-                  val jsonPath = dir / "agent.json"
-                  val json = os.read(jsonPath)
-                  io.circe.parser.parse(json) match
-                    case Right(parsed) =>
-                      // Extract skills/flows from request body
-                      val skillsOpt = body.hcursor.downField("skills").as[Option[List[String]]]
-                      val flowsOpt = body.hcursor.downField("flows").as[Option[List[String]]]
-                      val merged = parsed
-                        .deepMerge(skillsOpt.toOption.map(s => Json.obj("skills" -> s.asJson)).getOrElse(Json.obj()))
-                        .deepMerge(flowsOpt.toOption.map(f => Json.obj("flows" -> f.asJson)).getOrElse(Json.obj()))
-                      AtomicJson.writeSync(jsonPath, merged.noSpaces)
-                      true
-                    case Left(_) => false
-                }.flatMap {
-                  case true =>
-                    Ok(Json.obj("updated" -> true.asJson))
-                  case false =>
-                    InternalServerError(Json.obj("error" -> "Failed to write agent.json".asJson))
-                }
-              case None =>
-                NotFound(Json.obj("error" -> s"Agent '$agentName' not found".asJson))
-          yield result
-        }
+        logger.warn(s"Rejected PUT /agents/$agentName — skills/flows write-back retired 2026-09-06 (stage 2d tool-face batch)")
+        Gone(Json.obj("error" -> "agent skills/flows write-back retired 2026-09-06: per-agent capability config is definition/plugin-managed; agent.json is no longer written from the panel".asJson))
 
     // GET /skills — list all available skills (name + description) for the Agent panel
     case GET -> Root / "skills" =>
