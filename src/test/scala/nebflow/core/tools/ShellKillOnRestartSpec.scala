@@ -140,4 +140,55 @@ class ShellKillOnRestartSpec extends CatsEffectSuite:
     yield ()
   }
 
+  /**
+   * 孤儿后台任务收割 D1 主钩子（2026-09-06）：BgTaskRegistry.reclaimSession =
+   * killSessionProcesses（杀进程树）+ unregisterSession（注销 registry）+
+   * WS cancelled 帧——三件事合一，供 NodeEngine failed/cancelled/zombie 终态出口
+   * 与 Agent Stop 路径共用。E-5 验证它经 killSessionProcesses 切实杀死真实进程。
+   */
+  test("E-5: reclaimSession kills the process tree + clears registry + sends WS cancelled frame") {
+    for
+      wsFrames <- Ref.of[IO, List[io.circe.Json]](Nil)
+      shell <- ShellSession.forSession("e5-session")
+      // 异常路径销毁守卫（残留治理 2026-09-05）：sleep 120 不能漏到测试外
+      _ <- (for
+        // 后台任务（run_in_background 等价）+ registry 登记
+        _ <- shell.executeBackground(
+          "sleep 300",
+          jobIdOverride = Some("e5-bg"),
+          healthCheckIntervalSec = 1
+        )
+        _ <- BgTaskRegistry.register("e5-bg", "e5-session", "e5-bg-desc", "local")
+        // 前台卡死进程（killSessionProcesses 要杀的目标）
+        (health, fiber) <- startCmd(shell, "sleep 120 & wait")
+        pid = health.processRef.get().pid()
+        _ <- waitFor(procAlive(pid), 3000, "fg pid alive")
+        _ <- waitFor(BgTaskRegistry.waitingFor("e5-session").map(_.nonEmpty), 5000, "bg task registered")
+        // D1 收殓：杀进程树 + 注销 + WS 帧（reclaimSession 单点）
+        _ <- BgTaskRegistry.reclaimSession(
+          Some("e5-session"),
+          (j: io.circe.Json) => wsFrames.update(_ :+ j),
+          "nebula-root"
+        )
+        _ <- waitFor(procAlive(pid).map(!_), 10000, s"fg pid $pid dead after reclaimSession")
+        _ <- fiber.join.timeout(5.seconds).attempt.void
+        stillWaiting <- BgTaskRegistry.waitingFor("e5-session")
+        frames <- wsFrames.get
+        _ <- shell.cancelBackgroundJob("e5-bg").attempt.void
+      yield
+        assertEquals(stillWaiting, Nil, "bg task must be cleared from registry by reclaimSession")
+        assert(frames.exists(f =>
+          f.hcursor.get[String]("type").contains("backgroundTaskUpdate") &&
+            f.hcursor.get[String]("status").contains("cancelled") &&
+            f.hcursor.get[String]("taskId").contains("e5-bg")
+        ), s"WS cancelled backgroundTaskUpdate frame expected, got: ${frames.map(_.noSpaces.take(120)).mkString("|")}")
+      )
+        .guarantee(
+          shell.cancelBackgroundJob("e5-bg").attempt.void *>
+            ShellSession.killSessionProcesses(Some("e5-session")).attempt.void *>
+            ShellSession.destroySession("e5-session").attempt.void
+        )
+    yield ()
+  }
+
 end ShellKillOnRestartSpec
