@@ -793,43 +793,57 @@
 }
 
 /* ── Settings avatar entry (Account section — 09-05 五项裁定④; 2026-09-06
-   修整: 精简为居中单头像，区内文字全部移除——作者令) ──────────────────────
+   增补重设计: 去底板 + Linear/Vercel 式头像直置——作者任务书) ───────────────
    Dual state: logged out → product logo (bright/dark via <picture>);
    logged in with account avatar → photo. Same decision source as the
-   Activity Bar avatar (neblink.js avatarViewState). Tokens only. */
+   Activity Bar avatar (neblink.js avatarViewState).
+   Design: avatar sits directly on the panel — no card/baseboard; a 1px
+   ring defines the boundary; hover reuses the Activity Bar motion language
+   (scale 1.04 / active 0.97) plus a soft accent halo in the same
+   rgba(91,127,191,*) family the rest of the frame uses.
+   Click target = the avatar itself: the <button> shrinks to wrap the frame
+   (auto width, centered); the JS handler is unchanged (forwards to
+   #activity-avatar). Tokens only. */
 .settings-avatar-entry {
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  width: 100%;
-  padding: 8px;
-  background: var(--color-frame-input-bg);
-  border: 1px solid var(--color-frame-input-border);
-  border-radius: 8px;
+  display: block;
+  margin: 2px auto 6px;
+  padding: 6px;
+  background: transparent;
+  border: none;
+  border-radius: 50%;
   cursor: pointer;
-  text-align: left;
   font: inherit;
   color: inherit;
-  transition: border-color 0.15s, background 0.15s;
 }
-.settings-avatar-entry:hover { border-color: rgba(91, 127, 191, 0.35); }
+.settings-avatar-entry:focus-visible {
+  outline: 2px solid rgba(91, 127, 191, 0.65);
+  outline-offset: 2px;
+}
 .settings-avatar-frame {
   position: relative;
-  width: 40px;
-  height: 40px;
+  width: 56px;
+  height: 56px;
   border-radius: 50%;
   overflow: hidden;
   flex-shrink: 0;
-  background: var(--color-frame-hover);
+  background: transparent;
+  border: 1px solid var(--color-frame-input-border);
   display: flex;
   align-items: center;
   justify-content: center;
+  transition: border-color 0.15s, box-shadow 0.15s, transform 0.1s;
 }
+.settings-avatar-entry:hover .settings-avatar-frame {
+  border-color: rgba(91, 127, 191, 0.55);
+  box-shadow: 0 0 0 4px rgba(91, 127, 191, 0.12);
+  transform: scale(1.04);
+}
+.settings-avatar-entry:active .settings-avatar-frame { transform: scale(0.97); }
 .settings-avatar-logo {
-  width: 30px;
-  height: 30px;
+  width: 32px;
+  height: 32px;
   object-fit: contain;
-  /* Pixel-art logo v4: 30px = whole 7.5px blocks at 224px source scale —
+  /* Pixel-art logo v4: 32px = whole 7px blocks at 224px source scale —
      keep pixelated so stems stay even (same rule as .activity-avatar-logo). */
   image-rendering: pixelated;
   pointer-events: none;
