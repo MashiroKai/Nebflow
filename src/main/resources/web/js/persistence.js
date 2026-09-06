@@ -6,35 +6,18 @@ import state, { LS_KEY, LS_SESSIONS_KEY, LS_HISTORY_KEY, AGENT_PALETTE } from '.
 import { key } from './branding.js';
 import { activeView } from './chatView.js';
 import { t } from './i18n.js';
-import { renderMarkdownWithMath, escapeHtml, smartScroll, buildToolDetail, buildDelegatePromptHtml, attachToolClick, esc, localizeToolLabel, localizeToolSummary, renderHighlightedContent, createMsgCopyButton } from './utils.js';
+import { renderMarkdownWithMath, escapeHtml, smartScroll, buildToolDetail, buildDelegatePromptHtml, attachToolClick, esc, localizeToolLabel, localizeToolSummary, renderHighlightedContent } from './utils.js';
 import { renderWithRegistry, cleanupCardIframes } from './cardRegistry.js';
-import { createDurationBadgeElement, formatHm, toggleTimeFormat, applyPopCard, buildInjectedRow, bindCollapsibleToggle, renderAskUserHistory, buildCompactCardRow } from './chat.js';
+import { createDurationBadgeElement, createMsgFooterBadge, applyPopCard, buildInjectedRow, bindCollapsibleToggle, renderAskUserHistory, buildCompactCardRow } from './chat.js';
 import { buildTurnSummariesForHistory } from './turnGroup.js';
 import { renderRefBlock, normalizeTaskRef } from './reference.js';
 
 // ---------- AI message badge (no duration) ----------
-// Builds a duration-badge pill with timestamp + copy button, matching
-// the style used by finishAi() in chat.js for live messages.
+// Builds the unified v1.2 footer pill (time + copy), matching finishAi() in
+// chat.js for live messages. Delegates to the single chat.js builder
+// (2026-09-06 footer 补齐批) — divider-separator semantics live there.
 function createAiCopyBadge(timestamp, text) {
-  const badge = document.createElement('div');
-  badge.className = 'duration-badge';
-  if (timestamp && timestamp > 0) {
-    const timeSpan = document.createElement('span');
-    timeSpan.className = 'duration-badge-time';
-    timeSpan.setAttribute('data-ts', timestamp);
-    timeSpan.textContent = formatHm(timestamp);
-    timeSpan.title = '点击切换 12/24 小时制';
-    timeSpan.addEventListener('click', toggleTimeFormat);
-    badge.appendChild(timeSpan);
-    // Divider is a separator — only between time and copy, never trailing.
-    if (text) {
-      const div = document.createElement('span');
-      div.className = 'duration-badge-divider';
-      badge.appendChild(div);
-    }
-  }
-  if (text) badge.appendChild(createMsgCopyButton(text));
-  return badge;
+  return createMsgFooterBadge(timestamp, text);
 }
 
 // ---------- Safe localStorage write with quota handling ----------
@@ -388,25 +371,8 @@ export function restoreFromStorage(opts = {}) {
         row.appendChild(bubble);
       }
       (m.attachments || []).forEach(att => appendAttachmentBubble(row, att));
-      // Timestamp + copy button (pill style, matching AI duration badge)
-      if (m.timestamp && m.timestamp > 0) {
-        const badge = document.createElement('div');
-        badge.className = 'duration-badge';
-        const timeSpan = document.createElement('span');
-        timeSpan.className = 'duration-badge-time';
-        timeSpan.setAttribute('data-ts', m.timestamp);
-        timeSpan.textContent = formatHm(m.timestamp);
-        timeSpan.title = '点击切换 12/24 小时制';
-        timeSpan.addEventListener('click', toggleTimeFormat);
-        badge.appendChild(timeSpan);
-        if (m.text) {
-          const div = document.createElement('span');
-          div.className = 'duration-badge-divider';
-          badge.appendChild(div);
-          badge.appendChild(createMsgCopyButton(m.text));
-        }
-        row.appendChild(badge);
-      } else if (m.text) {
+      // Unified v1.2 footer pill (time + copy; copy-only when no timestamp)
+      if ((m.timestamp && m.timestamp > 0) || m.text) {
         row.appendChild(createAiCopyBadge(m.timestamp, m.text));
       }
       chat.appendChild(row);
@@ -432,6 +398,9 @@ export function restoreFromStorage(opts = {}) {
         tBubble.appendChild(tLabel);
         tBubble.appendChild(tContent);
         tRow.appendChild(tBubble);
+        // v1.2 unified footer (2026-09-06 补齐批): history thinking rows get
+        // time + copy too (timestamp rides the owning Ai message).
+        tRow.appendChild(createAiCopyBadge(m.timestamp, m.thinking));
         chat.appendChild(tRow);
         bindCollapsibleToggle(tLabel, () => tContent);
       }
@@ -460,6 +429,11 @@ export function restoreFromStorage(opts = {}) {
       if (m.input) { try { row.dataset.nfInput = typeof m.input === 'string' ? m.input : JSON.stringify(m.input); } catch {} }
       const card = document.createElement('div');
       card.className = 'tool-card';
+      // v1.2 unified footer (2026-09-06 补齐批): history tool rows get a
+      // footer too — UiMessage.Tool carries no timestamp, so copy-only.
+      // Card/iframe payloads copy the summary instead of the HTML envelope.
+      const toolFooterCopy = (m.content && typeof m.content === 'string' && !/^___\w+_HTML___/.test(m.content))
+        ? m.content : (m.summary || m.label || '');
       // Card tool: render standard tool card + separate card iframe below
       if (m.content && typeof m.content === 'string' && /^___\w+_HTML___/.test(m.content)) {
         const isError = m.isError;
@@ -473,6 +447,7 @@ export function restoreFromStorage(opts = {}) {
         card.innerHTML = '<span class="icon ' + (isError ? 'err' : 'ok') + '">' + icon + '</span>' +
           '<div class="content"><div class="label">' + lHtml + '</div></div>';
         row.appendChild(card);
+        if (toolFooterCopy) row.appendChild(createAiCopyBadge(0, toolFooterCopy));
         chat.appendChild(row);
         const cardRow = document.createElement('div');
         cardRow.className = 'row card-content';
@@ -500,6 +475,7 @@ export function restoreFromStorage(opts = {}) {
           '<div class="content"><div class="label">' + lHtml + '</div>' +
           (bodyHtml ? '<div class="body">' + bodyHtml + '</div>' : '') + '</div>';
         row.appendChild(card);
+        if (toolFooterCopy) row.appendChild(createAiCopyBadge(0, toolFooterCopy));
         chat.appendChild(row);
         if (hasBody) attachToolClick(card);
       }
@@ -569,6 +545,9 @@ export function restoreFromStorage(opts = {}) {
       qBubble.appendChild(qLabel);
       qBubble.appendChild(qText);
       qRow.appendChild(qBubble);
+      // v1.2 unified footer (2026-09-06 补齐批): ask question bubbles get a
+      // copy footer too (UiMessage.Ask carries no timestamp → copy-only).
+      if (m.question) qRow.appendChild(createAiCopyBadge(0, m.question));
       chat.appendChild(qRow);
       // Ask answer (AI side)
       if (m.answer) {
@@ -588,6 +567,9 @@ export function restoreFromStorage(opts = {}) {
           // v1.2 footer ruling: time + copy only
           const badge = createDurationBadgeElement(m.durationMs, m.model, i, m.timestamp, m.answer);
           aRow.appendChild(badge);
+        } else {
+          // v1.2 unified footer (2026-09-06 补齐批): no-duration answers too.
+          aRow.appendChild(createAiCopyBadge(m.timestamp, m.answer));
         }
         chat.appendChild(aRow);
       }
@@ -612,6 +594,9 @@ export function restoreFromStorage(opts = {}) {
         row.appendChild(badge);
       }
       row.appendChild(bubble);
+      // v1.2 unified footer (2026-09-06 补齐批): agent rows get a copy
+      // footer too (UiMessage.Agent carries no timestamp → copy-only).
+      if (m.text) row.appendChild(createAiCopyBadge(0, m.text));
       chat.appendChild(row);
     } else if (m.type === 'error') {
       // Skip error messages on restore — they're transient
@@ -703,24 +688,9 @@ export function restoreFromBackendHistory(msgs, opts = {}) {
         row.appendChild(bubble);
       }
       (m.attachments || []).forEach(att => appendAttachmentBubble(row, att));
-      // Timestamp + copy button (pill style, matching AI duration badge)
-      if (m.timestamp && m.timestamp > 0) {
-        const badge = document.createElement('div');
-        badge.className = 'duration-badge';
-        const timeSpan = document.createElement('span');
-        timeSpan.className = 'duration-badge-time';
-        timeSpan.setAttribute('data-ts', m.timestamp);
-        timeSpan.textContent = formatHm(m.timestamp);
-        timeSpan.title = '点击切换 12/24 小时制';
-        timeSpan.addEventListener('click', toggleTimeFormat);
-        badge.appendChild(timeSpan);
-        if (m.text) {
-          const div = document.createElement('span');
-          div.className = 'duration-badge-divider';
-          badge.appendChild(div);
-          badge.appendChild(createMsgCopyButton(m.text));
-        }
-        row.appendChild(badge);
+      // Unified v1.2 footer pill (time + copy; copy-only when no timestamp)
+      if ((m.timestamp && m.timestamp > 0) || m.text) {
+        row.appendChild(createAiCopyBadge(m.timestamp, m.text));
       }
       fragment.appendChild(row);
     } else if (m.type === 'ai') {
@@ -745,6 +715,9 @@ export function restoreFromBackendHistory(msgs, opts = {}) {
         tBubble.appendChild(tLabel);
         tBubble.appendChild(tContent);
         tRow.appendChild(tBubble);
+        // v1.2 unified footer (2026-09-06 补齐批): history thinking rows get
+        // time + copy too (timestamp rides the owning Ai message).
+        tRow.appendChild(createAiCopyBadge(m.timestamp, m.thinking));
         fragment.appendChild(tRow);
         bindCollapsibleToggle(tLabel, () => tContent);
       }
@@ -772,6 +745,11 @@ export function restoreFromBackendHistory(msgs, opts = {}) {
       if (m.input) { try { row.dataset.nfInput = typeof m.input === 'string' ? m.input : JSON.stringify(m.input); } catch {} }
       const card = document.createElement('div');
       card.className = 'tool-card';
+      // v1.2 unified footer (2026-09-06 补齐批): history tool rows get a
+      // footer too — UiMessage.Tool carries no timestamp, so copy-only.
+      // Card/iframe payloads copy the summary instead of the HTML envelope.
+      const toolFooterCopy = (m.content && typeof m.content === 'string' && !/^___\w+_HTML___/.test(m.content))
+        ? m.content : (m.summary || m.label || '');
       // Card tool: render standard tool card + separate card iframe below
       if (m.content && typeof m.content === 'string' && /^___\w+_HTML___/.test(m.content)) {
         const isError = m.isError;
@@ -785,6 +763,7 @@ export function restoreFromBackendHistory(msgs, opts = {}) {
         card.innerHTML = '<span class="icon ' + (isError ? 'err' : 'ok') + '">' + icon + '</span>' +
           '<div class="content"><div class="label">' + lHtml + '</div></div>';
         row.appendChild(card);
+        if (toolFooterCopy) row.appendChild(createAiCopyBadge(0, toolFooterCopy));
         fragment.appendChild(row);
         const cardRow = document.createElement('div');
         cardRow.className = 'row card-content';
@@ -797,6 +776,7 @@ export function restoreFromBackendHistory(msgs, opts = {}) {
         // Pop tool: rainbow filename + clickable card (shared with live renderTool)
         if (applyPopCard(card, m.label, m.summary, m.input, isError)) {
           row.appendChild(card);
+          if (toolFooterCopy) row.appendChild(createAiCopyBadge(0, toolFooterCopy));
           fragment.appendChild(row);
         } else {
         const icon = isError ? '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#f44336" stroke-width="3"><path d="M18 6L6 18M6 6l12 12"/></svg>'
@@ -817,6 +797,7 @@ export function restoreFromBackendHistory(msgs, opts = {}) {
           '<div class="content"><div class="label">' + lHtml + '</div>' +
           (bodyHtml ? '<div class="body">' + bodyHtml + '</div>' : '') + '</div>';
         row.appendChild(card);
+        if (toolFooterCopy) row.appendChild(createAiCopyBadge(0, toolFooterCopy));
         fragment.appendChild(row);
         if (hasBody) attachToolClick(card);
         }
@@ -888,6 +869,9 @@ export function restoreFromBackendHistory(msgs, opts = {}) {
       qBubble.appendChild(qLabel);
       qBubble.appendChild(qText);
       qRow.appendChild(qBubble);
+      // v1.2 unified footer (2026-09-06 补齐批): ask question bubbles get a
+      // copy footer too (UiMessage.Ask carries no timestamp → copy-only).
+      if (m.question) qRow.appendChild(createAiCopyBadge(0, m.question));
       fragment.appendChild(qRow);
       // Ask answer (AI side)
       if (m.answer) {
@@ -907,6 +891,9 @@ export function restoreFromBackendHistory(msgs, opts = {}) {
           // v1.2 footer ruling: time + copy only
           const badge = createDurationBadgeElement(m.durationMs, m.model, i, m.timestamp, m.answer);
           aRow.appendChild(badge);
+        } else {
+          // v1.2 unified footer (2026-09-06 补齐批): no-duration answers too.
+          aRow.appendChild(createAiCopyBadge(m.timestamp, m.answer));
         }
         fragment.appendChild(aRow);
       }
@@ -931,6 +918,9 @@ export function restoreFromBackendHistory(msgs, opts = {}) {
         row.appendChild(badge);
       }
       row.appendChild(bubble);
+      // v1.2 unified footer (2026-09-06 补齐批): agent rows get a copy
+      // footer too (UiMessage.Agent carries no timestamp → copy-only).
+      if (m.text) row.appendChild(createAiCopyBadge(0, m.text));
       fragment.appendChild(row);
     } else if (m.type === 'system') {
       // Skill-activated system messages are rendered as skill bubbles by the user handler above;
