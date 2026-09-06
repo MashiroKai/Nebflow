@@ -468,9 +468,13 @@ export const FLOW_CSS = `
   position: absolute; width: 3px; height: 3px;
   background: var(--color-text); border-radius: 50%; top: -1.5px;
 }
-.ring-1 .solar-dot { left: 2px; }
-.ring-2 .solar-dot { left: 6px; }
-.ring-3 .solar-dot { left: 11px; }
+/* Dot rides the ring's border midline: dot center radius (left + 1.5px half
+   width) must equal ring width/2 − 0.5px (border-box). Old values 2/6/11 put
+   the center 1.0px OUTSIDE the midline on every ring — dots floated off the
+   orbit line at any rotation phase (作者 20260906 截图反馈). */
+.ring-1 .solar-dot { left: 1px; }  /* midline r = 6/2 − 0.5  = 2.5  = 1 + 1.5 */
+.ring-2 .solar-dot { left: 5px; }  /* midline r = 14/2 − 0.5 = 6.5  = 5 + 1.5 */
+.ring-3 .solar-dot { left: 10px; } /* midline r = 24/2 − 0.5 = 11.5 = 10 + 1.5 */
 
 /* Initial angles — three dots spread around the orbit. These are BOTH the
    resting positions (pending / completed / static) and the loop endpoints:
@@ -628,10 +632,14 @@ export const FLOW_CSS = `
 .flow-orbit-node.failed .flow-ring { border-color: #ff3b30; opacity: 0.6; }
 .flow-orbit-node.failed .flow-orbit-status { color: #ff3b30; }
 
-/* Orbit dots — scoped to flow-orbit-node */
+/* Orbit dots — scoped to flow-orbit-node (currently unreferenced: no JS
+   builds this DOM; kept geometrically correct anyway). top:-2.75px puts the
+   4px dot's center 0.75px above the padding-box top edge = on the ring's
+   1.5px border midline; the old -2px sat the center on the border's inner
+   edge, 0.75px inside the midline. */
 .flow-orbit-node .flow-dot {
   position: absolute; width: 4px; height: 4px; border-radius: 50%;
-  background: var(--color-primary, #5b7fbf); top: -2px; left: 50%; transform: translateX(-50%);
+  background: var(--color-primary, #5b7fbf); top: -2.75px; left: 50%; transform: translateX(-50%);
 }
 .flow-orbit-node.running .flow-dot { box-shadow: 0 0 6px rgba(91,127,191,0.6); }
 
