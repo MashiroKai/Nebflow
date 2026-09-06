@@ -771,11 +771,10 @@ export default {
   'task.repeatWeekly': '每周',
 
   // NebLink
-  'neblink.title': '设备互联',
-  'neblink.devices': '设备',
   'neblink.thisDevice': '本机',
   'neblink.unknownDevice': '未命名设备',
   'neblink.noPeersHint': '请在两台设备上都登录 nebflow',
+  'neblink.loggedOutHint': '未登录，设备互联不可用',
   'neblink.deviceDescHint': '如：校园网环境、有 Vivado 2023.2',
   'neblink.save': '保存',
   'neblink.update': '更新',
