@@ -9,10 +9,15 @@
 // 响应帧走 GLOBAL 路由（无 sessionId 不换视图）；本模块单例弹窗 + 单一在飞请求，
 // 动态 onMessage 订阅 + 超时兜底（probeCanvasFile 先例）。
 //
-// 交互：面包屑导航（逐级可点，home 折叠为「主目录」）/ 上级 / 新建文件夹（行内输入，
-// 不弹 prompt，创建成功自动进入新目录）/ 点行进目录 / 「选中此目录」确认当前目录
-// → onPick(path)。视觉：Sapphire 玻璃 token（.wsp-* 类，样式见 chat.css），
-// 亮暗双主题随全局变量。
+// 交互：面包屑导航（蚀刻条内联 " / " 分隔，逐级可点，home 折叠为「主目录」，当前段
+// 纯文本不可点）/ 上级 = 列表首行 ".." 项（path-picker 基准形态）/ 新建文件夹
+// （footer 左侧入口，列表顶部行内输入，Enter 创建 / Esc 取消，创建成功自动进入新
+// 目录）/ 点行进目录 / 「选中此目录」确认当前目录 → onPick(path)。
+//
+// 视觉：逐值对齐 path-picker 文件浏览器模态（设计基准，modal.css #path-picker-* /
+// .pp-item 族）——共享玻璃卡（.wsp-panel 挂进 modal.css 共享选择器组）、蚀刻面包屑
+// 条、蚀刻列表容器 + hairline 行、footer 中性钮 + sapphire 主钮。布局样式 .wsp-*
+// 见 chat.css；面板材质由 modal.css 共享玻璃卡组承载，亮暗双主题随全局 token。
 
 import { sendWs, onMessage } from './ws.js';
 import { t } from './i18n.js';
@@ -80,17 +85,11 @@ export function openPicker(opts = {}) {
   overlay.className = 'wsp-overlay';
   overlay.innerHTML =
     '<div class="wsp-panel" role="dialog" aria-modal="true" aria-label="' + escapeHtml(t('workspacePicker.browseTitle')) + '">' +
-      '<div class="wsp-head">' +
-        '<span class="wsp-title">' + escapeHtml(t('workspacePicker.browseTitle')) + '</span>' +
-        '<button type="button" class="wsp-close" title="' + escapeHtml(t('workspacePicker.cancel')) + '">&times;</button>' +
-      '</div>' +
+      '<div class="wsp-title"></div>' +
       '<div class="wsp-crumbs"></div>' +
-      '<div class="wsp-toolbar">' +
-        '<button type="button" class="wsp-up">&uarr; ' + escapeHtml(t('workspacePicker.up')) + '</button>' +
-        '<button type="button" class="wsp-mkdir">+ ' + escapeHtml(t('workspacePicker.newFolder')) + '</button>' +
-      '</div>' +
       '<div class="wsp-list"></div>' +
       '<div class="wsp-foot">' +
+        '<button type="button" class="wsp-mkdir">+ ' + escapeHtml(t('workspacePicker.newFolder')) + '</button>' +
         '<span class="wsp-cur"></span>' +
         '<span class="wsp-foot-btns">' +
           '<button type="button" class="wsp-cancel">' + escapeHtml(t('workspacePicker.cancel')) + '</button>' +
@@ -98,6 +97,7 @@ export function openPicker(opts = {}) {
         '</span>' +
       '</div>' +
     '</div>';
+  overlay.querySelector('.wsp-title').textContent = t('workspacePicker.browseTitle');
   document.body.appendChild(overlay);
 
   const listEl = overlay.querySelector('.wsp-list');
@@ -113,33 +113,25 @@ export function openPicker(opts = {}) {
   };
 
   overlay.addEventListener('click', (e) => { if (e.target === overlay) close(null); }); // 点遮罩 = 取消
-  /** @type {HTMLElement} */ (overlay.querySelector('.wsp-close')).onclick = () => close(null);
   /** @type {HTMLElement} */ (overlay.querySelector('.wsp-cancel')).onclick = () => close(null);
   /** @type {HTMLElement} */ (overlay.querySelector('.wsp-pick')).onclick = () => close(ctx.current);
-  /** @type {HTMLElement} */ (overlay.querySelector('.wsp-up')).onclick = () => {
-    const crumbs = buildCrumbs(ctx.current, ctx.home);
-    if (crumbs.length > 1) navigate(crumbs[crumbs.length - 2].path);
-  };
   /** @type {HTMLElement} */ (overlay.querySelector('.wsp-mkdir')).onclick = () => startMkdir();
 
-  /** 渲染面包屑（逐级可点）。 */
+  /** 渲染面包屑（path-picker 基准形态：可点段 sapphire 链接，当前段纯文本，" / " 分隔）。 */
   function renderCrumbs() {
     crumbsEl.innerHTML = '';
     const crumbs = buildCrumbs(ctx.current, ctx.home);
     crumbs.forEach((c, i) => {
-      const seg = document.createElement('button');
-      seg.type = 'button';
-      seg.className = 'wsp-crumb';
-      seg.textContent = c.label;
-      seg.title = c.path;
-      if (i === crumbs.length - 1) seg.classList.add('here');
-      seg.onclick = () => navigate(c.path);
-      crumbsEl.appendChild(seg);
-      if (i < crumbs.length - 1) {
-        const sep = document.createElement('span');
-        sep.className = 'wsp-crumb-sep';
-        sep.textContent = '/';
-        crumbsEl.appendChild(sep);
+      if (i > 0) crumbsEl.appendChild(document.createTextNode(' / '));
+      if (i === crumbs.length - 1) {
+        crumbsEl.appendChild(document.createTextNode(c.label)); // 当前段：纯文本不可点
+      } else {
+        const seg = document.createElement('span');
+        seg.className = 'wsp-crumb';
+        seg.textContent = c.label;
+        seg.title = c.path;
+        seg.addEventListener('click', () => navigate(c.path));
+        crumbsEl.appendChild(seg);
       }
     });
   }
@@ -184,11 +176,11 @@ export function openPicker(opts = {}) {
     });
   }
 
-  /** 请求目录并渲染列表（面包屑/路径栏同步）。 */
+  /** 请求目录并渲染列表（面包屑同步；首行 ".." 上级项，path-picker 基准形态）。 */
   async function navigate(path) {
     if (openCtx !== ctx) return;
     ctx.current = path;
-    curEl.textContent = path;
+    curEl.textContent = ''; // 路径由面包屑承载；本元素仅作 mkdir 失败等瞬时报错
     listEl.innerHTML = '<div class="wsp-row wsp-empty">' + escapeHtml(t('workspacePicker.loading')) + '</div>';
     const res = await listDir(ctx.sessionId, path);
     if (openCtx !== ctx) return; // 已关闭/重开：丢弃旧响应
@@ -200,13 +192,31 @@ export function openPicker(opts = {}) {
     }
     if (res.home) ctx.home = res.home;
     ctx.current = res.path || path;
-    curEl.textContent = ctx.current;
     renderCrumbs();
 
     listEl.innerHTML = '';
+    // 上级目录项（文件系统根隐藏）——path-picker 基准：列表首行 ".." 项
+    if (ctx.current !== '/') {
+      const parentRow = document.createElement('button');
+      parentRow.type = 'button';
+      parentRow.className = 'wsp-row wsp-dir wsp-up-row';
+      parentRow.innerHTML =
+        '<span class="wsp-row-icon">..</span>' +
+        '<span class="wsp-row-name">..</span>';
+      parentRow.onclick = () => {
+        const parts = ctx.current.replace(/\/$/, '').split('/');
+        parts.pop();
+        navigate(parts.join('/') || '/');
+      };
+      listEl.appendChild(parentRow);
+    }
+
     const entries = res.entries || [];
     if (!entries.length) {
-      listEl.innerHTML = '<div class="wsp-row wsp-empty">' + escapeHtml(t('workspacePicker.empty')) + '</div>';
+      const empty = document.createElement('div');
+      empty.className = 'wsp-row wsp-empty';
+      empty.textContent = t('workspacePicker.empty');
+      listEl.appendChild(empty);
       return;
     }
     for (const name of entries) {
@@ -214,7 +224,9 @@ export function openPicker(opts = {}) {
       row.type = 'button';
       row.className = 'wsp-row wsp-dir';
       row.innerHTML =
-        '<svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 7a2 2 0 0 1 2-2h4l2.2 2.5H19a2 2 0 0 1 2 2V17a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2Z"/></svg>' +
+        '<span class="wsp-row-icon">' +
+          '<svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 7a2 2 0 0 1 2-2h4l2.2 2.5H19a2 2 0 0 1 2 2V17a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2Z"/></svg>' +
+        '</span>' +
         '<span class="wsp-row-name">' + escapeHtml(name) + '</span>';
       const child = (ctx.current === '/' ? '' : ctx.current) + '/' + name;
       row.onclick = () => navigate(child);
