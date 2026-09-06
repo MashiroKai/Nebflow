@@ -342,6 +342,11 @@ class NodeSchemaSlimSpec extends CatsEffectSuite:
       assert(!mine.asObject.exists(_.keys.exists(_ == "result")), "default payload must NOT carry result")
       assertEquals(mine.hcursor.get[String]("description").toOption, Some("端到端载荷收敛验证节点"))
       assertEquals(mine.hcursor.get[Boolean]("hasResult").toOption, Some(true))
+      // plugins 正向钉（Flow Map 卡显示插件分配批 2026-09-06）：带插件节点的载荷必须
+      // 携带插件名字数组（条件字段，非空才带；只放名字，禁塞描述全文）。无插件节点的
+      // 字段集零漂移由 NodeEventPushSpec NodeListKeys 精确键集断言兜底。
+      assertEquals(mine.hcursor.get[List[String]]("plugins").toOption, Some(List("slim-e2e")),
+        "payload must carry plugins name array for plugin-assigned nodes")
       // detail 通道：全文一致（同源 = 内存水合全文 = 落盘文件）
       val detail = detailRaw match
         case Right(raw) => io.circe.parser.parse(raw).getOrElse(fail("detail not json"))
