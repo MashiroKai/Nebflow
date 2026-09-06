@@ -9,7 +9,7 @@ import { getNeblinkState } from './neblink.js';
 import { setActivityBadge, openLoginModal } from './activityBar.js';
 import { onMessage } from './ws.js';
 import * as api from './friendsApi.js';
-import { openChatWithFriend, fmtTime } from './messages.js';
+import { openChatWithFriend, fmtTime, isFriendTrusted, setFriendTrusted } from './messages.js';
 import { showPopupMenu } from './contextMenu.js';
 
 let friends = [];
@@ -187,14 +187,24 @@ function friendRow(f) {
   row.addEventListener('click', open);
   row.addEventListener('keydown', (e) => { if (e.key === 'Enter') { e.preventDefault(); open(); } });
   // #290 §1.1/§1.2: WeChat-style row context menu (delete / block / unblock).
+  // 信任模式 v1: 非拉黑好友多出「信任此好友/取消信任」（纯本地标记；拉黑态
+  // 不显示——黑名单优先于信任，trusted 标记对 blocked 行无意义）。
   row.addEventListener('contextmenu', (e) => {
     e.preventDefault();
-    const items = [
+    const items = [];
+    if (!blocked) {
+      const trusted = isFriendTrusted(f.userId);
+      items.push({
+        label: trusted ? t('contacts.menuUntrust') : t('contacts.menuTrust'),
+        onClick: () => setFriendTrusted(f.userId, !trusted),
+      });
+    }
+    items.push(
       { label: t('contacts.menuDelete'), danger: true, onClick: () => confirmDeleteFriend(f) },
       blocked
         ? { label: t('contacts.menuUnblock'), onClick: () => unblockFriend(f) }
         : { label: t('contacts.menuBlock'), danger: true, onClick: () => confirmBlockFriend(f) },
-    ];
+    );
     showPopupMenu(e.clientX, e.clientY, items);
   });
   return row;
@@ -208,6 +218,7 @@ function confirmDeleteFriend(f) {
       await api.removeFriend(f.userId);
       friends = friends.filter(x => x.userId !== f.userId);
       saveBlockedCache(loadBlockedCache().filter(b => b.userId !== f.userId));
+      setFriendTrusted(f.userId, false); // 删除好友连同本地信任标记一起清
       render();
       window.dispatchEvent(new CustomEvent('fm-friends-changed'));
     } catch (err) { window.__showToast?.(err.message || t('messages.networkError'), 'error'); }
