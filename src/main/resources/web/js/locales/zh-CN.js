@@ -113,6 +113,9 @@ export default {
   'flowmap.flag.merge': '合并',
   'flowmap.flag.loop': '循环',
   'flowmap.flag.pending': '待确认',
+  // LoopNode 运行态相位文案（2026-09-06）：loop 节点 running 时 desc 行显 worker/verify
+  'flowmap.loopPhase.worker': '生产中',
+  'flowmap.loopPhase.verify': '验证中',
   'agentFile.hint': '此文件是项目工作区根的 agent 指令（AGENTS.md），可编辑并保存。',
 
   // === Friends & messages (A2A) ===

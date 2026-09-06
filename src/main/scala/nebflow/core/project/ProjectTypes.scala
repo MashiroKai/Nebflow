@@ -43,6 +43,36 @@ object BlockedFeedback:
   given Configuration = Configuration.default
   given Codec[BlockedFeedback] = ConfiguredCodec.derived
 
+/** LoopNode 配置（LoopNode 批 2026-09-06，主设计 20260902_flowmap-engine-evolution-design.md §2）。
+  * NodeDef.loop = Some 时节点以 loop 模式执行：worker 会话生产 → verify 会话校验 →
+  * PASS → 走既有 completed 交付链；FAIL → 打回 worker（输入恒定）重跑；达
+  * maxRounds(K) 仍未 PASS → 终态。与 hold/merge 的简洁一致性：NodeDef.loop 是
+  * Option 条件字段（缺省 None = 普通节点，withDefaults 解码旧数据零迁移），
+  * buildNodeJson 只在 loop 节点带 "loop" 条件字段（与 hold/merge 同构）。 */
+case class LoopConfig(
+  /** 轮级上限 K：打回重跑累计达 K 轮仍未 PASS → 终态（failNode，result 注明
+    * 「loop 达 K 轮上限未通过验证」）。与 LoopGuard（会话内 turn 级既有防线）
+    * **两轴独立**——turn 级管单会话内精确重复（worker/verify 会话内部触发即
+    * 以执行层 failed 形态上浮 → 整 Loop failed），轮级管 Loop 总轮数（本字段）。
+    * 语义：内容在变的第 K 轮也停（轮帽）；内容逐字不变量由 turn 级 LoopGuard
+    * R-text 提前拦截（同会话内计数跨轮累计，见 LoopGuard.scala:84-88）。 */
+  maxRounds: Int,
+  /** verify 侧 agent 名（默认 "general"）：验证方 = 通用 agent + plugins 体系
+    * （阶段 2 裁定 A——verify 专业化按验证域经 plugins 分配；worker 与 verify
+    * 共享 node.plugins 注入）。显式指定其他已装载 agent 名亦可。 */
+  verify: String = "general",
+  /** verify 校验清单模板（含验收基准说明），注入 verify 会话。空 → 执行期用
+    * NodeEngine 内置默认清单（VerifyDefaultTask）。 */
+  verifyTask: String = "",
+  /** loop 开关：false = loop 语义停用——节点退化为普通单次执行（worker 会话
+    * 跑一轮即完成，无 verify 无迭代；NodeEdit 可关闭再开启）。缺省 true。 */
+  enabled: Boolean = true
+)
+
+object LoopConfig:
+  given Configuration = Configuration.default.withDefaults
+  given Codec[LoopConfig] = ConfiguredCodec.derived
+
 /** Node 数据模型（§2.1 JSON 示例字段全量）。
   *
   * agent 字段（2026-09-05 插件架构对齐）：**新建节点一律落 "general"**（执行统一
@@ -89,6 +119,27 @@ case class NodeDef(
     * 落地收口在工作区根仓执行 → 必须不配 worktree（沙箱根=workspace，.git 可写）。
     * 旧 flow-map.json 无此键 → withDefaults 解码为 false（零迁移）= 旧行为。 */
   merge: Boolean = false,
+  /** LoopNode 配置（LoopNode 批 2026-09-06，主设计 §2）：Some = 本节点是 loop
+    * 节点——worker/verify 双会话迭代（执行期由 NodeEngine.runLoopNode 驱动，双
+    * 会话贯穿节点存续期、终态双销毁，不进 Flow Map 存储）；None = 普通节点。
+    * **loop 与 pending/等待态交互**：loop 迭代权只在节点 running 期间（startNode
+    * 启动 → runLoopNode 驱动轮次，worker/verify 会话 spawn 于启动时）；wiring/
+    * pending（等 in barrier + deps 闸门）与普通节点无差别——闸门全在 startNode
+    * 内，deps/hold/merge 均可与 loop 共存（deps 启动前把关、hold 在 verify PASS
+    * 完成时经 completeNode 生效、merge 语义在 loop 完成后照常）；worker/verify
+    * 会话输出 BLOCKED 锚定 → Loop 级 blockedNode（终态，重激活从第 1 轮重跑，
+    * 旧会话已随终态销毁）。enabled=false → 本字段保留但节点按普通节点单次执行。
+    * 旧 flow-map.json 无此键 → withDefaults 解码 None（零迁移）= 旧行为。 */
+  loop: Option[LoopConfig] = None,
+  /** loop 运行态 · 已跑轮数（仅 loop 节点有意义；每轮状态迁移经 store.mutate +
+    * WS nodeUpdated 同步，NodeList/REST/WS payload 单点序列化见 NodePayload）：
+    * 0 = 未启动；running = 当前轮；终态 = 总轮数（PASS 即通过轮）。 */
+  loopRound: Int = 0,
+  /** loop 运行态 · 当前阶段（running 才有）：worker / verify。 */
+  loopPhase: Option[String] = None,
+  /** loop 运行态 · 最近一次 FAIL verdict 摘要（≤200 字符；verify FAIL 打回时
+    * 更新，前端卡片可显示最近打回原因；PASS/终态保留最后一次 FAIL 供追溯）。 */
+  loopLastVerdict: Option[String] = None,
   /** dispatch-notify 回流标志（2026-09-05 批）：true = 节点到达终态（先接线
     * completion）后触发项目分发器新会话（带原因码的独立信号通道，不占 out 边；
     * 防循环/预算/去重见 DispatchNotify）。NodeEdit 按需开启，默认关——分发器
@@ -209,10 +260,30 @@ object NodePayload:
       val notifyFields = if node.notifyDispatcher then List("notifyDispatcher" -> node.notifyDispatcher.asJson) else Nil
       // merge 条件序列化（mount-enforce 批 20260905 payload 契约；与 hold 条件字段
       // 同构）：仅 merge 节点带 "merge": true——缺省/缺失 = 非 merge（前端按缺省
-      // 防御，非 merge 节点 payload 字段集零变化）。loop 为前瞻防御字段：引擎现无
-      // loop 节点概念（grep 核实）→ 暂不产出，前端缺省防御同款兼容。
+      // 防御，非 merge 节点 payload 字段集零变化）。
       val mergeFields = if node.merge then List("merge" -> node.merge.asJson) else Nil
-      Json.obj((baseFields ++ hasResultFields ++ taskPreviewFields ++ depsFields ++ feedbackFields ++ holdFields ++ pluginFields ++ notifyFields ++ mergeFields)*)
+      // loop 条件序列化（LoopNode 批 2026-09-06；与 merge 条件字段同构）：
+      // 仅 loop 节点带 "loop" 配置对象 + 运行态条件字段——缺省/缺失 = 非 loop
+      // （前端按缺省防御，非 loop 节点 payload 字段集零变化）。运行态字段按
+      // 条件带：loopRound（>0 才带）、loopPhase（running 才有）、
+      // loopLastVerdict（非空才带，最近一次 FAIL 摘要）。
+      val loopFields = node.loop match
+        case Some(lc) =>
+          val cfg = List("loop" -> Json.obj(
+            "maxRounds" -> lc.maxRounds.asJson,
+            "verify" -> lc.verify.asJson,
+            "enabled" -> lc.enabled.asJson
+          ))
+          val roundField = if node.loopRound > 0 then List("loopRound" -> node.loopRound.asJson) else Nil
+          val phaseField = node.loopPhase match
+            case Some(p) => List("loopPhase" -> p.asJson)
+            case None => Nil
+          val verdictField = node.loopLastVerdict match
+            case Some(v) if v.nonEmpty => List("loopLastVerdict" -> v.asJson)
+            case _ => Nil
+          cfg ++ roundField ++ phaseField ++ verdictField
+        case None => Nil
+      Json.obj((baseFields ++ hasResultFields ++ taskPreviewFields ++ depsFields ++ feedbackFields ++ holdFields ++ pluginFields ++ notifyFields ++ mergeFields ++ loopFields)*)
 
 /** Flow Map 活动区（§2.6，磁盘 flow-map.json）。 */
 case class FlowMapState(
