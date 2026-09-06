@@ -1,0 +1,41 @@
+package nebflow.core.project
+
+import munit.FunSuite
+
+/** NodePayload.buildNodeJson 的 plugins 条件序列化契约（Flow Map 节点卡显示插件分配批
+  * 2026-09-06）。卡片副行 `preset · p1, p2` 的数据源 = 本字段；契约两点：
+  *
+  * 1. 带插件分配节点 → 载荷携带 "plugins" 名字数组（只放名字，禁塞描述全文）；
+  * 2. 无插件节点 → 载荷不携带该键（条件字段与 deps/merge/loop 同构，字段集零漂移；
+  *    精确键集另有 NodeEventPushSpec NodeListKeys 断言兜底）。
+  *
+  * 纯单元级（NodeDef → Json 单点序列化，无 engine/actor），任何环境可跑。 */
+class NodePayloadSpec extends FunSuite:
+
+  test("buildNodeJson: plugin-assigned node carries plugins name array") {
+    val node = NodeDef(
+      id = "n-p",
+      name = "带插件",
+      agent = "general",
+      preset = Some("dev"),
+      plugins = List("nebflow-frontend-dev", "nebflow-backend-dev"),
+      createdAt = 1000L
+    )
+    val j = NodePayload.buildNodeJson(node, now = 2000L)
+    assertEquals(
+      j.hcursor.get[List[String]]("plugins").toOption,
+      Some(List("nebflow-frontend-dev", "nebflow-backend-dev")),
+      "payload must carry the plugins name array for plugin-assigned nodes"
+    )
+  }
+
+  test("buildNodeJson: plugin-less node omits the plugins key (field-set zero drift)") {
+    val node = NodeDef(id = "n-q", name = "无插件", agent = "general", createdAt = 1000L)
+    val j = NodePayload.buildNodeJson(node, now = 2000L)
+    assert(
+      !j.asObject.exists(_.contains("plugins")),
+      s"plugin-less node payload must NOT carry the plugins key, got keys: ${j.asObject.map(_.keys.toList.sorted)}"
+    )
+  }
+
+end NodePayloadSpec
