@@ -98,41 +98,207 @@ resolve_version() {
 
 INSTALL_DIR="${INSTALL_DIR:-${HOME}/${HOME_DIR}/bin}"
 
-# Brand banner (batch 4): figlet-style ASCII art + ANSI brand green #07C160.
-# Color degrade chain: truecolor -> 16-color green -> no color.
-#   guards: NO_COLOR convention / CI env / non-TTY -> plain text.
-# Bilingual slogan (D5 detection rule): the CJK line is printed only when the
-# shell locale is UTF-8 (always true on modern macOS/Linux); otherwise the
-# English line only. This is the single guarded non-ASCII spot in this file.
-print_banner() {
-    local c="" r=""
-    if [ -t 1 ] && [ -z "${NO_COLOR:-}" ] && [ -z "${CI:-}" ]; then
-        case "${COLORTERM:-}" in
-            truecolor|24bit) c=$'\e[38;2;7;193;96m'; r=$'\e[0m' ;;
-            *)               c=$'\e[32m';            r=$'\e[0m' ;;
-        esac
-    fi
-    local art=(
-        '  _   _  _____  ____   _____  _      ___ '
-        ' | \ | || ____|| __ ) |  ___|| |     / _ \'
-        ' |  \| ||  _|  |  _ \ | |_   | |    | | | |'
-        ' | |\  || |___ | |_) ||  _|  | |___ | |_| |'
-        ' |_| \_||_____||____/ |_|    |_____| \___/ '
-    )
-    local line
-    printf '\n'
-    for line in "${art[@]}"; do printf '%s%s%s\n' "$c" "$line" "$r"; done
-    printf '\n'
-    case "${LC_ALL:-${LANG:-}}" in
-        *UTF-8*|*utf8*|*utf-8*)
-            printf '  所有工作，一个入口。 / One entry. Every agent.\n'
-            ;;
+# >>> BRAND-UI-BEGIN (batch 4 redesign: pixel logo + progress bar) >>>
+# Brand banner: the Nebflow 7x7 pixel logo rendered as terminal color
+# blocks. The matrix was sampled OFFLINE from the brand assets
+# (docs/Nebflow/assets/logo/{dark,bright}.png, 224x224 = a 7x7 grid of 32px
+# cells, cell-center NEAREST sampling - the same pixelated look as the web
+# UI's image-rendering: pixelated) and embedded here as constant data: zero
+# image files, zero python, zero network at runtime. Full untrimmed 7x7
+# matrix (author ruling 2026-09-06: no 5x6 cropping - keeps the source
+# aspect); G = brand green #07C160, W = white (dark terminals) or
+# black (light terminals). No ASCII-art/figlet wordmark: the logo blocks
+# carry the brand, the wordmark is plain lowercase text.
+#
+# Color degrade chain: truecolor (3) -> xterm-256 (2) -> 8-color (1) ->
+# mono # mask (0), every level keeps the shape intact. Width discipline
+# (author ruling 2026-09-06): ONE pixel = ONE character cell at every
+# level - truecolor blocks, 256/8-color blocks and the mono # mask all
+# render 1 cell per pixel, so the shape never distorts between levels.
+#   guards: NO_COLOR / CI / non-TTY / TERM=dumb -> mono (plain text)
+#   theme : NEBFLOW_BANNER_THEME=dark|light overrides; else COLORFGBG's
+#           background field (>=7 means a light background); default dark
+#   level : NEBFLOW_UI_LEVEL=0..3 forces a level (preview/testing)
+
+BANNER_MASK=(
+    "......."
+    "GG.WWW."
+    "GG.WWW."
+    "..W..W."
+    "..W..W."
+    "..W..W."
+    "......."
+)
+
+_ui_level=0
+_ui_theme="dark"
+_ui_utf8=0
+case "${LC_ALL:-${LC_CTYPE:-${LANG:-}}}" in
+    *UTF-8*|*utf8*|*utf-8*) _ui_utf8=1 ;;
+esac
+
+ui_detect() {
+    case "${NEBFLOW_UI_LEVEL:-}" in
+        0|1|2|3) _ui_level="${NEBFLOW_UI_LEVEL}" ;;
         *)
-            printf '  One entry. Every agent.\n'
+            _ui_level=0
+            if [ -t 1 ] && [ -z "${NO_COLOR:-}" ] && [ -z "${CI:-}" ] && [ "${TERM:-dumb}" != "dumb" ]; then
+                case "${COLORTERM:-}" in
+                    truecolor|24bit) _ui_level=3 ;;
+                    *) case "${TERM:-}" in
+                           *256color*) _ui_level=2 ;;
+                           *)         _ui_level=1 ;;
+                       esac ;;
+                esac
+            fi
             ;;
     esac
-    printf '\n  %s v%s Installer (%s)\n\n' "${PRODUCT_NAME}" "${VERSION}" "${CHANNEL}"
+    case "${NEBFLOW_BANNER_THEME:-}" in
+        dark|light) _ui_theme="${NEBFLOW_BANNER_THEME}" ;;
+        *)
+            _ui_theme="dark"
+            if [ -n "${COLORFGBG:-}" ]; then
+                local _bg="${COLORFGBG##*;}"
+                case "$_bg" in
+                    ''|*[!0-9]*) : ;;
+                    *) [ "$_bg" -ge 7 ] 2>/dev/null && _ui_theme="light" ;;
+                esac
+            fi
+            ;;
+    esac
 }
+
+# -- low-level painters -------------------------------------------------------
+# One logo pixel = ONE character cell at every color level (author ruling
+# 2026-09-06); transparent pixels are a plain space.
+_px() {  # <G|W|.>
+    case "$1" in
+        .) printf ' '; return 0 ;;
+    esac
+    case "$_ui_level" in
+        3)
+            if [ "$1" = "G" ]; then printf '\033[48;2;7;193;96m \033[0m'
+            elif [ "$_ui_theme" = "dark" ]; then printf '\033[48;2;255;255;255m \033[0m'
+            else printf '\033[48;2;0;0;0m \033[0m'; fi
+            ;;
+        2)  # nearest xterm-256: #07C160 -> 35 (#00af5f); white 231; black 16
+            if [ "$1" = "G" ]; then printf '\033[48;5;35m \033[0m'
+            elif [ "$_ui_theme" = "dark" ]; then printf '\033[48;5;231m \033[0m'
+            else printf '\033[48;5;16m \033[0m'; fi
+            ;;
+        1)
+            if [ "$1" = "G" ]; then printf '\033[42m \033[0m'
+            elif [ "$_ui_theme" = "dark" ]; then printf '\033[47m \033[0m'
+            else printf '\033[40m \033[0m'; fi
+            ;;
+        *)  printf '#' ;;
+    esac
+}
+
+_fg_green() {
+    case "$_ui_level" in
+        3) printf '\033[1;38;2;7;193;96m' ;;
+        2) printf '\033[1;38;5;35m' ;;
+        1) printf '\033[1;32m' ;;
+    esac
+}
+_dim() { [ "$_ui_level" -ge 1 ] && printf '\033[2m' || true; }
+_rst() { [ "$_ui_level" -ge 1 ] && printf '\033[0m' || true; }
+
+print_banner() {
+    ui_detect
+    printf '\n'
+    local _i _j _row
+    for _i in 0 1 2 3 4 5 6; do
+        _row="${BANNER_MASK[$_i]}"
+        printf '  '
+        for ((_j=0; _j<${#_row}; _j++)); do _px "${_row:$_j:1}"; done
+        case "$_i" in
+            2) printf '  '; _fg_green; printf '%s' "${LOWER_NAME}"; _rst ;;
+            3) printf '  '; _dim; printf 'v%s installer (%s)' "${VERSION:-dev}" "${CHANNEL}"; _rst ;;
+        esac
+        printf '\n'
+    done
+    printf '\n'
+}
+
+# -- download progress --------------------------------------------------------
+# Clean single-line bar in brand green: percentage only when content-length
+# is known (unknown length -> spinner + byte count, never a fake %), current
+# file label, size/speed. In-place \r redraw, COLUMNS-adaptive. Non-TTY
+# (curl|bash pipe) / TERM=dumb: no control output at all, plain log lines.
+
+_progress_ok() {
+    [ -t 1 ] && [ "${TERM:-dumb}" != "dumb" ] && command -v curl > /dev/null 2>&1
+}
+
+_fmt_bytes() {  # <bytes> -> "12.3M" / "640K" / "512B"
+    awk -v b="${1:-0}" 'BEGIN{
+        if (b >= 1048576) printf "%.1fM", b/1048576;
+        else if (b >= 1024) printf "%.0fK", b/1024;
+        else printf "%dB", b;
+    }'
+}
+
+_bar() {  # <done> <total|-1> <width> -> bar body (no newline)
+    local _done=$1 _total=$2 _w=$3
+    local _e=0 _filled=0 _frac=0 _i _out=""
+    if [ "$_total" -gt 0 ] 2>/dev/null; then
+        _e=$(( _done * _w * 8 / _total ))
+        [ "$_e" -gt $((_w*8)) ] && _e=$((_w*8))
+        _filled=$((_e/8)); _frac=$((_e%8))
+    fi
+    local _g="" _r="" _d=""
+    case "$_ui_level" in
+        3) _g=$'\033[38;2;7;193;96m' ;;
+        2) _g=$'\033[38;5;35m' ;;
+        1) _g=$'\033[32m' ;;
+    esac
+    if [ -n "$_g" ]; then _r=$'\033[0m'; _d=$'\033[2m'; fi
+    _out="$_g"
+    if [ "$_ui_utf8" = 1 ]; then
+        # eighth-block partials give sub-cell precision
+        local _parts=("" "▏" "▎" "▍" "▌" "▋" "▊" "▉")
+        for ((_i=0; _i<_filled; _i++)); do _out="${_out}█"; done
+        if [ "$_frac" -gt 0 ]; then _out="${_out}${_parts[$_frac]}"; _filled=$((_filled+1)); fi
+        _out="${_out}${_r}${_d}"
+        for ((_i=_filled; _i<_w; _i++)); do _out="${_out}░"; done
+    else
+        for ((_i=0; _i<_filled; _i++)); do _out="${_out}#"; done
+        if [ "$_frac" -gt 0 ]; then _out="${_out}>"; _filled=$((_filled+1)); fi
+        _out="${_out}${_r}"
+        for ((_i=_filled; _i<_w; _i++)); do _out="${_out}-"; done
+    fi
+    _out="${_out}${_r}"
+    printf '%s' "$_out"
+}
+
+# Compose one full progress line (colors included). Pure function of its
+# arguments - also driven by scripts/preview-brand-ui.sh for static frames.
+_progress_line() {  # <done> <total|-1> <label> <speed_Bps|-1> <spin_idx>
+    local _done=$1 _total=$2 _label=$3 _spd=$4 _spin=$5
+    local _cols=${COLUMNS:-80}
+    local _info=" $(_fmt_bytes "$_done")"
+    [ "$_total" -gt 0 ] 2>/dev/null && _info="${_info}/$(_fmt_bytes "$_total")"
+    [ "$_spd" -ge 0 ] 2>/dev/null && _info="${_info}  $(_fmt_bytes "$_spd")/s"
+    local _pct
+    if [ "$_total" -gt 0 ] 2>/dev/null; then
+        _pct=$(awk -v d="$_done" -v t="$_total" 'BEGIN{p=int(d*100/t); printf "%3d%%", (p>100?100:p)}')
+    else
+        local _s='|/-\'
+        _pct="  ${_s:$((_spin % 4)):1} "
+    fi
+    local _w=$(( _cols - ${#_label} - ${#_info} - 16 ))
+    [ "$_w" -lt 10 ] && _w=10
+    [ "$_w" -gt 48 ] && _w=48
+    printf '  %s %s%s  %s' "$_pct" "$(_bar "$_done" "$_total" "$_w")" "$_info" "$_label"
+}
+
+progress_render() {  # <done> <total|-1> <label> <speed_Bps|-1> <spin_idx>
+    _progress_ok || return 0
+    printf '\r\033[K%s' "$(_progress_line "$@")"
+}
+# <<< BRAND-UI-END <<<
 
 # ---- [1/6] environment ----------------------------------------------------
 detect_os() {
@@ -348,7 +514,7 @@ ensure_java_linux_tarball() {
     local tmp_tar
     tmp_tar=$(mktemp /tmp/${LOWER_NAME}-jdk-XXXXXX.tar.gz)
     local jdk_url="https://api.adoptium.net/v3/binary/latest/21/ga/linux/${jdk_arch}/jdk/hotspot/normal/eclipse"
-    if download_file "$tmp_tar" "$tarball_name" \
+    if download_file "$tmp_tar" "$tarball_name" "$tarball_name" \
         "${COS_DEPS_BASE}/${tarball_name}" "$jdk_url"; then
         tar xzf "$tmp_tar" -C "${HOME}/${HOME_DIR}" 2>/dev/null
         rm -f "$tmp_tar"
@@ -473,7 +639,7 @@ _install_rg_tarball() {
     tmp_dir=$(mktemp -d)
     log_i "Downloading rg ${RG_VERSION} (${1})..."
     # Source chain: COS mirror -> GitHub -> ghproxy (batch 2)
-    if ! download_file "$tmp_archive" "$tarball_name" \
+    if ! download_file "$tmp_archive" "$tarball_name" "$tarball_name" \
         "${COS_DEPS_BASE}/${tarball_name}" "$gh_url" "https://ghproxy.net/${gh_url}"; then
         rm -rf "$tmp_archive" "$tmp_dir"
         return 1
@@ -560,16 +726,22 @@ install_voice_model() {
     log_i "Downloading Whisper voice model (~75MB, one-time)..."
     mkdir -p "$model_dir/onnx"
 
-    # Config files (small)
+    # Config files (small) - [n/N] multi-file counter in the label
+    local _n=0 _total_files=6
     local f
     for f in config.json tokenizer.json generation_config.json preprocessor_config.json; do
-        _download "$base/$f" "$model_dir/$f" 2>/dev/null || true
+        _n=$((_n+1))
+        _download "$base/$f" "$model_dir/$f" "[$_n/$_total_files] $f" 2>/dev/null || true
     done
 
     # Quantized ONNX models (encoder ~22MB + decoder ~51MB)
     local ok=true
-    _download "$base/onnx/encoder_model_quantized.onnx" "$model_dir/onnx/encoder_model_quantized.onnx" || ok=false
-    _download "$base/onnx/decoder_model_merged_quantized.onnx" "$model_dir/onnx/decoder_model_merged_quantized.onnx" || ok=false
+    _n=$((_n+1))
+    _download "$base/onnx/encoder_model_quantized.onnx" "$model_dir/onnx/encoder_model_quantized.onnx" \
+        "[$_n/$_total_files] encoder_model_quantized.onnx" || ok=false
+    _n=$((_n+1))
+    _download "$base/onnx/decoder_model_merged_quantized.onnx" "$model_dir/onnx/decoder_model_merged_quantized.onnx" \
+        "[$_n/$_total_files] decoder_model_merged_quantized.onnx" || ok=false
     if $ok; then
         log_ok "Voice model installed."
     else
@@ -587,15 +759,50 @@ stage_deps() {
 
 # ---- [3/6] jar ------------------------------------------------------------
 
+_file_size() { stat -f %z "$1" 2>/dev/null || stat -c %s "$1" 2>/dev/null || echo 0; }
+
+# TTY download with the brand progress bar: curl runs in the background
+# writing to the target file; we poll its size and redraw the bar. Total
+# size comes from a HEAD probe (content-length); unreachable -> spinner mode.
+_download_progress() {  # <url> <target> <label> -> curl exit code
+    local _url="$1" _target="$2" _label="$3"
+    local _total
+    _total=$(curl -fsSI --connect-timeout 5 --max-time 10 "$_url" 2>/dev/null \
+        | tr -d '\r' | awk 'tolower($1)=="content-length:"{n=$2} END{if(n!="") printf "%d", n}')
+    [ -z "$_total" ] && _total=-1
+    curl -fsSL --connect-timeout 10 --max-time 120 "$_url" -o "$_target" 2>/dev/null &
+    local _pid=$! _spin=0 _last=0 _now=0 _spd=-1
+    while kill -0 "$_pid" 2>/dev/null; do
+        _now=$(_file_size "$_target")
+        _spd=$(( (_now - _last) * 2 ))   # 0.5s poll interval
+        _last=$_now
+        progress_render "$_now" "$_total" "$_label" "$_spd" "$_spin"
+        _spin=$((_spin+1))
+        sleep 0.5 2>/dev/null || sleep 1
+    done
+    local _rc=0
+    wait "$_pid" || _rc=$?
+    _now=$(_file_size "$_target")
+    progress_render "$_now" "$_total" "$_label" -1 "$_spin"
+    printf '\n'
+    return "$_rc"
+}
+
 _download() {
-    local url="$1" target="$2"
-    if command -v curl &> /dev/null; then
-        curl -fsSL --connect-timeout 10 --max-time 120 "${url}" -o "${target}"
-    elif command -v wget &> /dev/null; then
-        wget --connect-timeout=10 --timeout=120 -q "${url}" -O "${target}"
+    local url="$1" target="$2" label="${3:-}"
+    if _progress_ok; then
+        _download_progress "$url" "$target" "${label:-$(basename "$target")}"
     else
-        log_err "curl or wget is required."
-        exit $ERR_CURL
+        # non-TTY (curl|bash pipe) / dumb terminal: plain one-line log
+        [ -n "$label" ] && log_i "Downloading ${label}..."
+        if command -v curl &> /dev/null; then
+            curl -fsSL --connect-timeout 10 --max-time 120 "${url}" -o "${target}"
+        elif command -v wget &> /dev/null; then
+            wget --connect-timeout=10 --timeout=120 -q "${url}" -O "${target}"
+        else
+            log_err "curl or wget is required."
+            exit $ERR_CURL
+        fi
     fi
 }
 
@@ -634,13 +841,13 @@ expected_checksum_hint() {  # <filename> -> "sha256: <hash>" line (or empty)
 # (COS first by convention) is verified against deps/checksums.txt when the
 # manifest is reachable; a mismatched source is discarded and the next one
 # is tried. Unknown checksum (manifest unreachable) degrades to accept.
-#   download_file <target> <filename-in-manifest> <url1> [url2] ...
+#   download_file <target> <filename-in-manifest> <label> <url1> [url2] ...
 download_file() {
-    local target="$1" name="$2"; shift 2
+    local target="$1" name="$2" label="$3"; shift 3
     local url verdict
     for url in "$@"; do
         log_v "Trying source: ${url}"
-        if _download "$url" "$target"; then
+        if _download "$url" "$target" "$label"; then
             verdict=$(verify_checksum "$target" "$name") || true
             case "$verdict" in
                 ok)      return 0 ;;
@@ -698,7 +905,7 @@ download_jar() {
     fi
 
     # #29: 仓库 private 后 GitHub Releases 未认证 404——COS 单一源
-    if _download "${COS_URL}" "${target}"; then
+    if _download "${COS_URL}" "${target}" "${JAR_NAME}"; then
         log_ok "Downloaded ${JAR_NAME} from COS."
         return 0
     fi
