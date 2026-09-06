@@ -75,11 +75,20 @@ function statusClass(st) {
  * @property {string=} task
  * @property {number=} createdAt
  * @property {number=} completedAt
- * @property {string[]=} in barrier 输入（NodePayload）
+ * @property {string[]=} in barrier 输入（NodePayload，恒带数组）
  * @property {string[]=} deps 依赖（NodePayload，条件序列化）
- * @property {string=} out 出边目标（NodePayload）
+ * @property {string=} out 出边目标（NodePayload；null = 无出边）
  * @property {any=} blockedFeedback blocked 结构化反馈（NodePayload，blocked 态）
  * @property {number=} blockCount 阻断轮数（NodePayload）
+ * @property {number=} ttlLeftSec 归档保留剩余秒（NodePayload 恒带键，null = 无 TTL）
+ * @property {boolean=} hasWorktree 配独立 worktree（NodePayload 恒带）
+ * @property {string=} worktree worktree 派生名（NodePayload；=分支名，未配 → null）
+ * @property {{maxRounds:number, verify:string, enabled:boolean}=} loop LoopNode 配置（条件对象）
+ * @property {number=} loopRound loop 运行态·轮数（条件：>0 才带）
+ * @property {string=} loopPhase loop 运行态·阶段 worker/verify（条件：running 才有）
+ * @property {string=} loopLastVerdict loop 运行态·最近 FAIL 摘要（条件：非空才带）
+ * @property {boolean=} merge 合并节点标记（条件：true 才带）
+ * @property {boolean=} notifyDispatcher 终态回流通知分发器（条件：true 才带）
  */
 
 /**
@@ -681,6 +690,32 @@ function resultInnerHtml(/** @type {string} */ text) {
   }
 }
 
+// ── 详情完整配置（2026-09-07 节点详情完整配置批）────────────────────
+// 详情卡 = 完整节点配置（作者 2026-09-07 口径：节点卡=预览，详情卡=完整配置）。
+// 三区在 meta/desc/blocked 之后、task/result 之前：配置（preset/plugins）→ 拓扑
+// （in/out/deps）→ 执行形态（worktree/loop/merge/notifyDispatcher，有则显无则不
+// 占位）。字段全部已在 NodePayload 载荷（条件字段缺键 = 非命中，防御不渲染）。
+
+/** @param {number} sec @returns {string} TTL 剩余秒 → 紧凑时长（23h 12m / 45m / 30s；zh/en 同形数字式）。 */
+function fmtTtl(sec) {
+  const s = Math.max(0, Math.floor(Number(sec) || 0));
+  const h = Math.floor(s / 3600);
+  const m = Math.floor((s % 3600) / 60);
+  if (h > 0) return `${h}h ${m}m`;
+  if (m > 0) return `${m}m`;
+  return `${s}s`;
+}
+
+/**
+ * KV 栅格（label 列自适应最宽标签——zh/en 双语言不设定宽；value 列防长 id 撑出）。
+ * @param {[string, string, boolean?][]} rows [label, valHtml(已 esc), muted?]
+ * @returns {string}
+ */
+function kvHtml(rows) {
+  return `<div class="fm-detail-kv">${rows.map(([l, v, m]) =>
+    `<span class="fm-detail-kv-label">${esc(l)}</span><span class="fm-detail-kv-val${m ? ' muted' : ''}">${v}</span>`).join('')}</div>`;
+}
+
 function renderDetail(/** @type {LayerCtx} */ ctx, /** @type {ChainMember} */ n) {
   const seq = ++ctx.detailRenderSeq; // 全文升级响应竞态防护（见 upgradeDetailResult）
   const st = String(n.status || '');
@@ -698,15 +733,65 @@ function renderDetail(/** @type {LayerCtx} */ ctx, /** @type {ChainMember} */ n)
   const chainLine = chain
     ? `${esc(t('flowmap.archive.chain'))}：${esc(chain.title)}（${esc(t('flowmap.archive.nodes', { n: String(chain.nodeCount) }))} · ${esc(chain.members.every((m) => TERMINAL_STATUSES.has(String(m.status || ''))) ? t('flowmap.archive.chainArchived') : t('flowmap.archive.chainRetained'))}）`
     : '';
-  // Agent 退役（node-flowmap-slim）：meta 首行粗体 = preset（未配置 → 空态「默认
-  // 预设」），plugins 有则并列其後——同节点卡副行口径。
-  const presetText = String(n.preset || '') || t('flowmap.presetDefault');
-  const pluginsText = Array.isArray(n.plugins) ? n.plugins.join(', ') : '';
+  // TTL（2026-09-07 完整配置批）：ttlLeftSec 恒带键（null = 无 TTL；仅终态节点
+  // 有值）——有值显剩余/已到期，无值不占位。
+  const ttlSec = (typeof n.ttlLeftSec === 'number' && isFinite(n.ttlLeftSec)) ? n.ttlLeftSec : null;
+  const ttlLine = ttlSec === null ? '' : `TTL · ${esc(ttlSec > 0
+    ? t('flowmap.detail.ttlLeft', { t: fmtTtl(ttlSec) })
+    : t('flowmap.detail.ttlExpired'))}`;
+  // meta 区：状态/id + 时间 + TTL + 所属链（preset/plugins 移入「配置」分区完整列出，
+  // 成员行/节点卡的预览副行口径不变——详情卡承载完整配置，meta 回归纯元数据）。
   const metaRows = [
-    `<b>${esc(presetText)}</b>${pluginsText ? ` · ${esc(pluginsText)}` : ''} · ${esc(statusLabel(st))} · ${esc(n.id)}`,
+    `${esc(statusLabel(st))} · ${esc(n.id)}`,
     `${esc(t('flowmap.archive.created'))} ${esc(fmtTime(n.createdAt))}${n.completedAt ? ` · ${esc(t('flowmap.archive.completed'))} ${esc(fmtTime(n.completedAt))}` : ''}`,
+    ttlLine,
     chainLine,
   ].filter(Boolean).join('<br>');
+  // 配置区（核心诉求）：preset 恒带可 null（空态沿用「默认预设」口径）；plugins
+  // 条件字段非空才有——全部列出，未分配 muted 空态。
+  const presetText = String(n.preset || '') || t('flowmap.presetDefault');
+  const plugins = Array.isArray(n.plugins) ? n.plugins : [];
+  const configHtml = `
+    <div class="fm-detail-sec">${esc(t('flowmap.detail.secConfig'))}</div>
+    ${kvHtml([
+      [t('flowmap.detail.preset'), esc(presetText), !n.preset],
+      [t('flowmap.detail.plugins'), plugins.length ? esc(plugins.join(', ')) : esc(t('flowmap.detail.none')), !plugins.length],
+    ])}`;
+  // 拓扑区：in 恒带数组（空 → muted 无）；out null → muted 无；deps 条件字段有才列。
+  const inList = Array.isArray(n.in) ? n.in : [];
+  /** @type {[string, string, boolean?][]} */
+  const topoRows = [
+    [t('flowmap.detail.in'), inList.length ? esc(inList.join(', ')) : esc(t('flowmap.detail.none')), !inList.length],
+    [t('flowmap.detail.out'), n.out ? esc(String(n.out)) : esc(t('flowmap.detail.none')), !n.out],
+  ];
+  if (Array.isArray(n.deps) && n.deps.length) {
+    topoRows.push([t('flowmap.detail.deps'), esc(n.deps.join(', '))]);
+  }
+  const topoHtml = `
+    <div class="fm-detail-sec">${esc(t('flowmap.detail.secTopo'))}</div>
+    ${kvHtml(topoRows)}`;
+  // 执行形态区（有则显、无则不占位）：worktree / loop（配置位 maxRounds/verify +
+  // 运行态 round/phase/verdict 有则附）/ merge / notifyDispatcher。
+  /** @type {[string, string, boolean?][]} */
+  const execRows = [];
+  if (n.worktree) execRows.push(['Worktree', esc(String(n.worktree))]);
+  const loop = (n.loop && typeof n.loop === 'object') ? /** @type {any} */ (n.loop) : null;
+  if (loop) {
+    const cfgParts = [t('flowmap.detail.loopRounds', { n: String(loop.maxRounds ?? '?') })];
+    if (loop.verify) cfgParts.push(t('flowmap.detail.loopVerify', { agent: String(loop.verify) }));
+    if (loop.enabled === false) cfgParts.push(t('flowmap.detail.loopDisabled'));
+    execRows.push([t('flowmap.detail.loop'), esc(cfgParts.join(' · '))]);
+    const rtParts = [];
+    if (typeof n.loopRound === 'number' && n.loopRound > 0) rtParts.push(t('flowmap.detail.loopRoundN', { n: String(n.loopRound) }));
+    if (n.loopPhase) rtParts.push(t(`flowmap.loopPhase.${n.loopPhase === 'verify' ? 'verify' : 'worker'}`));
+    if (rtParts.length) execRows.push([t('flowmap.detail.loopState'), esc(rtParts.join(' · '))]);
+    if (n.loopLastVerdict) execRows.push([t('flowmap.detail.loopVerdict'), esc(String(n.loopLastVerdict))]);
+  }
+  if (n.merge === true) execRows.push([t('flowmap.flag.merge'), esc(t('flowmap.detail.yes'))]);
+  if (n.notifyDispatcher === true) execRows.push([t('flowmap.detail.notify'), esc(t('flowmap.detail.yes'))]);
+  const execHtml = execRows.length
+    ? `<div class="fm-detail-sec">${esc(t('flowmap.detail.secExec'))}</div>${kvHtml(execRows)}`
+    : '';
   // blocked 结构化反馈（20260902 设计 §4.3 既有载荷；面板化后保留，回归不回退）
   const fb = st === 'blocked' && n.blockedFeedback ? /** @type {any} */ (n.blockedFeedback) : null;
   const blockedPanel = fb ? `
@@ -738,6 +823,9 @@ function renderDetail(/** @type {LayerCtx} */ ctx, /** @type {ChainMember} */ n)
     <div class="fm-detail-meta">${metaRows}</div>
     ${descText ? `<div class="fm-detail-desc">${esc(descText)}</div>` : ''}
     ${blockedPanel}
+    ${configHtml}
+    ${topoHtml}
+    ${execHtml}
     ${taskText ? `<div class="fm-detail-sec">${esc(t('flowmap.archive.taskLabel'))}</div><div class="fm-detail-task">${esc(taskText)}</div>` : ''}
     <div class="fm-detail-sec">${esc(t('flowmap.archive.resultLabel'))}</div>
     <div class="fm-detail-result fm-md">${resultHtml}</div>`;
