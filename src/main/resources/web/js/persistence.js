@@ -398,9 +398,8 @@ export function restoreFromStorage(opts = {}) {
         tBubble.appendChild(tLabel);
         tBubble.appendChild(tContent);
         tRow.appendChild(tBubble);
-        // v1.2 unified footer (2026-09-06 补齐批): history thinking rows get
-        // time + copy too (timestamp rides the owning Ai message).
-        tRow.appendChild(createAiCopyBadge(m.timestamp, m.thinking));
+        // 2026-09-06 二次裁定: thinking rows carry NO footer (intermediate
+        // process, not message-class). Corrects f8ea9385's classification.
         chat.appendChild(tRow);
         bindCollapsibleToggle(tLabel, () => tContent);
       }
@@ -710,9 +709,8 @@ export function restoreFromBackendHistory(msgs, opts = {}) {
         tBubble.appendChild(tLabel);
         tBubble.appendChild(tContent);
         tRow.appendChild(tBubble);
-        // v1.2 unified footer (2026-09-06 补齐批): history thinking rows get
-        // time + copy too (timestamp rides the owning Ai message).
-        tRow.appendChild(createAiCopyBadge(m.timestamp, m.thinking));
+        // 2026-09-06 二次裁定: thinking rows carry NO footer (intermediate
+        // process, not message-class). Corrects f8ea9385's classification.
         fragment.appendChild(tRow);
         bindCollapsibleToggle(tLabel, () => tContent);
       }
