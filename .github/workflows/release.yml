@@ -80,6 +80,10 @@ jobs:
           chmod +x /tmp/sbt-bin/sbt
           echo "/tmp/sbt-bin" >> $GITHUB_PATH
 
+      - name: Install ripgrep (Glob/Grep runtime dependency)
+        if: steps.check.outputs.skipped == 'false'
+        run: sudo apt-get update && sudo apt-get install -y ripgrep
+
       - name: Run tests
         if: steps.check.outputs.skipped == 'false'
         run: sbt -Dmunit.failOnFlaky=false test
