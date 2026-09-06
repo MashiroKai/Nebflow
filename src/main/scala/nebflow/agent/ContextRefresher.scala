@@ -338,6 +338,14 @@ object ContextRefresher:
    * 内容计算字节（零额外 IO）——命中触发源或任一文件超 80% 软线时在记忆块尾部
    * 追加整理提醒（>80% 为即时任务措辞；纯渲染见 renderMemoryBlock）。
    * 注入侧仍不加截断（§3.3 裁定）——提醒是提示，不是截断。
+   *
+   * TaskList 批（2026-09-06 作者 00:07 提议 + 00:11 首期无前端拍板）：构建时
+   * 顺带读一次 tasks.json 的 open 摘要行（一次小文件读，与记忆文件同量级）——
+   * open 任务存在时记忆块带一行摘要。生命周期门控 = systemStable 重建点
+   * （cache v2：条件块整体进 systemStable，仅在重启/压缩等 lifecycle 节点
+   * 重建，轮间复用缓存）——openSummaryLine 返回当前快照，生命周期性由重建
+   * 点天然承担；任务明细永不注入，按需 TaskList(action=list) 查询；全 done /
+   * 空 / 损坏 → 空串（提醒消失）。
    */
   def buildMemoryBlock(
     agentName: String,
@@ -349,16 +357,20 @@ object ContextRefresher:
     renderMemoryBlock(
       MemoryStore.loadUserMemory,
       agentMemory,
-      MemoryHygieneSignal.takePending()
+      MemoryHygieneSignal.takePending(),
+      nebflow.core.tools.TaskListStore.openSummaryLine()
     )
   end buildMemoryBlock
 
-  /** 纯渲染（spec 直测面）：两记忆内容 + (restartPending, compactPending) 信号 →
-    * 记忆块全文。文件字节直接由已加载内容计算（无第二次读盘）。 */
+  /** 纯渲染（spec 直测面）：两记忆内容 + (restartPending, compactPending) 信号 +
+    * TaskList open 摘要行 → 记忆块全文。文件字节直接由已加载内容计算（无第二次
+    * 读盘）。openTasksLine 为空串时不渲染（全 done 后提醒消失）；三段（记忆主体/
+    * 整理提醒/任务摘要）非空段以 --- 分隔。 */
   def renderMemoryBlock(
     userContent: Option[String],
     agentContent: Option[String],
-    lifecycleSignal: (Boolean, Boolean)
+    lifecycleSignal: (Boolean, Boolean),
+    openTasksLine: String = ""
   ): String =
     val sections = List(
       userContent.map(content => s"## User Memory\n\n$content"),
@@ -375,9 +387,7 @@ object ContextRefresher:
            |${sections.mkString("\n\n")}""".stripMargin
 
     val notice = memoryHygieneNotice(userContent, agentContent, lifecycleSignal)
-    if notice.isEmpty then base
-    else if base.isEmpty then notice
-    else base + "\n\n---\n\n" + notice
+    List(base, notice, openTasksLine).filter(_.nonEmpty).mkString("\n\n---\n\n")
   end renderMemoryBlock
 
   /** 生命周期整理提醒（§6.2-2.5）：任一文件 >80% 软线 → 即时任务措辞（当轮安排

@@ -2034,7 +2034,10 @@ object AgentCore:
     "Schedule",
     "Delegate",
     "AgentControl",
-    "MemoryEdit"
+    "MemoryEdit",
+    // TaskList（2026-09-06 TaskList 批）：Nebula 专属编排件——任务=快变状态
+    // 存储（~/.nebflow/tasks.json），与 MemoryEdit 同域隔离（非 Nebula 声明即剥）。
+    "TaskList"
   )
 
   /** dream 的 MemoryEdit 准入例外（2026-09-05 作者签准，修订 2026-08-31 裁定①）：
@@ -2071,9 +2074,14 @@ object AgentCore:
     * 不变，Nebula 是唯一例外（编排件+读三件+MemoryEdit，恰十四件）。
     * 2026-09-06 00:48 作者裁定再摘 NodeList：节点结果沿 out 边自动投递
     * Nebula，主动查图与「全量派发 + pending 节点、不维护状态清单」的裁定
-    * 职责重叠——本集恰十三件。
+    * 职责重叠。2026-09-06 TaskList 批（作者 00:07 提议 + 00:11 首期无前端
+    * 拍板）：+TaskList——Nebula 专属持久任务清单（快变状态出记忆、入
+    * ~/.nebflow/tasks.json 运行时数据层；生命周期节点注入一行 open 摘要，
+    * MemoryHygieneSignal 先例）——本集恰十四件。
     * 分组与矩阵行一一对应：
     *   - 编排触发：Task / ProjectCreate / AgentControl（list/status/cancel/restart）
+    *   - 任务编排：TaskList（2026-09-06 TaskList 批；NebulaExclusiveTools 同批
+    *     防声明逃逸——dispatcher/general/"*" 一律剥离）
     *   - 通信：SendFriendMessage（好友功能非旧体系，保留机制固定）
     *   - 读三件：Read / Glob / Grep（读代码读现状；无写手——一切执行走
     *     Project 派发）
@@ -2086,13 +2094,15 @@ object AgentCore:
     * Mail/Delegate/FlowTrigger/FlowExecute（旧体系退役）、Web 系、
     * TeamTask*、SubTask、NodeEdit/NodeCancel。Issue/CheckIssues 已整体
     * 退役（2026-09-04 作者终裁：报 issue 走 gh cli 由节点代劳，定义层已归档
-    * .archived-tools-2d/）。本集即 Nebula 工具面唯一来源：恰十三件、零 Issue、
+    * .archived-tools-2d/）。本集即 Nebula 工具面唯一来源：恰十四件、零 Issue、
     * 零旧体系四件。 */
   val NebulaOrchestrationTools = Set(
     // 编排触发（NodeList 2026-09-06 00:48 裁定摘除）
     "Task",
     "ProjectCreate",
     "AgentControl",
+    // 任务编排（2026-09-06 TaskList 批：快变状态出记忆；首期无前端）
+    "TaskList",
     // 通信（好友功能非旧体系）
     "SendFriendMessage",
     // 读三件（08:40 解禁；23:34 裁定收走写手——Bash/Write/Edit 不在本集）
@@ -2191,7 +2201,8 @@ object AgentCore:
       case _ =>
         agentDef.name match
           case "Nebula" =>
-            // 静态集收口：恰十四件、零 Issue、零旧体系四件。终裁记录：
+            // 静态集收口：恰十四件、零 Issue、零旧体系四件（2026-09-06 TaskList
+            // 批：+TaskList，作者 00:07 提议 + 00:11 首期无前端拍板）。终裁记录：
             // （2026-09-04 作者裁定）Issue/CheckIssues 退役，报 issue 走 gh cli
             // 由节点代劳；定义层已归档（agent.json CheckIssues 声明删除、
             // ~/.nebflow/tools/ 下 issue/check-issues/screenshot 归档
