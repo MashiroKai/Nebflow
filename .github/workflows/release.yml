@@ -56,12 +56,20 @@ jobs:
       - name: Check if tag already exists
         id: check
         run: |
-          if git tag -l | grep -q "^v${{ steps.version.outputs.version }}$"; then
-            echo "  Tag v${{ steps.version.outputs.version }} already exists — skipping"
-            echo "skipped=true" >> $GITHUB_OUTPUT
+          # [FIX 2026-09-06] skip-guard race removed: this version's tag is created
+          # by the release job itself, so on a re-push of beta the tag already
+          # exists and "skip on existing tag" dead-locked the whole build into an
+          # empty run (no build / no GH Release / no COS upload). Contract here is
+          # "every beta push rebuilds + republishes" — a stale tag is handled
+          # idempotently by the release job's "Create tag" (delete-then-create),
+          # not by skipping the build. So we never mark skipped.
+          TAG_VER="v${{ steps.version.outputs.version }}"
+          if git tag -l | grep -q "^${TAG_VER}$"; then
+            echo "  Tag ${TAG_VER} already exists — will re-create rather than skip"
           else
-            echo "skipped=false" >> $GITHUB_OUTPUT
+            echo "  Tag ${TAG_VER} does not exist yet — will create on release"
           fi
+          echo "skipped=false" >> $GITHUB_OUTPUT
 
       - uses: actions/setup-java@v4
         if: steps.check.outputs.skipped == 'false'
@@ -263,7 +271,14 @@ jobs:
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
-          git tag "v${{ needs.build-jar.outputs.version }}"
+          V="v${{ needs.build-jar.outputs.version }}"
+          # [FIX 2026-09-06] idempotent re-create: on a re-push of beta the tag for
+          # this version already exists on remote (created by a prior run); delete
+          # it first (local + remote) so `git tag` and `git push origin beta --tags`
+          # don't fail, and the release is rebuilt + republished.
+          git tag -d "$V" 2>/dev/null || true
+          git push origin ":refs/tags/$V" 2>/dev/null || true
+          git tag "$V"
           git push origin beta --tags
 
       - name: Create GitHub Release
