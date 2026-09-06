@@ -221,21 +221,26 @@ $CosUrl = "$CosBaseCn/$JarName"
 # (docs/Nebflow/assets/logo/{dark,bright}.png, 224x224 = 7x7 grid of 32px
 # cells, cell-center NEAREST sampling - same pixelated look as the web UI's
 # image-rendering: pixelated) and is embedded as a mask: G = brand green
-# #07C160, W = white (dark terminals) or black (light terminals). Trimmed to
-# the 5x6 visible cells. No ASCII-art wordmark: the logo blocks carry the
-# brand, the wordmark is plain lowercase text.
+# #07C160, W = white (dark terminals) or black (light terminals). Full
+# untrimmed 7x7 matrix (author ruling 2026-09-06: no 5x6 cropping). No
+# ASCII-art wordmark: the logo blocks carry the brand, the wordmark is
+# plain lowercase text.
 # Degrade chain: VT truecolor background blocks (PS 7+ / Windows Terminal)
 #   -> 16-color console background (PS 5.1 conhost, zero escape risk)
-#   -> mono ## mask (NO_COLOR / CI / redirected output).
+#   -> mono # mask (NO_COLOR / CI / redirected output).
+# Width discipline (author ruling 2026-09-06): ONE pixel = ONE character
+# cell at every level, so truecolor/16-color/mono all draw the same shape.
 # Theme: NEBFLOW_BANNER_THEME=dark|light overrides; default dark.
 # Batch 3 invariant holds: this file stays PURE ASCII after the UTF-8 BOM -
 # the CJK slogan is gone for good, escapes are built via [char]27.
 $BannerMask = @(
-    "GG.WWW",
-    "GG.WWW",
-    "..W..W",
-    "..W..W",
-    "..W..W"
+    ".......",
+    "GG.WWW.",
+    "GG.WWW.",
+    "..W..W.",
+    "..W..W.",
+    "..W..W.",
+    "......."
 )
 $BannerTheme = "dark"
 if ($env:NEBFLOW_BANNER_THEME -eq "light" -or $env:NEBFLOW_BANNER_THEME -eq "dark") {
@@ -248,15 +253,15 @@ if (-not ($env:NO_COLOR -or $env:CI -or [Console]::IsOutputRedirected)) {
 $BannerEsc = "$([char]27)"
 
 function Write-LogoPixel([string]$c) {
-    if ($c -eq ".") { Write-Host -NoNewline "  "; return }
+    if ($c -eq ".") { Write-Host -NoNewline " "; return }
     if ($BannerLevel -eq 3) {
         $rgb = if ($c -eq "G") { "7;193;96" } elseif ($BannerTheme -eq "dark") { "255;255;255" } else { "0;0;0" }
-        Write-Host -NoNewline "$BannerEsc[48;2;${rgb}m  $BannerEsc[0m"
+        Write-Host -NoNewline "$BannerEsc[48;2;${rgb}m $BannerEsc[0m"
     } elseif ($BannerLevel -eq 1) {
         $bg = if ($c -eq "G") { "Green" } elseif ($BannerTheme -eq "dark") { "White" } else { "Black" }
-        Write-Host -NoNewline "  " -BackgroundColor $bg
+        Write-Host -NoNewline " " -BackgroundColor $bg
     } else {
-        Write-Host -NoNewline "##"
+        Write-Host -NoNewline "#"
     }
 }
 
@@ -264,14 +269,14 @@ Write-Host ""
 for ($bi = 0; $bi -lt $BannerMask.Count; $bi++) {
     Write-Host -NoNewline "  "
     foreach ($ch in $BannerMask[$bi].ToCharArray()) { Write-LogoPixel ([string]$ch) }
-    if ($bi -eq 1) {
-        if ($BannerLevel -eq 3) { Write-Host -NoNewline "   $BannerEsc[1;38;2;7;193;96m$LowerName$BannerEsc[0m" }
-        elseif ($BannerLevel -eq 1) { Write-Host -NoNewline "   $LowerName" -ForegroundColor Green }
-        else { Write-Host -NoNewline "   $LowerName" }
-    } elseif ($bi -eq 2) {
+    if ($bi -eq 2) {
+        if ($BannerLevel -eq 3) { Write-Host -NoNewline "  $BannerEsc[1;38;2;7;193;96m$LowerName$BannerEsc[0m" }
+        elseif ($BannerLevel -eq 1) { Write-Host -NoNewline "  $LowerName" -ForegroundColor Green }
+        else { Write-Host -NoNewline "  $LowerName" }
+    } elseif ($bi -eq 3) {
         $vline = "v$Version installer ($Channel)"
-        if ($BannerLevel -eq 3) { Write-Host -NoNewline "   $BannerEsc[2m$vline$BannerEsc[0m" }
-        else { Write-Host -NoNewline "   $vline" }
+        if ($BannerLevel -eq 3) { Write-Host -NoNewline "  $BannerEsc[2m$vline$BannerEsc[0m" }
+        else { Write-Host -NoNewline "  $vline" }
     }
     Write-Host ""
 }
