@@ -48,6 +48,12 @@ class NodeSchemaSlimSpec extends CatsEffectSuite:
     """{"name":"general","description":"general executor","tools":[],"category":"standalone"}""")
   os.write.over(tempRoot / "agents" / "general" / "system.md", "# general\n")
   os.write.over(tempRoot / "nebflow.json", "{}")
+  // 20260907 修复（pre-existing 主干红，与本支裁定无关的夹具腐化）：E2E 用 preset
+  // "qa"，但夹具从未 seed model-presets.json——引擎 §E.3 preset 解析（须有非空
+  // model chain）失败 → 节点 failed → waitUntil 超时。seed 含 qa 链的 preset 表
+  // （RecordingLlm 为 stub，模型名不触真实调用）。
+  os.write.over(tempRoot / "model-presets.json",
+    """{"defaultPreset":"general","presets":{"general":{"name":"general","description":"default","preferred":"mock/mock-a","fallbacks":["mock/mock-b"]},"qa":{"name":"qa","description":"qa fixture preset","preferred":"mock/mock-qa","fallbacks":["mock/mock-qa-b"]}}}""")
 
   // skills-only plugin fixture（真实目录 + 审批走 PluginRegistry 单点，NodePluginChainSpec 同款）
   private val slimPluginDir = tempRoot / "plugins" / "slim-e2e"
@@ -164,7 +170,16 @@ class NodeSchemaSlimSpec extends CatsEffectSuite:
 
   // ── 1. description 契约 ─────────────────────────────────
 
-  test("A① create without description → NODE_DESCRIPTION_REQUIRED; empty → same; >200 → NODE_DESCRIPTION_TOO_LONG") {
+  test("A⓪ tool doc budget: NodeEdit description ≤3800 chars (裁定⑤b, was 7438)") {
+    val d = NodeEditTool.description
+    assert(d.length <= 3800, s"NodeEdit description must stay ≤3800 chars (ctx-econ 裁定⑤b), got ${d.length}")
+    // 语义锚点抽查：核心参数/错误码/机制关键词不得在压缩中丢失
+    for anchor <- List("nodename", "descriptionLong", "replace-on-provide", "NODE_AGENT_RETIRED", "EMPTY_NODE_CONNECTION",
+        "NODE_MERGE_REQUIRES_UPSTREAM", "worktree", "abandon", "notifyDispatcher", "Nebula", "NodeList(detail=") do
+      assert(d.contains(anchor), s"compressed description must keep '$anchor'")
+  }
+
+  test("A① create without description → NODE_DESCRIPTION_REQUIRED; empty → same; >60 → NODE_DESCRIPTION_TOO_LONG (裁定⑤c)") {
     val ws = plainWorkspace("desc")
     val system = ActorSystem(s"slim-desc-${Random.nextInt(100000)}")
     for
@@ -173,21 +188,25 @@ class NodeSchemaSlimSpec extends CatsEffectSuite:
       ctx = mkCtx(res, system, ws.toString)
       missing <- nodeEdit(nodeInput("slim-desc", "n-missing", "task" -> Json.fromString("t"), "out" -> Json.fromString("Nebula")), ctx)
       blank <- nodeEdit(nodeInput("slim-desc", "n-blank", "description" -> Json.fromString("   "), "task" -> Json.fromString("t"), "out" -> Json.fromString("Nebula")), ctx)
-      tooLong <- nodeEdit(nodeInput("slim-desc", "n-long", "description" -> Json.fromString("x" * 201), "task" -> Json.fromString("t"), "out" -> Json.fromString("Nebula")), ctx)
-      ok <- nodeEdit(nodeInput("slim-desc", "n-ok", "description" -> Json.fromString("  within limit  "), "task" -> Json.fromString("t"), "out" -> Json.fromString("Nebula")), ctx)
-      stored <- rt.store.getNode(ok.toOption.map(_ => "n-ok").getOrElse(""))
+      tooLong <- nodeEdit(nodeInput("slim-desc", "n-long", "description" -> Json.fromString("x" * 61), "task" -> Json.fromString("t"), "out" -> Json.fromString("Nebula")), ctx)
+      ok60 <- nodeEdit(nodeInput("slim-desc", "n-ok60", "description" -> Json.fromString("x" * 60), "task" -> Json.fromString("t"), "out" -> Json.fromString("Nebula")), ctx)
+      longDesc <- nodeEdit(nodeInput("slim-desc", "n-longd", "description" -> Json.fromString("short"), "descriptionLong" -> Json.fromString("L" * 201), "task" -> Json.fromString("t"), "out" -> Json.fromString("Nebula")), ctx)
+      okLong <- nodeEdit(nodeInput("slim-desc", "n-oklong", "description" -> Json.fromString("short"), "descriptionLong" -> Json.fromString("详述：" + "L" * 190), "task" -> Json.fromString("t"), "out" -> Json.fromString("Nebula")), ctx)
       snap <- rt.store.snapshot
       _ <- system.stopAll.handleErrorWith(_ => IO.unit)
     yield
       assert(missing.isLeft && missing.left.exists(_.contains("NODE_DESCRIPTION_REQUIRED")), s"missing description must be rejected, got: $missing")
       assert(blank.isLeft && blank.left.exists(_.contains("NODE_DESCRIPTION_REQUIRED")), s"blank description must be rejected, got: $blank")
-      assert(tooLong.isLeft && tooLong.left.exists(_.contains("NODE_DESCRIPTION_TOO_LONG")), s">200 must be rejected, got: $tooLong")
-      assert(ok.isRight, s"valid description must pass, got: $ok")
-      // 创建时 trim 归一
-      assertEquals(snap.nodes.values.find(_.name == "n-ok").flatMap(_.description), Some("within limit"))
+      assert(tooLong.isLeft && tooLong.left.exists(_.contains("NODE_DESCRIPTION_TOO_LONG")), s">60 must be rejected (裁定⑤c), got: $tooLong")
+      assert(ok60.isRight, s"exactly-60 description must pass, got: $ok60")
+      assert(longDesc.isLeft && longDesc.left.exists(_.contains("NODE_DESCRIPTION_LONG_TOO_LONG")), s"descriptionLong >200 must be rejected, got: $longDesc")
+      assert(okLong.isRight, s"valid descriptionLong must pass, got: $okLong")
+      // 双层落库：短文进 NodeDef.description，长文进 descriptionLong（均 trim 归一）
+      assertEquals(snap.nodes.values.find(_.name == "n-oklong").map(n => (n.description, n.descriptionLong)),
+        Some((Some("short"), Some("详述：" + "L" * 190))), "both layers must be stored trimmed")
   }
 
-  test("A② edit updates description") {
+  test("A② edit updates description; descriptionLong detail-only (not in default payload, present in detail channel) (裁定⑤c)") {
     val ws = plainWorkspace("desc-edit")
     val system = ActorSystem(s"slim-de-${Random.nextInt(100000)}")
     for
@@ -195,12 +214,25 @@ class NodeSchemaSlimSpec extends CatsEffectSuite:
       rt <- mountProject("slim-de", ws, system, res)
       ctx = mkCtx(res, system, ws.toString)
       _ <- nodeEdit(nodeInput("slim-de", "n-e", "description" -> Json.fromString("before"), "task" -> Json.fromString("t"), "out" -> Json.fromString("Nebula")), ctx)
-      upd <- nodeEdit(nodeInput("slim-de", "n-e", "description" -> Json.fromString("after")), ctx)
+      upd <- nodeEdit(nodeInput("slim-de", "n-e", "description" -> Json.fromString("after"), "descriptionLong" -> Json.fromString("编辑后的长描述")), ctx)
       snap <- rt.store.snapshot
+      payload <- NodeTools.buildNodeListPayload(rt)
+      nodeId = snap.nodes.values.find(_.name == "n-e").map(_.id).getOrElse("")
+      detailRaw <- NodeListTool.call(io.circe.JsonObject.fromIterable(List(
+        "project" -> Json.fromString("slim-de"),
+        "detail" -> Json.fromString(nodeId))), ctx)
       _ <- system.stopAll.handleErrorWith(_ => IO.unit)
     yield
       assert(upd.isRight, s"description edit must succeed, got: $upd")
       assertEquals(snap.nodes.values.find(_.name == "n-e").flatMap(_.description), Some("after"))
+      assertEquals(snap.nodes.values.find(_.name == "n-e").flatMap(_.descriptionLong), Some("编辑后的长描述"))
+      // 默认载荷：不带 descriptionLong 键（键集零漂移）
+      val nodes = payload.hcursor.downField("nodes").as[List[Json]].toOption.getOrElse(Nil)
+      val mine = nodes.find(_.hcursor.get[String]("id").toOption.contains(nodeId)).getOrElse(fail("node missing from payload"))
+      assert(!mine.asObject.exists(_.contains("descriptionLong")), "default payload must NOT carry descriptionLong (裁定⑤c detail-only)")
+      // detail 通道：条件键携带
+      val detail = io.circe.parser.parse(detailRaw.toOption.getOrElse(fail("detail failed"))).getOrElse(fail("detail not json"))
+      assertEquals(detail.hcursor.get[String]("descriptionLong").toOption, Some("编辑后的长描述"), "detail channel must carry descriptionLong")
   }
 
   // ── 2. agent/skill/mcp 退役 ─────────────────────────────

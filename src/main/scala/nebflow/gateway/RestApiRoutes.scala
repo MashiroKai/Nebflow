@@ -352,12 +352,14 @@ class RestApiRoutes(
                 // blocked 态携带 blockedFeedback——非 blocked 终态的历史残留经本
                 // 端点按需取（条件键：无历史反馈的节点不带，键集零漂移）。
                 val histFeedback = n.blockedFeedback.toList.map(bf => "blockedFeedback" -> bf.asJson)
+                // 裁定⑤c 双层化：长描述仅 detail 通道（同 NodeList detail=，条件键）
+                val descLong = n.descriptionLong.toList.map(d => "descriptionLong" -> d.asJson)
                 Ok(Json.obj(
                   "id" -> n.id.asJson,
                   "name" -> n.name.asJson,
                   "status" -> n.status.asJson,
                   "result" -> n.result.asJson
-                ).deepMerge(Json.obj(histFeedback*)))
+                ).deepMerge(Json.obj((histFeedback ++ descLong)*)))
             }
         }
       }

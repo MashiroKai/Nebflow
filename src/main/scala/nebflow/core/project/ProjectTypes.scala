@@ -28,6 +28,9 @@ object NodeLifecycle:
 
   val Terminal: Set[String] = Set(Completed, Failed, Cancelled, Blocked)
 
+  /** 全部合法生命周期值（NodeList status 过滤枚举校验单点，裁定⑤a 20260907）。 */
+  val All: Set[String] = Set(Wiring, Pending, Running, Completed, Failed, Cancelled, Blocked)
+
 /** 结构化 blocked 反馈（设计 §1.3 JSON 体）：BlockedReader 从节点最终输出解析。 */
 case class BlockedFeedback(
   category: String, // upstream-incomplete | task-underspecified | agent-mismatch | external-dependency | needs-split | other
@@ -94,8 +97,13 @@ case class NodeDef(
     * NodeList detail 消费方零改动）；归档区 JSON 直接剥 task（无重入价值）。
     * taskFile 指针只活在磁盘 JSON，不进内存模型。 */
   task: Option[String] = None,
-  /** 创建必写的简短描述（≤200 字符）。默认 None = 存量兼容（旧数据零迁移）。 */
+  /** 创建必写的简短描述（20260907 裁定⑤c 双层化：≤60 字符，进默认载荷）。
+    * 默认 None = 存量兼容（旧数据零迁移；存量 ≤200 长描述原样保留不回溯）。 */
   description: Option[String] = None,
+  /** 可选长描述（20260907 裁定⑤c 双层化：≤200 字符）——**不进默认载荷**，仅
+    * detail 按需通道（NodeList detail= / REST result 端点条件键）与前端详情窗
+    * 消费；存量节点无长文 → 缺键，消费方回退短文 description。默认 None = 零迁移。 */
+  descriptionLong: Option[String] = None,
   in: List[String] = Nil,
   out: Option[String] = None,
   /** 依赖连接（deps 设计 §1.1，主文档 20260902_flowmap-engine-evolution-design.md）：
