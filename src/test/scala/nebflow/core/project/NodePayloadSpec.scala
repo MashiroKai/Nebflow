@@ -38,4 +38,22 @@ class NodePayloadSpec extends FunSuite:
     )
   }
 
+  test("buildNodeJson: blocked node carries blockedFeedback; non-blocked terminals omit the key (裁定②)") {
+    val bf = BlockedFeedback("task-underspecified", "缺交付物定义", "补充验收标准")
+    val base = NodeDef(id = "n-bf", name = "bf", agent = "general", createdAt = 1000L)
+    // blocked 态：键在 + 结构化三字段透传（封顶属 BlockedReader 入库单点）
+    val jb = NodePayload.buildNodeJson(base.copy(status = NodeLifecycle.Blocked, blockedFeedback = Some(bf)), now = 2000L)
+    val bfCur = jb.hcursor.downField("blockedFeedback")
+    assertEquals(bfCur.get[String]("category").toOption, Some("task-underspecified"), "blocked node must carry structured feedback")
+    assertEquals(bfCur.get[String]("detail").toOption, Some("缺交付物定义"))
+    assertEquals(bfCur.get[String]("suggestion").toOption, Some("补充验收标准"))
+    // 无反馈的 blocked 节点也不带键（字段存在才条件序列化）
+    val jbNoFeedback = NodePayload.buildNodeJson(base.copy(status = NodeLifecycle.Blocked), now = 2000L)
+    assert(!jbNoFeedback.asObject.exists(_.contains("blockedFeedback")), "blocked without feedback body must not carry the key")
+    // 非 blocked 终态：历史残留不进默认载荷（裁定② 核心——审计实测 9 节点泄漏 11.6KB）
+    for st <- List(NodeLifecycle.Completed, NodeLifecycle.Failed, NodeLifecycle.Cancelled) do
+      val j = NodePayload.buildNodeJson(base.copy(status = st, blockedFeedback = Some(bf)), now = 2000L)
+      assert(!j.asObject.exists(_.contains("blockedFeedback")), s"status=$st must NOT carry blockedFeedback (裁定②), got keys: ${j.asObject.map(_.keys.toList.sorted)}")
+  }
+
 end NodePayloadSpec

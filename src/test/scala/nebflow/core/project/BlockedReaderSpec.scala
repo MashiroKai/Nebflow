@@ -92,6 +92,30 @@ class BlockedReaderSpec extends FunSuite:
     assertEquals(BlockedReader.parse("blocked: upstream not ready"), None)
   }
 
+  test("parse: JSON body detail >300 / suggestion >150 → capped (裁定② JSON 分支封顶)") {
+    val text = s"""BLOCKED
+                  |{"category":"other","detail":"${"d" * 1511}","suggestion":"${"s" * 594}"}""".stripMargin
+    val f = BlockedReader.parse(text).getOrElse(fail("expected blocked feedback"))
+    assertEquals(f.detail.length, 301, "detail must cap at 300 chars + ellipsis (审计实测最大 1511ch)")
+    assert(f.detail.startsWith("ddd") && f.detail.endsWith("…"), s"capped detail must keep head + ellipsis, got tail: ${f.detail.takeRight(5)}")
+    assertEquals(f.suggestion.length, 151, "suggestion must cap at 150 chars + ellipsis")
+  }
+
+  test("parse: JSON body within caps passes through verbatim (裁定② 不误伤)") {
+    val text = """BLOCKED
+                 |{"category":"other","detail":"恰好三百以内","suggestion":"建议"}""".stripMargin
+    val f = BlockedReader.parse(text).getOrElse(fail("expected blocked feedback"))
+    assertEquals(f.detail, "恰好三百以内")
+    assertEquals(f.suggestion, "建议")
+  }
+
+  test("parse: fallback branch keeps DetailCap=500 boundary (裁定② 仅收口 JSON 分支)") {
+    val f500 = BlockedReader.parse(s"BLOCKED: ${"x" * 500}").getOrElse(fail("expected"))
+    assertEquals(f500.detail.length, 500, "fallback detail at exactly 500 must not truncate")
+    val f501 = BlockedReader.parse(s"BLOCKED: ${"x" * 501}").getOrElse(fail("expected"))
+    assertEquals(f501.detail.length, 501, "fallback detail >500 truncates to 500 + ellipsis")
+  }
+
   test("render: 落库渲染串格式 [blocked:<category>] <detail> — 建议: <suggestion>") {
     assertEquals(
       BlockedReader.render(BlockedFeedback("needs-split", "任务过大", "拆为 A+B 两个节点")),

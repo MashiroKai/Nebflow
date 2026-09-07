@@ -1290,10 +1290,16 @@ With detail=<nodeId>: the same node shape + task + result (full text)."""
               case Some(n) =>
                 val now = System.currentTimeMillis()
                 val base = NodePayload.buildNodeJson(n, now)
-                val full = base.deepMerge(Json.obj(
-                  "task" -> n.task.asJson,
-                  "result" -> n.result.asJson
-                ))
+                // 裁定②历史参照补挂（20260907 上下文经济学批）：默认载荷仅 blocked 态
+                // 携带 blockedFeedback——detail 按需通道对非 blocked 节点补挂存储值
+                // （blocked 节点 base 已含，deepMerge 同值幂等）。
+                val histFeedback = n.blockedFeedback.toList.map(bf => "blockedFeedback" -> bf.asJson)
+                val full = base
+                  .deepMerge(Json.obj(
+                    "task" -> n.task.asJson,
+                    "result" -> n.result.asJson
+                  ))
+                  .deepMerge(Json.obj(histFeedback*))
                 Right(full.noSpaces)
             }
           case None =>
