@@ -440,6 +440,22 @@
   color: var(--color-frame-text-muted);
   flex-shrink: 0;
 }
+/* Project attribution (2026-09-06 author ruling): Flow rows label the owning
+   project next to the kind chip. Deliberately plainer than the chip — dim
+   bare text, no pill/box — so it reads as metadata subordinate to the Flow
+   badge and never competes with the node name below. Long names truncate
+   (nowrap + max-width + ellipsis; full name on hover via title). */
+.bg-task-project {
+  font-size: 10px;
+  font-weight: 400;
+  color: var(--color-frame-text-dim);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  max-width: 140px;
+  min-width: 0;
+  flex-shrink: 1;
+}
 .bg-task-uptime {
   font-size: 10px;
   color: var(--color-frame-text-muted);

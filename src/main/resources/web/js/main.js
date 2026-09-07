@@ -1877,6 +1877,13 @@ function renderBgAgentDropdown() {
     }[rowState];
     const kind = info.kind || bgAgentKindFromSession(info.sessionId || id);
     const kindPart = kind ? '<span class="bg-task-kind">' + escapeHtml(kind) + '</span>' : '';
+    // Project attribution (2026-09-06 author ruling): Flow rows carry the
+    // owning project's name next to the kind chip — muted plain text,
+    // visually subordinate to the chip, never competing with the node name.
+    // Absent (Root/direct delegates) → no badge at all.
+    const projectPart = info.project
+      ? '<span class="bg-task-project" title="' + escapeHtml(info.project) + '">' + escapeHtml(info.project) + '</span>'
+      : '';
     const displayName = info.name || id;
     const taskText = info.task ? displayName + ' · ' + info.task : displayName;
     const namePart = '<span class="bg-task-name" title="' + escapeHtml(taskText) + '">' + escapeHtml(taskText) + '</span>';
@@ -1918,7 +1925,7 @@ function renderBgAgentDropdown() {
         // second line, visually separated from the labels).
         '<div class="bg-task-line bg-task-meta">' +
           '<span class="bg-task-state bg-state-' + rowState + '">' + escapeHtml(statusLabel) + '</span>' +
-          kindPart + retriesPart + uptimePart +
+          kindPart + projectPart + retriesPart + uptimePart +
         '</div>' +
         '<div class="bg-task-line bg-task-name-line">' + namePart + '</div>' +
         stuckPart + toolPart +
@@ -2055,6 +2062,11 @@ onMessage('agentStart', (msg, view) => {
     // by routeWsSend), so using it here loaded the host's history (串台).
     sessionId: msg.nodeSessionId || '',
     kind: (prev && prev.kind) || bgAgentKindFromSession(msg.nodeSessionId || ''),
+    // Project attribution badge: live frames carry it only on agentStart
+    // (routeSubagentWsSend injects it for node-*/dispatcher-* sessions);
+    // non-project frames have no field — carry over from the previous entry
+    // (same cross-turn preservation as kind/startedAt/retryCount).
+    project: msg.project || (prev && prev.project) || '',
     startedAt: (prev && prev.startedAt) || Date.now(),
     status: 'Processing',
     retryCount: (prev && prev.retryCount) || 0,
@@ -3316,6 +3328,10 @@ onMessage('activeAgents', (msg) => {
       // state and retryCount the retries chip after a page refresh (backend
       // fields landed @179a009e).
       kind: a.kind || '',
+      // Project attribution (2026-09-06): activeAgents restore entries carry
+      // project for node-*/dispatcher-* rows (AgentRecord.project →
+      // activeAgentEntryJson); empty string → no badge.
+      project: a.project || '',
       startedAt: a.startedAt || null,
       status: a.status || '',
       retryCount: typeof a.retryCount === 'number' ? a.retryCount : 0,
