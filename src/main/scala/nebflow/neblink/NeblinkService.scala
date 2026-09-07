@@ -248,6 +248,40 @@ class NeblinkService private (
   def isTrustedPeer(remoteAddr: String): Boolean =
     trustedPeerIps.contains(remoteAddr)
 
+  /**
+   * Server-pushed device presence (presence v2 DeviceStatusUpdate frame, C6).
+   *
+   * Drives the SAME freshness field as the heartbeat/discovery path, so
+   * /neblink/status and the UI badge flip within one push (<2s) instead of
+   * waiting for the next heartbeat cycle. Push is primary; the periodic
+   * heartbeat pull remains as the frame-loss fallback (C5) — a later sync
+   * that still reports the peer refreshes lastSeen again.
+   *
+   *  - online: refresh lastSeen and fire the change callback. If the device
+   *    is unknown locally, the push carries no endpoints, so trigger a
+   *    discovery cycle to pull its full info instead.
+   *  - offline: age lastSeen to epoch — the freshness predicate (C3) reports
+   *    offline. The row stays (offline badge) until the server drops the
+   *    device from responses and syncPeers evicts it (C2).
+   */
+  def applyServerPeerStatus(deviceId: String, online: Boolean): IO[Unit] =
+    for
+      _ <- if online then pendingRemovals.update(_ - deviceId) else IO.unit
+      known <- peersRef.modify { peers =>
+        peers.get(deviceId) match
+          case Some(p) =>
+            val updated =
+              if online then p.copy(lastSeen = System.currentTimeMillis())
+              else p.copy(lastSeen = 0L)
+            (peers + (deviceId -> updated), true)
+          case None => (peers, false)
+      }
+      _ <-
+        if known then notifyPeersChanged
+        else if online then sendSync(SyncCommand.PeerDiscovered) // pull full info for the newcomer
+        else IO.unit
+    yield ()
+
   /** Handle an incoming handshake from a peer. Called by the REST endpoint. */
   def handleHandshake(
     deviceId: String,
@@ -391,6 +425,23 @@ end NeblinkService
 
 object NeblinkService:
   private val logger = NebflowLogger.forName("nebflow.neblink")
+
+  /**
+   * Peer "online" freshness window (millis). A peer counts as online only if
+   * it appeared in a server heartbeat/discovery response within this window
+   * (PeerInfo.lastSeen is refreshed on every successful sync).
+   *
+   * The floor of 90s matches the NebLink Server's own online TTL (90s), and
+   * the 2x sync-interval term gives two full heartbeat cycles of slack before
+   * a peer is flagged offline — transient single-cycle misses (network jitter,
+   * one failed heartbeat) never flip the badge.
+   */
+  def onlineFreshnessMs(syncIntervalSec: Int): Long =
+    math.max(90_000L, syncIntervalSec.toLong.max(1) * 2 * 1000)
+
+  /** Freshness predicate: has this peer been seen within the online window? */
+  def isPeerOnline(peer: PeerInfo, nowMs: Long, syncIntervalSec: Int): Boolean =
+    nowMs - peer.lastSeen <= onlineFreshnessMs(syncIntervalSec)
 
   def create(
     serverPort: Int = 8080,

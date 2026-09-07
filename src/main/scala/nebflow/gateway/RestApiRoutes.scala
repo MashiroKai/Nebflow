@@ -640,6 +640,13 @@ class RestApiRoutes(
           // doesn't mean the peer is reachable — cross-network peers need relay.
           directOnline = (deviceId: String) => ms.presenceServiceOpt.exists(_.isConnected(deviceId))
           relayAvailable = ms.relayTunnelOpt.exists(_.isAlive)
+          // C3 (ghost-peer fix): `online` is a real freshness judgement — the
+          // peer must have appeared in a server heartbeat/discovery response
+          // within the online window (NeblinkService.onlineFreshnessMs), not
+          // merely exist in the local list.
+          nowMs = System.currentTimeMillis()
+          peerOnline = (p: nebflow.neblink.PeerInfo) =>
+            NeblinkService.isPeerOnline(p, nowMs, cfg.syncIntervalSec)
           r <- Ok(
             Json.obj(
               "loggedIn" -> loggedIn.asJson,
@@ -662,7 +669,7 @@ class RestApiRoutes(
                     "capabilities" -> p.capabilities.asJson,
                     "userDescription" -> p.userDescription.asJson,
                     "lastSeen" -> p.lastSeen.asJson,
-                    "online" -> true.asJson, // server heartbeat: device is registered
+                    "online" -> peerOnline(p).asJson, // freshness: seen by server within the online window
                     "directOnline" -> directOnline(p.deviceId).asJson, // P2P WS reachable
                     "relayAvailable" -> relayAvailable.asJson // our relay tunnel is up
                   )
@@ -686,22 +693,46 @@ class RestApiRoutes(
         }
       }
 
-    // Logout — clear device credential, disable NebLink (keep server address),
-    // stop the client, clear user info and peers. Reverses the device-flow login.
+    // Logout — notify the server, stop tunnels, clear device credential,
+    // disable NebLink (keep server address), stop the client, clear user info
+    // and peers. Reverses the device-flow login.
     case req @ POST -> Root / "neblink" / "logout" =>
       withNeblink(req) { ms =>
         for
-          // 1. Delete the device credential file (~/.nebflow/neblink/device.json)
+          // 1. Notify the NebLink Server: DELETE /api/device/logout lets the
+          //    server clear the device session + relay tunnel immediately
+          //    instead of waiting for the 90s TTL purge. Best-effort — logout
+          //    must ALWAYS succeed locally, so any failure (network
+          //    unreachable, server down) is swallowed. Uses the discovery's
+          //    live client: enrollment hot-swap replaces it without updating
+          //    ms.relayClientOpt, which may hold a stale instance.
+          _ <- neblinkDiscovery.fold(IO.unit)(d =>
+            d.currentClient.flatMap {
+              case Some(client) =>
+                client.logout.handleErrorWith(e =>
+                  logger.debug(s"NebLink server logout notify failed (continuing local logout): ${e.getMessage}")
+                )
+              case None => IO.unit
+            }
+          )
+          // 2. Stop the relay tunnel — drops the local WS so no reconnect
+          //    loop keeps the device visible server-side after logout.
+          _ <- ms.relayTunnelOpt.fold(IO.unit)(t => t.stop().handleErrorWith(_ => IO.unit))
+          // 3. Drop all P2P presence connections and cancel auto-reconnects —
+          //    otherwise a reconnecting peer could silently re-enter the local
+          //    list after logout (reconnectLoop re-upserts on success).
+          _ <- ms.presenceServiceOpt.fold(IO.unit)(p => p.disconnectAll().handleErrorWith(_ => IO.unit))
+          // 4. Delete the device credential file (~/.nebflow/neblink/device.json)
           _ <- DeviceCredential.clear
-          // 2. Disable NebLink in config (keep neblinkServer address for next login).
+          // 5. Disable NebLink in config (keep neblinkServer address for next login).
           //    updateConfig refreshes the in-memory ref AND persists to disk, so
           //    /status reflects the change immediately without a restart.
           _ <- ms.updateConfig(_.copy(enabled = false))
-          // 3. Stop the NebLink client (hot-swap to None).
+          // 6. Stop the NebLink client (hot-swap to None).
           _ <- neblinkDiscovery.fold(IO.unit)(d => d.setClient(None))
-          // 4. Clear user info (avatar, github login) from the device identity.
+          // 7. Clear user info (avatar, github login) from the device identity.
           _ <- ms.updateDeviceInfo(avatarUrl = Some(""), githubLogin = Some(""))
-          // 5. Clear all discovered peers.
+          // 8. Clear all discovered peers.
           _ <- ms.clearPeers
           r <- Ok(Json.obj("ok" -> true.asJson))
         yield r

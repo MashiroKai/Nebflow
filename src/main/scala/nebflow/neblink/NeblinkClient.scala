@@ -461,7 +461,13 @@ class NeblinkClient(
           case Left(err) => IO.pure(Left(err))
         }
 
-  /** Convert NebLink Server peers to neblink PeerInfo. Picks first endpoint as address. */
+  /** Convert NebLink Server peers to neblink PeerInfo. Picks first endpoint as address.
+   *
+   * Presence v2: a peer the server explicitly flags online=false (lazy TTL
+   * judgement) maps to lastSeen=0 — non-fresh, so the C3 freshness predicate
+   * reports it offline. Without this mapping, an offline-flagged device would
+   * refresh itself back to "online" on every heartbeat just by appearing in
+   * the response, fighting the DeviceStatusUpdate push (C6). */
   def toNeblinkPeers(serverPeers: List[NeblinkPeerInfo]): List[PeerInfo] =
     serverPeers.filter(_.endpoints.nonEmpty).map { p =>
       val ep = p.endpoints.head
@@ -469,7 +475,8 @@ class NeblinkClient(
         deviceId = p.deviceId,
         deviceName = p.deviceName,
         platform = p.platform,
-        address = s"http://${ep.address}:${ep.port}"
+        address = s"http://${ep.address}:${ep.port}",
+        lastSeen = if p.online then System.currentTimeMillis() else 0L
       )
     }
 

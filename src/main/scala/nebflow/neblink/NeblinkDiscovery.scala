@@ -56,6 +56,14 @@ final class NeblinkDiscovery(
   def setClient(client: Option[NeblinkClient]): IO[Unit] =
     clientRef.set(client) *> logger.info("NebLink client hot-swapped")
 
+  /**
+   * The authoritative live client. Enrollment hot-swaps create a NEW
+   * NeblinkClient here without touching NeblinkService.relayClientOpt, so
+   * consumers that need "the client actually in use" (e.g. logout notify)
+   * must read this, not the relay client reference.
+   */
+  def currentClient: IO[Option[NeblinkClient]] = clientRef.get
+
   /** Discovery cycle — use NebLink Server if configured. */
   def discoverCycle: IO[Unit] =
     clientRef.get.flatMap {
@@ -78,7 +86,11 @@ final class NeblinkDiscovery(
       case Right(serverPeers) =>
         val neblinkPeers = client.toNeblinkPeers(serverPeers)
         val peerIps = client.peerAddresses(serverPeers)
-        neblinkPeers.traverse_(p => neblinkService.upsertPeer(p)) *>
+        // syncPeers (not bare upsert): the heartbeat path must CONVERGE the
+        // local peer list — peers that vanished from the server response are
+        // removed, not just refreshed. Upsert-only growth was the root cause
+        // of permanent ghost entries (logged-out devices staying "online").
+        presenceService.syncPeers(neblinkPeers) *>
           neblinkService.updateTrustedIps(peerIps) *>
           neblinkService.sendSync(nebflow.neblink.SyncCommand.PeerDiscovered) *>
           resetFailCount
