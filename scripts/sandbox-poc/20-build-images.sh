@@ -6,6 +6,13 @@ set -euo pipefail
 cd "$(dirname "$0")"
 . lib/common.sh
 
+# W9 workaround（PoC 现场取证）：seatbelt 沙箱写面不含 ~/.docker —— buildx 写
+# ~/.docker/buildx/activity/.tmp-* 被拒（operation not permitted）→ docker build 失败。
+# 修法=DOCKER_CONFIG 重定向 /tmp（W7 HOME 重定向同族）；docker provider 落地后此类
+# workaround 天然消失（容器内 HOME 可写）。匿名构建，不复制宿主 config.json（凭据面最小化）。
+export DOCKER_CONFIG=/tmp/nb-sbx-poc/docker-config
+mkdir -p "$DOCKER_CONFIG"
+
 TSV="$RESULTS/e-image-build.tsv"
 [ -f "$TSV" ] || tsv_append "$TSV" "tag	build_s	size_mb	base_size_mb"
 

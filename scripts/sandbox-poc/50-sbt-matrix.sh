@@ -21,9 +21,11 @@ CTR="$NB-matrix"
 TSV="$RESULTS/a-sbt-matrix.tsv"
 [ -f "$TSV" ] || tsv_append "$TSV" "phase	wall_s	rc"
 TEST_SUBSET="${TEST_SUBSET:-nebflow.core.sandbox.SandboxSpec nebflow.core.tools.ShellStuckDetectorSpec nebflow.agent.EmptyShellNotifySpec}"
-SBT_ARGS="-batch --no-colors"
-HOST_SBT_OPTS="-Dsbt.global.base=$HOST_CACHE/sbt-global -Dsbt.boot.directory=$HOST_CACHE/sbt-boot -Dsbt.supershell=false -Xmx2g"
-CT_SBT_OPTS="-Dsbt.global.base=/cache/sbt-global -Dsbt.boot.directory=/cache/sbt-boot -Dsbt.supershell=false -Xmx2g"
+# 注意：-batch / --no-colors 是 sbt 脚本层参数——容器内走 launcher jar 直连不识别
+# （PoC 实证：error Expected 'addPluginSbtFile'）——颜色/supershell 关闭统一走 SBT_OPTS sysprops，两臂一致。
+SBT_ARGS=""
+HOST_SBT_OPTS="-Dsbt.global.base=$HOST_CACHE/sbt-global -Dsbt.boot.directory=$HOST_CACHE/sbt-boot -Dsbt.supershell=false -Dsbt.color=false -Dsbt.log.noformat=true -Xmx2g"
+CT_SBT_OPTS="-Dsbt.global.base=/cache/sbt-global -Dsbt.boot.directory=/cache/sbt-boot -Dsbt.supershell=false -Dsbt.color=false -Dsbt.log.noformat=true -Xmx2g"
 
 mkdir -p "$HOST_CACHE"
 df_snapshot "a-start"
