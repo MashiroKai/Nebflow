@@ -150,6 +150,7 @@ jobs:
         with:
           name: ${{ env.LOWER_NAME }}-jar
           path: target/scala-3.5.2/${LOWER_NAME}-assembly-*.jar
+          retention-days: 3
 
   smoke-test:
     name: Smoke Test (${{ matrix.os }})
