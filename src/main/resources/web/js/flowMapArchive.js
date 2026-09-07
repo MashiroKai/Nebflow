@@ -71,6 +71,24 @@ function statusClass(st) {
   return TERMINAL_STATUSES.has(st) ? st : 'active';
 }
 
+/**
+ * 链归档资格（作者 2026-09-07 20:38「送达即移」裁定，取代 12:29 占图部分；与后端
+ * FlowMapStore.chainArchivable 严格同源）：链内无活跃（running/pending/wiring/blocked）
+ * 节点 ∧ 所有 failed/cancelled 成员**已上报**（notifySentAt 非空）。completed 天然满足
+ * （无上报要求）；blocked 永不自动归档（必留主图）；running/pending/wiring 为活跃态
+ * 非终态 → 链未齐。异常终态未上报（notifySentAt 空）→ 保留主图待上报。
+ * @param {ChainMember[]} members
+ * @returns {boolean}
+ */
+function chainEligible(members) {
+  return members.every((m) => {
+    const st = String(m.status || '');
+    if (st === 'completed') return true;
+    if (st === 'failed' || st === 'cancelled') return m.notifySentAt != null;
+    return false; // running/pending/wiring/blocked
+  });
+}
+
 // ══ 每项目链派生 store（§7.2，随 flowMapTab store 生命周期）═══
 
 /**
@@ -101,6 +119,9 @@ function statusClass(st) {
  * @property {string=} loopLastVerdict loop 运行态·最近 FAIL 摘要（条件：非空才带）
  * @property {boolean=} merge 合并节点标记（条件：true 才带）
  * @property {boolean=} notifyDispatcher 终态回流通知分发器（条件：true 才带）
+ * @property {number=} notifySentAt 异常终态（failed/cancelled）上报分发器时间戳
+ *   （NodePayload 条件序列化：已上报才带；前端链归档判据 chainEligible 据此判断
+ *   「异常终态已上报可归档」。completed 无上报要求恒缺省。）
  */
 
 /**
@@ -259,8 +280,9 @@ function clusterBatches(members) {
 /**
  * 链派生 + 归档判定（§7.2 单点函数；P2 triggerId 落地后仅此处换精确口径）。
  * 返回本次新完成（含重建）的链——调用方据此驱动整链同帧退场动画。
- * 2026-09-07 收紧：归档资格 = 批内**全 completed**；含 failed/cancelled 的链转入
- * buffer（保留主图待后端 24h TTL 清理），永不进归档面板——重启死亡场景留现场。
+ * 2026-09-07 20:38「送达即移」：归档资格 = 批内 chainEligible——链内无活跃节点 ∧
+ * 所有 failed/cancelled 成员已上报（notifySentAt 非空）。含未上报异常终态 / blocked /
+ * 活跃成员的链转入 buffer（保留主图），永不进归档面板——死亡现场留现场待上报。
  * @param {string} project
  * @param {ChainMember[]=} fmNodes 快照全量节点（活动 + 终态）
  * @returns {Chain[]}
@@ -288,13 +310,12 @@ export function refreshChains(project, fmNodes) {
   const newChains = [];
   s.chainOf = new Map();
   for (const b of batches) {
-    // 归档资格（2026-09-07 收紧）：全成员 completed 才归档；含 failed/cancelled
-    // 的链不自动归档（保留主图 = 死亡现场可见性），链未齐同前——两种「不归档」
-    // 都落 buffer（≥1 终态成员时），终态色卡保留主图。
-    const allCompleted = b.members.every((m) => String(m.status || '') === 'completed');
-    if (!allCompleted) {
+    // 归档资格（2026-09-07 20:38「送达即移」）：chainEligible（无活跃 + 异常终态已上报）
+    // 才归档；含未上报异常终态 / blocked / 链未齐 → 不自动归档（保留主图 = 死亡/待上报
+    // 现场可见性）——两种「不归档」都落 buffer（≥1 终态成员时），终态色卡保留主图。
+    if (!chainEligible(b.members)) {
       if (b.members.some((m) => TERMINAL_STATUSES.has(String(m.status || '')))) {
-        buffers.push(buildChain(b.id, b.members)); // 不归档链（链未齐/含异常终态）
+        buffers.push(buildChain(b.id, b.members)); // 不归档链（链未齐/含未上报或未齐异常终态）
       }
       continue;
     }
@@ -331,18 +352,18 @@ export function refreshChains(project, fmNodes) {
 /**
  * 任务列表主图同源过滤（2026-09-05 作者裁定 12:59）：纯派生、零 store 副作用——
  * 给定单项目节点全集，返回「整链已归档」节点 id 集。批次判定与 refreshChains
- * 共用 clusterBatches 单点：批内**全 completed** → 整链隐藏；含 failed/cancelled
- * 或任一非终态（含 blocked/held/wiring/pending/running）→ 整链保留（2026-09-07
- * 收紧：异常终态链不再自动归档——死亡现场在主图/任务列表保持可见）。与主图可
- * 见判定（isVisibleNode）的差异仅 store 记忆面（主图冻结已归档链可跨快照保留，
- * 本函数只按当前全集派生）——节点全集相同时结果一致。
+ * 共用 clusterBatches 单点：批内 chainEligible（无活跃 + 异常终态已上报）→ 整链隐藏；
+ * 含未上报异常终态 / blocked / 任一活跃（wiring/pending/running）→ 整链保留
+ * （2026-09-07 20:38「送达即移」——未上报异常终态/死亡现场在主图/任务列表保持可见）。
+ * 与主图可见判定（isVisibleNode）的差异仅 store 记忆面（主图冻结已归档链可跨快照
+ * 保留，本函数只按当前全集派生）——节点全集相同时结果一致。
  * @param {ChainMember[]=} fmNodes 快照全量节点（活动 + 终态，单项目）
  * @returns {Set<string>} 已归档（应隐藏）节点 id 集
  */
 export function deriveArchivedIds(fmNodes) {
   const archived = new Set();
   for (const b of clusterBatches(Array.from(fmNodes || []))) {
-    if (b.members.every((m) => String(m.status || '') === 'completed')) {
+    if (chainEligible(b.members)) {
       for (const m of b.members) archived.add(m.id);
     }
   }
