@@ -189,9 +189,9 @@ class NodeSchemaSlimSpec extends CatsEffectSuite:
       missing <- nodeEdit(nodeInput("slim-desc", "n-missing", "task" -> Json.fromString("t"), "out" -> Json.fromString("Nebula")), ctx)
       blank <- nodeEdit(nodeInput("slim-desc", "n-blank", "description" -> Json.fromString("   "), "task" -> Json.fromString("t"), "out" -> Json.fromString("Nebula")), ctx)
       tooLong <- nodeEdit(nodeInput("slim-desc", "n-long", "description" -> Json.fromString("x" * 61), "task" -> Json.fromString("t"), "out" -> Json.fromString("Nebula")), ctx)
-      ok60 <- nodeEdit(nodeInput("slim-desc", "n-ok60", "description" -> Json.fromString("x" * 60), "task" -> Json.fromString("t"), "out" -> Json.fromString("Nebula")), ctx)
-      longDesc <- nodeEdit(nodeInput("slim-desc", "n-longd", "description" -> Json.fromString("short"), "descriptionLong" -> Json.fromString("L" * 201), "task" -> Json.fromString("t"), "out" -> Json.fromString("Nebula")), ctx)
-      okLong <- nodeEdit(nodeInput("slim-desc", "n-oklong", "description" -> Json.fromString("short"), "descriptionLong" -> Json.fromString("详述：" + "L" * 190), "task" -> Json.fromString("t"), "out" -> Json.fromString("Nebula")), ctx)
+      ok60 <- nodeEdit(nodeInput("slim-desc", "n-ok60", "description" -> Json.fromString("x" * 60), "task" -> Json.fromString("task-ok60"), "out" -> Json.fromString("Nebula")), ctx)
+      longDesc <- nodeEdit(nodeInput("slim-desc", "n-longd", "description" -> Json.fromString("short"), "descriptionLong" -> Json.fromString("L" * 201), "task" -> Json.fromString("task-longd"), "out" -> Json.fromString("Nebula")), ctx)
+      okLong <- nodeEdit(nodeInput("slim-desc", "n-oklong", "description" -> Json.fromString("short"), "descriptionLong" -> Json.fromString("详述：" + "L" * 190), "task" -> Json.fromString("task-oklong"), "out" -> Json.fromString("Nebula")), ctx)
       snap <- rt.store.snapshot
       _ <- system.stopAll.handleErrorWith(_ => IO.unit)
     yield

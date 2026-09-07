@@ -10,7 +10,7 @@ import nebflow.actor.ActorSystem
 import nebflow.agent.{AgentLibrary, SharedResources}
 import nebflow.core.PathUtil
 import nebflow.core.task.FileTaskStore
-import nebflow.core.tools.FileLockManager
+import nebflow.core.tools.{FileLockManager, NodeTools}
 import nebflow.gateway.{RateLimiter, SessionStore}
 import nebflow.llm.{ModelCandidate, ThinkingConfig}
 import nebflow.shared.{LlmHandle, LlmRequest, LlmResponse, StreamChunk}
@@ -167,6 +167,10 @@ class DispatcherSpawnPromptSpec extends CatsEffectSuite:
       _ <- waitUntil(20.seconds)(resources.agentRegistry.get.map(!_.keySet.exists(_.startsWith(ProjectActor.DispatcherSessionPrefix))))
       ins <- llm.inputs.get
       snap <- rt.store.snapshot
+      // NodeList 默认载荷对照（回执实测）：同夹具新载荷字节数（审计 §3.2 基线
+      // 131 节点真实数据 ≈86KB——含 11.6KB blockedFeedback 泄漏 + 5.6KB deprecated
+      // 三键，本批②③后归零；夹具 0 blocked 节点 → ②③全效果可见）
+      payload <- NodeTools.buildNodeListPayload(rt)
       _ <- system.stopAll.handleErrorWith(_ => IO.unit)
     yield
       assertEquals(ins.size, 1, "恰好一个分发器 turn（spawn 首条消息）")
@@ -189,6 +193,8 @@ class DispatcherSpawnPromptSpec extends CatsEffectSuite:
       val pct = math.round(1000.0 * (1.0 - bytes.toDouble / oldStyleBytes)) / 10.0
       println(s"[ctx-econ 裁定①] nodes=$nodeCount old-style snapshot embed≈$oldStyleBytes bytes → actual first message=$bytes bytes (reduction $pct%)")
       assert(bytes < oldStyleBytes / 10, s"first message must be <10% of old-style snapshot embed ($bytes vs $oldStyleBytes)")
+      val payloadBytes = payload.noSpaces.getBytes("UTF-8").length
+      println(s"[ctx-econ 裁定②③⑤] NodeList default payload on $nodeCount-node fixture = $payloadBytes bytes (audit real-data baseline ≈86KB)")
   }
 
   private def mkGatedLlm: IO[GatedLlm] =
