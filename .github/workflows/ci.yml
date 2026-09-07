@@ -149,7 +149,11 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: ${{ env.LOWER_NAME }}-jar
-          path: target/scala-3.5.2/${LOWER_NAME}-assembly-*.jar
+          # with: 块不做 shell 展开——${LOWER_NAME} 在这里是字面量，artifact
+          # 会空上传、下游 smoke 全线 Artifact not found（本修 2026-09-07，
+          # Test 门禁转绿后 smoke 首次真跑即暴露）。必须用 Actions 表达式。
+          path: target/scala-3.5.2/${{ env.LOWER_NAME }}-assembly-*.jar
+          if-no-files-found: error
           retention-days: 3
 
   smoke-test:
