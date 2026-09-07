@@ -121,9 +121,10 @@ object ProjectRuntimeRegistry:
           )
           // 僵尸 running 对账（trigger-chain-fix §6.4）：重启窗口持久化 status=
           // running 且无在飞 fiber（本进程内存 running 表空 = 会话已死）的节点 →
-          // reapStaleRunning 收殓（cancelled + 显示 TTL + reaped 审计，同族第三
-          // 变体「重启后僵尸 running 只能人工 NodeEdit abandon 收殓」根除）；有在
-          // 飞 fiber 的活会话节点 Left 拒绝（误杀防护既有纪律，NodeEngine 硬约束）。
+          // reapStaleRunning 收殓（cancelled + reaped 审计；2026-09-07 裁定：无 TTL
+          // 强制清，死亡现场保留主图待上层裁决——同族第三变体「重启后僵尸 running
+          // 只能人工 NodeEdit abandon 收殓」根除）；有在飞 fiber 的活会话节点 Left
+          // 拒绝（误杀防护既有纪律，NodeEngine 硬约束）。
           // crash-recovery 批：skipStaleReap=true（启动挂载且恢复开启）时跳过——
           // 崩溃残留 running 留给紧随其后的 ProjectCrashRecovery sweep 认领（快段
           // 先于 projectTtlScanner 结构性保证，见 GatewayMain boot 链）；sweep 未
@@ -210,7 +211,8 @@ object ProjectActor:
   )
 
   /** 全局 TTL 扫描：周期给所有已挂载 ProjectActor 发 TtlTick（GatewayMain 启动）。
-    * TTL 只管终态节点 24h 显示消失；Node 运行本身不设超时（硬约束）。
+    * TTL 只管 **completed** 节点 24h 显示消失（2026-09-07 裁定收紧：failed/cancelled
+    * 不过期不归档，死亡现场保留待上层裁决）；Node 运行本身不设超时（硬约束）。
     * Bug 1 修复（QA e2e SOE）：`*> loop` 的 by-name 递归在构造期被 eager 求值 →
     * 必须 `*> IO.defer(loop)` 显式延迟到执行期（lazy val 同样会初始化死循环）。 */
   def ttlScanner(interval: FiniteDuration): IO[Unit] =
