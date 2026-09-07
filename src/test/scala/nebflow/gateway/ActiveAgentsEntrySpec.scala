@@ -101,4 +101,33 @@ class ActiveAgentsEntrySpec extends FunSuite:
     assertEquals(json.hcursor.get[String]("status"), Right("Error(boom)"))
   }
 
+  // ── 20260907 节点名刷新持久化：agentName 三档链（meta → displayName → sessionId）──
+
+  test("project node session without meta restores agentName = displayName (Flow Map node name)") {
+    // node-/dispatcher- 会话从不过 SessionStore.createSession（index 恒无条目）——
+    // 修复前此处 fallback sessionId，subagent 面板刷新后行显「node-xx 默认名」。
+    val r = rec("node-ab12cd34", AgentKind.Flow).copy(displayName = Some("实施-节点命名验证"))
+    val json = WebSocketRoutes.activeAgentEntryJson(r, None)
+    assertEquals(json.hcursor.get[String]("agentName"), Right("实施-节点命名验证"))
+  }
+
+  test("indexed meta takes precedence over displayName (team attribution unchanged)") {
+    // team/主会话既有归属语义零回归：meta.agentName 恒优先。
+    val m = meta("sid-team", "nebflow-project/Frontend", Some("Frontend"))
+    val r = rec("sid-team", AgentKind.Team).copy(displayName = Some("不应胜出"))
+    val json = WebSocketRoutes.activeAgentEntryJson(r, Some(m))
+    assertEquals(json.hcursor.get[String]("agentName"), Right("Frontend"))
+  }
+
+  test("no meta + no displayName falls back to sessionId (legacy behavior intact)") {
+    val json = WebSocketRoutes.activeAgentEntryJson(rec("delegate-x-12345678", AgentKind.Delegate), None)
+    assertEquals(json.hcursor.get[String]("agentName"), Right("delegate-x-12345678"))
+  }
+
+  test("dispatcher session restores agentName = dispatcher/<project>") {
+    val r = rec("dispatcher-ab12cd34", AgentKind.Flow).copy(displayName = Some("dispatcher/e2e-proj"))
+    val json = WebSocketRoutes.activeAgentEntryJson(r, None)
+    assertEquals(json.hcursor.get[String]("agentName"), Right("dispatcher/e2e-proj"))
+  }
+
 end ActiveAgentsEntrySpec
