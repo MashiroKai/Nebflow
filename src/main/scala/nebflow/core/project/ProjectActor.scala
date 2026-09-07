@@ -43,6 +43,7 @@ case class ProjectRuntime(
 
 /** 全局注册表：project name → runtime。 */
 object ProjectRuntimeRegistry:
+  private val logger = NebflowLogger.forName("nebflow.project.registry")
   private val runtimes = Ref.unsafe[IO, Map[String, ProjectRuntime]](Map.empty)
 
   def register(rt: ProjectRuntime): IO[Unit] = runtimes.update(_ + (rt.project.name -> rt))
@@ -63,6 +64,11 @@ object ProjectRuntimeRegistry:
     * （启动期无会话上下文，调用方直接传顶层根——A 修复后的 thread 语义）。
     * 与 ProjectCreate 幂等挂载（运行时主动路径，241ef6c5）互补：
     * 本函数管重启免人工，ProjectCreate 管运行时挂载/重挂。返回新挂载数。
+    * #46 fail-soft：单个项目 mount 失败（workspace 不可创建/不可解析，如跨平台
+    * 机器特定绝对路径、权限受限、路径被删——FlowMapStore.open 抛异常）时记 WARN
+    * 并跳过该项目（不计数、不中断），其余项目照常挂载，gateway 正常启动——不再
+    * 因一个坏项目拖垮整个启动批（此前异常沿 mount→mountAll→startupMount 冒泡到
+    * GatewayMain 启动退出）。不改 mount 本身（运行时 ProjectCreate 路径语义保持）。
     * wsSend：启动期传入 wsHub.broadcast——否则 engine 的 wsSendFn 是 no-op，
     * 节点/分发器事件永远到不了前端（#28 可观测缺口根因之一）。
     * skipStaleReap（crash-recovery 批 2026-09-07）：true = 启动挂载且崩溃恢复开启
@@ -81,7 +87,12 @@ object ProjectRuntimeRegistry:
       acc.flatMap { n =>
         get(pd.name).flatMap {
           case Some(_) => IO.pure(n) // 已挂载跳过（启动时序无并发，防御性判断）
-          case None    => mount(pd, system, resources, wsSend, rootSessionId, skipStaleReap = skipStaleReap).as(n + 1)
+          // #46 fail-soft：单项目 mount 失败（FlowMapStore.open 抛异常，如 workspace
+          // 不可创建/不可解析）→ 记 WARN 跳过、不计数、不中断，继续下一个项目。
+          case None =>
+            mount(pd, system, resources, wsSend, rootSessionId, skipStaleReap = skipStaleReap)
+              .as(n + 1)
+              .handleErrorWith(e => logger.warn(s"Project '${pd.name}' mount skipped: ${e.getMessage}") *> IO.pure(n))
         }
       }
     }

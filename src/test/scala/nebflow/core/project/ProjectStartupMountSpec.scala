@@ -78,4 +78,40 @@ class ProjectStartupMountSpec extends CatsEffectSuite:
       assertEquals(mounted2, 0, "already-mounted projects must be skipped (idempotent)")
   }
 
+  test("mountAll fail-soft: unmountable project workspace is skipped with warn; other projects still mount") {
+    // #46 回归：单项目 mount 失败不再拖垮整批启动。构造一个 workspace 不可创建的
+    // 项目（祖先路径存在但为普通文件，os.makeDir.all 必抛）+ 一个正常项目——
+    // mountAll 应记 WARN 跳过坏项目、照常挂载好项目、gateway 启动不崩。
+    val wsGood = tempRoot / "ws-good"
+    os.makeDir.all(wsGood)
+    // 自包含：tempRoot 为类级共享，先清掉上一个用例留下的项目目录，避免 list() 混入
+    os.remove.all(tempRoot / "projects")
+    os.makeDir.all(tempRoot / "projects")
+    // 阻塞文件：<tempRoot>/bad-blocker 是普通文件 → 其下 workspace 的 .nebflow 不可创建
+    val badBlocker = tempRoot / "bad-blocker"
+    os.write(badBlocker, "not a directory")
+    val badWorkspace = (badBlocker / "sub").toString
+    // 坏项目 project.json 直接落盘（模拟磁盘存量项目 workspace 已不可挂载）
+    val badDir = tempRoot / "projects" / "p-fs-bad"
+    os.makeDir.all(badDir)
+    os.write(
+      badDir / "project.json",
+      s"""{"name":"p-fs-bad","description":null,"workspace":"$badWorkspace","agentFile":"$badWorkspace/AGENTS.md","feedbackMode":null,"createdAt":${System.currentTimeMillis()}}"""
+    )
+    val system = ActorSystem(s"sm-${scala.util.Random.nextInt(100000)}")
+    val res = testResources(wsGood)
+    for
+      _ <- ProjectStore.create("p-fs-good", wsGood.toString, None, "# good")
+      projects <- ProjectStore.list()
+      mounted <- ProjectRuntimeRegistry.mountAll(projects, "nebula-root", system, res)
+      rtGood <- ProjectRuntimeRegistry.get("p-fs-good")
+      rtBad <- ProjectRuntimeRegistry.get("p-fs-bad")
+      _ <- ProjectRuntimeRegistry.clear
+      _ <- system.stopAll.handleErrorWith(_ => IO.unit)
+    yield
+      assertEquals(mounted, 1, "only the good project must mount; unmountable one skipped")
+      assert(rtGood.isDefined, "good project registered")
+      assert(rtBad.isEmpty, "unmountable project not registered (fail-soft skip)")
+  }
+
 end ProjectStartupMountSpec
