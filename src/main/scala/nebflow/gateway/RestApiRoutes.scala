@@ -673,6 +673,36 @@ class RestApiRoutes(
         yield r
       }
 
+    // Own-account avatar proxy (2026-09-07 设置页头像加载态修复): the avatar
+    // origin (neblink-server static host) sends no CORS headers, so the web
+    // local-first cache (avatarCache.js) could never fetch it cross-origin and
+    // never populated — every settings open fell back to a slow remote <img>.
+    // Same-origin proxy fixes the cache build; fetches ONLY the current
+    // identity avatarUrl (client supplies no URL — no open-proxy surface).
+    case req @ GET -> Root / "neblink" / "avatar" =>
+      withNeblink(req) { ms =>
+        ms.identity.flatMap { id =>
+          id.avatarUrl.filter(_.nonEmpty) match
+            case None => NotFound(Json.obj("error" -> "no avatar".asJson))
+            case Some(url) =>
+              AvatarProxy.fetch(AvatarProxy.jdkFetch)(url).flatMap {
+                case Right((contentType, bytes)) =>
+                  // Explicit byte-stream entity: bare Ok(Array[Byte]) resolves to
+                  // the circe generic encoder in this scope (circe encodes byte
+                  // arrays as JSON number arrays — the bytes would be mangled).
+                  val ct = org.http4s.headers.`Content-Type`.parse(contentType)
+                    .getOrElse(org.http4s.headers.`Content-Type`(MediaType.application.`octet-stream`))
+                  IO.pure(
+                    Response[IO](Status.Ok)
+                      .withEntity(fs2.Stream.emits(bytes).covary[IO])
+                      .withHeaders(ct)
+                  )
+                case Left(err) =>
+                  BadGateway(Json.obj("error" -> err.asJson))
+              }
+        }
+      }
+
     // Update neblink config (e.g. syncIntervalSec)
     case req @ PATCH -> Root / "neblink" / "config" =>
       withNeblink(req) { ms =>
