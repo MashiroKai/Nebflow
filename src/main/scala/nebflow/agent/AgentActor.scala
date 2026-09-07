@@ -11,7 +11,7 @@ import nebflow.core.ask.AskService
 import nebflow.core.compact.*
 import nebflow.core.flow.TeamSessionRegistry
 import nebflow.core.tools.AskUserQuestionTool
-import nebflow.core.tools.{BgTaskRegistry, ShellSession}
+import nebflow.core.tools.BgTaskRegistry
 import nebflow.llm.{AllProvidersDownTimeout, Fallback, FallbackExhaustedError}
 import nebflow.shared.*
 import nebflow.shared.given
@@ -637,24 +637,9 @@ object AgentActor extends AgentCore with AgentSession:
    * 不碰：其他 session 的进程、JVM 自身（ProcessTree 只操作注册的 ProcessHandle）。
    */
   private def killSessionShellProcesses(state: AgentState): IO[Unit] =
-    ShellSession.killSessionProcesses(state.sessionId) *>
-      BgTaskRegistry.unregisterSession(state.sessionId).flatMap { removed =>
-        removed.traverse_ { t =>
-          state.wsSend(
-            io.circe.Json.obj(
-              "type" -> "backgroundTaskUpdate".asJson,
-              "sessionId" -> state.sessionId.asJson,
-              // 权威分键（2026-09-05 计数/列表分叉修复）：与 BashTool/RemoteExecutor
-              // 发射点一致携带 rootSessionId，restart/Stop 清场帧按根会话分桶直达
-              // 归属视图（前端已删 bgTaskRootFor 启发式逆向分键）。
-              "rootSessionId" -> state.rootSessionId.asJson,
-              "taskId" -> t.jobId.asJson,
-              "description" -> t.description.asJson,
-              "status" -> "cancelled".asJson
-            )
-          ).handleErrorWith(_ => IO.unit)
-        }
-      }
+    // 抽公共收殓函数（孤儿后台任务收割 D1）：杀进程树 + 注销 BgTaskRegistry +
+    // WS cancelled 帧三件事合一，与 NodeEngine 终态出口共用（去重）。
+    BgTaskRegistry.reclaimSession(state.sessionId, state.wsSend, state.rootSessionId)
 
   /** Build the "askUser" WS payload for the frontend. When the question comes
     * from a sub-agent (ForwardAskUser), agentName is set to the source agent
