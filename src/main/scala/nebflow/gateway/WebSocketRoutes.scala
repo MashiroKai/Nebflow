@@ -5095,7 +5095,12 @@ object WebSocketRoutes:
     Json.obj(
       "sessionId"      -> rec.sessionId.asJson,
       "agentId"        -> rec.sessionId.asJson,
-      "agentName"      -> meta.flatMap(_.agentName).getOrElse(rec.sessionId).asJson,
+      // agentName 三档链（20260907 节点名刷新持久化批）：indexed meta（team/主会话既有
+      // 归属）→ AgentRecord.displayName（Project 域注册点写入的 Flow Map 节点名 /
+      // "dispatcher/<project>"——node-/dispatcher- 会话从不过 SessionStore.createSession，
+      // index 恒无条目，缺此档刷新后 subagent 面板行回退 sessionId「node-xx 默认名」）
+      // → sessionId 兜底（既有行为）。
+      "agentName"      -> meta.flatMap(_.agentName).orElse(rec.displayName).getOrElse(rec.sessionId).asJson,
       "rootSessionId"  -> rec.rootSessionId.asJson,
       "kind"           -> rec.kind.toString.asJson,
       "task"           -> meta.map(_.name).getOrElse("").asJson,

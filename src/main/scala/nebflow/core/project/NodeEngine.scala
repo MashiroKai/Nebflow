@@ -1179,7 +1179,8 @@ class NodeEngine(
             lastActivityMs = System.currentTimeMillis(),
             supervisorRef = Some(bridgeRef),
             // 恢复路径项目徽标（activeAgents 快照 → activeAgentEntryJson）。
-            project = Some(projectName)
+            project = Some(projectName),
+            displayName = Some(nodeName)
           )
         )
       )
@@ -1321,7 +1322,8 @@ class NodeEngine(
           startedAt = System.currentTimeMillis(),
           lastActivityMs = System.currentTimeMillis(),
           supervisorRef = Some(bridgeRef),
-          project = Some(projectName) // 恢复路径项目徽标（与节点/分发器同标准）
+          project = Some(projectName), // 恢复路径项目徽标（与节点/分发器同标准）
+          displayName = Some(sessionName)
         ))
       )
     yield LoopSession(sessionId, ref, bridgeRef, round)
