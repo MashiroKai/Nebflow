@@ -304,7 +304,13 @@ case class AgentRecord(
     * 同参同败连续计数 / 非进展轮数——pipeToolExecutions 每轮随 touchRegistryActivity
     * 同步写入。AgentControl list 的 stuck? 列旁显示 loop×N（诊断「高活动零进展」）。 */
   loopStreak: Int = 0,
-  loopRounds: Int = 0
+  loopRounds: Int = 0,
+  /** Project 归属（2026-09-06 作者裁定：Sub-Agents 面板 Flow 徽标旁标注项目名）。
+    * 仅 Project 域会话（node- 与 dispatcher- 前缀，NodeEngine/ProjectActor 注册点）有值；
+    * Delegate/SubTask/Ephemeral/FlowDAG/Team 等 None（默认 = 既有注册点零改动）。
+    * 恢复路径数据源：activeAgentEntryJson 输出 project 字段供前端刷新后渲染徽标；
+    * 实时路径不经此字段（agentStart 帧由 routeSubagentWsSend 转发层注入）。 */
+  project: Option[String] = None
 )
 
 // ============================================================
