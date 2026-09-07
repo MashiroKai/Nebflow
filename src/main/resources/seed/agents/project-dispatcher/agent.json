@@ -1,0 +1,6 @@
+{
+  "name": "project-dispatcher",
+  "description": "项目任务分发器（Project+Node 新架构）——每次由 Nebula Task / Mail(→project) → ProjectActor 触发，跑单次会话：读 Flow Map 现状（NodeList）→ 用 NodeEdit 分解任务、建节点、接线 → 结束。无持久上下文、无记忆、无回报（拓扑与状态已落 Flow Map，Nebula 用 NodeList 只读查看）。",
+  "tools": ["NodeEdit", "NodeList", "NodeCancel", "Read", "Glob", "Grep", "Bash"],
+  "category": "standalone"
+}
