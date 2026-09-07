@@ -23,9 +23,11 @@ TSV="$RESULTS/a-sbt-matrix.tsv"
 TEST_SUBSET="${TEST_SUBSET:-nebflow.core.sandbox.SandboxSpec nebflow.core.tools.ShellStuckDetectorSpec nebflow.agent.EmptyShellNotifySpec}"
 # 注意：-batch / --no-colors 是 sbt 脚本层参数——容器内走 launcher jar 直连不识别
 # （PoC 实证：error Expected 'addPluginSbtFile'）——颜色/supershell 关闭统一走 SBT_OPTS sysprops，两臂一致。
+# ivy.home 一并重定向：clean→cleanCachedResolutionCache 要写 ~/.ivy2/.sbt.ivy.lock（seatbelt 写拒，
+# 首轮实证 FileNotFoundException）——W1 workaround 家族的完整配方；docker provider 下天然消失。
 SBT_ARGS=""
-HOST_SBT_OPTS="-Dsbt.global.base=$HOST_CACHE/sbt-global -Dsbt.boot.directory=$HOST_CACHE/sbt-boot -Dsbt.supershell=false -Dsbt.color=false -Dsbt.log.noformat=true -Xmx2g"
-CT_SBT_OPTS="-Dsbt.global.base=/cache/sbt-global -Dsbt.boot.directory=/cache/sbt-boot -Dsbt.supershell=false -Dsbt.color=false -Dsbt.log.noformat=true -Xmx2g"
+HOST_SBT_OPTS="-Dsbt.global.base=$HOST_CACHE/sbt-global -Dsbt.boot.directory=$HOST_CACHE/sbt-boot -Dsbt.ivy.home=$HOST_CACHE/ivy2 -Dsbt.supershell=false -Dsbt.color=false -Dsbt.log.noformat=true -Xmx2g"
+CT_SBT_OPTS="-Dsbt.global.base=/cache/sbt-global -Dsbt.boot.directory=/cache/sbt-boot -Dsbt.ivy.home=/cache/ivy2 -Dsbt.supershell=false -Dsbt.color=false -Dsbt.log.noformat=true -Xmx2g"
 
 mkdir -p "$HOST_CACHE"
 df_snapshot "a-start"
@@ -95,8 +97,10 @@ run_suite a.host host ""
 echo "=== 缓存卷 seed（宿主私有缓存 → named volume，tar 流式，模型=M2 缓存卷预热） ==="
 docker volume rm "$CACHE_VOL" >/dev/null 2>&1 || true
 docker volume create "$CACHE_VOL" >/dev/null
+# COPYFILE_DISABLE=1：macOS bsdtar 默认为 xattr 生成 AppleDouble ._* 文件——Linux 容器侧
+# 被当独立文件（首轮实证：._task-system jar 让 scala compiler FatalError / launcher 断言）
 t0=$(now)
-tar -C "$HOST_CACHE" -c coursier sbt-global sbt-boot 2>/dev/null | docker run --rm -i -v "$CACHE_VOL:/cache" alpine:latest tar -C /cache -xf -
+COPYFILE_DISABLE=1 tar -C "$HOST_CACHE" -c coursier sbt-global sbt-boot ivy2 2>/dev/null | docker run --rm -i -v "$CACHE_VOL:/cache" alpine:latest tar -C /cache -xf -
 t1=$(now); echo "[a] cache seed $(python3 -c "print(f'{$t1-$t0:.1f}')")s"
 docker run --rm -v "$CACHE_VOL:/cache" alpine:latest du -sm /cache | awk '{print "[a] cache volume: "$1"MB"}'
 
