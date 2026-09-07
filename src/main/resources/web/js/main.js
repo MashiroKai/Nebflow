@@ -3022,10 +3022,11 @@ onMessage('forkComplete', (msg, view) => {
 // #396 Header adaptive layout (spec 52b19a64, frozen): measurement-driven
 // priority hiding + center clamp — ANY width zero icon overlap; no flex-wrap;
 // no "⋯" overflow menu (user 2026-08-25 裁定: 仅自动隐藏). The fixed set
-// (sidebar-toggle / header-model-info / memory-btn / bg-indicator / bgagent-
-// indicator / canvas-toggle-btn) is never hidden; non-fixed right buttons hide
-// by priority P1→P5 (bypass > voice > search > reminder > daemon), session-name
-// truncates first (ellipsis) then hides (P5).
+// (sidebar-toggle / header-model-info / memory-btn / session-name / bg-
+// indicator / bgagent-indicator / canvas-toggle-btn) is never hidden; non-fixed
+// right buttons hide by priority P1→P5 (bypass > voice > search > reminder >
+// daemon). 2026-09-07 作者裁定: session-name (agent name) is a fixed reserved
+// item — never truncated, never hidden; the chain must seat its FULL width.
 (function initHeaderResizeObserver() {
   const header = document.getElementById('header');
   if (!header || !window.ResizeObserver) return;
@@ -3053,11 +3054,14 @@ onMessage('forkComplete', (msg, view) => {
       if (!center || !session || !mem) return;
       // Reset to the widest reasonable state each pass, then hide by priority.
       rightPrio.forEach(fn => { const el = fn(); if (el) el.classList.remove(HIDE); });
-      session.classList.remove(HIDE);
       const headerW = header.clientWidth;
       const memW = mem.offsetWidth || 28;
       const CS_GAP = 8;         // .header-center flex gap (session ↔ memory)
-      const MIN_SESSION = 28;   // §6: session hides if it can't seat a meaningful chunk
+      // 2026-09-07: session-name is fixed-reserved (never hidden, flex-shrink:0
+      // in CSS), so its full intrinsic width is part of the fit requirement —
+      // icons hide EARLIER rather than ever squeezing the name.
+      const nameW = session.offsetWidth;
+      const need = memW + CS_GAP + nameW;
       // Zero-overlap clamp for the absolute-centered .header-center (left:50%,
       // translateX(-50%)). A centered box of width c clears the left cluster iff
       // c ≤ 2·(centerX - leftCluster.right), and the right cluster iff
@@ -3076,25 +3080,28 @@ onMessage('forkComplete', (msg, view) => {
         return { safe, leftW, rightW };
       };
       // Greedy: hide non-fixed right buttons P1→P5 (bypass first) until the
-      // centered center box can seat the memory button plus a meaningful
-      // MIN_SESSION chunk without overlap AND the right cluster no longer
-      // collides with the left. §4.3 right-cluster fill; session hides last.
+      // centered center box can seat the FULL session name plus the memory
+      // button without overlap AND the right cluster no longer collides with
+      // the left. §4.3 right-cluster fill. 2026-09-07: session-name is never
+      // hidden — if the chain exhausts we keep the name and let the clamp
+      // below guarantee its full width (icon overlap then remains possible
+      // only at pathological widths that no longer seat the fixed clusters).
       for (let i = 0; i <= rightPrio.length; i++) {
         const { safe, leftW, rightW } = measure();
-        const need = memW + CS_GAP + MIN_SESSION;
         if (safe >= need && leftW + rightW <= headerW) break;
         if (i < rightPrio.length) {
           const el = rightPrio[i]();
           if (el) { el.classList.add(HIDE); continue; }       // hide this priority
         }
-        session.classList.add(HIDE);                          // P5: hide session
-        break;
+        break;                                               // chain exhausted — name stays
       }
-      // Apply the clamp after the final visibility state. session-name ellipsizes
-      // inside the center; if safe < memW (pathological <240px) we keep the mem
-      // button floor and accept the §8 A10 theoretical clip rather than overlap.
+      // Apply the clamp after the final visibility state. The center never
+      // clamps below its intrinsic content (full name + memory button), so the
+      // name cannot truncate (flex-shrink:0, no ellipsis). When safe < need
+      // (pathological widths past the fixed clusters' floor) we prefer a fully
+      // visible name over truncation — supersedes #396 §8 A10's clip stance.
       const { safe } = measure();
-      center.style.maxWidth = Math.max(memW, safe) + 'px';
+      center.style.maxWidth = Math.max(need, safe) + 'px';
       center.style.minWidth = memW + 'px';
     });
   }
@@ -3108,8 +3115,10 @@ onMessage('forkComplete', (msg, view) => {
   // it grows its cluster WITHOUT resizing #header, so ResizeObserver on the
   // header alone would miss the reflow and leave a stale (too-loose) clamp
   // that overlaps (§8 A2). These elements are never toggled by layout() so
-  // observing them cannot cause a feedback loop.
-  ['sidebar-toggle', 'header-model-info', 'memory-btn',
+  // observing them cannot cause a feedback loop. session-name joins the set
+  // 2026-09-07: its text can arrive after boot (sessionList WS) and — now that
+  // the fit requirement uses its full width — a stale clamp must re-run.
+  ['sidebar-toggle', 'header-model-info', 'memory-btn', 'session-name',
     'bg-indicator', 'bgagent-indicator', 'canvas-toggle-btn']
     .forEach(id => { const el = document.getElementById(id); if (el) ro.observe(el); });
   layout();
