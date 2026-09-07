@@ -2,232 +2,104 @@
 
 # Nebflow
 
-Self-hosted AI coding assistant with multi-agent orchestration and cross-device collaboration.
+**One entry. Every agent.**
 
-[![License](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
+A self-hosted AI agent orchestration platform — bring all your work to one chat, and Nebflow dispatches it across agents, projects, and devices.
+
+[![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
+[![Platform](https://img.shields.io/badge/platform-macOS%20%7C%20Linux%20%7C%20Windows-lightgrey.svg)](https://github.com/MashiroKai/Nebflow/releases)
 [![Scala](https://img.shields.io/badge/Scala-3.5.2-red.svg)](https://www.scala-lang.org/)
-[![Rust](https://img.shields.io/badge/Rust-stable-orange.svg)](https://www.rust-lang.org/)
+[![Java](https://img.shields.io/badge/Java-17%2B-orange.svg)](https://adoptium.net/)
+
+<p align="center">
+  <img src="docs/assets/readme/hero-flow-map.png" alt="Nebflow Flow Map — a task chain executing live" width="960">
+</p>
+
+**[Website](https://nebflow.space)** · **[Releases](https://github.com/MashiroKai/Nebflow/releases)**
 
 </div>
 
----
-
-> **Brand configuration:** all brand values (product name, lowercase name, domains, URLs, packaging identifiers) are defined single-source in [`brand.conf`](brand.conf) — runtime code reads them through `nebflow.core.Branding`, and the frontend through the injected `window.__BRAND__`. Brand strings in this README describe the current brand only: when the project is renamed, `scripts/rebrand.sh` rewrites the docs from `brand.conf`. Do not hand-edit brand strings scattered in code or docs — change `brand.conf`.
-
-Nebflow is a self-hosted AI coding assistant that runs entirely on your machine. It features a browser-based chat interface with streaming responses, native HTML card rendering, multi-agent orchestration, and cross-device collaboration — all in a single JAR with no external dependencies beyond Java.
-
-> **Migration Notice:** Nebflow is migrating from Scala to Rust. The Rust implementation lives in [`nebflow-rs/`](nebflow-rs/) and is functionally complete (749 tests passing). The Scala version remains the running production build; the Rust version will eventually replace it. See [Migration Status](#migration-status-scala--rust) below.
+Nebflow runs entirely on your own machine: a single self-contained JAR serves a browser-based workspace where you chat, orchestrate multi-agent projects, and automate recurring work. There is no cloud account and no external service dependency beyond the LLM providers you choose to configure.
 
 ## Features
 
-- **Inline Card Rendering** — Agents render rich HTML cards (diagrams, charts, tables, animations) directly in the chat, not just text
-- **Web UI & CLI** — Browser-based interface with streaming, syntax highlighting, and file editing; plus a terminal REPL mode
-- **Multi-Provider LLM** — Zhipu GLM, DeepSeek, Qwen, Baichuan, and all OpenAI/Anthropic-compatible APIs, with automatic fallback chains
-- **18 Built-in Tools** — Read, Write, Edit, Bash, Grep, Glob, WebSearch, WebFetch, Curl, Card, Delegate, ExecuteFlow, Mail, TransferFile, TaskCreate, TaskUpdate, TaskList, AskUserQuestion
-- **Multi-Agent System** — Named agents with per-agent system prompts, tool whitelists, isolated project workspaces, and inter-agent delegation
-- **NebLink** — Connect multiple devices (macOS, Linux, Windows) over a synchronized mesh; execute commands and transfer files across devices
-- **Skills** — Reusable prompt templates with YAML frontmatter; compatible with Claude Code, Codex, and OpenClaw ecosystems
-- **Plan Mode** — Structured planning with canvas approval flow before execution
-- **Flow Engine** — Multi-step workflow orchestration with DAG dependencies, verification, and retry loops
-- **MCP Support** — Connect external tools and data sources via Model Context Protocol
-- **Three-Tier Memory** — Persistent memory at user, agent, and project scope across conversations
-- **Context Management** — Automatic and manual context compaction for long sessions
-- **Permission System** — Ask-before-execute for destructive operations; auto-approve for read-only tools
-- **Hooks** — Pre/post-execution callbacks triggered by tool patterns
-- **Cross-Platform** — macOS, Linux, and Windows with automatic Java, Git for Windows, and ripgrep installation
+### One entry, every agent — task dispatch on a live Flow Map
+
+Describe the goal once. A project dispatcher decomposes it into a DAG of nodes, runs each node in its own isolated git worktree, streams results back along the edges, and merges the finished chain — all of it visible live on the Flow Map.
+
+<p align="center">
+  <img src="docs/assets/readme/flow-map-demo.gif" alt="Task dispatch on the Nebflow Flow Map" width="800">
+</p>
+
+### A chat that renders, not just text
+
+Streaming markdown, tables, and rich inline cards — diagrams, charts, animations — rendered directly in the conversation, with per-message model badges.
+
+<p align="center">
+  <img src="docs/assets/readme/message-stream.png" alt="Nebflow chat with rendered markdown tables" width="800">
+</p>
+
+### Plugins and skills
+
+Extend Nebflow with plugin packages and reusable skills — YAML-frontmatter prompt templates compatible with the Claude Code and Codex ecosystems. Toggle, preview, and manage them from the built-in panel.
+
+<p align="center">
+  <img src="docs/assets/readme/plugins-panel.png" alt="Nebflow plugins panel" width="800">
+</p>
+
+### Voice in, hands free
+
+A floating voice orb lives on your desktop for voice input and hands-free agent interaction.
+
+<p align="center">
+  <img src="docs/assets/readme/micorb-idle.png" alt="Nebflow voice orb" width="340">
+</p>
+
+### And more
+
+- **Multi-provider LLM** — OpenAI- and Anthropic-compatible APIs, with health monitoring and automatic fallback chains
+- **MCP support** — connect external tools and data sources via the Model Context Protocol
+- **Three-tier memory** — persistent memory at user, agent, and project scope across conversations
+- **Permission system** — ask-before-execute for destructive operations, auto-approve for read-only tools
+- **Hooks & scheduled tasks** — pre/post tool-execution callbacks and cron-style recurring work
+- **NebLink** — connect your devices over a synchronized mesh; run commands and transfer files across machines
+- **Cross-platform** — macOS, Linux, and Windows, with automatic Java and ripgrep setup
 
 ## Quick Start
 
-### Install (macOS / Linux)
+macOS / Linux:
 
 ```bash
 curl -fsSL https://nebflow.space/install.sh | sh
 ```
 
-### Install (Windows)
-
-Open PowerShell and run:
+Windows (PowerShell):
 
 ```powershell
 irm https://nebflow.space/install.ps1 | iex
 ```
 
-The installer automatically detects and installs Java 17+, Git for Windows (on Windows), and ripgrep if they are not already available.
-
-### Desktop App
-
-Prebuilt desktop installers (bundled JRE, self-contained — no Java install needed) are published on the [GitHub Releases](https://github.com/MashiroKai/Nebflow/releases) page for every release:
-
-- `Nebflow-<version>-arm64.dmg` — macOS Apple Silicon
-- `Nebflow-<version>-x64.dmg` — macOS Intel
-- `Nebflow-<version>-x64.msi` — Windows
-- `Nebflow-<version>-x64.deb` — Linux (Debian/Ubuntu)
-
-> **Unsigned binaries (zero-budget signing policy):** the installers are not code-signed and not notarized.
-> - **macOS Gatekeeper** will block the first launch — right-click the app → *Open* → *Open* in the dialog (or System Settings → Privacy & Security → *Open Anyway*).
-> - **Windows SmartScreen** may show "Windows protected your PC" — click *More info* → *Run anyway*.
-
-### Uninstall
+Then start the workspace:
 
 ```bash
-# macOS / Linux
-curl -fsSL https://nebflow.space/uninstall.sh | sh
-
-# Windows PowerShell
-irm https://nebflow.space/uninstall.ps1 | iex
+nebflow start    # serves the web UI at http://localhost:8080
 ```
 
-## Usage
+Desktop installers with a bundled JRE (no Java install needed) are published on [GitHub Releases](https://github.com/MashiroKai/Nebflow/releases).
+
+To build from source (Java 17+, sbt):
 
 ```bash
-# Start web server (default port 8080)
-nebflow start
-
-# Start with custom port
-nebflow start --port 3000
-
-# Stop running server
-nebflow stop
-
-# CLI REPL mode
-nebflow
-
-# Show help
-nebflow help
+sbt assembly
 ```
 
-Open `http://localhost:8080` in your browser after starting the server.
+## Documentation
 
-## Configuration
-
-Nebflow stores all data in `~/.nebflow/`. Configuration lives at `~/.nebflow/nebflow.json` and is created automatically on first run.
-
-```json
-{
-  "llm": {
-    "providers": {
-      "zhipu": {
-        "baseUrl": "https://open.bigmodel.cn/api/paas/v4",
-        "apiKey": "${ZHIPU_API_KEY}"
-      },
-      "deepseek": {
-        "baseUrl": "https://api.deepseek.com",
-        "apiKey": "${DEEPSEEK_API_KEY}"
-      },
-      "qwen": {
-        "baseUrl": "https://dashscope.aliyuncs.com/compatible-mode/v1",
-        "apiKey": "${DASHSCOPE_API_KEY}"
-      }
-    },
-    "model": {
-      "default": "zhipu/glm-4.5"
-    }
-  },
-  "mcpServers": {}
-}
-```
-
-API keys can be set via environment variables (`${VAR_NAME}` syntax) or directly in the config file.
-
-## Building from Source
-
-### Scala (Current)
-
-#### Prerequisites
-
-- Java 17+
-- sbt 1.x
-
-```bash
-sbt compile          # Compile
-sbt assembly         # Build fat JAR
-make install         # Install to ~/.local/bin
-sbt test             # Run tests
-make check           # All quality checks (compile + scalafmt + scalafix)
-```
-
-The assembled JAR is output to `target/scala-3.5.2/`.
-
-### Rust (In Progress)
-
-#### Prerequisites
-
-- Rust (stable toolchain)
-- Cargo (included with Rust)
-
-```bash
-cd nebflow-rs
-cargo build --workspace              # Compile all crates
-cargo test --workspace               # Run tests (749 tests)
-cargo clippy --workspace --all-targets  # Lint
-cargo fmt --all -- --check           # Check formatting
-```
+Full documentation lives at [nebflow.space](https://nebflow.space).
 
 ## Architecture
 
-### Scala (Current)
-
-```
-src/main/scala/nebflow/
-├── actor/        # Actor system (ActorRef, ActorSystem, Behavior)
-├── agent/        # Agent lifecycle, session routing, multi-agent delegation
-├── bridge/       // Device bridge plugins for NebLink
-├── cli/          # CLI commands, REPL, TUI
-├── core/         # Tools, permissions, LLM client, context compaction
-│   ├── ask/      # Ask-user interaction service
-│   ├── compact/  # Context compaction engine
-│   ├── flow/     # Flow engine for multi-step workflows
-│   ├── hooks/    # Pre/post tool execution hooks
-│   ├── mcp/      # Model Context Protocol integration
-│   ├── scheduler/ # Scheduled and recurring tasks
-│   ├── skill/    # Skill loading and management
-│   ├── task/     # Task list state management
-│   ├── telemetry/ # Response time and usage tracking
-│   └── tools/    # 19 built-in tools
-├── dropbox/      # File dropbox for drag-and-drop uploads
-├── gateway/      # HTTP server, WebSocket routes, static resource serving
-├── llm/          # LLM client abstraction and provider implementations
-├── neblink/      # Cross-device synchronization protocol
-├── service/      # Session store, configuration, runtime preferences
-└── shared/       # Shared types, defaults, HTTP utilities
-```
-
-Built with **Scala 3**, **Cats Effect 3**, and **Pekko Actors**. The web UI is served from embedded resources — no separate frontend build step required.
-
-### Rust (In Progress)
-
-```
-nebflow-rs/
-├── nebflow-core/     # Core types, tools, LLM client, Flow engine
-├── nebflow-agent/    # Agent runtime, AgentBuilder, AgentRunner
-├── nebflow-gateway/  # HTTP/WS gateway, routing, session store
-└── nebflow-cli/      # CLI client
-```
-
-Built with **Rust**, **tokio** (async runtime), **axum** (HTTP/WebSocket server), and **serde** (serialization). Organized as a Cargo workspace with four member crates.
-
-## Migration Status: Scala → Rust
-
-Nebflow is actively migrating from Scala to Rust.
-
-| | Scala (Current) | Rust (In Progress) |
-|---|---|---|
-| **Location** | `src/main/scala/` | `nebflow-rs/` |
-| **Runtime** | JVM (Java 17+) | Native (tokio async runtime) |
-| **HTTP/WS** | http4s | axum |
-| **Serialization** | circe | serde |
-| **Concurrency** | Pekko Actors + Cats Effect | tokio |
-| **Status** | Production, actively running | Functionally complete (749 tests) |
-
-- The Scala version remains the running production build.
-- The Rust version in `nebflow-rs/` is functionally complete and covered by 749 passing tests.
-- Rust CI runs on every push/PR via [`.github/workflows/rust-ci.yml`](.github/workflows/rust-ci.yml) — format, clippy, and test checks.
-- Once the Rust version reaches feature parity and is validated end-to-end, the Scala code will be removed.
-
-## Links
-
-- **Website:** [nebflow.space](https://nebflow.space)
-- **Downloads:** [COS release bucket](https://nebflow-releases-1411212853.cos.ap-nanjing.myqcloud.com/)（仓库已转 private，安装/升级走 COS）
+Nebflow is written in **Scala 3** on **Pekko actors** (message passing and state management) and **http4s / cats-effect** (HTTP, WebSocket, and side-effect orchestration), with a deliberate boundary keeping the two layers apart. Work is organized as **Projects → Nodes**: a dispatcher turns a task into a Flow Map DAG, executes each node in an isolated worktree, and collects results along the out-edges for merge. Everything ships as a single self-contained JAR you host yourself — the web UI is served from embedded resources, with no separate frontend build step.
 
 ## License
 
