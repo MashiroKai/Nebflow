@@ -100,6 +100,21 @@
   color: var(--color-text-muted);
 }
 
+/* Presence badge (C4) — explicit per-device online/offline state so a listed
+   device can no longer masquerade as online. Colors reuse existing tokens
+   (--color-success matches .neblink-update-status.done; muted for offline). */
+.neblink-presence {
+  font-size: 11px;
+  flex-shrink: 0;
+  white-space: nowrap;
+}
+.neblink-presence.online { color: var(--color-success); }
+.neblink-presence.offline { color: var(--color-text-muted); }
+
+/* Offline rows are dimmed — listed ≠ online. */
+.neblink-peer-offline .neblink-peer-icon,
+.neblink-peer-offline .neblink-peer-name { opacity: 0.55; }
+
 .local-tag {
   color: var(--color-primary);
   font-weight: 500;

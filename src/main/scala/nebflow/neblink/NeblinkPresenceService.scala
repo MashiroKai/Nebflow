@@ -64,24 +64,31 @@ final class NeblinkPresenceService(
    * - Connects to peers that are in the list but have no active WS (and aren't
    *   already being auto-reconnected).
    * - Disconnects from peers that have a WS but are no longer in the list.
+   * - Removes peers from the local list when they vanished from the server
+   *   response — staleness is judged against peersRef (the whole local list),
+   *   not only active WS connections: a peer with no P2P connection (e.g.
+   *   cross-network, relay-only) that the server no longer reports must leave
+   *   the list too, otherwise it becomes a permanent ghost entry.
    * - Cancels auto-reconnect for peers that left the network.
    */
   def syncPeers(peers: List[PeerInfo]): IO[Unit] =
     val peerIds = peers.iterator.map(_.deviceId).toSet
-    val staleIds =
-      connections.keySet().asScala.filterNot(peerIds.contains).toList
-    val staleReconnectIds =
-      reconnecting.keySet().asScala.filterNot(peerIds.contains).toList
     for
+      knownPeers <- neblinkService.peers
+      stalePeerIds = knownPeers.iterator.map(_.deviceId).toSet.filterNot(peerIds.contains)
+      staleConnIds = connections.keySet().asScala.filterNot(peerIds.contains).toList
+      staleReconnectIds = reconnecting.keySet().asScala.filterNot(peerIds.contains).toList
       _ <- peers.traverse_(peer => neblinkService.upsertPeer(peer))
       // Disconnect peers that left the network
-      _ <- IO.blocking(staleIds.foreach(id => disconnectPeer(id)))
-      _ <- staleIds.traverse_(id => neblinkService.removePeer(id))
+      _ <- IO.blocking((stalePeerIds ++ staleConnIds).foreach(id => disconnectPeer(id)))
+      _ <- (stalePeerIds ++ staleConnIds).toList.traverse_(id => neblinkService.removePeer(id))
       // Cancel reconnection for peers no longer in the network
       _ <- IO.blocking(staleReconnectIds.foreach(id => cancelReconnect.put(id, true)))
-      // Connect to peers without active connection, skip those already reconnecting
+      // Connect to peers without active connection, skip those already reconnecting.
+      // lastSeen > 0 skips server-flagged-offline peers (lastSeen=0 marker from
+      // toNeblinkPeers) — no P2P attempt against a device the server calls dead.
       _ <- peers
-        .filter(p => !connections.containsKey(p.deviceId) && !reconnecting.containsKey(p.deviceId))
+        .filter(p => p.lastSeen > 0 && !connections.containsKey(p.deviceId) && !reconnecting.containsKey(p.deviceId))
         .traverse_(p => connect(p).start.void)
     yield ()
 
