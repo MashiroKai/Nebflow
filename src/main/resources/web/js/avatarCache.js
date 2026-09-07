@@ -15,14 +15,21 @@
 //      fetch 更新，下次轮询渲染自然生效。禁止「每次加载都请求远端」由此保证：
 //      渲染路径永不发请求，唯一请求点是 TTL 过期的后台刷新 + 首见 URL 的
 //      缓存建立（各带 in-flight 去重与失败退避）。
-//   4. 渐进增强：远端无 CORS 头时 fetch 失败 → 静默放弃缓存，行为退化到
-//      「<img> 直拉」现状，无回归。blob > 上限不入缓存（localStorage 配额）。
+//   4. 渐进增强：拉取失败（离线/网关旧版无代理）→ 静默放弃本次缓存构建，
+//      行为退化到「<img> 直拉」现状，无回归。blob > 上限不入缓存
+//      （localStorage 配额）。
 //   5. 登录态快照（loggedIn + dataUrl）随每次在线状态更新——本会话拿不到
 //      status（启动即离线）时 avatarViewState 回落该快照，跨刷新不丢头像。
 //      登出时 neblink.js 调 forgetAvatarProfile() 清除。
 //
 // Storage key 走 branding 命名空间（key('avatar_cache')）。全部读写 try/catch
 // 包裹：隐私模式/配额满 → 静默退化为直拉现状。
+//
+// 2026-09-07 修复（「进设置页头像经常加载态」）：回源拉取改走网关同源代理
+// GET /api/neblink/avatar（AvatarProxy.scala）——头像源站（neblink-server 静态
+// 托管）不发 CORS 头，浏览器跨域 fetch 恒失败，此前缓存实际永远建不起来，
+// 每次进设置页都退化成慢速远端 <img> 直拉（加载态常驻的根因）。缓存键仍是
+// 远端 URL（源标记/失效语义不变），仅拉取路径变化。
 
 import { key } from './branding.js';
 
@@ -58,6 +65,21 @@ function saveEntry(entry) {
   try { localStorage.setItem(LS_KEY, JSON.stringify(entry)); } catch { /* quota — cache is best-effort */ }
 }
 
+/** Same-origin gateway route that proxies the account avatar bytes
+ *  (AvatarProxy.scala, 2026-09-07): the avatar origin (neblink-server static
+ *  host) sends no CORS headers, so a direct cross-origin fetch ALWAYS failed
+ *  and this cache could never populate — the settings avatar showed a loading
+ *  state on every open. The cache key stays the remote URL (source marker /
+ *  invalidation semantics unchanged); only the fetch path changes. */
+const PROXY_URL = '/api/neblink/avatar';
+
+function proxyHeaders() {
+  try {
+    const token = localStorage.getItem(key('token')) || '';
+    return token ? { 'Authorization': `Bearer ${token}` } : {};
+  } catch { return {}; }
+}
+
 /** blob → dataURL (FileReader), rejecting non-images / oversized blobs. */
 function blobToDataUrl(blob) {
   return new Promise((resolve) => {
@@ -77,7 +99,10 @@ async function refreshDataUrl(sourceUrl) {
   if (entry && entry.failedAt && Date.now() - entry.failedAt < RETRY_BACKOFF_MS && entry.url === sourceUrl) return;
   inflight = sourceUrl;
   try {
-    const resp = await fetch(sourceUrl, { mode: 'cors', cache: 'no-store' });
+    // Same-origin proxy — never the remote URL directly (no CORS there).
+    // The proxy serves the CURRENT identity avatar, which is exactly what
+    // sourceUrl points at (both are read from the same status snapshot).
+    const resp = await fetch(PROXY_URL, { headers: proxyHeaders(), cache: 'no-store' });
     if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
     const dataUrl = await blobToDataUrl(await resp.blob());
     if (dataUrl) {
