@@ -173,7 +173,17 @@ case class NodeDef(
     * 终态化时清除。前端可辨「设计内等待后台任务」（status=running + bgWait 非空）
     * vs 真僵尸（无活会话且无在途后台任务）——避免把设计内等待误判为 dead-session
     * running。旧 flow-map.json 无此键 → withDefaults 解码 None（零迁移）。 */
-  bgWait: Option[String] = None
+  bgWait: Option[String] = None,
+  /** 节点会话 id 持久引用（crash-recovery 批 2026-09-07，D1）：flipToRunning 与
+    * startedAt 同事务落库——崩溃后 boot sweep 据此定位磁盘 transcript（nodeId→sessionId
+    * 映射此前只活在进程内，崩溃即断链 G1）。普通节点 = 唯一会话；loop 节点 = worker
+    * 主会话（verify 见 sessionRefVerify，裁定③双会话续接）。终态不清除（审计价值：
+    * 事后排查可定位 transcript）。旧 flow-map.json 无此键 → withDefaults 解码 None
+    * （零迁移，先例 deps/plugins/notifySentAt）——无值运行残留按 (c) 类处置。 */
+  sessionRef: Option[String] = None,
+  /** loop 节点 verify 会话 id 持久引用（crash-recovery 批，裁定③）：仅 loop 节点
+    * 翻转时与 sessionRef 同事务落库；非 loop 节点恒 None（重执行即清除）。 */
+  sessionRefVerify: Option[String] = None
 )
 
 object NodeDef:
