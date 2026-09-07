@@ -1,0 +1,68 @@
+{
+  "phase": "after",
+  "base": "http://localhost:8097",
+  "themes": {
+    "light": {
+      "failures": [],
+      "consoleErrors": [
+        "console.error: Failed to load resource: the server responded with a status of 400 (Bad Request)"
+      ],
+      "shots": [
+        "after-light-card.png",
+        "after-light-q1-btn.png",
+        "after-light-q2-btn.png",
+        "after-light-q3-btn.png",
+        "after-light-q4-btn.png"
+      ],
+      "probe": {
+        "q1_objectFit": "contain",
+        "q1_loaded": true,
+        "q1_svgStart": "<svg width=\"24\" height=\"24\"  xmlns=\"http",
+        "q1_srcHasInjectedDims": true,
+        "q1b_srcUntouched": true,
+        "q2_objectFit": "contain",
+        "q2_loaded": true,
+        "q2_srcHasInjectedDims": true,
+        "q3_objectFit": "contain",
+        "q3_natural": "160x60",
+        "q3_loaded": true,
+        "q4_swatchStripes": 2,
+        "q5_slotHidden": true,
+        "q6_noPreviewSlot": true,
+        "expectedFit": "contain"
+      }
+    },
+    "dark": {
+      "failures": [],
+      "consoleErrors": [
+        "console.error: Failed to load resource: the server responded with a status of 400 (Bad Request)"
+      ],
+      "shots": [
+        "after-dark-card.png",
+        "after-dark-q1-btn.png",
+        "after-dark-q2-btn.png",
+        "after-dark-q3-btn.png",
+        "after-dark-q4-btn.png"
+      ],
+      "probe": {
+        "q1_objectFit": "contain",
+        "q1_loaded": true,
+        "q1_svgStart": "<svg width=\"24\" height=\"24\"  xmlns=\"http",
+        "q1_srcHasInjectedDims": true,
+        "q1b_srcUntouched": true,
+        "q2_objectFit": "contain",
+        "q2_loaded": true,
+        "q2_srcHasInjectedDims": true,
+        "q3_objectFit": "contain",
+        "q3_natural": "160x60",
+        "q3_loaded": true,
+        "q4_swatchStripes": 2,
+        "q5_slotHidden": true,
+        "q6_noPreviewSlot": true,
+        "expectedFit": "contain"
+      }
+    }
+  },
+  "allPass": true,
+  "failures": 0
+}
