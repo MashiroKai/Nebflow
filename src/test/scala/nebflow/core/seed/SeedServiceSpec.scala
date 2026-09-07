@@ -10,7 +10,7 @@ import java.nio.file.Files
 /**
  * SeedService cold-start 播种引擎验证（cold-start seed 批 2026-09-07）。
  *
- * 覆盖定稿四项：① fresh home 完整播种（三 keeper + 3 插件 + projects/general）、
+ * 覆盖定稿四项：① fresh home 完整播种（三 keeper + 4 插件 + projects/general）、
  * ② 幂等 / 不覆盖用户编辑、③ fresh-home 守卫（已有用户数据 → 只写 marker 不播种）、
  * ④ 升级 add-only（低版本 marker + 已有文件 → 只补缺失，不重写）。
  *
@@ -57,14 +57,17 @@ class SeedServiceSpec extends FunSuite:
     assert(!gen.hcursor.downField("preset").succeeded, "general has no preset field")
     assert(gen.hcursor.downField("name").as[String].toOption.contains("general"))
 
-    // 3 系统插件：目录就位 + trusted
-    for name <- List("explorer-toolkit", "design-spec", "visual-report")
+    // 4 系统插件：目录就位 + trusted（slideblocks = 默认预装的大体量 skill 包）
+    for name <- List("explorer-toolkit", "design-spec", "visual-report", "slideblocks")
     do
       assert(os.exists(home / "plugins" / name / "plugin.json"), s"plugin '$name'/plugin.json present")
       assert(PluginRegistry.resolve(name).unsafeRunSync().isRight, s"plugin '$name' trusted")
     // 至少一个 skill 包实际复制
     assert(os.exists(home / "plugins" / "explorer-toolkit" / "skills" / "exploration-method" / "SKILL.md"),
       "explorer-toolkit skill copied")
+    // slideblocks 大体量 skill 包实际复制（plugin.json 锚点 + 整目录递归）
+    assert(os.exists(home / "plugins" / "slideblocks" / "skills" / "slideblocks" / "SKILL.md"),
+      "slideblocks skill copied")
 
     // projects/general 脚手架
     val projectJson = home / "projects" / "general" / "project.json"
@@ -83,6 +86,9 @@ class SeedServiceSpec extends FunSuite:
     val state = io.circe.parser.parse(os.read(marker)).toOption.get
     assert(state.hcursor.downField("version").as[String].toOption.contains("1.0.0"))
     assert(state.hcursor.downField("items").as[List[String]].toOption.exists(_.nonEmpty), "items recorded")
+    // 2 agents + 4 plugins + 1 project = 7
+    assert(state.hcursor.downField("items").as[List[String]].toOption.exists(_.size == 7),
+      "marker records 7 items (2 agents + 4 plugins + 1 project)")
 
   // ── ② 幂等 / 不覆盖用户编辑 ───────────────────────────────
   test("re-seed is idempotent and never overwrites user edits"):
