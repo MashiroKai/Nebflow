@@ -26,15 +26,26 @@ import scala.util.Try
 object NodeTools:
   private val logger = NebflowLogger.forName("nebflow.node.tools")
 
-  /** 解析 project（参数优先，fallback ctx.projectName）。 */
+  /** 解析 project（参数优先，fallback ctx.projectName；项目名大小写不敏感——
+    * registry.get 已做 equalsIgnoreCase 兜底，Nebflow/nebflow 等价）。 */
   def resolveProject(project: Option[String], ctx: ToolContext): IO[Either[String, ProjectRuntime]] =
     val name = project.orElse(ctx.projectName).getOrElse("")
     if name.isEmpty then IO.pure(Left("Missing 'project' parameter (and no project context)"))
     else
       ProjectRuntimeRegistry.get(name).flatMap {
         case Some(rt) => IO.pure(Right(rt))
-        case None => IO.pure(Left(s"Project '$name' is not mounted. Use ProjectCreate first."))
+        case None =>
+          ProjectRuntimeRegistry.all.map(rts => Left(mountError(name, rts.map(_.project.name))))
       }
+
+  /** 项目未挂载报错（附可用项目列表提示实际名称）——纯函数便于单测。
+    * 精确项目名不匹配时列出已挂载项目（提示实际名称，不裸报 not mounted）；
+    * 空列表（无任何挂载项目）给单独一行提示。 */
+  def mountError(name: String, available: List[String]): String =
+    if available.isEmpty then
+      s"Project '$name' is not mounted. No projects are currently mounted. Use ProjectCreate first."
+    else
+      s"Project '$name' is not mounted. Available projects: ${available.mkString(", ")}. Use ProjectCreate first."
 
   /** 引用节点存在性（活动区 + 归档区）。 */
   def ensureNodeExists(rt: ProjectRuntime, id: String): IO[Either[String, Unit]] =
@@ -274,7 +285,7 @@ object NodeEditTool extends Tool:
   val description =
     """Create or edit a Flow Map node — the dispatcher's single topology tool (create / wire / rewire). No files written (the store owns flow-map.json).
 ## Parameters
-- project (required): project name.
+- project (optional; defaults to current project): project name.
 - nodename: unique display name; missing = create, existing = edit.
 - description (required on create, ≤60 chars): one-line purpose — always-loaded card/payload metadata (results read on demand). Replace on edit.
 - descriptionLong (optional, ≤200 chars): longer summary, detail channel only (never in default payloads). Replace on edit.
@@ -299,7 +310,7 @@ object NodeEditTool extends Tool:
     List(
       "type" -> "object".asJson,
       "properties" -> Json.obj(
-        "project" -> Json.obj("type" -> "string".asJson, "description" -> "Project name (required)".asJson),
+        "project" -> Json.obj("type" -> "string".asJson, "description" -> "Project name (optional; defaults to the dispatcher's current project)".asJson),
         "nodename" -> Json.obj("type" -> "string".asJson, "description" -> "Display name; unique within the Flow Map".asJson),
         "description" -> Json.obj("type" -> "string".asJson, "description" -> "REQUIRED on create: one-line summary of the node's purpose, 1-60 chars (always-loaded card/payload metadata; replace on edit)".asJson),
         "descriptionLong" -> Json.obj("type" -> "string".asJson, "description" -> "Optional longer summary, ≤200 chars — detail channel only (NodeList detail= / REST), never in default payloads".asJson),
@@ -330,7 +341,7 @@ object NodeEditTool extends Tool:
         "verify" -> Json.obj("type" -> "string".asJson, "description" -> "Verify-agent name (default \"general\"): the session that checks each worker output (general agent + plugins — shares the node's plugins). Must exist in the Agent Catalog. Only with loop=true".asJson),
         "verifyTask" -> Json.obj("type" -> "string".asJson, "description" -> "Verify checklist template (against the original task / acceptance baseline). Empty → engine default checklist. Only with loop=true".asJson)
       ),
-      "required" -> Json.arr("project".asJson, "nodename".asJson)
+      "required" -> Json.arr("nodename".asJson)
     )
   )
 
@@ -1324,7 +1335,7 @@ object NodeListTool extends Tool:
 - Frontend panel data source (REST mirrors this shape).
 
 ## Parameters
-- **project** (required): project name.
+- **project** (optional; defaults to current project): project name.
 - **status** (optional): filter the map to specific lifecycle state(s) — single value, comma-separated list, or array. Valid: wiring, pending, running, completed, failed, cancelled, blocked. Example: "running,pending" to see only active work. Omitted = ALL nodes (use this for the full picture; filter only when the map is large and you know which slice you need). Applies to the map listing only, not to detail=.
 - **detail** (optional): a node id — returns that ONE node's full record instead of the whole map: metadata + task + result FULL TEXT (+ historical blockedFeedback when present). Payloads carry no result text; this is the on-demand read channel, same source as the REST result endpoint.
 
@@ -1335,14 +1346,14 @@ With detail=<nodeId>: the same node shape + task + result (full text)."""
     List(
       "type" -> "object".asJson,
       "properties" -> Json.obj(
-        "project" -> Json.obj("type" -> "string".asJson, "description" -> "Project name (required)".asJson),
+        "project" -> Json.obj("type" -> "string".asJson, "description" -> "Project name (optional; defaults to the dispatcher's current project)".asJson),
         "status" -> Json.obj("oneOf" -> Json.arr(
           Json.obj("type" -> "string".asJson),
           Json.obj("type" -> "array".asJson, "items" -> Json.obj("type" -> "string".asJson))
         ).asJson, "description" -> "Optional lifecycle filter: wiring|pending|running|completed|failed|cancelled|blocked — single, comma-separated, or array. Omitted = all nodes".asJson),
         "detail" -> Json.obj("type" -> "string".asJson, "description" -> "Node id — return that node's full record (metadata + task + result FULL TEXT) instead of the whole map".asJson)
       ),
-      "required" -> Json.arr("project".asJson)
+      "required" -> Json.arr()
     )
   )
 
@@ -1421,10 +1432,10 @@ object NodeCancelTool extends Tool:
     List(
       "type" -> "object".asJson,
       "properties" -> Json.obj(
-        "project" -> Json.obj("type" -> "string".asJson, "description" -> "Project name (required)".asJson),
+        "project" -> Json.obj("type" -> "string".asJson, "description" -> "Project name (optional; defaults to the dispatcher's current project)".asJson),
         "node-id" -> Json.obj("type" -> "string".asJson, "description" -> "Node id to cancel (from NodeList)".asJson)
       ),
-      "required" -> Json.arr("project".asJson, "node-id".asJson)
+      "required" -> Json.arr("node-id".asJson)
     )
   )
 
@@ -1481,7 +1492,7 @@ object NodeMessageTool extends Tool:
 - After dispatching: new constraints, corrections, or extra context that must reach a node WITHOUT re-dispatching or editing topology. Routing is automatic by node status.
 - **Dispatcher-only tool** (mechanism-fixed). Do not use for terminal nodes — see below.
 ## Parameters
-- **project** (required): project name.
+- **project** (optional; defaults to current project): project name.
 - **nodeId** (required): target node id (from NodeList).
 - **message** (required, non-empty): the supplementary instruction text.
 ## Routing semantics (by target node status)
@@ -1498,11 +1509,11 @@ Every message (injected / appended / not-delivered) is appended to the project's
     List(
       "type" -> "object".asJson,
       "properties" -> Json.obj(
-        "project" -> Json.obj("type" -> "string".asJson, "description" -> "Project name (required)".asJson),
+        "project" -> Json.obj("type" -> "string".asJson, "description" -> "Project name (optional; defaults to the dispatcher's current project)".asJson),
         "nodeId" -> Json.obj("type" -> "string".asJson, "description" -> "Target node id (from NodeList)".asJson),
         "message" -> Json.obj("type" -> "string".asJson, "description" -> "Supplementary instruction text (non-empty; injected at turn boundary if running, appended to task if not started)".asJson)
       ),
-      "required" -> Json.arr("project".asJson, "nodeId".asJson, "message".asJson)
+      "required" -> Json.arr("nodeId".asJson, "message".asJson)
     )
   )
 

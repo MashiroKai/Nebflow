@@ -47,7 +47,14 @@ object ProjectRuntimeRegistry:
 
   def register(rt: ProjectRuntime): IO[Unit] = runtimes.update(_ + (rt.project.name -> rt))
   def unregister(name: String): IO[Unit] = runtimes.update(_ - name)
-  def get(name: String): IO[Option[ProjectRuntime]] = runtimes.get.map(_.get(name))
+  /** 取项目运行时：精确 key 匹配优先（无回归），否则对 project.name 做
+    * equalsIgnoreCase 兜底——项目标识天然大小写不敏感（NodeList(Nebflow) 与
+    * NodeList(nebflow) 同解析，分发器实名报错根因）。unregister/mount 用
+    * canonical 名不受影响。 */
+  def get(name: String): IO[Option[ProjectRuntime]] =
+    runtimes.get.map { m =>
+      m.get(name).orElse(m.values.find(_.project.name.equalsIgnoreCase(name)))
+    }
   def all: IO[List[ProjectRuntime]] = runtimes.get.map(_.values.toList)
   def clear: IO[Unit] = runtimes.set(Map.empty)
 
