@@ -151,7 +151,10 @@ object Main extends IOApp:
     Runtime.getRuntime.addShutdownHook(
       new Thread(() => nebflow.llm.LlmInterface.cancelAllInflightSync())
     )
-    nebflow.gateway.GatewayMain.run
+    // GatewayMain.run(Nil): boot the real gateway. Nil is load-bearing — the
+    // P0 2026-09-06 arg gate in GatewayMain.run rejects ANY argument, and Main
+    // has already consumed --home/--port/--no-browser as global flags.
+    nebflow.gateway.GatewayMain.run(Nil)
       .guarantee(IO.blocking(ProcessManager.removePid()))
       .as(ExitCode.Success)
   end bootGateway
