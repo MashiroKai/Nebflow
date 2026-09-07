@@ -213,7 +213,7 @@ class ProjectSessionCancelPanelFrameSpec extends CatsEffectSuite:
       assertEquals(f.hcursor.get[String]("sessionId").toOption, Some("nebula-root"), "routing key")
   }
 
-  test("node-* watcher giveUp：TaskStuckWatcher 升级取消 → wsHub 补发 agentDone 面板帧") {
+  test("node-* watcher 分级接管：L1→L4 升级扫描，L3 桥 Cancelled 释放点 wsHub 补发 agentDone 面板帧") {
     val system = ActorSystem(s"node-giveup-${scala.util.Random.nextInt(100000)}")
     val wsHub = new WsHub()
     val broadcasts = Ref.unsafe[IO, List[Json]](Nil)
@@ -236,7 +236,10 @@ class ProjectSessionCancelPanelFrameSpec extends CatsEffectSuite:
           supervisorRef = Some(evtRef)
         ))
       )
-      // 4 轮扫描（attempt ≥ StopAttempts+2=4 → giveUp：桥 Cancelled + 面板帧）
+      // 4 轮扫描 = 分级接管全梯（hard-recovery P5，HardRecoveryEnabled 默认 true）：
+      // L1 halt → L2 hard-abort → L3 restart（桥 Cancelled + node-* 面板帧补发点）
+      // → L4 failed（resume 失败计数保留可达）。旧 giveUp 口径（attempt ≥
+      // StopAttempts+2=4 才补帧）已被分级链取代。
       stopCounts <- cats.effect.Ref.of[IO, Map[String, Int]](Map.empty)
       _ <- TaskStuckWatcher.scan(resources, wsHub, 300L, stopCounts)
       _ <- TaskStuckWatcher.scan(resources, wsHub, 300L, stopCounts)
