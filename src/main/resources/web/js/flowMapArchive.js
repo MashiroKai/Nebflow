@@ -17,15 +17,23 @@
 //   ⑤ 条目 24h TTL：按链完成时间到期清理、徽章同步减、成员从派生输入移除（防链
 //      重判复活）；剩余 <60min 显示「即将过期」。
 //
-// 数据源（NodePayload.buildNodeJson 单序列化点，规格 §1.4）：createdAt/completedAt/
-// status/result 齐备，链判定纯前端派生；载荷无 task 字段 → 链名第①级（task【】
-// 前缀）在有 task 时才启用，产品载荷自然落到第②③级（名称公共前缀/链首名）。
+// 数据源（裁定④「TTL 分开」批 2026-09-07 起双源合并）：
+//   ① 后端 Flow Archive（权威源，重启/刷新后仍在）：GET flow-map/archive 分批聚合
+//      （服务端按显示窗 24h 过滤）→ remoteChains/remoteMembers；拉取时机 = 悬浮层
+//      创建首拉 + nodeRemoved 防抖 + 面板打开刷新。
+//   ② 前端派生链（在场源）：快照全量节点 + nodeRemoved 墓碑经 clusterBatches 派生——
+//      仍驱动主图整链淡出动画与可见性（「主图立即消失」的当帧承担者），并补齐
+//      「链刚齐、后端 sweep 在途（≤30s）」窗口的面板条目。两源批 id 同源（同一聚簇
+//      算法 + 同一 createdAt 数据），面板条目按 id 去重 remote 优先。
+// 节点字段 = NodePayload.buildNodeJson 单序列化点（规格 §1.4）：createdAt/completedAt/
+// status/hasResult 齐备；载荷无 task 字段 → 链名第①级（task【】前缀）在有 task 时
+// 才启用，产品载荷自然落到第②③级（名称公共前缀/链首名）。
 
 import { esc, fmtTime } from './flowHelpers.js';
 import { t } from './i18n.js';
 import { showToast } from './modal.js';
 import { renderMarkdownWithMath } from './utils.js';
-import { fetchNodeResult } from './nodeData.js';
+import { fetchNodeResult, fetchFlowMapArchive } from './nodeData.js';
 
 // ── 常量（规格 §3.5/§5.9）─────────────────────────────────
 /** 终态集合：链齐判定与归档口径（规格 §3.1）。 */
@@ -115,6 +123,12 @@ function statusClass(st) {
  * @property {Map<string, ChainMember>} tombstones nodeRemoved 出库的终态节点（§7.2：
  *           终态事实保留参与链齐判定；快照重现即清除）
  * @property {Map<string, ChainMember>} input 最近一次派生输入（详情/链名数据源）
+ * @property {Map<string, Chain>} remoteChains 后端 Flow Archive 批次链（裁定④：
+ *           归档面板权威数据源，重启/刷新后仍在；链 id 与派生链同源）
+ * @property {Map<string, ChainMember>} remoteMembers 后端归档成员（详情/链名查找兜底）
+ * @property {boolean} remoteFetched 已成功首拉（悬浮层创建时触发一次）
+ * @property {boolean} remoteInflight 拉取在途（重入丢弃）
+ * @property {number=} remoteTimer nodeRemoved 防抖拉取计时器
  * @property {string | null} expandedEntry 面板展开条目 chainId
  */
 
@@ -133,6 +147,11 @@ function storeOf(project) {
       expiredIds: new Set(),
       tombstones: new Map(),
       input: new Map(),
+      remoteChains: new Map(),
+      remoteMembers: new Map(),
+      remoteFetched: false,
+      remoteInflight: false,
+      remoteTimer: 0,
       expandedEntry: null,
     };
     stores.set(project, s);
@@ -332,15 +351,16 @@ export function deriveArchivedIds(fmNodes) {
 
 /**
  * TTL 清理（§5.9）：到期链从面板移除 + 徽章同步减 + 成员从派生输入排除（§18-C10）。
+ * 裁定④扩展：remoteChains 同款清理（服务端已按 24h 过滤，本地时钟走动期间兜底）。
  * @param {string} project
  * @param {number=} now
  * @returns {number} 移除条数
  */
 export function purgeExpired(project, now = Date.now()) {
   const s = storeOf(project);
+  let removed = 0;
   const keep = s.chains.filter((c) => now - (c.completedAt || 0) <= ARCHIVE_TTL_MS);
-  const removed = s.chains.length - keep.length;
-  if (!removed) return 0;
+  removed += s.chains.length - keep.length;
   for (const c of s.chains) {
     if (keep.indexOf(c) !== -1) continue;
     for (const m of c.members) {
@@ -350,16 +370,93 @@ export function purgeExpired(project, now = Date.now()) {
     if (s.expandedEntry === c.id) s.expandedEntry = null;
   }
   s.chains = keep;
+  for (const [cid, c] of Array.from(s.remoteChains)) {
+    if (now - (c.completedAt || 0) <= ARCHIVE_TTL_MS) continue;
+    for (const m of c.members) {
+      s.expiredIds.add(m.id); // 防派生复活（同 §18-C10）
+      s.remoteMembers.delete(m.id);
+    }
+    s.remoteChains.delete(cid);
+    if (s.expandedEntry === cid) s.expandedEntry = null;
+    removed++;
+  }
   return removed;
+}
+
+// ── 后端 Flow Archive 数据源（裁定④「TTL 分开」批）────────────────
+
+/** 后端批次 → Chain（复用 buildChain 冻结/链名推导/最坏态单点；成员顺序由 buildChain 自理）。 */
+function remoteChainOf(batch) {
+  const members = Array.isArray(batch?.members) ? batch.members : [];
+  const chain = buildChain(String(batch?.id || ''), members);
+  if (typeof batch?.completedAt === 'number' && batch.completedAt > 0) {
+    chain.completedAt = batch.completedAt;
+  }
+  return chain;
+}
+
+/** 拉取后端归档批次 → remoteChains/remoteMembers（重启后归档面板的全量数据源）。
+ *  失败（未挂载/网络）静默保留现状，下次触发重试；成功后重渲染该项目全部存活层。 */
+async function fetchRemoteChains(project) {
+  const s = storeOf(project);
+  if (s.remoteInflight) return;
+  s.remoteInflight = true;
+  try {
+    const batches = await fetchFlowMapArchive(project);
+    if (batches) {
+      const now = Date.now();
+      s.remoteChains = new Map();
+      s.remoteMembers = new Map();
+      for (const b of batches) {
+        const chain = remoteChainOf(b);
+        if (!chain.id || !chain.members.length) continue;
+        if (now - (chain.completedAt || 0) > ARCHIVE_TTL_MS) continue; // 本地时钟兜底
+        s.remoteChains.set(chain.id, chain);
+        for (const m of chain.members) s.remoteMembers.set(m.id, m);
+      }
+      s.remoteFetched = true;
+      for (const ctx of Array.from(layerCtxs)) {
+        if (ctx.project !== project || !ctx.layer.isConnected) continue;
+        renderArchiveUi(ctx);
+      }
+    }
+  } finally {
+    s.remoteInflight = false;
+  }
+}
+
+/** nodeRemoved 出库后防抖刷新（链级 sweep 按成员逐条广播，合并为一次拉取）。
+ *  挂 recordNodeRemoved 内——flowMapTab 零改动。 */
+function scheduleRemoteRefresh(project) {
+  const s = storeOf(project);
+  if (s.remoteTimer) clearTimeout(s.remoteTimer);
+  s.remoteTimer = setTimeout(() => {
+    s.remoteTimer = 0;
+    // 该项目已无存活悬浮层（视图已关）→ 不拉（下次打开时首拉）
+    for (const ctx of layerCtxs) {
+      if (ctx.project === project && ctx.layer.isConnected) { fetchRemoteChains(project); return; }
+    }
+  }, 1500);
+}
+
+/** 面板条目并集（裁定④）：remoteChains（权威源）∪ 派生 chains（sweep 在途窗口
+ *  补齐）——按链 id 去重 remote 优先；completedAt 倒序（与 refreshChains 排序同款）。 */
+function panelChains(s) {
+  const out = new Map();
+  for (const c of s.chains) out.set(c.id, c);
+  for (const c of s.remoteChains.values()) out.set(c.id, c); // remote 覆盖同 id
+  return Array.from(out.values())
+    .sort((a, b) => (b.completedAt || 0) - (a.completedAt || 0) || a.title.localeCompare(b.title));
 }
 
 /**
  * nodeRemoved 出库墓碑（§7.2）：终态节点出库保留终态事实参与链齐判定；
- * 非终态出库直接消失。
+ * 非终态出库直接消失。裁定④：出库 = 后端归档落盘信号 → 防抖刷新 remote。
  */
 export function recordNodeRemoved(project, node) {
   const s = storeOf(project);
   if (node && isTerminalStatus(node.status)) s.tombstones.set(node.id, node);
+  scheduleRemoteRefresh(project);
 }
 
 /** 主图可见判定（§3.1）：可见 = 非已归档链成员 且 非 TTL 到期链成员。 */
@@ -369,10 +466,16 @@ export function isVisibleNode(project, node) {
   return !s.archivedIds.has(node.id) && !s.expiredIds.has(node.id);
 }
 
-/** nodeId → 所属链（含链未齐链；详情 meta 用）。 */
+/** nodeId → 所属链（含链未齐链 + 后端归档链；详情 meta 用）。 */
 export function chainOfNode(project, nodeId) {
   const s = stores.get(project);
-  return s ? (s.chainOf.get(nodeId) || null) : null;
+  if (!s) return null;
+  const derived = s.chainOf.get(nodeId);
+  if (derived) return derived;
+  for (const rc of s.remoteChains.values()) {
+    if (rc.members.some((m) => m.id === nodeId)) return rc;
+  }
+  return null;
 }
 
 // ══ 悬浮层 UI（悬浮钮 + 归档面板 + 右侧详情，§4/§5）═══
@@ -480,6 +583,8 @@ export function ensureArchiveLayer(host, container, project) {
   ctx.project = project;
   ctx.container = container;
   renderArchiveUi(ctx);
+  // 裁定④：悬浮层创建触发后端归档首拉（每项目一次；失败下渲染重试）
+  if (!storeOf(project).remoteFetched) fetchRemoteChains(project);
   return ctx;
 }
 
@@ -505,7 +610,7 @@ export function openDetailFor(container, project, nodeId) {
 
 function updateBadge(/** @type {LayerCtx} */ ctx, /** @type {boolean} */ pulse) {
   const s = storeOf(ctx.project);
-  const n = s.chains.length; // 徽章口径 = 面板链条目数（§4.3；TTL 清理同步减）
+  const n = panelChains(s).length; // 徽章口径 = 面板链条目数（§4.3；裁定④ remote∪派生；TTL 清理同步减）
   ctx.badge.textContent = n > 99 ? '99+' : String(n);
   ctx.badge.classList.toggle('hidden', n === 0);
   const label = t('flowmap.archive.button', { n: String(n) });
@@ -573,12 +678,13 @@ function entryHtml(c) {
   </div>`;
 }
 
-/** 面板渲染（§5.2/§5.3/§5.4/§7.3；展开态跨渲染保留 C13）。 */
+/** 面板渲染（§5.2/§5.3/§5.4/§7.3；展开态跨渲染保留 C13；裁定④ 条目=remote∪派生）。 */
 function renderArchiveUi(/** @type {LayerCtx} */ ctx, opts = {}) {
   const s = storeOf(ctx.project);
-  const totalNodes = s.chains.reduce((m, c) => m + c.nodeCount, 0);
-  ctx.panelBody.innerHTML = s.chains.length
-    ? s.chains.map(entryHtml).join('')
+  const entries = panelChains(s);
+  const totalNodes = entries.reduce((m, c) => m + c.nodeCount, 0);
+  ctx.panelBody.innerHTML = entries.length
+    ? entries.map(entryHtml).join('')
     : `<div class="fm-panel-empty">${esc(t('flowmap.archive.empty'))}</div>`;
   if (s.expandedEntry) {
     const el = ctx.panelBody.querySelector(`.fm-entry[data-chain-id="${CSS.escape(s.expandedEntry)}"]`);
@@ -597,7 +703,7 @@ function renderArchiveUi(/** @type {LayerCtx} */ ctx, opts = {}) {
     }
   }
   const countEl = ctx.panel.querySelector('.fm-panel-count');
-  if (countEl) countEl.textContent = t('flowmap.archive.count', { n: String(s.chains.length), m: String(totalNodes) });
+  if (countEl) countEl.textContent = t('flowmap.archive.count', { n: String(entries.length), m: String(totalNodes) });
   updateBadge(ctx, !!opts.pulse);
   updateDetailDock(ctx); // 每次渲染重判 host 口径 dock 形态（取代媒体查询的自动跟随）
 }
@@ -605,6 +711,7 @@ function renderArchiveUi(/** @type {LayerCtx} */ ctx, opts = {}) {
 // ── 开合（§5.7/§6/§9.2）──────────────────────────────────
 function openPanel(/** @type {LayerCtx} */ ctx) {
   if (ctx.closeTimer) { clearTimeout(ctx.closeTimer); ctx.closeTimer = 0; }
+  fetchRemoteChains(ctx.project); // 裁定④：面板打开刷新后端归档（幂等 in-flight 丢弃）
   ctx.panel.hidden = false;
   ctx.panel.classList.remove('closing');
   void ctx.panel.getBoundingClientRect(); // 强制起始态生效
@@ -668,7 +775,8 @@ function updateDetailDock(/** @type {LayerCtx} */ ctx) {
 
 function openDetail(/** @type {LayerCtx} */ ctx, /** @type {string} */ nodeId) {
   const s = storeOf(ctx.project);
-  const n = s.input.get(nodeId);
+  // 裁定④：派生输入（快照+墓碑）优先，后端归档成员兜底（重启后归档详情可开）
+  const n = s.input.get(nodeId) || s.remoteMembers.get(nodeId);
   if (!n) return;
   renderDetail(ctx, n);
   updateDetailDock(ctx);
@@ -941,7 +1049,8 @@ function highlightDownstream(/** @type {LayerCtx} */ ctx, /** @type {string | nu
 function highlightChainDownstream(/** @type {LayerCtx} */ ctx, /** @type {string} */ chainId, /** @type {boolean} */ on) {
   if (!on) { highlightDownstream(ctx, null, false); return; }
   const s = storeOf(ctx.project);
-  const chain = s.chains.find((c) => c.id === chainId) || s.bufferChains.find((c) => c.id === chainId);
+  const chain = s.chains.find((c) => c.id === chainId) || s.bufferChains.find((c) => c.id === chainId)
+    || s.remoteChains.get(chainId); // 裁定④：后端归档链条目 hover 联动同款
   if (!chain) return;
   clearAdjHighlight(ctx);
   const memberIds = new Set(chain.members.map((m) => m.id));

@@ -191,7 +191,7 @@ class FlowMapTaskFilesSpec extends CatsEffectSuite:
 
   // ── 4. 归档区 task 剥除（无重入价值；result 摘要/指针不动）──
 
-  test("archive strip: sweepExpired → archive JSON has no task/taskFile keys; result file semantics untouched") {
+  test("archive strip: sweepCompletedChains → 批文件无 task/taskFile 键; result file semantics untouched（裁定④分批落盘）") {
     val ws = freshWorkspace()
     val full = longTask
     for
@@ -199,10 +199,10 @@ class FlowMapTaskFilesSpec extends CatsEffectSuite:
       _ <- store.mutate(s => s.copy(nodes = s.nodes ++ Map(
         "n-done" -> node("n-done", "done", NodeLifecycle.Completed).copy(
           task = Some(full), result = Some("归档结果"), ttlExpireAt = Some(now - 1)))))
-      removed <- store.sweepExpired(now)
+      removed <- store.sweepCompletedChains(now)
       fromArchive <- store.findNode("n-done") // 同进程内存：task 未丢（读旧格式行为同源）
-      archRaw <- IO.blocking(os.read(ws / ".nebflow" / "flow-map-archive.json"))
-      archJson = readJson(ws / ".nebflow" / "flow-map-archive.json")
+      archRaw <- IO.blocking(os.read(ws / ".nebflow" / "flow-map-archive" / "chain-n-done.json"))
+      archJson = readJson(ws / ".nebflow" / "flow-map-archive" / "chain-n-done.json")
       nDone = nodeObj(archJson, "n-done")
       reopened <- FlowMapStore.open("demo-arch", ws.toString)
       archReopened <- reopened.archiveSnapshot

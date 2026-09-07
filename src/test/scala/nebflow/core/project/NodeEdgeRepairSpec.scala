@@ -175,7 +175,9 @@ class NodeEdgeRepairSpec extends CatsEffectSuite:
       }
     }
 
-  /** 让指定已完成节点悬空化（out 断开）并走真实 TTL 归档路径移入归档区。 */
+  /** 让指定已完成节点悬空化（out 断开）并走真实链级归档路径移入归档区。
+    * 裁定④链级 sweep 口径：整链全终态才归档——夹具把目标节点 createdAt 回拨 10min
+    * 自成一批（与同测在飞节点间隔 >120s 批窗口），整批全终态 → 即时归档。 */
   private def archiveDangling(rt: ProjectRuntime, name: String): IO[String] =
     for
       id <- idOf(rt, name)
@@ -185,10 +187,10 @@ class NodeEdgeRepairSpec extends CatsEffectSuite:
           case Some(fresh) =>
             s.copy(nodes = s.nodes.updated(id, fresh.copy(
               out = None, // 悬空（陈旧 out 覆盖时代的历史损伤形态 / LLM 断开写法）
-              ttlExpireAt = Some(System.currentTimeMillis() - 1000))))
+              createdAt = System.currentTimeMillis() - 600000))) // 自成一批（链级 sweep 批次隔离）
           case None => s
       }
-      removed <- rt.store.sweepExpired(System.currentTimeMillis())
+      removed <- rt.store.sweepCompletedChains(System.currentTimeMillis())
       _ <- assertIO(IO(removed.contains(id)), true, "node must be swept into archive")
       archived <- rt.store.findNode(id)
       _ <- assertIO(IO(archived.map(_.status)), Some(NodeLifecycle.Completed), "archived copy must keep completed status")

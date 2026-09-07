@@ -334,7 +334,9 @@ object FlowMapState:
   given Configuration = Configuration.default.withDefaults
   given Codec[FlowMapState] = ConfiguredCodec.derived
 
-/** Flow Map 归档区（§2.6 TTL 移入，磁盘 flow-map-archive.json；结果全文保留）。 */
+/** Flow Map 归档区（§2.6 整链全终态移入——裁定④「TTL 分开」批 2026-09-07；
+  * 磁盘按派发批次分文件 `flow-map-archive/<batchId>.json`；结果全文保留）。
+  * 内存模型：全量水合（findNode/投递链/detail/REST 零改动）；分批只是落盘布局。 */
 case class FlowMapArchive(
   project: String,
   nodes: Map[String, NodeDef] = Map.empty
@@ -343,6 +345,30 @@ case class FlowMapArchive(
 object FlowMapArchive:
   given Configuration = Configuration.default.withDefaults
   given Codec[FlowMapArchive] = ConfiguredCodec.derived
+
+/** 归档批次分文件（裁定④「TTL 分开」批）：`<workspace>/.nebflow/flow-map-archive/<batchId>.json`
+  * 一批一文件。batchId = `chain-<批内 createdAt 最早节点 id>`（批次聚簇算法与前端
+  * flowMapArchive.js clusterBatches 严格同源：createdAt 升序、相邻间隔 >120s 开新批）——
+  * 前端面板按 id 与派生链去重依赖此同源口径。nodes 落盘经 result 摘要+指针 / task
+  * 剥除手术（FlowMapStore persistBatchFiles）。 */
+case class FlowMapArchiveBatch(
+  project: String,
+  batch: String,
+  archivedAt: Long,
+  nodes: Map[String, NodeDef] = Map.empty
+)
+
+object FlowMapArchiveBatch:
+  given Configuration = Configuration.default.withDefaults
+  given Codec[FlowMapArchiveBatch] = ConfiguredCodec.derived
+
+/** 内存批次索引条目（裁定④）：nodeIds 为批次成员集（落盘写粒度判定 + REST 按批
+  * 组装的数据源）；不进 NodeDef——批次归属只活在批次索引与分文件名。 */
+case class ArchiveBatchMeta(
+  id: String,
+  archivedAt: Long,
+  nodeIds: Set[String]
+)
 
 /** Project 实体定义（§1.1，projects/<name>/project.json）。 */
 case class ProjectDef(

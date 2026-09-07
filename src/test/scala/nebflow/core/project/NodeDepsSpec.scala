@@ -377,7 +377,7 @@ class NodeDepsSpec extends CatsEffectSuite:
       _ <- rt2.store.mutate(s =>
         s.nodes.get(aId2).map(n => s.copy(nodes = s.nodes.updated(aId2, n.copy(ttlExpireAt = Some(System.currentTimeMillis() - 1000)))))
           .getOrElse(s)).void
-      swept <- rt2.store.sweepExpired(System.currentTimeMillis())
+      swept <- rt2.store.sweepCompletedChains(System.currentTimeMillis())
       archived <- rt2.store.archiveSnapshot
       // 上游已归档后接 deps 边 → findNode 归档兜底 → D1-deps 立即触发（「归档上游可触发」裁定）
       _ <- nodeEdit(nodeInput("deps-t4-archived", "late-c", "description" -> Json.fromString("test node purpose"),

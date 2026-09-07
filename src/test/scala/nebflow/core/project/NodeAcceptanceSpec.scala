@@ -160,9 +160,10 @@ class NodeAcceptanceSpec extends CatsEffectSuite:
 
   override def afterEach(context: munit.AfterEach): Unit = ProjectRuntimeRegistry.clear
 
-  // ── ④ TTL 二值断言 ─────────────────────────────────────
+  // ── ④ 链级即时归档二值断言（裁定④「TTL 分开」批 2026-09-07：整链全终态即时归档，
+  //    移除旧 24h 活动区滞留）─────────────────────────────────────
 
-  test("④a TTL: completed node disappears from activity + archived with full result") {
+  test("④a 链级即时归档: 整链全终态 → 活动区整批消失 + 归档留全文（无 24h 滞留）") {
     val ws = tempRoot / "ws-ttl-a"
     os.makeDir.all(ws)
     val system = ActorSystem(s"acc-ttla-${scala.util.Random.nextInt(100000)}")
@@ -172,6 +173,8 @@ class NodeAcceptanceSpec extends CatsEffectSuite:
       now = System.currentTimeMillis()
       _ <- rt.store.mutate(s =>
         s.copy(nodes = s.nodes ++ Map(
+          // 同批（createdAt 同刻）双终态节点；ttlExpireAt 一个已到期一个在未来——
+          // 新语义与计时无关：整链全终态即整批归档
           "n-done" -> NodeDef(id = "n-done", name = "done", agent = "test-agent",
             status = NodeLifecycle.Completed, result = Some("full result text for TTL"), createdAt = now,
             completedAt = Some(now - 60000), ttlExpireAt = Some(now - 1000)),
@@ -180,20 +183,20 @@ class NodeAcceptanceSpec extends CatsEffectSuite:
             completedAt = Some(now), ttlExpireAt = Some(now + 999999))
         ))
       )
-      removed <- rt.store.sweepExpired(now)
+      removed <- rt.store.sweepCompletedChains(now).map(_.sorted)
       s <- rt.store.snapshot
       arch <- rt.store.archiveSnapshot
       fromArchive <- rt.store.findNode("n-done")
       _ <- system.stopAll.handleErrorWith(_ => IO.unit)
     yield
-      assertEquals(removed, List("n-done"))
-      assert(!s.nodes.contains("n-done"), "TTL-expired node must disappear from activity")
-      assert(s.nodes.contains("n-fresh"), "non-expired node stays in activity")
+      assertEquals(removed, List("n-done", "n-fresh"), "整链全终态 → 整批离场（无 24h 滞留）")
+      assert(!s.nodes.contains("n-done"), "archived node must disappear from activity")
+      assert(!s.nodes.contains("n-fresh"), "整批同帧离场——fresh 终态成员不滞留")
       assertEquals(arch.nodes("n-done").result, Some("full result text for TTL"), "archive keeps full result")
       assertEquals(fromArchive.map(_.name), Some("done"), "findNode falls back to archive")
   }
 
-  test("④b TTL rewire: after activity disappearance, NodeEdit in=[archived] delivers archived result downstream") {
+  test("④b 归档重接线: after activity disappearance, NodeEdit in=[archived] delivers archived result downstream") {
     val ws = tempRoot / "ws-ttl-b"
     os.makeDir.all(ws)
     val system = ActorSystem(s"acc-ttlb-${scala.util.Random.nextInt(100000)}")
@@ -202,13 +205,13 @@ class NodeAcceptanceSpec extends CatsEffectSuite:
       rt <- mountProject("acc-ttl-b", ws, system, res)
       ctx = mkCtx(res, system, ws.toString)
       now = System.currentTimeMillis()
-      // A 完成（结果全文），TTL 到期 → 归档
+      // A 完成（结果全文）→ 整链全终态即时归档
       _ <- rt.store.mutate(s =>
         s.copy(nodes = s.nodes + ("n-a" -> NodeDef(id = "n-a", name = "A", agent = "test-agent",
           status = NodeLifecycle.Completed, result = Some("archived result of A"), createdAt = now,
           completedAt = Some(now - 60000), ttlExpireAt = Some(now - 1000))))
       )
-      _ <- rt.store.sweepExpired(now)
+      _ <- rt.store.sweepCompletedChains(now)
       s0 <- rt.store.snapshot
       // 显示消失后接线：NodeEdit 建 B，in 引用归档 A（out=Nebula：20260903 创建必带 out 适配）
       _ <- nodeEdit(nodeInput("acc-ttl-b", "B", "description" -> Json.fromString("test node purpose"),
