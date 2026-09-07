@@ -74,6 +74,10 @@ object SystemReminders:
    *    outdated; environment change notifications cut — only stable fields
    *    remain in systemStable, jittery chatWidth dropped from the template).
    *  - devices: caller supplies a pre-computed delta (+/- lines).
+   *  - projects: Nebula only (progressive disclosure 2026-09-07) — caller
+   *    supplies a pre-computed +/- delta of mounted projects; empty when no
+   *    change. systemStable carries the full list at lifecycle nodes, mid-session
+   *    mount/unmount/create is reported here instead of invalidating the cache.
    *
    * Reminder audit (2026-08-19): time-context (peak/off-peak + next idle
    * window) removed entirely — user flagged "Off-peak hours." as noise
@@ -89,7 +93,8 @@ object SystemReminders:
     taskListText: String = "",
     language: Option[String] = None,
     isRootAgent: Boolean = false,
-    injectTime: Boolean = true
+    injectTime: Boolean = true,
+    mountedProjectsDelta: String = ""
   ): IO[List[SystemReminder]] =
     if !isUserTurn then IO.pure(Nil)
     else
@@ -103,7 +108,8 @@ object SystemReminders:
           // session is team-registered, so the gate lives upstream — include the
           // reminder whenever text is non-empty (schedule stays Nebula-only).
           tasksReminder(taskListText) ++
-          languageReminder(language)
+          languageReminder(language) ++
+          projectsReminder(mountedProjectsDelta)
       yield reminders
 
   /** Devices changed since systemStable was built (cache v2; delta lines 2026-08-20). */
@@ -120,6 +126,14 @@ object SystemReminders:
   /** Language setting changed since systemStable was built (cache v2). */
   private def languageReminder(language: Option[String]): Option[SystemReminder] =
     language.map(lang => SystemReminder("language", s"Language changed: respond in $lang"))
+
+  /** Mounted projects changed since systemStable was built (cache v2,
+    * progressive disclosure 2026-09-07). Nebula sees incremental +/-
+    * entries when a project is mounted/unmounted/created — the root-aware
+    * gate lives upstream (AgentCore only renders delta for the root agent). */
+  private def projectsReminder(mountedProjectsDelta: String): Option[SystemReminder] =
+    if mountedProjectsDelta.isEmpty then None
+    else Some(SystemReminder("projects", s"Mounted projects changed:\n$mountedProjectsDelta"))
 
   /** Summary of this session's pending (untriggered) scheduled tasks. */
   private def pendingScheduleReminder(pending: List[ScheduledTask]): Option[SystemReminder] =
