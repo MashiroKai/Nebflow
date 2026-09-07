@@ -71,9 +71,12 @@
   font-weight: 600;
   white-space: nowrap;
   user-select: none;
-  /* #396 spec §8 A8: session name degrades — truncate first, hide last (P5) */
-  text-overflow: ellipsis;
-  overflow: hidden;
+  /* 2026-09-07 作者裁定: agent name is a fixed reserved item — fully visible at
+     ANY window width, never truncated, never hidden, never overlapping icons.
+     Header pressure is absorbed by earlier P1→P5 icon hiding instead (main.js
+     sizes the fit requirement with the name's full intrinsic width).
+     Supersedes the #396 §8 A8 truncate-first / hide-last (P5) degrade. */
+  flex-shrink: 0;
 }
 /* #396 adaptive header: non-fixed right buttons hide by priority (display:none,
    no overflow "⋯" menu — user 2026-08-25 裁定 仅自动隐藏). */
