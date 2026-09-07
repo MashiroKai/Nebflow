@@ -700,6 +700,11 @@ export default {
   'bg.ended': '进程已结束',
   'bg.stuck': '超过 10 分钟无输出',
   'bg.lines': '{count}行',
+  'bg.header': '后台任务 · {count}',
+  'bg.empty': '当前无运行中的后台任务',
+  'bg.kind.local': '本地',
+  'bg.kind.remote': '远程',
+  'bg.openedBy': '由 {origin} 开启',
 
   // === Time ===
   'time.yesterday': '昨天',
