@@ -218,6 +218,10 @@ object NodeDef:
  *     true——mount-enforce 批 payload 契约，缺失=非 merge）；
  *   - blockedFeedback：**仅 status==blocked 携带**（20260907 上下文经济学批裁定②
  *     ——非 blocked 终态的历史残留不进默认载荷；历史参照走 detail 补挂/归档）。
+ *   - notifySentAt：**仅异常终态（failed/cancelled）且已上报携带**（归档语义批
+ *     2026-09-07「送达即移」——前端链判据据此判断异常终态「已上报可归档」；与
+ *     deps/plugins 同构条件字段，非命中不带 = 零字段漂移）。completed 无上报要求
+ *     恒不带。
  * skill/mcp/preset 为节点配置（2b §B.4/H-11① deprecated，新建参数已退役）：同样
  * 条件序列化——仅非 None 才带（20260907 裁定③，无三键节点字段集字节级零漂移）。 */
 object NodePayload:
@@ -320,7 +324,15 @@ object NodePayload:
       // bgWait 条件序列化（僵尸收敛批 2026-09-06）：仅 bg-wait 自持的 running 节点
       // 带——命中才产出，未命中节点 payload 字段集零变化（既有条件字段断言零影响）。
       val bgWaitFields = node.bgWait.toList.map(w => "bgWait" -> w.asJson)
-      Json.obj((baseFields ++ legacyConfigFields ++ hasResultFields ++ taskPreviewFields ++ depsFields ++ feedbackFields ++ pluginFields ++ notifyFields ++ mergeFields ++ loopFields ++ bgWaitFields)*)
+      // notifySentAt 条件序列化（归档语义批 2026-09-07「送达即移」）：**仅异常终态
+      // （failed/cancelled）且已上报（notifySentAt.isDefined）才带**——前端链判据
+      // （flowMapArchive.js chainEligible）以此判断异常终态「已上报可归档」；与
+      // deps/plugins 同构条件字段，非命中不带 = 零字段漂移。completed 无上报要求恒不带。
+      val notifySentAtFields =
+        (if node.status == NodeLifecycle.Failed || node.status == NodeLifecycle.Cancelled then
+           node.notifySentAt.toList.map(t => "notifySentAt" -> t.asJson)
+         else Nil)
+      Json.obj((baseFields ++ legacyConfigFields ++ hasResultFields ++ taskPreviewFields ++ depsFields ++ feedbackFields ++ pluginFields ++ notifyFields ++ mergeFields ++ loopFields ++ bgWaitFields ++ notifySentAtFields)*)
 
 /** Flow Map 活动区（§2.6，磁盘 flow-map.json）。 */
 case class FlowMapState(
