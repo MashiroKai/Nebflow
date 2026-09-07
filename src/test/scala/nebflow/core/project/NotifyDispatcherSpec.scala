@@ -17,19 +17,27 @@ import nebflow.shared.{LlmHandle, LlmRequest, LlmResponse, StreamChunk}
 import scala.concurrent.duration.*
 
 /**
- * dispatch-notify（节点终态结果回流分发器）验收（2026-09-05 批）：
+ * dispatch-notify（节点终态结果回流分发器）验收（2026-09-05 批 completion；
+ * 2026-09-07 批扩展 failed 接线——设计 20260907_node-failure-event-dispatcher-routing.md）：
  *
  * - ① 显式开启节点完成 → 分发器会话被触发，通知文本含节点名/终态/原因码；
  *   结果全文可达（results/<id>.md 持久化 + NodeList detail 指引）
  * - ② 未开启节点零触发；out=Nebula 投递零回归
- * - ③ 防循环收敛：同节点去重（notifySentAt 持久标记）；链级预算耗尽 → 节点**保持
- *   completed + 落 notifySentAt 止重扫 + 单条监督通知（notice 语义非 blocked）**；
- *   预算按回合边界重置，single-flight 仅首次一条
- * - ④ 单一入口组合不双触发：未接线 reason（blocked/failed）接口层零动作
- *   （blocked 重入由 FeedbackRouter 独占）
- * - ⑤ 重启补投：未标记欠账由 redeliver 扫描补投；已标记（持久化）不重触发
+ * - ③ 防循环收敛（completion）：同节点去重（notifySentAt 持久标记）；链级预算耗尽 →
+ *   节点**保持 completed + 落 notifySentAt 止重扫 + 单条监督通知（notice 语义非
+ *   blocked）**；预算按回合边界重置，single-flight 仅首次一条
+ * - ④ 单一入口组合不双触发：blocked 仍接口预留零动作（FeedbackRouter 独占）；
+ *   failed 已接线（状态门控、不查 flag）——状态不匹配（blocked 节点 + Failed
+ *   reason）零动作
+ * - ⑤ 重启补投（completion）：未标记欠账由 redeliver 扫描补投；已标记不重触发
  * - ⑥ NodeEdit notifyDispatcher 开关机制：create 开启 / edit 撤销 / 域校验 /
  *   载荷条件字段 / 缺省关
+ * - ⑦-⑫ failed 用例组（2026-09-07 批）：同节点去重 / 预算分账与耗尽 /
+ *   窗口熔断（Suppress 不标记、冷却结束补投不丢失）/ redeliver 欠账 /
+ *   重激活后再失败必须再通知（inFlight 释放 + notifySentAt 清零配套）
+ * - ⑬-⑮ failed 集成（真实引擎 zombie 收敛路径）：out=Nebula 双收（Nebula
+ *   eventType=failed + 分发器同收）/ out=None 无 out 依赖 / out=节点下游
+ *   collect 结算 + 分发器触发
  */
 class NotifyDispatcherSpec extends CatsEffectSuite:
 
@@ -165,10 +173,15 @@ class NotifyDispatcherSpec extends CatsEffectSuite:
         (j.hcursor.get[String]("type").getOrElse(""), j.hcursor.get[String]("nodeId").getOrElse("")))))
       .handleError(_ => Nil)
 
-  /** 单测装配：真实 FlowMapStore（temp 盘）+ stub 触发/升级捕获。 */
+  /** 单测装配：真实 FlowMapStore（temp 盘）+ stub 触发/升级捕获（failed 窗口参数
+    * 可注入 tiny 值验证状态机，同 FeedbackRouterSpec 先例）。 */
   private def mkUnit(
     name: String,
-    budgetMax: Int = DispatchNotify.DefaultBudget
+    budgetMax: Int = DispatchNotify.DefaultBudget,
+    failedBudgetMax: Int = DispatchNotify.DefaultBudget,
+    failedWindowMs: Long = DispatchNotify.FailedWindowMs,
+    failedCooldownMs: Long = DispatchNotify.FailedCooldownMs,
+    failedWindowThreshold: Int = DispatchNotify.FailedWindowThreshold
   ): IO[(FlowMapStore, DispatchNotify, Ref[IO, List[String]], Ref[IO, List[String]], os.Path)] =
     val ws = tempRoot / s"unit-$name-${scala.util.Random.nextInt(100000)}"
     os.makeDir.all(ws)
@@ -181,9 +194,25 @@ class NotifyDispatcherSpec extends CatsEffectSuite:
         escalate = (text, _) => escalated.update(_ :+ text),
         emitUpdated = (_: NodeDef) => IO.unit,
         trigger = text => triggered.update(_ :+ text),
-        budgetMax = budgetMax
+        budgetMax = budgetMax,
+        failedBudgetMax = failedBudgetMax,
+        failedWindowMs = failedWindowMs,
+        failedCooldownMs = failedCooldownMs,
+        failedWindowThreshold = failedWindowThreshold
       )
     yield (store, dn, triggered, escalated, ws)
+
+  /** 种一个死会话 running 节点（僵尸收敛路径——settleStaleRunningNodes 驱动自动
+    * failed，2026-09-07 批 failed 通知的集成触发源；NodeDeadSessionAutoReapSpec 同款）。 */
+  private def seedZombie(rt: ProjectRuntime, id: String, nodeName: String, task: String,
+      out: Option[String], in: List[String] = Nil): IO[Unit] =
+    rt.store.mutate { s =>
+      s.copy(nodes = s.nodes + (id -> NodeDef(
+        id = id, name = nodeName, agent = "general", task = Some(task), out = out, in = in,
+        status = NodeLifecycle.Running,
+        startedAt = Some(System.currentTimeMillis() - 3_600_000),
+        createdAt = System.currentTimeMillis() - 3_600_000)))
+    }.void
 
   /** 种一个节点（可指定终态/标志/结果）。 */
   private def seed(store: FlowMapStore, id: String, name: String, status: String,
@@ -370,22 +399,28 @@ class NotifyDispatcherSpec extends CatsEffectSuite:
       assertEquals(s3After.notifySentAt.isDefined, true, "s3 marked sent")
   }
 
-  // ── ④：单一入口组合不双触发（未接线 reason 接口层零动作）─────────
+  // ── ④：单一入口组合不双触发（blocked 仍预留零动作；failed 已接线、状态门控）──
 
-  test("④ single-entry reason gate: blocked/failed reasons are interface-reserved no-ops (no double trigger with FeedbackRouter)") {
+  test("④ single-entry reason gate: blocked stays reserved no-op; failed wired (status-gated, flag-independent, no double trigger with FeedbackRouter)") {
     for
       (store, dn, triggered, escalated, _) <- mkUnit("reasongate")
       _ <- seed(store, "n-rg", "gate-node", NodeLifecycle.Blocked, notify = true, result = Some("[blocked:other] x"))
-      seeded <- store.getNode("n-rg").map(_.get)
-      _ <- dn.notifyTerminal(seeded, NotifyReason.Blocked)   // 预留：FeedbackRouter 独占 blocked 重入
-      _ <- dn.notifyTerminal(seeded, NotifyReason.Failed)    // 预留：监督化批
+      _ <- seed(store, "n-rgf", "gate-failed", NodeLifecycle.Failed, notify = false, result = Some("boom"))
+      blockedNode <- store.getNode("n-rg").map(_.get)
+      failedNode <- store.getNode("n-rgf").map(_.get)
+      _ <- dn.notifyTerminal(blockedNode, NotifyReason.Blocked)  // 仍预留：FeedbackRouter 独占 blocked 重入
+      _ <- dn.notifyTerminal(blockedNode, NotifyReason.Failed)   // 状态不匹配（Blocked ≠ Failed）→ 零动作
+      _ <- dn.notifyTerminal(failedNode, NotifyReason.Failed)    // failed 接线：不查 flag 也触发
       calls <- triggered.get
       esc <- escalated.get
-      after <- store.getNode("n-rg").map(_.get)
+      afterB <- store.getNode("n-rg").map(_.get)
+      afterF <- store.getNode("n-rgf").map(_.get)
     yield
-      assertEquals(calls.size, 0, "reserved reasons must not trigger")
-      assertEquals(esc.size, 0, "reserved reasons must not escalate")
-      assertEquals(after.notifySentAt, None, "no marker written for reserved reasons")
+      assertEquals(calls.size, 1, "only the failed node triggers (blocked reason no-op; status mismatch no-op)")
+      assert(calls.head.contains("gate-failed") && calls.head.contains("reason=failed"), s"failed trigger text, got: ${calls.headOption}")
+      assertEquals(esc.size, 0, "no escalation from the reason gate")
+      assertEquals(afterB.notifySentAt, None, "no marker written for blocked node")
+      assertEquals(afterF.notifySentAt.isDefined, true, "marker set for failed node")
   }
 
   // ── ⑤：重启补投（未标记欠账补投；已标记不重触发）────────────────
@@ -478,6 +513,254 @@ class NotifyDispatcherSpec extends CatsEffectSuite:
       assert(runningEdit.isRight, s"flag switch must be allowed on running node, got: $runningEdit")
       assert(completedRefused.isLeft, "flag switch must be refused on completed node")
       assert(completedRefused.left.exists(_.contains("wiring/pending/running")), s"refusal must name the domain, got: $completedRefused")
+  }
+
+  // ── ⑦-⑫：failed 接线单测（2026-09-07 批，设计 §11.2-11.5/11.8）────────
+
+  test("⑦ failed dedup: same node notifies exactly once (in-flight claim + persisted marker; flag-independent)") {
+    for
+      (store, dn, triggered, _, _) <- mkUnit("failed-dedup")
+      _ <- seed(store, "n-fdup", "fdup-node", NodeLifecycle.Failed, notify = false, result = Some("err-x"))
+      seeded <- store.getNode("n-fdup").map(_.getOrElse(fail("seed must land")))
+      _ <- dn.notifyTerminal(seeded, NotifyReason.Failed)
+      _ <- dn.notifyTerminal(seeded, NotifyReason.Failed) // 第二次必须被去重
+      calls <- triggered.get
+      after <- store.getNode("n-fdup").map(_.getOrElse(fail("node must exist")))
+    yield
+      assertEquals(calls.size, 1, "second notify for same node must be deduped")
+      assert(calls.head.contains("fdup-node") && calls.head.contains("reason=failed"), s"failed trigger text, got: ${calls.headOption}")
+      assertEquals(after.notifySentAt.isDefined, true, "marker persisted after first trigger")
+  }
+
+  test("⑧ failed ledger split: completion budget exhaustion does NOT consume failed budget (independent Refs)") {
+    for
+      (store, dn, triggered, escalated, _) <- mkUnit("failed-split", budgetMax = 1)
+      _ <- seed(store, "n-c1", "c-one", NodeLifecycle.Completed, notify = true, result = Some("R1"))
+      _ <- seed(store, "n-c2", "c-two", NodeLifecycle.Completed, notify = true, result = Some("R2"))
+      _ <- seed(store, "n-f1", "f-one", NodeLifecycle.Failed, notify = false, result = Some("E1"))
+      c1 <- store.getNode("n-c1").map(_.get)
+      c2 <- store.getNode("n-c2").map(_.get)
+      f1 <- store.getNode("n-f1").map(_.get)
+      _ <- dn.notifyTerminal(c1, NotifyReason.Completion)  // completion 预算 1/1 → 触发
+      _ <- dn.notifyTerminal(c2, NotifyReason.Completion)  // completion 预算耗尽 → 升级
+      _ <- dn.notifyTerminal(f1, NotifyReason.Failed)      // failed 预算独立分账 → 照常触发
+      calls <- triggered.get
+      esc <- escalated.get
+    yield
+      assertEquals(calls.count(_.contains("reason=completion")), 1, "completion: 1 trigger (budget=1)")
+      assertEquals(calls.count(_.contains("reason=failed")), 1, "failed budget must be independent of completion exhaustion")
+      assertEquals(esc.size, 1, "one completion-budget notice only")
+      assert(esc.head.contains("预算耗尽"), s"notice must carry budget reason, got: ${esc.headOption}")
+  }
+
+  test("⑨ failed budget exhaustion: 3rd failed (budget=2) not triggered, kept failed, single notice (notice semantics), no rescan") {
+    for
+      (store, dn, triggered, escalated, ws) <- mkUnit("failed-budget", failedBudgetMax = 2)
+      _ <- seed(store, "n-fb1", "fb-one", NodeLifecycle.Failed, notify = false, result = Some("E1"))
+      _ <- seed(store, "n-fb2", "fb-two", NodeLifecycle.Failed, notify = false, result = Some("E2"))
+      _ <- seed(store, "n-fb3", "fb-three", NodeLifecycle.Failed, notify = false, result = Some("E3"))
+      b1 <- store.getNode("n-fb1").map(_.get)
+      b2 <- store.getNode("n-fb2").map(_.get)
+      b3 <- store.getNode("n-fb3").map(_.get)
+      _ <- dn.notifyTerminal(b1, NotifyReason.Failed)
+      _ <- dn.notifyTerminal(b2, NotifyReason.Failed)
+      _ <- dn.notifyTerminal(b3, NotifyReason.Failed) // 预算 2 已耗尽 → 保持 failed + 单条 notice
+      calls <- triggered.get
+      esc <- escalated.get
+      b3After <- store.getNode("n-fb3").map(_.getOrElse(fail("fb3 must exist")))
+      audit <- readAuditTypes(ws)
+      _ <- dn.redeliver() // 止重扫：已标记 → 不再重投/重报
+      callsAfterScan <- triggered.get
+    yield
+      assertEquals(calls.size, 2, "failed budget=2 → exactly 2 triggers")
+      assertEquals(b3After.status, NodeLifecycle.Failed, "budget-exhausted node must STAY failed (terminal not flipped)")
+      assertEquals(b3After.notifySentAt.isDefined, true, "notifySentAt set → exits redeliver candidate set")
+      assertEquals(esc.size, 1, "exactly one supervisor notice (single-flight)")
+      assert(esc.head.contains("failed 通知预算耗尽"), s"notice must carry failed-budget reason, got: ${esc.head}")
+      assert(!esc.head.contains("blocked"), "notice must NOT use blocked semantics")
+      assert(audit.exists((t, id) => t == "dispatch-notify" && id == "n-fb3"), s"failed budget-exhausted audit for fb3, got: $audit")
+      assertEquals(callsAfterScan.size, 2, "no rescan: budget-exhausted node not re-notified")
+  }
+
+  test("⑩ failed window circuit breaker: threshold → merged escalation + cooldown; suppressed/cooldown-on unmarked; cooldown end → redeliver delivers (not lost)") {
+    for
+      (store, dn, triggered, escalated, _) <- mkUnit("failed-window",
+        failedWindowThreshold = 3, failedWindowMs = 250, failedCooldownMs = 300)
+      _ <- seed(store, "n-w1", "w-one", NodeLifecycle.Failed, notify = false, result = Some("E1"))
+      _ <- seed(store, "n-w2", "w-two", NodeLifecycle.Failed, notify = false, result = Some("E2"))
+      _ <- seed(store, "n-w3", "w-three", NodeLifecycle.Failed, notify = false, result = Some("E3"))
+      _ <- seed(store, "n-w4", "w-four", NodeLifecycle.Failed, notify = false, result = Some("E4"))
+      w1 <- store.getNode("n-w1").map(_.get)
+      w2 <- store.getNode("n-w2").map(_.get)
+      w3 <- store.getNode("n-w3").map(_.get)
+      w4 <- store.getNode("n-w4").map(_.get)
+      _ <- dn.notifyTerminal(w1, NotifyReason.Failed)  // 窗口 1 → 触发
+      _ <- dn.notifyTerminal(w2, NotifyReason.Failed)  // 窗口 2 → 触发
+      _ <- dn.notifyTerminal(w3, NotifyReason.Failed)  // 窗口 3 ≥ 阈值 → CooldownOn：合并升级 + 冷却
+      _ <- dn.notifyTerminal(w4, NotifyReason.Failed)  // 冷却期内 → Suppress：不标记不触发
+      calls1 <- triggered.get
+      esc1 <- escalated.get
+      w3a <- store.getNode("n-w3").map(_.get)
+      w4a <- store.getNode("n-w4").map(_.get)
+      _ <- IO.sleep(600.millis) // 窗口（250ms）+ 冷却（300ms）双过期
+      scan <- dn.redeliver()    // 回合边界：failed 预算重置；w3/w4 未标记 → 补投
+      calls2 <- triggered.get
+      w3b <- store.getNode("n-w3").map(_.get)
+      w4b <- store.getNode("n-w4").map(_.get)
+    yield
+      assertEquals(calls1.size, 2, "w1/w2 triggered; w3 cooldown-on (escalated), w4 suppressed")
+      assertEquals(esc1.size, 1, "merged single escalation on threshold")
+      assert(esc1.head.contains("冷却"), s"escalation must carry cooldown wording, got: ${esc1.head}")
+      assert(esc1.head.contains("w-three") && esc1.head.contains("n-w3"), "escalation carries latest failure node")
+      assertEquals(w3a.notifySentAt, None, "cooldown-on node unmarked → stays in candidate set")
+      assertEquals(w4a.notifySentAt, None, "suppressed node unmarked (not lost, deferred)")
+      assertEquals(scan, 2, "redeliver sees w3+w4 after cooldown")
+      assertEquals(calls2.size, 4, "w3/w4 delivered after cooldown ends (delayed, not lost)")
+      assert(w3b.notifySentAt.isDefined && w4b.notifySentAt.isDefined, "marked after post-cooldown delivery")
+  }
+
+  test("⑪ failed redeliver backlog: unmarked failed re-triggered by scan; marked never re-triggered (across restart)") {
+    for
+      (store, dn, triggered, _, _) <- mkUnit("failed-redeliver")
+      _ <- seed(store, "n-fr1", "fr-one", NodeLifecycle.Failed, notify = false, result = Some("E"))
+      _ <- seed(store, "n-fr2", "fr-two", NodeLifecycle.Failed, notify = false, result = Some("E"))
+      // 模拟「已通知并标记」的节点（重启前已投）
+      _ <- store.mutate(s => s.copy(nodes = s.nodes.updated("n-fr2",
+        s.nodes("n-fr2").copy(notifySentAt = Some(System.currentTimeMillis()))))).void
+      scan1 <- dn.redeliver()
+      count1 <- triggered.get.map(_.size)
+      _ <- dn.redeliver()
+      count2 <- triggered.get.map(_.size)
+      // 重启模拟：全新实例（进程态清零），持久标记仍在 → 不重触发
+      triggered2 <- Ref.of[IO, List[String]](Nil)
+      dn2 = new DispatchNotify(store, tempRoot.toString, store.project,
+        escalate = (_, _) => IO.unit, emitUpdated = (_: NodeDef) => IO.unit,
+        trigger = t => triggered2.update(_ :+ t), budgetMax = DispatchNotify.DefaultBudget)
+      _ <- dn2.redeliver()
+      count3 <- triggered2.get.map(_.size)
+      fr1 <- store.getNode("n-fr1").map(_.get)
+      fr2 <- store.getNode("n-fr2").map(_.get)
+    yield
+      assertEquals(scan1, 1, "scan sees exactly 1 unmarked failed candidate (fr1)")
+      assertEquals(count1, 1, "exactly one trigger from scan (fr1)")
+      assertEquals(count2, 1, "second scan: nothing new")
+      assertEquals(count3, 0, "fresh instance (restart): persisted markers prevent re-trigger")
+      assertEquals(fr1.notifySentAt.isDefined, true, "fr1 marked after delivery")
+      assertEquals(fr2.notifySentAt.isDefined, true, "fr2 (pre-marked) untouched")
+  }
+
+  test("⑫ failed re-notify after reactivation: in-flight released + notifySentAt cleared → second real failure notifies again (retry loop, not cycle)") {
+    for
+      (store, dn, triggered, _, _) <- mkUnit("failed-renotify")
+      _ <- seed(store, "n-rn", "rn-node", NodeLifecycle.Failed, notify = false, result = Some("err-1"))
+      n1 <- store.getNode("n-rn").map(_.get)
+      _ <- dn.notifyTerminal(n1, NotifyReason.Failed) // 触发 #1 + markSent（attempt 结束释放 inFlight）
+      // 模拟 NodeEdit failed 重激活复位（NodeTools 事务同款字段）：notifySentAt 清零
+      _ <- store.mutate(s => s.copy(nodes = s.nodes.updated("n-rn",
+        s.nodes("n-rn").copy(notifySentAt = None)))).void
+      n2 <- store.getNode("n-rn").map(_.get)
+      _ <- dn.notifyTerminal(n2, NotifyReason.Failed) // 重跑后的第二次真失败 → 必须再通知
+      calls <- triggered.get
+    yield
+      assertEquals(calls.size, 2, "reactivated node's second real failure must notify again — inFlight must not block forever")
+      assert(calls.forall(_.contains("reason=failed")), "both notifies carry failed reason")
+  }
+
+  // ── ⑬-⑮：failed 集成（真实引擎 zombie 收敛 → deliverFailed 尾部挂接）────
+
+  test("⑬ failed (out=Nebula) double delivery: Nebula gets eventType=failed AND dispatcher triggered; notify text/audit/marker asserts") {
+    val ws = tempRoot / "ws-fail-nebula"
+    os.makeDir.all(ws)
+    val system = ActorSystem(s"ntf-fn-${scala.util.Random.nextInt(100000)}")
+    val llm = FuncLlm(text => if text.contains("任务分发器") then IO.pure("ok") else IO.pure("x"))
+    for
+      res <- mkResources(system, tempRoot, llm.handle)
+      rt <- mountReal("ntf-fn", ws, system, res)
+      nebula <- registerNebulaCapture(res, system)
+      _ <- seedZombie(rt, "n-fn1", "fail-nebula", "dead task", Some("Nebula"))
+      _ <- rt.engine.settleStaleRunningNodes()
+      // out=Nebula 投递（eventType=failed）零回归
+      _ <- waitUntil(20.seconds)(nebula.get.map(_.exists((t, ev) =>
+        t.contains("[Node 'fail-nebula' failed]") && ev.contains("failed"))))
+      // 分发器触发（spawn prompt 捕获）
+      _ <- waitUntil(20.seconds)(llm.inputs.get.map(_.exists(p => p.contains("[dispatch-notify]") && p.contains("fail-nebula"))))
+      prompts <- llm.inputs.get
+      nodeId <- idOf(rt, "fail-nebula")
+      node <- rt.store.snapshot.map(_.nodes(nodeId))
+      audit <- readAuditTypes(ws)
+      deliveries <- nebula.get
+      _ <- system.stopAll.handleErrorWith(_ => IO.unit)
+    yield
+      val prompt = prompts.find(p => p.contains("[dispatch-notify]") && p.contains("fail-nebula"))
+        .getOrElse(fail("failed notify prompt must be captured"))
+      assert(prompt.contains(s"($nodeId)"), s"prompt must carry node id, got: ${prompt.take(200)}")
+      assert(prompt.contains("reason=failed"), "prompt must carry failed reason code")
+      assert(prompt.contains("错误摘要"), "prompt must carry err summary section")
+      assert(prompt.contains("no live session"), "prompt must carry the actual error text")
+      assert(prompt.contains("NodeList(detail=") && prompt.contains(nodeId), "prompt must carry result read hint (NodeList detail)")
+      assert(prompt.contains("reactivate"), "prompt must teach reactivate rerun (ruling ③: failed IS reactivatable)")
+      assert(prompt.contains("承接节点"), "prompt must teach rename-new fallback action")
+      assert(prompt.contains("abandon=true"), "prompt must teach abandon action")
+      assert(prompt.contains("Nebula"), "prompt must teach escalate-to-Nebula action")
+      assertEquals(node.notifySentAt.isDefined, true, "notifySentAt marker must be set after failed trigger")
+      assert(audit.exists((t, id) => t == "dispatch-notify" && id == nodeId), s"dispatch-notify failed audit must exist, got: $audit")
+      assert(deliveries.exists((t, ev) => t.contains("[Node 'fail-nebula' failed]") && ev.contains("failed")),
+        "out=Nebula failed delivery must be unchanged (Nebula + dispatcher double delivery)")
+  }
+
+  test("⑭ failed (out=None): dispatcher still triggered (no out-wiring dependency); no Nebula delivery for the node") {
+    val ws = tempRoot / "ws-fail-dangling"
+    os.makeDir.all(ws)
+    val system = ActorSystem(s"ntf-fd-${scala.util.Random.nextInt(100000)}")
+    val llm = FuncLlm(text => if text.contains("任务分发器") then IO.pure("ok") else IO.pure("x"))
+    for
+      res <- mkResources(system, tempRoot, llm.handle)
+      rt <- mountReal("ntf-fd", ws, system, res)
+      nebula <- registerNebulaCapture(res, system)
+      _ <- seedZombie(rt, "n-fd1", "fail-dangling", "dead task", None)
+      _ <- rt.engine.settleStaleRunningNodes()
+      _ <- waitUntil(20.seconds)(llm.inputs.get.map(_.exists(p => p.contains("[dispatch-notify]") && p.contains("fail-dangling"))))
+      nodeId <- idOf(rt, "fail-dangling")
+      node <- rt.store.snapshot.map(_.nodes(nodeId))
+      deliveries <- nebula.get
+      _ <- system.stopAll.handleErrorWith(_ => IO.unit)
+    yield
+      assertEquals(node.status, NodeLifecycle.Failed, "zombie converged to failed")
+      assertEquals(node.notifySentAt.isDefined, true, "dispatcher notified despite dangling out (no out dependency)")
+      // out=None：无节点结果投递（「[Node '…' failed]」形态 / eventType=failed 均不得
+      // 出现）。分发器最终输出投递的 header 会带任务摘要（含节点名）——那是 dispatcher
+      // 输出通道（eventType=completed），不是节点结果投递，不在此断言范围。
+      assert(!deliveries.exists((t, ev) => t.contains("[Node 'fail-dangling'") || ev.contains("failed")),
+        s"out=None: no node-result delivery for this node, got: $deliveries")
+  }
+
+  test("⑮ failed (out=node): downstream collect-settles AND dispatcher triggered for the failed upstream") {
+    val ws = tempRoot / "ws-fail-target"
+    os.makeDir.all(ws)
+    val system = ActorSystem(s"ntf-ft-${scala.util.Random.nextInt(100000)}")
+    val llm = FuncLlm(text => if text.contains("任务分发器") then IO.pure("ok") else IO.pure("dn-done"))
+    for
+      res <- mkResources(system, tempRoot, llm.handle)
+      rt <- mountReal("ntf-ft", ws, system, res)
+      _ <- seedZombie(rt, "n-ft-up", "fail-up", "dead upstream task", Some("n-ft-dn"))
+      _ <- rt.store.mutate { s =>
+        s.copy(nodes = s.nodes + ("n-ft-dn" -> NodeDef(
+          id = "n-ft-dn", name = "down-node", agent = "general",
+          task = Some("downstream work"), out = Some("Nebula"), in = List("n-ft-up"),
+          status = NodeLifecycle.Wiring, createdAt = System.currentTimeMillis() - 3_600_000))) }.void
+      _ <- rt.engine.settleStaleRunningNodes()
+      // 下游 collect 结算 → 启动 → 完成（既有语义零回归）
+      _ <- waitStatus(rt, "down-node", Set(NodeLifecycle.Completed))
+      _ <- waitUntil(20.seconds)(llm.inputs.get.map(_.exists(p => p.contains("[dispatch-notify]") && p.contains("fail-up"))))
+      upId <- idOf(rt, "fail-up")
+      up <- rt.store.snapshot.map(_.nodes(upId))
+      dn <- idOf(rt, "down-node").flatMap(id => rt.store.snapshot.map(_.nodes(id)))
+      _ <- system.stopAll.handleErrorWith(_ => IO.unit)
+    yield
+      assertEquals(up.status, NodeLifecycle.Failed, "upstream failed")
+      assertEquals(up.notifySentAt.isDefined, true, "dispatcher notified for failed upstream (settle-then-notify order)")
+      assertEquals(dn.status, NodeLifecycle.Completed, "downstream collect-settled and completed (zero regression)")
+      assertEquals(dn.result, Some("dn-done"), "downstream completed with its own run")
   }
 
 end NotifyDispatcherSpec
