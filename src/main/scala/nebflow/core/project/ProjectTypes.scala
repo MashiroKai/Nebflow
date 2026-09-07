@@ -157,7 +157,11 @@ case class NodeDef(
   // flow-map.json 携带的两键零迁移零破坏）。
   /** 该节点身份累计被 blocked 轮数（防循环计数 §3.1；NodeEdit 重激活不清零）。 */
   blockCount: Int = 0,
-  /** 最近一次 blocked 的结构化反馈（§1.4；重激活后保留供历史参照）。 */
+  /** 最近一次 blocked 的结构化反馈（§1.3）。存储侧永久保留（重激活不清零）；
+    * **载荷侧仅 status==blocked 携带**（观测面上下文经济学批 20260907 裁定②）：
+    * completed/failed/cancelled 的历史残留不进 NodeList/REST/WS 默认载荷——
+    * 历史参照走 detail 按需通道补挂与归档留痕；FeedbackRouter 重入协议消费
+    * 当下反馈（store 直读，不经载荷），零影响。 */
   blockedFeedback: Option[BlockedFeedback] = None,
   createdAt: Long,
   startedAt: Option[Long] = None,
@@ -192,8 +196,10 @@ object NodeDef:
   * 不带——载荷字段集对无此特征的节点零漂移）：
  *   - hasResult: 节点持有结果全文（前端据此发起按需拉取）；
  *   - taskPreview: 存量节点无 description 时的回退展示（task 首行 ≤80 字符截断）；
- *   - deps / blockedFeedback / plugins / merge：既有条件字段语义不变（merge
- *     仅 merge 节点带 "merge": true——mount-enforce 批 payload 契约，缺失=非 merge）。
+ *   - deps / plugins / merge：既有条件字段语义不变（merge 仅 merge 节点带 "merge":
+ *     true——mount-enforce 批 payload 契约，缺失=非 merge）；
+ *   - blockedFeedback：**仅 status==blocked 携带**（20260907 上下文经济学批裁定②
+ *     ——非 blocked 终态的历史残留不进默认载荷；历史参照走 detail 补挂/归档）。
  * skill/mcp/preset 为节点配置（skill/mcp 仅存量兼容展示——2b §B.4/H-11① deprecated）。 */
 object NodePayload:
   /** taskPreview 截断上限（回退展示第一层，存量节点专用）。 */
@@ -235,13 +241,22 @@ object NodePayload:
             val preview = if firstLine.length > TaskPreviewMaxChars then firstLine.take(TaskPreviewMaxChars) + "…" else firstLine
             List("taskPreview" -> preview.asJson)
           }.getOrElse(Nil)
-      val feedbackFields = node.blockedFeedback.toList.map { bf =>
-        "blockedFeedback" -> Json.obj(
-          "category" -> bf.category.asJson,
-          "detail" -> bf.detail.asJson,
-          "suggestion" -> bf.suggestion.asJson
-        )
-      }
+      // blockedFeedback 条件序列化（观测面上下文经济学批 20260907 裁定②）：
+      // **仅 status==blocked 携带**——completed/failed/cancelled 的历史残留不进
+      // 默认载荷（NodeList/REST/WS 单一序列化点同源瘦身，实测 9 个非 blocked
+      // 节点曾泄漏 11.6KB，审计 §3.5）。历史参照：NodeList(detail=) 补挂 + 归档
+      // 留痕；FeedbackRouter 重入协议消费当下反馈（store 直读不经载荷），零影响。
+      // 入库侧封顶（detail 300 / suggestion 150）在 BlockedReader 单点。
+      val feedbackFields =
+        if node.status == NodeLifecycle.Blocked then
+          node.blockedFeedback.toList.map { bf =>
+            "blockedFeedback" -> Json.obj(
+              "category" -> bf.category.asJson,
+              "detail" -> bf.detail.asJson,
+              "suggestion" -> bf.suggestion.asJson
+            )
+          }
+        else Nil
       // deps 条件序列化（deps 设计 §1.1；与 blockedFeedback 条件字段同构）：
       // 非 Nil 才带——NodeEventPushSpec 的 NodeListKeys 字段集断言零改动（无 deps
       // 的节点 payload 字段集不变），前端增量渲染对缺键天然兼容。
