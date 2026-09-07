@@ -395,7 +395,7 @@ class NodeBlockedReentrySpec extends CatsEffectSuite:
 
   // ── abandon：终态 → cancelled + TTL + 审计；running 拒绝 ────────
 
-  test("abandon: blocked node → cancelled + display TTL + audit; running node refused") {
+  test("abandon: blocked node → cancelled + retained on map (no TTL) + audit; running node refused") {
     val ws = tempRoot / "ws-abandon"
     os.makeDir.all(ws)
     val system = ActorSystem(s"blk-abandon-${scala.util.Random.nextInt(100000)}")
@@ -428,7 +428,10 @@ class NodeBlockedReentrySpec extends CatsEffectSuite:
       assert(refused.left.exists(_.contains("terminal")), s"refusal message must point to terminal-only, got: $refused")
       assert(r.isRight, s"abandon on blocked node must succeed, got: $r")
       assertEquals(a.status, NodeLifecycle.Cancelled, "abandoned node becomes cancelled (§7.7)")
-      assert(a.ttlExpireAt.isDefined, "abandoned node walks normal display TTL (§7.6)")
+      // 2026-09-07 作者裁定（8749a582，异常终态链不再自动归档）：abandon → cancelled
+      // 无 TTL 强制清（ttlExpireAt=None），节点留主图由上层裁决——本断言随代码对齐
+      // （旧断言 isDefined 系该批漏改，main 基线预存红，合并观测面P0P1引擎批复验时修正）。
+      assert(a.ttlExpireAt.isEmpty, "abandoned node retained on map — no display TTL (2026-09-07 ruling)")
       assert(evs.exists((t, id, p) => t == "nodeUpdated" && id == aId && p.hcursor.get[String]("status").toOption.contains(NodeLifecycle.Cancelled)),
         "abandon must emit nodeUpdated (cancelled)")
       assert(audit.exists((t, id) => t == "abandoned" && id == aId), s"abandoned audit line, got: $audit")
