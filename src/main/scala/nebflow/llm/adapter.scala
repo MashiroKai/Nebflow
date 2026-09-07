@@ -1,6 +1,9 @@
 package nebflow.llm
 
+import cats.effect.IO
 import nebflow.shared.*
+import sttp.capabilities.fs2.Fs2Streams
+import sttp.client4.StreamBackend
 
 case class SendMessageParams(
   messages: List[Message],
@@ -20,7 +23,13 @@ case class SendMessageParams(
     * (resolved per-candidate in interface.scala — fallback switches provider
     * mid-request and must not carry the previous provider's injection).
     * Consumed by OpenAiAdapter; Anthropic-protocol candidates never set it. */
-  providerSearch: Option[ProviderSearchKind] = None
+  providerSearch: Option[ProviderSearchKind] = None,
+  /** Hard-recovery P1 (2026-09-07, 设计 D-1 方案 A): per-attempt backend for
+    * STREAMING requests — a dedicated HttpClient whose shutdownNow() aborts
+    * exactly this request (the only primitive proven to unblock a parked body
+    * read). None = use the adapter's shared backend (legacy behavior; also the
+    * non-streaming sendMessage path). */
+  attemptBackend: Option[StreamBackend[IO, Fs2Streams[IO]]] = None
 )
 
 case class AdapterResponse(

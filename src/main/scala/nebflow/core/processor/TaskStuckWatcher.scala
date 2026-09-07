@@ -7,6 +7,7 @@ import nebflow.agent.{AgentCommand, AgentEvent, AgentKind, AgentRecord, AgentSta
 import nebflow.core.NebflowLogger
 import nebflow.gateway.WsHub
 
+import scala.concurrent.duration.*
 import scala.concurrent.duration.FiniteDuration
 
 /**
@@ -177,64 +178,130 @@ object TaskStuckWatcher:
           "cancel/restart it via AgentControl"
       ) *>
         broadcastStuck(wsHub, rec, idleSecs, "attention")
-    // Project flow 会话（node-/dispatcher-，supervisorRef=观察桥）卡死恢复
-    // （let-it-crash）：此前 parentRef=None 落入根 agent 分支只 notice——卡死的
-    // 分发器/节点永远滞留为 Processing 幽灵行。恢复走 supervisorRef（观察桥）的
-    // Cancelled 通道：dispatcher → 清 registry + 停 agent；node → resultDeferred
-    // cancelled → engine cancelNode 全链清理。绝不发 raw Stop——单次会话无
-    // supervisor 重启，Stop 杀掉 actor 而不发终态事件（桥收不到 → engine fiber
-    // 挂死 / 桥僵尸）。第 1 次即硬取消在飞 LLM（无重启预算可消耗，硬取消是唯一
-    // 快速恢复）；StopAttempts+2 次仍卡 → 桥 Cancelled 兜底（覆盖工具挂死等
-    // 无在飞 LLM 的形态）。dag- 旧 flow 会话（无 supervisorRef）不进此分支，
-    // 维持根 agent notice（其取消走 cancelFlow）。
+    // Project flow 会话（node-/dispatcher-，supervisorRef=观察桥）卡死：分级接管
+    // L1→L4（hard-recovery P5，2026-09-07 设计 §2.6/§9）。回验 = 下一轮扫描的
+    // stuck 复查（恢复则计数器随 filterKeys 复位，不再升级）。绝不发 raw Stop——
+    // 单次会话无 supervisor 重启，Stop 杀掉 actor 而不发终态事件（桥收不到 →
+    // engine fiber 挂死 / 桥僵尸）。dag- 旧 flow 会话（无 supervisorRef）不进此
+    // 分支，走根 agent 分级（其取消走 cancelFlow）。
     else if rec.kind == AgentKind.Flow && rec.supervisorRef.isDefined then
+      val hard = nebflow.shared.Defaults.HardRecoveryEnabled
       logger.warn(
         s"TaskStuckWatcher: Project flow session ${rec.sessionId} (kind=Flow) stuck in Processing " +
-          s"for ${idleSecs}s > threshold — hard-cancelling in-flight LLM, escalating to bridge Cancelled"
+          s"for ${idleSecs}s > threshold — escalating (L1 halt → L2 transport abort → L3 resume)"
       ) *>
-        broadcastStuck(wsHub, rec, idleSecs, "restart") *>
+        // P7 诚实帧：硬分级时每扫描一帧**真实** action（在下述 match 内逐拍广播）；
+        // 只有回滚形态（!hard）沿用旧语义在此统一广播 restart。
+        (if hard then IO.unit else broadcastStuck(wsHub, rec, idleSecs, "restart")) *>
         stopCounts.modify { m =>
           val n = m.getOrElse(rec.sessionId, 0) + 1
           (m.updated(rec.sessionId, n), n)
         }.flatMap { attempts =>
-          val escalate = nebflow.llm.LlmInterface.cancelInflightFor(rec.sessionId).flatMap { n =>
-            logger.warn(
-              s"TaskStuckWatcher: ${rec.sessionId} attempt $attempts — hard-cancelled $n in-flight LLM request(s)"
+          def hardCancel() =
+            nebflow.llm.LlmInterface.cancelInflightFor(rec.sessionId).flatMap { n =>
+              logger.warn(
+                s"TaskStuckWatcher: ${rec.sessionId} attempt $attempts — hard-cancelled $n in-flight LLM request(s)"
+              )
+            }.handleErrorWith(e =>
+              logger.warn(s"TaskStuckWatcher: hard-cancel for ${rec.sessionId} failed: ${e.getMessage}")
             )
-          }.handleErrorWith(e =>
-            logger.warn(s"TaskStuckWatcher: hard-cancel for ${rec.sessionId} failed: ${e.getMessage}")
-          )
-          val giveUp =
-            if attempts >= StopAttempts + 2 then
-              rec.supervisorRef match
-                case Some(sup) =>
-                  logger.warn(
-                    s"TaskStuckWatcher: ${rec.sessionId} still stuck after $attempts attempts — " +
-                      "releasing via bridge Cancelled (hard-cancel ineffective; single-shot session, no restart)"
-                  ) *>
-                    (sup ! AgentEvent.Cancelled(
-                      rec.sessionId,
-                      s"stuck for ${idleSecs}s with in-flight LLM hard-cancel ineffective — " +
-                        "released by TaskStuckWatcher; re-trigger the task if it should continue"
-                    )).handleErrorWith(e =>
-                      logger.warn(s"TaskStuckWatcher: bridge Cancelled for ${rec.sessionId} failed: ${e.getMessage}")
-                    ) *>
-                    // 面板实时终态帧（Sub-Agents 面板取消实时刷新修复）：giveUp
-                    // 取消此前零 WS 出口 → 面板行幽灵滞留到刷新。仅 node-* 在此
-                    // 补发——dispatcher-* 由其观察桥拆除点（ProjectActor）统一
-                    // 补发，避免双发。
-                    (if rec.sessionId.startsWith(nebflow.core.project.NodeEngine.SessionPrefix)
-                     then
-                       nebflow.core.node.NodeRunner
-                         .emitSubagentPanelDone(wsHub.broadcast, rec.sessionId, rec.rootSessionId)
-                         .handleErrorWith(e =>
-                           logger.warn(s"TaskStuckWatcher: panel done frame for ${rec.sessionId} failed: ${e.getMessage}")
-                         )
-                     else IO.unit) *>
-                    stopCounts.update(_ - rec.sessionId)
-                case None => IO.unit
-            else IO.unit
-          escalate *> giveUp
+          def transportAbort() =
+            // L2 双管（裁定① tier-2）：transport abort 解 LLM 流楔死 + 会话自有
+            // 进程组 kill 解工具挂死（按自有 PGID 击杀=强进程验身，会话 actor 保留）。
+            // 护栏（证据 #5 ① 双条件容器 CPU 盲区）：进程 kill（reclaimSession）仅在
+            // transport abort 命中 ≥1 在飞请求（LLM 楔死形态成立——流中 parked / intake-
+            // first-chunk park 均有在飞请求）时执行；命中 0 = 工具执行相位（docker/cargo
+            // 容器负载的 CPU 在容器内，宿主侧观测为零——活动桥接 sees 仅直接子进程
+            // CPU），收回进程 kill，升级链走 tier-3。kill 复用收殓支 reclaimSession
+            // 原语（Nebula 2026-09-07 12:41：killSessionProcesses + unregisterSession +
+            // WS 帧，幂等，不另造平行 kill 机制）。
+            nebflow.llm.LlmInterface.transportAbortFor(rec.sessionId).flatMap { n =>
+              logger.warn(
+                s"TaskStuckWatcher: ${rec.sessionId} attempt $attempts (L2) — transport-aborted $n in-flight LLM request(s)"
+              ) *>
+                (if n > 0 then
+                   nebflow.core.tools.BgTaskRegistry.reclaimSession(Some(rec.sessionId), wsHub.broadcast, rec.rootSessionId)
+                     .handleErrorWith(e =>
+                       logger.warn(s"TaskStuckWatcher: session reclaim for ${rec.sessionId} failed: ${e.getMessage}"))
+                 else
+                   logger.warn(
+                     s"TaskStuckWatcher: ${rec.sessionId} attempt $attempts (L2) — no in-flight LLM request (tool-phase); " +
+                       "process kill withheld [evidence #5 container-blindness guard]"
+                   ))
+            }.handleErrorWith(e =>
+              logger.warn(s"TaskStuckWatcher: transport abort for ${rec.sessionId} failed: ${e.getMessage}")
+            )
+          def bridgeCancelled(reason: String) =
+            rec.supervisorRef match
+              case Some(sup) =>
+                (sup ! AgentEvent.Cancelled(
+                  rec.sessionId,
+                  s"stuck for ${idleSecs}s ($reason) — released by TaskStuckWatcher"
+                )).handleErrorWith(e =>
+                  logger.warn(s"TaskStuckWatcher: bridge Cancelled for ${rec.sessionId} failed: ${e.getMessage}")
+                )
+              case None => IO.unit
+          if !hard then
+            // 回滚形态（HardRecoveryEnabled=false）：维持本批前行为——每轮
+            // hard-cancel，StopAttempts+2 轮后 bridge Cancelled 终态收殓。
+            hardCancel() *> {
+              if attempts >= StopAttempts + 2 then
+                logger.warn(
+                  s"TaskStuckWatcher: ${rec.sessionId} still stuck after $attempts attempts — " +
+                    "releasing via bridge Cancelled (hard-cancel ineffective; single-shot session, no restart)"
+                ) *>
+                  bridgeCancelled("hard-cancel ineffective") *>
+                  // 面板实时终态帧（Sub-Agents 面板取消实时刷新修复）：仅 node-*
+                  // 补发——dispatcher-* 由其观察桥拆除点（ProjectActor）统一补发。
+                  (if rec.sessionId.startsWith(nebflow.core.project.NodeEngine.SessionPrefix)
+                   then
+                     nebflow.core.node.NodeRunner
+                       .emitSubagentPanelDone(wsHub.broadcast, rec.sessionId, rec.rootSessionId)
+                       .handleErrorWith(e =>
+                         logger.warn(s"TaskStuckWatcher: panel done frame for ${rec.sessionId} failed: ${e.getMessage}")
+                       )
+                   else IO.unit) *>
+                  stopCounts.update(_ - rec.sessionId)
+              else IO.unit
+            }
+          else
+            attempts match
+              case 1 =>
+                // L1 软恢复：halt 在飞 LLM——turn 若卡死在 LLM 流上，StuckAbort 浮出
+                // → 有界重试 / turn-end 注入接管。action=halt（真实动作，P7 诚实帧）。
+                logger.warn(
+                  s"TaskStuckWatcher: ${rec.sessionId} attempt $attempts (L1) — halting in-flight LLM"
+                ) *> broadcastStuck(wsHub, rec, idleSecs, "halt") *> hardCancel()
+              case 2 =>
+                // L2 硬中断（action=hard-abort）：transport abort + reclaimSession（见
+                // transportAbort 的 evidence #5 护栏——非 LLM 楔死形态收回进程 kill）。
+                logger.warn(
+                  s"TaskStuckWatcher: ${rec.sessionId} attempt $attempts (L2) — transport abort + session process reclaim"
+                ) *> broadcastStuck(wsHub, rec, idleSecs, "hard-abort") *> transportAbort()
+              case 3 =>
+                // L3 真重启（设计 D-5）：bridge Cancelled 清场（actor 停止 + 节点终
+                // 态）→ 5s 让清场链走完 → hardResumeNode 从 transcript 断点续跑
+                // （复用 boot-recovery 底座）。fork：扫描循环不等。action=restart
+                // 此时为真（P7 诚实语义）。resume 成功才清计数（会话状态翻转/Running
+                // → watcher 不再见其 stuck）；失败保留计数 → 第 4 拍 L4 failed 可达。
+                logger.warn(
+                  s"TaskStuckWatcher: ${rec.sessionId} attempt $attempts (L3) — releasing via bridge Cancelled, then hard-resume from transcript breakpoint"
+                ) *> broadcastStuck(wsHub, rec, idleSecs, "restart") *>
+                  bridgeCancelled("L3 hard-recovery: true resume from transcript breakpoint") *>
+                  (IO.sleep(5.seconds) *>
+                    hardResumeFlowNode(resources, rec).flatMap {
+                      case true => stopCounts.update(_ - rec.sessionId)
+                      case false => IO.unit
+                    }).start.void
+              case 4 =>
+                // L4 响亮失败（诚实失败原则）：明确上报需人工处理、进度已落盘。
+                logger.error(
+                  s"TaskStuckWatcher: ${rec.sessionId} stuck for ${idleSecs}s — L1/L2/L3 all ineffective. " +
+                    "This session needs MANUAL attention; progress is persisted (transcript + queues on disk)."
+                ) *> broadcastStuck(wsHub, rec, idleSecs, "failed")
+              case _ =>
+                broadcastStuck(wsHub, rec, idleSecs, "failed")
+            end match
         }
     else
         rec.parentRef match
@@ -264,6 +331,30 @@ object TaskStuckWatcher:
                     )
                   }.handleErrorWith(e =>
                     logger.warn(s"TaskStuckWatcher: hard-cancel for ${rec.sessionId} failed: ${e.getMessage}")
+                  )
+                else IO.unit
+              // Hard-recovery P5（2026-09-07）：Stop + halt 双失效后补 L2 transport
+              // abort——parked read 的唯一解法（取证 §1.3），让 StuckAbort 真正浮出、
+              // mailbox 恢复轮转、排队的 Stop 被消费、BackoffSupervisor 重启。
+              val transportEscalate =
+                if nebflow.shared.Defaults.HardRecoveryEnabled && attempts >= StopAttempts + 1 then
+                  // L2 双管（裁定① tier-2）：LLM 流 transport abort + 会话自有进程组
+                  // kill（工具挂死形态；按自有 PGID 击杀，会话保留）。护栏（证据 #5 ①）：
+                  // 仅 transport abort 命中 ≥1 在飞请求（LLM 楔死形态）才 reclaimSession；
+                  // 工具相位（容器 CPU 盲区）收回 kill，升级链走 supervisor Cancelled。
+                  nebflow.llm.LlmInterface.transportAbortFor(rec.sessionId).flatMap { n =>
+                    logger.warn(
+                      s"TaskStuckWatcher: ${rec.sessionId} attempt $attempts (L2) — transport-aborted $n in-flight LLM request(s)"
+                    ) *>
+                      (if n > 0 then
+                         nebflow.core.tools.BgTaskRegistry.reclaimSession(Some(rec.sessionId), wsHub.broadcast, rec.rootSessionId)
+                           .handleErrorWith(e => logger.warn(s"TaskStuckWatcher: session reclaim for ${rec.sessionId} failed: ${e.getMessage}"))
+                       else
+                         logger.warn(
+                           s"TaskStuckWatcher: ${rec.sessionId} attempt $attempts (L2) — no in-flight LLM request (tool-phase); " +
+                             "process kill withheld [evidence #5 container-blindness guard]"))
+                  }.handleErrorWith(e =>
+                    logger.warn(s"TaskStuckWatcher: transport abort for ${rec.sessionId} failed: ${e.getMessage}")
                   )
                 else IO.unit
               // issue #31 (2026-08-20): escalate 后两轮扫描仍 stuck = Stop
@@ -299,16 +390,92 @@ object TaskStuckWatcher:
                         stopCounts.update(_ - rec.sessionId)
                     case None => IO.unit
                 else IO.unit
-              escalate *> giveUp *> (rec.ref ! AgentCommand.Stop(s"stuck-task-${rec.sessionId}"))
+              escalate *> transportEscalate *> giveUp *> (rec.ref ! AgentCommand.Stop(s"stuck-task-${rec.sessionId}"))
                 .handleErrorWith(e => logger.warn(s"TaskStuckWatcher: Stop to stuck sub-agent ${rec.sessionId} failed: ${e.getMessage}"))
             }
         case None =>
-          logger.warn(
-            s"TaskStuckWatcher: root agent ${rec.sessionId} stuck in Processing for ${idleSecs}s " +
-              "— not auto-restarting, broadcast taskStuck for user decision"
-          ) *>
-            broadcastStuck(wsHub, rec, idleSecs, "attention")
+          // 根 agent（无 parentRef；含 dag- 旧 flow 会话）：分级接管 L1-L4（hard-
+          // recovery P5 扩列，2026-09-07——此前只广播 attention，「卡死」的唯一
+          // 出口 = 重启宿主，取证 §1.1）。回验同 flow 分支 = 下一轮扫描复查。
+          // dag- 旧 flow 会话（kind=Flow，无 supervisorRef 也无 parentRef）EXEMPT：
+          // 其取消走 cancelFlow / RunningFlowRegistry（TaskStuckWatcherSpec
+          // :651 notice-only 铁律）——分级只适用于真 root（General/Team 根会话），
+          // 不得对 dag- 施加任何硬取消/kill 动作。
+          if !nebflow.shared.Defaults.HardRecoveryEnabled || rec.kind == nebflow.agent.AgentKind.Flow then
+            logger.warn(
+              s"TaskStuckWatcher: root agent ${rec.sessionId} (kind=${rec.kind}) stuck in Processing for ${idleSecs}s " +
+                "— not auto-restarting, broadcast taskStuck for user decision"
+            ) *>
+              broadcastStuck(wsHub, rec, idleSecs, "attention")
+          else
+            stopCounts.modify { m =>
+              val n = m.getOrElse(rec.sessionId, 0) + 1
+              (m.updated(rec.sessionId, n), n)
+            }.flatMap { attempts =>
+              val (action, io) = attempts match
+                case 1 =>
+                  ("halt",
+                    logger.warn(
+                      s"TaskStuckWatcher: root agent ${rec.sessionId} stuck for ${idleSecs}s — L1: halting in-flight LLM"
+                    ) *> nebflow.llm.LlmInterface.cancelInflightFor(rec.sessionId).void
+                      .handleErrorWith(e => logger.warn(s"TaskStuckWatcher: L1 halt for ${rec.sessionId} failed: ${e.getMessage}")))
+                case 2 =>
+                  ("hard-abort",
+                    logger.warn(
+                      s"TaskStuckWatcher: root agent ${rec.sessionId} still stuck — L2: transport abort + session process reclaim"
+                    ) *> nebflow.llm.LlmInterface.transportAbortFor(rec.sessionId).flatMap { n =>
+                      logger.warn(s"TaskStuckWatcher: L2 aborted $n in-flight LLM request(s) of ${rec.sessionId}") *>
+                        // 证据 #5 ① 护栏（同 flow transportAbort）：仅 LLM 楔死形态
+                        // （n>0）才 reclaimSession 进程 kill；工具相位（容器 CPU 盲区）
+                        // 收回，升级链走 tier-3。
+                        (if n > 0 then
+                           nebflow.core.tools.BgTaskRegistry.reclaimSession(Some(rec.sessionId), wsHub.broadcast, rec.rootSessionId)
+                             .handleErrorWith(e => logger.warn(s"TaskStuckWatcher: L2 reclaim for ${rec.sessionId} failed: ${e.getMessage}"))
+                         else
+                           logger.warn(
+                             s"TaskStuckWatcher: root agent ${rec.sessionId} L2 — no in-flight LLM request (tool-phase); " +
+                               "process kill withheld [evidence #5 container-blindness guard]"))
+                    }.handleErrorWith(e => logger.warn(s"TaskStuckWatcher: L2 abort for ${rec.sessionId} failed: ${e.getMessage}")))
+                case 3 =>
+                  ("restart",
+                    logger.warn(
+                      s"TaskStuckWatcher: root agent ${rec.sessionId} still stuck — L3: full actor restart " +
+                        "(transcript reload from disk, queued injections preserved)"
+                    ) *> (rec.ref ! nebflow.agent.AgentCommand.RestartAgent(nebflow.agent.RestartLevel.Full))
+                      .handleErrorWith(e => logger.warn(s"TaskStuckWatcher: L3 restart for ${rec.sessionId} failed: ${e.getMessage}"))
+                      *> stopCounts.update(_ - rec.sessionId))
+                case 4 =>
+                  ("failed",
+                    logger.error(
+                      s"TaskStuckWatcher: root agent ${rec.sessionId} stuck for ${idleSecs}s — L1/L2/L3 all ineffective. " +
+                        "This session needs MANUAL attention (progress persisted on disk: transcript + injection queues)."
+                    ))
+                case _ =>
+                  ("failed", IO.unit)
+              broadcastStuck(wsHub, rec, idleSecs, action) *> io
+            }
 
     end if
+
+  /** L3 for Flow 节点：定位 session 所属项目的 runtime 并 hardResumeNode（跨项目
+    * 按 rootSessionId 匹配 AgentRecord.rootSessionId = 项目 root 会话）。 */
+  private def hardResumeFlowNode(resources: SharedResources, rec: AgentRecord): IO[Boolean] =
+    nebflow.core.project.ProjectRuntimeRegistry.all
+      .flatMap { rts =>
+        rts.find(rt => rt.engine.rootSessionId.nonEmpty && rt.engine.rootSessionId == rec.rootSessionId) match
+          case Some(rt) =>
+            rt.engine.hardResumeNode(rec.sessionId).map(_.isDefined)
+              .handleErrorWith(e =>
+                logger.error(
+                  s"TaskStuckWatcher: hard-resume failed for ${rec.sessionId}: ${Option(e.getMessage).getOrElse(e.toString)}"
+                ).as(false))
+          case None =>
+            logger.warn(
+              s"TaskStuckWatcher: no project runtime for ${rec.sessionId} (root=${rec.rootSessionId}) — L3 resume unavailable"
+            ).as(false)
+      }
+      .handleErrorWith(e =>
+        logger.error(s"TaskStuckWatcher: project runtime lookup failed: ${Option(e.getMessage).getOrElse(e.toString)}")
+          .as(false))
 
 end TaskStuckWatcher

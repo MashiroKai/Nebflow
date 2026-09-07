@@ -457,6 +457,48 @@ class WebSocketRoutes(
     else logger.warn("Dropping message: no sessionId provided") *> IO.unit
 
   /**
+   * Hard-recovery P4 SessionKick (设计 §2.5, 2026-09-07): a user message or
+   * interrupt arriving for a session whose turn is WEDGED must be able to
+   * break in. Queueing alone never helps — the turn never ends, so queued
+   * input is never injected (production: 11:09:39 message queued, still
+   * waiting 22 minutes later). When the session is Processing with no
+   * activity for > SessionKickIdleSec (default 150s — deliberately above the
+   * 120s per-provider inactivity watchdog: only kick when that watchdog has
+   * provably failed to surface its error), force-abort the session's in-flight
+   * LLM request at the TRANSPORT level (the only primitive that unwedges a
+   * parked body read). The turn then fails with RecoverableAbort and the
+   * agent's normal machinery takes over: queued input batch-injects (缺陷⑥)
+   * or a bounded whole-turn retry (VPN flap). Fire-and-forget — the user's
+   * message was already routed/queued by the caller; the kick runs alongside.
+   * Verification (设计 P2) is the watcher's next scans (TaskStuckWatcher L2/L3
+   * escalate if the kick didn't take) plus a warn log here for diagnosis.
+   */
+  private def maybeSessionKick(sessionId: String, trigger: String): IO[Unit] =
+    if sessionId.isEmpty || !nebflow.shared.Defaults.HardRecoveryEnabled then IO.unit
+    else
+      sharedResources.agentRegistry.get.flatMap { registry =>
+        registry.get(sessionId) match
+          case Some(rec)
+              if rec.status == nebflow.agent.AgentStatus.Processing &&
+                rec.lastActivityMs > 0 &&
+                System.currentTimeMillis() - rec.lastActivityMs >
+                  nebflow.shared.Defaults.SessionKickIdleSec * 1000L =>
+            logger.info(
+              s"SessionKick ($trigger): session $sessionId Processing with no activity for " +
+                s"${(System.currentTimeMillis() - rec.lastActivityMs) / 1000}s — force-aborting in-flight LLM transport"
+            ) *>
+              nebflow.llm.LlmInterface
+                .transportAbortFor(sessionId)
+                .flatMap { n =>
+                  logger.info(s"SessionKick ($trigger): aborted $n in-flight LLM request(s) of $sessionId")
+                }
+                .handleErrorWith(e =>
+                  logger.warn(s"SessionKick ($trigger) transport abort failed for $sessionId: ${e.getMessage}")
+                )
+          case _ => IO.unit
+      }
+
+  /**
    * Public API for external sources (e.g. bridge plugins) to inject a user message
    * into a session's agent. Reuses the same logic as WebSocket user messages:
    * rate limiting, UiMessage recording, agent routing.
@@ -1095,7 +1137,11 @@ class WebSocketRoutes(
 
           case "interrupt" =>
             val intSessionId = parse(text).flatMap(_.hcursor.downField("sessionId").as[String]).toOption.getOrElse("")
-            logger.info("User interrupted") *> ensureAgent(intSessionId)(ref => ref ! AgentCommand.Interrupt())
+            // Hard-recovery P4: an interrupt aimed at a wedged turn cannot be
+            // consumed (P3 keeps the actor alive, but the parked read survives
+            // fiber cancellation) — kick the transport so the turn actually dies.
+            maybeSessionKick(intSessionId, "interrupt") *>
+              logger.info("User interrupted") *> ensureAgent(intSessionId)(ref => ref ! AgentCommand.Interrupt())
 
           case "restartAgent" =>
             val rJson = parse(text).toOption.getOrElse(io.circe.Json.Null)
@@ -3846,6 +3892,10 @@ class WebSocketRoutes(
         sessionId,
         List(UiMessage.User(content, Nil, timestamp = System.currentTimeMillis()))
       ) *>
+      // Hard-recovery P4: if the target turn is wedged (Processing + idle >
+      // SessionKickIdleSec), break it BEFORE queueing — the queued message
+      // injects at the turn boundary the kick creates (user intent first).
+      maybeSessionKick(sessionId, s"userMessage:$source") *>
       ensureAgent(sessionId)(ref => ref ! AgentCommand.ImmediateInput(content))
 
 

@@ -382,6 +382,58 @@ class NodeEngine(
       logger.info(s"[boot-recovery] node $nodeId rehydrating (session=${ctx.sessionId})") *>
       startNode(nodeId, Some(ctx))
 
+  /** Hard-recovery P5-L3（2026-09-07 设计 §2.6/§9）：运行时活挂节点的真重启——从磁盘
+    * transcript 断点 rehydrate 续跑，复用 boot-recovery 的 ResumeContext /
+    * startNode(resume) 全链（设计 §3.1「同一恢复底座」）。与 boot sweep 的差异：
+    * 触发源是运行时 TaskStuckWatcher 升级（进程活着），前置动作已由调用方完成——
+    * L2 transport abort（止血，解开 parked read）与 bridge Cancelled（清场：agent
+    * 停止 + 节点 Cancelled 终态）；此处只做「终态/Running → Pending CAS + resume」。
+    * 竞态：CAS 失败（并发终态化 / 已被重排 / 已被资格回扫新鲜启动）安静返回 None；
+    * transcript 缺失 → None（节点留终态，人工重触发，诚实失败原则）。返回重启的
+    * nodeId。 */
+  def hardResumeNode(sessionId: String): IO[Option[String]] =
+    store.snapshot.flatMap { snap =>
+      snap.nodes.values.find(n =>
+        n.sessionRef.contains(sessionId) || n.sessionRefVerify.contains(sessionId)
+      ) match
+        case None => IO.pure(None)
+        case Some(n) =>
+          resources.sessionStore.loadMessagesForSession(sessionId).attempt.flatMap {
+            case Right(msgs) if msgs.nonEmpty =>
+              val ctx = NodeEngine.ResumeContext(
+                sessionId = sessionId,
+                recoveredMessages = msgs,
+                resumePrompt = NodeEngine.nodeResumePrompt(projectName, n, msgs.size, n.bgWait) +
+                  "\n（hard-recovery：该节点会话此前卡死，已被引擎分级接管强制中断并从磁盘断点恢复续跑）"
+              )
+              store.mutateWithResult { s =>
+                s.nodes.get(n.id) match
+                  case Some(f)
+                      if f.status == NodeLifecycle.Cancelled || f.status == NodeLifecycle.Running =>
+                    (s.copy(nodes = s.nodes.updated(n.id, f.copy(
+                      status = NodeLifecycle.Pending,
+                      completedAt = None,
+                      ttlExpireAt = None,
+                      bgWait = None))), true)
+                  case _ => (s, false)
+              }.flatMap { (s, ok) =>
+                if !ok then IO.pure(None)
+                else
+                  s.nodes.get(n.id).traverse_(emitUpdated) *>
+                    FlowMapEventLog.append(workspace, projectName, n.id, "hard-recovery",
+                      s"resumed from stuck (session=$sessionId msgs=${msgs.size})") *>
+                    logger.info(
+                      s"[hard-recovery] node '${n.name}' (${n.id}) resumed from transcript breakpoint (session=$sessionId)"
+                    ) *>
+                    startNode(n.id, Some(ctx)).as(Some(n.id))
+              }
+            case _ =>
+              logger.warn(
+                s"[hard-recovery] no readable transcript for session $sessionId — node left terminal, manual re-trigger needed"
+              ).as(None)
+          }
+    }
+
   /** WS nodeRemoved（TTL 移除/归档后通知前端移除卡片）。payload = 节点最终态
     * （NodeList 同构——归档区兜底查得，ttlLeftSec=0），不再发空对象。 */
   def emitRemoved(nodeId: String): IO[Unit] =
@@ -433,31 +485,52 @@ class NodeEngine(
       }
 
   /** 裁定② running 路由：活会话 → ImmediateInput（source="system"，text 带
-    * [NODE-MESSAGE] 前缀头）；查无会话（nodeSessions/registry 无映射 = 会话
-    * 在检查与入队间已终结）→ 裁定②竞态兜底：任务记录追加 + 「注入未达」标注。
-    * 注入为 fire-and-forget tell（与 Mail/revalidate 先例同语义）——投递本身
-    * 不可回执，事件日志恒记录注入尝试（留痕不丢）。 */
+    * [NODE-MESSAGE] 前缀头）。
+    *
+    * 增量#5 修复（2026-09-07，slideblocks ×3 投递失败）：会话解析不再单依赖
+    * nodeSessions 内存缓存——**实时解析优先**：D1 持久化的 node.sessionRef 与
+    * Running 翻转同事务落库（重激活/重挂载后永为新会话的权威记录），缓存与
+    * sessionRef 不一致时以 sessionRef 为准并**自愈缓存**；两者逐一试探
+    * agentRegistry（任一命中即投递），全 miss 才走「注入未达」兜底。消除
+    * 「blocked→NodeEdit 重激活后注入持续解析到已终结句柄」的窗口（旧句柄
+    * 只可能存在于缓存侧；sessionRef 每次启动原子刷新）。注入为 fire-and-forget
+    * tell（与 Mail/revalidate 先例同语义）——投递本身不可回执，事件日志恒记录
+    * 注入尝试（留痕不丢）。 */
   private def injectRunning(node: NodeDef, text: String): IO[Either[String, String]] =
-    nodeSessions.get.map(_.get(node.id)).flatMap {
-      case Some(sid) =>
-        resources.agentRegistry.get.flatMap { reg =>
-          reg.get(sid) match
-            case Some(record) =>
-              val head = NodeEngine.nodeMessageHeader(node.name)
-              (record.ref ! AgentCommand.ImmediateInput(
-                text = s"$head\n\n$text",
-                source = Some("system")
-              )).void *>
-                FlowMapEventLog.append(workspace, projectName, node.id, NodeEngine.NodeMessageEventType,
-                  s"injected -> live session $sid: $text") *>
-                  logger.info(s"NodeMessage -> node '${node.name}' (${node.id}) injected at turn boundary (session $sid, ${text.length} chars)").as(
-                    Right(s"Message delivered to running node '${node.name}' — it will be injected at the next turn boundary ([NODE-MESSAGE] header). " +
-                      "Trace: flow-map-events.jsonl (node-message/injected)."))
-            case None =>
-              // registry 已清 = 会话正在拆除（runWithAgent 清理段）→ 未达兜底
-              appendUndelivered(node, text, sid)
-        }
-      case None => appendUndelivered(node, text, "-")
+    nodeSessions.get.map(_.get(node.id)).flatMap { cached =>
+      // 候选序：sessionRef（持久权威，实时解析）→ cached（内存快路径）。去重。
+      val candidates = (node.sessionRef.toList ++ cached.toList).distinct
+      def tryDeliver(sids: List[String]): IO[Either[String, String]] =
+        sids match
+          case sid :: rest =>
+            resources.agentRegistry.get.flatMap { reg =>
+              reg.get(sid) match
+                case Some(record) =>
+                  val head = NodeEngine.nodeMessageHeader(node.name)
+                  // 自愈：命中者非缓存值（重激活/重挂载后缓存滞后）→ 刷新缓存，
+                  // 后续投递恢复快路径。
+                  val heal = if cached.contains(sid) then IO.unit
+                    else nodeSessions.update(_ + (node.id -> sid)) *>
+                      logger.warn(
+                        s"NodeMessage: node '${node.name}' (${node.id}) session cache self-healed -> $sid " +
+                          s"(cached=${cached.getOrElse("-")}, sessionRef=${node.sessionRef.getOrElse("-")})"
+                      )
+                  heal *>
+                    (record.ref ! AgentCommand.ImmediateInput(
+                      text = s"$head\n\n$text",
+                      source = Some("system")
+                    )).void *>
+                    FlowMapEventLog.append(workspace, projectName, node.id, NodeEngine.NodeMessageEventType,
+                      s"injected -> live session $sid: $text") *>
+                    logger.info(s"NodeMessage -> node '${node.name}' (${node.id}) injected at turn boundary (session $sid, ${text.length} chars)").as(
+                      Right(s"Message delivered to running node '${node.name}' — it will be injected at the next turn boundary ([NODE-MESSAGE] header). " +
+                        "Trace: flow-map-events.jsonl (node-message/injected)."))
+                case None => tryDeliver(rest)
+            }
+          case Nil =>
+            // 全部候选查无会话（会话在检查与入队间已终结）→ 裁定②竞态兜底。
+            appendUndelivered(node, text, candidates.mkString("/"))
+      tryDeliver(candidates)
     }
 
   /** 裁定②竞态兜底：注入不可达 → 记录追加「注入未达」（纯留痕写——只对节点

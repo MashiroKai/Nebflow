@@ -119,6 +119,22 @@ object Fallback:
         // the full context the watcher just tried to stop burning). Abort the
         // whole stream; the agent's bounded turn-retry loop takes over.
         ErrorClassification(FailoverReason.Unknown, ErrorPermanence.Fatal, message = Some(e.getMessage))
+      case e: RecoverableAbort =>
+        // Hard-recovery P6 (2026-09-07): the TRANSPORT of this request was
+        // force-aborted (SessionKick / watcher L2) to unwedge a parked body
+        // read. Stream-level semantics identical to StuckAbort — Fatal, no
+        // provider fallback (partial content must never be stitched across
+        // providers; the provider is innocent, no markDown/evict). The
+        // DIFFERENCE lives at the agent layer: AgentActor.llmFailureRetryable
+        // treats RecoverableAbort as retryable (re-send the whole turn within
+        // the existing OverloadRetryMax/MaxTurnLlmCalls budget) or yields to
+        // queued user input at the turn boundary — see 设计 §9 细化 1.
+        ErrorClassification(
+          FailoverReason.Unknown,
+          ErrorPermanence.Fatal,
+          message = Some(e.getMessage),
+          evict = false
+        )
       case e: StreamInactivityTimeout =>
         // Flow-node supervision P1 (2026-08-26): a phase-2 mid-stream stall is
         // upstream jitter, not a dead provider — Transient so the agent layer

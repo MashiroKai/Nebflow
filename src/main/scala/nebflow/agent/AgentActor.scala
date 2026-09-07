@@ -12,7 +12,7 @@ import nebflow.core.compact.*
 import nebflow.core.flow.TeamSessionRegistry
 import nebflow.core.tools.AskUserQuestionTool
 import nebflow.core.tools.BgTaskRegistry
-import nebflow.llm.{AllProvidersDownTimeout, Fallback, FallbackExhaustedError}
+import nebflow.llm.{AllProvidersDownTimeout, Fallback, FallbackExhaustedError, RecoverableAbort}
 import nebflow.shared.*
 import nebflow.shared.given
 
@@ -51,6 +51,18 @@ object TurnBoundaryDrains:
   def drainHead[A](queue: List[A], compactionPending: Boolean): (Option[A], List[A]) =
     if compactionPending then (None, queue)
     else (queue.headOption, if queue.isEmpty then queue else queue.tail)
+
+  /** 缺陷⑥ 外部注入合批（2026-09-07 设计 §8）：drain the WHOLE queue at a
+    * turn boundary — one batched next-turn request instead of one turn per
+    * queued item (serial drainHead = N full-context LLM round-trips for N
+    * notifications, pure token waste when no user input separates them).
+    * Same compaction guard as drainHead: while a compaction job is pending
+    * nothing is consumed (injected-then-summarized-away loss, 2026-08-14) —
+    * CompactionComplete drains the queues after the summary is in place.
+    * Arrival order preserved (List :+ append, no re-sorting). */
+  def drainAll[A](queue: List[A], compactionPending: Boolean): (List[A], List[A]) =
+    if compactionPending then (Nil, queue)
+    else (queue, Nil)
 
   /** True for ExternalEvents carrying a Delegate/SubTask result. */
   def isSubagentResult(e: AgentCommand.ExternalEvent): Boolean =
@@ -120,6 +132,12 @@ object AgentActor extends AgentCore with AgentSession:
       )
     case _: ToolPipelineError => false
     case _: StreamInactivityTimeout => true
+    // Hard-recovery P6 (2026-09-07): a transport-aborted turn (SessionKick on
+    // a wedged read / watcher L2) is recoverable — re-send the whole turn
+    // within the SAME OverloadRetryMax/MaxTurnLlmCalls budget (no new quota,
+    // 设计 D-4). Distinct from StuckAbort (watcher kill semantics: not
+    // retryable — the Stop waiting in the mailbox is the recovery).
+    case _: RecoverableAbort => true
     case _ =>
       val cls = Fallback.classifyError(error)
       cls.permanence == ErrorPermanence.Transient && isOverloadReason(cls.reason)
@@ -1388,7 +1406,15 @@ object AgentActor extends AgentCore with AgentSession:
           // never violated. Single source: AgentActor.llmFailureRetryable.
           val isStreamInactivity = AgentActor.llmFailureInactivityClass(error)
           val retryable = AgentActor.llmFailureRetryable(error)
-          if retryable && state.llmFailRetries < OverloadRetryMax then
+          // Hard-recovery P4 (设计 §2.5「用户意图优先」): a transport-aborted turn
+          // with QUEUED user input must NOT blindly retry — the abort happened
+          // precisely BECAUSE a user message could not get in (wedged turn).
+          // Failing the turn routes to the turn-boundary drain, which batch-
+          // injects the queued inputs (缺陷⑥ 合批) as the next turn. Empty queue
+          // (VPN mid-stream flap) keeps the bounded auto-retry (增量#1 验收).
+          val recoverableAbortYieldsToQueued = error.isInstanceOf[RecoverableAbort] &&
+            state.execution.pendingImmediateInputs.nonEmpty
+          if retryable && !recoverableAbortYieldsToQueued && state.llmFailRetries < OverloadRetryMax then
             // 方案 C（2026-08-18 误杀修复）：预算只在重试路径递增——llmCallsThisTurn
             // 与 llmFailRetries 的区别：后者成功即重置（只限连续重试），前者 turn 内
             // 单调累计（限全 turn 重试总量，正常工具循环的成功调用不计入）。
@@ -1425,6 +1451,73 @@ object AgentActor extends AgentCore with AgentSession:
             // pipeLlmCall itself runs (whole turns block the actor loop).
             IO.sleep(delayMs.millis) *>
               pipeLlmCall(agentDef, resources, depth, parentRef, retryState, replyTo)
+          else if recoverableAbortYieldsToQueued then
+            // ── Hard-recovery P4「用户意图优先」+ 缺陷⑥ 合批（设计 §2.5/§8）──
+            // transport abort 的目的就是让排队的用户消息进来：失败回合不带内容
+            // （seam guard 弃置部分流），把整批排队输入合并为**一个**新 turn
+            // （roundComplete 一次 / 蓝气泡逐条 / 单次 LLM 往返）。
+            // 不得落入下方 freeze-or-fail——RecoverableAbort 分类为 Fatal
+            // （stream 层禁 provider 拼接），fatal 会连队列一起丢且 UI 报错，
+            // 「恢复」退化成「失败」（round-5 隔离冒烟实证：kick 后零恢复请求、
+            // agent 直接 idle、队列滞留）。
+            val immInputs = state.execution.pendingImmediateInputs
+            val immMessages = immInputs.map(imm =>
+              (imm.blocks match
+                case Some(blocks) if blocks.nonEmpty => Message(MessageRole.User, Right(blocks))
+                case _                               => Message(MessageRole.User, Left(imm.text))
+              ).copy(source = imm.source))
+            logAgentEvent(
+              agentDef,
+              depth,
+              state.sessionId,
+              state.sessionName,
+              "immediate-input-injected-after-recoverable-abort",
+              s"batch=${immInputs.size} texts=${immInputs.map(_.text.take(40)).mkString(" | ").take(200)}"
+            )
+            val updatedState = state
+              .copy(execution =
+                ExecutionContext
+                  .idle(state.execution.messages ++ immMessages, state.execution.turnIdx, state.execution.currentTurnId)
+                  .copy(pendingImmediateInputs = Nil,
+                        pendingMailQueueCount = state.execution.pendingMailQueueCount,
+                        pendingUserInputs = state.execution.pendingUserInputs,
+                        pendingEvents = state.execution.pendingEvents,
+                        outstandingSubagentResults = state.execution.outstandingSubagentResults,
+                        owedCompletion = state.execution.owedCompletion))
+              .withNextLoopTurn
+            for
+              // F2: disk snapshot in sync after the drain (queue emptied).
+              _ <- persistQueues(state.sessionId, updatedState.execution)
+              _ <- state.sessionId.fold(IO.unit)(sid => emitSessionBusy(state.wsSend, sid, busy = true))
+              // One blue injected bubble per sourced input — same (new) turn group.
+              _ <- immInputs.collect {
+                case imm if imm.source.isDefined =>
+                  emitInjectedUserEvent(
+                    state.wsSend,
+                    state.sessionId,
+                    imm.text,
+                    imm.source.get,
+                    imm.eventType,
+                    imm.sender,
+                    imm.senderTeam
+                  )
+              }.sequence_
+              _ <- state.sessionId.fold(IO.unit)(sid =>
+                ctx.forkTurn(
+                  (resources.sessionStore.saveMessagesForSession(sid, updatedState.execution.messages) *>
+                    resources.sessionStore.flushIndex)
+                    .handleErrorWith(e =>
+                      NebflowLogger.forName("nebflow.agent").warn(s"Save/flush session failed: ${e.getMessage}")
+                    )
+                )
+              )
+              _ <- state.sessionId.fold(IO.unit)(sid =>
+                ctx.forkTurn(
+                  state.wsSend(Json.obj("type" -> "roundComplete".asJson, "sessionId" -> sid.asJson))
+                    .handleErrorWith(e => NebflowLogger.forName("nebflow.agent").warn(s"roundComplete delivery failed: ${e.getMessage}"))
+                ))
+              b <- pipeLlmCall(agentDef, resources, depth, parentRef, updatedState, replyTo)
+            yield b
           else
             // ── v2 冻结式错误恢复（§3.3/§6.1 步骤 3）────────────────────────
             // transient 类错误不再 fail-fast（原「turn 死亡」语义）→ 进入
@@ -1661,28 +1754,30 @@ object AgentActor extends AgentCore with AgentSession:
               s"events=${events.size} remaining=${remainingEvents.size}"
             )
             List(buildEventReminder(events))
-        // Inject ONE queued immediate input alongside tool results (serial processing).
-        // While compaction is in progress, keep inputs queued — injecting mid-compaction
+        // 缺陷⑥ 外部注入合批（设计 §8）：drain ALL queued immediate inputs into
+        // THIS request (one batched turn instead of one turn per item). While
+        // compaction is in progress, keep inputs queued — injecting mid-compaction
         // risks the input being lost in the summary. CompactionComplete drains them.
-        val (immInputOpt, remainingImmInputs) =
-          TurnBoundaryDrains.drainHead(state.execution.pendingImmediateInputs, state.pendingCompaction.isDefined)
-        val immediateMessages = immInputOpt match
-          case Some(imm) =>
+        val (immInputs, remainingImmInputs) =
+          TurnBoundaryDrains.drainAll(state.execution.pendingImmediateInputs, state.pendingCompaction.isDefined)
+        val immediateMessages = immInputs match
+          case Nil => Nil
+          case inputs =>
             logAgentEvent(
               agentDef,
               depth,
               state.sessionId,
               state.sessionName,
               "immediate-input-injected-at-tools-complete",
-              s"text=${imm.text.take(60)} remaining=${remainingImmInputs.size}"
+              s"batch=${inputs.size} texts=${inputs.map(_.text.take(40)).mkString(" | ").take(200)} remaining=${remainingImmInputs.size}"
             )
-            List((imm.blocks match
-              case Some(blocks) if blocks.nonEmpty => Message(MessageRole.User, Right(blocks))
-              case _ => Message(MessageRole.User, Left(imm.text))
-            ).copy(source = imm.source))
-          case None => Nil
-        val immEventIO = immInputOpt match
-          case Some(imm) if imm.source.isDefined =>
+            inputs.map(imm =>
+              (imm.blocks match
+                case Some(blocks) if blocks.nonEmpty => Message(MessageRole.User, Right(blocks))
+                case _ => Message(MessageRole.User, Left(imm.text))
+              ).copy(source = imm.source))
+        val immEventIO = immInputs.collect {
+          case imm if imm.source.isDefined =>
             emitInjectedUserEvent(
               state.wsSend,
               state.sessionId,
@@ -1693,7 +1788,7 @@ object AgentActor extends AgentCore with AgentSession:
               imm.senderTeam,
               imm.delivery
             )
-          case _ => IO.unit
+        }.sequence_
         // Block 3 循环检测器 L0（supervision trio §D3）：LoopGuard Warn 提醒以
         // user system-reminder 追加在工具结果之后（同系统 reminder 形态）
         // ——零成本给模型自纠机会；不阻断轮次。
@@ -1839,7 +1934,15 @@ object AgentActor extends AgentCore with AgentSession:
           // stale-Processing-after-interrupt gap).
           _ <- touchRegistryActivity(resources, state.sessionId, AgentStatus.Idle)
         yield
-          val interruptedState = state.resetForInterrupt.withPendingCompaction(None)
+          // Hard-recovery P3: cancelCurrentTurn is now fire-and-forget — the
+          // abandoned turn fiber may still complete and send a late
+          // LlmComplete/LlmFailed. Bump currentTurnId so the stale-turnId
+          // guard discards them (turnId is monotonic; the next dispatch takes
+          // +1 from here with no collision — AgentCore.scala:449).
+          val interruptedState = state
+            .resetForInterrupt
+            .withCurrentTurnId(state.execution.currentTurnId + 1)
+            .withPendingCompaction(None)
           idle(agentDef, resources, depth, parentRef, interruptedState)
 
       // --- Retry: cancel current work, re-dispatch from last checkpoint ---
@@ -2883,16 +2986,21 @@ object AgentActor extends AgentCore with AgentSession:
       yield result
       end for
     else if state.pendingCompaction.isEmpty && state.execution.pendingImmediateInputs.nonEmpty then
-      // Inject ONE queued immediate input (serial processing).
-      val immInput = state.execution.pendingImmediateInputs.head
-      val remainingInputs = state.execution.pendingImmediateInputs.tail
+      // 缺陷⑥ 外部注入合批（设计 §8）：drain ALL queued inputs into ONE next-turn
+      // request — arrival order preserved, each input keeps its own Message +
+      // source label, one roundComplete / one save / one pipeLlmCall. The
+      // frontend renders one blue injected bubble per emitInjectedUserEvent
+      // frame, all inside the same (new) turn group; the reply lands once
+      // after the batch (设计 §8.3：组边界仍由 roundComplete 唯一决定).
+      val immInputs = state.execution.pendingImmediateInputs
+      val remainingInputs = Nil
       logAgentEvent(
         agentDef,
         depth,
         state.sessionId,
         state.sessionName,
         "immediate-input-injected-at-turn-end",
-        s"text=${immInput.text.take(60)} remaining=${remainingInputs.size}"
+        s"batch=${immInputs.size} texts=${immInputs.map(_.text.take(40)).mkString(" | ").take(200)}"
       )
       val roundCompleteIO: IO[Unit] =
         if !isSubagent then
@@ -2906,11 +3014,12 @@ object AgentActor extends AgentCore with AgentSession:
             )
           )
         else IO.unit
-      val immMessage = (immInput.blocks match
-        case Some(blocks) if blocks.nonEmpty => Message(MessageRole.User, Right(blocks))
-        case _ => Message(MessageRole.User, Left(immInput.text))
-      ).copy(source = immInput.source)
-      val messagesWithImmediate = newMessages ++ List(immMessage)
+      val immMessages = immInputs.map(imm =>
+        (imm.blocks match
+          case Some(blocks) if blocks.nonEmpty => Message(MessageRole.User, Right(blocks))
+          case _ => Message(MessageRole.User, Left(imm.text))
+        ).copy(source = imm.source))
+      val messagesWithImmediate = newMessages ++ immMessages
       val updatedState = state
         .copy(execution =
           ExecutionContext
@@ -2925,7 +3034,7 @@ object AgentActor extends AgentCore with AgentSession:
                   // #25: hold/replay the completion debt across this injection.
                   owedCompletion = owedAfter)
         )
-        .withNextLoopTurn // Block 3：turn 末注入 = 新 turn
+        .withNextLoopTurn // Block 3：turn 末注入 = 新 turn（整批共享同一 turn）
       for
         _ <- roundCompleteIO
         // F2: keep the disk snapshot in sync after the drain (injected input gone).
@@ -2933,18 +3042,19 @@ object AgentActor extends AgentCore with AgentSession:
         _ <-
           if !isSubagent then state.sessionId.fold(IO.unit)(sid => emitSessionBusy(state.wsSend, sid, busy = true))
           else IO.unit
-        _ <- immInput.source match
-          case Some(src) =>
+        // One blue injected bubble per sourced input — same group, back to back.
+        _ <- immInputs.collect {
+          case imm if imm.source.isDefined =>
             emitInjectedUserEvent(
               state.wsSend,
               state.sessionId,
-              immInput.text,
-              src,
-              immInput.eventType,
-              immInput.sender,
-              immInput.senderTeam
+              imm.text,
+              imm.source.get,
+              imm.eventType,
+              imm.sender,
+              imm.senderTeam
             )
-          case None => IO.unit
+        }.sequence_
         _ <- state.sessionId.fold(IO.unit)(sid =>
           ctx.forkTurn(
             (resources.sessionStore.saveMessagesForSession(sid, messagesWithImmediate) *>
@@ -3578,7 +3688,12 @@ object AgentActor extends AgentCore with AgentSession:
           _ <- touchRegistryActivity(resources, state.sessionId, AgentStatus.Idle)
           _ <- updateRegistryFrozenReason(resources, state.sessionId, None)
         yield
-          val interruptedState = state.resetForInterrupt.withPendingCompaction(None)
+          // Hard-recovery P3: same stale-turnId bump as the processing-state
+          // Interrupt — fire-and-forget cancel admits late turn results.
+          val interruptedState = state
+            .resetForInterrupt
+            .withCurrentTurnId(state.execution.currentTurnId + 1)
+            .withPendingCompaction(None)
           idle(agentDef, resources, depth, parentRef, interruptedState)
 
       case AgentCommand.Stop(_) =>

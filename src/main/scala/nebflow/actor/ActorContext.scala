@@ -84,9 +84,23 @@ final class LocalActorContext[Msg](
       _ <- activeTurnFibers.update(_ + (key -> fiber))
     yield ()
 
+  /** Hard-recovery P3 (2026-09-07): fire-and-forget. `Fiber.cancel` in CE3
+    * waits for the cancellation (finalizers included) to COMPLETE — for a
+    * fiber parked on an uncancellable wait (JDK HttpClient body read over a
+    * half-open connection, 取证 2026-09-07 §1.4) that wait is infinite, and
+    * the Interrupt/Stop/RestartAgent mailbox handlers that call this would
+    * wedge the whole actor (production: Interrupt at 11:23:35 froze the
+    * mailbox — a later user message never even queued). Instead: clear the
+    * tracking map immediately and fork each cancel on its own fiber. Late
+    * completion results from an abandoned turn are discarded by the existing
+    * stale-turnId guard (AgentActor LlmComplete/LlmFailed) — callers that
+    * interrupt a turn MUST bump currentTurnId — and the parked fiber itself
+    * is unwedged by the transport abort (LlmInterface.transportAbortFor,
+    * hard-recovery P1) when escalation reaches L2. */
   def cancelCurrentTurn(): IO[Unit] =
     activeTurnFibers.get.flatMap { fibers =>
-      fibers.values.toList.traverse_(_.cancel) *> activeTurnFibers.set(Map.empty)
+      activeTurnFibers.set(Map.empty) *>
+        fibers.values.toList.traverse_(_.cancel.start.void)
     }
 
   def spawn[ChildMsg](behavior: Behavior[ChildMsg], name: String): IO[ActorRef[ChildMsg]] =

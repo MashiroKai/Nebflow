@@ -305,6 +305,9 @@ export default {
   'manage.retry': 'Retry',
   'manage.stuck': 'Stuck · idle {secs}s',
   'manage.stuckAutoRestart': 'Stuck · auto-restarting',
+  // Hard-recovery P7 (2026-09-07): labels mirror the action the backend actually performed
+  'manage.stuckHardAbort': 'Stuck · force-aborting',
+  'manage.stuckFailed': 'Stuck · needs manual attention (progress saved)',
   // Sub-Agents panel (2026-08-25 subagents-panel spec) — state labels + empty state
   'subagents.header': 'Sub-agents · {count}',
   'subagents.empty': 'No running sub-agents',

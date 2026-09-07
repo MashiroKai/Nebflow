@@ -6,6 +6,8 @@ import cats.effect.std.Dispatcher
 import cats.syntax.all.*
 import nebflow.core.NebflowLogger
 import nebflow.shared.*
+import sttp.capabilities.fs2.Fs2Streams
+import sttp.client4.StreamBackend
 import sttp.client4.httpclient.fs2.HttpClientFs2Backend
 
 import scala.concurrent.duration.*
@@ -22,6 +24,20 @@ final class ShutdownAbort
   * fails and its own bounded retry loop (MaxTurnLlmCalls) takes over. */
 final class StuckAbort(val sessionId: String)
     extends RuntimeException(s"TaskStuckWatcher hard-cancel: LLM request of session $sessionId aborted (agent unresponsive to Stop)")
+
+/** Hard-recovery P6 (2026-09-07): raised when the transport of an in-flight LLM
+  * request is force-aborted (per-request HttpClient shutdownNow — the only
+  * primitive proven to unblock a parked body read, 取证 2026-09-07 §1.3) by
+  * SessionKick (user message/interrupt on a wedged turn) or watcher L2. The
+  * provider is NOT at fault — the stream-level classification is Fatal (no
+  * provider fallback, same as StuckAbort: partial content must never be
+  * stitched), but the AGENT layer treats it as retryable (re-send the whole
+  * turn within the existing OverloadRetryMax/MaxTurnLlmCalls budget) or yields
+  * to queued user input at the turn boundary — see AgentActor.llmFailureRetryable. */
+final class RecoverableAbort(val sessionId: String)
+    extends RuntimeException(
+      s"transport abort: LLM request of session $sessionId force-aborted (recoverable — turn will be re-sent)"
+    )
 
 object LlmInterface:
   private val logger = NebflowLogger.forName("nebflow.llm")
@@ -66,7 +82,11 @@ object LlmInterface:
   // own runtime.
   private final case class InflightEntry(
     sessionId: Option[String],
-    halt: Deferred[IO, Either[Throwable, Unit]]
+    halt: Deferred[IO, Either[Throwable, Unit]],
+    // Hard-recovery P1 (2026-09-07): per-attempt transport abort thunk. None
+    // until (and unless) the attempt's per-request HttpClient is created and
+    // attached — see attachTransportAbort / makeAttemptTransport.
+    abortRef: Ref[IO, Option[IO[Unit]]]
   )
 
   private val inflight: Ref[IO, Map[String, InflightEntry]] =
@@ -78,8 +98,21 @@ object LlmInterface:
     for
       key <- IO(java.util.UUID.randomUUID().toString)
       halt <- IO.deferred[Either[Throwable, Unit]]
-      _ <- inflight.update(_ + (key -> InflightEntry(sessionId, halt)))
+      abortRef <- IO.ref(Option.empty[IO[Unit]])
+      _ <- inflight.update(_ + (key -> InflightEntry(sessionId, halt, abortRef)))
     yield (key, halt)
+
+  /** Hard-recovery P1: attach (or replace) the transport abort action for an
+    * in-flight request. Called by sendStream's per-attempt transport setup. */
+  private[llm] def attachTransportAbort(key: String, abort: IO[Unit]): IO[Unit] =
+    setAbort(key, abort)
+
+  private def setAbort(key: String, abort: IO[Unit]): IO[Unit] =
+    inflight.get.flatMap { m =>
+      m.get(key) match
+        case Some(e) => e.abortRef.set(Some(abort))
+        case None    => IO.unit
+    }
 
   private[llm] def unregisterInflight(key: String): IO[Unit] =
     inflight.update(_ - key)
@@ -94,6 +127,30 @@ object LlmInterface:
       val matching = m.toList.collect { case (k, e) if e.sessionId.contains(sessionId) => (k, e) }
       matching.traverse_ { case (_, e) =>
         e.halt.complete(Left(new StuckAbort(sessionId))).void.handleErrorWith(_ => IO.unit)
+      } *> IO.pure(matching.size)
+    }
+
+  /** Hard-recovery P1/P4 (2026-09-07): L2 transport abort — force-abort every
+    * in-flight LLM request belonging to a session at the TRANSPORT level
+    * (per-request HttpClient shutdownNow). This is the only primitive proven
+    * to unblock a fiber parked on the JDK HttpClient body read (半开连接 —
+    * fs2 cancellation and the halt Deferred can only act at step boundaries,
+    * which a parked read never crosses; 取证 2026-09-07 §1.3). Also completes
+    * the halt with RecoverableAbort (belt: whichever surfaces first wins; the
+    * per-attempt abortedRef mapping in sendStream makes the surfaced error
+    * deterministically RecoverableAbort). No-op (0 aborted) when
+    * PerRequestTransport is disabled — callers verify and escalate (设计 P2). */
+  def transportAbortFor(sessionId: String): IO[Int] =
+    inflight.get.flatMap { m =>
+      val matching = m.toList.collect { case (k, e) if e.sessionId.contains(sessionId) => (k, e) }
+      matching.traverse_ { case (_, e) =>
+        e.abortRef.get.flatMap {
+          case Some(abort) => abort.attempt.void
+          case None        => IO.unit
+        } *>
+          // Belt: if the transport kill raced the stream past a step boundary,
+          // interruptWhen surfaces this instead of the raw IOException.
+          e.halt.complete(Left(new RecoverableAbort(sessionId))).void.handleErrorWith(_ => IO.unit)
       } *> IO.pure(matching.size)
     }
 
@@ -117,7 +174,7 @@ object LlmInterface:
    * swallowed by the shutdown hook's `catch case _: Throwable => ()` →
    * Ctrl+C inflight-abort silently no-ops.
    */
-  private def abortHttpClient(client: java.net.http.HttpClient): Unit =
+  private[llm] def abortHttpClient(client: java.net.http.HttpClient): Unit =
     try
       val m = classOf[java.net.http.HttpClient].getMethod("shutdownNow")
       m.invoke(client)
@@ -128,6 +185,48 @@ object LlmInterface:
       case e: java.lang.reflect.InvocationTargetException =>
         // shutdownNow exists but threw — still try close()
         try client.close() catch case _: Throwable => ()
+
+  // ── Hard-recovery P1: per-attempt transport (设计 D-1 方案 A, 2026-09-07) ──
+
+  private[llm] final case class AttemptTransport(
+    backend: StreamBackend[IO, Fs2Streams[IO]],
+    release: IO[Unit]
+  )
+
+  /** A dedicated HttpClient + fs2 backend + dispatcher per streaming attempt.
+    * shutdownNow() on this client aborts exactly ONE request — the only
+    * primitive that provably unblocks a fiber parked on the JDK body read
+    * (半开连接; 取证 2026-09-07: 22min hang, all fiber-level cancellation
+    * deferred at step boundaries, only the shutdown hook's shutdownNow
+    * unwedged it). The abort thunk is registered on the inflight entry so
+    * [[transportAbortFor]] can reach it (L2 / SessionKick); it flips
+    * abortedRef FIRST so whatever error the kill surfaces re-raises
+    * deterministically as RecoverableAbort. None when
+    * Defaults.PerRequestTransport is disabled (legacy shared client, L2
+    * degrades to no-op → callers escalate). Cost: one TLS handshake + one
+    * selector thread per request (~100-300ms, negligible next to LLM
+    * latency — 设计 §2.2). */
+  private[llm] def makeAttemptTransport(
+      key: String,
+      sessionId: String,
+      abortedRef: Ref[IO, Boolean]
+  ): IO[Option[AttemptTransport]] =
+    if !Defaults.PerRequestTransport then IO.pure(None)
+    else
+      Dispatcher.parallel[IO].allocated.flatMap { case (dispatcher, releaseDispatcher) =>
+        val client = java.net.http.HttpClient
+          .newBuilder()
+          .version(java.net.http.HttpClient.Version.HTTP_1_1)
+          .connectTimeout(java.time.Duration.ofSeconds(Defaults.LlmConnectTimeoutSec.toLong))
+          .build()
+        val backend = HttpClientFs2Backend.usingClient[IO](client, dispatcher)
+        val abort = abortedRef.set(true) *> IO(abortHttpClient(client)).attempt.void
+        val release =
+          IO(abortHttpClient(client)).attempt.void *>
+            IO(client.close()).attempt.void *>
+            releaseDispatcher
+        setAbort(key, abort).as(Some(AttemptTransport(backend, release)))
+      }
 
   // ── Vision PreCheck helpers ────────────────────────────
 
@@ -226,6 +325,10 @@ object LlmInterface:
     val httpClient = java.net.http.HttpClient
       .newBuilder()
       .version(java.net.http.HttpClient.Version.HTTP_1_1)
+      // Hard-recovery §2.2 配套小修: bound TCP establishment — a half-open
+      // dial after a VPN switch must fail within 30s, not hang forever (the
+      // JDK default connect timeout is infinite).
+      .connectTimeout(java.time.Duration.ofSeconds(Defaults.LlmConnectTimeoutSec.toLong))
       .build()
     Dispatcher.parallel[IO].allocated.flatMap { case (dispatcher, releaseDispatcher) =>
       val backend = HttpClientFs2Backend.usingClient[IO](httpClient, dispatcher)
@@ -509,6 +612,14 @@ object LlmInterface:
                                         )
                                       case _ => t
                                   }
+                                  // Hard-recovery P1/P6 (2026-09-07): per-attempt transport
+                                  // (per-request HttpClient, 设计 D-1 方案 A) + deterministic
+                                  // RecoverableAbort mapping. abortedRef flips BEFORE the client
+                                  // is killed, so whichever error the transport kill surfaces
+                                  // (read IOException racing interruptWhen) re-raises as
+                                  // RecoverableAbort instead of relying on IOException message
+                                  // matching.
+                                  fs2.Stream.eval(IO.ref(false)).flatMap { abortedRef =>
                                   val stream = fs2.Stream.force(
                                     (for
                                       // PreSendChecker: strip images for non-vision models
@@ -520,22 +631,32 @@ object LlmInterface:
                                       effectiveMessages =
                                         if !effectiveVision && hasImage(msgs) then stripImages(msgs) else msgs
                                       adapter <- registry.getAdapter(candidate.providerId)
-                                    yield adapter.sendMessageStream(
-                                      SendMessageParams(
-                                        effectiveMessages,
-                                        candidate.model,
-                                        req.tools,
-                                        Some(candidate.maxTokens),
-                                        cappedThinking,
-                                        req.systemStable,
-                                        req.systemDynamic,
-                                        Some(req.sessionId),
-                                        Some(req.agentId),
-                                        searchInjectionFor(req, candidate)
+                                      transportOpt <- makeAttemptTransport(key, req.sessionId, abortedRef)
+                                    yield adapter
+                                      .sendMessageStream(
+                                        SendMessageParams(
+                                          effectiveMessages,
+                                          candidate.model,
+                                          req.tools,
+                                          Some(candidate.maxTokens),
+                                          cappedThinking,
+                                          req.systemStable,
+                                          req.systemDynamic,
+                                          Some(req.sessionId),
+                                          Some(req.agentId),
+                                          searchInjectionFor(req, candidate),
+                                          attemptBackend = transportOpt.map(_.backend)
+                                        )
                                       )
+                                      .onFinalize(transportOpt.fold(IO.unit)(_.release))
                                     )
-                                    )
-                                   )
+                                   ).handleErrorWith { err =>
+                                     fs2.Stream.eval(abortedRef.get).flatMap { aborted =>
+                                       fs2.Stream.raiseError[IO](
+                                         if aborted then new RecoverableAbort(req.sessionId) else err
+                                       )
+                                     }
+                                   }
                                   (stream
                                     // Per-provider two-phase watchdog: detects both
                                     // dead connections (no first token) and mid-stream stalls.
@@ -839,6 +960,7 @@ object LlmInterface:
                                         }
                                       }
                                     }
+                                  } // end per-attempt abortedRef flatMap (hard-recovery P1/P6)
 
                             attemptWithHealthCheck
                           }
