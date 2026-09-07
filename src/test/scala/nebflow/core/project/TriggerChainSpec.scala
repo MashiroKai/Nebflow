@@ -323,7 +323,7 @@ class TriggerChainSpec extends CatsEffectSuite:
 
   // ── T-D mount 僵尸 running 对账 ─────────────────────────────
 
-  test("T-D mount zombie reconciliation: persisted running node with no live fiber is reaped (cancelled + display TTL + reaped audit) at mount") {
+  test("T-D mount zombie reconciliation: persisted running node with no live fiber is reaped (cancelled, no TTL, reaped audit) at mount") {
     val ws = tempRoot / "ws-td"
     os.makeDir.all((ws / ".nebflow"))
     val system = ActorSystem(s"tc-td-${scala.util.Random.nextInt(100000)}")
@@ -352,7 +352,10 @@ class TriggerChainSpec extends CatsEffectSuite:
       _ <- system.stopAll.handleErrorWith(_ => IO.unit)
     yield
       assertEquals(z.status, NodeLifecycle.Cancelled, "zombie running node must be reaped to cancelled at mount")
-      assert(z.ttlExpireAt.isDefined, "reaped zombie must carry display TTL (cancelNode chain)")
+      // 2026-09-07 作者裁定（df846488）：failed/cancelled 无 TTL 强制清——死亡现场
+      // 保留主图待上层裁决，不静默消失。cancelNode 链 ttlExpireAt 恒 None。
+      assert(z.ttlExpireAt.isEmpty,
+        "reaped zombie must NOT carry display TTL (2026-09-07 ruling: cancelled retained on map, no forced cleanup)")
       assert(audit.exists((t, id) => t == "reaped" && id == "n-zombie"),
         s"reaped audit event must be logged, got: $audit")
   }

@@ -572,7 +572,7 @@ class NodeDepsSpec extends CatsEffectSuite:
 
   // ── T8 abandon 接受域扩展（§1.6 裁定①）──────────────────
 
-  test("T8 abandon domain extension: wiring abandonable (cancelled+TTL+audit); running refused; upstream completion after abandon skips idempotently") {
+  test("T8 abandon domain extension: wiring abandonable (cancelled, no TTL, audit); running refused; upstream completion after abandon skips idempotently") {
     val ws = tempRoot / "ws-t8"
     os.makeDir.all(ws)
     val system = ActorSystem(s"deps-t8-${scala.util.Random.nextInt(100000)}")
@@ -586,7 +586,7 @@ class NodeDepsSpec extends CatsEffectSuite:
         "task" -> Json.fromString("slow-a"), "out" -> Json.fromString("Nebula")), ctx)
       _ <- waitStatus(rt, "slow-a", Set(NodeLifecycle.Running))
       slowId <- idOf(rt, "slow-a")
-      // wiring 节点 abandon → cancelled + display TTL + 审计。
+      // wiring 节点 abandon → cancelled（无 TTL，留主图）+ 审计。
       // w-wire store 直种（20260903 创建必带 out 新规范下 out-only wiring 节点不可经 NodeEdit 创建）
       _ <- rt.store.mutate(s => s.copy(nodes = s.nodes ++ Map(
         "n-w-wire" -> NodeDef(id = "n-w-wire", name = "w-wire", agent = "test-agent",
@@ -613,7 +613,10 @@ class NodeDepsSpec extends CatsEffectSuite:
       // wiring abandon：接受（「悬空活节点」处置出口）
       assert(rWire.isRight, s"wiring node must be abandonable, got: $rWire")
       assertEquals(wAfter.status, NodeLifecycle.Cancelled, "abandoned wiring node becomes cancelled")
-      assert(wAfter.ttlExpireAt.isDefined, "abandoned wiring node gets display TTL")
+      // 2026-09-07 作者裁定（df846488）：abandon 是上层裁决动作，cancelled 无 TTL
+      // 强制清——节点留主图待后续拓扑清理，不再 24h 后静默消失。
+      assert(wAfter.ttlExpireAt.isEmpty,
+        "abandoned wiring node must NOT get display TTL (2026-09-07 ruling: cancelled retained on map, no forced cleanup)")
       assert(audit1.exists((t, id) => t == "abandoned" && id == wId), s"abandoned audit event must be logged, got: $audit1")
       // running 仍拒绝
       assert(rRun.isLeft, s"running node abandon must be refused, got: $rRun")
