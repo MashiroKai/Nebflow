@@ -335,7 +335,7 @@ object NodeEditTool extends Tool:
         "preset" -> Json.obj("type" -> "string".asJson),
         "merge" -> Json.obj("type" -> "boolean".asJson, "description" -> "Merge/collection node (batch landing sink, create-only): triggers only when ALL upstreams completed (in-barrier); an upstream failure converts this node to blocked (category=upstream-incomplete) instead of the collect placeholder-start. Must NOT carry 'worktree' — a merge node lands on the workspace root repo (sandbox root = workspace, .git writable); task should embed the upstream branch/worktree list + landing command set. REQUIRES 'in' (≥1 existing upstream id) on create — zero-upstream merge is rejected (NODE_MERGE_REQUIRES_UPSTREAM): create the upstreams first, then this node with in=<ids>".asJson),
         "notifyDispatcher" -> Json.obj("type" -> "boolean".asJson, "description" -> "dispatch-notify backflow: on terminal state (completion wired) trigger a dispatcher session with this node's result reference (independent signal channel, no out-edge cost). Settable/withdrawable while wiring/pending/running".asJson),
-        "abandon" -> Json.obj("type" -> "boolean".asJson, "description" -> "Abandon a TERMINAL (blocked/completed/failed/cancelled), wiring/pending, or dead-session running node → cancelled + display TTL".asJson),
+        "abandon" -> Json.obj("type" -> "boolean".asJson, "description" -> "Abandon a TERMINAL (blocked/completed/failed/cancelled), wiring/pending, or dead-session running node → cancelled, retained on map (no TTL — failed/cancelled never auto-archived; upper layer decides cleanup)".asJson),
         "loop" -> Json.obj("type" -> "boolean".asJson, "description" -> "LoopNode flag (create/edit): true = this node iterates — a WORKER session produces a result, a VERIFY session checks it; PASS → delivered downstream; FAIL → worker re-runs (same session, constant input) up to maxRounds(K). false/omitted = normal single-pass node. A loop node still declares its normal in/out/deps (and may merge) — loop only adds the inner iterate-verify loop".asJson),
         "maxRounds" -> Json.obj("type" -> "integer".asJson, "description" -> "Loop round cap K (1-50, default 5): re-run the worker up to K times before the verify PASSes; reaching K without PASS terminalizes the node as failed (result states 'loop reached maxRounds'). Only meaningful with loop=true".asJson),
         "verify" -> Json.obj("type" -> "string".asJson, "description" -> "Verify-agent name (default \"general\"): the session that checks each worker output (general agent + plugins — shares the node's plugins). Must exist in the Agent Catalog. Only with loop=true".asJson),
@@ -831,8 +831,9 @@ object NodeEditTool extends Tool:
 
   // ── 编辑 ─────────────────────────────────────────────
 
-  /** abandon 动作（blocked 反馈重入设计 §7.7）：终态节点 → status=cancelled + 显示 TTL
-    * + 审计事件。分发器处置 blocked 节点的「放弃」载体；NodeCancel 语义不动（仅 running）。
+  /** abandon 动作（blocked 反馈重入设计 §7.7）：终态节点 → status=cancelled
+    * （无 TTL，留主图——2026-09-07 作者裁定：failed/cancelled 不自动归档）+ 审计事件。
+    * 分发器处置 blocked 节点的「放弃」载体；NodeCancel 语义不动（仅 running）。
     * R2 纪律：mutate 内现读 fresh，fresh 已非终态（并发重激活）→ 拒写。
     *
     * 接受域扩展（裁定①待实施语义，deps 设计 §1.6）：终态 ∪ wiring/pending——拓扑
@@ -841,7 +842,8 @@ object NodeEditTool extends Tool:
     * 被退役节点的上游其后完成时 deliverOut → startNode 幂等跳过（cancelled ∈ Terminal）。
     *
     * 死会话 running 收殓（清场 c-②，20260903 03:04 清场误杀事故复盘）：running 且
-    * 无在飞执行 fiber（会话死于传输中断/实例重启泄漏）→ 可收殓（cancelled + TTL）。
+    * 无在飞执行 fiber（会话死于传输中断/实例重启泄漏）→ 可收殓（cancelled，无 TTL，
+    * 留主图）。
     * 误杀防护（硬约束）：活 running（isRunning=true = 有在飞 fiber，取消信号可达）
     * 绝对拒绝，只能走 NodeCancel。无复活竞态：running 节点不会被 startNode 二次
     * spawn（入口状态幂等跳过），死会话不可能复活 → 预检后无需事务内复查 IO 信号。 */

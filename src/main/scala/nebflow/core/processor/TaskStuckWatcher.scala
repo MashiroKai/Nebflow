@@ -288,6 +288,20 @@ object TaskStuckWatcher:
                   s"TaskStuckWatcher: ${rec.sessionId} attempt $attempts (L3) — releasing via bridge Cancelled, then hard-resume from transcript breakpoint"
                 ) *> broadcastStuck(wsHub, rec, idleSecs, "restart") *>
                   bridgeCancelled("L3 hard-recovery: true resume from transcript breakpoint") *>
+                  // 面板实时终态帧（Sub-Agents 面板取消实时刷新修复；beta.57 CI
+                  // ProjectSessionCancelPanelFrameSpec 暴露的 hard 分支遗漏）：L3 桥
+                  // Cancelled 是分级链上 node-* 旧会话的释放点，不补发则面板行幽灵
+                  // 滞留到刷新。仅 node-* 补发——dispatcher-* 由其观察桥拆除点
+                  // （ProjectActor Failed|Cancelled 分支）统一补发，与 !hard giveUp
+                  // 分支同语义同护栏。
+                  (if rec.sessionId.startsWith(nebflow.core.project.NodeEngine.SessionPrefix)
+                   then
+                     nebflow.core.node.NodeRunner
+                       .emitSubagentPanelDone(wsHub.broadcast, rec.sessionId, rec.rootSessionId)
+                       .handleErrorWith(e =>
+                         logger.warn(s"TaskStuckWatcher: panel done frame for ${rec.sessionId} failed: ${e.getMessage}")
+                       )
+                   else IO.unit) *>
                   (IO.sleep(5.seconds) *>
                     hardResumeFlowNode(resources, rec).flatMap {
                       case true => stopCounts.update(_ - rec.sessionId)
