@@ -105,6 +105,7 @@ jobs:
           name: jar
           path: target/scala-3.5.2/${{ env.LOWER_NAME }}-assembly-*.jar
           if-no-files-found: error
+          retention-days: 3
 
   package-macos:
     name: Package macOS (${{ matrix.label }})
@@ -144,6 +145,7 @@ jobs:
           name: dmg-${{ matrix.label }}
           path: build/dist/*.dmg
           if-no-files-found: error
+          retention-days: 3
 
   package-windows:
     name: Package Windows (x64 msi)
@@ -187,6 +189,7 @@ jobs:
           name: msi-x64
           path: build/dist/*.msi
           if-no-files-found: error
+          retention-days: 3
 
   package-linux:
     name: Package Linux (deb + app-image)
@@ -227,6 +230,7 @@ jobs:
             build/dist/*.deb
             build/dist/*-app-image.tar.gz
           if-no-files-found: error
+          retention-days: 3
 
   release:
     name: Tag, Release & Mirror
