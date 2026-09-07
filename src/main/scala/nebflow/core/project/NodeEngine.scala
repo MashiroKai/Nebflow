@@ -71,9 +71,11 @@ class NodeEngine(
     escalate = (text, nodeName) => deliverToNebula(text, nodeName, NodeLifecycle.Blocked)
   )
 
-  /** dispatch-notify 通道（2026-09-05 批）：节点终态结果回流分发器的单一通知入口
-    * （completion 接线 / failed-blocked 预留；防循环+预算+持久去重见 DispatchNotify）。
-    * 挂接点仅两处：completedNode 尾部直触发 + ProjectActor.TtlTick 周期补投。 */
+  /** dispatch-notify 通道（2026-09-05 批接线 completion；2026-09-07 批接线 failed）：
+    * 节点终态结果回流分发器的单一通知入口（completion 查 notifyDispatcher flag；
+    * failed 不查——异常低频事件拓扑主人全知情；防循环+预算分账+窗口熔断+持久去重
+    * 见 DispatchNotify）。挂接点三处：completedNode 尾部 + deliverFailed 尾部直触发
+    * + ProjectActor.TtlTick 周期补投。 */
   private[project] val dispatchNotify: DispatchNotify = DispatchNotify.forEngine(
     store, workspace, projectName, rootSessionId,
     // notice 语义（非 blocked）：预算耗尽时节点保持 completed，前端不可标 BLOCKED。
@@ -1654,7 +1656,7 @@ class NodeEngine(
         yield ()
 
   private def deliverFailed(node: NodeDef, err: String): IO[Unit] =
-    node.out match
+    val settle: IO[Unit] = node.out match
       case None => IO.unit
       case Some("Nebula") =>
         deliverToNebula(s"[Node '${node.name}' failed]\n$err", node.name, "failed", Some(node.id))
@@ -1683,6 +1685,13 @@ class NodeEngine(
               }
             case None => IO.unit
         yield ()
+    // dispatch-notify（2026-09-07 批，设计 §2.1）：out 结算后通知分发器（failed 版，
+    // 不查 notifyDispatcher flag）。挂本函数尾部=单点收口——failNode 与
+    // autoFailDeadRunning 两口必经 deliverFailed，未来新增 failed 终态化路径只要走
+    // 这里就自动覆盖。通知在 out 结算**之后**发出：分发器 spawn/注入时读到的
+    // Flow Map 是结算后状态（下游已按 failed 推进、merge 下游已 blocked），拓扑判断
+    // 不失真——与 completedNode 先 deliverOut+settleDeps 再 notify 同序。
+    settle *> dispatchNotify.notifyTerminal(node, NotifyReason.Failed)
 
   /** 合并节点因上游失败转 blocked（merge-node 批 §触发语义②；与 blockedNode 同构
     * 但**不经 FeedbackRouter**）：① 事务内现读 fresh（R2 纪律，haltsOnFailure 只认
