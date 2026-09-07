@@ -12,6 +12,7 @@ import nebflow.core.daemon.{DaemonService, DaemonStore}
 import nebflow.core.hooks.*
 import nebflow.core.mcp.*
 import nebflow.core.scheduler.{ScheduledTaskService, ScheduledTaskStore}
+import nebflow.core.seed.SeedService
 import nebflow.core.skill.SkillService
 import nebflow.core.task.FileTaskStore
 import nebflow.core.project.{ProjectRuntimeRegistry, ProjectStore}
@@ -508,7 +509,14 @@ object GatewayMain extends IOApp:
                                 // 发 TtlTick；无项目时空转。
                                 val projectTtlScanner: IO[Unit] =
                                   nebflow.core.project.ProjectActor.ttlScanner(30.seconds).start.void
-                                hubSetup *> taskTtlSweep *> subagentCrashSweep *> startupMount *> projectCrashSweep *> projectTtlScanner *> {
+                                // 冷启动播种（cold-start seed 批 2026-09-07）：fresh home
+                                // 在 startupMount 前就绪默认最小集（project-dispatcher /
+                                // general agents + 5 系统插件 + projects/general）——通用项目
+                                // 需于挂载前存在，启动即自动挂载、Task(project=general) 直达
+                                // 分发器。幂等 + fail-soft（见 SeedService 注释），失败仅
+                                // 告警不阻塞启动（与 seedDefaults/startupMount 同构）。
+                                val seedMinimalSet: IO[Unit] = SeedService.ensureSeeded()
+                                hubSetup *> taskTtlSweep *> subagentCrashSweep *> seedMinimalSet *> startupMount *> projectCrashSweep *> projectTtlScanner *> {
                                   val sharedResourcesLive = sharedResources
                                   val sessionService = new SessionService(sessionStore)
                                   val agentService = new AgentService(agentLibrary)
