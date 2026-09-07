@@ -56,4 +56,21 @@ class NodePayloadSpec extends FunSuite:
       assert(!j.asObject.exists(_.contains("blockedFeedback")), s"status=$st must NOT carry blockedFeedback (裁定②), got keys: ${j.asObject.map(_.keys.toList.sorted)}")
   }
 
+  test("buildNodeJson: no-three-key node payload key set is byte-level zero drift (裁定③)") {
+    // 无 skill/mcp/preset 的节点（= NodeEdit 新建节点的唯一形态）：三键从基础集
+    // 移除后字段集恒定——精确键集断言（与 NodeEventPushSpec NodeListKeys 同口径）
+    val node = NodeDef(id = "n-z", name = "零漂移", agent = "general", createdAt = 1000L)
+    val j = NodePayload.buildNodeJson(node, now = 2000L)
+    val expected = Set("id", "name", "agent", "description", "status", "in", "out", "hasWorktree", "worktree", "blockCount", "createdAt", "completedAt", "ttlLeftSec")
+    assertEquals(j.asObject.map(_.keys.toSet), Some(expected), "key set must be exactly the base set (no skill/mcp/preset, no conditional keys)")
+    // 存量节点（三键有值）照常携带——条件序列化而非删除
+    val legacy = node.copy(skill = Some("s"), mcp = Some("m"), preset = Some("p"))
+    val jl = NodePayload.buildNodeJson(legacy, now = 2000L)
+    for (k, v) <- List("skill" -> "s", "mcp" -> "m", "preset" -> "p") do
+      assertEquals(jl.hcursor.get[String](k).toOption, Some(v), s"legacy node must keep carrying $k verbatim")
+    // 部分携带（只有 preset）：键集 = 基础集 + preset
+    val partial = NodePayload.buildNodeJson(node.copy(preset = Some("p")), now = 2000L)
+    assertEquals(partial.asObject.map(_.keys.toSet), Some(expected + "preset"))
+  }
+
 end NodePayloadSpec
