@@ -1,6 +1,8 @@
 package nebflow.core
 
+import cats.effect.unsafe.implicits.global
 import munit.FunSuite
+import nebflow.core.scheduler.ScheduledTaskStore
 import nebflow.shared.{Message, MessageRole}
 
 /**
@@ -70,5 +72,37 @@ class SystemRemindersSpec extends FunSuite:
       Message(MessageRole.User, Left(s"<system-reminder>\nCurrent time: 2026-08-11 0$i:00 +08:00\n</system-reminder>"))
     }.toList
     assertEquals(SystemReminders.pruneTimeReminders(messages), messages)
+
+  // ============================================================
+  // Mounted projects reminder (progressive disclosure, 2026-09-07):
+  // fires only when a non-empty delta is supplied; none otherwise.
+  // ============================================================
+
+  test("projects reminder fires when mountedProjectsDelta is non-empty"):
+    val taskStore = new ScheduledTaskStore(os.temp.dir() / "scheduled-tasks")
+    val reminders = SystemReminders
+      .collectAllIO(
+        isUserTurn = true,
+        taskStore = taskStore,
+        sessionId = None,
+        mountedProjectsDelta = "+ - voice-recognition-test: STT\n- - czt-project"
+      )
+      .unsafeRunSync()
+    val projects = reminders.find(_.category == "projects")
+    assert(projects.isDefined, s"expected a 'projects' reminder, got: ${reminders.map(_.category)}")
+    assert(projects.get.content.contains("+ - voice-recognition-test: STT"), projects.get.content)
+    assert(projects.get.content.contains("- - czt-project"), projects.get.content)
+
+  test("no projects reminder when mountedProjectsDelta is empty"):
+    val taskStore = new ScheduledTaskStore(os.temp.dir() / "scheduled-tasks")
+    val reminders = SystemReminders
+      .collectAllIO(
+        isUserTurn = true,
+        taskStore = taskStore,
+        sessionId = None,
+        mountedProjectsDelta = ""
+      )
+      .unsafeRunSync()
+    assert(!reminders.exists(_.category == "projects"), s"must not inject a projects reminder: ${reminders.map(_.category)}")
 
 end SystemRemindersSpec

@@ -11,6 +11,7 @@ import nebflow.agent.PromptSections.*
 import nebflow.core.*
 import nebflow.core.compact.*
 import nebflow.core.hooks.*
+import nebflow.core.project.ProjectRuntimeRegistry
 import nebflow.core.tools.*
 import nebflow.llm.{Fallback, TurnBudgetExceeded}
 import nebflow.shared.*
@@ -674,6 +675,16 @@ private[agent] trait AgentCore:
           }
           isRealUserTurn = isUserTurn && lastMsgOpt.exists(_.source.isEmpty)
           isRootAgent = freshDef.name == "Nebula"
+          // Mounted-project list (progressive disclosure 2026-09-07): Nebula
+          // only — dispatcher/node sessions skip the registry read (text stays
+          // "" → section not injected, no reminder). Root agent always gets an
+          // explicit state (sorted bullet lines or the 当前无挂载项目 placeholder).
+          mountedProjectsText <-
+            if isRootAgent then
+              ProjectRuntimeRegistry.all.map(rts =>
+                MountedProjectList.renderLines(rts.map(rt => rt.project.name -> rt.project.description))
+              )
+            else IO.pure("")
           nowMs = System.currentTimeMillis()
           injectTime = isUserTurn && (isRealUserTurn || nowMs - lastTimeReminderMs >= TimeReminderMinGapMs)
           // Tasks: team 成员 only（任务工具重做 2026-08-30——任务=进展展示，
@@ -704,7 +715,7 @@ private[agent] trait AgentCore:
             PromptContext(chatWidth = stateForLlm.session.chatWidth)
           )
           // Snapshot of the dynamic values at systemStable build time.
-          currentSnapshot = SystemStableSnapshot(devInfo, sessionsText, stateForLlm.language, envInfo)
+          currentSnapshot = SystemStableSnapshot(devInfo, sessionsText, stateForLlm.language, envInfo, mountedProjectsText)
           promptCtx = PromptContext(
             availableTools = allowedTools,
             depth = depth,
@@ -727,18 +738,20 @@ private[agent] trait AgentCore:
             guardrailsOn = guardrailsOn,
             isFlowNode = stateForLlm.isFlowNode,
             userFacingNode = stateForLlm.userFacingNode,
-            isTeamLead = isTeamLead
+            isTeamLead = isTeamLead,
+            isRootAgent = isRootAgent,
+            mountedProjectsText = mountedProjectsText
           )
           // systemStable: rebuilt only at lifecycle nodes; otherwise reuse the
           // cached string byte-for-byte (provider prefix cache stays hit).
           // Memory block (turnCtx.memoryBlock) is therefore consumed only at
           // rebuild — memory edits take effect at the next lifecycle node.
           // Reminder refactor (2026-08-20): sessions/environment change
-          // reminders removed (user ruling) — only devices (delta) and
-          // language remain as change notifications.
-          (systemStable, changeDevices, changeLanguage) =
+          // reminders removed (user ruling) — devices (delta) and language
+          // remain as change notifications, plus mounted projects (2026-09-07).
+          (systemStable, changeDevices, changeLanguage, changeProjects) =
             if isLifecycleRebuild then
-              (buildSystemPrompt(freshDef, turnCtx.systemPrefix, promptCtx), "", Option.empty[String])
+              (buildSystemPrompt(freshDef, turnCtx.systemPrefix, promptCtx), "", Option.empty[String], "")
             else
               val cached = stateForLlm.cachedSystemStable.getOrElse(
                 buildSystemPrompt(freshDef, turnCtx.systemPrefix, promptCtx)
@@ -747,7 +760,10 @@ private[agent] trait AgentCore:
               (
                 cached,
                 if snap.devices != devInfo then devicesDeltaLines(snap.devices, devInfo) else "",
-                if snap.language != stateForLlm.language then stateForLlm.language else None
+                if snap.language != stateForLlm.language then stateForLlm.language else None,
+                if snap.mountedProjects != mountedProjectsText then
+                  MountedProjectList.delta(snap.mountedProjects, mountedProjectsText)
+                else ""
               )
           reminders <- SystemReminders.collectAllIO(
             isUserTurn,
@@ -757,7 +773,8 @@ private[agent] trait AgentCore:
             taskListText = taskListText,
             language = changeLanguage,
             isRootAgent = isRootAgent,
-            injectTime = injectTime
+            injectTime = injectTime,
+            mountedProjectsDelta = changeProjects
           )
           // Branch change: persist synchronously (no async message needed)
           _ <- turnCtx.branchChange match
