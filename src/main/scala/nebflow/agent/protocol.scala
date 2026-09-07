@@ -310,7 +310,12 @@ case class AgentRecord(
     * Delegate/SubTask/Ephemeral/FlowDAG/Team 等 None（默认 = 既有注册点零改动）。
     * 恢复路径数据源：activeAgentEntryJson 输出 project 字段供前端刷新后渲染徽标；
     * 实时路径不经此字段（agentStart 帧由 routeSubagentWsSend 转发层注入）。 */
-  project: Option[String] = None
+  project: Option[String] = None,
+  /** 会话展示名（刷新恢复路径专用，20260907 节点名刷新持久化批）：Project 域注册点
+    * （NodeEngine 节点 / ProjectActor 分发器）写 Flow Map 节点名 / "dispatcher/<project>"；
+    * 其余域 None（默认 = 既有注册点零改动）。activeAgentEntryJson 恢复链消费：
+    * meta.agentName → displayName → sessionId 三档。 */
+  displayName: Option[String] = None
 )
 
 // ============================================================

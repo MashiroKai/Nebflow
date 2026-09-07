@@ -563,7 +563,8 @@ object ProjectActor:
                 supervisorRef = Some(bridgeRef),
                 // 恢复路径项目徽标：activeAgents 快照 → activeAgentEntryJson
                 // 输出 project（分发器行刷新后仍标注项目名）。
-                project = Some(cfg.project.name)
+                project = Some(cfg.project.name),
+                displayName = Some(s"dispatcher/${project.name}")
               )
             )
           )
