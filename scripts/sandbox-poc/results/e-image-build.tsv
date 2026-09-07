@@ -1,3 +1,4 @@
 tag	build_s	size_mb_unpacked	size_mb_compressed	base_mb
 alpine	79.7	585	181	14
 ubuntu	125.2	798	219	261
+ubuntu-langfix	4.5	798	219	261	# 补丁层重建（ENV LANG；inspect .Size BuildKit 计法 229MB 与 images 列 798MB 口径差记录在案）

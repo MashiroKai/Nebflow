@@ -320,19 +320,62 @@ trait SandboxBackend:
 > 本节由 M1 批（`scripts/sandbox-poc/`）执行后回填；各小节数据表 + 结论行 + 复现脚本路径。占位骨架随冻结版 commit，数据行以第二次 commit 落入。
 
 ### 7-a sbt 真实负载 VirtioFS 实测（A6 数据）
-（待回填：三臂计时表 / 结论行）
+
+| phase（wall_s） | host | ct-bind | ct-vol | ct-alpine |
+|---|---|---|---|---|
+| clean-compile | 45.0 | 95.4（**2.12×**） | 55.6（1.24×） | 61.9（1.38×） |
+| test-compile | 43.3 | 60.9（1.41×） | 88.0（2.03×⚠反例） | 55.7（1.29×） |
+| test-only（44 例） | 40.3 rc=1（宿主环境项） | 56.5 **rc=0** | 53.1 **rc=0** | 63.8 **rc=0**（perl 补后） |
+
+**结论（A6 终裁输入）**：VirtioFS 惩罚集中在写密集 clean-compile（2.12×）；target 具名卷回收 −42% 但有 test-compile 反例（单遍噪声）；三容器臂测试子集全绿、宿主反 8 败（环境更干净）。**维持默认纯 bind、target 卷不默认启用**（重编译密集项目 M2 opt-in）；镜像规范必含 `LANG=C.UTF-8` + perl（PoC 报告 §6.1/§6.5）。数据：`results/a-sbt-matrix.tsv`；详情见 PoC 报告 §1。
 
 ### 7-b docker stats --no-stream 采样 PoC（§2.4-D 依据）
-（待回填：采样延迟分布 / CPU% 稳定性 / 结论行）
+
+| 指标 | 值（n=32） |
+|---|---|
+| 单次调用延迟 min/median/p95/max | 1061 / 2069 / 2089 / 2106 ms |
+| 满载容器 CPUPerc mean±stdev | 100.06% ± 0.16%（贴单核理论值） |
+| idle 容器 CPUPerc mean/max | 0.000% / 0.000% |
+| 全容器一次调用 vs 单容器限定 | 2089 ms vs 1965 ms（容器数扩展弱） |
+
+**结论**：采样 ~2s/次、读数稳定——`progressProbe` 可行，档位=30s+ 粗粒度窗（匹配 10min no-progress / 300s B1/B2）；不可进秒级紧循环。数据：`results/b-stats-probe.{tsv,md}`；详情见 `20260907_m1-docker-poc-report.md` §2。
 
 ### 7-c per-task 容器生命周期演示（A4-A5 模型实证）
-（待回填：create/start/retention/再唤醒/TTL 销毁计时 / fs 状态保持断言 / 结论行）
+
+| phase | ms |
+|---|---|
+| create / start_cold | 119 / 200 |
+| exec_task（写状态+8MB blob） | 117 |
+| stop / start_warm（retention 再激活）/ auto_destroy（TTL rm -f） | 1155 / 147 / 156 |
+
+**结论**：四段全链演示通过（PASS=8 FAIL=0），fs 状态保持断言过；冷启动 ~0.32s、warm 再激活 ~0.15s——retention 复用模型开销可忽略、收益实证。数据：`results/c-lifecycle.{tsv,md}`；详情见 PoC 报告 §3。
 
 ### 7-d 前端 QA 容器化全链 PoC
-（待回填：实例启动/健康探活/截图验收/资产断言/清理计时 / 结论行）
+
+| phase | ms |
+|---|---|
+| create / start / exec_gateway | 158 / 312 / 89 |
+| health_ready（发布端口 /api/health 200） | 2287 |
+| destroy（rm -f 进程树全灭） | 497 |
+
+**结论**：**PASS=7 FAIL=0 全链成立**——容器内真实 gateway（发布端口 8098）+ verify-web-assets 全 200 + 宿主 playwright 截图 200×2 + 零残留 + 宿主 :8080 前后无扰（java 43459）。验收点①②④⑤⑥⑦ 全过。数据：`results/d-qa-e2e.{tsv,md}` + 截图；详情见 PoC 报告 §4。
 
 ### 7-e alpine/ubuntu 双工具链镜像对比（A5 终裁输入）
-（待回填：构建时长 / 镜像大小 / musl 兼容验证 / 结论行）
+
+| 镜像 | 构建 | 体积（未压缩/压缩） |
+|---|---|---|
+| alpine（musl） | 79.7s | 585MB / 181MB |
+| ubuntu（glibc） | 125.2s | 798MB / 219MB |
+
+**结论**：alpine 全面占优（−213MB / −45s），musl 兼容负载级实证（全量 compile+test）；**alpine 主线、ubuntu glibc 兜底保留**（双镜像 1.38GB 在 A10 预算内）。glibc 镜像必设 `LANG=C.UTF-8`（非 ASCII 路径崩溃，PoC 报告 §6.1，回归哨兵已入 20 脚本）。数据：`results/e-*.{tsv,txt}`；详情见 PoC 报告 §5。
 
 ### 7-f 资源记账（M1 批）
-（待回填：容器/卷/镜像净增量 / docker system df 前后 / 红线自检记录）
+
+| 项 | 批前（10:51） | 批后（12:42） | 净增 |
+|---|---|---|---|
+| 镜像 | 47 / 14.97GB | 49 / 16.26GB | **+2 = nb-poc-sbx:{alpine 643MB, ubuntu 798MB}（1.44GB，by design 保留）** |
+| 容器 | 10 | 9（nb-poc-* 零残留断言过） | 0 |
+| 卷 | 1（作者 68MB） | 1（同，未动） | 0（nb-poc-cache/tgt 已清） |
+| /tmp | — | — | hostcache 476MB（复验提速保留，tmp 层自清）+ logs 196K（证据） |
+
+**A10 预算核账**：镜像 1.44GB + 缓存卷（已清，峰值 479MB）+ retention 驻留（已清）——总量在 ≤4GB 预算内。红线自检见 PoC 报告 §8；记账链 `results/resource-ledger.md`。

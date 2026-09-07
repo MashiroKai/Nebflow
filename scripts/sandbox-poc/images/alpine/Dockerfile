@@ -5,8 +5,10 @@ ARG ALPINE_TAG=latest
 FROM alpine:${ALPINE_TAG}
 
 # L0: apk 国内源（USTC）——不动宿主 daemon.json 红线的镜像内等价物
+# perl：ShellStuckDetectorSpec #17 burner 与 qa 实录用例依赖（PoC-a 实证：缺 perl 时该测试
+#       612ms 秒退触发 vacuous-run 守卫——ubuntu 基底自带 perl 故容器臂全绿）
 RUN sed -i 's#https://dl-cdn.alpinelinux.org#https://mirrors.ustc.edu.cn#g' /etc/apk/repositories \
- && apk add --no-cache openjdk21-jdk bash git curl ca-certificates tzdata procps coreutils python3 \
+ && apk add --no-cache openjdk21-jdk bash git curl ca-certificates tzdata procps coreutils python3 perl \
  && mkdir -p /opt/sbt
 
 # L1: sbt 启动器（单 jar，非完整发行版；URL 由构建脚本按镜像源可达性决定）

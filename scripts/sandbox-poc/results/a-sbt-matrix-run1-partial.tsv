@@ -1,0 +1,16 @@
+phase	wall_s	rc
+a.host.boot	3.7	0
+a.host.update	4.0	0
+a.host.clean-compile	43.0	0
+a.host.test-compile	37.9	0
+a.host.test-only	38.0	1
+a.ctbind.clean-compile	0.2	1
+a.ctbind.test-compile	0.2	1
+a.ctbind.test-only	0.2	1
+a.ctbind.assembly	0.2	1
+a.ctvol.clean-compile	0.2	1
+a.ctvol.test-compile	0.2	1
+a.ctvol.test-only	0.2	1
+a.alpine.clean-compile	69.8	0
+a.alpine.test-compile	52.3	0
+a.alpine.test-only	8.7	1

@@ -57,11 +57,14 @@ for tag in alpine ubuntu; do
   row="$tag	$(python3 -c "print(f'{$t1-$t0:.1f}')")	$(python3 -c "print(f'{$size/1048576:.0f}')")	$(python3 -c "print(f'{$base_size/1048576:.0f}')")"
   tsv_append "$TSV" "$row"; echo "[e] $row"
 
-  # 兼容探针：JVM 版本 / libc / OS / sbt wrapper 可执行
+  # 兼容探针：JVM 版本 / libc / OS / sbt wrapper 可执行 + 非 ASCII 路径回归哨兵
+  # （PoC-a 实证：ubuntu glibc JDK 在 POSIX locale 下 sun.jnu.encoding=ASCII，中文路径目录
+  #   跑 sbt 时 launcher getCanonicalFile().isDirectory() 断言即崩；修复=镜像烘焙 LANG=C.UTF-8。
+  #   此探针在 /tmp 中文目录内跑 `sbt about`——回归即红，防修复回退。）
   {
     echo "===== $NB-sbx:$tag ====="
     docker run --rm "$NB-sbx:$tag" sh -c \
-      'java -version 2>&1 | head -2; echo ---; (ldd --version 2>&1 || true) | head -1; echo ---; grep PRETTY_NAME /etc/os-release; echo ---; which sbt && sbt --help >/dev/null 2>&1; echo "sbt-wrapper-exit=$?"'
+      'java -version 2>&1 | head -2; echo ---; (ldd --version 2>&1 || true) | head -1; echo ---; grep PRETTY_NAME /etc/os-release; echo ---; which sbt; mkdir -p "/tmp/中文路径-测试" && cd "/tmp/中文路径-测试" && sbt about >/dev/null 2>&1; echo "sbt-nonascii-path-exit=$?"'
   } >> "$COMPAT" 2>&1
 done
 

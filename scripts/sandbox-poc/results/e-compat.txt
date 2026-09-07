@@ -18,3 +18,23 @@ PRETTY_NAME="Ubuntu 24.04.4 LTS"
 ---
 /usr/local/bin/sbt
 sbt-wrapper-exit=1
+===== nb-poc-sbx:alpine (langfix rebuild probe 2026-09-07 12:10:33) =====
+openjdk version "21.0.12" 2026-07-21
+OpenJDK Runtime Environment (build 21.0.12+8-alpine-r0)
+---
+musl libc (aarch64)
+---
+PRETTY_NAME="Alpine Linux v3.24"
+---
+/usr/local/bin/sbt
+sbt-nonascii-path-exit=0
+===== nb-poc-sbx:ubuntu (langfix rebuild probe 2026-09-07 12:11:38) =====
+openjdk version "21.0.12" 2026-07-21
+OpenJDK Runtime Environment (build 21.0.12+8-1-24.04-Ubuntu)
+---
+ldd (Ubuntu GLIBC 2.39-0ubuntu8.8) 2.39
+---
+PRETTY_NAME="Ubuntu 24.04.4 LTS"
+---
+/usr/local/bin/sbt
+sbt-nonascii-path-exit=0
