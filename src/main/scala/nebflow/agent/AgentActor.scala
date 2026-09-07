@@ -1958,7 +1958,9 @@ object AgentActor extends AgentCore with AgentSession:
                     before = state.messages,
                     after = compactedMessages,
                     mode = compactionPending.map(_.mode).getOrElse("full"),
-                    extra = Map("preservedRounds" -> "0")
+                    // 尾部保真 (2026-09-07): truthful count read back from the
+                    // summary label written by FullCompact.parseResponseDetailed.
+                    extra = Map("preservedRounds" -> FullCompact.preservedRoundsOf(compactedMessages).toString)
                   )
                 case None => IO.pure(Left("no sessionId"))
               val compactEmitIO = archiveIO
@@ -3891,16 +3893,16 @@ object AgentActor extends AgentCore with AgentSession:
               case Left(reason) =>
                 ctx.self ! AgentCommand.CompactionComplete(Left(reason))
               case Right(_) =>
-                FullCompact.parseResponse(responseText, state.messages, effectiveRoot, readPaths) match
+                FullCompact.parseResponseDetailed(responseText, state.messages, effectiveRoot, readPaths) match
                   case Left(err) =>
                     ctx.self ! AgentCommand.CompactionComplete(Left(err))
-                  case Right(compactedMessages) =>
+                  case Right(outcome) =>
                     val postHookIO = CompactService
-                      .runPostCompactHook(state.messages.size, compactedMessages.size, resources, sessionId)
+                      .runPostCompactHook(state.messages.size, outcome.messages.size, resources, sessionId)
                       .handleErrorWith(_ => IO.unit)
                     ctx
                       .forkTurn(postHookIO)
-                      .flatMap(_ => ctx.self ! AgentCommand.CompactionComplete(Right(compactedMessages)))
+                      .flatMap(_ => ctx.self ! AgentCommand.CompactionComplete(Right(outcome.messages)))
           }
           .handleErrorWith(e => ctx.self ! AgentCommand.CompactionComplete(Left(e.getMessage)))
       )

@@ -725,4 +725,93 @@ class AgentActorCompactionSpec extends FunSuite:
       system.stopAll.attempt.void.unsafeRunSync()
       os.remove.all(tmp)
   }
+  // ============================================================
+  // 尾部保真 (2026-09-07 压缩摘要尾部保真): real-actor wiring test. The 09-07
+  // incident — a 182-message compaction whose summary dropped the author's
+  // LAST instruction, silently ignored after restore. This drives the REAL
+  // pipeline (AgentActor + TriggerCompaction → Compact turn →
+  // handleCompactResponse → parseResponseDetailed → CompactionComplete →
+  // continuation turn) with a scripted summarizer; the continuation request
+  // must carry the tail rounds VERBATIM (engine-level backstop on top of the
+  // template rule asserted in CompactServiceSpec).
+  // ============================================================
+
+  test("尾部保真: multi-round compaction keeps the last user instruction verbatim in the continuation") {
+    val system = ActorSystem("compact-tail-fidelity-test")
+    val tmp = os.temp.dir()
+    val prevRoot = PathUtil.dataRoot
+    val prevLlmLog = nebflow.core.LlmLogWriter.isEnabled
+    nebflow.core.LlmLogWriter.setEnabled(false)
+    PathUtil.setDataRoot(tmp / "data")
+    try
+      val program = for
+        counter <- IO.ref(0)
+        userTexts <- IO.ref(List.empty[List[String]])
+        llm = new DelayedSummaryLlm(counter, userTexts)
+        resources <- mkResources(system, tmp, llm)
+        agentDef = AgentDef(name = "standalone-agent", description = "test", tools = List("Read"), systemPrompt = "")
+        ref <- system.spawn(
+          AgentActor(
+            agentDef = agentDef,
+            resources = resources,
+            wsSend = _ => IO.unit,
+            depth = 0,
+            parentRef = None,
+            sessionId = Some("tail-fid-agent"),
+            sessionName = Some("tailfid"),
+            initialMessages = List(
+              Message(MessageRole.User, Left("任务一：很早的旧任务")),
+              Message(MessageRole.Assistant, Left("ok1")),
+              Message(MessageRole.User, Left("任务二：中间任务")),
+              Message(MessageRole.Assistant, Left("ok2")),
+              Message(MessageRole.User, Left("任务三：最后下达的任务——压缩前必须存活")),
+              Message(MessageRole.Assistant, Left("working"))
+            )
+          ),
+          "tail-fid-agent"
+        )
+        _ <- ref ! AgentCommand.TriggerCompaction("full", None, Some("post-compact instruction"))
+        _ <- {
+          def go(deadline: Long): IO[Unit] =
+            counter.get.flatMap { n =>
+              if n >= 2 then IO.unit
+              else if System.currentTimeMillis() > deadline then
+                IO.raiseError(new RuntimeException(s"continuation turn never started: count=$n"))
+              else IO.sleep(100.millis) *> go(deadline)
+            }
+          go(System.currentTimeMillis() + 5000L)
+        }
+        texts <- userTexts.get
+      yield
+        assert(texts.length >= 2, s"expected ≥2 LLM requests, got ${texts.length}")
+        val contTurnTexts = texts(1)
+        assert(
+          contTurnTexts.exists(_.contains("<context-compact")),
+          s"continuation must open with the compact summary, got: ${contTurnTexts.take(2)}"
+        )
+        assert(
+          contTurnTexts.exists(_.contains("preservedRounds=2")),
+          "summary label must report 2 preserved rounds (rounds 二+三, round 一 summarized)"
+        )
+        // The incident shape: the LAST user instruction survives VERBATIM.
+        assert(
+          contTurnTexts.exists(_.contains("任务三：最后下达的任务——压缩前必须存活")),
+          s"LAST user instruction must survive verbatim in the continuation, got: $contTurnTexts"
+        )
+        // preservedRounds=2 also keeps the second-to-last round.
+        assert(
+          contTurnTexts.exists(_.contains("任务二：中间任务")),
+          s"second-to-last round must survive too, got: $contTurnTexts"
+        )
+        // Tail order preserved: 任务二 before 任务三.
+        val idx2 = contTurnTexts.indexWhere(_.contains("任务二：中间任务"))
+        val idx3 = contTurnTexts.indexWhere(_.contains("任务三：最后下达的任务"))
+        assert(idx2 < idx3, s"preserved rounds must keep conversation order (idx2=$idx2 idx3=$idx3)")
+      program.unsafeRunSync()
+    finally
+      nebflow.core.LlmLogWriter.setEnabled(prevLlmLog)
+      PathUtil.setDataRoot(prevRoot)
+      system.stopAll.attempt.void.unsafeRunSync()
+      os.remove.all(tmp)
+  }
 end AgentActorCompactionSpec
