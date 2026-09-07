@@ -18,8 +18,12 @@ import scala.concurrent.duration.*
  * 职责：
  * 1. TriggerDispatcher → 分发器单例化（2026-09-02 作者裁定）：项目已有活跃
  *    分发器会话 → 任务文本注入现有会话（turn 边界串行消费）；无 → spawn 新
- *    分发器会话（单次会话 agent，fresh session：Flow Map 快照 + 任务文本注入；
- *    无回报——拓扑/状态已落 Flow Map）。ReenterDispatcher（blocked 重入）同规。
+ *    分发器会话（单次会话 agent，fresh session：任务文本注入；无回报——拓扑/
+ *    状态已落 Flow Map）。ReenterDispatcher（blocked 重入）同规。
+ *    观测面上下文经济学批（20260907 裁定①方向 B）：spawn/重入 prompt 不再嵌
+ *    Flow Map 水合快照（旧实现首条消息直灌 snapshot.asJson，nebflow 规模
+ *    ≈1,055KB → spawn 即超压缩阈值）——拓扑由分发器首轮 NodeList 按需拉取
+ *    （元数据 only + ToolResultGuard persist 兜底）。
  * 2. TTL 定时器：终态节点 24h 显示消失 → 移归档 + WS nodeRemoved（TTL 只管
  *    显示，非运行超时；Node 运行本身不设超时）
  * 3. CancelNode：转发到 NodeEngine（复用 cancel 信号）
@@ -283,16 +287,18 @@ object ProjectActor:
   private def projectMemoryText(project: ProjectDef): IO[String] =
     ProjectMemory.injectionBlock(project.workspace, project.name)
 
-  /** 新任务形态 prompt（spawnDispatcher 双形态之一，现状文案保留）。 */
-  private def newTaskPrompt(project: ProjectDef, snapshot: FlowMapState, taskText: String, pluginCatalog: String, projectMemory: String): String =
-    s"""你是项目「${project.name}」的任务分发器。当前 Flow Map 快照（NodeList 数据源）：
-       |```json
-       |${snapshot.asJson.noSpaces}
-       |```
+  /** 新任务形态 prompt（spawnDispatcher 双形态之一，现状文案保留）。
+    * 观测面上下文经济学批（20260907 裁定①方向 B）：不嵌 Flow Map 快照——旧实现
+    * `snapshot.asJson.noSpaces` 直灌首条消息（内存模型 result/task 双全文水合，
+    * nebflow 规模 ≈1,055KB，spawn 即超 CompactThreshold），改为「先 NodeList 读
+    * 现状」按需拉取（与工具通道同源同守卫）。private[project] 供 spawn 首条消息
+    * 形态 spec（DispatcherSpawnPromptSpec）固化断言。 */
+  private[project] def newTaskPrompt(project: ProjectDef, taskText: String, pluginCatalog: String, projectMemory: String): String =
+    s"""你是项目「${project.name}」的任务分发器。
        |
        |${if pluginCatalog.nonEmpty then pluginCatalog + "\n" else ""}${if projectMemory.nonEmpty then projectMemory + "\n" else ""}任务：$taskText
        |
-       |先 NodeList 读现状，再按需用 NodeEdit 建节点/接线/改接。所有 Node 工具调用必须带 project=${project.name} 参数。无需回报——拓扑与状态已落 Flow Map。""".stripMargin
+       |先 NodeList 读 Flow Map 现状（拓扑与节点状态按需拉取），再按需用 NodeEdit 建节点/接线/改接。所有 Node 工具调用必须带 project=${project.name} 参数。无需回报——拓扑与状态已落 Flow Map。""".stripMargin
 
   /** 重入协议四动作块（reentryPrompt 与 reentryInjectionText 共用，单点维护；
     * 设计 §2.2 原文照抄——四动作选择/abandon 说明/「无需回报」）。 */
@@ -306,19 +312,16 @@ object ProjectActor:
        |所有 Node 工具调用必须带 project=${project.name}。无需回报——拓扑与状态已落 Flow Map。""".stripMargin
 
   /** 重入调整形态 prompt（spawnDispatcher 双形态之二，设计 §2.2 原文照抄——
-    * 含节点名/id/blockCount/反馈三字段/Flow Map 快照注入/四动作选择/abandon 说明/「无需回报」）。 */
-  private def reentryPrompt(project: ProjectDef, snapshot: FlowMapState, node: NodeDef, feedback: BlockedFeedback, blockCount: Int, pluginCatalog: String, projectMemory: String): String =
+    * 含节点名/id/blockCount/反馈三字段/四动作选择/abandon 说明/「无需回报」）。
+    * 裁定①（20260907 方向 B）：快照注入移除，同 newTaskPrompt——四动作块自带
+    * 「先 NodeList 读现状」。private[project] 供 spec 固化断言。 */
+  private[project] def reentryPrompt(project: ProjectDef, node: NodeDef, feedback: BlockedFeedback, blockCount: Int, pluginCatalog: String, projectMemory: String): String =
     s"""你是项目「${project.name}」的任务分发器——本轮是【节点反馈重入调整】，不是新任务。
        |
        |节点 ${node.name}（${node.id}）报告 blocked（第 $blockCount 轮）：
        |  原因分类：${feedback.category}
        |  说明：${feedback.detail}
        |  对拓扑的建议：${feedback.suggestion}
-       |
-       |当前 Flow Map 快照（NodeList 数据源）：
-       |```json
-       |${snapshot.asJson.noSpaces}
-       |```
        |
        |${if pluginCatalog.nonEmpty then pluginCatalog + "\n" else ""}${if projectMemory.nonEmpty then projectMemory + "\n" else ""}${reentryActions(project)}""".stripMargin
 
@@ -423,11 +426,10 @@ object ProjectActor:
             )
             .as(same)
       case None =>
-        cfg.engine.store.snapshot.flatMap { snapshot =>
-          pluginCatalogText().flatMap { catalog =>
-            projectMemoryText(cfg.project).flatMap { memory =>
-              spawnDispatcher(cfg, active, same, newTaskPrompt(cfg.project, snapshot, taskText, catalog, memory), rootSessionId, "", taskText)
-            }
+        // 裁定①（20260907 方向 B）：无快照获取——spawn prompt 只组任务文本+目录+记忆
+        pluginCatalogText().flatMap { catalog =>
+          projectMemoryText(cfg.project).flatMap { memory =>
+            spawnDispatcher(cfg, active, same, newTaskPrompt(cfg.project, taskText, catalog, memory), rootSessionId, "", taskText)
           }
         }
     }
@@ -464,12 +466,11 @@ object ProjectActor:
                 )
                 .as(same)
           case None =>
-            cfg.engine.store.snapshot.flatMap { snapshot =>
-              pluginCatalogText().flatMap { catalog =>
-                projectMemoryText(cfg.project).flatMap { memory =>
-                  spawnDispatcher(cfg, active, same, reentryPrompt(cfg.project, snapshot, node, feedback, blockCount, catalog, memory), rootSessionId,
-                    s" (reentry round $blockCount: ${node.name})", reentryTaskText(node, feedback, blockCount))
-                }
+            // 裁定①（20260907 方向 B）：重入 spawn 同样不嵌快照（reentryActions 自带先 NodeList）
+            pluginCatalogText().flatMap { catalog =>
+              projectMemoryText(cfg.project).flatMap { memory =>
+                spawnDispatcher(cfg, active, same, reentryPrompt(cfg.project, node, feedback, blockCount, catalog, memory), rootSessionId,
+                  s" (reentry round $blockCount: ${node.name})", reentryTaskText(node, feedback, blockCount))
               }
             }
         }
