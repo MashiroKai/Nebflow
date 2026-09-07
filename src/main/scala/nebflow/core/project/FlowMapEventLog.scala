@@ -15,7 +15,10 @@ import nebflow.core.PathUtil
  *   settle-sweep / trigger-starved / start-aborted（trigger-chain-fix 批）/
  *   bg-wait / bg-wait-timeout / bg-released（bgtask-completion-gate 批）/
  *   mount-stalled（mount-enforce 批：可触发点后 60s 仍未触发的挂载停滞留痕，
- *   summary 含等待原因——上游终态明细 + barrier 残缺清单）。
+ *   summary 含等待原因——上游终态明细 + barrier 残缺清单）/
+ *   boot-recovery（crash-recovery 批 2026-09-07：boot sweep 每个认领动作——
+ *   rehydrate 认领 / (c) 类 failNode，summary 含三分类与 transcript 指针——
+ *   「禁止静默自愈」纪律，settle-sweep 先例同款）。
  * 注册式扩展：append API 无 schema 变更，新事件类型 = 本清单加一词 + 写入点调用。
  *
  * 0 schema 迁移（独立文件不碰 flow-map.json 契约）、append-only、重启保留、grep 友好。

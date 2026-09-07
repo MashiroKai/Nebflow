@@ -93,6 +93,15 @@ class NodeEngine(
   private[project] val nodeSessions: Ref[IO, Map[String, String]] =
     Ref.unsafe[IO, Map[String, String]](Map.empty)
 
+  /** boot 恢复排队集（crash-recovery 批 2026-09-07）：快段已认领（翻 Pending）但慢段
+    * 尚未 startNode(resume) 的节点 id——settleRunnableSweep 对其跳过（资格回扫的
+    * 新鲜启动会与续跑竞速，CAS 裁决虽不双 spawn 但恢复降级为无 transcript 的全新重
+    * 跑）。进程内 boot 生命周期状态：慢段逐节点认领前移除；慢段异常（节点级
+    * handleErrorWith）后该节点回归正常 pending 池，settle 回扫以新鲜路径兜底启动
+    * （R4 降级语义——恢复优先、收殓兜底）。 */
+  private[project] val bootRecoveryQueue: Ref[IO, Set[String]] =
+    Ref.unsafe[IO, Set[String]](Set.empty)
+
   /** 缺口4（2026-09-04 重复投递去重）：同 (identity, status) 60s 窗口内重复
     * Nebula 通知抑制——进程内时间窗 map（固定窗，顺路淘汰过期条目）。与 V8
     * nebulaDeliveredAt 账本**正交**：账本管跨重启 at-least-once（持久化，管
@@ -254,6 +263,124 @@ class NodeEngine(
           }
         }
     }
+
+  // ── boot-time 崩溃恢复（crash-recovery 批 2026-09-07，设计 §3.2 快段/慢段）──
+  //
+  // 快段（同步秒级）：对崩溃残留 status=Running 节点按持久层完整性三分类（§3.3）：
+  //   (a) checkpoint 完整 / (b) mid-turn —— 磁盘不可区分，统一同路径：认领 = 翻回
+  //       Pending + 清 bgWait + boot-recovery 事件 + 入 bootRecoveryQueue，续跑交慢段；
+  //   (c) sessionRef 无值 / transcript 缺失/损坏/空 —— failNode("crash recovery:
+  //       session transcript lost/corrupt") 走既有 deliverFailed 链（姊妹批挂接后自动
+  //       获分发器 failed 通知）。
+  // 认领动作改变节点状态使其即刻脱离 watchdog（settleStaleRunningNodes 只看 Running）
+  // 与资格回扫（bootRecoveryQueue 排除）的处置口径——sweep 与 watchdog 的竞速由
+  // 挂载顺序结构性关闭（快段先于 projectTtlScanner 启动完成）。
+  // 判定材料 = sessionRef（D1，与 startedAt 同事务落库）→ SessionStore transcript
+  // 文件。分类读取用 loadMessagesForSession（decode 失败侧自动备份损坏文件——
+  // SessionStore 既有语义，非静默）。
+
+  /** 快段单节点：分类 + 认领。返回：
+    * - Some(Right(ctx))：已认领（翻 Pending + 清 bgWait + 事件 + 入队），待慢段
+    *   startNode(ctx) 续跑；
+    * - Some(Left(reason))：(c) 类已 failNode（reason 含 transcript 指针），下游走
+    *   deliverFailed 既有链；
+    * - None：非候选（非 Running）或认领事务败给并发状态变更（fresh 守卫拒写）。
+    * 节点级异常不在此吞——调用方（sweep）逐节点 handleErrorWith，残余 Running 由
+    * watchdog 兜底（R4）。 */
+  def bootRecoveryClaim(n: NodeDef): IO[Option[Either[String, NodeEngine.ResumeContext]]] =
+    if n.status != NodeLifecycle.Running then IO.pure(None)
+    else
+      def failClaim(reason: String): IO[Option[Either[String, NodeEngine.ResumeContext]]] =
+        // (c) 类：仍 Running 才处置（fresh 守卫——与并发终态化互斥）；failNode 自带
+        // deliverFailed + WS；boot-recovery 事件留痕（禁止静默自愈）。
+        store.getNode(n.id).flatMap {
+          case Some(fresh) if fresh.status == NodeLifecycle.Running =>
+            failNode(n.id, reason) *>
+              FlowMapEventLog.append(workspace, projectName, n.id, NodeEngine.BootRecoveryEventType,
+                s"failed (class c): $reason") *>
+              logger.warn(s"[boot-recovery] node '${n.name}' (${n.id}) failed: $reason").as(Some(Left(reason)))
+          case _ => IO.pure(None)
+        }
+      def resumeClaim(ctx: NodeEngine.ResumeContext, claimNote: String): IO[Option[Either[String, NodeEngine.ResumeContext]]] =
+        // (a)/(b) 类认领：Running → Pending 单事务翻转（CAS：并发终态化/已处置 → 拒写
+        // 返回 None）+ 清 bgWait（等待集随进程蒸发 G4，resume prompt 已附死亡告知）。
+        store.mutateWithResult { s =>
+          s.nodes.get(n.id) match
+            case Some(f) if f.status == NodeLifecycle.Running =>
+              (s.copy(nodes = s.nodes.updated(n.id, f.copy(
+                status = NodeLifecycle.Pending,
+                bgWait = None))), true)
+            case _ => (s, false)
+        }.flatMap { (s, claimed) =>
+          if !claimed then IO.pure(None)
+          else
+            s.nodes.get(n.id).traverse_(emitUpdated) *>
+              bootRecoveryQueue.update(_ + n.id) *>
+              FlowMapEventLog.append(workspace, projectName, n.id, NodeEngine.BootRecoveryEventType,
+                s"claimed (resume): $claimNote") *>
+              logger.info(s"[boot-recovery] node '${n.name}' (${n.id}) claimed for rehydrate: $claimNote")
+                .as(Some(Right(ctx)))
+        }
+      // ── 分类（§3.3 判定表；loop 节点裁定③双会话续接）──
+      if n.loop.exists(_.enabled) then
+        n.sessionRef match
+          case None =>
+            failClaim(s"crash recovery: session transcript lost (loop node has no sessionRef persisted — predates crash recovery; " +
+              s"loopRound=${n.loopRound}, loopPhase=${n.loopPhase.getOrElse("-")} persisted for audit)")
+          case Some(workerSid) =>
+            resources.sessionStore.loadMessagesForSession(workerSid).attempt.flatMap {
+              case Right(workerMsgs) if workerMsgs.nonEmpty =>
+                // verify transcript 可缺（每轮输入自足）：缺 → 空 transcript 水合（等价新会话）。
+                val verifySid = n.sessionRefVerify
+                verifySid.traverse(sid => resources.sessionStore.loadMessagesForSession(sid).attempt.map {
+                  case Right(msgs) => msgs
+                  case Left(_)     => Nil // 既有 BackoffSupervisor 同款容错：坏档不阻断恢复
+                }).map(_.getOrElse(Nil)).flatMap { verifyMsgs =>
+                  val round = math.max(n.loopRound, 1)
+                  val phase = n.loopPhase.getOrElse(NodeEngine.LoopPhaseWorker)
+                  resumeClaim(
+                    NodeEngine.ResumeContext(
+                      sessionId = workerSid,
+                      recoveredMessages = workerMsgs,
+                      resumePrompt = NodeEngine.loopWorkerResumePrompt(n, round, phase, workerMsgs.size),
+                      verifySessionId = verifySid,
+                      verifyMessages = verifyMsgs,
+                      loopResumeRound = round,
+                      loopResumePhase = Some(phase)),
+                    s"loop dual-session resume (worker=$workerSid msgs=${workerMsgs.size}, verify=${verifySid.getOrElse("-")} msgs=${verifyMsgs.size}, round=$round, phase=$phase)")
+                }
+              case Right(_) =>
+                failClaim(s"crash recovery: session transcript lost/corrupt (loop worker sessionRef=$workerSid empty or missing; " +
+                  s"loopRound=${n.loopRound}, loopPhase=${n.loopPhase.getOrElse("-")} persisted for audit)")
+              case Left(e) =>
+                failClaim(s"crash recovery: session transcript unreadable (loop worker sessionRef=$workerSid: ${Option(e.getMessage).getOrElse(e.toString)})")
+            }
+      else
+        n.sessionRef match
+          case None =>
+            failClaim("crash recovery: session transcript lost (no sessionRef persisted — node predates crash recovery)")
+          case Some(sid) =>
+            resources.sessionStore.loadMessagesForSession(sid).attempt.flatMap {
+              case Right(msgs) if msgs.nonEmpty =>
+                resumeClaim(
+                  NodeEngine.ResumeContext(
+                    sessionId = sid,
+                    recoveredMessages = msgs,
+                    resumePrompt = NodeEngine.nodeResumePrompt(projectName, n, msgs.size, n.bgWait)),
+                  s"resume (sessionRef=$sid msgs=${msgs.size}${n.bgWait.fold("")(w => s", bgWait cleared: ${w.take(120)}")})")
+              case Right(_) =>
+                failClaim(s"crash recovery: session transcript lost/corrupt (sessionRef=$sid)")
+              case Left(e) =>
+                failClaim(s"crash recovery: session transcript unreadable (sessionRef=$sid: ${Option(e.getMessage).getOrElse(e.toString)})")
+            }
+
+  /** 慢段单节点：出队 + startNode(resume)。出队即归还 settle 回扫资格——本 fiber
+    * 紧接 startNode（CAS 翻转与任何并发新鲜启动互斥裁决，微秒窗口败者安静）；失败
+    * （agent 缺失等）则节点留在正常 pending 池由资格回扫新鲜兜底（R4 降级）。 */
+  def bootRecoveryStart(nodeId: String, ctx: NodeEngine.ResumeContext): IO[Unit] =
+    bootRecoveryQueue.update(_ - nodeId) *>
+      logger.info(s"[boot-recovery] node $nodeId rehydrating (session=${ctx.sessionId})") *>
+      startNode(nodeId, Some(ctx))
 
   /** WS nodeRemoved（TTL 移除/归档后通知前端移除卡片）。payload = 节点最终态
     * （NodeList 同构——归档区兜底查得，ttlLeftSec=0），不再发空对象。 */
@@ -429,8 +556,12 @@ class NodeEngine(
     node.deps.traverse(store.findNode)
       .map(_.forall(_.exists(_.status == NodeLifecycle.Completed)))
 
-  /** 启动节点（§2.1 创建即运行：入口节点由 NodeEdit 调；下游由投递 barrier 归零调）。 */
-  def startNode(nodeId: String): IO[Unit] =
+  /** 启动节点（§2.1 创建即运行：入口节点由 NodeEdit 调；下游由投递 barrier 归零调）。
+    * resume（crash-recovery 批 2026-09-07 D3）：boot sweep 认领的崩溃残留节点续跑——
+    * Some 时跳过 buildInput 直接用 resume prompt（水合消息经 spawn 链 initialMessages
+    * 注入），CAS 翻转/deps 闸门/barrier 复核/三表登记全套照走——恢复不绕过任何启动
+    * 纪律（resume 节点崩溃前已过同一闸门，deliveredTo/deps 随 flow-map 持久，重走恒真）。 */
+  def startNode(nodeId: String, resume: Option[NodeEngine.ResumeContext] = None): IO[Unit] =
     store.getNode(nodeId).flatMap {
       case None => IO.unit
       case Some(node) =>
@@ -459,18 +590,23 @@ class NodeEngine(
                   // 裁定①后降级为纵深防御：零连接主责在 NodeEdit 校验五/六，此处只兜
                   // 历史遗留数据（校验生效前落盘的零连接旧节点）与校验层外瞬态。
                   if node.status == NodeLifecycle.Wiring && node.task.isEmpty && node.in.isEmpty && node.deps.isEmpty then IO.unit
-                  else buildInput(node).flatMap { input =>
-                    // 翻转竞发败方终结（trigger-chain-fix CAS 守卫）：spawnAndRun 内
-                    // 翻转 LostRace 败方抛 StartRaceLost——在此单点吞掉，对全部调用
-                    // 方（forkStart/runDetached/直接调用）呈安静败方语义；其他异常
-                    // 原样上抛（forkStart/runDetached 留痕）。
-                    // LoopNode 路由（LoopNode 批 2026-09-06）：node.loop 启用 → 走
-                    // spawnAndRunLoop（worker/verify 双会话迭代）；否则标准路径。
-                    val runIO =
-                      if node.loop.exists(_.enabled) then spawnAndRunLoop(node, input)
-                      else spawnAndRun(node, input)
-                    runIO.handleErrorWith {
-                      case _: NodeEngine.StartRaceLost => IO.unit
+                  else {
+                    // resume：Some → 首轮输入 = resume prompt（任务全文经 NodeList(detail)
+                    // 指引自读，BackoffSupervisor continue-prompt 直系演化）；None → buildInput。
+                    val inputIO = resume.fold(buildInput(node))(ctx => IO.pure(ctx.resumePrompt))
+                    inputIO.flatMap { input =>
+                      // 翻转竞发败方终结（trigger-chain-fix CAS 守卫）：spawnAndRun 内
+                      // 翻转 LostRace 败方抛 StartRaceLost——在此单点吞掉，对全部调用
+                      // 方（forkStart/runDetached/直接调用）呈安静败方语义；其他异常
+                      // 原样上抛（forkStart/runDetached 留痕）。
+                      // LoopNode 路由（LoopNode 批 2026-09-06）：node.loop 启用 → 走
+                      // spawnAndRunLoop（worker/verify 双会话迭代）；否则标准路径。
+                      val runIO =
+                        if node.loop.exists(_.enabled) then spawnAndRunLoop(node, input, resume)
+                        else spawnAndRun(node, input, resume)
+                      runIO.handleErrorWith {
+                        case _: NodeEngine.StartRaceLost => IO.unit
+                      }
                     }
                   }
             }
@@ -515,7 +651,7 @@ class NodeEngine(
       }
     }
 
-  private def spawnAndRun(node: NodeDef, inputText: String): IO[Unit] =
+  private def spawnAndRun(node: NodeDef, inputText: String, resume: Option[NodeEngine.ResumeContext] = None): IO[Unit] =
     val nodeId = node.id
     for
       agentOpt <- EntityLoader.loadAgent(node.agent)
@@ -530,13 +666,16 @@ class NodeEngine(
           // ③ MCP server 启动 + 引用记账（PluginMcpManager，启动失败 → failNode）。
           // 三步全部发生在状态翻转（status=Running）之前——失败路径零 running 残留。
           // §E.3 preset 消费（协议符合度批接通，2b 遗留）：同样翻转前 failNode。
+          // resume（crash-recovery 批 D2/D3）：插件/preset/装配链逐行复用，仅两处
+          // 差异——sessionId 复用 sessionRef 旧 id（transcript 单文件续写 + F2 队列
+          // 重放白捡，BackoffSupervisor respawn 同款先例）+ initialMessages 水合。
           nodePresetDef(node, entry).flatMap {
             case Left(err) => failNode(nodeId, err)
             case Right(baseDef) =>
               prepareNodePlugins(node).flatMap {
                 case Left(err) => failNode(nodeId, err)
                 case Right(prepared) =>
-                  val sessionId = s"node-${java.util.UUID.randomUUID().toString.take(8)}"
+                  val sessionId = resume.fold(s"node-${java.util.UUID.randomUUID().toString.take(8)}")(_.sessionId)
                   val inputWithPlugins =
                     if prepared.injectedBlock.isEmpty then inputText
                     else inputText + "\n\n" + prepared.injectedBlock
@@ -546,7 +685,7 @@ class NodeEngine(
                       // 回收兜底（§B.4 第 5 步）：completed/failed/cancelled/blocked 全
                       // 终态汇合点=runWithAgent 完成；异常中止路径由 guarantee 补位。
                       // release 幂等（PluginMcpManager 内 no-op 语义），双保险不重复卸载。
-                      runWithAgent(node, baseDef, inputWithPlugins, sessionId, prepared, grant)
+                      runWithAgent(node, baseDef, inputWithPlugins, sessionId, prepared, grant, resume)
                         .guarantee(resources.pluginMcp.release(sessionId))
                   }
               }
@@ -557,11 +696,15 @@ class NodeEngine(
     * verify 两 agent、准备插件、acquire 各会话 MCP grant、翻转 Running、spawn 双会话、
     * 驱动 loop。终态（PASS/failed/cancelled/blocked/达 K）由 runLoopNode 落终态化，
     * 会话/MCP/running 清理在 guarantee 内（裁定 B 双销毁不残留）。 */
-  private def spawnAndRunLoop(node: NodeDef, inputText: String): IO[Unit] =
+  private def spawnAndRunLoop(node: NodeDef, inputText: String, resume: Option[NodeEngine.ResumeContext] = None): IO[Unit] =
     val nodeId = node.id
     val loopCfg = node.loop.get
-    val workerSessionId = s"node-${java.util.UUID.randomUUID().toString.take(8)}"
-    val verifySessionId = s"node-${java.util.UUID.randomUUID().toString.take(8)}"
+    // crash-recovery 批裁定③：resume=Some 时双会话复用 sessionRef（worker）/
+    // sessionRefVerify（verify）旧 id + 各自 transcript 水合，runLoopNode 从崩溃时
+    // loopRound/loopPhase 断点续跑（worker→verify 迭代跨 kill -9 续接）。
+    val workerSessionId = resume.fold(s"node-${java.util.UUID.randomUUID().toString.take(8)}")(_.sessionId)
+    // verify 会话：恢复优先复用旧 id（D2）；无旧 ref（崩溃于 flip 前/历史数据）→ 新 id。
+    val verifySessionId = resume.flatMap(_.verifySessionId).getOrElse(s"node-${java.util.UUID.randomUUID().toString.take(8)}")
     // projectRoot 解析（与 runWithAgent 同源单点：PathUtil.resolveNodeProjectRoot）
     val projectRoot =
       node.worktree match
@@ -598,10 +741,12 @@ class NodeEngine(
                       case (Right(wGrant), Right(vGrant)) =>
                         for
                           cancelSig <- Deferred[IO, Unit]
-                          _ <- flipToRunning(node, cancelSig, workerSessionId, nodeId, node.name)
-                          worker <- spawnLoopSession(workerBase, prepared, wGrant, workerSessionId, node.name, projectRoot)
-                          verify <- spawnLoopSession(verifyBase, prepared, vGrant, verifySessionId, s"${node.name}-verify", projectRoot)
-                          _ <- runLoopNode(node, worker, verify, inputText, cancelSig)
+                          _ <- flipToRunning(node, cancelSig, workerSessionId, nodeId, node.name, Some(verifySessionId))
+                          worker <- spawnLoopSession(workerBase, prepared, wGrant, workerSessionId, node.name, projectRoot,
+                            initialMessages = resume.fold(List.empty[Message])(_.recoveredMessages))
+                          verify <- spawnLoopSession(verifyBase, prepared, vGrant, verifySessionId, s"${node.name}-verify", projectRoot,
+                            initialMessages = resume.fold(List.empty[Message])(_.verifyMessages))
+                          _ <- runLoopNode(node, worker, verify, inputText, cancelSig, resume)
                             .guarantee(
                               destroyLoopSessions(worker, verify) *>
                                 resources.pluginMcp.release(workerSessionId) *>
@@ -703,7 +848,10 @@ class NodeEngine(
     inputText: String,
     sessionId: String,
     prepared: NodeEngine.PluginPreparation,
-    grant: PluginMcpManager.Grant
+    grant: PluginMcpManager.Grant,
+    /** crash-recovery 批 D3：Some = 崩溃恢复续跑（initialMessages=水合 transcript，
+      * inputText=resume prompt）；None = 新鲜启动（行为与本批前逐字节一致）。 */
+    resume: Option[NodeEngine.ResumeContext] = None
   ): IO[Unit] =
     val nodeId = node.id
     // sessionId 由 spawnAndRun 生成传入（阶段 2b：plugin MCP acquire 引用记账
@@ -771,9 +919,12 @@ class NodeEngine(
           case Some(fresh)
               if (fresh.status == NodeLifecycle.Pending || fresh.status == NodeLifecycle.Wiring)
                 && !fresh.in.exists(up => !fresh.deliveredTo.contains(up)) =>
+            // sessionRef 与 startedAt 同事务落库（crash-recovery 批 D1）：崩溃后 boot
+            // sweep 据此定位磁盘 transcript；终态不清除（审计价值）。
             (s.copy(nodes = s.nodes.updated(nodeId, fresh.copy(
               status = NodeLifecycle.Running,
-              startedAt = Some(now)))), NodeEngine.FlipOutcome.Done)
+              startedAt = Some(now),
+              sessionRef = Some(sessionId)))), NodeEngine.FlipOutcome.Done)
           case Some(fresh) if fresh.status == NodeLifecycle.Running =>
             (s, NodeEngine.FlipOutcome.LostRace)
           case Some(fresh) if fresh.in.exists(up => !fresh.deliveredTo.contains(up)) =>
@@ -849,7 +1000,11 @@ class NodeEngine(
           // 元数据在工作区内，git commit / worktree remove 直写不再 EPERM。
           // 独立信号传入（sessionRoot 显式 sandboxRoot 优先于 projectRoot），
           // 不按路径形态硬猜 workspace 布局；cwd/projectRoot 工具语义不动。
-          sandboxRoot = Some(workspace)
+          sandboxRoot = Some(workspace),
+          // crash-recovery 批 D3：恢复续跑时水合磁盘 transcript（NodeRunner.
+          // initialMessages 通道，BackoffSupervisor respawn 同款）；spawn 时
+          // RecoverPersistedQueues 自动重放该会话崩溃前排队中的 F2 注入。
+          initialMessages = resume.fold(List.empty[Message])(_.recoveredMessages)
         )
       )
       // Bridge actor：捕获 Completed/Failed/Cancelled → Deferred（同步 complete，
@@ -1122,7 +1277,8 @@ class NodeEngine(
     grant: PluginMcpManager.Grant,
     sessionId: String,
     sessionName: String,
-    projectRoot: String
+    projectRoot: String,
+    initialMessages: List[Message] = Nil
   ): IO[LoopSession] =
     for
       initD <- Deferred[IO, Either[String, List[Message]]]
@@ -1143,7 +1299,8 @@ class NodeEngine(
           rootSessionId = rootSessionId,
           isFlowNode = true,
           sandboxEnabled = true,
-          sandboxRoot = Some(workspace)
+          sandboxRoot = Some(workspace),
+          initialMessages = initialMessages
         )
       )
       bridgeRef <- system.spawn(
@@ -1164,13 +1321,16 @@ class NodeEngine(
 
   /** 翻转 + 在飞登记（LoopNode 批复用；与 runWithAgent 内联翻转同语义——CAS 守卫
     * Done/LostRace/Aborted 三态、running/nodeSessions 条件登记、start-aborted 事件。
-    * 独立实现避免改动既有 runWithAgent（并发分支保护，同文件不同 hunk 收敛）。 */
+    * 独立实现避免改动既有 runWithAgent（并发分支保护，同文件不同 hunk 收敛）。
+    * crash-recovery 批 D1/裁定③：翻转事务落 sessionRef（worker 主会话）+
+    * sessionRefVerify（verify 会话，仅 loop 有值）——loop 崩溃残留据此双会话续接。 */
   private def flipToRunning(
     node: NodeDef,
     cancelSig: Deferred[IO, Unit],
     sessionId: String,
     nodeId: String,
-    nodeName: String
+    nodeName: String,
+    verifySessionId: Option[String] = None
   ): IO[Unit] =
     for
       _ <- running.modify { m => if m.contains(nodeId) then (m, ()) else (m + (nodeId -> cancelSig), ()) }
@@ -1183,7 +1343,9 @@ class NodeEngine(
                 && !fresh.in.exists(up => !fresh.deliveredTo.contains(up)) =>
             (s.copy(nodes = s.nodes.updated(nodeId, fresh.copy(
               status = NodeLifecycle.Running,
-              startedAt = Some(now)))), NodeEngine.FlipOutcome.Done)
+              startedAt = Some(now),
+              sessionRef = Some(sessionId),
+              sessionRefVerify = verifySessionId))), NodeEngine.FlipOutcome.Done)
           case Some(fresh) if fresh.status == NodeLifecycle.Running =>
             (s, NodeEngine.FlipOutcome.LostRace)
           case Some(fresh) if fresh.in.exists(up => !fresh.deliveredTo.contains(up)) =>
@@ -1220,13 +1382,19 @@ class NodeEngine(
 
   /** runLoopNode 主编排（§2.2 状态机）：worker/verify 双会话迭代。spawnAndRunLoop
     * 已翻转+spawn+装好两会话后调用；终态（PASS/failed/cancelled/blocked/达 K）落
-    * 终态化后即返回，会话清理由调用方 guarantee 兜底。 */
+    * 终态化后即返回，会话清理由调用方 guarantee 兜底。
+    * crash-recovery 批裁定③：resume=Some 时从崩溃时持久断点（loopRound/loopPhase）
+    * 续跑——phase=worker → 本轮 worker 注入换 resume prompt（transcript 已水合，
+    * 从最后持久轮边界续作），完成后照常进 verify；phase=verify → 以 worker transcript
+    * 末条 assistant 文本重建本轮 verify 输入（标注崩溃续接）注入续验。loopRound 语义
+    * 保持连续（续跑轮号 = 崩溃时轮号，PASS 记同一轮，FAIL 打回 +1）。 */
   private def runLoopNode(
     node: NodeDef,
     worker: LoopSession,
     verify: LoopSession,
     workerFirstInput: String,
-    cancelSig: Deferred[IO, Unit]
+    cancelSig: Deferred[IO, Unit],
+    resume: Option[NodeEngine.ResumeContext] = None
   ): IO[Unit] =
     val nodeId = node.id
     val loopCfg = node.loop.get
@@ -1280,17 +1448,41 @@ class NodeEngine(
         NodeEngine.loopVerifyInput(1, node.task.getOrElse(""), upstream.flatten.mkString("\n"), workerText, loopCfg.verifyTask)
       }
 
-    def loopRound(roundNum: Int, lastFail: Option[VerdictReader.Verdict.Fail]): IO[Unit] =
+    /** verify 产出裁决（PASS 投递 worker 产出 / FAIL 打回 +1 / BLOCKED → Loop 级
+      * blocked）——loopRound 正常轮与 verify 相位崩溃续跑（resumeVerifyRound）共用。 */
+    def handleVerify(roundNum: Int, wText: String, vMsgs: List[Message]): IO[Unit] =
+      val vText = extractLastAssistantText(vMsgs)
+      BlockedReader.parse(vText) match
+        case Some(fb) => blockedNode(nodeId, fb) // verify 申告任务无法验证 → Loop 级 blocked
+        case None =>
+          VerdictReader.parse(vText) match
+            case VerdictReader.Verdict.Pass =>
+              // PASS：投递 worker 最终产出原文（§2.2 裁定建议 a）
+              completeNode(nodeId, wText)
+            case f: VerdictReader.Verdict.Fail =>
+              // FAIL：打回 worker（同会话注入意见），轮 +1，至 K
+              setVerdict(nodeId, VerdictReader.renderFailSummary(f)) *>
+                loopRound(roundNum + 1, Some(f))
+
+    /** roundNum 轮的 verify 输入构建（首轮模板三全文，N≥2 短段）。 */
+    def verifyInputFor(roundNum: Int, wText: String): IO[String] =
+      if roundNum <= 1 then verifyRound1Input(wText)
+      else IO.pure(NodeEngine.loopVerifyInput(roundNum, "", "", wText, ""))
+
+    def loopRound(roundNum: Int, lastFail: Option[VerdictReader.Verdict.Fail], overrideWorkerInput: Option[String] = None): IO[Unit] =
       if roundNum > maxRounds then
         // 达 K 轮仍未 PASS → 轮级兜底终态（§2.5 划界：maxRounds 是轮帽，非内容检测）
         val suffix = lastFail.map(f => s" — last verdict: ${VerdictReader.renderFailSummary(f)}").getOrElse("")
         failNode(nodeId, s"loop reached maxRounds=${maxRounds} without passing verification$suffix")
       else
-        val workerInput =
+        // overrideWorkerInput（crash-recovery 批）：worker 相位崩溃续跑时本轮 worker
+        // 输入 = resume prompt（上下文已在水合 transcript 内）；递归轮恒 None。
+        val workerInput = overrideWorkerInput.getOrElse {
           if roundNum == 1 then workerFirstInput
           else
             val f = lastFail.getOrElse(VerdictReader.Verdict.Fail(Nil, ""))
             NodeEngine.loopReworkInput(roundNum, f.issues, f.requirements)
+        }
         for
           _ <- goto(nodeId, NodeEngine.LoopPhaseWorker, roundNum)
           wOut <- step(worker, workerInput)
@@ -1302,29 +1494,41 @@ class NodeEngine(
                 case Some(fb) => blockedNode(nodeId, fb) // worker 申告无法继续 → Loop 级 blocked
                 case None =>
                   for
-                    vIn <- if roundNum == 1 then verifyRound1Input(wText)
-                           else IO.pure(NodeEngine.loopVerifyInput(roundNum, "", "", wText, ""))
+                    vIn <- verifyInputFor(roundNum, wText)
                     _ <- goto(nodeId, NodeEngine.LoopPhaseVerify, roundNum)
                     vOut <- step(verify, vIn)
                     _ <- vOut match
                       case Left(err) => failOrCancel(nodeId, s"verify round $roundNum: $err")
-                      case Right(vMsgs) =>
-                        val vText = extractLastAssistantText(vMsgs)
-                        BlockedReader.parse(vText) match
-                          case Some(fb) => blockedNode(nodeId, fb) // verify 申告任务无法验证 → Loop 级 blocked
-                          case None =>
-                            VerdictReader.parse(vText) match
-                              case VerdictReader.Verdict.Pass =>
-                                // PASS：投递 worker 最终产出原文（§2.2 裁定建议 a）
-                                completeNode(nodeId, wText)
-                              case f: VerdictReader.Verdict.Fail =>
-                                // FAIL：打回 worker（同会话注入意见），轮 +1，至 K
-                                setVerdict(nodeId, VerdictReader.renderFailSummary(f)) *>
-                                  loopRound(roundNum + 1, Some(f))
+                      case Right(vMsgs) => handleVerify(roundNum, wText, vMsgs)
                   yield ()
         yield ()
 
-    loopRound(1, None)
+    /** verify 相位崩溃续跑（裁定③）：以 worker transcript 末条 assistant 文本重建本轮
+      * verify 输入（附崩溃续接标注——旧输入可能未持久/已消费，重注入是操作侧消息），
+      * 注入水合后的 verify 会话续验；verdict 走 handleVerify 共用裁决（loopRound 语义
+      * 连续：PASS 记崩溃轮，FAIL 打回 +1）。 */
+    def resumeVerifyRound(r: NodeEngine.ResumeContext): IO[Unit] =
+      val roundNum = math.max(r.loopResumeRound, 1)
+      val wText = extractLastAssistantText(r.recoveredMessages)
+      for
+        vBase <- verifyInputFor(roundNum, wText)
+        _ <- goto(nodeId, NodeEngine.LoopPhaseVerify, roundNum)
+        vOut <- step(verify, NodeEngine.loopVerifyResumeAnnotation(roundNum) + "\n\n" + vBase)
+        _ <- vOut match
+          case Left(err) => failOrCancel(nodeId, s"verify round $roundNum (resumed): $err")
+          case Right(vMsgs) => handleVerify(roundNum, wText, vMsgs)
+      yield ()
+
+    resume match
+      case None => loopRound(1, None)
+      case Some(r) =>
+        val roundNum = math.max(r.loopResumeRound, 1)
+        r.loopResumePhase match
+          case Some(NodeEngine.LoopPhaseVerify) => resumeVerifyRound(r)
+          case _ =>
+            // worker 相位（或轮前崩溃 loopRound=0/phase=None）：本轮 worker 输入 =
+            // resume prompt，完成后照常进 verify 轮。
+            loopRound(roundNum, None, Some(r.resumePrompt))
 
 
   // ── 终态化（§2.7）─────────────────────────────────────────
@@ -1440,9 +1644,13 @@ class NodeEngine(
     * 节点一条 settle-sweep 事件，禁止静默自愈。 */
   def settleRunnableSweep(): IO[Unit] =
     for
+      // crash-recovery 批：已认领待 rehydrate 的节点排除（bootRecoveryQueue 见字段注
+      // 释）——资格回扫会以无 resume 的新鲜路径 fork startNode，与慢段续跑竞速会
+      // 顶掉 transcript 续接语义（CAS 败者安静但恢复降级为全新重跑）。
+      recovering <- bootRecoveryQueue.get
       s0 <- store.snapshot
       candidates = s0.nodes.values.filter(n =>
-        n.status == NodeLifecycle.Pending || n.status == NodeLifecycle.Wiring).toList
+        (n.status == NodeLifecycle.Pending || n.status == NodeLifecycle.Wiring) && !recovering.contains(n.id)).toList
       // 第 1 步：孤儿 barrier 自愈（deliverOutTo 自带 deliveredTo 去重，重复扫描幂等）
       healed <- candidates.traverse { n =>
         n.in.traverse { upId =>
@@ -2049,6 +2257,65 @@ object NodeEngine:
   /** loop 运行态阶段值（NodeDef.loopPhase；loopRound 配套）。 */
   val LoopPhaseWorker: String = "worker"
   val LoopPhaseVerify: String = "verify"
+
+  // ── boot-time 崩溃恢复（crash-recovery 批 2026-09-07）──────────────────
+
+  /** 恢复认领事件类型（FlowMapEventLog append-only JSONL，「禁止静默自愈」纪律——
+    * 每个认领/处置动作一条，summary 含三分类与 transcript 指针）。 */
+  val BootRecoveryEventType: String = "boot-recovery"
+
+  /** 崩溃恢复续跑上下文（D3）：spawnAndRun/runWithAgent/spawnAndRunLoop 全链的
+    * resume 增量——Some 时跳过 buildInput、复用旧会话 id（D2：transcript 单文件
+    * 续写 + F2 队列重放白捡）+ initialMessages 水合，其余装配逐行复用（R8：禁手写
+    * 独立 spawn 链）。普通节点仅主会话三字段；loop 节点（裁定③）另带 verify 双会话
+    * 与崩溃时 loopRound/loopPhase 断点。 */
+  final case class ResumeContext(
+    /** 复用的旧会话 id（普通节点唯一会话；loop = worker 主会话）。 */
+    sessionId: String,
+    /** 主会话水合消息（磁盘 transcript，最后持久 tool round 边界——§1.1 诚实语义：
+      * 工具执行中/LLM 调用中/2s debounce 窗内崩溃的轮次回退重放）。 */
+    recoveredMessages: List[Message],
+    /** 首轮输入 = resume prompt（BackoffSupervisor continue-prompt 直系演化）。 */
+    resumePrompt: String,
+    /** loop verify 会话 id（仅 loop 节点；None = 普通/无旧 ref 新起）。 */
+    verifySessionId: Option[String] = None,
+    /** verify 会话水合消息（loop 节点）。 */
+    verifyMessages: List[Message] = Nil,
+    /** loop 崩溃时持久轮次断点（≥1；0/无值按 1 起）。 */
+    loopResumeRound: Int = 0,
+    /** loop 崩溃时相位（worker/verify；无值按 worker）。 */
+    loopResumePhase: Option[String] = None
+  )
+
+  /** 普通节点 resume prompt（§3.3 模板；磁盘上 (a)/(b) 不可区分——副作用核验告知
+    * 恒带（裁定②诚实语义：mid-turn 重放=从上一持久轮重跑，已完成的工作无需重复，
+    * 未确认的副作用先核验）。bgWaitNote = 认领时清空的等待集快照（G4 死亡告知）。 */
+  def nodeResumePrompt(projectName: String, node: NodeDef, recoveredCount: Int, bgWaitNote: Option[String]): String =
+    val bgSection = bgWaitNote match
+      case Some(w) => s"\n崩溃前等待中的后台任务已死亡（$w）——等待集已随进程消失，其结果文件若在盘上请自行核验，按需重启该后台工作。\n"
+      case None => ""
+    s"""[system] 进程在你上一轮工作期间崩溃并已重启。你的会话历史已从磁盘恢复
+       |（共恢复 ${recoveredCount} 条消息，断点 = 最后一个已持久化的工具轮边界）。请继续完成节点任务「${node.name}」。
+       |注意：上一轮工具调用可能未完成即中断——请先核验关键副作用（git 状态、关键文件）再继续，已完成的工作无需重复。
+       |$bgSection
+       |任务全文（原始要求）：NodeList(detail="${node.id}", project="$projectName") 可读；本 prompt 只负责续跑告知。""".stripMargin
+
+  /** loop worker 相位 resume prompt（裁定③：worker→verify 迭代跨崩溃续接——本轮
+    * 产出从最后持久轮边界续作，verify 照常裁决本轮）。 */
+  def loopWorkerResumePrompt(node: NodeDef, round: Int, phase: String, recoveredCount: Int): String =
+    s"""[system] 进程在 LoopNode 第 $round 轮（$phase 阶段）执行期间崩溃并已重启。你的会话历史已从磁盘恢复
+       |（共恢复 ${recoveredCount} 条消息，断点 = 最后一个已持久化的工具轮边界）。请继续完成本轮产出——
+       |从断点继续工作，上一轮工具调用可能未完成即中断，请先核验关键副作用（git 状态、关键文件）再继续，已完成的工作无需重复；
+       |完成后给出本轮最终产出（后续由验证会话裁决）。
+       |原始任务全文：NodeList(detail="${node.id}") 可读；本 prompt 只负责续跑告知。""".stripMargin
+
+  /** loop verify 相位续跑标注（verify 输入由 worker transcript 末条 assistant 文本
+    * 重建——旧输入可能未持久/已消费，重注入是操作侧消息）。 */
+  def loopVerifyResumeAnnotation(round: Int): String =
+    s"[system] 进程在 LoopNode 第 $round 轮（verify 阶段）执行期间崩溃并已重启，verify 会话历史已恢复；" +
+      s"下方为重建的本轮验证输入（worker 本轮产出），请按验证协议对本轮给出 verdict。"
+
+  // ── LoopNode 模板（续）────────────────────────────────────────
 
   /** verify 文法脚注（主设计 §2.3 原文单点注入，模板三末尾）——与 ProtocolFootnote
     * 同机制，覆盖所有 verify 会话，防「verify 意图 FAIL 但忘写锚定行」被降级放行。 */
