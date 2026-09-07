@@ -1,0 +1,66 @@
+{
+  "phase": "before",
+  "base": "http://localhost:8097",
+  "themes": {
+    "light": {
+      "failures": [],
+      "consoleErrors": [
+        "console.error: Failed to load resource: the server responded with a status of 400 (Bad Request)"
+      ],
+      "shots": [
+        "before-light-card.png",
+        "before-light-q1-btn.png",
+        "before-light-q2-btn.png",
+        "before-light-q3-btn.png",
+        "before-light-q4-btn.png"
+      ],
+      "probe": {
+        "q1_objectFit": "cover",
+        "q1_loaded": true,
+        "q1_srcHasInjectedDims": false,
+        "q1b_srcUntouched": false,
+        "q2_objectFit": "cover",
+        "q2_loaded": true,
+        "q2_srcHasInjectedDims": false,
+        "q3_objectFit": "cover",
+        "q3_natural": "160x60",
+        "q3_loaded": true,
+        "q4_swatchStripes": 2,
+        "q5_slotHidden": true,
+        "q6_noPreviewSlot": true,
+        "expectedFit": "cover"
+      }
+    },
+    "dark": {
+      "failures": [],
+      "consoleErrors": [
+        "console.error: Failed to load resource: the server responded with a status of 400 (Bad Request)"
+      ],
+      "shots": [
+        "before-dark-card.png",
+        "before-dark-q1-btn.png",
+        "before-dark-q2-btn.png",
+        "before-dark-q3-btn.png",
+        "before-dark-q4-btn.png"
+      ],
+      "probe": {
+        "q1_objectFit": "cover",
+        "q1_loaded": true,
+        "q1_srcHasInjectedDims": false,
+        "q1b_srcUntouched": false,
+        "q2_objectFit": "cover",
+        "q2_loaded": true,
+        "q2_srcHasInjectedDims": false,
+        "q3_objectFit": "cover",
+        "q3_natural": "160x60",
+        "q3_loaded": true,
+        "q4_swatchStripes": 2,
+        "q5_slotHidden": true,
+        "q6_noPreviewSlot": true,
+        "expectedFit": "cover"
+      }
+    }
+  },
+  "allPass": true,
+  "failures": 0
+}

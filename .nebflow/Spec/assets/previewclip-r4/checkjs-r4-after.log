@@ -1,0 +1,3 @@
+checkJs: 288 errors (baseline 313, zero-gate files: 3)
+  OK  total errors 288 < baseline 313 (-25) — consider --update to burn the baseline down
+checkJs PASS: no new errors above baseline.

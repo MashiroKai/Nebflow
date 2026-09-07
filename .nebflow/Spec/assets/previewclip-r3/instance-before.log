@@ -1,0 +1,22 @@
+09:46:03.621 [33mWARN [0m nebflow.core.sandbox.SandboxBackend$Seatbelt$ - sandbox-exec probe failed (exit=71): sandbox-exec: sandbox_apply: Operation not permitted
+
+09:46:03.622 [36mINFO [0m nebflow.core.sandbox.SandboxRuntime$ - sandbox-exec probe FAILED — Bash fail-closed (sandbox.bash.failIfUnavailable=false 降级可配)
+09:46:03.625 [36mINFO [0m nebflow.gateway - nebflow v1.4.1-beta.56
+09:46:03.625 [36mINFO [0m nebflow.gateway - Context window: 1000000 tokens (default preset "general": kimi/kimi-k3)
+09:46:10.777 [33mWARN [0m nebflow.neblink.discovery - NebLink Server is not configured — discovery skipped
+09:46:10.778 [36mINFO [0m nebflow.scheduled-task - Starting scheduled task service (10s poll interval)
+09:46:11.103 [36mINFO [0m nebflow.gateway - gateway listening on 0.0.0.0:8097
+09:46:11.104 [36mINFO [0m nebflow.gateway - access URL: http://localhost:8097 (token in ~/.nebflow/auth.json)
+09:46:11.105 [36mINFO [0m nebflow.bridge - No bridge plugins configured
+09:46:11.117 [36mINFO [0m nebflow.gateway - Type 'quit', 'exit', or 'q' (or press Ctrl+C) to stop
+09:46:11.123 [36mINFO [0m nebflow.gateway - Initializing global MCP servers...
+09:46:11.128 [36mINFO [0m nebflow.mcp - MCP server 'zai' is disabled, skipping
+09:46:11.219 [36mINFO [0m nebflow.mcp.client.opendataloader-pdf - Handshake complete
+09:46:11.262 [36mINFO [0m nebflow.mcp - MCP server 'opendataloader-pdf' connected, 1 tools registered
+09:46:11.268 [36mINFO [0m nebflow.gateway - MCP servers initialized
+09:46:11.274 [36mINFO [0m nebflow.tools - No external tools loaded
+09:46:13.437 [36mINFO [0m nebflow.ws - WebSocket client connected
+09:46:13.483 [36mINFO [0m nebflow.agent.lifecycle - [32mNebula-85e1d301[0m [35mNebula/85e1d301[0m event=spawn detail=parent=- msgs=0
+09:46:13.500 [36mINFO [0m nebflow.flow.tree - FlowTreeActor started for session Some(85e1d301-e225-4cfd-9e19-c53912aa0512)
+09:46:19.262 [36mINFO [0m nebflow.ws - WebSocket client connected
+09:46:24.547 [36mINFO [0m nebflow.gateway - shutting down...
