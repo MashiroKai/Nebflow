@@ -152,11 +152,19 @@ class LoopGuardWiringSpec extends CatsEffectSuite:
         _ <-
           if expectFirstTurnBusy then
             waitFor(wsEvents, evs => evs.exists(j => (j \\ "busy").exists(!_.asBoolean.getOrElse(true))), s"$actorName first turn did not finish", 30000)
-          else IO.sleep(2500.millis) // freeze 路径无 busy=false 终态帧——定时窗收集
+          else
+            // freeze 路径无 busy=false 终态帧——轮询 registry Frozen 终态（即
+            // root-degrade 断言依赖的状态迁移本身），取代固定 2500ms 收集窗
+            // （满载下 freeze→registry 写入可滞后于窗口 → Processing 假读）
+            waitFor(resources.agentRegistry, (reg: Map[String, AgentRecord]) =>
+              reg.get(sid).exists(_.status == AgentStatus.Frozen), s"$actorName first turn did not freeze", 30000)
         _ <- secondTurn match
           case Some(msg) =>
             (actor ! AgentCommand.UserInput(msg, None, Some("cmid-2"))) *>
-              IO.sleep(1500.millis) // freeze 路径无 busy=false 终态帧——定时窗收集
+              // 同上：轮询 registry Frozen 终态，取代固定 1500ms 收集窗
+              // （l2-freeze L2 复发冻结链在满载下可滞后——CI :217 Processing 假读）
+              waitFor(resources.agentRegistry, (reg: Map[String, AgentRecord]) =>
+                reg.get(sid).exists(_.status == AgentStatus.Frozen), s"$actorName turn-2 did not freeze", 30000)
           case None => IO.unit
         reqs <- requests.get
         evs <- wsEvents.get
