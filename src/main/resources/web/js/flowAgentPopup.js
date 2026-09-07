@@ -19,6 +19,7 @@ import { t } from './i18n.js';
 import { buildManageBar, bindManageActions, syncManageControls } from './managePanel.js';
 import { isErrorReason, errorTileText, errorIcon } from './errorRecovery.js';
 import { truncateMiddle } from './utils.js';
+import { cleanupCardIframes } from './cardRegistry.js';
 
 // ── Per-agent state ───────────────────────────────────────
 // nodeSessionId → { view: ChatView, container: div, meta: {}, historyLoaded: bool }
@@ -681,6 +682,9 @@ export function removeStepView(sessionId) {
       removalTimers.delete(sessionId);
     }
     delete chatViews[entry.view.id];
+    // Release card iframe observers/browsing contexts BEFORE the container
+    // detaches (D1, mem-diag 20260907 — same contract as P0-1 chat paths).
+    cleanupCardIframes(entry.container);
     entry.container.remove();
     stepViews.delete(sessionId);
   }

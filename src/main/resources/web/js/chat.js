@@ -593,7 +593,7 @@ export function appendAiText(text) {
     { bubble, chat, snapped: view.stream.scrollSnapped },
     (target) => {
       if (!target.bubble.isConnected) return;
-      target.bubble.innerHTML = renderMarkdownWithMath(target.bubble._nfText || '') + '<span class="cursor"></span>';
+      target.bubble.innerHTML = renderMarkdownWithMath(target.bubble._nfText || '', true, { cache: false }) + '<span class="cursor"></span>';
       const box = view.stream.aiStreamAskBox;
       if (box) target.bubble.appendChild(box);
       rafScrollChat(target);
@@ -833,7 +833,7 @@ export function appendAgentText(agentId, text) {
     { bubble: a.bubble, chat, snapped: view.stream.scrollSnapped },
     (target) => {
       if (!target.bubble.isConnected) return;
-      target.bubble.innerHTML = renderMarkdownWithMath(target.bubble._nfText || '') + '<span class="cursor"></span>';
+      target.bubble.innerHTML = renderMarkdownWithMath(target.bubble._nfText || '', true, { cache: false }) + '<span class="cursor"></span>';
       rafScrollChat(target);
     });
 }
@@ -2442,7 +2442,7 @@ export function appendAskAnswer(delta) {
       if (!target.bubble.isConnected) return;
       const contentEl = target.bubble.querySelector('div:not(.ask-label)');
       if (contentEl) {
-        contentEl.innerHTML = renderMarkdownWithMath(target.bubble._nfText || '') + '<span class="cursor"></span>';
+        contentEl.innerHTML = renderMarkdownWithMath(target.bubble._nfText || '', true, { cache: false }) + '<span class="cursor"></span>';
       }
       rafScrollChat(target);
     });
@@ -2597,7 +2597,7 @@ export function appendThinkingDelta(delta) {
       if (!target || !target.bubble) return;
       const contentEl = target.bubble.querySelector('.thinking-content');
       if (contentEl) {
-        contentEl.innerHTML = renderMarkdownWithMath(target.bubble._nfText || '') + '<span class="cursor"></span>';
+        contentEl.innerHTML = renderMarkdownWithMath(target.bubble._nfText || '', true, { cache: false }) + '<span class="cursor"></span>';
       }
       // Scroll the correct chat element directly — smartScroll() reads state.dom
       // at rAF time which may be the wrong window. Capture snapped at schedule

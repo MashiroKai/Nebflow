@@ -178,6 +178,28 @@ window.addEventListener('message', (e) => {
 
 // ===== Card interaction: accumulate + submit =====
 const _cardAccumulator = {};
+// Last-activity timestamp per origin — drives the TTL prune below (D5,
+// mem-diag 20260907: entries were previously only cleared on submit, so
+// abandoned interactions accumulated forever).
+const CARD_ACCUM_TTL_MS = 10 * 60 * 1000;
+const _cardAccumTs = new Map();
+
+function pruneCardAccumulator(now = Date.now()) {
+  for (const [origin, ts] of _cardAccumTs) {
+    if (now - ts > CARD_ACCUM_TTL_MS) {
+      _cardAccumTs.delete(origin);
+      delete _cardAccumulator[origin];
+    }
+  }
+}
+
+/** Drop all in-progress card interaction accumulations. Card iframes are
+ *  destroyed on session switch/delete, so their pending selections are
+ *  unreachable orphans past that point (D5, mem-diag 20260907). */
+export function resetCardAccumulator() {
+  for (const k of Object.keys(_cardAccumulator)) delete _cardAccumulator[k];
+  _cardAccumTs.clear();
+}
 
 /**
  * Listen for card interaction messages.
@@ -193,13 +215,16 @@ window.addEventListener('message', (e) => {
   const data = e.data.data || {};
 
   if (action === 'accumulate') {
+    pruneCardAccumulator();
     // Merge into accumulator (per card iframe origin)
     const key = e.origin;
     if (!_cardAccumulator[key]) _cardAccumulator[key] = {};
     Object.assign(_cardAccumulator[key], data);
+    _cardAccumTs.set(key, Date.now());
   } else if (action === 'submit') {
     // Merge any accumulated data with the submit payload
     const key = e.origin;
+    _cardAccumTs.delete(key);
     const accumulated = _cardAccumulator[key] || {};
     const merged = { ...accumulated, ...data };
     delete _cardAccumulator[key];

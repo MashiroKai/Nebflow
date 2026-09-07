@@ -203,6 +203,10 @@ function box_rows() {
 
 // ── Chat modal (§2.3/§3.3) ───────────────────────────────
 function closeChat() {
+  // Every close path (ESC, backdrop, ×, post-send) funnels through here —
+  // detach the document listener centrally so open/close cycles stay
+  // symmetric (D4, mem-diag 20260907). removeEventListener is idempotent.
+  document.removeEventListener('keydown', escClose);
   if (modalEls) {
     modalEls.overlay.remove();
     modalEls = null;
@@ -358,8 +362,7 @@ function updateTrustBadge(conv) {
 function escClose(e) {
   if (e.key === 'Escape' && modalEls) {
     e.stopPropagation();
-    closeChat();
-    document.removeEventListener('keydown', escClose);
+    closeChat(); // also detaches this listener (D4)
   }
 }
 
