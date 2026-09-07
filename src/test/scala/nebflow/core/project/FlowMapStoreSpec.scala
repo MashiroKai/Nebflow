@@ -131,6 +131,29 @@ class FlowMapStoreSpec extends CatsEffectSuite:
       assertEquals(fromArchive.map(_.name), Some("done"))
   }
 
+  test("sweepExpired: failed/cancelled with legacy expired TTL are NEVER swept (2026-09-07 ruling)") {
+    // 作者裁定 2026-09-07：含 failed/cancelled 的链永不自动归档、无 TTL 强制清——
+    // 死亡现场保留主图待上层裁决取消/重跑。存量节点仍携带旧 ttlExpireAt（零迁移），
+    // sweep 过滤必须按 status==Completed 收窄（而非仅查 ttlExpireAt）才能保护它们。
+    val ws = freshWorkspace()
+    for
+      store <- FlowMapStore.open("demo", ws)
+      _ <- store.mutate(s => s.copy(nodes = s.nodes ++ Map(
+        "failed-old" -> node("failed-old", "failed-old", NodeLifecycle.Failed).copy(result = Some("boom"), ttlExpireAt = Some(now - 1)),
+        "cancelled-old" -> node("cancelled-old", "cancelled-old", NodeLifecycle.Cancelled).copy(ttlExpireAt = Some(now - 1)),
+        "done" -> node("done", "done", NodeLifecycle.Completed).copy(result = Some("ok"), ttlExpireAt = Some(now - 1))
+      )))
+      removed <- store.sweepExpired(now)
+      s <- store.snapshot
+      arch <- store.archiveSnapshot
+    yield
+      assertEquals(removed, List("done"), "only completed nodes are swept")
+      assert(s.nodes.contains("failed-old") && s.nodes.contains("cancelled-old"),
+        "failed/cancelled stay in the active area (death scene retained)")
+      assert(!arch.nodes.contains("failed-old") && !arch.nodes.contains("cancelled-old"),
+        "failed/cancelled never auto-archived")
+  }
+
   test("sweepExpired: archive persists across reopen") {
     val ws = freshWorkspace()
     for

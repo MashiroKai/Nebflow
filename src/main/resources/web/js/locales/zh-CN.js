@@ -78,10 +78,10 @@ export default {
   'flowmap.legend.depsMet': '依赖已满足',
   'flowmap.legend.depsWaiting': '依赖等待中',
   'flowmap.legend.depsUnmet': '依赖未满足',
-  // 整链归档 v3（20260903_flowmap-archive-panel-spec.md；flowmap.allArchived TTL 文案下线）
-  'flowmap.terminalTag': '链未齐·终态保留',
-  'flowmap.retained': '链未齐终态保留 {n}',
-  'flowmap.legend.terminalRetained': '链未齐·终态保留',
+  // 整链归档 v3（20260903_flowmap-archive-panel-spec.md；flowmap.allArchived TTL 文案下线；
+  // 2026-09-07 状态保真批：归档资格收紧为全 completed，terminalTag 退役——卡 title 改显真实状态词）
+  'flowmap.retained': '终态保留 {n}',
+  'flowmap.legend.terminalRetained': '终态保留（链未齐/异常）',
   'flowmap.st.wiring': '接线中',
   'flowmap.st.pending': '待运行',
   'flowmap.st.cancelled': '已取消',
@@ -100,6 +100,7 @@ export default {
   'flowmap.archive.chain': '所属链',
   'flowmap.archive.chainArchived': '已归档',
   'flowmap.archive.chainRetained': '链未齐·终态保留主图',
+  'flowmap.archive.chainAbnormal': '含失败/取消·保留主图待清理',
   'flowmap.archive.taskLabel': '任务',
   'flowmap.archive.resultLabel': '结果',
   'flowmap.archive.noResult': '暂无结果',
@@ -129,6 +130,7 @@ export default {
   'flowmap.detail.yes': '是',
   'flowmap.chain.archivedToast': '链「{chain}」整链归档（{n} 节点一起进归档）',
   'flowmap.chain.retainedToast': '节点已完成 · 链「{chain}」未齐（{done}/{total}）· 终态卡保留主图',
+  'flowmap.chain.retainedAbnormalToast': '链「{chain}」含失败/取消节点（{done}/{total} 终态）· 不自动归档 · 保留主图 24h 待承接',
   // 特殊节点标识徽标（badge 批 2026-09-05）：head 行胶囊文案；追加锚在 flowmap 块
   // 尾部，最小化与同批其他 locales 支的合并冲突面
   'flowmap.flag.merge': '合并',

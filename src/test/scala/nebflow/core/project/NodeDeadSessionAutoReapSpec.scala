@@ -270,7 +270,8 @@ class NodeDeadSessionAutoReapSpec extends CatsEffectSuite:
       assertEquals(z.status, NodeLifecycle.Failed, "dead-session running must auto-converge to failed")
       assert(z.result.exists(_.contains("no live session, no in-flight background task")),
         s"failure reason must record the dead-session trigger: ${z.result}")
-      assert(z.ttlExpireAt.isDefined, "converged node must get a display TTL")
+      assert(z.ttlExpireAt.isEmpty,
+        "converged node must NOT get a display TTL (2026-09-07 ruling: failed retained on map, no forced cleanup)")
       assert(imms.exists(_.text.contains("[Node 'zombie-a' failed]")),
         s"failed delivery must reach the root session, got: ${imms.map(_.text).mkString("|")}")
       assert(events.exists(_.contains("\"dead-session-reaped\"")),

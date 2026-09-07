@@ -79,10 +79,10 @@ export default {
   'flowmap.legend.depsMet': 'Dependency met',
   'flowmap.legend.depsWaiting': 'Dependency waiting',
   'flowmap.legend.depsUnmet': 'Dependency unmet',
-  // 整链归档 v3（20260903_flowmap-archive-panel-spec.md；flowmap.allArchived TTL 文案下线）
-  'flowmap.terminalTag': 'chain incomplete — retained (terminal)',
-  'flowmap.retained': '{n} retained (chain incomplete)',
-  'flowmap.legend.terminalRetained': 'Retained (chain incomplete)',
+  // 整链归档 v3（20260903_flowmap-archive-panel-spec.md；flowmap.allArchived TTL 文案下线；
+  // 2026-09-07 状态保真批：归档资格收紧为全 completed，terminalTag 退役——卡 title 改显真实状态词）
+  'flowmap.retained': '{n} retained (terminal)',
+  'flowmap.legend.terminalRetained': 'Retained (incomplete/abnormal)',
   'flowmap.st.wiring': 'wiring',
   'flowmap.st.pending': 'pending',
   'flowmap.st.cancelled': 'cancelled',
@@ -101,6 +101,7 @@ export default {
   'flowmap.archive.chain': 'Chain',
   'flowmap.archive.chainArchived': 'archived',
   'flowmap.archive.chainRetained': 'chain incomplete — retained on map',
+  'flowmap.archive.chainAbnormal': 'has failed/cancelled — retained on map pending cleanup',
   'flowmap.archive.taskLabel': 'Task',
   'flowmap.archive.resultLabel': 'Result',
   'flowmap.archive.noResult': 'No result yet',
@@ -131,6 +132,7 @@ export default {
   'flowmap.detail.yes': 'Yes',
   'flowmap.chain.archivedToast': 'Chain "{chain}" archived ({n} nodes together)',
   'flowmap.chain.retainedToast': 'Node completed — chain "{chain}" incomplete ({done}/{total}); terminal card retained on map',
+  'flowmap.chain.retainedAbnormalToast': 'Chain "{chain}" has failed/cancelled nodes ({done}/{total} terminal) — not auto-archived; retained on map for 24h',
   // Special-node flag badges (badge batch 2026-09-05): head-row capsule labels;
   // appended at the tail of the flowmap block to minimize merge-conflict surface
   // with other locales branches in this batch

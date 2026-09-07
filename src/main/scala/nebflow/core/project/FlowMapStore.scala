@@ -16,7 +16,9 @@ import nebflow.core.{AtomicJson, NebflowLogger, PathUtil}
  *   JSON 只留 ≤500 字符摘要 + 指针（task 归档侧无指针）；加载水合回内存全文
  * - 内存 Ref 持当前状态；所有变更走 `mutate`（Ref.update 原子性 + 落盘）
  * - 环检测：NodeEdit 建边（from→to）前 DFS（to 的传递下游沿 out 边可达 from → 拒）
- * - TTL：终态节点 ttlExpireAt 到期 → 移入归档区（结果全文保留）+ 活动区删除
+ * - TTL：completed 节点 ttlExpireAt 到期 → 移入归档区（结果全文保留）；
+ *   failed/cancelled/blocked 无 TTL 不过期（2026-09-07 作者裁定：死亡现场保留
+ *   主图待上层裁决，永不自动归档）+ 活动区删除
  * - barrier：节点启动条件 = 全部 in 上游 deliveredTo 含本节点（NodeEngine 裁决）
  *
  * 并发纪律：边/计数的变更必须在单个 mutate 内完成（§2.3「单事务更新」）。
@@ -106,13 +108,16 @@ class FlowMapStore private (
         reachable(to, Set.empty)
       }
 
-  /** TTL sweep：终态节点 ttlExpireAt ≤ now → 从活动区移入归档区（结果全文保留）。
+  /** TTL sweep：**completed** 节点 ttlExpireAt 到期 → 从活动区移入归档区（结果全文保留）。
+    * 2026-09-07 作者裁定收紧：failed/cancelled（与 blocked 同）永不自动归档、无 TTL
+    * 强制清——死亡现场保留主图待上层裁决取消/重跑；存量带 ttlExpireAt 的
+    * failed/cancelled 节点由此过滤保护（零数据迁移）。
     * 返回被移除的节点 id 列表（ProjectActor 据此发 WS nodeRemoved）。 */
   def sweepExpired(now: Long): IO[List[String]] =
     for
       s <- state.get
       expired = s.nodes.values
-        .filter(n => NodeLifecycle.Terminal.contains(n.status))
+        .filter(n => n.status == NodeLifecycle.Completed)
         .filter(n => n.ttlExpireAt.exists(_ <= now))
         .toList
       _ <- if expired.isEmpty then IO.unit

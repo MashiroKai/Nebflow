@@ -90,6 +90,16 @@
 
 .fm-node-head { display: flex; align-items: center; gap: 6px; margin-bottom: 2px; }
 
+/* 终态卡状态词（2026-09-07 状态保真批）：主图终态卡 head 行 glyph 旁文本——
+   死亡节点（重启收敛 failed/cancelled）的真实终态一眼可辨，不再是孤减号线。 */
+.fm-st-word {
+  font: 500 9px/1 -apple-system, BlinkMacSystemFont, sans-serif;
+  letter-spacing: 0.02em;
+}
+.fm-st-word.completed { color: var(--color-success); }
+.fm-st-word.failed { color: var(--color-error); }
+.fm-st-word.cancelled { color: var(--color-text-muted); }
+
 /* worktree 徽标：在 worktree 内工作的节点 */
 .fm-worktree-badge {
   font: 600 9px/1 -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
@@ -606,6 +616,15 @@
 .fm-entry-st.failed { color: var(--color-error); }
 .fm-entry-st.cancelled { color: var(--color-text-muted); }
 .fm-entry-st.active { color: rgb(var(--sapphire)); }
+/* 状态词（2026-09-07 状态保真批）：归档条目/成员行 glyph 旁恒带状态文本——
+   cancelled 减号 glyph 单看是「-」无从分辨，文本消灭歧义；色板与 glyph 同规则。 */
+.fm-entry-stw {
+  flex: 0 0 auto; font: 500 10px/1.4 -apple-system, BlinkMacSystemFont, sans-serif;
+}
+.fm-entry-stw.completed { color: var(--color-success); }
+.fm-entry-stw.failed { color: var(--color-error); }
+.fm-entry-stw.cancelled { color: var(--color-text-muted); }
+.fm-entry-stw.active { color: rgb(var(--sapphire)); }
 .fm-entry-name {
   flex: 0 1 auto; min-width: 0; font: 500 12px/1.4 -apple-system, BlinkMacSystemFont, sans-serif;
   color: var(--color-text); overflow: hidden; text-overflow: ellipsis; white-space: nowrap;

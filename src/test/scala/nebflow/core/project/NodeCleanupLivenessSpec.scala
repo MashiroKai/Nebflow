@@ -239,7 +239,8 @@ class NodeCleanupLivenessSpec extends CatsEffectSuite:
       assertEquals(aliveFlag, false, "engine in-flight map must not hold the seeded node")
       assert(r1.isRight && r1.exists(_.contains("reaped")), s"NodeCancel must reap dead running, got: $r1")
       assertEquals(after1.status, NodeLifecycle.Cancelled, "dead running must be terminalized by NodeCancel")
-      assert(after1.ttlExpireAt.isDefined, "reaped node must get display TTL")
+      assert(after1.ttlExpireAt.isEmpty,
+        "reaped node must NOT get a display TTL (2026-09-07 ruling: cancelled retained on map, no forced cleanup)")
       assert(audit1.exists((t, id) => t == "reaped" && id == deadId), s"reap must be audit-logged, got: $audit1")
       assert(r2.isRight && r2.exists(_.contains("no-op")), s"second cancel must be a no-op, got: $r2")
       assertEquals(after2.status, NodeLifecycle.Cancelled, "status stays cancelled (idempotent)")
@@ -344,7 +345,8 @@ class NodeCleanupLivenessSpec extends CatsEffectSuite:
     yield
       assert(r1.isRight, s"dead running must be abandonable, got: $r1")
       assertEquals(after1.status, NodeLifecycle.Cancelled, "abandoned dead running becomes cancelled")
-      assert(after1.ttlExpireAt.isDefined, "abandoned dead running gets display TTL")
+      assert(after1.ttlExpireAt.isEmpty,
+        "abandoned dead running must NOT get a display TTL (2026-09-07 ruling: cancelled retained on map)")
       assert(audit1.exists((t, id) => t == "abandoned" && id == deadId), s"abandon must be audit-logged, got: $audit1")
       assert(r2.isRight, s"terminal re-abandon is in-domain, got: $r2")
       assertEquals(after2.status, NodeLifecycle.Cancelled, "stays cancelled (idempotent)")
