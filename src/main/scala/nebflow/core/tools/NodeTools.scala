@@ -275,7 +275,7 @@ object NodeEditTool extends Tool:
 - **worktree** (optional, boolean, create-time only): true = an isolated git worktree is created for this node at <workspace>/.nebflow/worktrees/<derived-name> (derived from the node name, sanitized; same-name branch; baseline = main HEAD at creation) — creation happens immediately in this call (fail-fast: a failure rejects the whole NodeEdit). false / omitted = run directly in the workspace. On edits the parameter is refused (create-time binding only; existing nodes keep theirs).
 - **preset** (optional): node configuration preset.
 - **abandon** (optional, default false): abandon a terminal (blocked/completed/failed/cancelled), wiring/pending, or a STALE RUNNING node whose session is dead (no live execution fiber, e.g. after an instance restart) → status=cancelled + display TTL (audit-logged). The dispatcher's give-up action for blocked nodes, the topology-cleanup exit for retired wiring/pending nodes, and the reaping exit for dead-session running nodes. A LIVE running node is refused (mis-kill protection) — use NodeCancel for running nodes instead.
-- **notifyDispatcher** (optional, default false): dispatch-notify backflow flag — when this node reaches a terminal state (currently completion; failed/blocked reserved), the project dispatcher gets a new session triggered with the node's result reference (name/terminal/reason code; full result read via NodeList detail), so it can continue planning (extend topology / build merge-node sink / conclude / no-op). Independent signal channel — does NOT occupy the out edge. Settable/withdrawable while wiring/pending/running (refused on terminal). Nodes created BY the dispatcher default to false (must be explicitly enabled — convergence guarantee).
+- **notifyDispatcher** (optional, default false): dispatch-notify backflow flag — when this node COMPLETES with the flag on, the project dispatcher gets a new session triggered with the node's result reference (name/terminal/reason code; full result read via NodeList detail), so it can continue planning (extend topology / build merge-node sink / conclude / no-op). Completion-only switch: failed notifications are automatic and NOT flag-gated (every failed terminal state notifies the dispatcher); blocked stays reserved. Independent signal channel — does NOT occupy the out edge. Settable/withdrawable while wiring/pending/running (refused on terminal). Nodes created BY the dispatcher default to false (must be explicitly enabled — convergence guarantee).
 
 ## Retired parameters (rejected — capability model is plugins, not agents)
 - **agent**: NOT accepted. Every node executes the general agent; professional capability comes from plugins. Passing "agent" is rejected (point it at plugins).
@@ -286,6 +286,7 @@ object NodeEditTool extends Tool:
 - nodename exists → edit: in appends barrier inputs; deps replaces the whole dependency list (when provided); out sets/replaces (rewire); description replaces (when provided). Disconnecting (out=null on a node that has an out edge) is rejected — rewire to a new target instead.
 - Connection policy (20260903 收紧): creation requires BOTH an out edge (node id or "Nebula") AND an input side (task or in — task counts as the in-side connection, so entry nodes (task + out, no in) are legal and run on create; in and task may coexist). Missing out, or out with neither task nor in → EMPTY_NODE_CONNECTION. Disconnecting to a no-out state on edit → EMPTY_NODE_CONNECTION (rewire, don't disconnect). Legacy dangling nodes (out=null created before this policy) stay editable: edit their task/description/in/deps freely, rewire their out to a target and the retained result auto-delivers.
 - Blocked node edit: changing task/description (or in/out) on a blocked node reactivates it — status returns to wiring/pending, deliveredTo cleared, blockCount preserved (round history kept), completed upstream results re-delivered, then the node reruns with the new input. No-op if nothing actually changed.
+- Failed node edit (2026-09-07 batch): an actual change (task/description/in/out/deps) on a FAILED node reactivates it the same way — the dispatcher's FIRST-CHOICE recovery for transient/infrastructure failures (same node reruns, in/out topology kept). Difference from blocked: round history RESETS (blockCount→0, notifySentAt cleared — a rerun is not a semantic block round, and the next real failure notifies the dispatcher again). completed/cancelled remain non-reactivatable (create a successor node instead).
 - abandon=true → terminal/wiring/pending node becomes cancelled with display TTL (frontend removes it after TTL; result kept in archive).
 - Validation (0 spawn except worktree creation): description present/within limit; referenced nodes exist; DAG cycle check (DFS); 1-to-many rejected; target running → rejected ("input frozen — NodeCancel first"); worktree=true also creates the git worktree (the one create-time side effect, fail-fast).
 - Create an entry node (task present, no in) → it starts running immediately (async, non-blocking). Node result = the agent's final output, auto-saved (full text persisted to a per-node result file; payloads carry metadata only) and delivered along out (node → downstream barrier / Nebula → injected to root session / legacy no-out → retained, auto-delivered when rewired). Read a node's full result via NodeList(detail=<nodeId>)."""
@@ -982,27 +983,36 @@ object NodeEditTool extends Tool:
                               Some(ToolError(dChecks.collectFirst { case Left(e) => e }.getOrElse("invalid deps")))
                             else if !notifyStatusOk then
                               Some(ToolError(
-                                s"notifyDispatcher can only be set or withdrawn before completion (wiring/pending/running) — node '${node.name}' is ${node.status} (result already delivered). re-activation is the exit for blocked."))
+                                s"notifyDispatcher can only be set or withdrawn before completion (wiring/pending/running) — node '${node.name}' is ${node.status} (result already delivered). re-activation is the exit for blocked/failed."))
                             else if !loopStatusOk then
                               Some(ToolError(
-                                s"loop can only be set or withdrawn before completion (wiring/pending/running) — node '${node.name}' is ${node.status} (result already delivered). re-activation is the exit for blocked."))
+                                s"loop can only be set or withdrawn before completion (wiring/pending/running) — node '${node.name}' is ${node.status} (result already delivered). re-activation is the exit for blocked/failed."))
 
                             else None
                             )
                           // 前置拒绝集统一闸（description 校验 + 零连接 + deps 校验）
                           if earlyReject.isDefined then IO.pure(Left(earlyReject.get))
                           else {
-                          // blocked 重激活（blocked 反馈重入设计 §6 #5）：编辑 blocked 节点且
-                          // task/description/in/out/deps 实际变更 → status 回 wiring/pending、
-                          // deliveredTo 清空、completedAt/ttlExpireAt/startedAt 复位、
-                          // blockCount 保留（不清零，§3.1），随后 D1 补投递链重投全部已完成
-                          // 上游。（agent 已退役不可编辑——重激活沿用节点自身 agent。）
+                          // blocked/failed 重激活（blocked 反馈重入设计 §6 #5；failed
+                          // 放开=2026-09-07 批作者裁定③）：编辑 blocked/failed 节点且
+                          // task/description/in/out/deps 实际变更 → status 回
+                          // wiring/pending、deliveredTo 清空、completedAt/ttlExpireAt/
+                          // startedAt 复位，随后 D1 补投递链重投全部已完成上游。
+                          // blocked 版 blockCount 保留（§3.1 轮次历史）；failed 版轮次
+                          // 历史复位（重跑非语义阻塞轮次，见下方事务内注释）。
+                          // （agent 已退役不可编辑——重激活沿用节点自身 agent。）
                           val taskChanged = task.exists(t => NodeTools.normalizeTask(t) != node.task.map(NodeTools.normalizeTask).getOrElse(""))
                           val descriptionChanged = description.exists(d => d.trim != node.description.getOrElse(""))
                           val depsChanged = depsProvided && newDeps != node.deps
                           val loopChanged = loopFlag.provided && loopFlag.config != node.loop
-                          val actualChange = taskChanged || descriptionChanged || newOut != node.out || adds.nonEmpty || depsChanged || loopChanged
-                          val reactivate = node.status == NodeLifecycle.Blocked && actualChange
+                          // out 未传 ≠ 变更（actualChange quirk 修，2026-09-07）：
+                          // parseOut(None)=None 与 node.out=Some 恒不等——裸比较会让
+                          // 终态节点「未传 out 的编辑」恒判 actualChange=true → 意外重
+                          // 激活，违背描述「No-op if nothing actually changed」。与
+                          // 上方 setOutIO / finalOut 同款 outJson.isDefined 守卫。
+                          val outChanged = outJson.isDefined && newOut != node.out
+                          val actualChange = taskChanged || descriptionChanged || outChanged || adds.nonEmpty || depsChanged || loopChanged
+                          val reactivate = (node.status == NodeLifecycle.Blocked || node.status == NodeLifecycle.Failed) && actualChange
                           val appliedTask = task.orElse(node.task)
                           val appliedDeps = if depsProvided then newDeps else node.deps
                           // wiring 变更涉及节点集（最终态事件）：本节点（in/out 变更，in 追加
@@ -1101,13 +1111,23 @@ object NodeEditTool extends Tool:
                                               case _ => s
                                           }.void
                                         else IO.unit
-                                      // blocked 重激活写回（R2 纪律）：事务内现读 fresh，fresh 仍
-                                      // Blocked 才写；状态已变（并发 abandon/重激活）→ 拒写不重激活。
+                                      // blocked/failed 重激活写回（R2 纪律）：事务内现读
+                                      // fresh，fresh 仍 Blocked/Failed 才写；状态已变（并发
+                                      // abandon/重激活）→ 拒写不重激活。failed 版差异
+                                      // （2026-09-07 批，作者裁定①②语义点）：**轮次历史复位**
+                                      // 而非保留——重跑不是语义阻塞轮次：blockCount→0、
+                                      // blockedFeedback 清除（blockCount 复位后旧反馈成孤
+                                      // 儿数据）；notifySentAt 清除（重激活后再次真失败 →
+                                      // 分发器再获通知——重试回路非循环口径，DispatchNotify
+                                      // §2.2；inFlight 占位在通知尝试后已释放，不会挡第二次）。
+                                      // blocked 版三者保留（blockCount 记语义阻塞轮次，
+                                      // FeedbackRouter LoopCap 依赖）。
                                       didReactivate <-
                                         if reactivate then
                                           rt.store.mutate { s =>
                                             s.nodes.get(node.id) match
-                                              case Some(fresh) if fresh.status == NodeLifecycle.Blocked =>
+                                              case Some(fresh) if fresh.status == NodeLifecycle.Blocked || fresh.status == NodeLifecycle.Failed =>
+                                                val fromFailed = fresh.status == NodeLifecycle.Failed
                                                 val nextStatus =
                                                   if appliedTask.exists(_.trim.nonEmpty) && fresh.in.isEmpty then NodeLifecycle.Pending
                                                   else NodeLifecycle.Wiring
@@ -1117,21 +1137,28 @@ object NodeEditTool extends Tool:
                                                   description = description.map(_.trim).orElse(fresh.description),
                                                   deps = appliedDeps,
                                                   loop = loopFlag.config.orElse(fresh.loop), // loop 变更随重激活应用
-                                                  result = None, // blocked 反馈渲染串不复存在（反馈保留在 blockedFeedback）
+                                                  result = None, // blocked 反馈渲染串 / failed 错误文本均不复存在
                                                   deliveredTo = Nil,
                                                   // V8: 重激活 = 该节点身份重跑一轮，out=Nebula 投递
                                                   // 记账同样清零——重跑完成后的结果重新投递+记账。
                                                   nebulaDeliveredAt = None,
                                                   startedAt = None,
                                                   completedAt = None,
-                                                  ttlExpireAt = None))) // blockCount / blockedFeedback 保留
+                                                  ttlExpireAt = None,
+                                                  blockCount = if fromFailed then 0 else fresh.blockCount, // blocked 保留轮次 / failed 复位
+                                                  blockedFeedback = if fromFailed then None else fresh.blockedFeedback,
+                                                  notifySentAt = if fromFailed then None else fresh.notifySentAt)))
                                               case _ => s
                                           }.map(s2 =>
                                             s2.nodes.get(node.id).exists(n => n.status == NodeLifecycle.Wiring || n.status == NodeLifecycle.Pending))
                                         else IO.pure(false)
                                       _ <- if didReactivate then
-                                        FlowMapEventLog.append(rt.project.workspace, rt.project.name, node.id, "reactivated",
-                                          s"blocked node edited (round ${node.blockCount} preserved) → ${appliedTask.map(t => s"task=${t.take(80)}").getOrElse("")}") *>
+                                        val reactivateNote =
+                                          if node.status == NodeLifecycle.Failed then
+                                            s"failed node edited (round history reset: blockCount→0, notifySentAt cleared) → rerun: ${appliedTask.map(t => s"task=${t.take(80)}").getOrElse("")}"
+                                          else
+                                            s"blocked node edited (round ${node.blockCount} preserved) → ${appliedTask.map(t => s"task=${t.take(80)}").getOrElse("")}"
+                                        FlowMapEventLog.append(rt.project.workspace, rt.project.name, node.id, "reactivated", reactivateNote) *>
                                           // 重激活补投递（design §6 #5「随后走现有 D1 补投递链」）：
                                           // deliveredTo 已清空 → 全部 in 上游（终态有结果、非 blocked）
                                           // 重投（deliverOutTo dedup 幂等）→ barrier 结算 → 启动；
@@ -1228,7 +1255,10 @@ object NodeEditTool extends Tool:
                                       _ <- NodeTools.emitWiringUpdates(rt, affected)
                                     yield Right(
                                       s"Node '${node.name}' updated" +
-                                        (if didReactivate then s" — reactivated from blocked (round ${node.blockCount} preserved)" else "") +
+                                        (if didReactivate then
+                                          if node.status == NodeLifecycle.Failed then " — reactivated from failed (round history reset; next real failure re-notifies dispatcher)"
+                                          else s" — reactivated from blocked (round ${node.blockCount} preserved)"
+                                        else "") +
                                         (if notify.provided then s" — notifyDispatcher → ${notify.flag}" else "") +
                                         (newOut.map(t => s" — out → $t").getOrElse("") + (if adds.nonEmpty then s" — in += ${adds.mkString(",")}" else "")) +
                                         (if depsProvided && depsChanged then s" — deps → [${newDeps.mkString(",")}]" else "")
@@ -1378,7 +1408,7 @@ object NodeMessageTool extends Tool:
 ## Routing semantics (by target node status)
 - **running**: the message is injected into the node's live session at the NEXT turn boundary (reuses the immediate-input mechanism — it does NOT interrupt the current turn). The injected text carries a recognizable `[NODE-MESSAGE]` header (source: dispatcher NodeMessage + node name + timestamp), clearly distinct from the node's original task and from result deliveries. Race fallback: if the session ends before delivery, the message is recorded on the node's task annotated「注入未达」— the trace is never lost.
 - **wiring / pending** (non-terminal, no live session): the message is persistently appended to the node's task record as a `== 分发器补充（NodeMessage <timestamp>） ==` section — the node reads it as part of its task when it starts.
-- **terminal (completed / failed / cancelled / blocked)**: REFUSED (NODE_TERMINAL_NO_MESSAGE). A finished node is never retro-edited — create a new node instead (NodeEdit), even for blocked (blocked exit = NodeEdit reactivation or abandon, not messages).
+- **terminal (completed / failed / cancelled / blocked)**: REFUSED (NODE_TERMINAL_NO_MESSAGE). A finished node is never retro-edited — create a new node instead (NodeEdit), even for blocked/failed (their exit = NodeEdit reactivation or abandon, not messages).
 ## Errors
 - `NODE_NOT_FOUND` — nodeId does not exist in the project (active or archived).
 - `NODE_MESSAGE_EMPTY` — message is blank after trim.
