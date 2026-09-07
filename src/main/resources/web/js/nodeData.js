@@ -6,6 +6,8 @@
 //   GET /api/projects → {projects:[{name,workspace,agentFile,description,createdAt}]}
 //   GET /api/projects/<name>/flow-map → NodeList 载荷 {nodes[],worktrees[],meta}
 //     未挂载 → 404 {error}
+//   GET /api/projects/<name>/flow-map/archive → Flow Archive 分批 {batches[],ttlMs,count}
+//     （裁定④「TTL 分开」批：归档面板后端数据源；显示窗 24h）未挂载 → 404 {error}
 //   GET /api/projects/<name>/agent.md → {content}（项目不存在/无 AGENTS.md → 404；旧 .nebflow/Agent.md 兼容回落）
 //   PUT /api/projects/<name>/agent.md → body {content} → {saved:true}（写回工作区根 AGENTS.md）
 // WS 事件广播帧 {type,project,nodeId,node}：
@@ -24,6 +26,10 @@ export const API = {
   // 快照/事件载荷只带 hasResult 标记（元数据 only），全文仅此端点按需提供；
   // 未挂载/无节点 404
   nodeResult: (name, nodeId) => `/api/projects/${encodeURIComponent(name)}/flow-map/nodes/${encodeURIComponent(nodeId)}/result`,
+  // Flow Archive 分批内容（裁定④「TTL 分开」批 2026-09-07）：归档面板数据源——
+  // GET → {batches:[{id,archivedAt,completedAt,members:[NodePayload 元数据]}],ttlMs,count}；
+  // 服务端按显示窗（24h）过滤聚合；未挂载 404
+  flowMapArchive: (name) => `/api/projects/${encodeURIComponent(name)}/flow-map/archive`,
   // 项目 AGENTS.md（契约 §1）：GET 读 → {content} / PUT 存 → body {content} → {saved:true}；
   // URL 不变，磁盘读写工作区根 AGENTS.md（旧 .nebflow/Agent.md 由后端回落兼容）
   agentFile: (name) => `/api/projects/${encodeURIComponent(name)}/agent.md`,
@@ -82,6 +88,20 @@ export async function fetchNodeResult(projectName, nodeId) {
   if (!r.ok) return null;
   const data = await r.json();
   return typeof data?.result === 'string' ? data.result : null;
+}
+
+/** Flow Archive 分批内容（裁定④「TTL 分开」批）。GET .../flow-map/archive（需 auth）
+ *  → batches 数组（显示窗 24h 内，服务端已过滤）。未挂载/异常 → 返回 null（调用方
+ *  静默保留既有派生数据，下触发重试）。 */
+export async function fetchFlowMapArchive(projectName) {
+  try {
+    const r = await fetch(API.flowMapArchive(projectName), { headers: authHeaders() });
+    if (!r.ok) return null;
+    const data = await r.json();
+    return Array.isArray(data?.batches) ? data.batches : null;
+  } catch (_) {
+    return null;
+  }
 }
 
 /** 从 NodeList 汇总项目简要状态（「当前后台运行 agent 数」+「简要状态」）。 */
