@@ -1130,23 +1130,21 @@
 
 
 
-/* Tool blocks render flat (no bubble shell): the call header is a lightweight
-   row, and the result body is a flat content block whose hierarchy is expressed
-   by a thin left rail instead of a rounded background container. */
 .tool-card {
-  background: transparent;
-  border-radius: 0;
-  padding: 2px 0;
+  background: #f0f0f0;
+  border-radius: 10px;
+  padding: 6px 10px;
   font-size: 12px;
   max-width: 85%;
   font-family: ui-monospace, SFMono-Regular, monospace;
   cursor: pointer;
+  transition: background 0.15s;
   display: flex;
   align-items: flex-start;
   gap: 6px;
 }
-.tool-card:hover .label { color: #333; }
-.tool-card--pending { background: transparent; }
+.tool-card:hover { background: #e8e8e8; }
+.tool-card--pending { background: #e8e8e8; }
 .tool-card .icon { flex-shrink: 0; margin-top: 1px; }
 .tool-card .icon.ok { color: var(--color-success); }
 .tool-card .icon.err { color: var(--color-error); }
@@ -1185,11 +1183,9 @@
   font-size: 11px;
   margin-top: 4px;
   display: none;
-  background: transparent;
-  border-radius: 0;
-  border-left: 1px solid var(--color-border);
-  margin-left: 3px;
-  padding: 2px 0 2px 10px;
+  background: #f5f5f5;
+  border-radius: 6px;
+  padding: 6px 8px;
 }
 .tool-card .body.open {
   display: block;
@@ -1300,18 +1296,16 @@
 }
 
 /* Streaming tool argument body — shown while LLM generates tool call input.
-   Flat like the final tool body: thin left rail, no bubble container. */
+   Styled like thinking-content: clean, muted, and unobtrusive. */
 .tool-stream-body {
   margin-top: 6px;
   max-height: 45vh;
   overflow-y: auto;
   overflow-x: auto;
-  background: transparent;
-  border-radius: 0;
-  padding: 2px 0 2px 10px;
-  border: none;
-  border-left: 1px solid var(--color-border);
-  margin-left: 3px;
+  background: rgba(0,0,0,0.03);
+  border-radius: 8px;
+  padding: 10px 12px;
+  border: 1px solid var(--color-frame-border);
 }
 .tool-stream-body pre.tool-body-pre {
   margin: 0;
@@ -1443,20 +1437,20 @@
   .bubble.ai hr, .bubble.injected hr { border-top-color: #2a2d35; }
 
   .tool-card {
-    background: transparent;
+    background: #22252e;
   }
-  .tool-card:hover .label { color: #d6d9de; }
-  .tool-card--pending { background: transparent; }
+  .tool-card:hover { background: #282b33; }
+  .tool-card--pending { background: #282b33; }
   .tool-card .label { color: #b0b3ba; }
   .tool-card .body {
-    background: transparent;
+    background: #171a21;
     color: #c0c3ca;
   }
   .tool-card .body.open::-webkit-scrollbar-track { background: transparent; }
   .tool-card .body.open::-webkit-scrollbar-thumb { background: rgba(255,255,255,0.15); border-radius: 2px; }
   .tool-card .body .detail-cmd { border-bottom-color: #2a2d35; color: #7b7e88; }
 
-  .tool-stream-body { background: transparent; }
+  .tool-stream-body { background: rgba(255,255,255,0.04); }
   .tool-stream-body pre.tool-body-pre { color: #b0b3ba; }
   .tool-stream-body pre.tool-body-pre .cursor { background: #7b7e88; }
   .tool-stream-body::-webkit-scrollbar-thumb { background: rgba(255,255,255,0.12); border-radius: 2px; }
@@ -2121,7 +2115,6 @@
 }
 .row.tool.neblink-row .tool-card {
   border-left: 3px solid var(--color-primary);
-  padding-left: 8px;
 }
 .row.tool.neblink-row .tool-card .label::before {
   content: 'NEBLINK';
