@@ -12,8 +12,10 @@ import scala.concurrent.duration.*
  * - open 首写：`.nebflow/flow-map.json` 由 store 创建（验收①「只有 flow-map.json 被 store 写」）
  * - 读写往返：mutate → snapshot；重新 open 从磁盘恢复
  * - 环检测：A→B→A 拒（DFS 沿 out 边）；Nebula 终止链不误报
- * - 链级即时归档 sweep（裁定④「TTL 分开」批 2026-09-07）：整链全终态 → 整批立即移归档
- *   （分文件落盘）；链未齐（含 blocked 待办）→ 整批保留；findNode 归档兜底
+ * - 链级即时归档 sweep（裁定④「TTL 分开」批 2026-09-07；第三次演进 20:38「送达即移」）：
+ *   链内无活跃 ∧ fails/cancelled 成员已上报（notifySentAt.isDefined）→ 整批立即移归档
+ *   （分文件落盘）；链未齐（running）/ blocked 待办 / 异常终态未上报 → 整批保留；
+ *   findNode 归档兜底
  * - 存量单文件 flow-map-archive.json → 分批文件零丢失迁移（幂等）
  */
 class FlowMapStoreSpec extends CatsEffectSuite:
@@ -152,38 +154,86 @@ class FlowMapStoreSpec extends CatsEffectSuite:
       assertEquals(batchNodes.toList.sorted, List("n-a1", "n-a2"))
   }
 
-  test("sweepCompletedChains: 批含 failed/cancelled → 整批保留主图（2026-09-07 12:29 裁定）") {
-    // 作者裁定 2026-09-07 12:29：含 failed/cancelled/blocked 的批永不自动归档、无 TTL
-    // 强制清——死亡现场保留主图待上层裁决取消/重跑。链级即时归档按「批内全 completed」
-    // 才触发；同批含 failed/cancelled（即使成员带已到期 ttlExpireAt）→ 整批保留。
+  test("sweepCompletedChains: 异常终态已上报（failed/cancelled notifySentAt 已设）→ 整批立即归档（2026-09-07 20:38 送达即移）") {
+    // 作者裁定 2026-09-07 20:38「送达即移」取代 12:29 占图部分：failed/cancelled 成员
+    // notifySentAt.isDefined（上报已送达 = 失败/取消通知已发出）→ 链内无活跃 → 整批
+    // 归档；completed 成员天然满足（无上报要求）。死亡现场已上报即出主图进归档（分
+    // 文件落盘 + findNode 归档区可查）。
     val ws = freshWorkspace()
     for
       store <- FlowMapStore.open("demo", ws)
       _ <- store.mutate(s => s.copy(nodes = s.nodes ++ Map(
-        "failed-old" -> node("failed-old", "failed-old", NodeLifecycle.Failed).copy(result = Some("boom"), ttlExpireAt = Some(now - 1)),
-        "cancelled-old" -> node("cancelled-old", "cancelled-old", NodeLifecycle.Cancelled).copy(ttlExpireAt = Some(now - 1)),
-        "done" -> node("done", "done", NodeLifecycle.Completed).copy(result = Some("ok"), ttlExpireAt = Some(now - 1))
+        // 同批（createdAt 均为 now）failed + cancelled 均已被通知（notifySentAt 已设）+ completed
+        "n-f1" -> node("n-f1", "impl-failed", NodeLifecycle.Failed)
+          .copy(result = Some("boom"), completedAt = Some(now - 50000), notifySentAt = Some(now - 40000)),
+        "n-c1" -> node("n-c1", "verify-cancelled", NodeLifecycle.Cancelled)
+          .copy(completedAt = Some(now - 30000), notifySentAt = Some(now - 20000)),
+        "n-d1" -> node("n-d1", "audit-done", NodeLifecycle.Completed)
+          .copy(result = Some("ok"), completedAt = Some(now - 10000))
+      )))
+      removed <- store.sweepCompletedChains(now).map(_.sorted)
+      s <- store.snapshot
+      arch <- store.archiveSnapshot
+      fromArchive <- store.findNode("n-f1")
+    yield
+      assertEquals(removed, List("n-c1", "n-d1", "n-f1"))
+      assertEquals(s.nodes.keySet, Set.empty)
+      assertEquals(arch.nodes.keySet, Set("n-c1", "n-d1", "n-f1"))
+      assertEquals(arch.nodes("n-f1").result, Some("boom"), "归档内存保留结果全文")
+      assertEquals(fromArchive.map(_.status), Some(NodeLifecycle.Failed), "findNode 归档区兜底可查")
+  }
+
+  test("sweepCompletedChains: 异常终态未上报（failed/cancelled notifySentAt 空）→ 整批保留主图") {
+    // 异常终态成员 notifySentAt 为空（上报未送达）→ 未达「送达即移」归档资格 → 整批保留
+    // 主图（死亡现场留主图待上报）。含 completed 成员同批亦保留（链级同帧判定）。
+    val ws = freshWorkspace()
+    for
+      store <- FlowMapStore.open("demo", ws)
+      _ <- store.mutate(s => s.copy(nodes = s.nodes ++ Map(
+        "n-f2" -> node("n-f2", "impl-failed", NodeLifecycle.Failed).copy(result = Some("boom")),
+        "n-c2" -> node("n-c2", "verify-cancelled", NodeLifecycle.Cancelled),
+        "n-d2" -> node("n-d2", "audit-done", NodeLifecycle.Completed).copy(result = Some("ok"))
       )))
       removed <- store.sweepCompletedChains(now)
       s <- store.snapshot
       arch <- store.archiveSnapshot
     yield
-      assertEquals(removed, List.empty, "batch contains failed/cancelled → not all-completed → nothing swept")
-      assert(s.nodes.contains("failed-old") && s.nodes.contains("cancelled-old") && s.nodes.contains("done"),
+      assertEquals(removed, List.empty, "exception terminal unreported → not chainArchivable → nothing swept")
+      assert(s.nodes.contains("n-f2") && s.nodes.contains("n-c2") && s.nodes.contains("n-d2"),
         "death scene (incl. completed member in same batch) retained in active area")
       assert(arch.nodes.isEmpty, "nothing auto-archived")
   }
 
-  test("sweepCompletedChains: 链未齐（running / blocked 待办）→ 整批保留主图") {
+  test("sweepCompletedChains: 异常终态部分上报（failed 已报 cancelled 未报）→ 整批保留主图") {
+    // 混合：一个 failed 已上报 + 一个 cancelled 未上报 → chainArchivable 对「所有
+    // failed/cancelled 成员」要求 notifySentAt，未报者使整链不达资格 → 保留。
     val ws = freshWorkspace()
     for
       store <- FlowMapStore.open("demo", ws)
       _ <- store.mutate(s => s.copy(nodes = s.nodes ++ Map(
-        // 批1：一完成一 running → 链未齐，整批保留（含已到期终态成员）
+        "n-f3" -> node("n-f3", "impl-failed", NodeLifecycle.Failed).copy(result = Some("boom"), notifySentAt = Some(now - 40000)),
+        "n-c3" -> node("n-c3", "verify-cancelled", NodeLifecycle.Cancelled),
+        "n-d3" -> node("n-d3", "audit-done", NodeLifecycle.Completed).copy(result = Some("ok"))
+      )))
+      removed <- store.sweepCompletedChains(now)
+      s <- store.snapshot
+      arch <- store.archiveSnapshot
+    yield
+      assertEquals(removed, List.empty, "partial report (one unreported exception) → not chainArchivable → nothing swept")
+      assertEquals(s.nodes.keySet, Set("n-d3", "n-f3", "n-c3"))
+      assert(arch.nodes.isEmpty, "nothing auto-archived")
+  }
+
+  test("sweepCompletedChains: 链未齐（running）/ blocked 待办 → 整批保留主图") {
+    val ws = freshWorkspace()
+    for
+      store <- FlowMapStore.open("demo", ws)
+      _ <- store.mutate(s => s.copy(nodes = s.nodes ++ Map(
+        // 批1：一完成一 running → active 成员 → 链未齐，整批保留（含已到期终态成员）
         "n-b1" -> nodeAt("n-b1", "impl", NodeLifecycle.Completed, now - 60000)
           .copy(ttlExpireAt = Some(now - 1)),
         "n-b2" -> nodeAt("n-b2", "verify", NodeLifecycle.Running, now - 30000),
-        // 批2：一完成一 blocked（待办非终态）→ 整批保留
+        // 批2：一完成一 blocked（待办非终态，永不自动归档）→ 整批保留
         "n-c1" -> nodeAt("n-c1", "design", NodeLifecycle.Completed, now + 3600000)
           .copy(ttlExpireAt = Some(now - 1)),
         "n-c2" -> nodeAt("n-c2", "review", NodeLifecycle.Blocked, now + 3660000)
