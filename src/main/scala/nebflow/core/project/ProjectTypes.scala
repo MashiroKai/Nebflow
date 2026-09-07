@@ -28,6 +28,9 @@ object NodeLifecycle:
 
   val Terminal: Set[String] = Set(Completed, Failed, Cancelled, Blocked)
 
+  /** 全部合法生命周期值（NodeList status 过滤枚举校验单点，裁定⑤a 20260907）。 */
+  val All: Set[String] = Set(Wiring, Pending, Running, Completed, Failed, Cancelled, Blocked)
+
 /** 结构化 blocked 反馈（设计 §1.3 JSON 体）：BlockedReader 从节点最终输出解析。 */
 case class BlockedFeedback(
   category: String, // upstream-incomplete | task-underspecified | agent-mismatch | external-dependency | needs-split | other
@@ -94,8 +97,13 @@ case class NodeDef(
     * NodeList detail 消费方零改动）；归档区 JSON 直接剥 task（无重入价值）。
     * taskFile 指针只活在磁盘 JSON，不进内存模型。 */
   task: Option[String] = None,
-  /** 创建必写的简短描述（≤200 字符）。默认 None = 存量兼容（旧数据零迁移）。 */
+  /** 创建必写的简短描述（20260907 裁定⑤c 双层化：≤60 字符，进默认载荷）。
+    * 默认 None = 存量兼容（旧数据零迁移；存量 ≤200 长描述原样保留不回溯）。 */
   description: Option[String] = None,
+  /** 可选长描述（20260907 裁定⑤c 双层化：≤200 字符）——**不进默认载荷**，仅
+    * detail 按需通道（NodeList detail= / REST result 端点条件键）与前端详情窗
+    * 消费；存量节点无长文 → 缺键，消费方回退短文 description。默认 None = 零迁移。 */
+  descriptionLong: Option[String] = None,
   in: List[String] = Nil,
   out: Option[String] = None,
   /** 依赖连接（deps 设计 §1.1，主文档 20260902_flowmap-engine-evolution-design.md）：
@@ -157,7 +165,11 @@ case class NodeDef(
   // flow-map.json 携带的两键零迁移零破坏）。
   /** 该节点身份累计被 blocked 轮数（防循环计数 §3.1；NodeEdit 重激活不清零）。 */
   blockCount: Int = 0,
-  /** 最近一次 blocked 的结构化反馈（§1.4；重激活后保留供历史参照）。 */
+  /** 最近一次 blocked 的结构化反馈（§1.3）。存储侧永久保留（重激活不清零）；
+    * **载荷侧仅 status==blocked 携带**（观测面上下文经济学批 20260907 裁定②）：
+    * completed/failed/cancelled 的历史残留不进 NodeList/REST/WS 默认载荷——
+    * 历史参照走 detail 按需通道补挂与归档留痕；FeedbackRouter 重入协议消费
+    * 当下反馈（store 直读，不经载荷），零影响。 */
   blockedFeedback: Option[BlockedFeedback] = None,
   createdAt: Long,
   startedAt: Option[Long] = None,
@@ -192,8 +204,8 @@ object NodeDef:
 
 /** NodeList 载荷同构的节点 JSON（NodeList 工具 / REST flow-map / WS 事件共用单一序列化点）。
   * WS 事件（nodeCreated/nodeUpdated/nodeRemoved）与快照永远同构，前端增量渲染可直接对齐
-  * 字段集：{id, name, agent, skill, mcp, preset, description, status, in, out, hasWorktree,
-  * worktree, createdAt, completedAt, ttlLeftSec}。
+  * 字段集：{id, name, agent, description, status, in, out, hasWorktree, worktree,
+  * createdAt, completedAt, ttlLeftSec}（+ 条件字段，见下）。
   *
   * **载荷收敛（2026-09-05 Flow Map 精简批）**：默认载荷只含元数据——**节点结果全文与
   * 摘要都不进默认载荷**（原 result ≤500 字符摘要键移除；结果全文持久化在 per-node 文件
@@ -202,9 +214,12 @@ object NodeDef:
   * 不带——载荷字段集对无此特征的节点零漂移）：
  *   - hasResult: 节点持有结果全文（前端据此发起按需拉取）；
  *   - taskPreview: 存量节点无 description 时的回退展示（task 首行 ≤80 字符截断）；
- *   - deps / blockedFeedback / plugins / merge：既有条件字段语义不变（merge
- *     仅 merge 节点带 "merge": true——mount-enforce 批 payload 契约，缺失=非 merge）。
- * skill/mcp/preset 为节点配置（skill/mcp 仅存量兼容展示——2b §B.4/H-11① deprecated）。 */
+ *   - deps / plugins / merge：既有条件字段语义不变（merge 仅 merge 节点带 "merge":
+ *     true——mount-enforce 批 payload 契约，缺失=非 merge）；
+ *   - blockedFeedback：**仅 status==blocked 携带**（20260907 上下文经济学批裁定②
+ *     ——非 blocked 终态的历史残留不进默认载荷；历史参照走 detail 补挂/归档）。
+ * skill/mcp/preset 为节点配置（2b §B.4/H-11① deprecated，新建参数已退役）：同样
+ * 条件序列化——仅非 None 才带（20260907 裁定③，无三键节点字段集字节级零漂移）。 */
 object NodePayload:
   /** taskPreview 截断上限（回退展示第一层，存量节点专用）。 */
   val TaskPreviewMaxChars: Int = 80
@@ -215,9 +230,6 @@ object NodePayload:
       "id" -> node.id.asJson,
       "name" -> node.name.asJson,
       "agent" -> node.agent.asJson,
-      "skill" -> node.skill.asJson,
-      "mcp" -> node.mcp.asJson,
-      "preset" -> node.preset.asJson,
       // 创建必写的简短描述（按需读取第一层）；存量无值 → null（前端回退 taskPreview）
       "description" -> node.description.asJson,
       "status" -> node.status.asJson,
@@ -231,6 +243,14 @@ object NodePayload:
       "completedAt" -> node.completedAt.asJson,
       "ttlLeftSec" -> ttlLeft.asJson
     )
+      // deprecated 三键条件序列化（观测面上下文经济学批 20260907 裁定③）：skill/
+      // mcp/preset 移出基础集——仅存量节点非 None 才带（与 deps/plugins 条件字段
+      // 同构；新建节点参数已退役（NODE_AGENT_RETIRED），字段集恒零漂移）。审计实测
+      // 三键合计 ~5.6KB/载荷（131 节点全 null）。
+      val legacyConfigFields =
+        node.skill.toList.map(v => "skill" -> v.asJson) ++
+          node.mcp.toList.map(v => "mcp" -> v.asJson) ++
+          node.preset.toList.map(v => "preset" -> v.asJson)
       // hasResult 条件序列化（2026-09-05 载荷收敛）：节点持有结果全文才带——前端据此
       // 经 REST result 端点按需拉全文；无结果节点载荷字段集零变化。
       val hasResultFields =
@@ -245,13 +265,22 @@ object NodePayload:
             val preview = if firstLine.length > TaskPreviewMaxChars then firstLine.take(TaskPreviewMaxChars) + "…" else firstLine
             List("taskPreview" -> preview.asJson)
           }.getOrElse(Nil)
-      val feedbackFields = node.blockedFeedback.toList.map { bf =>
-        "blockedFeedback" -> Json.obj(
-          "category" -> bf.category.asJson,
-          "detail" -> bf.detail.asJson,
-          "suggestion" -> bf.suggestion.asJson
-        )
-      }
+      // blockedFeedback 条件序列化（观测面上下文经济学批 20260907 裁定②）：
+      // **仅 status==blocked 携带**——completed/failed/cancelled 的历史残留不进
+      // 默认载荷（NodeList/REST/WS 单一序列化点同源瘦身，实测 9 个非 blocked
+      // 节点曾泄漏 11.6KB，审计 §3.5）。历史参照：NodeList(detail=) 补挂 + 归档
+      // 留痕；FeedbackRouter 重入协议消费当下反馈（store 直读不经载荷），零影响。
+      // 入库侧封顶（detail 300 / suggestion 150）在 BlockedReader 单点。
+      val feedbackFields =
+        if node.status == NodeLifecycle.Blocked then
+          node.blockedFeedback.toList.map { bf =>
+            "blockedFeedback" -> Json.obj(
+              "category" -> bf.category.asJson,
+              "detail" -> bf.detail.asJson,
+              "suggestion" -> bf.suggestion.asJson
+            )
+          }
+        else Nil
       // deps 条件序列化（deps 设计 §1.1；与 blockedFeedback 条件字段同构）：
       // 非 Nil 才带——NodeEventPushSpec 的 NodeListKeys 字段集断言零改动（无 deps
       // 的节点 payload 字段集不变），前端增量渲染对缺键天然兼容。
@@ -291,7 +320,7 @@ object NodePayload:
       // bgWait 条件序列化（僵尸收敛批 2026-09-06）：仅 bg-wait 自持的 running 节点
       // 带——命中才产出，未命中节点 payload 字段集零变化（既有条件字段断言零影响）。
       val bgWaitFields = node.bgWait.toList.map(w => "bgWait" -> w.asJson)
-      Json.obj((baseFields ++ hasResultFields ++ taskPreviewFields ++ depsFields ++ feedbackFields ++ pluginFields ++ notifyFields ++ mergeFields ++ loopFields ++ bgWaitFields)*)
+      Json.obj((baseFields ++ legacyConfigFields ++ hasResultFields ++ taskPreviewFields ++ depsFields ++ feedbackFields ++ pluginFields ++ notifyFields ++ mergeFields ++ loopFields ++ bgWaitFields)*)
 
 /** Flow Map 活动区（§2.6，磁盘 flow-map.json）。 */
 case class FlowMapState(

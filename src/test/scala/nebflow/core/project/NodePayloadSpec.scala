@@ -38,4 +38,39 @@ class NodePayloadSpec extends FunSuite:
     )
   }
 
+  test("buildNodeJson: blocked node carries blockedFeedback; non-blocked terminals omit the key (裁定②)") {
+    val bf = BlockedFeedback("task-underspecified", "缺交付物定义", "补充验收标准")
+    val base = NodeDef(id = "n-bf", name = "bf", agent = "general", createdAt = 1000L)
+    // blocked 态：键在 + 结构化三字段透传（封顶属 BlockedReader 入库单点）
+    val jb = NodePayload.buildNodeJson(base.copy(status = NodeLifecycle.Blocked, blockedFeedback = Some(bf)), now = 2000L)
+    val bfCur = jb.hcursor.downField("blockedFeedback")
+    assertEquals(bfCur.get[String]("category").toOption, Some("task-underspecified"), "blocked node must carry structured feedback")
+    assertEquals(bfCur.get[String]("detail").toOption, Some("缺交付物定义"))
+    assertEquals(bfCur.get[String]("suggestion").toOption, Some("补充验收标准"))
+    // 无反馈的 blocked 节点也不带键（字段存在才条件序列化）
+    val jbNoFeedback = NodePayload.buildNodeJson(base.copy(status = NodeLifecycle.Blocked), now = 2000L)
+    assert(!jbNoFeedback.asObject.exists(_.contains("blockedFeedback")), "blocked without feedback body must not carry the key")
+    // 非 blocked 终态：历史残留不进默认载荷（裁定② 核心——审计实测 9 节点泄漏 11.6KB）
+    for st <- List(NodeLifecycle.Completed, NodeLifecycle.Failed, NodeLifecycle.Cancelled) do
+      val j = NodePayload.buildNodeJson(base.copy(status = st, blockedFeedback = Some(bf)), now = 2000L)
+      assert(!j.asObject.exists(_.contains("blockedFeedback")), s"status=$st must NOT carry blockedFeedback (裁定②), got keys: ${j.asObject.map(_.keys.toList.sorted)}")
+  }
+
+  test("buildNodeJson: no-three-key node payload key set is byte-level zero drift (裁定③)") {
+    // 无 skill/mcp/preset 的节点（= NodeEdit 新建节点的唯一形态）：三键从基础集
+    // 移除后字段集恒定——精确键集断言（与 NodeEventPushSpec NodeListKeys 同口径）
+    val node = NodeDef(id = "n-z", name = "零漂移", agent = "general", createdAt = 1000L)
+    val j = NodePayload.buildNodeJson(node, now = 2000L)
+    val expected = Set("id", "name", "agent", "description", "status", "in", "out", "hasWorktree", "worktree", "blockCount", "createdAt", "completedAt", "ttlLeftSec")
+    assertEquals(j.asObject.map(_.keys.toSet), Some(expected), "key set must be exactly the base set (no skill/mcp/preset, no conditional keys)")
+    // 存量节点（三键有值）照常携带——条件序列化而非删除
+    val legacy = node.copy(skill = Some("s"), mcp = Some("m"), preset = Some("p"))
+    val jl = NodePayload.buildNodeJson(legacy, now = 2000L)
+    for (k, v) <- List("skill" -> "s", "mcp" -> "m", "preset" -> "p") do
+      assertEquals(jl.hcursor.get[String](k).toOption, Some(v), s"legacy node must keep carrying $k verbatim")
+    // 部分携带（只有 preset）：键集 = 基础集 + preset
+    val partial = NodePayload.buildNodeJson(node.copy(preset = Some("p")), now = 2000L)
+    assertEquals(partial.asObject.map(_.keys.toSet), Some(expected + "preset"))
+  }
+
 end NodePayloadSpec

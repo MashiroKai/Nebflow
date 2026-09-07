@@ -2490,6 +2490,12 @@ object BlockedReader:
 
   private val Marker = "BLOCKED"
   private val DetailCap = 500
+  // 观测面上下文经济学批（20260907 裁定②）：JSON body 分支的 detail/suggestion
+  // 此前原样入库（实测最大 detail 1,511ch，审计锚点 9）——与 fallback 分支
+  // DetailCap 同域单点常量收口；300/150 配平载荷侧「仅 blocked 态携带」后的预算
+  // （NodePayload.buildNodeJson 单点序列化同步门控）。
+  private val JsonDetailCap = 300
+  private val JsonSuggestionCap = 150
 
   /** 解析节点最终输出：命中 blocked → Some(BlockedFeedback)；否则 None。 */
   def parse(resultText: String): Option[BlockedFeedback] =
@@ -2502,8 +2508,8 @@ object BlockedReader:
             case Right(json) =>
               val cursor = json.hcursor
               val category = cursor.get[String]("category").toOption.filter(Categories.contains).getOrElse("other")
-              val detail = cursor.get[String]("detail").toOption.getOrElse("")
-              val suggestion = cursor.get[String]("suggestion").toOption.getOrElse("")
+              val detail = capped(cursor.get[String]("detail").toOption.getOrElse(""), JsonDetailCap)
+              val suggestion = capped(cursor.get[String]("suggestion").toOption.getOrElse(""), JsonSuggestionCap)
               Some(BlockedFeedback(category, detail, suggestion))
             case Left(_) => Some(fallback(trimmed))
         case None => Some(fallback(trimmed))
@@ -2525,8 +2531,11 @@ object BlockedReader:
     val j = trimmed.lastIndexOf('}')
     if i >= 0 && j > i then Some(trimmed.substring(i, j + 1)) else None
 
+  /** 截断 helper（尾部省略号标记；fallback 与 JSON 分支共用，封顶值单点常量）。 */
+  private def capped(s: String, cap: Int): String =
+    if s.length > cap then s.take(cap) + "…" else s
+
   /** JSON 缺失/畸形降级：去掉 BLOCKED 标记行后的其余全文截断为 detail。 */
   private def fallback(trimmed: String): BlockedFeedback =
     val rest = trimmed.replaceFirst("^BLOCKED\\s*:?\\s*", "").trim
-    val detail = if rest.length > DetailCap then rest.take(DetailCap) + "…" else rest
-    BlockedFeedback("other", detail, "")
+    BlockedFeedback("other", capped(rest, DetailCap), "")

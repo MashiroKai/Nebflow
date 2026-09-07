@@ -115,7 +115,10 @@ class NodeEventPushSpec extends CatsEffectSuite:
     * hasResult 仅 result 非空节点带（条件序列化）→ 不入本基集合，按断言场景合并。
     * blockedFeedback / deps / plugins 同为条件字段 → 不入基集合）。 */
   private val NodeListKeys: Set[String] =
-    Set("id", "name", "agent", "skill", "mcp", "preset", "description", "status", "in", "out", "hasWorktree", "worktree", "blockCount", "createdAt", "completedAt", "ttlLeftSec")
+    // 裁定③（20260907 上下文经济学批）：skill/mcp/preset 移出基础集——条件序列化
+    // 仅非 None 才带；NodeEdit 新建节点三参数已退役（NODE_AGENT_RETIRED）→
+    // 事件载荷键集恒为本集合。
+    Set("id", "name", "agent", "description", "status", "in", "out", "hasWorktree", "worktree", "blockCount", "createdAt", "completedAt", "ttlLeftSec")
   /** 有结果节点（终态）的载荷键集 = 基集合 + hasResult。 */
   private val NodeListKeysWithResult: Set[String] = NodeListKeys + "hasResult"
 
