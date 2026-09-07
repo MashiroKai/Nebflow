@@ -254,7 +254,9 @@ class HotRestart(
       form,
       HotRestart.javaBinResolver(),
       AutoStartService.resolveRunJar(),
-      intentFile.toString
+      intentFile.toString,
+      PathUtil.dataRoot.toString,
+      port
     ) match
       case Right(cmd) => cmd.mkString(" ")
       case Left(msg)  => msg
@@ -404,36 +406,33 @@ object HotRestart:
   /** 纯函数命令构造（测试直注 form/javaBin/jarPath 验证；验收 4 的 javaBin 注入点
     * 即参数层）。
     *  - bundled：直接 spawn bundle executable（jpackage launcher 透传追加参数 →
-    *    实际 `--server --succeed …`；R3 透传存疑 = bundled 验收 DEFER，jar 式 exec
-    *    链为退化路径，桌面批解冻后实测）。
-    *  - jar：`java --add-opens … -jar <jar> start --succeed <intent> --no-browser`。
-    */
+    *    实际 `--server …`；R3 透传存疑 = bundled 验收 DEFER，桌面批解冻后实测）。
+    *  - jar：`java --add-opens … -jar <jar> start --home … --port … --succeed …
+    *    --no-browser`。
+    * 双保险（§3.5 规则 3）：env `NEBFLOW_GATEWAY_PORT` 主保险（defaultSpawn 显式
+    * 注入）+ argv `--home/--port` belt（intent 记录值注入 argv——任何一层 fork/exec
+    * 断链都不会回落 8080）。 */
   def buildCommand(
     form: String,
     javaBin: String,
     jarPath: Option[String],
-    intentPath: String
+    intentPath: String,
+    home: String,
+    port: Int
   ): Either[String, List[String]] =
+    val belt = List("--home", home, "--port", port.toString)
     form match
       case "bundled" =>
         jarPath.flatMap(AutoStartService.bundleExecutable) match
-          case Some(exe) => Right(List(exe, "--succeed", intentPath, "--no-browser"))
+          case Some(exe) =>
+            Right(List(exe) ++ belt ++ List("--succeed", intentPath, "--no-browser"))
           case None      => Left("bundled form detected but bundle executable not resolvable from jar path")
       case "jar" =>
         jarPath match
           case Some(jar) =>
             Right(
-              List(
-                javaBin,
-                "--add-opens",
-                "java.base/java.lang=ALL-UNNAMED",
-                "-jar",
-                jar,
-                "start",
-                "--succeed",
-                intentPath,
-                "--no-browser"
-              ))
+              List(javaBin, "--add-opens", "java.base/java.lang=ALL-UNNAMED", "-jar", jar, "start") ++
+                belt ++ List("--succeed", intentPath, "--no-browser"))
           case None => Left("cannot resolve run JAR (sbt run / dev classpath?) — hot restart unavailable")
       case other =>
         Left(s"cannot resolve run form '$other' (sbt run / dev classpath?) — hot restart unavailable")
@@ -466,7 +465,9 @@ object HotRestart:
       intent.form,
       javaBinResolver(),
       jarPath,
-      SuccessorGate.intentPath(PathUtil.dataRoot).toString
+      SuccessorGate.intentPath(PathUtil.dataRoot).toString,
+      intent.home,
+      intent.port
     )
     cmd match
       case Left(err) => IO.pure(Left(err))

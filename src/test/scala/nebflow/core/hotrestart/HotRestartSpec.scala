@@ -538,34 +538,47 @@ class HotRestartSpec extends CatsEffectSuite:
     })
   }
 
-  // ── spawn 命令构造（两形态，§4）──────────────────────────────────
+  // ── spawn 命令构造（两形态，§4；env 主保险 + argv belt，§3.5 规则 3）──
 
-  test("buildCommand jar form: java --add-opens -jar ... start --succeed --no-browser") {
-    val cmd = HotRestart.buildCommand("jar", "/fake/java", Some("/fake/nebflow-assembly-1.0.jar"), "/fake/intent.json")
+  test("buildCommand jar form: java --add-opens -jar start --home/--port belt --succeed --no-browser") {
+    val cmd = HotRestart.buildCommand(
+      "jar", "/fake/java", Some("/fake/nebflow-assembly-1.0.jar"),
+      "/fake/intent.json", home = "/fake/home", port = 8095)
     cmd match
       case Right(parts) =>
-        assertEquals(parts.take(4), List("/fake/java", "--add-opens", "java.base/java.lang=ALL-UNNAMED", "-jar"))
-        assert(parts.contains("start"), parts.toString)
+        assertEquals(parts.take(5), List("/fake/java", "--add-opens", "java.base/java.lang=ALL-UNNAMED", "-jar", "/fake/nebflow-assembly-1.0.jar"))
+        assertEquals(parts(5), "start")
+        // argv belt（intent 记录的 home/port 注入 argv）
+        val homePos = parts.indexOf("--home")
+        assertEquals(parts(homePos + 1), "/fake/home")
+        val portPos = parts.indexOf("--port")
+        assertEquals(parts(portPos + 1), "8095")
         val i = parts.indexOf("--succeed")
         assertEquals(parts(i + 1), "/fake/intent.json")
         assertEquals(parts.last, "--no-browser")
       case Left(err) => fail(s"jar form must build: $err")
   }
 
-  test("buildCommand bundled form: bundle executable with --succeed passthrough") {
+  test("buildCommand bundled form: bundle executable with belt + --succeed passthrough") {
     val appJar = "/Applications/Nebflow.app/Contents/app/nebflow.jar"
-    val cmd = HotRestart.buildCommand("bundled", "/fake/java", Some(appJar), "/fake/intent.json")
+    val cmd = HotRestart.buildCommand(
+      "bundled", "/fake/java", Some(appJar),
+      "/fake/intent.json", home = "/fake/home", port = 8095)
     cmd match
       case Right(parts) =>
         assertEquals(parts.head, "/Applications/Nebflow.app/Contents/MacOS/Nebflow")
-        assertEquals(parts(1), "--succeed")
-        assertEquals(parts(2), "/fake/intent.json")
+        val homePos = parts.indexOf("--home")
+        assertEquals(parts(homePos + 1), "/fake/home")
+        val portPos = parts.indexOf("--port")
+        assertEquals(parts(portPos + 1), "8095")
+        val i = parts.indexOf("--succeed")
+        assertEquals(parts(i + 1), "/fake/intent.json")
       case Left(err) => fail(s"bundled form must build from .app/Contents jar: $err")
   }
 
   test("buildCommand: unknown form / missing jar → loud Left (fail-safe, 不硬闯)") {
-    assert(HotRestart.buildCommand("unknown", "/fake/java", None, "/i").isLeft)
-    assert(HotRestart.buildCommand("jar", "/fake/java", None, "/i").isLeft)
+    assert(HotRestart.buildCommand("unknown", "/fake/java", None, "/i", "/h", 8095).isLeft)
+    assert(HotRestart.buildCommand("jar", "/fake/java", None, "/i", "/h", 8095).isLeft)
   }
 
   private def mkBroadcastCapture: IO[(io.circe.Json => IO[Unit], Ref[IO, List[String]])] =
