@@ -21,8 +21,8 @@ import scala.jdk.CollectionConverters.*
  *
  * 三件种子（三 keeper = Nebula 引擎自带 + 本服务补 project-dispatcher / general）：
  *  - 默认 agent：project-dispatcher + general（蒸馏版：去 preset 具名引用、去空 skills）
- *  - 系统插件：5 个主集（explorer-toolkit / engineering-methods / design-spec /
- *    visual-report / nebflow-qa），预装 + trusted（复用 PluginRegistry.approve）
+ *  - 系统插件：3 个主集（explorer-toolkit / design-spec / visual-report），
+ *    预装 + trusted（复用 PluginRegistry.approve）
  *  - 默认通用项目：id=general，workspace=~/.nebflow/projects/general，启动前挂载
  *
  * 触发（§4.2）：gateway boot 装配点调用 `ensureSeeded()`，位置 = 项目挂载前。
