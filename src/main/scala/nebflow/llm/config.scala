@@ -157,7 +157,9 @@ object StreamTimeoutsConfig:
   given Decoder[StreamTimeoutsConfig] = deriveDecoder[StreamTimeoutsConfig]
 
 case class ServiceLlmConfig(
-  providers: Map[String, ProviderConfig],
+  // provider 缺失 → 空映射 = 未配置 LLM 的合法中间态（种子写 plugins.trust
+  // 时可能只落 plugins 键、无 llm 节；解码缺省此处，见 NebflowServiceConfig.llm）。
+  providers: Map[String, ProviderConfig] = Map.empty,
   /** #339 D-b：llm.model 已退役——默认模型唯一来源是 model-presets.json 的
     * defaultPreset。Option 化的 schema 仅容忍存量文件的 llm.model 节（可解析
     * 但被忽略；boot 迁移会播种成 preset 后原子剥离）。 */
@@ -194,7 +196,13 @@ object ThinkingConfig:
 end ThinkingConfig
 
 case class NebflowServiceConfig(
-  llm: ServiceLlmConfig,
+  // 2026-09-07 插件信任持久化修复：llm 缺省 = 未配置 LLM 的合法中间态。种子在
+  // 冷启动（空 home）把 plugins.trust 写进一个无 llm 节的配置（mutateNebflowJson
+  // 首写 Json.obj() 骨架）；若无缺省，重启时 decode 抛 "Missing required field
+  // '.llm'" → GatewayMain 走 crash-recovery → restoreLatest 用冷启动期的 {} 快照
+  // 打回 → 信任表被抹掉。配合 Config.ensureLlmDefaults 缺省注入 + 本默认值，使
+  // 该形态解码为 defaultServiceConfig 等价物，不再触发恢复。
+  llm: ServiceLlmConfig = ServiceLlmConfig(providers = Map.empty),
   mcpServers: Option[Map[String, McpServerConfig]] = None,
   search: Option[SearchConfig] = None,
   thinkingConfig: Option[ThinkingConfig] = None,
@@ -271,12 +279,34 @@ object Config:
 
     // Resolve env vars in JSON string values
     val resolvedJson = resolveEnvVarsInJson(json)
+    // 2026-09-07 插件信任持久化修复：合法中间态（种子写 plugins.trust 时可能无
+    // llm 节、或 llm 无 providers）缺省注入，使解码成功而非抛
+    // "Missing required field '.llm'"——否则 GatewayMain 走 crash-recovery 用
+    // 冷启动期的 {} 快照打回 nebflow.json，信任表被抹掉。
+    val normalized = ensureLlmDefaults(resolvedJson)
 
-    resolvedJson.as[NebflowServiceConfig] match
+    normalized.as[NebflowServiceConfig] match
       case Right(cfg) => cfg
       case Left(err) =>
         val path = io.circe.CursorOp.opsToPath(err.history)
         throw new RuntimeException(s"Config parse error at '$path': ${err.message}")
+
+  /** 仅当 llm 节缺席、或 llm 存在但 providers 缺席时补一个空 providers；
+    * 其余字段（含非法形态）原样保留——非法形态仍会正常解码失败，不被掩盖。 */
+  private def ensureLlmDefaults(json: Json): Json =
+    json.asObject match
+      case None => json
+      case Some(obj) =>
+        val llmNorm = obj("llm") match
+          case None =>
+            // 顶层无 llm 节（种子中间态）：注入空 providers 的 llm
+            Json.obj("providers" -> Json.obj())
+          case Some(l) =>
+            l.asObject match
+              case Some(llmObj) if !llmObj.contains("providers") =>
+                Json.fromJsonObject(llmObj.add("providers", Json.obj()))
+              case _ => l // 已含 providers 或非对象 → 原样
+        Json.fromJsonObject(obj.add("llm", llmNorm))
 
   /** Minimal default config used when no config file exists. */
   private lazy val defaultServiceConfig: NebflowServiceConfig =
