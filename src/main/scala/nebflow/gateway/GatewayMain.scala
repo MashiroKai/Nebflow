@@ -88,6 +88,83 @@ object GatewayMain extends IOApp:
       java.nio.file.StandardOpenOption.TRUNCATE_EXISTING
     )
 
+  // ===== 热重启引导闸（hot-restart 批设计 §3.3）=====
+
+  /** Boot entry gate dispatch: normal boot = stale-intent hygiene + the standard
+    * single-instance hardening; succeed boot (hot-restart successor) = [s1]
+    * intent validation only — the port is STILL HELD by the old instance at this
+    * point, so ensureSingleInstance must NOT run here (its verified-stale
+    * classification would kill the very instance this successor is replacing:
+    * 禁裸 kill 红线零弱化). The successor takes the port via succeedPortGate
+    * below, after the old pid is confirmed dead. */
+  private def entryGate(cfg: GatewayConfig): IO[Unit] =
+    nebflow.core.hotrestart.SuccessorContext.get match
+      case None =>
+        // Normal boot: archive a stale (>10min) unarchived restart intent
+        // (验收 12 — WARN + archive, never blocking), then standard hardening.
+        nebflow.core.hotrestart.HotRestart.archiveStaleIntentIfNeeded *>
+          ensureSingleInstance(cfg.port.value)
+      case Some(ctx) =>
+        // [s1] intent validation (R6: home/port/host/freshness). Failure =
+        // loud refusal — the old instance is unaffected (still serving; its
+        // C2 poll times out, it TERMs this process and clears draining).
+        nebflow.core.hotrestart.SuccessorGate
+          .validate(ctx, PathUtil.dataRoot, cfg.host.toString, cfg.port.value)
+          .fold(
+            err =>
+              logger
+                .error(s"[hot-restart] successor intent validation failed: $err — refusing to boot")
+                .flatMap(_ =>
+                  IO.raiseError(new IllegalStateException(s"hot-restart successor refused: $err"))),
+            _ =>
+              logger.info(
+                s"[hot-restart] successor intent validated (old pid ${ctx.oldPid}, port ${ctx.port}, generation ${ctx.generation})"
+              ))
+      end match
+  end entryGate
+
+  /** 热重启 succeed 门（[s3]+[s4]，插桩位：projectTtlScanner 与 Ember build 之间，
+    * 设计 §3.3 文件级触点）：Zone A 引导完成的回执（intent phase=readyToBind 原子
+    * 回写）+ 端口让渡等待——等旧 pid 死亡（≤90s，对「旧实例走完优雅链」的确认，
+    * 非赌博 sleep）∧ connect 探测无活监听（TW socket 拒绝 connect = 可进场，Ember
+    * 的 bind + 既有 65s fail-open 语义归下游）。旧 pid 死后端口仍有活监听 = 外来
+    * 抢占者进场窗 → 回落 ensureSingleInstance 既有语义（verified stale 清除 /
+    * foreign 大声拒绝——单实例红线零弱化）。等待总超时 → failure 记录 + 弃进场退出
+    * （旧实例继续服务 / watchdog 人工兜底）。通过后本进程才写 pid 文件（旧实例的
+    * removePid hook 已随其死亡跑完，无竞删窗口）。普通启动恒为 no-op。 */
+  private def succeedPortGate(cfg: GatewayConfig): IO[Unit] =
+    nebflow.core.hotrestart.SuccessorContext.get match
+      case None => IO.unit
+      case Some(ctx) =>
+        val pid = ProcessHandle.current.pid
+        logger
+          .info(
+            s"[hot-restart] successor zone A done (pid $pid) — marking readyToBind, waiting for old pid ${ctx.oldPid} to hand over port ${cfg.port.value}"
+          )
+          .flatMap(_ =>
+            nebflow.core.hotrestart.SuccessorGate.markPhase(ctx.intentPath, "readyToBind")) *>
+          nebflow.core.hotrestart.SuccessorGate.awaitHandover(
+            ctx.oldPid,
+            cfg.port.value,
+            pidAlive = p => IO.blocking(ProcessHandle.of(p).map(_.isAlive).orElse(false)),
+            liveListener = p => IO.blocking(nebflow.cli.SingleInstanceGuard.connectProbeAccepted(p))
+          ).flatMap {
+            case Right(()) => IO.unit
+            case Left(err) if err == nebflow.core.hotrestart.SuccessorGate.ForeignOccupantSignal =>
+              logger
+                .warn(
+                  s"[hot-restart] old pid ${ctx.oldPid} dead but port ${cfg.port.value} still served — foreign-preemption window; standard single-instance gate applies")
+                .flatMap(_ => ensureSingleInstance(cfg.port.value))
+            case Left(err) =>
+              nebflow.core.hotrestart.SuccessorGate.markFailed(ctx.intentPath, err).attempt.void *>
+                logger.error(s"[hot-restart] port handover failed: $err — successor exiting (old instance unaffected)") *>
+                IO.raiseError(new IllegalStateException(s"hot-restart port handover failed: $err"))
+          } *>
+          IO.blocking(writePidFile()) *>
+          logger.info(s"[hot-restart] port handover confirmed — successor (pid $pid) owns pid file, binding now")
+    end match
+  end succeedPortGate
+
   private def openBrowser(url: String): IO[Unit] = IO.blocking {
     val os = sys.props.getOrElse("os.name", "").toLowerCase
     val cmd =
@@ -241,9 +318,9 @@ object GatewayMain extends IOApp:
     // resolved at boot — missing pieces must be loud up front, not discovered
     // later inside a failing tool call. No-op off Windows.
     nebflow.core.WindowsDepProbe.warnIfMissing *>
-      // Read port from config first, then kill stale processes on that port
+      // Read port from config first, then run the boot entry gate on that port
       GatewayConfig.load.flatMap { cfg =>
-        ensureSingleInstance(cfg.port.value) *> GatewayConfig.load.flatMap { cfg =>
+        entryGate(cfg) *> GatewayConfig.load.flatMap { cfg =>
         // Expose resolved gateway port and PID to agent via system properties
         System.setProperty("nebflow.gateway.port", cfg.port.value.toString)
         System.setProperty("nebflow.gateway.pid", ProcessHandle.current.pid.toString)
@@ -516,8 +593,19 @@ object GatewayMain extends IOApp:
                                 // 分发器。幂等 + fail-soft（见 SeedService 注释），失败仅
                                 // 告警不阻塞启动（与 seedDefaults/startupMount 同构）。
                                 val seedMinimalSet: IO[Unit] = SeedService.ensureSeeded()
-                                hubSetup *> taskTtlSweep *> subagentCrashSweep *> seedMinimalSet *> startupMount *> projectCrashSweep *> projectTtlScanner *> {
-                                  val sharedResourcesLive = sharedResources
+                                // 热重启编排器（hot-restart 批）：触发器无关——WS restart
+                                // 命令（P1）经 sharedResources.hotRestart 触发；REST/桌面菜单
+                                // 后续批次接同一入口。broadcast 接 wsHub（restartStatus 帧）。
+                                val hotRestart = new nebflow.core.hotrestart.HotRestart(
+                                  sharedResources,
+                                  cfg.port.value,
+                                  cfg.host.toString,
+                                  wsHub.broadcast
+                                )
+                                val sharedResourcesWithRestart =
+                                  sharedResources.copy(hotRestart = Some(hotRestart))
+                                hubSetup *> taskTtlSweep *> subagentCrashSweep *> seedMinimalSet *> startupMount *> projectCrashSweep *> projectTtlScanner *> succeedPortGate(cfg) *> {
+                                  val sharedResourcesLive = sharedResourcesWithRestart
                                   val sessionService = new SessionService(sessionStore)
                                   val agentService = new AgentService(agentLibrary)
                                   val configService = ConfigService
@@ -797,6 +885,30 @@ object GatewayMain extends IOApp:
                                                       _ <- logger.info(
                                                         s"access URL: $baseUrl (token in ~/.nebflow/auth.json)"
                                                       )
+                                                      // ── 热重启握手终态（[s7]，hot-restart 批设计 §3.3）──
+                                                      // successor.json（握手完成锚点）+ intent 归档
+                                                      // last-restart.json + 冷却窗锚点置位（R7）+
+                                                      // completed 帧（此刻重连尚未发生，帧为 best-
+                                                      // effort；验收 1 以 last-restart.json 存在为准）。
+                                                      // 普通启动（无 SuccessorContext）恒为 no-op。
+                                                      _ <- nebflow.core.hotrestart.SuccessorContext.get.traverse_ { ctx =>
+                                                        val newPid = ProcessHandle.current.pid
+                                                        nebflow.core.hotrestart.SuccessorGate
+                                                          .writeSuccessor(PathUtil.dataRoot, ctx.generation, newPid) *>
+                                                          nebflow.core.hotrestart.SuccessorGate
+                                                            .archiveIntent(PathUtil.dataRoot) *>
+                                                          nebflow.core.hotrestart.HotRestart.noteRestartCompleted() *>
+                                                          wsHub.broadcast(
+                                                            io.circe.Json.obj(
+                                                              "type" -> "restartStatus".asJson,
+                                                              "phase" -> "completed".asJson,
+                                                              "detail" -> s"successor pid $newPid serving (generation ${ctx.generation})".asJson
+                                                            )
+                                                          ) *>
+                                                          logger.info(
+                                                            s"[hot-restart] handover complete — successor pid $newPid serving, intent archived (generation ${ctx.generation}, old pid ${ctx.oldPid})"
+                                                          )
+                                                      }
                                                       // Register bridge as WsHub listener for agent events
                                                       _ <- wsHub.register(json =>
                                                         val sessionId =
@@ -891,7 +1003,13 @@ object GatewayMain extends IOApp:
                                                       // --- NebLink: sync is event-driven (actor), no background loops needed ---
                                                       _ <- logger.info(
                                                         "Type 'quit', 'exit', or 'q' (or press Ctrl+C) to stop"
-                                                      ) *> waitForQuit
+                                                      ) *>
+                                                        // 热重启优雅让渡闸（hot-restart 批 §3.3）：race 任一
+                                                        // 完成即收敛 use 块 → Ember 优雅 stop → .guarantee
+                                                        // 链 → JVM 自然退出（替代 System.exit(0)）。R4 零
+                                                        // 回归：quit/Ctrl+C 走 Left；Deferred 仅由 HotRestart
+                                                        // 编排器 complete——三既有退出路径行为不变。
+                                                        IO.race(waitForQuit, sharedResourcesWithDaemon.gatewayShutdown.get).void
                                                     yield ())
                                                   }
                                                   .guarantee(
