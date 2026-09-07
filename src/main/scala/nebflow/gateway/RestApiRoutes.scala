@@ -17,7 +17,7 @@ import nebflow.core.daemon.{DaemonConfig, DaemonService, DaemonStore}
 import nebflow.core.entity.{EntityLoader, NodeRoute}
 import nebflow.core.flow.{FlowTreeRegistry, TreeCommand}
 import nebflow.core.presets.{ModelPreset, PresetFile, PresetStore}
-import nebflow.core.project.{ProjectRuntimeRegistry, ProjectStore}
+import nebflow.core.project.{NodeEngine, NodePayload, ProjectRuntimeRegistry, ProjectStore}
 import nebflow.core.skill.SkillService
 import nebflow.core.tools.NodeTools
 // FreezeScheduleConfig encoder givens (workSchedule runtime-authoritative PATCH)
@@ -289,6 +289,8 @@ class RestApiRoutes(
     //   GET /projects/<name>/flow-map → 200 {nodes:[...], worktrees:[...], meta:{...}}
     //                   （2026-09-05 载荷收敛：节点条目=元数据 only——无 result 全文/摘要，
     //                   hasResult 标记 + description/taskPreview；结果全文按需取 ↓）
+    //   GET /projects/<name>/flow-map/archive → 200 {batches:[...], ttlMs, count}
+    //                   （裁定④「TTL 分开」批：归档面板数据源；显示窗 24h 内批次聚合）
     //   GET/PUT /projects/<name>/agent.md → 200 {content} / {saved:true}
     //   POST /projects/<name>/archive → 200 {archived:true, archivedAt}（§6.1 显式人工
     //                   归档：仅 project.json 打标记，零删除零移动；幂等；单程无取消）
@@ -330,6 +332,41 @@ class RestApiRoutes(
         ProjectRuntimeRegistry.get(name).flatMap {
           case None => NotFound(Json.obj("error" -> s"project '$name' not mounted".asJson))
           case Some(rt) => NodeTools.buildNodeListPayload(rt).flatMap(Ok(_))
+        }
+      }
+
+    // GET /projects/<name>/flow-map/archive — Flow Archive 分批内容（裁定④「TTL 分开」批
+    // 2026-09-07）：归档面板（右上角「已归档任务链」入口）的后端数据源。聚合返回显示窗
+    // （24h = NodeEngine.TtlDisplayMs，与前端 ARCHIVE_TTL_MS 同值，服务端单点把关）内
+    // 全部批次；成员 = NodePayload 元数据（结果全文走 nodes/<id>/result 按需通道，归档
+    // 节点由 findNode 兜底命中）。选聚合不选按批拉取：面板需全量列表，24h 窗口规模小，
+    // 与 flow-map 快照一次性拉取模式一致。批次按 completedAt 倒序。未挂载 → 404 {error}。
+    case req @ GET -> Root / "projects" / name / "flow-map" / "archive" =>
+      withAuth(req) {
+        ProjectRuntimeRegistry.get(name).flatMap {
+          case None => NotFound(Json.obj("error" -> s"project '$name' not mounted".asJson))
+          case Some(rt) =>
+            for
+              arch <- rt.store.archiveSnapshot
+              bt <- rt.store.archiveBatches
+              now <- IO(System.currentTimeMillis())
+              inWindow = bt.values.toList.flatMap { meta =>
+                val members = meta.nodeIds.flatMap(id => arch.nodes.get(id)).toList.sortBy(_.createdAt)
+                val completedAt = members.flatMap(_.completedAt).foldLeft(0L)(math.max)
+                if members.isEmpty || (completedAt > 0L && now - completedAt > NodeEngine.TtlDisplayMs) then None
+                else Some(Json.obj(
+                  "id" -> meta.id.asJson,
+                  "archivedAt" -> meta.archivedAt.asJson,
+                  "completedAt" -> completedAt.asJson,
+                  "members" -> members.map(n => NodePayload.buildNodeJson(n, now)).asJson
+                ))
+              }.sortBy(j => -(j.hcursor.get[Long]("completedAt").toOption.getOrElse(0L)))
+              resp <- Ok(Json.obj(
+                "batches" -> inWindow.asJson,
+                "ttlMs" -> NodeEngine.TtlDisplayMs.asJson,
+                "count" -> inWindow.size.asJson
+              ))
+            yield resp
         }
       }
 
