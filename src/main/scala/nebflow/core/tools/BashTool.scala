@@ -803,13 +803,19 @@ Git safety:
 
   /** Emit a WS event so the frontend shows the background task indicator. */
   private def emitBgTaskStarted(ctx: ToolContext, jobId: String, description: String, persistent: Boolean = false): IO[Unit] =
+    // 来源标注（2026-09-07 后台任务面板重设计，作者指令②）：类别+显示名从
+    // 注册会话推导（node- → Flow Map 节点名，dispatcher- → dispatcher/<project>，
+    // 其余 → Nebula），注册与 WS 信封同源携带。
+    val (origin, originLabel) = BgTaskRegistry.originFor(ctx.sessionId.getOrElse(""), ctx.sessionName)
     BgTaskRegistry.register(
       jobId,
       ctx.sessionId.getOrElse(""),
       description,
       "local",
       ctx.rootSessionId.orElse(ctx.sessionId).getOrElse(""),
-      persistent
+      persistent,
+      origin,
+      originLabel
     ) *>
       (ctx.wsSend.fold(
         logger.debug(s"Cannot notify frontend for background job $jobId: no wsSend (remote execution)")
@@ -821,7 +827,10 @@ Git safety:
           "taskId" -> jobId.asJson,
           "description" -> description.asJson,
           "status" -> "running".asJson,
-          "startedAt" -> System.currentTimeMillis().asJson
+          "startedAt" -> System.currentTimeMillis().asJson,
+          "kind" -> "local".asJson,
+          "origin" -> origin.asJson,
+          "originLabel" -> originLabel.asJson
         )
         logger.info(s"Background job $jobId \"$description\" started", "sessionId" -> ctx.sessionId.getOrElse("")) *>
           send(json).handleErrorWith(e => logger.warn(s"WS send failed for job $jobId: ${e.getMessage}"))
