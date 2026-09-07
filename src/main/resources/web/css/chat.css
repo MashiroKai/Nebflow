@@ -1754,10 +1754,29 @@
   flex: 1;
   min-width: 0;
 }
-.option-preview .preview-img {
+/* Prefixed ".option-box" raises specificity (0,3,0) above the bubble-level
+   ".bubble.ai img, .bubble.injected img" rule (0,2,1) below — without it the
+   margin reset loses the cascade. Previews only ever render inside an
+   .option-box (showOptions + history-replay twin), see chat.js. */
+.option-box .option-preview .preview-img {
   width: 100%;
   height: 100%;
-  object-fit: cover;
+  /* contain — never crop. Preview srcs are commonly square viewBox-only
+     data-URI SVG icons (no width/height attrs); object-fit: cover in the
+     56×40 slot clipped their top/bottom (author report 2026-09-07). Non-square
+     images now letterbox on the var(--color-surface) slot background. */
+  object-fit: contain;
+  /* R4: the bubble-level rule ".bubble.ai img, .bubble.injected img" imposes
+     margin-top: 4px on EVERY img inside an AI/injected bubble — the AskUser
+     card included. That margin pushed the 40px-tall img 4px down inside the
+     40px slot, so overflow:hidden shaved the icon's bottom 4px while the top
+     gained the shifted letterbox (author report 2026-09-07 R4: bottom
+     clipped + top space > bottom space). margin: 0 severs that bleed-through.
+     padding + the global border-box shrinks the object-fit content box to
+     52×36, guaranteeing every aspect ratio ≥2px of ink-free breathing room on
+     all four sides (a square icon renders 36×36, fully inside the slot). */
+  margin: 0;
+  padding: 2px;
   display: block;
   opacity: 0;                     /* §6: fade in on load (see .nf-loaded) */
   transition: opacity 0.2s ease-out;
