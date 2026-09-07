@@ -50,6 +50,9 @@ final class NeblinkRelayTunnel(
   /** Check if the relay tunnel is currently connected (for status reporting). */
   def isAlive: Boolean = alive.get()
 
+  /** Test seam: is the reconnect loop still running (false after stop())? */
+  private[neblink] def isRunning: Boolean = running.get()
+
   /** Start the relay tunnel connection loop. Runs in background until stop(). */
   def connect(): IO[Unit] =
     logger.info("Starting relay tunnel to NebLink Server") *>
@@ -192,6 +195,26 @@ final class NeblinkRelayTunnel(
   private[neblink] def updateLastPong(): Unit =
     lastPong.set(System.currentTimeMillis())
 
+  /**
+   * presence v2 (C6): handle a server-pushed DeviceStatusUpdate frame —
+   * `{"type":"device_status_update","deviceId":"...","online":true|false}`.
+   * The snake_case `device_id` spelling is tolerated as a fallback: the
+   * server-side frame was specified but not yet merged when this consumer
+   * landed, so the field naming is pinned at interop time (camelCase matches
+   * the relay protocol's requestId/eventId convention).
+   *
+   * Drives the same freshness path as heartbeats — the status endpoint and UI
+   * badge flip within one push, no polling wait.
+   */
+  private[neblink] def handleDeviceStatusUpdate(msg: Json): IO[Unit] =
+    val hc = msg.hcursor
+    val deviceId = hc.downField("deviceId").as[String]
+      .orElse(hc.downField("device_id").as[String])
+      .getOrElse("")
+    val online = hc.downField("online").as[Boolean].getOrElse(false)
+    if deviceId.isEmpty then logger.debug("DeviceStatusUpdate frame without deviceId — ignored")
+    else neblinkService.applyServerPeerStatus(deviceId, online)
+
   // ===== Heartbeat =====
 
   private def startHeartbeat(ws: WebSocket): Unit =
@@ -266,6 +289,15 @@ private final class RelayWsListener(
               tunnel.friendService.foreach { fs =>
                 dispatcher.unsafeRunAndForget(fs.onFriendEvent(json))
               }
+            case "device_status_update" =>
+              // presence v2 (C6)：设备上下线推送——隧道关闭/探活判死时服务端广播。
+              // 帧驱动为主（<2s 翻转），心跳顺带拉取降级为帧丢失兜底。
+              dispatcher.unsafeRunAndForget(tunnel.handleDeviceStatusUpdate(json))
+            case "disconnect" =>
+              // presence fix A1 (server-side): forced tunnel teardown on logout.
+              // The WS close follows; the reconnect loop's behavior after a
+              // server-forced disconnect is a pending product decision.
+              logger.debugSync("Relay tunnel: server sent Disconnect")
             case _ => ()
         case Left(_) => ()
     catch case _: Exception => ()

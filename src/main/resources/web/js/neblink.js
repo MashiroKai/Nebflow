@@ -262,8 +262,21 @@ export function neblinkSettingsHTML() {
     const displayName = escapeHtml(d.userDescription || d.deviceName || t('neblink.unknownDevice') || 'Unknown');
     const platformLabel = platformDisplay(d.platform);
 
+    // Presence badge (C4): the list used to imply "listed = online". The
+    // backend now reports a real freshness judgement (`online`), plus
+    // reachability hints (`directOnline` = P2P WS up, `relayAvailable` = our
+    // relay tunnel up). Peers get an explicit online/offline badge; offline
+    // rows are dimmed so a stale entry can never masquerade as reachable.
+    const isOnline = d.isLocal || d.online === true;
+    const reachHint = d.isLocal ? ''
+      : d.directOnline ? t('neblink.reachDirect')
+      : d.relayAvailable ? t('neblink.reachRelay')
+      : t('neblink.reachServerOnly');
+    const presenceBadge = d.isLocal ? ''
+      : `<span class="neblink-presence ${isOnline ? 'online' : 'offline'}" title="${escapeHtml(reachHint)}">${isOnline ? t('neblink.online') : t('neblink.offline')}</span>`;
+
     return `
-      <div class="neblink-peer">
+      <div class="neblink-peer${d.isLocal || isOnline ? '' : ' neblink-peer-offline'}">
         <span class="neblink-peer-icon">${platformLabel.icon}</span>
         <span class="neblink-peer-name dropbox-clickable"
           data-device-id="${did}"
@@ -271,6 +284,7 @@ export function neblinkSettingsHTML() {
           data-platform="${escapeHtml(d.platform || '')}"
           data-desc="${descVal}"
           data-is-local="${d.isLocal ? '1' : '0'}">${displayName}</span>
+        ${presenceBadge}
         ${d.isLocal
           ? '<span class="neblink-peer-status local-tag">' + t('neblink.thisDevice') + '</span>'
           : '<span class="neblink-peer-status">' + platformLabel.text + '</span>'}
