@@ -15,6 +15,10 @@ cd "$(dirname "$0")"
 
 REPOS="$(poc_repos)"
 HOST_CACHE=/tmp/nb-sbx-poc/hostcache
+# SandboxSpec dataroot 逃生口：spec 支持 NB_SANDBOX_SPEC_DATAROOT 环境变量重定向测试数据根；
+# 本会话 seatbelt 对 $HOME 写拒（run1 实证 mkdir .nb-sbx-dataroot-*: Operation not permitted，
+# 42/44 beforeEach 连挂）——host 臂统一重定向 /tmp（写入边界既定策略），容器臂无 TCC 不需要。
+HOST_DATAROOT=/tmp/nb-sbx-poc/dataroot
 CACHE_VOL="$NB-cache"
 TGT_VOL="$NB-tgt"
 CTR="$NB-matrix"
@@ -29,7 +33,7 @@ SBT_ARGS=""
 HOST_SBT_OPTS="-Dsbt.global.base=$HOST_CACHE/sbt-global -Dsbt.boot.directory=$HOST_CACHE/sbt-boot -Dsbt.ivy.home=$HOST_CACHE/ivy2 -Dsbt.supershell=false -Dsbt.color=false -Dsbt.log.noformat=true -Xmx2g"
 CT_SBT_OPTS="-Dsbt.global.base=/cache/sbt-global -Dsbt.boot.directory=/cache/sbt-boot -Dsbt.ivy.home=/cache/ivy2 -Dsbt.supershell=false -Dsbt.color=false -Dsbt.log.noformat=true -Xmx2g"
 
-mkdir -p "$HOST_CACHE"
+mkdir -p "$HOST_CACHE" "$HOST_DATAROOT"
 df_snapshot "a-start"
 
 phase() { # phase <label> <logfile> <cmd...>
@@ -49,7 +53,7 @@ phase() { # phase <label> <logfile> <cmd...>
 host_sbt() { # phase <label> <sbt-args...>
   local label="$1"; shift
   ( cd "$WT" && COURSIER_REPOSITORIES="$REPOS" COURSIER_CACHE="$HOST_CACHE/coursier" \
-      SBT_OPTS="$HOST_SBT_OPTS" phase "$label" "$LOGDIR/$label.log" sbt $SBT_ARGS "$@" )
+      SBT_OPTS="$HOST_SBT_OPTS" NB_SANDBOX_SPEC_DATAROOT="$HOST_DATAROOT" phase "$label" "$LOGDIR/$label.log" sbt $SBT_ARGS "$@" )
 }
 
 ct_exec() { # ct_exec <label> <container> <sbt-args...>
@@ -57,8 +61,12 @@ ct_exec() { # ct_exec <label> <container> <sbt-args...>
   phase "$label" "$LOGDIR/$label.log" docker exec \
     -e COURSIER_REPOSITORIES="$REPOS" -e COURSIER_CACHE=/cache/coursier -e SBT_OPTS="$CT_SBT_OPTS" \
     -e TZ=Asia/Shanghai \
+    -e LANG=C.UTF-8 -e LC_ALL=C.UTF-8 \
     -w "$WT" "$ctr" sbt $SBT_ARGS "$@"
 }
+# ↑ LANG 双保险：镜像已烘焙 LANG=C.UTF-8（ubuntu glibc JDK POSIX locale 下 sun.jnu.encoding=ASCII，
+#   中文 worktree 路径令 sbt launcher getCanonicalFile 断言崩溃——run1 快败根因，alpine/musl 免疫）；
+#   exec 层再显式注入，防陈旧镜像层遗漏。
 
 run_suite() { # run_suite <prefix> <mode host|ctbind|ctvol|alpine> <ctr-or-empty>
   local p="$1" mode="$2" ctr="$3"
@@ -117,6 +125,8 @@ docker run -d --name "$CTR" -v "$WT:$WT" -v "$TGT_VOL:$WT/target" -v "$CACHE_VOL
 run_suite a.ctvol ctvol "$CTR"
 
 echo "=== 附臂 ct-alpine（musl 兼容 + 性能） ==="
+# ⚠️ 臂序陷阱（PoC 现场实证）：本臂 clean 会抹掉 ctbind.assembly 的宿主侧产物（bind 直写）——
+#   60-qa-container-e2e.sh 依赖 assembly JAR，跑 60 前需先补 assembly（host 侧热缓存 ~1min）或调臂序。
 docker rm -f "$CTR" >/dev/null 2>&1 || true
 docker run -d --name "$CTR" -v "$WT:$WT" -v "$CACHE_VOL:/cache" -w "$WT" "$IMG_AL" sleep infinity >/dev/null
 run_suite a.alpine alpine "$CTR"

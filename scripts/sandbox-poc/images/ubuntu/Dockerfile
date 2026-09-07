@@ -26,5 +26,11 @@ RUN printf '#!/bin/sh\n# SBT_OPTS 由调用方注入（值内不含空格；与�
 ARG REPOSITORIES
 ENV COURSIER_REPOSITORIES=${REPOSITORIES}
 
+# L3: locale 兜底（PoC-a 实证的必踩坑）：glibc JDK 在 POSIX locale 下 sun.jnu.encoding=ASCII，
+#     非 ASCII 工作区路径（中文 worktree 名实证）sbt launcher getCanonicalFile().isDirectory()
+#     断言即崩。C.UTF-8 是 glibc 内建（无需 locales 包）。musl/alpine JDK 天然 UTF-8 无此问题。
+ENV LANG=C.UTF-8
+ENV LC_ALL=C.UTF-8
+
 WORKDIR /work
 CMD ["sleep", "infinity"]

@@ -23,7 +23,9 @@ bash scripts/sandbox-poc/20-build-images.sh     # 先出镜像（a/c/d 依赖）
 bash scripts/sandbox-poc/30-stats-probe.sh      # ~40s
 bash scripts/sandbox-poc/40-lifecycle-demo.sh   # ~50s（retain 15s + ttl 20s 演示值）
 bash scripts/sandbox-poc/50-sbt-matrix.sh       # 长跑（三臂 compile+test+assembly + alpine 附臂）
-bash scripts/sandbox-poc/60-qa-container-e2e.sh # 依赖 50 的 assembly 产物
+# ⚠️ 50 跑完后 alpine 臂的 clean 会抹掉 ctbind.assembly 产物——60 之前先补：
+#   cd <worktree> && SBT_OPTS=<同 host 臂> sbt assembly   （hostcache 热，~1min）
+bash scripts/sandbox-poc/60-qa-container-e2e.sh # 依赖 assembly 产物
 bash scripts/sandbox-poc/90-cleanup.sh          # 收口
 ```
 
