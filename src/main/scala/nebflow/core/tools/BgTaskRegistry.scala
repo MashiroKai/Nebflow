@@ -157,6 +157,11 @@ object BgTaskRegistry:
         .toList
     }
 
+  /** 热重启 quiesce（F5 域，hot-restart 批）：全部活动等待型（非 persistent）后台
+    * 任务——等待型任务无持久面（进程内 Ref），重启即亡，故必须纳入空闲判定。 */
+  def waitingTasks: IO[List[ActiveTask]] =
+    tasks.get.map(_.values.filter(!_.persistent).toList)
+
   /** 节点完成闸终局记账：等待型任务被超时/停滞看护杀掉时登记（BashTool 完成回调
     * Left(TimeoutException) 分支调用；persistent 与显式取消不入账——前者不在等待集，
     * 后者是 agent 自主决策）。 */
