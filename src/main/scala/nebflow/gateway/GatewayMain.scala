@@ -458,6 +458,10 @@ object GatewayMain extends IOApp:
                                 // 项目 → 幂等挂载（rootSessionId = 顶层 Nebula 主会话 id，
                                 // 启动期无会话上下文直接传顶层根）。免重启后人工重挂——
                                 // 与 ProjectCreate 幂等挂载（运行时主动路径）互补。
+                                // crash-recovery 批（2026-09-07）：恢复开启时启动挂载跳过
+                                // 挂载期僵尸收殓（cancelled）——崩溃残留 running 节点留给
+                                // 紧随其后的 projectCrashSweep 认领（rehydrate/failed）；
+                                // 恢复关闭时保持既有收殓行为（回滚语义=回到现状）。
                                 val startupMount: IO[Unit] =
                                   for
                                     rootSid <- sessionStore
@@ -472,7 +476,8 @@ object GatewayMain extends IOApp:
                                       // #28 可观测接线：启动挂载传入真实广播 wsSend——
                                       // engine 的节点/分发器事件经 wsHub 到达前端 subagent
                                       // 面板（此前 None → no-op，事件静默丢失）。
-                                      Some((json: io.circe.Json) => wsHub.broadcast(json))
+                                      Some((json: io.circe.Json) => wsHub.broadcast(json)),
+                                      skipStaleReap = nebflow.shared.Defaults.CrashRecoveryEnabled
                                     )
                                     _ <- if mounted > 0 then
                                       logger.info(
@@ -480,13 +485,29 @@ object GatewayMain extends IOApp:
                                       )
                                     else IO.unit
                                   yield ()
+                                // boot-time 崩溃断点恢复（crash-recovery 批 2026-09-07）：
+                                // 挂载后、TtlTick 首拍前同步跑快段（分类+认领，秒级——被认领
+                                // 节点翻 Pending 即刻脱离 watchdog 判死口径，竞速由挂载顺序
+                                // 结构性关闭），慢段（rehydrate 续跑，分钟级）在 sweep 内
+                                // fork 不阻塞 listen。恢复关闭（crashRecovery.enabled=false）
+                                // = 本步空转 + 上面 mountAll 已走既有僵尸收殓——完全回到
+                                // 本批前现状。sweep 内部逐项目/逐节点 handleError，异常不
+                                // 阻塞 boot（残余 Running 由 watchdog +30s 兜底收敛 failed）。
+                                val projectCrashSweep: IO[Unit] =
+                                  if nebflow.shared.Defaults.CrashRecoveryEnabled then
+                                    nebflow.core.project.ProjectCrashRecovery.recoverAll().flatMap { projects =>
+                                      if projects > 0 then
+                                        logger.info(s"Boot crash-recovery sweep: $projects project(s) had crashed nodes claimed (rehydrate/failed)")
+                                      else IO.unit
+                                    }
+                                  else IO.unit
                                 // #28 阶段 0：Project Flow Map 终态节点 TTL 扫描
                                 // （24h 显示消失 → 移归档 + WS nodeRemoved；Node
                                 // 运行本身不设超时）。周期给所有已挂载 ProjectActor
                                 // 发 TtlTick；无项目时空转。
                                 val projectTtlScanner: IO[Unit] =
                                   nebflow.core.project.ProjectActor.ttlScanner(30.seconds).start.void
-                                hubSetup *> taskTtlSweep *> subagentCrashSweep *> startupMount *> projectTtlScanner *> {
+                                hubSetup *> taskTtlSweep *> subagentCrashSweep *> startupMount *> projectCrashSweep *> projectTtlScanner *> {
                                   val sharedResourcesLive = sharedResources
                                   val sessionService = new SessionService(sessionStore)
                                   val agentService = new AgentService(agentLibrary)

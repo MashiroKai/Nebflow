@@ -219,6 +219,26 @@ object Defaults:
   /** TaskStuckWatcher scan interval. */
   val StuckWatcherIntervalSec: Int = 30
 
+  // ---- boot-time 崩溃恢复（crash-recovery 批 2026-09-07）----
+
+  /**
+   * 崩溃恢复回滚总开关（设计 R1）：默认 true——Gateway 启动后对崩溃残留 running
+   * 节点自动 rehydrate 续跑（快段认领先于 TtlTick 首拍，慢段复用 runWithAgent 全链）。
+   * false = sweep 空转 + 启动挂载恢复既有僵尸收殓（cancelled）+ watchdog 兜底不变
+   * ——完全回到本批前现状。system prop `nebflow.crashRecovery.enabled`（每次调用
+   * 现读，CompletionGate kill-switch 先例，测试可即时翻转）。
+   */
+  def CrashRecoveryEnabled: Boolean =
+    sys.props.getOrElse("nebflow.crashRecovery.enabled", "true").toBoolean
+
+  /**
+   * 同时 rehydrate 并发上限（设计 §3.2，作者裁定④ 取 3）：大项目 N 节点同时恢复的
+   * LLM 洪峰护栏——sweep 慢段信号量，节点会话终态才释放槽位。system prop
+   * `nebflow.crashRecovery.concurrency` 可调。
+   */
+  def CrashRecoveryConcurrency: Int =
+    sys.props.getOrElse("nebflow.crashRecovery.concurrency", "3").toInt
+
   // ---- STT（语音输入，可配置转录服务，#295）----
 
   /** STT 默认模型（OpenAI 兼容音频转录 API 的公共模型名，非用户配置）。 */
