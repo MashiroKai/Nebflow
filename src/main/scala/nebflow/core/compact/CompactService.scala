@@ -47,6 +47,24 @@ object CompactService:
       case _ => NebulaCompactReminder // Root (also catches Legacy)
     Message(MessageRole.User, Left(prompt))
 
+  /** Head signature shared by every profile reminder (CompactPreamble's first
+    * two lines — stable across profiles because they all prepend the same
+    * preamble). Used to recognize a compact reminder inside a message list. */
+  private val ReminderSignature = "<system-reminder>\nContext compaction required"
+
+  /** Is this message a compact reminder injected by [[buildCompactReminder]]?
+    * FullCompact uses this to exclude the trailing reminder from tail-round
+    * preservation — the reminder is the summarization instruction, not
+    * conversation content. */
+  def isCompactReminder(msg: Message): Boolean =
+    msg.content match
+      case Left(text) => text.startsWith(ReminderSignature)
+      case Right(blocks) =>
+        blocks.exists {
+          case ContentBlock.Text(t) => t.startsWith(ReminderSignature)
+          case _ => false
+        }
+
   // ------------------------------------------------------------------
   // Profile-specific compact prompts
   // ------------------------------------------------------------------
@@ -69,6 +87,15 @@ object CompactService:
       |LANGUAGE RULE — your summary MUST be written in the SAME language as the user's messages.
       |If the user wrote in Chinese, write your summary in Chinese.
       |If the user wrote in English, write your summary in English.
+      |
+      |TAIL FIDELITY RULE — the LAST user message before this summary request is
+      |the ACTIVE TASK: it may be unfinished, and nothing else carries it. Your
+      |summary MUST include (a) a verbatim or near-verbatim quote of that last
+      |user message, and (b) its processing status: not yet started / in
+      |progress / dispatched (to whom, awaiting what). Put both at the HEAD of
+      |your Current-Work / Current-Task section. Never omit or dilute the tail
+      |instruction on the grounds that it is "already covered" or "obvious" —
+      |after compaction, this summary is the ONLY record of it.
       |""".stripMargin
 
   /** Shared rules + file restoration section. */
@@ -140,11 +167,13 @@ object CompactService:
       |   - [Working-style instructions, language, tool preferences]
       |
       |7. Current Work:
-      |   [What you were doing immediately before this summary request.]
+      |   [What you were doing immediately before this summary request. OPEN this
+      |    section with a VERBATIM quote of the LAST user instruction and its
+      |    processing status (TAIL FIDELITY RULE), then your own in-flight action.]
       |
       |8. Next Step:
       |   [The single immediate orchestration action. Include direct quotes from
-      |   the most recent user instruction if relevant.]
+      |    the most recent user instruction if relevant.]
       |</summary>
       |""".stripMargin + CompactEpilogue
 
@@ -184,7 +213,10 @@ object CompactService:
       |   - [Any architectural/design decisions made during coordination]
       |
       |6. Current Work:
-      |   [What you were doing when compaction triggered — synthesizing results? Waiting for an agent?]
+      |   [What you were doing when compaction triggered — synthesizing results?
+      |    Waiting for an agent? OPEN this section with a VERBATIM quote of the
+      |    LAST instruction/Mail you received and its processing status
+      |    (TAIL FIDELITY RULE).]
       |
       |7. Next Step:
       |   [The immediate next coordination action needed]
@@ -214,7 +246,9 @@ object CompactService:
       |
       |<summary>
       |1. Current Task:
-      |   [What the manager asked you to do in the most recent Mail]
+      |   [The most recent Mail/instruction from the manager — QUOTE IT VERBATIM
+      |    (TAIL FIDELITY RULE), then state its status: not yet started /
+      |    in progress / blocked (by what)]
       |
       |2. Work Done So Far:
       |   [Files read, changes made, commands run — just the current task, not old ones]

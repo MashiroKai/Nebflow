@@ -300,7 +300,9 @@ private[agent] trait AgentCore:
       // 已有或在此补盘）——压缩轮只需全文概貌 + 路径引用，不需要大结果本体。
       // 此前 compact turn 跳过 FastMicroCompact/TTL 携带全量历史，历史超
       // provider 上限时拒绝 → 失败冷却刷新 → 永久死锁（qa-backend 失能根因之二）。
-      // 产物形态（summary 替换历史）不动，只改喂给压缩轮的输入。
+      // 本层只改喂给压缩轮的输入；产物形态原为「summary 替换历史」，2026-09-07
+      // 尾部保真批起改为「summary + 尾部 N 轮原样保留」（见 FullCompact.preservedTail
+      // 与 CompactConfig.preservedRounds）。
       compactionInput <- CompactUtils.prepareCompactionInput(
         state.messages,
         state.sessionId.getOrElse("default")
