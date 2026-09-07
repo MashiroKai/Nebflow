@@ -1708,7 +1708,11 @@
 .option-preview .preview-img {
   width: 100%;
   height: 100%;
-  object-fit: cover;
+  /* contain — never crop. Preview srcs are commonly square viewBox-only
+     data-URI SVG icons (no width/height attrs); object-fit: cover in the
+     56×40 slot clipped their top/bottom (author report 2026-09-07). Non-square
+     images now letterbox on the var(--color-surface) slot background. */
+  object-fit: contain;
   display: block;
   opacity: 0;                     /* §6: fade in on load (see .nf-loaded) */
   transition: opacity 0.2s ease-out;

@@ -1474,7 +1474,9 @@ const ASKUSER_DRAFTS_KEY = key('askuser_drafts');
 const askCardRegistry = new Map(); // sessionId → { questions, answers, shouldShow, selectOption, confirmIfReady, requestId }
 
 /** Build the inline preview slot for an option (direction C §2.1/§4.1).
- *  swatch: 1-5 color stripes filling the 56×40 slot; image: object-fit cover.
+ *  swatch: 1-5 color stripes filling the 56×40 slot; image: object-fit
+ *  contain — full fit, never crop (cover clipped square viewBox-only SVG
+ *  icons in the 56×40 slot, author report 2026-09-07).
  *  Returns '' when the preview is absent/invalid so the button renders exactly
  *  like the pre-preview version (E1/E3 zero regression). */
 function buildOptionPreview(pv) {
@@ -1490,9 +1492,49 @@ function buildOptionPreview(pv) {
   if (pv.type === 'image' && pv.src) {
     // §6 preview fades in on load (200ms ease-out); on error the slot hides
     // itself (E2) — label/desc stay clickable either way.
-    return `<span class="option-preview" aria-hidden="true"><img class="preview-img" src="${escapeHtml(pv.src)}" alt="" loading="lazy" onload="this.classList.add('nf-loaded')" onerror="this.closest('.option-preview').style.display='none'"></span>`;
+    return `<span class="option-preview" aria-hidden="true"><img class="preview-img" src="${escapeHtml(normalizeSvgDataUri(pv.src))}" alt="" loading="lazy" onload="this.classList.add('nf-loaded')" onerror="this.closest('.option-preview').style.display='none'"></span>`;
   }
   return '';
+}
+
+/** Compat fallback for viewBox-only SVG data-URI previews (author report
+ *  2026-09-07): LLM-generated icon srcs commonly carry a viewBox but no
+ *  width/height attrs, and concrete sizing for dimensionless SVGs is
+ *  under-specified across engines. Inject explicit intrinsic dimensions taken
+ *  from the viewBox so object-fit: contain letterboxes deterministically
+ *  everywhere. Strictly fail-open: any surprise (non-SVG src, unparseable
+ *  payload, existing dims, degenerate viewBox) returns the src untouched —
+ *  the CSS contain fix alone still renders those. Non-data-URI srcs (http,
+ *  png/jpeg data-URIs) are never touched (E1/E3 zero-regression surface). */
+function normalizeSvgDataUri(src) {
+  if (typeof src !== 'string' || !src.startsWith('data:image/svg+xml')) return src;
+  const comma = src.indexOf(',');
+  if (comma < 0) return src;
+  const header = src.slice(0, comma + 1);
+  const body = src.slice(comma + 1);
+  let svg;
+  if (/;base64/i.test(header)) {
+    try {
+      svg = new TextDecoder().decode(Uint8Array.from(atob(body), (ch) => ch.charCodeAt(0)));
+    } catch { return src; }
+  } else {
+    try { svg = decodeURIComponent(body); } catch { return src; }
+  }
+  const tag = svg.match(/<svg\b[^>]*>/i);
+  if (!tag) return src;
+  if (/\bwidth\s*=|\bheight\s*=/i.test(tag[0])) return src; // already has intrinsic dims
+  const vb = tag[0].match(/\bviewBox\s*=\s*(?:"([^"]*)"|'([^']*)')/i);
+  if (!vb) return src;
+  const dims = (vb[1] ?? vb[2]).trim().split(/[\s,]+/).map(Number);
+  if (dims.length !== 4 || dims.some(n => !Number.isFinite(n)) || dims[2] <= 0 || dims[3] <= 0) return src;
+  const fixed = svg.replace(tag[0], tag[0].replace(/^<svg/i, `<svg width="${dims[2]}" height="${dims[3]}" `));
+  if (/;base64/i.test(header)) {
+    const bytes = new TextEncoder().encode(fixed);
+    let bin = '';
+    for (let i = 0; i < bytes.length; i++) bin += String.fromCharCode(bytes[i]);
+    return header + btoa(bin);
+  }
+  return header + encodeURIComponent(fixed);
 }
 
 /** Broadcast an answered/locked AskUser card to every Canvas iframe so their
