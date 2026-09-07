@@ -5106,5 +5106,10 @@ object WebSocketRoutes:
       // 不做——快照轮询由前端按需刷新）。
       "status"         -> rec.status.toString.asJson,
       "startedAt"      -> rec.startedAt.asJson,
-      "retryCount"     -> retryCount.getOrElse(0).asJson
+      "retryCount"     -> retryCount.getOrElse(0).asJson,
+      // 项目归属（2026-09-06 作者裁定：面板 Flow 徽标旁标注项目名）——恢复路径
+      // 数据源。仅 Project 域会话（node- 与 dispatcher- 前缀，注册时写
+      // AgentRecord.project）有值；其余空串（前端 falsy → 不渲染徽标）。实时路径
+      // 不经此字段（agentStart 帧由 routeSubagentWsSend 转发层注入，见 NodeRunner）。
+      "project"        -> rec.project.getOrElse("").asJson
     )
