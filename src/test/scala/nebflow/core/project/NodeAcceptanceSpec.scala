@@ -769,7 +769,8 @@ class NodeAcceptanceSpec extends CatsEffectSuite:
       assertEquals(done.hcursor.downField("hasResult").as[Boolean].toOption, Some(true), "hasResult marker drives on-demand fetch")
       assertEquals(done.hcursor.downField("hasWorktree").as[Boolean].toOption, Some(false))
       assert(done.hcursor.downField("ttlLeftSec").as[Long].toOption.exists(_ > 0), "ttlLeftSec must be present for terminal node")
-      // 子任务 C：节点配置字段（skill/mcp/preset）须随 NodeList 载荷下发（前端 Flow Map 展示依据）
+      // 子任务 C：节点配置字段（skill/mcp/preset）——裁定③（20260907 上下文经济学批）
+      // 后条件序列化：仅存量非 None 节点携带（本节点三键有值，照常下发）
       assertEquals(done.hcursor.downField("skill").as[String].toOption, Some("code-review"))
       assertEquals(done.hcursor.downField("mcp").as[String].toOption, Some("github"))
       assertEquals(done.hcursor.downField("preset").as[String].toOption, Some("fast"))
