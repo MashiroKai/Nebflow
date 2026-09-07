@@ -1,0 +1,13 @@
+{
+  "seedVersion": "1.0.0",
+  "items": [
+    "agents:project-dispatcher",
+    "agents:general",
+    "plugins:explorer-toolkit",
+    "plugins:engineering-methods",
+    "plugins:design-spec",
+    "plugins:visual-report",
+    "plugins:nebflow-qa",
+    "project:general"
+  ]
+}

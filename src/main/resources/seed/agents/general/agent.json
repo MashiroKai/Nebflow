@@ -1,0 +1,4 @@
+{
+  "name": "general",
+  "description": "通用执行 agent——能力由分配的 plugins 决定"
+}
