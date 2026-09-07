@@ -253,7 +253,7 @@ class NodeBlockedReentrySpec extends CatsEffectSuite:
 
   // ── 验收③：blocked → ReenterDispatcher → 重入 prompt 形态 spawn ──
 
-  test("reentry: blocked routes ReenterDispatcher → dispatcher spawned with reentry-adjustment prompt (含节点名/id/轮次/三字段/快照/四动作/无需回报)") {
+  test("reentry: blocked routes ReenterDispatcher → dispatcher spawned with reentry-adjustment prompt (含节点名/id/轮次/三字段/四动作/无需回报；裁定①无快照)") {
     val ws = tempRoot / "ws-reentry"
     os.makeDir.all(ws)
     val system = ActorSystem(s"blk-reentry-${scala.util.Random.nextInt(100000)}")
@@ -283,7 +283,11 @@ class NodeBlockedReentrySpec extends CatsEffectSuite:
       assert(prompt.contains("原因分类：task-underspecified"), "prompt must carry category")
       assert(prompt.contains("说明：任务缺少交付物定义"), "prompt must carry detail")
       assert(prompt.contains("对拓扑的建议：补充验收标准"), "prompt must carry suggestion")
-      assert(prompt.contains("```json") && prompt.contains("Flow Map 快照"), "prompt must embed Flow Map snapshot")
+      // 裁定①（观测面上下文经济学批 20260907 方向 B）：重入 spawn prompt 不再嵌
+      // Flow Map 快照——拓扑由分发器首轮 NodeList 按需拉取（旧实现断言
+      // `contains("```json") && contains("Flow Map 快照")`，随快照移除翻转）。
+      assert(!prompt.contains("```json") && !prompt.contains("Flow Map 快照"), "reentry prompt must NOT embed Flow Map snapshot (ctx-econ 裁定①)")
+      assert(!prompt.contains("\"result\":") && !prompt.contains("\"task\":"), "reentry prompt must not carry hydrated result/task JSON fields")
       assert(prompt.contains("abandon=true"), "prompt must carry abandon action hint")
       assert(prompt.contains("无需回报"), "prompt must carry no-report note")
       assert(prompt.contains("project=blk-reentry"), "prompt must carry project param note")
