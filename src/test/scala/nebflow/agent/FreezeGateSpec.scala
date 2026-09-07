@@ -29,7 +29,7 @@ import scala.concurrent.duration.*
  */
 class FreezeGateSpec extends CatsEffectSuite:
 
-  override def munitIOTimeout: FiniteDuration = 90.seconds
+  override def munitIOTimeout: FiniteDuration = 180.seconds
 
   /** 计数 + 捕获请求的 mock：每请求一个 TextDelta + Done（纯文本收尾）。 */
   private class CountingLlm(
@@ -45,11 +45,17 @@ class FreezeGateSpec extends CatsEffectSuite:
       Stream.eval(counter.update(_ + 1) *> requests.update(_ :+ req)) >>
         Stream(StreamChunk.TextDelta("ok"), StreamChunk.Done(None, None))
 
-  /** 工具轮 mock：首请求返回 Read tool call（延迟 Done 制造关窗时间窗），后续纯文本。 */
+  /** 工具轮 mock：首请求返回 Read tool call，Done 前留关窗时间窗；后续纯文本。
+    * 关窗窗口的确定性化（B4/B5 flake 治本，移植 beta 2e46e565 同款）：默认 400ms
+    * 定长 sleep 下，满载调度可让测试线程的「观察到首轮 → 关窗（schedRef.set）」
+    * 赶不上窗口——续轮 dispatch 溜过仍然开着的 gate → 永不 Frozen → 超时红。
+    * 传入 `firstDoneGate` 后，首请求的 Done 改为等该 Deferred——测试在关窗完成
+    * 后才 complete，Done→工具→续轮 gate 检查时配置必然已冻结，窗口竞争不可能发生。 */
   private class ToolThenTextLlm(
     counter: cats.effect.Ref[IO, Int],
     requests: cats.effect.Ref[IO, List[LlmRequest]],
-    filePath: String
+    filePath: String,
+    firstDoneGate: Option[cats.effect.Deferred[IO, Unit]] = None
   ) extends LlmHandle[IO]:
     def send(req: LlmRequest): IO[LlmResponse] =
       IO.raiseError(new RuntimeException("send not expected in this test"))
@@ -59,11 +65,14 @@ class FreezeGateSpec extends CatsEffectSuite:
     ): Stream[IO, StreamChunk] =
       Stream.eval(counter.update(_ + 1) *> requests.update(_ :+ req)) >> Stream.eval(counter.get).flatMap {
         case 1 =>
+          val holdOpen: Stream[IO, Nothing] = firstDoneGate match
+            case Some(g) => Stream.eval(g.get).drain
+            case None    => Stream.sleep[IO](400.millis).drain
           Stream(StreamChunk.ToolCallChunk(nebflow.shared.ToolCall(
             id = "tc-read-1",
             name = "Read",
             input = io.circe.JsonObject("file_path" -> filePath.asJson)
-          ))) ++ Stream.sleep[IO](400.millis).drain ++
+          ))) ++ holdOpen ++
             Stream(StreamChunk.Done(None, None))
         case _ =>
           Stream(StreamChunk.TextDelta("done"), StreamChunk.Done(None, None))
@@ -331,7 +340,8 @@ class FreezeGateSpec extends CatsEffectSuite:
         requests <- IO.ref(List.empty[LlmRequest])
         events <- IO.ref(List.empty[Json])
         schedRef <- IO.ref(openConfig) // 不冻结启动第一轮
-        resources <- mkResources(system, tmp, ToolThenTextLlm(counter, requests, target.toString), schedRef)
+        doneGate <- cats.effect.Deferred[IO, Unit] // 关窗完成才放行 Done（确定性窗口）
+        resources <- mkResources(system, tmp, ToolThenTextLlm(counter, requests, target.toString, Some(doneGate)), schedRef)
         sid = "freeze-b4-tools-agent"
         ref <- system.spawn(
           AgentActor(
@@ -346,10 +356,11 @@ class FreezeGateSpec extends CatsEffectSuite:
         )
         _ <- resources.agentRegistry.update(_ + (sid -> AgentRecord(sid, ref, AgentKind.Root, sid, None)))
         _ <- ref ! AgentCommand.UserInput("read the file", None, Some("b4-tools-1"))
-        // 等首轮 LLM 请求发出（tool call 已流回、400ms 延迟 Done 之前）→ 关窗
+        // 等首轮 LLM 请求发出（tool call 已流回、Done 被确定性闸门挂起）→ 关窗
         _ <- waitUntil(System.currentTimeMillis() + 5000)(counter.get.map(_ >= 1))
         _ <- schedRef.set(frozenConfig())
-        // Done → 工具执行 → ToolsComplete → 续轮 dispatch 过 gate → 冻结
+        // 关窗已落定 → 放行 Done → 工具执行 → ToolsComplete → 续轮 dispatch 过 gate → 冻结
+        _ <- doneGate.complete(()).attempt.void
         _ <- waitUntil(System.currentTimeMillis() + 8000)(
           resources.agentRegistry.get.map(_.get(sid).exists(_.status == AgentStatus.Frozen))
         )
@@ -385,7 +396,8 @@ class FreezeGateSpec extends CatsEffectSuite:
         requests <- IO.ref(List.empty[LlmRequest])
         events <- IO.ref(List.empty[Json])
         schedRef <- IO.ref(openConfig)
-        resources <- mkResources(system, tmp, ToolThenTextLlm(counter, requests, target.toString), schedRef)
+        doneGate <- cats.effect.Deferred[IO, Unit] // 关窗完成才放行 Done（确定性窗口）
+        resources <- mkResources(system, tmp, ToolThenTextLlm(counter, requests, target.toString, Some(doneGate)), schedRef)
         sid = "freeze-b5-agent"
         ref <- system.spawn(
           AgentActor(
@@ -400,14 +412,20 @@ class FreezeGateSpec extends CatsEffectSuite:
         )
         _ <- resources.agentRegistry.update(_ + (sid -> AgentRecord(sid, ref, AgentKind.Root, sid, None)))
         _ <- ref ! AgentCommand.UserInput("read the file", None, Some("b5-1"))
-        _ <- waitUntil(System.currentTimeMillis() + 5000)(counter.get.map(_ >= 1))
+        // deadline 提升依据（CI 取证 2026-09-07 run 34076767244）：满载 CI JVM 曾全进程
+        // 停顿 8.1s（全组件日志空窗，GC 重压 —— ci.yml -Xmx2g / auto-release -Xmx3g 跑
+        // 全量 2564 测试），停顿结束后本测试的 deadline 判定先于 actor 恢复 → 假红。
+        // 放宽到 30s 容忍基础设施级停顿；真回归（唤醒不 dispatch）仍 30s 内清晰红。
+        _ <- waitUntil(System.currentTimeMillis() + 15000)(counter.get.map(_ >= 1))
         _ <- schedRef.set(frozenConfig())
-        _ <- waitUntil(System.currentTimeMillis() + 8000)(
+        // 关窗已落定 → 放行 Done（工具结果冻结在 gate 前，唤醒语义有据可依）
+        _ <- doneGate.complete(()).attempt.void
+        _ <- waitUntil(System.currentTimeMillis() + 30000)(
           resources.agentRegistry.get.map(_.get(sid).exists(_.status == AgentStatus.Frozen))
         )
         // 冻结中：用户消息唤醒（clientMessageId=Some）→ 工具结果 + 用户新指令同轮
         _ <- ref ! AgentCommand.UserInput("WAKE_UP_NOW continue with this", None, Some("b5-wake"))
-        _ <- waitUntil(System.currentTimeMillis() + 8000)(counter.get.map(_ >= 2))
+        _ <- waitUntil(System.currentTimeMillis() + 30000)(counter.get.map(_ >= 2))
         _ <- IO.sleep(300.millis)
         reqs <- requests.get
         wakeReq = reqs.last
@@ -463,7 +481,7 @@ class FreezeGateSpec extends CatsEffectSuite:
         _ <- resources.agentRegistry.update(_ + (sid -> AgentRecord(sid, ref, AgentKind.Root, sid, None)))
         // 冻结（系统输入触发）
         _ <- ref ! AgentCommand.UserInput("initial task")
-        _ <- waitUntil(System.currentTimeMillis() + 5000)(
+        _ <- waitUntil(System.currentTimeMillis() + 15000)(
           resources.agentRegistry.get.map(_.get(sid).exists(_.status == AgentStatus.Frozen))
         )
         // 冻结期间再注入系统消息：排队不唤醒
@@ -474,8 +492,8 @@ class FreezeGateSpec extends CatsEffectSuite:
         // 解除冻结 + 恢复 → 首个挂起任务 dispatch；turn 结束 drain 排队消息 → 第二轮
         _ <- schedRef.set(openConfig)
         _ <- ref ! AgentCommand.CheckFreezeGate
-        _ <- waitUntil(System.currentTimeMillis() + 8000)(counter.get.map(_ >= 1))
-        _ <- waitUntil(System.currentTimeMillis() + 10000)(counter.get.map(_ >= 2))
+        _ <- waitUntil(System.currentTimeMillis() + 30000)(counter.get.map(_ >= 1))
+        _ <- waitUntil(System.currentTimeMillis() + 30000)(counter.get.map(_ >= 2))
         reqs <- requests.get
         _ = assert(
           reqs.exists(_.messages.exists(_.textContent.contains("queued system message"))),
@@ -520,17 +538,17 @@ class FreezeGateSpec extends CatsEffectSuite:
         // 第一次冻结 + 唤醒 + 完整 turn 完成（回 idle）——clientMessageId 进入
         // recentMessageIds
         _ <- ref ! AgentCommand.UserInput("initial task")
-        _ <- waitUntil(System.currentTimeMillis() + 5000)(
+        _ <- waitUntil(System.currentTimeMillis() + 15000)(
           resources.agentRegistry.get.map(_.get(sid).exists(_.status == AgentStatus.Frozen))
         )
         _ <- ref ! AgentCommand.UserInput("wake once", None, Some("dup-1"))
-        _ <- waitUntil(System.currentTimeMillis() + 8000)(counter.get.map(_ >= 1))
+        _ <- waitUntil(System.currentTimeMillis() + 30000)(counter.get.map(_ >= 1))
         // 再次冻结（系统输入）后重发同一 clientMessageId → dedup，不 dispatch
-        _ <- waitUntil(System.currentTimeMillis() + 8000)(
+        _ <- waitUntil(System.currentTimeMillis() + 30000)(
           resources.agentRegistry.get.map(_.get(sid).exists(_.status == AgentStatus.Idle))
         )
         _ <- ref ! AgentCommand.UserInput("freeze again")
-        _ <- waitUntil(System.currentTimeMillis() + 5000)(
+        _ <- waitUntil(System.currentTimeMillis() + 15000)(
           resources.agentRegistry.get.map(_.get(sid).exists(_.status == AgentStatus.Frozen))
         )
         _ <- ref ! AgentCommand.UserInput("wake once", None, Some("dup-1"))
