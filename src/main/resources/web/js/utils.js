@@ -95,8 +95,14 @@ export function initMarkdown() {
 const MD_CACHE_CAP = 200;
 const _mdCache = new Map();
 
-export function renderMarkdownWithMath(text, parseVoice = true) {
+export function renderMarkdownWithMath(text, parseVoice = true, opts) {
   if (!text) return '';
+  // Streaming bypass (mem-diagnosis 20260907 D3): per-frame stream renders
+  // re-parse the SAME growing text — every intermediate snapshot used to
+  // enter this LRU and evict real entries until the hit rate hit 0. Stream
+  // renderers pass { cache:false } and go straight to the parser; only
+  // finish*/history renders (stable text) populate the cache.
+  if (opts && opts.cache === false) return _renderMarkdownWithMath(text, parseVoice);
   const key = `${parseVoice ? 1 : 0}${typeof marked !== 'undefined' ? 1 : 0}${typeof katex !== 'undefined' ? 1 : 0}${getLocale()}|${text}`;
   const hit = _mdCache.get(key);
   if (hit !== undefined) {

@@ -306,7 +306,7 @@ function buildShell() {
 
   closeBtn.addEventListener('click', closeUsageDashboard);
   overlay.addEventListener('mousedown', (e) => { if (e.target === overlay) closeUsageDashboard(); });
-  document.addEventListener('keydown', onDocKeydown);
+  // document keydown listener is owned by open/closeUsageDashboard (D5).
 
   // grid interactions (delegated)
   grid.addEventListener('click', (e) => {
@@ -336,6 +336,9 @@ export function openUsageDashboard() {
   if (!overlay) buildShell();
   if (isOpen) return;
   isOpen = true;
+  // open/close own the document listener symmetrically (D5, mem-diag
+  // 20260907) — the same function reference, so duplicate adds are no-ops.
+  document.addEventListener('keydown', onDocKeydown);
   lastFocus = document.activeElement;
   overlay.hidden = false;
   overlay.classList.remove('closing');
@@ -350,6 +353,7 @@ export function openUsageDashboard() {
 export function closeUsageDashboard() {
   if (!isOpen || !overlay) return;
   isOpen = false;
+  document.removeEventListener('keydown', onDocKeydown);
   overlay.classList.add('closing');
   setTimeout(() => {
     overlay.hidden = true;
