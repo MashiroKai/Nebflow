@@ -1186,7 +1186,21 @@ class NodeEngine(
         case Right(_) =>
           logger.info(s"Node '$nodeName' cancelled — stopping agent")
           (ref ! AgentCommand.Stop("Node cancelled")).void
-        case Left(_) => IO.unit
+        case Left(Left(fo)) =>
+          // 孤儿后台任务收割（D1 主钩子）：failed/cancelled/zombie/bg-wait-cap 出口
+          // 补收殓——NodeCancel 路径（Right）已由 Stop→killSessionShellProcesses
+          // 覆盖，此处只补桥 Left 终态（该分支无 Stop，resource 收殓链整条缺失；
+          // 事故 A 的 2b1e6310 孤儿 job ~3h 即此缺口：job 进程/ShellSession/
+          // BgTaskRegistry 项全部继续存活）。fork best-effort：收殓慢/失败不阻塞
+          // 节点终态化与下游投递。completed 出口（Left(Right)) 由完成闸已等完
+          // 等待型任务——保持现状（persistent 收殓属另批归属语义，不在此改）。
+          (BgTaskRegistry.reclaimSession(Some(sessionId), wsSendFn, rootSessionId) *>
+            FlowMapEventLog.append(workspace, projectName, nodeId, "bg-harvest",
+              s"node finalized (${if fo.message.contains("cancelled") then "cancelled" else "failed"}) — reclaimed bg session '$sessionId'"))
+            .handleErrorWith(e =>
+              logger.warn(s"Node '$nodeName' ($nodeId) bg-harvest reclaim failed: ${e.getMessage}"))
+            .void.start *> IO.unit
+        case Left(Right(_)) => IO.unit
       eventResult = outcome match
         case Left(r) => r
         case Right(_) => Left(FailOutcome("cancelled by NodeCancel"))
