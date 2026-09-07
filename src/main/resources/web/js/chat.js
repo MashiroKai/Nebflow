@@ -2491,10 +2491,12 @@ let _pendingThinkingRAF = null;
 // Capture the bubble + chat at schedule time so the rAF renders into the correct
 let _thinkingRafTarget = null;
 
-// #345 segment-level thinking collapse — REVERTED for streaming by the
-// 2026-09-05 思考直播回归 ruling: thinking streams EXPANDED by default
-// (label + pulse dots stay as the live affordance, content renders live
-// beneath). Only the turn-terminal tuck (turnGroup collapseTurn) folds it.
+// Thinking stream behavior (2026-09-07 09:24 author ruling): thinking streams
+// EXPANDED while generating, then AUTO-COLLAPSES once the stream finishes —
+// the long-lived pre-2026-08-20 behavior (old finishThinking set
+// content.style.display='none' + label.collapsible). The 2026-09-05
+// 思考直播回归 ruling keeps the live feed expanded mid-stream; this ruling
+// restores only the terminal auto-collapse.
 
 /** #345 duration label removed (2026-08-24 ruling): the done label reverts to
  *  the pre-#345 design — always「思考过程」(chat.thinkingLabel), no duration
@@ -2569,16 +2571,16 @@ export function appendThinkingDelta(delta) {
     const content = document.createElement('div');
     content.className = 'thinking-content';
     // 2026-09-05 ruling (思考直播回归): the thinking content streams EXPANDED
-    // again — the #345 streaming-collapse default is reverted. The label
-    // stays clickable (collapsible) so the user can fold the live feed away;
-    // the terminal tuck (turnGroup collapseTurn) folds the whole row at done.
+    // — the #345 streaming-collapse default stays reverted. The label stays
+    // clickable (collapsible) so the user can fold the live feed away;
+    // finishThinking auto-collapses at stream end (2026-09-07 09:24 ruling).
     content.style.display = '';
     bubble.appendChild(label);
     bubble.appendChild(content);
     row.appendChild(bubble);
     chat.appendChild(row);
     // Click/Enter folds or re-reveals the live content (rAF keeps rendering
-    // into it); finishThinking preserves whatever state the user left.
+    // into it); finishThinking auto-collapses regardless at stream end.
     bindCollapsibleToggle(label, () => content);
     activeView.stream.currentThinkingBubble = bubble;
   }
@@ -2629,10 +2631,11 @@ export function finishThinking() {
     if (activeView.stream.currentThinkingBubble.dataset) {
       activeView.stream.currentThinkingBubble.dataset.nfEnd = String(Date.now());
     }
-    // Keep whatever visibility the row currently has (2026-09-05 思考直播
-    // ruling: mid-turn process stays live-visible — only the terminal tuck
-    // folds it). Streaming default is expanded; a user-folded feed stays
-    // folded until the terminal.
+    // Auto-collapse at stream end (2026-09-07 09:24 author ruling, restoring
+    // the long-lived pre-2026-08-20 behavior): expanded while streaming,
+    // collapsed once done — regardless of mid-stream user toggles. The label
+    // stays clickable so the user can re-expand afterwards. The turn-terminal
+    // tuck (turnGroup collapseTurn) still folds the whole row at done.
     activeView.stream.currentThinkingBubble.classList.add('thinking-done');
     const label = activeView.stream.currentThinkingBubble.querySelector('.thinking-label');
     const content = activeView.stream.currentThinkingBubble.querySelector('.thinking-content');
@@ -2644,9 +2647,9 @@ export function finishThinking() {
       label.querySelectorAll('.thinking-dot').forEach((d) => d.remove());
       const labelText = label.querySelector('.thinking-label-text');
       if (labelText) labelText.textContent = t('chat.thinkingLabel');
-      const wasVisible = content ? content.style.display !== 'none' : false;
-      label.classList.toggle('expanded', wasVisible);
-      label.setAttribute('aria-expanded', String(wasVisible));
+      if (content) content.style.display = 'none';
+      label.classList.remove('expanded');
+      label.setAttribute('aria-expanded', 'false');
       bindCollapsibleToggle(label, () => content);
     } else if (content) {
       content.style.display = 'none';
