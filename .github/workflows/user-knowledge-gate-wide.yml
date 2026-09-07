@@ -5,9 +5,9 @@ name: User Knowledge Gate (wide, pre-public)
 #
 # 为什么默认不启用：
 #   - 私有仓 Actions 烧免费额度，公开后免费（仓库转公开后此限制消失）。
-#   - 当前 main 仍存在若干非测试路径的 [leak] 命中（AGENTS.md /Users/dev、
-#     REBRAND.md VPS IP、scripts/sandbox-poc 的 USTC 源、staging/dream-run
-#     报告等），若自动触发会使 CI 变红——公开前必须先扫清。
+#   - 当前 main 仍存在若干非测试路径的 [leak] 命中（AGENTS.md 作者工作目录、
+#     REBRAND.md 自有 VPS IP、scripts/sandbox-poc 的机构镜像源、staging
+#     dream-run 报告等），若自动触发会使 CI 变红——公开前必须先扫清。
 #
 # 启用时机（仓库公开后）：
 #   1. 先跑 `bash scripts/check-user-knowledge.sh --all`，把非测试路径的
