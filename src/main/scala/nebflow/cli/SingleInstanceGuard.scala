@@ -124,6 +124,14 @@ object SingleInstanceGuard:
       finally s.close()
     }.getOrElse(false)
 
+  /** Hot-restart handover probe (SuccessorGate [s4], hot-restart 批): the live-
+    * listener check for the successor's port-entry gate. TCP connect ONLY —
+    * never binds. true = a listener accepted (foreign-preemption window — the
+    * caller must fall back to ensureSingleInstance semantics); false =
+    * refused/timeout = no live listener even while TIME_WAIT drain is pending
+    * (the real bind and its fail-open ceiling stay owned by the Ember build). */
+  def connectProbeAccepted(port: Int): Boolean = connectAccepted(port)
+
   /** HTTP probe of the occupant's /api/health. MUST bypass the JVM system
     * proxy (local proxy 7890 otherwise swallows localhost, slow-failing the
     * probe). Identification accepts EITHER the new `product:"nebflow"` marker

@@ -160,6 +160,9 @@ object LlmInterface:
       m.values.toList.traverse_(_.halt.complete(Left(new ShutdownAbort))) *> inflight.set(Map.empty)
     }
 
+  /** Hot-restart quiesce (F4 域，hot-restart 批)：在飞 LLM 请求数。空闲判定 = 0。 */
+  def inflightCount: IO[Int] = inflight.get.map(_.size)
+
   /** Synchronous variant for JVM shutdown hooks (runs on IORuntime.global). */
   def cancelAllInflightSync(): Unit =
     try cancelAllInflight().unsafeRunSync()(using cats.effect.unsafe.implicits.global)
