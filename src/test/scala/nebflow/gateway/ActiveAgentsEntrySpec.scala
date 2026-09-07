@@ -101,4 +101,19 @@ class ActiveAgentsEntrySpec extends FunSuite:
     assertEquals(json.hcursor.get[String]("status"), Right("Error(boom)"))
   }
 
+  // ── 2026-09-06 项目归属徽标：恢复路径 project 字段 ───────────
+
+  test("project badge field: default empty (non-project agents render no badge)") {
+    // Delegate/SubTask/Team/Ephemeral 等注册点不带 project → 空串（前端 falsy）
+    val json = WebSocketRoutes.activeAgentEntryJson(rec("sid-p0", AgentKind.Delegate), None)
+    assertEquals(json.hcursor.get[String]("project"), Right(""))
+  }
+
+  test("project badge field: project-domain record echoes project name") {
+    // node-*/dispatcher-* 注册点写 AgentRecord.project（NodeEngine/ProjectActor）
+    val r = rec("node-ab12cd34", AgentKind.Flow).copy(project = Some("nebflow"))
+    val json = WebSocketRoutes.activeAgentEntryJson(r, None)
+    assertEquals(json.hcursor.get[String]("project"), Right("nebflow"))
+  }
+
 end ActiveAgentsEntrySpec

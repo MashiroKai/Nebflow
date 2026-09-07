@@ -508,7 +508,8 @@ object ProjectActor:
               // #28 可观测接线：与节点同款路由包装——分发器事件注入
               // rootSessionId/nodeSessionId 后在 subagent 面板可见
               // （Processing 状态 + 工具调用过程，与 Delegate/SubTask 同标准）。
-              wsSend = NodeRunner.routeSubagentWsSend(cfg.engine.wsSendFn, rootSessionId, sessionId),
+              // project：agentStart 帧注入项目名（面板项目徽标，2026-09-06）。
+              wsSend = NodeRunner.routeSubagentWsSend(cfg.engine.wsSendFn, rootSessionId, sessionId, Some(project.name)),
               projectRoot = Some(project.workspace),
               safetyMode = "confirm-edits",
               rootSessionId = rootSessionId,
@@ -547,7 +548,10 @@ object ProjectActor:
                 rootSessionId,
                 startedAt = System.currentTimeMillis(),
                 lastActivityMs = System.currentTimeMillis(),
-                supervisorRef = Some(bridgeRef)
+                supervisorRef = Some(bridgeRef),
+                // 恢复路径项目徽标：activeAgents 快照 → activeAgentEntryJson
+                // 输出 project（分发器行刷新后仍标注项目名）。
+                project = Some(cfg.project.name)
               )
             )
           )

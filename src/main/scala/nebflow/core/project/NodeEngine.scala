@@ -835,8 +835,8 @@ class NodeEngine(
           // #28 可观测接线：节点事件必须经路由包装注入 rootSessionId（前端
           // sessionBgAgents 归桶键）+ nodeSessionId（popup/历史路由）——否则
           // 子 agent 事件无法在 subagent 面板归到根会话（与 Delegate/SubTask
-          // 同一可观测性标准）。
-          wsSend = NodeRunner.routeSubagentWsSend(wsSendFn, rootSessionId, sessionId),
+          // 同一可观测性标准）。project：agentStart 帧注入项目名（面板项目徽标）。
+          wsSend = NodeRunner.routeSubagentWsSend(wsSendFn, rootSessionId, sessionId, Some(projectName)),
           projectRoot = Some(projectRoot),
           safetyMode = "confirm-edits",
           rootSessionId = rootSessionId,
@@ -1020,7 +1020,9 @@ class NodeEngine(
             rootSessionId,
             startedAt = System.currentTimeMillis(),
             lastActivityMs = System.currentTimeMillis(),
-            supervisorRef = Some(bridgeRef)
+            supervisorRef = Some(bridgeRef),
+            // 恢复路径项目徽标（activeAgents 快照 → activeAgentEntryJson）。
+            project = Some(projectName)
           )
         )
       )
@@ -1137,7 +1139,9 @@ class NodeEngine(
           sessionName = sessionName,
           depth = 1,
           parentRef = None,
-          wsSend = NodeRunner.routeSubagentWsSend(wsSendFn, rootSessionId, sessionId),
+          // 与节点同款：project 注入 agentStart 帧（LoopNode worker/verify 会话
+          // 亦属 Project 域，面板行同标准标注项目名）。
+          wsSend = NodeRunner.routeSubagentWsSend(wsSendFn, rootSessionId, sessionId, Some(projectName)),
           projectRoot = Some(projectRoot),
           safetyMode = "confirm-edits",
           rootSessionId = rootSessionId,
@@ -1157,7 +1161,8 @@ class NodeEngine(
           sessionId, ref, AgentKind.Flow, rootSessionId,
           startedAt = System.currentTimeMillis(),
           lastActivityMs = System.currentTimeMillis(),
-          supervisorRef = Some(bridgeRef)
+          supervisorRef = Some(bridgeRef),
+          project = Some(projectName) // 恢复路径项目徽标（与节点/分发器同标准）
         ))
       )
     yield LoopSession(sessionId, ref, bridgeRef, round)

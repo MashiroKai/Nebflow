@@ -111,11 +111,14 @@ object NodeRunner:
     * - rootSessionId：前端 sessionBgAgents 的归桶键（顶层根会话 id）
     * - sessionId：缺省时注入 rootSessionId（事件路由目标视图；Delegate 同款语义）
     * - nodeSessionId：已有则保留（toJson 已盖章自身会话），否则补子会话 id
+    * - project（可选）：agentStart 帧注入项目名（Sub-Agents 面板项目徽标，
+    *   2026-09-06 作者裁定）——仅 Project 域调用方（NodeEngine/ProjectActor）传值
     */
   def routeSubagentWsSend(
     base: Json => IO[Unit],
     rootSessionId: String,
-    subagentId: String
+    subagentId: String,
+    project: Option[String] = None
   ): Json => IO[Unit] =
     json =>
       json.asObject match
@@ -126,9 +129,18 @@ object NodeRunner:
           val withSession =
             if obj.contains("sessionId") then withRoot
             else withRoot.add("sessionId", rootSessionId.asJson)
-          val finalObj =
+          val withNodeSession =
             if obj.contains("nodeSessionId") then withSession
             else withSession.add("nodeSessionId", subagentId.asJson)
+          // 项目归属（2026-09-06 作者裁定：面板 Flow 徽标旁标注项目名）——仅
+          // agentStart（面板入口帧）注入：其余流事件（textDelta/toolStart/…）
+          // 零载荷膨胀，前端也只从 agentStart 读 project。非 Project 域会话
+          // （Delegate/SubTask 走 routeWsSend）不经过本包装 → 无 project 字段
+          // → 前端不渲染徽标（恢复路径见 AgentRecord.project）。
+          val finalObj =
+            if project.isDefined && obj("type").exists(_.asString.contains("agentStart")) then
+              withNodeSession.add("project", project.get.asJson)
+            else withNodeSession
           base(Json.fromJsonObject(finalObj))
         case None => base(json)
 
