@@ -11,7 +11,7 @@ import scala.concurrent.duration.*
  * Flow Map 持久化层拆分 + 按需读取回归（2026-09-05 Flow Map 精简批）。
  *
  * 契约（内存/投递仍用全文，落盘拆两半）：
- * - flow-map.json / flow-map-archive.json 内 result 收敛为 ≤500 字符摘要 + resultFile 指针
+ * - flow-map.json / flow-map-archive/<batchId>.json（裁定④分批落盘）内 result 收敛为 ≤500 字符摘要 + resultFile 指针
  * - 全文持久化到 per-node 文件 `.nebflow/results/<nodeId>.md`
  * - 加载时水合：内存 result 回读文件全文（投递链/重投扫描/详情端点同源，NodeEngine 零改动）
  * - 存量污染自动迁移：无文件的 result 落文件 + JSON 收敛 + 首次迁移 .bak 备份（幂等不覆盖）
@@ -153,16 +153,16 @@ class FlowMapResultFilesSpec extends CatsEffectSuite:
 
   // ── 4. 归档区同款拆分 ────────────────────────────────────
 
-  test("archive split: sweepExpired → archive JSON slim + full text in file (结果全文保留语义)") {
+  test("archive split: sweepCompletedChains → 批文件 slim + full text in file (结果全文保留语义；裁定④分批落盘)") {
     val ws = freshWorkspace()
     val full = longResult
     for
       store <- FlowMapStore.open("demo-arch", ws.toString)
       _ <- store.mutate(s => s.copy(nodes = s.nodes ++ Map(
         "n-done" -> node("n-done", "done", NodeLifecycle.Completed).copy(result = Some(full), ttlExpireAt = Some(now - 1)))))
-      removed <- store.sweepExpired(now)
+      removed <- store.sweepCompletedChains(now)
       fromArchive <- store.findNode("n-done")
-      archJson = readJson(ws / ".nebflow" / "flow-map-archive.json")
+      archJson = readJson(ws / ".nebflow" / "flow-map-archive" / "chain-n-done.json")
       nDone = archJson.hcursor.downField("nodes").downField("n-done")
       jsonSummary <- IO.fromEither(nDone.downField("result").as[String])
       pointer <- IO.fromEither(nDone.downField("resultFile").as[String])
