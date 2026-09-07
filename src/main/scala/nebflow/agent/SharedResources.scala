@@ -1,7 +1,7 @@
 package nebflow.agent
 
 import cats.effect.std.Dispatcher
-import cats.effect.{IO, Ref}
+import cats.effect.{Deferred, IO, Ref}
 import nebflow.actor.{ActorRef, ActorSystem}
 import nebflow.bridge.BridgeManager
 import nebflow.core.compact.HistoryArchiver
@@ -115,5 +115,17 @@ case class SharedResources(
   /** 阶段 2b Plugins（§B.5）：plugin 级 MCP 生命周期管理器（引用计数 + 信任运行时
     * 联动）。独立于全局 mcpManager（不复用 enable/disable 面，§B.5）；默认实例
     * 同步构造（Ref.unsafe 先例）——存量测试构造零改动，节点无分配时不触碰。 */
-  pluginMcp: nebflow.core.plugin.PluginMcpManager = nebflow.core.plugin.PluginMcpManager.unsafe()
+  pluginMcp: nebflow.core.plugin.PluginMcpManager = nebflow.core.plugin.PluginMcpManager.unsafe(),
+  /** 热重启优雅关停触发闸（hot-restart 批设计 §3.3）：HotRestart 编排器在三检查点
+    * 全过后 complete 它，GatewayMain 的 waitForQuit 经 IO.race 收敛 → use 块完成 →
+    * Ember 优雅 stop → .guarantee 链 → JVM 自然退出——替代 System.exit(0) 非优雅
+    * 退（RestApiRoutes neblink 更新路径的既有缺陷）。R4 零回归：Ctrl+C / quit /
+    * `nebflow stop` 三既有退出路径零改变（race 对它们无感——任一先完成即收敛，
+    * Deferred 无人 complete 时 race 行为与裸 waitForQuit 等价）。
+    * Deferred.unsafe 同步构造（HealthMonitor.signalRef 先例）→ 既有测试构造零改动。 */
+  gatewayShutdown: Deferred[IO, Unit] = Deferred.unsafe[IO, Unit],
+  /** 热重启编排器（hot-restart 批）：GatewayMain 装配后注入；None = 未装配（测试 /
+    * 极早期 boot / 总开关关闭）。WS restart 命令经它触发 requestRestart；进度经
+    * restartStatus 帧广播（wsHub）。 */
+  hotRestart: Option[nebflow.core.hotrestart.HotRestart] = None
 )
