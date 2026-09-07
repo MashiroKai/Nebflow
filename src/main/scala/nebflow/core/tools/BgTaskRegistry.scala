@@ -1,6 +1,8 @@
 package nebflow.core.tools
 
 import cats.effect.{IO, Ref}
+import cats.syntax.all.*
+import io.circe.Json
 import io.circe.syntax.*
 import nebflow.core.NebflowLogger
 
@@ -105,6 +107,44 @@ object BgTaskRegistry:
           val (removed, kept) = m.partition(_._2.sessionId == sid)
           (kept, removed.values.toList)
         }
+
+  /** 会话级收殓（孤儿后台任务收割 D1 主钩子）：杀该会话全部 shell 进程树
+    * （前台 + 后台 runProcess 注册的 OS 进程）+ 注销 BgTaskRegistry + WS
+    * backgroundTaskUpdate(status="cancelled") 帧。
+    *
+    * 由 NodeEngine 的 failed/cancelled/zombie 终态出口与本引擎 Agent Stop 路径
+    * 共用（抽公共函数——对齐 AgentActor.killSessionShellProcesses 的既有语义，
+    * 避免两处重复；AgentActor 改调本函数）。
+    *
+    * 幂等：会话无进程/无任务时 no-op；已杀/已注销时二次调用无副作用。
+    * 防误杀边界：只做技术收殓，不裁决进程/任务归属语义（persistent/detached 的
+    * 杀否由调用方决策——本函数对在册任务一律注销）。
+    *
+    * sessionId 为 None 时 no-op（对齐 unregisterSession/killSessionProcesses）。
+    */
+  def reclaimSession(
+    sessionId: Option[String],
+    wsSend: Json => IO[Unit],
+    rootSessionId: String
+  ): IO[Unit] =
+    ShellSession.killSessionProcesses(sessionId) *>
+      unregisterSession(sessionId).flatMap { removed =>
+        removed.traverse_ { t =>
+          wsSend(
+            Json.obj(
+              "type" -> "backgroundTaskUpdate".asJson,
+              "sessionId" -> sessionId.asJson,
+              // 权威分键（2026-09-05 计数/列表分叉修复）：与 BashTool/RemoteExecutor
+              // 发射点一致携带 rootSessionId，收割帧按根会话分桶直达归属视图
+              // （前端已删 bgTaskRootFor 启发式逆向分键）。
+              "rootSessionId" -> rootSessionId.asJson,
+              "taskId" -> t.jobId.asJson,
+              "description" -> t.description.asJson,
+              "status" -> "cancelled".asJson
+            )
+          ).handleErrorWith(_ => IO.unit)
+        }
+      }
 
   /** 节点完成闸等待集查询：某会话名下的活动等待型任务 = 自有任务（sessionId
     * 相等）+ 以该会话为根的子代理任务（rootSessionId 相等，命名空间不相交：

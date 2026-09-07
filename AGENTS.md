@@ -65,6 +65,27 @@ Nebflow 是一个开源（MIT）AI Agent 编排平台。本仓为 **Scala 版**�
 - **禁止运行 `sbt run`**（默认 home + 默认端口 8080 会抢宿主实例）——需要起服务必须带隔离参数（`--home /tmp/qa-* --port 809x`）
 - 需要验证编译用 `sbt compile`，需要验证测试用 `sbt test`——不要启动服务
 
+### 隔离实例标准启动配方（P0 2026-09-06，宿主误杀事故产物）
+
+QA/e2e/冒烟需要起真实 gateway 实例时**一律用本配方**：`NEBFLOW_GATEWAY_PORT` env 为 fork-proof 主保险（被任何 exec/fork 子进程继承，即使某层 argv 解析链断裂也不会回落 8080），`--port` 为冗余 belt（仅 nebflow.Main 全局旗标解析，一旦哪层 fork 只传 argv 也有 env 兜底）。**禁止 `java nebflow.gateway.GatewayMain` 直启**——它不是用户入口，带任何参数即 fail-fast 非零退出（2026-09-06 前 `--port` 被静默忽略、端口回落 8080，正是 09:07 宿主被杀事故根因链）。
+
+```bash
+P=8095; TMP=/tmp/qa-<task>; JAR=<构建产物 nebflow-assembly-*.jar>
+# ── pre-flight：目标端口必须空（非空=换端口，禁止顶掉占用者）──
+lsof -nP -iTCP:$P -sTCP:LISTEN                                   # 必须无输出
+H8080_BEFORE=$(lsof -nP -iTCP:8080 -sTCP:LISTEN -t | sort | tr '\n' ' ')   # 宿主监听集合快照
+# ── 启动（--home 隔离数据目录；--no-browser 防弹浏览器）──
+NEBFLOW_GATEWAY_PORT=$P java --add-opens java.base/java.lang=ALL-UNNAMED \
+  -cp "$JAR" nebflow.Main --home "$TMP" --port $P --no-browser start &
+echo $! > /tmp/qa-<task>.pid     # 记下自起 PID——收尾只准 kill 它，kill 前 PID 验身（≠环境表宿主 PID）
+# ── post-flight 双断言：① 本实例 LISTEN 目标端口 ② 8080 宿主集合与启动前完全一致 ──
+lsof -nP -iTCP:$P -sTCP:LISTEN                                   # 期望：仅自起 PID
+H8080_AFTER=$(lsof -nP -iTCP:8080 -sTCP:LISTEN -t | sort | tr '\n' ' ')
+[ "$H8080_BEFORE" = "$H8080_AFTER" ] && echo OK || echo "VIOLATION: 8080 host set changed"
+```
+
+8080 集合出现任何变化 = VIOLATION：立即停手并上报，绝不继续；收尾 kill 前先 `ps -p <pid> -o command=` 验身确认是自起实例且 PID ≠ 宿主 PID。
+
 ## 作者预览与端口纪律（2026-09-05 作者令）
 - **通用规则（daemon 固定端口）**：项目开发内容一律走心跳进程（daemon）固定端口——换内容不换端口，禁止为看新改动另起新端口旁路
 - **主仓特殊形态（宿主 8080）**：主仓前端预览入口为宿主 8080（非 daemon 端口），前端改动需宿主重启生效，重启窗口由 Nebula 统一安排

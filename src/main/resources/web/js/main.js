@@ -1898,11 +1898,18 @@ function renderBgAgentDropdown() {
       : '';
     // Stuck: restrained red label with idle seconds (manage-panel semantics).
     // NO inline cancel/restart buttons — operations live in the agent popup (A13).
+    // Hard-recovery P7 (2026-09-07): the label mirrors the REAL action the
+    // backend performed (halt / hard-abort / restart / failed) — "auto-
+    // restarting" only ever shows when an actual restart was triggered.
     const stuckPart = (rowState === 'stuck' && info.stuck)
       ? '<span class="bg-task-stuck" role="alert">' + escapeHtml(
           info.stuck.action === 'restart'
             ? t('manage.stuckAutoRestart')
-            : t('manage.stuck', { secs: info.stuck.idleSecs ?? '' })
+            : info.stuck.action === 'hard-abort'
+              ? t('manage.stuckHardAbort')
+              : info.stuck.action === 'failed'
+                ? t('manage.stuckFailed')
+                : t('manage.stuck', { secs: info.stuck.idleSecs ?? '' })
         ) + '</span>'
       : '';
     const toolLabel = info.currentTool || '';

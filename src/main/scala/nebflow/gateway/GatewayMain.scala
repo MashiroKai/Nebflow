@@ -1,7 +1,7 @@
 package nebflow.gateway
 
 import cats.effect.unsafe.implicits.global
-import cats.effect.{IO, IOApp, Ref}
+import cats.effect.{ExitCode, IO, IOApp, Ref}
 import cats.syntax.all.*
 import io.circe.Json
 import io.circe.syntax.*
@@ -25,53 +25,67 @@ import org.http4s.server.Router
 
 import scala.concurrent.duration.*
 
-object GatewayMain extends IOApp.Simple:
+object GatewayMain extends IOApp:
   private val logger = NebflowLogger.forName("nebflow.gateway")
 
   private def pidFilePath = java.nio.file.Paths.get(PathUtil.dataRoot.toString, "nebflow.pid")
 
   /**
-   * Kill stale Nebflow processes before starting.
-   * Port-based detection (like OpenClaw's cleanStaleGatewayProcessesSync):
-   * uses lsof to find all processes listening on the gateway port and kills them.
-   * Falls back to PID file on Windows.
+   * Kill stale Nebflow processes before starting — but ONLY verified Nebflow
+   * processes (P0 2026-09-06 host-kill hardening). Port-based detection
+   * (lsof) plus a per-pid identity check (JDK ProcessHandle command line,
+   * ps fallback): every listener's command line must carry a Nebflow marker
+   * before it may be destroyed (see [[StaleProcessGuard]] — restart flows
+   * still clear their stale instance).
+   * A foreign occupant refuses startup loudly; it is NEVER killed.
+   * Falls back to PID file only on Windows.
    */
   private def ensureSingleInstance(port: Int): IO[Unit] =
     IO.blocking {
       val os = sys.props.getOrElse("os.name", "").toLowerCase
       if os.contains("mac") || os.contains("linux") then
-        // Port-based detection: find all PIDs listening on our port
-        try
-          val pb = new ProcessBuilder("lsof", "-i", s":$port", "-t", "-sTCP:LISTEN")
-          val output = pb.redirectErrorStream(true).start()
-          val result = new String(output.getInputStream.readAllBytes(), "UTF-8").trim
-          output.waitFor()
-          if result.nonEmpty then
-            val pids = result.split("\\s+").filter(_.matches("\\d+"))
-            if pids.nonEmpty then
-              val currentPid = ProcessHandle.current.pid
-              val stalePids = pids.filter(_.toLong != currentPid)
-              if stalePids.nonEmpty then
-                logger
-                  .warn(s"[startup] killing stale processes on port $port: ${stalePids.mkString(", ")}")
-                  .unsafeRunSync()
-                for pid <- stalePids do
-                  try ProcessHandle.of(pid.toLong).ifPresent(_.destroyForcibly())
-                  catch case _: Exception => ()
-                Thread.sleep(1000)
-          end if
-        catch case _: Exception => ()
-      end if
-      // Write current PID file
-      val pf = pidFilePath
-      java.nio.file.Files.createDirectories(pf.getParent)
-      java.nio.file.Files.write(
-        pf,
-        ProcessHandle.current.pid.toString.getBytes("UTF-8"),
-        java.nio.file.StandardOpenOption.CREATE,
-        java.nio.file.StandardOpenOption.TRUNCATE_EXISTING
-      )
+        StaleProcessGuard.classify(
+          StaleProcessGuard.portListenerPids(port),
+          ProcessHandle.current.pid
+        ) match
+          case Right(stalePids) =>
+            if stalePids.nonEmpty then
+              logger
+                .warn(
+                  s"[startup] killing verified stale nebflow processes on port $port: " +
+                    s"${stalePids.mkString(", ")}"
+                )
+                .unsafeRunSync()
+              for pid <- stalePids do
+                try ProcessHandle.of(pid).ifPresent(_.destroyForcibly())
+                catch case _: Exception => ()
+              Thread.sleep(1000)
+            writePidFile()
+          case Left(foreign) =>
+            // P0 2026-09-06 (09:07 incident class): a NON-nebflow process
+            // holds the port. NEVER destroy it — refuse startup loudly; the
+            // boot dies here instead of killing someone else's process.
+            val detail =
+              s"[startup] REFUSING to start: port $port is held by a non-nebflow " +
+                s"process (${foreign.detail}) — stop it or pick another port " +
+                "(--port / NEBFLOW_GATEWAY_PORT)"
+            logger.error(detail).unsafeRunSync()
+            throw new IllegalStateException(detail)
+          end match
+      else writePidFile()
     }
+
+  /** Write the current PID file (unchanged behavior of the pre-hardening tail
+    * of ensureSingleInstance; reached only when startup is NOT refused). */
+  private def writePidFile(): Unit =
+    val pf = pidFilePath
+    java.nio.file.Files.createDirectories(pf.getParent)
+    java.nio.file.Files.write(
+      pf,
+      ProcessHandle.current.pid.toString.getBytes("UTF-8"),
+      java.nio.file.StandardOpenOption.CREATE,
+      java.nio.file.StandardOpenOption.TRUNCATE_EXISTING
+    )
 
   private def openBrowser(url: String): IO[Unit] = IO.blocking {
     val os = sys.props.getOrElse("os.name", "").toLowerCase
@@ -198,7 +212,30 @@ object GatewayMain extends IOApp.Simple:
     )
   )
 
-  def run: IO[Unit] =
+  /** P0 2026-09-06 (09:07 host-kill incident): GatewayMain never parsed argv —
+    * `java nebflow.gateway.GatewayMain --port 8097` silently DROPPED the flag,
+    * the port fell back to the default 8080, and the startup port-clear then
+    * hit the live host instance. Any argument now fails fast and loud;
+    * GatewayMain is not the user entry point. Main.bootGateway boots the real
+    * gateway via run(Nil).
+    */
+  def run(args: List[String]): IO[ExitCode] =
+    args match
+      case Nil =>
+        runGateway.as(ExitCode.Success)
+      case _ =>
+        IO.println(
+          "ERROR: nebflow.gateway.GatewayMain does not accept arguments " +
+            "(before 2026-09-06 they were silently ignored)."
+        ) *>
+          IO.println(
+            "GatewayMain is not the user entry point. " +
+              "Use: nebflow.Main --home <dir> --port <port> start"
+          ) *>
+          IO.pure(ExitCode.Error)
+  end run
+
+  private def runGateway: IO[Unit] =
     // Team #11 ④: log which Windows toolchain pieces (Git Bash / rg)
     // resolved at boot — missing pieces must be loud up front, not discovered
     // later inside a failing tool call. No-op off Windows.

@@ -563,12 +563,12 @@ class TaskStuckWatcherSpec extends CatsEffectSuite:
       agentCmds <- agentReceived.get
       bridgeEvts <- bridgeReceived.get
     yield
-      // 广播：action=restart（前端可见「卡死，自动恢复中」）
+      // 广播：action=halt（L1 软恢复——真实动作是 halt 在飞 LLM，尚未 restart；P7 诚实帧）
       assert(wsEvents.size == 1, s"expected one taskStuck broadcast, got $wsEvents")
       val ev = wsEvents.head
       assertEquals(ev.hcursor.get[String]("type").toOption, Some("taskStuck"))
       assertEquals(ev.hcursor.get[String]("kind").toOption, Some("Flow"))
-      assertEquals(ev.hcursor.get[String]("action").toOption, Some("restart"))
+      assertEquals(ev.hcursor.get[String]("action").toOption, Some("halt"))
       assertEquals(ev.hcursor.get[String]("sessionId").toOption, Some("dispatcher-ab12cd34"))
       // 第 1 次扫描即硬取消（flow 会话无 supervisor 重启预算可消耗）
       aborted match
@@ -580,7 +580,7 @@ class TaskStuckWatcherSpec extends CatsEffectSuite:
       assert(bridgeEvts.isEmpty, s"bridge must not receive events before giveUp, got $bridgeEvts")
   }
 
-  test("Project flow 会话连续 4 轮仍卡 → giveUp：桥收 Cancelled + 清 stopCounts") {
+  test("Project flow 会话连续分级接管 → L3 桥 Cancelled 释放；resume 失败计数保留 → L4 failed 可达") {
     val system = ActorSystem("test-flow-giveup")
     for
       _ <- IO(system)
@@ -595,23 +595,24 @@ class TaskStuckWatcherSpec extends CatsEffectSuite:
       stuck <- stuckProjectFlow(system, "node-aaaa1111", bridgeRef, threshold)
       _ <- resources.agentRegistry.set(Map("node-aaaa1111" -> stuck))
       stopCounts <- cats.effect.Ref.of[IO, Map[String, Int]](Map.empty)
-      _ <- TaskStuckWatcher.scan(resources, wsHub, threshold, stopCounts) // 1
-      _ <- TaskStuckWatcher.scan(resources, wsHub, threshold, stopCounts) // 2
-      _ <- TaskStuckWatcher.scan(resources, wsHub, threshold, stopCounts) // 3
-      _ <- TaskStuckWatcher.scan(resources, wsHub, threshold, stopCounts) // 4 ≥ StopAttempts+2 → giveUp
+      _ <- TaskStuckWatcher.scan(resources, wsHub, threshold, stopCounts) // 1 → L1 halt
+      _ <- TaskStuckWatcher.scan(resources, wsHub, threshold, stopCounts) // 2 → L2 hard-abort
+      _ <- TaskStuckWatcher.scan(resources, wsHub, threshold, stopCounts) // 3 → L3 restart（桥 Cancelled 释放）
+      _ <- TaskStuckWatcher.scan(resources, wsHub, threshold, stopCounts) // 4 → L4 failed（resume 失败计数保留）
       _ <- IO.sleep(200.millis)
       bridgeEvts <- bridgeReceived.get
       agentCmds <- agentReceived.get
       counts <- stopCounts.get
     yield
       val cancelled = bridgeEvts.collect { case c: AgentEvent.Cancelled => c }
-      assertEquals(cancelled.size, 1, s"bridge must receive exactly one Cancelled, got: $bridgeEvts")
+      assertEquals(cancelled.size, 1, s"bridge must receive exactly one Cancelled (L3 release), got: $bridgeEvts")
       assertEquals(cancelled.head.sessionId, "node-aaaa1111")
       assert(cancelled.head.reason.contains("stuck"), s"reason must carry stuck context: ${cancelled.head.reason}")
       // 全程零 raw Stop（即便 giveUp 也走桥 Cancelled）
       assert(agentCmds.isEmpty, s"flow session must never receive raw Stop, got $agentCmds")
-      // 双保险清计数已执行
-      assert(!counts.contains("node-aaaa1111"), s"stopCounts must be cleared after giveUp, got: $counts")
+      // L3 resume 失败（无 project runtime）→ 计数保留 → L4 "failed" 拍可达
+      // （响亮失败，不因清零而静默掩盖迟钝恢复）。
+      assert(counts.contains("node-aaaa1111"), s"stopCounts must persist after failed resume so L4 failed is reachable, got: $counts")
   }
 
   test("旧 flow 系统 dag- 会话（无 supervisorRef）维持 notice-only——不硬取消、不发 Cancelled") {
