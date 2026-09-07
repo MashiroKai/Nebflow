@@ -1619,7 +1619,7 @@ onMessage('historyPage', (msg, view) => {
             label.classList.toggle('expanded', !visible);
           };
         }
-        content.innerHTML = renderMarkdownWithMath(activeView.stream.thinkingText) + (!done ? '<span class="cursor"></span>' : '');
+        content.innerHTML = renderMarkdownWithMath(activeView.stream.thinkingText, true, { cache: done }) + (!done ? '<span class="cursor"></span>' : '');
         bubble.appendChild(label);
         bubble.appendChild(content);
         row.appendChild(bubble);
@@ -1635,7 +1635,7 @@ onMessage('historyPage', (msg, view) => {
         row.className = 'row ai';
         activeView.stream.currentAiBubble = document.createElement('div');
         activeView.stream.currentAiBubble.className = 'bubble ai';
-        activeView.stream.currentAiBubble.innerHTML = renderMarkdownWithMath(activeView.stream.aiText) + (isStillBusy ? '<span class="cursor"></span>' : '');
+        activeView.stream.currentAiBubble.innerHTML = renderMarkdownWithMath(activeView.stream.aiText, true, { cache: !isStillBusy }) + (isStillBusy ? '<span class="cursor"></span>' : '');
         row.appendChild(activeView.stream.currentAiBubble);
         chat.appendChild(row);
         if (!isStillBusy) {
@@ -1656,7 +1656,7 @@ onMessage('historyPage', (msg, view) => {
         label.className = 'ask-label';
         label.textContent = t('chat.askLabel');
         const content = document.createElement('div');
-        content.innerHTML = renderMarkdownWithMath(activeView.stream.askAnswerText) + '<span class="cursor"></span>';
+        content.innerHTML = renderMarkdownWithMath(activeView.stream.askAnswerText, true, { cache: false }) + '<span class="cursor"></span>';
         activeView.stream.currentAskBubble.appendChild(label);
         activeView.stream.currentAskBubble.appendChild(content);
         row.appendChild(activeView.stream.currentAskBubble);

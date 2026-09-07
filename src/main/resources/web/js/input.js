@@ -728,8 +728,11 @@ export function send() {
 let queueCounter = 0;
 const LS_QUEUE_KEY = key('message_queue');
 
-/** Persist message queue to localStorage so it survives browser refresh. */
-function persistQueue() {
+/** Persist message queue to localStorage so it survives browser refresh.
+ *  Exported for sidebar.js deleteSession — a deleted session's queue entries
+ *  must also leave the persisted copy, or a refresh resurrects them (D2,
+ *  mem-diag 20260907). */
+export function persistQueue() {
   try {
     // Strip non-serializable fields (preview images are large; keep metadata only)
     const serializable = {};

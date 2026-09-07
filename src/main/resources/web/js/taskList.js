@@ -123,6 +123,13 @@ async function refreshNodeSnapshot() {
     }
     if (next.size) nodeCache.set(name, next); else nodeCache.delete(name);
   }
+  // 项目删除收敛（D5，mem-diag 20260907）：快照项目清单来自 fetchProjects()
+  // 全集——不在清单里的项目 = 已删除（后端无 projectRemoved 帧），其缓存条目
+  // 随本次对账移除（此前只增不减，删除的项目永久滞留内存）。
+  const seenProjects = new Set(results.map(([name]) => name));
+  for (const name of Array.from(nodeCache.keys())) {
+    if (!seenProjects.has(name)) nodeCache.delete(name);
+  }
   rerenderWithNodes();
 }
 

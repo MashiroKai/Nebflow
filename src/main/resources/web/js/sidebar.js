@@ -15,7 +15,7 @@ import { restoreFromStorage, loadMsgs } from './persistence.js';
 import { renderTaskList } from './taskList.js';
 import { clearMemoryCache } from './memory.js';
 import { chatViews, setActiveView, activeView } from './chatView.js';
-import { cleanupCardIframes } from './cardRegistry.js';
+import { cleanupCardIframes, resetCardAccumulator } from './cardRegistry.js';
 import { t, getLocale, setLocale, getAvailableLocales } from './i18n.js';
 import { fetchNeblinkStatus, neblinkSettingsHTML, bindNeblinkEvents, avatarViewState, noteAvatarFailure } from './neblink.js';
 import { notifyManualUpdateCheck } from './updateCheck.js';
@@ -117,6 +117,9 @@ export function switchToSession(sessionId) {
   resetChatForActiveSession();
   restoreInputDraft(sessionId);
   clearMemoryCache();
+  // Card iframes die with the previous session's chat DOM — their pending
+  // interaction accumulations are unreachable orphans (D5, mem-diag 20260907).
+  resetCardAccumulator();
 
   // Restore folder context: highlight the session's parent folder
   const session = (state.sessions || []).find(s => s.id === sessionId);
@@ -2375,7 +2378,7 @@ export function resetChatForActiveSession() {
           label.classList.toggle('expanded', !visible);
         };
       }
-      content.innerHTML = renderMarkdownWithMath(pv.stream.thinkingText) + (!done ? '<span class="cursor"></span>' : '');
+      content.innerHTML = renderMarkdownWithMath(pv.stream.thinkingText, true, { cache: done }) + (!done ? '<span class="cursor"></span>' : '');
       bubble.appendChild(label);
       bubble.appendChild(content);
       row.appendChild(bubble);
@@ -2389,7 +2392,7 @@ export function resetChatForActiveSession() {
       row.className = 'row ai';
       pv.stream.currentAiBubble = document.createElement('div');
       pv.stream.currentAiBubble.className = 'bubble ai';
-      pv.stream.currentAiBubble.innerHTML = renderMarkdownWithMath(pv.stream.aiText) + (isStreaming ? '<span class="cursor"></span>' : '');
+      pv.stream.currentAiBubble.innerHTML = renderMarkdownWithMath(pv.stream.aiText, true, { cache: !isStreaming }) + (isStreaming ? '<span class="cursor"></span>' : '');
       row.appendChild(pv.stream.currentAiBubble);
       chat.appendChild(row);
       if (!isStreaming) {
@@ -2446,10 +2449,32 @@ export function deleteSession(sessionId) {
   delete state.sessionThinkingBuffers[sessionId];
   delete state.sessionBgTasks[sessionId];
   delete state.sessionBgAgents[sessionId];
-  delete state.sessionAgentMap[sessionId];
   delete state.sessionModelInfo[sessionId];
   // Hidden bg-agent popup views hold full DOM containers keyed by sessionId.
   import('./bgAgentPopup.js').then(({ removeStepView }) => removeStepView(sessionId)).catch(() => {});
+  // D2 (mem-diagnosis 20260907): purge the remaining session-keyed state —
+  // messageQueue holds queued-message entries, pendingRestore/turn*/safetyModes
+  // hold per-session buffers/flags, and agentStateTimers holds a live debounce
+  // timer for the session's agent — all otherwise linger for the app lifetime.
+  // (Capture the agent name BEFORE its map entry goes.)
+  const agentName = state.sessionAgentMap[sessionId];
+  delete state.sessionAgentMap[sessionId];
+  if (agentName && state.agentStateTimers[agentName]) {
+    clearTimeout(state.agentStateTimers[agentName]);
+    delete state.agentStateTimers[agentName];
+  }
+  delete state.messageQueue[sessionId];
+  delete state.pendingRestore[sessionId];
+  delete state.turnStartTimes[sessionId];
+  delete state.turnExpecting[sessionId];
+  state.frozenSessions.delete(sessionId);
+  state.answeredPermissions.delete(sessionId);
+  delete state.safetyModes[sessionId];
+  // Card accumulator entries for the deleted session's cards are orphans too.
+  resetCardAccumulator();
+  // Sync the persisted queue copy — otherwise the next page reload resurrects
+  // the deleted session's queued messages from localStorage (restoreQueue).
+  import('./input.js').then(({ persistQueue }) => persistQueue()).catch(() => {});
   persistUnread();
   persistMarkedUnread();
   persistPinned();
