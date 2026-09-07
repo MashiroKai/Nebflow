@@ -26,6 +26,10 @@ import scala.concurrent.duration.*
  * - FR2 无实际变更 → 不重激活（failed 保持终态）。
  * - FR3 终态边界不回退：completed/cancelled 不可重激活（actualChange 也不复活）。
  * - FR4 NodeMessage 对 failed 终态仍拒收（NODE_TERMINAL_NO_MESSAGE 不回退）。
+ * - FR5 out-absent quirk 锁定（actualChange quirk 修，2026-09-07）：编辑未传 out
+ *   且其余字段原值重发 → parseOut(None)=None 不得与 out=Some 误判不等 → no-op
+ *   不重激活（修前恒判 actualChange=true → 意外重激活）。
+ * - FR6 反向锁定：显式传 out 且值变更 → 仍算 actualChange → 重激活（防修过头）。
  *
  * 失败驱动=死会话僵尸收敛（settleStaleRunningNodes → autoFailDeadRunning →
  * deliverFailed，NodeDeadSessionAutoReapSpec 同款）——确定性，不依赖 LLM 报错路径。
@@ -151,10 +155,12 @@ class NodeFailedReactivateSpec extends CatsEffectSuite:
       .handleError(_ => Nil)
 
   /** 种一个死会话 running 节点（settleStaleRunningNodes 驱动自动 failed）。 */
-  private def seedZombie(rt: ProjectRuntime, id: String, nodeName: String, task: String, out: Option[String]): IO[Unit] =
+  private def seedZombie(rt: ProjectRuntime, id: String, nodeName: String, task: String, out: Option[String],
+                         description: Option[String] = None): IO[Unit] =
     rt.store.mutate { s =>
       s.copy(nodes = s.nodes + (id -> NodeDef(
         id = id, name = nodeName, agent = "general", task = Some(task), out = out,
+        description = description,
         status = NodeLifecycle.Running,
         startedAt = Some(System.currentTimeMillis() - 3_600_000),
         createdAt = System.currentTimeMillis() - 3_600_000)))
@@ -219,8 +225,8 @@ class NodeFailedReactivateSpec extends CatsEffectSuite:
       _ <- waitStatus(rt, "fr2-node", Set(NodeLifecycle.Failed))
       _ <- waitUntil(20.seconds)(byName(rt, "fr2-node").map(_.notifySentAt.isDefined))
       // 同 task 原文重发 + 同 out 显式回传 → 全维度无差异 → actualChange=false → 不
-      // 重激活。（注：out **未传**时 parseOut(None)=None 与 node.out=Some 恒不等，
-      // actualChange 恒真——20260902 批起 blocked 路径既有行为，本批不动，报告已记。）
+      // 重激活。（out **未传**的形态见 FR5——actualChange quirk 修后未传 out 不再
+      // 误判变更；本测试保留显式回传同值 out，双维度锁定 no-op 语义。）
       editRes <- nodeEdit(nodeInput("fr2", "fr2-node",
         "task" -> Json.fromString("same-task"),
         "out" -> Json.fromString("Nebula")), ctx)
@@ -292,6 +298,77 @@ class NodeFailedReactivateSpec extends CatsEffectSuite:
       assert(refused.isLeft, "NodeMessage to failed node must be REFUSED")
       assert(refused.left.exists(_.contains("NODE_TERMINAL_NO_MESSAGE")),
         s"refusal must carry NODE_TERMINAL_NO_MESSAGE, got: $refused")
+  }
+
+  // ── FR5：未传 out 的终态编辑 → no-op（out-absent quirk 锁定）─────────
+
+  test("FR5: edit failed node WITHOUT out (identical task/description) → stays failed (out-absent is not a change)") {
+    val ws = tempRoot / "ws-fr5"
+    os.makeDir.all(ws)
+    val system = ActorSystem(s"fr5-${scala.util.Random.nextInt(100000)}")
+    val llm = FuncLlm(text => IO.pure("ok"))
+    for
+      res <- mkResources(system, tempRoot, llm.handle)
+      rt <- mountReal("fr5", ws, system, res)
+      ctx = mkCtx(res, system, ws.toString)
+      _ <- seedZombie(rt, "n-fr5", "fr5-node", "fr5-task", Some("Nebula"), description = Some("fr5-desc"))
+      _ <- rt.engine.settleStaleRunningNodes()
+      _ <- waitStatus(rt, "fr5-node", Set(NodeLifecycle.Failed))
+      _ <- waitUntil(20.seconds)(byName(rt, "fr5-node").map(_.notifySentAt.isDefined))
+      // out 不传 + task/description 原值重发 → 全维度无差异 → actualChange=false。
+      // quirk 修前：parseOut(None)=None 与 out=Some("Nebula") 恒不等 → 恒判变更
+      // → 意外重激活（违背「No-op if nothing actually changed」）。
+      editRes <- nodeEdit(nodeInput("fr5", "fr5-node",
+        "task" -> Json.fromString("fr5-task"),
+        "description" -> Json.fromString("fr5-desc")), ctx)
+      _ <- IO.sleep(300.millis) // 无重激活即无异步启动——给竞态留确定性窗口后复查
+      after <- byName(rt, "fr5-node")
+      audit <- readAudit(ws)
+      _ <- system.stopAll.handleErrorWith(_ => IO.unit)
+    yield
+      assertEquals(after.status, NodeLifecycle.Failed, "out-absent edit with no value change → stays failed (no-op)")
+      assert(!editRes.exists(_.contains("reactivated")), s"no reactivation reported, got: $editRes")
+      assert(!audit.exists((t, id) => t == "reactivated" && id == "n-fr5"), "no reactivated audit event")
+  }
+
+  // ── FR6：显式传 out 且值变更 → 仍算变更 → 重激活（反向锁定）──────────
+
+  test("FR6: edit failed node changing ONLY out (explicit, new value) → reactivates and reruns") {
+    val ws = tempRoot / "ws-fr6"
+    os.makeDir.all(ws)
+    val system = ActorSystem(s"fr6-${scala.util.Random.nextInt(100000)}")
+    val llm = FuncLlm(text =>
+      if text.contains("任务分发器") then IO.pure("ok")
+      else if text.contains("fr6-task") then IO.pure("fr6-redone")
+      else IO.pure("ok"))
+    for
+      res <- mkResources(system, tempRoot, llm.handle)
+      rt <- mountReal("fr6", ws, system, res)
+      ctx = mkCtx(res, system, ws.toString)
+      now = System.currentTimeMillis()
+      // 下游 sink（wiring，带 task）：out 改指它 → 重跑完成 barrier 归零后被 start，
+      // FuncLlm 兜底 "ok" 承接 → 链路确定性收口（out=Nebula 终投）。
+      _ <- rt.store.mutate { s =>
+        s.copy(nodes = s.nodes + ("n-fr6sink" -> NodeDef(id = "n-fr6sink", name = "fr6-sink",
+          agent = "general", task = Some("fr6 sink task"), out = Some("Nebula"),
+          status = NodeLifecycle.Wiring, createdAt = now))) }.void
+      _ <- seedZombie(rt, "n-fr6", "fr6-node", "fr6-task", Some("Nebula"))
+      _ <- rt.engine.settleStaleRunningNodes()
+      _ <- waitStatus(rt, "fr6-node", Set(NodeLifecycle.Failed))
+      _ <- waitUntil(20.seconds)(byName(rt, "fr6-node").map(_.notifySentAt.isDefined))
+      // 仅改 out（显式传 + 值变更 Nebula → n-fr6sink）→ actualChange=true → 重激活
+      editRes <- nodeEdit(nodeInput("fr6", "fr6-node", "out" -> Json.fromString("n-fr6sink")), ctx)
+      _ <- waitStatus(rt, "fr6-node", Set(NodeLifecycle.Completed))
+      after <- byName(rt, "fr6-node")
+      _ <- waitStatus(rt, "fr6-sink", Set(NodeLifecycle.Completed))
+      audit <- readAudit(ws)
+      _ <- system.stopAll.handleErrorWith(_ => IO.unit)
+    yield
+      assert(editRes.exists(_.contains("reactivated from failed")), s"out-only change must reactivate, got: $editRes")
+      assertEquals(after.status, NodeLifecycle.Completed, "reactivated node reruns to completion")
+      assertEquals(after.out, Some("n-fr6sink"), "out rewired to the new target")
+      assertEquals(after.result, Some("fr6-redone"), "rerun keeps the original task (out-only edit)")
+      assert(audit.exists((t, id) => t == "reactivated" && id == "n-fr6"), "reactivated audit event must exist")
   }
 
 end NodeFailedReactivateSpec

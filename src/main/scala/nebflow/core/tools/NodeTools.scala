@@ -1005,7 +1005,13 @@ object NodeEditTool extends Tool:
                           val descriptionChanged = description.exists(d => d.trim != node.description.getOrElse(""))
                           val depsChanged = depsProvided && newDeps != node.deps
                           val loopChanged = loopFlag.provided && loopFlag.config != node.loop
-                          val actualChange = taskChanged || descriptionChanged || newOut != node.out || adds.nonEmpty || depsChanged || loopChanged
+                          // out 未传 ≠ 变更（actualChange quirk 修，2026-09-07）：
+                          // parseOut(None)=None 与 node.out=Some 恒不等——裸比较会让
+                          // 终态节点「未传 out 的编辑」恒判 actualChange=true → 意外重
+                          // 激活，违背描述「No-op if nothing actually changed」。与
+                          // 上方 setOutIO / finalOut 同款 outJson.isDefined 守卫。
+                          val outChanged = outJson.isDefined && newOut != node.out
+                          val actualChange = taskChanged || descriptionChanged || outChanged || adds.nonEmpty || depsChanged || loopChanged
                           val reactivate = (node.status == NodeLifecycle.Blocked || node.status == NodeLifecycle.Failed) && actualChange
                           val appliedTask = task.orElse(node.task)
                           val appliedDeps = if depsProvided then newDeps else node.deps
