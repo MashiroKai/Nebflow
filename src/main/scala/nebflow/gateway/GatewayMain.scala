@@ -464,9 +464,10 @@ object GatewayMain extends IOApp.Simple:
                                       else IO.unit
                                     }
                                   else IO.unit
-                                // #28 阶段 0：Project Flow Map 终态节点 TTL 扫描
-                                // （24h 显示消失 → 移归档 + WS nodeRemoved；Node
-                                // 运行本身不设超时）。周期给所有已挂载 ProjectActor
+                                // #28 阶段 0：Project Flow Map **completed** 节点 TTL 扫描
+                                // （24h 显示消失 → 移归档 + WS nodeRemoved；failed/cancelled
+                                // 无 TTL 不过期——2026-09-07 裁定，死亡现场保留待上层裁决；
+                                // Node 运行本身不设超时）。周期给所有已挂载 ProjectActor
                                 // 发 TtlTick；无项目时空转。
                                 val projectTtlScanner: IO[Unit] =
                                   nebflow.core.project.ProjectActor.ttlScanner(30.seconds).start.void

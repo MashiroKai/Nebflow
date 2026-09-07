@@ -126,8 +126,9 @@ class NodeEngine(
 
   /** 死会话 running 节点收殓（清场 c-③，20260903 03:04 清场误杀事故复盘）：
     * status=running 但无在飞执行 fiber（running 表无此节点——会话死于传输中断 /
-    * 实例重启后内存态清空）→ 直接终态化 cancelled + 显示 TTL（cancelNode 全链）
-    * + 审计事件，修复 NodeCancel「cancel signal sent」但状态不落终态的假成功。
+    * 实例重启后内存态清空）→ 直接终态化 cancelled（cancelNode 全链；2026-09-07
+    * 裁定：无 TTL 强制清，死亡现场保留主图待上层裁决）+ 审计事件，修复
+    * NodeCancel「cancel signal sent」但状态不落终态的假成功。
     * 误杀防护（硬约束）：有在飞 fiber = 活会话（取消信号可达）→ Left 拒绝，
     * 本方法绝不触碰活会话节点。幂等：非 running → Left（不重复终态化）。 */
   def reapStaleRunning(nodeId: String): IO[Either[String, String]] =
@@ -206,7 +207,9 @@ class NodeEngine(
               status = NodeLifecycle.Failed,
               result = Some(err),
               completedAt = Some(now),
-              ttlExpireAt = Some(now + NodeEngine.TtlDisplayMs))))
+              // 2026-09-07 作者裁定：failed/cancelled 无 TTL 强制清（同 blocked 既
+              // 有语义）——死亡现场保留主图待上层裁决取消/重跑，不静默消失。
+              ttlExpireAt = None)))
           case _ => st // 已终态/消失/状态已变 → 拒写（R2 竞态纪律）
       }
       _ <- s.nodes.get(nodeId) match
@@ -1806,7 +1809,8 @@ class NodeEngine(
               status = NodeLifecycle.Failed,
               result = Some(err),
               completedAt = Some(now),
-              ttlExpireAt = Some(now + NodeEngine.TtlDisplayMs))))
+              // 2026-09-07 作者裁定：failed 无 TTL 强制清——死亡现场保留待上层裁决。
+              ttlExpireAt = None)))
           case None => st
       }
       _ <- s.nodes.get(nodeId) match
@@ -1828,7 +1832,8 @@ class NodeEngine(
             st.copy(nodes = st.nodes.updated(nodeId, fresh.copy(
               status = NodeLifecycle.Cancelled,
               completedAt = Some(now),
-              ttlExpireAt = Some(now + NodeEngine.TtlDisplayMs))))
+              // 2026-09-07 作者裁定：cancelled 无 TTL 强制清——保留主图待上层处置。
+              ttlExpireAt = None)))
           case None => st
       }
       _ <- s.nodes.get(nodeId) match
@@ -2143,7 +2148,9 @@ class NodeEngine(
   private case class FailOutcome(message: String)
 
 object NodeEngine:
-  /** 终态节点显示 TTL（24h——2026-09-02 作者裁定；测试档可缩短——ProjectActor 注入）。 */
+  /** completed 节点显示 TTL（24h——2026-09-02 作者裁定；测试档可缩短——ProjectActor
+    * 注入）。2026-09-07 裁定收紧：仅 completed 带 TTL 到期自动归档；failed/cancelled
+    * （与 blocked 同）ttlExpireAt=None 不过期——死亡现场保留主图待上层裁决。 */
   val TtlDisplayMs: Long = 24 * 60 * 60 * 1000L
 
   /** startNode 翻转事务的结局（trigger-chain-fix §6.1 CAS 守卫）：Done=本 fiber

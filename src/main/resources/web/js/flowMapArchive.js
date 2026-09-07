@@ -1,10 +1,14 @@
 // flowMapArchive.js — Flow Map 整链归档（v3，规格 20260903_flowmap-archive-panel-spec.md）。
 //
-// 语义（作者 2026-09-03 20:26 五条反馈，规格 §3/§4/§5/§18）：
+// 语义（作者 2026-09-03 20:26 五条反馈，规格 §3/§4/§5/§18；① 于 2026-09-07
+//   「重启死亡现场可见性」批收紧——作者裁定：未完成的不该被归档）：
 //   ① 归档单位 = 任务链：同一次任务触发的节点按 createdAt 派发批次窗口（相邻间隔
-//      ≤120s）聚簇成链；链内全部成员到达终态（completed/failed/cancelled）→ 整链
-//      一起进归档（主图同帧集体淡出由 flowMapTab 的增量管线执行，本模块提供链判定
-//      与 newly-completed 检测）；链未齐时终态成员保留主图（终态色卡）。
+//      ≤120s）聚簇成链；链内全部成员 **completed** → 整链一起进归档（主图同帧集体
+//      淡出由 flowMapTab 的增量管线执行，本模块提供链判定与 newly-completed 检测）。
+//      含 failed/cancelled 成员的链**永不自动归档**——终态色卡保留主图（死亡现场
+//      可见性：重启/看门狗收敛的 failed/cancelled 必须留在图上供承接），24h 后由
+//      后端 TTL sweep + nodeRemoved 既有机制清出主图；链未齐时终态成员同样保留
+//      主图（终态色卡）。
 //   ② 归档面板 = 画布内右上角悬浮钮（元素选择器 .canvas-ref-select 同语言）+ mailbox
 //      式链条目（倒序/独占展开/成员行/hover 联动/Esc 分层关闭/焦点归还）。
 //   ③ 右侧详情面板（z 70 > 面板 60）：主图点节点与链内点成员两路触发；宽视口与归档
@@ -236,6 +240,8 @@ function clusterBatches(members) {
 /**
  * 链派生 + 归档判定（§7.2 单点函数；P2 triggerId 落地后仅此处换精确口径）。
  * 返回本次新完成（含重建）的链——调用方据此驱动整链同帧退场动画。
+ * 2026-09-07 收紧：归档资格 = 批内**全 completed**；含 failed/cancelled 的链转入
+ * buffer（保留主图待后端 24h TTL 清理），永不进归档面板——重启死亡场景留现场。
  * @param {string} project
  * @param {ChainMember[]=} fmNodes 快照全量节点（活动 + 终态）
  * @returns {Chain[]}
@@ -263,10 +269,13 @@ export function refreshChains(project, fmNodes) {
   const newChains = [];
   s.chainOf = new Map();
   for (const b of batches) {
-    const allTerm = b.members.every((m) => TERMINAL_STATUSES.has(String(m.status || '')));
-    if (!allTerm) {
+    // 归档资格（2026-09-07 收紧）：全成员 completed 才归档；含 failed/cancelled
+    // 的链不自动归档（保留主图 = 死亡现场可见性），链未齐同前——两种「不归档」
+    // 都落 buffer（≥1 终态成员时），终态色卡保留主图。
+    const allCompleted = b.members.every((m) => String(m.status || '') === 'completed');
+    if (!allCompleted) {
       if (b.members.some((m) => TERMINAL_STATUSES.has(String(m.status || '')))) {
-        buffers.push(buildChain(b.id, b.members)); // 链未齐（buffer，活数据派生）
+        buffers.push(buildChain(b.id, b.members)); // 不归档链（链未齐/含异常终态）
       }
       continue;
     }
@@ -303,17 +312,18 @@ export function refreshChains(project, fmNodes) {
 /**
  * 任务列表主图同源过滤（2026-09-05 作者裁定 12:59）：纯派生、零 store 副作用——
  * 给定单项目节点全集，返回「整链已归档」节点 id 集。批次判定与 refreshChains
- * 共用 clusterBatches 单点：批内全终态（TERMINAL_STATUSES）→ 整链隐藏（含该链
- * 已完成成员）；链内任一非终态（含 blocked/held/wiring/pending/running）→ 整链
- * 保留。与主图可见判定（isVisibleNode）的差异仅 store 记忆面（主图冻结已归档链
- * 可跨快照保留，本函数只按当前全集派生）——节点全集相同时结果一致。
+ * 共用 clusterBatches 单点：批内**全 completed** → 整链隐藏；含 failed/cancelled
+ * 或任一非终态（含 blocked/held/wiring/pending/running）→ 整链保留（2026-09-07
+ * 收紧：异常终态链不再自动归档——死亡现场在主图/任务列表保持可见）。与主图可
+ * 见判定（isVisibleNode）的差异仅 store 记忆面（主图冻结已归档链可跨快照保留，
+ * 本函数只按当前全集派生）——节点全集相同时结果一致。
  * @param {ChainMember[]=} fmNodes 快照全量节点（活动 + 终态，单项目）
  * @returns {Set<string>} 已归档（应隐藏）节点 id 集
  */
 export function deriveArchivedIds(fmNodes) {
   const archived = new Set();
   for (const b of clusterBatches(Array.from(fmNodes || []))) {
-    if (b.members.every((m) => TERMINAL_STATUSES.has(String(m.status || '')))) {
+    if (b.members.every((m) => String(m.status || '') === 'completed')) {
       for (const m of b.members) archived.add(m.id);
     }
   }
@@ -511,6 +521,10 @@ function updateBadge(/** @type {LayerCtx} */ ctx, /** @type {boolean} */ pulse) 
 /** @param {ChainMember} m @returns {string} 成员行（§5.5：状态/名称/元数据/时间/›） */
 function memberHtml(m) {
   const st = String(m.status || '');
+  // 状态词（2026-09-07 状态保真批）：glyph 旁恒带状态文本——cancelled 的减号
+  // glyph 单看是「-」无从分辨，未知状态原渲染空白；文本 = statusLabel（状态原文
+  // 兜底），空状态落「无」。「-」/空白不再可能出现。
+  const stWord = esc(statusLabel(st) || t('flowmap.detail.none'));
   // 载荷收敛（2026-09-05）：预览行 = description（回退 taskPreview）——载荷无 result
   const preview = String(m.description || m.taskPreview || '').slice(0, 60);
   // Agent 退役（node-flowmap-slim）：元数据槽 = preset 常显（未配置 → 空态「默认预设」），
@@ -523,6 +537,7 @@ function memberHtml(m) {
     <div class="fm-member" role="button" tabindex="0" data-node="${esc(m.id)}" title="${esc(String(m.name || ''))} · ${esc(t('flowmap.archive.openMemberHint'))}">
       <div class="fm-member-row">
         <span class="fm-entry-st ${statusClass(st)}">${ST_SVG[/** @type {'completed'} */ (st)] || ''}</span>
+        <span class="fm-entry-stw ${statusClass(st)}">${stWord}</span>
         <span class="fm-member-name">${esc(String(m.name || m.id))}</span>
         <span class="fm-member-meta" title="${esc(metaText)}">${esc(metaText)}</span>
         <span class="fm-member-time">${esc(fmtTime(m.completedAt))}</span>
@@ -546,6 +561,7 @@ function entryHtml(c) {
        aria-expanded="false" data-testid="archive-entry" title="${esc(c.title)}">
     <div class="fm-entry-row1">
       <span class="fm-entry-st ${statusClass(c.status)}">${ST_SVG[/** @type {'completed'} */ (c.status)] || ''}</span>
+      <span class="fm-entry-stw ${statusClass(c.status)}">${esc(statusLabel(c.status) || t('flowmap.detail.none'))}</span>
       <span class="fm-entry-name">${esc(c.title)}</span>
       <span class="fm-entry-nodes">${esc(t('flowmap.archive.nodes', { n: String(c.nodeCount) }))}</span>
       <span class="fm-entry-time">${esc(fmtTime(c.completedAt))}</span>
@@ -730,8 +746,18 @@ function renderDetail(/** @type {LayerCtx} */ ctx, /** @type {ChainMember} */ n)
   // 全文区在后。存量节点无 description → 区块整体不渲染（零 mock、零空态占位）。
   const descText = String(n.description || '');
   const chain = chainOfNode(ctx.project, n.id);
+  // 链状态三分（2026-09-07 状态保真批）：全 completed = 已归档；含 failed/cancelled
+  // = 异常终态保留主图待清理（不再称「链未齐」——此类链永不自动归档，语义必须诚实）；
+  // 其余 = 链未齐保留。
+  const chainStateKey = chain
+    ? (chain.members.every((m) => String(m.status || '') === 'completed')
+        ? 'flowmap.archive.chainArchived'
+        : (chain.members.some((m) => m.status === 'failed' || m.status === 'cancelled')
+            ? 'flowmap.archive.chainAbnormal'
+            : 'flowmap.archive.chainRetained'))
+    : '';
   const chainLine = chain
-    ? `${esc(t('flowmap.archive.chain'))}：${esc(chain.title)}（${esc(t('flowmap.archive.nodes', { n: String(chain.nodeCount) }))} · ${esc(chain.members.every((m) => TERMINAL_STATUSES.has(String(m.status || ''))) ? t('flowmap.archive.chainArchived') : t('flowmap.archive.chainRetained'))}）`
+    ? `${esc(t('flowmap.archive.chain'))}：${esc(chain.title)}（${esc(t('flowmap.archive.nodes', { n: String(chain.nodeCount) }))} · ${esc(t(chainStateKey))}）`
     : '';
   // TTL（2026-09-07 完整配置批）：ttlLeftSec 恒带键（null = 无 TTL；仅终态节点
   // 有值）——有值显剩余/已到期，无值不占位。
@@ -1106,12 +1132,15 @@ if (typeof ResizeObserver === 'undefined') {
 }
 
 // ── 链事件通知（flowMapTab 整链退场/链未齐保留时调用）─────────────
-/** 链未齐提示 toast（§6.3/§14-8 拍板 A：说明终态卡为何保留主图）。 */
+/** 链保留提示 toast（§6.3/§14-8 拍板 A：说明终态卡为何保留主图）。
+ *  2026-09-07 状态保真批：含 failed/cancelled 成员的链永不自动归档——toast 不再
+ *  称「链未齐」（暗示还在等齐），改报「含失败/取消 · 不自动归档 · 24h 后清理」。 */
 export function notifyChainRetained(project, chain, container) {
   const done = chain.members.filter((m) => TERMINAL_STATUSES.has(String(m.status || ''))).length;
+  const abnormal = chain.members.some((m) => m.status === 'failed' || m.status === 'cancelled');
   const ctx = findCtx(container, project);
   if (!ctx) return;
-  showToast(t('flowmap.chain.retainedToast', {
+  showToast(t(abnormal ? 'flowmap.chain.retainedAbnormalToast' : 'flowmap.chain.retainedToast', {
     chain: chain.title, done: String(done), total: String(chain.nodeCount),
   }), 'info');
 }
