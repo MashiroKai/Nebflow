@@ -48,3 +48,18 @@ Images          49        6         16.2GB    3.796GB (23%)
 Containers      8         1         352.4MB   352.4MB (99%)
 Local Volumes   1         1         68.44MB   0B (0%)
 Build Cache     25        0         592.4MB   227.8MB
+--- a-end (2026-09-07 11:07:31)
+Images          49        6         16.2GB    3.796GB (23%)
+Containers      8         1         352.4MB   352.4MB (99%)
+Local Volumes   3         1         560.6MB   492.1MB (87%)
+Build Cache     25        0         592.4MB   227.8MB
+--- a-start (2026-09-07 11:17:21)
+Images          49        6         16.2GB    3.796GB (23%)
+Containers      8         1         352.4MB   352.4MB (99%)
+Local Volumes   3         1         560.6MB   492.1MB (87%)
+Build Cache     25        0         592.4MB   227.8MB
+--- a-end (2026-09-07 11:21:48)
+Images          49        6         16.2GB    3.796GB (23%)
+Containers      8         1         352.4MB   352.4MB (99%)
+Local Volumes   3         1         560.7MB   492.3MB (87%)
+Build Cache     25        0         592.4MB   227.8MB
