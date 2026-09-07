@@ -144,7 +144,7 @@ class NodeEngine(
             logger.warn(s"Node '${n.name}' ($nodeId) reaped: status=running but no live execution fiber (dead session / instance restart)")
             FlowMapEventLog.append(workspace, projectName, nodeId, "reaped",
               "dead running session finalized as cancelled (no live execution fiber; NodeCancel reap)") *>
-              cancelNode(nodeId).as(Right(s"Node '${n.name}' reaped — dead running session finalized as cancelled (display TTL)"))
+              cancelNode(nodeId).as(Right(s"Node '${n.name}' reaped — dead running session finalized as cancelled (retained on map, no TTL)"))
         }
     }
 
