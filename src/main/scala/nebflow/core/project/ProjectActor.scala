@@ -547,7 +547,8 @@ object ProjectActor:
                 rootSessionId,
                 startedAt = System.currentTimeMillis(),
                 lastActivityMs = System.currentTimeMillis(),
-                supervisorRef = Some(bridgeRef)
+                supervisorRef = Some(bridgeRef),
+                displayName = Some(s"dispatcher/${project.name}")
               )
             )
           )

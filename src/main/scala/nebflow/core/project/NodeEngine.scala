@@ -1020,7 +1020,8 @@ class NodeEngine(
             rootSessionId,
             startedAt = System.currentTimeMillis(),
             lastActivityMs = System.currentTimeMillis(),
-            supervisorRef = Some(bridgeRef)
+            supervisorRef = Some(bridgeRef),
+            displayName = Some(nodeName)
           )
         )
       )
@@ -1157,7 +1158,8 @@ class NodeEngine(
           sessionId, ref, AgentKind.Flow, rootSessionId,
           startedAt = System.currentTimeMillis(),
           lastActivityMs = System.currentTimeMillis(),
-          supervisorRef = Some(bridgeRef)
+          supervisorRef = Some(bridgeRef),
+          displayName = Some(sessionName)
         ))
       )
     yield LoopSession(sessionId, ref, bridgeRef, round)
