@@ -53,19 +53,24 @@ object ProjectRuntimeRegistry:
     * 与 ProjectCreate 幂等挂载（运行时主动路径，241ef6c5）互补：
     * 本函数管重启免人工，ProjectCreate 管运行时挂载/重挂。返回新挂载数。
     * wsSend：启动期传入 wsHub.broadcast——否则 engine 的 wsSendFn 是 no-op，
-    * 节点/分发器事件永远到不了前端（#28 可观测缺口根因之一）。 */
+    * 节点/分发器事件永远到不了前端（#28 可观测缺口根因之一）。
+    * skipStaleReap（crash-recovery 批 2026-09-07）：true = 启动挂载且崩溃恢复开启
+    * ——跳过挂载期僵尸收殓，崩溃残留 running 节点留给紧随 startupMount 的
+    * ProjectCrashRecovery sweep 认领（rehydrate/failed，语义优于 cancelled 收殓）；
+    * false（默认，运行时挂载/恢复开关关闭）= 既有收殓行为零变化。 */
   def mountAll(
     projects: List[ProjectDef],
     rootSessionId: String,
     system: ActorSystem,
     resources: SharedResources,
-    wsSend: Option[Json => IO[Unit]] = None
+    wsSend: Option[Json => IO[Unit]] = None,
+    skipStaleReap: Boolean = false
   ): IO[Int] =
     projects.foldLeft(IO.pure(0)) { (acc, pd) =>
       acc.flatMap { n =>
         get(pd.name).flatMap {
           case Some(_) => IO.pure(n) // 已挂载跳过（启动时序无并发，防御性判断）
-          case None    => mount(pd, system, resources, wsSend, rootSessionId).as(n + 1)
+          case None    => mount(pd, system, resources, wsSend, rootSessionId, skipStaleReap = skipStaleReap).as(n + 1)
         }
       }
     }
@@ -78,7 +83,8 @@ object ProjectRuntimeRegistry:
     wsSend: Option[Json => IO[Unit]],
     rootSessionId: String,
     ttlDisplayMs: Long = NodeEngine.TtlDisplayMs,
-    ttlCheckIntervalSec: Int = 30
+    ttlCheckIntervalSec: Int = 30,
+    skipStaleReap: Boolean = false
   ): IO[ProjectRuntime] =
     get(project.name).flatMap {
       case Some(rt) => IO.pure(rt)
@@ -118,10 +124,16 @@ object ProjectRuntimeRegistry:
           // reapStaleRunning 收殓（cancelled + 显示 TTL + reaped 审计，同族第三
           // 变体「重启后僵尸 running 只能人工 NodeEdit abandon 收殓」根除）；有在
           // 飞 fiber 的活会话节点 Left 拒绝（误杀防护既有纪律，NodeEngine 硬约束）。
-          _ <- store.snapshot.flatMap { s =>
-            s.nodes.values.filter(_.status == NodeLifecycle.Running).toList
-              .traverse_(n => engine.reapStaleRunning(n.id).void)
-          }
+          // crash-recovery 批：skipStaleReap=true（启动挂载且恢复开启）时跳过——
+          // 崩溃残留 running 留给紧随其后的 ProjectCrashRecovery sweep 认领（快段
+          // 先于 projectTtlScanner 结构性保证，见 GatewayMain boot 链）；sweep 未
+          // 认领的残余仍由 watchdog（TtlTick settleStaleRunningNodes→failed）兜底。
+          _ <- if skipStaleReap then IO.unit
+          else
+            store.snapshot.flatMap { s =>
+              s.nodes.values.filter(_.status == NodeLifecycle.Running).toList
+                .traverse_(n => engine.reapStaleRunning(n.id).void)
+            }
           // V8 (2026-09-03): 挂载即扫——项目在运行时挂载（ProjectCreate 路径）且根
           // 会话已活跃时，滞留的 out=Nebula 结果立即补投，不等首个 30s tick。
           // 启动自动挂载路径根 ref 通常缺失 → 静默跳过，由 TtlTick 周期兜底。
