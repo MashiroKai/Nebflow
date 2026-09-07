@@ -1,6 +1,7 @@
 package nebflow.core.project
 
 import cats.effect.{IO, Ref}
+import cats.effect.unsafe.implicits.global
 import fs2.Stream
 import io.circe.Json
 import io.circe.syntax.*
@@ -53,10 +54,15 @@ class NodeDepsSpec extends CatsEffectSuite:
   override def afterAll(): Unit =
     PathUtil.setDataRoot(originalRoot)
 
-  /** 按输入文本分派回复与延迟的捕获 LLM：inputs 记录每次请求 user 文本。 */
+  /** 按输入文本分派回复与延迟的捕获 LLM：inputs 记录每次请求 user 文本。
+    * gateOf：Some 时先等该 Deferred 再产出回复——定长 delayOf 窗口在满载下
+    * 有竞态（T1「B 在 A 完成前保持等待」需观测 A 仍在跑时 B 的 Pending 态，
+    * 一旦 A 瞬回即完成，B 闸门即放行 → partial 读到 Running 假红）；改由
+    * Deferred 将「A 何时完成」变成测试显式可控的同步点。 */
   private class DispatchLlm(
       replyOf: String => String = _ => "ok",
-      delayOf: String => FiniteDuration = _ => 0.millis
+      delayOf: String => FiniteDuration = _ => 0.millis,
+      gateOf: String => Option[cats.effect.Deferred[IO, Unit]] = _ => None
   ):
     val inputs: Ref[IO, List[String]] = Ref.unsafe[IO, List[String]](Nil)
     def handle: LlmHandle[IO] = new LlmHandle[IO]:
@@ -68,7 +74,12 @@ class NodeDepsSpec extends CatsEffectSuite:
         val text = req.messages.map(_.textContent).mkString("\n")
         Stream
           .eval(inputs.update(_ :+ text) >> IO.sleep(delayOf(text)))
-          .flatMap(_ => Stream(StreamChunk.TextDelta(replyOf(text)), StreamChunk.Done(None, None)))
+          .flatMap { _ =>
+            val wait: Stream[IO, Nothing] = gateOf(text) match
+              case Some(g) => Stream.eval(g.get).drain
+              case None    => Stream.empty
+            wait ++ Stream(StreamChunk.TextDelta(replyOf(text)), StreamChunk.Done(None, None))
+          }
 
   /** 对指定文本抛错的失败 LLM（stream error → AgentEvent.Failed → failNode）。
     * delayBeforeFail：抛错前先等一段——保留 Running 窗口供测试建立依赖拓扑。 */
@@ -206,7 +217,11 @@ class NodeDepsSpec extends CatsEffectSuite:
     val ws = tempRoot / "ws-t1"
     os.makeDir.all(ws)
     val system = ActorSystem(s"deps-t1-${scala.util.Random.nextInt(100000)}")
-    val llm = DispatchLlm(replyOf = t => if t.contains("produce-A") then "RESULT-OF-A" else "ok")
+    val aGate = IO.deferred[Unit].unsafeRunSync()
+    val llm = DispatchLlm(
+      replyOf = t => if t.contains("produce-A") then "RESULT-OF-A" else "ok",
+      gateOf = t => if t.contains("produce-A") then Some(aGate) else None
+    )
     for
       res <- mkResources(system, tempRoot, llm.handle)
       rt <- mountProject("deps-t1", ws, system, res)
@@ -221,7 +236,9 @@ class NodeDepsSpec extends CatsEffectSuite:
         "task" -> Json.fromString("run-after-a"), "deps" -> Json.fromString(aId),
         "out" -> Json.fromString("Nebula")), ctx)
       partial <- rt.store.snapshot.map(_.nodes.values.find(_.name == "after-a"))
-      // A 完成 → settleDeps → B 启动并完成
+      // A 完成 → settleDeps → B 启动并完成——放行 A 门（此前 A 回复被 gateOf 挂起，
+      // 保证上面的 partial 观测落在「A 仍 Running」的窗口内，B 闸门拦下证据确定性）
+      _ <- aGate.complete(()).attempt.void
       _ <- waitStatus(rt, "src-a", Set(NodeLifecycle.Completed))
       _ <- waitStatus(rt, "after-a", Set(NodeLifecycle.Completed))
       bId <- idOf(rt, "after-a")
@@ -230,7 +247,8 @@ class NodeDepsSpec extends CatsEffectSuite:
       a <- nodeById(rt, aId).map(_.getOrElse(fail("A must exist")))
       _ <- system.stopAll.handleErrorWith(_ => IO.unit)
     yield
-      // B 在 A 完成前保持等待（闸门拦下证据）
+      // B 在 A 完成前保持等待（闸门拦下证据）——A 的 LLM 回复被 aGate 挂在
+      // 首轮（produce-A 命中），partial 读取期间 A 必然仍 Running（确定性）。
       assert(partial.exists(n => n.status == NodeLifecycle.Pending || n.status == NodeLifecycle.Wiring),
         s"B must wait while A runs, got ${partial.map(_.status)}")
       assert(b.deps.contains(aId), s"B.deps must reference A, got ${b.deps}")
