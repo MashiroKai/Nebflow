@@ -332,14 +332,21 @@ object LlmLogWriter:
         if lines.isEmpty then IO.unit
         else
           ensureWorker *> lines.foldLeft(IO.unit) { (acc, json) =>
-            acc *> sseQueue.tryOffer(json).flatMap {
-              case true => IO.delay(pendingWrites.incrementAndGet()).void
-              case false =>
-                // Overflow: drop + WARN — telemetry loss never blocks the stream path.
-                IO.delay(logger.warnSync(
-                  s"LlmLogWriter: sse queue full ($QueueCapacity) — dropping streaming event line"
-                ))
-            }
+            // 计数先于入队：counter 任意时刻 == 排队中 + 已take未落盘 行数，
+            // 无「offer 成功但尚未 +1」的瞬时空窗（负漂移曾取消在飞行等待）。
+            acc *> IO.delay(pendingWrites.incrementAndGet()).void *> sseQueue
+              .tryOffer(json)
+              .flatMap {
+                case true => IO.unit
+                case false =>
+                  // Overflow: drop + WARN — telemetry loss never blocks the stream path.
+                  IO.delay {
+                    pendingWrites.decrementAndGet()
+                    logger.warnSync(
+                      s"LlmLogWriter: sse queue full ($QueueCapacity) — dropping streaming event line"
+                    )
+                  }
+              }
           }
       )
 
@@ -358,26 +365,44 @@ object LlmLogWriter:
   /** Flush barrier: while true the worker does not take from the queue. */
   private val sseFlushing = new java.util.concurrent.atomic.AtomicBoolean(false)
 
-  /** Offered-but-not-yet-written lines — lets flushSync wait out in-flight writes. */
+  /** Offered-but-not-yet-written lines — lets flushSync wait out in-flight writes.
+    * EXACT accounting (never negative): only the queue path touches it
+    * (increment before offer / decrement after the consuming append). The
+    * sync direct-write paths (logRequest/logResponse/logIntake) must NOT
+    * decrement it — pre-fix they did, and the accumulated negative base
+    * cancelled flushSync's in-flight wait entirely ("taken but not yet
+    * appended" window ran bare → T2 flake on loaded CI runners). */
   private val pendingWrites = new java.util.concurrent.atomic.AtomicLong(0)
+
+  /** Test-only probe — specs assert the in-flight counter never drifts. */
+  private[nebflow] def ssePendingWritesForTest: Long = pendingWrites.get()
 
   private def sseWorkerLoop: IO[Unit] =
     (IO.blocking {
       while sseFlushing.get() do Thread.sleep(5)
-    } *> sseQueue.take.flatMap(json => IO.blocking(appendJsonl("sse", json)))).foreverM
+    } *> sseQueue.take.flatMap(json =>
+      IO.blocking {
+        try appendJsonl("sse", json)
+        finally pendingWrites.decrementAndGet()
+      }
+    )).foreverM
 
   private def ensureWorker: IO[Unit] =
     IO(sseWorkerStarted.compareAndSet(false, true)).ifM(sseWorkerLoop.start.void, IO.unit)
 
   /** Synchronous drain — specs / shutdown hook make the async write observable:
-    * every line offered BEFORE flushSync started is on disk when it returns. */
+    * every line offered BEFORE flushSync started is on disk when it returns.
+    * (Drain covers queued items; writeLock barrier covers in-append items;
+    * pendingWrites wait covers taken-but-not-yet-appended items.) */
   private[nebflow] def flushSync(): Unit =
     sseFlushing.set(true)
     try
       var more = true
       while more do
         sseQueue.tryTake.unsafeRunSync()(using cats.effect.unsafe.implicits.global) match
-          case Some(json) => appendJsonl("sse", json)
+          case Some(json) =>
+            try appendJsonl("sse", json)
+            finally pendingWrites.decrementAndGet()
           case None => more = false
       // Wait out any in-flight worker write (same lock appendJsonl holds).
       writeLock.synchronized(())
@@ -460,12 +485,6 @@ object LlmLogWriter:
         StandardOpenOption.APPEND
       )
     catch case e: Exception => logger.warnSync(s"LlmLogWriter.appendJsonl: ${e.getMessage}")
-    finally
-      // 对齐 ToolsLogWriter：队列路径的每行在落盘（或失败）后清账——
-      // flushSync 以此判断「已出队但未写完」的在飞行是否清零。同步直写路径
-      // （logRequest/logResponse）从未 increment，此处置为负无害（flushSync
-      // 只判 >0）。
-      pendingWrites.decrementAndGet()
   }
 
   // ── Conversion: Nebflow types → Anthropic-style JSON ────────────────

@@ -146,4 +146,31 @@ class LlmLogWriterStreamSpec extends FunSuite:
       assertEquals(readLines("sse").size, 3, "all lines land on disk after flushSync")
     finally LlmLogWriter.setWriteDelayMsForTest(0)
   }
+
+  test("T5: in-flight counter never drifts negative — sync direct writes must not cancel flushSync's in-flight wait") {
+    // pre-fix 形态：logRequest/logResponse 同步直写 appendJsonl 时无条件
+    // decrement（从未 increment）→ 每次直写 -2，累计负基座让 flushSync 的
+    // `pendingWrites > 0` 在飞行等待整体失效——worker「已take未append」窗口
+    // 裸奔，高负载 CI 上 T2 偶发少行（期望 3 行只见 2）。
+    LlmLogWriter.logRequest(requestFixture, "req-T5a", isSubagent = false, isCompaction = false)
+      .unsafeRunSync()
+    LlmLogWriter.logResponse(
+      requestId = "req-T5a",
+      resultText = "hello",
+      resultToolCalls = Nil,
+      resultThinking = None,
+      resultStopReason = Some("end_turn"),
+      resultUsage = Some(TokenUsage(1, 2)),
+      resultModel = Some("m")
+    ).unsafeRunSync()
+    // 队列零积压：同步直写路径不得动队列在飞行计数（pre-fix 此处 = -4，红）。
+    assertEquals(LlmLogWriter.ssePendingWritesForTest, 0L)
+
+    // 队列路径照常记账：flushSync 后清零且行落盘。
+    val encoder = new LlmLogWriter.StreamEventEncoder("req-T5", "stream-log-agent")
+    LlmLogWriter.logStreamEvent(encoder, StreamChunk.TextDelta("inflight")).unsafeRunSync()
+    LlmLogWriter.flushSync()
+    assertEquals(LlmLogWriter.ssePendingWritesForTest, 0L, "flushSync must settle the in-flight counter")
+    assertEquals(readLines("sse").count(_.contains("\"inflight\"")), 1)
+  }
 end LlmLogWriterStreamSpec
