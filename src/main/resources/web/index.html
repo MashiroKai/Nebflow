@@ -177,7 +177,7 @@
         </button>
         <button id="reminder-btn" title="Scheduled Tasks"><i data-lucide="clock"></i></button>
         <button id="daemon-btn" title="心跳进程"><i data-lucide="server"></i></button>
-        <div id="bg-indicator" class="hidden">
+        <div id="bg-indicator" class="hidden" role="button" tabindex="0" aria-haspopup="true" aria-expanded="false" aria-controls="bg-dropdown">
           <span class="bg-dot"></span>
           <span class="bg-count">0</span>
         </div>
@@ -203,8 +203,8 @@
       <div class="bg-dropdown-list" role="list"></div>
     </div>
     <div id="bg-dropdown" class="hidden">
-      <div class="bg-dropdown-header">Background tasks</div>
-      <div class="bg-dropdown-list"></div>
+      <div class="bg-dropdown-header" aria-live="polite">Background tasks</div>
+      <div class="bg-dropdown-list" role="list"></div>
     </div>
     <!-- Reminder Panel — floating dropdown from header button -->
     <div id="reminder-panel">

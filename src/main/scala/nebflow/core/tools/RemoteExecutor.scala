@@ -113,6 +113,9 @@ class RemoteExecutor(
     val firstLine = commandStr.split('\n').headOption.getOrElse(commandStr).take(80)
     val description = s"[${peer.deviceName}] ${params("description").flatMap(_.asString).getOrElse(firstLine)}"
 
+    // 来源标注（2026-09-07 后台任务面板重设计）：与 BashTool 同推导（注册
+    // 会话前缀 + 会话名 → 类别/显示名），注册与 WS 信封同源携带。
+    val (bgOrigin, bgOriginLabel) = BgTaskRegistry.originFor(ctx.sessionId.getOrElse(""), ctx.sessionName)
     for
       jobId <- IO.randomUUID.map(_.toString.take(8))
       _ <- logger.info(s"Remote background task $jobId started on ${peer.deviceName}: $firstLine")
@@ -123,7 +126,10 @@ class RemoteExecutor(
              ctx.sessionId.getOrElse(""),
              description,
              "remote",
-             ctx.rootSessionId.orElse(ctx.sessionId).getOrElse("")
+             ctx.rootSessionId.orElse(ctx.sessionId).getOrElse(""),
+             false,
+             bgOrigin,
+             bgOriginLabel
            )
       // 2. Start heartbeat so frontend shows progress (remote tasks have no process-level health)
       doneRef <- IO.ref(false)
@@ -253,6 +259,7 @@ class RemoteExecutor(
   end startRemoteHeartbeat
 
   private def emitBgTaskStarted(ctx: ToolContext, jobId: String, description: String): IO[Unit] =
+    val (origin, originLabel) = BgTaskRegistry.originFor(ctx.sessionId.getOrElse(""), ctx.sessionName)
     ctx.wsSend.fold(
       logger.debug(s"Cannot notify frontend for remote background job $jobId: no wsSend")
     )(send =>
@@ -264,7 +271,10 @@ class RemoteExecutor(
           "taskId" -> jobId.asJson,
           "description" -> description.asJson,
           "status" -> "running".asJson,
-          "startedAt" -> System.currentTimeMillis().asJson
+          "startedAt" -> System.currentTimeMillis().asJson,
+          "kind" -> "remote".asJson,
+          "origin" -> origin.asJson,
+          "originLabel" -> originLabel.asJson
         )
       ).handleErrorWith(e => logger.warn(s"WS send failed for remote job $jobId: ${e.getMessage}"))
     )

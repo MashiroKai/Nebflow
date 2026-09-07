@@ -65,4 +65,45 @@ class BgTaskRegistrySpec extends FunSuite:
         }
     io.unsafeRunSync()
   }
+
+  // ── 2026-09-07 后台任务面板重设计：来源标注（作者指令②）契约钉 ──
+
+  test("originFor derives category+label from registering session id prefix") {
+    assertEquals(BgTaskRegistry.originFor("node-ab12cd34", Some("实施-某节点")), ("node", "实施-某节点"))
+    assertEquals(BgTaskRegistry.originFor("node-ab12cd34", None), ("node", "node-ab12cd34")) // 缺名兜底会话 id
+    assertEquals(BgTaskRegistry.originFor("dispatcher-ef56gh78", Some("dispatcher/nebflow")), ("dispatcher", "dispatcher/nebflow"))
+    assertEquals(BgTaskRegistry.originFor("dispatcher-ef56gh78", None), ("dispatcher", "dispatcher"))
+    assertEquals(BgTaskRegistry.originFor("main-session-1", Some("Nebula")), ("nebula", "Nebula"))
+    assertEquals(BgTaskRegistry.originFor("", None), ("nebula", "Nebula")) // REST 直调空会话
+  }
+
+  test("activeTasksJson carries origin/originLabel/kind for the origin chip (snapshot path)") {
+    val (job, exec, root) = ("bgtaskspec-origin-1", "node-bgtaskspec-1", "main-bgtaskspec-4")
+    val io =
+      BgTaskRegistry.register(job, exec, "spec task origin", "remote", root, false, "node", "实施-某节点") *>
+        BgTaskRegistry.activeTasksJson.flatMap { json =>
+          IO {
+            val t = clue(tasksFor(root, json)).find(_.hcursor.get[String]("taskId").toOption.contains(job)).get
+            assertEquals(t.hcursor.get[String]("origin").toOption, Some("node"))
+            assertEquals(t.hcursor.get[String]("originLabel").toOption, Some("实施-某节点"))
+            assertEquals(t.hcursor.get[String]("kind").toOption, Some("remote"))
+          }
+        } *> cleanup(job)
+    io.unsafeRunSync()
+  }
+
+  test("register defaults keep backward compatibility (origin=nebula, empty label)") {
+    val (job, root) = ("bgtaskspec-origin-compat-1", "main-bgtaskspec-5")
+    val io =
+      BgTaskRegistry.register(job, root, "spec task compat", "local", root) *>
+        BgTaskRegistry.activeTasksJson.flatMap { json =>
+          IO {
+            val t = clue(tasksFor(root, json)).find(_.hcursor.get[String]("taskId").toOption.contains(job)).get
+            assertEquals(t.hcursor.get[String]("origin").toOption, Some("nebula"))
+            assertEquals(t.hcursor.get[String]("originLabel").toOption, Some(""))
+            assertEquals(t.hcursor.get[String]("kind").toOption, Some("local"))
+          }
+        } *> cleanup(job)
+    io.unsafeRunSync()
+  }
 end BgTaskRegistrySpec

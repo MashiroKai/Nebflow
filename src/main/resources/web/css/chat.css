@@ -440,6 +440,42 @@
   color: var(--color-frame-text-muted);
   flex-shrink: 0;
 }
+/* Origin chip (2026-09-07 后台任务面板重设计，作者指令②): marks which node
+   category started the task — nebula / dispatcher / node. Same chip family as
+   .bg-task-kind; category differentiation reuses EXISTING tokens only
+   (node = agent-sapphire accent, mirroring the frozen-state pattern;
+   dispatcher = one text notch brighter; nebula = base muted). No new color
+   tokens introduced. */
+.bg-task-origin {
+  font-size: 10px;
+  font-weight: 500;
+  padding: 1px 6px;
+  border-radius: 6px;
+  background: var(--glass-control-bg);
+  border: 1px solid var(--glass-control-border);
+  color: var(--color-frame-text-muted);
+  flex-shrink: 0;
+  max-width: 180px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.bg-task-origin.bg-origin-node {
+  color: rgb(var(--accent-agent-light));
+  border-color: rgb(var(--accent-agent-light) / 0.35);
+}
+.bg-task-origin.bg-origin-dispatcher {
+  color: var(--color-frame-text);
+}
+@media (prefers-color-scheme: dark) {
+  .bg-task-origin.bg-origin-node {
+    color: rgb(var(--sapphire));
+    border-color: rgb(var(--sapphire) / 0.35);
+  }
+}
+/* Background-task rows are not clickable (no popup; operations stay on the
+   inline cancel button) — override the shared .bg-task-row pointer affordance. */
+#bg-dropdown .bg-task-row { cursor: default; }
 .bg-task-uptime {
   font-size: 10px;
   color: var(--color-frame-text-muted);
