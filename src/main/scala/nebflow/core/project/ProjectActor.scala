@@ -257,9 +257,21 @@ object ProjectActor:
         lazy val behavior: Behavior[ProjectCommand] =
           Behaviors.receiveMessage {
             case ProjectCommand.TriggerDispatcher(taskText, rootSessionId) =>
-              dispatchTask(cfg, active, behavior, taskText, rootSessionId)
+              // 热重启 draining 准入闸（hot-restart 批设计 §3.3 choke 点清单）：
+              // draining 期间拒绝新分发器会话/新节点派发（新工作准入关闭）；
+              // completion/failed 回流被拒时 notifySentAt 未标记 → 重启后
+              // redeliver 扫描补投（延迟触发非丢失）。非 draining 零开销旁路。
+              nebflow.core.hotrestart.HotRestart.admissionGate.flatMap {
+                case Right(()) => dispatchTask(cfg, active, behavior, taskText, rootSessionId)
+                case Left(reason) =>
+                  logger.warn(s"[hot-restart] dispatcher trigger refused during draining: $reason").as(behavior)
+              }
             case ProjectCommand.ReenterDispatcher(nodeId, feedback, blockCount) =>
-              dispatchReentry(cfg, active, behavior, nodeId, feedback, blockCount, cfg.rootSessionId)
+              nebflow.core.hotrestart.HotRestart.admissionGate.flatMap {
+                case Right(()) => dispatchReentry(cfg, active, behavior, nodeId, feedback, blockCount, cfg.rootSessionId)
+                case Left(reason) =>
+                  logger.warn(s"[hot-restart] dispatcher reentry refused during draining: $reason").as(behavior)
+              }
             case ProjectCommand.CancelNode(nodeId) =>
               cfg.engine.cancelNodeById(nodeId).as(behavior)
             case ProjectCommand.TtlTick =>

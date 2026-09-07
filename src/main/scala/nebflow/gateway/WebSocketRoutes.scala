@@ -1285,7 +1285,9 @@ class WebSocketRoutes(
             val immJson = parse(text).toOption.getOrElse(io.circe.Json.Null)
             val immSessionId = immJson.hcursor.downField("sessionId").as[String].getOrElse("")
             val immContent = immJson.hcursor.downField("content").as[String].getOrElse("")
-            handleUserText(immSessionId, immContent, source = "immediateInput")
+            admitWorkOrRefuse(wsSend)(
+              handleUserText(immSessionId, immContent, source = "immediateInput")
+            )
 
           // Protocol alias for immediateInput, sent by the CLI (ChatSend).
           // Before this case existed the payload fell through to the silent
@@ -1299,7 +1301,48 @@ class WebSocketRoutes(
             val umJson = parse(text).toOption.getOrElse(io.circe.Json.Null)
             val umSessionId = umJson.hcursor.downField("sessionId").as[String].getOrElse("")
             val umContent = umJson.hcursor.downField("content").as[String].getOrElse("")
-            handleUserText(umSessionId, umContent, source = "userMessage")
+            admitWorkOrRefuse(wsSend)(
+              handleUserText(umSessionId, umContent, source = "userMessage")
+            )
+
+          // ── 热重启触发面（P1，hot-restart 批设计 §3.2）：Web UI 按钮的 WS 命令。
+          // confirm=true 必带（前端确认对话框「将等待当前工作完成后重启」的引擎侧
+          // 强制位）；waitIdle 默认 true（§7 拍板项 2 建议：UI 默认排队可取消语义
+          // 的后端形态——等待期工作照常准入）。进度经 restartStatus 帧 wsHub 广播
+          //（quiesce/draining/spawning/handing-over/completed/failed）。编排器与
+          // 触发源解耦——桌面菜单/REST API（P2）后续接同一 HotRestart.requestRestart。
+          case "restart" =>
+            val rc = parse(text).toOption.getOrElse(io.circe.Json.Null).hcursor
+            val confirmed = rc.downField("confirm").as[Boolean].getOrElse(false)
+            val waitIdle = rc.downField("waitIdle").as[Boolean].getOrElse(true)
+            val waitTimeoutMs = rc.downField("waitTimeoutMs").as[Long].getOrElse(600000L)
+            def restartReply(ok: Boolean, extra: (String, Json)*): IO[Unit] =
+              wsSend(
+                io.circe.Json.obj(
+                  Seq(("type", "restartResult".asJson), ("ok", ok.asJson)) ++ extra*
+                )
+              )
+            if !confirmed then
+              restartReply(
+                ok = false,
+                "error" -> "restart requires confirm=true — the gateway restarts in place once current work finishes".asJson
+              )
+            else
+              sharedResources.hotRestart match
+                case None =>
+                  restartReply(ok = false, "error" -> "hot restart is not available in this instance".asJson)
+                case Some(hr) =>
+                  val mode =
+                    if waitIdle then nebflow.core.hotrestart.RestartMode.WaitIdle(waitTimeoutMs)
+                    else nebflow.core.hotrestart.RestartMode.RejectIfBusy
+                  hr.requestRestart(source = "web-ui", mode = mode).flatMap {
+                    case Right(()) =>
+                      restartReply(
+                        ok = true,
+                        "message" -> "hot restart underway — the UI will reconnect automatically when the new instance is up".asJson
+                      )
+                    case Left(err) => restartReply(ok = false, "error" -> err.asJson)
+                  }
 
           // 冻结「跳过本次」按钮（2026-08-25 前端联调）：无文本跳过命令——
           // 不注入假消息气泡污染上下文，直调 skipCurrentFreezeWindow（置
@@ -3830,6 +3873,25 @@ class WebSocketRoutes(
           )
       }
     else IO.unit
+
+  /** 热重启 draining 工作准入闸（hot-restart 批设计 §3.3，WS 侧 choke 点）：包裹
+    * 工作型消息入口（userMessage / immediateInput——REST 的 handleMessagePublic
+    * 同走本 handleMessage，故 REST 工作型路径一并覆盖）。draining 置位期间拒绝
+    * 并回 workRefused 帧（503 + retryAfter 语义）；遗漏准入点的兜底 = 崩溃恢复
+    * sweep（设计 R2）。非 draining 期间零开销旁路（行为与既有完全一致）。 */
+  private def admitWorkOrRefuse(wsSend: io.circe.Json => IO[Unit])(cont: IO[Unit]): IO[Unit] =
+    nebflow.core.hotrestart.HotRestart.admissionGate.flatMap {
+      case Right(()) => cont
+      case Left(reason) =>
+        logger.warn(s"[hot-restart] work refused during draining: $reason") *>
+          wsSend(
+            io.circe.Json.obj(
+              "type" -> "workRefused".asJson,
+              "reason" -> reason.asJson,
+              "retryAfterMs" -> 5000.asJson
+            )
+          )
+    }
 
   private def handleUserText(sessionId: String, content: String, source: String): IO[Unit] =
     if sessionId.nonEmpty && content.nonEmpty then
