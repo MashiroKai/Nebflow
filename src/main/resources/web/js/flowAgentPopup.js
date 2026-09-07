@@ -867,9 +867,14 @@ function updateFooterStatus(entry) {
         taskEl.textContent = clock ? t('chat.frozenShort', { time: clock }) : t('chat.frozenNoTime');
       }
     } else if (status === 'stuck' && entry.meta.stuck) {
+      // Hard-recovery P7 (2026-09-07): label mirrors the REAL backend action.
       taskEl.textContent = entry.meta.stuck.action === 'restart'
         ? t('manage.stuckAutoRestart')
-        : t('manage.stuck', { secs: entry.meta.stuck.idleSecs ?? '' });
+        : entry.meta.stuck.action === 'hard-abort'
+          ? t('manage.stuckHardAbort')
+          : entry.meta.stuck.action === 'failed'
+            ? t('manage.stuckFailed')
+            : t('manage.stuck', { secs: entry.meta.stuck.idleSecs ?? '' });
     } else {
       taskEl.textContent = entry.meta.task || 'Session';
     }

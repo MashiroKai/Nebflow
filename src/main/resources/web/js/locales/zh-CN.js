@@ -303,6 +303,9 @@ export default {
   'manage.retry': '重试',
   'manage.stuck': '卡死 · {secs}s 无活动',
   'manage.stuckAutoRestart': '卡死 · 正在自动重启',
+  // Hard-recovery P7（2026-09-07）：标签与后端真实执行的动作一一对应
+  'manage.stuckHardAbort': '卡死 · 正在强制中断',
+  'manage.stuckFailed': '卡死 · 需人工处理（进度已保存）',
   // Sub-Agents 面板（2026-08-25 subagents-panel spec）——状态标签与空态
   'subagents.header': '子智能体 · {count}',
   'subagents.empty': '当前无运行中的子智能体',

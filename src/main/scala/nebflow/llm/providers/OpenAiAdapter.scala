@@ -441,7 +441,9 @@ class OpenAiAdapter(baseUrl: String, apiKey: String, backend: StreamBackend[IO, 
         .response(asStreamUnsafe(Fs2Streams[IO]))
         .readTimeout(Defaults.LlmReadTimeoutSec.seconds)
 
-      Stream.eval(backend.send(request)).flatMap { response =>
+      // Hard-recovery P1: per-attempt backend when provided (per-request
+      // HttpClient whose shutdownNow aborts exactly this request).
+      Stream.eval(params.attemptBackend.getOrElse(backend).send(request)).flatMap { response =>
         response.body match
           case Left(error) =>
             // 同 sendMessage：结构化 HttpError（子项②）。

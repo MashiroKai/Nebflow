@@ -239,6 +239,52 @@ object Defaults:
   def CrashRecoveryConcurrency: Int =
     sys.props.getOrElse("nebflow.crashRecovery.concurrency", "3").toInt
 
+  // ---- 引擎活挂硬恢复（hard-recovery 批 2026-09-07，设计 §2/§8/§9）----
+
+  /**
+   * 活挂硬恢复总开关（设计 D-2）：默认 true。false 时 SessionKick 与
+   * TaskStuckWatcher 的 L1-L4 升级链全部退化为本批前行为（watcher 只广播
+   * attention / 旧 hard-cancel；WS 层不 kick）。system prop，每次调用现读
+   * （CompletionGate kill-switch 先例，测试可即时翻转）。
+   */
+  def HardRecoveryEnabled: Boolean =
+    sys.props.getOrElse("nebflow.hardRecovery.enabled", "true").toBoolean
+
+  /**
+   * SessionKick 的 idle 判据（设计 D-3）：目标会话 Processing 且无活动超过此值
+   * 才 kick。默认 150s，刻意大于 LlmStreamInactivitySec(120s)——只有当既有
+   * per-provider 看门狗窗口已过、turn 既未结束也未报错（即错误被楔死无法浮出）
+   * 时才动手；60s 会误杀合法的 thinking 停顿与 fallback 间隙。误 kick 的代价
+   * 由 RecoverableAbort 的有界重试吸收（一次整 turn 重发）。
+   */
+  def SessionKickIdleSec: Int =
+    sys.props.getOrElse("nebflow.hardRecovery.kickIdleSec", "150").toInt
+
+  /**
+   * kick/升级动作后的回验 bound（设计 P2）：发出 abort 后在此窗口内验证会话
+   * 是否离开 Processing；未通过才升级下一级。默认 60s = 2×扫描间隔。
+   */
+  def KickVerifyBoundSec: Int =
+    sys.props.getOrElse("nebflow.hardRecovery.verifyBoundSec", "60").toInt
+
+  /**
+   * 流式请求的 per-request HttpClient 开关（设计 D-1 方案 A）：默认 true——
+   * sendStream 每个 attempt 独立 HttpClient + backend + dispatcher，transport
+   * abort = shutdownNow()，只杀目标请求零误伤（唯一实证有效原语，取证 §1.3）。
+   * 代价 = 每请求 TLS 握手（~100-300ms，相对 LLM 延迟可忽略）。false 时回退
+   * 共享 client（连接复用），transport abort 退化为 no-op → watcher 直升 L3。
+   */
+  def PerRequestTransport: Boolean =
+    sys.props.getOrElse("nebflow.llm.perRequestTransport", "true").toBoolean
+
+  /**
+   * LLM 连接建立超时（设计 §2.2 配套小修）：共享与 per-request HttpClient 的
+   * connectTimeout。现状为无限（interface.scala httpClient 构建无此配置）——
+   * 首包前的 TCP 半开（VPN 切换后新连接挂起）由此兜底。
+   */
+  def LlmConnectTimeoutSec: Int =
+    sys.props.getOrElse("nebflow.hardRecovery.connectTimeoutSec", "30").toInt
+
   // ---- STT（语音输入，可配置转录服务，#295）----
 
   /** STT 默认模型（OpenAI 兼容音频转录 API 的公共模型名，非用户配置）。 */
