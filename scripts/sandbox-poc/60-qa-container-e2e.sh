@@ -94,7 +94,7 @@ lsof -nP -iTCP:"$PORT" -sTCP:LISTEN >/dev/null 2>&1 && bad "发布端口未释�
 
 # ── 宿主 8080 无恙（红线自检收口） ──
 HOST8080_AFTER=$(lsof -nP -iTCP:8080 -sTCP:LISTEN | tail -1 | awk '{print $1" "$2}')
-[ "$HOST8080_BEFORE" = "$HOST8080_AFTER" ] && ok "宿主 :8080 全程无扰（$HOST8080_AFTER）" || bad "宿主 :8080 变化：$HOST8080_BEFORE → $HOST8080_AFTER"
+[ "$HOST8080_BEFORE" = "$HOST8080_AFTER" ] && ok "宿主 :8080 全程无扰（${HOST8080_AFTER}）" || bad "宿主 :8080 变化：${HOST8080_BEFORE} → ${HOST8080_AFTER}"
 hcode=$(curl -s -o /dev/null -w '%{http_code}' --max-time 3 http://127.0.0.1:8080/api/health 2>/dev/null || echo 000)
 [ "$hcode" = "200" ] && ok "宿主网关健康 200" || bad "宿主网关健康 http=$hcode"
 

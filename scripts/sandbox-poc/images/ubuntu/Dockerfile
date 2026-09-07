@@ -3,12 +3,13 @@
 ARG UBUNTU_TAG=24.04
 FROM ubuntu:${UBUNTU_TAG}
 
-# L0: apt 国内源（USTC）—— 24.04 为 deb822 格式（ubuntu.sources），旧格式兜底
+# L0: apt 国内源（USTC）—— 24.04 为 deb822 格式（ubuntu.sources），旧格式兜底；
+#     arm64 基底走 ports.ubuntu.com（ubuntu-ports），USTC 有对应镜像路径
 RUN set -eux; \
     if [ -f /etc/apt/sources.list.d/ubuntu.sources ]; then \
-      sed -i 's#http://archive.ubuntu.com/ubuntu/#https://mirrors.ustc.edu.cn/ubuntu/#g; s#http://security.ubuntu.com/ubuntu/#https://mirrors.ustc.edu.cn/ubuntu/#g' /etc/apt/sources.list.d/ubuntu.sources; \
+      sed -i 's#http://archive.ubuntu.com/ubuntu/#https://mirrors.ustc.edu.cn/ubuntu/#g; s#http://security.ubuntu.com/ubuntu/#https://mirrors.ustc.edu.cn/ubuntu/#g; s#http://ports.ubuntu.com/ubuntu-ports/#https://mirrors.ustc.edu.cn/ubuntu-ports/#g' /etc/apt/sources.list.d/ubuntu.sources; \
     fi; \
-    sed -i 's#http://archive.ubuntu.com/ubuntu/#https://mirrors.ustc.edu.cn/ubuntu/#g; s#http://security.ubuntu.com/ubuntu/#https://mirrors.ustc.edu.cn/ubuntu/#g' /etc/apt/sources.list 2>/dev/null || true; \
+    sed -i 's#http://archive.ubuntu.com/ubuntu/#https://mirrors.ustc.edu.cn/ubuntu/#g; s#http://security.ubuntu.com/ubuntu/#https://mirrors.ustc.edu.cn/ubuntu/#g; s#http://ports.ubuntu.com/ubuntu-ports/#https://mirrors.ustc.edu.cn/ubuntu-ports/#g' /etc/apt/sources.list 2>/dev/null || true; \
     apt-get update; \
     DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
       openjdk-21-jdk-headless bash git curl ca-certificates tzdata procps python3; \

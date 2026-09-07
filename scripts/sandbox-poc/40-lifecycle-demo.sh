@@ -48,7 +48,7 @@ ms=$(elapsed_ms "$t0" "$t1"); tsv_append "$TSV" "stop	$ms	"
 state=$(docker inspect -f '{{.State.Status}}' "$CTR")
 [ "$state" = "exited" ] && ok "容器进入 retention（exited）" || bad "stop 后状态=$state"
 ret_size=$(docker ps -a --filter "name=^$CTR$" --format '{{.Size}}')
-echo "[c] retention 驻留占盘: $ret_size（fs 状态保持中）"
+echo "[c] retention 驻留占盘: ${ret_size}（fs 状态保持中）"
 
 # ④ retention：驻留 RETAIN_S（模拟保留期；期间容器不动）
 sleep "$RETAIN_S"
@@ -60,8 +60,8 @@ ms=$(elapsed_ms "$t0" "$t1"); tsv_append "$TSV" "start_warm	$ms	"
 echo "[c] start(warm/reactivate) ${ms}ms"
 MARKER2=$(docker exec "$CTR" cat /var/task-state.txt 2>/dev/null || true)
 BLOB2=$(docker exec "$CTR" sh -c 'wc -c < /var/task-blob' 2>/dev/null | tr -d '[:space:]' || true)
-[ "$MARKER1" = "$MARKER2" ] && ok "再激活复用：marker 状态保持（$MARKER2）" || bad "marker 丢失（$MARKER1 → $MARKER2）"
-[ "$BLOB1" = "$BLOB2" ] && ok "再激活复用：blob 完整（${BLOB2}B）" || bad "blob 丢失（$BLOB1 → $BLOB2）"
+[ "$MARKER1" = "$MARKER2" ] && ok "再激活复用：marker 状态保持（${MARKER2}）" || bad "marker 丢失（${MARKER1} → ${MARKER2}）"
+[ "$BLOB1" = "$BLOB2" ] && ok "再激活复用：blob 完整（${BLOB2}B）" || bad "blob 丢失（${BLOB1} → ${BLOB2}）"
 
 # ⑥ TTL 到期 → auto-destroy（脚本侧 TtlTick 等价物：驻留 TTL_S 无再激活 → rm -f）
 echo "[c] TTL 观察窗 ${TTL_S}s（无再激活 → 销毁）..."
