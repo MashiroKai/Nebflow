@@ -289,12 +289,14 @@ class NodeEventPushSpec extends CatsEffectSuite:
       (rt0, events) <- mountRecording("acc-ev5", ws, system, res)
       now = System.currentTimeMillis()
       _ <- seed(rt0,
+        // 裁定④链级即时归档口径：n-gone 自成一批（createdAt 回拨 >120s 批窗口）全终态
+        // → 即时归档；n-stay blocked（待办非终态）→ 链未齐保留主图
         "n-gone" -> NodeDef(id = "n-gone", name = "已过期", agent = "test-agent", status = NodeLifecycle.Completed,
-          result = Some("expired result"), in = List.empty, out = Some("Nebula"), createdAt = now,
+          result = Some("expired result"), in = List.empty, out = Some("Nebula"), createdAt = now - 300000,
           completedAt = Some(now - 60000), ttlExpireAt = Some(now - 1000)),
-        "n-stay" -> NodeDef(id = "n-stay", name = "未到期", agent = "test-agent", status = NodeLifecycle.Completed,
-          result = Some("fresh"), createdAt = now, completedAt = Some(now), ttlExpireAt = Some(now + 999999)))
-      // TtlTick 全路径：ProjectActor → sweepExpired → emitRemoved
+        "n-stay" -> NodeDef(id = "n-stay", name = "未到期", agent = "test-agent", status = NodeLifecycle.Blocked,
+          result = Some("fresh"), createdAt = now, completedAt = None, ttlExpireAt = None))
+      // TtlTick 全路径：ProjectActor → sweepCompletedChains → emitRemoved
       ref <- system.spawn(
         nebflow.core.project.ProjectActor(
           nebflow.core.project.ProjectActor.ProjectConfig(rt0.project, rt0.engine, system, res, "nebula-root")),

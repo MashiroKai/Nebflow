@@ -253,7 +253,10 @@ object ProjectActor:
                 //（失败不影响 TTL sweep）。
                 cfg.engine.settleStaleRunningNodes()
                 .handleErrorWith(e => logger.warn(s"dead-session settle failed: ${e.getMessage}")) *>
-                cfg.engine.store.sweepExpired(System.currentTimeMillis()).flatMap { removed =>
+                // 链级即时归档 sweep（裁定④「TTL 分开」批 2026-09-07）：整链全终态
+                // → 整批立即移归档（移除旧 24h 活动区滞留）；链未齐（含 blocked 待办）
+                // → 保留。视觉「同帧淡出」由前端派生管线承担，本 sweep 出库+落盘。
+                cfg.engine.store.sweepCompletedChains(System.currentTimeMillis()).flatMap { removed =>
                   removed.traverse_(id => cfg.engine.emitRemoved(id))
                 }.as(behavior)
             case ProjectCommand.Shutdown =>

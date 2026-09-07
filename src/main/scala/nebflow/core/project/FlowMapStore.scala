@@ -10,13 +10,17 @@ import nebflow.core.{AtomicJson, NebflowLogger, PathUtil}
  * FlowMapStore —— 每项目 Flow Map 存储（#28 阶段 0，方案 §2.6）。
  *
  * - 磁盘 write-through：活动区 `<workspace>/.nebflow/flow-map.json` +
- *   归档区 `<workspace>/.nebflow/flow-map-archive.json`（原子写，重启恢复）。
+ *   归档区 `<workspace>/.nebflow/flow-map-archive/<batchId>.json`（裁定④「TTL 分开」批
+ *   2026-09-07：按派发批次分文件，一批一文件，原子写，重启恢复；存量单文件
+ *   `flow-map-archive.json` open 时零丢失迁移进分文件）。
  *   result/task 全文不进 JSON——result 拆 `results/<id>.md`（活动+归档），
  *   task 拆 `tasks/<id>.md`（仅活动区；归档 task 剥除，2026-09-06 存储瘦身批），
  *   JSON 只留 ≤500 字符摘要 + 指针（task 归档侧无指针）；加载水合回内存全文
  * - 内存 Ref 持当前状态；所有变更走 `mutate`（Ref.update 原子性 + 落盘）
  * - 环检测：NodeEdit 建边（from→to）前 DFS（to 的传递下游沿 out 边可达 from → 拒）
- * - TTL：终态节点 ttlExpireAt 到期 → 移入归档区（结果全文保留）+ 活动区删除
+ * - 链级即时归档（裁定④，取代旧 ttlExpireAt 24h 计时滞留）：活动区按派发批次聚簇
+ *   （与前端 clusterBatches 同源），批内全终态（completed/failed/cancelled）→ 整批
+ *   立即移归档（结果全文保留）+ 活动区删除；链未齐（含 blocked 待办）→ 整批保留
  * - barrier：节点启动条件 = 全部 in 上游 deliveredTo 含本节点（NodeEngine 裁决）
  *
  * 并发纪律：边/计数的变更必须在单个 mutate 内完成（§2.3「单事务更新」）。
@@ -26,7 +30,8 @@ class FlowMapStore private (
   private val statePath: os.Path,
   private val archivePath: os.Path,
   private val state: Ref[IO, FlowMapState],
-  private val archive: Ref[IO, FlowMapArchive]
+  private val archive: Ref[IO, FlowMapArchive],
+  private val batches: Ref[IO, Map[String, ArchiveBatchMeta]]
 ):
   private val logger = NebflowLogger.forName("nebflow.flowmap")
 
@@ -35,6 +40,9 @@ class FlowMapStore private (
 
   /** 当前归档区快照。 */
   def archiveSnapshot: IO[FlowMapArchive] = archive.get
+
+  /** 归档批次索引快照（裁定④：REST 按批组装 / 分文件写粒度判定的数据源）。 */
+  def archiveBatches: IO[Map[String, ArchiveBatchMeta]] = batches.get
 
   def getNode(id: String): IO[Option[NodeDef]] = state.get.map(_.nodes.get(id))
 
@@ -70,15 +78,18 @@ class FlowMapStore private (
       _ <- persistState(r._1)
     yield r
 
-  /** 归档区事务（TTL 移除时用）。 */
+  /** 归档区事务（单点更新用：out 改线 / notifySentAt / nebulaDeliveredAt 记账）。
+    * diff 落盘（裁定④）：old/new 对比出变更节点 → 批次索引映射 → 只重写受影响批
+    * 文件；变更节点无批次归属（防呆，正常路径不发生）→ 整档重写兜底。 */
   def mutateArchive(f: FlowMapArchive => FlowMapArchive): IO[FlowMapArchive] =
     for
-      newArc <- archive.updateAndGet { a =>
-        val na = f(a)
-        na.copy(project = project)
+      pair <- archive.modify { a =>
+        val na = f(a).copy(project = project)
+        (na, (a, na))
       }
-      _ <- persistArchive(newArc)
-    yield newArc
+      (oldA, newA) = pair
+      _ <- persistArchiveDiff(oldA, newA)
+    yield newA
 
   /** 环检测：设 from.out = to（或给 to 加 in=from，或给 to 声明 deps=[from]）是否成环。
     * to 的传递下游可达 from → 成环。后继集合（沿连接的流向）=
@@ -106,22 +117,38 @@ class FlowMapStore private (
         reachable(to, Set.empty)
       }
 
-  /** TTL sweep：终态节点 ttlExpireAt ≤ now → 从活动区移入归档区（结果全文保留）。
-    * 返回被移除的节点 id 列表（ProjectActor 据此发 WS nodeRemoved）。 */
-  def sweepExpired(now: Long): IO[List[String]] =
+  /** 链级即时归档 sweep（裁定④「TTL 分开」批 2026-09-07，取代旧 ttlExpireAt 24h 计时
+    * 滞留 sweep）：活动区按派发批次聚簇（FlowMapStore.clusterBatches，与前端
+    * flowMapArchive.js clusterBatches 严格同源）；批内全终态（ChainTerminalStatuses =
+    * completed/failed/cancelled——blocked 是待办非终态）→ 整批立即移归档 + 活动区删除；
+    * 链未齐（任一非终态）→ 整批保留（终态成员留主图，前端规格
+    * 20260903_flowmap-archive-panel-spec §3.1 ①同款）。
+    * TtlTick 30s 驱动（ProjectActor）——视觉「同帧淡出」由前端派生管线当帧承担，本
+    * sweep 承担出库与归档落盘（≤30s 滞后不可见：nodeRemoved 到达时前端墓碑幂等）。
+    * 顺序 = 归档先行（批次注册 → 归档区写入 → 分文件落盘）再删活动区：崩溃窗口残留
+    * 「活动+归档双在」下个 tick 自愈（幂等重归档零写入 + 补删），反向（先删活动）
+    * 崩溃则双失。返回被移除的节点 id 列表（ProjectActor 据此发 WS nodeRemoved）。 */
+  def sweepCompletedChains(now: Long): IO[List[String]] =
     for
       s <- state.get
-      expired = s.nodes.values
-        .filter(n => NodeLifecycle.Terminal.contains(n.status))
-        .filter(n => n.ttlExpireAt.exists(_ <= now))
-        .toList
-      _ <- if expired.isEmpty then IO.unit
+      doneBatches = FlowMapStore.clusterBatches(s.nodes.values).filter { case (_, members) =>
+        members.forall(n => FlowMapStore.ChainTerminalStatuses.contains(n.status))
+      }
+      _ <- if doneBatches.isEmpty then IO.unit
       else
-        val ids = expired.map(_.id).toSet
-        mutate(st => st.copy(nodes = st.nodes -- ids)) *>
-          mutateArchive(a => a.copy(nodes = a.nodes ++ expired.map(n => n.id -> n).toMap))
-      _ <- if expired.isEmpty then IO.unit else IO(logger.infoSync(s"FlowMap[$project] TTL sweep: ${expired.map(_.name).mkString(", ")} → archive"))
-    yield expired.map(_.id)
+        val moved = doneBatches.flatMap(_._2)
+        val ids = moved.map(_.id).toSet
+        val metas: Map[String, ArchiveBatchMeta] = doneBatches.map { case (bid, members) =>
+          bid -> ArchiveBatchMeta(bid, now, members.map(_.id).toSet)
+        }.toMap
+        for
+          _ <- batches.update(_ ++ metas)
+          newArc <- archive.updateAndGet(a => a.copy(nodes = a.nodes ++ moved.map(n => n.id -> n).toMap))
+          _ <- persistBatchFiles(metas.keySet, newArc, metas)
+          _ <- mutate(st => st.copy(nodes = st.nodes -- ids))
+          _ <- IO(logger.infoSync(s"FlowMap[$project] chain sweep: ${doneBatches.map(_._1).mkString(", ")} (${ids.size} node(s)) → archive"))
+        yield ()
+    yield doneBatches.flatMap(_._2).map(_.id)
 
   // ── 持久化 ─────────────────────────────────────────────
 
@@ -134,8 +161,8 @@ class FlowMapStore private (
     *     先写文件再写 JSON：崩溃窗口内「文件已存在、JSON 尚带全文」→ 下次加载按
     *     「文件存在即回读」水合，不丢不半；
     *   - JSON（flow-map.json）→ result / task 各收敛为 ≤500 字符摘要 + resultFile /
-    *     taskFile 指针（对工具/人工可读）；flow-map-archive.json → result 同款摘要
-    *     +指针，task 直接剥除（无 taskFile——归档无重入价值）。
+    *     taskFile 指针（对工具/人工可读）；归档分文件（flow-map-archive/<batchId>.json）
+    *     → result 同款摘要+指针，task 直接剥除（无 taskFile——归档无重入价值）。
     * 这治掉了「节点 result/task 全文灌进 flow-map.json」的载荷污染（宿主实测
     * 630KB 活动区 + 1.35MB 归档区；09-06 复测 task 仍占 nebflow-website 活动区
     * 214KB 中的 ~101KB）。 */
@@ -146,14 +173,52 @@ class FlowMapStore private (
       AtomicJson.writeSync(statePath, slimNodeResults(slimNodeTasks(s.asJson)).noSpaces)
     }
 
-  private def persistArchive(a: FlowMapArchive): IO[Unit] =
+  /** 归档分文件落盘（裁定④）：`<batchId>.json` 一批一文件——result 摘要+指针、task
+    * 剥除（手术与旧单文件同款）。只写 batchIds 命中的批（增量写粒度；替代旧「每次
+    * 变更全量重写 flow-map-archive.json」的写放大）。批成员全被移除 → 删批文件。 */
+  private def persistBatchFiles(batchIds: Set[String], a: FlowMapArchive, bt: Map[String, ArchiveBatchMeta]): IO[Unit] =
     IO.blocking {
-      if a.nodes.nonEmpty then
-        writeResultFiles(a.nodes)
-        // 归档不写 task 文件（writeTaskFiles 仅活动区）——存量活动期 task 文件留存
-        // 为孤儿（不删不引用），JSON 侧 task 键剥除。
-        AtomicJson.writeSync(archivePath, stripNodeTasks(slimNodeResults(a.asJson)).noSpaces)
+      if batchIds.nonEmpty then
+        os.makeDir.all(archiveDir)
+        batchIds.foreach { bid =>
+          bt.get(bid).foreach { meta =>
+            val nodes = meta.nodeIds.flatMap(id => a.nodes.get(id).map(id -> _)).toMap
+            if nodes.isEmpty && meta.nodeIds.nonEmpty then
+              os.remove.all(batchPath(bid)) // 批成员全移除 → 批文件删除（当前无调用方，防呆）
+            else if nodes.nonEmpty then
+              writeResultFiles(nodes)
+              // 归档不写 task 文件（writeTaskFiles 仅活动区）——存量活动期 task 文件
+              // 留存为孤儿（不删不引用），JSON 侧 task 键剥除。
+              val file = FlowMapArchiveBatch(project, bid, meta.archivedAt, nodes)
+              AtomicJson.writeSync(batchPath(bid), stripNodeTasks(slimNodeResults(file.asJson)).noSpaces)
+          }
+        }
     }
+
+  /** mutateArchive 的 diff 落盘：只重写变更节点所属批文件。变更/移除节点无批次归属
+    * （直种归档等防呆路径）→ 现场聚簇注册批次再落盘——归档写永不丢节点。 */
+  private def persistArchiveDiff(oldA: FlowMapArchive, newA: FlowMapArchive): IO[Unit] =
+    val changed = (newA.nodes.filterNot { case (id, n) => oldA.nodes.get(id).contains(n) }.keySet
+      ++ (oldA.nodes.keySet -- newA.nodes.keySet))
+    if changed.isEmpty then IO.unit
+    else
+      for
+        bt <- batches.get
+        affected = bt.collect { case (bid, meta) if meta.nodeIds.exists(changed.contains) => bid }.toSet
+        orphaned = changed.filterNot(id => bt.values.exists(_.nodeIds.contains(id)))
+        _ <-
+          if orphaned.isEmpty then persistBatchFiles(affected, newA, bt)
+          else
+            val nowMs = System.currentTimeMillis()
+            val newMetas = FlowMapStore.clusterBatches(newA.nodes.values.filter(n => orphaned.contains(n.id))).map { case (bid, members) =>
+              bid -> ArchiveBatchMeta(bid, members.flatMap(_.completedAt).foldLeft(nowMs)(math.max), members.map(_.id).toSet)
+            }.toMap
+            for
+              _ <- batches.update(_ ++ newMetas)
+              bt2 <- batches.get
+              _ <- persistBatchFiles(affected ++ newMetas.keySet, newA, bt2)
+            yield ()
+      yield ()
 
   /** 结果全文落 per-node 文件（幂等：内容相同跳过写）。 */
   private def writeResultFiles(nodes: Map[String, NodeDef]): Unit =
@@ -182,6 +247,11 @@ class FlowMapStore private (
   private def resultsDir: os.Path = statePath / os.up / FlowMapStore.ResultsDirName
 
   private def tasksDir: os.Path = statePath / os.up / FlowMapStore.TasksDirName
+
+  /** 归档分文件目录（裁定④：`<workspace>/.nebflow/flow-map-archive/`）。 */
+  private def archiveDir: os.Path = statePath / os.up / FlowMapStore.ArchiveDirName
+
+  private def batchPath(batchId: String): os.Path = archiveDir / s"$batchId.json"
 
   /** 落盘 JSON 手术：result 非空节点 → result=摘要 + 注入 resultFile 指针。
     * circe 派生解码忽略未知键 → resultFile 只活在磁盘 JSON，不进 NodeDef 内存模型。 */
@@ -336,16 +406,70 @@ class FlowMapStore private (
       else FlowMapState(project = project, updatedAt = System.currentTimeMillis())
     }
 
-  private def loadArchive(): IO[(FlowMapArchive, Boolean)] =
+  /** 归档加载（裁定④分批布局）+ 存量单文件零丢失迁移。返回 (归档区, 批次索引,
+    * 待收敛批 id 集——open 收尾时对它们重写一次分文件)。
+    *   1. 分文件目录在 → 逐批读入（单批损坏只跳该批，不拖垮全档）+ result 水合；
+    *   2. 存量单文件 flow-map-archive.json 在 → 解码 + result 水合迁移 → 剔除已被
+    *      分文件覆盖的节点（崩溃重入去重，分文件优先）→ 聚簇分批 → 逐批落分文件
+    *      （已存在不覆盖，幂等）→ 单文件改名 .split-bak（回滚锚点，不覆盖既有备份）。
+    * 崩溃中段安全：分文件原子写；改名只在全部批文件落盘后——中途崩溃下次 open
+    * 重走迁移，已写批文件经去重跳过。 */
+  private def loadArchive(): IO[(FlowMapArchive, Map[String, ArchiveBatchMeta], Set[String])] =
     IO.blocking {
-      if os.exists(archivePath) then
-        jsonParse(os.read(archivePath)).flatMap(_.as[FlowMapArchive]) match
-          case Right(a) =>
-            val normalized = a.copy(nodes = a.nodes.transform((_, n) => normalizeOut(n)))
-            val (hydratedNodes, migrated) = hydrateAndMigrate(normalized.nodes, archivePath, migrateTasks = false)
-            (normalized.copy(nodes = hydratedNodes), migrated)
-          case Left(_) => (FlowMapArchive(project = project), false)
-      else (FlowMapArchive(project = project), false)
+      val fromFiles: List[(ArchiveBatchMeta, Map[String, NodeDef], Boolean)] =
+        if os.exists(archiveDir) then
+          os.list(archiveDir).filter(_.last.endsWith(".json")).toList.flatMap { f =>
+            jsonParse(os.read(f)).flatMap(_.as[FlowMapArchiveBatch]) match
+              case Right(b) =>
+                val bid = if b.batch.nonEmpty then b.batch else f.last.stripSuffix(".json")
+                val normalized = b.nodes.transform((_, n) => normalizeOut(n))
+                val (hydrated, migrated) = hydrateAndMigrate(normalized, f, migrateTasks = false)
+                Some((ArchiveBatchMeta(bid, b.archivedAt, hydrated.keySet), hydrated, migrated))
+              case Left(e) =>
+                logger.warnSync(s"flow-map '$project': archive batch file corrupt: ${f.last}: $e — skipped")
+                None
+          }
+        else Nil
+      val fileNodeIds = fromFiles.flatMap(_._2.keySet).toSet
+      val fileMetas = fromFiles.map(_._1).map(m => m.id -> m).toMap
+      val converge = fromFiles.collect { case (m, _, true) => m.id }.toSet
+
+      val fromMonolith: List[(ArchiveBatchMeta, Map[String, NodeDef])] =
+        if os.exists(archivePath) then
+          jsonParse(os.read(archivePath)).flatMap(_.as[FlowMapArchive]) match
+            case Right(a0) =>
+              val normalized = a0.copy(nodes = a0.nodes.transform((_, n) => normalizeOut(n)))
+              val (hydrated, _) = hydrateAndMigrate(normalized.nodes, archivePath, migrateTasks = false)
+              val toMigrate = hydrated.filterNot { case (id, _) => fileNodeIds.contains(id) }
+              val nowMs = System.currentTimeMillis()
+              val migratedBatches = FlowMapStore.clusterBatches(toMigrate.values).flatMap { case (bid, members) =>
+                val target = batchPath(bid)
+                if os.exists(target) then None // 幂等：批文件已在（崩溃重入）→ 不覆盖
+                else
+                  val meta = ArchiveBatchMeta(bid,
+                    members.flatMap(_.completedAt).foldLeft(nowMs)(math.max),
+                    members.map(_.id).toSet)
+                  val nodes = members.map(n => n.id -> n).toMap
+                  writeResultFiles(nodes)
+                  val file = FlowMapArchiveBatch(project, bid, meta.archivedAt, nodes)
+                  AtomicJson.writeSync(target, stripNodeTasks(slimNodeResults(file.asJson)).noSpaces)
+                  Some(meta -> nodes)
+              }
+              val splitBak = os.Path(archivePath.toString + ".split-bak")
+              val dest = if os.exists(splitBak) then os.Path(s"${archivePath}.split-bak.$nowMs") else splitBak
+              os.move(archivePath, dest)
+              if hydrated.nonEmpty then
+                logger.warnSync(s"flow-map '$project': legacy single-file archive migrated to per-batch files (${migratedBatches.size} batch file(s), ${toMigrate.size} node(s)) — original renamed to ${dest.last}")
+              migratedBatches
+            case Left(e) =>
+              logger.warnSync(s"flow-map-archive.json corrupt: $e — archive starts empty")
+              Nil
+        else Nil
+
+      val allMetas = fileMetas ++ fromMonolith.map(_._1).map(m => m.id -> m).toMap
+      val allNodes = fromFiles.foldLeft(Map.empty[String, NodeDef])(_ ++ _._2) ++
+        fromMonolith.foldLeft(Map.empty[String, NodeDef])(_ ++ _._2)
+      (FlowMapArchive(project = project, nodes = allNodes), allMetas, converge)
     }
 
 object FlowMapStore:
@@ -355,6 +479,38 @@ object FlowMapStore:
   /** per-node task 文件目录名（相对 workspace/.nebflow/；与 results/ 同域，
     * 2026-09-06 存储瘦身批）。A/B 硬契约：存量迁移脚本与 store 读写同路径同字节。 */
   val TasksDirName: String = "tasks"
+
+  /** 归档分文件目录名（裁定④「TTL 分开」批；相对 workspace/.nebflow/）。 */
+  val ArchiveDirName: String = "flow-map-archive"
+
+  /** 派发批次窗口（与前端 flowMapArchive.js CHAIN_BATCH_MS 逐字同源）：同批
+    * createdAt 相邻间隔 ≤120s（实测同批 ≤80s、跨批 ≥3min）。 */
+  val ChainBatchMs: Long = 120000L
+
+  /** 链齐终态集（与前端 TERMINAL_STATUSES 逐字同源）：completed/failed/cancelled。
+    * blocked 不算——待办语义（§1.4，ttlExpireAt=None 常驻），链含 blocked 即未齐。
+    * 注意不复用 NodeLifecycle.Terminal（含 blocked）。 */
+  val ChainTerminalStatuses: Set[String] =
+    Set(NodeLifecycle.Completed, NodeLifecycle.Failed, NodeLifecycle.Cancelled)
+
+  /** 批次聚簇算法单点（裁定④；与前端 clusterBatches 严格同源）：节点按 createdAt
+    * 升序、相邻间隔 >ChainBatchMs 开新批；批 id = `chain-<批内 createdAt 最早节点
+    * id>`——前端面板按 id 与派生链去重、归档分文件名均依赖此同源口径。 */
+  def clusterBatches(nodes: Iterable[NodeDef]): List[(String, List[NodeDef])] =
+    val sorted = nodes.toList.sortBy(_.createdAt)
+    val out = scala.collection.mutable.ListBuffer.empty[(String, List[NodeDef])]
+    var curId = ""
+    var cur = scala.collection.mutable.ListBuffer.empty[NodeDef]
+    var lastT = 0L
+    for n <- sorted do
+      if cur.isEmpty || n.createdAt - lastT > ChainBatchMs then
+        if cur.nonEmpty then out += curId -> cur.toList
+        curId = s"chain-${n.id}"
+        cur = scala.collection.mutable.ListBuffer.empty[NodeDef]
+      cur += n
+      lastT = n.createdAt
+    if cur.nonEmpty then out += curId -> cur.toList
+    out.toList
 
   /** 落盘 JSON 内 result 摘要截断上限（与原 NodePayload 载荷摘要规则同口径）。 */
   val ResultSummaryCap: Int = 500
@@ -377,15 +533,17 @@ object FlowMapStore:
     val archivePath = base / "flow-map-archive.json"
     for
       s <- IO.blocking(os.makeDir.all(base))
-      store = new FlowMapStore(project, statePath, archivePath, Ref.unsafe[IO, FlowMapState](FlowMapState(project = project, updatedAt = 0L)), Ref.unsafe[IO, FlowMapArchive](FlowMapArchive(project = project)))
+      store = new FlowMapStore(project, statePath, archivePath, Ref.unsafe[IO, FlowMapState](FlowMapState(project = project, updatedAt = 0L)), Ref.unsafe[IO, FlowMapArchive](FlowMapArchive(project = project)), Ref.unsafe[IO, Map[String, ArchiveBatchMeta]](Map.empty))
       initial <- store.loadInitial()
-      (arch, archiveMigrated) <- store.loadArchive()
+      (arch, batchMetas, convergeBatches) <- store.loadArchive()
       _ <- store.state.set(initial)
       _ <- store.archive.set(arch)
+      _ <- store.batches.set(batchMetas)
       // 首写：确保 flow-map.json 存在（验收①「只有 flow-map.json 被 store 写」）；
       // 同时完成存量 JSON 的摘要收敛（水合后内存全文 → 落盘自动拆分）。
       _ <- store.persistState(initial)
-      // 归档区迁移收敛：归档 JSON 平日只在 archive mutation 时重写——存量污染在
-      // open 时立即收敛一次（幂等；无迁移时零写入）。
-      _ <- if archiveMigrated then store.persistArchive(arch) else IO.unit
+      // 归档区迁移收敛：批文件平日只在 archive mutation 时重写——存量污染/迁移在
+      // open 时立即收敛一次（幂等；无迁移时零写入）。单文件存量迁移本身已在
+      // loadArchive 内落盘并改名；此处只收敛分文件内的 result 摘要污染。
+      _ <- if convergeBatches.nonEmpty then store.persistBatchFiles(convergeBatches, arch, batchMetas) else IO.unit
     yield store
