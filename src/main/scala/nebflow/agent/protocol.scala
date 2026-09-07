@@ -1033,7 +1033,10 @@ case class SystemStableSnapshot(
   devices: String = "",
   sessions: String = "",
   language: Option[String] = None,
-  envInfo: String = ""
+  envInfo: String = "",
+  /** Mounted-project list body at systemStable build time (cache v2 change
+    * detection). Only populated for the root Nebula agent; "" for others. */
+  mountedProjects: String = ""
 )
 
 case class AgentState(

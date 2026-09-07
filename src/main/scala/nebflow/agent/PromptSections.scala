@@ -27,7 +27,7 @@ import nebflow.core.PathUtil
  *              下迁进工具 description——AskUserQuestion/Read/Pop/TeamTask 三件，
  *              提示词层不再按「是否有该工具」注入用法段落）
  *   500-599  — feature-flag sections (voice)
- *   600-699  — runtime-state sections (devices, sessions, language)
+ *   600-699  — runtime-state sections (devices, sessions, language, mounted projects)
  *   800-899  — catalog sections (skills)
  *   900+     — project rules and fallback
  */
@@ -84,7 +84,14 @@ object PromptSections:
     /** 轨道二 #5: this flow node's userFacing whitelist declaration. */
     userFacingNode: Boolean = false,
     /** Whether this session's agent is the team lead (Manager). */
-    isTeamLead: Boolean = false
+    isTeamLead: Boolean = false,
+    /** Whether this agent is the root Nebula agent (Progressive disclosure:
+      * mounted-project list is Nebula-only — dispatcher/node sessions must not
+      * see it, they already carry AGENTS.md / project memory). */
+    isRootAgent: Boolean = false,
+    /** Pre-rendered mounted-project list body (sorted bullet lines, or the
+      * "当前无挂载项目" placeholder). From AgentCore via ProjectRuntimeRegistry. */
+    mountedProjectsText: String = ""
   )
 
   object PromptContext:
@@ -281,9 +288,21 @@ object PromptSections:
       condition = _.language.isDefined,
       renderer = ctx => languageBlock(ctx.language.get)
     ),
+    // --- Mounted projects (progressive disclosure, 2026-09-07) ---
+    // 根 Nebula 会话可见当前挂载项目清单（project.json name/description）。
+    // 分发器/节点会话不注入（isRootAgent=false）——它们已有 AGENTS.md / 项目
+    // memory。mountedProjectsText 对根代理恒非空（无项目时渲染为占位
+    // 「当前无挂载项目」），空清单也显式呈现。mid-session 挂载/卸载/新建由
+    // SystemReminders.projectsReminder 增量通报（不改 systemStable 缓存）。
+    PromptSection.dynamic(
+      630,
+      condition = ctx => ctx.isRootAgent && ctx.mountedProjectsText.nonEmpty,
+      renderer = ctx => s"# Mounted Projects\n\n${ctx.mountedProjectsText}"
+    ),
     // --- 阶段 2d（§D.1-14/§D.2）：原 order 630 Task List Protocol 段已删除
     // ——内容下迁进 TeamTask 三件 description（双轨期语义，阶段 3 随 team
     // 退役一并拆除）。team 成员人手三件，协议文本随工具定义必达。
+    // 注：630 槽位现被上方的 Mounted Projects 段复用（原协议段已不存在）。
 
     // --- Catalog sections ---
     PromptSection.dynamic(
@@ -589,6 +608,51 @@ object PromptSections:
     stripSection(prompt, "Voice Output")
 
 end PromptSections
+
+/**
+ * Mounted-project list rendering + change detection (cache v2, 2026-09-07).
+ *
+ * Pure helpers so both AgentCore (wiring) and the unit specs can share one
+ * source of truth for the mounted-projects section body and its +/- delta.
+ */
+object MountedProjectList:
+
+  /** Placeholder rendered when the registry holds no mounted projects — the
+    * root Nebula session always sees an explicit state, empty included. */
+  val EmptyText = "当前无挂载项目"
+
+  /** Render registry entries as (name, description) into sorted bullet lines.
+    * Empty list → [[EmptyText]]; description is omitted when empty/None. */
+  def renderLines(projects: List[(String, Option[String])]): String =
+    if projects.isEmpty then EmptyText
+    else
+      projects
+        .sortBy(_._1)
+        .map { case (name, desc) =>
+          desc.filter(_.nonEmpty) match
+            case Some(d) => s"- $name: $d"
+            case None    => s"- $name"
+        }
+        .mkString("\n")
+
+  /** Line-level +/- delta between the snapshot text and the current text
+    * (same semantics as AgentCore.devicesDeltaLines). Each bullet entry is
+    * stripped of its leading "- " so the +/− marker reads cleanly ("+ name:
+    * desc" / "- name: desc") instead of the colliding "+- name". Returns ""
+    * when the entry sets are identical (only ordering/whitespace changed —
+    * no real change). */
+  def delta(old: String, current: String): String =
+    def entries(s: String): Vector[String] =
+      s.split("\n").map(_.trim).filter(_.nonEmpty).toVector
+    def bare(e: String): String = e.stripPrefix("- ").trim
+    val oldE = entries(old).map(bare)
+    val newE = entries(current).map(bare)
+    val added = newE.filterNot(oldE.contains)
+    val removed = oldE.filterNot(newE.contains)
+    if added.isEmpty && removed.isEmpty then ""
+    else (added.map("+ " + _) ++ removed.map("- " + _)).mkString("\n")
+
+end MountedProjectList
 
 /**
  * Prompt helpers for SubTask workers (Delegate split, 方案 A).
