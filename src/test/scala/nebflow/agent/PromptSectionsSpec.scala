@@ -270,4 +270,59 @@ class PromptSectionsSpec extends munit.FunSuite:
     assertEquals(assembleSystemPrompt("P", "A", ""), "PA")
     assertEquals(assembleSystemPrompt("P", "A", "C"), "PA\n\nC")
 
+  // ============================================================
+  // Mounted projects (progressive disclosure 2026-09-07): Nebula-only
+  // section + testable MountedProjectList render/delta helpers.
+  // ============================================================
+
+  test("Mounted Projects section injected for root agent with a non-empty list"):
+    val ctx = PromptContext(
+      isRootAgent = true,
+      mountedProjectsText = "- nebflow: Scala version\n- voice-recognition-test: STT"
+    )
+    val blocks = buildConditionalBlocks(ctx)
+    assert(blocks.contains("# Mounted Projects"), "root agent must see the mounted-projects section")
+    assert(blocks.contains("- nebflow: Scala version"))
+    assert(blocks.contains("- voice-recognition-test: STT"))
+
+  test("Mounted Projects section still injected for root agent when the list is the empty placeholder"):
+    // Empty list must be explicitly presented ("当前无挂载项目"), not silently dropped.
+    val ctx = PromptContext(isRootAgent = true, mountedProjectsText = MountedProjectList.EmptyText)
+    val blocks = buildConditionalBlocks(ctx)
+    assert(blocks.contains("# Mounted Projects"))
+    assert(blocks.contains(MountedProjectList.EmptyText))
+
+  test("Mounted Projects section NOT injected for non-root agents (dispatcher/node sessions)"):
+    val ctx = PromptContext(isRootAgent = false, mountedProjectsText = "- nebflow: Scala version")
+    val blocks = buildConditionalBlocks(ctx)
+    assert(!blocks.contains("# Mounted Projects"), "non-root agents must not see the mounted-projects section")
+
+  test("MountedProjectList.renderLines renders empty list as the explicit placeholder"):
+    assertEquals(MountedProjectList.renderLines(Nil), MountedProjectList.EmptyText)
+
+  test("MountedProjectList.renderLines sorts by name and omits empty description"):
+    val lines = MountedProjectList.renderLines(
+      List(
+        ("voice-recognition-test", Some("STT")),
+        ("nebflow", None),
+        ("czt-project", Some(""))
+      )
+    )
+    assertEquals(
+      lines,
+      "- czt-project\n- nebflow\n- voice-recognition-test: STT"
+    )
+
+  test("MountedProjectList.delta yields +/- lines for added/removed projects"):
+    val old = "- nebflow: Scala version\n- czt-project"
+    val current = "- nebflow: Scala version\n- voice-recognition-test: STT"
+    val d = MountedProjectList.delta(old, current)
+    assertEquals(d, "+ voice-recognition-test: STT\n- czt-project")
+    assert(!d.contains("- nebflow"), s"unchanged project should not appear: $d")
+
+  test("MountedProjectList.delta is empty when entry sets are identical (ignores ordering)"):
+    assertEquals(MountedProjectList.delta("- a\n- b", "- b\n- a"), "")
+    assertEquals(MountedProjectList.delta("- a\n- b", "- a\n- b"), "")
+    assertEquals(MountedProjectList.delta("- a", "- a"), "")
+
 end PromptSectionsSpec
