@@ -19,9 +19,11 @@ import nebflow.core.{AtomicJson, NebflowLogger, PathUtil}
  * - 内存 Ref 持当前状态；所有变更走 `mutate`（Ref.update 原子性 + 落盘）
  * - 环检测：NodeEdit 建边（from→to）前 DFS（to 的传递下游沿 out 边可达 from → 拒）
  * - 链级即时归档（裁定④「TTL 分开」，取代旧 ttlExpireAt 24h 计时滞留）：活动区按派发
- *   批次聚簇（与前端 clusterBatches 同源），批内**全 completed** → 整批立即移归档
- *   （结果全文保留）+ 活动区删除；含 failed/cancelled/blocked 的批 → 保留主图
- *   （2026-09-07 12:29 作者裁定：死亡现场待上层裁决取消/重跑，永不自动归档）
+ *   批次聚簇（与前端 clusterBatches 同源），批内**归档资格 = chainArchivable** → 整批
+ *   立即移归档（结果全文保留）+ 活动区删除。归档资格（2026-09-07 20:38 作者裁定
+ *   「送达即移」，取代 12:29 占图部分）：链内无活跃（running/pending/wiring/blocked）
+ *   节点 ∧ 所有 failed/cancelled 成员已上报（notifySentAt.isDefined）。completed 天然
+ *   满足；blocked 永不自动归档（必留主图）；未上报的异常终态保留主图待上报。
  * - barrier：节点启动条件 = 全部 in 上游 deliveredTo 含本节点（NodeEngine 裁决）
  *
  * 并发纪律：边/计数的变更必须在单个 mutate 内完成（§2.3「单事务更新」）。
@@ -120,11 +122,11 @@ class FlowMapStore private (
 
   /** 链级即时归档 sweep（裁定④「TTL 分开」批 2026-09-07，取代旧 ttlExpireAt 24h 计时
     * 滞留 sweep）：活动区按派发批次聚簇（FlowMapStore.clusterBatches，与前端
-    * flowMapArchive.js clusterBatches 严格同源）；批内全 **completed**（ChainTerminalStatuses =
-    * completed——2026-09-07 12:29 作者裁定收窄：failed/cancelled/blocked 永不自动归档，
-    * 死亡现场保留主图待上层裁决取消/重跑）→ 整批立即移归档 + 活动区删除；
-    * 含 failed/cancelled/blocked 的批 → 整批保留（终态成员留主图，前端规格
-    * 20260903_flowmap-archive-panel-spec §3.1 ①同款）。
+    * flowMapArchive.js clusterBatches 严格同源）；批内**归档资格 = chainArchivable**——
+    * 2026-09-07 20:38 作者裁定「送达即移」（取代 12:29 占图部分）：链内无活跃节点 ∧
+    * 所有 failed/cancelled 成员已上报（notifySentAt.isDefined）→ 整批立即移归档 +
+    * 活动区删除。completed 天然满足；blocked 永不自动归档（必留主图）；未上报的
+    * failed/cancelled → 保留主图待上报（终态成员留主图，前端规格 §3.1 同源）。
     * TtlTick 30s 驱动（ProjectActor）——视觉「同帧淡出」由前端派生管线当帧承担，本
     * sweep 承担出库与归档落盘（≤30s 滞后不可见：nodeRemoved 到达时前端墓碑幂等）。
     * 顺序 = 归档先行（批次注册 → 归档区写入 → 分文件落盘）再删活动区：崩溃窗口残留
@@ -134,7 +136,7 @@ class FlowMapStore private (
     for
       s <- state.get
       doneBatches = FlowMapStore.clusterBatches(s.nodes.values).filter { case (_, members) =>
-        members.forall(n => FlowMapStore.ChainTerminalStatuses.contains(n.status))
+        FlowMapStore.chainArchivable(members)
       }
       _ <- if doneBatches.isEmpty then IO.unit
       else
@@ -489,13 +491,27 @@ object FlowMapStore:
     * createdAt 相邻间隔 ≤120s（实测同批 ≤80s、跨批 ≥3min）。 */
   val ChainBatchMs: Long = 120000L
 
-  /** 链齐终态集（与前端 TERMINAL_STATUSES 逐字同源）：**completed**。
-    * 2026-09-07 12:29 作者裁定收窄：failed/cancelled/blocked 永不自动归档——死亡现场
-    * 保留主图待上层裁决取消/重跑，无 TTL 强制清；链含 failed/cancelled/blocked 即未齐，
-    * 整批保留。blocked 不算终态（待办语义，§1.4，ttlExpireAt=None 常驻）；注意不复用
-    * NodeLifecycle.Terminal（含 blocked）。 */
+  /** 无需上报即满足归档资格的终态集：**completed**（无上报要求，天然满足
+    * [[chainArchivable]]）。2026-09-07 12:29 裁定保留（failed/cancelled/blocked 永不
+    * 满足本集）；第三次演进（20:38「送达即移」）后归档判据 = [[chainArchivable]]，
+    * 本集并入其「completed → true」分支。注意不复用 NodeLifecycle.Terminal
+    * （含 blocked，blocked 永不自动归档）。 */
   val ChainTerminalStatuses: Set[String] =
     Set(NodeLifecycle.Completed)
+
+  /** 链级归档资格（作者 2026-09-07 20:38「送达即移」裁定，取代 12:29 占图部分）：
+    * 链内无活跃（running/pending/wiring/blocked）节点 ∧ 所有 failed/cancelled 成员的
+    * **上报已送达**（notifySentAt.isDefined——failed 终态化后 deliverFailed 尾部触发
+    * 通知落 notifySentAt；completed 无上报要求）。blocked 永不自动归档（必留主图）；
+    * running/pending/wiring 为活跃态非终态 → 链未齐。与前端 flowMapArchive.js
+    * chainEligible 严格同源。 */
+  def chainArchivable(members: Iterable[NodeDef]): Boolean =
+    members.forall { n =>
+      n.status match
+        case s if ChainTerminalStatuses.contains(s) => true
+        case NodeLifecycle.Failed | NodeLifecycle.Cancelled => n.notifySentAt.isDefined
+        case _ => false
+    }
 
   /** 批次聚簇算法单点（裁定④；与前端 clusterBatches 严格同源）：节点按 createdAt
     * 升序、相邻间隔 >ChainBatchMs 开新批；批 id = `chain-<批内 createdAt 最早节点

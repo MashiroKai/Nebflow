@@ -222,6 +222,10 @@ class NodeBlockedReentrySpec extends CatsEffectSuite:
       _ <- waitStatus(rt, "blocked-a", Set(NodeLifecycle.Blocked))
       aId <- idOf(rt, "blocked-a")
       a <- nodeById(rt, aId)
+      // 归档语义（2026-09-07 20:38「送达即移」负极）：blocked 永不自动归档——sweep 后
+      // blocked-a 必须仍留主图（本批另含 wiring down-b → 链未齐，两者皆不触发归档）。
+      removedBySweep <- rt.store.sweepCompletedChains(System.currentTimeMillis())
+      afterSweepInActive <- rt.store.snapshot.map(_.nodes.contains(aId))
       evs <- events.get
       audit <- readAuditTypes(ws)
       _ <- IO.sleep(300.millis) // 给「假如有下游结算」留窗口
@@ -249,6 +253,10 @@ class NodeBlockedReentrySpec extends CatsEffectSuite:
       assert(!evs.exists((t, id, _) => t == "nodeCompleted" && id == aId), "blocked must NOT emit nodeCompleted")
       // 审计（§4.4）
       assert(audit.exists((t, id) => t == "blocked" && id == aId), s"blocked audit line must exist, got: $audit")
+      // 「blocked 永不自动归档」负极断言：链 sweep 不得把 blocked 节点移出主图
+      assert(!removedBySweep.contains(aId), s"blocked node '${a.name}' must never be auto-archived by sweep, removed=$removedBySweep")
+      // sweep 后 blocked-a 仍留活动区（主图可见 = 待办语义）
+      assert(afterSweepInActive, "blocked node must stay in active area after sweep")
   }
 
   // ── 验收③：blocked → ReenterDispatcher → 重入 prompt 形态 spawn ──
