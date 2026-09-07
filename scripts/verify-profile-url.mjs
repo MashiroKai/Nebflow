@@ -7,8 +7,8 @@
 // moved the URL to its own injected field (window.__BRAND__.profileUrl) read
 // through brand.js getProfileUrl(). This script pins that contract:
 //
-//   1. injected https URL is used verbatim (debug domain AND publish domain,
-//      so the NEBFLOW_PROFILE_URL env override passes through untouched)
+//   1. injected https URL is used verbatim (default config AND the
+//      NEBFLOW_PROFILE_URL env override passes through untouched)
 //   2. absent field / absent __BRAND__ falls back to the live profile page
 //   3. non-https values (javascript:, http:) are rejected — the value goes
 //      into window.open(), so a hostile injection must never be navigable
@@ -27,13 +27,13 @@ import { fileURLToPath } from 'node:url';
 const ROOT = fileURLToPath(new URL('..', import.meta.url));
 const BRAND_JS = pathToFileURL(join(ROOT, 'src', 'main', 'resources', 'web', 'js', 'brand.js')).href;
 
-const FALLBACK = 'https://neblink.space/profile';
+const FALLBACK = 'https://nebflow.space/profile';
 const PLACEHOLDER = 'neblink.example';
 const BASE = { productName: 'Nebflow', lowerName: 'nebflow', domain: PLACEHOLDER };
 
 const cases = [
-  ['gateway injects real URL (debug domain)', { ...BASE, profileUrl: 'https://neblink.space/profile' }, 'https://neblink.space/profile'],
-  ['publish env override (nebflow.space)', { ...BASE, domain: 'nebflow.space', profileUrl: 'https://nebflow.space/profile' }, 'https://nebflow.space/profile'],
+  ['gateway injects real URL (default config)', { ...BASE, profileUrl: 'https://nebflow.space/profile' }, 'https://nebflow.space/profile'],
+  ['env override (nebflow.space)', { ...BASE, domain: 'nebflow.space', profileUrl: 'https://nebflow.space/profile' }, 'https://nebflow.space/profile'],
   ['older gateway: field absent', { ...BASE }, FALLBACK],
   ['no __BRAND__ at all (static serve)', null, FALLBACK],
   ['hostile: javascript: scheme', { ...BASE, profileUrl: 'javascript:alert(1)' }, FALLBACK],

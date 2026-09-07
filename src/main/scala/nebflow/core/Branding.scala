@@ -71,16 +71,16 @@ object Branding:
   val fullName: String = get("fullName")
 
   /**
-   * Primary domain. 双域机制（2026-09-01 登录链修复，作者拍板）：默认 = 调试域
-   * neblink.space（brand.conf 真值）；发布环境设 `NEBFLOW_BRAND_DOMAIN=nebflow.space`
-   * 自动替换（env 覆盖，复用 L3 dualEnv 双前缀读取）。display-only 语义：
+   * Primary domain. 单域（2026-09-07 命名边界裁定：neblink.space 退役）：默认 =
+   * nebflow.space（brand.conf 真值），可用 `NEBFLOW_BRAND_DOMAIN` env 覆盖
+   * （复用 L3 dualEnv 双前缀读取），默认无需再覆盖。display-only 语义：
    * 前端 profile 链接必须消费 `profileUrl`，禁止用 domain 构建 URL。
    */
   val domain: String = env("BRAND_DOMAIN").getOrElse(get("domain"))
 
   /** Profile 页 URL——前端 profile 链接的唯一来源（activityBar.js 消费它拼
-    * URL，与 domain 解耦）。双域机制同上：默认调试 neblink.space，发布 env
-    * `NEBFLOW_PROFILE_URL=https://nebflow.space/profile` 自动替换。 */
+    * URL，与 domain 解耦）。默认 = nebflow.space，可用
+    * `NEBFLOW_PROFILE_URL` env 覆盖。 */
   val profileUrl: String = env("PROFILE_URL").getOrElse(get("profileUrl"))
 
   /** Install script URL (current true value). */
