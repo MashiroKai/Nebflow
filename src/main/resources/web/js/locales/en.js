@@ -696,6 +696,11 @@ export default {
   'bg.ended': 'Process ended',
   'bg.stuck': 'No output for 10+ min',
   'bg.lines': '{count} lines',
+  'bg.header': 'Background tasks · {count}',
+  'bg.empty': 'No background tasks running',
+  'bg.kind.local': 'local',
+  'bg.kind.remote': 'remote',
+  'bg.openedBy': 'Started by {origin}',
 
   // === Time ===
   'time.yesterday': 'Yesterday',

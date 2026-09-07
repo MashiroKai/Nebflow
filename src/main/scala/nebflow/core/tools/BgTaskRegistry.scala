@@ -39,7 +39,16 @@ object BgTaskRegistry:
       * 不纳入节点等待集（节点完成不等它）；false = 等待型，纳入。默认 false
       * = 等待——绝大多数后台任务是编译/测试/CI，「完成即通知」语义本就要求
       * 等完再交付；server 是少数派且可显式申报。 */
-    persistent: Boolean = false
+    persistent: Boolean = false,
+    /** 来源类别（2026-09-07 后台任务面板重设计，作者指令②）：每任务标注开启
+      * 它的节点类别——"nebula" / "dispatcher" / "node"。由 originFor 从注册
+      * 会话 id 前缀推导（node-<uuid8> 随机段不含 Flow Map nodeId，故标识取
+      * 会话名=节点名，见 originLabel）。 */
+    origin: String = "nebula",
+    /** 来源显示名：Nebula / dispatcher/<project>（分发器 sessionName 即此
+      * 形态）/ Flow Map 节点名（节点 sessionName=nodeName）。空 = 调用方未传
+      * → 前端按 origin 类别兜底。 */
+    originLabel: String = ""
   )
 
   /** 节点完成闸：等待集内任务被超时/停滞看护杀掉的终局记账。节点终态化前
@@ -57,15 +66,30 @@ object BgTaskRegistry:
   private val tasks: Ref[IO, Map[String, ActiveTask]] = Ref.unsafe(Map.empty)
   private val failures: Ref[IO, Map[String, FailedBgTask]] = Ref.unsafe(Map.empty)
 
+  /** 来源推导（2026-09-07 后台任务面板重设计）：从注册会话 id 前缀 + 会话名
+    * 推导 (origin 类别, originLabel 显示名)。node-<uuid8> 的随机段不含 Flow Map
+    * nodeId（NodeEngine 生成），节点标识取 sessionName（NodeEngine 注入 = Flow Map
+    * 节点名）；dispatcher 的 sessionName 恒为 "dispatcher/<project>"。其余一律
+    * nebula（含空 sessionId 的 REST 直调）。 */
+  def originFor(sessionId: String, sessionName: Option[String]): (String, String) =
+    val name = sessionName.getOrElse("")
+    if sessionId.startsWith("node-") then
+      ("node", if name.nonEmpty then name else sessionId)
+    else if sessionId.startsWith("dispatcher-") then
+      ("dispatcher", if name.nonEmpty then name else "dispatcher")
+    else ("nebula", "Nebula")
+
   def register(
     jobId: String,
     sessionId: String,
     description: String,
     kind: String,
     rootSessionId: String = "",
-    persistent: Boolean = false
+    persistent: Boolean = false,
+    origin: String = "nebula",
+    originLabel: String = ""
   ): IO[Unit] =
-    tasks.update(_ + (jobId -> ActiveTask(jobId, sessionId, description, System.currentTimeMillis(), kind, rootSessionId, persistent)))
+    tasks.update(_ + (jobId -> ActiveTask(jobId, sessionId, description, System.currentTimeMillis(), kind, rootSessionId, persistent, origin, originLabel)))
 
   def unregister(jobId: String): IO[Unit] =
     tasks.update(_ - jobId)
@@ -120,7 +144,13 @@ object BgTaskRegistry:
                 "taskId" -> t.jobId.asJson,
                 "description" -> t.description.asJson,
                 "status" -> "running".asJson,
-                "startedAt" -> t.startedAtMs.asJson
+                "startedAt" -> t.startedAtMs.asJson,
+                // 2026-09-07 后台任务面板重设计：快照补 kind（local/remote）与
+                // 来源字段（origin 类别 + originLabel 显示名）——前端来源 chip
+                // 与类别样式在刷新恢复路径同样可渲染。
+                "kind" -> t.kind.asJson,
+                "origin" -> t.origin.asJson,
+                "originLabel" -> t.originLabel.asJson
               )
             }.toList
           }

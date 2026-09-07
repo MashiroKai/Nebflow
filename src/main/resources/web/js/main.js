@@ -2548,81 +2548,144 @@ function formatDuration(ms) {
   return `${h}h ${m % 60}m`;
 }
 
+// ── Background tasks panel (2026-09-07 重设计，作者指令①②③) ──────────────
+// 设计语言对齐 subagent 面板（renderBgAgentDropdown，2026-08-25 spec）：
+// 行 = 状态点 + 两行式（meta 行：状态文字/来源 chip/kind chip/行数/uptime；
+// 名称行：description）。状态点与文字成对（禁裸色）。来源 chip（origin）标注
+// 开启该任务的节点类别：nebula / dispatcher / node——数据权威 = 后端
+// BgTaskRegistry origin/originLabel 字段（实时信封与 activeBgTasks 快照同源），
+// 缺省（旧后端）时前端按注册会话 id 前缀兜底推导。防重叠（指令③）：任务行只
+// 进本面板、会话行只进 subagent 面板（key space 天然分离），节点/分发器来源的
+// 任务在本面板以来源 chip 显式标注「由 <节点> 开启」，subagent 面板不重复渲染。
+
+/** Task row state machine: cancelling > stuck (heartbeat idle>10min) > idle
+ *  (>2min) > running. Terminal tasks are removed from the bucket upstream. */
+function bgTaskRowState(task) {
+  if (task.status === 'cancelling') return 'cancelling';
+  const hb = task.heartbeat;
+  if (hb) {
+    if (hb.idleMs > 600000) return 'stuck';
+    if (hb.idleMs > 120000) return 'idle';
+  }
+  return 'running';
+}
+
+/** Resolve the origin chip {cat, label}: backend origin fields are
+ *  authoritative; fall back to the registering session-id prefix (old
+ *  backend / REST-invoked tools carry no origin). */
+function bgTaskOrigin(task) {
+  let cat = task.origin || '';
+  let label = task.originLabel || '';
+  if (!cat) {
+    const s = task.sessionId || '';
+    if (s.startsWith('node-')) cat = 'node';
+    else if (s.startsWith('dispatcher-')) cat = 'dispatcher';
+    else cat = 'nebula';
+  }
+  if (!label) {
+    label = cat === 'nebula' ? 'Nebula'
+      : cat === 'dispatcher' ? (task.sessionId ? 'dispatcher' : 'dispatcher')
+      : (task.sessionId || 'node');
+  }
+  return { cat, label };
+}
+
 function renderBgDropdown() {
   const tasks = state.sessionBgTasks[activeView?.sessionId] || [];
   const listEl = activeView.dom.bgDropdownListEl;
   const dropdown = activeView.dom.bgDropdownEl;
   if (!listEl || !dropdown) return 0;
-  listEl.innerHTML = '';
   // Show running AND cancelling tasks (cancelling tasks stay visible until backend confirms)
   const visible = tasks.filter(t => t.status === 'running' || t.status === 'cancelling');
+  // Panel header carries the live count (aria-live polite — subagent parity).
+  const headerEl = dropdown.querySelector('.bg-dropdown-header');
+  if (headerEl) headerEl.textContent = t('bg.header', { count: visible.length });
   if (visible.length === 0) {
-    dropdown.classList.add('hidden');
+    // Empty state (subagent parity): restrained i18n line, never fake rows.
+    // Auto-hide on drain stays in updateBgTasksUI (count→0 hides the dropdown);
+    // this line covers the transient/stale-count open path.
+    listEl.innerHTML = '<div class="bg-dropdown-empty">' + escapeHtml(t('bg.empty')) + '</div>';
     stopBgTimer();
     return 0;
   }
   const now = Date.now();
-  visible.forEach(task => {
-    const row = document.createElement('div');
-    row.className = 'bg-task-row';
-    if (task.status === 'cancelling') row.classList.add('bg-task-cancelling');
-    const info = document.createElement('div');
-    info.className = 'bg-task-info';
-    const desc = document.createElement('span');
-    desc.className = 'bg-task-desc';
-    desc.textContent = task.description || task.taskId;
-    const meta = document.createElement('div');
-    meta.className = 'bg-task-meta';
-    const idSpan = document.createElement('span');
-    idSpan.className = 'bg-task-id';
-    idSpan.textContent = task.taskId;
-    const durationSpan = document.createElement('span');
-    durationSpan.className = 'bg-task-duration';
-    durationSpan.dataset.taskId = task.taskId;
-    if (task.startedAt) durationSpan.textContent = formatDuration(now - task.startedAt);
-
-    // Heartbeat status indicator (skip for cancelling tasks — it'll be gone soon)
+  listEl.innerHTML = visible.map(task => {
+    const rowState = bgTaskRowState(task);
+    const statusLabel = rowState === 'cancelling' ? t('bg.cancelling')
+      : rowState === 'stuck' ? t('bg.stuck')
+      : t('bg.running');
+    const dotClass = {
+      running: 'bg-status-active', idle: 'bg-status-idle',
+      stuck: 'bg-status-stuck', cancelling: 'bg-status-done',
+    }[rowState];
+    const stateClass = rowState === 'stuck' ? ' bg-state-stuck'
+      : rowState === 'cancelling' ? ' bg-state-done' : '';
+    const { cat, label } = bgTaskOrigin(task);
+    const originPart = '<span class="bg-task-origin bg-origin-' + cat + '" title="' +
+      escapeHtml(t('bg.openedBy', { origin: label })) + '">' + escapeHtml(label) + '</span>';
+    const kindPart = task.kind
+      ? '<span class="bg-task-kind">' + escapeHtml((task.kind === 'local' || task.kind === 'remote') ? t('bg.kind.' + task.kind) : task.kind) + '</span>'
+      : '';
     const hb = task.heartbeat;
-    let statusDot = null;
-    let linesSpan = null;
-    if (hb && task.status !== 'cancelling') {
-      const idleClass = hb.idleMs > 600000 ? 'bg-status-stuck' : (hb.idleMs > 120000 ? 'bg-status-idle' : 'bg-status-active');
-      statusDot = document.createElement('span');
-      statusDot.className = `bg-task-status ${idleClass}`;
-      statusDot.title = hb.alive ? (hb.idleMs > 600000 ? t('bg.stuck') : t('bg.running')) : t('bg.ended');
-      linesSpan = document.createElement('span');
-      linesSpan.className = 'bg-task-lines';
-      linesSpan.textContent = t('bg.lines', { count: hb.outputLines });
-    }
+    const linesPart = (hb && rowState !== 'cancelling')
+      ? '<span class="bg-task-lines">' + escapeHtml(t('bg.lines', { count: hb.outputLines })) + '</span>'
+      : '';
+    const uptimePart = task.startedAt
+      ? '<span class="bg-task-uptime" data-task-id="' + escapeHtml(task.taskId) + '">' + escapeHtml(formatDuration(now - task.startedAt)) + '</span>'
+      : '';
+    const desc = task.description || task.taskId;
+    const nameTitle = desc + ' · ' + task.taskId;
+    return '<div class="bg-task-row' + (rowState === 'cancelling' ? ' bg-task-cancelling' : '') + '" role="listitem" tabindex="0">' +
+      '<span class="bg-task-status ' + dotClass + '" aria-hidden="true"></span>' +
+      '<div class="bg-task-info">' +
+        '<div class="bg-task-line bg-task-meta">' +
+          '<span class="bg-task-state' + stateClass + '">' + escapeHtml(statusLabel) + '</span>' +
+          originPart + kindPart + linesPart + uptimePart +
+        '</div>' +
+        '<div class="bg-task-line bg-task-name-line">' +
+          '<span class="bg-task-name" title="' + escapeHtml(nameTitle) + '">' + escapeHtml(desc) + '</span>' +
+        '</div>' +
+      '</div>' +
+      '<button class="bg-task-cancel" type="button">' + escapeHtml(rowState === 'cancelling' ? t('bg.cancelling') : t('bg.cancel')) + '</button>' +
+    '</div>';
+  }).join('');
 
-    meta.appendChild(idSpan);
-    if (statusDot) meta.appendChild(statusDot);
-    meta.appendChild(durationSpan);
-    if (linesSpan) meta.appendChild(linesSpan);
-    info.appendChild(desc);
-    info.appendChild(meta);
-    const cancelBtn = document.createElement('button');
-    cancelBtn.className = 'bg-task-cancel';
-    cancelBtn.textContent = t('bg.cancel');
-    cancelBtn.onclick = (e) => {
+  // Wire cancel buttons (unchanged semantics: optimistic cancelling state +
+  // cancelBackgroundJob WS command — regression red line).
+  listEl.querySelectorAll('.bg-task-row').forEach((row, i) => {
+    const task = visible[i];
+    if (!task) return;
+    const cancelBtn = row.querySelector('.bg-task-cancel');
+    if (!cancelBtn) return;
+    if (task.status === 'cancelling') {
+      cancelBtn.disabled = true;
+      cancelBtn.classList.add('cancelling');
+    }
+    cancelBtn.addEventListener('click', (e) => {
       e.stopPropagation();
       // Immediate visual feedback — optimistically show cancelling state
       cancelBtn.disabled = true;
       cancelBtn.classList.add('cancelling');
-      cancelBtn.textContent = task.status === 'cancelling' ? t('bg.cancelling') : '...';
+      cancelBtn.textContent = t('bg.cancelling');
       task.status = 'cancelling';
       sendWs({ type: 'cancelBackgroundJob', sessionId: activeView?.sessionId, jobId: task.taskId });
-    };
-    // If already cancelling, show the cancelling state
-    if (task.status === 'cancelling') {
-      cancelBtn.disabled = true;
-      cancelBtn.classList.add('cancelling');
-      cancelBtn.textContent = t('bg.cancelling');
-    }
-    row.appendChild(info);
-    row.appendChild(cancelBtn);
-    listEl.appendChild(row);
+    });
   });
+
+  // Keyboard (APG listbox parity with subagent panel): ArrowUp/ArrowDown move
+  // between rows. Rows have no click target (tasks open no popup); Tab reaches
+  // the row's cancel button. Property assignment — idempotent across re-renders.
+  listEl.onkeydown = (e) => {
+    const row = e.target && e.target.closest ? e.target.closest('.bg-task-row') : null;
+    if (!row) return;
+    if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
+      e.preventDefault();
+      const rows = [...listEl.querySelectorAll('.bg-task-row')];
+      const i = rows.indexOf(row);
+      const next = rows[e.key === 'ArrowDown' ? i + 1 : i - 1];
+      if (next) next.focus();
+    }
+  };
   return visible.length;
 }
 
@@ -2635,7 +2698,7 @@ function startBgTimer() {
     if (!dropdown || dropdown.classList.contains('hidden')) { stopBgTimer(); return; }
     const tasks = state.sessionBgTasks[v.sessionId] || [];
     const now = Date.now();
-    dropdown.querySelectorAll('.bg-task-duration').forEach(el => {
+    dropdown.querySelectorAll('.bg-task-uptime[data-task-id]').forEach(el => {
       const t = tasks.find(t => t.taskId === el.dataset.taskId);
       if (t && t.startedAt) el.textContent = formatDuration(now - t.startedAt);
     });
@@ -2673,6 +2736,7 @@ function updateBgTasksUI(targetView) {
     countEl.textContent = totalCount;
   } else {
     el.classList.add('hidden');
+    el.setAttribute('aria-expanded', 'false');
     if (dropdown) dropdown.classList.add('hidden');
     stopBgTimer();
   }
@@ -2697,23 +2761,28 @@ Object.values(chatViews).forEach(v => {
   const indicator = v.dom.bgIndicatorEl;
   const dropdown = v.dom.bgDropdownEl;
   if (!indicator || !dropdown) return;
-  indicator.addEventListener('click', (e) => {
+  const toggle = (e) => {
     e.stopPropagation();
     setActiveView(v);
-    if (dropdown.classList.contains('hidden')) {
-      // renderBgDropdown returns the visible-row count and hides itself when
-      // the bucket has no running/cancelling tasks — only re-show when there
-      // is something to show (previously an unconditional classList.remove
-      // resurrected an empty dropdown under a stale count badge, 2026-09-05).
-      const n = renderBgDropdown();
-      if (n > 0) {
-        dropdown.classList.remove('hidden');
-        startBgTimer();
-      }
+    const opening = dropdown.classList.contains('hidden');
+    if (opening) {
+      // renderBgDropdown renders rows or the i18n empty-state line (2026-09-07
+      // redesign — subagent parity; the stale-count empty-dropdown fork fixed
+      // 2026-09-05 now surfaces as a proper empty state instead of nothing).
+      renderBgDropdown();
+      dropdown.classList.remove('hidden');
+      const tasks = state.sessionBgTasks[v.sessionId] || [];
+      if (tasks.some(t => t.status === 'running' || t.status === 'cancelling')) startBgTimer();
     } else {
       dropdown.classList.add('hidden');
       stopBgTimer();
     }
+    indicator.setAttribute('aria-expanded', String(opening));
+  };
+  indicator.addEventListener('click', toggle);
+  // role=button keyboard parity (subagent indicator precedent).
+  indicator.addEventListener('keydown', (e) => {
+    if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); toggle(e); }
   });
 });
 
@@ -2724,6 +2793,7 @@ document.addEventListener('click', (e) => {
     const indicator = v.dom.bgIndicatorEl;
     if (dropdown && !dropdown.contains(e.target) && indicator && !indicator.contains(e.target)) {
       dropdown.classList.add('hidden');
+      if (indicator) indicator.setAttribute('aria-expanded', 'false');
     }
   });
   stopBgTimer();
@@ -2748,6 +2818,12 @@ onMessage('backgroundTaskUpdate', (msg, view) => {
   if (idx >= 0) {
     tasks[idx].status = msg.status;
     if (msg.description && !tasks[idx].description) tasks[idx].description = msg.description;
+    // 来源/kind（2026-09-07 重设计）：注册帧携带一次，后续心跳/终态帧不带——
+    // 只在缺省时回填，不覆盖。
+    if (msg.sessionId && !tasks[idx].sessionId) tasks[idx].sessionId = msg.sessionId;
+    if (msg.kind && !tasks[idx].kind) tasks[idx].kind = msg.kind;
+    if (msg.origin && !tasks[idx].origin) tasks[idx].origin = msg.origin;
+    if (msg.originLabel && !tasks[idx].originLabel) tasks[idx].originLabel = msg.originLabel;
     if (isTerminal) {
       tasks[idx].finishedAt = Date.now();
     }
@@ -2759,7 +2835,13 @@ onMessage('backgroundTaskUpdate', (msg, view) => {
       status: msg.status,
       startedAt: msg.startedAt || Date.now(),
       heartbeat: msg.heartbeat || null,
-      finishedAt: isTerminal ? Date.now() : undefined
+      finishedAt: isTerminal ? Date.now() : undefined,
+      // 来源标注（2026-09-07 重设计）：注册会话 id（兜底推导用）+ 后端权威
+      // origin/originLabel/kind（BgTaskRegistry.originFor 推导，信封同源）。
+      sessionId: msg.sessionId || '',
+      kind: msg.kind || '',
+      origin: msg.origin || '',
+      originLabel: msg.originLabel || ''
     });
   }
   // Remove terminal tasks after a brief delay so user sees the count update.
@@ -3273,7 +3355,14 @@ onMessage('activeBgTasks', (msg) => {
         status: (prev && prev.status === 'cancelling' && t.status === 'running') ? 'cancelling' : t.status,
         startedAt: t.startedAt || (prev ? prev.startedAt : Date.now()),
         heartbeat: (prev && prev.heartbeat) || t.heartbeat || null,
-        finishedAt: prev ? prev.finishedAt : undefined
+        finishedAt: prev ? prev.finishedAt : undefined,
+        // 来源/kind（2026-09-07 重设计）：快照为权威源（BgTaskRegistry
+        // activeTasksJson 已补 origin/originLabel/kind），旧后端缺省时沿用
+        // 本地 embellishment，再缺省由 bgTaskOrigin 按 sessionId 前缀兜底。
+        sessionId: t.sessionId || (prev ? prev.sessionId : '') || '',
+        kind: t.kind || (prev ? prev.kind : '') || '',
+        origin: t.origin || (prev ? prev.origin : '') || '',
+        originLabel: t.originLabel || (prev ? prev.originLabel : '') || ''
       };
     });
   }
