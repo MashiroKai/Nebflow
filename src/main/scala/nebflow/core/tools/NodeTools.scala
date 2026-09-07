@@ -274,7 +274,7 @@ object NodeEditTool extends Tool:
 - **plugins** (optional, replace-on-provide like deps): plugin package name(s) allocated to this node (phase 2b) — a plugin = skills + mcp.json (either alone is valid). Allocation injects the plugin's skills full-text into the node's first message, starts its MCP servers (tools named mcp__plugin_<plugin>_<server>__<tool>), and grants its declared builtin tools. Names must exist in the Plugin Catalog (see your prompt) AND be approved — unapproved (untrusted) allocation is refused (trust gate default-deny). This is THE capability mechanism: there is no per-node agent choice (execution runs the general agent; differentiate nodes with plugins).
 - **worktree** (optional, boolean, create-time only): true = an isolated git worktree is created for this node at <workspace>/.nebflow/worktrees/<derived-name> (derived from the node name, sanitized; same-name branch; baseline = main HEAD at creation) — creation happens immediately in this call (fail-fast: a failure rejects the whole NodeEdit). false / omitted = run directly in the workspace. On edits the parameter is refused (create-time binding only; existing nodes keep theirs).
 - **preset** (optional): node configuration preset.
-- **abandon** (optional, default false): abandon a terminal (blocked/completed/failed/cancelled), wiring/pending, or a STALE RUNNING node whose session is dead (no live execution fiber, e.g. after an instance restart) → status=cancelled + display TTL (audit-logged). The dispatcher's give-up action for blocked nodes, the topology-cleanup exit for retired wiring/pending nodes, and the reaping exit for dead-session running nodes. A LIVE running node is refused (mis-kill protection) — use NodeCancel for running nodes instead.
+- **abandon** (optional, default false): abandon a terminal (blocked/completed/failed/cancelled), wiring/pending, or a STALE RUNNING node whose session is dead (no live execution fiber, e.g. after an instance restart) → status=cancelled, retained on the map (no TTL — 2026-09-07 ruling: failed/cancelled are never auto-archived; the upper layer decides cleanup/rerun; audit-logged). The dispatcher's give-up action for blocked nodes, the topology-cleanup exit for retired wiring/pending nodes, and the reaping exit for dead-session running nodes. A LIVE running node is refused (mis-kill protection) — use NodeCancel for running nodes instead.
 - **notifyDispatcher** (optional, default false): dispatch-notify backflow flag — when this node reaches a terminal state (currently completion; failed/blocked reserved), the project dispatcher gets a new session triggered with the node's result reference (name/terminal/reason code; full result read via NodeList detail), so it can continue planning (extend topology / build merge-node sink / conclude / no-op). Independent signal channel — does NOT occupy the out edge. Settable/withdrawable while wiring/pending/running (refused on terminal). Nodes created BY the dispatcher default to false (must be explicitly enabled — convergence guarantee).
 
 ## Retired parameters (rejected — capability model is plugins, not agents)
@@ -818,16 +818,18 @@ object NodeEditTool extends Tool:
               st.copy(nodes = st.nodes.updated(node.id, fresh.copy(
                 status = NodeLifecycle.Cancelled,
                 completedAt = Some(now),
-                ttlExpireAt = Some(now + NodeEngine.TtlDisplayMs))))
+                // 2026-09-07 作者裁定：cancelled 无 TTL 强制清——abandon 是上层
+                // 裁决动作，节点留主图（不再 24h 后静默消失），由后续拓扑清理处置。
+                ttlExpireAt = None)))
             case _ => st // 状态已变（并发重激活/移除）→ 拒写
         }
         _ <- s.nodes.get(node.id) match
           case Some(c) if c.status == NodeLifecycle.Cancelled =>
             rt.engine.emitUpdated(c) *>
               FlowMapEventLog.append(rt.project.workspace, rt.project.name, node.id, "abandoned",
-                s"node abandoned via NodeEdit (${node.status}${if allowDeadRunning && node.status == NodeLifecycle.Running then "/dead-session" else ""} → cancelled + display TTL)")
+                s"node abandoned via NodeEdit (${node.status}${if allowDeadRunning && node.status == NodeLifecycle.Running then "/dead-session" else ""} → cancelled, retained on map)")
           case _ => IO.unit
-      yield Right(s"Node '${node.name}' abandoned — cancelled with display TTL (archived after TTL, result retained)")
+      yield Right(s"Node '${node.name}' abandoned — cancelled (retained on map, no TTL; result retained)")
 
     if node.status == NodeLifecycle.Running then
       rt.engine.isRunning(node.id).flatMap {

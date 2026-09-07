@@ -507,6 +507,13 @@ const FM_STATUS_SVG = {
   warn: '<path d="M3.5 1.5v9M3.5 2.5H9L7.5 4.75 9 7H3.5"/>',
   cancelled: '<path d="M3 6h6"/>',
 };
+/** 终态卡状态词 i18n 键（2026-09-07 状态保真批）：glyph 单看不可读（cancelled 减号
+ *  线视觉即「-」）——终态卡 head 行 glyph 旁恒带状态文本，死亡现场一眼可辨。 */
+const FM_NODE_ST_KEY = {
+  completed: 'flowmap.done',
+  failed: 'flowmap.fail',
+  cancelled: 'flowmap.st.cancelled',
+};
 const fmSvgIcon = (cls, inner, sw) =>
   `<span class="solar-node-status ${cls}"><svg viewBox="0 0 12 12" fill="none" stroke="currentColor"`
   + ` stroke-width="${sw}" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${inner}</svg></span>`;
@@ -561,6 +568,10 @@ function nodeHtml(n, pos, originX, nameOf) {
     : st === 'failed' ? fmSvgIcon('err', FM_STATUS_SVG.err, 1.5)
     : st === 'blocked' ? fmSvgIcon('warn', FM_STATUS_SVG.warn, 1.4)
     : st === 'cancelled' ? fmSvgIcon('cancelled', FM_STATUS_SVG.cancelled, 1.5) : '';
+  // 终态状态词（2026-09-07 状态保真批）：终态卡 glyph 旁恒带文本（已完成/失败/
+  // 已取消）——真实终态可见，不再是孤零零的「-」减号线。
+  const statusWord = term && FM_NODE_ST_KEY[st]
+    ? `<span class="fm-st-word ${esc(cls)}">${esc(t(FM_NODE_ST_KEY[st]))}</span>` : '';
   const worktreeBadge = n.hasWorktree || n.worktree
     ? `<span class="fm-worktree-badge" title="${esc(n.worktree || '')}">wt</span>` : '';
   // 特殊节点标识（badge 批）：merge/loop/pending 徽标进 head 行（wt 徽标同区，
@@ -599,13 +610,13 @@ function nodeHtml(n, pos, originX, nameOf) {
   const subTitle = pluginsText ? `${presetText} · ${pluginsText}` : presetText;
   return `
     <div class="solar-node fm-node ${cls}${term ? ' terminal' : ''}" data-node-id="${esc(n.id)}"
-         data-status="${esc(st)}" tabindex="0" title="${esc(n.name)} · ${esc(subTitle)}${term ? `（${esc(t('flowmap.terminalTag'))}）` : ''}" style="left:${left.toFixed(1)}px;top:${top.toFixed(1)}px">
+         data-status="${esc(st)}" tabindex="0" title="${esc(n.name)} · ${esc(subTitle)}${term && FM_NODE_ST_KEY[st] ? `（${esc(t(FM_NODE_ST_KEY[st]))}）` : ''}" style="left:${left.toFixed(1)}px;top:${top.toFixed(1)}px">
       <div class="solar-orbit">
         <div class="solar-ring ring-1"><div class="solar-dot-wrap"><div class="solar-dot"></div></div></div>
         <div class="solar-ring ring-2"><div class="solar-dot-wrap"><div class="solar-dot"></div></div></div>
         <div class="solar-ring ring-3"><div class="solar-dot-wrap"><div class="solar-dot"></div></div></div>
       </div>
-      <div class="fm-node-head">${worktreeBadge}${flags}${statusIcon}</div>
+      <div class="fm-node-head">${worktreeBadge}${flags}${statusIcon}${statusWord}</div>
       <div class="solar-node-label" title="${esc(n.name)}">${esc(n.name)}</div>
       <div class="solar-node-sub">${esc(subTitle)}</div>
       ${st === 'pending' && (n.in || []).length > 1 ? `<div class="fm-barrier-hint">barrier ×${(n.in || []).length}</div>` : ''}
