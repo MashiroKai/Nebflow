@@ -47,7 +47,7 @@ export const brand = Object.freeze(injected || fallback);
  * Fallback (older gateway, static file server, worktree preview) is the live
  * product profile page, verified reachable in the same analysis.
  */
-const PROFILE_URL_FALLBACK = 'https://neblink.space/profile';
+const PROFILE_URL_FALLBACK = 'https://nebflow.space/profile';
 
 export function getProfileUrl() {
   const url = /** @type {Brand} */ (brand).profileUrl;

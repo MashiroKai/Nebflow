@@ -4892,9 +4892,9 @@ object WebSocketRoutes:
     * appended homeDirName for the frontend's own legacy-path messaging;
     * 2026-09-01 login-chain fix appended profileUrl — the frontend's ONLY
     * URL input, consumed by activityBar.js to build the profile link).
-    * `domain` carries the debug value (neblink.space) or the publish value
-    * (nebflow.space via env override) — display-only, never consumed to
-    * build a URL.
+    * `domain` carries the default value (nebflow.space); a `NEBFLOW_BRAND_DOMAIN`
+    * env override may replace it (single-domain, 2026-09-07 naming ruling) —
+    * display-only, never consumed to build a URL.
     *
     * circe handles JSON string escaping; the serialized blob additionally
     * escapes the forward slash of "</" because it is inlined inside a
