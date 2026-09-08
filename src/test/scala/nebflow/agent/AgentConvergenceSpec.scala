@@ -116,17 +116,20 @@ class AgentConvergenceSpec extends FunSuite:
     assert(declared.contains("MemoryEdit"), "dream 声明 MemoryEdit → 授能（exclusiveToolsFor 豁免剥离）")
     val wildcard = CoreProbe.allowed(mkDef("dream", List("*")))
     assert(wildcard.contains("MemoryEdit"), "dream wildcard 同样授能（豁免在剥离面，声明形状无关）")
-    // 豁免恰为 MemoryEdit 一件——Schedule/Delegate/AgentControl/TaskList 对 dream 不得放开
+    // 豁免恰为 MemoryEdit 一件——Schedule/Delegate/AgentControl/TaskList/TaskBoard 对 dream 不得放开
     assertEquals(AgentCore.NebulaExclusiveTools -- AgentCore.DreamAdmittedTools,
-      Set("Schedule", "Delegate", "AgentControl", "TaskList"), "dream 豁免面 = 仅 MemoryEdit（TaskList 批后剥离面四件）")
-    val sneakyDream = CoreProbe.allowed(mkDef("dream", List("Schedule", "Delegate", "AgentControl", "TaskList")))
+      Set("Schedule", "Delegate", "AgentControl", "TaskList", "TaskBoard"),
+      "dream 豁免面 = 仅 MemoryEdit（TaskBoard 批 2 后剥离面五件——TaskBoard 对 dream 同样剥离，真实授能在 project 会话身份末段追加）")
+    val sneakyDream = CoreProbe.allowed(mkDef("dream", List("Schedule", "Delegate", "AgentControl", "TaskList", "TaskBoard")))
     assert(!sneakyDream.contains("Schedule"), "dream 对 Schedule 仍被剥")
     assert(!sneakyDream.contains("Delegate"), "dream 对 Delegate 仍被剥")
     assert(!sneakyDream.contains("AgentControl"), "dream 对 AgentControl 仍被剥（机制层 controlGrant 也只给 Nebula/lead）")
     assert(!sneakyDream.contains("TaskList"), "dream 对 TaskList 仍被剥（TaskList 批：非 DreamAdmittedTools）")
+    assert(!sneakyDream.contains("TaskBoard"), "dream 对 TaskBoard 仍被剥（任务板批 2：非 DreamAdmittedTools，声明不授能）")
     // 单点函数全身份语义（Nebula 空 / dream 豁免 / 其余全集）
     assertEquals(AgentCore.exclusiveToolsFor("Nebula"), Set.empty[String], "Nebula 无剥离")
-    assertEquals(AgentCore.exclusiveToolsFor("dream"), Set("Schedule", "Delegate", "AgentControl", "TaskList"), "dream 剥四件")
+    assertEquals(AgentCore.exclusiveToolsFor("dream"),
+      Set("Schedule", "Delegate", "AgentControl", "TaskList", "TaskBoard"), "dream 剥五件（TaskBoard 批 2 后）")
     assertEquals(AgentCore.exclusiveToolsFor("general"), AgentCore.NebulaExclusiveTools, "其余身份剥全集")
 
   // ===== §C.5：Glob/Grep 缺省根 = node root =====

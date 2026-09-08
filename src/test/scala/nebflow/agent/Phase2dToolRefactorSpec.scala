@@ -30,9 +30,10 @@ class Phase2dToolRefactorSpec extends FunSuite:
         isFlowNode: Boolean = false,
         isTeamLead: Boolean = false,
         userFacingNode: Boolean = false,
-        guardrailsOn: Boolean = false
+        guardrailsOn: Boolean = false,
+        projectBoardSession: Boolean = false
     ): Set[String] =
-      buildAllowedToolSet(defn, depth, isSubTaskWorker, isFlowNode, isTeamLead, userFacingNode, guardrailsOn)
+      buildAllowedToolSet(defn, depth, isSubTaskWorker, isFlowNode, isTeamLead, userFacingNode, guardrailsOn, projectBoardSession)
 
   private def mkDef(name: String, tools: List[String] = Nil): AgentDef =
     AgentDef(name = name, description = "", tools = tools)
@@ -63,11 +64,11 @@ class Phase2dToolRefactorSpec extends FunSuite:
     assert(!fixed.contains("Write"), "Nebula 机制集不含 Write（23:34 裁定）")
     assert(!fixed.contains("Edit"), "Nebula 机制集不含 Edit（23:34 裁定）")
 
-  test("D.1-1: dispatcher fixed set == Node 四件 + 读四件（逐件不变；NodeMessage 20260905 机制批第八件）"):
+  test("D.1-1: dispatcher fixed set == Node 四件 + 读四件 + TaskBoard（逐件不变；NodeMessage 20260905 机制批第八件、TaskBoard 20260908 任务板批 2 第九件）"):
     assertEquals(
       AgentCore.fixedToolsFor(mkDef("project-dispatcher")),
-      Set("NodeList", "NodeEdit", "NodeCancel", "NodeMessage", "Read", "Glob", "Grep", "Bash"),
-      "NodeMessage（20260905 机制批，作者裁定）：分发器七件→八件——向已分发节点注入补充消息"
+      Set("NodeList", "NodeEdit", "NodeCancel", "NodeMessage", "Read", "Glob", "Grep", "Bash", "TaskBoard"),
+      "TaskBoard（20260908 任务板批 2，规格 §1c）：分发器八件→九件——项目任务板全权面（create 全量/update 全板含结构字段/close 全板/list 全板；权限判定引擎侧身份=isDispatcher，工具内不信客户端参数）"
     )
 
   test("D.1-1: general fixed set == 裁定 5 八件 − AskUser（2026-09-06 节点面摘除，恰七件）"):
@@ -114,11 +115,30 @@ class Phase2dToolRefactorSpec extends FunSuite:
     assertEquals(generalDelivered, AgentCore.GeneralFixedTools,
       "general 节点形态交付面 == 静态集恰七件（2026-09-06 节点面摘除 AskUser）")
     assert(!generalDelivered.contains("NodeMessage"), "NodeMessage 仅分发器（general 不加，20260905 机制批裁定⑥）")
-    val dispatcherDelivered = CoreProbe.allowed(mkDef("project-dispatcher"), isFlowNode = true)
-    assertEquals(dispatcherDelivered, AgentCore.DispatcherFixedTools, "dispatcher 交付面 == 静态 8 件（含 NodeMessage）")
+    val dispatcherDelivered = CoreProbe.allowed(mkDef("project-dispatcher"), isFlowNode = true, projectBoardSession = true)
+    assertEquals(dispatcherDelivered, AgentCore.DispatcherFixedTools, "dispatcher project 会话交付面 == 静态 9 件（含 NodeMessage + TaskBoard）")
     assert(dispatcherDelivered.contains("NodeMessage"), "NodeMessage 机制固定进分发器交付面（20260905 机制批）")
+    assert(dispatcherDelivered.contains("TaskBoard"), "TaskBoard 随 project 会话身份进分发器交付面（任务板批 2 §1c）")
     // 边界（裁定⑥）：Nebula 不加 NodeMessage
     assert(!CoreProbe.allowed(mkDef("Nebula")).contains("NodeMessage"), "NodeMessage 仅分发器（Nebula 不加，裁定⑥）")
+
+  // ===== TaskBoard：project 会话按身份挂载（任务板批 2 §1c/§1d-4）=====
+
+  test("TaskBoard: projectBoardSession 旗标是唯一挂载闸——分发器/flow 节点 project 会话挂，双轨会话恒不挂"):
+    // 挂载表 §1c：projectBoardSession = isDispatcher || flowNodeId.isDefined。
+    // 追加点在全部角色过滤与 NebulaExclusiveTools 剥离【之后】（末段重挂）。
+    assert(CoreProbe.allowed(mkDef("project-dispatcher"), projectBoardSession = true).contains("TaskBoard"),
+      "分发器 project 会话（isDispatcher 置位）挂 TaskBoard")
+    assert(CoreProbe.allowed(mkDef("general"), isFlowNode = true, projectBoardSession = true).contains("TaskBoard"),
+      "flow 节点 project 会话（flowNodeId 置位）挂 TaskBoard（§1d：节点身份同面）")
+    // 双保险（§1d-4）：非 project 会话 flag=false 恒不挂——声明（含 "*"）不授能
+    // （nebulaFiltered 先剥、末段不挂），工具面 + 工具内身份判定两层独立。
+    assert(!CoreProbe.allowed(mkDef("sneaky", List("TaskBoard"))).contains("TaskBoard"),
+      "非 project 会话显式声明 TaskBoard 不授能（防声明逃逸通道，NebulaExclusiveTools）")
+    assert(!CoreProbe.allowed(mkDef("omni", List("*"))).contains("TaskBoard"),
+      "wildcard 声明同样不授能")
+    assert(!CoreProbe.allowed(mkDef("general"), isFlowNode = true).contains("TaskBoard"),
+      "双轨 flow 会话 flag=false 恒不挂（任务板批 2 前行为零变化）")
 
   // ===== D.1-11：SendFriendMessage 声明通道删除 =====
 

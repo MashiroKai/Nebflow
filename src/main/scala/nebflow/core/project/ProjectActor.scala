@@ -38,7 +38,12 @@ case class ProjectRuntime(
   engine: NodeEngine,
   system: ActorSystem,
   resources: SharedResources,
-  actorRef: Option[ActorRef[ProjectActor.ProjectCommand]] = None
+  actorRef: Option[ActorRef[ProjectActor.ProjectCommand]] = None,
+  /** 项目任务板（TaskBoard 批 2，规格 §1f）：mount 时 TaskBoardStore.open 同位
+    * 挂载（fail-soft——异常仅 WARN 置 None，不拖垮项目挂载）。工具层经
+    * NodeTools.resolveProject → rt.board 取用；None = 该项目无板（工具报
+    * TBOARD_PARAM 引导），注入面整块省略。 */
+  board: Option[TaskBoardStore] = None
 )
 
 /** 全局注册表：project name → runtime。 */
@@ -113,6 +118,14 @@ object ProjectRuntimeRegistry:
       case None =>
         for
           store <- FlowMapStore.open(project.name, project.workspace)
+          // TaskBoard 挂载（批 2 §1f）：与 FlowMapStore.open 同位。open 本体纯
+          // 构造无失败路径，防御式兜底保持 mount 语义一致——板建不起来仅 WARN
+          // 置 None（fail-soft），不拖垮项目挂载。
+          board <- IO(TaskBoardStore.open(project.name, project.workspace))
+            .map(Some.apply: TaskBoardStore => Option[TaskBoardStore])
+            .handleErrorWith(e => logger
+              .warn(s"Project '${project.name}' task board mount failed (board disabled): ${e.getMessage}")
+              .as(None))
           engine <- IO.pure(
             new NodeEngine(
               store,
@@ -124,7 +137,11 @@ object ProjectRuntimeRegistry:
               project.name,
               // blocked 反馈档位（§7.1）：project.json 可选字段 feedbackMode，缺省 auto
               project.feedbackMode.getOrElse(FeedbackRouter.ModeAuto),
-              emitNodeEvent(project.name, wsSend)
+              emitNodeEvent(project.name, wsSend),
+              // TaskBoard 批 2（§3a）：节点 buildInput 头部板块数据源——板 store
+              // + 项目目标行（ProjectDef.description，None 则目标行省略）。
+              board = board,
+              projectGoal = project.description
             )
           )
           actorRef <- system.spawn(
@@ -136,7 +153,8 @@ object ProjectRuntimeRegistry:
                 resources = resources,
                 rootSessionId = rootSessionId,
                 ttlDisplayMs = ttlDisplayMs,
-                ttlCheckIntervalSec = ttlCheckIntervalSec
+                ttlCheckIntervalSec = ttlCheckIntervalSec,
+                board = board
               )
             ),
             s"project-${project.name.take(20)}"
@@ -161,7 +179,7 @@ object ProjectRuntimeRegistry:
           // 会话已活跃时，滞留的 out=Nebula 结果立即补投，不等首个 30s tick。
           // 启动自动挂载路径根 ref 通常缺失 → 静默跳过，由 TtlTick 周期兜底。
           _ <- engine.redeliverUnconsumedNebulaResults().handleErrorWith(_ => IO.unit)
-          rt = ProjectRuntime(project, store, engine, system, resources, Some(actorRef))
+          rt = ProjectRuntime(project, store, engine, system, resources, Some(actorRef), board)
           _ <- register(rt)
         yield rt
     }
@@ -229,7 +247,10 @@ object ProjectActor:
     resources: SharedResources,
     rootSessionId: String,
     ttlDisplayMs: Long = NodeEngine.TtlDisplayMs,
-    ttlCheckIntervalSec: Int = 30
+    ttlCheckIntervalSec: Int = 30,
+    /** 项目任务板（TaskBoard 批 2 §3a）：分发器 spawn 注入（newTaskPrompt/
+      * reentryPrompt）数据源；None = 无板（注入整块省略）。mount 构造时传入。 */
+    board: Option[TaskBoardStore] = None
   )
 
   /** 全局 TTL 扫描：周期给所有已挂载 ProjectActor 发 TtlTick（GatewayMain 启动）。
@@ -334,16 +355,36 @@ object ProjectActor:
   private def projectMemoryText(project: ProjectDef): IO[String] =
     ProjectMemory.injectionBlock(project.workspace, project.name)
 
+  /** 分发器任务板注入段（TaskBoard 批 2 §3a）：renderDispatcher 全板紧凑行
+    * （≤1200 字符/20 行，超限整行丢弃+尾注——降级纪律在 renderer 单点）。
+    * 无板/空板 → ""（调用方不注空段，项目记忆先例同款）。⚠node-done join 数据
+    * 从 Flow Map 快照现读（§2d 真实终态映射，TaskBoardStore.nodeTerminalMap 单点），
+    * 不缓存——分发器每次 spawn/reentry 拿当下漂移面。 */
+  private def dispatcherBoardText(cfg: ProjectConfig): IO[String] =
+    cfg.board match
+      case None => IO.pure("")
+      case Some(board) =>
+        cfg.engine.store.snapshot.flatMap { snap =>
+          val terminal = TaskBoardStore.nodeTerminalMap(snap.nodes.values)
+          IO.blocking(board.entriesSync())
+            .map(entries => TaskBoardRenderer.renderDispatcher(entries, terminal))
+            .handleErrorWith(e =>
+              logger.warn(s"Project '${cfg.project.name}' task-board injection skipped: ${e.getMessage}").as(""))
+        }
+
   /** 新任务形态 prompt（spawnDispatcher 双形态之一，现状文案保留）。
     * 观测面上下文经济学批（20260907 裁定①方向 B）：不嵌 Flow Map 快照——旧实现
     * `snapshot.asJson.noSpaces` 直灌首条消息（内存模型 result/task 双全文水合，
     * nebflow 规模 ≈1,055KB，spawn 即超 CompactThreshold），改为「先 NodeList 读
     * 现状」按需拉取（与工具通道同源同守卫）。private[project] 供 spawn 首条消息
-    * 形态 spec（DispatcherSpawnPromptSpec）固化断言。 */
-  private[project] def newTaskPrompt(project: ProjectDef, taskText: String, pluginCatalog: String, projectMemory: String): String =
+    * 形态 spec（DispatcherSpawnPromptSpec）固化断言。
+    * TaskBoard 批 2（§3a）：taskBoard = <task-board> 注入块（renderer 单点渲染，
+    * 上限 1200 字符/20 行）——拼装相对顺序 …→插件目录→项目记忆→任务板→任务文本
+    * （任务板在任务文本之前；空串不注空段）。 */
+  private[project] def newTaskPrompt(project: ProjectDef, taskText: String, pluginCatalog: String, projectMemory: String, taskBoard: String = ""): String =
     s"""你是项目「${project.name}」的任务分发器。
        |
-       |${if pluginCatalog.nonEmpty then pluginCatalog + "\n" else ""}${if projectMemory.nonEmpty then projectMemory + "\n" else ""}任务：$taskText
+       |${if pluginCatalog.nonEmpty then pluginCatalog + "\n" else ""}${if projectMemory.nonEmpty then projectMemory + "\n" else ""}${if taskBoard.nonEmpty then taskBoard + "\n" else ""}任务：$taskText
        |
        |先 NodeList 读 Flow Map 现状（拓扑与节点状态按需拉取），再按需用 NodeEdit 建节点/接线/改接。所有 Node 工具调用必须带 project=${project.name} 参数。无需回报——拓扑与状态已落 Flow Map。""".stripMargin
 
@@ -361,8 +402,10 @@ object ProjectActor:
   /** 重入调整形态 prompt（spawnDispatcher 双形态之二，设计 §2.2 原文照抄——
     * 含节点名/id/blockCount/反馈三字段/四动作选择/abandon 说明/「无需回报」）。
     * 裁定①（20260907 方向 B）：快照注入移除，同 newTaskPrompt——四动作块自带
-    * 「先 NodeList 读现状」。private[project] 供 spec 固化断言。 */
-  private[project] def reentryPrompt(project: ProjectDef, node: NodeDef, feedback: BlockedFeedback, blockCount: Int, pluginCatalog: String, projectMemory: String): String =
+    * 「先 NodeList 读现状」。private[project] 供 spec 固化断言。
+    * TaskBoard 批 2（§3a）：taskBoard 注入块同 newTaskPrompt——拼装在项目记忆
+    * 之后、四动作块之前（任务板在任务文本之前语义的重入对应位）。 */
+  private[project] def reentryPrompt(project: ProjectDef, node: NodeDef, feedback: BlockedFeedback, blockCount: Int, pluginCatalog: String, projectMemory: String, taskBoard: String = ""): String =
     s"""你是项目「${project.name}」的任务分发器——本轮是【节点反馈重入调整】，不是新任务。
        |
        |节点 ${node.name}（${node.id}）报告 blocked（第 $blockCount 轮）：
@@ -370,7 +413,7 @@ object ProjectActor:
        |  说明：${feedback.detail}
        |  对拓扑的建议：${feedback.suggestion}
        |
-       |${if pluginCatalog.nonEmpty then pluginCatalog + "\n" else ""}${if projectMemory.nonEmpty then projectMemory + "\n" else ""}${reentryActions(project)}""".stripMargin
+       |${if pluginCatalog.nonEmpty then pluginCatalog + "\n" else ""}${if projectMemory.nonEmpty then projectMemory + "\n" else ""}${if taskBoard.nonEmpty then taskBoard + "\n" else ""}${reentryActions(project)}""".stripMargin
 
   /** 注入现有会话的新任务文本（单例化裁定：标注「新任务到达」来源；与进行中
     * 工作按 turn 串行——处理中排 pendingUserInputs，turn 边界消费）。 */
@@ -474,9 +517,13 @@ object ProjectActor:
             .as(same)
       case None =>
         // 裁定①（20260907 方向 B）：无快照获取——spawn prompt 只组任务文本+目录+记忆
+        // TaskBoard 批 2（§3a）：spawn 形态追加任务板块（注入活跃会话形态
+        // taskInjectionText 不重复注入——会话 spawn 时已带当次板快照，同项目记忆纪律）。
         pluginCatalogText().flatMap { catalog =>
           projectMemoryText(cfg.project).flatMap { memory =>
-            spawnDispatcher(cfg, active, same, newTaskPrompt(cfg.project, taskText, catalog, memory), rootSessionId, "", taskText)
+            dispatcherBoardText(cfg).flatMap { boardText =>
+              spawnDispatcher(cfg, active, same, newTaskPrompt(cfg.project, taskText, catalog, memory, boardText), rootSessionId, "", taskText)
+            }
           }
         }
     }
@@ -516,8 +563,10 @@ object ProjectActor:
             // 裁定①（20260907 方向 B）：重入 spawn 同样不嵌快照（reentryActions 自带先 NodeList）
             pluginCatalogText().flatMap { catalog =>
               projectMemoryText(cfg.project).flatMap { memory =>
-                spawnDispatcher(cfg, active, same, reentryPrompt(cfg.project, node, feedback, blockCount, catalog, memory), rootSessionId,
-                  s" (reentry round $blockCount: ${node.name})", reentryTaskText(node, feedback, blockCount))
+                dispatcherBoardText(cfg).flatMap { boardText =>
+                  spawnDispatcher(cfg, active, same, reentryPrompt(cfg.project, node, feedback, blockCount, catalog, memory, boardText), rootSessionId,
+                    s" (reentry round $blockCount: ${node.name})", reentryTaskText(node, feedback, blockCount))
+                }
               }
             }
         }
@@ -562,6 +611,12 @@ object ProjectActor:
               safetyMode = "confirm-edits",
               rootSessionId = rootSessionId,
               isFlowNode = true,
+              // TaskBoard 批 2（§1d）：分发器引擎侧身份标记 + 项目上下文——经
+              // AgentCore 透传 ToolContext（flowNodeId/isDispatcher/projectName），
+              // 是 TaskBoard 权限矩阵（全权列）与 project 缺省解析的身份来源；
+              // 工具内不信客户端参数（安全红线）。
+              isDispatcher = true,
+              projectName = Some(project.name),
               // 阶段 2a 沙箱（H-5①）：分发器 root=project workspace——worktree
               // 天然建在 <workspace>/.nebflow/ 内，git worktree add 写主仓 .git
               // 亦在界内。
