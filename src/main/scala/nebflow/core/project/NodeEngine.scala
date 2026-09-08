@@ -68,12 +68,15 @@ class NodeEngine(
   private val logger = NebflowLogger.forName("nebflow.node.engine")
 
   /** blocked 反馈路由器（§2.2/§2.3）：档位决策 + 项目级频率保护 + 重入/升级执行。
-    * escalate 通道 = 本引擎的 deliverToNebula（eventType="blocked"，前端 label 自动 BLOCKED）。 */
+    * escalate 通道 = 本引擎的 deliverToNebula（eventType="blocked"，前端 label 自动 BLOCKED）；
+    * escalateFailed 通道 = 同型 deliverToNebula（eventType="failed"）——P2 RetryCap
+    * 升级专用（spec §2.3 G12：failed 终态真实显示，不冒充 BLOCKED）。 */
   private[project] val feedbackRouter: FeedbackRouter = new FeedbackRouter(
     projectName = projectName,
     workspace = workspace,
     feedbackMode = feedbackMode,
-    escalate = (text, nodeName) => deliverToNebula(text, nodeName, NodeLifecycle.Blocked)
+    escalate = (text, nodeName) => deliverToNebula(text, nodeName, NodeLifecycle.Blocked),
+    escalateFailed = Some((text, nodeName) => deliverToNebula(text, nodeName, NodeLifecycle.Failed))
   )
 
   /** dispatch-notify 通道（2026-09-05 批接线 completion；2026-09-07 批接线 failed）：
@@ -604,34 +607,26 @@ class NodeEngine(
   def emitUpdated(node: NodeDef): IO[Unit] =
     emitEvent("nodeUpdated", node.id, NodePayload.buildNodeJson(node, System.currentTimeMillis()))
 
-  /** 显式投递（改接投递 §2.3：已完成节点结果 → 指定目标）。V8: Nebula 分支
-    * 同样记账——人工改接重投后刷新账本，避免周期扫描对同一结果再补投。
-    * 缺口3（2026-09-04）：人工改接重投通道同样过夹具信封排除——名字 ∧ 载荷
-    * 双确认 → WARN + 不投（结果滞留节点不删，真实工作不受影响）。 */
+  /** 显式投递（改接投递 §2.3：已完成节点结果 → 指定目标）。P1（spec §2.2 #4/#6）：
+    * 人工改接 / D1 补投 / 重激活补投链统一经本函数，目标解析加门控判定——沿
+    * node.out 中指向该目标的边：on ∌ pass → 跳过投递（failed-only 边不接收完成结果，
+    * 停等可见性由 mount-stalled 承载）；无边（修复路径的悬空/孤儿 barrier）→ 按
+    * {pass} 兜底投递（修复语义优先）。Nebula 分支：mode=result 通报 + V8 记账，
+    * mode=signal 只记账。V8: 记账避免周期扫描对同一结果再补投。缺口3：夹具信封
+    * 排除——名字 ∧ 载荷双确认 → WARN + 不投（结果滞留节点不删）。 */
   def deliverOutTo(node: NodeDef, target: String, resultText: String): IO[Unit] =
-    target match
-      case "Nebula" =>
-        if NodeEngine.isFixtureEnvelope(node) then
-          logger.warn(
-            s"[fixture-guard] excluded fixture envelope from manual redelivery: node '${node.name}' (${node.id}) status=${node.status} — name matches fixture family and task carries fixture marker")
-        else deliverToNebula(s"[Node '${node.name}' completed]\n$resultText", node.name, "completed", Some(node.id))
-      case t =>
-        for
-          targetOpt <- store.findNode(t)
-          _ <- targetOpt match
-            case None => IO.unit
-            case Some(_) =>
-              store.mutate { s =>
-                val tn = s.nodes.get(t)
-                tn match
-                  case Some(x) if !x.deliveredTo.contains(node.id) =>
-                    s.copy(nodes = s.nodes.updated(t, x.copy(deliveredTo = x.deliveredTo :+ node.id)))
-                  case _ => s
-              }.flatMap { s =>
-                val allArrived = s.nodes.get(t).exists(tn2 => tn2.in.forall(upId => tn2.deliveredTo.contains(upId)))
-                if allArrived then forkStart(s"deliver-out-to -> $t")(startNode(t)) else IO.unit
-              }
-        yield ()
+    val edge = node.out.find(_.to == target)
+    if edge.exists(e => !e.on.contains(OutEdge.Pass)) then
+      logger.info(s"[gating] redelivery '${node.name}' -> '$target' skipped: edge on=[${edge.get.on.mkString(",")}] excludes pass")
+    else
+      target match
+        case "Nebula" =>
+          if NodeEngine.isFixtureEnvelope(node) then
+            logger.warn(
+              s"[fixture-guard] excluded fixture envelope from manual redelivery: node '${node.name}' (${node.id}) status=${node.status} — name matches fixture family and task carries fixture marker")
+          else if edge.exists(_.mode == OutEdge.Signal) then markNebulaDelivered(node.id)
+          else deliverToNebula(s"[Node '${node.name}' completed]\n$resultText", node.name, "completed", Some(node.id))
+        case t => settleTo(node, t)
 
   /** deps 满足判定（deps 设计 §1.3）：声明式状态查询（幂等、零记账），非 deliveredTo
     * 式事件累计。findNode 归档兜底——TTL 归档不影响「完成」事实（归档上游可触发，
@@ -746,7 +741,14 @@ class NodeEngine(
       node.in.traverse { upId =>
         store.findNode(upId).map {
           case Some(up) =>
-            up.result.map(res => s"=== Node ${up.name} ===\n$res")
+            // P1（spec §2.2 #3）：signal 边不投载荷（deps 同款，下游输入 = 自身 task）。
+            // 判定沿上游→本节点的全部边：存在 result 边 → 注入（result 意图优先）；
+            // 全 signal → 抑制（含 failed 上游 result=错误文本不作输入投递的 signal
+            // 场景）；无边（修复/悬空路径）→ 注入（现状兜底）。
+            val toHere = up.out.filter(_.to == node.id)
+            val suppressed = toHere.nonEmpty && toHere.forall(_.mode == OutEdge.Signal)
+            if suppressed then None
+            else up.result.map(res => s"=== Node ${up.name} ===\n$res")
           case None => None
         }
       }.map { upstream =>
@@ -1979,72 +1981,246 @@ class NodeEngine(
       _ <- s.nodes.get(nodeId) match
         case Some(cancelled) =>
           emitEvent("nodeUpdated", nodeId, NodePayload.buildNodeJson(cancelled, now)) *>
-            logger.info(s"Node '${cancelled.name}' cancelled")
+            logger.info(s"Node '${cancelled.name}' cancelled") *>
+            // P2 G11（spec §3.4）：cancelled 级联清理该会话 pending asks——来源死亡
+            // 即关闭（hub 移槽 + askUserClosed 广播），卡片不再僵尸常挂。
+            cleanupPendingAsks(cancelled.sessionRef)
         case None =>
           logger.warn(s"Node '$nodeId' vanished before cancel finalize — skipped")
     yield ()
 
+  /** P2 G11（spec §3.4）：节点 cancelled 级联清理其会话的 pending asks——hub 新增
+    * CleanupForSession(sessionId)：移除该会话 pending 槽 + 向 root 广播
+    * askUserClosed{requestId}（前端关卡摘卡归批 F2，本批验收到引擎广播为止）。
+    * 三口级联：cancelNode（NodeCancel/bridge cancelled 分流）+ NodeEdit abandon +
+    * dead-session reap（reapStaleRunning 内部走 cancelNode，自动覆盖）。
+    * sessionRef=None（从未启动过，无会话即无问）或 hub 未挂（测试/早期 boot）→
+    * 静默跳过。fire-and-forget（tell 语义）：清理失败不阻断 cancelled 终态化。 */
+  def cleanupPendingAsks(sessionId: Option[String]): IO[Unit] =
+    sessionId.traverse_ { sid =>
+      resources.interactionHubRef.get.flatMap {
+        case Some(hub) => (hub ! InteractionHubCommand.CleanupForSession(sid)).void
+        case None => IO.unit
+      }
+    }
+
   // ── 投递（§2.7）─────────────────────────────────────────
 
-  /** out=节点：barrier 归零 → 启动下游。dedup 用 deliveredTo（防改接重投）。 */
-  private def deliverOut(node: NodeDef, resultText: String): IO[Unit] =
-    node.out match
-      case None => IO.unit // 悬空：结果保留在 result（持久化），接线后自动投递
-      case Some("Nebula") =>
-        deliverToNebula(s"[Node '${node.name}' completed]\n$resultText", node.name, "completed", Some(node.id))
-      case Some(targetId) =>
-        for
-          targetOpt <- store.findNode(targetId)
-          _ <- targetOpt match
-            case None =>
-              logger.warn(s"Node '${node.name}' out target '$targetId' not found — result retained")
-            case Some(target) =>
-              // 原子：target.deliveredTo += node.id（dedup）+ 更新
-              store.mutate { s =>
-                val t = s.nodes.get(targetId)
-                t match
-                  case Some(tn) if !tn.deliveredTo.contains(node.id) =>
-                    s.copy(nodes = s.nodes.updated(targetId, tn.copy(deliveredTo = tn.deliveredTo :+ node.id)))
-                  case _ => s
-              }.flatMap { s =>
-                val tn = s.nodes.get(targetId)
-                val allArrived = tn.exists(tn2 => tn2.in.forall(upId => tn2.deliveredTo.contains(upId)))
-                if allArrived && tn.exists(_.status != NodeLifecycle.Running) then
-                  forkStart(s"deliver-out -> $targetId")(startNode(targetId))
-                else IO.unit
-              }
-        yield ()
+  /** 节点目标结算（deliverOut / deliverFailed signal 边 / deliverOutTo 共用骨架）：
+    * target.deliveredTo += node.id（dedup 原子记账）→ barrier 归零且非 running 则
+    * fork 启动下游。载荷注入与否由 buildInput 按上游→下游边 mode 判定——本函数只管
+    * 记账与启动（「signal 只记账归零 barrier」与「result 投载荷」在投递侧同形，
+    * 差异全在输入装配侧，deps 同款拆分）。 */
+  private def settleTo(node: NodeDef, targetId: String): IO[Unit] =
+    store.findNode(targetId).flatMap {
+      case None =>
+        logger.warn(s"Node '${node.name}' out target '$targetId' not found — result retained")
+      case Some(_) =>
+        // 原子：target.deliveredTo += node.id（dedup）+ 更新
+        store.mutate { s =>
+          val t = s.nodes.get(targetId)
+          t match
+            case Some(tn) if !tn.deliveredTo.contains(node.id) =>
+              s.copy(nodes = s.nodes.updated(targetId, tn.copy(deliveredTo = tn.deliveredTo :+ node.id)))
+            case _ => s
+        }.flatMap { s =>
+          val tn = s.nodes.get(targetId)
+          val allArrived = tn.exists(tn2 => tn2.in.forall(upId => tn2.deliveredTo.contains(upId)))
+          if allArrived && tn.exists(_.status != NodeLifecycle.Running) then
+            forkStart(s"deliver-out -> $targetId")(startNode(targetId))
+          else IO.unit
+        }
+    }
 
+  /** 完成投递（P1 语义门控，spec §2.2 #2）：沿 on ∋ pass 过滤出边后投递。fan-out：
+    * Nebula 通报与多个节点目标并存（旧单值拓扑 = 单边，行为等价）。mode=result →
+    * 投载荷（经 buildInput 注入）+ Nebula 通报；mode=signal → 只记账归零 barrier，
+    * Nebula 只记账不通报（重投扫描按同门公式判定，不会重投）。dedup 用 deliveredTo
+    * （防改接重投）；canonical 合并同 (to,mode) 多边 on 集——一次终态至多投一次。 */
+  private def deliverOut(node: NodeDef, resultText: String): IO[Unit] =
+    val passEdges = OutEdge.canonical(node.out).filter(_.on.contains(OutEdge.Pass))
+    nebulaDelivery(node, resultText, passEdges.partition(_.to == OutEdge.NebulaTarget)._1) *>
+      passEdges.filterNot(_.to == OutEdge.NebulaTarget).traverse_(e => settleTo(node, e.to))
+
+  private def nebulaDelivery(node: NodeDef, resultText: String, nebulaEdges: List[OutEdge]): IO[Unit] =
+    if nebulaEdges.isEmpty then IO.unit // 悬空/无 pass 边：结果保留在 result（持久化）
+    else if nebulaEdges.exists(_.mode == OutEdge.Result) then
+      deliverToNebula(s"[Node '${node.name}' completed]\n$resultText", node.name, "completed", Some(node.id))
+    else markNebulaDelivered(node.id)
+
+  /** 失败投递（P1 语义门控，spec §2.2 #3；D5 零结算为底座）：
+    * ① 运行期 merge 兜底（纵深，护栏只读复用不重构 §2.6-2）：全部 out 边的节点目标
+    *    中 MergeNodePolicy.haltsOnFailure 命中 → mergeBlocked（**与门控无关**——覆盖
+    *    校验生效前落盘的旧拓扑 pass-only 边；创建期 NODE_MERGE_PASS_ONLY 已硬拒新
+    *    failed 入边）。先于 signal 结算执行（merge blocked 优先于下游触发，D5 原序）。
+    * ② Nebula 上报（on ∋ failed）：mode=result → 通报（旧 "Nebula" 双通报形态零漂移）；
+    *    mode=signal → 只记账。
+    * ③ on-failed signal 节点目标：settleTo 记账归零 barrier + 启动（buildInput 按边
+    *    mode 抑制载荷——failed 节点 result=错误文本不作输入投递）。
+    * ④ 其余（on-failed result 节点目标 = D5 零结算语义对齐，及无 failed 边覆盖的
+    *    pass-only 旧拓扑目标）：停等——不结算不投递，恢复零步（上游 reactivate 修复
+    *    重跑完成后经 deliverOut 正常投递）。
+    * 尾部 dispatch-notify 挂点不变（failed 版，不查 flag）。 */
   private def deliverFailed(node: NodeDef, err: String): IO[Unit] =
-    val settle: IO[Unit] = node.out match
-      case None => IO.unit
-      case Some("Nebula") =>
+    val edges = OutEdge.canonical(node.out)
+    val failedEdges = edges.filter(_.on.contains(OutEdge.Failed))
+    val nodeTargets = edges.map(_.to).filterNot(_ == OutEdge.NebulaTarget).distinct
+    val signalTargets = failedEdges
+      .filter(e => e.to != OutEdge.NebulaTarget && e.mode == OutEdge.Signal).map(_.to).distinct
+    val mergeFallback: IO[Unit] = nodeTargets.traverse_(t =>
+      store.findNode(t).flatMap {
+        case Some(target) if MergeNodePolicy.haltsOnFailure(target) =>
+          mergeBlockedByUpstreamFailure(target, node, err)
+        case _ => IO.unit
+      })
+    val nebulaIO = failedEdges.filter(_.to == OutEdge.NebulaTarget) match
+      case Nil => IO.unit
+      case nes if nes.exists(_.mode == OutEdge.Result) =>
         deliverToNebula(s"[Node '${node.name}' failed]\n$err", node.name, "failed", Some(node.id))
-      case Some(targetId) =>
-        // D5「failed 零结算」（20260908 wf1cde §3.3，作者 E-① YES + B1 pending 停等）：
-        // 上游 failed 不向任何下游结算——collect 占位结算已废除（占位投递与真实投递
-        // 共用 deliveredTo 键位 → 上游 reactivate 修复后真实结果被 dedup 挡住的连贯性
-        // 洞，wf1cde §3.2；废除决策 §3.3）。普通下游保持 pending/wiring 停等（保持
-        // 可见；恢复零步——上游 reactivate 修复重跑完成后经 deliverOut 正常投递，
-        // deliveredTo 无污染键 → barrier 归零自动续跑）；合并节点例外转 blocked 可见
-        // 终态（merge-node 批 20260905 §触发语义，MergeNodePolicy 单点只读复用）。
-        for
-          targetOpt <- store.findNode(targetId)
-          _ <- targetOpt match
-            case Some(target) if MergeNodePolicy.haltsOnFailure(target) =>
-              mergeBlockedByUpstreamFailure(target, node, err)
-            case Some(target) =>
-              logger.info(s"Node '${node.name}' failed — downstream '${target.name}' (${target.id}) keeps waiting (D5 zero-settlement; reactivate upstream to auto-resume)")
-            case None => IO.unit
-        yield ()
-    // dispatch-notify（2026-09-07 批，设计 §2.1）：out 结算后通知分发器（failed 版，
-    // 不查 notifyDispatcher flag）。挂本函数尾部=单点收口——failNode 与
-    // autoFailDeadRunning 两口必经 deliverFailed，未来新增 failed 终态化路径只要走
-    // 这里就自动覆盖。通知在 out 结算**之后**发出：分发器 spawn/注入时读到的
-    // Flow Map 是结算后状态（普通下游停等 pending/wiring、merge 下游已 blocked，
-    // 通知文本附停等等待者清单，wf1cde E-③），拓扑判断不失真——与 completedNode
-    // 先 deliverOut+settleDeps 再 notify 同序。
-    settle *> dispatchNotify.notifyTerminal(node, NotifyReason.Failed)
+      case _ => markNebulaDelivered(node.id)
+    val signalIO = signalTargets.traverse_(t => settleTo(node, t))
+    val waitLog: IO[Unit] =
+      val waiting = nodeTargets.diff(signalTargets) // 非 signal 覆盖的目标 = D5 停等（merge 兜底者已转 blocked）
+      if waiting.nonEmpty then
+        logger.info(s"Node '${node.name}' failed — downstream(s) ${waiting.mkString(", ")} keep waiting (D5 zero-settlement; on-failed signal edges opt targets out; reactivate upstream to auto-resume)")
+      else IO.unit
+    for
+      _ <- mergeFallback
+      _ <- nebulaIO
+      _ <- signalIO
+      _ <- waitLog
+      // P2 retry 单点触发（spec §2.3，wf3 §8-2）：retry 命中（gen < max）→ 自动回跳
+      // 重激活链**替代**本轮 dispatch-notify failed 通知（自愈处置中不扰分发器——
+      // 可见性由 nodeUpdated 事件 + FlowMapEventLog "retry" 留痕承载，cap 耗尽的
+      // RetryCap 升级才是人工注意力挂点）；未配置 → 既有 failed 通知原样（D5 尾部
+      // 挂点零改动）；cap 耗尽 → failed 通知 + RetryCap 升级双发（分发器拓扑通知
+      // 不丢，Nebula 另获预算耗尽升级）。同函数不重写 D5 语义——merge 兜底/Nebula
+      // 门控通报/signal 结算/停等留痕全部原样先行。
+      _ <- retryOrNotify(node, err)
+    yield ()
+
+  /** P2 retry 触发判定（spec §2.3）：三态分流见 deliverFailed 尾注。 */
+  private def retryOrNotify(node: NodeDef, err: String): IO[Unit] =
+    node.retry match
+      case None => dispatchNotify.notifyTerminal(node, NotifyReason.Failed)
+      case Some(policy) if node.gen < policy.max => retryReactivate(node, policy, err)
+      case Some(_) =>
+        dispatchNotify.notifyTerminal(node, NotifyReason.Failed) *>
+          feedbackRouter.routeRetryCap(node, err)
+
+  /** 自动回跳重激活链（spec §2.3：既有重激活协议的自动化——「不是新机制，是分发器
+    * 今天人工处置的自动化」）：
+    * ① 本节点（failed）重激活：gen+1（代次载体，blockCount 分立口径不变）、
+    *    deliveredTo 清、result/时间戳/投递记账复位、轮次历史复位（与 NodeEdit
+    *    failed 重激活同字段族）；R2 纪律——事务内现读 fresh 仍 failed 才写。
+    * ② retry.upstream 重激活（仅终态上游——wiring/pending/running 的上游已有在途
+    *    重跑，不干预不双跑）。
+    * ③ 本节点其余 in 上游（终态有结果、非 blocked）重投（NodeEdit 重激活补投同款，
+    *    deliverOutTo dedup 幂等）——否则清账后 barrier 永不归零。
+    * ④ fork：上游补投+启动（入口上游直接启动）——上游重跑完成经 pass 边重投本节点
+    *    （settleTo 记账归零 barrier → 启动），deps 邻居场景经 settleDeps 触达 →
+    *    本节点新代次启动。
+    * 已终态的其他消费者不被重跑意外重触发：deliverOut 幂等记账 + startNode 终态
+    * 幂等跳过——与今天人工重激活语义完全一致（spec §2.3 红线）。 */
+  private def retryReactivate(failed: NodeDef, policy: RetryPolicy, err: String): IO[Unit] =
+    for
+      now <- IO(System.currentTimeMillis())
+      s <- store.mutate { st =>
+        st.nodes.get(failed.id) match
+          case Some(fresh) if fresh.status == NodeLifecycle.Failed =>
+            val nextStatus =
+              if fresh.task.exists(_.trim.nonEmpty) && fresh.in.isEmpty then NodeLifecycle.Pending
+              else NodeLifecycle.Wiring
+            st.copy(nodes = st.nodes.updated(failed.id, fresh.copy(
+              status = nextStatus,
+              result = None,
+              deliveredTo = Nil,
+              gen = fresh.gen + 1,
+              nebulaDeliveredAt = None,
+              startedAt = None,
+              completedAt = None,
+              ttlExpireAt = None,
+              blockCount = 0, // failed 重激活轮次历史复位（NodeEdit 同款口径）
+              blockedFeedback = None,
+              notifySentAt = None)))
+          case _ => st // 状态已变（并发 abandon/人工重激活）→ 拒写不回跳
+      }
+      _ <- s.nodes.get(failed.id) match
+        case Some(b) if b.gen == failed.gen + 1 &&
+          (b.status == NodeLifecycle.Wiring || b.status == NodeLifecycle.Pending) =>
+          val retryNote =
+            s"failed (gen ${b.gen}/${policy.max}): ${err.take(140)} — auto-retry: reactivating self + rerunning upstream '${policy.upstream}'"
+          emitEvent("nodeUpdated", b.id, NodePayload.buildNodeJson(b, now)) *>
+            FlowMapEventLog.append(workspace, projectName, b.id, "retry", retryNote) *>
+            logger.warn(s"Node '${b.name}' (${b.id}) $retryNote") *>
+            store.getNode(policy.upstream).flatMap {
+              case Some(up) if NodeLifecycle.Terminal.contains(up.status) =>
+                reactivateForRetry(up, now)
+              case _ => IO.unit
+            } *>
+            b.in.filterNot(_ == policy.upstream).traverse_ { upId =>
+              store.findNode(upId).flatMap {
+                case Some(up) if up.result.isDefined && up.status != NodeLifecycle.Blocked && NodeLifecycle.Terminal.contains(up.status) =>
+                  deliverOutTo(up, b.id, up.result.get)
+                case _ => IO.unit
+              }
+            } *>
+            forkStart(s"retry-rerun -> ${policy.upstream}")(
+              store.getNode(policy.upstream).flatMap {
+                case None => IO.unit
+                case Some(up) => redeliverInAndStart(up)
+              })
+        case _ =>
+          logger.info(s"Node '${failed.name}' retry skipped — state changed before retry finalize (fresh-read discipline)")
+    yield ()
+
+  /** retry 上游重激活（既有重激活协议字段族，NodeEdit failed 重激活同构——不触碰
+    * task/description/in/out/deps/loop/retry）：result 清（旧产物不作投递，重跑产出
+    * 全新投递）、deliveredTo/nebulaDeliveredAt 清（重跑完成后重新投递+记账）、时间戳
+    * 复位；failed 上游轮次历史复位，completed 上游轮次字段原样。R2 竞态守卫：fresh
+    * 仍处重激活前看到的终态才写（并发人工重激活/abandon → 拒写）。 */
+  private def reactivateForRetry(up: NodeDef, now: Long): IO[Unit] =
+    store.mutate { st =>
+      st.nodes.get(up.id) match
+        case Some(fresh) if fresh.status == up.status && NodeLifecycle.Terminal.contains(fresh.status) =>
+          val fromFailed = fresh.status == NodeLifecycle.Failed
+          val nextStatus =
+            if fresh.task.exists(_.trim.nonEmpty) && fresh.in.isEmpty then NodeLifecycle.Pending
+            else NodeLifecycle.Wiring
+          st.copy(nodes = st.nodes.updated(up.id, fresh.copy(
+            status = nextStatus,
+            result = None,
+            deliveredTo = Nil,
+            nebulaDeliveredAt = None,
+            startedAt = None,
+            completedAt = None,
+            ttlExpireAt = None,
+            blockCount = if fromFailed then 0 else fresh.blockCount,
+            blockedFeedback = if fromFailed then None else fresh.blockedFeedback,
+            notifySentAt = if fromFailed then None else fresh.notifySentAt)))
+        case _ => st
+    }.flatMap { s2 =>
+      s2.nodes.get(up.id) match
+        case Some(u2) if u2.status == NodeLifecycle.Wiring || u2.status == NodeLifecycle.Pending =>
+          emitEvent("nodeUpdated", u2.id, NodePayload.buildNodeJson(u2, now))
+        case _ => IO.unit
+    }
+
+  /** 重激活补投递 + 启动（NodeTools 重激活链同款骨架，引擎内单点）：全部 in 上游
+    * 「终态有结果、非 blocked」重投（deliverOutTo dedup 幂等）→ barrier 归零启动；
+    * 入口节点（无 in、Pending）直接启动。 */
+  private def redeliverInAndStart(n: NodeDef): IO[Unit] =
+    n.in.traverse_ { upId =>
+      store.findNode(upId).flatMap {
+        case Some(up) if up.result.isDefined && up.status != NodeLifecycle.Blocked && NodeLifecycle.Terminal.contains(up.status) =>
+          deliverOutTo(up, n.id, up.result.get)
+        case _ => IO.unit
+      }
+    } *> store.getNode(n.id).flatMap {
+      case Some(n2) if n2.in.nonEmpty && n2.in.forall(n2.deliveredTo.contains) => startNode(n2.id)
+      case Some(n2) if n2.in.isEmpty && n2.status == NodeLifecycle.Pending => startNode(n2.id)
+      case _ => IO.unit
+    }
 
   /** 合并节点因上游失败转 blocked（merge-node 批 §触发语义②；与 blockedNode 同构
     * 但**不经 FeedbackRouter**）：① 事务内现读 fresh（R2 纪律，haltsOnFailure 只认
@@ -2173,7 +2349,11 @@ class NodeEngine(
           unpaid = (active.nodes.values ++ arch.nodes.values)
             .filter(n =>
               (n.status == NodeLifecycle.Completed || n.status == NodeLifecycle.Failed) &&
-                n.out.contains("Nebula") &&
+                // P1（spec §2.2 #5）：按边判定——存在指向 Nebula 且 on 含「status 对应门」
+                // 的边（completed→pass / failed→failed）。旧 "Nebula" 双读为 {pass,failed}
+                // 双通报边 → 两态恒命中（旧拓扑零漂移）；显式门控按声明收窄。
+                n.out.exists(e => e.to == OutEdge.NebulaTarget &&
+                  e.on.contains(if n.status == NodeLifecycle.Completed then OutEdge.Pass else OutEdge.Failed)) &&
                 n.result.exists(_.trim.nonEmpty) &&
                 n.nebulaDeliveredAt.isEmpty
             )

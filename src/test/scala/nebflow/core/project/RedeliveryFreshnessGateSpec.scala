@@ -48,7 +48,7 @@ class RedeliveryFreshnessGateSpec extends FunSuite:
 
   private def node(id: String, name: String, status: String, result: String, completedAt: Option[Long]): NodeDef =
     NodeDef(
-      id = id, name = name, agent = "worker", out = Some("Nebula"), status = status,
+      id = id, name = name, agent = "worker", out = List(OutEdge.nebula), status = status,
       result = Some(result), createdAt = System.currentTimeMillis() - 2 * Hour,
       completedAt = completedAt, ttlExpireAt = completedAt.map(_ + NodeEngine.TtlDisplayMs)
     )

@@ -1,6 +1,6 @@
 package nebflow.core.project
 
-import io.circe.{Codec, Json}
+import io.circe.{Codec, Decoder, Encoder, Json}
 import io.circe.derivation.{Configuration, ConfiguredCodec}
 import io.circe.syntax.*
 
@@ -72,6 +72,102 @@ object LoopConfig:
   given Configuration = Configuration.default.withDefaults
   given Codec[LoopConfig] = ConfiguredCodec.derived
 
+/** P1 out 语义门控 · 结构化 out 边（20260908 spec §2.2，作者 gate G1-G13 全过；
+  * 方案源 wf3 §3.1 OutEdge 双读）。NodeDef.out 自单值 Option[String] 升为 List[OutEdge]
+  * （扇出 + 失败信号边表达力），旧字符串经 codec 双读解码（归档数据零迁移）。
+  *
+  * @param to   "Nebula"（根会话上报通道）| 目标节点 id
+  * @param on   门控集 ⊆ {pass, failed}。缺省 {pass}（G1：D5 failed 零结算世界下旧拓扑
+  *             零漂移——failed 上游不触发 pass-only 边 = 普通下游停等语义）。
+  *             **Nebula 边缺省例外 {pass, failed}**：Nebula 是上报通道非下游结算，
+  *             今天 completed/failed 双通报是旧拓扑零漂移的组成部分（D5 只废除向
+  *             下游结算，未动 Nebula 通报）；显式门控（"(pass)Nebula"）按声明收紧。
+  * @param mode "result"=投载荷 | "signal"=只发信号（deps 同款：投递侧只记账归零
+  *             barrier + 启动，载荷由 buildInput 按边 mode 抑制——下游输入=自身 task）。 */
+case class OutEdge(
+  to: String,
+  on: Set[String] = Set("pass"),
+  mode: String = "result"
+)
+
+object OutEdge:
+  val Pass = "pass"
+  val Failed = "failed"
+  val Gates: Set[String] = Set(Pass, Failed)
+  val Result = "result"
+  val Signal = "signal"
+  val Modes: Set[String] = Set(Result, Signal)
+  val DefaultOn: Set[String] = Set(Pass)
+  /** Nebula 边缺省门集：completed + failed 双通报（旧拓扑零漂移，G1 例外依据见上）。 */
+  val NebulaDefaultOn: Set[String] = Set(Pass, Failed)
+  val NebulaTarget = "Nebula"
+
+  given Configuration = Configuration.default.withDefaults
+  given Codec[OutEdge] = ConfiguredCodec.derived
+
+  /** 旧拓扑 "Nebula" 边的等价构造（completed+failed 双通报，零漂移）——NodeDef
+    * 字面构造（测试/工具直建）用；与 fromLegacyString("Nebula") 同形。 */
+  def nebula: OutEdge = OutEdge(NebulaTarget, NebulaDefaultOn)
+
+  /** 旧字符串单边解码（codec 双读与表面语法共用单点）："A"→OutEdge("A",{pass},result)；
+    * "Nebula"→{pass,failed} 双通报形态；""/"null"（任意大小写、含空白）→ None。 */
+  def fromLegacyString(s: String): Option[OutEdge] =
+    val t = s.trim
+    if t.isEmpty || t.equalsIgnoreCase("null") then None
+    else Some(if t == NebulaTarget then OutEdge(t, NebulaDefaultOn) else OutEdge(t))
+
+  /** 规范化（投递/比较/落库单点）：同 (to, mode) 多边合并 on 集合（compat 矩阵 #1：
+    * 一次终态至多投一次）；on 滤非法门（手改数据防御），滤空 → {pass}；mode 非法 →
+    * result；LinkedHashMap 保序（边序稳定 = payload/存储确定性）。 */
+  def canonical(edges: List[OutEdge]): List[OutEdge] =
+    val merged = scala.collection.mutable.LinkedHashMap[(String, String), Set[String]]()
+    edges.foreach { e0 =>
+      val g = e0.on.filter(Gates.contains)
+      val e = e0.copy(on = if g.isEmpty then DefaultOn else g,
+        mode = if Modes.contains(e0.mode) then e0.mode else Result)
+      val k = (e.to, e.mode)
+      merged(k) = merged.getOrElse(k, Set.empty) ++ e.on
+    }
+    merged.map { case ((to, mode), on) => OutEdge(to, on, mode) }.toList
+
+  /** 双读解码（spec §2.2 #1，归档零迁移）：null/缺键→Nil（withDefaults）；旧字符串→
+    * fromLegacyString 单边；数组→逐边 ConfiguredCodec（withDefaults 补 on/mode）。 */
+  given Decoder[List[OutEdge]] = Decoder.instance { cur =>
+    cur.value match
+      case j if j.isNull => Right(Nil)
+      case j if j.isString => Right(fromLegacyString(j.asString.getOrElse("")).toList)
+      case _ => Decoder.decodeList(summon[Codec[OutEdge]]).tryDecode(cur)
+  }
+
+  /** 编码：Nil → Json.Null（与旧 Option None 落盘同形，无出环节点存储字节零漂移）；
+    * 非空 → 边对象数组（on/mode withDefaults 全量写出）。 */
+  given Encoder[List[OutEdge]] = Encoder.instance {
+    case Nil  => Json.Null
+    case list => Json.fromValues(list.map(e => summon[Codec[OutEdge]].apply(e)))
+  }
+
+/** P2 failed 回跳 retry 策略（20260908 spec §2.3，wf3 §4.2 方案①「回跳不是图边
+  * 而是策略字段」）：挂**下游单侧**（沿 deps「下游单侧持有、不回写上游」设计先例）。
+  * 本节点 failed 且 gen < max → 引擎自动化执行既有重激活协议全链（本节点重激活 +
+  * retry.upstream 重激活重跑 → 上游经 pass 边重投 → 本节点新代次启动）；gen 达 max
+  * → cap 耗尽，failed + FeedbackRouter RetryCap 升级。回跳边不进图（不进 in/out/
+  * deps 任何邻接表）→ 绕开 DAG 环检（环检是批聚簇/settle 终止性/前端渲染的全链
+  * 不变量）；retry 自身成环由 NodeEdit 创建/编辑期校验拒绝（NODE_RETRY_CYCLE）。
+  * 旧 flow-map.json 无此键 → withDefaults 解码 None（零迁移）= 旧行为（failed 即
+  * 终态，无自动回跳）。 */
+case class RetryPolicy(
+  /** 回跳上游：必须是本节点的 in/deps 邻居（NodeEdit 校验，NODE_RETRY_NEIGHBOR）
+    * ——回跳语义 =「重取上游产物再试」，跨子图回跳无输入语义支撑。 */
+  upstream: String,
+  /** 回跳预算：本节点累计自动回跳次数上限（gen 达 max → 升级）。1-10
+    * （NODE_RETRY_MAX_RANGE）。max=1 → 允许一次回跳（共两次执行机会）。 */
+  max: Int
+)
+
+object RetryPolicy:
+  given Configuration = Configuration.default.withDefaults
+  given Codec[RetryPolicy] = ConfiguredCodec.derived
+
 /** Node 数据模型（§2.1 JSON 示例字段全量）。
   *
   * agent 字段（2026-09-05 插件架构对齐）：**新建节点一律落 "general"**（执行统一
@@ -105,7 +201,10 @@ case class NodeDef(
     * 消费；存量节点无长文 → 缺键，消费方回退短文 description。默认 None = 零迁移。 */
   descriptionLong: Option[String] = None,
   in: List[String] = Nil,
-  out: Option[String] = None,
+  /** P1 out 语义门控（20260908 spec §2.2）：出边列表（0..N）。Nil = 悬空（结果保留
+    * 在 result，接线后自动投递）——旧单值拓扑经 codec 双读零迁移（"A"→pass 单边、
+    * "Nebula"→双通报边、null/缺键→Nil）。扇出/失败信号边表达力见 OutEdge。 */
+  out: List[OutEdge] = Nil,
   /** 依赖连接（deps 设计 §1.1，主文档 20260902_flowmap-engine-evolution-design.md）：
     * 下游单侧持有、不回写上游（上游不知道自己被依赖——「不用其输出」的结构体现）。
     * 语义 = 只等上游完成信号（status==completed），不投递上游结果——下游输入 =
@@ -141,6 +240,15 @@ case class NodeDef(
   /** loop 运行态 · 最近一次 FAIL verdict 摘要（≤200 字符；verify FAIL 打回时
     * 更新，前端卡片可显示最近打回原因；PASS/终态保留最后一次 FAIL 供追溯）。 */
   loopLastVerdict: Option[String] = None,
+  /** P2 failed 回跳 retry 策略（spec §2.3；RetryPolicy 详注）：Some = 本节点
+    * failed 时引擎自动回跳重跑 retry.upstream。下游单侧持有；None = 旧行为
+    * （failed 即终态）。旧 flow-map.json 无此键 → withDefaults 解码 None（零迁移）。 */
+  retry: Option[RetryPolicy] = None,
+  /** P2 retry 代次载体（spec §2.3）：本节点身份累计被自动回跳的次数（重激活协议
+    * gen+1，与 blockCount 分立——blockCount 专管 blocked 轮次口径不变）。0 = 未
+    * 回跳过；达 retry.max → cap 耗尽升级。前端「attempt N」显示载体（渲染归 F3）。
+    * 旧 flow-map.json 无此键 → withDefaults 解码 0（零迁移）。 */
+  gen: Int = 0,
   /** dispatch-notify 回流标志（2026-09-05 批）：true = 节点到达终态（先接线
     * completion）后触发项目分发器新会话（带原因码的独立信号通道，不占 out 边；
     * 防循环/预算/去重见 DispatchNotify）。NodeEdit 按需开启，默认关——分发器
@@ -205,7 +313,7 @@ object NodeDef:
 
 /** NodeList 载荷同构的节点 JSON（NodeList 工具 / REST flow-map / WS 事件共用单一序列化点）。
   * WS 事件（nodeCreated/nodeUpdated/nodeRemoved）与快照永远同构，前端增量渲染可直接对齐
-  * 字段集：{id, name, agent, description, status, in, out, hasWorktree, worktree,
+  * 字段集：{id, name, agent, description, status, in, hasWorktree, worktree,
   * createdAt, completedAt, ttlLeftSec}（+ 条件字段，见下）。
   *
   * **载荷收敛（2026-09-05 Flow Map 精简批）**：默认载荷只含元数据——**节点结果全文与
@@ -239,7 +347,6 @@ object NodePayload:
       "description" -> node.description.asJson,
       "status" -> node.status.asJson,
       "in" -> node.in.asJson,
-      "out" -> node.out.asJson,
       "hasWorktree" -> node.worktree.isDefined.asJson,
       "worktree" -> node.worktree.asJson,
       // blocked 反馈重入（设计 §4.1）：blockCount 恒带；blockedFeedback 仅 blocked 态才有结构化体
@@ -248,6 +355,12 @@ object NodePayload:
       "completedAt" -> node.completedAt.asJson,
       "ttlLeftSec" -> ttlLeft.asJson
     )
+      // P1 out 边数组条件序列化（spec §2.2 #8）：Nil 不带键（无出环节点字段集零漂移
+      // ——旧 None→null 键一并消失，消费方以缺键=无出边读取）；非空 → 规范化边数组
+      // [{to,on,mode}...]。前端边渲染适配属批 F3（本批仅载荷形态）。
+      val outFields =
+        if node.out.isEmpty then Nil
+        else List("out" -> OutEdge.canonical(node.out).asJson)
       // deprecated 三键条件序列化（观测面上下文经济学批 20260907 裁定③）：skill/
       // mcp/preset 移出基础集——仅存量节点非 None 才带（与 deps/plugins 条件字段
       // 同构；新建节点参数已退役（NODE_AGENT_RETIRED），字段集恒零漂移）。审计实测
@@ -325,6 +438,13 @@ object NodePayload:
       // bgWait 条件序列化（僵尸收敛批 2026-09-06）：仅 bg-wait 自持的 running 节点
       // 带——命中才产出，未命中节点 payload 字段集零变化（既有条件字段断言零影响）。
       val bgWaitFields = node.bgWait.toList.map(w => "bgWait" -> w.asJson)
+      // P2 retry 条件序列化（spec §2.3；与 merge 条件字段同构）：仅配置了 retry 的
+      // 节点带——未配置节点 payload 字段集零变化。gen 条件序列化（与 loopRound 同构）：
+      // >0 才带（0 = 未回跳过，缺键 = 同义）——前端「attempt N」徽标数据载体（渲染
+      // 消费归批 F3，本批只做字段+载荷暴露）。
+      val retryFields = node.retry.toList.map(r => "retry" -> Json.obj(
+        "upstream" -> r.upstream.asJson, "max" -> r.max.asJson))
+      val genFields = if node.gen > 0 then List("gen" -> node.gen.asJson) else Nil
       // notifySentAt 条件序列化（归档语义批 2026-09-07「送达即移」）：**仅异常终态
       // （failed/cancelled）且已上报（notifySentAt.isDefined）才带**——前端链判据
       // （flowMapArchive.js chainEligible）以此判断异常终态「已上报可归档」；与
@@ -333,7 +453,7 @@ object NodePayload:
         (if node.status == NodeLifecycle.Failed || node.status == NodeLifecycle.Cancelled then
            node.notifySentAt.toList.map(t => "notifySentAt" -> t.asJson)
          else Nil)
-      Json.obj((baseFields ++ legacyConfigFields ++ hasResultFields ++ taskPreviewFields ++ depsFields ++ feedbackFields ++ pluginFields ++ notifyFields ++ mergeFields ++ loopFields ++ bgWaitFields ++ notifySentAtFields)*)
+      Json.obj((baseFields ++ outFields ++ legacyConfigFields ++ hasResultFields ++ taskPreviewFields ++ depsFields ++ feedbackFields ++ pluginFields ++ notifyFields ++ mergeFields ++ loopFields ++ bgWaitFields ++ retryFields ++ genFields ++ notifySentAtFields)*)
 
 /** Flow Map 活动区（§2.6，磁盘 flow-map.json）。 */
 case class FlowMapState(
