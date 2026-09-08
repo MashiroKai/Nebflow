@@ -4,6 +4,7 @@ import cats.effect.IO
 import cats.effect.std.Dispatcher
 import com.sun.net.httpserver.{HttpExchange, HttpServer}
 import io.circe.Json
+import io.circe.syntax.*
 import munit.CatsEffectSuite
 import nebflow.agent.SharedResources
 import nebflow.core.PathUtil
@@ -277,6 +278,151 @@ class NeblinkLogoutRoutesSpec extends CatsEffectSuite:
             assertEquals(before, Some(true), "seeded peer starts online")
             assertEquals(off, Some(false), "offline push must flip status to offline")
             assertEquals(on, Some(true), "online push must flip status back")
+        }.guarantee(IO.blocking(server.stop(0)))
+      }
+    }
+  }
+
+  // ── RP-initiated logout (end-session) ──────────────────────────────────
+
+  private def endSessionRequest: Request[IO] =
+    // Deliberately NO Authorization header: this is a browser navigation hop
+    // (window.open) — the route must not depend on checkAuth.
+    Request[IO](Method.GET, Uri.unsafeFromString("/neblink/auth/end-session"))
+
+  test("end-session redirects to the provider end_session with the stored hint and tears local state down") {
+    Dispatcher.parallel[IO].use { dispatcher =>
+      startMockServer.flatMap { (server, url, _) =>
+        mkStack(url, dispatcher).flatMap { st =>
+          for
+            // Configure the AC provider like a real PKCE install + seed a
+            // credential carrying the id_token hint.
+            _ <- st.ms.updateConfig(cfg => cfg.copy(logto =
+              Some(LogtoConfig(endpoint = "https://auth.example", clientId = "legacy", pkceClientId = Some("pkce-app")))))
+            _ <- DeviceCredential.save(DeviceCredential(url, "n1", "d1", "dev-tok",
+              logto = Some(LogtoRefresh("rt-1", 1L, Some("tok.hint.sig")))))
+            resp <- st.routes.routes(endSessionRequest).value.map(_.getOrElse(fail("route fell through")))
+            peers <- st.ms.peers
+            cred <- DeviceCredential.load
+            cfg <- st.ms.neblinkConfig
+            clientAfter <- st.discovery.currentClient
+          yield
+            // 302 to the provider's end_session_endpoint, hint + return uri.
+            assertEquals(resp.status, Status.Found)
+            val loc = resp.headers.get[org.http4s.headers.Location].map(_.uri).getOrElse(fail("Location header missing"))
+            assertEquals(loc.path.renderString, "/oidc/session/end")
+            val q = loc.query.pairs.collect { case (k, Some(v)) => k -> v }.toMap
+            assertEquals(q.get("id_token_hint"), Some("tok.hint.sig"), "stored id_token must be replayed verbatim as the hint")
+            assertEquals(q.get("post_logout_redirect_uri"), Some("http://127.0.0.1:8080/auth/logged-out"))
+            // Local teardown (same 8 steps as POST /neblink/logout) happened.
+            assertEquals(cred, None, "credential (with the hint) removed")
+            assertEquals(peers, Nil)
+            assertEquals(clientAfter, None)
+            assertEquals(cfg.enabled, false)
+        }.guarantee(IO.blocking(server.stop(0)))
+      }
+    }
+  }
+
+  test("end-session without a stored id_token still logs out (no hint param, cookie-based)") {
+    Dispatcher.parallel[IO].use { dispatcher =>
+      startMockServer.flatMap { (server, url, _) =>
+        mkStack(url, dispatcher).flatMap { st =>
+          for
+            _ <- st.ms.updateConfig(cfg => cfg.copy(logto =
+              Some(LogtoConfig(endpoint = "https://auth.example", clientId = "legacy", pkceClientId = Some("pkce-app")))))
+            // Pre-RP-logout credential shape: no idToken block at all.
+            _ <- DeviceCredential.save(DeviceCredential(url, "n1", "d1", "dev-tok",
+              logto = Some(LogtoRefresh("rt-1", 1L))))
+            resp <- st.routes.routes(endSessionRequest).value.map(_.getOrElse(fail("route fell through")))
+          yield
+            assertEquals(resp.status, Status.Found)
+            val loc = resp.headers.get[org.http4s.headers.Location].map(_.uri).getOrElse(fail("Location header missing"))
+            val q = loc.query.pairs.collect { case (k, Some(v)) => k -> v }.toMap
+            assertEquals(q.contains("id_token_hint"), false, "never fabricate a hint — omit it entirely")
+        }.guarantee(IO.blocking(server.stop(0)))
+      }
+    }
+  }
+
+  test("end-session answers logto-not-configured when no AC app is configured") {
+    Dispatcher.parallel[IO].use { dispatcher =>
+      startMockServer.flatMap { (server, url, _) =>
+        mkStack(url, dispatcher).flatMap { st =>
+          // end-session reads effectiveLogto (same resolution as auth/start:
+          // explicit block wins verbatim, missing block → embeddedDefault).
+          // This pins the only 404 arm: an EXPLICIT block without a
+          // pkceClientId (the embedded default always carries one).
+          for
+            _ <- st.ms.updateConfig(cfg => cfg.copy(logto = Some(LogtoConfig(endpoint = "https://auth.example", clientId = "legacy", pkceClientId = None))))
+            resp <- st.routes.routes(endSessionRequest).value.map(_.getOrElse(fail("route fell through")))
+            body <- resp.as[Json]
+          yield
+            assertEquals(resp.status, Status.NotFound)
+            assertEquals(body.hcursor.downField("error").as[String].toOption, Some("logto-not-configured"))
+        }.guarantee(IO.blocking(server.stop(0)))
+      }
+    }
+  }
+
+  test("auth/start with forceLogin=true returns a prompt=login+consent authorize URL") {
+    Dispatcher.parallel[IO].use { dispatcher =>
+      startMockServer.flatMap { (server, url, _) =>
+        mkStack(url, dispatcher).flatMap { st =>
+          for
+            _ <- st.ms.updateConfig(cfg => cfg.copy(logto =
+              Some(LogtoConfig(endpoint = "https://auth.example", clientId = "legacy", pkceClientId = Some("pkce-app")))))
+            req = Request[IO](Method.POST, Uri.unsafeFromString("/neblink/auth/start"))
+              .withHeaders(Headers("Authorization" -> s"Bearer $TestToken"))
+              .withEntity(Json.obj("forceLogin" -> true.asJson))
+            resp <- st.routes.routes(req).value.map(_.getOrElse(fail("route fell through")))
+            body <- resp.as[Json]
+          yield
+            assertEquals(resp.status, Status.Ok)
+            val authorizeUrl = body.hcursor.downField("authorizeUrl").as[String].toOption.getOrElse(fail("authorizeUrl missing"))
+            assert(authorizeUrl.contains("prompt=login+consent"), s"forceLogin must force the account form: $authorizeUrl")
+            assert(authorizeUrl.contains("offline_access"), "refresh-token invariant must survive forceLogin")
+        }.guarantee(IO.blocking(server.stop(0)))
+      }
+    }
+  }
+
+  test("auth/start without a body stays a plain prompt=consent login (empty-body tolerance)") {
+    Dispatcher.parallel[IO].use { dispatcher =>
+      startMockServer.flatMap { (server, url, _) =>
+        mkStack(url, dispatcher).flatMap { st =>
+          for
+            _ <- st.ms.updateConfig(cfg => cfg.copy(logto =
+              Some(LogtoConfig(endpoint = "https://auth.example", clientId = "legacy", pkceClientId = Some("pkce-app")))))
+            // No .withEntity — the legacy call shape (empty body).
+            req = Request[IO](Method.POST, Uri.unsafeFromString("/neblink/auth/start"))
+              .withHeaders(Headers("Authorization" -> s"Bearer $TestToken"))
+            resp <- st.routes.routes(req).value.map(_.getOrElse(fail("route fell through")))
+            body <- resp.as[Json]
+          yield
+            assertEquals(resp.status, Status.Ok)
+            val authorizeUrl = body.hcursor.downField("authorizeUrl").as[String].toOption.getOrElse(fail("authorizeUrl missing"))
+            assert(authorizeUrl.contains("prompt=consent") && !authorizeUrl.contains("login"), s"plain login unchanged: $authorizeUrl")
+        }.guarantee(IO.blocking(server.stop(0)))
+      }
+    }
+  }
+
+  test("/auth/logged-out serves the RP-logout landing page") {
+    Dispatcher.parallel[IO].use { dispatcher =>
+      startMockServer.flatMap { (server, url, _) =>
+        mkStack(url, dispatcher).flatMap { st =>
+          for
+            resp <- st.routes.authCallbackRoutes(
+              Request[IO](Method.GET, Uri.unsafeFromString("/logged-out"))
+            ).value.map(_.getOrElse(fail("route fell through")))
+            // Raw byte decode: CirceEntityCodec (imported above) would
+            // otherwise route as[String] to the JSON decoder and choke on HTML.
+            body <- resp.body.through(fs2.text.utf8.decode).compile.string
+          yield
+            assertEquals(resp.status, Status.Ok)
+            assert(body.contains("已退出登录"), "landing page headline")
+            assertEquals(resp.contentType.map(_.mediaType), Some(MediaType.text.html), "served as HTML")
         }.guarantee(IO.blocking(server.stop(0)))
       }
     }
