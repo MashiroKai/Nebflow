@@ -129,7 +129,7 @@ class NodeSessionDeathFinalizeSpec extends FunSuite:
   private def seedRunningCandidate(store: FlowMapStore, id: String, name: String, task: String): IO[Unit] =
     store.mutate(s => s.copy(nodes = s.nodes + (id -> NodeDef(
       id = id, name = name, agent = "test-agent", task = Some(task),
-      out = Some("Nebula"), status = NodeLifecycle.Wiring, createdAt = System.currentTimeMillis())))).void
+      out = List(OutEdge.nebula), status = NodeLifecycle.Wiring, createdAt = System.currentTimeMillis())))).void
 
   private def waitUntil(timeout: FiniteDuration, every: FiniteDuration = 50.millis)(cond: IO[Boolean]): IO[Unit] =
     def go(deadline: Long): IO[Unit] = cond.flatMap {
