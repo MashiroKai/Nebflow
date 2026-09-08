@@ -16,6 +16,9 @@ import nebflow.core.PathUtil
  *   bg-wait / bg-wait-timeout / bg-released（bgtask-completion-gate 批）/
  *   mount-stalled（mount-enforce 批：可触发点后 60s 仍未触发的挂载停滞留痕，
  *   summary 含等待原因——上游终态明细 + barrier 残缺清单）/
+ *   node-ask（D6 批 F1 2026-09-08：项目节点 AskUser 提问留痕——方案 A 直达作者
+ *   的监督补齐件，summary 含节点名/requestId/问题摘要；写入点 AgentActor AskUser
+ *   处理链，分发器经事件流审计可见）/
  *   boot-recovery（crash-recovery 批 2026-09-07：boot sweep 每个认领动作——
  *   rehydrate 认领 / (c) 类 failNode，summary 含三分类与 transcript 指针——
  *   「禁止静默自愈」纪律，settle-sweep 先例同款）。
