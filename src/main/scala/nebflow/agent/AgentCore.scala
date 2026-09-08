@@ -751,10 +751,10 @@ private[agent] trait AgentCore:
           // remain as change notifications, plus mounted projects (2026-09-07).
           (systemStable, changeDevices, changeLanguage, changeProjects) =
             if isLifecycleRebuild then
-              (buildSystemPrompt(freshDef, turnCtx.systemPrefix, promptCtx), "", Option.empty[String], "")
+              (buildSystemPrompt(freshDef, promptCtx), "", Option.empty[String], "")
             else
               val cached = stateForLlm.cachedSystemStable.getOrElse(
-                buildSystemPrompt(freshDef, turnCtx.systemPrefix, promptCtx)
+                buildSystemPrompt(freshDef, promptCtx)
               )
               val snap = stateForLlm.stableSnapshot.getOrElse(currentSnapshot)
               (
@@ -1956,7 +1956,6 @@ private[agent] trait AgentCore:
 
   protected def buildSystemPrompt(
     agentDef: AgentDef,
-    systemPrefix: String,
     ctx: PromptContext
   ): String =
     val rawPrompt = if agentDef.systemPrompt.nonEmpty then agentDef.systemPrompt else Repl.loadSystemPrompt()
@@ -1965,7 +1964,7 @@ private[agent] trait AgentCore:
     val base = if ctx.isSubTaskWorker then SubTaskPrompt.stripTeamContent(rawPrompt) else rawPrompt
     val cleanedPrompt = PromptSections.stripAllMigrated(base)
     val conditionalBlocks = PromptSections.buildConditionalBlocks(ctx)
-    PromptSections.assembleSystemPrompt(systemPrefix, cleanedPrompt, conditionalBlocks)
+    PromptSections.assembleSystemPrompt(cleanedPrompt, conditionalBlocks)
 
   end buildSystemPrompt
 

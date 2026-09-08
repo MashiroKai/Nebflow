@@ -197,9 +197,9 @@ class Phase2dSkillCatalogSpec extends CatsEffectSuite:
     assert(ContextRefresher.skillCatalogEnabledFor("Coder"), "legacy agent 保留至阶段 3")
 
   test("D.1-12: node 会话（general 模版）首条消息不含 per-agent skill 目录（order 800 停注）"):
-    // 注意：共享前缀（system-prefix-for-all，JAR fallback/定义层文件）里有一段
-    // 静态「## Skills」能力说明——不是 order 800 的 per-agent 目录（设计 §D.1 #12
-    // 只对后者停注；前缀属定义层，阶段 3 随 team/flow 退役清单另行处理）。
+    // 注意：共享前缀层（system-prefix-for-all）已随阶段 2 批 A 退役——其
+    // JAR 内静态「## Skills」段一并消失，断言语义不受影响（本测试只钉
+    // order 800 per-agent 目录停注，设计 §D.1 #12）。
     // per-agent 目录的特征：目录头句「Skills live at」+ 条目行「- <skill>:」。
     val (_, program) = runNodeAndCapture(s"p2d-gen-${scala.util.Random.nextInt(100000)}", "general")
     val reqOpt = program.unsafeRunSync()

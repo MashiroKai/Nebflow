@@ -775,6 +775,9 @@ case class CompactionJob(
 
 case class TurnContext(
   agentDef: AgentDef,
+  /** 阶段 2 批 A（2026-09）systemPrefix 整层退役——恒空串；字段保留至阶段 3
+    * 随 TurnContext 清理一并移除（PromptSections.assembleSystemPrompt 的
+    * prefix 参数已同批删除，稳定首段 = agent system.md）。 */
   systemPrefix: String,
   projectRoot: Option[String],
   rulesMd: Option[String],
