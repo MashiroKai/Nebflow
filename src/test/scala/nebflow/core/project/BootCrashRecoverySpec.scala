@@ -27,8 +27,8 @@ import scala.concurrent.duration.*
  *  - C2 不误碰：等 barrier 的 wiring 下游不被 sweep 启动（无 boot-recovery 事件），
  *    只经正常投递链（上游 completed → deliverOut → deliveredTo 恰记一次）启动。
  *  - C3 (c) 类：sessionRef 无值 / transcript 文件缺失 → failed("crash recovery:
- *    session transcript lost") + deliverFailed 既有链（collect 下游推进 / merge 转
- *    blocked）。
+ *    session transcript lost") + deliverFailed 既有链（D5 零结算：普通下游停等 /
+ *    merge 转 blocked）。
  *  - C4 watchdog 竞速关闭：被认领节点无 dead-session-reaped；未被认领的 running
  *    残留仍由 watchdog 收敛 failed（降级兜底不变）。
  *  - C5 幂等重启：恢复完成后再跑 sweep → 零动作零事件零通知（每 boot 恰一条）。
@@ -331,7 +331,7 @@ class BootCrashRecoverySpec extends CatsEffectSuite:
 
   // ── C3 (c) 类：transcript 缺失/无 sessionRef → failed + 既有 failed 投递链 ──
 
-  test("C3: lost/corrupt transcript (class c) fails node via existing deliverFailed chain (collect settles, merge blocks)") {
+  test("C3: lost/corrupt transcript (class c) fails node via existing deliverFailed chain (D5 zero-settlement: plain downstream waits, merge blocks)") {
     val ws = tempRoot / "ws-c3"
     os.makeDir.all(ws)
     val system = ActorSystem(s"bcr-c3-${scala.util.Random.nextInt(1000000)}")
@@ -340,7 +340,7 @@ class BootCrashRecoverySpec extends CatsEffectSuite:
       res <- mkResources(system, llm.handle)
       _ <- registerRecorder(res, system, "nebula-root")
       rt <- mountProject("bcr-c3", ws, system, res)
-      // A：字段引入前的旧数据（sessionRef=None）；out=collect 下游 D
+      // A：字段引入前的旧数据（sessionRef=None）；out=普通下游 D
       _ <- seedRunning(rt, "n-c3a", "old-a", "old task", out = Some("n-c3d"))
       // B：有 sessionRef 但 transcript 文件缺失；out=merge 下游 M
       _ <- seedRunning(rt, "n-c3b", "lost-b", "lost task", out = Some("n-c3m"), sessionRef = Some("node-c3noFile"))
@@ -353,7 +353,9 @@ class BootCrashRecoverySpec extends CatsEffectSuite:
           createdAt = System.currentTimeMillis() - 3_600_000))) }.void
       (trig, trigger) <- triggerRecorder
       actions <- ProjectCrashRecovery.recoverProject(rt, trigger = trigger)
-      _ <- waitUntil(20.seconds)(byName(rt, "collect-d").map(n => NodeLifecycle.Terminal.contains(n.status)))
+      // D5：普通下游停等不终态化——等 boot-recovery 汇总触发（两 (c) 类处置的凭证）
+      _ <- waitUntil(20.seconds)(trig.get.map(_.nonEmpty))
+      _ <- IO.sleep(500.millis) // 给「假如 collect 仍在异步启动下游」留观察窗口
       a <- byName(rt, "old-a")
       b <- byName(rt, "lost-b")
       d <- byName(rt, "collect-d")
@@ -369,8 +371,11 @@ class BootCrashRecoverySpec extends CatsEffectSuite:
         s"(c) failure reason must name crash recovery, got: ${a.result}")
       assertEquals(b.status, NodeLifecycle.Failed)
       assert(b.result.exists(_.contains("crash recovery: session transcript lost/corrupt")))
-      assertEquals(d.status, NodeLifecycle.Completed,
-        "collect downstream must settle via deliverFailed placeholder semantics (not permanently pending)")
+      // D5 翻转（原 collect 断言）：普通下游停等零结算——不启动、无占位键
+      assertEquals(d.status, NodeLifecycle.Wiring,
+        "plain downstream stays wiring (D5 zero-settlement — placeholder abolished, dispatcher notified)")
+      assertEquals(d.deliveredTo, Nil,
+        "failed upstream must not write deliveredTo key into downstream (wf1cde §3.2 hole source)")
       assertEquals(m.status, NodeLifecycle.Blocked, "merge downstream must turn blocked on upstream failure")
       assert(events.count(e => e.contains("boot-recovery") && (e.contains("n-c3a") || e.contains("n-c3b"))) == 2,
         "each class-c disposition must leave a boot-recovery audit event")

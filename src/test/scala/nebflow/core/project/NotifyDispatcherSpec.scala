@@ -36,8 +36,8 @@ import scala.concurrent.duration.*
  *   窗口熔断（Suppress 不标记、冷却结束补投不丢失）/ redeliver 欠账 /
  *   重激活后再失败必须再通知（inFlight 释放 + notifySentAt 清零配套）
  * - ⑬-⑮ failed 集成（真实引擎 zombie 收敛路径）：out=Nebula 双收（Nebula
- *   eventType=failed + 分发器同收）/ out=None 无 out 依赖 / out=节点下游
- *   collect 结算 + 分发器触发
+ *   eventType=failed + 分发器同收）/ out=None 无 out 依赖 / out=节点下游 D5 零结算
+ *   停等 + 分发器触发（附等待者清单，20260908 wf1cde E-③）
  */
 class NotifyDispatcherSpec extends CatsEffectSuite:
 
@@ -702,6 +702,7 @@ class NotifyDispatcherSpec extends CatsEffectSuite:
       assert(prompt.contains("承接节点"), "prompt must teach rename-new fallback action")
       assert(prompt.contains("abandon=true"), "prompt must teach abandon action")
       assert(prompt.contains("Nebula"), "prompt must teach escalate-to-Nebula action")
+      assert(prompt.contains("无下游等待者"), "prompt must carry waiter line (E-③: none for out=Nebula leaf)")
       assertEquals(node.notifySentAt.isDefined, true, "notifySentAt marker must be set after failed trigger")
       assert(audit.exists((t, id) => t == "dispatch-notify" && id == nodeId), s"dispatch-notify failed audit must exist, got: $audit")
       assert(deliveries.exists((t, ev) => t.contains("[Node 'fail-nebula' failed]") && ev.contains("failed")),
@@ -734,7 +735,7 @@ class NotifyDispatcherSpec extends CatsEffectSuite:
         s"out=None: no node-result delivery for this node, got: $deliveries")
   }
 
-  test("⑮ failed (out=node): downstream collect-settles AND dispatcher triggered for the failed upstream") {
+  test("⑮ failed (out=node): downstream stays waiting (D5 zero-settlement) AND dispatcher triggered with waiter list") {
     val ws = tempRoot / "ws-fail-target"
     os.makeDir.all(ws)
     val system = ActorSystem(s"ntf-ft-${scala.util.Random.nextInt(100000)}")
@@ -749,18 +750,24 @@ class NotifyDispatcherSpec extends CatsEffectSuite:
           task = Some("downstream work"), out = Some("Nebula"), in = List("n-ft-up"),
           status = NodeLifecycle.Wiring, createdAt = System.currentTimeMillis() - 3_600_000))) }.void
       _ <- rt.engine.settleStaleRunningNodes()
-      // 下游 collect 结算 → 启动 → 完成（既有语义零回归）
-      _ <- waitStatus(rt, "down-node", Set(NodeLifecycle.Completed))
+      // D5 零结算：下游停等不启动；分发器通知照发（settle-then-notify 顺序不变）
       _ <- waitUntil(20.seconds)(llm.inputs.get.map(_.exists(p => p.contains("[dispatch-notify]") && p.contains("fail-up"))))
+      _ <- IO.sleep(500.millis) // 给「假如 collect 仍在异步启动下游」留观察窗口
       upId <- idOf(rt, "fail-up")
       up <- rt.store.snapshot.map(_.nodes(upId))
       dn <- idOf(rt, "down-node").flatMap(id => rt.store.snapshot.map(_.nodes(id)))
+      prompt <- llm.inputs.get.map(_.find(p => p.contains("[dispatch-notify]") && p.contains("fail-up")))
       _ <- system.stopAll.handleErrorWith(_ => IO.unit)
     yield
       assertEquals(up.status, NodeLifecycle.Failed, "upstream failed")
       assertEquals(up.notifySentAt.isDefined, true, "dispatcher notified for failed upstream (settle-then-notify order)")
-      assertEquals(dn.status, NodeLifecycle.Completed, "downstream collect-settled and completed (zero regression)")
-      assertEquals(dn.result, Some("dn-done"), "downstream completed with its own run")
+      // D5 翻转（原 collect 断言）：下游停等零结算——不启动、无 result、无占位键
+      assertEquals(dn.status, NodeLifecycle.Wiring, "downstream stays wiring (D5 zero-settlement — collect placeholder abolished)")
+      assertEquals(dn.result, None, "downstream never started (no session run)")
+      assertEquals(dn.deliveredTo, Nil, "failed upstream must not write deliveredTo key (wf1cde §3.2 hole source)")
+      // E-③：通知文本附停等等待者清单（此处恰为 down-node）
+      assert(prompt.exists(p => p.contains("下游等待者") && p.contains("down-node")),
+        "failed notify must carry waiter list naming the waiting successor (E-③)")
   }
 
 end NotifyDispatcherSpec
