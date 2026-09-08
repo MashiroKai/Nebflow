@@ -120,7 +120,12 @@ export async function fetchNeblinkStatus() {
       userDescription: d.userDescription || '',
       avatarUrl: d.avatarUrl || ''
     } : null;
-    neblinkState.peers = data.peers || [];
+    // F5（症状③防自过滤）：服务端 peers 若回显本机设备，下方 UI 合并
+    // [{...local,isLocal}, ...peers] 会出现「本机 + 同名 peer」双行（数量虚增
+    // 恰好 +1）。客户端整条链路零 self 防御（LAN announce 路径有、server 路径
+    // 无），此处兜底；幽灵注册属服务端数据缺口（S3/S4），不在本修复面。
+    const selfId = d ? d.id : null;
+    neblinkState.peers = (data.peers || []).filter(p => !selfId || p.deviceId !== selfId);
   } catch (e) {
     // neblink not available yet
   }
