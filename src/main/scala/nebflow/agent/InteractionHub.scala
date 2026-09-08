@@ -69,6 +69,11 @@ object InteractionHub:
             case InteractionHubCommand.ListPendingAsks(rootSessionId, reply) =>
               // 刷新存活 (2026-09-03): read-only snapshot for reconnect replay.
               ctx.forkTurn(handleListPendingAsks(pending, rootSessionId, reply)) *> IO.pure(behavior)
+            case InteractionHubCommand.CleanupForSession(sessionId) =>
+              // P2 G11 (20260908 spec §3.4): source-death cleanup — node cancelled
+              // while its AskUser card is pending → close the card (engine cascade:
+              // cancelNode / abandon / dead-session reap).
+              ctx.forkTurn(handleCleanupForSession(pending, rootWsSend, sessionId)) *> IO.pure(behavior)
         }
       IO.pure(behavior)
     }
@@ -348,6 +353,53 @@ object InteractionHub:
         case None => (m, reply.complete(false).void)
     }.flatten
 
+  // ============================================================
+  // P2 G11 (20260908 spec §3.4): source-death cleanup.
+  //
+  // A node cancelled while its AskUser card is pending leaves a zombie card:
+  // nobody can ever answer it (the requesting session is dead) and the
+  // deferred never completes — a permanently misleading blocker. The engine
+  // cascades CleanupForSession on all three death exits (cancelNode /
+  // NodeEdit abandon / dead-session reap): remove ALL pending slots whose
+  // sourceSession matches, then broadcast askUserClosed{requestId} so the
+  // frontend can retire the card + pending-bar entry (frontend consumption
+  // lands in batch F2; acceptance here stops at the engine broadcast).
+  // Broadcast goes to ALL registered roots — a card fanned out under
+  // fallback:true (#433) renders in windows other than the owning root, and
+  // a close signal must reach every window that may still show it.
+  // ============================================================
+  private def handleCleanupForSession(
+    pending: Ref[IO, Map[String, PendingRequest]],
+    rootWsSend: Ref[IO, Map[String, Json => IO[Unit]]],
+    sessionId: String
+  ): IO[Unit] =
+    pending.modify { m =>
+      val victims = m.toList.collect { case (rid, p) if p.sourceSession == sessionId => rid -> p }
+      if victims.isEmpty then (m, IO.unit)
+      else
+        (
+          m -- victims.map(_._1),
+          for
+            _ <- logger.info(
+              s"CleanupForSession $sessionId: closing ${victims.size} pending ask(s) (source session died)")
+            sends <- rootWsSend.get
+            _ <- victims.traverse_ { case (rid, p) =>
+              sends.toList.traverse_ { case (sid, ws) =>
+                ws(
+                  Json.obj(
+                    "type" -> "askUserClosed".asJson,
+                    "sessionId" -> sid.asJson,
+                    "requestId" -> rid.asJson,
+                    "sourceSession" -> sessionId.asJson
+                  )
+                ).handleErrorWith(e =>
+                  logger.warn(s"askUserClosed broadcast failed requestId=$rid root=$sid: ${e.getMessage}") *> IO.unit)
+              }
+            }
+          yield ()
+        )
+    }.flatten
+
   private def complete(p: PendingRequest, ans: InteractionAnswered): IO[Unit] =
     val approved = ans.payload.hcursor.downField("approved").as[Boolean].toOption
     val answers = ans.payload.hcursor.downField("answers").as[List[String]].toOption
@@ -403,3 +455,10 @@ object InteractionHubCommand:
     */
   final case class ListPendingAsks(rootSessionId: String, reply: ActorRef[List[Json]])
       extends InteractionHubCommand
+
+  /** P2 G11 (20260908 spec §3.4): engine → hub — the node owning `sessionId`
+    * (sourceSession of its asks) reached cancelled (cancelNode / abandon /
+    * dead-session reap cascade). Remove every pending slot sourced from that
+    * session and broadcast askUserClosed{requestId} so no zombie card outlives
+    * its asker. */
+  final case class CleanupForSession(sessionId: String) extends InteractionHubCommand

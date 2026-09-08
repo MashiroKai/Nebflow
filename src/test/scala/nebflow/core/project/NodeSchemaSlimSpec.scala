@@ -170,15 +170,16 @@ class NodeSchemaSlimSpec extends CatsEffectSuite:
 
   // ── 1. description 契约 ─────────────────────────────────
 
-  test("A⓪ tool doc budget: NodeEdit description ≤4400 chars (裁定⑤b 7438→3742；merge吸收main后落语义→4308)") {
+  test("A⓪ tool doc budget: NodeEdit description ≤4700 chars (⑤b 7438→3742；merge语义→4308；E1 out门控→4395；E2 retry 参数行)") {
     val d = NodeEditTool.description
     // 3800 为 ⑤b 压缩批自钉预算；合并观测面P0P1引擎批时解冲吸收 main 后落语义
     // （failed 重激活条款 / abandon 无 TTL 裁定 / notifyDispatcher completion-only）
-    // ——语义不可删，预算放宽至 4400（实测 4308，仍 -42% vs 7438 原始描述）。
-    assert(d.length <= 4400, s"NodeEdit description must stay ≤4400 chars (⑤b压缩+merge语义合并), got ${d.length}")
+    // ——语义不可删，预算放宽至 4400（实测 4308）。E1 out 门控语法行（实测 4395）
+    // 仍在预算内；批E2 retry 参数行（新语义，schema retry 属性详注同源）→ 4700。
+    assert(d.length <= 4700, s"NodeEdit description must stay ≤4700 chars (⑤b压缩+E1门控+E2 retry), got ${d.length}")
     // 语义锚点抽查：核心参数/错误码/机制关键词不得在压缩中丢失
     for anchor <- List("nodename", "descriptionLong", "replace-on-provide", "NODE_AGENT_RETIRED", "EMPTY_NODE_CONNECTION",
-        "NODE_MERGE_REQUIRES_UPSTREAM", "worktree", "abandon", "notifyDispatcher", "Nebula", "NodeList(detail=") do
+        "NODE_MERGE_REQUIRES_UPSTREAM", "worktree", "abandon", "notifyDispatcher", "Nebula", "NodeList(detail=", "retry") do
       assert(d.contains(anchor), s"compressed description must keep '$anchor'")
   }
 
