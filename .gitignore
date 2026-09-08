@@ -14,10 +14,8 @@ project/project/
 .DS_Store
 Thumbs.db
 
-# Nebflow runtime（.nebflow/ 整体忽略，唯 Spec/ 为 skills→plugins 映射标准源，可跟踪）
-# dispatcher-ctx 批照 memory-plan 配方：runtime 全忽略，仅 Spec/ 入 track（spec 随分支走）
-.nebflow/*
-!.nebflow/Spec/
+# .nebflow/ 运行时层整体不入 repo（2026-09-08 裁定）
+/.nebflow/
 .nebflow-qc.log
 
 # Internal / development-only
