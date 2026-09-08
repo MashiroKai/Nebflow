@@ -30,6 +30,7 @@ import {
   syncArchiveUi, openDetailFor,
   notifyChainRetained, notifyChainArchived,
 } from './flowMapArchive.js';
+import { toggleHTML, bindToggle, setToggleState } from './toggle.js';
 
 // 布局常量（紧凑化：作者 2026-09-04 裁定「层级从上到下、连线竖直/曲线、压缩冗余空白」）
 // NODE_W 对齐真实卡宽（FLOW_CSS .solar-node width:124px）——旧值 150 让布局数学
@@ -67,6 +68,29 @@ const reconcileTimers = new Map();
 /** @type {Set<string>} 整链退场动画进行中的项目：期间 WS/对账渲染挂起，
  *  退场结束的统一渲染兜底（防止中途 diff 把正在退场的卡提前拆掉）。 */
 const exitAnimating = new Set();
+
+// ── 视图过滤（P3 占位治理最小组合前端腿，报告 20260908_flowmap-占位调查与显示优化
+//   提案 P3；作者定案收缩为二态「全部/进行中」）──────────────────────────
+// 纯前端派生过滤：不改任何归档语义/载荷/后端。「进行中」= 隐藏终态与停滞卡
+// （completed/failed/cancelled/blocked），只留活跃（running/wiring/pending）——
+// 占位治理（P1 引擎判据）落地前作者可一键隐藏终态死链只看活跃。
+// 默认「全部」（现状行为零漂移）；视图态持久化 localStorage（nebflow.* 键惯例，
+// 参照 nebflow.onboarding.enabled），会话内多视图共享同一开关。
+const VIEW_FILTER_KEY = 'nebflow.flowmap.activeOnly';
+
+/** @returns {boolean} 当前是否「进行中」态（读取失败一律回落「全部」）。 */
+function viewFilterActiveOnly() {
+  try { return localStorage.getItem(VIEW_FILTER_KEY) === '1'; } catch (e) { return false; }
+}
+
+/** 视图过滤谓词（派生管线最后一环）：「全部」恒真；「进行中」放行活跃态
+ *  （running/wiring/pending），隐藏终态（completed/failed/cancelled）与 blocked
+ *  （待分发器处置的停滞卡，归隐藏侧——任务书口径）。 */
+function passesViewFilter(node) {
+  if (!viewFilterActiveOnly()) return true;
+  const st = String(node?.status || '');
+  return !isTerminalStatus(st) && st !== 'blocked';
+}
 
 function bumpGen(project) {
   genByProject.set(project, (genByProject.get(project) || 0) + 1);
@@ -743,15 +767,62 @@ function legendHtml() {
 //   （completed/failed/cancelled，终态色卡保留主图）；已归档链成员与 TTL 到期
 //   清理链成员（flowMapArchive.expiredIds）不可见。旧版「ttlLeftSec 到期前端隐藏」
 //   随链语义移除（§1.3 裁定基线变更 / §7.6 死代码清理）。
+// P3 视图过滤（2026-09-08）：归档可见性判定之后再叠加 passesViewFilter——
+//   「进行中」态额外隐藏终态/blocked 卡。纯派生，不回写缓存、不改归档语义。
 function visibleFmView(project, fm) {
   if (!fm) return fm;
-  const nodes = (fm.nodes || []).filter((n) => isVisibleNode(project, n));
+  const nodes = (fm.nodes || []).filter((n) => isVisibleNode(project, n) && passesViewFilter(n));
   return nodes.length === (fm.nodes || []).length ? fm : { ...fm, nodes };
 }
 
 /** 渲染管线输入的 fm 已是可见视图（visibleFmView 单点过滤），此处恒等。 */
 function visibleNodes(fm) {
   return fm?.nodes || [];
+}
+
+// ── 视图过滤控件（P3）：共享开关 .nb-toggle（toggle.js / sidebar.css，玻璃材质
+//   token 全复用，零新色值）。就地视图挂进 .flowmap-nav-bar（返回钮与摘要槽之间，
+//   幂等插入）；legacy 独立标签页无 nav-bar → 由 renderFlowMap 的 card-header
+//   模板内嵌。两种形态共用同一 localStorage 态，翻转即全量视图重渲。 ──
+
+/** @returns {string} 控件 HTML（label + nb-toggle 开关；on=进行中，off=全部）。 */
+function viewFilterControlHtml() {
+  return `<span class="flowmap-view-filter" data-testid="fm-view-filter" title="${esc(t('flowmap.viewFilter.hint'))}">`
+    + `<span class="flowmap-view-filter-label">${esc(t('flowmap.viewFilter.activeOnly'))}</span>`
+    + toggleHTML({
+      on: viewFilterActiveOnly(),
+      label: t('flowmap.viewFilter.activeOnly'),
+      title: t('flowmap.viewFilter.hint'),
+      attrs: ' data-testid="fm-view-filter-toggle"',
+    })
+    + `</span>`;
+}
+
+/** 翻转处理：持久化 → 同步所有开关实例 → 以缓存快照重渲全部打开的 Flow Map 视图
+ *  （diff 管线承担节点增删过渡，无缓存时回落全量拉取）。 */
+function onViewFilterChange(_el, on) {
+  try { localStorage.setItem(VIEW_FILTER_KEY, on ? '1' : '0'); } catch (e) { /* 隐私模式等：会话态兜底 */ }
+  document.querySelectorAll('.flowmap-view-filter .nb-toggle').forEach((el) => setToggleState(el, on));
+  for (const { project, pane } of openFlowMapPanes()) {
+    const scroll = pane.querySelector('.team-scroll') || pane.querySelector('.flowmap-view-body');
+    if (!scroll) continue;
+    const fm = fmByProject.get(project);
+    if (fm) renderFlowMap(scroll, visibleFmView(project, fm), project);
+    else renderFlowMapInto(scroll, project);
+  }
+}
+
+/** 就地视图：把控件挂进 nav-bar（幂等；pane 重建后下次渲染自动补挂并收敛状态）。 */
+function ensureViewFilterControl(paneEl) {
+  const navBar = paneEl ? paneEl.querySelector('.flowmap-nav-bar') : null;
+  if (!navBar) return;
+  const existing = navBar.querySelector('.flowmap-view-filter');
+  if (!existing) {
+    navBar.querySelector('.flowmap-back-btn')?.insertAdjacentHTML('afterend', viewFilterControlHtml());
+  } else {
+    setToggleState(existing.querySelector('.nb-toggle'), viewFilterActiveOnly());
+  }
+  bindToggle(navBar, onViewFilterChange);
 }
 
 // ── header 摘要：HTML 转义版（innerHTML）与纯文本版（textContent 增量更新）共用 ──
@@ -1162,6 +1233,9 @@ export function renderFlowMap(container, fm, projectName, opts = {}) {
   const rawNodes = fmByProject.get(projectName)?.nodes || [];
   const total = rawNodes.length;
   const nodes = visibleNodes(fm);
+  // P3 视图过滤控件：diff/全量两路径都保证 nav-bar 开关已挂载且状态收敛
+  // （pane 重建/恢复后首帧即补挂）。
+  ensureViewFilterControl(container.closest('.canvas-tab-pane'));
   const prev = renderedFmByContainer.get(container);
   if (prev && nodes.length > 0 && visibleNodes(prev).length > 0
       && renderFlowMapDiff(container, prev, fm, projectName)) {
@@ -1176,8 +1250,12 @@ export function renderFlowMap(container, fm, projectName, opts = {}) {
   // 有数据的情况说成没数据 —— qa 取证「后端有 3 节点、视图显示暂无节点」即此）。
   // v3（§7.3）：图空但有已归档链 → 「全部节点已完成，结果收入右上角归档」，
   // 悬浮钮保持可用（主图与面板可同时为「空图 + 有条目」）。
+  // P3 补第四态：「进行中」过滤把未归档终态卡全部隐藏时，不说「已全部归档」
+  // （死链终态并未归档）——显式告知是视图过滤所致。
+  const hiddenByFilter = viewFilterActiveOnly()
+    && rawNodes.some((n) => isVisibleNode(projectName, n) && !passesViewFilter(n));
   const emptyMsg = fm?.notMounted ? t('flowmap.notMounted')
-    : total > 0 ? t('flowmap.archive.allArchived')
+    : total > 0 ? (hiddenByFilter ? t('flowmap.viewFilter.noneActive') : t('flowmap.archive.allArchived'))
     : t('flowmap.empty');
   const state = fm?.notMounted ? 'not-mounted' : nodes.length > 0 ? 'nodes' : total > 0 ? 'archived' : 'empty';
   container.dataset.fmState = state;
@@ -1190,6 +1268,7 @@ export function renderFlowMap(container, fm, projectName, opts = {}) {
   const navSummary = paneEl ? paneEl.querySelector('.flowmap-nav-bar .flowmap-summary') : null;
   container.innerHTML = `
     ${navSummary ? '' : `<div class="flowmap-card-header">
+      ${viewFilterControlHtml()}
       <div class="flowmap-summary">${summarizeHeader(projectName, fm)}</div>
     </div>`}
     ${nodes.length === 0
@@ -1214,6 +1293,7 @@ export function renderFlowMap(container, fm, projectName, opts = {}) {
     rebuildAdjacency(canvas, fm, collectEdges(fm, positions));
   }
   bindFlowMapClicks(container, projectName);
+  if (!navSummary) bindToggle(container, onViewFilterChange); // legacy card-header 内嵌开关
   if (opts.animateAll) animateAllIn(container);
   syncArchiveUi(container, projectName);
   import('./utils.js').then(({ createIconsIn }) => createIconsIn(container));
@@ -1435,7 +1515,8 @@ function handleNodeWsEvent(msg) {
     const completedChains = refreshChains(project, next.nodes);
     const becameTerminal = type !== 'nodeRemoved' && isTerminalStatus(node.status);
     const nodeArchived = completedChains.some((c) => c.members.some((m) => m.id === node.id));
-    if (completedChains.length > 0 && !prefersReducedMotion()) {
+    if (completedChains.length > 0 && !prefersReducedMotion() && !viewFilterActiveOnly()) {
+      // P3：「进行中」态终态卡本就不在主图，整链退场动画无对象可播 → 直渲。
       animateChainExit(project, panes, completedChains, next);
     } else {
       renderFlowMapPanes(project, panes, next);
@@ -1486,7 +1567,7 @@ function animateChainExit(project, panes, chains, fm) {
     if (!scroll) continue;
     const preView = {
       ...fm,
-      nodes: (fm.nodes || []).filter((n) => isVisibleNode(project, n) || memberIds.has(n.id)),
+      nodes: (fm.nodes || []).filter((n) => (isVisibleNode(project, n) || memberIds.has(n.id)) && passesViewFilter(n)),
     };
     renderFlowMap(scroll, preView, project,
       { animateAll: !scroll.querySelector('.solar-canvas') });

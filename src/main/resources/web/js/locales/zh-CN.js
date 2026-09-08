@@ -85,6 +85,10 @@ export default {
   'flowmap.st.wiring': '接线中',
   'flowmap.st.pending': '待运行',
   'flowmap.st.cancelled': '已取消',
+  // 视图过滤（P3 占位治理，2026-09-08）：二态「全部/进行中」，纯前端派生过滤
+  'flowmap.viewFilter.activeOnly': '仅进行中',
+  'flowmap.viewFilter.hint': '隐藏终态节点（已完成/失败/已取消/已阻断），只看活跃节点',
+  'flowmap.viewFilter.noneActive': '无进行中节点——终态节点已被视图过滤隐藏',
   'flowmap.archive.button': '已归档任务链（{n}）',
   'flowmap.archive.title': '已归档任务链',
   'flowmap.archive.ttlTitle': '归档条目自完成起保留 24 小时，到期自动清理',
