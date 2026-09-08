@@ -224,10 +224,13 @@ class Phase2dSkillCatalogSpec extends CatsEffectSuite:
     val pop = tools.getOrElse("Pop", fail("general node must receive Pop"))
     assert(pop.contains("professional tool") && pop.contains("never hand-draw"),
       "Pop description carries the order-415 reporting workflow at the wire level")
-    // 2026-09-06 节点面摘除 AskUser：general 节点 wire 层不得再收到该工具
-    // （order-400 指南仍随工具 description 对 Nebula/显式声明身份生效，
-    // 由 AskUserQuestionToolSpec/机制 spec 覆盖，此处只钉 general 交付面）
-    assert(!tools.contains("AskUserQuestion"),
-      "AskUserQuestion no longer on the general node default face (2026-09-06 交互出口统一)")
+    // 2026-09-08 作者修订恢复 AskUser（D6 批D1）：general 节点 wire 层重新
+    // 收到该工具（2026-09-06 摘除断言反向）；order-400 指南仍随工具 description
+    // 自包含生效（删段不退化判据恢复钉死）
+    val ask = tools.getOrElse("AskUserQuestion", fail("general node must receive AskUserQuestion (2026-09-08 restored)"))
+    assert(ask.contains("When NOT to use"),
+      "AskUserQuestion description carries the order-400 guidance at the wire level")
+    assert(ask.contains("node-ask trace event") && ask.contains("project · node"),
+      "AskUserQuestion description carries the supervision note (D6 批D1: node-ask 留痕 + 来源标注)")
 
 end Phase2dSkillCatalogSpec
