@@ -24,9 +24,12 @@
 //      the ONLY stripped pieces are thinking + tool calls).
 //
 // The phrase metadata on duration badges (data-nf-phrase) feeds the header
-// again (live path via main.js meta.phrase; history via the done badge). The
-// 2026-09-04 banner-dedupe ruling survives: only the LATEST turn's header is
-// visible per session (`.turn-banner-superseded` on the header element).
+// again (live path via main.js meta.phrase; history via the done badge).
+// EVERY turn's header stays visible (2026-09-08 author ruling: 每轮 turn 都有
+// 自己的 ✻ 行、点击可展开/收起该轮过程). The 2026-09-04 banner-dedupe
+// (`.turn-banner-superseded`, only the latest header visible) was REMOVED —
+// hiding the older headers made them unclickable, which was the root cause
+// of the 「旧轮点不开」 regression.
 //
 // Numbers are computed FROM THE TURN'S ROW LIST (2026-09-05口径):
 //   工具 <M> 次   = count of `.row.tool` in scope
@@ -230,21 +233,6 @@ function bindHeaderToggle(header) {
   };
 }
 
-/* ---------- banner dedupe (2026-09-04 ruling, v2 carrier) ---------- */
-
-/** Only the LATEST turn's header stays visible; superseded headers keep
- *  their DOM (E10 search-expand keeps working) and are hidden via the
- *  marker class on the HEADER element. Rows are untouched — a closed turn's
- *  DOM is byte-stable (#403 invariant). */
-function applyLatestBannerOnly(chat, keep) {
-  const keepSet = new Set(keep);
-  const headers = Array.from(chat.children)
-    .filter(el => el.classList && el.classList.contains('turn-header'));
-  for (const h of headers) {
-    h.classList.toggle('turn-banner-superseded', !keepSet.has(h));
-  }
-}
-
 /* ---------- turn scope + closure cursor (#403, unchanged semantics) ---------- */
 
 /**
@@ -333,9 +321,6 @@ export function collapseTurn(view, meta = {}) {
     if (chat.scrollHeight - chat.scrollTop - chat.clientHeight < 80) {
       chat.scrollTop = chat.scrollHeight;
     }
-    // Banner dedupe (2026-09-04): this turn's header replaces all earlier
-    // turns' headers visually.
-    applyLatestBannerOnly(chat, [header]);
   }
   markClosed(chat); // #403: LLM ended — the turn is closed even when there
                     // was nothing to tuck; later arrivals are a new turn.
@@ -395,11 +380,9 @@ export function buildTurnSummariesForHistory(chat, opts = {}) {
   const { busyTail = false } = opts;
   const rows = Array.from(chat.children).filter(el => el.classList && el.classList.contains('row'));
   let segStart = 0;
-  let lastHeaders = null;
   const flush = (end) => {
     if (end > segStart) {
-      const headers = summarizeSegment(chat, rows.slice(segStart, end));
-      if (headers.length) lastHeaders = headers;
+      summarizeSegment(chat, rows.slice(segStart, end));
     }
   };
   rows.forEach((r, i) => {
@@ -418,7 +401,6 @@ export function buildTurnSummariesForHistory(chat, opts = {}) {
   } else {
     markClosed(chat);
   }
-  if (lastHeaders) applyLatestBannerOnly(chat, lastHeaders);
 }
 
 function summarizeSegment(chat, seg) {
