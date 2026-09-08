@@ -4,5 +4,5 @@
   "version": "1.0.0",
   "description": "工程方法论包——系统架构设计与并行调研纪律。内含 skills：grill（需求拆解、技术调研、trade-off 对比、双文档交付：人类摘要+AI 实施规格书）、parallel-research（正交拆题、来源强制、逐轨核验、双轨综合）。无 mcp.json、无工具扩展。",
   "capability": "系统工程方法论：节点获得需求拆解与 trade-off 对比的双文档交付纪律、正交拆题+逐轨核验的并行调研纪律",
-  "author": {"name": "Nebula distill"}
+  "author": {"name": "Nebflow"}
 }
