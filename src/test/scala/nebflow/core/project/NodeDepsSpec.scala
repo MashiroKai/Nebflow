@@ -332,7 +332,7 @@ class NodeDepsSpec extends CatsEffectSuite:
       // store 层混合传递链：A.out=B（流 A→B），C.deps=[B]（流 B→C）。
       // 追加 C→A 边（in 或 deps 同向）= A→B→C→A 环 → wouldCreateCycle(C, A) 必须 true
       _ <- rt.store.mutate(s => s.copy(nodes = s.nodes ++ Map(
-        "n-a" -> NodeDef(id = "n-a", name = "A", agent = "test-agent", out = Some("n-b"), createdAt = now),
+        "n-a" -> NodeDef(id = "n-a", name = "A", agent = "test-agent", out = List(OutEdge("n-b")), createdAt = now),
         "n-b" -> NodeDef(id = "n-b", name = "B", agent = "test-agent", createdAt = now),
         "n-c" -> NodeDef(id = "n-c", name = "C", agent = "test-agent", deps = List("n-b"), createdAt = now)
       )))
@@ -342,7 +342,7 @@ class NodeDepsSpec extends CatsEffectSuite:
       // node-b store 直种（20260903 创建必带 out 新规范下 out-only wiring 节点不可经 NodeEdit 创建）
       _ <- rt.store.mutate(s => s.copy(nodes = s.nodes ++ Map(
         "n-e2e-b" -> NodeDef(id = "n-e2e-b", name = "node-b", agent = "test-agent",
-          status = NodeLifecycle.Wiring, out = Some("Nebula"), createdAt = System.currentTimeMillis()))))
+          status = NodeLifecycle.Wiring, out = List(OutEdge.nebula), createdAt = System.currentTimeMillis()))))
       bE2e <- idOf(rt, "node-b")
       _ <- nodeEdit(nodeInput("deps-t3", "node-a", "description" -> Json.fromString("test node purpose"),
         "task" -> Json.fromString("work"), "out" -> Json.fromString(bE2e)), ctx)
@@ -436,7 +436,7 @@ class NodeDepsSpec extends CatsEffectSuite:
       // C2 store 直种（20260903 创建必带 out 新规范下 out-only wiring 节点不可经 NodeEdit 创建）
       _ <- rt.store.mutate(s => s.copy(nodes = s.nodes ++ Map(
         "n-in-waiter" -> NodeDef(id = "n-in-waiter", name = "in-waiter", agent = "test-agent",
-          status = NodeLifecycle.Wiring, out = Some("Nebula"), createdAt = System.currentTimeMillis()))))
+          status = NodeLifecycle.Wiring, out = List(OutEdge.nebula), createdAt = System.currentTimeMillis()))))
       c2Id <- idOf(rt, "in-waiter")
       _ <- nodeEdit(nodeInput("deps-t5", "src-a2", "description" -> Json.fromString("test node purpose"),
         "task" -> Json.fromString("boom-a2"), "out" -> Json.fromString(c2Id)), ctx)
@@ -495,7 +495,7 @@ class NodeDepsSpec extends CatsEffectSuite:
       // 下游 B 直种（wiring, out=Nebula）；nodeEdit 接线时 src-a.id 自动写进 B.in
       _ <- rt.store.mutate(s => s.copy(nodes = s.nodes ++ Map(
         "n-recovery-b" -> NodeDef(id = "n-recovery-b", name = "recovery-b", agent = "test-agent",
-          status = NodeLifecycle.Wiring, out = Some("Nebula"), createdAt = System.currentTimeMillis()))))
+          status = NodeLifecycle.Wiring, out = List(OutEdge.nebula), createdAt = System.currentTimeMillis()))))
       bId <- idOf(rt, "recovery-b")
       // 入口 A：out→B，首轮 task=flaky-a（必失败）
       _ <- nodeEdit(nodeInput("deps-t5b", "src-a", "description" -> Json.fromString("test node purpose"),
@@ -622,10 +622,10 @@ class NodeDepsSpec extends CatsEffectSuite:
       assert(r7b.left.exists(_.contains("EMPTY_NODE_CONNECTION")), s"7b must carry EMPTY_NODE_CONNECTION code, got: $r7b")
       assert(r7c.isRight, s"clearing deps while in+out remain must pass, got: $r7c")
       assertEquals(odAfter.deps, Nil, "7c: deps must be cleared (replace-on-provide)")
-      assertEquals(odAfter.out, Some("Nebula"), "7c: out must remain")
+      assertEquals(odAfter.out, List(OutEdge.nebula), "7c: out must remain")
       assert(r7d.isLeft, s"disconnecting out must be rejected under the tightened policy, got: $r7d")
       assert(r7d.left.exists(_.contains("EMPTY_NODE_CONNECTION")), s"7d must carry EMPTY_NODE_CONNECTION code, got: $r7d")
-      assertEquals(ioAfter.out, Some("Nebula"), "7d: out must remain (disconnect rejected)")
+      assertEquals(ioAfter.out, List(OutEdge.nebula), "7d: out must remain (disconnect rejected)")
       assert(ioAfter.in.contains(upId), "7d: in must remain untouched")
   }
 
@@ -649,7 +649,7 @@ class NodeDepsSpec extends CatsEffectSuite:
       // w-wire store 直种（20260903 创建必带 out 新规范下 out-only wiring 节点不可经 NodeEdit 创建）
       _ <- rt.store.mutate(s => s.copy(nodes = s.nodes ++ Map(
         "n-w-wire" -> NodeDef(id = "n-w-wire", name = "w-wire", agent = "test-agent",
-          status = NodeLifecycle.Wiring, out = Some("Nebula"), createdAt = System.currentTimeMillis()))))
+          status = NodeLifecycle.Wiring, out = List(OutEdge.nebula), createdAt = System.currentTimeMillis()))))
       wId <- idOf(rt, "w-wire")
       rWire <- nodeEdit(nodeInput("deps-t8", "w-wire", "abandon" -> Json.fromBoolean(true)), ctx)
       _ <- IO.sleep(200.millis)
