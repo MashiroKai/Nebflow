@@ -570,6 +570,9 @@ object AgentActor extends AgentCore with AgentSession:
     flowNodeId: Option[String] = None,
     isDispatcher: Boolean = false,
     projectName: Option[String] = None,
+    /** D6 批 F1（G9 路径 a）：节点人类可读名随 spawn 注入——AskUser payload
+      * nodeName 字段来源。详见 SessionContext.flowNodeName。 */
+    flowNodeName: Option[String] = None,
     /** 阶段 2a 沙箱（§A.6）：project 节点/分发器 spawn 置 true——AgentCore 据此
       * 从 projectRoot 派生 ToolContext.sandbox。默认 false=旧行为（双轨豁免面）。 */
     sandboxEnabled: Boolean = false,
@@ -631,6 +634,7 @@ object AgentActor extends AgentCore with AgentSession:
             flowNodeId = flowNodeId,
             isDispatcher = isDispatcher,
             projectName = projectName,
+            flowNodeName = flowNodeName,
             sandboxEnabled = sandboxEnabled,
             sandboxRoot = sandboxRoot
           )
@@ -673,13 +677,17 @@ object AgentActor extends AgentCore with AgentSession:
     * for attribution and sourceAgent/sourceSession carry the origin info.
     * Pure — `private[agent]` so the #380 passthrough contract (canvas/preview
     * emitted only when present, byte-identical otherwise) is unit-covered.
-    */
+    * D6 批 F1（G9）：project/nodeName 来源标注字段——仅在项目上下文（项目节点
+    * 或分发器会话）时携带，缺省 payload 与恢复前字节一致（AskUserBuildJsonSpec
+    * V11b 防线同款纪律）。 */
   private[agent] def buildAskUserJson(
     sessionId: Option[String],
     agentName: String,
     items: List[AskItem],
     sourceAgent: Option[String] = None,
-    sourceSession: Option[String] = None
+    sourceSession: Option[String] = None,
+    project: Option[String] = None,
+    nodeName: Option[String] = None
   ): Json =
     val fields = scala.collection.mutable.ListBuffer(
       "type" -> "askUser".asJson,
@@ -688,6 +696,8 @@ object AgentActor extends AgentCore with AgentSession:
     )
     sourceAgent.foreach(sa => fields += "sourceAgent" -> sa.asJson)
     sourceSession.foreach(ss => fields += "sourceSession" -> ss.asJson)
+    project.foreach(p => fields += "project" -> p.asJson)
+    nodeName.foreach(nn => fields += "nodeName" -> nn.asJson)
     fields += "items" -> Json.fromValues(items.map { item =>
       val base = scala.collection.mutable.ListBuffer(
         "question" -> item.question.asJson,
@@ -2281,7 +2291,36 @@ object AgentActor extends AgentCore with AgentSession:
         val srcSession = state.sessionId.getOrElse("")
         val rootSid =
           Option(state.session.rootSessionId).filter(_.nonEmpty).getOrElse(state.sessionId.getOrElse(""))
-        val payload = buildAskUserJson(Some(rootSid), srcAgent, items, Some(srcAgent), Some(srcSession))
+        // D6 批 F1（G9 来源标注）：项目上下文随 payload 携带——项目节点=flowNodeName
+        // （spawn 置位路径 a），分发器提问标注 "dispatcher"；非项目会话（Nebula
+        // 自问/REPL）无此两字段，前端 badge 回落 agentName（不回归）。
+        val askProject = state.projectName
+        val askNodeName =
+          if state.isDispatcher then Some("dispatcher") else state.flowNodeName
+        val payload = buildAskUserJson(
+          Some(rootSid), srcAgent, items, Some(srcAgent), Some(srcSession),
+          askProject, askNodeName
+        )
+        // D6 批 F1（方案 A 监督补齐件，spec §3.2/§3.3）：节点提问留痕 node-ask
+        // 事件——分发器监督从实时把关变审计可见（FlowMapEventLog 既有基座，
+        // NodeEngine start-aborted 等写入点先例）。仅项目节点会话留痕（分发器
+        // 提问本就在监督链内）；best-effort——留痕失败绝不阻断提问链。
+        val nodeAskEventIO = (state.flowNodeId, askProject) match
+          case (Some(nodeId), Some(proj)) =>
+            val q0 = items.headOption.map(_.question).getOrElse("")
+            val short = if q0.length > 40 then q0.take(37) + "..." else q0
+            val multi = if items.length > 1 then s" (+${items.length - 1} more)" else ""
+            val summary =
+              s"node=${askNodeName.getOrElse(nodeId)} requestId=$requestId ask: $short$multi"
+            state.sandboxRoot.orElse(state.projectRoot) match
+              case Some(workspace) =>
+                nebflow.core.project.FlowMapEventLog
+                  .append(workspace, proj, nodeId, "node-ask", summary)
+                  .handleErrorWith(e =>
+                    logger.warn(s"node-ask event append failed (node=$nodeId): ${e.getMessage}"))
+              case None =>
+                logger.warn(s"node-ask event skipped: no workspace path (node=$nodeId)")
+          case _ => IO.unit
         val sendIO = resources.interactionHubRef.get.flatMap {
           case Some(hub) =>
             // R2 (wait-timeout-fix, 2026-09-03): the turn parks on a
@@ -2307,7 +2346,7 @@ object AgentActor extends AgentCore with AgentSession:
                   sourceAgent = srcAgent,
                   sourceSession = srcSession
                 )
-              )).void
+              )).void *> nodeAskEventIO
           case None =>
             // Hub not spawned (early boot / tests): cancel the ask so the
             // caller's AskUserQuestionTool `.?` does not hang forever.
