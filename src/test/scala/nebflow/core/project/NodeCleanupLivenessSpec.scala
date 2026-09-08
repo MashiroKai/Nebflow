@@ -23,8 +23,9 @@ import scala.concurrent.duration.*
  * - c-① liveness：NodeList 快照 running 节点带 liveness 字段——活会话（有在飞
  *   执行 fiber）true、死会话残留（无在飞 fiber，实例重启泄漏形态）false；非
  *   running 节点不带键（wiring/pending 无会话存活概念、终态无存活可言）。
- * - c-② abandon 接受死会话 running（收殓 cancelled + TTL + 审计）；活 running
- *   绝对拒绝（误杀防护硬约束——与 NodeDepsSpec T8 互锚）。
+ * - c-② abandon 接受死会话 running（收殓 cancelled + 审计；无 TTL——2026-09-07
+ *   裁定：终态留主图不自动归档）；活 running 绝对拒绝（误杀防护硬约束——与
+ *   NodeDepsSpec T8 互锚）。
  * - c-③ NodeCancel 对死会话 running 真实落终态（修复假成功）；活 running 走
  *   正常取消信号（原语义）；幂等：已终态 → no-op 不重复终态化。
  *
@@ -324,7 +325,7 @@ class NodeCleanupLivenessSpec extends CatsEffectSuite:
 
   // ── c-②：死会话 running 经 abandon 收殓 + 幂等 ──────────
 
-  test("c2 abandon dead running: accepted, cancelled + TTL + audit; re-abandon on terminal is idempotent") {
+  test("c2 abandon dead running: accepted, cancelled, no TTL + audit (2026-09-07 ruling); re-abandon on terminal is idempotent") {
     val ws = tempRoot / "ws-abandon-dead"
     os.makeDir.all(ws)
     val system = ActorSystem(s"cln-abd-${scala.util.Random.nextInt(100000)}")

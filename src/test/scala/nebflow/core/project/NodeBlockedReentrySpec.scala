@@ -26,7 +26,7 @@ import scala.concurrent.duration.*
  * - 验收③：blocked → ReenterDispatcher → spawnDispatcher 以【重入调整】prompt 形态 spawn
  * - 验收④：第 3 次 blocked（count=3）升级 Nebula 不再重入（deliverToNebula 通道，无新 spawn）
  * - 重激活：编辑 blocked 节点 → wiring/pending + deliveredTo 清空 + blockCount 保留 + D1 重投
- * - abandon：终态节点 → cancelled + TTL + 审计；running 节点拒绝
+ * - abandon：终态节点 → cancelled + 审计（无 TTL——2026-09-07 裁定）；running 节点拒绝
  * - R1：D1 补投递必须排除 blocked（反馈串不是可投结果）
  */
 class NodeBlockedReentrySpec extends CatsEffectSuite:
@@ -401,7 +401,7 @@ class NodeBlockedReentrySpec extends CatsEffectSuite:
       assert(audit.exists((t, id) => t == "reactivated" && id == aId), s"reactivated audit line, got: $audit")
   }
 
-  // ── abandon：终态 → cancelled + TTL + 审计；running 拒绝 ────────
+  // ── abandon：终态 → cancelled + 审计（无 TTL，2026-09-07 裁定）；running 拒绝 ──
 
   test("abandon: blocked node → cancelled + retained on map (no TTL) + audit; running node refused") {
     val ws = tempRoot / "ws-abandon"
