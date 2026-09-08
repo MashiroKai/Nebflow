@@ -298,14 +298,19 @@ class NodeBgCompletionGateSpec extends CatsEffectSuite:
       // turn 1 结束（agent Idle），bg 任务仍在册 → 节点必须保持 Running（hold）
       (nodeSid, agentRef) <- waitIdle(res)
       jobs <- llm.jobIds.get
-      _ <- IO.sleep(400.millis) // 给「若未 hold 就错误终态化」留显形窗口
+      // beta.57 CI G2 治本（20260908）：固定 sleep 猜窗口改有界轮询——等桥真正
+      // 完成 turn-1 持留处理（bg-wait 审计事件落盘）才继续，消除「唤醒轮
+      // Completed 先于 hold 建立到达」的时序脆弱；「若未 hold 就错误终态化」
+      // 的显形能力保留（无 hold → 无 bg-wait 事件 → 此处超时红）。
+      _ <- waitUntil(15.seconds)(readEvents(ws).map(_.exists(_.contains("\"bg-wait\""))))
       midRun <- byName(rt, "wait-a")
       midImms <- recordedImmediate(recorded)
       waiting <- BgTaskRegistry.waitingFor(nodeSid)
       // 后台任务完成：unregister（回调同构）+ ExternalEvent 通知 → 唤醒轮
       _ <- jobs.traverse_(BgTaskRegistry.unregister)
       _ <- notifyBgCompleted(agentRef, "spec bg task")
-      _ <- waitUntil(20.seconds)(byName(rt, "wait-a").map(n =>
+      // 放行窗口 20s→30s：CI 负载头部空间（本地实测释放 ~4ms，绿路径时长不变）
+      _ <- waitUntil(30.seconds)(byName(rt, "wait-a").map(n =>
         n.status == NodeLifecycle.Completed || n.status == NodeLifecycle.Failed))
       done <- byName(rt, "wait-a")
       postImms <- recordedImmediate(recorded)
@@ -445,12 +450,13 @@ class NodeBgCompletionGateSpec extends CatsEffectSuite:
         extraOut = Some("n-g6-down"), res = res, system = system)
       (nodeSid, agentRef) <- waitIdle(res)
       jobs <- llm.jobIds.get
-      _ <- IO.sleep(300.millis)
+      // 同 G2 治本：hold 建立改 bg-wait 事件有界轮询（替代固定 sleep 猜窗口）
+      _ <- waitUntil(15.seconds)(readEvents(ws).map(_.exists(_.contains("\"bg-wait\""))))
       midRun <- byName(rt, "down-a")
       // 后台完成 → 放行 → completeNode → completed（无 hold 分流）
       _ <- jobs.traverse_(BgTaskRegistry.unregister)
       _ <- notifyBgCompleted(agentRef, "spec bg task")
-      _ <- waitUntil(20.seconds)(byName(rt, "down-a").map(n => NodeLifecycle.Terminal.contains(n.status)))
+      _ <- waitUntil(30.seconds)(byName(rt, "down-a").map(n => NodeLifecycle.Terminal.contains(n.status)))
       done <- byName(rt, "down-a")
       events <- readEvents(ws)
       _ <- system.stopAll.handleErrorWith(_ => IO.unit)
