@@ -31,7 +31,7 @@ import scala.concurrent.duration.*
  * - T-C CAS 翻转守卫：in+deps 混合触发同一节点（deliverOut 与 settleDeps 竞发）——
  *   恰好一次会话（LLM 输入计数=1），败方安静退出不双 spawn。
  * - T-D mount 僵尸对账：持久化 running 且无在飞 fiber 的节点，挂载即收殓
- *   （cancelled + 显示 TTL + reaped 审计）。
+ *   （cancelled 无 TTL + reaped 审计；2026-09-07 裁定：cancelled 不静默消失）。
  */
 class TriggerChainSpec extends CatsEffectSuite:
 
@@ -323,7 +323,7 @@ class TriggerChainSpec extends CatsEffectSuite:
 
   // ── T-D mount 僵尸 running 对账 ─────────────────────────────
 
-  test("T-D mount zombie reconciliation: persisted running node with no live fiber is reaped (cancelled, no TTL, reaped audit) at mount") {
+  test("T-D mount zombie reconciliation: persisted running node with no live fiber is reaped (cancelled, no TTL + reaped audit — 2026-09-07 ruling) at mount") {
     val ws = tempRoot / "ws-td"
     os.makeDir.all((ws / ".nebflow"))
     val system = ActorSystem(s"tc-td-${scala.util.Random.nextInt(100000)}")
