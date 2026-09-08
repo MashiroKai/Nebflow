@@ -54,7 +54,10 @@
   <script>/* Classic script: cannot import branding.js. Read the brand-namespaced key first, fall back to the legacy nebflow_ spelling. */var __b=(window.__BRAND__&&window.__BRAND__.lowerName)||'nebflow';if(localStorage.getItem(__b+'_sidebar_collapsed')==='true'||localStorage.getItem('nebflow_sidebar_collapsed')==='true')document.body.classList.add('sidebar-collapsed');window.__sidebarRestore={collapsed:document.body.classList.contains('sidebar-collapsed'),panel:localStorage.getItem(__b+'_sidebar_active_panel')||localStorage.getItem('nebflow_sidebar_active_panel')||'files'};</script>
   <!-- Activity Bar — vertical icon strip (independent glass card).
        Top: avatar (tap to log in to NebLink) + the two communication
-       entries (Messages → Contacts).
+       entries (Messages → Contacts). The communication entries are
+       release-gated OFF by default (friends feature flag, 2026-09-08 — see
+       js/featureFlags.js): activityBar.js detaches them at boot and
+       re-attaches them only when nebflow.json enables the flag.
        Bottom: fixed semantic order (2026-09-05 sidebar-restructure spec) —
        Files → Projects → Plugins (agents-btn mounts the plugins page) →
        Usage → Settings. Device management lives in the Settings panel

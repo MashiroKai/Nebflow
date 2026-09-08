@@ -145,35 +145,15 @@ function syncPanelDom() {
 
 function initSidePanels() {
   registerSidePanel({
-    id: 'messages',
-    buttonId: 'messages-btn',
-    panelId: 'panel-messages',
-    i18nKey: 'activity.messages',
-  });
-  registerSidePanel({
-    id: 'contacts',
-    buttonId: 'contacts-btn',
-    panelId: 'panel-contacts',
-    i18nKey: 'activity.contacts',
-  });
-  registerSidePanel({
     id: 'files',
     buttonId: 'files-btn',
     panelId: 'panel-sessions',
     i18nKey: 'activity.files',
   });
-  registerSidePanel({
-    id: 'messages',
-    buttonId: 'messages-btn',
-    panelId: 'panel-messages',
-    i18nKey: 'activity.messages',
-  });
-  registerSidePanel({
-    id: 'contacts',
-    buttonId: 'contacts-btn',
-    panelId: 'panel-contacts',
-    i18nKey: 'activity.contacts',
-  });
+  // Friends release gating (2026-09-08, see featureFlags.js): default-off
+  // posture — detach the Messages/Contacts entries now; main.js calls
+  // enableFriendPanels() once the first configData proves the flag on.
+  detachFriendEntries();
   // Restore the persisted panel; unregistered ids fall back to files.
   const stored = localStorage.getItem(LS_PANEL);
   activePanelId = stored && sidePanels.has(stored) ? stored : 'files';
@@ -207,6 +187,64 @@ function bridgeExplorerTitle() {
   apply();
   new MutationObserver(apply).observe(el, { childList: true, characterData: true, subtree: true });
   window.addEventListener('locale-changed', apply);
+}
+
+// ── Friends feature release gating (author ruling 2026-09-08) ────────────
+// Friend messaging + contacts ship disabled by default: a release user has no
+// reachable friend backend, so any leftover entry would be a dead end. The
+// flag lives in the existing server config channel — nebflow.json key
+// "features": { "friends": true } reaches the frontend verbatim via WS
+// configData → state.parsedConfig (see featureFlags.js). Gating = DOM
+// removal, not CSS hiding: the Messages/Contacts buttons + panels are
+// detached at boot; enableFriendPanels() re-attaches + registers them when
+// the flag is on. Decision latches once per boot (main.js); a config edit
+// takes effect on reload.
+/** @type {{msgsBtn: HTMLElement, contactsBtn: HTMLElement, msgsPanel: HTMLElement, contactsPanel: HTMLElement} | null} */
+let friendEntryNodes = null;
+
+/** Detach the gated friend entries from the DOM (default-off boot posture). */
+function detachFriendEntries() {
+  const msgsBtn = document.getElementById('messages-btn');
+  const contactsBtn = document.getElementById('contacts-btn');
+  const msgsPanel = document.getElementById('panel-messages');
+  const contactsPanel = document.getElementById('panel-contacts');
+  if (!msgsBtn || !contactsBtn || !msgsPanel || !contactsPanel) return;
+  friendEntryNodes = { msgsBtn, contactsBtn, msgsPanel, contactsPanel };
+  for (const el of Object.values(friendEntryNodes)) el.remove();
+}
+
+/**
+ * Re-attach + register the gated friend entries (flag confirmed on).
+ * Idempotent — a no-op once the entries are back in the DOM.
+ */
+export function enableFriendPanels() {
+  if (!friendEntryNodes) return;
+  const { msgsBtn, contactsBtn, msgsPanel, contactsPanel } = friendEntryNodes;
+  friendEntryNodes = null;
+  document.querySelector('#activity-bar .activity-spacer')?.before(msgsBtn, contactsBtn);
+  document.getElementById('sidebar-panel')?.append(msgsPanel, contactsPanel);
+  registerSidePanel({
+    id: 'messages',
+    buttonId: 'messages-btn',
+    panelId: 'panel-messages',
+    i18nKey: 'activity.messages',
+  });
+  registerSidePanel({
+    id: 'contacts',
+    buttonId: 'contacts-btn',
+    panelId: 'panel-contacts',
+    i18nKey: 'activity.contacts',
+  });
+  // The buttons were detached before initActivityBar's createIconsIn pass —
+  // convert their <i data-lucide> placeholders now.
+  if (typeof lucide !== 'undefined') {
+    createIconsIn(msgsBtn);
+    createIconsIn(contactsBtn);
+  }
+  // Honor the persisted active panel now that the registry knows these ids.
+  const stored = localStorage.getItem(LS_PANEL);
+  if (stored && sidePanels.has(stored)) activePanelId = stored;
+  syncPanelDom();
 }
 
 /**
