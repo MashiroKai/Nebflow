@@ -170,13 +170,17 @@ class NodeSchemaSlimSpec extends CatsEffectSuite:
 
   // ── 1. description 契约 ─────────────────────────────────
 
-  test("A⓪ tool doc budget: NodeEdit description ≤4700 chars (⑤b 7438→3742；merge语义→4308；E1 out门控→4395；E2 retry 参数行)") {
+  test("A⓪ tool doc budget: NodeEdit description ≤5450 chars (⑤b 7438→3742；merge语义→4308；E1 out门控→4395；E2 retry 参数行→4700；D2 描述重写→5450)") {
     val d = NodeEditTool.description
     // 3800 为 ⑤b 压缩批自钉预算；合并观测面P0P1引擎批时解冲吸收 main 后落语义
     // （failed 重激活条款 / abandon 无 TTL 裁定 / notifyDispatcher completion-only）
     // ——语义不可删，预算放宽至 4400（实测 4308）。E1 out 门控语法行（实测 4395）
     // 仍在预算内；批E2 retry 参数行（新语义，schema retry 属性详注同源）→ 4700。
-    assert(d.length <= 4700, s"NodeEdit description must stay ≤4700 chars (⑤b压缩+E1门控+E2 retry), got ${d.length}")
+    // 批D2 描述重写（spec 20260908 §5 批D2，行为基线=E1+E2）：out 门控语法逐段
+    // 展开 + out delivery 语义 bullet（D5 零结算/WARNING）+ retry 自动回跳链 +
+    // NODE_MERGE_PASS_ONLY 条款（实测 ~5,380）→ 5450。与 E1/E2 同窗合并使前缀
+    // 缓存一次性失效（spec §4.2 cache 纪律），增量成本一次性支付。
+    assert(d.length <= 5450, s"NodeEdit description must stay ≤5450 chars (⑤b压缩+E1门控+E2 retry+D2重写), got ${d.length}")
     // 语义锚点抽查：核心参数/错误码/机制关键词不得在压缩中丢失
     for anchor <- List("nodename", "descriptionLong", "replace-on-provide", "NODE_AGENT_RETIRED", "EMPTY_NODE_CONNECTION",
         "NODE_MERGE_REQUIRES_UPSTREAM", "worktree", "abandon", "notifyDispatcher", "Nebula", "NodeList(detail=", "retry") do
