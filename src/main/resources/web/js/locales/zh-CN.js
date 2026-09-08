@@ -623,6 +623,8 @@ export default {
   'chat.typeAnswer': '输入你的回答...',
   'chat.failedRender': '选项渲染失败，请重试。',
   'askUser.viewCompare': '在 Canvas 查看',
+  'askUser.pendingTitle': '待回答问题',
+  'askUser.sourceClosed': '来源已关闭（节点已取消）',
   'chat.waitingQuestion': '等待问题...',
   'chat.askFailed': '询问失败',
   'chat.askLabel': '询问',

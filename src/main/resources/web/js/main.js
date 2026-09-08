@@ -34,6 +34,7 @@ import {
   appendToolStreamDelta, cancelToolStreamRAF,
   formatResumeClock
 } from './chat.js';
+import { notePendingAsk, removePendingAsk, resetPendingAsks, initPendingAsks } from './askPending.js';
 import {
   initNavTabs, renderSessionSidebar, renderAgentList, renderSettings,
   deleteSession, formatSessionTime, setSessionAttention,
@@ -229,6 +230,9 @@ initChatView(
     sessionNameEl: document.getElementById('session-name'),
   }
 );
+
+// D6 批 F2: pending-ask bar + header badge wiring (click = jump to oldest ask).
+initPendingAsks();
 
 // ---------- 2. Init libraries ----------
 // Guard: Safari may execute module scripts before CDN scripts finish loading.
@@ -1257,11 +1261,16 @@ onMessage('maxTokens', (msg, view) => {
 onMessage('askUser', (msg, view) => {
   const sid = msg.sessionId;
   if (sid) setSessionAttention(sid, true);
+  // D6 批 F2: upsert the global pending mirror (requestId-keyed, idempotent —
+  // live first-send and replayed snapshot frames both land here).
+  notePendingAsk(msg);
   // AskUser waits for human response — suppress stream timeout indefinitely
   if (sid && state.sessionBusyTimeouts[sid]) {
     clearTimeout(state.sessionBusyTimeouts[sid]);
     delete state.sessionBusyTimeouts[sid];
   }
+  // D6 批 F1: source-label passthrough (project/nodeName) for the badge.
+  const askSource = { project: msg.project, nodeName: msg.nodeName };
   // 刷新存活 (2026-09-03): replayed frames — the hub snapshot re-sent by the
   // backend right after the initial historyPage of a session (re)subscribe
   // (browser refresh, WS reconnect, session switch). This is state
@@ -1281,11 +1290,11 @@ onMessage('askUser', (msg, view) => {
         const answered = !!box.querySelector('.option-answer');
         if (!answered && (!rid || rid === msg.requestId)) box.closest('.row.ai').remove();
       });
-      const rdata = renderAskUser(msg.items, msg.sessionId, msg.agentName, msg.requestId);
+      const rdata = renderAskUser(msg.items, msg.sessionId, msg.agentName, msg.requestId, askSource);
       if (rdata) saveAskMsgDedup(rdata, msg.sessionId, msg.requestId);
     } else if (sid) {
       // Non-active session: persist (deduped) so it can be restored on session switch
-      saveAskMsgDedup({ type: 'askUser', items: msg.items, agentName: msg.agentName, requestId: msg.requestId }, sid, msg.requestId);
+      saveAskMsgDedup({ type: 'askUser', items: msg.items, agentName: msg.agentName, requestId: msg.requestId, project: msg.project, nodeName: msg.nodeName }, sid, msg.requestId);
     }
     return;
   }
@@ -1297,11 +1306,11 @@ onMessage('askUser', (msg, view) => {
       const prevData = finishAi();
       if (prevData) saveMsg(prevData, sid);
     }
-    const data = renderAskUser(msg.items, msg.sessionId, msg.agentName, msg.requestId);
+    const data = renderAskUser(msg.items, msg.sessionId, msg.agentName, msg.requestId, askSource);
     if (data) saveMsg(data, msg.sessionId);
   } else if (sid) {
     // Non-active session: persist so it can be restored on session switch
-    saveMsg({ type: 'askUser', items: msg.items, agentName: msg.agentName, requestId: msg.requestId }, sid);
+    saveMsg({ type: 'askUser', items: msg.items, agentName: msg.agentName, requestId: msg.requestId, project: msg.project, nodeName: msg.nodeName }, sid);
   }
 });
 
@@ -1312,6 +1321,20 @@ onMessage('askUser', (msg, view) => {
 // on the card). The user's text already landed as a normal user bubble.
 onMessage('askUserAnswered', (msg) => {
   closeAskUserCard(msg.sessionId, msg.requestId);
+  // D6 批 F2: chat-input direct answer (hub broadcasts this frame only for
+  // that path) resolves the pending mirror entry; card answers remove
+  // themselves locally in the confirm/cancel callbacks (chat.js).
+  removePendingAsk(msg.requestId);
+});
+
+// D6 批 F2 (spec §3.4 来源死亡路): the source node's pending ask is closed by
+// the engine (cancelNode cascade — the CleanupForSession hub command lands in
+// batch E2; until then this frame is only sent by the E2 engine, frontend
+// handling is in place ahead of it). Lock the card with the source-closed
+// note and drop the bar entry.
+onMessage('askUserClosed', (msg) => {
+  closeAskUserCard(msg.sessionId, msg.requestId, t('askUser.sourceClosed'));
+  removePendingAsk(msg.requestId);
 });
 
 // F4 (#433): global actionable toast for permission cards whose target root
@@ -1681,7 +1704,7 @@ onMessage('historyPage', (msg, view) => {
       activeView.dom.chat.querySelectorAll('.row.ai').forEach(row => {
         if (row.querySelector('.option-box')) row.remove();
       });
-      renderAskUser(lastHistMsg.items, sid, lastHistMsg.agentName, lastHistMsg.requestId);
+      renderAskUser(lastHistMsg.items, sid, lastHistMsg.agentName, lastHistMsg.requestId, { project: lastHistMsg.project, nodeName: lastHistMsg.nodeName });
     }
 
     // Re-create interactive AskPermission if the last history message is an unanswered askPermission.
@@ -3338,6 +3361,10 @@ document.getElementById('new-folder-btn')?.addEventListener('click', () => creat
 // while the frontend was disconnected. On reconnect, re-fetch the active
 // session's history so the user sees the latest state.
 onReconnect(() => {
+  // D6 批 F2: reset the pending-ask mirror — the hub replays the still-pending
+  // snapshot (ListPendingAsks) right after the history refresh below, so the
+  // bar rebuilds from the single authority and never strands stale entries.
+  resetPendingAsks();
   const sid = state.activeSessionId;
   if (sid) {
     const view = findViewBySessionId(sid);
