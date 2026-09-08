@@ -590,7 +590,7 @@ private[agent] trait AgentCore:
         // Phase-aware compaction: Compact turn disables tools (existing behavior).
         val isCompactTurn = state.pendingCompaction.exists(_.phase == CompactionPhase.Compact)
         val isAskTurn = state.askMode.isDefined
-        val tools = if isCompactTurn then Some(Nil) else buildToolList(agentDef, depth, state.isSubTaskWorker, state.isFlowNode)
+        val tools = if isCompactTurn then Some(Nil) else buildToolList(agentDef, depth, state.isSubTaskWorker, state.isFlowNode, projectBoardSession = state.isDispatcher || state.flowNodeId.isDefined)
         val isSubagent = depth > 0
         val sessionIdOpt = state.sessionId
         // Track the first model that failed (for modelChanged notification)
@@ -643,7 +643,7 @@ private[agent] trait AgentCore:
           // 轨道二 #5: hot-read the dedicatedAgents flag once per turn — flows
           // into tool stripping (T1 leaf display tools) + identity clause.
           guardrailsOn <- nebflow.core.Guardrails.enabled
-          allowedTools = buildAllowedToolSet(freshDef, depth, stateForLlm.isSubTaskWorker, isFlowNode = stateForLlm.isFlowNode, isTeamLead = isTeamLead, userFacingNode = stateForLlm.userFacingNode, guardrailsOn = guardrailsOn)
+          allowedTools = buildAllowedToolSet(freshDef, depth, stateForLlm.isSubTaskWorker, isFlowNode = stateForLlm.isFlowNode, isTeamLead = isTeamLead, userFacingNode = stateForLlm.userFacingNode, guardrailsOn = guardrailsOn, projectBoardSession = stateForLlm.isDispatcher || stateForLlm.flowNodeId.isDefined)
           // #16 observability: one log line per LLM call when MCP tools are
           // injected — names the servers explicitly so phantom-tool suspicion
           // can be settled by grepping the log instead of reconstructing
@@ -825,7 +825,7 @@ private[agent] trait AgentCore:
             else Nil
           freshTools =
             if isCompactTurn then Some(Nil)
-            else buildToolList(freshDef, depth, stateForLlm.isSubTaskWorker, stateForLlm.isFlowNode, isTeamLead, userFacingNode = stateForLlm.userFacingNode, guardrailsOn = guardrailsOn)
+            else buildToolList(freshDef, depth, stateForLlm.isSubTaskWorker, stateForLlm.isFlowNode, isTeamLead, userFacingNode = stateForLlm.userFacingNode, guardrailsOn = guardrailsOn, projectBoardSession = stateForLlm.isDispatcher || stateForLlm.flowNodeId.isDefined)
           // 冷启动路由已删除（2026-08-19 用户裁决：「这是错误的，按 preset」）：
           // 它把闲置唤醒/重启后的第一发改道到 LowCost preset，偏离用户设置的
           // preset 链。模型选择现在严格 = freshDef.model（preset 解析结果）。
@@ -1049,7 +1049,7 @@ private[agent] trait AgentCore:
       effectiveDef = currentDefOpt.getOrElse(agentDef)
       isTeamLead <- isTeamLeadStatus(effectiveDef, state.sessionId)
       guardrailsOn <- nebflow.core.Guardrails.enabled
-      allowedTools = buildAllowedToolSet(effectiveDef, depth, state.isSubTaskWorker, state.isFlowNode, isTeamLead, userFacingNode = state.userFacingNode, guardrailsOn = guardrailsOn)
+      allowedTools = buildAllowedToolSet(effectiveDef, depth, state.isSubTaskWorker, state.isFlowNode, isTeamLead, userFacingNode = state.userFacingNode, guardrailsOn = guardrailsOn, projectBoardSession = state.isDispatcher || state.flowNodeId.isDefined)
       (filteredCalls, droppedCalls) =
         // WebSearch P0: kimi's native $web_search tool call bypasses the
         // agent-tool whitelist — it is provider-injected (not an agent tool)
@@ -1137,6 +1137,13 @@ private[agent] trait AgentCore:
         requestId = result.requestId,
         bashConfig = resources.bashResilience,
         teamName = teamNameOpt,
+        // TaskBoard 批 2（§1d 身份接线收尾）：项目任务板身份从 SessionContext 透传
+        // 进 ToolContext——TaskBoardTool 权限矩阵的引擎侧判定来源（不信客户端参数）；
+        // projectName 同批接通既有空置字段（分发器/节点 spawn 注入 → 节点会话内
+        // Node 系工具 project 缺省解析生效，证据 §6-2 空置历史就此终结）。
+        flowNodeId = state.session.flowNodeId,
+        isDispatcher = state.session.isDispatcher,
+        projectName = state.session.projectName,
         sandbox = sandboxPolicy
       )
       freshResults <- filteredCalls.parTraverse { call =>
@@ -1709,7 +1716,8 @@ private[agent] trait AgentCore:
     isFlowNode: Boolean = false,
     isTeamLead: Boolean = false,
     userFacingNode: Boolean = false,
-    guardrailsOn: Boolean = false
+    guardrailsOn: Boolean = false,
+    projectBoardSession: Boolean = false
   ): Set[String] =
     // 阶段 2c（§C.1/裁定 11）：收敛三定义（Nebula/project-dispatcher/general）
     // 的 agent.json tools 声明整体失效——工具面全部机制固定，零配置。存量
@@ -1837,7 +1845,12 @@ private[agent] trait AgentCore:
     // 也造不出白名单外授予）。编排类工具（Task/Mail/NodeEdit 等）永不进白名单，
     // §C.1 静态矩阵不被 plugin 授予绕过。
     val pluginGranted = categoryFiltered ++ agentDef.pluginTools.filter(nebflow.core.plugin.PluginRegistry.BuiltinToolWhitelist)
-    pluginGranted
+    // TaskBoard（20260908 任务板批 2，规格 §1c）：project 会话按身份挂载——
+    // projectBoardSession = isDispatcher || flowNodeId.isDefined（分发器/项目节点）。
+    // 追加点在全部角色过滤与 NebulaExclusiveTools 剥离【之后】：分发器固定面
+    // 九件先被 nebulaFiltered 剥、此处按会话身份重挂，两段不冲突；双轨 flow/
+    // team/Nebula 会话 flag=false 恒不挂（工具面 + 工具内身份拒绝双保险 §1d-4）。
+    if projectBoardSession then pluginGranted + "TaskBoard" else pluginGranted
 
   end buildAllowedToolSet
 
@@ -1848,9 +1861,10 @@ private[agent] trait AgentCore:
     isFlowNode: Boolean = false,
     isTeamLead: Boolean = false,
     userFacingNode: Boolean = false,
-    guardrailsOn: Boolean = false
+    guardrailsOn: Boolean = false,
+    projectBoardSession: Boolean = false
   ): Option[List[ToolDefinition]] =
-    val allowedSet = buildAllowedToolSet(agentDef, depth, isSubTaskWorker, isFlowNode, isTeamLead, userFacingNode, guardrailsOn)
+    val allowedSet = buildAllowedToolSet(agentDef, depth, isSubTaskWorker, isFlowNode, isTeamLead, userFacingNode, guardrailsOn, projectBoardSession)
     // 2026-09-06 工具面裁撤批：FlowReport 的 per-node contract describe 注入
     // 随工具退役一并移除（contract 数据本体仍在 AgentDef.flowContract，引擎
     // spawn 注入路径零触碰）。
@@ -2109,7 +2123,13 @@ object AgentCore:
     "MemoryEdit",
     // TaskList（2026-09-06 TaskList 批）：Nebula 专属编排件——任务=快变状态
     // 存储（~/.nebflow/tasks.json），与 MemoryEdit 同域隔离（非 Nebula 声明即剥）。
-    "TaskList"
+    "TaskList",
+    // TaskBoard（20260908 任务板批 2）：项目域编排件（非 Nebula 专属——分发器
+    // 固定面 + project 节点会话按身份挂载），但同享本集的【防声明逃逸】通道：
+    // agent.json 声明（含 "*"）对一切非 Nebula 身份不授能。project 会话的真实
+    // 授能在 buildAllowedToolSet 末段按会话身份追加（晚于本集剥离点），分发器
+    // 固定面同理（nebulaFiltered 先剥、末段再挂）——剥离与授能两点不相干扰。
+    "TaskBoard"
   )
 
   /** dream 的 MemoryEdit 准入例外（2026-09-05 作者签准，修订 2026-08-31 裁定①）：
@@ -2203,7 +2223,10 @@ object AgentCore:
     * （Read/Glob/Grep/Bash，读现状 + git worktree 管理）。不给 Write/Edit（分发器只
     * 分解不产内容）、不给 AskUserQuestion（单次会话不阻塞等用户，§C.3）。
     * NodeMessage（20260905 机制批，作者裁定）第八件：向已分发节点注入补充消息
-    * （running=turn 边界注入 / wiring/pending=任务追加 / 终态拒绝）。 */
+    * （running=turn 边界注入 / wiring/pending=任务追加 / 终态拒绝）。
+    * TaskBoard（20260908 任务板批 2）第九件：项目任务板全权面（§1c 挂载表——
+    * create 全量/update 全板含结构字段/close 全板/list 全板；权限判定的引擎侧
+    * 身份=isDispatcher，工具内不信客户端参数）。 */
   val DispatcherFixedTools = Set(
     "NodeList",
     "NodeEdit",
@@ -2212,7 +2235,8 @@ object AgentCore:
     "Read",
     "Glob",
     "Grep",
-    "Bash"
+    "Bash",
+    "TaskBoard"
   )
 
   /** Team task tools（任务工具重做 2026-08-30：category=team 机制层注入

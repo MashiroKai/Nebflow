@@ -278,6 +278,11 @@ class TaskBoardStore private (val project: String, workspace: String):
           s"[OK] TaskBoard closed #$id ${existing.status}→done$qNote"
   }
 
+  /** 全板条目快照（批 2 接线新增，向后兼容扩展——既有方法零改动）：注入渲染
+    * （renderer 需原始条目做上限/降级装配）与节点归属判定的读入口。读路径不加
+    * 锁（同 listSync 取舍：AtomicJson 原子换入，读者只见旧或新完整文件）。 */
+  def entriesSync(): List[TaskBoardEntry] = readViewSync().tasks
+
   /** list 渲染（status/assignee 精确过滤；nodeTerminal = nodeId→终态名映射，批 2
     * 由 Flow Map 接线传入 → ⚠node-done 只读漂移标记 §2d，本批默认空映射即无标记）。 */
   def listSync(
@@ -362,6 +367,14 @@ object TaskBoardStore:
   /** 每项目一实例（批 2 挂 ProjectRuntime.board；open 即建，无 IO、无失败路径）。 */
   def open(project: String, workspace: String): TaskBoardStore =
     new TaskBoardStore(project, workspace)
+
+  /** ⚠node-done join 的映射构造单点（批 2 新增，向后兼容扩展——纯函数）：Flow Map
+    * 节点集 → nodeId→终态映射。仅 completed/failed/cancelled 计入（§2d：blocked
+    * 节点「永不过期+必留主图」与任务 blocked 语义自然对齐，不标漂移）；renderer
+    * 的 nodeDone 只做 contains 判定，过滤语义收口在此。 */
+  def nodeTerminalMap(nodes: Iterable[NodeDef]): Map[String, String] =
+    val drift = Set(NodeLifecycle.Completed, NodeLifecycle.Failed, NodeLifecycle.Cancelled)
+    nodes.collect { case n if drift(n.status) => n.id -> n.status }.toMap
 
   // ------------------------------------------------------------------
   // 纯校验器（TaskListStore 逐条同构；renderer 与单测复用）

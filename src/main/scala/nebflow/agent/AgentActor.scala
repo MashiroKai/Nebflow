@@ -564,6 +564,12 @@ object AgentActor extends AgentCore with AgentSession:
     isFlowNode: Boolean = false,
     /** 轨道二 #5: 节点 userFacing 白名单声明（详见 SessionContext.userFacingNode）。 */
     userFacingNode: Boolean = false,
+    /** Project 任务板身份（TaskBoard 批 2，详见 SessionContext.flowNodeId/isDispatcher/
+      * projectName）：NodeEngine 置 flowNodeId+projectName，ProjectActor 置
+      * isDispatcher+projectName；经 AgentCore 透传 ToolContext。默认空=非项目会话。 */
+    flowNodeId: Option[String] = None,
+    isDispatcher: Boolean = false,
+    projectName: Option[String] = None,
     /** 阶段 2a 沙箱（§A.6）：project 节点/分发器 spawn 置 true——AgentCore 据此
       * 从 projectRoot 派生 ToolContext.sandbox。默认 false=旧行为（双轨豁免面）。 */
     sandboxEnabled: Boolean = false,
@@ -622,6 +628,9 @@ object AgentActor extends AgentCore with AgentSession:
             freezeExempt = freezeExempt,
             isFlowNode = isFlowNode,
             userFacingNode = userFacingNode,
+            flowNodeId = flowNodeId,
+            isDispatcher = isDispatcher,
+            projectName = projectName,
             sandboxEnabled = sandboxEnabled,
             sandboxRoot = sandboxRoot
           )

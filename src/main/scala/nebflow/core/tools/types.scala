@@ -59,8 +59,17 @@ case class ToolContext(
     * `team` parameter for Nebula's read-only oversight. */
   teamName: Option[String] = None,
   /** Project 上下文（#28 阶段 0）：项目分发器会话注入——Node 工具 project
-    * 参数缺省从本字段取（分发器无需每次传 project）。None = 非项目上下文。 */
+    * 参数缺省从本字段取（分发器无需每次传 project）。None = 非项目上下文。
+    * TaskBoard 批 2：project 节点会话亦注入（SessionContext.projectName 链路
+    * 接通——此前生产代码从未赋值，证据 §6-2），节点会话内 Node 系工具的
+    * project 缺省解析随之生效。 */
   projectName: Option[String] = None,
+  /** Project 任务板身份（TaskBoard 批 2，规格 §1d）：flowNodeId = project 节点
+    * 会话的 NodeDef.id；isDispatcher = 分发器会话标记。由 AgentCore 从
+    * SessionContext 透传（引擎侧身份，不信客户端参数）——TaskBoardTool 权限
+    * 矩阵判定来源；两字段皆空 = 非项目会话（工具未挂载 + 工具内拒绝双保险）。 */
+  flowNodeId: Option[String] = None,
+  isDispatcher: Boolean = false,
   /** Bash 卡死防护阈值（#391）：默认 Defaults 值，测试可注入小阈值验证
     * 自动转后台/硬超时/停滞窗口；GatewayMain 从 nebflow.json 顶层键覆写。 */
   bashConfig: nebflow.shared.BashResilienceConfig = nebflow.shared.BashResilienceConfig(),

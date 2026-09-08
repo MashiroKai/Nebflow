@@ -58,7 +58,12 @@ class NodeEngine(
   /** 节点完成闸等待总上限兜底（bgtask-completion-gate 批）：单个 bg 等待期超过
     * 此值 → 节点 failed+注明（防通知链断裂永久悬挂）。默认 Defaults.BgGateWaitTimeoutMs
     * （system prop nebflow.bgtask.gate.timeoutMs 可调）；spec 注小值验红。 */
-  bgWaitCapMs: Long = nebflow.shared.Defaults.BgGateWaitTimeoutMs
+  bgWaitCapMs: Long = nebflow.shared.Defaults.BgGateWaitTimeoutMs,
+  /** 项目任务板 store（TaskBoard 批 2 §3a）：节点 buildInput 头部板块数据源；
+    * None = 该项目无板（节点注入整块省略）。mount 时传入。 */
+  val board: Option[TaskBoardStore] = None,
+  /** 项目目标行来源（TaskBoard 批 2 §3b：ProjectDef.description；None 整行省略）。 */
+  val projectGoal: Option[String] = None
 ):
   private val logger = NebflowLogger.forName("nebflow.node.engine")
 
@@ -707,23 +712,45 @@ class NodeEngine(
       .start
       .void
 
+  /** 节点任务板头部块（TaskBoard 批 2 §3a）：三段式（①项目目标行 ②自己名下工单
+    * 详情块 ③全板速览）——renderer.renderNodeInject 单点装配（上限/降级纪律在
+    * renderer）。工单归属按 assignee=自身 node.id（§1d 权限矩阵的身份同源）；
+    * ⚠node-done join 用 Flow Map 真实终态映射（store.snapshot 现读，nodeTerminalMap
+    * 单点过滤）。无板 → ""（调用方不注空段）。 */
+  private def taskBoardNodeBlock(node: NodeDef): IO[String] =
+    board match
+      case None => IO.pure("")
+      case Some(b) =>
+        store.snapshot.flatMap { snap =>
+          val terminal = TaskBoardStore.nodeTerminalMap(snap.nodes.values)
+          IO.blocking {
+            val entries = b.entriesSync()
+            val mine = entries.filter(_.assignee.contains(node.id))
+            TaskBoardRenderer.renderNodeInject(projectGoal, mine, entries, terminal)
+          }
+        }
+
   /** 构造节点输入：自身 task 上下文 + 各上游 result（=== Node <name> === 头，§2.7）+
     * blocked 声明协议脚注（设计 §1.5 原文，单点注入覆盖所有节点——节点 agent 是通用
     * 全局 agent，system prompt 不含约定，必须随输入注入）。
     * 收敛裁定（作者 2026-09-07）：项目记忆=分发器配置知识——分发器建节点时把关键
     * 口径写进节点 task，节点侧不再注入记忆全文。节点上下文=task+上游结果+AGENTS.md；
     * 节点每 spawn 省一份记忆全文 token（多节点并行批次收益可观）；AGENTS.md 每 turn
-    * 注入面不受影响。全局注入面（ContextRefresher）不含项目记忆——瘦身边界不变。 */
+    * 注入面不受影响。全局注入面（ContextRefresher）不含项目记忆——瘦身边界不变。
+    * TaskBoard 批 2（§3a）：头部追加任务板块（在任务文本之前；无板/三段皆空 →
+    * 不注空段）——「自身工单 id」是节点显式上报（决策 d）的使能器。 */
   private[project] def buildInput(node: NodeDef): IO[String] =
     val ownTask = node.task.getOrElse("")
-    node.in.traverse { upId =>
-      store.findNode(upId).map {
-        case Some(up) =>
-          up.result.map(res => s"=== Node ${up.name} ===\n$res")
-        case None => None
+    taskBoardNodeBlock(node).flatMap { boardBlock =>
+      node.in.traverse { upId =>
+        store.findNode(upId).map {
+          case Some(up) =>
+            up.result.map(res => s"=== Node ${up.name} ===\n$res")
+          case None => None
+        }
+      }.map { upstream =>
+        (List(boardBlock, ownTask).filter(_.nonEmpty) ++ upstream).mkString("\n\n") + "\n\n" + NodeEngine.ProtocolFootnote
       }
-    }.map { upstream =>
-      (List(ownTask).filter(_.nonEmpty) ++ upstream).mkString("\n\n") + "\n\n" + NodeEngine.ProtocolFootnote
     }
 
   private def spawnAndRun(node: NodeDef, inputText: String, resume: Option[NodeEngine.ResumeContext] = None): IO[Unit] =
@@ -818,9 +845,14 @@ class NodeEngine(
                           cancelSig <- Deferred[IO, Unit]
                           _ <- flipToRunning(node, cancelSig, workerSessionId, nodeId, node.name, Some(verifySessionId))
                           worker <- spawnLoopSession(workerBase, prepared, wGrant, workerSessionId, node.name, projectRoot,
-                            initialMessages = resume.fold(List.empty[Message])(_.recoveredMessages))
+                            initialMessages = resume.fold(List.empty[Message])(_.recoveredMessages),
+                            // TaskBoard 批 2（§1d）：loop worker/verify 会话同属该
+                            // loop 节点——flowNodeId 身份与普通节点同源（权限矩阵
+                            // 同面：仅自己名下任务 status+note）。
+                            flowNodeId = Some(nodeId))
                           verify <- spawnLoopSession(verifyBase, prepared, vGrant, verifySessionId, s"${node.name}-verify", projectRoot,
-                            initialMessages = resume.fold(List.empty[Message])(_.verifyMessages))
+                            initialMessages = resume.fold(List.empty[Message])(_.verifyMessages),
+                            flowNodeId = Some(nodeId))
                           _ <- runLoopNode(node, worker, verify, inputText, cancelSig, resume)
                             .guarantee(
                               destroyLoopSessions(worker, verify) *>
@@ -1067,6 +1099,11 @@ class NodeEngine(
           safetyMode = "confirm-edits",
           rootSessionId = rootSessionId,
           isFlowNode = true, // leaf 剥离（与 flow 节点一致：无 Node 工具/展示类）
+          // TaskBoard 批 2（§1d）：节点引擎侧身份（flowNodeId=NodeDef.id）+ 项目
+          // 上下文——AgentCore 透传 ToolContext 后 TaskBoard 权限矩阵据此判定
+          // （仅自己名下任务、仅 status+note），project 缺省解析随之生效。
+          flowNodeId = Some(nodeId),
+          projectName = Some(projectName),
           // 阶段 2a 沙箱（§A.6）：dev/修复节点 root=<workspace>/.nebflow/<wt>、
           // merge 节点 root=workspace——物理隔离，最小权限。
           sandboxEnabled = true,
@@ -1370,7 +1407,10 @@ class NodeEngine(
     sessionId: String,
     sessionName: String,
     projectRoot: String,
-    initialMessages: List[Message] = Nil
+    initialMessages: List[Message] = Nil,
+    /** TaskBoard 批 2（§1d）：loop 会话引擎侧节点身份（所属 NodeDef.id——worker/
+      * verify 同属该 loop 节点，TaskBoard 权限矩阵与普通节点同面）。 */
+    flowNodeId: Option[String] = None
   ): IO[LoopSession] =
     for
       initD <- Deferred[IO, Either[String, List[Message]]]
@@ -1392,6 +1432,10 @@ class NodeEngine(
           safetyMode = "confirm-edits",
           rootSessionId = rootSessionId,
           isFlowNode = true,
+          // TaskBoard 批 2（§1d）：loop 会话同置节点身份 + 项目上下文（普通节点
+          // runWithAgent 同款——worker/verify 更新自己工单与普通节点同权限面）。
+          flowNodeId = flowNodeId,
+          projectName = Some(projectName),
           sandboxEnabled = true,
           sandboxRoot = Some(workspace),
           initialMessages = initialMessages
@@ -2350,14 +2394,17 @@ object NodeEngine:
     * count=3（> 2）→ 升级 Nebula 不再重入。 */
   val MaxBlockRoundsPerNode: Int = 2
 
-  /** blocked 声明协议脚注（设计 §1.5 文案原样，buildInput 末尾单点注入）。 */
+  /** blocked 声明协议脚注（设计 §1.5 文案原样，buildInput 末尾单点注入）。
+    * TaskBoard 批 2（§3c）：末尾增一行上报指引——与 blocked 协议同点注入、同
+    * 生命周期；措辞自带条件（「若…给了」），无板会话注入该行无副作用。 */
   val ProtocolFootnote: String =
     """── 节点协议 ──
       |若你判定任务无法完成（上游依赖未就绪/任务定义不完整/能力不匹配/缺外部条件），
       |不要硬造结果：把最终输出的第一行写为 BLOCKED，随后给出 JSON：
       |{"category":"…","detail":"…","suggestion":"…"}
       |category ∈ upstream-incomplete | task-underspecified | agent-mismatch |
-      |external-dependency | needs-split | other。可完成时正常输出结果，勿以 BLOCKED 开头。""".stripMargin
+      |external-dependency | needs-split | other。可完成时正常输出结果，勿以 BLOCKED 开头。
+      |若上方 <task-board> 给了你工单编号，完成或受阻时用 TaskBoard 工具更新其状态（close=完成，blocked=受阻）。""".stripMargin
 
   // ── LoopNode（LoopNode 批 2026-09-06，主设计 §2.2/§2.3）──────────────────
 
