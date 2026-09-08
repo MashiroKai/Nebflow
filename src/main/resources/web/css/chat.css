@@ -2122,12 +2122,6 @@
   min-width: 0;
   overflow-wrap: break-word;
 }
-/* Banner dedupe (2026-09-04): a session renders only its LATEST turn's
-   stats header; superseded turns' headers keep their DOM (E10 search-expand
-   keeps working) but stop stacking visually. The marker rides on the HEADER
-   element — rows are untouched, so closed turns stay byte-stable (#403
-   invariant). */
-.turn-header.turn-banner-superseded { display: none; }
 /* Static tucked state for the stripped middle blocks (thinking + tool rows).
    max-height 0 + collapsed margins so no gap remains. The expand/collapse
    toggle is INSTANT (the 批② WAAPI transition layer was removed 2026-09-06,
