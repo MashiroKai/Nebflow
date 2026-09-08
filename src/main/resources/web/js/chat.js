@@ -8,6 +8,7 @@ import { renderMarkdownWithMath, escapeHtml, buildToolDetail, buildDelegatePromp
 import { renderWithRegistry } from './cardRegistry.js';
 import { t } from './i18n.js';
 import { sendWs, onMessage } from './ws.js';
+import { askSourceLabel, removePendingAsk } from './askPending.js';
 import { renderRefBlock, normalizeTaskRef, parseTaskReturnText, buildTaskRefLine } from './reference.js';
 
 // ---------- Time format preference (12h / 24h toggle) ----------
@@ -2015,7 +2016,7 @@ function probeCanvasFile(path) {
   });
 }
 
-export function renderAskUser(items, askSessionId, agentName, requestId) {
+export function renderAskUser(items, askSessionId, agentName, requestId, source) {
   if (!Array.isArray(items) || items.length === 0) {
     renderError(t('chat.waitingQuestion'));
     return { type: 'askUser', items: [] };
@@ -2028,11 +2029,15 @@ export function renderAskUser(items, askSessionId, agentName, requestId) {
   const bubble = document.createElement('div');
   bubble.className = 'bubble ai';
   row.appendChild(bubble);
-  // Show source agent badge if not Nebula
-  if (agentName && agentName !== 'Nebula') {
+  // Show source badge if not Nebula. D6 批 F1 (G9): project context (project
+  // node / dispatcher ask) renders "project · nodeName" so concurrent asks
+  // from several nodes stay attributable; no project field → bare agentName
+  // (Nebula self-ask / REPL — pre-F1 behavior, no regression).
+  const badgeLabel = askSourceLabel({ project: source && source.project, nodeName: source && source.nodeName, agentName });
+  if (badgeLabel && badgeLabel !== 'Nebula') {
     const badge = document.createElement('div');
     badge.className = 'ask-user-source';
-    badge.textContent = agentName;
+    badge.textContent = badgeLabel;
     badge.style.cssText = 'font: 600 11px -apple-system, sans-serif; color: var(--color-text-muted, #888); margin-bottom: 8px; padding: 2px 8px; background: var(--color-surface, rgba(255,255,255,0.06)); border-radius: 6px; display: inline-block;';
     bubble.appendChild(badge);
   }
@@ -2067,12 +2072,16 @@ export function renderAskUser(items, askSessionId, agentName, requestId) {
       if (state.ws && state.ws.readyState === WebSocket.OPEN) {
         state.ws.send(JSON.stringify({ type: 'askUserAnswer', sessionId: targetSid, answers, ...(requestId && { requestId }) }));
       }
+      // D6 批 F2: card-answer resolves the pending slot locally (the hub does
+      // NOT broadcast askUserAnswered for card answers — only for chat-input).
+      removePendingAsk(requestId);
       broadcastAskState(targetSid);
       window.dispatchEvent(new CustomEvent('session-attention', { detail: { sessionId: targetSid, attention: false } }));
     }, t('chat.confirm'), () => {
       if (state.ws && state.ws.readyState === WebSocket.OPEN) {
         state.ws.send(JSON.stringify({ type: 'askUserAnswer', sessionId: targetSid, answers: ['__cancelled__'], ...(requestId && { requestId }) }));
       }
+      removePendingAsk(requestId);
       broadcastAskState(targetSid);
       window.dispatchEvent(new CustomEvent('session-attention', { detail: { sessionId: targetSid, attention: false } }));
     }, targetSid, requestId);
@@ -2080,7 +2089,12 @@ export function renderAskUser(items, askSessionId, agentName, requestId) {
     console.error('[askUser] render failed:', e);
     bubble.textContent = t('chat.failedRender');
   }
-  return { type: 'askUser', items, requestId };
+  // Persisted entry carries the source-label fields (D6 批 F1) so the badge
+  // survives localStorage restore / interactive re-render (main.js:1684).
+  return {
+    type: 'askUser', items, requestId,
+    ...(source && source.project ? { project: source.project, nodeName: source.nodeName } : {})
+  };
 }
 
 /** Lock an AskUser card that was answered via the chat input (author ruling
@@ -2090,8 +2104,11 @@ export function renderAskUser(items, askSessionId, agentName, requestId) {
  *  via:'chat-input'}; the user's text lands as a normal user bubble (same as
  *  the card's Other path), so the card only needs the local lock treatment —
  *  the same end-state as the confirm path, minus sending anything.
- *  Returns true when a matching unanswered card was found and locked. */
-export function closeAskUserCard(sessionId, requestId) {
+ *  Returns true when a matching unanswered card was found and locked.
+ *  `note` (D6 批 F2): override the lock-line text — the askUserClosed path
+ *  (source node died; engine cascade lands in batch E2) marks the card with
+ *  t('askUser.sourceClosed') instead of the chat-input note. */
+export function closeAskUserCard(sessionId, requestId, note) {
   if (!sessionId || !requestId) return false;
   const view = findViewBySessionId(sessionId);
   const chat = view && view.dom && view.dom.chat;
@@ -2107,7 +2124,7 @@ export function closeAskUserCard(sessionId, requestId) {
     if (cancelBtn) cancelBtn.style.display = 'none';
     const ansDiv = document.createElement('div');
     ansDiv.className = 'option-answer';
-    ansDiv.textContent = '-> ' + t('chat.answeredViaChatInput');
+    ansDiv.textContent = '-> ' + (note || t('chat.answeredViaChatInput'));
     box.appendChild(ansDiv);
     // The registry is per-session and holds only the NEWEST card — tear down
     // the Canvas answer channel / drafts / attention only when this frame

@@ -619,6 +619,8 @@ export default {
   'chat.typeAnswer': 'Type your answer...',
   'chat.failedRender': 'Failed to render options. Please try again.',
   'askUser.viewCompare': 'View in Canvas',
+  'askUser.pendingTitle': 'Pending questions',
+  'askUser.sourceClosed': 'Source closed (node cancelled)',
   'chat.waitingQuestion': 'Waiting for question...',
   'chat.askFailed': 'Ask failed',
   'chat.askLabel': 'Ask',
