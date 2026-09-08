@@ -206,10 +206,10 @@ class DispatcherClosedLoopSmokeSpec extends CatsEffectSuite:
       val b = snap.nodes.values.find(_.name == "闭环-下游B").getOrElse(fail("node B missing"))
       assertEquals(a.status, NodeLifecycle.Completed, "entry node A must complete")
       assertEquals(b.status, NodeLifecycle.Completed, "downstream node B must complete")
-      // 接线：B 的 in 声明把 A.out 改接为 B（barrier 合并接线语义）
+      // 接线：B 的 in 声明给 A.out 追加 B 边（P1 追加语义——既有 Nebula 分发边保留）
       assert(b.in.contains(a.id), s"B.in must contain A (${a.id}), got: ${b.in}")
-      assertEquals(a.out, Some(b.id), "A.out must be rewired to B by B's in declaration")
-      assertEquals(b.out, Some("Nebula"), "B.out must be Nebula")
+      assertEquals(a.out, List(OutEdge.nebula, OutEdge(b.id)), "A.out must keep Nebula + append B edge (in-declaration append semantics)")
+      assertEquals(b.out, List(OutEdge.nebula), "B.out must be Nebula")
       // 注：B→Nebula 投递记账（nebulaDeliveredAt）在本 harness 不可观测——无真实
       // root 会话，deliverToNebula 按设计 WARN 不落账（同 ProjectDispatcher*Spec
       // 先例日志）；Nebula 投递链回归由 NebulaDeliveryDedupSpec/RedeliverySpec 覆盖。
