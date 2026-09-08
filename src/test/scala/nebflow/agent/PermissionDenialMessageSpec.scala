@@ -9,9 +9,11 @@ import munit.FunSuite
  * approach instead of re-asking. Timeout never increments the counter (user
  * inaction ≠ denial), which is asserted at the call site by construction.
  *
- * 2026-09-06 节点面摘除 AskUser：retryableHint 改为工具名中性（原
- * "via AskUserQuestion" 摘除）——denialMessage 是全身份共用的纯函数，不得
- * 指向 general 节点默认面已不含的工具。
+ * 2026-09-06 节点面摘除 AskUser 时 retryableHint 曾改为工具名中性（原
+ * "via AskUserQuestion" 摘除）。2026-09-08 作者修订恢复 general 面（D6 批D1）
+ * 后口径复查：中性文案保留——语义与工具面无关（被拒工具可能恰是
+ * AskUserQuestion 本身；dispatcher 等身份不在面内），「existing reporting
+ * channel」对所有身份均成立。
  */
 class PermissionDenialMessageSpec extends FunSuite:
 
@@ -28,10 +30,11 @@ class PermissionDenialMessageSpec extends FunSuite:
     assert(m.contains("denied this tool 2 times in this turn"))
     assert(m.contains("Change the approach"))
     assert(m.contains("report the blocker"))
-    // 2026-09-06 节点面摘除 AskUser：劝停提示工具名中性——不得指向会话
-    // 可能不具备的工具（general 默认面已无 AskUserQuestion；变异验红锚）
+    // 2026-09-08 恢复 general 面后口径复查：hint 仍保持工具名中性——被拒
+    // 工具可能恰是 AskUserQuestion 本身（点名即劝再问，荒谬）；变异验红锚：
+    // hint 文案重新点名工具即红
     assert(!m.contains("AskUserQuestion"),
-      "denial hint is tool-name-free (2026-09-06: general default face no longer carries AskUserQuestion)")
+      "denial hint stays tool-name-free (中性文案保留：与工具面组成无关，见类注释)")
     assert(m.endsWith("</system-reminder>"))
   }
 

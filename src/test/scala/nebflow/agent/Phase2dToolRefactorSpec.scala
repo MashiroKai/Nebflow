@@ -71,11 +71,11 @@ class Phase2dToolRefactorSpec extends FunSuite:
       "TaskBoard（20260908 任务板批 2，规格 §1c）：分发器八件→九件——项目任务板全权面（create 全量/update 全板含结构字段/close 全板/list 全板；权限判定引擎侧身份=isDispatcher，工具内不信客户端参数）"
     )
 
-  test("D.1-1: general fixed set == 裁定 5 八件 − AskUser（2026-09-06 节点面摘除，恰七件）"):
+  test("D.1-1: general fixed set == 裁定 5 原文八件（2026-09-08 作者修订恢复 AskUser，逐件不变）"):
     assertEquals(
       AgentCore.fixedToolsFor(mkDef("general")),
-      Set("Read", "Glob", "Edit", "Write", "Grep", "Bash", "Pop"),
-      "AskUserQuestion 从 general 默认面移除（2026-09-06 作者提议 + Nebula 背书：交互出口统一）"
+      Set("Read", "Glob", "Edit", "Write", "Grep", "Bash", "AskUserQuestion", "Pop"),
+      "AskUserQuestion 回归 general 默认面（2026-09-08 作者修订，D6 批D1：直达作者 + 留痕审计）"
     )
 
   test("D.1-1: legacy 路径不再含三角色 name 分支——catch-all 对三角色名生效"):
@@ -113,7 +113,7 @@ class Phase2dToolRefactorSpec extends FunSuite:
     }
     val generalDelivered = CoreProbe.allowed(mkDef("general"), isFlowNode = true)
     assertEquals(generalDelivered, AgentCore.GeneralFixedTools,
-      "general 节点形态交付面 == 静态集恰七件（2026-09-06 节点面摘除 AskUser）")
+      "general 节点形态交付面 == 静态集恰八件（2026-09-08 作者修订恢复 AskUser）")
     assert(!generalDelivered.contains("NodeMessage"), "NodeMessage 仅分发器（general 不加，20260905 机制批裁定⑥）")
     val dispatcherDelivered = CoreProbe.allowed(mkDef("project-dispatcher"), isFlowNode = true, projectBoardSession = true)
     assertEquals(dispatcherDelivered, AgentCore.DispatcherFixedTools, "dispatcher project 会话交付面 == 静态 9 件（含 NodeMessage + TaskBoard）")
