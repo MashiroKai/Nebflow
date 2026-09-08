@@ -616,7 +616,9 @@ object ContextRefresher:
    * Build Team catalog for system prompt injection.
    *  Detects team membership from the session's FlowMembership registration.
    *  - Team agents: see their own team's members + flows (progressive disclosure)
-   *  - Nebula / standalone: see global Teams & Flows overview
+   *  - Nebula / standalone: empty — global Teams & Flows 概览已停注（系统
+   *    提示词重构阶段二 B 批，flowCatalog/skillCatalog 同款先例；TurnContext
+   *    字段保留至阶段 3）
    */
   private def buildTeamCatalogForSession(sessionId: Option[String]): IO[String] =
     sessionId match
@@ -648,19 +650,15 @@ object ContextRefresher:
                 }
                 .getOrElse("")
             case None =>
-              // Nebula or standalone: show global catalog
-              for
-                teams <- EntityLoader.listTeams()
-                flows <- EntityLoader.listFlows()
-                agents <- EntityLoader.listAgents()
-              yield TeamCatalog.buildGlobalCatalog(teams, flows, agents)
+              // global 目录停注（系统提示词重构阶段二 B 批）：无 team 注册
+              // 会话（Nebula/standalone）不再注入 global Teams & Flows 概览
+              // ——生产点置空，order 816 section（condition=nonEmpty）自然
+              // 不渲染（与 flowCatalog 571-575 先例同款）；TurnContext 字段
+              // 保留至阶段 3。team 专属目录分支保留（team agent 渐进披露不变）。
+              IO.pure("")
         yield result
       case None =>
-        // No session (e.g. very early init): show global catalog
-        for
-          teams <- EntityLoader.listTeams()
-          flows <- EntityLoader.listFlows()
-          agents <- EntityLoader.listAgents()
-        yield TeamCatalog.buildGlobalCatalog(teams, flows, agents)
+        // 无 session（极早期 init）：同上，global 目录停注（阶段二 B 批）。
+        IO.pure("")
 
 end ContextRefresher
