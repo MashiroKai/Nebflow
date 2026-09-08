@@ -880,6 +880,11 @@ case class SessionContext(
     * （证据 §6-2），本批接通后 Node 系工具的 project 缺省解析（NodeTools.
     * resolveProject fallback 链）在节点会话内也生效。None = 非项目会话。 */
   projectName: Option[String] = None,
+  /** 节点人类可读名（D6 批 F1 G9 路径 a：spawn 置位随路注入，spec §3.3）——
+    * NodeEngine 置 node.name（loop worker/verify 同属该 loop 节点名）；
+    * AskUser payload 的 nodeName 字段来源（badge「project · nodeName」归因）。
+    * None = 非项目节点会话（Nebula/分发器/REPL——分发器由 isDispatcher 标注）。 */
+  flowNodeName: Option[String] = None,
   /**
    * D11 交互豁免（freeze-schedule spec v1.1）：用户在场等待的交互会话
    * 不参与冻结——冻结它们省下的 token 远低于浪费的用户等待时间。
@@ -1120,6 +1125,7 @@ object AgentState:
     flowNodeId: Option[String] = None,
     isDispatcher: Boolean = false,
     projectName: Option[String] = None,
+    flowNodeName: Option[String] = None,
     sandboxEnabled: Boolean = false,
     sandboxRoot: Option[String] = None,
     loopTurnKey: Long = 0L
@@ -1152,6 +1158,7 @@ object AgentState:
         flowNodeId = flowNodeId,
         isDispatcher = isDispatcher,
         projectName = projectName,
+        flowNodeName = flowNodeName,
         sandboxEnabled = sandboxEnabled,
         sandboxRoot = sandboxRoot
       ),
@@ -1219,6 +1226,7 @@ extension (s: AgentState)
   def flowNodeId: Option[String] = s.session.flowNodeId
   def isDispatcher: Boolean = s.session.isDispatcher
   def projectName: Option[String] = s.session.projectName
+  def flowNodeName: Option[String] = s.session.flowNodeName
 
   def withSession(session: SessionContext): AgentState = s.copy(session = session)
   def withExecution(execution: ExecutionContext): AgentState = s.copy(execution = execution)

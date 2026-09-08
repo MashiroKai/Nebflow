@@ -181,6 +181,13 @@
           <span class="bg-dot"></span>
           <span class="bg-count">0</span>
         </div>
+        <!-- D6 批 F2: pending AskUser count — same capsule pattern as bg-indicator,
+             warning hue (pending question = blocked task chain). Click jumps to
+             the oldest pending card. -->
+        <div id="pending-asks-indicator" class="hidden" role="button" tabindex="0" aria-live="polite">
+          <span class="pa-dot"></span>
+          <span class="pa-count">0</span>
+        </div>
         <div id="bgagent-indicator" class="hidden" title="Sub-agents running" role="button" tabindex="0" aria-haspopup="true" aria-expanded="false" aria-controls="bgagent-dropdown">
           <span class="bgagent-dot"></span>
           <span class="bgagent-count">0</span>
@@ -235,6 +242,9 @@
     </div>
     <div id="top-overlays">
       <div id="task-list"></div>
+      <!-- D6 批 F2: pending-AskUser persistent bar (one row per unanswered
+           question: source · summary, click = scroll to card + highlight) -->
+      <div id="ask-pending-bar" class="hidden" role="list" aria-live="polite"></div>
       <div id="notification-banner"></div>
     </div>
     <div id="chat"></div>

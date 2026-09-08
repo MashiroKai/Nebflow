@@ -2003,6 +2003,102 @@
   }
 }
 
+/* ===== Pending-Ask bar + header badge (D6 批 F2, G10) =====
+   Rows reuse the notif-item card language (surface + hairline shadow); the
+   header capsule reuses the bg-indicator pattern with the existing
+   --color-warning token (pending question = blocked task chain). No new color
+   values beyond the warning token's alpha variants. */
+#ask-pending-bar {
+  flex-shrink: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 4px 12px;
+  margin: 0 8px;
+  max-height: 120px;
+  overflow-y: auto;
+}
+#ask-pending-bar.hidden { display: none; }
+.ask-pending-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 5px 10px;
+  border: none;
+  border-radius: 8px;
+  font-size: 13px;
+  line-height: 1.4;
+  text-align: left;
+  background: var(--color-surface);
+  box-shadow: 0px 0px 0px 1px rgba(0,0,0,0.04), 0px 1px 3px rgba(0,0,0,0.03);
+  color: var(--color-text);
+  cursor: pointer;
+  animation: notifSlideIn 0.3s ease;
+}
+.ask-pending-row:hover { box-shadow: 0px 0px 0px 1px rgba(0,0,0,0.08), 0px 1px 4px rgba(0,0,0,0.06); }
+.ask-pending-source {
+  flex-shrink: 0;
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--color-text-muted);
+  padding: 1px 7px;
+  background: rgba(128,128,128,0.1);
+  border-radius: 6px;
+  max-width: 40%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.ask-pending-summary {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+@media (prefers-color-scheme: dark) {
+  .ask-pending-row {
+    background: rgba(255,255,255,0.04);
+    box-shadow: 0px 0px 0px 1px rgba(255,255,255,0.06);
+  }
+  .ask-pending-row:hover { box-shadow: 0px 0px 0px 1px rgba(255,255,255,0.12); }
+}
+
+#pending-asks-indicator {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  background: color-mix(in srgb, var(--color-warning) 15%, transparent);
+  border-radius: 999px;
+  border: 1px solid color-mix(in srgb, var(--color-warning) 40%, transparent);
+  padding: 2px 9px;
+  font-size: 12px;
+  color: var(--color-warning);
+  cursor: pointer;
+  transition: background 0.2s;
+}
+#pending-asks-indicator:hover { background: color-mix(in srgb, var(--color-warning) 25%, transparent); }
+#pending-asks-indicator.hidden { display: none; }
+.pa-dot {
+  width: 7px; height: 7px;
+  border-radius: 50%;
+  background: var(--color-warning);
+  animation: bg-pulse 1.5s ease-in-out infinite;
+}
+.pa-count { font-weight: 500; }
+
+/* Click-to-locate highlight flash on the target AskUser card row. */
+@keyframes askCardFlash {
+  0%, 100% { box-shadow: 0 0 0 0 transparent; }
+  30% { box-shadow: 0 0 0 3px color-mix(in srgb, var(--color-warning) 45%, transparent); }
+}
+.row.ai.ask-card-flash { animation: askCardFlash 1.2s ease 2; border-radius: 8px; }
+@media (prefers-reduced-motion: reduce) {
+  .ask-pending-row { animation: none; }
+  .row.ai.ask-card-flash { animation: none; box-shadow: 0 0 0 2px color-mix(in srgb, var(--color-warning) 45%, transparent); }
+  .pa-dot { animation: none; }
+}
+
 /* ===== Thinking bubble ===== */
 .thinking-row {
   margin-bottom: 0 !important;

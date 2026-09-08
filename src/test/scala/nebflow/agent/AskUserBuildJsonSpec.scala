@@ -64,4 +64,38 @@ class AskUserBuildJsonSpec extends FunSuite:
     )
   }
 
+  // ---- D6 批 F1（G9 来源标注）：project/nodeName 字段契约 ----
+
+  test("F1a: project + nodeName are emitted when present (project node ask)") {
+    val items = List(AskItem("Which scheme?", List(AskOption("A"), AskOption("B"))))
+    val json = AgentActor.buildAskUserJson(
+      Some("root-1"), "general", items, Some("general"), Some("node-abc"),
+      project = Some("Nebflow"), nodeName = Some("实施-F1F2")
+    )
+    assertEquals(json.hcursor.downField("project").as[String], Right("Nebflow"))
+    assertEquals(json.hcursor.downField("nodeName").as[String], Right("实施-F1F2"))
+  }
+
+  test("F1b: dispatcher ask carries nodeName=dispatcher") {
+    val items = List(AskItem("Proceed?", List(AskOption("yes"), AskOption("no"))))
+    val json = AgentActor.buildAskUserJson(
+      Some("root-1"), "dispatcher", items, Some("dispatcher"), Some("disp-1"),
+      project = Some("Nebflow"), nodeName = Some("dispatcher")
+    )
+    assertEquals(json.hcursor.downField("project").as[String], Right("Nebflow"))
+    assertEquals(json.hcursor.downField("nodeName").as[String], Right("dispatcher"))
+  }
+
+  test("F1c: no project/nodeName → payload stays byte-identical to the pre-F1 shape") {
+    val items = List(AskItem("Continue?", List(AskOption("yes"), AskOption("no"))))
+    val json = frame(items)
+    assertEquals(json.hcursor.downField("project").focus, None)
+    assertEquals(json.hcursor.downField("nodeName").focus, None)
+    val expected =
+      """{"type":"askUser","sessionId":"root-1","agentName":"Backend","sourceAgent":"Backend",""" +
+        """"sourceSession":"team-abc","items":[{"question":"Continue?","options":[{"label":"yes"},{"label":"no"}],""" +
+        """"allowOther":true}]}"""
+    assertEquals(json.noSpaces, expected)
+  }
+
 end AskUserBuildJsonSpec
