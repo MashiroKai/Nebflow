@@ -39,8 +39,9 @@ import scala.concurrent.duration.*
  * 用例（独立 spec，避免污染 flaky 的 NodeSessionDeathFinalizeSpec 复验区间）：
  *  - Z1 僵尸收敛：播种 status=Running 且无活会话/fiber → settle → failed + 投递达
  *    根会话 + dead-session-reaped 审计。
- *  - Z2 下游 barrier 不永久阻塞：上游 A 僵尸自动失败 → collect 下游 B 依 deliverFailed
- *    占位结算完启动并走到终态（不再永久 pending）。
+ *  - Z2 下游停等可见（D5 零结算，20260908 wf1cde §3 翻转原 collect 断言）：上游 A
+ *    僵尸自动失败 → 下游 B 停等 pending/wiring 保持可见（零结算零启动），处置靠
+ *    failed 通知；上游修复重跑后自动续跑。
  *  - Z3 不误杀活会话：真实 spawn + 挂死 LLM → settle → 节点保持 Running（registry
  *    有活记录）。
  *  - Z4 不动等待后台任务：死会话但有在途 bg 任务（waitingFor 非空）→ settle → 节点
@@ -278,9 +279,9 @@ class NodeDeadSessionAutoReapSpec extends CatsEffectSuite:
         s"dead-session-reaped audit event expected, got: ${events.mkString("|").take(300)}")
   }
 
-  // ── Z2 下游 barrier 不永久阻塞 ────────────────────────────────
+  // ── Z2 下游停等可见（D5 零结算，原 collect settlement 翻转）────────────
 
-  test("Z2: downstream not permanently blocked when upstream zombie auto-fails (collect settlement)") {
+  test("Z2: downstream stays waiting (visible) when upstream zombie auto-fails (D5 zero-settlement); failed delivery + notify unchanged") {
     val ws = tempRoot / "ws-z2"
     os.makeDir.all(ws)
     val system = ActorSystem(s"drs-z2-${scala.util.Random.nextInt(100000)}")
@@ -300,16 +301,22 @@ class NodeDeadSessionAutoReapSpec extends CatsEffectSuite:
             task = Some("process downstream"), out = Some("Nebula"), in = List("n-up"),
             status = NodeLifecycle.Wiring, createdAt = System.currentTimeMillis() - 3_600_000))) }.void
       _ <- rt.engine.settleStaleRunningNodes()
-      // A failed via deliverFailed → collect-settles B (deliveredTo += A) → barrier 归零 → B 启动 → 完成
-      _ <- waitUntil(20.seconds)(byName(rt, "down-b").map(n => NodeLifecycle.Terminal.contains(n.status)))
+      // A failed via deliverFailed → D5 零结算：B 停等（不启动）；up out=节点（非
+      // Nebula）→ 无 root 结果投递（分发器处置走 dispatch-notify 通道，⑮ 锁）
+      _ <- waitUntil(20.seconds)(byName(rt, "up-a").map(_.status == NodeLifecycle.Failed))
+      _ <- IO.sleep(500.millis) // 给「假如 collect 仍在异步启动 B」留观察窗口
       up <- byName(rt, "up-a")
       dn <- byName(rt, "down-b")
       _ <- system.stopAll.handleErrorWith(_ => IO.unit)
     yield
       assertEquals(up.status, NodeLifecycle.Failed, "zombie upstream must be failed")
-      assert(NodeLifecycle.Terminal.contains(dn.status) && dn.status == NodeLifecycle.Completed,
-        s"downstream must NOT stay permanently pending — reached ${dn.status}")
-      assertEquals(dn.result, Some("process downstream"), "downstream completes with its own task (collect settlement, no upstream payload)")
+      // D5 翻转（原 collect 断言）：下游停等可见（声明语义，非意外悬挂）——处置靠
+      // failed 通知（附等待者清单）；上游 reactivate 修复重跑后自动续跑
+      assert(dn.status == NodeLifecycle.Wiring || dn.status == NodeLifecycle.Pending,
+        s"downstream must stay waiting and visible (D5 zero-settlement), got ${dn.status}")
+      assertEquals(dn.deliveredTo, Nil,
+        "failed upstream must not write deliveredTo key into downstream (wf1cde §3.2 hole source)")
+      assertEquals(dn.result, None, "downstream never started (no session run)")
   }
 
   // ── Z3 不误杀活会话 ──────────────────────────────────────────
