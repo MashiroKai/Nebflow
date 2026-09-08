@@ -393,7 +393,7 @@ class CompletionGateSpec extends CatsEffectSuite:
       // B（wiring，无 task）种子——A 的 out 投递断言点（NodeBlockedReentrySpec 同款）
       _ <- rt.store.mutate(s => s.copy(nodes = s.nodes ++ Map(
         "n-down-b" -> NodeDef(id = "n-down-b", name = "down-b", agent = "test-agent",
-          status = NodeLifecycle.Wiring, out = Some("Nebula"), createdAt = System.currentTimeMillis()))))
+          status = NodeLifecycle.Wiring, out = List(OutEdge.nebula), createdAt = System.currentTimeMillis()))))
       _ <- nodeEdit(nodeInput(name, "gate-a", "description" -> Json.fromString("gate scenario node"),
         "task" -> Json.fromString("gate-scenario"), "worktree" -> Json.fromBoolean(true),
         "out" -> Json.fromString("n-down-b")), ctx)

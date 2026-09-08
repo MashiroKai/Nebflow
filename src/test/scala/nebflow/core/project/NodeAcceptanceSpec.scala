@@ -296,7 +296,7 @@ class NodeAcceptanceSpec extends CatsEffectSuite:
       _ <- system.stopAll.handleErrorWith(_ => IO.unit)
     yield
       assert(r.isRight, s"running rewire must be free, got: $r")
-      assertEquals(s.nodes("n-a").out, Some("n-b"))
+      assertEquals(s.nodes("n-a").out, List(OutEdge("n-b")))
   }
 
   test("②b buffered rewire: completed node rewire delivers buffered result to new target immediately") {
@@ -312,7 +312,7 @@ class NodeAcceptanceSpec extends CatsEffectSuite:
         s.copy(nodes = s.nodes ++ Map(
           "n-a" -> NodeDef(id = "n-a", name = "A", agent = "test-agent",
             status = NodeLifecycle.Completed, result = Some("buffered result"), createdAt = now,
-            completedAt = Some(now - 1000), ttlExpireAt = Some(now + 99999), out = None),
+            completedAt = Some(now - 1000), ttlExpireAt = Some(now + 99999), out = Nil),
           "n-b" -> NodeDef(id = "n-b", name = "B", agent = "test-agent",
             status = NodeLifecycle.Wiring, createdAt = now)
         ))
@@ -344,7 +344,7 @@ class NodeAcceptanceSpec extends CatsEffectSuite:
         s.copy(nodes = s.nodes ++ Map(
           "n-a" -> NodeDef(id = "n-a", name = "A", agent = "test-agent",
             status = NodeLifecycle.Completed, result = Some("consumed result"), createdAt = now,
-            completedAt = Some(now - 1000), ttlExpireAt = Some(now + 99999), out = Some("n-x")),
+            completedAt = Some(now - 1000), ttlExpireAt = Some(now + 99999), out = List(OutEdge("n-x"))),
           "n-x" -> NodeDef(id = "n-x", name = "X", agent = "test-agent",
             status = NodeLifecycle.Completed, in = List("n-a"), deliveredTo = List("n-a"),
             createdAt = now, completedAt = Some(now - 500), ttlExpireAt = Some(now + 99999)),
@@ -360,7 +360,7 @@ class NodeAcceptanceSpec extends CatsEffectSuite:
       assert(r.isLeft, s"rewire to consumed old target must be REJECTED, got: $r")
       assert(r.left.exists(e => e.toLowerCase.contains("consum") || e.toLowerCase.contains("cancel")),
         s"rejection should guide NodeCancel, got: $r")
-      assertEquals(s.nodes("n-a").out, Some("n-x"), "A.out must stay on consumed target X")
+      assertEquals(s.nodes("n-a").out, List(OutEdge("n-x")), "A.out must stay on consumed target X")
   }
 
   // ── ① 创建即运行（入口节点）────────────────────────────
@@ -514,7 +514,7 @@ class NodeAcceptanceSpec extends CatsEffectSuite:
           // 存量形态种子：A 持 out=n-x（新规范下断开操作被拒，状态必须原样保留）
           "n-a" -> NodeDef(id = "n-a", name = "A", agent = "test-agent",
             status = NodeLifecycle.Completed, result = Some("kept result"), createdAt = now,
-            completedAt = Some(now - 1000), ttlExpireAt = Some(now + 99999), out = Some("n-x"), in = List("n-seed")),
+            completedAt = Some(now - 1000), ttlExpireAt = Some(now + 99999), out = List(OutEdge("n-x")), in = List("n-seed")),
           "n-x" -> NodeDef(id = "n-x", name = "X", agent = "test-agent",
             status = NodeLifecycle.Wiring, in = List("n-a"), createdAt = now),
           "n-b" -> NodeDef(id = "n-b", name = "B", agent = "test-agent",
@@ -530,7 +530,7 @@ class NodeAcceptanceSpec extends CatsEffectSuite:
     yield
       assert(r.isLeft, s"disconnect must be rejected under the tightened connection policy, got: $r")
       assert(r.left.exists(_.contains("EMPTY_NODE_CONNECTION")), s"rejection must carry EMPTY_NODE_CONNECTION, got: $r")
-      assertEquals(a.map(_.out), Some(Some("n-x")), "A.out must remain (disconnect rejected)")
+      assertEquals(a.map(_.out), Some(List(OutEdge("n-x"))), "A.out must remain (disconnect rejected)")
       assertEquals(a.flatMap(_.result), Some("kept result"), "A.result must be retained")
       assertEquals(x.map(_.in), Some(List("n-a")), "old target X.in must be untouched")
       assertEquals(x.map(_.deliveredTo), Some(List.empty), "X.deliveredTo unchanged (no partial apply)")
@@ -550,7 +550,7 @@ class NodeAcceptanceSpec extends CatsEffectSuite:
       _ <- rt.store.mutate(s =>
         s.copy(nodes = s.nodes ++ Map(
           "n-a" -> NodeDef(id = "n-a", name = "A", agent = "test-agent",
-            status = NodeLifecycle.Wiring, out = Some("n-b"), createdAt = now),
+            status = NodeLifecycle.Wiring, out = List(OutEdge("n-b")), createdAt = now),
           "n-b" -> NodeDef(id = "n-b", name = "B", agent = "test-agent",
             status = NodeLifecycle.Wiring, in = List("n-a"), createdAt = now)
         ))
@@ -562,13 +562,13 @@ class NodeAcceptanceSpec extends CatsEffectSuite:
     yield
       assert(r.isLeft, s"A→B→A cycle must be REJECTED, got: $r")
       assert(r.left.exists(_.toLowerCase.contains("cycle")), s"error should mention cycle, got: $r")
-      assertEquals(s.nodes("n-b").out, None, "B.out unchanged (cycle rejected before mutate)")
-      assertEquals(s.nodes("n-a").out, Some("n-b"), "A→B edge unchanged")
+      assertEquals(s.nodes("n-b").out, Nil, "B.out unchanged (cycle rejected before mutate)")
+      assertEquals(s.nodes("n-a").out, List(OutEdge("n-b")), "A→B edge unchanged")
   }
 
   // ── ⑦ 1 对多拒 ───────────────────────────────────────
 
-  test("⑦ 1-to-many: NodeEdit out array rejected (single out semantics)") {
+  test("⑦ out array rejected: fan-out goes through segment syntax (P1)") {
     val ws = tempRoot / "ws-1n"
     os.makeDir.all(ws)
     val system = ActorSystem(s"acc-1n-${scala.util.Random.nextInt(100000)}")
@@ -583,14 +583,15 @@ class NodeAcceptanceSpec extends CatsEffectSuite:
           "n-c" -> NodeDef(id = "n-c", name = "C", agent = "test-agent", status = NodeLifecycle.Wiring, createdAt = now)
         ))
       )
-      // 建 A，out = [B, C]（数组 → 1 对多拒绝）
+      // 建 A，out = [B, C]（JSON 数组 → 拒绝；1 对多走 "(pass)B, (failed)C" 段语法，P1）
       r <- nodeEdit(nodeInput("acc-1n", "A", "description" -> Json.fromString("test node purpose"),
         "task" -> Json.fromString("fanout"), "out" -> Json.arr(Json.fromString("n-b"), Json.fromString("n-c"))), ctx)
       s <- rt.store.snapshot
       _ <- system.stopAll.handleErrorWith(_ => IO.unit)
     yield
-      assert(r.isLeft, s"1-to-many must be REJECTED, got: $r")
-      assert(r.left.exists(_.toLowerCase.contains("1-to-many")), s"error should mention 1-to-many, got: $r")
+      assert(r.isLeft, s"array out must be REJECTED, got: $r")
+      assert(r.left.exists(msg => msg.contains("JSON array") && msg.contains("segment syntax")),
+        s"error should reject the array and point at segment syntax, got: $r")
       assert(!s.nodes.values.exists(_.name == "A"), "A must not be created on rejection")
   }
 

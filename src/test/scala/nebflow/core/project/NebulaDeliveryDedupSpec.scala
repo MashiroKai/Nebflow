@@ -46,7 +46,7 @@ class NebulaDeliveryDedupSpec extends FunSuite:
 
   private def node(id: String, name: String, status: String, result: String): NodeDef =
     NodeDef(
-      id = id, name = name, agent = "worker", out = Some("Nebula"), status = status,
+      id = id, name = name, agent = "worker", out = List(OutEdge.nebula), status = status,
       result = Some(result), createdAt = System.currentTimeMillis() - 2 * Hour,
       completedAt = Some(System.currentTimeMillis() - Hour)
     )

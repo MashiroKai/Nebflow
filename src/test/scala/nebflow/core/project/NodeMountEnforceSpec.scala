@@ -355,7 +355,7 @@ class NodeMountEnforceSpec extends CatsEffectSuite:
         id = "n-waiter", name = "waiter", agent = "general",
         in = List(upId), status = NodeLifecycle.Wiring,
         createdAt = now - 600_000L))
-      _ <- rt.store.mutate(s => s.copy(nodes = s.nodes.updated(upId, s.nodes(upId).copy(out = Some("n-waiter")))))
+      _ <- rt.store.mutate(s => s.copy(nodes = s.nodes.updated(upId, s.nodes(upId).copy(out = List(OutEdge("n-waiter"))))))
       _ <- rt.engine.settleRunnableSweep()
       postSweep <- rt.store.getNode("n-waiter").map(_.getOrElse(fail("waiter must exist")))
       auditAfterSweep <- readAudit(ws)
