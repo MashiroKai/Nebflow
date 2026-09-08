@@ -264,7 +264,7 @@ class NodeCleanupLivenessSpec extends CatsEffectSuite:
       // out-only wiring 节点不可经 NodeEdit 创建）
       _ <- rt.store.mutate(s => s.copy(nodes = s.nodes ++ Map(
         "n-w-wire" -> NodeDef(id = "n-w-wire", name = "w-wire", agent = "test-agent",
-          status = NodeLifecycle.Wiring, out = Some("Nebula"), createdAt = System.currentTimeMillis()))))
+          status = NodeLifecycle.Wiring, out = List(OutEdge.nebula), createdAt = System.currentTimeMillis()))))
       wiringId <- idOf(rt, "w-wire")
       payWiring <- payloadOf(rt, wiringId)
       // 真实活 running（延迟 LLM 保持窗口）

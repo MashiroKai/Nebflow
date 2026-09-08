@@ -1,6 +1,6 @@
 package nebflow.core.project
 
-import io.circe.{Codec, Json}
+import io.circe.{Codec, Decoder, Encoder, Json}
 import io.circe.derivation.{Configuration, ConfiguredCodec}
 import io.circe.syntax.*
 
@@ -72,6 +72,80 @@ object LoopConfig:
   given Configuration = Configuration.default.withDefaults
   given Codec[LoopConfig] = ConfiguredCodec.derived
 
+/** P1 out 语义门控 · 结构化 out 边（20260908 spec §2.2，作者 gate G1-G13 全过；
+  * 方案源 wf3 §3.1 OutEdge 双读）。NodeDef.out 自单值 Option[String] 升为 List[OutEdge]
+  * （扇出 + 失败信号边表达力），旧字符串经 codec 双读解码（归档数据零迁移）。
+  *
+  * @param to   "Nebula"（根会话上报通道）| 目标节点 id
+  * @param on   门控集 ⊆ {pass, failed}。缺省 {pass}（G1：D5 failed 零结算世界下旧拓扑
+  *             零漂移——failed 上游不触发 pass-only 边 = 普通下游停等语义）。
+  *             **Nebula 边缺省例外 {pass, failed}**：Nebula 是上报通道非下游结算，
+  *             今天 completed/failed 双通报是旧拓扑零漂移的组成部分（D5 只废除向
+  *             下游结算，未动 Nebula 通报）；显式门控（"(pass)Nebula"）按声明收紧。
+  * @param mode "result"=投载荷 | "signal"=只发信号（deps 同款：投递侧只记账归零
+  *             barrier + 启动，载荷由 buildInput 按边 mode 抑制——下游输入=自身 task）。 */
+case class OutEdge(
+  to: String,
+  on: Set[String] = Set("pass"),
+  mode: String = "result"
+)
+
+object OutEdge:
+  val Pass = "pass"
+  val Failed = "failed"
+  val Gates: Set[String] = Set(Pass, Failed)
+  val Result = "result"
+  val Signal = "signal"
+  val Modes: Set[String] = Set(Result, Signal)
+  val DefaultOn: Set[String] = Set(Pass)
+  /** Nebula 边缺省门集：completed + failed 双通报（旧拓扑零漂移，G1 例外依据见上）。 */
+  val NebulaDefaultOn: Set[String] = Set(Pass, Failed)
+  val NebulaTarget = "Nebula"
+
+  given Configuration = Configuration.default.withDefaults
+  given Codec[OutEdge] = ConfiguredCodec.derived
+
+  /** 旧拓扑 "Nebula" 边的等价构造（completed+failed 双通报，零漂移）——NodeDef
+    * 字面构造（测试/工具直建）用；与 fromLegacyString("Nebula") 同形。 */
+  def nebula: OutEdge = OutEdge(NebulaTarget, NebulaDefaultOn)
+
+  /** 旧字符串单边解码（codec 双读与表面语法共用单点）："A"→OutEdge("A",{pass},result)；
+    * "Nebula"→{pass,failed} 双通报形态；""/"null"（任意大小写、含空白）→ None。 */
+  def fromLegacyString(s: String): Option[OutEdge] =
+    val t = s.trim
+    if t.isEmpty || t.equalsIgnoreCase("null") then None
+    else Some(if t == NebulaTarget then OutEdge(t, NebulaDefaultOn) else OutEdge(t))
+
+  /** 规范化（投递/比较/落库单点）：同 (to, mode) 多边合并 on 集合（compat 矩阵 #1：
+    * 一次终态至多投一次）；on 滤非法门（手改数据防御），滤空 → {pass}；mode 非法 →
+    * result；LinkedHashMap 保序（边序稳定 = payload/存储确定性）。 */
+  def canonical(edges: List[OutEdge]): List[OutEdge] =
+    val merged = scala.collection.mutable.LinkedHashMap[(String, String), Set[String]]()
+    edges.foreach { e0 =>
+      val g = e0.on.filter(Gates.contains)
+      val e = e0.copy(on = if g.isEmpty then DefaultOn else g,
+        mode = if Modes.contains(e0.mode) then e0.mode else Result)
+      val k = (e.to, e.mode)
+      merged(k) = merged.getOrElse(k, Set.empty) ++ e.on
+    }
+    merged.map { case ((to, mode), on) => OutEdge(to, on, mode) }.toList
+
+  /** 双读解码（spec §2.2 #1，归档零迁移）：null/缺键→Nil（withDefaults）；旧字符串→
+    * fromLegacyString 单边；数组→逐边 ConfiguredCodec（withDefaults 补 on/mode）。 */
+  given Decoder[List[OutEdge]] = Decoder.instance { cur =>
+    cur.value match
+      case j if j.isNull => Right(Nil)
+      case j if j.isString => Right(fromLegacyString(j.asString.getOrElse("")).toList)
+      case _ => Decoder.decodeList(summon[Codec[OutEdge]]).tryDecode(cur)
+  }
+
+  /** 编码：Nil → Json.Null（与旧 Option None 落盘同形，无出环节点存储字节零漂移）；
+    * 非空 → 边对象数组（on/mode withDefaults 全量写出）。 */
+  given Encoder[List[OutEdge]] = Encoder.instance {
+    case Nil  => Json.Null
+    case list => Json.fromValues(list.map(e => summon[Codec[OutEdge]].apply(e)))
+  }
+
 /** Node 数据模型（§2.1 JSON 示例字段全量）。
   *
   * agent 字段（2026-09-05 插件架构对齐）：**新建节点一律落 "general"**（执行统一
@@ -105,7 +179,10 @@ case class NodeDef(
     * 消费；存量节点无长文 → 缺键，消费方回退短文 description。默认 None = 零迁移。 */
   descriptionLong: Option[String] = None,
   in: List[String] = Nil,
-  out: Option[String] = None,
+  /** P1 out 语义门控（20260908 spec §2.2）：出边列表（0..N）。Nil = 悬空（结果保留
+    * 在 result，接线后自动投递）——旧单值拓扑经 codec 双读零迁移（"A"→pass 单边、
+    * "Nebula"→双通报边、null/缺键→Nil）。扇出/失败信号边表达力见 OutEdge。 */
+  out: List[OutEdge] = Nil,
   /** 依赖连接（deps 设计 §1.1，主文档 20260902_flowmap-engine-evolution-design.md）：
     * 下游单侧持有、不回写上游（上游不知道自己被依赖——「不用其输出」的结构体现）。
     * 语义 = 只等上游完成信号（status==completed），不投递上游结果——下游输入 =
@@ -205,7 +282,7 @@ object NodeDef:
 
 /** NodeList 载荷同构的节点 JSON（NodeList 工具 / REST flow-map / WS 事件共用单一序列化点）。
   * WS 事件（nodeCreated/nodeUpdated/nodeRemoved）与快照永远同构，前端增量渲染可直接对齐
-  * 字段集：{id, name, agent, description, status, in, out, hasWorktree, worktree,
+  * 字段集：{id, name, agent, description, status, in, hasWorktree, worktree,
   * createdAt, completedAt, ttlLeftSec}（+ 条件字段，见下）。
   *
   * **载荷收敛（2026-09-05 Flow Map 精简批）**：默认载荷只含元数据——**节点结果全文与
@@ -239,7 +316,6 @@ object NodePayload:
       "description" -> node.description.asJson,
       "status" -> node.status.asJson,
       "in" -> node.in.asJson,
-      "out" -> node.out.asJson,
       "hasWorktree" -> node.worktree.isDefined.asJson,
       "worktree" -> node.worktree.asJson,
       // blocked 反馈重入（设计 §4.1）：blockCount 恒带；blockedFeedback 仅 blocked 态才有结构化体
@@ -248,6 +324,12 @@ object NodePayload:
       "completedAt" -> node.completedAt.asJson,
       "ttlLeftSec" -> ttlLeft.asJson
     )
+      // P1 out 边数组条件序列化（spec §2.2 #8）：Nil 不带键（无出环节点字段集零漂移
+      // ——旧 None→null 键一并消失，消费方以缺键=无出边读取）；非空 → 规范化边数组
+      // [{to,on,mode}...]。前端边渲染适配属批 F3（本批仅载荷形态）。
+      val outFields =
+        if node.out.isEmpty then Nil
+        else List("out" -> OutEdge.canonical(node.out).asJson)
       // deprecated 三键条件序列化（观测面上下文经济学批 20260907 裁定③）：skill/
       // mcp/preset 移出基础集——仅存量节点非 None 才带（与 deps/plugins 条件字段
       // 同构；新建节点参数已退役（NODE_AGENT_RETIRED），字段集恒零漂移）。审计实测
@@ -333,7 +415,7 @@ object NodePayload:
         (if node.status == NodeLifecycle.Failed || node.status == NodeLifecycle.Cancelled then
            node.notifySentAt.toList.map(t => "notifySentAt" -> t.asJson)
          else Nil)
-      Json.obj((baseFields ++ legacyConfigFields ++ hasResultFields ++ taskPreviewFields ++ depsFields ++ feedbackFields ++ pluginFields ++ notifyFields ++ mergeFields ++ loopFields ++ bgWaitFields ++ notifySentAtFields)*)
+      Json.obj((baseFields ++ outFields ++ legacyConfigFields ++ hasResultFields ++ taskPreviewFields ++ depsFields ++ feedbackFields ++ pluginFields ++ notifyFields ++ mergeFields ++ loopFields ++ bgWaitFields ++ notifySentAtFields)*)
 
 /** Flow Map 活动区（§2.6，磁盘 flow-map.json）。 */
 case class FlowMapState(

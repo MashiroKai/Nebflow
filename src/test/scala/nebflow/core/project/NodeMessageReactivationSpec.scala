@@ -111,7 +111,7 @@ class NodeMessageReactivationSpec extends CatsEffectSuite:
     rt.store.mutate { s =>
       s.copy(nodes = s.nodes.updated("n-r1", NodeDef(
         id = "n-r1", name = "react-a", agent = "general",
-        task = Some("原任务（已被 NodeEdit 重激活改写）"), out = Some("Nebula"),
+        task = Some("原任务（已被 NodeEdit 重激活改写）"), out = List(OutEdge.nebula),
         status = NodeLifecycle.Running,
         startedAt = Some(System.currentTimeMillis()),
         createdAt = System.currentTimeMillis(),

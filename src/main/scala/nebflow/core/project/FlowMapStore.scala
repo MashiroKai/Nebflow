@@ -109,7 +109,8 @@ class FlowMapStore private (
             n.deps.foldLeft(acc)((a, d) => a.updated(d, n.id :: a.getOrElse(d, Nil)))
           }
         def successors(id: String): List[String] =
-          val viaOut = s.nodes.get(id).flatMap(_.out).filter(_ != "Nebula").toList
+          // P1 多边：全部 out 边目标（跳过 Nebula）；环检测目标仍是单 id（to 参数）
+          val viaOut = s.nodes.get(id).map(_.out.map(_.to).filterNot(_ == "Nebula")).getOrElse(Nil)
           viaOut ++ depsReverse.getOrElse(id, Nil)
         def reachable(start: String, visited: Set[String]): Boolean =
           if start == from then true
@@ -326,11 +327,12 @@ class FlowMapStore private (
         Json.fromJsonObject(io.circe.JsonObject.fromMap(nobj.toMap - "task" - "taskFile"))
       case _ => n
 
-  /** 加载净化：历史数据存在 out 被写成**字符串** "null" 的行（parseOut 归一化修复
-    * 之前 LLM 以字符串 "null" 断开接线被当字面 target id 存盘；实证归档
-    * n-8a481bd0/n-c90d1140）。语义应为悬空 None——加载时归一，下次落盘即真 null。 */
+  /** 加载净化（P1 双读后的边形态）：历史数据存在 out 被写成**字符串** "null" 的行
+    * （parseOut 归一化修复之前 LLM 以字符串 "null" 断开接线被当字面 target id 存盘；
+    * 实证归档 n-8a481bd0/n-c90d1140）。codec 双读已把字符串 "null" 解码为 Nil——本
+    * 净化保留为手改数据防御：滤除 to 为空/字面 "null" 的边。语义应为悬空 Nil。 */
   private def normalizeOut(n: NodeDef): NodeDef =
-    n.copy(out = n.out.map(_.trim).filterNot(_.equalsIgnoreCase("null")).filter(_.nonEmpty))
+    n.copy(out = n.out.filterNot(e => e.to.trim.isEmpty || e.to.equalsIgnoreCase("null")))
 
   /** H-11①（阶段 2b）：存量 flow-map 节点的旧 skill/mcp 字段——加载时告警 +
     * 仅作展示（deprecated，NodeEdit 已拒写，无自动映射）。字段保留不动。 */
