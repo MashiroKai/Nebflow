@@ -145,7 +145,7 @@ class NodeMessageSpec extends CatsEffectSuite:
   ): IO[Unit] =
     rt.store.mutate(s => s.copy(nodes = s.nodes ++ Map(
       id -> NodeDef(id = id, name = name, agent = "test-agent", task = task, result = result,
-        status = status, out = Some("Nebula"), createdAt = System.currentTimeMillis())))).void
+        status = status, out = List(OutEdge.nebula), createdAt = System.currentTimeMillis())))).void
 
   private def nodeMessage(rt: ProjectRuntime, nodeId: String, message: String): IO[Either[String, String]] =
     rt.engine.sendNodeMessage(nodeId, message)

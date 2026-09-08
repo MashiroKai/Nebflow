@@ -253,7 +253,7 @@ class NodeDeadSessionAutoReapSpec extends CatsEffectSuite:
       _ <- rt.store.mutate { s =>
         s.copy(nodes = s.nodes + ("n-z1" -> NodeDef(
           id = "n-z1", name = "zombie-a", agent = "general",
-          task = Some("long running task"), out = Some("Nebula"),
+          task = Some("long running task"), out = List(OutEdge.nebula),
           status = NodeLifecycle.Running,
           startedAt = Some(System.currentTimeMillis() - 3_600_000),
           createdAt = System.currentTimeMillis() - 3_600_000))) }.void
@@ -294,11 +294,11 @@ class NodeDeadSessionAutoReapSpec extends CatsEffectSuite:
       _ <- rt.store.mutate { s =>
         s.copy(nodes = s.nodes ++ Map(
           "n-up" -> NodeDef(id = "n-up", name = "up-a", agent = "general",
-            task = Some("long task"), out = Some("n-dn"), status = NodeLifecycle.Running,
+            task = Some("long task"), out = List(OutEdge("n-dn")), status = NodeLifecycle.Running,
             startedAt = Some(System.currentTimeMillis() - 3_600_000),
             createdAt = System.currentTimeMillis() - 3_600_000),
           "n-dn" -> NodeDef(id = "n-dn", name = "down-b", agent = "test-agent",
-            task = Some("process downstream"), out = Some("Nebula"), in = List("n-up"),
+            task = Some("process downstream"), out = List(OutEdge.nebula), in = List("n-up"),
             status = NodeLifecycle.Wiring, createdAt = System.currentTimeMillis() - 3_600_000))) }.void
       _ <- rt.engine.settleStaleRunningNodes()
       // A failed via deliverFailed → D5 零结算：B 停等（不启动）；up out=节点（非
@@ -361,7 +361,7 @@ class NodeDeadSessionAutoReapSpec extends CatsEffectSuite:
       _ <- rt.store.mutate { s =>
         s.copy(nodes = s.nodes + ("n-z4" -> NodeDef(
           id = "n-z4", name = "wait-bg", agent = "general",
-          task = Some("long task"), out = Some("Nebula"), status = NodeLifecycle.Running,
+          task = Some("long task"), out = List(OutEdge.nebula), status = NodeLifecycle.Running,
           startedAt = Some(System.currentTimeMillis() - 3_600_000),
           createdAt = System.currentTimeMillis() - 3_600_000))) }.void
       // 构造「死会话但有在途等待型后台任务」：nodeSessions 映射 + 在册 bg 任务
