@@ -161,6 +161,9 @@ const TERMINAL_MSG_TYPES = new Set([
   // 会话帧被入口过滤器丢弃，活跃会话帧无订阅者 no-op（后端照发，零触碰）。
   'backgroundTaskUpdate',
   'askUser', 'askPermission', 'askUserAnswered',
+  // D6 批 F2: source-death close frame (engine cascade = batch E2; frontend
+  // handling already in place) — same view routing as askUserAnswered.
+  'askUserClosed',
   // 工作区目录选择结果（workspace-picker 批次）：{sessionId, requestId, path|
   // cancelled|fallback}——askUser 交互家族同语义（带 sessionId，视图路由同 askUser）。
   'workspaceDirPicked',
