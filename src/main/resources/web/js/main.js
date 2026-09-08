@@ -93,7 +93,12 @@ import './flowAnim.js';
 import './agentManager.js';
 import { openPlugins } from './plugins.js';
 import { initColResizers } from './colResizer.js';
-import { initActivityBar, toggleSideBar } from './activityBar.js';
+import { initActivityBar, toggleSideBar, enableFriendPanels } from './activityBar.js';
+import { friendsEnabled } from './featureFlags.js';
+
+// Friends release gating latch (2026-09-08): false until the first configData
+// of the boot decides the flag (see the configData handler below).
+let friendsGateDecided = false;
 
 // ---------- Live thinking timer ----------
 let _thinkingTimerInterval = null;
@@ -2411,6 +2416,19 @@ onMessage('configData', (msg, view) => {
   state._freshConfigText = state.configText; // Cache for slider's fetch-before-save
   try { state.parsedConfig = JSON.parse(state.configText); } catch { state.parsedConfig = null; }
   state.configDirty = false;
+  // Friends release gating (2026-09-08, see featureFlags.js): latch the flag
+  // decision on the first configData of the boot — configData re-fires on
+  // every config save, but the gate does not live-toggle; a flag edit takes
+  // effect on reload. Gated off = entries stay detached and contacts/messages
+  // modules never init (no polling, no WS handlers — no live dead code).
+  if (!friendsGateDecided) {
+    friendsGateDecided = true;
+    if (friendsEnabled()) {
+      enableFriendPanels();
+      initContacts();
+      initMessages();
+    }
+  }
   const editor = document.getElementById('config-editor');
   if (editor) editor.value = state.configText;
   // Re-render settings if the modal is open
@@ -3237,8 +3255,9 @@ initUsageDashboard();
 initNeblink();
 initUpdateCheck();
 initDropbox();
-initContacts();
-initMessages();
+// initContacts()/initMessages() are NOT called here — they are friends-feature
+// modules, started from the configData handler only when the release gate
+// (featureFlags.js friendsEnabled) is on.
 
 // Preload Monaco Editor during idle time so first file open is instant.
 // Monaco (~2MB from CDN) is the main cause of first-open lag.
