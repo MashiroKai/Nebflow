@@ -3,5 +3,6 @@
   "name": "explorer-toolkit",
   "version": "1.0.0",
   "description": "代码库探索与方案规划方法论（检索举证纪律 + 方案结构与验收条件设计）；可视化配 visual-report。内含 skills：exploration-method（先入口后发散的探索路径 + 路径+行号举证纪律 + 结论先行汇报）、solution-planning（方案五件套 + 分档验收条件方法论 + 方案前置澄清纪律）。无 mcp.json、无工具扩展——纯方法论 skill 包。",
-  "capability": "代码库探索与方案规划方法论：节点获得入口定位/发散检索/路径+行号举证与方案五件套设计纪律"
+  "capability": "代码库探索与方案规划方法论：节点获得入口定位/发散检索/路径+行号举证与方案五件套设计纪律",
+  "author": {"name": "Nebflow"}
 }

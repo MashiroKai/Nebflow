@@ -3,8 +3,6 @@
   "items": [
     "agents:project-dispatcher",
     "agents:general",
-    "plugins:explorer-toolkit",
-    "plugins:design-spec",
     "plugins:visual-report",
     "plugins:slideblocks",
     "project:general"
