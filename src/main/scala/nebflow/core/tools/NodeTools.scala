@@ -245,6 +245,56 @@ object NodeTools:
   def wouldCreateCycle(rt: ProjectRuntime, fromId: String, to: String): IO[Boolean] =
     rt.store.wouldCreateCycle(fromId, to)
 
+  /** P2 retry 风暴防护两校验（spec §2.3，0 spawn；批E2）。Some(错误) = 拒绝：
+    *   ① 邻居限定（NODE_RETRY_NEIGHBOR）：retry.upstream 必须是持有节点的 in/deps
+    *      邻居——回跳语义 =「重取上游产物再试」，跨子图回跳无输入语义支撑（沿 deps
+    *      「下游单侧持有」连通性先例）。
+    *   ② retry 环（NODE_RETRY_CYCLE）：retry 图自身无环（B.retry→C 且 C.retry→B
+    *      拒绝）——retry 边不进 DAG（wf3 §4.2 方案①：绕开环检是设计前提），自环
+    *      防护必须独立成检（规模极小：每节点至多一条 retry 出边，链走即判）。
+    * upstream 存在性无需单查：邻居限定以 in/deps 为值域（其成员均经存在性校验），
+    * 非邻居即拒（错误文案指向先接线）。
+    *
+    * @param holderId   retry 持有节点 id（创建期 = 新节点临时 id，环检起点）
+    * @param policy     本次要设置的 retry 策略
+    * @param neighbors  持有节点的最终 in ∪ deps（编辑路径 = 应用本次改动后的全集） */
+  def retryGuard(
+    rt: ProjectRuntime,
+    holderId: String,
+    holderName: String,
+    policy: RetryPolicy,
+    neighbors: List[String]
+  ): IO[Option[String]] =
+    if !neighbors.distinct.contains(policy.upstream) then
+      IO.pure(Some(
+        s"retry.upstream '${policy.upstream}' must be an in/deps neighbor of node '$holderName' — " +
+          "retry re-runs an upstream whose output feeds this node; declare the in/deps edge first, then set retry. (NODE_RETRY_NEIGHBOR)"))
+    else
+      retryCycleExists(rt, holderId, policy.upstream).map {
+        case true =>
+          Some(
+            s"retry chain cycle: setting retry on '$holderName' → '${policy.upstream}' closes a retry loop " +
+              "(B.retry→C and C.retry→B would re-run nodes forever) — retry chains must stay acyclic. (NODE_RETRY_CYCLE)")
+        case false => None
+      }
+
+  /** retry 环判定（retryGuard ②的载体）：沿 retry.upstream 链行走（候选边视同已
+    * 设置），回到持有者即环；访问集防既有数据（手改 flow-map.json）已环时死循环。 */
+  def retryCycleExists(rt: ProjectRuntime, holderId: String, candidateUp: String): IO[Boolean] =
+    rt.store.snapshot.map { s =>
+      def nextOf(id: String): Option[String] =
+        if id == holderId then Some(candidateUp)
+        else s.nodes.get(id).flatMap(_.retry.map(_.upstream))
+      def walk(cur: String, visited: Set[String]): Boolean =
+        if cur == holderId then true
+        else if visited.contains(cur) then false
+        else nextOf(cur) match
+          case Some(n) => walk(n, visited + cur)
+          case None    => false
+      walk(candidateUp, Set.empty)
+    }
+
+
   /** task 文本归一化（loop detect 用）：trim + 空白折叠。 */
   def normalizeTask(t: String): String = t.trim.replaceAll("\\s+", " ")
 
@@ -368,6 +418,13 @@ final case class NodeEditNotify(flag: Boolean, provided: Boolean)
   * config=None = 显式停用 loop（loop=false）。 */
 final case class NodeEditLoop(config: Option[LoopConfig], provided: Boolean)
 
+/** retry 参数载体（批E2 P2 failed 回跳，spec §2.3）：call() 解析的（policy,
+  * provided）经 implicit 自动填入 createNode/proceed/editNode（与 notify/loop 同
+  * 机制）。provided=false（未传）= 编辑不改动 / 创建 None；provided=true 且
+  * policy=Some = 设置/替换（对象或字符串形态）；provided=true 且 policy=None =
+  * 显式清除（retry=null，replace-on-provide 与 deps 同款）。 */
+final case class NodeEditRetry(policy: Option[RetryPolicy], provided: Boolean)
+
 object NodeEditTool extends Tool:
   val name = "NodeEdit"
 
@@ -387,6 +444,7 @@ object NodeEditTool extends Tool:
 - task (optional): node task; an entry node (task, no in) starts running on create.
 - in (optional): upstream id(s) added as barrier inputs (multi-in = barrier); each upstream's out rewires here.
 - deps (optional, replace-on-provide like in): upstream id(s) awaited for COMPLETION SIGNAL only — no result injected (input = own task). Needs result? in. Ordering only? deps. Both? write both. Passed (any form, incl []/null) = whole-list replacement. failed/cancelled/blocked upstream never triggers; running upstream legal; editing deps on RUNNING node rejected (input frozen).
+- retry (optional, downstream-held like deps): failed auto-retry {upstream:"<in/deps-neighbor>", max:N} or "<id>:<N>" — on FAIL with gen<N auto-reactivates self + re-runs that upstream; gen≥N → failed + RetryCap escalation. Acyclic; max 1-10; null clears.
 - out (required on create): "B" | "Nebula" | fan-out "(pass)B, (failed)C" | failed-signal "(failed)C:signal". Gates ⊆ pass,failed (default pass; Nebula pass+failed); mode :result/:signal. null rejected.
 - plugins (optional, replace-on-provide): plugin name(s) — THE capability mechanism (no per-node agent; nodes run general). A plugin = skills + mcp.json (either alone valid). Allocation injects skills into the node's first message, starts MCP servers (mcp__plugin_<p>_<s>__<t>), grants builtin tools. Names must be in the Plugin Catalog AND trusted (default-deny).
 - worktree (optional boolean, create-time only): true = isolated git worktree auto-created at .nebflow/worktrees/<derived-from-name> (same-name branch, baseline main HEAD); immediate + fail-fast. Refused on edits.
@@ -430,6 +488,15 @@ object NodeEditTool extends Tool:
         "notifyDispatcher" -> Json.obj("type" -> "boolean".asJson, "description" -> "dispatch-notify backflow: on terminal state (completion wired) trigger a dispatcher session with this node's result reference (independent signal channel, no out-edge cost). Settable/withdrawable while wiring/pending/running".asJson),
         "abandon" -> Json.obj("type" -> "boolean".asJson, "description" -> "Abandon a TERMINAL (blocked/completed/failed/cancelled), wiring/pending, or dead-session running node → cancelled, retained on map (no TTL — failed/cancelled never auto-archive; upper layer decides cleanup; audit-logged)".asJson),
         "loop" -> Json.obj("type" -> "boolean".asJson, "description" -> "LoopNode flag (create/edit): true = this node iterates — a WORKER session produces a result, a VERIFY session checks it; PASS → delivered downstream; FAIL → worker re-runs (same session, constant input) up to maxRounds(K). false/omitted = normal single-pass node. A loop node still declares its normal in/out/deps (and may merge) — loop only adds the inner iterate-verify loop".asJson),
+        "retry" -> Json.obj(
+          "oneOf" -> Json.arr(
+            Json.obj("type" -> "object".asJson, "properties" -> Json.obj(
+              "upstream" -> Json.obj("type" -> "string".asJson),
+              "max" -> Json.obj("type" -> "integer".asJson)),
+              "required" -> Json.arr("upstream".asJson, "max".asJson)),
+            Json.obj("type" -> "string".asJson)
+          ).asJson,
+          "description" -> "Failed auto-retry policy (P2, downstream-held like deps): {upstream:\"<in/deps-neighbor id>\", max:N} or \"<id>:<N>\". On this node's FAILURE with gen<N the engine auto-reactivates it (gen+1, deliveredTo cleared) AND re-runs the upstream — the fresh result re-delivers here as a new attempt; gen≥N → terminal failed + RetryCap escalation to Nebula (each retry is logged, intermediate failures don't re-notify the dispatcher). upstream must be an in/deps neighbor (NODE_RETRY_NEIGHBOR); retry chains must stay acyclic (NODE_RETRY_CYCLE); max 1-10 (NODE_RETRY_MAX_RANGE); null clears (replace-on-provide)".asJson),
         "maxRounds" -> Json.obj("type" -> "integer".asJson, "description" -> "Loop round cap K (1-50, default 5): re-run the worker up to K times before the verify PASSes; reaching K without PASS terminalizes the node as failed (result states 'loop reached maxRounds'). Only meaningful with loop=true".asJson),
         "verify" -> Json.obj("type" -> "string".asJson, "description" -> "Verify-agent name (default \"general\"): the session that checks each worker output (general agent + plugins — shares the node's plugins). Must exist in the Agent Catalog. Only with loop=true".asJson),
         "verifyTask" -> Json.obj("type" -> "string".asJson, "description" -> "Verify checklist template (against the original task / acceptance baseline). Empty → engine default checklist. Only with loop=true".asJson)
@@ -477,6 +544,33 @@ object NodeEditTool extends Tool:
     implicit val loopFlag: NodeEditLoop =
       if !loopProvided then NodeEditLoop(None, provided = false)
       else NodeEditLoop(if loopEnabled then Some(LoopConfig(maxRounds, verify, verifyTask)) else None, provided = true)
+    // retry 参数（批E2 P2 failed 回跳，spec §2.3）：两形态——JSON 对象
+    // {"upstream":"<id>","max":N} 或字符串 "<id>:<N>"；null=清除。replace-on-provide
+    // 与 deps 同款：传了（任何形态含 null）= 整体替换/清除，未传 = 不改动。
+    // max 范围 1-10 在解析单点校验（NODE_RETRY_MAX_RANGE）——创建/编辑共用。
+    val retryJson = input("retry")
+    val retryProvided = retryJson.isDefined
+    val retryParsed: Either[String, Option[RetryPolicy]] =
+      retryJson match
+        case None => Right(None)
+        case Some(j) if j.isNull => Right(None)
+        case Some(j) if j.isObject =>
+          (j.hcursor.get[String]("upstream"), j.hcursor.get[Int]("max")) match
+            case (Right(up), Right(mx)) =>
+              if mx < 1 || mx > 10 then Left(s"'retry.max' must be between 1 and 10 (got $mx) — the auto-retry budget per node. (NODE_RETRY_MAX_RANGE)")
+              else if up.trim.isEmpty then Left("'retry.upstream' must be a non-empty node id")
+              else Right(Some(RetryPolicy(up.trim, mx)))
+            case _ => Left("'retry' object form requires string 'upstream' and integer 'max'")
+        case Some(j) if j.isString =>
+          j.asString.getOrElse("").trim.split(':').toList match
+            case up :: mx :: Nil if up.trim.nonEmpty =>
+              mx.trim.toIntOption match
+                case Some(n) if n >= 1 && n <= 10 => Right(Some(RetryPolicy(up.trim, n)))
+                case Some(n) => Left(s"'retry.max' must be between 1 and 10 (got $n) — the auto-retry budget per node. (NODE_RETRY_MAX_RANGE)")
+                case None => Left(s"'retry' string form must be '<upstream-id>:<max-int>', got '${j.asString.getOrElse("")}'")
+            case _ => Left(s"'retry' string form must be '<upstream-id>:<max-int>', got '${j.asString.getOrElse("")}'")
+        case Some(_) => Left("'retry' must be an object {upstream, max} or a string '<upstream-id>:<max>'")
+    implicit val retryFlag: NodeEditRetry = NodeEditRetry(retryParsed.getOrElse(None), retryProvided)
     val inJson = input("in")
     val depsJson = input("deps")
     val outJson = input("out")
@@ -513,6 +607,10 @@ object NodeEditTool extends Tool:
     else if loopEnabled && (maxRounds < 1 || maxRounds > 50) then
       IO.pure(Left(ToolError(
         s"'maxRounds' must be between 1 and 50 (got $maxRounds) — the loop round cap K (loop node iteration budget). (NODE_LOOP_MAXROUNDS_RANGE)")))
+    // retry 解析/范围错误前置拦截（批E2）：对象/字符串形态与 max 范围在解析单点
+    // 已判，这里统一拦在进 create/edit 之前（0 spawn）。
+    else if retryProvided && retryParsed.isLeft then
+      IO.pure(Left(ToolError(retryParsed.swap.toOption.getOrElse("invalid retry"))))
     // description 校验（创建必写 + 编辑可 update 共用）：trim 非空 + ≤60 字符
     // （裁定⑤c 双层化：短文进默认载荷；长文走 descriptionLong ≤200）。
     else if description.exists(d => d.trim.isEmpty) then
@@ -571,7 +669,7 @@ object NodeEditTool extends Tool:
                                 preset.isDefined ||
                                 abandon || inJson.isDefined || depsJson.isDefined ||
                                 pluginsProvided ||
-                                mergeProvided || notifyProvided.isDefined
+                                mergeProvided || notifyProvided.isDefined || retryProvided
                             if abandon then
                               IO.pure(Left(ToolError(s"Node '$nodename' is archived (display TTL expired) — abandon is not applicable; it already ages out of views on its own.")))
                             else if mergeProvided then
@@ -659,7 +757,7 @@ object NodeEditTool extends Tool:
     depsJson: Option[Json],
     outJson: Option[Json],
     merge: Boolean = false
-  )(implicit notify: NodeEditNotify, loopFlag: NodeEditLoop): IO[Either[ToolError, String]] =
+  )(implicit notify: NodeEditNotify, loopFlag: NodeEditLoop, retryFlag: NodeEditRetry): IO[Either[ToolError, String]] =
     // 执行统一 general（2026-09-05 插件架构对齐）：新建节点不再接受 agent 参数，
     // 专业能力由 plugins 差异化；NodeDef.agent 字段保留（存量兼容读 + spawn 读取）。
     val agentName = "general"
@@ -766,7 +864,7 @@ object NodeEditTool extends Tool:
     deps: List[String],
     out: List[OutEdge],
     merge: Boolean = false
-  )(implicit notify: NodeEditNotify, loopFlag: NodeEditLoop): IO[Either[ToolError, String]] =
+  )(implicit notify: NodeEditNotify, loopFlag: NodeEditLoop, retryFlag: NodeEditRetry): IO[Either[ToolError, String]] =
     val nodeId = s"n-${java.util.UUID.randomUUID().toString.take(8)}"
     val outTargets = out.map(_.to).filterNot(_ == OutEdge.NebulaTarget).distinct
     for
@@ -784,6 +882,11 @@ object NodeEditTool extends Tool:
       // P1 校验层②（spec §2.2）：下游持 in 边而上游已 failed 无 on-failed 边且非 merge →
       // WARNING（不阻断，人工兜底合法）——补投链/死锁可见性由既有 mount-stalled 承载
       stallWarn <- NodeTools.stalledInWarning(rt, nodeId, nodename, ins, merge)
+      // 批E2 retry 风暴防护（spec §2.3，0 spawn）：邻居限定 + retry 环。值域 =
+      // 本次声明的 in ∪ deps（节点尚未落库，in 邻接关系沿声明）。
+      retryGate <- retryFlag.policy match
+        case None => IO.pure(None)
+        case Some(p) => NodeTools.retryGuard(rt, nodeId, nodename, p, ins ++ deps)
       // loop detect（§2.6）：入口节点（有 task）同 agent+task 归一化重复 → 拒
       dup <- task match
         case Some(t) if t.trim.nonEmpty => NodeTools.findDuplicateDispatch(rt, agentName, t)
@@ -804,6 +907,8 @@ object NodeEditTool extends Tool:
           IO.pure(Left(ToolError(s"Cycle detected: out → ${outTargets.mkString(", ")} would create a loop — DAG must stay acyclic")))
         else if mergeGate.isDefined then
           IO.pure(Left(ToolError(mergeGate.get)))
+        else if retryGate.isDefined then
+          IO.pure(Left(ToolError(retryGate.get)))
         else if dup.isDefined then
           IO.pure(Left(ToolError(s"疑似重复派发: agent '$agentName' already has a ${dup.get.status} node with the same task (node '${dup.get.name}'). Check NodeList before re-dispatching.")))
         else IO.pure(Right(()))
@@ -827,6 +932,9 @@ object NodeEditTool extends Tool:
             // 否则 None（普通节点）。loop 不构成「可立即运行」的输入语义——仍须 task/in 承载
             // 输入（与 deps 同款：完成信号/迭代语义不是输入），入口/barrier 判定不变。
             loop = loopFlag.config,
+            // P2 failed 回跳 retry 策略（spec §2.3）：未传 None（旧行为）；传了 = 校验
+            // 通过的 RetryPolicy（下游单侧持有）。
+            retry = retryFlag.policy,
             // dispatch-notify 回流标志（创建期按需开启；缺省 false=分发器新建节点
             // 不继承——收敛保证见 DispatchNotify）
             notifyDispatcher = notify.flag,
@@ -920,6 +1028,9 @@ object NodeEditTool extends Tool:
               (if task.isDefined && ins.isEmpty && !merge then " — entry node started running." else "") +
               (if deps.nonEmpty then s" deps ← ${deps.mkString(",")}" else "") +
               (if out.nonEmpty then s" out → ${out.map(_.to).mkString(", ")}" else "") +
+              (retryFlag.policy match
+                case Some(p) => s" retry ← ${p.upstream}:max=${p.max}"
+                case None => "") +
               (if stallWarn.nonEmpty then "\n" + stallWarn.mkString("\n") else "")
           ))
     yield result
@@ -965,7 +1076,10 @@ object NodeEditTool extends Tool:
           case Some(c) if c.status == NodeLifecycle.Cancelled =>
             rt.engine.emitUpdated(c) *>
               FlowMapEventLog.append(rt.project.workspace, rt.project.name, node.id, "abandoned",
-                s"node abandoned via NodeEdit (${node.status}${if allowDeadRunning && node.status == NodeLifecycle.Running then "/dead-session" else ""} → cancelled, retained on map)")
+                s"node abandoned via NodeEdit (${node.status}${if allowDeadRunning && node.status == NodeLifecycle.Running then "/dead-session" else ""} → cancelled, retained on map)") *>
+              // P2 G11（spec §3.4）：cancelled 级联清理该会话 pending asks（与
+              // cancelNode/reap 同款单点——问出问题的节点被放弃，卡片必须关闭）。
+              rt.engine.cleanupPendingAsks(c.sessionRef)
           case _ => IO.unit
       yield Right(s"Node '${node.name}' abandoned — cancelled (retained on map, no TTL; result retained)")
 
@@ -993,7 +1107,7 @@ object NodeEditTool extends Tool:
     depsJson: Option[Json],
     outJson: Option[Json],
     ctx: ToolContext
-  )(implicit notify: NodeEditNotify, loopFlag: NodeEditLoop): IO[Either[ToolError, String]] =
+  )(implicit notify: NodeEditNotify, loopFlag: NodeEditLoop, retryFlag: NodeEditRetry): IO[Either[ToolError, String]] =
     // ── 动作分支 ──
     if abandon then abandonNode(rt, node)
     // worktree 创建期绑定闸（2026-09-05 显式布尔改造）：worktree 是 create-time
@@ -1143,7 +1257,16 @@ object NodeEditTool extends Tool:
                             )
                           // 前置拒绝集统一闸（description 校验 + 零连接 + deps 校验）
                           if earlyReject.isDefined then IO.pure(Left(earlyReject.get))
-                          else {
+                          // 批E2 retry 风暴防护（spec §2.3，0 spawn）：邻居限定（值域 =
+                          // 应用本次改动后的最终 in ∪ deps）+ retry 环。校验失败卡在
+                          // 全部写路径（in 追加/重激活/写回）之前——本次编辑零副作用。
+                          else (retryFlag.policy match
+                            case None => IO.pure(None)
+                            case Some(p) =>
+                              NodeTools.retryGuard(rt, node.id, node.name, p, finalIn ++ finalDeps)
+                          ).flatMap {
+                            case Some(err) => IO.pure(Left(ToolError(err)))
+                            case None => {
                           // blocked/failed 重激活（blocked 反馈重入设计 §6 #5；failed
                           // 放开=2026-09-07 批作者裁定③）：编辑 blocked/failed 节点且
                           // task/description/in/out/deps 实际变更 → status 回
@@ -1286,6 +1409,22 @@ object NodeEditTool extends Tool:
                                               case Some(fresh) if fresh.status == NodeLifecycle.Wiring || fresh.status == NodeLifecycle.Pending || fresh.status == NodeLifecycle.Running =>
                                                 s.copy(nodes = s.nodes.updated(node.id, fresh.copy(loop = loopFlag.config)))
                                               case _ => s
+                                          }.void
+                                        else IO.unit
+                                      // retry 设置/清除写回（批E2 P2，spec §2.3）：replace-on-provide
+                                      //（传了即整体替换，null=清除）；不参与重激活判定（retry 是
+                                      // 「下一次失败」的行为开关，语义同 notifyDispatcher——已有
+                                      // failed 节点要立即生效须另行重激活，如改 task）。
+                                      // 语义校验（邻居/环）已在写路径前 retryGuard 拦截；此处纯写
+                                      //（任意状态可设——failed 节点配置 retry 后，人工重激活触发的
+                                      // 重跑再失败时自动回跳）。
+                                      _ <-
+                                        if retryFlag.provided then
+                                          rt.store.mutate { s =>
+                                            s.nodes.get(node.id) match
+                                              case Some(fresh) =>
+                                                s.copy(nodes = s.nodes.updated(node.id, fresh.copy(retry = retryFlag.policy)))
+                                              case None => s
                                           }.void
                                         else IO.unit
                                       // blocked/failed 重激活写回（R2 纪律）：事务内现读
@@ -1440,6 +1579,11 @@ object NodeEditTool extends Tool:
                                           else s" — reactivated from blocked (round ${node.blockCount} preserved)"
                                         else "") +
                                         (if notify.provided then s" — notifyDispatcher → ${notify.flag}" else "") +
+                                        (if retryFlag.provided then
+                                           retryFlag.policy match
+                                             case Some(p) => s" — retry ← ${p.upstream}:max=${p.max}"
+                                             case None    => " — retry cleared"
+                                         else "") +
                                         (if outProvided && newOut.nonEmpty then s" — out → ${newOut.map(_.to).mkString(",")}" else "") +
                                         (if adds.nonEmpty then s" — in += ${adds.mkString(",")}" else "") +
                                         (if depsProvided && depsChanged then s" — deps → [${newDeps.mkString(",")}]" else "")
@@ -1450,6 +1594,7 @@ object NodeEditTool extends Tool:
                                 stallWarn <- NodeTools.stalledInWarning(rt, node.id, node.name, finalIn, node.merge)
                               yield inResult.map(r =>
                                 if stallWarn.isEmpty then r else r + "\n" + stallWarn.mkString("\n"))
+                          }
                           }
                           }
                   }
