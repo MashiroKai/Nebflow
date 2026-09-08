@@ -12,9 +12,11 @@ import scala.concurrent.duration.*
  * - open 首写：`.nebflow/flow-map.json` 由 store 创建（验收①「只有 flow-map.json 被 store 写」）
  * - 读写往返：mutate → snapshot；重新 open 从磁盘恢复
  * - 环检测：A→B→A 拒（DFS 沿 out 边）；Nebula 终止链不误报
- * - 链级即时归档 sweep（裁定④「TTL 分开」批 2026-09-07；第三次演进 20:38「送达即移」）：
- *   链内无活跃 ∧ fails/cancelled 成员已上报（notifySentAt.isDefined）→ 整批立即移归档
- *   （分文件落盘）；链未齐（running）/ blocked 待办 / 异常终态未上报 → 整批保留；
+ * - 链级即时归档 sweep（裁定④「TTL 分开」批 2026-09-07；20:38「送达即移」；
+ *   2026-09-08 P1「cancelled 判据放行」）：链内无活跃 ∧ failed 成员已上报
+ *   （notifySentAt.isDefined）∧ cancelled 放行（通知系统无 Cancelled reason、
+ *   notifySentAt 对 cancelled 恒空，终态即移）→ 整批立即移归档（分文件落盘）；
+ *   链未齐（running/pending/wiring）/ blocked 待办 / failed 未上报 → 整批保留；
  *   findNode 归档兜底
  * - 存量单文件 flow-map-archive.json → 分批文件零丢失迁移（幂等）
  */
@@ -154,11 +156,12 @@ class FlowMapStoreSpec extends CatsEffectSuite:
       assertEquals(batchNodes.toList.sorted, List("n-a1", "n-a2"))
   }
 
-  test("sweepCompletedChains: 异常终态已上报（failed/cancelled notifySentAt 已设）→ 整批立即归档（2026-09-07 20:38 送达即移）") {
-    // 作者裁定 2026-09-07 20:38「送达即移」取代 12:29 占图部分：failed/cancelled 成员
-    // notifySentAt.isDefined（上报已送达 = 失败/取消通知已发出）→ 链内无活跃 → 整批
-    // 归档；completed 成员天然满足（无上报要求）。死亡现场已上报即出主图进归档（分
-    // 文件落盘 + findNode 归档区可查）。
+  test("sweepCompletedChains: 异常终态已上报（failed notifySentAt 已设；cancelled P1 后无需上报）→ 整批立即归档（2026-09-07 20:38 送达即移）") {
+    // 作者裁定 2026-09-07 20:38「送达即移」取代 12:29 占图部分：failed 成员
+    // notifySentAt.isDefined（上报已送达 = 失败通知已发出）→ 链内无活跃 → 整批
+    // 归档；completed 成员天然满足（无上报要求）；cancelled 成员 P1（2026-09-08
+    // 判据放行）后无需上报（本用例其 notifySentAt 已设，两判据下均过）。死亡现场
+    // 已上报即出主图进归档（分文件落盘 + findNode 归档区可查）。
     val ws = freshWorkspace()
     for
       store <- FlowMapStore.open("demo", ws)
@@ -183,9 +186,10 @@ class FlowMapStoreSpec extends CatsEffectSuite:
       assertEquals(fromArchive.map(_.status), Some(NodeLifecycle.Failed), "findNode 归档区兜底可查")
   }
 
-  test("sweepCompletedChains: 异常终态未上报（failed/cancelled notifySentAt 空）→ 整批保留主图") {
-    // 异常终态成员 notifySentAt 为空（上报未送达）→ 未达「送达即移」归档资格 → 整批保留
-    // 主图（死亡现场留主图待上报）。含 completed 成员同批亦保留（链级同帧判定）。
+  test("sweepCompletedChains: failed 未上报（notifySentAt 空）→ 整批保留主图（③ failed 语义不回归）") {
+    // P1（2026-09-08）后本批的「保留」判据成员是 **failed**（notifySentAt 空 → 未上报
+    // → 不达资格）；cancelled 成员已放行、不再构成阻塞——failed 未上报压住整链的语义
+    // 不回归。含 completed/cancelled 成员同批亦保留（链级同帧判定）。
     val ws = freshWorkspace()
     for
       store <- FlowMapStore.open("demo", ws)
@@ -204,9 +208,12 @@ class FlowMapStoreSpec extends CatsEffectSuite:
       assert(arch.nodes.isEmpty, "nothing auto-archived")
   }
 
-  test("sweepCompletedChains: 异常终态部分上报（failed 已报 cancelled 未报）→ 整批保留主图") {
-    // 混合：一个 failed 已上报 + 一个 cancelled 未上报 → chainArchivable 对「所有
-    // failed/cancelled 成员」要求 notifySentAt，未报者使整链不达资格 → 保留。
+  test("sweepCompletedChains: P1 判据放行——failed 已报 + cancelled 未报（notifySentAt 恒空）→ 整批归档（2026-09-08）") {
+    // 本用例旧断言为「整批保留」：旧判据要求 cancelled 也 notifySentAt.isDefined，
+    // 而通知系统无 Cancelled reason、该字段对 cancelled 恒空 → 判据永假，整链死锁
+    // （71/83 占位死链根因）。2026-09-08 作者拍板 P1 判据放行后 cancelled 无需上报
+    // 即达资格：failed 已报 + cancelled 未报 → 整批归档。断言翻转 = P1 修复本体，
+    // 非回归。
     val ws = freshWorkspace()
     for
       store <- FlowMapStore.open("demo", ws)
@@ -215,13 +222,102 @@ class FlowMapStoreSpec extends CatsEffectSuite:
         "n-c3" -> node("n-c3", "verify-cancelled", NodeLifecycle.Cancelled),
         "n-d3" -> node("n-d3", "audit-done", NodeLifecycle.Completed).copy(result = Some("ok"))
       )))
+      removed <- store.sweepCompletedChains(now).map(_.sorted)
+      s <- store.snapshot
+      arch <- store.archiveSnapshot
+      fromArchive <- store.findNode("n-c3")
+    yield
+      assertEquals(removed, List("n-c3", "n-d3", "n-f3"), "P1: cancelled 放行 → 整批立即移归档")
+      assertEquals(s.nodes.keySet, Set.empty, "整链出库，活动区清空")
+      assertEquals(arch.nodes.keySet, Set("n-c3", "n-d3", "n-f3"))
+      assertEquals(fromArchive.map(_.status), Some(NodeLifecycle.Cancelled), "findNode 归档兜底可查")
+  }
+
+  test("sweepCompletedChains: P1——cancelled 成员链全终态（notifySentAt 恒空）→ 下个 tick 整批归档（71 死链形态）") {
+    // 验收①：占位死链本体形态——链含 cancelled（无任何通知通道 → notifySentAt 永远
+    // 为空），旧判据永假、整链永锁；P1 后链内全终态（含 × 成员）下个 sweep tick 资格
+    // 成立、整批出库。completed+cancelled 同批 + 纯 cancelled 独立批（createdAt 相隔
+    // >120s 各成一批）一并覆盖。
+    val ws = freshWorkspace()
+    for
+      store <- FlowMapStore.open("demo", ws)
+      _ <- store.mutate(s => s.copy(nodes = s.nodes ++ Map(
+        "n-d4" -> nodeAt("n-d4", "impl-done", NodeLifecycle.Completed, now - 600000)
+          .copy(result = Some("ok"), completedAt = Some(now - 590000)),
+        "n-c4" -> nodeAt("n-c4", "verify-cancelled", NodeLifecycle.Cancelled, now - 540000)
+          .copy(completedAt = Some(now - 530000)), // notifySentAt 恒空（死链本体）
+        "n-solo" -> nodeAt("n-solo", "solo-cancelled", NodeLifecycle.Cancelled, now - 300000)
+          .copy(result = Some("x"), completedAt = Some(now - 290000))
+      )))
+      removed <- store.sweepCompletedChains(now).map(_.sorted)
+      s <- store.snapshot
+      arch <- store.archiveSnapshot
+      bt <- store.archiveBatches
+      backC <- store.findNode("n-c4")
+      backSolo <- store.findNode("n-solo")
+    yield
+      assertEquals(removed, List("n-c4", "n-d4", "n-solo"), "全终态（含 cancelled 成员）→ 整批立即移归档")
+      assertEquals(s.nodes.keySet, Set.empty)
+      assertEquals(arch.nodes.keySet, Set("n-c4", "n-d4", "n-solo"))
+      assertEquals(bt.keySet, Set("chain-n-d4", "chain-n-solo"), "两批各成归档分文件")
+      assertEquals(backC.map(_.status), Some(NodeLifecycle.Cancelled), "归档面板回看可达")
+      assertEquals(backSolo.map(_.status), Some(NodeLifecycle.Cancelled))
+  }
+
+  test("sweepCompletedChains: P1 红线——cancelled 与活跃兄弟并存（running/pending/wiring/blocked）→ 整批保留") {
+    // 验收②：活跃链兄弟保留语义不变——链内任一活跃态（含 blocked 待办）→ 整链不
+    // 归档，cancelled 放行不外溢到活跃链。四个独立批（createdAt 相隔 >120s）各含
+    // 一个 cancelled + 一个活跃态成员。
+    val ws = freshWorkspace()
+    for
+      store <- FlowMapStore.open("demo", ws)
+      _ <- store.mutate(s => s.copy(nodes = s.nodes ++ Map(
+        "n-c5r" -> nodeAt("n-c5r", "c-with-running", NodeLifecycle.Cancelled, now - 1200000),
+        "n-a5r" -> nodeAt("n-a5r", "still-running", NodeLifecycle.Running, now - 1140000),
+        "n-c5p" -> nodeAt("n-c5p", "c-with-pending", NodeLifecycle.Cancelled, now - 900000),
+        "n-a5p" -> nodeAt("n-a5p", "still-pending", NodeLifecycle.Pending, now - 840000),
+        "n-c5w" -> nodeAt("n-c5w", "c-with-wiring", NodeLifecycle.Cancelled, now - 600000),
+        "n-a5w" -> nodeAt("n-a5w", "still-wiring", NodeLifecycle.Wiring, now - 540000),
+        "n-c5b" -> nodeAt("n-c5b", "c-with-blocked", NodeLifecycle.Cancelled, now - 300000),
+        "n-a5b" -> nodeAt("n-a5b", "still-blocked", NodeLifecycle.Blocked, now - 240000)
+      )))
       removed <- store.sweepCompletedChains(now)
       s <- store.snapshot
       arch <- store.archiveSnapshot
     yield
-      assertEquals(removed, List.empty, "partial report (one unreported exception) → not chainArchivable → nothing swept")
-      assertEquals(s.nodes.keySet, Set("n-d3", "n-f3", "n-c3"))
+      assertEquals(removed, List.empty, "活跃链（含 blocked 批）任一批都不归档")
+      assertEquals(s.nodes.keySet,
+        Set("n-c5r", "n-a5r", "n-c5p", "n-a5p", "n-c5w", "n-a5w", "n-c5b", "n-a5b"),
+        "cancelled 与活跃兄弟同批 → 全员留主图")
       assert(arch.nodes.isEmpty, "nothing auto-archived")
+  }
+
+  test("chainArchivable: P1 判据真值表（④ completed 快轨 / ① cancelled 放行 / ③ failed 上报门 / ② 活跃·blocked 拒）") {
+    val done = node("t-done", "done", NodeLifecycle.Completed)
+    val cancelledNoNotify = node("t-c", "c", NodeLifecycle.Cancelled) // notifySentAt 空（cancelled 无通道恒空）
+    val cancelledNotified = cancelledNoNotify.copy(notifySentAt = Some(now))
+    val failedNoNotify = node("t-f", "f", NodeLifecycle.Failed)
+    val failedNotified = failedNoNotify.copy(notifySentAt = Some(now))
+    // ④ 纯 completed 链快轨回归
+    assertEquals(FlowMapStore.chainArchivable(List(done)), true)
+    // ① cancelled 成员链（含 × 成员、notifySentAt 恒空）
+    assertEquals(FlowMapStore.chainArchivable(List(done, cancelledNoNotify)), true)
+    assertEquals(FlowMapStore.chainArchivable(List(cancelledNoNotify)), true)
+    assertEquals(FlowMapStore.chainArchivable(List(cancelledNoNotify, cancelledNotified)), true)
+    // ③ failed 上报语义不回归
+    assertEquals(FlowMapStore.chainArchivable(List(failedNotified)), true)
+    assertEquals(FlowMapStore.chainArchivable(List(failedNoNotify)), false, "failed 未上报 → 保留主图待上报")
+    assertEquals(FlowMapStore.chainArchivable(List(failedNoNotify, cancelledNoNotify)), false,
+      "failed 未上报压住整链（cancelled 放行不外溢）")
+    assertEquals(FlowMapStore.chainArchivable(List(failedNotified, cancelledNoNotify)), true,
+      "failed 已报 + cancelled 未报 → 可归档（P1 修复场景）")
+    // ② 活跃链兄弟保留 + blocked 永不自动归档
+    List(NodeLifecycle.Running, NodeLifecycle.Pending, NodeLifecycle.Wiring, NodeLifecycle.Blocked).foreach { st =>
+      assertEquals(FlowMapStore.chainArchivable(List(cancelledNoNotify, node(s"t-a-$st", "a", st))), false,
+        s"cancelled + $st → 整链保留")
+      assertEquals(FlowMapStore.chainArchivable(List(done, node(s"t-b-$st", "b", st))), false,
+        s"completed + $st → 链未齐")
+    }
   }
 
   test("sweepCompletedChains: 链未齐（running）/ blocked 待办 → 整批保留主图") {
