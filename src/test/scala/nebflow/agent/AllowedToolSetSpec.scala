@@ -614,15 +614,15 @@ class AllowedToolSetSpec extends FunSuite:
     assert(!allowed.contains("AskUserQuestion"), "dispatcher 不给 AskUserQuestion（单次会话不阻塞等用户，§C.3）")
     assert(!allowed.contains("Mail"), "dispatcher 无 Mail")
 
-  test("general 固定 7 件（§C.4/§C.5 裁定 5 − 2026-09-06 节点面摘除 AskUser）——BaseTools + Pop"):
+  test("general 固定 8 件（§C.4/§C.5 裁定 5 原文；2026-09-08 作者修订恢复 AskUser）——BaseTools + AskUserQuestion/Pop"):
     val bare = mkDef("general", Nil)
     val allowed = CoreProbe.allowed(bare, isFlowNode = true) // general 节点会话 isFlowNode=true
-    val seven = Set("Read", "Glob", "Edit", "Write", "Grep", "Bash", "Pop")
-    seven.foreach(t => assert(allowed.contains(t), s"general fixed tool missing: $t"))
-    // 钉死断言（2026-09-06 作者提议 + Nebula 背书裁定）：general 默认面不含
-    // AskUserQuestion——交互出口统一（作者触点 = Flow Map pending 节点 +
-    // Nebula 汇报；节点确认点 = 建 pending 节点/BLOCKED 回投）——变异验红锚
-    assert(!allowed.contains("AskUserQuestion"), "general 默认面零 AskUserQuestion（2026-09-06 节点面摘除）")
+    val eight = Set("Read", "Glob", "Edit", "Write", "Grep", "Bash", "AskUserQuestion", "Pop")
+    eight.foreach(t => assert(allowed.contains(t), s"general fixed tool missing: $t"))
+    // 钉死断言（2026-09-08 作者修订，D6 批D1 G6/G7）：general 默认面含回
+    // AskUserQuestion——直达作者方案（节点提问经 InteractionHub 直达 Nebula
+    // 窗口；分发器监督=node-ask 留痕审计）——变异验红锚
+    assert(allowed.contains("AskUserQuestion"), "general 默认面含 AskUserQuestion（2026-09-08 恢复）")
     assert(!allowed.contains("Mail"), "general 无 Mail")
     assert(!allowed.contains("MultiEdit"), "general 无 MultiEdit（已从 ToolRegistry 删除）")
     // 声明无效（机制固定零配置）
@@ -630,11 +630,11 @@ class AllowedToolSetSpec extends FunSuite:
     val sneakyAllowed = CoreProbe.allowed(sneaky)
     assert(!sneakyAllowed.contains("WebSearch") && !sneakyAllowed.contains("Delegate"),
       "general: tools 声明整体失效")
-    // Nebula / dispatcher 面不受本裁定影响（对照钉死）
+    // Nebula / dispatcher 面不受影响（对照钉死）
     assert(AgentCore.fixedToolsFor(mkDef("Nebula", Nil)).contains("AskUserQuestion"),
-      "Nebula 面保留 AskUserQuestion（本裁定只动 general 节点面）")
+      "Nebula 面保留 AskUserQuestion（从未摘除）")
     assert(!AgentCore.fixedToolsFor(mkDef("project-dispatcher", Nil)).contains("AskUserQuestion"),
-      "dispatcher 面照旧无 AskUserQuestion（§C.3，不受本裁定影响）")
+      "dispatcher 面照旧无 AskUserQuestion（§C.3：单次会话不阻塞等用户）")
 
   test("the six remain mechanism-fixed for non-converged agents — cannot be configured away"):
     // 阶段 2c 只收敛 Nebula/dispatcher/general 三定义；team/flow/普通 standalone
@@ -662,11 +662,14 @@ class AllowedToolSetSpec extends FunSuite:
 
   // ===== 轨道二 #5: T1 flow-worker display-tool guardrails (dedicatedAgents) =====
 
-  test("guardrails ON: flow node loses Pop/AskUserQuestion even when explicitly declared"):
+  test("guardrails ON: flow node loses Pop but keeps AskUserQuestion (G8 豁免, even when explicitly declared)"):
     val defn = mkDef("qa-worker", List("Read", "Grep", "Bash", "Pop", "AskUserQuestion"))
     val allowed = CoreProbe.allowed(defn, isFlowNode = true, guardrailsOn = true)
-    assert(!allowed.contains("Pop"), "Pop stripped at engine level (deck-v6 lesson)")
-    assert(!allowed.contains("AskUserQuestion"), "AskUserQuestion stripped (nodes have nobody to ask)")
+    assert(!allowed.contains("Pop"), "Pop stripped at engine level (deck-v6 lesson; 无留痕约束仍剥)")
+    // G8（2026-09-08 作者 gate，D6 spec §3.2）：AskUserQuestion 豁免——节点
+    // 提问有来源标注+node-ask 留痕审计，与「表演性交付」风险面不同；不豁免
+    // 则 guardrails 开启即静默收回提问工具。变异验红锚：摘掉豁免即红。
+    assert(allowed.contains("AskUserQuestion"), "AskUserQuestion kept (G8 exemption: audited ask ≠ performative delivery)")
     assert(allowed.contains("Read"), "domain tools kept")
 
   test("guardrails OFF (default): declared Pop stays available to a flow node — zero regression"):

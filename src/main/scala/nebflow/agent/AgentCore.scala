@@ -1828,7 +1828,13 @@ private[agent] trait AgentCore:
         // 的展示类工具——引擎级剥离而非提示词恳求（deck-v6 实证：提示词约束在
         // 错位人设下会被推翻）。即使 agent.json 显式声明也扣掉；userFacing:true
         // 节点（白名单）豁免。策略=「写文件给下游」≠「Pop 给用户」。
-        if guardrailsOn && !userFacingNode then leafStripped -- nebflow.core.Guardrails.FlowWorkerStrippedTools
+        // G8（2026-09-08 作者 gate，D6 spec §3.2）：AskUserQuestion 对本剥离链
+        // （isFlowNode 会话，项目节点同走此分支）豁免——节点提问有来源标注
+        // 「项目 · 节点」+ node-ask 留痕事件对分发器审计可见（F1F2 批同窗落地），
+        // 与「错位人设下表演性交付」风险面不同；Pop 仍剥（展示交付无留痕约束）。
+        // 不豁免的暗坑：guardrails 一开即静默收回提问工具，「开着开着不能问了」。
+        if guardrailsOn && !userFacingNode then
+          leafStripped -- (nebflow.core.Guardrails.FlowWorkerStrippedTools - "AskUserQuestion")
         else leafStripped
       // Flow agents have no Mail — flow nodes report their result as plain
       // text output consumed by the executor (the structured FlowReport
@@ -2078,11 +2084,13 @@ object AgentCore:
    * instead of re-asking endlessly. Every denial is a real user action (the
    * timer-driven auto-deny was removed by R1, wait-timeout-fix).
    *
-   * 2026-09-06 节点面摘除 AskUser：retryableHint 改为工具名中性（原
-   * "via AskUserQuestion" 摘除）——本函数是全身份共用的纯函数（无会话工具
-   * 面上下文），而 general 节点默认面已不含 AskUserQuestion，劝停提示不得
-   * 指向会话可能不具备的工具；既有上报通道（节点=pending 节点/BLOCKED 回投，
-   * Nebula=直接汇报）对所有身份均成立。
+   * 2026-09-06 节点面摘除 AskUser 时 retryableHint 曾改为工具名中性（原
+   * "via AskUserQuestion" 摘除）。2026-09-08 作者修订恢复 general 面
+   * AskUserQuestion（D6 批D1）后口径复查：hint 保持工具名中性不变——这与其
+   * 说因工具面组成，不如说语义本身如此：被拒的工具可能恰是 AskUserQuestion
+   * 本身（点名即劝再问，荒谬），且 dispatcher 等身份不在面内；中性表述对所有
+   * 身份均成立（澄清渠道节点=AskUserQuestion 提问/pending 节点/BLOCKED 回投，
+   * Nebula=直接汇报）。
    */
   def denialMessage(toolName: String, n: Int): String =
     if n >= 2 then
@@ -2261,15 +2269,23 @@ object AgentCore:
     "Bash"
   )
 
-  /** 通用模版固定工具集（§C.1/§C.5，裁定 5 原文 8 件；2026-09-06 作者提议 +
-    * Nebula 背书裁定：AskUserQuestion 从 general 节点默认面移除——交互出口
-    * 统一，作者触点只有 Flow Map pending 节点与 Nebula 汇报两条，节点确认点
-    * = 建 pending 节点/BLOCKED 回投）：恰七件 = BaseTools 六件 + Pop。Web 系
-    * 不在默认面内——经 §B.6 plugin 扩展授予；MultiEdit 已从 ToolRegistry 删除
-    * （能力由 Edit replace_all 覆盖）。机制面零改动：AskUserQuestionTool/
-    * InteractionHub/流式特判/Guardrails 剥离语义照旧——Nebula 面与「非 general
-    * 身份显式声明可得」的 legacy 声明路径均不受影响。 */
-  val GeneralFixedTools: Set[String] = BaseTools + "Pop"
+  /** 通用模版固定工具集（§C.1/§C.5，裁定 5 原文 8 件）：恰八件 = BaseTools
+    * 六件 + AskUserQuestion + Pop。
+    *
+    * 恢复裁定（2026-09-08 作者修订，D6 spec §3.2 G6/G7 gate）：直达作者方案
+    * ——AskUserQuestion 回归 general 默认面，节点提问经 InteractionHub 直达
+    * Nebula 窗口；分发器监督语义以 ask 留痕补齐而非路由（节点提问写
+    * node-ask 留痕事件，分发器经事件流审计可见；来源标注「项目 · 节点」随
+    * F1F2 前端批同窗落地）。9-6 历史脉络（2026-09-06 作者提议 + Nebula 背书：
+    * 「交互出口统一」曾摘除本件七件化）——其针对的「表演性交付/随意打扰」
+    * 风险由定向手段化解（来源标注 + 留痕审计 + description anti-pattern 条款），
+    * BLOCKED/pending 节点通道原样保留分层（任务级申告 vs 执行级提问）。
+    * 机制面零改动：AskUserQuestionTool/InteractionHub/流式特判照旧；
+    * Guardrails 剥离对 isFlowNode 会话豁免 AskUserQuestion（G8，见
+    * buildAllowedToolSet isFlowNode 分支注释）。Web 系不在默认面内——经
+    * §B.6 plugin 扩展授予；MultiEdit 已从 ToolRegistry 删除（能力由 Edit
+    * replace_all 覆盖）。 */
+  val GeneralFixedTools: Set[String] = BaseTools + "AskUserQuestion" + "Pop"
 
   /**
    * Fixed tools for a given agent — 阶段 2d（D.1-1）后的唯一注入入口。
