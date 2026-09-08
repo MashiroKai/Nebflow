@@ -849,10 +849,13 @@ class NodeEngine(
                             // TaskBoard 批 2（§1d）：loop worker/verify 会话同属该
                             // loop 节点——flowNodeId 身份与普通节点同源（权限矩阵
                             // 同面：仅自己名下任务 status+note）。
-                            flowNodeId = Some(nodeId))
+                            flowNodeId = Some(nodeId),
+                            // D6 批 F1（G9 路径 a）：节点名随路注入（AskUser 归因）。
+                            flowNodeName = Some(node.name))
                           verify <- spawnLoopSession(verifyBase, prepared, vGrant, verifySessionId, s"${node.name}-verify", projectRoot,
                             initialMessages = resume.fold(List.empty[Message])(_.verifyMessages),
-                            flowNodeId = Some(nodeId))
+                            flowNodeId = Some(nodeId),
+                            flowNodeName = Some(node.name))
                           _ <- runLoopNode(node, worker, verify, inputText, cancelSig, resume)
                             .guarantee(
                               destroyLoopSessions(worker, verify) *>
@@ -1104,6 +1107,9 @@ class NodeEngine(
           // （仅自己名下任务、仅 status+note），project 缺省解析随之生效。
           flowNodeId = Some(nodeId),
           projectName = Some(projectName),
+          // D6 批 F1（G9 路径 a）：节点人类可读名随 spawn 注入——AskUser payload
+          // nodeName 字段来源（badge「project · nodeName」+ node-ask 留痕事件）。
+          flowNodeName = Some(nodeName),
           // 阶段 2a 沙箱（§A.6）：dev/修复节点 root=<workspace>/.nebflow/<wt>、
           // merge 节点 root=workspace——物理隔离，最小权限。
           sandboxEnabled = true,
@@ -1410,7 +1416,10 @@ class NodeEngine(
     initialMessages: List[Message] = Nil,
     /** TaskBoard 批 2（§1d）：loop 会话引擎侧节点身份（所属 NodeDef.id——worker/
       * verify 同属该 loop 节点，TaskBoard 权限矩阵与普通节点同面）。 */
-    flowNodeId: Option[String] = None
+    flowNodeId: Option[String] = None,
+    /** D6 批 F1（G9 路径 a）：loop 节点人类可读名（worker/verify 同名——
+      * 提问归因到节点而非会话分身），AskUser payload nodeName 字段来源。 */
+    flowNodeName: Option[String] = None
   ): IO[LoopSession] =
     for
       initD <- Deferred[IO, Either[String, List[Message]]]
@@ -1436,6 +1445,7 @@ class NodeEngine(
           // runWithAgent 同款——worker/verify 更新自己工单与普通节点同权限面）。
           flowNodeId = flowNodeId,
           projectName = Some(projectName),
+          flowNodeName = flowNodeName,
           sandboxEnabled = true,
           sandboxRoot = Some(workspace),
           initialMessages = initialMessages
