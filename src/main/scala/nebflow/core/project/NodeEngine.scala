@@ -68,12 +68,15 @@ class NodeEngine(
   private val logger = NebflowLogger.forName("nebflow.node.engine")
 
   /** blocked 反馈路由器（§2.2/§2.3）：档位决策 + 项目级频率保护 + 重入/升级执行。
-    * escalate 通道 = 本引擎的 deliverToNebula（eventType="blocked"，前端 label 自动 BLOCKED）。 */
+    * escalate 通道 = 本引擎的 deliverToNebula（eventType="blocked"，前端 label 自动 BLOCKED）；
+    * escalateFailed 通道 = 同型 deliverToNebula（eventType="failed"）——P2 RetryCap
+    * 升级专用（spec §2.3 G12：failed 终态真实显示，不冒充 BLOCKED）。 */
   private[project] val feedbackRouter: FeedbackRouter = new FeedbackRouter(
     projectName = projectName,
     workspace = workspace,
     feedbackMode = feedbackMode,
-    escalate = (text, nodeName) => deliverToNebula(text, nodeName, NodeLifecycle.Blocked)
+    escalate = (text, nodeName) => deliverToNebula(text, nodeName, NodeLifecycle.Blocked),
+    escalateFailed = Some((text, nodeName) => deliverToNebula(text, nodeName, NodeLifecycle.Failed))
   )
 
   /** dispatch-notify 通道（2026-09-05 批接线 completion；2026-09-07 批接线 failed）：
@@ -1978,10 +1981,28 @@ class NodeEngine(
       _ <- s.nodes.get(nodeId) match
         case Some(cancelled) =>
           emitEvent("nodeUpdated", nodeId, NodePayload.buildNodeJson(cancelled, now)) *>
-            logger.info(s"Node '${cancelled.name}' cancelled")
+            logger.info(s"Node '${cancelled.name}' cancelled") *>
+            // P2 G11（spec §3.4）：cancelled 级联清理该会话 pending asks——来源死亡
+            // 即关闭（hub 移槽 + askUserClosed 广播），卡片不再僵尸常挂。
+            cleanupPendingAsks(cancelled.sessionRef)
         case None =>
           logger.warn(s"Node '$nodeId' vanished before cancel finalize — skipped")
     yield ()
+
+  /** P2 G11（spec §3.4）：节点 cancelled 级联清理其会话的 pending asks——hub 新增
+    * CleanupForSession(sessionId)：移除该会话 pending 槽 + 向 root 广播
+    * askUserClosed{requestId}（前端关卡摘卡归批 F2，本批验收到引擎广播为止）。
+    * 三口级联：cancelNode（NodeCancel/bridge cancelled 分流）+ NodeEdit abandon +
+    * dead-session reap（reapStaleRunning 内部走 cancelNode，自动覆盖）。
+    * sessionRef=None（从未启动过，无会话即无问）或 hub 未挂（测试/早期 boot）→
+    * 静默跳过。fire-and-forget（tell 语义）：清理失败不阻断 cancelled 终态化。 */
+  def cleanupPendingAsks(sessionId: Option[String]): IO[Unit] =
+    sessionId.traverse_ { sid =>
+      resources.interactionHubRef.get.flatMap {
+        case Some(hub) => (hub ! InteractionHubCommand.CleanupForSession(sid)).void
+        case None => IO.unit
+      }
+    }
 
   // ── 投递（§2.7）─────────────────────────────────────────
 
@@ -2068,8 +2089,138 @@ class NodeEngine(
       _ <- nebulaIO
       _ <- signalIO
       _ <- waitLog
-      _ <- dispatchNotify.notifyTerminal(node, NotifyReason.Failed)
+      // P2 retry 单点触发（spec §2.3，wf3 §8-2）：retry 命中（gen < max）→ 自动回跳
+      // 重激活链**替代**本轮 dispatch-notify failed 通知（自愈处置中不扰分发器——
+      // 可见性由 nodeUpdated 事件 + FlowMapEventLog "retry" 留痕承载，cap 耗尽的
+      // RetryCap 升级才是人工注意力挂点）；未配置 → 既有 failed 通知原样（D5 尾部
+      // 挂点零改动）；cap 耗尽 → failed 通知 + RetryCap 升级双发（分发器拓扑通知
+      // 不丢，Nebula 另获预算耗尽升级）。同函数不重写 D5 语义——merge 兜底/Nebula
+      // 门控通报/signal 结算/停等留痕全部原样先行。
+      _ <- retryOrNotify(node, err)
     yield ()
+
+  /** P2 retry 触发判定（spec §2.3）：三态分流见 deliverFailed 尾注。 */
+  private def retryOrNotify(node: NodeDef, err: String): IO[Unit] =
+    node.retry match
+      case None => dispatchNotify.notifyTerminal(node, NotifyReason.Failed)
+      case Some(policy) if node.gen < policy.max => retryReactivate(node, policy, err)
+      case Some(_) =>
+        dispatchNotify.notifyTerminal(node, NotifyReason.Failed) *>
+          feedbackRouter.routeRetryCap(node, err)
+
+  /** 自动回跳重激活链（spec §2.3：既有重激活协议的自动化——「不是新机制，是分发器
+    * 今天人工处置的自动化」）：
+    * ① 本节点（failed）重激活：gen+1（代次载体，blockCount 分立口径不变）、
+    *    deliveredTo 清、result/时间戳/投递记账复位、轮次历史复位（与 NodeEdit
+    *    failed 重激活同字段族）；R2 纪律——事务内现读 fresh 仍 failed 才写。
+    * ② retry.upstream 重激活（仅终态上游——wiring/pending/running 的上游已有在途
+    *    重跑，不干预不双跑）。
+    * ③ 本节点其余 in 上游（终态有结果、非 blocked）重投（NodeEdit 重激活补投同款，
+    *    deliverOutTo dedup 幂等）——否则清账后 barrier 永不归零。
+    * ④ fork：上游补投+启动（入口上游直接启动）——上游重跑完成经 pass 边重投本节点
+    *    （settleTo 记账归零 barrier → 启动），deps 邻居场景经 settleDeps 触达 →
+    *    本节点新代次启动。
+    * 已终态的其他消费者不被重跑意外重触发：deliverOut 幂等记账 + startNode 终态
+    * 幂等跳过——与今天人工重激活语义完全一致（spec §2.3 红线）。 */
+  private def retryReactivate(failed: NodeDef, policy: RetryPolicy, err: String): IO[Unit] =
+    for
+      now <- IO(System.currentTimeMillis())
+      s <- store.mutate { st =>
+        st.nodes.get(failed.id) match
+          case Some(fresh) if fresh.status == NodeLifecycle.Failed =>
+            val nextStatus =
+              if fresh.task.exists(_.trim.nonEmpty) && fresh.in.isEmpty then NodeLifecycle.Pending
+              else NodeLifecycle.Wiring
+            st.copy(nodes = st.nodes.updated(failed.id, fresh.copy(
+              status = nextStatus,
+              result = None,
+              deliveredTo = Nil,
+              gen = fresh.gen + 1,
+              nebulaDeliveredAt = None,
+              startedAt = None,
+              completedAt = None,
+              ttlExpireAt = None,
+              blockCount = 0, // failed 重激活轮次历史复位（NodeEdit 同款口径）
+              blockedFeedback = None,
+              notifySentAt = None)))
+          case _ => st // 状态已变（并发 abandon/人工重激活）→ 拒写不回跳
+      }
+      _ <- s.nodes.get(failed.id) match
+        case Some(b) if b.gen == failed.gen + 1 &&
+          (b.status == NodeLifecycle.Wiring || b.status == NodeLifecycle.Pending) =>
+          val retryNote =
+            s"failed (gen ${b.gen}/${policy.max}): ${err.take(140)} — auto-retry: reactivating self + rerunning upstream '${policy.upstream}'"
+          emitEvent("nodeUpdated", b.id, NodePayload.buildNodeJson(b, now)) *>
+            FlowMapEventLog.append(workspace, projectName, b.id, "retry", retryNote) *>
+            logger.warn(s"Node '${b.name}' (${b.id}) $retryNote") *>
+            store.getNode(policy.upstream).flatMap {
+              case Some(up) if NodeLifecycle.Terminal.contains(up.status) =>
+                reactivateForRetry(up, now)
+              case _ => IO.unit
+            } *>
+            b.in.filterNot(_ == policy.upstream).traverse_ { upId =>
+              store.findNode(upId).flatMap {
+                case Some(up) if up.result.isDefined && up.status != NodeLifecycle.Blocked && NodeLifecycle.Terminal.contains(up.status) =>
+                  deliverOutTo(up, b.id, up.result.get)
+                case _ => IO.unit
+              }
+            } *>
+            forkStart(s"retry-rerun -> ${policy.upstream}")(
+              store.getNode(policy.upstream).flatMap {
+                case None => IO.unit
+                case Some(up) => redeliverInAndStart(up)
+              })
+        case _ =>
+          logger.info(s"Node '${failed.name}' retry skipped — state changed before retry finalize (fresh-read discipline)")
+    yield ()
+
+  /** retry 上游重激活（既有重激活协议字段族，NodeEdit failed 重激活同构——不触碰
+    * task/description/in/out/deps/loop/retry）：result 清（旧产物不作投递，重跑产出
+    * 全新投递）、deliveredTo/nebulaDeliveredAt 清（重跑完成后重新投递+记账）、时间戳
+    * 复位；failed 上游轮次历史复位，completed 上游轮次字段原样。R2 竞态守卫：fresh
+    * 仍处重激活前看到的终态才写（并发人工重激活/abandon → 拒写）。 */
+  private def reactivateForRetry(up: NodeDef, now: Long): IO[Unit] =
+    store.mutate { st =>
+      st.nodes.get(up.id) match
+        case Some(fresh) if fresh.status == up.status && NodeLifecycle.Terminal.contains(fresh.status) =>
+          val fromFailed = fresh.status == NodeLifecycle.Failed
+          val nextStatus =
+            if fresh.task.exists(_.trim.nonEmpty) && fresh.in.isEmpty then NodeLifecycle.Pending
+            else NodeLifecycle.Wiring
+          st.copy(nodes = st.nodes.updated(up.id, fresh.copy(
+            status = nextStatus,
+            result = None,
+            deliveredTo = Nil,
+            nebulaDeliveredAt = None,
+            startedAt = None,
+            completedAt = None,
+            ttlExpireAt = None,
+            blockCount = if fromFailed then 0 else fresh.blockCount,
+            blockedFeedback = if fromFailed then None else fresh.blockedFeedback,
+            notifySentAt = if fromFailed then None else fresh.notifySentAt)))
+        case _ => st
+    }.flatMap { s2 =>
+      s2.nodes.get(up.id) match
+        case Some(u2) if u2.status == NodeLifecycle.Wiring || u2.status == NodeLifecycle.Pending =>
+          emitEvent("nodeUpdated", u2.id, NodePayload.buildNodeJson(u2, now))
+        case _ => IO.unit
+    }
+
+  /** 重激活补投递 + 启动（NodeTools 重激活链同款骨架，引擎内单点）：全部 in 上游
+    * 「终态有结果、非 blocked」重投（deliverOutTo dedup 幂等）→ barrier 归零启动；
+    * 入口节点（无 in、Pending）直接启动。 */
+  private def redeliverInAndStart(n: NodeDef): IO[Unit] =
+    n.in.traverse_ { upId =>
+      store.findNode(upId).flatMap {
+        case Some(up) if up.result.isDefined && up.status != NodeLifecycle.Blocked && NodeLifecycle.Terminal.contains(up.status) =>
+          deliverOutTo(up, n.id, up.result.get)
+        case _ => IO.unit
+      }
+    } *> store.getNode(n.id).flatMap {
+      case Some(n2) if n2.in.nonEmpty && n2.in.forall(n2.deliveredTo.contains) => startNode(n2.id)
+      case Some(n2) if n2.in.isEmpty && n2.status == NodeLifecycle.Pending => startNode(n2.id)
+      case _ => IO.unit
+    }
 
   /** 合并节点因上游失败转 blocked（merge-node 批 §触发语义②；与 blockedNode 同构
     * 但**不经 FeedbackRouter**）：① 事务内现读 fresh（R2 纪律，haltsOnFailure 只认

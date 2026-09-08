@@ -146,6 +146,28 @@ object OutEdge:
     case list => Json.fromValues(list.map(e => summon[Codec[OutEdge]].apply(e)))
   }
 
+/** P2 failed 回跳 retry 策略（20260908 spec §2.3，wf3 §4.2 方案①「回跳不是图边
+  * 而是策略字段」）：挂**下游单侧**（沿 deps「下游单侧持有、不回写上游」设计先例）。
+  * 本节点 failed 且 gen < max → 引擎自动化执行既有重激活协议全链（本节点重激活 +
+  * retry.upstream 重激活重跑 → 上游经 pass 边重投 → 本节点新代次启动）；gen 达 max
+  * → cap 耗尽，failed + FeedbackRouter RetryCap 升级。回跳边不进图（不进 in/out/
+  * deps 任何邻接表）→ 绕开 DAG 环检（环检是批聚簇/settle 终止性/前端渲染的全链
+  * 不变量）；retry 自身成环由 NodeEdit 创建/编辑期校验拒绝（NODE_RETRY_CYCLE）。
+  * 旧 flow-map.json 无此键 → withDefaults 解码 None（零迁移）= 旧行为（failed 即
+  * 终态，无自动回跳）。 */
+case class RetryPolicy(
+  /** 回跳上游：必须是本节点的 in/deps 邻居（NodeEdit 校验，NODE_RETRY_NEIGHBOR）
+    * ——回跳语义 =「重取上游产物再试」，跨子图回跳无输入语义支撑。 */
+  upstream: String,
+  /** 回跳预算：本节点累计自动回跳次数上限（gen 达 max → 升级）。1-10
+    * （NODE_RETRY_MAX_RANGE）。max=1 → 允许一次回跳（共两次执行机会）。 */
+  max: Int
+)
+
+object RetryPolicy:
+  given Configuration = Configuration.default.withDefaults
+  given Codec[RetryPolicy] = ConfiguredCodec.derived
+
 /** Node 数据模型（§2.1 JSON 示例字段全量）。
   *
   * agent 字段（2026-09-05 插件架构对齐）：**新建节点一律落 "general"**（执行统一
@@ -218,6 +240,15 @@ case class NodeDef(
   /** loop 运行态 · 最近一次 FAIL verdict 摘要（≤200 字符；verify FAIL 打回时
     * 更新，前端卡片可显示最近打回原因；PASS/终态保留最后一次 FAIL 供追溯）。 */
   loopLastVerdict: Option[String] = None,
+  /** P2 failed 回跳 retry 策略（spec §2.3；RetryPolicy 详注）：Some = 本节点
+    * failed 时引擎自动回跳重跑 retry.upstream。下游单侧持有；None = 旧行为
+    * （failed 即终态）。旧 flow-map.json 无此键 → withDefaults 解码 None（零迁移）。 */
+  retry: Option[RetryPolicy] = None,
+  /** P2 retry 代次载体（spec §2.3）：本节点身份累计被自动回跳的次数（重激活协议
+    * gen+1，与 blockCount 分立——blockCount 专管 blocked 轮次口径不变）。0 = 未
+    * 回跳过；达 retry.max → cap 耗尽升级。前端「attempt N」显示载体（渲染归 F3）。
+    * 旧 flow-map.json 无此键 → withDefaults 解码 0（零迁移）。 */
+  gen: Int = 0,
   /** dispatch-notify 回流标志（2026-09-05 批）：true = 节点到达终态（先接线
     * completion）后触发项目分发器新会话（带原因码的独立信号通道，不占 out 边；
     * 防循环/预算/去重见 DispatchNotify）。NodeEdit 按需开启，默认关——分发器
@@ -407,6 +438,13 @@ object NodePayload:
       // bgWait 条件序列化（僵尸收敛批 2026-09-06）：仅 bg-wait 自持的 running 节点
       // 带——命中才产出，未命中节点 payload 字段集零变化（既有条件字段断言零影响）。
       val bgWaitFields = node.bgWait.toList.map(w => "bgWait" -> w.asJson)
+      // P2 retry 条件序列化（spec §2.3；与 merge 条件字段同构）：仅配置了 retry 的
+      // 节点带——未配置节点 payload 字段集零变化。gen 条件序列化（与 loopRound 同构）：
+      // >0 才带（0 = 未回跳过，缺键 = 同义）——前端「attempt N」徽标数据载体（渲染
+      // 消费归批 F3，本批只做字段+载荷暴露）。
+      val retryFields = node.retry.toList.map(r => "retry" -> Json.obj(
+        "upstream" -> r.upstream.asJson, "max" -> r.max.asJson))
+      val genFields = if node.gen > 0 then List("gen" -> node.gen.asJson) else Nil
       // notifySentAt 条件序列化（归档语义批 2026-09-07「送达即移」）：**仅异常终态
       // （failed/cancelled）且已上报（notifySentAt.isDefined）才带**——前端链判据
       // （flowMapArchive.js chainEligible）以此判断异常终态「已上报可归档」；与
@@ -415,7 +453,7 @@ object NodePayload:
         (if node.status == NodeLifecycle.Failed || node.status == NodeLifecycle.Cancelled then
            node.notifySentAt.toList.map(t => "notifySentAt" -> t.asJson)
          else Nil)
-      Json.obj((baseFields ++ outFields ++ legacyConfigFields ++ hasResultFields ++ taskPreviewFields ++ depsFields ++ feedbackFields ++ pluginFields ++ notifyFields ++ mergeFields ++ loopFields ++ bgWaitFields ++ notifySentAtFields)*)
+      Json.obj((baseFields ++ outFields ++ legacyConfigFields ++ hasResultFields ++ taskPreviewFields ++ depsFields ++ feedbackFields ++ pluginFields ++ notifyFields ++ mergeFields ++ loopFields ++ bgWaitFields ++ retryFields ++ genFields ++ notifySentAtFields)*)
 
 /** Flow Map 活动区（§2.6，磁盘 flow-map.json）。 */
 case class FlowMapState(
