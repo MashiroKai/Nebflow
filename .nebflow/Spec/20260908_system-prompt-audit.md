@@ -272,4 +272,4 @@ Read / Write / Edit / Glob / Grep / Bash / Pop。`<injected-plugins>` 注入的�
 
 ## 作者裁定修正（2026-09-08）
 
-作者审阅 spec 后裁定三处修正：①「运行安全（红线）不需要，这个是我们本地开发才有的问题」——三稿运行安全/进程安全节全删（§4.1 删「## 运行安全（红线）」节、§4.3 删「## 进程安全（红线）」节、§3-A 下沉表 Process Safety 各条改「不下沉、随 prefix 层退役消失」）；②「我们的 skill 已经变成插件系统了，skill-creator 过时了，后期我们会开发插件 creator」——Nebula 稿删「技能」行，L5 skill catalog 注入层不在本批动、列阶段 3 未决项；③「<injected-plugins> 注入的内容是你的操作规程？插件应该是赋予的能力，而不是操作规程」——general 稿改写为「<injected-plugins> 是分配给你的能力（工具与其说明），按需使用」。实施顺序调整为 B → D+E → A → C（取代 spec §3 原顺序）。作者未否决其余内容=按稿实施。
+作者审阅 spec 后裁定三处修正：①「运行安全（红线）不需要，这个是我们本地开发才有的问题」——三稿运行安全/进程安全节全删（§4.1 删「## 运行安全（红线）」节、§4.3 删「## 进程安全（红线）」节、§3-A 下沉表 Process Safety 各条改「不下沉、随 prefix 层退役消失」）；②「我们的 skill 已经变成插件系统了，skill-creator 过时了，后期我们会开发插件 creator」——Nebula 稿删「技能」行，L5 skill catalog 注入层不在本批动、列阶段 3 未决项；③「<injected-plugins> 注入的内容是你的操作规程？插件应该是赋予的能力，而不是操作规程」——general 稿改写为「<injected-plugins> 是分配给你的能力（工具与其说明），按需使用」（适用面=general 稿，D 批已落实；Seeds.Nebula 镜像 Nebula 稿、无该表述，故 E 支不适用）。实施顺序调整为 B → D+E → A → C（取代 spec §3 原顺序）。作者未否决其余内容=按稿实施。
