@@ -66,6 +66,21 @@ async function req(method, path, body) {
   return text ? JSON.parse(text) : {};
 }
 
+/** err → 分态 kind（0908 作者令·好友面板报错分态，好友域内复用）：
+ *  'auth'       = 401/403 登录失效（withAuth 鉴权失败；req() 已另派
+ *                 fm-auth-required → openLoginModal 全局链，卡片/toast 为兜底可见反馈）
+ *  'neblinkOff' = 404（friendService None → "NebLink not enabled"；勿与
+ *                 「未找到该用户」混态——found:false 恒 200，不进错误面）
+ *  'retryable'  = 5xx/422/429/网络及其余（网络错无 status，req() 已另派
+ *                 fm-network-error 全局 toast；消费方可凭 err.status 缺失跳过
+ *                 本地 toast 避免双提示，卡片态与全局 toast 并存不冲突）。 */
+export function errKind(err) {
+  const s = err && err.status;
+  if (s === 401 || s === 403) return 'auth';
+  if (s === 404) return 'neblinkOff';
+  return 'retryable';
+}
+
 // ── Mock store ───────────────────────────────────────────
 // In-memory per page load; seeded from localStorage so tests and manual
 // previews get deterministic scenarios.

@@ -22,7 +22,7 @@ let verifyFor = null;      // username awaiting verification-note input
 let sentTo = new Set();    // usernames sent this session（乐观回显；服务端态 = relation_status）
 let searching = false;     // search in flight → button loading state
 let searchQ = '';          // preserved across re-renders (panel rebuilds on state change)
-let searchError = false;   // 请求失败分态（≠「未找到」；09-06 作者令三态：空结果/加载中/失败）
+let searchErrorKind = null; // null | 'auth' | 'neblinkOff' | 'retryable'（api.errKind 分态；≠「未找到」；0908 作者令按 err.status 拆分三态）
 
 // ── 红点语义（0904 批次，微信常识）：未看过的请求才亮。展开「新的朋友」
 // 即视为已看（与查看后即清的微信口径一致），新 friend_event 再亮；同意/
@@ -221,7 +221,7 @@ function confirmDeleteFriend(f) {
       setFriendTrusted(f.userId, false); // 删除好友连同本地信任标记一起清
       render();
       window.dispatchEvent(new CustomEvent('fm-friends-changed'));
-    } catch (err) { window.__showToast?.(err.message || t('messages.networkError'), 'error'); }
+    } catch (err) { friendErrToast(err); }
   };
   if (typeof window.__showConfirm === 'function') {
     window.__showConfirm(t('contacts.deleteTitle'), t('contacts.deleteConfirm', { name }), run);
@@ -242,7 +242,7 @@ function confirmBlockFriend(f) {
       if (row) row.blocked = true;
       render();
       window.dispatchEvent(new CustomEvent('fm-friends-changed'));
-    } catch (err) { window.__showToast?.(err.message || t('messages.networkError'), 'error'); }
+    } catch (err) { friendErrToast(err); }
   };
   if (typeof window.__showConfirm === 'function') {
     window.__showConfirm(t('contacts.blockTitle'), t('contacts.blockConfirm', { name }), run);
@@ -255,7 +255,7 @@ async function unblockFriend(f) {
     saveBlockedCache(loadBlockedCache().filter(b => b.userId !== f.userId));
     await refresh();
     window.dispatchEvent(new CustomEvent('fm-friends-changed'));
-  } catch (err) { window.__showToast?.(err.message || t('messages.networkError'), 'error'); }
+  } catch (err) { friendErrToast(err); }
 }
 
 // ── Search (submit-style, 1s min interval) ───────────────
@@ -281,16 +281,18 @@ function buildSearch() {
     lastSearchAt = now;
     verifyFor = null;
     searching = true;
-    searchError = false;
+    searchErrorKind = null;
     render(); // button → loading state (input value survives via searchQ)
     try {
       searchResult = await api.searchUser(searchQ.trim());
-      searchError = false;
-    } catch {
-      // 失败分态（09-06 作者令）：422/429/网络/窗口期 404 → 「搜索失败」卡，
-      // 不再伪装成「未找到该用户」（此前与空结果混态，误导性强）。
+      searchErrorKind = null;
+    } catch (err) {
+      // 失败分态（09-06 作者令拆分「未找到」；0908 作者令再按 err.status 三分）：
+      // 401/403→登录失效卡+重登按钮（fm-auth-required 全局链保留，卡片为兜底
+      // 可见反馈）；404→「Neblink 未启用」（≠「未找到」，found:false 恒 200）；
+      // 5xx/422/429/网络/窗口期→可重试卡。
       searchResult = null;
-      searchError = true;
+      searchErrorKind = api.errKind(err);
     }
     searching = false;
     render();
@@ -306,7 +308,7 @@ function buildSearch() {
   row.appendChild(btn);
   if (searching) {
     block.appendChild(buildSearching());
-  } else if (searchError) {
+  } else if (searchErrorKind) {
     block.appendChild(buildSearchError());
   } else if (searchResult) {
     block.appendChild(buildResultCard());
@@ -325,12 +327,39 @@ function buildSearching() {
   return card;
 }
 
-// 请求失败态：明确反馈，不冒充「未找到」
+// 请求失败态（0908 作者令三分态）：明确反馈，不冒充「未找到」。
+// auth → 登录失效卡 + 重登按钮（→openLoginModal；全局 fm-auth-required 链
+// 保留，卡片为兜底可见反馈）；neblinkOff → 「Neblink 未启用」；retryable →
+// 可重试文案（网络错另有 fm-network-error 全局 toast，并存不冲突）。
 function buildSearchError() {
   const card = el('div', 'fm-result-card fm-search-error');
   card.setAttribute('role', 'alert');
-  card.appendChild(el('div', 'fm-empty', t('contacts.searchError')));
+  if (searchErrorKind === 'auth') {
+    card.appendChild(el('div', 'fm-empty', t('contacts.searchAuthError')));
+    const foot = el('div', 'fm-result-foot');
+    const btn = el('button', 'glass-control fm-login-btn', t('contacts.relogin'));
+    btn.addEventListener('click', () => openLoginModal());
+    foot.appendChild(btn);
+    card.appendChild(foot);
+  } else if (searchErrorKind === 'neblinkOff') {
+    card.appendChild(el('div', 'fm-empty', t('contacts.neblinkOff')));
+  } else {
+    card.appendChild(el('div', 'fm-empty', t('contacts.searchError')));
+  }
   return card;
+}
+
+// 好友操作失败 toast 分态（0908 作者令：delete/block/unblock 同族折叠拆分）：
+// auth→登录引导；404→Neblink 未启用；其余 HTTP 错→networkError 现文案。
+// 网络错（err 无 status）已由 fm-network-error 全局 toast 覆盖，本地跳过
+// 避免双提示。
+function friendErrToast(err) {
+  if (!err || err.status === undefined) return;
+  const kind = api.errKind(err);
+  const key = kind === 'auth' ? 'contacts.searchAuthError'
+    : kind === 'neblinkOff' ? 'contacts.neblinkOff'
+    : 'messages.networkError';
+  window.__showToast?.(t(key), 'error');
 }
 
 function buildResultCard() {
@@ -427,7 +456,7 @@ function buildResultCard() {
       try {
         await api.unblockFriend(r.userId);
         saveBlockedCache(loadBlockedCache().filter(b => b.userId !== r.userId));
-      } catch (err) { window.__showToast?.(err.message || t('messages.networkError'), 'error'); }
+      } catch (err) { friendErrToast(err); }
       searchResult = null;
       await refresh();
       window.dispatchEvent(new CustomEvent('fm-friends-changed'));
