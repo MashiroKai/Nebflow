@@ -351,6 +351,15 @@ function injectLoginModalStyles() {
 .login-modal-btn:hover { filter: brightness(1.06); }
 .login-modal-btn:active { filter: brightness(0.96); }
 .login-waiting { margin-top: 12px; font-size: 12px; color: var(--color-text-muted); }
+/* Switch-account secondary entry (RP-logout fix, 2026-09-06) — quiet text
+   link under the primary button; muted color, no new tokens. */
+.login-switch-link {
+  display: inline-block; margin-top: 10px; padding: 2px 6px;
+  background: none; border: none; cursor: pointer;
+  font-size: 12px; color: var(--color-text-muted);
+  text-decoration: none; border-radius: 6px; transition: color 0.15s;
+}
+.login-switch-link:hover { color: var(--color-text); }
 .login-success { font-size: 14px; color: var(--color-primary); padding: 12px 0; }
 .login-error-msg { font-size: 13px; color: #e57373; margin-bottom: 14px; line-height: 1.5; }
 `;
@@ -471,9 +480,13 @@ function showLoginModal() {
     } else if (state === 'waiting') {
       // PKCE primary path: nothing to copy - the browser tab does the whole
       // hosted login and redirects back to the local gateway.
+      // "使用其他账号登录" (RP-logout fix, 2026-09-06): restarts the flow
+      // with prompt="login consent" so the hosted page shows the account
+      // form even when this browser still holds a Logto SSO session.
       body = `
         <div class="login-hint">在浏览器中登录 nebflow 账号以连接此设备</div>
         <button class="login-modal-btn glass-control" id="login-open-auth">重新打开登录页面</button>
+        <button class="login-switch-link" id="login-switch-account">使用其他账号登录</button>
         <div class="login-waiting">等待登录完成…</div>`;
     } else if (state === 'waiting-device') {
       // Legacy device-flow fallback (gateway reports logto-not-configured).
@@ -501,13 +514,22 @@ function showLoginModal() {
       if (flowInfo?.authorizeUrl) window.open(flowInfo.authorizeUrl, '_blank');
       else if (flowInfo?.verificationUri) window.open(flowInfo.verificationUri, '_blank');
     });
+    // Switch account (RP-logout fix, 2026-09-06): reserve the popup inside
+    // THIS click gesture (same contract as the retry button below), then
+    // restart the flow — startPkceLogin(true) sends prompt="login consent"
+    // so Logto shows the account form instead of silently re-entering the
+    // SSO-session account.
+    modal.querySelector('#login-switch-account')?.addEventListener('click', () => {
+      reservePopup(); // synchronous gesture reservation
+      startFlow(true);
+    });
     modal.querySelector('#login-retry')?.addEventListener('click', () => {
       reservePopup(); // synchronous gesture reservation for the retry
       startFlow();
     });
   };
 
-  const startFlow = async () => {
+  const startFlow = async (forceLogin = false) => {
     setPairing(true);
     finished = false;
     render('starting');
@@ -524,7 +546,8 @@ function showLoginModal() {
     };
     try {
       // Primary path: Authorization Code + PKCE via the hosted Logto page.
-      const pkce = await startPkceLogin();
+      // forceLogin → prompt="login consent" (switch-account entry).
+      const pkce = await startPkceLogin(forceLogin);
       if (pkce) {
         flowInfo = pkce;
         st.flowState = 'waiting';

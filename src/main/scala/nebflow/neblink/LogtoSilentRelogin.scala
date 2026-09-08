@@ -76,7 +76,10 @@ object LogtoSilentRelogin:
   ): IO[Option[String]] =
     fresh match
       case Right(tokens) =>
-        tokens.refreshToken.traverse_(DeviceCredential.updateLogtoRefresh) *>
+        // Rotation write-back: new refresh token + (when the refresh grant
+        // response carried one) the fresh id_token — keeps the end-session
+        // hint current with the provider's latest session issuance.
+        tokens.refreshToken.traverse_(rt => DeviceCredential.updateLogtoRefresh(rt, tokens.idToken)) *>
           ms.identity.flatMap { identity =>
             LogtoDeviceFlow
               .register(LogtoDeviceFlow.jdkSend)(

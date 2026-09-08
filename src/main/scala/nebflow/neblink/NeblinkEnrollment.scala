@@ -14,9 +14,10 @@ import io.circe.Json
 object NeblinkEnrollment:
 
   /** Persist the EnrollResponse fields. `logtoRefresh` carries the provider
-    * refresh token (AC+PKCE / silent re-login) into device.json; `reloginHook`
-    * is wired into the hot-swapped client so IT can silent-relogin too.
-    * Returns the persisted device token. */
+    * refresh token (AC+PKCE / silent re-login) into device.json; `logtoIdToken`
+    * (RP-logout fix, 2026-09-06) the raw id_token for the end-session
+    * `id_token_hint`; `reloginHook` is wired into the hot-swapped client so
+    * IT can silent-relogin too. Returns the persisted device token. */
   def persist(
     ms: NeblinkService,
     resolvedUrl: String,
@@ -24,7 +25,8 @@ object NeblinkEnrollment:
     logtoRefresh: Option[String],
     discovery: Option[NeblinkDiscovery],
     gatewayPort: Int,
-    reloginHook: Option[IO[Option[String]]]
+    reloginHook: Option[IO[Option[String]]],
+    logtoIdToken: Option[String] = None
   ): IO[Either[String, String]] =
     val deviceToken = json.hcursor.downField("deviceToken").as[String].toOption
     val networkId = json.hcursor.downField("networkId").as[String].toOption.getOrElse("")
@@ -36,7 +38,8 @@ object NeblinkEnrollment:
       case Some(tok) =>
         for
           identity <- ms.identity
-          logtoBlock = logtoRefresh.map(rt => LogtoRefresh(rt, System.currentTimeMillis()))
+          logtoBlock = logtoRefresh.map(rt =>
+            LogtoRefresh(rt, System.currentTimeMillis(), logtoIdToken))
           cred = DeviceCredential(resolvedUrl, networkId, identity.deviceId, tok, logtoBlock)
           _ <- DeviceCredential.save(cred)
           newConfig = NeblinkServerConfig(
