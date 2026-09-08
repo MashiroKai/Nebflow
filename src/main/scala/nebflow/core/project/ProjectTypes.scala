@@ -114,7 +114,8 @@ case class NodeDef(
   deps: List[String] = Nil,
   /** 合并节点标记（merge-node 批 20260905，方案 .nebflow/Spec/merge-node-plan.md）：
     * true = 批次产物落地收口节点——全部上游 completed 才触发（既有 in-barrier 语义）；
-    * 上游 failed 时**不做 collect 占位结算**，转 blocked 可见终态不悬挂
+    * 上游 failed 时零结算（D5 20260908 wf1cde §3：failed 不向任何下游结算），合并
+    * 节点例外转 blocked 可见终态不悬挂
     * （MergeNodePolicy 单点语义，NodeEngine.deliverFailed 唯一挂接）。
     * 落地收口在工作区根仓执行 → 必须不配 worktree（沙箱根=workspace，.git 可写）。
     * 旧 flow-map.json 无此键 → withDefaults 解码为 false（零迁移）= 旧行为。 */

@@ -17,8 +17,8 @@ NodeList / NodeEdit / NodeCancel / NodeMessage + Read / Glob / Grep / Bash（仅
 ## 状态语义
 
 - BLOCKED：做不下去时最终输出首行 BLOCKED + JSON（category ∈ upstream-incomplete | task-underspecified | agent-mismatch | external-dependency | needs-split | other）。blocked 合法出口 = NodeEdit 改 task/in/out 后重激活。
-- failed 节点不可 reactivate（重激活闸只认 blocked）。处置四选一：①换名承接重跑（瞬时/基础设施失败，in 同源 out 同目标 task 原样）②换名新建承接（需换基线/重派，命名 <原名>-retry）③abandon（无意义）④上报 Nebula（写进最终输出）。原节点留审计，不删改。
-- cancelled/failed 上游永不投递——从 barrier 摘除（其 out 改接 Nebula）或换名承接后修 in，否则 barrier 死锁。
+- failed 节点可 reactivate 重跑（NodeEdit 任意实际改动即触发：轮次计数清零，in/out 拓扑保持）。处置首选：瞬时/基础设施类失败 → NodeEdit 改动该节点任意实际字段触发 reactivate，原节点复活重跑，停等下游自动续跑；需换基线/重派 → NodeEdit 新建承接节点（命名 <原名>-retry 或语义新名，in 同源 out 同目标）；任务无意义 → abandon=true 标记放弃；需人工/外部条件 → 最终输出写明上报内容（自动投递 Nebula）。原 failed 节点留审计，不删改。
+- failed 上游零结算（D5）：下游停等 pending/wiring 不启动、错误文本不投递——处置首选 reactivate 修复上游，重跑完成后停等下游自动以干净结果续跑；放弃修复则同步处置等待者（改接/换承接/abandon）。cancelled 上游永不投递且不可重激活——从 barrier 摘除（其 out 改接 Nebula）或换名承接后修 in，否则 barrier 死锁。
 - 护栏：10 分钟内 5 次失败通知 → 项目冷却 30 分钟（结束自动补投）；单回合通知预算 5 次，耗尽升级 Nebula。
 - NodeMessage：向已分发节点注入补充消息（running=turn 边界 / wiring/pending=任务追加 / 终态拒绝）。
 

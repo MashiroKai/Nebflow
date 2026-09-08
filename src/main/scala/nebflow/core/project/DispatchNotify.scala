@@ -71,7 +71,9 @@ import nebflow.core.NebflowLogger
  * completion：completedNode 在终态落库+投递+deps 结算完成后调用本入口（1 行挂接）。
  * failed：NodeEngine.deliverFailed 尾部挂接（2026-09-07 批单点收口——failNode 与
  * autoFailDeadRunning 两口必经 deliverFailed；通知在 out 结算**之后**发出，分发器
- * spawn/注入时读到的 Flow Map 是结算后状态，拓扑判断不失真）。宿主重启后未投递
+ * spawn/注入时读到的 Flow Map 是结算后状态，拓扑判断不失真）。D5 起（20260908
+ * wf1cde §3）failed 零结算：普通下游停等 pending/wiring、merge 下游转 blocked，
+ * 通知文本尾部附停等等待者清单（E-③，[[waitingSuccessors]]）。宿主重启后未投递
  * 通知（notifySentAt 为空）由 ProjectActor.TtlTick(30s) 挂 [[redeliver]] 周期补投
  * （参照 redeliverUnconsumedNebulaResults 形态）。
  */
@@ -215,7 +217,10 @@ final class DispatchNotify(
       case FailedWindowVerdict.Proceed =>
         failedBudgetUsed.modify(n => if n >= failedBudgetMax then (n, false) else (n + 1, true)).flatMap {
           case true =>
-            trigger(failedNotifyTaskText(node))
+            // 触发前现读等待者清单（wf1cde E-③）：停等下游随通知告知分发器
+            // （补投扫描路径同此口，清单一致）。
+            waitingSuccessors(node.id).flatMap(waiters =>
+              trigger(failedNotifyTaskText(node, waiters)))
               .handleErrorWith(e => logger.warn(s"dispatch-notify trigger failed for node '${node.name}' (${node.id}): ${e.getMessage}").void) *>
               markSent(node.id) *>
               FlowMapEventLog.append(workspace, projectName, node.id, "dispatch-notify",
@@ -342,11 +347,34 @@ final class DispatchNotify(
        |请先 NodeList 读现状，再基于该结果决定后续：扩拓扑 / 建合并节点收口 / 收口 / 判定无需动作。
        |无需回报——拓扑与状态已落 Flow Map。""".stripMargin
 
+  /** D5 停等等待者清单（20260908 wf1cde §3.3 + E-③）：因本节点 failed 而停等的下游。
+    * 判定（status ∈ {pending, wiring} 的停等态）：in-barrier 等待 = in 引用本节点 ∧
+    * 未收到其投递（deliveredTo 无此键——与 startNode barrier 闸门同构）；deps 等待 =
+    * deps 引用本节点（depsSatisfied 只认 completed，failed 永不满足）。合并节点例外
+    * 下游已转 blocked（可见终态 + merge-blocked 独立通报），不在停等集合，不入清单。 */
+  private def waitingSuccessors(failedNodeId: String): IO[List[String]] =
+    store.snapshot.map { s =>
+      s.nodes.values
+        .filter { n =>
+          val waiting = n.status == NodeLifecycle.Wiring || n.status == NodeLifecycle.Pending
+          val inWait = n.in.contains(failedNodeId) && !n.deliveredTo.contains(failedNodeId)
+          val depsWait = n.deps.contains(failedNodeId)
+          waiting && (inWait || depsWait)
+        }
+        .toList
+        .map(n => s"${n.name}(${n.id})")
+    }
+
   /** failed 版通知任务文本（2026-09-07 批设计 §2.3 + 作者 09:24 裁定③——failed 可
     * 重激活重跑：reactivate 为首选处置，换名新建降为换基线/重派备选）：err 摘要 +
-    * 四动作清单 + 操作知识（分发器是单次会话无记忆，每次都要被告知）。 */
-  private def failedNotifyTaskText(node: NodeDef): String =
+    * 四动作清单 + 操作知识（分发器是单次会话无记忆，每次都要被告知）。
+    * D5 追加（20260908 wf1cde E-③）：尾部附停等等待者告知行——有则列节点名/id
+    * （处置上游前先知影响面），无则明示「无下游等待者」（处置不再靠 NodeList 巡检猜）。 */
+  private def failedNotifyTaskText(node: NodeDef, waiters: List[String]): String =
     val errSummary = node.result.map(_.take(500)).getOrElse("(无错误文本)")
+    val waiterLine = waiters match
+      case Nil   => "下游等待者：无下游等待者。"
+      case names => s"下游等待者（failed 零结算停等中；上游修复重跑完成后自动续跑）：${names.mkString(", ")}。"
     s"""[dispatch-notify] 节点 '${node.name}' (${node.id}) failed（reason=failed，project=$projectName）。
        |错误摘要：$errSummary
        |结果全文：NodeList(detail="${node.id}", project=$projectName)。
@@ -355,6 +383,7 @@ final class DispatchNotify(
        |2. 需换基线/重派（任务定义或执行形态需实质调整）→ NodeEdit 新建承接节点（建议命名 <原名>-retry 或语义新名），接原拓扑位置（in 同源、out 同目标）；原 failed 节点留作审计，勿删改；
        |3. 任务无意义/无法修复 → NodeEdit abandon=true 标记放弃；
        |4. 需人工/外部条件 → 在你的最终输出中写明上报内容（自动投递 Nebula）。
+       |$waiterLine
        |无需回报——拓扑与状态已落 Flow Map。""".stripMargin
 
 object DispatchNotify:

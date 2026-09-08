@@ -196,12 +196,13 @@ class NodeEngine(
 
   /** 死会话 running 节点的自动收敛（僵尸收敛批 2026-09-06；与 NodeCancel-stale /
     * abandon 的人力收殓区分——本方法走**自动** watchdog 路径）。收敛目标取 **failed**
-    * 而非 reapStaleRunning 的 cancelled：cancelled 不投递下游（cancelNode 不调
-    * deliverFailed/settleDeps），下游 barrier/deps 永不释放——正是「下游永久阻塞」
-    * 这门核心危害；failed 沿 deliverFailed 给下游一个 collect 占位结算（merge 型转
-    * blocked），barrier 归零，下游不再悬挂。fresh 守卫（R2）：只在 `status==Running`
-    * 时收敛——节点已终态/状态已变 → 拒写（并发完成/取消不被本路径覆盖成 failed）。
-    * 审计事件独立（dead-session-reaped），与既有 reaped/abandoned 区分。 */
+    * 而非 reapStaleRunning 的 cancelled：cancelled 不投递不通知（cancelNode 不调
+    * deliverFailed/settleDeps）且不可重激活——无人知情、无人可修；failed 沿
+    * deliverFailed 触发分发器通知（附停等等待者清单，wf1cde E-③）且可 reactivate
+    * 修复重跑——D5 零结算下下游停等可见，上游修好后等待者自动续跑。fresh 守卫
+    * （R2）：只在 `status==Running` 时收敛——节点已终态/状态已变 → 拒写（并发
+    * 完成/取消不被本路径覆盖成 failed）。审计事件独立（dead-session-reaped），
+    * 与既有 reaped/abandoned 区分。 */
   private def autoFailDeadRunning(nodeId: String, err: String): IO[Unit] =
     for
       now <- IO(System.currentTimeMillis())
@@ -1945,7 +1946,8 @@ class NodeEngine(
         case Some(failed) =>
           emitEvent("nodeUpdated", nodeId, NodePayload.buildNodeJson(failed, now)) *>
             logger.warn(s"Node '${failed.name}' failed: ${err.take(200)}") *>
-            // 失败投递（§2.7）：out=Nebula → failed 消息；out=节点 → collect 结算（占位符）。
+            // 失败投递（§2.7 + D5 零结算）：out=Nebula → failed 消息；out=节点 →
+            // 下游停等零结算（merge 例外转 blocked），停等等待者经尾部通知告知分发器。
             deliverFailed(failed, err)
         case None =>
           logger.warn(s"Node '$nodeId' vanished before failure finalize — error not persisted")
@@ -2009,36 +2011,29 @@ class NodeEngine(
       case Some("Nebula") =>
         deliverToNebula(s"[Node '${node.name}' failed]\n$err", node.name, "failed", Some(node.id))
       case Some(targetId) =>
-        // collect 结算：占位符标记 + 计数归零继续（§2.4 默认 collect）。
-        // 合并节点例外（merge-node 批 20260905 §触发语义，MergeNodePolicy 单点）：
-        // 占位结算会让合并在不完整输入上启动 → 改转 blocked 可见终态不悬挂。
+        // D5「failed 零结算」（20260908 wf1cde §3.3，作者 E-① YES + B1 pending 停等）：
+        // 上游 failed 不向任何下游结算——collect 占位结算已废除（占位投递与真实投递
+        // 共用 deliveredTo 键位 → 上游 reactivate 修复后真实结果被 dedup 挡住的连贯性
+        // 洞，wf1cde §3.2；废除决策 §3.3）。普通下游保持 pending/wiring 停等（保持
+        // 可见；恢复零步——上游 reactivate 修复重跑完成后经 deliverOut 正常投递，
+        // deliveredTo 无污染键 → barrier 归零自动续跑）；合并节点例外转 blocked 可见
+        // 终态（merge-node 批 20260905 §触发语义，MergeNodePolicy 单点只读复用）。
         for
           targetOpt <- store.findNode(targetId)
           _ <- targetOpt match
             case Some(target) if MergeNodePolicy.haltsOnFailure(target) =>
               mergeBlockedByUpstreamFailure(target, node, err)
             case Some(target) =>
-              store.mutate { s =>
-                val t = s.nodes.get(targetId)
-                t match
-                  case Some(tn) if !tn.deliveredTo.contains(node.id) =>
-                    s.copy(nodes = s.nodes.updated(targetId, tn.copy(deliveredTo = tn.deliveredTo :+ node.id)))
-                  case _ => s
-              }.flatMap { s =>
-                val tn = s.nodes.get(targetId)
-                val allArrived = tn.exists(tn2 => tn2.in.forall(upId => tn2.deliveredTo.contains(upId)))
-                if allArrived && tn.exists(_.status != NodeLifecycle.Running) then
-                  forkStart(s"deliver-failed -> $targetId")(startNode(targetId))
-                else IO.unit
-              }
+              logger.info(s"Node '${node.name}' failed — downstream '${target.name}' (${target.id}) keeps waiting (D5 zero-settlement; reactivate upstream to auto-resume)")
             case None => IO.unit
         yield ()
     // dispatch-notify（2026-09-07 批，设计 §2.1）：out 结算后通知分发器（failed 版，
     // 不查 notifyDispatcher flag）。挂本函数尾部=单点收口——failNode 与
     // autoFailDeadRunning 两口必经 deliverFailed，未来新增 failed 终态化路径只要走
     // 这里就自动覆盖。通知在 out 结算**之后**发出：分发器 spawn/注入时读到的
-    // Flow Map 是结算后状态（下游已按 failed 推进、merge 下游已 blocked），拓扑判断
-    // 不失真——与 completedNode 先 deliverOut+settleDeps 再 notify 同序。
+    // Flow Map 是结算后状态（普通下游停等 pending/wiring、merge 下游已 blocked，
+    // 通知文本附停等等待者清单，wf1cde E-③），拓扑判断不失真——与 completedNode
+    // 先 deliverOut+settleDeps 再 notify 同序。
     settle *> dispatchNotify.notifyTerminal(node, NotifyReason.Failed)
 
   /** 合并节点因上游失败转 blocked（merge-node 批 §触发语义②；与 blockedNode 同构
