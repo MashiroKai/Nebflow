@@ -8,12 +8,21 @@
 
 #task-list.has-tasks {
   max-height: 50vh;
-  overflow-y: auto;
+  /* 2026-09-08 作者令：面板头钉顶——滚动边界内移到 .task-body-inner，
+     外层收敛为 hidden（双滚动条防线），高度预算语义不变（整卡含 header ≤50vh）。*/
+  overflow: hidden;
   padding: 2px 8px 4px;
+  /* flex column 链：has-tasks → card → body → inner，逐层 min-height:0
+     让高度约束传到底，inner 才获得可滚动的确定高度。 */
+  display: flex;
+  flex-direction: column;
 }
 
 /* Subtle glass card — lighter than full glass panels but not bare */
 .task-card {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
   background: var(--glass-bg);
   -webkit-backdrop-filter: blur(var(--glass-blur)) saturate(1.15);
   backdrop-filter: blur(var(--glass-blur)) saturate(1.15);
@@ -35,6 +44,9 @@
   margin-bottom: 4px;
   font-size: 12px;
   cursor: default;
+  /* 钉顶头：位于滚动容器（.task-body-inner）之外的兄弟节点，天然不随
+     内容滚走；flex-shrink:0 防 50vh 高度压力下头部被压缩。 */
+  flex-shrink: 0;
 }
 
 .task-toggle {
@@ -73,14 +85,21 @@
 .task-body {
   display: grid;
   grid-template-rows: 1fr;
+  min-height: 0; /* flex item 可缩：高度压力传到 inner 滚动体 */
   transition: grid-template-rows 0.28s cubic-bezier(0.4, 0, 0.2, 1),
               opacity 0.22s ease;
   opacity: 1;
 }
 
 .task-body-inner {
-  overflow: hidden;
+  overflow: hidden; /* 折叠态语义：grid 0fr 动画期间内容裁剪，不产生滚动条 */
   min-height: 0;
+}
+
+/* 展开态唯一滚动容器：仅列表体滚，header 在滚动边界外钉顶。
+   折叠瞬间 .collapsed 生效 → 回到 overflow:hidden，动画期无滚动条残影。 */
+.task-card:not(.collapsed) .task-body-inner {
+  overflow-y: auto;
 }
 
 .task-card.collapsed .task-body {
