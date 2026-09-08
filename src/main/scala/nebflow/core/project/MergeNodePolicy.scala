@@ -15,8 +15,8 @@ package nebflow.core.project
   *   - 上游 blocked   → 不结算不触发（blockedNode 本就不投递）；走既有 blocked
   *                      重入协议处置该上游，合并节点原地 wiring/pending 等待
   *   - 上游 failed    → 本 object.haltsOnFailure 命中 → NodeEngine 把合并节点转
-  *                      blocked 可见终态（**不做 collect 占位结算**——占位会让合
-  *                      并在不完整输入上启动；也不悬挂 pending）
+  *                      blocked 可见终态（D5 起 failed 对全部下游零结算，普通下游
+  *                      停等 pending；合并节点例外取可见终态，不悬挂）
   *   - 上游 cancelled → 无投递（cancelNode 本就不结算）；合并节点保持
   *                      wiring/pending 可见，由分发器 NodeList 巡检处置（改接/abandon）
   */
@@ -25,7 +25,8 @@ object MergeNodePolicy:
   /** 判定：该节点是否合并节点（NodeEdit create `merge=true` 显式标记）。 */
   def isMerge(n: NodeDef): Boolean = n.merge
 
-  /** 上游失败时该合并节点是否应转 blocked（而非 collect 占位结算）：
+  /** 上游失败时该合并节点是否应转 blocked（D5 起 failed 全局零结算——普通下游停等
+    * pending，合并节点例外取 blocked 可见终态）：
     * 仅合并节点且尚未启动（wiring/pending）——running/终态一律不动
     * （running 不会被失败上游触达：其启动前提是全部上游已完成投递）。 */
   def haltsOnFailure(n: NodeDef): Boolean =
