@@ -149,6 +149,7 @@ export default {
   'contacts.self': '这是你自己',
   'contacts.sendMessage': '发消息',
   'contacts.outgoingPending': '等待对方处理',
+  'contacts.alreadyRequested': '已申请过，等待对方处理',
   'contacts.respondRequest': '回应请求',
   'contacts.unblock': '取消拉黑',
   'contacts.newFriends': '新的朋友',

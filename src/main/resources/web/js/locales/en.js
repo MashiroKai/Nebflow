@@ -152,6 +152,7 @@ export default {
   'contacts.self': 'This is you',
   'contacts.sendMessage': 'Message',
   'contacts.outgoingPending': 'Waiting for their response',
+  'contacts.alreadyRequested': 'Request already sent — waiting for their response',
   'contacts.respondRequest': 'Respond to request',
   'contacts.unblock': 'Unblock',
   'contacts.newFriends': 'New Friends',
