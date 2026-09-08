@@ -23,6 +23,29 @@
   text-overflow: ellipsis;
 }
 
+/* ── 视图过滤控件（P3 占位治理 2026-09-08：二态「全部/进行中」）──────────────
+   开关本体复用共享组件 .nb-toggle（sidebar.css「nb-toggle — shared switch」，
+   --glass-control-* 材质 token + 双主题自适应），本条只承担行内布局与标签字号，
+   零新色值。挂点：就地视图 .flowmap-nav-bar（返回钮后）与 legacy card-header。 */
+.flowmap-view-filter {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  flex: 0 0 auto;
+  white-space: nowrap;
+}
+.flowmap-view-filter-label {
+  font: 400 12px/1.4 -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+  color: var(--color-text-muted);
+}
+/* 窄窗让位两级兜底：① ≤479px 先藏文字标签只留 34px 开关本体（nav-bar 360px 窄窗
+   单行不溢出口径的共存条件——返回钮+摘要双 ellipsis 之上只能再让出一个开关位）；
+   ② <340px 既有口径摘要 display:none（projectPanel.css/flowmap-ui-fix ③极窄），
+   开关始终保住（视图过滤在窄窗仍可触达）。 */
+@media (max-width: 479px) {
+  .flowmap-view-filter-label { display: none; }
+}
+
 .flowmap-loading {
   padding: 48px 24px;
   text-align: center;

@@ -86,6 +86,10 @@ export default {
   'flowmap.st.wiring': 'wiring',
   'flowmap.st.pending': 'pending',
   'flowmap.st.cancelled': 'cancelled',
+  // 视图过滤（P3 占位治理，2026-09-08）：二态「全部/进行中」，纯前端派生过滤
+  'flowmap.viewFilter.activeOnly': 'Active only',
+  'flowmap.viewFilter.hint': 'Hide terminal nodes (completed/failed/cancelled/blocked) — show active only',
+  'flowmap.viewFilter.noneActive': 'No active nodes — terminal nodes are hidden by the view filter',
   'flowmap.archive.button': 'Archived task chains ({n})',
   'flowmap.archive.title': 'Archived task chains',
   'flowmap.archive.ttlTitle': 'Entries are kept for 24 hours after completion, then cleaned up automatically',

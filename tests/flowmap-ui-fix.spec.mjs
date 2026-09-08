@@ -221,7 +221,7 @@ test('②标题栏单元素「← 项目名」：箭头+名字、无独立返回
     const btn = bar?.querySelector('[data-back-to-projects]');
     if (!bar || !btn) return null;
     return {
-      btnCount: bar.querySelectorAll('button').length,
+      btnCount: bar.querySelectorAll('[data-back-to-projects]').length,
       hasSvg: !!btn.querySelector('svg'),
       name: btn.querySelector('.flowmap-back-name')?.textContent,
       title: btn.getAttribute('title'),
