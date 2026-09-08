@@ -84,12 +84,12 @@ class FlowMapStoreSpec extends CatsEffectSuite:
         "b" -> node("b", "B"),
         "c" -> node("c", "C")
       )))
-      _ <- store.mutate(s => s.copy(nodes = s.nodes.updated("a", s.nodes("a").copy(out = Some("b")))))
+      _ <- store.mutate(s => s.copy(nodes = s.nodes.updated("a", s.nodes("a").copy(out = List(OutEdge("b"))))))
       // b.out = c：b 的传递下游（c）不达 a → 不环
       noCycle <- store.wouldCreateCycle("b", "c")
       // a.out 已是 b；若 b.out = a → a 的传递下游（b）达 b 自身 → 环
       cycleAB <- store.wouldCreateCycle("b", "a")
-      _ <- store.mutate(s => s.copy(nodes = s.nodes.updated("b", s.nodes("b").copy(out = Some("a")))))
+      _ <- store.mutate(s => s.copy(nodes = s.nodes.updated("b", s.nodes("b").copy(out = List(OutEdge("a"))))))
       // 已成环后：a.out → b 再测一次仍报环
       again <- store.wouldCreateCycle("b", "a")
       // 新边 a→c 不受影响（c 下游无 a）
@@ -106,7 +106,7 @@ class FlowMapStoreSpec extends CatsEffectSuite:
     for
       store <- FlowMapStore.open("demo", ws)
       _ <- store.mutate(s => s.copy(nodes = s.nodes ++ Map(
-        "a" -> node("a", "A").copy(out = Some("Nebula")),
+        "a" -> node("a", "A").copy(out = List(OutEdge.nebula)),
         "b" -> node("b", "B")
       )))
       r1 <- store.wouldCreateCycle("b", "a")
@@ -300,12 +300,12 @@ class FlowMapStoreSpec extends CatsEffectSuite:
       mtimeY0 <- IO.blocking(os.mtime(dir / "chain-n-y1.json"))
       _ <- IO.blocking(Thread.sleep(20)) // mtime 粒度护栏
       // 归档节点 out 改线（NodeTools 同款单点更新路径）
-      _ <- store.mutateArchive(a => a.copy(nodes = a.nodes.updatedWith("n-x1")(_.map(_.copy(out = Some("n-z"))))))
+      _ <- store.mutateArchive(a => a.copy(nodes = a.nodes.updatedWith("n-x1")(_.map(_.copy(out = List(OutEdge("n-z")))))))
       mtimeY1 <- IO.blocking(os.mtime(dir / "chain-n-y1.json"))
       xJson = jsonParse(os.read(dir / "chain-n-x1.json")).toOption.get
-      xOut <- IO.fromEither(xJson.hcursor.downField("nodes").downField("n-x1").get[String]("out"))
+      xOut <- IO.fromEither(xJson.hcursor.downField("nodes").downField("n-x1").downField("out").as[List[OutEdge]])
     yield
-      assertEquals(xOut, "n-z")
+      assertEquals(xOut, List(OutEdge("n-z")), "archived out round-trips as P1 edge array")
       assertEquals(mtimeY1, mtimeY0, "未受影响批文件不重写")
   }
 

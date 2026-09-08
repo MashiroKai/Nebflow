@@ -216,7 +216,7 @@ class NodeBlockedReentrySpec extends CatsEffectSuite:
       // out 新规范下 out-only wiring 节点不可经 NodeEdit 创建）
       _ <- rt.store.mutate(s => s.copy(nodes = s.nodes ++ Map(
         "n-down-b" -> NodeDef(id = "n-down-b", name = "down-b", agent = "test-agent",
-          status = NodeLifecycle.Wiring, out = Some("Nebula"), createdAt = System.currentTimeMillis()))))
+          status = NodeLifecycle.Wiring, out = List(OutEdge.nebula), createdAt = System.currentTimeMillis()))))
       _ <- nodeEdit(nodeInput("blk-shape", "blocked-a", "description" -> Json.fromString("test node purpose"),
         "task" -> Json.fromString("will-block-A"), "out" -> Json.fromString("Nebula")), ctx)
       _ <- waitStatus(rt, "blocked-a", Set(NodeLifecycle.Blocked))
@@ -469,7 +469,7 @@ class NodeBlockedReentrySpec extends CatsEffectSuite:
       // out 新规范下 out-only wiring 节点不可经 NodeEdit 创建）
       _ <- rt.store.mutate(s => s.copy(nodes = s.nodes ++ Map(
         "n-wiring-w" -> NodeDef(id = "n-wiring-w", name = "wiring-w", agent = "test-agent",
-          status = NodeLifecycle.Wiring, out = Some("Nebula"), createdAt = System.currentTimeMillis()))))
+          status = NodeLifecycle.Wiring, out = List(OutEdge.nebula), createdAt = System.currentTimeMillis()))))
       _ <- nodeEdit(nodeInput("blk-r1", "wiring-w", "in" -> Json.fromString(aId)), ctx)
       _ <- IO.sleep(800.millis) // 给「假如误投递」留窗口
       inputs <- llm.inputs.get

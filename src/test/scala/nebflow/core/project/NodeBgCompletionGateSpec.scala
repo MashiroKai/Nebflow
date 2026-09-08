@@ -444,7 +444,7 @@ class NodeBgCompletionGateSpec extends CatsEffectSuite:
       // seed 下游 wiring 节点——出边指向下游（区别于 G2 的 out=Nebula）
       _ <- rt.store.mutate(st => st.copy(nodes = st.nodes ++ Map(
         "n-g6-down" -> NodeDef(id = "n-g6-down", name = "bg-down", agent = "test-agent",
-          task = None, status = NodeLifecycle.Wiring, out = Some("Nebula"),
+          task = None, status = NodeLifecycle.Wiring, out = List(OutEdge.nebula),
           createdAt = System.currentTimeMillis())))).void
       _ <- createNode("bg-g6", ws, "down-a", "result-HOLDBG",
         extraOut = Some("n-g6-down"), res = res, system = system)
