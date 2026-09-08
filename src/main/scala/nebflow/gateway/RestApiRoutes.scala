@@ -31,7 +31,7 @@ import nebflow.service.ConfigService
 import org.http4s.*
 import org.http4s.circe.CirceEntityCodec.*
 import org.http4s.dsl.io.*
-import org.http4s.headers.{Authorization, `Content-Type`}
+import org.http4s.headers.{Authorization, Location, `Content-Type`}
 import org.http4s.server.websocket.WebSocketBuilder2
 import org.http4s.websocket.WebSocketFrame
 import org.typelevel.ci.{CIString, CIStringSyntax}
@@ -770,47 +770,59 @@ class RestApiRoutes(
     // Logout — notify the server, stop tunnels, clear device credential,
     // disable NebLink (keep server address), stop the client, clear user info
     // and peers. Reverses the device-flow login.
+    //
+    // NOTE (RP-logout fix, 2026-09-06): this endpoint is LOCAL-only teardown
+    // — it never touches the provider's browser SSO session, so a login
+    // right after it silently redirects back into the original account.
+    // The full logout (local teardown + Logto end-session handoff) is
+    // GET /neblink/auth/end-session below; the web logout button drives
+    // that one. This endpoint stays for API compatibility and scripted use.
     case req @ POST -> Root / "neblink" / "logout" =>
       withNeblink(req) { ms =>
-        for
-          // 1. Notify the NebLink Server: DELETE /api/device/logout lets the
-          //    server clear the device session + relay tunnel immediately
-          //    instead of waiting for the 90s TTL purge. Best-effort — logout
-          //    must ALWAYS succeed locally, so any failure (network
-          //    unreachable, server down) is swallowed. Uses the discovery's
-          //    live client: enrollment hot-swap replaces it without updating
-          //    ms.relayClientOpt, which may hold a stale instance.
-          _ <- neblinkDiscovery.fold(IO.unit)(d =>
-            d.currentClient.flatMap {
-              case Some(client) =>
-                client.logout.handleErrorWith(e =>
-                  logger.debug(s"NebLink server logout notify failed (continuing local logout): ${e.getMessage}")
-                )
-              case None => IO.unit
-            }
-          )
-          // 2. Stop the relay tunnel — drops the local WS so no reconnect
-          //    loop keeps the device visible server-side after logout.
-          _ <- ms.relayTunnelOpt.fold(IO.unit)(t => t.stop().handleErrorWith(_ => IO.unit))
-          // 3. Drop all P2P presence connections and cancel auto-reconnects —
-          //    otherwise a reconnecting peer could silently re-enter the local
-          //    list after logout (reconnectLoop re-upserts on success).
-          _ <- ms.presenceServiceOpt.fold(IO.unit)(p => p.disconnectAll().handleErrorWith(_ => IO.unit))
-          // 4. Delete the device credential file (~/.nebflow/neblink/device.json)
-          _ <- DeviceCredential.clear
-          // 5. Disable NebLink in config (keep neblinkServer address for next login).
-          //    updateConfig refreshes the in-memory ref AND persists to disk, so
-          //    /status reflects the change immediately without a restart.
-          _ <- ms.updateConfig(_.copy(enabled = false))
-          // 6. Stop the NebLink client (hot-swap to None).
-          _ <- neblinkDiscovery.fold(IO.unit)(d => d.setClient(None))
-          // 7. Clear user info (avatar, github login) from the device identity.
-          _ <- ms.updateDeviceInfo(avatarUrl = Some(""), githubLogin = Some(""))
-          // 8. Clear all discovered peers.
-          _ <- ms.clearPeers
-          r <- Ok(Json.obj("ok" -> true.asJson))
-        yield r
+        performLocalLogout(ms) *> Ok(Json.obj("ok" -> true.asJson))
       }
+
+    // RP-initiated logout (OIDC Session Management, RP-logout fix
+    // 2026-09-06) — browser navigation endpoint: local teardown FIRST
+    // (same steps as POST /neblink/logout above, credential read before
+    // it is cleared), then 302 to the provider's end_session_endpoint with
+    // the persisted id_token as `id_token_hint` (valid hint = no
+    // confirmation page) and the local `/auth/logged-out` landing page as
+    // `post_logout_redirect_uri` (ignored by the provider until the uri is
+    // allow-listed on the Logto app — probed 2026-09-06, always safe).
+    // The browser-side Logto session cookie dies here, so the NEXT login
+    // shows the account page instead of silently re-entering the old
+    // account.
+    //
+    // No gateway checkAuth BY DESIGN: this is a browser navigation hop (no
+    // Authorization header available) in the standard OIDC RP-logout shape
+    // — the credential it acts on is the provider's own session cookie.
+    // Worst case abuse = triggering a logout redirect (low risk).
+    case GET -> Root / "neblink" / "auth" / "end-session" =>
+      neblinkService match
+        case None => NotFound(Json.obj("error" -> "NebLink service not initialized".asJson))
+        case Some(ms) =>
+          for
+            logto <- ms.neblinkConfig.map(_.effectiveLogto)
+            // Read the hint BEFORE performLocalLogout deletes the file.
+            cred <- DeviceCredential.load
+            idToken = cred.flatMap(_.logto).flatMap(_.idToken)
+            resp <- logto.flatMap(lc => lc.pkceClientId.map(_ => lc)) match
+              case Some(lc) =>
+                val target = LogtoAuthCode.endSessionUrl(
+                  lc.endpoint,
+                  idToken,
+                  Some(s"http://127.0.0.1:$gatewayPort/auth/logged-out")
+                )
+                for
+                  _ <- performLocalLogout(ms)
+                  _ <- logger.info("RP-initiated logout: local teardown done, redirecting to provider end_session")
+                  r <- Found(Location(Uri.unsafeFromString(target)))
+                yield r
+              // Same surface as auth/start: unconfigured provider (or AC app
+              // id missing) — the caller falls back to the local-only logout.
+              case _ => NotFound(Json.obj("error" -> "logto-not-configured".asJson))
+          yield resp
 
     // Enroll device via pairing code — calls the NebLink Server's
     // /api/device/enroll, receives a long-lived device credential, persists it,
@@ -998,6 +1010,12 @@ class RestApiRoutes(
 
     // Start a PKCE login: build verifier/challenge + state (in-memory,
     // single-flight), return the hosted authorize URL for window.open.
+    // Optional body {"forceLogin":true} → authorize prompt "login consent"
+    // (RP-logout fix, 2026-09-06): the switch-account entry — `login`
+    // forces the hosted account page even with a live Logto SSO session;
+    // `consent` is kept so the offline_access/refresh-token invariant
+    // (see LogtoAuthCode.authorizeUrl) never regresses. Body is optional:
+    // absent/empty/unparsable → plain login.
     case req @ POST -> Root / "neblink" / "auth" / "start" =>
       if !checkAuth(req) then Forbidden(Json.obj("error" -> "Unauthorized".asJson))
       else
@@ -1005,6 +1023,14 @@ class RestApiRoutes(
           case None => BadRequest(Json.obj("error" -> "NebLink service not initialized".asJson))
           case Some(ms) =>
             for
+              forceLogin <- req
+                .attemptAs[Json]
+                .value
+                .map {
+                  case Right(json) =>
+                    json.hcursor.downField("forceLogin").as[Boolean].toOption.getOrElse(false)
+                  case Left(_) => false // empty / non-JSON body = plain login
+                }
               // Embedded-default fallback: missing logto block resolves to the
               // product's hosted auth service (fresh installs get PKCE login).
               logto <- ms.neblinkConfig.map(_.effectiveLogto)
@@ -1017,7 +1043,14 @@ class RestApiRoutes(
                     state <- LogtoAuthCode.generateState
                     _ <- pkceLogin.start(verifier, state)
                     redirectUri = loopbackCallbackUri
-                    authorizeUrl = LogtoAuthCode.authorizeUrl(lc.endpoint, pkceClientId, redirectUri, challenge, state)
+                    authorizeUrl = LogtoAuthCode.authorizeUrl(
+                      lc.endpoint,
+                      pkceClientId,
+                      redirectUri,
+                      challenge,
+                      state,
+                      prompt = if forceLogin then "login consent" else "consent"
+                    )
                     r <- Ok(Json.obj("authorizeUrl" -> authorizeUrl.asJson))
                   yield r
                 // Logto unconfigured, or configured without the AC app id —
@@ -2848,9 +2881,10 @@ class RestApiRoutes(
     ms: NeblinkService,
     resolvedUrl: String,
     json: Json,
-    logtoRefresh: Option[String] = None
+    logtoRefresh: Option[String] = None,
+    logtoIdToken: Option[String] = None
   ): IO[org.http4s.Response[IO]] =
-    persistEnrollment(ms, resolvedUrl, json, logtoRefresh).flatMap {
+    persistEnrollment(ms, resolvedUrl, json, logtoRefresh, logtoIdToken).flatMap {
       case Right(_) =>
         val networkId = json.hcursor.downField("networkId").as[String].toOption.getOrElse("")
         Ok(
@@ -2869,7 +2903,8 @@ class RestApiRoutes(
     ms: NeblinkService,
     resolvedUrl: String,
     json: Json,
-    logtoRefresh: Option[String]
+    logtoRefresh: Option[String],
+    logtoIdToken: Option[String] = None
   ): IO[Either[String, String]] =
     NeblinkEnrollment.persist(
       ms,
@@ -2878,7 +2913,8 @@ class RestApiRoutes(
       logtoRefresh,
       neblinkDiscovery,
       gatewayPort,
-      reloginHook = Some(LogtoSilentRelogin.make(ms, IO.pure(neblinkDiscovery), gatewayPort, neblinkServerUrl(None)))
+      reloginHook = Some(LogtoSilentRelogin.make(ms, IO.pure(neblinkDiscovery), gatewayPort, neblinkServerUrl(None))),
+      logtoIdToken = logtoIdToken
     )
   end persistEnrollment
 
@@ -2893,7 +2929,55 @@ class RestApiRoutes(
   def authCallbackRoutes: HttpRoutes[IO] = HttpRoutes.of[IO] {
     case req @ GET -> Root / "callback" =>
       handleAuthCallback(req.uri.query.params)
+    // RP-logout return target (2026-09-06): the provider lands here when
+    // the post_logout_redirect_uri is accepted (allow-listed on the Logto
+    // app). Until then the provider shows its own default logged-out page —
+    // same UX, different host.
+    case GET -> Root / "logged-out" =>
+      htmlResponse(loggedOutPage, Status.Ok)
   }
+
+  /** The 8-step local teardown shared by POST /neblink/logout and the
+    * RP-initiated end-session endpoint. Always completes locally — every
+    * remote/best-effort step swallows failures. */
+  private def performLocalLogout(ms: NeblinkService): IO[Unit] =
+    for
+      // 1. Notify the NebLink Server: DELETE /api/device/logout lets the
+      //    server clear the device session + relay tunnel immediately
+      //    instead of waiting for the 90s TTL purge. Best-effort — logout
+      //    must ALWAYS succeed locally, so any failure (network
+      //    unreachable, server down) is swallowed. Uses the discovery's
+      //    live client: enrollment hot-swap replaces it without updating
+      //    ms.relayClientOpt, which may hold a stale instance.
+      _ <- neblinkDiscovery.fold(IO.unit)(d =>
+        d.currentClient.flatMap {
+          case Some(client) =>
+            client.logout.handleErrorWith(e =>
+              logger.debug(s"NebLink server logout notify failed (continuing local logout): ${e.getMessage}")
+            )
+          case None => IO.unit
+        }
+      )
+      // 2. Stop the relay tunnel — drops the local WS so no reconnect
+      //    loop keeps the device visible server-side after logout.
+      _ <- ms.relayTunnelOpt.fold(IO.unit)(t => t.stop().handleErrorWith(_ => IO.unit))
+      // 3. Drop all P2P presence connections and cancel auto-reconnects —
+      //    otherwise a reconnecting peer could silently re-enter the local
+      //    list after logout (reconnectLoop re-upserts on success).
+      _ <- ms.presenceServiceOpt.fold(IO.unit)(p => p.disconnectAll().handleErrorWith(_ => IO.unit))
+      // 4. Delete the device credential file (~/.nebflow/neblink/device.json)
+      _ <- DeviceCredential.clear
+      // 5. Disable NebLink in config (keep neblinkServer address for next login).
+      //    updateConfig refreshes the in-memory ref AND persists to disk, so
+      //    /status reflects the change immediately without a restart.
+      _ <- ms.updateConfig(_.copy(enabled = false))
+      // 6. Stop the NebLink client (hot-swap to None).
+      _ <- neblinkDiscovery.fold(IO.unit)(d => d.setClient(None))
+      // 7. Clear user info (avatar, github login) from the device identity.
+      _ <- ms.updateDeviceInfo(avatarUrl = Some(""), githubLogin = Some(""))
+      // 8. Clear all discovered peers.
+      _ <- ms.clearPeers
+    yield ()
 
   private def handleAuthCallback(query: Map[String, String]): IO[org.http4s.Response[IO]] =
     // Provider error redirect (?error=...&error_description=...) — user
@@ -2963,7 +3047,7 @@ class RestApiRoutes(
                                 )
                                 .flatMap {
                                   case Right(json) =>
-                                    completeDeviceEnrollment(ms, serverUrl, json, tokens.refreshToken).attempt
+                                    completeDeviceEnrollment(ms, serverUrl, json, tokens.refreshToken, tokens.idToken).attempt
                                       .flatMap {
                                         case Right(r) if r.status.isSuccess =>
                                           pkceLogin.succeed *> htmlResponse(callbackPage(ok = true, ""), Status.Ok)
@@ -3015,6 +3099,19 @@ class RestApiRoutes(
        |.icon{color:$iconColor;font-size:42px;line-height:1;margin-bottom:10px}h1{font-size:18px;font-weight:600;margin:0 0 8px}
        |p{color:#6a737d;font-size:13px;margin:0;max-width:320px;word-break:break-all}</style></head>
        |<body><div class="card"><div class="icon">$icon</div><h1>$headline</h1><p>$detail</p></div></body></html>""".stripMargin
+
+  /** RP-logout landing page (post_logout_redirect_uri target, 2026-09-06).
+    * Same visual skeleton as callbackPage — a static result card. */
+  private def loggedOutPage: String =
+    s"""<!doctype html>
+       |<html lang="zh-CN"><head><meta charset="utf-8">
+       |<meta name="viewport" content="width=device-width,initial-scale=1">
+       |<title>nebflow 已退出登录</title>
+       |<style>body{font-family:-apple-system,'Segoe UI','PingFang SC',sans-serif;display:flex;align-items:center;justify-content:center;height:100vh;margin:0;background:#f6f7f9;color:#1f2328}
+       |.card{text-align:center;padding:44px 52px;border-radius:14px;background:#fff;box-shadow:0 2px 14px rgba(0,0,0,.08)}
+       |.icon{color:#07c160;font-size:42px;line-height:1;margin-bottom:10px}h1{font-size:18px;font-weight:600;margin:0 0 8px}
+       |p{color:#6a737d;font-size:13px;margin:0;max-width:320px;word-break:break-all}</style></head>
+       |<body><div class="card"><div class="icon">✓</div><h1>已退出登录</h1><p>已在浏览器中退出 nebflow 账号，本页可以关闭</p></div></body></html>""".stripMargin
 
   /** HTML response without circe's String-entity hijack (explicit bytes +
     * content type + length). */
