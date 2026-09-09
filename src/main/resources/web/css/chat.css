@@ -1927,11 +1927,18 @@
   align-items: center;
   gap: 6px;
   padding: 5px 10px;
+  border: 1px solid var(--glass-control-border);
   border-radius: 8px;
   font-size: 13px;
   line-height: 1.4;
-  background: var(--color-surface);
-  box-shadow: 0px 0px 0px 1px rgba(0,0,0,0.04), 0px 1px 3px rgba(0,0,0,0.03);
+  background: var(--glass-control-bg);
+  -webkit-backdrop-filter: blur(var(--glass-control-blur)) saturate(1.2);
+  backdrop-filter: blur(var(--glass-control-blur)) saturate(1.2);
+  box-shadow:
+    inset 0 1px 0 var(--glass-control-highlight),
+    inset 0 -1px 0 var(--glass-control-underedge),
+    0 1px 3px var(--glass-control-glow),
+    0 2px 8px var(--glass-control-shadow);
   color: var(--color-text);
   animation: notifSlideIn 0.3s ease;
 }
@@ -1996,18 +2003,13 @@
   background: rgba(128,128,128,0.1);
 }
 
-@media (prefers-color-scheme: dark) {
-  .notif-item {
-    background: rgba(255,255,255,0.04);
-    box-shadow: 0px 0px 0px 1px rgba(255,255,255,0.06);
-  }
-}
-
 /* ===== Pending-Ask bar + header badge (D6 批 F2, G10) =====
-   Rows reuse the notif-item card language (surface + hairline shadow); the
-   header capsule reuses the bg-indicator pattern with the existing
-   --color-warning token (pending question = blocked task chain). No new color
-   values beyond the warning token's alpha variants. */
+   Rows share the notif-item glass-control material (semi-transparent tint +
+   backdrop blur + whisper border + 3D edges) so pending questions stay
+   readable over chat content in both themes — token-driven, no theme
+   overrides needed. The header capsule reuses the bg-indicator pattern with
+   the existing --color-warning token (pending question = blocked task
+   chain). No new color values beyond the existing token set. */
 #ask-pending-bar {
   flex-shrink: 0;
   display: flex;
@@ -2024,18 +2026,31 @@
   align-items: center;
   gap: 8px;
   padding: 5px 10px;
-  border: none;
+  border: 1px solid var(--glass-control-border);
   border-radius: 8px;
   font-size: 13px;
   line-height: 1.4;
   text-align: left;
-  background: var(--color-surface);
-  box-shadow: 0px 0px 0px 1px rgba(0,0,0,0.04), 0px 1px 3px rgba(0,0,0,0.03);
+  background: var(--glass-control-bg);
+  -webkit-backdrop-filter: blur(var(--glass-control-blur)) saturate(1.2);
+  backdrop-filter: blur(var(--glass-control-blur)) saturate(1.2);
+  box-shadow:
+    inset 0 1px 0 var(--glass-control-highlight),
+    inset 0 -1px 0 var(--glass-control-underedge),
+    0 1px 3px var(--glass-control-glow),
+    0 2px 8px var(--glass-control-shadow);
   color: var(--color-text);
   cursor: pointer;
   animation: notifSlideIn 0.3s ease;
 }
-.ask-pending-row:hover { box-shadow: 0px 0px 0px 1px rgba(0,0,0,0.08), 0px 1px 4px rgba(0,0,0,0.06); }
+.ask-pending-row:hover {
+  background: var(--glass-control-bg-hover);
+  box-shadow:
+    inset 0 1px 0 var(--glass-control-highlight-hover),
+    inset 0 -1px 0 var(--glass-control-underedge),
+    0 2px 8px var(--glass-control-glow-hover),
+    0 4px 12px var(--glass-control-shadow-hover);
+}
 .ask-pending-source {
   flex-shrink: 0;
   font-size: 11px;
@@ -2055,13 +2070,6 @@
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
-}
-@media (prefers-color-scheme: dark) {
-  .ask-pending-row {
-    background: rgba(255,255,255,0.04);
-    box-shadow: 0px 0px 0px 1px rgba(255,255,255,0.06);
-  }
-  .ask-pending-row:hover { box-shadow: 0px 0px 0px 1px rgba(255,255,255,0.12); }
 }
 
 #pending-asks-indicator {
