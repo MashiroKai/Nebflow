@@ -98,7 +98,15 @@ object ToolRegistry:
       // 第九件 + project 节点/分发器会话 buildAllowedToolSet 末段按身份追加），
       // plugins 声明不授能（NebulaExclusiveTools 同享防逃逸通道）；权限矩阵在
       // 工具内按引擎侧身份判定（TaskBoardTool.dispatchSync）。
-      "TaskBoard" -> TaskBoardToolDef
+      "TaskBoard" -> TaskBoardToolDef,
+      // report_blocked（blocked 结构化信号批 20260909，设计 spec 方案 A 改造点
+      // #2/#3）：Flow Map 节点专属 blocked 申报工具（协议级结构化信号，替代
+      // 文本锚定推断）。授能面 = buildAllowedToolSet 末段按 isFlowNode 会话
+      // 身份注入（TaskBoard 同款挂载模式，编排层专属工具族）+ 工具内
+      // ctx.flowNodeId 身份拒绝双保险；plugins 声明不授能（不在 BuiltinTool
+      // 白名单）。信号经 BlockedSignalRegistry 登记表由 NodeEngine 完成时点
+      // drain 消费（blockedNode 终态化 → FeedbackRouter 重入协议原样接管）。
+      "report_blocked" -> ReportBlockedToolDef
     )
     tools.putAll(builtins.asJava)
   }
