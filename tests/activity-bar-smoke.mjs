@@ -46,7 +46,11 @@ function wireRoutes(page, { blockModules = false } = {}) {
 
 function wireWs(page) {
   return page.routeWebSocket(/\/ws/, (ws) => {
-    const sendConfig = () => ws.send(JSON.stringify({ type: 'configData', config: '{}', configured: true, onboarding: 'done' }));
+    // friends explicitly OFF: this spec tests the Activity Bar skeleton (A1
+    // asserts the Messages/Contacts entries are absent). Local dev defaults
+    // the friends flag ON (featureFlags.js dev branch, author ruling
+    // 2026-09-10), so the dev off-path must be pinned explicitly here.
+    const sendConfig = () => ws.send(JSON.stringify({ type: 'configData', config: '{"features":{"friends":false}}', configured: true, onboarding: 'done' }));
     const sendSessions = () => ws.send(JSON.stringify({ type: 'sessionList', sessions: [{ id: SID, name: 'Smoke', agentName: 'Nebula' }], folders: [], activeId: SID }));
     sendConfig(); sendSessions();
     ws.onMessage((raw) => {
@@ -76,12 +80,19 @@ await wireRoutes(page);
 await wireWs(page);
 await boot(page);
 
-// A1: button order — avatar, files-btn, spacer (messages/contacts unregistered → absent); no todos slot
+// A1: button order — avatar, spacer, files-btn, … The Messages/Contacts
+// entries are release-gated (featureFlags.js): this spec pins friends OFF
+// (see wireWs), so they stay detached at boot and the static spacer keeps
+// its index.html position. (Order fixed 2026-09-10: the 3f54b19b gating
+// batch detached the entries but missed adapting these two assertions —
+// baseline was 39/41 on main with the same two FAILs.)
 const order = await page.locator('#activity-bar > *').evaluateAll(els => els.map(e => e.id || e.className));
 check('A1 child 1 = #activity-avatar', order[0] === 'activity-avatar', JSON.stringify(order));
-check('A1 child 2 = #files-btn', order[1] === 'files-btn', JSON.stringify(order.slice(0, 3)));
-check('A1 child 3 = .activity-spacer', (order[2] || '').includes('activity-spacer'), order[2]);
+check('A1 child 2 = .activity-spacer (entries detached)', (order[1] || '').includes('activity-spacer'), order[1]);
+check('A1 child 3 = #files-btn', order[2] === 'files-btn', JSON.stringify(order.slice(0, 3)));
 check('A1 no #todos-btn', await page.locator('#todos-btn').count() === 0);
+check('A1 no #messages-btn (friends off)', await page.locator('#messages-btn').count() === 0);
+check('A1 no #contacts-btn (friends off)', await page.locator('#contacts-btn').count() === 0);
 
 // A2: fresh load — expanded + files active + exactly 1 active panel containing explorer
 check('A2 body not collapsed', await page.evaluate(() => !document.body.classList.contains('sidebar-collapsed')));
