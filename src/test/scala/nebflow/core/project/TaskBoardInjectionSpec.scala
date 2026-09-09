@@ -73,6 +73,13 @@ class TaskBoardInjectionSpec extends FunSuite:
     // blocked 协议本体不动（既有断言锚）
     assert(NodeEngine.ProtocolFootnote.contains("needs-split"))
 
+  test("ProtocolFootnote 措辞（blocked 结构化信号批 20260909，spec §5.2 #7）：工具优先 + 文本备用通道裸形态强调"):
+    val fn = NodeEngine.ProtocolFootnote
+    assert(fn.contains("report_blocked"), s"第一优先=工具申报:\n$fn")
+    assert(fn.contains("随后照常输出"), s"申报后照常收尾（申报≠终止输出）:\n$fn")
+    assert(fn.contains("工具不可用时才用文本备用通道"), s"文本通道降级定位:\n$fn")
+    assert(fn.contains("不加 # / ** / 导语等任何前缀"), s"裸形态强调（6 例 markdown 形态侵蚀实证）:\n$fn")
+
   // ===== 身份透传链（§1d-2）=====
 
   test("AgentState 三字段往返：flowNodeId/isDispatcher/projectName 落 SessionContext 可读"):
