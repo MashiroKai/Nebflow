@@ -2,7 +2,7 @@
   "$schema": "https://agent-plugins.org/schemas/1.0.0/plugin.schema.json",
   "name": "slideblocks",
   "version": "1.0.0",
-  "description": "SlideBlocks 演示制作与平台开发包——Slidev deck 全流程制作 + Registry 平台站三域。内含 skills：slideblocks（自主制作/改进完整 Slidev 演示：Blocks/Decks/Recipes、执行锁、交付校验）、slideblocks-frontend（Astro+Vue 平台站前端、截图驱动验证）、slideblocks-backend（REST API/DB/Auth/对象存储/Worker）、slideblocks-docs（i18n 双语同步、Registry 内容规范、权利审查）。无 mcp.json、无工具扩展。",
-  "capability": "Slidev 演示制作与平台开发：节点获得 Blocks/Decks/Recipes 全流程 deck 制作能力与 Astro+Vue 平台站三域（前端/后端/docs）开发纪律",
-  "author": {"name": "Nebflow"}
+  "description": "SlideBlocks 演示制作包——Slidev deck 全流程制作。内含唯一 skill：slideblocks（自主制作/改进完整 Slidev 演示：Blocks/Decks/Recipes、执行锁、交付校验）。无 mcp.json、无工具扩展。",
+  "capability": "Slidev 演示制作：节点获得 Blocks/Decks/Recipes 全流程 deck 制作能力",
+  "author": {"name": "UniUni2000/slideblocks-skill"}
 }
