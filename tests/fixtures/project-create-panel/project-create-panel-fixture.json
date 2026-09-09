@@ -2,13 +2,9 @@
   "requestId": "pc-e2e-01",
   "items": [
     {
-      "question": "ProjectCreate 需要项目工作区路径 — 候选为 /Users/dev/Claude code 下尚未用作项目工作区的目录。点选其一，或选 其他… 输入其他绝对路径（支持 ~）。",
-      "options": [
-        { "label": "/Users/dev/Claude code/Nebflow" },
-        { "label": "/Users/dev/Claude code/phd-notebook" },
-        { "label": "/Users/dev/Claude code/Reminder" }
-      ],
-      "allowOther": true
+      "question": "ProjectCreate 需要项目工作区路径 — 点击上方「选择工作区」打开应用内目录浏览器（可逐级浏览、新建文件夹，含隐藏目录）；或在下方输入框手输绝对路径（支持 ~ 展开）。",
+      "options": [],
+      "dirPicker": true
     }
   ]
 }

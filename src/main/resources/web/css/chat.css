@@ -2713,18 +2713,6 @@
   margin: -2px 0 8px;
   word-break: break-all;
 }
-/* 候选目录 chips（降级为次级提示）：小号、弱化，机制仍是 option-btn。 */
-.ws-pick-candidate {
-  font-size: 11.5px;
-  padding: 3px 9px;
-  opacity: 0.85;
-  max-width: 100%;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-  direction: rtl; /* 长路径截头留尾（basename 在尾部） */
-}
-.ws-pick-candidate .option-desc { direction: ltr; }
 
 /* Route C：应用内目录浏览器弹窗（workspacePicker.js）
    设计基准 = path-picker 文件浏览器模态（modal.css #path-picker-* / .pp-item 族）：

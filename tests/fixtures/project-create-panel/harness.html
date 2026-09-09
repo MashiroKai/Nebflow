@@ -5,9 +5,10 @@
      前端实现 = 完整复用 AskUserQuestion 卡片（renderAskUser/showOptions），零新增
      组件与 i18n key —— 本 harness 以真实渲染模块（chatView.js / state.js / chat.js，
      无 stub 无打包）回放面板形态的 askUser 载荷，验证：
-       1. 面板卡片渲染（问题 + 候选路径按钮 + Other 自由输入兜底 + 取消键）；
-       2. 点选候选 → 确认 → askUserAnswer 帧载荷正确（answers=[路径], requestId）；
-       3. Other 自由输入 → 载荷正确；
+       1. 面板卡片渲染（问题 + 「选择工作区」大目标 + 自由输入 textarea + 取消键；
+          2026-09-09 作者裁定：无候选、无「其他…」）；
+       2. 自由输入路径 → 确认 → askUserAnswer 帧载荷正确（answers=[路径], requestId）；
+       3. '~' 前缀原样上送（展开由后端负责）；
        4. 取消 → answers=['__cancelled__'] 哨兵。
 
      spec（tests/project-create-panel.spec.mjs）以临时静态服务驱动本页
