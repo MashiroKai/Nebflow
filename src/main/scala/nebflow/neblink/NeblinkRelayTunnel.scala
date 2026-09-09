@@ -79,7 +79,10 @@ final class NeblinkRelayTunnel(
           tokenGetter() match
             case None =>
               val wait = math.min(30, 1 << math.min(attempt, 4)).seconds
-              logger.debug(s"Relay tunnel: no session token yet, retrying in ${wait.toSeconds}s...").flatMap { _ =>
+              // R2 visibility: this branch used to log at DEBUG only — a login
+              // that never completes left the tunnel dark for hours with zero
+              // trace. INFO keeps the retry loop observable (≤2 lines/min).
+              logger.info(s"Relay tunnel: no session token yet, retrying in ${wait.toSeconds}s...").flatMap { _ =>
                 IO.sleep(wait).flatMap { _ => connectLoop(attempt + 1) }
               }
             case Some(token) =>
@@ -196,12 +199,19 @@ final class NeblinkRelayTunnel(
     lastPong.set(System.currentTimeMillis())
 
   /**
-   * presence v2 (C6): handle a server-pushed DeviceStatusUpdate frame —
-   * `{"type":"device_status_update","deviceId":"...","online":true|false}`.
-   * The snake_case `device_id` spelling is tolerated as a fallback: the
-   * server-side frame was specified but not yet merged when this consumer
-   * landed, so the field naming is pinned at interop time (camelCase matches
-   * the relay protocol's requestId/eventId convention).
+   * presence v2 (C6): handle a server-pushed DeviceStatusUpdate frame.
+   *
+   * Wire schema (dual-field tolerant — fixes the interop mismatch where the
+   * server actually emits `{"deviceId":"...","status":"offline"}` while this
+   * consumer only read the `online` boolean and defaulted to false, so a
+   * future `status:"online"` frame would have been silently misread as
+   * OFFLINE):
+   *   - `online: true|false`     — boolean spelling (spec-proposed), takes priority
+   *   - `status: "online"|"offline"` — string spelling (current server wire,
+   *     pinned by the server's wire-shape test), case-insensitive fallback
+   *   - neither present          — defaults to false (legacy behavior)
+   * The snake_case `device_id` spelling is tolerated as well (camelCase
+   * matches the relay protocol's requestId/eventId convention).
    *
    * Drives the same freshness path as heartbeats — the status endpoint and UI
    * badge flip within one push, no polling wait.
@@ -211,7 +221,9 @@ final class NeblinkRelayTunnel(
     val deviceId = hc.downField("deviceId").as[String]
       .orElse(hc.downField("device_id").as[String])
       .getOrElse("")
-    val online = hc.downField("online").as[Boolean].getOrElse(false)
+    val online = hc.downField("online").as[Boolean].toOption
+      .orElse(hc.downField("status").as[String].toOption.map(_.equalsIgnoreCase("online")))
+      .getOrElse(false)
     if deviceId.isEmpty then logger.debug("DeviceStatusUpdate frame without deviceId — ignored")
     else neblinkService.applyServerPeerStatus(deviceId, online)
 
@@ -229,10 +241,23 @@ final class NeblinkRelayTunnel(
         try
           if alive.get() then
             if System.currentTimeMillis() - lastPong.get() > 30_000L then
-              logger.debugSync("Relay tunnel heartbeat timeout, closing for reconnect")
-              try ws.sendClose(WebSocket.NORMAL_CLOSURE, "heartbeat timeout")
-              catch case _: Exception => ()
-            else ws.sendText("""{"type":"ping"}""", true)
+              // Zombie-connection fix (diag-transfer-stuck R2): a half-open TCP
+              // connection never delivers sendClose to the peer and the JDK
+              // listener's onError/onClose never fire, so `closed` (the
+              // connectOnce latch) stayed incomplete and the reconnect loop
+              // stalled silently for hours. abort() tears the connection down
+              // LOCALLY — the listener fires immediately, connectOnce returns
+              // and connectLoop reconnects.
+              logger.infoSync("Relay tunnel heartbeat timeout — aborting zombie connection for reconnect")
+              ws.abort()
+            else
+              try ws.sendText("""{"type":"ping"}""", true)
+              catch case _: Exception =>
+                // send failure on a live-flagged connection means the socket is
+                // already broken — abort now instead of waiting out the pong
+                // window with a dead connection (alive must track reality).
+                logger.debugSync("Relay tunnel ping send failed — aborting broken connection")
+                ws.abort()
         catch case _: Exception => ()
       },
       10,

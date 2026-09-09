@@ -42,11 +42,15 @@ object LogtoAuthCode:
     * `picture` (2026-09-01 login-chain fix, C2): parsed from the id_token's
     * `picture` claim when the grant carried the `profile` scope — the
     * client-side avatar source for Logto users (Logto picture → device
-    * identity → activity bar). */
+    * identity → activity bar).
+    * `idToken` (RP-logout fix, 2026-09-06): the raw JWT, persisted so the
+    * end-session handoff can carry it as `id_token_hint` (skips Logto's
+    * logout confirmation page for a one-shot sign-out). */
   final case class TokenResult(
     accessToken: String,
     refreshToken: Option[String],
-    picture: Option[String] = None
+    picture: Option[String] = None,
+    idToken: Option[String] = None
   )
 
   // ── PKCE primitives (pure) ──────────────────────────────────────────────
@@ -92,13 +96,22 @@ object LogtoAuthCode:
    * across authorizes (exp. 5), so the prompt ships on EVERY login — the
    * cost is one extra consent screen on the low-frequency browser login
    * path (daily use rides the deviceToken + refresh_token silent chain).
+   *
+   * `prompt` is parameterized (RP-logout fix, 2026-09-06): the default
+   * stays "consent" (refresh-token invariant above MUST NOT regress); the
+   * switch-account entry passes "login consent" — `login` forces the
+   * hosted sign-in page even when the browser's Logto SSO session is
+   * alive, so the user gets the account input instead of a silent
+   * redirect back to the original account. Both values are legal
+   * space-separated OIDC prompt lists (RFC 6749-bis / Core §3.1.2.1).
    */
   def authorizeUrl(
     endpoint: String,
     clientId: String,
     redirectUri: String,
     codeChallenge: String,
-    state: String
+    state: String,
+    prompt: String = "consent"
   ): String =
     s"${endpoint.stripSuffix("/")}${Protocol.LogtoOidc.authorize}?" +
       LogtoDeviceFlow.formEncode(
@@ -106,11 +119,40 @@ object LogtoAuthCode:
         "redirect_uri" -> redirectUri,
         "response_type" -> "code",
         "scope" -> "openid offline_access email profile",
-        "prompt" -> "consent",
+        "prompt" -> prompt,
         "code_challenge" -> codeChallenge,
         "code_challenge_method" -> "S256",
         "state" -> state
       )
+
+  /** RP-initiated logout (OIDC Session Management §5, RP-logout fix
+    * 2026-09-06): the URL the browser is navigated to, terminating the
+    * PROVIDER session — without it a fresh authorize redirects silently
+    * back into the original account (no account choice).
+    *
+    * `idTokenHint`: the raw id_token persisted at login. A VALID hint lets
+    * the provider skip the "Do you want to sign out?" confirmation; a
+    * malformed/fabricated one is REJECTED with 400 (probed on the deployed
+    * Logto 2026-09-06) — so only pass a stored-hint through verbatim, and
+    * omit it entirely when none is stored (session-cookie logout still
+    * works, one confirmation screen). Never synthesize a hint.
+    *
+    * `postLogoutRedirectUri`: optional return target. The deployed provider
+    * IGNORES an unregistered uri (200 + default logged-out page, probed
+    * 2026-09-06 — no error), so passing it is always safe; it activates
+    * automatically once the uri is allow-listed on the Logto app (see the
+    * ops checklist in the RP-logout report). */
+  def endSessionUrl(
+    endpoint: String,
+    idTokenHint: Option[String],
+    postLogoutRedirectUri: Option[String]
+  ): String =
+    val params =
+      idTokenHint.map("id_token_hint" -> _).toSeq ++
+        postLogoutRedirectUri.map("post_logout_redirect_uri" -> _).toSeq
+    val base = s"${endpoint.stripSuffix("/")}${Protocol.LogtoOidc.endSession}"
+    if params.isEmpty then base
+    else base + "?" + LogtoDeviceFlow.formEncode(params*)
 
   /** Exchange the authorization code (+ verifier) for tokens. */
   def tokenRequest(
@@ -160,7 +202,7 @@ object LogtoAuthCode:
       refreshToken = c.downField("refresh_token").as[Option[String]].toOption.flatten
       idToken = c.downField("id_token").as[Option[String]].toOption.flatten
       picture = idToken.flatMap(decodeIdTokenPicture)
-    yield TokenResult(accessToken, refreshToken, picture)
+    yield TokenResult(accessToken, refreshToken, picture, idToken)
 
   /** Decode the `picture` claim from a JWT payload (base64url, no signature
     * check — the token response arrives over TLS from the provider's token

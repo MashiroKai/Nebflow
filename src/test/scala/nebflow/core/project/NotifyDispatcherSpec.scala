@@ -36,8 +36,8 @@ import scala.concurrent.duration.*
  *   窗口熔断（Suppress 不标记、冷却结束补投不丢失）/ redeliver 欠账 /
  *   重激活后再失败必须再通知（inFlight 释放 + notifySentAt 清零配套）
  * - ⑬-⑮ failed 集成（真实引擎 zombie 收敛路径）：out=Nebula 双收（Nebula
- *   eventType=failed + 分发器同收）/ out=None 无 out 依赖 / out=节点下游
- *   collect 结算 + 分发器触发
+ *   eventType=failed + 分发器同收）/ out=None 无 out 依赖 / out=节点下游 D5 零结算
+ *   停等 + 分发器触发（附等待者清单，20260908 wf1cde E-③）
  */
 class NotifyDispatcherSpec extends CatsEffectSuite:
 
@@ -205,7 +205,7 @@ class NotifyDispatcherSpec extends CatsEffectSuite:
   /** 种一个死会话 running 节点（僵尸收敛路径——settleStaleRunningNodes 驱动自动
     * failed，2026-09-07 批 failed 通知的集成触发源；NodeDeadSessionAutoReapSpec 同款）。 */
   private def seedZombie(rt: ProjectRuntime, id: String, nodeName: String, task: String,
-      out: Option[String], in: List[String] = Nil): IO[Unit] =
+      out: List[OutEdge], in: List[String] = Nil): IO[Unit] =
     rt.store.mutate { s =>
       s.copy(nodes = s.nodes + (id -> NodeDef(
         id = id, name = nodeName, agent = "general", task = Some(task), out = out, in = in,
@@ -216,7 +216,7 @@ class NotifyDispatcherSpec extends CatsEffectSuite:
 
   /** 种一个节点（可指定终态/标志/结果）。 */
   private def seed(store: FlowMapStore, id: String, name: String, status: String,
-      notify: Boolean, result: Option[String], out: Option[String] = Some("Nebula")): IO[Unit] =
+      notify: Boolean, result: Option[String], out: List[OutEdge] = List(OutEdge.nebula)): IO[Unit] =
     store.mutate(s => s.copy(nodes = s.nodes + (id -> NodeDef(
       id = id, name = name, agent = "general", status = status, result = result,
       notifyDispatcher = notify, out = out, createdAt = System.currentTimeMillis())))).void
@@ -432,7 +432,7 @@ class NotifyDispatcherSpec extends CatsEffectSuite:
       _ <- seed(store, "n-r2", "redeliver-two", NodeLifecycle.Completed, notify = true, result = Some("R"))
       // 模拟「已通知并标记」的节点（重启前已投）
       _ <- seed(store, "n-r3", "redeliver-marked", NodeLifecycle.Completed, notify = true, result = Some("R"),
-        out = Some("Nebula"))
+        out = List(OutEdge.nebula)) // 显式双通报边（与缺省同形，可读性）
       _ <- store.mutate(s => s.copy(nodes = s.nodes.updated("n-r3",
         s.nodes("n-r3").copy(notifySentAt = Some(System.currentTimeMillis()))))).void
       n1 <- store.getNode("n-r1").map(_.get)
@@ -486,7 +486,7 @@ class NotifyDispatcherSpec extends CatsEffectSuite:
       // wiring 节点（store 直种）：edit 开 → 撤 → 载荷条件字段
       _ <- rt.store.mutate(s => s.copy(nodes = s.nodes ++ Map(
         "n-wiring-w" -> NodeDef(id = "n-wiring-w", name = "wiring-w", agent = "general",
-          status = NodeLifecycle.Wiring, out = Some("Nebula"), createdAt = System.currentTimeMillis()))))
+          status = NodeLifecycle.Wiring, out = List(OutEdge.nebula), createdAt = System.currentTimeMillis()))))
       _ <- nodeEdit(nodeInput("ntf-flag", "wiring-w", "notifyDispatcher" -> Json.fromBoolean(true)), ctx)
       wOn <- rt.store.snapshot.map(_.nodes("n-wiring-w"))
       _ <- nodeEdit(nodeInput("ntf-flag", "wiring-w", "notifyDispatcher" -> Json.fromBoolean(false)), ctx)
@@ -677,7 +677,7 @@ class NotifyDispatcherSpec extends CatsEffectSuite:
       res <- mkResources(system, tempRoot, llm.handle)
       rt <- mountReal("ntf-fn", ws, system, res)
       nebula <- registerNebulaCapture(res, system)
-      _ <- seedZombie(rt, "n-fn1", "fail-nebula", "dead task", Some("Nebula"))
+      _ <- seedZombie(rt, "n-fn1", "fail-nebula", "dead task", List(OutEdge.nebula))
       _ <- rt.engine.settleStaleRunningNodes()
       // out=Nebula 投递（eventType=failed）零回归
       _ <- waitUntil(20.seconds)(nebula.get.map(_.exists((t, ev) =>
@@ -702,6 +702,7 @@ class NotifyDispatcherSpec extends CatsEffectSuite:
       assert(prompt.contains("承接节点"), "prompt must teach rename-new fallback action")
       assert(prompt.contains("abandon=true"), "prompt must teach abandon action")
       assert(prompt.contains("Nebula"), "prompt must teach escalate-to-Nebula action")
+      assert(prompt.contains("无下游等待者"), "prompt must carry waiter line (E-③: none for out=Nebula leaf)")
       assertEquals(node.notifySentAt.isDefined, true, "notifySentAt marker must be set after failed trigger")
       assert(audit.exists((t, id) => t == "dispatch-notify" && id == nodeId), s"dispatch-notify failed audit must exist, got: $audit")
       assert(deliveries.exists((t, ev) => t.contains("[Node 'fail-nebula' failed]") && ev.contains("failed")),
@@ -717,7 +718,7 @@ class NotifyDispatcherSpec extends CatsEffectSuite:
       res <- mkResources(system, tempRoot, llm.handle)
       rt <- mountReal("ntf-fd", ws, system, res)
       nebula <- registerNebulaCapture(res, system)
-      _ <- seedZombie(rt, "n-fd1", "fail-dangling", "dead task", None)
+      _ <- seedZombie(rt, "n-fd1", "fail-dangling", "dead task", Nil)
       _ <- rt.engine.settleStaleRunningNodes()
       _ <- waitUntil(20.seconds)(llm.inputs.get.map(_.exists(p => p.contains("[dispatch-notify]") && p.contains("fail-dangling"))))
       nodeId <- idOf(rt, "fail-dangling")
@@ -734,7 +735,7 @@ class NotifyDispatcherSpec extends CatsEffectSuite:
         s"out=None: no node-result delivery for this node, got: $deliveries")
   }
 
-  test("⑮ failed (out=node): downstream collect-settles AND dispatcher triggered for the failed upstream") {
+  test("⑮ failed (out=node): downstream stays waiting (D5 zero-settlement) AND dispatcher triggered with waiter list") {
     val ws = tempRoot / "ws-fail-target"
     os.makeDir.all(ws)
     val system = ActorSystem(s"ntf-ft-${scala.util.Random.nextInt(100000)}")
@@ -742,25 +743,31 @@ class NotifyDispatcherSpec extends CatsEffectSuite:
     for
       res <- mkResources(system, tempRoot, llm.handle)
       rt <- mountReal("ntf-ft", ws, system, res)
-      _ <- seedZombie(rt, "n-ft-up", "fail-up", "dead upstream task", Some("n-ft-dn"))
+      _ <- seedZombie(rt, "n-ft-up", "fail-up", "dead upstream task", List(OutEdge("n-ft-dn")))
       _ <- rt.store.mutate { s =>
         s.copy(nodes = s.nodes + ("n-ft-dn" -> NodeDef(
           id = "n-ft-dn", name = "down-node", agent = "general",
-          task = Some("downstream work"), out = Some("Nebula"), in = List("n-ft-up"),
+          task = Some("downstream work"), out = List(OutEdge.nebula), in = List("n-ft-up"),
           status = NodeLifecycle.Wiring, createdAt = System.currentTimeMillis() - 3_600_000))) }.void
       _ <- rt.engine.settleStaleRunningNodes()
-      // 下游 collect 结算 → 启动 → 完成（既有语义零回归）
-      _ <- waitStatus(rt, "down-node", Set(NodeLifecycle.Completed))
+      // D5 零结算：下游停等不启动；分发器通知照发（settle-then-notify 顺序不变）
       _ <- waitUntil(20.seconds)(llm.inputs.get.map(_.exists(p => p.contains("[dispatch-notify]") && p.contains("fail-up"))))
+      _ <- IO.sleep(500.millis) // 给「假如 collect 仍在异步启动下游」留观察窗口
       upId <- idOf(rt, "fail-up")
       up <- rt.store.snapshot.map(_.nodes(upId))
       dn <- idOf(rt, "down-node").flatMap(id => rt.store.snapshot.map(_.nodes(id)))
+      prompt <- llm.inputs.get.map(_.find(p => p.contains("[dispatch-notify]") && p.contains("fail-up")))
       _ <- system.stopAll.handleErrorWith(_ => IO.unit)
     yield
       assertEquals(up.status, NodeLifecycle.Failed, "upstream failed")
       assertEquals(up.notifySentAt.isDefined, true, "dispatcher notified for failed upstream (settle-then-notify order)")
-      assertEquals(dn.status, NodeLifecycle.Completed, "downstream collect-settled and completed (zero regression)")
-      assertEquals(dn.result, Some("dn-done"), "downstream completed with its own run")
+      // D5 翻转（原 collect 断言）：下游停等零结算——不启动、无 result、无占位键
+      assertEquals(dn.status, NodeLifecycle.Wiring, "downstream stays wiring (D5 zero-settlement — collect placeholder abolished)")
+      assertEquals(dn.result, None, "downstream never started (no session run)")
+      assertEquals(dn.deliveredTo, Nil, "failed upstream must not write deliveredTo key (wf1cde §3.2 hole source)")
+      // E-③：通知文本附停等等待者清单（此处恰为 down-node）
+      assert(prompt.exists(p => p.contains("下游等待者") && p.contains("down-node")),
+        "failed notify must carry waiter list naming the waiting successor (E-③)")
   }
 
 end NotifyDispatcherSpec

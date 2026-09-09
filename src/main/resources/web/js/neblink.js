@@ -120,7 +120,12 @@ export async function fetchNeblinkStatus() {
       userDescription: d.userDescription || '',
       avatarUrl: d.avatarUrl || ''
     } : null;
-    neblinkState.peers = data.peers || [];
+    // F5（症状③防自过滤）：服务端 peers 若回显本机设备，下方 UI 合并
+    // [{...local,isLocal}, ...peers] 会出现「本机 + 同名 peer」双行（数量虚增
+    // 恰好 +1）。客户端整条链路零 self 防御（LAN announce 路径有、server 路径
+    // 无），此处兜底；幽灵注册属服务端数据缺口（S3/S4），不在本修复面。
+    const selfId = d ? d.id : null;
+    neblinkState.peers = (data.peers || []).filter(p => !selfId || p.deviceId !== selfId);
   } catch (e) {
     // neblink not available yet
   }
@@ -427,11 +432,18 @@ export function cancelDeviceFlow() {
  * Returns {authorizeUrl} on success; returns null when the gateway reports
  * 404 logto-not-configured (caller should fall back to startDeviceFlow);
  * throws Error(message) on any other failure.
+ *
+ * `forceLogin` (RP-logout fix, 2026-09-06): true → the gateway adds
+ * prompt="login consent" to the authorize URL, so the hosted page shows
+ * the ACCOUNT form even when this browser still holds a Logto SSO
+ * session — the switch-account entry. Default false = plain login
+ * (fast path, consent only).
  */
-export async function startPkceLogin() {
+export async function startPkceLogin(forceLogin = false) {
   const resp = await fetch('/api/neblink/auth/start', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json', 'Authorization': 'Bearer ' + getAuthToken() },
+    body: JSON.stringify({ forceLogin: !!forceLogin }),
   });
   let data = {};
   try { data = await resp.json(); } catch (_) { data = {}; }
@@ -505,23 +517,29 @@ export function cancelPkceFlow() {
 export function bindNeblinkEvents(rerender) {
   _rerender = rerender;
 
-  // Logout button — clears the device credential + disables NebLink via
-  // POST /api/neblink/logout, then refreshes status so the settings panel
-  // and the avatar both return to the logged-out state.
+  // Logout — full RP-initiated logout (RP-logout fix, 2026-09-06).
+  // window.open('/api/neblink/auth/end-session') in the SAME gesture tick
+  // (synchronous → popup-blocker safe): the endpoint performs the local
+  // teardown (same 8 steps as the old POST /api/neblink/logout) and 302s
+  // the new tab to Logto's end_session_endpoint, killing the provider's
+  // browser SSO session. Without that hop, the next login silently
+  // re-enters the original account (no account choice — the root cause of
+  // the silent-relogin bug). The new tab ends on the provider's
+  // logged-out page (or our /auth/logged-out landing once the
+  // post_logout_redirect_uri is allow-listed on the Logto app).
+  // The main window refreshes its status a beat later, after the local
+  // teardown on the backend has landed.
   const logoutBtn = /** @type {HTMLButtonElement|null} */ (document.getElementById('neblink-logout-btn'));
   if (logoutBtn) {
-    logoutBtn.addEventListener('click', async () => {
+    logoutBtn.addEventListener('click', () => {
       logoutBtn.disabled = true;
       logoutBtn.textContent = '正在退出…';
-      try {
-        await fetch('/api/neblink/logout', {
-          method: 'POST',
-          headers: { 'Authorization': 'Bearer ' + getAuthToken() },
-        });
-      } catch (e) { /* non-critical — refresh state either way */ }
-      forgetAvatarProfile(); // drop the last-known snapshot: a logged-out user must not resurrect offline
-      await fetchNeblinkStatus();
-      rerender();
+      window.open('/api/neblink/auth/end-session', '_blank', 'noopener');
+      setTimeout(async () => {
+        forgetAvatarProfile(); // drop the last-known snapshot: a logged-out user must not resurrect offline
+        await fetchNeblinkStatus();
+        rerender();
+      }, 1000);
     });
   }
 

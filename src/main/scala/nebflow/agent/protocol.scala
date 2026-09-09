@@ -775,6 +775,9 @@ case class CompactionJob(
 
 case class TurnContext(
   agentDef: AgentDef,
+  /** 阶段 2 批 A（2026-09）systemPrefix 整层退役——恒空串；字段保留至阶段 3
+    * 随 TurnContext 清理一并移除（PromptSections.assembleSystemPrompt 的
+    * prefix 参数已同批删除，稳定首段 = agent system.md）。 */
   systemPrefix: String,
   projectRoot: Option[String],
   rulesMd: Option[String],
@@ -865,6 +868,23 @@ case class SessionContext(
    * nebflow.json 后下个 turn 生效，无需重启或 respawn。
    */
   userFacingNode: Boolean = false,
+  /** Project 任务板身份（TaskBoard 批 2 接线，规格 §1d）：flowNodeId = project 节点
+    * 会话的 NodeDef.id（NodeEngine spawn 点置位）；isDispatcher = 分发器会话标记
+    * （ProjectActor spawn 点置位）。经 AgentCore 透传进 ToolContext——TaskBoard
+    * 工具的引擎侧身份判定来源（不信客户端参数）。两字段皆空 = 非项目会话
+    * （Nebula/team/flow 双轨/REST）→ 工具未挂载 + 工具内拒绝，双保险不可达。 */
+  flowNodeId: Option[String] = None,
+  isDispatcher: Boolean = false,
+  /** 所属项目名（TaskBoard 批 2 身份链随路接通）：分发器/节点 spawn 注入 →
+    * AgentCore 透传 ToolContext.projectName——该字段此前存在但生产代码从未赋值
+    * （证据 §6-2），本批接通后 Node 系工具的 project 缺省解析（NodeTools.
+    * resolveProject fallback 链）在节点会话内也生效。None = 非项目会话。 */
+  projectName: Option[String] = None,
+  /** 节点人类可读名（D6 批 F1 G9 路径 a：spawn 置位随路注入，spec §3.3）——
+    * NodeEngine 置 node.name（loop worker/verify 同属该 loop 节点名）；
+    * AskUser payload 的 nodeName 字段来源（badge「project · nodeName」归因）。
+    * None = 非项目节点会话（Nebula/分发器/REPL——分发器由 isDispatcher 标注）。 */
+  flowNodeName: Option[String] = None,
   /**
    * D11 交互豁免（freeze-schedule spec v1.1）：用户在场等待的交互会话
    * 不参与冻结——冻结它们省下的 token 远低于浪费的用户等待时间。
@@ -1102,6 +1122,10 @@ object AgentState:
     freezeExempt: Boolean = false,
     isFlowNode: Boolean = false,
     userFacingNode: Boolean = false,
+    flowNodeId: Option[String] = None,
+    isDispatcher: Boolean = false,
+    projectName: Option[String] = None,
+    flowNodeName: Option[String] = None,
     sandboxEnabled: Boolean = false,
     sandboxRoot: Option[String] = None,
     loopTurnKey: Long = 0L
@@ -1131,6 +1155,10 @@ object AgentState:
         freezeExempt = freezeExempt,
         isFlowNode = isFlowNode,
         userFacingNode = userFacingNode,
+        flowNodeId = flowNodeId,
+        isDispatcher = isDispatcher,
+        projectName = projectName,
+        flowNodeName = flowNodeName,
         sandboxEnabled = sandboxEnabled,
         sandboxRoot = sandboxRoot
       ),
@@ -1195,6 +1223,10 @@ extension (s: AgentState)
   def isSubTaskWorker: Boolean = s.session.isSubTaskWorker
   def isFlowNode: Boolean = s.session.isFlowNode
   def userFacingNode: Boolean = s.session.userFacingNode
+  def flowNodeId: Option[String] = s.session.flowNodeId
+  def isDispatcher: Boolean = s.session.isDispatcher
+  def projectName: Option[String] = s.session.projectName
+  def flowNodeName: Option[String] = s.session.flowNodeName
 
   def withSession(session: SessionContext): AgentState = s.copy(session = session)
   def withExecution(execution: ExecutionContext): AgentState = s.copy(execution = execution)

@@ -52,6 +52,15 @@ object NodeRunner:
     isFlowNode: Boolean = false,
     expectsMail: Boolean = false,
     userFacingNode: Boolean = false,
+    /** Project 任务板身份（TaskBoard 批 2，详见 SessionContext 同名字段）：
+      * NodeEngine 节点 spawn 置 flowNodeId=Some(node.id)+projectName；ProjectActor
+      * 分发器 spawn 置 isDispatcher=true+projectName。默认空=非项目会话（零变化）。 */
+    flowNodeId: Option[String] = None,
+    isDispatcher: Boolean = false,
+    projectName: Option[String] = None,
+    /** D6 批 F1（G9 路径 a）：节点人类可读名随 spawn 注入（NodeEngine 置
+      * node.name）——AskUser payload nodeName 字段来源。详见 SessionContext。 */
+    flowNodeName: Option[String] = None,
     /** actor 名字（默认 = sessionId；flow 节点用 "dagnode-<nodeId>-<sid>" 前缀）。 */
     actorName: String = "",
     /** 阶段 2a 沙箱（§A.6）：project 节点/分发器置 true——AgentCore 从
@@ -93,6 +102,10 @@ object NodeRunner:
           isFlowNode = p.isFlowNode,
           expectsMail = p.expectsMail,
           userFacingNode = p.userFacingNode,
+          flowNodeId = p.flowNodeId,
+          isDispatcher = p.isDispatcher,
+          projectName = p.projectName,
+          flowNodeName = p.flowNodeName,
           sandboxEnabled = p.sandboxEnabled,
           sandboxRoot = p.sandboxRoot
         ),

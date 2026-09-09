@@ -19,10 +19,11 @@ let requestsExpanded = false;
 let lastSearchAt = 0;
 let searchResult = null;   // null | {found:false} | 契约搜索结果（归一内部形态，含 relation_status）
 let verifyFor = null;      // username awaiting verification-note input
-let sentTo = new Set();    // usernames sent this session（乐观回显；服务端态 = relation_status）
+let sentTo = new Set();    // 本会话已发出请求的乐观回显键集（服务端态 = relation_status）；
+                           // 键 = username 小写 或 `id:<userId>` 双键（userId 不受服务端档案形态影响）
 let searching = false;     // search in flight → button loading state
 let searchQ = '';          // preserved across re-renders (panel rebuilds on state change)
-let searchError = false;   // 请求失败分态（≠「未找到」；09-06 作者令三态：空结果/加载中/失败）
+let searchErrorKind = null; // null | 'auth' | 'neblinkOff' | 'retryable'（api.errKind 分态；≠「未找到」；0908 作者令按 err.status 拆分三态）
 
 // ── 红点语义（0904 批次，微信常识）：未看过的请求才亮。展开「新的朋友」
 // 即视为已看（与查看后即清的微信口径一致），新 friend_event 再亮；同意/
@@ -36,7 +37,9 @@ function saveSeenRequests(set) {
 }
 function unseenIncomingCount() {
   const seen = loadSeenRequests();
-  return incoming.filter(r => r.status === 'pending' && !seen.has(r.requestId)).length;
+  // F3：与 F1 同一缺省约定——网关 incoming 行亦无 status（FriendRequestSummary
+  // 无该字段），严格 === 'pending' 使直连模式红点恒 0；缺失视为 pending。
+  return incoming.filter(r => (r.status === undefined || r.status === 'pending') && !seen.has(r.requestId)).length;
 }
 
 // #290 §1.2 WeChat-style blacklist: blocked friends stay in the list, greyed.
@@ -78,7 +81,17 @@ async function refresh() {
     friends = merged;
     incoming = (data.incoming || []);
     outgoing = (data.outgoing || []);
-    sentTo = new Set(outgoing.filter(r => r.status === 'pending').map(r => (r.to?.neblinkId || '').toLowerCase()));
+    // F1（症状②主修复）：网关出参 OutgoingRequestSummary 无 status 字段
+    // （NeblinkModel.scala:336-340 deriveEncoder），严格 === 'pending' 恒空 →
+    // 「等待对方处理」一次 refresh 即被 wipe。缺省约定：status 缺失视为 pending
+    // （对齐 requestRow 的 rq.status || 'pending' 既有写法）；wire 将来带
+    // status 时仍尊重。双键索引：username 键依赖服务端回填，userId 键兜底。
+    sentTo = new Set();
+    for (const r of outgoing) {
+      if (r.status !== undefined && r.status !== 'pending') continue;
+      if (r.to?.neblinkId) sentTo.add(String(r.to.neblinkId).toLowerCase());
+      if (r.to?.userId) sentTo.add(`id:${r.to.userId}`);
+    }
   } catch { /* keep last known */ }
   render();
   updateBadge();
@@ -147,7 +160,7 @@ function render() {
     if (requestsExpanded) {
       // Viewing the inbox = seen (WeChat-style red-dot semantics).
       const seen = loadSeenRequests();
-      for (const r of incoming) if (r.status === 'pending') seen.add(r.requestId);
+      for (const r of incoming) if (r.status === undefined || r.status === 'pending') seen.add(r.requestId);
       saveSeenRequests(seen);
     }
     render();
@@ -221,7 +234,7 @@ function confirmDeleteFriend(f) {
       setFriendTrusted(f.userId, false); // 删除好友连同本地信任标记一起清
       render();
       window.dispatchEvent(new CustomEvent('fm-friends-changed'));
-    } catch (err) { window.__showToast?.(err.message || t('messages.networkError'), 'error'); }
+    } catch (err) { friendErrToast(err); }
   };
   if (typeof window.__showConfirm === 'function') {
     window.__showConfirm(t('contacts.deleteTitle'), t('contacts.deleteConfirm', { name }), run);
@@ -242,7 +255,7 @@ function confirmBlockFriend(f) {
       if (row) row.blocked = true;
       render();
       window.dispatchEvent(new CustomEvent('fm-friends-changed'));
-    } catch (err) { window.__showToast?.(err.message || t('messages.networkError'), 'error'); }
+    } catch (err) { friendErrToast(err); }
   };
   if (typeof window.__showConfirm === 'function') {
     window.__showConfirm(t('contacts.blockTitle'), t('contacts.blockConfirm', { name }), run);
@@ -255,7 +268,7 @@ async function unblockFriend(f) {
     saveBlockedCache(loadBlockedCache().filter(b => b.userId !== f.userId));
     await refresh();
     window.dispatchEvent(new CustomEvent('fm-friends-changed'));
-  } catch (err) { window.__showToast?.(err.message || t('messages.networkError'), 'error'); }
+  } catch (err) { friendErrToast(err); }
 }
 
 // ── Search (submit-style, 1s min interval) ───────────────
@@ -281,16 +294,18 @@ function buildSearch() {
     lastSearchAt = now;
     verifyFor = null;
     searching = true;
-    searchError = false;
+    searchErrorKind = null;
     render(); // button → loading state (input value survives via searchQ)
     try {
       searchResult = await api.searchUser(searchQ.trim());
-      searchError = false;
-    } catch {
-      // 失败分态（09-06 作者令）：422/429/网络/窗口期 404 → 「搜索失败」卡，
-      // 不再伪装成「未找到该用户」（此前与空结果混态，误导性强）。
+      searchErrorKind = null;
+    } catch (err) {
+      // 失败分态（09-06 作者令拆分「未找到」；0908 作者令再按 err.status 三分）：
+      // 401/403→登录失效卡+重登按钮（fm-auth-required 全局链保留，卡片为兜底
+      // 可见反馈）；404→「Neblink 未启用」（≠「未找到」，found:false 恒 200）；
+      // 5xx/422/429/网络/窗口期→可重试卡。
       searchResult = null;
-      searchError = true;
+      searchErrorKind = api.errKind(err);
     }
     searching = false;
     render();
@@ -306,7 +321,7 @@ function buildSearch() {
   row.appendChild(btn);
   if (searching) {
     block.appendChild(buildSearching());
-  } else if (searchError) {
+  } else if (searchErrorKind) {
     block.appendChild(buildSearchError());
   } else if (searchResult) {
     block.appendChild(buildResultCard());
@@ -325,12 +340,39 @@ function buildSearching() {
   return card;
 }
 
-// 请求失败态：明确反馈，不冒充「未找到」
+// 请求失败态（0908 作者令三分态）：明确反馈，不冒充「未找到」。
+// auth → 登录失效卡 + 重登按钮（→openLoginModal；全局 fm-auth-required 链
+// 保留，卡片为兜底可见反馈）；neblinkOff → 「Neblink 未启用」；retryable →
+// 可重试文案（网络错另有 fm-network-error 全局 toast，并存不冲突）。
 function buildSearchError() {
   const card = el('div', 'fm-result-card fm-search-error');
   card.setAttribute('role', 'alert');
-  card.appendChild(el('div', 'fm-empty', t('contacts.searchError')));
+  if (searchErrorKind === 'auth') {
+    card.appendChild(el('div', 'fm-empty', t('contacts.searchAuthError')));
+    const foot = el('div', 'fm-result-foot');
+    const btn = el('button', 'glass-control fm-login-btn', t('contacts.relogin'));
+    btn.addEventListener('click', () => openLoginModal());
+    foot.appendChild(btn);
+    card.appendChild(foot);
+  } else if (searchErrorKind === 'neblinkOff') {
+    card.appendChild(el('div', 'fm-empty', t('contacts.neblinkOff')));
+  } else {
+    card.appendChild(el('div', 'fm-empty', t('contacts.searchError')));
+  }
   return card;
+}
+
+// 好友操作失败 toast 分态（0908 作者令：delete/block/unblock 同族折叠拆分）：
+// auth→登录引导；404→Neblink 未启用；其余 HTTP 错→networkError 现文案。
+// 网络错（err 无 status）已由 fm-network-error 全局 toast 覆盖，本地跳过
+// 避免双提示。
+function friendErrToast(err) {
+  if (!err || err.status === undefined) return;
+  const kind = api.errKind(err);
+  const key = kind === 'auth' ? 'contacts.searchAuthError'
+    : kind === 'neblinkOff' ? 'contacts.neblinkOff'
+    : 'messages.networkError';
+  window.__showToast?.(t(key), 'error');
 }
 
 function buildResultCard() {
@@ -384,7 +426,7 @@ function buildResultCard() {
     return card;
   }
 
-  if (rs === 'outgoing_pending' || (rs === 'addable' && sentTo.has(username.toLowerCase()))) {
+  if (rs === 'outgoing_pending' || (rs === 'addable' && (sentTo.has(username.toLowerCase()) || (r.userId && sentTo.has(`id:${r.userId}`))))) {
     // 我方出站待处理 → 「等待对方处理」（sentTo 为乐观回显，非服务端态）
     foot.appendChild(el('span', 'fm-status-text', t('contacts.outgoingPending')));
     card.appendChild(foot);
@@ -427,7 +469,7 @@ function buildResultCard() {
       try {
         await api.unblockFriend(r.userId);
         saveBlockedCache(loadBlockedCache().filter(b => b.userId !== r.userId));
-      } catch (err) { window.__showToast?.(err.message || t('messages.networkError'), 'error'); }
+      } catch (err) { friendErrToast(err); }
       searchResult = null;
       await refresh();
       window.dispatchEvent(new CustomEvent('fm-friends-changed'));
@@ -451,7 +493,24 @@ function buildResultCard() {
       try {
         await api.sendFriendRequest(username, input.value.trim());
         sentTo.add(username.toLowerCase());
-      } catch { /* keep state */ }
+        if (searchResult?.userId) sentTo.add(`id:${searchResult.userId}`);
+        // F2：就地翻转搜索卡 relation_status——此后任何 refresh/重渲染都不再
+        // 依赖 sentTo 或搜索时刻的陈旧 rs，卡片稳定停「等待对方处理」。
+        if (searchResult?.found) searchResult.relation_status = 'outgoing_pending';
+      } catch (err) {
+        if (err && err.status === 409) {
+          // 重复申请（neblink-server friends.rs:399-404 语义：同对 pending 已
+          // 存在）——请求确实在服务端在途，按「已申请」处理：就地翻转卡片态，
+          // 绝不回退「加好友」可点态（0908 分发器对焦①b；旧统一 catch 吞掉
+          // 409 是「验证中弹回加好友」根因之一）。
+          sentTo.add(username.toLowerCase());
+          if (searchResult?.userId) sentTo.add(`id:${searchResult.userId}`);
+          if (searchResult?.found) searchResult.relation_status = 'outgoing_pending';
+          window.__showToast?.(t('contacts.alreadyRequested'), 'info');
+        } else {
+          friendErrToast(err); // F4：HTTP 类失败分态 toast（网络错由全局 fm-network-error 覆盖，friendErrToast 内已跳过）
+        }
+      }
       verifyFor = null;
       render();
     };

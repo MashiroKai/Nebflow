@@ -10,7 +10,7 @@ import java.nio.file.Files
 /**
  * SeedService cold-start 播种引擎验证（cold-start seed 批 2026-09-07）。
  *
- * 覆盖定稿四项：① fresh home 完整播种（三 keeper + 4 插件 + projects/general）、
+ * 覆盖定稿四项：① fresh home 完整播种（三 keeper + 2 插件 + projects/general）、
  * ② 幂等 / 不覆盖用户编辑、③ fresh-home 守卫（已有用户数据 → 只写 marker 不播种）、
  * ④ 升级 add-only（低版本 marker + 已有文件 → 只补缺失，不重写）。
  *
@@ -47,25 +47,32 @@ class SeedServiceSpec extends FunSuite:
     assert(os.exists(genAgentJson), "general/agent.json seeded")
     assert(os.exists(home / "agents" / "general" / "system.md"), "general/system.md seeded")
 
-    // 蒸馏：agent.json 不得含 preset / skills 具名引用（§5）
+    // agent.json 基线锚定（TB #20 基线对齐 2026-09-09）：种子以 runtime trusted 形态为准，
+    // preset/skills 字段合法入 seed——project-dispatcher: preset=general, skills=[]
     val pd = io.circe.parser.parse(os.read(pdAgentJson)).toOption.get
-    assert(!pd.hcursor.downField("preset").succeeded, "project-dispatcher has no preset field")
-    assert(!pd.hcursor.downField("skills").succeeded, "project-dispatcher has no skills field")
+    assert(pd.hcursor.downField("preset").as[String].toOption.contains("general"),
+      "project-dispatcher preset=general")
+    assert(pd.hcursor.downField("skills").as[List[String]].toOption.exists(_.isEmpty),
+      "project-dispatcher skills=[]")
     assert(pd.hcursor.downField("name").as[String].toOption.contains("project-dispatcher"))
 
     val gen = io.circe.parser.parse(os.read(genAgentJson)).toOption.get
-    assert(!gen.hcursor.downField("preset").succeeded, "general has no preset field")
+    assert(gen.hcursor.downField("preset").as[String].toOption.contains("general"),
+      "general preset=general")
     assert(gen.hcursor.downField("name").as[String].toOption.contains("general"))
 
-    // 4 系统插件：目录就位 + trusted（slideblocks = 默认预装的大体量 skill 包）
-    for name <- List("explorer-toolkit", "design-spec", "visual-report", "slideblocks")
+    // 收缩后默认插件集 = {visual-report, slideblocks}（c7501470 manifest 收缩）：目录就位 + trusted
+    for name <- List("visual-report", "slideblocks")
     do
       assert(os.exists(home / "plugins" / name / "plugin.json"), s"plugin '$name'/plugin.json present")
       assert(PluginRegistry.resolve(name).unsafeRunSync().isRight, s"plugin '$name' trusted")
-    // 至少一个 skill 包实际复制
-    assert(os.exists(home / "plugins" / "explorer-toolkit" / "skills" / "exploration-method" / "SKILL.md"),
-      "explorer-toolkit skill copied")
-    // slideblocks 大体量 skill 包实际复制（plugin.json 锚点 + 整目录递归）
+    // 收缩语义负断言：explorer-toolkit / design-spec 已移出 manifest → 不得播种
+    for name <- List("explorer-toolkit", "design-spec")
+    do
+      assert(!os.exists(home / "plugins" / name), s"plugin '$name' NOT seeded (removed from default set)")
+    // skill 包实际复制实证（两个默认插件各验一条，plugin.json 锚点 + 整目录递归）
+    assert(os.exists(home / "plugins" / "visual-report" / "skills" / "visual-report" / "SKILL.md"),
+      "visual-report skill copied")
     assert(os.exists(home / "plugins" / "slideblocks" / "skills" / "slideblocks" / "SKILL.md"),
       "slideblocks skill copied")
 
@@ -86,9 +93,9 @@ class SeedServiceSpec extends FunSuite:
     val state = io.circe.parser.parse(os.read(marker)).toOption.get
     assert(state.hcursor.downField("version").as[String].toOption.contains("1.0.0"))
     assert(state.hcursor.downField("items").as[List[String]].toOption.exists(_.nonEmpty), "items recorded")
-    // 2 agents + 4 plugins + 1 project = 7
-    assert(state.hcursor.downField("items").as[List[String]].toOption.exists(_.size == 7),
-      "marker records 7 items (2 agents + 4 plugins + 1 project)")
+    // 2 agents + 2 plugins + 1 project = 5（收缩后默认集）
+    assert(state.hcursor.downField("items").as[List[String]].toOption.exists(_.size == 5),
+      "marker records 5 items (2 agents + 2 plugins + 1 project)")
 
   // ── ② 幂等 / 不覆盖用户编辑 ───────────────────────────────
   test("re-seed is idempotent and never overwrites user edits"):
@@ -144,9 +151,11 @@ class SeedServiceSpec extends FunSuite:
     // 已有文件不被覆盖（用户胜出）
     val agentContent = os.read(home / "agents" / "general" / "agent.json")
     assert(agentContent.contains("preUpgrade"), "pre-existing agent.json not rewritten (user wins)")
-    // 缺失的补齐：project-dispatcher、插件、项目
+    // 缺失的补齐：project-dispatcher、插件（补种集 = 现行 manifest 默认集，manifest 驱动 SeedService.runSeed）、项目
     assert(os.exists(home / "agents" / "project-dispatcher" / "agent.json"), "missing dispatcher added")
-    assert(os.exists(home / "plugins" / "explorer-toolkit" / "plugin.json"), "missing plugin added")
+    assert(os.exists(home / "plugins" / "visual-report" / "plugin.json"), "missing plugin added")
+    assert(os.exists(home / "plugins" / "slideblocks" / "plugin.json"), "missing plugin added")
+    assert(!os.exists(home / "plugins" / "explorer-toolkit"), "shrink-removed plugin not replanted on upgrade")
     assert(os.exists(home / "projects" / "general" / "project.json"), "missing project added")
     // marker 升级到当前版本
     val marker = io.circe.parser.parse(os.read(home / ".seed-state.json")).toOption.get

@@ -122,8 +122,8 @@ function badgeCensus(page) {
 }
 
 /** Row-only DOM snapshot (headers excluded): for #403 byte-stability checks.
- *  The banner-dedupe marker class legitimately changes a closed turn's
- *  HEADER attributes; the rows themselves must never change. */
+ *  The header's dataset (turnState) legitimately changes on toggle; the rows
+ *  themselves must never change. */
 function rowsSnapshot(page) {
   return page.evaluate(() =>
     Array.from(document.getElementById('chat').children)
@@ -198,7 +198,9 @@ test.describe('one header per turn — multi-round tool loop (author repro)', ()
     const c = await badgeCensus(page);
     // 跨 turn 不融合：两个 turn 各一个 header。
     expect(c.groupCount).toBe(2);
-    expect(c.bars.map(b => b.visible)).toEqual([false, true]); // turn1 header superseded
+    // 2026-09-08 ruling: EVERY header stays visible (banner-dedupe removed —
+    // the hidden old headers were unclickable, the 「旧轮点不开」 root cause).
+    expect(c.bars.map(b => b.visible)).toEqual([true, true]);
     // turn1 rows byte-stable（#403 不变量）。
     const domAfter = await rowsSnapshot(page);
     expect(domAfter.startsWith(domBefore)).toBe(true);

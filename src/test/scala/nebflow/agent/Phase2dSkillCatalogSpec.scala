@@ -197,9 +197,9 @@ class Phase2dSkillCatalogSpec extends CatsEffectSuite:
     assert(ContextRefresher.skillCatalogEnabledFor("Coder"), "legacy agent 保留至阶段 3")
 
   test("D.1-12: node 会话（general 模版）首条消息不含 per-agent skill 目录（order 800 停注）"):
-    // 注意：共享前缀（system-prefix-for-all，JAR fallback/定义层文件）里有一段
-    // 静态「## Skills」能力说明——不是 order 800 的 per-agent 目录（设计 §D.1 #12
-    // 只对后者停注；前缀属定义层，阶段 3 随 team/flow 退役清单另行处理）。
+    // 注意：共享前缀层（system-prefix-for-all）已随阶段 2 批 A 退役——其
+    // JAR 内静态「## Skills」段一并消失，断言语义不受影响（本测试只钉
+    // order 800 per-agent 目录停注，设计 §D.1 #12）。
     // per-agent 目录的特征：目录头句「Skills live at」+ 条目行「- <skill>:」。
     val (_, program) = runNodeAndCapture(s"p2d-gen-${scala.util.Random.nextInt(100000)}", "general")
     val reqOpt = program.unsafeRunSync()
@@ -224,10 +224,13 @@ class Phase2dSkillCatalogSpec extends CatsEffectSuite:
     val pop = tools.getOrElse("Pop", fail("general node must receive Pop"))
     assert(pop.contains("professional tool") && pop.contains("never hand-draw"),
       "Pop description carries the order-415 reporting workflow at the wire level")
-    // 2026-09-06 节点面摘除 AskUser：general 节点 wire 层不得再收到该工具
-    // （order-400 指南仍随工具 description 对 Nebula/显式声明身份生效，
-    // 由 AskUserQuestionToolSpec/机制 spec 覆盖，此处只钉 general 交付面）
-    assert(!tools.contains("AskUserQuestion"),
-      "AskUserQuestion no longer on the general node default face (2026-09-06 交互出口统一)")
+    // 2026-09-08 作者修订恢复 AskUser（D6 批D1）：general 节点 wire 层重新
+    // 收到该工具（2026-09-06 摘除断言反向）；order-400 指南仍随工具 description
+    // 自包含生效（删段不退化判据恢复钉死）
+    val ask = tools.getOrElse("AskUserQuestion", fail("general node must receive AskUserQuestion (2026-09-08 restored)"))
+    assert(ask.contains("When NOT to use"),
+      "AskUserQuestion description carries the order-400 guidance at the wire level")
+    assert(ask.contains("node-ask trace event") && ask.contains("project · node"),
+      "AskUserQuestion description carries the supervision note (D6 批D1: node-ask 留痕 + 来源标注)")
 
 end Phase2dSkillCatalogSpec

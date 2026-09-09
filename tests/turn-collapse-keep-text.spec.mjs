@@ -134,8 +134,8 @@ function visibleTexts(page) {
 }
 
 /** Row-only DOM snapshot (headers excluded): for #403 byte-stability checks.
- *  The banner-dedupe marker class legitimately changes a closed turn's
- *  HEADER attributes; the rows themselves must never change. */
+ *  The header's dataset (turnState) legitimately changes on toggle; the rows
+ *  themselves must never change. */
 function rowsSnapshot(page) {
   return page.evaluate(() =>
     Array.from(document.getElementById('chat').children)
@@ -258,7 +258,7 @@ test.describe('decompression model — live alternating turn (验收 ②④)', (
 });
 
 test.describe('思考直播回归 (验收 ①)', () => {
-  test('thinking streams EXPANDED; stays visible after finishThinking; only the terminal tuck folds it', async ({ browser }) => {
+  test('thinking streams EXPANDED; auto-collapses at stream end (09-07 ruling) with a clickable re-open label', async ({ browser }) => {
     const { context, page, pageErrors } = await newPage(browser);
 
     // Streaming: content div must be visible while deltas land.
@@ -279,8 +279,9 @@ test.describe('思考直播回归 (验收 ①)', () => {
     expect(streaming.hasText).toBe(true);
     expect(streaming.label).toContain('思考中');
 
-    // Mid-turn finish (text reply follows): thinking stays visible — only
-    // the terminal folds it (「运行中 turn 中间过程照旧实时可见，只有终态才收」).
+    // Mid-turn finish (text reply follows): the thinking CONTENT auto-collapses
+    // at stream end (2026-09-07 09:24 author ruling — restores the pre-08-20
+    // behavior; 15f7cab4), the label stays clickable so the user can re-open.
     await page.evaluate(() => window.__thinkingStreamMid());
     expect(pageErrors).toEqual([]);
     const mid = await page.evaluate(() => {
@@ -292,13 +293,23 @@ test.describe('思考直播回归 (验收 ①)', () => {
         rowVisible: row ? row.offsetHeight > 0 : false,
         contentVisible: content ? content.offsetHeight > 0 : false,
         label: row?.querySelector('.thinking-label-text')?.textContent || '',
+        collapsible: !!row?.querySelector('.thinking-label.collapsible'),
         aiText: aiRow ? (aiRow.querySelector('.bubble.ai')?.textContent || '').trim() : '',
       };
     });
     expect(mid.rowVisible).toBe(true);
-    expect(mid.contentVisible).toBe(true);
+    expect(mid.contentVisible).toBe(false); // auto-collapse at stream end (09-07 ruling)
     expect(mid.label).toBe('思考过程'); // done label, pre-#345 design
+    expect(mid.collapsible).toBe(true); // label stays clickable — 可重开
     expect(mid.aiText).toBe('思考后的答案。');
+
+    // Click the label → the content re-expands (「可重开」contract).
+    await page.locator('#chat .row.thinking-row .thinking-label').click();
+    const reopened = await page.evaluate(() => {
+      const content = document.querySelector('#chat .row.thinking-row .thinking-content');
+      return content ? content.offsetHeight > 0 : false;
+    });
+    expect(reopened).toBe(true);
 
     await context.close();
   });
@@ -356,8 +367,8 @@ test.describe('decompression model — closure semantics (验收 #403)', () => {
 
     // The closed turn's ROWS are byte-identical to before the new turn
     // (rows never move; the new turn appends strictly after the cursor).
-    // The banner-dedupe marker on turn-1's header (a header-attribute
-    // change) is a legal render-layer update and excluded here.
+    // Header changes (a new header for the new turn) are legal render-layer
+    // updates and excluded here.
     const after = await rowsSnapshot(page);
     expect(after.startsWith(before)).toBe(true);
 

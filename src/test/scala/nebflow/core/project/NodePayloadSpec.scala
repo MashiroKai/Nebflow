@@ -61,8 +61,12 @@ class NodePayloadSpec extends FunSuite:
     // 移除后字段集恒定——精确键集断言（与 NodeEventPushSpec NodeListKeys 同口径）
     val node = NodeDef(id = "n-z", name = "零漂移", agent = "general", createdAt = 1000L)
     val j = NodePayload.buildNodeJson(node, now = 2000L)
-    val expected = Set("id", "name", "agent", "description", "status", "in", "out", "hasWorktree", "worktree", "blockCount", "createdAt", "completedAt", "ttlLeftSec")
-    assertEquals(j.asObject.map(_.keys.toSet), Some(expected), "key set must be exactly the base set (no skill/mcp/preset, no conditional keys)")
+    // P1 out 语义门控：out 条件序列化（Nil 不带键，同 blockedFeedback/plugins 同构）
+    // → 基础键集不再恒含 out；有边节点 = 基础集 + out
+    val expected = Set("id", "name", "agent", "description", "status", "in", "hasWorktree", "worktree", "blockCount", "createdAt", "completedAt", "ttlLeftSec")
+    assertEquals(j.asObject.map(_.keys.toSet), Some(expected), "key set must be exactly the base set (no skill/mcp/preset; out omitted when Nil)")
+    val withOut = NodePayload.buildNodeJson(node.copy(out = List(OutEdge.nebula)), now = 2000L)
+    assertEquals(withOut.asObject.map(_.keys.toSet), Some(expected + "out"), "node with out edges must carry the canonical edge array key")
     // 存量节点（三键有值）照常携带——条件序列化而非删除
     val legacy = node.copy(skill = Some("s"), mcp = Some("m"), preset = Some("p"))
     val jl = NodePayload.buildNodeJson(legacy, now = 2000L)

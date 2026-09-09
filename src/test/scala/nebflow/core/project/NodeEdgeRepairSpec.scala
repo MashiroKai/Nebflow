@@ -186,7 +186,7 @@ class NodeEdgeRepairSpec extends CatsEffectSuite:
         s.nodes.get(id) match
           case Some(fresh) =>
             s.copy(nodes = s.nodes.updated(id, fresh.copy(
-              out = None, // 悬空（陈旧 out 覆盖时代的历史损伤形态 / LLM 断开写法）
+              out = Nil, // 悬空（陈旧 out 覆盖时代的历史损伤形态 / LLM 断开写法）
               createdAt = System.currentTimeMillis() - 600000))) // 自成一批（链级 sweep 批次隔离）
           case None => s
       }
@@ -224,7 +224,7 @@ class NodeEdgeRepairSpec extends CatsEffectSuite:
       // W store 直种（20260903 创建必带 out 新规范下 out-only wiring 节点不可经 NodeEdit 创建）
       _ <- rt.store.mutate(s => s.copy(nodes = s.nodes ++ Map(
         "n-w" -> NodeDef(id = "n-w", name = "w-w", agent = "test-agent",
-          status = NodeLifecycle.Wiring, out = Some("Nebula"), createdAt = System.currentTimeMillis()))))
+          status = NodeLifecycle.Wiring, out = List(OutEdge.nebula), createdAt = System.currentTimeMillis()))))
       wId <- idOf(rt, "w-w")
       _ <- nodeEdit(nodeInput("edge-arch-append", "run-r", "description" -> Json.fromString("test node purpose"),
         "task" -> Json.fromString("slow-r"), "out" -> Json.fromString(wId)), ctx)
@@ -269,7 +269,7 @@ class NodeEdgeRepairSpec extends CatsEffectSuite:
       // out 新规范下 out-only wiring 节点不可经 NodeEdit 创建）
       _ <- rt.store.mutate(s => s.copy(nodes = s.nodes ++ Map(
         "n-w" -> NodeDef(id = "n-w", name = "w-w", agent = "test-agent",
-          status = NodeLifecycle.Wiring, out = Some("Nebula"), createdAt = System.currentTimeMillis()))))
+          status = NodeLifecycle.Wiring, out = List(OutEdge.nebula), createdAt = System.currentTimeMillis()))))
       wId <- idOf(rt, "w-w")
       _ <- nodeEdit(nodeInput("edge-arch-deps", "slow-x", "description" -> Json.fromString("test node purpose"),
         "task" -> Json.fromString("slow-x"), "out" -> Json.fromString("Nebula")), ctx)
@@ -320,7 +320,7 @@ class NodeEdgeRepairSpec extends CatsEffectSuite:
       // W store 直种（20260903 创建必带 out 新规范下 out-only wiring 节点不可经 NodeEdit 创建）
       _ <- rt.store.mutate(s => s.copy(nodes = s.nodes ++ Map(
         "n-w" -> NodeDef(id = "n-w", name = "w-w", agent = "test-agent",
-          status = NodeLifecycle.Wiring, out = Some("Nebula"), createdAt = System.currentTimeMillis()))))
+          status = NodeLifecycle.Wiring, out = List(OutEdge.nebula), createdAt = System.currentTimeMillis()))))
       wId <- idOf(rt, "w-w")
       _ <- nodeEdit(nodeInput("edge-arch-wire", "done-a", "description" -> Json.fromString("test node purpose"),
         "task" -> Json.fromString("dangling-result-A"), "out" -> Json.fromString("Nebula")), ctx)
@@ -342,7 +342,7 @@ class NodeEdgeRepairSpec extends CatsEffectSuite:
       assertEquals(w.status, NodeLifecycle.Completed, "W must start after re-delivery and complete")
       assert(wInput.isDefined, s"W input must carry A's result header, got inputs=${allInputs.map(_.take(150))}")
       // 归档副本的 out 单权威补写（setOut 归档感知）
-      assertEquals(archA.flatMap(_.out), Some(wId), "archived A.out must be rewritten to W (single-authority kept in archive)")
+      assertEquals(archA.map(_.out), Some(List(OutEdge(wId))), "archived A.out must be rewritten to W (single-authority kept in archive)")
       // 不产生同名重复节点：活动区不得出现新的 done-a（归档原件保持在归档区）
       assertEquals(activeNames, Nil, "no duplicate active node may be created for an archived name edit")
       assert(archA.map(_.id).contains(aId), "archived original must keep its id")
@@ -360,7 +360,7 @@ class NodeEdgeRepairSpec extends CatsEffectSuite:
       // W store 直种（20260903 创建必带 out 新规范下 out-only wiring 节点不可经 NodeEdit 创建）
       _ <- rt.store.mutate(s => s.copy(nodes = s.nodes ++ Map(
         "n-w" -> NodeDef(id = "n-w", name = "w-w", agent = "test-agent",
-          status = NodeLifecycle.Wiring, out = Some("Nebula"), createdAt = System.currentTimeMillis()))))
+          status = NodeLifecycle.Wiring, out = List(OutEdge.nebula), createdAt = System.currentTimeMillis()))))
       wId <- idOf(rt, "w-w")
       _ <- nodeEdit(nodeInput("edge-active-wire", "done-a", "description" -> Json.fromString("test node purpose"),
         "task" -> Json.fromString("dangling-result-A"), "out" -> Json.fromString("Nebula")), ctx)
@@ -393,7 +393,7 @@ class NodeEdgeRepairSpec extends CatsEffectSuite:
       // W store 直种（20260903 创建必带 out 新规范下 out-only wiring 节点不可经 NodeEdit 创建）
       _ <- rt.store.mutate(s => s.copy(nodes = s.nodes ++ Map(
         "n-w" -> NodeDef(id = "n-w", name = "w-w", agent = "test-agent",
-          status = NodeLifecycle.Wiring, out = Some("Nebula"), createdAt = System.currentTimeMillis()))))
+          status = NodeLifecycle.Wiring, out = List(OutEdge.nebula), createdAt = System.currentTimeMillis()))))
       wId <- idOf(rt, "w-w")
       _ <- nodeEdit(nodeInput("edge-preedge", "done-a", "description" -> Json.fromString("test node purpose"),
         "task" -> Json.fromString("dangling-result-A"), "out" -> Json.fromString("Nebula")), ctx)
@@ -437,7 +437,7 @@ class NodeEdgeRepairSpec extends CatsEffectSuite:
       // W store 直种（20260903 创建必带 out 新规范下 out-only wiring 节点不可经 NodeEdit 创建）
       _ <- rt.store.mutate(s => s.copy(nodes = s.nodes ++ Map(
         "n-w" -> NodeDef(id = "n-w", name = "w-w", agent = "test-agent",
-          status = NodeLifecycle.Wiring, out = Some("Nebula"), createdAt = System.currentTimeMillis()))))
+          status = NodeLifecycle.Wiring, out = List(OutEdge.nebula), createdAt = System.currentTimeMillis()))))
       wId <- idOf(rt, "w-w")
       _ <- nodeEdit(nodeInput("edge-catchup", "done-a", "description" -> Json.fromString("test node purpose"),
         "task" -> Json.fromString("done-result-A"), "out" -> Json.fromString("Nebula")), ctx)
@@ -493,7 +493,7 @@ class NodeEdgeRepairSpec extends CatsEffectSuite:
       assert(rIn.isLeft && rIn.left.exists(_.contains("archived")), s"in edit on archived must be rejected, got: $rIn")
       assert(rAbandon.isLeft && rAbandon.left.exists(_.contains("archived")), s"abandon on archived must be rejected, got: $rAbandon")
       assert(rNoOut.isLeft && rNoOut.left.exists(_.contains("archived")), s"no-op edit on archived must be rejected, got: $rNoOut")
-      assertEquals(archAfter.flatMap(_.out), None, "rejected edits must not touch the archived node")
+      assertEquals(archAfter.map(_.out), Some(Nil), "rejected edits must not touch the archived node")
       assertEquals(archAfter.flatMap(_.result), Some("ok"), "result must be untouched (CaptureLlm echoes 'ok')")
   }
 

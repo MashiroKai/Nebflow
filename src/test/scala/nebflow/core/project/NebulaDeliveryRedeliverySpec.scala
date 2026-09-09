@@ -54,7 +54,7 @@ class NebulaDeliveryRedeliverySpec extends FunSuite:
       id = id,
       name = s"node-$id",
       agent = "worker",
-      out = Some("Nebula"),
+      out = List(OutEdge.nebula),
       status = status,
       result = Some(result),
       createdAt = System.currentTimeMillis() - 60_000L

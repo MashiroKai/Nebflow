@@ -3,5 +3,6 @@
   "name": "design-spec",
   "version": "1.0.0",
   "description": "UI/UX 设计规格书方法论与视觉评审流程（只设计不实现）。内含 skill：design-spec（角色边界 / 四道防线 / 规格书模板 §0-9 / 检索源清单 / 硬约束）。无 mcp.json——无外部依赖，按协议裁定允许仅含 skills；配合 user 层 skill nebflow/visual-style（视觉铁律）、design-system（案例库）、card-design（HTML 卡片规范）使用，见 skill 正文「配合关系」节。",
-  "capability": "设计规格书生产与视觉评审方法论：节点获得按 §0-9 模板撰写 UI/UX 设计规格书、四道防线自查与视觉评审的纪律（只设计不实现）"
+  "capability": "设计规格书生产与视觉评审方法论：节点获得按 §0-9 模板撰写 UI/UX 设计规格书、四道防线自查与视觉评审的纪律（只设计不实现）",
+  "author": {"name": "Nebflow"}
 }

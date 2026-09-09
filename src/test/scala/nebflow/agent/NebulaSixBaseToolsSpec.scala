@@ -18,8 +18,8 @@ import munit.FunSuite
  *   交付面双层）∧ Bash/Write/Edit ∉ Nebula 集 + TaskList ∈ Nebula 集 +
  *   恰十四件计数——本文件即变异验红锚点：机制集加回写手或 NodeList 任一件
  *   （或摘掉 TaskList、或计数漂移）即红。
- * - ② 六件基础 ⊆ general 机制集（GeneralFixedTools = BaseTools + Pop；
- *   2026-09-06 节点面摘除 AskUser 后恰七件）
+ * - ② 六件基础 ⊆ general 机制集（GeneralFixedTools = BaseTools +
+ *   AskUserQuestion + Pop 恰八件；2026-09-08 作者修订恢复 AskUser，D6 批D1）
  *   ——回归钉死（general 已含六件是断言对象非改动对象；六件全体默认对
  *   general 侧不变）。
  * - ③（已删除，注明缘由）原「Write/Edit 真工具调用 × Nebula 会话写根」联合
@@ -74,14 +74,14 @@ class NebulaSixBaseToolsSpec extends FunSuite:
 
   // ===== ② 六件基础 ⊆ general 机制集（回归钉死）=====
 
-  test("② 六件基础 ⊆ general 机制集（GeneralFixedTools=六件+Pop，2026-09-06 摘 AskUser 后恰七件）"):
+  test("② 六件基础 ⊆ general 机制集（GeneralFixedTools=六件+AskUserQuestion/Pop 恰八件，2026-09-08 恢复 AskUser）"):
     val six = AgentCore.BaseTools
     assert(six.subsetOf(AgentCore.GeneralFixedTools),
       s"general 固定集必须含基础六件（缺: ${six.diff(AgentCore.GeneralFixedTools)}）")
-    assertEquals(AgentCore.GeneralFixedTools.size, 7,
-      "general 固定集恰七件（裁定 5 八件 − 2026-09-06 节点面摘除 AskUser：BaseTools 六件 + Pop）")
-    assert(!AgentCore.GeneralFixedTools.contains("AskUserQuestion"),
-      "general 固定集零 AskUserQuestion（2026-09-06 节点面摘除——变异验红锚）")
+    assertEquals(AgentCore.GeneralFixedTools.size, 8,
+      "general 固定集恰八件（裁定 5 原文：BaseTools 六件 + AskUserQuestion/Pop；2026-09-08 作者修订恢复）")
+    assert(AgentCore.GeneralFixedTools.contains("AskUserQuestion"),
+      "general 固定集含 AskUserQuestion（2026-09-08 作者修订恢复——变异验红锚）")
     val delivered = CoreProbe.allowed(mkDef("general"), isFlowNode = true)
     six.foreach(t => assert(delivered.contains(t), s"general 交付面缺基础六件之一: $t"))
 

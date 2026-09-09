@@ -145,35 +145,15 @@ function syncPanelDom() {
 
 function initSidePanels() {
   registerSidePanel({
-    id: 'messages',
-    buttonId: 'messages-btn',
-    panelId: 'panel-messages',
-    i18nKey: 'activity.messages',
-  });
-  registerSidePanel({
-    id: 'contacts',
-    buttonId: 'contacts-btn',
-    panelId: 'panel-contacts',
-    i18nKey: 'activity.contacts',
-  });
-  registerSidePanel({
     id: 'files',
     buttonId: 'files-btn',
     panelId: 'panel-sessions',
     i18nKey: 'activity.files',
   });
-  registerSidePanel({
-    id: 'messages',
-    buttonId: 'messages-btn',
-    panelId: 'panel-messages',
-    i18nKey: 'activity.messages',
-  });
-  registerSidePanel({
-    id: 'contacts',
-    buttonId: 'contacts-btn',
-    panelId: 'panel-contacts',
-    i18nKey: 'activity.contacts',
-  });
+  // Friends release gating (2026-09-08, see featureFlags.js): default-off
+  // posture — detach the Messages/Contacts entries now; main.js calls
+  // enableFriendPanels() once the first configData proves the flag on.
+  detachFriendEntries();
   // Restore the persisted panel; unregistered ids fall back to files.
   const stored = localStorage.getItem(LS_PANEL);
   activePanelId = stored && sidePanels.has(stored) ? stored : 'files';
@@ -207,6 +187,64 @@ function bridgeExplorerTitle() {
   apply();
   new MutationObserver(apply).observe(el, { childList: true, characterData: true, subtree: true });
   window.addEventListener('locale-changed', apply);
+}
+
+// ── Friends feature release gating (author ruling 2026-09-08) ────────────
+// Friend messaging + contacts ship disabled by default: a release user has no
+// reachable friend backend, so any leftover entry would be a dead end. The
+// flag lives in the existing server config channel — nebflow.json key
+// "features": { "friends": true } reaches the frontend verbatim via WS
+// configData → state.parsedConfig (see featureFlags.js). Gating = DOM
+// removal, not CSS hiding: the Messages/Contacts buttons + panels are
+// detached at boot; enableFriendPanels() re-attaches + registers them when
+// the flag is on. Decision latches once per boot (main.js); a config edit
+// takes effect on reload.
+/** @type {{msgsBtn: HTMLElement, contactsBtn: HTMLElement, msgsPanel: HTMLElement, contactsPanel: HTMLElement} | null} */
+let friendEntryNodes = null;
+
+/** Detach the gated friend entries from the DOM (default-off boot posture). */
+function detachFriendEntries() {
+  const msgsBtn = document.getElementById('messages-btn');
+  const contactsBtn = document.getElementById('contacts-btn');
+  const msgsPanel = document.getElementById('panel-messages');
+  const contactsPanel = document.getElementById('panel-contacts');
+  if (!msgsBtn || !contactsBtn || !msgsPanel || !contactsPanel) return;
+  friendEntryNodes = { msgsBtn, contactsBtn, msgsPanel, contactsPanel };
+  for (const el of Object.values(friendEntryNodes)) el.remove();
+}
+
+/**
+ * Re-attach + register the gated friend entries (flag confirmed on).
+ * Idempotent — a no-op once the entries are back in the DOM.
+ */
+export function enableFriendPanels() {
+  if (!friendEntryNodes) return;
+  const { msgsBtn, contactsBtn, msgsPanel, contactsPanel } = friendEntryNodes;
+  friendEntryNodes = null;
+  document.querySelector('#activity-bar .activity-spacer')?.before(msgsBtn, contactsBtn);
+  document.getElementById('sidebar-panel')?.append(msgsPanel, contactsPanel);
+  registerSidePanel({
+    id: 'messages',
+    buttonId: 'messages-btn',
+    panelId: 'panel-messages',
+    i18nKey: 'activity.messages',
+  });
+  registerSidePanel({
+    id: 'contacts',
+    buttonId: 'contacts-btn',
+    panelId: 'panel-contacts',
+    i18nKey: 'activity.contacts',
+  });
+  // The buttons were detached before initActivityBar's createIconsIn pass —
+  // convert their <i data-lucide> placeholders now.
+  if (typeof lucide !== 'undefined') {
+    createIconsIn(msgsBtn);
+    createIconsIn(contactsBtn);
+  }
+  // Honor the persisted active panel now that the registry knows these ids.
+  const stored = localStorage.getItem(LS_PANEL);
+  if (stored && sidePanels.has(stored)) activePanelId = stored;
+  syncPanelDom();
 }
 
 /**
@@ -351,6 +389,15 @@ function injectLoginModalStyles() {
 .login-modal-btn:hover { filter: brightness(1.06); }
 .login-modal-btn:active { filter: brightness(0.96); }
 .login-waiting { margin-top: 12px; font-size: 12px; color: var(--color-text-muted); }
+/* Switch-account secondary entry (RP-logout fix, 2026-09-06) — quiet text
+   link under the primary button; muted color, no new tokens. */
+.login-switch-link {
+  display: inline-block; margin-top: 10px; padding: 2px 6px;
+  background: none; border: none; cursor: pointer;
+  font-size: 12px; color: var(--color-text-muted);
+  text-decoration: none; border-radius: 6px; transition: color 0.15s;
+}
+.login-switch-link:hover { color: var(--color-text); }
 .login-success { font-size: 14px; color: var(--color-primary); padding: 12px 0; }
 .login-error-msg { font-size: 13px; color: #e57373; margin-bottom: 14px; line-height: 1.5; }
 `;
@@ -471,9 +518,13 @@ function showLoginModal() {
     } else if (state === 'waiting') {
       // PKCE primary path: nothing to copy - the browser tab does the whole
       // hosted login and redirects back to the local gateway.
+      // "使用其他账号登录" (RP-logout fix, 2026-09-06): restarts the flow
+      // with prompt="login consent" so the hosted page shows the account
+      // form even when this browser still holds a Logto SSO session.
       body = `
         <div class="login-hint">在浏览器中登录 nebflow 账号以连接此设备</div>
         <button class="login-modal-btn glass-control" id="login-open-auth">重新打开登录页面</button>
+        <button class="login-switch-link" id="login-switch-account">使用其他账号登录</button>
         <div class="login-waiting">等待登录完成…</div>`;
     } else if (state === 'waiting-device') {
       // Legacy device-flow fallback (gateway reports logto-not-configured).
@@ -501,13 +552,22 @@ function showLoginModal() {
       if (flowInfo?.authorizeUrl) window.open(flowInfo.authorizeUrl, '_blank');
       else if (flowInfo?.verificationUri) window.open(flowInfo.verificationUri, '_blank');
     });
+    // Switch account (RP-logout fix, 2026-09-06): reserve the popup inside
+    // THIS click gesture (same contract as the retry button below), then
+    // restart the flow — startPkceLogin(true) sends prompt="login consent"
+    // so Logto shows the account form instead of silently re-entering the
+    // SSO-session account.
+    modal.querySelector('#login-switch-account')?.addEventListener('click', () => {
+      reservePopup(); // synchronous gesture reservation
+      startFlow(true);
+    });
     modal.querySelector('#login-retry')?.addEventListener('click', () => {
       reservePopup(); // synchronous gesture reservation for the retry
       startFlow();
     });
   };
 
-  const startFlow = async () => {
+  const startFlow = async (forceLogin = false) => {
     setPairing(true);
     finished = false;
     render('starting');
@@ -524,7 +584,8 @@ function showLoginModal() {
     };
     try {
       // Primary path: Authorization Code + PKCE via the hosted Logto page.
-      const pkce = await startPkceLogin();
+      // forceLogin → prompt="login consent" (switch-account entry).
+      const pkce = await startPkceLogin(forceLogin);
       if (pkce) {
         flowInfo = pkce;
         st.flowState = 'waiting';

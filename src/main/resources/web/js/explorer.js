@@ -269,6 +269,9 @@ function dropDirForEvent(e) {
 
 function bindTreeDragMove(tree) {
   tree.addEventListener('dragover', (e) => {
+    // Internal drag-to-move only (existing #303 behavior). External OS-file
+    // drags are owned by the section-level channel (bindSectionExternalDrop)
+    // — the whole explorer panel accepts them, not just tree zones.
     if (!dragMoveSrc) return;
     const dir = dropDirForEvent(e);
     if (dir === null) { setDropTarget(null); return; }
@@ -286,13 +289,16 @@ function bindTreeDragMove(tree) {
   });
 
   tree.addEventListener('dragleave', (e) => {
+    // Internal drags only: leaving the tree entirely → clear highlight
+    // (child-element transitions keep relatedTarget inside and are ignored).
+    // External drags key off the section-level handler instead.
     if (!dragMoveSrc) return;
-    // Leaving the tree entirely → clear highlight (child-element transitions
-    // keep relatedTarget inside the tree and are ignored).
     if (!tree.contains(e.relatedTarget)) setDropTarget(null);
   });
 
   tree.addEventListener('drop', (e) => {
+    // Internal drag-to-move only. External OS drops bubble past this handler
+    // (no preventDefault here) to the section-level channel below.
     if (!dragMoveSrc) return;
     const dir = dropDirForEvent(e);
     const src = dragMoveSrc;
@@ -301,6 +307,69 @@ function bindTreeDragMove(tree) {
     e.preventDefault();
     e.stopPropagation();
     sendWs({ type: 'movePath', sessionId: state.activeSessionId, path: src.path, targetDir: dir, rootPath: explorerRoot });
+  });
+}
+
+// ── External drag-in landing zones (section-level) ──────────────────────
+// c0cc89df bound the OS-file channel to the TREE only, and dropDirForEvent
+// returned null for file rows / blank tree space / the header. Those spots
+// never saw preventDefault → the browser dispatched drop, the document-level
+// handler swallowed it, and a Finder drag onto most of the visible panel did
+// nothing. Fix: one channel on #explorer-section. VS Code parity for landing
+// resolution — folder row → that dir; file row → its parent dir; everything
+// else in the section (tree blank, header, margins) → project root.
+
+/** Resolve the landing directory for an external drag over the section.
+ *  Always returns a string — the whole section accepts external drops. */
+function externalDropDir(e) {
+  const t = e.target instanceof Element ? e.target : null;
+  if (!t) return '';
+  const folder = t.closest('.explorer-item.explorer-folder');
+  if (folder && folder.dataset.path !== undefined) return folder.dataset.path;
+  const item = t.closest('.explorer-item');
+  if (item && item.dataset.path !== undefined) {
+    const p = item.dataset.path;
+    const cut = p.lastIndexOf('/');
+    return cut > 0 ? p.slice(0, cut) : '';   // file row → parent dir
+  }
+  return '';
+}
+
+/** Highlight the folder row the resolved dir maps to (the highlight names the
+ *  landing folder). Reuses the existing .drop-target styles — zero new CSS. */
+function setExternalDropHighlight(dir) {
+  const tree = document.getElementById('explorer-tree');
+  if (!tree) return;
+  if (!dir) { setDropTarget(tree.querySelector('.explorer-root'), true); return; }
+  const row = tree.querySelector(
+    `.explorer-dir-wrapper[data-path="${CSS.escape(dir)}"] > .explorer-item.explorer-folder`);
+  setDropTarget(row || tree.querySelector('.explorer-root'), true);
+}
+
+/** External drag-in channel at SECTION level: header, blank tree space, rows —
+ *  the whole visible panel accepts OS file/folder drops. Internal app drags
+ *  still route through the tree channels above (dragMoveSrc guard). */
+function bindSectionExternalDrop(section) {
+  section.addEventListener('dragover', (e) => {
+    if (dragMoveSrc || !hasExternalDrag(e)) return;
+    e.preventDefault();
+    e.stopPropagation();   // keep the document-level dragover from overriding dropEffect
+    e.dataTransfer.dropEffect = 'copy';
+    setExternalDropHighlight(externalDropDir(e));
+  });
+  section.addEventListener('dragleave', (e) => {
+    if (dragMoveSrc || !dropTargetEl) return;
+    // dataTransfer types are unreadable during dragleave on some engines —
+    // external leaves key off dropTargetEl (set only while we highlight).
+    if (!section.contains(e.relatedTarget)) setDropTarget(null);
+  });
+  section.addEventListener('drop', (e) => {
+    if (dragMoveSrc || !hasExternalDrag(e)) return;
+    e.preventDefault();
+    e.stopPropagation();   // the document-level drop handler must not swallow this
+    const dir = externalDropDir(e);
+    setDropTarget(null);
+    importExternalDrop(e.dataTransfer, dir);
   });
 }
 
@@ -317,6 +386,242 @@ function startRowDrag(e, node, path, isDir) {
     e.dataTransfer.effectAllowed = 'copyMove';   // copy → input bar, move → tree
   }
   node.classList.add('dragging');
+}
+
+// ── External drag-in (OS files/folders → tree copy) ───────────────────────
+// VS Code parity: dropping OS files/folders onto a folder row (or the blank
+// root area) COPIES them into that directory. Writes go through the existing
+// `writeFile` op with `encoding:'base64'` (byte-preserving; the backend
+// creates parent dirs on demand, so a dropped folder tree lands recursively
+// without extra mkdir round trips — empty dropped folders are not recreated,
+// documented口径). Same-name top-level items open a 3-choice conflict dialog
+// (Replace / Keep Both / Cancel), one per conflicted item, sequential;
+// Cancel skips THAT item and continues with the rest.
+
+/** Per-file byte cap — the WS JSON channel is not a bulk-transfer medium. */
+const EXTERNAL_IMPORT_MAX_BYTES = 20 * 1024 * 1024;
+
+/** True when the drag carries OS files/folders (never our internal drags). */
+function hasExternalDrag(e) {
+  if (!e.dataTransfer || dragMoveSrc) return false;
+  const items = e.dataTransfer.items;
+  if (items && Array.from(items).some(i => i.kind === 'file')) return true;
+  return Array.from(e.dataTransfer.types || []).includes('Files');
+}
+
+/** Read a File as base64 (chunked to stay clear of argument-count limits). */
+async function fileToBase64(file) {
+  const bytes = new Uint8Array(await file.arrayBuffer());
+  let bin = '';
+  const CHUNK = 0x8000;
+  for (let i = 0; i < bytes.length; i += CHUNK) {
+    bin += String.fromCharCode.apply(null, bytes.subarray(i, i + CHUNK));
+  }
+  return btoa(bin);
+}
+
+/** Top-level dropped items. Prefers webkitGetAsEntry (folder trees); without
+ *  it, degrades to flat File objects (folders arrive as their loose files). */
+function collectTopDropItems(dataTransfer) {
+  const tops = [];
+  let usedEntryApi = false;
+  for (const it of Array.from(dataTransfer.items || [])) {
+    if (it.kind !== 'file') continue;
+    const entry = typeof it.webkitGetAsEntry === 'function' ? it.webkitGetAsEntry() : null;
+    if (entry) {
+      usedEntryApi = true;
+      tops.push({ name: entry.name, isDir: entry.isDirectory, entry });
+    }
+  }
+  if (usedEntryApi) return tops;
+  return Array.from(dataTransfer.files || []).map(f => ({ name: f.name, isDir: false, file: f }));
+}
+
+/** Recursively read a FileSystemEntry into file leaves with paths relative to
+ *  the drop root — every rel starts with the top entry's own name. */
+function readEntryLeaves(entry, base) {
+  return new Promise((resolve, reject) => {
+    if (entry.isFile) {
+      entry.file((f) => resolve([{ rel: base + entry.name, file: f }]), reject);
+      return;
+    }
+    if (!entry.isDirectory) { resolve([]); return; }
+    const reader = entry.createReader();
+    const kids = [];
+    const readBatch = () => {
+      // readEntries returns entries in batches — must loop until an empty batch.
+      reader.readEntries(async (batch) => {
+        if (!batch.length) {
+          const nested = await Promise.all(
+            kids.map((k) => readEntryLeaves(k, base + entry.name + '/')));
+          resolve(nested.flat());
+          return;
+        }
+        kids.push(...batch);
+        readBatch();
+      }, reject);
+    };
+    readBatch();
+  });
+}
+
+/** Leaves for one top item, with a possibly-renamed top segment (conflict
+ *  resolution renames the ROOT of the dropped tree, VS Code "Keep Both"). */
+async function leavesForTopItem(item, resolvedTop) {
+  // Entry-based tops (every real-browser drop — Finder/Explorer — carries a
+  // working webkitGetAsEntry) MUST go through readEntryLeaves: the entry
+  // branch of collectTopDropItems carries NO `file`, so `item.file` here was
+  // undefined and the write threw "Cannot read properties of undefined" —
+  // the c0cc89df drop-in never landed a real OS file (synthetic-DataTransfer
+  // tests only ever exercised the files[] fallback below, which is why the
+  // old QA passed). readEntryLeaves(entry.file) materializes the File lazily.
+  if (item.entry) {
+    const leaves = await readEntryLeaves(item.entry, '');
+    return leaves.map((l) => ({ rel: resolvedTop + l.rel.slice(item.name.length), file: l.file }));
+  }
+  return [{ rel: resolvedTop, file: item.file }];   // files[] fallback only
+}
+
+/** VS Code-style "Keep Both" name: "foo copy.txt", "foo copy 2.txt", …
+ *  (dotfiles like .gitignore never split — lastIndexOf('.')===0). */
+function uniqueDropName(name, taken) {
+  const dot = name.lastIndexOf('.');
+  const stem = dot > 0 ? name.slice(0, dot) : name;
+  const ext = dot > 0 ? name.slice(dot) : '';
+  for (let n = 1; ; n++) {
+    const candidate = n === 1 ? `${stem} copy${ext}` : `${stem} copy ${n}${ext}`;
+    if (!taken.has(candidate)) return candidate;
+  }
+}
+
+/** One-shot listDir scans used by external drop-in for conflict detection.
+ *  Keyed by explorer-relative dir path; consumed by the dirListing handler
+ *  BEFORE the normal render path (scans never touch pendingLoads). */
+const externalListScans = new Map();
+
+/** Promise the set of entry names in `dirPath` (explorer-relative).
+ *  Resolves empty on error/timeout so the drop still proceeds — individual
+ *  writes surface their own errors. */
+function scanDirNames(dirPath) {
+  return new Promise((resolve) => {
+    externalListScans.set(dirPath, (entries) => resolve(new Set(entries.map(e => e.name))));
+    sendWs({ type: 'listDir', sessionId: state.activeSessionId, path: dirPath, rootPath: explorerRoot });
+    setTimeout(() => {
+      if (externalListScans.has(dirPath)) {
+        externalListScans.delete(dirPath);
+        resolve(new Set());
+      }
+    }, 10000);
+  });
+}
+
+/** Pending external writes: explorer-relative path → { resolve, reject }.
+ *  Correlates fileSaved / fileSaveError frames (path-keyed) with in-flight
+ *  writes so the import can sequence folder leaves deterministically. */
+const pendingExternalWrites = new Map();
+
+/** Write one leaf via the writeFile op (base64 = byte-preserving copy). */
+async function writeExternalLeaf(relPath, file) {
+  if (file.size > EXTERNAL_IMPORT_MAX_BYTES) {
+    throw new Error(`${file.name}: exceeds ${Math.round(EXTERNAL_IMPORT_MAX_BYTES / 1024 / 1024)}MB limit`);
+  }
+  const b64 = await fileToBase64(file);
+  return new Promise((resolve, reject) => {
+    pendingExternalWrites.set(relPath, { resolve, reject });
+    sendWs({
+      type: 'writeFile', sessionId: state.activeSessionId,
+      path: relPath, content: b64, encoding: 'base64', rootPath: explorerRoot,
+    });
+    // Lost-response guard: a vanished frame must not hang the import forever.
+    setTimeout(() => {
+      const p = pendingExternalWrites.get(relPath);
+      if (p) { pendingExternalWrites.delete(relPath); reject(new Error(`${file.name}: write timed out`)); }
+    }, 30000);
+  });
+}
+
+/** 3-choice conflict resolution for one dropped item. Resolves
+ *  'replace' | 'keepboth' | 'cancel'. */
+function confirmImportConflict(name) {
+  return new Promise((resolve) => {
+    const api = /** @type {any} */ (window).__showConflict;
+    if (typeof api !== 'function') { resolve('replace'); return; }  // dialog unavailable
+    api(t('explorer.conflictTitle'), t('explorer.conflictMsg', { name }), {
+      onReplace: () => resolve('replace'),
+      onKeepBoth: () => resolve('keepboth'),
+      onCancel: () => resolve('cancel'),
+    });
+  });
+}
+
+/** Import OS-dropped items into `targetDir` (explorer-relative, '' = root).
+ *  Sequential per top item; same-name items prompt Replace / Keep Both /
+ *  Cancel. Refreshes + expands the target dir when done. */
+async function importExternalDrop(dataTransfer, targetDir) {
+  let tops;
+  try { tops = collectTopDropItems(dataTransfer); }
+  catch (e) { window.__showToast?.(String(e?.message || e), 'error'); return; }
+  if (!tops.length) return;
+
+  const existing = await scanDirNames(targetDir);
+  let imported = 0;
+  for (const top of tops) {
+    let resolvedTop = top.name;
+    if (existing.has(top.name)) {
+      const choice = await confirmImportConflict(top.name);
+      if (choice === 'cancel') continue;              // skip this item, keep the rest
+      if (choice === 'keepboth') {
+        resolvedTop = uniqueDropName(top.name, existing);
+        existing.add(resolvedTop);
+      }
+      // 'replace' keeps resolvedTop = top.name: an existing file is
+      // overwritten; an existing folder merges (same-name leaves replaced).
+    } else {
+      existing.add(resolvedTop);
+    }
+    let leaves;
+    try { leaves = await leavesForTopItem(top, resolvedTop); }
+    catch (e) {
+      window.__showToast?.(`${top.name}: ${e?.message || e}`, 'error');
+      continue;
+    }
+    for (const leaf of leaves) {
+      const rel = targetDir ? `${targetDir}/${leaf.rel}` : leaf.rel;
+      try {
+        await writeExternalLeaf(rel, leaf.file);
+        imported++;
+      } catch (e) {
+        window.__showToast?.(String(e?.message || e), 'error');
+      }
+    }
+  }
+  if (imported > 0) {
+    refreshImportTarget(targetDir);
+    window.__showToast?.(t('explorer.imported', { count: imported }), 'success');
+  }
+}
+
+/** After an external import: make the result visible, VS Code-style — the
+ *  drop target folder OPENS and shows the imported items (root is always
+ *  visible; refreshDirOf('') reloads it). NOTE: refreshDirOf(path) refreshes
+ *  the PARENT of path (getTargetDir semantics), which is wrong for a drop
+ *  target — the imported items live INSIDE targetDir, so its own children
+ *  container must be expanded + reloaded here. */
+function refreshImportTarget(targetDir) {
+  if (!targetDir) { refreshDirOf(''); return; }
+  const wrapper = /** @type {HTMLElement|null} */ (
+    document.querySelector(`.explorer-dir-wrapper[data-path="${CSS.escape(targetDir)}"]`));
+  const children = /** @type {HTMLElement|null} */ (wrapper?.querySelector('.explorer-children'));
+  // Wrapper gone (dir deleted mid-flight / not rendered) → fall back to
+  // refreshing its parent listing so the tree reflects disk reality.
+  if (!wrapper || !children) { refreshDirOf(targetDir); return; }
+  expandedDirs.add(targetDir);
+  currentDir = targetDir;
+  const chevron = /** @type {HTMLElement|null} */ (wrapper.querySelector('.explorer-chevron'));
+  if (chevron) chevron.classList.add('expanded');
+  children.style.display = '';
+  children.innerHTML = '';
+  loadDir(targetDir, children, targetDir.split('/').length);
 }
 
 // ── Helpers ────────────────────────────────────────────────────────────
@@ -574,6 +879,14 @@ window.addEventListener('explorer-preload-pinned', (e) => {
 // ── WS Message Handlers ───────────────────────────────────────────────
 
 onMessage('dirListing', (msg) => {
+  // External drop-in conflict scans consume their own listDir replies and
+  // never touch the render pipeline (pendingLoads).
+  const scan = externalListScans.get(msg.path);
+  if (scan) {
+    externalListScans.delete(msg.path);
+    scan(msg.entries || []);
+    return;
+  }
   const reqId = msg.path || '__root__';
   const pending = pendingLoads.get(reqId);
   pendingLoads.delete(reqId);
@@ -747,6 +1060,14 @@ export function initExplorer() {
     bindTreeDragMove(tree);
   }
 
+  // External drag-in: whole-section accept (Finder parity — the whole visible
+  // panel receives OS file drops, not just tree zones). Bound once.
+  const section = /** @type {any} */ (document.getElementById('explorer-section'));
+  if (section && !section._extDropBound) {
+    section._extDropBound = true;
+    bindSectionExternalDrop(section);
+  }
+
   if (tree && !tree._ctxBound) {
     tree._ctxBound = true;
     tree.addEventListener('contextmenu', (e) => {
@@ -908,7 +1229,7 @@ function deleteNode(path) {
   const name = path.split('/').pop();
   const send = () => sendWs({ type: 'deletePath', sessionId: state.activeSessionId, path, rootPath: explorerRoot });
   if (typeof window.__showConfirm === 'function') {
-    window.__showConfirm('Delete File', `Delete "${name}"? This cannot be undone.`, send);
+    window.__showConfirm(t('explorer.deleteTitle'), t('explorer.deleteConfirmOne', { name }), send);
   } else {
     send();
   }
@@ -1049,6 +1370,26 @@ onMessage('pathMoved', (msg) => {
     retargetFileTabs(oldPath, newPath, explorerRoot || ''));
   pruneSelection(oldPath);
   window.__showToast?.(t('explorer.moved', { name: newPath.split('/').pop() }), 'info');
+});
+
+/** writeFile responses for external drop-in: correlate in-flight writes
+ *  (pendingExternalWrites, path-keyed) so folder leaves sequence correctly.
+ *  Non-external editor saves are untouched (monacoEditor handles them). */
+onMessage('fileSaved', (msg) => {
+  const pending = msg.path && pendingExternalWrites.get(msg.path);
+  if (pending) {
+    pendingExternalWrites.delete(msg.path);
+    pending.resolve();
+  }
+});
+onMessage('fileSaveError', (msg) => {
+  const pending = msg.path && pendingExternalWrites.get(msg.path);
+  if (pending) {
+    pendingExternalWrites.delete(msg.path);
+    pending.reject(new Error(msg.error || 'write failed'));
+  } else {
+    window.__showToast?.(msg.error || 'File save failed', 'error');
+  }
 });
 
 /** Refresh the parent directory of a created/deleted path. */

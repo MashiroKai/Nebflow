@@ -65,6 +65,14 @@ if (cssOrphans.length > 0) {
 }
 
 // ── 3. JS bundle (splitting preserves lazy boundaries) ─────────
+// RELEASE STRIP MARKER (author ruling 2026-09-10, friends feature): every
+// bundle produced HERE is a CI/CD release artifact — the ONLY build step the
+// frontend has. Local dev (sbt run) serves the source tree directly and never
+// passes through this file, so it keeps dev-tree semantics. featureFlags.js
+// reads the marker inline; esbuild folds `if (true === true)` and DCE strips
+// the dev branch (friendsEnabled() → physical `return false` in the bundle).
+// Member-expression define (same shape as process.env.NODE_ENV).
+const RELEASE_DEFINES = { 'window.__NEBFLOW_RELEASE__': 'true' };
 const result = await esbuild.build({
   entryPoints: [join(SRC, 'js', 'main.js')],
   bundle: true,
@@ -74,6 +82,7 @@ const result = await esbuild.build({
   minify: true,
   sourcemap: 'linked',
   metafile: true,
+  define: RELEASE_DEFINES,
   outdir: join(OUT, 'assets'),
   entryNames: 'app-[hash]',
   chunkNames: 'chunks/[name]-[hash]',
