@@ -65,6 +65,43 @@ class LogtoAuthCodeSpec extends FunSuite:
     assert(url.contains("offline_access"), "consent kept in the prompt list → refresh_token invariant intact")
   }
 
+  test("authorizeUrl appends ui_locales only when non-empty (BYUI locale handoff)") {
+    val base = (endpoint: String, clientId: String, redirectUri: String, challenge: String, state: String) =>
+      LogtoAuthCode.authorizeUrl(endpoint, clientId, redirectUri, challenge, state)
+    // Non-empty → the OIDC standard ui_locales hint rides along.
+    val zh = LogtoAuthCode.authorizeUrl(
+      endpoint = "https://auth.example",
+      clientId = "pkce-app",
+      redirectUri = "http://127.0.0.1:8080/auth/callback",
+      codeChallenge = "ch",
+      state = "st",
+      uiLocales = "zh"
+    )
+    assert(zh.contains("ui_locales=zh"), s"BYUI locale handoff must reach the authorize URL: $zh")
+    val en = LogtoAuthCode.authorizeUrl(
+      endpoint = "https://auth.example",
+      clientId = "pkce-app",
+      redirectUri = "http://127.0.0.1:8080/auth/callback",
+      codeChallenge = "ch",
+      state = "st",
+      uiLocales = "en"
+    )
+    assert(en.contains("ui_locales=en"), s"en handoff must survive: $en")
+    // Default / empty → param omitted ENTIRELY: byte-identical legacy URL,
+    // page falls back to navigator.language (pre-BYUI behavior unchanged).
+    val bare = base("https://auth.example", "pkce-app", "http://127.0.0.1:8080/auth/callback", "ch", "st")
+    assert(!bare.contains("ui_locales"), s"empty uiLocales must omit the param: $bare")
+    val explicitEmpty = LogtoAuthCode.authorizeUrl(
+      endpoint = "https://auth.example",
+      clientId = "pkce-app",
+      redirectUri = "http://127.0.0.1:8080/auth/callback",
+      codeChallenge = "ch",
+      state = "st",
+      uiLocales = ""
+    )
+    assert(!explicitEmpty.contains("ui_locales"), s"explicit empty must equal the legacy shape: $explicitEmpty")
+  }
+
   // ── RP-initiated logout (end_session) ──────────────────────────────────
 
   test("endSessionUrl points at /oidc/session/end with hint + return uri") {

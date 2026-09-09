@@ -5,7 +5,7 @@
 import state from './state.js';
 import { key } from './branding.js';
 import { escapeHtml } from './utils.js';
-import { t } from './i18n.js';
+import { t, getLocale } from './i18n.js';
 import { onMessage, sendWs } from './ws.js';
 import { brand } from './brand.js';
 import { lookupAvatar, rememberAvatarProfile, lastKnownAvatarProfile, forgetAvatarProfile } from './avatarCache.js';
@@ -438,12 +438,18 @@ export function cancelDeviceFlow() {
  * the ACCOUNT form even when this browser still holds a Logto SSO
  * session — the switch-account entry. Default false = plain login
  * (fast path, consent only).
+ *
+ * `uiLocales` (BYUI handoff ①, 2026-09-09): the client UI language is
+ * forwarded as the OIDC ui_locales hint (single tag: "zh"/"en") so the
+ * hosted sign-in page matches the app language. Harmless pre-BYUI (the
+ * stock hosted page uses it to pick its language); the server whitelists
+ * the value and omits the param otherwise → navigator.language fallback.
  */
 export async function startPkceLogin(forceLogin = false) {
   const resp = await fetch('/api/neblink/auth/start', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json', 'Authorization': 'Bearer ' + getAuthToken() },
-    body: JSON.stringify({ forceLogin: !!forceLogin }),
+    body: JSON.stringify({ forceLogin: !!forceLogin, uiLocales: getLocale() === 'en' ? 'en' : 'zh' }),
   });
   let data = {};
   try { data = await resp.json(); } catch (_) { data = {}; }
