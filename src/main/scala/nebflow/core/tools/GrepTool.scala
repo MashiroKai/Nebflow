@@ -194,7 +194,7 @@ Usage:
 
     RgHelper.runRg(args.toList, workDir) match
       case Left(err) => Left(err)
-      case Right((stdoutStr, stderrStr, exitCode)) =>
+      case Right((stdoutStr, stderrStr, exitCode, _)) =>
         if exitCode == 2 then
           Left(
             ToolError(s"Error: ${if stderrStr.trim.nonEmpty then stderrStr.trim else s"rg exited with code $exitCode"}")
