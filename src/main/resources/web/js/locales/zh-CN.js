@@ -720,6 +720,21 @@ export default {
   'bg.kind.local': '本地',
   'bg.kind.remote': '远程',
   'bg.openedBy': '由 {origin} 开启',
+  // 终态留存行 + 输出详情卡（2026-09-09 输出查看批）
+  'bg.completed': '已完成',
+  'bg.failed': '失败',
+  'bg.cancelled': '已取消',
+  'bg.detail.aria': '后台任务输出详情',
+  'bg.detail.copy': '复制',
+  'bg.detail.copied': '已复制',
+  'bg.detail.empty': '暂无输出',
+  'bg.detail.remote': '远端任务暂不支持输出查看',
+  'bg.detail.notFound': '任务输出已不可用（任务已结束并被清理）',
+  'bg.detail.truncated': '输出过大，仅保留末尾',
+  'bg.detail.meta': '{lines} 行 · {bytes}',
+  'bg.detail.exit': 'exit {code}',
+  'bg.detail.failedHint': '失败原因：{error}',
+  'bg.detail.cancelHint': '取消原因：{error}',
 
   // === Time ===
   'time.yesterday': '昨天',
