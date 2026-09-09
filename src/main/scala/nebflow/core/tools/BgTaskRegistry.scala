@@ -127,10 +127,15 @@ object BgTaskRegistry:
     wsSend: Json => IO[Unit],
     rootSessionId: String
   ): IO[Unit] =
-    ShellSession.killSessionProcesses(sessionId) *>
+      ShellSession.killSessionProcesses(sessionId) *>
       unregisterSession(sessionId).flatMap { removed =>
         removed.traverse_ { t =>
-          wsSend(
+          // 输出查看批（2026-09-09）：收割的挂起任务同为终态——输出留存区翻转
+          // 为 cancelled，详情卡可回看收割时刻为止的输出。幂等 no-op 当已完成。
+          nebflow.core.tools.BgTaskOutputStore
+            .finalizeTask(t.jobId, "cancelled", None, Some("Session reclaimed"))
+            .handleError(_ => IO.unit) *>
+            wsSend(
             Json.obj(
               "type" -> "backgroundTaskUpdate".asJson,
               "sessionId" -> sessionId.asJson,

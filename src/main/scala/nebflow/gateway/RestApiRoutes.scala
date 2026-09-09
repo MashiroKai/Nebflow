@@ -1779,6 +1779,39 @@ class RestApiRoutes(
               )
         yield result
 
+    // GET /bg-tasks/:jobId/output?offset=N — background task output view
+    // (2026-09-09 author request: the bg-tasks panel rows open a detail card).
+    // REST GET polling over WS push: stateless byte-offset cursor (line
+    // granularity — returns every line whose start offset >= offset), auth via
+    // the same withAuth middleware as /api/agents/:name/model, and no 256KB
+    // payloads broadcast through WsHub to every connected client. Response:
+    // status / totalBytes / totalLines / truncated (tail window dropped the
+    // head) / output / nextOffset (+ finishedAtMs / exitCode / errorHint when
+    // terminal). 404 = unknown jobId (remote tasks and evicted retention).
+    case req @ GET -> Root / "bg-tasks" / jobId / "output" =>
+      withAuth(req) {
+        val offset = req.uri.params.get("offset").flatMap(_.toLongOption).getOrElse(0L)
+        nebflow.core.tools.BgTaskOutputStore.read(jobId, offset).flatMap {
+          case None =>
+            NotFound(Json.obj("error" -> s"Background task '$jobId' not found or output unavailable".asJson))
+          case Some(o) =>
+            Ok(
+              Json.obj(
+                "taskId" -> o.taskId.asJson,
+                "status" -> o.status.asJson,
+                "totalBytes" -> o.totalBytes.asJson,
+                "totalLines" -> o.totalLines.asJson,
+                "truncated" -> o.truncated.asJson,
+                "output" -> o.output.asJson,
+                "nextOffset" -> o.nextOffset.asJson,
+                "finishedAtMs" -> o.finishedAtMs.asJson,
+                "exitCode" -> o.exitCode.asJson,
+                "errorHint" -> o.errorHint.asJson
+              )
+            )
+        }
+      }
+
     // GET /agents/list — list all global agents (for extends dropdown)
     // GET /agents/list — list all agents (all three layers)
     case GET -> Root / "agents" / "list" =>
