@@ -14,7 +14,6 @@ import nebflow.service.{MemoryStore, RulesStore}
  * unchanged files cost only a stat() syscall — no re-read, no rebuild.
  *
  * Sources:
- *   • system-prefix  — FileInjectionSource with mtime cache
  *   • agentDef       — AgentLibrary.get (reads system.md from disk)
  *   • rulesMd        — folder chain → RulesStore.resolveInheritedRules (mtime-cached)
  *   • projectRoot    — folder chain → SessionStore.resolveProjectRoot
@@ -23,73 +22,6 @@ import nebflow.service.{MemoryStore, RulesStore}
  *   • memory files   — built into memoryBlock string, injected into system prompt
  */
 object ContextRefresher:
-
-  /** Registered InjectionSources — for documentation and future management. */
-  val promptSources: List[InjectionSource] = List(
-    systemPrefixForAll,
-    systemPrefixForTeams,
-    systemPrefixForFlows,
-    managerPrefixSource
-  )
-
-  /**
-   * System prefix for ALL agents: ~/.nebflow/prompts/system-prefix-for-all.md
-   *  with JAR fallback (/system-prefix-for-all.md).
-   */
-  val systemPrefixForAll: FileInjectionSource =
-    val jarFallback =
-      val is = getClass.getResourceAsStream("/system-prefix-for-all.md")
-      if is != null then
-        try scala.io.Source.fromInputStream(is)(scala.io.Codec.UTF8).mkString.trim
-        finally is.close()
-      else ""
-    // Backward compat: if new file missing, try old system-prefix.md
-    val legacyFallback =
-      if jarFallback.nonEmpty then jarFallback + "\n\n"
-      else
-        val is2 = getClass.getResourceAsStream("/system-prefix.md")
-        if is2 != null then
-          try scala.io.Source.fromInputStream(is2)(scala.io.Codec.UTF8).mkString.trim + "\n\n"
-          finally is2.close()
-        else ""
-    new FileInjectionSource(
-      "system-prefix-for-all",
-      PathUtil.dataRoot / "prompts" / "system-prefix-for-all.md",
-      fallback = legacyFallback
-    )
-
-  end systemPrefixForAll
-
-  /**
-   * System prefix for TEAM agents only: ~/.nebflow/prompts/system-prefix-for-teams.md
-   *  No JAR fallback — empty if file doesn't exist.
-   */
-  val systemPrefixForTeams: FileInjectionSource =
-    new FileInjectionSource(
-      "system-prefix-for-teams",
-      PathUtil.dataRoot / "prompts" / "system-prefix-for-teams.md"
-    )
-
-  /**
-   * System prefix for FLOW agents only: ~/.nebflow/prompts/system-prefix-for-flows.md
-   *  No JAR fallback — empty if file doesn't exist.
-   */
-  val systemPrefixForFlows: FileInjectionSource =
-    new FileInjectionSource(
-      "system-prefix-for-flows",
-      PathUtil.dataRoot / "prompts" / "system-prefix-for-flows.md"
-    )
-
-  /**
-   * Manager prefix: ~/.nebflow/prompts/manager-prefix.md
-   *  Injected only for Team Manager agents (name == "Manager").
-   *  No JAR fallback — empty if file doesn't exist.
-   */
-  val managerPrefixSource: FileInjectionSource =
-    new FileInjectionSource(
-      "manager-prefix",
-      PathUtil.dataRoot / "prompts" / "manager-prefix.md"
-    )
 
   // ============================================================
   // Resolution helpers
@@ -519,21 +451,10 @@ object ContextRefresher:
       // SubTask workers are leaf task-execution pipelines: strip all team /
       // manager / memory context — the prompt is their only context source.
       isWorker = state.isSubTaskWorker
-      // Load all-agent prefix + category-specific prefix
-      allPrefixRaw <- systemPrefixForAll.get
-      categoryPrefix <-
-        if isWorker then IO.pure("")
-        else
-          globalDef.category match
-            case "team" => systemPrefixForTeams.get
-            case "flow" => systemPrefixForFlows.get
-            case _ => IO.pure("")
-      // Manager prefix: only for Team Manager agents
-      managerPrefix <-
-        if isWorker || globalDef.name != "Manager" then IO.pure("")
-        else managerPrefixSource.get
-      systemPrefixRaw = allPrefixRaw + categoryPrefix + managerPrefix
-      systemPrefix = systemPrefixRaw
+      // 阶段 2 批 A（2026-09）：systemPrefix 整层退役——四源（for-all/teams/
+      // flows/manager + JAR fallback 双兜底链）与三段拼装全部删除；
+      // TurnContext.systemPrefix 恒空串（字段保留至阶段 3 随 TurnContext
+      // 清理一并移除）。稳定首段 = agent system.md（provider 前缀缓存锚点）。
       projectRoot <- resolveProjectRoot(state.folderId, resources, globalDef.name)
       // Projects directory: ~/.nebflow/projects/<folderName>/
       projectsDir <- resolveProjectsDir(state.folderId, resources, globalDef.name)
@@ -584,7 +505,7 @@ object ContextRefresher:
         else ""
     yield TurnContext(
       globalDef,
-      systemPrefix,
+      "", // systemPrefix：阶段 2 批 A 整层退役——恒空串；字段保留至阶段 3
       projectRoot,
       rulesMd,
       agentsMd,
@@ -616,7 +537,9 @@ object ContextRefresher:
    * Build Team catalog for system prompt injection.
    *  Detects team membership from the session's FlowMembership registration.
    *  - Team agents: see their own team's members + flows (progressive disclosure)
-   *  - Nebula / standalone: see global Teams & Flows overview
+   *  - Nebula / standalone: empty — global Teams & Flows 概览已停注（系统
+   *    提示词重构阶段二 B 批，flowCatalog/skillCatalog 同款先例；TurnContext
+   *    字段保留至阶段 3）
    */
   private def buildTeamCatalogForSession(sessionId: Option[String]): IO[String] =
     sessionId match
@@ -648,19 +571,15 @@ object ContextRefresher:
                 }
                 .getOrElse("")
             case None =>
-              // Nebula or standalone: show global catalog
-              for
-                teams <- EntityLoader.listTeams()
-                flows <- EntityLoader.listFlows()
-                agents <- EntityLoader.listAgents()
-              yield TeamCatalog.buildGlobalCatalog(teams, flows, agents)
+              // global 目录停注（系统提示词重构阶段二 B 批）：无 team 注册
+              // 会话（Nebula/standalone）不再注入 global Teams & Flows 概览
+              // ——生产点置空，order 816 section（condition=nonEmpty）自然
+              // 不渲染（与 flowCatalog 571-575 先例同款）；TurnContext 字段
+              // 保留至阶段 3。team 专属目录分支保留（team agent 渐进披露不变）。
+              IO.pure("")
         yield result
       case None =>
-        // No session (e.g. very early init): show global catalog
-        for
-          teams <- EntityLoader.listTeams()
-          flows <- EntityLoader.listFlows()
-          agents <- EntityLoader.listAgents()
-        yield TeamCatalog.buildGlobalCatalog(teams, flows, agents)
+        // 无 session（极早期 init）：同上，global 目录停注（阶段二 B 批）。
+        IO.pure("")
 
 end ContextRefresher

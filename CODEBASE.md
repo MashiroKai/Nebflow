@@ -35,7 +35,7 @@ src/
       Main.scala  (1 file)    — Application entry point
       Version.scala (1 file)  — Version constant (single source of truth)
     resources/
-      system-prefix.md  — JAR-bundled system prompt prefix (skills, memory, session mgmt)
+      logback.xml      — logging config; seed/ (starter data), web/ (frontend assets)
   test/
     scala/nebflow/
       actor/      (1 file)    — ActorSpec

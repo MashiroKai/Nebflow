@@ -182,9 +182,9 @@ class NodeEventPushSpec extends CatsEffectSuite:
       val cj = created.get._3
       assertEquals(cj.hcursor.get[String]("name").toOption, Some("M"))
       assertEquals(cj.hcursor.downField("in").as[List[String]].toOption, Some(List("n-a")), "created payload must carry final in")
-      assertEquals(cj.hcursor.downField("out").as[Option[String]].toOption, Some(Some("n-b")), "created payload must carry final out")
+      assertEquals(cj.hcursor.downField("out").downArray.get[String]("to").toOption, Some("n-b"), "created payload must carry final out (P1 edge array)")
       // wiring 变更事件：上游 A out 改指 M
-      val updA = evs.find((t, id, p) => t == "nodeUpdated" && id == "n-a" && p.hcursor.get[String]("out").toOption.contains(mId))
+      val updA = evs.find((t, id, p) => t == "nodeUpdated" && id == "n-a" && p.hcursor.downField("out").downArray.get[String]("to").toOption.contains(mId))
       assert(updA.isDefined, s"upstream A must emit nodeUpdated with out=M, got: ${evs.map((t, id, _) => (t, id))}")
       // wiring 变更事件：out 目标 B in 追加 M
       val updB = evs.find((t, id, p) => t == "nodeUpdated" && id == "n-b" && p.hcursor.downField("in").as[List[String]].toOption.exists(_.contains(mId)))
@@ -204,7 +204,7 @@ class NodeEventPushSpec extends CatsEffectSuite:
       now = System.currentTimeMillis()
       _ <- seed(rt,
         "n-a" -> NodeDef(id = "n-a", name = "A", agent = "test-agent", status = NodeLifecycle.Completed,
-          result = Some("buffered"), createdAt = now, completedAt = Some(now - 1000), ttlExpireAt = Some(now + 99999), out = Some("n-x")),
+          result = Some("buffered"), createdAt = now, completedAt = Some(now - 1000), ttlExpireAt = Some(now + 99999), out = List(OutEdge("n-x"))),
         "n-x" -> NodeDef(id = "n-x", name = "X", agent = "test-agent", status = NodeLifecycle.Wiring, in = List("n-a"), createdAt = now),
         "n-y" -> NodeDef(id = "n-y", name = "Y", agent = "test-agent", status = NodeLifecycle.Wiring, createdAt = now))
       r <- nodeEdit(nodeInput("acc-ev2", "A", "out" -> Json.fromString("n-y")), ctx)
@@ -213,7 +213,7 @@ class NodeEventPushSpec extends CatsEffectSuite:
     yield
       assert(r.isRight, s"rewire must succeed, got: $r")
       // 本节点：out = n-y（最终态）
-      val updA = evs.find((t, id, p) => t == "nodeUpdated" && id == "n-a" && p.hcursor.get[String]("out").toOption.contains("n-y"))
+      val updA = evs.find((t, id, p) => t == "nodeUpdated" && id == "n-a" && p.hcursor.downField("out").downArray.get[String]("to").toOption.contains("n-y"))
       assert(updA.isDefined, s"A must emit nodeUpdated with out=n-y, got: ${evs.map((t, id, _) => (t, id))}")
       // 旧目标 X：in 移除 A（最终态 in=[]）
       val updX = evs.find((t, id, p) => t == "nodeUpdated" && id == "n-x")
@@ -247,7 +247,7 @@ class NodeEventPushSpec extends CatsEffectSuite:
       val updM = evs.find((t, id, p) => t == "nodeUpdated" && id == "n-m" && p.hcursor.downField("in").as[List[String]].toOption.exists(_.contains("n-u")))
       assert(updM.isDefined, s"M must emit nodeUpdated with final in=[n-u], got: ${evs.map((t, id, p) => (t, id, p.hcursor.downField("in").as[List[String]].toOption))}")
       // 上游 U：out 改指 M
-      val upduU = evs.find((t, id, p) => t == "nodeUpdated" && id == "n-u" && p.hcursor.get[String]("out").toOption.contains("n-m"))
+      val upduU = evs.find((t, id, p) => t == "nodeUpdated" && id == "n-u" && p.hcursor.downField("out").downArray.get[String]("to").toOption.contains("n-m"))
       assert(upduU.isDefined, s"upstream U must emit nodeUpdated with out=n-m, got: ${evs.map((t, id, _) => (t, id))}")
   }
 
@@ -295,7 +295,7 @@ class NodeEventPushSpec extends CatsEffectSuite:
         // 裁定④链级即时归档口径：n-gone 自成一批（createdAt 回拨 >120s 批窗口）全终态
         // → 即时归档；n-stay blocked（待办非终态）→ 链未齐保留主图
         "n-gone" -> NodeDef(id = "n-gone", name = "已过期", agent = "test-agent", status = NodeLifecycle.Completed,
-          result = Some("expired result"), in = List.empty, out = Some("Nebula"), createdAt = now - 300000,
+          result = Some("expired result"), in = List.empty, out = List(OutEdge.nebula), createdAt = now - 300000,
           completedAt = Some(now - 60000), ttlExpireAt = Some(now - 1000)),
         "n-stay" -> NodeDef(id = "n-stay", name = "未到期", agent = "test-agent", status = NodeLifecycle.Blocked,
           result = Some("fresh"), createdAt = now, completedAt = None, ttlExpireAt = None))
@@ -317,7 +317,7 @@ class NodeEventPushSpec extends CatsEffectSuite:
       assertEquals(p.hcursor.get[String]("name").toOption, Some("已过期"), "removed payload must carry node identity (was empty obj)")
       assertEquals(p.hcursor.get[String]("agent").toOption, Some("test-agent"))
       assertEquals(p.hcursor.get[String]("status").toOption, Some(NodeLifecycle.Completed))
-      assertEquals(p.hcursor.downField("out").as[Option[String]].toOption, Some(Some("Nebula")))
+      assertEquals(p.hcursor.downField("out").downArray.get[String]("to").toOption, Some("Nebula"), "removed payload carries out as P1 edge array")
       // 有结果节点 → 基集合 + hasResult（2026-09-05 载荷收敛，result 本体不进载荷）
       assertEquals(p.asObject.map(_.keys.toSet), Some(NodeListKeysWithResult), "nodeRemoved payload keys must equal NodeList keys + hasResult")
       assert(!evs.exists((t, id, _) => t == "nodeRemoved" && id == "n-stay"), "non-expired node must NOT emit nodeRemoved")

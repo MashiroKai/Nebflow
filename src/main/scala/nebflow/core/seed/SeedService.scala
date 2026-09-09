@@ -9,6 +9,8 @@ import nebflow.core.plugin.PluginRegistry
 import nebflow.core.project.ProjectStore
 
 import java.net.JarURLConnection
+import java.security.MessageDigest
+import scala.collection.immutable.SortedMap
 import scala.jdk.CollectionConverters.*
 
 /**
@@ -20,8 +22,9 @@ import scala.jdk.CollectionConverters.*
  * 改安装脚本。
  *
  * 三件种子（三 keeper = Nebula 引擎自带 + 本服务补 project-dispatcher / general）：
- *  - 默认 agent：project-dispatcher + general（蒸馏版：去 preset 具名引用、去空 skills）
- *  - 系统插件：3 个主集（explorer-toolkit / design-spec / visual-report），
+ *  - 默认 agent：project-dispatcher + general（形态以 runtime trusted 版为准，preset/skills
+ *    字段合法入 seed——TB #20 基线对齐 2026-09-09）
+ *  - 系统插件：收缩后默认集（visual-report / slideblocks，c7501470），
  *    预装 + trusted（复用 PluginRegistry.approve）
  *  - 默认通用项目：id=general，workspace=~/.nebflow/projects/general，启动前挂载
  *
@@ -31,9 +34,25 @@ import scala.jdk.CollectionConverters.*
  *     marker（记录当前 SeedVersion），不完整播种（防在 author 现役 home 误建 general）。
  *  2. else（fresh home）：marker 缺失 → 完整冷启动播种；marker.version < seedVersion
  *     → 升级 add-only 补种（每条 `!os.exists` 守卫，只补缺失文件）；>= → no-op。
+ *  3. 最后（所有分支、不受守卫/marker 门控）：插件一致性 reconcile（见下）。
+ *
+ * 插件一致性 reconcile（「始终保持一致」机制，2026-09-09 批）：完整播种只解决
+ * fresh home；既有 home 的已装插件会因 add-only 语义永久冻结（2026-09-09 断点：
+ * author home 的 slideblocks 旧快照永不收敛）。reconcile 在每次启动对 manifest
+ * 声明的插件做 seed ↔ runtime digest 比对仲裁：
+ *  - runtime 目录缺失 → 不动（既有 home 不新装插件，新装仍走完整播种路径）
+ *  - seed digest == runtime digest → 无动作（常态，静默通过）
+ *  - 不一致且 runtime digest == 信任记录 digest（干净快照，用户未改）→ 种子镜像
+ *    覆盖（含删除 runtime 独有文件）+ 自动 re-approve → 冷启动插件与最新种子一致
+ *  - 不一致且 runtime digest ≠ 信任记录 digest（用户改过）→ 跳过 + WARN（用户编辑 > 种子）
+ *  - 不一致且无信任记录 → 跳过 + WARN（无仲裁基准，保守不覆盖）
+ * 仲裁语义：trusted digest 是 approve 时刻的目录内容 fingerprint——runtime 现算
+ * digest 与之一致 ⇔ 该目录自审批后未被任何一方改动，种子更新可安全接管；任何漂移
+ * （用户编辑、.DS_Store 等异物）都视为「用户态」，种子永不覆盖。
  *
  * 幂等 + fail-soft（§4.3/§4.4）：每条目独立 try/catch，失败仅 WARN 跳过、不中断；
- * 任何已有文件绝不覆盖（用户编辑 > 种子）；全程 best-effort，never crash gateway。
+ * agent/project 任何已有文件绝不覆盖（用户编辑 > 种子）；插件仅在 digest 仲裁干净时
+ * 可被种子刷新（见 reconcile）；全程 best-effort，never crash gateway。
  */
 object SeedService:
   private val logger = NebflowLogger.forName("nebflow.core.seed")
@@ -45,7 +64,8 @@ object SeedService:
   private val DataRootPlaceholder = "<DATA_ROOT>"
 
   // ── 公共入口 ─────────────────────────────────────────────
-  /** 冷启动播种（幂等、add-only、best-effort）。失败绝不阻止 gateway 启动。 */
+  /** 冷启动播种（幂等、add-only、best-effort）+ 插件一致性 reconcile。
+    * 失败绝不阻止 gateway 启动。 */
   def ensureSeeded(): IO[Unit] = IO.blocking {
     val root = PathUtil.dataRoot
     try
@@ -67,6 +87,8 @@ object SeedService:
             writeMarker(root, manifest.seedVersion, items)
             logger.infoSync(s"Seed: upgraded v${m.version} → v${manifest.seedVersion} (${items.size} item(s) added)")
           case _ => () // marker.version >= seedVersion → no-op
+      // 插件一致性 pass（所有分支都跑，不受守卫/marker 门控——digest 一致时是无操作）
+      reconcilePlugins(root, manifest)
     catch
       case e: Exception =>
         // 种子全程 best-effort：单点失败绝不阻止 gateway 启动（与 startupMount fail-soft 同构）
@@ -111,8 +133,9 @@ object SeedService:
       logger.infoSync(s"Seed: wrote agent '$name' (agent.json=$jsonWrote, system.md=$mdWrote)")
     jsonWrote || mdWrote
 
-  /** 插件条目：整目录复制 seed/plugins/<name>/ → ~/.nebflow/plugins/<name>/，首次装即 trusted。
-    * 目标目录已存在 → 跳过（绝不覆盖、不重新信任——尊重用户/author 副本）。 */
+  /** 插件条目（安装路径）：整目录复制 seed/plugins/<name>/ → ~/.nebflow/plugins/<name>/，
+    * 首次装即 trusted。目标目录已存在 → 跳过（安装语义不覆盖；已装插件的刷新由
+    * reconcilePlugins 的 digest 仲裁接管）。 */
   private def seedPlugin(root: os.Path, name: String): Boolean =
     val targetDir = root / "plugins" / name
     if os.exists(targetDir) then
@@ -162,6 +185,88 @@ object SeedService:
           logger.warnSync(s"Seed: project '$name' create failed: $err")
           false
 
+  // ── 插件一致性 reconcile（「始终保持一致」机制）──────────
+  /** 每次启动对 manifest 声明的插件做 seed ↔ runtime 比对（digest 仲裁，见类注释）。
+    * 只刷新 runtime 已存在的插件；缺失不新装（既有 home 面积不扩张，新装走完整播种）。 */
+  private def reconcilePlugins(root: os.Path, manifest: SeedManifest): Unit =
+    manifest.items.collect {
+      case id if id.startsWith(PluginsPrefix) => id.stripPrefix(PluginsPrefix)
+    }.foreach { name =>
+      try reconcilePlugin(root, name)
+      catch
+        case e: Exception =>
+          logger.warnSync(s"Seed: plugin '$name' reconcile failed: ${e.getMessage}")
+    }
+
+  private def reconcilePlugin(root: os.Path, name: String): Unit =
+    val targetDir = root / "plugins" / name
+    if !os.exists(targetDir) then () // 缺失 → 不在既有 home 新装（注释见 reconcilePlugins）
+    else seedResources(name) match
+      case None => () // 无种子资源，无从比对（fresh 路径 seedPlugin 已 WARN）
+      case Some(seedFiles) =>
+        val seedDigest = treeDigest(seedFiles)
+        PluginRegistry.computeDigest(targetDir) match
+          case Right((runtimeDigest, _)) if runtimeDigest == seedDigest => () // 已一致
+          case Right((runtimeDigest, _)) =>
+            // 仲裁基准 = 信任记录落库 digest（approve 时刻 fingerprint，目录漂移不影响记录本身；
+            // TrustStatus 现算漂移即 untrusted，取不到基准，不适用）
+            PluginRegistry.trustRecordDigest(name) match
+              case Some(td) if td == runtimeDigest =>
+                // 干净运行时（自 approve 后零漂移）→ 种子镜像覆盖 + 自动重审（零用户操作）
+                mirrorSeed(targetDir, seedFiles)
+                PluginRegistry.approve(name).unsafeRunSync()
+                logger.infoSync(
+                  s"Seed: plugin '$name' refreshed from seed (digest ${runtimeDigest.take(12)}… → ${seedDigest.take(12)}…) and re-approved")
+              case Some(td) =>
+                // 用户改过（runtime 漂移出 trust 记录）→ 用户编辑 > 种子
+                logger.warnSync(
+                  s"Seed: plugin '$name' differs from seed (seed ${seedDigest.take(12)}…) — runtime is user-modified (digest ${runtimeDigest.take(12)}… ≠ trusted ${td.take(12)}…), keeping user version")
+              case None =>
+                // 无信任记录（untrusted/未审）→ 无仲裁基准，保守不覆盖
+                logger.warnSync(
+                  s"Seed: plugin '$name' differs from seed (seed ${seedDigest.take(12)}… vs runtime ${runtimeDigest.take(12)}…) and has no trust record — keeping runtime version")
+          case Left(err) =>
+            logger.warnSync(s"Seed: plugin '$name' runtime digest failed: $err — skipped")
+
+  /** seed 资源字节面（rel POSIX 路径 → bytes）。复用 resourceDirList（file/jar 双协议）。 */
+  private def seedResources(name: String): Option[SortedMap[String, Array[Byte]]] =
+    val base = os.SubPath(s"seed/plugins/$name")
+    val rels = resourceDirList(base)
+    if rels.isEmpty then None
+    else
+      val entries = rels.flatMap { rel =>
+        readResourceBytes(join(base, rel)).map(rel.toString -> _)
+      }
+      Some(SortedMap.from(entries))
+
+  /** 资源树 digest——与 PluginRegistry.computeDigest 同算法（按 rel 路径排序，
+    * 逐文件 "rel\0<bytes>\0" 喂入 SHA-256）。SortedMap 保序 ⇒ 与「先字节保真写盘
+    * 再 computeDigest」等价（seedPlugin 文本写入 + 本方法字节写入均 UTF-8 保真）。 */
+  private def treeDigest(files: SortedMap[String, Array[Byte]]): String =
+    val md = MessageDigest.getInstance("SHA-256")
+    files.foreach { (rel, bytes) =>
+      md.update(s"$rel\u0000".getBytes("UTF-8"))
+      md.update(bytes)
+      md.update("\u0000".getBytes("UTF-8"))
+    }
+    md.digest().map("%02x".format(_)).mkString
+
+  /** 种子镜像覆盖：字节保真写全部种子文件 → 删 runtime 独有文件 → 清理删空目录。
+    * 仅在「runtime digest == trusted digest」已证干净后调用（脏目录绝不进此路径）。 */
+  private def mirrorSeed(targetDir: os.Path, seedFiles: SortedMap[String, Array[Byte]]): Unit =
+    seedFiles.foreach { (rel, bytes) =>
+      val target = targetDir / os.SubPath(rel)
+      os.makeDir.all(target / os.up)
+      os.write.over(target, bytes)
+    }
+    os.walk(targetDir).toList.filter(os.isFile).foreach { f =>
+      if !seedFiles.contains(f.relativeTo(targetDir).toString) then os.remove(f)
+    }
+    // 清理删空的残留目录（digest 只计文件，此步纯整洁）
+    os.walk(targetDir).toList.filter(os.isDir)
+      .sortBy(d => -d.relativeTo(targetDir).segments.length)
+      .foreach { d => if os.list(d).isEmpty then os.remove(d) }
+
   // ── helpers ──────────────────────────────────────────────
   private def writeIfAbsent(path: os.Path, content: Option[String]): Boolean =
     content match
@@ -181,6 +286,13 @@ object SeedService:
     val stream = Option(getClass.getClassLoader.getResourceAsStream(rel.toString))
     stream.map { s =>
       try new String(s.readAllBytes(), java.nio.charset.StandardCharsets.UTF_8)
+      finally s.close()
+    }
+
+  private def readResourceBytes(rel: os.SubPath): Option[Array[Byte]] =
+    val stream = Option(getClass.getClassLoader.getResourceAsStream(rel.toString))
+    stream.map { s =>
+      try s.readAllBytes()
       finally s.close()
     }
 

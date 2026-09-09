@@ -89,7 +89,7 @@ async function bootPage({ locale = 'zh-CN', sessions = [{ id: SID, agentName: 'N
       clientFrames.push(m);
       if (m.type === 'getHistory') ws.send(JSON.stringify({ type: 'historyPage', sessionId: m.sessionId, messages: [], hasMore: false, offset: 0 }));
     });
-    ws.send(JSON.stringify({ type: 'configData', configured: true, onboarding: 'done', models: [], defaults: {} }));
+    ws.send(JSON.stringify({ type: 'configData', config: '{"features":{"friends":true}}', configured: true, onboarding: 'done', models: [], defaults: {} }));
     ws.send(JSON.stringify({ type: 'sessionList', sessions, activeId: sessions[0]?.id || null, folders: [] }));
   });
   await page.goto(BASE + '/index.html');

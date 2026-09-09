@@ -25,7 +25,8 @@ import scala.concurrent.duration.*
  * - T2 in+deps 混合 barrier（in 段注入、deps 段绝不注入；两路等待汇合同一 startNode 闸门）
  * - T3 混合图环检测（store 层传递链 + NodeEdit e2e 双层）
  * - T4 D1-deps 补触发（活动区 + 归档变体——「归档上游可触发」裁定回归锚）
- * - T5 failed 不触发 deps 下游（对照 in 边 collect——锁定 §1.3 行为差异）
+ * - T5 failed 不触发下游（D5 零结算：in 边与 deps 边同归停等，wf1cde §3.3）
+ * - T5b D5 停等恢复闭环（reactivate→重跑→下游收真实结果，wf1cde §3.2 洞回归锁）
  * - T6 创建连接校验（校验五，20260903 收紧：(task ∨ in) ∧ out——创建必带 out）
  * - T7 编辑路径连接校验（校验六零连接下限不变 + 校验六-a 断开拒绝，20260903 收紧）
  * - T8 abandon 接受域扩展（裁定①待实施语义 §1.6）
@@ -331,7 +332,7 @@ class NodeDepsSpec extends CatsEffectSuite:
       // store 层混合传递链：A.out=B（流 A→B），C.deps=[B]（流 B→C）。
       // 追加 C→A 边（in 或 deps 同向）= A→B→C→A 环 → wouldCreateCycle(C, A) 必须 true
       _ <- rt.store.mutate(s => s.copy(nodes = s.nodes ++ Map(
-        "n-a" -> NodeDef(id = "n-a", name = "A", agent = "test-agent", out = Some("n-b"), createdAt = now),
+        "n-a" -> NodeDef(id = "n-a", name = "A", agent = "test-agent", out = List(OutEdge("n-b")), createdAt = now),
         "n-b" -> NodeDef(id = "n-b", name = "B", agent = "test-agent", createdAt = now),
         "n-c" -> NodeDef(id = "n-c", name = "C", agent = "test-agent", deps = List("n-b"), createdAt = now)
       )))
@@ -341,7 +342,7 @@ class NodeDepsSpec extends CatsEffectSuite:
       // node-b store 直种（20260903 创建必带 out 新规范下 out-only wiring 节点不可经 NodeEdit 创建）
       _ <- rt.store.mutate(s => s.copy(nodes = s.nodes ++ Map(
         "n-e2e-b" -> NodeDef(id = "n-e2e-b", name = "node-b", agent = "test-agent",
-          status = NodeLifecycle.Wiring, out = Some("Nebula"), createdAt = System.currentTimeMillis()))))
+          status = NodeLifecycle.Wiring, out = List(OutEdge.nebula), createdAt = System.currentTimeMillis()))))
       bE2e <- idOf(rt, "node-b")
       _ <- nodeEdit(nodeInput("deps-t3", "node-a", "description" -> Json.fromString("test node purpose"),
         "task" -> Json.fromString("work"), "out" -> Json.fromString(bE2e)), ctx)
@@ -416,9 +417,9 @@ class NodeDepsSpec extends CatsEffectSuite:
       assert(!cInput.exists(_.contains("RESULT-OF-A")), "variant-2: C input must NOT contain archived upstream result")
   }
 
-  // ── T5 failed 不触发 deps 下游（对照 in 边 collect）────────
+  // ── T5 failed 不触发下游（D5 零结算：in 边与 deps 边同归停等）────────
 
-  test("T5 failed upstream: deps waiter stays pending and visible; in-edge waiter is collected and starts (behavior difference locked)") {
+  test("T5 failed upstream: deps waiter AND in-edge waiter both stay waiting and visible (D5 zero-settlement, wf1cde §3.3)") {
     val ws = tempRoot / "ws-t5"
     os.makeDir.all(ws)
     val system = ActorSystem(s"deps-t5-${scala.util.Random.nextInt(100000)}")
@@ -435,7 +436,7 @@ class NodeDepsSpec extends CatsEffectSuite:
       // C2 store 直种（20260903 创建必带 out 新规范下 out-only wiring 节点不可经 NodeEdit 创建）
       _ <- rt.store.mutate(s => s.copy(nodes = s.nodes ++ Map(
         "n-in-waiter" -> NodeDef(id = "n-in-waiter", name = "in-waiter", agent = "test-agent",
-          status = NodeLifecycle.Wiring, out = Some("Nebula"), createdAt = System.currentTimeMillis()))))
+          status = NodeLifecycle.Wiring, out = List(OutEdge.nebula), createdAt = System.currentTimeMillis()))))
       c2Id <- idOf(rt, "in-waiter")
       _ <- nodeEdit(nodeInput("deps-t5", "src-a2", "description" -> Json.fromString("test node purpose"),
         "task" -> Json.fromString("boom-a2"), "out" -> Json.fromString(c2Id)), ctx)
@@ -450,23 +451,81 @@ class NodeDepsSpec extends CatsEffectSuite:
       // 双双失败
       _ <- waitStatus(rt, "src-a", Set(NodeLifecycle.Failed))
       _ <- waitStatus(rt, "src-a2", Set(NodeLifecycle.Failed))
-      _ <- IO.sleep(800.millis) // 给「假如 deps 被误触发」留窗口
+      _ <- IO.sleep(800.millis) // 给「假如下游被误触发」留窗口
+      a2Id <- idOf(rt, "src-a2")
       bId <- idOf(rt, "dep-waiter")
       b <- nodeById(rt, bId).map(_.getOrElse(fail("B must exist")))
       c2 <- nodeById(rt, c2Id).map(_.getOrElse(fail("C2 must exist")))
       bInputs <- llm.inputs.get.map(_.filter(_.contains("dep-waiter-work")))
-      // C2 无 task（wiring）→ 输入 = 上游错误投递段 + 脚注；按 in 投递头定位其输入
-      c2Input <- llm.inputs.get.map(_.find(_.contains("=== Node src-a2 ===")))
+      // D5 翻转（原 collect 对照组断言）：in 边下游同样停等——零启动零占位投递
+      c2Inputs <- llm.inputs.get.map(_.filter(_.contains("=== Node src-a2 ===")))
       _ <- system.stopAll.handleErrorWith(_ => IO.unit)
     yield
       // deps 边：failed ∉ completed → B 保持 pending/wiring 可见（分发器可自行处置）
       assert(b.status == NodeLifecycle.Pending || b.status == NodeLifecycle.Wiring,
         s"deps waiter must stay pending after upstream failed, got ${b.status}")
       assert(bInputs.isEmpty, s"deps waiter must NEVER be started by failed upstream, got ${bInputs.map(_.take(120))}")
-      // 对照 in 边：failed 走 deliverFailed collect 结算 → C2 被触发（「带错继续」）
-      assertEquals(c2.status, NodeLifecycle.Completed, "in-edge waiter must be collected and start (collect semantics)")
-      assert(c2Input.isDefined, "in-edge waiter must have been started")
-      assert(c2Input.exists(_.contains("boom-exploded")), "in-edge collect carries failed upstream error string as result")
+      // in 边（D5 零结算，wf1cde §3.3）：上游 failed 不向下游结算 → C2 停等零启动，
+      // 且 failed 上游不得写 deliveredTo 键（§3.2 连贯性洞根源废除）
+      assertEquals(c2.status, NodeLifecycle.Wiring,
+        s"in-edge waiter must stay wiring after upstream failed (D5 zero-settlement), got ${c2.status}")
+      assert(c2Inputs.isEmpty, s"in-edge waiter must NOT be started by failed upstream (collect placeholder settlement abolished), got ${c2Inputs.map(_.take(120))}")
+      assert(!c2.deliveredTo.contains(a2Id),
+        "failed upstream must NOT write deliveredTo key into downstream (wf1cde §3.2 hole source)")
+  }
+
+  // ── T5b D5 停等恢复闭环（wf1cde §3.2 洞回归锁）：failed 零结算停等 → reactivate
+  //    修复重跑 → 下游收**真实结果**自动续跑（collect 时代残留 deliveredTo 污染键
+  //    会把真实投递 dedup 挡死的连贯性洞，本用例端到端锁死不再回归）────────
+
+  test("T5b D5 recovery loop: in-edge waiter stays waiting on upstream failure; reactivate+rerun delivers clean real result (wf1cde §3.2 hole regression lock)") {
+    val ws = tempRoot / "ws-t5b"
+    os.makeDir.all(ws)
+    val system = ActorSystem(s"deps-t5b-${scala.util.Random.nextInt(100000)}")
+    // 首轮 task 含 flaky-a → 必失败（小延迟保留启动窗口）；reactivate 改 task 为
+    // good-a 后不再命中 failWhen → 重跑成功回复 REAL-RESULT-FROM-A
+    val llm = FailOnLlm(
+      failWhen = _.contains("flaky-a"),
+      replyOf = _ => "REAL-RESULT-FROM-A",
+      delayBeforeFail = 100.millis)
+    for
+      res <- mkResources(system, tempRoot, llm.handle)
+      rt <- mountProject("deps-t5b", ws, system, res)
+      ctx = mkCtx(res, system, ws.toString)
+      // 下游 B 直种（wiring, out=Nebula）；nodeEdit 接线时 src-a.id 自动写进 B.in
+      _ <- rt.store.mutate(s => s.copy(nodes = s.nodes ++ Map(
+        "n-recovery-b" -> NodeDef(id = "n-recovery-b", name = "recovery-b", agent = "test-agent",
+          status = NodeLifecycle.Wiring, out = List(OutEdge.nebula), createdAt = System.currentTimeMillis()))))
+      bId <- idOf(rt, "recovery-b")
+      // 入口 A：out→B，首轮 task=flaky-a（必失败）
+      _ <- nodeEdit(nodeInput("deps-t5b", "src-a", "description" -> Json.fromString("test node purpose"),
+        "task" -> Json.fromString("flaky-a"), "out" -> Json.fromString(bId)), ctx)
+      _ <- waitStatus(rt, "src-a", Set(NodeLifecycle.Failed))
+      _ <- IO.sleep(300.millis) // 给「假如 collect 仍在异步启动 B」留观察窗口
+      bAfterFail <- nodeById(rt, bId).map(_.getOrElse(fail("B must exist")))
+      // 分发器处置（failedNotifyTaskText 动作①）：NodeEdit 实际改动触发 reactivate
+      _ <- nodeEdit(nodeInput("deps-t5b", "src-a", "description" -> Json.fromString("test node purpose"),
+        "task" -> Json.fromString("good-a"), "out" -> Json.fromString(bId)), ctx)
+      _ <- waitStatus(rt, "src-a", Set(NodeLifecycle.Completed))
+      _ <- waitStatus(rt, "recovery-b", Set(NodeLifecycle.Completed))
+      bInputs <- llm.inputs.get.map(_.filter(_.contains("=== Node src-a ===")))
+      bFinal <- nodeById(rt, bId).map(_.getOrElse(fail("B must exist")))
+      _ <- system.stopAll.handleErrorWith(_ => IO.unit)
+    yield
+      // 阶段一（failed 后）：B 停等零结算——不启动、无投递段、deliveredTo 无污染键
+      assert(bAfterFail.status == NodeLifecycle.Wiring || bAfterFail.status == NodeLifecycle.Pending,
+        s"B must stay waiting after upstream failed, got ${bAfterFail.status}")
+      assertEquals(bAfterFail.deliveredTo, Nil,
+        "failed upstream must not write deliveredTo key (hole source abolished)")
+      // 阶段二（reactivate→重跑完成）：B 自动启动，输入含真实结果段、不含失败错误文本
+      //（collect 时代的洞：残留占位键让真实投递被 dedup 挡死，B 永远等不到干净输入）
+      assertEquals(bFinal.status, NodeLifecycle.Completed, "B must auto-resume after upstream rerun completes")
+      assertEquals(bFinal.result, Some("REAL-RESULT-FROM-A"), "B completed on its own run after real delivery")
+      assert(bInputs.length == 1, s"B must have been started exactly once with real delivery, got ${bInputs.length}")
+      assert(bInputs.headOption.exists(_.contains("REAL-RESULT-FROM-A")),
+        "B input must carry the rerun's REAL result via in-delivery section")
+      assert(bInputs.forall(i => !i.contains("boom-exploded")),
+        "B input must NOT contain the failed round's error text")
   }
 
   // ── T6 创建连接校验（校验五，20260903 收紧：(task ∨ in) ∧ out）──────
@@ -563,16 +622,16 @@ class NodeDepsSpec extends CatsEffectSuite:
       assert(r7b.left.exists(_.contains("EMPTY_NODE_CONNECTION")), s"7b must carry EMPTY_NODE_CONNECTION code, got: $r7b")
       assert(r7c.isRight, s"clearing deps while in+out remain must pass, got: $r7c")
       assertEquals(odAfter.deps, Nil, "7c: deps must be cleared (replace-on-provide)")
-      assertEquals(odAfter.out, Some("Nebula"), "7c: out must remain")
+      assertEquals(odAfter.out, List(OutEdge.nebula), "7c: out must remain")
       assert(r7d.isLeft, s"disconnecting out must be rejected under the tightened policy, got: $r7d")
       assert(r7d.left.exists(_.contains("EMPTY_NODE_CONNECTION")), s"7d must carry EMPTY_NODE_CONNECTION code, got: $r7d")
-      assertEquals(ioAfter.out, Some("Nebula"), "7d: out must remain (disconnect rejected)")
+      assertEquals(ioAfter.out, List(OutEdge.nebula), "7d: out must remain (disconnect rejected)")
       assert(ioAfter.in.contains(upId), "7d: in must remain untouched")
   }
 
   // ── T8 abandon 接受域扩展（§1.6 裁定①）──────────────────
 
-  test("T8 abandon domain extension: wiring abandonable (cancelled, no TTL, audit); running refused; upstream completion after abandon skips idempotently") {
+  test("T8 abandon domain extension: wiring abandonable (cancelled, no TTL + audit — 2026-09-07 ruling); running refused; upstream completion after abandon skips idempotently") {
     val ws = tempRoot / "ws-t8"
     os.makeDir.all(ws)
     val system = ActorSystem(s"deps-t8-${scala.util.Random.nextInt(100000)}")
@@ -586,11 +645,11 @@ class NodeDepsSpec extends CatsEffectSuite:
         "task" -> Json.fromString("slow-a"), "out" -> Json.fromString("Nebula")), ctx)
       _ <- waitStatus(rt, "slow-a", Set(NodeLifecycle.Running))
       slowId <- idOf(rt, "slow-a")
-      // wiring 节点 abandon → cancelled（无 TTL，留主图）+ 审计。
+      // wiring 节点 abandon → cancelled + 审计（2026-09-07 裁定：cancelled 无 TTL，留主图待上层处置）。
       // w-wire store 直种（20260903 创建必带 out 新规范下 out-only wiring 节点不可经 NodeEdit 创建）
       _ <- rt.store.mutate(s => s.copy(nodes = s.nodes ++ Map(
         "n-w-wire" -> NodeDef(id = "n-w-wire", name = "w-wire", agent = "test-agent",
-          status = NodeLifecycle.Wiring, out = Some("Nebula"), createdAt = System.currentTimeMillis()))))
+          status = NodeLifecycle.Wiring, out = List(OutEdge.nebula), createdAt = System.currentTimeMillis()))))
       wId <- idOf(rt, "w-wire")
       rWire <- nodeEdit(nodeInput("deps-t8", "w-wire", "abandon" -> Json.fromBoolean(true)), ctx)
       _ <- IO.sleep(200.millis)

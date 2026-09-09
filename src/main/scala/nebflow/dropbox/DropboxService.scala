@@ -14,6 +14,8 @@ import nebflow.neblink.{NeblinkClient, NeblinkService}
 import java.net.URI
 import java.net.http.{HttpClient, HttpRequest, HttpResponse}
 
+import scala.concurrent.duration.*
+
 /**
  * Cross-device Dropbox — text messages and file transfer over the neblink P2P network.
  *
@@ -28,8 +30,15 @@ import java.net.http.{HttpClient, HttpRequest, HttpResponse}
  */
 final class DropboxService private (
   neblinkService: NeblinkService,
-  wsHub: WsHub
+  wsHub: WsHub,
+  /** Signaling timeouts (diag-transfer-stuck R4): a message parked in one of
+    * the watched statuses past its window is marked failed instead of sitting
+    * in the UI as「传输中…」forever. Injected so tests can use short windows. */
+  offerTimeout: FiniteDuration = 120.seconds, // pending → waiting for file-response
+  acceptedTimeout: FiniteDuration = 10.minutes, // accepted → waiting for the frontend upload
+  transferTimeout: FiniteDuration = 31.minutes // transferring → waiting for upload completion (P2P HTTP caps at 30min)
 ):
+
   private val logger = NebflowLogger.forName("nebflow.dropbox")
 
   // ===== State =====
@@ -89,25 +98,90 @@ final class DropboxService private (
       )
       for
         _ <- addMessage(deviceId, msg)
-        _ <- sendDataOrRelay(deviceId, "dropbox", payload)
-        _ <- notifyFrontend("dropbox-message", deviceId, msg.asJson)
+        delivered <- sendDataOrRelay(deviceId, "dropbox", payload)
+        _ <-
+          if delivered then notifyFrontend("dropbox-message", deviceId, msg.asJson)
+          else
+            // R3: a text message that reached no channel is honestly failed
+            // (frontend renders the failed state on upsert).
+            for
+              _ <- updateMessageStatus(deviceId, msg.msgId, "failed")
+              _ <- notifyFrontend("dropbox-message", deviceId, msg.copy(status = "failed").asJson)
+            yield ()
       yield ()
     }
 
   /**
    * Send a data-channel message via P2P WS; fall back to relay Notify when no
    * direct WS connection exists (cross-network peers).
+   *
+   * R3 (diag-transfer-stuck): the old version swallowed relay failures with a
+   * WARN, so a lost file-response silently froze the sender's transfer state
+   * machine. Now returns true only when one of the channels actually accepted
+   * the frame; callers decide how to surface a false (mark failed).
    */
-  private def sendDataOrRelay(deviceId: String, channel: String, payload: Json): IO[Unit] =
+  private def sendDataOrRelay(deviceId: String, channel: String, payload: Json): IO[Boolean] =
     neblinkService.sendData(deviceId, channel, payload).flatMap {
-      case true  => IO.unit
+      case true  => IO.pure(true)
       case false =>
         neblinkService.relayClientOpt match
           case Some(client) =>
-            client.relayNotify(deviceId, channel, payload).void
-              .handleErrorWith(e => logger.warn(s"Relay notify to $deviceId failed: ${e.getMessage}"))
+            client.relayNotify(deviceId, channel, payload).map(_.isRight)
+              .handleErrorWith(e =>
+                logger.warn(s"Relay notify to $deviceId failed: ${e.getMessage}").as(false))
           case None =>
-            logger.warn(s"Cannot deliver dropbox message to $deviceId: no P2P WS and no relay client")
+            logger.warn(s"Cannot deliver dropbox message to $deviceId: no P2P WS and no relay client").as(false)
+    }
+
+  /** Mark a transfer + its message as failed and tell the frontend (R3/R4). */
+  private def markTransferFailed(
+    transferId: String,
+    peerDeviceId: String,
+    msgId: String,
+    reason: String
+  ): IO[Unit] =
+    for
+      _ <- updateTransferStatus(transferId, "failed")
+      _ <- updateMessageStatus(peerDeviceId, msgId, "failed")
+      _ <- notifyFrontend(
+            "dropbox-file-complete",
+            peerDeviceId,
+            Json.obj(
+              "transferId" -> transferId.asJson,
+              "msgId" -> msgId.asJson,
+              "success" -> false.asJson,
+              "error" -> reason.asJson
+            )
+          )
+      _ <- logger.warn(s"Dropbox transfer $transferId marked failed: $reason")
+    yield ()
+
+  /**
+   * R4 timeout watchdog: after `timeout`, if the transfer is still parked in
+   * one of `stuckStatuses`, migrate it to failed + notify the frontend, so a
+   * lost frame (disconnected peer, dead tunnel) can no longer freeze the UI
+   * on「传输中…」forever. Fired as a fire-and-forget fiber; a completion that
+   * arrives late (reconnect inside the window) simply no-ops here.
+   */
+  private def armTransferTimeout(
+    transferId: String,
+    peerDeviceId: String,
+    msgId: String,
+    timeout: FiniteDuration,
+    stuckStatuses: Set[String]
+  ): IO[Unit] =
+    (IO.sleep(timeout) *> failIfStuck(transferId, peerDeviceId, msgId, stuckStatuses)).start.void
+
+  private def failIfStuck(
+    transferId: String,
+    peerDeviceId: String,
+    msgId: String,
+    stuckStatuses: Set[String]
+  ): IO[Unit] =
+    transfersRef.get.map(_.get(transferId)).flatMap {
+      case Some(t) if stuckStatuses.contains(t.status) =>
+        markTransferFailed(transferId, peerDeviceId, msgId, s"timeout while waiting in '${t.status}' state")
+      case _ => IO.unit
     }
 
   /** Offer a file to a peer. Generates a transferId and sends the offer. */
@@ -154,8 +228,15 @@ final class DropboxService private (
             for
               _ <- transfersRef.update(_ + (transferId -> transfer))
               _ <- addMessage(deviceId, msg)
-              _ <- sendDataOrRelay(deviceId, "dropbox", payload)
-              _ <- notifyFrontend("dropbox-message", deviceId, msg.asJson)
+              delivered <- sendDataOrRelay(deviceId, "dropbox", payload)
+              _ <-
+                if delivered then
+                  // Arm pending-timeout: if the file-response never comes back
+                  // (peer/relay down), fail instead of parking on「传输中…」.
+                  armTransferTimeout(transferId, deviceId, msgId, offerTimeout, Set("pending")) *>
+                    notifyFrontend("dropbox-message", deviceId, msg.asJson)
+                else
+                  markTransferFailed(transferId, deviceId, msgId, "file-offer could not be delivered")
             yield ()
       }
     }
@@ -170,7 +251,7 @@ final class DropboxService private (
           for
             _ <- transfersRef.update(_ + (transferId -> t.copy(status = newStatus)))
             _ <- updateMessageStatus(senderDeviceId, t.msgId, newStatus)
-            _ <- sendDataOrRelay(
+            delivered <- sendDataOrRelay(
                   senderDeviceId,
                   "dropbox",
                   Json.obj(
@@ -179,6 +260,13 @@ final class DropboxService private (
                     "accepted" -> accepted.asJson
                   )
                 )
+            _ <-
+              if delivered then
+                // Receiver parked in accepted until the sender uploads; arm a
+                // timeout so a never-started upload fails instead of hanging.
+                armTransferTimeout(transferId, senderDeviceId, t.msgId, acceptedTimeout, Set("accepted"))
+              else
+                markTransferFailed(transferId, senderDeviceId, t.msgId, "file-response could not be delivered")
           yield ()
         case None => IO.unit
     yield ()
@@ -204,7 +292,12 @@ final class DropboxService private (
         for
           _ <- IO.blocking(os.makeDir.all(tempDir))
           senderHash <- streamToFileWithHash(body, tempPath)
-          _ <- updateTransferStatus(transferId, "transferring")
+          // R4: persist the "transferring" phase to the message so the UI shows
+          // a real stage (was transfersRef-only), and arm a transferring
+          // timeout in case the upload fiber dies mid-flight.
+          _ <- updateTransferStatus(transferId, "transferring") *>
+            updateMessageStatus(t.peerDeviceId, t.msgId, "transferring")
+          _ <- armTransferTimeout(transferId, t.peerDeviceId, t.msgId, transferTimeout, Set("transferring"))
           result <- sendTempToPeer(t, tempPath)
           _ <- IO.blocking(os.remove(tempPath)).handleErrorWith(_ => IO.unit)
           _ <- result match
@@ -221,7 +314,13 @@ final class DropboxService private (
                     "success" -> matchResult.asJson,
                     "sha256" -> senderHash.asJson
                   )
-                )
+                ).flatMap {
+                  case true => IO.unit
+                  case false =>
+                    // The bytes reached the peer but the completion frame did
+                    // not; the peer's own timeout/recovery handles the state.
+                    logger.warn(s"file-complete could not be delivered to ${t.peerDeviceId} — peer will time out")
+                }
                 _ <- updateTransferStatus(transferId, if matchResult then "completed" else "failed")
                 _ <- updateMessageStatus(t.peerDeviceId, t.msgId, if matchResult then "completed" else "failed")
                 _ <- notifyFrontend(
@@ -338,7 +437,15 @@ final class DropboxService private (
       _ <- transfersRef.update(_ + (transferId -> transfer))
       _ <- addMessage(senderId, msg)
       _ <- notifyFrontend("dropbox-message", senderId, msg.asJson)
-      _ <- sendDataOrRelay(senderId, "dropbox", acceptPayload)
+      delivered <- sendDataOrRelay(senderId, "dropbox", acceptPayload)
+      _ <-
+        if delivered then
+          // Auto-accept sent (arm accepted-timeout: this side waits for the
+          // sender to push the bytes; an abandoned upload fails rather than
+          // pinging「传输中…」).
+          armTransferTimeout(transferId, senderId, msgId, acceptedTimeout, Set("accepted"))
+        else
+          markTransferFailed(transferId, senderId, msgId, "auto-accept response could not be delivered")
     yield ()
 
   end handleIncomingOffer
@@ -349,23 +456,35 @@ final class DropboxService private (
     val transferId = hc.downField("transferId").as[String].getOrElse("")
     val accepted = hc.downField("accepted").as[Boolean].getOrElse(false)
     for
-      transfer <- transfersRef.get.map(_.get(transferId))
+      // R5: if the in-memory record is gone (restart / very late frame after
+      // a reconnect), rebuild a minimal outbound transfer from the persisted
+      // message so the state machine can still move instead of silently
+      // dropping the acknowledgement.
+      transfer <- ensureTransfer(transferId, "out")
       _ <- transfer match
         case Some(t) =>
           val newStatus = if accepted then "accepted" else "rejected"
           for
             _ <- transfersRef.update(_ + (transferId -> t.copy(status = newStatus)))
             _ <- updateMessageStatus(t.peerDeviceId, t.msgId, newStatus)
+            _ <-
+              if accepted then
+                // Sender now waits for the frontend to start the upload; arm an
+                // accepted-timeout so a lost dropbox-file-response event
+                // (frontend drives uploadFile from it) fails rather than hanging
+                // the message in accepted forever.
+                armTransferTimeout(transferId, t.peerDeviceId, t.msgId, acceptedTimeout, Set("accepted"))
+              else IO.unit
             _ <- notifyFrontend(
               "dropbox-file-response",
               t.peerDeviceId,
               Json.obj("transferId" -> transferId.asJson, "accepted" -> accepted.asJson)
             )
           yield ()
-        case None => IO.unit
+        case None =>
+          logger.warn(s"file-response for unknown transfer $transferId — no persisted message to rebuild from")
+          IO.unit
     yield ()
-
-    end for
 
   end handleFileResponse
 
@@ -375,7 +494,11 @@ final class DropboxService private (
     val transferId = hc.downField("transferId").as[String].getOrElse("")
     val success = hc.downField("success").as[Boolean].getOrElse(false)
     for
-      transfer <- transfersRef.get.map(_.get(transferId))
+      // R5: a file-complete arriving after the receiving process restarted has
+      // no in-memory transfer. Rebuild from the persisted message (and scan the
+      // Downloads dir for the leftover temp file) so the UI can move to a
+      // terminal state instead of dropping the completion.
+      transfer <- ensureTransfer(transferId, "in")
       _ <- transfer match
         case Some(t) =>
           for
@@ -398,9 +521,10 @@ final class DropboxService private (
               )
             )
           yield ()
-        case None => IO.unit
+        case None =>
+          logger.warn(s"file-complete for unknown transfer $transferId — no persisted message to rebuild from")
+          IO.unit
     yield ()
-    end for
   end handleFileComplete
 
   // ===== Helpers =====
@@ -421,6 +545,59 @@ final class DropboxService private (
 
   private def updateTransferStatus(transferId: String, status: String): IO[Unit] =
     transfersRef.update(m => m.get(transferId).map(t => m + (transferId -> t.copy(status = status))).getOrElse(m))
+
+  /**
+   * R5: look up a transfer in memory; if absent, rebuild a minimal record from
+   * the persisted message history so a late frame (after restart / reconnect)
+   * can still drive the state machine instead of being silently dropped.
+   */
+  private def ensureTransfer(transferId: String, direction: String): IO[Option[FileTransfer]] =
+    transfersRef.get.map(_.get(transferId)).flatMap {
+      case some @ Some(_) => IO.pure(some)
+      case None =>
+        rebuildTransfer(transferId, direction).flatMap {
+          case None => IO.pure(None)
+          case Some(t) =>
+            logger.warn(
+              s"Transfer $transferId not in memory (restart/late frame) — rebuilt from persisted message"
+            ) *> transfersRef.update(_ + (transferId -> t)).as(Some(t))
+        }
+    }
+
+  /** Rebuild a minimal inbound/outbound transfer from the persisted file message with this transferId. */
+  private def rebuildTransfer(transferId: String, direction: String): IO[Option[FileTransfer]] =
+    messagesRef.get.map { msgs =>
+      msgs.toList.collectFirst {
+        case (deviceId, list) if list.exists(m => m.kind == "file" && m.transferId == transferId) =>
+          (deviceId, list.find(m => m.kind == "file" && m.transferId == transferId).get)
+      }.map { case (deviceId, m) =>
+        val tempPath =
+          if direction == "in" then findReceiverTempFile(m.fileName, transferId)
+          else ""
+        FileTransfer(
+          transferId = transferId,
+          direction = direction,
+          peerDeviceId = deviceId,
+          peerAddress = "",
+          fileName = m.fileName,
+          fileSize = m.fileSize,
+          mimeType = m.mimeType,
+          msgId = m.msgId,
+          status = m.status,
+          tempPath = tempPath
+        )
+      }
+    }
+
+  /** Scan the Downloads dir for a leftover `.fileName.dropbox-XXXX` temp file (restart recovery). */
+  private def findReceiverTempFile(fileName: String, transferId: String): String =
+    try
+      val prefix = s".$fileName.dropbox-${transferId.take(8)}"
+      val dlDir = DropboxUtil.downloadsDir
+      if os.exists(dlDir) then
+        os.list(dlDir).find(_.last.startsWith(prefix)).map(_.toString).getOrElse("")
+      else ""
+    catch case _: Exception => ""
 
   private def notifyFrontend(msgType: String, deviceId: String, msgJson: Json): IO[Unit] =
     wsHub.broadcast(
@@ -526,4 +703,15 @@ object DropboxService:
 
   def create(neblinkService: NeblinkService, wsHub: WsHub): IO[DropboxService] =
     val svc = new DropboxService(neblinkService, wsHub)
+    svc.init.as(svc)
+
+  /** Test factory with injectable signaling timeouts. */
+  private[nebflow] def createForTest(
+    neblinkService: NeblinkService,
+    wsHub: WsHub,
+    offerTimeout: FiniteDuration,
+    acceptedTimeout: FiniteDuration,
+    transferTimeout: FiniteDuration
+  ): IO[DropboxService] =
+    val svc = new DropboxService(neblinkService, wsHub, offerTimeout, acceptedTimeout, transferTimeout)
     svc.init.as(svc)

@@ -972,12 +972,10 @@ class WebSocketRoutes(
       )
     }
 
-  /** '~' 前缀展开（仅前缀语义；非 ~ 开头原样返回）——wsBrowse 路径入参用。 */
-  private def expandTilde(path: String): String =
-    val home = sys.props("user.home")
-    if path == "~" then home
-    else if path.startsWith("~/") then home + path.drop(1)
-    else path
+  /** '~' 前缀展开（仅前缀语义；非 ~ 开头原样返回）——wsBrowse 路径入参用。
+    * 委托 PathUtil.expandTilde：统一支持 `~` / `~/` / `~\`（Windows 分隔符形态），
+    * 并在 Windows 上做分隔符归一（os-lib 拒绝混合分隔符段）。 */
+  private def expandTilde(path: String): String = PathUtil.expandTilde(path)
 
   /** 应用内工作区浏览器（Route C 兜底）的目录列表响应帧。
     * home 供前端把 home 前缀折叠为「主目录」面包屑；err 非 null → 前端在弹窗
@@ -2253,20 +2251,23 @@ class WebSocketRoutes(
             val json = parse(text).toOption.getOrElse(io.circe.Json.Null)
             val hc = json.hcursor
             val popFilePathRaw = hc.downField("path").as[String].getOrElse("")
-            // Expand a leading `~` (home shorthand) to the absolute home dir —
-            // historical Pop records may store `~/...`; only the server (which
-            // knows user.home) can resolve it to an absolute path.
-            val userHome = System.getProperty("user.home", "")
-            val popFilePath =
-              if popFilePathRaw == "~" then userHome
-              else if popFilePathRaw.startsWith("~/") then userHome + popFilePathRaw.drop(1)
-              else popFilePathRaw
+            // Expand a leading `~` (home shorthand: `~`, `~/`, `~\`) to the
+            // absolute home dir — historical Pop records may store `~/...`;
+            // only the server (which knows user.home) can resolve it to an
+            // absolute path. PathUtil also normalizes separators on Windows.
+            val popFilePath = PathUtil.expandTilde(popFilePathRaw)
             if popFilePath.nonEmpty then
               (for
-                _ <- IO.raiseUnless(popFilePath.startsWith("/"))(
+                // Cross-platform absolute check: `startsWith("/")` rejected
+                // every Windows path (C:\..., C:/..., UNC) with "path must be
+                // absolute" — the KAI file-browser bug (diag-win-paths).
+                // PathUtil.isAbsolute accepts POSIX, drive-letter and UNC forms.
+                _ <- IO.raiseUnless(PathUtil.isAbsolute(popFilePath))(
                   new RuntimeException("path must be absolute")
                 )
-                basePath = os.Path(popFilePath)
+                // resolvePath (not bare os.Path): survives cross-drive paths
+                // (pwd on C:, target on D:) via the java.nio fallback.
+                basePath = PathUtil.resolvePath(popFilePath)
                 _ <- IO.raiseUnless(os.exists(basePath))(
                   new RuntimeException(s"file not found: $popFilePath")
                 )
@@ -2469,7 +2470,12 @@ class WebSocketRoutes(
                 )
                 // Prevent deleting the project root itself
                 _ <- IO.raiseWhen(canonicalBase == canonicalRoot)(new RuntimeException("cannot delete project root"))
-                _ <- IO.blocking { if os.exists(basePath) then os.remove(basePath) }
+                // remove.all: single delete must cover non-empty directories too
+                // (VS Code parity — a right-click delete on a folder takes the
+                // whole subtree; previously os.remove failed on non-empty dirs
+                // and only the batch deletePaths channel could remove them).
+                // On a plain file remove.all behaves exactly like remove.
+                _ <- IO.blocking { if os.exists(basePath) then os.remove.all(basePath) }
               yield dpPath)
                 .flatMap { p =>
                   wsSend(io.circe.Json.obj("type" -> "pathDeleted".asJson, "path" -> p.asJson))
@@ -2571,6 +2577,10 @@ class WebSocketRoutes(
             val wrSessionId = hc.downField("sessionId").as[String].getOrElse("")
             val wrFilePath = hc.downField("path").as[String].getOrElse("")
             val wrContent = hc.downField("content").as[String].getOrElse("")
+            // Optional `encoding:"base64"` — byte-preserving writes for binary
+            // payloads (external file drag-in). Absent = plain text, the
+            // editor-save path, unchanged.
+            val wrEncoding = hc.downField("encoding").as[String].getOrElse("")
             if wrSessionId.nonEmpty && wrFilePath.nonEmpty then
               val overrideRoot = hc.downField("rootPath").as[Option[String]].toOption.flatten
               (for
@@ -2589,11 +2599,21 @@ class WebSocketRoutes(
                   new RuntimeException("path outside project root")
                 )
                 _ <- IO.blocking {
-                  os.write.over(basePath, wrContent)
+                  // Create parent dirs on demand so a drop-imported folder tree
+                  // lands recursively (no separate mkdir round trip). No-op when
+                  // the parent exists (editor-save path).
+                  if !os.exists(basePath / os.up) then os.makeDir.all(basePath / os.up)
+                  if wrEncoding == "base64" then
+                    os.write.over(basePath, java.util.Base64.getDecoder.decode(wrContent))
+                  else
+                    os.write.over(basePath, wrContent)
                 }
               yield basePath.toString)
                 .flatMap { absPath =>
-                  logger.info(s"File saved: $absPath (${wrContent.length} chars)")
+                  val desc =
+                    if wrEncoding == "base64" then s"${wrContent.length} b64 chars"
+                    else s"${wrContent.length} chars"
+                  logger.info(s"File saved: $absPath ($desc)")
                   wsSend(
                     io.circe.Json.obj(
                       "type" -> "fileSaved".asJson,

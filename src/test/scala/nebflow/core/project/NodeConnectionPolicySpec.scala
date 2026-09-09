@@ -245,7 +245,7 @@ class NodeConnectionPolicySpec extends CatsEffectSuite:
       _ <- system.stopAll.handleErrorWith(_ => IO.unit)
     yield
       assert(r.isRight, s"out=Nebula create must pass, got: $r")
-      assertEquals(n.out, Some("Nebula"), "node must carry the Nebula exit edge")
+      assertEquals(n.out, List(OutEdge.nebula), "node must carry the Nebula exit edge")
       assertEquals(n.status, NodeLifecycle.Completed, "node must complete (Nebula delivery is a no-op without a live root session)")
   }
 
@@ -317,11 +317,11 @@ class NodeConnectionPolicySpec extends CatsEffectSuite:
       // 本用例主体是 rewire/断开的接线校验语义，与投递/运行无关）
       _ <- rt.store.mutate(s => s.copy(nodes = s.nodes ++ Map(
         "n-src" -> NodeDef(id = "n-src", name = "src", agent = "test-agent",
-          status = NodeLifecycle.Wiring, out = Some("Nebula"), createdAt = System.currentTimeMillis()),
+          status = NodeLifecycle.Wiring, out = List(OutEdge.nebula), createdAt = System.currentTimeMillis()),
         "n-dst-a" -> NodeDef(id = "n-dst-a", name = "dst-a", agent = "test-agent",
-          status = NodeLifecycle.Wiring, out = Some("Nebula"), createdAt = System.currentTimeMillis()),
+          status = NodeLifecycle.Wiring, out = List(OutEdge.nebula), createdAt = System.currentTimeMillis()),
         "n-dst-b" -> NodeDef(id = "n-dst-b", name = "dst-b", agent = "test-agent",
-          status = NodeLifecycle.Wiring, out = Some("Nebula"), createdAt = System.currentTimeMillis()))))
+          status = NodeLifecycle.Wiring, out = List(OutEdge.nebula), createdAt = System.currentTimeMillis()))))
       aId <- idOf(rt, "dst-a")
       bId <- idOf(rt, "dst-b")
       // rewire 到 dst-a：合法
@@ -341,7 +341,7 @@ class NodeConnectionPolicySpec extends CatsEffectSuite:
       assert(rd.left.exists(_.contains("Rewire")), s"disconnect rejection must guide to rewire, got: $rd")
       assert(rd2.isLeft, s"string \"null\" disconnect must be rejected too, got: $rd2")
       assert(rw2.isRight, s"rewire to dst-b must still pass after rejections, got: $rw2")
-      assertEquals(src.out, Some(bId), "src.out must end at dst-b (rewires applied, disconnects not)")
+      assertEquals(src.out, List(OutEdge(bId)), "src.out must end at dst-b (rewires applied, disconnects not)")
   }
 
   // ── ⑦ 存量悬空 completed：接线补投递不回归 + 其他字段编辑合法 ─
@@ -362,7 +362,7 @@ class NodeConnectionPolicySpec extends CatsEffectSuite:
       _ <- waitStatus(rt, "legacy", Set(NodeLifecycle.Completed))
       legacyId <- idOf(rt, "legacy")
       _ <- rt.store.mutate(s => s.copy(nodes = s.nodes.updated(legacyId,
-        s.nodes(legacyId).copy(out = None))))
+        s.nodes(legacyId).copy(out = Nil))))
       dangling <- nodeById(rt, legacyId).map(_.getOrElse(fail("legacy must exist")))
       // 下游 consumer（入口创建后完成——补投递只要求 deliveredTo 记账 + 状态合法）
       _ <- nodeEdit(nodeInput("connp-c7", "consumer", "description" -> Json.fromString("test node purpose"),

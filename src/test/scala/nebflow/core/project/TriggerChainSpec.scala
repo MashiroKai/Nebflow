@@ -31,7 +31,7 @@ import scala.concurrent.duration.*
  * - T-C CAS 翻转守卫：in+deps 混合触发同一节点（deliverOut 与 settleDeps 竞发）——
  *   恰好一次会话（LLM 输入计数=1），败方安静退出不双 spawn。
  * - T-D mount 僵尸对账：持久化 running 且无在飞 fiber 的节点，挂载即收殓
- *   （cancelled + 显示 TTL + reaped 审计）。
+ *   （cancelled 无 TTL + reaped 审计；2026-09-07 裁定：cancelled 不静默消失）。
  */
 class TriggerChainSpec extends CatsEffectSuite:
 
@@ -232,7 +232,7 @@ class TriggerChainSpec extends CatsEffectSuite:
 
   // ── T-B 案例 B：孤儿 barrier 自愈（settleSweep）──────────────
 
-  test("T-B orphan barrier heal: C1 (first in declarer, out stolen by C2) gets redelivery+start from settleRunnableSweep; deliveredTo dedup idempotent; settle-sweep event logged") {
+  test("T-B orphan barrier heal: C1 (in=[U] with delivery missing, edge-orphanded via store surgery) gets redelivery+start from settleRunnableSweep; deliveredTo dedup idempotent; settle-sweep event logged") {
     val ws = tempRoot / "ws-tb"
     os.makeDir.all(ws)
     val system = ActorSystem(s"tc-tb-${scala.util.Random.nextInt(100000)}")
@@ -246,17 +246,29 @@ class TriggerChainSpec extends CatsEffectSuite:
         "task" -> Json.fromString("up-tb"), "out" -> Json.fromString("Nebula")), ctx)
       _ <- waitStatus(rt, "up", Set(NodeLifecycle.Running))
       upId <- idOf(rt, "up")
-      // C1 先建（拿走 U.out），C2 后建（夺走 U.out）——报告 §2.2 案例 B 拓扑
+      // C1 接 in=[U]（P1 追加语义：in 声明给 U.out 追加边，不再互相「夺走」——
+      // 报告 §2.2 案例 B 的「后建者夺走 out」损伤形态已被结构性消除；孤儿改由
+      // store 手术构造：只保 in 关系与投递缺失，边被移除 = 真实历史损伤等价形）
       _ <- nodeEdit(nodeInput("tc-tb", "c1", "description" -> Json.fromString("test node purpose"),
         "in" -> Json.fromString(upId), "out" -> Json.fromString("Nebula")), ctx)
       _ <- nodeEdit(nodeInput("tc-tb", "c2", "description" -> Json.fromString("test node purpose"),
         "in" -> Json.fromString(upId), "out" -> Json.fromString("Nebula")), ctx)
       c1Id <- idOf(rt, "c1")
       c2Id <- idOf(rt, "c2")
-      // U 完成：deliverOut 只到 out 持有者 C2（回归红线：C2 即时获投递并启动）；
-      // C1 孤儿悬挂（现状=永不）
+      // U 完成：P1 追加语义下 C1/C2 双双即时获投递并启动（fan-out 兼容回归）
       _ <- waitStatus(rt, "up", Set(NodeLifecycle.Completed))
+      _ <- waitStatus(rt, "c1", Set(NodeLifecycle.Completed))
       _ <- waitStatus(rt, "c2", Set(NodeLifecycle.Completed))
+      // store 手术构造孤儿（历史损伤等价形）：C1 复位 wiring + 清记账/启动痕迹 +
+      // 移除 U.out 中指向 C1 的边（deliveredTo 缺失 + completed 有 result 上游 =
+      // settleRunnableSweep 的孤儿判定面）
+      _ <- rt.store.mutate { s =>
+        val c1Reset = s.nodes(c1Id).copy(
+          status = NodeLifecycle.Wiring, deliveredTo = Nil, startedAt = None,
+          completedAt = None, result = None, ttlExpireAt = None)
+        val uOrphan = s.nodes(upId).copy(out = s.nodes(upId).out.filterNot(_.to == c1Id))
+        s.copy(nodes = s.nodes.updated(c1Id, c1Reset).updated(upId, uOrphan))
+      }.void
       pre <- rt.store.snapshot.map(_.nodes)
       c1Pre = pre.get(c1Id).getOrElse(fail("c1 must exist"))
       c2Pre = pre.get(c2Id).getOrElse(fail("c2 must exist"))
@@ -270,12 +282,11 @@ class TriggerChainSpec extends CatsEffectSuite:
       audit <- readAuditTypes(ws)
       _ <- system.stopAll.handleErrorWith(_ => IO.unit)
     yield
-      // 现状回归面：out 持有者 C2 即时获投递（deliverOut 语义不变）
-      assert(c2Pre.deliveredTo.contains(upId), "C2 (out holder) must receive U's delivery at completion (red line: unchanged)")
-      assertEquals(c2Pre.status, NodeLifecycle.Completed, "C2 must complete without sweep (event-driven path intact)")
-      // 孤儿 C1：U 完成时未获投递（缺陷现场），回扫后自愈
+      // P1 fan-out 兼容回归：追加语义下 U 完成即投递两个下游（旧「夺走」形态不存在）
+      assert(c2Pre.deliveredTo.contains(upId), "C2 must have received U's delivery at completion (event-driven path intact)")
+      // 手术后 C1 孤儿：U 完成时未获投递（缺陷现场），回扫后自愈
       assert(!c1Pre.deliveredTo.contains(upId),
-        "precondition: C1 must be orphaned after U completes (out stolen by C2)")
+        "precondition: C1 must be orphaned after surgery (delivery bookkeeping missing)")
       assert(c1.deliveredTo.contains(upId), s"C1.deliveredTo must contain U after sweep, got ${c1.deliveredTo}")
       assert(c1.deliveredTo.count(_ == upId) == 1,
         s"deliveredTo dedup must stay idempotent across repeated sweeps, got ${c1.deliveredTo}")
@@ -323,7 +334,7 @@ class TriggerChainSpec extends CatsEffectSuite:
 
   // ── T-D mount 僵尸 running 对账 ─────────────────────────────
 
-  test("T-D mount zombie reconciliation: persisted running node with no live fiber is reaped (cancelled, no TTL, reaped audit) at mount") {
+  test("T-D mount zombie reconciliation: persisted running node with no live fiber is reaped (cancelled, no TTL + reaped audit — 2026-09-07 ruling) at mount") {
     val ws = tempRoot / "ws-td"
     os.makeDir.all((ws / ".nebflow"))
     val system = ActorSystem(s"tc-td-${scala.util.Random.nextInt(100000)}")

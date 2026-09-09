@@ -91,7 +91,14 @@ object ToolRegistry:
       // 专属编排件——持久任务清单（~/.nebflow/tasks.json 运行时数据层）。
       // 授能面 = NebulaOrchestrationTools 单一来源（恰十四件，TaskList 批 +1）；
       // NebulaExclusiveTools 防声明逃逸（dispatcher/general/"*" 一律剥离）。
-      "TaskList" -> TaskListTool
+      "TaskList" -> TaskListTool,
+      // TaskBoard（20260908 任务板批 2，规格 §1b/§1c）：项目域共享工作项看板
+      // ——Flow Map 管节点，TaskBoard 管任务（TaskList 同族四态 + blocks 闸 +
+      // close 幂等）。授能面 = 会话身份机制挂载（分发器 DispatcherFixedTools
+      // 第九件 + project 节点/分发器会话 buildAllowedToolSet 末段按身份追加），
+      // plugins 声明不授能（NebulaExclusiveTools 同享防逃逸通道）；权限矩阵在
+      // 工具内按引擎侧身份判定（TaskBoardTool.dispatchSync）。
+      "TaskBoard" -> TaskBoardToolDef
     )
     tools.putAll(builtins.asJava)
   }

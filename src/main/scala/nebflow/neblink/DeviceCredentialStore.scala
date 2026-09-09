@@ -31,15 +31,39 @@ case class DeviceCredential(
   logto: Option[LogtoRefresh] = None
 )
 
-/** Provider refresh credential (Logto), with rotation bookkeeping. */
+/** Provider refresh credential (Logto), with rotation bookkeeping.
+  * `idToken` (RP-logout fix, 2026-09-06): the raw id_token from the same
+  * token response — carried VERBATIM as `id_token_hint` on the end-session
+  * handoff (a valid hint skips the provider's logout confirmation page;
+  * a fabricated one is rejected with 400, probed 2026-09-06). Optional +
+  * backward compatible: credentials logged in before this field existed
+  * decode with None and simply log out via session cookie (+ one confirm
+  * screen) until the next login refreshes it. */
 case class LogtoRefresh(
   refreshToken: String,
-  updatedAt: Long
+  updatedAt: Long,
+  idToken: Option[String] = None
 )
 
 object LogtoRefresh:
-  given Encoder[LogtoRefresh] = deriveEncoder
-  given Decoder[LogtoRefresh] = deriveDecoder
+  /** Hand-written encoder mirrors the DeviceCredential style: absent
+    * optional fields stay absent (no nulls in the credential file). */
+  given Encoder[LogtoRefresh] = Encoder.instance { r =>
+    val base = JsonObject(
+      "refreshToken" -> r.refreshToken.asJson,
+      "updatedAt" -> r.updatedAt.asJson
+    )
+    Json.fromJsonObject(
+      r.idToken.fold(base)(v => base.add("idToken", v.asJson))
+    )
+  }
+  given Decoder[LogtoRefresh] = Decoder.instance { c =>
+    for
+      refreshToken <- c.downField("refreshToken").as[String]
+      updatedAt <- c.downField("updatedAt").as[Long]
+      idToken <- c.downField("idToken").as[Option[String]]
+    yield LogtoRefresh(refreshToken, updatedAt, idToken)
+  }
 
 object DeviceCredential:
   /** Encoder omits the `logto` block when absent (clean legacy-shape files). */
@@ -90,11 +114,18 @@ object DeviceCredential:
     }
 
   /** Write back the latest rotated refresh token (no-op when nothing is
-    * persisted yet — enrollment owns the first write). */
-  def updateLogtoRefresh(refreshToken: String): IO[Unit] =
+    * persisted yet — enrollment owns the first write). `newIdToken` REPLACES
+    * the stored hint when the provider issued a fresh id_token (refresh
+    * grant response) and KEEPS the previous one when absent. */
+  def updateLogtoRefresh(refreshToken: String, newIdToken: Option[String] = None): IO[Unit] =
     load.flatMap {
       case Some(cred) =>
-        save(cred.copy(logto = Some(LogtoRefresh(refreshToken, System.currentTimeMillis()))))
+        val next = cred.logto match
+          case Some(prev) =>
+            prev.copy(refreshToken = refreshToken, updatedAt = System.currentTimeMillis(),
+              idToken = newIdToken.orElse(prev.idToken))
+          case None => LogtoRefresh(refreshToken, System.currentTimeMillis(), newIdToken)
+        save(cred.copy(logto = Some(next)))
       case None => IO.unit
     }
 

@@ -253,22 +253,22 @@ class PromptSectionsSpec extends munit.FunSuite:
       os.remove.all(tempRoot)
 
   // ============================================================
-  // System prompt assembly (provider prefix-cache contract)
+  // System prompt assembly（阶段 2 批 A：systemPrefix 层退役，稳定首段 =
+  // agent system.md——provider prefix-cache 锚点）
   // ============================================================
 
-  test("shared system prefix stays first in assembled prompt (provider prefix cache)"):
-    // The shared system-prefix-for-all block must be the first bytes of every
-    // agent's system prompt — cross-agent prefix caching depends on it.
-    val prompt = assembleSystemPrompt("SHARED-PREFIX", "AGENT-MD", "CONDITIONAL")
-    assert(prompt.startsWith("SHARED-PREFIX"), "shared prefix must be first")
-    val prefixIdx = prompt.indexOf("SHARED-PREFIX")
+  test("agent system.md is the first stable segment in assembled prompt"):
+    // 阶段 2 批 A 退役共享 system-prefix 层后，稳定首段 = agent system.md
+    // （同模版会话共享的基座）——provider 前缀缓存锚点，必须位于最前。
+    val prompt = assembleSystemPrompt("AGENT-MD", "CONDITIONAL")
+    assert(prompt.startsWith("AGENT-MD"), "agent system.md must be first")
     val agentIdx = prompt.indexOf("AGENT-MD")
     val condIdx = prompt.indexOf("CONDITIONAL")
-    assert(prefixIdx < agentIdx && agentIdx < condIdx, "order must be prefix → agent.md → conditional")
+    assert(agentIdx < condIdx, "order must be agent.md → conditional")
 
   test("assembleSystemPrompt omits separator when no conditional blocks"):
-    assertEquals(assembleSystemPrompt("P", "A", ""), "PA")
-    assertEquals(assembleSystemPrompt("P", "A", "C"), "PA\n\nC")
+    assertEquals(assembleSystemPrompt("A", ""), "A")
+    assertEquals(assembleSystemPrompt("A", "C"), "A\n\nC")
 
   // ============================================================
   // Mounted projects (progressive disclosure 2026-09-07): Nebula-only

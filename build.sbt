@@ -117,6 +117,14 @@ lazy val root = (project in file("."))
     // Assembly settings (fat JAR fallback)
     assembly / assemblyMergeStrategy := {
       case x if x.endsWith("module-info.class") => MergeStrategy.discard
+      // Seed resources pass through untouched: sbt-assembly's default strategy
+      // renames license/readme files at ANY depth (even the project's own
+      // resources), which corrupted the cold-start seed mirror — e.g. seed
+      // plugins/slideblocks/skills/slideblocks/LICENSE shipped as
+      // "LICENSE_<assemblyJarName>", breaking seed→plugin byte fidelity and
+      // diverging the jar-seeded digest from the repo seed. seed/ has exactly
+      // one source jar, so `first` is the faithful pass-through.
+      case x if x.startsWith("seed/") => MergeStrategy.first
       case x =>
         val oldStrategy = (assembly / assemblyMergeStrategy).value
         oldStrategy(x)

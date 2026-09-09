@@ -50,6 +50,39 @@ class LogtoAuthCodeSpec extends FunSuite:
     assert(url.contains("profile"), "C2 (2026-09-01): profile scope carries the id_token picture claim — the Logto-user avatar source")
   }
 
+  test("authorizeUrl forceLogin variant ships prompt=login+consent and KEEPS offline_access (RP-logout fix)") {
+    val url = LogtoAuthCode.authorizeUrl(
+      endpoint = "https://auth.example",
+      clientId = "pkce-app",
+      redirectUri = "http://127.0.0.1:8080/auth/callback",
+      codeChallenge = "ch",
+      state = "st",
+      prompt = "login consent"
+    )
+    // `login` forces the hosted account page even with a live SSO session;
+    // `consent` must STAY (offline_access regression guard, 2026-08-28 probe).
+    assert(url.contains("prompt=login+consent"), "switch-account entry forces the account form")
+    assert(url.contains("offline_access"), "consent kept in the prompt list → refresh_token invariant intact")
+  }
+
+  // ── RP-initiated logout (end_session) ──────────────────────────────────
+
+  test("endSessionUrl points at /oidc/session/end with hint + return uri") {
+    val url = LogtoAuthCode.endSessionUrl(
+      endpoint = "https://auth.example",
+      idTokenHint = Some("tok.abc.sig"),
+      postLogoutRedirectUri = Some("http://127.0.0.1:8080/auth/logged-out")
+    )
+    assertEquals(url, "https://auth.example/oidc/session/end?id_token_hint=tok.abc.sig&post_logout_redirect_uri=http%3A%2F%2F127.0.0.1%3A8080%2Fauth%2Flogged-out")
+  }
+
+  test("endSessionUrl omits absent params and tolerates trailing-slash endpoints") {
+    val noHint = LogtoAuthCode.endSessionUrl("https://auth.example", None, Some("http://127.0.0.1:9/x"))
+    assert(noHint.startsWith("https://auth.example/oidc/session/end?post_logout_redirect_uri="))
+    val bare = LogtoAuthCode.endSessionUrl("https://auth.example/", None, None)
+    assertEquals(bare, "https://auth.example/oidc/session/end")
+  }
+
   // ── token requests ──────────────────────────────────────────────────────
 
   test("tokenRequest posts the authorization_code grant with the verifier") {
@@ -90,6 +123,15 @@ class LogtoAuthCodeSpec extends FunSuite:
     // id_token missing / malformed → None, token still parsed
     assertEquals(LogtoAuthCode.parseTokenResponse("""{"access_token":"at"}""").map(_.picture), Right(None))
     assertEquals(LogtoAuthCode.parseTokenResponse("""{"access_token":"at","id_token":"not-a-jwt"}""").map(_.picture), Right(None))
+  }
+
+  test("parseTokenResponse carries the RAW id_token through (RP-logout hint source)") {
+    // The end-session handoff must replay the id_token VERBATIM (a mutated
+    // or fabricated hint is rejected 400 by the provider, probed 2026-09-06).
+    val idToken = "eyJhbGciOiJSUzI1NiJ9.eyJzdWIiOiJ1MSJ9.sig"
+    val body = s"""{"access_token":"at","refresh_token":"rt","id_token":"$idToken"}"""
+    assertEquals(LogtoAuthCode.parseTokenResponse(body).map(_.idToken), Right(Some(idToken)))
+    assertEquals(LogtoAuthCode.parseTokenResponse("""{"access_token":"at"}""").map(_.idToken), Right(None))
   }
 
   test("decodeIdTokenPicture is pure and rejects malformed JWTs") {

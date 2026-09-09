@@ -31,11 +31,17 @@ object Protocol:
 
   /** Standard OIDC endpoints on the external provider (Logto). `authorize`
     * serves the Authorization Code + PKCE flow (stage 2, 2026-08-28);
-    * `deviceAuth` the RFC 8628 legacy flow. */
+    * `deviceAuth` the RFC 8628 legacy flow; `endSession` the RP-initiated
+    * logout (OIDC Session Management, RP-logout fix 2026-09-06). */
   object LogtoOidc:
     val authorize: String = "/oidc/auth"
     val deviceAuth: String = "/oidc/device/auth"
     val token: String = "/oidc/token"
+    /** RP-initiated logout. Read-only discovery probe of the deployed
+      * provider (auth.nebflow.space/.well-known discovery, 2026-09-06):
+      * end_session_endpoint = <endpoint>/oidc/session/end. Same constant
+      * discipline as authorize/token — the deployed Logto is ours. */
+    val endSession: String = "/oidc/session/end"
   end LogtoOidc
 
   /** Config field under the neblink block of the config file

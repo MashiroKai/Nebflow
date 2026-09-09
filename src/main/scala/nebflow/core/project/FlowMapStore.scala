@@ -20,10 +20,11 @@ import nebflow.core.{AtomicJson, NebflowLogger, PathUtil}
  * - 环检测：NodeEdit 建边（from→to）前 DFS（to 的传递下游沿 out 边可达 from → 拒）
  * - 链级即时归档（裁定④「TTL 分开」，取代旧 ttlExpireAt 24h 计时滞留）：活动区按派发
  *   批次聚簇（与前端 clusterBatches 同源），批内**归档资格 = chainArchivable** → 整批
- *   立即移归档（结果全文保留）+ 活动区删除。归档资格（2026-09-07 20:38 作者裁定
- *   「送达即移」，取代 12:29 占图部分）：链内无活跃（running/pending/wiring/blocked）
- *   节点 ∧ 所有 failed/cancelled 成员已上报（notifySentAt.isDefined）。completed 天然
- *   满足；blocked 永不自动归档（必留主图）；未上报的异常终态保留主图待上报。
+ *   立即移归档（结果全文保留）+ 活动区删除。归档资格（2026-09-07 20:38「送达即移」
+ *   + 2026-09-08 P1「cancelled 判据放行」作者裁定）：链内无活跃（running/pending/
+ *   wiring/blocked）节点 ∧ failed 成员已上报（notifySentAt.isDefined）∧ cancelled
+ *   放行（通知系统无 Cancelled reason，旧判据对其永假 → 死链；终态即移）。completed
+ *   天然满足；blocked 永不自动归档（必留主图）；未上报的 failed 保留主图待上报。
  * - barrier：节点启动条件 = 全部 in 上游 deliveredTo 含本节点（NodeEngine 裁决）
  *
  * 并发纪律：边/计数的变更必须在单个 mutate 内完成（§2.3「单事务更新」）。
@@ -109,7 +110,8 @@ class FlowMapStore private (
             n.deps.foldLeft(acc)((a, d) => a.updated(d, n.id :: a.getOrElse(d, Nil)))
           }
         def successors(id: String): List[String] =
-          val viaOut = s.nodes.get(id).flatMap(_.out).filter(_ != "Nebula").toList
+          // P1 多边：全部 out 边目标（跳过 Nebula）；环检测目标仍是单 id（to 参数）
+          val viaOut = s.nodes.get(id).map(_.out.map(_.to).filterNot(_ == "Nebula")).getOrElse(Nil)
           viaOut ++ depsReverse.getOrElse(id, Nil)
         def reachable(start: String, visited: Set[String]): Boolean =
           if start == from then true
@@ -123,10 +125,13 @@ class FlowMapStore private (
   /** 链级即时归档 sweep（裁定④「TTL 分开」批 2026-09-07，取代旧 ttlExpireAt 24h 计时
     * 滞留 sweep）：活动区按派发批次聚簇（FlowMapStore.clusterBatches，与前端
     * flowMapArchive.js clusterBatches 严格同源）；批内**归档资格 = chainArchivable**——
-    * 2026-09-07 20:38 作者裁定「送达即移」（取代 12:29 占图部分）：链内无活跃节点 ∧
-    * 所有 failed/cancelled 成员已上报（notifySentAt.isDefined）→ 整批立即移归档 +
-    * 活动区删除。completed 天然满足；blocked 永不自动归档（必留主图）；未上报的
-    * failed/cancelled → 保留主图待上报（终态成员留主图，前端规格 §3.1 同源）。
+    * 2026-09-07 20:38「送达即移」+ 2026-09-08 P1「cancelled 判据放行」（取代 12:29
+    * 占图部分）：链内无活跃节点 ∧ failed 成员已上报（notifySentAt.isDefined）∧
+    * cancelled 放行（通知系统无 Cancelled reason、cancel/abandon 均不写 notifySentAt，
+    * 旧判据对其永假 → 含 cancelled 成员的链整链死锁，71/83 占位死链根因；作者拍板
+    * 判据放行 = 终态即移）→ 整批立即移归档 + 活动区删除。completed 天然满足；
+    * blocked 永不自动归档（必留主图）；未上报的 failed → 保留主图待上报（终态成员
+    * 留主图，前端规格 §3.1 同源）。
     * TtlTick 30s 驱动（ProjectActor）——视觉「同帧淡出」由前端派生管线当帧承担，本
     * sweep 承担出库与归档落盘（≤30s 滞后不可见：nodeRemoved 到达时前端墓碑幂等）。
     * 顺序 = 归档先行（批次注册 → 归档区写入 → 分文件落盘）再删活动区：崩溃窗口残留
@@ -326,11 +331,12 @@ class FlowMapStore private (
         Json.fromJsonObject(io.circe.JsonObject.fromMap(nobj.toMap - "task" - "taskFile"))
       case _ => n
 
-  /** 加载净化：历史数据存在 out 被写成**字符串** "null" 的行（parseOut 归一化修复
-    * 之前 LLM 以字符串 "null" 断开接线被当字面 target id 存盘；实证归档
-    * n-8a481bd0/n-c90d1140）。语义应为悬空 None——加载时归一，下次落盘即真 null。 */
+  /** 加载净化（P1 双读后的边形态）：历史数据存在 out 被写成**字符串** "null" 的行
+    * （parseOut 归一化修复之前 LLM 以字符串 "null" 断开接线被当字面 target id 存盘；
+    * 实证归档 n-8a481bd0/n-c90d1140）。codec 双读已把字符串 "null" 解码为 Nil——本
+    * 净化保留为手改数据防御：滤除 to 为空/字面 "null" 的边。语义应为悬空 Nil。 */
   private def normalizeOut(n: NodeDef): NodeDef =
-    n.copy(out = n.out.map(_.trim).filterNot(_.equalsIgnoreCase("null")).filter(_.nonEmpty))
+    n.copy(out = n.out.filterNot(e => e.to.trim.isEmpty || e.to.equalsIgnoreCase("null")))
 
   /** H-11①（阶段 2b）：存量 flow-map 节点的旧 skill/mcp 字段——加载时告警 +
     * 仅作展示（deprecated，NodeEdit 已拒写，无自动映射）。字段保留不动。 */
@@ -499,18 +505,25 @@ object FlowMapStore:
   val ChainTerminalStatuses: Set[String] =
     Set(NodeLifecycle.Completed)
 
-  /** 链级归档资格（作者 2026-09-07 20:38「送达即移」裁定，取代 12:29 占图部分）：
-    * 链内无活跃（running/pending/wiring/blocked）节点 ∧ 所有 failed/cancelled 成员的
-    * **上报已送达**（notifySentAt.isDefined——failed 终态化后 deliverFailed 尾部触发
-    * 通知落 notifySentAt；completed 无上报要求）。blocked 永不自动归档（必留主图）；
-    * running/pending/wiring 为活跃态非终态 → 链未齐。与前端 flowMapArchive.js
-    * chainEligible 严格同源。 */
+  /** 链级归档资格（2026-09-07 20:38「送达即移」+ 2026-09-08 P1「cancelled 判据放行」
+    * 作者裁定，取代 12:29 占图部分）：completed → true（无上报要求）；failed → 上报
+    * 已送达（notifySentAt.isDefined——终态化后 deliverFailed 尾部触发通知落
+    * notifySentAt）；**cancelled → true**（P1 判据放行：通知系统无 Cancelled reason、
+    * cancel/abandon 均不写 notifySentAt，旧判据「cancelled 需已上报」永假 → 含
+    * cancelled 成员的链整链永久锁死不出库。cancelled 是终态，语义实质从「无通道永
+    * 滞留」变「终态即移」，作者已拍板实施；归档后回看走归档面板，findNode 兜底可达）。
+    * blocked 永不自动归档（必留主图）；running/pending/wiring 为活跃态非终态 → 链未齐
+    * （活跃链兄弟保留语义不变）。
+    * 注意：前端 flowMapArchive.js chainEligible 仍是 20:38 旧判据镜像，本批未同步
+    * （P1 引擎单侧先行，前端批跟进）——后端归档先行的 ≤30s 窗口内前端派生链仍按旧
+    * 判据留主图，nodeRemoved 墓碑幂等兜底出图，无归档泄漏。 */
   def chainArchivable(members: Iterable[NodeDef]): Boolean =
     members.forall { n =>
       n.status match
         case s if ChainTerminalStatuses.contains(s) => true
-        case NodeLifecycle.Failed | NodeLifecycle.Cancelled => n.notifySentAt.isDefined
-        case _ => false
+        case NodeLifecycle.Cancelled                => true
+        case NodeLifecycle.Failed                   => n.notifySentAt.isDefined
+        case _                                      => false
     }
 
   /** 批次聚簇算法单点（裁定④；与前端 clusterBatches 严格同源）：节点按 createdAt

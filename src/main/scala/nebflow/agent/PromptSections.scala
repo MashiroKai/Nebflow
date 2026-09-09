@@ -581,17 +581,19 @@ object PromptSections:
       .mkString("\n\n")
 
   /**
-   * Assemble the final system prompt: shared prefix FIRST, then the agent
-   * system.md, then conditional blocks.
+   * Assemble the final system prompt: the agent system.md FIRST, then
+   * conditional blocks.
    *
-   * The prefix order is a provider prefix-cache contract — the shared
-   * system-prefix-for-all block must stay at the very front or the common
-   * prefix across agents is lost and every agent's prompt cache is
-   * invalidated. Pinned by PromptSectionsSpec (cache optimization, 2026-08-18).
+   * The leading stable segment is the provider prefix-cache anchor — the
+   * shared system.md base (identical across sessions of the same template)
+   * must stay at the very front or the common prefix is lost and every
+   * session's prompt cache is invalidated. Phase-2 batch A (2026-09) retired
+   * the shared system-prefix layer; the stable system.md base now serves
+   * that role. Pinned by PromptSectionsSpec.
    */
-  def assembleSystemPrompt(prefix: String, agentPrompt: String, conditionalBlocks: String): String =
+  def assembleSystemPrompt(agentPrompt: String, conditionalBlocks: String): String =
     val separator = if conditionalBlocks.nonEmpty then "\n\n" else ""
-    s"$prefix$agentPrompt$separator$conditionalBlocks"
+    s"$agentPrompt$separator$conditionalBlocks"
 
   /**
    * Remove a `## Section` block from a prompt string.
