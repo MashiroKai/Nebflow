@@ -269,71 +269,107 @@ function dropDirForEvent(e) {
 
 function bindTreeDragMove(tree) {
   tree.addEventListener('dragover', (e) => {
-    // Internal drag-to-move (existing #303 behavior).
-    if (dragMoveSrc) {
-      const dir = dropDirForEvent(e);
-      if (dir === null) { setDropTarget(null); return; }
-      const valid = isValidDropTarget(dragMoveSrc.path, dir);
-      // stopPropagation: keep the input-bar's document-level dragover from
-      // overriding dropEffect for file-MIME drags inside the tree.
-      e.stopPropagation();
-      const zone = dir
-        ? (e.target instanceof Element ? e.target.closest('.explorer-item.explorer-folder') : null)
-        : tree.querySelector('.explorer-root');
-      if (!valid) { setDropTarget(zone, false); return; }
-      e.preventDefault();
-      e.dataTransfer.dropEffect = 'move';
-      setDropTarget(zone, true);
-      return;
-    }
-    // External drag-in (OS files/folders): highlight the hovered folder row
-    // (or the root blank area) as a copy target — precise-to-row, VS Code
-    // parity. A file row is not a drop zone.
-    if (hasExternalDrag(e)) {
-      const dir = dropDirForEvent(e);
-      if (dir === null) { setDropTarget(null); return; }
-      e.preventDefault();
-      e.stopPropagation();
-      e.dataTransfer.dropEffect = 'copy';
-      const zone = dir
-        ? (e.target instanceof Element ? e.target.closest('.explorer-item.explorer-folder') : null)
-        : tree.querySelector('.explorer-root');
-      setDropTarget(zone, true);
-    }
+    // Internal drag-to-move only (existing #303 behavior). External OS-file
+    // drags are owned by the section-level channel (bindSectionExternalDrop)
+    // — the whole explorer panel accepts them, not just tree zones.
+    if (!dragMoveSrc) return;
+    const dir = dropDirForEvent(e);
+    if (dir === null) { setDropTarget(null); return; }
+    const valid = isValidDropTarget(dragMoveSrc.path, dir);
+    // stopPropagation: keep the input-bar's document-level dragover from
+    // overriding dropEffect for file-MIME drags inside the tree.
+    e.stopPropagation();
+    const zone = dir
+      ? (e.target instanceof Element ? e.target.closest('.explorer-item.explorer-folder') : null)
+      : tree.querySelector('.explorer-root');
+    if (!valid) { setDropTarget(zone, false); return; }
+    e.preventDefault();
+    e.dataTransfer.dropEffect = 'move';
+    setDropTarget(zone, true);
   });
 
   tree.addEventListener('dragleave', (e) => {
-    // Leaving the tree entirely → clear highlight (child-element transitions
-    // keep relatedTarget inside the tree and are ignored). Covers internal
-    // drags AND external drops — dataTransfer types are unreadable during
-    // dragleave on some engines, so external drags key off dropTargetEl.
-    if (!dragMoveSrc && !dropTargetEl) return;
+    // Internal drags only: leaving the tree entirely → clear highlight
+    // (child-element transitions keep relatedTarget inside and are ignored).
+    // External drags key off the section-level handler instead.
+    if (!dragMoveSrc) return;
     if (!tree.contains(e.relatedTarget)) setDropTarget(null);
   });
 
   tree.addEventListener('drop', (e) => {
-    // Internal drag-to-move.
-    if (dragMoveSrc) {
-      const dir = dropDirForEvent(e);
-      const src = dragMoveSrc;
-      setDropTarget(null);
-      if (dir === null || !isValidDropTarget(src.path, dir)) return;
-      e.preventDefault();
-      e.stopPropagation();
-      sendWs({ type: 'movePath', sessionId: state.activeSessionId, path: src.path, targetDir: dir, rootPath: explorerRoot });
-      return;
-    }
-    // External drag-in: copy OS files/folders into the hovered directory.
-    if (hasExternalDrag(e)) {
-      const dir = dropDirForEvent(e);
-      setDropTarget(null);
-      if (dir === null) return;   // file row / outside a zone — no preventDefault:
-                                  // bubbles to the document handler which swallows
-                                  // the drop (no browser "open dropped file").
-      e.preventDefault();
-      e.stopPropagation();
-      importExternalDrop(e.dataTransfer, dir);
-    }
+    // Internal drag-to-move only. External OS drops bubble past this handler
+    // (no preventDefault here) to the section-level channel below.
+    if (!dragMoveSrc) return;
+    const dir = dropDirForEvent(e);
+    const src = dragMoveSrc;
+    setDropTarget(null);
+    if (dir === null || !isValidDropTarget(src.path, dir)) return;
+    e.preventDefault();
+    e.stopPropagation();
+    sendWs({ type: 'movePath', sessionId: state.activeSessionId, path: src.path, targetDir: dir, rootPath: explorerRoot });
+  });
+}
+
+// ── External drag-in landing zones (section-level) ──────────────────────
+// c0cc89df bound the OS-file channel to the TREE only, and dropDirForEvent
+// returned null for file rows / blank tree space / the header. Those spots
+// never saw preventDefault → the browser dispatched drop, the document-level
+// handler swallowed it, and a Finder drag onto most of the visible panel did
+// nothing. Fix: one channel on #explorer-section. VS Code parity for landing
+// resolution — folder row → that dir; file row → its parent dir; everything
+// else in the section (tree blank, header, margins) → project root.
+
+/** Resolve the landing directory for an external drag over the section.
+ *  Always returns a string — the whole section accepts external drops. */
+function externalDropDir(e) {
+  const t = e.target instanceof Element ? e.target : null;
+  if (!t) return '';
+  const folder = t.closest('.explorer-item.explorer-folder');
+  if (folder && folder.dataset.path !== undefined) return folder.dataset.path;
+  const item = t.closest('.explorer-item');
+  if (item && item.dataset.path !== undefined) {
+    const p = item.dataset.path;
+    const cut = p.lastIndexOf('/');
+    return cut > 0 ? p.slice(0, cut) : '';   // file row → parent dir
+  }
+  return '';
+}
+
+/** Highlight the folder row the resolved dir maps to (the highlight names the
+ *  landing folder). Reuses the existing .drop-target styles — zero new CSS. */
+function setExternalDropHighlight(dir) {
+  const tree = document.getElementById('explorer-tree');
+  if (!tree) return;
+  if (!dir) { setDropTarget(tree.querySelector('.explorer-root'), true); return; }
+  const row = tree.querySelector(
+    `.explorer-dir-wrapper[data-path="${CSS.escape(dir)}"] > .explorer-item.explorer-folder`);
+  setDropTarget(row || tree.querySelector('.explorer-root'), true);
+}
+
+/** External drag-in channel at SECTION level: header, blank tree space, rows —
+ *  the whole visible panel accepts OS file/folder drops. Internal app drags
+ *  still route through the tree channels above (dragMoveSrc guard). */
+function bindSectionExternalDrop(section) {
+  section.addEventListener('dragover', (e) => {
+    if (dragMoveSrc || !hasExternalDrag(e)) return;
+    e.preventDefault();
+    e.stopPropagation();   // keep the document-level dragover from overriding dropEffect
+    e.dataTransfer.dropEffect = 'copy';
+    setExternalDropHighlight(externalDropDir(e));
+  });
+  section.addEventListener('dragleave', (e) => {
+    if (dragMoveSrc || !dropTargetEl) return;
+    // dataTransfer types are unreadable during dragleave on some engines —
+    // external leaves key off dropTargetEl (set only while we highlight).
+    if (!section.contains(e.relatedTarget)) setDropTarget(null);
+  });
+  section.addEventListener('drop', (e) => {
+    if (dragMoveSrc || !hasExternalDrag(e)) return;
+    e.preventDefault();
+    e.stopPropagation();   // the document-level drop handler must not swallow this
+    const dir = externalDropDir(e);
+    setDropTarget(null);
+    importExternalDrop(e.dataTransfer, dir);
   });
 }
 
@@ -432,9 +468,18 @@ function readEntryLeaves(entry, base) {
 /** Leaves for one top item, with a possibly-renamed top segment (conflict
  *  resolution renames the ROOT of the dropped tree, VS Code "Keep Both"). */
 async function leavesForTopItem(item, resolvedTop) {
-  if (!item.isDir) return [{ rel: resolvedTop, file: item.file }];
-  const leaves = await readEntryLeaves(item.entry, '');
-  return leaves.map((l) => ({ rel: resolvedTop + l.rel.slice(item.name.length), file: l.file }));
+  // Entry-based tops (every real-browser drop — Finder/Explorer — carries a
+  // working webkitGetAsEntry) MUST go through readEntryLeaves: the entry
+  // branch of collectTopDropItems carries NO `file`, so `item.file` here was
+  // undefined and the write threw "Cannot read properties of undefined" —
+  // the c0cc89df drop-in never landed a real OS file (synthetic-DataTransfer
+  // tests only ever exercised the files[] fallback below, which is why the
+  // old QA passed). readEntryLeaves(entry.file) materializes the File lazily.
+  if (item.entry) {
+    const leaves = await readEntryLeaves(item.entry, '');
+    return leaves.map((l) => ({ rel: resolvedTop + l.rel.slice(item.name.length), file: l.file }));
+  }
+  return [{ rel: resolvedTop, file: item.file }];   // files[] fallback only
 }
 
 /** VS Code-style "Keep Both" name: "foo copy.txt", "foo copy 2.txt", …
@@ -1013,6 +1058,14 @@ export function initExplorer() {
   if (tree && !tree._dragMoveBound) {
     tree._dragMoveBound = true;
     bindTreeDragMove(tree);
+  }
+
+  // External drag-in: whole-section accept (Finder parity — the whole visible
+  // panel receives OS file drops, not just tree zones). Bound once.
+  const section = /** @type {any} */ (document.getElementById('explorer-section'));
+  if (section && !section._extDropBound) {
+    section._extDropBound = true;
+    bindSectionExternalDrop(section);
   }
 
   if (tree && !tree._ctxBound) {
