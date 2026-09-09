@@ -1056,10 +1056,11 @@ class WebSocketRoutes(
                     case Some(dir) =>
                       if !os.isDir(dir) then (dir.toString, None, Nil, "not a directory")
                       else
+                        // 2026-09-09 作者裁定：默认显示隐藏文件夹（dot 目录不过滤）——
+                        // 选目录模式须能进入 ~/.nebflow/projects/（隐藏目录嵌套路径）。
                         val entries = os.list(dir)
                           .filter(os.isDir)
                           .map(_.last)
-                          .filterNot(_.startsWith("."))
                           .toList.sorted
                         // 根目录无上级（segmentCount==0）；其余经 os.up 规范化
                         val parent = if dir.segmentCount > 0 then Some((dir / os.up).toString) else None

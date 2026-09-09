@@ -1669,8 +1669,9 @@ export function showOptions(container, questions, onConfirm, doneLabel, onCancel
     // 工作区选择卡（dirPicker=true）：问题下方渲染「选择工作区」大目标——内联 SVG
     // 描边文件夹图标（禁 emoji）。点击目标或卡片空白区整体 → 应用内目录浏览器
     // （workspacePicker.js，2026-09-06 作者拍板：复用文件浏览器「选择目录」设计 +
-    // 新建文件夹，不走系统对话框）；下方候选 chips 降级为次级提示；Other… 手输路径
-    // 兜底保留（标准 option-btn/textarea 机制不动）。
+    // 新建文件夹，不走系统对话框）。2026-09-09 作者裁定：后端不下发候选 options——
+    // 无候选 chips、无「其他…」按钮；空 options 使下方自由输入 textarea 直接可见
+    // （~ 手输兜底，展开由后端负责）。
     let dirPick = null;
     if (item.dirPicker) {
       const target = document.createElement('button');
@@ -1750,8 +1751,6 @@ export function showOptions(container, questions, onConfirm, doneLabel, onCancel
         if (!isStr && typeof opt.cls === 'string' && opt.cls) btn.classList.add(opt.cls);
         if (isMulti) {
           btn.dataset.label = label;
-          // dirPicker 卡：候选目录降级为次级提示 chips（视觉弱化，机制不变）
-          if (item.dirPicker) btn.classList.add('ws-pick-candidate');
           const preview = typeof opt === 'object' && opt !== null ? opt.preview : null;
           if (preview) btn.classList.add('has-preview');
           btn.innerHTML = '<span class="option-check"></span>' + (preview ? buildOptionPreview(preview) : '') + '<span class="option-text">' +
@@ -1764,8 +1763,6 @@ export function showOptions(container, questions, onConfirm, doneLabel, onCancel
           };
         } else {
           btn.dataset.label = label;
-          // dirPicker 卡：候选目录降级为次级提示 chips（视觉弱化，机制不变）
-          if (item.dirPicker) btn.classList.add('ws-pick-candidate');
           const preview = typeof opt === 'object' && opt !== null ? opt.preview : null;
           if (preview) btn.classList.add('has-preview');
           if (preview) {
