@@ -1016,6 +1016,11 @@ class RestApiRoutes(
     // `consent` is kept so the offline_access/refresh-token invariant
     // (see LogtoAuthCode.authorizeUrl) never regresses. Body is optional:
     // absent/empty/unparsable → plain login.
+    // Optional body {"uiLocales":"zh"|"en"} (BYUI handoff ①, 2026-09-09):
+    // forwarded as the OIDC ui_locales hint so the hosted page matches the
+    // client UI language. WHITELISTED to "zh"/"en" — any other value (or an
+    // absent field) resolves to "" and the param is omitted, which is also
+    // the byte-identical legacy behavior for old callers.
     case req @ POST -> Root / "neblink" / "auth" / "start" =>
       if !checkAuth(req) then Forbidden(Json.obj("error" -> "Unauthorized".asJson))
       else
@@ -1023,14 +1028,19 @@ class RestApiRoutes(
           case None => BadRequest(Json.obj("error" -> "NebLink service not initialized".asJson))
           case Some(ms) =>
             for
-              forceLogin <- req
+              // One body read feeds both optional fields (http4s streams a
+              // request body once).
+              bodyJson <- req
                 .attemptAs[Json]
                 .value
-                .map {
-                  case Right(json) =>
-                    json.hcursor.downField("forceLogin").as[Boolean].toOption.getOrElse(false)
-                  case Left(_) => false // empty / non-JSON body = plain login
-                }
+                .map(_.toOption) // empty / non-JSON body = plain login
+              forceLogin = bodyJson
+                .flatMap(_.hcursor.downField("forceLogin").as[Boolean].toOption)
+                .getOrElse(false)
+              uiLocales = bodyJson
+                .flatMap(_.hcursor.downField("uiLocales").as[String].toOption)
+                .flatMap(v => if v == "zh" || v == "en" then Some(v) else None)
+                .getOrElse("")
               // Embedded-default fallback: missing logto block resolves to the
               // product's hosted auth service (fresh installs get PKCE login).
               logto <- ms.neblinkConfig.map(_.effectiveLogto)
@@ -1049,7 +1059,8 @@ class RestApiRoutes(
                       redirectUri,
                       challenge,
                       state,
-                      prompt = if forceLogin then "login consent" else "consent"
+                      prompt = if forceLogin then "login consent" else "consent",
+                      uiLocales = uiLocales
                     )
                     r <- Ok(Json.obj("authorizeUrl" -> authorizeUrl.asJson))
                   yield r
