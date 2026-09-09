@@ -6,7 +6,7 @@ import io.circe.syntax.*
 import io.circe.{Json, JsonObject}
 import nebflow.actor.ActorRef
 import nebflow.agent.AgentCommand
-import nebflow.core.{AskItem, AskOption, NebflowLogger, PathUtil}
+import nebflow.core.{AskItem, NebflowLogger, PathUtil}
 import nebflow.core.entity.EntityLoader
 import nebflow.core.project.*
 
@@ -1943,7 +1943,7 @@ object ProjectCreateTool extends Tool:
           }
       }
 
-  /** workspace 归一化（绝对化 + 去尾斜杠），用于同名冲突判定与候选排除。
+  /** workspace 归一化（绝对化 + 去尾斜杠），用于同名冲突判定。
     * 不可解析 → None（视为不同）。 */
   private def normalizeWorkspace(p: String): Option[String] =
     Try(os.Path(p, PathUtil.dataRoot).toString).toOption
@@ -1960,29 +1960,6 @@ object ProjectCreateTool extends Tool:
   // ============================================================
   // 未知路径交互面板（口径②）
   // ============================================================
-
-  /** 候选根目录（触点）：默认 ~/Claude code；spec 用系统属性注入隔离目录。
-    * 独立属性注入（非 PathUtil.dataRoot 派生）——候选根是用户机器上的项目
-    * 惯例目录，与数据根语义无关。 */
-  private def candidatesRoot: os.Path =
-    Option(System.getProperty("nebflow.projectcreate.candidates-dir"))
-      .map(os.Path(_, os.Path(sys.props("user.home"))))
-      .getOrElse(os.Path(sys.props("user.home")) / "Claude code")
-
-  /** 候选扫描（纯函数，spec 覆盖）：root 一级子目录、排除点目录与已占用
-    * workspace、按名称排序、最多 max 个。root 不存在 → 空（面板仍有 Other
-    * 自由输入兜底，不因无候选而不可用）。 */
-  def scanCandidates(root: os.Path, taken: Set[String], max: Int = 8): List[String] =
-    if !os.isDir(root) then Nil
-    else
-      os.list(root)
-        .filter(os.isDir)
-        .map(_.toString)
-        .filterNot(p => os.Path(p).last.startsWith("."))
-        .filterNot(p => taken.exists(t => stripTrailingSlashes(t) == stripTrailingSlashes(p)))
-        .toList
-        .sorted
-        .take(max)
 
   /** '~' 展开（仅前缀语义，防 API 差异；非 ~ 开头原样返回）。 */
   def expandTilde(path: String): String =
@@ -2066,14 +2043,16 @@ object ProjectCreateTool extends Tool:
                 "pass 'workspace' (and optionally 'name') explicitly."
             )))
           case Some(agentRef) =>
+            // 2026-09-09 作者裁定：面板不再下发候选（无候选 chips、无「其他…」）。
+            // 选择面 = 应用内目录浏览器（dirPicker=true → 前端大目标 → workspacePicker.js，
+            // 可逐级浏览/新建文件夹/显示隐藏目录）+ 空 options 使自由输入 textarea 直接
+            // 可见（~ 手输兜底，后端 expandTilde/parsePanelAnswer 负责展开与绝对化校验）。
+            val question =
+              s"ProjectCreate 需要项目工作区路径 — 点击上方「选择工作区」打开应用内目录浏览器" +
+                s"（可逐级浏览、新建文件夹，含隐藏目录）；或在下方输入框手输绝对路径（支持 ~ 展开）。"
+            val item = AskItem(question, List.empty, dirPicker = true)
+            val requestId = java.util.UUID.randomUUID().toString.take(8)
             for
-              taken <- ProjectStore.list().map(_.flatMap(p => normalizeWorkspace(p.workspace)).toSet)
-              candidates = scanCandidates(candidatesRoot, taken)
-              question =
-                s"ProjectCreate 需要项目工作区路径 — 点击上方「选择工作区」打开应用内目录浏览器（可逐级浏览、新建文件夹）；" +
-                  s"候选为 $candidatesRoot 下尚未用作项目工作区的目录，可点选；或选 Other… 手输绝对路径（支持 ~）。"
-              item = AskItem(question, candidates.map(c => AskOption(c, None)), dirPicker = true)
-              requestId = java.util.UUID.randomUUID().toString.take(8)
               answers <- agentRef
                 .?(
                   (replyTo: ActorRef[List[String]]) => AgentCommand.AskUser(requestId, List(item), Some(replyTo)),
