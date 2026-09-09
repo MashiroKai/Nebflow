@@ -94,15 +94,14 @@ const DAEMON_CSS = `
 }
 .daemon-panel-header-right { display: flex; align-items: center; gap: 4px; }
 
-/* ── Add / Close Buttons ── */
-.daemon-add-btn, .daemon-close-btn {
+/* ── Close Button ── */
+.daemon-close-btn {
   display: flex; align-items: center; justify-content: center;
   width: 22px; height: 22px; border: 1px solid transparent; border-radius: 6px;
   background: transparent; cursor: pointer; transition: all 0.15s; opacity: 0.7;
 }
-.daemon-add-btn { color: rgb(91, 127, 191); }
 .daemon-close-btn { color: var(--color-text-muted); }
-.daemon-add-btn:hover, .daemon-close-btn:hover {
+.daemon-close-btn:hover {
   opacity: 1;
   background: var(--glass-control-bg-hover);
   -webkit-backdrop-filter: blur(var(--glass-control-blur)) saturate(1.2);
@@ -112,7 +111,7 @@ const DAEMON_CSS = `
     inset 0 1px 0 var(--glass-control-highlight),
     inset 0 -1px 0 var(--glass-control-underedge);
 }
-.daemon-add-btn svg, .daemon-close-btn svg { width: 14px; height: 14px; stroke-width: 2; }
+.daemon-close-btn svg { width: 14px; height: 14px; stroke-width: 2; }
 
 /* ── Panel Body ── */
 .daemon-panel-body {
@@ -132,15 +131,11 @@ const DAEMON_CSS = `
 /* ── Empty State ── */
 .daemon-empty {
   display: flex; flex-direction: column; align-items: center; justify-content: center;
-  padding: 40px 16px 36px; gap: 6px; cursor: pointer; user-select: none;
-  border-radius: 10px; margin: 0 4px; transition: background 0.15s;
+  padding: 40px 16px 36px; gap: 6px; user-select: none;
+  border-radius: 10px; margin: 0 4px;
 }
-.daemon-empty:hover { background: rgba(91, 127, 191, 0.04); }
 .daemon-empty-text { font-size: 12px; color: var(--color-text); opacity: 0.3; letter-spacing: -0.01em; }
 .daemon-empty-hint { font-size: 11px; color: var(--color-text); opacity: 0.18; letter-spacing: -0.01em; }
-@media (prefers-color-scheme: dark) {
-  .daemon-empty:hover { background: rgba(91, 127, 191, 0.05); }
-}
 
 /* ── Daemon Row ── */
 .daemon-row {
@@ -256,60 +251,6 @@ const DAEMON_CSS = `
 .daemon-btn-icon.delete:hover { color: #f44336; }
 .daemon-btn-icon svg { width: 13px; height: 13px; stroke-width: 2; }
 .daemon-btn:disabled, .daemon-btn-icon:disabled { opacity: 0.4; cursor: default; }
-
-/* ── Add Form ── */
-.daemon-add-form {
-  padding: 10px 12px; border-radius: 10px;
-  background: rgba(91, 127, 191, 0.03);
-  border: 1px solid rgba(91, 127, 191, 0.10);
-  margin: 2px 4px 6px;
-  animation: daemonFormIn 0.25s cubic-bezier(0.16, 1, 0.3, 1);
-}
-@keyframes daemonFormIn { from { opacity: 0; transform: translateY(-8px); } to { opacity: 1; transform: translateY(0); } }
-.daemon-add-field { margin-bottom: 6px; }
-.daemon-add-field:last-of-type { margin-bottom: 8px; }
-.daemon-add-label {
-  display: block; font: 600 10px -apple-system, sans-serif;
-  color: var(--color-text-muted); text-transform: uppercase;
-  letter-spacing: 0.05em; margin-bottom: 3px;
-}
-.daemon-add-input {
-  width: 100%; border-radius: 6px; padding: 5px 8px; font-size: 12px;
-  font-family: inherit; color: var(--color-text);
-  background: var(--glass-etched-bg, rgba(0,0,0,0.025));
-  outline: none; border: 1px solid var(--glass-etched-border, var(--glass-border));
-  transition: border-color 0.2s, box-shadow 0.2s;
-  box-sizing: border-box;
-}
-.daemon-add-input:focus {
-  border-color: var(--glass-etched-border-focus, rgba(91,127,191,0.35));
-  box-shadow: 0 0 0 2px rgba(91, 127, 191, 0.08);
-}
-.daemon-add-input.mono { font-family: ui-monospace, SFMono-Regular, monospace; }
-.daemon-add-actions { display: flex; gap: 6px; justify-content: flex-end; }
-.daemon-add-save {
-  font: 600 12px -apple-system, sans-serif; color: #fff;
-  background: rgb(91, 127, 191); border: none; border-radius: 7px;
-  padding: 5px 14px; cursor: pointer; transition: opacity 0.15s;
-}
-.daemon-add-save:hover { opacity: 0.88; }
-.daemon-add-save:disabled { opacity: 0.5; cursor: default; }
-.daemon-add-cancel {
-  font: 500 12px -apple-system, sans-serif; color: var(--color-text-muted);
-  background: var(--glass-control-bg);
-  -webkit-backdrop-filter: blur(var(--glass-control-blur)) saturate(1.2);
-  backdrop-filter: blur(var(--glass-control-blur)) saturate(1.2);
-  border: 1px solid var(--glass-control-border);
-  box-shadow:
-    inset 0 1px 0 var(--glass-control-highlight),
-    inset 0 -1px 0 var(--glass-control-underedge);
-  border-radius: 7px; padding: 4px 12px; cursor: pointer; transition: all 0.15s;
-}
-.daemon-add-cancel:hover { background: var(--glass-control-bg-hover); color: var(--color-text); }
-@media (prefers-color-scheme: dark) {
-  .daemon-add-form { background: rgba(91, 127, 191, 0.04); border-color: rgba(91, 127, 191, 0.10); }
-  .daemon-add-input { background: rgba(255, 255, 255, 0.04); border-color: rgba(91, 127, 191, 0.08); color: #e0e0e0; }
-}
 </style>
 `;
 
@@ -422,7 +363,9 @@ function buildEmptyState() {
   el.className = 'daemon-empty';
   el.innerHTML = `
     <div class="daemon-empty-text">${t('daemons.empty')}</div>
-    <div class="daemon-empty-hint">${t('daemons.emptyHint')}</div>`;
+    <div class="daemon-empty-hint">${t('daemons.emptyHint')}</div>
+    <div class="daemon-empty-hint">${t('daemons.emptyHint2')}</div>
+    <div class="daemon-empty-hint">${t('daemons.emptyHint3')}</div>`;
   return el;
 }
 
