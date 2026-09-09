@@ -55,6 +55,14 @@ object NodeTools:
       case None => Left(s"Referenced node '$id' not found in project '${rt.project.name}'")
     }
 
+  /** out 目标解析（20260909 in 丢失事故修复面单点）：out 边目标串接受节点 id 或节点名
+    * （in/deps 维持纯 id 契约，不经此解析）。返回解析后的节点 id；悬空 → None。
+    * 校验（存在性/状态守卫/环检测）、in 镜像记账、投递结算统一以解析结果为准——
+    * 原始串形态只留在存储层（边 to 字段，前端/审计可读）。 */
+  def resolveOutTarget(rt: ProjectRuntime, target: String): IO[Option[String]] =
+    if target == OutEdge.NebulaTarget then IO.pure(None)
+    else rt.store.snapshot.map(s => OutEdge.resolveTargetId(s.nodes, target))
+
   /** 状态守卫：目标已运行 → 拒绝接线（§2.2「目标已运行，输入已冻结」）。 */
   def ensureTargetNotRunning(rt: ProjectRuntime, id: String): IO[Either[String, Unit]] =
     rt.store.getNode(id).map {
@@ -176,12 +184,18 @@ object NodeTools:
   def setOut(rt: ProjectRuntime, fromId: String, newOut: List[OutEdge]): IO[Unit] =
     val newEdges = OutEdge.canonical(newOut)
     def rewire(nodes: Map[String, NodeDef], from: NodeDef): Map[String, NodeDef] =
-      val oldTargets = from.out.map(_.to).filterNot(_ == OutEdge.NebulaTarget).distinct
-      val newTargets = newEdges.map(_.to).filterNot(_ == OutEdge.NebulaTarget).distinct
-      val afterRemoved = oldTargets.diff(newTargets).foldLeft(nodes)((acc, t) =>
-        acc.get(t).map(tn => acc.updated(t, tn.copy(in = tn.in.filterNot(_ == fromId)))).getOrElse(acc))
-      val afterAdded = newTargets.diff(oldTargets).foldLeft(afterRemoved)((acc, t) =>
-        acc.get(t).map(tn => acc.updated(t, tn.copy(in = (tn.in :+ fromId).distinct))).getOrElse(acc))
+      // in 镜像记账按解析后的节点 id 做（20260909 in 丢失事故修复）：目标串有 id/名字
+      // 两种形态，removed/added 的 diff 必须在「节点身份」空间进行——按原始串 diff 时，
+      // 「旧 id 形态边 → 新名字形态边指向同一节点」会被误判为改接他点，removed 侧把
+      // 下游 in 抹掉、added 侧又因名字查 Map MISS 而漏记（净效应 = in 蒸发）。
+      val oldIds = from.out.map(_.to).filterNot(_ == OutEdge.NebulaTarget).distinct
+        .flatMap(OutEdge.resolveTargetId(nodes, _)).distinct
+      val newIds = newEdges.map(_.to).filterNot(_ == OutEdge.NebulaTarget).distinct
+        .flatMap(OutEdge.resolveTargetId(nodes, _)).distinct
+      val afterRemoved = oldIds.diff(newIds).foldLeft(nodes)((acc, tid) =>
+        acc.get(tid).map(tn => acc.updated(tid, tn.copy(in = tn.in.filterNot(_ == fromId)))).getOrElse(acc))
+      val afterAdded = newIds.diff(oldIds).foldLeft(afterRemoved)((acc, tid) =>
+        acc.get(tid).map(tn => acc.updated(tid, tn.copy(in = (tn.in :+ fromId).distinct))).getOrElse(acc))
       afterAdded.updated(fromId, from.copy(out = newEdges))
     rt.store.getNode(fromId).flatMap {
       case Some(_) =>
@@ -216,10 +230,15 @@ object NodeTools:
     edges
       .filter(e => e.on.contains(OutEdge.Failed) && e.to != OutEdge.NebulaTarget)
       .toList.traverse { e =>
-        rt.store.getNode(e.to).map {
-          case Some(t) if MergeNodePolicy.isMerge(t) =>
-            Some(s"out edge '(failed)${e.to}' targets a merge node — on-failed edges into a merge node are rejected: a merge fires only when ALL upstreams complete, and upstream failure already converts it to a visible blocked state (D5). Use a pass-only edge, or signal a non-merge fallback node instead. (NODE_MERGE_PASS_ONLY)")
-          case _ => None
+        // 目标按解析后 id 查（20260909 修复面：名字形态的 failed 边不再绕过本门控）
+        NodeTools.resolveOutTarget(rt, e.to).flatMap {
+          case None => IO.pure(None)
+          case Some(tid) =>
+            rt.store.getNode(tid).map {
+              case Some(t) if MergeNodePolicy.isMerge(t) =>
+                Some(s"out edge '(failed)${e.to}' targets a merge node — on-failed edges into a merge node are rejected: a merge fires only when ALL upstreams complete, and upstream failure already converts it to a visible blocked state (D5). Use a pass-only edge, or signal a non-merge fallback node instead. (NODE_MERGE_PASS_ONLY)")
+              case _ => None
+            }
         }
       }.map(_.flatten.headOption)
 
@@ -484,7 +503,7 @@ object NodeEditTool extends Tool:
           Json.obj("type" -> "array".asJson, "items" -> Json.obj("type" -> "string".asJson))
         ).asJson, "description" -> "Upstream node id(s) this node waits on for completion signal only (no result injected). Replace-on-provide: [] / null clears. Needs the result? Use in".asJson),
         "out" -> Json.obj("type" -> "string".asJson,
-          "description" -> "Out-edge spec (required on create; on edit replaces the whole edge set): edge = target + gates + mode. \"B\" = pass edge with payload (legacy); \"Nebula\" = root notify on completed+failed; fan-out \"(pass)B, (failed)C\"; node failure edge = \"(failed)C:signal\" (failure starts C on its own task — error text never injected). Gates (parens, comma-sep) ⊆ pass,failed — default pass; implicit-gate Nebula = pass+failed; explicit gates narrow. mode :result (payload; default) | :signal (barrier settle only — deps parity). On-failed edge into a merge node rejected (NODE_MERGE_PASS_ONLY); null disconnect rejected while an edge exists — rewire (EMPTY_NODE_CONNECTION); JSON arrays rejected — use segment syntax. Same (target,mode) edges merge gates".asJson),
+          "description" -> "Out-edge spec (required on create; on edit replaces the whole edge set): edge = target + gates + mode. Target = node id OR node name (the engine resolves names to nodes for validation, in-edge mirrors and delivery). \"B\" = pass edge with payload (legacy); \"Nebula\" = root notify on completed+failed; fan-out \"(pass)B, (failed)C\"; node failure edge = \"(failed)C:signal\" (failure starts C on its own task — error text never injected). Gates (parens, comma-sep) ⊆ pass,failed — default pass; implicit-gate Nebula = pass+failed; explicit gates narrow. mode :result (payload; default) | :signal (barrier settle only — deps parity). On-failed edge into a merge node rejected (NODE_MERGE_PASS_ONLY); null disconnect rejected while an edge exists — rewire (EMPTY_NODE_CONNECTION); JSON arrays rejected — use segment syntax. Same (target,mode) edges merge gates".asJson),
         "plugins" -> Json.obj("oneOf" -> Json.arr(
           Json.obj("type" -> "string".asJson),
           Json.obj("type" -> "array".asJson, "items" -> Json.obj("type" -> "string".asJson))
@@ -882,8 +901,18 @@ object NodeEditTool extends Tool:
       depsOk <- deps.traverse(id => NodeTools.ensureNodeExists(rt, id))
       cycleIn <- ins.traverse(id => NodeTools.wouldCreateCycle(rt, fromId = id, to = nodeId))
       cycleDeps <- deps.traverse(id => NodeTools.wouldCreateCycle(rt, fromId = id, to = nodeId))
-      outOk <- outTargets.traverse(t => NodeTools.ensureNodeExists(rt, t))
-      cycleOut <- outTargets.traverse(t => NodeTools.wouldCreateCycle(rt, fromId = nodeId, to = t))
+      // out 目标解析（20260909 in 丢失事故修复面）：接受节点 id 或节点名，校验/环检/
+      // 镜像记账全部在解析后的 id 上做——名字形态不再被 id-only 校验误拒，也不再绕过
+      // 环检测（原实现按原始串查 Map，名字串查不到 → 环检测静默放行）。
+      outResolved <- outTargets.traverse(t => NodeTools.resolveOutTarget(rt, t).map(opt => t -> opt))
+      outOk = outResolved.map { case (t, opt) =>
+        opt.toRight(s"Referenced node '$t' not found in project '${rt.project.name}' (not a node id, nor any node's name)")
+      }
+      cycleOut <- outResolved.traverse { case (_, opt) =>
+        opt match
+          case Some(tid) => NodeTools.wouldCreateCycle(rt, fromId = nodeId, to = tid)
+          case None      => IO.pure(false) // 悬空已被 outOk 拒，环检无意义
+      }
       // P1 校验层①（spec §2.2）：指向 merge 的 on-failed 边 → 硬拒（NODE_MERGE_PASS_ONLY）
       mergeGate <- NodeTools.ensureMergePassOnly(rt, out)
       // P1 校验层②（spec §2.2）：下游持 in 边而上游已 failed 无 on-failed 边且非 merge →
@@ -964,16 +993,33 @@ object NodeEditTool extends Tool:
             }
             val outNodes = out.foldLeft(withInList.nodes)((acc, e) =>
               if e.to != OutEdge.NebulaTarget then
-                acc.get(e.to) match
-                  case Some(tn) => acc.updated(e.to, tn.copy(in = (tn.in :+ nodeId).distinct))
+                // in 镜像按解析后 id 记账（同 setOut——20260909 事故修复）：目标串可能是名字
+                OutEdge.resolveTargetId(acc, e.to) match
+                  case Some(tid) =>
+                    acc.get(tid) match
+                      case Some(tn) => acc.updated(tid, tn.copy(in = (tn.in :+ nodeId).distinct))
+                      case None => acc
                   case None => acc
               else acc)
             withInList.copy(nodes = outNodes.updated(nodeId, outNodes(nodeId).copy(out = OutEdge.canonical(out))))
           }
-          val createIO: IO[Unit] =
+          // create 回执一致性断言（20260909 in 丢失事故护栏①）：回执返回前写后读，
+          // 断言 in 已随节点同事务落定。现实现里 in 追加与节点插入在同一 Ref 事务
+          // （不可分离）；本断言是防回归哨兵——in 追加若被挪出 mutate（或未来重构
+          // 引入后置写）即在此显式红，杜绝「回执成功但 in 空 → barrier 空真」的静默形态。
+          val createIO: IO[Either[ToolError, String]] =
             mutateIO.flatMap { s =>
-              // 新节点事件（NodeList 同构 payload，in/out 以 store 最终态为准）
-              rt.engine.emitCreated(s.nodes(nodeId)) *>
+              val created = s.nodes(nodeId)
+              val missingIn = ins.filterNot(created.in.contains)
+              if missingIn.nonEmpty then
+                val msg =
+                  s"engine consistency tripwire: node '$nodename' ($nodeId) was created but in edge(s) [${missingIn.mkString(", ")}] are missing from the persisted state " +
+                    s"(in=[${created.in.mkString(", ")}]) — its in-barrier would silently never fire. (ENGINE_IN_RECEIPT_MISMATCH)"
+                IO(logger.errorSync(s"[node.tools] $msg")).as(Left(ToolError(msg)))
+              else
+                (
+                // 新节点事件（NodeList 同构 payload，in/out 以 store 最终态为准）
+                rt.engine.emitCreated(s.nodes(nodeId)) *>
                 // wiring 变更事件（barrier 合并接线 §2.3）：上游 out 追加指向本节点 +
                 // out 目标 in 追加——此前只有 nodeCreated，改写的节点无事件（缺失补齐）
                 NodeTools.emitWiringUpdates(rt, ins ++ out.map(_.to).filterNot(_ == OutEdge.NebulaTarget)) *>
@@ -1029,17 +1075,18 @@ object NodeEditTool extends Tool:
                 (if task.isDefined && ins.isEmpty && !merge then
                    NodeTools.runDetached(rt, s"start entry node $nodeId")(rt.engine.startNode(nodeId))
                  else IO.unit)
+                ).as(Right(
+                  s"Node '$nodename' ($nodeId) created in project '${rt.project.name}'" +
+                    (if task.isDefined && ins.isEmpty && !merge then " — entry node started running." else "") +
+                    (if deps.nonEmpty then s" deps ← ${deps.mkString(",")}" else "") +
+                    (if out.nonEmpty then s" out → ${out.map(_.to).mkString(", ")}" else "") +
+                    (retryFlag.policy match
+                      case Some(p) => s" retry ← ${p.upstream}:max=${p.max}"
+                      case None => "") +
+                    (if stallWarn.nonEmpty then "\n" + stallWarn.mkString("\n") else "")
+                ))
             }
-          createIO.as(Right(
-            s"Node '$nodename' ($nodeId) created in project '${rt.project.name}'" +
-              (if task.isDefined && ins.isEmpty && !merge then " — entry node started running." else "") +
-              (if deps.nonEmpty then s" deps ← ${deps.mkString(",")}" else "") +
-              (if out.nonEmpty then s" out → ${out.map(_.to).mkString(", ")}" else "") +
-              (retryFlag.policy match
-                case Some(p) => s" retry ← ${p.upstream}:max=${p.max}"
-                case None => "") +
-              (if stallWarn.nonEmpty then "\n" + stallWarn.mkString("\n") else "")
-          ))
+          createIO
     yield result
     end for
 
@@ -1154,6 +1201,19 @@ object NodeEditTool extends Tool:
               val newTargets = newOut.map(_.to).filterNot(_ == OutEdge.NebulaTarget).distinct
               val oldTargets = node.out.map(_.to).filterNot(_ == OutEdge.NebulaTarget).distinct
               val outChanged = outProvided && OutEdge.canonical(newOut) != OutEdge.canonical(node.out)
+              // out 目标解析 + 存在性闸（20260909 in 丢失事故修复面）：新目标接受节点 id
+              // 或节点名，统一解析为 id 后再过状态守卫/环检测/merge 门控——原实现按原始
+              // 串查 Map，名字形态「查无此点」被状态守卫与环检测静默放行，坏边由此进入
+              // 拓扑。悬空目标现在显式拒绝（可行动错误，不再静默半接线）。
+              val resolvedIds: IO[Either[String, List[String]]] =
+                if outProvided && newTargets.nonEmpty then
+                  newTargets.traverse(t => NodeTools.resolveOutTarget(rt, t).map(opt => t -> opt)).map { pairs =>
+                    val missing = pairs.collect { case (t, None) => t }
+                    if missing.nonEmpty then
+                      Left(s"out target '${missing.head}' not found in project '${rt.project.name}' — not a node id, nor any node's name. Wire an existing node or \"Nebula\".")
+                    else Right(pairs.collect { case (_, Some(id)) => id }.distinct)
+                  }
+                else IO.pure(Right(Nil))
               // D2 修复（验收②c，@a4b5d184 spec 实证）：旧目标已消费 → 拒绝改接。
               // 完成节点改投新目标时，若被移除的旧目标已启动/已完成（结果已投递、输入已消费），
               // 改投会造成语义漂移 + 重复投递风险。保留「旧目标未启动（Wiring/Pending）→
@@ -1163,34 +1223,46 @@ object NodeEditTool extends Tool:
               val removedTargets = if outProvided then oldTargets.diff(newTargets) else Nil
               val consumedGuard: IO[Either[String, Unit]] =
                 if node.status != NodeLifecycle.Completed then IO.pure(Right(()))
-                else removedTargets.traverse(oldT => rt.store.findNode(oldT).map {
-                  case Some(x) if x.status != NodeLifecycle.Wiring && x.status != NodeLifecycle.Pending =>
-                    Left(
-                      s"Node '${node.name}' result already delivered to '${x.name}' (status=${x.status}) — input consumed. " +
-                        s"NodeCancel it first, then rewire, then recreate the old target node."
-                    )
-                  case _ => Right(())
+                else removedTargets.traverse(oldT => NodeTools.resolveOutTarget(rt, oldT).flatMap {
+                  case Some(tid) => rt.store.findNode(tid).map {
+                    case Some(x) if x.status != NodeLifecycle.Wiring && x.status != NodeLifecycle.Pending =>
+                      Left(
+                        s"Node '${node.name}' result already delivered to '${x.name}' (status=${x.status}) — input consumed. " +
+                          s"NodeCancel it first, then rewire, then recreate the old target node."
+                      )
+                    case _ => Right(())
+                  }
+                  case None => IO.pure(Right(())) // 悬空旧目标（手改数据防御）：保守不拦
                 }).map(_.collectFirst { case Left(e) => e }.toLeft(()))
               // 守卫：新目标已运行 → 拒绝（§2.2 状态守卫，对所有声明的 out 目标——含未变者，
               // 与旧单值行为一致）+ P1 校验层①（NODE_MERGE_PASS_ONLY：指向 merge 的
-              // on-failed 边硬拒）+ 旧目标已消费 → 拒绝（§2.3）
+              // on-failed 边硬拒）+ 旧目标已消费 → 拒绝（§2.3）。全部按解析后 id 判定。
               val guard: IO[Either[String, Unit]] =
-                if outProvided && newTargets.nonEmpty then
-                  newTargets.traverse(t => NodeTools.ensureTargetNotRunning(rt, t)).flatMap { rs =>
-                    rs.collectFirst { case Left(e) => e } match
-                      case Some(e) => IO.pure(Left(e))
-                      case None =>
-                        NodeTools.ensureMergePassOnly(rt, newOut).flatMap {
-                          case Some(gate) => IO.pure(Left(gate): Either[String, Unit])
-                          case None       => consumedGuard
+                resolvedIds.flatMap {
+                  case Left(err) => IO.pure(Left(err))
+                  case Right(ids) =>
+                    val statusOk: IO[Either[String, Unit]] =
+                      if outProvided && ids.nonEmpty then
+                        ids.traverse(t => NodeTools.ensureTargetNotRunning(rt, t)).flatMap { rs =>
+                          rs.collectFirst { case Left(e) => e } match
+                            case Some(e) => IO.pure(Left(e))
+                            case None =>
+                              NodeTools.ensureMergePassOnly(rt, newOut).flatMap {
+                                case Some(gate) => IO.pure(Left(gate): Either[String, Unit])
+                                case None       => consumedGuard
+                              }
                         }
-                  }
-                else consumedGuard
+                      else consumedGuard
+                    statusOk
+                }
               guard.flatMap {
                 case Left(err) => IO.pure(Left(ToolError(err)))
                 case Right(_) =>
-                  // 环检测（新 out：每个非 Nebula 目标）
-                  val cycle: IO[List[Boolean]] = newTargets.traverse(t => NodeTools.wouldCreateCycle(rt, node.id, t))
+                  // 环检测（新 out：每个非 Nebula 目标，按解析后 id）
+                  val cycle: IO[List[Boolean]] = resolvedIds.flatMap {
+                    case Left(_)  => IO.pure(Nil) // guard 已拒，不可达
+                    case Right(ids) => ids.traverse(t => NodeTools.wouldCreateCycle(rt, node.id, t))
+                  }
                   cycle.flatMap { isCycles =>
                     val cycleTarget = newTargets.zip(isCycles).collectFirst { case (t, true) => t }
                     if cycleTarget.isDefined then
