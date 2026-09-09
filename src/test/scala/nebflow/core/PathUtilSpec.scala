@@ -80,7 +80,7 @@ class PathUtilSpec extends FunSuite:
   }
 
   // ===== isAbsolute: dual-platform semantics matrix =====
-  // Regression gate for the KAI file-browser fix (diag-win-paths): pop.readFile
+  // Regression gate for the file-browser Windows-path fix (diag-win-paths): pop.readFile
   // used naive `startsWith("/")`, rejecting every Windows path form. These are
   // pure string checks — identical results on any host OS.
 
