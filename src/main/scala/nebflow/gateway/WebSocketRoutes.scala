@@ -2260,7 +2260,7 @@ class WebSocketRoutes(
               (for
                 // Cross-platform absolute check: `startsWith("/")` rejected
                 // every Windows path (C:\..., C:/..., UNC) with "path must be
-                // absolute" — the KAI file-browser bug (diag-win-paths).
+                // absolute" — the file-browser Windows-path bug (diag-win-paths).
                 // PathUtil.isAbsolute accepts POSIX, drive-letter and UNC forms.
                 _ <- IO.raiseUnless(PathUtil.isAbsolute(popFilePath))(
                   new RuntimeException("path must be absolute")

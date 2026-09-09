@@ -296,14 +296,15 @@ jobs:
         # escapes quotes throughout — grep for window.__BRAND__ would still
         # match inside the escaped body, which is exactly how that bug once
         # slipped through. Assert on raw bytes instead:
-        #  1. first 15 bytes are exactly "<!DOCTYPE html" (no leading '"')
+        #  1. first 15 bytes are exactly "<!DOCTYPE html>" (full open tag — no
+        #     leading '"'; the literal must match the head -c 15 grab byte-for-byte)
         #  2. the injected contract appears with RAW quotes: "productName":
         shell: bash
         run: |
           BODY=$(curl -s http://localhost:8080/)
           FIRST15=$(printf '%s' "$BODY" | head -c 15)
-          if [ "$FIRST15" != "<!DOCTYPE html" ]; then
-            echo "FAIL: index does not start with <!DOCTYPE html (got: $FIRST15)"
+          if [ "$FIRST15" != "<!DOCTYPE html>" ]; then
+            echo "FAIL: index does not start with <!DOCTYPE html> (got: $FIRST15)"
             printf '%s' "$BODY" | head -c 200
             exit 1
           fi
