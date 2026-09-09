@@ -236,4 +236,59 @@ class NeblinkPresenceConvergenceSpec extends CatsEffectSuite:
     }
   }
 
+  // ===== C6b: server wire uses `status` string, not the `online` boolean =====
+  // The server (relay.rs) emits `{"deviceId":"...","status":"offline"}`, and
+  // its wire-shape test pins that spelling. The consumer previously read only
+  // the `online` boolean (defaulting to false), so a `status:"online"` frame
+  // from the upcoming server online-broadcast would have been misread as
+  // OFFLINE. These tests pin the dual-field toleration.
+
+  test("DeviceStatusUpdate status-string frame (current server wire) flips a peer online/offline (fix-client-events #1)") {
+    withTunnel { (ms, tunnel) =>
+      for
+        _ <- ms.upsertPeer(peer("srv"))
+        _ <- tunnel.handleDeviceStatusUpdate(
+          io.circe.parser.parse("""{"type":"device_status_update","deviceId":"srv","status":"online"}""").toOption.get)
+        afterOnline <- ms.peers
+        _ <- tunnel.handleDeviceStatusUpdate(
+          io.circe.parser.parse("""{"type":"device_status_update","deviceId":"srv","status":"offline"}""").toOption.get)
+        afterOffline <- ms.peers
+      yield
+        val now = System.currentTimeMillis()
+        assert(afterOnline.exists(p => p.deviceId == "srv" && NeblinkService.isPeerOnline(p, now, 45)),
+          "status:online must mark the peer online")
+        assert(!afterOffline.exists(p => p.deviceId == "srv" && NeblinkService.isPeerOnline(p, now, 45)),
+          "status:offline must mark the peer offline")
+    }
+  }
+
+  test("DeviceStatusUpdate status:string is case-insensitive (ONLINE/OFFLINE tolerated)") {
+    withTunnel { (ms, tunnel) =>
+      for
+        _ <- ms.upsertPeer(peer("cs"))
+        _ <- tunnel.handleDeviceStatusUpdate(
+          io.circe.parser.parse("""{"type":"device_status_update","deviceId":"cs","status":"ONLINE"}""").toOption.get)
+        after <- ms.peers
+      yield
+        val now = System.currentTimeMillis()
+        assert(after.exists(p => p.deviceId == "cs" && NeblinkService.isPeerOnline(p, now, 45)),
+          "status:ONLINE (upper-case) must still mark online")
+    }
+  }
+
+  test("DeviceStatusUpdate online:boolean still wins when both spellings are present (back-compat)") {
+    withTunnel { (ms, tunnel) =>
+      for
+        _ <- ms.upsertPeer(peer("both"))
+        // online:true takes priority over a contradictory status:string
+        _ <- tunnel.handleDeviceStatusUpdate(
+          io.circe.parser.parse("""{"type":"device_status_update","deviceId":"both","online":true,"status":"offline"}""").toOption.get)
+        after <- ms.peers
+      yield
+        val now = System.currentTimeMillis()
+        assert(after.exists(p => p.deviceId == "both" && NeblinkService.isPeerOnline(p, now, 45)),
+          "online:true must win over status:offline")
+    }
+  }
+
 end NeblinkPresenceConvergenceSpec
