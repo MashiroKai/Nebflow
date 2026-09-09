@@ -34,6 +34,7 @@
 /* ── Shared Modal Glass Card ───────────────────────────────────────────── */
 #modal-box,
 #delete-box,
+#conflict-box,
 #memory-modal,
 #rules-modal,
 #path-picker-modal,
@@ -57,6 +58,7 @@
 @media (prefers-color-scheme: dark) {
   #modal-box,
   #delete-box,
+  #conflict-box,
   #memory-modal,
   #rules-modal,
   #path-picker-modal,
@@ -74,6 +76,7 @@
 /* Top-edge refraction line — sapphire crystal dome */
 #modal-box::before,
 #delete-box::before,
+#conflict-box::before,
 #memory-modal::before,
 #rules-modal::before,
 #path-picker-modal::before,
@@ -159,6 +162,8 @@
 /* Neutral / Cancel button */
 #modal-cancel,
 #delete-cancel,
+#conflict-cancel,
+#conflict-keep-both,
 #memory-modal-actions button,
 #rules-modal-actions button,
 #path-picker-actions button {
@@ -174,6 +179,8 @@
 }
 #modal-cancel:hover,
 #delete-cancel:hover,
+#conflict-cancel:hover,
+#conflict-keep-both:hover,
 #memory-modal-actions button:hover,
 #rules-modal-actions button:hover,
 #path-picker-actions button:hover {
@@ -204,6 +211,7 @@
 
 /* Destructive button */
 #delete-confirm,
+#conflict-replace,
 #rules-modal-delete,
 #path-picker-clear {
   border: 1px solid rgba(220, 60, 60, 0.3) !important;
@@ -212,6 +220,7 @@
   transition: all 0.25s ease;
 }
 #delete-confirm:hover,
+#conflict-replace:hover,
 #rules-modal-delete:hover,
 #path-picker-clear:hover {
   background: rgba(220, 60, 60, 0.08) !important;
@@ -326,6 +335,40 @@
   font-size: 14px;
 }
 #delete-confirm {
+  padding: 8px 18px;
+  border-radius: 10px;
+  font-size: 14px;
+}
+
+/* ---------- Drop Conflict Dialog ---------- */
+#conflict-box {
+  border-radius: 20px;
+  padding: 24px;
+  width: 340px;
+  display: none;
+  animation: modalIn 0.2s cubic-bezier(0.16, 1, 0.3, 1);
+}
+#conflict-title {
+  font-size: 16px;
+  font-weight: 600;
+  color: var(--color-frame-text-bright);
+  margin-bottom: 12px;
+}
+#conflict-msg {
+  font-size: 14px;
+  color: var(--color-frame-text-muted);
+  line-height: 1.5;
+  margin-bottom: 16px;
+  word-break: break-word;
+}
+#conflict-actions {
+  display: flex;
+  gap: 8px;
+  justify-content: flex-end;
+}
+#conflict-cancel,
+#conflict-keep-both,
+#conflict-replace {
   padding: 8px 18px;
   border-radius: 10px;
   font-size: 14px;

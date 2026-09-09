@@ -269,38 +269,71 @@ function dropDirForEvent(e) {
 
 function bindTreeDragMove(tree) {
   tree.addEventListener('dragover', (e) => {
-    if (!dragMoveSrc) return;
-    const dir = dropDirForEvent(e);
-    if (dir === null) { setDropTarget(null); return; }
-    const valid = isValidDropTarget(dragMoveSrc.path, dir);
-    // stopPropagation: keep the input-bar's document-level dragover from
-    // overriding dropEffect for file-MIME drags inside the tree.
-    e.stopPropagation();
-    const zone = dir
-      ? (e.target instanceof Element ? e.target.closest('.explorer-item.explorer-folder') : null)
-      : tree.querySelector('.explorer-root');
-    if (!valid) { setDropTarget(zone, false); return; }
-    e.preventDefault();
-    e.dataTransfer.dropEffect = 'move';
-    setDropTarget(zone, true);
+    // Internal drag-to-move (existing #303 behavior).
+    if (dragMoveSrc) {
+      const dir = dropDirForEvent(e);
+      if (dir === null) { setDropTarget(null); return; }
+      const valid = isValidDropTarget(dragMoveSrc.path, dir);
+      // stopPropagation: keep the input-bar's document-level dragover from
+      // overriding dropEffect for file-MIME drags inside the tree.
+      e.stopPropagation();
+      const zone = dir
+        ? (e.target instanceof Element ? e.target.closest('.explorer-item.explorer-folder') : null)
+        : tree.querySelector('.explorer-root');
+      if (!valid) { setDropTarget(zone, false); return; }
+      e.preventDefault();
+      e.dataTransfer.dropEffect = 'move';
+      setDropTarget(zone, true);
+      return;
+    }
+    // External drag-in (OS files/folders): highlight the hovered folder row
+    // (or the root blank area) as a copy target — precise-to-row, VS Code
+    // parity. A file row is not a drop zone.
+    if (hasExternalDrag(e)) {
+      const dir = dropDirForEvent(e);
+      if (dir === null) { setDropTarget(null); return; }
+      e.preventDefault();
+      e.stopPropagation();
+      e.dataTransfer.dropEffect = 'copy';
+      const zone = dir
+        ? (e.target instanceof Element ? e.target.closest('.explorer-item.explorer-folder') : null)
+        : tree.querySelector('.explorer-root');
+      setDropTarget(zone, true);
+    }
   });
 
   tree.addEventListener('dragleave', (e) => {
-    if (!dragMoveSrc) return;
     // Leaving the tree entirely → clear highlight (child-element transitions
-    // keep relatedTarget inside the tree and are ignored).
+    // keep relatedTarget inside the tree and are ignored). Covers internal
+    // drags AND external drops — dataTransfer types are unreadable during
+    // dragleave on some engines, so external drags key off dropTargetEl.
+    if (!dragMoveSrc && !dropTargetEl) return;
     if (!tree.contains(e.relatedTarget)) setDropTarget(null);
   });
 
   tree.addEventListener('drop', (e) => {
-    if (!dragMoveSrc) return;
-    const dir = dropDirForEvent(e);
-    const src = dragMoveSrc;
-    setDropTarget(null);
-    if (dir === null || !isValidDropTarget(src.path, dir)) return;
-    e.preventDefault();
-    e.stopPropagation();
-    sendWs({ type: 'movePath', sessionId: state.activeSessionId, path: src.path, targetDir: dir, rootPath: explorerRoot });
+    // Internal drag-to-move.
+    if (dragMoveSrc) {
+      const dir = dropDirForEvent(e);
+      const src = dragMoveSrc;
+      setDropTarget(null);
+      if (dir === null || !isValidDropTarget(src.path, dir)) return;
+      e.preventDefault();
+      e.stopPropagation();
+      sendWs({ type: 'movePath', sessionId: state.activeSessionId, path: src.path, targetDir: dir, rootPath: explorerRoot });
+      return;
+    }
+    // External drag-in: copy OS files/folders into the hovered directory.
+    if (hasExternalDrag(e)) {
+      const dir = dropDirForEvent(e);
+      setDropTarget(null);
+      if (dir === null) return;   // file row / outside a zone — no preventDefault:
+                                  // bubbles to the document handler which swallows
+                                  // the drop (no browser "open dropped file").
+      e.preventDefault();
+      e.stopPropagation();
+      importExternalDrop(e.dataTransfer, dir);
+    }
   });
 }
 
@@ -317,6 +350,233 @@ function startRowDrag(e, node, path, isDir) {
     e.dataTransfer.effectAllowed = 'copyMove';   // copy → input bar, move → tree
   }
   node.classList.add('dragging');
+}
+
+// ── External drag-in (OS files/folders → tree copy) ───────────────────────
+// VS Code parity: dropping OS files/folders onto a folder row (or the blank
+// root area) COPIES them into that directory. Writes go through the existing
+// `writeFile` op with `encoding:'base64'` (byte-preserving; the backend
+// creates parent dirs on demand, so a dropped folder tree lands recursively
+// without extra mkdir round trips — empty dropped folders are not recreated,
+// documented口径). Same-name top-level items open a 3-choice conflict dialog
+// (Replace / Keep Both / Cancel), one per conflicted item, sequential;
+// Cancel skips THAT item and continues with the rest.
+
+/** Per-file byte cap — the WS JSON channel is not a bulk-transfer medium. */
+const EXTERNAL_IMPORT_MAX_BYTES = 20 * 1024 * 1024;
+
+/** True when the drag carries OS files/folders (never our internal drags). */
+function hasExternalDrag(e) {
+  if (!e.dataTransfer || dragMoveSrc) return false;
+  const items = e.dataTransfer.items;
+  if (items && Array.from(items).some(i => i.kind === 'file')) return true;
+  return Array.from(e.dataTransfer.types || []).includes('Files');
+}
+
+/** Read a File as base64 (chunked to stay clear of argument-count limits). */
+async function fileToBase64(file) {
+  const bytes = new Uint8Array(await file.arrayBuffer());
+  let bin = '';
+  const CHUNK = 0x8000;
+  for (let i = 0; i < bytes.length; i += CHUNK) {
+    bin += String.fromCharCode.apply(null, bytes.subarray(i, i + CHUNK));
+  }
+  return btoa(bin);
+}
+
+/** Top-level dropped items. Prefers webkitGetAsEntry (folder trees); without
+ *  it, degrades to flat File objects (folders arrive as their loose files). */
+function collectTopDropItems(dataTransfer) {
+  const tops = [];
+  let usedEntryApi = false;
+  for (const it of Array.from(dataTransfer.items || [])) {
+    if (it.kind !== 'file') continue;
+    const entry = typeof it.webkitGetAsEntry === 'function' ? it.webkitGetAsEntry() : null;
+    if (entry) {
+      usedEntryApi = true;
+      tops.push({ name: entry.name, isDir: entry.isDirectory, entry });
+    }
+  }
+  if (usedEntryApi) return tops;
+  return Array.from(dataTransfer.files || []).map(f => ({ name: f.name, isDir: false, file: f }));
+}
+
+/** Recursively read a FileSystemEntry into file leaves with paths relative to
+ *  the drop root — every rel starts with the top entry's own name. */
+function readEntryLeaves(entry, base) {
+  return new Promise((resolve, reject) => {
+    if (entry.isFile) {
+      entry.file((f) => resolve([{ rel: base + entry.name, file: f }]), reject);
+      return;
+    }
+    if (!entry.isDirectory) { resolve([]); return; }
+    const reader = entry.createReader();
+    const kids = [];
+    const readBatch = () => {
+      // readEntries returns entries in batches — must loop until an empty batch.
+      reader.readEntries(async (batch) => {
+        if (!batch.length) {
+          const nested = await Promise.all(
+            kids.map((k) => readEntryLeaves(k, base + entry.name + '/')));
+          resolve(nested.flat());
+          return;
+        }
+        kids.push(...batch);
+        readBatch();
+      }, reject);
+    };
+    readBatch();
+  });
+}
+
+/** Leaves for one top item, with a possibly-renamed top segment (conflict
+ *  resolution renames the ROOT of the dropped tree, VS Code "Keep Both"). */
+async function leavesForTopItem(item, resolvedTop) {
+  if (!item.isDir) return [{ rel: resolvedTop, file: item.file }];
+  const leaves = await readEntryLeaves(item.entry, '');
+  return leaves.map((l) => ({ rel: resolvedTop + l.rel.slice(item.name.length), file: l.file }));
+}
+
+/** VS Code-style "Keep Both" name: "foo copy.txt", "foo copy 2.txt", …
+ *  (dotfiles like .gitignore never split — lastIndexOf('.')===0). */
+function uniqueDropName(name, taken) {
+  const dot = name.lastIndexOf('.');
+  const stem = dot > 0 ? name.slice(0, dot) : name;
+  const ext = dot > 0 ? name.slice(dot) : '';
+  for (let n = 1; ; n++) {
+    const candidate = n === 1 ? `${stem} copy${ext}` : `${stem} copy ${n}${ext}`;
+    if (!taken.has(candidate)) return candidate;
+  }
+}
+
+/** One-shot listDir scans used by external drop-in for conflict detection.
+ *  Keyed by explorer-relative dir path; consumed by the dirListing handler
+ *  BEFORE the normal render path (scans never touch pendingLoads). */
+const externalListScans = new Map();
+
+/** Promise the set of entry names in `dirPath` (explorer-relative).
+ *  Resolves empty on error/timeout so the drop still proceeds — individual
+ *  writes surface their own errors. */
+function scanDirNames(dirPath) {
+  return new Promise((resolve) => {
+    externalListScans.set(dirPath, (entries) => resolve(new Set(entries.map(e => e.name))));
+    sendWs({ type: 'listDir', sessionId: state.activeSessionId, path: dirPath, rootPath: explorerRoot });
+    setTimeout(() => {
+      if (externalListScans.has(dirPath)) {
+        externalListScans.delete(dirPath);
+        resolve(new Set());
+      }
+    }, 10000);
+  });
+}
+
+/** Pending external writes: explorer-relative path → { resolve, reject }.
+ *  Correlates fileSaved / fileSaveError frames (path-keyed) with in-flight
+ *  writes so the import can sequence folder leaves deterministically. */
+const pendingExternalWrites = new Map();
+
+/** Write one leaf via the writeFile op (base64 = byte-preserving copy). */
+async function writeExternalLeaf(relPath, file) {
+  if (file.size > EXTERNAL_IMPORT_MAX_BYTES) {
+    throw new Error(`${file.name}: exceeds ${Math.round(EXTERNAL_IMPORT_MAX_BYTES / 1024 / 1024)}MB limit`);
+  }
+  const b64 = await fileToBase64(file);
+  return new Promise((resolve, reject) => {
+    pendingExternalWrites.set(relPath, { resolve, reject });
+    sendWs({
+      type: 'writeFile', sessionId: state.activeSessionId,
+      path: relPath, content: b64, encoding: 'base64', rootPath: explorerRoot,
+    });
+    // Lost-response guard: a vanished frame must not hang the import forever.
+    setTimeout(() => {
+      const p = pendingExternalWrites.get(relPath);
+      if (p) { pendingExternalWrites.delete(relPath); reject(new Error(`${file.name}: write timed out`)); }
+    }, 30000);
+  });
+}
+
+/** 3-choice conflict resolution for one dropped item. Resolves
+ *  'replace' | 'keepboth' | 'cancel'. */
+function confirmImportConflict(name) {
+  return new Promise((resolve) => {
+    const api = /** @type {any} */ (window).__showConflict;
+    if (typeof api !== 'function') { resolve('replace'); return; }  // dialog unavailable
+    api(t('explorer.conflictTitle'), t('explorer.conflictMsg', { name }), {
+      onReplace: () => resolve('replace'),
+      onKeepBoth: () => resolve('keepboth'),
+      onCancel: () => resolve('cancel'),
+    });
+  });
+}
+
+/** Import OS-dropped items into `targetDir` (explorer-relative, '' = root).
+ *  Sequential per top item; same-name items prompt Replace / Keep Both /
+ *  Cancel. Refreshes + expands the target dir when done. */
+async function importExternalDrop(dataTransfer, targetDir) {
+  let tops;
+  try { tops = collectTopDropItems(dataTransfer); }
+  catch (e) { window.__showToast?.(String(e?.message || e), 'error'); return; }
+  if (!tops.length) return;
+
+  const existing = await scanDirNames(targetDir);
+  let imported = 0;
+  for (const top of tops) {
+    let resolvedTop = top.name;
+    if (existing.has(top.name)) {
+      const choice = await confirmImportConflict(top.name);
+      if (choice === 'cancel') continue;              // skip this item, keep the rest
+      if (choice === 'keepboth') {
+        resolvedTop = uniqueDropName(top.name, existing);
+        existing.add(resolvedTop);
+      }
+      // 'replace' keeps resolvedTop = top.name: an existing file is
+      // overwritten; an existing folder merges (same-name leaves replaced).
+    } else {
+      existing.add(resolvedTop);
+    }
+    let leaves;
+    try { leaves = await leavesForTopItem(top, resolvedTop); }
+    catch (e) {
+      window.__showToast?.(`${top.name}: ${e?.message || e}`, 'error');
+      continue;
+    }
+    for (const leaf of leaves) {
+      const rel = targetDir ? `${targetDir}/${leaf.rel}` : leaf.rel;
+      try {
+        await writeExternalLeaf(rel, leaf.file);
+        imported++;
+      } catch (e) {
+        window.__showToast?.(String(e?.message || e), 'error');
+      }
+    }
+  }
+  if (imported > 0) {
+    refreshImportTarget(targetDir);
+    window.__showToast?.(t('explorer.imported', { count: imported }), 'success');
+  }
+}
+
+/** After an external import: make the result visible, VS Code-style — the
+ *  drop target folder OPENS and shows the imported items (root is always
+ *  visible; refreshDirOf('') reloads it). NOTE: refreshDirOf(path) refreshes
+ *  the PARENT of path (getTargetDir semantics), which is wrong for a drop
+ *  target — the imported items live INSIDE targetDir, so its own children
+ *  container must be expanded + reloaded here. */
+function refreshImportTarget(targetDir) {
+  if (!targetDir) { refreshDirOf(''); return; }
+  const wrapper = /** @type {HTMLElement|null} */ (
+    document.querySelector(`.explorer-dir-wrapper[data-path="${CSS.escape(targetDir)}"]`));
+  const children = /** @type {HTMLElement|null} */ (wrapper?.querySelector('.explorer-children'));
+  // Wrapper gone (dir deleted mid-flight / not rendered) → fall back to
+  // refreshing its parent listing so the tree reflects disk reality.
+  if (!wrapper || !children) { refreshDirOf(targetDir); return; }
+  expandedDirs.add(targetDir);
+  currentDir = targetDir;
+  const chevron = /** @type {HTMLElement|null} */ (wrapper.querySelector('.explorer-chevron'));
+  if (chevron) chevron.classList.add('expanded');
+  children.style.display = '';
+  children.innerHTML = '';
+  loadDir(targetDir, children, targetDir.split('/').length);
 }
 
 // ── Helpers ────────────────────────────────────────────────────────────
@@ -574,6 +834,14 @@ window.addEventListener('explorer-preload-pinned', (e) => {
 // ── WS Message Handlers ───────────────────────────────────────────────
 
 onMessage('dirListing', (msg) => {
+  // External drop-in conflict scans consume their own listDir replies and
+  // never touch the render pipeline (pendingLoads).
+  const scan = externalListScans.get(msg.path);
+  if (scan) {
+    externalListScans.delete(msg.path);
+    scan(msg.entries || []);
+    return;
+  }
   const reqId = msg.path || '__root__';
   const pending = pendingLoads.get(reqId);
   pendingLoads.delete(reqId);
@@ -908,7 +1176,7 @@ function deleteNode(path) {
   const name = path.split('/').pop();
   const send = () => sendWs({ type: 'deletePath', sessionId: state.activeSessionId, path, rootPath: explorerRoot });
   if (typeof window.__showConfirm === 'function') {
-    window.__showConfirm('Delete File', `Delete "${name}"? This cannot be undone.`, send);
+    window.__showConfirm(t('explorer.deleteTitle'), t('explorer.deleteConfirmOne', { name }), send);
   } else {
     send();
   }
@@ -1049,6 +1317,26 @@ onMessage('pathMoved', (msg) => {
     retargetFileTabs(oldPath, newPath, explorerRoot || ''));
   pruneSelection(oldPath);
   window.__showToast?.(t('explorer.moved', { name: newPath.split('/').pop() }), 'info');
+});
+
+/** writeFile responses for external drop-in: correlate in-flight writes
+ *  (pendingExternalWrites, path-keyed) so folder leaves sequence correctly.
+ *  Non-external editor saves are untouched (monacoEditor handles them). */
+onMessage('fileSaved', (msg) => {
+  const pending = msg.path && pendingExternalWrites.get(msg.path);
+  if (pending) {
+    pendingExternalWrites.delete(msg.path);
+    pending.resolve();
+  }
+});
+onMessage('fileSaveError', (msg) => {
+  const pending = msg.path && pendingExternalWrites.get(msg.path);
+  if (pending) {
+    pendingExternalWrites.delete(msg.path);
+    pending.reject(new Error(msg.error || 'write failed'));
+  } else {
+    window.__showToast?.(msg.error || 'File save failed', 'error');
+  }
 });
 
 /** Refresh the parent directory of a created/deleted path. */
