@@ -59,6 +59,25 @@ class RestApiRoutes(
   /** Logto AC+PKCE login single-flight state (stage 2, 2026-08-28). */
   private val pkceLogin = PkceLoginSession.unsafe
 
+  /** Selfdrawn (BFF) login interaction — the gateway-held Logto session
+    * (2026-09-09 design §2.2, plan A): cookie jar + this login's PKCE
+    * material + the social connector while the social branch is active.
+    * Single-flight, gateway memory only; cleared on finalize/terminal error. */
+  private final case class SelfdrawnActive(
+    jar: LogtoExperience.CookieJar,
+    verifier: String,
+    state: String,
+    interactionEvent: String,
+    socialTarget: Option[String] = None
+  )
+
+  private val selfdrawn = cats.effect.Ref.unsafe[IO, Option[SelfdrawnActive]](None)
+
+  /** Terminal login failure with its HTTP presentation (hosted-flow callback
+    * pages and selfdrawn finalize share the chain, each mapping the failure
+    * to its own surface — HTML page vs JSON body). */
+  private final case class LoginFailure(message: String, status: Status)
+
   def routes: HttpRoutes[IO] = HttpRoutes.of[IO] {
     // Health check (P2-6 layered, 2026-08-25): `providers` = per-model health
     // (up / down:<reason>), `search` = Tier 2a standalone search API health
@@ -1065,6 +1084,254 @@ class RestApiRoutes(
     case req @ GET -> Root / "neblink" / "auth" / "state" =>
       if !checkAuth(req) then Forbidden(Json.obj("error" -> "Unauthorized".asJson))
       else pkceLogin.statusJson.flatMap(Ok(_))
+
+    // ===== Selfdrawn (BFF) login — gateway-held Logto interaction =====
+    // 2026-09-09 design `20260909_login-selfdrawn-design.md` §2.2 (plan A):
+    // the gateway holds the Logto interaction cookie jar and drives the
+    // Experience API; the browser only talks to the local gateway (zero
+    // auth-domain pages). Step routes are thin proxies whose error bodies
+    // carry the upstream {error, code} so the S2 wizard can branch; the
+    // submit/consent/social-callback surfaces carry the consent + token
+    // orchestration and finalize through the shared exchangeAndEnroll chain.
+
+    // Open the interaction server-side: GET /oidc/auth with redirects never
+    // followed (the 303 + _interaction cookies land in the gateway jar),
+    // then PUT the interaction event. The browser is sent NOTHING to open.
+    // prompt=consent stays — the refresh-token invariant never regresses.
+    // Optional body {"interactionEvent":"SignIn"|"Register"|"ForgotPassword"},
+    // default SignIn (tolerates empty/unparsable body like /auth/start).
+    case req @ POST -> Root / "neblink" / "auth" / "selfdrawn" / "start" =>
+      if !checkAuth(req) then Forbidden(Json.obj("error" -> "Unauthorized".asJson))
+      else
+        neblinkService match
+          case None => BadRequest(Json.obj("error" -> "NebLink service not initialized".asJson))
+          case Some(ms) =>
+            for
+              event <- req
+                .attemptAs[Json]
+                .value
+                .map {
+                  case Right(json) => json.hcursor.downField("interactionEvent").as[String].toOption.getOrElse("SignIn")
+                  case Left(_)     => "SignIn"
+                }
+              logto <- ms.neblinkConfig.map(_.effectiveLogto)
+              resp <- logto.flatMap(lc => lc.pkceClientId.map(pkce => (lc, pkce))) match
+                case Some((lc, pkceClientId)) =>
+                  for
+                    verifier <- LogtoAuthCode.generateVerifier
+                    challenge = LogtoAuthCode.challengeS256(verifier)
+                    state <- LogtoAuthCode.generateState
+                    jar <- LogtoExperience.CookieJar.make
+                    cookie <- jar.cookieHeader
+                    raw <- LogtoExperience.jdkSend(
+                      LogtoExperience
+                        .interactionStart(lc.endpoint, pkceClientId, loopbackCallbackUri, challenge, state)
+                        .copy(cookie = cookie)
+                    )
+                    _ <- jar.absorb(raw.setCookies)
+                    // Interaction is usable only when the provider answered
+                    // the redirect AND the event registration went through.
+                    opened <-
+                      if (raw.status >= 300 && raw.status < 400) && raw.location.isDefined then
+                        LogtoExperience.jdkSendAndRun(jar)(LogtoExperience.interactionPut(lc.endpoint, event)).map(_.isRight)
+                      else IO.pure(false)
+                    _ <- if opened then
+                      selfdrawn.set(Some(SelfdrawnActive(jar, verifier, state, event))) *>
+                        pkceLogin.start(verifier, state)
+                    else IO.unit
+                    resp <-
+                      if opened then Ok(Json.obj("ok" -> true.asJson))
+                      else
+                        val msg = s"interaction start failed: HTTP ${raw.status}${raw.location.fold("")(l => s" Location=$l")}"
+                        pkceLogin.fail(msg) *> IO.pure(Response(Status.BadGateway).withEntity(
+                          Json.obj("error" -> msg.asJson, "code" -> "selfdrawn-start-failed".asJson)))
+                  yield resp
+                // Same arm as /auth/start: explicit block without the AC app
+                // id (embedded default always carries one).
+                case _ => NotFound(Json.obj("error" -> "logto-not-configured".asJson))
+            yield resp
+
+    // Password verification (sign-in). {identifier:{type,value}, password}.
+    case req @ POST -> Root / "neblink" / "auth" / "selfdrawn" / "password" =>
+      withSelfdrawnSession(req) { (_, lc, active) =>
+        bodyOrEmpty(req).flatMap { body =>
+          val idType = body.hcursor.downField("identifier").downField("type").as[String].toOption.getOrElse("username")
+          val idValue = body.hcursor.downField("identifier").downField("value").as[String].toOption.getOrElse("")
+          val password = body.hcursor.downField("password").as[String].toOption.getOrElse("")
+          if idValue.isEmpty || password.isEmpty then
+            BadRequest(Json.obj("error" -> "identifier.value 与 password 必填".asJson, "code" -> "selfdrawn-bad-request".asJson))
+          else
+            LogtoExperience.jdkSendAndRun(active.jar)(
+              LogtoExperience.passwordVerify(lc.endpoint, idType, idValue, password)
+            ).flatMap {
+              case Right(json) => Ok(json)
+              case Left(err)   => experienceErrorResponse(err)
+            }
+        }
+      }
+
+    // Send a verification code. {interactionEvent?, identifier:{type,value}}
+    // (interactionEvent defaults to the start event).
+    case req @ POST -> Root / "neblink" / "auth" / "selfdrawn" / "verification-code" =>
+      withSelfdrawnSession(req) { (_, lc, active) =>
+        bodyOrEmpty(req).flatMap { body =>
+          val event = body.hcursor.downField("interactionEvent").as[String].toOption.getOrElse(active.interactionEvent)
+          val idType = body.hcursor.downField("identifier").downField("type").as[String].toOption.getOrElse("email")
+          val idValue = body.hcursor.downField("identifier").downField("value").as[String].toOption.getOrElse("")
+          if idValue.isEmpty then
+            BadRequest(Json.obj("error" -> "identifier.value 必填".asJson, "code" -> "selfdrawn-bad-request".asJson))
+          else
+            LogtoExperience.jdkSendAndRun(active.jar)(
+              LogtoExperience.verificationCodeSend(lc.endpoint, event, idType, idValue)
+            ).flatMap {
+              case Right(json) => Ok(json)
+              case Left(err)   => experienceErrorResponse(err)
+            }
+        }
+      }
+
+    // Verify the code. {verificationId, code}.
+    case req @ POST -> Root / "neblink" / "auth" / "selfdrawn" / "verification-code" / "verify" =>
+      withSelfdrawnSession(req) { (_, lc, active) =>
+        bodyOrEmpty(req).flatMap { body =>
+          val vid = body.hcursor.downField("verificationId").as[String].toOption.getOrElse("")
+          val code = body.hcursor.downField("code").as[String].toOption.getOrElse("")
+          if vid.isEmpty || code.isEmpty then
+            BadRequest(Json.obj("error" -> "verificationId 与 code 必填".asJson, "code" -> "selfdrawn-bad-request".asJson))
+          else
+            LogtoExperience.jdkSendAndRun(active.jar)(
+              LogtoExperience.verificationCodeVerify(lc.endpoint, vid, code)
+            ).flatMap {
+              case Right(json) => Ok(json)
+              case Left(err)   => experienceErrorResponse(err)
+            }
+        }
+      }
+
+    // Bind a verified identity. {verificationId, linkSocialIdentity?}.
+    case req @ POST -> Root / "neblink" / "auth" / "selfdrawn" / "identification" =>
+      withSelfdrawnSession(req) { (_, lc, active) =>
+        bodyOrEmpty(req).flatMap { body =>
+          val vid = body.hcursor.downField("verificationId").as[String].toOption.getOrElse("")
+          val link = body.hcursor.downField("linkSocialIdentity").as[Boolean].toOption.getOrElse(false)
+          if vid.isEmpty then
+            BadRequest(Json.obj("error" -> "verificationId 必填".asJson, "code" -> "selfdrawn-bad-request".asJson))
+          else
+            LogtoExperience.jdkSendAndRun(active.jar)(
+              LogtoExperience.identification(lc.endpoint, vid, link)
+            ).flatMap {
+              case Right(_)  => Ok(Json.obj("ok" -> true.asJson))
+              case Left(err) => experienceErrorResponse(err)
+            }
+        }
+      }
+
+    // Registration / profile fields — payload passes through verbatim.
+    case req @ POST -> Root / "neblink" / "auth" / "selfdrawn" / "profile" =>
+      withSelfdrawnSession(req) { (_, lc, active) =>
+        bodyOrEmpty(req).flatMap { body =>
+          if body.asObject.forall(_.isEmpty) then
+            BadRequest(Json.obj("error" -> "profile payload 必填（type/value...）".asJson, "code" -> "selfdrawn-bad-request".asJson))
+          else
+            LogtoExperience.jdkSendAndRun(active.jar)(
+              LogtoExperience.profile(lc.endpoint, body)
+            ).flatMap {
+              case Right(_)  => Ok(Json.obj("ok" -> true.asJson))
+              case Left(err) => experienceErrorResponse(err)
+            }
+        }
+      }
+
+    // MFA sign-in step: verify a TOTP code. {code, verificationId?}.
+    case req @ POST -> Root / "neblink" / "auth" / "selfdrawn" / "mfa" / "totp" =>
+      withSelfdrawnSession(req) { (_, lc, active) =>
+        bodyOrEmpty(req).flatMap { body =>
+          val code = body.hcursor.downField("code").as[String].toOption.getOrElse("")
+          val vid = body.hcursor.downField("verificationId").as[String].toOption
+          if code.isEmpty then
+            BadRequest(Json.obj("error" -> "code 必填".asJson, "code" -> "selfdrawn-bad-request".asJson))
+          else
+            LogtoExperience.jdkSendAndRun(active.jar)(
+              LogtoExperience.totpVerify(lc.endpoint, code, vid)
+            ).flatMap {
+              case Right(json) => Ok(json)
+              case Left(err)   => experienceErrorResponse(err)
+            }
+        }
+      }
+
+    // Submit + consent orchestration + finalize: submit → (consent hop?
+    // GET info + POST approve) → the final loopback redirect is resolved
+    // server-side through the shared token-exchange + device-registration
+    // chain. Success/error land in /api/neblink/auth/state (sticky).
+    // MFA-required comes back as a pass-through 422 — the wizard drives
+    // POST mfa/totp then re-submits.
+    case req @ POST -> Root / "neblink" / "auth" / "selfdrawn" / "submit" =>
+      withSelfdrawnSession(req) { (_, lc, active) =>
+        LogtoExperience.submitWithConsent(LogtoExperience.jdkSend)(lc.endpoint, active.jar).flatMap {
+          case Right(redirectTo) =>
+            finalizeSelfdrawnRedirect(redirectTo).flatMap {
+              case Right(ok)  => selfdrawn.set(None) *> Ok(ok)
+              case Left(msg)  => selfdrawn.set(None) *> BadGateway(Json.obj("error" -> msg.asJson))
+            }
+          case Left(err) => experienceErrorResponse(err)
+        }
+      }
+
+    // Consent info for the wizard's consent screen (scopes list passthrough).
+    case req @ GET -> Root / "neblink" / "auth" / "selfdrawn" / "consent" =>
+      withSelfdrawnSession(req) { (_, lc, active) =>
+        LogtoExperience.jdkSendAndRun(active.jar)(LogtoExperience.consentInfo(lc.endpoint)).flatMap {
+          case Right(json) => Ok(json)
+          case Left(err)   => experienceErrorResponse(err)
+        }
+      }
+
+    // Consent approval {organizationIds?} — auto-finalizes when the answer
+    // carries the final redirect; an acknowledge-only answer (semantics in
+    // the待锁 set, design §2.3 #1) leaves the wizard to re-run submit.
+    case req @ POST -> Root / "neblink" / "auth" / "selfdrawn" / "consent" =>
+      withSelfdrawnSession(req) { (_, lc, active) =>
+        bodyOrEmpty(req).flatMap { body =>
+          val orgIds = body.hcursor.downField("organizationIds").as[Option[List[String]]].toOption.flatten
+          LogtoExperience.jdkSendAndRun(active.jar)(LogtoExperience.consentApprove(lc.endpoint, orgIds)).flatMap {
+            case Right(json) =>
+              LogtoExperience.redirectToOf(json) match
+                case Some(redirectTo) =>
+                  finalizeSelfdrawnRedirect(redirectTo).flatMap {
+                    case Right(ok)  => selfdrawn.set(None) *> Ok(ok)
+                    case Left(msg)  => selfdrawn.set(None) *> BadGateway(Json.obj("error" -> msg.asJson))
+                  }
+                case None => Ok(Json.obj("ok" -> true.asJson))
+            case Left(err) => experienceErrorResponse(err)
+          }
+        }
+      }
+
+    // Social branch, step 1: {target:"github"|"google"} → the IdP
+    // authorization URL for window.open (an IdP domain, NOT the auth
+    // domain). state doubles as the social-callback CSRF token.
+    case req @ POST -> Root / "neblink" / "auth" / "selfdrawn" / "social" =>
+      withSelfdrawnSession(req) { (_, lc, active) =>
+        bodyOrEmpty(req).flatMap { body =>
+          val target = body.hcursor.downField("target").as[String].toOption.getOrElse("")
+          if target.isEmpty then
+            BadRequest(Json.obj("error" -> "target 必填（github|google）".asJson, "code" -> "selfdrawn-bad-request".asJson))
+          else
+            LogtoExperience.jdkSendAndRun(active.jar)(
+              LogtoExperience.socialAuthorizationUri(lc.endpoint, target, active.state, socialCallbackUri)
+            ).flatMap {
+              case Right(json) =>
+                LogtoExperience.redirectToOf(json) match
+                  case Some(idpUrl) =>
+                    selfdrawn.update(s => s.map(a => a.copy(socialTarget = Some(target)))) *>
+                      Ok(Json.obj("redirectTo" -> idpUrl.asJson))
+                  case None =>
+                    BadGateway(Json.obj("error" -> "authorization-uri response missing redirectTo".asJson))
+              case Left(err) => experienceErrorResponse(err)
+            }
+        }
+      }
 
     // Cloud session sync toggle — removed (session sync deleted)
 
@@ -2929,6 +3196,11 @@ class RestApiRoutes(
   def authCallbackRoutes: HttpRoutes[IO] = HttpRoutes.of[IO] {
     case req @ GET -> Root / "callback" =>
       handleAuthCallback(req.uri.query.params)
+    // Social branch finisher (selfdrawn login, 2026-09-09 design §2.2):
+    // IdP → Logto /callback/social/:target → 303 → here. Root-level like
+    // /callback — the redirect carries no gateway token.
+    case req @ GET -> Root / "social-callback" =>
+      handleSocialCallback(req.uri.query.params)
     // RP-logout return target (2026-09-06): the provider lands here when
     // the post_logout_redirect_uri is accepted (allow-listed on the Logto
     // app). Until then the provider shows its own default logged-out page —
@@ -2998,89 +3270,224 @@ class RestApiRoutes(
               Status.BadRequest
             )
           case Some(verifier) =>
-            neblinkService match
-              case None =>
-                pkceLogin.fail("NebLink service not initialized") *>
-                  htmlResponse(callbackPage(ok = false, "nebflow 服务未初始化"), Status.InternalServerError)
-              case Some(ms) =>
-                for
-                  // Same resolution as /api/neblink/auth/start: explicit logto
-                  // block wins, otherwise the embedded production default.
-                  // The raw `_.logto` read here previously broke the PKCE
-                  // chain for fresh installs (start succeeded via the
-                  // embedded default, then the callback died with a
-                  // misleading "Logto 登录未配置" — 2026-08-30).
-                  logto <- ms.neblinkConfig.map(_.effectiveLogto)
-                  serverUrl <- neblinkServerUrl(None)
-                  resp <- logto.flatMap(lc => lc.pkceClientId.map(pkce => (lc, pkce))) match
-                    case Some((lc, pkceClientId)) =>
-                      LogtoAuthCode
-                        .tokenCall(LogtoDeviceFlow.jdkSend)(
-                          LogtoAuthCode.tokenRequest(
-                            lc.endpoint,
-                            pkceClientId,
-                            loopbackCallbackUri,
-                            code,
-                            verifier
-                          )
+            exchangeAndEnroll(code, verifier).flatMap {
+              case Right(_)    => htmlResponse(callbackPage(ok = true, ""), Status.Ok)
+              case Left(fail)  => htmlResponse(callbackPage(ok = false, fail.message), fail.status)
+            }
+        }
+
+  /** Token exchange + device registration — the final hop of EVERY login
+    * chain (hosted-page browser callback AND selfdrawn finalize alike).
+    * `verifier` must come from `pkceLogin.take(state)`; the pkceLogin status
+    * machine is updated on both outcomes so the frontend poll renders the
+    * result. Error statuses are preserved verbatim from the pre-extraction
+    * behavior (2026-09-09 refactor — behavior-identical split). */
+  private def exchangeAndEnroll(code: String, verifier: String): IO[Either[LoginFailure, Unit]] =
+    neblinkService match
+      case None =>
+        pkceLogin.fail("NebLink service not initialized").as(Left(LoginFailure("nebflow 服务未初始化", Status.InternalServerError)))
+      case Some(ms) =>
+        for
+          // Same resolution as /api/neblink/auth/start: explicit logto
+          // block wins, otherwise the embedded production default.
+          // The raw `_.logto` read here previously broke the PKCE
+          // chain for fresh installs (start succeeded via the
+          // embedded default, then the callback died with a
+          // misleading "Logto 登录未配置" — 2026-08-30).
+          logto <- ms.neblinkConfig.map(_.effectiveLogto)
+          serverUrl <- neblinkServerUrl(None)
+          result <- logto.flatMap(lc => lc.pkceClientId.map(pkce => (lc, pkce))) match
+            case Some((lc, pkceClientId)) =>
+              LogtoAuthCode
+                .tokenCall(LogtoDeviceFlow.jdkSend)(
+                  LogtoAuthCode.tokenRequest(
+                    lc.endpoint,
+                    pkceClientId,
+                    loopbackCallbackUri,
+                    code,
+                    verifier
+                  )
+                )
+                .flatMap {
+                  case Right(tokens) =>
+                    ms.identity.flatMap { identity =>
+                      // C2 (2026-09-01 login-chain fix): id_token picture
+                      // → device identity avatarUrl immediately (Logto
+                      // users get an avatar without waiting for the
+                      // enroll response; neblink-server avatar sync is
+                      // the C1 half, this is the client-side half).
+                      val pictureWrite = tokens.picture match
+                        case Some(pic) if pic.nonEmpty =>
+                          ms.updateDeviceInfo(avatarUrl = Some(pic))
+                        case _ => IO.unit
+                      pictureWrite *>
+                      LogtoDeviceFlow
+                        .register(LogtoDeviceFlow.jdkSend)(
+                          serverUrl,
+                          tokens.accessToken,
+                          identity.deviceId,
+                          identity.deviceName,
+                          identity.platform
                         )
                         .flatMap {
-                          case Right(tokens) =>
-                            ms.identity.flatMap { identity =>
-                              // C2 (2026-09-01 login-chain fix): id_token picture
-                              // → device identity avatarUrl immediately (Logto
-                              // users get an avatar without waiting for the
-                              // enroll response; neblink-server avatar sync is
-                              // the C1 half, this is the client-side half).
-                              val pictureWrite = tokens.picture match
-                                case Some(pic) if pic.nonEmpty =>
-                                  ms.updateDeviceInfo(avatarUrl = Some(pic))
-                                case _ => IO.unit
-                              pictureWrite *>
-                              LogtoDeviceFlow
-                                .register(LogtoDeviceFlow.jdkSend)(
-                                  serverUrl,
-                                  tokens.accessToken,
-                                  identity.deviceId,
-                                  identity.deviceName,
-                                  identity.platform
-                                )
-                                .flatMap {
-                                  case Right(json) =>
-                                    completeDeviceEnrollment(ms, serverUrl, json, tokens.refreshToken, tokens.idToken).attempt
-                                      .flatMap {
-                                        case Right(r) if r.status.isSuccess =>
-                                          pkceLogin.succeed *> htmlResponse(callbackPage(ok = true, ""), Status.Ok)
-                                        case Right(_) =>
-                                          pkceLogin.fail("Enrollment failed") *>
-                                            htmlResponse(callbackPage(ok = false, "设备注册未完成"), Status.BadGateway)
-                                        case Left(e) =>
-                                          pkceLogin.fail(Option(e.getMessage).getOrElse("enrollment error")) *>
-                                            htmlResponse(
-                                              callbackPage(ok = false, Option(e.getMessage).getOrElse("登录处理失败")),
-                                              Status.InternalServerError
-                                            )
-                                      }
-                                  case Left(err) =>
-                                    pkceLogin.fail(s"register: $err") *>
-                                      htmlResponse(callbackPage(ok = false, s"设备注册失败：$err"), Status.BadGateway)
-                                }
-                            }
+                          case Right(json) =>
+                            completeDeviceEnrollment(ms, serverUrl, json, tokens.refreshToken, tokens.idToken).attempt
+                              .flatMap {
+                                case Right(r) if r.status.isSuccess =>
+                                  pkceLogin.succeed.as(Right(()))
+                                case Right(_) =>
+                                  pkceLogin.fail("Enrollment failed").as(Left(LoginFailure("设备注册未完成", Status.BadGateway)))
+                                case Left(e) =>
+                                  val msg = Option(e.getMessage).getOrElse("登录处理失败")
+                                  pkceLogin.fail(msg).as(Left(LoginFailure(msg, Status.InternalServerError)))
+                              }
                           case Left(err) =>
-                            pkceLogin.fail(s"token: $err") *>
-                              htmlResponse(callbackPage(ok = false, s"登录令牌交换失败：$err"), Status.BadRequest)
+                            pkceLogin.fail(s"register: $err").as(Left(LoginFailure(s"设备注册失败：$err", Status.BadGateway)))
                         }
-                    case _ =>
-                      // With effectiveLogto this only fires when an explicit
-                      // logto block exists but lacks pkceClientId (the
-                      // embedded default carries one; a missing block falls
-                      // back to it). Name the actual misconfiguration.
-                      pkceLogin.fail("logto-pkce-client-not-configured") *>
-                        htmlResponse(
-                          callbackPage(ok = false, "Logto PKCE 未配置：logto 段缺少 pkceClientId"),
-                          Status.NotFound
-                        )
-                yield resp
+                    }
+                  case Left(err) =>
+                    pkceLogin.fail(s"token: $err").as(Left(LoginFailure(s"登录令牌交换失败：$err", Status.BadRequest)))
+                }
+            case _ =>
+              // With effectiveLogto this only fires when an explicit
+              // logto block exists but lacks pkceClientId (the
+              // embedded default carries one; a missing block falls
+              // back to it). Name the actual misconfiguration.
+              pkceLogin.fail("logto-pkce-client-not-configured").as(
+                Left(LoginFailure("Logto PKCE 未配置：logto 段缺少 pkceClientId", Status.NotFound)))
+        yield result
+    end match
+
+  /** The social branch's return target: Logto's `/callback/social/:target`
+    * 303s the browser here (zero hosted-page rendering on the auth domain —
+    * the hop is protocol-mandated by the connector's registered callback
+    * URI; design §2.2 「域名瞬时过境」). */
+  private def socialCallbackUri: String = s"http://127.0.0.1:$gatewayPort/auth/social-callback"
+
+  /** Selfdrawn step precondition: gateway token + resolvable provider config
+    * + an active interaction session (i.e. /selfdrawn/start already ran). */
+  private def withSelfdrawnSession(req: Request[IO])
+      (f: (NeblinkService, LogtoConfig, SelfdrawnActive) => IO[org.http4s.Response[IO]]): IO[org.http4s.Response[IO]] =
+    if !checkAuth(req) then Forbidden(Json.obj("error" -> "Unauthorized".asJson))
+    else
+      neblinkService match
+        case None => BadRequest(Json.obj("error" -> "NebLink service not initialized".asJson))
+        case Some(ms) =>
+          ms.neblinkConfig.map(_.effectiveLogto).flatMap {
+            case Some(lc) =>
+              selfdrawn.get.flatMap {
+                case Some(active) => f(ms, lc, active)
+                case None =>
+                  BadRequest(Json.obj(
+                    "error" -> "no selfdrawn login session — call /api/neblink/auth/selfdrawn/start first".asJson,
+                    "code" -> "selfdrawn-no-session".asJson))
+              }
+            case None => NotFound(Json.obj("error" -> "logto-not-configured".asJson))
+          }
+
+  /** Tolerant JSON body read: absent/invalid body → `{}` (each step route
+    * validates its own required fields and answers 400 with a named cause). */
+  private def bodyOrEmpty(req: Request[IO]): IO[Json] =
+    req.attemptAs[Json].value.map(_.getOrElse(Json.obj()))
+
+  /** Upstream Experience error → HTTP response. The upstream status passes
+    * through (422/400/404 keep their semantics for the wizard); transport
+    * failures (status 0) and odd codes become 502. Body carries `code` —
+    * what the wizard branches on (mfa-required → TOTP step, etc.). */
+  private def experienceErrorResponse(err: LogtoExperience.ExperienceError): IO[org.http4s.Response[IO]] =
+    val status = err.status match
+      case 0 => Status.BadGateway
+      case s => org.http4s.Status.fromInt(s).getOrElse(Status.BadGateway)
+    IO.pure(
+      Response(status = status).withEntity(
+        Json.obj(
+          "error" -> err.describe.asJson,
+          "code" -> err.code.map(_.asJson).getOrElse(Json.Null),
+          "upstreamStatus" -> err.status.asJson
+        )
+      ))
+
+  /** Resolve the final redirect (loopback `/auth/callback?code=...&state=...`)
+    * into a completed login: single-flight state check + token exchange +
+    * device registration — the shared `exchangeAndEnroll` chain. */
+  private def finalizeSelfdrawnRedirect(redirectTo: String): IO[Either[String, Json]] =
+    LogtoExperience.parseRedirectCallback(redirectTo) match
+      case None =>
+        val msg = "最终 redirectTo 未携带 code/state，无法完成登录"
+        pkceLogin.fail(msg).as(Left(msg))
+      case Some((code, state)) =>
+        pkceLogin.take(state).flatMap {
+          case None => IO.pure(Left("登录回调校验失败（state 不匹配或已过期）"))
+          case Some(verifier) =>
+            exchangeAndEnroll(code, verifier).map {
+              case Right(_)   => Right(Json.obj("ok" -> true.asJson))
+              case Left(fail) => Left(fail.message)
+            }
+        }
+
+  /** Social branch finisher: IdP → Logto `/callback/social/:target` (303,
+    * zero rendering) → here. Server-side chain: social verify →
+    * identification → submit(+consent) → token exchange + device
+    * registration. The browser lands on the same static result page as the
+    * hosted-flow callback; the wizard polls /api/neblink/auth/state.
+    *
+    * 待锁 seam (design §2.3 #2): the query → connectorData mapping is the
+    * single adjust-once point once QA locks it with a real account. */
+  private def handleSocialCallback(query: Map[String, String]): IO[org.http4s.Response[IO]] =
+    query.get("error").filter(_.nonEmpty) match
+      case Some(err) =>
+        val msg = s"$err${query.get("error_description").fold("")(d => s": $d")}"
+        pkceLogin.fail(msg) *> htmlResponse(callbackPage(ok = false, msg), Status.BadRequest)
+      case None =>
+        def bail(msg: String, status: Status): IO[org.http4s.Response[IO]] =
+          pkceLogin.fail(msg) *> selfdrawn.set(None) *> htmlResponse(callbackPage(ok = false, msg), status)
+        selfdrawn.get.flatMap {
+          case None =>
+            bail("社交登录回调无进行中的登录会话（先调用 selfdrawn/start + selfdrawn/social）", Status.BadRequest)
+          case Some(active) =>
+            val stateOk = query.get("state").forall(_ == active.state)
+            active.socialTarget match
+              case None =>
+                bail("social session missing target — call /api/neblink/auth/selfdrawn/social first", Status.BadRequest)
+              case Some(_) if !stateOk =>
+                bail("登录回调校验失败（state 不匹配）", Status.BadRequest)
+              case Some(target) =>
+                neblinkService match
+                  case None => bail("nebflow 服务未初始化", Status.InternalServerError)
+                  case Some(ms) =>
+                    ms.neblinkConfig.map(_.effectiveLogto).flatMap {
+                      case None => bail("Logto 登录未配置", Status.NotFound)
+                      case Some(lc) =>
+                        val jar = active.jar
+                        val chain: IO[Either[String, Unit]] =
+                          LogtoExperience.jdkSendAndRun(jar)(
+                            LogtoExperience.socialVerify(lc.endpoint, target, LogtoExperience.connectorDataFromQuery(query))
+                          ).flatMap {
+                            case Left(err) => IO.pure(Left(err.describe))
+                            case Right(vjson) =>
+                              LogtoExperience.verificationIdOf(vjson) match
+                                case None => IO.pure(Left("social verify response missing verificationId"))
+                                case Some(vid) =>
+                                  LogtoExperience.jdkSendAndRun(jar)(
+                                    LogtoExperience.identification(lc.endpoint, vid)
+                                  ).flatMap {
+                                    case Left(err) => IO.pure(Left(err.describe))
+                                    case Right(_) =>
+                                      LogtoExperience.submitWithConsent(LogtoExperience.jdkSend)(lc.endpoint, jar).flatMap {
+                                        case Left(err)  => IO.pure(Left(err.describe))
+                                        // Either[String, Json] → unit: the social chain only
+                                        // needs pass/fail; the page renders the outcome.
+                                        case Right(red) => finalizeSelfdrawnRedirect(red).map(_.map(_ => ()))
+                                      }
+                                  }
+                          }
+                        chain.flatMap {
+                          case Right(_) =>
+                            selfdrawn.set(None) *> htmlResponse(callbackPage(ok = true, ""), Status.Ok)
+                          case Left(msg) =>
+                            selfdrawn.set(None) *> htmlResponse(callbackPage(ok = false, msg), Status.BadGateway)
+                        }
+                    }
         }
 
   /** Static loopback login result page (success + error variants). The
