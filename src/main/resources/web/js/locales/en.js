@@ -885,7 +885,9 @@ export default {
   // === Daemons (Heartbeat) ===
   'daemons.title': 'Heartbeat',
   'daemons.empty': 'No heartbeats',
-  'daemons.emptyHint': 'Click + to add a heartbeat',
+  'daemons.emptyHint': 'Heartbeats are created by your Agent while it runs tasks (e.g. ask it to start a dev server) — for services that need to stay online.',
+  'daemons.emptyHint2': 'The host periodically probes the service port and relaunches the process about 10 seconds after it goes down.',
+  'daemons.emptyHint3': 'Typical uses: dev servers, scheduled jobs, continuous monitoring.',
   'daemons.start': 'Start',
   'daemons.stop': 'Stop',
   'daemons.restart': 'Restart',
