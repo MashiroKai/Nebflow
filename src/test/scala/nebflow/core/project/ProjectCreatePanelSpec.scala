@@ -41,16 +41,13 @@ class ProjectCreatePanelSpec extends CatsEffectSuite:
 
   private val tempRoot: os.Path = os.pwd / "target" / "test-project-create-panel"
   private val originalRoot = PathUtil.dataRoot
-  private val candRoot: os.Path = tempRoot / "candidates"
-  private val candProp = "nebflow.projectcreate.candidates-dir"
 
   // 类级：隔离 dataRoot（projects/ agents/ 落 tempRoot，禁碰真实 ~/.nebflow）
-  // + 候选根注入（触点每次调用读属性）+ 预置分发器定义（test ④ 走 EntityLoader）。
+  // + 预置分发器定义（test ④ 走 EntityLoader）。
+  // 2026-09-09 作者裁定：面板不再下发候选（删除 candidates-dir 属性注入）。
   PathUtil.setDataRoot(tempRoot)
   os.remove.all(tempRoot)
   os.makeDir.all(tempRoot)
-  os.makeDir.all(candRoot)
-  System.setProperty(candProp, candRoot.toString)
   os.makeDir.all(tempRoot / "agents" / "project-dispatcher")
   os.write.over(
     tempRoot / "agents" / "project-dispatcher" / "agent.json",
@@ -59,7 +56,6 @@ class ProjectCreatePanelSpec extends CatsEffectSuite:
   os.write.over(tempRoot / "agents" / "project-dispatcher" / "system.md", "# project-dispatcher\n")
 
   override def afterAll(): Unit =
-    System.clearProperty(candProp)
     PathUtil.setDataRoot(originalRoot)
 
   override def beforeEach(context: munit.BeforeEach): Unit = ProjectRuntimeRegistry.clear
@@ -236,17 +232,11 @@ class ProjectCreatePanelSpec extends CatsEffectSuite:
   // ② 未知/缺省 path → 面板 pending 产生
   // ============================================================
 
-  test("② 缺省 workspace → AskUser 式面板 pending 产生（真实 hub；候选排除已占用与点目录）") {
+  test("② 缺省 workspace → AskUser 式面板 pending 产生（真实 hub；空 options + dirPicker，2026-09-09 作者裁定）") {
     val ws = tempRoot / "ws-p2"
-    // 候选目录：alpha（已被占用）/ beta / gamma / .hidden（点目录排除）
-    val alpha = candRoot / "alpha"
-    val beta = candRoot / "beta"
-    val gamma = candRoot / "gamma"
-    List(alpha, beta, gamma, candRoot / ".hidden").foreach(os.makeDir.all)
+    os.makeDir.all(ws)
     val system = ActorSystem(s"pcp-2-${scala.util.Random.nextInt(100000)}")
     for
-      // alpha 被既有 project 占用（不走工具——候选排除语义只看 store 定义）
-      _ <- ProjectStore.create("occupied", alpha.toString, None, "t")
       res <- IO(minimalResources(ws))
       frames <- Ref.of[IO, List[Json]](Nil)
       hub <- system.spawn(InteractionHub(), "interaction-hub-p2")
@@ -271,7 +261,6 @@ class ProjectCreatePanelSpec extends CatsEffectSuite:
         )
       )
       result <- done.get
-      _ <- ProjectStore.delete("occupied")
       _ <- system.stopAll.handleErrorWith(_ => IO.unit)
     yield
       assert(result.isRight, s"cancel closes the panel successfully: $result")
@@ -279,20 +268,14 @@ class ProjectCreatePanelSpec extends CatsEffectSuite:
       val (ridGot, items) = askOpt.getOrElse(fail("panel items must be dispatched"))
       assertEquals(ridGot, rid)
       assertEquals(items.length, 1, "exactly one question (path selection)")
-      val labels = items.head.options.map(_.label)
-      assertEquals(
-        labels,
-        List(beta.toString, gamma.toString),
-        "candidates = first-level dirs, sorted; occupied alpha and dot-dir .hidden excluded"
-      )
-      assert(items.head.question.contains(candRoot.toString), "question must name the candidate root")
-      assert(items.head.allowOther, "free-input fallback (Other) must stay enabled")
-      assert(items.head.dirPicker, "workspace card must carry dirPicker=true (系统文件夹选择框大目标，2026-09-05 作者裁定)")
+      assertEquals(items.head.options, List.empty, "no candidate options — in-app browser is the selection surface (2026-09-09)")
+      assert(items.head.dirPicker, "workspace card must carry dirPicker=true (2026-09-05 作者裁定)")
+      assert(items.head.question.contains("选择工作区"), "question must guide to the in-app browser")
+      assert(items.head.question.contains("~"), "question must keep the manual-input (~) fallback")
       val askFrame = fs.find(_.hcursor.downField("type").as[String].toOption.contains("askUser")).get
-      val frameLabels = askFrame.hcursor.downField("items").as[List[Json]].toOption.get.head
+      val frameOptions = askFrame.hcursor.downField("items").as[List[Json]].toOption.get.head
         .hcursor.downField("options").as[List[Json]].toOption.get
-        .map(_.hcursor.downField("label").as[String].toOption.get).toList
-      assertEquals(frameLabels, labels, "rendered frame must carry the candidate paths")
+      assertEquals(frameOptions, Nil, "rendered frame must carry empty options")
       assert(askFrame.hcursor.downField("requestId").as[String].isRight, "frame must carry requestId")
     end for
   }
@@ -301,11 +284,12 @@ class ProjectCreatePanelSpec extends CatsEffectSuite:
   // ③ 面板点选 → 创建完成（含 #43 兼容断言）
   // ============================================================
 
-  test("③ 用户点选候选路径 → 创建链走通；pending 期间 agent 形态负载不消费面板槽（#43 语义）") {
+  test("③ 用户点选目录浏览器返回的路径 → 创建链走通；pending 期间 agent 形态负载不消费面板槽（#43 语义）") {
     val ws = tempRoot / "ws-p3"
     os.makeDir.all(ws)
-    val beta = candRoot / "beta"
-    os.makeDir.all(beta)
+    // 浏览器选中目录（等价 workspacePicker onPick 回传的绝对路径）
+    val pickDir = tempRoot / "ws-pick-beta"
+    os.makeDir.all(pickDir)
     val system = ActorSystem(s"pcp-3-${scala.util.Random.nextInt(100000)}")
     for
       res <- IO(minimalResources(ws))
@@ -324,14 +308,14 @@ class ProjectCreatePanelSpec extends CatsEffectSuite:
         InteractionAnswered(rid, "nebula-root", Json.obj("text" -> Json.fromString("delegate 汇报：任务完成。")))
       )
       notYet <- IO.race(done.get.map(_.toString), IO.sleep(250.millis).as("still-pending"))
-      // 用户点选 beta（卡片点击 → askUserAnswer → hub Answered，answers=[路径]）
+      // 用户选中 pickDir（卡片 → askUserAnswer → hub Answered，answers=[路径]）
       _ <- hub ! InteractionHubCommand.Answered(
-        InteractionAnswered(rid, "nebula-root", Json.obj("answers" -> Json.arr(Json.fromString(beta.toString))))
+        InteractionAnswered(rid, "nebula-root", Json.obj("answers" -> Json.arr(Json.fromString(pickDir.toString))))
       )
       result <- done.get
-      pd <- ProjectStore.load("beta")
-      rt <- ProjectRuntimeRegistry.get("beta")
-      _ <- ProjectRuntimeRegistry.unregister("beta")
+      pd <- ProjectStore.load("ws-pick-beta")
+      rt <- ProjectRuntimeRegistry.get("ws-pick-beta")
+      _ <- ProjectRuntimeRegistry.unregister("ws-pick-beta")
       _ <- system.stopAll.handleErrorWith(_ => IO.unit)
     yield
       assertEquals(
@@ -341,8 +325,8 @@ class ProjectCreatePanelSpec extends CatsEffectSuite:
       )
       assert(result.isRight, s"user pick must complete creation: $result")
       assert(pd.isDefined, "project.json must be created from the picked path")
-      assertEquals(pd.get.name, "beta", "name derives from picked path basename")
-      assertEquals(pd.get.workspace, beta.toString)
+      assertEquals(pd.get.name, "ws-pick-beta", "name derives from picked path basename")
+      assertEquals(pd.get.workspace, pickDir.toString)
       assert(rt.isDefined, "project must be mounted after panel-driven creation")
     end for
   }
