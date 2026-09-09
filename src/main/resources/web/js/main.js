@@ -72,6 +72,7 @@ import { initChatView, chatViews, findViewBySessionId, activeView, setActiveView
 import { isErrorReason, normalizeReason, applyErrorFrozen, clearErrorFrozen, renderEscalationCard } from './errorRecovery.js';
 import { handleFlowAgentHistory, openStepPopup as openFlowStepPopup } from './flowAgentPopup.js';
 import { handleBgAgentHistory, openStepPopup as openBgAgentPopup, cleanupBgAgentView } from './bgAgentPopup.js';
+import { openBgTaskOutput } from './bgTaskOutputPopup.js';
 import { fmtUptime, isFailedSnapshotStatus } from './managePanel.js';
 import { initNeblink } from './neblink.js';
 import { initUpdateCheck } from './updateCheck.js';
@@ -2618,10 +2619,14 @@ function formatDuration(ms) {
 // 进本面板、会话行只进 subagent 面板（key space 天然分离），节点/分发器来源的
 // 任务在本面板以来源 chip 显式标注「由 <节点> 开启」，subagent 面板不重复渲染。
 
-/** Task row state machine: cancelling > stuck (heartbeat idle>10min) > idle
- *  (>2min) > running. Terminal tasks are removed from the bucket upstream. */
+/** Task row state machine: cancelling > (terminal) > stuck (heartbeat idle>10min)
+ *  > idle (>2min) > running. Terminal tasks (completed/failed/cancelled) are
+ *  retained in the bucket until the panel refreshes (reconnect/activeBgTasks
+ *  snapshot replaces it) so the user can reopen them for output viewing. */
 function bgTaskRowState(task) {
   if (task.status === 'cancelling') return 'cancelling';
+  if (task.status === 'failed') return 'failed';
+  if (task.status === 'completed' || task.status === 'cancelled') return 'done';
   const hb = task.heartbeat;
   if (hb) {
     if (hb.idleMs > 600000) return 'stuck';
@@ -2655,8 +2660,13 @@ function renderBgDropdown() {
   const listEl = activeView.dom.bgDropdownListEl;
   const dropdown = activeView.dom.bgDropdownEl;
   if (!listEl || !dropdown) return 0;
-  // Show running AND cancelling tasks (cancelling tasks stay visible until backend confirms)
-  const visible = tasks.filter(t => t.status === 'running' || t.status === 'cancelling');
+  // Show running, cancelling, AND retained terminal tasks (completed/failed/
+  // cancelled). Terminal rows stay until the panel refreshes (reconnect /
+  // page reload / activeBgTasks snapshot replace) — the user can reopen them
+  // to view output, which is the 2026-09-09 output-viewing feature.
+  const visible = tasks.filter(t =>
+    t.status === 'running' || t.status === 'cancelling' ||
+    t.status === 'completed' || t.status === 'failed' || t.status === 'cancelled');
   // Panel header carries the live count (aria-live polite — subagent parity).
   const headerEl = dropdown.querySelector('.bg-dropdown-header');
   if (headerEl) headerEl.textContent = t('bg.header', { count: visible.length });
@@ -2671,15 +2681,24 @@ function renderBgDropdown() {
   const now = Date.now();
   listEl.innerHTML = visible.map(task => {
     const rowState = bgTaskRowState(task);
-    const statusLabel = rowState === 'cancelling' ? t('bg.cancelling')
+    // Terminal labels ride on the authoritative status (completed/failed/
+    // cancelled are distinct); running ladder uses the heartbeat-derived state.
+    const statusLabel =
+      task.status === 'completed' ? t('bg.completed')
+      : task.status === 'failed' ? t('bg.failed')
+      : task.status === 'cancelled' ? t('bg.cancelled')
+      : rowState === 'cancelling' ? t('bg.cancelling')
       : rowState === 'stuck' ? t('bg.stuck')
       : t('bg.running');
     const dotClass = {
       running: 'bg-status-active', idle: 'bg-status-idle',
       stuck: 'bg-status-stuck', cancelling: 'bg-status-done',
+      failed: 'bg-status-error', done: 'bg-status-done',
     }[rowState];
     const stateClass = rowState === 'stuck' ? ' bg-state-stuck'
-      : rowState === 'cancelling' ? ' bg-state-done' : '';
+      : rowState === 'failed' ? ' bg-state-failed'
+      : rowState === 'cancelling' || rowState === 'done' ? ' bg-state-done' : '';
+    const endedClass = (rowState === 'done' || rowState === 'failed') ? ' bg-task-ended' : '';
     const { cat, label } = bgTaskOrigin(task);
     const originPart = '<span class="bg-task-origin bg-origin-' + cat + '" title="' +
       escapeHtml(t('bg.openedBy', { origin: label })) + '">' + escapeHtml(label) + '</span>';
@@ -2687,7 +2706,7 @@ function renderBgDropdown() {
       ? '<span class="bg-task-kind">' + escapeHtml((task.kind === 'local' || task.kind === 'remote') ? t('bg.kind.' + task.kind) : task.kind) + '</span>'
       : '';
     const hb = task.heartbeat;
-    const linesPart = (hb && rowState !== 'cancelling')
+    const linesPart = (hb && rowState !== 'cancelling' && rowState !== 'done' && rowState !== 'failed')
       ? '<span class="bg-task-lines">' + escapeHtml(t('bg.lines', { count: hb.outputLines })) + '</span>'
       : '';
     const uptimePart = task.startedAt
@@ -2695,7 +2714,12 @@ function renderBgDropdown() {
       : '';
     const desc = task.description || task.taskId;
     const nameTitle = desc + ' · ' + task.taskId;
-    return '<div class="bg-task-row' + (rowState === 'cancelling' ? ' bg-task-cancelling' : '') + '" role="listitem" tabindex="0">' +
+    // Terminal rows: no cancel button (nothing to cancel) — the row itself is
+    // the click target for output viewing. Running rows keep the cancel button.
+    const cancelPart = (rowState === 'cancelling' || rowState === 'running' || rowState === 'idle' || rowState === 'stuck')
+      ? '<button class="bg-task-cancel" type="button">' + escapeHtml(rowState === 'cancelling' ? t('bg.cancelling') : t('bg.cancel')) + '</button>'
+      : '';
+    return '<div class="bg-task-row' + (rowState === 'cancelling' ? ' bg-task-cancelling' : '') + endedClass + '" role="listitem" tabindex="0">' +
       '<span class="bg-task-status ' + dotClass + '" aria-hidden="true"></span>' +
       '<div class="bg-task-info">' +
         '<div class="bg-task-line bg-task-meta">' +
@@ -2706,7 +2730,7 @@ function renderBgDropdown() {
           '<span class="bg-task-name" title="' + escapeHtml(nameTitle) + '">' + escapeHtml(desc) + '</span>' +
         '</div>' +
       '</div>' +
-      '<button class="bg-task-cancel" type="button">' + escapeHtml(rowState === 'cancelling' ? t('bg.cancelling') : t('bg.cancel')) + '</button>' +
+      cancelPart +
     '</div>';
   }).join('');
 
@@ -2716,25 +2740,43 @@ function renderBgDropdown() {
     const task = visible[i];
     if (!task) return;
     const cancelBtn = row.querySelector('.bg-task-cancel');
-    if (!cancelBtn) return;
-    if (task.status === 'cancelling') {
-      cancelBtn.disabled = true;
-      cancelBtn.classList.add('cancelling');
+    if (cancelBtn) {
+      if (task.status === 'cancelling') {
+        cancelBtn.disabled = true;
+        cancelBtn.classList.add('cancelling');
+      }
+      cancelBtn.addEventListener('click', (e) => {
+        e.stopPropagation();
+        // Immediate visual feedback — optimistically show cancelling state
+        cancelBtn.disabled = true;
+        cancelBtn.classList.add('cancelling');
+        cancelBtn.textContent = t('bg.cancelling');
+        task.status = 'cancelling';
+        sendWs({ type: 'cancelBackgroundJob', sessionId: activeView?.sessionId, jobId: task.taskId });
+      });
     }
-    cancelBtn.addEventListener('click', (e) => {
-      e.stopPropagation();
-      // Immediate visual feedback — optimistically show cancelling state
-      cancelBtn.disabled = true;
-      cancelBtn.classList.add('cancelling');
-      cancelBtn.textContent = t('bg.cancelling');
-      task.status = 'cancelling';
-      sendWs({ type: 'cancelBackgroundJob', sessionId: activeView?.sessionId, jobId: task.taskId });
+    // Row click target (2026-09-09 output viewing): open the glass detail card.
+    // Cancel button stopPropagation above; a click anywhere else on a terminal
+    // OR running row opens the card. Remote tasks degrade in the card itself.
+    row.addEventListener('click', (e) => {
+      if (e.target.closest('.bg-task-cancel')) return; // belt — cancel already stopsPropagation
+      openBgTaskOutput(task);
+    });
+    // Keyboard parity (APG listbox precedent): Enter/Space on a focused row
+    // opens the detail card; ArrowUp/Down navigation stays in the shared handler.
+    row.addEventListener('keydown', (e) => {
+      if (e.key === 'Enter' || e.key === ' ') {
+        e.preventDefault();
+        e.stopPropagation();
+        openBgTaskOutput(task);
+      }
     });
   });
 
   // Keyboard (APG listbox parity with subagent panel): ArrowUp/ArrowDown move
-  // between rows. Rows have no click target (tasks open no popup); Tab reaches
-  // the row's cancel button. Property assignment — idempotent across re-renders.
+  // between rows; Enter/Space on a focused row opens the detail card (wired
+  // per-row above); Tab reaches the row's cancel button (running rows).
+  // Property assignment — idempotent across re-renders.
   listEl.onkeydown = (e) => {
     const row = e.target && e.target.closest ? e.target.closest('.bg-task-row') : null;
     if (!row) return;
@@ -2782,8 +2824,14 @@ function updateBgTasksUI(targetView) {
   // flow canvas (getRunningFlows), not in this indicator.
   const tasks = state.sessionBgTasks[view.sessionId] || [];
   const now = Date.now();
+  // Retained terminal rows (completed/failed/cancelled) keep the indicator
+  // visible so the user can reopen them for output viewing; they clear on the
+  // next panel refresh (reconnect / page reload replaces the bucket via
+  // activeBgTasks snapshot). The 3s finishedAt clause only guards the brief
+  // window right after a terminal frame lands.
   const active = tasks.filter(task =>
     task.status === 'running' || task.status === 'cancelling' ||
+    task.status === 'completed' || task.status === 'failed' || task.status === 'cancelled' ||
     (task.finishedAt && (now - task.finishedAt < 3000))
   );
   const totalCount = active.length;
@@ -2904,23 +2952,15 @@ onMessage('backgroundTaskUpdate', (msg, view) => {
       originLabel: msg.originLabel || ''
     });
   }
-  // Remove terminal tasks after a brief delay so user sees the count update.
+  // Terminal rows are RETAINED in the bucket (2026-09-09 output viewing): the
+  // user reopens them to view output. The old 3s setTimeout removal is gone —
+  // retention lasts until the panel refreshes (reconnect / page reload, where
+  // the activeBgTasks snapshot replaces the bucket with running tasks only).
   // Refresh the OWNING view's badge (findViewBySessionId(sid)), not the
   // ws.js-routed activeView: sub-agent events arrive with view=null (no popup)
   // or a popup ChatView, and skipping/retargeting the refresh is what froze
   // the root window's count while the bucket drained (the reported
   // "count>0 but empty dropdown" fork).
-  if (isTerminal) {
-    const taskId = msg.taskId;
-    setTimeout(() => {
-      const existing = state.sessionBgTasks[sid];
-      if (existing) {
-        state.sessionBgTasks[sid] = existing.filter(t => t.taskId !== taskId);
-        const v = findViewBySessionId(sid);
-        if (v && v.mounted) updateBgTasksUI(v);
-      }
-    }, 3000);
-  }
   refreshBgBadgeFor(sid);
 });
 
