@@ -47,6 +47,7 @@ const POPUP_CSS = `<style id="bgt-output-popup-css">
 .bgt-overlay {
   position: fixed; top: 0; left: 0; right: 0; bottom: 0;
   display: flex; align-items: center; justify-content: center;
+  background: var(--overlay-bg);
   z-index: 1000;
   animation: bgt-fade-in 0.2s ease;
 }
@@ -62,7 +63,7 @@ const POPUP_CSS = `<style id="bgt-output-popup-css">
   -webkit-backdrop-filter: blur(var(--glass-blur)) saturate(1.15);
   backdrop-filter: blur(var(--glass-blur)) saturate(1.15);
   border: 1px solid var(--glass-border);
-  border-radius: 16px;
+  border-radius: 20px;
   overflow: hidden;
   box-shadow:
     inset 0 1px 0 0 rgba(255,255,255,0.25),
@@ -80,8 +81,8 @@ const POPUP_CSS = `<style id="bgt-output-popup-css">
 
 /* Header：同 .flow-agent-header（顶缘折射线 + 底部 hairline）。 */
 .bgt-header {
-  display: flex; align-items: center; gap: 8px;
-  padding: 10px 14px 10px 16px;
+  display: flex; align-items: center; gap: 6px;
+  padding: 10px 16px;
   border-bottom: 1px solid var(--glass-border);
   flex-shrink: 0;
   position: relative;
@@ -116,17 +117,29 @@ const POPUP_CSS = `<style id="bgt-output-popup-css">
 .bgt-state-chip {
   display: inline-flex; align-items: center; gap: 5px;
   flex-shrink: 0;
-  font: 500 11px -apple-system, sans-serif;
+  font: 400 11px -apple-system, sans-serif;
   color: var(--color-frame-text-muted);
 }
+/* Unified panel spec §3.1：状态词 400 让位主名；终态分色同行面板
+   （done/cancelled/cancelling → dim，failed → error，chat.css:432-435 同源）。 */
+.bgt-state-label--done { color: var(--color-frame-text-dim); }
+.bgt-state-label--failed { color: var(--color-error); }
 .bgt-close {
   cursor: pointer; font-size: 16px; line-height: 1;
   opacity: 0.7; transition: opacity 0.15s;
   padding: 2px 4px; color: var(--color-text);
   border-radius: 4px;
   flex-shrink: 0;
+  background: none; border: none;
 }
-.bgt-close:hover { opacity: 1; background: rgba(255,255,255,0.06); }
+.bgt-close:hover { opacity: 1; background: var(--color-frame-hover); }
+.bgt-close:focus { outline: none; }
+/* 焦点环约定（projectPanel.css/nav.css 同款）：只认键盘路径的 :focus-visible 细环，
+   程序化 .focus()（打开卡片时的焦点管理）不出环。 */
+.bgt-close:focus-visible {
+  outline: none;
+  box-shadow: 0 0 0 2px var(--glass-control-border);
+}
 
 /* 失败原因行（failed 任务终态回看）：克制的红，可行动文案。 */
 .bgt-error {
@@ -138,21 +151,24 @@ const POPUP_CSS = `<style id="bgt-output-popup-css">
   overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
 }
 
-/* 输出区：<pre> 等宽（配色对齐既有代码/终端展示面），pre-wrap 长行折行。 */
+/* 输出区：<pre> 等宽（配色对齐既有代码/终端展示面），pre-wrap 长行折行。
+   无 background——玻璃由 .bgt-modal 统一承载（同 .flow-agent-chat 形态，
+   正文区不透明底会击穿面板毛玻璃材质）。 */
 .bgt-body { flex: 1; min-height: 0; display: flex; position: relative; }
 .bgt-output {
   flex: 1;
   margin: 0;
   padding: 12px 16px;
   overflow: auto;
-  font: 400 12px/1.55 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font: 400 12px/1.55 ui-monospace, SFMono-Regular, monospace;
   color: var(--color-text);
-  background: var(--color-surface);
   white-space: pre-wrap;
   word-break: break-word;
   overscroll-behavior: contain;
   scrollbar-color: var(--color-frame-border) transparent;
 }
+/* 代码/终端面 4px 细滚动条档（base.css 全局 6px，tool-card body 先例同款覆宽）。 */
+.bgt-output::-webkit-scrollbar { width: 4px; height: 4px; }
 .bgt-placeholder {
   position: absolute; inset: 0;
   display: flex; align-items: center; justify-content: center;
@@ -160,7 +176,6 @@ const POPUP_CSS = `<style id="bgt-output-popup-css">
   font: 400 12px -apple-system, sans-serif;
   color: var(--color-text-muted);
   text-align: center;
-  background: var(--color-surface);
 }
 .bgt-placeholder.bgt-hidden { display: none; }
 
@@ -204,7 +219,7 @@ const POPUP_CSS = `<style id="bgt-output-popup-css">
   border-radius: 10px;
   color: #fff;
   cursor: pointer;
-  background: rgba(7, 193, 96, 0.42);
+  background: rgba(7, 193, 96, 0.55);
   -webkit-backdrop-filter: blur(8px) saturate(1.3);
   backdrop-filter: blur(8px) saturate(1.3);
   border: 1px solid rgba(7, 193, 96, 0.30);
@@ -233,10 +248,19 @@ const POPUP_CSS = `<style id="bgt-output-popup-css">
 }
 /* dark 主题同 #send-btn 深一档（同 hue，+alpha 抵消暗底合成变暗）。 */
 @media (prefers-color-scheme: dark) {
-  .bgt-copy-btn { background: rgba(7, 193, 96, 0.50); border-color: rgba(7, 193, 96, 0.34); }
-  .bgt-copy-btn:hover { background: rgba(7, 193, 96, 0.66); border-color: rgba(7, 193, 96, 0.44); }
+  .bgt-copy-btn { background: rgba(7, 193, 96, 0.62); border-color: rgba(7, 193, 96, 0.34); }
+  .bgt-copy-btn:hover { background: rgba(7, 193, 96, 0.72); border-color: rgba(7, 193, 96, 0.44); }
+  .bgt-copy-btn:active { background: rgba(7, 193, 96, 0.78); border-color: rgba(7, 193, 96, 0.48); }
 }
 .bgt-copy-btn.copied { opacity: 0.85; }
+/* remote 降级禁用态：#send-btn:disabled 绿家族不灰（input.css 同配方，
+   整钮均匀褪 opacity 会让绿底变灰绿、脱离绿玻璃家族）。 */
+.bgt-copy-btn:disabled {
+  background: rgba(7, 193, 96, 0.16);
+  border-color: rgba(7, 193, 96, 0.08);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.10);
+  cursor: default;
+}
 @media (prefers-reduced-motion: reduce) {
   .bgt-overlay { animation: none; }
   .bgt-copy-btn { transition-duration: 0.01s; }
@@ -252,12 +276,13 @@ function ensureCss() {
 }
 
 // ── Status mapping（复用行面板的状态点/文字约定）───────────
+// state 仅作样式钩子（chip 终态分色，见 POPUP_CSS .bgt-state-label--*），状态→文案/点的映射本身不动。
 function statusView(status) {
-  if (status === 'completed') return { label: t('bg.completed'), dot: 'bg-task-status bg-status-done' };
-  if (status === 'failed') return { label: t('bg.failed'), dot: 'bg-task-status bg-status-error' };
-  if (status === 'cancelled') return { label: t('bg.cancelled'), dot: 'bg-task-status bg-status-done' };
-  if (status === 'cancelling') return { label: t('bg.cancelling'), dot: 'bg-task-status bg-status-done' };
-  return { label: t('bg.running'), dot: 'bg-task-status bg-status-active' };
+  if (status === 'completed') return { label: t('bg.completed'), dot: 'bg-task-status bg-status-done', state: 'done' };
+  if (status === 'failed') return { label: t('bg.failed'), dot: 'bg-task-status bg-status-error', state: 'failed' };
+  if (status === 'cancelled') return { label: t('bg.cancelled'), dot: 'bg-task-status bg-status-done', state: 'done' };
+  if (status === 'cancelling') return { label: t('bg.cancelling'), dot: 'bg-task-status bg-status-done', state: 'done' };
+  return { label: t('bg.running'), dot: 'bg-task-status bg-status-active', state: '' };
 }
 
 function renderStatus(status, exitCode) {
@@ -268,6 +293,7 @@ function renderStatus(status, exitCode) {
   const labelEl = chip.querySelector('.bgt-state-label');
   const v = statusView(status);
   dotEl.className = v.dot + ' bgt-dot';
+  labelEl.className = 'bgt-state-label' + (v.state ? ' bgt-state-label--' + v.state : '');
   labelEl.textContent = v.label;
   // 非零退出码补注（completed 但 exit!=0 也如实展示）
   const sub = overlayEl.querySelector('.bgt-subtitle');
@@ -474,11 +500,10 @@ export function openBgTaskOutput(task) {
   overlayEl.querySelector('.bgt-close').focus();
 
   if (task.kind === 'remote') {
-    // 远端任务降级：不轮询、禁复制，卡内注明暂不支持查看（任务规格允许的降级面）
+    // 远端任务降级：不轮询、禁复制，卡内注明暂不支持查看（任务规格允许的降级面）。
+    // 禁用态样式走 .bgt-copy-btn:disabled（#send-btn:disabled 绿家族配方）。
     showPlaceholder(t('bg.detail.remote'));
     copyBtn.disabled = true;
-    copyBtn.style.opacity = '0.35';
-    copyBtn.style.cursor = 'default';
     renderStatus('running');
     overlayEl.querySelector('.bgt-meta').textContent = '';
     return;
