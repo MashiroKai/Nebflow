@@ -55,30 +55,50 @@ object RgHelper:
     * (WindowsDepProbe). */
   def resolvedPath: Option[String] = resolveRgPath
 
-  /** Read an InputStream line-by-line, throwing OutputTooLargeException if it exceeds 500KB. */
-  def readWithLimit(is: java.io.InputStream): String =
+  /** Read an InputStream line-by-line up to MAX_STDOUT_BYTES. Returns
+    * (content, truncated): over-limit reads stop early (the writer gets
+    * SIGPIPE once the stream closes) instead of throwing — the caller decides
+    * whether truncation is fatal (Grep keeps the hard error) or tolerable
+    * (Glob truncates and annotates). */
+  def readWithLimit(is: java.io.InputStream): (String, Boolean) =
     val reader = new BufferedReader(new InputStreamReader(is, "UTF-8"))
     val sb = new StringBuilder
     var totalBytes = 0
+    var truncated = false
     var line = reader.readLine()
-    while line != null do
+    while line != null && !truncated do
       val lineBytes = line.length + 1
       if totalBytes + lineBytes > MAX_STDOUT_BYTES then
-        reader.close()
-        throw new OutputTooLargeException
-      if sb.nonEmpty then sb.append('\n')
-      sb.append(line)
-      totalBytes += lineBytes
-      line = reader.readLine()
+        truncated = true // over-cap line dropped; stream closed below
+      else
+        if sb.nonEmpty then sb.append('\n')
+        sb.append(line)
+        totalBytes += lineBytes
+        line = reader.readLine()
     reader.close()
-    sb.toString
+    (sb.toString, truncated)
   end readWithLimit
 
   /**
-   * Run rg with the given args. Returns (stdout, stderr, exitCode) or a ToolError.
-   * Enforces 60s timeout and 500KB output limit.
+   * Run rg with the given args. Returns (stdout, stderr, exitCode, stdoutTruncated)
+   * or a ToolError. Enforces 60s timeout and 500KB output limit.
+   *
+   * @param processCwd process working directory for rg (default: workDir). GlobTool
+   *                   passes the search root and searches "." so rg's gitignore-style
+   *                   glob anchoring resolves against the search root, not the
+   *                   absolute-path prefix (single-segment wildcard patterns can
+   *                   never match an absolute user-prefix).
+   * @param truncateOnOverflow false (Grep): stdout over the limit stays a hard
+   *                   ToolError. true (Glob): stdout is truncated at the limit and
+   *                   stdoutTruncated=true is returned instead. stderr over the
+   *                   limit is always truncated (diagnostic stream only).
    */
-  def runRg(args: List[String], workDir: String): Either[ToolError, (String, String, Int)] =
+  def runRg(
+    args: List[String],
+    workDir: String,
+    processCwd: Option[String] = None,
+    truncateOnOverflow: Boolean = false
+  ): Either[ToolError, (String, String, Int, Boolean)] =
     resolveRgPath match
       case None =>
         Left(
@@ -89,17 +109,19 @@ object RgHelper:
       case Some(rgPath) =>
         try
           val proc = new ProcessBuilder((rgPath :: args)*)
-            .directory(new File(workDir))
+            .directory(new File(processCwd.getOrElse(workDir)))
             .start()
           try
-            val stdoutStr = readWithLimit(proc.getInputStream)
-            val stderrStr = readWithLimit(proc.getErrorStream)
+            val (stdoutStr, stdoutTruncated) = readWithLimit(proc.getInputStream)
+            if stdoutTruncated && !truncateOnOverflow then throw new OutputTooLargeException
+            // stderr is diagnostic-only: truncation never fails the call
+            val (stderrStr, _) = readWithLimit(proc.getErrorStream)
             val exited = proc.waitFor(60, TimeUnit.SECONDS)
             val exitCode =
               if exited then proc.exitValue()
               else
                 proc.destroyForcibly(); -1
-            Right((stdoutStr, stderrStr, exitCode))
+            Right((stdoutStr, stderrStr, exitCode, stdoutTruncated))
           finally proc.destroy()
         catch
           case _: OutputTooLargeException =>
