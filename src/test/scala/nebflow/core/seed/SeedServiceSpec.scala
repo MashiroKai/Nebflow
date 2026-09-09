@@ -47,14 +47,18 @@ class SeedServiceSpec extends FunSuite:
     assert(os.exists(genAgentJson), "general/agent.json seeded")
     assert(os.exists(home / "agents" / "general" / "system.md"), "general/system.md seeded")
 
-    // 蒸馏：agent.json 不得含 preset / skills 具名引用（§5）
+    // agent.json 基线锚定（TB #20 基线对齐 2026-09-09）：种子以 runtime trusted 形态为准，
+    // preset/skills 字段合法入 seed——project-dispatcher: preset=general, skills=[]
     val pd = io.circe.parser.parse(os.read(pdAgentJson)).toOption.get
-    assert(!pd.hcursor.downField("preset").succeeded, "project-dispatcher has no preset field")
-    assert(!pd.hcursor.downField("skills").succeeded, "project-dispatcher has no skills field")
+    assert(pd.hcursor.downField("preset").as[String].toOption.contains("general"),
+      "project-dispatcher preset=general")
+    assert(pd.hcursor.downField("skills").as[List[String]].toOption.exists(_.isEmpty),
+      "project-dispatcher skills=[]")
     assert(pd.hcursor.downField("name").as[String].toOption.contains("project-dispatcher"))
 
     val gen = io.circe.parser.parse(os.read(genAgentJson)).toOption.get
-    assert(!gen.hcursor.downField("preset").succeeded, "general has no preset field")
+    assert(gen.hcursor.downField("preset").as[String].toOption.contains("general"),
+      "general preset=general")
     assert(gen.hcursor.downField("name").as[String].toOption.contains("general"))
 
     // 收缩后默认插件集 = {visual-report, slideblocks}（c7501470 manifest 收缩）：目录就位 + trusted

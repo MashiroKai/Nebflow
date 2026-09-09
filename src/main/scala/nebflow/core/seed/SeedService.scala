@@ -20,7 +20,8 @@ import scala.jdk.CollectionConverters.*
  * 改安装脚本。
  *
  * 三件种子（三 keeper = Nebula 引擎自带 + 本服务补 project-dispatcher / general）：
- *  - 默认 agent：project-dispatcher + general（蒸馏版：去 preset 具名引用、去空 skills）
+ *  - 默认 agent：project-dispatcher + general（形态以 runtime trusted 版为准，preset/skills
+ *    字段合法入 seed——TB #20 基线对齐 2026-09-09）
  *  - 系统插件：3 个主集（explorer-toolkit / design-spec / visual-report），
  *    预装 + trusted（复用 PluginRegistry.approve）
  *  - 默认通用项目：id=general，workspace=~/.nebflow/projects/general，启动前挂载
