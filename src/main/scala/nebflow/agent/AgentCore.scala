@@ -1858,19 +1858,20 @@ private[agent] trait AgentCore:
     // 九件先被 nebulaFiltered 剥、此处按会话身份重挂，两段不冲突；双轨 flow/
     // team/Nebula 会话 flag=false 恒不挂（工具面 + 工具内身份拒绝双保险 §1d-4）。
     val withBoard = if projectBoardSession then pluginGranted + "TaskBoard" else pluginGranted
-    // report_blocked（blocked 结构化信号批 20260909，设计 spec §5.2 #4）：flow
-    // 节点会话专属挂载——编排层专属工具族（Pop/AskUser/Schedule 同类），不进
-    // 通用 agent 工具面。判据 = flowNodeSession（引擎侧 flowNodeId.isDefined），
-    // **不能用 isFlowNode**：分发器会话 spawn 也带 isFlowNode=true
-    // （ProjectActor.scala spawn 点）但 flowNodeId 恒 None——用 isFlowNode 会把
-    // 工具 schema 泄漏进分发器工具面（spec §6/§9.3 明确禁止）。追加点与
-    // TaskBoard 同段（全部角色过滤之后）：guardrails 剥离链与
-    // NebulaExclusiveTools 均不触及；工具内身份拒绝（ctx.flowNodeId 空 →
-    // REPORT_BLOCKED_FORBIDDEN）与挂载面过滤构成双保险（TaskBoardTool.scala:46-49
-    // 同款）；插件声明不授能（不在 BuiltinToolWhitelist）。信号消费点 =
-    // NodeEngine 会话完成时点 BlockedSignalRegistry.drain（结构化信号优先，
-    // 文本锚定降级面不放宽）。
-    if flowNodeSession then withBoard + nebflow.core.tools.ReportBlockedToolDef.Name else withBoard
+    // node_report（blocked 结构化信号批 20260909，设计 spec §5.2 #4；同日作者
+    // 裁定泛化更名 NodeReport 统一三语义）：flow 节点会话专属挂载——编排层专属
+    // 工具族（Pop/AskUser/Schedule 同类），不进通用 agent 工具面。判据 =
+    // flowNodeSession（引擎侧 flowNodeId.isDefined），**不能用 isFlowNode**：
+    // 分发器会话 spawn 也带 isFlowNode=true（ProjectActor.scala spawn 点）但
+    // flowNodeId 恒 None——用 isFlowNode 会把工具 schema 泄漏进分发器工具面
+    // （spec §6/§9.3 明确禁止）。追加点与 TaskBoard 同段（全部角色过滤之后）：
+    // guardrails 剥离链与 NebulaExclusiveTools 均不触及；工具内身份拒绝
+    // （ctx.flowNodeId 空 → NODE_REPORT_FORBIDDEN）与挂载面过滤构成双保险
+    // （TaskBoardTool.scala:46-49 同款）；插件声明不授能（不在
+    // BuiltinToolWhitelist）。信号消费点 = NodeEngine 会话完成时点
+    // NodeReportRegistry.drain（按类别分流既有链：blocked/pass/fail；文本锚定
+    // 降级面不放宽）。
+    if flowNodeSession then withBoard + nebflow.core.tools.NodeReportToolDef.Name else withBoard
 
   end buildAllowedToolSet
 
@@ -2152,7 +2153,13 @@ object AgentCore:
     // agent.json 声明（含 "*"）对一切非 Nebula 身份不授能。project 会话的真实
     // 授能在 buildAllowedToolSet 末段按会话身份追加（晚于本集剥离点），分发器
     // 固定面同理（nebulaFiltered 先剥、末段再挂）——剥离与授能两点不相干扰。
-    "TaskBoard"
+    "TaskBoard",
+    // node_report（20260909 NodeReport 泛化批）：flow 节点会话专属终态语义申报
+    // 工具，与 TaskBoard 同享防声明逃逸通道——"*"/显式声明对一切非节点会话身份
+    // 不授能（真实授能 = 末段 flowNodeSession 按身份追加）。v1 report_blocked
+    // 未入本集（通配声明者 allowedSet 带 schema 泄漏面，执行侧由工具内身份拒绝
+    // 兜底），泛化批补齐同款隔离；剥离与授能两点不相干扰（同 TaskBoard 注）。
+    nebflow.core.tools.NodeReportToolDef.Name
   )
 
   /** dream 的 MemoryEdit 准入例外（2026-09-05 作者签准，修订 2026-08-31 裁定①）：
