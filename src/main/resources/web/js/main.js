@@ -3067,90 +3067,143 @@ onMessage('forkComplete', (msg, view) => {
   }, true); // capture phase — intercept before other handlers
 })();
 
-// #396 Header adaptive layout (spec 52b19a64, frozen): measurement-driven
-// priority hiding + center clamp — ANY width zero icon overlap; no flex-wrap;
-// no "⋯" overflow menu (user 2026-08-25 裁定: 仅自动隐藏). The fixed set
-// (sidebar-toggle / header-model-info / memory-btn / session-name / bg-
-// indicator / bgagent-indicator / canvas-toggle-btn) is never hidden; non-fixed
-// right buttons hide by priority P1→P5 (bypass > voice > search > reminder >
-// daemon). 2026-09-07 作者裁定: session-name (agent name) is a fixed reserved
-// item — never truncated, never hidden; the chain must seat its FULL width.
+// #396 Header adaptive layout (spec .nebflow/Spec/20260825_header-collision-spec.md,
+// frozen; v2 revised 2026-09-09 11:36 作者裁定): measurement-driven priority
+// hiding + center clamp — ANY width zero icon overlap; no flex-wrap; no "⋯"
+// overflow menu (user 2026-08-25 裁定: 仅自动隐藏). Fixed set (never hidden):
+// sidebar-toggle / canvas-toggle-btn / session-name (2026-09-07 作者裁定:
+// agent name never truncated, never hidden; the chain must seat its FULL width).
+// v2 (2026-09-09 11:36): ONE survival-priority chain over ALL hideable items,
+// HIGH→LOW — narrowing hides from the tail: the background-task/sub-agent
+// capsules (+ pending-asks, same content-driven capsule family) hide LAST
+// (author ruling: 后台任务/后台agent 优先显示), memory-btn + header-model-info
+// next, then the legacy right-cluster P1→P5 order (bypass → voice → search →
+// reminder → daemon; spec §3.2). Collision volume is fully measured
+// (getBoundingClientRect / offsetWidth / intrinsic center width) — the old
+// empirical constants (memW fallback 28, CS_GAP=8) are gone. A hysteresis dead
+// zone keeps the hide/show cut from oscillating at the critical width.
 (function initHeaderResizeObserver() {
   const header = document.getElementById('header');
   if (!header || !window.ResizeObserver) return;
   const HIDE = 'nb-header-hide';
-  // Non-fixed right-cluster controls in hide-priority order (lowest first).
-  const rightPrio = [
-    () => document.getElementById('bypass-dropdown'),
-    () => document.getElementById('voice-toggle-btn'),
-    () => document.getElementById('search-btn'),
-    () => document.getElementById('reminder-btn'),
-    () => document.getElementById('daemon-btn'),
+  // Hysteresis band (px) — a CONTROL parameter for the hide/show dead zone,
+  // not a collision-volume measurement (all volumes are measured live below).
+  // An item is hidden as soon as the layout truly overlaps (free < 0) but only
+  // restored when it fits with this much slack (free ≥ HYST_PX), so resize
+  // jitter (scrollbar ~9-15px steps, sub-pixel rounding) cannot flip the cut
+  // back and forth at the critical width.
+  const HYST_PX = 12;
+  // Survival-priority chain, HIGH → LOW — index 0 survives the narrowest
+  // widths; narrowing hides items from the tail (bypass first). Keep in sync
+  // with scripts/e2e-header-collision.cjs CHAIN. #pending-asks-indicator is
+  // not enumerated in the 11:36 ruling text but is the same content-driven
+  // capsule family (D6 批 F2, AskUser pending) → top tier beside bg/bgagent.
+  const CHAIN = [
+    'bg-indicator',            // v2 tier 1 — hides LAST (11:36 裁定)
+    'bgagent-indicator',       // v2 tier 1
+    'pending-asks-indicator',  // v2 tier 1 (same capsule family)
+    'memory-btn',              // v2 tier 2
+    'header-model-info',       // v2 tier 2
+    'daemon-btn',              // v2 tier 3 — legacy P-order reversed: daemon
+    'reminder-btn',            //   survives longest …
+    'search-btn',
+    'voice-toggle-btn',
+    'bypass-dropdown',         //   … bypass hides first (spec §3.2 P1)
   ];
   const centerEl = () => /** @type {HTMLElement|null} */ (header.querySelector('.header-center'));
   const leftEl = () => /** @type {HTMLElement|null} */ (header.querySelector('.header-left'));
   const rightEl = () => /** @type {HTMLElement|null} */ (header.querySelector('.header-right'));
+  const byId = (id) => document.getElementById(id);
   let raf = null;
+
+  // Content-driven visibility: the `hidden` attribute (memory before enable)
+  // or the `hidden` class (bg capsules with 0 tasks, context ring without
+  // data) takes an item OUT of the chain — it occupies no space (0 tasks = no
+  // badge, unchanged). Same for elements that do not render at all: the
+  // shelved TTS entry stays `display:none` via css/voice.css, so its chain
+  // slot is dormant (it can never collide; if TTS ships again the slot wakes
+  // up automatically). layout() itself only ever toggles nb-header-hide,
+  // never these content flags — so "仅自动隐藏" and the capsule semantics
+  // stay orthogonal.
+  const inContent = (el) => !!el && !el.hidden && !el.classList.contains('hidden')
+    && (el.offsetWidth > 0 || el.classList.contains(HIDE));
+
+  // Zero-overlap fit probe — every number is measured live (spec §4.3 v2):
+  //   need  = the center box's INTRINSIC width (max-width:none → offsetWidth;
+  //           contains the full session name + the real flex gap + the memory
+  //           button), replacing the old memW-||-28 + CS_GAP=8 estimate;
+  //   safe  = the centered box's zero-overlap budget (2× axis-to-cluster-edge
+  //           distance, real getBoundingClientRect pixels — header border and
+  //           padding included, §8 A2);
+  //   free  = how much width remains before either constraint breaks.
+  // `slack` turns the probe into the hysteresis show-test (fit with margin).
+  function fit(slack) {
+    const center = centerEl();
+    if (!center) return { ok: true, free: Infinity, need: 0, safe: 0 };
+    const prevMax = center.style.maxWidth;
+    center.style.maxWidth = 'none';
+    const need = center.offsetWidth;               // intrinsic (name + gap + mem)
+    center.style.maxWidth = prevMax;
+    const hr = header.getBoundingClientRect();
+    const cx = hr.left + hr.width / 2;             // center of the sticky box
+    const leftR = leftEl() ? leftEl().getBoundingClientRect() : { right: cx };
+    const rightR = rightEl() ? rightEl().getBoundingClientRect() : { left: cx };
+    const leftRoom = Math.max(0, 2 * (cx - leftR.right));
+    const rightRoom = Math.max(0, 2 * (rightR.left - cx));
+    const safe = Math.min(leftRoom, rightRoom);
+    const leftW = leftEl() ? leftEl().offsetWidth : 0;
+    const rightW = rightEl() ? rightEl().offsetWidth : 0;
+    const free = Math.min(safe - need, header.clientWidth - leftW - rightW);
+    return { ok: free >= slack, free, need, safe };
+  }
 
   function layout() {
     if (raf) cancelAnimationFrame(raf);
     raf = requestAnimationFrame(() => {
       raf = null;
-      const center = centerEl();
-      const session = document.getElementById('session-name');
-      const mem = document.getElementById('memory-btn');
-      if (!center || !session || !mem) return;
-      // Reset to the widest reasonable state each pass, then hide by priority.
-      rightPrio.forEach(fn => { const el = fn(); if (el) el.classList.remove(HIDE); });
-      const headerW = header.clientWidth;
-      const memW = mem.offsetWidth || 28;
-      const CS_GAP = 8;         // .header-center flex gap (session ↔ memory)
-      // 2026-09-07: session-name is fixed-reserved (never hidden, flex-shrink:0
-      // in CSS), so its full intrinsic width is part of the fit requirement —
-      // icons hide EARLIER rather than ever squeezing the name.
-      const nameW = session.offsetWidth;
-      const need = memW + CS_GAP + nameW;
-      // Zero-overlap clamp for the absolute-centered .header-center (left:50%,
-      // translateX(-50%)). A centered box of width c clears the left cluster iff
-      // c ≤ 2·(centerX - leftCluster.right), and the right cluster iff
-      // c ≤ 2·(rightCluster.left - centerX). We measure the real pixel rects so
-      // header border+padding are accounted for (§8 A2 zero-overlap guarantee).
-      const measure = () => {
-        const hr = header.getBoundingClientRect();
-        const cx = hr.left + hr.width / 2;            // center of the sticky box
-        const leftR = leftEl() ? leftEl().getBoundingClientRect() : { right: cx };
-        const rightR = rightEl() ? rightEl().getBoundingClientRect() : { left: cx };
-        const leftRoom = Math.max(0, 2 * (cx - leftR.right));
-        const rightRoom = Math.max(0, 2 * (rightR.left - cx));
-        const safe = Math.min(leftRoom, rightRoom);
-        const leftW = leftEl() ? leftEl().offsetWidth : 0;
-        const rightW = rightEl() ? rightEl().offsetWidth : 0;
-        return { safe, leftW, rightW };
-      };
-      // Greedy: hide non-fixed right buttons P1→P5 (bypass first) until the
-      // centered center box can seat the FULL session name plus the memory
-      // button without overlap AND the right cluster no longer collides with
-      // the left. §4.3 right-cluster fill. 2026-09-07: session-name is never
-      // hidden — if the chain exhausts we keep the name and let the clamp
-      // below guarantee its full width (icon overlap then remains possible
-      // only at pathological widths that no longer seat the fixed clusters).
-      for (let i = 0; i <= rightPrio.length; i++) {
-        const { safe, leftW, rightW } = measure();
-        if (safe >= need && leftW + rightW <= headerW) break;
-        if (i < rightPrio.length) {
-          const el = rightPrio[i]();
-          if (el) { el.classList.add(HIDE); continue; }       // hide this priority
-        }
-        break;                                               // chain exhausted — name stays
+      const cands = CHAIN.map(byId).filter(inContent);   // chain order, high→low
+      // Normalize the persisted cut to a PREFIX of the current candidate list:
+      // the visible set must always be cands[0..n) (prefix invariant — qa §10
+      // invariant 3). Items that left content keep a stale HIDE class, but
+      // they are not in cands; apply() below re-derives every class.
+      // n = keep count: cands[0..n) visible, cands[n..] hidden.
+      let n = cands.findIndex((el) => el.classList.contains(HIDE));
+      if (n === -1) n = cands.length;
+      const apply = (k) => { cands.forEach((el, i) => el.classList.toggle(HIDE, i >= k)); };
+      apply(n);
+      // Hide loop: an actual overlap (free < 0) drops the lowest-priority KEPT
+      // item. session-name is never hidden (fixed, 2026-09-07) — if the chain
+      // exhausts (n = 0), the clamp below keeps the name fully visible
+      // instead; overlap then remains possible only at widths that cannot
+      // seat the fixed set itself (supersedes #396 §8 A10's clip stance).
+      while (n > 0 && !fit(0).ok) { n -= 1; apply(n); }
+      // Show loop (hysteresis): tentatively admit the next higher-priority
+      // HIDDEN item (keep one more) and keep it only when the POST-admission
+      // layout fits with HYST_PX slack; otherwise revert and stop. Testing
+      // the state AFTER the admission (not before) is what makes the loop
+      // converge instead of walking the chain. In the dead zone
+      // free ∈ [0, HYST_PX) neither loop acts, so the cut is stable against
+      // resize jitter at the critical width.
+      while (n < cands.length) {
+        apply(n + 1);
+        if (fit(HYST_PX).ok) { n = Math.min(n + 1, cands.length); } else { apply(n); break; }
       }
-      // Apply the clamp after the final visibility state. The center never
-      // clamps below its intrinsic content (full name + memory button), so the
-      // name cannot truncate (flex-shrink:0, no ellipsis). When safe < need
-      // (pathological widths past the fixed clusters' floor) we prefer a fully
-      // visible name over truncation — supersedes #396 §8 A10's clip stance.
-      const { safe } = measure();
-      center.style.maxWidth = Math.max(need, safe) + 'px';
-      center.style.minWidth = memW + 'px';
+      // Final clamp: the center never shrinks below its intrinsic content
+      // (full name + memory button), so the name cannot truncate. min-width =
+      // measured memory-button width (no fallback constant).
+      const f = fit(0);
+      const center = centerEl();
+      const mem = byId('memory-btn');
+      center.style.maxWidth = Math.max(f.need, f.safe) + 'px';
+      center.style.minWidth = (inContent(mem) ? mem.offsetWidth : 0) + 'px';
+      // Test observability contract (scripts/e2e-header-collision.cjs): the
+      // settled cut + last measurements. Plain data — nothing reads it in
+      // production code.
+      window.__headerLayout = {
+        cut: n, total: cands.length,
+        hiddenIds: cands.slice(n).map((el) => el.id),
+        free: Math.round(f.free), need: Math.round(f.need), safe: Math.round(f.safe),
+      };
     });
   }
 
@@ -3158,17 +3211,20 @@ onMessage('forkComplete', (msg, view) => {
   if (header) ro.observe(header);
   const mainEl = document.getElementById('main');
   if (mainEl) ro.observe(mainEl);
-  // Observe the fixed-set, content-driven elements too. When a dynamic fixed
-  // element appears (context-ring / memory / bg-indicator / bgagent-indicator)
-  // it grows its cluster WITHOUT resizing #header, so ResizeObserver on the
-  // header alone would miss the reflow and leave a stale (too-loose) clamp
-  // that overlaps (§8 A2). These elements are never toggled by layout() so
-  // observing them cannot cause a feedback loop. session-name joins the set
-  // 2026-09-07: its text can arrive after boot (sessionList WS) and — now that
-  // the fit requirement uses its full width — a stale clamp must re-run.
-  ['sidebar-toggle', 'header-model-info', 'memory-btn', 'session-name',
-    'bg-indicator', 'bgagent-indicator', 'canvas-toggle-btn']
-    .forEach(id => { const el = document.getElementById(id); if (el) ro.observe(el); });
+  // window-resize 兜底 (v2): the ResizeObserver chain (header ↔ #main) covers
+  // normal resizes, but a direct listener keeps the reflow independent of RO
+  // delivery timing (devtools zoom steps, initial programmatic resizes).
+  window.addEventListener('resize', layout, { passive: true });
+  // Content-driven items: when one APPEARS (context ring gets data, memory
+  // enables, a bg capsule shows, the name arrives via sessionList WS) it grows
+  // its cluster WITHOUT resizing #header, so the header alone would miss the
+  // reflow and leave a stale (too-loose) clamp (§8 A2). Observing them is
+  // loop-safe: layout() toggling nb-header-hide changes their size, which
+  // fires one extra observer pass that converges (a steady-state pass changes
+  // nothing → no further observer events).
+  ['sidebar-toggle', 'session-name', 'bg-indicator', 'bgagent-indicator',
+    'pending-asks-indicator', 'memory-btn', 'header-model-info', 'canvas-toggle-btn']
+    .forEach(id => { const el = byId(id); if (el) ro.observe(el); });
   layout();
 })();
 
