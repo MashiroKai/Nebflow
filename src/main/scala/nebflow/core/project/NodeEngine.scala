@@ -2010,25 +2010,33 @@ class NodeEngine(
     * target.deliveredTo += node.id（dedup 原子记账）→ barrier 归零且非 running 则
     * fork 启动下游。载荷注入与否由 buildInput 按上游→下游边 mode 判定——本函数只管
     * 记账与启动（「signal 只记账归零 barrier」与「result 投载荷」在投递侧同形，
-    * 差异全在输入装配侧，deps 同款拆分）。 */
+    * 差异全在输入装配侧，deps 同款拆分）。
+    * 目标解析（20260909 in 丢失事故修复面③）：边 to 串有节点 id / 节点名两形态
+    * （LLM 按名接线的自然写法原样落库；存量归档数据同），记账/启动统一落到解析后
+    * 的 id——名字形态边不再是死边（原实现 findNode 按原始串查，名字边投递静默丢失）。 */
   private def settleTo(node: NodeDef, targetId: String): IO[Unit] =
-    store.findNode(targetId).flatMap {
+    store.snapshot.map(s => OutEdge.resolveTargetId(s.nodes, targetId)).flatMap {
       case None =>
         logger.warn(s"Node '${node.name}' out target '$targetId' not found — result retained")
-      case Some(_) =>
-        // 原子：target.deliveredTo += node.id（dedup）+ 更新
-        store.mutate { s =>
-          val t = s.nodes.get(targetId)
-          t match
-            case Some(tn) if !tn.deliveredTo.contains(node.id) =>
-              s.copy(nodes = s.nodes.updated(targetId, tn.copy(deliveredTo = tn.deliveredTo :+ node.id)))
-            case _ => s
-        }.flatMap { s =>
-          val tn = s.nodes.get(targetId)
-          val allArrived = tn.exists(tn2 => tn2.in.forall(upId => tn2.deliveredTo.contains(upId)))
-          if allArrived && tn.exists(_.status != NodeLifecycle.Running) then
-            forkStart(s"deliver-out -> $targetId")(startNode(targetId))
-          else IO.unit
+      case Some(tid) =>
+        store.findNode(tid).flatMap {
+          case None =>
+            logger.warn(s"Node '${node.name}' out target '$targetId' not found — result retained")
+          case Some(_) =>
+            // 原子：target.deliveredTo += node.id（dedup）+ 更新
+            store.mutate { s =>
+              val t = s.nodes.get(tid)
+              t match
+                case Some(tn) if !tn.deliveredTo.contains(node.id) =>
+                  s.copy(nodes = s.nodes.updated(tid, tn.copy(deliveredTo = tn.deliveredTo :+ node.id)))
+                case _ => s
+            }.flatMap { s =>
+              val tn = s.nodes.get(tid)
+              val allArrived = tn.exists(tn2 => tn2.in.forall(upId => tn2.deliveredTo.contains(upId)))
+              if allArrived && tn.exists(_.status != NodeLifecycle.Running) then
+                forkStart(s"deliver-out -> $tid")(startNode(tid))
+              else IO.unit
+            }
         }
     }
 
