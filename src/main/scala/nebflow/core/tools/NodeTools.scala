@@ -2004,13 +2004,15 @@ object ProjectCreateTool extends Tool:
   private def stripTrailingSlashes(s: String): String = s.replaceAll("/+$", "")
 
   /** 面板答案解析（纯函数，spec 覆盖）：首槽空 / 取消哨兵 → Shelved；
-    * '~' 展开后非绝对 → BadPath；合法 → Chosen（去尾斜杠）。 */
+    * '~' 展开后非绝对 → BadPath；合法 → Chosen（去尾斜杠）。
+    * isAbsolute 为跨平台判定（POSIX / 盘符 / UNC）——朴素 startsWith("/")
+    * 会拒绝 Windows 盘符答案（diag-win-paths P1）。 */
   private def parsePanelAnswer(answers: List[String]): PanelAnswer =
     val raw = answers.headOption.map(_.trim).getOrElse("")
     if raw.isEmpty || raw == CancelSentinel then PanelAnswer.Shelved
     else
       val expanded = expandTilde(raw)
-      if !expanded.startsWith("/") then PanelAnswer.BadPath(raw, "path must be absolute")
+      if !PathUtil.isAbsolute(expanded) then PanelAnswer.BadPath(raw, "path must be absolute")
       else PanelAnswer.Chosen(stripTrailingSlashes(expanded))
 
   /** 面板答案落地（纯分派）：Shelved → 搁置消息；BadPath → 明确报错；

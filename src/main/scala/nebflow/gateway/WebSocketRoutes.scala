@@ -972,12 +972,10 @@ class WebSocketRoutes(
       )
     }
 
-  /** '~' 前缀展开（仅前缀语义；非 ~ 开头原样返回）——wsBrowse 路径入参用。 */
-  private def expandTilde(path: String): String =
-    val home = sys.props("user.home")
-    if path == "~" then home
-    else if path.startsWith("~/") then home + path.drop(1)
-    else path
+  /** '~' 前缀展开（仅前缀语义；非 ~ 开头原样返回）——wsBrowse 路径入参用。
+    * 委托 PathUtil.expandTilde：统一支持 `~` / `~/` / `~\`（Windows 分隔符形态），
+    * 并在 Windows 上做分隔符归一（os-lib 拒绝混合分隔符段）。 */
+  private def expandTilde(path: String): String = PathUtil.expandTilde(path)
 
   /** 应用内工作区浏览器（Route C 兜底）的目录列表响应帧。
     * home 供前端把 home 前缀折叠为「主目录」面包屑；err 非 null → 前端在弹窗
@@ -2253,20 +2251,23 @@ class WebSocketRoutes(
             val json = parse(text).toOption.getOrElse(io.circe.Json.Null)
             val hc = json.hcursor
             val popFilePathRaw = hc.downField("path").as[String].getOrElse("")
-            // Expand a leading `~` (home shorthand) to the absolute home dir —
-            // historical Pop records may store `~/...`; only the server (which
-            // knows user.home) can resolve it to an absolute path.
-            val userHome = System.getProperty("user.home", "")
-            val popFilePath =
-              if popFilePathRaw == "~" then userHome
-              else if popFilePathRaw.startsWith("~/") then userHome + popFilePathRaw.drop(1)
-              else popFilePathRaw
+            // Expand a leading `~` (home shorthand: `~`, `~/`, `~\`) to the
+            // absolute home dir — historical Pop records may store `~/...`;
+            // only the server (which knows user.home) can resolve it to an
+            // absolute path. PathUtil also normalizes separators on Windows.
+            val popFilePath = PathUtil.expandTilde(popFilePathRaw)
             if popFilePath.nonEmpty then
               (for
-                _ <- IO.raiseUnless(popFilePath.startsWith("/"))(
+                // Cross-platform absolute check: `startsWith("/")` rejected
+                // every Windows path (C:\..., C:/..., UNC) with "path must be
+                // absolute" — the KAI file-browser bug (diag-win-paths).
+                // PathUtil.isAbsolute accepts POSIX, drive-letter and UNC forms.
+                _ <- IO.raiseUnless(PathUtil.isAbsolute(popFilePath))(
                   new RuntimeException("path must be absolute")
                 )
-                basePath = os.Path(popFilePath)
+                // resolvePath (not bare os.Path): survives cross-drive paths
+                // (pwd on C:, target on D:) via the java.nio fallback.
+                basePath = PathUtil.resolvePath(popFilePath)
                 _ <- IO.raiseUnless(os.exists(basePath))(
                   new RuntimeException(s"file not found: $popFilePath")
                 )
