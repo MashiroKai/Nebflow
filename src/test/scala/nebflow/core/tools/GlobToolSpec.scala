@@ -112,4 +112,155 @@ class GlobToolSpec extends FunSuite:
     assert(!msg.contains("not a valid path segment"), s"os-lib raw message leaked: $msg")
   }
 
+  // ── 20260909 Glob 修复批：单层语义 / 超限截断 / dot 显式 / CJK / head_limit ──
+
+  private def callFull(pattern: String, path: Option[String], headLimit: Option[Int]): Either[ToolError, String] =
+    val fields = scala.collection.mutable.ListBuffer[(String, io.circe.Json)]("pattern" -> pattern.asJson)
+    path.foreach(p => fields += ("path" -> p.asJson))
+    headLimit.foreach(n => fields += ("head_limit" -> n.asJson))
+    GlobTool.call(JsonObject.fromIterable(fields.toList), ToolContext(projectRoot = os.pwd.toString)).unsafeRunSync()
+
+  private def withFixture(f: os.Path => Unit): Unit =
+    val tmp = os.Path(java.nio.file.Files.createTempDirectory("nb-glob-fix"))
+    try f(tmp)
+    finally os.remove.all(tmp)
+
+  /** result lines that are actual entries (truncation notes start with "(") */
+  private def entryLines(out: String): List[String] =
+    out.split("\\n").toList.filter(l => l.nonEmpty && !l.startsWith("("))
+
+  test("'*' is strictly single-level — no recursion into subdirectories (defect ①)") {
+    withFixture { root =>
+      os.write(root / "top.txt", "a", createFolders = true)
+      os.write(root / "sub" / "deep.txt", "b", createFolders = true)
+      val out = callFull("*", Some(root.toString), None).toOption.get
+      val lines = entryLines(out)
+      assert(lines.contains("top.txt"), s"top-level file must be listed: $out")
+      assert(!lines.exists(_.contains("deep.txt")), s"'*' must not recurse into sub/: $out")
+    }
+  }
+
+  test("'*.txt' is anchored to a single level (not basename-recursive)") {
+    withFixture { root =>
+      os.write(root / "top.txt", "a", createFolders = true)
+      os.write(root / "other.txt", "c", createFolders = true)
+      os.write(root / "sub" / "deep.txt", "b", createFolders = true)
+      val lines = entryLines(callFull("*.txt", Some(root.toString), None).toOption.get).sorted
+      assertEquals(lines, List("other.txt", "top.txt"), s"'*.txt' must stay single-level: $lines")
+    }
+  }
+
+  test("'**' recurses through subdirectories") {
+    withFixture { root =>
+      os.write(root / "top.txt", "a", createFolders = true)
+      os.write(root / "sub" / "deep.txt", "b", createFolders = true)
+      val lines = entryLines(callFull("**/*.txt", Some(root.toString), None).toOption.get)
+      assert(lines.exists(_.contains("top.txt")) && lines.exists(_.contains("deep.txt")),
+        s"'**' must recurse for both: $lines")
+    }
+  }
+
+  test("static prefix + single-level tail stays within the prefix directory") {
+    withFixture { root =>
+      os.write(root / "src" / "a.txt", "a", createFolders = true)
+      os.write(root / "src" / "sub" / "b.txt", "b", createFolders = true)
+      os.write(root / "a.txt", "top", createFolders = true)
+      // searchRoot = <root>/src（静态前缀被吃掉），输出相对 searchRoot
+      val lines = entryLines(callFull("src/*.txt", Some(root.toString), None).toOption.get)
+      assertEquals(lines, List("a.txt"), s"prefix-dir single level only, root a.txt excluded: $lines")
+    }
+  }
+
+  test("dot-files and dot-dirs are hidden by default (no VCS internals in results)") {
+    withFixture { root =>
+      os.write(root / "a.txt", "a", createFolders = true)
+      os.write(root / ".hidden.txt", "h", createFolders = true)
+      os.write(root / ".hdir" / "f.txt", "f", createFolders = true)
+      os.write(root / ".git" / "objects" / "packfile", "p", createFolders = true)
+      val lines = entryLines(callFull("**/*.txt", Some(root.toString), None).toOption.get)
+      assertEquals(lines, List("a.txt"), s"dot entries must be excluded by default: $lines")
+    }
+  }
+
+  test("explicit dot-segment patterns match worktree-style .git pointer files (defect ③, acceptance)") {
+    withFixture { root =>
+      os.write(root / "wt-one" / ".git", "gitdir: /somewhere", createFolders = true)
+      os.write(root / "wt-two" / ".git", "gitdir: /elsewhere", createFolders = true)
+      os.write(root / "plain.txt", "x", createFolders = true)
+
+      val bySeg = entryLines(callFull("*/.git", Some(root.toString), None).toOption.get).sorted
+      assertEquals(bySeg, List("wt-one/.git", "wt-two/.git"), s"'*/.git' must hit pointer files: $bySeg")
+
+      val byName = entryLines(callFull(".git", Some(root.toString), None).toOption.get).sorted
+      assertEquals(byName, List("wt-one/.git", "wt-two/.git"), s"literal '.git' must hit pointer files: $byName")
+    }
+  }
+
+  test("explicit dot-dir pattern lists dot-dir contents") {
+    withFixture { root =>
+      os.write(root / "a.txt", "a", createFolders = true)
+      os.write(root / ".dotfile", "d", createFolders = true)
+      os.write(root / ".hdir" / "f.txt", "f", createFolders = true)
+
+      val inDotDir = entryLines(callFull(".hdir/*", Some(root.toString), None).toOption.get)
+      // 静态前缀 .hdir 被吃为 searchRoot，输出相对该前缀目录（同 crash-5 旧语义）
+      assertEquals(inDotDir, List("f.txt"), s"explicit dot-dir pattern must list contents: $inDotDir")
+
+      val dotNames = entryLines(callFull(".*", Some(root.toString), None).toOption.get)
+      assertEquals(dotNames, List(".dotfile"), s"'.*' anchors to root-level dot-files: $dotNames")
+    }
+  }
+
+  test("CJK directory names match in patterns (defect ③ non-ASCII)") {
+    withFixture { root =>
+      os.write(root / "中文目录" / "内文件.txt", "c", createFolders = true)
+      os.write(root / "中文文件.txt", "f", createFolders = true)
+
+      // 静态中文前缀 → searchRoot 吃掉前缀，输出相对前缀目录
+      val static = entryLines(callFull("中文目录/*", Some(root.toString), None).toOption.get)
+      assertEquals(static, List("内文件.txt"), s"static CJK prefix: $static")
+
+      val seg = entryLines(callFull("*/内文件.txt", Some(root.toString), None).toOption.get)
+      assertEquals(seg, List("中文目录/内文件.txt"), s"CJK dir under wildcard segment: $seg")
+
+      val rec = entryLines(callFull("中文*/**", Some(root.toString), None).toOption.get)
+      assert(rec.contains("中文目录/内文件.txt"), s"CJK wildcard prefix recursive: $rec")
+    }
+  }
+
+  test("head_limit pages with exact total note and validates its range") {
+    withFixture { root =>
+      (1 to 5).foreach(i => os.write(root / s"f$i.txt", "x", createFolders = true))
+
+      val paged = callFull("*.txt", Some(root.toString), Some(2)).toOption.get
+      assertEquals(entryLines(paged).length, 2, s"head_limit=2 must return 2 rows: $paged")
+      assert(paged.contains("(5 matches in total"), s"note must carry the exact total: $paged")
+
+      val full = callFull("*.txt", Some(root.toString), Some(10)).toOption.get
+      assert(!full.contains("matches in total"), s"no note when everything fits: $full")
+
+      val zero = callFull("*.txt", Some(root.toString), Some(0))
+      assert(zero.isLeft && zero.swap.toOption.get.message.contains("GLOB_HEAD_LIMIT"), s"$zero")
+
+      val huge = callFull("*.txt", Some(root.toString), Some(10001))
+      assert(huge.isLeft && huge.swap.toOption.get.message.contains("GLOB_HEAD_LIMIT"), s"$huge")
+    }
+  }
+
+  test("oversized result set truncates with unknown-total note instead of erroring (defect ②)") {
+    withFixture { root =>
+      // 1500 files x ~450B path line ≈ 675KB > 500KB rg cap
+      val dir = root / ("d" * 200)
+      (1 to 1500).foreach { i =>
+        val pad = "f" * (250 - s"$i".length - 4)
+        os.write(dir / s"${pad}$i.txt", "x", createFolders = true)
+      }
+      val r = callFull("**", Some(root.toString), None)
+      assert(r.isRight, s"oversized result must truncate, not hard-error: ${r.swap.toOption.get.message}")
+      val out = r.toOption.get
+      assert(out.contains("500KB"), s"unknown-total note expected: ${out.take(400)}")
+      assert(entryLines(out).sizeIs <= 100, s"default head_limit (100) still applies: ${entryLines(out).size}")
+    }
+  }
+
 end GlobToolSpec
