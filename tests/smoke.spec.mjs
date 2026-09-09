@@ -24,17 +24,31 @@ const TOKEN = process.env.NEBFLOW_TOKEN ?? (() => {
 })();
 
 test.beforeEach(async ({ page }) => {
-  // Capture all console errors for later assertion
+  // Capture all console errors for later assertion. _consoleErrorUrls is a
+  // parallel array: msg.location().url is the failing resource URL for
+  // network-type errors, so benign filters can pair text ↔ URL precisely.
   page._consoleErrors = [];
+  page._consoleErrorUrls = [];
   page._pageErrors = [];
-  // Track which URLs are 403 so we can filter known-benign ones
-  page._forbiddenUrls = new Set();
+  // Benign-noise tracking: 400 responses from the ws.js auth probe's bare
+  // /api/nf-file GET (403 baseline sources are matched by pathname directly
+  // in filterBenignErrors)
+  page._benign400Urls = new Set();
   // Whole-session asset watch: any /js/ or /vendor/ 404 at ANY point (not
   // just the networkidle window) means a static-route contract break — the
   // exact failure mode of the viewer plugin 404 incident.
   page._asset404s = [];
   page.on('response', (resp) => {
-    if (resp.status() === 403) page._forbiddenUrls.add(resp.url());
+    if (resp.status() === 400) {
+      // ws.js probeCookieAuth (auth probe) deliberately GETs /api/nf-file with
+      // no params: a valid cookie hits the missing-'path' BadRequest branch —
+      // 400 IS the "cookie auth works" signal (ws.js:299-314; only 401/403
+      // mean the cookie failed). Chromium logs every 4xx as an unsuppressible
+      // network-layer console error, so the probe's bare 400 is baseline noise
+      // (same whitelist口径 as scripts/e2e-askuser-source-label.mjs BASELINE_NOISE).
+      const u = new URL(resp.url());
+      if (u.pathname === '/api/nf-file' && ![...u.searchParams.keys()].length) page._benign400Urls.add(resp.url());
+    }
     if (resp.status() === 404) {
       const path = new URL(resp.url()).pathname;
       // /assets/ = P1 bundle chunks; /js/ + /vendor/ = source-tree modules.
@@ -42,26 +56,38 @@ test.beforeEach(async ({ page }) => {
     }
   });
   page.on('console', (msg) => {
-    if (msg.type() === 'error') page._consoleErrors.push(msg.text());
+    if (msg.type() === 'error') {
+      page._consoleErrors.push(msg.text());
+      page._consoleErrorUrls.push(msg.location()?.url ?? '');
+    }
   });
   page.on('pageerror', (err) => {
     page._pageErrors.push(err.message);
   });
 });
 
-/** Filter out console errors caused by known-benign 403s (e.g. NebLink auth probe). */
+/** Filter out console errors caused by known-baseline noise. Each error's
+ *  status text is paired with its OWN resource URL (msg.location().url), so a
+ *  403/400 from any other URL stays a real error — no page-wide swallowing:
+ *  - 403 from /api/neblink/* (status probe fires unauthenticated by design)
+ *    and the boot-time /api/canvas-tabs fetch (Bearer not yet in state).
+ *  - 400 from the ws.js auth probe's bare /api/nf-file GET (400 = "cookie
+ *    auth works" by design — see the beforeEach benign-400 watcher). */
 function filterBenignErrors(page, errors) {
-  const benignPatterns = [/neblink/i];
-  const isBenign = (text) => {
-    // Generic "Failed to load resource: 403" — check if it maps to a known-benign URL
+  const isBenign = (text, i) => {
+    const url = page._consoleErrorUrls[i] ?? '';
+    if (!url) return false;
+    let path = '';
+    try { path = new URL(url).pathname; } catch { return false; }
     if (text.includes('403')) {
-      for (const url of page._forbiddenUrls) {
-        if (benignPatterns.some(p => p.test(url))) return true;
-      }
+      return path.startsWith('/api/neblink/') || path === '/api/canvas-tabs';
+    }
+    if (text.includes('400')) {
+      return page._benign400Urls.has(url);
     }
     return false;
   };
-  return errors.filter(e => !isBenign(e));
+  return errors.filter((e, i) => !isBenign(e, i));
 }
 
 /** True when the instance serves the P1 bundle (entry script under /assets/). */
@@ -92,7 +118,8 @@ test.describe('Smoke — page load', () => {
     // Allow a moment for deferred scripts (Monaco preload, etc.)
     await page.waitForTimeout(2000);
 
-    // Filter out known non-critical errors (NebLink auth probe 403)
+    // Filter out known non-critical errors (baseline noise: neblink/canvas-tabs
+    // 403s, the auth probe's by-design bare 400)
     const realErrors = filterBenignErrors(page, page._consoleErrors);
 
     expect(realErrors, `Console errors:\n${realErrors.join('\n')}`).toEqual([]);
@@ -193,7 +220,12 @@ test.describe('Smoke — WS auth probe-first', () => {
     page.on('websocket', (ws) => wsUrls.push(ws.url()));
     const probeStatuses = [];
     page.on('response', (resp) => {
-      if (resp.url().includes('/api/nf-tasks')) probeStatuses.push(resp.status());
+      // Watch the CURRENT auth-probe target: probeCookieAuth GETs /api/nf-file
+      // with no params (moved off the retired /api/nf-tasks by the 2026-08-30
+      // task-tools redo). Requests WITH a path param are real file reads —
+      // their 400 means "type not allowed", a different semantic entirely.
+      const u = new URL(resp.url());
+      if (u.pathname === '/api/nf-file' && !u.searchParams.has('path')) probeStatuses.push(resp.status());
     });
 
     await page.goto(`${BASE}/?token=${TOKEN}`);
@@ -203,9 +235,11 @@ test.describe('Smoke — WS auth probe-first', () => {
     expect(wsUrls.length, 'expected at least one WebSocket connection').toBeGreaterThan(0);
     // Probe said cookies work → token must stay out of the WS URL.
     expect(wsUrls[0], `first WS URL: ${wsUrls[0]}`).not.toContain('token=');
-    // The auth probe must have run and seen the cookie (200) — if this flakes
-    // to 403 the probe itself is racy and the diagnostic matters.
-    expect(probeStatuses, 'auth probe should have fired').toEqual([200]);
+    // The auth probe must have run and seen the cookie: a valid cookie hits
+    // /api/nf-file's missing-'path' BadRequest branch → 400 IS "cookie auth
+    // works" (only 401/403 mean the cookie failed — if this ever flakes to
+    // those, the probe itself is racy and the diagnostic matters).
+    expect(probeStatuses, 'auth probe should have fired').toEqual([400]);
 
     const wsErrors = page._consoleErrors.filter(e =>
       /WebSocket connection .* failed/i.test(e) || /handshake rejected/i.test(e)
@@ -334,59 +368,6 @@ test.describe('Smoke — lazy-load paths (real backend)', () => {
       assetReqs.some(r => r.startsWith('200') && r.includes('/api/nf-file')),
       `image viewer must fetch /api/nf-file 200:\n${assetReqs.join('\n')}`
     ).toBe(true);
-
-    expect(page._asset404s, `asset 404s:\n${page._asset404s.join('\n')}`).toEqual([]);
-    const realErrors = filterBenignErrors(page, page._consoleErrors);
-    expect(realErrors, `Console errors:\n${realErrors.join('\n')}`).toEqual([]);
-    expect(page._pageErrors, `Page errors:\n${page._pageErrors.join('\n')}`).toEqual([]);
-  });
-
-  test('task panel archive button → archive tab (real /api/nf-tasks)', async ({ page }) => {
-    const nfTaskReqs = [];
-    page.on('response', (r) => {
-      if (r.url().includes('/api/nf-tasks')) nfTaskReqs.push(r.status());
-    });
-
-    await page.goto(`${BASE}/?token=${TOKEN}`);
-    await page.waitForLoadState('networkidle');
-    await expect(page.locator('#send-btn')).not.toHaveClass(/disconnected/, { timeout: 10000 });
-    await dismissOnboarding(page);
-
-    // Bundle mode (P1): seeding calls renderTaskList via a module URL, which
-    // does not exist once bundled (no /js/*.js, no REST write endpoint for
-    // tasks). The lazy-chunk coverage this test provides is carried in bundle
-    // mode by the canvas viewer test (same dynamic-import mechanism through
-    // the workspace-open-item contract).
-    test.skip(await isBundled(page), 'task seeding needs source-mode module access; bundle lazy coverage via canvas test');
-
-    // A fresh instance has no tasks, so the panel header (and its archive
-    // button) never appears on its own. Feed the same entry point the WS
-    // taskListUpdate handler uses (renderTaskList) with one in_progress
-    // agent task, then click through the real UI: panel header archive
-    // button → archive Canvas tab.
-    // NOTE (rotted-test fix 2026-08-26): this case seeded a `completed` task
-    // and clicked `.task-today-bar`/`.task-today-all` — that collapse-bar UI
-    // was removed by the two-section panel redesign (8f082213, 2026-08-18)
-    // and completed tasks no longer render in the active panel at all
-    // (taskList.js isVisible: completed → archive-only). The four
-    // deterministic smoke failures across QA rounds (#419/#420①/#37/B6-C5,
-    // ports 8312/8314/8315/8316) all traced to this dead-element wait.
-    await page.evaluate(async () => {
-      const { renderTaskList } = await import('/js/taskList.js');
-      renderTaskList([{
-        id: 'smoke-task-1',
-        subject: 'Smoke agent task',
-        status: 'in_progress',
-        createdAt: new Date().toISOString(),
-        notes: [],
-      }], null, 'smoke');
-    });
-    await page.locator('.task-archive-btn').click();
-
-    // Archive opens as a Canvas tab and fetches the real /api/nf-tasks.
-    await page.locator('.canvas-tab', { hasText: /任务档案|Task Archive/ }).waitFor({ timeout: 8000 });
-    await expect.poll(() => nfTaskReqs.length, { timeout: 8000 }).toBeGreaterThan(0);
-    expect(nfTaskReqs[0], '/api/nf-tasks must be 200').toBe(200);
 
     expect(page._asset404s, `asset 404s:\n${page._asset404s.join('\n')}`).toEqual([]);
     const realErrors = filterBenignErrors(page, page._consoleErrors);
