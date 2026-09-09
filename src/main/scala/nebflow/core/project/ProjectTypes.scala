@@ -116,6 +116,18 @@ object OutEdge:
     if t.isEmpty || t.equalsIgnoreCase("null") then None
     else Some(if t == NebulaTarget then OutEdge(t, NebulaDefaultOn) else OutEdge(t))
 
+  /** out 边目标串 → 节点 id 解析（标识符二元性收敛单点，2026-09-09 in 落盘丢失事故）：
+    * 目标串历史上有两种形态——节点 id（引擎镜像 appendEdgeTo 写入）与节点名（LLM/分发器
+    * 按 name 接线的自然写法，原样落库）；而节点 Map、in/deliveredTo 记账、settleTo 投递
+    * 全部以 **id 为键**。直接以原始串查 Map 会静默 MISS（setOut added 侧漏记下游 in）或
+    * 误命中另一形态（removed 侧把 id 形态旧边当「被移除目标」→ 抹掉下游 in —— 正是
+    * 20260909 「create 带 in → 随后 out 按名改接 → in 被清空 → barrier 空真提前启动」
+    * 的事故链）。解析顺序：id 命中 → 名字命中 → None（悬空，调用方显式处理）。
+    * 名字唯一性由 NodeEdit schema 保证（nodename unique within the Flow Map）。 */
+  def resolveTargetId(nodes: Map[String, NodeDef], target: String): Option[String] =
+    if nodes.contains(target) then Some(target)
+    else nodes.values.find(_.name == target).map(_.id)
+
   /** 规范化（投递/比较/落库单点）：同 (to, mode) 多边合并 on 集合（compat 矩阵 #1：
     * 一次终态至多投一次）；on 滤非法门（手改数据防御），滤空 → {pass}；mode 非法 →
     * result；LinkedHashMap 保序（边序稳定 = payload/存储确定性）。 */
