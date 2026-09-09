@@ -408,6 +408,39 @@ class NeblinkLogoutRoutesSpec extends CatsEffectSuite:
     }
   }
 
+  test("auth/start forwards uiLocales zh/en and whitelists everything else (BYUI handoff)") {
+    Dispatcher.parallel[IO].use { dispatcher =>
+      startMockServer.flatMap { (server, url, _) =>
+        mkStack(url, dispatcher).flatMap { st =>
+          for
+            _ <- st.ms.updateConfig(cfg => cfg.copy(logto =
+              Some(LogtoConfig(endpoint = "https://auth.example", clientId = "legacy", pkceClientId = Some("pkce-app")))))
+            start = (ui: Option[String]) =>
+              val base = Request[IO](Method.POST, Uri.unsafeFromString("/neblink/auth/start"))
+                .withHeaders(Headers("Authorization" -> s"Bearer $TestToken"))
+              val req = ui.fold(base)(v => base.withEntity(Json.obj("uiLocales" -> v.asJson)))
+              st.routes.routes(req).value.map(_.getOrElse(fail("route fell through"))).flatMap(_.as[Json])
+              .map(body =>
+                body.hcursor.downField("authorizeUrl").as[String].toOption.getOrElse(fail("authorizeUrl missing")))
+            zhUrl <- start(Some("zh"))
+            enUrl <- start(Some("en"))
+            legacyUrl <- start(None) // old callers: no uiLocales field at all
+            junkUrl <- start(Some("de-DE")) // not whitelisted → param omitted
+          yield
+            assert(zhUrl.contains("ui_locales=zh"), s"zh handoff must reach the authorize URL: $zhUrl")
+            assert(enUrl.contains("ui_locales=en"), s"en handoff must reach the authorize URL: $enUrl")
+            assert(!legacyUrl.contains("ui_locales"), s"legacy callers keep the byte-identical URL: $legacyUrl")
+            assert(!junkUrl.contains("ui_locales"), s"non-whitelisted values are dropped, not forwarded: $junkUrl")
+            // Invariants that must survive on every variant.
+            for (u <- Seq(zhUrl, enUrl, legacyUrl, junkUrl)) {
+              assert(u.contains("prompt=consent"), s"refresh-token invariant intact: $u")
+              assert(u.contains("offline_access"), s"scope invariant intact: $u")
+            }
+        }.guarantee(IO.blocking(server.stop(0)))
+      }
+    }
+  }
+
   test("/auth/logged-out serves the RP-logout landing page") {
     Dispatcher.parallel[IO].use { dispatcher =>
       startMockServer.flatMap { (server, url, _) =>

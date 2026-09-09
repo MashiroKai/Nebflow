@@ -104,6 +104,17 @@ object LogtoAuthCode:
    * alive, so the user gets the account input instead of a silent
    * redirect back to the original account. Both values are legal
    * space-separated OIDC prompt lists (RFC 6749-bis / Core §3.1.2.1).
+   *
+   * `uiLocales` (BYUI handoff, 2026-09-09): optional OIDC standard
+   * `ui_locales` hint so the hosted page renders in the CLIENT's UI
+   * language ("zh" / "en", single tag per the handoff). Harmless pre-BYUI —
+   * the stock hosted page just picks the sign-in language; active once the
+   * BYUI SPA ships (its resolveLocale reads ui_locales first). Empty
+   * (default) omits the param entirely: the URL is byte-identical to the
+   * pre-BYUI shape and the page falls back to navigator.language. Gating
+   * note: NO feature flag here (handoff ① ruling) — the rollback lever is
+   * server-side (Logto Console custom-UI upload/removal), and a release
+   * strip would defeat the point (release builds are the ones that log in).
    */
   def authorizeUrl(
     endpoint: String,
@@ -111,18 +122,23 @@ object LogtoAuthCode:
     redirectUri: String,
     codeChallenge: String,
     state: String,
-    prompt: String = "consent"
+    prompt: String = "consent",
+    uiLocales: String = ""
   ): String =
     s"${endpoint.stripSuffix("/")}${Protocol.LogtoOidc.authorize}?" +
       LogtoDeviceFlow.formEncode(
-        "client_id" -> clientId,
-        "redirect_uri" -> redirectUri,
-        "response_type" -> "code",
-        "scope" -> "openid offline_access email profile",
-        "prompt" -> prompt,
-        "code_challenge" -> codeChallenge,
-        "code_challenge_method" -> "S256",
-        "state" -> state
+        (
+          Seq(
+            "client_id" -> clientId,
+            "redirect_uri" -> redirectUri,
+            "response_type" -> "code",
+            "scope" -> "openid offline_access email profile",
+            "prompt" -> prompt,
+            "code_challenge" -> codeChallenge,
+            "code_challenge_method" -> "S256",
+            "state" -> state
+          ) ++ (if uiLocales.nonEmpty then Seq("ui_locales" -> uiLocales) else Seq.empty)
+        )*
       )
 
   /** RP-initiated logout (OIDC Session Management §5, RP-logout fix
