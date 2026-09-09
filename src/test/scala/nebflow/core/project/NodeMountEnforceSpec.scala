@@ -213,6 +213,36 @@ class NodeMountEnforceSpec extends CatsEffectSuite:
         "rejected creates must leave NO node in the store (0 spawn)")
   }
 
+  // ── M1b 第 6 例形态实证钉住（20260909 blocked-signal spec §0 附带发现/§1 例6）──
+  // n-e8b82fd5（合并-Smoke修复批）：merge=true ∧ task ∧ in=[]，经 EMPTY_NODE_
+  // CONNECTION「task or in 二选一」通道以 entry 形态直跑 → completed 伪终态在案。
+  // 护栏本体 = merge 校验②（019cc53b mount-enforce 批 20260905 落地，spec 侦查
+  // 误判「代码层无校验」已收敛）——本测试固化该事故形态防回退（BS-3 独立可拆，
+  // 生产代码零改动）。
+
+  test("M1b: n-e8b82fd5 incident form (merge=true + task + explicit in=[]) is rejected at create, node NOT persisted") {
+    val ws = tempRoot / "ws-m1b"
+    os.makeDir.all(ws)
+    val system = ActorSystem(s"me-m1b-${scala.util.Random.nextInt(100000)}")
+    val llm = EchoLlm()
+    for
+      res <- mkResources(system, tempRoot, llm.handle)
+      rt <- mountProject("me-m1b", ws, system, res)
+      ctx = mkCtx(res, system, ws.toString)
+      // 事故形态逐字复刻：merge=true、显式空数组 in=[]、task+out 在（entry 直跑形态）
+      r <- nodeEdit(nodeInput("me-m1b", "merge-smoke-fix", "description" -> Json.fromString("n-e8b82fd5 form pin"),
+        "task" -> Json.fromString("landing smoke fixes"), "out" -> Json.fromString("Nebula"),
+        "in" -> Json.arr(), "merge" -> Json.fromBoolean(true)), ctx)
+      snap <- rt.store.snapshot
+      _ <- system.stopAll.handleErrorWith(_ => IO.unit)
+    yield
+      assert(r.isLeft, s"n-e8b82fd5 form (merge=true, task, in=[]) must be rejected, got: $r")
+      assert(r.left.exists(_.contains("NODE_MERGE_REQUIRES_UPSTREAM")),
+        s"rejection must carry NODE_MERGE_REQUIRES_UPSTREAM, got: $r")
+      assert(!snap.nodes.values.exists(n => n.name == "merge-smoke-fix"),
+        "rejected incident form must leave NO node in the store (0 spawn)")
+  }
+
   // ── M② in 引用存在性钉死 ───────────────────────────────
 
   test("M2: create with in referencing a nonexistent node is rejected (existence pin)") {
