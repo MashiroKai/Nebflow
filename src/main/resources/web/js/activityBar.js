@@ -2,9 +2,8 @@
 //
 // Layout (top → bottom):
 //   • Avatar — the NebLink login entry. Tap when logged out → opens the
-//     self-drawn login wizard (loginWizard.js; the gateway BFF holds the
-//     Logto interaction, so the browser renders zero auth.nebflow.space
-//     pages). Tap when logged in →
+//     NebLink login modal (Logto OIDC, Authorization Code + PKCE; legacy
+//     device flow as fallback). Tap when logged in →
 //     opens the account profile page (brand.getProfileUrl) in a new tab.
 //   • Side Bar panel switch buttons (Files; future panels register the same way).
 //   • (spacer)
@@ -20,10 +19,9 @@
 // stays visible when the sidebar is collapsed.
 
 import { openSettingsPanel, closeSettingsPanel, isSettingsPanelActive } from './sidebar.js';
-import { fetchNeblinkStatus, getNeblinkState, avatarViewState, noteAvatarFailure } from './neblink.js';
-import { openLoginWizard } from './loginWizard.js';
+import { fetchNeblinkStatus, getNeblinkState, startDeviceFlow, pollDeviceFlow, cancelDeviceFlow, startPkceLogin, pollPkceState, cancelPkceFlow, avatarViewState, noteAvatarFailure } from './neblink.js';
 import { setUpdateDot } from './updateCheck.js';
-import { createIconsIn } from './utils.js';
+import { createIconsIn, escapeHtml } from './utils.js';
 import { getProfileUrl } from './brand.js';
 import { t } from './i18n.js';
 import { key } from './branding.js';
@@ -315,39 +313,319 @@ function bindAvatar() {
       // into the app window.
       window.open(getProfileUrl(), '_blank', 'noopener');
     } else {
-      // Not logged in → open the self-drawn login wizard (E1, design §1.1).
-      openLoginWizard(loginWizardCallbacks());
+      // Not logged in → open the NebLink login modal (PKCE, device-flow fallback)
+      showLoginModal();
     }
   });
 }
 
-// ── Login wizard (self-drawn, plan A) ────────────────────
-// 2026-09-09 design `20260909_login-selfdrawn-design.md` §2.2: the hosted
-// Logto pages are GONE from the login path — the browser renders only this
-// app's glass wizard (loginWizard.js) talking to the gateway BFF. The old
-// hosted-page entries are absorbed:
-//   E1 (this avatar entry)        → the wizard identifier step
-//   E2 (重新打开登录页面)          → dissolved: there is no hosted page anymore
-//   E3 (使用其他账号登录)          → dissolved: the wizard IS the account form
-//   E4 (consent 同意屏)           → resolved server-side inside submit
-// E5-E8 (register / forgot / MFA / social) are wizard steps in loginWizard.js.
-// The legacy device flow (logto-not-configured) fallback lives there too.
-
-/** Callbacks the wizard needs from this module: the avatar pairing spinner
- *  and the post-login refresh (fetchNeblinkStatus + renderAvatar). */
-function loginWizardCallbacks() {
-  return {
-    onPairingChange: (v) => { getNeblinkState().pairing = v; renderAvatar(); },
-    onLoginDone: () => { refresh(); },
-  };
+// ── Login modal (PKCE primary, device-flow fallback) ─────
+// Styles are injected once here (rather than a CSS file) so the modal stays
+// self-contained in this module; all values come from the Sapphire Glass
+// design variables so it themes with the rest of the UI.
+let loginModalStylesInjected = false;
+function injectLoginModalStyles() {
+  if (loginModalStylesInjected) return;
+  loginModalStylesInjected = true;
+  const style = document.createElement('style');
+  style.textContent = `
+.nebflow-login-modal {
+  position: fixed; top: 50%; left: 50%; transform: translate(-50%, -50%);
+  width: 320px; z-index: 1000; overflow: hidden;
+  background: var(--glass-bg, rgba(24, 28, 38, 0.68));
+  -webkit-backdrop-filter: blur(var(--glass-blur, 24px)) saturate(1.15);
+  backdrop-filter: blur(var(--glass-blur, 24px)) saturate(1.15);
+  border: 1px solid var(--glass-border, rgba(255,255,255,0.1));
+  border-radius: 16px;
+  box-shadow:
+    inset 0 1px 0 0 rgba(255, 255, 255, 0.25),
+    0px 2px 8px rgba(0, 0, 0, 0.04),
+    0px 8px 24px rgba(0, 0, 0, 0.06);
+  animation: nebflowLoginIn 0.2s ease;
+}
+@media (prefers-color-scheme: dark) {
+  .nebflow-login-modal {
+    box-shadow:
+      inset 0 1px 0 0 rgba(255, 255, 255, 0.04),
+      0px 2px 8px rgba(0, 0, 0, 0.20),
+      0px 8px 24px rgba(0, 0, 0, 0.35);
+  }
+}
+.nebflow-login-modal::before {
+  content: '';
+  position: absolute; top: 0; left: 10%; right: 10%; height: 1px;
+  background: linear-gradient(90deg, transparent 10%, var(--sapphire-refraction, rgba(255,255,255,0.45)) 50%, transparent 90%);
+  pointer-events: none; z-index: 1;
+}
+@keyframes nebflowLoginIn {
+  from { opacity: 0; transform: translate(-50%, -50%) scale(0.96) translateY(8px); }
+  to   { opacity: 1; transform: translate(-50%, -50%) scale(1) translateY(0); }
+}
+.login-modal-header {
+  display: flex; justify-content: space-between; align-items: center;
+  padding: 12px 16px; border-bottom: 1px solid var(--glass-border, rgba(255,255,255,0.05));
+}
+.login-modal-header h3 { font-size: 14px; margin: 0; color: var(--color-text); font-weight: 600; letter-spacing: -0.01em; }
+.login-modal-close {
+  background: none; border: none; color: var(--color-text-muted);
+  font-size: 18px; cursor: pointer; padding: 0 4px; line-height: 1;
+  opacity: 0.5; transition: opacity 0.15s;
+}
+.login-modal-close:hover { opacity: 1; }
+.login-modal-body { padding: 16px; text-align: center; }
+.login-hint { font-size: 13px; color: var(--color-text-muted); margin-bottom: 12px; line-height: 1.5; }
+.login-user-code {
+  font-family: 'SF Mono', 'Fira Code', monospace;
+  font-size: 26px; font-weight: 600; letter-spacing: 2px;
+  color: var(--color-primary); margin-bottom: 4px;
+  font-variant-numeric: tabular-nums;
+}
+.login-code-caption { font-size: 12px; color: var(--color-text-muted); margin-bottom: 14px; }
+.login-modal-btn {
+  display: inline-block; padding: 8px 20px; border-radius: 10px;
+  font-size: 13px; font-weight: 500; color: var(--color-text);
+  cursor: pointer; transition: filter 0.15s;
+}
+.login-modal-btn:hover { filter: brightness(1.06); }
+.login-modal-btn:active { filter: brightness(0.96); }
+.login-waiting { margin-top: 12px; font-size: 12px; color: var(--color-text-muted); }
+/* Switch-account secondary entry (RP-logout fix, 2026-09-06) — quiet text
+   link under the primary button; muted color, no new tokens. */
+.login-switch-link {
+  display: inline-block; margin-top: 10px; padding: 2px 6px;
+  background: none; border: none; cursor: pointer;
+  font-size: 12px; color: var(--color-text-muted);
+  text-decoration: none; border-radius: 6px; transition: color 0.15s;
+}
+.login-switch-link:hover { color: var(--color-text); }
+.login-success { font-size: 14px; color: var(--color-primary); padding: 12px 0; }
+.login-error-msg { font-size: 13px; color: #e57373; margin-bottom: 14px; line-height: 1.5; }
+`;
+  document.head.appendChild(style);
 }
 
 /**
- * Public entry for the NebLink login (used by the friends/messages panels'
- * logged-out empty states) — opens the self-drawn wizard.
+ * Public entry for the NebLink login modal (used by the
+ * friends/messages panels' logged-out empty states).
  */
 export function openLoginModal() {
-  openLoginWizard(loginWizardCallbacks());
+  showLoginModal();
+}
+
+// ── Popup-blocker resilience ─────────────────────────────
+// Browsers only allow window.open inside the synchronous user-gesture stack.
+// The login flow must await the gateway (PKCE / device-flow start) before it
+// knows the authorize URL, so a plain window.open after the await is blocked.
+// Pattern: reserve an about:blank window synchronously in the click handler,
+// then navigate it once the URL arrives. If the reservation itself returns
+// null (blocker), fall back to a toast with a manual glass-control link.
+
+/** @type {Window|null} */
+let reservedPopup = null;
+
+/** Reserve a blank popup. Must be called synchronously in the gesture stack. */
+function reservePopup() {
+  try {
+    reservedPopup = window.open('about:blank', '_blank');
+  } catch (e) {
+    reservedPopup = null;
+  }
+  return reservedPopup;
+}
+
+/** Navigate the reserved popup to url (or close it when url is null). */
+function navigateReserved(url) {
+  const w = reservedPopup;
+  reservedPopup = null;
+  if (!w) return false;
+  try {
+    if (url) { w.location.href = url; return true; }
+    w.close();
+  } catch (e) { /* cross-origin or already closed - ignore */ }
+  return false;
+}
+
+/** Blocked fallback: toast with a manual glass-control link to url. */
+function popupBlockedFallback(url) {
+  const toast = document.createElement('div');
+  toast.className = 'nebflow-toast nebflow-toast-info';
+  const msg = document.createElement('span');
+  msg.textContent = t('login.popupBlocked');
+  const a = document.createElement('a');
+  a.className = 'glass-control nebflow-toast-link';
+  a.href = url;
+  a.target = '_blank';
+  a.rel = 'noopener';
+  a.textContent = t('login.openPage');
+  toast.append(msg, a);
+  document.body.appendChild(toast);
+  requestAnimationFrame(() => toast.classList.add('show'));
+  setTimeout(() => {
+    toast.classList.remove('show');
+    setTimeout(() => toast.remove(), 300);
+  }, 8000);
+}
+
+/**
+ * Centered glass modal driving the NebLink login.
+ * States: starting → waiting (PKCE browser login) → success | error, with a
+ * waiting-device state (user code + polling) when the gateway reports
+ * logto-not-configured and the legacy device flow takes over.
+ * Closing the modal cancels polling.
+ */
+function showLoginModal() {
+  if (document.getElementById('nebflow-login-modal')) return;
+  injectLoginModalStyles();
+
+  const modal = document.createElement('div');
+  modal.id = 'nebflow-login-modal';
+  modal.className = 'nebflow-login-modal';
+  document.body.appendChild(modal);
+
+  const st = getNeblinkState();
+  let flowInfo = null;
+  let finished = false; // true once success/error reached — close() must not cancel then
+
+  const setPairing = (v) => { st.pairing = v; renderAvatar(); };
+
+  const close = () => {
+    if (!finished) {
+      cancelPkceFlow();
+      cancelDeviceFlow();
+      setPairing(false);
+    }
+    document.removeEventListener('keydown', onKey);
+    modal.remove();
+  };
+  const onKey = (e) => { if (e.key === 'Escape') close(); };
+  document.addEventListener('keydown', onKey);
+  // Click outside to close (deferred so the opening click doesn't close it).
+  setTimeout(() => {
+    document.addEventListener('click', function outside(e) {
+      if (!document.body.contains(modal)) {
+        document.removeEventListener('click', outside);
+      } else if (!modal.contains(e.target)) {
+        close();
+        document.removeEventListener('click', outside);
+      }
+    });
+  }, 100);
+
+  const render = (state, data = {}) => {
+    let body = '';
+    if (state === 'starting') {
+      body = `<div class="login-waiting" style="margin-top:0;padding:12px 0">正在启动登录…</div>`;
+    } else if (state === 'waiting') {
+      // PKCE primary path: nothing to copy - the browser tab does the whole
+      // hosted login and redirects back to the local gateway.
+      // "使用其他账号登录" (RP-logout fix, 2026-09-06): restarts the flow
+      // with prompt="login consent" so the hosted page shows the account
+      // form even when this browser still holds a Logto SSO session.
+      body = `
+        <div class="login-hint">在浏览器中登录 nebflow 账号以连接此设备</div>
+        <button class="login-modal-btn glass-control" id="login-open-auth">重新打开登录页面</button>
+        <button class="login-switch-link" id="login-switch-account">使用其他账号登录</button>
+        <div class="login-waiting">等待登录完成…</div>`;
+    } else if (state === 'waiting-device') {
+      // Legacy device-flow fallback (gateway reports logto-not-configured).
+      body = `
+        <div class="login-hint">在浏览器中完成授权以连接此设备</div>
+        <div class="login-user-code">${escapeHtml(data.userCode || '')}</div>
+        <div class="login-code-caption">授权码</div>
+        <button class="login-modal-btn glass-control" id="login-open-auth">打开授权页面</button>
+        <div class="login-waiting">等待授权完成…</div>`;
+    } else if (state === 'success') {
+      body = `<div class="login-success">✓ 连接成功，设备已加入网络</div>`;
+    } else if (state === 'error') {
+      body = `
+        <div class="login-error-msg">${escapeHtml(data.message || '登录失败')}</div>
+        <button class="login-modal-btn glass-control" id="login-retry">重试</button>`;
+    }
+    modal.innerHTML = `
+      <div class="login-modal-header">
+        <h3>登录 nebflow 账号</h3>
+        <button class="login-modal-close">&times;</button>
+      </div>
+      <div class="login-modal-body">${body}</div>`;
+    modal.querySelector('.login-modal-close').onclick = close;
+    modal.querySelector('#login-open-auth')?.addEventListener('click', () => {
+      if (flowInfo?.authorizeUrl) window.open(flowInfo.authorizeUrl, '_blank');
+      else if (flowInfo?.verificationUri) window.open(flowInfo.verificationUri, '_blank');
+    });
+    // Switch account (RP-logout fix, 2026-09-06): reserve the popup inside
+    // THIS click gesture (same contract as the retry button below), then
+    // restart the flow — startPkceLogin(true) sends prompt="login consent"
+    // so Logto shows the account form instead of silently re-entering the
+    // SSO-session account.
+    modal.querySelector('#login-switch-account')?.addEventListener('click', () => {
+      reservePopup(); // synchronous gesture reservation
+      startFlow(true);
+    });
+    modal.querySelector('#login-retry')?.addEventListener('click', () => {
+      reservePopup(); // synchronous gesture reservation for the retry
+      startFlow();
+    });
+  };
+
+  const startFlow = async (forceLogin = false) => {
+    setPairing(true);
+    finished = false;
+    render('starting');
+    const onSuccess = () => {
+      finished = true;
+      setPairing(false);
+      render('success');
+      setTimeout(() => { close(); refresh(); }, 1500);
+    };
+    const onError = (errMsg) => {
+      finished = true;
+      setPairing(false);
+      render('error', { message: errMsg });
+    };
+    try {
+      // Primary path: Authorization Code + PKCE via the hosted Logto page.
+      // forceLogin → prompt="login consent" (switch-account entry).
+      const pkce = await startPkceLogin(forceLogin);
+      if (pkce) {
+        flowInfo = pkce;
+        st.flowState = 'waiting';
+        render('waiting');
+        // Navigate the popup reserved in the click gesture; the in-modal
+        // button stays as a second fallback if both were blocked.
+        if (!navigateReserved(pkce.authorizeUrl)) popupBlockedFallback(pkce.authorizeUrl);
+        pollPkceState(onSuccess, onError);
+        return;
+      }
+      // Fallback: gateway answered logto-not-configured - legacy device flow.
+      flowInfo = await startDeviceFlow();
+      // Mirror the codes into neblinkState (same as the Settings flow) so the
+      // Settings panel shows the waiting UI if it's open.
+      st.deviceCode = flowInfo.deviceCode;
+      st.userCode = flowInfo.userCode;
+      st.flowState = 'waiting';
+      render('waiting-device', { userCode: flowInfo.userCode });
+      if (flowInfo.verificationUri && !navigateReserved(flowInfo.verificationUri)) {
+        popupBlockedFallback(flowInfo.verificationUri);
+      }
+      pollDeviceFlow(
+        flowInfo.deviceCode,
+        flowInfo.interval || 3,
+        flowInfo.expiresIn || 900,
+        onSuccess,
+        onError
+      );
+    } catch (e) {
+      finished = true;
+      setPairing(false);
+      navigateReserved(null); // release the reserved popup on failure
+      render('error', { message: e.message || '启动登录失败' });
+    }
+  };
+
+  // Reserve the popup synchronously inside the click gesture stack — the
+  // async startFlow below cannot open one without being blocked.
+  reservePopup();
+  startFlow();
 }
 
 // ── State refresh → avatar styling ───────────────────────
