@@ -196,10 +196,10 @@ class NodeEngine(
         if m.get(nodeId).contains(sessionId) then (m - nodeId) else m
       } *>
       resources.agentRegistry.update(_ - sessionId) *>
-      // blocked 结构化信号批（20260909 spec §5.2 #5④）：登记表对称清理——
-      // cancelled/failed/异常退出路径未消费的申报在此兜底移除（completed 路径
-      // 已 drain，此处幂等 no-op）。与 running/nodeSessions 同点清理纪律。
-      BlockedSignalRegistry.remove(sessionId)
+      // blocked 结构化信号批（20260909 spec §5.2 #5④；同日泛化 NodeReportRegistry）：
+      // 登记表对称清理——cancelled/failed/异常退出路径未消费的申报在此兜底移除
+      // （completed 路径已 drain，此处幂等 no-op）。与 running/nodeSessions 同点清理纪律。
+      NodeReportRegistry.remove(sessionId)
 
   /** 死会话 running 节点的自动收敛（僵尸收敛批 2026-09-06；与 NodeCancel-stale /
     * abandon 的人力收殓区分——本方法走**自动** watchdog 路径）。收敛目标取 **failed**
@@ -1344,12 +1344,13 @@ class NodeEngine(
       _ <- eventResult match
         case Right(messages) =>
           val text = extractLastAssistantText(messages)
-          // blocked 结构化信号批（20260909 spec §5.2 #5①②）：会话完成时点 drain
-          // 登记表——工具申报（协议事实）优先于文本锚定（降级面，行为零变化）。
-          // 时序上必在 bg 闸之后（resultDeferred 完成即等待集已放行）；drain
-          // take-and-remove 单次消费，cancelled/failed 路径不消费（残留由
-          // guarantee 内 cleanupRunTables 的 remove 对称清理）。
-          BlockedSignalRegistry.drain(sessionId).flatMap { declared =>
+          // blocked 结构化信号批（20260909 spec §5.2 #5①②；同日作者裁定泛化
+          // NodeReport 统一三语义）：会话完成时点 drain 登记表——工具申报（协议
+          // 事实）优先于文本锚定（降级面，行为零变化）。时序上必在 bg 闸之后
+          // （resultDeferred 完成即等待集已放行）；drain take-and-remove 单次消费，
+          // cancelled/failed 路径不消费（残留由 guarantee 内 cleanupRunTables 的
+          // remove 对称清理）。
+          NodeReportRegistry.drain(sessionId).flatMap { declared =>
             completeNode(nodeId, text, declared)
           }
         case Left(fo) =>
@@ -1614,12 +1615,25 @@ class NodeEngine(
 
     /** verify 产出裁决（PASS 投递 worker 产出 / FAIL 打回 +1 / BLOCKED → Loop 级
       * blocked）——loopRound 正常轮与 verify 相位崩溃续跑（resumeVerifyRound）共用。
-      * blocked 结构化信号批（20260909 spec §5.2 #8）：verify 会话完成时点先 drain
-      * 登记表——工具申报（协议事实）优先，未命中走文本锚定降级面（行为零变化）。 */
+      * blocked 结构化信号批（20260909 spec §5.2 #8；同日作者裁定泛化 NodeReport
+      * 统一三语义）：verify 会话完成时点先 drain 登记表——工具申报（协议事实）
+      * 按类别分流到既有链：pass 与 VERDICT: PASS 同链（投递 worker 产出）、fail
+      * 与 VERDICT: FAIL 同链（detail=打回意见 / suggestion=通过标准，打回 worker）、
+      * blocked → Loop 级 blocked；未申报走文本锚定降级面（行为零变化）。 */
     def handleVerify(roundNum: Int, wText: String, vMsgs: List[Message]): IO[Unit] =
       val vText = extractLastAssistantText(vMsgs)
-      BlockedSignalRegistry.drain(verify.sessionId).flatMap {
-        case Some(fb) => blockedNode(nodeId, fb, finalText = Some(vText)) // verify 工具申报 → Loop 级 blocked
+      val R = nebflow.core.tools.NodeReportToolDef
+      NodeReportRegistry.drain(verify.sessionId).flatMap {
+        case Some(fb) if R.isPass(fb.category) =>
+          completeNode(nodeId, wText) // verify 工具申报 pass → 投递 worker 产出（VERDICT: PASS 同链）
+        case Some(fb) if R.isFail(fb.category) =>
+          // verify 工具申报 fail → 打回 worker（VERDICT: FAIL 同链）：
+          // detail = 打回意见（空则占位），suggestion = 通过标准。
+          val issues = List(if fb.detail.trim.isEmpty then VerdictReader.PlaceholderIssues else fb.detail.trim)
+          val f = VerdictReader.Verdict.Fail(issues, fb.suggestion)
+          setVerdict(nodeId, VerdictReader.renderFailSummary(f)) *>
+            loopRound(roundNum + 1, Some(f))
+        case Some(fb) => blockedNode(nodeId, fb, finalText = Some(vText)) // verify 工具申报 blocked → Loop 级 blocked
         case None =>
           BlockedReader.parse(vText) match
             case Some(fb) => blockedNode(nodeId, fb) // verify 申告任务无法验证 → Loop 级 blocked
@@ -1660,23 +1674,29 @@ class NodeEngine(
             case Left(err) => failOrCancel(nodeId, s"worker round $roundNum: $err")
             case Right(wMsgs) =>
               val wText = extractLastAssistantText(wMsgs)
-              // blocked 结构化信号批（20260909 spec §5.2 #8）：worker 会话完成时点
-              // 先 drain 登记表（工具申报优先，spawnLoopSession 会话已带 flowNodeId
-              // ——工具天然可达）；未命中走文本锚定降级面（行为零变化）。
-              BlockedSignalRegistry.drain(worker.sessionId).flatMap {
-                case Some(fb) => blockedNode(nodeId, fb, finalText = Some(wText)) // worker 工具申报 → Loop 级 blocked
-                case None =>
-                  BlockedReader.parse(wText) match
-                    case Some(fb) => blockedNode(nodeId, fb) // worker 申告无法继续 → Loop 级 blocked
-                    case None =>
-                      for
-                        vIn <- verifyInputFor(roundNum, wText)
-                        _ <- goto(nodeId, NodeEngine.LoopPhaseVerify, roundNum)
-                        vOut <- step(verify, vIn)
-                        _ <- vOut match
-                          case Left(err) => failOrCancel(nodeId, s"verify round $roundNum: $err")
-                          case Right(vMsgs) => handleVerify(roundNum, wText, vMsgs)
-                      yield ()
+              // blocked 结构化信号批（20260909 spec §5.2 #8；同日作者裁定泛化
+              // NodeReport 统一三语义）：worker 会话完成时点先 drain 登记表
+              // （工具申报按类别分流：blocked → Loop 级 blocked；fail → 既有
+              // failed 链；pass 与无申报同链照常进 verify 裁决。spawnLoopSession
+              // 会话已带 flowNodeId——工具天然可达）；未申报走文本锚定降级面
+              // （行为零变化）。
+              val R = nebflow.core.tools.NodeReportToolDef
+              NodeReportRegistry.drain(worker.sessionId).flatMap {
+                case Some(fb) if R.isFail(fb.category) =>
+                  failNode(nodeId, R.renderFail(fb)) // worker 工具申报 fail → 既有 failed 链
+                case Some(fb) if R.isBlockedSemantics(fb.category) =>
+                  blockedNode(nodeId, fb, finalText = Some(wText)) // worker 工具申报 blocked → Loop 级 blocked
+                case _ =>
+                  // 无申报（None）或 pass 申报：本轮产出照常进 verify 裁决
+                  // （pass = worker 正式声明本轮完成，与无申报同链零新链）。
+                  for
+                    vIn <- verifyInputFor(roundNum, wText)
+                    _ <- goto(nodeId, NodeEngine.LoopPhaseVerify, roundNum)
+                    vOut <- step(verify, vIn)
+                    _ <- vOut match
+                      case Left(err) => failOrCancel(nodeId, s"verify round $roundNum: $err")
+                      case Right(vMsgs) => handleVerify(roundNum, wText, vMsgs)
+                  yield ()
               }
         yield ()
 
@@ -1718,15 +1738,26 @@ class NodeEngine(
   // deliverOut 沿空 out 悬空 → 下游永久 wiring；n-ab4a884f 同理回写覆盖成 Nebula。
   // 节点已不在活动区（被移除）→ 拒写拒投（陈旧写回会把它复活成垃圾行）。
 
-  /** blocked 结构化信号批（20260909 spec §5.3）：declared = 节点会话经
-    * report_blocked 工具申报的结构化反馈（NodeEngine 终态分流处 drain 登记表
-    * 所得）；默认 None 向后兼容全部既有调用点。分流顺序【结构化信号优先】：
-    * declared → BlockedReader 文本锚定（降级面，不放宽）→ CompletionGate。 */
+  /** blocked 结构化信号批（20260909 spec §5.3；同日作者裁定泛化 NodeReport
+    * 统一三语义）：declared = 节点会话经 node_report 工具申报的结构化反馈
+    * （NodeEngine 终态分流处 drain 登记表所得）；默认 None 向后兼容全部既有
+    * 调用点。分流顺序【结构化信号优先，按申报类别三分流，全部锚定既有链零新链】：
+    * pass → 既有 completed 语义链（回落 declared=None 原路径：BlockedReader
+    * 降级面 → CompletionGate 闸门 → completedNode——闸门是完成链的产物完整性
+    * owner，pass 申报不绕闸、零放宽）；fail → 既有 failed 语义链（failNode：
+    * deliverFailed / merge 兜底 / retry 挂点原样接管）；blocked（细分六类/泛值）
+    * → 既有 blockedNode/FeedbackRouter 链。 */
   private def completeNode(nodeId: String, resultText: String,
       declared: Option[BlockedFeedback] = None): IO[Unit] =
     declared match
-      // 结构化信号优先（协议事实）：工具申报即节点对任务可完成性的正式判断，
-      // blocked 可重激活无损，completed 伪终态不可逆（spec §6 语义裁定）。
+      // pass 申报：节点正式声明完成 → 与无申报同链走既有完成路径（降级面+闸门原样）
+      case Some(fb) if nebflow.core.tools.NodeReportToolDef.isPass(fb.category) =>
+        completeNode(nodeId, resultText)
+      // fail 申报：节点正式声明失败 → 既有 failed 链（result=渲染串，观测面单点格式）
+      case Some(fb) if nebflow.core.tools.NodeReportToolDef.isFail(fb.category) =>
+        failNode(nodeId, nebflow.core.tools.NodeReportToolDef.renderFail(fb))
+      // blocked 申报（细分六类/泛值，协议事实优先）：工具申报即节点对任务可完成性
+      // 的正式判断，blocked 可重激活无损，completed 伪终态不可逆（spec §6 语义裁定）。
       case Some(fb) => blockedNode(nodeId, fb, finalText = Some(resultText))
       case None =>
         // blocked 分流（设计 §1.3/§2.1）：最终输出以 BLOCKED 锚定 → blockedNode；
@@ -2628,20 +2659,22 @@ object NodeEngine:
     * count=3（> 2）→ 升级 Nebula 不再重入。 */
   val MaxBlockRoundsPerNode: Int = 2
 
-  /** blocked 声明协议脚注（buildInput 末尾单点注入）。TaskBoard 批 2（§3c）：末尾
-    * 增一行上报指引——与 blocked 协议同点注入、同生命周期；措辞自带条件
+  /** 节点终态语义申报协议脚注（buildInput 末尾单点注入）。TaskBoard 批 2（§3c）：
+    * 末尾增一行上报指引——与终态语义协议同点注入、同生命周期；措辞自带条件
     * （「若…给了」），无板会话注入该行无副作用。
-    * blocked 结构化信号批（20260909 spec §5.2 #7）：第一优先 = 调用
-    * report_blocked 工具申报（协议级结构化信号，schema 白名单强制格式）；文本
-    * 锚定降级为「工具不可用时」备用通道，措辞强调首行裸形态要求（6 例实证：
-    * markdown 标题/加粗/前置导语均锚定失败）。 */
+    * blocked 结构化信号批（20260909 spec §5.2 #7）：第一优先 = 调用申报工具；
+    * 同日作者裁定泛化（NodeReport 统一三语义）：工具更名 node_report，blocked
+    * 细分六类之外 pass/fail 语义同走结构化申报；三语义文本锚定（首行裸 BLOCKED
+    * / VERDICT: PASS/FAIL）降级为「工具不可用时」备用通道，措辞强调首行裸形态
+    * 要求（6 例实证：markdown 标题/加粗/前置导语均锚定失败）。 */
   val ProtocolFootnote: String =
     """── 节点协议 ──
       |若你判定任务无法完成（上游依赖未就绪/任务定义不完整/能力不匹配/缺外部条件），
-      |不要硬造结果：第一优先调用 report_blocked 工具申报（参数 category/detail/
-      |suggestion；category ∈ upstream-incomplete | task-underspecified |
-      |agent-mismatch | external-dependency | needs-split | other），随后照常输出
-      |收尾报告。工具不可用时才用文本备用通道：把最终输出的第一行写为裸 BLOCKED
+      |不要硬造结果：第一优先调用 node_report 工具申报（参数 category/detail/
+      |suggestion；受阻申报 category ∈ upstream-incomplete | task-underspecified |
+      |agent-mismatch | external-dependency | needs-split | other | blocked），随后照常输出
+      |收尾报告。任务/轮次「已完成/已失败」的正式判定同样走 node_report：category
+      |传 pass 或 fail（detail 写明依据）。工具不可用时才用文本备用通道：把最终输出的第一行写为裸 BLOCKED
       |（首行恰为 BLOCKED 四个字母——不加 # / ** / 导语等任何前缀），随后给出 JSON：
       |{"category":"…","detail":"…","suggestion":"…"}。
       |可完成时正常输出结果，勿申报 blocked。
