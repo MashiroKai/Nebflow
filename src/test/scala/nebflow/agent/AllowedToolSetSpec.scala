@@ -60,7 +60,7 @@ class AllowedToolSetSpec extends FunSuite:
     def face(defn: AgentDef): List[String] =
       buildToolList(defn).getOrElse(Nil).map(_.name)
 
-    /** Probe the session-identity mount tail (TaskBoard / report_blocked 段)——
+    /** Probe the session-identity mount tail (TaskBoard / node_report 段)——
       * flowNodeSession 模拟引擎侧 flowNodeId.isDefined（项目节点会话）。 */
     def allowedWithSession(
         defn: AgentDef,
@@ -711,27 +711,36 @@ class AllowedToolSetSpec extends FunSuite:
     val off = CoreProbe.allowed(worker, isSubTaskWorker = true, guardrailsOn = false)
     assertEquals(on, off, "flag must not alter the SubTask-worker path in any way")
 
-  // ===== report_blocked 挂载面（blocked 结构化信号批 20260909，spec §5.2 #4/§9.3）=====
+  // ===== node_report 挂载面（blocked 结构化信号批 20260909，spec §5.2 #4/§9.3；
+  // 同日作者裁定泛化 NodeReport 统一三语义——更名后钉住断言全保留+扩面）=====
 
-  test("report_blocked: flow NODE session (flowNodeSession=true) carries the tool (TaskBoard-tail mount)"):
+  test("node_report: flow NODE session (flowNodeSession=true) carries the tool (TaskBoard-tail mount)"):
     val node = mkDef("general", Nil)
     val allowed = CoreProbe.allowedWithSession(node, isFlowNode = true, flowNodeSession = true)
-    assert(allowed.contains("report_blocked"), s"flow node session must carry report_blocked, got: $allowed")
+    assert(allowed.contains("node_report"), s"flow node session must carry node_report, got: $allowed")
     // 注册表有 schema（LLM 工具面真实可见——buildToolList ∩ ALL_TOOLS 非空）
-    assert(ToolRegistry.TOOL_MAP.contains("report_blocked"), "tool must be registered")
+    assert(ToolRegistry.TOOL_MAP.contains("node_report"), "tool must be registered")
+    assert(!ToolRegistry.TOOL_MAP.contains("report_blocked"), "v1 report_blocked must be fully renamed (no dual registration)")
 
-  test("report_blocked: dispatcher session (isFlowNode=true, flowNodeId empty) does NOT see it"):
+  test("node_report: dispatcher session (isFlowNode=true, flowNodeId empty) does NOT see it"):
     // 分发器 spawn 也带 isFlowNode=true（ProjectActor spawn 点）但 flowNodeId 恒
     // None——挂载判据必须是 flowNodeSession 而非 isFlowNode，否则 schema 泄漏进
     // 分发器工具面（spec §6/§9.3 禁止面）。变异验红锚：挂载判据改回 isFlowNode 即红。
     val dispatcher = mkDef("project-dispatcher", Nil)
     val face = CoreProbe.allowedWithSession(dispatcher, isFlowNode = true, flowNodeSession = false)
-    assert(!face.contains("report_blocked"), s"dispatcher must NOT see report_blocked, got: $face")
+    assert(!face.contains("node_report"), s"dispatcher must NOT see node_report, got: $face")
+    // 交付面（LLM schema 可见面 = allowedSet ∩ ALL_TOOLS）同样零泄漏（双保险面）
+    val faceList = CoreProbe.face(dispatcher)
+    assert(!faceList.contains("node_report"), s"dispatcher LLM face must NOT carry node_report schema, got: $faceList")
 
-  test("report_blocked: Nebula / team / standalone faces clean; plugins declaration grants nothing"):
-    assert(!CoreProbe.allowedWithSession(mkDef("Nebula", Nil), isFlowNode = false, flowNodeSession = false).contains("report_blocked"), "Nebula face clean")
-    assert(!CoreProbe.allowedWithSession(mkDef("backend", Nil).copy(category = "team"), isFlowNode = false, flowNodeSession = false).contains("report_blocked"), "team face clean")
-    assert(!CoreProbe.allowedWithSession(mkDef("solo", Nil), isFlowNode = false, flowNodeSession = false).contains("report_blocked"), "standalone face clean")
+  test("node_report: Nebula / team / standalone / wildcard faces clean; plugins declaration grants nothing"):
+    assert(!CoreProbe.allowedWithSession(mkDef("Nebula", Nil), isFlowNode = false, flowNodeSession = false).contains("node_report"), "Nebula face clean")
+    assert(!CoreProbe.allowedWithSession(mkDef("Nebula", List("*")), isFlowNode = false, flowNodeSession = false).contains("node_report"), "Nebula wildcard face clean")
+    assert(!CoreProbe.allowedWithSession(mkDef("backend", Nil).copy(category = "team"), isFlowNode = false, flowNodeSession = false).contains("node_report"), "team face clean")
+    assert(!CoreProbe.allowedWithSession(mkDef("solo", Nil), isFlowNode = false, flowNodeSession = false).contains("node_report"), "standalone face clean")
+    // 通配声明不逃逸："*" 展开到全部注册工具，但 node_report 只按会话身份挂载
+    val wildcard = CoreProbe.allowedWithSession(mkDef("omni", List("*")), isFlowNode = true, flowNodeSession = false)
+    assert(!wildcard.contains("node_report"), "wildcard must NOT resurrect node_report without a node session identity")
     // plugins 声明不授能（不在 BuiltinToolWhitelist；编排类工具 §C.1 静态矩阵不可绕过）
-    assert(!nebflow.core.plugin.PluginRegistry.BuiltinToolWhitelist.contains("report_blocked"), "plugin whitelist must not carry report_blocked")
+    assert(!nebflow.core.plugin.PluginRegistry.BuiltinToolWhitelist.contains("node_report"), "plugin whitelist must not carry node_report")
 end AllowedToolSetSpec
