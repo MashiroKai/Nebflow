@@ -764,6 +764,12 @@ object PluginRegistry:
       yield TrustRecord(sha, at, files)
     }
 
+  /** 信任记录落库 digest（approve 时刻的目录 fingerprint；之后目录漂移不影响记录本身）。
+    * 与 TrustStatus（现算状态：漂移即 untrusted 重审）互补——需要「approve 时刻基准」
+    * 做对比仲裁的场景（seed reconcile 判「用户是否改过」）用本方法。 */
+  def trustRecordDigest(name: String): Option[String] =
+    trustRecord(name).map(_.sha256)
+
   private def readTrustTable(): Map[String, Json] =
     val configPath = PathUtil.configJsonReadPath(PathUtil.dataRoot)
     if !os.exists(configPath) then Map.empty
