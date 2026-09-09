@@ -427,6 +427,10 @@ Git safety:
                   for
                     jobId <- IO.randomUUID.map(_.toString.take(8))
                     onComplete = makeNotifyCallback(command, desc, ctx, jobId, tailN, gateOwned)
+                    // 输出查看批（2026-09-09 作者需求）：先建缓冲拿句柄，sink 随
+                    // executeBackground 挂上 JobHealth——运行中逐行入尾窗缓冲，
+                    // 终态后由 onComplete finalizeTask 进留存区（详情卡 REST 读）。
+                    outBuffer <- BgTaskOutputStore.open(jobId)
                     _ <- shell.executeBackground(
                       actualCommand,
                       desc,
@@ -436,7 +440,8 @@ Git safety:
                       hardTimeoutMs = hardTimeoutMs,
                       stuckWindowSec = ctx.bashConfig.stuckWindowSec,
                       healthCheckIntervalSec = ctx.bashConfig.healthCheckIntervalSec,
-                      persistent = persistent
+                      persistent = persistent,
+                      outputSink = Some((line: String) => outBuffer.append(line))
                     )
                     _ <- emitBgTaskStarted(ctx, jobId, bgDescription, persistent)
                   yield Right(
@@ -718,7 +723,7 @@ Git safety:
     ctx.agentActorRef.map { ref => (result: Either[Throwable, ProcessResult]) =>
       val firstLine = command.split('\n').headOption.getOrElse(command).take(80)
       val description = desc.getOrElse(firstLine)
-      val (eventType, payload, metadata, exitInfo) = result match
+      val (eventType, payload, metadata, exitInfo, exitCodeOpt, errHintOpt, storeStatus) = result match
         case Right(pr) =>
           val rawOut = tailN match
             case Some(n) => applyTailTruncation(pr.stdout, n)
@@ -735,15 +740,27 @@ Git safety:
               "exitCode" -> pr.exitCode.asJson,
               "output" -> output.asJson
             ),
-            exitTxt
+            exitTxt,
+            Some(pr.exitCode),
+            None: Option[String],
+            "completed"
           )
         case Left(e) =>
           val errInfo = Option(e.getMessage).getOrElse(e.getClass.getSimpleName)
+          // 输出留存区语义（仅 store；agent 通知路径 eventType 不变）：取消类
+          // 异常（cancelBackgroundJob / 会话收割 complete Left(InterruptedException)）
+          // 在留存区记 cancelled 而非 failed——用户回看时语义准确。
+          val store = e match
+            case _: InterruptedException => "cancelled"
+            case _ => "failed"
           (
             "failed",
             s"[Background task failed] \"$description\":\n$errInfo",
             JsonObject("description" -> description.asJson),
-            s" ($errInfo)"
+            s" ($errInfo)",
+            None: Option[Int],
+            Some(errInfo),
+            store
           )
 
       // 节点完成闸批：等待集内任务被超时/停滞看护杀掉（TimeoutException = B1
@@ -793,6 +810,10 @@ Git safety:
       // independently — each has its own error recovery so one failure
       // doesn't prevent the other.
       BgTaskRegistry.unregister(jobId) *>
+        // 输出查看批：终态翻转 + 进留存区（completed/failed；cancelled 走 WS
+        // cancelBackgroundJob / reclaimSession 的 finalizeTask，幂等防双写）。
+        BgTaskOutputStore.finalizeTask(jobId, storeStatus, exitCodeOpt, errHintOpt).handleErrorWith(e2 =>
+          logger.warn(s"bg-output finalize failed for job $jobId: ${e2.getMessage}")) *>
         gateLedger *>
         logger.info(
           s"Background job $jobId callback: $eventType$exitInfo",

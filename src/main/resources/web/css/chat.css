@@ -476,9 +476,15 @@
     border-color: rgb(var(--sapphire) / 0.35);
   }
 }
-/* Background-task rows are not clickable (no popup; operations stay on the
-   inline cancel button) — override the shared .bg-task-row pointer affordance. */
-#bg-dropdown .bg-task-row { cursor: default; }
+/* Background-task rows are clickable (2026-09-09 output viewing: row click
+   opens the glass detail card) — shared .bg-task-row pointer affordance now
+   applies in #bg-dropdown too; Enter/Space keyboard parity wired in main.js.
+   Focus = hover background (no accent bar — visual-style iron rule). */
+#bg-dropdown .bg-task-row { cursor: pointer; }
+#bg-dropdown .bg-task-row:focus-visible {
+  outline: none;
+  background: var(--color-frame-hover);
+}
 /* Project attribution (2026-09-06 author ruling): Flow rows label the owning
    project next to the kind chip. Deliberately plainer than the chip — dim
    bare text, no pill/box — so it reads as metadata subordinate to the Flow
@@ -681,6 +687,21 @@
   opacity: 0.65;
   pointer-events: none;
 }
+/* ── Retained terminal rows (2026-09-09 output viewing) ──────────────────
+   completed/failed/cancelled rows stay in the panel until refresh; distinct
+   muted style (new state distinction) while keeping the row clickable.
+   The output detail card (glass overlay) styles live in bgTaskOutputPopup.js
+   (flow-agent popup family pattern — feature popups inject their own CSS). */
+.bg-task-row.bg-task-ended { opacity: 0.72; }
+.bg-task-row.bg-task-ended:hover { opacity: 1; }
+.bg-task-state.bg-state-failed { color: var(--color-error); }
+.bg-task-state.bg-state-done { color: var(--color-frame-text-muted); }
+#bg-dropdown .bg-task-status.bg-status-done {
+  background: var(--color-frame-text-muted);
+  box-shadow: none;
+  animation: none;
+}
+#bg-dropdown .bg-task-status.bg-status-error { animation: none; }
 /* History pagination indicators */
 .history-loader {
   display: flex;

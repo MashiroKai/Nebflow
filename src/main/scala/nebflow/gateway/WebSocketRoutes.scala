@@ -2692,6 +2692,14 @@ class WebSocketRoutes(
                       if cancelled then s"Cancelled background job $jobId"
                       else s"Background job $jobId not found or already completed"
                     logger.info(logMsg, "sessionId" -> cancelSessionId, "jobId" -> jobId) *>
+                      // 输出查看批（2026-09-09）：显式取消也是终态——输出留存区
+                      // 翻转为 cancelled，详情卡回看「取消时刻为止」的全部输出。
+                      // 幂等：若完成回调已先 finalize（竞态），此处 no-op。
+                      (if cancelled then
+                         nebflow.core.tools.BgTaskOutputStore
+                           .finalizeTask(jobId, "cancelled", None, Some("Cancelled by user"))
+                           .handleErrorWith(e => logger.warn(s"bg-output finalize (cancel) failed for job $jobId: ${e.getMessage}"))
+                       else IO.unit) *>
                       // Notify agent so it can process cancellation
                       ensureAgent(cancelSessionId) { ref =>
                         ref ! AgentCommand.ExternalEvent(

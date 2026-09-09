@@ -716,6 +716,21 @@ export default {
   'bg.kind.local': 'local',
   'bg.kind.remote': 'remote',
   'bg.openedBy': 'Started by {origin}',
+  // Retained terminal rows + output detail card (2026-09-09 output viewing)
+  'bg.completed': 'Completed',
+  'bg.failed': 'Failed',
+  'bg.cancelled': 'Cancelled',
+  'bg.detail.aria': 'Background task output',
+  'bg.detail.copy': 'Copy',
+  'bg.detail.copied': 'Copied',
+  'bg.detail.empty': 'No output yet',
+  'bg.detail.remote': 'Output viewing is not available for remote tasks',
+  'bg.detail.notFound': 'Task output is no longer available (task ended and was cleaned up)',
+  'bg.detail.truncated': 'Large output — showing the tail only',
+  'bg.detail.meta': '{lines} lines · {bytes}',
+  'bg.detail.exit': 'exit {code}',
+  'bg.detail.failedHint': 'Failed: {error}',
+  'bg.detail.cancelHint': 'Cancelled: {error}',
 
   // === Time ===
   'time.yesterday': 'Yesterday',
