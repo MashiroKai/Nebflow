@@ -146,6 +146,51 @@ export function showConfirm(title, message, onConfirm, opts = {}) {
   modalOverlay.classList.add('on');
 }
 
+// --- Drop conflict dialog (external file drag-in, VS Code parity) ---
+// A 3-choice dialog (Replace / Keep Both / Cancel) reusing #modal-overlay and
+// the shared glass-card + button families (modal.css groups #conflict-box with
+// #delete-box). No new tokens; replace keeps the danger style, keep-both/cancel
+// the neutral style. The stack never nests under showConfirm/showDeleteModal:
+// each close resets its own callback and hides the overlay via hideModals().
+let conflictCallbacks = null;
+
+/**
+ * Show the drag-in conflict dialog.
+ * @param {string} title — dialog title (generic, e.g. 'Replace')
+ * @param {string} message — body (carries the conflicting name)
+ * @param {{ onReplace?: Function, onKeepBoth?: Function, onCancel?: Function }} [cbs]
+ */
+export function showConflict(title, message, cbs = {}) {
+  const { modalBox, deleteBox, modalOverlay } = state.dom;
+  const box = document.getElementById('conflict-box');
+  if (!box) { cbs.onCancel?.(); return; }
+  modalBox.style.display = 'none';
+  deleteBox.style.display = 'none';
+  document.getElementById('conflict-title').textContent = title;
+  document.getElementById('conflict-msg').textContent = message;
+  conflictCallbacks = cbs;
+  box.style.display = 'block';
+  modalOverlay.classList.add('on');
+}
+
+/** Reset the conflict dialog to a never-shown state (no overlay flash). */
+function hideConflict() {
+  const box = document.getElementById('conflict-box');
+  if (box) box.style.display = 'none';
+  conflictCallbacks = null;
+}
+
+/** Invoke a conflict action and close the overlay. */
+function resolveConflict(action) {
+  const cb = conflictCallbacks;
+  hideConflict();
+  hideModals();
+  if (!cb) return;
+  if (action === 'replace') cb.onReplace?.();
+  else if (action === 'keepboth') cb.onKeepBoth?.();
+  else cb.onCancel?.();
+}
+
 // --- Generic toast notification ---
 // 2026-09-03 glass redesign (author ruling): type semantics moved from the
 // color accent strip to a leading glyph icon (color-only distinction; glyph
@@ -240,13 +285,37 @@ export function initModals() {
   deleteCancelBtn.onclick = hideModals;
   deleteConfirmBtn.onclick = confirmDeleteSession;
 
-  // Modal overlay click-to-close
+  // Drop conflict dialog — a conflict box open is always dismissed as Cancel
+  // (never as Replace) when the user clicks the overlay or presses Escape.
+  const conflictBox = document.getElementById('conflict-box');
+  if (conflictBox) {
+    const bindConflictBtn = (sel, action) => {
+      const b = conflictBox.querySelector(sel);
+      if (b) b.onclick = () => resolveConflict(action);
+    };
+    bindConflictBtn('#conflict-cancel', 'cancel');
+    bindConflictBtn('#conflict-keep-both', 'keepboth');
+    bindConflictBtn('#conflict-replace', 'replace');
+  }
+
+  // Modal overlay click-to-close. If the conflict box is visible, clicking the
+  // overlay closes it as Cancel (must not strand a pending import).
   modalOverlay.onclick = (e) => {
-    if (e.target === modalOverlay) hideModals();
+    if (e.target !== modalOverlay) return;
+    if (conflictCallbacks) resolveConflict('cancel');
+    else hideModals();
   };
+
+  // Escape: conflict open → Cancel; otherwise close whichever modal is up.
+  document.addEventListener('keydown', (e) => {
+    if (e.key !== 'Escape') return;
+    if (conflictCallbacks) resolveConflict('cancel');
+    else hideModals();
+  });
 
   // Expose session modal helpers for sidebar cross-module usage
   window.__showDeleteModal = showDeleteModal;
   window.__showConfirm = showConfirm;
   window.__showToast = showToast;
+  /** @type {any} */ (window).__showConflict = showConflict;
 }

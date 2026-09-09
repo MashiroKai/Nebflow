@@ -2469,7 +2469,12 @@ class WebSocketRoutes(
                 )
                 // Prevent deleting the project root itself
                 _ <- IO.raiseWhen(canonicalBase == canonicalRoot)(new RuntimeException("cannot delete project root"))
-                _ <- IO.blocking { if os.exists(basePath) then os.remove(basePath) }
+                // remove.all: single delete must cover non-empty directories too
+                // (VS Code parity — a right-click delete on a folder takes the
+                // whole subtree; previously os.remove failed on non-empty dirs
+                // and only the batch deletePaths channel could remove them).
+                // On a plain file remove.all behaves exactly like remove.
+                _ <- IO.blocking { if os.exists(basePath) then os.remove.all(basePath) }
               yield dpPath)
                 .flatMap { p =>
                   wsSend(io.circe.Json.obj("type" -> "pathDeleted".asJson, "path" -> p.asJson))
@@ -2571,6 +2576,10 @@ class WebSocketRoutes(
             val wrSessionId = hc.downField("sessionId").as[String].getOrElse("")
             val wrFilePath = hc.downField("path").as[String].getOrElse("")
             val wrContent = hc.downField("content").as[String].getOrElse("")
+            // Optional `encoding:"base64"` — byte-preserving writes for binary
+            // payloads (external file drag-in). Absent = plain text, the
+            // editor-save path, unchanged.
+            val wrEncoding = hc.downField("encoding").as[String].getOrElse("")
             if wrSessionId.nonEmpty && wrFilePath.nonEmpty then
               val overrideRoot = hc.downField("rootPath").as[Option[String]].toOption.flatten
               (for
@@ -2589,11 +2598,21 @@ class WebSocketRoutes(
                   new RuntimeException("path outside project root")
                 )
                 _ <- IO.blocking {
-                  os.write.over(basePath, wrContent)
+                  // Create parent dirs on demand so a drop-imported folder tree
+                  // lands recursively (no separate mkdir round trip). No-op when
+                  // the parent exists (editor-save path).
+                  if !os.exists(basePath / os.up) then os.makeDir.all(basePath / os.up)
+                  if wrEncoding == "base64" then
+                    os.write.over(basePath, java.util.Base64.getDecoder.decode(wrContent))
+                  else
+                    os.write.over(basePath, wrContent)
                 }
               yield basePath.toString)
                 .flatMap { absPath =>
-                  logger.info(s"File saved: $absPath (${wrContent.length} chars)")
+                  val desc =
+                    if wrEncoding == "base64" then s"${wrContent.length} b64 chars"
+                    else s"${wrContent.length} chars"
+                  logger.info(s"File saved: $absPath ($desc)")
                   wsSend(
                     io.circe.Json.obj(
                       "type" -> "fileSaved".asJson,

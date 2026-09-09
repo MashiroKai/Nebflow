@@ -319,6 +319,18 @@
         <button id="delete-confirm">Delete</button>
       </div>
     </div>
+    <!-- Drop conflict dialog (external file drag-in, VS Code parity) — 3-choice
+         Replace / Keep Both / Cancel. Cleaned/re-rendered by modal.js; buttons
+         localized via the i18n `conflict-*` entries. -->
+    <div id="conflict-box">
+      <div id="conflict-title">Replace</div>
+      <div id="conflict-msg"></div>
+      <div id="conflict-actions">
+        <button id="conflict-cancel">Cancel</button>
+        <button id="conflict-keep-both">Keep Both</button>
+        <button id="conflict-replace">Replace</button>
+      </div>
+    </div>
   </div>
   <!-- Agent Editor Modal — retired 2026-09-06 (tool-face retirement batch):
        per-agent editing lives in the Canvas detail tab (agentManager.js). -->
