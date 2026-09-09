@@ -37,8 +37,13 @@ object PathUtil:
     else s
 
   /**
-   * Expand a leading `~` (or `~/`) to the JVM's `user.home`.
+   * Expand a leading `~` (or `~/` / `~\`) to the JVM's `user.home`.
    * Leaves all other strings unchanged. Idempotent.
+   *
+   * `~\x` (Windows separator form) expands to home + `\x` — on a Windows JVM
+   * that yields the native `C:\Users\name\x`; on POSIX the backslash stays in
+   * the name and the path simply won't exist (same failure class as before,
+   * never a wrong-file read).
    *
    * After expansion, separators are normalized for the current OS so that
    * `~/Desktop` on Windows produces `C:\Users\name\Desktop` (all backslashes),
@@ -52,7 +57,7 @@ object PathUtil:
     val home = sys.props.getOrElse("user.home", "~")
     val expanded =
       if s == "~" then home
-      else if s.startsWith("~/") then home + s.substring(1)
+      else if s.startsWith("~/") || s.startsWith("~\\") then home + s.substring(1)
       else s
     normalizeSeparators(expanded)
 

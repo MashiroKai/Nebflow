@@ -221,7 +221,8 @@ final class NeblinkPresenceService(
     connections.containsKey(deviceId)
 
   /** Send a data message to a connected peer over the WS presence connection.
-   * Returns true if sent, false if no active WS connection. */
+    * Returns true if the message was actually flushed to the socket, false if
+    * there is no connection or the write did not complete (half-open TCP). */
   def sendData(deviceId: String, channel: String, payload: Json): IO[Boolean] =
     IO.blocking {
       val conn = connections.get(deviceId)
@@ -231,8 +232,18 @@ final class NeblinkPresenceService(
           "channel" -> channel.asJson,
           "payload" -> payload
         )
-        conn.ws.sendText(msg.noSpaces, true)
-        true
+        // Delivery-verified send (diag-transfer-stuck R3/P2): sendText used to
+        // return true as soon as the frame was *queued*. On a half-open
+        // connection the future never completes and the frame was silently
+        // lost while the caller believed P2P delivery succeeded (so it never
+        // fell back to relay). Wait briefly for the flush; timeout/failure →
+        // false so sendDataOrRelay can use the relay path.
+        try
+          conn.ws.sendText(msg.noSpaces, true).get(5, TimeUnit.SECONDS)
+          true
+        catch case _: Exception =>
+          logger.debug(s"WS send to $deviceId did not complete (half-open?), caller should use relay fallback")
+          false
       else
         logger.debug(s"No WS connection to $deviceId, data message not delivered via P2P")
         false
