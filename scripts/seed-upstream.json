@@ -1,0 +1,14 @@
+{
+  "_comment": "种子插件上游跟随基线表——scripts/sync-seed-upstream.mjs 读写。baseline = 种子蒸馏件当前对齐的上游 commit；check 模式对比上游 HEAD 与 baseline 的 upstreamDir diff，--apply 模式镜像同步后推进 baseline。",
+  "plugins": {
+    "slideblocks": {
+      "upstreamRepo": "https://github.com/UniUni2000/slideblocks-skill",
+      "upstreamDir": "skills/slideblocks",
+      "seedDir": "src/main/resources/seed/plugins/slideblocks/skills/slideblocks",
+      "baseline": "b3ed976",
+      "baselineFull": "b3ed976c272698a3e87712119b8633b63f95c2e9",
+      "upstreamHeadAtCheck": "b3ed976c272698a3e87712119b8633b63f95c2e9",
+      "recordedAt": "2026-09-09"
+    }
+  }
+}
