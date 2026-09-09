@@ -25,7 +25,11 @@ private[tools] class JobHealth(
   val outputLineCount: AtomicInteger = new AtomicInteger(0),
   val startedAtMs: AtomicLong = new AtomicLong(System.currentTimeMillis()),
   /** Whether a "process dead" notification has already been sent — prevents spam. */
-  val deadNotified: AtomicBoolean = new AtomicBoolean(false)
+  val deadNotified: AtomicBoolean = new AtomicBoolean(false),
+  /** 后台任务输出查看批（2026-09-09）：逐行输出汇聚口——runProcess 的 stdout/
+    * stderr 行回调调用。仅后台路径（executeBackground）注入 BgTaskOutputStore
+    * 缓冲 sink；前台/默认 no-op（前台输出直接随 ProcessResult 返回，无需缓冲）。 */
+  val outputSink: String => Unit = _ => ()
 )
 
 /** Snapshot of a running background job's health. */
@@ -140,14 +144,17 @@ final class ShellSession private (
     // 被 5min idle 杀、30min 被硬超时杀对 server 全是误杀）。用户自担：仍可
     // cancel_background_job 显式取消、killSessionProcesses/kill 照常清理、
     // WS 心跳指示器照常可见。心跳保持（可见性不受豁免影响）。
-    persistent: Boolean = false
+    persistent: Boolean = false,
+    // 输出查看批（2026-09-09）：逐行输出汇聚口（BgTaskOutputStore 缓冲 sink，
+    // BashTool 后台路径注入）。None = 无缓冲（默认，兼容既有调用方/测试）。
+    outputSink: Option[String => Unit] = None
   ): IO[String] =
     lifecycleMutex.lock.surround {
       for
         _ <- checkAlive *> touch
         jobId <- jobIdOverride.fold(IO.randomUUID.map(_.toString.take(8)))(IO.pure)
         deferred <- Deferred[IO, Either[Throwable, ProcessResult]]
-        health = new JobHealth()
+        health = new JobHealth(outputSink = outputSink.getOrElse(_ => ()))
         fiber <- backgroundExecute(command, deferred, health, on_complete).start
         hbFiber <- on_heartbeat match
           case Some(cb) => startHeartbeat(jobId, deferred, health, cb)
@@ -523,7 +530,10 @@ final class ShellSession private (
             // outer health — ensures stuck detection works even when caller
             // passed health = None.
             h.lastActivityMs.set(System.currentTimeMillis())
-            h.outputLineCount.incrementAndGet(),
+            h.outputLineCount.incrementAndGet()
+            // 输出查看批：行序按读取到达序（stdout/stderr 两读线程并发，全局
+            // 近似行序——简洁优先，不做流间严格排序）。
+            h.outputSink(line),
           isProcessExited = () => !proc.isAlive
         )
       )
@@ -532,7 +542,8 @@ final class ShellSession private (
           proc.getErrorStream,
           line =>
             h.lastActivityMs.set(System.currentTimeMillis())
-            h.outputLineCount.incrementAndGet(),
+            h.outputLineCount.incrementAndGet()
+            h.outputSink(line),
           isProcessExited = () => !proc.isAlive
         )
       )
