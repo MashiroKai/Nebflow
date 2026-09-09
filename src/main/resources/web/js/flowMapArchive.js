@@ -918,12 +918,20 @@ function renderDetail(/** @type {LayerCtx} */ ctx, /** @type {ChainMember} */ n)
       [t('flowmap.detail.preset'), esc(presetText), !n.preset],
       [t('flowmap.detail.plugins'), plugins.length ? esc(plugins.join(', ')) : esc(t('flowmap.detail.none')), !plugins.length],
     ])}`;
-  // 拓扑区：in 恒带数组（空 → muted 无）；out null → muted 无；deps 条件字段有才列。
+  // 拓扑区：in 恒带数组（空 → muted 无）；out 兼容双形态——D6 批 E1（5a45c788）
+  // 载荷改边对象数组 [{to,on,mode}]（归一化单点 buildNodeJson，缺键=无出边），
+  // legacy 字符串/字符串数组（双读解码前的存量盘上形态）一并防御，取目标名列表
+  // 逗号连接，空 → muted 无；deps 条件字段有才列。（修前 String(对象数组) 隐式
+  // 序列化产出 "[object Object]"；边门控展示等 F3 前端适配批落地。）
   const inList = Array.isArray(n.in) ? n.in : [];
+  /** @type {string[]} 出边目标名列表（边对象取 .to；legacy 字符串原样）。 */
+  const outTargets = Array.isArray(n.out)
+    ? n.out.map((e) => (e && typeof e === 'object') ? String(e.to ?? '') : String(e ?? '')).filter(Boolean)
+    : (n.out ? [String(n.out)] : []);
   /** @type {[string, string, boolean?][]} */
   const topoRows = [
     [t('flowmap.detail.in'), inList.length ? esc(inList.join(', ')) : esc(t('flowmap.detail.none')), !inList.length],
-    [t('flowmap.detail.out'), n.out ? esc(String(n.out)) : esc(t('flowmap.detail.none')), !n.out],
+    [t('flowmap.detail.out'), outTargets.length ? esc(outTargets.join(', ')) : esc(t('flowmap.detail.none')), !outTargets.length],
   ];
   if (Array.isArray(n.deps) && n.deps.length) {
     topoRows.push([t('flowmap.detail.deps'), esc(n.deps.join(', '))]);
