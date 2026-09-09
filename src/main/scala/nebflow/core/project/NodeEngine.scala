@@ -195,7 +195,11 @@ class NodeEngine(
       nodeSessions.update { m =>
         if m.get(nodeId).contains(sessionId) then (m - nodeId) else m
       } *>
-      resources.agentRegistry.update(_ - sessionId)
+      resources.agentRegistry.update(_ - sessionId) *>
+      // blocked 结构化信号批（20260909 spec §5.2 #5④）：登记表对称清理——
+      // cancelled/failed/异常退出路径未消费的申报在此兜底移除（completed 路径
+      // 已 drain，此处幂等 no-op）。与 running/nodeSessions 同点清理纪律。
+      BlockedSignalRegistry.remove(sessionId)
 
   /** 死会话 running 节点的自动收敛（僵尸收敛批 2026-09-06；与 NodeCancel-stale /
     * abandon 的人力收殓区分——本方法走**自动** watchdog 路径）。收敛目标取 **failed**
@@ -1340,7 +1344,14 @@ class NodeEngine(
       _ <- eventResult match
         case Right(messages) =>
           val text = extractLastAssistantText(messages)
-          completeNode(nodeId, text)
+          // blocked 结构化信号批（20260909 spec §5.2 #5①②）：会话完成时点 drain
+          // 登记表——工具申报（协议事实）优先于文本锚定（降级面，行为零变化）。
+          // 时序上必在 bg 闸之后（resultDeferred 完成即等待集已放行）；drain
+          // take-and-remove 单次消费，cancelled/failed 路径不消费（残留由
+          // guarantee 内 cleanupRunTables 的 remove 对称清理）。
+          BlockedSignalRegistry.drain(sessionId).flatMap { declared =>
+            completeNode(nodeId, text, declared)
+          }
         case Left(fo) =>
           if fo.message.contains("cancelled") then cancelNode(nodeId)
           else failNode(nodeId, fo.message)
@@ -1602,20 +1613,26 @@ class NodeEngine(
       }
 
     /** verify 产出裁决（PASS 投递 worker 产出 / FAIL 打回 +1 / BLOCKED → Loop 级
-      * blocked）——loopRound 正常轮与 verify 相位崩溃续跑（resumeVerifyRound）共用。 */
+      * blocked）——loopRound 正常轮与 verify 相位崩溃续跑（resumeVerifyRound）共用。
+      * blocked 结构化信号批（20260909 spec §5.2 #8）：verify 会话完成时点先 drain
+      * 登记表——工具申报（协议事实）优先，未命中走文本锚定降级面（行为零变化）。 */
     def handleVerify(roundNum: Int, wText: String, vMsgs: List[Message]): IO[Unit] =
       val vText = extractLastAssistantText(vMsgs)
-      BlockedReader.parse(vText) match
-        case Some(fb) => blockedNode(nodeId, fb) // verify 申告任务无法验证 → Loop 级 blocked
+      BlockedSignalRegistry.drain(verify.sessionId).flatMap {
+        case Some(fb) => blockedNode(nodeId, fb, finalText = Some(vText)) // verify 工具申报 → Loop 级 blocked
         case None =>
-          VerdictReader.parse(vText) match
-            case VerdictReader.Verdict.Pass =>
-              // PASS：投递 worker 最终产出原文（§2.2 裁定建议 a）
-              completeNode(nodeId, wText)
-            case f: VerdictReader.Verdict.Fail =>
-              // FAIL：打回 worker（同会话注入意见），轮 +1，至 K
-              setVerdict(nodeId, VerdictReader.renderFailSummary(f)) *>
-                loopRound(roundNum + 1, Some(f))
+          BlockedReader.parse(vText) match
+            case Some(fb) => blockedNode(nodeId, fb) // verify 申告任务无法验证 → Loop 级 blocked
+            case None =>
+              VerdictReader.parse(vText) match
+                case VerdictReader.Verdict.Pass =>
+                  // PASS：投递 worker 最终产出原文（§2.2 裁定建议 a）
+                  completeNode(nodeId, wText)
+                case f: VerdictReader.Verdict.Fail =>
+                  // FAIL：打回 worker（同会话注入意见），轮 +1，至 K
+                  setVerdict(nodeId, VerdictReader.renderFailSummary(f)) *>
+                    loopRound(roundNum + 1, Some(f))
+      }
 
     /** roundNum 轮的 verify 输入构建（首轮模板三全文，N≥2 短段）。 */
     def verifyInputFor(roundNum: Int, wText: String): IO[String] =
@@ -1643,17 +1660,24 @@ class NodeEngine(
             case Left(err) => failOrCancel(nodeId, s"worker round $roundNum: $err")
             case Right(wMsgs) =>
               val wText = extractLastAssistantText(wMsgs)
-              BlockedReader.parse(wText) match
-                case Some(fb) => blockedNode(nodeId, fb) // worker 申告无法继续 → Loop 级 blocked
+              // blocked 结构化信号批（20260909 spec §5.2 #8）：worker 会话完成时点
+              // 先 drain 登记表（工具申报优先，spawnLoopSession 会话已带 flowNodeId
+              // ——工具天然可达）；未命中走文本锚定降级面（行为零变化）。
+              BlockedSignalRegistry.drain(worker.sessionId).flatMap {
+                case Some(fb) => blockedNode(nodeId, fb, finalText = Some(wText)) // worker 工具申报 → Loop 级 blocked
                 case None =>
-                  for
-                    vIn <- verifyInputFor(roundNum, wText)
-                    _ <- goto(nodeId, NodeEngine.LoopPhaseVerify, roundNum)
-                    vOut <- step(verify, vIn)
-                    _ <- vOut match
-                      case Left(err) => failOrCancel(nodeId, s"verify round $roundNum: $err")
-                      case Right(vMsgs) => handleVerify(roundNum, wText, vMsgs)
-                  yield ()
+                  BlockedReader.parse(wText) match
+                    case Some(fb) => blockedNode(nodeId, fb) // worker 申告无法继续 → Loop 级 blocked
+                    case None =>
+                      for
+                        vIn <- verifyInputFor(roundNum, wText)
+                        _ <- goto(nodeId, NodeEngine.LoopPhaseVerify, roundNum)
+                        vOut <- step(verify, vIn)
+                        _ <- vOut match
+                          case Left(err) => failOrCancel(nodeId, s"verify round $roundNum: $err")
+                          case Right(vMsgs) => handleVerify(roundNum, wText, vMsgs)
+                      yield ()
+              }
         yield ()
 
     /** verify 相位崩溃续跑（裁定③）：以 worker transcript 末条 assistant 文本重建本轮
@@ -1694,29 +1718,39 @@ class NodeEngine(
   // deliverOut 沿空 out 悬空 → 下游永久 wiring；n-ab4a884f 同理回写覆盖成 Nebula。
   // 节点已不在活动区（被移除）→ 拒写拒投（陈旧写回会把它复活成垃圾行）。
 
-  private def completeNode(nodeId: String, resultText: String): IO[Unit] =
-    // blocked 分流（设计 §1.3/§2.1）：最终输出以 BLOCKED 锚定 → blockedNode；
-    // 非 BLOCKED 开头 → completeNode 原路径（产物完整性闸门 + completedNode）。
-    BlockedReader.parse(resultText) match
-      case Some(feedback) => blockedNode(nodeId, feedback)
+  /** blocked 结构化信号批（20260909 spec §5.3）：declared = 节点会话经
+    * report_blocked 工具申报的结构化反馈（NodeEngine 终态分流处 drain 登记表
+    * 所得）；默认 None 向后兼容全部既有调用点。分流顺序【结构化信号优先】：
+    * declared → BlockedReader 文本锚定（降级面，不放宽）→ CompletionGate。 */
+  private def completeNode(nodeId: String, resultText: String,
+      declared: Option[BlockedFeedback] = None): IO[Unit] =
+    declared match
+      // 结构化信号优先（协议事实）：工具申报即节点对任务可完成性的正式判断，
+      // blocked 可重激活无损，completed 伪终态不可逆（spec §6 语义裁定）。
+      case Some(fb) => blockedNode(nodeId, fb, finalText = Some(resultText))
       case None =>
-        // 产物完整性闸门（audit 20260905 机制建议）：completed 出口三合法态
-        // 校验（a 已提交+b commit-ready 申报+c 零改动；脏且未申报 → Reject）。
-        // Reject → blockedNode 转 blocked（复用 BLOCKED 反馈协议：不走 out 投递、
-        // 结果不丢弃，重入协议处置）——堵「节点自报 completed 但产物滞留」静默丢失。
-        // fail-open 见 CompletionGate.check。
-        store.getNode(nodeId).flatMap {
-          case Some(fresh) if fresh.status == NodeLifecycle.Running =>
-            CompletionGate.check(workspace, fresh.worktree, resultText, gateRunner).flatMap {
-              case CompletionGate.Pass(reason) =>
-                logger.debug(s"Node '${fresh.name}' completion gate pass: $reason")
-                completedNode(nodeId, resultText)
-              case CompletionGate.Reject(reason, diag) =>
-                logger.warn(s"Node '${fresh.name}' completion gate reject: $reason")
-                blockedNode(nodeId, CompletionGate.feedback(diag))
+        // blocked 分流（设计 §1.3/§2.1）：最终输出以 BLOCKED 锚定 → blockedNode；
+        // 非 BLOCKED 开头 → completeNode 原路径（产物完整性闸门 + completedNode）。
+        BlockedReader.parse(resultText) match
+          case Some(feedback) => blockedNode(nodeId, feedback)
+          case None =>
+            // 产物完整性闸门（audit 20260905 机制建议）：completed 出口三合法态
+            // 校验（a 已提交+b commit-ready 申报+c 零改动；脏且未申报 → Reject）。
+            // Reject → blockedNode 转 blocked（复用 BLOCKED 反馈协议：不走 out 投递、
+            // 结果不丢弃，重入协议处置）——堵「节点自报 completed 但产物滞留」静默丢失。
+            // fail-open 见 CompletionGate.check。
+            store.getNode(nodeId).flatMap {
+              case Some(fresh) if fresh.status == NodeLifecycle.Running =>
+                CompletionGate.check(workspace, fresh.worktree, resultText, gateRunner).flatMap {
+                  case CompletionGate.Pass(reason) =>
+                    logger.debug(s"Node '${fresh.name}' completion gate pass: $reason")
+                    completedNode(nodeId, resultText)
+                  case CompletionGate.Reject(reason, diag) =>
+                    logger.warn(s"Node '${fresh.name}' completion gate reject: $reason")
+                    blockedNode(nodeId, CompletionGate.feedback(diag))
+                }
+              case _ => completedNode(nodeId, resultText)
             }
-          case _ => completedNode(nodeId, resultText)
-        }
 
   /** completed 原路径：落库 completed + TTL → emitEvent nodeCompleted → deliverOut → settleDeps。 */
   private def completedNode(nodeId: String, resultText: String): IO[Unit] =
@@ -1911,8 +1945,15 @@ class NodeEngine(
     * ② emitEvent nodeUpdated（复用现有 WS 类型 + NodePayload 同构载荷，不加新事件类型）。
     * ③ 不结算下游（out=节点不做 barrier 占位投递——传播停止是特性；下游 pending
     *    由重入分发器 NodeList 可见并处置）。
-    * ④ 调 FeedbackRouter（重入 / 升级 / 频率保护决策）。 */
-  private def blockedNode(nodeId: String, feedback: BlockedFeedback): IO[Unit] =
+    * ④ 调 FeedbackRouter（重入 / 升级 / 频率保护决策）。
+    *
+    * finalText（blocked 结构化信号批 20260909 spec §5.2 #6）：工具申报通道传入
+    * 节点最终全文——result 落库 = 渲染串头部 + 全文拼接；内存 Ref/投递链持有
+    * 全文，落盘时 FlowMapStore persist 拆分（results/<nodeId>.md 全文 + JSON
+    * ≤500 字符摘要，头部恰为渲染串）观测面信息不丢。文本锚定路径不传
+    * （申报即全文，渲染串落库现状维持）。 */
+  private def blockedNode(nodeId: String, feedback: BlockedFeedback,
+      finalText: Option[String] = None): IO[Unit] =
     for
       now <- IO(System.currentTimeMillis())
       s <- store.mutate { st =>
@@ -1920,7 +1961,7 @@ class NodeEngine(
           case Some(fresh) if fresh.status == NodeLifecycle.Running =>
             st.copy(nodes = st.nodes.updated(nodeId, fresh.copy(
               status = NodeLifecycle.Blocked,
-              result = Some(BlockedReader.render(feedback)),
+              result = Some(BlockedReader.render(feedback) + finalText.fold("")("\n\n" + _)),
               blockedFeedback = Some(feedback),
               blockCount = fresh.blockCount + 1,
               completedAt = Some(now),
@@ -2587,16 +2628,23 @@ object NodeEngine:
     * count=3（> 2）→ 升级 Nebula 不再重入。 */
   val MaxBlockRoundsPerNode: Int = 2
 
-  /** blocked 声明协议脚注（设计 §1.5 文案原样，buildInput 末尾单点注入）。
-    * TaskBoard 批 2（§3c）：末尾增一行上报指引——与 blocked 协议同点注入、同
-    * 生命周期；措辞自带条件（「若…给了」），无板会话注入该行无副作用。 */
+  /** blocked 声明协议脚注（buildInput 末尾单点注入）。TaskBoard 批 2（§3c）：末尾
+    * 增一行上报指引——与 blocked 协议同点注入、同生命周期；措辞自带条件
+    * （「若…给了」），无板会话注入该行无副作用。
+    * blocked 结构化信号批（20260909 spec §5.2 #7）：第一优先 = 调用
+    * report_blocked 工具申报（协议级结构化信号，schema 白名单强制格式）；文本
+    * 锚定降级为「工具不可用时」备用通道，措辞强调首行裸形态要求（6 例实证：
+    * markdown 标题/加粗/前置导语均锚定失败）。 */
   val ProtocolFootnote: String =
     """── 节点协议 ──
       |若你判定任务无法完成（上游依赖未就绪/任务定义不完整/能力不匹配/缺外部条件），
-      |不要硬造结果：把最终输出的第一行写为 BLOCKED，随后给出 JSON：
-      |{"category":"…","detail":"…","suggestion":"…"}
-      |category ∈ upstream-incomplete | task-underspecified | agent-mismatch |
-      |external-dependency | needs-split | other。可完成时正常输出结果，勿以 BLOCKED 开头。
+      |不要硬造结果：第一优先调用 report_blocked 工具申报（参数 category/detail/
+      |suggestion；category ∈ upstream-incomplete | task-underspecified |
+      |agent-mismatch | external-dependency | needs-split | other），随后照常输出
+      |收尾报告。工具不可用时才用文本备用通道：把最终输出的第一行写为裸 BLOCKED
+      |（首行恰为 BLOCKED 四个字母——不加 # / ** / 导语等任何前缀），随后给出 JSON：
+      |{"category":"…","detail":"…","suggestion":"…"}。
+      |可完成时正常输出结果，勿申报 blocked。
       |若上方 <task-board> 给了你工单编号，完成或受阻时用 TaskBoard 工具更新其状态（close=完成，blocked=受阻）。""".stripMargin
 
   // ── LoopNode（LoopNode 批 2026-09-06，主设计 §2.2/§2.3）──────────────────
