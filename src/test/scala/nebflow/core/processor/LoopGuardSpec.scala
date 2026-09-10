@@ -318,6 +318,28 @@ class LoopGuardSpec extends FunSuite:
       case other                       => fail(s"expected Freeze (strongest), got $other")
   }
 
+  test("R1 resetCrossTurn: 唤醒清零观察窗后同 fp 再失败 1 次不冻；terminatedFps 不受影响") {
+    val e = failed("Read", args("/x"), "File does not exist: /x")
+    val fp = LoopGuard.fingerprint("Read", args("/x"))
+    // 唤醒前：t1/t2 已各记 1 次（未达 3 turn）
+    val (c1, _) = LoopGuard.evaluate(List(e), "t1", LoopGuard.Counters.Empty, cfg)
+    val (c2, _) = LoopGuard.evaluate(List(e), "t2", c1, cfg)
+    assertEquals(c2.crossTurn.get(fp).map(_.size), Some(2))
+    // 对照（未修原状）：不重置 → 唤醒 turn t3 第 1 败即 3 turns → Freeze
+    val (_, vRaw) = LoopGuard.evaluate(List(e), "t3", c2, cfg)
+    vRaw match
+      case LoopGuard.Verdict.Freeze(_) => // expected — 缺陷原状（唤醒后秒冻）
+      case other                       => fail(s"expected Freeze without reset, got $other")
+    // 修法：唤醒重置观察窗 → 同一 t3 第 1 败不得 Freeze（只重新记 1 个 turn）
+    val (c3, v3) = LoopGuard.evaluate(List(e), "t3", c2.resetCrossTurn, cfg)
+    v3 match
+      case LoopGuard.Verdict.Freeze(_) => fail("唤醒后第 1 次失败不得冻结（观察窗已清零）")
+      case _                           => // Pass/Warn 均可（turn 边界另按新 turnKey 清 S1/R）
+    assertEquals(c3.crossTurn.get(fp).map(_.size), Some(1))
+    // terminatedFps 刻意不随 resetCrossTurn 清（L1 终止过的 fp 复发仍即刻 Freeze）
+    assertEquals(c2.copy(terminatedFps = Set(fp)).resetCrossTurn.terminatedFps, Set(fp))
+  }
+
   test("reminderMessage renders system-reminder envelope") {
     val msg = LoopGuard.reminderMessage(LoopGuard.Verdict.Warn("something is looping"))
     assert(msg.startsWith("<system-reminder>"))
