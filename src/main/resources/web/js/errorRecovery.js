@@ -20,7 +20,7 @@
 //   errorEscalated{ sessionId, agentId?, reason, retryCount, level, escalateAt }
 //   resumed       { sessionId }  (shared with schedule — main.js owns it)
 
-import state from './state.js';
+import state, { LS_SESSIONS_KEY } from './state.js';
 import { t } from './i18n.js';
 import { sendWs } from './ws.js';
 import { escapeHtml } from './utils.js';
@@ -28,7 +28,15 @@ import { findViewBySessionId } from './chatView.js';
 
 // ── Reason metadata ──────────────────────────────────────────────────────
 // wire names are the FreezeReason enum cases (kebab) emitted by protocol.scala.
-const ERROR_REASONS = ['llm-transient', 'network', 'provider-down', 'restart-recovery'];
+// 'loop' (R3, 2026-09-10): LoopGuard L2 park. The backend enters it through the
+// SAME error-family entry point (AgentActor enterErrorFrozen(..., FreezeReason
+// .Loop, LoopFreezeResumeMs=365d)), so it belongs to this family. It used to be
+// absent here ⇒ normalizeReason() folded it into 'schedule' ⇒ the loop freeze
+// rendered as the sapphire TIME-TABLE freeze ("已冻结 · <+1y clock>", disabled
+// composer, "跳过本次" button — itself a backend no-op for loop) and never got
+// the retry/abandon affordances, i.e. the "why did it stop" was unanswerable
+// and the family's only exits were invisible.
+const ERROR_REASONS = ['llm-transient', 'network', 'provider-down', 'restart-recovery', 'loop'];
 
 /** True when the frozen reason is an error-family reason (not 'schedule'). */
 export function isErrorReason(reason) {
@@ -47,6 +55,7 @@ const REASON_KEYS = {
   'network': 'chat.errorRecovering.network',
   'provider-down': 'chat.errorRecovering.providerDown',
   'restart-recovery': 'chat.errorRecovering.restartRecovery',
+  'loop': 'chat.errorRecovering.loop',
 };
 
 /** Human label for a reason (already translated, via t()). */
@@ -72,6 +81,10 @@ const ICON_SHAPES = {
   // rotate-cw resume arrow — "restart recovery"
   'restart-recovery':
     '<polyline points="23 4 23 10 17 10"/><path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10"/>',
+  // rotate-ccw repeat cycle — "the same action keeps repeating"
+  'loop':
+    '<path d="m17 2 4 4-4 4"/><path d="M3 11v-1a4 4 0 0 1 4-4h14"/>' +
+    '<path d="m7 22-4-4 4-4"/><path d="M21 13v1a4 4 0 0 1-4 4H3"/>',
 };
 
 /** 18px warning SVG for a reason. Static shape (pulse via CSS, not rotation). */
@@ -89,7 +102,12 @@ export function buildStripText(info) {
   const n = Number(info.retryCount);
   const hasRetry = Number.isFinite(n) && n >= 1;
   let base;
-  if (hasRetry) {
+  if (normalizeReason(info.reason) === 'loop') {
+    // R3: the loop park never auto-recovers (resumeAt = +365d) — the generic
+    // "错误恢复中" prefix would be a lie. Dedicated line: what happened + the
+    // two real exits (the buttons sit right next to it).
+    base = t('chat.loopFrozenStrip');
+  } else if (hasRetry) {
     const retry = t('chat.errorRecoveringRetryCount', { n });
     base = t('chat.errorRecoveringStrip', { reason, retry });
   } else {
@@ -102,11 +120,86 @@ export function buildStripText(info) {
 }
 
 // ── Actions (dim 5: retry / abandon buttons) ─────────────────────────────
-/** "立即重试" — R3 user-wake, forces the frozen agent to resume (re-dispatch
- *  from its lastDispatch checkpoint). */
+/** Fresh clientMessageId — byte-identical in shape to the input.js send paths.
+ *  A NEW id per click is mandatory, not cosmetic: the frozen agent's wake
+ *  branch dedups on it (AgentActor.checkDuplicate) and a repeated id is
+ *  silently dropped — the 2nd click of a reused id would be a no-op. */
+function newClientMessageId() {
+  return Date.now().toString(36) + Math.random().toString(36).slice(2, 6);
+}
+
+/** Last user-authored message text of a session — the payload the retry
+ *  re-sends. DOM first (it renders the live conversation AND the backend
+ *  history restore), then the per-session localStorage cache written by
+ *  persistence.saveMsg (covers sessions whose view is not mounted).
+ *  Injected (blue) bubbles are `row user` + `bubble injected`, so the
+ *  `.bubble.user` selector skips them by construction; attachment-only rows
+ *  carry `att-bubble` and are skipped too (their text is a `[file: …]` tag).
+ *  Within a bubble the payload is the LAST child (plain sends = the text div;
+ *  /ask + skill bubbles = a label div followed by the question/argument div) —
+ *  reading the bubble itself would prepend the label. */
+function lastUserMessageText(sid) {
+  const v = findViewBySessionIdSafe(sid);
+  const chat = v && v.dom && v.dom.chat;
+  if (chat) {
+    const bubbles = chat.querySelectorAll('.row.user .bubble.user:not(.att-bubble)');
+    for (let i = bubbles.length - 1; i >= 0; i--) {
+      const txt = ((bubbles[i].lastElementChild || bubbles[i]).textContent || '').trim();
+      if (txt) return txt;
+    }
+  }
+  try {
+    const all = JSON.parse(localStorage.getItem(LS_SESSIONS_KEY) || '{}');
+    const arr = all[sid] || [];
+    for (let i = arr.length - 1; i >= 0; i--) {
+      const m = arr[i];
+      if (m && m.type === 'user' && !m.injected && typeof m.text === 'string' && m.text.trim()) {
+        return m.text.trim();
+      }
+    }
+  } catch (e) { /* cache unreadable — fall through to the empty return */ }
+  return '';
+}
+
+/** "立即重试" — user wake: re-send the last user message as a normal browser
+ *  send frame (typeless), which is what actually resumes the frozen agent.
+ *
+ *  R2 (2026-09-10). The previous form
+ *      sendWs({ type: 'immediateInput', sessionId: sid, content: '' })
+ *  was a structural no-op, twice over:
+ *   (a) empty content — the immediateInput route funnels into handleUserText,
+ *       whose `if sessionId.nonEmpty && content.nonEmpty` guard drops it with
+ *       a "dropped EMPTY content" warn and dispatches nothing;
+ *   (b) even with text it could never WAKE a frozen agent: the immediateInput
+ *       route reads only sessionId + content and never forwards
+ *       clientMessageId, and the frozen agent's only text exit is
+ *       `case UserInput(...) if clientMessageId.isDefined` ⇒ wake; without an
+ *       id the same message takes the queue-without-waking branch and the
+ *       freeze is untouched.
+ *  AgentCommand.Retry is not an alternative either: it has a handler
+ *  (AgentActor ~:3788) but NO WS route, and it re-dispatches as Gated — a loop
+ *  freeze would simply re-freeze. The typeless browser frame (content +
+ *  clientMessageId + sessionId) is the only client shape that reaches
+ *  AgentCommand.UserInput(content, None, clientMessageId, …) and thus the wake
+ *  branch. Chat width rides along (as in input.js) so the resumed turn keeps
+ *  the same wrap width.
+ *
+ *  Trade-off (inherent to re-sending): the agent's context gains a second copy
+ *  of the last user message. That is the point — the wake re-states the user's
+ *  request so the parked turn can be retried. */
 export function sendRetry(sid) {
   if (!sid) return;
-  sendWs({ type: 'immediateInput', sessionId: sid, content: '' });
+  const text = lastUserMessageText(sid);
+  if (!text) {
+    // No user text anywhere (no rendered row, no cache entry) — there is
+    // nothing to re-send, and an empty frame is exactly the no-op being fixed.
+    // Say so instead of failing silently.
+    console.warn('[errorRecovery] retry: no user message text available for session', sid);
+    return;
+  }
+  const v = findViewBySessionIdSafe(sid);
+  const chatWidth = (v && v.dom && v.dom.chat && v.dom.chat.clientWidth) || 0;
+  sendWs({ content: text, clientMessageId: newClientMessageId(), sessionId: sid, chatWidth });
 }
 
 /** "取消任务" — abandon recovery → terminal settle (reuses cancelAgent). */
@@ -300,6 +393,9 @@ export function errorTileText(meta) {
   if (reason === 'schedule') return '';
   if (meta.escalation) return t('chat.errorEscalatedEscalation');
   if (reason === 'llm-transient') return t('chat.errorTileRetry');
+  // Loop park is manual-only (no auto-recovery) — "等恢复" would promise a
+  // resume that never comes; label the cause instead.
+  if (reason === 'loop') return t('chat.errorRecovering.loop');
   return t('chat.errorTileWaiting');
 }
 
