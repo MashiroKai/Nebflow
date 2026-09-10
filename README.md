@@ -9,7 +9,7 @@ A self-hosted AI agent orchestration platform — bring all your work to one cha
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 [![Platform](https://img.shields.io/badge/platform-macOS%20%7C%20Linux%20%7C%20Windows-lightgrey.svg)](https://github.com/MashiroKai/Nebflow/releases)
 [![Scala](https://img.shields.io/badge/Scala-3.5.2-red.svg)](https://www.scala-lang.org/)
-[![Java](https://img.shields.io/badge/Java-17%2B-orange.svg)](https://adoptium.net/)
+[![Java](https://img.shields.io/badge/Java-21%2B-orange.svg)](https://adoptium.net/)
 
 <p align="center">
   <img src="docs/assets/readme/hero-flow-map.png" alt="Nebflow Flow Map — a task chain executing live" width="960">
@@ -87,7 +87,7 @@ nebflow start    # serves the web UI at http://localhost:8080
 
 Desktop installers with a bundled JRE (no Java install needed) are published on [GitHub Releases](https://github.com/MashiroKai/Nebflow/releases).
 
-To build from source (Java 17+, sbt):
+To build from source (Java 21+, sbt):
 
 ```bash
 sbt assembly

@@ -229,15 +229,16 @@ object DoctorCommand extends CliCommand:
         val javaMajor =
           try javaVer.takeWhile(_.isDigit).toInt
           catch case _ => 0
-        val javaOk = javaMajor >= 11
+        val javaOk = javaMajor >= 21
         checks += Diagnostic(
           "Java",
           javaOk,
           javaVer,
           if !javaOk && fix then
-            fixes += "Java 11+ required — please install or update JDK"
-            "Java 11+ required"
-          else if !javaOk then "Java 11+ required"
+            fixes += "Java 21+ required — please install or update JDK (https://adoptium.net/temurin/releases/?version=21)"
+            "Java 21+ required — install JDK 21, then re-run 'nebflow doctor --fix'"
+          else if !javaOk then
+            "Java 21+ required — install JDK 21 (https://adoptium.net/temurin/releases/?version=21), then re-run 'nebflow doctor'"
           else ""
         )
 
