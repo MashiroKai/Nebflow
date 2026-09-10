@@ -38,10 +38,12 @@ class SandboxFenceRemovalSpec extends CatsEffectSuite:
 
   private var savedDataRoot: Option[os.Path] = None
   private var pinnedDataRoot: Option[os.Path] = None
+  private val createdDirs = scala.collection.mutable.ListBuffer.empty[os.Path]
 
   override def beforeEach(context: munit.BeforeEach): Unit =
     savedDataRoot = Some(PathUtil.dataRoot)
     val pinned = os.Path(Files.createTempDirectory("nb-s2-dataroot"))
+    createdDirs += pinned
     os.makeDir.all(pinned / "agents" / "Coder")
     os.makeDir.all(pinned / "agents" / "Nebula")
     os.write.over(pinned / "agents" / "Coder" / "memory.md", "coder memory NBX_S2_CODER_MEM")
@@ -53,8 +55,11 @@ class SandboxFenceRemovalSpec extends CatsEffectSuite:
   override def afterEach(context: munit.AfterEach): Unit =
     savedDataRoot.foreach(PathUtil.setDataRoot)
     savedDataRoot = None
-    pinnedDataRoot.foreach(p => try os.remove.all(p) catch case _: Exception => ())
     pinnedDataRoot = None
+    // 自清：本批建的临时目录一律删除（跑完零残留；与 AGENTS.md「自起进程跑完即清」
+    // 同口径的测试侧纪律）
+    createdDirs.foreach(p => try os.remove.all(p) catch case _: Exception => ())
+    createdDirs.clear()
     super.afterEach(context)
 
   /** 开启态策略（真实 canonical）——pathRoot 随 forRoot 与 root 同源。 */
@@ -63,7 +68,9 @@ class SandboxFenceRemovalSpec extends CatsEffectSuite:
   private def ctxIn(tmp: os.Path): ToolContext = ToolContext(projectRoot = tmp.toString, sandbox = policyIn(tmp))
 
   private def freshDir(tag: String): os.Path =
-    os.Path(SandboxPolicy.canonicalize(Files.createTempDirectory(s"nb-s2-$tag").toAbsolutePath))
+    val d = os.Path(SandboxPolicy.canonicalize(Files.createTempDirectory(s"nb-s2-$tag").toAbsolutePath))
+    createdDirs += d
+    d
 
   // ------------------------------------------------------------------
   // S1：会话信号解耦
