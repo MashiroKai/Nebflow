@@ -258,10 +258,50 @@ case class AgentRecord(
    */
   status: AgentStatus = AgentStatus.Idle,
   /**
-   * P0 阶段 3：最近一次 turn 活动时间戳（LLM 流 chunk / 工具执行完成 /
-   * turn 完成时更新）。TaskStuckWatcher 判卡死的数据源。
+   * P0 阶段 3 + 2026-09-10 卡死判据换轴（信号拆分）：最近一次 **agent 侧**
+   * 活动时间戳——只允许由 agent 侧事件写入：LLM 调用开始 / 流 chunk / 工具
+   * 批次完成（AgentCore.pipeLlmCall / pipeToolExecutions）、turn 终态与控制
+   * 消息（AgentActor 各点）、AskUser/permission 进出（AgentCore.askUserPermission）、
+   * 出生注册。**进程侧活性不得再写入本字段**（写入点见 `processActivityMs`）。
+   * TaskStuckWatcher 判卡死的数据源之一。
    */
   lastActivityMs: Long = 0L,
+  /**
+   * 2026-09-10 卡死判据换轴（取证 `20260910_130621_flow-node-activity-signal-forensics.md`）：
+   * **进程侧**活性时间戳——唯一写点 = `BashTool.startActivityBridge`（前台命令
+   * 有进展：stdout 行数增长 / CPU ≥ CpuActiveThresholdNanos / sleep-like）与
+   * `RemoteExecutor` 远程前台心跳（每 30s 无条件）。
+   *
+   * 语义 =「这个会话正在跑的子进程还有动静」，**不是**「agent 还在推进」——
+   * 本次事故（n-5c69c793 会话被前台 `npx next dev` 占死 2h50m）里 dev server
+   * 的 CPU 微动（实测 1.786 ms/s = 10ms 阈值的 5.4 倍）持续刷新 agent 侧戳，
+   * 导致 TaskStuckWatcher / SessionKick / AgentControl 全部失明。
+   *
+   * **本字段不得再被 TaskStuckWatcher / SessionKick / 人可见 idle 读取**：
+   * 它只能作为「子进程确实活着」的旁证，不构成「有进展」。
+   */
+  processActivityMs: Long = 0L,
+  /**
+   * 2026-09-10 卡死判据换轴：当前 turn 起点（该 turn 首次进入 Processing 的
+   * 时刻）。由 AgentCore.touchRegistryActivity 在 status 由非 Processing
+   * 转入 Processing 时置位（同 turn 内的多轮工具循环不重置）；仅诊断/展示用，
+   * 不参与卡死判据（判据用 `currentToolStartedAt`）。
+   */
+  turnStartedAt: Long = 0L,
+  /**
+   * 2026-09-10 卡死判据换轴：当前 turn 内在飞的工具名。写入点 = 工具执行开始
+   * （AgentCore.pipeToolExecutions 既有工具循环内，与 touchRegistryActivity 同
+   * 一写入路径）；离开 Processing（Idle/WaitingForUser/Frozen/Error）或工具批次
+   * 完成时清空。人可见性：AgentControl list 的 phase 列 / status 的 toolPhase 行。
+   */
+  currentToolName: Option[String] = None,
+  /**
+   * 2026-09-10 卡死判据换轴：当前工具调用的起始时刻（0 = 无在飞工具）。
+   * **新卡死判据的主轴**：同一 turn 内单个工具调用持续超过
+   * `Defaults.ToolPhaseStuckMs`（默认 10min）且 status 仍为 Processing →
+   * 判卡死并走既有 L1→L4 分级恢复。判据**不引用任何进程 CPU**。
+   */
+  currentToolStartedAt: Long = 0L,
   /**
    * AgentControl（2026-08-19 spec §3.1）：监听该 agent 终态的 adapter 引用——
    * ephemeral Delegate/SubTask = BackoffSupervisor；persistent Delegate =

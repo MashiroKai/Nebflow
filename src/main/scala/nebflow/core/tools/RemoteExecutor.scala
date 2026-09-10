@@ -151,8 +151,10 @@ class RemoteExecutor(
    *
    * 远程执行无本地进程树、无进程级进展探测（HTTP 等待中无法区分「命令在跑」
    * 与「设备无响应」），因此：
-   * - 本地活动心跳（每 30s touch agent lastActivityMs）保持 turn 活动——
-   *   防 TaskStuckWatcher 把正常远程长命令误判卡死 restart
+   * - 进程侧活动心跳（每 30s touch **processActivityMs**，2026-09-10 换轴前写的是
+   *   lastActivityMs）——「对端还在等」的旁证；**不再**参与卡死判据，远程长命令
+   *   的看护改由工具相位判据承担（单个工具调用超 ToolPhaseStuckMs 且 turn 未完成
+   *   → TaskStuckWatcher 分级恢复）
    * - 真挂起（设备无响应）由 BgTimeout（3600s 网络超时）兜底——远程固有局限：
    *   无法像本地 Bash 一样用输出/CPU 停滞检测，网络层超时是唯一防线
    */
@@ -168,21 +170,24 @@ class RemoteExecutor(
     val description = s"[${peer.deviceName}] ${params("description").flatMap(_.asString).getOrElse(firstLine)}"
 
     for
-      // 活动心跳：等待期间每 30s 刷新 lastActivityMs（防 TaskStuckWatcher 误杀）。
+      // 进程侧活动心跳（2026-09-10 换轴）：等待期间每 30s 刷新
+      // **processActivityMs**（不再是 lastActivityMs——远程等待中的「进程/网络
+      // 还活着」不等于 agent 侧有进展；旧写点与 BashTool 活动桥同属事故根因族）。
       hbFiber <- (IO.sleep(30.seconds) *> touchAgentActivity(ctx)).foreverM.start
       r <- executeViaBestPath(peer, toolName, remoteParams, BgTimeout)
       _ <- hbFiber.cancel
     yield r
   end executeForegroundSync
 
-  /** 刷新 agent registry 的 lastActivityMs（远程等待期间保持 turn 活动）。 */
+  /** 刷新 registry 的 **进程侧** 活动戳（远程等待期间保持「对端还在跑」的旁证）。
+    * 2026-09-10 换轴：目标字段 = processActivityMs——本戳不参与卡死判据。 */
   private def touchAgentActivity(ctx: ToolContext): IO[Unit] =
     (ctx.sharedResources, ctx.sessionId) match
       case (Some(res), Some(sid)) =>
         val now = System.currentTimeMillis()
         res.agentRegistry.modify { m =>
           m.get(sid) match
-            case Some(rec) => (m.updated(sid, rec.copy(lastActivityMs = now)), ())
+            case Some(rec) => (m.updated(sid, rec.copy(processActivityMs = now)), ())
             case None => (m, ())
         }
       case _ => IO.unit

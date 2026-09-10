@@ -398,9 +398,14 @@ final class ShellSession private (
   /**
    * Minimum CPU delta (nanos) during sampling to consider a process "active".
    * 10ms of CPU work in 2s means the process is computing, not waiting for input.
-   * private[tools]（#391 机制 D）：BashTool 活动桥接的 hasProgress 与 no-progress
-   * ceiling 同标准——cpu > lastCpu 无阈值会让卡死进程的 CPU 微消耗（<10ms/30s）
-   * 持续 touch lastActivityMs → TaskStuckWatcher 永远判不了（B9 盲区 3）。
+   * private[tools]（#391 机制 D）：BashTool 活动桥接的 hasProgress 与后台停滞
+   * 探测（2s 采样窗）共用此常量。
+   *
+   * 2026-09-10 卡死判据换轴（阈值解耦）：前台 no-progress ceiling **不再**用本
+   * 常量——10ms/30s = 0.033% 单核，任何有偶发唤醒的进程都能越过（事故实证：
+   * 前台 dev server 1.786 ms/s = 5.4 倍阈值 ⇒ 10 分钟安全网被微动无条件解除，
+   * 命令跑了 2h50m 未被杀）。ceiling 改用
+   * Defaults.ForegroundCpuProgressNanos（1s/30s 窗 = 3.3% 单核，与采样窗同量纲）。
    */
   private[tools] val CpuActiveThresholdNanos: Long = 10_000_000L
 
@@ -590,11 +595,14 @@ final class ShellSession private (
           }.flatMap { (alive, lines, cpu) =>
             if !alive then IO.unit
             // Strictly-greater: macOS `ps` time quantizes to centiseconds —
-            // one quantum (10ms) EQUALS CpuActiveThresholdNanos, so `>=` let
-            // a sleep process's single startup quantum count as "active" and
-            // touch the window (D-1 flake under load). A genuinely computing
-            // process accrues orders of magnitude more per sample window.
-            else if lines > lastLines || (cpu - lastCpu) > CpuActiveThresholdNanos then
+            // one quantum (10ms) EQUALS the bridge's threshold.
+            // 2026-09-10 换轴（阈值解耦）：本 ceiling 的「有 CPU 进展」判据改用
+            // Defaults.ForegroundCpuProgressNanos（1s / 30s 采样窗 ≈ 3.3% 单核，
+            // 与采样窗同量纲），**不再**共用 BashTool 活动桥接的 10ms 常量：后者
+            // 10ms/30s = 0.033% 单核，进程一有偶发唤醒就解除窗口（事故实证：该
+            // 前台命令凭 CPU 微动（5.4 倍阈值）绕过了本条 10 分钟安全网，跑了 2h50m）。
+            // 真正在算的进程（构建/测试）一个 30s 窗烧掉远超 1s CPU → 照常续跑。
+            else if lines > lastLines || (cpu - lastCpu) > Defaults.ForegroundCpuProgressNanos then
               watch(lines, cpu, 0L)
             else if idleMs + ForegroundSampleInterval.toMillis >= ForegroundNoProgressTimeout.toMillis then
               IO.delay(

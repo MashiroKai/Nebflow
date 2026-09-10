@@ -478,14 +478,11 @@ class WebSocketRoutes(
     else
       sharedResources.agentRegistry.get.flatMap { registry =>
         registry.get(sessionId) match
-          case Some(rec)
-              if rec.status == nebflow.agent.AgentStatus.Processing &&
-                rec.lastActivityMs > 0 &&
-                System.currentTimeMillis() - rec.lastActivityMs >
-                  nebflow.shared.Defaults.SessionKickIdleSec * 1000L =>
+          case Some(rec) if isKickCandidate(rec, System.currentTimeMillis()) =>
+            val idleMs = System.currentTimeMillis() - rec.lastActivityMs
             logger.info(
-              s"SessionKick ($trigger): session $sessionId Processing with no activity for " +
-                s"${(System.currentTimeMillis() - rec.lastActivityMs) / 1000}s — force-aborting in-flight LLM transport"
+              s"SessionKick ($trigger): session $sessionId Processing with no agent-side activity for " +
+                s"${idleMs / 1000}s — force-aborting in-flight LLM transport"
             ) *>
               nebflow.llm.LlmInterface
                 .transportAbortFor(sessionId)
@@ -497,6 +494,30 @@ class WebSocketRoutes(
                 )
           case _ => IO.unit
       }
+
+  /**
+   * 2026-09-10 卡死判据换轴：kick 判据与 lastActivityMs 一并收紧为 **agent 侧**
+   * 信号，并加一条工具相位护栏（与 TaskStuckWatcher.assess 同轴）：
+   *
+   *   - lastActivityMs 现在只由 agent 侧事件写（BashTool 活动桥 / RemoteExecutor
+   *     心跳改写 processActivityMs）——旧判据「idle > 150s 就 kick」在长前台
+   *     命令期间读到的是**进程**活性，kick 语义（「LLM transport 被楔死」）错位。
+   *   - 护栏：**有工具正在执行**（0 < 工具已持续时间 ≤ ToolPhaseStuckMs）时不 kick
+   *     ——工具执行相位本就没有在飞 LLM 请求（上一轮流已结束），transport abort
+   *     是 no-op；且这条护栏避免了「新半径」：长前台命令（>150s）不再因为 agent 侧
+   *     戳停摆而被每次用户消息踢一脚。
+   *   - 工具相位**自己**超时（> ToolPhaseStuckMs）时护栏解除：让 TaskStuckWatcher
+   *     的换轴判据成为唯一接管者（此时 kick 命中 0 在飞请求，无副作用）。
+   */
+  private def isKickCandidate(rec: nebflow.agent.AgentRecord, now: Long): Boolean =
+    val kickIdleMs = nebflow.shared.Defaults.SessionKickIdleSec * 1000L
+    val agentIdleMs = if rec.lastActivityMs > 0 then now - rec.lastActivityMs else 0L
+    val toolPhaseMs = if rec.currentToolStartedAt > 0 then now - rec.currentToolStartedAt else 0L
+    val toolInFlight = toolPhaseMs > 0 && toolPhaseMs <= nebflow.shared.Defaults.ToolPhaseStuckMs
+    rec.status == nebflow.agent.AgentStatus.Processing &&
+      rec.lastActivityMs > 0 &&
+      agentIdleMs > kickIdleMs &&
+      !toolInFlight
 
   /**
    * Public API for external sources (e.g. bridge plugins) to inject a user message
