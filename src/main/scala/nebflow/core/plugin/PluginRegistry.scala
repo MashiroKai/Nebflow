@@ -69,7 +69,8 @@ object PluginRegistry:
     * （插件继续装载其余组件，§6.2 边界）。 */
   val CanonicalMcpSchema = "https://agent-plugins.org/schemas/1.0.0/mcp.schema.json"
 
-  /** §5.2 闭合 schema 十字段（其余能力走 extensions 命名空间）。描述单源批
+  /** §5.2 闭合 schema 十一字段（capability 系 dispatcher-ctx 批新增后注释未同步，
+    * 2026-09-10 顺手修正；其余能力走 extensions 命名空间）。描述单源批
     * （作者 2026-09-10 09:30 裁定）：`capability` 键转 deprecated——登记在本集合
     * 使存量包仍带该键不报错、不触发 unknown-field 告警（向后兼容），但读取/承载/
     * 渲染逻辑全部退役（PluginDef 无此字段），description 是唯一描述源。 */

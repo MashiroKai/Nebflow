@@ -1,0 +1,7 @@
+{
+  "$schema": "https://agent-plugins.org/schemas/1.0.0/plugin.schema.json",
+  "name": "你的插件名（1-64 字符；小写字母/数字/连字符/点；首尾字母数字；禁连续 -- 与 ..；禁用官方保留前缀 nebflow-plugin-）",
+  "version": "1.0.0",
+  "description": "定位句：XX 包——节点获得<一句话核心能力>。适用于<触发场景，核心词全落字>。内含 skills：<skill-a>（一句话括注）。不适用于<边界>；<相邻需求>另配 <插件名> 插件。无 mcp.json、无工具扩展。",
+  "author": {"name": "作者名"}
+}
