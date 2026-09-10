@@ -850,6 +850,12 @@ export default {
   'neblink.cancel': '取消',
   'neblink.updating': '更新中…',
   'neblink.restarting': '重启中…',
+  // 切换账号（设置页账号区，2026-09-10）
+  'neblink.switchAccount': '切换账号',
+  'neblink.logout': '退出登录',
+  'neblink.loggingOut': '正在退出…',
+  'neblink.useOtherAccount': '使用其他账号登录…',
+  'neblink.currentTag': '当前',
 
   // Dropbox
   'dropbox.tabChat': '对话',
