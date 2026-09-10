@@ -3705,6 +3705,13 @@ object AgentActor extends AgentCore with AgentSession:
           .withAskMode(Some(question))
           .withStatus(AgentStatus.Processing)
           .withNextLoopTurn // Block 3：冻结唤醒 = 新 turn
+          // A 轨（2026-09-10 冻结族最小修法，形态照 R1）：/ask 唤醒同样是新 turn
+          // 纪元 **且** 重新开始 LoopGuard 跨 turn 观察窗——不重置则唤醒前累积的
+          // 同 fp 失败记录把唤醒后的第 1 次失败直接推过 crossTurnFailureTurns
+          // （LoopGuardWiringSpec 先红实证：唤醒轮即 "failed in 4 separate turns"
+          // 秒冻）。terminatedFps 不在此列：被 L1 终止过的 fp 复发仍即刻 Freeze
+          // （既有语义，冻结不受影响）。
+          .withLoopCounters(state.loopCounters.resetCrossTurn)
         currentNextChange(resources).flatMap { nextChange =>
           emitStream(state.wsSend, AgentStreamEvent.Resumed(nextChange), isSubagent = depth > 0, state.sessionId) *> updateRegistryFrozenReason(resources, state.sessionId, None) *>
             pipeLlmCall(agentDef, resources, depth, parentRef, askState, None, DispatchCause.UserWake)
@@ -3720,6 +3727,13 @@ object AgentActor extends AgentCore with AgentSession:
           )
           .withStatus(AgentStatus.Processing)
           .withNextLoopTurn // Block 3：冻结唤醒 = 新 turn
+          // A 轨（2026-09-10 冻结族最小修法，形态照 R1）：skill 激活唤醒同样是新
+          // turn 纪元 **且** 重新开始 LoopGuard 跨 turn 观察窗——不重置则唤醒前
+          // 累积的同 fp 失败记录把唤醒后的第 1 次失败直接推过
+          // crossTurnFailureTurns（LoopGuardWiringSpec 先红实证：唤醒轮即
+          // "failed in 4 separate turns" 秒冻）。terminatedFps 不在此列（L1 终止过
+          // 的 fp 复发仍即刻 Freeze，既有语义不变）。
+          .withLoopCounters(state.loopCounters.resetCrossTurn)
         for
           _ <- currentNextChange(resources).flatMap { nextChange =>
             emitStream(state.wsSend, AgentStreamEvent.Resumed(nextChange), isSubagent = depth > 0, state.sessionId) *> updateRegistryFrozenReason(resources, state.sessionId, None)

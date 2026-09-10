@@ -237,11 +237,39 @@ class LoopGuardWiringSpec extends CatsEffectSuite:
         s"registry=${registry.values.map(r => s"${r.sessionId}:${r.status}").mkString(",")}, " +
         s"evs=${evs.map(_.noSpaces).mkString(" | ")})"
 
-  /** R1 钉子驱动：3 次带 clientMessageId 的用户消息 → 3 个不同 turn 各失败 1 次
-    * 同一 fp（第 3 turn 命中 crossTurnFailureTurns=3 → Freeze），随后第 4 次
-    * 用户唤醒（frozen 态 UserWake）同 fp 再失败 1 次。返回唤醒前后的原始快照。
+  /** A 轨（2026-09-10 冻结缺陷收尾）：frozen 态三条「用户动作唤醒」入口的到达形态。
+    * UserMessage = `AgentCommand.UserInput(clientMessageId.isDefined)`（R1 已修）；
+    * AskQuestion / SkillActivate = 本批两条同族路径（`/ask` WS 帧 → AgentActor.scala
+    * 冻结态 AskQuestion 分支；skill 激活帧 → 冻结态 SkillActivate 分支）。
     */
-  private def driveWake(actorName: String, script: Vector[Boolean]): WakeRun =
+  private enum WakeEntry:
+    case UserMessage, AskQuestion, SkillActivate
+
+  /** 唤醒命令（逐字镜像各入口在生产中到达 frozen 态时的命令形态）。 */
+  private def wakeCommand(entry: WakeEntry): AgentCommand = entry match
+    case WakeEntry.UserMessage =>
+      AgentCommand.UserInput("wake", None, Some("cmid-4"))
+    case WakeEntry.AskQuestion =>
+      AgentCommand.AskQuestion("wake-question: why does the Read keep failing?", "loop-wake-ask")
+    case WakeEntry.SkillActivate =>
+      AgentCommand.SkillActivate(
+        "wake-fixture-skill",
+        "wake-skill-input",
+        "loop-wake-skill",
+        "SKILL BODY (fixture)",
+        os.pwd.toString
+      )
+
+  /** R1 钉子驱动 + A 轨两入口复用：3 次带 clientMessageId 的用户消息 → 3 个不同
+    * turn 各失败 1 次同一 fp（第 3 turn 命中 crossTurnFailureTurns=3 → Freeze），
+    * 随后经 `entry` 指定的**用户动作唤醒**入口唤醒，同 fp 再失败 1 次。返回唤醒
+    * 前后的原始快照。
+    */
+  private def driveWake(
+      actorName: String,
+      script: Vector[Boolean],
+      entry: WakeEntry = WakeEntry.UserMessage
+  ): WakeRun =
     val system = ActorSystem(s"loop-guard-$actorName")
     val tmp = os.temp.dir()
     seedLoopConfig(tmp)
@@ -281,8 +309,8 @@ class LoopGuardWiringSpec extends CatsEffectSuite:
           s"$actorName cross-turn accumulation (3 turns) did not freeze", 30000)
         preLoop <- wsEvents.get.map(loopFrames(_).size)
         preBusy <- wsEvents.get.map(busyFalseCount)
-        // 用户唤醒（frozen 态 UserWake 分支）：同 fp 再失败 1 次
-        _ <- actor ! AgentCommand.UserInput("wake", None, Some("cmid-4"))
+        // 用户动作唤醒（frozen 态经 `entry` 入口）：同 fp 再失败 1 次
+        _ <- actor ! wakeCommand(entry)
         _ <- waitUntil(requests, (rs: List[LlmRequest]) => rs.size >= 6, 15000)
         // 收敛窗：未冻结 → 收尾轮（第 7 次请求）应已派出；冻结 → 停在第 6 次
         _ <- IO.sleep(2500.millis)
@@ -358,6 +386,36 @@ class LoopGuardWiringSpec extends CatsEffectSuite:
         s"fewer means the wake round re-froze on the pre-wake counter: $run")
     assertEquals(loopFrames(run.evs).size, 1,
       s"wake must not re-freeze: exactly 1 loopDetected (pre-wake), got ${loopFrames(run.evs).size}: $run")
+  }
+
+  test("A-track AskQuestion wake: frozen-state /ask wake restarts the cross-turn window") {
+    // 同族唤醒路径 #1（本批）：冻结态 `case AgentCommand.AskQuestion(question, _)` 分支
+    // ——WebSocketRoutes 的 /ask（WS `{type:"ask"}`）→ AgentCommand.AskQuestion。形态逐字
+    // 同构于 R1 UserWake：新 turn 纪元但（未修时）不重置 LoopGuard 跨 turn 观察窗 ⇒
+    // 唤醒后同 fp 再失败 1 次即被唤醒前记录推过 crossTurnFailureTurns。
+    val script = Vector(true, false, true, false, true, true, false)
+    val run = driveWake("wake-reset-ask", script, WakeEntry.AskQuestion)
+    assertEquals(run.preWakeLoopFrames, 1,
+      s"pre-wake cross-turn accumulation (3 turns, same fp) must still freeze: $run")
+    assertEquals(run.reqs.size, 7,
+      s"AskQuestion wake must restart the cross-turn observation window: expected 7 LLM requests, " +
+        s"got ${run.reqs.size} — fewer means the ask wake re-froze on the pre-wake counter: $run")
+    assertEquals(loopFrames(run.evs).size, 1,
+      s"ask wake must not re-freeze: exactly 1 loopDetected (pre-wake), got ${loopFrames(run.evs).size}: $run")
+  }
+
+  test("A-track SkillActivate wake: frozen-state skill wake restarts the cross-turn window") {
+    // 同族唤醒路径 #2（本批）：冻结态 `case AgentCommand.SkillActivate(...)` 分支
+    // ——WebSocketRoutes 的 skill 激活（WS `{type:"skill"}`）→ AgentCommand.SkillActivate。
+    val script = Vector(true, false, true, false, true, true, false)
+    val run = driveWake("wake-reset-skill", script, WakeEntry.SkillActivate)
+    assertEquals(run.preWakeLoopFrames, 1,
+      s"pre-wake cross-turn accumulation (3 turns, same fp) must still freeze: $run")
+    assertEquals(run.reqs.size, 7,
+      s"SkillActivate wake must restart the cross-turn observation window: expected 7 LLM requests, " +
+        s"got ${run.reqs.size} — fewer means the skill wake re-froze on the pre-wake counter: $run")
+    assertEquals(loopFrames(run.evs).size, 1,
+      s"skill wake must not re-freeze: exactly 1 loopDetected (pre-wake), got ${loopFrames(run.evs).size}: $run")
   }
 
 end LoopGuardWiringSpec
