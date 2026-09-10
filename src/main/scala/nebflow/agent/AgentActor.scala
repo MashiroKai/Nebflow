@@ -3672,6 +3672,12 @@ object AgentActor extends AgentCore with AgentSession:
               .withEmptyResponseRetries(0)
               .withMailUsedThisTurn(false)
               .withNextLoopTurn // Block 3：冻结唤醒 = 新 turn
+              // R1（2026-09-10 冻结族最小修法）：用户唤醒 = 新 turn 纪元 **且**
+              // 重新开始 LoopGuard 跨 turn 观察窗——不重置则唤醒前累积的同 fp
+              // 失败记录把唤醒后的第 1 次失败直接推过 crossTurnFailureTurns
+              // （实测唤醒后 6.65s / 21.26s 复冻）。terminatedFps 不在此列：
+              // 被 L1 终止过的 fp 复发仍即刻 Freeze（既有语义，冻结不受影响）。
+              .withLoopCounters(stateWithWidth.loopCounters.resetCrossTurn)
             logAgentEvent(agentDef, depth, state.sessionId, state.sessionName, "freeze-wake", s"text=${text.take(60)}")
             currentNextChange(resources).flatMap { nextChange =>
               emitStream(state.wsSend, AgentStreamEvent.Resumed(nextChange), isSubagent = depth > 0, state.sessionId) *> updateRegistryFrozenReason(resources, state.sessionId, None) *>
