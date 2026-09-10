@@ -1,8 +1,7 @@
 {
   "$schema": "https://agent-plugins.org/schemas/1.0.0/plugin.schema.json",
   "name": "visual-report",
-  "version": "1.0.0",
-  "description": "可视化汇报包——用专业工具（matplotlib/graphviz/plotly 等）生成 SVG 图表并用 Pop 展示到 Canvas。内含 skills：visual-report（图表/架构图/流程图/数据可视化生成规范：配色、排版、标注、布局审美）。HTML 卡片样式规范另配 design-cards 插件的 card-design。无 mcp.json、无工具扩展。",
-  "capability": "可视化汇报生产：节点获得用专业工具（matplotlib/graphviz/plotly）生成图表/架构图/流程图 SVG 并经 Pop 展示的规范与审美纪律",
+  "version": "1.0.1",
+  "description": "可视化汇报包——节点获得用专业工具（matplotlib/graphviz/plotly 等）生成 SVG 图表并经 Pop 展示到 Canvas 的能力。适用于画图表、画架构图、画流程图、数据可视化、出图配图、做可视化汇报等任务。内含 skill：visual-report（图表/架构图/流程图/数据可视化生成规范：配色、排版、标注、布局审美）。HTML 卡片样式规范另配 design-cards 插件的 card-design。组件面：无 mcp.json、无工具扩展。",
   "author": {"name": "Nebflow"}
 }
