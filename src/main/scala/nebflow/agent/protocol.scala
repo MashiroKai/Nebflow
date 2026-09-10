@@ -308,10 +308,14 @@ case class AgentRecord(
    * （[[nebflow.shared.Defaults.declaredToolTimeoutMs]]，只读声明值、不读工具默认
    * 值）。0 = 未声明。
    *
-   * 判据消费单点 = `TaskStuckWatcher.assess` 的 toolOverdue 轴：
-   * `toolPhaseMs > min(ToolPhaseStuckMs, currentToolDeadlineMs + slack)` —— 判据
+   * 判据消费单点 = `TaskStuckWatcher.assess` 的 toolOverdue 轴（经
+   * [[nebflow.core.processor.ToolStuckJudgment.effectiveToolPhaseMs]]）：
+   * `toolPhaseMs > max(ToolPhaseStuckMs, currentToolDeadlineMs + slack)` —— 判据
    * 尊重命令自己声明的合法时长（案例 1 的 `timeout=900000ms` 不再在 11.2 分钟被
-   * 判死）。判据仍**不引用任何进程 CPU**。
+   * 判死）。**只放宽不收紧**；未声明 `timeout` 的工具仍按默认档 10min 判死。
+   * 口径已裁定（2026-09-10：以 `max` 为准；设计 §6-R6 逐字写 `min`，与本项立论
+   * 「尊重命令自己声明的合法时长」不自洽——见设计 §6-R6 订正注记）。
+   * 判据仍**不引用任何进程 CPU**。
    *
    * 生命周期与 currentToolStartedAt 同步（工具开始置位 / 工具批次完成与离开
    * Processing 清 0）。
