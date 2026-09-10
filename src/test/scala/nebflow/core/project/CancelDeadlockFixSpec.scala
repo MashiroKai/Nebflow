@@ -35,8 +35,10 @@ import scala.concurrent.duration.*
  *    且未被即时告警的停滞仍由回扫照常发（不是全面静音）
  *  - R3 failed 侧：settleStaleRunningNodes 收敛 failed → barrier-blocked；且
  *    **零摘除**（下游 in 不动、无 pendingSuccession）——R4 硬约束的代码面证据
- *  - R5：settleFailedHardResume 失败腿（摘除 + 即时告警 + R1 回流 + hard-recovery
- *    留痕）与两条无动作腿（非 cancelled 节点 / 无归属会话）
+ *  - R5 **方案 4**：`settleFailedHardResume` 失败腿把 L3 中间态 Cancelled **改判
+ *    failed**（经 `failNode` 全链：result 含 sessionId + L3 语义 / nodeUpdated /
+ *    failed 回流恰好一次 / D5 零结算停等），**不摘除、不打 pendingSuccession**；
+ *    两条无动作腿（非 cancelled 节点 / 无归属会话）与状态守卫幂等
  *
  * ⚠ 隔离实例（真 gateway）实测 Δ 读数不在本文件——见批报告证据目录。
  */
@@ -394,7 +396,7 @@ class CancelDeadlockFixSpec extends CatsEffectSuite:
         s"R4 visibility: frame payload must carry pendingSuccession, got ${bFrame.get.noSpaces.take(300)}")
   }
 
-  test("R3-dedup-b: immediate barrier check obeys the legal-wait exemptions — a still-running sibling upstream (and a dangling ref) must NOT raise the alert, while the R4 detach still lands") {
+  test("R3-dedup-b: immediate barrier check obeys the legal-wait exemptions — a still-running sibling upstream (and a dangling ref) must NOT raise the alert, while the R5-方案4 failed re-judge leaves the graph intact") {
     val ws = tempRoot / "ws-dedup-b"
     os.makeDir.all(ws)
     val system = ActorSystem(s"cd-dedupb-${scala.util.Random.nextInt(100000)}")
@@ -403,7 +405,7 @@ class CancelDeadlockFixSpec extends CatsEffectSuite:
       res <- mkResources(system, tempRoot, new StubLlm().handle)
       triggered <- Ref.of[IO, List[String]](Nil)
       rt <- mountProject("cd-dedup-b", ws, system, res, triggered)
-      // U：被取消（L3 未摘除）→ 会触发即时检查；E：仍在 running = 合法等待（不得告警）
+      // U：L3 中间态被取消（未摘除）→ settleFailedHardResume 改判 failed → 触发即时检查；E：仍在 running = 合法等待（不得告警）
       _ <- seed(rt.store, NodeDef(id = "n-u", name = "U", agent = "general",
         status = NodeLifecycle.Cancelled, result = Some("cancelled[source=engine]: reason=x"),
         sessionRef = Some("node-sess-l3b"), out = List(OutEdge("n-d"), OutEdge("n-x")),
@@ -422,8 +424,12 @@ class CancelDeadlockFixSpec extends CatsEffectSuite:
       audit <- readAudit(ws)
       _ <- system.stopAll.handleErrorWith(_ => IO.unit)
     yield
-      assertEquals(u.out, List(OutEdge.nebula), "R5 failure leg detach must still land (idempotent, independent of the alert)")
-      assertEquals(d.pendingSuccession, List("n-u"), "successor must still be marked")
+      // R5 方案 4：改判 failed ⇒ failed 侧零摘除（out 原样、下游 in 不动、无「待承接」标）
+      assertEquals(u.status, NodeLifecycle.Failed, "L3 resume failure must re-judge the node as failed")
+      assertEquals(u.out, List(OutEdge("n-d"), OutEdge("n-x")),
+        "R4 red line: the failed side must NOT detach the out edges")
+      assert(d.in.contains("n-u"), s"failed side must NOT prune the downstream in mirror, got ${d.in}")
+      assertEquals(d.pendingSuccession, Nil, "R4 red line: the failed side must NOT write the 待承接 marker")
       val alerts = audit.filter(_._1 == "barrier-blocked")
       assertEquals(alerts.filter(_._2 == "n-d"), Nil,
         s"legal wait (sibling upstream still running) must NOT alert, got ${alerts.map(_._2)}")
@@ -431,9 +437,9 @@ class CancelDeadlockFixSpec extends CatsEffectSuite:
         s"dangling upstream ref must NOT alert (conservative), got ${alerts.map(_._2)}")
   }
 
-  // ── R5：L3 resume 失败腿 ────────────────────────────────────────
+  // ── R5 方案 4：L3 resume 失败腿 → 改判 failed ─────────────────────
 
-  test("R5: settleFailedHardResume — cancelled node w/o detach gets detach + immediate barrier alert + R1 notify + hard-recovery FAILED audit; repeated call performs no new action") {
+  test("R5-方案4: settleFailedHardResume re-judges the L3-cancelled node as FAILED via the failNode chain — out kept (no detach / no pendingSuccession, D5 stop-wait) + exactly one FAILED notification + hard-recovery audit; replay is a state-guarded no-op") {
     val ws = tempRoot / "ws-l3fail"
     os.makeDir.all(ws)
     val system = ActorSystem(s"cd-l3-${scala.util.Random.nextInt(100000)}")
@@ -442,10 +448,13 @@ class CancelDeadlockFixSpec extends CatsEffectSuite:
       res <- mkResources(system, tempRoot, new StubLlm().handle)
       triggered <- Ref.of[IO, List[String]](Nil)
       rt <- mountProject("cd-l3fail", ws, system, res, triggered)
-      // 被取消的上游（L3 路径**未摘除**——out 仍指下游）+ 带 pendingSuccession 的下游
+      // L3 中间态现场：节点被 bridge Cancelled（out **未摘除**）+ 回流占位已写
+      // （cancelNode(notify=false) → holdTerminalNotify；见 NodeEngine.cancelNode 头注）
       _ <- seed(rt.store, NodeDef(id = "n-u", name = "U", agent = "general",
-        status = NodeLifecycle.Cancelled, result = Some("cancelled[source=engine]: reason=stuck 25m (L3 hard-recovery: released by TaskStuckWatcher)"),
+        status = NodeLifecycle.Cancelled,
+        result = Some("cancelled[source=engine]: reason=stuck 25m (L3 hard-recovery: released by TaskStuckWatcher)"),
         sessionRef = Some("node-sess-l3"), out = List(OutEdge("n-d")),
+        notifySentAt = Some(now - 4_000L),
         createdAt = now - 1_800_000L, completedAt = Some(now - 1_800_000L)))
       _ <- seed(rt.store, NodeDef(id = "n-d", name = "D", agent = "general",
         status = NodeLifecycle.Pending, in = List("n-u"), createdAt = now - 1_700_000L))
@@ -456,27 +465,79 @@ class CancelDeadlockFixSpec extends CatsEffectSuite:
       fired1 <- triggered.get
       _ <- rt.engine.settleFailedHardResume("node-sess-l3") // 幂等重放
       fired2 <- triggered.get
+      u2 <- node(rt, "n-u")
       d2 <- node(rt, "n-d")
       audit2 <- readAudit(ws)
       _ <- system.stopAll.handleErrorWith(_ => IO.unit)
     yield
-      assertEquals(u.out, List(OutEdge.nebula), "R5 failure leg must perform the deferred R4 detach")
-      assert(!d.in.contains("n-u") && d.pendingSuccession == List("n-u"),
-        s"R5 failure leg must mark the successor: in=${d.in} pendingSuccession=${d.pendingSuccession}")
+      // ① 改判：Cancelled → Failed，result 自解释（含 sessionId + 「L3 hard-recovery resume failed」语义）
+      assertEquals(u.status, NodeLifecycle.Failed, "L3 resume failure must re-judge the node as failed")
+      val uErr = u.result.getOrElse("")
+      assert(uErr.contains("L3 hard-recovery resume failed"), s"result must carry the L3 failure semantics: $uErr")
+      assert(uErr.contains("node-sess-l3"), s"result must carry the sessionId: $uErr")
+      assert(u.completedAt.isDefined && u.ttlExpireAt.isEmpty, "failed finalize must stamp completedAt and keep the node (no TTL sweep)")
+      // ② failed 侧零摘除 / 零标记（D5 零结算停等）——R4 硬约束：不得把摘除扩展到 failed
+      assertEquals(u.out, List(OutEdge("n-d")), "failed side must NOT detach the out edge (R4→failed permanently rejected)")
+      assertEquals(d.in, List("n-u"), s"failed side must NOT prune the downstream in mirror, got ${d.in}")
+      assertEquals(d.pendingSuccession, Nil, "failed side must NOT write the 待承接 marker")
+      // ③ 回流**恰好一次**且语义为 failed（占位归还 → failNode → deliverFailed → notifyTerminal(Failed)）
+      //    ——既不双份（cancelled 那一条从未发出）也不零回流（failed 这一条正常发出）
+      assert(u.notifySentAt.isDefined, "the failed notification must land notifySentAt (chainArchivable entry condition)")
+      assertEquals(fired1.size, 1, s"exactly one dispatcher notification expected, got ${fired1.size}: ${fired1.map(_.take(80))}")
+      val text = fired1.head
+      assert(text.contains("reason=failed"), s"notification must be the failed variant: ${text.take(200)}")
+      assert(text.contains("L3 hard-recovery resume failed"),
+        s"notification must carry the L3 failure reason text: ${text.take(400)}")
+      assert(text.contains("触发 reactivate 重跑"), s"failed text must keep the reactivate guidance: ${text.take(300)}")
+      assert(!text.contains("已被**取消**"), "the cancelled notification variant must NEVER be sent on the L3 failure leg")
+      assert(text.contains("下游等待者（failed 零结算停等中"), s"D5 stop-wait must be visible in the notification: ${text.take(400)}")
+      assert(text.contains("D(n-d)"), s"the waiting successor must be listed: ${text.take(400)}")
+      // ④ 审计：一条 hard-recovery 行 + 中间态 cancelled 事件不被改写（append-only）
       val hr = audit1.filter { case (t, id, _) => t == "hard-recovery" && id == "n-u" }
-      assertEquals(hr.size, 1, s"exactly one hard-recovery FAILED line expected, got ${audit1.map((t, id, _) => (t, id))}")
-      assert(hr.head._3.contains("L3 resume FAILED"), s"R5 failure wording: ${hr.head._3}")
+      assertEquals(hr.size, 1, s"exactly one hard-recovery line expected, got ${audit1.map((t, id, _) => (t, id))}")
+      assert(hr.head._3.contains("L3 resume FAILED") && hr.head._3.contains("re-judged as failed"),
+        s"audit wording must state the re-judge: ${hr.head._3}")
+      val canc = audit1.filter { case (t, id, _) => t == "cancelled" && id == "n-u" }
+      assertEquals(canc.size, 0, "no NEW cancelled event is written by the fallback (the historical one, if any, is never rewritten)")
+      // ④b failed 侧 barrier 检查（R3 一栏，cause 随终态改写为 failed）：下游被判「被终态上游永久闸死」→ 即时告警
       val bEv = audit1.filter { case (t, id, _) => t == "barrier-blocked" && id == "n-d" }
-      assertEquals(bEv.size, 1, s"R5 failure leg must raise the immediate barrier alert, got ${audit1.map((t, id, _) => (t, id))}")
-      assert(bEv.head._3.contains("cause=L3-resume-failed"), s"alert must carry the L3 cause: ${bEv.head._3}")
-      assertEquals(fired1.size, 1, s"R5 failure leg must notify the dispatcher (R1), got ${fired1.size}")
-      // 幂等：动作零新增（重复调用不重复触发/不重复告警；审计行本身按调用追加，见本用例断言）
-      assertEquals(fired2.size, 1, "repeated call must not re-notify (notifySentAt dedup)")
-      assertEquals(d2.pendingSuccession, List("n-u"), "marker must not duplicate")
-      val bEv2 = audit2.filter { case (t, id, _) => t == "barrier-blocked" && id == "n-d" }
-      assertEquals(bEv2.size, 1, "repeated call must not re-alert the same barrier")
-      val hr2 = audit2.filter { case (t, id, _) => t == "hard-recovery" && id == "n-u" }
-      assertEquals(hr2.size, 2, "audit line is appended per call (actions are idempotent; the log is append-only by design)")
+      assertEquals(bEv.size, 1, s"the failed-side terminal write point must raise the immediate alert, got ${audit1.map((t, id, _) => (t, id))}")
+      assert(bEv.head._3.contains("cause=failed"), s"alert must carry cause=failed: ${bEv.head._3}")
+      // ⑤ 幂等：状态守卫（已非 Cancelled）→ 零动作、零新增事件、零重复回流
+      assertEquals(u2.status, NodeLifecycle.Failed, "replay must not flip the re-judged status")
+      assertEquals(fired2.size, 1, "replay must not re-notify (state guard + notifySentAt dedup)")
+      assertEquals(d2.pendingSuccession, Nil, "replay must not write the marker")
+      assertEquals(audit2.filter { case (t, id, _) => t == "hard-recovery" && id == "n-u" }.size, 1,
+        "replay must not append another hard-recovery line (state guard, not log-append)")
+  }
+
+  test("R5-方案4 dedup: holdTerminalNotify keeps the L3 intermediate Cancelled state out of the 30s redeliver sweep (0 candidates); releaseTerminalNotify hands the marker back so the next real terminal state notifies exactly once") {
+    for
+      (store, dn, triggered, _, _) <- mkNotify("hold")
+      _ <- seed(store, cNode("n-h", "hold-one"))
+      // ① 基线：无占位 → 补投扫描把它当候选（1 条 cancelled 通知）
+      n0 <- dn.redeliver()
+      f0 <- triggered.get
+      // ② L3 中间态：占位写入 → 扫描结构性看不见它（5s 窗口内任一轮都不会把中间态当终局回流）
+      _ <- dn.holdTerminalNotify("n-h")
+      held <- store.getNode("n-h").map(_.exists(_.notifySentAt.isDefined))
+      n1 <- dn.redeliver()
+      f1 <- triggered.get
+      // ③ 终局腿归还：占位清零 → 下一次真实终态照常回流
+      _ <- dn.releaseTerminalNotify("n-h")
+      cleared <- store.getNode("n-h").map(_.exists(_.notifySentAt.isEmpty))
+      n2 <- dn.redeliver()
+      f2 <- triggered.get
+      f2Texts = f2.map(_.take(60))
+    yield
+      assertEquals(n0, 1, "baseline: an unmarked cancelled node is a redeliver candidate")
+      assertEquals(f0.size, 1, s"baseline sweep must notify once, got ${f0.size}")
+      assert(held, "holdTerminalNotify must write the notifySentAt placeholder")
+      assertEquals(n1, 0, s"the held node must leave the sweep candidate set (no cancellation-sweep race), got $n1")
+      assertEquals(f1.size, 1, s"no extra notification while held, got ${f1.size}: $f2Texts")
+      assert(cleared, "releaseTerminalNotify must clear the marker")
+      assertEquals(n2, 1, "after the hand-back the node is a candidate again")
+      assertEquals(f2.size, 2, s"the next real terminal state notifies exactly once more, got ${f2.size}")
   }
 
   test("R5b: settleFailedHardResume no-op legs — node not cancelled, and unknown session (both silent, zero side effects)") {

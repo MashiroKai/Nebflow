@@ -798,15 +798,15 @@ object TaskStuckWatcher:
         logger.error(s"TaskStuckWatcher: project runtime lookup failed: ${Option(e.getMessage).getOrElse(e.toString)}")
           .as(None))
 
-  /** R5 失败分支（取消静默死锁修复批 2026-09-10，作者裁定 R5 方案 3）：L3 resume
-    * 未生效 ⇒ 节点停留在 Cancelled 终态（且按 R4 摘除尚未执行——L3 取消路径有意
-    * 延后摘除，见 NodeEngine 桥注释）——补两条出路：
-    *   ① 按 **R1** 回流分发器（幂等：cancelNode 时已触发+makrSent ⇒ 此处 no-op，
-    *      引擎侧 settleFailedHardResume 统一收口）；
-    *   ② 按 **R4** 摘除被取消节点的 out（→ Nebula）并给受影响下游打「待承接」标，
-    *      同时补发**R3** 即时 barrier 告警。
-    * 找不到 runtime（跨项目/未挂载）→ 响亮 ERROR（诚实失败；节点仍 cancelled，
-    * 可见性由事件流 mount-stalled 兜底）。 */
+  /** R5 失败分支（取消静默死锁修复批 2026-09-10）：L3 resume 未生效 ⇒ 引擎侧把节点
+    * **改判 failed**（R5 方案 4，见 `NodeEngine.settleFailedHardResume`：failNode 全链
+    * = result 含原因 / nodeUpdated / failed 回流 / D5 停等留痕），本方法只是「找 runtime
+    * → 转交引擎」的定位层：
+    *   - 找得到 runtime → [[NodeEngine.settleFailedHardResume]]（唯一终局写点；节点
+    *     **不摘除、不打 pendingSuccession**——failed 侧零标的 D5 纪律）。
+    *   - 找不到 runtime（跨项目/未挂载）→ 响亮 ERROR（诚实失败；节点仍 cancelled，
+    *     可见性由事件流 `cancelled` + 周期 `mount-stalled` 兜底）——此出口**无法**改判
+    *     （没有引擎实例可写节点），是本方法的已知残口，不在本批修复面内。 */
   private def hardRecoveryFallback(resources: SharedResources, rec: AgentRecord): IO[Unit] =
     nebflow.core.project.ProjectRuntimeRegistry.all
       .flatMap { rts =>
@@ -815,13 +815,13 @@ object TaskStuckWatcher:
           case None =>
             logger.error(
               s"TaskStuckWatcher: L3 resume failed and no project runtime for ${rec.sessionId} " +
-                s"(root=${rec.rootSessionId}) — node left cancelled without dispatcher notify / upstream detach " +
+                s"(root=${rec.rootSessionId}) — node left cancelled without the failed re-judge / dispatcher notify " +
                 "(manual intervention required)"
             )
       }
       .handleErrorWith(e =>
         logger.error(
-          s"TaskStuckWatcher: L3 fallback (R1 notify / R4 detach) failed for ${rec.sessionId}: ${Option(e.getMessage).getOrElse(e.toString)}"
+          s"TaskStuckWatcher: L3 fallback (failed re-judge) failed for ${rec.sessionId}: ${Option(e.getMessage).getOrElse(e.toString)}"
         ))
 
 end TaskStuckWatcher

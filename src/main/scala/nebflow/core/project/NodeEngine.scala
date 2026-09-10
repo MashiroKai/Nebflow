@@ -452,7 +452,12 @@ class NodeEngine(
                       status = NodeLifecycle.Pending,
                       completedAt = None,
                       ttlExpireAt = None,
-                      bgWait = None))), true)
+                      bgWait = None,
+                      // R5 方案 4：L3 中间态的回流占位（cancelNode(notify=false) 写入）
+                      // 在此归还——节点已复活，本代次的真实终态尚未发生，占位若留
+                      // 会把将来的 completion 回流持久去重吞掉（新一代静默死锁）。
+                      // Running → Pending 时清无可清（幂等零副作用）。
+                      notifySentAt = None))), true)
                   case _ => (s, false)
               }.flatMap { (s, ok) =>
                 if !ok then
@@ -478,36 +483,68 @@ class NodeEngine(
           }
     }
 
-  /** R5 resume 失败分支（取消静默死锁修复批 2026-09-10，作者裁定 R5 方案 3）：
-    * L3 硬恢复的 resume 未生效 ⇒ 节点停留在 Cancelled 终态。作者裁定「失败时按 R1
-    * 回流 + 按 R4 摘除/标记」——本方法是该两条动作的引擎侧单点：
-    *   ① R4 摘除（`detachCancelledUpstream`）：L3 取消路径有意延后摘除（见 cancelNode
-    *      的桥调用点裁定），失败分支必须补上，否则 barrier 永久悬着；
-    *   ② R3 即时 barrier 告警（摘除后下游带「待承接」标）；
-    *   ③ R1 回流分发器（`notifyTerminal(_, Cancelled)`）——若 cancelNode 时已触发并
-    *      落 notifySentAt，此处由 DispatchNotify 的持久去重 no-op（幂等）；
-    *   ④ `hard-recovery` 审计事件（失败留痕，与成功腿的 `resumed from …` 事件对称）。
-    * 全部幂等（重放/重复 L3 拍安全）。节点状态非 cancelled（resume 已复活 / 已被
-    * 分发器处置）→ 零动作。找不到节点（会话未绑定/已归档）→ 响亮 ERROR 留痕。 */
+  /** R5 **方案 4**（取消静默死锁修复批 2026-09-10，作者裁定「L3 resume 失败 → 改判
+    * failed」）：L3 硬恢复的 resume 未生效 ⇒ 节点由 Cancelled **改判 failed**
+    * （走既有 [[failNode]] 全链：result=原因 / nodeUpdated / 失败回流 / D5 零结算
+    * 停等留痕 / failed 侧 barrier 检查）。这是 [[hardResumeNode]] 返回 None 的引擎侧
+    * 唯一收口，也是**失败腿唯一的终局写点**。
+    *
+    * 为什么是 failed 而不是「留在 cancelled + 按 R4 摘除」（方案 3）：语义上
+    * 「引擎接管失败」是失败而非取消；能力上 failed 可经 NodeEdit 重激活（cancelled
+    * 不可），把「上游修好 → 重跑 → 停等下游自动续跑」这条 D5 首选恢复路径还给用户。
+    *
+    * 三条同步面（设计 §5 影响面裁定）：
+    *   ① **不摘除 / 不打「待承接」标**：failed = D5 零结算停等（下游保持 in 完整、
+    *      barrier 继续等上游 reactivate）——与失败的 R4「自动摘除扩展到 failed」提案
+    *      在同一裁定里被**永久拒绝**的理由一致（摘除会掐死 reactivate 恢复路径）。
+    *      `cancelNode` / [[detachCancelledUpstream]] 的永久拒绝注释与 failed 侧零摘除
+    *      纪律**不回退**：本方法不调用二者。
+    *   ② **回流恰好一次且语义为 failed**：L3 路径的中间态 Cancelled 不发通知
+    *      （`cancelNode(notify = false)` 占位）——这里先
+    *      [[DispatchNotify.releaseTerminalNotify]] 归还占位，再经 [[failNode]] →
+    *      `deliverFailed` → `notifyTerminal(Failed)` 发**唯一**一条通知。⇒ 双向坏形态
+    *      都被结构性排除：不会「同节点 cancelled + failed 双份回流」（cancelled 那条
+    *      从未发出），也不会「零回流」（failed 这条经既有去重链正常发出；即便预算
+    *      耗尽，[[DispatchNotify]] 也会 markSent 止重扫）。
+    *   ③ **审计可 join、不改写历史**：FlowMapEventLog 的 `cancelled`（中间态，含
+    *      source 与原因）+ 本方法追加的 `hard-recovery … L3 resume FAILED … re-judged
+    *      as failed` + `nodeUpdated(Failed)` 三行按 nodeId 可对账；**已写事件不修订**
+    *      （append-only），读者按 ts 顺序即得「被取消 → 恢复失败 → 改判失败」的完整链。
+    *
+    * `chainArchivable` 结论（[[FlowMapStore.chainArchivable]]，见其 failed 判据）：
+    * 无需改动——failed 成员要求 `notifySentAt.isDefined`，而本路径的失败回流必然落在
+    * 该状态（发送成功 → markSent；失败预算耗尽 → 同样 markSent 止重扫），故改判后的
+    * 节点与任何 failed 节点的归档资格完全一致；「引擎接管失败且通知也没发出去」不是
+    * 本路径引入的新形态（既有 failed 链同样兜底）。
+    *
+    * 幂等：状态守卫（非 Cancelled → 零动作）+ failed 回流/事件/告警各自去重。
+    * 找不到节点（会话未绑定/已归档）→ 响亮 ERROR（诚实失败），零动作。 */
   def settleFailedHardResume(sessionId: String): IO[Unit] =
     store.snapshot.flatMap { snap =>
       snap.nodes.values.find(n => n.sessionRef.contains(sessionId) || n.sessionRefVerify.contains(sessionId)) match
         case None =>
           logger.error(
-            s"[hard-recovery] L3 resume failed but no node owns session $sessionId — nothing to notify/detach (manual intervention required)"
+            s"[hard-recovery] L3 resume failed but no node owns session $sessionId — nothing to re-judge (manual intervention required)"
           )
         case Some(n) if n.status != NodeLifecycle.Cancelled =>
           logger.info(
             s"[hard-recovery] L3 resume failed for session $sessionId but node '${n.name}' (${n.id}) is ${n.status} — no fallback action needed"
           )
         case Some(n) =>
-          detachCancelledUpstream(n.id).flatMap { detached =>
+          // 失败原因 = sessionId + 「L3 hard-recovery resume failed」语义 + 恢复指引
+          // （节点 result 是分发器/前端读到的权威文本，必须自解释）。
+          val err =
+            s"L3 hard-recovery resume failed (session=$sessionId) — the engine could not revive this node from " +
+              "the on-disk transcript breakpoint (no readable transcript / resume CAS rejected); " +
+              "node re-judged as failed by the L3 hard-recovery chain. Downstream keeps waiting (D5 zero-settlement): " +
+              "reactivate the upstream (NodeEdit) or rewire the graph to recover."
+          val keptTargets = n.out.map(_.to).filterNot(_ == OutEdge.NebulaTarget)
+          dispatchNotify.releaseTerminalNotify(n.id) *>
             FlowMapEventLog.append(workspace, projectName, n.id, "hard-recovery",
-              s"L3 resume FAILED (session=$sessionId) — node left cancelled; dispatcher notified (R1) + out detached (R4)" +
-                (if detached.nonEmpty then s"; successors awaiting handover: ${detached.mkString(",")}" else "")) *>
-              checkBarriersNow(n.id, cause = "L3-resume-failed") *>
-              store.getNode(n.id).flatMap(_.traverse_(fresh => dispatchNotify.notifyTerminal(fresh, NotifyReason.Cancelled)))
-          }
+              s"L3 resume FAILED (session=$sessionId) — node re-judged as failed (was cancelled by the L3 bridge); " +
+                "out kept (no detach), successors keep waiting (D5 zero-settlement)" +
+                (if keptTargets.nonEmpty then s"; downstream still in=${keptTargets.mkString(",")}" else "")) *>
+            failNode(n.id, err)
     }
 
   /** WS nodeRemoved（TTL 移除/归档后通知前端移除卡片）。payload = 节点最终态
@@ -1494,13 +1531,17 @@ class NodeEngine(
             val reason = CancelSource.reasonFromBridgeMessage(fo.message)
             // R4 × R5 交互裁定（本批唯一延迟摘除点）：L3 硬恢复路径（bridge Cancelled
             // → 5s → resume）**延后**摘除——立即摘除会让 resume 成功后拓扑永久缺轨
-            // （下游 in 已被 prune、永远拿不到该节点结果）。该路径的摘除由 R5 的
-            // resume 失败分支（[[settleFailedHardResume]]，作者裁定「失败时按 R1 回流
-            // + 按 R4 摘除/标记」）承担；resume 成功则拓扑完整保留。
+            // （下游 in 已被 prune、永远拿不到该节点结果）；resume 成功则拓扑完整保留，
+            // 失败则由 R5 方案 4 的 [[settleFailedHardResume]] 改判 failed（**不摘除**，
+            // D5 零结算停等——摘除 failed 早在 R4 裁定里被永久拒绝，见 cancelNode 头注
+            // 与 [[detachCancelledUpstream]]）。
             // 其余取消路径（L3 之外的 watcher giveUp / AgentControl / 面板 NodeCancel /
             // 父会话级联）一律立即摘除。
             val deferDetach = reason.contains("(L3 hard-recovery:")
-            cancelNode(nodeId, reason, CancelSource.classify(reason), detach = !deferDetach)
+            // R5 方案 4（2026-09-10 裁定）：同一条 L3 路径同样**推迟回流**——中间态
+            // Cancelled 不是终局（5s 后 resume 定生死），故与 deferDetach 同参数
+            // 联动（notify=false = 占位推迟，见 cancelNode 头注）。
+            cancelNode(nodeId, reason, CancelSource.classify(reason), detach = !deferDetach, notify = !deferDetach)
           else failNode(nodeId, fo.message)
     yield ()).guarantee {
       // 任意退出路径（正常/崩溃/异常/cancel）三表对称移除——与既有清理段
@@ -2237,8 +2278,11 @@ class NodeEngine(
     *      指引就是「从 barrier 摘除」——**不是**零结果结算）+ prune 下游 in 镜像 +
     *      给下游打 `pendingSuccession` 标（barrier 不被以缺轨输入自动触发成缺轨结论）。
     *      `detach = false` = **L3 硬恢复路径专用**（bridge Cancelled → 5s → resume）：
-    *      摘除延后到 R5 的 resume 失败分支（[[settleFailedHardResume]]），否则 resume
-    *      一成功、拓扑已被摘除，下游就永远拿不到该节点结果。
+    *      该路径**永不摘除**——resume 成功后拓扑必须完整（否则下游 in 已被 prune、
+    *      永远拿不到该节点结果）；resume 失败则 R5 方案 4 把节点改判 `failed`
+    *      （[[settleFailedHardResume]]，**也不摘除**：R4 方案 3「failed 也自动摘」已
+    *      被永久拒绝，见 [[detachCancelledUpstream]] 头注）。故 L3 路径的 out 边与
+    *      下游 in 镜像自始至终原样保留，barrier 靠 D5 零结算停等而非摘除化解。
     *   ④ **R3 即时 barrier 告警**（终态写点同步，0 延迟；周期回扫降为兜底，见
     *      [[checkBarriersNow]] 的去重口径）。
     *   ⑤ **R1 回流分发器**：`notifyTerminal(_, Cancelled)`（不查 notifyDispatcher flag，
@@ -2247,8 +2291,21 @@ class NodeEngine(
     * 幂等：detach 幂等（out 已无节点目标即零写）、notify 由 notifySentAt 去重、
     * barrier 告警由即时/回扫共享单发记账去重——重复调用不产生重复副作用。
     * 三口复用（NodeCancel 桥 / dead-session reap / TaskStuckWatcher 取消）：
-    * `reason`/`source` 由调用方按 [[CancelSource]] 口径给出（R7 两态）。 */
-  private def cancelNode(nodeId: String, reason: String, source: CancelSource, detach: Boolean = true): IO[Unit] =
+    * `reason`/`source` 由调用方按 [[CancelSource]] 口径给出（R7 两态）。
+    *
+    * **`notify = false`（R5 方案 4，2026-09-10 裁定）**：与 `detach = false` 同一
+    * 调用点（L3 硬恢复路径）——该路径的 Cancelled 只是**中间态**（bridge Cancelled
+    * → 5s → resume），终局由 resume 结果决定，故推迟**回流**而非「不发」：
+    *   - 这里不发 Cancelled 通知，改以 [[DispatchNotify.holdTerminalNotify]] 占位
+    *     （抑制 30s 补投扫描在 5s 窗口内把中间态当终态回流——见该方法注释）；
+    *   - resume 成功 → 节点复活，占位由 `hardResumeNode` 的 CAS 归还，其真实终态
+    *     照常回流；
+    *   - resume 失败 → [[settleFailedHardResume]] 归还占位并改判 failed（failed
+    *     语义回流一次）。
+    *   ⇒ 对外可见面恰好一次、语义与终局一致（既不双份 cancelled+failed，也不零回流）。
+    * 该参数**只**影响回流时点，不动 ①②③④ 任何行为，也不动 failed 侧（D5 零结算
+    * 与 `deliverFailed` 本体逐字不变）。 */
+  private def cancelNode(nodeId: String, reason: String, source: CancelSource, detach: Boolean = true, notify: Boolean = true): IO[Unit] =
     val rendered = s"cancelled[source=${CancelSource.code(source)}]: reason=$reason"
     for
       now <- IO(System.currentTimeMillis())
@@ -2277,7 +2334,11 @@ class NodeEngine(
         case None =>
           logger.warn(s"Node '$nodeId' vanished before cancel finalize — skipped")
       _ <- checkBarriersNow(nodeId, cause = "cancelled") // R3 即时告警
-      _ <- s.nodes.get(nodeId).traverse_(n => dispatchNotify.notifyTerminal(n, NotifyReason.Cancelled)) // R1
+      _ <-
+        // R1 回流（notify=true）；L3 路径（notify=false）改以占位推迟——见方法头注
+        // 「notify = false」段（中间态不是终局，终局腿负责真实回流）。
+        if notify then s.nodes.get(nodeId).traverse_(n => dispatchNotify.notifyTerminal(n, NotifyReason.Cancelled))
+        else dispatchNotify.holdTerminalNotify(nodeId)
     yield ()
 
   /** R4 自动摘除（取消静默死锁修复批）：被取消节点的 out 改接 Nebula + 受影响下游的
