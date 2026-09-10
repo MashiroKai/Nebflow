@@ -325,16 +325,24 @@ object ProjectActor:
                 // 链级即时归档 sweep（裁定④「TTL 分开」批 2026-09-07）：整链全终态
                 // → 整批立即移归档（移除旧 24h 活动区滞留）；链未齐（含 blocked 待办）
                 // → 保留。视觉「同帧淡出」由前端派生管线承担，本 sweep 出库+落盘。
-                // 归档审计 + 索引对账（P3 归档联动批 2026-09-10，spec §6.2）：
+                // 归档审计 + 索引联动（P3 归档联动批 2026-09-10，spec §6.2；写路径接线 =
+                // 缺口归口补线批 2026-09-10）：
                 // ① 出库明细版 sweep（链级事实来自推导单点，调用方零二次派生）——
                 //    WS nodeRemoved 逐节点如旧（先行，语义零变化），随后为每条出库链
                 //    追加 chain-archived 审计事件（顶层 chainId + 结构化 summary：
                 //    `chain=<id> archivedAt=<ms> members=<n>`；nodeId = 分量内 createdAt
                 //    最早节点）。事件追加 best-effort——写失败绝不回滚归档、不影响 WS，
-                //    漏事件由 ② 对账兜底（归档事实 ↔ 索引 chain 集）检出。
-                // ② 索引对账兜底：挂既有 30s TtlTick 周期，内部 10min 节流 + 索引区
-                //    无 INDEX.md 即零开销 no-op；只写 `<workspace>/.nebflow/tmp/` 报表，
-                //    不改任何文档本体（fail-soft，同上述各扫描先例）。
+                //    漏事件由 ③ 的 catch-up 兜底（幂等重放）。
+                // ② 索引翻转（事件驱动、幂等）：「链归档 → 自动翻 INDEX.md」的盘上闭环
+                //    ——链块与条目 state 在 active ↔ archived 分区之间迁移。**仅本轮有
+                //    出库链时才调用**（swept 空 = 零开销，禁每 30s 空扫）；best-effort
+                //    失败仅 WARN，绝不回滚归档、不影响 WS nodeRemoved 语义与后续 tick
+                //    （同 ① 审计事件先例）。
+                // ③ 对账兜底：同一 30s 周期内按 workspace 节流 10min，窗内先跑一次
+                //    apply catch-up（覆盖「事件已写、apply 未落地」的进程死亡窗口，
+                //    幂等）再只读对账；索引区无 INDEX.md 即零开销 no-op；只写
+                //    `<workspace>/.nebflow/tmp/` 报表，不改任何文档本体。
+                //    索引根单点 = DocIndexConsumer.indexRootsFor（home 域 + ws 域）。
                 cfg.engine.store.sweepCompletedChainsDetailed(System.currentTimeMillis()).flatMap { swept =>
                   val removals = swept.flatMap(_.nodeIds).traverse_(id => cfg.engine.emitRemoved(id))
                   val audits = swept.traverse_ { c =>
@@ -350,12 +358,22 @@ object ProjectActor:
                       .handleErrorWith(e =>
                         logger.warn(s"chain-archived audit append failed (${c.chainId}): ${e.getMessage}"))
                   }
+                  // ③ 索引翻转（事件驱动、幂等）：出库后把链块/条目 state 在 active ↔
+                  //    archived 间迁移。swept 空 → 不调用（零开销，禁 30s 空扫）。
+                  val flip =
+                    if swept.isEmpty then IO.unit
+                    else
+                      DocIndexConsumer
+                        .applyChainEvents(cfg.project.workspace,
+                          DocIndexConsumer.indexRootsFor(cfg.project.workspace))
+                        .handleErrorWith(e => logger.warn(s"doc-index flip failed: ${e.getMessage}"))
+                        .void
                   val reconcile = DocIndexConsumer
                     .tick(cfg.project.workspace)
                     .handleErrorWith(e =>
                       logger.warn(s"doc-index reconcile tick failed: ${e.getMessage}").as(None))
                     .void
-                  removals *> audits *> reconcile
+                  removals *> audits *> flip *> reconcile
                 }.as(behavior)
             case ProjectCommand.Shutdown =>
               IO.pure(Behaviors.stopped)

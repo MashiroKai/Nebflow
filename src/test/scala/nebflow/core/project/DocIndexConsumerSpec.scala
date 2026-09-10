@@ -19,7 +19,9 @@ import scala.concurrent.duration.*
  * - D 消费者：白名单（只改写 INDEX.md）、无条目/无索引跳过 + 记日志、
  *   chain-restored 回翻分支（接口点，无写入点）。
  * - E 对账兜底：missing-in-index / stale-in-index 检出 + 报表落
- *   `<workspace>/.nebflow/tmp/`；tick 节流与「索引未落地 = 零开销 no-op」。
+ *   `<workspace>/.nebflow/tmp/`；tick 节流与「索引未落地 = 零开销 no-op」；
+ *   E③ = tick 内写路径 catch-up（覆盖「事件已写、apply 未落地」的进程死亡窗口，
+ *   缺口归口补线批 2026-09-10）。
  */
 class DocIndexConsumerSpec extends CatsEffectSuite:
 
@@ -373,4 +375,27 @@ class DocIndexConsumerSpec extends CatsEffectSuite:
       assert(now.contains("chain-n9"))
       assertEquals(throttled, None)
       assertEquals(throttledReport, false)
+  }
+
+  test("E③ tick catch-up：事件已写、apply 未落地（进程死亡窗口）→ 兜底补齐翻转 + 对账 clean") {
+    val ws = freshDir("nb-docidx-catchup-").toString
+    val root = freshDir("nb-docidx-catchuproot-")
+    val idx = root / sampleDomain / "INDEX.md"
+    val report = os.Path(ws) / ".nebflow" / "tmp" / DocIndexConsumer.ReportFileName
+    for
+      // 隔离：本用例只走 tick（生产兜底入口），不直接调 applyChainEvents
+      _ <- writeDomain(root, sampleIndex())
+      _ <- writeBatch(ws, "chain-n1") // 归档事实已落盘
+      _ <- FlowMapEventLog.append(ws, "demo", "n1", FlowMapEventLog.ChainArchivedType,
+        FlowMapEventLog.chainArchivedSummary("chain-n1", atMs, 2), Some("chain-n1")) // 事件已写
+      before <- IO.blocking(os.read(idx))
+      ticked <- DocIndexConsumer.tick(ws, minIntervalMs = 0, indexRoots = Some(List(root.toString)))
+      after <- IO.blocking(os.read(idx))
+      reportExists <- IO.blocking(os.exists(report))
+    yield
+      assert(before.contains("| active |"), "前置：索引仍是未落地的 active 态")
+      assert(after.contains("| archived |"), s"兜底 catch-up 必须补齐未落地的翻转:\n$after")
+      assert(after.contains(s"### chain-n1 · 链标题一 · completed · 2 节点 · archived"), after)
+      assert(ticked.exists(_.isClean), ticked.toString)
+      assertEquals(reportExists, false, "catch-up 后事实一致 → 对账 clean → 不写报表")
   }
