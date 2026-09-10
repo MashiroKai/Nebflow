@@ -24,6 +24,9 @@ let sentTo = new Set();    // 本会话已发出请求的乐观回显键集（�
 let searching = false;     // search in flight → button loading state
 let searchQ = '';          // preserved across re-renders (panel rebuilds on state change)
 let searchErrorKind = null; // null | 'auth' | 'neblinkOff' | 'retryable'（api.errKind 分态；≠「未找到」；0908 作者令按 err.status 拆分三态）
+let listErrorKind = null;   // null | 'auth' | 'neblinkOff' | 'retryable'（好友列表加载失败分态，F4 20260910：
+                            // 「列表失败」≠「空列表」——失败且无缓存数据时以错误态替代空态文案；
+                            // 有缓存数据仍 keep-last-known 不打扰）
 
 // ── 红点语义（0904 批次，微信常识）：未看过的请求才亮。展开「新的朋友」
 // 即视为已看（与查看后即清的微信口径一致），新 friend_event 再亮；同意/
@@ -62,9 +65,10 @@ export function getFriendList() { return friends; }
 
 // ── Data ─────────────────────────────────────────────────
 async function refresh() {
-  if (!loggedIn()) { friends = []; incoming = []; outgoing = []; render(); return; }
+  if (!loggedIn()) { friends = []; incoming = []; outgoing = []; listErrorKind = null; render(); return; }
   try {
     const data = await api.getFriends();
+    listErrorKind = null; // F4: a successful load clears any previous failure state
     const serverFriends = data.friends || [];
     // Merge the client-side blocked mirror: rows the server excluded (blocked)
     // reappear greyed; if the server does return a blocked row, its data wins.
@@ -92,7 +96,11 @@ async function refresh() {
       if (r.to?.neblinkId) sentTo.add(String(r.to.neblinkId).toLowerCase());
       if (r.to?.userId) sentTo.add(`id:${r.to.userId}`);
     }
-  } catch { /* keep last known */ }
+  } catch (err) {
+    // F4（20260910）：失败≠空。记录分态供 render 区分「空列表」与「加载失败」；
+    // 已有缓存数据时 keep-last-known 行为不变（不闪错误态）。
+    listErrorKind = api.errKind(err);
+  }
   render();
   updateBadge();
 }
@@ -175,7 +183,21 @@ function render() {
   const list = el('div', 'fm-friend-list');
   list.setAttribute('role', 'listbox');
   list.setAttribute('aria-label', t('panel.contacts'));
-  if (friends.length === 0) {
+  if (friends.length === 0 && listErrorKind) {
+    // F4（20260910）：加载失败且无缓存数据 → 错误态替代空态（复用搜索卡
+    // 分态 keys：auth/neblinkOff 与搜索共用文案；retryable 走列表专属 key）。
+    const key = listErrorKind === 'auth' ? 'contacts.searchAuthError'
+      : listErrorKind === 'neblinkOff' ? 'contacts.neblinkOff'
+      : 'contacts.listError';
+    const errWrap = el('div', 'fm-empty');
+    errWrap.setAttribute('data-fm-list-error', listErrorKind); // 断言契约（与视觉文案解耦）
+    errWrap.appendChild(el('div', null, t(key)));
+    const retry = el('button', 'glass-control', t('contacts.retry'));
+    retry.style.marginTop = '8px';
+    retry.addEventListener('click', () => { listErrorKind = null; refresh(); });
+    errWrap.appendChild(retry);
+    list.appendChild(errWrap);
+  } else if (friends.length === 0) {
     list.appendChild(el('div', 'fm-empty', t('contacts.empty')));
   } else {
     for (const f of friends) list.appendChild(friendRow(f));

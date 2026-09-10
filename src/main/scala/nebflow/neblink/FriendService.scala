@@ -24,15 +24,33 @@ import scala.concurrent.duration.*
  * 事件与确认回调由 GatewayMain 接线（UI/通知中心/AskUser 交互），FriendService
  * 本身不依赖任何 UI 层——纯逻辑（限速/去重/cursor）在 FriendMessagingGuard，
  * 可独立单测。
+ *
+ * client 引用统一（2026-09-10 好友搜索失效根修 F1）：本服务不再持有构造期
+ * NeblinkClient 快照，而是每次调用经 `currentClient` 读权威 live client
+ * （NeblinkDiscovery.clientRef——enrollment hot-swap 的唯一替换点）。此前
+ * GatewayMain 构造 FriendService 时注入 client₀，而 hot-swap 只换 discovery
+ * 的引用：UI 重新登录/换账号后 discovery 侧 session 有效、本服务侧 session
+ * 已被服务端 one-live-session 策略踢掉，403 持续到进程重启（搜索 502、
+ * 列表静默折叠空态）。与 performLocalLogout 读 discovery.currentClient 的
+ * 既有先例语义一致（权威 live client = discovery.clientRef）。
  */
 final class FriendService(
-  client: NeblinkClient,
+  currentClient: IO[Option[NeblinkClient]],
   config: AgentMessagingConfig,
   guard: FriendMessagingGuard = new FriendMessagingGuard(),
   onFriendEvent: Option[FriendEvent => IO[Unit]] = None,
   askConfirm: Option[String => IO[Boolean]] = None
 ):
   private val logger = NebflowLogger.forName("nebflow.neblink.friends")
+
+  /** F1: resolve the authoritative live client per call. None (logged out /
+    * never configured) mirrors NeblinkClient.withSession's own "Not logged in"
+    * shape so callers see one uniform error domain. */
+  private def withClient[A](f: NeblinkClient => IO[Either[String, A]]): IO[Either[String, A]] =
+    currentClient.flatMap {
+      case None      => IO.pure(Left("Not logged in"))
+      case Some(cli) => f(cli)
+    }
 
   // ===== 事件入口（NeblinkRelayTunnel friend_event case 回调） =====
 
@@ -89,7 +107,7 @@ final class FriendService(
 
   /** 拉会话列表，合并未读 cursor。 */
   def refreshConversations(): IO[List[ConversationSummary]] =
-    client.listConversations.flatMap {
+    withClient(_.listConversations).flatMap {
       case Left(err) => logger.warn(s"listConversations failed: $err").as(Nil)
       case Right(convs) =>
         convs
@@ -101,7 +119,7 @@ final class FriendService(
     * 服务端 unreadCount（mergeUnread 基线）+ message_new 事件增量维护。 */
   def pullConversation(conversationId: String): IO[Unit] =
     guard.localMaxId(conversationId).flatMap { after =>
-      client.listMessages(conversationId, after).flatMap {
+      withClient(_.listMessages(conversationId, after)).flatMap {
         case Left(err) => logger.warn(s"pullConversation $conversationId failed: $err")
         case Right(msgs) if msgs.isEmpty => IO.unit
         case Right(msgs) =>
@@ -111,17 +129,25 @@ final class FriendService(
       }
     }
 
-  /** 好友列表快照（UI 渲染数据源）。 */
+  /** 好友列表快照（后台刷新语义：失败折叠空列表——refreshAll/事件触发链
+    * 不该把上游故障转成 REST 错误）。REST 直通面用 listFriends（F4）。 */
   def refreshFriends(): IO[FriendListResponse] =
-    client.listFriends.flatMap {
+    withClient(_.listFriends).flatMap {
       case Left(err) => logger.warn(s"listFriends failed: $err").as(FriendListResponse(Nil))
       case Right(resp) => IO.pure(resp)
     }
 
+  /** F4 分态穿透（2026-09-10 好友搜索批）：好友列表 REST 直通——上游 Left
+    * 原样上抛（网关折叠 502），前端得以区分「空列表」与「加载失败」。
+    * 后台刷新链（refreshAll / friend_event）仍走折叠版 refreshFriends，
+    * 不把后台拉取失败泄成 UI 错误。 */
+  def listFriends: IO[Either[String, FriendListResponse]] =
+    withClient(_.listFriends)
+
   /** 标记已读（本地 cursor + 服务端）。 */
   def markRead(conversationId: String, lastReadMessageId: Long): IO[Either[String, String]] =
     guard.setRead(conversationId, lastReadMessageId) *>
-      client.markConversationRead(conversationId, lastReadMessageId)
+      withClient(_.markConversationRead(conversationId, lastReadMessageId))
 
   // ===== Agent 发消息（SendFriendMessage 工具入口） =====
 
@@ -159,7 +185,7 @@ final class FriendService(
   private def doSend(friendUserId: String, body: String): IO[Either[String, String]] =
     // origin=agent：sendAsAgent 是唯一 agent 代发 choke point（#290 spec v1.1）——
     // wire 缺 origin 时服务器缺省落 "user"，agent 消息语义（徽章/审计/限速区分）失效。
-    client.sendFriendMessage(friendUserId, body, origin = Some("agent")).flatMap {
+    withClient(_.sendFriendMessage(friendUserId, body, origin = Some("agent"))).flatMap {
       case Left(err) => IO.pure(Left(err))
       case Right(json) =>
         val convId = json.hcursor.get[String]("conversationId").toOption
@@ -170,39 +196,44 @@ final class FriendService(
   // ===== 暴露给 UI 的查询 =====
 
   def listMessages(conversationId: String, after: Long = 0L, limit: Int = 50): IO[Either[String, List[MessageSummary]]] =
-    client.listMessages(conversationId, after, limit)
+    withClient(_.listMessages(conversationId, after, limit))
 
-  def lookupUser(q: String): IO[Either[String, Json]] = client.lookupUser(q)
+  def lookupUser(q: String): IO[Either[String, Json]] = withClient(_.lookupUser(q))
 
   /** 搜索（friend-search-contract §4.1）：username OR email 双键 NOCASE 精确，
     * 网关代理 → neblink-server /api/users/search（替代旧 lookup）。 */
-  def searchUser(q: String): IO[Either[String, Json]] = client.searchUser(q)
+  def searchUser(q: String): IO[Either[String, Json]] = withClient(_.searchUser(q))
 
   /** [U3] 自定义 NebLink 号 + 可用性检测（网关代理 → neblink-server）。 */
-  def setNeblinkId(neblinkId: String): IO[Either[String, Json]] = client.setNeblinkId(neblinkId)
+  def setNeblinkId(neblinkId: String): IO[Either[String, Json]] = withClient(_.setNeblinkId(neblinkId))
 
-  def neblinkIdAvailable(q: String): IO[Either[String, Json]] = client.neblinkIdAvailable(q)
+  def neblinkIdAvailable(q: String): IO[Either[String, Json]] = withClient(_.neblinkIdAvailable(q))
 
   def sendFriendRequest(query: String, note: Option[String] = None): IO[Either[String, Json]] =
-    client.sendFriendRequest(query, note)
+    withClient(_.sendFriendRequest(query, note))
 
-  def acceptFriendRequest(requestId: String): IO[Either[String, Json]] = client.acceptFriendRequest(requestId)
+  def acceptFriendRequest(requestId: String): IO[Either[String, Json]] =
+    withClient(_.acceptFriendRequest(requestId))
 
-  def declineFriendRequest(requestId: String): IO[Either[String, String]] = client.declineFriendRequest(requestId)
+  def declineFriendRequest(requestId: String): IO[Either[String, String]] =
+    withClient(_.declineFriendRequest(requestId))
 
   /** 删除好友（UI 操作，无权限/限速控制）。 */
-  def removeFriend(friendUserId: String): IO[Either[String, String]] = client.removeFriend(friendUserId)
+  def removeFriend(friendUserId: String): IO[Either[String, String]] =
+    withClient(_.removeFriend(friendUserId))
 
   /** 拉黑好友（#290 §1.2）。 */
-  def blockFriend(friendUserId: String): IO[Either[String, String]] = client.blockFriend(friendUserId)
+  def blockFriend(friendUserId: String): IO[Either[String, String]] =
+    withClient(_.blockFriend(friendUserId))
 
   /** 移出黑名单（仅拉黑方）。 */
-  def unblockFriend(friendUserId: String): IO[Either[String, String]] = client.unblockFriend(friendUserId)
+  def unblockFriend(friendUserId: String): IO[Either[String, String]] =
+    withClient(_.unblockFriend(friendUserId))
 
   /** 用户身份直接发送（前端 UI 输入框发送；与 agent 的 sendAsAgent 不同，无
     * 权限档位/限速——spec §7.2 限制的是 agent 代发）。发送成功后补拉会话增量。 */
   def sendAsUser(friendUserId: String, body: String): IO[Either[String, Json]] =
-    client.sendFriendMessage(friendUserId, body).flatMap {
+    withClient(_.sendFriendMessage(friendUserId, body)).flatMap {
       case Right(json) =>
         json.hcursor.get[String]("conversationId").toOption match
           case Some(convId) => pullConversation(convId).void.handleErrorWith(_ => IO.unit).as(Right(json))
