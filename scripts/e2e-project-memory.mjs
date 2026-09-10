@@ -16,22 +16,27 @@
 //
 // Run（worktree 根）：
 //   node scripts/e2e-project-memory.mjs
-// Env：KEEP=1 保留 fixture home（默认跑完即删）；GATEWAY_PORT=8096 MOCK_PORT=18996
+// Env：默认跑完**不删** fixture home（要清理设 CLEAN=1 / NB_CLEAN=1；NB_DRY_RUN=1 只跑删除守卫断言）；
+//      GATEWAY_PORT=8096 MOCK_PORT=18996
 // （与 dispatcher-ctx 批 e2e 的 8097/18997 错开，防并行互踩）。
 
 import { spawn, execSync } from 'node:child_process';
 import http from 'node:http';
-import { readFileSync, mkdirSync, writeFileSync, cpSync, rmSync, existsSync } from 'node:fs';
+import { readFileSync, mkdirSync, writeFileSync, cpSync, existsSync } from 'node:fs';
 import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { homedir, tmpdir } from 'node:os';
 import { setTimeout as sleep } from 'node:timers/promises';
+import { guardFixtureHome, safeRm } from './lib/delguard.mjs';
 
 const REPO = dirname(dirname(fileURLToPath(import.meta.url)));
 const GATEWAY_PORT = Number(process.env.GATEWAY_PORT || 8096);
 const MOCK_PORT = Number(process.env.MOCK_PORT || 18996);
 const BASE = `http://127.0.0.1:${GATEWAY_PORT}`;
 const HOME = process.env.NEBFLOW_HOME || join(tmpdir(), `nb-pmem-e2e-${Date.now()}`);
+// R4 删除守卫：解析后的真实绝对路径必须落 tmpdir 之下（≠ tmpdir 自身）——早期 fail-fast，先于任何 spawn。
+// NB_DRY_RUN=1：只跑断言、不删除、不 spawn（下游负控入口）。
+guardFixtureHome(HOME, { label: 'e2e-project-memory' });
 const DISPATCHER_AGENT_SRC = process.env.DISPATCHER_AGENT_SRC || join(homedir(), '.nebflow', 'agents', 'project-dispatcher');
 const TEMPLATE_SRC = join(REPO, 'staging', 'project-memory-template.md');
 const MARKER_A = 'PMEM-MARKER-A-7391（项目记忆探针条目，2026-09-05）';
@@ -62,8 +67,8 @@ async function cleanup() {
       }
     } catch { /* no listener — good */ }
   }
-  if (!process.env.KEEP) { try { rmSync(HOME, { recursive: true, force: true }); } catch { /* best effort */ } }
-  else console.log(`KEEP=1 — fixture home retained: ${HOME}`);
+  // 删除点二次断言；默认不删（要清理设 CLEAN=1）——非 tmp 隔离 home 在此处也会被拒
+  safeRm(HOME, { label: 'e2e-project-memory' });
 }
 for (const sig of ['SIGINT', 'SIGTERM', 'uncaughtException', 'unhandledRejection']) {
   process.on(sig, async (e) => { if (e) console.error(e); await cleanup(); process.exit(1); });
