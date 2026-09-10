@@ -1365,11 +1365,10 @@ object AgentActor extends AgentCore with AgentSession:
                     )
                   )
                   .handleErrorWith(e =>
-                    IO(
-                      NebflowLogger
-                        .forName("nebflow.agent")
-                        .warn(s"usage record failed: ${e.getMessage}")
-                    )
+                    // 2026-09-10 死日志修复：warn 已返回 IO[Unit]，再包 IO(...) 得 IO[IO[Unit]]（静默）。
+                    NebflowLogger
+                      .forName("nebflow.agent")
+                      .warn(s"usage record failed: ${e.getMessage}")
                   )
               case _ => IO.unit
           usageEvent *> usageRecordIO *> handleLlmCompleteBranch(
@@ -2148,9 +2147,8 @@ object AgentActor extends AgentCore with AgentSession:
                   _ <- ctx.forkTurn(
                     persistIfSession(resources, compactedState)
                       .handleErrorWith(e =>
-                        IO(
-                          NebflowLogger.forName("nebflow.agent").warn(s"Persist after compact failed: ${e.getMessage}")
-                        )
+                        // 2026-09-10 死日志修复：去掉外层 IO(...)（内层 IO 永不执行）。
+                        NebflowLogger.forName("nebflow.agent").warn(s"Persist after compact failed: ${e.getMessage}")
                       )
                   )
                   _ <- persistDrainIO
@@ -2867,9 +2865,8 @@ object AgentActor extends AgentCore with AgentSession:
           // Synchronous emit to prevent markIdle/markBusy race condition
           emitStreamIO(state.wsSend, doneEvent, isSubagent = true, state.sessionId)
             .handleErrorWith(e =>
-              IO(
-                NebflowLogger.forName("nebflow.agent").warn(s"finishTurn: emitDone (sync) failed: ${e.getMessage}")
-              ).void
+              // 2026-09-10 死日志修复：去掉外层 IO(...)（内层日志永不执行）。
+              NebflowLogger.forName("nebflow.agent").warn(s"finishTurn: emitDone (sync) failed: ${e.getMessage}").void
             )
         else
           state.sessionId.fold(IO.unit) { sid =>
@@ -2881,19 +2878,17 @@ object AgentActor extends AgentCore with AgentSession:
               (state
                 .wsSend(doneJson)
                 .handleErrorWith(e =>
-                  IO(
-                    NebflowLogger
-                      .forName("nebflow.agent")
-                      .warn(s"finishTurn: Done event delivery failed: ${e.getMessage}")
-                  )
+                  // 2026-09-10 死日志修复：去掉外层 IO(...)。
+                  NebflowLogger
+                    .forName("nebflow.agent")
+                    .warn(s"finishTurn: Done event delivery failed: ${e.getMessage}")
                 ) *>
                 emitSessionBusy(state.wsSend, sid, busy = false))
                 .handleErrorWith(e =>
-                  IO(
-                    NebflowLogger
-                      .forName("nebflow.agent")
-                      .warn(s"finishTurn: Done+sessionBusy chain failed: ${e.getMessage}")
-                  )
+                  // 2026-09-10 死日志修复：去掉外层 IO(...)。
+                  NebflowLogger
+                    .forName("nebflow.agent")
+                    .warn(s"finishTurn: Done+sessionBusy chain failed: ${e.getMessage}")
                 )
             )
           }
