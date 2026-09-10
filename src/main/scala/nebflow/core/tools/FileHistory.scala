@@ -2,7 +2,9 @@ package nebflow.core.tools
 
 import cats.effect.{IO, Ref}
 
-import java.nio.file.{Files, Path, Paths}
+import nebflow.core.PathUtil
+
+import java.nio.file.{Files, Path}
 import java.security.MessageDigest
 
 import scala.jdk.CollectionConverters.*
@@ -10,9 +12,11 @@ import scala.jdk.CollectionConverters.*
 /**
  * VS Code-style file history: snapshots file content before overwrites.
  *
- * Storage layout:
- *   ~/.nebflow/history/{pathHash}/{timestamp}           — snapshot content
- *   ~/.nebflow/history/{pathHash}/{timestamp}.identity   — agent identity (optional)
+ * Storage layout (default root follows PathUtil.dataRoot — CLI --home flag /
+ * NEBFLOW_HOME env / default ~/.nebflow; isolated instances keep their file
+ * history inside their own home, LlmLogWriter/ToolsLogWriter 同款契约):
+ *   <dataRoot>/history/{pathHash}/{timestamp}           — snapshot content
+ *   <dataRoot>/history/{pathHash}/{timestamp}.identity   — agent identity (optional)
  *
  * Each file keeps up to `maxEntries` snapshots; oldest are evicted first.
  * Files larger than `maxFileSizeBytes` are skipped.
@@ -130,7 +134,11 @@ object FileHistory:
     md.digest().take(16).map(b => String.format("%02x", b)).mkString
 
   def create(
-    historyRoot: Path = Paths.get(System.getProperty("user.home"), ".nebflow", "history"),
+    // Default follows the instance data root (PathUtil.dataRoot), evaluated
+    // per call — never a raw user.home hardcode (P1 20260910 同类点位：隔离
+    // 实例的文件历史曾越界写入生产 ~/.nebflow/history). Explicit roots
+    // (specs / custom layouts) are unaffected.
+    historyRoot: Path = (PathUtil.dataRoot / "history").toNIO,
     maxEntries: Int = DefaultMaxEntries,
     maxFileSizeBytes: Long = DefaultMaxFileSizeBytes
   ): IO[FileHistory] =
