@@ -96,7 +96,8 @@ object TaskStuckWatcher:
    * R6（取消静默死锁修复批 2026-09-10，作者裁定方案 2）：轴 ② 的有效阈值改为
    * `[[ToolStuckJudgment.effectiveToolPhaseMs]]` —— **尊重命令自己声明的合法时长**
    * （有效阈值 = max(默认档, 声明 + 宽限)，即声明时长只可**放宽**判据、不可收紧到
-   * 默认档之下；未声明取默认档。逐字公式差异与理由见该函数注释的待裁说明）。
+   * 默认档之下；未声明取默认档。逐字公式差异与「已裁定以 max 为准」的理由见该
+   * 函数注释）。
    * 三例误杀的案例 1 命令自带 `timeout=900000ms`（15min 授权），旧判据在其 11.2
    * 分钟处开火；改造后该命令在其授权期内不再判死。
    * 未声明时长（currentToolDeadlineMs == 0）→ 原 10min 档零变化。
@@ -111,8 +112,10 @@ object TaskStuckWatcher:
     val agentIdleMs = if rec.lastActivityMs > 0 then now - rec.lastActivityMs else 0L
     val agentStale = rec.lastActivityMs > 0 && agentIdleMs > thresholdMs
     val toolPhaseMs = if rec.currentToolStartedAt > 0 then now - rec.currentToolStartedAt else 0L
-    // R6：有效工具相位阈值——命令声明了合法时长就取 min(默认档, 声明 + 宽限)。
-    // 只放宽不放严：声明时长远小于默认档时 min 仍取声明值（命令自己的授权优先）。
+    // R6（**已裁定 2026-09-10：以 `max` 为准**）：有效工具相位阈值——命令声明了
+    // 合法时长就取 max(默认档, 声明 + 宽限)。**只放宽不收紧**；未声明 `timeout`
+    // 的工具仍按默认档 10min 判死。（旧文写 min，与「尊重命令自己声明的合法时长」
+    // 的立论自相矛盾——min 在大声明时退化为 10min，案例 1 照旧误杀。）
     val effectiveToolPhaseMs = ToolStuckJudgment.effectiveToolPhaseMs(
       toolPhaseThresholdMs, rec.currentToolDeadlineMs, nebflow.shared.Defaults.ToolDeadlineSlackMs)
     val toolOverdue = rec.currentToolStartedAt > 0 && toolPhaseMs > effectiveToolPhaseMs
@@ -624,16 +627,15 @@ end TaskStuckWatcher
 object ToolStuckJudgment:
   /** 有效工具相位阈值。
     *
-    * ⚠ **实现口径与设计文档逐字公式的差异（待裁项，见批报告 §待裁）**：设计 §6-R6
+    * ⚠ **实现口径与设计文档逐字公式的差异（已裁定，2026-09-10）**：设计 §6-R6
     * 方案 2 的公式逐字写作 `min(ToolPhaseStuckMs, deadline + slack)`，但该公式与
     * 同一裁定项的两条验收口径自相矛盾：`min` 在 deadline > ToolPhaseStuckMs 时退化
     * 为 ToolPhaseStuckMs，**案例 1（`timeout=900000ms`，11.2min 被判死）照旧被误杀**
     * —— 而方案 2 的立论原文就是「尊重命令自己声明的合法时长」，验收口径亦明写
-    * 「命令自带大 timeout 且持续推进 → 改造后不判」。故此处按**裁定意图与验收口径**
-    * 实现为 `max`（有效阈值 = **max(默认档, 声明 + 宽限)**：声明时长可放宽判据，
-    * 不可收紧到默认档之下；未声明 ⇒ 默认档）。
-    * 若复核/作者裁定取 `min`（= 10min 硬顶，声明只许缩短不许延长），改动 = 本函数
-    * `math.max` → `math.min` 一行。
+    * 「命令自带大 timeout 且持续推进 → 改造后不判」。**已裁定（2026-09-10）：以
+    * `max` 为准**（有效阈值 = **max(默认档, 声明 + 宽限)**：声明时长只可**放宽**
+    * 判据、不可收紧到默认档之下；未声明 ⇒ 默认档，仍 10min 判死）。设计文档
+    * §6-R6 已加同源订正注记（正文照旧保留）。
     *
     * **不读取任何进程 CPU**（红线 R6-4）。 */
   def effectiveToolPhaseMs(defaultMs: Long, declaredMs: Long, slackMs: Long): Long =
