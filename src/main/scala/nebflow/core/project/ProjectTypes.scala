@@ -343,13 +343,18 @@ object NodeDef:
  *     2026-09-07「送达即移」——前端链判据据此判断异常终态「已上报可归档」；与
  *     deps/plugins 同构条件字段，非命中不带 = 零字段漂移）。completed 无上报要求
  *     恒不带。
+ *   - chainId：**仅当节点所属拓扑链成员数 ≥2 携带**（链级抽象 P0；链 = 活动∪归档
+ *     合并集弱连通分量，派生单点 FlowMapStore.topologicalChains，判据注入单点 =
+ *     FlowMapStore.chainIdOf）——孤立单节点链不带，payload 字段集零膨胀；与
+ *     deps/plugins 同构条件字段，非命中不带。WS 四事件经 NodeEngine.emitWithChain
+ *     富化单点自动携带（帧外壳零改动）。
  * skill/mcp/preset 为节点配置（2b §B.4/H-11① deprecated，新建参数已退役）：同样
  * 条件序列化——仅非 None 才带（20260907 裁定③，无三键节点字段集字节级零漂移）。 */
 object NodePayload:
   /** taskPreview 截断上限（回退展示第一层，存量节点专用）。 */
   val TaskPreviewMaxChars: Int = 80
 
-  def buildNodeJson(node: NodeDef, now: Long): Json =
+  def buildNodeJson(node: NodeDef, now: Long, chainId: Option[String] = None): Json =
     val ttlLeft = node.ttlExpireAt.map(t => Math.max(0L, (t - now) / 1000L))
     val baseFields = List(
       "id" -> node.id.asJson,
@@ -465,7 +470,11 @@ object NodePayload:
         (if node.status == NodeLifecycle.Failed || node.status == NodeLifecycle.Cancelled then
            node.notifySentAt.toList.map(t => "notifySentAt" -> t.asJson)
          else Nil)
-      Json.obj((baseFields ++ outFields ++ legacyConfigFields ++ hasResultFields ++ taskPreviewFields ++ depsFields ++ feedbackFields ++ pluginFields ++ notifyFields ++ mergeFields ++ loopFields ++ bgWaitFields ++ retryFields ++ genFields ++ notifySentAtFields)*)
+      // chainId 条件序列化（链级抽象 P0；与 deps/plugins 条件字段同构）：仅调用方
+      // 注入（FlowMapStore.chainIdOf 单点判据：所属合并集分量成员数 ≥2）才带——
+      // 孤立单节点链与未注入调用方（如归档 REST 端点）payload 字段集零变化。
+      val chainFields = chainId.toList.map(c => "chainId" -> c.asJson)
+      Json.obj((baseFields ++ outFields ++ legacyConfigFields ++ hasResultFields ++ taskPreviewFields ++ depsFields ++ feedbackFields ++ pluginFields ++ notifyFields ++ mergeFields ++ loopFields ++ bgWaitFields ++ retryFields ++ genFields ++ notifySentAtFields ++ chainFields)*)
 
 /** Flow Map 活动区（§2.6，磁盘 flow-map.json）。 */
 case class FlowMapState(
@@ -492,10 +501,11 @@ object FlowMapArchive:
   given Codec[FlowMapArchive] = ConfiguredCodec.derived
 
 /** 归档批次分文件（裁定④「TTL 分开」批）：`<workspace>/.nebflow/flow-map-archive/<batchId>.json`
-  * 一批一文件。batchId = `chain-<批内 createdAt 最早节点 id>`（批次聚簇算法与前端
-  * flowMapArchive.js clusterBatches 严格同源：createdAt 升序、相邻间隔 >120s 开新批）——
-  * 前端面板按 id 与派生链去重依赖此同源口径。nodes 落盘经 result 摘要+指针 / task
-  * 剥除手术（FlowMapStore persistBatchFiles）。 */
+  * 一批一文件。batchId = `chain-<分量内 createdAt 最早节点 id>`——链级抽象 P0（C4）
+  * 起为拓扑链 id（派生单点 FlowMapStore.topologicalChains，取代旧 ≤120s 时间批聚簇；
+  * id 生成规则与旧口径同构，前端面板/分文件名消费方式不变；存量旧时间批 id 零迁移
+  * 共存，C5）。nodes 落盘经 result 摘要+指针 / task 剥除手术（FlowMapStore
+  * persistBatchFiles）。 */
 case class FlowMapArchiveBatch(
   project: String,
   batch: String,
@@ -508,11 +518,36 @@ object FlowMapArchiveBatch:
   given Codec[FlowMapArchiveBatch] = ConfiguredCodec.derived
 
 /** 内存批次索引条目（裁定④）：nodeIds 为批次成员集（落盘写粒度判定 + REST 按批
-  * 组装的数据源）；不进 NodeDef——批次归属只活在批次索引与分文件名。 */
+  * 组装的数据源）；不进 NodeDef——批次归属只活在批次索引与分文件名。跨区续做分量
+  * 再归档命中同链 id 时 nodeIds 取并集合并（FlowMapStore sweep，防旧批成员孤儿化）。 */
 case class ArchiveBatchMeta(
   id: String,
   archivedAt: Long,
   nodeIds: Set[String]
+)
+
+/** 链谱系边（链级抽象 P0 · D3）：via ∈ {in, out, deps} 标注连接语义——deps 为弱关联
+  * （只等上游 completed 信号、不投载荷，deps 设计 §1.1）；同一双端经不同类型边连接
+  * 时各自保留一条（in 镜像边与 out 边语义不同）。方向恒上游→下游（in/deps 由下游
+  * 持有、翻转标注；out 原生即上游→下游）。 */
+case class ChainEdge(
+  from: String,
+  to: String,
+  via: String
+)
+
+/** 拓扑链（链级抽象 P0 · spec §2.1）：活动∪归档合并节点集上的弱连通分量，派生单点
+  * FlowMapStore.topologicalChains 的返回载体。链 id = `chain-<分量内 createdAt 最早
+  * 节点 id>`（与旧时间批 id 规则同构）；entries = 分量内 in=Nil ∧ deps=Nil 双空（D2，
+  * 与创建期入口判据对齐）；ends = 分量内 out 无节点目标的成员（仅 Nebula/悬空/
+  * out=Nil 都算，D7）；memberIds 按 createdAt 升序（平局 id 兜底）。纯派生量——
+  * NodeDef 本体不加字段（C1）。 */
+case class ChainInfo(
+  id: String,
+  entries: List[String] = Nil,
+  ends: List[String] = Nil,
+  memberIds: List[String] = Nil,
+  edges: List[ChainEdge] = Nil
 )
 
 /** Project 实体定义（§1.1，projects/<name>/project.json）。 */

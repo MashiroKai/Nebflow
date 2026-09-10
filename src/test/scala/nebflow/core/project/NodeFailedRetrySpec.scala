@@ -288,7 +288,12 @@ class NodeFailedRetrySpec extends CatsEffectSuite:
       bAfter <- nodeById(rt, bId).map(_.getOrElse(fail("B must exist")))
       aRuns <- llm.inputs.get.map(_.count(_.contains("seed-cap-a")))
       bRuns <- llm.inputs.get.map(_.count(_.contains("seed-cap-b")))
-      events <- readEvents(ws)
+      // RetryCap 升级触达（审计留痕单点：escalated 事件 + reason=RetryCap）——
+      // 升级落盘异步于状态翻转（waitUntil 先满足），轮询等触达再断言（断言本体
+      // 零变化；2026-09-10 链P0 批实证重负载共跑下固定读会假红）。
+      _ <- waitUntil(10.seconds)(readEvents(ws).map(events =>
+        events.exists(l => l.contains("\"type\":\"escalated\"") && l.contains("reason=RetryCap") && l.contains(bId))))
+      events2 <- readEvents(ws)
       _ <- system.stopAll.handleErrorWith(_ => IO.unit)
     yield
       // cap 耗尽形态：failed 是终态、gen 钉在 max、不再回跳（B/A 各恰两跑）
@@ -298,9 +303,8 @@ class NodeFailedRetrySpec extends CatsEffectSuite:
       assertEquals(bRuns, 2, "B must run exactly max+1 times")
       assert(bAfter.result.exists(_.contains("boom-every-generation")),
         s"failed result must carry the last failure summary, got: ${bAfter.result.map(_.take(200))}")
-      // RetryCap 升级触达（审计留痕单点：escalated 事件 + reason=RetryCap）
-      assert(events.exists(l => l.contains("\"type\":\"escalated\"") && l.contains("reason=RetryCap") && l.contains(bId)),
-        s"event log must carry the RetryCap escalation for B, got: ${events.filter(_.contains("escalated")).take(3)}")
+      assert(events2.exists(l => l.contains("\"type\":\"escalated\"") && l.contains("reason=RetryCap") && l.contains(bId)),
+        s"event log must carry the RetryCap escalation for B, got: ${events2.filter(_.contains("escalated")).take(3)}")
   }
 
   // ── ③ 已终态消费者不被重跑意外重触发 ────────────────────────
