@@ -1286,7 +1286,15 @@ class RestApiRoutes(
         sharedResources.friendService match
           case None => NotFound(Json.obj("error" -> "NebLink not enabled".asJson))
           case Some(fs) =>
-            fs.refreshFriends().flatMap(resp => Ok(resp.asJson))
+            // F4 (2026-09-10 friend-search batch): list loads go through the
+            // DIRECT path — upstream Left folds to 502 so the frontend can
+            // tell "no friends yet" apart from "load failed". The folded
+            // empty-list variant (FriendService.refreshFriends) stays for the
+            // background refresh chain only.
+            fs.listFriends.flatMap {
+              case Right(resp) => Ok(resp.asJson)
+              case Left(err)   => BadGateway(Json.obj("error" -> err.asJson))
+            }
       }
 
     /** 待处理请求分组（incoming / outgoing）。 */

@@ -82,7 +82,7 @@ class FriendMessageOriginSpec extends FunSuite:
       override def sendFriendMessage(friendUserId: String, body: String, origin: Option[String] = None) =
         IO { seen += origin }.as(Right(io.circe.Json.obj("conversationId" -> "c1".asJson)))
     c.login("dev", "name", "platform", List(NeblinkEndpoint("10.0.0.5", 1, "lan"))).unsafeRunSync()
-    val svc = new FriendService(c, AgentMessagingConfig(mode = "auto"))
+    val svc = new FriendService(IO.pure(Some(c)), AgentMessagingConfig(mode = "auto"))
     val out = svc.sendAsAgent("friend-1", "agent hello from #290 e2e").unsafeRunSync()
     assert(out.isRight, s"sendAsAgent failed: $out")
     assertEquals(seen.result(), List(Some("agent")), "doSend call-site must pass origin=Some(agent)")
@@ -94,7 +94,7 @@ class FriendMessageOriginSpec extends FunSuite:
       override def sendFriendMessage(friendUserId: String, body: String, origin: Option[String] = None) =
         IO { seen += origin }.as(Right(io.circe.Json.obj("conversationId" -> "c1".asJson)))
     c.login("dev", "name", "platform", List(NeblinkEndpoint("10.0.0.5", 1, "lan"))).unsafeRunSync()
-    val svc = new FriendService(c, AgentMessagingConfig(mode = "auto"))
+    val svc = new FriendService(IO.pure(Some(c)), AgentMessagingConfig(mode = "auto"))
     val out = svc.sendAsUser("friend-1", "user typed this").unsafeRunSync()
     assert(out.isRight, s"sendAsUser failed: $out")
     assertEquals(seen.result(), List(None), "sendAsUser must NOT set origin=agent")

@@ -35,7 +35,12 @@ import scala.concurrent.duration.*
 final class NeblinkRelayTunnel(
   neblinkService: NeblinkService,
   serverUrl: String,
-  tokenGetter: () => Option[String],
+  /** Live session-token source, evaluated on every (re)connect. F1 (2026-09-10
+    * friend-search batch): GatewayMain wires this to the discovery-held
+    * authoritative client (IO-based, resolved per attempt) so enrollment
+    * hot-swaps are picked up — a constructor-time client closure kept reading
+    * a session the server had kicked. */
+  tokenGetter: () => IO[Option[String]],
   /** A2A 一期（spec §5.1）：friend_event 推送回调（事件去重/未读/补拉在 FriendService）。 */
   private[neblink] val friendService: Option[FriendService] = None
 )(dispatcher: Dispatcher[IO]):
@@ -76,7 +81,7 @@ final class NeblinkRelayTunnel(
       IO.sleep(delay).flatMap { _ =>
         if !running.get() then IO.unit
         else
-          tokenGetter() match
+          tokenGetter().flatMap {
             case None =>
               val wait = math.min(30, 1 << math.min(attempt, 4)).seconds
               // R2 visibility: this branch used to log at DEBUG only — a login
@@ -100,6 +105,7 @@ final class NeblinkRelayTunnel(
                     if running.get() then connectLoop(attempt + 1) else IO.unit
                   }
                 }
+          }
       }
 
   /** Establish a single WS connection; returns when the connection ends. */

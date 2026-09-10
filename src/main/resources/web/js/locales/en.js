@@ -208,6 +208,8 @@ export default {
   'contacts.searchAuthError': 'Session expired — please log in again',
   'contacts.relogin': 'Log in again',
   'contacts.neblinkOff': 'NebLink is not enabled — friend features unavailable',
+  'contacts.listError': 'Friend list failed to load',
+  'contacts.retry': 'Retry',
   'header.memory': 'Memory',
   'header.bgTasks': 'Background tasks',
   'input.placeholder': 'Type a message...',
