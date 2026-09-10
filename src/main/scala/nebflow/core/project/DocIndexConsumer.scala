@@ -40,13 +40,20 @@ import scala.collection.mutable.ListBuffer
  * 幂等：事件按文件顺序回放折叠（同 chainId 后写覆盖先写）→ 期望状态；变换是不动点
  * （第二次应用零 diff，不写盘）。
  *
+ * **接线（P3 缺口归口补线批 2026-09-10）**——写路径 [[applyChainEvents]] 的两个生产
+ * 调用点（此前只有只读对账 [[tick]] 被接线，翻转入口全仓零生产调用方 → 「建链 → 归档
+ * → 自动翻 INDEX.md」走不通）：
+ * 1. `ProjectActor.TtlTick` 出库之后、且**仅当本轮 `swept.nonEmpty`**（swept 空 = 零
+ *    开销，免每 30s 空扫）；best-effort 失败仅 WARN，不回滚归档、不影响 WS
+ *    nodeRemoved 与后续 tick。
+ * 2. [[tick]] 内的 catch-up（同一 10min 节流窗：先 apply 再只读对账）——覆盖「事件已
+ *    写、apply 未落地」的进程死亡窗口；幂等（零 diff 免写盘）。
+ * 索引根单点 = [[indexRootsFor]]（home 域 + ws 域两行事实；禁配置文件 / env / 新设置项）。
+ *
  * **未接线接口点**（登记，勿当已落地）：
  * - `chain-restored`：链抽象 P2 `restoreChain` 尚未落地 → 本批只定义事件类型
  *   （[[FlowMapEventLog.ChainRestoredType]]）+ 消费侧回翻分支（[[transformIndex]]），
  *   无写入点（禁止虚构调用点）。P2 落地时在 restore 调用点追加对称事件即可激活。
- * - [[applyChainEvents]]：索引翻转入口，调用方 = 分发器/调度节点/离线任务（本批不
- *   自动接线——索引域 `<dataRoot>/docs` 不属项目工作区，无 roots 配置源）。
- *   已接线的是对账兜底 [[tick]]（挂 ProjectActor.TtlTick 30s 周期，内部 10min 节流）。
  */
 object DocIndexConsumer:
 
@@ -59,7 +66,8 @@ object DocIndexConsumer:
   /** 索引扫描最大深度（`<root>/<域>/INDEX.md` = 2 层；留一层余量）。 */
   val MaxIndexScanDepth = 3
 
-  /** 对账兜底节流间隔（挂 30s TtlTick 周期，内部按此节流；JVM 内全局单点）。 */
+  /** 对账兜底节流间隔（挂 30s TtlTick 周期，内部按此节流；**按 workspace 键**——每个
+    * 项目的 ws 域索引互不饿死）。 */
   val DefaultReconcileIntervalMs: Long = 10 * 60 * 1000L
 
   /** 条目 state 值域（spec §5.2：`active` | `archived`，索引自治可变）。 */
@@ -517,40 +525,47 @@ object DocIndexConsumer:
     }
 
   /** 索引维护入口（消费者主函数）：读事件 → 折叠期望状态 → 翻转/迁移所有 INDEX.md。
-    * 未接线（调用方 = 分发器/调度节点/离线任务；本批只在 [[tick]] 接了只读对账）。 */
+    * 调用方（本批接线，见类注释）：① ProjectActor.TtlTick 出库后（swept.nonEmpty 门控）
+    * ② [[tick]] 内的 10min 兜底 catch-up。**幂等**：同事件重放零 diff → 不写盘。
+    *
+    * 无链族事件 → 单次事件文件读取即返回（零索引扫描零日志）：接线后本函数每 10min 被
+    * 兜底 tick 调一次，无事实时不得为「空跑」白扫 home 域全量 INDEX.md。 */
   def applyChainEvents(workspace: String, indexRoots: List[String], dryRun: Boolean = false): IO[ApplyReport] =
-    for
-      ev <- readEvents(workspace)
-      (events, parseErrors) = ev
-      chainEvents = events.filter(e => ChainEventTypes.contains(e.typ))
-      desired = desiredStates(chainEvents)
-      files <- scanIndexFiles(indexRoots)
-      _ <-
-        if files.isEmpty then
-          logger.info(s"doc-index: no $IndexFileName under [${indexRoots.mkString(", ")}] — skip（索引未落地或路径不含索引）")
-        else IO.unit
-      pairs <- files.traverse(f => IO.blocking(os.read(f)).map(c => (f, c)))
-      results <- pairs.traverse { case (f, c) => applyToIndex(f, c, desired, dryRun) }
-      known = pairs.flatMap { case (_, c) => chainIdsIn(c) }.toSet
-      skipped = desired.keys.filterNot(known.contains).toList.sorted
-      _ <-
-        if skipped.nonEmpty then
-          logger.info(s"doc-index: chain(s) with events but no index entry — skipped: ${skipped.mkString(", ")}")
-        else IO.unit
-      _ <- if !dryRun && results.exists(_.changed) then
-        IO(logger.infoSync(s"doc-index: ${results.count(_.changed)} index file(s) updated (flips=${results.map(_.stateFlips).sum}, blocksMoved=${results.map(_.blocksMoved).sum})"))
-      else IO.unit
-    yield ApplyReport(
-      workspace = workspace,
-      eventLines = events.size,
-      chainEvents = chainEvents.size,
-      desiredStates = desired.view.mapValues(_.archived).toMap,
-      indexFiles = files.map(_.toString),
-      results = results,
-      skippedChains = skipped,
-      parseErrors = parseErrors,
-      dryRun = dryRun
-    )
+    readEvents(workspace).flatMap { case (events, parseErrors) =>
+      val chainEvents = events.filter(e => ChainEventTypes.contains(e.typ))
+      val desired = desiredStates(chainEvents)
+      if chainEvents.isEmpty then
+        IO.pure(ApplyReport(workspace, events.size, 0, Map.empty, Nil, Nil, Nil, parseErrors, dryRun))
+      else
+        for
+          files <- scanIndexFiles(indexRoots)
+          _ <-
+            if files.isEmpty then
+              logger.info(s"doc-index: no $IndexFileName under [${indexRoots.mkString(", ")}] — skip（索引未落地或路径不含索引）")
+            else IO.unit
+          pairs <- files.traverse(f => IO.blocking(os.read(f)).map(c => (f, c)))
+          results <- pairs.traverse { case (f, c) => applyToIndex(f, c, desired, dryRun) }
+          known = pairs.flatMap { case (_, c) => chainIdsIn(c) }.toSet
+          skipped = desired.keys.filterNot(known.contains).toList.sorted
+          _ <-
+            if skipped.nonEmpty then
+              logger.info(s"doc-index: chain(s) with events but no index entry — skipped: ${skipped.mkString(", ")}")
+            else IO.unit
+          _ <- if !dryRun && results.exists(_.changed) then
+            IO(logger.infoSync(s"doc-index: ${results.count(_.changed)} index file(s) updated (flips=${results.map(_.stateFlips).sum}, blocksMoved=${results.map(_.blocksMoved).sum})"))
+          else IO.unit
+        yield ApplyReport(
+          workspace = workspace,
+          eventLines = events.size,
+          chainEvents = chainEvents.size,
+          desiredStates = desired.view.mapValues(_.archived).toMap,
+          indexFiles = files.map(_.toString),
+          results = results,
+          skippedChains = skipped,
+          parseErrors = parseErrors,
+          dryRun = dryRun
+        )
+    }
 
   private def applyToIndex(path: os.Path, content: String, desired: Map[String, DesiredState],
                            dryRun: Boolean): IO[IndexApplyResult] =
@@ -605,36 +620,62 @@ object DocIndexConsumer:
       "note" -> "只读对账（文档本体零改动）：missing-in-index = 归档区有事实、索引 chain 集无；stale-in-index = 索引条目 state=active 但链已在归档区".asJson
     )
 
-  /** 默认索引根：`<dataRoot>/docs`（文档规范 §1 域目录的父目录），不存在 → 空集。 */
-  def defaultIndexRoots: IO[List[String]] =
-    IO.blocking {
-      val root = PathUtil.dataRoot / "docs"
-      if os.exists(root) && os.isDir(root) then List(root.toString) else Nil
+  /** **索引根单点**（P3 接线批 2026-09-10）——固定返回两域：
+    *   - home 域 `<dataRoot>/docs`（`~/.nebflow/docs`，文档规范 §1 域目录的父目录，
+    *     **多项目共享**：链 id 全局唯一，跨项目不撞见「假设清单」）；
+    *   - ws 域 `<workspace>/.nebflow/Spec`（项目内规格域，各项目独立）。
+    *
+    * 纯计算（无 IO、无存在性检查）：不存在的根由 [[scanIndexFiles]] 过滤 ⇒ 零成本跳过。
+    * **唯一允许的根来源**——禁 roots 配置文件 / env / 新设置项 / 新参数面（本批只要
+    * 「两域固定计算」两行事实）。[[defaultIndexRoots]] 与 [[tick]] 均复用于此。 */
+  def indexRootsFor(workspace: String): List[String] =
+    List(
+      (PathUtil.dataRoot / "docs").toString,
+      (os.Path(workspace, PathUtil.dataRoot) / ".nebflow" / "Spec").toString
+    )
+
+  /** 默认索引根（口径单点 = [[indexRootsFor]]；保留本名供「不显式给根」的调用方语义）。 */
+  def defaultIndexRoots(workspace: String): List[String] = indexRootsFor(workspace)
+
+  /** 节流闸（JVM 内、**按 workspace 键**）：同一 workspace 串行 check-and-set。
+    * 键化理由（本批）：根含 ws 域（各项目不同）——全局单点会让先到者把后到者的 ws 域
+    * 节流掉（多项目安装下后到项目的写路径 catch-up 永不执行）。 */
+  private val lastTickMs = scala.collection.concurrent.TrieMap.empty[String, Long]
+  private val tickGate = new Object
+
+  private def claimTick(workspace: String, now: Long, minIntervalMs: Long): Boolean =
+    tickGate.synchronized {
+      val prev = lastTickMs.getOrElse(workspace, 0L)
+      val due = prev == 0L || now - prev >= minIntervalMs
+      if due then lastTickMs.put(workspace, now)
+      due
     }
 
-  private val lastTickMs = new java.util.concurrent.atomic.AtomicLong(0L)
-
-  /** 定时对账兜底（挂 ProjectActor.TtlTick 30s 周期；JVM 内按 [[minIntervalMs]] 节流，
-    * 多项目 tick 不叠加扫描）。`indexRoots = None` → [[defaultIndexRoots]]（`<dataRoot>/docs`，
-    * 显式传 Some 供测试/自定义域根）。索引区无 INDEX.md → 零开销 no-op（不写盘不打
-    * 日志）；报表干净（无 missing/stale）→ 不写报表文件。**只写 tmp 报表，不改文档本体。** */
+  /** 定时兜底（挂 ProjectActor.TtlTick 30s 周期；按 workspace 节流，多项目各自独立）。
+    * 一趟两段：
+    *   1. 写路径 catch-up [[applyChainEvents]]（幂等）——覆盖「事件已写、apply 未落地」
+    *      的进程死亡窗口（崩溃/重启后下一个 10min 窗内补齐翻转）；
+    *   2. 只读对账（报表语义不变：仍只读文档本体，仍落
+    *      `<workspace>/.nebflow/tmp/doc-index-reconcile.json`；报表干净不写盘）。
+    *
+    * catch-up 失败仅 WARN（fail-soft）——对账照常跑，绝不因写路径异常炸 tick。
+    * `indexRoots = None` → [[indexRootsFor]]（home + ws 两域，口径单点）；显式 Some 供
+    * 测试/自定义域根。索引区无 INDEX.md / 无链族事件 → 零开销 no-op（不写盘不打日志）。 */
   def tick(workspace: String, minIntervalMs: Long = DefaultReconcileIntervalMs,
            indexRoots: Option[List[String]] = None): IO[Option[ReconcileReport]] =
-    IO.blocking {
-      val now = System.currentTimeMillis()
-      val prev = lastTickMs.get()
-      val due = prev == 0L || now - prev >= minIntervalMs
-      if due then lastTickMs.set(now)
-      due
-    }.flatMap {
+    IO.blocking(claimTick(workspace, System.currentTimeMillis(), minIntervalMs)).flatMap {
       case false => IO.pure(None)
       case true =>
-        val roots = indexRoots.fold(defaultIndexRoots)(rs => IO.pure(rs))
-        roots.flatMap(scanIndexFiles).flatMap {
+        val roots = indexRoots.fold(indexRootsFor(workspace))(identity)
+        val catchUp = applyChainEvents(workspace, roots)
+          .handleErrorWith(e => logger.warn(s"doc-index flip (tick catch-up) failed: ${e.getMessage}"))
+          .void
+        val reconcileNow = scanIndexFiles(roots).flatMap {
           case Nil => IO.pure(None)
           case files =>
             buildReport(workspace, files).flatMap { r =>
               if r.isClean then IO.pure(Some(r)) else writeReport(r).as(Some(r))
             }
         }
+        catchUp *> reconcileNow
     }
