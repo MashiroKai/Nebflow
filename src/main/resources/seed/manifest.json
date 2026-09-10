@@ -5,6 +5,7 @@
     "agents:general",
     "plugins:visual-report",
     "plugins:slideblocks",
+    "plugins:nebflow-plugin-creator",
     "project:general"
   ]
 }
