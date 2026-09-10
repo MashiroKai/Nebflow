@@ -619,6 +619,11 @@ object ProjectActor:
               // 工具内不信客户端参数（安全红线）。
               isDispatcher = true,
               projectName = Some(project.name),
+              // 链级抽象 P2（20260910 spec §9.2 项 6）：分发器**不属任何链**——链是
+              // Flow Map 节点集上的弱连通分量，分发器会话不是节点、无 NodeDef.id。
+              // 显式置 None（口径显式化，非依赖默认值）：ProjectActor 是唯一非节点
+              // 的项目域 spawn 点，未来若有人在此误传链值，本节注释即口径锚点。
+              flowChainId = None,
               // 阶段 2a 沙箱（H-5①）：分发器 root=project workspace——worktree
               // 天然建在 <workspace>/.nebflow/ 内，git worktree add 写主仓 .git
               // 亦在界内。
