@@ -624,11 +624,11 @@ final class ShellSession private (
             else if lines > lastLines || (cpu - lastCpu) > Defaults.ForegroundCpuProgressNanos then
               watch(lines, cpu, 0L) // 有进展（输出 / 本窗 CPU 超门槛）→ 重置判死窗口
             else if idleMs + ForegroundSampleInterval.toMillis >= ForegroundNoProgressTimeout.toMillis then
-              IO.delay(
-                shellLogger.warn(
-                  s"Foreground command idle for ${(idleMs + ForegroundSampleInterval.toMillis) / 1000}s " +
-                    s"(no output, no CPU progress) — killing: ${command.take(80)}"
-                )
+              // 2026-09-10 死日志修复：原为 `IO.delay(shellLogger.warn(...))`——warn 已返回
+              // IO[Unit]，再包一层得到 IO[IO[Unit]]，内层日志永不执行（看护路径静默无日志）。
+              shellLogger.warn(
+                s"Foreground command idle for ${(idleMs + ForegroundSampleInterval.toMillis) / 1000}s " +
+                  s"(no output, no CPU progress) — killing: ${command.take(80)}"
               ) *> stuckFlag.set(true) *> ProcessTree.killProcessTree(proc)
             // 无进展：仍要推进基线，否则下一窗比较的是累计值而非本窗增量（见上）。
             else watch(lines, cpu, idleMs + ForegroundSampleInterval.toMillis)
@@ -647,9 +647,8 @@ final class ShellSession private (
       // EOF, reads unblock, and the timeout surfaces within milliseconds.
       val timeoutWatchdog =
         IO.sleep(timeout) *>
-          IO.delay(
-            shellLogger.warn(s"Command timeout (${timeout.toSeconds}s) reached — killing process tree: ${command.take(80)}")
-          ) *>
+          // 2026-09-10 死日志修复：去掉外层 IO.delay（内层 IO 永不执行）。杀树顺序不变。
+          shellLogger.warn(s"Command timeout (${timeout.toSeconds}s) reached — killing process tree: ${command.take(80)}") *>
           ProcessTree.killProcessTree(proc)
 
       for
@@ -752,9 +751,8 @@ final class ShellSession private (
               IO.delay(cb(existing))
                 .flatten
                 .handleErrorWith(e =>
-                  IO.delay(
-                    NebflowLogger.forName("nebflow.shell").warn(s"Background job callback failed: ${e.getMessage}")
-                  )
+                  // 2026-09-10 死日志修复：回调失败路径原为 IO.delay(warn(...)) —— 静默无日志。
+                  NebflowLogger.forName("nebflow.shell").warn(s"Background job callback failed: ${e.getMessage}")
                 )
             }
         case _ =>
@@ -763,9 +761,8 @@ final class ShellSession private (
               IO.delay(cb(result))
                 .flatten
                 .handleErrorWith(e =>
-                  IO.delay(
-                    NebflowLogger.forName("nebflow.shell").warn(s"Background job callback failed: ${e.getMessage}")
-                  )
+                  // 2026-09-10 死日志修复：同上（结果回调失败路径）。
+                  NebflowLogger.forName("nebflow.shell").warn(s"Background job callback failed: ${e.getMessage}")
                 )
             }
       }

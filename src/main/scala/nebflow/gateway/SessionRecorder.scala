@@ -96,9 +96,10 @@ class SessionRecorder private (
       case _ => IO.unit
 
     record.handleErrorWith(e =>
-      IO(SessionRecorder.logger.warn(s"Failed to record UI message for session $sessionId: ${e.getMessage}"))
+      // 2026-09-10 死日志修复：去掉外层 IO(...)（内层 IO 永不执行 —— 记录失败静默无日志）。
+      SessionRecorder.logger.warn(s"Failed to record UI message for session $sessionId: ${e.getMessage}")
     ) *> underlying(json).handleErrorWith(e =>
-      IO(SessionRecorder.logger.warn(s"Failed to broadcast for session $sessionId: ${e.getMessage}"))
+      SessionRecorder.logger.warn(s"Failed to broadcast for session $sessionId: ${e.getMessage}")
     )
   end apply
 

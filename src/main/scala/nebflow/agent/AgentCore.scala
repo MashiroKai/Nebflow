@@ -442,7 +442,8 @@ private[agent] trait AgentCore:
       preHookIO = hook
         .run(state.messages, agentDef.name, state.sessionId, None, resources)
         .handleErrorWith(e =>
-          IO(lifecycleLog.warn(s"Pre-compaction hook failed for ${agentDef.name}: ${e.getMessage}")).void
+          // 2026-09-10 死日志修复：去掉外层 IO(...)（内层 IO 永不执行）。
+          lifecycleLog.warn(s"Pre-compaction hook failed for ${agentDef.name}: ${e.getMessage}").void
         )
 
       // ── 2. Single-stage compaction ──
