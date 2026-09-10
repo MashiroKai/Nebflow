@@ -2289,7 +2289,12 @@ class NodeEngine(
     * 投递，因此与 D5 的 failed 零结算纪律不冲突（R4 硬约束：failed 侧零改动）。
     *
     * 幂等：out 已无节点目标（重复调用 / 本就悬空）→ 返回 Nil 且零写。
-    * 返回被 prune 的下游 id 集（供审计事件与 R1 通知文本使用）。 */
+    * 返回被 prune 的下游 id 集（供审计事件与 R1 通知文本使用）。
+    *
+    * 可见性（R4 验收项「自动摘除 + 标记可见」）：prune 生效时对每个受影响下游补发
+    * `nodeUpdated`（payload 走 NodePayload 条件字段 `pendingSuccession`，前端卡片/
+    * 分发器 NodeList 同一序列化点）——与 NodeTools.emitWiringUpdates 同款：标记若只
+    * 落盘不推帧，前端要等下一次全量快照才见。幂等（无 prune → 零帧）。 */
   private def detachCancelledUpstream(nodeId: String): IO[List[String]] =
     store.mutateWithResult { s =>
       s.nodes.get(nodeId) match
@@ -2307,7 +2312,14 @@ class NodeEngine(
             }
             (s.copy(nodes = pruned.updated(nodeId, from.copy(out = List(OutEdge.nebula)))), targets)
         case None => (s, Nil)
-    }.map(_._2)
+    }.flatMap { case (_, pruned) =>
+      pruned.foldLeft(IO.unit) { (acc, tid) =>
+        acc >> store.getNode(tid).flatMap {
+          case Some(n) => emitUpdated(n)
+          case None    => IO.unit
+        }
+      }.as(pruned)
+    }
 
   /** R3 终态写点**即时** barrier 检查（取消静默死锁修复批，作者裁定 R3 方案 3）：
     * 终态写点已经知道「谁终态了 + 谁是它的 barrier」，信息完整——把「周期发现」变成
