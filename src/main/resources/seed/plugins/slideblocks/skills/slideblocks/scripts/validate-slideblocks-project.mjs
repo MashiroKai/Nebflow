@@ -9,6 +9,7 @@ export const VALIDATION_SCOPE =
 
 const SKIPPED_DIRECTORIES = new Set([
   '.git',
+  '.nebflow',
   '.slideblocks',
   '.slidev',
   '.output',
