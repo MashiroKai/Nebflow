@@ -48,6 +48,14 @@ import scala.util.matching.Regex
  * 扫描节奏（§B.3）：进程内 mtime 缓存——目录树任一 mtime 变化即全量重扫
  * （对齐 skill「改后即时生效」机制）；spawn/NodeEdit 校验路径每次走 list/resolve
  * 天然新鲜。
+ *
+ * 装载可见性（可见性批 2026-09-10，P1 静默缩容）：装载失败 / 信任未批准 / digest
+ * 漂移都会让包从 Plugin Catalog 消失，此前只有逐包 WARN、目录静默缩容（2026-09-06
+ * 14/16 整包拒载 → 冷启动目录只剩 2 包，作者侧无聚合信号）。现在两条聚合出口：
+ * ①目录段尾缺席注记（[[PluginRegistry.renderCatalog]] 单点，分发器注入段与
+ * REST GET /plugins/catalog 同字节）；②启动/重扫健康摘要（[[PluginRegistry.healthSummary]]
+ * / [[PluginRegistry.logHealthSummary]]，只出异常、干净场景零输出）。两者都只加
+ * 可见性——装载校验与信任门判定语义未动。
  */
 object PluginRegistry:
 
@@ -298,8 +306,13 @@ object PluginRegistry:
   /** mtime 缓存（进程内）：目录树（根 + 子树全部目录**与文件**）的绝对路径 mtime
     * 快照。文件内容修改只变文件自身 mtime（父目录 mtime 不动）→ 签名必须含文件，
     * 否则「改动即重审」（§B.8-3）会在缓存命中路径上漏检。键 = 绝对路径。 */
-  private case class Cache(sig: List[(String, Long)], plugins: List[PluginDef])
+  private case class Cache(sig: List[(String, Long)], snapshot: Snapshot)
   private val cache = new java.util.concurrent.atomic.AtomicReference[Option[Cache]](None)
+
+  /** 一次全量扫描的完整产出：可装载条目（含 untrusted——审批清单/面板需要看到待审
+    * 插件）+ 拒载清单（§B.2 左值）。可见性批（2026-09-10 P1 静默缩容）：拒载清单与
+    * 条目同缓存，目录缺席注记 / 启动健康摘要 / 渲染共用同一次扫描（单点、零重复装载）。 */
+  private final case class Snapshot(plugins: List[PluginDef], rejected: List[(String, String)])
 
   private def treeSig(dir: os.Path): List[(String, Long)] =
     try
@@ -307,33 +320,31 @@ object PluginRegistry:
       (dir :: all).map(p => p.toString -> os.mtime(p)).sortBy(_._1)
     catch case _: Exception => Nil
 
-  /** 全量注册表（含 untrusted——审批清单/面板需要看到待审插件）。 */
-  def scan(): IO[List[PluginDef]] =
+  /** 全量扫描唯一实现（缓存：目录树 mtime 签名未变则复用上次产出）。 */
+  private def snapshot(): IO[Snapshot] =
     IO.blocking {
-      if !os.isDir(pluginsDir) then Nil
+      if !os.isDir(pluginsDir) then Snapshot(Nil, Nil)
       else
         val subDirs = os.list(pluginsDir).filter(os.isDir).toList.sortBy(_.last)
         val full = treeSig(pluginsDir)
         cache.get match
-          case Some(c) if c.sig == full => c.plugins
+          case Some(c) if c.sig == full => c.snapshot
           case _ =>
             val loaded = subDirs.map(d => loadPlugin(d))
-            val defs = loaded.collect { case Right(p) => p }
-            val rejected = loaded.collect { case Left((n, r)) => n -> r }
-            rejected.foreach { case (n, r) => logger.warnSync(s"Plugin '$n' rejected: $r") }
-            cache.set(Some(Cache(full, defs)))
-            defs
+            val snap = Snapshot(
+              plugins = loaded.collect { case Right(p) => p },
+              rejected = loaded.collect { case Left((n, r)) => n -> r })
+            snap.rejected.foreach { case (n, r) => logger.warnSync(s"Plugin '$n' rejected: $r") }
+            cache.set(Some(Cache(full, snap)))
+            snap
     }
 
-  /** 审批清单渲染数据：全部插件（含拒载原因）。 */
+  /** 全量注册表（含 untrusted——审批清单/面板需要看到待审插件）。 */
+  def scan(): IO[List[PluginDef]] = snapshot().map(_.plugins)
+
+  /** 审批清单渲染数据：全部插件 + 拒载原因（同缓存快照，与 scan 同源同时点）。 */
   def listWithRejected(): IO[(List[PluginDef], List[(String, String)])] =
-    IO.blocking {
-      if !os.isDir(pluginsDir) then (Nil, Nil)
-      else
-        val subDirs = os.list(pluginsDir).filter(os.isDir).toList.sortBy(_.last)
-        val loaded = subDirs.map(d => loadPlugin(d))
-        (loaded.collect { case Right(p) => p }, loaded.collect { case Left((n, r)) => n -> r })
-    }
+    snapshot().map(snap => (snap.plugins, snap.rejected))
 
   /** 解析单个插件（信任门校验入口）。Left = 分配失败原因（含审批指引）。 */
   def resolve(name: String): IO[Either[String, PluginDef]] =
@@ -906,6 +917,111 @@ object PluginRegistry:
           AtomicJson.writeSync(configPath, transform(root).noSpaces)
           Right(())
 
+  // ── 装载可见性（P1 静默缩容，2026-09-10 可见性批）─────────────────
+  // 背景：整包拒载 / 信任未批准 / digest 漂移 → 目录静默缩容，作者侧无任何聚合
+  // 信号（2026-09-06 08:31 14/16 整包拒载只有逐包 WARN，冷启动目录只剩 2 包；
+  // 2026-09-08 digest 漂移窗口目录再次无声缺席）。本节**只加可见性**：不改装载
+  // 校验、不改信任门判定、不改目录过滤链（untrusted 依旧不进目录行）。
+
+  /** 目录缺席分类（可见性口径，不参与任何装载/信任判定）。 */
+  enum AbsenceKind(val label: String):
+    /** 装载失败：manifest/校验拒载（§B.2 装载校验）。 */
+    case LoadFailed extends AbsenceKind("装载失败")
+    /** 信任未批准：装载成功但信任表无审批记录（默认拒绝；含撤审回落）。 */
+    case NeverApproved extends AbsenceKind("信任未批准")
+    /** digest 漂移：有审批记录但目录内容 digest 与记录不符（升级即重审，§B.8-3）。 */
+    case DigestDrift extends AbsenceKind("digest 漂移")
+
+  /** 一条缺席记录：包名 + 分类 + 原因（原因文本与注册表/拒载消息同源，不另造文案）。 */
+  final case class Absence(name: String, kind: AbsenceKind, reason: String)
+
+  /** 缺席清单 = 在 plugins/ 下存在、但不进 Plugin Catalog 的包：装载失败 + 未受信。
+    * 分类依据权威来源（拒载左值 / 信任表与现算 digest 比对），不做原因字符串匹配。 */
+  private def absencesOf(snap: Snapshot): List[Absence] =
+    val rejected = snap.rejected.sortBy(_._1).map { case (n, r) =>
+      Absence(n, AbsenceKind.LoadFailed, r)
+    }
+    val untrusted = snap.plugins.filterNot(_.trust.trusted).sortBy(_.name).map { p =>
+      Absence(p.name, untrustedKind(p), untrustedReason(p))
+    }
+    rejected ++ untrusted
+
+  private def untrustedKind(p: PluginDef): AbsenceKind =
+    trustRecord(p.name) match
+      case None => AbsenceKind.NeverApproved
+      case Some(rec) if rec.sha256 != p.digest => AbsenceKind.DigestDrift
+      // 有记录且与现况 digest 一致却仍未受信：装载判定下不可达（loadPlugin 同条件
+      // 即 Trusted）；保守归入「未批准」——可见性口径，不影响判定本身。
+      case Some(_) => AbsenceKind.NeverApproved
+
+  private def untrustedReason(p: PluginDef): String = p.trust match
+    case TrustStatus.Untrusted(r) => r
+    case TrustStatus.Trusted(_, _) => "untrusted" // 调用点已按 trust.trusted 过滤
+
+  /** 日志用分类 slug（英文，与既有 plugin 日志行文一致）。 */
+  private def kindSlug(k: AbsenceKind): String = k match
+    case AbsenceKind.LoadFailed => "load-failed"
+    case AbsenceKind.NeverApproved => "unapproved"
+    case AbsenceKind.DigestDrift => "digest-drift"
+
+  /** 目录缺席注记（段尾聚合，唯一实现）：只出计数不出包名——本注记进分发器
+    * prompt（Token 经济优先），包名+原因清单由启动健康摘要落日志。零缺席 → ""。 */
+  private def absenceNote(absences: List[Absence]): String =
+    if absences.isEmpty then ""
+    else
+      val counts = AbsenceKind.values.toList
+        .map(k => s"${k.label} ${absences.count(_.kind == k)}")
+      s"另有 ${absences.size} 个插件未载入（${counts.mkString(" / ")}）"
+
+  /** 启动/重扫健康摘要（P1 可见性）：首行 = 总包数 / 载入数 / 目录可见数 / 缺席分类
+    * 计数，随后逐条缺席明细（一行一条 `[分类] 包名: 原因`）。零缺席 → None（干净
+    * 场景零噪音）；`plugins.enabled=false` → None（插件系统整体关闭，不刷无意义告警）。 */
+  def healthSummary(): IO[Option[String]] =
+    PluginsConfig.enabled.flatMap {
+      case false => IO.pure(None)
+      case true => snapshot().flatMap(snap => IO.blocking(healthSummaryOf(snap)))
+    }
+
+  private def healthSummaryOf(snap: Snapshot): Option[String] =
+    val absences = absencesOf(snap)
+    if absences.isEmpty then None
+    else
+      val visible = snap.plugins.count(_.trust.trusted)
+      val counts = AbsenceKind.values.toList
+        .map(k => s"${kindSlug(k)} ${absences.count(_.kind == k)}").mkString(" / ")
+      val head =
+        s"${snap.plugins.size + snap.rejected.size} package(s) on disk, ${snap.plugins.size} loaded, " +
+          s"$visible catalog-visible, ${absences.size} absent ($counts)"
+      val detail = absences.map(a => s"  [${kindSlug(a.kind)}] ${a.name}: ${a.reason}")
+      Some((head :: detail).mkString("\n"))
+
+  /** 健康摘要输出记账：同状态只出一次（重扫 tick 30s 一次，不重复刷屏），状态变化
+    * 后重新输出，回到干净后复位（异常复现可再出）。 */
+  private val healthLogState =
+    new java.util.concurrent.atomic.AtomicReference[(Int, Option[String])]((0, None))
+
+  /** 输出健康摘要（有异常才出，WARN 级；best-effort——调用方自担错误兜底）。
+    * 挂接点：GatewayMain 启动（trigger "startup"）与插件信任重扫完成
+    * （NodeEngine.revalidatePluginTrust，TtlTick 30s，trigger "rescan"）。 */
+  def logHealthSummary(trigger: String): IO[Unit] =
+    healthSummary().flatMap {
+      case None =>
+        IO.delay {
+          val (n, last) = healthLogState.get()
+          if last.isDefined then healthLogState.set((n, None))
+        }
+      case Some(body) =>
+        IO.delay {
+          val (n, last) = healthLogState.get()
+          if last != Some(body) then
+            healthLogState.set((n + 1, Some(body)))
+            logger.warnSync(s"plugin health[$trigger]:\n$body")
+        }
+    }
+
+  /** 健康摘要输出记账（测试钩子）：(已输出次数, 最近一次正文)。 */
+  def healthSummaryLogStateForTest: (Int, Option[String]) = healthLogState.get()
+
   // ── 分发器目录注入（§B.4 第 2 步；描述单源批 2026-09-10 双渲染器收敛）─────
 
   /** Plugin Catalog 段头——双渲染器单点：分发器注入段（DispatcherContextCatalog
@@ -924,17 +1040,22 @@ object PluginRegistry:
     val tools = if p.toolsExtension.isEmpty then "" else s" | tools: ${p.toolsExtension.mkString(", ")}"
     s"- ${p.name}: $desc [skills: $skills | mcp: $mcp$tools]"
 
-  /** Plugin Catalog 段（对齐 skillCatalog order 800 先例）。untrusted 不出现。
-    * 无受信插件 / flag 关 → ""（不注入空段）。本方法是插件目录渲染的唯一实现
-    * （分发器注入与调试预览共用，双渲染器重复实现已收敛于此）。 */
+  /** Plugin Catalog 段（对齐 skillCatalog order 800 先例）。untrusted 不出现（过滤链
+    * 未动）。空段判定（可见性批改口径）：**无缺席注记时**才可能为空——无受信插件且
+    * 无缺席包（盘上无插件）/ flag 关 → ""；若一个插件都没进目录但盘上有缺席包，
+    * 则只注入段头 + 缺席注记（目录缩容到 0 也不许无声）。本方法是插件目录渲染的
+    * 唯一实现（分发器注入与调试预览共用，双渲染器重复实现已收敛于此）。 */
   def renderCatalog(): IO[String] =
     PluginsConfig.enabled.flatMap {
       case false => IO.pure("")
       case true =>
-        scan().map { all =>
-          val trusted = all.filter(_.trust.trusted).sortBy(_.name)
-          if trusted.isEmpty then ""
-          else CatalogHeader + "\n" + trusted.map(catalogLine).mkString("\n")
+        snapshot().flatMap { snap =>
+          IO.blocking {
+            val trusted = snap.plugins.filter(_.trust.trusted).sortBy(_.name)
+            val note = absenceNote(absencesOf(snap))
+            val lines = trusted.map(catalogLine) ++ Option.when(note.nonEmpty)(note)
+            if lines.isEmpty then "" else CatalogHeader + "\n" + lines.mkString("\n")
+          }
         }
     }
 end PluginRegistry

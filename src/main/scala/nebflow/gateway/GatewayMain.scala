@@ -885,6 +885,17 @@ object GatewayMain extends IOApp:
                                                       _ <- logger.info(
                                                         s"access URL: $baseUrl (token in ~/.nebflow/auth.json)"
                                                       )
+                                                      // ── 插件装载健康摘要（P1 静默缩容可见性，2026-09-10）──
+                                                      // 启动完成即聚合输出一次：总包数/载入数/目录可见数 +
+                                                      // 拒载清单 + 未批准清单 + digest 漂移清单（一行一条）。
+                                                      // 干净场景零输出（healthSummary 返回 None）；同状态去重，
+                                                      // 重扫 tick 不重复刷屏（PluginRegistry.logHealthSummary）。
+                                                      // best-effort：摘要失败只 WARN，不影响启动。
+                                                      _ <- nebflow.core.plugin.PluginRegistry
+                                                        .logHealthSummary("startup")
+                                                        .handleErrorWith(e =>
+                                                          logger.warn(s"plugin health summary failed: ${e.getMessage}")
+                                                        )
                                                       // ── 热重启握手终态（[s7]，hot-restart 批设计 §3.3）──
                                                       // successor.json（握手完成锚点）+ intent 归档
                                                       // last-restart.json + 冷却窗锚点置位（R7）+
