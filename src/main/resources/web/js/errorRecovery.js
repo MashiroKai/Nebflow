@@ -28,7 +28,15 @@ import { findViewBySessionId } from './chatView.js';
 
 // ── Reason metadata ──────────────────────────────────────────────────────
 // wire names are the FreezeReason enum cases (kebab) emitted by protocol.scala.
-const ERROR_REASONS = ['llm-transient', 'network', 'provider-down', 'restart-recovery'];
+// 'loop' (R3, 2026-09-10): LoopGuard L2 park. The backend enters it through the
+// SAME error-family entry point (AgentActor enterErrorFrozen(..., FreezeReason
+// .Loop, LoopFreezeResumeMs=365d)), so it belongs to this family. It used to be
+// absent here ⇒ normalizeReason() folded it into 'schedule' ⇒ the loop freeze
+// rendered as the sapphire TIME-TABLE freeze ("已冻结 · <+1y clock>", disabled
+// composer, "跳过本次" button — itself a backend no-op for loop) and never got
+// the retry/abandon affordances, i.e. the "why did it stop" was unanswerable
+// and the family's only exits were invisible.
+const ERROR_REASONS = ['llm-transient', 'network', 'provider-down', 'restart-recovery', 'loop'];
 
 /** True when the frozen reason is an error-family reason (not 'schedule'). */
 export function isErrorReason(reason) {
@@ -47,6 +55,7 @@ const REASON_KEYS = {
   'network': 'chat.errorRecovering.network',
   'provider-down': 'chat.errorRecovering.providerDown',
   'restart-recovery': 'chat.errorRecovering.restartRecovery',
+  'loop': 'chat.errorRecovering.loop',
 };
 
 /** Human label for a reason (already translated, via t()). */
@@ -72,6 +81,10 @@ const ICON_SHAPES = {
   // rotate-cw resume arrow — "restart recovery"
   'restart-recovery':
     '<polyline points="23 4 23 10 17 10"/><path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10"/>',
+  // rotate-ccw repeat cycle — "the same action keeps repeating"
+  'loop':
+    '<path d="m17 2 4 4-4 4"/><path d="M3 11v-1a4 4 0 0 1 4-4h14"/>' +
+    '<path d="m7 22-4-4 4-4"/><path d="M21 13v1a4 4 0 0 1-4 4H3"/>',
 };
 
 /** 18px warning SVG for a reason. Static shape (pulse via CSS, not rotation). */
@@ -89,7 +102,12 @@ export function buildStripText(info) {
   const n = Number(info.retryCount);
   const hasRetry = Number.isFinite(n) && n >= 1;
   let base;
-  if (hasRetry) {
+  if (normalizeReason(info.reason) === 'loop') {
+    // R3: the loop park never auto-recovers (resumeAt = +365d) — the generic
+    // "错误恢复中" prefix would be a lie. Dedicated line: what happened + the
+    // two real exits (the buttons sit right next to it).
+    base = t('chat.loopFrozenStrip');
+  } else if (hasRetry) {
     const retry = t('chat.errorRecoveringRetryCount', { n });
     base = t('chat.errorRecoveringStrip', { reason, retry });
   } else {
@@ -375,6 +393,9 @@ export function errorTileText(meta) {
   if (reason === 'schedule') return '';
   if (meta.escalation) return t('chat.errorEscalatedEscalation');
   if (reason === 'llm-transient') return t('chat.errorTileRetry');
+  // Loop park is manual-only (no auto-recovery) — "等恢复" would promise a
+  // resume that never comes; label the cause instead.
+  if (reason === 'loop') return t('chat.errorRecovering.loop');
   return t('chat.errorTileWaiting');
 }
 

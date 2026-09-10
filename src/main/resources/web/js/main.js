@@ -412,6 +412,15 @@ onMessage('frozen', (msg) => {
       if (isError) {
         // Amber family: .frozen-error (never .frozen — UI-1 mutex).
         applyErrorFrozen(v, { sessionId: sid, reason, retryCount: msg.retryCount, escalation: msg.escalation });
+        // Same defect family as F-1 above: applyErrorFrozen only swaps the
+        // CLASS. If a schedule-window tick had disabled this bar moments
+        // earlier (window active + the session was briefly idle), removing
+        // '.frozen' leaves the disabled attributes behind with no class left
+        // for applyLocalFreeze to heal — the amber bar is then visually
+        // "type to retry" while the composer is dead. The error family must
+        // always hand back an enabled composer (retry button + typing are its
+        // two exits).
+        setFrozenBarState(v, false);
       } else {
         v.dom.inputBar.classList.add('frozen');
         v.dom.inputBar.dataset.frozen = 'true';
