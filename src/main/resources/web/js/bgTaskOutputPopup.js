@@ -165,25 +165,31 @@ const POPUP_CSS = `<style id="bgt-output-popup-css">
   overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
 }
 
-/* 输出区：<pre> 等宽（配色对齐既有代码/终端展示面），pre-wrap 长行折行。
-   无 background——玻璃由 .bgt-modal 统一承载（同 .flow-agent-chat 形态，
-   正文区不透明底会击穿面板毛玻璃材质）。
-   复制（2026-09-10 作者指令）：.bgt-body 复用代码块的 .code-block-wrap 容器
-   class——.code-copy-btn 的 hover 浮现（chat.css .code-block-wrap:hover）与
-   玻璃主题（sapphire.css Pattern B / chat.css dark 档）零复制生效，交互、
-   样式、已复制反馈与代码块完全同款。padding-top 抬高给右上角按钮留浮层位。 */
-.bgt-body { flex: 1; min-height: 0; display: flex; position: relative; }
+/* 输出区（2026-09-10 作者指令：终端化内芯）：后台任务输出是终端任务——
+   内芯 = 跟随主题的深/浅终端底（light #f5f5f5 / dark #111419，与代码块
+   .bubble.ai pre 同源值）+ 等宽栈 + pre-wrap 原始换行；外层 .bgt-modal
+   仍守毛玻璃、overlay 禁暗化红线不变（面板外壳毛玻璃统一 + 内芯终端化）。
+   复制：.bgt-body 复用代码块 .code-block-wrap 容器 class——.code-copy-btn
+   的 hover 浮现（chat.css）与玻璃主题（sapphire.css Pattern B / dark 档）
+   零复制生效；padding-top 抬高给右上角浮层按钮留位（28px = 按钮高+余量）。 */
+.bgt-body { flex: 1; min-height: 0; display: flex; position: relative; padding: 0 12px 10px; }
 .bgt-output {
   flex: 1;
   margin: 0;
-  padding: 28px 16px 12px;
+  padding: 28px 14px 12px;
   overflow: auto;
-  font: 400 12px/1.55 ui-monospace, SFMono-Regular, monospace;
+  background: #f5f5f5;
+  border: 1px solid var(--color-frame-border);
+  border-radius: 8px;
+  font: 400 12px/1.55 ui-monospace, SFMono-Regular, Menlo, monospace;
   color: var(--color-text);
   white-space: pre-wrap;
   word-break: break-word;
   overscroll-behavior: contain;
   scrollbar-color: var(--color-frame-border) transparent;
+}
+@media (prefers-color-scheme: dark) {
+  .bgt-output { background: #111419; scrollbar-color: rgba(255,255,255,0.15) transparent; }
 }
 /* 代码/终端面 4px 细滚动条档（base.css 全局 6px，tool-card body 先例同款覆宽）。 */
 .bgt-output::-webkit-scrollbar { width: 4px; height: 4px; }
@@ -196,6 +202,7 @@ const POPUP_CSS = `<style id="bgt-output-popup-css">
   text-align: center;
 }
 .bgt-placeholder.bgt-hidden { display: none; }
+.bgt-exit-label.bgt-hidden, .bgt-truncated.bgt-hidden, .bgt-error.bgt-hidden { display: none; }
 
 /* Footer：同 .flow-agent-footer（顶缘折射线 + hairline）；meta 左、截断注记右。
    （2026-09-10 作者指令：显式复制按钮区移除——复制改为 hover 右上角浮现，
@@ -220,12 +227,28 @@ const POPUP_CSS = `<style id="bgt-output-popup-css">
   z-index: 1;
 }
 .bgt-meta {
-  font: 400 11px -apple-system, sans-serif;
+  font: 400 11px ui-monospace, SFMono-Regular, Menlo, monospace;
   font-variant-numeric: tabular-nums;
   color: var(--color-text-muted);
   min-width: 0;
+  display: inline-flex; align-items: center; gap: 6px;
+}
+.bgt-meta-text {
+  min-width: 0;
   overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
 }
+/* 终端语言的状态标识（2026-09-10 作者指令③：状态在终端语言内表达，行前缀/
+   角标，禁大色块）：运行态 = meta 行前缀终端光标块（.tool-stream-body
+   pre .cursor 同源视觉：--color-primary 5×14 blink）；终态 = 美元符 prompt
+   前缀 + exit 码（如 "$ exit 0 · 3 行 · 27 B"）。 */
+.bgt-cursor {
+  display: inline-block;
+  width: 5px; height: 12px;
+  background: var(--color-primary);
+  animation: blink 1s steps(2) infinite;
+  flex-shrink: 0;
+}
+.bgt-prompt { opacity: 0.7; flex-shrink: 0; }
 .bgt-truncated {
   font: 500 11px -apple-system, sans-serif;
   color: #d4a030;
@@ -274,8 +297,30 @@ function renderStatus(status, exitCode) {
 
 function renderMeta(data) {
   if (!cur || cur.closed) return;
-  const metaEl = overlayEl.querySelector('.bgt-meta');
-  metaEl.textContent = t('bg.detail.meta', { lines: fmtLines(data.totalLines), bytes: fmtBytes(data.totalBytes) });
+  const metaTextEl = overlayEl.querySelector('.bgt-meta-text');
+  if (metaTextEl) metaTextEl.textContent = t('bg.detail.meta', { lines: fmtLines(data.totalLines), bytes: fmtBytes(data.totalBytes) });
+}
+
+// 终端语言 meta（2026-09-10 作者指令③）：终态 → `$` prompt 前缀 + exit 码
+// （复用 bg.detail.exit / 既有终态 label，零新 key）；运行态 → 闪烁光标块。
+// 只动 marker 与 exit-label 两段——meta-text（行数/字节）由 renderMeta 独占。
+function renderTerminalState(status, exitCode) {
+  if (!cur || cur.closed) return;
+  const marker = overlayEl.querySelector('.bgt-meta-marker');
+  const exitEl = overlayEl.querySelector('.bgt-exit-label');
+  if (!marker || !exitEl) return;
+  if (status && status !== 'running' && status !== 'cancelling') {
+    marker.innerHTML = '<span class="bgt-prompt">$</span>';
+    const label = (exitCode !== undefined && exitCode !== null)
+      ? t('bg.detail.exit', { code: exitCode })
+      : statusView(status).label;
+    exitEl.textContent = label;
+    exitEl.classList.remove('bgt-hidden');
+  } else {
+    marker.innerHTML = '<span class="bgt-cursor" aria-hidden="true"></span>';
+    exitEl.textContent = '';
+    exitEl.classList.add('bgt-hidden');
+  }
 }
 
 function showTruncatedNote() {
@@ -328,6 +373,7 @@ function stopAll() {
   if (!cur) return;
   stopPoll();
   if (cur.totalTimer) { clearTimeout(cur.totalTimer); cur.totalTimer = null; }
+  if (cur.retryTimer) { clearTimeout(cur.retryTimer); cur.retryTimer = null; }
   if (cur.abortCtl) { try { cur.abortCtl.abort(); } catch { /* */ } cur.abortCtl = null; }
 }
 
@@ -395,20 +441,30 @@ async function pollOnce() {
   if (typeof data.nextOffset === 'number') cur.offset = data.nextOffset;
   renderMeta(data);
   renderStatus(data.status, data.exitCode);
+  renderTerminalState(data.status, data.exitCode);
   if (data.truncated) showTruncatedNote();
   if (data.errorHint) showErrorHint(data.errorHint);
   if (data.status && data.status !== 'running') { stopAll(); return; }
   // 单次读取模式（终态行）但 store 竟返回 running（行状态过时/竞态）→
   // 就地转轮询模式直到终态（预算照常生效）。
-  if (cur.oneShot) { cur.oneShot = false; armTotalBudget(); }
+  if (cur.oneShot) {
+    cur.oneShot = false;
+    armTotalBudget();
+    cur.pollTimer = setInterval(pollOnce, 2000);
+  }
 }
 
-// 失败预算判定：超限 → 明确错误终局（禁无限静默等待）。
+// 失败预算判定：超限 → 明确错误终局（禁无限静默等待）；未超限 → 安排下一拍
+// （oneShot 的「首拍+2 重试」由 retryTimer 驱动；轮询模式由 interval 驱动）。
 function onReadFailure() {
   if (!cur || cur.closed) return;
   cur.failCount = (cur.failCount || 0) + 1;
-  const budget = cur.oneShot ? MAX_ONESHOT_ATTEMPTS : MAX_POLL_FAILS;
-  if (cur.failCount >= budget) showReadFailure();
+  if (cur.oneShot) {
+    if (cur.failCount >= MAX_ONESHOT_ATTEMPTS) { showReadFailure(); return; }
+    if (!cur.retryTimer) cur.retryTimer = setTimeout(() => { if (cur && !cur.closed) { cur.retryTimer = null; pollOnce(); } }, 1200);
+    return;
+  }
+  if (cur.failCount >= MAX_POLL_FAILS) showReadFailure();
 }
 
 // 轮询模式总预算：10min 无终态 → 停轮询并明示（persistent/僵死任务防线）。
@@ -485,6 +541,7 @@ export function openBgTaskOutput(task) {
     text: '',
     pollTimer: null,
     totalTimer: null,
+    retryTimer: null,
     abortCtl: null,
     failCount: 0,
     oneShot: false,
@@ -519,7 +576,7 @@ export function openBgTaskOutput(task) {
         '<div class="bgt-placeholder bgt-hidden"></div>' +
       '</div>' +
       '<div class="bgt-footer">' +
-        '<span class="bgt-meta"></span>' +
+        '<span class="bgt-meta"><span class="bgt-meta-marker"></span><span class="bgt-exit-label bgt-hidden"></span><span class="bgt-meta-text"></span></span>' +
         '<span class="bgt-truncated bgt-hidden"></span>' +
       '</div>' +
     '</div>';
@@ -549,6 +606,7 @@ export function openBgTaskOutput(task) {
   // 转圈，即作者实测「卡在那」的形态之一）。
   renderStatus(cur.initialStatus);
   renderMeta({ totalLines: 0, totalBytes: 0 });
+  renderTerminalState(cur.initialStatus);
 
   // 焦点管理：聚焦关闭按钮，关闭时归还触发行
   overlayEl.querySelector('.bgt-close').focus();
