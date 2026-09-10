@@ -194,6 +194,10 @@ export function sendRetry(sid) {
     // No user text anywhere (no rendered row, no cache entry) — there is
     // nothing to re-send, and an empty frame is exactly the no-op being fixed.
     // Say so instead of failing silently.
+    // N-1 (2026-09-10): this is now defense-in-depth only. ensureStrip probes
+    // the same predicate at render time and renders the button `disabled` with
+    // a visible reason, so the user-facing path never reaches this branch; it
+    // survives for the strip-less callers (direct calls, a future entry point).
     console.warn('[errorRecovery] retry: no user message text available for session', sid);
     return;
   }
@@ -248,7 +252,31 @@ function ensureStrip(view, info) {
     `<button class="error-abandon-btn" type="button">${escapeHtml(t('chat.errorAbandon'))}</button>`;
   strip.querySelector('.error-recovery-text').textContent = buildStripText(info);
   const sid = info.sessionId;
-  strip.querySelector('.error-retry-btn').addEventListener('click', () => sendRetry(sid));
+  // N-1 (2026-09-10): the retry button is only actionable when there IS a
+  // user-authored text to re-send — sendRetry's payload source is
+  // lastUserMessageText(), so an injected-only conversation (scheduled task /
+  // Mail / delegate driven) has nothing to replay. Until now the button stayed
+  // visible and clickable in that case while the click did nothing but a
+  // console.warn — the same "visible, clickable, no feedback" defect class this
+  // batch exists to remove (and the strip text promised 重试). Probe the SAME
+  // function the click path uses, so the state can never disagree with it, and
+  // turn the no-op into a disabled control that says why.
+  //
+  // The reason rides ON the button (label swap) rather than in a sibling hint
+  // span on purpose: the strip row is a fixed-width flex row (icon + reason +
+  // 2 buttons), and a third text item costs the reason line its width — the
+  // measured first cut dropped it from 13 to ~3 visible chars, and giving the
+  // hint its own wrapped row grew the strip from 1 to 3 rows. Label swap is the
+  // only shape that explains the disabled state at zero layout cost.
+  const retryBtn = strip.querySelector('.error-retry-btn');
+  if (!lastUserMessageText(sid)) {
+    retryBtn.disabled = true;
+    retryBtn.setAttribute('aria-disabled', 'true');
+    retryBtn.dataset.unavailable = 'no-user-message';   // DOM assertion contract
+    retryBtn.textContent = t('chat.errorRetryNoText');
+    retryBtn.title = t('chat.errorRetryNoTextTitle');
+  }
+  retryBtn.addEventListener('click', () => sendRetry(sid));
   strip.querySelector('.error-abandon-btn').addEventListener('click', () => sendAbandon(sid));
   return strip;
 }
