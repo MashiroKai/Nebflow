@@ -222,6 +222,12 @@ Git safety:
     val criticalPatterns = List(
       """rm\s+-rf\s+/\s*$""".r,
       """rm\s+-rf\s+/\*\s*""".r,
+      // R11: 递归删除打到盘根（Windows 形态的 `rm -rf /`）——整盘/整卷级
+      // 两个前瞻：① 含 -Recurse ② 目标恰为盘根（`C:\` / `C:/` / `C:`，其后是空白或行尾）；
+      // 顺序无关（-Recurse 在路径前/后均可），但不把 `C:\Users\x` 之类子路径误判为盘根。
+      """(?i)\bRemove-Item\b(?=[\s\S]*-Recurse)(?=[\s\S]*['"]?[A-Za-z]:[\\/]{0,2}['"]?(?=\s|$))""".r,
+      """(?i)\b(rd|rmdir)\s+/s\b[\s\S]*['"]?[A-Za-z]:[\\/]{0,2}['"]?(?=\s|$)""".r,
+      """(?i)\b(shutil\.rmtree|rmSync|rmdirSync)\s*\(\s*['"]/['"]""".r,
       """pkill\s+(-f\s+)?.*nebflow""".r,
       """killall\s+.*java""".r,
       """(?i)format\s+/""".r,
@@ -231,6 +237,14 @@ Git safety:
     val dangerousPatterns = List(
       """rm\s+-rf\s+""".r,
       """rm\s+-fr\s+""".r,
+      // R11: Windows 递归删除（2026-09-10 P0 的两条肇事形态此前判 0/safe）
+      """(?i)\bRemove-Item\b[\s\S]*-Recurse""".r,
+      """(?i)\b(rd|rmdir)\s+/s\b""".r,
+      """(?i)\bdel\s+(?:/[a-z]+\s+)*/s\b""".r,
+      // R11: 脚本语言递归删除（本机 .mjs/.py 的删除点全走这两条路径）
+      """(?i)\bshutil\.rmtree\b""".r,
+      """(?i)\brm(?:Sync|dirSync)?\s*\([\s\S]*\brecursive\s*:\s*true""".r,
+      """(?i)\bfind\b[\s\S]*\s-delete\b""".r,
       """\bpkill\b""".r,
       """\bkillall\b""".r,
       """(?i)\bkill\s+(-[0-9]+)?\s*\d+""".r,
