@@ -621,6 +621,8 @@ export default {
   'chat.errorRecoveringHint': '错误恢复中 · 输入消息可立即重试',
   'chat.errorRecoveringRetryCount': '第 {n} 次重试',
   'chat.errorRetry': '立即重试',
+  'chat.errorRetryNoText': '无可重发',
+  'chat.errorRetryNoTextTitle': '本会话中没有你发送过的文本消息，无法自动重发；直接在输入框输入内容发送即可唤醒。',
   'chat.errorAbandon': '取消任务',
   'chat.errorRestartContinue': '重启并续跑',
   'chat.errorWait': '继续等待',
