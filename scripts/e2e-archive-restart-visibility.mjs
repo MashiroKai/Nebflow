@@ -22,21 +22,25 @@
 //
 // Run（worktree 根，先 sbt compile + export Compile/fullClasspath）：
 //   node scripts/e2e-archive-restart-visibility.mjs
-// Env：PORT=8111 MOCK_PORT=18111 KEEP=1（保留 fixture home 供复查）
+// Env：PORT=8111 MOCK_PORT=18111（fixture home 默认**不删**，要清理设 CLEAN=1；NB_DRY_RUN=1 只跑删除守卫断言）
 
 import { spawn, execSync } from 'node:child_process';
 import http from 'node:http';
-import { readFileSync, writeFileSync, mkdirSync, existsSync, rmSync, openSync, cpSync } from 'node:fs';
+import { readFileSync, writeFileSync, mkdirSync, existsSync, openSync, cpSync } from 'node:fs';
 import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { tmpdir, homedir } from 'node:os';
 import { setTimeout as sleep } from 'node:timers/promises';
+import { guardFixtureHome, safeRm } from './lib/delguard.mjs';
 
 const REPO = dirname(dirname(fileURLToPath(import.meta.url)));
 const PORT = Number(process.env.PORT || 8111);
 const MOCK_PORT = Number(process.env.MOCK_PORT || 18111);
 const BASE = `http://127.0.0.1:${PORT}`;
 const HOME = process.env.NEBFLOW_HOME || join(tmpdir(), `nb-arch-e2e-${Date.now()}`);
+// R4 删除守卫：解析后的真实绝对路径必须落 tmpdir 之下（≠ tmpdir 自身）——早期 fail-fast，先于任何 spawn。
+// NB_DRY_RUN=1：只跑断言、不删除、不 spawn（下游负控入口）。
+guardFixtureHome(HOME, { label: 'e2e-archive-restart-visibility' });
 const WS = join(HOME, 'ws-demo');
 const FM = join(WS, '.nebflow', 'flow-map.json');
 const FM_ARCHIVE = join(WS, '.nebflow', 'flow-map-archive.json');
@@ -75,8 +79,8 @@ function cleanup() {
       }
     } catch { /* no listener — good */ }
   }
-  if (!process.env.KEEP) { try { rmSync(HOME, { recursive: true, force: true }); } catch { /* best effort */ } }
-  else console.log(`KEEP=1 — fixture home retained: ${HOME}`);
+  // 删除点二次断言；默认不删（要清理设 CLEAN=1）——非 tmp 隔离 home 在此处也会被拒
+  safeRm(HOME, { label: 'e2e-archive-restart-visibility' });
 }
 for (const sig of ['SIGINT', 'SIGTERM', 'uncaughtException', 'unhandledRejection']) {
   process.on(sig, (e) => { if (e) console.error(e); cleanup(); process.exit(1); });
