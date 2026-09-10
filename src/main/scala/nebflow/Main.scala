@@ -198,9 +198,13 @@ object Main extends IOApp:
         )
         // GatewayMain.run(Nil): Nil is load-bearing (arg gate) — the successor
         // context travels via the static holder, not argv.
+        // Exit code is passed through verbatim (JDK-21 gate, 2026-09-10): a
+        // normal shutdown still yields Success, but a gate refusal inside
+        // GatewayMain must not be swallowed into 0 — the hot-restart
+        // orchestrator would then read "JVM too old, refused to start" as a
+        // clean handover.
         nebflow.gateway.GatewayMain.run(Nil)
           .guarantee(IO.blocking(ProcessManager.removePid()))
-          .as(ExitCode.Success)
     }
 
   /** For the pid-file hit: probe whether our port serves a nebflow health
@@ -224,8 +228,11 @@ object Main extends IOApp:
     // GatewayMain.run(Nil): boot the real gateway. Nil is load-bearing — the
     // P0 2026-09-06 arg gate in GatewayMain.run rejects ANY argument, and Main
     // has already consumed --home/--port/--no-browser as global flags.
+    // Exit code is passed through verbatim (JDK-21 gate, 2026-09-10): the
+    // success path stays Success, but a gate refusal must not be swallowed
+    // into 0 — scripts/launchd would otherwise read "JVM too old, refused to
+    // start" as a normal exit.
     nebflow.gateway.GatewayMain.run(Nil)
       .guarantee(IO.blocking(ProcessManager.removePid()))
-      .as(ExitCode.Success)
   end bootGateway
 end Main
