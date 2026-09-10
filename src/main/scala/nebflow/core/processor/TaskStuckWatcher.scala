@@ -92,6 +92,15 @@ object TaskStuckWatcher:
    *      CPU 微动永不失明）
    * 前置条件（status == Processing、WaitingForUser 豁免、lastActivityMs==0 视作
    * 未 touch）由调用方保持不变：assess 只回答「给定记录是否超时」。
+   *
+   * R6（取消静默死锁修复批 2026-09-10，作者裁定方案 2）：轴 ② 的有效阈值改为
+   * `[[ToolStuckJudgment.effectiveToolPhaseMs]]` —— **尊重命令自己声明的合法时长**
+   * （有效阈值 = max(默认档, 声明 + 宽限)，即声明时长只可**放宽**判据、不可收紧到
+   * 默认档之下；未声明取默认档。逐字公式差异与理由见该函数注释的待裁说明）。
+   * 三例误杀的案例 1 命令自带 `timeout=900000ms`（15min 授权），旧判据在其 11.2
+   * 分钟处开火；改造后该命令在其授权期内不再判死。
+   * 未声明时长（currentToolDeadlineMs == 0）→ 原 10min 档零变化。
+   * **不得**把进程 CPU 重新引入判据（红线 R6-4）。
    */
   def assess(
     rec: AgentRecord,
@@ -102,15 +111,23 @@ object TaskStuckWatcher:
     val agentIdleMs = if rec.lastActivityMs > 0 then now - rec.lastActivityMs else 0L
     val agentStale = rec.lastActivityMs > 0 && agentIdleMs > thresholdMs
     val toolPhaseMs = if rec.currentToolStartedAt > 0 then now - rec.currentToolStartedAt else 0L
-    val toolOverdue = rec.currentToolStartedAt > 0 && toolPhaseMs > toolPhaseThresholdMs
+    // R6：有效工具相位阈值——命令声明了合法时长就取 min(默认档, 声明 + 宽限)。
+    // 只放宽不放严：声明时长远小于默认档时 min 仍取声明值（命令自己的授权优先）。
+    val effectiveToolPhaseMs = ToolStuckJudgment.effectiveToolPhaseMs(
+      toolPhaseThresholdMs, rec.currentToolDeadlineMs, nebflow.shared.Defaults.ToolDeadlineSlackMs)
+    val toolOverdue = rec.currentToolStartedAt > 0 && toolPhaseMs > effectiveToolPhaseMs
     val toolLabel = rec.currentToolName.getOrElse("?")
+    // 声明时长参与判定时才附注（未声明 → 文案逐字不变 = 既有断言零漂移）。
+    val deadlineNote =
+      if rec.currentToolDeadlineMs > 0 then s" (declared timeout ${rec.currentToolDeadlineMs / 1000}s)"
+      else ""
     if agentStale && toolOverdue then
       Some((math.max(agentIdleMs, toolPhaseMs) / 1000,
-        s"agent idle ${agentIdleMs / 1000}s and tool '$toolLabel' running ${toolPhaseMs / 1000}s in an unfinished turn"))
+        s"agent idle ${agentIdleMs / 1000}s and tool '$toolLabel' running ${toolPhaseMs / 1000}s$deadlineNote in an unfinished turn"))
     else if agentStale then
       Some((agentIdleMs / 1000, s"agent idle ${agentIdleMs / 1000}s (no LLM/tool event)"))
     else if toolOverdue then
-      Some((toolPhaseMs / 1000, s"tool '$toolLabel' running ${toolPhaseMs / 1000}s in an unfinished turn"))
+      Some((toolPhaseMs / 1000, s"tool '$toolLabel' running ${toolPhaseMs / 1000}s$deadlineNote in an unfinished turn"))
     else None
 
   /**
@@ -357,8 +374,22 @@ object TaskStuckWatcher:
                    else IO.unit) *>
                   (IO.sleep(5.seconds) *>
                     hardResumeFlowNode(resources, rec).flatMap {
-                      case true => stopCounts.update(_ - rec.sessionId)
-                      case false => IO.unit
+                      case Some(nodeId) =>
+                        // R5（取消静默死锁修复批 2026-09-10）：resume **成功**腿留痕——
+                        // 此前 6/6 次 L3 开火零留痕（引擎侧 hardResumeNode 内部的
+                        // `[hard-recovery] … resumed from transcript breakpoint` +
+                        // hard-recovery 事件是唯一一条；此处补 watcher 侧归属行，
+                        // 使「L3 开火 → resume 结果」在同一日志流内可闭环对账）。
+                        logger.info(
+                          s"TaskStuckWatcher: ${rec.sessionId} L3 resume OK — node '$nodeId' resumed from transcript breakpoint"
+                        ) *> stopCounts.update(_ - rec.sessionId)
+                      case None =>
+                        // R5：resume **失败**腿留痕（此前静默：节点永久 cancelled、零解释）
+                        // → 按 R1 回流分发器 + 按 R4 摘除/标记（引擎侧幂等）。
+                        logger.error(
+                          s"TaskStuckWatcher: ${rec.sessionId} L3 resume FAILED — node left cancelled; " +
+                            "notifying dispatcher (R1) and detaching its out edges / marking successors (R4)"
+                        ) *> hardRecoveryFallback(resources, rec)
                     }).start.void
               case 4 =>
                 // L4 响亮失败（诚实失败原则）：明确上报需人工处理、进度已落盘。
@@ -525,24 +556,86 @@ object TaskStuckWatcher:
     end if
 
   /** L3 for Flow 节点：定位 session 所属项目的 runtime 并 hardResumeNode（跨项目
-    * 按 rootSessionId 匹配 AgentRecord.rootSessionId = 项目 root 会话）。 */
-  private def hardResumeFlowNode(resources: SharedResources, rec: AgentRecord): IO[Boolean] =
+    * 按 rootSessionId 匹配 AgentRecord.rootSessionId = 项目 root 会话）。
+    * R5 留痕契约：返回 `Some(nodeId)` = resume 真生效（节点已由 Cancelled/Running
+    * 翻回 Pending 并从 transcript 续跑）；`None` = 未生效（无 runtime / 无
+    * transcript / CAS 被拒 / 异常）——各失败出口在 NodeEngine.hardResumeNode 内
+    * 均有 WARN/ERROR 留痕（R5 补），调用方据 None 走 [[hardRecoveryFallback]]。 */
+  private def hardResumeFlowNode(resources: SharedResources, rec: AgentRecord): IO[Option[String]] =
     nebflow.core.project.ProjectRuntimeRegistry.all
       .flatMap { rts =>
         rts.find(rt => rt.engine.rootSessionId.nonEmpty && rt.engine.rootSessionId == rec.rootSessionId) match
           case Some(rt) =>
-            rt.engine.hardResumeNode(rec.sessionId).map(_.isDefined)
+            rt.engine.hardResumeNode(rec.sessionId)
               .handleErrorWith(e =>
                 logger.error(
                   s"TaskStuckWatcher: hard-resume failed for ${rec.sessionId}: ${Option(e.getMessage).getOrElse(e.toString)}"
-                ).as(false))
+                ).as(None))
           case None =>
             logger.warn(
               s"TaskStuckWatcher: no project runtime for ${rec.sessionId} (root=${rec.rootSessionId}) — L3 resume unavailable"
-            ).as(false)
+            ).as(None)
       }
       .handleErrorWith(e =>
         logger.error(s"TaskStuckWatcher: project runtime lookup failed: ${Option(e.getMessage).getOrElse(e.toString)}")
-          .as(false))
+          .as(None))
+
+  /** R5 失败分支（取消静默死锁修复批 2026-09-10，作者裁定 R5 方案 3）：L3 resume
+    * 未生效 ⇒ 节点停留在 Cancelled 终态（且按 R4 摘除尚未执行——L3 取消路径有意
+    * 延后摘除，见 NodeEngine 桥注释）——补两条出路：
+    *   ① 按 **R1** 回流分发器（幂等：cancelNode 时已触发+makrSent ⇒ 此处 no-op，
+    *      引擎侧 settleFailedHardResume 统一收口）；
+    *   ② 按 **R4** 摘除被取消节点的 out（→ Nebula）并给受影响下游打「待承接」标，
+    *      同时补发**R3** 即时 barrier 告警。
+    * 找不到 runtime（跨项目/未挂载）→ 响亮 ERROR（诚实失败；节点仍 cancelled，
+    * 可见性由事件流 mount-stalled 兜底）。 */
+  private def hardRecoveryFallback(resources: SharedResources, rec: AgentRecord): IO[Unit] =
+    nebflow.core.project.ProjectRuntimeRegistry.all
+      .flatMap { rts =>
+        rts.find(rt => rt.engine.rootSessionId.nonEmpty && rt.engine.rootSessionId == rec.rootSessionId) match
+          case Some(rt) => rt.engine.settleFailedHardResume(rec.sessionId)
+          case None =>
+            logger.error(
+              s"TaskStuckWatcher: L3 resume failed and no project runtime for ${rec.sessionId} " +
+                s"(root=${rec.rootSessionId}) — node left cancelled without dispatcher notify / upstream detach " +
+                "(manual intervention required)"
+            )
+      }
+      .handleErrorWith(e =>
+        logger.error(
+          s"TaskStuckWatcher: L3 fallback (R1 notify / R4 detach) failed for ${rec.sessionId}: ${Option(e.getMessage).getOrElse(e.toString)}"
+        ))
 
 end TaskStuckWatcher
+
+/**
+ * R6 判据单点（取消静默死锁修复批 2026-09-10，作者裁定 R6 方案 2）：工具相位轴的
+ * **有效阈值**计算。抽成独立纯函数 = 可独立单测边界（声明/未声明/极小声明/极大声明），
+ * 且 `assess` 与任何将来消费者共用同一口径（防判据漂移，与 `assess` 唯一事实源同源）。
+ *
+ *   effective = if declaredMs > 0 then max(defaultMs, declaredMs + slackMs) else defaultMs
+ *
+ * 语义（红线）：只放宽、不放严。声明时长只参与**放宽**（案例 1 的 `timeout=900000ms`
+ * → 阈值 960s），声明 + 宽限小于默认档（极小声明）时仍取默认档——命令自己声明的小
+ * 授权不得把 10min 安全网缩到其下（那一档的判死由工具自身的授权超时承担，红线
+ * R6-3：本函数不改 Bash 工具授权语义）。
+ * **不读取任何进程 CPU**（红线 R6-4）。
+ */
+object ToolStuckJudgment:
+  /** 有效工具相位阈值。
+    *
+    * ⚠ **实现口径与设计文档逐字公式的差异（待裁项，见批报告 §待裁）**：设计 §6-R6
+    * 方案 2 的公式逐字写作 `min(ToolPhaseStuckMs, deadline + slack)`，但该公式与
+    * 同一裁定项的两条验收口径自相矛盾：`min` 在 deadline > ToolPhaseStuckMs 时退化
+    * 为 ToolPhaseStuckMs，**案例 1（`timeout=900000ms`，11.2min 被判死）照旧被误杀**
+    * —— 而方案 2 的立论原文就是「尊重命令自己声明的合法时长」，验收口径亦明写
+    * 「命令自带大 timeout 且持续推进 → 改造后不判」。故此处按**裁定意图与验收口径**
+    * 实现为 `max`（有效阈值 = **max(默认档, 声明 + 宽限)**：声明时长可放宽判据，
+    * 不可收紧到默认档之下；未声明 ⇒ 默认档）。
+    * 若复核/作者裁定取 `min`（= 10min 硬顶，声明只许缩短不许延长），改动 = 本函数
+    * `math.max` → `math.min` 一行。
+    *
+    * **不读取任何进程 CPU**（红线 R6-4）。 */
+  def effectiveToolPhaseMs(defaultMs: Long, declaredMs: Long, slackMs: Long): Long =
+    if declaredMs > 0 then math.max(defaultMs, declaredMs + math.max(0L, slackMs))
+    else defaultMs

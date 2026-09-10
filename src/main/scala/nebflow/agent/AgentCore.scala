@@ -1198,7 +1198,11 @@ private[agent] trait AgentCore:
                     resources,
                     sessionIdOpt,
                     AgentStatus.Processing,
-                    toolStarting = Some((call.name, System.currentTimeMillis()))
+                    toolStarting = Some((call.name, System.currentTimeMillis())),
+                    // R6（取消静默死锁修复批 2026-09-10）：工具自己声明的授权时长
+                    // （入参 `timeout`，只读声明值）随工具相位一并登记 —— 判据据此
+                    // 尊重「命令被允许跑多久」，不再对带长授权的前台命令误杀。
+                    toolDeadlineMs = nebflow.shared.Defaults.declaredToolTimeoutMs(call.input)
                   ) *>
                   // 审计 20260903 子项①：工具执行期心跳包裹（仅实际执行段——
                   // 权限 Ask/AskUserQuestion 等待由前端 askUser 处理器既有
@@ -2108,7 +2112,10 @@ private[agent] trait AgentCore:
     now: Long = System.currentTimeMillis(),
     turnStart: Boolean = false,
     toolStarting: Option[(String, Long)] = None,
-    clearToolPhase: Boolean = false
+    clearToolPhase: Boolean = false,
+    /** R6（取消静默死锁修复批 2026-09-10）：本工具自己声明的授权时长（ms）——与
+      * `toolStarting` 同批传入（0 = 未声明）。末尾带默认值，既有位置构造/调用零破坏。 */
+    toolDeadlineMs: Long = 0L
   ): IO[Unit] =
     sessionId.fold(IO.unit) { sid =>
       resources.agentRegistry.modify { m =>
@@ -2121,13 +2128,14 @@ private[agent] trait AgentCore:
             val withTurn = if turnBegan then rec.copy(turnStartedAt = now) else rec
             val withPhase = toolStarting match
               case Some((name, startedAt)) =>
-                withTurn.copy(currentToolName = Some(name), currentToolStartedAt = startedAt)
+                withTurn.copy(currentToolName = Some(name), currentToolStartedAt = startedAt, currentToolDeadlineMs = toolDeadlineMs)
               case None =>
-                if clearToolPhase then withTurn.copy(currentToolName = None, currentToolStartedAt = 0L)
+                if clearToolPhase then
+                  withTurn.copy(currentToolName = None, currentToolStartedAt = 0L, currentToolDeadlineMs = 0L)
                 else withTurn
             val phased =
               if status == AgentStatus.Processing then withPhase
-              else withPhase.copy(currentToolName = None, currentToolStartedAt = 0L)
+              else withPhase.copy(currentToolName = None, currentToolStartedAt = 0L, currentToolDeadlineMs = 0L)
             (m.updated(sid, phased.copy(status = status, lastActivityMs = now)), ())
           case None => (m, ())
       }

@@ -31,8 +31,56 @@ object NodeLifecycle:
   /** 全部合法生命周期值（NodeList status 过滤枚举校验单点，裁定⑤a 20260907）。 */
   val All: Set[String] = Set(Wiring, Pending, Running, Completed, Failed, Cancelled, Blocked)
 
-/** 结构化 blocked 反馈（设计 §1.3 JSON 体）：BlockedReader 从节点最终输出解析。 */
-case class BlockedFeedback(
+/** 取消触发源（取消静默死锁修复批 2026-09-10，作者裁定 **R7 方案 3**）：只区分
+  * 「引擎发起 / 用户发起」两态（完整 taxonomy——stuck-watcher-l3 / giveup /
+  * agent-control / parent-cascade / node-cancel / dead-session-reap——本批不做）。
+  *
+  * 取值口径（**不改 AgentEvent 消息形态**，设计 §6-R7 工程判定：跨模块常驻协议
+  * 零扰动；来源由桥侧从 `AgentEvent.Cancelled` 的 reason 文本前缀推导）：
+  *   - `Engine`：引擎自身看门狗/回收链发起——`TaskStuckWatcher` 的 L3 硬恢复与
+  *     giveUp 桥取消（reason 尾注 `— released by TaskStuckWatcher`）、
+  *     `NodeEngine.reapStaleRunning` 的死会话收殓。特征 = 无人主动要求取消，
+  *     是引擎对「卡死/死亡」的自动处置。
+  *   - `User`：人/Agent 主动发起——`AgentControl` cancel、面板 `cancelAgent`、
+  *     `NodeCancel`（含 `reapStaleRunning` 之外的 NodeCancel-stale 转发）、父会话
+  *     删除级联（`SessionChildCascade`）、以及一切无特征文本的兜底。
+  *
+  * 消费面：节点 `result` 文本（`cancelled[source=engine|user]: reason=…`）、
+  * `cancelled` 审计事件 summary、R1 回流通知文本——事后可区分「用户主动取消」
+  * 与「引擎误杀」，这是评估判据误伤率的前提。 */
+enum CancelSource:
+  case Engine
+  case User
+
+object CancelSource:
+  val EngineCode = "engine"
+  val UserCode = "user"
+
+  /** 编码（result / 事件 / 通知文本共用单点）。 */
+  def code(s: CancelSource): String =
+    s match
+      case CancelSource.Engine => EngineCode
+      case CancelSource.User   => UserCode
+
+  /** 引擎发起特征串：`TaskStuckWatcher` 两处桥取消的 reason 尾注（L3 `… — released
+    * by TaskStuckWatcher` / giveUp `… released by TaskStuckWatcher; consider
+    * re-delegating this task`）——单一判据，桥侧零元数据新增。 */
+  val StuckWatcherMarker = "released by TaskStuckWatcher"
+
+  /** reason 文本 → 触发源分类（单点，R7）。 */
+  def classify(reason: String): CancelSource =
+    if reason.contains(StuckWatcherMarker) then CancelSource.Engine else CancelSource.User
+
+  /** 由桥的 `FailOutcome` 消息（形如 `cancelled: <reason>` / `cancelled by NodeCancel`）
+    * 反解取消原因文本——桥只把原因拼进消息串，本函数是唯一还原点（R2：原因不再
+    * 在桥之后被 `contains` 嗅探后丢弃）。 */
+  def reasonFromBridgeMessage(message: String): String =
+    val trimmed = message.trim
+    if trimmed.startsWith("cancelled:") then trimmed.stripPrefix("cancelled:").trim
+    else if trimmed.contains("cancelled") then trimmed
+    else trimmed
+
+/** 结构化 blocked 反馈（设计 §1.3 JSON 体）：BlockedReader 从节点最终输出解析。 */case class BlockedFeedback(
   category: String, // upstream-incomplete | task-underspecified | agent-mismatch | external-dependency | needs-split | other
   detail: String,
   suggestion: String
@@ -316,7 +364,22 @@ case class NodeDef(
   sessionRef: Option[String] = None,
   /** loop 节点 verify 会话 id 持久引用（crash-recovery 批，裁定③）：仅 loop 节点
     * 翻转时与 sessionRef 同事务落库；非 loop 节点恒 None（重执行即清除）。 */
-  sessionRefVerify: Option[String] = None
+  sessionRefVerify: Option[String] = None,
+  /** R4「待承接」标记（取消静默死锁修复批 2026-09-10，作者裁定 R4 方案 4）：
+    * 本节点 in-barrier 上曾有、后被引擎**取消并自动摘除**（`NodeEngine.cancelNode`
+    * 的 R4 摘除：被取消节点 out→Nebula + 本节点 in 镜像 prune）的上游 id 列表。
+    *
+    * 语义：摘除只是把人工「改接 out 触发 in 镜像 prune」自动化（D5 对 cancelled 的
+    * 既有指引），**不是零结果结算**；但摘除后 barrier 会以「少一轨」的输入正常
+    * 启动，静默产出一个缺轨结论。本字段把「缺失」变成显式状态 —— 三个启动闸门
+    * （`NodeEngine.startNode` / `settleTo` / `settleRunnableSweep`）联合要求
+    * `pendingSuccession.isEmpty` 才放行，即 **barrier 不被以缺轨输入自动触发**。
+    *
+    * 解除：分发器承接动作落地时（NodeEdit 对本节点任意实际变更 —— 例如把新承接
+    * 节点 append 进本节点 in）清空。可见性：NodePayload 条件字段 + mount-stalled
+    * 事件 reason 明示「待承接」。
+    * 旧 flow-map.json 无此键 → withDefaults 解码 Nil（零迁移）。 */
+  pendingSuccession: List[String] = Nil
 )
 
 object NodeDef:
@@ -474,7 +537,13 @@ object NodePayload:
       // 注入（FlowMapStore.chainIdOf 单点判据：所属合并集分量成员数 ≥2）才带——
       // 孤立单节点链与未注入调用方（如归档 REST 端点）payload 字段集零变化。
       val chainFields = chainId.toList.map(c => "chainId" -> c.asJson)
-      Json.obj((baseFields ++ outFields ++ legacyConfigFields ++ hasResultFields ++ taskPreviewFields ++ depsFields ++ feedbackFields ++ pluginFields ++ notifyFields ++ mergeFields ++ loopFields ++ bgWaitFields ++ retryFields ++ genFields ++ notifySentAtFields ++ chainFields)*)
+      // pendingSuccession 条件序列化（取消静默死锁修复批 R4；与 deps/plugins 同构）：
+      // 非空才带——无「待承接」槽位的节点 payload 字段集零变化。前端渲染面本批零
+      // 改动（未知键天然忽略，仅作可见性载体）；分发器侧读 NodeList 即可见。
+      val pendingSuccessionFields =
+        if node.pendingSuccession.nonEmpty then List("pendingSuccession" -> node.pendingSuccession.asJson)
+        else Nil
+      Json.obj((baseFields ++ outFields ++ legacyConfigFields ++ hasResultFields ++ taskPreviewFields ++ depsFields ++ feedbackFields ++ pluginFields ++ notifyFields ++ mergeFields ++ loopFields ++ bgWaitFields ++ retryFields ++ genFields ++ notifySentAtFields ++ pendingSuccessionFields ++ chainFields)*)
 
 /** Flow Map 活动区（§2.6，磁盘 flow-map.json）。 */
 case class FlowMapState(
