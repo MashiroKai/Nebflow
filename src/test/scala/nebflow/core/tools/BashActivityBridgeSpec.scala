@@ -11,14 +11,18 @@ import scala.concurrent.duration.*
 
 /**
  * #391 机制 D（2026-08-25）：活动桥接 CPU 判断对齐 CpuActiveThresholdNanos
- * （10ms/采样窗口，与 shell.scala 前台 no-progress ceiling 同标准）——
- * `cpu > lastCpu` 无阈值让卡死进程的 CPU 微消耗（Chrome 挂起 <10ms/30s）持续
- * touch lastActivityMs → TaskStuckWatcher 永远判不了（B9 盲区 3）。
+ * （10ms/采样窗口）。
  *
- * 验收（设计文档 §5.4）：
- * - D-1 输出零增长 + CPU 增量 <10ms/窗口 → 不 touch lastActivityMs（registry 时间戳不变）
- * - D-2 CPU 增量 ≥10ms/窗口 → touch（合法长任务不受影响）
- * - D-3 TaskStuckWatcherSpec 回归（全量覆盖，语义不变）
+ * 2026-09-10 卡死判据换轴（取证 20260910_130621_flow-node-activity-signal-forensics.md）：
+ * 活动桥接写目标从 `AgentRecord.lastActivityMs`（agent 侧，卡死判据的数据源）
+ * 改为 `AgentRecord.processActivityMs`（进程侧，**不参与卡死判据**）——事故实证：
+ * 前台常驻 dev server 的 CPU 微动经此桥每 30s 刷新 agent 侧戳 ⇒ TaskStuckWatcher
+ * 判据失明 2h50m。本 spec 的断言随之改为「进程侧戳动 / agent 侧戳不动」。
+ *
+ * 验收：
+ * - D-1 输出零增长 + CPU 增量 <10ms/窗口 → 两戳都不动
+ * - D-2 CPU 增量 ≥10ms/窗口 → processActivityMs 被 touch，lastActivityMs 不动
+ *   （进程活性 ≠ agent 活动——换轴的核心契约）
  */
 class BashActivityBridgeSpec extends CatsEffectSuite:
 
@@ -90,7 +94,10 @@ class BashActivityBridgeSpec extends CatsEffectSuite:
   private def lastActivityOf(registry: Ref[IO, Map[String, AgentRecord]]): IO[Long] =
     registry.get.map(_.get("bridge-session").map(_.lastActivityMs).getOrElse(-1L))
 
-  test("D-1: CPU delta < 10ms/窗口 + 零输出 → lastActivityMs 不被 touch（卡死不误判有进展）") {
+  private def processActivityOf(registry: Ref[IO, Map[String, AgentRecord]]): IO[Long] =
+    registry.get.map(_.get("bridge-session").map(_.processActivityMs).getOrElse(-1L))
+
+  test("D-1: CPU delta < 10ms/窗口 + 零输出 → 两戳都不被 touch（卡死不误判有进展）") {
     for
       registry <- Ref.of[IO, Map[String, AgentRecord]](
         Map("bridge-session" -> AgentRecord(
@@ -109,11 +116,13 @@ class BashActivityBridgeSpec extends CatsEffectSuite:
       // 尾部 destroyForcibly 只覆盖 happy path，中途抛错即泄漏）
       _ <- runBridge(proc, ctx).guarantee(IO(proc.destroyForcibly()))
       last <- lastActivityOf(registry)
+      process <- processActivityOf(registry)
       _ <- IO(assert(last == 123456789L, s"lastActivityMs must NOT be touched: $last"))
+      _ <- IO(assert(process == 0L, s"processActivityMs must NOT be touched either: $process"))
     yield ()
   }
 
-  test("D-2: CPU delta ≥ 10ms/窗口 → lastActivityMs touched（合法长任务不受影响）") {
+  test("D-2: CPU delta ≥ 10ms/窗口 → processActivityMs touched，lastActivityMs 不动") {
     for
       registry <- Ref.of[IO, Map[String, AgentRecord]](
         Map("bridge-session" -> AgentRecord(
@@ -131,7 +140,10 @@ class BashActivityBridgeSpec extends CatsEffectSuite:
       proc <- startProc("python3 -c 'while True: pass'")
       _ <- runBridge(proc, ctx).guarantee(IO(proc.destroyForcibly()))
       last <- lastActivityOf(registry)
-      _ <- IO(assert(last != 123456789L, s"lastActivityMs must be touched for busy process: $last"))
+      process <- processActivityOf(registry)
+      _ <- IO(assert(process != 0L, s"processActivityMs must be touched for busy process: $process"))
+      // 换轴铁律：进程活性绝不写 agent 侧戳（否则卡死判据再次被进程 CPU 微动解除）
+      _ <- IO(assert(last == 123456789L, s"lastActivityMs must NOT be touched by the process bridge: $last"))
     yield ()
   }
 

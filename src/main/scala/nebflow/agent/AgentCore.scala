@@ -889,7 +889,9 @@ private[agent] trait AgentCore:
           _ <- agentStartIO
           // P0 阶段 3：LLM 调用开始——registry 状态快照置 Processing 并 touch
           // 活动戳（流 chunk 期间由 evalTap 持续刷新，见下方 sendStream 管道）。
-          _ <- touchRegistryActivity(resources, sessionIdOpt, AgentStatus.Processing)
+          // 2026-09-10 换轴：turnStart=true → status 真由非 Processing 转入时
+          // 置 turnStartedAt（同 turn 后续轮次不重置）。
+          _ <- touchRegistryActivity(resources, sessionIdOpt, AgentStatus.Processing, turnStart = true)
           ctxTriple <- contextIo.timeout(ContextBuildTimeout).attempt
           result <- ctxTriple match
             case Right((turnCtx, request, stateWithReminder)) =>
@@ -1181,6 +1183,19 @@ private[agent] trait AgentCore:
             else permissionDecision(resources, state, call)
               .flatMap {
                 case PermissionDecision.Allow =>
+                  // 2026-09-10 卡死判据换轴：工具**开始**点——记当前工具相位
+                  // （名字 + 起始时刻）供 TaskStuckWatcher 判「单个工具调用持续
+                  // 超阈且 turn 未完成」。复用既有 touchRegistryActivity 写入路径
+                  // （不新开第二条 registry 写路径），并同时刷新 agent 侧活动戳
+                  // ——「agent 正在执行工具」本身就是 agent 侧活动。
+                  // 批量工具（parTraverse）并发起步：登记为最后起步者，同一批次
+                  // 内各 call 的起始时刻相差毫秒级，对 10min 档判据无实质影响。
+                  touchRegistryActivity(
+                    resources,
+                    sessionIdOpt,
+                    AgentStatus.Processing,
+                    toolStarting = Some((call.name, System.currentTimeMillis()))
+                  ) *>
                   // 审计 20260903 子项①：工具执行期心跳包裹（仅实际执行段——
                   // 权限 Ask/AskUserQuestion 等待由前端 askUser 处理器既有
                   // 「抑制 timer」契约覆盖，包裹会反向重武装 timer，故排除）。
@@ -1308,8 +1323,11 @@ private[agent] trait AgentCore:
           )
       // P0 阶段 3：工具执行完成——touch 活动戳（长工具执行期间流已结束，
       // 若无此 touch 会被误判卡死；下轮 LLM 调用开始会再次 mark Processing）。
+      // 2026-09-10 换轴：clearToolPhase=true → 批次完成即清工具相位（新判据的
+      // 主轴是「单个工具调用持续超阈」，批次结束必须归零，否则下一轮 LLM 期间
+      // 会带着过期相位被误判）。
       // Block 3：同点镜像 loopStreak/loopRounds（AgentControl list 的 loop×N）。
-      _ <- touchRegistryActivity(resources, sessionIdOpt, AgentStatus.Processing) *>
+      _ <- touchRegistryActivity(resources, sessionIdOpt, AgentStatus.Processing, clearToolPhase = true) *>
         sessionIdOpt.fold(IO.unit) { sid =>
           resources.agentRegistry.update { m =>
             m.get(sid) match
@@ -2064,21 +2082,48 @@ private[agent] trait AgentCore:
    * 本 helper 是这两个字段的主要写入点（注册点默认值除外）：
    *   - Processing：AgentCore.pipeLlmCall（LLM 调用开始 + 每个流 chunk）
    *   - Idle：AgentActor.finishTurnCont 回 idle 分支（turn 完成）
-   * 补充写入点（#319，2026-08-19）：BashTool.startActivityBridge 在前台命令
-   * 有进展（输出/CPU/sleep）时也会刷新 lastActivityMs——防止长前台命令被
-   * TaskStuckWatcher 误判卡死。仅 touch 时间戳，不改变 status。
+   *
+   * 2026-09-10 卡死判据换轴（取证 20260910_130621_flow-node-activity-signal-forensics.md）：
+   *   - **本 helper 是 lastActivityMs 的唯一 agent 侧写入路径**——进程侧活性改
+   *     写 `processActivityMs`（BashTool 活动桥 / RemoteExecutor 心跳），不再经此。
+   *   - `turnStart`：status 由非 Processing（且非 WaitingForUser 这个人机交互
+   *     子态）转入 Processing 时置 `turnStartedAt = now`；同 turn 内的多轮
+   *     LLM/工具循环不重置（否则「turn 起点」退化成「轮起点」）。
+   *   - `toolStarting`：工具执行开始 → 记 `currentToolName/currentToolStartedAt`
+   *     （同一 modify 路径，不另开写入路径）。
+   *   - `clearToolPhase`：工具批次完成 → 清工具相位。
+   *   - 离开 Processing 一律清工具相位（Idle/WaitingForUser/Frozen/Error 相位
+   *     无意义，留着会让下一次 turn 继承过期相位）。
    * 幂等且仅在记录存在时更新（registry 无该 session 时 no-op——不创建幽灵条目）。
    */
   protected def touchRegistryActivity(
     resources: SharedResources,
     sessionId: Option[String],
     status: AgentStatus,
-    now: Long = System.currentTimeMillis()
+    now: Long = System.currentTimeMillis(),
+    turnStart: Boolean = false,
+    toolStarting: Option[(String, Long)] = None,
+    clearToolPhase: Boolean = false
   ): IO[Unit] =
     sessionId.fold(IO.unit) { sid =>
       resources.agentRegistry.modify { m =>
         m.get(sid) match
-          case Some(rec) => (m.updated(sid, rec.copy(status = status, lastActivityMs = now)), ())
+          case Some(rec) =>
+            // turn 起点：仅当本会话此前不在 Processing（WaitingForUser 是同一
+            // turn 内的人机交互子态，不算新 turn 起点）。
+            val turnBegan =
+              turnStart && rec.status != AgentStatus.Processing && rec.status != AgentStatus.WaitingForUser
+            val withTurn = if turnBegan then rec.copy(turnStartedAt = now) else rec
+            val withPhase = toolStarting match
+              case Some((name, startedAt)) =>
+                withTurn.copy(currentToolName = Some(name), currentToolStartedAt = startedAt)
+              case None =>
+                if clearToolPhase then withTurn.copy(currentToolName = None, currentToolStartedAt = 0L)
+                else withTurn
+            val phased =
+              if status == AgentStatus.Processing then withPhase
+              else withPhase.copy(currentToolName = None, currentToolStartedAt = 0L)
+            (m.updated(sid, phased.copy(status = status, lastActivityMs = now)), ())
           case None => (m, ())
       }
     }
