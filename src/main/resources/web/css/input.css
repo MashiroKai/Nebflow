@@ -157,9 +157,22 @@
 /* Frozen "ice-sealed" input bar (2026-08-24 spec, user ruling: the bar itself
    carries the frozen state — no standalone status row). Cold sapphire glass:
    stronger tint + border, a 3px frost ring, a frost glow, and the refraction
-   line brightened to an ice edge. Frozen ≠ disabled: the field stays fully
-   editable and the send button keeps its green (send = wake). Zero new color
-   tokens — sapphire/sapphire-glow alpha variants only. */
+   line brightened to an ice edge. Zero new color tokens — sapphire/
+   sapphire-glow alpha variants only.
+
+   Corrected 2026-09-10 (F-1 alignment): the former note here read "Frozen ≠
+   disabled: the field stays fully editable and the send button keeps its green
+   (send = wake)" — that describes no code path. Both the frozen event branch
+   and applyLocalFreeze call setFrozenBarState(v, true) (main.js:427 / :545),
+   which puts `disabled` + aria-disabled="true" on #input, #voice-btn,
+   #attach-btn, #send-btn and #stop-btn. Only the send ICON stays full-contrast
+   by design (the `#input-bar.frozen #send-btn[disabled] svg { opacity: 1 }`
+   guard below) — a visual choice, not an enabled control. "Editable composer,
+   typing is a wake" belongs to the amber error family (.frozen-error below),
+   whose handler hands the composer back enabled right after applyErrorFrozen
+   (main.js:423); F-1 (2026-09-10) additionally made class and disabled
+   attributes always clear together (main.js:332-340) — the .frozen bar's own
+   exits are 「跳过本次」 and the schedule window ending. */
 #input-bar.frozen,
 .fa-input-bar.frozen {
   border-color: rgb(var(--sapphire) / 0.45);
