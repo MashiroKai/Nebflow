@@ -320,19 +320,24 @@ Git safety:
     else lines.takeRight(n).mkString("\n")
 
   def call(input: JsonObject, ctx: ToolContext): IO[Either[ToolError, String]] =
-    // 阶段 2a 沙箱（§A.4-4）：probe 失败时 fail-closed——绝不静默放行。
-    // sandbox.bash.failIfUnavailable=false 显式降级：WARN + 结果 [unsandboxed] 前缀。
-    if ctx.sandbox.enabled && !nebflow.core.sandbox.SandboxRuntime.current.available then
-      if ctx.sandbox.bashFailIfUnavailable then
-        IO.pure(Left(ToolError(nebflow.core.sandbox.SandboxRuntime.unavailableMessage(ctx.sandbox.root))))
-      else
-        BashTool.logger
-          .warn(
-            s"sandbox-exec unavailable; running Bash UNSANDBOXED (explicit sandbox.bash.failIfUnavailable=false)",
-            "sessionId" -> ctx.sessionId.getOrElse("")
-          )
-          *> doCall(input, ctx).map(markUnsandboxed)
-    else doCall(input, ctx)
+    // [沙箱拆围栏批 S3，2026-09-10] provider 语义（design §4.2 / R4=d2 + §6.1 R7=g1）：
+    //
+    // ① 宿主路径不再 fail-closed：围栏拆掉后「无包裹」是**缺省态**（provider=host），
+    //    旧判据 `ctx.sandbox.enabled && !SandboxRuntime.current.available` 失去对象；
+    //    连带解除 Linux 上的**隐性不可用**（非 macOS 时 `SandboxBackend.probe` 恒
+    //    false × 缺省 bashFailIfUnavailable=true ⇒ Linux Bash 整体被拒；现已无此路）。
+    // ② 非宿主 provider（local-process / container / auto）**不可用或未实现 = 明示
+    //    失败**，绝不静默回落宿主执行（design §6.2 U7）——原因在启动期由
+    //    `SandboxRuntime.init` 定妥，此处只读结果（单一判据来源，避免两处漂移）。
+    // ③ `[unsandboxed]` 前缀与 §A.4-4 显式降级档一并退役：新语义下没有「降级到无
+    //    包裹」这一档（要么宿主直跑 = 正常态，要么显式失败），`markUnsandboxed` 失
+    //    触发源已删除。
+    nebflow.core.sandbox.SandboxRuntime.failureCause match
+      case Some(cause) =>
+        IO.pure(
+          Left(ToolError(nebflow.core.sandbox.SandboxRuntime.failureMessage(cause, ctx.sandbox.root)))
+        )
+      case None => doCall(input, ctx)
 
   private def doCall(input: JsonObject, ctx: ToolContext): IO[Either[ToolError, String]] =
     val explicitTimeoutMs: Option[Long] = input("timeout")
@@ -457,7 +462,7 @@ Git safety:
                     .execute(actualCommand, remoteTimeout)
                     .attempt
                     .map {
-                      case Right(pr) => formatResult(pr, desc, tailN, sandboxOpt.map(_.root.toString))
+                      case Right(pr) => formatResult(pr, desc, tailN)
                       case Left(_: TimeoutException) =>
                         Left(ToolError(s"[Command timed out after ${remoteTimeout.toMillis}ms]"))
                       case Left(e) =>
@@ -475,26 +480,6 @@ Git safety:
               }
           end if
     end match
-
-  /** 显式降级（sandbox.bash.failIfUnavailable=false 且 probe 失败）：结果加
-    * [unsandboxed] 前缀（§A.4-4），防模型把无围栏输出当成已验证环境。 */
-  private def markUnsandboxed(r: Either[ToolError, String]): Either[ToolError, String] =
-    r match
-      case Right(s) => Right("[unsandboxed] " + s)
-      case left => left
-
-  /** Seatbelt 违规归因（§A.4-5）：stderr 出现方言 "Operation not permitted" 时
-    * 标注沙箱拒绝，防模型误诊为环境故障。 */
-  private[tools] def attributeSandboxDenial(
-    r: Either[ToolError, String],
-    pr: ProcessResult,
-    sandboxRoot: Option[String]
-  ): Either[ToolError, String] =
-    (r, sandboxRoot) match
-      case (Right(s), Some(root)) if pr.exitCode != 0 && pr.stderr.contains("Operation not permitted") =>
-        Right(s + s"\n[sandbox: bash write denied outside sandbox root $root]")
-      case _ => r
-  end attributeSandboxDenial
 
   /**
    * Execute a command in the foreground until it completes or fails.
@@ -530,8 +515,6 @@ Git safety:
   ): IO[Either[ToolError, String]] =
     // 无显式 timeout → 不设命令级超时（前台直跑语义，365.days 近似无限）。
     val processTimeout = explicitTimeoutMs.map(_.millis).getOrElse(365.days)
-    // §A.4-5 归因：沙箱会话的命令失败且 stderr 含 Seatbelt 方言 → 标注拒绝来源。
-    val sandboxRoot = Some(ctx.sandbox).filter(_.enabled).map(_.root.toString)
     val health = new JobHealth()
     // #22 (2026-08-19): a running Bash is INVISIBLE — the completion log only
     // fires when it returns, so a long/hung command reads as "turn went
@@ -557,7 +540,7 @@ Git safety:
         .execute(command, processTimeout, Some(health))
         .attempt
         .map {
-          case Right(pr) => formatResult(pr, desc, tailN, sandboxRoot)
+          case Right(pr) => formatResult(pr, desc, tailN)
           case Left(e: TimeoutException) =>
             Left(ToolError(s"[Command timed out after ${processTimeout.toMillis}ms]"))
           case Left(e) =>
@@ -654,8 +637,7 @@ Git safety:
   private def formatResult(
     result: ProcessResult,
     desc: Option[String],
-    tailN: Option[Int] = None,
-    sandboxRoot: Option[String] = None
+    tailN: Option[Int] = None
   ): Either[ToolError, String] =
     val prefix = desc.map(d => s"[$d]\n").getOrElse("")
     val dirLine = s"(cwd: ${result.cwd})\n"
@@ -668,10 +650,8 @@ Git safety:
     val errLine = if cleanedErr.nonEmpty then s"\n[stderr]:\n$cleanedErr" else ""
     val output = cleanedOut + errLine
     val full = prefix + dirLine + exitLine + output
-    val base =
-      if full.trim.isEmpty then Right("[Command executed successfully with no output]")
-      else Right(full)
-    attributeSandboxDenial(base, result, sandboxRoot)
+    if full.trim.isEmpty then Right("[Command executed successfully with no output]")
+    else Right(full)
 
   end formatResult
 

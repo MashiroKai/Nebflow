@@ -107,12 +107,14 @@ case class SharedResources(
     * 读取（bashAutoBackgroundMs/bashBackgroundHardTimeoutMs/bashStuckWindowSec），
     * 经 AgentCore 注入 ToolContext → BashTool。带默认值 → 既有测试构造零改动。 */
   bashResilience: nebflow.shared.BashResilienceConfig = nebflow.shared.BashResilienceConfig(),
-  /** 阶段 2a 沙箱配置（§G.1）：GatewayMain 从 nebflow.json sandbox 节 fail-safe
-    * 加载（absent → enabled=true 默认）。经 AgentCore 派生 ToolContext.sandbox——
-    * 但闸门激活还需会话级 SessionContext.sandboxEnabled=true（project 节点/
-    * 分发器 + Nebula 根会话 spawn 置位），故存量测试的默认构造不受影响。
+  /** 执行环境 provider 配置（design §4.2；GatewayMain 启动经 SandboxConfig.load +
+    * SandboxRuntime.init 装配）：absent → 缺省 provider=host / enabled=true。经
+    * AgentCore 派生 ToolContext.sandbox（路径语义 + 会话根推导）。默认实例 =
+    * provider=host（宿主直跑），存量测试构造零改动。
     * [沙箱拆围栏批 S1, 2026-09-10] 本配置不再参与 AGENTS.md 注入判据（该判据改用
-    * SessionContext.projectSession，见 ContextRefresher.agentsMdEnabledFor）。 */
+    * SessionContext.projectSession，见 ContextRefresher.agentsMdEnabledFor）。
+    * [沙箱拆围栏批 S3, 2026-09-10] JVM 写闸已退役（S2）、宿主 Bash 包裹已退场
+    * （S3）：本配置残留承重 = provider 装配 + 会话根/路径语义 + §4.5 回退点。 */
   sandboxConfig: nebflow.core.sandbox.SandboxConfig = nebflow.core.sandbox.SandboxConfig(),
   /** 阶段 2b Plugins（§B.5）：plugin 级 MCP 生命周期管理器（引用计数 + 信任运行时
     * 联动）。独立于全局 mcpManager（不复用 enable/disable 面，§B.5）；默认实例
