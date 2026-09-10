@@ -627,15 +627,12 @@ object DocIndexConsumer:
     *
     * 纯计算（无 IO、无存在性检查）：不存在的根由 [[scanIndexFiles]] 过滤 ⇒ 零成本跳过。
     * **唯一允许的根来源**——禁 roots 配置文件 / env / 新设置项 / 新参数面（本批只要
-    * 「两域固定计算」两行事实）。[[defaultIndexRoots]] 与 [[tick]] 均复用于此。 */
+    * 「两域固定计算」两行事实）。[[tick]] 复用于此。 */
   def indexRootsFor(workspace: String): List[String] =
     List(
       (PathUtil.dataRoot / "docs").toString,
       (os.Path(workspace, PathUtil.dataRoot) / ".nebflow" / "Spec").toString
     )
-
-  /** 默认索引根（口径单点 = [[indexRootsFor]]；保留本名供「不显式给根」的调用方语义）。 */
-  def defaultIndexRoots(workspace: String): List[String] = indexRootsFor(workspace)
 
   /** 节流闸（JVM 内、**按 workspace 键**）：同一 workspace 串行 check-and-set。
     * 键化理由（本批）：根含 ws 域（各项目不同）——全局单点会让先到者把后到者的 ws 域
