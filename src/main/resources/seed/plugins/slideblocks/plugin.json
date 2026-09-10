@@ -1,8 +1,7 @@
 {
   "$schema": "https://agent-plugins.org/schemas/1.0.0/plugin.schema.json",
   "name": "slideblocks",
-  "version": "1.0.0",
-  "description": "SlideBlocks 演示制作包——Slidev deck 全流程制作。内含唯一 skill：slideblocks（自主制作/改进完整 Slidev 演示：Blocks/Decks/Recipes、执行锁、交付校验）。无 mcp.json、无工具扩展。",
-  "capability": "Slidev 演示制作：节点获得 Blocks/Decks/Recipes 全流程 deck 制作能力",
+  "version": "1.0.1",
+  "description": "SlideBlocks 演示制作包——节点获得用 Slidev 从零制作/改进完整 PPT 演示（slides、deck、幻灯片）的全流程纪律。适用于做 PPT、写演示、出幻灯片、制作 slides、改进已有 deck、按 Slidev 重做演示等任务。内含 skill：slideblocks（Blocks/Decks/Recipes 全流程、执行锁、交付校验）。不适用于 HTML 卡片与社交图设计（另配 design-cards 插件）。组件面：无 mcp.json、无工具扩展。",
   "author": {"name": "UniUni2000/slideblocks-skill"}
 }
