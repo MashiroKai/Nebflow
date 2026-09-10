@@ -381,14 +381,23 @@ final class ShellSession private (
 
   /**
    * #22 (2026-08-19): foreground no-progress ceiling. A foreground command
-   * with NO new output AND no CPU activity for this long is killed with an
-   * informative error — it is almost certainly waiting for interactive input
-   * or hung on something the agent cannot see. Commands that keep producing
-   * output or burning CPU (builds, test suites) run on; sleep-like commands
-   * are excluded (#319: `sleep N` foreground must complete).
+   * that makes NO progress — no new output AND no CPU progress within a
+   * single sample window (see Defaults.ForegroundCpuProgressNanos) — for this
+   * long is killed with an informative error: it is almost certainly waiting
+   * for interactive input or hung on something the agent cannot see. Commands
+   * that keep producing output, or that burn real CPU every window (builds,
+   * test suites), run on; sleep-like commands are excluded (#319: `sleep N`
+   * foreground must complete).
+   *
+   * 2026-09-10（验收项 3 修复）：判据是**窗口增量**——每次比较的都是「本窗」烧掉的
+   * CPU，基线在每个分支都推进，见 `foregroundNoProgressWatch`。
+   *
+   * 采样窗与判死窗口可经 system prop 缩短（kill-switch 先例），供下游真实形态复现 /
+   * 验收把 10min 级单臂压到分钟级——见 Defaults.ForegroundSampleIntervalMs /
+   * Defaults.ForegroundNoProgressTimeoutMs。
    */
-  private val ForegroundSampleInterval: FiniteDuration = 30.seconds
-  private val ForegroundNoProgressTimeout: FiniteDuration = 10.minutes
+  private def ForegroundSampleInterval: FiniteDuration = Defaults.ForegroundSampleIntervalMs.millis
+  private def ForegroundNoProgressTimeout: FiniteDuration = Defaults.ForegroundNoProgressTimeoutMs.millis
 
   private val shellLogger = NebflowLogger.forName("nebflow.shell")
 
@@ -580,11 +589,13 @@ final class ShellSession private (
       val stuckFlag = Ref.unsafe[IO, Boolean](false)
 
       // ── Foreground no-progress ceiling (#22, 2026-08-19) ────────────────
-      // A foreground command that produces no output and burns no CPU for
-      // ForegroundNoProgressTimeout is killed — interactive prompts / hung
-      // waits would otherwise freeze the agent's turn forever (default
-      // timeout is 365.days). Progress (output OR CPU) resets the window, so
-      // long builds and test suites run to completion (#319 preserved).
+      // A foreground command that produces no output and makes no CPU progress
+      // *within a sample window* for ForegroundNoProgressTimeout is killed —
+      // interactive prompts / hung waits would otherwise freeze the agent's
+      // turn forever (default timeout is 365.days). Progress (output OR a
+      // window CPU increment over Defaults.ForegroundCpuProgressNanos) resets
+      // the window, so long builds and test suites run to completion
+      // (#319 preserved).
       def foregroundNoProgressWatch: IO[Unit] =
         def watch(lastLines: Int, lastCpu: Long, idleMs: Long): IO[Unit] =
           IO.sleep(ForegroundSampleInterval) *> IO {
@@ -602,17 +613,26 @@ final class ShellSession private (
             // 10ms/30s = 0.033% 单核，进程一有偶发唤醒就解除窗口（事故实证：该
             // 前台命令凭 CPU 微动（5.4 倍阈值）绕过了本条 10 分钟安全网，跑了 2h50m）。
             // 真正在算的进程（构建/测试）一个 30s 窗烧掉远超 1s CPU → 照常续跑。
+            //
+            // 2026-09-10（验收项 3 修复）：`lastCpu`/`lastLines` 是**上一个采样窗**的
+            // 基线，两条分支都推进 ⇒ 上面的差值是**本窗增量**，不是「自上次重置以来的
+            // 累计量」。旧实现只在重置分支推进 `lastCpu`，于是每窗比较的是跨窗累加值：
+            // 事故速率 1.786 ms/s 只需 19 窗就能累过 1s 门槛 ⇒ 每 ~19 窗重置一次，
+            // 10 分钟安全网（20 窗）永不触发（有效门槛被压到 1.754 ms/s，声明值 33.3 ms/s）。
             else if lines > lastLines || (cpu - lastCpu) > Defaults.ForegroundCpuProgressNanos then
-              watch(lines, cpu, 0L)
+              watch(lines, cpu, 0L) // 有进展（输出 / 本窗 CPU 超门槛）→ 重置判死窗口
             else if idleMs + ForegroundSampleInterval.toMillis >= ForegroundNoProgressTimeout.toMillis then
               IO.delay(
                 shellLogger.warn(
                   s"Foreground command idle for ${(idleMs + ForegroundSampleInterval.toMillis) / 1000}s " +
-                    s"(no output, no CPU) — killing: ${command.take(80)}"
+                    s"(no output, no CPU progress) — killing: ${command.take(80)}"
                 )
               ) *> stuckFlag.set(true) *> ProcessTree.killProcessTree(proc)
-            else watch(lastLines, lastCpu, idleMs + ForegroundSampleInterval.toMillis)
+            // 无进展：仍要推进基线，否则下一窗比较的是累计值而非本窗增量（见上）。
+            else watch(lines, cpu, idleMs + ForegroundSampleInterval.toMillis)
           }
+        // lastCpu 基线自 0 起 = 进程出生时的 CPU（新进程出生时 CPU 为 0）——首窗
+        // 比较的同样是「本窗增量」（出生 → 首次采样），与后续各窗口径一致。
         watch(h.outputLineCount.get(), 0L, 0L)
 
       // ── Hard timeout watchdog (#22, 2026-08-19 20:35 incident) ──────────
@@ -693,7 +713,7 @@ final class ShellSession private (
                    "Command produced no output within " + StuckDetectionGracePeriod.toSeconds +
                      " seconds and no CPU activity was detected."
                  else
-                  "Command produced no output and no CPU activity for " +
+                  "Command produced no output and no CPU progress for " +
                     ForegroundNoProgressTimeout.toSeconds + " seconds (foreground no-progress ceiling).") +
                   " This command likely requires interactive terminal input (or is hung). " +
                   "Use a non-interactive alternative, pass an explicit timeout, or run it " +
