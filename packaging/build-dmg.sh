@@ -30,6 +30,10 @@
 #   semver       1.4.1[-beta.N]      → 1.4.1       (suffix dropped)
 set -euo pipefail
 
+# ── 删除守卫（R5）：所有 rm -rf 目标先过 delguard 断言（入参处 + 删除点各一次）──
+# 口径与负控入口见 packaging/lib/delguard.sh；DRY_RUN=1 只断言不删。
+. "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)/lib/delguard.sh"
+
 # ── Brand values (L2 rebrand): repo-root brand.conf is the only edit point ──
 # Parser parity with project/Branding.scala and runtime nebflow.core.Branding:
 # `key = value`, full-line '#' comments, ` # ` starts an inline comment.
@@ -45,7 +49,12 @@ OUT="build/dist"
 while [[ $# -gt 0 ]]; do
   case "$1" in
     --jar-dir) JAR_DIR="$2"; shift 2 ;;
-    --out)     OUT="$2"; shift 2 ;;
+    --out)
+      [ $# -ge 2 ] || { echo "build-dmg.sh: --out requires an argument (e.g. --out build/dist)" >&2; exit 2; }
+      OUT="$2"
+      # 入参即断言（fail-fast）：非空 / 非 `/` / 非 $HOME / 非用户目录根 / 在允许落点根之下
+      delguard_assert_paths "option --out" "$OUT" || { echo "build-dmg.sh: --out target rejected by delguard -> abort" >&2; exit 2; }
+      shift 2 ;;
     *) echo "unknown option: $1" >&2; exit 1 ;;
   esac
 done
@@ -68,7 +77,8 @@ APP_VERSION=$(packaging/app-version.sh)
 # dir with only the fat jar so target/classes etc. never leak in.
 STAGE="build/jpackage-input"
 RUNTIME="build/runtime"
-rm -rf "$STAGE" "$OUT" "$RUNTIME"
+# 删除点二次断言（含 STAGE/RUNTIME 常量）：任一不通过即 exit 2，绝不降级执行
+delguard_rm_rf "pre-clean" "$STAGE" "$OUT" "$RUNTIME" || { echo "build-dmg.sh: pre-clean rejected by delguard -> abort" >&2; exit 2; }
 mkdir -p "$STAGE" "$OUT"
 cp "$JAR" "$STAGE/"
 
