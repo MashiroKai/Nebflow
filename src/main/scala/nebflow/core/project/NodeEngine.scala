@@ -942,7 +942,9 @@ class NodeEngine(
       }
 
   /** 信任门运行时重验（§B.5 信任联动，ProjectActor.TtlTick 30s 驱动）：停用
-    * digest 失效的运行中 plugin MCP + 对持有会话发系统提醒。flag off → no-op。 */
+    * digest 失效的运行中 plugin MCP + 对持有会话发系统提醒。flag off → no-op。
+    * 可见性批（2026-09-10 P1 静默缩容）：重验即插件重扫完成点——同处聚合输出一次
+    * 装载健康摘要（拒载/未批准/digest 漂移清单；干净场景零输出、同状态去重）。 */
   def revalidatePluginTrust(): IO[Unit] =
     PluginsConfig.enabled.flatMap {
       case false => IO.unit
@@ -956,7 +958,9 @@ class NodeEngine(
                   (ref ! AgentCommand.ImmediateInput(text, source = Some("system"))).void
                 case None => IO.unit // 会话已终结——提醒无投递面，server 已停即足够
             }
-        ).void
+        ).void *>
+          PluginRegistry.logHealthSummary("rescan")
+            .handleErrorWith(e => logger.warn(s"plugin health summary failed: ${e.getMessage}"))
     }
 
   private def runWithAgent(
