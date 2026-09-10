@@ -68,6 +68,12 @@ import nebflow.core.PathUtil
  * 退役、解析保留（S2 / R5=e2），`agents/<agent>/memory.md` 写拒（R3=c1）保留。`off` 与
  * `forRoot` 的 cfg.enabled 回退点按 §4.5 保留不删。
  *
+ * [沙箱拆围栏批 S3，2026-09-10] 宿主 Bash 包裹退场（F6/F7/F8 宿主路径）+ provider
+ * 语义落地（R4=d2）：`enabled` 由「围栏总闸」退化为**旧行为回退开关**（仍被
+ * `forRoot` 消费，§4.5 回退点不删）；`bashFailIfUnavailable` 字段**退役**（宿主路径
+ * 不再 fail-closed；非宿主 provider 不可用一律显式失败，无降级档）。
+ * 本 case class 的 root/pathRoot 语义**不变**（路径解析与写根推导原料）。
+ *
  * Nebula 根会话（2026-09-05 作者裁定 13:09：Nebula 会话沙箱启用 + 写根
  * =~/.nebflow 数据根，让 Nebula 直接处理定义层与运行时配置）：置位点 =
  * WebSocketRoutes.doSpawnRootAgent（depth=0 全仓唯一 spawn 点）；root =
@@ -88,15 +94,16 @@ case class SandboxPolicy(
     * readableRoots 全盘化后本字段退出读面承重（全盘读吸收一切白名单条目）；
     * 定义保留 = forRoot 构造链与 SUBSUME 类变异用例的快照锚点，不删。 */
   readExtras: List[os.Path] = Nil,
-  /** additionalRoots（H-5 预留③）：跨仓显式可写根，默认空=关。本批只留配置解析
-    * 位，不做 UI/NodeEdit 参数。语义：追加进 writableRoots 与 readableRoots。 */
+  /** additionalRoots（H-5 预留③）：跨仓显式可写根，默认空=关。语义：追加进
+    * writableRoots。[S3] 残留承重 = provider=local-process 的 Seatbelt profile
+    * 白名单扩口（JVM 写闸已随 S2 退役；宿主直跑下本字段无消费点）。 */
   extraWritable: List[os.Path] = Nil,
-  /** 总开关（feature flag §G.1）：false = 旧行为，全部闸门旁路。 */
+  /** 总开关（§G.1 回退语义）。[拆围栏批 S3，2026-09-10] **不再是围栏总闸**——
+    * 围栏已拆（S1/S2/S3），本字段的残留承重 = design §4.5 的「回旧行为」回退点：
+    * `false` ⇒ `forRoot` 短路 `off`（无会话根、无相对路径基准）、`SandboxRuntime.init`
+    * 不 probe 不包裹、Bash 不拦。**保留不删**（§4.5 硬要求：拆围栏 = 改缺省行为，
+    * 不是能力删除）。 */
   enabled: Boolean = true,
-  /** sandbox.bash.failIfUnavailable（§A.4-4）：probe 失败时 Bash fail-closed
-    * （默认 true=报 SANDBOX_UNAVAILABLE 不执行）；false = 显式降级 WARN +
-    * [unsandboxed] 前缀。 */
-  bashFailIfUnavailable: Boolean = true,
   /** 会话根（路径语义载体）。[沙箱拆围栏批 S1/R8 解耦，2026-09-10]
     *
     * 语义：Some = 本会话有工作根 —— 文件工具的**路径语义**锚定它（相对路径基准、
@@ -265,7 +272,6 @@ object SandboxPolicy:
         readExtras = (defaultReadExtras ++ cfg.additionalRootsAsRead).map(p => os.Path(canonicalize(p.wrapped))).distinct,
         extraWritable = cfg.additionalRootsAsWrite.map(p => os.Path(canonicalize(p.wrapped))),
         enabled = true,
-        bashFailIfUnavailable = cfg.bashFailIfUnavailable,
         // 路径语义载体与 root 同源（拆围栏批 S1 解耦）：闸门退役不动解析基准。
         pathRoot = Some(canonicalRoot)
       )
@@ -344,25 +350,45 @@ object SandboxPolicy:
 end SandboxPolicy
 
 /**
- * nebflow.json 顶层 sandbox 节（§G.1 feature flag + H-5 预留③ + §A.4-4）：
+ * nebflow.json 顶层 sandbox 节（§G.1 + H-5 预留③ + **拆围栏批 S3 / R4=d2 provider**）：
  *
  * {{{
  * "sandbox": {
- *   "enabled": true,                      // 默认 true=合并后生效；false 一键回旧行为
+ *   "provider": "host",                   // 执行环境 provider，缺省 host（宿主直跑）
+ *   "enabled": true,                      // 旧行为回退点（§4.5）：false = 拆围栏前旧行为
  *   "additionalRoots": [],                // H-5 预留③：跨仓显式可写根，默认空=关
- *   "bash": { "failIfUnavailable": true } // probe 失败 fail-closed（默认）/降级
+ *   "bash": { "failIfUnavailable": true } // [S3 已退役] 不再被消费，见字段注释
  * }
  * }}}
  *
+ * [拆围栏批 S3，2026-09-10] 语义迁移逐项：
+ *  - **新增 `provider`（执行环境 provider）**，缺省 `host`——取代 docker 批 A2
+ *    「缺省 seatbelt」（design §4.2 表 + §6.4 取代项 6）。取值/失败语义见
+ *    `SandboxProvider`；U7：未实现或不可用的取值**显式失败，绝不静默回落 host**。
+ *  - `enabled`：从「围栏总闸」退化为**旧行为回退开关**（§4.5 硬要求保留）。
+ *  - `additionalRoots`：写白名单扩口（写闸已随 F1 退役）——残留承重 = provider=
+ *    local-process 的 Seatbelt profile 白名单扩口（`writableRoots`），保留。
+ *  - `bash.failIfUnavailable`：**失去对象**（宿主路径不再 fail-closed；非宿主
+ *    provider 不可用一律显式失败，无「降级到无围栏」档）⇒ 字段与键名保留（源码
+ *    兼容：存量 spec 具名参数），但**不再被任何代码消费**，启动时 WARN 提示退役。
+ *
  * Fail-safe 加载（镜像 ToolResultTtlConfig.load）：absent/非法 → 默认值
- * （enabled=true）。注意 SharedResources 字段默认值即本默认——但闸门激活还需
- * 会话级 sandboxEnabled=true（project 节点/分发器 spawn 置位；Nebula 根会话按
- * isNebulaRootSession 亦置位），存量测试（无 project 上下文）不受影响。
+ * （provider=host / enabled=true）。注意 SharedResources 字段默认值即本默认。
+ * **例外（U7）**：`provider` 键存在但取值非法/类型错误时**不静默当 host**——落
+ * Host 值但把可读原因带在 `providerError` 上，由 `SandboxRuntime.init` 转成 Bash
+ * 的显式失败。
  */
 final case class SandboxConfig(
   enabled: Boolean = true,
   additionalRoots: List[String] = Nil,
-  bashFailIfUnavailable: Boolean = true
+  /** [S3 退役：不再被消费] sandbox.bash.failIfUnavailable（§A.4-4 旧语义：probe
+    * 失败时降级跑 + `[unsandboxed]` 前缀）。新语义下 provider 不可用一律显式失败
+    * （U7），无「降级」档 ⇒ 本字段与其配置键保留仅为源码兼容，启动时 WARN。 */
+  bashFailIfUnavailable: Boolean = true,
+  /** 执行环境 provider（design §4.2 / R4=d2 缺省 `host`）。 */
+  provider: SandboxProvider = SandboxProvider.Host,
+  /** provider 取值非法时的**显式失败原因**（U7：绝不静默回落 host）；None = 配置可解释。 */
+  providerError: Option[String] = None
 ):
   /** additionalRoots 只应为绝对目录路径——非法项 fail-safe 丢弃（不 fail 启动）。 */
   private def validAdditionalRoots: List[os.Path] =
@@ -385,11 +411,30 @@ object SandboxConfig:
         .downField("bash")
         .as[Option[Map[String, Boolean]]]
         .map(_.flatMap(_.get("failIfUnavailable")).getOrElse(true))
-    yield SandboxConfig(enabled, additionalRoots, bashFailIfUnavailable)
+      providerJson <- c.downField("provider").as[Option[Json]]
+    yield
+      // provider 解析（S3 / R4=d2）：缺省 host；**非法取值或错误类型不静默回落
+      // host**（U7）——值落 Host（保证失败路径有根可用），原因带在 providerError 上。
+      val (provider, providerError) = providerJson match
+        case None => (SandboxProvider.Host, None)
+        case Some(json) =>
+          json.asString match
+            case Some(raw) =>
+              SandboxProvider.parse(raw) match
+                case Right(p)   => (p, None)
+                case Left(msg)  => (SandboxProvider.Host, Some(msg))
+            case None =>
+              (
+                SandboxProvider.Host,
+                Some(s""""sandbox.provider" 必须是字符串（收到 ${json.noSpaces.take(40)}）。""")
+              )
+      SandboxConfig(enabled, additionalRoots, bashFailIfUnavailable, provider, providerError)
   }
 
   /** Fail-safe load from the raw config node（镜像 FreezeSchedule.load /
-    * ToolResultTtlConfig.load）：absent / 非法 / garbage → 默认（enabled=true）。 */
+    * ToolResultTtlConfig.load）：absent / 非法 / garbage → 默认（provider=host,
+    * enabled=true）。provider **取值**非法不经此路（decoder 内转 providerError，
+    * 见 U7：不静默回落 host）。 */
   def load(json: Option[Json]): SandboxConfig =
     json.flatMap(_.as[SandboxConfig].toOption).getOrElse(SandboxConfig())
 end SandboxConfig
