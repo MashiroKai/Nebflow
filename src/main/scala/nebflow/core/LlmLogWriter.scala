@@ -15,7 +15,10 @@ import scala.jdk.CollectionConverters.*
 /**
  * Writes LLM request/response logs in Router-compatible JSONL format.
  *
- * Output directory: ~/.nebflow/logs/router/
+ * Output directory: <dataRoot>/logs/router/ — dataRoot = PathUtil.dataRoot
+ * (CLI --home flag / NEBFLOW_HOME env / default ~/.nebflow). Isolated
+ * instances (--home /tmp/qa-*) keep their LLM request logs inside their own
+ * home; the production default collapses to ~/.nebflow/logs/router/.
  *   - {date}_summary.jsonl  — lightweight entries for list view
  *   - {date}_full.jsonl     — entries with object refs for detail view
  *   - {date}_sse.jsonl      — SSE-style events for streaming reconstruction
@@ -50,8 +53,19 @@ object LlmLogWriter:
   private val writeDelayMsForTest = new java.util.concurrent.atomic.AtomicLong(0)
   private[nebflow] def setWriteDelayMsForTest(ms: Long): Unit = writeDelayMsForTest.set(ms)
 
+  /** Log root follows the instance data root (PathUtil.dataRoot: CLI --home
+    * flag / NEBFLOW_HOME env / default ~/.nebflow) — NEVER a raw user.home
+    * hardcode. P1 defect 20260910 (实测报告 20260910_loopnode新形式实测报告.md):
+    * the previous `Paths.get(user.home, ".nebflow", ...)` hardcode leaked
+    * every isolated instance's LLM request bodies (objects/ 含 messages 全量)
+    * into the production ~/.nebflow/logs/router. logDirOverride stays the
+    * test-only injection point (takes precedence). */
   private def logDir: Path =
-    logDirOverride.get().getOrElse(Paths.get(System.getProperty("user.home"), ".nebflow", "logs", "router"))
+    logDirOverride.get().getOrElse((PathUtil.dataRoot / "logs" / "router").toNIO)
+
+  /** Package-visible probe — specs pin the dataRoot-following contract
+    * (isolated home + production-default path) without writing to either. */
+  private[core] def logDirForTest: Path = logDir
   private def objectsDir: Path = logDir.resolve("objects")
 
   /** Retention days — shared with ToolsLogWriter (方案 B: tools 日志保留对齐

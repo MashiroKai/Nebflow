@@ -14,7 +14,10 @@ import java.util.concurrent.atomic.{AtomicBoolean, AtomicLong, AtomicReference}
 
 /** Structured tool-execution JSONL log（审计 20260903 §5 方案 B）.
   *
-  * Output directory: ~/.nebflow/logs/tools/
+  * Output directory: <dataRoot>/logs/tools/ — dataRoot = PathUtil.dataRoot
+  * (CLI --home flag / NEBFLOW_HOME env / default ~/.nebflow); isolated
+  * instances keep their tool logs inside their own home, the production
+  * default collapses to ~/.nebflow/logs/tools/ (LlmLogWriter 同款契约).
   *   - {date}.jsonl — one line per tool execution (success AND failure)
   *
   * Fixed keys per line (always present; Option values null when absent):
@@ -72,8 +75,15 @@ object ToolsLogWriter:
 
   private def clock(): Instant = clockOverride.get().fold(Instant.now())(_())
 
+  /** Log root follows the instance data root (PathUtil.dataRoot) — same
+    * contract as LlmLogWriter (P1 20260910: the user.home hardcode leaked
+    * isolated instances' tool logs into the production ~/.nebflow/logs/tools).
+    * dirOverride stays the test-only injection point (takes precedence). */
   private def logDir: Path =
-    dirOverride.get().getOrElse(Paths.get(System.getProperty("user.home"), ".nebflow", "logs", "tools"))
+    dirOverride.get().getOrElse((PathUtil.dataRoot / "logs" / "tools").toNIO)
+
+  /** Package-visible probe — specs pin the dataRoot-following contract. */
+  private[core] def logDirForTest: Path = logDir
 
   /** Fixed-millisecond ISO8601 UTC — lexicographically sortable. */
   private val tsFormat =
