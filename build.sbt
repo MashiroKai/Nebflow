@@ -72,11 +72,37 @@ lazy val root = (project in file("."))
 
     // Compiler options
     scalacOptions ++= Seq(
-      // JDK baseline is 21 (see README.md / CONTRIBUTING.md): -release pins
-      // the API surface to 21 so a newer build JDK (e.g. 23) can never
-      // silently reintroduce an API above the declared baseline — that drift
-      // is the mechanism that put HttpClient#close (21+) on a 17 runtime.
-      "-release:21",
+      // ── 两个常量，不是一个数（2026-09-10 收尾补正）─────────────────────
+      // 运行时门槛 = 21（README / CONTRIBUTING / Dockerfile / 两份安装器 /
+      // doctor / GatewayMain 启动闸 —— 全部由 scripts/check-jdk-baseline.sh 钉）。
+      // 编译期字节码目标 = 17（就是下面这一行）。两者刻意**不相等**，且目标
+      // 必须严格低于门槛（门禁 A-7a 钉死这个不等式）。
+      //
+      // 为什么目标要低一档：
+      //   · 产物必须在门槛以下那一档 JVM 上**能加载**。否则
+      //     src/main/scala/nebflow/core/JvmRequirement.scala 的人话报错
+      //     （"requires Java 21 or newer" + 平台升级指引 + Jar:/Java: 诊断）
+      //     根本跑不到：17 容器里连 nebflow.Main 都加载不了，JVM 直接抛
+      //     UnsupportedClassVersionError（实测 class file version 65 > 61）。
+      //   · `nebflow update | doctor | version` 是自修入口，必须在"待升级的
+      //     那台机器"上可运行（立项约束：闸放 GatewayMain.run 首行，不放
+      //     Main.run）。字节码 65 会把它们一起焊死 —— 用户只剩卸载重装。
+      //
+      // 为什么这不是"把 API 面放开"：
+      //   · `-release` 同时钉 API 面与字节码目标；17 的 API 面是 21 的**子集**，
+      //     API 漂移从机制上更不可能，不是更可能。
+      //   · Scala 3.5.2 无法把"API 面 21"与"输出字节码 17"拆开：-release 与
+      //     -java-output-version 是同一个设置，同时给会直接
+      //     "Flag -java-output-version set repeatedly"；单独给
+      //     -java-output-version:17 同样把 API 面降到 17（两者均实测）。
+      //   · 运行时门槛 21 由启动闸 + doctor + 安装器 + Dockerfile + 本门禁
+      //     共同承担，**不靠字节码目标承担**。
+      //
+      // 因此 A-5 断言的是字节码目标 == 17（不是 21），A-7a 断言 17 < 21，
+      // A-7b 断言 jar 内 Main.class major == 61。把这里改回 "-release:21"
+      // 会让 17 侧的人话报错重新不可达 —— 那是回退，不是修复。
+      // 详见 CONTRIBUTING.md「Prerequisites」与 scripts/check-jdk-baseline.sh 文件头。
+      "-release:17",
       "-encoding", "utf8",
       "-deprecation",
       "-feature",

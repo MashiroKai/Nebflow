@@ -169,25 +169,41 @@ object LlmInterface:
     catch case _: Throwable => ()
 
   /**
-   * Best-effort abort of a JDK HttpClient: calls `shutdownNow()` (JDK 21+)
-   * via reflection, degrading gracefully to `close()` (JDK 11+) on JDK 17.
-   * Without this, `httpClient.shutdownNow()` compiles fine (JDK 23 build) but
-   * throws `NoSuchMethodError` at runtime on JDK 17 (real Windows machine,
-   * CI packaging),
-   * swallowed by the shutdown hook's `catch case _: Throwable => ()` →
-   * Ctrl+C inflight-abort silently no-ops.
+   * Best-effort abort of a JDK HttpClient: calls `shutdownNow()` (JDK 21+),
+   * falling back to `close()` (also JDK 21+ — HttpClient became AutoCloseable
+   * in 21). Both are 21+ APIs and are reached **reflectively** because this
+   * source tree compiles with `-release:17` (see build.sbt): the jar must load
+   * on a 17 JVM so the "requires Java 21" banner can print and
+   * `update`/`doctor`/`version` stay usable, which means no 21+ API may appear
+   * in the compile-time surface. On a ≤20 JVM both calls are best-effort
+   * no-ops; the abort path only has real work to do on the supported 21+
+   * runtime. Without the reflective indirection, `httpClient.shutdownNow()`
+   * compiles fine on a 21 build but throws `NoSuchMethodError` at runtime below
+   * 21 (real Windows machine, CI packaging), and that error is swallowed by
+   * the shutdown hook's `catch case _: Throwable => ()` → Ctrl+C inflight-abort
+   * silently no-ops.
    */
   private[llm] def abortHttpClient(client: java.net.http.HttpClient): Unit =
+    val _ = if !invokeNoArg(client, "shutdownNow") then invokeNoArg(client, "close")
+
+  /** `HttpClient#close()` is JDK 21+ (AutoCloseable) — routed through reflection
+    * so the call site compiles under `-release:17`. No-op on ≤20 (method absent).
+    */
+  private[llm] def closeHttpClient(client: java.net.http.HttpClient): Unit =
+    invokeNoArg(client, "close")
+
+  /** Invoke a no-arg method on a JDK HttpClient by name; `false` = the method is
+    * absent on this JVM (older release) or the invocation itself threw. The
+    * caller decides whether to fall back to another primitive.
+    */
+  private def invokeNoArg(target: java.net.http.HttpClient, method: String): Boolean =
     try
-      val m = classOf[java.net.http.HttpClient].getMethod("shutdownNow")
-      m.invoke(client)
+      classOf[java.net.http.HttpClient].getMethod(method).invoke(target)
+      true
     catch
-      case _: NoSuchMethodException =>
-        // JDK < 21: shutdownNow doesn't exist — close() is the best we have
-        client.close()
-      case e: java.lang.reflect.InvocationTargetException =>
-        // shutdownNow exists but threw — still try close()
-        try client.close() catch case _: Throwable => ()
+      case _: NoSuchMethodException                       => false
+      case _: java.lang.reflect.InvocationTargetException => false
+      case scala.util.control.NonFatal(_)                 => false
 
   // ── Hard-recovery P1: per-attempt transport (设计 D-1 方案 A, 2026-09-07) ──
 
@@ -226,7 +242,7 @@ object LlmInterface:
         val abort = abortedRef.set(true) *> IO(abortHttpClient(client)).attempt.void
         val release =
           IO(abortHttpClient(client)).attempt.void *>
-            IO(client.close()).attempt.void *>
+            IO(closeHttpClient(client)).attempt.void *>
             releaseDispatcher
         setAbort(key, abort).as(Some(AttemptTransport(backend, release)))
       }
@@ -347,19 +363,21 @@ object LlmInterface:
       //      (usingClient sets closeClient=false → backend.close() is a no-op)
       //      and in-flight FS2/sttp exchanges kept running until the JVM
       //      halted on its own — token spend continued.
-      //      JDK 17 fallback: shutdownNow() is JDK21+. On JDK17 the method
-      //      doesn't exist — reflection probe + degrade to close() (JDK11+,
-      //      AutoCloseable). close() waits for in-flight exchanges to complete
-      //      rather than aborting them, but at least releases resources.
-      //      Without this guard, NoSuchMethodError is swallowed by the
-      //      hook's catch-all → Ctrl+C fix silently no-ops on JDK17 (real machine).
-      //   2. httpClient.close() — best-effort close of cached/open connections.
+      //      Below 21 the method doesn't exist — reflection probe degrades to
+      //      close() (also JDK 21+, so a no-op there). close() waits for
+      //      in-flight exchanges to complete rather than aborting them, but at
+      //      least releases resources. Both calls go through reflection (see
+      //      abortHttpClient / closeHttpClient) because this tree compiles with
+      //      -release:17 so the jar stays loadable on a 17 JVM — without it the
+      //      raw call compiles on a 21 build but throws NoSuchMethodError / is
+      //      an API-surface violation.
+      //   2. closeHttpClient(httpClient) — best-effort close of cached/open connections.
       //   3. backend.close() — no-op for a user-provided client, kept for
       //      symmetry in case a backend-owned client is introduced later.
       //   4. releaseDispatcher — cancels dispatcher fibers.
       val doRelease: IO[Unit] =
         IO(abortHttpClient(httpClient)) *>
-          IO(httpClient.close()) *>
+          IO(closeHttpClient(httpClient)) *>
           IO(backend.close()) *>
           releaseDispatcher
       val releasedRef: Ref[IO, Boolean] = Ref.unsafe(false)
