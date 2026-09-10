@@ -507,15 +507,17 @@ Git safety:
    *
    * 卡死兜底保持：
    * - 显式 timeout（若有）→ watchdog 杀进程树
-   * - 前台 no-progress ceiling（shell.scala #22）：10min 零输出零 CPU 且非
-   *   sleep-like → 停滞杀（命令级）
-   * - TaskStuckWatcher（turn 级）：活动桥接只刷新有进展的进程——真卡死命令
-   *   不刷新 lastActivityMs，10min 零活动 → restart 杀进程树
+   * - 前台 no-progress ceiling（shell.scala #22）：10min 零输出且无**实质** CPU
+   *   （CPU 速率阈值与活动桥接常量解耦，2026-09-10）→ 停滞杀（命令级）
+   * - TaskStuckWatcher（turn 级，2026-09-10 换轴）：判据 = agent 侧事件停滞 ∪
+   *   单个工具调用持续超 10min（工具相位），**均不看进程 CPU**——进程活性
+   *   （processActivityMs）不再是「有进展」的证据，长跑命令不再能凭 CPU 微动
+   *   免疫卡死检测。
    *
    * 活动桥接（#319）保持：有进展（输出/CPU≥阈值/sleep-like）刷新
-   * lastActivityMs——TaskStuckWatcher「有进展不判卡死」语义；#391 机制 D
-   * 让 CPU 判断对齐 CpuActiveThresholdNanos（10ms/30s 采样），卡死进程的
-   * CPU 微消耗不再无脑刷新。
+   * **processActivityMs**（进程侧字段）——#391 机制 D 让 CPU 判断对齐
+   * CpuActiveThresholdNanos（10ms/30s 采样）；2026-09-10 起该戳与 agent 侧
+   * 活动彻底分家（事故根因即两者曾被同一字段承载）。
    */
   private def executeForeground(
     shell: ShellSession,
@@ -544,8 +546,11 @@ Git safety:
     val timeoutLabel = explicitTimeoutMs.map(ms => s" timeout=${ms}ms").getOrElse("")
     for
       _ <- IO(handlersLogger.infoSync(s"$logCtx Tool Bash START$timeoutLabel: $firstLine"))
-      // Activity bridge: while the command runs, mirror process progress into
-      // the agent registry so TaskStuckWatcher never kills a busy command.
+      // Process-activity bridge: while the command runs, mirror **process-side**
+      // liveness into the registry (AgentRecord.processActivityMs) so operators
+      // can tell "the child process is still alive" from "the agent is making
+      // progress". 2026-09-10 换轴：该桥不再影响卡死判据（旧行为=进程 CPU
+      // 微动持续刷新 agent 侧戳 → 2h50m 判据失明，事故根因）。
       bridgeFiber <- startActivityBridge(shell, health, command, ctx)
       result <- shell
         .execute(command, processTimeout, Some(health))
@@ -565,11 +570,16 @@ Git safety:
 
   /**
    * Activity bridge (#319): periodically checks the running process and, when
-   * it shows progress, refreshes the agent registry's lastActivityMs. This
-   * tells TaskStuckWatcher "not stuck" for commands that are actively working
-   * but produce output slowly (or none at all, e.g. sleep). Genuinely stuck
-   * processes (no output, no CPU, not sleep-like) are left alone so the
-   * watcher can still stop them.
+   * it shows progress, refreshes the agent registry's **process-side** activity
+   * stamp (AgentRecord.processActivityMs) — NOT the agent-side stamp.
+   *
+   * 2026-09-10 卡死判据换轴（取证 20260910_130621_flow-node-activity-signal-forensics.md）：
+   * 本桥不再 touch `lastActivityMs` —— 事故实证：一条前台常驻 dev server 命令
+   * （输出恒 0 行、CPU 微动 1.786 ms/s = 10ms 阈值的 5.4 倍）经此桥每 30s 刷新
+   * agent 侧戳，令 TaskStuckWatcher 判据 / SessionKick / AgentControl 的 idle
+   * **全部失明 2h50m**。「进程还有动静」不是「agent 还在推进」：本桥现在只写
+   * `processActivityMs`（不得被 TaskStuckWatcher / SessionKick / 人可见 idle 读取），
+   * agent 侧戳只由 agent 事件写（AgentCore.touchRegistryActivity）。
    *
    * #22 (2026-08-19): while alive, also emits a once-a-minute running log
    * (INFO, WARN after 10min) — without it an in-flight command leaves zero
@@ -619,18 +629,23 @@ Git safety:
             else IO.unit
           val sleepLike = shell.SleepCommandRe.findFirstIn(command).isDefined
           val hasProgress = alive && (lines > lastLines || cpuActive || sleepLike)
-          runningLog *> (if hasProgress then touchAgentActivity(ctx) *> loop(lines, cpu, tick) else loop(lastLines, lastCpu, tick))
+          runningLog *> (if hasProgress then touchProcessActivity(ctx) *> loop(lines, cpu, tick) else loop(lastLines, lastCpu, tick))
         }
     loop(health.outputLineCount.get(), 0L, 0).start
 
-  /** Refresh the agent registry's lastActivityMs for this session (if present). */
-  private def touchAgentActivity(ctx: ToolContext): IO[Unit] =
+  /**
+   * Refresh the agent registry's **process-side** activity stamp for this
+   * session (if present). 2026-09-10 换轴：目标字段 = `processActivityMs`
+   * （旧实现写 `lastActivityMs`，把进程活性混进 agent 侧判据——事故根因）。
+   * 本戳不参与卡死判据，只作「子进程确实活着」的旁证。
+   */
+  private def touchProcessActivity(ctx: ToolContext): IO[Unit] =
     (ctx.sharedResources, ctx.sessionId) match
       case (Some(res), Some(sid)) =>
         val now = System.currentTimeMillis()
         res.agentRegistry.modify { m =>
           m.get(sid) match
-            case Some(rec) => (m.updated(sid, rec.copy(lastActivityMs = now)), ())
+            case Some(rec) => (m.updated(sid, rec.copy(processActivityMs = now)), ())
             case None => (m, ())
         }
       case _ => IO.unit
