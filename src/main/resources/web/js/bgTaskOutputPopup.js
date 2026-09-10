@@ -167,12 +167,16 @@ const POPUP_CSS = `<style id="bgt-output-popup-css">
 
 /* 输出区：<pre> 等宽（配色对齐既有代码/终端展示面），pre-wrap 长行折行。
    无 background——玻璃由 .bgt-modal 统一承载（同 .flow-agent-chat 形态，
-   正文区不透明底会击穿面板毛玻璃材质）。 */
+   正文区不透明底会击穿面板毛玻璃材质）。
+   复制（2026-09-10 作者指令）：.bgt-body 复用代码块的 .code-block-wrap 容器
+   class——.code-copy-btn 的 hover 浮现（chat.css .code-block-wrap:hover）与
+   玻璃主题（sapphire.css Pattern B / chat.css dark 档）零复制生效，交互、
+   样式、已复制反馈与代码块完全同款。padding-top 抬高给右上角按钮留浮层位。 */
 .bgt-body { flex: 1; min-height: 0; display: flex; position: relative; }
 .bgt-output {
   flex: 1;
   margin: 0;
-  padding: 12px 16px;
+  padding: 28px 16px 12px;
   overflow: auto;
   font: 400 12px/1.55 ui-monospace, SFMono-Regular, monospace;
   color: var(--color-text);
@@ -193,8 +197,9 @@ const POPUP_CSS = `<style id="bgt-output-popup-css">
 }
 .bgt-placeholder.bgt-hidden { display: none; }
 
-/* Footer：同 .flow-agent-footer（顶缘折射线 + hairline）；meta 左、复制右。
-   复制按钮 = .glass-control 绿玻璃语言（#send-btn 参数，透明玻璃族填充）。 */
+/* Footer：同 .flow-agent-footer（顶缘折射线 + hairline）；meta 左、截断注记右。
+   （2026-09-10 作者指令：显式复制按钮区移除——复制改为 hover 右上角浮现，
+   与代码块同款交互同款样式，见 .bgt-body 的 code-block-wrap 复用。） */
 .bgt-footer {
   flex-shrink: 0;
   display: flex; align-items: center; gap: 8px;
@@ -226,58 +231,8 @@ const POPUP_CSS = `<style id="bgt-output-popup-css">
   color: #d4a030;
   flex-shrink: 0;
 }
-.bgt-actions { margin-left: auto; display: flex; align-items: center; gap: 8px; flex-shrink: 0; }
-.bgt-copy-btn {
-  font: 500 12px -apple-system, BlinkMacSystemFont, sans-serif;
-  padding: 5px 14px;
-  border-radius: 10px;
-  color: #fff;
-  cursor: pointer;
-  background: rgba(7, 193, 96, 0.55);
-  -webkit-backdrop-filter: blur(8px) saturate(1.3);
-  backdrop-filter: blur(8px) saturate(1.3);
-  border: 1px solid rgba(7, 193, 96, 0.30);
-  box-shadow:
-    inset 0 1px 0 rgba(255, 255, 255, 0.35),
-    inset 0 -1px 0 rgba(0, 0, 0, 0.08),
-    0 1px 4px rgba(7, 193, 96, 0.25),
-    0 0 12px rgba(7, 193, 96, 0.20),
-    0 2px 8px rgba(0, 0, 0, 0.06);
-  transition: background 0.2s, box-shadow 0.2s, border-color 0.2s, opacity 0.2s;
-}
-.bgt-copy-btn:hover {
-  background: rgba(7, 193, 96, 0.68);
-  border-color: rgba(7, 193, 96, 0.40);
-  box-shadow:
-    inset 0 1px 0 rgba(255, 255, 255, 0.4),
-    inset 0 -1px 0 rgba(0, 0, 0, 0.08),
-    0 2px 8px rgba(7, 193, 96, 0.30),
-    0 0 14px rgba(7, 193, 96, 0.22),
-    0 2px 12px rgba(0, 0, 0, 0.08);
-}
-.bgt-copy-btn:active {
-  background: rgba(7, 193, 96, 0.75);
-  border-color: rgba(7, 193, 96, 0.45);
-  box-shadow: inset 0 1px 3px rgba(0, 0, 0, 0.15), 0 1px 2px rgba(7, 193, 96, 0.12);
-}
-/* dark 主题同 #send-btn 深一档（同 hue，+alpha 抵消暗底合成变暗）。 */
-@media (prefers-color-scheme: dark) {
-  .bgt-copy-btn { background: rgba(7, 193, 96, 0.62); border-color: rgba(7, 193, 96, 0.34); }
-  .bgt-copy-btn:hover { background: rgba(7, 193, 96, 0.72); border-color: rgba(7, 193, 96, 0.44); }
-  .bgt-copy-btn:active { background: rgba(7, 193, 96, 0.78); border-color: rgba(7, 193, 96, 0.48); }
-}
-.bgt-copy-btn.copied { opacity: 0.85; }
-/* remote 降级禁用态：#send-btn:disabled 绿家族不灰（input.css 同配方，
-   整钮均匀褪 opacity 会让绿底变灰绿、脱离绿玻璃家族）。 */
-.bgt-copy-btn:disabled {
-  background: rgba(7, 193, 96, 0.16);
-  border-color: rgba(7, 193, 96, 0.08);
-  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.10);
-  cursor: default;
-}
 @media (prefers-reduced-motion: reduce) {
   .bgt-overlay { animation: none; }
-  .bgt-copy-btn { transition-duration: 0.01s; }
 }
 </style>`;
 
@@ -482,35 +437,38 @@ function startPoll() {
   }
 }
 
-// ── 复制（绿玻璃按钮）──────────────────────────────────────
-async function copyOutput(btn) {
-  if (!cur || cur.closed) return;
-  const text = cur.text;
-  let ok = false;
-  try {
-    await navigator.clipboard.writeText(text);
-    ok = true;
-  } catch {
-    // 降级：隐藏 textarea + execCommand（非安全上下文兜底）
-    try {
-      const ta = document.createElement('textarea');
-      ta.value = text;
-      ta.style.position = 'fixed';
-      ta.style.opacity = '0';
-      document.body.appendChild(ta);
-      ta.select();
-      ok = document.execCommand('copy');
-      ta.remove();
-    } catch { ok = false; }
+// ── 复制（hover 右上角浮现，2026-09-10 作者指令：与代码块同款）──
+// 点击处理直接复用代码块全局 window.copyCode（utils.js）：读取
+// .code-block-wrap 内 pre 的当前 textContent（运行中=已加载部分，规格允许）、
+// chat.copied 反馈 2s 还原、降级选中文本——交互/反馈与代码块行为完全一致。
+// 防御性 fallback：window.copyCode 缺席时用本地最小实现（同款反馈语义）。
+function wireCopyButton(btn) {
+  if (typeof window.copyCode === 'function') {
+    btn.addEventListener('click', () => window.copyCode(btn));
+    return;
   }
-  const prev = btn.textContent;
-  btn.textContent = ok ? t('bg.detail.copied') : prev;
-  btn.classList.toggle('copied', ok);
-  if (ok) setTimeout(() => {
-    if (!cur || cur.closed) return;
-    btn.textContent = t('bg.detail.copy');
-    btn.classList.remove('copied');
-  }, 1500);
+  btn.addEventListener('click', async () => {
+    const pre = overlayEl && overlayEl.querySelector('.bgt-output');
+    const text = pre ? pre.textContent : '';
+    if (!text) return;
+    try {
+      await navigator.clipboard.writeText(text);
+      const span = btn.querySelector('span');
+      span.textContent = t('chat.copied');
+      btn.classList.add('copied');
+      setTimeout(() => {
+        span.textContent = t('chat.copy');
+        btn.classList.remove('copied');
+      }, 2000);
+    } catch { /* 与代码块同语义：静默失败 */ }
+  });
+}
+
+// 与 utils.js renderMarkdown 注入的代码块复制按钮同构（svg + span 双语 title）。
+function copyButtonHtml() {
+  return '<button class="code-copy-btn" type="button" title="' + t('chat.copy') + '">' +
+    '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>' +
+    '<span>' + t('chat.copy') + '</span></button>';
 }
 
 // ── Open / close ──────────────────────────────────────────
@@ -555,23 +513,21 @@ export function openBgTaskOutput(task) {
         '<button class="bgt-close" type="button" aria-label="Close">×</button>' +
       '</div>' +
       '<div class="bgt-error bgt-hidden"></div>' +
-      '<div class="bgt-body">' +
+      '<div class="bgt-body code-block-wrap">' +
+        copyButtonHtml() +
         '<pre class="bgt-output"></pre>' +
         '<div class="bgt-placeholder bgt-hidden"></div>' +
       '</div>' +
       '<div class="bgt-footer">' +
         '<span class="bgt-meta"></span>' +
         '<span class="bgt-truncated bgt-hidden"></span>' +
-        '<div class="bgt-actions">' +
-          '<button class="bgt-copy-btn" type="button"></button>' +
-        '</div>' +
       '</div>' +
     '</div>';
 
   // 动态文本一律 textContent（XSS 纪律）
   overlayEl.querySelector('.bgt-title').textContent = task.description || task.taskId;
-  const copyBtn = overlayEl.querySelector('.bgt-copy-btn');
-  copyBtn.textContent = t('bg.detail.copy');
+  const copyBtn = overlayEl.querySelector('.code-copy-btn');
+  wireCopyButton(copyBtn);
 
   document.body.appendChild(overlayEl);
 
@@ -587,7 +543,6 @@ export function openBgTaskOutput(task) {
   // 在 document 捕获级关 #bg-dropdown——卡片在最顶层，Esc 两段式先关卡片，
   // stopPropagation 挡住后续层（再按一次 Esc 才轮到下拉，既有行为不变）。
   window.addEventListener('keydown', escHandler, true);
-  copyBtn.addEventListener('click', () => copyOutput(copyBtn));
 
   // 初始状态（行面板乐观态）→ 首拍立刻校正。remote 任务显示行传入的真实
   // 状态（2026-09-10 修复：旧版写死 running——完成的 remote 任务在卡内永远
@@ -599,10 +554,9 @@ export function openBgTaskOutput(task) {
   overlayEl.querySelector('.bgt-close').focus();
 
   if (task.kind === 'remote') {
-    // 远端任务降级：不轮询、禁复制，卡内注明暂不支持查看（任务规格允许的降级面）。
-    // 禁用态样式走 .bgt-copy-btn:disabled（#send-btn:disabled 绿家族配方）。
+    // 远端任务降级：不轮询，卡内注明暂不支持查看（任务规格允许的降级面）。
+    // 复制按钮照常 hover 浮现（空输出点击 no-op——window.copyCode 空文本 guard）。
     showPlaceholder(t('bg.detail.remote'));
-    copyBtn.disabled = true;
     overlayEl.querySelector('.bgt-meta').textContent = '';
     return;
   }
