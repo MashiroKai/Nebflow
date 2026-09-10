@@ -110,6 +110,7 @@ H8080_AFTER=$(lsof -nP -iTCP:8080 -sTCP:LISTEN -t | sort | tr '\n' ' ')
 - **静态资源可达性验收（2026-08-16，P0 Canvas viewers 404 教训）**：任何新引用的 JS/CSS/模块 URL——**包括动态 import 的子模块**——必须在运行实例上实测返回 200。服务端静态路由按目录逐条挂载、http4s DSL 单段匹配，resources/ 里新增**子目录**必须同步加服务端路由；动态 import 链要整条验证
 - **合并关卡（2026-08-16，质量路线 W1）**：前端改动（web/ 下任何文件）合并前必须过 `scripts/verify-web-assets.mjs`（遍历 web/ 全文件对真实实例断言 200，隔离实例跑）；新静态文件不可达 = 红 = 不合
 - **WS 命令链冒烟（2026-08-18，P0 定时任务静默丢失教训）**：涉 WS 命令链批次合并前，另跑 `scripts/smoke-scheduled-task.mjs`（隔离实例，`NEBFLOW_URL`+`NEBFLOW_HOME_DIR` 指向隔离环境）——fire-and-forget 静默失败类回归的哨兵
+- **checkJs 类型门（2026-09-10，CI 只管 push/PR 的漏检教训）**：前端改动（web/ 下任何文件）合并前必须过 `node scripts/check-js-types.mjs`（仓内钉版 tsc、禁 npx 网络拉取；拿 `tests/type-baseline.json` 比基线，与 CI `js-types` job 同判据）；新文件报错 / (file, TS code) 计数上升 / 总数上升 = 红 = 不合——红了修代码，**不得为过门改 `tests/type-baseline.json`**（禁以 `--update` 刷新掩盖新错、禁加或放宽条目）
 
 ## 文档产出路径（派发纪律）
 派发含文档产出的任务（方案/规格书/设计/调研报告等）时，prompt 必须写明目标路径 `~/.nebflow/docs/Nebflow/`，禁止指定 /tmp。活文档无日期前缀、阶段文档 `<YYYYMMDD>_` 前缀、配图存 `assets/`——规范见 `~/.nebflow/docs/CONVENTIONS.md`。
