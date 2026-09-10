@@ -17,7 +17,7 @@ import scala.concurrent.duration.*
  * 手段，TaskStuckWatcher 只覆盖 Processing 卡死一类。
  *
  * 四操作：
- *  - list    全部后台 agent 表格（kind/status/stuck?/up/idle/retries/task）
+ *  - list    全部后台 agent 表格（kind/status/stuck?/phase/up/idle/retries/task）
  *  - status  单个详情卡片 + 孤儿任务检测（registry 无记录但 task=running）
  *  - cancel  终止任务：supervisor 路径（AgentEvent.Cancelled → notifyParentAndStop
  *            "cancelled"，barrier 正确释放）/ 降级 Stop 路径（Ephemeral bridge
@@ -43,8 +43,8 @@ object AgentControlTool extends Tool:
     """Inspect and control background agent sessions — the sub-agents spawned via Delegate/SubTask, ephemeral Mail runners, and other live sessions in this instance.
 
 Actions:
-- **list**: table of all live background agents (kind, status, stuck?, uptime, idle time, retry count, task). Use this FIRST when a sub-agent is silent or you suspect it is stuck — "stuck?" marks Processing agents with no activity for >10min (same threshold as the automatic watcher).
-- **status**: full detail for one agent (pass sessionId from list): state, timings, task prompt excerpt, retry count, last error. Also detects orphan task files (actor gone but task still marked running).
+- **list**: table of all live background agents (kind, status, stuck?, phase, uptime, idle time, retry count, task). Use this FIRST when a sub-agent is silent or you suspect it is stuck — "stuck?" marks Processing agents that either produced no agent-side event (LLM chunk / tool batch) for >10min, or have a single tool call running for >10min inside an unfinished turn (same judgement as the automatic watcher — process CPU is irrelevant to it). "phase" shows the in-flight tool call (name + elapsed), which is what tells you whether the agent is executing a tool or has gone silent.
+- **status**: full detail for one agent (pass sessionId from list): state, timings, in-flight tool phase, task prompt excerpt, retry count, last error. Also detects orphan task files (actor gone but task still marked running).
 - **cancel**: terminate an agent's current task. The parent session receives a "cancelled" notification and any wait barrier is released — nobody waits forever. Allowed kinds: Delegate, SubTask, Ephemeral, Project node/dispatcher sessions (node-*/dispatcher-*, settles via the session bridge), and Team members (permission-scoped — see Safety rules).
 - **restart**: kill the stuck turn and resume from the last persisted checkpoint (same mechanism as crash recovery — completed work is kept). Allowed kinds: Delegate (ephemeral) and SubTask (both consume the supervisor's restart budget, 2 per 5min; exceeding it fails the task), and Team members (Stop + re-activation from persisted history — no supervisor budget consumed).
 
@@ -213,10 +213,25 @@ When to use:
         if name.nonEmpty then name else sid
       case _ => sid
 
-  private def isStuck(rec: AgentRecord, now: Long): Boolean =
-    rec.status == AgentStatus.Processing &&
-      rec.lastActivityMs > 0 &&
-      now - rec.lastActivityMs > Defaults.StuckThresholdMs
+  /**
+   * 2026-09-10 卡死判据换轴：判定收敛到 TaskStuckWatcher.assess（唯一事实源）——
+   * agent 侧事件停滞 ∪ 工具相位超时，二者都不引用进程 CPU。旧实现只读
+   * lastActivityMs，而该戳曾被 BashTool 活动桥用进程 CPU 微动刷新 → stuck? 列恒
+   * "no"（本次事故 2h56m 零可见性）。
+   */
+  private def stuckAssessment(rec: AgentRecord, now: Long): Option[(Long, String)] =
+    if rec.status == AgentStatus.Processing then nebflow.core.processor.TaskStuckWatcher.assess(rec, now)
+    else None
+
+  /**
+   * 2026-09-10 换轴（人可见性）：当前工具相位文本——工具名 + 已持续时长
+   * （如 "Bash 3m20s"）。无在飞工具 → "-"。空转的「有工具在跑」是人判断
+   * 「进程占死 vs agent 停摆」的第一手信息（事故现场唯一缺口）。
+   */
+  private def toolPhaseLabel(rec: AgentRecord, now: Long): String =
+    (rec.currentToolName, rec.currentToolStartedAt) match
+      case (Some(name), startedAt) if startedAt > 0 => s"$name ${fmtDuration(now - startedAt)}"
+      case _                                        => "-"
 
   // ── actions ───────────────────────────────────────────────
 
@@ -419,7 +434,12 @@ When to use:
         .map { rec =>
           val task = taskMap.get(rec.sessionId)
           val agent = task.map(_.agentName).getOrElse(agentNameFromSessionId(rec.sessionId))
-          val stuck = if isStuck(rec, now) then s"⚠ ${fmtMillis(now - rec.lastActivityMs)}" else "no"
+          // 2026-09-10 换轴：stuck? 由 assess 判定（agent 侧停滞 ∪ 工具相位超时），
+          // 括号内数字取真正触发的停滞秒数（工具相位触发时即工具已运行时长）。
+          val stuck =
+            stuckAssessment(rec, now) match
+              case Some((secs, _)) => s"⚠ ${fmtDuration(secs * 1000)}"
+              case None            => "no"
           // Block 3（§3.4）：LoopGuard 计数镜像——S1 连败 streak / S2 无进展轮数
           //（streak@warn=3, terminate=8；非零即有循环嫌疑，供 Manager/Nebula 决策）
           val loop =
@@ -447,6 +467,9 @@ When to use:
             if rec.parentSessionId.nonEmpty then rec.parentSessionId.take(16) else "-",
             rec.status.toString,
             stuck,
+            // 2026-09-10 换轴：当前工具相位（工具名 + 已持续时长）——「进程占死
+            // 但 agent 侧零事件」的第一手可见性。
+            toolPhaseLabel(rec, now),
             loop,
             barrier,
             fmtMillis(if rec.startedAt > 0 then now - rec.startedAt else 0),
@@ -456,7 +479,7 @@ When to use:
           )
         }
     yield
-      val header = List("sessionId", "kind", "agent", "parent", "status", "stuck?", "loop", "barrier", "up", "idle", "retries", "task")
+      val header = List("sessionId", "kind", "agent", "parent", "status", "stuck?", "phase", "loop", "barrier", "up", "idle", "retries", "task")
       // V2 (2026-09-03): orphan rows — tasks with status=running but NO live
       // registry entry (previous process crashed mid-task; the registry is
       // memory-only). This join-free listing is the only surface where the
@@ -472,6 +495,7 @@ When to use:
             if t.parentSessionId.nonEmpty then t.parentSessionId.take(16) else "-",
             "orphan(running)",
             "crash",
+            "-",
             "-",
             "-",
             fmtMillis(math.max(0L, now - t.spawnedAt)),
@@ -496,7 +520,9 @@ When to use:
              |
              |$table
              |
-             |stuck? = Processing with no activity for >${Defaults.StuckThresholdMs / 60000}min (same threshold as the automatic watcher).$orphanNote
+             |stuck? = Processing and either (a) no agent-side event (LLM chunk / tool batch) for >${Defaults.StuckThresholdMs / 60000}min
+             |         or (b) one tool call running for >${Defaults.ToolPhaseStuckMs / 60000}min inside an unfinished turn — same judgement as the automatic watcher.
+             |phase = the in-flight tool call (name + elapsed) for the current turn — "-" when no tool is executing.$orphanNote
              |loop = streak/rounds (loop-guard): streak = consecutive rounds failing the same call (warn@3); rounds = non-progressing
              |       rounds this turn (escalates at 70% turn budget / 8). Non-zero = loop suspicion — check status, consider restart.
              |barrier = outstandingSubagents/heldResults (issue #31): outstanding>0 while idle with no in-flight work = phantom slot
@@ -538,16 +564,25 @@ When to use:
       registry.get(sessionId) match
         case Some(rec) =>
           resources.subAgentTaskStore.findByTaskId(sessionId).map { taskOpt =>
+            // 2026-09-10 换轴：stuck 详情带判据原因（哪条轴触发）；
+            // toolPhase = 当前工具名 + 已持续时长（进程占死形态的第一手信息）。
+            val stuckLine = stuckAssessment(rec, now) match
+              case Some((secs, reason)) => s"YES (${fmtDuration(secs * 1000)} — $reason)"
+              case None                 => "no"
             val lines = List(
               s"sessionId: ${rec.sessionId}",
               s"kind: ${rec.kind}",
               s"status: ${rec.status}",
-              s"stuck: ${if isStuck(rec, now) then s"YES (idle ${fmtMillis(now - rec.lastActivityMs)})" else "no"}",
+              s"stuck: $stuckLine",
+              s"toolPhase: ${toolPhaseLabel(rec, now)}" +
+                (if rec.turnStartedAt > 0 then s" (turn started ${fmtDuration(now - rec.turnStartedAt)} ago)" else ""),
               // Block 3（§3.4）：loop-guard 计数详情
               s"loop: streak=${rec.loopStreak} rounds=${rec.loopRounds}" +
                 (if rec.loopStreak >= 3 then " ⚠ same call failing repeatedly" else ""),
               s"startedAt: ${if rec.startedAt > 0 then fmtMillis(now - rec.startedAt) + " ago" else "(unknown)"}",
-              s"lastActivity: ${if rec.lastActivityMs > 0 then fmtMillis(now - rec.lastActivityMs) + " ago" else "(never)"}",
+              // idle 列语义收紧（2026-09-10）：agent 侧事件停滞时长——进程侧
+              // 活性（processActivityMs）刻意不在此展示（避免把进程动静读成进展）。
+              s"lastActivity: ${if rec.lastActivityMs > 0 then fmtMillis(now - rec.lastActivityMs) + " ago (agent-side)" else "(never)"}",
               s"rootSessionId: ${rec.rootSessionId}",
               s"parentSessionId: ${if rec.parentSessionId.nonEmpty then rec.parentSessionId else "-"}",
               s"supervised: ${rec.supervisorRef.isDefined}",

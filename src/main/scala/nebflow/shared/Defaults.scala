@@ -219,6 +219,39 @@ object Defaults:
   /** TaskStuckWatcher scan interval. */
   val StuckWatcherIntervalSec: Int = 30
 
+  /**
+   * 2026-09-10 卡死判据换轴（取证 20260910_130621_flow-node-activity-signal-forensics.md）：
+   * **工具相位**卡死阈值——同一 turn 内单个工具调用持续超过此值、且该 turn 仍
+   * 未完成（status == Processing）→ 判卡死，走既有 L1→L4 分级恢复/告警链路。
+   *
+   * 与 `StuckThresholdMs` 同档（10min，即既有前台 no-progress ceiling 的档位），
+   * 但语义不同：`StuckThresholdMs` 量的是「agent 侧事件流停滞」（LLM 流楔死形态），
+   * 本值量的是「单个工具调用不返回」（进程占死形态）。两者都不引用进程 CPU——
+   * 这正是本次事故必须换轴的原因：被占死的会话 agent 侧早已停摆（零 LLM turn、
+   * 零 chunk），而进程 CPU 微动让旧判据永不失明。
+   *
+   * system prop `nebflow.stuck.toolPhaseMs`，每次调用现读（kill-switch 先例，
+   * 下游真实形态复现验收靠它缩短窗口）。
+   */
+  def ToolPhaseStuckMs: Long =
+    sys.props.getOrElse("nebflow.stuck.toolPhaseMs", "600000").toLong
+
+  /**
+   * 2026-09-10 卡死判据换轴（阈值解耦）：前台 no-progress ceiling 的「有进展」
+   * CPU 判据——与 BashTool 活动桥接的 `shell.CpuActiveThresholdNanos`（10ms）
+   * **不再共用常量**。10ms/30s = 0.033% 单核，任何「活着且有偶发唤醒」的进程
+   * （dev server 的 file watcher/HMR tick）都轻松越过 → 该 10 分钟安全网被
+   * 微动无条件解除（本次事故前台命令跑了 2h50m 未被杀，即此因）。
+   *
+   * 本值 = 一个真正在算的进程在一个 30s 采样窗内至少燃烧的 CPU（1s ≈ 3.3% 单核）；
+   * 微动（事故实测 0.18% ≈ 54ms/30s）不再算进展 —— 判定标准与采样窗同一量纲
+   * （CPU 速率），不再是跨窗口失效的绝对差值。
+   *
+   * system prop `nebflow.shell.foregroundCpuProgressNanos`。
+   */
+  def ForegroundCpuProgressNanos: Long =
+    sys.props.getOrElse("nebflow.shell.foregroundCpuProgressNanos", "1000000000").toLong
+
   // ---- boot-time 崩溃恢复（crash-recovery 批 2026-09-07）----
 
   /**

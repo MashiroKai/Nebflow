@@ -23,8 +23,20 @@ import scala.concurrent.duration.FiniteDuration
  *   - AgentRecord.status == Processing 且 now - lastActivityMs > threshold
  *   - idle 态永不判卡死（run_in_background 时 agent 回 Idle 为合法状态）——
  *     防误杀铁律；status/lastActivityMs 由 AgentCore.touchRegistryActivity
- *     在 LLM 流 chunk / 工具完成 / turn 完成时维护，另由 BashTool 活动桥接
- *     （#319）在长前台命令有进展时刷新 lastActivityMs——有进展不判卡死。
+ *     在 LLM 流 chunk / 工具完成 / turn 完成时维护。
+ *
+ * 2026-09-10 卡死判据换轴（取证 20260910_130621_flow-node-activity-signal-forensics.md）：
+ * 事故实证（n-5c69c793 会话被一条前台常驻 dev server 命令占死 2h50m）——旧判据的
+ * 唯一周期写点 BashTool.startActivityBridge 把**进程侧 CPU 微动**当成了 agent 侧
+ * 活动（实测 1.786 ms/s = 10ms 阈值的 5.4 倍 ⇒ 恒有「进展」），于是 `idle` 恒 <30s、
+ * 本 watcher 与 SessionKick 双双失明。换轴后判据 = 两条 **agent 侧** 判据的并集
+ * （`assess`，**不引用任何进程 CPU**）：
+ *   - ① agent 侧事件流停滞：now - lastActivityMs > threshold（LLM 流楔死形态；
+ *     lastActivityMs 现在只由 agent 侧事件写，进程活性另存 processActivityMs）
+ *   - ② 工具相位超时：同一 turn 内单个工具调用持续 > Defaults.ToolPhaseStuckMs
+ *     （默认 10min，与前台 no-progress ceiling 同档）且该 turn 未完成
+ *     （status 仍 Processing）——进程占死形态（本次事故形态）。
+ * 恢复链（L1→L4 / Team 只读 / 子 agent Stop）保持不变，见 recover。
  *
  * 恢复：
  *   - 子 agent（有 parentRef）：发 AgentCommand.Stop → AgentActor 的 Stop
@@ -66,6 +78,40 @@ object TaskStuckWatcher:
 
   /** 与 WebSocketRoutes.filterActiveAgents 相同的 task 集合（保持单一事实源意识）。 */
   private val taskKinds = Set(AgentKind.Delegate, AgentKind.Ephemeral, AgentKind.Flow, AgentKind.SubTask)
+
+  /**
+   * 2026-09-10 卡死判据换轴（唯一判据事实源）：本 watcher 的扫描 + AgentControlTool
+   * 的 stuck?/status 展示 + WebSocketRoutes.maybeSessionKick 全部走此函数，避免三处
+   * 判据漂移（旧代码三处各写一遍 `now - lastActivityMs > 阈值`）。
+   *
+   * 返回 Some((停滞秒数, 原因文本)) = 判卡死；None = 不判。
+   * 判据（并集，**均不读取任何进程 CPU / processActivityMs**）：
+   *   ① agent 侧事件流停滞：lastActivityMs 超阈（LLM 流楔死 / turn 挂死形态）
+   *   ② 工具相位超时：当前 turn 内单个工具调用持续超 Defaults.ToolPhaseStuckMs
+   *      （进程占死形态——本次事故形态：零 LLM turn、零 chunk，旧判据因进程
+   *      CPU 微动永不失明）
+   * 前置条件（status == Processing、WaitingForUser 豁免、lastActivityMs==0 视作
+   * 未 touch）由调用方保持不变：assess 只回答「给定记录是否超时」。
+   */
+  def assess(
+    rec: AgentRecord,
+    now: Long,
+    thresholdMs: Long = nebflow.shared.Defaults.StuckThresholdMs,
+    toolPhaseThresholdMs: Long = nebflow.shared.Defaults.ToolPhaseStuckMs
+  ): Option[(Long, String)] =
+    val agentIdleMs = if rec.lastActivityMs > 0 then now - rec.lastActivityMs else 0L
+    val agentStale = rec.lastActivityMs > 0 && agentIdleMs > thresholdMs
+    val toolPhaseMs = if rec.currentToolStartedAt > 0 then now - rec.currentToolStartedAt else 0L
+    val toolOverdue = rec.currentToolStartedAt > 0 && toolPhaseMs > toolPhaseThresholdMs
+    val toolLabel = rec.currentToolName.getOrElse("?")
+    if agentStale && toolOverdue then
+      Some((math.max(agentIdleMs, toolPhaseMs) / 1000,
+        s"agent idle ${agentIdleMs / 1000}s and tool '$toolLabel' running ${toolPhaseMs / 1000}s in an unfinished turn"))
+    else if agentStale then
+      Some((agentIdleMs / 1000, s"agent idle ${agentIdleMs / 1000}s (no LLM/tool event)"))
+    else if toolOverdue then
+      Some((toolPhaseMs / 1000, s"tool '$toolLabel' running ${toolPhaseMs / 1000}s in an unfinished turn"))
+    else None
 
   /**
    * 扫描集合 = taskKinds + Root + Team。Root（Nebula 主窗口）虽不在活跃子代理列表
@@ -135,18 +181,21 @@ object TaskStuckWatcher:
         // Processing with a fresh lastActivityMs — AgentActor AskUser handler
         // / AgentCore.askUserPermission), so true hangs stay reachable.
         .filter(rec => rec.status != AgentStatus.WaitingForUser)
-        .filter(rec => rec.lastActivityMs > 0 && now - rec.lastActivityMs > thresholdMs)
-      val stuckIds = stuck.map(_.sessionId).toSet
+        // 2026-09-10 换轴：判据收敛到 assess（agent 侧事件停滞 ∪ 工具相位超时，
+        // 二者都不引用进程 CPU）。旧行 `now - rec.lastActivityMs > thresholdMs`
+        // 保留为 assess 的判据 ①，其余语义不变。
+        .flatMap(rec => assess(rec, now, thresholdMs).map((rec, _)))
+      val stuckIds = stuck.map(_._1.sessionId).toSet
       // Drop counters for sessions that recovered (fresh activity / different
       // status / gone) so a future stuck episode starts from Stop attempt 1.
       stopCounts.modify(m => (m.view.filterKeys(stuckIds.contains).toMap, ())) *>
-        stuck.traverse_ { rec =>
-          recover(resources, wsHub, rec, now, stopCounts)
+        stuck.traverse_ { (rec, assessment) =>
+          recover(resources, wsHub, rec, assessment._1, assessment._2, stopCounts)
         }
     }
 
-  /** taskStuck WS 广播（统一 payload：sessionId/kind/idleSecs/action）。 */
-  private def broadcastStuck(wsHub: WsHub, rec: AgentRecord, idleSecs: Long, action: String): IO[Unit] =
+  /** taskStuck WS 广播（统一 payload：sessionId/kind/idleSecs/action/reason）。 */
+  private def broadcastStuck(wsHub: WsHub, rec: AgentRecord, idleSecs: Long, action: String, reason: String): IO[Unit] =
     wsHub
       .broadcast(
         io.circe.Json.obj(
@@ -154,7 +203,10 @@ object TaskStuckWatcher:
           "sessionId" -> rec.sessionId.asJson,
           "kind" -> rec.kind.toString.asJson,
           "idleSecs" -> idleSecs.asJson,
-          "action" -> action.asJson
+          "action" -> action.asJson,
+          // 2026-09-10 换轴：判据原因（哪条轴触发 / 工具名与已持续时间）——
+          // 人类可见性的一部分（旧前端忽略未知键，向后兼容）。
+          "reason" -> reason.asJson
         )
       )
       .handleErrorWith(e => logger.warn(s"TaskStuckWatcher: taskStuck WS broadcast failed: ${e.getMessage}"))
@@ -164,20 +216,21 @@ object TaskStuckWatcher:
     resources: SharedResources,
     wsHub: WsHub,
     rec: AgentRecord,
-    now: Long,
+    idleSecs: Long,
+    reason: String,
     stopCounts: cats.effect.Ref[IO, Map[String, Int]]
   ): IO[Unit] =
-    val idleSecs = (now - rec.lastActivityMs) / 1000
     // #22: Team kind 只读——长驻用户可见会话，绝不自动 Stop（AgentControl §4）。
     // 2026-08-19 Frontend 僵尸 turn 若有此广播，2 小时静默会变成即时可见。
     if rec.kind == AgentKind.Team then
       logger.warn(
         s"TaskStuckWatcher: team agent ${rec.sessionId} stuck in Processing for ${idleSecs}s " +
+          s"[judge: $reason] " +
           "— the actor is never auto-stopped (let-it-crash: crash+recover beats chronic hang), " +
           "but a looping turn may be terminated by loop guard; the team Manager or Nebula can " +
           "cancel/restart it via AgentControl"
       ) *>
-        broadcastStuck(wsHub, rec, idleSecs, "attention")
+        broadcastStuck(wsHub, rec, idleSecs, "attention", reason)
     // Project flow 会话（node-/dispatcher-，supervisorRef=观察桥）卡死：分级接管
     // L1→L4（hard-recovery P5，2026-09-07 设计 §2.6/§9）。回验 = 下一轮扫描的
     // stuck 复查（恢复则计数器随 filterKeys 复位，不再升级）。绝不发 raw Stop——
@@ -188,11 +241,11 @@ object TaskStuckWatcher:
       val hard = nebflow.shared.Defaults.HardRecoveryEnabled
       logger.warn(
         s"TaskStuckWatcher: Project flow session ${rec.sessionId} (kind=Flow) stuck in Processing " +
-          s"for ${idleSecs}s > threshold — escalating (L1 halt → L2 transport abort → L3 resume)"
+          s"for ${idleSecs}s > threshold [judge: $reason] — escalating (L1 halt → L2 transport abort → L3 resume)"
       ) *>
         // P7 诚实帧：硬分级时每扫描一帧**真实** action（在下述 match 内逐拍广播）；
         // 只有回滚形态（!hard）沿用旧语义在此统一广播 restart。
-        (if hard then IO.unit else broadcastStuck(wsHub, rec, idleSecs, "restart")) *>
+        (if hard then IO.unit else broadcastStuck(wsHub, rec, idleSecs, "restart", reason)) *>
         stopCounts.modify { m =>
           val n = m.getOrElse(rec.sessionId, 0) + 1
           (m.updated(rec.sessionId, n), n)
@@ -271,13 +324,13 @@ object TaskStuckWatcher:
                 // → 有界重试 / turn-end 注入接管。action=halt（真实动作，P7 诚实帧）。
                 logger.warn(
                   s"TaskStuckWatcher: ${rec.sessionId} attempt $attempts (L1) — halting in-flight LLM"
-                ) *> broadcastStuck(wsHub, rec, idleSecs, "halt") *> hardCancel()
+                ) *> broadcastStuck(wsHub, rec, idleSecs, "halt", reason) *> hardCancel()
               case 2 =>
                 // L2 硬中断（action=hard-abort）：transport abort + reclaimSession（见
                 // transportAbort 的 evidence #5 护栏——非 LLM 楔死形态收回进程 kill）。
                 logger.warn(
                   s"TaskStuckWatcher: ${rec.sessionId} attempt $attempts (L2) — transport abort + session process reclaim"
-                ) *> broadcastStuck(wsHub, rec, idleSecs, "hard-abort") *> transportAbort()
+                ) *> broadcastStuck(wsHub, rec, idleSecs, "hard-abort", reason) *> transportAbort()
               case 3 =>
                 // L3 真重启（设计 D-5）：bridge Cancelled 清场（actor 停止 + 节点终
                 // 态）→ 5s 让清场链走完 → hardResumeNode 从 transcript 断点续跑
@@ -286,7 +339,7 @@ object TaskStuckWatcher:
                 // → watcher 不再见其 stuck）；失败保留计数 → 第 4 拍 L4 failed 可达。
                 logger.warn(
                   s"TaskStuckWatcher: ${rec.sessionId} attempt $attempts (L3) — releasing via bridge Cancelled, then hard-resume from transcript breakpoint"
-                ) *> broadcastStuck(wsHub, rec, idleSecs, "restart") *>
+                ) *> broadcastStuck(wsHub, rec, idleSecs, "restart", reason) *>
                   bridgeCancelled("L3 hard-recovery: true resume from transcript breakpoint") *>
                   // 面板实时终态帧（Sub-Agents 面板取消实时刷新修复；beta.57 CI
                   // ProjectSessionCancelPanelFrameSpec 暴露的 hard 分支遗漏）：L3 桥
@@ -312,9 +365,9 @@ object TaskStuckWatcher:
                 logger.error(
                   s"TaskStuckWatcher: ${rec.sessionId} stuck for ${idleSecs}s — L1/L2/L3 all ineffective. " +
                     "This session needs MANUAL attention; progress is persisted (transcript + queues on disk)."
-                ) *> broadcastStuck(wsHub, rec, idleSecs, "failed")
+                ) *> broadcastStuck(wsHub, rec, idleSecs, "failed", reason)
               case _ =>
-                broadcastStuck(wsHub, rec, idleSecs, "failed")
+                broadcastStuck(wsHub, rec, idleSecs, "failed", reason)
             end match
         }
     else
@@ -322,12 +375,12 @@ object TaskStuckWatcher:
         case Some(_) =>
           logger.warn(
             s"TaskStuckWatcher: sub-agent ${rec.sessionId} (kind=${rec.kind}) stuck in Processing " +
-              s"for ${idleSecs}s > threshold — sending Stop for supervised restart"
+              s"for ${idleSecs}s > threshold [judge: $reason] — sending Stop for supervised restart"
           ) *>
             // AgentControl spec §3.5：子 agent 自动重启也广播 taskStuck（原先只有
             // 根 agent 广播）——前端可见「后台 agent 卡死，正在自动重启」，Nebula
             // 事后用 AgentControl(list) 能看到 retryCount。
-            broadcastStuck(wsHub, rec, idleSecs, "restart") *>
+            broadcastStuck(wsHub, rec, idleSecs, "restart", reason) *>
             // gate-wedge P1-1: count ineffective Stops. A suspended agent never
             // consumes mailbox messages, so resending forever is useless (the
             // incident: thousands of resends over 6.5h). At the Nth attempt we
@@ -418,9 +471,9 @@ object TaskStuckWatcher:
           if !nebflow.shared.Defaults.HardRecoveryEnabled || rec.kind == nebflow.agent.AgentKind.Flow then
             logger.warn(
               s"TaskStuckWatcher: root agent ${rec.sessionId} (kind=${rec.kind}) stuck in Processing for ${idleSecs}s " +
-                "— not auto-restarting, broadcast taskStuck for user decision"
+                s"[judge: $reason] — not auto-restarting, broadcast taskStuck for user decision"
             ) *>
-              broadcastStuck(wsHub, rec, idleSecs, "attention")
+              broadcastStuck(wsHub, rec, idleSecs, "attention", reason)
           else
             stopCounts.modify { m =>
               val n = m.getOrElse(rec.sessionId, 0) + 1
@@ -466,7 +519,7 @@ object TaskStuckWatcher:
                     ))
                 case _ =>
                   ("failed", IO.unit)
-              broadcastStuck(wsHub, rec, idleSecs, action) *> io
+              broadcastStuck(wsHub, rec, idleSecs, action, reason) *> io
             }
 
     end if
