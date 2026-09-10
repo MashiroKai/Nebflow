@@ -39,9 +39,13 @@ import io.circe.Json
  * 用户裁决（watcher「根 agent 只广播不自动处置」政策对齐）。挂载点按
  * depth==0 过滤 Terminate。
  *
- * 兜底关系：预算帽删除后，超长 turn 的最后防线 = TaskStuckWatcher 零活动
- * 检测（10min 无 touch）——R 检测抓「有活动的循环」，watcher 抓「无活动
- * 的挂起」，两者判据正交无重叠误杀面。
+ * 兜底关系：预算帽删除后，超长 turn 的最后防线 = TaskStuckWatcher 卡死检测——
+ * 2026-09-10 换轴后为「agent 侧 10min 零事件（无活动）∪ 单个工具调用持续
+ * 超 10min 且 turn 未完成（进程占死）」两条 agent 侧判据（**不引用进程 CPU**，
+ * 取证 20260910_130621）：R 检测抓「有活动的循环」，watcher 抓「零进展的
+ * 挂起/占死」，两者判据正交无重叠误杀面。本检测器与本次换轴无耦合——循环
+ * 形态的每次工具失败都是 agent 侧事件（仍持续 touch 活动戳），工具相位亦随
+ * 每个短调用重置，故本检测器职责不变。
  */
 object LoopGuard:
 
