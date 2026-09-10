@@ -149,7 +149,7 @@ final class FriendService(
     guard.setRead(conversationId, lastReadMessageId) *>
       withClient(_.markConversationRead(conversationId, lastReadMessageId))
 
-  // ===== Agent 发消息（SendFriendMessage 工具入口） =====
+  // ===== Agent 发消息（SendMessage 工具入口） =====
 
   /**
    * 以用户身份向好友发消息（spec §7.2 权限模型）：

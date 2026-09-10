@@ -42,7 +42,7 @@ class AgentConvergenceSpec extends FunSuite:
     val expected = Set(
       "Task", "ProjectCreate", "AgentControl",
       "TaskList",                                           // 任务编排（2026-09-06 TaskList 批：快变状态出记忆）
-      "SendFriendMessage",
+      "SendMessage",
       "Read", "Glob", "Grep",                                // 读三件（08:40 解禁四件；23:34 裁定收走写手）
       "Card",                                               // 可视化（2026-09-05 解封恢复）
       "AskUserQuestion", "Pop",

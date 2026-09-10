@@ -9,7 +9,7 @@ import java.time.LocalTime
 import java.time.format.DateTimeFormatter
 
 /**
- * SendFriendMessage tool — A2A 一期 agent 发消息能力（friends-messaging-arch §7.1
+ * SendMessage tool — A2A 一期 agent 发消息能力（friends-messaging-arch §7.1
  * 冻结设计 + 20260828 方向补充 spec §2）。LLM 通过它以用户身份向已建立好友关系的
  * 联系人发送文本消息；收方看到的是好友本人（用户身份送达，冻结语义）。
  *
@@ -39,7 +39,7 @@ object FriendMessageTool extends Tool:
   /** Startup wiring (GatewayMain). No-op safe to call once. */
   def initialize(fs: FriendService): Unit = service = Some(fs)
 
-  val name = "SendFriendMessage"
+  val name = "SendMessage"
 
   val description =
     """Send a text message to one of the user's NebLink friends, acting on the user's behalf. Only established friend relationships can receive messages; the message is delivered as the user (the recipient sees it as the user themselves). Subject to permission tiers and rate limits (per-friend and global hourly caps); depending on the user's configuration the send may require explicit user confirmation or be disabled outright.
@@ -135,7 +135,7 @@ object FriendMessageTool extends Tool:
 
   def summarize(input: JsonObject): String =
     val to = input("to").flatMap(_.asString).getOrElse("?")
-    s"SendFriendMessage(to=$to)"
+    s"SendMessage(to=$to)"
 
   def summarizeResult(input: JsonObject, result: String): String = result
 end FriendMessageTool
