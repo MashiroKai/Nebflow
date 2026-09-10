@@ -201,9 +201,9 @@ object LlmInterface:
       classOf[java.net.http.HttpClient].getMethod(method).invoke(target)
       true
     catch
-      case _: NoSuchMethodException                       => false
+      case _: NoSuchMethodException => false
       case _: java.lang.reflect.InvocationTargetException => false
-      case scala.util.control.NonFatal(_)                 => false
+      case scala.util.control.NonFatal(_) => false
 
   // ── Hard-recovery P1: per-attempt transport (设计 D-1 方案 A, 2026-09-07) ──
 
