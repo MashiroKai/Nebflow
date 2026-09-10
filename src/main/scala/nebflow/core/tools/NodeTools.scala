@@ -1491,6 +1491,23 @@ object NodeEditTool extends Tool:
                                               case None => s
                                           }.void
                                         else IO.unit
+                                      // pendingSuccession 清除（取消静默死锁修复批 R4）：
+                                      // 本节点带「待承接」标（其 in 上曾有被引擎取消并
+                                      // 自动摘除的上游）而本次编辑有**实际变更** =
+                                      // 分发器已介入处置（承接节点 append 回 in / 改接 /
+                                      // 其它拓扑调整）→ 解除闸门，barrier 恢复可触发。
+                                      // 清除只在 actualChange 时发生（纯 no-op 编辑不
+                                      // 解锁，防误放行）；标记本身由 R4 摘除写入。
+                                      _ <-
+                                        if actualChange then
+                                          rt.store.mutate { s =>
+                                            s.nodes.get(node.id) match
+                                              case Some(fresh) if fresh.pendingSuccession.nonEmpty =>
+                                                s.copy(nodes = s.nodes.updated(node.id,
+                                                  fresh.copy(pendingSuccession = Nil)))
+                                              case _ => s
+                                          }.void
+                                        else IO.unit
                                       // notifyDispatcher 设置/撤销写回（dispatch-notify 批）：
                                       // 校验已在 earlyReject 拦截（终态 → 拒）；running 合法
                                       // （完成时行为开关）。事务内现读 fresh（R2 纪律）+ 状态双重保险。

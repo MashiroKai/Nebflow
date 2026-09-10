@@ -303,6 +303,21 @@ case class AgentRecord(
    */
   currentToolStartedAt: Long = 0L,
   /**
+   * R6（取消静默死锁修复批 2026-09-10，作者裁定 R6 方案 2）：当前在飞工具**自己
+   * 声明**的授权时长（ms）——工具开始时从入参 JSON 的 `timeout` 字段读出
+   * （[[nebflow.shared.Defaults.declaredToolTimeoutMs]]，只读声明值、不读工具默认
+   * 值）。0 = 未声明。
+   *
+   * 判据消费单点 = `TaskStuckWatcher.assess` 的 toolOverdue 轴：
+   * `toolPhaseMs > min(ToolPhaseStuckMs, currentToolDeadlineMs + slack)` —— 判据
+   * 尊重命令自己声明的合法时长（案例 1 的 `timeout=900000ms` 不再在 11.2 分钟被
+   * 判死）。判据仍**不引用任何进程 CPU**。
+   *
+   * 生命周期与 currentToolStartedAt 同步（工具开始置位 / 工具批次完成与离开
+   * Processing 清 0）。
+   */
+  currentToolDeadlineMs: Long = 0L,
+  /**
    * AgentControl（2026-08-19 spec §3.1）：监听该 agent 终态的 adapter 引用——
    * ephemeral Delegate/SubTask = BackoffSupervisor；persistent Delegate =
    * persistentAdapter；Ephemeral/Flow/Root/Team = None（无取消通道，cancel 走
