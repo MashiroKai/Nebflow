@@ -170,7 +170,7 @@ case class NeblinkConfig(
     * ones. */
   logto: Option[LogtoConfig] = None,
   /** Agent messaging permissions (A2A 一期, spec §7.2): how the
-    * SendFriendMessage tool may send on the user's behalf. */
+    * SendMessage tool may send on the user's behalf. */
   agentMessaging: AgentMessagingConfig = AgentMessagingConfig()
 ):
   /** Login-chain resolution: an explicit `logto` block wins verbatim; a

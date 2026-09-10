@@ -723,7 +723,7 @@ object GatewayMain extends IOApp:
                                               wsHub.broadcast(frame)
                                             }
                                           )
-                                          // A2A 一期（#290 域 A）：SendFriendMessage 工具接线——
+                                          // A2A 一期（#290 域 A）：SendMessage 工具接线——
                                           // 授权仅 Nebula agent.json 声明（作者特批 2026-08-28），
                                           // 服务依赖走 RemoteExecutor.initialize 同款单例模式。
                                           FriendMessageTool.initialize(friendService)

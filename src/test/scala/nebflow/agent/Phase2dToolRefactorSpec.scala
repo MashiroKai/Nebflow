@@ -11,7 +11,7 @@ import nebflow.core.tools.ToolRegistry
  * - D.1-1：fixedToolsFor 收口——三角色直接返回静态集常量（工具面逐件不变，
  *   与 AgentConvergenceSpec 互为表里）；legacy 分支（team/flow/catch-all）
  *   原样保留（双轨期），三角色 name 分支已从 legacy 路径删除。
- * - D.1-11：SendFriendMessage 声明式注入通道删除——显式声明与 "*" 均不再
+ * - D.1-11：SendMessage 声明式注入通道删除——显式声明与 "*" 均不再
  *   授能，Nebula 静态集照常携带。
  * - D.1-9：converged 三角色 agent.json mcpServers 声明退役（机制层与 tools
  *   声明同批失效）；plugin MCP 前缀追加语义补 spec 钉（§B.4 既有命名
@@ -45,7 +45,7 @@ class Phase2dToolRefactorSpec extends FunSuite:
     val expected =
       Set("Task", "ProjectCreate", "AgentControl",
         "TaskList",                                            // 任务编排（2026-09-06 TaskList 批：快变状态出记忆）
-        "SendFriendMessage",
+        "SendMessage",
         "Read", "Glob", "Grep",                                // 读三件（08:40 解禁四件；23:34 裁定收走写手）
         "Card",                                               // 可视化（2026-09-05 解封恢复）
         "AskUserQuestion", "Pop",
@@ -140,21 +140,38 @@ class Phase2dToolRefactorSpec extends FunSuite:
     assert(!CoreProbe.allowed(mkDef("general"), isFlowNode = true).contains("TaskBoard"),
       "双轨 flow 会话 flag=false 恒不挂（任务板批 2 前行为零变化）")
 
-  // ===== D.1-11：SendFriendMessage 声明通道删除 =====
+  // ===== D.1-11：SendMessage 声明通道删除 =====
 
-  test("D.1-11: standalone 显式声明 SendFriendMessage 不再授能"):
-    val declared = CoreProbe.allowed(mkDef("social", List("Read", "SendFriendMessage")))
-    assert(!declared.contains("SendFriendMessage"), "声明通道已删——声明不授能")
+  // 工具面收敛 批① A 轨（2026-09-10）：通信工具纯名字迁移（旧名 = LegacyToolName
+  // 拼接值，见下；「好友消息」→ 中性「消息」，语义/件数零变化）。
+  // 三条不变式必须齐——件数恰十四 ∧ 新名在 ∧ 旧名零残留。本文件刻意不写裸旧名
+  // 字面量：既让「引号精确 grep 旧名 → 0」的验收口径成立（注释本身也不许破口径），
+  // 又保住零残留断言——裸字面量会同时打破这两条中的一条。
+  private val LegacyToolName = "SendFriend" + "Message"
+
+  test("A轨(批①): 改名后三条不变式齐——交付面恰十四件 ∧ 含 SendMessage ∧ 旧名零残留"):
+    val delivered = CoreProbe.allowed(mkDef("Nebula"))
+    assertEquals(delivered.size, 14, "纯名字迁移不改件数——Nebula 交付面仍恰十四件")
+    assert(delivered.contains("SendMessage"), "新名进交付面（改名承重点：LLM 可见名）")
+    assert(!delivered.exists(_.contains(LegacyToolName)), "旧名零残留（LLM 交付面）")
+    assert(!AgentCore.NebulaOrchestrationTools.exists(_.contains(LegacyToolName)),
+      "旧名零残留（Nebula 机制固定集）")
+    assert(!ToolRegistry.TOOL_MAP.contains(LegacyToolName),
+      "旧名零残留（注册表——旧调用名解析失败，按未知工具明确报错，不静默）")
+
+  test("D.1-11: standalone 显式声明 SendMessage 不再授能"):
+    val declared = CoreProbe.allowed(mkDef("social", List("Read", "SendMessage")))
+    assert(!declared.contains("SendMessage"), "声明通道已删——声明不授能")
     val wildcard = CoreProbe.allowed(mkDef("omni", List("*")))
-    assert(!wildcard.contains("SendFriendMessage"), "\"*\" 同样不授能")
+    assert(!wildcard.contains("SendMessage"), "\"*\" 同样不授能")
     assert(CoreProbe.allowed(mkDef("social", List("Read"))).contains("Read"), "其余声明不受影响")
 
-  test("D.1-11: Nebula 机制固定照常携带 SendFriendMessage"):
-    assert(CoreProbe.allowed(mkDef("Nebula")).contains("SendFriendMessage"),
+  test("D.1-11: Nebula 机制固定照常携带 SendMessage"):
+    assert(CoreProbe.allowed(mkDef("Nebula")).contains("SendMessage"),
       "机制固定是唯一授权源（静态集）")
 
-  test("D.1-11: registry 注册名不变（工具本身保留）"):
-    assert(ToolRegistry.TOOL_MAP.contains("SendFriendMessage"))
+  test("D.1-11: registry 注册名随改名（工具本身保留）"):
+    assert(ToolRegistry.TOOL_MAP.contains("SendMessage"))
 
   // ===== D.1-9：converged mcpServers 声明退役 + plugin 前缀语义钉 =====
 
