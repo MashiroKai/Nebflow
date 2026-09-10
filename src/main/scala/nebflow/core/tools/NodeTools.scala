@@ -367,12 +367,22 @@ object NodeTools:
       .start
       .void
 
-  /** NodeList 工具 / REST flow-map 端点共用的载荷（nodes/worktrees/meta，§2.2 NodeList 返回结构）。
-    * 节点序列化统一走 NodePayload.buildNodeJson（与 WS 事件 payload 同构）。
+  /** NodeList 工具 / REST flow-map 端点共用的载荷（nodes/worktrees/chains/meta，
+    * §2.2 NodeList 返回结构）。节点序列化统一走 NodePayload.buildNodeJson（与 WS
+    * 事件 payload 同构）。
     *
     * statusFilter（观测面上下文经济学批 20260907 裁定⑤a）：可选生命周期枚举多选
     * 过滤——**缺省 None = 全量，输出字节级等于现状**（向后兼容铁律；REST/前端
-    * 调用零改动）。命中过滤时 liveness 探测也只对入选 running 节点做。 */
+    * 调用零改动）。命中过滤时 liveness 探测也只对入选 running 节点做。
+    *
+    * chains 顶层旁挂 + 节点级 chainId（链级抽象 P0 · spec §6.2）：派生单点 =
+    * FlowMapStore.topologicalChains（活动∪归档合并集，D8），旁挂仅收「分量成员数
+    * ≥2 且含活动成员」的链（与节点级 chainId 判据同口径——凡载荷带 chainId 的
+    * 节点其链条目必在旁挂中，前端 chainId → 链查找恒命中）；条目形状
+    * {id,title,entries,ends,memberIds}，title 由 FlowMapStore.chainTitle 三级推导
+    * 下发（前端零派生）；entries/ends/memberIds = 分量全量（含归档成员，spec §6.2
+    * 「全成员」——主图渲染由前端按节点缓存过滤）。WS 不带链级帧，结构变化由前端
+    * 对账重拉快照消化。 */
   def buildNodeListPayload(rt: ProjectRuntime, statusFilter: Option[Set[String]] = None): IO[Json] =
     for
       s <- rt.store.snapshot
@@ -393,11 +403,26 @@ object NodeTools:
         .map(_.toMap)
     yield
       val now = System.currentTimeMillis()
+      // 链派生（合并集分量）+ chainId 条件键注入 + chains 旁挂组装（同源单点）
+      val combined = s.nodes ++ arch.nodes
+      val chains = FlowMapStore.topologicalChains(combined.values)
+        .filter(c => c.memberIds.size >= 2 && c.memberIds.exists(s.nodes.contains))
+      val chainIdByNode = chains.flatMap(c => c.memberIds.map(_ -> c.id)).toMap
       val nodes = selected.map { n =>
-        val base = NodePayload.buildNodeJson(n, now)
+        val base = NodePayload.buildNodeJson(n, now, chainIdByNode.get(n.id))
         liveness.get(n.id) match
           case Some(alive) => base.deepMerge(Json.obj("liveness" -> Json.fromBoolean(alive)))
           case None        => base
+      }
+      val chainsJson = chains.map { c =>
+        val members = c.memberIds.flatMap(combined.get)
+        Json.obj(
+          "id" -> c.id.asJson,
+          "title" -> FlowMapStore.chainTitle(members, c.id).asJson,
+          "entries" -> c.entries.asJson,
+          "ends" -> c.ends.asJson,
+          "memberIds" -> c.memberIds.asJson
+        )
       }
       val wtDir = os.Path(rt.project.workspace) / ".nebflow"
       val authDir = wtDir / "worktrees"
@@ -417,6 +442,7 @@ object NodeTools:
       Json.obj(
         "nodes" -> nodes.asJson,
         "worktrees" -> worktrees.asJson,
+        "chains" -> chainsJson.asJson,
         "meta" -> Json.obj(
           "project" -> rt.project.name.asJson,
           "updatedAt" -> s.updatedAt.asJson,
@@ -1694,7 +1720,7 @@ object NodeListTool extends Tool:
 - **detail** (optional): a node id — returns that ONE node's full record instead of the whole map: metadata + task + result FULL TEXT (+ historical blockedFeedback when present). Payloads carry no result text; this is the on-demand read channel, same source as the REST result endpoint.
 
 ## Returns
-Default: {nodes: [{id, name, agent, description, status, in, out, hasWorktree, worktree, blockCount, createdAt, completedAt, ttlLeftSec, + conditional: hasResult, taskPreview (legacy no-description fallback), deps, plugins, merge, loop, blockedFeedback (blocked only), skill/mcp/preset (legacy values only), liveness (running only)}], worktrees: [...], meta: {project, updatedAt, archived}} — metadata only, NO result text (Flow Map slim-payload contract: results live in per-node files, read on demand).
+Default: {nodes: [{id, name, agent, description, status, in, out, hasWorktree, worktree, blockCount, createdAt, completedAt, ttlLeftSec, + conditional: hasResult, taskPreview (legacy no-description fallback), deps, plugins, merge, loop, blockedFeedback (blocked only), skill/mcp/preset (legacy values only), liveness (running only), chainId (multi-member chain only)}], chains: [{id, title, entries, ends, memberIds}] (topological task chains derived backend-side; a node's chainId joins its entry here; members may include archived nodes — filter by your node cache for on-graph rendering), worktrees: [...], meta: {project, updatedAt, archived}} — metadata only, NO result text (Flow Map slim-payload contract: results live in per-node files, read on demand).
 With detail=<nodeId>: the same node shape + task + result (full text)."""
   val inputSchema = JsonObject.fromIterable(
     List(
@@ -1730,25 +1756,29 @@ With detail=<nodeId>: the same node shape + task + result (full text)."""
         // 瘦身批）。payload 键集 = NodeList 同构字段 + task + result。
         input("detail").flatMap(_.asString).map(_.trim).filter(_.nonEmpty) match
           case Some(nodeId) =>
-            rt.store.findNode(nodeId).map {
-              case None => Left(ToolError(s"Node '$nodeId' not found (active or archived) — check NodeList without detail for the current topology"))
+            rt.store.findNode(nodeId).flatMap {
+              case None => IO.pure(Left(ToolError(s"Node '$nodeId' not found (active or archived) — check NodeList without detail for the current topology")))
               case Some(n) =>
-                val now = System.currentTimeMillis()
-                val base = NodePayload.buildNodeJson(n, now)
-                // 裁定②历史参照补挂（20260907 上下文经济学批）：默认载荷仅 blocked 态
-                // 携带 blockedFeedback——detail 按需通道对非 blocked 节点补挂存储值
-                // （blocked 节点 base 已含，deepMerge 同值幂等）。
-                val histFeedback = n.blockedFeedback.toList.map(bf => "blockedFeedback" -> bf.asJson)
-                // 裁定⑤c 双层化：descriptionLong 仅 detail 通道（不进默认载荷）——
-                // 条件键，存量节点无长文 → 缺键（消费方回退短文 description）。
-                val descLong = n.descriptionLong.toList.map(d => "descriptionLong" -> d.asJson)
-                val full = base
-                  .deepMerge(Json.obj(
-                    "task" -> n.task.asJson,
-                    "result" -> n.result.asJson
-                  ))
-                  .deepMerge(Json.obj((histFeedback ++ descLong)*))
-                Right(full.noSpaces)
+                // chainId 条件键（链级抽象 P0）：detail 单节点记录与快照/WS 同构——
+                // 判据单点 FlowMapStore.chainIdOf（双区可达，归档节点同样带链归属）。
+                rt.store.chainIdOf(n.id).map { chainId =>
+                  val now = System.currentTimeMillis()
+                  val base = NodePayload.buildNodeJson(n, now, chainId)
+                  // 裁定②历史参照补挂（20260907 上下文经济学批）：默认载荷仅 blocked 态
+                  // 携带 blockedFeedback——detail 按需通道对非 blocked 节点补挂存储值
+                  // （blocked 节点 base 已含，deepMerge 同值幂等）。
+                  val histFeedback = n.blockedFeedback.toList.map(bf => "blockedFeedback" -> bf.asJson)
+                  // 裁定⑤c 双层化：descriptionLong 仅 detail 通道（不进默认载荷）——
+                  // 条件键，存量节点无长文 → 缺键（消费方回退短文 description）。
+                  val descLong = n.descriptionLong.toList.map(d => "descriptionLong" -> d.asJson)
+                  val full = base
+                    .deepMerge(Json.obj(
+                      "task" -> n.task.asJson,
+                      "result" -> n.result.asJson
+                    ))
+                    .deepMerge(Json.obj((histFeedback ++ descLong)*))
+                  Right(full.noSpaces)
+                }
             }
           case None =>
             // status 过滤（裁定⑤a，20260907）：解析三形态宽容（string/array/逗号串），

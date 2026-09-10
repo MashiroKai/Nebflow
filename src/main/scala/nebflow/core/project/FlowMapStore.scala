@@ -18,13 +18,15 @@ import nebflow.core.{AtomicJson, NebflowLogger, PathUtil}
  *   JSON 只留 ≤500 字符摘要 + 指针（task 归档侧无指针）；加载水合回内存全文
  * - 内存 Ref 持当前状态；所有变更走 `mutate`（Ref.update 原子性 + 落盘）
  * - 环检测：NodeEdit 建边（from→to）前 DFS（to 的传递下游沿 out 边可达 from → 拒）
- * - 链级即时归档（裁定④「TTL 分开」，取代旧 ttlExpireAt 24h 计时滞留）：活动区按派发
- *   批次聚簇（与前端 clusterBatches 同源），批内**归档资格 = chainArchivable** → 整批
- *   立即移归档（结果全文保留）+ 活动区删除。归档资格（2026-09-07 20:38「送达即移」
- *   + 2026-09-08 P1「cancelled 判据放行」作者裁定）：链内无活跃（running/pending/
- *   wiring/blocked）节点 ∧ failed 成员已上报（notifySentAt.isDefined）∧ cancelled
- *   放行（通知系统无 Cancelled reason，旧判据对其永假 → 死链；终态即移）。completed
- *   天然满足；blocked 永不自动归档（必留主图）；未上报的 failed 保留主图待上报。
+ * - 链级即时归档（裁定④「TTL 分开」，取代旧 ttlExpireAt 24h 计时滞留）：链级抽象
+ *   P0（C4）起链 = 拓扑分量（topologicalChains，活动∪归档合并集弱连通分量，取代旧
+ *   ≤120s 时间批聚簇），**分量归档资格 = chainArchivable**（适用单位=分量，判据本体
+ *   不变）→ 整链立即移归档（结果全文保留）+ 活动区删除。归档资格（2026-09-07
+ *   20:38「送达即移」+ 2026-09-08 P1「cancelled 判据放行」作者裁定）：链内无活跃
+ *   （running/pending/wiring/blocked）节点 ∧ failed 成员已上报（notifySentAt.
+ *   isDefined）∧ cancelled 放行（通知系统无 Cancelled reason，旧判据对其永假 →
+ *   死链；终态即移）。completed 天然满足；blocked 永不自动归档（必留主图）；未上报
+ *   的 failed 保留主图待上报。
  * - barrier：节点启动条件 = 全部 in 上游 deliveredTo 含本节点（NodeEngine 裁决）
  *
  * 并发纪律：边/计数的变更必须在单个 mutate 内完成（§2.3「单事务更新」）。
@@ -55,6 +57,27 @@ class FlowMapStore private (
     state.get.map(_.nodes.get(id)).flatMap {
       case some @ Some(_) => IO.pure(some)
       case None => archive.get.map(_.nodes.get(id))
+    }
+
+  /** 双区合并节点集（链级抽象 P0 · D8 跨区遍历数据源）：活动区 ++ 归档区。归档
+    * NodeDef 的 in/out 完整保留 → 跨区连通（续做引用归档上游）在合并集上自动并链。
+    * topologicalChains / chainIdOf 的数据源；id 冲突（崩溃窗口双在）活动区优先。 */
+  def combinedNodes: IO[Map[String, NodeDef]] =
+    for
+      s <- state.get
+      a <- archive.get
+    yield s.nodes ++ a.nodes
+
+  /** 节点所属链 id（载荷 chainId 条件键判据单点，链级抽象 P0）：合并集分量成员数
+    * ≥2 才返回（孤立单节点链不带——payload 零膨胀）；节点已不在双区（已被移除且
+    * 查无归档）→ None。WS 事件经 NodeEngine.emitWithChain、快照经
+    * NodeTools.buildNodeListPayload 消费本判据，两处口径恒同源。 */
+  def chainIdOf(nodeId: String): IO[Option[String]] =
+    combinedNodes.map { combined =>
+      FlowMapStore.topologicalChains(combined.values)
+        .find(_.memberIds.contains(nodeId))
+        .filter(_.memberIds.size >= 2)
+        .map(_.id)
     }
 
   /** 事务变更：f 应用到当前状态 → Ref 更新 → 落盘。返回新活动区。 */
@@ -123,15 +146,19 @@ class FlowMapStore private (
       }
 
   /** 链级即时归档 sweep（裁定④「TTL 分开」批 2026-09-07，取代旧 ttlExpireAt 24h 计时
-    * 滞留 sweep）：活动区按派发批次聚簇（FlowMapStore.clusterBatches，与前端
-    * flowMapArchive.js clusterBatches 严格同源）；批内**归档资格 = chainArchivable**——
-    * 2026-09-07 20:38「送达即移」+ 2026-09-08 P1「cancelled 判据放行」（取代 12:29
-    * 占图部分）：链内无活跃节点 ∧ failed 成员已上报（notifySentAt.isDefined）∧
-    * cancelled 放行（通知系统无 Cancelled reason、cancel/abandon 均不写 notifySentAt，
-    * 旧判据对其永假 → 含 cancelled 成员的链整链死锁，71/83 占位死链根因；作者拍板
-    * 判据放行 = 终态即移）→ 整批立即移归档 + 活动区删除。completed 天然满足；
-    * blocked 永不自动归档（必留主图）；未上报的 failed → 保留主图待上报（终态成员
-    * 留主图，前端规格 §3.1 同源）。
+    * 滞留 sweep；链级抽象 P0 · C4：聚簇口径由时间批换拓扑分量——spec §4.3-3「先合并
+    * 算分量、再筛活动成员」直白实现）：分量在活动∪归档合并集上判定
+    * （FlowMapStore.topologicalChains · D8），归档资格 = chainArchivable（判据本体
+    * 不变，2026-09-07 20:38「送达即移」+ 2026-09-08 P1「cancelled 判据放行」：链内
+    * 无活跃节点 ∧ failed 成员已上报（notifySentAt.isDefined）∧ cancelled 放行——
+    * 通知系统无 Cancelled reason、cancel/abandon 均不写 notifySentAt，旧判据对其
+    * 永假 → 含 cancelled 成员的链整链死锁，71/83 占位死链根因；作者拍板判据放行 =
+    * 终态即移）→ 整分量立即移归档 + 活动区删除。归档区成员恒终态（已在归档）→
+    * 资格实际由分量的**活动区成员**决定；跨区续做分量（活跃下游接归档上游）的归档
+    * 区成员不重复出库，仅活动成员入册——批 id 取分量链 id，与既有归档批 id 重合时
+    * nodeIds 并集合并（防旧批成员孤儿化，批文件收敛为全链）。
+    * completed 天然满足；blocked 永不自动归档（必留主图）；未上报的 failed → 保留
+    * 主图待上报（终态成员留主图，前端规格 §3.1 同源）。
     * TtlTick 30s 驱动（ProjectActor）——视觉「同帧淡出」由前端派生管线当帧承担，本
     * sweep 承担出库与归档落盘（≤30s 滞后不可见：nodeRemoved 到达时前端墓碑幂等）。
     * 顺序 = 归档先行（批次注册 → 归档区写入 → 分文件落盘）再删活动区：崩溃窗口残留
@@ -140,24 +167,32 @@ class FlowMapStore private (
   def sweepCompletedChains(now: Long): IO[List[String]] =
     for
       s <- state.get
-      doneBatches = FlowMapStore.clusterBatches(s.nodes.values).filter { case (_, members) =>
-        FlowMapStore.chainArchivable(members)
+      a <- archive.get
+      chains = FlowMapStore.topologicalChains(s.nodes.values ++ a.nodes.values)
+      doneChains = chains.flatMap { c =>
+        val activeMembers = c.memberIds.flatMap(id => s.nodes.get(id))
+        if activeMembers.isEmpty || !FlowMapStore.chainArchivable(activeMembers) then None
+        else Some(c.id -> activeMembers)
       }
-      _ <- if doneBatches.isEmpty then IO.unit
+      _ <- if doneChains.isEmpty then IO.unit
       else
-        val moved = doneBatches.flatMap(_._2)
+        val moved = doneChains.flatMap(_._2)
         val ids = moved.map(_.id).toSet
-        val metas: Map[String, ArchiveBatchMeta] = doneBatches.map { case (bid, members) =>
-          bid -> ArchiveBatchMeta(bid, now, members.map(_.id).toSet)
-        }.toMap
         for
+          bt0 <- batches.get
+          // 批 id 合并（跨区续做分量）：拓扑链 id 可能与既有归档批 id 重合（归档上游
+          // 是分量内 createdAt 最早节点）——memberIds 并集，旧批成员保持批次归属。
+          metas: Map[String, ArchiveBatchMeta] = doneChains.map { case (bid, members) =>
+            val merged = bt0.get(bid).map(_.nodeIds).getOrElse(Set.empty)
+            bid -> ArchiveBatchMeta(bid, now, members.map(_.id).toSet ++ merged)
+          }.toMap
           _ <- batches.update(_ ++ metas)
-          newArc <- archive.updateAndGet(a => a.copy(nodes = a.nodes ++ moved.map(n => n.id -> n).toMap))
+          newArc <- archive.updateAndGet(a2 => a2.copy(nodes = a2.nodes ++ moved.map(n => n.id -> n).toMap))
           _ <- persistBatchFiles(metas.keySet, newArc, metas)
           _ <- mutate(st => st.copy(nodes = st.nodes -- ids))
-          _ <- IO(logger.infoSync(s"FlowMap[$project] chain sweep: ${doneBatches.map(_._1).mkString(", ")} (${ids.size} node(s)) → archive"))
+          _ <- IO(logger.infoSync(s"FlowMap[$project] chain sweep: ${doneChains.map(_._1).mkString(", ")} (${ids.size} node(s)) → archive"))
         yield ()
-    yield doneBatches.flatMap(_._2).map(_.id)
+    yield doneChains.flatMap(_._2).map(_.id)
 
   // ── 持久化 ─────────────────────────────────────────────
 
@@ -211,23 +246,39 @@ class FlowMapStore private (
       ++ (oldA.nodes.keySet -- newA.nodes.keySet))
     if changed.isEmpty then IO.unit
     else
-      for
-        bt <- batches.get
-        affected = bt.collect { case (bid, meta) if meta.nodeIds.exists(changed.contains) => bid }.toSet
-        orphaned = changed.filterNot(id => bt.values.exists(_.nodeIds.contains(id)))
-        _ <-
-          if orphaned.isEmpty then persistBatchFiles(affected, newA, bt)
-          else
-            val nowMs = System.currentTimeMillis()
-            val newMetas = FlowMapStore.clusterBatches(newA.nodes.values.filter(n => orphaned.contains(n.id))).map { case (bid, members) =>
-              bid -> ArchiveBatchMeta(bid, members.flatMap(_.completedAt).foldLeft(nowMs)(math.max), members.map(_.id).toSet)
-            }.toMap
-            for
-              _ <- batches.update(_ ++ newMetas)
-              bt2 <- batches.get
-              _ <- persistBatchFiles(affected ++ newMetas.keySet, newA, bt2)
-            yield ()
-      yield ()
+        for
+          bt <- batches.get
+          affected = bt.collect { case (bid, meta) if meta.nodeIds.exists(changed.contains) => bid }.toSet
+          orphaned = changed.filterNot(id => bt.values.exists(_.nodeIds.contains(id)))
+          _ <-
+            if orphaned.isEmpty then persistBatchFiles(affected, newA, bt)
+            else
+              val nowMs = System.currentTimeMillis()
+              for
+                s <- state.get
+                // 孤儿重聚簇（链级抽象 P0 · C4 拓扑口径取代时间批）：孤儿在合并集
+                // 分量上定域（分量链 id 作批 id——跨区续做分量与活动侧同链同 id），
+                // 只入册孤儿成员（批内既有成员不重复入册）；分量 id 与既有批重合 →
+                // nodeIds 并集合并（防旧批成员孤儿化，批文件收敛为全链）。
+                newMetas = FlowMapStore
+                  .topologicalChains(s.nodes.values ++ newA.nodes.values)
+                  .flatMap { c =>
+                    val orphans = c.memberIds.filter(orphaned.contains)
+                    if orphans.isEmpty then None
+                    else
+                      val orphanNodes = orphans.flatMap(id => newA.nodes.get(id))
+                      val base = ArchiveBatchMeta(c.id,
+                        orphanNodes.flatMap(_.completedAt).foldLeft(nowMs)(math.max),
+                        orphans.toSet)
+                      Some(c.id -> bt.get(c.id)
+                        .map(p => base.copy(nodeIds = base.nodeIds ++ p.nodeIds, archivedAt = math.max(base.archivedAt, p.archivedAt)))
+                        .getOrElse(base))
+                  }.toMap
+                _ <- batches.update(_ ++ newMetas)
+                bt2 <- batches.get
+                _ <- persistBatchFiles(affected ++ newMetas.keySet, newA, bt2)
+              yield ()
+        yield ()
 
   /** 结果全文落 per-node 文件（幂等：内容相同跳过写）。 */
   private def writeResultFiles(nodes: Map[String, NodeDef]): Unit =
@@ -452,7 +503,12 @@ class FlowMapStore private (
               val (hydrated, _) = hydrateAndMigrate(normalized.nodes, archivePath, migrateTasks = false)
               val toMigrate = hydrated.filterNot { case (id, _) => fileNodeIds.contains(id) }
               val nowMs = System.currentTimeMillis()
-              val migratedBatches = FlowMapStore.clusterBatches(toMigrate.values).flatMap { case (bid, members) =>
+              // 迁移聚簇（链级抽象 P0 · C4 拓扑口径）：待迁移节点按拓扑分量分批——
+              // 只在 toMigrate 上派生（已入分文件的节点保持原批零迁移，C5；若并入
+              // 派生会让分量 id 锚到既有批 → 命中「文件已在」幂等跳过 → 节点丢失）。
+              val migratedBatches = FlowMapStore.topologicalChains(toMigrate.values).flatMap { c =>
+                val members = c.memberIds.flatMap(id => toMigrate.get(id))
+                val bid = c.id
                 val target = batchPath(bid)
                 if os.exists(target) then None // 幂等：批文件已在（崩溃重入）→ 不覆盖
                 else
@@ -493,10 +549,6 @@ object FlowMapStore:
   /** 归档分文件目录名（裁定④「TTL 分开」批；相对 workspace/.nebflow/）。 */
   val ArchiveDirName: String = "flow-map-archive"
 
-  /** 派发批次窗口（与前端 flowMapArchive.js CHAIN_BATCH_MS 逐字同源）：同批
-    * createdAt 相邻间隔 ≤120s（实测同批 ≤80s、跨批 ≥3min）。 */
-  val ChainBatchMs: Long = 120000L
-
   /** 无需上报即满足归档资格的终态集：**completed**（无上报要求，天然满足
     * [[chainArchivable]]）。2026-09-07 12:29 裁定保留（failed/cancelled/blocked 永不
     * 满足本集）；第三次演进（20:38「送达即移」）后归档判据 = [[chainArchivable]]，
@@ -514,6 +566,8 @@ object FlowMapStore:
     * 滞留」变「终态即移」，作者已拍板实施；归档后回看走归档面板，findNode 兜底可达）。
     * blocked 永不自动归档（必留主图）；running/pending/wiring 为活跃态非终态 → 链未齐
     * （活跃链兄弟保留语义不变）。
+    * 适用单位（链级抽象 P0 · C4）：时间批 → **拓扑分量**——调用方传入分量的活动区
+    * 成员（归档区成员恒终态天然放行，资格实际由活动成员决定，sweep §4.3-3）。
     * 注意：前端 flowMapArchive.js chainEligible 仍是 20:38 旧判据镜像，本批未同步
     * （P1 引擎单侧先行，前端批跟进）——后端归档先行的 ≤30s 窗口内前端派生链仍按旧
     * 判据留主图，nodeRemoved 墓碑幂等兜底出图，无归档泄漏。 */
@@ -526,24 +580,90 @@ object FlowMapStore:
         case _                                      => false
     }
 
-  /** 批次聚簇算法单点（裁定④；与前端 clusterBatches 严格同源）：节点按 createdAt
-    * 升序、相邻间隔 >ChainBatchMs 开新批；批 id = `chain-<批内 createdAt 最早节点
-    * id>`——前端面板按 id 与派生链去重、归档分文件名均依赖此同源口径。 */
-  def clusterBatches(nodes: Iterable[NodeDef]): List[(String, List[NodeDef])] =
-    val sorted = nodes.toList.sortBy(_.createdAt)
-    val out = scala.collection.mutable.ListBuffer.empty[(String, List[NodeDef])]
-    var curId = ""
-    var cur = scala.collection.mutable.ListBuffer.empty[NodeDef]
-    var lastT = 0L
-    for n <- sorted do
-      if cur.isEmpty || n.createdAt - lastT > ChainBatchMs then
-        if cur.nonEmpty then out += curId -> cur.toList
-        curId = s"chain-${n.id}"
-        cur = scala.collection.mutable.ListBuffer.empty[NodeDef]
-      cur += n
-      lastT = n.createdAt
-    if cur.nonEmpty then out += curId -> cur.toList
-    out.toList
+  /** 拓扑链派生单点（链级抽象 P0 · spec §2.1；C4 起取代旧时间批聚簇 clusterBatches
+    * ——该算法与 ChainBatchMs 常量已退役，全消费方 sweep/persistArchiveDiff/
+    * loadArchive 均走本单点，无双口径漂移面）：链 = 节点集上的**弱连通分量**——
+    * 无向边 = in ∪ out ∪ deps（C3/D1 deps 算链边，弱关联语义由谱系边表 via 标注）；
+    * out 边逐目标解析——"Nebula" 豁免（非图成员，环检同款）、名字形态过
+    * OutEdge.resolveTargetId 命中才连、悬空名跳过不产生链归属（D9，与 settleTo
+    * MISS 语义一致）；retry 回跳边不进任何邻接表 → 天然不进链拓扑（D4 既定事实）；
+    * merge/loop 节点 = 普通成员（D3/D4）。孤立节点 = 单成员链（D6）。
+    * chainId = `chain-<分量内 createdAt 最早节点 id>`（与旧时间批 id 规则同构）：
+    * 链尾追加成员 → 最早节点不变 → id 稳定；分量合并 → 归并为最早 createdAt 者
+    * 的 id。entries = 分量内 in=Nil ∧ deps=Nil 双空（D2，与创建期入口判据对齐）；
+    * ends = 分量内 out 无节点目标的成员（仅 Nebula 边/悬空名/out=Nil 都算，D7）。
+    * edges = 谱系边表（同双端不同 via 各自保留；方向恒上游→下游）。
+    * 确定性：分量列表按 id 排序、成员按 (createdAt, id) 升序、edges 全排序——同输入
+    * 恒同输出。纯函数（无 IO、不读 store），数据源由调用方给定（合并集 = 双区）。 */
+  def topologicalChains(nodes: Iterable[NodeDef]): List[ChainInfo] =
+    val nodeMap = nodes.map(n => n.id -> n).toMap
+    val emptyAdj = scala.collection.mutable.LinkedHashSet.empty[String]
+    val adj = scala.collection.mutable.HashMap.empty[String, scala.collection.mutable.LinkedHashSet[String]]
+    val edges = scala.collection.mutable.LinkedHashSet.empty[ChainEdge]
+    def link(upstream: String, downstream: String, via: String): Unit =
+      // 双端都必须在节点集内——悬空引用不产生链归属（也不进邻接表，防幽灵成员）
+      if nodeMap.contains(upstream) && nodeMap.contains(downstream) then
+        adj.getOrElseUpdate(upstream, scala.collection.mutable.LinkedHashSet.empty) += downstream
+        adj.getOrElseUpdate(downstream, scala.collection.mutable.LinkedHashSet.empty) += upstream
+        edges += ChainEdge(from = upstream, to = downstream, via = via)
+    nodeMap.values.foreach { n =>
+      n.in.foreach(up => link(up, n.id, "in"))
+      n.out.foreach { e =>
+        if e.to != OutEdge.NebulaTarget then
+          OutEdge.resolveTargetId(nodeMap, e.to).foreach(t => link(n.id, t, "out"))
+      }
+      n.deps.foreach(up => link(up, n.id, "deps"))
+    }
+    def hasNodeTarget(n: NodeDef): Boolean =
+      n.out.exists(e => e.to != OutEdge.NebulaTarget && OutEdge.resolveTargetId(nodeMap, e.to).isDefined)
+    // 弱连通分量（BFS；起点按 (createdAt, id) 排序保证确定性）
+    val seen = scala.collection.mutable.HashSet.empty[String]
+    val components = scala.collection.mutable.ListBuffer.empty[List[NodeDef]]
+    nodeMap.values.toList.sortBy(n => (n.createdAt, n.id)).foreach { start =>
+      if !seen.contains(start.id) then
+        seen += start.id
+        val queue = scala.collection.mutable.Queue.empty[String]
+        queue.enqueue(start.id)
+        val comp = scala.collection.mutable.ListBuffer.empty[NodeDef]
+        while queue.nonEmpty do
+          val cur = queue.dequeue()
+          nodeMap.get(cur).foreach(comp += _)
+          adj.getOrElse(cur, emptyAdj).foreach { nxt =>
+            if !seen.contains(nxt) then
+              seen += nxt
+              queue.enqueue(nxt)
+          }
+        components += comp.toList
+    }
+    components.map { members =>
+      val sorted = members.sortBy(n => (n.createdAt, n.id))
+      val memberIds = sorted.map(_.id).toList
+      val memberIdSet = memberIds.toSet
+      ChainInfo(
+        id = s"chain-${sorted.head.id}",
+        entries = sorted.filter(n => n.in.isEmpty && n.deps.isEmpty).map(_.id).toList,
+        ends = sorted.filterNot(hasNodeTarget).map(_.id).toList,
+        memberIds = memberIds,
+        edges = edges.toList
+          .filter(e => memberIdSet.contains(e.from) && memberIdSet.contains(e.to))
+          .sortBy(e => (e.from, e.to, e.via))
+      )
+    }.sortBy(_.id).toList
+
+  /** 链名三级推导单点（链级抽象 P0 · spec §6.2，后端下发前端零派生）：
+    * ① 链上首个 description（成员 createdAt 升序第一个非空）→ ② 首节点 task 预览
+    * （首行 ≤NodePayload.TaskPreviewMaxChars 截断，与载荷 taskPreview 同规则）→
+    * ③ chain id 兜底。 */
+  def chainTitle(members: Iterable[NodeDef], chainId: String): String =
+    val sorted = members.toList.sortBy(n => (n.createdAt, n.id))
+    val desc = sorted.flatMap(_.description).find(_.trim.nonEmpty).map(_.trim)
+    val taskPreview = sorted.headOption
+      .flatMap(_.task.map(_.trim).filter(_.nonEmpty))
+      .map { t =>
+        val firstLine = t.linesIterator.next().trim
+        if firstLine.length > NodePayload.TaskPreviewMaxChars then firstLine.take(NodePayload.TaskPreviewMaxChars) + "…" else firstLine
+      }
+    desc.orElse(taskPreview).getOrElse(chainId)
 
   /** 落盘 JSON 内 result 摘要截断上限（与原 NodePayload 载荷摘要规则同口径）。 */
   val ResultSummaryCap: Int = 500

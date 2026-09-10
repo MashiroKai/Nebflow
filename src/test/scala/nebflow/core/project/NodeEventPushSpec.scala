@@ -106,6 +106,21 @@ class NodeEventPushSpec extends CatsEffectSuite:
   private def nodeEdit(input: Json, ctx: ToolContext): IO[Either[String, String]] =
     NodeEditTool.call(input.asObject.get, ctx).map(_.left.map(_.message))
 
+  /** 轮询等待（NodeAcceptanceSpec 同款范式）：节点执行在后台 fiber 推进，事件落
+    * events 挂载是异步事实——断言前先等事件就绪，不做固定时长竞速。 */
+  private def waitUntil(timeout: FiniteDuration, every: FiniteDuration = 50.millis)(
+      cond: IO[Boolean]
+  ): IO[Unit] =
+    def go(deadline: Long): IO[Unit] =
+      cond.flatMap {
+        case true => IO.unit
+        case false =>
+          if System.currentTimeMillis() >= deadline then
+            IO.raiseError(new AssertionError("waitUntil: condition not met in time"))
+          else IO.sleep(every) >> go(deadline)
+      }
+    go(System.currentTimeMillis() + timeout.toMillis)
+
   private def nodeInput(project: String, nodename: String, extra: (String, Json)*): Json =
     Json.obj(("project" -> Json.fromString(project)) :: ("nodename" -> Json.fromString(nodename)) :: extra.toList*)
 
@@ -113,7 +128,10 @@ class NodeEventPushSpec extends CatsEffectSuite:
     * 单一序列化点对齐；skill/mcp/preset 为节点配置字段；description 恒带（存量无值 null）；
     * blockCount 恒带（§4.1）；**result 全文/摘要不进默认载荷**（2026-09-05 载荷收敛），
     * hasResult 仅 result 非空节点带（条件序列化）→ 不入本基集合，按断言场景合并。
-    * blockedFeedback / deps / plugins 同为条件字段 → 不入基集合）。 */
+    * blockedFeedback / deps / plugins 同为条件字段 → 不入基集合）。
+    * chainId（链级抽象 P0）同为条件字段：仅所属拓扑链成员数 ≥2 才带（判定单点
+    * FlowMapStore.chainIdOf；本 spec 各用例节点均为孤立单节点链 → 不带，基集合
+    * 不变；多成员链的 chainId 载荷断言见 FlowMapChainSpec）。 */
   private val NodeListKeys: Set[String] =
     // 裁定③（20260907 上下文经济学批）：skill/mcp/preset 移出基础集——条件序列化
     // 仅非 None 才带；NodeEdit 新建节点三参数已退役（NODE_AGENT_RETIRED）→
@@ -263,7 +281,10 @@ class NodeEventPushSpec extends CatsEffectSuite:
       ctx = mkCtx(res, system, ws.toString)
       r <- nodeEdit(nodeInput("acc-ev4", "调研-同构", "description" -> Json.fromString("test node purpose"),
         "task" -> Json.fromString("homomorphic"), "out" -> Json.fromString("Nebula")), ctx)
-      _ <- IO.sleep(3.seconds)
+      // 原为固定 IO.sleep(3.seconds)——节点完成在后台 fiber 推进，重负载下完成可
+      // >3s（2026-09-10 链P0 批实测与重夹具 spec 同跑时复现假红）。改 waitUntil
+      // 轮询 nodeCompleted 事件就绪（断言本体零变化），消除时序脆弱。
+      _ <- waitUntil(15.seconds)(events.get.map(_.exists((t, _, _) => t == "nodeCompleted")))
       evs <- events.get
       _ <- system.stopAll.handleErrorWith(_ => IO.unit)
     yield
