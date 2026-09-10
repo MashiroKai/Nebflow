@@ -12,6 +12,14 @@ This guide is for developers preparing changes to this repository. It covers env
 
 No `.jvmopts` or `.sdkmanrc` is used; toolchain versions live in `project/build.properties` and the CI workflow.
 
+**Two constants, not one number — the build JDK and the artifact's bytecode target are deliberately different.** `-release:17` in `build.sbt` sets the *artifact* target (class-file major 61), while the *runtime floor* stays 21. Do not "fix" `-release:17` back to `-release:21`:
+
+- A major-65 artifact cannot even be loaded by a 17 JVM, so the human-readable `requires Java 21` refusal (`src/main/scala/nebflow/core/JvmRequirement.scala`) becomes unreachable — the start gate never runs — and `nebflow update | doctor | version`, the self-repair path a user needs *on the machine being upgraded*, are welded shut.
+- It does not loosen the API surface: `-release` pins both the API surface and the bytecode target, and release 17's API surface is a subset of 21's. The 21 floor is enforced at runtime by the `GatewayMain` start gate, `doctor`, the installers, the Dockerfile, and `scripts/check-jdk-baseline.sh`.
+- Scala 3.5.2 cannot split "API surface 21 / bytecode 17" (`-release` and `-java-output-version` are the same setting; supplying both yields `Flag -java-output-version set repeatedly`, and `-java-output-version:17` alone lowers the API surface too).
+
+Consequently `scripts/check-jdk-baseline.sh` asserts `-release == JDK_BYTECODE_TARGET` (A-5), that the target is strictly below the floor (A-7a), and that the built jar's `nebflow/Main.class` is major 61 (A-7b) with the 17-side behaviour checked at runtime (A-6) — see the script header.
+
 ## Build and run locally
 
 ```bash
