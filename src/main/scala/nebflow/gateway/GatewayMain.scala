@@ -300,7 +300,16 @@ object GatewayMain extends IOApp:
   def run(args: List[String]): IO[ExitCode] =
     args match
       case Nil =>
-        runGateway.as(ExitCode.Success)
+        // JDK baseline gate (2026-09-10, JDK-21 batch, B track): boot needs Java 21+.
+        // Deliberately HERE, not in `Main.run`: the self-repair path
+        // (`nebflow update|uninstall|doctor|version`) goes Main.run → CliRouter →
+        // GatewayClient (plain HTTP) / the install script, and never boots the
+        // gateway in-process — gating Main.run would brick the very command a
+        // user on an old JVM needs to run. Main.bootGateway and
+        // Main.succeedGateway both funnel through this Nil branch, so every real
+        // gateway boot is still covered.
+        if JvmRequirement.isSatisfied then runGateway.as(ExitCode.Success)
+        else IO.println(JvmRequirement.errorText).as(ExitCode.Error)
       case _ =>
         IO.println(
           "ERROR: nebflow.gateway.GatewayMain does not accept arguments " +
