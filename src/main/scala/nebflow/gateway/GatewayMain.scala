@@ -437,8 +437,10 @@ object GatewayMain extends IOApp:
                             nebflow.core.compact.ToolResultTtlConfig.load(config.toolResultTtl)
                           val toolResultTtlRef: Ref[IO, nebflow.core.compact.ToolResultTtlConfig] =
                             Ref.unsafe(toolResultTtlCfg)
-                          // 阶段 2a 沙箱（§G.1）：fail-safe 加载 + 启动 probe 一次缓存
-                          // （§A.4-4）。probe 阻塞 <1s；失败默认 fail-closed。
+                          // 执行环境 provider（拆围栏批 S3 / design §4.2）：fail-safe
+                          // 加载 + 按 provider 装配执行面一次缓存（provider=host 缺省
+                          // = 宿主直跑不 probe；local-process 才 probe，阻塞 <1s；取值
+                          // 非法或 container/auto 未实现 ⇒ 显式失败，不静默回落宿主）。
                           val sandboxCfg = nebflow.core.sandbox.SandboxConfig.load(config.sandbox)
                           nebflow.core.sandbox.SandboxRuntime.init(sandboxCfg)
                       logger.info(s"nebflow v${nebflow.Version.string}") *>
