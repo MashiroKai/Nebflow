@@ -181,6 +181,123 @@ class LoopGuardWiringSpec extends CatsEffectSuite:
   private def errorFrames(evs: List[io.circe.Json]): List[io.circe.Json] =
     evs.filter(j => (j \\ "type").exists(_.asString.contains("error")))
 
+  private def loopFrames(evs: List[io.circe.Json]): List[io.circe.Json] =
+    evs.filter(j => (j \\ "type").exists(_.asString.contains("loopDetected")))
+
+  private def busyFalseCount(evs: List[io.circe.Json]): Int =
+    evs.count(j => (j \\ "busy").exists(!_.asBoolean.getOrElse(true)))
+
+  /** 脚本化 LLM：按请求序号取脚本位——true = 发同一 fp（同 tool + 同 args）的
+    * 失败 Read 调用，false = 纯文本收尾（turn 结束）。用于「每 turn 只败一次」
+    * 的多 turn 场景（crossTurn 每 turn 只累 1 次，永不触及 S1 hard）。
+    */
+  private class ScriptedLlm(
+      requests: Ref[IO, List[LlmRequest]],
+      script: Vector[Boolean]
+  ) extends LlmHandle[IO]:
+    def send(req: LlmRequest): IO[LlmResponse] =
+      IO.raiseError(new RuntimeException("send not expected in this test"))
+    def sendStream(
+      req: LlmRequest,
+      onAttempt: Option[nebflow.shared.FallbackAttempt => IO[Unit]] = None
+    ): Stream[IO, StreamChunk] =
+      Stream.eval(requests.update(_ :+ req)).drain ++
+        Stream.eval(requests.get.map(_.size)).flatMap { n =>
+          if script.lift(n - 1).getOrElse(false) then
+            Stream(
+              StreamChunk.ToolCallChunk(
+                ToolCall(s"tu-$n", "Read", JsonObject("file_path" -> badPath.asJson))
+              ),
+              StreamChunk.Done(None, None)
+            )
+          else Stream(StreamChunk.TextDelta("all done"), StreamChunk.Done(None, None))
+        }
+
+  /** 同 waitFor 但不抛错（超时即返回，交由调用点的断言报红并给出原始计数）。 */
+  private def waitUntil[A](ref: Ref[IO, A], pred: A => Boolean, timeoutMs: Long): IO[Unit] =
+    def go(deadline: Long): IO[Unit] =
+      ref.get.map(pred).flatMap {
+        case true  => IO.unit
+        case false =>
+          if System.currentTimeMillis() >= deadline then IO.unit
+          else IO.sleep(100.millis) >> go(deadline)
+      }
+    go(System.currentTimeMillis() + timeoutMs)
+
+  private final case class WakeRun(
+      reqs: List[LlmRequest],
+      evs: List[io.circe.Json],
+      registry: Map[String, AgentRecord],
+      preWakeLoopFrames: Int,
+      preWakeBusyFalse: Int
+  ):
+    override def toString: String =
+      s"WakeRun(reqs=${reqs.size}, loopFrames=${loopFrames(evs).size}, " +
+        s"preWakeLoopFrames=$preWakeLoopFrames, preWakeBusyFalse=$preWakeBusyFalse, " +
+        s"registry=${registry.values.map(r => s"${r.sessionId}:${r.status}").mkString(",")}, " +
+        s"evs=${evs.map(_.noSpaces).mkString(" | ")})"
+
+  /** R1 钉子驱动：3 次带 clientMessageId 的用户消息 → 3 个不同 turn 各失败 1 次
+    * 同一 fp（第 3 turn 命中 crossTurnFailureTurns=3 → Freeze），随后第 4 次
+    * 用户唤醒（frozen 态 UserWake）同 fp 再失败 1 次。返回唤醒前后的原始快照。
+    */
+  private def driveWake(actorName: String, script: Vector[Boolean]): WakeRun =
+    val system = ActorSystem(s"loop-guard-$actorName")
+    val tmp = os.temp.dir()
+    seedLoopConfig(tmp)
+    val prevRoot = PathUtil.dataRoot
+    val prevLlmLog = nebflow.core.LlmLogWriter.isEnabled
+    nebflow.core.LlmLogWriter.setEnabled(false)
+    PathUtil.setDataRoot(tmp / "data")
+    try
+      val program = for
+        requests <- IO.ref(List.empty[LlmRequest])
+        llm = new ScriptedLlm(requests, script)
+        resources <- mkResources(system, tmp, llm)
+        wsEvents <- IO.ref(List.empty[io.circe.Json])
+        def_ = AgentDef(name = "Worker", description = "loop fixture", tools = List("Read"), systemPrompt = "")
+        sid = s"loop-$actorName"
+        actor <- system.spawn(
+          AgentActor(
+            agentDef = def_,
+            resources = resources,
+            wsSend = j => wsEvents.update(_ :+ j),
+            depth = 1,
+            parentRef = None,
+            sessionId = Some(sid),
+            sessionName = Some(actorName),
+            safetyMode = "auto-all"
+          ),
+          actorName
+        )
+        _ <- resources.agentRegistry.update(_ + (sid -> AgentRecord(sid, actor, AgentKind.Ephemeral, sid, None)))
+        _ <- actor ! AgentCommand.UserInput("turn-1", None, Some("cmid-1"))
+        _ <- waitFor(wsEvents, evs => busyFalseCount(evs) >= 1, s"$actorName turn-1 did not finish", 30000)
+        _ <- actor ! AgentCommand.UserInput("turn-2", None, Some("cmid-2"))
+        _ <- waitFor(wsEvents, evs => busyFalseCount(evs) >= 2, s"$actorName turn-2 did not finish", 30000)
+        // turn-3：第 3 个不同 turn 同 fp 失败 → crossTurn 命中 → Freeze（真阳性）
+        _ <- actor ! AgentCommand.UserInput("turn-3", None, Some("cmid-3"))
+        _ <- waitFor(wsEvents, evs => loopFrames(evs).nonEmpty,
+          s"$actorName cross-turn accumulation (3 turns) did not freeze", 30000)
+        preLoop <- wsEvents.get.map(loopFrames(_).size)
+        preBusy <- wsEvents.get.map(busyFalseCount)
+        // 用户唤醒（frozen 态 UserWake 分支）：同 fp 再失败 1 次
+        _ <- actor ! AgentCommand.UserInput("wake", None, Some("cmid-4"))
+        _ <- waitUntil(requests, (rs: List[LlmRequest]) => rs.size >= 6, 15000)
+        // 收敛窗：未冻结 → 收尾轮（第 7 次请求）应已派出；冻结 → 停在第 6 次
+        _ <- IO.sleep(2500.millis)
+        reqs <- requests.get
+        evs <- wsEvents.get
+        registry <- resources.agentRegistry.get
+      yield WakeRun(reqs.reverse, evs, registry, preLoop, preBusy)
+      program.unsafeRunSync()
+    finally
+      nebflow.core.LlmLogWriter.setEnabled(prevLlmLog)
+      PathUtil.setDataRoot(prevRoot)
+      system.stopAll.attempt.void.unsafeRunSync()
+      os.remove.all(tmp)
+  end driveWake
+
   test("L0+L1 (depth=1): soft reminder injected into round 2; hard terminates turn with loop error") {
     val (reqs, evs, _) = drive("l1-terminate", depth = 1, maxToolCalls = 10, secondTurn = None)
     // soft=1 → round1 Warn；round2 streak=2；round3 streak=3=hard → Terminate。
@@ -223,6 +340,24 @@ class LoopGuardWiringSpec extends CatsEffectSuite:
     assert(loopFrames.nonEmpty, s"expected a loopDetected WS frame, got: $evs")
     val frozenRec = registry.get("loop-l2-freeze")
     assert(frozenRec.exists(_.status == AgentStatus.Frozen), s"registry must mark the session Frozen, got: $frozenRec")
+  }
+
+  test("R1 UserWake: wake restarts the cross-turn window (同 fp 唤醒后再失败 1 次不再秒冻)") {
+    // 2026-09-10 冻结缺陷（LoopGuard 冻结族）R1 最小修法钉子。
+    // 脚本位：r1 败 / r2 收尾 ‖ r3 败 / r4 收尾 ‖ r5 败（crossTurn=3 → 冻结）
+    //         ‖ 唤醒轮 r6 败（同 fp 第 4 次失败）/ r7 收尾
+    val script = Vector(true, false, true, false, true, true, false)
+    val run = driveWake("wake-reset-cross-turn", script)
+    // 真阳性（未唤醒路径不动）：3 个不同 turn 累积同 fp 失败 → 仍 Freeze（1 次 loopDetected）
+    assertEquals(run.preWakeLoopFrames, 1,
+      s"pre-wake cross-turn accumulation (3 turns, same fp) must still freeze: $run")
+    // 钉子：唤醒后同 fp 再失败 1 次 → 不得 Freeze；唤醒轮继续派发收尾请求（r6+r7）
+    assertEquals(run.reqs.size, 7,
+      s"UserWake must restart the cross-turn observation window: expected 7 LLM requests " +
+        s"(3 pre-wake turns + wake-failure round + wake wrap-up round), got ${run.reqs.size} — " +
+        s"fewer means the wake round re-froze on the pre-wake counter: $run")
+    assertEquals(loopFrames(run.evs).size, 1,
+      s"wake must not re-freeze: exactly 1 loopDetected (pre-wake), got ${loopFrames(run.evs).size}: $run")
   }
 
 end LoopGuardWiringSpec
