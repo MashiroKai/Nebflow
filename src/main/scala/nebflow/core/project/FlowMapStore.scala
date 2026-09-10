@@ -163,8 +163,22 @@ class FlowMapStore private (
     * sweep 承担出库与归档落盘（≤30s 滞后不可见：nodeRemoved 到达时前端墓碑幂等）。
     * 顺序 = 归档先行（批次注册 → 归档区写入 → 分文件落盘）再删活动区：崩溃窗口残留
     * 「活动+归档双在」下个 tick 自愈（幂等重归档零写入 + 补删），反向（先删活动）
-    * 崩溃则双失。返回被移除的节点 id 列表（ProjectActor 据此发 WS nodeRemoved）。 */
+    * 崩溃则双失。返回被移除的节点 id 列表（ProjectActor 据此发 WS nodeRemoved）。
+    *
+    * P3 归档联动批（2026-09-10）：链级明细版 [[sweepCompletedChainsDetailed]] 为唯一
+    * 实现，本方法退化为「只取被移除节点 id」的兼容外壳（既有调用方/单测零改动）；
+    * 归档审计事件（chain-archived）由调用方在出库后追加——事件载荷需 chainId /
+    * 分量最早节点 / 成员数，这些**只能来自 sweep 内部派生的链分量**（本类是链派生
+    * 单点，调用方二次派生 = 禁止的双端派生，spec §6.2 注）。 */
   def sweepCompletedChains(now: Long): IO[List[String]] =
+    sweepCompletedChainsDetailed(now).map(_.flatMap(_.nodeIds))
+
+  /** sweep 出库明细（P3 归档联动批）：语义与归档判定与 [[sweepCompletedChains]] 完全
+    * 同源（同一实现），返回每链的链级事实——chainId（分量链 id）、nodeId（分量内
+    * createdAt 最早节点，= chainId 派生源节点，FlowMapStore.scala:643 同源）、
+    * nodeIds（本次移出活动区的成员）、members（分量成员总数，含已在归档区的成员——
+    * 与归档批文件 nodeIds 并集口径同源）。 */
+  def sweepCompletedChainsDetailed(now: Long): IO[List[FlowMapStore.SweptChain]] =
     for
       s <- state.get
       a <- archive.get
@@ -172,7 +186,7 @@ class FlowMapStore private (
       doneChains = chains.flatMap { c =>
         val activeMembers = c.memberIds.flatMap(id => s.nodes.get(id))
         if activeMembers.isEmpty || !FlowMapStore.chainArchivable(activeMembers) then None
-        else Some(c.id -> activeMembers)
+        else Some((c, activeMembers))
       }
       _ <- if doneChains.isEmpty then IO.unit
       else
@@ -182,17 +196,25 @@ class FlowMapStore private (
           bt0 <- batches.get
           // 批 id 合并（跨区续做分量）：拓扑链 id 可能与既有归档批 id 重合（归档上游
           // 是分量内 createdAt 最早节点）——memberIds 并集，旧批成员保持批次归属。
-          metas: Map[String, ArchiveBatchMeta] = doneChains.map { case (bid, members) =>
-            val merged = bt0.get(bid).map(_.nodeIds).getOrElse(Set.empty)
-            bid -> ArchiveBatchMeta(bid, now, members.map(_.id).toSet ++ merged)
+          metas: Map[String, ArchiveBatchMeta] = doneChains.map { case (c, members) =>
+            val merged = bt0.get(c.id).map(_.nodeIds).getOrElse(Set.empty)
+            c.id -> ArchiveBatchMeta(c.id, now, members.map(_.id).toSet ++ merged)
           }.toMap
           _ <- batches.update(_ ++ metas)
           newArc <- archive.updateAndGet(a2 => a2.copy(nodes = a2.nodes ++ moved.map(n => n.id -> n).toMap))
           _ <- persistBatchFiles(metas.keySet, newArc, metas)
           _ <- mutate(st => st.copy(nodes = st.nodes -- ids))
-          _ <- IO(logger.infoSync(s"FlowMap[$project] chain sweep: ${doneChains.map(_._1).mkString(", ")} (${ids.size} node(s)) → archive"))
+          _ <- IO(logger.infoSync(s"FlowMap[$project] chain sweep: ${doneChains.map(_._1.id).mkString(", ")} (${ids.size} node(s)) → archive"))
         yield ()
-    yield doneChains.flatMap(_._2).map(_.id)
+    yield doneChains.map { case (c, members) =>
+      FlowMapStore.SweptChain(
+        chainId = c.id,
+        nodeId = c.memberIds.headOption.getOrElse(""),
+        nodeIds = members.map(_.id),
+        members = c.memberIds.size,
+        archivedAt = now
+      )
+    }
 
   // ── 持久化 ─────────────────────────────────────────────
 
@@ -541,6 +563,20 @@ class FlowMapStore private (
 object FlowMapStore:
   /** per-node 结果文件目录名（相对 workspace/.nebflow/）。 */
   val ResultsDirName: String = "results"
+
+  /** sweep 出库明细载体（P3 归档联动批 2026-09-10；[[FlowMapStore.sweepCompletedChainsDetailed]]
+    * 的返回元素）：链级事实，供调用方追加 chain-archived 审计事件——链 id、
+    * 分量内 createdAt 最早节点（事件 nodeId；= chainId 派生源节点，FlowMapStore.scala:643）、
+    * 本次移出成员、分量成员总数（含已在归档区成员；与归档批文件 nodeIds 并集口径同源）、
+    * 出库时刻（= 归档批 archivedAt，同一 now 参数）。**派生只发生在本类内部**，
+    * 调用方不得二次派生（spec §6.2 双端派生禁令）。 */
+  case class SweptChain(
+    chainId: String,
+    nodeId: String,
+    nodeIds: List[String],
+    members: Int,
+    archivedAt: Long
+  )
 
   /** per-node task 文件目录名（相对 workspace/.nebflow/；与 results/ 同域，
     * 2026-09-06 存储瘦身批）。A/B 硬契约：存量迁移脚本与 store 读写同路径同字节。 */

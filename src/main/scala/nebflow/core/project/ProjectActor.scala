@@ -325,8 +325,37 @@ object ProjectActor:
                 // 链级即时归档 sweep（裁定④「TTL 分开」批 2026-09-07）：整链全终态
                 // → 整批立即移归档（移除旧 24h 活动区滞留）；链未齐（含 blocked 待办）
                 // → 保留。视觉「同帧淡出」由前端派生管线承担，本 sweep 出库+落盘。
-                cfg.engine.store.sweepCompletedChains(System.currentTimeMillis()).flatMap { removed =>
-                  removed.traverse_(id => cfg.engine.emitRemoved(id))
+                // 归档审计 + 索引对账（P3 归档联动批 2026-09-10，spec §6.2）：
+                // ① 出库明细版 sweep（链级事实来自推导单点，调用方零二次派生）——
+                //    WS nodeRemoved 逐节点如旧（先行，语义零变化），随后为每条出库链
+                //    追加 chain-archived 审计事件（顶层 chainId + 结构化 summary：
+                //    `chain=<id> archivedAt=<ms> members=<n>`；nodeId = 分量内 createdAt
+                //    最早节点）。事件追加 best-effort——写失败绝不回滚归档、不影响 WS，
+                //    漏事件由 ② 对账兜底（归档事实 ↔ 索引 chain 集）检出。
+                // ② 索引对账兜底：挂既有 30s TtlTick 周期，内部 10min 节流 + 索引区
+                //    无 INDEX.md 即零开销 no-op；只写 `<workspace>/.nebflow/tmp/` 报表，
+                //    不改任何文档本体（fail-soft，同上述各扫描先例）。
+                cfg.engine.store.sweepCompletedChainsDetailed(System.currentTimeMillis()).flatMap { swept =>
+                  val removals = swept.flatMap(_.nodeIds).traverse_(id => cfg.engine.emitRemoved(id))
+                  val audits = swept.traverse_ { c =>
+                    FlowMapEventLog
+                      .append(
+                        cfg.project.workspace,
+                        cfg.project.name,
+                        c.nodeId,
+                        FlowMapEventLog.ChainArchivedType,
+                        FlowMapEventLog.chainArchivedSummary(c.chainId, c.archivedAt, c.members),
+                        Some(c.chainId)
+                      )
+                      .handleErrorWith(e =>
+                        logger.warn(s"chain-archived audit append failed (${c.chainId}): ${e.getMessage}"))
+                  }
+                  val reconcile = DocIndexConsumer
+                    .tick(cfg.project.workspace)
+                    .handleErrorWith(e =>
+                      logger.warn(s"doc-index reconcile tick failed: ${e.getMessage}").as(None))
+                    .void
+                  removals *> audits *> reconcile
                 }.as(behavior)
             case ProjectCommand.Shutdown =>
               IO.pure(Behaviors.stopped)
