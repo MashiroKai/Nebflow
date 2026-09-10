@@ -394,6 +394,43 @@ class CancelDeadlockFixSpec extends CatsEffectSuite:
         s"R4 visibility: frame payload must carry pendingSuccession, got ${bFrame.get.noSpaces.take(300)}")
   }
 
+  test("R3-dedup-b: immediate barrier check obeys the legal-wait exemptions — a still-running sibling upstream (and a dangling ref) must NOT raise the alert, while the R4 detach still lands") {
+    val ws = tempRoot / "ws-dedup-b"
+    os.makeDir.all(ws)
+    val system = ActorSystem(s"cd-dedupb-${scala.util.Random.nextInt(100000)}")
+    val now = System.currentTimeMillis()
+    for
+      res <- mkResources(system, tempRoot, new StubLlm().handle)
+      triggered <- Ref.of[IO, List[String]](Nil)
+      rt <- mountProject("cd-dedup-b", ws, system, res, triggered)
+      // U：被取消（L3 未摘除）→ 会触发即时检查；E：仍在 running = 合法等待（不得告警）
+      _ <- seed(rt.store, NodeDef(id = "n-u", name = "U", agent = "general",
+        status = NodeLifecycle.Cancelled, result = Some("cancelled[source=engine]: reason=x"),
+        sessionRef = Some("node-sess-l3b"), out = List(OutEdge("n-d"), OutEdge("n-x")),
+        createdAt = now - 900_000L, completedAt = Some(now - 800_000L)))
+      _ <- seed(rt.store, NodeDef(id = "n-e", name = "E", agent = "general",
+        status = NodeLifecycle.Running, startedAt = Some(now - 60_000L), createdAt = now - 60_000L))
+      _ <- seed(rt.store, NodeDef(id = "n-d", name = "D-mixed", agent = "general",
+        status = NodeLifecycle.Pending, in = List("n-u", "n-e"), createdAt = now - 700_000L))
+      // X：带悬空引用（图上查不到的上游）→ 保守不判
+      _ <- seed(rt.store, NodeDef(id = "n-x", name = "X-dangling", agent = "general",
+        status = NodeLifecycle.Pending, in = List("n-u", "n-ghost"), createdAt = now - 700_000L))
+      _ <- rt.engine.settleFailedHardResume("node-sess-l3b")
+      u <- node(rt, "n-u")
+      d <- node(rt, "n-d")
+      x <- node(rt, "n-x")
+      audit <- readAudit(ws)
+      _ <- system.stopAll.handleErrorWith(_ => IO.unit)
+    yield
+      assertEquals(u.out, List(OutEdge.nebula), "R5 failure leg detach must still land (idempotent, independent of the alert)")
+      assertEquals(d.pendingSuccession, List("n-u"), "successor must still be marked")
+      val alerts = audit.filter(_._1 == "barrier-blocked")
+      assertEquals(alerts.filter(_._2 == "n-d"), Nil,
+        s"legal wait (sibling upstream still running) must NOT alert, got ${alerts.map(_._2)}")
+      assertEquals(alerts.filter(_._2 == "n-x"), Nil,
+        s"dangling upstream ref must NOT alert (conservative), got ${alerts.map(_._2)}")
+  }
+
   // ── R5：L3 resume 失败腿 ────────────────────────────────────────
 
   test("R5: settleFailedHardResume — cancelled node w/o detach gets detach + immediate barrier alert + R1 notify + hard-recovery FAILED audit; repeated call performs no new action") {

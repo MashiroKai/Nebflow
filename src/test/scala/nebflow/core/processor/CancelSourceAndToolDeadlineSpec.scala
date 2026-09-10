@@ -102,7 +102,7 @@ class CancelSourceAndToolDeadlineSpec extends CatsEffectSuite:
 
   // ── U4 R6：有效阈值口径 ──────────────────────────────────────────
 
-  test("U4 R6: effectiveToolPhaseMs — declared wins; undeclared falls back to the default band") {
+  test("U4 R6: effectiveToolPhaseMs — declared only widens; undeclared (or small declared) keeps the default band") {
     val d = 600_000L
     val slack = 60_000L
     // 未声明 → 默认档（10min）零变化
