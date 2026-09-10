@@ -17,7 +17,7 @@ import scala.concurrent.duration.*
  * 手段，TaskStuckWatcher 只覆盖 Processing 卡死一类。
  *
  * 四操作：
- *  - list    全部后台 agent 表格（kind/status/stuck?/up/idle/retries/task）
+ *  - list    全部后台 agent 表格（kind/status/stuck?/phase/up/idle/retries/task）
  *  - status  单个详情卡片 + 孤儿任务检测（registry 无记录但 task=running）
  *  - cancel  终止任务：supervisor 路径（AgentEvent.Cancelled → notifyParentAndStop
  *            "cancelled"，barrier 正确释放）/ 降级 Stop 路径（Ephemeral bridge
@@ -43,8 +43,8 @@ object AgentControlTool extends Tool:
     """Inspect and control background agent sessions — the sub-agents spawned via Delegate/SubTask, ephemeral Mail runners, and other live sessions in this instance.
 
 Actions:
-- **list**: table of all live background agents (kind, status, stuck?, uptime, idle time, retry count, task). Use this FIRST when a sub-agent is silent or you suspect it is stuck — "stuck?" marks Processing agents with no activity for >10min (same threshold as the automatic watcher).
-- **status**: full detail for one agent (pass sessionId from list): state, timings, task prompt excerpt, retry count, last error. Also detects orphan task files (actor gone but task still marked running).
+- **list**: table of all live background agents (kind, status, stuck?, phase, uptime, idle time, retry count, task). Use this FIRST when a sub-agent is silent or you suspect it is stuck — "stuck?" marks Processing agents that either produced no agent-side event (LLM chunk / tool batch) for >10min, or have a single tool call running for >10min inside an unfinished turn (same judgement as the automatic watcher — process CPU is irrelevant to it). "phase" shows the in-flight tool call (name + elapsed), which is what tells you whether the agent is executing a tool or has gone silent.
+- **status**: full detail for one agent (pass sessionId from list): state, timings, in-flight tool phase, task prompt excerpt, retry count, last error. Also detects orphan task files (actor gone but task still marked running).
 - **cancel**: terminate an agent's current task. The parent session receives a "cancelled" notification and any wait barrier is released — nobody waits forever. Allowed kinds: Delegate, SubTask, Ephemeral, Project node/dispatcher sessions (node-*/dispatcher-*, settles via the session bridge), and Team members (permission-scoped — see Safety rules).
 - **restart**: kill the stuck turn and resume from the last persisted checkpoint (same mechanism as crash recovery — completed work is kept). Allowed kinds: Delegate (ephemeral) and SubTask (both consume the supervisor's restart budget, 2 per 5min; exceeding it fails the task), and Team members (Stop + re-activation from persisted history — no supervisor budget consumed).
 
