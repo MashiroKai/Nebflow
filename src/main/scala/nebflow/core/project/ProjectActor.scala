@@ -340,7 +340,7 @@ object ProjectActor:
     * 对齐 skillCatalog order 800 注入先例——用注入目录段而非新增查询工具
     * （分发器单次会话、目录规模小，不多造工具）。
     * dispatcher-ctx 批（2026-09-05）：目录渲染收口到 DispatcherContextCatalog
-    * 双段拼装（插件能力目录 capability 优先 + 预设场景目录），本类只留挂接。 */
+    * 双段拼装（插件能力目录 description 单源 + 预设场景目录），本类只留挂接。 */
   private def pluginCatalogText(): IO[String] = nebflow.core.plugin.DispatcherContextCatalog.render()
 
   /** 项目记忆注入段（project-memory 批 2026-09-05 §3）：本项目 workspace
