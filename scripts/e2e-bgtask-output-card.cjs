@@ -206,6 +206,7 @@ const runResp = (taskId) => ({ contentType: 'application/json', body: JSON.strin
         svg: !!btn.querySelector('svg'), span: !!btn.querySelector('span'),
         font: pre.fontFamily, bg: pre.backgroundColor,
         prompt: marker.querySelector('.bgt-prompt')?.textContent,
+        exitLabel: document.querySelector('.bgt-exit-label')?.textContent,
         metaText: document.querySelector('.bgt-meta-text')?.textContent,
       };
     });
@@ -221,7 +222,7 @@ const runResp = (taskId) => ({ contentType: 'application/json', body: JSON.strin
     ok('N7e 复制=当前已加载文本 + copied 反馈', cp.got === 'line-1\nline-2\nDONE' && cp.copied);
     ok('N8a 等宽栈含 Menlo', /Menlo/.test(struct.font));
     ok('N8b 终端底色 #f5f5f5', struct.bg === 'rgb(245, 245, 245)');
-    ok('N8c 完成态 $ exit prompt（终端语言）', struct.prompt === '$' && /exit 0/.test(struct.metaText || ''));
+    ok('N8c 完成态 $ exit prompt（终端语言）', struct.prompt === '$' && struct.exitLabel === 'exit 0' && /\d/.test(struct.metaText || ''));
     ok('N8d 无 pageerror', errors.length === 0);
     await S.p.close();
   }
