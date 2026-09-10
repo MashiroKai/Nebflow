@@ -9,6 +9,7 @@ import { t, getLocale } from './i18n.js';
 import { onMessage, sendWs } from './ws.js';
 import { brand } from './brand.js';
 import { lookupAvatar, rememberAvatarProfile, lastKnownAvatarProfile, forgetAvatarProfile } from './avatarCache.js';
+import { getKnownAccounts, rememberAccount } from './knownAccounts.js';
 // NOTE: dropbox.js is dynamically imported at the click site - P2-4 cycle cut
 // (neblink <-> dropbox mutual import).
 
@@ -118,8 +119,20 @@ export async function fetchNeblinkStatus() {
       platform: d.platform,
       capabilities: d.capabilities || {},
       userDescription: d.userDescription || '',
-      avatarUrl: d.avatarUrl || ''
+      avatarUrl: d.avatarUrl || '',
+      // Account identity hints (switch-account, 2026-09-10): decoded
+      // server-side from the persisted id_token's email/name claims
+      // (read-only). Empty strings when the credential predates the claims
+      // or the provider omitted them.
+      email: d.email || '',
+      displayName: d.displayName || ''
     } : null;
+    // Account memory capture (switch-account spec §6): a live logged-in
+    // status with an identity is the "login success" anchor — dedup + move
+    // to head + cap inside rememberAccount. Stores ONLY email+displayName.
+    if (neblinkState.loggedIn && neblinkState.device?.email) {
+      rememberAccount({ email: neblinkState.device.email, displayName: neblinkState.device.displayName });
+    }
     // F5（症状③防自过滤）：服务端 peers 若回显本机设备，下方 UI 合并
     // [{...local,isLocal}, ...peers] 会出现「本机 + 同名 peer」双行（数量虚增
     // 恰好 +1）。客户端整条链路零 self 防御（LAN announce 路径有、server 路径
@@ -308,11 +321,17 @@ export function neblinkSettingsHTML() {
 
   // Device list sits directly under the avatar inside the unified account
   // block (2026-09-06) — no inner section label, no standalone block chrome.
+  // 2026-09-10: 「切换账号」joins 「退出登录」in one row (switch-account spec
+  // §1 — green glass primary per the confirmed mockup; row layout styles in
+  // neblink.css .neblink-account-actions).
   return `
     <div class="neblink-logged-in">
       <div class="neblink-peers-list">${deviceRows}</div>
       ${peerHint}
-      <button class="neblink-logout-btn" id="neblink-logout-btn">退出登录</button>
+      <div class="neblink-account-actions">
+        <button class="neblink-switch-btn" id="neblink-switch-btn" type="button">${t('neblink.switchAccount')}</button>
+        <button class="neblink-logout-btn" id="neblink-logout-btn" type="button">${t('neblink.logout')}</button>
+      </div>
     </div>`;
 }
 
@@ -523,7 +542,9 @@ export function cancelPkceFlow() {
 export function bindNeblinkEvents(rerender) {
   _rerender = rerender;
 
-  // Logout — full RP-initiated logout (RP-logout fix, 2026-09-06).
+  // Full RP-initiated logout chain — the SINGLE shared implementation used by
+  // both the settings logout button and the switch-account modal (spec §4:
+  // "原样复用既有 logout 链路"). RP-logout fix, 2026-09-06:
   // window.open('/api/neblink/auth/end-session') in the SAME gesture tick
   // (synchronous → popup-blocker safe): the endpoint performs the local
   // teardown (same 8 steps as the old POST /api/neblink/logout) and 302s
@@ -535,18 +556,29 @@ export function bindNeblinkEvents(rerender) {
   // post_logout_redirect_uri is allow-listed on the Logto app).
   // The main window refreshes its status a beat later, after the local
   // teardown on the backend has landed.
+  function initiateLogout() {
+    window.open('/api/neblink/auth/end-session', '_blank', 'noopener');
+    setTimeout(async () => {
+      forgetAvatarProfile(); // drop the last-known snapshot: a logged-out user must not resurrect offline
+      await fetchNeblinkStatus();
+      _rerender?.();
+    }, 1000);
+  }
+
+  // Logout button.
   const logoutBtn = /** @type {HTMLButtonElement|null} */ (document.getElementById('neblink-logout-btn'));
   if (logoutBtn) {
     logoutBtn.addEventListener('click', () => {
       logoutBtn.disabled = true;
-      logoutBtn.textContent = '正在退出…';
-      window.open('/api/neblink/auth/end-session', '_blank', 'noopener');
-      setTimeout(async () => {
-        forgetAvatarProfile(); // drop the last-known snapshot: a logged-out user must not resurrect offline
-        await fetchNeblinkStatus();
-        rerender();
-      }, 1000);
+      logoutBtn.textContent = t('neblink.loggingOut');
+      initiateLogout();
     });
+  }
+
+  // Switch-account modal entry (2026-09-10, switch-account spec §1-§6).
+  const switchBtn = /** @type {HTMLButtonElement|null} */ (document.getElementById('neblink-switch-btn'));
+  if (switchBtn) {
+    switchBtn.addEventListener('click', () => { openSwitchAccountModal(initiateLogout); });
   }
 
   // NL 号入口已移除（09-05 裁定）——原 edit/cancel/input/save 绑定随区块删除。
@@ -593,6 +625,189 @@ export function bindNeblinkEvents(rerender) {
       }));
     });
   });
+}
+
+// ---- Switch-account modal (2026-09-10, spec §2-§5) ----
+// Glass panel per the user modal ruling: NO overlay/backdrop darkening (the
+// panel floats directly over the UI), the panel itself is frosted glass
+// (backdrop-filter blur) — same recipe as the Activity Bar login modal.
+// Reuses the account-domain infra: neblink PKCE start (forceLogin), the
+// shared initiateLogout chain, knownAccounts.js memory. List rows are built
+// with DOM APIs + textContent (emails are untrusted strings — no innerHTML).
+
+/**
+ * Switch to a remembered account (spec §4): run the full logout chain
+ * (RP end-session + local status refresh), then restart the login flow on
+ * the hosted page. The authorize URL is built SERVER-side
+ * (/api/neblink/auth/start, prompt="login consent"); this function only
+ * navigates to it.
+ *
+ * BYUI prefill slot (forensic verdict 2026-09-10): the auth.nebflow.space
+ * BYUI sign-in card does NOT read any URL prefill param yet, and Logto's
+ * custom-UI 303 landing does not forward arbitrary authorize query params
+ * (production-probed: `first_screen` maps to a path, query is NOT passed
+ * through). Per the fork-a ruling the client therefore ships WITHOUT the
+ * param; when the BYUI prefill lands (website-side spec: read `login_hint`
+ * off the landing URL and prefill the identifier input — one line in
+ * auth-ui/src/views/signin.ts), enable prefill here by appending
+ * `&login_hint=` + encodeURIComponent(prefillEmail) to `authorizeUrl`
+ * before navigating, and pass the account email through from the row click.
+ * @param {() => void} initiateLogout — shared RP-logout chain
+ * @param {string|null} prefillEmail — account email to prefill (v1: unused)
+ */
+async function switchLogoutAndLogin(initiateLogout, prefillEmail = null) {
+  initiateLogout(); // sync gesture: opens the end-session tab + schedules local refresh
+  void prefillEmail; // v1 ships without the param — see BYUI prefill slot note above
+  try {
+    // Reserve the popup inside THIS gesture (same contract as the Activity
+    // Bar login modal): the authorize URL only exists after the gateway
+    // round-trip, and a post-await window.open gets blocked. The end-session
+    // tab above is intentionally FIRST in the gesture (Safari allows one
+    // open per gesture — logout integrity outranks the login hop; a failed
+    // reserve degrades to the manual login-modal fallback below).
+    const reserved = window.open('about:blank', '_blank');
+    const pkce = await startPkceLogin(true);
+    if (pkce?.authorizeUrl) {
+      let navigated = false;
+      if (reserved) {
+        try { reserved.location.href = pkce.authorizeUrl; navigated = true; }
+        catch (e) { /* popup closed mid-await — try a fresh open below */ }
+      }
+      if (!navigated && !window.open(pkce.authorizeUrl, '_blank')) {
+        // Fully blocked → the settings avatar re-opens the login modal,
+        // whose in-modal button is the manual fallback surface.
+        import('./activityBar.js').then(m => m.openLoginModal()).catch(() => {});
+      }
+      return;
+    }
+    // Legacy fallback (gateway without Logto): hand over to the login
+    // modal, which drives the device flow (user code + polling).
+    if (reserved) { try { reserved.close(); } catch (e) { /* ignore */ } }
+    import('./activityBar.js').then(m => m.openLoginModal()).catch(() => {});
+  } catch (e) {
+    // start failed (network etc.) — the logout hop already ran; surface the
+    // standard login modal so the user can retry from a known surface.
+    import('./activityBar.js').then(m => m.openLoginModal()).catch(() => {});
+  }
+}
+
+/**
+ * Open the switch-account glass modal (spec §2): title + remembered account
+ * list (current account pinned/highlighted with a 「当前」 tag) + the
+ * bottom 「使用其他账号登录…」 entry. Empty list → only that entry.
+ * Clicking the CURRENT account only closes the modal (zero side effects);
+ * any other row runs the logout+login chain (§4); the bottom entry runs it
+ * without a prefill target (§5).
+ * @param {() => void} initiateLogout — shared RP-logout chain
+ */
+function openSwitchAccountModal(initiateLogout) {
+  if (document.getElementById('nebflow-switch-account-modal')) return;
+
+  const modal = document.createElement('div');
+  modal.id = 'nebflow-switch-account-modal';
+  modal.className = 'neblink-switch-modal';
+  modal.setAttribute('role', 'dialog');
+  modal.setAttribute('aria-label', t('neblink.switchAccount'));
+  document.body.appendChild(modal);
+
+  const currentEmail = (neblinkState.device?.email || '').trim().toLowerCase();
+  // Spec §3: current account pinned to top (green frame + 「当前」 tag).
+  // Status capture already keeps the current at head; the explicit stable
+  // hoist makes the pin independent of the stored order.
+  const accounts = getKnownAccounts().slice().sort((a, b) => {
+    const am = currentEmail && a.email.trim().toLowerCase() === currentEmail ? 0 : 1;
+    const bm = currentEmail && b.email.trim().toLowerCase() === currentEmail ? 0 : 1;
+    return am - bm;
+  });
+
+  const close = () => {
+    document.removeEventListener('keydown', onKey);
+    modal.remove();
+  };
+  const onKey = (e) => { if (e.key === 'Escape') close(); };
+  document.addEventListener('keydown', onKey);
+  // Click outside to close (deferred so the opening click doesn't close it).
+  setTimeout(() => {
+    document.addEventListener('click', function outside(e) {
+      if (!document.body.contains(modal)) {
+        document.removeEventListener('click', outside);
+      } else if (!modal.contains(/** @type {Node} */ (e.target))) {
+        close();
+        document.removeEventListener('click', outside);
+      }
+    });
+  }, 100);
+
+  // ── build DOM ──
+  const header = document.createElement('div');
+  header.className = 'neblink-switch-header';
+  const h3 = document.createElement('h3');
+  h3.textContent = t('neblink.switchAccount');
+  const closeBtn = document.createElement('button');
+  closeBtn.className = 'neblink-switch-close';
+  closeBtn.type = 'button';
+  closeBtn.setAttribute('aria-label', t('neblink.switchAccount'));
+  closeBtn.textContent = '\u00d7';
+  closeBtn.addEventListener('click', close);
+  header.append(h3, closeBtn);
+
+  const body = document.createElement('div');
+  body.className = 'neblink-switch-body';
+
+  const list = document.createElement('div');
+  list.className = 'neblink-switch-list';
+  for (const acct of accounts) {
+    const row = document.createElement('button');
+    row.type = 'button';
+    const isCurrent = currentEmail && acct.email.trim().toLowerCase() === currentEmail;
+    row.className = 'neblink-switch-row' + (isCurrent ? ' current' : '');
+
+    const avatar = document.createElement('span');
+    avatar.className = 'neblink-switch-avatar';
+    avatar.setAttribute('aria-hidden', 'true');
+    const initial = (acct.displayName || acct.email).trim().charAt(0).toUpperCase();
+    avatar.textContent = initial || '?';
+
+    const name = document.createElement('span');
+    name.className = 'neblink-switch-name';
+    name.textContent = acct.displayName || acct.email;
+    name.title = acct.email;
+
+    row.append(avatar, name);
+
+    if (isCurrent) {
+      const tag = document.createElement('span');
+      tag.className = 'neblink-switch-tag';
+      tag.textContent = t('neblink.currentTag');
+      row.appendChild(tag);
+      // Spec §4: clicking the current account = close only, zero side effects.
+      row.addEventListener('click', close);
+    } else {
+      // Spec §4: switch = full logout chain + fresh login on the hosted
+      // page (v1 ships without the BYUI prefill param — see the prefill
+      // slot note on switchLogoutAndLogin).
+      row.addEventListener('click', () => {
+        close();
+        void switchLogoutAndLogin(initiateLogout, acct.email);
+      });
+    }
+    list.appendChild(row);
+  }
+  if (accounts.length) body.appendChild(list);
+
+  // Spec §3/§5: bottom entry — logout + hosted login without a prefill
+  // target. Rendered alone when the list is empty.
+  const other = document.createElement('button');
+  other.type = 'button';
+  other.className = 'neblink-switch-other';
+  other.textContent = t('neblink.useOtherAccount');
+  other.addEventListener('click', () => {
+    close();
+    void switchLogoutAndLogin(initiateLogout, null);
+  });
+  body.appendChild(other);
+
+  modal.append(header, body);
 }
 
 // ---- Init (called once from main.js) ----

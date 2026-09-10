@@ -846,6 +846,12 @@ export default {
   'neblink.cancel': 'Cancel',
   'neblink.updating': 'Updating...',
   'neblink.restarting': 'Restarting...',
+  // Switch account (settings account area, 2026-09-10)
+  'neblink.switchAccount': 'Switch account',
+  'neblink.logout': 'Log out',
+  'neblink.loggingOut': 'Signing out…',
+  'neblink.useOtherAccount': 'Use another account…',
+  'neblink.currentTag': 'Current',
 
   // Dropbox
   'dropbox.tabChat': 'Chat',
