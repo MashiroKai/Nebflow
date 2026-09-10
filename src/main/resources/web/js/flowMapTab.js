@@ -13,11 +13,12 @@
 // 收到事件即更新，不切换标签页。fetch 全量快照降级为对账兜底：增量应用后仍安排一次
 // 防抖拉取，diff 渲染保证对账只在真实漂移时碰 DOM（对账无跳变）。
 //
-// 整链归档 v3（规格 20260903_flowmap-archive-panel-spec.md，作者 2026-09-03 20:26）：
-// 主图可见集 = 活动节点 + 链未齐的终态保留卡（visibleFmView 派生视图，链判定在
-// flowMapArchive.refreshChains）；链齐瞬间整链成员卡同帧 fm-exit 集体淡出（350ms
-// 一条整体动画）→ 存活卡平滑补位 → 面板条目置顶闪烁 + 徽章 +1。终态节点不再走
-// TTL 倒计时驻留（tickTtl/fm-ttl 徽标随 v3 语义移除，条目 TTL 归 flowMapArchive）。
+// 归档单源收口（链级抽象 P0，设计 20260910_flowmap-chain-abstraction-spec.md
+// §4.2/§7-B）：主图可见集 = 后端活动区快照本身——归档资格判定唯一存在于后端
+// （FlowMapStore sweep，拓扑链口径），sweep 出库逐成员广播 nodeRemoved → 增量
+// diff 单卡 fm-exit 淡出（复用既有机制），600ms 对账兜底收敛；前端零链派生零
+// 判据（旧 refreshChains/chainEligible 时间批镜像已删除）。
+// 归档面板反馈 = flowMapArchive refetch 出现新链 id 时徽章脉冲 + 条目闪烁 + toast。
 
 import { openTab, getTabPane } from './canvas.js';
 import { ensureFlowCss } from './flowCss.js';
@@ -25,10 +26,9 @@ import { esc } from './flowHelpers.js';
 import { t } from './i18n.js';
 import { fetchFlowMap, NODE_STATUS_CLS } from './nodeData.js';
 import {
-  isTerminalStatus, refreshChains, purgeExpired,
-  isVisibleNode, recordNodeRemoved, dropStore, getStore,
+  isTerminalStatus, purgeExpired,
+  ingestNodes, recordNodeRemoved, dropStore,
   syncArchiveUi, openDetailFor,
-  notifyChainRetained, notifyChainArchived,
 } from './flowMapArchive.js';
 import { toggleHTML, bindToggle, setToggleState } from './toggle.js';
 
@@ -65,9 +65,6 @@ const genByProject = new Map();
 const renderedFmByContainer = new WeakMap();
 /** @type {Map<string, number>} project → 对账拉取定时器 id */
 const reconcileTimers = new Map();
-/** @type {Set<string>} 整链退场动画进行中的项目：期间 WS/对账渲染挂起，
- *  退场结束的统一渲染兜底（防止中途 diff 把正在退场的卡提前拆掉）。 */
-const exitAnimating = new Set();
 
 // ── 视图过滤（P3 占位治理最小组合前端腿，报告 20260908_flowmap-占位调查与显示优化
 //   提案 P3；作者定案收缩为二态「全部/进行中」）──────────────────────────
@@ -506,19 +503,16 @@ function layoutNodes(fm) {
 }
 
 /** 上游 id → 显示名解析器（deps 设计 §1.4「wiring 节点等待谁」脚注）：
- *  图内可见 → `名(id)`；已随整链归档/到期出库 → `名（已归档）`（诚实降级，规格
- *  §3.3/§8.4；原字符标记 ✦ 按裁定①节点域禁符号字符换 i18n 纯文字）；
- *  不在快照 → `裸id（已归档）`（断链诊断教训的低成本可见性）。 */
+ *  图内可见 → `名(id)`；不在活动区快照（已随后端 sweep 归档出库，或悬空引用）
+ *  → `名/裸id（已归档）`（诚实降级，规格 §3.3/§8.4）。可见性 = 后端活动区快照
+ *  单源（P0），不再查前端派生集。 */
 function nameResolverOf(project) {
   const fm = fmByProject.get(project);
   const byId = new Map((fm?.nodes || []).map((n) => [n.id, n]));
-  const store = getStore(project);
   const archTag = t('flowmap.archivedTag');
   return (id) => {
     const n = byId.get(id);
-    if (!n) return `${id}${archTag}`;
-    if (store && (store.archivedIds.has(id) || store.expiredIds.has(id))) return `${n.name}${archTag}`;
-    return `${n.name}(${id})`;
+    return n ? `${n.name}(${id})` : `${id}${archTag}`;
   };
 }
 
@@ -761,17 +755,15 @@ function legendHtml() {
     </div>`;
 }
 
-// ── 可见集（v3 整链语义，规格 §3.1）──────────────────────
+// ── 可见集（P0 单源收口）──────────────────────────────
 // fmByProject 缓存的是后端权威全量快照；渲染管线只吃「可见派生视图」：
-//   可见 = 活动节点（wiring/pending/running/blocked）+ 链未齐链的终态成员
-//   （completed/failed/cancelled，终态色卡保留主图）；已归档链成员与 TTL 到期
-//   清理链成员（flowMapArchive.expiredIds）不可见。旧版「ttlLeftSec 到期前端隐藏」
-//   随链语义移除（§1.3 裁定基线变更 / §7.6 死代码清理）。
-// P3 视图过滤（2026-09-08）：归档可见性判定之后再叠加 passesViewFilter——
-//   「进行中」态额外隐藏终态/blocked 卡。纯派生，不回写缓存、不改归档语义。
+//   可见 = 快照成员本身（归档资格判定唯一在后端——sweep 出库即 nodeRemoved 广播，
+//   增量管线逐卡淡出；前端不再持有任何已归档/到期排除集）。
+// P3 视图过滤（2026-09-08）：可见性之上叠加 passesViewFilter——「进行中」态额外
+//   隐藏终态/blocked 卡。纯派生，不回写缓存、不改归档语义。
 function visibleFmView(project, fm) {
   if (!fm) return fm;
-  const nodes = (fm.nodes || []).filter((n) => isVisibleNode(project, n) && passesViewFilter(n));
+  const nodes = (fm.nodes || []).filter((n) => passesViewFilter(n));
   return nodes.length === (fm.nodes || []).length ? fm : { ...fm, nodes };
 }
 
@@ -1253,7 +1245,7 @@ export function renderFlowMap(container, fm, projectName, opts = {}) {
   // P3 补第四态：「进行中」过滤把未归档终态卡全部隐藏时，不说「已全部归档」
   // （死链终态并未归档）——显式告知是视图过滤所致。
   const hiddenByFilter = viewFilterActiveOnly()
-    && rawNodes.some((n) => isVisibleNode(projectName, n) && !passesViewFilter(n));
+    && rawNodes.some((n) => !passesViewFilter(n));
   const emptyMsg = fm?.notMounted ? t('flowmap.notMounted')
     : total > 0 ? (hiddenByFilter ? t('flowmap.viewFilter.noneActive') : t('flowmap.archive.allArchived'))
     : t('flowmap.empty');
@@ -1342,8 +1334,8 @@ export function openFlowMapTab(projectName) {
  *  ——此时这份响应相对缓存是旧的，丢弃并重新对账，否则旧快照会回滚增量状态。
  *  opts.highlightNodeId：渲染完成后滚动定位并闪烁高亮该节点（任务列表节点条目
  *  点击跳转入口，2026-09-02）。
- *  v3 播种（§7.2）：快照全量节点入缓存 → 链派生（refreshChains）→ TTL 清理
- *  （purgeExpired，快照导入触发一次）→ 可见派生视图渲染。 */
+ *  P0 播种：快照入缓存 → ingestNodes（活动节点 + chains 旁挂导入详情/链上下文
+ *  数据源，零派生）→ TTL 面板兜底清理 → 可见派生视图渲染。 */
 export function renderFlowMapInto(container, projectName, opts = {}) {
   if (!container) return;
   const seq = (seqByProject.get(projectName) || 0) + 1;
@@ -1364,9 +1356,8 @@ export function renderFlowMapInto(container, projectName, opts = {}) {
     }
     bumpGen(projectName);
     fmByProject.set(projectName, fm);
-    refreshChains(projectName, fm.nodes);
+    ingestNodes(projectName, fm.nodes, fm.chains);
     purgeExpired(projectName);
-    if (exitAnimating.has(projectName)) return; // 整链退场进行中：退场结束统一渲染兜底
     renderFlowMap(container, visibleFmView(projectName, fm), projectName);
     if (opts.highlightNodeId) highlightFlowMapNode(container, projectName, opts.highlightNodeId);
   }).catch(() => {
@@ -1419,7 +1410,7 @@ document.addEventListener('canvas-tab-closed', (/** @type {CustomEvent} */ e) =>
     fmByProject.delete(project);
     seqByProject.delete(project);
     genByProject.delete(project);
-    dropStore(project); // v3：链派生 store 随视图生命周期
+    dropStore(project); // 归档 store 随视图生命周期（详情/面板数据源）
     const timer = reconcileTimers.get(project);
     if (timer) { clearTimeout(timer); reconcileTimers.delete(project); }
   }
@@ -1489,11 +1480,15 @@ function renderFlowMapTabIfNeeded(project) {
   }
 }
 
-/** 节点 WS 事件（{type, project, nodeId, node}）处理：
- *  1) 缓存可用（有快照、已挂载、payload 带节点身份）→ 并入快照 → 链重判
- *     （refreshChains）→ 链齐 → 整链同帧退场动画（§3.4/§6.1b）；链未齐 → 终态卡
- *     原地转终态色卡保留主图 + toast（§6.3）→ 增量 diff 渲染 → 对账兜底；
- *  2) 否则（无缓存 / 未挂载刚激活 / 视图处于非图状态 / 旧帧缺字段）→ 全量拉快照。 */
+/** 节点 WS 事件（{type, project, nodeId, node}）处理（P0 sweep 事实驱动）：
+ *  1) 缓存可用（有快照、已挂载、payload 带节点身份）→ 并入快照 → ingestNodes
+ *     （详情/链上下文数据源，零派生）→ 增量 diff 渲染（出库节点单卡 fm-exit
+ *     淡出）→ 归档面板同步 → nodeRemoved 触发 /archive 防抖 refetch（面板条目
+ *     到达反馈 = refetch 新链 id diff，见 flowMapArchive.fetchRemoteChains）
+ *     → 600ms 对账兜底；
+ *  2) 否则（无缓存 / 未挂载刚激活 / 视图处于非图状态 / 旧帧缺字段）→ 全量拉快照。
+ *  归档资格/时机判定唯一在后端 sweep：前端不再判「链齐」（旧 refreshChains +
+ *  整链同帧退场 animateChainExit 已删），退场 = 出库事实的增量消化。 */
 function handleNodeWsEvent(msg) {
   const type = String(msg?.type || '');
   const project = msg?.project;
@@ -1510,32 +1505,11 @@ function handleNodeWsEvent(msg) {
     const next = { ...fm, nodes, meta: { ...(fm.meta || {}), updatedAt: Date.now() } };
     bumpGen(project);
     fmByProject.set(project, next);
-    // 链重判：返回新完成（含「迟到成员并入已归档链」的重建）链 → 整链退场；
-    // refreshChains 对成员集不变的链幂等跳过（冻结条目保留）。
-    const completedChains = refreshChains(project, next.nodes);
-    const becameTerminal = type !== 'nodeRemoved' && isTerminalStatus(node.status);
-    const nodeArchived = completedChains.some((c) => c.members.some((m) => m.id === node.id));
-    if (completedChains.length > 0 && !prefersReducedMotion() && !viewFilterActiveOnly()) {
-      // P3：「进行中」态终态卡本就不在主图，整链退场动画无对象可播 → 直渲。
-      animateChainExit(project, panes, completedChains, next);
-    } else {
-      renderFlowMapPanes(project, panes, next);
-    }
+    ingestNodes(project, next.nodes, next.chains);
+    renderFlowMapPanes(project, panes, next);
     for (const { pane } of panes) {
       const scroll = pane.querySelector('.team-scroll') || pane.querySelector('.flowmap-view-body');
-      if (scroll) syncArchiveUi(scroll, project, {
-        pulse: completedChains.length > 0,
-        flashChainIds: completedChains.map((c) => c.id),
-      });
-    }
-    if (completedChains.length > 0) {
-      const mainScroll = panes.map((p) => p.pane.querySelector('.team-scroll') || p.pane.querySelector('.flowmap-view-body')).find(Boolean);
-      if (mainScroll) notifyChainArchived(project, completedChains, mainScroll);
-    } else if (becameTerminal && !nodeArchived && !prefersReducedMotion()) {
-      // 链未齐：终态卡保留主图说明 toast（§14-8 拍板 A）
-      const chain = (getStore(project).chainOf.get(node.id)) || null;
-      const mainScroll = panes.map((p) => p.pane.querySelector('.team-scroll') || p.pane.querySelector('.flowmap-view-body')).find(Boolean);
-      if (chain && mainScroll) notifyChainRetained(project, chain, mainScroll);
+      if (scroll) syncArchiveUi(scroll, project);
     }
     scheduleReconcile(project);
     return;
@@ -1552,35 +1526,6 @@ function renderFlowMapPanes(project, panes, fm) {
     renderFlowMap(scroll, visibleFmView(project, fm), project,
       { animateAll: !scroll.querySelector('.solar-canvas') });
   }
-}
-
-/** 整链同帧退场（规格 §3.4/§6.1b）：① 先渲染一帧「状态已更新、成员仍在图」的
- *  中间态（终态色卡 + 边转 delivered）；② 全部成员卡同一帧加 fm-exit（一条整体
- *  动画 350ms，非逐节点滴入）；③ 退场结束后统一渲染（整链移除 + 存活卡补位
- *  400ms 既有曲线 + 条目置顶闪烁 + 徽章脉冲）。期间该项目渲染挂起，防止中途
- *  diff 把正在退场的卡提前拆掉。 */
-function animateChainExit(project, panes, chains, fm) {
-  const memberIds = new Set(chains.flatMap((c) => c.members.map((m) => m.id)));
-  exitAnimating.add(project);
-  for (const { pane } of panes) {
-    const scroll = pane.querySelector('.team-scroll') || pane.querySelector('.flowmap-view-body');
-    if (!scroll) continue;
-    const preView = {
-      ...fm,
-      nodes: (fm.nodes || []).filter((n) => (isVisibleNode(project, n) || memberIds.has(n.id)) && passesViewFilter(n)),
-    };
-    renderFlowMap(scroll, preView, project,
-      { animateAll: !scroll.querySelector('.solar-canvas') });
-    for (const id of memberIds) {
-      const el = scroll.querySelector(`.fm-node[data-node-id="${CSS.escape(id)}"]`);
-      if (el) el.classList.add('fm-exit');
-    }
-  }
-  setTimeout(() => {
-    exitAnimating.delete(project);
-    // 350ms 窗口内可能又并入新事件：读最新缓存渲染（退场链成员已不在可见集）
-    renderFlowMapPanes(project, panes, fmByProject.get(project) || fm);
-  }, 350);
 }
 
 // WS 事件驱动（契约 §2）：四类节点事件全部走增量管线。之前是「任何事件 → 全量
