@@ -609,6 +609,8 @@ export default {
   'chat.errorRecovering.network': 'Network interrupted',
   'chat.errorRecovering.providerDown': 'All model services unavailable',
   'chat.errorRecovering.restartRecovery': 'Previous run interrupted',
+  'chat.errorRecovering.loop': 'loop detected',
+  'chat.loopFrozenStrip': 'Loop detected · the same action kept failing — no auto-recovery, retry or cancel the task',
   'chat.errorRecoveringStrip': 'Recovering · {reason} · {retry}',
   'chat.errorRecoveringStripNoRetry': 'Recovering · {reason}',
   'chat.errorRecoveringHint': 'Recovering · send a message to retry now',
