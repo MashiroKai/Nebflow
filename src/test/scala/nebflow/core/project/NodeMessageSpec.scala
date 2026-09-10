@@ -426,7 +426,9 @@ class NodeMessageSpec extends CatsEffectSuite:
       _ <- seedNode(rt, "n-q", "readback-q", NodeLifecycle.Pending, task = Some("base task"))
       _ <- nodeMessage(rt, "n-q", "读回探针-DELTA")
       q <- rt.store.getNode("n-q").map(_.getOrElse(fail("n-q must exist")))
-      input <- rt.engine.buildInput(q)
+      // 链透传批 P2：buildInput 增 chain 参数（spawn 时刻链快照）——本 spec 节点
+      // 无链（无 seed 边）→ None = 无链上下文块（不影响本测断言面）。
+      input <- rt.engine.buildInput(q, None)
       _ <- system.stopAll.handleErrorWith(_ => IO.unit)
     yield
       assert(input.contains("base task"), "own task present in input")

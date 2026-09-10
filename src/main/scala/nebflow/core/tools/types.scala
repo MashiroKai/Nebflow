@@ -70,6 +70,14 @@ case class ToolContext(
     * 矩阵判定来源；两字段皆空 = 非项目会话（工具未挂载 + 工具内拒绝双保险）。 */
   flowNodeId: Option[String] = None,
   isDispatcher: Boolean = false,
+  /** 链级抽象 P2（20260910 process-doc-chain-attribution spec §9.2 项 1）：本节点
+    * 所属链 id = `chain-<分量最早 createdAt 节点 id>`（FlowMapStore.chainIdOf 判据
+    * 单点，分量成员数 ≥2 才带值——孤立单节点链不带，与 payload chainId 条件键
+    * 同口径）。NodeEngine 在节点 spawn 时一次性取值注入，经 SessionContext →
+    * AgentCore 透传至此。分发器/非项目会话/单节点分量 = None。
+    * 快照语义（§4.1 失败面③）：spawn 后接线并链不改本值 → 节点写文档时标
+    * `chain-source: engine`（快照归属），权威归属留给索引。 */
+  flowChainId: Option[String] = None,
   /** Bash 卡死防护阈值（#391）：默认 Defaults 值，测试可注入小阈值验证
     * 自动转后台/硬超时/停滞窗口；GatewayMain 从 nebflow.json 顶层键覆写。 */
   bashConfig: nebflow.shared.BashResilienceConfig = nebflow.shared.BashResilienceConfig(),

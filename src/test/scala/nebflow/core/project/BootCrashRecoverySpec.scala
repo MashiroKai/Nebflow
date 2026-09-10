@@ -299,7 +299,11 @@ class BootCrashRecoverySpec extends CatsEffectSuite:
     val system = ActorSystem(s"bcr-c2-${scala.util.Random.nextInt(1000000)}")
     val sid = "node-c2aa22cc"
     // 下游 test-agent 的任务文本独特，用于断言其启动输入来自正常投递链（task 全文）
-    val llm = ScriptLlm(last => if last.contains("实现功能 X") then "UPSTREAM-OK" else "DOWNSTREAM-OK")
+    // 链透传批 P2 适配：分流键由「上游 task 文本」改为「上游 result 段标记」——
+    // buildInput 新增的链头含 chainTitle（三级推导：分量 head 成员的 task 首行
+    // 预览），C2 夹具里 head=up-a ⇒ 下游输入会含上游 task 文本「实现功能 X」，
+    // 旧键会把下游误判为上游。语义等价且更贴断言意图：收到上游 result 段 = 下游。
+    val llm = ScriptLlm(last => if last.contains("=== Node up-a ===") then "DOWNSTREAM-OK" else "UPSTREAM-OK")
     for
       res <- mkResources(system, llm.handle)
       _ <- registerRecorder(res, system, "nebula-root")
