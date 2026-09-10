@@ -609,7 +609,11 @@ export function openBgTaskOutput(task) {
   renderTerminalState(cur.initialStatus);
 
   // 焦点管理：聚焦关闭按钮，关闭时归还触发行
-  overlayEl.querySelector('.bgt-close').focus();
+  // guard：querySelector 失配（null）/ 非 HTMLElement 时无害 no-op——旧写法在该
+  // 情形抛 TypeError。instanceof 为运行期窄化守卫（本仓焦点行既有写法，见
+  // chatSearch.js:368），非类型断言逃逸。命中处无变化。
+  const closeBtn = overlayEl.querySelector('.bgt-close');
+  if (closeBtn instanceof HTMLElement) closeBtn.focus();
 
   if (task.kind === 'remote') {
     // 远端任务降级：不轮询，卡内注明暂不支持查看（任务规格允许的降级面）。
