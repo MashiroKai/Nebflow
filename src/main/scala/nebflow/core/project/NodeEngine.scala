@@ -1187,6 +1187,10 @@ class NodeEngine(
           // 阶段 2a 沙箱（§A.6）：dev/修复节点 root=<workspace>/.nebflow/<wt>、
           // merge 节点 root=workspace——物理隔离，最小权限。
           sandboxEnabled = true,
+          // 项目会话信号（沙箱拆围栏批 S1/R8 解耦）：本 spawn 点 = 项目节点会话
+          // ⇒ AGENTS.md 注入判据置位（与沙箱总闸解耦，避免拆围栏时连带关掉项目
+          // 契约注入）。语义见 SessionContext.projectSession。
+          projectSession = true,
           // [2026-09-05 21:05 作者裁定——worktree 节点继承项目沙箱]：沙箱根=
           // 项目工作区根（不收窄到 worktree 自身）——主仓 .git/worktrees/<name>/
           // 元数据在工作区内，git commit / worktree remove 直写不再 EPERM。
@@ -1536,6 +1540,9 @@ class NodeEngine(
           flowChainId = flowChainId,
           sandboxEnabled = true,
           sandboxRoot = Some(workspace),
+          // 项目会话信号（沙箱拆围栏批 S1/R8 解耦）：loop worker/verify 属项目
+          // 节点会话 ⇒ AGENTS.md 注入判据置位（与普通节点 runWithAgent 同款）。
+          projectSession = true,
           initialMessages = initialMessages
         )
       )

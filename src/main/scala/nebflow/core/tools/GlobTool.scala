@@ -1,7 +1,7 @@
 package nebflow.core.tools
 
 import cats.effect.IO
-import nebflow.core.sandbox.{FileSandbox, SandboxPolicy}
+import nebflow.core.sandbox.FileSandbox
 import io.circe.JsonObject
 import io.circe.syntax.*
 
@@ -80,12 +80,13 @@ object GlobTool extends Tool:
   def call(input: JsonObject, ctx: ToolContext): IO[Either[ToolError, String]] = IO.blocking {
     val rawPattern = input("pattern").flatMap(_.asString).getOrElse("")
     val pathOpt = input("path").flatMap(_.asString)
-    // 阶段 2a 沙箱（§A.2/§A.8-8）：相对路径与缺省根按节点 sandbox.root 解析——
-    // 修掉默认根=JVM user.dir 的现状；沙箱关时保持旧行为（user.dir）。
+    // 阶段 2a 沙箱（§A.2/§A.8-8）：相对路径与缺省根按**会话根**解析——修掉默认根
+    // =JVM user.dir 的现状。[沙箱拆围栏批 S1/S2] 判据改取 SandboxPolicy.pathRoot
+    // （会话根信号），不再取 sandbox.enabled（围栏总闸）：闸门退役或回退开关拨动
+    // 都不得把缺省根打回 user.dir（design §4.4 S2 验收）。无会话根时保持旧行为
+    // = user.dir。
     val workDir = System.getProperty("user.dir")
-    val baseDir: os.Path =
-      if ctx.sandbox.enabled then ctx.sandbox.root
-      else os.Path(workDir)
+    val baseDir: os.Path = ToolPathUtil.searchBaseDir(ctx.sandbox, workDir)
 
     // head_limit（20260909 Glob 修复批）：缺省 MAX_RESULTS；非法值给可行动文案
     val headLimit: Either[ToolError, Int] =
@@ -148,11 +149,11 @@ object GlobTool extends Tool:
         FileSandbox.checkReadRoot(ctx, searchRootPath) match
           case Left(err) => Left(err)
           case Right(canonicalRoot) =>
-            // 凭据红线遍历排除（沙箱开时）：搜索根在 ~/.nebflow/agents 子树内 →
-            // rg 排除 agent 私有记忆（memory.md）——文件级负向规则管不住目录遍历。
-            val memExcludes =
-              if ctx.sandbox.enabled then SandboxPolicy.memoryGlobExcludes(canonicalRoot.wrapped) else Nil
-            runGlob(relPattern, canonicalRoot, workDir, memExcludes, dotExplicit, limit)
+            // [沙箱拆围栏批 S1，R3=c1 读侧放开] agents/<agent>/memory.md 的**遍历
+            // 排除已退役**（原 `SandboxPolicy.memoryGlobExcludes` → `--glob
+            // !memory.md`）：读侧不留假闸（排除拦不住 Bash cat，保留只制造「有
+            // 保护」的错觉）。写侧例外仍由 FileSandbox.checkWrite 独立承载。
+            runGlob(relPattern, canonicalRoot, workDir, Nil, dotExplicit, limit)
       }
     }
   }

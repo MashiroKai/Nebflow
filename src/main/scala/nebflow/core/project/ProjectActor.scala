@@ -674,7 +674,10 @@ object ProjectActor:
               // 阶段 2a 沙箱（H-5①）：分发器 root=project workspace——worktree
               // 天然建在 <workspace>/.nebflow/ 内，git worktree add 写主仓 .git
               // 亦在界内。
-              sandboxEnabled = true
+              sandboxEnabled = true,
+              // 项目会话信号（沙箱拆围栏批 S1/R8 解耦）：分发器 = 项目作用域会话
+              // ⇒ AGENTS.md 注入判据置位（接收面 = 项目分发器 + 节点会话不变）。
+              projectSession = true
             )
           )
           // 单次会话观察桥（#28 可观测收尾）：分发器 turn 完成 → 清 registry +

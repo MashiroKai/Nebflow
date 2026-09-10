@@ -78,6 +78,10 @@ object NodeRunner:
       * 自身（主仓 .git/worktrees/<name>/ 元数据可直写）。None = 沿用 projectRoot
       * 推导（旧行为）。 */
     sandboxRoot: Option[String] = None,
+    /** 项目会话信号（沙箱拆围栏批 S1/R8 解耦）：project 节点 spawn（NodeEngine
+      * ×2）/ 分发器 spawn（ProjectActor ×1）置 true——AGENTS.md 注入判据来源，
+      * 与沙箱总闸（sandboxEnabled）解耦。默认 false = 旧行为不变。 */
+    projectSession: Boolean = false,
     /** restart 重建传 false（旧 childSpawnFn 的 AgentActor 不带
       * readTracker/fileHistory，保持行为零变化）。 */
     withTracking: Boolean = true
@@ -115,7 +119,8 @@ object NodeRunner:
           flowNodeName = p.flowNodeName,
           flowChainId = p.flowChainId,
           sandboxEnabled = p.sandboxEnabled,
-          sandboxRoot = p.sandboxRoot
+          sandboxRoot = p.sandboxRoot,
+          projectSession = p.projectSession
         ),
         actorName
       )
