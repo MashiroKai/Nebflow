@@ -1,4 +1,4 @@
-FROM eclipse-temurin:17-jre-alpine
+FROM eclipse-temurin:21-jre-alpine
 
 # L2 rebrand: brand values from repo-root brand.conf — pass them as build
 # args so the jar glob follows the assembly name without editing this file:

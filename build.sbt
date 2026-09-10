@@ -72,6 +72,11 @@ lazy val root = (project in file("."))
 
     // Compiler options
     scalacOptions ++= Seq(
+      // JDK baseline is 21 (see README.md / CONTRIBUTING.md): -release pins
+      // the API surface to 21 so a newer build JDK (e.g. 23) can never
+      // silently reintroduce an API above the declared baseline — that drift
+      // is the mechanism that put HttpClient#close (21+) on a 17 runtime.
+      "-release:21",
       "-encoding", "utf8",
       "-deprecation",
       "-feature",
