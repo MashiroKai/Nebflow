@@ -90,6 +90,11 @@
   text-overflow: ellipsis;
   white-space: nowrap;
 }
+/* N-1 (2026-09-10): the disabled retry button now carries its own reason in its
+   LABEL (chat.errorRetryNoText), so no extra text node is needed inside the
+   strip — an inserted hint span costs the reason line its width (measured: 13 →
+   3 visible chars in-row, or a 3-row strip when wrapped). Label width is
+   comparable, so the strip's geometry is unchanged. */
 .error-retry-btn,
 .error-abandon-btn {
   pointer-events: auto;
@@ -108,8 +113,17 @@
   border: 1px solid rgb(var(--amber) / 0.45);
   color: rgb(var(--amber));
 }
-.error-retry-btn:hover {
+.error-retry-btn:hover:not(:disabled) {
   background: rgb(var(--amber) / 0.26);
+}
+/* N-1 (2026-09-10): disabled retry = visibly inert (the no-op is gone, so the
+   affordance must stop looking actionable). Hover feedback is excluded above —
+   a disabled control that still lights up on hover reads as clickable. */
+.error-retry-btn:disabled {
+  cursor: not-allowed;
+  opacity: 0.45;
+  background: rgb(var(--amber) / 0.08);
+  border-color: rgb(var(--amber) / 0.25);
 }
 .error-abandon-btn {
   background: transparent;
