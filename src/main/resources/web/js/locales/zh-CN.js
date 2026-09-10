@@ -133,8 +133,6 @@ export default {
   'flowmap.detail.notify': '回流通知',
   'flowmap.detail.yes': '是',
   'flowmap.chain.archivedToast': '链「{chain}」整链归档（{n} 节点一起进归档）',
-  'flowmap.chain.retainedToast': '节点已完成 · 链「{chain}」未齐（{done}/{total}）· 终态卡保留主图',
-  'flowmap.chain.retainedAbnormalToast': '链「{chain}」含失败/取消节点（{done}/{total} 终态）· 不自动归档 · 保留主图 24h 待承接',
   // 特殊节点标识徽标（badge 批 2026-09-05）：head 行胶囊文案；追加锚在 flowmap 块
   // 尾部，最小化与同批其他 locales 支的合并冲突面
   'flowmap.flag.merge': '合并',

@@ -1,33 +1,26 @@
-// flowMapArchive.js — Flow Map 整链归档（v3，规格 20260903_flowmap-archive-panel-spec.md）。
+// flowMapArchive.js — Flow Map 归档面板（v4 单源收口：链级抽象 P0，
+//   设计 20260910_flowmap-chain-abstraction-spec.md §4.2/§7-B）。
 //
-// 语义（作者 2026-09-03 20:26 五条反馈，规格 §3/§4/§5/§18；① 于 2026-09-07
-//   「重启死亡现场可见性」批收紧——作者裁定：未完成的不该被归档）：
-//   ① 归档单位 = 任务链：同一次任务触发的节点按 createdAt 派发批次窗口（相邻间隔
-//      ≤120s）聚簇成链；链内全部成员 **completed** → 整链一起进归档（主图同帧集体
-//      淡出由 flowMapTab 的增量管线执行，本模块提供链判定与 newly-completed 检测）。
-//      含 failed/cancelled 成员的链**永不自动归档**——终态色卡保留主图（死亡现场
-//      可见性：重启/看门狗收敛的 failed/cancelled 必须留在图上供承接），24h 后由
-//      后端 TTL sweep + nodeRemoved 既有机制清出主图；链未齐时终态成员同样保留
-//      主图（终态色卡）。
-//   ② 归档面板 = 画布内右上角悬浮钮（元素选择器 .canvas-ref-select 同语言）+ mailbox
-//      式链条目（倒序/独占展开/成员行/hover 联动/Esc 分层关闭/焦点归还）。
-//   ③ 右侧详情面板（z 70 > 面板 60）：主图点节点与链内点成员两路触发；宽视口与归档
+// 语义（P0 单源收口后）：
+//   ① 归档资格判定唯一存在于后端（FlowMapStore sweep，拓扑链口径）：链内全部成员
+//      终态且资格齐备 → 后端 sweep 整链出活动区 → 逐成员 nodeRemoved 广播 → 主图/
+//      任务列表由既有增量管线消化退场。前端零派生零判据——chainEligible 旧判据与
+//      clusterBatches 时间批镜像（CHAIN_BATCH_MS/refreshChains/deriveArchivedIds）
+//      已删除：「同一派生逻辑双端实现必然漂移」的根治（spec §1.2 教训；前端
+//      chainEligible cancelled 判据曾落后后端一代）。
+//   ② 归档面板 = 画布内右上角悬浮钮 + mailbox 式链条目（交互不变，§4/§5）。数据
+//      单源 = 后端 GET flow-map/archive 批次聚合（权威源，重启/刷新后仍在；历史批
+//      id 自然保留，spec C5 零迁移）：拉取时机 = 悬浮层创建首拉 + 面板打开 +
+//      nodeRemoved 防抖。refetch 出现新链 id → 徽章脉冲 + 条目闪烁 + toast
+//      （sweep 事实驱动的到达反馈，取代旧「派生链齐即报」的提前量）。
+//   ③ 链上下文消费（spec §6.2 契约）：节点 payload 条件键 chainId（**可能缺失**
+//      ——读不到 = 孤立节点处理，链 UI 自然降级，勿假设恒有）；快照顶层 chains
+//      旁挂 [{id,title,entries,ends,memberIds}]（title 后端三级推导下发，前端禁再
+//      推导）。本模块消费面 = 详情窗「所属链」行；旧后端（无新键）一切照旧不炸。
+//   ④ 右侧详情面板（z 70 > 面板 60）：主图点节点与链内点成员两路触发；宽视口与归档
 //      面板并排零重叠（dock-left 404px），窄视口同位浮前。
-//   ④ 全局空白点击统一收起（click 判定 + >3px 拖拽豁免 + 节点/面板内部豁免）。
-//   ⑤ 条目 24h TTL：按链完成时间到期清理、徽章同步减、成员从派生输入移除（防链
-//      重判复活）；剩余 <60min 显示「即将过期」。
-//
-// 数据源（裁定④「TTL 分开」批 2026-09-07 起双源合并）：
-//   ① 后端 Flow Archive（权威源，重启/刷新后仍在）：GET flow-map/archive 分批聚合
-//      （服务端按显示窗 24h 过滤）→ remoteChains/remoteMembers；拉取时机 = 悬浮层
-//      创建首拉 + nodeRemoved 防抖 + 面板打开刷新。
-//   ② 前端派生链（在场源）：快照全量节点 + nodeRemoved 墓碑经 clusterBatches 派生——
-//      仍驱动主图整链淡出动画与可见性（「主图立即消失」的当帧承担者），并补齐
-//      「链刚齐、后端 sweep 在途（≤30s）」窗口的面板条目。两源批 id 同源（同一聚簇
-//      算法 + 同一 createdAt 数据），面板条目按 id 去重 remote 优先。
-// 节点字段 = NodePayload.buildNodeJson 单序列化点（规格 §1.4）：createdAt/completedAt/
-// status/hasResult 齐备；载荷无 task 字段 → 链名第①级（task【】前缀）在有 task 时
-// 才启用，产品载荷自然落到第②③级（名称公共前缀/链首名）。
+//   ⑤ 全局空白点击统一收起（click 判定 + >3px 拖拽豁免 + 节点/面板内部豁免）。
+//   ⑥ 条目 24h TTL：服务端显示窗单点把关，本地 purge 为时钟走动期间兜底。
 
 import { esc, fmtTime } from './flowHelpers.js';
 import { t } from './i18n.js';
@@ -50,8 +43,6 @@ export function isTerminalStatus(st) {
   return TERMINAL_STATUSES.has(String(st || ''));
 }
 
-/** 派发批次窗口（§3.5）：同批 createdAt 相邻间隔 ≤120s（实测同批 ≤80s、跨批 ≥3min）。 */
-const CHAIN_BATCH_MS = 120000;
 /** 归档条目 TTL（§5.9）：自链完成时间起保留 24h。 */
 export const ARCHIVE_TTL_MS = 86400000;
 /** 「即将过期」标签窗口：剩余 <60min。 */
@@ -77,25 +68,7 @@ function statusClass(st) {
   return TERMINAL_STATUSES.has(st) ? st : 'active';
 }
 
-/**
- * 链归档资格（作者 2026-09-07 20:38「送达即移」裁定，取代 12:29 占图部分；与后端
- * FlowMapStore.chainArchivable 严格同源）：链内无活跃（running/pending/wiring/blocked）
- * 节点 ∧ 所有 failed/cancelled 成员**已上报**（notifySentAt 非空）。completed 天然满足
- * （无上报要求）；blocked 永不自动归档（必留主图）；running/pending/wiring 为活跃态
- * 非终态 → 链未齐。异常终态未上报（notifySentAt 空）→ 保留主图待上报。
- * @param {ChainMember[]} members
- * @returns {boolean}
- */
-function chainEligible(members) {
-  return members.every((m) => {
-    const st = String(m.status || '');
-    if (st === 'completed') return true;
-    if (st === 'failed' || st === 'cancelled') return m.notifySentAt != null;
-    return false; // running/pending/wiring/blocked
-  });
-}
-
-// ══ 每项目链派生 store（§7.2，随 flowMapTab store 生命周期）═══
+// ══ 每项目归档 store（随 flowMapTab store 生命周期）═══
 
 /**
  * @typedef {Object} ChainMember
@@ -125,9 +98,11 @@ function chainEligible(members) {
  * @property {string=} loopLastVerdict loop 运行态·最近 FAIL 摘要（条件：非空才带）
  * @property {boolean=} merge 合并节点标记（条件：true 才带）
  * @property {boolean=} notifyDispatcher 终态回流通知分发器（条件：true 才带）
+ * @property {string=} chainId 所属链 id（NodePayload 条件键，链级抽象 P0 契约：
+ *   后端拓扑链单源下发；可能缺失——缺失 = 孤立节点，链 UI 自然降级）
  * @property {number=} notifySentAt 异常终态（failed/cancelled）上报分发器时间戳
- *   （NodePayload 条件序列化：已上报才带；前端链归档判据 chainEligible 据此判断
- *   「异常终态已上报可归档」。completed 无上报要求恒缺省。）
+ *   （NodePayload 条件序列化：已上报才带。P0 起归档资格判定唯一在后端，前端
+ *   不再消费此键做链判据。）
  */
 
 /**
@@ -142,18 +117,17 @@ function chainEligible(members) {
 
 /**
  * @typedef {Object} ArchiveStore
- * @property {Chain[]} chains 已归档链（面板条目，冻结成员；completedAt 倒序）
- * @property {Chain[]} bufferChains 链未齐链（≥1 终态成员；面板不显、徽章不计）
- * @property {Map<string, Chain>} chainOf nodeId → 所属链（含 buffer）
- * @property {Set<string>} archivedIds 已归档链成员 id（主图不可见集）
- * @property {Set<string>} expiredIds TTL 到期链成员 id（派生输入排除，防复活 §18-C10）
- * @property {Map<string, ChainMember>} tombstones nodeRemoved 出库的终态节点（§7.2：
- *           终态事实保留参与链齐判定；快照重现即清除）
- * @property {Map<string, ChainMember>} input 最近一次派生输入（详情/链名数据源）
- * @property {Map<string, Chain>} remoteChains 后端 Flow Archive 批次链（裁定④：
- *           归档面板权威数据源，重启/刷新后仍在；链 id 与派生链同源）
+ * @property {Map<string, ChainMember>} input 最近一次快照导入的活动节点
+ *           （详情窗/链名/hover 联动数据源；flowMapTab 快照与 WS 增量路径经
+ *           ingestNodes 汇入）
+ * @property {Map<string, Object>} snapshotChains 后端快照 chains 旁挂
+ *           （chainId → {id,title,entries,ends,memberIds}；旧后端缺键 = 空，
+ *           详情「所属链」行自然降级；title 后端下发，前端零推导）
+ * @property {Map<string, Chain>} remoteChains 后端 Flow Archive 批次链（面板唯一
+ *           数据源，权威、重启/刷新后仍在；历史批 id 自然保留）
  * @property {Map<string, ChainMember>} remoteMembers 后端归档成员（详情/链名查找兜底）
- * @property {boolean} remoteFetched 已成功首拉（悬浮层创建时触发一次）
+ * @property {boolean} remoteFetched 已成功首拉（悬浮层创建时触发一次；首拉为
+ *           toast/flash 基线——存量归档不是「新闻」）
  * @property {boolean} remoteInflight 拉取在途（重入丢弃）
  * @property {number=} remoteTimer nodeRemoved 防抖拉取计时器
  * @property {string | null} expandedEntry 面板展开条目 chainId
@@ -167,13 +141,8 @@ function storeOf(project) {
   let s = stores.get(project);
   if (!s) {
     s = {
-      chains: [],
-      bufferChains: [],
-      chainOf: new Map(),
-      archivedIds: new Set(),
-      expiredIds: new Set(),
-      tombstones: new Map(),
       input: new Map(),
+      snapshotChains: new Map(),
       remoteChains: new Map(),
       remoteMembers: new Map(),
       remoteFetched: false,
@@ -202,9 +171,13 @@ const byCompletedDesc = (/** @type {ChainMember} */ a, /** @type {ChainMember} *
   (b.completedAt || 0) - (a.completedAt || 0);
 
 /**
- * 链名推导（§5.3 确定性三级）：① ≥2 成员 task 含【…】且公共前缀 ≥2 字（产品载荷
- * 暂无 task 字段，出现时自动启用）→ ② 成员名去角色前缀后公共前缀 ≥3 字 → ③ 链首
- * （createdAt 最早）节点名。
+ * 归档链条目显示名（§5.3 确定性三级，**仅 /archive 批次兜底**）：该端点本批零改动、
+ * 载荷无 title 键 → 条目名由成员名/task 推导渲染。这不是链归属判定（归属唯一来源
+ * = 后端）；快照 chains 旁挂（活动区链上下文）的 title 由后端三级推导下发，前端
+ * 禁再推导（spec §6.2 契约）。
+ * 推导规则：① ≥2 成员 task 含【…】且公共前缀 ≥2 字（产品载荷暂无 task 字段，
+ * 出现时自动启用）→ ② 成员名去角色前缀后公共前缀 ≥3 字 → ③ 链首（createdAt
+ * 最早）节点名。
  * @param {ChainMember[]} members createdAt 升序
  * @returns {string}
  */
@@ -259,126 +232,40 @@ function buildChain(id, members) {
 }
 
 /**
- * 批次聚簇（§3.5 算法单点）：成员按 createdAt 升序、相邻间隔 ≤CHAIN_BATCH_MS
- * 归一批。refreshChains（主图归档判定）与 deriveArchivedIds（任务列表主图同源
- * 过滤，2026-09-05 作者裁定）共用本函数——链判定口径严格同源，消费侧不另写派生。
- * @param {ChainMember[]} members 全量成员（活动 + 终态，顺序不限）
- * @returns {{id: string, members: ChainMember[]}[]} 批次数组（批内 createdAt 升序）
- */
-function clusterBatches(members) {
-  const sorted = members.slice().sort(byCreated);
-  /** @type {{id: string, members: ChainMember[]}[]} */
-  const batches = [];
-  let cur = null;
-  let lastT = -Infinity;
-  for (const n of sorted) {
-    const ct = n.createdAt || 0;
-    if (!cur || ct - lastT > CHAIN_BATCH_MS) {
-      cur = { id: 'chain-' + n.id, members: [] };
-      batches.push(cur);
-    }
-    cur.members.push(n);
-    lastT = ct;
-  }
-  return batches;
-}
-
-/**
- * 链派生 + 归档判定（§7.2 单点函数；P2 triggerId 落地后仅此处换精确口径）。
- * 返回本次新完成（含重建）的链——调用方据此驱动整链同帧退场动画。
- * 2026-09-07 20:38「送达即移」：归档资格 = 批内 chainEligible——链内无活跃节点 ∧
- * 所有 failed/cancelled 成员已上报（notifySentAt 非空）。含未上报异常终态 / blocked /
- * 活跃成员的链转入 buffer（保留主图），永不进归档面板——死亡现场留现场待上报。
+ * 快照/WS 增量导入（链级抽象 P0：取代旧 refreshChains 链派生）。**零判定零派生**
+ * ——只把 flowMapTab 已有的快照数据记入 store，供详情窗（openDetail）、链上下文
+ * （chainOfNode）与 hover 联动读取：
+ *   - fmNodes：全量活动节点（快照路径 = fetchFlowMap().nodes；WS 路径 = 事件并入后
+ *     的完整节点集——两路都传全集，直接整体替换）。
+ *   - fmChains：快照顶层 chains 旁挂（§6.2 契约，条件键——可能缺失）。传 undefined
+ *     = 本次载荷未带该键（旧后端/中间态），旁挂缓存原样保留；传数组（含空数组）
+ *     = 整体替换。title 由后端下发，本函数原样存储、零推导。
  * @param {string} project
- * @param {ChainMember[]=} fmNodes 快照全量节点（活动 + 终态）
- * @returns {Chain[]}
+ * @param {ChainMember[]=} fmNodes
+ * @param {any[]=} fmChains 快照 chains 旁挂（undefined = 键缺失，保留现缓存）
  */
-export function refreshChains(project, fmNodes) {
+export function ingestNodes(project, fmNodes, fmChains) {
   const s = storeOf(project);
-  const input = new Map();
-  for (const n of fmNodes || []) {
-    input.set(n.id, n);
-    s.tombstones.delete(n.id); // 快照重现 → 出库墓碑清除
+  if (fmNodes) {
+    const input = new Map();
+    for (const n of fmNodes) input.set(n.id, n);
+    s.input = input;
   }
-  for (const [id, tn] of s.tombstones) {
-    if (!input.has(id)) input.set(id, tn);
-  }
-  s.input = input;
-
-  // 批次聚簇（§3.5，单点 clusterBatches）：全量节点剔除 TTL 到期后按 createdAt 归批
-  const batches = clusterBatches(
-    Array.from(input.values()).filter((n) => !s.expiredIds.has(n.id)));
-
-  const known = new Map(s.chains.map((c) => [c.id, c]));
-  /** @type {Chain[]} */
-  const buffers = [];
-  /** @type {Chain[]} */
-  const newChains = [];
-  s.chainOf = new Map();
-  for (const b of batches) {
-    // 归档资格（2026-09-07 20:38「送达即移」）：chainEligible（无活跃 + 异常终态已上报）
-    // 才归档；含未上报异常终态 / blocked / 链未齐 → 不自动归档（保留主图 = 死亡/待上报
-    // 现场可见性）——两种「不归档」都落 buffer（≥1 终态成员时），终态色卡保留主图。
-    if (!chainEligible(b.members)) {
-      if (b.members.some((m) => TERMINAL_STATUSES.has(String(m.status || '')))) {
-        buffers.push(buildChain(b.id, b.members)); // 不归档链（链未齐/含未上报或未齐异常终态）
+  if (fmChains !== undefined) {
+    const sc = new Map();
+    if (Array.isArray(fmChains)) {
+      for (const c of fmChains) {
+        if (c && c.id) sc.set(String(c.id), c);
       }
-      continue;
     }
-    const prev = known.get(b.id);
-    // 成员集不变（id 集相等，与序无关）→ 幂等跳过（§7.2）：冻结条目按完成时间
-    // 倒序、当前批按创建升序，逐位对比会把每条已归档链误判为重建（每次刷新重复
-    // toast + 已归档成员被退场动画复活回主图）。成员集变化才算重建（迟到成员并入）。
-    const prevIds = prev ? new Set(prev.members.map((m) => m.id)) : null;
-    const identical = !!prevIds && prevIds.size === b.members.length
-      && b.members.every((m) => prevIds.has(m.id));
-    if (identical) continue; // 冻结条目原样保留（成员被服务端 TTL 出库由墓碑补位）
-    const chain = buildChain(b.id, b.members);
-    if (prev) Object.assign(prev, chain); // 迟到成员并入已归档链（重建条目，不重复）
-    else s.chains.push(chain);
-    newChains.push(chain);
+    s.snapshotChains = sc;
   }
-  for (const c of s.chains) {
-    for (const m of c.members) {
-      if (!s.chainOf.has(m.id)) s.chainOf.set(m.id, c);
-    }
-  }
-  for (const c of buffers) {
-    for (const m of c.members) s.chainOf.set(m.id, c);
-  }
-  s.bufferChains = buffers;
-  s.archivedIds = new Set();
-  for (const c of s.chains) {
-    for (const m of c.members) s.archivedIds.add(m.id);
-  }
-  s.chains.sort((a, b) => (b.completedAt || 0) - (a.completedAt || 0) || a.title.localeCompare(b.title));
-  return newChains;
 }
 
 /**
- * 任务列表主图同源过滤（2026-09-05 作者裁定 12:59）：纯派生、零 store 副作用——
- * 给定单项目节点全集，返回「整链已归档」节点 id 集。批次判定与 refreshChains
- * 共用 clusterBatches 单点：批内 chainEligible（无活跃 + 异常终态已上报）→ 整链隐藏；
- * 含未上报异常终态 / blocked / 任一活跃（wiring/pending/running）→ 整链保留
- * （2026-09-07 20:38「送达即移」——未上报异常终态/死亡现场在主图/任务列表保持可见）。
- * 与主图可见判定（isVisibleNode）的差异仅 store 记忆面（主图冻结已归档链可跨快照
- * 保留，本函数只按当前全集派生）——节点全集相同时结果一致。
- * @param {ChainMember[]=} fmNodes 快照全量节点（活动 + 终态，单项目）
- * @returns {Set<string>} 已归档（应隐藏）节点 id 集
- */
-export function deriveArchivedIds(fmNodes) {
-  const archived = new Set();
-  for (const b of clusterBatches(Array.from(fmNodes || []))) {
-    if (chainEligible(b.members)) {
-      for (const m of b.members) archived.add(m.id);
-    }
-  }
-  return archived;
-}
-
-/**
- * TTL 清理（§5.9）：到期链从面板移除 + 徽章同步减 + 成员从派生输入排除（§18-C10）。
- * 裁定④扩展：remoteChains 同款清理（服务端已按 24h 过滤，本地时钟走动期间兜底）。
+ * TTL 清理（§5.9）：到期链从面板移除 + 徽章同步减。P0 单源收口后仅剩 remote 条目
+ * ——服务端按 24h 显示窗过滤是单点把关，本地时钟走动期间在此兜底；「派生输入
+ * 排除防复活」随派生删除一并退役（主图可见性 = 后端活动区快照，无复活面）。
  * @param {string} project
  * @param {number=} now
  * @returns {number} 移除条数
@@ -386,23 +273,9 @@ export function deriveArchivedIds(fmNodes) {
 export function purgeExpired(project, now = Date.now()) {
   const s = storeOf(project);
   let removed = 0;
-  const keep = s.chains.filter((c) => now - (c.completedAt || 0) <= ARCHIVE_TTL_MS);
-  removed += s.chains.length - keep.length;
-  for (const c of s.chains) {
-    if (keep.indexOf(c) !== -1) continue;
-    for (const m of c.members) {
-      s.expiredIds.add(m.id);
-      s.tombstones.delete(m.id);
-    }
-    if (s.expandedEntry === c.id) s.expandedEntry = null;
-  }
-  s.chains = keep;
   for (const [cid, c] of Array.from(s.remoteChains)) {
     if (now - (c.completedAt || 0) <= ARCHIVE_TTL_MS) continue;
-    for (const m of c.members) {
-      s.expiredIds.add(m.id); // 防派生复活（同 §18-C10）
-      s.remoteMembers.delete(m.id);
-    }
+    for (const m of c.members) s.remoteMembers.delete(m.id);
     s.remoteChains.delete(cid);
     if (s.expandedEntry === cid) s.expandedEntry = null;
     removed++;
@@ -422,8 +295,11 @@ function remoteChainOf(batch) {
   return chain;
 }
 
-/** 拉取后端归档批次 → remoteChains/remoteMembers（重启后归档面板的全量数据源）。
- *  失败（未挂载/网络）静默保留现状，下次触发重试；成功后重渲染该项目全部存活层。 */
+/** 拉取后端归档批次 → remoteChains/remoteMembers（归档面板唯一数据源）。
+ *  失败（未挂载/网络）静默保留现状，下次触发重试；成功后重渲染该项目全部存活层。
+ *  到达反馈（P0 sweep 事实驱动，取代旧派生「链齐即报」的提前量）：首拉为基线
+ *  （存量归档不报）；后续 refetch 出现新增链 id → 徽章脉冲 + 条目闪烁 + toast
+ *  ——事实级判定：条目已出现在后端归档里，零误报（abandon 等非归档出库不进此路）。 */
 async function fetchRemoteChains(project) {
   const s = storeOf(project);
   if (s.remoteInflight) return;
@@ -432,19 +308,33 @@ async function fetchRemoteChains(project) {
     const batches = await fetchFlowMapArchive(project);
     if (batches) {
       const now = Date.now();
+      const baseline = s.remoteFetched; // 首拉 = 基线
+      const prevIds = baseline ? new Set(s.remoteChains.keys()) : null;
       s.remoteChains = new Map();
       s.remoteMembers = new Map();
+      /** @type {Chain[]} 新增条目（相对上次成功拉取） */
+      const freshChains = [];
       for (const b of batches) {
         const chain = remoteChainOf(b);
         if (!chain.id || !chain.members.length) continue;
         if (now - (chain.completedAt || 0) > ARCHIVE_TTL_MS) continue; // 本地时钟兜底
         s.remoteChains.set(chain.id, chain);
         for (const m of chain.members) s.remoteMembers.set(m.id, m);
+        if (prevIds && !prevIds.has(chain.id)) freshChains.push(chain);
       }
       s.remoteFetched = true;
+      let liveCtx = null;
       for (const ctx of Array.from(layerCtxs)) {
         if (ctx.project !== project || !ctx.layer.isConnected) continue;
-        renderArchiveUi(ctx);
+        if (!liveCtx) liveCtx = ctx;
+        renderArchiveUi(ctx, freshChains.length
+          ? { pulse: true, flashChainIds: freshChains.map((c) => c.id) }
+          : {});
+      }
+      if (liveCtx) {
+        for (const c of freshChains) {
+          showToast(t('flowmap.chain.archivedToast', { chain: c.title, n: String(c.nodeCount) }), 'info');
+        }
       }
     }
   } finally {
@@ -466,43 +356,52 @@ function scheduleRemoteRefresh(project) {
   }, 1500);
 }
 
-/** 面板条目并集（裁定④）：remoteChains（权威源）∪ 派生 chains（sweep 在途窗口
- *  补齐）——按链 id 去重 remote 优先；completedAt 倒序（与 refreshChains 排序同款）。 */
+/** 面板条目 = remoteChains 单源（P0 单源收口：旧「派生 chains 补 sweep 在途窗口」
+ *  随派生删除退役——条目在后端 sweep 落库 + 本函数 refetch 后出现，晚 ≤30s+防抖，
+ *  换取归档资格判定唯一存在于后端）。completedAt 倒序。 */
 function panelChains(s) {
-  const out = new Map();
-  for (const c of s.chains) out.set(c.id, c);
-  for (const c of s.remoteChains.values()) out.set(c.id, c); // remote 覆盖同 id
-  return Array.from(out.values())
+  return Array.from(s.remoteChains.values())
     .sort((a, b) => (b.completedAt || 0) - (a.completedAt || 0) || a.title.localeCompare(b.title));
 }
 
 /**
- * nodeRemoved 出库墓碑（§7.2）：终态节点出库保留终态事实参与链齐判定；
- * 非终态出库直接消失。裁定④：出库 = 后端归档落盘信号 → 防抖刷新 remote。
+ * nodeRemoved 出库信号 → 防抖刷新 remote（链级 sweep 按成员逐条广播，合并为一次
+ * 拉取）。P0 起出库事实本身即主图/任务列表退场的驱动（增量管线消化），本函数只
+ * 承担面板数据新鲜度。旧墓碑机制（终态事实保留参与链齐判定）随派生删除退役。
  */
-export function recordNodeRemoved(project, node) {
-  const s = storeOf(project);
-  if (node && isTerminalStatus(node.status)) s.tombstones.set(node.id, node);
+export function recordNodeRemoved(project, _node) {
   scheduleRemoteRefresh(project);
 }
 
-/** 主图可见判定（§3.1）：可见 = 非已归档链成员 且 非 TTL 到期链成员。 */
-export function isVisibleNode(project, node) {
-  const s = stores.get(project);
-  if (!s) return true;
-  return !s.archivedIds.has(node.id) && !s.expiredIds.has(node.id);
-}
-
-/** nodeId → 所属链（含链未齐链 + 后端归档链；详情 meta 用）。 */
+/** nodeId → 所属链（详情「所属链」行数据源）。两路查证，**无任何本地派生**：
+ *  ① 后端归档链（remoteChains，成员行点击/已归档节点）；
+ *  ② 活动区链上下文：节点 payload 的 chainId 条件键（可能缺失）→ 快照 chains 旁挂
+ *     摘要（spec §6.2 契约；title/成员集后端下发，缺旁挂或缺 chainId = null，
+ *     详情链行自然降级——旧后端形态恒走此降级，零 crash）。 */
 export function chainOfNode(project, nodeId) {
   const s = stores.get(project);
   if (!s) return null;
-  const derived = s.chainOf.get(nodeId);
-  if (derived) return derived;
   for (const rc of s.remoteChains.values()) {
     if (rc.members.some((m) => m.id === nodeId)) return rc;
   }
-  return null;
+  const n = s.input.get(nodeId);
+  const chainId = n && n.chainId ? String(n.chainId) : '';
+  if (!chainId) return null;
+  const sc = s.snapshotChains.get(chainId);
+  if (!sc) return null;
+  const memberIds = (Array.isArray(sc.memberIds) ? sc.memberIds : []).map(String);
+  const members = memberIds
+    .map((id) => s.input.get(id) || s.remoteMembers.get(id))
+    .filter(Boolean)
+    .sort(byCompletedDesc);
+  return {
+    id: chainId,
+    title: String(sc.title || ''),
+    members,
+    nodeCount: memberIds.length || members.length,
+    status: chainStatusOf(members),
+    completedAt: members.reduce((mx, m) => Math.max(mx, m.completedAt || 0), 0),
+  };
 }
 
 // ══ 悬浮层 UI（悬浮钮 + 归档面板 + 右侧详情，§4/§5）═══
@@ -1063,7 +962,6 @@ function highlightDownstream(/** @type {LayerCtx} */ ctx, /** @type {string | nu
   if (!on || !nodeId) return;
   const s = storeOf(ctx.project);
   for (const n of s.input.values()) {
-    if (!isVisibleNode(ctx.project, n)) continue;
     const hit = (Array.isArray(n.in) && n.in.includes(nodeId))
       || (Array.isArray(n.deps) && n.deps.includes(nodeId))
       || n.out === nodeId;
@@ -1076,13 +974,11 @@ function highlightDownstream(/** @type {LayerCtx} */ ctx, /** @type {string | nu
 function highlightChainDownstream(/** @type {LayerCtx} */ ctx, /** @type {string} */ chainId, /** @type {boolean} */ on) {
   if (!on) { highlightDownstream(ctx, null, false); return; }
   const s = storeOf(ctx.project);
-  const chain = s.chains.find((c) => c.id === chainId) || s.bufferChains.find((c) => c.id === chainId)
-    || s.remoteChains.get(chainId); // 裁定④：后端归档链条目 hover 联动同款
+  const chain = s.remoteChains.get(chainId); // 面板条目 = remote 单源（P0）
   if (!chain) return;
   clearAdjHighlight(ctx);
   const memberIds = new Set(chain.members.map((m) => m.id));
   for (const n of s.input.values()) {
-    if (!isVisibleNode(ctx.project, n)) continue;
     const refs = [...(Array.isArray(n.in) ? n.in : []), ...(Array.isArray(n.deps) ? n.deps : [])];
     if (!refs.some((x) => memberIds.has(x))) continue;
     const card = ctx.container.querySelector(`.fm-node[data-node-id="${CSS.escape(n.id)}"]`);
@@ -1267,35 +1163,10 @@ if (typeof ResizeObserver === 'undefined') {
   });
 }
 
-// ── 链事件通知（flowMapTab 整链退场/链未齐保留时调用）─────────────
-/** 链保留提示 toast（§6.3/§14-8 拍板 A：说明终态卡为何保留主图）。
- *  2026-09-07 状态保真批：含 failed/cancelled 成员的链永不自动归档——toast 不再
- *  称「链未齐」（暗示还在等齐），改报「含失败/取消 · 不自动归档 · 24h 后清理」。 */
-export function notifyChainRetained(project, chain, container) {
-  const done = chain.members.filter((m) => TERMINAL_STATUSES.has(String(m.status || ''))).length;
-  const abnormal = chain.members.some((m) => m.status === 'failed' || m.status === 'cancelled');
-  const ctx = findCtx(container, project);
-  if (!ctx) return;
-  showToast(t(abnormal ? 'flowmap.chain.retainedAbnormalToast' : 'flowmap.chain.retainedToast', {
-    chain: chain.title, done: String(done), total: String(chain.nodeCount),
-  }), 'info');
-}
-
-/** 整链归档提示 toast（§3.4 增量过渡的口播伴随）。 */
-export function notifyChainArchived(project, chains, container) {
-  const ctx = findCtx(container, project);
-  if (!ctx) return;
-  for (const c of chains) {
-    showToast(t('flowmap.chain.archivedToast', { chain: c.title, n: String(c.nodeCount) }), 'info');
-  }
-}
-
-function findCtx(container, project) {
-  for (const ctx of layerCtxs) {
-    if (ctx.project === project && ctx.container === container && ctx.layer.isConnected) return ctx;
-  }
-  return container && container.isConnected ? ctxFor(container, project) : null;
-}
+// ── 链事件通知（P0 单源收口后仅剩「到达反馈」——已上移 fetchRemoteChains
+//    refetch diff：条目出现在后端归档才报，资格/时机判定全部在后端）。
+//    旧 notifyChainArchived/notifyChainRetained（派生链齐即报 + 保留判据 toast）
+//    随前端派生删除退役。
 
 // ── TTL 周期检查（§5.9：30s 轮询；快照导入触发在 flowMapTab 播种路径）─────
 setInterval(() => {
