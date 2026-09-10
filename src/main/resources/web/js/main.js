@@ -2973,6 +2973,11 @@ function updateBgTasksUI(targetView) {
   } else {
     el.classList.add('hidden');
     el.setAttribute('aria-expanded', 'false');
+    // §3 invariant (badge count == listed rows): the TTL sweep now drives the
+    // count to 0 as a NORMAL path (a lone terminal row expiring), so the stale
+    // last value must be zeroed — otherwise the hidden badge keeps counting a
+    // row that no longer exists (0 rows ⇔ badge "0", hidden).
+    countEl.textContent = '0';
     if (dropdown) dropdown.classList.add('hidden');
     stopBgTimer();
   }
