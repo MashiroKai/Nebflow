@@ -616,6 +616,8 @@ export default {
   'chat.errorRecoveringHint': 'Recovering · send a message to retry now',
   'chat.errorRecoveringRetryCount': 'retry {n}',
   'chat.errorRetry': 'Retry now',
+  'chat.errorRetryNoText': 'Nothing to resend',
+  'chat.errorRetryNoTextTitle': 'This session has no text message you sent, so there is nothing to resend. Type in the input box and send to wake it.',
   'chat.errorAbandon': 'Cancel task',
   'chat.errorRestartContinue': 'Restart & continue',
   'chat.errorWait': 'Keep waiting',
