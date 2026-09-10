@@ -345,11 +345,13 @@ final class ShellSession private (
           bundled
         else new ProcessBuilder(bashPath, "-s")
       else new ProcessBuilder(bashPath, "-c", command)
-    // 阶段 2a 沙箱（§A.4-3）：macOS 上经 Seatbelt 包装——/usr/bin/sandbox-exec
-    // 硬编码绝对路径 + /bin/bash（防 PATH 注入），策略随 fork/exec 传播到全部
-    // 子进程树。后端不可用（probe 失败）时 wrap=None → 裸跑：fail-closed 拦截
-    // 在 BashTool 入口（SANDBOX_UNAVAILABLE），显式降级时带 [unsandboxed] 前缀，
-    // 均不会静默走到这里。
+    // 执行环境 provider 接缝（design §1.1 F11：**接缝不是围栏，是接入点**）。
+    // [沙箱拆围栏批 S3，2026-09-10] 缺省 provider=host ⇒ SandboxRuntime.current =
+    // `SandboxBackend.Host`，wrap 恒 None ⇒ 走 plain（宿主路径**不再包裹**）；
+    // provider=local-process ⇒ Seatbelt 后端，wrap 返回 sandbox-exec 包裹 argv
+    // （§4.5 回退点，切 provider 即恢复）。**本调用点保留为唯一 wrap 接缝**：容器/VM
+    // 执行面的 Bash 命令未来必须从同一处注入（「一处切换、全量生效」的机械支点）。
+    // 非宿主 provider 若不可用，BashTool.call 已在入口显式失败（绝不静默回落宿主）。
     val pb: ProcessBuilder =
       if !isWindows && sandbox.exists(_.enabled) then
         nebflow.core.sandbox.SandboxRuntime.current.wrap(List("bash", "-c", command), sandbox.get) match

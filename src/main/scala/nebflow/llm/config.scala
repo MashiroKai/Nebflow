@@ -224,9 +224,11 @@ case class NebflowServiceConfig(
     * toolResultTtl 节原样 JSON——ToolResultTtlConfig.load fail-safe 解析（非法
     * 配置视为关闭）。默认关（enabled=false）。request-only 清理，会话文件不动。 */
   toolResultTtl: Option[io.circe.Json] = None,
-  /** 阶段 2a 沙箱（§G.1）：顶层 sandbox 节原样 JSON——SandboxConfig.load
-    * fail-safe 解析（absent/非法 → enabled=true 默认）。enabled=false 一键回
-    * 旧行为（代码路径保留一个版本周期，§G.1 回滚）。 */
+  /** 执行环境 provider 配置节（§G.1；拆围栏批 S3 起语义 = design §4.2 的
+    * `sandbox.provider`）：顶层 sandbox 节原样 JSON——SandboxConfig.load fail-safe
+    * 解析（absent → 缺省 provider=host / enabled=true）。provider 取值非法或
+    * container/auto 未实现 ⇒ 显式失败（不静默回落宿主执行）；enabled=false 保留为
+    * 旧行为回退点（§4.5）。 */
   sandbox: Option[io.circe.Json] = None
 )
 
