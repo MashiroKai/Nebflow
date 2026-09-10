@@ -329,6 +329,15 @@ function clearBusyFor(msg) {
       fv.dom.inputBar.classList.remove('frozen', 'frozen-error');
       delete fv.dom.inputBar.dataset.frozen;
       delete fv.dom.inputBar.dataset.errorFrozen;
+      // F-1 (2026-09-10): removing the class is NOT enough. setFrozenBarState(v,
+      // true) is what disabled #input + #voice-btn/#attach-btn/#send-btn/
+      // #stop-btn, and setFrozenBarState(v, false) is the ONLY place those
+      // attributes are removed. Without this call the bar looks unfrozen while
+      // every control stays disabled, and applyLocalFreeze's self-heal branch
+      // (else-if requires bar.classList.contains('frozen')) can never fire
+      // because we just removed that class → the composer stays dead until a
+      // reload. Class and attributes must always be cleared together.
+      setFrozenBarState(fv, false);
       // Error-recovery family: also drop the amber reason strip (UI-7 cleanup).
       clearErrorFrozen(sid);
       // Restore the mode-appropriate placeholder when the frozen session is
@@ -403,6 +412,15 @@ onMessage('frozen', (msg) => {
       if (isError) {
         // Amber family: .frozen-error (never .frozen — UI-1 mutex).
         applyErrorFrozen(v, { sessionId: sid, reason, retryCount: msg.retryCount, escalation: msg.escalation });
+        // Same defect family as F-1 above: applyErrorFrozen only swaps the
+        // CLASS. If a schedule-window tick had disabled this bar moments
+        // earlier (window active + the session was briefly idle), removing
+        // '.frozen' leaves the disabled attributes behind with no class left
+        // for applyLocalFreeze to heal — the amber bar is then visually
+        // "type to retry" while the composer is dead. The error family must
+        // always hand back an enabled composer (retry button + typing are its
+        // two exits).
+        setFrozenBarState(v, false);
       } else {
         v.dom.inputBar.classList.add('frozen');
         v.dom.inputBar.dataset.frozen = 'true';

@@ -608,11 +608,14 @@ export default {
   'chat.micOrb.offline': '离线',
   /* Error-recovery family (frozen-error-recovery plan §4.3/§4.4) — amber
      "错误恢复中" language, never "已冻结". Reason keys map to FreezeReason
-     wire names (llm-transient / network / provider-down / restart-recovery). */
+     wire names (llm-transient / network / provider-down / restart-recovery /
+     loop). */
   'chat.errorRecovering.llmTransient': 'LLM 服务暂不可用',
   'chat.errorRecovering.network': '网络中断',
   'chat.errorRecovering.providerDown': '所有模型服务暂不可用',
   'chat.errorRecovering.restartRecovery': '上次运行被中断',
+  'chat.errorRecovering.loop': '循环检测',
+  'chat.loopFrozenStrip': '循环检测暂停 · 同一操作重复失败，不会自动恢复，请重试或取消任务',
   'chat.errorRecoveringStrip': '错误恢复中 · {reason} · {retry}',
   'chat.errorRecoveringStripNoRetry': '错误恢复中 · {reason}',
   'chat.errorRecoveringHint': '错误恢复中 · 输入消息可立即重试',
