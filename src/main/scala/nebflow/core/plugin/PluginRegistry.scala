@@ -69,7 +69,8 @@ object PluginRegistry:
     * （插件继续装载其余组件，§6.2 边界）。 */
   val CanonicalMcpSchema = "https://agent-plugins.org/schemas/1.0.0/mcp.schema.json"
 
-  /** §5.2 闭合 schema 十字段（其余能力走 extensions 命名空间）。 */
+  /** §5.2 闭合 schema 十一字段（capability 系 dispatcher-ctx 批新增后注释未同步，
+    * 2026-09-10 顺手修正；其余能力走 extensions 命名空间）。 */
   private val KnownManifestKeys = Set(
     "$schema", "name", "version", "description", "capability", "author",
     "homepage", "repository", "license", "keywords", "extensions")
