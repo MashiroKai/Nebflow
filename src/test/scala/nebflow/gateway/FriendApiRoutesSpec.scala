@@ -156,7 +156,7 @@ class FriendApiRoutesSpec extends CatsEffectSuite:
   private def withMockServer[A](use: (String, NeblinkClient, FriendService) => IO[A]): IO[A] =
     IO.delay(startMockServer).flatMap { (server, url) =>
       val client = new NeblinkClient(NeblinkServerConfig(url = url, networkId = "n1", secret = "s"), 8080)
-      use(url, client, new FriendService(client, AgentMessagingConfig()))
+      use(url, client, new FriendService(IO.pure(Some(client)), AgentMessagingConfig()))
         .guarantee(IO.blocking(server.stop(0)))
     }
 
@@ -209,7 +209,7 @@ class FriendApiRoutesSpec extends CatsEffectSuite:
 
   test("auth gate: no token -> 403") {
     // No server needed: withAuth rejects before the friendService is touched.
-    val fs = new FriendService(mkClient("http://127.0.0.1:1"), AgentMessagingConfig())
+    val fs = new FriendService(IO.pure(Some(mkClient("http://127.0.0.1:1"))), AgentMessagingConfig())
     runWith(Some(fs))(Request[IO](Method.GET, Uri.unsafeFromString("/friends")))
       .map(resp => assertEquals(resp.status, Status.Forbidden))
   }
@@ -516,6 +516,45 @@ class FriendApiRoutesSpec extends CatsEffectSuite:
           assert(body.hcursor.downField("error").as[String].exists(_.contains("not_blocker")))
         )
       }
+    }
+  }
+
+  test("GET /friends upstream auth-rejection 403 -> 502 (F4: load-failure ≠ empty list)") {
+    // F4（20260910 好友搜索批）：好友列表 REST 直通面——上游会话失效形态
+    // （403 Missing or invalid token，one-live-session kick 后的持续 403）
+    // 必须以 502 到达前端，前端才能区分「空列表」与「加载失败」；此前的
+    // 折叠空列表语义只剩后台刷新链（FriendService.refreshFriends）。
+    // 本 client 不带 identity（自愈关闭）——F4 穿透与 F2 自愈分别钉。
+    val server = HttpServer.create(new InetSocketAddress("127.0.0.1", 0), 0)
+    def respond(ex: HttpExchange, status: Int, body: String): Unit =
+      ex.getRequestBody.transferTo(java.io.OutputStream.nullOutputStream())
+      ex.getRequestBody.close()
+      val bytes = body.getBytes(StandardCharsets.UTF_8)
+      ex.getResponseHeaders.add("Content-Type", "application/json")
+      ex.sendResponseHeaders(status, bytes.length.toLong)
+      ex.getResponseBody.write(bytes)
+      ex.getResponseBody.close()
+    server.createContext(
+      "/api/device/login",
+      ex => respond(ex, 200, """{"token":"tok-kicked","networkId":"n1","deviceId":"d1","peers":[]}""")
+    )
+    server.createContext(
+      "/api/friends",
+      ex => respond(ex, 403, """{"error":"Missing or invalid token"}""")
+    )
+    server.start()
+    val url = s"http://127.0.0.1:${server.getAddress.getPort}"
+    val client  = new NeblinkClient(NeblinkServerConfig(url = url, networkId = "n1", secret = "s"), 8080)
+    val fs      = new FriendService(IO.pure(Some(client)), AgentMessagingConfig())
+    val checked = client.login("d1", "dev", "macos", Nil) *> runWith(Some(fs))(
+      authed(Request[IO](Method.GET, Uri.unsafeFromString("/friends")))
+    ).guarantee(IO.blocking(server.stop(0)))
+
+    checked.flatMap { resp =>
+      assertEquals(resp.status, Status.BadGateway)
+      resp.as[Json].map(body =>
+        assert(body.hcursor.downField("error").as[String].exists(_.contains("Missing or invalid token")))
+      )
     }
   }
 

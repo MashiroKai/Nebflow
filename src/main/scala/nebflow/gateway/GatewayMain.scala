@@ -668,7 +668,10 @@ object GatewayMain extends IOApp:
                                                     cfg.port.value,
                                                     IO.pure(neblinkService.neblinkConfig.unsafeRunSync().neblinkServer.map(_.url).getOrElse(Branding.serverUrl))
                                                   )
-                                                )
+                                                ),
+                                                // F2 (2026-09-10 friend-search batch): identity source
+                                                // for the API-level 401/403 session self-heal.
+                                                identity = Some(neblinkService.identity)
                                               )
                                             )
                                           case _ => None
@@ -678,17 +681,31 @@ object GatewayMain extends IOApp:
                                       neblinkService.setPresenceService(presenceService)
                                       // Register remote executor for cross-device tool dispatch (P2P + relay fallback)
                                       RemoteExecutor.initialize(neblinkService, dispatcher, neblinkClient)
-                                      // Start relay tunnel if NebLink Server is configured — maintains a
-                                      // persistent WS to the server so cross-network relay-exec requests
-                                      // can reach this device.
+                                      // F1 (2026-09-10 friend-search incident): discovery is the
+                                      // AUTHORITATIVE live-client holder (clientRef, swapped by
+                                      // enrollment hot-swap) — construct it BEFORE every consumer and
+                                      // hand out reads of it, so all components share one client
+                                      // instance. Previously FriendService + relay tunnel captured the
+                                      // constructor-time client: after a UI re-login/账号切换 the
+                                      // server's one-live-session policy kicked that client's session
+                                      // and FriendService 403'd until process restart (search → 502).
+                                      val tsDiscovery = new nebflow.neblink.NeblinkDiscovery(
+                                        neblinkService,
+                                        cfg.port.value,
+                                        presenceService,
+                                        neblinkClient
+                                      )
+                                      neblinkDiscoveryHolder.set(Some(tsDiscovery))
                                       // A2A 一期：FriendService 基于 NeblinkClient（好友/消息 REST +
                                       // 事件去重/限速/未读 cursor）。WS 事件回调广播 friendEvent 给前端
                                       // （messages.js 监听）；agentMessaging 配置来自 neblinkConfig。
+                                      // F1: FriendService 每次调用读 discovery.currentClient（权威
+                                      // live client），hot-swap 后自动跟随新实例。
                                       val clientWithFriends: Option[(nebflow.neblink.NeblinkClient, nebflow.neblink.FriendService)] =
                                         neblinkClient.map { client =>
                                           val amConfig = neblinkService.neblinkConfig.unsafeRunSync().agentMessaging
                                           val friendService = new nebflow.neblink.FriendService(
-                                            client,
+                                            tsDiscovery.currentClient,
                                             amConfig,
                                             onFriendEvent = Some { ev =>
                                               // Frontend contract (messages.js onMessage('friend_event')):
@@ -716,7 +733,10 @@ object GatewayMain extends IOApp:
                                         val relayTunnel = new nebflow.neblink.NeblinkRelayTunnel(
                                           neblinkService,
                                           serverUrl,
-                                          () => client.currentSessionToken,
+                                          // F1: read the authoritative client live on each reconnect —
+                                          // a constructor-time closure kept returning a kicked session.
+                                          () =>
+                                            tsDiscovery.currentClient.map(_.flatMap(_.currentSessionToken)),
                                           friendService = Some(friendService)
                                         )(dispatcher)
                                         neblinkService.setRelayTunnel(relayTunnel)
@@ -728,13 +748,6 @@ object GatewayMain extends IOApp:
                                         dispatcher.unsafeRunAndForget(friendService.refreshAll())
                                       }
                                       // Discovery service — uses NebLink Server for discovery
-                                      val tsDiscovery = new nebflow.neblink.NeblinkDiscovery(
-                                        neblinkService,
-                                        cfg.port.value,
-                                        presenceService,
-                                        neblinkClient
-                                      )
-                                      neblinkDiscoveryHolder.set(Some(tsDiscovery))
                                       neblinkService.setDiscoveryHook(
                                         tsDiscovery.discoverCycle
                                           .handleErrorWith(e =>
