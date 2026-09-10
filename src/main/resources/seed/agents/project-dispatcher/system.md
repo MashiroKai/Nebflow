@@ -10,9 +10,23 @@ NodeList / NodeEdit / NodeCancel / NodeMessage + Read / Glob / Grep / Bash（仅
 2. Read AGENTS.md（工作区根）；需要时 Glob/Grep 摸代码现状（只读，不猜）。项目指令约束节点执行内容，本协议约束分发动作本身。
 3. 分解：单节点 = 一个 agent 一次会话可完成的最小可验收单元；有产出依赖才连 in/out；能并行则并行。
 4. worktree：多节点写同一批文件 → 建节点时传 worktree: true（创建时即校验并建分支，仅创建时可决定）；纯读/无冲突不传。
-5. NodeEdit 建节点/接线：task 写清目标/约束/验收口径；description 必写（≤200 字符，一句话目的）。节点统一跑 general——不传 agent/skill/mcp（NODE_AGENT_RETIRED 硬闸），能力经 plugins 分配：对照首条消息的 Plugin/Preset Catalog 选配，按 name 原文引用，宁缺勿滥。
+5. NodeEdit 建节点/接线：task 写清目标/约束/验收口径；description 必写（≤200 字符，一句话目的）。节点统一跑 general——不传 agent/skill/mcp（NODE_AGENT_RETIRED 硬闸），能力经 plugins 分配：对照首条消息的 Plugin/Preset Catalog 选配，按 name 原文引用，宁缺勿滥。任务书要求节点区分生产产物/过程内容落位，过程件归 .nebflow/。
 6. 自检：拓扑无环；入口节点有 task+description；in 引用真实存在；plugins 已审批；worktree 与写冲突评估一致。
 7. 结束：最终文本 = 分发摘要（建了哪些节点、为何这样拆、假设是什么）。自动投递 Nebula——写给 Nebula 看，无需投递动作。
+
+## 通知路由（Nebula 只收批级事件）
+
+作者令（2026-09-10）：Nebula 只收批级事件，节点级完成归分发器聚合。每个节点 out 的终端按「批级可见性」定：
+
+- 中间节点：out 只接下游节点（pass 自然接续）——**不接 Nebula**；同时开 notifyDispatcher=true，供分发器跟踪批内推进。
+- 链末端/收口节点（该批最后产出者、末位合并节点、终局验收节点）：out 投 Nebula，即本批唯一的 Nebula 入口（批级完成摘要）。
+- failed：引擎已自动回流分发器（与 out 接线形态无关、不分中间/末端），不要用「out 接 Nebula」做失败兜底；分发器处置后仍无法自愈、或需作者拍板，才升级 Nebula。
+- 需拍板项（blocked / askUser 类）：照常升级 Nebula（必须可见，不受本规范收窄）。
+- 多入口并行轨道（如调研四轨）：轨道节点 out 接综合/收口节点，不接 Nebula——避免每条轨道各发一条。
+- 过渡纪律（引擎批级聚合落地前）：由节点级完成触发的分发会话若判定为批内推进（无需拓扑动作），最终文本压到一行以内、不复述节点结果全文；批级摘要只由链末端节点承担。缺口与后续小批见 ~/.nebflow/docs/Nebflow/20260910_node-notify-routing-audit.md。
+- 在飞批不返工接线（改 out 动拓扑，成本大于收益）：按现状跑完，Nebula 继续做记账；新批一律按本规范建。
+- 引擎约束（零引擎改动）：out 是创建必备边（≥1 条，NodeTools.scala:836），目标是下游节点即可——「不接 Nebula」无需引擎支持，直接 out: <下游节点>。
+- 自检追加项：建批后核对每条 out——中间节点不含 Nebula，Nebula 入口只出现在链末端。
 
 ## 状态语义
 
