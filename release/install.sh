@@ -40,7 +40,7 @@ COS_DEPS_BASE="${COS_BASE_CN}/deps"
 
 SCRIPT_VERSION="2.0.0"
 RG_VERSION="14.1.1"
-JDK_MAJOR_REQUIRED=17   # runtime floor; fresh installs target OpenJDK 21
+JDK_MAJOR_REQUIRED=21   # runtime floor
 ERR_VERSION=10
 ERR_JAVA=11
 ERR_JAR=12
@@ -933,7 +933,31 @@ create_wrapper() {
     cat > "${wrapper}" << WRAPPER
 #!/bin/bash
 SCRIPT_DIR="\$(cd "\$(dirname "\$0")" && pwd)"
-JAVA_BIN="\$(command -v java || echo "\$HOME/${HOME_DIR}/jdk-21/bin/java")"
+# Java selection: the pinned JDK (jdk-21) wins; PATH java is only a fallback.
+JAVA_BIN="\$HOME/${HOME_DIR}/jdk-21/bin/java"
+[ -x "\$JAVA_BIN" ] || JAVA_BIN="\$(command -v java || true)"
+java_hint() {
+    case "\$(uname -s)" in
+        Darwin) echo "  Install: brew install openjdk@21" >&2 ;;
+        Linux)  echo "  Install: sudo apt install openjdk-21-jdk-headless  (dnf/yum: java-21-openjdk, apk: openjdk21)" >&2 ;;
+        *)      echo "  Install: https://adoptium.net/temurin/releases/?version=21" >&2 ;;
+    esac
+    echo "  Then re-run: ${WRAPPER_NAME} <command>" >&2
+    }
+if [ -z "\$JAVA_BIN" ]; then
+    echo "ERROR: Java ${JDK_MAJOR_REQUIRED:-21}+ not found (no pinned JDK, none on PATH)." >&2
+    java_hint
+    exit ${ERR_JAVA:-11}
+fi
+JAVA_MAJOR="\$("\$JAVA_BIN" -version 2>&1 | awk -F '"' '/version/ {print \$2}' | cut -d'.' -f1)"
+[ "\$JAVA_MAJOR" = "1" ] && JAVA_MAJOR="\$("\$JAVA_BIN" -version 2>&1 | awk -F '"' '/version/ {print \$2}' | cut -d'.' -f2)"
+case "\$JAVA_MAJOR" in ''|*[!0-9]*) JAVA_MAJOR=0 ;; esac
+if [ "\$JAVA_MAJOR" -lt ${JDK_MAJOR_REQUIRED:-21} ]; then
+    echo "ERROR: Java ${JDK_MAJOR_REQUIRED:-21}+ required, found \$("\$JAVA_BIN" -version 2>&1 | head -n1)" >&2
+    echo "       launcher java: \$JAVA_BIN" >&2
+    java_hint
+    exit ${ERR_JAVA:-11}
+fi
 JAR=\$(ls -1 "\${SCRIPT_DIR}"/${LOWER_NAME}-assembly-*.jar 2>/dev/null | head -n1)
 if [ -z "\$JAR" ]; then
     echo "ERROR: ${PRODUCT_NAME} JAR not found in \${SCRIPT_DIR}"
@@ -1016,8 +1040,33 @@ stage_config() {
 
 # ---- [6/6] done -----------------------------------------------------------
 
+# Major version of the java the generated launcher will actually use (pinned
+# jdk-21 first, PATH java as fallback); prints nothing when none is usable.
+# Mirrors the resolution order written into the wrapper by create_wrapper().
+_launcher_java_major() {
+    local java_bin="${HOME}/${HOME_DIR}/jdk-21/bin/java"
+    [ -x "$java_bin" ] || java_bin="$(command -v java 2>/dev/null || true)"
+    [ -n "$java_bin" ] || return 0
+    local v
+    v=$("$java_bin" -version 2>&1 | awk -F '"' '/version/ {print $2}' | cut -d'.' -f1)
+    if [ "$v" = "1" ]; then
+        v=$("$java_bin" -version 2>&1 | awk -F '"' '/version/ {print $2}' | cut -d'.' -f2)
+    fi
+    case "$v" in ''|*[!0-9]*) return 0 ;; esac
+    printf '%s' "$v"
+}
+
 stage_finish() {
     stage_hdr 6 "Done!"
+    # Post-install re-verification: never print a success line when the java the
+    # launcher will use is below the floor (this used to be a silent success).
+    local launcher_major
+    launcher_major=$(_launcher_java_major)
+    if [ -z "$launcher_major" ] || [ "$launcher_major" -lt "$JDK_MAJOR_REQUIRED" ]; then
+        log_err "Java ${JDK_MAJOR_REQUIRED}+ is required, but the launcher resolves to: ${launcher_major:-none}."
+        java_manual_hint
+        exit $ERR_JAVA
+    fi
     echo ""
     echo "[ok] ${PRODUCT_NAME} v${VERSION} installed."
     echo "     Run: ${WRAPPER_NAME} --help"
