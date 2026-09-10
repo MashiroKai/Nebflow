@@ -11,6 +11,9 @@
 # bundle detection); under the script/jar layout it falls back to the classic
 # `java -jar` template - no jpackage launcher hard-coupling, backward
 # compatible, no runtime changes needed for the freeze.
+# [2026-09-10] JDK baseline 17 -> 21 (declaration only): the requirement text
+# below plus a build-machine JDK assertion before jlink (A5 §4.3). Bundle
+# layout and packaging flow unchanged.
 # ----------------------------------------------------------------------------
 # Build a macOS .dmg of Nebflow from the sbt-assembly fat jar via jpackage.
 #
@@ -18,7 +21,7 @@
 #   --jar-dir  directory containing ${LOWER_NAME}-assembly-*.jar (default target/scala-3.5.2)
 #   --out      output directory for the .dmg (default build/dist)
 #
-# Requirements: JDK 17+ with jpackage on PATH (or JAVA_HOME set), fat jar built
+# Requirements: JDK 21+ with jpackage on PATH (or JAVA_HOME set), fat jar built
 # (sbt assembly). No signing — jpackage ad-hoc signs automatically. First launch
 # on macOS 15+ requires System Settings > Privacy & Security approval.
 #
@@ -53,7 +56,7 @@ if [[ -z "$JAR" ]]; then
   exit 1
 fi
 if ! command -v jpackage >/dev/null 2>&1; then
-  echo "ERROR: jpackage not on PATH — install JDK 17+ or set JAVA_HOME." >&2
+  echo "ERROR: jpackage not on PATH — install JDK 21+ or set JAVA_HOME." >&2
   exit 1
 fi
 
@@ -80,6 +83,25 @@ echo "  VERSION:    $RAW_VERSION (app-version $APP_VERSION)"
 ICON_FILE="packaging/icons/nebflow.icns"
 if [ ! -f "$ICON_FILE" ]; then
   echo "ERROR: $ICON_FILE missing — regen via packaging/gen-icons.py" >&2
+  exit 1
+fi
+
+# ── Build-machine JDK assertion (A5 §4.3) ───────────────────────────────────
+# jlink's runtime image IS the build machine's JDK: building the bundle on 17
+# would ship a 17 runtime and re-introduce the HttpClient#close (21+) failure
+# inside the product. Assert BEFORE jlink/jpackage does any work.
+JAVA_BUILD_BIN="${JAVA_HOME:+$JAVA_HOME/bin/java}"
+if [ ! -x "$JAVA_BUILD_BIN" ]; then
+  JAVA_BUILD_BIN="$(command -v java || true)"
+fi
+JAVA_MAJOR=$("${JAVA_BUILD_BIN:-java}" -XshowSettings:properties -version 2>&1 \
+  | awk -F'= *' '/java\.specification\.version/{print $2; exit}')
+if [ -z "${JAVA_MAJOR:-}" ]; then
+  echo "ERROR: cannot read java.specification.version from ${JAVA_BUILD_BIN:-java} — JDK 21+ is required to build the runtime image." >&2
+  exit 1
+fi
+if [ "$JAVA_MAJOR" -ge 21 ] 2>/dev/null; then :; else
+  echo "ERROR: need JDK 21+ to build the runtime image (got $JAVA_MAJOR) — point JAVA_HOME at a JDK 21+ install." >&2
   exit 1
 fi
 
