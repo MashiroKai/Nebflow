@@ -573,6 +573,9 @@ object AgentActor extends AgentCore with AgentSession:
     /** D6 批 F1（G9 路径 a）：节点人类可读名随 spawn 注入——AskUser payload
       * nodeName 字段来源。详见 SessionContext.flowNodeName。 */
     flowNodeName: Option[String] = None,
+    /** 链级抽象 P2（20260910 spec §9.2 项 2）：节点所属链 id spawn 时刻快照
+      * （NodeEngine 注入，None = 无链/非项目会话）。详见 SessionContext.flowChainId。 */
+    flowChainId: Option[String] = None,
     /** 阶段 2a 沙箱（§A.6）：project 节点/分发器 spawn 置 true——AgentCore 据此
       * 从 projectRoot 派生 ToolContext.sandbox。默认 false=旧行为（双轨豁免面）。 */
     sandboxEnabled: Boolean = false,
@@ -635,6 +638,7 @@ object AgentActor extends AgentCore with AgentSession:
             isDispatcher = isDispatcher,
             projectName = projectName,
             flowNodeName = flowNodeName,
+            flowChainId = flowChainId,
             sandboxEnabled = sandboxEnabled,
             sandboxRoot = sandboxRoot
           )
