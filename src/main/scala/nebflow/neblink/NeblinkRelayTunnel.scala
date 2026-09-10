@@ -12,7 +12,7 @@ import nebflow.core.tools.{ToolContext, ToolRegistry}
 import java.net.URI
 import java.net.http.{HttpClient, WebSocket}
 import java.util.concurrent.*
-import java.util.concurrent.atomic.{AtomicBoolean, AtomicLong}
+import java.util.concurrent.atomic.{AtomicBoolean, AtomicInteger, AtomicLong}
 
 import scala.concurrent.duration.*
 
@@ -44,6 +44,8 @@ final class NeblinkRelayTunnel(
   /** A2A 一期（spec §5.1）：friend_event 推送回调（事件去重/未读/补拉在 FriendService）。 */
   private[neblink] val friendService: Option[FriendService] = None
 )(dispatcher: Dispatcher[IO]):
+  import NeblinkRelayTunnel.{TunnelAuthStatus, shouldHealAuthFailure}
+
   private val logger = NebflowLogger.forName("nebflow.neblink.relay")
 
   @volatile private var wsRef: Option[WebSocket] = None
@@ -52,8 +54,25 @@ final class NeblinkRelayTunnel(
   private val lastPong = new AtomicLong(System.currentTimeMillis())
   private var heartbeat: Option[ScheduledExecutorService] = None
 
+  /** F7 (2026-09-10 隧道鉴权自愈批): last relay-ws upgrade auth rejection —
+    * the state `relayAvailable = isAlive` cannot express (see authStatus). */
+  @volatile private var lastAuthRejection: Option[TunnelAuthStatus] = None
+
+  /** Anti-loop counter: consecutive upgrade failures since the last successful
+    * connect. Drives shouldHealAuthFailure. */
+  private val authFailStreak = new AtomicInteger(0)
+
+  /** When the last self-heal re-login was attempted (0 = never). */
+  @volatile private var lastHealAtMs = 0L
+
   /** Check if the relay tunnel is currently connected (for status reporting). */
   def isAlive: Boolean = alive.get()
+
+  /** F7: last upgrade auth rejection (status code + self-heal outcome).
+    * Surfaces on /neblink/status as an INDEPENDENT "auth rejected" state —
+    * "tunnel dead" alone hides whether we are waiting on a 403 (our session was
+    * kicked → self-healable) or on a 5xx (server side). */
+  def authStatus: Option[TunnelAuthStatus] = lastAuthRejection
 
   /** Test seam: is the reconnect loop still running (false after stop())? */
   private[neblink] def isRunning: Boolean = running.get()
@@ -101,12 +120,81 @@ final class NeblinkRelayTunnel(
                   else IO.unit
                 }
                 .handleErrorWith { e =>
-                  logger.warn(s"Relay tunnel error: ${e.getMessage}").flatMap { _ =>
-                    if running.get() then connectLoop(attempt + 1) else IO.unit
-                  }
+                  // F3 (report §3): never log e.getMessage here — it is null for
+                  // WebSocketHandshakeException and carries only the class NAME
+                  // when wrapped in ExecutionException. describe() extracts the
+                  // HTTP status (+ a redacted body snippet) instead.
+                  val failure = RelayTunnelDiagnostics.describe(e)
+                  if failure.authRejected then handleAuthRejection(failure, attempt)
+                  else
+                    logger.warn(s"Relay tunnel error: ${failure.summary}").flatMap { _ =>
+                      if running.get() then connectLoop(attempt + 1) else IO.unit
+                    }
                 }
           }
       }
+
+  /**
+   * Auth-rejection path of the reconnect loop (report §4 F2/F3, U1).
+   *
+   * A 401/403 on the upgrade means OUR session token was rejected — under the
+   * server's one-live-session-per-device policy that is what every fresh login
+   * on this device (UI re-login, account switch, enrollment hot-swap) does to
+   * the tunnel's session. The reconnect loop used to retry the SAME dead token
+   * forever, so the device stayed unreachable until a gateway restart.
+   *
+   * NARROW gate: only 401/403 come here. 5xx / gateway / transport failures are
+   * server-side or environmental — a re-login is meaningless for them and would
+   * only add a login storm, so they take the plain reporting path above.
+   *
+   * Anti-loop: at most one re-login per failure streak (a further one only
+   * after HealCooldownMs); the streak resets on the next successful connect.
+   */
+  private def handleAuthRejection(failure: RelayTunnelDiagnostics.UpgradeFailure, attempt: Int): IO[Unit] =
+    val streak = authFailStreak.incrementAndGet()
+    val nowMs = System.currentTimeMillis()
+    val head = s"Relay tunnel upgrade rejected (auth): ${failure.summary}"
+    if !shouldHealAuthFailure(streak, nowMs, lastHealAtMs) then
+      IO { lastAuthRejection = Some(TunnelAuthStatus(failure.statusCode.getOrElse(0), nowMs, healAttempted = false, healSucceeded = false, active = true)) } *>
+        logger.warn(s"$head — self-heal NOT retried (failure streak #$streak, anti-loop bound); backing off") *>
+        (if running.get() then connectLoop(attempt + 1) else IO.unit)
+    else
+      for
+        _ <- logger.warn(s"$head — attempting session self-heal (re-login)")
+        _ <- IO { lastHealAtMs = nowMs }
+        healed <- healSession()
+        _ <- logger.warn(
+          if healed then "Relay tunnel session self-heal: re-login OK — retrying with the refreshed token"
+          else "Relay tunnel session self-heal: re-login FAILED — continuing with backoff"
+        )
+        _ <- IO { lastAuthRejection = Some(TunnelAuthStatus(failure.statusCode.getOrElse(0), nowMs, healAttempted = true, healSucceeded = healed, active = true)) }
+        // The refreshed token is picked up by tokenGetter on the next attempt —
+        // it reads the live client, never a cached/snapshotted token.
+        _ <- if healed then connectLoop(0) else if running.get() then connectLoop(attempt + 1) else IO.unit
+      yield ()
+
+  /**
+   * Run the shared single-flight re-login on the client the relay path actually
+   * uses. `NeblinkService.relayClientOpt` is the hot-swap pointer: GatewayMain
+   * registers the startup client, `NeblinkEnrollment.persist` re-points it on
+   * every re-enrollment and logout clears it — so this is resolved per heal and
+   * never captured at construction.
+   *
+   * It goes through `NeblinkClient.ensureFreshSession`, the SAME gate the
+   * API-level heal (friend batch F2) uses: two independent gates would race two
+   * logins, and since every login kicks our own previous session server-side,
+   * they would kick each other in a loop. One gate per client instance means the
+   * concurrent API 403s and this relay 403 collapse into one login.
+   */
+  private def healSession(): IO[Boolean] =
+    IO(neblinkService.relayClientOpt).flatMap {
+      case None =>
+        logger.warn("Relay tunnel session self-heal: no live NebLink client — reporting only").as(false)
+      case Some(client) =>
+        client
+          .ensureFreshSession("relay-upgrade-auth-reject")
+          .handleErrorWith(e => logger.warn(s"Relay tunnel session self-heal errored (${e.getClass.getSimpleName})").as(false))
+    }
 
   /** Establish a single WS connection; returns when the connection ends. */
   private def connectOnce(id: DeviceIdentity, token: String): IO[Unit] =
@@ -129,6 +217,11 @@ final class NeblinkRelayTunnel(
         alive.set(true)
         lastPong.set(System.currentTimeMillis())
         startHeartbeat(w)
+        // Anti-loop reset + F7: a successful upgrade means the credential
+        // problem is over — the next rejection gets a fresh heal budget and the
+        // status stops claiming "auth rejected" (code/time stay as history).
+        authFailStreak.set(0)
+        lastAuthRejection = lastAuthRejection.map(_.copy(active = false))
         logger.infoSync(s"Relay tunnel connected: $wsUri")
         ()
       } *> closed.get // block until WS closes
@@ -285,6 +378,66 @@ final class NeblinkRelayTunnel(
     val encodedId = try java.net.URLEncoder.encode(id.deviceId, "UTF-8")
     catch case _: Exception => id.deviceId
     s"$wsBase/api/device/relay-ws?deviceId=$encodedId"
+
+end NeblinkRelayTunnel
+
+object NeblinkRelayTunnel:
+
+  /**
+   * Minimum interval between two auth-rejection self-heals inside the SAME
+   * failure streak (see `shouldHealAuthFailure`). One re-login per minute is
+   * the ceiling for a server that keeps rejecting our token — the same order of
+   * magnitude as the normal login cadence, i.e. no login storm.
+   */
+  private[neblink] val HealCooldownMs = 60_000L
+
+  /**
+   * Anti-loop decision for the auth-rejection self-heal (the F2 obligation:
+   * "重登失败不得无界循环"), mirroring `NeblinkClient.reloginAllowed`'s
+   * single-shot rule.
+   *
+   * The FIRST rejection of a failure streak heals immediately (that is the
+   * incident case: the session was kicked, one re-login fixes it). Later
+   * rejections of the same streak only heal again after `HealCooldownMs`, so a
+   * server that rejects our token forever costs at most one re-login per minute
+   * instead of one per backoff round. The streak resets on every successful
+   * connect, giving a legitimately recovered device a fresh budget.
+   */
+  private[neblink] def shouldHealAuthFailure(streak: Int, nowMs: Long, lastHealAtMs: Long): Boolean =
+    streak <= 1 || (lastHealAtMs > 0L && nowMs - lastHealAtMs >= HealCooldownMs)
+
+  /**
+   * Last relay-ws upgrade auth rejection (F7, report §4 F7).
+   *
+   * `active` = the tunnel is currently parked on this rejection (cleared by the
+   * next successful connect); `statusCode` / `atMs` stay as history so a
+   * recovered device can still be diagnosed after the fact.
+   */
+  final case class TunnelAuthStatus(
+    statusCode: Int,
+    atMs: Long,
+    healAttempted: Boolean,
+    healSucceeded: Boolean,
+    active: Boolean
+  )
+
+  /**
+   * `/neblink/status` payload for the relay tunnel (F7). `relayAvailable` alone
+   * (the only relay field the endpoint had) cannot distinguish "tunnel is down"
+   * from "tunnel is down BECAUSE our session was rejected" — the latter is what
+   * drives the self-heal path and is the client-side half of the report §6
+   * cross-project discriminator.
+   */
+  def statusJson(available: Boolean, status: Option[TunnelAuthStatus]): io.circe.Json =
+    io.circe.Json.obj(
+      "available" -> available.asJson,
+      "authRejected" -> status.exists(_.active).asJson,
+      "lastRejectedStatusCode" -> status.map(_.statusCode).asJson,
+      "lastRejectedAt" -> status.map(_.atMs).asJson,
+      "selfHeal" -> status
+        .map(s => if !s.healAttempted then "not-attempted" else if s.healSucceeded then "ok" else "failed")
+        .asJson
+    )
 
 end NeblinkRelayTunnel
 

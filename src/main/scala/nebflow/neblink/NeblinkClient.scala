@@ -463,35 +463,54 @@ class NeblinkClient(
   /** Single-flight gate: N concurrent auth rejections must produce exactly ONE
     * re-login (each login kicks the previous session server-side — racing
     * logins would kick each other in a loop). Losers await the winner's
-    * Deferred and retry with whatever session it produced. */
+    * Deferred and reuse its outcome. Shared by EVERY heal caller through
+    * ensureFreshSession. */
   private val reloginGate: Ref[IO, Option[Deferred[IO, Boolean]]] = Ref.unsafe(None)
 
-  private def selfHeal[A](err: String, f: String => IO[Either[String, A]]): IO[Either[String, A]] =
+  /**
+   * Single-flight session self-heal — ONE re-login per concurrent burst,
+   * regardless of how many independent consumers noticed the rejection.
+   *
+   * Entry points (both feed the SAME gate by construction):
+   *   - the API-level path (`withSession` → selfHeal) for REST consumers;
+   *   - the relay-tunnel upgrade path (`NeblinkRelayTunnel.handleAuthRejection`),
+   *     which is the tunnel's ONLY way to refresh a token the server kicked.
+   *
+   * WHY the gate must be shared rather than per-caller: every login kicks our
+   * own previous session server-side (one-live-session-per-device), so two
+   * gates = two racing logins = each kicking the other's fresh session, which
+   * is exactly the self-inflicted churn this batch exists to prevent.
+   * Single-flight is per client instance, and F1 guarantees every consumer
+   * shares one instance (discovery.clientRef / NeblinkService.relayClientOpt).
+   *
+   * `trigger` only labels the log line (attribution: which consumer noticed).
+   * Returns true when a usable fresh session exists afterwards.
+   */
+  def ensureFreshSession(trigger: String): IO[Boolean] =
     Deferred[IO, Boolean].flatMap { mine =>
       reloginGate
         .modify {
-          case None          => (Some(mine), Left(mine))
-          case Some(winner)  => (Some(winner), Right(winner))
+          case None         => (Some(mine), Left(mine))
+          case Some(winner) => (Some(winner), Right(winner))
         }
         .flatMap {
           case Left(won) =>
             // I won the race: re-login exactly once, publish the outcome, and
             // clear the gate only if it is still mine (a newer winner may have
             // replaced it while my login was in flight).
-            val run = silentRelogin.flatMap(ok => won.complete(ok).as(ok))
+            val run = silentRelogin(trigger).flatMap(ok => won.complete(ok).as(ok))
             run.guarantee(reloginGate.update {
               case Some(g) if g eq won => None
               case other               => other
-            }).flatMap {
-              case true  => replayAfterHeal(f, err)
-              case false => IO.pure(Left(err))
-            }
-          case Right(winner) =>
-            winner.get.flatMap {
-              case true  => replayAfterHeal(f, err)
-              case false => IO.pure(Left(err))
-            }
+            })
+          case Right(winner) => winner.get
         }
+    }
+
+  private def selfHeal[A](err: String, f: String => IO[Either[String, A]]): IO[Either[String, A]] =
+    ensureFreshSession("api-auth-reject").flatMap {
+      case true  => replayAfterHeal(f, err)
+      case false => IO.pure(Left(err))
     }
 
   /** One replay attempt with the (possibly refreshed) session token. Reads the
@@ -505,12 +524,14 @@ class NeblinkClient(
   /** Silent re-login for the self-heal path. Uses the full public login chain
     * (allowRelogin = true): the kicked-session case re-exchanges the still
     * valid deviceToken; the revoked-deviceToken case additionally runs the
-    * Logto hook. Never throws — failures map to false. */
-  private def silentRelogin: IO[Boolean] =
+    * Logto hook. Never throws — failures map to false. `trigger` name-tags the
+    * log line so a burst can be attributed to its consumer (API vs relay
+    * tunnel). */
+  private def silentRelogin(trigger: String): IO[Boolean] =
     identity match
       case None => IO.pure(false)
       case Some(getId) =>
-        logger.warn("NebLink session rejected by server (401/403 auth) — attempting silent re-login") *>
+        logger.warn(s"NebLink session rejected by server (401/403 auth) — attempting silent re-login [$trigger]") *>
           getId.flatMap { id =>
             login(id.deviceId, id.deviceName, id.platform, Nil).flatMap {
               case Right(_)  => IO.pure(true)
@@ -530,25 +551,32 @@ class NeblinkClient(
    * The request goes: this device -> Server -> target device's WS tunnel.
    */
   def relayExec(targetDeviceId: String, action: String, params: JsonObject): IO[Either[String, String]] =
-    sessionToken match
-      case None => IO.pure(Left("Not logged in"))
-      case Some(token) =>
-        val body = Json.obj(
-          "action" -> action.asJson,
-          "params" -> params.asJson,
-          "projectRoot" -> System.getProperty("user.dir", ".").asJson
-        ).noSpaces
-        sendRequest("POST", s"${config.url}/api/relay/$targetDeviceId/exec", body, Some(token)).flatMap {
-          case Right(respBody) =>
-            decode[Json](respBody) match
-              case Right(json) =>
-                val output = json.hcursor.downField("output").as[String].getOrElse("")
-                val error = json.hcursor.downField("error").as[String].getOrElse("")
-                if error.nonEmpty then IO.pure(Left(error))
-                else IO.pure(Right(output))
-              case Left(err) => IO.pure(Left(s"Decode error: ${err.getMessage}"))
-          case Left(err) => IO.pure(Left(err))
-        }
+    val body = Json.obj(
+      "action" -> action.asJson,
+      "params" -> params.asJson,
+      "projectRoot" -> System.getProperty("user.dir", ".").asJson
+    ).noSpaces
+    // 2026-09-10 隧道鉴权自愈批: this used to read sessionToken directly and
+    // was therefore the one cross-device dispatch path WITHOUT the 401/403
+    // self-heal (the friend batch registered it as a leftover). It now goes
+    // through withSession, so "control the remote computer" recovers from a
+    // kicked session exactly like search/list do — same shared gate, same
+    // per-request single shot. The heal wraps ONLY the HTTP call: the decoded
+    // `error` field is a remote-tool error, not an auth signal, and must never
+    // feed the trigger.
+    withSession(token =>
+      sendRequest("POST", s"${config.url}/api/relay/$targetDeviceId/exec", body, Some(token))
+    ).flatMap {
+      case Right(respBody) =>
+        decode[Json](respBody) match
+          case Right(json) =>
+            val output = json.hcursor.downField("output").as[String].getOrElse("")
+            val error = json.hcursor.downField("error").as[String].getOrElse("")
+            if error.nonEmpty then IO.pure(Left(error))
+            else IO.pure(Right(output))
+          case Left(err) => IO.pure(Left(s"Decode error: ${err.getMessage}"))
+      case Left(err) => IO.pure(Left(err))
+    }
 
   /** Convert NebLink Server peers to neblink PeerInfo. Picks first endpoint as address.
    *
