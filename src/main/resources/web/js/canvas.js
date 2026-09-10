@@ -1111,12 +1111,11 @@ export function initCanvas() {
  *  Tabs without absPath (Teams/Flows panels) are restored synchronously
  *  and re-render from live state; file tabs re-fetch content on restore. */
 function persistTabs() {
-  // Don't overwrite saved tabs with an empty list — transient states can
-  // empty the in-memory Map, but saved data should survive for restoration.
-  if (tabs.size === 0) {
-    console.log('[persistTabs] tabs empty — skipping save to preserve existing data');
-    return;
-  }
+  // P1 (2026-09-10, 定案 §7): 不再对空表早退。关闭（含关闭最后一个）必须把当前
+  // 集合写入双源——可以是空集 { v:2, tabs: [] }。旧 F2 早退让「关掉最后一个标签」
+  // 一份都不写，服务端与 localStorage 都留旧记录，重启后被并集恢复整批重开
+  // （定案 A6 缺口 A）。空存档语义 = 不恢复：restoreFromData / restoreTabs
+  // 均有 tabs.length > 0 守卫，故写空集不会造成「关不掉的标签」。
   try {
     const serializable = [];
     for (const [, t] of tabs) {
@@ -1156,21 +1155,82 @@ function persistTabs() {
 }
 
 // F1: 防抖合并连续操作成一次服务端 PUT。500ms 窗口内多次 persistTabs 只发一次。
+// P2 (2026-09-10, 定案 §7): 防抖窗不再丢单——待发载荷留一份在 pendingPersistPayload，
+// 页面离开/切后台时立即 flush（闭合 500ms 窗口）；PUT 失败记 persistDirty，连接
+// 恢复时重放「当前集合」（闭合「服务端重启期间关闭」）。定案 A6 缺口 B。
+let pendingPersistPayload = null;
+let persistDirty = false;
+
 function scheduleServerPersist(payload) {
+  pendingPersistPayload = payload;
   if (serverPersistTimer) clearTimeout(serverPersistTimer);
   serverPersistTimer = setTimeout(() => {
     serverPersistTimer = null;
-    fetch(TABS_API, {
-      method: 'PUT',
-      // withAuth (RestApiRoutes) only accepts Bearer/query token — NOT cookie.
-      // Without the header the PUT 403s and the service archive never persists.
-      headers: { 'Content-Type': 'application/json', ...authHeaders() },
-      body: JSON.stringify(payload),
-    })
-      .then((r) => { if (!r.ok) console.warn('[canvas-tabs] server persist failed:', r.status); })
-      .catch((e) => console.warn('[canvas-tabs] server persist error:', e));
+    const p = pendingPersistPayload;
+    pendingPersistPayload = null;
+    sendServerPersist(p);
   }, 500);
 }
+
+// P2: 发送一份存档载荷（防抖到期 / pagehide·visibilitychange flush 共用）。
+// keepalive 供页面卸载路径——请求可在文档销毁后完成。不用 sendBeacon：它无法带
+// Bearer 头，而 /api/canvas-tabs 走 withAuth（无 token 会 403）。
+function sendServerPersist(payload, keepalive) {
+  if (!payload) return;
+  fetch(TABS_API, {
+    method: 'PUT',
+    keepalive: !!keepalive,
+    // withAuth (RestApiRoutes) only accepts Bearer/query token — NOT cookie.
+    // Without the header the PUT 403s and the service archive never persists.
+    headers: { 'Content-Type': 'application/json', ...authHeaders() },
+    body: JSON.stringify(payload),
+  })
+    .then((r) => {
+      if (r.ok) { persistDirty = false; return; }
+      persistDirty = true;
+      console.warn('[canvas-tabs] server persist failed:', r.status);
+    })
+    .catch((e) => {
+      persistDirty = true;
+      console.warn('[canvas-tabs] server persist error:', e);
+    });
+}
+
+// P2: 把防抖窗内待发的 PUT 立即发掉（页面卸载 / 切到后台）。
+function flushPendingPersist() {
+  if (serverPersistTimer) {
+    clearTimeout(serverPersistTimer);
+    serverPersistTimer = null;
+  }
+  const payload = pendingPersistPayload;
+  pendingPersistPayload = null;
+  sendServerPersist(payload, true);
+}
+
+// P2: 监听器与重放钩子只注册一次——模块顶层语句，ES module 单次求值即幂等保证。
+// ws.js 必须动态 import：静态 import 会与 canvas.js 成环（仓内既定出口，
+// 见 scripts/check-circular.mjs 注释），同 sendFileRestoreRequests 的做法。
+document.addEventListener('visibilitychange', () => {
+  if (document.visibilityState === 'hidden') flushPendingPersist();
+});
+window.addEventListener('pagehide', flushPendingPersist);
+
+let persistReconnectBound = false;
+function bindPersistReconnect() {
+  if (persistReconnectBound) return;
+  persistReconnectBound = true;
+  import('./ws.js')
+    .then(({ onReconnect }) => {
+      onReconnect(() => {
+        if (!persistDirty) return;
+        // 重放「当前集合」而非旧载荷：persistTabs 重建载荷后走防抖 PUT。
+        // 只在连接恢复时触发，不逐帧重试，无自旋/日志风暴。
+        persistTabs();
+      });
+    })
+    .catch(() => { /* ws.js 不可用 → 无重放通道，保持 dirty */ });
+}
+bindPersistReconnect();
 
 // F1: 解析并校验 v2 标签存档（兼容 localStorage JSON 字符串与服务端对象）。
 // 不合法 → null（交由服务端/回退路径处理，不清空本地缓存）。
