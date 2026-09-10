@@ -16,8 +16,9 @@ cd "$(dirname "$0")"
 REPOS="$(poc_repos)"
 HOST_CACHE=/tmp/nb-sbx-poc/hostcache
 # SandboxSpec dataroot 逃生口：spec 支持 NB_SANDBOX_SPEC_DATAROOT 环境变量重定向测试数据根；
-# 本会话 seatbelt 对 $HOME 写拒（run1 实证 mkdir .nb-sbx-dataroot-*: Operation not permitted，
-# 42/44 beforeEach 连挂）——host 臂统一重定向 /tmp（写入边界既定策略），容器臂无 TCC 不需要。
+# host 臂统一重定向 /tmp 是 PoC 写入边界/缓存 seed 的既定策略（容器臂无 TCC，不需要）。
+# sandbox 归因已于 2026-09-10 拆围栏后退役（历史：当时 seatbelt 对 $HOME 写拒——run1 实证
+# mkdir .nb-sbx-dataroot-*: Operation not permitted，42/44 beforeEach 连挂）。
 HOST_DATAROOT=/tmp/nb-sbx-poc/dataroot
 CACHE_VOL="$NB-cache"
 TGT_VOL="$NB-tgt"
@@ -27,8 +28,9 @@ TSV="$RESULTS/a-sbt-matrix.tsv"
 TEST_SUBSET="${TEST_SUBSET:-nebflow.core.sandbox.SandboxSpec nebflow.core.tools.ShellStuckDetectorSpec nebflow.agent.EmptyShellNotifySpec}"
 # 注意：-batch / --no-colors 是 sbt 脚本层参数——容器内走 launcher jar 直连不识别
 # （PoC 实证：error Expected 'addPluginSbtFile'）——颜色/supershell 关闭统一走 SBT_OPTS sysprops，两臂一致。
-# ivy.home 一并重定向：clean→cleanCachedResolutionCache 要写 ~/.ivy2/.sbt.ivy.lock（seatbelt 写拒，
-# 首轮实证 FileNotFoundException）——W1 workaround 家族的完整配方；docker provider 下天然消失。
+# ivy.home 一并重定向：宿主私有缓存隔离（写入边界/缓存 seed）的既定策略——clean 会触发
+# cleanCachedResolutionCache 写 ~/.ivy2/.sbt.ivy.lock，重定向后落在 $HOST_CACHE/ivy2；docker provider 下天然消失。
+# sandbox 归因已于 2026-09-10 拆围栏后退役（历史：当时 seatbelt 写拒，首轮实证 FileNotFoundException）。
 SBT_ARGS=""
 HOST_SBT_OPTS="-Dsbt.global.base=$HOST_CACHE/sbt-global -Dsbt.boot.directory=$HOST_CACHE/sbt-boot -Dsbt.ivy.home=$HOST_CACHE/ivy2 -Dsbt.supershell=false -Dsbt.color=false -Dsbt.log.noformat=true -Xmx2g"
 CT_SBT_OPTS="-Dsbt.global.base=/cache/sbt-global -Dsbt.boot.directory=/cache/sbt-boot -Dsbt.ivy.home=/cache/ivy2 -Dsbt.supershell=false -Dsbt.color=false -Dsbt.log.noformat=true -Xmx2g"

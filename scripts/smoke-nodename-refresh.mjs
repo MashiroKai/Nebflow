@@ -195,14 +195,19 @@ function buildFixture() {
   writeFileSync(join(ws, 'AGENTS.md'), '# e2e-proj\n\nE2E fixture workspace (nodename-refresh).\n');
 }
 
-// ── 隔离实例（sbt run --home/--port；命令串单参数传 sbt；boot 目录隔离防 ~/.sbt 写锁）──
+// ── 隔离实例（sbt run --home/--port；命令串单参数传 sbt）──
+// boot 目录隔离已随拆围栏退役（2026-09-10）：原先注入的两个 sbt sysprop
+// （boot.directory=/tmp/nb-sbt-boot-nodename、global.base=/tmp/nb-sbt-base-nodename）是
+// 绕 ~/.sbt EPERM 写锁的绕行；拆围栏 + 宿主重启后 plain sbt 可直写 ~/.sbt
+// （T2 探针 2026-09-10 17:30 CST：env -u SBT_OPTS -u COURSIER_CACHE sbt -batch "print name" ⇒ exit=0），
+// 故此处只保留 -Xmx3g（大 sbt 会话内存）。注：sbt run 调用形态未改（单派项）。
 function startGateway() {
   const cmd = `run --home ${HOME} --port ${GATEWAY_PORT} --no-browser`;
   const sbt = spawn('sbt', ['-batch', cmd], {
     cwd: REPO, detached: true, stdio: ['ignore', 'pipe', 'pipe'],
     env: {
       ...process.env,
-      SBT_OPTS: (process.env.SBT_OPTS || '') + ` -Dsbt.boot.directory=/tmp/nb-sbt-boot-nodename -Dsbt.global.base=/tmp/nb-sbt-base-nodename -Xmx3g`,
+      SBT_OPTS: (process.env.SBT_OPTS || '') + ` -Xmx3g`,
     },
   });
   children.push(sbt);

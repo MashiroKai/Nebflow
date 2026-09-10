@@ -16,10 +16,15 @@
 //   node scripts/check-js-types.mjs --update     # regenerate baseline after intentional fixes
 //
 // tsc resolution: local node_modules/typescript ONLY (typescript is pinned as
-// a devDependency). The old `npx -y -p typescript@5.5` fallback was removed:
-// in sandboxed environments it hits EPERM on the npm cache and silently
-// produced untrustworthy (false-PASS) gate results. Without local tsc this
-// script now fails loudly with a `npm install` hint.
+// a devDependency, `typescript@5.5.4`). The reason for the strict resolution is
+// determinism/reproducibility: a gate must not depend on a floating tsc fetched
+// from the network at run time. The old `npx -y -p typescript@5.5` fallback was
+// removed for exactly that reason — it bypassed the pin and could silently
+// produce untrustworthy (false-PASS) gate results. (Historical trigger, now
+// retired: back when the dev shell ran inside the Seatbelt sandbox, that npx
+// path also hit EPERM on the npm cache; the sandbox attribution was retired on
+// 2026-09-10 with the fence removal — the pin/determinism reason stands.)
+// Without local tsc this script now fails loudly with a `npm install` hint.
 
 import { execFileSync } from 'node:child_process';
 import { existsSync, readFileSync, writeFileSync } from 'node:fs';
@@ -43,12 +48,13 @@ function runTsc() {
   const args = ['-p', 'jsconfig.json', '--pretty', 'false'];
   if (!existsSync(TSC_LOCAL)) {
     // No silent npx fallback: an unresolvable tsc must fail the gate loudly.
-    // (npx fallback removed 2026-09-05 — see header comment.)
+    // The reason is determinism: typescript is pinned (5.5.4) and a floating
+    // npx fetch would defeat the pin. (npx fallback removed 2026-09-05.)
     console.error(
       'checkJs gate: TypeScript not found at node_modules/typescript.\n' +
       '  Fix: npm install   (typescript is a pinned devDependency)\n' +
-      '  This gate no longer falls back to npx: that path silently produced\n' +
-      '  untrustworthy results when the npm cache was not writable.'
+      '  This gate no longer falls back to npx: that path bypassed the pinned\n' +
+      '  typescript version and could silently produce untrustworthy results.'
     );
     process.exit(2);
   }
