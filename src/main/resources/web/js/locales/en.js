@@ -731,6 +731,8 @@ export default {
   'bg.detail.exit': 'exit {code}',
   'bg.detail.failedHint': 'Failed: {error}',
   'bg.detail.cancelHint': 'Cancelled: {error}',
+  'bg.detail.readError': 'Failed to load output (network error or no response) — close and retry',
+  'bg.detail.stopped': 'Output polling stopped (task did not finish for a long time)',
 
   // === Time ===
   'time.yesterday': 'Yesterday',

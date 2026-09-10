@@ -20,8 +20,22 @@ import { key } from './branding.js';
 
 // ── State（单例卡：同一时刻最多一张详情卡）─────────────────
 let overlayEl = null;
-let cur = null; // { taskId, offset, text, pollTimer, closed, gotData, restoreFocus }
+// cur.failCount：连续失败计数（网络/HTTP≥400/超时）——超预算终局，禁无限静默等待
+// （2026-09-10 作者实测「完成的后台任务会卡在那」修复：旧版 resp!ok 与网络错误
+//  都静默 return 无上限重试、完成态行也进 2s 轮询死等——三处全是无终局路径）。
+let cur = null; // { taskId, offset, text, pollTimer, closed, gotData, restoreFocus, ... }
 let escHandler = null;
+
+// 终态集合（completed/failed/cancelled）——终态行走单次读取模式（不进轮询）。
+const isTerminalStatus = (s) => s === 'completed' || s === 'failed' || s === 'cancelled';
+// 轮询模式连续失败预算：5 次（~10s 无一成功即终局报错，不无限静默重试）。
+const MAX_POLL_FAILS = 5;
+// 单次读取模式（终态行）失败预算：3 拍（首拍+2 重试）。
+const MAX_ONESHOT_ATTEMPTS = 3;
+// 每次 fetch 的挂死兜底：8s 无响应按失败计（AbortController）。
+const FETCH_TIMEOUT_MS = 8000;
+// 轮询模式总预算：10min 无终态 → 停轮询并明示（persistent/僵死任务防线）。
+const MAX_POLL_TOTAL_MS = 10 * 60 * 1000;
 
 function getToken() { return localStorage.getItem(key('token')) || ''; }
 function authHeaders() {
@@ -348,47 +362,124 @@ function appendOutput(text) {
   if (nearBottom) pre.scrollTop = pre.scrollHeight;
 }
 
-// ── 轮询（字节游标增量）────────────────────────────────────
+// ── 轮询（字节游标增量；2026-09-10 修复：预算+终局态）──────
 function stopPoll() {
   if (cur && cur.pollTimer) { clearInterval(cur.pollTimer); cur.pollTimer = null; }
 }
 
+// 终局收口：停一切定时器与在途请求。所有终局路径（终态到达/404/失败预算/
+// 总预算）必须走这里——禁任何无限静默等待。
+function stopAll() {
+  if (!cur) return;
+  stopPoll();
+  if (cur.totalTimer) { clearTimeout(cur.totalTimer); cur.totalTimer = null; }
+  if (cur.abortCtl) { try { cur.abortCtl.abort(); } catch { /* */ } cur.abortCtl = null; }
+}
+
+// 读取失败终局（预算耗尽）：明确错误提示 + 停止一切等待，面板可关闭。
+function showReadFailure() {
+  if (!cur || cur.closed) return;
+  stopAll();
+  const dotEl = overlayEl.querySelector('.bgt-dot');
+  if (dotEl) dotEl.className = 'bg-task-status bg-status-error bgt-dot';
+  showPlaceholder(t('bg.detail.readError'));
+}
+
+// 带 8s 挂死兜底的 fetch（AbortController；响应到达即拆定时器）。
+async function fetchWithTimeout(url, opts) {
+  const ctl = new AbortController();
+  cur.abortCtl = ctl;
+  const timer = setTimeout(() => ctl.abort(), FETCH_TIMEOUT_MS);
+  try {
+    return await fetch(url, { ...opts, signal: ctl.signal });
+  } finally {
+    clearTimeout(timer);
+    if (cur && cur.abortCtl === ctl) cur.abortCtl = null;
+  }
+}
+
 async function pollOnce() {
   if (!cur || cur.closed) return;
+  let resp = null;
   try {
-    const resp = await fetch(
+    resp = await fetchWithTimeout(
       `/api/bg-tasks/${encodeURIComponent(cur.taskId)}/output?offset=${cur.offset}`,
       { headers: authHeaders() }
     );
-    if (resp.status === 404) {
-      // 未知任务：remote 任务从未缓冲 / 留存区已淘汰。仅首拍降级提示，
-      // 已有数据时（极端：轮询中被淘汰）保留现有内容只停轮询。
-      if (!cur.gotData) showPlaceholder(t('bg.detail.notFound'));
-      renderStatus('cancelled');
-      stopPoll();
-      return;
-    }
-    if (!resp.ok) return; // 瞬态错误——下一 tick 重试
-    const data = await resp.json();
-    cur.gotData = true;
-    hidePlaceholder();
-    if (data.output) appendOutput(data.output);
-    else if (!cur.text) showPlaceholder(t('bg.detail.empty'));
-    if (typeof data.nextOffset === 'number') cur.offset = data.nextOffset;
-    renderMeta(data);
-    renderStatus(data.status, data.exitCode);
-    if (data.truncated) showTruncatedNote();
-    if (data.errorHint) showErrorHint(data.errorHint);
-    if (data.status && data.status !== 'running') stopPoll();
   } catch {
-    // 网络/瞬态失败：静默，下一 tick 重试（面板轮询同语义）
+    // 网络/超时失败：计入预算（旧版静默 return 无上限——卡死主根因之一）。
+    onReadFailure();
+    return;
   }
+  if (!cur || cur.closed) return;
+  if (resp.status === 404) {
+    // 未知任务：remote 任务从未缓冲 / 留存区已淘汰。仅首拍降级提示，
+    // 已有数据时（极端：轮询中被淘汰）保留现有内容只停轮询。
+    // 状态 chip 不谎报（2026-09-10 修复：旧版写死 cancelled——已完成任务
+    // 被留存淘汰后显示「已取消」，与面板行「已完成」矛盾）。
+    if (!cur.gotData) showPlaceholder(t('bg.detail.notFound'));
+    const dotEl = overlayEl.querySelector('.bgt-dot');
+    if (dotEl) dotEl.className = 'bg-task-status bg-status-done bgt-dot';
+    stopAll();
+    return;
+  }
+  if (!resp.ok) { onReadFailure(); return; } // HTTP 错误——计入预算，不再静默
+  let data = null;
+  try {
+    data = await resp.json();
+  } catch {
+    onReadFailure(); // 响应体损坏同预算处理
+    return;
+  }
+  if (!cur || cur.closed) return;
+  cur.failCount = 0;
+  cur.gotData = true;
+  hidePlaceholder();
+  if (data.output) appendOutput(data.output);
+  else if (!cur.text) showPlaceholder(t('bg.detail.empty'));
+  if (typeof data.nextOffset === 'number') cur.offset = data.nextOffset;
+  renderMeta(data);
+  renderStatus(data.status, data.exitCode);
+  if (data.truncated) showTruncatedNote();
+  if (data.errorHint) showErrorHint(data.errorHint);
+  if (data.status && data.status !== 'running') { stopAll(); return; }
+  // 单次读取模式（终态行）但 store 竟返回 running（行状态过时/竞态）→
+  // 就地转轮询模式直到终态（预算照常生效）。
+  if (cur.oneShot) { cur.oneShot = false; armTotalBudget(); }
+}
+
+// 失败预算判定：超限 → 明确错误终局（禁无限静默等待）。
+function onReadFailure() {
+  if (!cur || cur.closed) return;
+  cur.failCount = (cur.failCount || 0) + 1;
+  const budget = cur.oneShot ? MAX_ONESHOT_ATTEMPTS : MAX_POLL_FAILS;
+  if (cur.failCount >= budget) showReadFailure();
+}
+
+// 轮询模式总预算：10min 无终态 → 停轮询并明示（persistent/僵死任务防线）。
+function armTotalBudget() {
+  if (!cur || cur.totalTimer) return;
+  cur.totalTimer = setTimeout(() => {
+    if (!cur || cur.closed) return;
+    stopAll();
+    const dotEl = overlayEl.querySelector('.bgt-dot');
+    if (dotEl) dotEl.className = 'bg-task-status bg-status-done bgt-dot';
+    showPlaceholder(t('bg.detail.stopped'));
+  }, MAX_POLL_TOTAL_MS);
 }
 
 function startPoll() {
   stopPoll();
+  // 完成态行走单次读取模式（2026-09-10 验收①：从持久层一次读取到位，不依赖
+  // 活流/活订阅）——首拍失败允许 2 次重试，仍失败即终局报错；绝无轮询死等。
+  // （oneShot 在 pollOnce 内发现 store 仍 running 时就地解除并转入轮询。）
+  cur.oneShot = isTerminalStatus(cur.initialStatus);
+  cur.failCount = 0;
   pollOnce();
-  cur.pollTimer = setInterval(pollOnce, 2000);
+  if (!cur.oneShot) {
+    cur.pollTimer = setInterval(pollOnce, 2000);
+    armTotalBudget();
+  }
 }
 
 // ── 复制（绿玻璃按钮）──────────────────────────────────────
@@ -435,9 +526,15 @@ export function openBgTaskOutput(task) {
     offset: 0,
     text: '',
     pollTimer: null,
+    totalTimer: null,
+    abortCtl: null,
+    failCount: 0,
+    oneShot: false,
     closed: false,
     gotData: false,
     restoreFocus,
+    // 行面板乐观态——单次读取模式的判定基准 + 404 时 chip 不谎报的依据
+    initialStatus: task.status || 'running',
     originText: [task.originLabel, task.kind === 'remote' ? t('bg.kind.remote') : (task.kind ? t('bg.kind.local') : '')]
       .filter(Boolean).join(' · ')
   };
@@ -492,8 +589,10 @@ export function openBgTaskOutput(task) {
   window.addEventListener('keydown', escHandler, true);
   copyBtn.addEventListener('click', () => copyOutput(copyBtn));
 
-  // 初始状态（行面板乐观态）→ 首拍立刻校正
-  renderStatus(task.status || 'running');
+  // 初始状态（行面板乐观态）→ 首拍立刻校正。remote 任务显示行传入的真实
+  // 状态（2026-09-10 修复：旧版写死 running——完成的 remote 任务在卡内永远
+  // 转圈，即作者实测「卡在那」的形态之一）。
+  renderStatus(cur.initialStatus);
   renderMeta({ totalLines: 0, totalBytes: 0 });
 
   // 焦点管理：聚焦关闭按钮，关闭时归还触发行
@@ -504,7 +603,6 @@ export function openBgTaskOutput(task) {
     // 禁用态样式走 .bgt-copy-btn:disabled（#send-btn:disabled 绿家族配方）。
     showPlaceholder(t('bg.detail.remote'));
     copyBtn.disabled = true;
-    renderStatus('running');
     overlayEl.querySelector('.bgt-meta').textContent = '';
     return;
   }
@@ -513,7 +611,7 @@ export function openBgTaskOutput(task) {
 
 export function closeBgTaskOutput() {
   if (!overlayEl) { cur = null; return; }
-  stopPoll();
+  stopAll();
   if (cur) cur.closed = true;
   const restore = cur && cur.restoreFocus;
   escHandler && window.removeEventListener('keydown', escHandler, true);
