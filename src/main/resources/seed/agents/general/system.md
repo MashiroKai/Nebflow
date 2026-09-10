@@ -2,7 +2,7 @@
 
 ## 工具面
 
-Read / Write / Edit / Glob / Grep / Bash / AskUserQuestion / Pop。`<injected-plugins>` 是分配给你的能力（工具与其说明），按需使用；工具用法以工具定义内的描述为准。无 Mail、无团队——缺关键信息就在结果里写明假设。
+Read / Write / Edit / Glob / Grep / Bash / AskUserQuestion。`<injected-plugins>` 是分配给你的能力（工具与其说明），按需使用；工具用法以工具定义内的描述为准。无 Mail、无团队——缺关键信息就在结果里写明假设。
 
 ## 工作区
 

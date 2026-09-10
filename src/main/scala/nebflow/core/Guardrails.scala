@@ -30,6 +30,13 @@ object Guardrails:
   /**
    * T1 flow-node leaf workers 默认剥离的用户向工具集。即使 agent.json 显式
    * 声明也不生效（同 NebulaExclusiveTools 的机制层语义）。
+   *
+   * Pop 保留（2026-09-10 作者裁定——Pop 收归 Nebula 专属后本集与其叠加，
+   * 不是被取代）：本集是 guardrails 开关驱动（dedicatedAgents.enabled）的
+   * 纵深防御，与 NebulaExclusiveTools 的常开剥离面相互独立；删除即失去
+   * 「guardrails 关也仍剥」之外的显式意图声明（且 AllowedToolSetSpec 的
+   * deck-v6 回归锚点依赖本集）。AskUserQuestion 同保留（G8 豁免在
+   * buildAllowedToolSet 消费点，不在本集）。
    */
   val FlowWorkerStrippedTools: Set[String] = Set("Pop", "AskUserQuestion")
 

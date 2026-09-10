@@ -15,7 +15,7 @@ import java.nio.file.Files
  *
  * - §G.3-①：Nebula 工具清单 = §C.1 NebulaSet 逐项断言（buildToolList 层——
  *   LLM 实际收到的工具定义列表，未注册名自然缺席，比 allowedSet 更接近交付面）。
- * - dispatcher / general 固定集同层断言（§C.1 分发器行 / §C.4 八件）。
+ * - dispatcher / general 固定集同层断言（§C.1 分发器行 / §C.4 七件）。
  * - MultiEdit 从 ToolRegistry 删除（§C.1：能力由 Edit replace_all 覆盖），
  *   MemoryEdit 注册且 Nebula 专属（§C.1 记忆行 + NebulaExclusiveTools）；
  *   dream 受限准入例外（2026-09-05 作者签准，DreamAdmittedTools——动作面
@@ -85,12 +85,12 @@ class AgentConvergenceSpec extends FunSuite:
     assert(!CoreProbe.toolList(mkDef("Nebula")).toSet.contains("NodeMessage"), "Nebula 不加 NodeMessage")
     assert(!CoreProbe.toolList(mkDef("general"), isFlowNode = true).toSet.contains("NodeMessage"), "general 不加 NodeMessage")
 
-  // ===== general 固定 8 件（2026-09-08 作者修订恢复 AskUser，D6 批D1）=====
+  // ===== general 固定 7 件（2026-09-08 恢复 AskUser；2026-09-10 摘 Pop）=====
 
-  test("general LLM tool list == 裁定 5 原文 8 件（isFlowNode 节点形态；2026-09-08 恢复 AskUser）"):
+  test("general LLM tool list == 7 件（isFlowNode 节点形态；2026-09-10 作者裁定摘 Pop）"):
     val delivered = CoreProbe.toolList(mkDef("general"), isFlowNode = true).toSet
-    assertEquals(delivered, Set("Read", "Glob", "Edit", "Write", "Grep", "Bash", "AskUserQuestion", "Pop"),
-      "通用模版固定 8 件（§C.5 顺序语义 + 2026-09-08 作者修订恢复 AskUser，非配置）")
+    assertEquals(delivered, Set("Read", "Glob", "Edit", "Write", "Grep", "Bash", "AskUserQuestion"),
+      "通用模版固定 7 件（§C.5 顺序语义 + 2026-09-08 作者修订恢复 AskUser + 2026-09-10 裁定 Pop 收归 Nebula 专属，非配置）")
 
   // ===== ToolRegistry 面变化 =====
 
@@ -116,8 +116,8 @@ class AgentConvergenceSpec extends FunSuite:
     assert(wildcard.contains("MemoryEdit"), "dream wildcard 同样授能（豁免在剥离面，声明形状无关）")
     // 豁免恰为 MemoryEdit 一件——Schedule/Delegate/AgentControl/TaskList/TaskBoard/node_report 对 dream 不得放开
     assertEquals(AgentCore.NebulaExclusiveTools -- AgentCore.DreamAdmittedTools,
-      Set("Schedule", "Delegate", "AgentControl", "TaskList", "TaskBoard", "node_report"),
-      "dream 豁免面 = 仅 MemoryEdit（NodeReport 泛化批后剥离面六件——TaskBoard/node_report 对 dream 同样剥离，真实授能在 project 会话身份末段追加）")
+      Set("Schedule", "Delegate", "AgentControl", "TaskList", "TaskBoard", "node_report", "Pop"),
+      "dream 豁免面 = 仅 MemoryEdit（NodeReport 泛化批后剥离面六件 + 2026-09-10 Pop——TaskBoard/node_report/Pop 对 dream 同样剥离，真实授能在 project 会话身份末段追加 / Pop 仅 Nebula）")
     val sneakyDream = CoreProbe.allowed(mkDef("dream", List("Schedule", "Delegate", "AgentControl", "TaskList", "TaskBoard")))
     assert(!sneakyDream.contains("Schedule"), "dream 对 Schedule 仍被剥")
     assert(!sneakyDream.contains("Delegate"), "dream 对 Delegate 仍被剥")
@@ -127,7 +127,13 @@ class AgentConvergenceSpec extends FunSuite:
     // 单点函数全身份语义（Nebula 空 / dream 豁免 / 其余全集）
     assertEquals(AgentCore.exclusiveToolsFor("Nebula"), Set.empty[String], "Nebula 无剥离")
     assertEquals(AgentCore.exclusiveToolsFor("dream"),
-      Set("Schedule", "Delegate", "AgentControl", "TaskList", "TaskBoard", "node_report"), "dream 剥六件（NodeReport 泛化批后）")
+      Set("Schedule", "Delegate", "AgentControl", "TaskList", "TaskBoard", "node_report", "Pop"),
+      "dream 剥七件（NodeReport 泛化批后六件 + 2026-09-10 Pop）")
+    // 2026-09-10 作者裁定：Pop 收归 Nebula 专属——dream（及一切非 Nebula 身份）
+    // 拿不到 Pop：不在 DreamAdmittedTools 豁免面内
+    assert(!AgentCore.DreamAdmittedTools.contains("Pop"), "DreamAdmittedTools 不含 Pop ⇒ dream 拿不到 Pop")
+    assert(!CoreProbe.allowed(mkDef("dream", List("Pop"))).contains("Pop"),
+      "dream 声明 Pop 无效（非 DreamAdmittedTools；Pop 仅 Nebula）")
     assertEquals(AgentCore.exclusiveToolsFor("general"), AgentCore.NebulaExclusiveTools, "其余身份剥全集")
 
   // ===== §C.5：Glob/Grep 缺省根 = node root =====

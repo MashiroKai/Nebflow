@@ -71,12 +71,14 @@ class Phase2dToolRefactorSpec extends FunSuite:
       "TaskBoard（20260908 任务板批 2，规格 §1c）：分发器八件→九件——项目任务板全权面（create 全量/update 全板含结构字段/close 全板/list 全板；权限判定引擎侧身份=isDispatcher，工具内不信客户端参数）"
     )
 
-  test("D.1-1: general fixed set == 裁定 5 原文八件（2026-09-08 作者修订恢复 AskUser，逐件不变）"):
+  test("D.1-1: general fixed set == 七件（2026-09-08 恢复 AskUser；2026-09-10 裁定摘 Pop）"):
     assertEquals(
       AgentCore.fixedToolsFor(mkDef("general")),
-      Set("Read", "Glob", "Edit", "Write", "Grep", "Bash", "AskUserQuestion", "Pop"),
-      "AskUserQuestion 回归 general 默认面（2026-09-08 作者修订，D6 批D1：直达作者 + 留痕审计）"
+      Set("Read", "Glob", "Edit", "Write", "Grep", "Bash", "AskUserQuestion"),
+      "AskUserQuestion 回归 general 默认面（2026-09-08 作者修订，D6 批D1：直达作者 + 留痕审计）；Pop 摘除（2026-09-10 作者裁定：收归 Nebula 专属——节点交付物沿 out 边交链末端/Nebula）"
     )
+    assert(!AgentCore.fixedToolsFor(mkDef("general")).contains("Pop"),
+      "general 固定面零 Pop（2026-09-10 裁定，变异验红锚）")
 
   test("D.1-1: legacy 路径不再含三角色 name 分支——catch-all 对三角色名生效"):
     // legacyFixedTools 是纯 category 函数：三角色名传入时走 catch-all BaseTools
@@ -113,7 +115,7 @@ class Phase2dToolRefactorSpec extends FunSuite:
     }
     val generalDelivered = CoreProbe.allowed(mkDef("general"), isFlowNode = true)
     assertEquals(generalDelivered, AgentCore.GeneralFixedTools,
-      "general 节点形态交付面 == 静态集恰八件（2026-09-08 作者修订恢复 AskUser）")
+      "general 节点形态交付面 == 静态集恰七件（2026-09-08 作者修订恢复 AskUser；2026-09-10 裁定摘 Pop）")
     assert(!generalDelivered.contains("NodeMessage"), "NodeMessage 仅分发器（general 不加，20260905 机制批裁定⑥）")
     val dispatcherDelivered = CoreProbe.allowed(mkDef("project-dispatcher"), isFlowNode = true, projectBoardSession = true)
     assertEquals(dispatcherDelivered, AgentCore.DispatcherFixedTools, "dispatcher project 会话交付面 == 静态 9 件（含 NodeMessage + TaskBoard）")
@@ -233,12 +235,17 @@ class Phase2dToolRefactorSpec extends FunSuite:
     assert(d.contains("git diff"), "历史对比手法")
     assert(d.contains("exact-match"), "Edit 安全联动")
 
-  test("D.2: Pop description 含可视化汇报工作流关键句（order 415 下迁）"):
+  test("D.2: Pop description 含 Nebula 专属 + 节点交付协议关键句（2026-09-10 作者裁定重写）"):
+    // 旧的「生成后立即 Pop / professional tool + never hand-draw」面向节点的
+    // 汇报工作流指导句已按裁定删除（工具面收口取代提示词恳求）；改为明示
+    // Nebula 专属 + 节点交付协议（沿 out 边交链末端/Nebula）。
     val d = ToolRegistry.TOOL_MAP("Pop").description
-    assert(d.contains("professional tool"), "专业工具→SVG→Pop 句")
-    assert(d.contains("SVG"), "格式偏好")
-    assert(d.contains("never hand-draw"), "反模式（ASCII 手绘）")
+    assert(d.contains("Nebula-exclusive"), "专属声明句")
+    assert(d.contains("POP_NEBULA_ONLY"), "拒答错误码（非 Nebula 身份被拒的可行动文案）")
+    assert(d.contains("out edge"), "节点交付协议：沿 out 边交链末端/Nebula")
     assert(d.contains("Canvas"), "呈现面")
+    assert(!d.contains("never hand-draw"),
+      "面向节点的「生成后立即 Pop」指导句必须已删（不得写成「节点也能 Pop」）")
 
   test("D.2: TeamTask 三件 description 含任务协议关键句（order 630 下迁，双轨期）"):
     val list = ToolRegistry.TOOL_MAP("TeamTaskList").description
