@@ -237,6 +237,40 @@ object Defaults:
     sys.props.getOrElse("nebflow.stuck.toolPhaseMs", "600000").toLong
 
   /**
+   * R6（取消静默死锁修复批 2026-09-10，作者裁定 R6 方案 2）：工具相位判据的
+   * **授权宽限**——判据尊重命令自己声明的合法时长：
+   *
+   *   toolOverdue ⟺ now - currentToolStartedAt > min(ToolPhaseStuckMs, declaredDeadline + Slack)
+   *
+   * 背景：三例误杀的案例 1 命令自带 `timeout=900000ms`（15min 授权），判据在其
+   * 11.2 分钟处开火。判据此前与工具自报授权时长零耦合。
+   *
+   * 取值理由：watcher 扫描周期 `StuckWatcherIntervalSec` = 30s；60s = 2 拍 —— 命令
+   * 声明的时长一到，最多 2 拍（≈60s+拍相位）内判死，既不因拍相位漏判，也不把
+   * 「合法时长刚过」误判为「早已卡死」。**本值只放宽、不放严**：声明时长远小于
+   * 10min 的工具仍受 ToolPhaseStuckMs 保护（min 语义），未声明时长的工具零行为
+   * 变化（仍 10min）。
+   *
+   * system prop `nebflow.stuck.toolDeadlineSlackMs`，每次调用现读（kill-switch 先例）。
+   */
+  def ToolDeadlineSlackMs: Long =
+    sys.props.getOrElse("nebflow.stuck.toolDeadlineSlackMs", "60000").toLong
+
+  /**
+   * 工具调用自己声明的授权时长（ms）。R6 唯一取数口：读工具入参 JSON 的 `timeout`
+   * 字段（Bash 工具既有授权参数，语义 = 该命令被允许跑多久）。
+   *
+   * **只读调用方声明的值，不读工具内部默认值**（默认值 = 引擎授权上限，不是「命令
+   * 声明的合法时长」——把默认值当声明会让所有工具都变成「已声明」，从而把 10min
+   * 判据静默改写成工具默认时长 + slack）。缺字段 / 非正数 / 非数 → 0（= 未声明，
+   * 判据回落到 ToolPhaseStuckMs）。
+   *
+   * 不改 Bash 工具自身的授权超时语义（红线 R6-3）：本函数只被判据消费。
+   */
+  def declaredToolTimeoutMs(toolInput: io.circe.JsonObject): Long =
+    toolInput("timeout").flatMap(_.asNumber).flatMap(_.toLong).filter(_ > 0L).getOrElse(0L)
+
+  /**
    * 2026-09-10 卡死判据换轴（阈值解耦）：前台 no-progress ceiling 的「有进展」
    * CPU 判据——与 BashTool 活动桥接的 `shell.CpuActiveThresholdNanos`（10ms）
    * **不再共用常量**。10ms/30s = 0.033% 单核，任何「活着且有偶发唤醒」的进程

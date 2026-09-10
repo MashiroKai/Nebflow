@@ -26,7 +26,17 @@ import nebflow.core.PathUtil
  *   时追加——nodeId = 分量内 createdAt 最早节点（与链 id 派生同源），summary =
  *   `chain=<id> archivedAt=<ms> members=<n>`，顶层 chainId 同值；索引维护消费者
  *   DocIndexConsumer 据此翻 INDEX.md 条目 state）/ chain-restored（同批定义的对称
- *   事件类型——链抽象 P2 restoreChain 拉回时索引回翻；**接口点，本批无写入点**）。
+ *   事件类型——链抽象 P2 restoreChain 拉回时索引回翻；**接口点，本批无写入点**）/
+ *   hard-recovery（hard-recovery 批 2026-09-07 起由 NodeEngine.hardResumeNode 写
+ *   「resumed from stuck」；取消静默死锁修复批 R5 补写 resume **失败**腿——
+ *   `L3 resume FAILED … node left cancelled; dispatcher notified (R1) + out detached (R4)`）/
+ *   cancelled（**取消静默死锁修复批 R2** 2026-09-10：cancelled 终态化留痕——
+ *   `node cancelled [source=engine|user]: <reason>`（+ R4 摘除目标清单）。此前
+ *   cancelled 唯一留痕是 bg-harvest 那行**无原因**文本，取消原因全系统零落盘）/
+ *   barrier-blocked（**取消静默死锁修复批 R3**：终态写点（cancelled/failed）
+ *   同步做下游 barrier 检查，已被终态上游永久闸死 → **即时**告警（0 延迟，不设
+ *   60s 档）。周期回扫的 mount-stalled 保留为兜底，两者由 NodeEngine 的
+ *   stallNotified + barrierAlerted 单发记账去重——同一停滞不发两条）。
  * 注册式扩展：append API 无 schema 变更，新事件类型 = 本清单加一词 + 写入点调用；
  * chainId 为顶层**可选**字段（2026-09-10 加，spec §9.2 项 9）：旧行无该键照常解析
  * （零迁移、append-only），新行仅在链族事件带上。
