@@ -240,16 +240,22 @@ object Defaults:
    * R6（取消静默死锁修复批 2026-09-10，作者裁定 R6 方案 2）：工具相位判据的
    * **授权宽限**——判据尊重命令自己声明的合法时长：
    *
-   *   toolOverdue ⟺ now - currentToolStartedAt > min(ToolPhaseStuckMs, declaredDeadline + Slack)
+   *   toolOverdue ⟺ now - currentToolStartedAt > 有效阈值
+   *   有效阈值 = [[declaredToolTimeoutMs]] > 0 ? max(ToolPhaseStuckMs, declared + Slack)
+   *                                        : ToolPhaseStuckMs
+   *
+   * ⚠ 设计文档 §6-R6 的逐字公式为 `min(ToolPhaseStuckMs, deadline + slack)`，与
+   * 该裁定项的两条验收口径（「大 timeout 且持续推进 → 改造后不判」/「不带 timeout
+   * 仍 10min 判死」）不自洽——`min` 在大 timeout 时退化为 10min，案例 1 照旧误杀。
+   * **实施按裁定意图（尊重声明时长）与验收口径取 max**；差异已在批报告「待裁项」
+   * 显式登记，实现单点 = `ToolStuckJudgment.effectiveToolPhaseMs`（改 min 即一行）。
    *
    * 背景：三例误杀的案例 1 命令自带 `timeout=900000ms`（15min 授权），判据在其
    * 11.2 分钟处开火。判据此前与工具自报授权时长零耦合。
    *
    * 取值理由：watcher 扫描周期 `StuckWatcherIntervalSec` = 30s；60s = 2 拍 —— 命令
    * 声明的时长一到，最多 2 拍（≈60s+拍相位）内判死，既不因拍相位漏判，也不把
-   * 「合法时长刚过」误判为「早已卡死」。**本值只放宽、不放严**：声明时长远小于
-   * 10min 的工具仍受 ToolPhaseStuckMs 保护（min 语义），未声明时长的工具零行为
-   * 变化（仍 10min）。
+   * 「合法时长刚过」误判为「早已卡死」。未声明时长的工具零行为变化（仍 10min）。
    *
    * system prop `nebflow.stuck.toolDeadlineSlackMs`，每次调用现读（kill-switch 先例）。
    */

@@ -94,11 +94,12 @@ object TaskStuckWatcher:
    * 未 touch）由调用方保持不变：assess 只回答「给定记录是否超时」。
    *
    * R6（取消静默死锁修复批 2026-09-10，作者裁定方案 2）：轴 ② 的有效阈值改为
-   * `min(ToolPhaseStuckMs, currentToolDeadlineMs + ToolDeadlineSlackMs)`
-   * —— **尊重命令自己声明的合法时长**。三例误杀的案例 1 命令自带
-   * `timeout=900000ms`（15min 授权），旧判据在其 11.2 分钟处开火；改造后该命令在
-   * 其授权期内不再判死。未声明时长（currentToolDeadlineMs == 0）→ 原 10min 档
-   * 零变化。**不得**把进程 CPU 重新引入判据（红线 R6-4）。
+   * `[[ToolStuckJudgment.effectiveToolPhaseMs]]` —— **尊重命令自己声明的合法时长**
+   * （声明 > 默认档取声明，声明 < 默认档取声明，未声明取默认档；逐字公式差异与
+   * 理由见该函数注释的待裁说明）。三例误杀的案例 1 命令自带 `timeout=900000ms`
+   * （15min 授权），旧判据在其 11.2 分钟处开火；改造后该命令在其授权期内不再判死。
+   * 未声明时长（currentToolDeadlineMs == 0）→ 原 10min 档零变化。
+   * **不得**把进程 CPU 重新引入判据（红线 R6-4）。
    */
   def assess(
     rec: AgentRecord,
@@ -618,6 +619,20 @@ end TaskStuckWatcher
  * **不读取任何进程 CPU**（红线 R6-4）。
  */
 object ToolStuckJudgment:
+  /** 有效工具相位阈值。
+    *
+    * ⚠ **实现口径与设计文档逐字公式的差异（待裁项，见批报告 §待裁）**：设计 §6-R6
+    * 方案 2 的公式逐字写作 `min(ToolPhaseStuckMs, deadline + slack)`，但该公式与
+    * 同一裁定项的两条验收口径自相矛盾：`min` 在 deadline > ToolPhaseStuckMs 时退化
+    * 为 ToolPhaseStuckMs，**案例 1（`timeout=900000ms`，11.2min 被判死）照旧被误杀**
+    * —— 而方案 2 的立论原文就是「尊重命令自己声明的合法时长」，验收口径亦明写
+    * 「命令自带大 timeout 且持续推进 → 改造后不判」。故此处按**裁定意图与验收口径**
+    * 实现为 `max`（声明时长 > 默认档 ⇒ 以声明时长为轴；声明时长 < 默认档 ⇒ 以声明
+    * 时长为轴 —— 即「命令的授权时长就是它被允许跑多久」，默认档只在未声明时生效）。
+    * 若复核/作者裁定取 `min`（= 10min 硬顶，声明只许缩短不许延长），改动 = 本函数
+    * `math.max` → `math.min` 一行。
+    *
+    * **不读取任何进程 CPU**（红线 R6-4）。 */
   def effectiveToolPhaseMs(defaultMs: Long, declaredMs: Long, slackMs: Long): Long =
-    if declaredMs > 0 then math.min(defaultMs, declaredMs + math.max(0L, slackMs))
+    if declaredMs > 0 then math.max(defaultMs, declaredMs + math.max(0L, slackMs))
     else defaultMs
