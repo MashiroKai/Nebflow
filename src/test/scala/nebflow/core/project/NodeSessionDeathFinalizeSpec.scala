@@ -66,7 +66,7 @@ class NodeSessionDeathFinalizeSpec extends FunSuite:
     def sendStream(req: nebflow.shared.LlmRequest, onAttempt: Option[nebflow.shared.FallbackAttempt => IO[Unit]] = None) =
       fs2.Stream.eval(IO.never)
 
-  private def withFixture(name: String)(body: (FlowMapStore, NodeEngine, SharedResources, ActorSystem, Ref[IO, List[AgentCommand]], String) => Unit): Unit =
+  private def withFixture(name: String, notifySeam: Option[Ref[IO, List[String]]] = None)(body: (FlowMapStore, NodeEngine, SharedResources, ActorSystem, Ref[IO, List[AgentCommand]], String) => Unit): Unit =
     val tmp = os.temp.dir(prefix = s"nodedeath-$name")
     PathUtil.setDataRoot(tmp / "data")
     // EntityLoader.agentsDir = PathUtil.dataRoot/agents —— agent 库种在 dataRoot 下
@@ -125,7 +125,8 @@ class NodeSessionDeathFinalizeSpec extends FunSuite:
           rootSid,
           "ddproj",
           FeedbackRouter.ModeAuto,
-          (_, _, _) => IO.unit
+          (_, _, _) => IO.unit,
+          notifyTriggerOverride = notifySeam.map(ref => (text: String) => ref.update(_ :+ text))
         )
       yield (store, engine, resources, recorded, rootSid, rootRef)
       val (store, engine, resources, recorded, rootSid, rootRef) = io.unsafeRunSync()
@@ -280,6 +281,97 @@ class NodeSessionDeathFinalizeSpec extends FunSuite:
       yield node
       val node = io.unsafeRunSync()
       assertEquals(clue(node.map(_.status)), Some(NodeLifecycle.Cancelled), "cancel semantics untouched by gap-1 fix")
+    }
+  }
+
+  test("R5-方案4 INTEGRATION (real engine + real bridge): the L3 bridge cancel (deferDetach + deferNotify) holds the node with ZERO outward flow; the resume leg fails with 'no readable transcript' and the re-judge lands as failed with exactly ONE failed notification") {
+    val triggered = Ref.unsafe[IO, List[String]](Nil)
+    withFixture("r5-l3", notifySeam = Some(triggered)) { (store, engine, resources, system, recorded, rootSid) =>
+      val io = for
+        // 上游节点（将被 L3 取消）+ 下游 Pending（D5 停等观察面）
+        _ <- store.mutate(s => s.copy(nodes = s.nodes + ("n-l3" -> NodeDef(
+          id = "n-l3", name = "node-l3", agent = "test-agent", task = Some("long running task that will never finish"),
+          out = List(OutEdge("n-l3d")), status = NodeLifecycle.Wiring,
+          createdAt = System.currentTimeMillis())))).void
+        _ <- store.mutate(s => s.copy(nodes = s.nodes + ("n-l3d" -> NodeDef(
+          id = "n-l3d", name = "node-l3-downstream", agent = "test-agent", task = Some("downstream"),
+          in = List("n-l3"), out = List(OutEdge.nebula), status = NodeLifecycle.Pending,
+          createdAt = System.currentTimeMillis())))).void
+        _ <- engine.startNode("n-l3").start
+        _ <- waitUntil(30.seconds)(store.getNode("n-l3").map(_.exists(_.status == NodeLifecycle.Running)))
+        _ <- waitUntil(30.seconds)(nodeSession(resources).map(_.isDefined))
+        rec0 <- nodeSession(resources)
+        rec = rec0.getOrElse(fail("node session must exist"))
+        sup = rec.supervisorRef.getOrElse(fail("bridge supervisorRef must be wired"))
+        // 生产 L3 文本（TaskStuckWatcher.bridgeCancelled 逐字同源：含 "(L3 hard-recovery:"）
+        l3Reason =
+          "stuck for 1500s (L3 hard-recovery: true resume from transcript breakpoint) — released by TaskStuckWatcher"
+        _ <- (sup ! AgentEvent.Cancelled(rec.sessionId, l3Reason)).void
+        _ <- waitUntil(30.seconds)(store.getNode("n-l3").map(_.exists(_.status == NodeLifecycle.Cancelled)))
+        held <- store.getNode("n-l3").map(_.get)
+        fires0 <- triggered.get
+        // resume 腿：本 fixture 的挂死会话无 transcript ⇒ 引擎侧 "no readable transcript" ⇒ None
+        resumed <- engine.hardResumeNode(rec.sessionId)
+        // 改判腿（引擎侧唯一收口）
+        _ <- engine.settleFailedHardResume(rec.sessionId)
+        _ <- waitUntil(30.seconds)(store.getNode("n-l3").map(_.exists(_.status == NodeLifecycle.Failed)))
+        judged <- store.getNode("n-l3").map(_.get)
+        down <- store.getNode("n-l3d").map(_.get)
+        fires1 <- triggered.get
+      yield (held, fires0, resumed, judged, down, fires1, rec.sessionId)
+      val (held, fires0, resumed, judged, down, fires1, sid) = io.unsafeRunSync()
+      // ① L3 中间态：Cancelled + 回流占位（deferNotify）——**对外零回流**（既不 cancelled 也不 failed）
+      assertEquals(clue(held.status), NodeLifecycle.Cancelled, "the L3 bridge cancel must land as cancelled")
+      assert(clue(held.result).exists(_.contains("source=engine")), s"R2: the cancel reason must be recorded: ${held.result}")
+      assert(clue(held.notifySentAt).isDefined, "the L3 intermediate state must hold the notify marker (deferred flow-back)")
+      assertEquals(clue(fires0), Nil, "the L3 intermediate Cancelled state must produce ZERO outward flow")
+      // ② resume 失败形态 = no readable transcript（与隔离实例 e2e 同一条出口）
+      assertEquals(clue(resumed), None, "resume must fail (the hanging session left no readable transcript)")
+      // ③ 改判 failed：状态 / 原因 / 边保留 / D5 停等 / 恰好一条 failed 回流
+      assertEquals(clue(judged.status), NodeLifecycle.Failed, "the L3 resume failure must re-judge the node as failed")
+      assert(clue(judged.result).exists(_.contains("L3 hard-recovery resume failed")), s"reason: ${judged.result}")
+      assert(clue(judged.result).exists(_.contains(sid)), "the sessionId must ride the failure reason")
+      assertEquals(clue(judged.out), List(OutEdge("n-l3d")), "failed side must NOT detach the out edge")
+      assert(clue(down.in).contains("n-l3"), s"failed side must NOT prune the downstream in mirror: ${down.in}")
+      assertEquals(clue(down.pendingSuccession), Nil, "failed side must NOT write the 待承接 marker")
+      assertEquals(clue(fires1).size, 1, s"exactly one dispatcher notification expected, got ${fires1.size}")
+      assert(clue(fires1.head).contains("reason=failed"), s"failed wording expected: ${fires1.head.take(200)}")
+      assert(clue(fires1.head).contains("L3 hard-recovery resume failed"), "the notification must carry the L3 reason")
+      assert(!clue(fires1.head).contains("已被**取消**"), "the cancelled notification variant must NEVER go out on the L3 leg")
+    }
+  }
+
+  test("R5-方案4 INTEGRATION (success leg): a successful L3 resume hands the notify marker back — the revived node is NOT left flagged as already-notified (its real terminal state still flows back exactly once)") {
+    val triggered = Ref.unsafe[IO, List[String]](Nil)
+    withFixture("r5-l3ok", notifySeam = Some(triggered)) { (store, engine, resources, system, recorded, rootSid) =>
+      val io = for
+        _ <- seedRunningCandidate(store, "n-l3ok", "node-l3ok", "long running task that will never finish")
+        _ <- engine.startNode("n-l3ok").start
+        _ <- waitUntil(30.seconds)(store.getNode("n-l3ok").map(_.exists(_.status == NodeLifecycle.Running)))
+        _ <- waitUntil(30.seconds)(nodeSession(resources).map(_.isDefined))
+        rec0 <- nodeSession(resources)
+        rec = rec0.getOrElse(fail("node session must exist"))
+        sup = rec.supervisorRef.getOrElse(fail("bridge supervisorRef must be wired"))
+        _ <- (sup ! AgentEvent.Cancelled(rec.sessionId,
+          "stuck for 1500s (L3 hard-recovery: true resume from transcript breakpoint) — released by TaskStuckWatcher")).void
+        _ <- waitUntil(30.seconds)(store.getNode("n-l3ok").map(_.exists(_.status == NodeLifecycle.Cancelled)))
+        held <- store.getNode("n-l3ok").map(_.get)
+        // 断点在磁盘上：为会话补一份可读 transcript ⇒ resume 必须成功（成功后节点复活续跑）
+        _ <- resources.sessionStore.saveMessagesForSession(rec.sessionId,
+          List(nebflow.shared.Message(nebflow.shared.MessageRole.User, Left("resume from breakpoint"))))
+        resumed <- engine.hardResumeNode(rec.sessionId)
+        _ <- waitUntil(30.seconds)(store.getNode("n-l3ok").map(_.exists(n =>
+          n.status == NodeLifecycle.Pending || n.status == NodeLifecycle.Running)))
+        revived <- store.getNode("n-l3ok").map(_.get)
+        fires <- triggered.get
+      yield (held, resumed, revived, fires)
+      val (held, resumed, revived, fires) = io.unsafeRunSync()
+      assert(clue(held.notifySentAt).isDefined, "precondition: the L3 intermediate state holds the marker")
+      assertEquals(clue(resumed), Some("n-l3ok"), "resume must succeed with a readable transcript")
+      assert(clue(revived.status) != NodeLifecycle.Cancelled, s"the node must be revived, got ${revived.status}")
+      assertEquals(clue(revived.notifySentAt), None,
+        "the hold must be handed back on the success leg — otherwise the revived node's real terminal state would be silenced by dedup")
+      assertEquals(clue(fires), Nil, "neither leg may emit an outward flow before the node's real terminal state")
     }
   }
 
