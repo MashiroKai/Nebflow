@@ -53,6 +53,24 @@ jobs:
       - name: Check src/main for NebulaLogger double-wrap
         run: bash scripts/check-dead-logging.sh
 
+  jdk-baseline-gate:
+    name: JDK Baseline Gate (21)
+    # Fail-fast static gate: the JDK 21 baseline is ONE fact spread over five
+    # declaration surfaces — release/install.sh, release/install.ps1, the
+    # README badge / build-from-source line, Dockerfile:1, build.sbt -release.
+    # Any surface drifting back to 17 is silent until a user installs on a
+    # stale JDK; the two installers drifting apart (G5 form: one file saying
+    # 17 while the other says 21) is invisible from either file alone.
+    # No needs: runs in parallel with compile and fails in seconds.
+    # The Java-17 reproduction half of the same gate runs in docker-test
+    # (it needs the assembly artifact); same script, --jar mode.
+    # Same logic locally: bash scripts/check-jdk-baseline.sh
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Assert JDK 21 across every declaration surface
+        run: bash scripts/check-jdk-baseline.sh
+
   compile:
     name: Compile (${{ matrix.os }})
     runs-on: ${{ matrix.os }}
@@ -359,3 +377,14 @@ jobs:
           docker logs ${LOWER_NAME}-test 2>&1 | head -20
           curl -sf http://localhost:8080/api/health || echo "Health check failed"
           docker stop ${LOWER_NAME}-test
+      - name: Java 17 reproduction — the jar must refuse to start (A-6)
+        # The only assertion that makes "Java 17 is incompatible" visible in CI:
+        # the step above never fails on a broken container — `curl -sf … || echo`
+        # swallows the health check, so it is green on any JVM whatsoever.
+        # Reuses this job's already-downloaded assembly, runs it inside
+        # eclipse-temurin:17-jre and asserts the gate behaviour: a NON-ZERO exit
+        # with a Java-21 / class-file-version diagnostic. Still running after
+        # 90s = did not refuse = failure (never a hang, never a pass).
+        # Container discipline lives in the script: `--network none`, no
+        # --network host, no port mapping, named container + EXIT trap cleanup.
+        run: bash scripts/check-jdk-baseline.sh --jar "$(ls target/scala-3.5.2/${LOWER_NAME}-assembly-*.jar | head -1)"
