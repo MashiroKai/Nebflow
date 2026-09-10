@@ -63,7 +63,12 @@ class NodeEngine(
     * None = 该项目无板（节点注入整块省略）。mount 时传入。 */
   val board: Option[TaskBoardStore] = None,
   /** 项目目标行来源（TaskBoard 批 2 §3b：ProjectDef.description；None 整行省略）。 */
-  val projectGoal: Option[String] = None
+  val projectGoal: Option[String] = None,
+  /** dispatch-notify 触发通道覆盖（取消静默死锁修复批 R1，测试接缝）：Some 时取代
+    * 真实触发链（ProjectRuntimeRegistry → ProjectActor.TriggerDispatcher）——spec
+    * 用它捕获**通知文本原文**断言「cancelled 专属处置指引」。生产调用点零传参
+    * （默认 None = 真实链，零行为变化）。 */
+  notifyTriggerOverride: Option[String => IO[Unit]] = None
 ):
   private val logger = NebflowLogger.forName("nebflow.node.engine")
 
@@ -79,16 +84,18 @@ class NodeEngine(
     escalateFailed = Some((text, nodeName) => deliverToNebula(text, nodeName, NodeLifecycle.Failed))
   )
 
-  /** dispatch-notify 通道（2026-09-05 批接线 completion；2026-09-07 批接线 failed）：
+  /** dispatch-notify 通道（2026-09-05 批接线 completion；2026-09-07 批接线 failed；
+    * 取消静默死锁修复批 2026-09-10 接线 cancelled/R1）：
     * 节点终态结果回流分发器的单一通知入口（completion 查 notifyDispatcher flag；
-    * failed 不查——异常低频事件拓扑主人全知情；防循环+预算分账+窗口熔断+持久去重
-    * 见 DispatchNotify）。挂接点三处：completedNode 尾部 + deliverFailed 尾部直触发
-    * + ProjectActor.TtlTick 周期补投。 */
+    * failed/cancelled 不查——异常低频事件拓扑主人全知情；防循环+预算独立分账+
+    * 窗口熔断+持久去重见 DispatchNotify）。挂接点四处：completedNode 尾部 +
+    * deliverFailed 尾部直触发 + **cancelNode 尾部（R1）** + ProjectActor.TtlTick 周期补投。 */
   private[project] val dispatchNotify: DispatchNotify = DispatchNotify.forEngine(
     store, workspace, projectName, rootSessionId,
     // notice 语义（非 blocked）：预算耗尽时节点保持 completed，前端不可标 BLOCKED。
     escalate = (text, nodeName) => deliverToNebula(text, nodeName, DispatchNotify.NoticeEventType),
-    emitUpdated = emitUpdated
+    emitUpdated = emitUpdated,
+    triggerOverride = notifyTriggerOverride
   )
 
   /** 运行中节点 → cancel 信号（NodeCancel 用）。 */
@@ -152,7 +159,13 @@ class NodeEngine(
             logger.warn(s"Node '${n.name}' ($nodeId) reaped: status=running but no live execution fiber (dead session / instance restart)")
             FlowMapEventLog.append(workspace, projectName, nodeId, "reaped",
               "dead running session finalized as cancelled (no live execution fiber; NodeCancel reap)") *>
-              cancelNode(nodeId).as(Right(s"Node '${n.name}' reaped — dead running session finalized as cancelled (retained on map, no TTL)"))
+              // R2/R2-R7：reap 是**引擎发起**的收殓（无人主动取消）→ source=Engine，
+              // reason 明确写出死会话判据（此前 cancelNode 无 reason 形参，此处文本
+              // 只存在于 reaped 事件里，节点自身零原因）。
+              cancelNode(nodeId,
+                "dead-session reap: status=running but no live execution fiber (dead session / instance restart)",
+                CancelSource.Engine)
+                .as(Right(s"Node '${n.name}' reaped — dead running session finalized as cancelled (retained on map, no TTL)"))
         }
     }
 
@@ -231,7 +244,9 @@ class NodeEngine(
             logger.warn(s"Node '${failed.name}' auto-finalized failed (dead session): ${err.take(200)}") *>
             FlowMapEventLog.append(workspace, projectName, nodeId, "dead-session-reaped",
               s"dead-session node auto-converged to failed: ${err.take(220)}") *>
-            deliverFailed(failed, err)
+            deliverFailed(failed, err) *>
+            // R3：与 failNode 同款的终态写点即时 barrier 告警（failed 侧仅此新增）。
+            checkBarriersNow(failed.id, cause = "failed")
         case _ => IO.unit
     yield ()
 
@@ -414,7 +429,12 @@ class NodeEngine(
       snap.nodes.values.find(n =>
         n.sessionRef.contains(sessionId) || n.sessionRefVerify.contains(sessionId)
       ) match
-        case None => IO.pure(None)
+        case None =>
+          // R5（取消静默死锁修复批）：此前静默 `IO.pure(None)`——L3 6/6 零留痕的一个
+          // 候选出口。留痕不改行为（仍返回 None）。
+          logger.warn(
+            s"[hard-recovery] no node owns session $sessionId — L3 resume skipped (session never bound to a node / node already archived)"
+          ).as(None)
         case Some(n) =>
           resources.sessionStore.loadMessagesForSession(sessionId).attempt.flatMap {
             case Right(msgs) if msgs.nonEmpty =>
@@ -435,7 +455,13 @@ class NodeEngine(
                       bgWait = None))), true)
                   case _ => (s, false)
               }.flatMap { (s, ok) =>
-                if !ok then IO.pure(None)
+                if !ok then
+                  // R5：此前静默 `IO.pure(None)`——L3 6/6 零留痕的另一个候选出口。
+                  // 留痕不改行为（节点保持原状，仍返回 None）。
+                  logger.error(
+                    s"[hard-recovery] resume CAS rejected for node '${n.name}' (${n.id}) — status is no longer " +
+                      s"Cancelled/Running (concurrent terminal / restart / sweep); node left as-is, manual re-trigger needed"
+                  ).as(None)
                 else
                   s.nodes.get(n.id).traverse_(emitUpdated) *>
                     FlowMapEventLog.append(workspace, projectName, n.id, "hard-recovery",
@@ -449,6 +475,38 @@ class NodeEngine(
               logger.warn(
                 s"[hard-recovery] no readable transcript for session $sessionId — node left terminal, manual re-trigger needed"
               ).as(None)
+          }
+    }
+
+  /** R5 resume 失败分支（取消静默死锁修复批 2026-09-10，作者裁定 R5 方案 3）：
+    * L3 硬恢复的 resume 未生效 ⇒ 节点停留在 Cancelled 终态。作者裁定「失败时按 R1
+    * 回流 + 按 R4 摘除/标记」——本方法是该两条动作的引擎侧单点：
+    *   ① R4 摘除（`detachCancelledUpstream`）：L3 取消路径有意延后摘除（见 cancelNode
+    *      的桥调用点裁定），失败分支必须补上，否则 barrier 永久悬着；
+    *   ② R3 即时 barrier 告警（摘除后下游带「待承接」标）；
+    *   ③ R1 回流分发器（`notifyTerminal(_, Cancelled)`）——若 cancelNode 时已触发并
+    *      落 notifySentAt，此处由 DispatchNotify 的持久去重 no-op（幂等）；
+    *   ④ `hard-recovery` 审计事件（失败留痕，与成功腿的 `resumed from …` 事件对称）。
+    * 全部幂等（重放/重复 L3 拍安全）。节点状态非 cancelled（resume 已复活 / 已被
+    * 分发器处置）→ 零动作。找不到节点（会话未绑定/已归档）→ 响亮 ERROR 留痕。 */
+  def settleFailedHardResume(sessionId: String): IO[Unit] =
+    store.snapshot.flatMap { snap =>
+      snap.nodes.values.find(n => n.sessionRef.contains(sessionId) || n.sessionRefVerify.contains(sessionId)) match
+        case None =>
+          logger.error(
+            s"[hard-recovery] L3 resume failed but no node owns session $sessionId — nothing to notify/detach (manual intervention required)"
+          )
+        case Some(n) if n.status != NodeLifecycle.Cancelled =>
+          logger.info(
+            s"[hard-recovery] L3 resume failed for session $sessionId but node '${n.name}' (${n.id}) is ${n.status} — no fallback action needed"
+          )
+        case Some(n) =>
+          detachCancelledUpstream(n.id).flatMap { detached =>
+            FlowMapEventLog.append(workspace, projectName, n.id, "hard-recovery",
+              s"L3 resume FAILED (session=$sessionId) — node left cancelled; dispatcher notified (R1) + out detached (R4)" +
+                (if detached.nonEmpty then s"; successors awaiting handover: ${detached.mkString(",")}" else "")) *>
+              checkBarriersNow(n.id, cause = "L3-resume-failed") *>
+              store.getNode(n.id).flatMap(_.traverse_(fresh => dispatchNotify.notifyTerminal(fresh, NotifyReason.Cancelled)))
           }
     }
 
@@ -678,7 +736,11 @@ class NodeEngine(
                 // barrier 归零后才调（入口 in=Nil 平凡归零），检查对它们恒真、零行为变化。
                 // 本检查沿快照；并发接线窗口的事务性复核在 spawnAndRun 的翻转 mutate 内
                 //（fix a 启动判定完整性，20260903）。
-                if node.in.exists(up => !node.deliveredTo.contains(up)) then IO.unit
+                // R4（取消静默死锁修复批）：带「待承接」标记的 barrier 不放行——引擎自动
+                // 摘除 cancelled 上游后 in 已 prune，若不设此闸，barrier 会以「少一轨」的
+                // 输入正常启动、静默产出缺轨结论（设计 §6-R4 选择方案 4 的核心理由）。
+                // 分发器承接动作落地（NodeEdit 任意实际变更）即清空标记，此处自然放行。
+                if node.in.exists(up => !node.deliveredTo.contains(up)) || node.pendingSuccession.nonEmpty then IO.unit
                 else
                   // 防御：wiring 空节点（无 task 无 in 无 deps）不空跑（防浪费 token）。
                   // 裁定①后降级为纵深防御：零连接主责在 NodeEdit 校验五/六，此处只兜
@@ -1425,7 +1487,20 @@ class NodeEngine(
             completeNode(nodeId, text, declared)
           }
         case Left(fo) =>
-          if fo.message.contains("cancelled") then cancelNode(nodeId)
+          if fo.message.contains("cancelled") then
+            // R2：原因文本从桥消息还原（此前只做 `contains("cancelled")` 布尔嗅探后
+            // 丢弃）。R7：触发源按 [[CancelSource]] 两态分类（引擎看门狗 vs 人/Agent
+            // 主动取消），由 reason 文本特征推导——**不改 AgentEvent 消息形态**。
+            val reason = CancelSource.reasonFromBridgeMessage(fo.message)
+            // R4 × R5 交互裁定（本批唯一延迟摘除点）：L3 硬恢复路径（bridge Cancelled
+            // → 5s → resume）**延后**摘除——立即摘除会让 resume 成功后拓扑永久缺轨
+            // （下游 in 已被 prune、永远拿不到该节点结果）。该路径的摘除由 R5 的
+            // resume 失败分支（[[settleFailedHardResume]]，作者裁定「失败时按 R1 回流
+            // + 按 R4 摘除/标记」）承担；resume 成功则拓扑完整保留。
+            // 其余取消路径（L3 之外的 watcher giveUp / AgentControl / 面板 NodeCancel /
+            // 父会话级联）一律立即摘除。
+            val deferDetach = reason.contains("(L3 hard-recovery:")
+            cancelNode(nodeId, reason, CancelSource.classify(reason), detach = !deferDetach)
           else failNode(nodeId, fo.message)
     yield ()).guarantee {
       // 任意退出路径（正常/崩溃/异常/cancel）三表对称移除——与既有清理段
@@ -1677,9 +1752,13 @@ class NodeEngine(
       }.flatMap(s => s.nodes.get(nodeId).traverse_(emitUpdated))
 
     /** 执行层失败/取消分流（§2.4）：cancelled → cancelNode（整 Loop cancelled）；
-      * 其余（LLM 错误/agent 消失/LoopGuard L1 终止该 turn）→ 整 Loop failed（failNode）。 */
+      * 其余（LLM 错误/agent 消失/LoopGuard L1 终止该 turn）→ 整 Loop failed（failNode）。
+      * R2/R7（取消静默死锁修复批）：Loop 会话的取消同样带原因 + 触发源——err 文本已
+      * 含 `cancelled` 特征，原样作为 reason 落盘（[[CancelSource]] 两态分类同桥口径）。 */
     def failOrCancel(nodeId: String, err: String): IO[Unit] =
-      if err.contains("cancelled") then cancelNode(nodeId) else failNode(nodeId, err)
+      if err.contains("cancelled") then
+        cancelNode(nodeId, err, CancelSource.classify(err))
+      else failNode(nodeId, err)
 
     /** verify 首轮输入构建（模板三全文：原始任务 + 上游段 + 待验证产出 + 验证清单 +
       * 验证协议脚注）；轮 N≥2 用模板三短段（持久上下文已持有），见 loopVerifyInput。 */
@@ -1926,6 +2005,14 @@ class NodeEngine(
   private val stallNotified: Ref[IO, Set[String]] =
     Ref.unsafe[IO, Set[String]](Set.empty)
 
+  /** R3 即时 barrier 告警单发记账（取消静默死锁修复批）：已由**终态写点同步**
+    * （[[checkBarriersNow]]）发过 `barrier-blocked` 的下游 id 集。与 [[stallNotified]]
+    * 分工：本集管「即时告警已发」，周期回扫发射集要排除本集成员（同一停滞不得发
+    * 两条）；每轮 sweep 按「此刻是否仍被终态上游闸住」剪枝——恢复（承接/改接/启动）
+    * 即出集，未来再次停滞可再告警一次。 */
+  private val barrierAlerted: Ref[IO, Set[String]] =
+    Ref.unsafe[IO, Set[String]](Set.empty)
+
   /** 资格回扫（根因报告 §6.2，TtlTick 30s 驱动，ProjectActor 挂点）：对活动区
     * pending/wiring 节点做声明式启动资格重估，一次性关死「有资格但没人叫」的悬
     * 挂族（孤儿 barrier、D1 缺口、投递丢失、触发消费错位——案例 B 收口C 96min
@@ -1969,7 +2056,10 @@ class NodeEngine(
         n.status == NodeLifecycle.Pending || n.status == NodeLifecycle.Wiring).toList
       qualified <- actives.filterA { n =>
         val emptyWiring = n.status == NodeLifecycle.Wiring && n.task.isEmpty && n.in.isEmpty && n.deps.isEmpty
-        val barrierOk = !n.in.exists(up => !n.deliveredTo.contains(up))
+        // R4：带「待承接」标记的 barrier 不放行（摘除后 in 已 prune，若不设此闸，
+        // barrier 会以缺轨输入正常启动并静默产出缺轨结论）。分发器承接后（NodeEdit
+        // 实际变更）标记清空，此处自然放行。
+        val barrierOk = !n.in.exists(up => !n.deliveredTo.contains(up)) && n.pendingSuccession.isEmpty
         if emptyWiring || !barrierOk then IO.pure(false)
         else depsSatisfied(n)
       }
@@ -2003,8 +2093,14 @@ class NodeEngine(
       stallChecks <- actives.traverse(n => mountStallReason(n, nowMs).map(reason => n.id -> reason))
       stalledNow = stallChecks.collect { case (id, Some(reason)) => id -> reason }
       prevStall <- stallNotified.get
-      stallToEmit = stalledNow.filter { case (id, _) => !prevStall.contains(id) }
+      // R3 去重（取消静默死锁修复批）：本轮发射集排除「终态写点已即时告警」的节点
+      // ——同一停滞期不得发两条（即时 barrier-blocked + 周期 mount-stalled）。
+      prevAlerted <- barrierAlerted.get
+      stallToEmit = stalledNow.filter { case (id, _) => !prevStall.contains(id) && !prevAlerted.contains(id) }
       _ <- stallNotified.set(stalledNow.map(_._1).toSet)
+      // 即时告警记账剪枝：仅保留「此刻仍被终态上游闸住」的下游（恢复即出集）。
+      heldNow = actives.collect { case n if barrierHeldReason(s1.nodes, n).isDefined => n.id }.toSet
+      _ <- barrierAlerted.set(prevAlerted.intersect(heldNow))
       _ <- stallToEmit.traverse_ { case (id, reason) =>
         FlowMapEventLog.append(workspace, projectName, id, "mount-stalled", reason) *>
           logger.warn(s"[$projectName] node $id mount-stalled: $reason")
@@ -2024,7 +2120,10 @@ class NodeEngine(
     * 全部上游终态后仍 pending/wiring 超 60s = 停滞；reason 携带各上游终态明细 +
     * barrier 残缺清单，供事件流直接定位等待原因。 */
   private def mountStallReason(n: NodeDef, now: Long): IO[Option[String]] =
-    (n.in ++ n.deps).distinct.traverse(upId => store.findNode(upId)).flatMap { ups =>
+    // R4：pendingSuccession（「待承接」槽位）并入上游集——被摘除的 cancelled 上游
+    // 的 completedAt（= 取消时刻）因此参与可触发点 t0，使「承接等待」与其它停滞
+    // 同源计时（60s 档），并让 barrier 残缺清单能点名它。
+    (n.in ++ n.deps ++ n.pendingSuccession).distinct.traverse(upId => store.findNode(upId)).flatMap { ups =>
       if ups.exists(_.isEmpty) then IO.pure(None)
       else
         val us = ups.flatten
@@ -2042,9 +2141,13 @@ class NodeEngine(
             val barrierDesc = n.in.filterNot(n.deliveredTo.contains) match
               case Nil => "in-barrier cleared"
               case missing => s"in-barrier undelivered=[${missing.mkString(",")}]"
+            val successionDesc =
+              if n.pendingSuccession.nonEmpty then
+                s", awaiting handover (R4 pendingSuccession=[${n.pendingSuccession.mkString(",")}] — cancelled upstream detached; barrier held, dispatcher must hand over 承接 / rewire 改接 / abandon)"
+              else ""
             IO.pure(Some(
               s"mount stalled: ${stalledSec}s past triggerable point, still status=${n.status}, " +
-                s"$barrierDesc, no running/wiring upstream (upstreams: $upDesc) — settle sweep " +
+                s"$barrierDesc$successionDesc, no running/wiring upstream (upstreams: $upDesc) — settle sweep " +
                 "takeover attempted; if still stuck a terminal (failed/cancelled) upstream is blocking " +
                 "the barrier — dispatcher intervention required"))
     }
@@ -2112,19 +2215,50 @@ class NodeEngine(
             logger.warn(s"Node '${failed.name}' failed: ${err.take(200)}") *>
             // 失败投递（§2.7 + D5 零结算）：out=Nebula → failed 消息；out=节点 →
             // 下游停等零结算（merge 例外转 blocked），停等等待者经尾部通知告知分发器。
-            deliverFailed(failed, err)
+            deliverFailed(failed, err) *>
+            // R3（取消静默死锁修复批）：failed 侧**唯一**新增行为 = 终态写点同步的
+            // barrier 即时告警（作者硬约束：failed 一栏只多 R3 的 barrier 检查，无摘除/
+            // 无结算改动——deliverFailed 的 D5 零结算语义逐字不变）。
+            checkBarriersNow(failed.id, cause = "failed")
         case None =>
           logger.warn(s"Node '$nodeId' vanished before failure finalize — error not persisted")
     yield ()
 
-  private def cancelNode(nodeId: String): IO[Unit] =
+  /** cancelled 终态化（**取消静默死锁修复批 2026-09-10 重写**——此前只写 status/
+    * completedAt/ttlExpireAt，四条出口全截断：无 result / 无事件 / 不结算 / 不通知）：
+    *
+    *   ① **R2 原因落盘**：`result = Some("cancelled[source=…]: reason=…")`。此前
+    *      reason 只作为内存字符串（桥 `FailOutcome`）存在、在桥后被 `contains("cancelled")`
+    *      布尔嗅探，随后被丢弃——**取消原因在全系统零落盘**（设计 §1.2 差异点）。
+    *   ② **R2 审计留痕**：`FlowMapEventLog` 新增 `cancelled` 事件（含 source + reason
+    *      + 摘除目标）。此前唯一留痕是 `bg-harvest` 那行**无原因**。
+    *   ③ **R4 自动摘除 + 「待承接」标记**（`detach = true` 默认）：把本节点 out 改接
+    *      Nebula（= 今天人工 `NodeEdit(out=[Nebula])` 的自动化；D5 对 cancelled 的既有
+    *      指引就是「从 barrier 摘除」——**不是**零结果结算）+ prune 下游 in 镜像 +
+    *      给下游打 `pendingSuccession` 标（barrier 不被以缺轨输入自动触发成缺轨结论）。
+    *      `detach = false` = **L3 硬恢复路径专用**（bridge Cancelled → 5s → resume）：
+    *      摘除延后到 R5 的 resume 失败分支（[[settleFailedHardResume]]），否则 resume
+    *      一成功、拓扑已被摘除，下游就永远拿不到该节点结果。
+    *   ④ **R3 即时 barrier 告警**（终态写点同步，0 延迟；周期回扫降为兜底，见
+    *      [[checkBarriersNow]] 的去重口径）。
+    *   ⑤ **R1 回流分发器**：`notifyTerminal(_, Cancelled)`（不查 notifyDispatcher flag，
+    *      与 failed 完全对称；账务与通知文本见 DispatchNotify）。
+    *
+    * 幂等：detach 幂等（out 已无节点目标即零写）、notify 由 notifySentAt 去重、
+    * barrier 告警由即时/回扫共享单发记账去重——重复调用不产生重复副作用。
+    * 三口复用（NodeCancel 桥 / dead-session reap / TaskStuckWatcher 取消）：
+    * `reason`/`source` 由调用方按 [[CancelSource]] 口径给出（R7 两态）。 */
+  private def cancelNode(nodeId: String, reason: String, source: CancelSource, detach: Boolean = true): IO[Unit] =
+    val rendered = s"cancelled[source=${CancelSource.code(source)}]: reason=$reason"
     for
       now <- IO(System.currentTimeMillis())
+      detached <- if detach then detachCancelledUpstream(nodeId) else IO.pure(Nil)
       s <- store.mutate { st =>
         st.nodes.get(nodeId) match
           case Some(fresh) =>
             st.copy(nodes = st.nodes.updated(nodeId, fresh.copy(
               status = NodeLifecycle.Cancelled,
+              result = Some(rendered), // R2：取消原因落盘（此前 cancelled result 恒空）
               completedAt = Some(now),
               // 2026-09-07 作者裁定：cancelled 无 TTL 强制清——保留主图待上层处置。
               ttlExpireAt = None)))
@@ -2133,13 +2267,123 @@ class NodeEngine(
       _ <- s.nodes.get(nodeId) match
         case Some(cancelled) =>
           emitWithChain("nodeUpdated", nodeId, NodePayload.buildNodeJson(cancelled, now)) *>
-            logger.info(s"Node '${cancelled.name}' cancelled") *>
+            logger.info(s"Node '${cancelled.name}' cancelled [source=${CancelSource.code(source)}]: ${reason.take(200)}") *>
+            FlowMapEventLog.append(workspace, projectName, nodeId, "cancelled",
+              s"node cancelled [source=${CancelSource.code(source)}]: ${reason.take(220)}" +
+                (if detached.nonEmpty then s" — out detached to Nebula; successors awaiting handover: ${detached.mkString(",")}" else "")) *>
             // P2 G11（spec §3.4）：cancelled 级联清理该会话 pending asks——来源死亡
             // 即关闭（hub 移槽 + askUserClosed 广播），卡片不再僵尸常挂。
             cleanupPendingAsks(cancelled.sessionRef)
         case None =>
           logger.warn(s"Node '$nodeId' vanished before cancel finalize — skipped")
+      _ <- checkBarriersNow(nodeId, cause = "cancelled") // R3 即时告警
+      _ <- s.nodes.get(nodeId).traverse_(n => dispatchNotify.notifyTerminal(n, NotifyReason.Cancelled)) // R1
     yield ()
+
+  /** R4 自动摘除（取消静默死锁修复批）：被取消节点的 out 改接 Nebula + 受影响下游的
+    * in 镜像 prune + 下游登记 `pendingSuccession`（「待承接」）。
+    *
+    * 语义与 `NodeTools.setOut` 的 removed 侧 prune 同源（`in.filterNot(_ == fromId)`，
+    * 设计 §5-Q1 实证的人工原语），但写点在引擎内部（工具层的 NodeEdit 是分发器动作，
+    * 不经此路径）。**不产生任何结算/投递**——摘除 = 该边不存在，既非零结算也非占位
+    * 投递，因此与 D5 的 failed 零结算纪律不冲突（R4 硬约束：failed 侧零改动）。
+    *
+    * 幂等：out 已无节点目标（重复调用 / 本就悬空）→ 返回 Nil 且零写。
+    * 返回被 prune 的下游 id 集（供审计事件与 R1 通知文本使用）。 */
+  private def detachCancelledUpstream(nodeId: String): IO[List[String]] =
+    store.mutateWithResult { s =>
+      s.nodes.get(nodeId) match
+        case Some(from) =>
+          val targets = from.out.map(_.to).filterNot(_ == OutEdge.NebulaTarget).distinct
+            .flatMap(OutEdge.resolveTargetId(s.nodes, _)).distinct
+          if targets.isEmpty then (s, Nil)
+          else
+            val pruned = targets.foldLeft(s.nodes) { (acc, tid) =>
+              acc.get(tid) match
+                case Some(tn) => acc.updated(tid, tn.copy(
+                  in = tn.in.filterNot(_ == nodeId),
+                  pendingSuccession = (tn.pendingSuccession :+ nodeId).distinct))
+                case None => acc
+            }
+            (s.copy(nodes = pruned.updated(nodeId, from.copy(out = List(OutEdge.nebula)))), targets)
+        case None => (s, Nil)
+    }.map(_._2)
+
+  /** R3 终态写点**即时** barrier 检查（取消静默死锁修复批，作者裁定 R3 方案 3）：
+    * 终态写点已经知道「谁终态了 + 谁是它的 barrier」，信息完整——把「周期发现」变成
+    * 「同步可知」。对每个 in/deps/pendingSuccession 引用 `terminalId` 的 pending/wiring
+    * 下游，若该 barrier 已被终态上游永久闸死（[[barrierHeldReason]]）→ 立即写
+    * `barrier-blocked` 事件 + WARN（**无 60s 阈值**，理论延迟 ≈ 0）。
+    *
+    * 与周期回扫（`settleRunnableSweep` → `mountStalledMs` 60s 档 → `mount-stalled`）
+    * 的关系：**兜底而非重复**。单发记账由 [[barrierAlerted]] 承担——周期回扫把
+    * barrierAlerted 成员排除出发射集，且每轮按「此刻是否仍被闸住」剪枝（恢复即出集）。
+    *
+    * 反例护栏（对齐 `mountStallReason` 的合法等待豁免，见 [[barrierHeldReason]]）：
+    * 仍有 running/wiring 上游 → 不告警；上游引用悬空 → 不告警。 */
+  private def checkBarriersNow(terminalId: String, cause: String): IO[Unit] =
+    store.snapshot.flatMap { snap =>
+      snap.nodes.values.toList
+        .filter(n =>
+          (n.status == NodeLifecycle.Pending || n.status == NodeLifecycle.Wiring) &&
+            (n.in.contains(terminalId) || n.deps.contains(terminalId) || n.pendingSuccession.contains(terminalId)))
+        .traverse_ { n =>
+          barrierHeldReason(snap.nodes, n) match
+            case None => IO.unit
+            case Some(reason) =>
+              barrierAlerted.modify(s => if s.contains(n.id) then (s, false) else (s + n.id, true)).flatMap {
+                case false => IO.unit // 本停滞期已告警（即时或回扫）→ 单发
+                case true =>
+                  val summary = s"barrier blocked by terminal upstream (cause=$cause): $reason"
+                  FlowMapEventLog.append(workspace, projectName, n.id, "barrier-blocked", summary) *>
+                    logger.warn(s"[$projectName] node ${n.id} barrier-blocked (cause=$cause): $reason")
+              }
+        }
+    }
+
+  /** barrier 被终态上游**永久闸死**的判定单点（R3 即时告警与周期回扫共享口径，
+    * **不含时间阈值**——即时路径要求 0 延迟，60s 阈值只属于周期兜底）。
+    * 返回 Some(reason) = 已闸死（barrier 的闸门不会再自行打开）。
+    *
+    * 判定：
+    *   - blocker = ① in 引用且**未投递**且上游已是「非 completed 的终态」
+    *     （failed/cancelled/blocked——永不投递）；② deps 引用且上游非 completed；
+    *     ③ `pendingSuccession` 成员（R4 摘除后登记的「待承接」槽位）。
+    *   - 其余上游必须全部到位（in 已投递 / deps 已 completed）——**仍有 running/
+    *     wiring 上游 = 合法等待，不判**（mountStallReason 同款豁免）。
+    *   - 任一 in/deps 引用在图上查不到（悬空遗留数据）→ 保守不判。
+    *   - `completed 但未投递`的上游**不算 blocker**（那是投递丢失，settle 回扫的自愈
+    *     对象，不是终态闸死）——避免重复告警噪音。 */
+  private def barrierHeldReason(nodes: Map[String, NodeDef], n: NodeDef): Option[String] =
+    val refs = (n.in ++ n.deps).distinct
+    val resolved = refs.flatMap(id => nodes.get(id).map(id -> _))
+    if resolved.size != refs.size then None
+    else
+      def upstreamOf(id: String): Option[NodeDef] = nodes.get(id)
+      def permanentlyTerminal(id: String): Boolean =
+        upstreamOf(id).exists(u => u.status != NodeLifecycle.Completed && NodeLifecycle.Terminal.contains(u.status))
+      val inBlockers = refs.filter(id => n.in.contains(id) && !n.deliveredTo.contains(id) && permanentlyTerminal(id))
+      val depsBlockers = refs.filter(id => n.deps.contains(id) && upstreamOf(id).exists(_.status != NodeLifecycle.Completed))
+      val blockers = (inBlockers ++ depsBlockers ++ n.pendingSuccession).distinct
+      if blockers.isEmpty then None
+      else
+        val othersOk = refs.forall { id =>
+          blockers.contains(id) ||
+            ((!n.in.contains(id) || n.deliveredTo.contains(id)) &&
+              (!n.deps.contains(id) || upstreamOf(id).exists(_.status == NodeLifecycle.Completed)))
+        }
+        if !othersOk then None
+        else
+          val blockerDesc = blockers.map { id =>
+            upstreamOf(id).map(u => s"'${u.name}'(${id}):${u.status}").getOrElse(s"$id:gone")
+          }.mkString(", ")
+          if n.pendingSuccession.nonEmpty then
+            Some(s"in-barrier awaiting handover — pendingSuccession=[${n.pendingSuccession.mkString(",")}] " +
+              s"(cancelled upstream detached by R4; the slot is explicitly NOT settled and the barrier will not " +
+              s"auto-trigger until the dispatcher hands over) — upstreams: $blockerDesc")
+          else
+            Some(s"in-barrier permanently wedged by terminal upstream (no settlement for failed/cancelled) — " +
+              s"upstreams: $blockerDesc — dispatcher must hand over (承接) / rewire (改接) / abandon")
 
   /** P2 G11（spec §3.4）：节点 cancelled 级联清理其会话的 pending asks——hub 新增
     * CleanupForSession(sessionId)：移除该会话 pending 槽 + 向 root 广播
@@ -2184,7 +2428,9 @@ class NodeEngine(
                 case _ => s
             }.flatMap { s =>
               val tn = s.nodes.get(tid)
-              val allArrived = tn.exists(tn2 => tn2.in.forall(upId => tn2.deliveredTo.contains(upId)))
+              // R4：barrier 归零判定并入「待承接」标记（缺轨输入不得自动触发下游）。
+              val allArrived = tn.exists(tn2 =>
+                tn2.in.forall(upId => tn2.deliveredTo.contains(upId)) && tn2.pendingSuccession.isEmpty)
               if allArrived && tn.exists(_.status != NodeLifecycle.Running) then
                 forkStart(s"deliver-out -> $tid")(startNode(tid))
               else IO.unit
