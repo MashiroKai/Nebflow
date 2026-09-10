@@ -94,4 +94,57 @@ class ToolReversibilitySpec extends CatsEffectSuite:
     assertEquals(BashTool.dangerLevel("ls -la"), 0)
   }
 
+  // --- R11: dangerLevel 跨平台删除盲区补齐（Windows 形态 + 脚本语言形态） ---
+
+  test("dangerLevel >= 2 for the P0 PowerShell recursive profile delete") {
+    val cmd = """Remove-Item -LiteralPath 'C:\Users\Kai' -Recurse -Force -ErrorAction SilentlyContinue"""
+    assert(BashTool.dangerLevel(cmd) >= 2, s"expected >= 2, got ${BashTool.dangerLevel(cmd)}")
+  }
+
+  test("dangerLevel >= 2 for the P0 cmd rd /s /q") {
+    val cmd = """cmd /c "rd /s /q C:\Users\Kai""""
+    assert(BashTool.dangerLevel(cmd) >= 2, s"expected >= 2, got ${BashTool.dangerLevel(cmd)}")
+  }
+
+  test("dangerLevel 2 for Remove-Item -Recurse variants (quotes / -LiteralPath / -Force)") {
+    assertEquals(BashTool.dangerLevel("""Remove-Item -Path "C:\build\out" -Recurse -Force"""), 2)
+    assertEquals(BashTool.dangerLevel("""Remove-Item C:\tmp\x -Recurse"""), 2)
+    assertEquals(BashTool.dangerLevel("""powershell -c "Remove-Item -LiteralPath 'D:\data' -Recurse""""), 2)
+    // 非递归 PowerShell 删除维持 0（本批不扩围）
+    assertEquals(BashTool.dangerLevel("""Remove-Item C:\tmp\x -Force"""), 0)
+  }
+
+  test("dangerLevel 2 for cmd rmdir /s and del /s /q") {
+    assertEquals(BashTool.dangerLevel("""cmd /c "rmdir /s /q D:\build""""), 2)
+    assertEquals(BashTool.dangerLevel("""rd /s /q D:\build"""), 2)
+    assertEquals(BashTool.dangerLevel("""cmd /c "del /s /q C:\tmp\*.log""""), 2)
+    assertEquals(BashTool.dangerLevel("""cmd /c "del /q C:\tmp\a.txt""""), 0) // 无 /s：非递归
+  }
+
+  test("dangerLevel 2 for script-language recursive deletes (shutil / node fs)") {
+    assertEquals(BashTool.dangerLevel("""python3 -c "import shutil; shutil.rmtree('/tmp/x')""""), 2)
+    assertEquals(BashTool.dangerLevel("""node -e "fs.rmSync('/tmp/x', { recursive: true, force: true })""""), 2)
+    assertEquals(BashTool.dangerLevel("""fs.rmSync(HOME, { recursive: true, force: true })"""), 2)
+  }
+
+  test("dangerLevel 2 for find -delete") {
+    assertEquals(BashTool.dangerLevel("""find /tmp/x -type f -delete"""), 2)
+  }
+
+  test("dangerLevel 3 for recursive delete to a drive root (Windows)") {
+    assertEquals(BashTool.dangerLevel("""Remove-Item -LiteralPath 'C:\' -Recurse -Force"""), 3)
+    assertEquals(BashTool.dangerLevel("""cmd /c "rd /s /q C:\""""), 3)
+  }
+
+  test("dangerLevel unchanged for safe / warning / non-delete near-misses") {
+    assertEquals(BashTool.dangerLevel("ls -la"), 0)
+    assertEquals(BashTool.dangerLevel("git checkout main"), 1)
+    assertEquals(BashTool.dangerLevel("rm -rf /tmp/x"), 2)
+    assertEquals(BashTool.dangerLevel("rm -rf /"), 3)
+    // 近似命令不得被误判（防新增模式过宽）
+    assertEquals(BashTool.dangerLevel("""find . -name '*.mjs'"""), 0)
+    assertEquals(BashTool.dangerLevel("grep -ri nebflow src"), 0)
+    assertEquals(BashTool.dangerLevel("""python3 -c "print('rmtree')" """.trim), 0)
+  }
+
 end ToolReversibilitySpec

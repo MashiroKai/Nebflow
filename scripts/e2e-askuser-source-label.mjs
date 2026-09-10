@@ -29,7 +29,8 @@
 //   引擎留痕：workspace .nebflow/flow-map-events.jsonl 含 node-ask 事件×2
 //
 // Run（worktree 根，jar 已构建）：node scripts/e2e-askuser-source-label.mjs
-// Env：KEEP=1 保留 fixture home；GATEWAY_PORT=8098 MOCK_PORT=18998；
+// Env：fixture home 默认**不删**（要清理设 CLEAN=1 / NB_CLEAN=1；NB_DRY_RUN=1 只跑删除守卫断言）；
+//   GATEWAY_PORT=8098 MOCK_PORT=18998；
 //   JAR 默认 target/scala-3.5.2/nebflow-assembly-*.jar（取最新）。
 
 import { spawn, execSync } from 'node:child_process';
@@ -40,12 +41,16 @@ import { fileURLToPath } from 'node:url';
 import { homedir, tmpdir } from 'node:os';
 import { setTimeout as sleep } from 'node:timers/promises';
 import { chromium } from '/opt/homebrew/lib/node_modules/playwright/index.mjs';
+import { guardFixtureHome, safeRm, assertCleanable } from './lib/delguard.mjs';
 
 const REPO = dirname(dirname(fileURLToPath(import.meta.url)));
 const GATEWAY_PORT = Number(process.env.GATEWAY_PORT || 8098);
 const MOCK_PORT = Number(process.env.MOCK_PORT || 18998);
 const BASE = `http://127.0.0.1:${GATEWAY_PORT}`;
 const HOME = process.env.NEBFLOW_HOME || join(tmpdir(), 'qa-f1f2-askuser');
+// R4 删除守卫：解析后的真实绝对路径必须落 tmpdir 之下（≠ tmpdir 自身）——早期 fail-fast，先于任何 spawn。
+// NB_DRY_RUN=1：只跑断言、不删除、不 spawn（下游负控入口）。
+guardFixtureHome(HOME, { label: 'e2e-askuser-source-label' });
 const PROJECT = 'qa-f1f2';
 const WS_DIR = join(HOME, `ws-${PROJECT}`);
 const DISPATCHER_AGENT_SRC = process.env.DISPATCHER_AGENT_SRC || join(homedir(), '.nebflow', 'agents', 'project-dispatcher');
@@ -229,6 +234,8 @@ function startMock() {
 
 // ── fixture home ──
 function buildFixture() {
+  // R4：删除点二次断言（本处是 fixture 重建的幂等重置，非数据清理 → 不受 CLEAN 开关约束，但仍须过断言）
+  assertCleanable(HOME, { label: 'e2e-askuser-source-label/buildFixture' });
   rmSync(HOME, { recursive: true, force: true });
   mkdirSync(HOME, { recursive: true });
   cpSync(DISPATCHER_AGENT_SRC, join(HOME, 'agents', 'project-dispatcher'), { recursive: true });
@@ -660,7 +667,7 @@ await light.browser.close();
 }
 
 await cleanup();
-if (!process.env.KEEP) { try { rmSync(HOME, { recursive: true, force: true }); } catch { /* best effort */ } }
-else console.log(`KEEP=1 — fixture home retained: ${HOME}`);
+// 删除点二次断言；默认不删（要清理设 CLEAN=1）——非 tmp 隔离 home 在此处也会被拒
+safeRm(HOME, { label: 'e2e-askuser-source-label' });
 console.log(failed === 0 ? '\nALL PASS' : `\n${failed} CHECK(S) FAILED`);
 process.exit(failed === 0 ? 0 : 1);
