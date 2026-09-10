@@ -50,8 +50,23 @@ object NeblinkEnrollment:
           )
           _ <- ms.updateConfig(cfg => cfg.copy(enabled = true, neblinkServer = Some(newConfig)))
           // Hot-swap the client in the discovery service. The fresh client
-          // carries the silent re-login hook (Logto refresh on 401).
-          _ <- discovery.fold(IO.unit)(d => d.setClient(Some(new NeblinkClient(newConfig, gatewayPort, onDeviceTokenRejected = reloginHook))))
+          // carries the silent re-login hook (Logto refresh on 401) and the
+          // device identity (API-level session self-heal, F2 of the
+          // 2026-09-10 friend-search batch).
+          // F1 (same batch): the discovery clientRef is the AUTHORITATIVE
+          // live client — FriendService reads it per call (GatewayMain wiring)
+          // and the relay/status consumers are re-pointed here via
+          // setRelayClient so every component follows the hot-swap.
+          _ <-
+            discovery.fold(IO.unit) { d =>
+              val fresh = new NeblinkClient(
+                newConfig,
+                gatewayPort,
+                onDeviceTokenRejected = reloginHook,
+                identity = Some(ms.identity)
+              )
+              d.setClient(Some(fresh)) *> IO(ms.setRelayClient(Some(fresh)))
+            }
           // Trigger immediate re-discovery.
           _ <- ms.sendSync(SyncCommand.PeerDiscovered)
           // Persist GitHub user info (avatar + login) from server response.

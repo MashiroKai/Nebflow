@@ -104,7 +104,7 @@ class FriendMessageToolSpec extends CatsEffectSuite:
     IO.delay {
       val stub = StubClient()
       stub.login()
-      new FriendService(stub.client, AgentMessagingConfig(mode = mode)) -> stub
+      new FriendService(IO.pure(Some(stub.client)), AgentMessagingConfig(mode = mode)) -> stub
     }.flatMap { (fs, stub) => use(fs) }
 
   private def callTool(fs: FriendService, input: JsonObject): IO[Either[ToolError, String]] = {
