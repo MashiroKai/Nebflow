@@ -373,6 +373,45 @@ object Defaults:
   def KickVerifyBoundSec: Int =
     sys.props.getOrElse("nebflow.hardRecovery.verifyBoundSec", "60").toInt
 
+  // ---- R8 看门狗自身监测（2026-09-10 机制设计 §2–§4）----
+
+  /**
+   * R8 方向②（L3 有效性自检）：L3 开火后 `T+N` 复查该会话/节点的**行为面**结局
+   * （设计 §3.4）。默认 120s = 4×`StuckWatcherIntervalSec`：
+   *   - 必须 > L3 内部的硬编码 `IO.sleep(5s)` + 最慢 transcript 读；
+   *   - 必须是扫描间隔的整数倍 ⇒ **零新增定时器**（复查搭既有扫描轮）；
+   *   - 桥侧延迟实测 3ms ⇒ 120s 已给 24 倍余量。
+   *
+   * **第一版为常量，不做配置项**（设计 §3.4 末：标定后再决定是否外放）。测试/e2e
+   * 通过 `TaskStuckWatcher.scan` 的 `l3VerifyDelayMs` 参数注入缩短的窗口，
+   * **不引入 system prop**（生产只有一个值：120s）。
+   */
+  val L3VerifyDelayMs: Long = 120_000L
+
+  /**
+   * R8 方向③（影子模式 / dry-run）：**只记录不动作**的标定开关，默认 `false`
+   * （生产行为零变化；本期默认不启用——机制备好，等标定窗口需要时再开，设计 §5）。
+   *
+   * `true` 时 `TaskStuckWatcher.recover` 内**全部破坏性动作**被禁止（设计 §4.4
+   * 表 1–9：inflight hard-cancel / transportAbort / `reclaimSession` 进程 kill /
+   * 子 agent `AgentCommand.Stop` / `bridgeCancelled` / `RestartAgent(Full)` /
+   * `hardResumeFlowNode` / `emitSubagentPanelDone` / `broadcastStuck` WS 帧），
+   * **只保留** ① 结构化事件（`WatchdogEventLog`）+ 日志——否则「关掉看门狗来研究
+   * 看门狗」是无观测面的死路（设计 §4.1）。
+   *
+   * 作用域**仅** `TaskStuckWatcher.recover`：`SessionKick`
+   * （`WebSocketRoutes.maybeSessionKick`）与 watcher 的 `hardResumeFlowNode` 调用点
+   * 之外无第二含义（设计 §4.3 末，避免一个 flag 两套语义）。
+   *
+   * 与 `HardRecoveryEnabled` **正交**：`shadow=true` 时忽略 hard，一律不动手
+   * （shadow 是更强的「只看」）。
+   *
+   * 代价（须知会）：影子期内**真实卡死不被恢复**（设计 §4.5 末）。
+   * system prop `nebflow.stuck.shadow`，每次 `recover` 现读（kill-switch 先例）。
+   */
+  def StuckShadowMode: Boolean =
+    sys.props.getOrElse("nebflow.stuck.shadow", "false").trim.equalsIgnoreCase("true")
+
   /**
    * 流式请求的 per-request HttpClient 开关（设计 D-1 方案 A）：默认 true——
    * sendStream 每个 attempt 独立 HttpClient + backend + dispatcher，transport

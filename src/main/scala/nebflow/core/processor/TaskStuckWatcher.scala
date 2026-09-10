@@ -103,12 +103,35 @@ object TaskStuckWatcher:
    * 未声明时长（currentToolDeadlineMs == 0）→ 原 10min 档零变化。
    * **不得**把进程 CPU 重新引入判据（红线 R6-4）。
    */
-  def assess(
+  /** R8 方向①（看门狗自身监测）：判据**分支身份**取值域（设计 §2.3 的 `branch`）——
+    * 与 [[assessDetailed]] 同源单点，事件面与日志面不二次派生（防漂移）。 */
+  val BranchMerged: String = "merged"
+  val BranchAgentStale: String = "agent-stale"
+  val BranchToolOverdue: String = "tool-overdue"
+
+  /** R8 方向①：判据命中详情（[[assess]] 的旧返回值 + 分支身份 + 原始读数）。
+    * 事件面（`WatchdogEventLog`）消费之；**任何字段都不得回流进判据**——`branch` /
+    * `toolPhaseMs` / `agentIdleMs` 只是同一次判定的读数快照，判据本体仍是
+    * [[assessDetailed]] 内的两个不等式（红线 R6-4：不引入进程 CPU 等新信号）。 */
+  final case class StuckAssessment(
+    secs: Long,
+    reason: String,
+    branch: String,
+    agentIdleMs: Long,
+    toolPhaseMs: Long,
+    toolName: Option[String]
+  )
+
+  /** [[assess]] 的详情版（唯一判据事实源）：返回命中的**分支身份**与两条轴的原始终
+    * 读数，供 R8 事件面消费。`assess` 退化为它的投影——**既有三消费点
+    * （watcher 扫描 / `AgentControlTool` 展示 / `WebSocketRoutes` kick）签名与行为
+    * 零改动**。 */
+  def assessDetailed(
     rec: AgentRecord,
     now: Long,
     thresholdMs: Long = nebflow.shared.Defaults.StuckThresholdMs,
     toolPhaseThresholdMs: Long = nebflow.shared.Defaults.ToolPhaseStuckMs
-  ): Option[(Long, String)] =
+  ): Option[StuckAssessment] =
     val agentIdleMs = if rec.lastActivityMs > 0 then now - rec.lastActivityMs else 0L
     val agentStale = rec.lastActivityMs > 0 && agentIdleMs > thresholdMs
     val toolPhaseMs = if rec.currentToolStartedAt > 0 then now - rec.currentToolStartedAt else 0L
@@ -125,13 +148,26 @@ object TaskStuckWatcher:
       if rec.currentToolDeadlineMs > 0 then s" (declared timeout ${rec.currentToolDeadlineMs / 1000}s)"
       else ""
     if agentStale && toolOverdue then
-      Some((math.max(agentIdleMs, toolPhaseMs) / 1000,
-        s"agent idle ${agentIdleMs / 1000}s and tool '$toolLabel' running ${toolPhaseMs / 1000}s$deadlineNote in an unfinished turn"))
+      Some(StuckAssessment(math.max(agentIdleMs, toolPhaseMs) / 1000,
+        s"agent idle ${agentIdleMs / 1000}s and tool '$toolLabel' running ${toolPhaseMs / 1000}s$deadlineNote in an unfinished turn",
+        BranchMerged, agentIdleMs, toolPhaseMs, rec.currentToolName))
     else if agentStale then
-      Some((agentIdleMs / 1000, s"agent idle ${agentIdleMs / 1000}s (no LLM/tool event)"))
+      Some(StuckAssessment(agentIdleMs / 1000, s"agent idle ${agentIdleMs / 1000}s (no LLM/tool event)",
+        BranchAgentStale, agentIdleMs, toolPhaseMs, rec.currentToolName))
     else if toolOverdue then
-      Some((toolPhaseMs / 1000, s"tool '$toolLabel' running ${toolPhaseMs / 1000}s$deadlineNote in an unfinished turn"))
+      Some(StuckAssessment(toolPhaseMs / 1000, s"tool '$toolLabel' running ${toolPhaseMs / 1000}s$deadlineNote in an unfinished turn",
+        BranchToolOverdue, agentIdleMs, toolPhaseMs, rec.currentToolName))
     else None
+
+  /** 判据（并集）的兼容投影：`Some((停滞秒数, 原因文本))` = 判卡死；None = 不判。
+    * 语义与 [[assessDetailed]] 逐字一致（既有调用方零改动）。 */
+  def assess(
+    rec: AgentRecord,
+    now: Long,
+    thresholdMs: Long = nebflow.shared.Defaults.StuckThresholdMs,
+    toolPhaseThresholdMs: Long = nebflow.shared.Defaults.ToolPhaseStuckMs
+  ): Option[(Long, String)] =
+    assessDetailed(rec, now, thresholdMs, toolPhaseThresholdMs).map(a => (a.secs, a.reason))
 
   /**
    * 扫描集合 = taskKinds + Root + Team。Root（Nebula 主窗口）虽不在活跃子代理列表
@@ -167,23 +203,47 @@ object TaskStuckWatcher:
     def loop: IO[Unit] =
       for
         stopCounts <- cats.effect.Ref.of[IO, Map[String, Int]](Map.empty)
-        _ <- scanLoop(stopCounts)
+        // R8 方向②：待复查的 L3 开火（内存态；宿主重启即丢——设计 §3.8 明确接受，
+        // 与 stopCounts 同族，不得当作持久状态消费）。
+        pendingL3 <- cats.effect.Ref.of[IO, List[PendingL3]](Nil)
+        _ <- scanLoop(stopCounts, pendingL3)
       yield ()
 
-    def scanLoop(stopCounts: cats.effect.Ref[IO, Map[String, Int]]): IO[Unit] =
-      scan(resources, wsHub, thresholdMs, stopCounts).handleErrorWith(e =>
+    def scanLoop(stopCounts: cats.effect.Ref[IO, Map[String, Int]], pendingL3: cats.effect.Ref[IO, List[PendingL3]]): IO[Unit] =
+      scan(resources, wsHub, thresholdMs, stopCounts, pendingL3).handleErrorWith(e =>
         logger.warn(s"TaskStuckWatcher scan failed (will retry next cycle): ${e.getMessage}")
-      ) *> IO.sleep(interval) >> scanLoop(stopCounts)
+      ) *> IO.sleep(interval) >> scanLoop(stopCounts, pendingL3)
     loop
+
+  /** R8 方向②：一次待复查的 L3 开火（设计 §3.2-C「待验证」登记）。携带开火当时的
+    * 判据读数与分支，使复查事件（`l3-ineffective`）与开火事件（`stuck-fire`）在同一
+    * 事件面可按 (sessionId, firedAt) join。 */
+  private[processor] final case class PendingL3(
+    sessionId: String,
+    rootSessionId: String,
+    firedAt: Long,
+    branch: String,
+    toolPhaseMs: Long,
+    agentIdleMs: Long,
+    attempt: Int
+  )
 
   /** 单轮扫描：识别卡死 agent 并执行恢复动作。独立成函数便于单元测试。 */
   def scan(
     resources: SharedResources,
     wsHub: WsHub,
     thresholdMs: Long,
-    stopCounts: cats.effect.Ref[IO, Map[String, Int]] = cats.effect.Ref.unsafe(Map.empty)
+    stopCounts: cats.effect.Ref[IO, Map[String, Int]] = cats.effect.Ref.unsafe(Map.empty),
+    /** R8 ②：L3 待复查登记（默认空 Ref = 单测一次驱动不留状态）。 */
+    pendingL3: cats.effect.Ref[IO, List[PendingL3]] = cats.effect.Ref.unsafe(List.empty),
+    /** R8 ②：T+N 的 N（测试注入缩短窗口；生产默认常量 120s，无 prop）。 */
+    l3VerifyDelayMs: Long = nebflow.shared.Defaults.L3VerifyDelayMs
   ): IO[Unit] =
     val now = System.currentTimeMillis()
+    // R8 ②：复查搭**本**扫描轮（零新增定时器，设计 §3.4）——先复查上轮到期的 L3，
+    // 再扫本轮卡死候选（顺序无关，但先复查可让同轮内「复查发现失效 → 下一轮的
+    // 恢复动作」时序更直观）。
+    verifyL3Outcomes(resources, pendingL3, now, l3VerifyDelayMs) *>
     resources.agentRegistry.get.flatMap { registry =>
       val stuck = registry.values.toList
         .filter(rec => scannedKinds.contains(rec.kind))
@@ -204,13 +264,14 @@ object TaskStuckWatcher:
         // 2026-09-10 换轴：判据收敛到 assess（agent 侧事件停滞 ∪ 工具相位超时，
         // 二者都不引用进程 CPU）。旧行 `now - rec.lastActivityMs > thresholdMs`
         // 保留为 assess 的判据 ①，其余语义不变。
-        .flatMap(rec => assess(rec, now, thresholdMs).map((rec, _)))
+        // R8 ①：改用详情版（assess 的投影），事件面取分支身份与原始读数。
+        .flatMap(rec => assessDetailed(rec, now, thresholdMs).map((rec, _)))
       val stuckIds = stuck.map(_._1.sessionId).toSet
       // Drop counters for sessions that recovered (fresh activity / different
       // status / gone) so a future stuck episode starts from Stop attempt 1.
       stopCounts.modify(m => (m.view.filterKeys(stuckIds.contains).toMap, ())) *>
         stuck.traverse_ { (rec, assessment) =>
-          recover(resources, wsHub, rec, assessment._1, assessment._2, stopCounts)
+          recover(resources, wsHub, rec, assessment, stopCounts, pendingL3, l3VerifyDelayMs)
         }
     }
 
@@ -231,15 +292,35 @@ object TaskStuckWatcher:
       )
       .handleErrorWith(e => logger.warn(s"TaskStuckWatcher: taskStuck WS broadcast failed: ${e.getMessage}"))
 
-  /** 恢复动作：Team 只读通知 / Project flow 会话取消 / 子 agent 重启 / 根 agent 通知。 */
+  /** 恢复动作：Team 只读通知 / Project flow 会话取消 / 子 agent 重启 / 根 agent 通知。
+    *
+    * R8（看门狗自身监测）在本函数内落三件事：
+    *   ① 每次开火**无条件**写一条 `stuck-fire` 结构化事件（[[recordFire]]，
+    *      fire-per-fire，不做单发去重）；
+    *   ② **影子模式**（`Defaults.StuckShadowMode`，默认 false）：`shadow=true` 时
+    *      本函数内全部破坏性动作（设计 §4.4 表 1–9）被 [[act]] 短路，只留事件 + 日志；
+    *   ③ L3 开火时登记 [[PendingL3]]（方向②的 T+N 复查输入）。
+    * ①②③ 都不改变非 shadow 分支的动作序列（影子开关关闭时逐字等价）。 */
   private def recover(
     resources: SharedResources,
     wsHub: WsHub,
     rec: AgentRecord,
-    idleSecs: Long,
-    reason: String,
-    stopCounts: cats.effect.Ref[IO, Map[String, Int]]
+    assessment: StuckAssessment,
+    stopCounts: cats.effect.Ref[IO, Map[String, Int]],
+    pendingL3: cats.effect.Ref[IO, List[PendingL3]],
+    l3VerifyDelayMs: Long
   ): IO[Unit] =
+    val idleSecs = assessment.secs
+    val reason = assessment.reason
+    val hard = nebflow.shared.Defaults.HardRecoveryEnabled
+    // R8 ③：影子模式每次开火现读（不缓存，支持不重启翻转；设计 §4.3）。
+    val shadow = nebflow.shared.Defaults.StuckShadowMode
+    /** 破坏性动作闸门：shadow=true 时短路为 no-op（只记录不动作）。
+      * **作用域仅本函数**——`SessionKick`/`hardResumeFlowNode` 的内部行为不进本开关面。 */
+    def act[A](io: IO[A]): IO[A] = if shadow then IO.unit.asInstanceOf[IO[A]] else io
+    /** R8 ①：开火留痕（含 shadow 标记，使标定窗口内的行自解释）。 */
+    def recordFire(level: String, attempt: Int): IO[Unit] =
+      recordStuckFire(rec, assessment, level, attempt, hard, shadow)
     // #22: Team kind 只读——长驻用户可见会话，绝不自动 Stop（AgentControl §4）。
     // 2026-08-19 Frontend 僵尸 turn 若有此广播，2 小时静默会变成即时可见。
     if rec.kind == AgentKind.Team then
@@ -250,7 +331,8 @@ object TaskStuckWatcher:
           "but a looping turn may be terminated by loop guard; the team Manager or Nebula can " +
           "cancel/restart it via AgentControl"
       ) *>
-        broadcastStuck(wsHub, rec, idleSecs, "attention", reason)
+        recordFire("attention", 0) *>
+        act(broadcastStuck(wsHub, rec, idleSecs, "attention", reason))
     // Project flow 会话（node-/dispatcher-，supervisorRef=观察桥）卡死：分级接管
     // L1→L4（hard-recovery P5，2026-09-07 设计 §2.6/§9）。回验 = 下一轮扫描的
     // stuck 复查（恢复则计数器随 filterKeys 复位，不再升级）。绝不发 raw Stop——
@@ -258,14 +340,13 @@ object TaskStuckWatcher:
     // engine fiber 挂死 / 桥僵尸）。dag- 旧 flow 会话（无 supervisorRef）不进此
     // 分支，走根 agent 分级（其取消走 cancelFlow）。
     else if rec.kind == AgentKind.Flow && rec.supervisorRef.isDefined then
-      val hard = nebflow.shared.Defaults.HardRecoveryEnabled
       logger.warn(
         s"TaskStuckWatcher: Project flow session ${rec.sessionId} (kind=Flow) stuck in Processing " +
           s"for ${idleSecs}s > threshold [judge: $reason] — escalating (L1 halt → L2 transport abort → L3 resume)"
       ) *>
         // P7 诚实帧：硬分级时每扫描一帧**真实** action（在下述 match 内逐拍广播）；
         // 只有回滚形态（!hard）沿用旧语义在此统一广播 restart。
-        (if hard then IO.unit else broadcastStuck(wsHub, rec, idleSecs, "restart", reason)) *>
+        act(if hard then IO.unit else broadcastStuck(wsHub, rec, idleSecs, "restart", reason)) *>
         stopCounts.modify { m =>
           val n = m.getOrElse(rec.sessionId, 0) + 1
           (m.updated(rec.sessionId, n), n)
@@ -317,16 +398,17 @@ object TaskStuckWatcher:
           if !hard then
             // 回滚形态（HardRecoveryEnabled=false）：维持本批前行为——每轮
             // hard-cancel，StopAttempts+2 轮后 bridge Cancelled 终态收殓。
-            hardCancel() *> {
+            recordFire("stop", attempts) *>
+            act(hardCancel()) *> {
               if attempts >= StopAttempts + 2 then
                 logger.warn(
                   s"TaskStuckWatcher: ${rec.sessionId} still stuck after $attempts attempts — " +
                     "releasing via bridge Cancelled (hard-cancel ineffective; single-shot session, no restart)"
                 ) *>
-                  bridgeCancelled("hard-cancel ineffective") *>
+                  act(bridgeCancelled("hard-cancel ineffective")) *>
                   // 面板实时终态帧（Sub-Agents 面板取消实时刷新修复）：仅 node-*
                   // 补发——dispatcher-* 由其观察桥拆除点（ProjectActor）统一补发。
-                  (if rec.sessionId.startsWith(nebflow.core.project.NodeEngine.SessionPrefix)
+                  act(if rec.sessionId.startsWith(nebflow.core.project.NodeEngine.SessionPrefix)
                    then
                      nebflow.core.node.NodeRunner
                        .emitSubagentPanelDone(wsHub.broadcast, rec.sessionId, rec.rootSessionId)
@@ -344,13 +426,13 @@ object TaskStuckWatcher:
                 // → 有界重试 / turn-end 注入接管。action=halt（真实动作，P7 诚实帧）。
                 logger.warn(
                   s"TaskStuckWatcher: ${rec.sessionId} attempt $attempts (L1) — halting in-flight LLM"
-                ) *> broadcastStuck(wsHub, rec, idleSecs, "halt", reason) *> hardCancel()
+                ) *> recordFire("L1", attempts) *> act(broadcastStuck(wsHub, rec, idleSecs, "halt", reason)) *> act(hardCancel())
               case 2 =>
                 // L2 硬中断（action=hard-abort）：transport abort + reclaimSession（见
                 // transportAbort 的 evidence #5 护栏——非 LLM 楔死形态收回进程 kill）。
                 logger.warn(
                   s"TaskStuckWatcher: ${rec.sessionId} attempt $attempts (L2) — transport abort + session process reclaim"
-                ) *> broadcastStuck(wsHub, rec, idleSecs, "hard-abort", reason) *> transportAbort()
+                ) *> recordFire("L2", attempts) *> act(broadcastStuck(wsHub, rec, idleSecs, "hard-abort", reason)) *> act(transportAbort())
               case 3 =>
                 // L3 真重启（设计 D-5）：bridge Cancelled 清场（actor 停止 + 节点终
                 // 态）→ 5s 让清场链走完 → hardResumeNode 从 transcript 断点续跑
@@ -359,15 +441,15 @@ object TaskStuckWatcher:
                 // → watcher 不再见其 stuck）；失败保留计数 → 第 4 拍 L4 failed 可达。
                 logger.warn(
                   s"TaskStuckWatcher: ${rec.sessionId} attempt $attempts (L3) — releasing via bridge Cancelled, then hard-resume from transcript breakpoint"
-                ) *> broadcastStuck(wsHub, rec, idleSecs, "restart", reason) *>
-                  bridgeCancelled("L3 hard-recovery: true resume from transcript breakpoint") *>
+                ) *> recordFire("L3", attempts) *> act(broadcastStuck(wsHub, rec, idleSecs, "restart", reason)) *>
+                  act(bridgeCancelled("L3 hard-recovery: true resume from transcript breakpoint")) *>
                   // 面板实时终态帧（Sub-Agents 面板取消实时刷新修复；beta.57 CI
                   // ProjectSessionCancelPanelFrameSpec 暴露的 hard 分支遗漏）：L3 桥
                   // Cancelled 是分级链上 node-* 旧会话的释放点，不补发则面板行幽灵
                   // 滞留到刷新。仅 node-* 补发——dispatcher-* 由其观察桥拆除点
                   // （ProjectActor Failed|Cancelled 分支）统一补发，与 !hard giveUp
                   // 分支同语义同护栏。
-                  (if rec.sessionId.startsWith(nebflow.core.project.NodeEngine.SessionPrefix)
+                  act(if rec.sessionId.startsWith(nebflow.core.project.NodeEngine.SessionPrefix)
                    then
                      nebflow.core.node.NodeRunner
                        .emitSubagentPanelDone(wsHub.broadcast, rec.sessionId, rec.rootSessionId)
@@ -375,7 +457,12 @@ object TaskStuckWatcher:
                          logger.warn(s"TaskStuckWatcher: panel done frame for ${rec.sessionId} failed: ${e.getMessage}")
                        )
                    else IO.unit) *>
-                  (IO.sleep(5.seconds) *>
+                  // R8 ②：登记 T+N 复查（**无条件**——shadow 与否都登记，复查本身只告警
+                  // 不动作）。登记在 `.start` 之前 ⇒ 复查输入不依赖 resume fiber 的调度。
+                  pendingL3.update(_.filterNot(_.sessionId == rec.sessionId) :+
+                    PendingL3(rec.sessionId, rec.rootSessionId, System.currentTimeMillis(),
+                      assessment.branch, assessment.toolPhaseMs, assessment.agentIdleMs, attempts)) *>
+                  act((IO.sleep(5.seconds) *>
                     hardResumeFlowNode(resources, rec).flatMap {
                       case Some(nodeId) =>
                         // R5（取消静默死锁修复批 2026-09-10）：resume **成功**腿留痕——
@@ -387,21 +474,23 @@ object TaskStuckWatcher:
                           s"TaskStuckWatcher: ${rec.sessionId} L3 resume OK — node '$nodeId' resumed from transcript breakpoint"
                         ) *> stopCounts.update(_ - rec.sessionId)
                       case None =>
-                        // R5：resume **失败**腿留痕（此前静默：节点永久 cancelled、零解释）
-                        // → 按 R1 回流分发器 + 按 R4 摘除/标记（引擎侧幂等）。
+                        // R5 方案 3 留痕 + 方案 4（本批）：resume **失败**腿不再留
+                        // 「节点永久 cancelled」——引擎侧 `settleFailedHardResume`
+                        // 现在把节点**改判 failed**（经既有 failNode 全链：result 含
+                        // 原因 / nodeUpdated / failed 回流 / D5 停等留痕）。
                         logger.error(
-                          s"TaskStuckWatcher: ${rec.sessionId} L3 resume FAILED — node left cancelled; " +
-                            "notifying dispatcher (R1) and detaching its out edges / marking successors (R4)"
+                          s"TaskStuckWatcher: ${rec.sessionId} L3 resume FAILED — re-judging node as failed " +
+                            "(engine settleFailedHardResume: failNode full chain; D5 zero-settlement for downstream)"
                         ) *> hardRecoveryFallback(resources, rec)
-                    }).start.void
+                    }).start.void)
               case 4 =>
                 // L4 响亮失败（诚实失败原则）：明确上报需人工处理、进度已落盘。
                 logger.error(
                   s"TaskStuckWatcher: ${rec.sessionId} stuck for ${idleSecs}s — L1/L2/L3 all ineffective. " +
                     "This session needs MANUAL attention; progress is persisted (transcript + queues on disk)."
-                ) *> broadcastStuck(wsHub, rec, idleSecs, "failed", reason)
+                ) *> recordFire("L4", attempts) *> act(broadcastStuck(wsHub, rec, idleSecs, "failed", reason))
               case _ =>
-                broadcastStuck(wsHub, rec, idleSecs, "failed", reason)
+                recordFire("L4", attempts) *> act(broadcastStuck(wsHub, rec, idleSecs, "failed", reason))
             end match
         }
     else
@@ -414,7 +503,7 @@ object TaskStuckWatcher:
             // AgentControl spec §3.5：子 agent 自动重启也广播 taskStuck（原先只有
             // 根 agent 广播）——前端可见「后台 agent 卡死，正在自动重启」，Nebula
             // 事后用 AgentControl(list) 能看到 retryCount。
-            broadcastStuck(wsHub, rec, idleSecs, "restart", reason) *>
+            act(broadcastStuck(wsHub, rec, idleSecs, "restart", reason)) *>
             // gate-wedge P1-1: count ineffective Stops. A suspended agent never
             // consumes mailbox messages, so resending forever is useless (the
             // incident: thousands of resends over 6.5h). At the Nth attempt we
@@ -491,8 +580,10 @@ object TaskStuckWatcher:
                         stopCounts.update(_ - rec.sessionId)
                     case None => IO.unit
                 else IO.unit
-              escalate *> transportEscalate *> giveUp *> (rec.ref ! AgentCommand.Stop(s"stuck-task-${rec.sessionId}"))
-                .handleErrorWith(e => logger.warn(s"TaskStuckWatcher: Stop to stuck sub-agent ${rec.sessionId} failed: ${e.getMessage}"))
+              recordFire("stop", attempts) *>
+                act(escalate *> transportEscalate *> giveUp) *>
+                act((rec.ref ! AgentCommand.Stop(s"stuck-task-${rec.sessionId}"))
+                  .handleErrorWith(e => logger.warn(s"TaskStuckWatcher: Stop to stuck sub-agent ${rec.sessionId} failed: ${e.getMessage}")))
             }
         case None =>
           // 根 agent（无 parentRef；含 dag- 旧 flow 会话）：分级接管 L1-L4（hard-
@@ -507,7 +598,8 @@ object TaskStuckWatcher:
               s"TaskStuckWatcher: root agent ${rec.sessionId} (kind=${rec.kind}) stuck in Processing for ${idleSecs}s " +
                 s"[judge: $reason] — not auto-restarting, broadcast taskStuck for user decision"
             ) *>
-              broadcastStuck(wsHub, rec, idleSecs, "attention", reason)
+              recordFire("attention", 0) *>
+              act(broadcastStuck(wsHub, rec, idleSecs, "attention", reason))
           else
             stopCounts.modify { m =>
               val n = m.getOrElse(rec.sessionId, 0) + 1
@@ -553,10 +645,133 @@ object TaskStuckWatcher:
                     ))
                 case _ =>
                   ("failed", IO.unit)
-              broadcastStuck(wsHub, rec, idleSecs, action, reason) *> io
+              recordFire(s"L${math.min(attempts, 4)}", attempts) *>
+                act(broadcastStuck(wsHub, rec, idleSecs, action, reason)) *> act(io)
             }
 
     end if
+
+  /** R8 方向①（看门狗自身监测，设计 §2.3）：一次开火的**无条件**结构化留痕。
+    *
+    * 字段 = 设计 §2.3 建议集：`ts` / `type` / `sessionId` / `kind` / `branch` /
+    * `toolPhaseMs` / `agentIdleMs` / `toolName` / `level` / `attempt` /
+    * `hardRecoveryEnabled`（+ `shadow`：标定窗口内让每行自解释，本批新增字段）。
+    *
+    *   - `attempt` = `stopCounts` 当轮值——**内存态，宿主重启归零**（设计 §1.2-F2）：
+    *     如实记录、不得当作连续计数消费。
+    *   - `branch` ∈ [[BranchMerged]] / [[BranchAgentStale]] / [[BranchToolOverdue]]
+    *     （由 [[assessDetailed]] 单点产出）。
+    *   - **不写**进程 CPU / `processActivityMs` / 任何 `assess` 未用的信号
+    *     （红线 R6-4）；**不嵌** progress 快照（v2 再议）。
+    *   - best-effort：写失败只 WARN（[[WatchdogEventLog.append]] 内兜底）。 */
+  private def recordStuckFire(
+    rec: AgentRecord,
+    a: StuckAssessment,
+    level: String,
+    attempt: Int,
+    hard: Boolean,
+    shadow: Boolean
+  ): IO[Unit] =
+    WatchdogEventLog.append(io.circe.Json.obj(
+      "ts" -> io.circe.Json.fromLong(System.currentTimeMillis()),
+      "type" -> io.circe.Json.fromString(WatchdogEventLog.StuckFireType),
+      "sessionId" -> io.circe.Json.fromString(rec.sessionId),
+      "kind" -> io.circe.Json.fromString(rec.kind.toString),
+      "branch" -> io.circe.Json.fromString(a.branch),
+      "toolPhaseMs" -> io.circe.Json.fromLong(a.toolPhaseMs),
+      "agentIdleMs" -> io.circe.Json.fromLong(a.agentIdleMs),
+      "toolName" -> a.toolName.fold(io.circe.Json.Null)(io.circe.Json.fromString),
+      "level" -> io.circe.Json.fromString(level),
+      "attempt" -> io.circe.Json.fromInt(attempt),
+      "hardRecoveryEnabled" -> io.circe.Json.fromBoolean(hard),
+      "shadow" -> io.circe.Json.fromBoolean(shadow)
+    ))
+
+  // ── R8 方向②：L3 有效性自检（T+N 行为面复查）────────────────────────────
+
+  /** 复查到期登记（到期的取出，未到期的留待下一轮）；再逐条裁决。 */
+  private def verifyL3Outcomes(
+    resources: SharedResources,
+    pendingL3: cats.effect.Ref[IO, List[PendingL3]],
+    now: Long,
+    l3VerifyDelayMs: Long
+  ): IO[Unit] =
+    pendingL3
+      .modify { ps =>
+        val (due, rest) = ps.partition(p => now - p.firedAt >= l3VerifyDelayMs)
+        (rest, due)
+      }
+      .flatMap(_.traverse_(checkL3Outcome(resources, _, l3VerifyDelayMs)))
+      .handleErrorWith(e =>
+        logger.warn(s"TaskStuckWatcher: L3 outcome self-check failed (audit-only): ${Option(e.getMessage).getOrElse(e.toString)}"))
+
+  /** 单条 L3 开火的 T+N 裁决（设计 §3.3 判据，**行为面**——不看任何日志）：
+    *
+    *   - `(ii)` 节点状态仍是 `Cancelled` ⇒ **失效**（本次事故主判据：14/14 命中）；
+    *   - `(i)` 节点未复活（非 Pending/Running/Completed）而会话仍在 `Processing`
+    *     ⇒ 失效（「桥 Cancelled 本身没落地」形态）；
+    *   - `(iii)` 节点已被 resume 复活（Pending/Running/Completed）⇒ 生效（设计
+    *     §3.6 第 3 行：只要求「出现过 Pending/Running」，不要求稳态）；
+    *   - 节点查无（已归档/从未绑定）而会话也不在 Processing ⇒ 无从判失效（保守不告警）。
+    *
+    * **只告警不动作**（设计 §3.6 末）：写 ① `l3-ineffective` 事件 + `logger.error`；
+    * 不重试、不改判、不 kill；**一期不回流分发器**（`NotifyReason` 无 stuck 类值，
+    * 与 R7 taxonomy 一起做——任务书 ③ 口径）。 */
+  private def checkL3Outcome(resources: SharedResources, p: PendingL3, l3VerifyDelayMs: Long): IO[Unit] =
+    nebflow.core.project.ProjectRuntimeRegistry.all.flatMap { rts =>
+      rts.find(rt => rt.engine.rootSessionId.nonEmpty && rt.engine.rootSessionId == p.rootSessionId) match
+        case None =>
+          logger.warn(
+            s"TaskStuckWatcher: L3 self-check skipped for ${p.sessionId} — no project runtime (root=${p.rootSessionId}); " +
+              "verdict not derivable (restart/unmount tolerated by design §3.8)")
+        case Some(rt) =>
+          for
+            snap <- rt.store.snapshot
+            reg <- resources.agentRegistry.get
+            node = snap.nodes.values.find(n =>
+              n.sessionRef.contains(p.sessionId) || n.sessionRefVerify.contains(p.sessionId))
+            recordProcessing = reg.get(p.sessionId).exists(_.status == AgentStatus.Processing)
+            verdict = node match
+              case Some(n) if n.status == nebflow.core.project.NodeLifecycle.Cancelled =>
+                Some(("node-still-cancelled", n.id))
+              case Some(n) if LiveForL3Check.contains(n.status) => None
+              case Some(n) if recordProcessing => Some(("session-still-processing", n.id))
+              case Some(n) => None
+              case None if recordProcessing => Some(("session-still-processing", ""))
+              case None => None
+            _ <- verdict match
+              case Some((evidence, nodeId)) =>
+                logger.error(
+                  s"TaskStuckWatcher: L3 INEFFECTIVE for ${p.sessionId} (evidence=$evidence, node=${if nodeId.isEmpty then "-" else nodeId}) — " +
+                    s"fired at ${p.firedAt} (level=L3, branch=${p.branch}); no state migration within +${l3VerifyDelayMs / 1000}s " +
+                    "⇒ the L3 leg is not working (alert only, no action by design §3.6)"
+                ) *> WatchdogEventLog.append(io.circe.Json.obj(
+                  "ts" -> io.circe.Json.fromLong(System.currentTimeMillis()),
+                  "type" -> io.circe.Json.fromString(WatchdogEventLog.L3IneffectiveType),
+                  "sessionId" -> io.circe.Json.fromString(p.sessionId),
+                  "rootSessionId" -> io.circe.Json.fromString(p.rootSessionId),
+                  "nodeId" -> io.circe.Json.fromString(nodeId),
+                  "branch" -> io.circe.Json.fromString(p.branch),
+                  "toolPhaseMs" -> io.circe.Json.fromLong(p.toolPhaseMs),
+                  "agentIdleMs" -> io.circe.Json.fromLong(p.agentIdleMs),
+                  "level" -> io.circe.Json.fromString("L3"),
+                  "attempt" -> io.circe.Json.fromInt(p.attempt),
+                  "firedAt" -> io.circe.Json.fromLong(p.firedAt),
+                  "verifiedAt" -> io.circe.Json.fromLong(System.currentTimeMillis()),
+                  "evidence" -> io.circe.Json.fromString(evidence)
+                ))
+              case None => IO.unit
+          yield ()
+    }.handleErrorWith(e =>
+      logger.warn(s"TaskStuckWatcher: L3 self-check for ${p.sessionId} failed: ${Option(e.getMessage).getOrElse(e.toString)}"))
+
+  /** L3 复查视为「resume 已生效」的节点状态集（设计 §3.3(iii)：只要求出现过
+    * Pending/Running；Completed 一并放行——带 resume 的节点跑到完成同样证明该腿有效）。 */
+  private val LiveForL3Check: Set[String] = Set(
+    nebflow.core.project.NodeLifecycle.Pending,
+    nebflow.core.project.NodeLifecycle.Running,
+    nebflow.core.project.NodeLifecycle.Completed
+  )
 
   /** L3 for Flow 节点：定位 session 所属项目的 runtime 并 hardResumeNode（跨项目
     * 按 rootSessionId 匹配 AgentRecord.rootSessionId = 项目 root 会话）。
