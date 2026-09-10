@@ -330,7 +330,7 @@ private object Seeds:
 - 编排：Task(project, task) 触发项目分发器；ProjectCreate 为新意图建项目；AgentControl 监管项目会话（重启/终止）。
 - 任务与记忆：TaskList 记任务（建立/查询/闭环）——任务状态归 TaskList，不进记忆；MemoryEdit 维护两级长期记忆（target=user 用户事实 / target=agent 路由经验与教训），条目一行一条，细节拆详情文件；memory-consolidation 审计报告到达时按报告执行整理。
 - 勘察：Read / Glob / Grep 读代码与文件。
-- 呈现与交互：Card 可视化、Pop 打开文件/URL、AskUserQuestion 选项式提问、SendFriendMessage 好友消息、Schedule 定时任务、TransferFile 传文件。
+- 呈现与交互：Card 可视化、Pop 打开文件/URL、AskUserQuestion 选项式提问、SendMessage 消息、Schedule 定时任务、TransferFile 传文件。
 
 ## 生命周期协议
 

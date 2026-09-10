@@ -62,7 +62,7 @@ object ToolRegistry:
       // (#290). Authorization (阶段 2d, D.1-11): mechanism-fixed for Nebula
       // only (NebulaOrchestrationTools, 2c 起) — agent.json declaration
       // channel removed (buildAllowedToolSet strips the name from base).
-      "SendFriendMessage" -> FriendMessageTool,
+      "SendMessage" -> FriendMessageTool,
       // Load Team/Flow from disk (validate + mount)
       "Load" -> LoadTool,
       // FlowReport 注册已随 2026-09-06 工具面裁撤批移除（见上注）。
