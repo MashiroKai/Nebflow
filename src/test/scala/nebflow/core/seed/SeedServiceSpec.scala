@@ -10,7 +10,7 @@ import java.nio.file.Files
 /**
  * SeedService cold-start 播种引擎验证（cold-start seed 批 2026-09-07）。
  *
- * 覆盖定稿四项：① fresh home 完整播种（三 keeper + 2 插件 + projects/general）、
+ * 覆盖定稿四项：① fresh home 完整播种（三 keeper + 3 插件 + projects/general）、
  * ② 幂等 / 不覆盖用户编辑、③ fresh-home 守卫（已有用户数据 → 只写 marker 不播种）、
  * ④ 升级 add-only（低版本 marker + 已有文件 → 只补缺失，不重写）。
  *
@@ -61,8 +61,9 @@ class SeedServiceSpec extends FunSuite:
       "general preset=general")
     assert(gen.hcursor.downField("name").as[String].toOption.contains("general"))
 
-    // 收缩后默认插件集 = {visual-report, slideblocks}（c7501470 manifest 收缩）：目录就位 + trusted
-    for name <- List("visual-report", "slideblocks")
+    // 现行默认插件集 = {visual-report, slideblocks, nebflow-plugin-creator}
+    // （c7501470 收缩后经 nebflow-plugin-creator 批扩为 3 包，2026-09-10）：目录就位 + trusted
+    for name <- List("visual-report", "slideblocks", "nebflow-plugin-creator")
     do
       assert(os.exists(home / "plugins" / name / "plugin.json"), s"plugin '$name'/plugin.json present")
       assert(PluginRegistry.resolve(name).unsafeRunSync().isRight, s"plugin '$name' trusted")
@@ -70,7 +71,7 @@ class SeedServiceSpec extends FunSuite:
     for name <- List("explorer-toolkit", "design-spec")
     do
       assert(!os.exists(home / "plugins" / name), s"plugin '$name' NOT seeded (removed from default set)")
-    // skill 包实际复制实证（两个默认插件各验一条，plugin.json 锚点 + 整目录递归）
+    // skill 包实际复制实证（3 包默认集中抽验两包，plugin.json 锚点 + 整目录递归）
     assert(os.exists(home / "plugins" / "visual-report" / "skills" / "visual-report" / "SKILL.md"),
       "visual-report skill copied")
     assert(os.exists(home / "plugins" / "slideblocks" / "skills" / "slideblocks" / "SKILL.md"),
@@ -93,9 +94,9 @@ class SeedServiceSpec extends FunSuite:
     val state = io.circe.parser.parse(os.read(marker)).toOption.get
     assert(state.hcursor.downField("version").as[String].toOption.contains("1.0.0"))
     assert(state.hcursor.downField("items").as[List[String]].toOption.exists(_.nonEmpty), "items recorded")
-    // 2 agents + 2 plugins + 1 project = 5（收缩后默认集）
-    assert(state.hcursor.downField("items").as[List[String]].toOption.exists(_.size == 5),
-      "marker records 5 items (2 agents + 2 plugins + 1 project)")
+    // 2 agents + 3 plugins（visual-report / slideblocks / nebflow-plugin-creator） + 1 project = 6
+    assert(state.hcursor.downField("items").as[List[String]].toOption.exists(_.size == 6),
+      "marker records 6 items (2 agents + 3 plugins + 1 project)")
 
   // ── ② 幂等 / 不覆盖用户编辑 ───────────────────────────────
   test("re-seed is idempotent and never overwrites user edits"):
@@ -155,6 +156,7 @@ class SeedServiceSpec extends FunSuite:
     assert(os.exists(home / "agents" / "project-dispatcher" / "agent.json"), "missing dispatcher added")
     assert(os.exists(home / "plugins" / "visual-report" / "plugin.json"), "missing plugin added")
     assert(os.exists(home / "plugins" / "slideblocks" / "plugin.json"), "missing plugin added")
+    assert(os.exists(home / "plugins" / "nebflow-plugin-creator" / "plugin.json"), "missing plugin added")
     assert(!os.exists(home / "plugins" / "explorer-toolkit"), "shrink-removed plugin not replanted on upgrade")
     assert(os.exists(home / "projects" / "general" / "project.json"), "missing project added")
     // marker 升级到当前版本
