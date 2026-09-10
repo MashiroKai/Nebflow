@@ -106,6 +106,11 @@ class PluginRegistrySpec extends CatsEffectSuite:
   private def scan: IO[List[PluginRegistry.PluginDef]] = PluginRegistry.scan()
   private def names: IO[Set[String]] = scan.map(_.map(_.name).toSet)
 
+  /** 本 suite 盘上 6 包的缺席注记（口径：本 spec 固定 fixtures——empty/bad-tools 拒载、
+    * full/skills-only 撤审后无审批记录、messy 从未审批、mcp-only 审批后改动 digest 漂移）。 */
+  private val absenceNote6 =
+    "另有 6 个插件未载入（装载失败 2 / 信任未批准 3 / digest 漂移 1）"
+
   // ── 扫描 / 装载校验（§B.2 / §B.8-7/5/8）────────────────────
 
   test("§B.8-7 装载校验: skills 与 mcp 可只用其一——两者其一的插件全部装载") {
@@ -236,13 +241,18 @@ class PluginRegistrySpec extends CatsEffectSuite:
       assert(!before.contains("- full:"), "untrusted plugin must NOT be in catalog before approval")
   }
 
-  test("目录注入: 无受信插件 → 空串（不注入空段）") {
-    // 专用空缓存场景：临时清掉全部 trust 记录较重——用 revoke full + 断言其余信任插件仍在
-    // 的替代：新建一个孤立扫描路径不可行（dataRoot 单例）。此处断言 revoke 后缩行。
+  test("目录注入: 无受信插件但盘上有缺席包 → 不出插件行，只出段头 + 缺席注记（可见性批口径）") {
+    // 空段口径（可见性批 2026-09-10）：无受信插件「且」无缺席包才返回 ""；本用例
+    // 撤审 full 后受信集为空、盘上仍有 6 个缺席包（拒载/未批准/漂移）→ 段头 + 注记
+    // 必须仍在（目录缩容到 0 也不许无声），但不得出现任何插件行。
     for
       _ <- PluginRegistry.revoke("full")
       after <- PluginRegistry.renderCatalog()
-    yield assert(!after.contains("- full:"), "revoked plugin must disappear from catalog immediately")
+    yield
+      assert(!after.contains("- full:"), "revoked plugin must disappear from catalog immediately")
+      assert(!after.linesIterator.exists(_.startsWith("- ")),
+        s"no plugin line may render when nothing is trusted: $after")
+      assertEquals(after, PluginRegistry.CatalogHeader + "\n" + absenceNote6, s"header + absence note only: $after")
   }
 
   // ── feature flag（§G.2）────────────────────────────────

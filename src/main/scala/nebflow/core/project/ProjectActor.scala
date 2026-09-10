@@ -336,7 +336,9 @@ object ProjectActor:
     }
 
   /** Plugin Catalog 段（阶段 2b §B.4 第 2 步）：分发器 prompt 组装的注入源。
-    * 受信 plugin 目录（untrusted 不出现，§B.3）；flag 关 / 无受信插件 → ""。
+    * 受信 plugin 目录（untrusted 不出现，§B.3）；flag 关 / 盘上无插件 → ""。可见性批
+    * （2026-09-10）：段尾缺席注记随段给出（装载失败/信任未批准/digest 漂移计数），
+    * 目录缩容时不再静默——口径见 PluginRegistry.renderCatalog。
     * 对齐 skillCatalog order 800 注入先例——用注入目录段而非新增查询工具
     * （分发器单次会话、目录规模小，不多造工具）。
     * dispatcher-ctx 批（2026-09-05）：目录渲染收口到 DispatcherContextCatalog

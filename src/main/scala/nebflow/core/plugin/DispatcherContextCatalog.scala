@@ -11,7 +11,7 @@ import nebflow.core.presets.PresetStore
  * 分发器 spawn/重入 prompt 组装（ProjectActor.pluginCatalogText）注入两段目录，
  * 让分发器「按任务需求为节点选配 plugins 与 preset」时不用猜：
  *
- * 1. **Plugin 能力目录**——段头/过滤链/行渲染单点全部在 [[PluginRegistry.renderCatalog]]
+ * 1. **Plugin 能力目录**——段头/过滤链/行渲染/缺席注记单点全部在 [[PluginRegistry.renderCatalog]]
  *    （`PluginsConfig.enabled` 总闸 + `scan().filter(_.trust.trusted)`），本类只委托。
  *    描述单源批（作者 2026-09-10 09:30 裁定：人审与分发器目录渲染同一份内容）：
  *    manifest `description` 是唯一描述源，`capability` 键退役为 deprecated——存量包
@@ -32,7 +32,10 @@ import nebflow.core.presets.PresetStore
  * 多造工具徒增一次往返；反方考量（目录膨胀挤占上下文）由行格式精简
  * （每条 1-2 行）压制，超限再议按需查询。
  *
- * 渲染规则：两段都空 → ""（调用方不注入空段，先例同 renderCatalog）。
+ * 渲染规则：两段都空 → ""（调用方不注入空段，先例同 renderCatalog）。可见性批
+ * （2026-09-10 P1 静默缩容）：插件段段尾可带缺席注记（「另有 N 个插件未载入（装载
+ * 失败 x / 信任未批准 y / digest 漂移 z）」）——目录缩容不再无声；注记只出计数，
+ * 包名+原因清单在启动健康摘要日志（PluginRegistry.healthSummary）。
  */
 object DispatcherContextCatalog:
 
