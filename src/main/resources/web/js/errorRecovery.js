@@ -20,7 +20,7 @@
 //   errorEscalated{ sessionId, agentId?, reason, retryCount, level, escalateAt }
 //   resumed       { sessionId }  (shared with schedule — main.js owns it)
 
-import state from './state.js';
+import state, { LS_SESSIONS_KEY } from './state.js';
 import { t } from './i18n.js';
 import { sendWs } from './ws.js';
 import { escapeHtml } from './utils.js';
@@ -102,11 +102,86 @@ export function buildStripText(info) {
 }
 
 // ── Actions (dim 5: retry / abandon buttons) ─────────────────────────────
-/** "立即重试" — R3 user-wake, forces the frozen agent to resume (re-dispatch
- *  from its lastDispatch checkpoint). */
+/** Fresh clientMessageId — byte-identical in shape to the input.js send paths.
+ *  A NEW id per click is mandatory, not cosmetic: the frozen agent's wake
+ *  branch dedups on it (AgentActor.checkDuplicate) and a repeated id is
+ *  silently dropped — the 2nd click of a reused id would be a no-op. */
+function newClientMessageId() {
+  return Date.now().toString(36) + Math.random().toString(36).slice(2, 6);
+}
+
+/** Last user-authored message text of a session — the payload the retry
+ *  re-sends. DOM first (it renders the live conversation AND the backend
+ *  history restore), then the per-session localStorage cache written by
+ *  persistence.saveMsg (covers sessions whose view is not mounted).
+ *  Injected (blue) bubbles are `row user` + `bubble injected`, so the
+ *  `.bubble.user` selector skips them by construction; attachment-only rows
+ *  carry `att-bubble` and are skipped too (their text is a `[file: …]` tag).
+ *  Within a bubble the payload is the LAST child (plain sends = the text div;
+ *  /ask + skill bubbles = a label div followed by the question/argument div) —
+ *  reading the bubble itself would prepend the label. */
+function lastUserMessageText(sid) {
+  const v = findViewBySessionIdSafe(sid);
+  const chat = v && v.dom && v.dom.chat;
+  if (chat) {
+    const bubbles = chat.querySelectorAll('.row.user .bubble.user:not(.att-bubble)');
+    for (let i = bubbles.length - 1; i >= 0; i--) {
+      const txt = ((bubbles[i].lastElementChild || bubbles[i]).textContent || '').trim();
+      if (txt) return txt;
+    }
+  }
+  try {
+    const all = JSON.parse(localStorage.getItem(LS_SESSIONS_KEY) || '{}');
+    const arr = all[sid] || [];
+    for (let i = arr.length - 1; i >= 0; i--) {
+      const m = arr[i];
+      if (m && m.type === 'user' && !m.injected && typeof m.text === 'string' && m.text.trim()) {
+        return m.text.trim();
+      }
+    }
+  } catch (e) { /* cache unreadable — fall through to the empty return */ }
+  return '';
+}
+
+/** "立即重试" — user wake: re-send the last user message as a normal browser
+ *  send frame (typeless), which is what actually resumes the frozen agent.
+ *
+ *  R2 (2026-09-10). The previous form
+ *      sendWs({ type: 'immediateInput', sessionId: sid, content: '' })
+ *  was a structural no-op, twice over:
+ *   (a) empty content — the immediateInput route funnels into handleUserText,
+ *       whose `if sessionId.nonEmpty && content.nonEmpty` guard drops it with
+ *       a "dropped EMPTY content" warn and dispatches nothing;
+ *   (b) even with text it could never WAKE a frozen agent: the immediateInput
+ *       route reads only sessionId + content and never forwards
+ *       clientMessageId, and the frozen agent's only text exit is
+ *       `case UserInput(...) if clientMessageId.isDefined` ⇒ wake; without an
+ *       id the same message takes the queue-without-waking branch and the
+ *       freeze is untouched.
+ *  AgentCommand.Retry is not an alternative either: it has a handler
+ *  (AgentActor ~:3788) but NO WS route, and it re-dispatches as Gated — a loop
+ *  freeze would simply re-freeze. The typeless browser frame (content +
+ *  clientMessageId + sessionId) is the only client shape that reaches
+ *  AgentCommand.UserInput(content, None, clientMessageId, …) and thus the wake
+ *  branch. Chat width rides along (as in input.js) so the resumed turn keeps
+ *  the same wrap width.
+ *
+ *  Trade-off (inherent to re-sending): the agent's context gains a second copy
+ *  of the last user message. That is the point — the wake re-states the user's
+ *  request so the parked turn can be retried. */
 export function sendRetry(sid) {
   if (!sid) return;
-  sendWs({ type: 'immediateInput', sessionId: sid, content: '' });
+  const text = lastUserMessageText(sid);
+  if (!text) {
+    // No user text anywhere (no rendered row, no cache entry) — there is
+    // nothing to re-send, and an empty frame is exactly the no-op being fixed.
+    // Say so instead of failing silently.
+    console.warn('[errorRecovery] retry: no user message text available for session', sid);
+    return;
+  }
+  const v = findViewBySessionIdSafe(sid);
+  const chatWidth = (v && v.dom && v.dom.chat && v.dom.chat.clientWidth) || 0;
+  sendWs({ content: text, clientMessageId: newClientMessageId(), sessionId: sid, chatWidth });
 }
 
 /** "取消任务" — abandon recovery → terminal settle (reuses cancelAgent). */
