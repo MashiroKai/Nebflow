@@ -8,15 +8,15 @@
 //   - 节点视图机制（2026-09-02 作者裁定 + 2026-09-05 徽章裁定）保留不动：
 //     WS nodeCreated/Updated/Completed/Removed 自包含订阅 + REST 快照对齐
 //     （_wsTs 防回滚）+ 八态徽章映射 + 点击行 → Flow Map 跳转聚焦。
-//   - 主图同源过滤（2026-09-05 12:59 作者裁定）：整链已归档（批内全终态）的
-//     节点不显示——判据与 Flow Map 主图同一 clusterBatches 单点（flowMapArchive
-//     .deriveArchivedIds 纯派生），任务列表 = 主图当前集合口径。
+//   - 主图同源过滤（2026-09-05 12:59 作者裁定 → 链级抽象 P0 单源收口）：可见性
+//     = 后端活动区事实本身——整链归档由后端 sweep 出活动区并广播 nodeRemoved
+//     （缓存删除）+ 快照对账消化，前端零链派生零判据（旧 deriveArchivedIds/
+//     clusterBatches 时间批镜像已删除，判据唯一存在于后端 FlowMapStore）。
 import { t } from './i18n.js';
 import { createIconsIn } from './utils.js';
 import state from './state.js';
 import { onMessage, onReconnect } from './ws.js';
 import { fetchProjects, fetchFlowMap, NODE_STATUS_CLS } from './nodeData.js';
-import { deriveArchivedIds } from './flowMapArchive.js';
 
 // ── Flow Map 节点条目（2026-09-02 作者裁定：节点作为条目并入任务列表）──────
 // [节点区块 · 独立命名空间] 数据 = WS 节点广播帧（nodeCreated/Updated/Completed/
@@ -56,18 +56,17 @@ function nodeIsLive(n) {
   return true;
 }
 
-/** 面板节点条目数据：全部项目的活跃节点，最近活动在前。主图同源过滤
- *  （2026-09-05 12:59 作者裁定）在此唯一咽喉生效：快照刷新与 WS 增量都汇入
- *  renderTaskList → 本函数——按项目跑与主图同一 clusterBatches 链判定
- *  （deriveArchivedIds，flowMapArchive.js 导出）得 archivedIds，整链全终态
- *  （已归档）节点整链排除（含该链已完成成员）；链内任一非终态（含 blocked）→
- *  整链保留。过滤后无节点 = 主图空 = 面板收起（既有空态兜底）。 */
+/** 面板节点条目数据：全部项目的活跃节点，最近活动在前。主图同源可见性
+ *  （2026-09-05 12:59 作者裁定，P0 单源收口）= 后端活动区事实本身：节点留在
+ *  缓存即显示（含已终态、等待后端 sweep 的成员），后端 sweep 整链出库广播
+ *  nodeRemoved → 缓存删除即隐藏，快照对账兜底收敛——前端零链派生零判据
+ *  （旧 deriveArchivedIds 链资格镜像已删，归档资格判定唯一存在于后端）。
+ *  过滤后无节点 = 主图空 = 面板收起（既有空态兜底）。 */
 function collectNodes() {
   const out = [];
   for (const [project, byId] of nodeCache) {
-    const archivedIds = deriveArchivedIds(Array.from(byId.values()));
     for (const n of byId.values()) {
-      if (n && n.id && !archivedIds.has(n.id) && nodeIsLive(n)) out.push({ node: n, project });
+      if (n && n.id && nodeIsLive(n)) out.push({ node: n, project });
     }
   }
   out.sort((a, b) => nodeTs(b.node) - nodeTs(a.node));
