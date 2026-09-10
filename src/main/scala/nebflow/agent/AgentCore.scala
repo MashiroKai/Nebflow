@@ -1071,7 +1071,10 @@ private[agent] trait AgentCore:
       effectiveProjectRoot = freshProjectRoot.getOrElse(resources.projectRoot.toString)
       // 阶段 2a 沙箱（§A.3/§A.6）：root = 会话 projectRoot（node.worktree=Some →
       // <workspace>/.nebflow/<wt>；None → workspace；分发器 → project workspace，
-      // H-5①）。仅 project 节点/分发器（SessionContext.sandboxEnabled）激活；
+      // H-5①）。sandboxEnabled（会话级围栏总闸）为真时构造策略；本块同时是
+      // SandboxPolicy.pathRoot（路径语义载体，拆闸保解析）的唯一生产者。
+      // [沙箱拆围栏批 S1, 2026-09-10] AGENTS.md 注入判据已与 sandboxEnabled 解耦
+      // （改用 SessionContext.projectSession）——本块的启用面变化不再连带影响注入面。
       // Nebula 无文件工具天然豁免、team/flow/Delegate 双轨会话默认旧行为（§A.7）。
       //
       // [verify-fix] 2026-09-03 独立验证节点（E2E 实证）：sandbox root 必须取

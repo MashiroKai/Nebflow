@@ -872,9 +872,12 @@ case class SessionContext(
   mailTurnCount: Int = 0,
   /** 阶段 2a 沙箱会话开关（§A.6/H-5①）：true 时 AgentCore 从 projectRoot 派生
     * ToolContext.sandbox（root=worktree 或 workspace；分发器=project workspace）。
-    * 仅 project 节点（NodeEngine）与分发器（ProjectActor）spawn 置位；Nebula/
-    * team/flow/Delegate 等双轨会话默认 false=旧行为（§A.7 Nebula 天然豁免，
-    * 双轨期不动旧体系），2c 收敛后统一。 */
+    * 置位点 = project 节点（NodeEngine）与分发器（ProjectActor）spawn，以及
+    * Nebula 根会话（WebSocketRoutes，2026-09-05 裁定）；team/flow/Delegate 等双轨
+    * 会话默认 false=旧行为（§A.7，双轨期不动旧体系）。
+    * 边界（[沙箱拆围栏批 S1, 2026-09-10]）：本字段自本批起**只承载「围栏总闸」**
+    * ——root 推导 + 闸门开关；「是否项目作用域会话」由 projectSession 独立承载
+    * （AGENTS.md 注入判据），两信号不再互为代名词。 */
   sandboxEnabled: Boolean = false,
   /** 显式沙箱根（2026-09-05 21:05 作者裁定——worktree 节点继承项目沙箱）：
     * NodeEngine spawn 点传入项目工作区根，worktree 节点沙箱 root 收敛为工作区
@@ -883,6 +886,20 @@ case class SessionContext(
     * 沿用 projectRoot 推导（分发器/未接线节点旧行为逐字节不变）。推导权威在
     * SandboxPolicy.sessionRoot。 */
   sandboxRoot: Option[String] = None,
+  /** 项目会话信号（沙箱拆围栏批 S1/R8 解耦，2026-09-10）：true = 本会话属项目
+    * 作用域（project 节点 / 分发器）——项目级契约文件 AGENTS.md 的注入判据
+    * （ContextRefresher.agentsMdEnabledFor）。
+    *
+    * 与 sandboxEnabled 分道的原因：拆围栏批将退役 sandboxEnabled 这一「围栏总闸」
+    * 语义，而 AGENTS.md 注入必须继续生效——继续复用旧信号就会造成「拆围栏顺带
+    * 关掉项目契约注入」的静默回归（design §0 结论 4 / R8 的 h2 禁止项）。判据按
+    * 会话形态（spawn 置位）而非围栏开关置位，两者生命周期就此解耦。
+    *
+    * 置位点（call site 口径 3 处）：NodeEngine 节点 spawn ×2（普通节点 / loop
+    * worker·verify）+ ProjectActor 分发器 spawn ×1；WebSocketRoutes 的 WS 根会话
+    * （含 Nebula）保持 false——AGENTS.md 接收面 = project 分发器 + 节点会话不变。
+    * 详见 design §4.4 S1 / §7 交下游纪律 1。 */
+  projectSession: Boolean = false,
   /** Last experience extraction timestamp. */
   lastExperienceAt: Option[Long] = None,
   /**
@@ -1177,6 +1194,10 @@ object AgentState:
     flowChainId: Option[String] = None,
     sandboxEnabled: Boolean = false,
     sandboxRoot: Option[String] = None,
+    /** 项目会话信号（沙箱拆围栏批 S1/R8 解耦）：spawn 侧置位，见
+      * SessionContext.projectSession。默认 false = 非项目会话（WS 根会话 /
+      * team / flow / Delegate / SubTask 双轨面）语义与旧行为逐字节不变。 */
+    projectSession: Boolean = false,
     loopTurnKey: Long = 0L
   ): AgentState =
     val interaction = (pendingAskUser, pendingPermission) match
@@ -1210,7 +1231,8 @@ object AgentState:
         flowNodeName = flowNodeName,
         flowChainId = flowChainId,
         sandboxEnabled = sandboxEnabled,
-        sandboxRoot = sandboxRoot
+        sandboxRoot = sandboxRoot,
+        projectSession = projectSession
       ),
       ExecutionContext(messages, status, turnIdx, 0L, interaction),
       CompactionState(pendingCompaction, compactionFailures, 0L, latestUsage),
@@ -1263,6 +1285,9 @@ extension (s: AgentState)
   def projectRoot: Option[String] = s.session.projectRoot
   def sandboxEnabled: Boolean = s.session.sandboxEnabled
   def sandboxRoot: Option[String] = s.session.sandboxRoot
+  /** 项目会话信号（沙箱拆围栏批 S1/R8 解耦）：AGENTS.md 注入判据的来源，见
+    * SessionContext.projectSession。 */
+  def projectSession: Boolean = s.session.projectSession
   def rulesMd: Option[String] = s.session.rulesMd
   def agentsMd: Option[String] = s.session.agentsMd
   def folderId: Option[String] = s.session.folderId

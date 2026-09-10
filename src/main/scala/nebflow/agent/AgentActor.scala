@@ -582,7 +582,11 @@ object AgentActor extends AgentCore with AgentSession:
     /** 显式沙箱根（2026-09-05 21:05 作者裁定——worktree 节点继承项目沙箱）：
       * NodeEngine 传项目工作区根，沙箱 root 不再收窄到 worktree 目录自身。None =
       * 沿用 projectRoot 推导（旧行为）。 */
-    sandboxRoot: Option[String] = None
+    sandboxRoot: Option[String] = None,
+    /** 项目会话信号（沙箱拆围栏批 S1/R8 解耦）：project 节点 / 分发器 spawn 置
+      * true（NodeEngine ×2 + ProjectActor ×1），AGENTS.md 注入判据据此置位——
+      * 不再挂在沙箱总闸上。默认 false = WS 根会话/双轨面不注入（旧行为不变）。 */
+    projectSession: Boolean = false
   ): Behavior[AgentCommand] =
     Behaviors.setup { ctx =>
       val effectiveRootSessionId =
@@ -640,7 +644,8 @@ object AgentActor extends AgentCore with AgentSession:
             flowNodeName = flowNodeName,
             flowChainId = flowChainId,
             sandboxEnabled = sandboxEnabled,
-            sandboxRoot = sandboxRoot
+            sandboxRoot = sandboxRoot,
+            projectSession = projectSession
           )
         )(using ctx)
       )

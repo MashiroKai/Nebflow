@@ -109,8 +109,10 @@ case class SharedResources(
   bashResilience: nebflow.shared.BashResilienceConfig = nebflow.shared.BashResilienceConfig(),
   /** 阶段 2a 沙箱配置（§G.1）：GatewayMain 从 nebflow.json sandbox 节 fail-safe
     * 加载（absent → enabled=true 默认）。经 AgentCore 派生 ToolContext.sandbox——
-    * 但闸门激活还需会话级 SessionContext.sandboxEnabled=true（仅 project 节点/
-    * 分发器 spawn 置位），故存量测试的默认构造不受影响。 */
+    * 但闸门激活还需会话级 SessionContext.sandboxEnabled=true（project 节点/
+    * 分发器 + Nebula 根会话 spawn 置位），故存量测试的默认构造不受影响。
+    * [沙箱拆围栏批 S1, 2026-09-10] 本配置不再参与 AGENTS.md 注入判据（该判据改用
+    * SessionContext.projectSession，见 ContextRefresher.agentsMdEnabledFor）。 */
   sandboxConfig: nebflow.core.sandbox.SandboxConfig = nebflow.core.sandbox.SandboxConfig(),
   /** 阶段 2b Plugins（§B.5）：plugin 级 MCP 生命周期管理器（引用计数 + 信任运行时
     * 联动）。独立于全局 mcpManager（不复用 enable/disable 面，§B.5）；默认实例
