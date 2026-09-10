@@ -38,6 +38,14 @@ class CardToolRegistrationSpec extends FunSuite:
       "插件通道不得授 Card（Card 仅 Nebula 固定面携带）"
     )
 
+  test("Pop is NOT in the plugin builtin whitelist (2026-09-10 作者裁定：Pop 收归 Nebula 专属)"):
+    // 插件再授予通道关闭——否则 org.nebflow/tools 声明 Pop 可绕过
+    // AgentCore.NebulaExclusiveTools 的剥离面，把 Pop 发回任意节点。
+    assert(
+      !nebflow.core.plugin.PluginRegistry.BuiltinToolWhitelist.contains("Pop"),
+      "插件通道不得授 Pop（Pop 仅 Nebula 本体根会话可用）"
+    )
+
   // ── 授能面 ──────────────────────────────────────────────
 
   test("Nebula fixed set carries Card; dispatcher/general do not"):

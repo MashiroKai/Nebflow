@@ -114,7 +114,9 @@ class AllowedToolSetSpec extends FunSuite:
     val defn = mkDef("solo", List("Read", "Pop"))
     val allowed = CoreProbe.allowed(defn)
     assert(allowed.contains("Read"))
-    assert(allowed.contains("Pop"))
+    // 2026-09-10 作者裁定：Pop 收归 Nebula 专属——非 Nebula 身份声明（含 "*"）
+    // 一律剥离（NebulaExclusiveTools 防声明逃逸通道）
+    assert(!allowed.contains("Pop"), "Pop is Nebula-exclusive (2026-09-10) — standalone declaration grants nothing")
     assert(!allowed.contains("Issue"), "Issue retired (2026-09-04) — standalone never has it")
     assert(allowed.contains("Write"))
     assert(!allowed.contains("Mail"), "standalone agent does not get Mail")
@@ -157,12 +159,13 @@ class AllowedToolSetSpec extends FunSuite:
     assert(!CoreProbe.allowed(teamDefn).contains("FlowReport"), "team agent does not get FlowReport")
     assert(!CoreProbe.allowed(stdDefn).contains("FlowReport"), "standalone agent does not get FlowReport")
 
-  test("non-Nebula agents can use AskUserQuestion if listed"):
+  test("non-Nebula agents can use AskUserQuestion if listed (Pop is NOT — Nebula-exclusive)"):
     // AskUserQuestion is no longer Nebula-exclusive — any agent that requests it gets it.
+    // Pop 相反（2026-09-10 作者裁定）：收归 Nebula 专属，声明一律剥离。
     val defn = mkDef("leaky", List("Read", "Pop", "AskUserQuestion"))
     val allowed = CoreProbe.allowed(defn)
     assert(allowed.contains("Read"), "Read allowed")
-    assert(allowed.contains("Pop"), "Pop is no longer Nebula-exclusive — must be kept")
+    assert(!allowed.contains("Pop"), "Pop is Nebula-exclusive (2026-09-10) — stripped even when declared")
     assert(allowed.contains("AskUserQuestion"), "AskUserQuestion is no longer Nebula-exclusive")
 
   test("Nebula keeps Nebula-exclusive tools"):
@@ -555,7 +558,7 @@ class AllowedToolSetSpec extends FunSuite:
 
   // ===== TaskList 工具面隔离（2026-09-06 TaskList 批，硬约束）=====
   // Nebula 专属编排件：仅 NebulaOrchestrationTools 携带（+1，恰十四件）；
-  // dispatcher（DispatcherFixedTools）/ general（BaseTools+Pop）与一切非
+  // dispatcher（DispatcherFixedTools）/ general（BaseTools+AskUserQuestion）与一切非
   // Nebula 身份（含 "*" 声明、dream、SubTask worker、flow 节点）零出现。
 
   test("TaskList 仅 Nebula（工具面总数=原数目+1 仅此一件）：dispatcher/general 固定面均不含"):
@@ -625,15 +628,19 @@ class AllowedToolSetSpec extends FunSuite:
     assert(!allowed.contains("AskUserQuestion"), "dispatcher 不给 AskUserQuestion（单次会话不阻塞等用户，§C.3）")
     assert(!allowed.contains("Mail"), "dispatcher 无 Mail")
 
-  test("general 固定 8 件（§C.4/§C.5 裁定 5 原文；2026-09-08 作者修订恢复 AskUser）——BaseTools + AskUserQuestion/Pop"):
+  test("general 固定 7 件（§C.4/§C.5；2026-09-10 作者裁定摘 Pop）——BaseTools + AskUserQuestion"):
     val bare = mkDef("general", Nil)
     val allowed = CoreProbe.allowed(bare, isFlowNode = true) // general 节点会话 isFlowNode=true
-    val eight = Set("Read", "Glob", "Edit", "Write", "Grep", "Bash", "AskUserQuestion", "Pop")
-    eight.foreach(t => assert(allowed.contains(t), s"general fixed tool missing: $t"))
+    val seven = Set("Read", "Glob", "Edit", "Write", "Grep", "Bash", "AskUserQuestion")
+    seven.foreach(t => assert(allowed.contains(t), s"general fixed tool missing: $t"))
     // 钉死断言（2026-09-08 作者修订，D6 批D1 G6/G7）：general 默认面含回
     // AskUserQuestion——直达作者方案（节点提问经 InteractionHub 直达 Nebula
     // 窗口；分发器监督=node-ask 留痕审计）——变异验红锚
     assert(allowed.contains("AskUserQuestion"), "general 默认面含 AskUserQuestion（2026-09-08 恢复）")
+    // 钉死断言（2026-09-10 作者裁定）：Pop 不在 general 固定面——节点交付物沿
+    // out 边交链末端/Nebula，由 Nebula 决定是否展示——变异验红锚（加回即红）
+    assert(!allowed.contains("Pop"), "general 节点不得持有 Pop（2026-09-10 裁定：Pop 收归 Nebula 专属）")
+    assert(!AgentCore.GeneralFixedTools.contains("Pop"), "GeneralFixedTools 零 Pop（定义层摘除）")
     assert(!allowed.contains("Mail"), "general 无 Mail")
     assert(!allowed.contains("MultiEdit"), "general 无 MultiEdit（已从 ToolRegistry 删除）")
     // 声明无效（机制固定零配置）
@@ -683,23 +690,28 @@ class AllowedToolSetSpec extends FunSuite:
     assert(allowed.contains("AskUserQuestion"), "AskUserQuestion kept (G8 exemption: audited ask ≠ performative delivery)")
     assert(allowed.contains("Read"), "domain tools kept")
 
-  test("guardrails OFF (default): declared Pop stays available to a flow node — zero regression"):
+  test("guardrails OFF (default): declared Pop is STILL stripped — Nebula-exclusive beats the flag (2026-09-10)"):
+    // 2026-09-10 作者裁定（Pop 收归 Nebula 专属）前，本断言是「flag off = 旧行为
+    // 逐字节兼容（声明即持有）」；裁定后 NebulaExclusiveTools 是常开剥离面，
+    // 与 guardrails 开关无关——声明 Pop 对任何非 Nebula 身份都不授能。
     val defn = mkDef("qa-worker", List("Read", "Grep", "Bash", "Pop", "AskUserQuestion"))
     val allowed = CoreProbe.allowed(defn, isFlowNode = true, guardrailsOn = false)
-    assert(allowed.contains("Pop"), "flag off = pre-guardrail behavior byte-compatible")
+    assert(!allowed.contains("Pop"), "Pop stripped regardless of the guardrails flag (Nebula-exclusive)")
     assert(allowed.contains("AskUserQuestion"))
 
-  test("guardrails ON + userFacing:true whitelist keeps display tools"):
+  test("guardrails ON + userFacing:true whitelist cannot resurrect Pop (Nebula-exclusive, 2026-09-10)"):
+    // userFacing 白名单只豁免 guardrails 的展示类剥离；对它之后的
+    // NebulaExclusiveTools 剥离面无效——Pop 对非 Nebula 身份一律不回。
     val defn = mkDef("reviewer", List("Read", "Grep", "Pop"))
     val allowed = CoreProbe.allowed(defn, isFlowNode = true, userFacingNode = true, guardrailsOn = true)
-    assert(allowed.contains("Pop"), "userFacing node is the whitelist escape hatch")
+    assert(!allowed.contains("Pop"), "userFacing whitelist does not resurrect a Nebula-exclusive tool")
     val leafStripped = CoreProbe.allowed(defn.copy(tools = List("Read", "Grep")), isFlowNode = true, userFacingNode = true, guardrailsOn = true)
     assert(!leafStripped.contains("Pop"), "whitelist restores nothing extra — declaration remains the source")
 
   test("guardrails ON does not touch non-flow agents"):
     val solo = mkDef("explorer", List("Read", "Pop", "AskUserQuestion"))
     val allowed = CoreProbe.allowed(solo, guardrailsOn = true)
-    assert(allowed.contains("Pop"), "T0 standalone untouched")
+    assert(!allowed.contains("Pop"), "T0 standalone: Pop stripped (Nebula-exclusive), not a guardrails effect")
     assert(allowed.contains("AskUserQuestion"), "T0 standalone untouched")
     val worker = mkDef("backend", List("Read")).copy(category = "team")
     val member = CoreProbe.allowed(worker, guardrailsOn = true)

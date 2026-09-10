@@ -1874,7 +1874,8 @@ private[agent] trait AgentCore:
       else mcpFiltered
     // 阶段 2b Plugins（§B.6 内建工具授予）：org.nebflow/tools 申请的 builtin 工具
     // 追加在全部角色过滤之后——信任门审批是授权权威（§B.3 审批清单必审区块），
-    // 审批通过 = 用户明确授予该节点此工具；白名单 {WebSearch, WebFetch, Curl, Pop}
+    // 审批通过 = 用户明确授予该节点此工具；白名单 {WebSearch, WebFetch, Curl}
+    // （2026-09-10 作者裁定：Pop 移出——收归 Nebula 专属，插件再授予通道关闭）
     // 在 PluginRegistry 装载层强制，此处再过滤一次（纵深防御：损坏的 AgentDef
     // 也造不出白名单外授予）。编排类工具（Task/Mail/NodeEdit 等）永不进白名单，
     // §C.1 静态矩阵不被 plugin 授予绕过。
@@ -2208,6 +2209,13 @@ object AgentCore:
     // 授能在 buildAllowedToolSet 末段按会话身份追加（晚于本集剥离点），分发器
     // 固定面同理（nebulaFiltered 先剥、末段再挂）——剥离与授能两点不相干扰。
     "TaskBoard",
+    // Pop（2026-09-10 作者裁定「我觉得把pop工具给nebula专属吧」）：Pop 收归
+    // Nebula 专属——Canvas 是用户面呈现通道，节点乱 Pop 是过程件污染的入口，
+    // 靠纪律不如靠工具面收口。本集同时是【防声明逃逸】通道：agent.json 声明
+    // （含 "*"）对一切非 Nebula 身份不授能（Pop 已从 general 固定面摘除、从
+    // 插件白名单摘除；真实授能 = NebulaOrchestrationTools 单点）。执行面另有
+    // PopTool 分发层身份闸（POP_NEBULA_ONLY）——定义层与分发层两层收口。
+    "Pop",
     // node_report（20260909 NodeReport 泛化批）：flow 节点会话专属终态语义申报
     // 工具，与 TaskBoard 同享防声明逃逸通道——"*"/显式声明对一切非节点会话身份
     // 不授能（真实授能 = 末段 flowNodeSession 按身份追加）。v1 report_blocked
@@ -2262,7 +2270,10 @@ object AgentCore:
     *   - 读三件：Read / Glob / Grep（读代码读现状；无写手——一切执行走
     *     Project 派发）
     *   - 可视化：Card（2026-09-05 解封，commit 793f62c1 曾整体删除）
-    *   - 用户面：AskUserQuestion / Pop；平台：Schedule / TransferFile
+    *   - 用户面：AskUserQuestion / Pop（Pop = Nebula 专属可视化出口，2026-09-10
+    *     作者裁定；非 Nebula 身份经 NebulaExclusiveTools 剥 + PopTool 身份闸
+    *     双保险——节点交付物沿 out 边交链末端/Nebula，由 Nebula 决定是否展示）；
+    *     平台：Schedule / TransferFile
     *   - 记忆：MemoryEdit（§C.2，白名单硬编码 User.md + agents/Nebula/memory.md）
     * 显式不含：Bash/Write/Edit（2026-09-05 23:34 裁定移除——Nebula 无写手）、
     * NodeList（2026-09-06 00:48 裁定摘除——out 边自动投递取代主动查图；
@@ -2287,7 +2298,8 @@ object AgentCore:
     "Grep",
     // 可视化（2026-09-05 解封恢复，前端消费面另批）
     "Card",
-    // 用户面
+    // 用户面（Pop = Nebula 专属可视化出口，2026-09-10 作者裁定——Nebula 本体
+    // 专属保留；非 Nebula 身份由 NebulaExclusiveTools 剥 + PopTool 身份闸兜底）
     "AskUserQuestion",
     "Pop",
     // 平台
@@ -2345,8 +2357,12 @@ object AgentCore:
     "Bash"
   )
 
-  /** 通用模版固定工具集（§C.1/§C.5，裁定 5 原文 8 件）：恰八件 = BaseTools
-    * 六件 + AskUserQuestion + Pop。
+  /** 通用模版固定工具集（§C.1/§C.5）：恰七件 = BaseTools 六件 + AskUserQuestion。
+    *
+    * 2026-09-10 作者裁定（「我觉得把pop工具给nebula专属吧」）：Pop 从本集摘除
+    * ——Pop 收归 Nebula 专属，通用模版（general/节点会话）不再持有；节点交付物
+    * 沿 out 边交链末端/Nebula，由 Nebula 决定是否展示（工具面 + PopTool 身份闸
+    * 双层收口）。裁定 5 原文「8 件」中的 Pop 一项由此作废，其余七件不变。
     *
     * 恢复裁定（2026-09-08 作者修订，D6 spec §3.2 G6/G7 gate）：直达作者方案
     * ——AskUserQuestion 回归 general 默认面，节点提问经 InteractionHub 直达
@@ -2361,7 +2377,7 @@ object AgentCore:
     * buildAllowedToolSet isFlowNode 分支注释）。Web 系不在默认面内——经
     * §B.6 plugin 扩展授予；MultiEdit 已从 ToolRegistry 删除（能力由 Edit
     * replace_all 覆盖）。 */
-  val GeneralFixedTools: Set[String] = BaseTools + "AskUserQuestion" + "Pop"
+  val GeneralFixedTools: Set[String] = BaseTools + "AskUserQuestion"
 
   /**
    * Fixed tools for a given agent — 阶段 2d（D.1-1）后的唯一注入入口。
