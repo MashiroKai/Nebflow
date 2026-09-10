@@ -691,6 +691,15 @@ class RestApiRoutes(
           nowMs = System.currentTimeMillis()
           peerOnline = (p: nebflow.neblink.PeerInfo) =>
             NeblinkService.isPeerOnline(p, nowMs, cfg.syncIntervalSec)
+          // Account identity hints (switch-account, 2026-09-10): decoded
+          // READ-ONLY from the ALREADY-persisted id_token (no extra I/O —
+          // `cred` is loaded right below anyway). Same trust rationale as
+          // the C2 picture claim: TLS-sourced token, claim read only, the
+          // token never leaves the store. The web client's account memory
+          // persists ONLY these two display strings — never any credential.
+          acctClaims = cred.flatMap(_.logto.flatMap(_.idToken)) match
+            case Some(tok) => LogtoAuthCode.decodeIdTokenClaims(tok, Seq("email", "name"))
+            case None      => Map.empty[String, String]
           r <- Ok(
             Json.obj(
               "loggedIn" -> loggedIn.asJson,
@@ -701,7 +710,9 @@ class RestApiRoutes(
                 "capabilities" -> id.capabilities.asJson,
                 "userDescription" -> id.userDescription.asJson,
                 "avatarUrl" -> id.avatarUrl.asJson,
-                "githubLogin" -> id.githubLogin.asJson
+                "githubLogin" -> id.githubLogin.asJson,
+                "email" -> acctClaims.getOrElse("email", "").asJson,
+                "displayName" -> acctClaims.getOrElse("name", "").asJson
               ),
               "peers" -> peersList
                 .map(p =>

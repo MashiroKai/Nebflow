@@ -183,6 +183,28 @@ class LogtoAuthCodeSpec extends FunSuite:
     assertEquals(LogtoAuthCode.decodeIdTokenPicture("single-part"), None)
   }
 
+  test("decodeIdTokenClaims extracts email+name for switch-account memory (2026-09-10)") {
+    // Payload {"email":"a@b.io","name":"Alice","sub":"u1"} →
+    // base64url "eyJlbWFpbCI6ImFAYi5pbyIsIm5hbWUiOiJBbGljZSIsInN1YiI6InUxIn0"
+    val tok = "eyJhbGciOiJSUzI1NiJ9.eyJlbWFpbCI6ImFAYi5pbyIsIm5hbWUiOiJBbGljZSIsInN1YiI6InUxIn0.sig"
+    assertEquals(
+      LogtoAuthCode.decodeIdTokenClaims(tok, Seq("email", "name")),
+      Map("email" -> "a@b.io", "name" -> "Alice")
+    )
+    // Missing claims are omitted (empty map when none requested exist).
+    val noClaims = "eyJhbGciOiJSUzI1NiJ9.eyJzdWIiOiJ1MSJ9.sig"
+    assertEquals(LogtoAuthCode.decodeIdTokenClaims(noClaims, Seq("email", "name")), Map.empty[String, String])
+    // Non-string claim values are skipped (never throws).
+    val nonString = "eyJhbGciOiJSUzI1NiJ9.eyJlbWFpbCI6NDIsIm5hbWUiOnsiYSI6MX19.sig"
+    assertEquals(LogtoAuthCode.decodeIdTokenClaims(nonString, Seq("email", "name")), Map.empty[String, String])
+    // Malformed input → empty map, no exception.
+    assertEquals(LogtoAuthCode.decodeIdTokenClaims("a.b%%%c", Seq("email")), Map.empty[String, String])
+    assertEquals(LogtoAuthCode.decodeIdTokenClaims("single-part", Seq("email")), Map.empty[String, String])
+    // Empty-string claims are treated as absent.
+    val emptyClaim = "eyJhbGciOiJSUzI1NiJ9.eyJlbWFpbCI6IiJ9.sig"
+    assertEquals(LogtoAuthCode.decodeIdTokenClaims(emptyClaim, Seq("email")), Map.empty[String, String])
+  }
+
   test("parseCallbackError picks the OAuth error redirect") {
     assertEquals(
       LogtoAuthCode.parseCallbackError(Map("error" -> "access_denied", "error_description" -> "user said no")),

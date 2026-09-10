@@ -220,11 +220,19 @@ object LogtoAuthCode:
       picture = idToken.flatMap(decodeIdTokenPicture)
     yield TokenResult(accessToken, refreshToken, picture, idToken)
 
-  /** Decode the `picture` claim from a JWT payload (base64url, no signature
-    * check — the token response arrives over TLS from the provider's token
-    * endpoint, and the caller already exchanged the code for it; we only
-    * read a claim, never act on the token). Pure, testable. */
-  def decodeIdTokenPicture(idToken: String): Option[String] =
+  /** Decode the given string claims from a JWT payload (base64url, no
+    * signature check — the token response arrives over TLS from the
+    * provider's token endpoint (or was persisted verbatim from such a
+    * response), and callers only READ claims, never act on the token).
+    * Missing / non-string / empty claims are omitted; malformed input
+    * yields an empty map — never throws.
+    *
+    * Consumers: `picture` (C2, 2026-09-01), `email` + `name` (switch-account
+    * account memory, 2026-09-10 — the persisted id_token is the ONLY
+    * account-identity source reachable by the web client; the claims are
+    * surfaced read-only via /api/neblink/status and the client persists
+    * just those two display strings, never any credential). */
+  def decodeIdTokenClaims(idToken: String, names: Seq[String]): Map[String, String] =
     idToken.split("\\.") match
       case parts if parts.length >= 2 =>
         try
@@ -232,11 +240,20 @@ object LogtoAuthCode:
             Base64.getUrlDecoder.decode(parts(1)),
             StandardCharsets.UTF_8
           )
-          parser.parse(payload).toOption
-            .flatMap(_.hcursor.downField("picture").as[Option[String]].toOption.flatten)
-            .filter(_.nonEmpty)
-        catch case _: IllegalArgumentException => None
-      case _ => None
+          val cur = parser.parse(payload).toOption
+            .map(_.hcursor)
+            .getOrElse(io.circe.Json.obj().hcursor)
+          names.flatMap { n =>
+            cur.downField(n).as[Option[String]].toOption.flatten
+              .filter(_.nonEmpty)
+              .map(n -> _)
+          }.toMap
+        catch case _: IllegalArgumentException => Map.empty
+      case _ => Map.empty
+
+  /** Decode the `picture` claim from a JWT payload. Pure, testable. */
+  def decodeIdTokenPicture(idToken: String): Option[String] =
+    decodeIdTokenClaims(idToken, Seq("picture")).get("picture")
 
   /** Parse an OAuth error redirect (callback query params). */
   def parseCallbackError(query: Map[String, String]): Option[CallbackError] =
