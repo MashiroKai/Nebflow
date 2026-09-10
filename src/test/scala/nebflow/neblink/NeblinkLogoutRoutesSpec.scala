@@ -155,7 +155,7 @@ class NeblinkLogoutRoutesSpec extends CatsEffectSuite:
       ms <- NeblinkService.create(0, dispatcher)
       client = new NeblinkClient(NeblinkServerConfig(url = serverUrl, networkId = "n1", secret = "s"), 0)
       ps = new NeblinkPresenceService(ms, 0)(dispatcher)
-      tunnel = new NeblinkRelayTunnel(ms, serverUrl, () => client.currentSessionToken)(dispatcher)
+      tunnel = new NeblinkRelayTunnel(ms, serverUrl, () => IO.pure(client.currentSessionToken))(dispatcher)
       _ = ms.setRelayClient(Some(client))
       _ = ms.setRelayTunnel(tunnel)
       _ = ms.setPresenceService(ps)

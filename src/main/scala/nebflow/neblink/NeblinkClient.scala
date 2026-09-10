@@ -1,6 +1,6 @@
 package nebflow.neblink
 
-import cats.effect.IO
+import cats.effect.{Deferred, IO, Ref}
 import io.circe.generic.semiauto.*
 import io.circe.parser.decode
 import io.circe.syntax.*
@@ -106,11 +106,18 @@ import FriendCodecs.{given, *}
  *   and returns the NEW device token; the client swaps it in and retries the
  *   login ONCE. None (no hook) or a None result surfaces the original error —
  *   the frontend then prompts a fresh login.
+ * @param identity Device identity source for the API-level session self-heal
+ *   (2026-09-10 friend-search incident): withSession requests that hit a
+ *   server-side auth rejection (401, or the "Missing or invalid token" 403 —
+ *   one-live-session-per-(device,network) kicks the session on every fresh
+ *   login/enrollment on this device) trigger ONE silent re-login + replay.
+ *   None disables the heal (tests / pure-transport construction sites).
  */
 class NeblinkClient(
   config: NeblinkServerConfig,
   serverPort: Int,
-  onDeviceTokenRejected: Option[IO[Option[String]]] = None
+  onDeviceTokenRejected: Option[IO[Option[String]]] = None,
+  identity: Option[IO[DeviceIdentity]] = None
 ):
   private val logger = NebflowLogger.forName("nebflow.neblink.client")
 
@@ -425,9 +432,91 @@ class NeblinkClient(
   // ---- helpers ----
 
   private def withSession[A](f: String => IO[Either[String, A]]): IO[Either[String, A]] =
+    withSessionPlain(f).flatMap {
+      case Left(err) if NeblinkClient.sessionRecoverable(err) => selfHeal(err, f)
+      case other                                              => IO.pure(other)
+    }
+
+  private def withSessionPlain[A](f: String => IO[Either[String, A]]): IO[Either[String, A]] =
     sessionToken match
       case None => IO.pure(Left("Not logged in"))
       case Some(token) => f(token)
+
+  // ===== API-level session self-heal (2026-09-10 friend-search incident) =====
+  //
+  // Server-side one-live-session-per-(device, network) means any fresh
+  // login/enrollment on this device KICKS the current session (store.rs
+  // kick_sessions_where). The kicked session then 403s "Missing or invalid
+  // token" forever: the discover() heartbeat re-login loop only runs on the
+  // discovery-held client, so plain API consumers (FriendService search/list)
+  // had no recovery path — the gateway had to be restarted (F2 of the
+  // incident report; F1 unifies the client reference on top of this).
+  //
+  // Trigger is deliberately NARROW: a re-login kicks our own previous session
+  // server-side, so business 403s (not_blocker etc.) must never enter this
+  // path — only 401 or the server's auth-rejection 403 body shape qualifies.
+  //
+  // Anti-loop: the replay goes through withSessionPlain, NOT withSession —
+  // a fresh 401/403 after healing surfaces as-is (per-request single shot,
+  // mirroring doLogin's allowRelogin = false pattern).
+
+  /** Single-flight gate: N concurrent auth rejections must produce exactly ONE
+    * re-login (each login kicks the previous session server-side — racing
+    * logins would kick each other in a loop). Losers await the winner's
+    * Deferred and retry with whatever session it produced. */
+  private val reloginGate: Ref[IO, Option[Deferred[IO, Boolean]]] = Ref.unsafe(None)
+
+  private def selfHeal[A](err: String, f: String => IO[Either[String, A]]): IO[Either[String, A]] =
+    Deferred[IO, Boolean].flatMap { mine =>
+      reloginGate
+        .modify {
+          case None          => (Some(mine), Left(mine))
+          case Some(winner)  => (Some(winner), Right(winner))
+        }
+        .flatMap {
+          case Left(won) =>
+            // I won the race: re-login exactly once, publish the outcome, and
+            // clear the gate only if it is still mine (a newer winner may have
+            // replaced it while my login was in flight).
+            val run = silentRelogin.flatMap(ok => won.complete(ok).as(ok))
+            run.guarantee(reloginGate.update {
+              case Some(g) if g eq won => None
+              case other               => other
+            }).flatMap {
+              case true  => replayAfterHeal(f, err)
+              case false => IO.pure(Left(err))
+            }
+          case Right(winner) =>
+            winner.get.flatMap {
+              case true  => replayAfterHeal(f, err)
+              case false => IO.pure(Left(err))
+            }
+        }
+    }
+
+  /** One replay attempt with the (possibly refreshed) session token. Reads the
+    * token live so a re-login that swapped it in is picked up; no session
+    * means the heal didn't produce one — surface the ORIGINAL error. */
+  private def replayAfterHeal[A](f: String => IO[Either[String, A]], originalErr: String): IO[Either[String, A]] =
+    sessionToken match
+      case None         => IO.pure(Left(originalErr))
+      case Some(token)  => f(token)
+
+  /** Silent re-login for the self-heal path. Uses the full public login chain
+    * (allowRelogin = true): the kicked-session case re-exchanges the still
+    * valid deviceToken; the revoked-deviceToken case additionally runs the
+    * Logto hook. Never throws — failures map to false. */
+  private def silentRelogin: IO[Boolean] =
+    identity match
+      case None => IO.pure(false)
+      case Some(getId) =>
+        logger.warn("NebLink session rejected by server (401/403 auth) — attempting silent re-login") *>
+          getId.flatMap { id =>
+            login(id.deviceId, id.deviceName, id.platform, Nil).flatMap {
+              case Right(_)  => IO.pure(true)
+              case Left(e)   => logger.warn(s"NebLink silent re-login failed: $e").as(false)
+            }
+          }.handleErrorWith(e => logger.warn(s"NebLink silent re-login errored: ${e.getMessage}").as(false))
 
   private def withSessionRaw(method: String, path: String, body: String): IO[Either[String, String]] =
     withSession(token => sendRequest(method, s"${config.url}$path", body, Some(token)))
@@ -585,6 +674,20 @@ object NeblinkClient:
   /** HTTP 401 marker from sendRequest's `HTTP <code>: <body>` error shape. */
   private[neblink] def isUnauthorized(err: String): Boolean =
     err.startsWith("HTTP 401")
+
+  /**
+   * Self-heal trigger for withSession requests (2026-09-10 friend-search
+   * incident, F2). Narrow by design: a re-login kicks our own previous
+   * session server-side (one-live-session policy), so ONLY server auth
+   * rejections may enter the heal path —
+   *  - 401: unconditional (unauthorized = session/token problem);
+   *  - 403: only when the body carries the server's token-rejection shape
+   *    ("Missing or invalid token", friends.rs require_user_or_device).
+   *    Business 403s ("not_blocker", "not_friend", ...) contain no "token"
+   *    and stay untouched.
+   */
+  private[neblink] def sessionRecoverable(err: String): Boolean =
+    isUnauthorized(err) || (err.startsWith("HTTP 403") && err.toLowerCase.contains("token"))
 
   /**
    * Phase-1 gate for the deviceToken-rejected path — the ONLY route to the
