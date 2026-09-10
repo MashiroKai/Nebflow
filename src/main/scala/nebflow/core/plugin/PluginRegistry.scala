@@ -69,7 +69,10 @@ object PluginRegistry:
     * （插件继续装载其余组件，§6.2 边界）。 */
   val CanonicalMcpSchema = "https://agent-plugins.org/schemas/1.0.0/mcp.schema.json"
 
-  /** §5.2 闭合 schema 十字段（其余能力走 extensions 命名空间）。 */
+  /** §5.2 闭合 schema 十字段（其余能力走 extensions 命名空间）。描述单源批
+    * （作者 2026-09-10 09:30 裁定）：`capability` 键转 deprecated——登记在本集合
+    * 使存量包仍带该键不报错、不触发 unknown-field 告警（向后兼容），但读取/承载/
+    * 渲染逻辑全部退役（PluginDef 无此字段），description 是唯一描述源。 */
   private val KnownManifestKeys = Set(
     "$schema", "name", "version", "description", "capability", "author",
     "homepage", "repository", "license", "keywords", "extensions")
@@ -107,14 +110,13 @@ object PluginRegistry:
 
   /** 注册表条目（§B.3 产出结构）。author 为渲染字符串（§5.4 author object 的
     * name/email/url 摘要）；homepage/repository/license/keywords 为 §5.4 元数据
-    * 字段（协议符合度批新增，供审批清单完整渲染）。 */
+    * 字段（协议符合度批新增，供审批清单完整渲染）。描述单源批（2026-09-10）：
+    * PluginDef 不再承载 capability（字段退役，manifest 键 deprecated 容忍见
+    * KnownManifestKeys）——description 是唯一描述源。 */
   final case class PluginDef(
     name: String,
     version: String,
     description: String,
-    /** 能力向单行句（dispatcher-ctx 批 2026-09-05）：「该插件让节点具备什么能力」。
-      * 可选——absent/空白回落 None，目录渲染回落 description。 */
-    capability: Option[String] = None,
     author: String,
     homepage: String = "",
     repository: String = "",
@@ -414,10 +416,8 @@ object PluginRegistry:
         val description = stringField(c, "description") match
           case Right(v) => v
           case l @ Left(_) => return Left(name0 -> l.swap.toOption.getOrElse(""))
-        // capability（可选）：宽容解析——absent/非字符串/空白 → None（§B.8-5 同向：
-        // 旧版 Nebflow 读到该字段也只是 unknown-field 告警，不炸）
-        val capability = c.downField("capability").as[Option[String]].toOption.flatten
-          .map(_.trim).filter(_.nonEmpty)
+        // capability：描述单源批（2026-09-10）退役——不再读取不再承载（deprecated
+        // 键经 KnownManifestKeys 登记而宽容装载，见集合注释）
         val homepage = stringField(c, "homepage") match
           case Right(v) => v
           case l @ Left(_) => return Left(name0 -> l.swap.toOption.getOrElse(""))
@@ -550,7 +550,6 @@ object PluginRegistry:
           name = pname,
           version = version,
           description = description,
-          capability = capability,
           author = author,
           homepage = homepage,
           repository = repository,
@@ -907,10 +906,27 @@ object PluginRegistry:
           AtomicJson.writeSync(configPath, transform(root).noSpaces)
           Right(())
 
-  // ── 分发器目录注入（§B.4 第 2 步）───────────────────────────
+  // ── 分发器目录注入（§B.4 第 2 步；描述单源批 2026-09-10 双渲染器收敛）─────
+
+  /** Plugin Catalog 段头——双渲染器单点：分发器注入段（DispatcherContextCatalog
+    * 委托本文件）与调试 REST GET /plugins/catalog 同字节输出（creator spec D10
+    * 收敛）；分发器 system.md「Plugin Catalog 认知」按此头部识别目录段。 */
+  val CatalogHeader =
+    "# Plugin Catalog（可分配能力包，NodeEdit 的 plugins 参数按 name 引用；能力句 = 该插件让节点具备什么能力）"
+
+  /** 单插件目录行（渲染规则单点）。描述单源批（作者 2026-09-10 09:30 裁定）：
+    * 内容源 = manifest `description`（缺省回落 name）；`capability` 键已 deprecated，
+    * 渲染层忽略。尾缀保留 [skills | mcp | tools] 结构清单——工具面本身是能力信号。 */
+  def catalogLine(p: PluginDef): String =
+    val desc = if p.description.isEmpty then p.name else p.description
+    val skills = if p.skills.isEmpty then "-" else p.skills.map(s => s.id.split('/')(1)).mkString(", ")
+    val mcp = if p.mcpServers.isEmpty then "-" else p.mcpServers.keys.mkString(", ")
+    val tools = if p.toolsExtension.isEmpty then "" else s" | tools: ${p.toolsExtension.mkString(", ")}"
+    s"- ${p.name}: $desc [skills: $skills | mcp: $mcp$tools]"
 
   /** Plugin Catalog 段（对齐 skillCatalog order 800 先例）。untrusted 不出现。
-    * 无受信插件 / flag 关 → ""（不注入空段）。 */
+    * 无受信插件 / flag 关 → ""（不注入空段）。本方法是插件目录渲染的唯一实现
+    * （分发器注入与调试预览共用，双渲染器重复实现已收敛于此）。 */
   def renderCatalog(): IO[String] =
     PluginsConfig.enabled.flatMap {
       case false => IO.pure("")
@@ -918,15 +934,7 @@ object PluginRegistry:
         scan().map { all =>
           val trusted = all.filter(_.trust.trusted).sortBy(_.name)
           if trusted.isEmpty then ""
-          else
-            val lines = trusted.map { p =>
-              val skills = if p.skills.isEmpty then "-" else p.skills.map(s => s.id.split('/')(1)).mkString(", ")
-              val mcp = if p.mcpServers.isEmpty then "-" else p.mcpServers.keys.mkString(", ")
-              val tools = if p.toolsExtension.isEmpty then "" else s" | tools: ${p.toolsExtension.mkString(", ")}"
-              val desc = if p.description.isEmpty then p.name else p.description
-              s"- ${p.name}: $desc [skills: $skills | mcp: $mcp$tools]"
-            }
-            "# Plugin Catalog（可分配能力包，NodeEdit 的 plugins 参数按 name 引用）\n" + lines.mkString("\n")
+          else CatalogHeader + "\n" + trusted.map(catalogLine).mkString("\n")
         }
     }
 end PluginRegistry

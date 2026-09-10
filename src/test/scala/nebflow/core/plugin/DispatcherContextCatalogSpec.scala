@@ -10,9 +10,12 @@ import scala.concurrent.duration.*
  * dispatcher-ctx 批（2026-09-05）——DispatcherContextCatalog spec：
  * 分发器上下文双目录（插件能力目录 + 预设场景目录）渲染语义。
  *
+ * 描述单源批（2026-09-10 作者裁定）改口径：manifest `description` 是唯一描述源，
+ * `capability` 键 deprecated（装载不报错、渲染层忽略）。
+ *
  * 覆盖：
- * - capability 优先渲染（capability 行出现、description 不出现）
- * - capability 缺省/空白 → 回落 description（宽容解析 Option[String]）
+ * - description 单源渲染（capability 键存在时目录只出 description、键不报错）
+ * - 无 capability / 空白 capability → description 正常渲染（向后兼容形态）
  * - 过滤链同源：untrusted 不出现（默认拒绝）；plugins.enabled=false 总闸压制插件段
  * - 预设场景目录不受 plugins 总闸影响；"name — description" / 无 description 只出 name
  * - 双段拼装：render() 非空段空行相接
@@ -65,22 +68,23 @@ class DispatcherContextCatalogSpec extends CatsEffectSuite:
     }
 
   // ── fixtures ─────────────────────────────────────────────
-  // cap-plugin：capability + description（目录应出现 capability、不出现 description）
+  // cap-plugin：capability（deprecated 键）+ description 并存（目录应只出
+  // description、capability 文本不出现、装载零告警）
   private val capPlugin = pluginDir("cap-plugin")
   writeManifest(capPlugin,
     s"""{"$$schema":"${PluginRegistry.CanonicalSchema}","name":"cap-plugin","version":"1.0.0",""" +
-      """"description":"结构描述句（内容清单式，目录里不应出现）",""" +
-      """"capability":"端到端能力探针：节点获得目录链路验证能力"}""")
+      """"description":"描述单源探针：本句应出现在目录行",""" +
+      """"capability":"旧能力句：已退役，目录不得渲染本句"}""")
   writeSkill(capPlugin, "probe")
 
-  // desc-fallback：无 capability → 回落 description
+  // desc-fallback：无 capability 键（单源形态）→ description 正常渲染
   private val descFallback = pluginDir("desc-fallback")
   writeManifest(descFallback,
     s"""{"$$schema":"${PluginRegistry.CanonicalSchema}","name":"desc-fallback","version":"1.0.0",""" +
       """"description":"回落描述：解析方法论能力包"}""")
   writeSkill(descFallback, "fallback-skill")
 
-  // cap-blank：capability 为空白串 → 宽容解析 None → 回落 description
+  // cap-blank：capability 为空白串（存量形态）→ 宽容容忍 + description 正常渲染
   private val capBlank = pluginDir("cap-blank")
   writeManifest(capBlank,
     s"""{"$$schema":"${PluginRegistry.CanonicalSchema}","name":"cap-blank","version":"1.0.0",""" +
@@ -114,7 +118,7 @@ class DispatcherContextCatalogSpec extends CatsEffectSuite:
 
   // ── 渲染规则 ─────────────────────────────────────────────
 
-  test("capability 优先：目录行出 capability，description 不出现") {
+  test("描述单源：capability 键 deprecated——装载零告警、目录只出 description") {
     for
       _ <- approveAll
       rendered <- DispatcherContextCatalog.render()
@@ -122,20 +126,20 @@ class DispatcherContextCatalogSpec extends CatsEffectSuite:
     yield
       assert(rendered.contains("# Plugin Catalog"), s"header must present: $rendered")
       assert(
-        rendered.contains("- cap-plugin: 端到端能力探针：节点获得目录链路验证能力"),
-        s"capability line must render: $rendered")
-      assert(!rendered.contains("结构描述句"), "description must NOT appear when capability exists")
-      // capability 不触发 unknown-field 告警（协议字段已登记）
-      assert(warnings.isEmpty, s"capability must be a known field, got warnings: $warnings")
+        rendered.contains("- cap-plugin: 描述单源探针：本句应出现在目录行"),
+        s"description line must render: $rendered")
+      assert(!rendered.contains("旧能力句"), "deprecated capability text must NOT appear in catalog")
+      // capability 键已登记 KnownManifestKeys：存量包带键装载零 unknown-field 告警
+      assert(warnings.isEmpty, s"capability key must be tolerated silently, got warnings: $warnings")
   }
 
-  test("capability 缺省/空白 → 回落 description") {
+  test("无 capability / 空白 capability → description 正常渲染") {
     for
       _ <- approveAll
       rendered <- DispatcherContextCatalog.render()
     yield
-      assert(rendered.contains("- desc-fallback: 回落描述：解析方法论能力包"), s"fallback line: $rendered")
-      assert(rendered.contains("- cap-blank: 空白回落描述句"), s"blank capability falls back: $rendered")
+      assert(rendered.contains("- desc-fallback: 回落描述：解析方法论能力包"), s"single-source line: $rendered")
+      assert(rendered.contains("- cap-blank: 空白回落描述句"), s"blank capability tolerated: $rendered")
   }
 
   test("过滤链同源：untrusted 不出现") {
@@ -143,6 +147,21 @@ class DispatcherContextCatalogSpec extends CatsEffectSuite:
       _ <- approveAll
       rendered <- DispatcherContextCatalog.render()
     yield assert(!rendered.contains("untrusted-plugin"), "untrusted plugin must not appear")
+  }
+
+  test("调试渲染收敛：PluginRegistry.renderCatalog 与注入段插件部分同字节") {
+    for
+      _ <- approveAll
+      viaDispatcher <- DispatcherContextCatalog.render()
+      viaDebug <- PluginRegistry.renderCatalog()
+    yield
+      // D10 双渲染器收敛：插件段字节一致（render() = 插件段 + 空行 + preset 段，
+      // 故调试输出须为 render() 的前缀且止于插件段末尾）
+      assert(viaDispatcher.startsWith(viaDebug) || viaDebug.isEmpty,
+        s"debug catalog must equal the injected plugin section prefix\n--debug--\n$viaDebug\n--injected--\n$viaDispatcher")
+      assert(viaDebug.contains("# Plugin Catalog"), s"debug header must present: $viaDebug")
+      assert(viaDebug.contains("- cap-plugin: 描述单源探针：本句应出现在目录行"), s"debug line single-source: $viaDebug")
+      assert(!viaDebug.contains("旧能力句"), "debug renderer must ignore deprecated capability too")
   }
 
   test("预设场景目录：name — description / 无 description 只出 name") {
