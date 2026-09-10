@@ -221,9 +221,11 @@ class Phase2dSkillCatalogSpec extends CatsEffectSuite:
     val read = tools.getOrElse("Read", fail("general node must receive Read"))
     assert(read.contains("Live results") && read.contains("Never re-read"),
       "Read description carries the order-410 live semantics at the wire level")
-    val pop = tools.getOrElse("Pop", fail("general node must receive Pop"))
-    assert(pop.contains("professional tool") && pop.contains("never hand-draw"),
-      "Pop description carries the order-415 reporting workflow at the wire level")
+    // 2026-09-10 作者裁定翻转本断言：Pop 收归 Nebula 专属——general 节点在
+    // wire 层（LLM 工具面）收不到 Pop 的 schema（定义层摘除 general 固定面 +
+    // NebulaExclusiveTools 剥离；执行面另有 PopTool 身份闸兜底）
+    assert(!tools.contains("Pop"),
+      s"general node must NOT receive Pop (2026-09-10 作者裁定：Pop 收归 Nebula 专属), got keys: ${tools.keys.toList.sorted}")
     // 2026-09-08 作者修订恢复 AskUser（D6 批D1）：general 节点 wire 层重新
     // 收到该工具（2026-09-06 摘除断言反向）；order-400 指南仍随工具 description
     // 自包含生效（删段不退化判据恢复钉死）

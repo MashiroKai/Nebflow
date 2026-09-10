@@ -66,8 +66,14 @@ object PluginRegistry:
 
   /** §B.6 固定安全集：plugin 只能授予既有 builtin 工具且限于白名单——
     * 不能发明新工具、不能授予编排类（Task/Mail/NodeEdit 等永不进白名单，
-    * 角色边界由 §C.1 静态矩阵守住）。 */
-  val BuiltinToolWhitelist: Set[String] = Set("WebSearch", "WebFetch", "Curl", "Pop")
+    * 角色边界由 §C.1 静态矩阵守住）。
+    *
+    * 2026-09-10 作者裁定（Pop 收归 Nebula 专属）：Pop 移出白名单——插件再授予
+    * 通道关闭（否则「第三方包声明 org.nebflow/tools:["Pop"]」可绕过
+    * AgentCore.NebulaExclusiveTools 的剥离面，把 Pop 发回任意节点）。实测对既有
+    * 插件零影响：全部 plugin.json 与 org.nebflow/tools.json 无一授予 builtin
+    * 工具（证据见 .nebflow/evidence/20260910_pop-nebula-exclusive/plugin-tools-scan.txt）。 */
+  val BuiltinToolWhitelist: Set[String] = Set("WebSearch", "WebFetch", "Curl")
 
   /** §5.2 canonical manifest $schema（Agent Plugins 1.0.0）。缺失/非 canonical
     * → 拒载（required + 客户端只识别 canonical 值，§5.2/§5.3）。 */
