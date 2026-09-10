@@ -556,6 +556,9 @@ export function openBgTaskOutput(task) {
 
   overlayEl = document.createElement('div');
   overlayEl.className = 'bgt-overlay';
+  // 行身份（R2，2026-09-10）：main.js 的后台任务面板靠它判断「这一行的输出卡正开着」
+  // ⇒ 该行到期倒计时暂停（卡片关闭后重新计时，不是关闭即到期）。
+  overlayEl.dataset.taskId = task.taskId;
   overlayEl.setAttribute('role', 'dialog');
   overlayEl.setAttribute('aria-label', t('bg.detail.aria'));
   overlayEl.innerHTML =

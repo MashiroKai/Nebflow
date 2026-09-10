@@ -2618,6 +2618,98 @@ onMessage('sessionBusy', (msg, view) => {
 // --- Background task indicator in header ---
 let _bgTimer = null;
 
+// ── Terminal-row eviction (2026-09-10 裁定 R1 + R3 + R4) ────────────────────
+// Terminal rows (completed/failed/cancelled) are still retained so the user can
+// reopen them to read the output — but for a BOUNDED window: after
+// TERMINAL_ROW_TTL_MS the row leaves the BUCKET, which is the panel's single
+// render source (renderBgDropdown reads state.sessionBgTasks, main.js:2677).
+// Evicting the DOM alone would resurrect the row on the next panel open. At most
+// TERMINAL_ROW_MAX terminal rows are retained per session bucket; beyond that the
+// oldest one (by finishedAt) is evicted. Non-terminal rows
+// (running/cancelling/idle/stuck) are never cleared here, and no path wipes a
+// whole bucket (the unfinished tasks must stay visible).
+const TERMINAL_ROW_TTL_MS = 60000;
+const TERMINAL_ROW_MAX = 5;
+
+/** The terminal triple (same set the row state machine treats as ended). */
+function isTerminalBgStatus(status) {
+  return status === 'completed' || status === 'failed' || status === 'cancelled';
+}
+
+/** taskId of the row whose output detail card is currently open — the popup
+ *  stamps `data-task-id` on its overlay (bgTaskOutputPopup.js) — else null.
+ *  R2: that row's eviction countdown is paused while its output is being read. */
+function openBgOutputTaskId() {
+  const overlay = document.querySelector('.bgt-overlay');
+  return overlay ? overlay.getAttribute('data-task-id') : null;
+}
+
+/** Retention sweep over ONE session bucket (mutates in place; true = changed).
+ *  · terminal row whose eviction deadline passed  → dropped from the bucket
+ *  · terminal row whose output card is open       → deadline re-armed from now
+ *    (R2: paused while reading, and the close restarts a FULL window instead of
+ *    expiring the row on close)
+ *  · more than TERMINAL_ROW_MAX retained terminal rows → oldest by finishedAt out */
+function sweepBgTerminalRows(tasks, now) {
+  const openCardTaskId = openBgOutputTaskId();
+  const kept = [];
+  let changed = false;
+  for (const task of tasks) {
+    if (!isTerminalBgStatus(task.status)) { kept.push(task); continue; }
+    if (openCardTaskId && task.taskId === openCardTaskId) {
+      task.evictAt = now + TERMINAL_ROW_TTL_MS;
+      kept.push(task);
+      continue;
+    }
+    // Defensive: a terminal row without a deadline (old bucket shape / a frame
+    // path that predates this change) still gets one — from its own finishedAt —
+    // so retention can never become unbounded again.
+    if (typeof task.evictAt !== 'number') {
+      task.evictAt = (typeof task.finishedAt === 'number' ? task.finishedAt : now) + TERMINAL_ROW_TTL_MS;
+    }
+    if (task.evictAt <= now) { changed = true; continue; }
+    kept.push(task);
+  }
+  const terminal = kept.filter(task => isTerminalBgStatus(task.status));
+  if (terminal.length > TERMINAL_ROW_MAX) {
+    const survivors = new Set(terminal
+      .slice()
+      .sort((a, b) => (b.finishedAt || 0) - (a.finishedAt || 0))
+      .slice(0, TERMINAL_ROW_MAX));
+    for (let i = kept.length - 1; i >= 0; i--) {
+      if (isTerminalBgStatus(kept[i].status) && !survivors.has(kept[i])) { kept.splice(i, 1); changed = true; }
+    }
+  }
+  if (changed) tasks.splice(0, tasks.length, ...kept);
+  return changed;
+}
+
+/** Sweep every session bucket, then refresh the badges of the sessions that
+ *  changed (badge count == list row count is the same-source invariant: both read
+ *  this bucket). Called from the 1s ticker — never from the render path — so
+ *  eviction does not wait for the panel to be opened. */
+function sweepAllBgTerminalRows() {
+  const now = Date.now();
+  const changedSids = [];
+  for (const [sid, bucket] of Object.entries(state.sessionBgTasks || {})) {
+    if (!Array.isArray(bucket) || bucket.length === 0) continue;
+    if (sweepBgTerminalRows(bucket, now)) changedSids.push(sid);
+  }
+  for (const sid of changedSids) refreshBgBadgeFor(sid);
+  return changedSids;
+}
+
+/** Start the 1s ticker while ANY bucket still holds rows — the old gate
+ *  ("dropdown open ∧ something running/cancelling") let a closed panel freeze
+ *  terminal rows forever, so the badge never came back down on its own. */
+function ensureBgTimer() {
+  if (_bgTimer) return;
+  if (!activeView) return;
+  const anyRows = Object.values(state.sessionBgTasks || {}).some(b => Array.isArray(b) && b.length > 0);
+  if (!anyRows) return;
+  startBgTimer();
+}
+
 function formatDuration(ms) {
   const s = Math.floor(ms / 1000);
   if (s < 60) return `${s}s`;
@@ -2638,9 +2730,10 @@ function formatDuration(ms) {
 // 任务在本面板以来源 chip 显式标注「由 <节点> 开启」，subagent 面板不重复渲染。
 
 /** Task row state machine: cancelling > (terminal) > stuck (heartbeat idle>10min)
- *  > idle (>2min) > running. Terminal tasks (completed/failed/cancelled) are
- *  retained in the bucket until the panel refreshes (reconnect/activeBgTasks
- *  snapshot replaces it) so the user can reopen them for output viewing. */
+ *  > idle (>2min) > running. Terminal tasks (completed/failed/cancelled) stay in
+ *  the bucket for TERMINAL_ROW_TTL_MS so the user can reopen them for output
+ *  viewing, then the retention sweep (sweepBgTerminalRows) drops them — the panel
+ *  refreshes (reconnect / activeBgTasks snapshot) is no longer the only cleanup. */
 function bgTaskRowState(task) {
   if (task.status === 'cancelling') return 'cancelling';
   if (task.status === 'failed') return 'failed';
@@ -2678,14 +2771,18 @@ function renderBgDropdown() {
   const listEl = activeView.dom.bgDropdownListEl;
   const dropdown = activeView.dom.bgDropdownEl;
   if (!listEl || !dropdown) return 0;
+  // Enforce the retention deadline at RENDER time too (not only on the 1s tick):
+  // a panel open / badge refresh must never paint a row whose window already
+  // ended, otherwise the ticker's ≤1s lag shows up as a resurrected row.
+  sweepBgTerminalRows(tasks, Date.now());
   // Show running, cancelling, AND retained terminal tasks (completed/failed/
-  // cancelled). Terminal rows stay until the panel refreshes (reconnect /
-  // page reload / activeBgTasks snapshot replace) — the user can reopen them
-  // to view output, which is the 2026-09-09 output-viewing feature.
+  // cancelled). Terminal rows stay for their retention window (they are removed
+  // from the bucket by sweepBgTerminalRows once their deadline passes) so the user
+  // can reopen them to view output — the 2026-09-09 output-viewing feature, now
+  // bounded by TERMINAL_ROW_TTL_MS / TERMINAL_ROW_MAX. The visible set and the badge
+  // count share the same source (the bucket), so the badge always equals the rows.
   const visible = tasks.filter(t =>
-    t.status === 'running' || t.status === 'cancelling' ||
-    t.status === 'completed' || t.status === 'failed' || t.status === 'cancelled');
-  // Panel header carries the live count (aria-live polite — subagent parity).
+    t.status === 'running' || t.status === 'cancelling' || isTerminalBgStatus(t.status));  // Panel header carries the live count (aria-live polite — subagent parity).
   const headerEl = dropdown.querySelector('.bg-dropdown-header');
   if (headerEl) headerEl.textContent = t('bg.header', { count: visible.length });
   if (visible.length === 0) {
@@ -2814,14 +2911,23 @@ function startBgTimer() {
   const v = activeView; // capture at start time — interval fires later when activeView may have drifted
   if (!v) return;
   _bgTimer = setInterval(() => {
+    // R1/R3 retention sweep FIRST and for every bucket: it must run whatever the
+    // dropdown state is, otherwise a closed panel freezes terminal rows (and the
+    // badge) until the next reconnect.
+    sweepAllBgTerminalRows();
     const dropdown = v.dom.bgDropdownEl;
-    if (!dropdown || dropdown.classList.contains('hidden')) { stopBgTimer(); return; }
-    const tasks = state.sessionBgTasks[v.sessionId] || [];
-    const now = Date.now();
-    dropdown.querySelectorAll('.bg-task-uptime[data-task-id]').forEach(el => {
-      const t = tasks.find(t => t.taskId === el.dataset.taskId);
-      if (t && t.startedAt) el.textContent = formatDuration(now - t.startedAt);
-    });
+    if (dropdown && !dropdown.classList.contains('hidden')) {
+      const tasks = state.sessionBgTasks[v.sessionId] || [];
+      const now = Date.now();
+      dropdown.querySelectorAll('.bg-task-uptime[data-task-id]').forEach(el => {
+        const t = tasks.find(t => t.taskId === el.dataset.taskId);
+        if (t && t.startedAt) el.textContent = formatDuration(now - t.startedAt);
+      });
+    }
+    // Idle out once every bucket is empty; ensureBgTimer() restarts it on the next
+    // frame / badge refresh (this is what keeps a non-empty bucket ticking even
+    // while the panel stays closed).
+    if (!Object.values(state.sessionBgTasks || {}).some(b => Array.isArray(b) && b.length > 0)) stopBgTimer();
   }, 1000);
 }
 
@@ -2842,14 +2948,18 @@ function updateBgTasksUI(targetView) {
   // flow canvas (getRunningFlows), not in this indicator.
   const tasks = state.sessionBgTasks[view.sessionId] || [];
   const now = Date.now();
-  // Retained terminal rows (completed/failed/cancelled) keep the indicator
-  // visible so the user can reopen them for output viewing; they clear on the
-  // next panel refresh (reconnect / page reload replaces the bucket via
-  // activeBgTasks snapshot). The 3s finishedAt clause only guards the brief
-  // window right after a terminal frame lands.
+  // Drop already-expired terminal rows before counting: the badge must equal the
+  // rows the panel would paint (same bucket, same deadline) — the 1s ticker alone
+  // would let the badge over-count for up to a second after the deadline.
+  sweepBgTerminalRows(tasks, now);
+  // Retained terminal rows (completed/failed/cancelled) keep the indicator visible
+  // for their retention window so the user can reopen them for output viewing; the
+  // 1s sweep removes them from the bucket when the window ends (badge falls with
+  // them). Same predicate set as renderBgDropdown's visible filter ⇒ badge == rows.
+  // The 3s finishedAt clause only guards the brief window right after a terminal
+  // frame lands.
   const active = tasks.filter(task =>
-    task.status === 'running' || task.status === 'cancelling' ||
-    task.status === 'completed' || task.status === 'failed' || task.status === 'cancelled' ||
+    task.status === 'running' || task.status === 'cancelling' || isTerminalBgStatus(task.status) ||
     (task.finishedAt && (now - task.finishedAt < 3000))
   );
   const totalCount = active.length;
@@ -2867,9 +2977,11 @@ function updateBgTasksUI(targetView) {
     stopBgTimer();
   }
   if (dropdown && !dropdown.classList.contains('hidden')) {
-    const n = renderBgDropdown();
-    if (n > 0) startBgTimer(); else stopBgTimer();
+    renderBgDropdown();
   }
+  // R1/R3: keep the retention ticker alive whenever any bucket holds rows — the
+  // eviction (and the badge falling back) must not wait for the panel to be opened.
+  ensureBgTimer();
 }
 
 /** Refresh the badge of the view that DISPLAYS the session owning `sid`'s
@@ -2897,11 +3009,13 @@ Object.values(chatViews).forEach(v => {
       // 2026-09-05 now surfaces as a proper empty state instead of nothing).
       renderBgDropdown();
       dropdown.classList.remove('hidden');
-      const tasks = state.sessionBgTasks[v.sessionId] || [];
-      if (tasks.some(t => t.status === 'running' || t.status === 'cancelling')) startBgTimer();
+      // Any retained row (terminal included) keeps the 1s sweep running while the
+      // panel is open; ensureBgTimer() also covers the bucket-non-empty case.
+      ensureBgTimer();
     } else {
       dropdown.classList.add('hidden');
-      stopBgTimer();
+      // The retention ticker keeps running while the bucket is non-empty (the
+      // sweep must not depend on the panel being open) — see ensureBgTimer().
     }
     indicator.setAttribute('aria-expanded', String(opening));
   };
@@ -2922,7 +3036,9 @@ document.addEventListener('click', (e) => {
       if (indicator) indicator.setAttribute('aria-expanded', 'false');
     }
   });
-  stopBgTimer();
+  // (No stopBgTimer() here: the 1s retention ticker is owned by ensureBgTimer()
+  // and idles out on its own once every bucket is empty. Stopping it on a stray
+  // document click used to freeze terminal-row eviction until the next event.)
 });
 
 onMessage('backgroundTaskUpdate', (msg, view) => {
@@ -2940,7 +3056,7 @@ onMessage('backgroundTaskUpdate', (msg, view) => {
   // 'cancelled' is terminal too: AgentActor.killSessionShellProcesses emits
   // status="cancelled" on restart/Stop — treating it as non-terminal left
   // ghost entries in the bucket forever (never shown, never removed).
-  const isTerminal = msg.status === 'completed' || msg.status === 'failed' || msg.status === 'cancelled';
+  const isTerminal = isTerminalBgStatus(msg.status);
   if (idx >= 0) {
     tasks[idx].status = msg.status;
     if (msg.description && !tasks[idx].description) tasks[idx].description = msg.description;
@@ -2951,7 +3067,11 @@ onMessage('backgroundTaskUpdate', (msg, view) => {
     if (msg.origin && !tasks[idx].origin) tasks[idx].origin = msg.origin;
     if (msg.originLabel && !tasks[idx].originLabel) tasks[idx].originLabel = msg.originLabel;
     if (isTerminal) {
+      // Retention deadline (R1): the 1s sweep removes the row from the bucket when
+      // it passes; while the row's output card is open the deadline is re-armed
+      // each tick (R2 — paused reading), so closing restarts a full window.
       tasks[idx].finishedAt = Date.now();
+      tasks[idx].evictAt = Date.now() + TERMINAL_ROW_TTL_MS;
     }
     if (msg.heartbeat) tasks[idx].heartbeat = msg.heartbeat;
   } else {
@@ -2962,6 +3082,7 @@ onMessage('backgroundTaskUpdate', (msg, view) => {
       startedAt: msg.startedAt || Date.now(),
       heartbeat: msg.heartbeat || null,
       finishedAt: isTerminal ? Date.now() : undefined,
+      evictAt: isTerminal ? Date.now() + TERMINAL_ROW_TTL_MS : undefined,
       // 来源标注（2026-09-07 重设计）：注册会话 id（兜底推导用）+ 后端权威
       // origin/originLabel/kind（BgTaskRegistry.originFor 推导，信封同源）。
       sessionId: msg.sessionId || '',
@@ -2970,10 +3091,13 @@ onMessage('backgroundTaskUpdate', (msg, view) => {
       originLabel: msg.originLabel || ''
     });
   }
-  // Terminal rows are RETAINED in the bucket (2026-09-09 output viewing): the
-  // user reopens them to view output. The old 3s setTimeout removal is gone —
-  // retention lasts until the panel refreshes (reconnect / page reload, where
-  // the activeBgTasks snapshot replaces the bucket with running tasks only).
+  // Terminal rows are RETAINED in the bucket for a bounded window (2026-09-09
+  // output viewing, bounded 2026-09-10 by R1/R3): the user reopens them to view
+  // output, then the 1s sweep drops them once evictAt passes (max TERMINAL_ROW_MAX
+  // retained). The old 3s setTimeout removal is gone; retention is no longer
+  // unbounded-until-refresh either. Sweep once right here so a burst of terminal
+  // frames cannot leave the bucket over the cap until the next tick.
+  sweepBgTerminalRows(tasks, Date.now());
   // Refresh the OWNING view's badge (findViewBySessionId(sid)), not the
   // ws.js-routed activeView: sub-agent events arrive with view=null (no popup)
   // or a popup ChatView, and skipping/retargeting the refresh is what froze
@@ -3544,6 +3668,7 @@ onMessage('activeBgTasks', (msg) => {
         startedAt: t.startedAt || (prev ? prev.startedAt : Date.now()),
         heartbeat: (prev && prev.heartbeat) || t.heartbeat || null,
         finishedAt: prev ? prev.finishedAt : undefined,
+        evictAt: prev ? prev.evictAt : undefined,
         // 来源/kind（2026-09-07 重设计）：快照为权威源（BgTaskRegistry
         // activeTasksJson 已补 origin/originLabel/kind），旧后端缺省时沿用
         // 本地 embellishment，再缺省由 bgTaskOrigin 按 sessionId 前缀兜底。
