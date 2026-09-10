@@ -28,6 +28,24 @@ class RemoteExecutor(
 
   private val logger = NebflowLogger.forName("nebflow.remote-executor")
 
+  /**
+   * The relay client ACTUALLY in use, resolved per dispatch (F1 sweep of the
+   * 2026-09-10 隧道鉴权自愈批).
+   *
+   * `NeblinkService.relayClientOpt` is the hot-swap pointer: GatewayMain
+   * registers the startup client and `NeblinkEnrollment.persist` re-points it
+   * on every re-enrollment (logout clears it) — reading it live means a UI
+   * re-login / account switch is followed instead of a constructor-time
+   * snapshot. This class used to capture client₀ and kept dispatching through
+   * a client whose session the server had kicked (the relay path is exactly the
+   * "control the other computer" business leg of the incident).
+   *
+   * The constructor argument stays as a fallback for tests / non-gateway
+   * wiring, where the service pointer is never set.
+   */
+  private def currentRelayClient: IO[Option[NeblinkClient]] =
+    IO(neblinkService.relayClientOpt).map(_.orElse(relayClient))
+
   /** Timeout for synchronous remote calls without ToolContext (fallback path). */
   private val SyncTimeout = 120.seconds
 
@@ -454,7 +472,10 @@ class RemoteExecutor(
     params: JsonObject,
     timeout: FiniteDuration
   ): IO[Either[ToolError, String]] =
-    relayClient match
+    // F1 sweep (2026-09-10 隧道鉴权自愈批): resolve the client per dispatch —
+    // never dispatch through a constructor-time snapshot whose session the
+    // server may have kicked.
+    currentRelayClient.flatMap {
       case None =>
         // No relay available — P2P only
         p2pExecuteWithRetry(peer, toolName, params, timeout).flatMap {
@@ -506,6 +527,7 @@ class RemoteExecutor(
                 case Left(err) => IO.pure(Left(err))
               }
         yield result
+    }
   end executeViaBestPath
 
   // ---- BUG 4: Relay cold-start retry ----

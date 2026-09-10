@@ -70,6 +70,8 @@ final class RelayAuthFixtureServer extends AutoCloseable:
   val relayAttempts = new ConcurrentLinkedQueue[(Int, Boolean)]()
   /** Bearer tokens seen on relay-ws upgrade attempts (masked to a prefix). */
   val relayTokens = new ConcurrentLinkedQueue[String]()
+  /** (bearer token, was it a live session) of every /api/relay/&lt;id&gt;/exec call. */
+  val relayExecCalls = new ConcurrentLinkedQueue[(String, Boolean)]()
   /** How many times a live session was kicked by a newer login. */
   val kickedSessions = new AtomicInteger(0)
 
@@ -190,6 +192,15 @@ final class RelayAuthFixtureServer extends AutoCloseable:
       closeQuietly(sock)
     else if path.startsWith("/api/device/relay-ws") then
       handleRelayUpgrade(req, sock, out)
+    else if path.startsWith("/api/relay/") && path.endsWith("/exec") then
+      // Cross-device dispatch (RemoteExecutor → NeblinkClient.relayExec):
+      // which client's session token carries the call is the observable that
+      // proves the hot-swap convergence.
+      val tok = bearer(req)
+      relayExecCalls.add((tok, isLive(tok)))
+      if isLive(tok) then respond(out, 200, """{"output":"remote-ok","error":""}""")
+      else respond(out, 403, AuthRejectBody)
+      closeQuietly(sock)
     else if path.startsWith("/api/users/search") || path.startsWith("/api/friends") ||
       path.startsWith("/api/conversations")
     then

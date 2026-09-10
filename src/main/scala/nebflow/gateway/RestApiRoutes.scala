@@ -684,6 +684,14 @@ class RestApiRoutes(
           // doesn't mean the peer is reachable — cross-network peers need relay.
           directOnline = (deviceId: String) => ms.presenceServiceOpt.exists(_.isConnected(deviceId))
           relayAvailable = ms.relayTunnelOpt.exists(_.isAlive)
+          // F7 (2026-09-10 隧道鉴权自愈批): relayAvailable alone hides WHY the
+          // tunnel is down. authRejected distinguishes "our session was
+          // rejected (401/403) — self-heal territory" from a server-side 5xx,
+          // which is the report §6 cross-project discriminator.
+          relayStatus = nebflow.neblink.NeblinkRelayTunnel.statusJson(
+            relayAvailable,
+            ms.relayTunnelOpt.flatMap(_.authStatus)
+          )
           // C3 (ghost-peer fix): `online` is a real freshness judgement — the
           // peer must have appeared in a server heartbeat/discovery response
           // within the online window (NeblinkService.onlineFreshnessMs), not
@@ -703,6 +711,7 @@ class RestApiRoutes(
           r <- Ok(
             Json.obj(
               "loggedIn" -> loggedIn.asJson,
+              "relay" -> relayStatus,
               "device" -> Json.obj(
                 "id" -> id.deviceId.asJson,
                 "name" -> id.deviceName.asJson,
@@ -3034,8 +3043,14 @@ class RestApiRoutes(
       //    updateConfig refreshes the in-memory ref AND persists to disk, so
       //    /status reflects the change immediately without a restart.
       _ <- ms.updateConfig(_.copy(enabled = false))
-      // 6. Stop the NebLink client (hot-swap to None).
+      // 6. Stop the NebLink client (hot-swap to None). Both client pointers are
+      //    cleared: the discovery one (authoritative live client) AND the
+      //    NeblinkService relay pointer, which every relay consumer reads
+      //    (RemoteExecutor / TransferFileTool / DropboxService / status) —
+      //    leaving it behind kept a logged-out client reachable through the
+      //    relay path (2026-09-10 隧道鉴权自愈批 convergence sweep).
       _ <- neblinkDiscovery.fold(IO.unit)(d => d.setClient(None))
+      _ <- IO(ms.setRelayClient(None))
       // 7. Clear user info (avatar, github login) from the device identity.
       _ <- ms.updateDeviceInfo(avatarUrl = Some(""), githubLogin = Some(""))
       // 8. Clear all discovered peers.
