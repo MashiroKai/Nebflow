@@ -20,8 +20,22 @@ import { key } from './branding.js';
 
 // ── State（单例卡：同一时刻最多一张详情卡）─────────────────
 let overlayEl = null;
-let cur = null; // { taskId, offset, text, pollTimer, closed, gotData, restoreFocus }
+// cur.failCount：连续失败计数（网络/HTTP≥400/超时）——超预算终局，禁无限静默等待
+// （2026-09-10 作者实测「完成的后台任务会卡在那」修复：旧版 resp!ok 与网络错误
+//  都静默 return 无上限重试、完成态行也进 2s 轮询死等——三处全是无终局路径）。
+let cur = null; // { taskId, offset, text, pollTimer, closed, gotData, restoreFocus, ... }
 let escHandler = null;
+
+// 终态集合（completed/failed/cancelled）——终态行走单次读取模式（不进轮询）。
+const isTerminalStatus = (s) => s === 'completed' || s === 'failed' || s === 'cancelled';
+// 轮询模式连续失败预算：5 次（~10s 无一成功即终局报错，不无限静默重试）。
+const MAX_POLL_FAILS = 5;
+// 单次读取模式（终态行）失败预算：3 拍（首拍+2 重试）。
+const MAX_ONESHOT_ATTEMPTS = 3;
+// 每次 fetch 的挂死兜底：8s 无响应按失败计（AbortController）。
+const FETCH_TIMEOUT_MS = 8000;
+// 轮询模式总预算：10min 无终态 → 停轮询并明示（persistent/僵死任务防线）。
+const MAX_POLL_TOTAL_MS = 10 * 60 * 1000;
 
 function getToken() { return localStorage.getItem(key('token')) || ''; }
 function authHeaders() {
@@ -151,21 +165,31 @@ const POPUP_CSS = `<style id="bgt-output-popup-css">
   overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
 }
 
-/* 输出区：<pre> 等宽（配色对齐既有代码/终端展示面），pre-wrap 长行折行。
-   无 background——玻璃由 .bgt-modal 统一承载（同 .flow-agent-chat 形态，
-   正文区不透明底会击穿面板毛玻璃材质）。 */
-.bgt-body { flex: 1; min-height: 0; display: flex; position: relative; }
+/* 输出区（2026-09-10 作者指令：终端化内芯）：后台任务输出是终端任务——
+   内芯 = 跟随主题的深/浅终端底（light #f5f5f5 / dark #111419，与代码块
+   .bubble.ai pre 同源值）+ 等宽栈 + pre-wrap 原始换行；外层 .bgt-modal
+   仍守毛玻璃、overlay 禁暗化红线不变（面板外壳毛玻璃统一 + 内芯终端化）。
+   复制：.bgt-body 复用代码块 .code-block-wrap 容器 class——.code-copy-btn
+   的 hover 浮现（chat.css）与玻璃主题（sapphire.css Pattern B / dark 档）
+   零复制生效；padding-top 抬高给右上角浮层按钮留位（28px = 按钮高+余量）。 */
+.bgt-body { flex: 1; min-height: 0; display: flex; position: relative; padding: 0 12px 10px; }
 .bgt-output {
   flex: 1;
   margin: 0;
-  padding: 12px 16px;
+  padding: 28px 14px 12px;
   overflow: auto;
-  font: 400 12px/1.55 ui-monospace, SFMono-Regular, monospace;
+  background: #f5f5f5;
+  border: 1px solid var(--color-frame-border);
+  border-radius: 8px;
+  font: 400 12px/1.55 ui-monospace, SFMono-Regular, Menlo, monospace;
   color: var(--color-text);
   white-space: pre-wrap;
   word-break: break-word;
   overscroll-behavior: contain;
   scrollbar-color: var(--color-frame-border) transparent;
+}
+@media (prefers-color-scheme: dark) {
+  .bgt-output { background: #111419; scrollbar-color: rgba(255,255,255,0.15) transparent; }
 }
 /* 代码/终端面 4px 细滚动条档（base.css 全局 6px，tool-card body 先例同款覆宽）。 */
 .bgt-output::-webkit-scrollbar { width: 4px; height: 4px; }
@@ -178,9 +202,11 @@ const POPUP_CSS = `<style id="bgt-output-popup-css">
   text-align: center;
 }
 .bgt-placeholder.bgt-hidden { display: none; }
+.bgt-exit-label.bgt-hidden, .bgt-truncated.bgt-hidden, .bgt-error.bgt-hidden { display: none; }
 
-/* Footer：同 .flow-agent-footer（顶缘折射线 + hairline）；meta 左、复制右。
-   复制按钮 = .glass-control 绿玻璃语言（#send-btn 参数，透明玻璃族填充）。 */
+/* Footer：同 .flow-agent-footer（顶缘折射线 + hairline）；meta 左、截断注记右。
+   （2026-09-10 作者指令：显式复制按钮区移除——复制改为 hover 右上角浮现，
+   与代码块同款交互同款样式，见 .bgt-body 的 code-block-wrap 复用。） */
 .bgt-footer {
   flex-shrink: 0;
   display: flex; align-items: center; gap: 8px;
@@ -201,69 +227,35 @@ const POPUP_CSS = `<style id="bgt-output-popup-css">
   z-index: 1;
 }
 .bgt-meta {
-  font: 400 11px -apple-system, sans-serif;
+  font: 400 11px ui-monospace, SFMono-Regular, Menlo, monospace;
   font-variant-numeric: tabular-nums;
   color: var(--color-text-muted);
   min-width: 0;
+  display: inline-flex; align-items: center; gap: 6px;
+}
+.bgt-meta-text {
+  min-width: 0;
   overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
 }
+/* 终端语言的状态标识（2026-09-10 作者指令③：状态在终端语言内表达，行前缀/
+   角标，禁大色块）：运行态 = meta 行前缀终端光标块（.tool-stream-body
+   pre .cursor 同源视觉：--color-primary 5×14 blink）；终态 = 美元符 prompt
+   前缀 + exit 码（如 "$ exit 0 · 3 行 · 27 B"）。 */
+.bgt-cursor {
+  display: inline-block;
+  width: 5px; height: 12px;
+  background: var(--color-primary);
+  animation: blink 1s steps(2) infinite;
+  flex-shrink: 0;
+}
+.bgt-prompt { opacity: 0.7; flex-shrink: 0; }
 .bgt-truncated {
   font: 500 11px -apple-system, sans-serif;
   color: #d4a030;
   flex-shrink: 0;
 }
-.bgt-actions { margin-left: auto; display: flex; align-items: center; gap: 8px; flex-shrink: 0; }
-.bgt-copy-btn {
-  font: 500 12px -apple-system, BlinkMacSystemFont, sans-serif;
-  padding: 5px 14px;
-  border-radius: 10px;
-  color: #fff;
-  cursor: pointer;
-  background: rgba(7, 193, 96, 0.55);
-  -webkit-backdrop-filter: blur(8px) saturate(1.3);
-  backdrop-filter: blur(8px) saturate(1.3);
-  border: 1px solid rgba(7, 193, 96, 0.30);
-  box-shadow:
-    inset 0 1px 0 rgba(255, 255, 255, 0.35),
-    inset 0 -1px 0 rgba(0, 0, 0, 0.08),
-    0 1px 4px rgba(7, 193, 96, 0.25),
-    0 0 12px rgba(7, 193, 96, 0.20),
-    0 2px 8px rgba(0, 0, 0, 0.06);
-  transition: background 0.2s, box-shadow 0.2s, border-color 0.2s, opacity 0.2s;
-}
-.bgt-copy-btn:hover {
-  background: rgba(7, 193, 96, 0.68);
-  border-color: rgba(7, 193, 96, 0.40);
-  box-shadow:
-    inset 0 1px 0 rgba(255, 255, 255, 0.4),
-    inset 0 -1px 0 rgba(0, 0, 0, 0.08),
-    0 2px 8px rgba(7, 193, 96, 0.30),
-    0 0 14px rgba(7, 193, 96, 0.22),
-    0 2px 12px rgba(0, 0, 0, 0.08);
-}
-.bgt-copy-btn:active {
-  background: rgba(7, 193, 96, 0.75);
-  border-color: rgba(7, 193, 96, 0.45);
-  box-shadow: inset 0 1px 3px rgba(0, 0, 0, 0.15), 0 1px 2px rgba(7, 193, 96, 0.12);
-}
-/* dark 主题同 #send-btn 深一档（同 hue，+alpha 抵消暗底合成变暗）。 */
-@media (prefers-color-scheme: dark) {
-  .bgt-copy-btn { background: rgba(7, 193, 96, 0.62); border-color: rgba(7, 193, 96, 0.34); }
-  .bgt-copy-btn:hover { background: rgba(7, 193, 96, 0.72); border-color: rgba(7, 193, 96, 0.44); }
-  .bgt-copy-btn:active { background: rgba(7, 193, 96, 0.78); border-color: rgba(7, 193, 96, 0.48); }
-}
-.bgt-copy-btn.copied { opacity: 0.85; }
-/* remote 降级禁用态：#send-btn:disabled 绿家族不灰（input.css 同配方，
-   整钮均匀褪 opacity 会让绿底变灰绿、脱离绿玻璃家族）。 */
-.bgt-copy-btn:disabled {
-  background: rgba(7, 193, 96, 0.16);
-  border-color: rgba(7, 193, 96, 0.08);
-  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.10);
-  cursor: default;
-}
 @media (prefers-reduced-motion: reduce) {
   .bgt-overlay { animation: none; }
-  .bgt-copy-btn { transition-duration: 0.01s; }
 }
 </style>`;
 
@@ -305,8 +297,30 @@ function renderStatus(status, exitCode) {
 
 function renderMeta(data) {
   if (!cur || cur.closed) return;
-  const metaEl = overlayEl.querySelector('.bgt-meta');
-  metaEl.textContent = t('bg.detail.meta', { lines: fmtLines(data.totalLines), bytes: fmtBytes(data.totalBytes) });
+  const metaTextEl = overlayEl.querySelector('.bgt-meta-text');
+  if (metaTextEl) metaTextEl.textContent = t('bg.detail.meta', { lines: fmtLines(data.totalLines), bytes: fmtBytes(data.totalBytes) });
+}
+
+// 终端语言 meta（2026-09-10 作者指令③）：终态 → `$` prompt 前缀 + exit 码
+// （复用 bg.detail.exit / 既有终态 label，零新 key）；运行态 → 闪烁光标块。
+// 只动 marker 与 exit-label 两段——meta-text（行数/字节）由 renderMeta 独占。
+function renderTerminalState(status, exitCode) {
+  if (!cur || cur.closed) return;
+  const marker = overlayEl.querySelector('.bgt-meta-marker');
+  const exitEl = overlayEl.querySelector('.bgt-exit-label');
+  if (!marker || !exitEl) return;
+  if (status && status !== 'running' && status !== 'cancelling') {
+    marker.innerHTML = '<span class="bgt-prompt">$</span>';
+    const label = (exitCode !== undefined && exitCode !== null)
+      ? t('bg.detail.exit', { code: exitCode })
+      : statusView(status).label;
+    exitEl.textContent = label;
+    exitEl.classList.remove('bgt-hidden');
+  } else {
+    marker.innerHTML = '<span class="bgt-cursor" aria-hidden="true"></span>';
+    exitEl.textContent = '';
+    exitEl.classList.add('bgt-hidden');
+  }
 }
 
 function showTruncatedNote() {
@@ -348,78 +362,169 @@ function appendOutput(text) {
   if (nearBottom) pre.scrollTop = pre.scrollHeight;
 }
 
-// ── 轮询（字节游标增量）────────────────────────────────────
+// ── 轮询（字节游标增量；2026-09-10 修复：预算+终局态）──────
 function stopPoll() {
   if (cur && cur.pollTimer) { clearInterval(cur.pollTimer); cur.pollTimer = null; }
 }
 
+// 终局收口：停一切定时器与在途请求。所有终局路径（终态到达/404/失败预算/
+// 总预算）必须走这里——禁任何无限静默等待。
+function stopAll() {
+  if (!cur) return;
+  stopPoll();
+  if (cur.totalTimer) { clearTimeout(cur.totalTimer); cur.totalTimer = null; }
+  if (cur.retryTimer) { clearTimeout(cur.retryTimer); cur.retryTimer = null; }
+  if (cur.abortCtl) { try { cur.abortCtl.abort(); } catch { /* */ } cur.abortCtl = null; }
+}
+
+// 读取失败终局（预算耗尽）：明确错误提示 + 停止一切等待，面板可关闭。
+function showReadFailure() {
+  if (!cur || cur.closed) return;
+  stopAll();
+  const dotEl = overlayEl.querySelector('.bgt-dot');
+  if (dotEl) dotEl.className = 'bg-task-status bg-status-error bgt-dot';
+  showPlaceholder(t('bg.detail.readError'));
+}
+
+// 带 8s 挂死兜底的 fetch（AbortController；响应到达即拆定时器）。
+async function fetchWithTimeout(url, opts) {
+  const ctl = new AbortController();
+  cur.abortCtl = ctl;
+  const timer = setTimeout(() => ctl.abort(), FETCH_TIMEOUT_MS);
+  try {
+    return await fetch(url, { ...opts, signal: ctl.signal });
+  } finally {
+    clearTimeout(timer);
+    if (cur && cur.abortCtl === ctl) cur.abortCtl = null;
+  }
+}
+
 async function pollOnce() {
   if (!cur || cur.closed) return;
+  let resp = null;
   try {
-    const resp = await fetch(
+    resp = await fetchWithTimeout(
       `/api/bg-tasks/${encodeURIComponent(cur.taskId)}/output?offset=${cur.offset}`,
       { headers: authHeaders() }
     );
-    if (resp.status === 404) {
-      // 未知任务：remote 任务从未缓冲 / 留存区已淘汰。仅首拍降级提示，
-      // 已有数据时（极端：轮询中被淘汰）保留现有内容只停轮询。
-      if (!cur.gotData) showPlaceholder(t('bg.detail.notFound'));
-      renderStatus('cancelled');
-      stopPoll();
-      return;
-    }
-    if (!resp.ok) return; // 瞬态错误——下一 tick 重试
-    const data = await resp.json();
-    cur.gotData = true;
-    hidePlaceholder();
-    if (data.output) appendOutput(data.output);
-    else if (!cur.text) showPlaceholder(t('bg.detail.empty'));
-    if (typeof data.nextOffset === 'number') cur.offset = data.nextOffset;
-    renderMeta(data);
-    renderStatus(data.status, data.exitCode);
-    if (data.truncated) showTruncatedNote();
-    if (data.errorHint) showErrorHint(data.errorHint);
-    if (data.status && data.status !== 'running') stopPoll();
   } catch {
-    // 网络/瞬态失败：静默，下一 tick 重试（面板轮询同语义）
+    // 网络/超时失败：计入预算（旧版静默 return 无上限——卡死主根因之一）。
+    onReadFailure();
+    return;
   }
+  if (!cur || cur.closed) return;
+  if (resp.status === 404) {
+    // 未知任务：remote 任务从未缓冲 / 留存区已淘汰。仅首拍降级提示，
+    // 已有数据时（极端：轮询中被淘汰）保留现有内容只停轮询。
+    // 状态 chip 不谎报（2026-09-10 修复：旧版写死 cancelled——已完成任务
+    // 被留存淘汰后显示「已取消」，与面板行「已完成」矛盾）。
+    if (!cur.gotData) showPlaceholder(t('bg.detail.notFound'));
+    const dotEl = overlayEl.querySelector('.bgt-dot');
+    if (dotEl) dotEl.className = 'bg-task-status bg-status-done bgt-dot';
+    stopAll();
+    return;
+  }
+  if (!resp.ok) { onReadFailure(); return; } // HTTP 错误——计入预算，不再静默
+  let data = null;
+  try {
+    data = await resp.json();
+  } catch {
+    onReadFailure(); // 响应体损坏同预算处理
+    return;
+  }
+  if (!cur || cur.closed) return;
+  cur.failCount = 0;
+  cur.gotData = true;
+  hidePlaceholder();
+  if (data.output) appendOutput(data.output);
+  else if (!cur.text) showPlaceholder(t('bg.detail.empty'));
+  if (typeof data.nextOffset === 'number') cur.offset = data.nextOffset;
+  renderMeta(data);
+  renderStatus(data.status, data.exitCode);
+  renderTerminalState(data.status, data.exitCode);
+  if (data.truncated) showTruncatedNote();
+  if (data.errorHint) showErrorHint(data.errorHint);
+  if (data.status && data.status !== 'running') { stopAll(); return; }
+  // 单次读取模式（终态行）但 store 竟返回 running（行状态过时/竞态）→
+  // 就地转轮询模式直到终态（预算照常生效）。
+  if (cur.oneShot) {
+    cur.oneShot = false;
+    armTotalBudget();
+    cur.pollTimer = setInterval(pollOnce, 2000);
+  }
+}
+
+// 失败预算判定：超限 → 明确错误终局（禁无限静默等待）；未超限 → 安排下一拍
+// （oneShot 的「首拍+2 重试」由 retryTimer 驱动；轮询模式由 interval 驱动）。
+function onReadFailure() {
+  if (!cur || cur.closed) return;
+  cur.failCount = (cur.failCount || 0) + 1;
+  if (cur.oneShot) {
+    if (cur.failCount >= MAX_ONESHOT_ATTEMPTS) { showReadFailure(); return; }
+    if (!cur.retryTimer) cur.retryTimer = setTimeout(() => { if (cur && !cur.closed) { cur.retryTimer = null; pollOnce(); } }, 1200);
+    return;
+  }
+  if (cur.failCount >= MAX_POLL_FAILS) showReadFailure();
+}
+
+// 轮询模式总预算：10min 无终态 → 停轮询并明示（persistent/僵死任务防线）。
+function armTotalBudget() {
+  if (!cur || cur.totalTimer) return;
+  cur.totalTimer = setTimeout(() => {
+    if (!cur || cur.closed) return;
+    stopAll();
+    const dotEl = overlayEl.querySelector('.bgt-dot');
+    if (dotEl) dotEl.className = 'bg-task-status bg-status-done bgt-dot';
+    showPlaceholder(t('bg.detail.stopped'));
+  }, MAX_POLL_TOTAL_MS);
 }
 
 function startPoll() {
   stopPoll();
+  // 完成态行走单次读取模式（2026-09-10 验收①：从持久层一次读取到位，不依赖
+  // 活流/活订阅）——首拍失败允许 2 次重试，仍失败即终局报错；绝无轮询死等。
+  // （oneShot 在 pollOnce 内发现 store 仍 running 时就地解除并转入轮询。）
+  cur.oneShot = isTerminalStatus(cur.initialStatus);
+  cur.failCount = 0;
   pollOnce();
-  cur.pollTimer = setInterval(pollOnce, 2000);
+  if (!cur.oneShot) {
+    cur.pollTimer = setInterval(pollOnce, 2000);
+    armTotalBudget();
+  }
 }
 
-// ── 复制（绿玻璃按钮）──────────────────────────────────────
-async function copyOutput(btn) {
-  if (!cur || cur.closed) return;
-  const text = cur.text;
-  let ok = false;
-  try {
-    await navigator.clipboard.writeText(text);
-    ok = true;
-  } catch {
-    // 降级：隐藏 textarea + execCommand（非安全上下文兜底）
-    try {
-      const ta = document.createElement('textarea');
-      ta.value = text;
-      ta.style.position = 'fixed';
-      ta.style.opacity = '0';
-      document.body.appendChild(ta);
-      ta.select();
-      ok = document.execCommand('copy');
-      ta.remove();
-    } catch { ok = false; }
+// ── 复制（hover 右上角浮现，2026-09-10 作者指令：与代码块同款）──
+// 点击处理直接复用代码块全局 window.copyCode（utils.js）：读取
+// .code-block-wrap 内 pre 的当前 textContent（运行中=已加载部分，规格允许）、
+// chat.copied 反馈 2s 还原、降级选中文本——交互/反馈与代码块行为完全一致。
+// 防御性 fallback：window.copyCode 缺席时用本地最小实现（同款反馈语义）。
+function wireCopyButton(btn) {
+  if (typeof window.copyCode === 'function') {
+    btn.addEventListener('click', () => window.copyCode(btn));
+    return;
   }
-  const prev = btn.textContent;
-  btn.textContent = ok ? t('bg.detail.copied') : prev;
-  btn.classList.toggle('copied', ok);
-  if (ok) setTimeout(() => {
-    if (!cur || cur.closed) return;
-    btn.textContent = t('bg.detail.copy');
-    btn.classList.remove('copied');
-  }, 1500);
+  btn.addEventListener('click', async () => {
+    const pre = overlayEl && overlayEl.querySelector('.bgt-output');
+    const text = pre ? pre.textContent : '';
+    if (!text) return;
+    try {
+      await navigator.clipboard.writeText(text);
+      const span = btn.querySelector('span');
+      span.textContent = t('chat.copied');
+      btn.classList.add('copied');
+      setTimeout(() => {
+        span.textContent = t('chat.copy');
+        btn.classList.remove('copied');
+      }, 2000);
+    } catch { /* 与代码块同语义：静默失败 */ }
+  });
+}
+
+// 与 utils.js renderMarkdown 注入的代码块复制按钮同构（svg + span 双语 title）。
+function copyButtonHtml() {
+  return '<button class="code-copy-btn" type="button" title="' + t('chat.copy') + '">' +
+    '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>' +
+    '<span>' + t('chat.copy') + '</span></button>';
 }
 
 // ── Open / close ──────────────────────────────────────────
@@ -435,9 +540,16 @@ export function openBgTaskOutput(task) {
     offset: 0,
     text: '',
     pollTimer: null,
+    totalTimer: null,
+    retryTimer: null,
+    abortCtl: null,
+    failCount: 0,
+    oneShot: false,
     closed: false,
     gotData: false,
     restoreFocus,
+    // 行面板乐观态——单次读取模式的判定基准 + 404 时 chip 不谎报的依据
+    initialStatus: task.status || 'running',
     originText: [task.originLabel, task.kind === 'remote' ? t('bg.kind.remote') : (task.kind ? t('bg.kind.local') : '')]
       .filter(Boolean).join(' · ')
   };
@@ -458,23 +570,21 @@ export function openBgTaskOutput(task) {
         '<button class="bgt-close" type="button" aria-label="Close">×</button>' +
       '</div>' +
       '<div class="bgt-error bgt-hidden"></div>' +
-      '<div class="bgt-body">' +
+      '<div class="bgt-body code-block-wrap">' +
+        copyButtonHtml() +
         '<pre class="bgt-output"></pre>' +
         '<div class="bgt-placeholder bgt-hidden"></div>' +
       '</div>' +
       '<div class="bgt-footer">' +
-        '<span class="bgt-meta"></span>' +
+        '<span class="bgt-meta"><span class="bgt-meta-marker"></span><span class="bgt-exit-label bgt-hidden"></span><span class="bgt-meta-text"></span></span>' +
         '<span class="bgt-truncated bgt-hidden"></span>' +
-        '<div class="bgt-actions">' +
-          '<button class="bgt-copy-btn" type="button"></button>' +
-        '</div>' +
       '</div>' +
     '</div>';
 
   // 动态文本一律 textContent（XSS 纪律）
   overlayEl.querySelector('.bgt-title').textContent = task.description || task.taskId;
-  const copyBtn = overlayEl.querySelector('.bgt-copy-btn');
-  copyBtn.textContent = t('bg.detail.copy');
+  const copyBtn = overlayEl.querySelector('.code-copy-btn');
+  wireCopyButton(copyBtn);
 
   document.body.appendChild(overlayEl);
 
@@ -490,21 +600,21 @@ export function openBgTaskOutput(task) {
   // 在 document 捕获级关 #bg-dropdown——卡片在最顶层，Esc 两段式先关卡片，
   // stopPropagation 挡住后续层（再按一次 Esc 才轮到下拉，既有行为不变）。
   window.addEventListener('keydown', escHandler, true);
-  copyBtn.addEventListener('click', () => copyOutput(copyBtn));
 
-  // 初始状态（行面板乐观态）→ 首拍立刻校正
-  renderStatus(task.status || 'running');
+  // 初始状态（行面板乐观态）→ 首拍立刻校正。remote 任务显示行传入的真实
+  // 状态（2026-09-10 修复：旧版写死 running——完成的 remote 任务在卡内永远
+  // 转圈，即作者实测「卡在那」的形态之一）。
+  renderStatus(cur.initialStatus);
   renderMeta({ totalLines: 0, totalBytes: 0 });
+  renderTerminalState(cur.initialStatus);
 
   // 焦点管理：聚焦关闭按钮，关闭时归还触发行
   overlayEl.querySelector('.bgt-close').focus();
 
   if (task.kind === 'remote') {
-    // 远端任务降级：不轮询、禁复制，卡内注明暂不支持查看（任务规格允许的降级面）。
-    // 禁用态样式走 .bgt-copy-btn:disabled（#send-btn:disabled 绿家族配方）。
+    // 远端任务降级：不轮询，卡内注明暂不支持查看（任务规格允许的降级面）。
+    // 复制按钮照常 hover 浮现（空输出点击 no-op——window.copyCode 空文本 guard）。
     showPlaceholder(t('bg.detail.remote'));
-    copyBtn.disabled = true;
-    renderStatus('running');
     overlayEl.querySelector('.bgt-meta').textContent = '';
     return;
   }
@@ -513,7 +623,7 @@ export function openBgTaskOutput(task) {
 
 export function closeBgTaskOutput() {
   if (!overlayEl) { cur = null; return; }
-  stopPoll();
+  stopAll();
   if (cur) cur.closed = true;
   const restore = cur && cur.restoreFocus;
   escHandler && window.removeEventListener('keydown', escHandler, true);

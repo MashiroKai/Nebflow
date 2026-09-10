@@ -725,8 +725,6 @@ export default {
   'bg.failed': '失败',
   'bg.cancelled': '已取消',
   'bg.detail.aria': '后台任务输出详情',
-  'bg.detail.copy': '复制',
-  'bg.detail.copied': '已复制',
   'bg.detail.empty': '暂无输出',
   'bg.detail.remote': '远端任务暂不支持输出查看',
   'bg.detail.notFound': '任务输出已不可用（任务已结束并被清理）',
@@ -735,6 +733,8 @@ export default {
   'bg.detail.exit': 'exit {code}',
   'bg.detail.failedHint': '失败原因：{error}',
   'bg.detail.cancelHint': '取消原因：{error}',
+  'bg.detail.readError': '输出读取失败（网络异常或服务无响应），请关闭后重试',
+  'bg.detail.stopped': '输出轮询已停止（任务长时间未结束）',
 
   // === Time ===
   'time.yesterday': '昨天',

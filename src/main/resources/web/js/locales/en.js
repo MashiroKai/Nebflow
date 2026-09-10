@@ -721,8 +721,6 @@ export default {
   'bg.failed': 'Failed',
   'bg.cancelled': 'Cancelled',
   'bg.detail.aria': 'Background task output',
-  'bg.detail.copy': 'Copy',
-  'bg.detail.copied': 'Copied',
   'bg.detail.empty': 'No output yet',
   'bg.detail.remote': 'Output viewing is not available for remote tasks',
   'bg.detail.notFound': 'Task output is no longer available (task ended and was cleaned up)',
@@ -731,6 +729,8 @@ export default {
   'bg.detail.exit': 'exit {code}',
   'bg.detail.failedHint': 'Failed: {error}',
   'bg.detail.cancelHint': 'Cancelled: {error}',
+  'bg.detail.readError': 'Failed to load output (network error or no response) — close and retry',
+  'bg.detail.stopped': 'Output polling stopped (task did not finish for a long time)',
 
   // === Time ===
   'time.yesterday': 'Yesterday',
