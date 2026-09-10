@@ -58,7 +58,15 @@ import nebflow.core.PathUtil
  * 数据根入写面不扩大红线。
  *
  * enabled=false（nebflow.json sandbox.enabled=false 或非 project 会话）即回旧行为
- * （§G.1 回滚语义）：所有闸门短路过行，工具表现与沙箱引入前完全一致。
+ * （§G.1 回滚语义）：所有闸门短路过行，工具表现与沙箱引入前完全一致
+ * （pathRoot=None 保证路径语义亦随之一并回旧）。
+ *
+ * [沙箱拆围栏批 S1/S2，2026-09-10] 本批只做「解耦」不改能力：①新增 pathRoot
+ * （路径语义载体，见字段注释）——路径解析不再挂在围栏总闸上；②会话形态信号
+ * projectSession（SessionContext）接手 AGENTS.md 注入判据，sandboxEnabled 不再是
+ * 「project 会话」的代名词（design §4.4 S1 / R8）；③FileSandbox 的写根/读拒判定
+ * 退役、解析保留（S2 / R5=e2），`agents/<agent>/memory.md` 写拒（R3=c1）保留。`off` 与
+ * `forRoot` 的 cfg.enabled 回退点按 §4.5 保留不删。
  *
  * Nebula 根会话（2026-09-05 作者裁定 13:09：Nebula 会话沙箱启用 + 写根
  * =~/.nebflow 数据根，让 Nebula 直接处理定义层与运行时配置）：置位点 =
@@ -68,7 +76,10 @@ import nebflow.core.PathUtil
  * sandboxPolicy 构造按 isNebulaRootSession 特判取 dataRoot；节点/分发器会话
  * 仍取 projectRoot 零变化。旁路语义：AGENTS.md 注入 gating（ContextRefresher
  * .agentsMdEnabledFor）按 agentName 排除 Nebula——sandboxEnabled 信号自本批起
- * 不再独占「project 会话」语义。
+ * 不再独占「project 会话」语义。[沙箱拆围栏批 S1, 2026-09-10] 注入判据已彻底换轨
+ * 到 SessionContext.projectSession（会话形态信号），与 sandboxEnabled 解耦——
+ * sandboxEnabled 自本批起只承载「围栏总闸」（root 推导 + 闸门开关），退役路径见
+ * design §4.4 S1/S3。
  */
 case class SandboxPolicy(
   /** canonical 后的沙箱根。 */
@@ -85,12 +96,31 @@ case class SandboxPolicy(
   /** sandbox.bash.failIfUnavailable（§A.4-4）：probe 失败时 Bash fail-closed
     * （默认 true=报 SANDBOX_UNAVAILABLE 不执行）；false = 显式降级 WARN +
     * [unsandboxed] 前缀。 */
-  bashFailIfUnavailable: Boolean = true
+  bashFailIfUnavailable: Boolean = true,
+  /** 会话根（路径语义载体）。[沙箱拆围栏批 S1/R8 解耦，2026-09-10]
+    *
+    * 语义：Some = 本会话有工作根 —— 文件工具的**路径语义**锚定它（相对路径基准、
+    * Grep/Glob 缺省搜索根等，消费点 ToolPathUtil）；None = 无会话根 = 旧行为
+    * （四件套拒相对路径、Glob/Grep 用 JVM user.dir）。与 `root` 的区别：`root`
+    * 是根集合推导的原料（写根/Seatbelt profile），本字段只承载路径解析基准。
+    *
+    * 为什么必须与 `enabled` 分开：`enabled` 是「围栏总闸」——拆围栏批把它退化为
+    * 回旧行为的开关（§4.5 回退点，保留不删），而路径解析是**非围栏职能**，拆围栏
+    * 要拆的是闸、不是解析（R5=e2「拆闸保解析」）。路径语义若继续挂在 enabled 上，
+    * 拨动回退开关会连带把 Grep/Glob 缺省根打回 JVM user.dir——正是 FileSandbox
+    * 头注释自陈修掉的旧缺陷（design §8.1 X-1/X-2/X-9 的耦合面）。
+    *
+    * 取值：forRoot 内与 root 同源（同一次 canonicalize 双写），故有会话根时
+    * pathRoot == Some(root)；off / cfg.enabled=false 时为 None（此时 root="/" 仅是
+    * 占位，不得当路径基准用）。 */
+  pathRoot: Option[os.Path] = None
 )
 
 object SandboxPolicy:
 
-  /** 关闭态策略：闸门全部旁路。root 仅为占位（不可达——所有闸门先查 enabled）。 */
+  /** 关闭态策略：闸门全部旁路。root 仅为占位（不可达——所有闸门先查 enabled）；
+    * pathRoot=None（无会话根 ⇒ 路径语义亦回旧行为：相对路径拒、Grep/Glob 用
+    * JVM user.dir）。 */
   val off: SandboxPolicy = SandboxPolicy(os.Path("/"), Nil, Nil, enabled = false)
 
   /** 系统只读面（§A.2）：够编译器/工具链/系统命令使用。[2026-09-06 读宽批]
@@ -229,12 +259,15 @@ object SandboxPolicy:
   def forRoot(root: os.Path, cfg: SandboxConfig): SandboxPolicy =
     if !cfg.enabled then off
     else
+      val canonicalRoot = os.Path(canonicalize(root.wrapped))
       SandboxPolicy(
-        root = os.Path(canonicalize(root.wrapped)),
+        root = canonicalRoot,
         readExtras = (defaultReadExtras ++ cfg.additionalRootsAsRead).map(p => os.Path(canonicalize(p.wrapped))).distinct,
         extraWritable = cfg.additionalRootsAsWrite.map(p => os.Path(canonicalize(p.wrapped))),
         enabled = true,
-        bashFailIfUnavailable = cfg.bashFailIfUnavailable
+        bashFailIfUnavailable = cfg.bashFailIfUnavailable,
+        // 路径语义载体与 root 同源（拆围栏批 S1 解耦）：闸门退役不动解析基准。
+        pathRoot = Some(canonicalRoot)
       )
 
   /**
@@ -323,8 +356,8 @@ end SandboxPolicy
  *
  * Fail-safe 加载（镜像 ToolResultTtlConfig.load）：absent/非法 → 默认值
  * （enabled=true）。注意 SharedResources 字段默认值即本默认——但闸门激活还需
- * 会话级 sandboxEnabled=true（仅 project 节点/分发器 spawn 置位），存量测试
- * （无 project 上下文）不受影响。
+ * 会话级 sandboxEnabled=true（project 节点/分发器 spawn 置位；Nebula 根会话按
+ * isNebulaRootSession 亦置位），存量测试（无 project 上下文）不受影响。
  */
 final case class SandboxConfig(
   enabled: Boolean = true,

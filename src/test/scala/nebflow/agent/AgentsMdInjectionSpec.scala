@@ -69,32 +69,34 @@ class AgentsMdInjectionSpec extends CatsEffectSuite:
   }
 
   // ── ② gating 三态 ────────────────────────────────────────────────
+  // [沙箱拆围栏批 S1/R8 解耦, 2026-09-10] 入参名 sandboxEnabled → projectSession
+  // （会话形态信号）。断言与判定逻辑逐字不变，仅具名实参标签随信号改名更新。
 
-  test("gate: node session (sandboxEnabled=true + projectRoot) -> inject") {
-    assert(ContextRefresher.agentsMdEnabledFor(sandboxEnabled = true, projectRoot = Some("/ws/a")))
+  test("gate: node session (projectSession=true + projectRoot) -> inject") {
+    assert(ContextRefresher.agentsMdEnabledFor(projectSession = true, projectRoot = Some("/ws/a")))
   }
 
-  test("gate: Nebula shape (WS root fallback projectRoot, sandboxEnabled=false) -> no inject") {
+  test("gate: Nebula shape (WS root fallback projectRoot, projectSession=false) -> no inject") {
     // Nebula 经 WebSocketRoutes 拿到 fallback projectRoot=~/.nebflow/projects（恒 Some）——
-    // 排除它靠 sandboxEnabled=false（spawn 形态位），这正是 projectRoot.isDefined
-    // 单基准被否决的原因。
-    assert(!ContextRefresher.agentsMdEnabledFor(sandboxEnabled = false, projectRoot = Some("/x/.nebflow/projects")))
+    // 排除它靠 projectSession=false（spawn 形态位；WS 根会话不置位），这正是
+    // projectRoot.isDefined 单基准被否决的原因。
+    assert(!ContextRefresher.agentsMdEnabledFor(projectSession = false, projectRoot = Some("/x/.nebflow/projects")))
   }
 
   test("gate: dual-track team/flow shape (no projectRoot) -> no inject") {
-    assert(!ContextRefresher.agentsMdEnabledFor(sandboxEnabled = false, projectRoot = None))
-    assert(!ContextRefresher.agentsMdEnabledFor(sandboxEnabled = true, projectRoot = None))
-    assert(!ContextRefresher.agentsMdEnabledFor(sandboxEnabled = true, projectRoot = Some("")))
+    assert(!ContextRefresher.agentsMdEnabledFor(projectSession = false, projectRoot = None))
+    assert(!ContextRefresher.agentsMdEnabledFor(projectSession = true, projectRoot = None))
+    assert(!ContextRefresher.agentsMdEnabledFor(projectSession = true, projectRoot = Some("")))
   }
 
   test("gate: Nebula sandboxed root session (2026-09-05 sandbox batch) -> no inject") {
-    // Nebula 会话沙箱启用后（第三置位点 WebSocketRoutes.doSpawnRootAgent），
-    // sandboxEnabled=true ∧ projectRoot=Some(fallback ~/.nebflow/projects) 恒成立
-    // ——若无 agentName 排除必误注入。AGENTS.md 接收面维持 project 分发器 +
-    // node 会话，Nebula 根会话按名字排除。
+    // Nebula 根会话（WS 根会话置位点）在 S1 解耦后 projectSession=false（形态位
+    // 不置）——天然不注入；agentName 排除保留为第二道保险：即便 projectSession
+    // 误置 true ∧ projectRoot=Some(fallback ~/.nebflow/projects)，name=="Nebula"
+    // 仍不注入。AGENTS.md 接收面维持 project 分发器 + node 会话。
     assert(
       !ContextRefresher.agentsMdEnabledFor(
-        sandboxEnabled = true,
+        projectSession = true,
         projectRoot = Some("/x/.nebflow/projects"),
         agentName = "Nebula"
       )
@@ -102,7 +104,7 @@ class AgentsMdInjectionSpec extends CatsEffectSuite:
     // 默认参数 ""（既有两参调用形态）语义不变：非 Nebula 名照旧放行
     assert(
       ContextRefresher.agentsMdEnabledFor(
-        sandboxEnabled = true,
+        projectSession = true,
         projectRoot = Some("/ws/a"),
         agentName = "project-dispatcher"
       )
@@ -203,12 +205,17 @@ class AgentsMdInjectionSpec extends CatsEffectSuite:
       friendService = None
     )
 
+  /** node/分发器会话形态的 spawn 侧契约：[沙箱拆围栏批 S1/R8 解耦] 后 AGENTS.md
+    * 注入判据 = projectSession（会话形态信号），生产置位点 = NodeEngine 节点 spawn
+    * ×2 + ProjectActor 分发器 spawn ×1（与 sandboxEnabled 同点置位）——本 helper 按
+    * 同款契约置两个位，断言语义零变化。 */
   private def nodeShapedState(ws: os.Path, sandbox: Boolean): AgentState =
     AgentState(
       sessionId = None, // node/分发器会话形态：无 folderId、无 team 注册
       folderId = None,
       projectRoot = Some(ws.toString),
-      sandboxEnabled = sandbox
+      sandboxEnabled = sandbox,
+      projectSession = sandbox
     )
 
   test("refreshTurn e2e: node-shaped session with ARBITRARY agent name injects AGENTS.md") {
@@ -219,6 +226,24 @@ class AgentsMdInjectionSpec extends CatsEffectSuite:
     val defn = AgentDef(name = "swift-dev", description = "arbitrary node agent")
     ContextRefresher.refreshTurn(nodeShapedState(ws, sandbox = true), res, defn).map { tc =>
       assertEquals(tc.agentsMd, Some("# e2e project instructions"))
+    }
+  }
+
+  test("refreshTurn e2e: 围栏总闸关（sandboxEnabled=false）+ projectSession=true ⇒ AGENTS.md 仍注入（S1 解耦）") {
+    val ws = wsWithAgentsMd("ws-e2e-decoupled", "# decoupled project instructions")
+    val res = mkResources(tempRoot / "e2e-agents-lib")
+    val defn = AgentDef(name = "swift-dev", description = "arbitrary node agent")
+    // 解耦核心取证：注入不再依赖沙箱总闸——拆围栏（sandboxEnabled 退役/置 false）
+    // 不得连带关掉项目级契约文件注入（design §0 结论 4 / R8 h2 禁止项）。
+    val decoupled = AgentState(
+      sessionId = None,
+      folderId = None,
+      projectRoot = Some(ws.toString),
+      sandboxEnabled = false,
+      projectSession = true
+    )
+    ContextRefresher.refreshTurn(decoupled, res, defn).map { tc =>
+      assertEquals(tc.agentsMd, Some("# decoupled project instructions"))
     }
   }
 
