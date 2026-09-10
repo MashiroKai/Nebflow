@@ -135,8 +135,6 @@ export default {
   'flowmap.detail.notify': 'Dispatcher notify',
   'flowmap.detail.yes': 'Yes',
   'flowmap.chain.archivedToast': 'Chain "{chain}" archived ({n} nodes together)',
-  'flowmap.chain.retainedToast': 'Node completed — chain "{chain}" incomplete ({done}/{total}); terminal card retained on map',
-  'flowmap.chain.retainedAbnormalToast': 'Chain "{chain}" has failed/cancelled nodes ({done}/{total} terminal) — not auto-archived; retained on map for 24h',
   // Special-node flag badges (badge batch 2026-09-05): head-row capsule labels;
   // appended at the tail of the flowmap block to minimize merge-conflict surface
   // with other locales branches in this batch

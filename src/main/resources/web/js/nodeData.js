@@ -4,7 +4,10 @@
 // 所有 REST 端点与 WS 事件路径集中在本文件，前端据此对接后端。
 //
 //   GET /api/projects → {projects:[{name,workspace,agentFile,description,createdAt}]}
-//   GET /api/projects/<name>/flow-map → NodeList 载荷 {nodes[],worktrees[],meta}
+//   GET /api/projects/<name>/flow-map → NodeList 载荷 {nodes[],worktrees[],chains?[],meta}
+//     （链级抽象 P0：chains = 顶层旁挂条件键 [{id,title,entries,ends,memberIds}]，
+//     title 后端三级推导下发；节点 payload 条件键 chainId——可能缺失，缺失 = 孤立
+//     节点。旧后端无这两键，前端零派生优雅降级）
 //     未挂载 → 404 {error}
 //   GET /api/projects/<name>/flow-map/archive → Flow Archive 分批 {batches[],ttlMs,count}
 //     （裁定④「TTL 分开」批：归档面板后端数据源；显示窗 24h）未挂载 → 404 {error}
