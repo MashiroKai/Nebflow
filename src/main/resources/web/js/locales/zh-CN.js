@@ -735,6 +735,8 @@ export default {
   'bg.detail.exit': 'exit {code}',
   'bg.detail.failedHint': '失败原因：{error}',
   'bg.detail.cancelHint': '取消原因：{error}',
+  'bg.detail.readError': '输出读取失败（网络异常或服务无响应），请关闭后重试',
+  'bg.detail.stopped': '输出轮询已停止（任务长时间未结束）',
 
   // === Time ===
   'time.yesterday': '昨天',
