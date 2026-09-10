@@ -61,7 +61,7 @@ class NeblinkPresenceConvergenceSpec extends CatsEffectSuite:
     Dispatcher.parallel[IO].use { dispatcher =>
       for
         ms <- NeblinkService.createForTest(0, dispatcher, testGrace)
-        tunnel = new NeblinkRelayTunnel(ms, "http://127.0.0.1:9", () => None)(dispatcher)
+        tunnel = new NeblinkRelayTunnel(ms, "http://127.0.0.1:9", () => IO.pure(None))(dispatcher)
         out <- use(ms, tunnel)
       yield out
     }
