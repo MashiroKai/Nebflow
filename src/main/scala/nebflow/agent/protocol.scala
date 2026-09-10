@@ -885,6 +885,13 @@ case class SessionContext(
     * AskUser payload 的 nodeName 字段来源（badge「project · nodeName」归因）。
     * None = 非项目节点会话（Nebula/分发器/REPL——分发器由 isDispatcher 标注）。 */
   flowNodeName: Option[String] = None,
+  /** 链级抽象 P2（20260910 process-doc-chain-attribution spec §9.2 项 2）：本节点
+    * 所属链 id（NodeEngine 节点 spawn 时经 FlowMapStore.chainIdOf 判据单点取
+    * spawn 时刻快照注入；分量成员数 ≥2 才带值）。经 AgentCore 透传
+    * ToolContext.flowChainId——节点把 `chain:` 写进过程文档元数据头的值来源。
+    * 分发器/非项目会话/孤立单节点分量 = None（分发器口径显式化见 ProjectActor
+    * spawn 点）。快照语义见 ToolContext.flowChainId 注释。 */
+  flowChainId: Option[String] = None,
   /**
    * D11 交互豁免（freeze-schedule spec v1.1）：用户在场等待的交互会话
    * 不参与冻结——冻结它们省下的 token 远低于浪费的用户等待时间。
@@ -1126,6 +1133,8 @@ object AgentState:
     isDispatcher: Boolean = false,
     projectName: Option[String] = None,
     flowNodeName: Option[String] = None,
+    /** 链级抽象 P2（§9.2 项 2）：节点所属链 id 快照（None = 无链/非项目会话）。 */
+    flowChainId: Option[String] = None,
     sandboxEnabled: Boolean = false,
     sandboxRoot: Option[String] = None,
     loopTurnKey: Long = 0L
@@ -1159,6 +1168,7 @@ object AgentState:
         isDispatcher = isDispatcher,
         projectName = projectName,
         flowNodeName = flowNodeName,
+        flowChainId = flowChainId,
         sandboxEnabled = sandboxEnabled,
         sandboxRoot = sandboxRoot
       ),
@@ -1227,6 +1237,8 @@ extension (s: AgentState)
   def isDispatcher: Boolean = s.session.isDispatcher
   def projectName: Option[String] = s.session.projectName
   def flowNodeName: Option[String] = s.session.flowNodeName
+  /** 链级抽象 P2（§9.2 项 2）：本节点所属链 id 快照（None = 无链/非项目会话）。 */
+  def flowChainId: Option[String] = s.session.flowChainId
 
   def withSession(session: SessionContext): AgentState = s.copy(session = session)
   def withExecution(execution: ExecutionContext): AgentState = s.copy(execution = execution)

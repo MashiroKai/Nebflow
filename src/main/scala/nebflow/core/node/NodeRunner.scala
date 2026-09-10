@@ -61,6 +61,13 @@ object NodeRunner:
     /** D6 批 F1（G9 路径 a）：节点人类可读名随 spawn 注入（NodeEngine 置
       * node.name）——AskUser payload nodeName 字段来源。详见 SessionContext。 */
     flowNodeName: Option[String] = None,
+    /** 链级抽象 P2（20260910 process-doc-chain-attribution spec §9.2 项 4/5）：
+      * 节点所属链 id（spawn 时刻快照）——NodeEngine 节点/loop 会话 spawn 置
+      * NodeEngine.chainContextOf(nodeId) 快照值（与 FlowMapStore.chainIdOf 同口径，
+      * 一次分量重算同时取 id/title/成员数）；分发器 spawn 显式置 None（不属任何链，
+      * ProjectActor 口径）；Delegate/SubTask/flow 轨默认 None = 零变化。
+      * 详见 SessionContext.flowChainId / ToolContext.flowChainId。 */
+    flowChainId: Option[String] = None,
     /** actor 名字（默认 = sessionId；flow 节点用 "dagnode-<nodeId>-<sid>" 前缀）。 */
     actorName: String = "",
     /** 阶段 2a 沙箱（§A.6）：project 节点/分发器置 true——AgentCore 从
@@ -106,6 +113,7 @@ object NodeRunner:
           isDispatcher = p.isDispatcher,
           projectName = p.projectName,
           flowNodeName = p.flowNodeName,
+          flowChainId = p.flowChainId,
           sandboxEnabled = p.sandboxEnabled,
           sandboxRoot = p.sandboxRoot
         ),

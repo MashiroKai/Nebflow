@@ -685,21 +685,29 @@ class NodeEngine(
                   // 历史遗留数据（校验生效前落盘的零连接旧节点）与校验层外瞬态。
                   if node.status == NodeLifecycle.Wiring && node.task.isEmpty && node.in.isEmpty && node.deps.isEmpty then IO.unit
                   else {
-                    // resume：Some → 首轮输入 = resume prompt（任务全文经 NodeList(detail)
-                    // 指引自读，BackoffSupervisor continue-prompt 直系演化）；None → buildInput。
-                    val inputIO = resume.fold(buildInput(node))(ctx => IO.pure(ctx.resumePrompt))
-                    inputIO.flatMap { input =>
-                      // 翻转竞发败方终结（trigger-chain-fix CAS 守卫）：spawnAndRun 内
-                      // 翻转 LostRace 败方抛 StartRaceLost——在此单点吞掉，对全部调用
-                      // 方（forkStart/runDetached/直接调用）呈安静败方语义；其他异常
-                      // 原样上抛（forkStart/runDetached 留痕）。
-                      // LoopNode 路由（LoopNode 批 2026-09-06）：node.loop 启用 → 走
-                      // spawnAndRunLoop（worker/verify 双会话迭代）；否则标准路径。
-                      val runIO =
-                        if node.loop.exists(_.enabled) then spawnAndRunLoop(node, input, resume)
-                        else spawnAndRun(node, input, resume)
-                      runIO.handleErrorWith {
-                        case _: NodeEngine.StartRaceLost => IO.unit
+                    // 链快照单点（链级抽象 P2 §9.2 项 4/5/7 + 性能纪律）：spawn 前取
+                    // 一次，同时喂首条消息链头（buildInput）与会话身份
+                    // （ToolContext.flowChainId）——同一快照两处同源，链头文本与会话
+                    // 身份恒等（不重复全量重算分量）。resume 路径跳过 buildInput（用
+                    // resume prompt）但身份照旧注入：快照重取（spawn 时刻语义），非
+                    // 崩溃前残值。
+                    chainContextOf(node.id).flatMap { chain =>
+                      // resume：Some → 首轮输入 = resume prompt（任务全文经 NodeList(detail)
+                      // 指引自读，BackoffSupervisor continue-prompt 直系演化）；None → buildInput。
+                      val inputIO = resume.fold(buildInput(node, chain))(ctx => IO.pure(ctx.resumePrompt))
+                      inputIO.flatMap { input =>
+                        // 翻转竞发败方终结（trigger-chain-fix CAS 守卫）：spawnAndRun 内
+                        // 翻转 LostRace 败方抛 StartRaceLost——在此单点吞掉，对全部调用
+                        // 方（forkStart/runDetached/直接调用）呈安静败方语义；其他异常
+                        // 原样上抛（forkStart/runDetached 留痕）。
+                        // LoopNode 路由（LoopNode 批 2026-09-06）：node.loop 启用 → 走
+                        // spawnAndRunLoop（worker/verify 双会话迭代）；否则标准路径。
+                        val runIO =
+                          if node.loop.exists(_.enabled) then spawnAndRunLoop(node, input, resume, chain)
+                          else spawnAndRun(node, input, resume, chain)
+                        runIO.handleErrorWith {
+                          case _: NodeEngine.StartRaceLost => IO.unit
+                        }
                       }
                     }
                   }
@@ -741,17 +749,47 @@ class NodeEngine(
           }
         }
 
-  /** 构造节点输入：自身 task 上下文 + 各上游 result（=== Node <name> === 头，§2.7）+
-    * blocked 声明协议脚注（设计 §1.5 原文，单点注入覆盖所有节点——节点 agent 是通用
-    * 全局 agent，system prompt 不含约定，必须随输入注入）。
+  /** 链快照单点（链级抽象 P2 · §9.2 性能纪律硬约束）：`FlowMapStore.topologicalChains`
+    * 每次调用全量重算 `combinedNodes` + 弱连通分量（O(N+E)）——**只允许在节点 spawn
+    * 时调用一次**，禁止进事件流/结果落盘/索引对账等热路径（逐节点调用放大为
+    * O(N·E)，§9.2 :571）。
+    * 本方法 = `chainIdOf` 判据单点的手工展开（同一次分量重算里同时取得 chainId /
+    * title / memberCount 三值——若调 chainIdOf 再算一次分量即双重全量重算），口径
+    * 与 chainIdOf 逐字同源：合并集（活动∪归档）上取含本节点的分量，成员数 ≥2 才
+    * 带值（孤立单节点链 = 无链，与载荷 chainId 条件键恒同）。 */
+  private[project] def chainContextOf(nodeId: String): IO[Option[NodeEngine.NodeChainContext]] =
+    store.combinedNodes.map { combined =>
+      FlowMapStore.topologicalChains(combined.values)
+        .find(_.memberIds.contains(nodeId))
+        .filter(_.memberIds.size >= 2)
+        .map { ci =>
+          NodeEngine.NodeChainContext(
+            chainId = ci.id,
+            title = FlowMapStore.chainTitle(ci.memberIds.flatMap(combined.get), ci.id),
+            memberCount = ci.memberIds.size
+          )
+        }
+    }
+
+  /** 构造节点输入：链上下文块（链头 + 元数据头模板，仅本节点有链时注入）+ 自身
+    * task 上下文 + 各上游 result（=== Node <name> === 头，§2.7）+ blocked 声明协议
+    * 脚注（设计 §1.5 原文，单点注入覆盖所有节点——节点 agent 是通用全局 agent，
+    * system prompt 不含约定，必须随输入注入）。
     * 收敛裁定（作者 2026-09-07）：项目记忆=分发器配置知识——分发器建节点时把关键
     * 口径写进节点 task，节点侧不再注入记忆全文。节点上下文=task+上游结果+AGENTS.md；
     * 节点每 spawn 省一份记忆全文 token（多节点并行批次收益可观）；AGENTS.md 每 turn
     * 注入面不受影响。全局注入面（ContextRefresher）不含项目记忆——瘦身边界不变。
     * TaskBoard 批 2（§3a）：头部追加任务板块（在任务文本之前；无板/三段皆空 →
-    * 不注空段）——「自身工单 id」是节点显式上报（决策 d）的使能器。 */
-  private[project] def buildInput(node: NodeDef): IO[String] =
+    * 不注空段）——「自身工单 id」是节点显式上报（决策 d）的使能器。
+    * 链级抽象 P2（§9.2 项 7/8）：链头 + 元数据头模板置于最前（首屏可见，agent 先
+    * 看到链归属再读任务）；`chain` 参数由调用方（startNode）传入 spawn 时刻快照——
+    * 无链（None）→ 整块不注入（不注空行/零占位）。 */
+  private[project] def buildInput(node: NodeDef, chain: Option[NodeEngine.NodeChainContext]): IO[String] =
     val ownTask = node.task.getOrElse("")
+    // 链上下文块（有链才有）：链头一行 + 紧随的可复制元数据头模板（§3，文本尽量短）
+    // ——两行同一块（块内不空行，「模板紧随链头」字面口径），块间仍以空行分隔。
+    val chainBlock: List[String] =
+      chain.toList.map(c => NodeEngine.chainHeaderLine(c) + "\n" + NodeEngine.DocMetadataHeadBlock)
     taskBoardNodeBlock(node).flatMap { boardBlock =>
       node.in.traverse { upId =>
         store.findNode(upId).map {
@@ -767,11 +805,12 @@ class NodeEngine(
           case None => None
         }
       }.map { upstream =>
-        (List(boardBlock, ownTask).filter(_.nonEmpty) ++ upstream).mkString("\n\n") + "\n\n" + NodeEngine.ProtocolFootnote
+        (chainBlock ++ List(boardBlock, ownTask).filter(_.nonEmpty) ++ upstream).mkString("\n\n") + "\n\n" + NodeEngine.ProtocolFootnote
       }
     }
 
-  private def spawnAndRun(node: NodeDef, inputText: String, resume: Option[NodeEngine.ResumeContext] = None): IO[Unit] =
+  private def spawnAndRun(node: NodeDef, inputText: String, resume: Option[NodeEngine.ResumeContext] = None,
+      chain: Option[NodeEngine.NodeChainContext] = None): IO[Unit] =
     val nodeId = node.id
     for
       agentOpt <- EntityLoader.loadAgent(node.agent)
@@ -805,7 +844,7 @@ class NodeEngine(
                       // 回收兜底（§B.4 第 5 步）：completed/failed/cancelled/blocked 全
                       // 终态汇合点=runWithAgent 完成；异常中止路径由 guarantee 补位。
                       // release 幂等（PluginMcpManager 内 no-op 语义），双保险不重复卸载。
-                      runWithAgent(node, baseDef, inputWithPlugins, sessionId, prepared, grant, resume)
+                      runWithAgent(node, baseDef, inputWithPlugins, sessionId, prepared, grant, resume, chain)
                         .guarantee(resources.pluginMcp.release(sessionId))
                   }
               }
@@ -816,7 +855,8 @@ class NodeEngine(
     * verify 两 agent、准备插件、acquire 各会话 MCP grant、翻转 Running、spawn 双会话、
     * 驱动 loop。终态（PASS/failed/cancelled/blocked/达 K）由 runLoopNode 落终态化，
     * 会话/MCP/running 清理在 guarantee 内（裁定 B 双销毁不残留）。 */
-  private def spawnAndRunLoop(node: NodeDef, inputText: String, resume: Option[NodeEngine.ResumeContext] = None): IO[Unit] =
+  private def spawnAndRunLoop(node: NodeDef, inputText: String, resume: Option[NodeEngine.ResumeContext] = None,
+      chain: Option[NodeEngine.NodeChainContext] = None): IO[Unit] =
     val nodeId = node.id
     val loopCfg = node.loop.get
     // crash-recovery 批裁定③：resume=Some 时双会话复用 sessionRef（worker）/
@@ -869,11 +909,15 @@ class NodeEngine(
                             // 同面：仅自己名下任务 status+note）。
                             flowNodeId = Some(nodeId),
                             // D6 批 F1（G9 路径 a）：节点名随路注入（AskUser 归因）。
-                            flowNodeName = Some(node.name))
+                            flowNodeName = Some(node.name),
+                            // 链级抽象 P2（§9.2 项 5）：worker/verify 同属该 loop
+                            // 节点 → 同一条链的同一快照（startNode 单点算出）。
+                            flowChainId = chain.map(_.chainId))
                           verify <- spawnLoopSession(verifyBase, prepared, vGrant, verifySessionId, s"${node.name}-verify", projectRoot,
                             initialMessages = resume.fold(List.empty[Message])(_.verifyMessages),
                             flowNodeId = Some(nodeId),
-                            flowNodeName = Some(node.name))
+                            flowNodeName = Some(node.name),
+                            flowChainId = chain.map(_.chainId))
                           _ <- runLoopNode(node, worker, verify, inputText, cancelSig, resume)
                             .guarantee(
                               destroyLoopSessions(worker, verify) *>
@@ -983,7 +1027,10 @@ class NodeEngine(
     grant: PluginMcpManager.Grant,
     /** crash-recovery 批 D3：Some = 崩溃恢复续跑（initialMessages=水合 transcript，
       * inputText=resume prompt）；None = 新鲜启动（行为与本批前逐字节一致）。 */
-    resume: Option[NodeEngine.ResumeContext] = None
+    resume: Option[NodeEngine.ResumeContext] = None,
+    /** 链级抽象 P2（§9.2 项 4）：节点所属链快照（spawnAndRun 由 startNode 单点算好
+      * 传入——与首条消息链头同源）。None = 无链（孤立单节点分量/不在双区）。 */
+    chain: Option[NodeEngine.NodeChainContext] = None
   ): IO[Unit] =
     val nodeId = node.id
     // sessionId 由 spawnAndRun 生成传入（阶段 2b：plugin MCP acquire 引用记账
@@ -1132,6 +1179,11 @@ class NodeEngine(
           // D6 批 F1（G9 路径 a）：节点人类可读名随 spawn 注入——AskUser payload
           // nodeName 字段来源（badge「project · nodeName」+ node-ask 留痕事件）。
           flowNodeName = Some(nodeName),
+          // 链级抽象 P2（§9.2 项 4）：链身份随 spawn 注入（spawn 时刻快照，
+          // startNode 经 chainContextOf 单点取值）——AgentCore 透传
+          // ToolContext.flowChainId，节点产出据此写过程文档元数据头 `chain:`。
+          // None = 无链（孤立单节点分量/不在双区）——口径与载荷 chainId 恒同。
+          flowChainId = chain.map(_.chainId),
           // 阶段 2a 沙箱（§A.6）：dev/修复节点 root=<workspace>/.nebflow/<wt>、
           // merge 节点 root=workspace——物理隔离，最小权限。
           sandboxEnabled = true,
@@ -1449,7 +1501,10 @@ class NodeEngine(
     flowNodeId: Option[String] = None,
     /** D6 批 F1（G9 路径 a）：loop 节点人类可读名（worker/verify 同名——
       * 提问归因到节点而非会话分身），AskUser payload nodeName 字段来源。 */
-    flowNodeName: Option[String] = None
+    flowNodeName: Option[String] = None,
+    /** 链级抽象 P2（§9.2 项 5）：loop 会话链身份（worker/verify 同属该 loop
+      * 节点 → 同一 chainId 快照）。详见 SessionContext.flowChainId。 */
+    flowChainId: Option[String] = None
   ): IO[LoopSession] =
     for
       initD <- Deferred[IO, Either[String, List[Message]]]
@@ -1476,6 +1531,9 @@ class NodeEngine(
           flowNodeId = flowNodeId,
           projectName = Some(projectName),
           flowNodeName = flowNodeName,
+          // 链级抽象 P2（§9.2 项 5）：loop worker/verify 会话链身份与 loop 节点同源
+          // （同一 spawn 时刻快照）——工具面/元数据头归属口径与普通节点恒同。
+          flowChainId = flowChainId,
           sandboxEnabled = true,
           sandboxRoot = Some(workspace),
           initialMessages = initialMessages
@@ -2694,6 +2752,45 @@ object NodeEngine:
       |{"category":"…","detail":"…","suggestion":"…"}。
       |可完成时正常输出结果，勿申报 blocked。
       |若上方 <task-board> 给了你工单编号，完成或受阻时用 TaskBoard 工具更新其状态（close=完成，blocked=受阻）。""".stripMargin
+
+  // ── 链级抽象 P2：链上下文透传（20260910_process-doc-chain-attribution-spec §9.2）──
+
+  /** 节点所属链的 spawn 时刻快照（§9.2 项 4/5/7）：chainId = `chain-<分量最早
+    * createdAt 节点 id>`，title = 链名三级推导单点（FlowMapStore.chainTitle），
+    * memberCount = 分量成员数。三字段同源同刻——首条消息链头与会话身份
+    * （ToolContext.flowChainId）由同一快照喂，两处口径恒同。 */
+  final case class NodeChainContext(chainId: String, title: String, memberCount: Int)
+
+  /** 首条消息链头（§9.2 项 7 原文字面）：`[chain: <title> (<chainId>) · N 节点]`
+    * ——节点执行会话内唯一能拿到「我属于哪条链」的文本面（节点无 NodeList，
+    * registry.scala:70 口径）。单行、无换行尾随。 */
+  def chainHeaderLine(c: NodeChainContext): String =
+    s"[chain: ${c.title} (${c.chainId}) · ${c.memberCount} 节点]"
+
+  /** 过程文档元数据头模板（§3，本批 §9.2 项 8 注入面）——可复制 YAML front
+    * matter + 纪律抬头。**上限以键数计**（2026-09-10 作者裁定，`CONVENTIONS.md:7`
+    * 与 `:78` 权威）：≤8 个键；行数是派生量 = 键数 + 2 个 `---` 包围行 ⇒ 至多 10
+    * 行，故 8 键实例（单链 9 行 / 多链 10 行）合法。蓝本 spec §3.1 的「≤8 行」表述
+    * 已被该裁定取代（该处属已冻结阶段文档，不得回改）。
+    * 模板体 = house 单链形态（`CONVENTIONS.md:44-52` 同源，7 键 9 行）；键白名单
+    * 八个（chain/chains/chain-source/chain-role/produced-by/produced-at/
+    * doc-class/root），**零路径值**（禁绝对/相对路径 —— 防新增悬空引用）、禁嵌套
+    * 对象、缺省不带 = 合法（无归属文档仍可写，只是不进 chain 分区）。
+    * `chains`（多链归属）/`chain-role` 条件形态在 chain 行注释内就地说明；
+    * `produced-at` 与文件名时间源同刻（§3.4-2 名序=真序纪律）。
+    * 只在有链时注入（紧随链头）——无链会话无归属对象，注入模板只会诱导编造
+    * chain id（详见交付报告的裁定说明）。 */
+  val DocMetadataHeadBlock: String =
+    """[过程文档元数据头（写过程文档时可选；≤8 个键——行数 = 键数 + 2 个 --- 包围行，至多 10 行；零路径值、禁嵌套；受上限约束时省略可选键；缺省不带 = 合法。键白名单 = chain/chains/chain-source/chain-role/produced-by/produced-at/doc-class/root）——复制改值：]
+      |---
+      |chain: <chainId>          # 多链归属改写 chains: [主链, …]（仅 ≥2 条时）；合并节点 chain-role 必 merge
+      |chain-source: engine      # engine | manual | inferred
+      |chain-role: member        # member | head | tail | merge
+      |produced-by: node:<nodeId> # node:<id> | dispatcher | author | engine
+      |produced-at: <ISO-8601 秒级+时区>  # 与文件名时间源同刻，如 2026-09-10T11:28:14+08:00
+      |doc-class: stage          # stage | live
+      |root: home                # home | ws
+      |---""".stripMargin
 
   // ── LoopNode（LoopNode 批 2026-09-06，主设计 §2.2/§2.3）──────────────────
 
