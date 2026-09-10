@@ -55,20 +55,28 @@ jobs:
 
   jdk-baseline-gate:
     name: JDK Baseline Gate (21)
-    # Fail-fast static gate: the JDK 21 baseline is ONE fact spread over five
-    # declaration surfaces — release/install.sh, release/install.ps1, the
-    # README badge / build-from-source line, Dockerfile:1, build.sbt -release.
-    # Any surface drifting back to 17 is silent until a user installs on a
-    # stale JDK; the two installers drifting apart (G5 form: one file saying
-    # 17 while the other says 21) is invisible from either file alone.
+    # Fail-fast static gate. TWO constants, NOT one number:
+    #   JDK_BASELINE        = 21  runtime floor, declared on five surfaces —
+    #                             release/install.sh, release/install.ps1, the
+    #                             README badge / build-from-source line,
+    #                             Dockerfile:1, and the GatewayMain start gate.
+    #   JDK_BYTECODE_TARGET = 17  the artifact's bytecode/API target, strictly
+    #                             BELOW the floor (build.sbt -release, A-5/A-7a).
+    # Pinning the bytecode target back to 21 is a REGRESSION, not a fix: major 65
+    # makes a 17 JVM fail to load nebflow.Main at all, so the "requires Java 21"
+    # banner becomes unreachable and `update`/`doctor`/`version` (the self-repair
+    # path) get welded shut. Dropping the target to 17 does NOT loosen the API
+    # surface — release 17's API surface is a subset of 21's — and Scala 3.5.2
+    # cannot split "API 21 / bytecode 17" (same -release setting; measured).
+    # A-5 asserts build.sbt == JDK_BYTECODE_TARGET; A-7a asserts the target is
+    # strictly below the floor. The Java-17 runtime half (A-7b + A-6) runs in
+    # docker-test because it needs the assembly artifact; same script, --jar mode.
     # No needs: runs in parallel with compile and fails in seconds.
-    # The Java-17 reproduction half of the same gate runs in docker-test
-    # (it needs the assembly artifact); same script, --jar mode.
     # Same logic locally: bash scripts/check-jdk-baseline.sh
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - name: Assert JDK 21 across every declaration surface
+      - name: Assert JDK 21 across every declaration surface (+ bytecode target below the floor)
         run: bash scripts/check-jdk-baseline.sh
 
   compile:
@@ -377,14 +385,25 @@ jobs:
           docker logs ${LOWER_NAME}-test 2>&1 | head -20
           curl -sf http://localhost:8080/api/health || echo "Health check failed"
           docker stop ${LOWER_NAME}-test
-      - name: Java 17 reproduction — the jar must refuse to start (A-6)
+      - name: Java 17 reproduction — banner reachable + self-repair path alive (A-7b/A-6)
         # The only assertion that makes "Java 17 is incompatible" visible in CI:
         # the step above never fails on a broken container — `curl -sf … || echo`
         # swallows the health check, so it is green on any JVM whatsoever.
-        # Reuses this job's already-downloaded assembly, runs it inside
-        # eclipse-temurin:17-jre and asserts the gate behaviour: a NON-ZERO exit
-        # with a Java-21 / class-file-version diagnostic. Still running after
-        # 90s = did not refuse = failure (never a hang, never a pass).
+        # Reuses this job's already-downloaded assembly and runs it inside
+        # eclipse-temurin:17-jre with --network none:
+        #   A-7b  nebflow/Main.class in the jar must be major 61 (declared target
+        #         17) — a static read of the artifact, seconds.
+        #   A-6 §1 bare start must reach the HUMAN-READABLE refusal: "requires
+        #         Java 21" + upgrade guidance + Jar:/Java: lines, NON-ZERO exit.
+        #         Accepting a bare UnsupportedClassVersionError here would mean
+        #         the gate never ran — that form is now a FAILURE.
+        #   A-6 §2 version/help/doctor/update must each RUN (non-empty output, no
+        #         UnsupportedClassVersionError, version prints "nebflow v…") —
+        #         the self-repair entries must survive on the machine that needs
+        #         upgrading. `update` in an offline container is judged by
+        #         reaching its own logic (its own error), not by class loading.
+        #   Any command still running after 90s = FAILURE (never a hang, never
+        #   a pass).
         # Container discipline lives in the script: `--network none`, no
         # --network host, no port mapping, named container + EXIT trap cleanup.
         run: bash scripts/check-jdk-baseline.sh --jar "$(ls target/scala-3.5.2/${LOWER_NAME}-assembly-*.jar | head -1)"
