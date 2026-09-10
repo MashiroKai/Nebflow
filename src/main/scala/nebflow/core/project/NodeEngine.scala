@@ -227,7 +227,7 @@ class NodeEngine(
       }
       _ <- s.nodes.get(nodeId) match
         case Some(failed) if failed.status == NodeLifecycle.Failed =>
-          emitEvent("nodeUpdated", nodeId, NodePayload.buildNodeJson(failed, now)) *>
+          emitWithChain("nodeUpdated", nodeId, NodePayload.buildNodeJson(failed, now)) *>
             logger.warn(s"Node '${failed.name}' auto-finalized failed (dead session): ${err.take(200)}") *>
             FlowMapEventLog.append(workspace, projectName, nodeId, "dead-session-reaped",
               s"dead-session node auto-converged to failed: ${err.take(220)}") *>
@@ -456,8 +456,8 @@ class NodeEngine(
     * （NodeList 同构——归档区兜底查得，ttlLeftSec=0），不再发空对象。 */
   def emitRemoved(nodeId: String): IO[Unit] =
     store.findNode(nodeId).flatMap {
-      case Some(n) => emitEvent("nodeRemoved", nodeId, NodePayload.buildNodeJson(n, System.currentTimeMillis()))
-      case None    => emitEvent("nodeRemoved", nodeId, Json.obj("id" -> nodeId.asJson))
+      case Some(n) => emitWithChain("nodeRemoved", nodeId, NodePayload.buildNodeJson(n, System.currentTimeMillis()))
+      case None    => emitWithChain("nodeRemoved", nodeId, Json.obj("id" -> nodeId.asJson))
     }
 
   // ── NodeMessage（20260905 机制批，作者裁定六条语义）──────────────────
@@ -602,14 +602,25 @@ class NodeEngine(
           IO.pure(Left(s"Node '${node.id}' vanished before the message was appended (NODE_NOT_FOUND)"))
     }
 
+  /** WS 事件链富化单点（链级抽象 P0）：全部节点事件 payload 经此统一补 chainId
+    * 条件键——判据单点 FlowMapStore.chainIdOf（合并集分量成员数 ≥2 才带，孤立单
+    * 节点链不带 = payload 零膨胀；与快照 buildNodeListPayload 同口径）。查无链
+    * （节点已出双区/单节点链）→ payload 原样透传。WS 帧外壳
+    * （ProjectActor.emitNodeEvent）零改动——富化只发生在载荷体。 */
+  private def emitWithChain(eventType: String, nodeId: String, payload: Json): IO[Unit] =
+    store.chainIdOf(nodeId).flatMap {
+      case Some(cid) => emitEvent(eventType, nodeId, payload.deepMerge(Json.obj("chainId" -> cid.asJson)))
+      case None      => emitEvent(eventType, nodeId, payload)
+    }
+
   /** WS nodeCreated（NodeEdit 创建后）。payload 与 NodeList 同构。 */
   def emitCreated(node: NodeDef): IO[Unit] =
-    emitEvent("nodeCreated", node.id, NodePayload.buildNodeJson(node, System.currentTimeMillis()))
+    emitWithChain("nodeCreated", node.id, NodePayload.buildNodeJson(node, System.currentTimeMillis()))
 
   /** WS nodeUpdated（NodeEdit 编辑/wiring 变更后）。payload 与 NodeList 同构，
     * 调用方须传 store 最终态（wiring 变更走 NodeTools.emitWiringUpdates）。 */
   def emitUpdated(node: NodeDef): IO[Unit] =
-    emitEvent("nodeUpdated", node.id, NodePayload.buildNodeJson(node, System.currentTimeMillis()))
+    emitWithChain("nodeUpdated", node.id, NodePayload.buildNodeJson(node, System.currentTimeMillis()))
 
   /** 显式投递（改接投递 §2.3：已完成节点结果 → 指定目标）。P1（spec §2.2 #4/#6）：
     * 人工改接 / D1 补投 / 重激活补投链统一经本函数，目标解析加门控判定——沿
@@ -1057,7 +1068,7 @@ class NodeEngine(
           // 最终条目必须属于本活会话 fiber（NodeCancel 信号才能到达本会话）。
           running.update(m => m + (nodeId -> cancelSig)) *>
             flipped.nodes.get(nodeId).traverse_(runningDef =>
-              emitEvent("nodeUpdated", nodeId, NodePayload.buildNodeJson(runningDef, System.currentTimeMillis())))
+              emitWithChain("nodeUpdated", nodeId, NodePayload.buildNodeJson(runningDef, System.currentTimeMillis())))
         case NodeEngine.FlipOutcome.LostRace =>
           // CAS 败方：按 sig 身份只回滚自己的登记（不得误删赢家的条目），抛
           // StartRaceLost 终止本 fiber 的 for 推导（否则败方继续 spawn = 双会话，
@@ -1524,7 +1535,7 @@ class NodeEngine(
         case NodeEngine.FlipOutcome.Done =>
           running.update(m => m + (nodeId -> cancelSig)) *>
             flipped.nodes.get(nodeId).traverse_(n =>
-              emitEvent("nodeUpdated", nodeId, NodePayload.buildNodeJson(n, System.currentTimeMillis())))
+              emitWithChain("nodeUpdated", nodeId, NodePayload.buildNodeJson(n, System.currentTimeMillis())))
         case NodeEngine.FlipOutcome.LostRace =>
           running.modify { case m if m.get(nodeId).exists(_.eq(cancelSig)) => (m - nodeId, ()); case m => (m, ()) } *>
             nodeSessions.update(_ - nodeId) *> IO.raiseError(NodeEngine.StartRaceLost(nodeId))
@@ -1799,7 +1810,7 @@ class NodeEngine(
       }
       _ <- s.nodes.get(nodeId) match
         case Some(completed) =>
-          emitEvent("nodeCompleted", nodeId, NodePayload.buildNodeJson(completed, now)) *>
+          emitWithChain("nodeCompleted", nodeId, NodePayload.buildNodeJson(completed, now)) *>
             logger.info(s"Node '${completed.name}' completed (result ${resultText.length} chars)") *>
             deliverOut(completed, resultText) *>
             // deps 反向结算（deps 设计 §1.3）：与 deliverOut 同一完成 fiber 顺序推进
@@ -2002,7 +2013,7 @@ class NodeEngine(
       _ <- s.nodes.get(nodeId) match
         case Some(bn) if bn.status == NodeLifecycle.Blocked =>
           val summary = s"round ${bn.blockCount}: [${feedback.category}] ${feedback.detail.take(160)}"
-          emitEvent("nodeUpdated", nodeId, NodePayload.buildNodeJson(bn, now)) *>
+          emitWithChain("nodeUpdated", nodeId, NodePayload.buildNodeJson(bn, now)) *>
             logger.warn(s"Node '${bn.name}' blocked — $summary") *>
             FlowMapEventLog.append(workspace, projectName, nodeId, "blocked", summary) *>
             feedbackRouter.route(bn, feedback)
@@ -2028,7 +2039,7 @@ class NodeEngine(
       }
       _ <- s.nodes.get(nodeId) match
         case Some(failed) =>
-          emitEvent("nodeUpdated", nodeId, NodePayload.buildNodeJson(failed, now)) *>
+          emitWithChain("nodeUpdated", nodeId, NodePayload.buildNodeJson(failed, now)) *>
             logger.warn(s"Node '${failed.name}' failed: ${err.take(200)}") *>
             // 失败投递（§2.7 + D5 零结算）：out=Nebula → failed 消息；out=节点 →
             // 下游停等零结算（merge 例外转 blocked），停等等待者经尾部通知告知分发器。
@@ -2052,7 +2063,7 @@ class NodeEngine(
       }
       _ <- s.nodes.get(nodeId) match
         case Some(cancelled) =>
-          emitEvent("nodeUpdated", nodeId, NodePayload.buildNodeJson(cancelled, now)) *>
+          emitWithChain("nodeUpdated", nodeId, NodePayload.buildNodeJson(cancelled, now)) *>
             logger.info(s"Node '${cancelled.name}' cancelled") *>
             // P2 G11（spec §3.4）：cancelled 级联清理该会话 pending asks——来源死亡
             // 即关闭（hub 移槽 + askUserClosed 广播），卡片不再僵尸常挂。
@@ -2230,7 +2241,7 @@ class NodeEngine(
           (b.status == NodeLifecycle.Wiring || b.status == NodeLifecycle.Pending) =>
           val retryNote =
             s"failed (gen ${b.gen}/${policy.max}): ${err.take(140)} — auto-retry: reactivating self + rerunning upstream '${policy.upstream}'"
-          emitEvent("nodeUpdated", b.id, NodePayload.buildNodeJson(b, now)) *>
+          emitWithChain("nodeUpdated", b.id, NodePayload.buildNodeJson(b, now)) *>
             FlowMapEventLog.append(workspace, projectName, b.id, "retry", retryNote) *>
             logger.warn(s"Node '${b.name}' (${b.id}) $retryNote") *>
             store.getNode(policy.upstream).flatMap {
@@ -2282,7 +2293,7 @@ class NodeEngine(
     }.flatMap { s2 =>
       s2.nodes.get(up.id) match
         case Some(u2) if u2.status == NodeLifecycle.Wiring || u2.status == NodeLifecycle.Pending =>
-          emitEvent("nodeUpdated", u2.id, NodePayload.buildNodeJson(u2, now))
+          emitWithChain("nodeUpdated", u2.id, NodePayload.buildNodeJson(u2, now))
         case _ => IO.unit
     }
 
@@ -2333,7 +2344,7 @@ class NodeEngine(
       _ <- s.nodes.get(target.id) match
         case Some(bn) if bn.status == NodeLifecycle.Blocked =>
           val summary = s"merge node blocked: upstream '${failed.name}' (${failed.id}) failed — ${err.take(140)}"
-          emitEvent("nodeUpdated", target.id, NodePayload.buildNodeJson(bn, now)) *>
+          emitWithChain("nodeUpdated", target.id, NodePayload.buildNodeJson(bn, now)) *>
             logger.warn(s"Node '${bn.name}' $summary") *>
             FlowMapEventLog.append(workspace, projectName, target.id, "merge-blocked", summary) *>
             deliverToNebula(

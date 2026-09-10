@@ -176,25 +176,41 @@ class NodeEdgeRepairSpec extends CatsEffectSuite:
     }
 
   /** 让指定已完成节点悬空化（out 断开）并走真实链级归档路径移入归档区。
-    * 裁定④链级 sweep 口径：整链全终态才归档——夹具把目标节点 createdAt 回拨 10min
-    * 自成一批（与同测在飞节点间隔 >120s 批窗口），整批全终态 → 即时归档。 */
+    * 链级抽象 P0 拓扑口径（C4）：整链全终态才归档——夹具断开 out（目标节点无
+    * in/deps）→ 自成单成员孤立链 → 全终态 → 即时归档。幂等容错：同项目内其他
+    * 孤立 completed 节点会在同一次 sweep 一并出库（拓扑口径下归档边界=连通性，
+    * 旧时间批口径的「与 running 兄弟同批幸存」不存在）——目标已不在活动区时
+    * 直接回其归档 id。 */
   private def archiveDangling(rt: ProjectRuntime, name: String): IO[String] =
-    for
-      id <- idOf(rt, name)
-      _ <- waitStatus(rt, name, Set(NodeLifecycle.Completed))
-      _ <- rt.store.mutate { s =>
-        s.nodes.get(id) match
-          case Some(fresh) =>
-            s.copy(nodes = s.nodes.updated(id, fresh.copy(
-              out = Nil, // 悬空（陈旧 out 覆盖时代的历史损伤形态 / LLM 断开写法）
-              createdAt = System.currentTimeMillis() - 600000))) // 自成一批（链级 sweep 批次隔离）
-          case None => s
-      }
-      removed <- rt.store.sweepCompletedChains(System.currentTimeMillis())
-      _ <- assertIO(IO(removed.contains(id)), true, "node must be swept into archive")
-      archived <- rt.store.findNode(id)
-      _ <- assertIO(IO(archived.map(_.status)), Some(NodeLifecycle.Completed), "archived copy must keep completed status")
-    yield id
+    rt.store.snapshot.flatMap { s =>
+      s.nodes.values.find(_.name == name) match
+        case Some(n) =>
+          waitStatus(rt, name, Set(NodeLifecycle.Completed)) *>
+            rt.store.mutate { st =>
+              st.nodes.get(n.id) match
+                case Some(fresh) =>
+                  st.copy(nodes = st.nodes.updated(n.id, fresh.copy(
+                    out = Nil, // 悬空（陈旧 out 覆盖时代的历史损伤形态 / LLM 断开写法）
+                    createdAt = System.currentTimeMillis() - 600000)))
+                case None => st
+            }.flatMap { _ =>
+              rt.store.sweepCompletedChains(System.currentTimeMillis()).flatMap { removed =>
+                assert(removed.contains(n.id), "node must be swept into archive")
+                rt.store.findNode(n.id).flatMap {
+                  case Some(archived) =>
+                    IO(assertEquals(archived.status, NodeLifecycle.Completed, "archived copy must keep completed status")).as(n.id)
+                  case None => IO.raiseError(new AssertionError("archived copy missing after sweep"))
+                }
+              }
+            }
+        case None =>
+          // 已被同 sweep 带进归档区（拓扑口径：孤立 completed 即时归档）→ 直接回 id
+          rt.store.archiveSnapshot.flatMap { a =>
+            a.nodes.values.find(_.name == name) match
+              case Some(n) => IO.pure(n.id)
+              case None    => IO.raiseError(new AssertionError(s"node '$name' not found in active or archive"))
+          }
+    }
 
   /** 子集启动断言（变异验红锚「不提前触发」）：任何携带上游结果头的已启动输入
     * 必须携带全部预期头——只出现一部分 = 以不完整 barrier 提前启动。 */
