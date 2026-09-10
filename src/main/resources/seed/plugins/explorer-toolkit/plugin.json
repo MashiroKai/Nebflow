@@ -1,8 +1,7 @@
 {
   "$schema": "https://agent-plugins.org/schemas/1.0.0/plugin.schema.json",
   "name": "explorer-toolkit",
-  "version": "1.0.0",
-  "description": "代码库探索与方案规划方法论（检索举证纪律 + 方案结构与验收条件设计）；可视化配 visual-report。内含 skills：exploration-method（先入口后发散的探索路径 + 路径+行号举证纪律 + 结论先行汇报）、solution-planning（方案五件套 + 分档验收条件方法论 + 方案前置澄清纪律）。无 mcp.json、无工具扩展——纯方法论 skill 包。",
-  "capability": "代码库探索与方案规划方法论：节点获得入口定位/发散检索/路径+行号举证与方案五件套设计纪律",
+  "version": "1.0.1",
+  "description": "代码库探索与方案规划方法包——节点获得先入口后发散的探索路径、路径+行号举证纪律，以及方案五件套与分档验收条件设计能力。适用于探索陌生代码库、读代码定位入口、写技术方案、设计验收条件、规划实施步骤等任务。内含 skills：exploration-method（探索路径+路径行号举证+结论先行汇报）、solution-planning（方案五件套+分档验收条件方法论+前置澄清纪律）。不适用于需求拆解与 trade-off 调研（另配 engineering-methods 插件）；方案出图另配 visual-report 插件。组件面：无 mcp.json、无工具扩展。",
   "author": {"name": "Nebflow"}
 }

@@ -1,8 +1,7 @@
 {
   "$schema": "https://agent-plugins.org/schemas/1.0.0/plugin.schema.json",
   "name": "engineering-methods",
-  "version": "1.0.0",
-  "description": "工程方法论包——系统架构设计与并行调研纪律。内含 skills：grill（需求拆解、技术调研、trade-off 对比、双文档交付：人类摘要+AI 实施规格书）、parallel-research（正交拆题、来源强制、逐轨核验、双轨综合）。无 mcp.json、无工具扩展。",
-  "capability": "系统工程方法论：节点获得需求拆解与 trade-off 对比的双文档交付纪律、正交拆题+逐轨核验的并行调研纪律",
+  "version": "1.0.1",
+  "description": "工程方法论包——节点获得需求拆解、技术调研与 trade-off 对比的双文档交付纪律，以及正交拆题、来源强制、逐轨核验的并行调研纪律。适用于需求拆解、技术调研、方案对比、trade-off 选型、架构设计、并行调研等任务。内含 skills：grill（需求拆解/技术调研/trade-off 对比/双文档交付）、parallel-research（正交拆题/来源强制/逐轨核验/双轨综合）。不适用于已定方案的执行验证与交付把关（另配 nebflow-qa 插件）。组件面：无 mcp.json、无工具扩展。",
   "author": {"name": "Nebflow"}
 }
