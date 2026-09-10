@@ -721,8 +721,6 @@ export default {
   'bg.failed': 'Failed',
   'bg.cancelled': 'Cancelled',
   'bg.detail.aria': 'Background task output',
-  'bg.detail.copy': 'Copy',
-  'bg.detail.copied': 'Copied',
   'bg.detail.empty': 'No output yet',
   'bg.detail.remote': 'Output viewing is not available for remote tasks',
   'bg.detail.notFound': 'Task output is no longer available (task ended and was cleaned up)',

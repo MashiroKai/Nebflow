@@ -725,8 +725,6 @@ export default {
   'bg.failed': '失败',
   'bg.cancelled': '已取消',
   'bg.detail.aria': '后台任务输出详情',
-  'bg.detail.copy': '复制',
-  'bg.detail.copied': '已复制',
   'bg.detail.empty': '暂无输出',
   'bg.detail.remote': '远端任务暂不支持输出查看',
   'bg.detail.notFound': '任务输出已不可用（任务已结束并被清理）',
