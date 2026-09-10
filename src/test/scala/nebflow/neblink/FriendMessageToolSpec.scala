@@ -9,7 +9,7 @@ import munit.CatsEffectSuite
 import nebflow.neblink.{AgentMessagingConfig, FriendService, FriendSummary, NeblinkClient, NeblinkEndpoint, NeblinkServerConfig}
 
 /**
- * SendFriendMessage tool 单测（#290 域 A）。
+ * SendMessage tool 单测（#290 域 A）。
  *
  * 钉死：①to 三级解析（neblinkId 精确→昵称精确→昵称唯一前缀）+ 多命中/零命中候选
  * 列表 ②档位行为透传（off 拒绝 / auto 发送成功文案 / ask 未接线拒绝）③参数校验
@@ -175,8 +175,8 @@ class FriendMessageToolSpec extends CatsEffectSuite:
     assert(d.contains("delivered as the user"))
   }
 
-  test("tool registered under the exact name SendFriendMessage") {
-    assert(ToolRegistry.TOOL_MAP.contains("SendFriendMessage"))
+  test("tool registered under the exact name SendMessage") {
+    assert(ToolRegistry.TOOL_MAP.contains("SendMessage"))
   }
 
 end FriendMessageToolSpec

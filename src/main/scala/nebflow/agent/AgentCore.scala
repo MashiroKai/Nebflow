@@ -1757,11 +1757,11 @@ private[agent] trait AgentCore:
           case Nil => Set.empty[String]
           case List("*") => ToolRegistry.ALL_TOOLS.map(_.name).toSet
           case names => names.toSet
-    // 阶段 2d（D.1-11）：SendFriendMessage 声明式注入通道删除——机制固定唯一
+    // 阶段 2d（D.1-11）：SendMessage 声明式注入通道删除——机制固定唯一
     // 授权（NebulaOrchestrationTools，2c 起）。任何 agent.json 声明（含 "*"）
     // 不再授能（TeamTaskTools 防逃逸先例：the tool name IS the permission
     // boundary）。Nebula 的静态集照常携带该工具，行为零变化。
-    val declaredBase = base - "SendFriendMessage"
+    val declaredBase = base - "SendMessage"
     // Fixed tools are auto-injected based on agent category — they don't
     // need to be listed in agent.json. Mail is team-only. 阶段 2d（D.1-1）：
     // 注入唯一入口 = fixedToolsForDef——收敛三角色直接返回静态集常量（收口），
@@ -2257,7 +2257,7 @@ object AgentCore:
     *   - 编排触发：Task / ProjectCreate / AgentControl（list/status/cancel/restart）
     *   - 任务编排：TaskList（2026-09-06 TaskList 批；NebulaExclusiveTools 同批
     *     防声明逃逸——dispatcher/general/"*" 一律剥离）
-    *   - 通信：SendFriendMessage（好友功能非旧体系，保留机制固定）
+    *   - 通信：SendMessage（好友功能非旧体系，保留机制固定）
     *   - 读三件：Read / Glob / Grep（读代码读现状；无写手——一切执行走
     *     Project 派发）
     *   - 可视化：Card（2026-09-05 解封，commit 793f62c1 曾整体删除）
@@ -2279,7 +2279,7 @@ object AgentCore:
     // 任务编排（2026-09-06 TaskList 批：快变状态出记忆；首期无前端）
     "TaskList",
     // 通信（好友功能非旧体系）
-    "SendFriendMessage",
+    "SendMessage",
     // 读三件（08:40 解禁；23:34 裁定收走写手——Bash/Write/Edit 不在本集）
     "Read",
     "Glob",
