@@ -243,14 +243,45 @@ object Defaults:
    * （dev server 的 file watcher/HMR tick）都轻松越过 → 该 10 分钟安全网被
    * 微动无条件解除（本次事故前台命令跑了 2h50m 未被杀，即此因）。
    *
-   * 本值 = 一个真正在算的进程在一个 30s 采样窗内至少燃烧的 CPU（1s ≈ 3.3% 单核）；
-   * 微动（事故实测 0.18% ≈ 54ms/30s）不再算进展 —— 判定标准与采样窗同一量纲
-   * （CPU 速率），不再是跨窗口失效的绝对差值。
+   * 语义（2026-09-10 验收项 3 修复后与实现逐字对齐，见 shell.scala
+   * `foregroundNoProgressWatch`）：每 `ForegroundSampleIntervalMs` 采一次进程 CPU，
+   * 与**上一个采样窗**的采样值相减；差值**严格大于**本值才算「本窗有进展」（重置
+   * 判死窗口）。输出行数增长同样算进展。基线在重置与不重置两条分支**都**推进 ⇒
+   * 比较的永远是单窗增量，不是「自上次重置以来的累计量」（旧实现漏推 no-reset
+   * 分支的基线，把有效门槛压到 1.754 ms/s——声明值与实现差 19 倍，本条注释的
+   * 「不再是跨窗口失效的绝对差值」当时与实现相反；现已按本条实现）。
    *
-   * system prop `nebflow.shell.foregroundCpuProgressNanos`。
+   * 有效门槛量化：每窗 CPU 增量 ≤ 本值（默认 1e9 ns / 30s 窗 = 33.3 ms/s =
+   * **3.3% 单核**）的进程算「无进展」⇒ 连续 `ForegroundNoProgressTimeoutMs`
+   * （默认 600s = 20 窗）即被杀。事故实测 CPU 微动 1.786 ms/s（0.18% 单核 ≈
+   * 54ms/30s，比门槛低 18.7 倍）⇒ 必然在 10min 窗口内被收掉。反向（#319 保护
+   * 不变）：每窗烧 > 本值 CPU 的长跑（构建/测试）或任何有输出的命令照常续跑。
+   *
+   * system prop `nebflow.shell.foregroundCpuProgressNanos`（每次调用现读）。
+   * 注意：本值按「每个采样窗」计量——缩短 `nebflow.shell.foregroundSampleIntervalMs`
+   * 会使等效速率门槛按同比例升高，短窗测试须等比调小本值。
    */
   def ForegroundCpuProgressNanos: Long =
     sys.props.getOrElse("nebflow.shell.foregroundCpuProgressNanos", "1000000000").toLong
+
+  /**
+   * 前台 no-progress ceiling 的 CPU 采样窗（默认 30s，与 ForegroundCpuProgressNanos
+   * 的「1s/窗」配对；判死窗口 = 20 个采样窗）。system prop
+   * `nebflow.shell.foregroundSampleIntervalMs`，每次调用现读（kill-switch 先例）——
+   * 下游真实形态复现 / 验收可把 10min 级单臂压到分钟级（须 > 0）。
+   */
+  def ForegroundSampleIntervalMs: Long =
+    sys.props.getOrElse("nebflow.shell.foregroundSampleIntervalMs", "30000").toLong
+
+  /**
+   * 前台 no-progress ceiling 的判死窗口（默认 600000ms = 10min，即 20 个采样窗）：
+   * 前台命令零输出、且每个采样窗的 CPU 增量都 ≤ ForegroundCpuProgressNanos 持续至此
+   * → killProcessTree + 带说明的 TimeoutException（命令级；与 #319「前台直跑不转后台」
+   * 并存——本判死是停滞兜底，不改变直跑语义）。system prop
+   * `nebflow.shell.foregroundNoProgressTimeoutMs`，每次调用现读（kill-switch 先例）。
+   */
+  def ForegroundNoProgressTimeoutMs: Long =
+    sys.props.getOrElse("nebflow.shell.foregroundNoProgressTimeoutMs", "600000").toLong
 
   // ---- boot-time 崩溃恢复（crash-recovery 批 2026-09-07）----
 

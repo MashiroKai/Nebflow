@@ -25,7 +25,7 @@ object BashTool extends Tool:
 
 Usage:
 - The working directory persists between commands, but shell state does not persist across Nebflow restarts.
-- You may specify an optional timeout in milliseconds (max 3600000) to set a hard deadline. If not specified, the command runs in the foreground until it completes (or is killed by the stall guard: no output AND no CPU for 10 minutes). Foreground commands do NOT auto-move to background.
+- You may specify an optional timeout in milliseconds (max 3600000) to set a hard deadline. If not specified, the command runs in the foreground until it completes (or is killed by the stall guard: no output AND under ~1s of CPU per 30s window, sustained for 10 minutes). Foreground commands do NOT auto-move to background.
 - Dangerous commands (rm -rf, force push, etc.) are blocked for safety.
 - For git commands: Prefer to create a new commit rather than amending an existing commit.
 - Only create commits when requested by the user.
@@ -507,8 +507,9 @@ Git safety:
    *
    * 卡死兜底保持：
    * - 显式 timeout（若有）→ watchdog 杀进程树
-   * - 前台 no-progress ceiling（shell.scala #22）：10min 零输出且无**实质** CPU
-   *   （CPU 速率阈值与活动桥接常量解耦，2026-09-10）→ 停滞杀（命令级）
+   * - 前台 no-progress ceiling（shell.scala #22）：10min 零输出且每个采样窗的 CPU
+   *   增量都 ≤ 1s（**窗口增量**口径，阈值与活动桥接常量解耦，2026-09-10）→
+   *   停滞杀（命令级）
    * - TaskStuckWatcher（turn 级，2026-09-10 换轴）：判据 = agent 侧事件停滞 ∪
    *   单个工具调用持续超 10min（工具相位），**均不看进程 CPU**——进程活性
    *   （processActivityMs）不再是「有进展」的证据，长跑命令不再能凭 CPU 微动
