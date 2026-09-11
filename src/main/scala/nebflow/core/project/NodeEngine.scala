@@ -876,7 +876,7 @@ class NodeEngine(
         }
     }
 
-  /** 构造节点输入：链上下文块（链头 + 元数据头模板，仅本节点有链时注入）+ 自身
+  /** 构造节点输入：链上下文块（链头 + 文件名尾溯源提示段，仅本节点有链时注入）+ 自身
     * task 上下文 + 各上游 result（=== Node <name> === 头，§2.7）+ blocked 声明协议
     * 脚注（设计 §1.5 原文，单点注入覆盖所有节点——节点 agent 是通用全局 agent，
     * system prompt 不含约定，必须随输入注入）。
@@ -886,15 +886,16 @@ class NodeEngine(
     * 注入面不受影响。全局注入面（ContextRefresher）不含项目记忆——瘦身边界不变。
     * TaskBoard 批 2（§3a）：头部追加任务板块（在任务文本之前；无板/三段皆空 →
     * 不注空段）——「自身工单 id」是节点显式上报（决策 d）的使能器。
-    * 链级抽象 P2（§9.2 项 7/8）：链头 + 元数据头模板置于最前（首屏可见，agent 先
+    * 链级抽象 P2（§9.2 项 7/8；提示段形态 = 2026-09-11 R-3 裁定后的文件名尾溯源）：
+    * 链头 + 溯源提示段置于最前（首屏可见，agent 先
     * 看到链归属再读任务）；`chain` 参数由调用方（startNode）传入 spawn 时刻快照——
     * 无链（None）→ 整块不注入（不注空行/零占位）。 */
   private[project] def buildInput(node: NodeDef, chain: Option[NodeEngine.NodeChainContext]): IO[String] =
     val ownTask = node.task.getOrElse("")
-    // 链上下文块（有链才有）：链头一行 + 紧随的可复制元数据头模板（§3，文本尽量短）
-    // ——两行同一块（块内不空行，「模板紧随链头」字面口径），块间仍以空行分隔。
+    // 链上下文块（有链才有）：链头一行 + 紧随的可复制文件名尾溯源提示段（文本尽量短）
+    // ——两行同一块（块内不空行，「提示段紧随链头」字面口径），块间仍以空行分隔。
     val chainBlock: List[String] =
-      chain.toList.map(c => NodeEngine.chainHeaderLine(c) + "\n" + NodeEngine.DocMetadataHeadBlock)
+      chain.toList.map(c => NodeEngine.chainHeaderLine(c) + "\n" + NodeEngine.DocProvenanceBlock)
     taskBoardNodeBlock(node).flatMap { boardBlock =>
       node.in.traverse { upId =>
         store.findNode(upId).map {
@@ -1286,7 +1287,8 @@ class NodeEngine(
           flowNodeName = Some(nodeName),
           // 链级抽象 P2（§9.2 项 4）：链身份随 spawn 注入（spawn 时刻快照，
           // startNode 经 chainContextOf 单点取值）——AgentCore 透传
-          // ToolContext.flowChainId，节点产出据此写过程文档元数据头 `chain:`。
+          // ToolContext.flowChainId，节点产出据此在过程文档**文件名尾段**写链归属
+          // `__<chainId>`（正文零元数据头；2026-09-11 作者裁定 R-3）。
           // None = 无链（孤立单节点分量/不在双区）——口径与载荷 chainId 恒同。
           flowChainId = chain.map(_.chainId),
           // 阶段 2a 沙箱（§A.6）：dev/修复节点 root=<workspace>/.nebflow/<wt>、
@@ -1658,7 +1660,7 @@ class NodeEngine(
           projectName = Some(projectName),
           flowNodeName = flowNodeName,
           // 链级抽象 P2（§9.2 项 5）：loop worker/verify 会话链身份与 loop 节点同源
-          // （同一 spawn 时刻快照）——工具面/元数据头归属口径与普通节点恒同。
+          // （同一 spawn 时刻快照）——工具面/文件名尾溯源归属口径与普通节点恒同。
           flowChainId = flowChainId,
           sandboxEnabled = true,
           sandboxRoot = Some(workspace),
@@ -3099,30 +3101,30 @@ object NodeEngine:
   def chainHeaderLine(c: NodeChainContext): String =
     s"[chain: ${c.title} (${c.chainId}) · ${c.memberCount} 节点]"
 
-  /** 过程文档元数据头模板（§3，本批 §9.2 项 8 注入面）——可复制 YAML front
-    * matter + 纪律抬头。**上限以键数计**（2026-09-10 作者裁定，`CONVENTIONS.md:7`
-    * 与 `:78` 权威）：≤8 个键；行数是派生量 = 键数 + 2 个 `---` 包围行 ⇒ 至多 10
-    * 行，故 8 键实例（单链 9 行 / 多链 10 行）合法。蓝本 spec §3.1 的「≤8 行」表述
-    * 已被该裁定取代（该处属已冻结阶段文档，不得回改）。
-    * 模板体 = house 单链形态（`CONVENTIONS.md:44-52` 同源，7 键 9 行）；键白名单
-    * 八个（chain/chains/chain-source/chain-role/produced-by/produced-at/
-    * doc-class/root），**零路径值**（禁绝对/相对路径 —— 防新增悬空引用）、禁嵌套
-    * 对象、缺省不带 = 合法（无归属文档仍可写，只是不进 chain 分区）。
-    * `chains`（多链归属）/`chain-role` 条件形态在 chain 行注释内就地说明；
-    * `produced-at` 与文件名时间源同刻（§3.4-2 名序=真序纪律）。
-    * 只在有链时注入（紧随链头）——无链会话无归属对象，注入模板只会诱导编造
-    * chain id（详见交付报告的裁定说明）。 */
-  val DocMetadataHeadBlock: String =
-    """[过程文档元数据头（写过程文档时可选；≤8 个键——行数 = 键数 + 2 个 --- 包围行，至多 10 行；零路径值、禁嵌套；受上限约束时省略可选键；缺省不带 = 合法。键白名单 = chain/chains/chain-source/chain-role/produced-by/produced-at/doc-class/root）——复制改值：]
-      |---
-      |chain: <chainId>          # 多链归属改写 chains: [主链, …]（仅 ≥2 条时）；合并节点 chain-role 必 merge
-      |chain-source: engine      # engine | manual | inferred
-      |chain-role: member        # member | head | tail | merge
-      |produced-by: node:<nodeId> # node:<id> | dispatcher | author | engine
-      |produced-at: <ISO-8601 秒级+时区>  # 与文件名时间源同刻，如 2026-09-10T11:28:14+08:00
-      |doc-class: stage          # stage | live
-      |root: home                # home | ws
-      |---""".stripMargin
+  /** 过程文档命名·溯源提示段（R-3，2026-09-11 作者裁定；替代原「过程文档元数据头
+    * 模板」——本批 §9.2 项 8 注入面）——**不再教写正文元数据头**：旧模板体（可复制
+    * YAML front matter + 键白名单）正是正文元数据头的诱导源，整体作废。
+    * 权威条文（与 `CONVENTIONS.md` 逐字同源）：① 正文零元数据头（`chain`/`chains`/
+    * `chain-source`/`chain-role`/`produced-by`/`produced-at`/`doc-class`/`root` 一律
+    * 不写进正文）；② 溯源只进文件名尾段——阶段文档
+    * `<YYYYMMDD>_<HHMMSS>_<topic>__<chainId>.md`、多链 `__<主链Id>+<次链Id>.md`；
+    * ③ 无归属不带尾段（不得编造），活文档（无日期前缀）同规则（有归属才带尾段）；
+    * ④ 与既有 `-<n>` 同秒消歧并存（唯一性消歧 ≠ 已禁的版本副本 `-vN`）；⑤ 存量冻结
+    * （零改名、零搬移、零回改）。
+    * 段体 = 可复制的四种文件名形态 + 三条纪律，**零 `---` 行、零键白名单**（旧模板的
+    * 诱导源就在这两处）；链 id 值取自紧随其上的链头行（`chainHeaderLine`）。
+    * 旧「元数据头上限 = ≤8 键 / ≤10 行」（2026-09-10 作者裁定）随正文头停写退为**存量
+    * 读取侧历史口径**（`index-backfill.py` 的 legacy 元数据头读取路径仍按该口径容错）。
+    * 只在有链时注入（紧随链头）——无链会话无归属对象，注入只会诱导编造 chain id
+    * （裁定理由同原交付报告）。 */
+  val DocProvenanceBlock: String =
+    """[过程文档命名·溯源（正文零元数据头；链归属只进文件名尾段 `__<chainId>`；有归属时复制改值：]
+      |# 正文零元数据头：chain/chains/chain-source/chain-role/produced-by/produced-at/doc-class/root 一律不写进正文
+      |20260911_082530_<topic>__<chainId>.md          # 阶段文档 = <YYYYMMDD>_<HHMMSS>_<topic>__<chainId>
+      |<topic>__<chainId>.md                          # 活文档（无日期前缀）同规则：有归属才带尾段
+      |20260911_082530_<topic>.md                     # 无归属不带尾段（不得编造）
+      |20260911_082530_<topic>__<主链Id>+<次链Id>.md  # 多链：__<主链Id>+<次链Id>
+      |# chainId 取自上方链头行；时间取与内容同刻的秒级本地时间；同秒重名加 -<n> 消歧；存量文档零改名/零搬移/零回改""".stripMargin
 
   // ── LoopNode（LoopNode 批 2026-09-06，主设计 §2.2/§2.3）──────────────────
 
