@@ -19,6 +19,7 @@ language: zh
    - 适用于**所有**弹窗（设置、聊天搜索、Agent 对话……），不是某个弹窗的特例
 2. **可交互控件**：统一玻璃质感标准（`.glass-control`）——主发送按钮 `#send-btn` 用**微信绿实色族（#07C160，白字）**；其余可交互控件复用其玻璃质感（blur + 立体边缘）。具体数值以主仓 `src/main/resources/web/css/input.css` 的 `#send-btn` 为准
    - **灰族语义登记（中性灰玻璃族）**：三处次级「发送」语义控件——dropbox 发送（`web/js/dropbox.js:91` `#dropbox-send-btn`）、好友消息发送（`web/js/messages.js:320` `.fm-send-btn`）、联系人验证发送（`web/js/contacts.js:514`，`.fm-verify-box` 内 `.glass-control`）——保持**中性灰**：值域 rest `rgba(255,255,255,0.45)`（暗档 `0.05`），四态 rest/hover/active/disabled 齐备，规则与 token（`--glass-send-*`）落主仓 `src/main/resources/web/css/sapphire.css` 灰族块；**严禁并入微信绿实色族**（灰族无色相）
+   - **亮档反馈用「边框 + 投影」，禁用白 alpha 填充递进**：亮底衬上白玻璃填充的 rest/hover/active 合成亮度为 253.00 / 253.33 / 254.00（Δ ≤ 0.67/255）肉眼不可辨——亮档 hover/active 只用**边框**（白 → 黑 alpha）与**投影**（外投影抬升 / inset 内陷）表达，填充值域与 rest 边框保持不动；暗档不受此限（暗底衬同组值 Δ 13–27 可辨）。裁定来源：作者 2026-09-11 可视化裁定 **B（保留白玻璃材质）**，判定出处 P4 批报告 `~/.nebflow/docs/Nebflow/20260911_112728_sendbtn-p4-gray__chain-n-a2a6cc8a.md` §4②；落地实现 `sapphire.css` 灰族块（亮档专用 `--glass-send-shadow*`，规则限 `@media (prefers-color-scheme: light)`）
 3. **字重（方案 B 中度）**：body 400 / 标题 600 / 按钮 500 / 代码 500
 4. **消息气泡**：边缘自然不刻意——rgba(0,0,0,0.04) 极淡 border；注入消息（蓝色气泡）顶栏显示来源 `SOURCE · AGENT_NAME · EVENT_TYPE`（Team 消息标注 Team name），内容区不重复这些信息
 5. **侧边栏激活态**：用阴影，不用竖线
