@@ -349,10 +349,16 @@ export function renderUserBubble(text, attachments, timestamp) {
 // visually distinct from the user's own green bubble.
 
 /** Map backend injection source → display label. Sources are tool/protocol
- *  names (proper nouns) — no i18n needed. Unknown sources are capitalized. */
+ *  names (proper nouns) — no i18n needed. Unknown sources are capitalized.
+ *
+ *  task / dispatch（Q2-B2，2026-09-11 任务分发器收件规则批）：后端对分发器收件的
+ *  两种入口权威定名——`task` = Task 入口（Task 工具 / Mail(→project) / 重入 /
+ *  spawn 首条 prompt），`dispatch` = 回流通知（DispatchNotify）。二者显式登记，
+ *  **不靠首字母大写兜底**（兜底对多词源名/大小写变体不设防）。 */
 const INJECTED_SOURCE_LABELS = {
   mail: 'Mail', delegate: 'Delegate', subtask: 'SubTask', skill: 'Skill',
   ask: 'Ask', flow: 'Flow', tool: 'Tool', api: 'API',
+  task: 'Task', dispatch: 'Dispatch',
 };
 
 /** Map backend eventType → display suffix for the source label.
