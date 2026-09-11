@@ -1,7 +1,8 @@
 # memory.md「记忆管理规则」节替换文本（Nebula 本人执行项）
 
-> 职权红线：本文件只是 staging 参考。~/.nebflow/agents/Nebula/memory.md 是 Nebula
-> 记忆本体，宿主/节点禁 cp 直写——由 Nebula 本人执行下述 MemoryEdit。
+> 职权红线（2026-09-12 局部取代）：本文件只是 staging 参考。~/.nebflow/agents/Nebula/memory.md 是 Nebula
+> 记忆本体，宿主/节点禁 cp 直写——由**记忆整理 agent**（`memory-consolidator`，压缩双轨第二轨，消费
+> `~/.nebflow/memory/queue.jsonl`）执行；Nebula 的 `MemoryEdit` 已退化为纯记账（`queued`，下次压缩应用）。
 
 ## 执行指令（给 Nebula）
 

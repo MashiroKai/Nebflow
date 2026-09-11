@@ -4,6 +4,7 @@
     "agents:project-dispatcher",
     "agents:general",
     "agents:kernel",
+    "agents:memory-consolidator",
     "plugins:visual-report",
     "plugins:slideblocks",
     "plugins:nebflow-plugin-creator",

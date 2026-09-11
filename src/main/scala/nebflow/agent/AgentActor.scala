@@ -4211,9 +4211,52 @@ object AgentActor extends AgentCore with AgentSession:
                     val postHookIO = CompactService
                       .runPostCompactHook(state.messages.size, outcome.messages.size, resources, sessionId)
                       .handleErrorWith(_ => IO.unit)
-                    ctx
-                      .forkTurn(postHookIO)
-                      .flatMap(_ => ctx.self ! AgentCommand.CompactionComplete(Right(outcome.messages)))
+                    // 记忆轨（压缩双轨第二轨，2026-09-12 记忆改造批 / spec §5 R3 O-A）：
+                    // 在本 fork 内、CompactionComplete **之前** join ⇒ 装机点
+                    // （processing 的 CompactionComplete(Right) → state.withMessages）
+                    // 天然晚于两轨完成，零新增状态位（复用 pendingCompaction 作窗口守卫）。
+                    // 硬超时在 MemoryTrack 内（IO.timeoutTo，无 timeout 的 join 已被 spec
+                    // 明文否决）；失败/超时 = fail-open 降级：照常装机（用旧记忆）+ 队列
+                    // 条目保留 + 事件 memory-track-failed / memory-track-timeout。
+                    // 口径只对根会话（depth 0）生效——与前置 hook 的 Root profile 同域
+                    // （子会话压缩没有记忆面，跑轨即纯浪费；空队列时轨内谓词亦会跳过）。
+                    val memoryTrackIO: IO[Unit] =
+                      if depth != 0 then IO.unit
+                      else
+                        MemoryTrack
+                          .run(resources, state.sessionId, depth)
+                          .handleErrorWith { e =>
+                            IO {
+                              logAgentEvent(
+                                agentDef, depth, state.sessionId, state.sessionName,
+                                "memory-track-failed", s"err=${e.getMessage}")
+                              MemoryTrack.Result(MemoryTrack.Status.Failed, e.getMessage, 0)
+                            }
+                          }
+                          .flatMap { r =>
+                            r.status match
+                              case MemoryTrack.Status.Failed =>
+                                IO(logAgentEvent(
+                                  agentDef, depth, state.sessionId, state.sessionName,
+                                  "memory-track-failed",
+                                  s"pendingAtStart=${r.pendingAtStart} outcomes=${r.outcomesWritten} detail=${r.detail.take(200)}"))
+                              case MemoryTrack.Status.Timeout =>
+                                IO(logAgentEvent(
+                                  agentDef, depth, state.sessionId, state.sessionName,
+                                  "memory-track-timeout",
+                                  s"pendingAtStart=${r.pendingAtStart} outcomes=${r.outcomesWritten} hardMs=${MemoryTrack.hardTimeoutMs} detail=${r.detail.take(200)}"))
+                              case MemoryTrack.Status.Completed =>
+                                IO(logAgentEvent(
+                                  agentDef, depth, state.sessionId, state.sessionName,
+                                  "memory-track-completed",
+                                  s"pendingAtStart=${r.pendingAtStart} changed=${r.changed}"))
+                              case MemoryTrack.Status.Skipped => IO.unit
+                          }
+                    for
+                      _ <- ctx.forkTurn(postHookIO)
+                      _ <- memoryTrackIO
+                      _ <- ctx.self ! AgentCommand.CompactionComplete(Right(outcome.messages))
+                    yield ()
           }
           .handleErrorWith(e => ctx.self ! AgentCommand.CompactionComplete(Left(e.getMessage)))
       )

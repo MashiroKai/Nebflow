@@ -7,7 +7,7 @@
 |---|---|---|
 | `memory-consolidation-flow/flow.json` | `~/.nebflow/flows/memory-consolidation/flow.json` | scanner-only 化：consolidator 节点退役，scanner 直接 $return（报告投递 Nebula） |
 | `memory-consolidation-flow/agents/scanner/agent.json` | `~/.nebflow/flows/memory-consolidation/agents/scanner/agent.json` | 改名 memory-auditor；去 Mail（报告沿 flow 输出投递，不需要 Mail 直发） |
-| `memory-consolidation-flow/agents/scanner/system.md` | `~/.nebflow/flows/memory-consolidation/agents/scanner/system.md` | 审计报告格式：九项指标头部 + 条目级动作 + T1/T2/T3 判据 + 职权红线（不直写） |
+| `memory-consolidation-flow/agents/scanner/system.md` | `~/.nebflow/flows/memory-consolidation/agents/scanner/system.md` | 审计报告格式：九项指标头部 + 条目级动作 + T1/T2/T3 判据 + 职权红线（不直写；2026-09-12 局部取代：执行权归记忆整理 agent，发现以队列条目投入） |
 | `skills/memory-consolidation/SKILL.md` | `~/.nebflow/skills/memory-consolidation/SKILL.md` | 触发四路（周审计/生命周期/阈值/事件）+ 三问准入 + 取代规则 + 分级 + 预算 |
 | `agents-Nebula-system.md` | `~/.nebflow/agents/Nebula/system.md` | 整文件替换：仅「memory 维护纪律」节重写（三问/取代/分级/预算/审计回投），其余节原样保留 |
 | `memory-md-rule-section-replacement.md` | （非 cp——Nebula 本人执行项） | memory.md「记忆管理规则」节替换文本 + 执行指令，结果文本中同步给出 |
