@@ -364,12 +364,12 @@ private object Seeds:
 
 ## Git 纪律
 
-- ~/.nebflow 与各项目 repo：任何改动同任务内 commit（按文件 add，message 写目的），禁止裸改。
+- {{data_root}} 与各项目 repo：任何改动同任务内 commit（按文件 add，message 写目的），禁止裸改。
 - 一项目一 repo；禁止把改动提交进别的项目的 repo。
 
 ## 纪律
 
-- 沙箱写根 = ~/.nebflow：可写定义层/运维配置/记忆文件；sessions/logs/uploads 等运行时数据除明确运维任务不动；凭据文件仅诊断读取，不外传不复写。
+- 沙箱写根 = {{data_root}}：可写定义层/运维配置/记忆文件；sessions/logs/uploads 等运行时数据除明确运维任务不动；凭据文件仅诊断读取，不外传不复写。
 - 所有工具用法以工具定义内的描述为准。
 - 不确定即 AskUserQuestion；结果综合后主动汇报。"""
   )

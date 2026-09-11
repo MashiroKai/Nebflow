@@ -1339,7 +1339,12 @@ class NodeEngine(
 
   /** 逐 plugin 逐 skill 读 SKILL.md 全文（frontmatter 去除 + ${SKILL_DIR} 替换，
     * SkillService.loadSkill 单点复用——修复「模型自读拿不到替换」缺口，§B.4 ②）。
-    * 文件不可读 → Left（节点级失败，不静默降级）。 */
+    * 文件不可读 → Left（节点级失败，不静默降级）。
+    *
+    * 数据根渲染（home 硬编码 → 运行时动态化批 2026-09-11）：注入块里的
+    * `{{data_root}}` 在此渲染为实例数据根（PathUtil.substituteDataRoot，与
+    * AgentCore.buildSystemPrompt / DispatcherContextCatalog.render 同一实现）——
+    * 隔离实例的节点看到的是**本实例**的 home 路径，而非固定 `~/.nebflow`。 */
   private def injectedPluginBlock(defn: PluginRegistry.PluginDef): IO[Either[String, String]] =
     if defn.skills.isEmpty then IO.pure(Right(""))
     else
@@ -1348,7 +1353,7 @@ class NodeEngine(
           case Some(content) =>
             IO.pure[Either[String, String]](Right(
               s"""<plugin name="${defn.name}" skill="${sk.name}">
-                 |${content.content}
+                 |${PathUtil.substituteDataRoot(content.content)}
                  |</plugin>""".stripMargin))
           case None =>
             IO.pure[Either[String, String]](Left(

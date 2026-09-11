@@ -72,14 +72,14 @@ frontmatter 下限：name（等于目录名）+ description（一句话说清 wh
 
 ## 第四步：落盘（直写 + 同名探测）
 
-- 直写目标：`~/.nebflow/plugins/<name>/`（节点直写是既定流程能力；信任门保证
+- 直写目标：`{{data_root}}/plugins/<name>/`（节点直写是既定流程能力；信任门保证
   未 approve 的包不可被分配，直写风险已被门控覆盖）。
 - **落盘前必须探测同名目录**，命中即走分叉①，不覆盖。
 
 ## 第五步：机械自检
 
 ```bash
-python3 ${SKILL_DIR}/scripts/validate_plugin.py ~/.nebflow/plugins/<name>
+python3 ${SKILL_DIR}/scripts/validate_plugin.py {{data_root}}/plugins/<name>
 ```
 
 - 脚本按 M1-M15 逐条输出 PASS/FAIL + 命中原文，并复算包 digest。
@@ -104,7 +104,7 @@ digest 可与 approve 后 `GET /api/plugins` 返回的 digest 人工比对闭环
 
 | # | 分叉 | 处置 |
 |---|------|------|
-| ① | 同名冲突：`~/.nebflow/plugins/<name>/` 已存在 | 先判定用户意图：(a) 更新既有插件 → 在**副本**上改，改完整体替换 + 明确提示「digest 将漂移，需重新 approve；建议 bump version」；(b) 新包撞名 → 换名重生成。任何情况下不静默覆盖 |
+| ① | 同名冲突：`{{data_root}}/plugins/<name>/` 已存在 | 先判定用户意图：(a) 更新既有插件 → 在**副本**上改，改完整体替换 + 明确提示「digest 将漂移，需重新 approve；建议 bump version」；(b) 新包撞名 → 换名重生成。任何情况下不静默覆盖 |
 | ② | digest 漂移 / 产出后再改动 | 流程定序强制「终检 → 冻结 → 交付」；交付后不得再写。approve 前要改：改完重跑校验重走终检，approve 以终检后 digest 为准 |
 | ③ | 描述质量不合格 | 校验脚本 M6-M11 机械拦截 → 自修 ≤2 轮 → 仍不过 = blocked 上报（附逐条失败原文），禁止降级交付 |
 | ④ | name 非法 / 保留前缀冲突 | 生成期即校验（M3/M4）：非法 → 按 §5.5 规则改名；保留前缀命中且非官方 → 换名。不落盘才发现 |
@@ -115,7 +115,7 @@ digest 可与 approve 后 `GET /api/plugins` 返回的 digest 人工比对闭环
 
 终检 PASS 后，在交付报告固定附审批指引原文：
 
-> 本插件包已落盘 `~/.nebflow/plugins/<name>/`，当前为 untrusted（信任门默认拒绝）。
+> 本插件包已落盘 `{{data_root}}/plugins/<name>/`，当前为 untrusted（信任门默认拒绝）。
 > 请审阅包内容后任选其一完成审批：Plugin 面板开关、
 > `POST /api/plugins/<name>/approve`、`nebflow plugin approve <name>`。
 > 审批记录当前目录 digest；此后任何文件改动都会重新触发审批。
@@ -131,7 +131,7 @@ digest 可与 approve 后 `GET /api/plugins` 返回的 digest 人工比对闭环
 ## 交付报告模板
 
 ```
-① 产物：~/.nebflow/plugins/<name>/（包结构树）
+① 产物：{{data_root}}/plugins/<name>/（包结构树）
 ② 校验：M1-M15 全 PASS（逐条摘要 + digest sha256:<值> files=<N>）
 ③ 状态：untrusted 待批（绝不代批）
 ④ 审批指引：面板 / REST approve / CLI approve 三入口 + 生效时机说明
