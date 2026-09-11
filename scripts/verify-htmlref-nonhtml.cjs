@@ -37,9 +37,26 @@ const INIT = `
 async function boot(page) {
   const errs = [];
   page.on('pageerror', e => errs.push(String(e)));
+  // C 批（票据腿）：viewer 渲染前会 POST /api/nf-ticket（image.js/pdf.js 的
+  // ticketUrl）。静态 harness 的 http.server 对 POST 不回 2xx JSON，若不显式
+  // mock，mint 降级 → 无票 URL → nf-file 401 → renderFile catch →
+  // "Failed to render"。假票按请求里的 paths 确定性生成。
+  await page.route('**/api/nf-ticket*', (route) => {
+    let paths = [];
+    try { paths = JSON.parse(route.request().postData() || '{}').paths || []; } catch (e) { paths = []; }
+    const tickets = {};
+    (Array.isArray(paths) ? paths : []).forEach((p, i) => {
+      tickets[p] = { t: 'harness-ticket-' + i, exp: Date.now() + 3600000, uses: -1 };
+    });
+    return route.fulfill({ json: { tickets, rejected: [] } });
+  });
+  // 票据腿判据：无票请求计数（真实端点会 401 —— 这里记录成显式断言）。
+  const state = { ticketless: 0 };
+  page.__nfTicketState = state;
   // Mock /api/nf-file for image (png) and pdf range/206 like the real backend.
   await page.route('**/api/nf-file*', (route) => {
     const url = route.request().url();
+    if (!url.includes('ticket=')) state.ticketless++;
     const isPdf = url.includes('test.pdf');
     const body = isPdf ? PDF : PNG;
     const range = route.request().headers()['range'];
@@ -138,6 +155,9 @@ async function boot(page) {
   ok('Image pane has NO .canvas-ref-select', out.imageSelectAbsent === true, out.imageSelectAbsent);
   ok('URL pane has NO .canvas-ref-select', out.urlSelectAbsent === true, { urlSelectAbsent: out.urlSelectAbsent, urlPaneCount: out.urlPaneCount });
   ok('no page errors', errs.length === 0, errs);
+  // C 批（票据腿）：每个 nf-file 请求都必须带票（新机制纳入门禁）。
+  const ticketless = (page.__nfTicketState && page.__nfTicketState.ticketless) || 0;
+  ok('every /api/nf-file request carries a ticket', ticketless === 0, { ticketless });
 
   await browser.close();
   const failed = results.filter(r => !r.pass).length;

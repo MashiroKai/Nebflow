@@ -399,17 +399,18 @@ async function openApp(colorScheme) {
 
 const light = await openApp('light');
 const { page } = light;
-// F2④ console-error 断言的基线噪音白名单（2026-09-08 R2 实跑确认，两者均由
-// 既有设计在 fresh fixture home 下必然触发，与本批改动面零交集——本批不动
-// ws.js 探针/canvas 持久化/任何路由）：
-//   ① GET /api/nf-file 400 —— ws.js:307 probeCookieAuth 故意裸探（无 path
-//      参数）：400 = "cookie auth works" 的设定期望（ws.js:300-305 注释原文）。
+// F2④ console-error 断言的基线噪音白名单（两者均由既有设计在 fresh fixture
+// home 下必然触发）：
+//   ① GET /api/nf-authcheck 403 —— ws.js probeCookieAuth 的当前靶点
+//      （2026-09-11 C 批 R9 = O-A 迁移）。旧条目是「裸 GET 本地文件端点的
+//      400 = cookie auth works」：票据腿批把那个端点改为票据-only 后，无票
+//      请求恒 401，那条 400 语义已不存在，故白名单条目随靶点一起改写。
 //   ② GET /api/canvas-tabs 404 —— 契约形态：无存档 → NotFound by design
 //      （RestApiRoutes.scala:251-254「GET → 200 或 404（无存档）」）。
 // 白名单只放这两个精确模式；任何其他 console 错误照旧判 FAIL。
 const BASELINE_NOISE = [
-  /http 400: .*\/api\/nf-file/,
-  /console\.error: .*\/api\/nf-file/,
+  /http 403: .*\/api\/nf-authcheck/,
+  /console\.error: .*\/api\/nf-authcheck/,
   /http 404: .*\/api\/canvas-tabs/,
   /console\.error: .*\/api\/canvas-tabs/,
 ];

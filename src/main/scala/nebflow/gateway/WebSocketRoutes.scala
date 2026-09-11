@@ -43,7 +43,14 @@ class WebSocketRoutes(
   contextWindow: Int = Defaults.ContextWindow,
   sharedResources: SharedResources,
   mcpManager: McpManager,
-  sttService: Option[SttService] = None
+  sttService: Option[SttService] = None,
+  /** C2-6: the `/api/nf-file` ticket store, created (TTL from
+    * `nebflow.json`) and injected by GatewayMain. The default keeps every
+    * existing construction site (specs, tooling) compiling. */
+  nfTicketStore: NfTicketStore = NfTicketStore.unsafeDefault(),
+  /** C1-5 injection seam: the credential-namespace policy the read and the
+    * signing endpoints share. Memoized so the R2 inode scan is a one-off. */
+  nfPathPolicy: WebSocketRoutes.NfPathPolicy = WebSocketRoutes.NfPathPolicy.memoized()
 ):
   private val logger = NebflowLogger.forName("nebflow.ws")
 
@@ -567,7 +574,7 @@ class WebSocketRoutes(
     else ensureAgent(sessionId)(ref => ref ! command)
 
   def routes: HttpRoutes[IO] =
-    WebSocketRoutes.uploadsRoutes(token) <+> WebSocketRoutes.jsRoutes <+> WebSocketRoutes.assetsRoutes <+> WebSocketRoutes.nfFileRoutes(token) <+> HttpRoutes.of[IO] {
+    WebSocketRoutes.uploadsRoutes(token) <+> WebSocketRoutes.jsRoutes <+> WebSocketRoutes.assetsRoutes <+> WebSocketRoutes.nfFileRoutes(token, nfTicketStore, nfPathPolicy) <+> WebSocketRoutes.nfTicketRoutes(token, nfTicketStore, nfPathPolicy) <+> WebSocketRoutes.nfAuthcheckRoutes(token) <+> HttpRoutes.of[IO] {
     case req @ GET -> Root / "ws" =>
       // Cookie takes priority to avoid token leakage in browser history/logs/Referer.
       // Query param kept as fallback for cross-origin or first-load scenarios.
@@ -4863,31 +4870,377 @@ object WebSocketRoutes:
     "json"
   )
 
+  // ────────────────────────────────────────────────────────────────────────
+  // C1 — credential-namespace refusal (R1 = O-A: default-deny + allowlist)
+  //
+  // Before this batch the read endpoint confined NO root: credential check +
+  // extension whitelist only. `?path=~/.nebflow/auth.json` (extension `json`,
+  // on the whitelist) served the gateway token itself, and any extension-
+  // whitelisted file under `~/.ssh` / `~/.aws` / `~/.docker` was fair game.
+  //
+  // Policy (R1 = O-A), applied to the *realpath* (C1-1), so symlinks and
+  // `..` chains cannot dodge it:
+  //   P1 = PathUtil.dataRoot (the data root; `overrideRoot` respected — never
+  //        a hardcoded `~/.nebflow`)   → default deny, allowlist below
+  //   P2 = home credential entries      → default deny (whole subtree)
+  //   P3 = <workspace>/.nebflow         → default deny, allowlist below
+  //   outside P1..P3                    → pattern reject only (mode B), so
+  //        /tmp/... and project files stay readable (CardTool's documented
+  //        "you MUST use absolute paths" contract)
+  //   hits → 403 + actionable `reason` (never a 404 disguise)
+  //
+  // R2 (hard link aliasing) rides on top: (dev,ino) of the known credential
+  // files is captured once at startup — realpath cannot see a hard link.
+  // ────────────────────────────────────────────────────────────────────────
+
+  /** A1 — the ONLY `PathUtil.dataRoot` subtrees whose contents may be served.
+    *
+    * Every other entry under the data root is credential-bearing by default:
+    * `auth.json` (the gateway token), `nebflow.json`, `secrets/`, `logs/`,
+    * `sessions/`, `usage-records/`, … Fail-closed: a new directory added
+    * under the data root is refused until it is listed here. */
+  val NfDataRootAllowlist: List[String] =
+    List("projects", "uploads", "plots", "workspace-items", "voice-models")
+
+  /** A2 — the ONLY `<workspace>/.nebflow` subtrees whose contents may be served
+    * (evidence capture directories: screenshots/logs a node produced). */
+  val NfWorkspaceAllowlistPrefix: String = "evidence"
+
+  /** P2 — home credential entries (dirs and files) that are refused wholesale. */
+  val NfExternalCredentialEntries: List[String] =
+    List(".ssh", ".aws", ".gnupg", ".config/gh", ".docker", ".kube", ".netrc", ".git-credentials")
+
+  /** B — pattern reject for paths OUTSIDE the protected namespaces.
+    *
+    * Mode B is deliberately narrow (basename-shaped), because it must not
+    * misfire on ordinary project material: a `/tmp/output.svg` or
+    * `/Users/x/project/plot.png` stays readable. It catches the two shapes a
+    * credential file reliably has — a private-key/env basename, or a
+    * credential-holding directory anywhere in the path. */
+  val NfCredentialNamePattern: scala.util.matching.Regex =
+    """(?i)^(\.?(env|netrc|git-credentials|npmrc|pypirc|pgpass)|id_(rsa|dsa|ecdsa|ed25519)(\.pub)?|auth\.json|credentials(\.json|\.yaml|\.yml|\.txt)?|secrets?(\.json|\.yaml|\.yml|\.txt)?|token|token\.json|.*\.(pem|key|p12|pfx|keystore|jks))$""".r
+
+  /** B — credential-holding directory segments (matched at any depth). */
+  val NfCredentialPathSegments: Set[String] =
+    Set(".ssh", ".aws", ".gnupg", ".kube", ".docker", ".git-credentials")
+
+  /** The filesystem coordinates the C1 verdict is computed against.
+    *
+    * Injectable so the route stays instance-free and unit-testable with a
+    * synthesized data root / workspace root / inode set
+    * (`NfFileRoutesSpec` / `NfTicketRoutesSpec`), and so the (dev,ino) scan
+    * happens exactly once per JVM in production. */
+  final case class NfPathPolicy(
+    dataRoot: java.nio.file.Path,
+    workspaceRoot: java.nio.file.Path,
+    credentialInodes: Set[String]
+  )
+
+  object NfPathPolicy:
+
+    /** Canonicalize if the directory exists (macOS `/var` → `/private/var`,
+      * symlinked data roots), else keep the normalized absolute form. */
+    private def canonicalOrSelf(p: java.nio.file.Path): java.nio.file.Path =
+      try p.toRealPath()
+      catch case _: Throwable => p.toAbsolutePath.normalize()
+
+    /** `fileKey().toString()` is the JVM's portable identity for a file —
+      * on POSIX it is `(dev=…,ino=…)`, exactly the R2 key. */
+    private[gateway] def inodeKey(p: java.nio.file.Path): Option[String] =
+      try
+        val attrs =
+          java.nio.file.Files.readAttributes(p, classOf[java.nio.file.attribute.BasicFileAttributes])
+        Option(attrs.fileKey()).map(_.toString)
+      catch case _: Throwable => None
+
+    /** Every file under `dir` (depth-capped), best effort. */
+    private def filesUnder(dir: java.nio.file.Path, maxDepth: Int): List[java.nio.file.Path] =
+      if !java.nio.file.Files.isDirectory(dir) then Nil
+      else
+        val out = scala.collection.mutable.ListBuffer.empty[java.nio.file.Path]
+        try
+          val stream = java.nio.file.Files.walk(dir, maxDepth)
+          try
+            stream.forEach { p =>
+              if java.nio.file.Files.isRegularFile(p) then out += p
+            }
+          finally stream.close()
+        catch case _: Throwable => ()
+        out.toList
+
+    /** R2: (dev,ino) of the known credential files — data-root config/auth
+      * files, everything under `secrets/`, and the whole `~/.ssh` tree. Small
+      * by construction (single digits to tens of files). */
+    private[gateway] def scanCredentialInodes(dataRoot: java.nio.file.Path): Set[String] =
+      val home = java.nio.file.Paths.get(sys.props.getOrElse("user.home", "/"))
+      val seeds: List[java.nio.file.Path] =
+        List(dataRoot.resolve("auth.json"), dataRoot.resolve("nebflow.json")) ++
+          filesUnder(dataRoot.resolve("secrets"), 8) ++
+          filesUnder(home.resolve(".ssh"), 8)
+      seeds.flatMap(inodeKey).toSet
+
+    /** Production policy: the real data root, the process workspace, and the
+      * startup inode snapshot. */
+    def standard(): NfPathPolicy =
+      val root = canonicalOrSelf(java.nio.file.Paths.get(PathUtil.dataRoot.toString))
+      val workspace = canonicalOrSelf(java.nio.file.Paths.get(os.pwd.toString))
+      NfPathPolicy(root, workspace, scanCredentialInodes(root))
+
+    /** Memoized so the inode scan is a startup cost, not a per-request one. */
+    private lazy val standardMemo: NfPathPolicy = standard()
+
+    def memoized(): NfPathPolicy = standardMemo
+
+  /** Verdict of the shared path judge (C1-5) — the read endpoint and the
+    * signing endpoint ask the SAME question through this one function, so a
+    * path that cannot be read can never be ticketed. */
+  enum NfVerdict:
+    case Allowed(realPath: java.nio.file.Path, ext: String)
+    case Denied(status: Status, reason: String, message: String)
+
+  /** C1-4: pure credential-namespace judge. `Some(reason)` = refuse with 403. */
+  def nfCredentialDeny(realPath: java.nio.file.Path, policy: NfPathPolicy): Option[String] =
+    val rp = realPath.toAbsolutePath.normalize()
+    val p1 = policy.dataRoot
+    val p3 = policy.workspaceRoot
+    def relUnder(root: java.nio.file.Path): String =
+      root
+        .relativize(rp)
+        .toString
+        .replace('\\', '/')
+    if rp.startsWith(p1) then
+      val rel = relUnder(p1)
+      val head = rel.split('/').headOption.getOrElse("")
+      if NfDataRootAllowlist.contains(head) then None
+      else
+        Some(
+          s"the Nebflow data directory is credential-bearing; only " +
+            s"${NfDataRootAllowlist.mkString("/**, ", "/**, ", "/**")} may be served"
+        )
+    else if rp.startsWith(p3) then
+      val rel = relUnder(p3)
+      val head = rel.split('/').headOption.getOrElse("")
+      if head.startsWith(NfWorkspaceAllowlistPrefix) then None
+      else
+        Some(
+          s"the project .nebflow directory is credential-bearing; only " +
+            s"${NfWorkspaceAllowlistPrefix}*/** may be served"
+        )
+    else
+      val home = java.nio.file.Paths.get(sys.props.getOrElse("user.home", "/")).toAbsolutePath.normalize()
+      val homeRel =
+        if rp.startsWith(home) then Some(home.relativize(rp).toString.replace('\\', '/')) else None
+      val externalHit = homeRel.exists { rel =>
+        val norm = rel.stripPrefix("./")
+        NfExternalCredentialEntries.exists(entry => norm == entry || norm.startsWith(entry + "/"))
+      }
+      if externalHit then Some("this path is a known credential location")
+      else
+        val segments = (0 until rp.getNameCount).map(i => rp.getName(i).toString).toArray
+        val basename = Option(rp.getFileName).map(_.toString).getOrElse("")
+        if segments.exists(NfCredentialPathSegments.contains) then
+          Some("this path traverses a credential directory")
+        else if NfCredentialNamePattern.matches(basename) then
+          Some("this filename is a known credential shape")
+        else None
+
+  /** C1-5: the single authority for "may this raw path be served?".
+    *
+    * Chain (plan §3.3): empty → `~` expansion → lexical normalize →
+    * exists/isRegularFile (404) → toRealPath (404) → R2 hard-link inode (403)
+    * → `nfCredentialDeny` (403) → extension taken from the REAL path (400).
+    * The extension verdict deliberately uses the realpath: a client can no
+    * longer pick the served extension by naming a symlink (C1-2). */
+  def nfFileVerdict(
+    rawPath: String,
+    policy: NfPathPolicy
+  ): IO[NfVerdict] =
+    if rawPath.trim.isEmpty then
+      IO.pure(NfVerdict.Denied(Status.BadRequest, "missing-path", "Missing 'path' parameter"))
+    else
+      IO.blocking {
+        val expanded = PathUtil.expandTilde(rawPath)
+        val lexical = java.nio.file.Paths.get(expanded).normalize()
+        if !java.nio.file.Files.exists(lexical) || !java.nio.file.Files.isRegularFile(lexical) then
+          NfVerdict.Denied(
+            Status.NotFound,
+            "not-found",
+            s"no regular file at $lexical"
+          )
+        else
+          val realTry =
+            try Right(lexical.toRealPath())
+            catch case e: Throwable => Left(e)
+          realTry match
+            case Left(e) =>
+              NfVerdict.Denied(Status.NotFound, "not-found", s"path could not be resolved: ${e.getMessage}")
+            case Right(real) =>
+              // Namespace judge first: a credential file named directly (or
+              // reached through a symlink) must report `credential-path`, not
+              // the alias-specific `credential-hardlink`. The inode guard is
+              // the fallback that catches aliases the namespace judge cannot
+              // see at all (a hard link at an unrelated path, R2).
+              val deny = nfCredentialDeny(real, policy) match
+                case Some(reason) => Some(NfVerdict.Denied(Status.Forbidden, "credential-path", reason))
+                case None =>
+                  if NfPathPolicy.inodeKey(real).exists(policy.credentialInodes.contains) then
+                    Some(
+                      NfVerdict.Denied(
+                        Status.Forbidden,
+                        "credential-hardlink",
+                        "this file is a hard link to a Nebflow credential file"
+                      )
+                    )
+                  else None
+              deny match
+                case Some(d) => d
+                case None =>
+                    val name = real.toString
+                    val ext = name.lastIndexOf('.') match
+                      case -1 => ""
+                      case i  => name.substring(i + 1).toLowerCase
+                    if !NfFileAllowedExt.contains(ext) then
+                      NfVerdict.Denied(Status.BadRequest, "file-type", "File type not allowed")
+                    else NfVerdict.Allowed(real, ext)
+      }
+
+  /** Plain-text response builder.
+    *
+    * Deliberately NOT `Response.withEntity(String)` / the dsl generators:
+    * this file imports `org.http4s.circe.CirceEntityCodec.*`, whose
+    * `circeEntityEncoder[String]` (circe has an `Encoder[String]`) takes
+    * precedence over http4s' own text encoder, so `withEntity("prose")` emits
+    * a JSON-quoted string (`"prose"`). That is invisible to a status-only
+    * assertion but wrong for a diagnostic body — the reason text is meant to
+    * be read by a human and grepped by a spec. */
+  private def nfText(status: Status, body: String): Response[IO] =
+    Response[IO](status)
+      .putHeaders(`Content-Type`(MediaType.text.plain, Charset.`UTF-8`))
+      .withBodyStream(fs2.Stream.emit(body).through(fs2.text.utf8.encode))
+
+  /** Render a refusal. The `reason` rides in both the body and a header so
+    * clients (and specs) can branch without parsing prose. */
+  private def nfDenied(resp: NfVerdict.Denied): Response[IO] =
+    nfText(resp.status, s"${resp.reason}: ${resp.message}")
+      .putHeaders(org.http4s.Header.Raw(org.typelevel.ci.CIString("X-Nf-Reason"), resp.reason))
+
   /** Serves whitelisted local files from disk for card iframes
-    * (GET /api/nf-file?path=xxx&token=xxx). Supports Range requests for
+    * (GET /api/nf-file?path=xxx&ticket=xxx). Supports Range requests for
     * video seeking. Standalone (zero class deps) so it is directly
     * unit-testable (NfFileRoutesSpec); composed ahead of the instance
-    * routes like uploadsRoutes. */
-  def nfFileRoutes(token: String): HttpRoutes[IO] = HttpRoutes.of[IO] {
+    * routes like uploadsRoutes.
+    *
+    * 2026-09-11 (C batch, R5 = ticket-only): the global gateway token leg is
+    * GONE — a permanent, path-agnostic credential is exactly what this batch
+    * removes. A request must carry a ticket minted by `POST /api/nf-ticket`
+    * for this precise realpath. Missing ticket → 401; unknown/expired/
+    * mismatched → 403 with `reason`. The route body has no `handleErrorWith`
+    * (it used to be three total functions), so the new resolution step is an
+    * explicit `IO.blocking` + in-function try — never a throwing lambda. */
+  def nfFileRoutes(
+    token: String,
+    store: NfTicketStore,
+    policy: NfPathPolicy = NfPathPolicy.memoized()
+  ): HttpRoutes[IO] = HttpRoutes.of[IO] {
     case req @ GET -> Root / "api" / "nf-file" =>
-      val provided = extractToken(req)
-      if !Auth.validateToken(provided, token) then Forbidden("Invalid token")
+      val rawPath = req.params.get("path").getOrElse("")
+      val ticket = req.params.get("ticket").getOrElse("")
+      if rawPath.isEmpty then BadRequest("Missing 'path' parameter")
+      else if ticket.isEmpty then
+        // Not the DSL `Unauthorized`: that constructor demands a
+        // WWW-Authenticate challenge, and this route has no auth scheme to
+        // advertise (the ticket is an opaque bearer value, not Basic/Digest).
+        IO.pure(nfText(Status.Unauthorized, "Missing 'ticket' parameter"))
       else
-        val rawPath = req.params.get("path").getOrElse("")
-        if rawPath.isEmpty then BadRequest("Missing 'path' parameter")
-        else
-          // Resolve and validate path
-          val expanded = if rawPath.startsWith("~") then sys.props("user.home") + rawPath.substring(1) else rawPath
-          val path = java.nio.file.Paths.get(expanded).normalize()
-          val ext = path.toString.lastIndexOf('.') match
-            case -1 => ""
-            case i => path.toString.substring(i + 1).toLowerCase
-          // Only allow whitelisted extensions
-          if !NfFileAllowedExt.contains(ext) then BadRequest("File type not allowed")
-          else if !java.nio.file.Files.exists(path) || !java.nio.file.Files.isRegularFile(path) then NotFound()
-          else StaticFile.fromPath(fs2.io.file.Path(path.toString), Some(req)).getOrElseF(NotFound())
-        end if
-      end if
+        nfFileVerdict(rawPath, policy).flatMap {
+          case denied: NfVerdict.Denied => IO.pure(nfDenied(denied))
+          case NfVerdict.Allowed(real, _) =>
+            store.verifyAndConsume(ticket, real.toString).flatMap {
+              case Left(reason) =>
+                IO.pure(nfDenied(NfVerdict.Denied(Status.Forbidden, reason, "ticket rejected")))
+              case Right(_) =>
+                StaticFile
+                  .fromPath(fs2.io.file.Path(real.toString), Some(req))
+                  .getOrElseF(NotFound())
+            }
+        }
+  }
+
+  /** C2-2: `POST /api/nf-ticket` — mint short-lived, per-path read tickets.
+    *
+    * Body `{sessionId, paths[]}`. Every path goes through the SAME verdict as
+    * the read endpoint (C1-5), so an unreadable path can never be ticketed;
+    * rejections come back in `rejected[]` with their `reason` instead of
+    * failing the whole batch (the frontend degrades per path — §4.3 F4).
+    *
+    * Auth: the ordinary gateway token through `extractToken` (cookie first,
+    * Bearer second, `?token=` last). The frontend sends no explicit
+    * credential — the cookie rides along on the same-origin fetch.
+    */
+  def nfTicketRoutes(
+    token: String,
+    store: NfTicketStore,
+    policy: NfPathPolicy = NfPathPolicy.memoized()
+  ): HttpRoutes[IO] = HttpRoutes.of[IO] {
+    case req @ POST -> Root / "api" / "nf-ticket" =>
+      if !Auth.validateToken(extractToken(req), token) then Forbidden("Invalid token")
+      else
+        req.as[Json].attempt.flatMap {
+          case Left(e) =>
+            BadRequest(s"malformed ticket request body: ${e.getMessage}")
+          case Right(body) =>
+            val sessionId = body.hcursor.downField("sessionId").as[String].getOrElse("")
+            val paths = body.hcursor
+              .downField("paths")
+              .as[List[String]]
+              .getOrElse(Nil)
+              .filter(_.nonEmpty)
+              .distinct
+            // Re-read `nfFile.ticketTtlSeconds` (throttled + mtime-gated) so a
+            // config edit takes effect without a restart (R3).
+            store.refreshTtlFromConfig() *>
+              paths
+                .traverse { p =>
+                  nfFileVerdict(p, policy).flatMap {
+                    case NfVerdict.Allowed(real, _) =>
+                      store.issue(sessionId, real.toString).map { issued =>
+                        Right(
+                          p,
+                          Json.obj(
+                            "t" -> issued.token.asJson,
+                            "exp" -> issued.expiresAt.asJson,
+                            "uses" -> issued.remaining.asJson
+                          )
+                        )
+                      }
+                    case denied: NfVerdict.Denied =>
+                      IO.pure(Left(p, Json.obj("path" -> p.asJson, "reason" -> denied.reason.asJson)))
+                  }
+                }
+                .map { results =>
+                  val tickets = results.collect { case Right((p, j)) => p -> j }
+                  val rejected = results.collect { case Left((_, j)) => j }
+                  Json.obj(
+                    "tickets" -> Json.obj(tickets*),
+                    "rejected" -> Json.arr(rejected*)
+                  )
+                }
+                .flatMap(Ok(_))
+        }
+  }
+
+  /** R9 = O-A: `GET /api/nf-authcheck` — the cookie-reachability probe target.
+    *
+    * Replaces the old "bare `/api/nf-file` → 400 = cookie works" signal, which
+    * the ticket leg turns into 401 (a status that overlaps the genuine
+    * failure case, so the old probe could no longer distinguish anything).
+    * This route touches ZERO disk and has no other side effect: 204 when the
+    * presented credential validates (cookie / Bearer / `?token=` all through
+    * `extractToken`), 403 otherwise. */
+  def nfAuthcheckRoutes(token: String): HttpRoutes[IO] = HttpRoutes.of[IO] {
+    case req @ GET -> Root / "api" / "nf-authcheck" =>
+      if Auth.validateToken(extractToken(req), token) then NoContent()
+      else Forbidden("Invalid token")
   }
 
   /**
