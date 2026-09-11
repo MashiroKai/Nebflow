@@ -408,16 +408,20 @@ object NodeDef:
  *     恒不带。
  *   - chainId：**仅当节点所属拓扑链成员数 ≥2 携带**（链级抽象 P0；链 = 活动∪归档
  *     合并集弱连通分量，派生单点 FlowMapStore.topologicalChains，判据注入单点 =
- *     FlowMapStore.chainIdOf）——孤立单节点链不带，payload 字段集零膨胀；与
+ *     FlowMapStore.chainAttrsOf）——孤立单节点链不带，payload 字段集零膨胀；与
  *     deps/plugins 同构条件字段，非命中不带。WS 四事件经 NodeEngine.emitWithChain
  *     富化单点自动携带（帧外壳零改动）。
+ *   - chainIds：**仅 merge 节点且多链归属（成员链数 ≥2）携带**（U1 批 · 作者裁定①；
+ *     值 = 主链 :: 全量成员链，无上限无降级；派生单点 FlowMapStore.mergeChainIds）
+ *     ——普通节点与单链 merge 节点不带（普通节点恒单值 chainId，禁止全员数组）。
  * skill/mcp/preset 为节点配置（2b §B.4/H-11① deprecated，新建参数已退役）：同样
  * 条件序列化——仅非 None 才带（20260907 裁定③，无三键节点字段集字节级零漂移）。 */
 object NodePayload:
   /** taskPreview 截断上限（回退展示第一层，存量节点专用）。 */
   val TaskPreviewMaxChars: Int = 80
 
-  def buildNodeJson(node: NodeDef, now: Long, chainId: Option[String] = None): Json =
+  def buildNodeJson(node: NodeDef, now: Long, chainId: Option[String] = None,
+                    chainIds: Option[List[String]] = None): Json =
     val ttlLeft = node.ttlExpireAt.map(t => Math.max(0L, (t - now) / 1000L))
     val baseFields = List(
       "id" -> node.id.asJson,
@@ -533,10 +537,14 @@ object NodePayload:
         (if node.status == NodeLifecycle.Failed || node.status == NodeLifecycle.Cancelled then
            node.notifySentAt.toList.map(t => "notifySentAt" -> t.asJson)
          else Nil)
-      // chainId 条件序列化（链级抽象 P0；与 deps/plugins 条件字段同构）：仅调用方
-      // 注入（FlowMapStore.chainIdOf 单点判据：所属合并集分量成员数 ≥2）才带——
-      // 孤立单节点链与未注入调用方（如归档 REST 端点）payload 字段集零变化。
-      val chainFields = chainId.toList.map(c => "chainId" -> c.asJson)
+      // chainId / chainIds 条件序列化（链级抽象 P0 + U1 多链归属批；与 deps/plugins
+      // 条件字段同构）：chainId 仅调用方注入（FlowMapStore.chainAttrsOf 单点判据：
+      // 所属合并集分量成员数 ≥2）才带——孤立单节点链与未注入调用方（如归档 REST
+      // 端点）payload 字段集零变化；chainIds 仅 **merge 节点**且成员链数 ≥2 才带
+      // （普通节点恒不带 = 单值 chainId 语义不变，作者裁定①），值 = 主链 :: 全量
+      // 成员链（无上限、无降级）。
+      val chainFields = chainId.toList.map(c => "chainId" -> c.asJson) ++
+        chainIds.filter(_.size >= 2).toList.map(ids => "chainIds" -> ids.asJson)
       // pendingSuccession 条件序列化（取消静默死锁修复批 R4；与 deps/plugins 同构）：
       // 非空才带——无「待承接」槽位的节点 payload 字段集零变化。前端渲染面本批零
       // 改动（未知键天然忽略，仅作可见性载体）；分发器侧读 NodeList 即可见。
