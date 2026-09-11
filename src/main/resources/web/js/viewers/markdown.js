@@ -33,10 +33,22 @@ async function viewMarkdown(pane, { content, absPath, fileName }) {
     html = html.replace(/(<img\s+[^>]*src=")([^"]+)(")/g, (m, prefix, src, suffix) => {
       // Skip remote, data, and already-resolved URLs
       if (/^(https?:|data:|\/api\/)/.test(src)) return m;
-      // Resolve relative or absolute path
+      // The HTML has already been through the markdown parser, which
+      // percent-encodes link destinations — `![](assets/截屏 1.png)` and
+      // `![](<assets/x 2.png>)` both arrive here as `assets/%E6%88%AA…%201.png`.
+      // Decode before resolving, otherwise the value is escaped a second time
+      // below (`%25E6…`) and the endpoint looks for a literal `%E6…` file.
+      // A src that is not valid escape syntax (e.g. a literal `%` in a name)
+      // is used verbatim.
+      try { src = decodeURIComponent(src); } catch (e) { /* keep as-is */ }
+      // Resolve relative or absolute path.
+      // `~` counts as absolute: the /api/nf-file endpoint expands it to the
+      // user home (nfFileRoutes: `~` → user.home). The old check treated `~`
+      // as relative, producing `<dir>/~/x.png` — a path that never exists, so
+      // every `![](~/…)` image in a markdown file 404'd.
       let resolved;
-      if (src.startsWith('/') || /^[A-Za-z]:[\\/]/.test(src)) {
-        resolved = src; // already absolute
+      if (src.startsWith('/') || src.startsWith('~') || /^[A-Za-z]:[\\/]/.test(src)) {
+        resolved = src; // already absolute (or ~-anchored)
       } else {
         resolved = dir ? dir + '/' + src.replace(/^\.\//, '') : src;
       }

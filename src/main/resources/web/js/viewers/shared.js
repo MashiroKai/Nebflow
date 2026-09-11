@@ -53,7 +53,11 @@ export function resolveLocalFiles(html, dir, token) {
     if (!src || src.trim() === '') return null;
     let resolved;
     if (src.startsWith('/') || /^[A-Za-z]:[\\/]/.test(src) || src.startsWith('~')) {
-      resolved = src.replace(/^~/, ''); // backend expands ~
+      // Keep `~` intact — the /api/nf-file endpoint expands it to the user
+      // home. The old implementation stripped the `~` prefix (contradicting
+      // this comment's claim) and sent `/x.png` — an absolute path at the
+      // filesystem root — so every `~/…` src/href in an HTML file 404'd.
+      resolved = src;
     } else if (dir) {
       resolved = dir + '/' + src.replace(/^\.\//, '');
     } else {
