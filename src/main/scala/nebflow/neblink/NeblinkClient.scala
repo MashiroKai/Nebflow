@@ -134,6 +134,9 @@ class NeblinkClient(
 
   @volatile private var sessionToken: Option[String] = None
 
+  /** C1: own `/24` prefixes from the last [[detectLocalEndpoints]] run (see [[localPrefixes]]). */
+  @volatile private var cachedLocalPrefixes: Set[String] = Set.empty
+
   /** Active long-lived device credential — starts from config, replaced by
     * the silent re-login hook when the server rejects the old one. */
   @volatile private var activeDeviceToken: Option[String] = config.deviceToken
@@ -148,6 +151,12 @@ class NeblinkClient(
    * addresses are unreachable from the real LAN — e.g. `192.168.121.1` on a
    * Windows `vEthernet (WSL)` adapter. If filtering would remove every
    * endpoint, falls back to the unfiltered list so P2P still has a chance.
+   *
+   * C1 (2026-09-11 P2P 直连修复批): also labels each endpoint with a `kind`
+   * (`tailscale` for `100.64.0.0/10`, else `lan`) and the NIC name, and caches
+   * our own `/24` prefixes so inbound namelists can be preference-ordered
+   * without re-enumerating NICs. `NeblinkEndpoint` already carried `kind`/`label`
+   * — no protocol change (方案 §3.3, 与 `updateTrustedIps` 全端点口径一致).
    */
   def detectLocalEndpoints: IO[List[NeblinkEndpoint]] = IO.blocking {
     try
@@ -156,15 +165,33 @@ class NeblinkClient(
         .filterNot(_.isLoopback)
 
       def toEndpoints(nics: List[NetworkInterface]): List[NeblinkEndpoint] =
-        nics.flatMap(_.getInetAddresses.asScala)
-          .filter(_.isInstanceOf[java.net.Inet4Address])
-          .map(addr => NeblinkEndpoint(addr.getHostAddress, serverPort, "lan", ""))
+        nics.flatMap { nic =>
+          val label = Option(nic.getDisplayName).filter(_.nonEmpty).orElse(Option(nic.getName)).getOrElse("")
+          nic.getInetAddresses.asScala.toList
+            .filter(_.isInstanceOf[java.net.Inet4Address])
+            .map(addr => NeblinkEndpoint(addr.getHostAddress, serverPort, classifyKind(addr.getHostAddress), label))
+        }
 
       val physical = allNics.filterNot(isLikelyVirtualNic)
       val preferred = toEndpoints(physical)
-      if preferred.nonEmpty then preferred else toEndpoints(allNics) // never lose all endpoints
+      val chosen = if preferred.nonEmpty then preferred else toEndpoints(allNics) // never lose all endpoints
+      cachedLocalPrefixes = EndpointPreference.localPrefixesOf(chosen.map(_.address))
+      chosen
     catch case _: Exception => Nil
   }
+
+  /** C1 地址口径 (§3.3): `100.64.0.0/10` ⇒ `tailscale`，其余 IPv4 ⇒ `lan`. */
+  private def classifyKind(address: String): String =
+    if EndpointPreference.isTailscaleHost(address) then "tailscale" else "lan"
+
+  /** Local `/24` prefixes seen by the most recent [[detectLocalEndpoints]] run.
+    *
+    * Both caller paths that produce a namelist run it first — `login`
+    * (`doLogin` detects when the caller passes no endpoints) and `heartbeat`
+    * (re-detects every beat) — so this is warm by the time
+    * [[toNeblinkPeers]] maps a server response.
+    */
+  def localPrefixes: Set[String] = cachedLocalPrefixes
 
   /**
    * Heuristic virtual-NIC detector. `NetworkInterface.isVirtual()` is
@@ -578,7 +605,16 @@ class NeblinkClient(
       case Left(err) => IO.pure(Left(err))
     }
 
-  /** Convert NebLink Server peers to neblink PeerInfo. Picks first endpoint as address.
+  /** Convert NebLink Server peers to neblink PeerInfo.
+   *
+   * C1 (2026-09-11 P2P 直连修复批): **keeps every declared endpoint**, ordered by
+   * [[EndpointPreference]] (Tailscale → 同网段 → 其余), with `address` =
+   * `endpoints.head` (the best candidate). Previously only `endpoints.head` was
+   * kept and the rest discarded — in the incident that head was an unreachable
+   * LAN address while the working Tailscale endpoint sat at index 1, so
+   * `connect` had nothing to fall back to and `directOnline` stayed false
+   * (方案 §1.2 (A), §3.2 结论 2). Consistent with the全端点 口径 already used by
+   * [[peerAddresses]] (→ `NeblinkService.updateTrustedIps`).
    *
    * Presence v2: a peer the server explicitly flags online=false (lazy TTL
    * judgement) maps to lastSeen=0 — non-fresh, so the C3 freshness predicate
@@ -586,14 +622,19 @@ class NeblinkClient(
    * refresh itself back to "online" on every heartbeat just by appearing in
    * the response, fighting the DeviceStatusUpdate push (C6). */
   def toNeblinkPeers(serverPeers: List[NeblinkPeerInfo]): List[PeerInfo] =
+    val prefixes = localPrefixes
     serverPeers.filter(_.endpoints.nonEmpty).map { p =>
-      val ep = p.endpoints.head
+      val urls = EndpointPreference.order(
+        p.endpoints.map(ep => s"http://${ep.address}:${ep.port}"),
+        prefixes
+      )
       PeerInfo(
         deviceId = p.deviceId,
         deviceName = p.deviceName,
         platform = p.platform,
-        address = s"http://${ep.address}:${ep.port}",
-        lastSeen = if p.online then System.currentTimeMillis() else 0L
+        address = urls.head,
+        lastSeen = if p.online then System.currentTimeMillis() else 0L,
+        endpoints = urls
       )
     }
 

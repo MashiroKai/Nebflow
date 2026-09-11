@@ -17,6 +17,21 @@ import scala.concurrent.duration.*
 import scala.jdk.CollectionConverters.*
 
 /**
+ * Outcome of the most recent presence dial attempt against a peer (C3,
+ * 2026-09-11 P2P 直连修复批).
+ *
+ * Unlike `connections` (which only exists while a dial SUCCEEDS), this record
+ * exists for failures too — that is the whole point: before this批 a failed
+ * dial only produced a `logger.debug` line, which `root level=INFO` filtered
+ * away, so `directOnline=false` had **zero** attributable留痕 (方案 §1.1 环③ /
+ * U-1). `endpoint` is the candidate actually dialed (C1 择优: the winner on
+ * success, the last tried candidate on failure) and `error = None` marks a
+ * successful dial — so consumers can tell "dialed and succeeded" from "dialed
+ * and failed (with reason)" from "never dialed" (`Option[Nothing]`).
+ */
+final case class PresenceDialStatus(endpoint: String, error: Option[String], atMs: Long)
+
+/**
  * Manages outgoing WebSocket presence connections to NebLink peers.
  *
  * When device A discovers device B via the NebLink Server, A opens a persistent
@@ -54,6 +69,40 @@ final class NeblinkPresenceService(
 
   /** Device IDs whose reconnection should stop (explicit disconnect / peer left network). */
   private val cancelReconnect = new ConcurrentHashMap[String, java.lang.Boolean]()
+
+  /** deviceId -> most recent dial outcome (C3). Successes are recorded too. */
+  private val dialStatuses = new ConcurrentHashMap[String, PresenceDialStatus]()
+
+  /** deviceId -> last outcome key we already logged, for C3 log rate-limiting. */
+  private val lastLoggedDialKey = new ConcurrentHashMap[String, String]()
+
+  /**
+   * Per-candidate build budget for one dial attempt (C1: 短超时串行短路).
+   *
+   * Bounded so that a peer with N candidates costs at most `N × 1.5s` before we
+   * give up and let `directOnline` stay false — instead of a single 5s hang on a
+   * black-holed address (the old code) with no fallback at all.
+   */
+  private val PerCandidateDialTimeoutMs = 1_500L
+
+  /** Most recent dial outcome for a peer; `None` = never dialed. */
+  def dialStatus(deviceId: String): Option[PresenceDialStatus] = Option(dialStatuses.get(deviceId))
+
+  /** Endpoint a SUCCESSFUL dial actually landed on (C1 择优结果), if any. */
+  def chosenEndpoint(deviceId: String): Option[String] =
+    dialStatus(deviceId).filter(_.error.isEmpty).map(_.endpoint).filter(_.nonEmpty)
+
+  /**
+   * Candidate endpoints to dial, in preference order (C1).
+   *
+   * `peer.endpoints` already arrives preference-ordered (100.64.0.0/10 →
+   * 同网段 → 其余, see [[EndpointPreference]]); peers built by other paths
+   * (inbound presence 路由 / tests) have `endpoints = Nil` and fall back to the
+   * single `address` — behaviour identical to before C1.
+   */
+  private def candidatesOf(peer: PeerInfo): List[String] =
+    val all = if peer.endpoints.nonEmpty then peer.endpoints else List(peer.address)
+    all.filter(_.nonEmpty).distinct
 
   // ===== Public API =====
 
@@ -94,82 +143,153 @@ final class NeblinkPresenceService(
 
   end syncPeers
 
-  /** Establish an outgoing WS presence connection to a peer. No-op if already connected. */
+  /** Establish an outgoing WS presence connection to a peer. No-op if already connected.
+   *
+   * C1 (2026-09-11 P2P 直连修复批): dials every candidate endpoint in preference
+   * order with a short per-candidate budget, short-circuiting on the first
+   * success. Before this批 only `peer.address` (= the server namelist's
+   * `endpoints.head`, in the incident an unreachable LAN address) was dialed, so
+   * a healthy Tailscale endpoint sitting at index 1 was never tried and
+   * `directOnline` stayed false forever (方案 §1.2 (A)/(D)).
+   *
+   * C3: the outcome of every attempt is recorded (and logged on state change) so
+   * a failed dial is attributable instead of vanishing into a DEBUG line.
+   */
   def connect(peer: PeerInfo): IO[Unit] =
     if connections.containsKey(peer.deviceId) then IO.unit
     else
-      extractHost(peer.address) match
-        case None => IO.unit
+      val candidates = candidatesOf(peer)
+      if candidates.isEmpty then
+        recordDialOutcome(peer, "", Some("no usable endpoint (empty peer address)"))
+      else
+        neblinkService.identity
+          .flatMap(id => dialCandidates(peer, candidates, id, 0))
+          .handleErrorWith(e =>
+            // identity / dispatcher-level failure — still must be attributable
+            recordDialOutcome(peer, candidates.head, Some(s"${e.getClass.getSimpleName}: ${e.getMessage}"))
+          )
+
+  /**
+   * Try candidate `idx`; on success record the winner and write it back as the
+   * peer's `address` (so a subsequent `p2pExecute` — which also walks the
+   * candidate list — starts from the endpoint proven reachable), otherwise
+   * record the failure and move to the next candidate.
+   */
+  private def dialCandidates(
+    peer: PeerInfo,
+    candidates: List[String],
+    id: DeviceIdentity,
+    idx: Int
+  ): IO[Unit] =
+    if idx >= candidates.size then IO.unit
+    else
+      val endpoint = candidates(idx)
+      extractHost(endpoint) match
+        case None =>
+          // Unparseable candidate is a real (if local) failure — never silent (C3).
+          recordDialOutcome(peer, endpoint, Some(s"unparseable endpoint: $endpoint")) *>
+            dialCandidates(peer, candidates, id, idx + 1)
         case Some(host) =>
-          neblinkService.identity
-            .flatMap { id =>
-              IO.blocking {
-                val wsUri = buildWsUri(host, id)
-                try
-                  val alive = new AtomicBoolean(true)
-                  val lastPong = new AtomicLong(System.currentTimeMillis())
-                  val heartbeat = Executors.newSingleThreadScheduledExecutor { r =>
-                    val t = new Thread(r, s"presence-hb-${peer.deviceName}")
-                    t.setDaemon(true)
-                    t
-                  }
+          IO.blocking(openConnection(peer, host, id)).flatMap {
+            case Right(_) =>
+              // 首个成功者写回 peer.address，并记入 connections（已在 openConnection 内）。
+              recordDialOutcome(peer, endpoint, None) *>
+                (if endpoint != peer.address then neblinkService.upsertPeer(peer.copy(address = endpoint))
+                 else IO.unit)
+            case Left(err) =>
+              recordDialOutcome(peer, endpoint, Some(err)) *>
+                dialCandidates(peer, candidates, id, idx + 1)
+          }
 
-                  val listener = new PresenceWsListener(this, peer)
-                  val client = HttpClient
-                    .newBuilder()
-                    .proxy(java.net.ProxySelector.of(null)) // bypass HTTP proxy for P2P
-                    .build()
-                  val ws = client
-                    .newWebSocketBuilder()
-                    .buildAsync(URI.create(wsUri), listener)
-                    .get(5, TimeUnit.SECONDS)
+  /**
+   * Blocking dial of a single host. Returns `Left(reason)` on failure — the
+   * reason class is what C3 §反控-3 needs to tell "地址不可达 / 拨号超时" apart.
+   * Registers the connection in `connections` on success.
+   */
+  private def openConnection(peer: PeerInfo, host: String, id: DeviceIdentity): Either[String, Unit] =
+    val wsUri = buildWsUri(host, id)
+    try
+      val alive = new AtomicBoolean(true)
+      val lastPong = new AtomicLong(System.currentTimeMillis())
+      val heartbeat = Executors.newSingleThreadScheduledExecutor { r =>
+        val t = new Thread(r, s"presence-hb-${peer.deviceName}")
+        t.setDaemon(true)
+        t
+      }
 
-                  val conn = PresenceConnection(ws, alive, lastPong, heartbeat)
-                  connections.put(peer.deviceId, conn)
+      val listener = new PresenceWsListener(this, peer)
+      val client = HttpClient
+        .newBuilder()
+        .proxy(java.net.ProxySelector.of(null)) // bypass HTTP proxy for P2P
+        .build()
+      val ws = client
+        .newWebSocketBuilder()
+        .buildAsync(URI.create(wsUri), listener)
+        .get(PerCandidateDialTimeoutMs, TimeUnit.MILLISECONDS)
 
-                  // Heartbeat: send ping every 5s; force-close if pong overdue (> 10s)
-                  heartbeat.scheduleAtFixedRate(
-                    { () =>
-                      try
-                        if alive.get() then
-                          if System.currentTimeMillis() - lastPong.get() > 10_000L then
-                            logger.debugSync(s"Heartbeat timeout: ${peer.deviceName}")
-                            // Force immediate cleanup — don't rely on onClose (may never fire
-                            // if the TCP connection is broken, e.g. after sleep/wake)
-                            val zombie = connections.remove(peer.deviceId)
-                            if zombie != null then
-                              try zombie.heartbeat.shutdownNow()
-                              catch
-                                case _: Exception => ()
-                            // Remove peer and trigger auto-reconnect
-                            dispatcher.unsafeRunAndForget(
-                              neblinkService.removePeer(peer.deviceId) *>
-                                logger.info(s"Heartbeat timeout: ${peer.deviceName}, auto-reconnecting...") *>
-                                startReconnect(peer)
-                            )
-                            try ws.sendClose(WebSocket.NORMAL_CLOSURE, "heartbeat timeout")
-                            catch case _: Exception => ()
-                          else ws.sendText("""{"type":"ping"}""", true)
-                      catch case _: Exception => ()
-                    },
-                    5,
-                    5,
-                    TimeUnit.SECONDS
-                  )
+      val conn = PresenceConnection(ws, alive, lastPong, heartbeat)
+      connections.put(peer.deviceId, conn)
 
-                  Right(())
-                catch
-                  case _: java.util.concurrent.TimeoutException =>
-                    Left("timeout")
-                  case e: Exception =>
-                    Left(e.getMessage)
-                end try
-              }.flatMap {
-                case Right(_) => logger.debug(s"Presence connected: ${peer.deviceName} ($host)")
-                case Left(err) => logger.debug(s"Presence connect failed: ${peer.deviceName} - $err")
-              }
-            }
-            .handleErrorWith(e => logger.debug(s"Presence connect error: ${e.getMessage}"))
+      // Heartbeat: send ping every 5s; force-close if pong overdue (> 10s)
+      heartbeat.scheduleAtFixedRate(
+        { () =>
+          try
+            if alive.get() then
+              if System.currentTimeMillis() - lastPong.get() > 10_000L then
+                logger.debugSync(s"Heartbeat timeout: ${peer.deviceName}")
+                // Force immediate cleanup — don't rely on onClose (may never fire
+                // if the TCP connection is broken, e.g. after sleep/wake)
+                val zombie = connections.remove(peer.deviceId)
+                if zombie != null then
+                  try zombie.heartbeat.shutdownNow()
+                  catch
+                    case _: Exception => ()
+                // Remove peer and trigger auto-reconnect
+                dispatcher.unsafeRunAndForget(
+                  neblinkService.removePeer(peer.deviceId) *>
+                    logger.info(s"Heartbeat timeout: ${peer.deviceName}, auto-reconnecting...") *>
+                    startReconnect(peer)
+                )
+                try ws.sendClose(WebSocket.NORMAL_CLOSURE, "heartbeat timeout")
+                catch case _: Exception => ()
+              else ws.sendText("""{"type":"ping"}""", true)
+          catch case _: Exception => ()
+        },
+        5,
+        5,
+        TimeUnit.SECONDS
+      )
+
+      Right(())
+    catch
+      case _: java.util.concurrent.TimeoutException =>
+        // C3 §反控-3: the "timeout" class is a distinct, attributable reason —
+        // the address was black-holed rather than actively refused.
+        Left(s"timeout after ${PerCandidateDialTimeoutMs}ms")
+      case e: Exception =>
+        Left(Option(e.getMessage).getOrElse(e.getClass.getSimpleName))
+
+  /**
+   * Record a dial outcome (C3) and log **only on state change** — a peer that
+   * stays unreachable is retried every sync cycle (~30s), so unconditional
+   * logging would flood the file. Failures log at WARN (was `debug`, which
+   * `root level=INFO` swallowed entirely — 方案 §1.1 环③ evidence E-5).
+   */
+  private def recordDialOutcome(peer: PeerInfo, endpoint: String, error: Option[String]): IO[Unit] =
+    val shown = if endpoint.nonEmpty then endpoint else if peer.address.nonEmpty then peer.address else "(no endpoint)"
+    dialStatuses.put(peer.deviceId, PresenceDialStatus(shown, error, System.currentTimeMillis()))
+    val key = s"$shown|${error.getOrElse("")}"
+    val changed = Option(lastLoggedDialKey.put(peer.deviceId, key)).forall(_ != key)
+    if !changed then IO.unit
+    else
+      error match
+        case Some(err) =>
+          logger.warn(
+            s"Presence dial failed for ${peer.deviceName} via $shown: $err " +
+              s"(tried ${candidatesOf(peer).size} candidate endpoint(s))"
+          )
+        case None =>
+          logger.info(s"Presence dial ok for ${peer.deviceName} via $shown")
 
   /** Explicitly disconnect from a peer by deviceId. Cancels any pending reconnection. */
   def disconnect(deviceId: String): IO[Unit] =
