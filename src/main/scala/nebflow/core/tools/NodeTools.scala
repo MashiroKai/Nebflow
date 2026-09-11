@@ -1177,12 +1177,18 @@ object NodeEditTool extends Tool:
             // 才写——并发重激活成 running 且未预检死会话时拒写（该窗口内节点已有
             // 在飞会话，abandon 不得中断）
             case Some(fresh) if fresh.status != NodeLifecycle.Running || allowDeadRunning =>
-              st.copy(nodes = st.nodes.updated(node.id, fresh.copy(
+              st.copy(nodes = st.nodes.updated(node.id, rt.engine.withoutReportPending(fresh.copy(
                 status = NodeLifecycle.Cancelled,
                 completedAt = Some(now),
                 // 2026-09-07 作者裁定：cancelled 无 TTL 强制清——abandon 是上层
                 // 裁决动作，节点留主图（不再 24h 后静默消失），由后续拓扑清理处置。
-                ttlExpireAt = None)))
+                ttlExpireAt = None))))
+              // 未申报计时同事务清表（noderpt 批 F3，2026-09-11 复核 D3 修复）：abandon
+              // 是第 7 个**不经 run fiber** 的终态写点（`allowDeadRunning=true` 分支专门
+              // 收殓「Running + 无活 fiber」的死会话节点，那类节点永远到不了
+              // `cleanupRunTables`）⇒ 不清表则持久层/归档残留「终态节点带待申报计时」的
+              // 误导态（复核探针 P2 实测残留）。复用引擎侧公共纯函数单点（同判据，防
+              // 第 8 个写点再漏）。
             case _ => st // 状态已变（并发重激活/移除）→ 拒写
         }
         _ <- s.nodes.get(node.id) match
