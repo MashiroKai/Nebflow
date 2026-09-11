@@ -82,15 +82,68 @@ export async function fetchFlowMap(projectName) {
   return await r.json();
 }
 
+/** 节点结果全文取用超时（ms，2026-09-11 fmresult 批）。取值理由：结果端点是网关
+ *  本地内存读（单节点 results/<id>.md 水合全文），正常往返为毫秒级（实测 <20ms，
+ *  见 .nebflow/evidence/20260911_fmresult-placeholder/）；12s 留足网关在 agent 回合
+ *  高峰/归档大批量下的抖动余量，同时把「占位无限挂起」压缩为有界等待——超过即落
+ *  明确错误态（原因 + 可操作提示），用户不再面对无终态的「…」。 */
+export const NODE_RESULT_TIMEOUT_MS = 12000;
+/** 超时标记 message（与 fetch 自身的网络拒绝区分）。 */
+const NODE_RESULT_TIMEOUT_MSG = 'nf-result-timeout';
+
+/**
+ * 节点结果三态结果对象（见 fetchNodeResultDetail 文档）。
+ * @typedef {{state: 'ok', result: string}
+ *   | {state: 'empty'}
+ *   | {state: 'http', status: number}
+ *   | {state: 'network'}
+ *   | {state: 'timeout'}} NodeResultOutcome
+ */
+
 /** 节点结果全文。GET /api/projects/<name>/flow-map/nodes/<nodeId>/result（需 auth）→ {id,name,status,result}。
  *  20260905 载荷收敛：NodePayload 快照/事件为元数据 only（无 result 键，hasResult 标记），
- *  详情窗打开时经本调用按需取全文；节点不存在/项目未挂载（404）返回 null——调用方
- *  静默兜底。result 为 null（节点无结果）→ null。 */
-export async function fetchNodeResult(projectName, nodeId) {
-  const r = await fetch(API.nodeResult(projectName, nodeId), { headers: authHeaders() });
-  if (!r.ok) return null;
-  const data = await r.json();
-  return typeof data?.result === 'string' ? data.result : null;
+ *  详情窗打开时经本调用按需取全文。
+ *
+ *  2026-09-11 fmresult 批：返回值由「全文 | null」升级为**三态结果对象**——旧形态把
+ *  「节点无结果（200 + result:null）」与「端点不可达（404/5xx/网络/超时）」压成同一个
+ *  null，详情窗只能一律落空态文案 ⇒ 「错误态与空态混淆」且挂死请求让占位「…」永无终态。
+ *  状态语义（消费端 = flowMapArchive 结果区终态判定）：
+ *    ok      200 且 result 为非空字符串（全文）
+ *    empty   200 但 result 非字符串/空白（节点确实没有结果——不是错误）
+ *    http    非 2xx（404 = 节点不在活动区/归档区或项目未挂载；5xx = 服务异常）
+ *    network fetch 拒绝或响应不可解析（断网/连接被拒/坏响应）
+ *    timeout 超时无响应（AbortController 中止，见 NODE_RESULT_TIMEOUT_MS）
+ *  调用方按 state 分流：ok → 换装、empty → 空态、其余 → 明确错误态。
+ *  @param {string} projectName @param {string} nodeId @param {number=} timeoutMs
+ *  @returns {Promise<NodeResultOutcome>} */
+export async function fetchNodeResultDetail(projectName, nodeId, timeoutMs = NODE_RESULT_TIMEOUT_MS) {
+  const ctrl = typeof AbortController === 'function' ? new AbortController() : null;
+  /** @type {any} */
+  let timer = 0;
+  try {
+    /** 超时守（2026-09-11 fmresult 批）：结果端点无响应时旧实现让详情窗占位「…」
+     *  无限挂起（用户无任何终态、无重试线索）。本 Promise 到点即 abort 底层请求并
+     *  以固定 message 标记超时（与网络拒绝区分）。 */
+    const timeout = new Promise((_, rej) => {
+      timer = setTimeout(() => {
+        if (ctrl) ctrl.abort();
+        rej(new Error(NODE_RESULT_TIMEOUT_MSG));
+      }, timeoutMs);
+    });
+    const res = await /** @type {Response} */ (await Promise.race([
+      fetch(API.nodeResult(projectName, nodeId), ctrl ? { headers: authHeaders(), signal: ctrl.signal } : { headers: authHeaders() }),
+      timeout,
+    ]));
+    if (!res.ok) return { state: 'http', status: res.status };
+    const data = await res.json();
+    const result = typeof data?.result === 'string' ? data.result : '';
+    return result.trim() ? { state: 'ok', result } : { state: 'empty' };
+  } catch (e) {
+    const isTimeout = !!(e && /** @type {any} */ (e).message === NODE_RESULT_TIMEOUT_MSG);
+    return { state: isTimeout ? 'timeout' : 'network' };
+  } finally {
+    if (timer) clearTimeout(timer);
+  }
 }
 
 /** Flow Archive 分批内容（裁定④「TTL 分开」批）。GET .../flow-map/archive（需 auth）

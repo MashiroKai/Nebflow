@@ -109,6 +109,15 @@ export default {
   'flowmap.archive.taskLabel': 'Task',
   'flowmap.archive.resultLabel': 'Result',
   'flowmap.archive.noResult': 'No result yet',
+  // Result area explicit error state (2026-09-11 fmresult batch): the "…" placeholder
+  // must reach a terminal state — a failed full-text fetch is no longer silently folded
+  // into the empty state ("No result yet"); it shows a readable reason + an action hint.
+  'flowmap.archive.resultLoadFail': 'Failed to load result: {reason}',
+  'flowmap.archive.resultLoadFailHint': 'Close and reopen the detail panel to retry',
+  'flowmap.archive.resultFailTimeout': 'request timed out (gateway did not respond)',
+  'flowmap.archive.resultFailNetwork': 'request failed or response unreadable (network error)',
+  'flowmap.archive.resultFailHttp': 'server returned {status}',
+  'flowmap.archive.resultFailGone': 'result no longer reachable (node left active/archive area)',
   'flowmap.archive.created': 'Created',
   'flowmap.archive.completed': 'Completed',
   'flowmap.archive.ttlPurged': '24h TTL cleanup: {n} chain(s) removed from archive',
