@@ -3729,7 +3729,10 @@ object NodeEngine:
   /** 提醒轮注入文案（作者裁定逐字要素：「你已交棒但未调用 node_report；请立即申报
     * pass/fail/blocked」+ 当前档位）。**不含任何判罚/威胁措辞**——本阶梯永不判 failed
     * （相对设计稿 §4.2 的核心改判），文案不得暗示「否则会失败」。
-    * 实际投递文本 = `[NODE-MESSAGE] 来源：…` 头（sendNodeMessage 通道自带）+ 本文案。 */
+    * 实际投递文本 = 本文案**原文**（首行前缀头 `[NODE-REPORT-REMINDER]`），经
+    * `AgentCommand.ExternalEvent(source = NodeReportReminderSource, eventType = "reminder")`
+    * 进节点会话唤醒轮——不叠 `[NODE-MESSAGE]` 头（那条是分发器 NodeMessage 通道专用，
+    * 前缀头单点区分来源；注入通道差异见 [[injectReminderTurn]]）。 */
   def reportReminderText(nodeName: String, rung: Int, maxRungs: Int, rungMs: Long, elapsedMs: Long): String =
     s"""$NodeReportReminderPrefix 你已交棒但未调用 node_report；请立即申报 pass/fail/blocked。
        |（引擎未申报兜底 · 第 $rung/$maxRungs 拍 · 档位 ${reportRungLabel(rungMs)} · 已等待 ${elapsedMs / 1000}s · 节点 $nodeName）
