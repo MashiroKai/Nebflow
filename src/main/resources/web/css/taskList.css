@@ -211,7 +211,8 @@
   color: var(--color-text, #000);
 }
 
-/* meta 只标 agent（project 已由分组头承载——信息减法） */
+/* meta = 节点 description（缺失回落 agent 名；project 已由分组头承载——信息减法）。
+   窄栏省略号截断，全文由 metaEl.title 悬停承载（沿用既有原生 tooltip 形态） */
 .task-node-meta {
   display: block;
   margin-top: 1px;
