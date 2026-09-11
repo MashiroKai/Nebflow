@@ -1336,14 +1336,22 @@ private[agent] trait AgentCore:
       // 主轴是「单个工具调用持续超阈」，批次结束必须归零，否则下一轮 LLM 期间
       // 会带着过期相位被误判）。
       // Block 3：同点镜像 loopStreak/loopRounds（AgentControl list 的 loop×N）。
+      // stuck 自动恢复批 P1（2026-09-11）：同点镜像 LoopGuard 跨轮指纹**只读投影**
+      // （loopStrikeCount/lastLoopFp，设计 §3.4 互斥点 2）——投影口径单点 =
+      // [[AgentCore.projectLoopCounters]]，不在此二次派生。**只读不回流判据**：
+      // 两个新字段都不进任何判死不等式，只供 watcher 识别「恢复 → 立刻又被
+      // LoopGuard 冻结」的自激循环（停恢复链的互斥信号）。
       _ <- touchRegistryActivity(resources, sessionIdOpt, AgentStatus.Processing, clearToolPhase = true) *>
         sessionIdOpt.fold(IO.unit) { sid =>
           resources.agentRegistry.update { m =>
             m.get(sid) match
               case Some(rec) =>
+                val (strikeCount, lastFp) = AgentCore.projectLoopCounters(loopCounters)
                 m.updated(sid, rec.copy(
                   loopStreak = loopCounters.streakCount,
-                  loopRounds = loopCounters.repeatStreak
+                  loopRounds = loopCounters.repeatStreak,
+                  loopStrikeCount = strikeCount,
+                  lastLoopFp = lastFp
                 ))
               case None => m
           }
@@ -2145,6 +2153,44 @@ private[agent] trait AgentCore:
 end AgentCore
 
 object AgentCore:
+
+  /**
+   * stuck 自动恢复批 P1（2026-09-11 作者裁定 R-3）：**正信号（进展证据）写入语义的
+   * 唯一落点**——把「本采样窗内该会话的在飞工具确有推进」记进
+   * [[nebflow.agent.AgentRecord.lastProgressSignalAt]]。
+   *
+   * 为什么是纯函数 + 独立落点：① 写入语义集中于此，**传感器**（工具活动桥的采样
+   * 循环，`BashTool.startActivityBridge`）只负责在判定出「本窗有进展」时调用它——
+   * 「什么算进展」的口径与被写进哪个字段的口径不分散在两条调用链上；② 纯函数可
+   * 独立单测（给定 rec + now ⇒ 字段推进），不必启 actor。
+   *
+   * **方向性（红线 R6-4 的边界，作者已确认不算放松）**：本字段**只阻止判死、绝不
+   * 促成判死**——消费点唯一 = `TaskStuckWatcher.classify` 的类② 分流（⇒ 本拍零动作、
+   * 只记 `suspect`），绝不进入 `assessDetailed` 的任何判死不等式。
+   *
+   * 与 [[AgentRecord.processActivityMs]] 的区别：后者是「子进程还活着」的旁证且被
+   * 明文禁止被 watcher 读取；本函数写的是语义明确的「有进展」证据通道。
+   */
+  def markToolProgress(rec: AgentRecord, now: Long = System.currentTimeMillis()): AgentRecord =
+    if rec.lastProgressSignalAt >= now then rec else rec.copy(lastProgressSignalAt = now)
+
+  /**
+   * stuck 自动恢复批 P1：LoopGuard 跨轮指纹的**只读投影**（设计 §3.4 互斥点 2 的
+   * 可见性缺口）。`Counters.crossTurn` 在 AgentState 内、watcher 不可读；本函数把它
+   * 折成两个可直接比较的标量，写点与既有 loopStreak/loopRounds 镜像**同点**
+   * （`pipeToolExecutions`）——**不碰冻结面**（`AgentActor` / `LoopGuard`）。
+   *
+   *   - `loopStrikeCount` = `crossTurn` 各 fp 的失败 turn 集合大小之和（累计跨轮命中数）；
+   *   - `lastLoopFp` = 命中次数最多者，同数取字典序最小（**确定性**，不受 Map 迭代序影响）。
+   *
+   * **只读不回流判据**：两者都不参与任何判死不等式，只作为「恢复 → 又被冻结」自激
+   * 循环的识别信号（见 `TaskStuckWatcher` 互斥点 2）。
+   */
+  def projectLoopCounters(counters: nebflow.core.processor.LoopGuard.Counters): (Int, String) =
+    val hits = counters.crossTurn.iterator.map { case (fp, turns) => (fp, turns.size) }.toList
+    val total = hits.iterator.map(_._2).sum
+    val lastFp = hits.sortBy { case (fp, n) => (-n, fp) }.headOption.map(_._1).getOrElse("")
+    (total, lastFp)
 
   /**
    * R1 (wait-timeout-fix, 2026-09-03 作者裁定①): the permission-confirmation

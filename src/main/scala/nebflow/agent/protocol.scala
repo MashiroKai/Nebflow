@@ -374,7 +374,44 @@ case class AgentRecord(
     * （NodeEngine 节点 / ProjectActor 分发器）写 Flow Map 节点名 / "dispatcher/<project>"；
     * 其余域 None（默认 = 既有注册点零改动）。activeAgentEntryJson 恢复链消费：
     * meta.agentName → displayName → sessionId 三档。 */
-  displayName: Option[String] = None
+  displayName: Option[String] = None,
+  /**
+   * 正信号（**进展证据**）时间戳（stuck 自动恢复批 P1，2026-09-11 作者裁定 R-3）。
+   *
+   * 语义 = 「本会话当前在飞的工具，在上一个采样窗里**确有推进**」——由工具活动桥的
+   * 采样点判定（stdout 行数增长 ∨ 单窗 CPU 增量 > 活动桥阈值），写点 =
+   * `AgentCore.markToolProgress`（唯一写入语义落点；真实传感器 = 工具活动桥采样循环，
+   * 它与 `processActivityMs` **同点、同判据、不同语义**：后者是「子进程还活着」的
+   * 旁证，本字段是「本窗有进展」的证据）。
+   *
+   * **方向性（红线 R6-4 的边界，作者已确认）**：本字段**只阻止判死、绝不促成判死**
+   * ——它只出现在「⇒ 归 类② 假阳性、本拍不动作」的合取项里，不出现在
+   * `TaskStuckWatcher.assessDetailed` 任何判死不等式内。0 = 从未观测到进展。
+   *
+   * 与 `processActivityMs` 的关键差异：后者被明文禁止被 watcher 读取（见其上注释），
+   * 本字段是为此**显式新开**的、语义为「进展证据」的通道——两者不可互相顶替。
+   */
+  lastProgressSignalAt: Long = 0L,
+  /**
+   * LoopGuard 跨轮指纹**只读投影**（stuck 自动恢复批 P1：互斥点 2 的可见性缺口，
+   * 设计 §3.4/§3.8）。`AgentState.loopCounters` 在 actor 内不可读，而 watcher 需要
+   * 「本会话是否处于循环形态」的只读快照来识别「恢复 → 立刻又被 LoopGuard 冻结」
+   * 的自激循环。
+   *
+   * 语义 = `Counters.crossTurn` 的**累计命中数**（fp → 失败过的 turn 集合，各自大小求和）。
+   * 写点 = `AgentCore.pipeToolExecutions` 既有 loopStreak/loopRounds 镜像同点（**不碰
+   * 冻结面** `AgentActor`/`LoopGuard`）。
+   *
+   * **只读不回流判据**：本字段**不参与任何判死不等式**，只作为「停恢复链」的
+   * 互斥信号（恢复前后对比：计数上升 = 其间发生过循环命中）。
+   */
+  loopStrikeCount: Int = 0,
+  /**
+   * LoopGuard 最近一次跨轮命中的指纹（`Counters.crossTurn` 中命中次数最多者，
+   * 同数取字典序最小 —— 确定性投影，与 [[loopStrikeCount]] 同点写入）。
+   * 空串 = 无跨轮命中记录。**只读不回流判据**（同 [[loopStrikeCount]]）。
+   */
+  lastLoopFp: String = ""
 )
 
 // ============================================================

@@ -154,6 +154,18 @@ object LlmInterface:
       } *> IO.pure(matching.size)
     }
 
+  /** stuck 自动恢复批 P1（2026-09-11）：**只读** per-session 在飞 LLM 请求数。
+    *
+    * 与 [[cancelInflightFor]] / [[transportAbortFor]] 的关键差异：本方法是**纯读**
+    * ——不完成任何 halt、不触发任何 abort、不改 registry，可在「判定前分流」这类
+    * 只观测不动作的位置安全使用（此前判据序要判「本会话是否有在飞 LLM」只能靠
+    * 破坏性的 cancel 调用反推，设计 §6.1 未证项 6 即此）。
+    *
+    * 消费点（唯一）：`TaskStuckWatcher.classify` 的**判据序第一档**——`> 0` ⇒ 归
+    * 类④ provider hang（LLM 层三档看护自管），watcher 本拍零动作（设计 §2.1）。 */
+  def inflightFor(sessionId: String): IO[Int] =
+    inflight.get.map(_.count { case (_, e) => e.sessionId.contains(sessionId) })
+
   /** Abort all in-flight LLM requests — streams fail with [[ShutdownAbort]]. */
   def cancelAllInflight(): IO[Unit] =
     inflight.get.flatMap { m =>

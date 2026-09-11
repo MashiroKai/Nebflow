@@ -122,6 +122,113 @@ object TaskStuckWatcher:
     toolName: Option[String]
   )
 
+  // ── 判据序：根因分流（stuck 自动恢复批 P1，2026-09-11）────────────────────
+  //
+  // 设计 §2.1 的判据序：**先分流，再判死**。`assessDetailed` 回答「是否命中停滞
+  // 候选」，本段回答「命中的是哪一类、本拍该不该动作」——两者严格分离，
+  // 分流结果**绝不回流进判死不等式**（判死本体仍是 assessDetailed 的两条不等式）。
+
+  /** 类① 真卡死：无进展且无事件（判据命中后无任何「还在干活」的证据）。 */
+  val ClassTrueStuck: String = "true-stuck"
+  /** 类② 假阳性：工具相位未超有效阈值**且**有正信号（还在推进）⇒ 本拍不动作。 */
+  val ClassFalsePositive: String = "false-positive"
+  /** 类④ provider hang：本会话有在飞 LLM 请求 ⇒ 交 LLM 层三档看护，watcher 不介入。 */
+  val ClassProviderHang: String = "provider-hang"
+  /** 判据序的分流结果（设计 §2.1）。 */
+  final case class StuckClassification(
+    /** ∈ [[ClassTrueStuck]] / [[ClassFalsePositive]] / [[ClassProviderHang]]。 */
+    cls: String,
+    /** 该类的机器可读判据读数（进事件面与上报文本；**不回流判据**）。 */
+    note: String,
+    /** true = 本拍允许进入恢复链（P2/P3 的断点恢复腿）。类②/④ 恒 false。 */
+    recoverable: Boolean,
+    /** true = 本拍允许执行**破坏档**（L2 进程 kill / 终态化）。类① 必须为 false
+      * （设计 §2.2 建议动作档：类① 只允许非破坏档 L1 + 恢复腿）。 */
+    destructiveAllowed: Boolean
+  )
+
+  /** 类③（环境失效）与类⑥/⑦ 不在本 watcher 的产出面，此处显式记录归属以免被误
+    * 读成遗漏：
+    *   - 类③ 工具显式失败 / cwd 失效：其可观测形态 = 工具相位被清（`currentToolStartedAt`
+    *     归零）或 agent 事件恢复 ⇒ 本 watcher 不会把它判成停滞；剩余窗口（工具尚未
+    *     返回而 cwd 已失效）在 registry 快照上**无信号可用**（`AgentRecord` 无 cwd
+    *     字段）⇒ 本批**不产出该类**，正确出口仍是 agent 自纠（未证项，见报告）。
+    *   - 类⑥ bgWait cap / bg idle：**R-4 裁定不并入本批**（归 home 板 #5），仅在
+    *     「无正信号不得终态化」口径上与类② 同源。
+    *   - 类⑦ `bg-harvest` 无 cause：本批 **P2 附加小项**（R-5），发射点
+    *     `NodeEngine` 的 bg-harvest 写点。
+    */
+
+  /** 正信号（进展证据）是否新鲜——**只阻止判死、绝不促成判死**（作者裁定 R-3）。
+    * 读 [[AgentRecord.lastProgressSignalAt]]（写点语义单点 =
+    * `AgentCore.markToolProgress`，传感器 = 工具活动桥采样点）。 */
+  def hasProgressSignal(
+    rec: AgentRecord,
+    now: Long,
+    windowMs: Long = nebflow.shared.Defaults.StuckProgressSignalWindowMs
+  ): Boolean =
+    rec.lastProgressSignalAt > 0 && now - rec.lastProgressSignalAt <= math.max(0L, windowMs)
+
+  /** 判据序（设计 §2.1）的**唯一实现单点**——纯函数，可独立单测；扫描面与任何
+    * 将来消费者共用同一口径（防分流漂移，与 [[assessDetailed]] 唯一事实源同源）。
+    *
+    * 判定顺序（严格自上而下，先命中先返回）：
+    *   1. `inflight > 0` ⇒ 类④ [[ClassProviderHang]]（LLM 层自管，watcher 零动作）
+    *   2. 有工具相位（`currentToolStartedAt > 0`）：
+    *      a. `toolPhaseMs ≤ 有效阈值` 且**有正信号** ⇒ 类② [[ClassFalsePositive]]
+    *         （本拍不动作，只记 `suspect`——这条正是今天 11/11 样本的出口）
+    *      b. 其余 ⇒ 类① [[ClassTrueStuck]]（**非破坏档**：只允许 L1 + 恢复腿）
+    *   3. 无工具相位 ⇒ 类① [[ClassTrueStuck]]
+    *
+    * **类⑤（会话纤维挂起 / 邮箱堵）本批不产出**（**未尽事项，单列**）：设计 §2.2 的
+    * 判据需要 `cancelInflightFor == 0 ∧ transportAbortFor == 0` 两个**返回值**读数，
+    * 而这两者都是**破坏性探针**（会 complete halt Deferred / 触发 transport abort），
+    * 不能放在「只观测、不动作」的分流位上（这正是本批新增只读 `inflightFor` 的原因）。
+    * 用「`inflightFor == 0`」冒充该条件会造成**静默误分类**：正常的工具相位同样
+    * inflight == 0，会把类① 判成类⑤ 而跳过恢复腿（本批实测：该冒充使
+    * `TaskStuckWatcherSpec`/`WatchdogSelfMonitorSpec` 的 L3 用例由绿转红）。
+    * ⇒ 类⑤ 归属维持设计原文的「**需更强原语，另批**」（§2.2 建议动作档），
+    * 本批不宣称该类可判（报告「未尽事项」列明）。
+    *
+    * **不读取任何进程 CPU**（红线 R6-4）：`inflight` 是 LLM 在飞计数，正信号走
+    * 「只阻止」方向，两者都不构成判死依据。 */
+  def classify(
+    rec: AgentRecord,
+    a: StuckAssessment,
+    now: Long,
+    inflight: Int,
+    toolPhaseThresholdMs: Long = nebflow.shared.Defaults.ToolPhaseStuckMs,
+    progressWindowMs: Long = nebflow.shared.Defaults.StuckProgressSignalWindowMs
+  ): StuckClassification =
+    val effectiveToolPhaseMs = ToolStuckJudgment.effectiveToolPhaseMs(
+      toolPhaseThresholdMs, rec.currentToolDeadlineMs, nebflow.shared.Defaults.ToolDeadlineSlackMs)
+    val progress = hasProgressSignal(rec, now, progressWindowMs)
+    val progressAgoSecs = if rec.lastProgressSignalAt > 0 then (now - rec.lastProgressSignalAt) / 1000 else -1L
+    if inflight > 0 then
+      StuckClassification(ClassProviderHang,
+        s"$inflight in-flight LLM request(s) for this session — provider-hang (class 4): the LLM layer's own " +
+          "watchdog owns this case, the watcher takes no action this round",
+        recoverable = false, destructiveAllowed = false)
+    else if rec.currentToolStartedAt > 0 then
+      if a.toolPhaseMs <= effectiveToolPhaseMs && progress then
+        StuckClassification(ClassFalsePositive,
+          s"tool '${a.toolName.getOrElse("?")}' still inside its authorised window " +
+            s"(${a.toolPhaseMs / 1000}s ≤ ${effectiveToolPhaseMs / 1000}s) and advancing " +
+            s"(progress signal ${progressAgoSecs}s ago) — false positive (class 2): no action this round",
+          recoverable = false, destructiveAllowed = false)
+      else
+        StuckClassification(ClassTrueStuck,
+          s"no progress signal (last=${if progressAgoSecs < 0 then "never" else s"${progressAgoSecs}s ago"}) " +
+            s"while tool '${a.toolName.getOrElse("?")}' is in flight " +
+            s"(${a.toolPhaseMs / 1000}s, authorised ${effectiveToolPhaseMs / 1000}s) — true stuck (class 1): " +
+            "non-destructive tier only (L1 halt + recovery leg; no process kill, no terminalization)",
+          recoverable = true, destructiveAllowed = false)
+    else
+      StuckClassification(ClassTrueStuck,
+        s"no tool phase in flight, no in-flight LLM request, no progress signal — " +
+          "true stuck (class 1): non-destructive tier only (L1 halt + recovery leg)",
+        recoverable = true, destructiveAllowed = false)
+
   /** [[assess]] 的详情版（唯一判据事实源）：返回命中的**分支身份**与两条轴的原始终
     * 读数，供 R8 事件面消费。`assess` 退化为它的投影——**既有三消费点
     * （watcher 扫描 / `AgentControlTool` 展示 / `WebSocketRoutes` kick）签名与行为
@@ -271,7 +378,14 @@ object TaskStuckWatcher:
       // status / gone) so a future stuck episode starts from Stop attempt 1.
       stopCounts.modify(m => (m.view.filterKeys(stuckIds.contains).toMap, ())) *>
         stuck.traverse_ { (rec, assessment) =>
-          recover(resources, wsHub, rec, assessment, stopCounts, pendingL3, l3VerifyDelayMs)
+          // 判据序（P1）：先分流根因类别，再进恢复链。`inflightFor` 是**只读**在飞
+          // 计数（设计 §6.1 未证项 6 的补齐）——此前判「本会话是否有在飞 LLM」只能
+          // 靠破坏性的 cancelInflightFor 反推。stopAttempts 取当轮值（内存态）。
+          nebflow.llm.LlmInterface.inflightFor(rec.sessionId).flatMap { inflight =>
+            recover(resources, wsHub, rec, assessment,
+              classify(rec, assessment, now, inflight),
+              stopCounts, pendingL3, l3VerifyDelayMs)
+          }
         }
     }
 
@@ -306,6 +420,7 @@ object TaskStuckWatcher:
     wsHub: WsHub,
     rec: AgentRecord,
     assessment: StuckAssessment,
+    cls: StuckClassification,
     stopCounts: cats.effect.Ref[IO, Map[String, Int]],
     pendingL3: cats.effect.Ref[IO, List[PendingL3]],
     l3VerifyDelayMs: Long
@@ -321,9 +436,30 @@ object TaskStuckWatcher:
     /** R8 ①：开火留痕（含 shadow 标记，使标定窗口内的行自解释）。 */
     def recordFire(level: String, attempt: Int): IO[Unit] =
       recordStuckFire(rec, assessment, level, attempt, hard, shadow)
+    // ── 判据序留痕（P1，2026-09-11）──────────────────────────────────────────
+    // 每一次判定命中都留一行 `stuck-detected`（含**零动作**的类② 拍与交棒 LLM 层的
+    // 类④ 拍）——fire-per-fire，与 R8 的 `stuck-fire` 同纪律、同面可按 (sessionId, ts)
+    // join。**动作面留痕**（`stuck-fire`）与**检出面留痕**（`stuck-detected`）分开，
+    // 使「改造后 11/11 转 suspect」这类零动作事实在审计面不被读成开火。
+    val classifyNote = recordClassification(rec, assessment, cls)
+    // ── 判据序闸门（P1，2026-09-11 作者裁定 R-3）──────────────────────────────
+    // 类② 假阳性 ⇒ **本拍零动作**：不 halt、不 abort、不 kill、不终态化、不广播。
+    // 这正是今天 11/11 样本改造后应有的出口（**预期行为，不是回归**）：它们的形态 =
+    // 「>600s 单工具调用 + 工具持续推进」，落在类②（正信号在场 ⇒ 只阻止判死）。
+    if cls.cls == ClassFalsePositive then
+      logger.info(
+        s"TaskStuckWatcher: ${rec.sessionId} (kind=${rec.kind}) hit the stall judge " +
+          s"[branch=${assessment.branch}, judge: $reason] but is classified ${cls.cls} — " +
+          s"no action this round (suspect only). ${cls.note}"
+      ) *> classifyNote
+    // 类④ provider hang：**只走 LLM 侧处置**（L1 halt / L2 transport abort 都是 LLM 层
+    // 原语），**绝不进节点级腿**——`destructiveAllowed=false` 收回 L2 进程 kill，
+    // `recoverable=false` 使 L3 节点级腿被跳过（见下方各分支的门）；`classifyNote`
+    // 照常留痕。§2.1 的「LLM 层三档看护接管」在此落成：L1 的 halt 正是把控制权交还
+    // LLM 层有界重试的既有原语（见 L1 分支注释）。
     // #22: Team kind 只读——长驻用户可见会话，绝不自动 Stop（AgentControl §4）。
     // 2026-08-19 Frontend 僵尸 turn 若有此广播，2 小时静默会变成即时可见。
-    if rec.kind == AgentKind.Team then
+    else if rec.kind == AgentKind.Team then
       logger.warn(
         s"TaskStuckWatcher: team agent ${rec.sessionId} stuck in Processing for ${idleSecs}s " +
           s"[judge: $reason] " +
@@ -331,6 +467,7 @@ object TaskStuckWatcher:
           "but a looping turn may be terminated by loop guard; the team Manager or Nebula can " +
           "cancel/restart it via AgentControl"
       ) *>
+        classifyNote *>
         recordFire("attention", 0) *>
         act(broadcastStuck(wsHub, rec, idleSecs, "attention", reason))
     // Project flow 会话（node-/dispatcher-，supervisorRef=观察桥）卡死：分级接管
@@ -346,6 +483,7 @@ object TaskStuckWatcher:
       ) *>
         // P7 诚实帧：硬分级时每扫描一帧**真实** action（在下述 match 内逐拍广播）；
         // 只有回滚形态（!hard）沿用旧语义在此统一广播 restart。
+        classifyNote *>
         act(if hard then IO.unit else broadcastStuck(wsHub, rec, idleSecs, "restart", reason)) *>
         stopCounts.modify { m =>
           val n = m.getOrElse(rec.sessionId, 0) + 1
@@ -373,14 +511,22 @@ object TaskStuckWatcher:
               logger.warn(
                 s"TaskStuckWatcher: ${rec.sessionId} attempt $attempts (L2) — transport-aborted $n in-flight LLM request(s)"
               ) *>
-                (if n > 0 then
+                (if n > 0 && cls.destructiveAllowed then
                    nebflow.core.tools.BgTaskRegistry.reclaimSession(Some(rec.sessionId), wsHub.broadcast, rec.rootSessionId)
                      .handleErrorWith(e =>
                        logger.warn(s"TaskStuckWatcher: session reclaim for ${rec.sessionId} failed: ${e.getMessage}"))
                  else
+                   // P1 类① 非破坏档限定（设计 §2.2 建议动作档）：类① 的进程 kill
+                   // 被**结构性**收回——两条独立的闸门都指向同一结论：
+                   //   ① 本批新增的判据序（[[classify]]）：`inflightFor > 0` ⇒ 类④
+                   //      分流，永远走不到 L2 的 n > 0 分支；
+                   //   ② 本处的 `cls.destructiveAllowed` 显式守卫：即使将来放宽扫描面
+                   //      或时序在判据后发生变化，类① 也不会静默获得进程 kill 能力
+                   //      （设计 §3.4 互斥点 (b) 的同款「显式化」纪律）。
                    logger.warn(
                      s"TaskStuckWatcher: ${rec.sessionId} attempt $attempts (L2) — no in-flight LLM request (tool-phase); " +
-                       "process kill withheld [evidence #5 container-blindness guard]"
+                       s"process kill withheld [evidence #5 container-blindness guard; class=${cls.cls} " +
+                       s"destructiveAllowed=${cls.destructiveAllowed}]"
                    ))
             }.handleErrorWith(e =>
               logger.warn(s"TaskStuckWatcher: transport abort for ${rec.sessionId} failed: ${e.getMessage}")
@@ -398,6 +544,7 @@ object TaskStuckWatcher:
           if !hard then
             // 回滚形态（HardRecoveryEnabled=false）：维持本批前行为——每轮
             // hard-cancel，StopAttempts+2 轮后 bridge Cancelled 终态收殓。
+            classifyNote *>
             recordFire("stop", attempts) *>
             act(hardCancel()) *> {
               if attempts >= StopAttempts + 2 then
@@ -433,6 +580,16 @@ object TaskStuckWatcher:
                 logger.warn(
                   s"TaskStuckWatcher: ${rec.sessionId} attempt $attempts (L2) — transport abort + session process reclaim"
                 ) *> recordFire("L2", attempts) *> act(broadcastStuck(wsHub, rec, idleSecs, "hard-abort", reason)) *> act(transportAbort())
+              case 3 if !cls.recoverable =>
+                // 判据序闸门（P1）：类④ provider hang ⇒ 节点级腿**跳过**（负控③
+                // 「不执行 L2 进程 kill / L3」）。理由：本案的根因在 LLM 流（有在飞
+                // 请求），节点级清场/恢复不是对症手段；L1 的 halt 已把控制权交还
+                // LLM 层的有界重试（见 L1 注释），此后按 §3.3「立即放弃、不重试」
+                // 条件 2 走一次上报而不是继续升级。
+                logger.error(
+                  s"TaskStuckWatcher: ${rec.sessionId} attempt $attempts (L3) — SKIPPED for class ${cls.cls} " +
+                    s"(recoverable=false): the node-level leg is not the remedy here; the LLM layer owns this case. ${cls.note}"
+                ) *> recordFire("L3", attempts)
               case 3 =>
                 // L3 真重启（设计 D-5）：bridge Cancelled 清场（actor 停止 + 节点终
                 // 态）→ 5s 让清场链走完 → hardResumeNode 从 transcript 断点续跑
@@ -441,7 +598,7 @@ object TaskStuckWatcher:
                 // → watcher 不再见其 stuck）；失败保留计数 → 第 4 拍 L4 failed 可达。
                 logger.warn(
                   s"TaskStuckWatcher: ${rec.sessionId} attempt $attempts (L3) — releasing via bridge Cancelled, then hard-resume from transcript breakpoint"
-                ) *> recordFire("L3", attempts) *> act(broadcastStuck(wsHub, rec, idleSecs, "restart", reason)) *>
+                ) *> classifyNote *> recordFire("L3", attempts) *> act(broadcastStuck(wsHub, rec, idleSecs, "restart", reason)) *>
                   act(bridgeCancelled("L3 hard-recovery: true resume from transcript breakpoint")) *>
                   // 面板实时终态帧（Sub-Agents 面板取消实时刷新修复；beta.57 CI
                   // ProjectSessionCancelPanelFrameSpec 暴露的 hard 分支遗漏）：L3 桥
@@ -503,6 +660,7 @@ object TaskStuckWatcher:
             // AgentControl spec §3.5：子 agent 自动重启也广播 taskStuck（原先只有
             // 根 agent 广播）——前端可见「后台 agent 卡死，正在自动重启」，Nebula
             // 事后用 AgentControl(list) 能看到 retryCount。
+            classifyNote *>
             act(broadcastStuck(wsHub, rec, idleSecs, "restart", reason)) *>
             // gate-wedge P1-1: count ineffective Stops. A suspended agent never
             // consumes mailbox messages, so resending forever is useless (the
@@ -536,13 +694,16 @@ object TaskStuckWatcher:
                     logger.warn(
                       s"TaskStuckWatcher: ${rec.sessionId} attempt $attempts (L2) — transport-aborted $n in-flight LLM request(s)"
                     ) *>
-                      (if n > 0 then
+                      // P1 判据序闸门：进程 kill 只在 `destructiveAllowed` 类上执行
+                      // （类①/②/④ 均为 false ⇒ 结构性收回；见 [[classify]]）。
+                      (if n > 0 && cls.destructiveAllowed then
                          nebflow.core.tools.BgTaskRegistry.reclaimSession(Some(rec.sessionId), wsHub.broadcast, rec.rootSessionId)
                            .handleErrorWith(e => logger.warn(s"TaskStuckWatcher: session reclaim for ${rec.sessionId} failed: ${e.getMessage}"))
                        else
                          logger.warn(
                            s"TaskStuckWatcher: ${rec.sessionId} attempt $attempts (L2) — no in-flight LLM request (tool-phase); " +
-                             "process kill withheld [evidence #5 container-blindness guard]"))
+                             s"process kill withheld [evidence #5 container-blindness guard; class=${cls.cls} " +
+                             s"destructiveAllowed=${cls.destructiveAllowed}]"))
                   }.handleErrorWith(e =>
                     logger.warn(s"TaskStuckWatcher: transport abort for ${rec.sessionId} failed: ${e.getMessage}")
                   )
@@ -580,7 +741,8 @@ object TaskStuckWatcher:
                         stopCounts.update(_ - rec.sessionId)
                     case None => IO.unit
                 else IO.unit
-              recordFire("stop", attempts) *>
+              classifyNote *>
+                recordFire("stop", attempts) *>
                 act(escalate *> transportEscalate *> giveUp) *>
                 act((rec.ref ! AgentCommand.Stop(s"stuck-task-${rec.sessionId}"))
                   .handleErrorWith(e => logger.warn(s"TaskStuckWatcher: Stop to stuck sub-agent ${rec.sessionId} failed: ${e.getMessage}")))
@@ -598,6 +760,7 @@ object TaskStuckWatcher:
               s"TaskStuckWatcher: root agent ${rec.sessionId} (kind=${rec.kind}) stuck in Processing for ${idleSecs}s " +
                 s"[judge: $reason] — not auto-restarting, broadcast taskStuck for user decision"
             ) *>
+              classifyNote *>
               recordFire("attention", 0) *>
               act(broadcastStuck(wsHub, rec, idleSecs, "attention", reason))
           else
@@ -621,13 +784,16 @@ object TaskStuckWatcher:
                         // 证据 #5 ① 护栏（同 flow transportAbort）：仅 LLM 楔死形态
                         // （n>0）才 reclaimSession 进程 kill；工具相位（容器 CPU 盲区）
                         // 收回，升级链走 tier-3。
-                        (if n > 0 then
+                        // P1 判据序闸门（同 flow 分支）：进程 kill 只在
+                        // `destructiveAllowed` 类上执行。
+                        (if n > 0 && cls.destructiveAllowed then
                            nebflow.core.tools.BgTaskRegistry.reclaimSession(Some(rec.sessionId), wsHub.broadcast, rec.rootSessionId)
                              .handleErrorWith(e => logger.warn(s"TaskStuckWatcher: L2 reclaim for ${rec.sessionId} failed: ${e.getMessage}"))
                          else
                            logger.warn(
                              s"TaskStuckWatcher: root agent ${rec.sessionId} L2 — no in-flight LLM request (tool-phase); " +
-                               "process kill withheld [evidence #5 container-blindness guard]"))
+                               s"process kill withheld [evidence #5 container-blindness guard; class=${cls.cls} " +
+                               s"destructiveAllowed=${cls.destructiveAllowed}]"))
                     }.handleErrorWith(e => logger.warn(s"TaskStuckWatcher: L2 abort for ${rec.sessionId} failed: ${e.getMessage}")))
                 case 3 =>
                   ("restart",
@@ -645,7 +811,8 @@ object TaskStuckWatcher:
                     ))
                 case _ =>
                   ("failed", IO.unit)
-              recordFire(s"L${math.min(attempts, 4)}", attempts) *>
+              classifyNote *>
+                recordFire(s"L${math.min(attempts, 4)}", attempts) *>
                 act(broadcastStuck(wsHub, rec, idleSecs, action, reason)) *> act(io)
             }
 
@@ -685,6 +852,45 @@ object TaskStuckWatcher:
       "attempt" -> io.circe.Json.fromInt(attempt),
       "hardRecoveryEnabled" -> io.circe.Json.fromBoolean(hard),
       "shadow" -> io.circe.Json.fromBoolean(shadow)
+    ))
+
+  /** 判据序（P1）的事件类型：**每次判定命中的类别**（含「本拍不动作」的类②/④）。
+    *
+    * 与 R8 的 `stuck-fire`（[[WatchdogEventLog.StuckFireType]]，只在**动作开火**时写）
+    * 严格区分——本类型描述的是「检出面」而不是「开火面」（设计 §3.5 的两行表：
+    * 「检出 + 根因分类 → 事件流 `stuck-detected`」/「恢复尝试 → `stuck-recovery-attempt`」）。
+    * 混用会让「今天 11/11 转 suspect」这类**零动作**事实在审计面被读成开火。
+    *
+    * 事件类型词表由**生产者**持有（本对象），与 R8 的 `WatchdogEventLog` 常量并存——
+    * 避免为一个新类型改动 R8 已落地的审计模块（本批文件面纪律）。
+    */
+  val StuckDetectedType: String = "stuck-detected"
+
+  /** 判据序的分流留痕（**无条件**，含类②/④ 的零动作拍）：一行结构化事件，字段 =
+    * 类别 + 判据读数 + 分支身份，与 R8 的 `stuck-fire` 同面可按 (sessionId, ts) join。
+    *
+    * **不写**进程 CPU / `processActivityMs`（红线 R6-4）；正信号只以**布尔方向**
+    * （是否阻止了本拍判死）出现，不把「行数/CPU 增量」原文写进事件面（设计 §2.2-C
+    * 的「事件内不嵌 progress 快照」纪律，v2 再议）。
+    * best-effort：写失败只 WARN（[[WatchdogEventLog.append]] 内兜底）。 */
+  private def recordClassification(
+    rec: AgentRecord,
+    a: StuckAssessment,
+    cls: StuckClassification
+  ): IO[Unit] =
+    WatchdogEventLog.append(io.circe.Json.obj(
+      "ts" -> io.circe.Json.fromLong(System.currentTimeMillis()),
+      "type" -> io.circe.Json.fromString(StuckDetectedType),
+      "sessionId" -> io.circe.Json.fromString(rec.sessionId),
+      "kind" -> io.circe.Json.fromString(rec.kind.toString),
+      "branch" -> io.circe.Json.fromString(a.branch),
+      "class" -> io.circe.Json.fromString(cls.cls),
+      "toolPhaseMs" -> io.circe.Json.fromLong(a.toolPhaseMs),
+      "agentIdleMs" -> io.circe.Json.fromLong(a.agentIdleMs),
+      "toolName" -> a.toolName.fold(io.circe.Json.Null)(io.circe.Json.fromString),
+      "recoverable" -> io.circe.Json.fromBoolean(cls.recoverable),
+      "destructiveAllowed" -> io.circe.Json.fromBoolean(cls.destructiveAllowed),
+      "note" -> io.circe.Json.fromString(cls.note)
     ))
 
   // ── R8 方向②：L3 有效性自检（T+N 行为面复查）────────────────────────────
