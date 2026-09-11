@@ -29,6 +29,7 @@ import {
   isTerminalStatus, purgeExpired,
   ingestNodes, recordNodeRemoved, dropStore,
   syncArchiveUi, openDetailFor,
+  chainMembersOf, chainHighlightIds,
 } from './flowMapArchive.js';
 import { toggleHTML, bindToggle, setToggleState } from './toggle.js';
 
@@ -333,6 +334,21 @@ function rebuildAdjacency(canvas, fm, edgesMap) {
   adjByCanvas.set(canvas, { nbrs, ends });
 }
 
+/** canvas → 项目名（U1 链高亮：hover/click 需读该项目的链上下文；渲染入口注入）。 */
+const chainCtxByCanvas = new WeakMap();
+
+/** hover 的链高亮集合（U1 批 · 作者裁定④）：hover 链上的任意节点（普通节点或合并
+ *  节点）⇒ 高亮**整条链** = 该链全量成员 id 集，**含链上全部合并节点**（不得漏掉）。
+ *  这里刻意不消费 `chainHighlightIds` 的多链退化（那只属点击语义③）——否则 hover
+ *  多链合并节点会把自己所在整链 dim 掉。链不可知（孤立节点/旧后端）→ 集合退化为
+ *  仅自身（等于既有无邻居行为，零 crash）。
+ *  @param {HTMLElement} canvas @param {string} nodeId @returns {Set<string>} */
+function hoverChainSet(canvas, nodeId) {
+  const project = chainCtxByCanvas.get(canvas);
+  if (!project) return new Set([nodeId]);
+  return new Set(chainMembersOf(project, nodeId));
+}
+
 /** 清 hover 强调类（节点 + 边一起清，L0 还原唯一出口）。修复（20260905 作者报告
  *  「连线 hover 变淡看不清」主因）：原实现还原路径只清节点类、提前 return 跳过
  *  边类——节点 hover 结束后全部非邻接边永久卡在 .fm-edge-dim（opacity .06），
@@ -344,24 +360,56 @@ function clearHoverClasses(canvas) {
     .forEach((el) => el.classList.remove('fm-edge-hi', 'fm-edge-dim'));
 }
 
-/** 应用节点 hover 强调态（hoverId=null 还原 L0）。自身 .fm-hi（1.12）、邻居 .fm-nb
- *  （1.06）、其余 .fm-dim；边按端点分 .fm-edge-hi / .fm-edge-dim（N1 参数）。 */
+// ── 点击链高亮（U1 批 · 作者 2026-09-11 裁定③）──────────────────────
+// 语义：点**多链合并节点**（引擎 chainIds 长度 ≥2）⇒ 只高亮该节点本身（不得牵动/
+// 高亮任何其他链节点）；点**单链合并节点 / 普通节点**⇒ 整条链一起高亮（含链上全部
+// 节点）。视觉载体 = 既有 `.fm-adj` 类（flowMap.css 既有规则，本批零 CSS 改动）；
+// `.fm-chain-pick` 仅是无样式的选择标记（供清除时精确定位，不影响外观）。清空时机
+// = 点击空白处 / 点击另一节点 / 画布重渲染。
+const CHAIN_PICK_CLASS = 'fm-chain-pick';
+
+/** 清点击链高亮（只清本批标记的卡；归档面板 hover 的 .fm-adj-by-entry 不受影响）。 */
+function clearChainPick(canvas) {
+  canvas.querySelectorAll(`.fm-node.${CHAIN_PICK_CLASS}`).forEach((el) => {
+    el.classList.remove('fm-adj', CHAIN_PICK_CLASS);
+  });
+}
+
+/** 应用点击链高亮（U1 裁定③）：集合 = chainHighlightIds（多链合并 ⟶ 仅自身）。 */
+function applyChainPick(canvas, nodeId) {
+  clearChainPick(canvas);
+  if (!canvas || !nodeId) return;
+  const project = chainCtxByCanvas.get(canvas);
+  if (!project) return;
+  const { ids } = chainHighlightIds(project, nodeId);
+  const set = new Set(ids);
+  canvas.querySelectorAll('.fm-node').forEach((el) => {
+    if (!set.has(el.getAttribute('data-node-id'))) return;
+    el.classList.add('fm-adj', CHAIN_PICK_CLASS);
+  });
+}
+
+/** 应用节点 hover 强调态（hoverId=null 还原 L0）。**U1 批改轴：链口径取代邻接口径**
+ *  （作者 2026-09-11 裁定④）——自身 .fm-hi（1.12）、同链其余成员 .fm-nb（1.06，
+ *  **含链上合并节点**）、链外 .fm-dim；边按「两端是否都在链内」分 .fm-edge-hi /
+ *  .fm-edge-dim。边的构造规则（哪些边存在、状态档位/颜色）零改动——本函数只切
+ *  hover 瞬态类。 */
 function applyHover(canvas, hoverId) {
-  const adj = adjByCanvas.get(canvas);
-  if (!adj) return;
   clearHoverClasses(canvas);
   if (!hoverId) return;
-  const set = adj.nbrs.get(hoverId);
+  const set = hoverChainSet(canvas, hoverId);
   for (const n of canvas.querySelectorAll('.fm-node')) {
     if (n.classList.contains('fm-exit')) continue;
     const id = n.getAttribute('data-node-id');
     if (id === hoverId) n.classList.add('fm-hi');
-    else if (set && set.has(id)) n.classList.add('fm-nb');
+    else if (set.has(id)) n.classList.add('fm-nb');
     else n.classList.add('fm-dim');
   }
+  const adj = adjByCanvas.get(canvas);
   for (const p of canvas.querySelectorAll('[data-edge-id]')) {
-    const e = adj.ends.get(p.getAttribute('data-edge-id'));
-    if (e && e.has(hoverId)) p.classList.add('fm-edge-hi');
+    const e = adj && adj.ends.get(p.getAttribute('data-edge-id'));
+    const inChain = e && Array.from(e).every((x) => x === hoverId || set.has(x));
+    if (inChain) p.classList.add('fm-edge-hi');
     else p.classList.add('fm-edge-dim');
   }
 }
@@ -392,8 +440,10 @@ function applyEdgeHover(canvas, edgeId) {
  *  节点与连线两入口：pointerover 目标命中 .fm-node 走节点邻域语义（N1），
  *  命中 [data-edge-id]（边路径/箭头，pointer-events 已在 flowMap.css 开启）
  *  走连线加亮语义；两者互斥切换，80ms 宽限跨缝隙不闪烁。 */
-function bindHover(canvas) {
+function bindHover(canvas, projectName) {
   if (canvas.dataset.fmHoverBound === '1') return;
+  // U1 链高亮上下文（作者裁定④）：hover 需读项目链上下文（链成员集），随绑定注入。
+  if (projectName) chainCtxByCanvas.set(canvas, projectName);
   canvas.dataset.fmHoverBound = '1';
   let hovered = null; // 节点 hover：data-node-id
   let hoverEdge = null; // 连线 hover：data-edge-id
@@ -1281,7 +1331,7 @@ export function renderFlowMap(container, fm, projectName, opts = {}) {
   const canvas = container.querySelector('.solar-canvas');
   if (vp && canvas) {
     bindCamera(vp, canvas);
-    bindHover(canvas);
+    bindHover(canvas, projectName);
     rebuildAdjacency(canvas, fm, collectEdges(fm, positions));
   }
   bindFlowMapClicks(container, projectName);
@@ -1299,6 +1349,19 @@ function bindFlowMapClicks(container, projectName) {
       openNodeDetail(projectName, el.getAttribute('data-node-id') || '', container);
     });
   });
+  // U1 点击链高亮（作者裁定③）：捕获相位挂容器级委托——节点自身的 click 监听会
+  // stopPropagation，冒泡相位收不到；捕获相位先于节点监听执行，语义稳定。
+  const canvas = container.querySelector('.solar-canvas');
+  if (canvas && canvas.dataset.fmChainPickBound !== '1') {
+    canvas.dataset.fmChainPickBound = '1';
+    container.addEventListener('click', (e) => {
+      if (!canvas.isConnected) return;
+      const nEl = /** @type {HTMLElement} */ (e.target).closest?.('.fm-node');
+      const id = nEl ? nEl.getAttribute('data-node-id') || '' : '';
+      if (id) applyChainPick(canvas, id);
+      else clearChainPick(canvas); // 点空白 = 取消选择（与既有「空白点收起面板」同拍）
+    }, true);
+  }
 }
 
 // 节点结果详情（§5.8）：v3 起走右侧详情面板（flowMapArchive，z 70 浮前 +
