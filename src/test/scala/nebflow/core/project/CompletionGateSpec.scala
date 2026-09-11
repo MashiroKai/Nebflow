@@ -175,7 +175,11 @@ class CompletionGateSpec extends CatsEffectSuite:
         rootSessionId = "nebula-root",
         projectName = name,
         emitEvent = (t, id, payload) => events.update((t, id, payload) :: _),
-        gateRunner = runner
+        gateRunner = runner,
+        // noderpt 批 A 段：本 fixture 主题非 node_report 语义 ⇒ 显式关腿 2（生产默认开；
+        // 腿 2 默认开行为由 NodeReportReminderSpec 覆盖）。本 spec 断言产物闸门的
+        // pass/reject 分流，必须照常走到终态化。
+        reportGateHold = Some(false)
       )
       pd = ProjectDef(name = name, workspace = ws.toString, agentFile = (ws / "AGENTS.md").toString, createdAt = System.currentTimeMillis())
       rt = ProjectRuntime(pd, store, engine, system, res, None)

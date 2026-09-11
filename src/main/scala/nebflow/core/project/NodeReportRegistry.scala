@@ -39,6 +39,13 @@ object NodeReportRegistry:
       (m - sessionId, m.get(sessionId))
     }
 
+  /** 非消费读（noderpt 批 A 段 2026-09-11）：观察桥的 Completed 分支与未申报提醒
+    * 扫描腿用它判「该会话是否已申报」，**不消费**——消费语义仍唯一保留在终态点
+    * （`NodeEngine` 桥放行后的 `drain` → completeNode 分流），二者拆开后「申报 ⇒
+    * 放行」与「未申报 ⇒ hold + 起表」才能在同一 Completed 事件里共存。 */
+  def peek(sessionId: String): IO[Option[BlockedFeedback]] =
+    signals.get.map(_.get(sessionId))
+
   /** 清理钩子（不消费）：NodeEngine cleanupRunTables 对称清理点调用——
    * cancelled/failed/异常退出路径的残留申报在此兜底移除（幂等 no-op 安全）。 */
   def remove(sessionId: String): IO[Unit] =

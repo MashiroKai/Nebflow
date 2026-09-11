@@ -132,6 +132,23 @@ class FlowMapStore private (
       _ <- persistArchiveDiff(oldA, newA)
     yield newA
 
+  /** 归档区事务（带结果版，批 F1' 修复第 2 轮 2026-09-12）：语义与 [[mutateWithResult]]
+    * 同源，作用于归档区——调用方据此区分「本事务做了转移」与「条件不满足未转移」。
+    * 首个消费方 = `NodeEngine` 的销毁扫描腿：归档区成员的 `destroyAt` 清除要按
+    * 「字段仍等于登记值」做 CAS（并发同拍只留一个赢家 ⇒ 不重复发 `node-destroyed`），
+    * 与活动区侧清点同判据。f 在 Ref CAS 自旋下可能重入多次 ⇒ f 必须纯（结果值只依赖
+    * 输入状态，无副作用）。 */
+  def mutateArchiveWithResult[A](f: FlowMapArchive => (FlowMapArchive, A)): IO[(FlowMapArchive, A)] =
+    for
+      pair <- archive.modify { a =>
+        val (na0, res) = f(a)
+        val na = na0.copy(project = project)
+        (na, (a, na, res))
+      }
+      (oldA, newA, res) = pair
+      _ <- persistArchiveDiff(oldA, newA)
+    yield (newA, res)
+
   /** 环检测：设 from.out = to（或给 to 加 in=from，或给 to 声明 deps=[from]）是否成环。
     * to 的传递下游可达 from → 成环。后继集合（沿连接的流向）=
     * 「out 目标（跳过 Nebula）」 ∪ 「{ m | m.deps.contains(当前节点) }」——deps 设计
@@ -620,7 +637,16 @@ object FlowMapStore:
     * 成员（归档区成员恒终态天然放行，资格实际由活动成员决定，sweep §4.3-3）。
     * 注意：前端 flowMapArchive.js chainEligible 仍是 20:38 旧判据镜像，本批未同步
     * （P1 引擎单侧先行，前端批跟进）——后端归档先行的 ≤30s 窗口内前端派生链仍按旧
-    * 判据留主图，nodeRemoved 墓碑幂等兜底出图，无归档泄漏。 */
+    * 判据留主图，nodeRemoved 墓碑幂等兜底出图，无归档泄漏。
+    *
+    * **销毁窗口与归档资格正交**（noderpt 批 F1' 修复第 2 轮，2026-09-12）：本判据
+    * **不看** `destroyAt`——「终态延迟销毁窗口（30min）」与「链级归档（TtlTick 30s）」
+    * 是两个独立轴：窗口未收殓**不阻塞**出库，窗口语义改由销毁扫描腿的**双区读面**
+    * 兜底（`NodeEngine.sweepDestroyWindows` 同时扫活动区 ∪ 归档区 ⇒ 被搬进归档区的
+    * 成员到点照样收殓，见该函数头注）。历史（已撤销）：F1（`314b20c0`）曾在此前置
+    * 拒收带 `destroyAt` 的成员，使链尾节点「窗口未收殓」期间整链不出库——被独立复核
+    * 判为回归（`NodeDepsSpec.T4` / `NodeEdgeRepairSpec` 6 例全红，仅还原本函数即 16/16
+    * 全绿），故撤销：归档资格只由活跃态 / 上报事实决定（口径见上段）。 */
   def chainArchivable(members: Iterable[NodeDef]): Boolean =
     members.forall { n =>
       n.status match

@@ -161,6 +161,95 @@ object Defaults:
   def BgGateWaitTimeoutMs: Long =
     sys.props.getOrElse("nebflow.bgtask.gate.timeoutMs", (2 * 60 * 60 * 1000L).toString).toLong
 
+  // ── 节点生命周期收敛批（noderpt 批 A 段，2026-09-11 作者裁定）───────────────
+  //
+  // 完成门的**两条腿**各自独立开关（同一闸门、两个判据）：
+  //   腿 1（后台任务存活）：`BgGateCompletionHold` —— 默认 **false = 封存**
+  //     （作者 R1 裁定形态 (a)：代码保留、先不起用、可回退）；
+  //   腿 2（未申报 node_report）：`NodeReportCompletionHold` —— 默认 **true**
+  //     （作者 2026-09-11 裁定：未申报的 Completed 不终态化，节点保持 Running，
+  //     由未申报提醒阶梯兜底；申报后下一个 Completed 放行终态化）。
+  //
+  // 两者都是「现读」prop（sys.props.getOrElse，BgGateWaitTimeoutMs 同款先例）——
+  // 生产侧无在线翻转路由，改值需重启宿主生效；spec 侧走 NodeEngine 构造入参
+  // （`bgGateCompletionHold` / `reportGateHold`）避开全局 prop 的跨 suite 污染。
+
+  /**
+   * 完成门腿 1 开关（`nebflow.bgGate.completionHold`，默认 `false` = 封存）：
+   * true = 桥观察 `Completed` 时查 `BgTaskRegistry.waitingFor` 并 hold（今天的行为，
+   * 含 armCap 兜底计时器）；false = 跳过等待集检查直接走放行分支（不再因「后台任务
+   * 还在跑」拦节点）。hold 代码与 armCap 逐字保留，flag 打开即恢复旧行为。
+   * 每次调用现读（spec/运维可即时翻转）。
+   */
+  def BgGateCompletionHold: Boolean =
+    sys.props.getOrElse("nebflow.bgGate.completionHold", "false").trim.equalsIgnoreCase("true")
+
+  /**
+   * 完成门腿 2 开关（`nebflow.noderpt.completionHold`，默认 `true`）：
+   * true = 桥收到本会话 `AgentEvent.Completed` 且 `NodeReportRegistry` 申报槽为空 ⇒
+   * **不终态化**（节点保持 Running、会话存活），由未申报提醒阶梯提醒；申报槽非空 ⇒
+   * 照常放行（resultDeferred 完成 → drain 分流终态化）。
+   * false = 未申报也照常放行 = 本批之前的文本锚定降级面行为（零行为变化）。
+   */
+  def NodeReportCompletionHold: Boolean =
+    sys.props.getOrElse("nebflow.noderpt.completionHold", "true").trim.equalsIgnoreCase("true")
+
+  /**
+   * 未申报提醒阶梯（`nebflow.noderpt.remind.ladderMs`，逗号分隔毫秒，默认
+   * `10min / 30min / 1h / 2h / 4h` + 此后每 4h：8 拍 = 10m/30m/1h/2h/4h/8h/12h/16h）。
+   * 第 N 个元素 = 第 N 拍的触发阈值（elapsed ≥ 该值且尚未发过 ⇒ 发一拍）。
+   * 空数组 = 阶梯关闭（结合 maxRungs=0 即整条提醒腿停摆）。每次调用现读（验收可压到
+   * 10s/30s 级）。
+   */
+  def NodeReportReminderLadderMs: List[Long] =
+    sys.props
+      .getOrElse(
+        "nebflow.noderpt.remind.ladderMs",
+        "600000,1800000,3600000,7200000,14400000,28800000,43200000,57600000")
+      .split(',')
+      .iterator
+      .map(_.trim)
+      .filter(_.nonEmpty)
+      .flatMap(_.toLongOption)
+      .toList
+
+  /**
+   * 单节点提醒上限（`nebflow.noderpt.remind.maxRungs`，默认 8 = 作者裁定「单节点上限
+   * 8 拍」）。超过上限后**停止注入**（每拍都是一次完整 LLM turn，封顶为省 token），
+   * 改由 [[NodeReportReminderQuiescentMs]] 的 quiescent 档继续写事件。`0` = 关闭提醒腿。
+   */
+  def NodeReportReminderMaxRungs: Int =
+    sys.props.getOrElse("nebflow.noderpt.remind.maxRungs", "8").trim.toIntOption.getOrElse(8)
+
+  /**
+   * 阶梯耗尽后的 quiescent 事件间隔（`nebflow.noderpt.remind.quiescentIntervalMs`，
+   * 默认 4h；作者 2026-09-11 裁定②：第 8 拍后**不再注入**、但**事件不停**——每 4h
+   * 写一条 `node-report-missing`（`stage=quiescent`、不递增 reminderCount），持续到
+   * 节点终态/挂起出口/申报清表。同一 prop 现读，验收可压到 10s 级。
+   */
+  def NodeReportReminderQuiescentMs: Long =
+    sys.props.getOrElse("nebflow.noderpt.remind.quiescentIntervalMs", (4 * 60 * 60 * 1000L).toString).toLong
+
+  // ── 终态延迟销毁窗口（noderpt 批 B 段，2026-09-11 作者裁定：一律存活 30 分钟再销毁）──
+
+  /**
+   * 终态延迟销毁窗口（`nebflow.noderpt.destroyWindowMs`，默认 **30 分钟**——与
+   * `ShellSession` 的内建 `SessionTTL = 30.minutes` 同量级对齐，后者为 `private`
+   * 常量不可跨包复用，故在此独立声明并显式注明对齐关系）。
+   *
+   * 语义（作者裁定形态 (b)）：节点**终态时刻只登记不杀进程**（`destroyAt = T + 本窗口`
+   * 落节点持久字段）——窗口内进程/任务照跑、输出照写、**允许读取取证**，仅**禁止新
+   * spawn**（新后台任务 / 新会话）；到点由 `NodeEngine.sweepDestroyWindows`
+   * （`ProjectActor.TtlTick` 30s 节拍）执行 `BgTaskRegistry.reclaimSession` + 逐条
+   * `finalizeTask` + 释放 `ShellSession.sessions` 条目 + 清 `destroyAt`（幂等）。
+   * 挂起腿不登记窗口（即时收割不变）。
+   *
+   * 每次调用现读（验收可压到秒级；spec 亦可走 NodeEngine 构造入参 `destroyWindowMs`
+   * 注入，避开全局 prop 的跨 suite 污染，`bgGateCompletionHold` 同款）。
+   */
+  def NodeDestroyWindowMs: Long =
+    sys.props.getOrElse("nebflow.noderpt.destroyWindowMs", (30 * 60 * 1000L).toString).toLong
+
   // ---- Tool Result Guard ----
 
   /**

@@ -185,7 +185,11 @@ class NodeBlockedToolSignalSpec extends CatsEffectSuite:
         workspace = ws.toString,
         rootSessionId = "nebula-root",
         projectName = name,
-        emitEvent = (t, id, payload) => events.update((t, id, payload) :: _)
+        emitEvent = (t, id, payload) => events.update((t, id, payload) :: _),
+        // noderpt 批 A 段：本 fixture 主题 = node_report(blocked) 工具信号 ⇒ 显式关腿 2
+        // （生产默认开；腿 2 默认开行为由 NodeReportReminderSpec 覆盖）。本 spec 的
+        // 未申报降级面用例（文本锚定）依赖「未申报照常放行」的旧口径。
+        reportGateHold = Some(false)
       )
       pd = ProjectDef(name = name, workspace = ws.toString, agentFile = (ws / "AGENTS.md").toString, createdAt = System.currentTimeMillis())
       rt = ProjectRuntime(pd, store, engine, system, res, None)

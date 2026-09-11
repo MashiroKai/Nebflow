@@ -147,7 +147,10 @@ class NodeAcceptanceSpec extends CatsEffectSuite:
         workspace = ws.toString,
         rootSessionId = "nebula-root",
         projectName = name,
-        emitEvent = (_, _, _) => IO.unit
+        emitEvent = (_, _, _) => IO.unit,
+        // noderpt 批 A 段：本 fixture 主题非 node_report 语义 ⇒ 显式关腿 2（生产默认开；
+        // 腿 2 默认开行为由 NodeReportReminderSpec 覆盖）。
+        reportGateHold = Some(false)
       )
       pd = ProjectDef(name = name, workspace = ws.toString, agentFile = (ws / "AGENTS.md").toString, createdAt = System.currentTimeMillis())
       rt = ProjectRuntime(pd, store, engine, system, res, None)
@@ -729,10 +732,18 @@ class NodeAcceptanceSpec extends CatsEffectSuite:
       //（结果全文 per-node 持久化，仍是 store-owned——「零手写文件」原则不变）
       // 2026-09-06 存储瘦身：再扩 tasks/<nodeId>.md（task 全文 per-node 持久化，
       // 落盘 JSON 只留摘要+taskFile 指针——同为 store-owned，原则不变）
-      val newEntries = after.diff(before) // 新增项（应只有 results/ 与 tasks/ 目录）
-      assert(newEntries.forall(e => e.startsWith("results") || e.startsWith("tasks")),
-        s"NodeEdit may only add store-owned results/tasks entries, got: $newEntries")
-      assertEquals(after.filterNot(e => e.startsWith("results") || e.startsWith("tasks")), before, "non-results/tasks entries must be unchanged")
+      val newEntries = after.diff(before) // 新增项（应只有 results/ 与 tasks/ 目录 + 审计日志）
+      // noderpt 批 B 段（2026-09-11）：终态延迟销毁窗口登记（`node-destroy-scheduled`）
+      // 与到点销毁（`node-destroyed`）写进 **store-owned 审计日志** `flow-map-events.jsonl`
+      // （既有 append-only JSONL，本就是 NodeEngine 各终态写点的留痕面：blocked/reaped/
+      // cancelled/bg-wait 等同族）——「零手写文件」原则不变（仍全部由 store/引擎写、
+      // 无手写产物），故纳入白名单。
+      assert(newEntries.forall(e =>
+        e.startsWith("results") || e.startsWith("tasks") || e.startsWith("flow-map-events")),
+        s"NodeEdit may only add store-owned results/tasks/audit entries, got: $newEntries")
+      assertEquals(
+        after.filterNot(e => e.startsWith("results") || e.startsWith("tasks") || e.startsWith("flow-map-events")),
+        before, "non-results/tasks/audit entries must be unchanged")
       // 结果全文落 per-node 文件（results/<id>.md）；flow-map.json 内 result 为摘要
       //（本测试 RecordingLlm 结果 "ok" < 500 字符 → 摘要==全文，全文含性断言由
       // FlowMapResultFilesSpec 以 >500 长文本承载）
