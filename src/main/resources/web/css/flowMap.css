@@ -328,10 +328,20 @@
    本身保留（既有设计，非本批对象）。共享 class `.flow-agent-block-readonly` 本体
    （flowCss.js 注入，flowViewers.js 多处复用并自带 inline 高度）零改动。 */
 .flow-blocked-raw .flow-agent-block-readonly {
+  max-height: 300px;
+  overflow-y: auto;
   white-space: pre-wrap;
   border: 1px solid var(--color-border);
   border-radius: 8px;
   padding: 8px 10px;
+}
+/* 本卡内该区的区内滚动清零（2026-09-11 滚动一体化批）：`.flow-blocked-raw` 不止本卡用
+   （flowViewers.js:117 的 agent 结果查看器同款结构）⇒ 上面那条全局规则原样保留，只在
+   `.fm-detail` 作用域内覆盖高度/滚动两项。非本卡面实测零影响（同读数：卡外仍
+   max-height:300px / overflow-y:auto / white-space:pre-wrap）。 */
+.fm-detail .flow-blocked-raw .flow-agent-block-readonly {
+  max-height: none;
+  overflow-y: visible;
 }
 
 /* 边的投递语义（§2.7）。flow-run 的 .flow-edge.active 是"正在流动"的行军蚁；
