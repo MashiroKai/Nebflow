@@ -31,6 +31,15 @@ import scala.concurrent.duration.*
  */
 class TaskStuckWatcherSpec extends CatsEffectSuite:
 
+  // R8 方向①（看门狗自身监测）：本 spec 的用例会驱动真实开火（`scan`/`run`）⇒
+  // 新增的看门狗事件日志（默认 `<dataRoot>/logs/watchdog/`，而 spec 环境里
+  // dataRoot 未隔离 = 真实 ~/.nebflow）必须重定向到本 spec 自己的临时目录，
+  // 否则 sbt test 会把测试事件写进生产 home（与 LlmLogWriter.setLogDirForTest
+  // 同款测试缝）。
+  private val watchdogLogTmp = os.temp.dir(prefix = "stuck-watchdog-events")
+  override def beforeAll(): Unit = WatchdogEventLog.setLogDirForTest(watchdogLogTmp.toNIO)
+  override def afterAll(): Unit = WatchdogEventLog.resetLogDirForTest()
+
   private val fakeLlm = new LlmHandle[IO]:
     def send(req: LlmRequest): IO[LlmResponse] =
       IO.raiseError(new RuntimeException("fake llm not expected here"))
