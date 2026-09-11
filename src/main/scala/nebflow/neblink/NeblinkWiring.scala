@@ -41,17 +41,32 @@ object NeblinkWiring:
   ): FriendService =
     new FriendService(clientProvider, config, guard, onFriendEvent)
 
-  /** The value written into `SharedResources.friendService`.
+  /** The value written into `SharedResources.friendService` (A 案, 2026-09-11).
     *
-    * CURRENT (defective) semantics — mirrors `GatewayMain` verbatim: the slot is
-    * derived from the boot client snapshot, so a fresh home can never
-    * materialise a friend domain without a restart.
+    * The slot is ALWAYS `Some`: a fresh home (boot snapshot = `None`) must still
+    * get a live-resolving friend domain, otherwise a UI login can never bring it
+    * into existence without a process restart — the defect this batch fixes
+    * (16 `/api/friends*` sites stuck on `404 NebLink not enabled`). "Not logged
+    * in" is expressed by the SERVICE (`FriendService.withClient` →
+    * `Left("Not logged in")` → 401/404 by config criterion), never by the
+    * absence of the service.
+    *
+    * `bootClient` is deliberately kept in the signature and *only* logged: the
+    * boot snapshot stays visible at the call site (it is still what the startup
+    * client / relay client are derived from), while no longer being part of the
+    * existence judgement. Keeping the parameter also keeps the wiring line in
+    * `FriendBootSnapshotRedlineSpec` identical before and after the fix — the
+    * red-line spec's assertions flipped from red to green without a single
+    * change to its wiring line or assertions.
     */
   def sharedResourcesSlot(
     bootClient: Option[NeblinkClient],
     friendService: FriendService
   ): Option[FriendService] =
-    logger.debug(s"friend domain slot resolved (boot client present: ${bootClient.isDefined})")
-    bootClient.map(_ => friendService)
+    logger.debug(
+      s"friend domain wired unconditionally (boot client present: ${bootClient.isDefined}; " +
+        "existence no longer gated on the boot snapshot)"
+    )
+    Some(friendService)
 
 end NeblinkWiring

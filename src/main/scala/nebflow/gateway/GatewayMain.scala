@@ -712,33 +712,42 @@ object GatewayMain extends IOApp:
                                       // （messages.js 监听）；agentMessaging 配置来自 neblinkConfig。
                                       // F1: FriendService 每次调用读 discovery.currentClient（权威
                                       // live client），hot-swap 后自动跟随新实例。
-                                      val clientWithFriends: Option[(nebflow.neblink.NeblinkClient, nebflow.neblink.FriendService)] =
-                                        neblinkClient.map { client =>
-                                          val amConfig = neblinkService.neblinkConfig.unsafeRunSync().agentMessaging
-                                          val friendService = new nebflow.neblink.FriendService(
-                                            tsDiscovery.currentClient,
-                                            amConfig,
-                                            onFriendEvent = Some { ev =>
-                                              // Frontend contract (messages.js onMessage('friend_event')):
-                                              // frame type is "friend_event"; event type in msg.event;
-                                              // payload fields (conversationId/messageId/body/...) flattened
-                                              // onto the frame. Strip the payload's inner "type" so it
-                                              // cannot clobber the frame envelope.
-                                              val payloadFields =
-                                                ev.payload.asObject.getOrElse(io.circe.JsonObject.empty).remove("type")
-                                              val frame = io.circe.Json
-                                                .obj("type" -> "friend_event".asJson, "event" -> ev.eventType.asJson)
-                                                .deepMerge(io.circe.Json.fromJsonObject(payloadFields))
-                                              wsHub.broadcast(frame)
-                                            }
-                                          )
-                                          // A2A 一期（#290 域 A）：SendMessage 工具接线——
-                                          // 授权仅 Nebula agent.json 声明（作者特批 2026-08-28），
-                                          // 服务依赖走 RemoteExecutor.initialize 同款单例模式。
-                                          FriendMessageTool.initialize(friendService)
-                                          (client, friendService)
+                                      // 2026-09-11 boot 快照修复（A 案）：好友域的**存在性**不再由
+                                      // boot 期的 client 快照决定（此前整段落在
+                                      // `neblinkClient.map { … }` 内 ⇒ 全新 home 恒 None ⇒ 16 个
+                                      // /api/friends* 站点 404 到进程重启；判决书定论 ③）。用户走
+                                      // device-flow/AC+PKCE 登录只 hot-swap client
+                                      // （NeblinkEnrollment.persist），故装配必须无条件；「未登录」
+                                      // 由 FriendService.withClient → Left("Not logged in") 表达，
+                                      // 不靠「服务不存在」表达。
+                                      val amConfig = neblinkService.neblinkConfig.unsafeRunSync().agentMessaging
+                                      val friendService = nebflow.neblink.NeblinkWiring.friendService(
+                                        tsDiscovery.currentClient,
+                                        amConfig,
+                                        onFriendEvent = Some { ev =>
+                                          // Frontend contract (messages.js onMessage('friend_event')):
+                                          // frame type is "friend_event"; event type in msg.event;
+                                          // payload fields (conversationId/messageId/body/...) flattened
+                                          // onto the frame. Strip the payload's inner "type" so it
+                                          // cannot clobber the frame envelope.
+                                          val payloadFields =
+                                            ev.payload.asObject.getOrElse(io.circe.JsonObject.empty).remove("type")
+                                          val frame = io.circe.Json
+                                            .obj("type" -> "friend_event".asJson, "event" -> ev.eventType.asJson)
+                                            .deepMerge(io.circe.Json.fromJsonObject(payloadFields))
+                                          wsHub.broadcast(frame)
                                         }
-                                      clientWithFriends.foreach { (client, friendService) =>
+                                      )
+                                      // A2A 一期（#290 域 A）：SendMessage 工具接线——
+                                      // 授权仅 Nebula agent.json 声明（作者特批 2026-08-28），
+                                      // 服务依赖走 RemoteExecutor.initialize 同款单例模式。
+                                      // 2026-09-11：无条件 initialize（未登录由 sendAsAgent →
+                                      // Left("Not logged in") 表达；工具侧 `service match None`
+                                      // 兜底保留）。
+                                      FriendMessageTool.initialize(friendService)
+                                      // relay tunnel 装配：2026-09-11 起常驻（见下一提交的
+                                      // 无条件化）；本提交暂保持 boot 条件触发（行为不变）。
+                                      neblinkClient.foreach { _ =>
                                         val serverUrl =
                                           neblinkService.neblinkConfig.unsafeRunSync().neblinkServer.get.url
                                         val relayTunnel = new nebflow.neblink.NeblinkRelayTunnel(
@@ -786,7 +795,10 @@ object GatewayMain extends IOApp:
                                               sharedResourcesLive.copy(
                                                 bridgeManager = Some(bridgeManager),
                                                 neblinkService = Some(neblinkService),
-                                                friendService = clientWithFriends.map(_._2),
+                                                // 2026-09-11 boot 快照修复：slot 恒 Some（装配缝里
+                                                // 明确记录「boot 快照不再参与存在性判据」）。
+                                                friendService = nebflow.neblink.NeblinkWiring
+                                                  .sharedResourcesSlot(neblinkClient, friendService),
                                                 dropboxService = Some(dropboxService)
                                               )
 
