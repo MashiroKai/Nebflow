@@ -409,8 +409,12 @@ class NodeEngine(
     * `autoFailDeadRunning`、`mergeBlockedByUpstreamFailure`、NodeCancel 收殓等，
     * 它们的节点从没有 fiber 可跑 finalizer ⇒ 计时会随节点进归档（隔离实例实跑读
     * 数：reap 后归档的 cancelled 节点仍带 `reportPendingSince`/`reportReminderCount`）。
-    * 值已清 ⇒ 原样返回（零漂移，不发生无谓写）。 */
-  private def withoutReportPending(n: NodeDef): NodeDef =
+    * 值已清 ⇒ 原样返回（零漂移，不发生无谓写）。
+    *
+    * **public**（noderpt 批 F3，2026-09-11 复核 D3 修复）：第 7 个写点在另一模块
+    * （`NodeTools` 的 `NodeEdit abandon`，`:1181`）⇒ 提为公共单点，跨模块复用同一判据，
+    * 防第 8 个写点再漏。纯函数（无 IO、不读 store）——调用方在自己的 mutate 事务内联用。 */
+  def withoutReportPending(n: NodeDef): NodeDef =
     if n.reportPendingSince.isEmpty && n.reportReminderCount == 0 then n
     else n.copy(reportPendingSince = None, reportReminderCount = 0)
 
