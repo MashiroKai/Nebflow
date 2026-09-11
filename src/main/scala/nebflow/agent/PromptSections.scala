@@ -535,7 +535,11 @@ object PromptSections:
       "CHAT_WIDTH" -> ctx.chatWidth.toString,
       "NEBFLOW_VERSION" -> nebflow.Version.string,
       "NEBFLOW_PID" -> sys.props.getOrElse("nebflow.gateway.pid", java.lang.ProcessHandle.current().pid().toString),
-      "NEBFLOW_GATEWAY_PORT" -> sys.props.getOrElse("nebflow.gateway.port", "8080")
+      "NEBFLOW_GATEWAY_PORT" -> sys.props.getOrElse("nebflow.gateway.port", "8080"),
+      // 数据根供给（home 硬编码 → 运行时动态化批 2026-09-11；P3）：data.sh 的
+      // JSON 由它派生 `data_root` 字段。命名避 NEBFLOW_HOME（env/sysprop 既名，
+      // 语义不同：这里是**本实例**数据根的绝对路径）。
+      "NEBFLOW_DATA_ROOT" -> nebflow.core.PathUtil.dataRoot.toString
     )
     val result =
       try

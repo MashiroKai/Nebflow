@@ -10,6 +10,7 @@ import java.util.concurrent.ConcurrentHashMap
 
 import scala.jdk.CollectionConverters.*
 
+import nebflow.core.PathUtil
 import nebflow.core.project.{ProjectMemory, ProjectStore}
 import nebflow.service.{MemoryBudget, MemorySnapshot, MemoryStore}
 
@@ -61,11 +62,15 @@ object MemoryEditTool extends Tool:
 
   val name = "MemoryEdit"
 
-  val description =
-    """Edit persistent memory files — entry-level operations on the memory whitelist. Changes take effect at the next lifecycle node (memory is injected into the system prompt per turn); no need to re-read to verify.
+  // `def` + s-interpolation（home 硬编码 → 运行时动态化批 2026-09-11）：目标文件
+  // 路径走 PathUtil.dataRootRenderValue —— 默认 home ⇒ `~/.nebflow/...`（与旧字面
+  // 逐字节一致），隔离实例 ⇒ 该实例 home 的绝对路径（否则教错路径）。`def` on
+  // purpose：dataRoot 可在对象初始化后被换根（--home / 测试 setDataRoot）。
+  def description =
+    s"""Edit persistent memory files — entry-level operations on the memory whitelist. Changes take effect at the next lifecycle node (memory is injected into the system prompt per turn); no need to re-read to verify.
 ## Targets (no path parameter exists — targets are names resolved to fixed files)
-- target=user → ~/.nebflow/User.md — user facts: identity, preferences, working style, environment.
-- target=agent → ~/.nebflow/agents/Nebula/memory.md — routing experience, technical lessons, domain knowledge.
+- target=user → ${PathUtil.dataRootRenderValue}/User.md — user facts: identity, preferences, working style, environment.
+- target=agent → ${PathUtil.dataRootRenderValue}/agents/Nebula/memory.md — routing experience, technical lessons, domain knowledge.
 - target=project:<name> → `<workspace>/.nebflow/memory.md` of the REGISTERED project `<name>` — project state, progress, conventions. Resolved via the project registry; unknown project → error (list projects first). Project memory is injected into that project's dispatcher and node contexts — NOT into your global system prompt.
 ## Actions
 - append: add an entry at the end of `section` (omit `section` = end of file). `content` required.
@@ -73,7 +78,7 @@ object MemoryEditTool extends Tool:
 - remove: locate the same way and delete the entry. `match` required.
 - replace_section: replace the ENTIRE body of `section` with `content` (bulk cleanup — use instead of many removes). Both required.
 ## Semantics
-- Entries are markdown list lines ("- ..."); convention: `- <fact>（→<id> detail at ~/.nebflow/memory/<id>.md）`.
+- Entries are markdown list lines ("- ..."); convention: `- <fact>（→<id> detail at ${PathUtil.dataRootRenderValue}/memory/<id>.md）`.
 - `section` matches a "## Heading" line exactly (the "## " prefix is optional in the parameter).
 - No whole-file rewrite exists by design — memory cannot be wiped in one call.
 - Identity: Nebula may use all four actions. dream is admitted for revision actions only (remove/update/replace_section) — append is denied (DREAM_APPEND_DENIED): dream must not create new memories (2026-09-05 author-approved iron rule, enforced at this tool's dispatch layer).
@@ -85,15 +90,15 @@ object MemoryEditTool extends Tool:
 - replace_section is exempt by design: it is the consolidation (shrinking) channel; gating it would remove the only way back under budget. The Dream extraction hook shares the same gate on its side.
 - Injection is NEVER truncated (ruling 2026-09-05 §3.3): over-budget memory silently taxes every future session — the write-side gate is the only enforcement, so honor the WARN.
 ## Snapshot (write guard, 2026-09-05 dream batch)
-- EVERY action snapshots the current on-disk file to `~/.nebflow/memory-backups/<ts>/` BEFORE saving (memory files are outside the ~/.nebflow git tracking layer — the snapshot is the only fine-grained rollback anchor). Last 20 snapshots per file are kept.
+- EVERY action snapshots the current on-disk file to `${PathUtil.dataRootRenderValue}/memory-backups/<ts>/` BEFORE saving (memory files are outside the `${PathUtil.dataRootRenderValue}` git tracking layer — the snapshot is the only fine-grained rollback anchor). Last 20 snapshots per file are kept.
 - If the snapshot fails the action is aborted with nothing written (MEMORYEDIT_SNAPSHOT) — fail-closed, fix and retry."""
 
-  val inputSchema: JsonObject = JsonObject(
+  def inputSchema: JsonObject = JsonObject(
     "type" -> "object".asJson,
     "properties" -> Json.obj(
       "target" -> Json.obj(
         "type"        -> "string".asJson,
-        "description" -> "Memory target: \"user\" → ~/.nebflow/User.md; \"agent\" → ~/.nebflow/agents/Nebula/memory.md; \"project:<name>\" → <workspace>/.nebflow/memory.md of registered project <name>.".asJson
+        "description" -> s"Memory target: \"user\" → ${PathUtil.dataRootRenderValue}/User.md; \"agent\" → ${PathUtil.dataRootRenderValue}/agents/Nebula/memory.md; \"project:<name>\" → <workspace>/.nebflow/memory.md of registered project <name>.".asJson
       ),
       "action" -> Json.obj(
         "type"        -> "string".asJson,
@@ -152,13 +157,13 @@ object MemoryEditTool extends Tool:
           ProjectStore.load(name).unsafeRunSync() match
             case None =>
               Left(ToolError(
-                s"""MemoryEdit: unknown project '$name' — target=project:<name> resolves via the project registry (~/.nebflow/projects/<name>/project.json). Check the project name (list projects first). (MEMORYEDIT_TARGET)"""))
+                s"""MemoryEdit: unknown project '$name' — target=project:<name> resolves via the project registry (${PathUtil.dataRootRenderValue}/projects/<name>/project.json). Check the project name (list projects first). (MEMORYEDIT_TARGET)"""))
             case Some(pd) =>
               val pm = ProjectMemory.path(pd.workspace)
               Right(Target(pm, () => ProjectMemory.load(pm), ProjectMemory.save(pm, _)))
       case other =>
         Left(ToolError(
-          s"MemoryEdit: unknown target '$other' — legal forms: \"user\" (~/.nebflow/User.md), \"agent\" (~/.nebflow/agents/Nebula/memory.md), \"project:<name>\" (registered project's <workspace>/.nebflow/memory.md). (MEMORYEDIT_TARGET)"))
+          s"MemoryEdit: unknown target '$other' — legal forms: \"user\" (${PathUtil.dataRootRenderValue}/User.md), \"agent\" (${PathUtil.dataRootRenderValue}/agents/Nebula/memory.md), \"project:<name>\" (registered project's <workspace>/.nebflow/memory.md). (MEMORYEDIT_TARGET)"))
 
   // per-file 互斥（QC nit 3）：单进程内同一目标文件的整段读-改-写串行化（见 call）。
   // 取舍：锁放工具侧而非 MemoryStore.saveFile——读（readLines）也在本工具，锁住

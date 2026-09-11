@@ -53,14 +53,20 @@ object DispatcherContextCatalog:
     }
 
   /** 双目录拼装入口（ProjectActor.pluginCatalogText 挂接点）：非空段以空行
-    * 相接；全空 → ""。 */
+    * 相接；全空 → ""。
+    *
+    * 数据根渲染（home 硬编码 → 运行时动态化批 2026-09-11）：段内 `{{data_root}}`
+    * （如插件 manifest description 里写的路径形态）在此渲染为**本实例**的数据根
+    * ——PathUtil.substituteDataRoot 单点（与 AgentCore.buildSystemPrompt /
+    * NodeEngine.injectedPluginBlock 同一实现，勿复制）。 */
   def render(): IO[String] =
     (pluginSection(), presetSection()).mapN { (pluginPart, presetPart) =>
-      (pluginPart.nonEmpty, presetPart.nonEmpty) match
+      val assembled = (pluginPart.nonEmpty, presetPart.nonEmpty) match
         case (true, true)   => pluginPart + "\n\n" + presetPart
         case (true, false)  => pluginPart
         case (false, true)  => presetPart
         case (false, false) => ""
+      nebflow.core.PathUtil.substituteDataRoot(assembled)
     }
 
   private val PresetHeader =

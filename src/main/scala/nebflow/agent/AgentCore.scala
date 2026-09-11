@@ -2041,7 +2041,11 @@ private[agent] trait AgentCore:
     val base = if ctx.isSubTaskWorker then SubTaskPrompt.stripTeamContent(rawPrompt) else rawPrompt
     val cleanedPrompt = PromptSections.stripAllMigrated(base)
     val conditionalBlocks = PromptSections.buildConditionalBlocks(ctx)
-    PromptSections.assembleSystemPrompt(cleanedPrompt, conditionalBlocks)
+    // 数据根占位符渲染（home 硬编码 → 运行时动态化批 2026-09-11）：插在
+    // stripAllMigrated 之后、assembleSystemPrompt 之前 —— 默认 home 下渲染值
+    // 恰为 `~/.nebflow`（字节零变），隔离实例下为其实例 home 绝对路径。磁盘上的
+    // system.md 保持占位符形态（渲染层变换，不改字节）。
+    PromptSections.assembleSystemPrompt(PathUtil.substituteDataRoot(cleanedPrompt), conditionalBlocks)
 
   end buildSystemPrompt
 

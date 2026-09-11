@@ -202,6 +202,40 @@ object PathUtil:
         case None => resolvedDefaultRoot
     )
 
+  // ── 数据根渲染层（home 硬编码 → 运行时动态化批，2026-09-11）─────────────
+  //
+  // 背景：提示词 / 插件 SKILL.md / 工具描述里散落 `~/.nebflow` 字面 —— 隔离实例
+  // （`--home /tmp/...`）下这些字面指向**另一个** home：教错路径、BashTool 危险
+  // 命令正则护错对象。收口在**渲染层**（磁盘字节零变 ⇒ 插件 digest / 信任门零
+  // 影响），单一实现供三处调用（勿复制多份）：AgentCore.buildSystemPrompt（agent
+  // system.md 文本面）、NodeEngine.injectedPluginBlock（<injected-plugins> 注入
+  // 块）、DispatcherContextCatalog.render（分发器双目录段）。
+
+  /** 提示词文本里的数据根占位符 —— 与既有 `{{working_dir}}` / `{{pid}}` 同源
+    * 语法（data.sh JSON 替换通道）。 */
+  val DataRootPlaceholder: String = "{{data_root}}"
+
+  /** `{{data_root}}` 渲染值 / 工具描述插值值（P2-b 回归守卫）：
+    *   - 默认 home ⇒ 字面 `~/<homeDirName>`（当前品牌 = `~/.nebflow`）—— 主实例
+    *     输出逐字节不变；
+    *   - 非默认（隔离实例 / `--home` / 测试换根）⇒ dataRoot 绝对路径 —— 渲染出的
+    *     路径指向**本实例自己的** home。
+    * `def` on purpose：dataRoot 可在对象初始化后被换根（setDataRoot / --home）。 */
+  def dataRootRenderValue: String = renderDataRootValue(dataRoot)
+
+  /** Pure core of [[dataRootRenderValue]] — parameterized so the spec can verify
+    * both rendering tiers without swapping the process-wide data root. */
+  private[core] def renderDataRootValue(root: os.Path): String =
+    if root == os.home / Branding.homeDirName then "~/" + Branding.homeDirName
+    else root.toString
+
+  /** 纯文本变换：`{{data_root}}` → [[dataRootRenderValue]]，其余字节原样透传。
+    * 渲染层单点（播种时替换 / 脚本 sed 两条路线已否决——它们改的是磁盘字节，
+    * 会让插件 digest 漂移并触发信任门重审）。 */
+  def substituteDataRoot(text: String): String =
+    if text.contains(DataRootPlaceholder) then text.replace(DataRootPlaceholder, dataRootRenderValue)
+    else text
+
   /** Marker file placed in the LEGACY directory after a one-time migration,
     * so a later "new dir missing + legacy present" state (user deleted the
     * new dir) resolves to the legacy dir instead of re-migrating. Fixed
