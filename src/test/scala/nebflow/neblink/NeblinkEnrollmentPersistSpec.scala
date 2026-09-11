@@ -132,4 +132,104 @@ class NeblinkEnrollmentPersistSpec extends FunSuite:
     assertEquals(server.deviceToken, Some("tok-rt"))
     assertEquals(server.networkId, "net-123")
   }
+
+  // ── O5 配套修法批（2026-09-11, o5fix）：身份落盘与 refreshToken 解耦 ──────
+  // 依据：独立复核 n-c77627a2 §2①（判据链 RestApiRoutes:3188 → LogtoAuthCode:255
+  // → NeblinkEnrollment:67-70 → DeviceCredentialStore:77-80 → status 恒空）+
+  // §2①-9（`save` 全量覆盖会回收存量身份）。
+
+  private def deviceCredPath: os.Path = os.Path(tmpDir, os.pwd) / "neblink" / "device.json"
+
+  /** 存量 pre-O5 device.json 形态（有 refresh 令牌 + id_token，带 ACL 不敏感）。 */
+  private def seedPreO5Credential(server: String = "https://neblink.example"): Unit =
+    os.write.over(
+      deviceCredPath,
+      s"""{"serverUrl":"$server","networkId":"net-123","deviceId":"dev-seed","deviceToken":"tok-old",
+         | "logto":{"refreshToken":"legacy-refresh","updatedAt":7,"idToken":"legacy-id"}}""".stripMargin,
+      createFolders = true
+    )
+
+  private def persistedCredential: DeviceCredential =
+    DeviceCredential.load.unsafeRunSync().getOrElse(fail("device.json missing after persist"))
+
+  test("o5fix: persist lands the identity when the login carries an id_token but NO refresh token") {
+    Dispatcher.parallel[IO].use { dispatcher =>
+      NeblinkService.createForTest(8099, dispatcher, 15.seconds).flatMap { ms =>
+        NeblinkEnrollment.persist(
+          ms,
+          resolvedUrl = "https://neblink.example",
+          json = enrollJson("tok-id-only"),
+          logtoRefresh = None, // O5 后的常态：provider 不再签发 refresh_token
+          discovery = None,
+          gatewayPort = 8099,
+          reloginHook = None,
+          logtoIdToken = Some("post-o5-id")
+        )
+      }
+    }.unsafeRunSync()
+
+    val cred = persistedCredential
+    // 身份面（/api/neblink/status 与 logout hint 的取数表达式同形）
+    assertEquals(cred.logto.flatMap(_.idToken), Some("post-o5-id"))
+    assertEquals(cred.logto.map(_.refreshToken), Some(""))
+  }
+
+  test("o5fix: a login carrying no logto data at all must not wipe the stored block (覆盖写不劣于现状)") {
+    seedPreO5Credential()
+    Dispatcher.parallel[IO].use { dispatcher =>
+      NeblinkService.createForTest(8099, dispatcher, 15.seconds).flatMap { ms =>
+        NeblinkEnrollment.persist(
+          ms,
+          resolvedUrl = "https://neblink.example",
+          json = enrollJson("tok-device-flow"),
+          logtoRefresh = None,
+          discovery = None,
+          gatewayPort = 8099,
+          reloginHook = None
+        )
+      }
+    }.unsafeRunSync()
+
+    val cred = persistedCredential
+    assertEquals(cred.deviceToken, "tok-device-flow")
+    assertEquals(cred.logto.flatMap(_.idToken), Some("legacy-id"), "stored identity was wiped")
+    // 显式取舍（见批结果）：存量 pre-O5 refresh 兜底不因「新登录没带刷新令牌」被删。
+    assertEquals(cred.logto.map(_.refreshToken), Some("legacy-refresh"))
+  }
+
+  test("o5fix: an incoming id_token replaces the stored identity; a foreign serverUrl never carries over") {
+    seedPreO5Credential()
+    Dispatcher.parallel[IO].use { dispatcher =>
+      NeblinkService.createForTest(8099, dispatcher, 15.seconds).flatMap { ms =>
+        NeblinkEnrollment.persist(
+          ms,
+          resolvedUrl = "https://neblink.example",
+          json = enrollJson("tok-refresh-identity"),
+          logtoRefresh = None,
+          discovery = None,
+          gatewayPort = 8099,
+          reloginHook = None,
+          logtoIdToken = Some("fresh-id")
+        )
+      }
+    }.unsafeRunSync()
+    assertEquals(persistedCredential.logto.flatMap(_.idToken), Some("fresh-id"))
+
+    // 换成另一台 server 的登录：旧 server 的凭据不得被当作本机身份继承。
+    seedPreO5Credential(server = "https://other.example")
+    Dispatcher.parallel[IO].use { dispatcher =>
+      NeblinkService.createForTest(8099, dispatcher, 15.seconds).flatMap { ms =>
+        NeblinkEnrollment.persist(
+          ms,
+          resolvedUrl = "https://neblink.example",
+          json = enrollJson("tok-other-server"),
+          logtoRefresh = None,
+          discovery = None,
+          gatewayPort = 8099,
+          reloginHook = None
+        )
+      }
+    }.unsafeRunSync()
+    assertEquals(persistedCredential.logto, None)
+  }
 end NeblinkEnrollmentPersistSpec

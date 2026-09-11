@@ -1043,8 +1043,13 @@ class RestApiRoutes(
     // Optional body {"forceLogin":true} → authorize prompt "login consent"
     // (RP-logout fix, 2026-09-06): the switch-account entry — `login`
     // forces the hosted account page even with a live Logto SSO session;
-    // `consent` is kept so the offline_access/refresh-token invariant
-    // (see LogtoAuthCode.authorizeUrl) never regresses. Body is optional:
+    // `consent` re-asks for consent on that same hosted page (UX: the account
+    // chooser must be reached even when the provider SSO session is alive).
+    // [O5, 2026-09-11] The offline_access/refresh-token invariant this comment
+    // used to cite NO LONGER EXISTS — authorize requests `openid email
+    // profile`, no refresh token is issued for a new login, and the persisted
+    // identity comes from the id_token (see LogtoAuthCode.authorizeUrl /
+    // DeviceCredentialStore.LogtoRefresh). Body is optional:
     // absent/empty/unparsable → plain login.
     // Optional body {"uiLocales":"zh"|"en"} (BYUI handoff ①, 2026-09-09):
     // forwarded as the OIDC ui_locales hint so the hosted page matches the

@@ -19,8 +19,15 @@ object NeblinkEnrollment:
   /** Persist the EnrollResponse fields. `logtoRefresh` carries the provider
     * refresh token (AC+PKCE / silent re-login) into device.json; `logtoIdToken`
     * (RP-logout fix, 2026-09-06) the raw id_token for the end-session
-    * `id_token_hint`; `reloginHook` is wired into the hot-swapped client so
-    * IT can silent-relogin too. Returns the persisted device token.
+    * `id_token_hint` AND for the switch-account identity hints. `reloginHook`
+    * is wired into the hot-swapped client so IT can silent-relogin too.
+    * Returns the persisted device token.
+    *
+    * The two Logto options are INDEPENDENT since the O5 companion fix
+    * (2026-09-11): a post-O5 login carries an id_token and no refresh token, so
+    * the device.json `logto` block is written when EITHER is present. Both are
+    * MERGED with the stored credential (incoming wins, absent keeps stored) —
+    * see the comment in [[persistImpl]] for why.
     *
     * Isolation guard (2026-09-11): an instance running on a redirected data
     * root must not auto-register with the production network — see
@@ -64,8 +71,28 @@ object NeblinkEnrollment:
       case Some(tok) =>
         for
           identity <- ms.identity
-          logtoBlock = logtoRefresh.map(rt =>
-            LogtoRefresh(rt, System.currentTimeMillis(), logtoIdToken))
+          // O5 companion fix (2026-09-11) — the `logto` block is no longer
+          // refresh-token-gated AND is no longer rebuilt blind:
+          //  - a NEW login (post-O5) carries an id_token but NO refresh token
+          //    (`LogtoAuthCode.parseTokenResponse`; authorize no longer asks
+          //    for offline_access). The identity half — status `email` /
+          //    `displayName` + the end-session `id_token_hint` — must still be
+          //    persisted, so the block is written when EITHER half exists;
+          //  - a login that carries NEITHER half (self-hosted device-flow poll,
+          //    pairing-code path: `completeDeviceEnrollment` defaults) must not
+          //    destroy what is already stored. `DeviceCredential.save` rewrites
+          //    the whole file (`os.write.over`), so rebuilding the credential
+          //    from the incoming options alone would wipe the stored identity
+          //    (and the pre-O5 refresh fallback) on every such login.
+          // Merge rule: an incoming value always wins; an absent incoming value
+          // KEEPS the stored one. Scoped to the same `serverUrl` — a credential
+          // belonging to another server is not this device's identity.
+          stored <- DeviceCredential.load
+          storedBlock = stored.filter(_.serverUrl == resolvedUrl).flatMap(_.logto)
+          logtoBlock = LogtoRefresh.of(
+            logtoRefresh.filter(_.nonEmpty).orElse(storedBlock.map(_.refreshToken)),
+            logtoIdToken.filter(_.nonEmpty).orElse(storedBlock.flatMap(_.idToken))
+          )
           cred = DeviceCredential(resolvedUrl, networkId, identity.deviceId, tok, logtoBlock)
           _ <- DeviceCredential.save(cred)
           newConfig = NeblinkServerConfig(
