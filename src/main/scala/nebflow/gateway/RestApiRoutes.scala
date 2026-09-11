@@ -1302,11 +1302,17 @@ class RestApiRoutes(
             // background refresh chain only.
             fs.listFriends.flatMap {
               case Right(resp) => Ok(resp.asJson)
-              case Left(err)   => BadGateway(Json.obj("error" -> err.asJson))
+              // 2026-09-11：上游 Left 走单一判据（未登录 → 401/404，其余 → 502）。
+              case Left(err)   => friendErr(err)
             }
       }
 
-    /** 待处理请求分组（incoming / outgoing）。 */
+    /** 待处理请求分组（incoming / outgoing）。
+      *
+      * 2026-09-11 明写「不改（无消费者）」：本端点走折叠版
+      * `FriendService.refreshFriends`（上游 Left 在服务内折成空表 ⇒ 恒 200），
+      * 前端 `friendsApi.js` 对该路径只有 POST，incoming/outgoing 全部来自
+      * `GET /api/friends`（含本面板）⇒ 不接 friendErr、不扩大改动面。 */
     case req @ GET -> Root / "friends" / "requests" =>
       withAuth(req) {
         sharedResources.friendService match
@@ -1472,11 +1478,55 @@ class RestApiRoutes(
 
   }
 
-  /** Uniform A2A endpoint result mapping: upstream Left → 502 with error body. */
+  // ===== 好友域上游错误的单一判据（2026-09-11 boot 快照修复，R3(a)） =====
+
+  /** 本网关是否配置了 NebLink（server 址存在）？**live 读 config ref**
+    * （同既有先例 `neblinkServerUrl` / `ms.relayTunnelOpt`，不得引入新的 boot
+    * 快照）。未配置 ⇒ 好友域维持 `404 NebLink not enabled`，前端
+    * `errKind='neblinkOff'` 保持可表达（其 retry 只对「已配置但暂时失败」有意义）。
+    */
+  private def neblinkConfigured: IO[Boolean] =
+    neblinkService match
+      case Some(ms) => ms.neblinkConfig.map(_.neblinkServer.isDefined)
+      case None     => IO.pure(false)
+
+  /** 好友域上游失败的**单一**应答判据。三个渲染上游 `Left` 的落点共用它：
+    * `friendResult` / `friendResultRaw` / `GET /friends` 内联（其余好友路由全部
+    * 经前两个 helper 汇聚，禁逐处复制粘贴分叉）。
+    *
+    *  - `"Not logged in"`（`FriendService.withClient`：登出 / 从未 enroll）
+    *    **且已配置** ⇒ **401** + `code=neblink_not_logged_in`。
+    *    **有意与 withAuth 的 403 分化**（2026-09-11 复核 N4）：网关自身鉴权缺失
+    *    是 403 `Unauthorized`，NebLink 会话缺失是 401；同一端点族的两种
+    *    「未认证」靠 `code` 字段消歧，**不要「统一」掉**（前端 401/403 都映射
+    *    到 auth → 重登引导，语义一致）。
+    *  - `"Not logged in"` **且未配置** ⇒ **404** `NebLink not enabled`
+    *    （与修前 wire 契约逐字一致——缺了这条就是净回归：前端把 502 认成
+    *    `retryable`、重试恒无效）。
+    *  - 其余上游错误 ⇒ **502**（不变）。
+    */
+  private def friendErr(err: String): IO[Response[IO]] =
+    if err != "Not logged in" then BadGateway(Json.obj("error" -> err.asJson))
+    else
+      neblinkConfigured.flatMap {
+        case true =>
+          // 显式构造（http4s 的 `Unauthorized(...)` 有 WWW-Authenticate 重载，
+          // 直接传 Json 会命中它）——不带 WWW-Authenticate：这不是 HTTP 层面的
+          // 401 challenge，是 NebLink 会话缺失的应用层状态。
+          IO.pure(
+            Response[IO](Status.Unauthorized)
+              .withEntity(Json.obj("error" -> "Not logged in".asJson, "code" -> "neblink_not_logged_in".asJson))
+          )
+        case false =>
+          NotFound(Json.obj("error" -> "NebLink not enabled".asJson))
+      }
+
+  /** Uniform A2A endpoint result mapping: upstream Left → 401/404/502 by the
+    * single judgement above (was: always 502). */
   private def friendResult(result: Either[String, io.circe.Json]): IO[Response[IO]] =
     result match
       case Right(json) => Ok(json)
-      case Left(err)   => BadGateway(Json.obj("error" -> err.asJson))
+      case Left(err)   => friendErr(err)
 
   /** Raw-string upstream results (decline/remove/read): parse the body as JSON
     * when possible, else wrap as {ok, message}. */
@@ -1486,7 +1536,7 @@ class RestApiRoutes(
         parser.parse(body) match
           case Right(json) => Ok(json)
           case Left(_)     => Ok(Json.obj("ok" -> true.asJson, "message" -> body.asJson))
-      case Left(err) => BadGateway(Json.obj("error" -> err.asJson))
+      case Left(err) => friendErr(err)
 
   /** Shared remote-update logic: P2P HTTP first, relay fallback. Used by REST + WS handlers. */
   private def doRemoteUpdate(

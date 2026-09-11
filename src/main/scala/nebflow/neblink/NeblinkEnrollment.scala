@@ -67,6 +67,10 @@ object NeblinkEnrollment:
               )
               d.setClient(Some(fresh)) *> IO(ms.setRelayClient(Some(fresh)))
             }
+          // 2026-09-11 tunnel 生命周期：logout 会 stop() 隧道，且此前没有任何路径把
+          // running 复位 ⇒ 「登出 → 再登录」后 relay 永久缺席到进程重启。装配
+          // owner 仍是 GatewayMain（这里只发「确保在跑」信号：单飞 + 幂等）。
+          _ <- ms.ensureRelayTunnel
           // Trigger immediate re-discovery.
           _ <- ms.sendSync(SyncCommand.PeerDiscovered)
           // Persist GitHub user info (avatar + login) from server response.

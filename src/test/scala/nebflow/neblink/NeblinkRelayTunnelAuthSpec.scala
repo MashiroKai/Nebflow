@@ -125,7 +125,13 @@ class NeblinkRelayTunnelAuthSpec extends CatsEffectSuite:
         client = mkClient(fix)
         _ = ms.setRelayClient(Some(client))
         _ <- client.login(Device, "qa-host", "macos", Nil)
-        tunnel = new NeblinkRelayTunnel(ms, fix.url, () => IO(client.currentSessionToken))(dispatcher)
+        // 2026-09-11：URL 由构造期死值改为连接期 live 解析（构造参已移除）
+        // ⇒ 把 server 址写进 config ref（生产里 updateConfig/enrollment 的等价物）。
+        _ <- ms.updateConfig(_.copy(
+          enabled = true,
+          neblinkServer = Some(NeblinkServerConfig(url = fix.url, networkId = Net, secret = "qa-secret"))
+        ))
+        tunnel = new NeblinkRelayTunnel(ms, () => IO(client.currentSessionToken))(dispatcher)
         _ = ms.setRelayTunnel(tunnel)
         fiber <- tunnel.connect().start
         out <- body(ms, client, tunnel).guarantee(fiber.cancel *> tunnel.stop())

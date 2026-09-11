@@ -1,23 +1,26 @@
 package nebflow.gateway
 
 import cats.effect.IO
+import cats.effect.std.Dispatcher
 import cats.syntax.all.*
 import com.sun.net.httpserver.{HttpExchange, HttpServer}
 import io.circe.Json
 import io.circe.syntax.*
 import munit.CatsEffectSuite
 import nebflow.agent.SharedResources
+import nebflow.core.PathUtil
 import nebflow.core.compact.HistoryArchiver
 import nebflow.core.task.FileTaskStore
 import nebflow.core.tools.FileLockManager
 import nebflow.llm.{ModelChainConfig, ModelCandidate, NebflowServiceConfig, ServiceLlmConfig, ThinkingConfig}
-import nebflow.neblink.{AgentMessagingConfig, FriendService, NeblinkClient, NeblinkServerConfig}
+import nebflow.neblink.{AgentMessagingConfig, FriendService, NeblinkClient, NeblinkServerConfig, NeblinkService}
 import org.http4s.*
 import org.http4s.circe.CirceEntityCodec.*
 import org.http4s.dsl.io.*
 
 import java.net.InetSocketAddress
 import java.nio.charset.StandardCharsets
+import java.nio.file.Files
 
 /**
  * A2A 好友/消息 REST 端点契约测试（#290 gateway 接线）。
@@ -37,6 +40,39 @@ import java.nio.charset.StandardCharsets
 class FriendApiRoutesSpec extends CatsEffectSuite:
 
   private val TestToken = "test-token-123"
+
+  // 401/404 配置判据需要真实的 NeblinkService（live config ref）⇒ 隔离 dataRoot，
+  // 否则 `NeblinkService.create` 会读写真实 ~/.nebflow（device.json / config.json）。
+  private var tmpDir: java.nio.file.Path = null
+  private var savedRoot: os.Path = scala.compiletime.uninitialized
+
+  override def beforeEach(context: BeforeEach): Unit =
+    super.beforeEach(context)
+    savedRoot = PathUtil.dataRoot
+    tmpDir = Files.createTempDirectory("friend-api-spec")
+    PathUtil.setDataRoot(os.Path(tmpDir, os.pwd))
+
+  override def afterEach(context: AfterEach): Unit =
+    PathUtil.setDataRoot(savedRoot)
+    os.remove.all(os.Path(tmpDir, os.pwd))
+    super.afterEach(context)
+
+  /** 隔离 home 里的真实 NeblinkService（不联网：只建 config ref + identity）。
+    * `configured = true` 表示用户配置过 / 登录过 NebLink（server 址在 live
+    * config 里），`false` = 全新 home。 */
+  private def withService[A](configured: Boolean)(body: NeblinkService => IO[A]): IO[A] =
+    Dispatcher.parallel[IO].use { dispatcher =>
+      NeblinkService.create(0, dispatcher).flatMap { ms =>
+        val seed =
+          if configured then
+            ms.updateConfig(_.copy(
+              enabled = true,
+              neblinkServer = Some(NeblinkServerConfig(url = "http://127.0.0.1:9", networkId = "n1", secret = "s"))
+            ))
+          else IO.unit
+        seed *> body(ms)
+      }
+    }
 
   // ── mock neblink-server ─────────────────────────────────
 
@@ -184,7 +220,7 @@ class FriendApiRoutesSpec extends CatsEffectSuite:
       friendService = fs
     )
 
-  private def mkRoutes(fs: Option[FriendService]): RestApiRoutes =
+  private def mkRoutes(fs: Option[FriendService], ms: Option[NeblinkService] = None): RestApiRoutes =
     val config = NebflowServiceConfig(
       llm = ServiceLlmConfig(providers = Map.empty) // #339：llm.model 已退役
     )
@@ -193,14 +229,17 @@ class FriendApiRoutesSpec extends CatsEffectSuite:
       configRef = cats.effect.Ref.unsafe[IO, NebflowServiceConfig](config),
       sharedResources = mkResources(fs),
       sessionStore = null,
-      wsRoutes = null
+      wsRoutes = null,
+      neblinkService = ms
     )
 
   private def authed(req: Request[IO]): Request[IO] =
     req.withHeaders(Headers("Authorization" -> s"Bearer $TestToken"))
 
-  private def runWith(fs: Option[FriendService])(req: Request[IO]): IO[Response[IO]] =
-    mkRoutes(fs).routes(req).value.map(_.getOrElse(fail("route fell through")))
+  private def runWith(fs: Option[FriendService], ms: Option[NeblinkService] = None)(
+    req: Request[IO]
+  ): IO[Response[IO]] =
+    mkRoutes(fs, ms).routes(req).value.map(_.getOrElse(fail("route fell through")))
 
   override def munitIOTimeout: scala.concurrent.duration.FiniteDuration =
     scala.concurrent.duration.DurationInt(60).seconds
@@ -222,6 +261,41 @@ class FriendApiRoutesSpec extends CatsEffectSuite:
           assert(body.hcursor.downField("error").as[String].exists(_ == "NebLink not enabled"))
         )
       }
+  }
+
+  // ── 2026-09-11 boot 快照修复：未登录应答语义（R3(a)） ──────────────────
+
+  test("configured + no session -> 401 neblink_not_logged_in (未登录不再与上游错共 502 面)") {
+    // 已配置（server 址在 live config）但无会话 = 登出后 / 从未 enroll：
+    // 「Not logged in」必须与「上游错」分态。401 与 withAuth 的 403 是有意的
+    // 契约分化（同一端点族两种「未认证」），靠 code 字段消歧。
+    withService(configured = true) { ms =>
+      val fs = new FriendService(IO.pure(None), AgentMessagingConfig())
+      runWith(Some(fs), Some(ms))(authed(Request[IO](Method.GET, Uri.unsafeFromString("/friends"))))
+        .flatMap { resp =>
+          assertEquals(resp.status, Status.Unauthorized)
+          resp.as[Json].map { body =>
+            assertEquals(body.hcursor.downField("error").as[String].toOption, Some("Not logged in"))
+            assertEquals(body.hcursor.downField("code").as[String].toOption, Some("neblink_not_logged_in"))
+          }
+        }
+    }
+  }
+
+  test("unconfigured + no session -> still 404 NebLink not enabled (neblinkOff 保持可表达)") {
+    // blocking-1 回归闸：A 案（friendService 恒 Some）单独落地时，若没有这条
+    // 配置判据，全新 home 会从 404 neblinkOff 变成 502 retryable（重试恒无效）
+    // = 净回归。
+    withService(configured = false) { ms =>
+      val fs = new FriendService(IO.pure(None), AgentMessagingConfig())
+      runWith(Some(fs), Some(ms))(authed(Request[IO](Method.GET, Uri.unsafeFromString("/friends"))))
+        .flatMap { resp =>
+          assertEquals(resp.status, Status.NotFound)
+          resp.as[Json].map(body =>
+            assertEquals(body.hcursor.downField("error").as[String].toOption, Some("NebLink not enabled"))
+          )
+        }
+    }
   }
 
   test("GET /friends proxies upstream friend list") {

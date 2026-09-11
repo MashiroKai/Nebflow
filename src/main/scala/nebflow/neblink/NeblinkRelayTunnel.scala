@@ -30,11 +30,24 @@ import scala.concurrent.duration.*
  *
  * Auto-reconnects with exponential backoff (0s -> 1s -> 2s ... -> 30s cap).
  * Token is read live from NeblinkClient so re-login after token expiry works.
- * Always-on by design — started in GatewayMain when NebLink Server is configured.
+ * Always-on by design — GatewayMain installs it unconditionally (2026-09-11)
+ * and it idles in a DEBUG backoff until a server URL appears.
+ *
+ * 2026-09-11 (tunnel lifecycle fix) — three defects closed here:
+ *  1. `serverUrl` used to be a constructor-time value: the tunnel was installed
+ *     once at boot, so `updateConfig` / enrollment could never re-point it.
+ *     It is now resolved LIVE per attempt from the config ref (the URL knob is
+ *     gone from the constructor entirely).
+ *  2. There was no "no URL configured yet" branch: the loop only handled
+ *     "no session token". A fresh home (no NebLink config) now idles with a
+ *     DEBUG log and a 5-minute backoff ceiling instead of noise.
+ *  3. `stop()` (logout) set `running=false` and NOTHING ever set it back —
+ *     "logout → log in again" left the relay dead until a process restart.
+ *     `start()` / `ensure()` revive it, single-flight via CAS (no bare
+ *     check-then-act ⇒ no double tunnel).
  */
 final class NeblinkRelayTunnel(
   neblinkService: NeblinkService,
-  serverUrl: String,
   /** Live session-token source, evaluated on every (re)connect. F1 (2026-09-10
     * friend-search batch): GatewayMain wires this to the discovery-held
     * authoritative client (IO-based, resolved per attempt) so enrollment
@@ -77,10 +90,52 @@ final class NeblinkRelayTunnel(
   /** Test seam: is the reconnect loop still running (false after stop())? */
   private[neblink] def isRunning: Boolean = running.get()
 
-  /** Start the relay tunnel connection loop. Runs in background until stop(). */
+  /** Test seam: how many connection-loop chains have been spawned. Two
+    * `ensure()` calls must spawn ONE chain (no double tunnel) — asserting the
+    * spawn counter is deterministic, unlike inferring it from reconnect
+    * attempt counters. */
+  private val loopSpawns = new AtomicInteger(0)
+  private[neblink] def loopSpawnCount: Int = loopSpawns.get()
+
+  /** N3 log-voice latch for the "configured but no session token" state, which
+    * is a STEADY state since logout keeps the server URL: first occurrence
+    * INFO (visibility), the rest DEBUG (no permanent INFO spam). Reset on
+    * every successful connect, so a later outage gets a visible first line. */
+  private val noTokenInfoLogged = new AtomicBoolean(false)
+
+  /** Spawn one connection loop chain (fire-and-forget; the loop ends on
+    * running == false). */
+  private def spawnLoop(): IO[Unit] =
+    IO(loopSpawns.incrementAndGet()).void *> IO {
+      dispatcher.unsafeRunAndForget(
+        connectLoop(0).handleErrorWith(e =>
+          logger.warn(s"Relay tunnel loop terminated unexpectedly (${e.getClass.getSimpleName})")
+        )
+      )
+    }
+
+  /** Start the relay tunnel connection loop (boot entry). Returns immediately —
+    * the loop itself runs in the background until stop(). */
   def connect(): IO[Unit] =
     logger.info("Starting relay tunnel to NebLink Server") *>
-      connectLoop(0)
+      IO(running.set(true)) *> spawnLoop()
+
+  /** Idempotent (re)start — revives a tunnel that `stop()` (logout) shut down.
+    *
+    * Single-flight via CAS: concurrent callers (enrollment hot-swap + boot)
+    * cannot spawn a second loop, and there is no bare check-then-act on a
+    * shared flag. `running` starts true (the tunnel is constructed running),
+    * so `ensure()` before any stop() is a no-op.
+    */
+  def start(): IO[Unit] =
+    IO(running.compareAndSet(false, true)).flatMap {
+      case false => IO.unit // already running — nothing to do
+      case true  => logger.info("Relay tunnel (re)starting after stop()") *> spawnLoop()
+    }
+
+  /** Alias of `start()` — the "make sure the tunnel runs" signal used by the
+    * enrollment hot-swap path (`NeblinkService.ensureRelayTunnel`). */
+  def ensure(): IO[Unit] = start()
 
   /** Gracefully stop the tunnel. */
   def stop(): IO[Unit] =
@@ -93,6 +148,13 @@ final class NeblinkRelayTunnel(
 
   // ===== Connection loop =====
 
+  /** Live NebLink Server URL, resolved on EVERY attempt from the config ref
+    * (precedent: `RestApiRoutes.neblinkServerUrl` / `relayTunnelOpt`). Never a
+    * constructor-time snapshot: the tunnel object is installed once at boot and
+    * may be re-pointed by enrollment without being rebuilt. */
+  private def currentServerUrl: IO[Option[String]] =
+    neblinkService.neblinkConfig.map(_.neblinkServer.map(_.url))
+
   private def connectLoop(attempt: Int): IO[Unit] =
     if !running.get() then IO.unit
     else
@@ -100,37 +162,57 @@ final class NeblinkRelayTunnel(
       IO.sleep(delay).flatMap { _ =>
         if !running.get() then IO.unit
         else
-          tokenGetter().flatMap {
+          currentServerUrl.flatMap {
             case None =>
-              val wait = math.min(30, 1 << math.min(attempt, 4)).seconds
-              // R2 visibility: this branch used to log at DEBUG only — a login
-              // that never completes left the tunnel dark for hours with zero
-              // trace. INFO keeps the retry loop observable (≤2 lines/min).
-              logger.info(s"Relay tunnel: no session token yet, retrying in ${wait.toSeconds}s...").flatMap { _ =>
-                IO.sleep(wait).flatMap { _ => connectLoop(attempt + 1) }
-              }
-            case Some(token) =>
-              neblinkService.identity
-                .flatMap(id => connectOnce(id, token))
+              // Not configured (fresh home / never enrolled): the tunnel is
+              // installed unconditionally, so this state must idle QUIETLY.
+              // DEBUG + backoff ceiling raised to 5 minutes (N3): a permanent
+              // INFO line here would be pure noise for users who never use
+              // NebLink.
+              val wait = math.min(300, 1 << math.min(attempt, 9)).seconds
+              logger
+                .debug(s"Relay tunnel: no NebLink server configured yet, retrying in ${wait.toSeconds}s...")
                 .flatMap { _ =>
-                  if running.get() then
-                    logger.info("Relay tunnel disconnected, reconnecting...").flatMap { _ =>
-                      connectLoop(0) // reset for immediate retry
-                    }
-                  else IO.unit
+                  IO.sleep(wait).flatMap { _ => connectLoop(attempt + 1) }
                 }
-                .handleErrorWith { e =>
-                  // F3 (report §3): never log e.getMessage here — it is null for
-                  // WebSocketHandshakeException and carries only the class NAME
-                  // when wrapped in ExecutionException. describe() extracts the
-                  // HTTP status (+ a redacted body snippet) instead.
-                  val failure = RelayTunnelDiagnostics.describe(e)
-                  if failure.authRejected then handleAuthRejection(failure, attempt)
-                  else
-                    logger.warn(s"Relay tunnel error: ${failure.summary}").flatMap { _ =>
-                      if running.get() then connectLoop(attempt + 1) else IO.unit
-                    }
-                }
+            case Some(url) =>
+              tokenGetter().flatMap {
+                case None =>
+                  val wait = math.min(30, 1 << math.min(attempt, 4)).seconds
+                  // R2 visibility: this branch used to log at DEBUG only — a login
+                  // that never completes left the tunnel dark for hours with zero
+                  // trace. INFO keeps the retry loop observable (≤2 lines/min).
+                  // N3: this state is STEADY after logout (the server URL is
+                  // kept), so only the FIRST occurrence is INFO.
+                  val line = s"Relay tunnel: no session token yet, retrying in ${wait.toSeconds}s..."
+                  val voice =
+                    if noTokenInfoLogged.compareAndSet(false, true) then logger.info(line)
+                    else logger.debug(line)
+                  voice.flatMap { _ => IO.sleep(wait).flatMap { _ => connectLoop(attempt + 1) } }
+                case Some(token) =>
+                  val attemptConnect =
+                    neblinkService.identity
+                      .flatMap(id => connectOnce(id, url, token))
+                      .flatMap { _ =>
+                        if running.get() then
+                          logger.info("Relay tunnel disconnected, reconnecting...").flatMap { _ =>
+                            connectLoop(0) // reset for immediate retry
+                          }
+                        else IO.unit
+                      }
+                  attemptConnect.handleErrorWith { e =>
+                    // F3 (report §3): never log e.getMessage here — it is null for
+                    // WebSocketHandshakeException and carries only the class NAME
+                    // when wrapped in ExecutionException. describe() extracts the
+                    // HTTP status (+ a redacted body snippet) instead.
+                    val failure = RelayTunnelDiagnostics.describe(e)
+                    if failure.authRejected then handleAuthRejection(failure, attempt)
+                    else
+                      logger.warn(s"Relay tunnel error: ${failure.summary}").flatMap { _ =>
+                        if running.get() then connectLoop(attempt + 1) else IO.unit
+                      }
+                  }
+              }
           }
       }
 
@@ -197,10 +279,10 @@ final class NeblinkRelayTunnel(
     }
 
   /** Establish a single WS connection; returns when the connection ends. */
-  private def connectOnce(id: DeviceIdentity, token: String): IO[Unit] =
+  private def connectOnce(id: DeviceIdentity, url: String, token: String): IO[Unit] =
     Deferred[IO, Unit].flatMap { closed =>
       IO.blocking {
-        val wsUri = buildRelayWsUri(serverUrl, id)
+        val wsUri = buildRelayWsUri(url, id)
         val listener = new RelayWsListener(this, closed, dispatcher)
         val client = HttpClient
           .newBuilder()
@@ -222,6 +304,9 @@ final class NeblinkRelayTunnel(
         // status stops claiming "auth rejected" (code/time stay as history).
         authFailStreak.set(0)
         lastAuthRejection = lastAuthRejection.map(_.copy(active = false))
+        // N3: re-arm the first-line INFO voice — a later outage (e.g. after
+        // logout) gets one visible line instead of silence.
+        noTokenInfoLogged.set(false)
         logger.infoSync(s"Relay tunnel connected: $wsUri")
         ()
       } *> closed.get // block until WS closes
