@@ -246,6 +246,17 @@ object AgentActor extends AgentCore with AgentSession:
     else if sid.startsWith("dag-") then Some("flow")
     else Some("tool")
 
+  /**
+   * ② (2026-09-11, queue-direct-pass diagnosis §2 根因): a REAL human input must
+   * never carry an injection source. Single definition of the rule so it holds
+   * identically at every ImmediateInput/UserInput → Message conversion point
+   * (idle judgement, compaction drain, turn-end batch drain) — a caller that
+   * sets both `source=Some(...)` and `fromUser=true` still renders as a plain
+   * user turn, because 真人性 wins over the label.
+   */
+  private def injectionSourceFor(fromUser: Boolean, source: Option[String]): Option[String] =
+    if fromUser then None else source
+
   /** issue #31 Fix D (2026-08-20)：把自身 barrier 状态快照进 agentRegistry，
     * 供 AgentControl list/status 展示——phantom slot（成员 hang / 停止失败时
     * barrier 永不归还）从日志考古变成一条命令可见。诊断语义：idle 期
@@ -344,14 +355,14 @@ object AgentActor extends AgentCore with AgentSession:
     (imm.blocks match
       case Some(blocks) if blocks.nonEmpty => Message(MessageRole.User, Right(blocks))
       case _ => Message(MessageRole.User, Left(imm.text))
-    ).copy(source = imm.source)
+    ).copy(source = injectionSourceFor(imm.fromUser, imm.source))
 
   /** UserInput (AgentCommand) → User message for inline continuation injection. */
   private def userCmdToMessage(ui: AgentCommand.UserInput): Message =
     (ui.blocks match
       case Some(blocks) if blocks.nonEmpty => Message(MessageRole.User, Right(blocks))
       case _ => Message(MessageRole.User, Left(ui.text))
-    ).copy(source = ui.source)
+    ).copy(source = injectionSourceFor(ui.fromUser, ui.source))
 
   /**
    * F1 (2026-08-30): drain every queue that was held back during the
@@ -448,13 +459,14 @@ object AgentActor extends AgentCore with AgentSession:
       updatedExec
     )
 
-  /** WS bubble emission for every injected immediate/user input that carries a source. */
+  /** WS bubble emission for every injected immediate/user input that carries a source.
+    * ② (2026-09-11): fromUser 优先于 source —— 真人输入不产注入气泡。 */
   private def emitInjectedBubbles(
     state: AgentState,
     drain: PostCompactDrain
   )(using ctx: ActorContext[AgentCommand]): IO[Unit] =
     val immBubbles = drain.injectedImms.traverse_ { imm =>
-      imm.source match
+      injectionSourceFor(imm.fromUser, imm.source) match
         case Some(src) =>
           emitInjectedUserEvent(
             state.wsSend, state.sessionId, imm.text, src, imm.eventType, imm.sender, imm.senderTeam, imm.delivery
@@ -462,7 +474,7 @@ object AgentActor extends AgentCore with AgentSession:
         case None => IO.unit
     }
     val userBubbles = drain.injectedUsers.traverse_ { ui =>
-      ui.source match
+      injectionSourceFor(ui.fromUser, ui.source) match
         case Some(src) =>
           emitInjectedUserEvent(
             state.wsSend, state.sessionId, ui.text, src, ui.eventType, ui.sender, ui.senderTeam, ui.delivery
@@ -776,7 +788,7 @@ object AgentActor extends AgentCore with AgentSession:
   )(using ctx: ActorContext[AgentCommand]): Behavior[AgentCommand] =
     Behaviors.receiveMessage:
 
-      case AgentCommand.UserInput(text, replyTo, clientMessageId, blocks, chatWidth, source, sender, senderTeam, delivery, eventType) =>
+      case AgentCommand.UserInput(text, replyTo, clientMessageId, blocks, chatWidth, source, sender, senderTeam, delivery, eventType, fromUser) =>
         val (isDuplicate, dedupedState) = checkDuplicate(clientMessageId, state)
         if isDuplicate then
           logger.info(s"Dropping duplicate message with clientMessageId=${clientMessageId.getOrElse("")}")
@@ -798,9 +810,13 @@ object AgentActor extends AgentCore with AgentSession:
           // Tool-injected inputs (Mail ask/fork, Delegate, SubTask, ImmediateInput
           // converted from Mail delivery) have clientMessageId=None → emit a user
           // event so the frontend renders the task prompt as a visible bubble.
+          // ② (2026-09-11): `fromUser` is the second, explicit discriminator —
+          // a real human text that travelled the ImmediateInput leg arrives with
+          // clientMessageId=None and used to be stamped source="tool" (blue TOOL
+          // card + isRealUserTurn=false). 真人 ⇒ no source, never.
           val injectionSource: Option[String] =
             if clientMessageId.isDefined then None
-            else source.orElse(inferInjectionSource(state.sessionId, replyTo))
+            else injectionSourceFor(fromUser, source.orElse(inferInjectionSource(state.sessionId, replyTo)))
           val enrichedBlocks: Option[List[ContentBlock]] = blocks.filter(_.nonEmpty)
           val stateWithFlush = stateWithWidth
           val userMsg = (enrichedBlocks match
@@ -1188,8 +1204,11 @@ object AgentActor extends AgentCore with AgentSession:
         }
 
       // Immediate input arriving in idle (turn already finished) — treat as normal UserInput
-      case AgentCommand.ImmediateInput(text, blocks, source, eventType, sender, senderTeam, delivery) =>
-        for _ <- ctx.self ! AgentCommand.UserInput(text, None, None, blocks, 0, source, sender, senderTeam, delivery, eventType)
+      // ② (2026-09-11): `fromUser` is carried across the conversion — dropping it
+      // here is exactly what made a real human text land in the
+      // `clientMessageId=None ⇒ source="tool"` fallback (diagnosis §1.4 idle row).
+      case AgentCommand.ImmediateInput(text, blocks, source, eventType, sender, senderTeam, delivery, fromUser) =>
+        for _ <- ctx.self ! AgentCommand.UserInput(text, None, None, blocks, 0, source, sender, senderTeam, delivery, eventType, fromUser)
         yield idle(agentDef, resources, depth, parentRef, state)
 
       // Queued mail arriving in idle — drain immediately as a new turn.
@@ -1515,7 +1534,7 @@ object AgentActor extends AgentCore with AgentSession:
               (imm.blocks match
                 case Some(blocks) if blocks.nonEmpty => Message(MessageRole.User, Right(blocks))
                 case _                               => Message(MessageRole.User, Left(imm.text))
-              ).copy(source = imm.source))
+              ).copy(source = injectionSourceFor(imm.fromUser, imm.source)))
             logAgentEvent(
               agentDef,
               depth,
@@ -1540,17 +1559,19 @@ object AgentActor extends AgentCore with AgentSession:
               _ <- persistQueues(state.sessionId, updatedState.execution)
               _ <- state.sessionId.fold(IO.unit)(sid => emitSessionBusy(state.wsSend, sid, busy = true))
               // One blue injected bubble per sourced input — same (new) turn group.
-              _ <- immInputs.collect {
-                case imm if imm.source.isDefined =>
+              // ② (2026-09-11): 真人输入不产注入气泡（fromUser 优先于 source）。
+              _ <- immInputs.flatMap { imm =>
+                injectionSourceFor(imm.fromUser, imm.source).map(src =>
                   emitInjectedUserEvent(
                     state.wsSend,
                     state.sessionId,
                     imm.text,
-                    imm.source.get,
+                    src,
                     imm.eventType,
                     imm.sender,
                     imm.senderTeam
                   )
+                )
               }.sequence_
               _ <- state.sessionId.fold(IO.unit)(sid =>
                 ctx.forkTurn(
@@ -1825,19 +1846,21 @@ object AgentActor extends AgentCore with AgentSession:
               (imm.blocks match
                 case Some(blocks) if blocks.nonEmpty => Message(MessageRole.User, Right(blocks))
                 case _ => Message(MessageRole.User, Left(imm.text))
-              ).copy(source = imm.source))
-        val immEventIO = immInputs.collect {
-          case imm if imm.source.isDefined =>
+              ).copy(source = injectionSourceFor(imm.fromUser, imm.source)))
+        // ② (2026-09-11): 真人输入不产注入气泡（fromUser 优先于 source）。
+        val immEventIO = immInputs.flatMap { imm =>
+          injectionSourceFor(imm.fromUser, imm.source).map(src =>
             emitInjectedUserEvent(
               state.wsSend,
               state.sessionId,
               imm.text,
-              imm.source.get,
+              src,
               imm.eventType,
               imm.sender,
               imm.senderTeam,
               imm.delivery
             )
+          )
         }.sequence_
         // Block 3 循环检测器 L0（supervision trio §D3）：LoopGuard Warn 提醒以
         // user system-reminder 追加在工具结果之后（同系统 reminder 形态）
@@ -3108,7 +3131,7 @@ object AgentActor extends AgentCore with AgentSession:
         (imm.blocks match
           case Some(blocks) if blocks.nonEmpty => Message(MessageRole.User, Right(blocks))
           case _ => Message(MessageRole.User, Left(imm.text))
-        ).copy(source = imm.source))
+        ).copy(source = injectionSourceFor(imm.fromUser, imm.source)))
       val messagesWithImmediate = newMessages ++ immMessages
       val updatedState = state
         .copy(execution =
@@ -3133,17 +3156,20 @@ object AgentActor extends AgentCore with AgentSession:
           if !isSubagent then state.sessionId.fold(IO.unit)(sid => emitSessionBusy(state.wsSend, sid, busy = true))
           else IO.unit
         // One blue injected bubble per sourced input — same group, back to back.
-        _ <- immInputs.collect {
-          case imm if imm.source.isDefined =>
+        // ② (2026-09-11): 真人输入没有来源标签 ⇒ 也不产注入气泡（fromUser 优先
+        // 于 source，与 Message 侧的 injectionSourceFor 同一判据）。
+        _ <- immInputs.flatMap { imm =>
+          injectionSourceFor(imm.fromUser, imm.source).map(src =>
             emitInjectedUserEvent(
               state.wsSend,
               state.sessionId,
               imm.text,
-              imm.source.get,
+              src,
               imm.eventType,
               imm.sender,
               imm.senderTeam
             )
+          )
         }.sequence_
         _ <- state.sessionId.fold(IO.unit)(sid =>
           ctx.forkTurn(
@@ -3687,7 +3713,7 @@ object AgentActor extends AgentCore with AgentSession:
             else
               IO.pure(frozen(agentDef, resources, depth, parentRef, state, replyTo, resumeAt, reason, retryCount, escalation))
 
-      case AgentCommand.UserInput(text, replyTo2, clientMessageId, blocks, chatWidth, source, sender, senderTeam, delivery, eventType) =>
+      case AgentCommand.UserInput(text, replyTo2, clientMessageId, blocks, chatWidth, source, sender, senderTeam, delivery, eventType, fromUser) =>
         if clientMessageId.isDefined then
           // ★ 用户唤醒（B5）：注入用户消息到冻结中的上下文，立即 dispatch——
           // 冻结前组装好的工具结果 + 用户新指令同轮喂给 LLM。dedup 防止 WS
@@ -3726,7 +3752,7 @@ object AgentActor extends AgentCore with AgentSession:
           val queued = state.copy(execution =
             state.execution.copy(
               pendingUserInputs = state.execution.pendingUserInputs :+ AgentCommand.UserInput(
-                text, replyTo2, clientMessageId, blocks, chatWidth, source, sender, senderTeam, delivery, eventType
+                text, replyTo2, clientMessageId, blocks, chatWidth, source, sender, senderTeam, delivery, eventType, fromUser
               )
             )
           )

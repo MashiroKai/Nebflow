@@ -34,6 +34,8 @@ class CompactionQueueStoreSpec extends FunSuite:
     delivery = Some("queue")
   )
   private val imm2 = AgentCommand.ImmediateInput("plain-imm", source = None)
+  /** ② (2026-09-11): a REAL user text that travelled the ImmediateInput leg. */
+  private val immHuman = AgentCommand.ImmediateInput("human text", source = None, fromUser = true)
   private val ev1 = AgentCommand.ExternalEvent(
     source = "subtask",
     eventType = "completed",
@@ -66,6 +68,27 @@ class CompactionQueueStoreSpec extends FunSuite:
     assertEquals(got.events.head.correlationId, Some("corr-1"))
     assertEquals(got.events(1).source, "bridge")
     assertEquals(got.events(1).payload, "payload-2")
+  }
+
+  test("② human-origin bit survives 入队 ↔ 崩溃恢复 round-trip (fromUser)") {
+    val q = CompactionQueueStore.PersistedQueues(imms = List(immHuman, imm1, imm2), events = Nil)
+    CompactionQueueStore.save("sid-human", q).unsafeRunSync()
+    val got = CompactionQueueStore.load("sid-human").unsafeRunSync().get
+    assertEquals(got.imms.size, 3)
+    assertEquals(got.imms.head.fromUser, true, "真人位必须在入队↔恢复往返后保住")
+    assertEquals(got.imms.head.source, None)
+    assertEquals(got.imms(1).fromUser, false, "服务端注入位不得被误置")
+    assertEquals(got.imms(2).fromUser, false)
+  }
+
+  test("② pre-② snapshot without the field decodes as fromUser=false (backward compatible)") {
+    val file = tmp / "data" / "sessions" / "sid-prefix" / "injection-queues.json"
+    os.makeDir.all(file / os.up)
+    os.write(file, """{"imms":[{"text":"old","source":"mail"}],"events":[]}""")
+    val got = CompactionQueueStore.load("sid-prefix").unsafeRunSync().get
+    assertEquals(got.imms.size, 1)
+    assertEquals(got.imms.head.fromUser, false)
+    assertEquals(got.imms.head.source, Some("mail"))
   }
 
   test("save of empty queues clears the file") {
