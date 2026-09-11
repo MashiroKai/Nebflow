@@ -964,7 +964,8 @@ case class SessionContext(
   /** 链级抽象 P2（20260910 process-doc-chain-attribution spec §9.2 项 2）：本节点
     * 所属链 id（NodeEngine 节点 spawn 时经 FlowMapStore.chainIdOf 判据单点取
     * spawn 时刻快照注入；分量成员数 ≥2 才带值）。经 AgentCore 透传
-    * ToolContext.flowChainId——节点把 `chain:` 写进过程文档元数据头的值来源。
+    * ToolContext.flowChainId——节点在过程文档**文件名尾段**写链归属 `__<chainId>`
+    * 的值来源（正文零元数据头；2026-09-11 作者裁定 R-3）。
     * 分发器/非项目会话/孤立单节点分量 = None（分发器口径显式化见 ProjectActor
     * spawn 点）。快照语义见 ToolContext.flowChainId 注释。 */
   flowChainId: Option[String] = None,

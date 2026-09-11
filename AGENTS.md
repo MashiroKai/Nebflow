@@ -113,7 +113,7 @@ H8080_AFTER=$(lsof -nP -iTCP:8080 -sTCP:LISTEN -t | sort | tr '\n' ' ')
 - **checkJs 类型门（2026-09-10，CI 只管 push/PR 的漏检教训）**：前端改动（web/ 下任何文件）合并前必须过 `node scripts/check-js-types.mjs`（仓内钉版 tsc、禁 npx 网络拉取；拿 `tests/type-baseline.json` 比基线，与 CI `js-types` job 同判据）；新文件报错 / (file, TS code) 计数上升 / 总数上升 = 红 = 不合——红了修代码，**不得为过门改 `tests/type-baseline.json`**（禁以 `--update` 刷新掩盖新错、禁加或放宽条目）
 
 ## 文档产出路径（派发纪律）
-派发含文档产出的任务（方案/规格书/设计/调研报告等）时，prompt 必须写明目标路径 `~/.nebflow/docs/Nebflow/`，禁止指定 /tmp。活文档无日期前缀、阶段文档 `<YYYYMMDD>_` 前缀、配图存 `assets/`——规范见 `~/.nebflow/docs/CONVENTIONS.md`。
+派发含文档产出的任务（方案/规格书/设计/调研报告等）时，prompt 必须写明目标路径 `~/.nebflow/docs/Nebflow/`，禁止指定 /tmp。命名与溯源（2026-09-11 作者裁定）：**正文零元数据头**（`chain`/`chains`/`chain-source`/`chain-role`/`produced-by`/`produced-at`/`doc-class`/`root` 一律不写进正文）；**链归属只进文件名尾段**——阶段文档 `<YYYYMMDD>_<HHMMSS>_<topic>__<chainId>.md`、多链 `__<主链Id>+<次链Id>.md`、**无归属不带尾段**（不得编造）、活文档（无日期前缀）同规则（有归属才带 `...__<chainId>.md`）；同秒重名用 `-<n>` 消歧；配图存 `assets/`；存量文档零改名、零搬移、零回改。权威规范见 `~/.nebflow/docs/CONVENTIONS.md`。
 
 ## 用户裁定（User Rulings）
 - 2026-08-17 ｜ 引导放工具说明里，不注入任何 system.md（agent 行为引导的载体是工具 description）
