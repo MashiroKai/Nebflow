@@ -912,6 +912,17 @@ export default {
   'search.dateCancel': '取消',
   'search.toolDisabledHint': '当前栏目下不适用工具筛选',
   'search.dateDisabledInPop': 'Pop 栏目下不可用日期定位',
+  // v2 (2026-09-11)：结果行内卡片本体 + 独立消息浮层窗口
+  'search.cardUnavailable': '卡片内容不可用',
+  'search.cardRenderFailed': '卡片渲染失败',
+  'search.cardLoadFailed': '卡片资源加载失败',
+  'search.floatTitle': '消息窗口',
+  'search.floatFromHere': '自该条消息起',
+  'search.floatClose': '关闭窗口',
+  'search.floatLoadFailed': '无法加载该会话的历史消息',
+  'search.floatHitNotFound': '未能定位该消息',
+  'search.floatRenderFailed': '消息渲染失败',
+  'search.floatTruncated': '其后还有 {n} 条未显示',
 
   // === Daemons (Heartbeat) ===
   'daemons.title': '心跳进程',
