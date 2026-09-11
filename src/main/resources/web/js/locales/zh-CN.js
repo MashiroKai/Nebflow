@@ -149,6 +149,10 @@ export default {
   // LoopNode 运行态相位文案（2026-09-06）：loop 节点 running 时 desc 行显 worker/verify
   'flowmap.loopPhase.worker': '生产中',
   'flowmap.loopPhase.verify': '验证中',
+  // U1 多链归属批（2026-09-11）：合并节点详情卡「收的 worktree/分支」行——数据源 =
+  // 上游 in 闭包内节点载荷 worktree 字段；取不到时如实落不可得+原因。中英键集对称。
+  'flowmap.detail.mergeUpstreams': '收的 worktree/分支',
+  'flowmap.detail.mergeUpstreamsNone': '不可得（上游节点不在当前载荷缓存）',
   'agentFile.hint': '此文件是项目工作区根的 agent 指令（AGENTS.md），可编辑并保存。',
 
   // === Friends & messages (A2A) ===

@@ -153,6 +153,11 @@ export default {
   // LoopNode running-phase labels (2026-09-06): loop card desc line shows worker/verify
   'flowmap.loopPhase.worker': 'Producing',
   'flowmap.loopPhase.verify': 'Verifying',
+  // U1 multi-chain batch (2026-09-11): merge detail card row "upstream worktrees/branches"
+  // — source = worktree field of nodes in the in-edge closure; never fabricated (falls
+  // back to an explicit unavailable reason). zh/en key sets stay symmetric.
+  'flowmap.detail.mergeUpstreams': 'Upstream worktrees/branches',
+  'flowmap.detail.mergeUpstreamsNone': 'Unavailable (upstream nodes not in the loaded payload)',
   'agentFile.hint': 'This file is the project workspace agent instructions (AGENTS.md at the workspace root); edit and save it.',
 
   // === Friends & messages (A2A) ===
