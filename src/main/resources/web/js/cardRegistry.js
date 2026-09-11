@@ -252,6 +252,109 @@ function injectFileTokens(html) {
   });
 }
 
+/** Build the load-failure placeholder script injected into srcdoc.
+ *
+ *  2026-09-11 (carderr batch): a card whose <img>/<video>/<audio> failed to
+ *  load (unresolved local reference, file deleted after the tool call, 403,
+ *  missing token) used to render as an invisible empty box — indistinguishable
+ *  from an intentional blank. The author hit this with
+ *  `<img src="~/projects/gamma-telescope/reports/…svg">` (path did not exist
+ *  after `~` expansion) and saw an empty graph.
+ *
+ *  The injected script replaces the failed element with a visible placeholder
+ *  carrying the alt text, a failure hint and the original src. Notes:
+ *   - resource `error` events do not bubble, so the listener is registered in
+ *     the capture phase on window, from <head> (before any media is parsed);
+ *   - the auth token is stripped from the displayed src — a placeholder must
+ *     never print `?token=…`;
+ *   - <video>/<audio> carry preload="none" (see renderHtmlCard), so their
+ *     placeholder appears when the user presses play, not on card load;
+ *   - scope is img/video/audio (+ a <source> child targets its media parent);
+ *     <script>/<link>/CSS url() failures are NOT covered (registered as an
+ *     open gap in the batch report, deliberately not widened here). */
+function buildMediaFallbackScript() {
+  return `<script>
+(function(){
+  var HINT='This reference was not proxied or the file is unreachable. The Card tool result lists unresolved references (warnings).';
+  function stripToken(u){
+    return String(u||'').replace(/([?&])token=[^&]*/g,'$1').replace(/[?&]$/,'');
+  }
+  function placeholder(el,src){
+    var tag=(el.tagName||'media').toLowerCase();
+    var alt=(el.getAttribute&&el.getAttribute('alt'))||'';
+    var box=document.createElement('div');
+    box.setAttribute('data-nf-load-error','1');
+    box.style.cssText='box-sizing:border-box;width:100%;max-width:100%;padding:10px 12px;margin:0;border:1px dashed var(--color-border,rgba(127,127,127,0.55));border-radius:8px;background:var(--color-surface,transparent);color:var(--color-text-muted,#8b8e96);font-size:12px;line-height:1.5;word-break:break-all;font-family:-apple-system,BlinkMacSystemFont,"SF Pro Text","Helvetica Neue",sans-serif';
+    var head=document.createElement('div');
+    head.style.cssText='color:var(--color-text,#1b1e26);font-weight:500';
+    head.textContent=tag+' could not be loaded'+(alt?' — '+alt:'');
+    var why=document.createElement('div');
+    why.textContent=HINT;
+    var code=document.createElement('code');
+    code.textContent='src: '+stripToken(src);
+    box.appendChild(head);
+    box.appendChild(why);
+    box.appendChild(code);
+    if(el.parentNode) el.parentNode.replaceChild(box,el);
+  }
+  window.addEventListener('error',function(ev){
+    var t=ev.target;
+    if(!t||!t.tagName) return;
+    var reported=(t.getAttribute&&t.getAttribute('src'))||t.currentSrc||'';
+    var tag=t.tagName.toUpperCase();
+    if(tag==='SOURCE'){
+      var host=t.parentNode;
+      if(!host||!host.tagName) return;
+      var hostTag=host.tagName.toUpperCase();
+      if(hostTag!=='VIDEO'&&hostTag!=='AUDIO') return;
+      t=host;
+      tag=hostTag;
+    }
+    if(tag!=='IMG'&&tag!=='VIDEO'&&tag!=='AUDIO') return;
+    if(t.getAttribute('data-nf-load-error')) return;
+    if(!reported) reported=t.currentSrc||'';
+    t.setAttribute('data-nf-load-error','1');
+    placeholder(t,reported);
+  },true);
+})();
+</script>`;
+}
+
+/** Render the unresolved-reference notice above a card.
+ *
+ *  2026-09-11 (carderr batch): the Card tool now reports every local reference
+ *  it could not proxy in its payload (`warnings`). Replaying a persisted
+ *  session keeps them, so the notice is rebuilt from the payload instead of
+ *  being a one-shot render artifact. Values come from the agent's HTML —
+ *  textContent only, never innerHTML. */
+function renderCardWarnings(wrap, iframe, warnings) {
+  if (!warnings || !warnings.length) return;
+  const box = document.createElement('div');
+  box.className = 'html-card-warning';
+  const head = document.createElement('div');
+  head.className = 'html-card-warning-head';
+  head.textContent = warnings.length === 1
+    ? '1 file reference could not be proxied'
+    : warnings.length + ' file references could not be proxied';
+  box.appendChild(head);
+  const list = document.createElement('ul');
+  list.className = 'html-card-warning-list';
+  warnings.forEach((w) => {
+    const item = document.createElement('li');
+    const ref = document.createElement('code');
+    const ww = w || {};
+    const count = Number(ww.count) > 1 ? ' (x' + ww.count + ')' : '';
+    ref.textContent = String(ww.ref || '(unknown reference)') + count;
+    item.appendChild(ref);
+    const why = document.createElement('span');
+    why.textContent = ' — ' + String(ww.reason || 'unknown') + (ww.detail ? ': ' + String(ww.detail) : '');
+    item.appendChild(why);
+    list.appendChild(item);
+  });
+  box.appendChild(list);
+  wrap.insertBefore(box, iframe);
+}
+
 /** Render HTML content inside a sandboxed iframe.
  *  Uses lazy loading: the iframe's srcdoc is not set until it scrolls near the
  *  viewport (IntersectionObserver). This prevents dozens of iframe browsing
@@ -259,7 +362,7 @@ function injectFileTokens(html) {
  *  being created simultaneously when a session with many cards is opened.
  *  Additionally, <audio>/<video> elements get preload="none" so the browser
  *  never auto-fetches media files; the user must click play. */
-function renderHtmlCard(container, html, title) {
+function renderHtmlCard(container, html, title, warnings) {
   container.innerHTML = '';
 
   const wrap = document.createElement('div');
@@ -268,6 +371,7 @@ function renderHtmlCard(container, html, title) {
   const id = ++_iframeId;
   const themeCSS = buildThemeVarsCSS();
   const heightScript = buildHeightScript(id);
+  const mediaFallbackScript = buildMediaFallbackScript();
 
   // Inject auth tokens into /api/nf-file URLs (sandboxed iframe can't use cookies)
   let processedHtml = injectFileTokens(html);
@@ -281,7 +385,7 @@ function renderHtmlCard(container, html, title) {
   // #nf-wrap: width:100% fills the available card width.
   // SVGs with width:100% scale proportionally via viewBox + height:auto.
   // No fit-content deadlock — the width chain is: chat panel → row → container → wrap → iframe → nf-wrap, all 100%.
-  const srcdoc = `<!DOCTYPE html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><style>${themeCSS}html,body{margin:0;padding:0;font-size:15px;line-height:1.5;box-sizing:border-box;word-wrap:break-word;overflow-wrap:break-word;background:var(--color-bg);color:var(--color-text);overflow:hidden;}*,*:before,*:after{box-sizing:inherit;}svg{max-width:100%;height:auto;}svg text{font-size:min(max(14px,100%),5vw);}img{max-width:100%;height:auto;}</style></head><body><div id="nf-wrap" style="width:100%">${processedHtml}</div>${heightScript}</body></html>`;
+  const srcdoc = `<!DOCTYPE html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><style>${themeCSS}html,body{margin:0;padding:0;font-size:15px;line-height:1.5;box-sizing:border-box;word-wrap:break-word;overflow-wrap:break-word;background:var(--color-bg);color:var(--color-text);overflow:hidden;}*,*:before,*:after{box-sizing:inherit;}svg{max-width:100%;height:auto;}svg text{font-size:min(max(14px,100%),5vw);}img{max-width:100%;height:auto;}</style>${mediaFallbackScript}</head><body><div id="nf-wrap" style="width:100%">${processedHtml}</div>${heightScript}</body></html>`;
 
   const iframe = document.createElement('iframe');
   iframe.className = 'html-card-iframe';
@@ -289,6 +393,10 @@ function renderHtmlCard(container, html, title) {
   iframe.setAttribute('scrolling', 'no');
   iframe.dataset.nfCardId = id;
   wrap.appendChild(iframe);
+
+  // Unresolved local references reported by the Card tool (carderr batch):
+  // list them above the card so a broken asset is never a silent blank box.
+  renderCardWarnings(wrap, iframe, warnings);
 
   container.appendChild(wrap);
 
@@ -428,7 +536,7 @@ export function cleanupCardIframes(root) {
 export function renderWithRegistry(container, text, toolName) {
   // Direct {html, title} object — used by Card tool (no marker needed)
   if (text && typeof text === 'object' && !Array.isArray(text) && text.html) {
-    renderHtmlCard(container, text.html, text.title || '');
+    renderHtmlCard(container, text.html, text.title || '', text.warnings);
     return true;
   }
 
@@ -444,7 +552,7 @@ export function renderWithRegistry(container, text, toolName) {
       const json = text.substring(htmlMatch[0].length);
       const data = JSON.parse(json);
       if (data.html) {
-        renderHtmlCard(container, data.html, data.title || '');
+        renderHtmlCard(container, data.html, data.title || '', data.warnings);
         return true;
       }
     } catch (e) {}
@@ -458,7 +566,7 @@ export function renderWithRegistry(container, text, toolName) {
       const data = JSON.parse(json);
       const inner = data.data || data;
       if (inner.html) {
-        renderHtmlCard(container, inner.html, inner.title || '');
+        renderHtmlCard(container, inner.html, inner.title || '', inner.warnings);
         return true;
       }
     } catch (e) {}

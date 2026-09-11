@@ -2476,6 +2476,34 @@
   transition: opacity 0.15s ease-out;
 }
 
+/* Unresolved local-file references reported by the Card tool (2026-09-11).
+   Listed above the card so a reference the backend could not proxy is never a
+   silent blank box. Restrained by design: hairline divider + warning-colored
+   heading, no accent bars, no background fill. */
+.html-card-warning {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 8px 10px;
+  border-bottom: 1px solid var(--color-border);
+  font-size: 12px;
+  line-height: 1.45;
+}
+.html-card-warning-head {
+  color: var(--color-warning);
+  font-weight: 500;
+}
+.html-card-warning-list {
+  margin: 0;
+  padding-left: 16px;
+  color: var(--color-text-muted);
+  word-break: break-all;
+}
+.html-card-warning-list code {
+  font-size: 11px;
+  color: var(--color-text);
+}
+
 /* ===== Permission Danger Levels ===== */
 .perm-danger-banner {
   display: flex;
