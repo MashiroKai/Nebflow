@@ -665,9 +665,18 @@ object GatewayMain extends IOApp:
                                       val neblinkDiscoveryHolder =
                                         new java.util.concurrent.atomic.AtomicReference[Option[nebflow.neblink.NeblinkDiscovery]](None)
                                       // Check if NebLink Server is configured; if so, create client for NebLink-based discovery
+                                      val neblinkConfigAtBoot = neblinkService.neblinkConfig.unsafeRunSync()
+                                      // 隔离护栏（2026-09-11 作者裁定，见 EnrollGuard）：非默认 home
+                                      // 的实例（--home / <PREFIX>_HOME）默认**不**自动向生产网注册——
+                                      // 同账号重复登录会踢掉作者主客户端，没必要每跑一次测试就踢一次。
+                                      // NEBFLOW_ALLOW_PROD_ENROLL=1 显式放行；默认 home 零行为变化；
+                                      // 本地/自定义 host 不受影响。
+                                      val bootEnrollRefusal: Option[String] =
+                                        neblinkConfigAtBoot.neblinkServer
+                                          .flatMap(s => nebflow.neblink.EnrollGuard.enrollRefusal(s.url))
                                       val neblinkClient: Option[nebflow.neblink.NeblinkClient] =
-                                        neblinkService.neblinkConfig.unsafeRunSync() match
-                                          case nc if nc.neblinkServer.isDefined =>
+                                        neblinkConfigAtBoot match
+                                          case nc if nc.neblinkServer.isDefined && bootEnrollRefusal.isEmpty =>
                                             Some(
                                               new nebflow.neblink.NeblinkClient(
                                                 nc.neblinkServer.get,
@@ -691,6 +700,10 @@ object GatewayMain extends IOApp:
                                                 identity = Some(neblinkService.identity)
                                               )
                                             )
+                                          case nc if nc.neblinkServer.isDefined =>
+                                            // 命中隔离护栏：不建 boot 客户端 ⇒ 不自动登录/入网。
+                                            // 不做静默降级——拒绝理由在下方 IO 链上打 WARN。
+                                            None
                                           case _ => None
                                       // Wire relay client + presence service into NeblinkService so
                                       // TransferFileTool / DropboxService / status endpoint can use them.
@@ -778,6 +791,9 @@ object GatewayMain extends IOApp:
                                       // enrollment 只发「确保在跑」信号（单飞 + 幂等）；
                                       // 登记必须落在 IO 链上（setRelayTunnelStarter 返回 IO，
                                       // 写成裸语句会静默不执行）。
+                                      bootEnrollRefusal.fold(IO.unit)(r =>
+                                        logger.warn(s"[neblink] $r — boot client not created")
+                                      ) *>
                                       neblinkService.setRelayTunnelStarter(relayTunnel.ensure()) *>
                                         // Discovery service — uses NebLink Server for discovery
                                         neblinkService.setDiscoveryHook(

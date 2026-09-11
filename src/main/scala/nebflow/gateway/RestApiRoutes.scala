@@ -2903,9 +2903,19 @@ class RestApiRoutes(
    * Uses java.net.http directly (mirrors NeblinkClient) to avoid pulling an
    * http4s client dependency into this routes class. Bypasses the system proxy
    * so direct LAN access works.
+   *
+   * Isolation guard (2026-09-11): single choke point for the pairing-code
+   * enroll path — an instance on a redirected data root does not auto-register
+   * with the production network (see `EnrollGuard`). Refusal is returned on the
+   * error channel (caller renders "Enrollment failed: …") AND logged, so it is
+   * never silent; `NEBFLOW_ALLOW_PROD_ENROLL=1` restores the old behaviour.
    */
   private def enrollWithServer(serverUrl: String, body: String): IO[Either[String, Json]] =
-    proxyPost(serverUrl, nebflow.neblink.Protocol.DeviceApi.enroll, body)
+    nebflow.neblink.EnrollGuard.enrollRefusal(serverUrl) match
+      case Some(reason) =>
+        logger.warn(s"enroll refused by the isolation guard: $reason").as(Left(reason))
+      case None =>
+        proxyPost(serverUrl, nebflow.neblink.Protocol.DeviceApi.enroll, body)
 
   /**
    * SSRF guard for provider model discovery: only absolute http(s) URLs with a

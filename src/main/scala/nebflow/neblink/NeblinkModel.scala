@@ -5,9 +5,10 @@ import io.circe.generic.semiauto.*
 import io.circe.parser.decode
 import io.circe.syntax.*
 import io.circe.{Decoder, Encoder, Json, JsonObject}
-import nebflow.core.PathUtil
+import nebflow.core.{AtomicJson, Branding, NebflowLogger, PathUtil}
 
 import java.util.UUID
+import scala.util.matching.Regex
 
 // ===== Device Identity =====
 
@@ -24,6 +25,8 @@ case class DeviceIdentity(
 )
 
 object DeviceIdentity:
+  private val logger = NebflowLogger.forName("nebflow.neblink.device")
+
   given Encoder[DeviceIdentity] = deriveEncoder
 
   /** Manual decoder: deriveDecoder does NOT honor Scala parameter defaults
@@ -69,34 +72,249 @@ object DeviceIdentity:
       .map(_.stripSuffix(".local")) // macOS mDNS returns "hostname.local"
       .getOrElse("Unknown")
 
+  // ── Machine-code derived device id (2026-09-11 作者裁定) ────────────────────
+  //
+  // 过去 deviceId = UUID.randomUUID()，每次重铸都在服务端留下一条新的 devices
+  // 行（服务端对同一 id 幂等 —— store.rs 四条 ON CONFLICT(id, network_id)
+  // upsert，但它从不铸造 id），这是「同机 5 条设备行」的近因
+  // （dup-device-verdict §1.2 类 2）。现在改为「机器码 + scope」的确定性派生：
+  //
+  //   deviceId = UUIDv5(namespace = DeviceIdNamespace, name = machineCode|scope)
+  //
+  // 语义（一次钉死，勿混）：
+  //   - 同一 (机器码, scope) ⇒ 同 id。默认 home 下任意重装 / 删 device.json /
+  //     换安装目录都得到同一个 id（服务端因此不再堆幽灵行）。
+  //   - 非默认 home（CLI --home 或 <PREFIX>_HOME，见 PathUtil.dataRoot）的 scope
+  //     = dataRoot 路径字符串 ⇒ **有意**派生不同 id：隔离/测试实例与作者主客户端
+  //     不撞身份（同 id 会因服务端 one-live-session-per-(device, network) 把主
+  //     客户端踢下线，见 NeblinkClient.scala:448 一带注释）。
+  //   - 一台机器上开两个不同账号的实例（各自 home）互不影响：身份按 home 隔离，
+  //     服务端踢线只发生在同一 (device_id, network_id) 维度（store.rs:1039 /
+  //     :1801）——「同机同账号被踢」允许发生，但**不是**必须发生。
+  //   - 机器码读不到（权限 / 平台不支持 / 沙箱受限）⇒ 回退随机 UUID，但**照样
+  //     落盘**（见 loadOrCreate），不再有「新铸不落盘 ⇒ 每次启动都新铸」的粘性循环。
+  //
+  // 结果保持 UUID 形态（36 字符）：wire 契约不变。服务端 devices.id 是 TEXT、
+  // 无长度/字符集约束（store.rs:145-153），故 36 字符 UUID 恒在可容纳范围内。
+
+  /** Fixed UUIDv5 namespace for the device-id derivation. Wire-visible constant:
+    * changing it re-mints every client's id — do not touch without a migration. */
+  private[neblink] val DeviceIdNamespace: UUID =
+    UUID.fromString("6f1a2c3d-4e5b-4a7c-8d9e-0f1a2b3c4d5e")
+
+  /** Scope value for the standard (production) data root. */
+  private[neblink] val DefaultScope: String = "default"
+
+  /** Env override for the machine code — test/debug ONLY (see the value table in
+    * the batch report). It replaces the machine-code *source*, not the semantics:
+    * the id stays a pure function of (value, scope), so reproducibility is
+    * unaffected — same override value always yields the same id. */
+  private[neblink] val MachineIdEnv: String = "NEBLINK_MACHINE_ID"
+
+  /** True when the data root was redirected away from `<user.home>/<brand dir>`
+    * (CLI `--home`, see Main.scala; or the `<PREFIX>_HOME` env, both funnel
+    * through PathUtil.dataRoot). */
+  private[neblink] def isNonDefaultHome: Boolean =
+    PathUtil.dataRoot.toNIO.toAbsolutePath.normalize !=
+      (os.home / Branding.homeDirName).toNIO.toAbsolutePath.normalize
+
+  /** Scope component of the derivation (see the block comment above). */
+  private[neblink] def deviceIdScope: String =
+    if isNonDefaultHome then PathUtil.dataRoot.toString else DefaultScope
+
+  /** Pure: the device id for a (machineCode, scope) pair — same input, same
+    * output, always UUID-shaped. */
+  def deriveDeviceId(machineCode: String, scope: String): String =
+    uuidV5(DeviceIdNamespace, s"$machineCode|$scope").toString
+
+  /** RFC 4122 §4.3 UUIDv5 (SHA-1, name-based). The JDK ships no v5 generator
+    * (`UUID.nameUUIDFromBytes` is v3/MD5). Namespace and name bytes are hashed
+    * in network (big-endian) byte order, then the version/variant bits are
+    * overwritten per the RFC. */
+  private[neblink] def uuidV5(namespace: UUID, name: String): UUID =
+    val md = java.security.MessageDigest.getInstance("SHA-1")
+    md.update(bytesOf(namespace))
+    md.update(name.getBytes(java.nio.charset.StandardCharsets.UTF_8))
+    val h = md.digest()
+    h(6) = ((h(6) & 0x0f) | 0x50).toByte // version 5
+    h(8) = ((h(8) & 0x3f) | 0x80).toByte // RFC 4122 variant
+    val bb = java.nio.ByteBuffer.wrap(h)
+    new UUID(bb.getLong, bb.getLong)
+
+  private def bytesOf(u: UUID): Array[Byte] =
+    val bb = java.nio.ByteBuffer.allocate(16)
+    bb.putLong(u.getMostSignificantBits)
+    bb.putLong(u.getLeastSignificantBits)
+    bb.array()
+
+  // ── Machine code (platform probes) ────────────────────────────────────────
+  //
+  // macOS: IOPlatformUUID (ioreg) · Windows: MachineGuid (registry) ·
+  // Linux: /etc/machine-id, falling back to the DMI product UUID.
+
+  private val PlatformUuidRe: Regex = """"IOPlatformUUID"\s*=\s*"([^"]+)"""".r
+  private val MachineGuidRe: Regex = """(?im)^\s*MachineGuid\s+REG_SZ\s+(\S+)\s*$""".r
+
+  /** Known non-identifying placeholder values (systemd leaves "uninitialized"
+    * when it never generated an id) — treated as "unreadable" so that every such
+    * machine does NOT collapse onto one shared derived id. */
+  private val MachineCodePlaceholders: Set[String] = Set("uninitialized", "none", "unknown")
+
+  /** Machine code, or None when unreadable (permission / unsupported platform /
+    * restricted sandbox / placeholder value). `NEBLINK_MACHINE_ID` (test/debug)
+    * REPLACES the probe verbatim — it is a source override, not a semantic one:
+    * the id stays a pure function of (value, scope), so the same override always
+    * yields the same id. */
+  private[neblink] def readMachineCode(): Option[String] =
+    envValue(MachineIdEnv)
+      .orElse(envValue("NEBFLOW_MACHINE_ID")) match
+      case Some(overridden) => sanitizeMachineCode(Some(overridden))
+      case None             => sanitizeMachineCode(readMachineCodeFromOs())
+
+  private[neblink] def sanitizeMachineCode(raw: Option[String]): Option[String] =
+    raw
+      .map(_.trim)
+      .filter(_.nonEmpty)
+      .filterNot(v => MachineCodePlaceholders.contains(v.toLowerCase))
+
+  private[neblink] def readMachineCodeFromOs(): Option[String] =
+    val osName = System.getProperty("os.name", "").toLowerCase
+    if osName.contains("mac") then
+      firstMatch(
+        runCapture(Seq("ioreg", "-rd1", "-c", "IOPlatformExpertDevice")),
+        PlatformUuidRe
+      )
+    else if osName.contains("win") then
+      firstMatch(
+        runCapture(
+          Seq("reg", "query", """HKLM\SOFTWARE\Microsoft\Cryptography""", "/v", "MachineGuid")
+        ),
+        MachineGuidRe
+      )
+    else if osName.contains("linux") then
+      readTrimmed(os.Path("/etc/machine-id"))
+        .orElse(readTrimmed(os.Path("/sys/class/dmi/id/product_uuid")))
+    else None
+
+  private def envValue(name: String): Option[String] =
+    sys.env.get(name).map(_.trim).filter(_.nonEmpty)
+
+  private def firstMatch(out: Option[String], re: Regex): Option[String] =
+    out.flatMap(s => re.findFirstMatchIn(s).map(_.group(1).trim)).filter(_.nonEmpty)
+
+  private def runCapture(cmd: Seq[String]): Option[String] =
+    try
+      val r = os.proc(cmd).call(check = false, stdout = os.Pipe, stderr = os.Pipe, timeout = 5000)
+      if r.exitCode == 0 then Some(r.out.text()) else None
+    catch case _: Exception => None
+
+  private def readTrimmed(p: os.Path): Option[String] =
+    try if os.exists(p) then Some(os.read(p).trim).filter(_.nonEmpty) else None
+    catch case _: Exception => None
+
+  // ── Load / persist (self-healing) ─────────────────────────────────────────
+
+  /** One load attempt: the identity to use, whether it must be written back,
+    * and a log line to emit (`IO.unit` on the silent happy path). */
+  private case class Loaded(identity: DeviceIdentity, needsSave: Boolean, log: IO[Unit])
+
+  /**
+   * Load the persisted identity, minting one when there is none usable.
+   *
+   * Exactly one decode per call (the old shape decoded twice — once to load,
+   * once to decide `needsSave`). Three branches:
+   *  1. file present + decodes  -> reuse verbatim; write back ONLY if a legacy
+   *     migration changed something (empty deviceSecret / ".local" deviceName).
+   *  2. file present + decode fails -> back the corrupt file up, mint, and
+   *     persist immediately (the old code minted WITHOUT saving, so every boot
+   *     minted again — the sticky re-mint loop of dup-device-verdict §1.2).
+   *  3. file absent -> mint (machine-code-derived, see above) and persist.
+   *
+   * A redirected data root keeps an existing decodable identity (conservative
+   * reading: identity reuse only when the CURRENT dataRoot holds a decodable
+   * file); otherwise the deterministic derivation supplies the id.
+   */
   def loadOrCreate: IO[DeviceIdentity] =
-    IO.blocking {
-      if os.exists(devicePath) then
-        decode[DeviceIdentity](os.read(devicePath)) match
-          case Right(d) => ensureSecret(ensureCleanDeviceName(d))
-          case Left(_) => createNew()
-      else createNew()
-    }.flatMap { id =>
-      // Persist if file doesn't exist yet, or if we just migrated (deviceSecret or deviceName)
-      val needsSave = !os.exists(devicePath) ||
-        decode[DeviceIdentity](os.read(devicePath)).toOption.exists { saved =>
-          saved.deviceSecret.isEmpty || saved.deviceName != id.deviceName
-        }
-      if needsSave then save(id).as(id) else IO.pure(id)
-    }
+    for
+      loaded <- IO.blocking(loadOnce())
+      _ <- loaded.log
+      id <-
+        if loaded.needsSave then save(loaded.identity).as(loaded.identity)
+        else IO.pure(loaded.identity)
+    yield id
 
+  private def loadOnce(): Loaded =
+    val path = devicePath
+    if os.exists(path) then
+      decode[DeviceIdentity](os.read(path)) match
+        case Right(saved) =>
+          val migrated = ensureSecret(ensureCleanDeviceName(saved))
+          Loaded(migrated, needsSave = migrated != saved, log = IO.unit)
+        case Left(err) =>
+          val backup = backupCorruptFile()
+          val m = mint()
+          Loaded(
+            m.identity,
+            needsSave = true,
+            log = logger.warn(
+              s"device.json at $path is not decodable (${err.getMessage}) — corrupt file moved to " +
+                s"$backup, minted deviceId=${m.identity.deviceId} (${m.source}) and persisted"
+            )
+          )
+    else
+      val m = mint()
+      Loaded(
+        m.identity,
+        needsSave = true,
+        log = logger.info(
+          s"no device.json at $path — minted deviceId=${m.identity.deviceId} " +
+            s"(scope=${deviceIdScope}, ${m.source}) and persisted"
+        )
+      )
+
+  /** Move the undecodable file aside so the failure is forensically visible
+    * (`device.json.corrupt-<ts>`) and the next boot is a clean one. A failed
+    * move is NOT fatal — `save` rewrites the path anyway. Returns the backup
+    * path, or the failure description. */
+  private def backupCorruptFile(): String =
+    val ts = java.time.format.DateTimeFormatter
+      .ofPattern("yyyyMMdd-HHmmss-SSS")
+      .withZone(java.time.ZoneId.systemDefault())
+      .format(java.time.Instant.now())
+    val backup = devicePath / os.up / s"${devicePath.last}.corrupt-$ts"
+    try
+      os.move(devicePath, backup)
+      backup.toString
+    catch case e: Exception => s"(backup failed: ${e.getMessage})"
+
+  /** Atomic write (tmp + `ATOMIC_MOVE`): a crash mid-write can no longer leave
+    * a half-written device.json, which used to be the entry into the "decode
+    * fails -> new id every boot" loop. */
   def save(identity: DeviceIdentity): IO[Unit] =
-    IO.blocking {
-      os.write.over(devicePath, identity.asJson.spaces2, createFolders = true)
-    }
+    AtomicJson.write(devicePath, identity.asJson.spaces2)
 
-  private def createNew(): DeviceIdentity =
-    DeviceIdentity(
-      deviceId = UUID.randomUUID().toString,
-      deviceName = detectDeviceName,
-      platform = detectPlatform,
-      deviceSecret = UUID.randomUUID().toString + UUID.randomUUID().toString
-    )
+  /** Minted identity plus the (log-only) provenance of its device id. */
+  private case class Minted(identity: DeviceIdentity, source: String)
+
+  /** A brand-new identity. The id is the machine-code derivation when the
+    * machine code is readable, else a random UUID — either way `loadOrCreate`
+    * persists it, so the fallback is a one-time event, not a per-boot loop.
+    * `source` is logged so an unreadable machine code is never silent. */
+  private def mint(): Minted =
+    val name = detectDeviceName
+    val platform = detectPlatform
+    val secret = UUID.randomUUID().toString + UUID.randomUUID().toString
+    readMachineCode() match
+      case Some(code) =>
+        Minted(
+          DeviceIdentity(deriveDeviceId(code, deviceIdScope), name, platform, secret),
+          "machine-code derived"
+        )
+      case None =>
+        Minted(
+          DeviceIdentity(UUID.randomUUID().toString, name, platform, secret),
+          "machine code unreadable — random UUID fallback"
+        )
 
   /** Migrate old DeviceIdentity without deviceSecret — generate one on first load. */
   private def ensureSecret(id: DeviceIdentity): DeviceIdentity =
