@@ -398,7 +398,7 @@ object NodeTools:
     * 三级推导下发（前端零派生）；entries/ends/memberIds = 分量全量（含归档成员，
     * spec §6.2「全成员」——主图渲染由前端按节点缓存过滤）。节点级 chainIds 条件键
     * **仅 merge 节点且成员链数 ≥2** 带（作者裁定①：多链归属只对合并节点做；普通
-    * 节点恒单值 chainId），值 = 主链 :: 全量成员链（无上限、无降级）。
+    * 节点恒单值 chainId），值 = 全量成员链（无上限、无降级）。
     * WS 不带链级帧，结构变化由前端对账重拉快照消化。 */
   def buildNodeListPayload(rt: ProjectRuntime, statusFilter: Option[Set[String]] = None): IO[Json] =
     for

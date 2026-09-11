@@ -706,8 +706,12 @@ object FlowMapStore:
     * 按**入口可达分解**得到的枝线（每个入口 e，即 `in ∧ deps` 双空节点，对应一条
     * 独立派发的支线；其链 id 与它独占分量时该有的 id 同构 = `chain-<e>`）。合并节点
     * 的多个上游 `in` 边把各支线汇聚进同一分量，于是它同时属于这些支线：
-    * `chainIds(M) = 主链（= 分量链 id，topologicalChains.id）:: 其余成员链 id`，
-    * 全部列出、**无上限、无降级路径**（作者裁定①；原「上限 4 + 超限降级」方案已废）。
+    * `chainIds(M) = 全量成员链 id（可达 M 的入口链，分量 entries 序）`，全部列出、
+    * **无上限、无降级路径**（作者裁定①；原「上限 4 + 超限降级」方案已废）。主链仍由
+    * 既有单值 `chainId` 承载（= 分量链 id，[[chainAttrsOf]] `_1`）——`chainIds` 只列
+    * 成员链本身（主链同时也是成员链时自然出现在列表里，见分量最早 createdAt 节点
+    * 恰为某入口的常见形态），两键正交：chainId = 分区归属（折叠/归档/落点），
+    * chainIds = 多链成员归属（作者裁定①的口径）。
     *
     * 定向可达（§12.2.3-B 最小自洽定义，与「in 代理接线为主」的现状拓扑吻合）：
     * 沿 **in 正向（u → 引用 u 的下游）∪ out 正向（跳过 Nebula/悬空名）∪ deps 正向**
@@ -748,7 +752,7 @@ object FlowMapStore:
           seen.toSet
         val memberChains = comp.entries.filter(e => reachFrom(e).contains(nodeId)).map(e => s"chain-$e")
         if memberChains.size < 2 then None
-        else Some((comp.id :: memberChains.filterNot(_ == comp.id)).distinct)
+        else Some(memberChains)
       }
     }
 
