@@ -1151,8 +1151,9 @@ private[agent] trait AgentCore:
         isDispatcher = state.session.isDispatcher,
         projectName = state.session.projectName,
         // 链级抽象 P2（20260910 process-doc-chain-attribution spec §9.2 项 3）：
-        // 链身份随身份三元组同路透传——节点会话内的产出据此把 `chain:` 写进
-        // 过程文档元数据头（值 = spawn 时刻快照，来源口径 chain-source: engine）。
+        // 链身份随身份三元组同路透传——节点会话内的产出据此在过程文档**文件名
+        // 尾段**写链归属 `__<chainId>`（值 = spawn 时刻快照；正文零元数据头，
+        // 2026-09-11 作者裁定 R-3）。
         // 分发器/非项目会话/孤立单节点分量 = None（与 payload chainId 同判据）。
         flowChainId = state.session.flowChainId,
         sandbox = sandboxPolicy
