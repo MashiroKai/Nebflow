@@ -456,6 +456,70 @@ object Defaults:
   def StuckSuspendPollMs: Long =
     sys.props.getOrElse("nebflow.stuck.suspendPollMs", "250").toLong
 
+  // ---- stuck 自动恢复：重试预算 / 退避 / 冷却（P3，2026-09-11 作者裁定 R-2）----
+  //
+  // 作者 2026-09-11 拍板「R-2 = 按建议值落成 Defaults 常量」，即设计 §3.3 表的前五
+  // 行数值**原样**成为常量（不重新标定）。语义：作者对 token 放大高度敏感 ⇒
+  // **禁无条件重试**——恢复是一次性的、有预算的、有冷却的动作，不是循环。
+  //
+  // 全部走 system prop kill-switch 先例（与上面几条同款），但**默认值 = 裁定值**：
+  // prop 只为隔离实例/测试缩窗，不改变生产语义。
+
+  /** 单代次恢复预算（默认 **1**）：一个「卡死 episode」内最多一次恢复尝试。
+    *
+    * 理由（§3.3）：「类②误杀（本样本形态）**一次即够**——恢复后若同形态再卡，
+    * 说明不是误判」。episode 边界 = 会话离开 stuck 候选集那一刻（[[TaskStuckWatcher.scan]]
+    * 中与 `stopCounts` 同点的 `genAttempts` 复位）。
+    *
+    * system prop `nebflow.stuck.recoveryMaxPerGen`。 */
+  def StuckRecoveryMaxPerGen: Int =
+    sys.props.getOrElse("nebflow.stuck.recoveryMaxPerGen", "1").toInt
+
+  /** 全链恢复预算（默认 **2**，含跨代次）：同一会话累计最多两次恢复。
+    *
+    * 理由（§3.3）：「与 `BackoffSupervisor.maxRestarts=2` 同档心智；防
+    * 『恢复→再卡→再恢复』链」。跨代次 ⇒ 不随 episode 复位（只随会话消失复位）。
+    *
+    * system prop `nebflow.stuck.recoveryMaxPerChain`。 */
+  def StuckRecoveryMaxPerChain: Int =
+    sys.props.getOrElse("nebflow.stuck.recoveryMaxPerChain", "2").toInt
+
+  /** 退避曲线（默认 **30s → 120s → 600s**；基点 = 扫描周期 30s）。
+    *
+    * §3.3：30s 与 `StuckWatcherIntervalSec` 对齐；120s 与 `L3VerifyDelayMs` 同档；
+    * 600s = 阈值档。取值 = `StuckRecoveryBackoffMs(attempt)`（attempt 超界时取末项 =
+    * 上限，不再增长）。 */
+  val StuckRecoveryBackoffMs: List[Long] = List(30_000L, 120_000L, 600_000L)
+
+  /** 退避曲线的查询口径：第 `attempt` 次恢复之后的静默时长（attempt 从 1 起；
+    * ≤0 或超界按端点夹取）。纯函数，可独立单测。 */
+  def stuckRecoveryBackoffMs(attempt: Int): Long =
+    if StuckRecoveryBackoffMs.isEmpty then 0L
+    else StuckRecoveryBackoffMs(math.max(1, math.min(attempt, StuckRecoveryBackoffMs.size)) - 1)
+
+  /** 恢复后冷却（默认 **20min** = 2×`StuckThresholdMs`）：一次恢复完成后，
+    * 本会话在冷却窗内**零动作**（§3.4 判定序第 3 步）。
+    *
+    * 理由（§3.3）：「防『恢复后立刻又被同轴判死』的自激振荡」。
+    * system prop `nebflow.stuck.recoveryCooldownMs`。 */
+  def StuckRecoveryCooldownMs: Long =
+    sys.props.getOrElse("nebflow.stuck.recoveryCooldownMs", "1200000").toLong
+
+  /** transcript 重放封顶（默认 **40 条**）：resume 时最多重放最近 40 条消息。
+    *
+    * 理由（§3.3）：直击「重发全量 ~250k 上下文 = token 放大面」的教训。
+    * 消费点 = [[nebflow.core.project.NodeEngine.hardResumeNode]]（封顶 + prompt 声明）。
+    * system prop `nebflow.stuck.recoveryReplayMaxMsgs`。 */
+  def StuckRecoveryReplayMaxMsgs: Int =
+    sys.props.getOrElse("nebflow.stuck.recoveryReplayMaxMsgs", "40").toInt
+
+  /** 互斥点 2（§3.4）的检测窗（默认 **60s** = 扫描周期 ×2）：恢复完成后该窗内若
+    * LoopGuard 跨轮命中计数**上升**（或会话进入 Loop 冻结）⇒ 写 `recovery-loop-detected`
+    * 事件、**立即停恢复链** + 一次上报（= 「反复卡 ⇒ 反复重试」的机器识别点）。
+    * system prop `nebflow.stuck.recoveryLoopDetectMs`。 */
+  def StuckRecoveryLoopDetectMs: Long =
+    sys.props.getOrElse("nebflow.stuck.recoveryLoopDetectMs", "60000").toLong
+
   /**
    * 流式请求的 per-request HttpClient 开关（设计 D-1 方案 A）：默认 true——
    * sendStream 每个 attempt 独立 HttpClient + backend + dispatcher，transport
