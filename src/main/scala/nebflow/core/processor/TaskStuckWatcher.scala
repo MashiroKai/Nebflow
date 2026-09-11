@@ -1386,22 +1386,38 @@ object TaskStuckWatcher:
                   _ <- (awaitSessionDrained(resources, rec.sessionId, nebflow.shared.Defaults.StuckSuspendWaitMs)
                     .flatMap {
                       case true =>
-                        rt.engine.hardResumeNode(rec.sessionId, Some(anchor)).flatMap {
+                        // §3.4 步骤 6（**硬约束② 修复**：写点 = `hardResumeNode` 的
+                        // `onResumed` = **CAS 接受瞬间**）：恢复**成功** ⇒ 写冷却窗基点 +
+                        // 互斥点 2 的指纹基线（下一个 60s 窗内指纹上升 = 反复卡识别）。
+                        //
+                        // 为什么必须是回调而不是返回值之后：`hardResumeNode` 尾部的
+                        // `startNode` 同步等到被恢复会话的**整段终态**（`runWithAgent` 的
+                        // `IO.race`）——恢复后的会话可能运行数十分钟，写点若挂在返回值之后，
+                        // 这段运行期里 `lastRecoveryAt == 0` ⇒ 冷却窗（[[recoveryGate]]）与
+                        // 互斥点 2（[[loopDetectedAfterRecovery]]）**不生效**（独立复核实测：
+                        // 恢复成功后 25s 账本仍 `lastRecoveryAt=0`）。回调内失败仍只 warn，
+                        // 不中断恢复腿；CAS 被拒时回调不触发 ⇒ 零写入（负控）。
+                        val onResumed: IO[Unit] =
+                          ledger
+                            .update(m =>
+                              m.updated(rec.sessionId, led.copy(
+                                lastRecoveryAt = System.currentTimeMillis(),
+                                strikeBaseline = rec.loopStrikeCount,
+                                fpBaseline = rec.lastLoopFp)))
+                            .handleErrorWith(e =>
+                              logger.warn(s"TaskStuckWatcher: recovery ledger update failed: ${e.getMessage}")) *>
+                            logger.info(
+                              s"TaskStuckWatcher: ${rec.sessionId} recovery ACCEPTED (CAS) — cooldown " +
+                                s"${nebflow.shared.Defaults.StuckRecoveryCooldownMs / 60000}min + 互斥点 2 指纹基线" +
+                                s"已在恢复接受瞬间置位（hasOutput=${anchor.hasOutput}；不等被恢复会话终态）")
+                        rt.engine.hardResumeNode(rec.sessionId, Some(anchor), onResumed).flatMap {
                           case Some(nodeId) =>
-                            // §3.4 步骤 6：恢复**成功** ⇒ 写冷却窗基点 + 互斥点 2 的
-                            // 指纹基线（下一个 60s 窗内指纹上升 = 反复卡识别）。
-                            ledger
-                              .update(m =>
-                                m.updated(rec.sessionId, led.copy(
-                                  lastRecoveryAt = System.currentTimeMillis(),
-                                  strikeBaseline = rec.loopStrikeCount,
-                                  fpBaseline = rec.lastLoopFp)))
-                              .handleErrorWith(e =>
-                                logger.warn(s"TaskStuckWatcher: recovery ledger update failed: ${e.getMessage}")) *>
-                              logger.info(
-                                s"TaskStuckWatcher: ${rec.sessionId} recovery OK — node '$nodeId' resumed from " +
-                                  s"transcript breakpoint (hasOutput=${anchor.hasOutput}); cooldown " +
-                                  s"${nebflow.shared.Defaults.StuckRecoveryCooldownMs / 60000}min from now")
+                            // 账本写点已在 `onResumed`（CAS 接受瞬间）完成；此处只记
+                            // 「恢复腿已跑完（被恢复会话返回终态）」这一进度事实——不得再
+                            // 承载冷却窗口径（那会把它重新拖回会话终态时点）。
+                            logger.info(
+                              s"TaskStuckWatcher: ${rec.sessionId} recovery OK — node '$nodeId' resumed run " +
+                                s"returned (hasOutput=${anchor.hasOutput}; ledger baseline written at CAS accept)")
                           case None =>
                             logger.error(
                               s"TaskStuckWatcher: ${rec.sessionId} recovery resume not effective (CAS rejected / " +
