@@ -331,8 +331,28 @@ class NfTicketRoutesSpec extends CatsEffectSuite:
 
   // ── R1 policy shape ──────────────────────────────────────────────────
   test("policy: P1 is PathUtil.dataRoot (never a hardcoded home directory)") {
-    val policy = WebSocketRoutes.NfPathPolicy.memoized()
-    assertEquals(policy.dataRoot, Paths.get(PathUtil.dataRoot.toString).toRealPath())
+    // 2026-09-11 full-suite flake fix: the previous form was
+    //   `memoized()` + `Paths.get(PathUtil.dataRoot.toString).toRealPath()`
+    // and it is wrong twice over in a shared JVM — (a) the process-wide lazy
+    // memo may hold a data root captured by an *earlier* suite, and (b)
+    // `PathUtil.dataRoot` is a mutable global that other suites swap to a temp
+    // dir and then delete, so `toRealPath()` throws NoSuchFileException
+    // (`delete-session-cleanup-test…`). Assert the *derivation* instead, which
+    // holds whether or not the directory currently exists: the policy root is
+    // `canonicalOrSelf` of the live data root.
+    val live = Paths.get(PathUtil.dataRoot.toString)
+    val policy = WebSocketRoutes.NfPathPolicy.standard()
+    assertEquals(policy.dataRoot, WebSocketRoutes.NfPathPolicy.canonicalOrSelf(live))
+    // "never a hardcoded home directory": when the live root is not the default
+    // `~/.nebflow`, the policy must NOT have fallen back to it.
+    val hardcoded =
+      Paths.get(sys.props.getOrElse("user.home", "/")).resolve(".nebflow").toAbsolutePath.normalize()
+    if live.toAbsolutePath.normalize() != hardcoded then
+      assertNotEquals(
+        policy.dataRoot,
+        hardcoded,
+        "P1 must follow PathUtil.dataRoot (NEBFLOW_HOME_DIR), not a literal home path"
+      )
   }
 
   test("policy: a newly added data-root directory is denied by default (fail-closed)") {

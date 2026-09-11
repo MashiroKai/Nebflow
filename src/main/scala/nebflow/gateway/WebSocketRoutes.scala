@@ -4940,7 +4940,7 @@ object WebSocketRoutes:
 
     /** Canonicalize if the directory exists (macOS `/var` → `/private/var`,
       * symlinked data roots), else keep the normalized absolute form. */
-    private def canonicalOrSelf(p: java.nio.file.Path): java.nio.file.Path =
+    private[gateway] def canonicalOrSelf(p: java.nio.file.Path): java.nio.file.Path =
       try p.toRealPath()
       catch case _: Throwable => p.toAbsolutePath.normalize()
 
