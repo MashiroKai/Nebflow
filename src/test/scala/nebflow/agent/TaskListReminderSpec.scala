@@ -47,7 +47,8 @@ class TaskListReminderSpec extends FunSuite:
   private def file: os.Path = home / "tasks.json"
 
   private def resetTasks(): Unit =
-    if os.exists(file) then os.remove(file)
+    List(file, home / "tasks-history.jsonl", home / "tasks-history.1.jsonl")
+      .foreach(p => if os.exists(p) then os.remove(p))
 
   /** 直写 tasks.json（不经工具——本 spec 只关心注入侧对文件状态的响应）。 */
   private def seedTask(id: String, title: String, status: String): Unit =
@@ -127,6 +128,31 @@ class TaskListReminderSpec extends FunSuite:
     val block = ContextRefresher.buildMemoryBlock("Nebula")
     assert(block.contains("[TaskList]"), "压缩后首个注入带 open 摘要")
     assert(block.contains("#2[in_progress] 跟进 review"), block)
+
+  test("升级批（R3）：摘要行尾指向 list|show（新增 show 后按需明细指引同步更新）"):
+    resetTasks()
+    seedTask("1", "写交付报告", "open")
+    MemoryHygieneSignal.resetForTest(restartedV = true, compactedV = false)
+    val block = ContextRefresher.buildMemoryBlock("Nebula")
+    assert(block.contains("TaskList(action=list|show)"),
+      s"尾指引必须含 show（否则模型不知道能查变更史）: $block")
+
+  test("升级批：变更史 / 时间线文本永不进记忆块（史只在 show 按需读取）"):
+    resetTasks()
+    seedTask("1", "有史任务", "open")
+    // 直造史文件：含醒目标记串 + note 时间线形态文本
+    os.write.over(home / "tasks-history.jsonl",
+      """{"at":"2026-09-11T00:00:00Z","actor":"nebula","kind":"log","id":"1","text":"史文件机密正文XYZ不应注入"}
+        |{"at":"2026-09-11T00:01:00Z","actor":"nebula","kind":"update","id":"1","field":"note","from":"旧版机密A不应注入","to":"新版机密B不应注入"}""".stripMargin,
+      createFolders = true)
+    MemoryHygieneSignal.resetForTest(restartedV = true, compactedV = false)
+    val block = ContextRefresher.buildMemoryBlock("Nebula")
+    assert(block.contains("[TaskList]"), block)
+    assert(!block.contains("史文件机密正文XYZ不应注入"), "log 正文不得注入")
+    assert(!block.contains("旧版机密A不应注入"), "note 变更 old 侧不得注入")
+    assert(!block.contains("新版机密B不应注入"), "note 变更 new 侧不得注入")
+    assert(!block.contains("Note timeline"), "时间线小节不得注入")
+    assert(!block.contains("tasks-history"), "史文件名不得注入")
 
   test("集成：全 done + 生命周期信号 → 摘要行消失"):
     resetTasks()
