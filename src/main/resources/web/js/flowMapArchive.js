@@ -457,14 +457,29 @@ export function chainHighlightIds(project, nodeId) {
  *  **数据源 = 引擎已持有的节点载荷 `worktree` 字段**（= worktree 目录名，与同名分支
  *  一致；含 `hasWorktree`/`worktree` 的 NodePayload 恒带键、未配为 null）——沿 **in
  *  边**（合并账本，指南 §0.1）向上做闭包遍历，收集所有带 worktree 的上游节点值；
- *  零新增引擎字段、零硬编码、零臆造。上游节点不在前端缓存（活动区快照只含活动节点；
- *  归档成员经 remoteMembers 兜底）→ 该支线贡献为空，渲染层如实落「不可得」文案。
- *  @param {string} project @param {string} nodeId @returns {string[]} 去重升序 worktree 名 */
+ *  零新增引擎字段、零硬编码、零臆造。
+ *  闭包记三个集合（**不含起点自身**）：`visited` = 全部可达上游 id；`hit` = 其中在
+ *  前端缓存（活动快照 `input` / 归档成员 `remoteMembers`）命中的；`absent` =
+ *  `visited \ hit`；`found` = 已收集到的 worktree 值。
+ *  **取不到（`found` 为空）不得单一归因**（复核轮2 打回点：真实成因是「上游在载荷内
+ *  但未配 worktree」，旧文案却断言「不在当前载荷缓存」= 假陈述）——按可见性落三态，
+ *  渲染层按键读取（判定顺序即 1 → 2 → 3）：
+ *    ① `absent` 为空（可达上游全在缓存、worktree 全为 null）
+ *       ⇒ `flowmap.detail.mergeUpstreamsNone`；
+ *    ② `hit` 为空（可达上游全不在缓存——归档超窗 / 悬空引用），
+ *       ⇒ `flowmap.detail.mergeUpstreamsAbsent`；
+ *    ③ 两者皆非空（部分上游不可见，可见上游又未配 worktree）
+ *       ⇒ `flowmap.detail.mergeUpstreamsMixed`。
+ *  每条文案在其对应态下恒为真：混合态不得归入任一单一成因键。
+ *  @param {string} project @param {string} nodeId
+ *  @returns {{ found: string[], state: 1 | 2 | 3 }} 去重升序 worktree 名 + 空结果成因态 */
 export function mergeUpstreamWorktrees(project, nodeId) {
   const s = stores.get(project);
-  if (!s) return [];
+  if (!s) return { found: [], state: 1 };
   const seen = new Set([nodeId]);
   const found = new Set();
+  let hit = 0;    // 可达上游中在缓存命中的
+  let absent = 0; // 可达上游中不在缓存的（不贡献 worktree 值，且其上游不可遍历）
   let frontier = [nodeId];
   while (frontier.length) {
     const next = [];
@@ -475,13 +490,22 @@ export function mergeUpstreamWorktrees(project, nodeId) {
         if (seen.has(up)) continue;
         seen.add(up);
         const un = s.input.get(up) || s.remoteMembers.get(up);
-        if (un && un.worktree) found.add(String(un.worktree));
+        if (un) {
+          hit++;
+          if (un.worktree) found.add(String(un.worktree));
+        } else {
+          absent++;
+        }
         next.push(up);
       }
     }
     frontier = next;
   }
-  return Array.from(found).sort();
+  const list = Array.from(found).sort();
+  /** @type {1 | 2 | 3} */
+  let state = 1;
+  if (!list.length) state = absent === 0 ? 1 : (hit === 0 ? 2 : 3);
+  return { found: list, state };
 }
 
 // ══ 悬浮层 UI（悬浮钮 + 归档面板 + 右侧详情，§4/§5）═══
@@ -939,11 +963,16 @@ function renderDetail(/** @type {LayerCtx} */ ctx, /** @type {ChainMember} */ n)
     execRows.push([t('flowmap.flag.merge'), esc(t('flowmap.detail.yes'))]);
     // U1 批 · 作者裁定⑤：合并节点卡补「收的是哪些 worktree/分支」一行——数据源 =
     // 上游 in 边闭包内节点载荷的 worktree 字段（引擎已持有；见 mergeUpstreamWorktrees）。
-    // 取不到（上游不在前端缓存：归档超窗 / 旧载荷无该键）→ 如实落「不可得 + 原因」。
-    const wts = mergeUpstreamWorktrees(ctx.project, String(n.id || ''));
+    // 取不到（found 为空）→ 按闭包内上游的可见性**分因**落「不可得 + 原因」，每条
+    // 文案在其对应态下恒为真（态①上游在缓存但未配 worktree / 态②上游全不在缓存 /
+    // 态③混合；单一成因键会造出「不在载荷缓存」这类假陈述——复核轮2 打回点）。
+    const ups = mergeUpstreamWorktrees(ctx.project, String(n.id || ''));
+    const upsKey = ups.state === 1 ? 'flowmap.detail.mergeUpstreamsNone'
+      : ups.state === 2 ? 'flowmap.detail.mergeUpstreamsAbsent'
+        : 'flowmap.detail.mergeUpstreamsMixed';
     execRows.push([
       t('flowmap.detail.mergeUpstreams'),
-      wts.length ? esc(wts.join(' · ')) : esc(t('flowmap.detail.mergeUpstreamsNone')),
+      esc(ups.found.length ? ups.found.join(' · ') : t(upsKey)),
     ]);
   }
   if (n.notifyDispatcher === true) execRows.push([t('flowmap.detail.notify'), esc(t('flowmap.detail.yes'))]);
