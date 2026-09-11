@@ -2,17 +2,21 @@
 // Zoom: transform scale on the <img> (layout-free), wheel/keys/toolbar via the
 // shared viewers/zoom.js engine; pan via pointer drag.
 
-import { getToken, escapeHtml, formatSize } from './shared.js';
+import { escapeHtml, formatSize } from './shared.js';
+import { ticketUrl, reMint } from '../nfTicket.js';
 import { enableViewerZoom } from './zoom.js';
 
-/** Image viewer — <img> served via /api/nf-file, pannable + zoomable. */
-function viewImage(pane, { absPath, fileName, size }) {
+/** Image viewer — <img> served via /api/nf-file, pannable + zoomable.
+ *
+ *  2026-09-11 (C batch): async — the URL is minted per open (T1: never early),
+ *  and carries a path-bound ticket instead of the global token. A load failure
+ *  gets exactly ONE re-mint + retry before the error panel (T3 self-healing);
+ *  a second failure is treated as deterministic and is NOT retried again. */
+async function viewImage(pane, { absPath, fileName, size }) {
   if (!absPath) {
     pane.innerHTML = '<div class="canvas-error">Cannot display image: no absolute path available.</div>';
     return;
   }
-  const tok = getToken();
-  const url = `/api/nf-file?path=${encodeURIComponent(absPath)}&token=${encodeURIComponent(tok)}`;
   const img = new Image();
   img.alt = fileName || 'image';
   // Prevent native image drag. <img> is draggable by default — an accidental
@@ -20,7 +24,18 @@ function viewImage(pane, { absPath, fileName, size }) {
   // (e.g. drop outside the window, Safari quirks) suppresses click events
   // page-wide, which presents as "canvas tabs stop responding".
   img.draggable = false;
+  let retried = false;
   img.onerror = () => {
+    if (!retried) {
+      // Ticket failures (401 missing, 403 expired) self-heal once; a
+      // deterministic failure (400/403 credential-path/404) simply fails the
+      // same way again and falls through to the panel below (T4).
+      retried = true;
+      reMint(absPath).then((next) => {
+        if (pane.isConnected) img.src = next;
+      });
+      return;
+    }
     let reason = 'File may be corrupted or not a valid image format.';
     if (size && size < 500) reason += ` (File is only ${size} bytes — likely an error page or placeholder, not a real image.)`;
     pane.innerHTML = `<div class="canvas-error">${reason}<br>Path: ${escapeHtml(absPath)}</div>`;
@@ -103,7 +118,7 @@ function viewImage(pane, { absPath, fileName, size }) {
       else applyScale(1, pivot);
     });
   };
-  img.src = url;
+  img.src = await ticketUrl(absPath);
 }
 
 export default {

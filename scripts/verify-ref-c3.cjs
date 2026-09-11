@@ -56,7 +56,20 @@ const HTML = `<!DOCTYPE html><html><head>
     const errs = [];
     page.on('pageerror', (e) => errs.push(String(e)));
 
+    // C 批（票据腿）：pdf.js 渲染前 POST /api/nf-ticket（ticketUrl）。
+    // 静态 harness 的 http.server 对 POST 不回 2xx JSON ⇒ 必须显式假票 mock。
+    await page.route('**/api/nf-ticket*', (route) => {
+      let paths = [];
+      try { paths = JSON.parse(route.request().postData() || '{}').paths || []; } catch (e) { paths = []; }
+      const tickets = {};
+      (Array.isArray(paths) ? paths : []).forEach((p, i) => {
+        tickets[p] = { t: 'harness-ticket-' + i, exp: Date.now() + 3600000, uses: -1 };
+      });
+      return route.fulfill({ json: { tickets, rejected: [] } });
+    });
+    const ticketState = { ticketless: 0 };
     await page.route('**/api/nf-file*', (route) => {
+      if (!route.request().url().includes('ticket=')) ticketState.ticketless++;
       const body = fs.readFileSync(PDF_PATH);
       const range = route.request().headers()['range'];
       if (range) {
@@ -189,6 +202,8 @@ const HTML = `<!DOCTYPE html><html><head>
       out.noAnchor && out.noAnchor.scrollTop === 0, JSON.stringify(out.noAnchor));
 
     ok('no page errors', errs.length === 0, errs.slice(0, 3).join(' | '));
+    // C 批（票据腿）门禁：nf-file 请求必须带票。
+    ok('every /api/nf-file request carries a ticket', ticketState.ticketless === 0, { ticketless: ticketState.ticketless });
   } finally {
     await browser.close();
     try { fs.unlinkSync(HARNESS_HTML); } catch {}

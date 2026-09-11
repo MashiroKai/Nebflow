@@ -3,6 +3,7 @@
 
 import { key } from '../branding.js';
 import { t } from '../i18n.js';
+import { mintTickets, nfFilePathsIn, injectTickets } from '../nfTicket.js';
 export function getToken() {
   return localStorage.getItem(key('token')) || '';
 }
@@ -45,36 +46,75 @@ export function buildThemeVarsCSS() {
 
 /** Convert local file paths in src= and href= attributes to /api/nf-file URLs.
  *  Handles: absolute paths (/tmp/..., ~/...), relative paths (relative to HTML dir).
- *  Skips: http://, https://, data:, #, javascript:, blob:, /api/ (already proxied). */
-export function resolveLocalFiles(html, dir, token) {
-  const tokParam = token ? `&token=${encodeURIComponent(token)}` : '';
-  const toFileUrl = (src) => {
+ *  Skips: http://, https://, data:, #, javascript:, blob:, /api/ (already proxied).
+ *
+ *  2026-09-11 (C batch): async, and the credential leg is a per-path ticket
+ *  instead of the global token. The scan runs FIRST and mints one batched
+ *  ticket request for every distinct candidate (an HTML deliverable commonly
+ *  references a dozen companions — one request, not a dozen); the rewrite runs
+ *  second, synchronously. A failed mint is not fatal: the URL is emitted
+ *  without a ticket, the endpoint answers 401, and the viewer's existing
+ *  failure path shows it (§4.3 F2).
+ *
+ *  The `token` parameter is gone: no credential is ever built into these URLs
+ *  any more (T2 — a credential must not reach a serializable text face).
+ *
+ *  CSS `url()` / `@import` returns are NOT rewritten here — a known, unchanged
+ *  gap on this path (shared.js:60-72 only ever handled src=/href=). The Card
+ *  path DOES rewrite them (CardTool side); see cardRegistry.js for its own
+ *  injection, which covers the unquoted `url()` form too. */
+export async function resolveLocalFiles(html, dir) {
+  const toPath = (src) => {
     if (/^(https?:|data:|#|javascript:|blob:|\/api\/|mailto:|tel:)/i.test(src)) return null;
     if (!src || src.trim() === '') return null;
-    let resolved;
     if (src.startsWith('/') || /^[A-Za-z]:[\\/]/.test(src) || src.startsWith('~')) {
       // Keep `~` intact — the /api/nf-file endpoint expands it to the user
       // home. The old implementation stripped the `~` prefix (contradicting
       // this comment's claim) and sent `/x.png` — an absolute path at the
       // filesystem root — so every `~/…` src/href in an HTML file 404'd.
-      resolved = src;
-    } else if (dir) {
-      resolved = dir + '/' + src.replace(/^\.\//, '');
-    } else {
-      return null; // can't resolve without dir
+      return src;
     }
-    return `/api/nf-file?path=${encodeURIComponent(resolved)}${tokParam}`;
+    if (dir) return dir + '/' + src.replace(/^\.\//, '');
+    return null; // can't resolve without dir
+  };
+  const SRC_RE = /\bsrc\s*=\s*(["'])([^"']+)\1/gi;
+  const HREF_RE = /\bhref\s*=\s*(["'])([^"']+)\1/gi;
+  const candidates = new Set();
+  const scan = (re) => {
+    html.replace(re, (m, _q, url) => {
+      const p = toPath(url);
+      if (p) candidates.add(p);
+      return m;
+    });
+  };
+  scan(SRC_RE);
+  scan(HREF_RE);
+  // Already-proxied `/api/nf-file?path=…` URLs are NOT left alone any more.
+  // They used to be skipped as "already resolved" — true while the credential
+  // was the global token, which such a URL did not carry either. Now a
+  // credential-free nf-file URL is a guaranteed 401, and these URLs do occur:
+  // a persisted/replayed card, or hand-written markup, arrives with the
+  // proxy URL already in it (and with a ticket that has long expired).
+  // Authentication is therefore applied to them in place.
+  for (const p of nfFilePathsIn(html)) candidates.add(p);
+  // F1: zero candidates → zero mint requests (mintTickets early-returns).
+  const tickets = await mintTickets([...candidates]);
+  const toUrl = (p) => {
+    const t = tickets.get(p);
+    return `/api/nf-file?path=${encodeURIComponent(p)}${t ? '&ticket=' + encodeURIComponent(t) : ''}`;
   };
   // src= attributes
-  html = html.replace(/\bsrc\s*=\s*(["'])([^"']+)\1/gi, (m, q, src) => {
-    const url = toFileUrl(src);
-    return url ? `src=${q}${url}${q}` : m;
+  html = html.replace(SRC_RE, (m, q, src) => {
+    const p = toPath(src);
+    return p ? `src=${q}${toUrl(p)}${q}` : m;
   });
   // href= attributes (for <link> stylesheets, <a> anchors with local paths)
-  html = html.replace(/\bhref\s*=\s*(["'])([^"']+)\1/gi, (m, q, href) => {
-    const url = toFileUrl(href);
-    return url ? `href=${q}${url}${q}` : m;
+  html = html.replace(HREF_RE, (m, q, href) => {
+    const p = toPath(href);
+    return p ? `href=${q}${toUrl(p)}${q}` : m;
   });
+  // Already-proxied URLs (pass 2b) — credential injected, path untouched.
+  html = injectTickets(html, tickets);
   return html;
 }
 

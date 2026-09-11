@@ -96,9 +96,22 @@ private[tools] object FileRefs:
    * rejection is now reported in the tool result under `warnings`.
    *
    * NOTE — `out-of-proxy-root` is deliberately NOT a member of this enum:
-   * GET /api/nf-file (WebSocketRoutes.scala:4848-4868) enforces token +
-   * extension whitelist only and confines no root, so these tools must not
-   * invent a root the endpoint does not have.
+   * GET /api/nf-file enforces a path-bound ticket + a credential namespace
+   * (R1: default-deny + allowlist inside PathUtil.dataRoot and the project
+   * `.nebflow`, pattern reject outside) + the extension whitelist. The
+   * credential namespace is a DENY list on credential-shaped locations, not a
+   * project root: `/tmp/...` and any absolute path outside the protected
+   * namespaces stay readable, exactly as CardTool's "you MUST use absolute
+   * paths" contract documents. So these tools still must not invent a
+   * containment root the endpoint does not have — but they must keep the
+   * extension whitelist (the endpoint is authoritative, this table mirrors
+   * it).
+   *
+   * 2026-09-11 (C batch): the `token` leg was replaced by the ticket leg, so
+   * a reference is only servable if the render-time caller mints a ticket for
+   * the realpath. Tool-side URL strings are UNCHANGED (tickets are injected at
+   * render time, never at tool time) — see CardToolFileRefSpec /
+   * CardToolScanFaceSpec, which lock those exact strings.
    */
   enum FileRefFailure(val code: String, val what: String):
     /** 不存在 */

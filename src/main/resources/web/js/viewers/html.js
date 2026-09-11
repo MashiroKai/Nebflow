@@ -5,7 +5,7 @@
 // ctrl/cmd+wheel and ⌘/ctrl key presses over the iframe reach the parent
 // through zoomBridgeScript postMessage (cross-frame events don't bubble).
 
-import { getToken, buildThemeVarsCSS, resolveLocalFiles, addSourceToggle, addElementRefToggle } from './shared.js';
+import { buildThemeVarsCSS, resolveLocalFiles, addSourceToggle, addElementRefToggle } from './shared.js';
 import { makeReference } from '../reference.js';
 import { t } from '../i18n.js';
 import { enableViewerZoom } from './zoom.js';
@@ -47,14 +47,31 @@ const anchorNavScript = `<script>
 <\/script>`;
 
 /** Script injected into the iframe to forward image clicks to the parent
- *  for lightbox preview. Uses the _nfImagePreview message prefix. */
+ *  for lightbox preview. Uses the _nfImagePreview message prefix.
+ *
+ *  2026-09-11 (C batch, self-correction ⑧): the payload carries the PATH, not
+ *  just a ready-made URL. The parent re-mints a fresh ticket for that path when
+ *  the lightbox opens — so the card's injected ticket is never reused, never
+ *  outlives its TTL while sitting in the parent document, and never lands in
+ *  the parent DOM at all (the parent fetches the bytes and shows a blob: URL).
+ *  The `src` field stays, credential-stripped, as the fallback for images that
+ *  are not nf-file-proxied at all. */
 const imgClickScript = `<script>
 (function(){
+  function stripCredential(u){
+    return String(u||'').replace(/([?&])(token|ticket)=[^&]*/g,'$1').replace(/[?&]$/,'');
+  }
+  function pathOf(u){
+    var m=/[?&]path=([^&]*)/.exec(String(u||''));
+    if(!m) return '';
+    try{ return decodeURIComponent(m[1]); }catch(e){ return ''; }
+  }
   document.addEventListener('click', function(e){
     var img = e.target.closest ? e.target.closest('img') : null;
     if (!img) return;
     e.preventDefault();
-    parent.postMessage({ _nfImagePreview: { src: img.currentSrc || img.src, alt: img.alt || '' } }, '*');
+    var raw = img.currentSrc || img.src || '';
+    parent.postMessage({ _nfImagePreview: { src: stripCredential(raw), path: pathOf(raw), alt: img.alt || '' } }, '*');
   }, true);
 })();
 <\/script>`;
@@ -362,8 +379,14 @@ function bindZoomBridge() {
  *  audio/video preloading disabled, theme propagation for live dark mode.
  *
  *  Unlike Card (auto-height in chat), Canvas fills the panel height and
- *  scrolls internally — like a browser viewport. */
-function viewHtml(pane, { content, absPath, fileName, warnings }) {
+ *  scrolls internally — like a browser viewport.
+ *
+ *  2026-09-11 (C batch): async — the local-file rewrite has to await one
+ *  batched ticket mint. `initCanvasThemeWatcher()` / `bindZoomBridge()` stay
+ *  ABOVE the await on purpose: they are idempotent one-shot wiring, and
+ *  keeping them synchronous preserves the remount ordering that the zoom
+ *  engine and the theme watcher depend on. */
+async function viewHtml(pane, { content, absPath, fileName, warnings }) {
   initCanvasThemeWatcher();
   bindZoomBridge();
 
@@ -400,12 +423,12 @@ function viewHtml(pane, { content, absPath, fileName, warnings }) {
 
   // Directory of the HTML file, for resolving relative paths
   const dir = absPath ? absPath.substring(0, absPath.lastIndexOf('/')) : '';
-  const token = getToken();
 
   let html = content || '<!DOCTYPE html><html><body><p style="color:#999;padding:20px">Empty HTML file</p></body></html>';
 
-  // 1. Convert local file paths in src/href to /api/nf-file URLs
-  html = resolveLocalFiles(html, dir, token);
+  // 1. Convert local file paths in src/href to /api/nf-file URLs (one batched
+  //    ticket mint; the credential is a per-path ticket, never the token).
+  html = await resolveLocalFiles(html, dir);
 
   // 2. Add preload="none" to audio/video (prevent mass-fetch on load)
   html = html.replace(/(<audio\b(?![^>]*\bpreload=)[^>]*)(\s*\/?>)/gi, '$1 preload="none"$2');
