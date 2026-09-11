@@ -356,6 +356,13 @@ object ProjectActor:
                 //（失败不影响 TTL sweep）。
                 cfg.engine.settleStaleRunningNodes()
                 .handleErrorWith(e => logger.warn(s"dead-session settle failed: ${e.getMessage}")) *>
+                // 未申报提醒阶梯（noderpt 批 A 段 2026-09-11 作者裁定）：完成门腿 2
+                // （未申报不终态化）的配套兜底——对「已交棒但未 node_report」的 Running
+                // 节点按阶梯注入提醒轮 + 写 node-report-missing 事件，阶梯耗尽转 quiescent
+                // 档（只留痕不注入）。**永不判 failed、永不杀会话**：本扫描腿零终态化动作。
+                // best-effort 同款（失败不影响后续 sweep）。
+                cfg.engine.remindUnreportedNodes()
+                .handleErrorWith(e => logger.warn(s"node-report reminder sweep failed: ${e.getMessage}")) *>
                 // 链级即时归档 sweep（裁定④「TTL 分开」批 2026-09-07）：整链全终态
                 // → 整批立即移归档（移除旧 24h 活动区滞留）；链未齐（含 blocked 待办）
                 // → 保留。视觉「同帧淡出」由前端派生管线承担，本 sweep 出库+落盘。

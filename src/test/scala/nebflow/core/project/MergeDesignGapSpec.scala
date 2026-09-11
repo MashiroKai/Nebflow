@@ -114,7 +114,10 @@ class MergeDesignGapSpec extends CatsEffectSuite:
           frames.update(_ :+ payload.deepMerge(Json.obj(
             "type" -> Json.fromString(typ), "nodeId" -> Json.fromString(nodeId)))),
         // 通知触发器接缝（与 CancelDeadlockFixSpec 同款）：不 spawn 分发会话，只记账
-        notifyTriggerOverride = Some((text: String) => notified.update(_ :+ text))
+        notifyTriggerOverride = Some((text: String) => notified.update(_ :+ text)),
+        // noderpt 批 A 段：本 fixture 主题非 node_report 语义 ⇒ 显式关腿 2（生产默认开；
+        // 腿 2 默认开行为由 NodeReportReminderSpec 覆盖）。
+        reportGateHold = Some(false)
       )
       pd = ProjectDef(name = name, workspace = ws.toString, agentFile = (ws / "AGENTS.md").toString,
         createdAt = System.currentTimeMillis())

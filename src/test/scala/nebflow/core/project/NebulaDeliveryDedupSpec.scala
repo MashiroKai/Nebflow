@@ -87,7 +87,9 @@ class NebulaDeliveryDedupSpec extends FunSuite:
         rootSid = s"dedup-root-$name"
         rootRef <- system.spawn(recorderBehavior(recorded), s"dedup-rec-$name")
         engine = new NodeEngine(store, system, resources, _ => IO.unit, workspace.toString,
-          rootSid, "dedupproj", FeedbackRouter.ModeAuto, (_, _, _) => IO.unit)
+          rootSid, "dedupproj", FeedbackRouter.ModeAuto, (_, _, _) => IO.unit,
+          // noderpt 批 A 段：本 fixture 主题 = 投递去重记账 ⇒ 显式关腿 2（生产默认开）。
+          reportGateHold = Some(false))
       yield (store, engine, resources, recorded, rootSid, rootRef)
       val (store, engine, resources, recorded, rootSid, rootRef) = io.unsafeRunSync()
       resources.agentRegistry

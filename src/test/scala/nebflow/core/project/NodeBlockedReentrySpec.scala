@@ -143,7 +143,10 @@ class NodeBlockedReentrySpec extends CatsEffectSuite:
         workspace = ws.toString,
         rootSessionId = "nebula-root",
         projectName = name,
-        emitEvent = (t, id, payload) => events.update((t, id, payload) :: _)
+        emitEvent = (t, id, payload) => events.update((t, id, payload) :: _),
+        // noderpt 批 A 段：本 fixture 主题 = blocked 重入协议（文本锚定/tool 申报两路）
+        // ⇒ 显式关腿 2（生产默认开；腿 2 默认开行为由 NodeReportReminderSpec 覆盖）。
+        reportGateHold = Some(false)
       )
       pd = ProjectDef(name = name, workspace = ws.toString, agentFile = (ws / "AGENTS.md").toString, createdAt = System.currentTimeMillis())
       rt = ProjectRuntime(pd, store, engine, system, res, None)
@@ -198,8 +201,21 @@ class NodeBlockedReentrySpec extends CatsEffectSuite:
         (j.hcursor.get[String]("type").getOrElse(""), j.hcursor.get[String]("nodeId").getOrElse("")))))
       .handleError(_ => Nil)
 
-  override def beforeEach(context: munit.BeforeEach): Unit = ProjectRuntimeRegistry.clear
-  override def afterEach(context: munit.AfterEach): Unit = ProjectRuntimeRegistry.clear
+  // noderpt 批 A 段（2026-09-11）：本 fixture 主题 = blocked/重入协议（文本锚定 +
+  // tool 申报两路），与 node_report 申报语义正交。生产默认腿 2 **开**（桥收到
+  // Completed 且申报槽空 ⇒ hold，改由提醒阶梯兜底）——那会让「输出 BLOCKED 文本
+  // 但不调 node_report」的节点不再终态化为 blocked（本 fixture 的 reentry/loop-cap
+  // 两条走真实 `ProjectRuntimeRegistry.mount`，其引擎无构造入参可注 ⇒ 只能经全局
+  // prop 显式关腿 2）。腿 2 默认开的行为由 NodeReportReminderSpec 覆盖。
+  private val ReportHoldProp = "nebflow.noderpt.completionHold"
+
+  override def beforeEach(context: munit.BeforeEach): Unit =
+    ProjectRuntimeRegistry.clear
+    System.setProperty(ReportHoldProp, "false")
+
+  override def afterEach(context: munit.AfterEach): Unit =
+    ProjectRuntimeRegistry.clear
+    System.clearProperty(ReportHoldProp)
 
   // ── blocked 数据形态 + 不结算下游 + WS 事件 + 审计（§2.1）──────────
 

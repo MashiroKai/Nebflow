@@ -150,7 +150,12 @@ class NodeBgReclaimSpec extends CatsEffectSuite:
         rootSessionId = "nebula-root",
         projectName = name,
         emitEvent = (_, _, _) => IO.unit,
-        bgWaitCapMs = bgWaitCapMs
+        bgWaitCapMs = bgWaitCapMs,
+        // noderpt 批 A 段：本 spec 主题 = bg 等待家族（腿 1）⇒ 显式置回旧行为；
+        // 腿 2（生产默认开）不在本 spec 主题内，显式关（默认开行为由
+        // NodeReportReminderSpec 覆盖）。
+        bgGateCompletionHold = Some(true),
+        reportGateHold = Some(false)
       )
       pd = ProjectDef(name = name, workspace = ws.toString, agentFile = (ws / "AGENTS.md").toString, createdAt = System.currentTimeMillis())
       rt = ProjectRuntime(pd, store, engine, system, res, None)
