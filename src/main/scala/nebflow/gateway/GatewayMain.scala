@@ -677,7 +677,13 @@ object GatewayMain extends IOApp:
                                                     neblinkService,
                                                     IO(neblinkDiscoveryHolder.get),
                                                     cfg.port.value,
-                                                    IO.pure(neblinkService.neblinkConfig.unsafeRunSync().neblinkServer.map(_.url).getOrElse(Branding.serverUrl))
+                                                    // 2026-09-11（复核 N1）：原为 IO.pure(...unsafeRunSync()...) ——
+                                                    // IO.pure 的实参严格求值 ⇒ 该 unsafeRunSync 在 boot 执行，
+                                                    // 启动客户端的 silent-relogin server URL 被冻结在 boot 值。
+                                                    // 改为 live 读（同 RestApiRoutes.neblinkServerUrl 先例）。
+                                                    neblinkService.neblinkConfig.map(
+                                                      _.neblinkServer.map(_.url).getOrElse(Branding.serverUrl)
+                                                    )
                                                   )
                                                 ),
                                                 // F2 (2026-09-10 friend-search batch): identity source
@@ -712,54 +718,69 @@ object GatewayMain extends IOApp:
                                       // （messages.js 监听）；agentMessaging 配置来自 neblinkConfig。
                                       // F1: FriendService 每次调用读 discovery.currentClient（权威
                                       // live client），hot-swap 后自动跟随新实例。
-                                      val clientWithFriends: Option[(nebflow.neblink.NeblinkClient, nebflow.neblink.FriendService)] =
-                                        neblinkClient.map { client =>
-                                          val amConfig = neblinkService.neblinkConfig.unsafeRunSync().agentMessaging
-                                          val friendService = new nebflow.neblink.FriendService(
-                                            tsDiscovery.currentClient,
-                                            amConfig,
-                                            onFriendEvent = Some { ev =>
-                                              // Frontend contract (messages.js onMessage('friend_event')):
-                                              // frame type is "friend_event"; event type in msg.event;
-                                              // payload fields (conversationId/messageId/body/...) flattened
-                                              // onto the frame. Strip the payload's inner "type" so it
-                                              // cannot clobber the frame envelope.
-                                              val payloadFields =
-                                                ev.payload.asObject.getOrElse(io.circe.JsonObject.empty).remove("type")
-                                              val frame = io.circe.Json
-                                                .obj("type" -> "friend_event".asJson, "event" -> ev.eventType.asJson)
-                                                .deepMerge(io.circe.Json.fromJsonObject(payloadFields))
-                                              wsHub.broadcast(frame)
-                                            }
-                                          )
-                                          // A2A 一期（#290 域 A）：SendMessage 工具接线——
-                                          // 授权仅 Nebula agent.json 声明（作者特批 2026-08-28），
-                                          // 服务依赖走 RemoteExecutor.initialize 同款单例模式。
-                                          FriendMessageTool.initialize(friendService)
-                                          (client, friendService)
+                                      // 2026-09-11 boot 快照修复（A 案）：好友域的**存在性**不再由
+                                      // boot 期的 client 快照决定（此前整段落在
+                                      // `neblinkClient.map { … }` 内 ⇒ 全新 home 恒 None ⇒ 16 个
+                                      // /api/friends* 站点 404 到进程重启；判决书定论 ③）。用户走
+                                      // device-flow/AC+PKCE 登录只 hot-swap client
+                                      // （NeblinkEnrollment.persist），故装配必须无条件；「未登录」
+                                      // 由 FriendService.withClient → Left("Not logged in") 表达，
+                                      // 不靠「服务不存在」表达。
+                                      val amConfig = neblinkService.neblinkConfig.unsafeRunSync().agentMessaging
+                                      val friendService = nebflow.neblink.NeblinkWiring.friendService(
+                                        tsDiscovery.currentClient,
+                                        amConfig,
+                                        onFriendEvent = Some { ev =>
+                                          // Frontend contract (messages.js onMessage('friend_event')):
+                                          // frame type is "friend_event"; event type in msg.event;
+                                          // payload fields (conversationId/messageId/body/...) flattened
+                                          // onto the frame. Strip the payload's inner "type" so it
+                                          // cannot clobber the frame envelope.
+                                          val payloadFields =
+                                            ev.payload.asObject.getOrElse(io.circe.JsonObject.empty).remove("type")
+                                          val frame = io.circe.Json
+                                            .obj("type" -> "friend_event".asJson, "event" -> ev.eventType.asJson)
+                                            .deepMerge(io.circe.Json.fromJsonObject(payloadFields))
+                                          wsHub.broadcast(frame)
                                         }
-                                      clientWithFriends.foreach { (client, friendService) =>
-                                        val serverUrl =
-                                          neblinkService.neblinkConfig.unsafeRunSync().neblinkServer.get.url
-                                        val relayTunnel = new nebflow.neblink.NeblinkRelayTunnel(
-                                          neblinkService,
-                                          serverUrl,
-                                          // F1: read the authoritative client live on each reconnect —
-                                          // a constructor-time closure kept returning a kicked session.
-                                          () =>
-                                            tsDiscovery.currentClient.map(_.flatMap(_.currentSessionToken)),
-                                          friendService = Some(friendService)
-                                        )(dispatcher)
-                                        neblinkService.setRelayTunnel(relayTunnel)
-                                        dispatcher.unsafeRunAndForget(relayTunnel.connect())
-                                        // Baseline refresh (spec §5.2 startup entry): conversations +
-                                        // per-conversation keyset pull + friends. Silently no-ops when
-                                        // not logged in yet (FriendService catches upstream errors);
-                                        // later friend_event pushes keep state fresh.
+                                      )
+                                      // A2A 一期（#290 域 A）：SendMessage 工具接线——
+                                      // 授权仅 Nebula agent.json 声明（作者特批 2026-08-28），
+                                      // 服务依赖走 RemoteExecutor.initialize 同款单例模式。
+                                      // 2026-09-11：无条件 initialize（未登录由 sendAsAgent →
+                                      // Left("Not logged in") 表达；工具侧 `service match None`
+                                      // 兜底保留）。
+                                      FriendMessageTool.initialize(friendService)
+                                      // relay tunnel 装配（2026-09-11 常驻）：不再由 boot 期
+                                      // 的 neblinkClient 快照门住 —— 全新 home 也要有隧道
+                                      // 对象，否则用户登录后 relay/事件推送永远不出现。
+                                      // serverUrl 由连接期 live 解析（构造参已移除）；
+                                      // stop()（logout）后由 ensureRelayTunnel（enrollment）
+                                      // 复活 —— 装配 owner 始终是这里。
+                                      val relayTunnel = new nebflow.neblink.NeblinkRelayTunnel(
+                                        neblinkService,
+                                        // F1: read the authoritative client live on each reconnect —
+                                        // a constructor-time closure kept returning a kicked session.
+                                        () =>
+                                          tsDiscovery.currentClient.map(_.flatMap(_.currentSessionToken)),
+                                        friendService = Some(friendService)
+                                      )(dispatcher)
+                                      neblinkService.setRelayTunnel(relayTunnel)
+                                      dispatcher.unsafeRunAndForget(relayTunnel.connect())
+                                      // Baseline refresh (spec §5.2 startup entry): conversations +
+                                      // per-conversation keyset pull + friends. Silently no-ops when
+                                      // not logged in yet (FriendService catches upstream errors);
+                                      // later friend_event pushes keep state fresh.
+                                      // 仍保留 boot 条件触发：无 client 时这一拉只会刷 warn 噪声
+                                      // （登录后由面板 REST / friend_event 兜底）。
+                                      if neblinkClient.isDefined then
                                         dispatcher.unsafeRunAndForget(friendService.refreshAll())
-                                      }
-                                      // Discovery service — uses NebLink Server for discovery
-                                      neblinkService.setDiscoveryHook(
+                                      // enrollment 只发「确保在跑」信号（单飞 + 幂等）；
+                                      // 登记必须落在 IO 链上（setRelayTunnelStarter 返回 IO，
+                                      // 写成裸语句会静默不执行）。
+                                      neblinkService.setRelayTunnelStarter(relayTunnel.ensure()) *>
+                                        // Discovery service — uses NebLink Server for discovery
+                                        neblinkService.setDiscoveryHook(
                                         tsDiscovery.discoverCycle
                                           .handleErrorWith(e =>
                                             logger.debug(s"Discovery error: ${e.getMessage}").void
@@ -777,7 +798,10 @@ object GatewayMain extends IOApp:
                                         neblinkService.sendSync(nebflow.neblink.SyncCommand.PeerDiscovered) *>
                                         // Start NebLink Server heartbeat loop (if configured) — maintains
                                         // session liveness and updates peer list every 30 seconds.
-                                        // The fiber is stored so it can be cancelled/restarted on hot-swap.
+                                        // 2026-09-11 注释校正（复核 R2-d）：这里 `.void` 丢弃了 fiber，
+                                        // 并没有「存起来以便 hot-swap 时取消/重启」；实际语义是每拍经
+                                        // discovery.currentClient 读 live client（NeblinkDiscovery:78-82）
+                                        // ⇒ 无需重启，loop 本就跟随 hot-swap。
                                         startHeartbeatLoop(tsDiscovery).void *>
                                         // Create Dropbox service (cross-device messaging & file transfer)
                                         nebflow.dropbox.DropboxService.create(neblinkService, wsHub).flatMap {
@@ -786,7 +810,10 @@ object GatewayMain extends IOApp:
                                               sharedResourcesLive.copy(
                                                 bridgeManager = Some(bridgeManager),
                                                 neblinkService = Some(neblinkService),
-                                                friendService = clientWithFriends.map(_._2),
+                                                // 2026-09-11 boot 快照修复：slot 恒 Some（装配缝里
+                                                // 明确记录「boot 快照不再参与存在性判据」）。
+                                                friendService = nebflow.neblink.NeblinkWiring
+                                                  .sharedResourcesSlot(neblinkClient, friendService),
                                                 dropboxService = Some(dropboxService)
                                               )
 
@@ -1054,7 +1081,11 @@ object GatewayMain extends IOApp:
                                                       // sttp backend/dispatcher close — Ctrl+C previously let
                                                       // FS2 streams keep burning tokens during JVM drain.
                                                       nebflow.llm.LlmInterface.cancelAllInflight() *>
-                                                      neblinkClient.traverse_(_.logout) *>
+                                                      // 2026-09-11：原为 boot 快照 neblinkClient.traverse_ ——
+                                                      // cold-start ⇒ None（退出不通知 server）、hot-swap 后通知的
+                                                      // 是旧（已被踢）client。改读权威 live client（同
+                                                      // performLocalLogout 的既有先例；Ref.get 不抛）。
+                                                      tsDiscovery.currentClient.flatMap(_.traverse_(_.logout)) *>
                                                       mcpManager.stopAll() *>
                                                       releaseBackend
                                                   )

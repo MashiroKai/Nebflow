@@ -61,7 +61,9 @@ class NeblinkPresenceConvergenceSpec extends CatsEffectSuite:
     Dispatcher.parallel[IO].use { dispatcher =>
       for
         ms <- NeblinkService.createForTest(0, dispatcher, testGrace)
-        tunnel = new NeblinkRelayTunnel(ms, "http://127.0.0.1:9", () => IO.pure(None))(dispatcher)
+        // 2026-09-11：构造参 serverUrl 已移除（连接期 live 解析）。本 spec 只驱动
+        // 帧解析，从不起隧道 ⇒ 无需配置 server 址。
+        tunnel = new NeblinkRelayTunnel(ms, () => IO.pure(None))(dispatcher)
         out <- use(ms, tunnel)
       yield out
     }

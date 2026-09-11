@@ -1,6 +1,6 @@
 package nebflow.neblink
 
-import cats.effect.std.{Dispatcher, Queue}
+import cats.effect.std.{Dispatcher, Queue, Semaphore}
 import cats.effect.{IO, Ref}
 import cats.syntax.all.*
 import io.circe.Json
@@ -46,6 +46,7 @@ class NeblinkService private (
   serverPort: Int,
   private val syncQueue: Queue[IO, SyncCommand],
   private val dispatcher: Dispatcher[IO],
+  private val relayTunnelEnsureGate: Semaphore[IO],
   private val peerRemovalGracePeriod: FiniteDuration = 15.seconds
 ):
   private val logger = NebflowLogger.forName("nebflow.neblink")
@@ -67,6 +68,35 @@ class NeblinkService private (
 
   def setRelayTunnel(tunnel: NeblinkRelayTunnel): Unit = _relayTunnel = Some(tunnel)
   def relayTunnelOpt: Option[NeblinkRelayTunnel] = _relayTunnel
+
+  /** Relay tunnnel "make sure it is running" starter (2026-09-11 tunnel
+    * lifecycle fix). GatewayMain stays the tunnel ASSEMBLY owner and registers
+    * the starter here; enrollment paths (`NeblinkEnrollment.persist`, which
+    * hot-swaps the client) only ask for the tunnel to be ensured — they never
+    * build one. Held in a Ref (not a bare `@volatile`), and the ensure path is
+    * serialized by `relayTunnelEnsureGate`. */
+  private val relayTunnelStarter: Ref[IO, Option[IO[Unit]]] = Ref.unsafe[IO, Option[IO[Unit]]](None)
+
+  /** 登记 starter。**返回 IO**：调用点必须把它放进 IO 位置（`*>` / for 生成器）——
+    * cats-effect 惯例（同 `updateTrustedIps` / `setDiscoveryHook`），写成裸语句会
+    * 静默不执行。 */
+  def setRelayTunnelStarter(starter: IO[Unit]): IO[Unit] = relayTunnelStarter.set(Some(starter))
+
+  /** Single-flight `ensure`: serialized (Semaphore) delegation to the starter.
+    *
+    * WHY it matters: `stop()` on logout used to kill the tunnel forever — the
+    * only recovery was a process restart. After a re-login the tunnel must come
+    * back, and two concurrent ensures (e.g. enroll + a second device-flow
+    * callback) must not spawn two loops. Idempotent end-to-end: the starter is
+    * `NeblinkRelayTunnel.ensure()`, whose CAS makes it a no-op while running.
+    */
+  def ensureRelayTunnel: IO[Unit] =
+    relayTunnelEnsureGate.permit.use { _ =>
+      relayTunnelStarter.get.flatMap {
+        case Some(starter) => starter
+        case None          => IO.unit
+      }
+    }
 
   def setPresenceService(ps: NeblinkPresenceService): Unit = _presenceService = Some(ps)
   def presenceServiceOpt: Option[NeblinkPresenceService] = _presenceService
@@ -471,7 +501,8 @@ object NeblinkService:
       peersRef <- Ref.of[IO, Map[String, PeerInfo]](Map.empty)
       descRef <- Ref.of[IO, Map[String, String]](peerDescs)
       syncQueue <- Queue.unbounded[IO, SyncCommand]
-      service = new NeblinkService(idRef, cfgRef, peersRef, descRef, serverPort, syncQueue, dispatcher, gracePeriod)
+      relayTunnelGate <- Semaphore[IO](1)
+      service = new NeblinkService(idRef, cfgRef, peersRef, descRef, serverPort, syncQueue, dispatcher, relayTunnelGate, gracePeriod)
       // Start sync loop — NebLink Server is the trust boundary, no login needed.
       _ = dispatcher.unsafeRunAndForget(service.startSyncLoop)
     yield service
