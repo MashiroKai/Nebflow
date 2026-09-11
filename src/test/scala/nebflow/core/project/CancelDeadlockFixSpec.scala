@@ -162,6 +162,8 @@ class CancelDeadlockFixSpec extends CatsEffectSuite:
       store <- FlowMapStore.open(s"cancel-$name", ws.toString)
       triggered <- Ref.of[IO, List[String]](Nil)
       escalated <- Ref.of[IO, List[String]](Nil)
+      // Q4 打包窗口（2026-09-11）默认关闭：本 spec 验证护栏状态机与通知文本，
+      // 不模拟时序（windowMs = 0 = 同步逐条触发，判据保持确定性）。
       dn = new DispatchNotify(
         store, ws.toString, s"cancel-$name",
         escalate = (text, _) => escalated.update(_ :+ text),
@@ -174,7 +176,8 @@ class CancelDeadlockFixSpec extends CatsEffectSuite:
         cancelledBudgetMax = cancelledBudgetMax,
         cancelledWindowMs = cancelledWindowMs,
         cancelledCooldownMs = cancelledCooldownMs,
-        cancelledWindowThreshold = cancelledWindowThreshold
+        cancelledWindowThreshold = cancelledWindowThreshold,
+        windowMs = 0L
       )
     yield (store, dn, triggered, escalated, ws)
 

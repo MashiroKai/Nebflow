@@ -4,6 +4,8 @@ import cats.effect.{IO, Ref}
 import cats.syntax.all.*
 import nebflow.core.NebflowLogger
 
+import scala.concurrent.duration.*
+
 /**
  * dispatch-notify —— 节点终态结果回流任务分发器的单一通知通道（2026-09-05 批）。
  *
@@ -87,6 +89,18 @@ import nebflow.core.NebflowLogger
  * 通知文本尾部附停等等待者清单（E-③，[[waitingSuccessors]]）。宿主重启后未投递
  * 通知（notifySentAt 为空）由 ProjectActor.TtlTick(30s) 挂 [[redeliver]] 周期补投
  * （参照 redeliverUnconsumedNebulaResults 形态）。
+ *
+ * == 打包窗口与预算并账（Q4，2026-09-11 任务分发器收件规则批） ==
+ * 守卫链（flag/状态/持久去重/占位/窗口熔断）全部保持**逐件**裁决不变；变化只在
+ * 「投递 + 预算计数」这一步：通过守卫的件先进入按 reason 分账的打包缓冲
+ * （[[NotifyBatch]]），**首件到达起算 5s 滚动窗口**（[[windowMs]]，默认
+ * [[DefaultWindowMs]]，不随新件延长 ⇒ 单件延迟上界 5s），窗口结束时把本窗口的件
+ * **合并为一次注入**（[[flushBatch]]），并按**一次注入**计一个预算单位。
+ * 由此：一轮 TtlTick 内的密集扇出（N 件终态）只花 1 个预算单位、只注入 1 条分发器
+ * 任务（**#62「第 6 件起静默失联」结构性消除**）；预算是成本保护（限流器口径），
+ * 窗口只改「怎么算一次」，不改任何护栏阈值。窗口是进程内状态：崩溃即丢，但件未
+ * `markSent` ⇒ 仍在 [[redeliver]] 候选集，重启后补投（at-least-once 不破）。
+ * `windowMs <= 0` ⇒ 同步逐条触发（窗口引入前的行为，测试接缝）。
  */
 final class DispatchNotify(
   store: FlowMapStore,
@@ -116,7 +130,14 @@ final class DispatchNotify(
     * 的风暴不得触发 failed 的 cooldown 而把真正的高优先级失败通知一并静音）。 */
   cancelledWindowMs: Long = DispatchNotify.FailedWindowMs,
   cancelledCooldownMs: Long = DispatchNotify.FailedCooldownMs,
-  cancelledWindowThreshold: Int = DispatchNotify.FailedWindowThreshold
+  cancelledWindowThreshold: Int = DispatchNotify.FailedWindowThreshold,
+  /** 打包窗口（Q4，2026-09-11 任务分发器收件规则批）：同一 reason 的件在窗口内
+    * 到达即**合并为一次注入**，并按「一次注入」计一个预算单位（[[flushBatch]]）。
+    * 默认 [[DispatchNotify.DefaultWindowMs]]（5s，写死）；**≤0 关闭打包**（同步逐条
+    * 触发 = 窗口引入前的行为，测试接缝）。窗口是**滚动**的：首件到达起算，不随
+    * 新件延长 ⇒ 单件延迟上界 = 窗口长度。分账口径不变（completion / failed /
+    * cancelled 各一份缓冲 + 各自预算）。 */
+  windowMs: Long = DispatchNotify.DefaultWindowMs
 ):
   private val logger = NebflowLogger.forName("nebflow.project.dispatch-notify")
 
@@ -160,6 +181,92 @@ final class DispatchNotify(
 
   /** cancelled 预算耗尽 single-flight（与 completion/failed 三方分账）。 */
   private val cancelledBudgetEscalated: Ref[IO, Boolean] = Ref.unsafe[IO, Boolean](false)
+
+  /** 打包缓冲（Q4）：按 reason 分账（completion / failed / cancelled 各一份），
+    * 每份 = 本窗口已入队但尚未注入的 (节点, 通知文本)。内存态：崩溃即丢，节点
+    * 未 markSent ⇒ 仍在 [[redeliver]] 候选集，重启后补投（at-least-once 不破）。 */
+  private case class NotifyBatch(entries: List[(NodeDef, String)] = Nil)
+  private val batches: Ref[IO, Map[String, NotifyBatch]] = Ref.unsafe[IO, Map[String, NotifyBatch]](Map.empty)
+
+  /** 缓冲分账键 = reason 码（与预算/窗口分账同维度）。 */
+  private def batchKey(reason: NotifyReason): String = NotifyReason.code(reason)
+
+  /** 预算计数单点（按 reason 分账）。 */
+  private def budgetUsedFor(reason: NotifyReason): Ref[IO, Int] = reason match
+    case NotifyReason.Failed    => failedBudgetUsed
+    case NotifyReason.Cancelled => cancelledBudgetUsed
+    case _                      => budgetUsed
+
+  /** 预算上限单点（按 reason 分账）。 */
+  private def budgetMaxFor(reason: NotifyReason): Int = reason match
+    case NotifyReason.Failed    => failedBudgetMax
+    case NotifyReason.Cancelled => cancelledBudgetMax
+    case _                      => budgetMax
+
+  /** 预算耗尽升级单点（按 reason 分派到既有三个 escalate*，节点保持终态语义各自不变）。 */
+  private def escalateBudgetExhaustedFor(node: NodeDef, reason: NotifyReason): IO[Unit] = reason match
+    case NotifyReason.Failed    => escalateFailedBudgetExhausted(node)
+    case NotifyReason.Cancelled => escalateCancelledBudgetExhausted(node)
+    case _                      => escalateBudgetExhausted(node)
+
+  /** 合并通知文本：单件逐字不变（零回归）；多件 = 一次注入的合并件。 */
+  private def mergedText(texts: List[String]): String =
+    texts match
+      case Nil       => ""
+      case List(one) => one
+      case many =>
+        // 与桥侧合并摘要（ProjectActor.batchSummaryLine）同形：本批 N 件触发 + 各件清单。
+        s"[dispatch-notify] 本批 ${many.size} 件触发（同打包窗口合并为一次注入）：\n\n" + many.mkString("\n\n---\n\n")
+
+  /** Q4 入队（打包窗口唯一入口，替代原来的立即 trigger）。
+    *  - `windowMs <= 0`：同步立即 flush（逐条等价旧行为）。
+    *  - 否则：入缓冲 + 首件到达起算滚动窗口；窗口结束时 [[flushBatch]] 合并注入。
+    * 同节点重复入队（redeliver 撞窗口等）在缓冲层去重——同一件不得重复注入。 */
+  private def enqueueNotify(reason: NotifyReason, node: NodeDef, text: String): IO[Unit] =
+    val key = batchKey(reason)
+    if windowMs <= 0 then
+      batches
+        .update(m => m.updated(key, NotifyBatch(m.getOrElse(key, NotifyBatch()).entries :+ (node, text))))
+        .flatMap(_ => flushBatch(reason))
+    else
+      batches
+        .modify { m =>
+          val b = m.getOrElse(key, NotifyBatch())
+          if b.entries.exists(_._1.id == node.id) then (m, false)
+          else (m.updated(key, b.copy(entries = b.entries :+ (node, text))), b.entries.isEmpty)
+        }
+        .flatMap { first =>
+          if first then (IO.sleep(windowMs.millis) *> flushBatch(reason)).start.void else IO.unit
+        }
+
+  /** Q4 打包投递（窗口结束的唯一出口）：本窗口的件**合并为一次** `trigger`，并按
+    * **一次注入**计一个预算单位（Q4「打包后按一次注入计数」）——一轮扫描内的密集
+    * 扇出不再从第 6 件起被预算静默丢弃（#62）。
+    *
+    * 预算耗尽：逐件走 [[escalateBudgetExhaustedFor]]（节点保持终态 + markSent 退出
+    * 候选集 + single-flight 监督通知）——账务口径与窗口引入前一致。
+    * 投递成功后逐件 `markSent`（tell-then-mark，per-node 持久去重语义不变）。 */
+  private def flushBatch(reason: NotifyReason): IO[Unit] =
+    val key = batchKey(reason)
+    batches.modify(m => (m - key, m.getOrElse(key, NotifyBatch()).entries)).flatMap {
+      case Nil => IO.unit
+      case entries =>
+        budgetUsedFor(reason).modify(n => if n >= budgetMaxFor(reason) then (n, false) else (n + 1, true)).flatMap {
+          case true =>
+            val nodes = entries.map(_._1)
+            trigger(mergedText(entries.map(_._2)))
+              .handleErrorWith(e =>
+                logger.warn(s"dispatch-notify trigger failed (reason=${key}, batch=${entries.size}): ${e.getMessage}").void) *>
+              nodes.traverse_(node =>
+                markSent(node.id) *>
+                  FlowMapEventLog.append(workspace, projectName, node.id, "dispatch-notify",
+                    s"triggered: $key → dispatcher (node '${node.name}', batch=${entries.size}, budget ${budgetMaxFor(reason)})")) *>
+              logger.info(
+                s"Project '$projectName' dispatch-notify batch flushed: reason=$key batch=${entries.size} nodes=${nodes.map(_.name).mkString(",")}")
+          case false =>
+            entries.traverse_((node, _) => escalateBudgetExhaustedFor(node, reason))
+        }
+    }
 
   /** cancelled 窗口裁决（与 [[FailedWindowVerdict]] 同构，独立实例）。 */
   private enum CancelledWindowVerdict:
@@ -226,21 +333,11 @@ final class DispatchNotify(
       case None        => false
     }
 
-  /** completion 投递尝试（2026-09-05 批原路径，行为零变化）：预算 → tell-then-mark；
-    * 耗尽 → escalateBudgetExhausted。 */
+  /** completion 投递尝试（2026-09-05 批原路径；Q4 起改为**打包入队**——投递与预算
+    * 计数在窗口结束时由 [[flushBatch]] 单点完成：切了窗口后行为逐字等价，未切窗口
+    * 时同窗口的多件合并为一次注入）。 */
   private def completionAttempt(node: NodeDef): IO[Unit] =
-    budgetUsed.modify(n => if n >= budgetMax then (n, false) else (n + 1, true)).flatMap {
-      case true =>
-        // tell-then-mark（at-least-once）：触发 → 持久标记 → 审计
-        trigger(notifyTaskText(node, NotifyReason.Completion))
-          .handleErrorWith(e => logger.warn(s"dispatch-notify trigger failed for node '${node.name}' (${node.id}): ${e.getMessage}").void) *>
-          markSent(node.id) *>
-          FlowMapEventLog.append(workspace, projectName, node.id, "dispatch-notify",
-            s"triggered: completion → dispatcher (node '${node.name}', budget $budgetMax)") *>
-          logger.info(s"Project '$projectName' node '${node.name}' (${node.id}) completed — dispatcher notified (reason=completion)")
-      case false =>
-        escalateBudgetExhausted(node)
-    }
+    enqueueNotify(NotifyReason.Completion, node, notifyTaskText(node, NotifyReason.Completion))
 
   /** failed 投递尝试（2026-09-07 批，设计 §3 护栏链）：窗口裁决在前（Suppress/
     * CooldownOn 不耗预算不标记——冷却结束 redeliver 补投不丢失）→ 预算 →
@@ -258,20 +355,11 @@ final class DispatchNotify(
         (g.copy(failedAt = recent), FailedWindowVerdict.Proceed)
     }.flatMap {
       case FailedWindowVerdict.Proceed =>
-        failedBudgetUsed.modify(n => if n >= failedBudgetMax then (n, false) else (n + 1, true)).flatMap {
-          case true =>
-            // 触发前现读等待者清单（wf1cde E-③）：停等下游随通知告知分发器
-            // （补投扫描路径同此口，清单一致）。
-            waitingSuccessors(node.id).flatMap(waiters =>
-              trigger(failedNotifyTaskText(node, waiters)))
-              .handleErrorWith(e => logger.warn(s"dispatch-notify trigger failed for node '${node.name}' (${node.id}): ${e.getMessage}").void) *>
-              markSent(node.id) *>
-              FlowMapEventLog.append(workspace, projectName, node.id, "dispatch-notify",
-                s"triggered: failed → dispatcher (node '${node.name}', failed budget $failedBudgetMax)") *>
-              logger.info(s"Project '$projectName' node '${node.name}' (${node.id}) failed — dispatcher notified (reason=failed)")
-          case false =>
-            escalateFailedBudgetExhausted(node)
-        }
+        // 触发前现读等待者清单（wf1cde E-③）：停等下游随通知告知分发器
+        // （补投扫描路径同此口，清单一致）。Q4：文本在入队时成型，投递与预算
+        // 计数在窗口结束时由 [[flushBatch]] 单点完成。
+        waitingSuccessors(node.id).flatMap(waiters =>
+          enqueueNotify(NotifyReason.Failed, node, failedNotifyTaskText(node, waiters)))
       case FailedWindowVerdict.Suppress =>
         // 冷却期内：不触发、不 markSent——节点留在 redeliver 候选集，冷却结束后下轮
         // 扫描自然补投（延迟触发而非永久丢失，设计 §3）。
@@ -407,18 +495,9 @@ final class DispatchNotify(
         (g.copy(cancelledAt = recent), CancelledWindowVerdict.Proceed)
     }.flatMap {
       case CancelledWindowVerdict.Proceed =>
-        cancelledBudgetUsed.modify(n => if n >= cancelledBudgetMax then (n, false) else (n + 1, true)).flatMap {
-          case true =>
-            waitingSuccessors(node.id).flatMap(waiters =>
-              trigger(cancelledNotifyTaskText(node, waiters)))
-              .handleErrorWith(e => logger.warn(s"dispatch-notify trigger failed for node '${node.name}' (${node.id}): ${e.getMessage}").void) *>
-              markSent(node.id) *>
-              FlowMapEventLog.append(workspace, projectName, node.id, "dispatch-notify",
-                s"triggered: cancelled → dispatcher (node '${node.name}', cancelled budget $cancelledBudgetMax)") *>
-              logger.info(s"Project '$projectName' node '${node.name}' (${node.id}) cancelled — dispatcher notified (reason=cancelled)")
-          case false =>
-            escalateCancelledBudgetExhausted(node)
-        }
+        // Q4：同一 reason 的件在窗口内合并为一次注入（预算按一次注入计）。
+        waitingSuccessors(node.id).flatMap(waiters =>
+          enqueueNotify(NotifyReason.Cancelled, node, cancelledNotifyTaskText(node, waiters)))
       case CancelledWindowVerdict.Suppress =>
         logger.warn(s"Project '$projectName' node '${node.name}' (${node.id}) cancelled during cancel-notify cooldown — suppressed (unmarked; redelivered after cooldown)")
       case CancelledWindowVerdict.CooldownOn =>
@@ -607,6 +686,11 @@ object DispatchNotify:
   /** 链级通知预算默认值（设计约束③建议值；completion/failed 同值独立分账）。 */
   val DefaultBudget: Int = 5
 
+  /** 打包窗口默认值（Q4 裁定，2026-09-11 任务分发器收件规则批）：写死 5s。
+    * 语义 = 同 reason 的件在该窗口内到达即合并为**一次注入**，并按「一次注入」
+    * 计一个预算单位（密集扇出不再从第 6 件起被预算静默丢弃，#62）。 */
+  val DefaultWindowMs: Long = 5000L
+
   /** failed 通知滚动窗口/冷却/阈值默认值（2026-09-07 批）：直接抄 FeedbackRouter
     * 同名参数（10min/30min/5）——项目内护栏心智一致（设计 §10.2 建议、作者 09:24
     * 裁定②确认）。 */
@@ -627,7 +711,7 @@ object DispatchNotify:
       case Some(rt) =>
         rt.actorRef match
           case Some(ref) =>
-            (ref ! ProjectActor.ProjectCommand.TriggerDispatcher(text, rootSessionId)).void
+            (ref ! ProjectActor.ProjectCommand.TriggerDispatcher(text, rootSessionId, ProjectActor.SourceDispatch)).void
           case None =>
             NebflowLogger.forName("nebflow.project.dispatch-notify")
               .warn(s"Project '$projectName' has no actorRef — dispatch-notify skipped")
@@ -641,7 +725,13 @@ object DispatchNotify:
     * `triggerOverride`（取消静默死锁修复批，测试接缝）：Some 时取代
     * [[defaultTrigger]]——spec 用它捕获**通知文本原文**做断言（`defaultTrigger`
     * 在未挂 actorRef 的项目里只 WARN，文本无从观察）。生产调用点不传（默认 None
-    * = 真实触发链，零行为变化）。 */
+    * = 真实触发链，零行为变化）。
+    *
+    * `windowMs`（Q4，2026-09-11）：打包窗口，默认 [[DefaultWindowMs]] = 5s。
+    * **测试接缝蕴含窗口关闭**：`triggerOverride` 存在 ⇒ `windowMs = 0`（同步逐条
+    * 触发）——注入 stub 的 spec 不模拟时序，5s 墙钟等待会把确定性判据变成 flaky
+    * 等待；生产恒 `None` ⇒ 恒 5s 窗口。要显式验证窗口行为时直接构造
+    * [[DispatchNotify]] 并传 `windowMs`。 */
   def forEngine(
     store: FlowMapStore,
     workspace: String,
@@ -650,10 +740,12 @@ object DispatchNotify:
     escalate: (String, String) => IO[Unit],
     emitUpdated: NodeDef => IO[Unit],
     budgetMax: Int = DefaultBudget,
-    triggerOverride: Option[String => IO[Unit]] = None
+    triggerOverride: Option[String => IO[Unit]] = None,
+    windowMs: Long = DefaultWindowMs
   ): DispatchNotify =
     new DispatchNotify(store, workspace, projectName, escalate, emitUpdated,
-      triggerOverride.getOrElse(defaultTrigger(projectName, rootSessionId)), budgetMax)
+      triggerOverride.getOrElse(defaultTrigger(projectName, rootSessionId)), budgetMax,
+      windowMs = if triggerOverride.isDefined then 0L else windowMs)
 
 /** 通知原因码（单一入口 dispatchNotify(reason, node) 的 reason 维度）。
   * completion（2026-09-05 批）与 failed（2026-09-07 批）已接线；blocked 预留接口

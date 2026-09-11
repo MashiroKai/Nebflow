@@ -200,13 +200,24 @@ object ProjectActor:
   private val logger = NebflowLogger.forName("nebflow.project.actor")
 
   enum ProjectCommand:
-    case TriggerDispatcher(taskText: String, rootSessionId: String)
+    case TriggerDispatcher(taskText: String, rootSessionId: String, source: String = ProjectActor.SourceTask)
     /** blocked 反馈重入（设计 §2.2）：FeedbackRouter 裁决通过 → spawn 全新分发器会话
       * 注入重入 prompt。无 rootSessionId 参数——重入是系统发起，用挂载时的 root。 */
     case ReenterDispatcher(nodeId: String, feedback: BlockedFeedback, blockCount: Int)
     case CancelNode(nodeId: String)
     case TtlTick
     case Shutdown
+
+  /** 注入来源权威定名（Q2-B2，2026-09-11 任务分发器收件规则批）。三分：
+    *  - [[SourceTask]] = Task 入口（Task 工具 / Mail(→project) / 重入 / spawn 首条 prompt）；
+    *  - [[SourceDispatch]] = 回流通知（DispatchNotify → TriggerDispatcher）；
+    *  - `"node"` = 节点消息（NodeEngine.deliverToNebula 侧，本批不动）。
+    * 前端 `INJECTED_SOURCE_LABELS` 有对应显式标签（web/js/chat.js）——
+    * **后端是唯一定名源**，前端不得靠首字母大写兜底。
+    * `TriggerDispatcher.source` 默认 [[SourceTask]] ⇒ 既有调用点（TaskTool /
+    * MailTool / ProjectCrashRecovery）零改动即落 task 语义。 */
+  val SourceTask: String = "task"
+  val SourceDispatch: String = "dispatch"
 
   /** 分发器全局 agent 名（定义文件交付 Nebula/entity-creator 注册）。 */
   val DispatcherAgentName = "project-dispatcher"
@@ -218,19 +229,30 @@ object ProjectActor:
 
   /** 活跃分发器会话登记（单例化裁定 2026-09-02）。spawn 时置位、观察桥终态时
     * 清除（与 agentRegistry 同点清理）。pendingInjected = 已注入本会话但 turn
-    * 尚未终结的任务数：注入任务以 UserInput(replyTo=观察桥) 进入，每个任务
-    * 恰好产出一个 Completed 终态事件——桥见 Completed 时 pendingInjected>0 →
-    * 延迟拆除（-1，后续注入 turn 还要跑）；=0 → 正常拆除（最后一 turn 已终态）。
-    * pendingTaskTexts = 未消费任务的触发任务全文队列（队首=当前在飞 turn 对应
-    * 的触发任务，与 pendingInjected 同步增减、恒等长）：桥 Completed 时原子 pop
-    * 队首作为该 turn 最终输出投递 Nebula 的任务摘要来源（2026-09-05 接线）。 */
+    * 尚未终结的件数：注入任务以 UserInput(replyTo=观察桥) 进入，**spawn 首条
+    * prompt 也计 1 件**。
+    * pendingTaskTexts = 未消费件的触发任务全文队列（队首=最早未消费件）；不变量
+    * `pendingInjected == pendingTaskTexts.size`，桥 Completed 时以 k 同减两者，
+    * pop 出的 k 件作为该 turn 最终输出投递 Nebula 的任务摘要来源（2026-09-05 接线）。
+    *
+    * Q3-a（2026-09-11 收件规则批）：mid-turn 直投让**一个 turn 可以消费多件**
+    * （tools-complete 边界整队合批，AgentActor.drainUserBatch）——一个 Completed
+    * 不再恒等于一件。本 turn 消费几件由 [[ActiveDispatcher.consumedTaskMsgs]]
+    * 增量判定（会话历史里带注入来源标签的消息条数），k 件只投**一条合并摘要**
+    * （见 [[batchSummaryLine]]）；余件 > 0 → 保活，归零 → 拆除。 */
   case class ActiveDispatcher(
     sessionId: String,
     agentRef: ActorRef[AgentCommand],
     bridgeRef: ActorRef[AgentEvent],
     pendingInjected: Int = 0,
-    pendingTaskTexts: List[String] = Nil
+    pendingTaskTexts: List[String] = Nil,
+    /** 已计入消费的注入来源消息条数（`source ∈ {task, dispatch}`）——桥跨
+      * Completed 事件累计，用于算出本 turn 消费了几件（增量 ≤ 0 时降级为 1）。 */
+    consumedTaskMsgs: Int = 0
   )
+
+  /** 桥侧消费计数只认后端定名的注入来源（Q2-B2 三分中的两个分发器入口源）。 */
+  private val DispatcherInjectedSources: Set[String] = Set(SourceTask, SourceDispatch)
 
   /** 触发任务摘要（投递标注用）：折叠全部空白为单空格（多行任务→单行），超出
     * DispatcherTaskSummaryChars 截断加省略号。空文本 → None（标注省略 task 段）。 */
@@ -239,6 +261,18 @@ object ProjectActor:
     if oneLine.isEmpty then None
     else if oneLine.length <= NodeEngine.DispatcherTaskSummaryChars then Some(oneLine)
     else Some(oneLine.take(NodeEngine.DispatcherTaskSummaryChars) + "…")
+
+  /** Q3-a 合并摘要（2026-09-11）：一个 turn 消费 k 件时投 **一条**合并件
+    * （「本批 k 件触发」+ 各件任务文本清单），禁止拆成 k 条末态投递（Q3-b 禁项）。
+    * k = 1 → 逐字沿用 [[taskSummaryLine]]（单件路径行为零变化）。 */
+  private def batchSummaryLine(taskTexts: List[String]): Option[String] =
+    taskTexts match
+      case Nil      => None
+      case List(one) => taskSummaryLine(one)
+      case many =>
+        val items = many.flatMap(taskSummaryLine)
+        if items.isEmpty then None
+        else Some(s"本批 ${many.size} 件触发：" + items.mkString("；"))
 
   case class ProjectConfig(
     project: ProjectDef,
@@ -277,13 +311,13 @@ object ProjectActor:
       Ref.of[IO, Option[ActiveDispatcher]](None).map { active =>
         lazy val behavior: Behavior[ProjectCommand] =
           Behaviors.receiveMessage {
-            case ProjectCommand.TriggerDispatcher(taskText, rootSessionId) =>
+            case ProjectCommand.TriggerDispatcher(taskText, rootSessionId, source) =>
               // 热重启 draining 准入闸（hot-restart 批设计 §3.3 choke 点清单）：
               // draining 期间拒绝新分发器会话/新节点派发（新工作准入关闭）；
               // completion/failed 回流被拒时 notifySentAt 未标记 → 重启后
               // redeliver 扫描补投（延迟触发非丢失）。非 draining 零开销旁路。
               nebflow.core.hotrestart.HotRestart.admissionGate.flatMap {
-                case Right(()) => dispatchTask(cfg, active, behavior, taskText, rootSessionId)
+                case Right(()) => dispatchTask(cfg, active, behavior, taskText, rootSessionId, source)
                 case Left(reason) =>
                   logger.warn(s"[hot-restart] dispatcher trigger refused during draining: $reason").as(behavior)
               }
@@ -501,25 +535,42 @@ object ProjectActor:
     Behaviors.receive[AgentEvent] { (_, event) =>
       event match
         case AgentEvent.Completed(_, messages) =>
-          // 原子裁决：pendingInjected>0 → 计数-1 保活（注入 turn 未跑完）；
-          // =0 → 该 Completed 即最后一 turn 终态 → 拆除。modify 全序保证与
-          // 注入占位不可交错（占位成功 → 本次必见 >0）。
-          // 2026-09-05 接线：同一 modify 内同步 pop pendingTaskTexts 队首（本
-          // turn 对应的触发任务全文）——每个任务 turn 终态时，该 turn 的最终
-          // assistant 文本自动投递 Nebula 根会话（deliverDispatcherOutputToNebula：
-          // 空文本不投、忙时 ImmediateInput 排队、占位类极简输出照常投）。投递
-          // 失败仅 WARN 不影响拆除裁决（fire-and-forget，无账本无重投）。
+          // 原子裁决（Q3-a 扩展，2026-09-11 收件规则批）：本 turn 消费了几件 =
+          // 会话历史里带注入来源标签（task/dispatch）的消息**增量**——mid-turn 直投
+          // 落地后一个 Completed 不再恒等于一件（AgentActor.drainUserBatch 在
+          // tools-complete 边界整队合批：N 件 = 1 次注入 = 1 个 turn = 1 个 Completed）。
+          // 增量 ≤0（会话中期历史被压缩等）降级为「一 Completed 一件」（改前行为）：
+          // 宁多消费不滞留。pendingInjected 与 pendingTaskTexts 恒等长（spawn 首条
+          // prompt 也计 1 件，见 spawnDispatcher 的 active.set），故两者同减 k。
+          // 拆除判据：k 件消费后仍有余件（未跑完的注入件）→ 保活；归零 → 拆除。
+          // 2026-09-05 接线保持：同一 modify 内同步 pop 本 turn 消费的件全文——该 turn
+          // 的最终 assistant 文本自动投递 Nebula 根会话（deliverDispatcherOutputToNebula：
+          // 空文本不投、忙时 ImmediateInput 排队、占位类极简输出照常投；k>1 时投
+          // **一条合并摘要**，Q3-b「拆末态各发一条」为禁项）。投递失败仅 WARN 不影响
+          // 拆除裁决（fire-and-forget，无账本无重投）。
+          val seenInjectedMsgs =
+            messages.count(m => m.source.exists(DispatcherInjectedSources.contains))
           active.modify {
-            case Some(a) if a.sessionId == sessionId && a.pendingInjected > 0 =>
-              (Some(a.copy(pendingInjected = a.pendingInjected - 1, pendingTaskTexts = a.pendingTaskTexts.drop(1))),
-                (false, a.pendingTaskTexts.headOption))
             case Some(a) if a.sessionId == sessionId =>
-              (None, (true, a.pendingTaskTexts.headOption))
-            case _ => (None, (true, None))
+              val consumed =
+                if seenInjectedMsgs > a.consumedTaskMsgs then seenInjectedMsgs - a.consumedTaskMsgs
+                else if a.pendingInjected > 0 then 1
+                else 0
+              val k = math.max(0, math.min(consumed, math.min(a.pendingInjected, a.pendingTaskTexts.size)))
+              val consumedTexts = a.pendingTaskTexts.take(k)
+              val remaining = a.pendingInjected - k
+              if remaining > 0 then
+                (Some(a.copy(
+                  pendingInjected = remaining,
+                  pendingTaskTexts = a.pendingTaskTexts.drop(k),
+                  consumedTaskMsgs = math.max(a.consumedTaskMsgs, seenInjectedMsgs)
+                )), (false, consumedTexts))
+              else (None, (true, consumedTexts))
+            case _ => (None, (true, Nil))
           }.flatMap {
-            case (teardownNow, taskTextOpt) =>
+            case (teardownNow, consumedTexts) =>
               cfg.engine
-                .deliverDispatcherOutputToNebula(messages, taskTextOpt.flatMap(taskSummaryLine))
+                .deliverDispatcherOutputToNebula(messages, batchSummaryLine(consumedTexts))
                 .handleErrorWith(e =>
                   logger.warn(s"Project '${cfg.project.name}' dispatcher output delivery failed: ${e.getMessage}")) *>
                 (if teardownNow then teardown
@@ -542,12 +593,14 @@ object ProjectActor:
     active: Ref[IO, Option[ActiveDispatcher]],
     same: Behavior[ProjectCommand],
     taskText: String,
-    rootSessionId: String
+    rootSessionId: String,
+    source: String = SourceTask
   ): IO[Behavior[ProjectCommand]] =
     // 单例化裁定：先经 modify 原子占位（占位与桥终态清理在全序 Ref 操作上不可
     // 交错——占位成功则桥必见 pendingInjected>0 而延迟拆除）——有活跃会话 →
     // 任务注入现有会话（turn 边界生效：处理中排 pendingUserInputs，idle 直接
     // 开新 turn）；无（含占位瞬间会话刚终结）→ spawn 新实例。
+    // source（Q2-B2）：Task 入口 = task；DispatchNotify 回流通知 = dispatch。
     active.modify {
       case Some(a) =>
         (Some(a.copy(pendingInjected = a.pendingInjected + 1, pendingTaskTexts = a.pendingTaskTexts :+ taskText)), Some(a))
@@ -557,11 +610,11 @@ object ProjectActor:
         (a.agentRef ! AgentCommand.UserInput(
           text = taskInjectionText(taskText),
           replyTo = Some(a.bridgeRef),
-          source = Some("task")
+          source = Some(source)
         )).void *>
           logger
             .info(
-              s"Project '${cfg.project.name}' task injected into active dispatcher ${a.sessionId} (pending=${a.pendingInjected})"
+              s"Project '${cfg.project.name}' task injected into active dispatcher ${a.sessionId} (pending=${a.pendingInjected}, source=$source)"
             )
             .as(same)
       case None =>
@@ -571,7 +624,7 @@ object ProjectActor:
         pluginCatalogText().flatMap { catalog =>
           projectMemoryText(cfg.project).flatMap { memory =>
             dispatcherBoardText(cfg).flatMap { boardText =>
-              spawnDispatcher(cfg, active, same, newTaskPrompt(cfg.project, taskText, catalog, memory, boardText), rootSessionId, "", taskText)
+              spawnDispatcher(cfg, active, same, newTaskPrompt(cfg.project, taskText, catalog, memory, boardText), rootSessionId, "", taskText, source)
             }
           }
         }
@@ -601,7 +654,9 @@ object ProjectActor:
             (a.agentRef ! AgentCommand.UserInput(
               text = reentryInjectionText(cfg.project, node, feedback, blockCount),
               replyTo = Some(a.bridgeRef),
-              source = Some("task")
+              // 重入是 task 形态入口（FeedbackRouter 独占 blocked 重入，非 DispatchNotify
+              // 回流）——来源标签与 Task 入口同值（Q2-B2 三分之外的既有语义，保持不变）。
+              source = Some(SourceTask)
             )).void *>
               logger
                 .info(
@@ -632,7 +687,8 @@ object ProjectActor:
     prompt: String,
     rootSessionId: String,
     tag: String,
-    firstTaskText: String
+    firstTaskText: String,
+    source: String = SourceTask
   ): IO[Behavior[ProjectCommand]] =
     val project = cfg.project
     EntityLoader.loadAgent(DispatcherAgentName).flatMap {
@@ -721,8 +777,13 @@ object ProjectActor:
           // ReenterDispatcher 一律注入本会话，无 spawn 竞态窗口。
           // pendingTaskTexts 初始化为 [firstTaskText]：首 turn（spawn prompt）
           // 终态时投递标注用（2026-09-05 接线）。
-          _ <- active.set(Some(ActiveDispatcher(sessionId, ref, bridgeRef, pendingTaskTexts = List(firstTaskText))))
-          _ <- (ref ! AgentCommand.UserInput(text = prompt, replyTo = Some(bridgeRef))).void
+          // Q3-a（2026-09-11）：pendingInjected 同置 1——「已注入本会话但 turn 尚未
+          // 终结的件数」首条 prompt 也是一件，**恒等式 pendingInjected ==
+          // pendingTaskTexts.size**（桥的消费计数 k 直接同减两者）；且首条 prompt
+          // 也打同源标签（source）：桥的消费增量按「历史里带源消息条数」判定，
+          // 首条缺标签会让增量恒差 1（批量场景下演变成少消费 → 会话滞留）。
+          _ <- active.set(Some(ActiveDispatcher(sessionId, ref, bridgeRef, pendingInjected = 1, pendingTaskTexts = List(firstTaskText))))
+          _ <- (ref ! AgentCommand.UserInput(text = prompt, replyTo = Some(bridgeRef), source = Some(source))).void
           _ <- logger.info(s"Project '${project.name}' dispatcher session spawned: $sessionId$tag")
         yield same
     }
