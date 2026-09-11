@@ -188,6 +188,12 @@ final class ShellSession private (
     lifecycleMutex.lock.surround {
       for
         _ <- checkAlive *> touch
+        // 终态延迟销毁窗口的禁 spawn 守卫（noderpt 批 B 段 2026-09-11 作者裁定：节点终态后
+        // 一律存活 30 分钟再销毁——窗口内允许读取取证、**禁止新 spawn**）。放这里 =
+        // 进程真正 spawn 之前（`backgroundExecute`/`runProcess` 之下再无此点），窗口内的
+        // 已注册任务照跑、输出照写，不受影响。抛错经 AgentCore.executeTool 的
+        // `handleErrorWith` 渲染成 `Tool execution error: <文案>` 回给 LLM（可读、可纠）。
+        _ <- BgTaskRegistry.denySpawnIfFinalized(sessionId)
         jobId <- jobIdOverride.fold(IO.randomUUID.map(_.toString.take(8)))(IO.pure)
         deferred <- Deferred[IO, Either[Throwable, ProcessResult]]
         health = new JobHealth(outputSink = outputSink.getOrElse(_ => ()))
@@ -1200,6 +1206,21 @@ object ShellSession:
     sessionId: String,
     initialDir: Option[String] = None,
     sandbox: Option[nebflow.core.sandbox.SandboxPolicy] = None
+  ): IO[ShellSession] =
+    // 终态延迟销毁窗口的禁 spawn 守卫（noderpt 批 B 段 2026-09-11 作者裁定）：**新会话
+    // 一律拒绝**——节点终态后其会话已交还（窗口内实体仍在，走 doGetOrCreate 的
+    // Some 分支复用；到点 reclaim 后表项仍留 = 死会话不可复活）。放这里而非
+    // forSession 入口：forSession 的 Some 分支是**复用**（含面板 cancelBackgroundJob
+    // 等读/操作面），创建才是「新 spawn」。
+    for
+      _ <- BgTaskRegistry.denySpawnIfFinalized(sessionId)
+      s <- createUnchecked(sessionId, initialDir, sandbox)
+    yield s
+
+  private def createUnchecked(
+    sessionId: String,
+    initialDir: Option[String],
+    sandbox: Option[nebflow.core.sandbox.SandboxPolicy]
   ): IO[ShellSession] =
     for
       dirRef <- Ref.of[IO, String](

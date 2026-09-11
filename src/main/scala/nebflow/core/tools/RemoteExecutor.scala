@@ -280,6 +280,10 @@ class RemoteExecutor(
     // 会话前缀 + 会话名 → 类别/显示名），注册与 WS 信封同源携带。
     val (bgOrigin, bgOriginLabel) = BgTaskRegistry.originFor(ctx.sessionId.getOrElse(""), ctx.sessionName)
     for
+      // 终态延迟销毁窗口的禁 spawn 守卫（noderpt 批 B 段 2026-09-11 作者裁定）：远程后台
+      // 不经本地 ShellSession（无 executeBackground），故在**注册/发射之前**独立设点——
+      // 拒绝时零 WS 帧、零 registry 项、零 HTTP fiber（真拦截，不是事后注销）。
+      _ <- BgTaskRegistry.denySpawnIfFinalized(ctx.sessionId.getOrElse(""))
       jobId <- IO.randomUUID.map(_.toString.take(8))
       _ <- logger.info(s"Remote background task $jobId started on ${peer.deviceName}: $firstLine")
       // 1. Emit "running" to frontend + register in global registry

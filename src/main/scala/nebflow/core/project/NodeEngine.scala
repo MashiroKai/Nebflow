@@ -68,9 +68,34 @@ class NodeEngine(
     * 真实触发链（ProjectRuntimeRegistry → ProjectActor.TriggerDispatcher）——spec
     * 用它捕获**通知文本原文**断言「cancelled 专属处置指引」。生产调用点零传参
     * （默认 None = 真实链，零行为变化）。 */
-  notifyTriggerOverride: Option[String => IO[Unit]] = None
+  notifyTriggerOverride: Option[String => IO[Unit]] = None,
+  /** 完成门腿 1 开关（noderpt 批 A 段 2026-09-11）：后台任务存活是否拦节点终态化。
+    * None = 现读 `Defaults.BgGateCompletionHold`（生产默认 **false = 封存**：不查
+    * `BgTaskRegistry.waitingFor`，hold 代码与 armCap 逐字保留、打开即恢复旧行为）；
+    * Some = spec 显式注入（避开全局 prop 的跨 suite 污染，测试矩阵双态各一条）。 */
+  bgGateCompletionHold: Option[Boolean] = None,
+  /** 完成门腿 2 开关（noderpt 批 A 段）：未申报 `node_report` 是否拦节点终态化。
+    * None = 现读 `Defaults.NodeReportCompletionHold`（生产默认 **true**：未申报的
+    * `Completed` 不终态化、节点保持 Running，由未申报提醒阶梯兜底）；Some = spec 注入。 */
+  reportGateHold: Option[Boolean] = None,
+  /** 终态延迟销毁窗口（noderpt 批 B 段 2026-09-11 作者裁定「一律存活 30 分钟再销毁」）：
+    * None = 现读 `Defaults.NodeDestroyWindowMs`（生产默认 30min）；Some = spec 注入
+    * （压到 0/秒级，避开全局 prop 的跨 suite 污染——`bgGateCompletionHold` 同款接缝）。 */
+  destroyWindowMs: Option[Long] = None
 ):
   private val logger = NebflowLogger.forName("nebflow.node.engine")
+
+  /** 完成门腿 1 生效值（每次判定现读；无在线翻转路由 ⇒ 生产侧改 prop 需重启宿主）。 */
+  private def bgGateHoldEnabled: Boolean =
+    bgGateCompletionHold.getOrElse(nebflow.shared.Defaults.BgGateCompletionHold)
+
+  /** 完成门腿 2 生效值（同上，现读）。 */
+  private def reportGateHoldEnabled: Boolean =
+    reportGateHold.getOrElse(nebflow.shared.Defaults.NodeReportCompletionHold)
+
+  /** 终态延迟销毁窗口生效值（现读；spec 走构造入参注入）。 */
+  private def destroyWindowDurationMs: Long =
+    destroyWindowMs.getOrElse(nebflow.shared.Defaults.NodeDestroyWindowMs)
 
   /** blocked 反馈路由器（§2.2/§2.3）：档位决策 + 项目级频率保护 + 重入/升级执行。
     * escalate 通道 = 本引擎的 deliverToNebula（eventType="blocked"，前端 label 自动 BLOCKED）；
@@ -189,6 +214,253 @@ class NodeEngine(
       s.nodes.get(nodeId).filter(_.bgWait == desc).traverse_(emitUpdated)
     }
 
+  /** 未申报计时起表（noderpt 批 A 段 2026-09-11）：**只置不重**——首次未申报在手时置
+    * `reportPendingSince`（+ 计数归零）；已置则原样保留，后续 `Completed`（含提醒轮自身
+    * 产生的 Completed）与 `NodeMessage` 重入都不改起点（代裁 4：否则计时可被无限拖延）。
+    * 会话身份守卫：只在「本 fiber 的会话仍是该节点的当前会话」时置（`sessionRef` 同值），
+    * 避免 resume/reactivate 换会话后旧 fiber 的判定落到新会话上。值真的变化才 emitUpdated
+    * （载荷条件字段随之带；未变化不刷帧）。 */
+  private def markReportPendingIfAbsent(nodeId: String, sessionId: String): IO[Unit] =
+    IO(System.currentTimeMillis()).flatMap { now =>
+      store.mutateWithResult { st =>
+        st.nodes.get(nodeId) match
+          case Some(fresh)
+              if fresh.status == NodeLifecycle.Running
+                && fresh.sessionRef.forall(_ == sessionId)
+                && fresh.reportPendingSince.isEmpty =>
+            (st.copy(nodes = st.nodes.updated(nodeId, fresh.copy(
+              reportPendingSince = Some(now),
+              reportReminderCount = 0))), true)
+          case _ => (st, false)
+      }.flatMap {
+        case (s, true)  => s.nodes.get(nodeId).traverse_(emitUpdated)
+        case (_, false) => IO.unit
+      }
+    }
+
+  /** 未申报计时清表（唯一清表条件 = 该会话任一 `node_report` 申报；终态/挂起出口与新一轮
+    * 翻转同点清零，防跨轮累计）。`sessionId = Some` 时只在「本 fiber 的会话仍是该节点当前
+    * 会话」时清——resume 换会话后老 fiber 的收尾不得误清新会话的计时。 */
+  private def clearReportPending(nodeId: String, sessionId: Option[String]): IO[Unit] =
+    store.mutateWithResult { st =>
+      st.nodes.get(nodeId) match
+        case Some(fresh)
+            if fresh.reportPendingSince.isDefined
+              && sessionId.forall(sid => fresh.sessionRef.forall(_ == sid)) =>
+          (st.copy(nodes = st.nodes.updated(nodeId, fresh.copy(
+            reportPendingSince = None,
+            reportReminderCount = 0))), true)
+        case _ => (st, false)
+    }.flatMap {
+      case (s, true)  => s.nodes.get(nodeId).traverse_(emitUpdated)
+      case (_, false) => IO.unit
+    }
+
+  // ── 终态延迟销毁窗口（noderpt 批 B 段 2026-09-11 作者裁定：一律存活 30 分钟再销毁）──
+  //
+  // 语义（作者裁定形态 (b)，逐条）：
+  //   ① 终态时刻**只登记**，不杀进程：`destroyAt = T + destroyWindowMs` 落节点持久字段；
+  //   ② 窗口内：进程/任务照跑、输出照写、**允许读取取证**，仅**禁止新 spawn**（新后台
+  //      任务 / 新会话——拦截表 = `BgTaskRegistry.finalizedSessions`，落点见该对象头注）；
+  //   ③ 到点由 `sweepDestroyWindows`（`ProjectActor.TtlTick` 30s）执行 `reclaimSession`
+  //      （杀进程树 + 注销 registry + 逐条 `finalizeTask` + 释放 `ShellSession.sessions`
+  //      条目 + WS `backgroundTaskUpdate(status="cancelled")` 帧）+ 清 `destroyAt`；
+  //   ④ 挂起腿不登记（中途换会话，进程即时收割不变）；
+  //   ⑤ `settleStaleRunningNodes` 的「bg 等待不算死」判据保留不动（代裁 6）；
+  //   ⑥ 每条终态出口都留可事后对齐的痕迹：`destroyAt` 字段 + `node-destroy-scheduled`
+  //      / `node-destroyed` 事件（failed/cancelled 与 completed/blocked 口径一致）。
+  //
+  // 与既有「即时收割」的差别只在**时点**：收殓动作集合逐字相同（同一个
+  // `BgTaskRegistry.reclaimSession`），从「终态瞬间 fork」移到「窗口到期扫描」。
+
+  /** 节点名下的会话清单（销毁窗口的收殓对象）：普通节点 = `sessionRef`；Loop 节点 =
+    * worker（`sessionRef`）+ verify（`sessionRefVerify`）双会话（裁定 B 双会话贯穿）。 */
+  private def destroyTargetSessions(n: NodeDef): List[String] =
+    (n.sessionRef.toList ++ n.sessionRefVerify.toList).map(_.trim).filter(_.nonEmpty).distinct
+
+  /** 终态销毁窗口登记（终态写点之后调用——**只登记不杀进程**）。
+    *
+    * 幂等：`destroyAt` 已置 ⇒ 不改字段、不重复发事件（同节点二次终态化/重复调用零副作用）。
+    * 安全：节点**非终态**（未真正终态化 / 已被重激活回 Running）⇒ 拒登记——窗口只属于
+    * 终态，绝不把 Running 节点的进程放进销毁计划。
+    * 副作用：① 落 `destroyAt` 持久字段（跨宿主重启存活 ⇒ 到点仍由扫描腿兜底）；
+    * ② 会话登记进 `BgTaskRegistry` 禁 spawn 表；③ `node-destroy-scheduled` 事件 + 日志。 */
+  private def scheduleDestroy(nodeId: String, sessions: List[String], cause: String): IO[Unit] =
+    IO(System.currentTimeMillis()).flatMap { now =>
+      val at = now + destroyWindowDurationMs
+      store.mutateWithResult { st =>
+        st.nodes.get(nodeId) match
+          case Some(fresh) if NodeLifecycle.Terminal.contains(fresh.status) && fresh.destroyAt.isEmpty =>
+            (st.copy(nodes = st.nodes.updated(nodeId, fresh.copy(destroyAt = Some(at)))), true)
+          case _ => (st, false)
+      }.flatMap { case (s, registered) =>
+        if !registered then IO.unit
+        else
+          s.nodes.get(nodeId).traverse_ { n =>
+            val sids = sessions.map(_.trim).filter(_.nonEmpty).distinct
+            sids.traverse_(sid => BgTaskRegistry.markSessionFinalized(sid, at)) *>
+              emitUpdated(n) *>
+              FlowMapEventLog.append(workspace, projectName, nodeId, NodeEngine.DestroyScheduledEventType,
+                s"terminal destroy scheduled: session(s) ${sids.mkString(",")} kept alive for " +
+                  s"${destroyWindowDurationMs / 1000}s (read-only evidence window; new spawns rejected) — " +
+                  s"destroyAt=$at; cause: ${cause.take(160)}") *>
+              logger.info(
+                s"Node '${n.name}' ($nodeId) terminal (${n.status}) — destroy window opened: sessions " +
+                  s"${sids.mkString(",")} stay alive until $at (${destroyWindowDurationMs / 1000}s)")
+          }
+      }
+    }
+
+  /** `destroyAt` 字段清除（**双区单点**，批 F1' 修复第 2 轮 2026-09-12）：活动区优先、
+    * 归档区兜底——归档成员**不得复活进活动区**（既有归档写纪律，`NodeTools.setOut`
+    * 归档分支先例），故只改归档副本的字段。
+    *
+    * CAS：只在字段仍 `== expected`（即本次扫描读到的登记值）时清除 ⇒ 并发同拍只留一个
+    * 赢家，输家得 `None`（不重复 `reclaimSession` 已完成、也不重复发事件）。
+    * 返回 `Some((清点后的节点, 是否活动区))`——调用方据此决定要不要发 `nodeUpdated`
+    * （归档区清点不发，见 [[destroyNodeSessions]] 注）。 */
+  private def clearDestroyAt(nodeId: String, expected: Option[Long]): IO[Option[(NodeDef, Boolean)]] =
+    if expected.isEmpty then IO.pure(None)
+    else
+      store.mutateWithResult { st =>
+        st.nodes.get(nodeId) match
+          case Some(fresh) if fresh.destroyAt == expected =>
+            (st.copy(nodes = st.nodes.updated(nodeId, fresh.copy(destroyAt = None))), true)
+          case _ => (st, false)
+      }.flatMap {
+        case (s, true) => IO.pure(s.nodes.get(nodeId).map(_ -> true))
+        case _ =>
+          store.mutateArchiveWithResult { ar =>
+            ar.nodes.get(nodeId) match
+              case Some(fresh) if fresh.destroyAt == expected =>
+                (ar.copy(nodes = ar.nodes.updated(nodeId, fresh.copy(destroyAt = None))), true)
+              case _ => (ar, false)
+          }.map { case (ar, cleared) => if cleared then ar.nodes.get(nodeId).map(_ -> false) else None }
+      }
+
+  /** 窗口撤销（异常残留清点）：节点带着 `destroyAt` 却已非终态（窗口内被重激活/重跑）
+    * ⇒ 清字段 + 解禁 spawn + `node-destroy-withdrawn` 事件。正常路径在翻转点已清零，
+    * 本方法只作扫描腿的防御兜底。
+    *
+    * 双区感知（F1' 第 2 轮）：字段清除经 [[clearDestroyAt]]——活动区优先、归档区兜底；
+    * 归档成员不发 `nodeUpdated`（同 [[destroyNodeSessions]]：nodeRemoved 墓碑已把该节点
+    * 移出主图，发 payload 会把它拉回派生图）。 */
+  private def withdrawDestroyWindow(n: NodeDef, reason: String): IO[Unit] =
+    val sids = destroyTargetSessions(n)
+    clearDestroyAt(n.id, n.destroyAt).flatMap {
+      case None => IO.unit
+      case Some((fresh, inActive)) =>
+        sids.traverse_(BgTaskRegistry.reopenSession) *>
+          IO.whenA(inActive)(emitUpdated(fresh)) *>
+          FlowMapEventLog.append(workspace, projectName, n.id, NodeEngine.DestroyWithdrawnEventType,
+            s"destroy window withdrawn (node no longer terminal): $reason") *>
+          logger.warn(s"Node '${n.name}' (${n.id}) destroy window withdrawn: $reason")
+    }
+
+  /** 终态销毁窗口扫描腿（`ProjectActor.TtlTick` 30s 驱动，与 `settleStaleRunningNodes` /
+    * `remindUnreportedNodes` 同族——复用既有心跳点零新调度器）。
+    *
+    * 两件事：① **表项自愈**——带 `destroyAt` 的节点逐个重建禁 spawn 表（宿主重启后
+    * 内存表为空，本腿一拍内恢复，禁 spawn 面不因重启长期失守）；② **到点销毁**——
+    * `destroyAt <= now` 且节点仍为终态 ⇒ `destroyNodeSessions`；节点已非终态 ⇒
+    * `withdrawDestroyWindow`（窗口随重激活撤销）。
+    *
+    * **读面 = 活动区 ∪ 归档区**（批 F1' 修复第 2 轮 2026-09-12，复核 D1 根治）：链级
+    * 归档（TtlTick 同拍，链全终态即整链出库）会把**窗口未收殓**的成员搬进归档区；本腿
+    * 若只读活动区 snapshot，则 ① 到点永不收殓（进程 / persistent·bg 任务永久泄漏）、
+    * ② 宿主重启后的禁 spawn 表自愈也读不到它——两处读面都漏。故本腿在两个读面上都
+    * 覆盖归档区：字段清除落在**归档副本**上（不复活进活动区，见 [[clearDestroyAt]]），
+    * `node-destroyed` 事件照写（归档侧可见性载体 = 事件 + 日志）。
+    * 归因对照：与归档资格解耦——`chainArchivable` **不看** `destroyAt`（撤销 F1 的前置
+    * 拒收）⇒ 归档语义与销毁窗口正交，二者都不牺牲。
+    *
+    * 幂等：字段已清 ⇒ 不再入选（二次调用零副作用）；`reclaimSession` 本体亦幂等
+    * （会话无进程/无任务时 no-op、已注销二次无副作用）。best-effort：单节点失败只 WARN，
+    * 不影响其它节点与后续 TTL sweep。 */
+  def sweepDestroyWindows(): IO[Unit] =
+    (for
+      s <- store.snapshot
+      a <- store.archiveSnapshot
+      // 双区并集（id 冲突 = 崩溃窗口「活动+归档双在」⇒ 取活动区副本，权威副本口径与
+      // FlowMapStore.combinedNodes 同源）
+      registered = (s.nodes.values ++ a.nodes.values.filterNot(n => s.nodes.contains(n.id)))
+        .toList.filter(_.destroyAt.isDefined)
+      // ① 表项自愈（重启后重建；幂等覆盖）
+      _ <- registered.traverse_ { n =>
+        val at = n.destroyAt.getOrElse(0L)
+        destroyTargetSessions(n).traverse_(sid => BgTaskRegistry.markSessionFinalized(sid, at))
+      }
+      // ② 到点处置（逐个复核**最新**状态，避免用陈旧快照做终态判断；`findNode` =
+      //    活动区优先 + 归档区兜底，双区同一判据单点）
+      _ <- IO(System.currentTimeMillis()).flatMap { now =>
+        registered.filter(_.destroyAt.exists(_ <= now)).traverse_ { snap =>
+          store.findNode(snap.id).flatMap { latest =>
+            latest match
+              case None => IO.unit // 双区皆无（并发移除）→ no-op
+              case Some(fresh) if fresh.destroyAt.isEmpty => IO.unit // 已被其它路径处置
+              case Some(fresh) if !NodeLifecycle.Terminal.contains(fresh.status) =>
+                withdrawDestroyWindow(fresh,
+                  s"node status is '${fresh.status}' at window expiry (reactivated/re-run inside the window) — spawn ban lifted")
+              case Some(fresh) => destroyNodeSessions(fresh)
+          }
+        }
+      }
+    yield ()
+    ).handleErrorWith(e => logger.warn(s"destroy-window sweep failed: ${e.getMessage}"))
+
+  /** 到点对称收殓（③ 的执行体）：对节点名下全部会话执行 `reclaimSession`
+    * （= 杀进程树 + 注销 BgTaskRegistry + 逐条 `BgTaskOutputStore.finalizeTask("cancelled")`
+    * + 释放 `ShellSession.sessions` 条目 + WS `backgroundTaskUpdate(status="cancelled")` 帧，
+    * 见 `shell.scala#killSessionProcesses` 与 `BgTaskRegistry#reclaimSession`），
+    * 再清 `destroyAt` + 写 `node-destroyed` 事件。
+    *
+    * 双区（F1' 第 2 轮）：字段清除经 [[clearDestroyAt]]——活动区命中即清活动区（并发
+    * `nodeUpdated`，前端窗口字段即刻消失）；**归档区命中则只清归档副本**，且**不发
+    * `nodeUpdated`**：`nodeRemoved` 墓碑已把归档成员移出主图，发 payload 会把它拉回
+    * 派生图（归档成员禁复活纪律）；归档侧可见性由 `node-destroyed` 事件 + 日志承载。
+    *
+    * 幂等双保险：字段清点用「destroyAt 与本次登记值相同」的 CAS（并发同拍只留一个赢家）；
+    * 输家 `reclaimSession` 亦为 no-op。清点后**禁 spawn 表项保留**（死会话不可复活——
+    * 合法复活唯一入口 = 节点翻转 Running 时的 `BgTaskRegistry.reopenSession`）。 */
+  private def destroyNodeSessions(n: NodeDef): IO[Unit] =
+    val at = n.destroyAt.getOrElse(0L)
+    val sids = destroyTargetSessions(n)
+    for
+      _ <- sids.traverse_(sid => BgTaskRegistry.markSessionFinalized(sid, at))
+      _ <- sids.traverse_ { sid =>
+        BgTaskRegistry.reclaimSession(Some(sid), wsSendFn, rootSessionId)
+          .handleErrorWith(e =>
+            logger.warn(s"Node '${n.name}' (${n.id}) destroy-window reclaim failed for session '$sid': ${e.getMessage}"))
+      }
+      cleared <- clearDestroyAt(n.id, n.destroyAt)
+      _ <- cleared.traverse_ { case (fresh, inActive) =>
+        IO.whenA(inActive)(emitUpdated(fresh)) *>
+          FlowMapEventLog.append(workspace, projectName, n.id, NodeEngine.DestroyedEventType,
+            s"terminal destroy window expired: session(s) ${sids.mkString(",")} reclaimed " +
+              s"(processes killed + bg tasks finalized + shell sessions released), destroyAt=$at" +
+              (if inActive then "" else " [archived member: field cleared on the archived copy, node not revived into the active map]")) *>
+          logger.info(
+            s"Node '${n.name}' (${n.id}) destroy window expired — reclaimed session(s) ${sids.mkString(",")}" +
+              (if inActive then "" else " (archived member)"))
+      }
+    yield ()
+
+  /** 终态写点的计时清表纯函数（noderpt 批 A 段 2026-09-11）：**终态无计时语义** ⇒
+    * 状态写点与计时字段同事务清零，持久层不残留「终态节点带待申报计时」的误导态。
+    * 为什么不能只靠 [[clearReportPending]]（run fiber 收尾的 `cleanupRunTables`）：
+    * 存在**不经 run fiber** 的终态写点——boot 期 `reapStaleRunning`（死会话收殓）、
+    * `autoFailDeadRunning`、`mergeBlockedByUpstreamFailure`、NodeCancel 收殓等，
+    * 它们的节点从没有 fiber 可跑 finalizer ⇒ 计时会随节点进归档（隔离实例实跑读
+    * 数：reap 后归档的 cancelled 节点仍带 `reportPendingSince`/`reportReminderCount`）。
+    * 值已清 ⇒ 原样返回（零漂移，不发生无谓写）。
+    *
+    * **public**（noderpt 批 F3，2026-09-11 复核 D3 修复）：第 7 个写点在另一模块
+    * （`NodeTools` 的 `NodeEdit abandon`，`:1181`）⇒ 提为公共单点，跨模块复用同一判据，
+    * 防第 8 个写点再漏。纯函数（无 IO、不读 store）——调用方在自己的 mutate 事务内联用。 */
+  def withoutReportPending(n: NodeDef): NodeDef =
+    if n.reportPendingSince.isEmpty && n.reportReminderCount == 0 then n
+    else n.copy(reportPendingSince = None, reportReminderCount = 0)
+
   /** 在飞登记三表的对称清理（僵尸收敛批 2026-09-06 清理硬化，根因报告漏洞①）：
     * running / nodeSessions / agentRegistry 三表在 runWithAgent 内登记后，只能由该
     * fiber 自己在 race 落定后清理——fiber 崩溃/被外部 cancel/悬死在 race 时三表泄漏
@@ -212,7 +484,10 @@ class NodeEngine(
       // blocked 结构化信号批（20260909 spec §5.2 #5④；同日泛化 NodeReportRegistry）：
       // 登记表对称清理——cancelled/failed/异常退出路径未消费的申报在此兜底移除
       // （completed 路径已 drain，此处幂等 no-op）。与 running/nodeSessions 同点清理纪律。
-      NodeReportRegistry.remove(sessionId)
+      NodeReportRegistry.remove(sessionId) *>
+      // 未申报计时对称清理（noderpt 批 A 段 2026-09-11）：终态/挂起出口清表不累计
+      // （挂起恢复后按新会话重新起表；sessionId 守卫防误清 resume 后新会话的计时）。
+      clearReportPending(nodeId, Some(sessionId))
 
   /** 死会话 running 节点的自动收敛（僵尸收敛批 2026-09-06；与 NodeCancel-stale /
     * abandon 的人力收殓区分——本方法走**自动** watchdog 路径）。收敛目标取 **failed**
@@ -229,13 +504,13 @@ class NodeEngine(
       s <- store.mutate { st =>
         st.nodes.get(nodeId) match
           case Some(fresh) if fresh.status == NodeLifecycle.Running =>
-            st.copy(nodes = st.nodes.updated(nodeId, fresh.copy(
+            st.copy(nodes = st.nodes.updated(nodeId, withoutReportPending(fresh.copy(
               status = NodeLifecycle.Failed,
               result = Some(err),
               completedAt = Some(now),
               // 2026-09-07 作者裁定：failed/cancelled 无 TTL 强制清（同 blocked 既
               // 有语义）——死亡现场保留主图待上层裁决取消/重跑，不静默消失。
-              ttlExpireAt = None)))
+              ttlExpireAt = None))))
           case _ => st // 已终态/消失/状态已变 → 拒写（R2 竞态纪律）
       }
       _ <- s.nodes.get(nodeId) match
@@ -264,7 +539,11 @@ class NodeEngine(
     *   - 「无在途后台任务」= BgTaskRegistry.waitingFor(sessionId) 为空——非空 = 设计
     *     内等待后台任务（节点按设计保持 running，**不得收敛/提前结算**——作者红线，
     *     禁把「等待后台任务」当 bug 提前结算）。
-    * 不误杀活会话：registry 有活记录 / waitingFor 非空 → 一律跳过。 */
+    * 不误杀活会话：registry 有活记录 / waitingFor 非空 → 一律跳过。
+    *
+    * noderpt 批 A 段（2026-09-11 代裁 6）：判据**原样保留**（bg 等待不算死），只补
+    * 「在事件里标出该态节点供人监督」——命中该豁免时单发一条
+    * [[NodeEngine.DeadSessionBgWaitEventType]] 事件（进程内每节点一条，防 30s 节拍刷屏）。 */
   def settleStaleRunningNodes(): IO[Unit] =
     store.snapshot.flatMap { s =>
       s.nodes.values.filter(_.status == NodeLifecycle.Running).toList
@@ -284,7 +563,12 @@ class NodeEngine(
             case false => IO.pure(false)
             case true =>
               nodeSessions.get.map(_.get(n.id)).flatMap {
-                case Some(sid) => BgTaskRegistry.waitingFor(sid).map(_.isEmpty)
+                case Some(sid) =>
+                  BgTaskRegistry.waitingFor(sid).flatMap {
+                    case waiting if waiting.nonEmpty =>
+                      markDeadSessionBgWaitExemption(n, sid, waiting).as(false)
+                    case _ => IO.pure(true)
+                  }
                 case None => IO.pure(true)
               }
           }
@@ -295,6 +579,286 @@ class NodeEngine(
               "node session dead (no live session, no in-flight background task) — auto-converged to failed by dead-session watchdog")
           }
         }
+    }
+
+  // ── 未申报提醒阶梯（noderpt 批 A 段 2026-09-11 作者裁定）────────────────────
+  //
+  // 背景：完成门腿 2 默认开（`reportGateHoldEnabled`）⇒ 节点交棒（桥收到 Completed）
+  // 而**未**调 node_report 时不终态化——节点保持 Running、会话存活。本腿是那条
+  // 「保持 Running」的兜底提醒：**永不判 failed、永不上报失败、永不杀进程或会话**
+  // （相对设计稿 §4.2「30min 判 failed」的核心改判），只提醒 + 留痕，等人工处置。
+  //
+  // 时序（作者裁定逐字）：10min / 30min / 1h / 2h / 4h + 此后每 4h 一拍、单节点上限
+  // 8 拍；第 8 拍后**不再注入**（每拍都是一次完整 LLM turn，封顶为省 token），但
+  // **事件不停**——改每 `quiescentIntervalMs`（默认 4h）一条 `node-report-missing`
+  // （stage=quiescent、reminderCount 不递增），直到终态/挂起出口/申报清表。
+  //
+  // 计时跨宿主重启存活：起点落**节点持久字段** `reportPendingSince`（落盘），扫描腿在
+  // `ProjectActor.TtlTick`（30s 节拍）上跑——禁用 per-node fiber 计时器（重启即丢）。
+
+  /** quiescent 档写事件节流记账（nodeId → 上次写事件的 ts）。内存态：重启后每个节点
+    * 至多多写一条 quiescent 事件（幂等冗余，不丢监督面）；阶梯拍数的幂等不依赖本表
+    * （那是 `reportReminderCount` 的持久 CAS）。 */
+  private val quiescentNotified: Ref[IO, Map[String, Long]] =
+    Ref.unsafe[IO, Map[String, Long]](Map.empty)
+
+  /** 死会话 bg-wait 豁免留痕单发记账（nodeId 集合，进程内一次）。 */
+  private val bgWaitExemptNotified: Ref[IO, Set[String]] = Ref.unsafe[IO, Set[String]](Set.empty)
+
+  /** 释放唤醒单发记账（nodeId → 已唤醒的 `reportPendingSince` 值，进程内）：同一**未申报
+    * 期**只注入一次唤醒轮——防 TtlTick 30s 拍连发 LLM turn。新一轮翻转/新会话重排起表
+    * （新起点值）自动重新允许；进程重启后表空 ⇒ 至多再唤醒一次（幂等冗余，不丢监督面）。 */
+  private val releaseWakeSent: Ref[IO, Map[String, Long]] = Ref.unsafe[IO, Map[String, Long]](Map.empty)
+
+  /** 代裁 6「在事件里标出该态节点供人监督」：`settleStaleRunningNodes` 命中
+    * 「死会话 + 仍在途后台任务」豁免时单发一条留痕（判据本身原样保留——bg 等待不算死）。 */
+  private def markDeadSessionBgWaitExemption(
+    node: NodeDef,
+    sessionId: String,
+    waiting: List[BgTaskRegistry.ActiveTask]
+  ): IO[Unit] =
+    bgWaitExemptNotified.modify(s => if s.contains(node.id) then (s, false) else (s + node.id, true)).flatMap {
+      case false => IO.unit
+      case true =>
+        FlowMapEventLog.append(workspace, projectName, node.id, NodeEngine.DeadSessionBgWaitEventType,
+          s"dead-session node kept Running (bg-wait exemption): ${waiting.size} background task(s) still " +
+            s"in flight (${waiting.map(t => s"'${t.description}'").mkString(", ")}) — not reaped, needs human supervision") *>
+          logger.warn(
+            s"Node '${node.name}' (${node.id}) session '$sessionId' looks dead but still owns ${waiting.size} " +
+              "in-flight background task(s) — kept Running for human supervision (bg-wait exemption, no auto-convergence)")
+    }
+
+  /** 未申报提醒阶梯扫描腿（ProjectActor.TtlTick 30s 驱动，与 `settleStaleRunningNodes` /
+    * `settleRunnableSweep` 同族——复用既有心跳点零新调度器）。
+    *
+    * 逐节点判据（作者裁定口径）：`status == Running ∧ reportPendingSince 已置`；
+    *   - 申报槽非空（**非消费读**）⇒ 申报已到但桥可能未观测（`NodeMessage` 重入轮不产
+    *     生 `Completed`）⇒ **唤醒桥复检放行**（[[wakeBridgeForRelease]]，不清表不注入提醒）；
+    *   - `elapsed ≥ 第 N 档 ∧ N > reportReminderCount` ⇒ 发第 N 拍（注入 + 事件）；
+    *   - `dueRung ≥ maxRungs` 且拍数已满 ⇒ quiescent 档（只写事件，间隔
+    *     `quiescentIntervalMs`）；
+    *   - 与 `cleanupRunTables` 对称：节点非 Running / 会话映射已清 / 会话非活 ⇒ 跳过
+    *     （注入需要活会话；僵尸腿由 settleStaleRunningNodes 管）。
+    *
+    * 幂等：拍数按 `reportReminderCount` 的 CAS 单发（同一拍并发/重复命中 ⇒ 计数已推进
+    * ⇒ no-op、不重复写事件）；quiescent 按内存记账节流。**零 failNode 路径**。 */
+  def remindUnreportedNodes(): IO[Unit] =
+    val ladder = nebflow.shared.Defaults.NodeReportReminderLadderMs
+    val maxRungs = math.min(nebflow.shared.Defaults.NodeReportReminderMaxRungs, ladder.length)
+    if ladder.isEmpty || maxRungs <= 0 then IO.unit
+    else
+      store.snapshot.flatMap { s =>
+        s.nodes.values
+          .filter(n => n.status == NodeLifecycle.Running && n.reportPendingSince.isDefined)
+          .toList
+          .traverse_(n => remindUnreportedNode(n, ladder, maxRungs))
+      }
+
+  private def remindUnreportedNode(node: NodeDef, ladder: List[Long], maxRungs: Int): IO[Unit] =
+    val since = node.reportPendingSince.getOrElse(0L)
+    IO(System.currentTimeMillis()).flatMap { now =>
+      val elapsed = now - since
+      val dueRung = ladder.count(_ <= elapsed)
+      val ladderStage = math.min(dueRung, maxRungs) > node.reportReminderCount
+      val quiescentStage = !ladderStage && dueRung >= maxRungs
+      if !ladderStage && !quiescentStage then IO.unit
+      else
+        nodeSessions.get.map(_.get(node.id)).flatMap { cached =>
+          // 会话 id 候选 = 内存缓存 ∪ 持久 sessionRef（injectRunning 同款解析序）。
+          val candidates = (cached.toList ++ node.sessionRef.toList).distinct
+          if candidates.isEmpty then IO.unit // 三表已清（会话映射无）⇒ 跳过
+          else
+            // 申报槽检查（非消费读）：任一候选会话有申报 ⇒ 申报已到 ⇒ 清表不提醒。
+            candidates
+              .traverse(sid => NodeReportRegistry.peek(sid).map(sid -> _))
+              .flatMap { probes =>
+                probes.collectFirst { case (sid, Some(_)) => sid } match
+                  case Some(sid) => wakeBridgeForRelease(node, sid, since)
+                  case None =>
+                    val target = math.min(dueRung, maxRungs)
+                    if ladderStage then
+                      resources.agentRegistry.get.flatMap { reg =>
+                        candidates.find(reg.contains) match
+                          case None => IO.unit // 会话非活 ⇒ 跳过（注入不可达）
+                          case Some(sid) =>
+                            fireReminderRung(node, sid, since, elapsed, target, maxRungs, ladder(target - 1))
+                      }
+                    else fireQuiescentEvent(node, since, elapsed, maxRungs, ladder(maxRungs - 1))
+              }
+        }
+    }
+
+  /** 发第 N 拍（阶梯期）：`reportReminderCount` CAS 单发 ⇒ 注入提醒轮 + 写
+    * `node-report-missing`（stage=active）。注入复用 `sendNodeMessage` 通道（其内部
+    * 会写 node-message 留痕并在会话已终结时回退「注入未达」），投递结果进事件字段。 */
+  private def fireReminderRung(
+    node: NodeDef,
+    sessionId: String,
+    since: Long,
+    elapsed: Long,
+    rung: Int,
+    maxRungs: Int,
+    rungMs: Long
+  ): IO[Unit] =
+    val expectedCount = node.reportReminderCount
+    store.mutateWithResult { st =>
+      st.nodes.get(node.id) match
+        case Some(fresh)
+            if fresh.status == NodeLifecycle.Running
+              && fresh.reportPendingSince.contains(since)
+              && fresh.reportReminderCount == expectedCount =>
+          (st.copy(nodes = st.nodes.updated(node.id, fresh.copy(reportReminderCount = rung))), true)
+        case _ => (st, false)
+    }.flatMap {
+      case (_, false) => IO.unit // 同拍重复命中 / 状态已变 ⇒ 不再发（幂等）
+      case (s, true) =>
+        val exhausted = rung >= maxRungs
+        injectReminderTurn(sessionId, NodeEngine.reportReminderText(node.name, rung, maxRungs, rungMs, elapsed), rung, maxRungs)
+          .flatMap { delivered =>
+            s.nodes.get(node.id).traverse_(emitUpdated) *>
+              FlowMapEventLog.append(workspace, projectName, node.id, NodeEngine.NodeReportMissingEventType,
+                NodeEngine.reportMissingSummary(
+                  stage = NodeEngine.NodeReportStageActive, rung = rung, maxRungs = maxRungs,
+                  rungMs = rungMs, elapsedMs = elapsed, pendingSince = since, reminderCount = rung,
+                  ladderExhausted = exhausted, delivered = Some(delivered))) *>
+              logger.warn(
+                s"Node '${node.name}' (${node.id}) finished its turn without a node_report declaration — " +
+                  s"reminder $rung/$maxRungs injected (delivered=$delivered, waited=${elapsed / 1000}s, session=$sessionId); " +
+                  "the node stays Running — never failed, never killed (human supervision expected)")
+          }
+    }
+
+  /** 释放唤醒（noderpt 批 F2，2026-09-11 复核 D2 修复）：申报**已到**但桥未观测时的放行腿。
+    *
+    * 病灶（复核 D2 / 探针 P3 实证）：`NodeMessage` 重入轮（`sendNodeMessage → injectRunning
+    * → AgentCommand.ImmediateInput`）在 AgentActor 内转成 `UserInput(replyTo = None)` ⇒ 该轮
+    * 收尾的 `completionTargets` 不含节点观察桥 ⇒ **无 `AgentEvent.Completed` 到桥**（⑧-1
+    * 同一根因）。若该轮里 agent 调了 `node_report`（分发器催办后最常见的那一轮），申报就进了
+    * `NodeReportRegistry`，而桥的复检点只在 `Completed` 分支 ⇒ 永不触发。改前本腿走 `peek`
+    * 命中分支**只清表**（`clearReportPending`）不放行 ⇒ 计时清零、节点永久 Running、
+    * 零提醒零投递（安全网被无声关闭）。
+    *
+    * 本腿动作：命中申报槽 ⇒ **唤醒桥复检**（**不清表**）。桥在 `Completed` 分支里做的正是
+    * 「`clearReportPending *> releaseNow`」原子组合 ⇒ 复检即放行，清表与放行同点；申报信息
+    * 由终态点的 `NodeReportRegistry.drain` 单次消费（pass/fail/blocked 三链分流零改动）。
+    *
+    * **为什么退化为「注入一次唤醒轮」而非直接放行**（按任务书要求登记退化理由 + 代码锚）：
+    * `releaseNow` 是桥行为内的**局部闭包**（`NodeEngine.scala:2160`，闭包持有本次 `Completed`
+    * 的 `messages` 与 `resultDeferred`），扫描腿（`ProjectActor.TtlTick`）手上只有
+    * `AgentRecord`/`AgentRef`——其接收面是 `AgentEvent`，而 `Completed/Failed/Cancelled`
+    * 三者都是**终态事件**：合成一个喂给桥 = 伪造终态（`messages` 只能是编造文本），比不释放
+    * 更糟。故 **不存在等价的直接释放入口** ⇒ 退化为注入唤醒轮，让桥自己走它既有的复检放行
+    * 路径。通道 = 与提醒轮/腿 1 后台完成通知同一条已实证机制：`node-` 前缀 Flow 会话以
+    * `AgentRecord.supervisorRef`（= 本桥）作粘性 `replyTo` ⇒ 唤醒轮收尾必回 `Completed`。
+    *
+    * **为什么不清表**：若在此先清表，桥复检将见空槽 ⇒ 再次 hold，且申报已被吃掉、无法再被
+    * `drain` 消费 ⇒ 比现状更糟的静默搁死（节点永久 Running 且无监督痕迹）。清表必须与放行
+    * 同点（桥内原子组合）。
+    *
+    * 单发：同一未申报期只唤醒一次（see [[releaseWakeSent]]）。会话已不在 registry（死会话）
+    * 时**不清表**、只留痕：计时保留 ⇒ quiescent 留痕与僵尸腿（`settleStaleRunningNodes`）
+    * 两条既有出路都不丢。 */
+  private def wakeBridgeForRelease(node: NodeDef, sessionId: String, since: Long): IO[Unit] =
+    releaseWakeSent.get.flatMap { sent =>
+      if sent.get(node.id).contains(since) then IO.unit
+      else
+        releaseWakeSent.update(_ + (node.id -> since)) *>
+          injectExternalTurn(
+            sessionId,
+            NodeEngine.NodeReportReleaseWakeSource,
+            eventType = "release-wake",
+            payload = NodeEngine.reportReleaseWakeText(node.name),
+            metadata = io.circe.JsonObject("pendingSince" -> since.asJson)
+          ).flatMap { delivered =>
+            FlowMapEventLog.append(workspace, projectName, node.id, NodeEngine.NodeReportReleaseWakeEventType,
+              NodeEngine.reportReleaseWakeSummary(sessionId, since, delivered)) *>
+              (if delivered then
+                 logger.info(
+                   s"Node '${node.name}' (${node.id}) holds a node_report declaration the completion bridge never " +
+                     s"observed (immediate-injection turn produces no Completed) — release wake injected into " +
+                     s"session '$sessionId' so the bridge re-checks and releases (clock kept: $since)")
+               else
+                 logger.warn(
+                   s"Node '${node.name}' (${node.id}) holds a node_report declaration but session '$sessionId' is " +
+                     "not live — release wake undeliverable; clock kept, node stays Running (dead-session settle / " +
+                     "human action expected)"))
+          }
+    }
+
+  /** 提醒轮注入（**外部事件唤醒通道**）。
+    *
+    * 为什么不是 `sendNodeMessage`（ImmediateInput）通道：`ImmediateInput` 在 AgentActor
+    * 内转成 `UserInput(replyTo = None)`，其轮次收尾的
+    * `completionTargets = replyTo.toList ++ owedCompletion`（`finishTurnCont`）**不含**
+    * 本节点观察桥 ⇒ 唤醒轮**不产生** `AgentEvent.Completed` ⇒ 桥无法复检、节点无法放行
+    * （本批 spec R4 实证：提醒已注入、agent 已按提醒申报，节点仍滞留 Running）。
+    * `ExternalEvent` 走的是**节点会话唤醒轮专用腿**（AgentActor：`node-` 前缀且
+    * `kind=Flow` 的会话以 `AgentRecord.supervisorRef` 作粘性 replyTo）——唤醒轮结束必回
+    * `Completed` 到本桥，与完成闸腿 1 的「后台任务完成通知 → 唤醒轮 → 复检」**同一机制**。
+    * 提醒文本原文（含专用前缀头 [[NodeReportReminderPrefix]]）进 agent 上下文/transcript。
+    *
+    * 返回 true = 已投递给活会话 actor（tell 语义，fire-and-forget）；false = 会话已不在
+    * registry（会话非活 ⇒ 事件字段 delivered=false，节点仍保持 Running，等人工/僵尸腿）。 */
+  private def injectReminderTurn(sessionId: String, text: String, rung: Int, maxRungs: Int): IO[Boolean] =
+    injectExternalTurn(
+      sessionId,
+      NodeEngine.NodeReportReminderSource,
+      eventType = "reminder",
+      payload = text,
+      metadata = io.circe.JsonObject(
+        "rung" -> rung.asJson,
+        "maxRungs" -> maxRungs.asJson
+      )
+    )
+
+  /** 外部事件唤醒轮注入**单点**（提醒轮与释放唤醒共用，见 [[wakeBridgeForRelease]]）：
+    * 查 registry 取会话 actor → `AgentCommand.ExternalEvent`（tell 语义，fire-and-forget）。
+    * 返回 true = 已投递给活会话 actor；false = 会话已不在 registry（调用方据此写
+    * `delivered=false` / 走 WARN 留痕）。 */
+  private def injectExternalTurn(
+    sessionId: String,
+    source: String,
+    eventType: String,
+    payload: String,
+    metadata: io.circe.JsonObject
+  ): IO[Boolean] =
+    resources.agentRegistry.get.map(_.get(sessionId)).flatMap {
+      case None => IO.pure(false)
+      case Some(record) =>
+        (record.ref ! AgentCommand.ExternalEvent(
+          source = source,
+          eventType = eventType,
+          payload = payload,
+          metadata = metadata
+        )).void *> IO.pure(true)
+    }
+
+  /** quiescent 档（第 maxRungs 拍之后）：**不注入**，每 `quiescentIntervalMs` 写一条
+    * `node-report-missing`（stage=quiescent，reminderCount 不递增）。节点保持 Running。 */
+  private def fireQuiescentEvent(
+    node: NodeDef,
+    since: Long,
+    elapsed: Long,
+    maxRungs: Int,
+    lastRungMs: Long
+  ): IO[Unit] =
+    val intervalMs = nebflow.shared.Defaults.NodeReportReminderQuiescentMs
+    val stageEntry = since + lastRungMs
+    IO(System.currentTimeMillis()).flatMap { now =>
+      quiescentNotified.get.map(_.getOrElse(node.id, stageEntry)).flatMap { last =>
+        if intervalMs <= 0 || now - last < intervalMs then IO.unit
+        else
+          quiescentNotified.update(_ + (node.id -> now)) *>
+            FlowMapEventLog.append(workspace, projectName, node.id, NodeEngine.NodeReportMissingEventType,
+              NodeEngine.reportMissingSummary(
+                stage = NodeEngine.NodeReportStageQuiescent, rung = maxRungs, maxRungs = maxRungs,
+                rungMs = lastRungMs, elapsedMs = elapsed, pendingSince = since,
+                reminderCount = node.reportReminderCount, ladderExhausted = true, delivered = None)) *>
+            logger.warn(
+              s"Node '${node.name}' (${node.id}) still has no node_report declaration after the reminder ladder " +
+                s"(${maxRungs} rungs, waited ${elapsed / 1000}s) — quiescent stage: no further reminders injected, " +
+                "periodic audit event only; node stays Running awaiting human action (never failed, never killed)")
+      }
     }
 
   // ── boot-time 崩溃恢复（crash-recovery 批 2026-09-07，设计 §3.2 快段/慢段）──
@@ -342,7 +906,11 @@ class NodeEngine(
             case Some(f) if f.status == NodeLifecycle.Running =>
               (s.copy(nodes = s.nodes.updated(n.id, f.copy(
                 status = NodeLifecycle.Pending,
-                bgWait = None))), true)
+                bgWait = None,
+                // 未申报计时随认领清零（noderpt 批 A 段）：重挂载后按新会话重新起表，
+                // 旧一轮的起点/拍数不继承（flipToRunning 处还有一道同语义的兜底清零）。
+                reportPendingSince = None,
+                reportReminderCount = 0))), true)
             case _ => (s, false)
         }.flatMap { (s, claimed) =>
           if !claimed then IO.pure(None)
@@ -604,6 +1172,10 @@ class NodeEngine(
                       completedAt = None,
                       ttlExpireAt = None,
                       bgWait = None,
+                      // 未申报计时清零（noderpt 批 A 段）：L3 resume 是新会话，旧一轮的
+                      // 计时起点/拍数不继承（挂起出口清表不累计的同一纪律）。
+                      reportPendingSince = None,
+                      reportReminderCount = 0,
                       // R5 方案 4：L3 中间态的回流占位（cancelNode(notify=false) 写入）
                       // 在此归还——节点已复活，本代次的真实终态尚未发生，占位若留
                       // 会把将来的 completion 回流持久去重吞掉（新一代静默死锁）。
@@ -1284,7 +1856,7 @@ class NodeEngine(
                             flowChainId = chain.map(_.chainId))
                           _ <- runLoopNode(node, worker, verify, inputText, cancelSig, resume)
                             .guarantee(
-                              destroyLoopSessions(worker, verify) *>
+                              destroyLoopSessions(nodeId, worker, verify) *>
                                 resources.pluginMcp.release(workerSessionId) *>
                                 resources.pluginMcp.release(verifySessionId) *>
                                 running.update(_ - nodeId) *>
@@ -1469,10 +2041,19 @@ class NodeEngine(
                 && !fresh.in.exists(up => !fresh.deliveredTo.contains(up)) =>
             // sessionRef 与 startedAt 同事务落库（crash-recovery 批 D1）：崩溃后 boot
             // sweep 据此定位磁盘 transcript；终态不清除（审计价值）。
+            // 未申报计时同事务清零（noderpt 批 A 段 2026-09-11）：翻转 = 新一轮/新会话
+            // （首次启动 / reactivate 重激活 / boot resume / 挂起恢复），旧一轮的计时
+            // 起点与拍数一律不继承（否则新会话一交棒就按旧起点直接跳到高拍）。
+            // **销毁窗口同点撤销**（noderpt 批 B 段）：翻转 = 节点重新 Running ⇒ 旧的
+            // `destroyAt` 窗口作废（节点在窗口内被重激活/重跑时，绝不按旧计划销毁在跑的
+            // 进程）；禁 spawn 表项由翻转后的 `BgTaskRegistry.reopenSession` 同步解除。
             (s.copy(nodes = s.nodes.updated(nodeId, fresh.copy(
               status = NodeLifecycle.Running,
               startedAt = Some(now),
-              sessionRef = Some(sessionId)))), NodeEngine.FlipOutcome.Done)
+              sessionRef = Some(sessionId),
+              reportPendingSince = None,
+              reportReminderCount = 0,
+              destroyAt = None))), NodeEngine.FlipOutcome.Done)
           case Some(fresh) if fresh.status == NodeLifecycle.Running =>
             (s, NodeEngine.FlipOutcome.LostRace)
           case Some(fresh) if fresh.in.exists(up => !fresh.deliveredTo.contains(up)) =>
@@ -1487,6 +2068,10 @@ class NodeEngine(
           // 赢家重装自己的 cancelSig：条件注册期间条目可能仍是竞发者的占位——
           // 最终条目必须属于本活会话 fiber（NodeCancel 信号才能到达本会话）。
           running.update(m => m + (nodeId -> cancelSig)) *>
+            // 销毁窗口撤销的第二步（noderpt 批 B 段）：把**上一轮**的会话解出禁 spawn 表
+            // （旧 sessionRef 可能正是窗口内被登记的那个；新 sessionId 是新 id，不受影响）。
+            // 不清 ⇒ 重激活/重跑后旧 id 永久禁 spawn（虽无新调用方，仍是错误状态）。
+            node.sessionRef.traverse_(BgTaskRegistry.reopenSession) *>
             flipped.nodes.get(nodeId).traverse_(runningDef =>
               emitWithChain("nodeUpdated", nodeId, NodePayload.buildNodeJson(runningDef, System.currentTimeMillis())))
         case NodeEngine.FlipOutcome.LostRace =>
@@ -1628,6 +2213,14 @@ class NodeEngine(
                           workspace, projectName, nodeId, "bg-wait-timeout",
                           s"background wait cap (${bgWaitCapMs / 1000}s) hit with ${waiting.size} task(s) pending — finalizing failed") *>
                         waitCapFiber.set(None) *>
+                        // ⑤ 残留字段收口（noderpt 批 B 段实测缺陷：`n-0931699e` status=completed
+                        // 而 `bgWait` 非空）：本出口此前只 complete deferred、**不写
+                        // `setNodeBgWait(Nil)`** ⇒ 首个 hold 期置位的 bgWait 随节点进终态/归档
+                        // 永久残留（与 `setNodeBgWait` 头注「flow-map.json 不残留过期 bgWait」
+                        // 的契约相悖，也让前端把终态节点误标「等待后台任务」）。此处补写——
+                        // fresh 守卫要求 status==Running，此刻节点仍 Running（终态化在后），
+                        // 故写点有效；幂等（值未变不写不 event）。
+                        setNodeBgWait(nodeId, Nil) *>
                         resultDeferred
                           .complete(Left(FailOutcome(
                             s"background task wait cap exceeded (${bgWaitCapMs / 1000}s): still waiting for " +
@@ -1658,7 +2251,18 @@ class NodeEngine(
                 def receive(ctx: ActorContext[AgentEvent], event: AgentEvent): IO[Behavior[AgentEvent]] =
                   event match
                     case AgentEvent.Completed(_, messages) =>
-                      BgTaskRegistry.waitingFor(sessionId).flatMap { waiting =>
+                      // 完成门（noderpt 批 A 段 2026-09-11 作者裁定）——同一闸门两条腿：
+                      //   腿 1「后台任务存活」（`bgGateHoldEnabled`，默认 false = 封存）：
+                      //     关 ⇒ **不查** BgTaskRegistry.waitingFor，直接用空等待集走放行
+                      //     分支（hold/armCap 代码逐字保留，开 flag 即恢复逐字旧行为）；
+                      //   腿 2「未申报 node_report」（`reportGateHoldEnabled`，默认 true）：
+                      //     放行前非消费读申报槽——空 ⇒ **不终态化**（节点保持 Running、
+                      //     会话存活）并起表（只置不重）；非空 ⇒ 清表后放行，终态点 drain
+                      //     照常分流（blocked/pass/fail 三链零改动）。
+                      val waitingIO: IO[List[BgTaskRegistry.ActiveTask]] =
+                        if bgGateHoldEnabled then BgTaskRegistry.waitingFor(sessionId)
+                        else IO.pure(Nil)
+                      waitingIO.flatMap { waiting =>
                         if waiting.nonEmpty then
                           holdEmitted.get.flatMap { already =>
                             val emitOnce =
@@ -1680,14 +2284,61 @@ class NodeEngine(
                         else
                           BgTaskRegistry.drainFailures(sessionId).flatMap { failures =>
                             if failures.isEmpty then
-                              holdEmitted.get.flatMap { held =>
-                                disarmCap *> holdEmitted.set(false) *>
-                                  IO.whenA(held)(
-                                    FlowMapEventLog.append(
-                                      workspace, projectName, nodeId, "bg-released",
-                                      "all background task(s) finished — completion released") *>
-                                      setNodeBgWait(nodeId, Nil)) *>
-                                  resultDeferred.complete(Right(messages)).attempt.void.as(Behaviors.stopped)
+                              // 放行分支（腿 1 封存后 Completed 直达此处）。放行前的
+                              // 腿 2 判定 = 未申报闸。
+                              def releaseNow: IO[Behavior[AgentEvent]] =
+                                holdEmitted.get.flatMap { held =>
+                                  disarmCap *> holdEmitted.set(false) *>
+                                    IO.whenA(held)(
+                                      FlowMapEventLog.append(
+                                        workspace, projectName, nodeId, "bg-released",
+                                        "all background task(s) finished — completion released") *>
+                                        setNodeBgWait(nodeId, Nil)) *>
+                                    resultDeferred.complete(Right(messages)).attempt.void.as(Behaviors.stopped)
+                                }
+                              // 文本锚定 BLOCKED 豁免（noderpt 批 B 段 · 作者代裁 ⑧-4 = (a)）：
+                              // 节点 `Completed` ∧ 申报槽空 ∧ **输出文本可被 `BlockedReader`
+                              // 判为 blocked** ⇒ **不走 hold、不进提醒阶梯**，照既有行为终态化
+                              // 为 blocked（`completeNode` 的文本锚定分流逐字不变）。
+                              // 理由（代裁逐字）：文本说 BLOCKED 本身就是明确的求助申报——
+                              // hold 住等于丢掉唯一求助通道（忘申报会被提醒救回，求助被 hold
+                              // 则无人知晓，风险不对称）；豁免范围**严格限定**为「能被
+                              // `BlockedReader` 判定为 blocked 的文本」，不是「任意非空文本」，
+                              // 其余静默结束一律仍走 hold + 提醒阶梯。
+                              // 文本来源 = **与终态点完完全全同一份**：`messages` 是同一个
+                              // bridge 事件载荷，`extractLastAssistantText(messages)` 与终态
+                              // 分支 `completeNode(nodeId, text = extractLastAssistantText(messages))`
+                              // 同函数同输入 ⇒ 判定输入零漂移（不引入第二个文本来源）。
+                              // 失败方向（代裁③）：判定抛错/不可判 ⇒ 保守**回落 hold**（= 今日
+                              // leg 2 行为），不因豁免判定故障放宽闸门。
+                              val anchoredBlocked: Boolean =
+                                try BlockedReader.parse(extractLastAssistantText(messages)).isDefined
+                                catch case _: Throwable => false
+                              NodeReportRegistry.peek(sessionId).flatMap {
+                                case Some(_) =>
+                                  // 已申报 ⇒ 清表（申报 ⇒ 清表，唯一清表条件）后放行；
+                                  // 消费语义仍唯一保留在终态点 drain（peek 不消费，
+                                  // 否则申报信息在 1810 处已被吃掉、只能走文本降级面）。
+                                  clearReportPending(nodeId, Some(sessionId)) *> releaseNow
+                                case None if reportGateHoldEnabled && !anchoredBlocked =>
+                                  // 未申报且**无 BLOCKED 文本锚定** ⇒ hold：**不终态化、不投递、
+                                  // 不杀会话**（节点保持 Running 等人工处置），起表后桥继续存活
+                                  // ——下一轮 Completed（提醒轮 / NodeMessage 重入 / 后台通知
+                                  // 唤醒）在此复检。
+                                  // 只置不重：提醒轮自身的 Completed 不改起点（代裁 4）。
+                                  markReportPendingIfAbsent(nodeId, sessionId).as(bridge)
+                                case None =>
+                                  // 两条出口：① 腿 2 关（封存形态）——未申报照常放行 = 本批
+                                  // 之前的文本锚定降级面行为（行为零变化）；② 腿 2 开但**文本
+                                  // 锚定 BLOCKED 命中**（代裁 ⑧-4 豁免）——放行后由终态点的
+                                  // 既有 `BlockedReader.parse` 分流成 blocked（求助上报链
+                                  // blocked → 分发器 → 人 完整保留）。
+                                  IO.whenA(reportGateHoldEnabled && anchoredBlocked)(
+                                    logger.info(
+                                      s"Node '$nodeName' ($nodeId) finished without a node_report but its final " +
+                                        "text anchors BLOCKED — leg-2 hold waived (⑧-4 exemption); finalizing via the " +
+                                        "existing blocked chain")) *>
+                                    releaseNow
                               }
                             else
                               disarmCap *> holdEmitted.set(false) *>
@@ -1762,26 +2413,31 @@ class NodeEngine(
           logger.info(s"Node '$nodeName' cancelled — stopping agent")
           (ref ! AgentCommand.Stop("Node cancelled")).void
         case Left(Left(fo)) =>
-          // 孤儿后台任务收割（D1 主钩子）：failed/cancelled/zombie/bg-wait-cap 出口
-          // 补收殓——NodeCancel 路径（Right）已由 Stop→killSessionShellProcesses
-          // 覆盖，此处只补桥 Left 终态（该分支无 Stop，resource 收殓链整条缺失；
-          // 事故 A 的 2b1e6310 孤儿 job ~3h 即此缺口：job 进程/ShellSession/
-          // BgTaskRegistry 项全部继续存活）。fork best-effort：收殓慢/失败不阻塞
-          // 节点终态化与下游投递。completed 出口（Left(Right)) 由完成闸已等完
-          // 等待型任务——保持现状（persistent 收殓属另批归属语义，不在此改）。
-          (BgTaskRegistry.reclaimSession(Some(sessionId), wsSendFn, rootSessionId) *>
-            FlowMapEventLog.append(workspace, projectName, nodeId, "bg-harvest",
-              // R-5 / 类⑦（stuck 自动恢复批 P2 附加小项，本板 #98 同源）：**补 cause**。
-              // 此前该行是「无原因的终态化留痕」——读者只能看到「被回收」而不知
-              // 「因何终态」，正是 #98「重启后 bg 会话回收把在飞节点判 cancelled
-              // （无 result/无通知）→ 下游 barrier 静默死锁」取证时的第一个盲区。
-              // cause 词表 = 与本次终态化同一个判据（挂起 / 取消 / 归还能力失败），
-              // 由桥消息文本单点派生（不改 AgentEvent 形态，与 CancelSource 同纪律）。
-              s"node finalized (${NodeEngine.finalizeCause(fo.message)}) — reclaimed bg session '$sessionId'; " +
-                s"cause: ${fo.message.take(160)}"))
-            .handleErrorWith(e =>
-              logger.warn(s"Node '$nodeName' ($nodeId) bg-harvest reclaim failed: ${e.getMessage}"))
-            .void.start *> IO.unit
+          // 孤儿后台任务收殓（D1 主钩子，原语义）——**noderpt 批 B 段改为「登记窗口」
+          // 之前，此处只保留挂起腿的即时收殓**：
+          //   挂起腿（`isSuspendOutcome`）= 中途换会话（stuck 自动恢复的恢复腿，非终态）
+          //   ——保留进程无意义且与 resume 后的新会话重复 ⇒ **不登记窗口、即时收殓不变**
+          //   （任务要求 ③.5 逐字），其 `bg-harvest` 带 cause 留痕（R-5）逐字保留。
+          //   其它桥终态出口（failed/cancelled/zombie/bg-wait-cap）不再即时收割——按作者
+          //   裁定「一律存活 30 分钟再销毁」移到终态写点之后的 `scheduleDestroy` 登记，
+          //   到点由 `sweepDestroyWindows` 执行同一个 `reclaimSession`（收殓动作集合逐字
+          //   相同，只改时点）。NodeCancel 路径（Right）由 `Stop→killSessionShellProcesses`
+          //   覆盖（即时，见下方登记段的排除说明）。
+          if suspended then
+            (BgTaskRegistry.reclaimSession(Some(sessionId), wsSendFn, rootSessionId) *>
+              FlowMapEventLog.append(workspace, projectName, nodeId, "bg-harvest",
+                // R-5 / 类⑦（stuck 自动恢复批 P2 附加小项，本板 #98 同源）：**补 cause**。
+                // 此前该行是「无原因的终态化留痕」——读者只能看到「被回收」而不知
+                // 「因何终态」，正是 #98「重启后 bg 会话回收把在飞节点判 cancelled
+                // （无 result/无通知）→ 下游 barrier 静默死锁」取证时的第一个盲区。
+                // cause 词表 = 与本次终态化同一个判据（挂起 / 取消 / 归还能力失败），
+                // 由桥消息文本单点派生（不改 AgentEvent 形态，与 CancelSource 同纪律）。
+                s"node finalized (${NodeEngine.finalizeCause(fo.message)}) — reclaimed bg session '$sessionId'; " +
+                  s"cause: ${fo.message.take(160)}"))
+              .handleErrorWith(e =>
+                logger.warn(s"Node '$nodeName' ($nodeId) bg-harvest reclaim failed: ${e.getMessage}"))
+              .void.start *> IO.unit
+          else IO.unit
         case Left(Right(_)) => IO.unit
       eventResult = outcome match
         case Left(r) => r
@@ -1830,6 +2486,24 @@ class NodeEngine(
             // 联动（notify=false = 占位推迟，见 cancelNode 头注）。
             cancelNode(nodeId, reason, CancelSource.classify(reason), detach = !deferDetach, notify = !deferDetach)
           else failNode(nodeId, fo.message)
+      // ③ 终态对称收割（noderpt 批 B 段 2026-09-11 作者裁定：一律存活 30 分钟再销毁）：
+      // 桥终态**四出口**（failed / cancelled / zombie(猝死) / completed）统一到这一个
+      // **登记点**——终态写点之后只登记窗口（`destroyAt` 字段 + 禁 spawn 表 +
+      // `node-destroy-scheduled` 事件），不杀进程；到点由 `sweepDestroyWindows` 收殓。
+      // blocked 出口在 `blockedNode` 内同款登记（口径一致）。
+      // **两条腿不登记**（各附理由）：
+      //   · 挂起腿（`suspended`）：中途换会话、非终态，进程已在上方即时收殓（③.5）；
+      //   · NodeCancel 腿（`outcome = Right(_)` = cancelSig 抢先）：人为/看门狗主动取消，
+      //     上方 `AgentCommand.Stop` → `killSessionShellProcesses` **即时收殓**（既有语义），
+      //     「窗口内进程仍在」对该腿不成立——登记会留下与事实不符的痕迹，故不登记
+      //     （其痕迹由既有 `cancelled` 事件承担）。
+      _ <- outcome match
+        case Right(_) => IO.unit
+        case _ if suspended => IO.unit
+        case _ =>
+          scheduleDestroy(nodeId, List(sessionId), eventResult match
+            case Right(_) => "completed"
+            case Left(fo) => NodeEngine.finalizeCause(fo.message))
     yield ()).guarantee {
       // 任意退出路径（正常/崩溃/异常/cancel）三表对称移除——与既有清理段
       // （agentRegistry/running/nodeSessions :947-953）同点幂等（先到先清）。
@@ -1993,7 +2667,10 @@ class NodeEngine(
               status = NodeLifecycle.Running,
               startedAt = Some(now),
               sessionRef = Some(sessionId),
-              sessionRefVerify = verifySessionId))), NodeEngine.FlipOutcome.Done)
+              sessionRefVerify = verifySessionId,
+              // 销毁窗口撤销（noderpt 批 B 段，与 runWithAgent 翻转同点同语义）：
+              // Loop 节点重激活/重跑 ⇒ 旧窗口作废（绝不按旧计划销毁在跑的进程）。
+              destroyAt = None))), NodeEngine.FlipOutcome.Done)
           case Some(fresh) if fresh.status == NodeLifecycle.Running =>
             (s, NodeEngine.FlipOutcome.LostRace)
           case Some(fresh) if fresh.in.exists(up => !fresh.deliveredTo.contains(up)) =>
@@ -2006,6 +2683,8 @@ class NodeEngine(
       _ <- flipOutcome match
         case NodeEngine.FlipOutcome.Done =>
           running.update(m => m + (nodeId -> cancelSig)) *>
+            // 销毁窗口撤销第二步（noderpt 批 B 段）：上一轮双会话解出禁 spawn 表。
+            (node.sessionRef.toList ++ node.sessionRefVerify.toList).traverse_(BgTaskRegistry.reopenSession) *>
             flipped.nodes.get(nodeId).traverse_(n =>
               emitWithChain("nodeUpdated", nodeId, NodePayload.buildNodeJson(n, System.currentTimeMillis())))
         case NodeEngine.FlipOutcome.LostRace =>
@@ -2020,9 +2699,32 @@ class NodeEngine(
     yield ()
 
   /** 终态双会话销毁（裁定 B）：停 agent + 停桥 + 注销 registry。MCP release 与
-    * running/nodeSessions 清理在 spawnAndRunLoop 的 guarantee 内一并做（此处只管会话）。 */
-  private def destroyLoopSessions(worker: LoopSession, verify: LoopSession): IO[Unit] =
-    resources.agentRegistry.update(_ - worker.sessionId - verify.sessionId) *>
+    * running/nodeSessions 清理在 spawnAndRunLoop 的 guarantee 内一并做（此处只管会话）。
+    *
+    * noderpt 批 B 段（2026-09-11 作者裁定 ④）**同批修**两处既有缺口：
+    *   ① **申报槽清理**：`NodeReportRegistry.remove(worker) + remove(verify)` —— 此前双会话
+    *      终态不 remove ⇒ Loop 的 `node_report` 申报残留（设计稿 §2 缺口清单第 6 条）。
+    *   ② **双会话的进程/任务收殓**：此前本函数只停 actor，**从不**调用
+    *      `BgTaskRegistry.reclaimSession` ⇒ worker/verify 名下的后台进程、在册任务与输出
+    *      留存区永不收殓（③ 补的对称化只覆盖普通节点）。
+    *      **时点按作者裁定「Loop 终态同样走 30 分钟窗口口径（与③一致）」**——收殓动作集合
+    *      与③逐字相同（同一个 `reclaimSession`），但由窗口到期执行：
+    *      · 登记 = 本函数的 `scheduleDestroy(nodeId, List(worker, verify), …)`（窗口内禁
+    *        这两个 sessionId 的新 spawn，与普通节点同表同判据）；
+    *      · 到点 = `sweepDestroyWindows` → `destroyNodeSessions` → `destroyTargetSessions`
+    *        取 `sessionRef`（= worker）**与** `sessionRefVerify`（= verify）**两个**会话逐个
+    *        `reclaimSession`（杀进程树 + 注销 registry + 逐条 `finalizeTask` + 释放
+    *        `ShellSession.sessions` 条目 + WS `backgroundTaskUpdate(status="cancelled")` 帧）。
+    *      ⇒ 本函数**不**即时 reclaim：就地收殓会让窗口口径对 Loop 失效（与本段硬口径冲突），
+    *      故把「双会话收殓」落在窗口执行体上，并由 `LoopNodeSpec` ⑦（双会话 + 申报槽）与
+    *      `NodeBgReclaimSpec` R1/R7（窗口/到点/幂等）钉死。
+    *      停 actor / 停桥 / 注销 registry 保持不变（会话实体拆除不随窗口变——窗口保的是
+    *      进程与任务（可取证面），不是已死的 agent actor）。 */
+  private def destroyLoopSessions(nodeId: String, worker: LoopSession, verify: LoopSession): IO[Unit] =
+    scheduleDestroy(nodeId, List(worker.sessionId, verify.sessionId), "loop-terminal") *>
+      NodeReportRegistry.remove(worker.sessionId) *>
+      NodeReportRegistry.remove(verify.sessionId) *>
+      resources.agentRegistry.update(_ - worker.sessionId - verify.sessionId) *>
       system.stop(worker.agentRef).handleErrorWith(_ => IO.unit) *>
       system.stop(worker.bridgeRef).handleErrorWith(_ => IO.unit) *>
       system.stop(verify.agentRef).handleErrorWith(_ => IO.unit) *>
@@ -2291,11 +2993,11 @@ class NodeEngine(
       s <- store.mutate { st =>
         st.nodes.get(nodeId) match
           case Some(fresh) =>
-            st.copy(nodes = st.nodes.updated(nodeId, fresh.copy(
+            st.copy(nodes = st.nodes.updated(nodeId, withoutReportPending(fresh.copy(
               status = NodeLifecycle.Completed,
               result = Some(resultText),
               completedAt = Some(now),
-              ttlExpireAt = Some(now + NodeEngine.TtlDisplayMs))))
+              ttlExpireAt = Some(now + NodeEngine.TtlDisplayMs)))))
           case None => st
       }
       _ <- s.nodes.get(nodeId) match
@@ -2515,13 +3217,13 @@ class NodeEngine(
       s <- store.mutate { st =>
         st.nodes.get(nodeId) match
           case Some(fresh) if fresh.status == NodeLifecycle.Running =>
-            st.copy(nodes = st.nodes.updated(nodeId, fresh.copy(
+            st.copy(nodes = st.nodes.updated(nodeId, withoutReportPending(fresh.copy(
               status = NodeLifecycle.Blocked,
               result = Some(BlockedReader.render(feedback) + finalText.fold("")("\n\n" + _)),
               blockedFeedback = Some(feedback),
               blockCount = fresh.blockCount + 1,
               completedAt = Some(now),
-              ttlExpireAt = None)))
+              ttlExpireAt = None))))
           case _ => st // 节点已消失 / 状态已变 → 拒写（R2 竞态纪律）
       }
       _ <- s.nodes.get(nodeId) match
@@ -2530,6 +3232,10 @@ class NodeEngine(
           emitWithChain("nodeUpdated", nodeId, NodePayload.buildNodeJson(bn, now)) *>
             logger.warn(s"Node '${bn.name}' blocked — $summary") *>
             FlowMapEventLog.append(workspace, projectName, nodeId, "blocked", summary) *>
+            // ③ blocked 出口的销毁窗口登记（noderpt 批 B 段：与桥终态四出口**口径一致**
+            // ——终态时刻只登记、到点由 `sweepDestroyWindows` 收殓；blocked 节点在窗口内
+            // 仍可被 reactivate，届时 `withdrawDestroyWindow` / 翻转点清零撤销窗口）。
+            scheduleDestroy(bn.id, destroyTargetSessions(bn), "blocked") *>
             feedbackRouter.route(bn, feedback)
         case Some(other) =>
           logger.info(s"Node '$nodeId' state changed to '${other.status}' before blocked finalize — refused (fresh-read discipline)")
@@ -2543,12 +3249,12 @@ class NodeEngine(
       s <- store.mutate { st =>
         st.nodes.get(nodeId) match
           case Some(fresh) =>
-            st.copy(nodes = st.nodes.updated(nodeId, fresh.copy(
+            st.copy(nodes = st.nodes.updated(nodeId, withoutReportPending(fresh.copy(
               status = NodeLifecycle.Failed,
               result = Some(err),
               completedAt = Some(now),
               // 2026-09-07 作者裁定：failed 无 TTL 强制清——死亡现场保留待上层裁决。
-              ttlExpireAt = None)))
+              ttlExpireAt = None))))
           case None => st
       }
       _ <- s.nodes.get(nodeId) match
@@ -2614,12 +3320,12 @@ class NodeEngine(
       s <- store.mutate { st =>
         st.nodes.get(nodeId) match
           case Some(fresh) =>
-            st.copy(nodes = st.nodes.updated(nodeId, fresh.copy(
+            st.copy(nodes = st.nodes.updated(nodeId, withoutReportPending(fresh.copy(
               status = NodeLifecycle.Cancelled,
               result = Some(rendered), // R2：取消原因落盘（此前 cancelled result 恒空）
               completedAt = Some(now),
               // 2026-09-07 作者裁定：cancelled 无 TTL 强制清——保留主图待上层处置。
-              ttlExpireAt = None)))
+              ttlExpireAt = None))))
           case None => st
       }
       _ <- s.nodes.get(nodeId) match
@@ -3039,12 +3745,12 @@ class NodeEngine(
       s <- store.mutate { st =>
         st.nodes.get(target.id) match
           case Some(fresh) if MergeNodePolicy.haltsOnFailure(fresh) =>
-            st.copy(nodes = st.nodes.updated(target.id, fresh.copy(
+            st.copy(nodes = st.nodes.updated(target.id, withoutReportPending(fresh.copy(
               status = NodeLifecycle.Blocked,
               result = Some(MergeNodePolicy.renderBlocked(feedback)),
               blockedFeedback = Some(feedback),
               completedAt = Some(now),
-              ttlExpireAt = None)))
+              ttlExpireAt = None))))
           case _ => st // 状态已变（并发终态化）→ 拒写（R2 竞态纪律）
       }
       _ <- s.nodes.get(target.id) match
@@ -3374,6 +4080,131 @@ object NodeEngine:
 
   /** 节点 id 前缀（sessionId = "node-<uuid>"）。 */
   val SessionPrefix = "node-"
+
+  // ── 未申报提醒阶梯常量（noderpt 批 A 段 2026-09-11 作者裁定）──────────────────
+
+  /** 提醒轮注入文本的**专用前缀头**（文案首行；agent 与取证双面可识别——与
+    * `[NODE-MESSAGE]`（分发器 NodeMessage 通道）区分：本头 = 引擎未申报兜底）。 */
+  val NodeReportReminderPrefix: String = "[NODE-REPORT-REMINDER]"
+
+  /** 未申报留痕事件类型（FlowMapEventLog）：阶梯期每拍一条 + quiescent 档周期一条。 */
+  val NodeReportMissingEventType: String = "node-report-missing"
+
+  /** 死会话 bg-wait 豁免留痕事件类型（代裁 6：把「不算死」的节点标进事件供人监督）。 */
+  val DeadSessionBgWaitEventType: String = "dead-session-bg-wait"
+
+  /** 提醒轮注入的 ExternalEvent source 标签（agent 侧 `<system-reminder>` 头内标识；
+    * 不进可见气泡白名单 = 不给前端造「用户气泡」，提醒面靠事件 + transcript）。 */
+  val NodeReportReminderSource: String = "node-report-reminder"
+
+  /** 事件 `stage` 取值：阶梯期（有注入） / quiescent（只留痕不注入）。 */
+  val NodeReportStageActive: String = "active"
+  val NodeReportStageQuiescent: String = "quiescent"
+
+  // ── 释放唤醒常量（noderpt 批 F2，2026-09-11 复核 D2 修复）──────────────────────
+  //
+  // 与提醒阶梯同族但**不同语义**：提醒 = 「你没申报」（注入提醒轮 + 事件）；
+  // 释放唤醒 = 「你申报了，但桥没观测到那一轮」（唤醒桥复检放行 + 事件，不提醒）。
+  // 前缀头/ source / 事件类型三者单点区分，取证侧不必猜是哪条腿。
+
+  /** 释放唤醒注入文本的专用前缀头（首行；与 `[NODE-REPORT-REMINDER]` 区分）。 */
+  val NodeReportReleaseWakePrefix: String = "[NODE-REPORT-RELEASE-WAKE]"
+
+  /** 释放唤醒注入的 ExternalEvent source 标签。 */
+  val NodeReportReleaseWakeSource: String = "node-report-release-wake"
+
+  /** 释放唤醒留痕事件类型（FlowMapEventLog）：每次唤醒一条（单发记账见 `releaseWakeSent`）。 */
+  val NodeReportReleaseWakeEventType: String = "node-report-release-wake"
+
+  /** 释放唤醒注入文案（并非「你没申报」的提醒——申报**已到**，缺的只是桥的观测）：
+    * 要求 agent 用本轮回复给出节点最终结果文本（重述即可，无需再做工作），该轮回复经桥
+    * 复检后作为节点结果投递。**不含判罚/威胁措辞**（与提醒文案同纪律：本族永不判 failed）。 */
+  def reportReleaseWakeText(nodeName: String): String =
+    s"""$NodeReportReleaseWakePrefix 节点 $nodeName 的 node_report 申报已收到，但完成观察桥未观测到产生该申报的那一轮
+       |（NodeMessage / 即时注入轮的收尾不产生完成事件，引擎据此补一次唤醒）。
+       |请直接用本轮回复给出该节点的**最终结果文本**——已无补充时重述上一轮的最终结论即可；
+       |无需再做任何工具调用或额外工作，本轮回复将作为节点结果放行并投递下游。
+       |本次唤醒不判罚失败、不终止会话、不杀进程。""".stripMargin
+
+  /** 释放唤醒留痕 summary（`k=v` 单空格分隔，与 [[reportMissingSummary]] 同构，可被
+    * [[parseReportMissingSummary]] 解析）：pendingSince（未申报起点）· delivered（注入是否达）。 */
+  def reportReleaseWakeSummary(sessionId: String, pendingSince: Long, delivered: Boolean): String =
+    s"node_report declaration present but the completion bridge never observed the declaring turn — " +
+      s"release wake injected: stage=release-wake session=$sessionId pendingSince=$pendingSince delivered=$delivered"
+
+  // ── 终态延迟销毁窗口常量（noderpt 批 B 段 2026-09-11 作者裁定：一律存活 30 分钟再销毁）──
+
+  /** 终态销毁登记事件（写点 = 终态时刻的 `scheduleDestroy`；窗口开启的唯一痕迹——
+    * failed/cancelled 与 completed/blocked 口径一致，挂起腿不写）。 */
+  val DestroyScheduledEventType: String = "node-destroy-scheduled"
+
+  /** 终态销毁完成事件（写点 = `sweepDestroyWindows` 到点回收；summary 含 destroyAt /
+    * 会话清单 / 被收殓任务数，事后可与 `node-destroy-scheduled` 对齐「窗口是否走完」）。 */
+  val DestroyedEventType: String = "node-destroyed"
+
+  /** 窗口撤销事件（写点 = `sweepDestroyWindows` 发现「带 destroyAt 的节点已非终态」=
+    * 窗口内被 reactivate/重跑 ⇒ 撤销窗口、解除禁 spawn；正常路径在翻转点即已清零，
+    * 本事件只覆盖异常残留）。 */
+  val DestroyWithdrawnEventType: String = "node-destroy-withdrawn"
+
+  /** 档位人话标签（阈值 ms → "10min"/"1h"/"10s"）——提醒文案与事件共用单点。 */
+  def reportRungLabel(ms: Long): String =
+    if ms > 0 && ms % 3600000L == 0 then s"${ms / 3600000L}h"
+    else if ms > 0 && ms % 60000L == 0 then s"${ms / 60000L}min"
+    else s"${ms / 1000L}s"
+
+  /** 提醒轮注入文案（作者裁定逐字要素：「你已交棒但未调用 node_report；请立即申报
+    * pass/fail/blocked」+ 当前档位）。**不含任何判罚/威胁措辞**——本阶梯永不判 failed
+    * （相对设计稿 §4.2 的核心改判），文案不得暗示「否则会失败」。
+    * 实际投递文本 = 本文案**原文**（首行前缀头 `[NODE-REPORT-REMINDER]`），经
+    * `AgentCommand.ExternalEvent(source = NodeReportReminderSource, eventType = "reminder")`
+    * 进节点会话唤醒轮——不叠 `[NODE-MESSAGE]` 头（那条是分发器 NodeMessage 通道专用，
+    * 前缀头单点区分来源；注入通道差异见 [[injectReminderTurn]]）。 */
+  def reportReminderText(nodeName: String, rung: Int, maxRungs: Int, rungMs: Long, elapsedMs: Long): String =
+    s"""$NodeReportReminderPrefix 你已交棒但未调用 node_report；请立即申报 pass/fail/blocked。
+       |（引擎未申报兜底 · 第 $rung/$maxRungs 拍 · 档位 ${reportRungLabel(rungMs)} · 已等待 ${elapsedMs / 1000}s · 节点 $nodeName）
+       |你的 turn 已结束但引擎没有收到终态申报，节点因此保持 Running、结果未投递下游。请调用 node_report 申报 pass / fail / blocked（附 detail），随后照常输出收尾报告。
+       |本提醒不判罚失败、不终止会话、不杀进程——只是提醒；你不申报则该节点一直保持 Running 等人工处置。""".stripMargin
+
+  /** `node-report-missing` 的结构化 summary（`k=v` 单空格分隔，含 `=` 的 token 由
+    * [[parseReportMissingSummary]] 单点解析——`FlowMapEventLog.append` 的顶层只有
+    * ts/type/project/nodeId/summary 五字段，扩展字段一律进 summary，与
+    * `FlowMapEventLog.chainArchivedSummary` 先例同构）。字段清单：
+    *   stage（active|quiescent）· rung（第几拍，形如 `3/8`）· rungMs（该拍阈值）
+    *   · elapsedMs（已等待）· pendingSince（= reportPendingSince）· reminderCount
+    *   · ladderExhausted（末拍/之后为 true）· delivered（仅阶梯期有：提醒轮是否投递达）。 */
+  def reportMissingSummary(
+    stage: String,
+    rung: Int,
+    maxRungs: Int,
+    rungMs: Long,
+    elapsedMs: Long,
+    pendingSince: Long,
+    reminderCount: Int,
+    ladderExhausted: Boolean,
+    delivered: Option[Boolean]
+  ): String =
+    val base = List(
+      s"stage=$stage",
+      s"rung=$rung/$maxRungs",
+      s"rungMs=$rungMs",
+      s"elapsedMs=$elapsedMs",
+      s"pendingSince=$pendingSince",
+      s"reminderCount=$reminderCount",
+      s"ladderExhausted=$ladderExhausted"
+    ) ++ delivered.map(d => s"delivered=$d").toList
+    s"node finished without a node_report declaration — ${base.mkString(" ")}"
+
+  /** summary 解析（结构化字段单点，消费者免手工切分；非 `k=v` token 忽略）。 */
+  def parseReportMissingSummary(summary: String): Map[String, String] =
+    summary.split("\\s+").iterator
+      .filter(t => t.indexOf('=') > 0)
+      .map { t =>
+        val i = t.indexOf('=')
+        t.substring(0, i) -> t.substring(i + 1)
+      }
+      .toMap
+
 
   // ── P2（stuck 自动恢复批）：runtime 定位键修正（硬依赖 2，正交实验已证**正**）──
   //

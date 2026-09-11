@@ -113,7 +113,9 @@ class NebulaDeliveryRedeliverySpec extends FunSuite:
           rootSid,
           "v8proj",
           FeedbackRouter.ModeAuto,
-          (_, _, _) => IO.unit
+          (_, _, _) => IO.unit,
+          // noderpt 批 A 段：本 fixture 主题 = 未消费结果重投 ⇒ 显式关腿 2（生产默认开）。
+          reportGateHold = Some(false)
         )
       yield (store, engine, resources, recorded, rootSid, rootRef)
       val (store, engine, resources, recorded, rootSid, rootRef) = io.unsafeRunSync()

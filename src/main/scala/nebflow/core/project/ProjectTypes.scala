@@ -379,7 +379,37 @@ case class NodeDef(
     * 节点 append 进本节点 in）清空。可见性：NodePayload 条件字段 + mount-stalled
     * 事件 reason 明示「待承接」。
     * 旧 flow-map.json 无此键 → withDefaults 解码 Nil（零迁移）。 */
-  pendingSuccession: List[String] = Nil
+  pendingSuccession: List[String] = Nil,
+  /** 未申报计时起点（noderpt 批 A 段 2026-09-11 作者裁定）：节点会话交棒
+    * （观察桥收到 `AgentEvent.Completed`）时 `NodeReportRegistry` 申报槽为空 ⇒
+    * 引擎置本字段（**只置不重**——后续 Completed 不改起点，NodeMessage 重入也不重置）。
+    *
+    * 唯一清表条件 = 该会话任一 `node_report` 申报（清表后由既有 `drain` 分流终态化）；
+    * 终态/挂起出口（`NodeEngine.cleanupRunTables`）与新一轮翻转
+    * （`flipToRunning` / runWithAgent 的 CAS 翻转 = 新会话）同点清零。
+    *
+    * 落盘的理由（硬约束）：计时必须跨宿主重启存活——扫描腿在 `ProjectActor.TtlTick`
+    * （30s 节拍）上跑，禁止 per-node fiber 计时器（宿主重启即丢）。
+    * 旧 flow-map.json 无此键 → withDefaults 解码 None（零迁移）。 */
+  reportPendingSince: Option[Long] = None,
+  /** 未申报提醒拍数（同一批）：每**注入**一拍 +1（CAS 单发；quiescent 档不递增）。
+    * 到顶只停止注入，永不判 failed、永不杀会话（作者裁定）。与
+    * [[reportPendingSince]] 同点清零。旧 flow-map.json 无此键 → 解码 0（零迁移）。 */
+  reportReminderCount: Int = 0,
+  /** 终态延迟销毁登记时刻（noderpt 批 B 段 2026-09-11 作者裁定「一律存活 30 分钟再销毁」）：
+    * 节点**终态化瞬间**置 `destroyAt = now + Defaults.NodeDestroyWindowMs`（默认 30min），
+    * 时刻只登记、**不杀进程**——窗口内进程/任务照跑、输出照写、允许读取取证，仅禁止
+    * 新 spawn（`BgTaskRegistry.finalizedSessions` 表）；到点由
+    * `NodeEngine.sweepDestroyWindows`（`ProjectActor.TtlTick` 30s）执行
+    * `reclaimSession`（杀进程树 + 注销 registry + 逐条 finalizeTask + 释放
+    * `ShellSession.sessions` 条目 + WS `backgroundTaskUpdate(status="cancelled")` 帧）
+    * 后清零（幂等）。
+    *
+    * 写入点 = 桥终态四出口（completed/failed/cancelled/zombie）与 blocked 出口的
+    * `scheduleDestroy`（挂起腿与 NodeCancel 腿不登记，见 NodeEngine 注）；清除点 =
+    * 销毁完成（扫描腿）/ 新一轮翻转回 Running（窗口撤销）/ 节点非终态时扫描腿自愈。
+    * 旧 flow-map.json 无此键 → `withDefaults` 解码 None（零迁移，先例 sessionRef 同款）。 */
+  destroyAt: Option[Long] = None
 )
 
 object NodeDef:
@@ -402,6 +432,10 @@ object NodeDef:
  *     true——mount-enforce 批 payload 契约，缺失=非 merge）；
  *   - blockedFeedback：**仅 status==blocked 携带**（20260907 上下文经济学批裁定②
  *     ——非 blocked 终态的历史残留不进默认载荷；历史参照走 detail 补挂/归档）。
+ *   - bgWait：**仅 bg-wait 自持的 running 节点携带**（僵尸收敛批 2026-09-06）。
+ *   - reportPendingSince / reportReminderCount：**仅 status==running 且未申报计时
+ *     已置携带**（noderpt 批 A 段 2026-09-11：已交棒但未 node_report 的节点——
+ *     取证/前端据此辨「待申报」Running 态，两键成对、绝不在终态节点泄漏）。
  *   - notifySentAt：**仅异常终态（failed/cancelled）且已上报携带**（归档语义批
  *     2026-09-07「送达即移」——前端链判据据此判断异常终态「已上报可归档」；与
  *     deps/plugins 同构条件字段，非命中不带 = 零字段漂移）。completed 无上报要求
@@ -525,6 +559,25 @@ object NodePayload:
       // bgWait 条件序列化（僵尸收敛批 2026-09-06）：仅 bg-wait 自持的 running 节点
       // 带——命中才产出，未命中节点 payload 字段集零变化（既有条件字段断言零影响）。
       val bgWaitFields = node.bgWait.toList.map(w => "bgWait" -> w.asJson)
+      // 未申报计时条件序列化（noderpt 批 A 段 2026-09-11）：**仅 status==running 且
+      // 计时已置**才带——两键成对（reportPendingSince = 交棒时刻 ms；reportReminderCount
+      // = 已注入拍数）。未命中节点字段集零变化（与 bgWait/deps 条件字段同构）；终态
+      // 节点即使字段有残留也不带（与 bgWait 的「不泄漏过期态」同纪律）。观测面：
+      // 前端/取证可直接辨「已交棒待申报」的 Running 节点。
+      val reportPendingFields =
+        if node.status == NodeLifecycle.Running && node.reportPendingSince.isDefined then
+          List(
+            "reportPendingSince" -> node.reportPendingSince.asJson,
+            "reportReminderCount" -> node.reportReminderCount.asJson
+          )
+        else Nil
+      // destroyAt 条件序列化（noderpt 批 B 段 2026-09-11）：**仅终态且已登记**才带——
+      // 值是窗口到点的 ms 时刻（前端/取证可算「还有多久销毁」），窗口结束即随字段清零
+      // 消失。未登记节点（含全部 Running 节点）payload 字段集零变化（与 notifySentAt
+      // 的「仅异常终态携带」同纪律）。
+      val destroyAtFields =
+        if NodeLifecycle.Terminal.contains(node.status) then node.destroyAt.toList.map(t => "destroyAt" -> t.asJson)
+        else Nil
       // P2 retry 条件序列化（spec §2.3；与 merge 条件字段同构）：仅配置了 retry 的
       // 节点带——未配置节点 payload 字段集零变化。gen 条件序列化（与 loopRound 同构）：
       // >0 才带（0 = 未回跳过，缺键 = 同义）——前端「attempt N」徽标数据载体（渲染
@@ -554,7 +607,7 @@ object NodePayload:
       val pendingSuccessionFields =
         if node.pendingSuccession.nonEmpty then List("pendingSuccession" -> node.pendingSuccession.asJson)
         else Nil
-      Json.obj((baseFields ++ outFields ++ legacyConfigFields ++ hasResultFields ++ taskPreviewFields ++ depsFields ++ feedbackFields ++ pluginFields ++ notifyFields ++ mergeFields ++ loopFields ++ bgWaitFields ++ retryFields ++ genFields ++ notifySentAtFields ++ pendingSuccessionFields ++ chainFields)*)
+      Json.obj((baseFields ++ outFields ++ legacyConfigFields ++ hasResultFields ++ taskPreviewFields ++ depsFields ++ feedbackFields ++ pluginFields ++ notifyFields ++ mergeFields ++ loopFields ++ bgWaitFields ++ reportPendingFields ++ destroyAtFields ++ retryFields ++ genFields ++ notifySentAtFields ++ pendingSuccessionFields ++ chainFields)*)
 
 /** Flow Map 活动区（§2.6，磁盘 flow-map.json）。 */
 case class FlowMapState(

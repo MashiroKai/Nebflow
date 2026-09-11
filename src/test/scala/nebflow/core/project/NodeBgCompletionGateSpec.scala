@@ -160,7 +160,15 @@ class NodeBgCompletionGateSpec extends CatsEffectSuite:
     ws: os.Path,
     system: ActorSystem,
     res: SharedResources,
-    bgWaitCapMs: Long = 3_600_000L
+    bgWaitCapMs: Long = 3_600_000L,
+    // noderpt 批 A 段（2026-09-11）：完成门两条腿的显式注入。
+    //  - bgGateCompletionHold = **true**：本 spec 的主题就是腿 1（后台任务存活 hold）
+    //    的既有行为（G1–G8），生产默认已封存（false）⇒ 此处置回旧行为作对照；
+    //  - reportGateHold = **false**：腿 2（未申报不终态化）不在本 spec 主题内，且其
+    //    桩 LLM 不申报 ⇒ 打开会让 G1/G2/G5/G6 全部滞留 Running（腿 2 的默认开行为由
+    //    NodeReportReminderSpec + G9 覆盖）。
+    bgGateCompletionHold: Boolean = true,
+    reportGateHold: Boolean = false
   ): IO[ProjectRuntime] =
     for
       store <- FlowMapStore.open(name, ws.toString)
@@ -173,7 +181,9 @@ class NodeBgCompletionGateSpec extends CatsEffectSuite:
         rootSessionId = "nebula-root",
         projectName = name,
         emitEvent = (_, _, _) => IO.unit,
-        bgWaitCapMs = bgWaitCapMs
+        bgWaitCapMs = bgWaitCapMs,
+        bgGateCompletionHold = Some(bgGateCompletionHold),
+        reportGateHold = Some(reportGateHold)
       )
       pd = ProjectDef(name = name, workspace = ws.toString, agentFile = (ws / "AGENTS.md").toString, createdAt = System.currentTimeMillis())
       rt = ProjectRuntime(pd, store, engine, system, res, None)
@@ -525,5 +535,44 @@ class NodeBgCompletionGateSpec extends CatsEffectSuite:
       _ <- system.stopAll.handleErrorWith(_ => IO.unit)
     yield
       assertEquals(done.status, NodeLifecycle.Cancelled, "giveUp Cancelled via bridge must cancel the held node (correct behavior, no hang)")
+  }
+
+  // ── G9 封存档（noderpt 批 A 段改点①）：flag 关 ⇒ 不 hold（等待型任务存续也放行）──
+
+  test("G9: with the bg completion-hold sealed, a pending wait-set task no longer blocks finalization") {
+    val ws = tempRoot / "ws-g9"
+    os.makeDir.all(ws)
+    val system = ActorSystem(s"bg-g9-${scala.util.Random.nextInt(100000)}")
+    val llm = BgStubLlm()
+    for
+      res <- mkResources(system, tempRoot, llm.handle)
+      _ <- IO(llm.res = res)
+      recorded <- registerRecorder(res, system, "nebula-root")
+      // 本用例 = 封存档（生产默认）：bgGateCompletionHold=false
+      rt <- mountProject("bg-g9", ws, system, res, bgGateCompletionHold = false)
+      _ <- createNode("bg-g9", ws, "sealed-a", "result-SEALED", res = res, system = system)
+      // 注意：封存后节点**首轮即终态化**（不再有 hold 窗口）⇒ 不能用 waitIdle（会话
+      // 已被清理）。等待型任务在首轮 LLM 请求时由桩登记 —— 等登记可见即可。
+      _ <- waitUntil(15.seconds)(llm.nodeSessions.get.map(_.nonEmpty))
+      sids <- llm.nodeSessions.get
+      nodeSid = sids.headOption.getOrElse(fail("stub never saw the node session"))
+      // 登记在册的等待型任务必须**不**拦节点（封存后的正面收益：bg 存活不再是完成
+      // 门的判据）
+      waiting <- BgTaskRegistry.waitingFor(nodeSid)
+      _ <- waitUntil(20.seconds)(byName(rt, "sealed-a").map(n => NodeLifecycle.Terminal.contains(n.status)))
+      done <- byName(rt, "sealed-a")
+      imms <- recordedImmediate(recorded)
+      events <- readEvents(ws)
+      jobs <- llm.jobIds.get
+      _ <- jobs.traverse_(BgTaskRegistry.unregister).attempt.void
+      _ <- system.stopAll.handleErrorWith(_ => IO.unit)
+    yield
+      assertEquals(done.status, NodeLifecycle.Completed,
+        "sealed gate: a pending wait-set task must not hold the node")
+      assertEquals(done.result, Some("result-SEALED"), "first-turn text finalizes immediately")
+      assert(imms.exists(_.text.contains("[Node 'sealed-a' completed]")), "delivery is not delayed by the bg task")
+      assert(waiting.nonEmpty, "the wait-set task was registered and present (evidence the gate is what changed)")
+      assert(!events.exists(_.contains("\"bg-wait\"")), "no bg-wait hold event may be emitted when sealed")
+      assert(!events.exists(_.contains("\"bg-released\"")), "no release event either (no hold happened)")
   }
 end NodeBgCompletionGateSpec

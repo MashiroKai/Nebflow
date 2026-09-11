@@ -89,7 +89,9 @@ class RedeliveryFreshnessGateSpec extends FunSuite:
         rootSid = s"fresh-root-$name"
         rootRef <- system.spawn(recorderBehavior(recorded), s"fresh-rec-$name")
         engine = new NodeEngine(store, system, resources, _ => IO.unit, workspace.toString,
-          rootSid, "freshproj", FeedbackRouter.ModeAuto, (_, _, _) => IO.unit)
+          rootSid, "freshproj", FeedbackRouter.ModeAuto, (_, _, _) => IO.unit,
+          // noderpt 批 A 段：本 fixture 主题 = 重投新鲜度门 ⇒ 显式关腿 2（生产默认开）。
+          reportGateHold = Some(false))
       yield (store, engine, resources, recorded, rootSid, rootRef)
       val (store, engine, resources, recorded, rootSid, rootRef) = io.unsafeRunSync()
       resources.agentRegistry
