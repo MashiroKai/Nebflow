@@ -27,6 +27,8 @@ let searchErrorKind = null; // null | 'auth' | 'neblinkOff' | 'retryable'（api.
 let listErrorKind = null;   // null | 'auth' | 'neblinkOff' | 'retryable'（好友列表加载失败分态，F4 20260910：
                             // 「列表失败」≠「空列表」——失败且无缓存数据时以错误态替代空态文案；
                             // 有缓存数据仍 keep-last-known 不打扰）
+                            // R4 20260911：同一分态亦由「新的朋友」请求区消费（buildRequests——
+                            // 失败≠「暂无好友请求」，同规则：仅有缓存数据时 keep-last-known）
 
 // ── 红点语义（0904 批次，微信常识）：未看过的请求才亮。展开「新的朋友」
 // 即视为已看（与查看后即清的微信口径一致），新 friend_event 再亮；同意/
@@ -559,6 +561,32 @@ function buildResultCard() {
 function buildRequests() {
   const wrap = el('div', 'fm-requests');
   if (incoming.length === 0 && outgoing.length === 0) {
+    if (listErrorKind) {
+      // R4（20260911）：请求区此前无错误分支——加载失败时 incoming/outgoing
+      // 保持 []，于是「失败」被折叠成「暂无好友请求」（用户以为真的没有请求）。
+      // 与列表区同规则：仅在无缓存数据（in/out 皆空）时以错误态替代空态；
+      // 有缓存数据仍 keep-last-known 不打扰。分态与列表区同源（api.errKind）：
+      // auth → 登录失效 + 重新登录；neblinkOff → Neblink 未启用；
+      // 其余（retryable）→ 请求区专属文案 contacts.requestsError + 重试。
+      const errWrap = el('div', 'fm-empty');
+      errWrap.setAttribute('data-fm-req-error', listErrorKind); // 断言契约（与视觉文案解耦，镜像 data-fm-list-error）
+      if (listErrorKind === 'auth') {
+        errWrap.appendChild(el('div', null, t('contacts.searchAuthError')));
+        const relogin = el('button', 'glass-control fm-login-btn', t('contacts.relogin'));
+        relogin.addEventListener('click', () => openLoginModal());
+        errWrap.appendChild(relogin);
+      } else if (listErrorKind === 'neblinkOff') {
+        errWrap.appendChild(el('div', null, t('contacts.neblinkOff')));
+      } else {
+        errWrap.appendChild(el('div', null, t('contacts.requestsError')));
+        const retry = el('button', 'glass-control', t('contacts.retry'));
+        retry.style.marginTop = '8px';
+        retry.addEventListener('click', () => { listErrorKind = null; refresh(); });
+        errWrap.appendChild(retry);
+      }
+      wrap.appendChild(errWrap);
+      return wrap;
+    }
     wrap.appendChild(el('div', 'fm-empty', t('contacts.noRequests')));
     return wrap;
   }
