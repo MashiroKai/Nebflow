@@ -590,8 +590,8 @@ function stampForwarded(id) {
 // 通知形态不变：仅好友消息既有角标三级，无横幅无提示音（08-18 裁定）。
 function maybeAutoForward(m, conv) {
   // SEALED (author ruling 2026-09-12): 封存期行为 early-return——门禁链与函数体
-  // 完整保留（调用点 :698 / 监听 :730-732 不动）。回退 = featureFlags.js 常量
-  // 改回 false。
+  // 完整保留（onFriendEvent 内调用点、initMessages 内 fm-trust-changed 监听
+  // 均不动）。回退 = featureFlags.js 常量改回 false。
   if (TRUST_SEALED) return;
   if (!m || !conv || !conv.friend) return;
   if (m.senderId !== conv.friend.userId) return; // incoming only
