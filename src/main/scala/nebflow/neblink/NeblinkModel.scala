@@ -356,7 +356,22 @@ case class PeerInfo(
   deviceSecret: String = "",
   capabilities: Map[String, String] = Map.empty,
   userDescription: String = "",
-  lastSeen: Long = System.currentTimeMillis()
+  lastSeen: Long = System.currentTimeMillis(),
+  /** C1 (2026-09-11 P2P 直连修复批): **every** endpoint the peer declared to the
+    * NebLink Server, preference-ordered (see [[EndpointPreference]]), `address`
+    * being `endpoints.head`.
+    *
+    * WHY: the namelist drops down to `endpoints.head` on the receiving side
+    * (`NeblinkClient.toNeblinkPeers`) — in the 2026-09-11 incident that head was
+    * an unreachable LAN address while a working Tailscale endpoint sat at index
+    * 1, so P2P could never come up. `address` alone is a single point of failure;
+    * this field is the candidate list the dial / execute sides walk.
+    *
+    * Empty (`Nil`) for peers built by paths that carry no server namelist
+    * (inbound presence route, test fixtures) — those fall back to `address`,
+    * i.e. pre-C1 behaviour. Defaulted ⇒ wire/JSON decoding stays backward
+    * compatible (`NeblinkModelSpec` "endpoints 缺省" 回归). */
+  endpoints: List[String] = Nil
 )
 
 object PeerInfo:
@@ -372,9 +387,70 @@ object PeerInfo:
       capabilities <- c.downField("capabilities").as[Option[Map[String, String]]].map(_.getOrElse(Map.empty))
       userDescription <- c.downField("userDescription").as[Option[String]].map(_.getOrElse(""))
       lastSeen <- c.downField("lastSeen").as[Option[Long]].map(_.getOrElse(System.currentTimeMillis()))
-    yield PeerInfo(deviceId, deviceName, platform, address, deviceSecret, capabilities, userDescription, lastSeen)
+      // C1: absent (all pre-existing persisted records / API payloads) ⇒ Nil.
+      endpoints <- c.downField("endpoints").as[Option[List[String]]].map(_.getOrElse(Nil))
+    yield PeerInfo(deviceId, deviceName, platform, address, deviceSecret, capabilities, userDescription, lastSeen, endpoints)
   }
 end PeerInfo
+
+/**
+ * Endpoint preference ordering (C1, 2026-09-11 P2P 直连修复批) — 方案 §3.3 目标口径.
+ *
+ * Order: `100.64.0.0/10` (Tailscale / CGNAT) → 本机同网段 (`/24`) → 其余.
+ * Rationale: a Tailscale address is reachable across networks by construction,
+ * while a LAN address only works on the same link — in the incident the server
+ * picked the LAN one and dialing it went out via the default gateway
+ * (`route -n get 192.168.1.145` → `gateway 192.168.2.1`). Same-subnet `/24` is
+ * the next best guess when Tailscale is absent.
+ *
+ * Pure and side-effect free so the ordering is unit-testable without a network;
+ * ties keep the server's original order (`sortBy` is stable), so a namelist that
+ * already arrives well-ordered is left untouched.
+ */
+object EndpointPreference:
+
+  /** Extract the host from `"http://100.x.y.z:8080"` (mirrors presence `extractHost`). */
+  def hostOf(url: String): String =
+    val stripped = url.replaceFirst("(?i)^https?://", "")
+    val slashIdx = stripped.indexOf('/')
+    val authority = if slashIdx >= 0 then stripped.substring(0, slashIdx) else stripped
+    // IPv6 literals are bracketed; keep them whole rather than splitting on ':'
+    if authority.startsWith("[") then
+      val close = authority.indexOf(']')
+      if close > 0 then authority.substring(1, close) else authority
+    else
+      val colonIdx = authority.indexOf(':')
+      (if colonIdx > 0 then authority.substring(0, colonIdx) else authority).trim
+
+  private def octets(host: String): Option[Vector[Int]] =
+    val parts = host.split('.')
+    if parts.length != 4 then None
+    else
+      val nums = parts.toVector.map(_.toIntOption.filter(n => n >= 0 && n <= 255))
+      if nums.forall(_.isDefined) then Some(nums.map(_.get)) else None
+
+  /** `100.64.0.0/10` — the Tailscale / CGNAT carrier-grade range. */
+  def isTailscaleHost(host: String): Boolean =
+    octets(host).exists(o => o(0) == 100 && o(1) >= 64 && o(1) <= 127)
+
+  /** `/24` prefix key (`"192.168.2."`) — the cheap "same LAN?" approximation. */
+  def subnet24(host: String): Option[String] =
+    octets(host).map(o => s"${o(0)}.${o(1)}.${o(2)}.")
+
+  /** Local `/24` prefixes derived from this device's own IPv4 addresses. */
+  def localPrefixesOf(localAddresses: List[String]): Set[String] =
+    localAddresses.flatMap(subnet24).toSet
+
+  /** Lower = tried first. 0 = Tailscale/CGNAT, 1 = same `/24` as a local NIC, 2 = the rest. */
+  def rank(url: String, localPrefixes: Set[String]): Int =
+    val host = hostOf(url)
+    if isTailscaleHost(host) then 0
+    else if subnet24(host).exists(localPrefixes.contains) then 1
+    else 2
+
+  /** Preference-ordered, de-duplicated candidate list (stable within a rank). */
+  def order(urls: List[String], localPrefixes: Set[String]): List[String] =
+    urls.filter(_.nonEmpty).distinct.sortBy(u => rank(u, localPrefixes))
 
 // ===== Neblink Config =====
 
