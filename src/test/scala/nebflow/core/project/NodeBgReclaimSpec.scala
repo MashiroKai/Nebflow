@@ -343,13 +343,25 @@ class NodeBgReclaimSpec extends CatsEffectSuite:
       _ <- IO(llm.res = res)
       wsFrames <- Ref.of[IO, List[Json]](Nil)
       rt <- mountProject("bg-r2", ws, system, res, wsFrames, bgWaitCapMs = 1200L)
+      // bgWait 是**瞬时字段**：hold 期置位（= 首轮收尾时刻，**早于** `waitNodeIdle` 返回）
+      // → cap 到点即清零。改前的「点对点 `waitUntil(bgWait.isDefined)`」与 1.2s caps
+      // 窗口竞速：只要 `waitNodeIdle` + 前序 wait 链耗时 > 1.2s（JIT/负载/GC 抖动即可，
+      // 本批实测 4 次运行命中 2 次）断言就整段落空——测的是**调度时延**不是契约。
+      // 改为**起点先行**的后台采样（20ms 一拍，先于 createNode 启动）：断言「hold 期确实
+      // 置过位」+「cap 出口清零」，判据强度不减、不再依赖调度巧合。
+      samples <- Ref.of[IO, List[String]](Nil)
+      sampler <- (byName(rt, "cap-a").attempt
+        .map(_.toOption.flatMap(_.bgWait).isDefined)
+        .flatMap(b => samples.update(_ :+ s"$b")) *> IO.sleep(20.millis)).foreverM.start
       _ <- createNode("bg-r2", ws, "cap-a", "result-CAP", res = res, system = system)
       nodeSid <- waitNodeIdle(res)
       _ <- waitUntil(10.seconds)(sessionTasksEmpty(nodeSid).map(!_))
-      // 首个 hold 期已置 bgWait（窗口收口前的既有行为）
-      _ <- waitUntil(10.seconds)(byName(rt, "cap-a").map(_.bgWait.isDefined))
       _ <- waitUntil(20.seconds)(
         byName(rt, "cap-a").map(n => NodeLifecycle.Terminal.contains(n.status)))
+      _ <- sampler.cancel
+      sampleLog <- samples.get
+      _ <- IO(println(s"[R2 sample] hold-period bgWait observed=${sampleLog.contains("true")} " +
+        s"(true=${sampleLog.count(_ == "true")}/$sampleLog.size polls @20ms)"))
       done <- byName(rt, "cap-a")
       _ <- rt.engine.sweepDestroyWindows()
       _ <- waitUntil(10.seconds)(sessionTasksEmpty(nodeSid)) // 收殓跑完
@@ -363,6 +375,8 @@ class NodeBgReclaimSpec extends CatsEffectSuite:
     yield
       assertEquals(done.status, NodeLifecycle.Failed, "wait cap must fail the node (never hang)")
       assert(done.result.exists(_.contains("wait cap exceeded")), s"cap annotation expected: ${done.result}")
+      assert(sampleLog.contains("true"),
+        s"the hold period must have set bgWait (sampled timeline: true=${sampleLog.count(_ == "true")}/${sampleLog.size})")
       // ⑤ 残留字段回归断言（实测 n-0931699e：status=completed 而 bgWait 非空）
       assertEquals(afterSweep.bgWait, None,
         "the bg-wait-cap exit must clear bgWait (regression: field used to linger forever)")
