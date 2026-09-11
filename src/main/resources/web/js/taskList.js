@@ -251,13 +251,21 @@ function buildNodeRow(node, project) {
   label.className = 'task-node-label';
   label.textContent = node.name || node.id;
   text.appendChild(label);
-  // project 已由分组头承载，meta 只标 agent；无 agent 不渲染（行更矮更净）。
+  // project 已由分组头承载，meta 只标节点自身信息：description 优先（agent 字段已
+  // 退役——新建节点恒 "general" 零信息量，节点行副行显示它等于空信息）；缺失
+  // （存量节点）→ 回落 agent 名；两者皆无 → 不渲染（行更矮更净，零空行）。
+  // 数据源 = 默认载荷 description（ProjectTypes.scala NodePayload 基础字段，随
+  // fetchFlowMap 快照与 WS 节点帧同构到达，零新增取数）。窄栏由 CSS 省略号截断，
+  // 悬停全文挂 metaEl.title——row.title 的「打开 Flow Map」语义与 aria-label 不动。
+  const desc = typeof node.description === 'string' ? node.description.trim() : '';
   const agent = typeof node.agent === 'string' ? node.agent : '';
-  if (agent) {
+  const metaText = desc || agent;
+  if (metaText) {
     const metaEl = document.createElement('span');
     metaEl.className = 'task-node-meta';
     metaEl.setAttribute('aria-hidden', 'true');
-    metaEl.textContent = agent;
+    metaEl.textContent = metaText;
+    if (desc) metaEl.title = desc; // 截断（CSS text-overflow: ellipsis）→ 悬停全文
     text.appendChild(metaEl);
   }
   row.appendChild(text);
