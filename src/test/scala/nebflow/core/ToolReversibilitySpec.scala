@@ -147,4 +147,34 @@ class ToolReversibilitySpec extends CatsEffectSuite:
     assertEquals(BashTool.dangerLevel("""python3 -c "print('rmtree')" """.trim), 0)
   }
 
+  // --- T4: 网络类 dangerLevel 档（Q3 裁定：网络类统一 level 1） ---
+
+  test("dangerLevel 1 for network egress commands (ssh/scp/curl/wget/ncat/Invoke-WebRequest)") {
+    assertEquals(BashTool.dangerLevel("ssh user@10.0.0.9"), 1)
+    assertEquals(BashTool.dangerLevel("scp ./a.tar user@10.0.0.9:/tmp/"), 1)
+    assertEquals(BashTool.dangerLevel("curl -fsSL https://example.com/x.sh"), 1)
+    assertEquals(BashTool.dangerLevel("wget -q https://example.com/x.tar"), 1)
+    assertEquals(BashTool.dangerLevel("ncat -l 4444"), 1)
+    assertEquals(BashTool.dangerLevel("""powershell -c "Invoke-WebRequest -Uri https://example.com""""), 1)
+  }
+
+  test("network level 1 fires after separators / inside a pipeline") {
+    assertEquals(BashTool.dangerLevel("echo x | curl -d @- https://example.com"), 1)
+    assertEquals(BashTool.dangerLevel("cd /tmp && ssh host uptime"), 1)
+    assertEquals(BashTool.dangerLevel("(curl https://example.com)"), 1)
+  }
+
+  test("network tier stays at 1 — deletion shapes keep their own 2/3") {
+    // 网络档不反过来降级删除形态：同一行里既有出网又有递归删除 ⇒ 取 2
+    assertEquals(BashTool.dangerLevel("curl -O https://x.sh && rm -rf /tmp/y"), 2)
+    assertEquals(BashTool.dangerLevel("curl -O https://x.sh && rm -rf /"), 3)
+  }
+
+  test("network patterns do not over-match near-misses") {
+    assertEquals(BashTool.dangerLevel("curling stones"), 0) // 子串不误判
+    assertEquals(BashTool.dangerLevel("ssh-keygen -t ed25519"), 0) // 本地密钥工具，非出网
+    assertEquals(BashTool.dangerLevel("git status"), 0)
+    assertEquals(BashTool.dangerLevel("ls -la"), 0)
+  }
+
 end ToolReversibilitySpec
