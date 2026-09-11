@@ -231,7 +231,7 @@ object AgentActor extends AgentCore with AgentSession:
    * own session id prefix, falling back to the fork-adapter replyTo for
    * Mail ask/fork spawns, and finally the generic "tool".
    *
-   *   delegate-… → "delegate"   SubTaskTool worker
+   *   delegate-… → "delegate"   DelegateTool 内核会话（一次性执行件）
    *   subtask-…  → "subtask"    SubTaskTool worker
    *   dag-…      → "flow"       FlowDagExecutor node
    *   otherwise  → "tool"

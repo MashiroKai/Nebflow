@@ -1,6 +1,6 @@
 ---
 name: isolated-smoke-verification
-description: 隔离实例冒烟验证法——验证多 agent 交互修复/后端改动时，用临时 NEBFLOW_HOME+独占端口+mock 路由起隔离实例，断言锚定持久化产物而非易失 stdout；含沙盒泄漏三信号三角定位、kill 前 PID 验身、易失证据替代法证。Use when 验证 Delegate/SubTask 链、重启恢复、fallback 等跨 agent 行为，或怀疑冒烟测试污染真实数据根。
+description: 隔离实例冒烟验证法——验证多 agent 交互修复/后端改动时，用临时 NEBFLOW_HOME+独占端口+mock 路由起隔离实例，断言锚定持久化产物而非易失 stdout；含沙盒泄漏三信号三角定位、kill 前 PID 验身、易失证据替代法证。Use when 验证 Delegate/SubTask 链、重启恢复、fallback 等跨 agent 行为，或怀疑冒烟测试污染真实数据根。Delegate 自 2026-09-11 恢复为内置极简内核（`delegate-kernel-<8hex>`，工具面七件），验证其链时 kernel def 需在隔离 home 内存在（种子首启自动补装；隔离实例用仓内 seed 播种）。
 audience: nebflow-project
 language: zh
 status: active

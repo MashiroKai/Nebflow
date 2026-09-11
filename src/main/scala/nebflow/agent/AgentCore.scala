@@ -2402,8 +2402,8 @@ object AgentCore:
     *   来源标注 `subagent · <任务摘要>`（U3）。
     * - 显式**不含**：Delegate/SubTask/Task（叶子纪律——内核不再派生）、Mail
     *   （已退役）、AgentControl/Card/Pop（管控与用户面归 Nebula）、TaskBoard/
-    *   node_report/Node*/TaskList/MemoryEdit/Schedule（项目与编排面）、
-    *   plugin/MCP 工具（极简 = 机制固定、零配置面，裁定 11）。
+    *   node_report/Node 系工具/TaskList/MemoryEdit/Schedule（项目与编排面）、
+    *   plugin 与 MCP 工具（极简 = 机制固定、零配置面，裁定 11）。
     *
     * 零配置面：内核名在 ConvergedAgentNames 内 ⇒ agents/kernel/agent.json 的
     * tools/mcpServers 声明整体失效，本常量即唯一来源。 */

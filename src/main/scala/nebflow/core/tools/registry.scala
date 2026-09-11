@@ -45,7 +45,8 @@ object ToolRegistry:
       "Schedule" -> ScheduleTool,
       // Unified agent communication (message + ask modes)
       "Mail" -> MailTool,
-      // Sub-agent delegation (background + persistent modes) — Nebula/调度器专用
+      // Sub-agent delegation → 内置极简内核（2026-09-11 恢复批）：Nebula 专属
+      // 执行件，目标恒为 `kernel` def（无 agent 目标参数）；persistent 模式已退役。
       "Delegate" -> DelegateTool,
       // Background agent inspection & control (list/status/cancel/restart) — Nebula 专用
       "AgentControl" -> AgentControlTool,
