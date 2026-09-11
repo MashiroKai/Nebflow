@@ -37,6 +37,14 @@ class ToolPhaseStuckAxisSpec extends CatsEffectSuite:
 
   override def munitIOTimeout: Duration = 120.seconds
 
+  // R8 方向①：本 spec 会驱动真实开火（TaskStuckWatcher.scan）⇒ 看门狗事件日志
+  // （默认 <dataRoot>/logs/watchdog/）必须落到 spec 自己的临时目录，不得写进
+  // 真实 ~/.nebflow（与 LlmLogWriter.setLogDirForTest 同款测试缝）。
+  private val watchdogLogTmp = os.temp.dir(prefix = "stuck-axis-watchdog-events")
+  override def beforeAll(): Unit =
+    nebflow.core.processor.WatchdogEventLog.setLogDirForTest(watchdogLogTmp.toNIO)
+  override def afterAll(): Unit = nebflow.core.processor.WatchdogEventLog.resetLogDirForTest()
+
   private val Sid = "node-phase-axis-0001"
   private val ToolPhaseProp = "nebflow.stuck.toolPhaseMs"
 
