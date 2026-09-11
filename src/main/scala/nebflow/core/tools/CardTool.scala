@@ -623,8 +623,14 @@ Example (interactive 3D with Three.js):
             )
           val payload = Json
             .obj(
-              "html" -> outcome.html.asJson,
-              "title" -> title.asJson,
+              // Warnings come FIRST on purpose: ToolResultGuard replaces the
+              // LLM-visible content of a result over 50K chars with the first
+              // 2048 chars + a persisted-file pointer (ToolResultGuard.scala
+              // persistAndReplace). A big card would push a trailing warning
+              // section out of that preview — leading with fileRefs/warnings
+              // keeps the failure visible to the model in every case.
+              // Field order is irrelevant to the frontend (property access on
+              // the parsed object), so this stays contract-compatible.
               "fileRefs" -> Json.obj(
                 "proxied" -> outcome.proxied.asJson,
                 "failed" -> distinct.size.asJson,
@@ -640,7 +646,9 @@ Example (interactive 3D with Three.js):
                     "count" -> count.asJson
                   )
                 }*
-              )
+              ),
+              "html" -> outcome.html.asJson,
+              "title" -> title.asJson
             )
             .noSpaces
           Right(s"$CardSentinel$payload")
