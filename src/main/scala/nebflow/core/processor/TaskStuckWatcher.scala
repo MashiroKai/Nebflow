@@ -599,47 +599,19 @@ object TaskStuckWatcher:
                 logger.warn(
                   s"TaskStuckWatcher: ${rec.sessionId} attempt $attempts (L3) — releasing via bridge Cancelled, then hard-resume from transcript breakpoint"
                 ) *> classifyNote *> recordFire("L3", attempts) *> act(broadcastStuck(wsHub, rec, idleSecs, "restart", reason)) *>
-                  act(bridgeCancelled("L3 hard-recovery: true resume from transcript breakpoint")) *>
-                  // 面板实时终态帧（Sub-Agents 面板取消实时刷新修复；beta.57 CI
-                  // ProjectSessionCancelPanelFrameSpec 暴露的 hard 分支遗漏）：L3 桥
-                  // Cancelled 是分级链上 node-* 旧会话的释放点，不补发则面板行幽灵
-                  // 滞留到刷新。仅 node-* 补发——dispatcher-* 由其观察桥拆除点
-                  // （ProjectActor Failed|Cancelled 分支）统一补发，与 !hard giveUp
-                  // 分支同语义同护栏。
-                  act(if rec.sessionId.startsWith(nebflow.core.project.NodeEngine.SessionPrefix)
-                   then
-                     nebflow.core.node.NodeRunner
-                       .emitSubagentPanelDone(wsHub.broadcast, rec.sessionId, rec.rootSessionId)
-                       .handleErrorWith(e =>
-                         logger.warn(s"TaskStuckWatcher: panel done frame for ${rec.sessionId} failed: ${e.getMessage}")
-                       )
-                   else IO.unit) *>
+                  // P2（R-1=B）：L3 从「先终态化再救援」改成「**终态之前挂起并恢复**」。
+                  // 旧写法是 bridgeCancelled（停 actor + 节点终态 cancelled）→ sleep 5s
+                  // → hardResumeNode；新写法是 suspendNode（只停 actor，节点留 Running）
+                  // → **有界等待终止确认** → 锚探测 → CAS + resume。全程不进 Cancelled。
+                  // 副作用：不再需要「面板终态帧」补发（节点未终态，面板行由 nodeUpdated
+                  // 驱动），故原 emitSubagentPanelDone 调用随之移除——这是**语义变化**，
+                  // 不是遗漏：挂起腿不产生终态帧。
                   // R8 ②：登记 T+N 复查（**无条件**——shadow 与否都登记，复查本身只告警
                   // 不动作）。登记在 `.start` 之前 ⇒ 复查输入不依赖 resume fiber 的调度。
                   pendingL3.update(_.filterNot(_.sessionId == rec.sessionId) :+
                     PendingL3(rec.sessionId, rec.rootSessionId, System.currentTimeMillis(),
                       assessment.branch, assessment.toolPhaseMs, assessment.agentIdleMs, attempts)) *>
-                  act((IO.sleep(5.seconds) *>
-                    hardResumeFlowNode(resources, rec).flatMap {
-                      case Some(nodeId) =>
-                        // R5（取消静默死锁修复批 2026-09-10）：resume **成功**腿留痕——
-                        // 此前 6/6 次 L3 开火零留痕（引擎侧 hardResumeNode 内部的
-                        // `[hard-recovery] … resumed from transcript breakpoint` +
-                        // hard-recovery 事件是唯一一条；此处补 watcher 侧归属行，
-                        // 使「L3 开火 → resume 结果」在同一日志流内可闭环对账）。
-                        logger.info(
-                          s"TaskStuckWatcher: ${rec.sessionId} L3 resume OK — node '$nodeId' resumed from transcript breakpoint"
-                        ) *> stopCounts.update(_ - rec.sessionId)
-                      case None =>
-                        // R5 方案 3 留痕 + 方案 4（本批）：resume **失败**腿不再留
-                        // 「节点永久 cancelled」——引擎侧 `settleFailedHardResume`
-                        // 现在把节点**改判 failed**（经既有 failNode 全链：result 含
-                        // 原因 / nodeUpdated / failed 回流 / D5 停等留痕）。
-                        logger.error(
-                          s"TaskStuckWatcher: ${rec.sessionId} L3 resume FAILED — re-judging node as failed " +
-                            "(engine settleFailedHardResume: failNode full chain; D5 zero-settlement for downstream)"
-                        ) *> hardRecoveryFallback(resources, rec)
-                    }).start.void)
+                  act(runRecoveryLeg(resources, wsHub, rec, assessment, cls, attempts).start.void)
               case 4 =>
                 // L4 响亮失败（诚实失败原则）：明确上报需人工处理、进度已落盘。
                 logger.error(
@@ -924,18 +896,19 @@ object TaskStuckWatcher:
     * 不重试、不改判、不 kill；**一期不回流分发器**（`NotifyReason` 无 stuck 类值，
     * 与 R7 taxonomy 一起做——任务书 ③ 口径）。 */
   private def checkL3Outcome(resources: SharedResources, p: PendingL3, l3VerifyDelayMs: Long): IO[Unit] =
-    nebflow.core.project.ProjectRuntimeRegistry.all.flatMap { rts =>
-      rts.find(rt => rt.engine.rootSessionId.nonEmpty && rt.engine.rootSessionId == p.rootSessionId) match
-        case None =>
-          logger.warn(
-            s"TaskStuckWatcher: L3 self-check skipped for ${p.sessionId} — no project runtime (root=${p.rootSessionId}); " +
-              "verdict not derivable (restart/unmount tolerated by design §3.8)")
-        case Some(rt) =>
+    // P2（硬依赖 2）：定位键从 `rootSessionId`（多项目挂载下歧义）改为「会话属于哪个
+    // store」（[[runtimeOwning]]）——复查的对象必须是**真正持有该节点**的那个引擎，
+    // 否则复查自己也会落进「命中的是错引擎 ⇒ 节点查无 ⇒ 误判不足」的同一陷阱。
+    runtimeOwning(p.sessionId).flatMap {
+      case None =>
+        logger.warn(
+          s"TaskStuckWatcher: L3 self-check skipped for ${p.sessionId} — no project runtime owns this session " +
+            s"(root=${p.rootSessionId}); verdict not derivable (restart/unmount tolerated by design §3.8)")
+      case Some(rt) =>
           for
             snap <- rt.store.snapshot
             reg <- resources.agentRegistry.get
-            node = snap.nodes.values.find(n =>
-              n.sessionRef.contains(p.sessionId) || n.sessionRefVerify.contains(p.sessionId))
+            node = nebflow.core.project.NodeEngine.findNodeForSession(snap, p.sessionId)
             recordProcessing = reg.get(p.sessionId).exists(_.status == AgentStatus.Processing)
             verdict = node match
               case Some(n) if n.status == nebflow.core.project.NodeLifecycle.Cancelled =>
@@ -979,56 +952,191 @@ object TaskStuckWatcher:
     nebflow.core.project.NodeLifecycle.Completed
   )
 
-  /** L3 for Flow 节点：定位 session 所属项目的 runtime 并 hardResumeNode（跨项目
-    * 按 rootSessionId 匹配 AgentRecord.rootSessionId = 项目 root 会话）。
-    * R5 留痕契约：返回 `Some(nodeId)` = resume 真生效（节点已由 Cancelled/Running
-    * 翻回 Pending 并从 transcript 续跑）；`None` = 未生效（无 runtime / 无
-    * transcript / CAS 被拒 / 异常）——各失败出口在 NodeEngine.hardResumeNode 内
-    * 均有 WARN/ERROR 留痕（R5 补），调用方据 None 走 [[hardRecoveryFallback]]。 */
-  private def hardResumeFlowNode(resources: SharedResources, rec: AgentRecord): IO[Option[String]] =
+  /** P2（硬依赖 2，正交实验已证**正**）：按会话定位它**所属**的项目 runtime。
+    *
+    * 被替换掉的旧写法是 `rts.find(rt => rt.engine.rootSessionId == rec.rootSessionId)`
+    * ——`rootSessionId` **不是**项目级唯一键：启动挂载把同一个顶层 rootSessionId 交给
+    * 全部项目（`GatewayMain` 单个 rootSid → `ProjectActor.mountAll` → `mount` →
+    * `NodeEngine(rootSessionId, …)`），`ProjectRuntimeRegistry.all` 是 Map 无序 ⇒
+    * 16 个同 id 候选中任取其一。
+    *
+    * 实证（宿主日志 2026-09-11）：06:58 启动「16 project(s) mounted
+    * (rootSessionId=5cc7590a-…)」；当天 `nebflow.node.engine - [hard-recovery] no node
+    * owns session`（**引擎内**节点查无，`NodeEngine` 的 findNodeForSession 出口）**12**
+    * 次，而 watcher 层「no project runtime for …」（旧 `rts.find` 整体落空）**0** 次
+    * ⇒ find 总是命中、命中的却总是**错的引擎**，resume 成功率 0。
+    *
+    * 新口径：**唯一键 = 会话在哪个 store 里**（`NodeEngine.ownsSession` 只读扫
+    * `sessionRef`/`sessionRefVerify`）。三个旧消费点
+    * （`hardResumeFlowNode` / `checkL3Outcome` / `hardRecoveryFallback`）统一走本函数。 */
+  private def runtimeOwning(sessionId: String): IO[Option[nebflow.core.project.ProjectRuntime]] =
     nebflow.core.project.ProjectRuntimeRegistry.all
       .flatMap { rts =>
-        rts.find(rt => rt.engine.rootSessionId.nonEmpty && rt.engine.rootSessionId == rec.rootSessionId) match
-          case Some(rt) =>
-            rt.engine.hardResumeNode(rec.sessionId)
-              .handleErrorWith(e =>
-                logger.error(
-                  s"TaskStuckWatcher: hard-resume failed for ${rec.sessionId}: ${Option(e.getMessage).getOrElse(e.toString)}"
-                ).as(None))
-          case None =>
-            logger.warn(
-              s"TaskStuckWatcher: no project runtime for ${rec.sessionId} (root=${rec.rootSessionId}) — L3 resume unavailable"
-            ).as(None)
+        def go(rest: List[nebflow.core.project.ProjectRuntime]): IO[Option[nebflow.core.project.ProjectRuntime]] =
+          rest match
+            case Nil => IO.pure(None)
+            case rt :: tail =>
+              rt.engine.ownsSession(sessionId).flatMap(ok => if ok then IO.pure(Some(rt)) else go(tail))
+        go(rts)
       }
       .handleErrorWith(e =>
-        logger.error(s"TaskStuckWatcher: project runtime lookup failed: ${Option(e.getMessage).getOrElse(e.toString)}")
+        logger
+          .error(s"TaskStuckWatcher: project runtime lookup failed: ${Option(e.getMessage).getOrElse(e.toString)}")
           .as(None))
 
-  /** R5 失败分支（取消静默死锁修复批 2026-09-10）：L3 resume 未生效 ⇒ 引擎侧把节点
-    * **改判 failed**（R5 方案 4，见 `NodeEngine.settleFailedHardResume`：failNode 全链
-    * = result 含原因 / nodeUpdated / failed 回流 / D5 停等留痕），本方法只是「找 runtime
-    * → 转交引擎」的定位层：
-    *   - 找得到 runtime → [[NodeEngine.settleFailedHardResume]]（唯一终局写点；节点
-    *     **不摘除、不打 pendingSuccession**——failed 侧零标的 D5 纪律）。
-    *   - 找不到 runtime（跨项目/未挂载）→ 响亮 ERROR（诚实失败；节点仍 cancelled，
-    *     可见性由事件流 `cancelled` + 周期 `mount-stalled` 兜底）——此出口**无法**改判
-    *     （没有引擎实例可写节点），是本方法的已知残口，不在本批修复面内。 */
-  private def hardRecoveryFallback(resources: SharedResources, rec: AgentRecord): IO[Unit] =
-    nebflow.core.project.ProjectRuntimeRegistry.all
-      .flatMap { rts =>
-        rts.find(rt => rt.engine.rootSessionId.nonEmpty && rt.engine.rootSessionId == rec.rootSessionId) match
-          case Some(rt) => rt.engine.settleFailedHardResume(rec.sessionId)
-          case None =>
-            logger.error(
-              s"TaskStuckWatcher: L3 resume failed and no project runtime for ${rec.sessionId} " +
-                s"(root=${rec.rootSessionId}) — node left cancelled without the failed re-judge / dispatcher notify " +
-                "(manual intervention required)"
-            )
-      }
-      .handleErrorWith(e =>
+  /** L3 恢复腿（Flow 节点）：**挂起 → 有界等待 → 锚探测 → CAS + resume**（R-1=B）。
+    *
+    * 与改造前的差异（这是本批的结构性改动）：
+    *   - 前置动作从 `bridgeCancelled`（停 actor **+ 节点终态化**）改成
+    *     `NodeEngine.suspendNode`（**只停 actor**，节点保持 `Running`）——全程不进
+    *     `Cancelled`，`cancelled` 保持真终态语义（不可重激活）；
+    *   - 固定 `IO.sleep(5s)` 改成**有界等待会话从 registry 摘除**（`StuckSuspendWaitMs`
+    *     上限 + 轮询步长）——把「赌时序」换成「等可观测确认」，超时降级不 resume；
+    *   - 锚探测（§3.1）成为**恢复前置步骤**：A1（transcript）不可用 ⇒ 不重试、直接
+    *     一次上报；A3（worktree/git）作产物面旁证（§3.2 零产出/有产出分支）。
+    *
+    * 返回 `Some(nodeId)` = resume 真生效；`None` 已由本方法内部的
+    * [[reportExhausted]]/日志收口（不再有「静默 None」出口）。 */
+  private def runRecoveryLeg(
+    resources: SharedResources,
+    wsHub: WsHub,
+    rec: AgentRecord,
+    assessment: StuckAssessment,
+    cls: StuckClassification,
+    attempts: Int
+  ): IO[Unit] =
+    runtimeOwning(rec.sessionId).flatMap {
+      case None =>
+        // 无 runtime 拥有该会话（节点已归档 / 从未绑定 / 项目已卸载）⇒ 无可恢复之物。
         logger.error(
-          s"TaskStuckWatcher: L3 fallback (failed re-judge) failed for ${rec.sessionId}: ${Option(e.getMessage).getOrElse(e.toString)}"
-        ))
+          s"TaskStuckWatcher: no project runtime owns session ${rec.sessionId} — recovery impossible " +
+            "(node archived / never bound / project unmounted)")
+        reportExhausted(wsHub, rec, assessment, cls, attempts, Nil, "no project runtime owns this session")
+      case Some(rt) =>
+        for
+          // ① A1 主锚（§3.1）：会话 transcript。空 / decode 失败 ⇒ 不可用 ⇒ **不重试**。
+          a1 <- resources.sessionStore.loadMessagesForSession(rec.sessionId).attempt
+          _ <- a1 match
+            case Right(msgs) if msgs.nonEmpty =>
+              rt.engine.probeRecoveryAnchors(rec.sessionId).flatMap { anchor =>
+                for
+                  _ <- logger.info(
+                    s"TaskStuckWatcher: ${rec.sessionId} recovery anchors — A1 transcript=${msgs.size} msgs (available), " +
+                      s"A3 worktree=${anchor.worktreeAvailable} (${anchor.probeDir}), hasOutput=${anchor.hasOutput}")
+                  // 挂起 = **只停 actor，不终态化**（R-1=B）。同步发出（不 fork）——
+                  // 「开火 ⇒ 中断信号」必须确定性成立；其后的「等终止确认 + resume」
+                  // 才交给后台 fiber（见下方 .start），扫描循环不等。
+                  _ <- rt.engine.suspendNode(rec.sessionId, s"stuck ${assessment.secs}s (${assessment.branch})")
+                  // 挂起**已同步发出**（上一行，不 fork）——「L3 开火 ⇒ 中断信号已发出」
+                  // 必须确定性成立，不依赖 fiber 调度时序。此处只把「等终止确认 +
+                  // resume」交给后台 fiber（扫描循环不等它）。
+                  _ <- (awaitSessionDrained(resources, rec.sessionId, nebflow.shared.Defaults.StuckSuspendWaitMs)
+                    .flatMap {
+                      case true =>
+                        rt.engine.hardResumeNode(rec.sessionId, Some(anchor)).flatMap {
+                          case Some(nodeId) =>
+                            logger.info(
+                              s"TaskStuckWatcher: ${rec.sessionId} recovery OK — node '$nodeId' resumed from " +
+                                s"transcript breakpoint (hasOutput=${anchor.hasOutput})")
+                          case None =>
+                            logger.error(
+                              s"TaskStuckWatcher: ${rec.sessionId} recovery resume not effective (CAS rejected / " +
+                                "transcript vanished) — single report")
+                            reportExhausted(wsHub, rec, assessment, cls, attempts,
+                              List("suspend → hard-resume CAS/transcript leg"), "resume not effective")
+                        }
+                      case false =>
+                        reportExhausted(wsHub, rec, assessment, cls, attempts, List("suspend"),
+                          "suspend confirmation timed out")
+                    }).start.void
+                yield ()
+              }
+            case Right(_) =>
+              logger.error(
+                s"TaskStuckWatcher: ${rec.sessionId} recovery anchor A1 unavailable (transcript empty) — " +
+                  "no retry, single report (design §3.3 condition 1)")
+              reportExhausted(wsHub, rec, assessment, cls, attempts, Nil, "unrecoverable: empty transcript")
+            case Left(e) =>
+              logger.error(
+                s"TaskStuckWatcher: ${rec.sessionId} recovery anchor A1 unreadable " +
+                  s"(${Option(e.getMessage).getOrElse(e.toString)}) — no retry, single report (design §3.3 condition 1)")
+              reportExhausted(wsHub, rec, assessment, cls, attempts, Nil, "unrecoverable: unreadable transcript")
+        yield ()
+    }
+
+  /** 有界等待「会话已从 registry 摘除」= 引擎 fiber 的清理段已完成（取代固定 sleep 5s）。
+    * 轮询步长/上限见 [[nebflow.shared.Defaults.StuckSuspendPollMs]] / `StuckSuspendWaitMs`。 */
+  private def awaitSessionDrained(resources: SharedResources, sessionId: String, timeoutMs: Long): IO[Boolean] =
+    val poll = math.max(1L, nebflow.shared.Defaults.StuckSuspendPollMs)
+    val deadline = System.currentTimeMillis() + timeoutMs
+    def go: IO[Boolean] =
+      resources.agentRegistry.get.map(_.contains(sessionId)).flatMap {
+        case false => IO.pure(true)
+        case true =>
+          if System.currentTimeMillis() >= deadline then IO.pure(false)
+          else IO.sleep(poll.millis) >> go
+      }
+    go.handleErrorWith(e =>
+      logger
+        .warn(s"TaskStuckWatcher: suspend confirmation poll for $sessionId failed: ${Option(e.getMessage).getOrElse(e.toString)}")
+        .as(false))
+
+  /** 恢复耗尽 / 不可恢复时的**恰好一次**上报（设计 §3.5 的最后一格）。
+    *
+    * 语义（R-1=B 与 R-6 协同）：节点此时是 `Running`（挂起腿不终态化）⇒ 走
+    * [[NodeEngine.failStuckRecovery]]（failNode 全链：result 含原因 / nodeUpdated /
+    * failed 回流 / D5 零结算停等）。**去重靠既有链**：`notifySentAt` 持久标记 +
+    * `DispatchNotify.releaseTerminalNotify` 占位归还——本轮改造不新造账本、不新增
+    * `NotifyReason`/`CancelSource` 枚举值（R-6：上报面本批只做内部静默）。
+    *
+    * `actions` = 已尝试的恢复动作清单（进 result / 事件 / 通知文本，回答「引擎试过什么」）。 */
+  private def reportExhausted(
+    wsHub: WsHub,
+    rec: AgentRecord,
+    assessment: StuckAssessment,
+    cls: StuckClassification,
+    attempts: Int,
+    actions: List[String],
+    cause: String
+  ): IO[Unit] =
+    val text =
+      s"stuck auto-recovery exhausted for session ${rec.sessionId} (class=${cls.cls}, judge branch=${assessment.branch}, " +
+        s"agentIdle=${assessment.agentIdleMs / 1000}s, toolPhase=${assessment.toolPhaseMs / 1000}s, " +
+        s"tool=${assessment.toolName.getOrElse("-")}, attempts=$attempts): $cause; " +
+        s"recovery actions tried: ${if actions.isEmpty then "none (not recoverable)" else actions.mkString(" → ")}. " +
+        "The engine suspended (not killed) the session and could not revive it from the on-disk transcript; " +
+        "node re-judged as failed (D5 zero-settlement: downstream keeps waiting; reactivate via NodeEdit or rewire)."
+    val rendered = s"cancelled[source=engine]: reason=$text" // 仅日志/事件用，不改节点状态
+    runtimeOwning(rec.sessionId).flatMap {
+      case Some(rt) => rt.engine.failStuckRecovery(rec.sessionId, text)
+      case None =>
+        logger.error(s"TaskStuckWatcher: $text — but no runtime owns the session; report could not be recorded")
+    } *>
+      WatchdogEventLog.append(io.circe.Json.obj(
+        "ts" -> io.circe.Json.fromLong(System.currentTimeMillis()),
+        "type" -> io.circe.Json.fromString(RecoveryExhaustedType),
+        "sessionId" -> io.circe.Json.fromString(rec.sessionId),
+        "kind" -> io.circe.Json.fromString(rec.kind.toString),
+        "class" -> io.circe.Json.fromString(cls.cls),
+        "branch" -> io.circe.Json.fromString(assessment.branch),
+        "attempt" -> io.circe.Json.fromInt(attempts),
+        "cause" -> io.circe.Json.fromString(cause),
+        "actions" -> io.circe.Json.arr(actions.map(io.circe.Json.fromString)*)
+      )) *>
+      logger.error(s"TaskStuckWatcher: $text")
+
+  /** 恢复耗尽事件类型（与 `stuck-detected`/`stuck-fire` 同面，可按 sessionId join）。 */
+  val RecoveryExhaustedType: String = "stuck-recovery-exhausted"
+
+  // ── 旧 R5 失败分支已随 P2 退场（2026-09-11）────────────────────────────────
+  // 原 `hardRecoveryFallback`（找 runtime → NodeEngine.settleFailedHardResume）针对的是
+  // 「先终态化再救援」形态（节点停在中间态 Cancelled，需要一条把 Cancelled 改判 failed
+  // 的腿）。R-1=B 之后挂起腿全程不进 Cancelled，节点在恢复失败时是 **Running**，
+  // 该函数的 CAS 守卫（`n.status == Cancelled`）恒不命中 ⇒ 成为纯死代码。
+  // 它被 [[runRecoveryLeg]] 内的 [[reportExhausted]] → `NodeEngine.failStuckRecovery`
+  // 取代（同一 failNode 全链、同一条「恰好一次回流」结构，状态守卫改为 Running）。
+  // `NodeEngine.settleFailedHardResume` 本身**保留不动**：它是**既有** L3 形态与历史
+  // 数据（节点已停在 Cancelled 的存量）的收口，删除会掐掉存量现场的处置路径。
 
 end TaskStuckWatcher
 

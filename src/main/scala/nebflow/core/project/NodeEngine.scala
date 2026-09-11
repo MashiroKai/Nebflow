@@ -415,20 +415,132 @@ class NodeEngine(
       logger.info(s"[boot-recovery] node $nodeId rehydrating (session=${ctx.sessionId})") *>
       startNode(nodeId, Some(ctx))
 
-  /** Hard-recovery P5-L3（2026-09-07 设计 §2.6/§9）：运行时活挂节点的真重启——从磁盘
-    * transcript 断点 rehydrate 续跑，复用 boot-recovery 的 ResumeContext /
-    * startNode(resume) 全链（设计 §3.1「同一恢复底座」）。与 boot sweep 的差异：
-    * 触发源是运行时 TaskStuckWatcher 升级（进程活着），前置动作已由调用方完成——
-    * L2 transport abort（止血，解开 parked read）与 bridge Cancelled（清场：agent
-    * 停止 + 节点 Cancelled 终态）；此处只做「终态/Running → Pending CAS + resume」。
-    * 竞态：CAS 失败（并发终态化 / 已被重排 / 已被资格回扫新鲜启动）安静返回 None；
-    * transcript 缺失 → None（节点留终态，人工重触发，诚实失败原则）。返回重启的
-    * nodeId。 */
-  def hardResumeNode(sessionId: String): IO[Option[String]] =
+  /** 本引擎是否拥有该会话（P2 定位键修正的实例侧入口，**只读** store 扫描）。
+    * watcher 用它代替 `rt.engine.rootSessionId == rec.rootSessionId` 判定「哪个
+    * runtime 是这个会话的家」。 */
+  def ownsSession(sessionId: String): IO[Boolean] =
+    store.snapshot.map(snap => NodeEngine.findNodeForSession(snap, sessionId).isDefined).handleErrorWith(_ => IO.pure(false))
+
+  /** P2：**挂起**节点会话——「只停 actor，不改节点状态」。
+    *
+    * 这就是 R-1=B 要求的「挂起不终态化」原语：今天的 `bridgeCancelled` 一步兼两职
+    * （停 actor + 节点终态化），本方法把前者单独拆出来。实现方式是向观察桥发一条
+    * 带 [[NodeEngine.SuspendReasonPrefix]] 哨兵的 `AgentEvent.Cancelled`——桥照旧
+    * 完成 `resultDeferred`，引擎 fiber 认出哨兵后走**挂起腿**（停 actor + 清理运行表，
+    * **不写 status/result/ttl、不通知、不摘除**），节点保持 `Running`。
+    *
+    * 调用方（`TaskStuckWatcher` 的 L3 恢复腿）随后按「有界等待 actor 终止确认」
+    * 轮询 [[nebflow.agent.SharedResources]] 的 registry，确认会话已摘除后再调
+    * [[hardResumeNode]] 做 CAS + resume。
+    *
+    * 与 `cancelNode`（终态化）的关系：两条路**互斥且语义不同**——`cancelled` 保持
+    * 真终态（不可重激活），挂起只是本代次的中断点。 */
+  def suspendNode(sessionId: String, reason: String): IO[Boolean] =
+    store.snapshot.map(snap => NodeEngine.findNodeForSession(snap, sessionId)).flatMap {
+      case None =>
+        logger.warn(s"[stuck-recovery] suspend skipped — no node owns session $sessionId").as(false)
+      case Some(n) =>
+        resources.agentRegistry.get.map(_.get(sessionId).flatMap(_.supervisorRef)).flatMap {
+          case Some(sup) =>
+            (sup ! AgentEvent.Cancelled(sessionId, s"${NodeEngine.SuspendReasonPrefix}): $reason")).as(true)
+              .handleErrorWith(e =>
+                logger.warn(s"[stuck-recovery] suspend signal for $sessionId failed: ${e.getMessage}").as(false))
+          case None =>
+            logger.warn(
+              s"[stuck-recovery] suspend skipped for node '${n.name}' (${n.id}) — no supervisor bridge registered " +
+                "(session already gone or never bound)").as(false)
+        }
+    }
+
+  private[project] def suspendLog(sessionId: String, nodeId: String): Unit =
+    logger.info(
+      s"[stuck-recovery] session $sessionId suspended (actor stopped, node $nodeId left Running — NOT terminalized; " +
+        "the L3 recovery leg will CAS it back to Pending and resume from the transcript breakpoint)")
+
+  /** P2：恢复锚探测（设计 §3.1 的 A3 + §3.2 的产物判据）。**零 LLM、零副作用**——
+    * 只读目录 + 三条 git 只读查询；探测失败如实降级（不伪造可用）。
+    *
+    * 口径见 [[RecoveryAnchor]]（含与 §3.2 逐字公式的差异说明）。 */
+  def probeRecoveryAnchors(sessionId: String): IO[NodeEngine.RecoveryAnchor] =
     store.snapshot.flatMap { snap =>
-      snap.nodes.values.find(n =>
-        n.sessionRef.contains(sessionId) || n.sessionRefVerify.contains(sessionId)
-      ) match
+      NodeEngine.findNodeForSession(snap, sessionId) match
+        case None =>
+          IO.pure(NodeEngine.RecoveryAnchor(false, "", false, "node not found in this project's store"))
+        case Some(n) =>
+          val dir: String =
+            try PathUtil.resolveNodeProjectRoot(workspace, n.worktree).toString
+            catch case _: Throwable => workspace
+          val f = os.Path(dir)
+          val worktreeOk = os.exists(f) && os.isDir(f) && os.exists(f / ".git")
+          val gitOut = (args: List[String]) =>
+            try
+              val r = os.proc(args).call(cwd = f, check = false, stderr = os.Pipe, mergeErrIntoOut = true)
+              Some((r.exitCode, r.out.text().trim))
+            catch case _: Throwable => None
+          val porcelain = gitOut(List("git", "status", "--porcelain"))
+          // 「本代次新提交数」= 本节点 startedAt 之后的提交（NodeDef.startedAt 是
+          // Option[Long]；缺失则退化为 0 ⇒ 该维不计，只靠 P2 工作区判据）。
+          val since = gitOut(List("git", "rev-list", "--count", "HEAD",
+            "--since=" + (n.startedAt.getOrElse(0L) / 1000).toString))
+          val newCommits = since.flatMap(_._2.toIntOption).getOrElse(0)
+          val dirty = porcelain.exists(_._2.nonEmpty)
+          val hasOutput = dirty || newCommits > 0
+          val evidence =
+            s"git status --porcelain = ${if dirty then "non-empty" else "clean"}, " +
+              s"commits since node start = $newCommits"
+          IO.pure(NodeEngine.RecoveryAnchor(worktreeOk, dir, hasOutput, evidence))
+    }.handleErrorWith(e =>
+      logger
+        .warn(s"[stuck-recovery] anchor probe for $sessionId failed: ${Option(e.getMessage).getOrElse(e.toString)}")
+        .as(NodeEngine.RecoveryAnchor(false, "", false, "anchor probe failed (see log)")))
+
+  /** P2：恢复腿未生效时的终局写点（R-1=B 形态）。
+    *
+    * 与 R5 的 [[settleFailedHardResume]] 的差异：R5 那条腿的前提是「节点处于中间态
+    * `Cancelled`」（先终态化再救援），而 R-1=B 之后恢复腿全程不进 `Cancelled` ——
+    * 节点此时是 **`Running`**。语义完全一致（诚实失败：引擎接管失败 = failed，可经
+    * `NodeEdit` 重激活），故复用同一条 `failNode` 全链，只是状态守卫不同。
+    *
+    * 先 [[DispatchNotify.releaseTerminalNotify]] 归还可能的回流占位（幂等：无占位
+    * 零写）——保证「恰好一次回流」在两种形态下都成立（挂起腿本不写占位，R5 旧形态
+    * 会写，两者都在此归还）。 */
+  def failStuckRecovery(sessionId: String, err: String): IO[Unit] =
+    store.snapshot.flatMap { snap =>
+      NodeEngine.findNodeForSession(snap, sessionId) match
+        case None =>
+          logger.error(
+            s"[stuck-recovery] recovery failed but no node owns session $sessionId — nothing to re-judge " +
+              "(manual intervention required)")
+        case Some(n) if NodeLifecycle.Terminal.contains(n.status) =>
+          logger.info(
+            s"[stuck-recovery] recovery failed for session $sessionId but node '${n.name}' (${n.id}) is already " +
+              s"${n.status} — no fallback action needed (idempotent)")
+        case Some(n) =>
+          dispatchNotify.releaseTerminalNotify(n.id) *>
+            FlowMapEventLog.append(workspace, projectName, n.id, "hard-recovery",
+              s"stuck recovery FAILED (session=$sessionId) — node re-judged as failed: ${err.take(200)}") *>
+            failNode(n.id, err)
+    }
+
+  /** Hard-recovery P5-L3（2026-09-07 设计 §2.6/§9；**2026-09-11 stuck 自动恢复批 P2 改造**）：
+    * 运行时活挂节点的真重启——从磁盘 transcript 断点 rehydrate 续跑，复用
+    * boot-recovery 的 ResumeContext / startNode(resume) 全链（设计 §3.1「同一恢复底座」）。
+    *
+    * **P2 改造（R-1=B：恢复动作放在终态之前）**：
+    *   - 前置动作 = L2 transport abort（止血）+ [[suspendNode]]（**挂起**，不是终态化）
+    *     ⇒ 节点到达这里时状态是 **`Running`**（本代次从未进过 `Cancelled`）；
+    *   - CAS 前置条件随之**收敛为 `Running` 单一值**（旧值 `Cancelled | Running` 是
+    *     「先终态化再救援」形态的遗留：留住它等于给「已取消」的节点一条复活路径，
+    *     与「`cancelled` 是不可重激活的真终态」冲突 —— 收敛后该语义由类型面保证）；
+    *   - `resumePrompt` 按**零产出 / 有产出**分支（§3.2）：零产出告知「上次尝试零产出、
+    *     已中断」，有产出带「未落盘的副作用不可信」+ 已产出清单。**重放封顶**（R-2 的
+    *     40 条）在 P3 落地，本段先构造分支文本。
+    *
+    * 竞态：CAS 失败（并发终态化 / 已被重排 / 已被资格回扫新鲜启动）安静返回 None；
+    * transcript 缺失 → None（由调用方走一次上报，诚实失败原则）。返回重启的 nodeId。 */
+  def hardResumeNode(sessionId: String, anchor: Option[NodeEngine.RecoveryAnchor] = None): IO[Option[String]] =
+    store.snapshot.flatMap { snap =>
+      NodeEngine.findNodeForSession(snap, sessionId) match
         case None =>
           // R5（取消静默死锁修复批）：此前静默 `IO.pure(None)`——L3 6/6 零留痕的一个
           // 候选出口。留痕不改行为（仍返回 None）。
@@ -442,12 +554,16 @@ class NodeEngine(
                 sessionId = sessionId,
                 recoveredMessages = msgs,
                 resumePrompt = NodeEngine.nodeResumePrompt(projectName, n, msgs.size, n.bgWait) +
-                  "\n（hard-recovery：该节点会话此前卡死，已被引擎分级接管强制中断并从磁盘断点恢复续跑）"
+                  NodeEngine.stuckResumeNote(anchor)
               )
               store.mutateWithResult { s =>
                 s.nodes.get(n.id) match
+                  // P2（R-1=B）：CAS 前置条件**收敛为 `Running` 单一值**——挂起腿
+                  // 不终态化，节点到达此处必为 Running。保留 `Cancelled` 等于给
+                  // 「真终态」留一条复活后门，与「cancelled 不可重激活」的用户可
+                  // 预期语义冲突（设计 §3.6 选项 B 的立论：消除冲突而不是绕过它）。
                   case Some(f)
-                      if f.status == NodeLifecycle.Cancelled || f.status == NodeLifecycle.Running =>
+                      if f.status == NodeLifecycle.Running =>
                     (s.copy(nodes = s.nodes.updated(n.id, f.copy(
                       status = NodeLifecycle.Pending,
                       completedAt = None,
@@ -465,7 +581,7 @@ class NodeEngine(
                   // 留痕不改行为（节点保持原状，仍返回 None）。
                   logger.error(
                     s"[hard-recovery] resume CAS rejected for node '${n.name}' (${n.id}) — status is no longer " +
-                      s"Cancelled/Running (concurrent terminal / restart / sweep); node left as-is, manual re-trigger needed"
+                      s"Running (concurrent terminal / restart / sweep); node left as-is, manual re-trigger needed"
                   ).as(None)
                 else
                   s.nodes.get(n.id).traverse_(emitUpdated) *>
@@ -1488,6 +1604,12 @@ class NodeEngine(
       _ <- (ref ! AgentCommand.UserInput(text = inputText, replyTo = Some(bridgeRef))).void
       // 等待完成——不设超时（硬约束）；唯一竞争事件 = NodeCancel 信号。
       outcome <- IO.race(resultDeferred.get, cancelSig.get)
+      // P2（R-1=B）：挂起腿识别。桥送来的 Cancelled 若带 [[NodeEngine.SuspendReasonPrefix]]
+      // 哨兵 ⇒ 本次中断是**挂起**（stuck 自动恢复的恢复腿），不是终态化：只停 actor，
+      // 节点保持 Running，由 watcher 侧 CAS + resume 接手。
+      suspended <- IO.pure(outcome match
+        case Left(Left(fo)) => NodeEngine.isSuspendOutcome(fo.message)
+        case _              => false)
       _ <- outcome match
         case Right(_) =>
           logger.info(s"Node '$nodeName' cancelled — stopping agent")
@@ -1502,7 +1624,14 @@ class NodeEngine(
           // 等待型任务——保持现状（persistent 收殓属另批归属语义，不在此改）。
           (BgTaskRegistry.reclaimSession(Some(sessionId), wsSendFn, rootSessionId) *>
             FlowMapEventLog.append(workspace, projectName, nodeId, "bg-harvest",
-              s"node finalized (${if fo.message.contains("cancelled") then "cancelled" else "failed"}) — reclaimed bg session '$sessionId'"))
+              // R-5 / 类⑦（stuck 自动恢复批 P2 附加小项，本板 #98 同源）：**补 cause**。
+              // 此前该行是「无原因的终态化留痕」——读者只能看到「被回收」而不知
+              // 「因何终态」，正是 #98「重启后 bg 会话回收把在飞节点判 cancelled
+              // （无 result/无通知）→ 下游 barrier 静默死锁」取证时的第一个盲区。
+              // cause 词表 = 与本次终态化同一个判据（挂起 / 取消 / 归还能力失败），
+              // 由桥消息文本单点派生（不改 AgentEvent 形态，与 CancelSource 同纪律）。
+              s"node finalized (${NodeEngine.finalizeCause(fo.message)}) — reclaimed bg session '$sessionId'; " +
+                s"cause: ${fo.message.take(160)}"))
             .handleErrorWith(e =>
               logger.warn(s"Node '$nodeName' ($nodeId) bg-harvest reclaim failed: ${e.getMessage}"))
             .void.start *> IO.unit
@@ -1517,9 +1646,12 @@ class NodeEngine(
       // NodeMessage 注入链对称移除（与 running 表同点清理——此后 sendNodeMessage
       // 查无映射即走「注入未达」兜底，不再向死会话投递）。
       _ <- nodeSessions.update(_ - nodeId)
-      // 终态处理：写 result/status/ttl + 投递（§2.7）——传 nodeId，终态化内部
-      // 事务内现读 fresh 节点（不沿本 fiber 启动时捕获的陈旧快照）
-      _ <- eventResult match
+      // P2（R-1=B）：**挂起腿不终态化**。会话已被 Stop（上方 system.stop(ref)，
+      // 与既有取消路径同款），registry/running/nodeSessions 三表已清（同上），
+      // 但节点**不写 status/result/ttl、不通知、不摘除、不跑 barrier 检查**——
+      // 它保持 `Running`，由 watcher 侧「有界等待 + hardResumeNode CAS + resume」
+      // 接手。这正是把「清场」与「终态化」解耦的那一刀（设计 §3.6 选项 B）。
+      _ <- if suspended then IO(suspendLog(sessionId, nodeId)) else eventResult match
         case Right(messages) =>
           val text = extractLastAssistantText(messages)
           // blocked 结构化信号批（20260909 spec §5.2 #5①②；同日作者裁定泛化
@@ -3061,6 +3193,92 @@ object NodeEngine:
 
   /** 节点 id 前缀（sessionId = "node-<uuid>"）。 */
   val SessionPrefix = "node-"
+
+  // ── P2（stuck 自动恢复批）：runtime 定位键修正（硬依赖 2，正交实验已证**正**）──
+  //
+  // 事故形态：`rts.find(rt => rt.engine.rootSessionId == rec.rootSessionId)` 在
+  // **多项目挂载**下必然歧义——`ProjectActor.mountAll` 把**同一个顶层 rootSessionId**
+  // 交给全部项目（`GatewayMain` 单个 `rootSid` → `mountAll` → `mount` →
+  // `NodeEngine(rootSessionId, …)`），`ProjectRuntimeRegistry.all` 是 Map 无序
+  // （`runtimes.get.map(_.values.toList)`）⇒ 16 个同 id 候选中任取其一。
+  //
+  // 实证（宿主日志，2026-09-11 06:58 启动 16 项目同一 rootSessionId
+  // `5cc7590a-…`）：`no node owns session`（**引擎内**节点查无，NodeEngine:436）12 次，
+  // 而 watcher 层「no project runtime for …」（`rts.find` 整体落空）**0 次** ⇒
+  // `find` 总是命中、命中的却总是**错的引擎**（15/16 概率），节点在别的项目 store 里。
+  //
+  // ⇒ 项目定位键 = **会话在哪个 store 里**，不是 rootSessionId。`sessionRef`
+  // （node-/dispatcher- 会话 id）在任一 store 内唯一，故按 sessionRef 扫 store 即
+  // 精确唯一解。
+
+  /** 按 `sessionRef` / `sessionRefVerify` 在 store 快照里定位节点（P2 定位键唯一入口）。
+    * 全部消费点（watcher 的 resume / L3 复查 / 失败兜底）共用本函数——**禁止**再用
+    * `rootSessionId` 反查项目（见上方硬依赖 2 说明）。 */
+  def findNodeForSession(snap: FlowMapState, sessionId: String): Option[NodeDef] =
+    snap.nodes.values.find(n =>
+      n.sessionRef.contains(sessionId) || n.sessionRefVerify.contains(sessionId))
+
+  /** P2「挂起不终态化」哨兵（R-1=B）——见 [[NodeEngine.suspendNode]] 与
+    * `runWithAgent` 的挂起分支。走既有 `AgentEvent.Cancelled` 载体（**不改跨模块消息
+    * 形态**，与 `CancelSource` 从 reason 文本前缀推导同款纪律），由引擎侧识别前缀后
+    * 走「只停 actor、不终态化」的挂起腿。 */
+  val SuspendReasonPrefix = "(node-suspend"
+
+  def isSuspendOutcome(msg: String): Boolean = msg.contains(SuspendReasonPrefix)
+
+  /** R-5 / 类⑦：`bg-harvest` 事件的 **cause** 词表（从同一份桥消息文本单点派生——
+    * 不改 `AgentEvent` 形态，与 `CancelSource` 同纪律）。
+    *
+    * 该事件此前**无原因**：读者只能看到「node finalized (cancelled) — reclaimed bg
+    * session」，看不出是引擎看门狗取消、bg 等待上限、会话猝死还是本批新增的挂起腿
+    * （本板 #98 的两条诉求「为什么被 cancelled / 是否通知过」的第一个盲区即此）。 */
+  def finalizeCause(msg: String): String =
+    if isSuspendOutcome(msg) then "suspended-for-recovery"
+    else if msg.contains("cancelled") then "cancelled"
+    else if msg.contains("wait cap") then "bg-wait-cap"
+    else if msg.contains("terminated without a terminal event") then "session-died"
+    else "failed"
+
+  // ── P2：恢复锚探测结果（设计 §3.1）──────────────────────────────────────
+
+  /** 恢复锚探测结果（§3.1 的 A1/A3 + §3.2 的零产出/有产出判据）。
+    *
+    * A1（transcript）在主锚位：由调用方（watcher）经 `SessionStore.loadMessagesForSession`
+    * 探测（引擎侧同一读点，二者同源）——不可用 ⇒ **不恢复、直接一次上报**。
+    * A3（worktree/git）是产物面旁证：目录缺失 ⇒ 该锚不可用（#159 形态），
+    * 降级为「A1 可用则续跑」。 */
+  final case class RecoveryAnchor(
+    /** A3 可用 = worktree 目录存在 ∧ 是 git 工作树（`.git` 条目存在）。 */
+    worktreeAvailable: Boolean,
+    /** 探测用的工作目录（worktree 优先、回落工作区）——同时是 hasOutput 探针的 cwd。 */
+    probeDir: String,
+    /** §3.2 的 `P1 ∨ P2`：有产出 ⇒ 断点续跑；零产出 ⇒ 重启 turn。 */
+    hasOutput: Boolean,
+    /** 可读的产物证据文本（进 resume prompt 与上报文本；**不回流判据**）。 */
+    outputEvidence: String
+  )
+
+  /** §3.2 的 resume 分支告知（零产出 vs 有产出），拼在既有 `nodeResumePrompt` 之后。
+    *
+    * ⚠ **与设计 §3.2 口径的差异（单列，未证项）**：§3.2 的 P1 逐字为
+    * `git rev-list --count <baseline>..HEAD`，但 `NodeDef` **不持久化任何 baseline
+    * sha**（本仓无该字段）⇒ 无 `baseline` 可用。本实现取可得的只读等价物：
+    * `git rev-list --count HEAD --since=<本节点 startedAt>`（「本代次新提交数」）
+    * ∨ `git status --porcelain` 非空（未提交产出）。语义一致（都是「本代次是否
+    * 改变了工作产物」），但**不是逐字公式**——须由验收/后续批知悉。 */
+  def stuckResumeNote(anchor: Option[RecoveryAnchor]): String =
+    anchor match
+      case Some(a) if !a.hasOutput =>
+        "\n（hard-recovery：该节点会话此前卡死，已被引擎分级接管中断并从磁盘断点恢复续跑。" +
+          s"**上次尝试零产出**（${a.outputEvidence}；worktree " +
+          s"${if a.worktreeAvailable then s"可用：${a.probeDir}" else "不可用（目录缺失/非 git 工作树）"}）" +
+          "——请从头完成本节点任务，不要假定任何工作已完成。）"
+      case Some(a) =>
+        "\n（hard-recovery：该节点会话此前卡死，已被引擎分级接管中断并从磁盘断点恢复续跑。" +
+          s"**已有产出**（${a.outputEvidence}）——请先核验上一轮未落盘的副作用（git 状态、关键文件），" +
+          "已完成的工作无需重复，从中断点继续。）"
+      case None =>
+        "\n（hard-recovery：该节点会话此前卡死，已被引擎分级接管中断并从磁盘断点恢复续跑。）"
 
   /** 节点级 blocked 重入上限（设计 §3.1/§7.2）：blockCount 1/2 → 重入调整；
     * count=3（> 2）→ 升级 Nebula 不再重入。 */
