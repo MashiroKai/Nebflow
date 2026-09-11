@@ -431,7 +431,7 @@ class NeblinkLogoutRoutesSpec extends CatsEffectSuite:
             assertEquals(resp.status, Status.Ok)
             val authorizeUrl = body.hcursor.downField("authorizeUrl").as[String].toOption.getOrElse(fail("authorizeUrl missing"))
             assert(authorizeUrl.contains("prompt=login+consent"), s"forceLogin must force the account form: $authorizeUrl")
-            assert(authorizeUrl.contains("offline_access"), "refresh-token invariant must survive forceLogin")
+            assert(!authorizeUrl.contains("offline_access"), s"O5: no offline_access on the forceLogin authorize either: $authorizeUrl")
         }.guarantee(IO.blocking(server.stop(0)))
       }
     }
@@ -483,8 +483,10 @@ class NeblinkLogoutRoutesSpec extends CatsEffectSuite:
             assert(!junkUrl.contains("ui_locales"), s"non-whitelisted values are dropped, not forwarded: $junkUrl")
             // Invariants that must survive on every variant.
             for (u <- Seq(zhUrl, enUrl, legacyUrl, junkUrl)) {
-              assert(u.contains("prompt=consent"), s"refresh-token invariant intact: $u")
-              assert(u.contains("offline_access"), s"scope invariant intact: $u")
+              // prompt=consent stays an invariant of every variant, but as
+              // shipped UX only — O5 removed the refresh-token rationale.
+              assert(u.contains("prompt=consent"), s"prompt=consent intact on every variant: $u")
+              assert(!u.contains("offline_access"), s"O5: no variant may request offline_access: $u")
             }
         }.guarantee(IO.blocking(server.stop(0)))
       }

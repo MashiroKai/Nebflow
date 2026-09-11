@@ -133,7 +133,8 @@ class ConfigTrustPersistSpec extends FunSuite:
     val diskAfterRestart = os.read(configPath)
     assert(diskAfterRestart.contains("trust"), "trust must survive the restart (fix root cause)")
     assert(!diskAfterRestart.trim.isEmpty && diskAfterRestart.trim != "{}", "config must not be clobbered to {}")
-    // 插件仍 trusted（默认插件集 = {visual-report, slideblocks, nebflow-plugin-creator}，manifest 收缩后 explorer-toolkit 不入种子）
+    // 插件仍 trusted（默认插件集 = 8 包，见 seed/manifest.json:7-14；manifest 扩集后
+    // restart 仍不得丢失既有信任面——本条只看 visual-report 一项，不随集合大小漂移）
     assert(PluginRegistry.resolve("visual-report").unsafeRunSync().isRight,
       "seeded plugin must still resolve as trusted after restart")
     // 解码出的运行时配置 = 默认 llm（无 provider）
