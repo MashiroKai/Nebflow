@@ -17,6 +17,7 @@
 import { key } from './branding.js';
 import { t } from './i18n.js';
 import { makeReference } from './reference.js';
+import { initCanvasDrop } from './canvasDrop.js';
 import { authHeaders } from './flowHelpers.js'; // Bearer token for REST withAuth (/api/canvas-tabs)
 
 const MIN_CANVAS_WIDTH = 320;
@@ -475,7 +476,14 @@ export function openTab(id, title, opts = {}) {
   // Auto-scroll the tab bar to show the newly added tab.
   tabBar.scrollTo({ left: tabBar.scrollWidth, behavior: 'smooth' });
 
-  const entry = { id, title, type, paneEl: pane, tabEl: tab, closable, pinned, absPath: opts.absPath || null };
+  const entry = { id, title, type, paneEl: pane, tabEl: tab, closable, pinned,
+                  absPath: opts.absPath || null,
+                  // canvasdrop: the write root + request path the pane was
+                  // opened with. The drop handler reuses them verbatim so its
+                  // writeFile lands under the same containment root as the
+                  // editor's own save (no root broadening).
+                  rootPath: opts.rootPath || null,
+                  filePath: opts.filePath || null };
   tabs.set(id, entry);
 
   // Track preview tab — will be replaced when a new tab in the same
@@ -980,7 +988,10 @@ export async function openWorkspaceItem(item) {
     }
   }
 
-  const entry = openTab(id, title || id, { type: itemType, pinned: !!pinned, absPath: absPath });
+  const entry = openTab(id, title || id, {
+    type: itemType, pinned: !!pinned, absPath: absPath,
+    rootPath: item.rootPath || null, filePath: item.path || null,
+  });
   if (!entry) return;
   const pane = entry.paneEl;
 
@@ -1061,6 +1072,24 @@ export function initCanvas() {
       e.preventDefault();
       e.stopPropagation();
       showCanvasRefMenu(e.clientX, e.clientY, entry);
+    });
+  }
+
+  // canvasdrop: OS file dropped onto a pane → copy into `<fileDir>/assets/`
+  // and insert a relative reference at the cursor. The resolver hands the drop
+  // handler the tab's own absPath / write root / itemType; panel tabs (no file
+  // behind them) resolve to null and get a visible "not editable here" notice.
+  const canvasContent = document.getElementById('canvas-content');
+  if (canvasContent) {
+    initCanvasDrop(canvasContent, (pane) => {
+      const tabId = pane.dataset.tabId;
+      const entry = tabId ? tabs.get(tabId) : null;
+      if (!entry) return null;
+      return {
+        absPath: entry.absPath || undefined,
+        rootPath: entry.rootPath || null,
+        itemType: entry.type,
+      };
     });
   }
 

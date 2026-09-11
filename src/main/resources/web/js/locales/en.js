@@ -941,6 +941,14 @@ export default {
   // === Canvas save feedback ===
   'canvas.saved': 'Saved {name}',
   'canvas.saveFailed': 'Failed to save {name}: {error}',
+  // === Canvas external file drop (canvasdrop, 2026-09-11 author rulings R1–R7) ===
+  'canvas.dropInserted': 'Inserted {ref}',
+  'canvas.dropFailed': 'Insert failed: {error}',
+  'canvas.dropUnsupported': 'Unsupported type: {name} (droppable images: png / jpg / jpeg / gif / svg / webp / bmp / ico / avif / tiff / tif)',
+  'canvas.dropBatchUnsupported': 'Batch drop is not supported yet — drop one image at a time',
+  'canvas.dropNotEditable': 'This is a preview / read-only view — switch to source view before dropping',
+  'canvas.dropNoTarget': 'No editable file here — drop inside the file being edited',
+  'canvas.dropTooLarge': '{name} exceeds the 20MB limit and was not written',
   // === Lightbox (image preview) ===
   'lightbox.ariaLabel': 'Image preview',
   'lightbox.close': 'Close preview',

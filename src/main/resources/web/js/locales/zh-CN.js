@@ -946,6 +946,14 @@ export default {
   // === Canvas 保存反馈 ===
   'canvas.saved': '已保存 {name}',
   'canvas.saveFailed': '保存 {name} 失败：{error}',
+  // === Canvas 外部文件拖入（canvasdrop，2026-09-11 作者裁定 R1–R7）===
+  'canvas.dropInserted': '已插入 {ref}',
+  'canvas.dropFailed': '插入失败：{error}',
+  'canvas.dropUnsupported': '暂不支持该类型：{name}（可拖入的图片：png / jpg / jpeg / gif / svg / webp / bmp / ico / avif / tiff / tif）',
+  'canvas.dropBatchUnsupported': '暂不支持批量拖入，一次只能拖入一张图片',
+  'canvas.dropNotEditable': '当前是预览/只读视图，不能插入引用 —— 切到源码视图后再拖入',
+  'canvas.dropNoTarget': '这里没有可编辑的文件，请拖到正在编辑的文件区域内',
+  'canvas.dropTooLarge': '{name} 超过 20MB 上限，未写入',
   // === Lightbox（图片预览） ===
   'lightbox.ariaLabel': '图片预览',
   'lightbox.close': '关闭预览',
