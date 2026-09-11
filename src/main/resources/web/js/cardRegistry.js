@@ -159,6 +159,11 @@ window.addEventListener('message', (e) => {
     // If height changed, ensure scroll position still shows the card bottom.
     // Works for first measurement (oldHeight == '' → heightChanged = true) and subsequent resizes.
     if (heightChanged) {
+      // Detached-window isolation (msgsearch v2, 2026-09-11): a card rendered
+      // inside a floating window (search result window) belongs to that
+      // window's own scroll container — it must never drive the ACTIVE view's
+      // chat scroll (opening such a window may not move the main session).
+      if (iframe.closest('[data-nf-float-layer]')) return;
       const view = state.getActiveView ? state.getActiveView() : null;
       const chat = view && view.dom.chat;
       if (!chat) return;

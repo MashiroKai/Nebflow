@@ -1027,6 +1027,158 @@
 #search-results { transition: opacity 0.12s ease; }
 #search-results[data-loading="true"] { opacity: 0.5; }
 
+/* ── Inline card body in a result row (v2, 2026-09-11) ──────────────────────
+   A hit whose tool message produced a Card expands that card body under the
+   preview, rendered by the shared card registry (.html-card-wrap /
+   .html-card-iframe — no card styling of its own). Rows without a card add no
+   node at all; the .search-result* rules above are untouched. */
+.search-result-card {
+  margin-top: 8px;
+  width: 100%;
+  max-width: 100%;
+}
+/* Failure of the card body must be visible inside the row (never silent). */
+.search-result-card-warn {
+  margin-top: 6px;
+  padding: 6px 8px;
+  border-radius: 8px;
+  font-size: 11px;
+  line-height: 1.45;
+  color: var(--color-error);
+  background: color-mix(in srgb, var(--color-error) 8%, transparent);
+  border: 1px solid color-mix(in srgb, var(--color-error) 26%, transparent);
+}
+
+/* ── Detached message window (v2, 2026-09-11) ──────────────────────────────
+   Opened by clicking a non-Pop search result: an independent floating window
+   whose content STARTS at the clicked message. Draggable / independently
+   closable / independently scrollable / several at once (cascade offset).
+   Material = the popup family (glass panel + sapphire refraction line, no
+   backdrop, no dimming — 视觉铁律 1); it floats ABOVE the search overlay
+   (z-index 310) without changing anything underneath it. */
+.nf-msgfloat {
+  position: fixed;
+  z-index: 1000;
+  width: min(520px, calc(100vw - 32px));
+  height: min(560px, calc(100vh - 96px));
+  display: flex;
+  flex-direction: column;
+  background: var(--glass-bg);
+  -webkit-backdrop-filter: blur(var(--glass-blur)) saturate(1.15);
+  backdrop-filter: blur(var(--glass-blur)) saturate(1.15);
+  border: 1px solid var(--glass-border);
+  border-radius: 16px;
+  overflow: hidden;
+  box-shadow:
+    inset 0 1px 0 0 rgba(255, 255, 255, 0.25),
+    0 2px 8px rgba(0, 0, 0, 0.04),
+    0 8px 32px rgba(0, 0, 0, 0.10);
+  animation: nfMsgFloatIn 0.18s ease;
+}
+@media (prefers-color-scheme: dark) {
+  .nf-msgfloat {
+    box-shadow:
+      inset 0 1px 0 0 rgba(255, 255, 255, 0.04),
+      0 2px 8px rgba(0, 0, 0, 0.20),
+      0 8px 32px rgba(0, 0, 0, 0.35);
+  }
+}
+.nf-msgfloat.dragging { animation: none; }
+@keyframes nfMsgFloatIn { from { opacity: 0; transform: translateY(6px); } to { opacity: 1; transform: none; } }
+
+/* Header — the drag handle (same refraction line as the popup family). */
+.nf-msgfloat-head {
+  flex-shrink: 0;
+  position: relative;
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  padding: 10px 12px 10px 16px;
+  border-bottom: 1px solid var(--glass-border);
+  cursor: grab;
+  user-select: none;
+  touch-action: none;
+}
+.nf-msgfloat.dragging .nf-msgfloat-head { cursor: grabbing; }
+.nf-msgfloat-head::before {
+  content: '';
+  position: absolute;
+  top: 0; left: 10%; right: 10%;
+  height: 1px;
+  background: linear-gradient(90deg,
+    transparent 10%,
+    var(--sapphire-refraction) 50%,
+    transparent 90%);
+  pointer-events: none;
+}
+.nf-msgfloat-title {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--color-frame-text-bright);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  min-width: 0;
+  max-width: 60%;
+}
+.nf-msgfloat-sub {
+  font-size: 11px;
+  color: var(--color-frame-text-muted);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  min-width: 0;
+}
+.nf-msgfloat-close {
+  margin-left: auto;
+  flex-shrink: 0;
+  width: 22px;
+  height: 22px;
+  border: none;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--color-frame-text-muted);
+  font-size: 15px;
+  line-height: 1;
+  cursor: pointer;
+  opacity: 0.7;
+}
+.nf-msgfloat-close:hover {
+  opacity: 1;
+  background: var(--color-frame-hover);
+  color: var(--color-frame-text-bright);
+}
+.nf-msgfloat-close:focus { outline: none; }
+.nf-msgfloat-close:focus-visible { outline: 2px solid var(--color-frame-border); outline-offset: 1px; }
+
+/* Body — the window's own scroll container (history rows drawn by the same
+   history renderer as the main chat). */
+.nf-msgfloat-chat {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  padding: 8px 16px 20px;
+  overscroll-behavior: contain;
+  scrollbar-color: var(--color-frame-border) transparent;
+}
+.nf-msgfloat-chat .row { max-width: 100%; }
+.nf-msgfloat-notice {
+  margin: 8px 0;
+  padding: 6px 8px;
+  border-radius: 8px;
+  font-size: 11px;
+  line-height: 1.45;
+  color: var(--color-error);
+  background: color-mix(in srgb, var(--color-error) 8%, transparent);
+  border: 1px solid color-mix(in srgb, var(--color-error) 26%, transparent);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .nf-msgfloat { animation: none; }
+}
+
 /* Inline retry button in the status line (error state). */
 #search-status .cfg-btn { margin-left: 8px; }
 

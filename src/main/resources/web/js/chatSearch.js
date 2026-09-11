@@ -27,16 +27,24 @@
 // Messages are fetched via the REST API (backend is the source of truth):
 //   GET /api/sessions?includeUnindexed=1 → session list incl. unindexed
 //   GET /api/sessions/{id}/history       → UiMessage list per session
+//
+// v2 (2026-09-11 author ruling) — two changes on top of v3.1, nothing else:
+//   1) A hit whose tool message produced a Card renders that card body inline
+//      under the preview (same renderer as the chat: renderWithRegistry). Every
+//      other row keeps its exact DOM/styling; the list layout is untouched.
+//   2) Clicking a non-Pop hit opens an independent floating window that starts
+//      at the hit (chatSearchFloat.js) instead of scrolling the MAIN session.
+//      Pop/Card artifacts with a Canvas-openable filePath keep the existing
+//      Canvas-direct routing. The in-session jump machinery (scrollToMessage /
+//      flashRow / jumpToResult + its WS paging) is gone with it.
 
 import state from './state.js';
 import { key } from './branding.js';
-import { chatViews } from './chatView.js';
-import { switchToSession } from './sidebar.js';
-import { sendWs } from './ws.js';
 import { t, getLocale } from './i18n.js';
 import { escapeHtml } from './utils.js';
 import { popArtifactFromInput, openPopArtifact } from './chat.js';
-import { expandGroupContaining } from './turnGroup.js';
+import { renderWithRegistry, cleanupCardIframes } from './cardRegistry.js';
+import { openSearchMessageFloat } from './chatSearchFloat.js';
 
 const MAX_RESULTS = 200;      // search-mode cap (v2.1 one-shot query)
 const FETCH_PAGE = 100;       // stream page size (spec §6.3 caps a page at ≤200;
@@ -222,6 +230,11 @@ export function closeSearchModal() {
   if (calOpen) closeCalendar(false);
   sentinelObserver?.disconnect();
   sentinelEl = null;
+  // Card bodies in the result list own sandboxed iframes — release their
+  // browsing contexts/observers while the modal is closed (the next open
+  // re-renders the list from scratch).
+  const resultsEl = document.getElementById('search-results');
+  if (resultsEl) cleanupCardIframes(resultsEl);
   document.getElementById('search-overlay')?.classList.remove('on');
   document.getElementById('search-btn')?.focus();   // return focus to the opener
 }
@@ -540,10 +553,17 @@ function openPillListbox(pill, pop) {
 }
 
 // ── Keyboard contract ──────────────────────────────────────
+/** True when the event originated inside a detached message window (its own
+ *  Esc / Tab handling must win over the modal's capture-phase handler). */
+function inMessageFloat(target) {
+  return target instanceof Element && !!target.closest('[data-nf-float-layer]');
+}
+
 function onModalKeydown(e) {
   const overlay = document.getElementById('search-overlay');
   if (!overlay?.classList.contains('on')) return;
   if (e.isComposing) return;   // never intercept IME composition keys
+  if (inMessageFloat(e.target)) return;   // keys belong to the message window
 
   const modal = document.getElementById('search-modal');
   const ae = document.activeElement;
@@ -665,6 +685,9 @@ function setActive(i, scroll = false) {
 /** Focus trap: Tab/Shift+Tab cycle inside the modal (or inside the open
  *  calendar popover), never escaping to the background chat area. */
 function trapFocus(e) {
+  // v2: a detached message window (chatSearchFloat) is its own focus scope —
+  // keys raised while focus sits inside one belong to that window.
+  if (inMessageFloat(e.target)) return;
   const scope = calOpen
     ? document.getElementById('search-date-popover')
     : document.getElementById('search-modal');
@@ -869,6 +892,7 @@ async function runStream() {
       if (!sid) {
         if (mySeq !== searchSeq) return;
         resultsEl.removeAttribute('data-loading');
+        clearResults(resultsEl);
         resultsEl.innerHTML = `<div class="search-hint">${escapeHtml(t('search.emptyCategory'))}</div>`;
         statusEl.textContent = t('search.noSession');
         streamSessions = [];
@@ -1041,6 +1065,7 @@ async function runSearch() {
       if (!sid) {
         if (mySeq !== searchSeq) return;
         resultsEl.removeAttribute('data-loading');
+        clearResults(resultsEl);
         resultsEl.innerHTML = `<div class="search-hint">${escapeHtml(t('search.noResults'))}<br>${escapeHtml(t('search.noResultsSuggestion'))}</div>`;
         statusEl.textContent = t('search.noSession');
         streamSessions = [];
@@ -1151,8 +1176,8 @@ function wrapItem(s, viewIdx) {
     input: m.input,
     text: m.text,
     // #41: copy the raw tool segments too — this wrapper is what the click
-    // handler actually hands to scrollToMessage; without them the jump site
-    // sees undefined candidates under every locale.
+    // handler hands to the message window (chatSearchFloat); without them the
+    // window's hit-locating candidates are undefined under every locale.
     summary: m.summary || '',
     content: m.content || '',
     ts: m.ts,
@@ -1184,12 +1209,21 @@ function buildModel() {
   lastTotal = streamMode === 'search' ? lastTotal : lastResults.length;
 }
 
+/** Drop the rendered list. Card bodies own sandboxed iframes, so their
+ *  observers/browsing contexts are released FIRST (cardRegistry contract:
+ *  cleanup before a mass DOM removal — a re-search reruns on every keystroke).
+ *  @param {HTMLElement} resultsEl */
+function clearResults(resultsEl) {
+  cleanupCardIframes(resultsEl);
+  resultsEl.innerHTML = '';
+}
+
 /** Fresh full render of the current window (initial load / mode switch). */
 function renderStreamFresh(resultsEl, statusEl) {
   resultsEl.removeAttribute('data-loading');
   sentinelObserver?.disconnect();
   sentinelEl = null;
-  resultsEl.innerHTML = '';
+  clearResults(resultsEl);
   renderedCount = 0;
   activeIndex = -1;
 
@@ -1341,6 +1375,75 @@ function populateToolFilter(perSession, keepValue) {
 }
 
 // ── Result rendering ───────────────────────────────────────
+/** Card marker written by the Card tool (`___CARD_HTML___{json}`) — the same
+ *  payload chat.js / persistence.js feed to renderWithRegistry when they draw
+ *  a tool message's card body. */
+const CARD_MARKER_RE = /^___\w+_HTML___/;
+
+/** The card payload to hand to renderWithRegistry for this row, or null when
+ *  the message carries no card body. */
+function cardPayloadOf(r) {
+  if (r.kind !== 'tool') return null;
+  const c = r.content;
+  if (typeof c === 'string' && CARD_MARKER_RE.test(c)) return c;
+  if (c && typeof c === 'object' && typeof c.html === 'string' && c.html) return c;
+  return null;
+}
+
+/** True when the message WAS a Card delivery, so a missing/unrenderable body
+ *  is a visible failure rather than a no-op (row gets an inline warning). */
+function expectsCardBody(r) {
+  return r.kind === 'tool' && cleanToolName(r.tool) === 'Card';
+}
+
+/** Inline warning strip inside a result row (failure must be visible, never
+ *  console-only and never a silently missing card). */
+function mountRowNotice(rowEl, msg) {
+  const existing = rowEl.querySelector('.search-result-card-warn');
+  if (existing) { existing.textContent = msg; return existing; }
+  const el = document.createElement('div');
+  el.className = 'search-result-card-warn';
+  el.setAttribute('role', 'status');
+  el.textContent = msg;
+  rowEl.appendChild(el);
+  return el;
+}
+
+/**
+ * Render a historical card body inside a result row through the shared card
+ * registry renderer (no bespoke card DOM). Every failure branch is surfaced in
+ * the row itself.
+ * @param {HTMLElement} host  the row's `.search-result-card` container
+ * @param {any} payload       renderWithRegistry payload (marker string/object)
+ * @param {HTMLElement} rowEl the owning result row (notice target)
+ */
+function mountResultCard(host, payload, rowEl) {
+  const fail = (msg) => {
+    host.dataset.cardState = 'failed';
+    mountRowNotice(rowEl, msg);
+  };
+  if (!payload) { fail(t('search.cardUnavailable')); return; }
+  let ok = false;
+  try {
+    ok = renderWithRegistry(host, payload);
+  } catch (e) {
+    console.debug('[chatSearch] card render threw', e);
+    fail(t('search.cardRenderFailed'));
+    return;
+  }
+  if (!ok) { fail(t('search.cardRenderFailed')); return; }
+  host.dataset.cardState = 'rendered';
+  // Late failure detector: a card iframe that got its srcdoc but never reported
+  // a height means its own content/assets never rendered (the height protocol
+  // is the only signal the parent gets from inside the sandboxed frame).
+  setTimeout(() => {
+    if (!host.isConnected || host.dataset.cardState !== 'rendered') return;
+    const frame = host.querySelector('iframe[data-nf-card-id]');
+    if (!(frame instanceof HTMLIFrameElement)) { fail(t('search.cardRenderFailed')); return; }
+    if (frame.hasAttribute('srcdoc') && !frame.style.height) fail(t('search.cardLoadFailed'));
+  }, 4000);
+}
+
 /** One result row element. data-key is the stable identity (sessionId:ord);
  *  data-ts / data-kind / data-attachments are the QA assertion surface. */
 function resultElement(r) {
@@ -1364,7 +1467,17 @@ function resultElement(r) {
     </div>
     <div class="search-result-preview">${highlightPreview(r.text, kw)}</div>
   </div>`;
-  return /** @type {HTMLElement} */ (tpl.content.firstElementChild);
+  const el = /** @type {HTMLElement} */ (tpl.content.firstElementChild);
+  // Card-bearing messages get their card body expanded right under the
+  // preview; every other row keeps its exact previous DOM (zero new nodes).
+  const payload = cardPayloadOf(r);
+  if (payload || expectsCardBody(r)) {
+    const host = document.createElement('div');
+    host.className = 'search-result-card';
+    el.appendChild(host);
+    mountResultCard(host, payload, el);
+  }
+  return el;
 }
 
 /** Preview snippet centered on the first keyword match, with <mark> highlights. */
@@ -1406,30 +1519,17 @@ function formatTime(ts) {
   return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')} ${hh}:${mm}`;
 }
 
-// ── Jump to message ────────────────────────────────────────
-// DOM matching normalizes away whitespace and non-alphanumeric characters so
-// markdown formatting (**bold**, `code`, list bullets) doesn't break the match.
-const stripForMatch = (s) => (s || '').replace(/[^\p{L}\p{N}]/gu, '').toLowerCase();
-
-// ── Jump-to-message ────────────────────────────────────────
-// The chat view initially renders only the newest 50 messages and pages older
-// history on scroll-to-top, so a search hit can sit far outside the loaded
-// window — a pure DOM scan fails "most of the time" (2026-08-18 user report).
-// scrollToMessage therefore drives the same WS pagination the scroll listener
-// uses: while the target is unmatched and the view has older pages, request
-// them (50 at a time) and retry, up to JUMP_MAX_PAGES / JUMP_DEADLINE_MS.
-const JUMP_TICK_MS = 250;
-const JUMP_MAX_PAGES = 40;        // 40 × 50 = 2000 messages of lookback
-const JUMP_DEADLINE_MS = 25000;   // overall budget
-
 // ── Result activation ───────────────────────────────────────
 /**
- * Activate a result row (click or Enter). Pop/Card artifact messages (with a
- * Canvas-openable filePath — same detection as the message bubble's Pop card)
- * open the content DIRECTLY in Canvas, no message jump; everything else keeps
- * the locate-and-jump behavior. The modal closes in both cases (act-and-exit
- * convention — jumpToResult already closes; a Canvas tab opened under an open
- * modal would be hidden behind it).
+ * Activate a result row (click or Enter).
+ *   - Pop/Card artifact messages (Canvas-openable filePath — same detection as
+ *     the message bubble's Pop card) keep the existing Canvas-direct routing:
+ *     the modal closes and the artifact opens in Canvas (act-and-exit).
+ *   - Every other result opens a detached floating window that STARTS at the
+ *     clicked message (chatSearchFloat.js). The main session is left exactly as
+ *     it was — no session switch, no scroll, no focus change — and the search
+ *     modal stays open (opening a window changes neither the main window's
+ *     state nor the modal's, and several windows can be opened in a row).
  */
 function activateResult(res) {
   const art = popArtifactFromInput(res.tool, res.input);
@@ -1438,82 +1538,10 @@ function activateResult(res) {
     openPopArtifact(art.filePath, art.title);
     return;
   }
-  jumpToResult(res);
-}
-
-function jumpToResult(res) {
-  closeSearchModal();
-  switchToSession(res.sessionId);
-  scrollToMessage(res, { pages: 0, start: Date.now(), settleTicks: 0 });
-}
-
-/** @param {HTMLElement} el */
-function flashRow(el) {
-  expandGroupContaining(el); // #346 E10: reveal collapsed turn before scrolling
-  el.scrollIntoView({ block: 'center', behavior: 'smooth' });
-  el.classList.add('search-hit-flash');
-  setTimeout(() => el.classList.remove('search-hit-flash'), 1800);
-}
-
-/**
- * @param {any} res search result ({sessionId, text, ts})
- * @param {{pages:number, start:number, settleTicks:number}} st jump state
- */
-function scrollToMessage(res, st) {
-  const pv = chatViews.primary;
-  const chat = pv?.dom?.chat;
-  if (!chat) return;
-  // User navigated away mid-jump — abort silently.
-  if (state.activeSessionId !== res.sessionId) return;
-
-  // 1. Text-snippet match (primary, human-meaningful). Tool cards localize
-  //    label/summary at render time, so under a non-English UI the raw summary
-  //    heading the joined text never matches the DOM (#41). Try candidates in
-  //    order: content (rendered verbatim in the card body — locale-independent),
-  //    then the raw summary and the legacy joined text (keeps the English-UI
-  //    path intact). Non-tool kinds keep the single legacy snippet.
-  const candidates = res.kind === 'tool'
-    ? [res.content, res.summary, res.text]
-    : [res.text];
-  const snippets = [];
-  for (const cand of candidates) {
-    const s = stripForMatch(cand).slice(0, 40);
-    if (s.length >= 4 && !snippets.includes(s)) snippets.push(s);
-  }
-  for (const snippet of snippets) {
-    const rows = chat.querySelectorAll('.row, .tool-card');
-    for (const el of rows) {
-      if (stripForMatch(el.textContent).includes(snippet)) { flashRow(el); return; }
-    }
-  }
-  // 2. Exact-timestamp fallback — covers image-only / very short messages
-  //    whose stripped snippet is under 4 chars (the duration badge carries
-  //    data-ts epoch ms). Tool/agent/ask rows normalize to ts=0 and skip.
-  if (res.ts) {
-    const badge = chat.querySelector(`[data-ts="${res.ts}"]`);
-    const row = badge?.closest('.row, .tool-card');
-    if (row) { flashRow(row); return; }
-  }
-
-  // 3. Not in the loaded window — page older history in and retry.
-  const p = pv.pagination;
-  const expired = Date.now() - st.start > JUMP_DEADLINE_MS;
-  if (!expired && p && !p.pendingInitialLoad && !p.loading && p.hasMore && p.offset > 0 && st.pages < JUMP_MAX_PAGES) {
-    p.loading = true;
-    st.pages++;
-    sendWs({ type: 'getHistory', sessionId: res.sessionId, limit: 50, beforeIndex: p.offset });
-  } else if (!expired && p && !p.pendingInitialLoad && !p.loading && !p.hasMore) {
-    // History fully loaded and still no match — allow a few settle ticks for
-    // deferred markdown rendering, then give up.
-    if (++st.settleTicks > 4) {
-      (/** @type {any} */ (window)).__showToast?.(t('search.jumpFailed'), 'error');
-      return;
-    }
-  } else if (expired) {
-    (/** @type {any} */ (window)).__showToast?.(t('search.jumpFailed'), 'error');
-    return;
-  }
-  setTimeout(() => scrollToMessage(res, st), JUMP_TICK_MS);
+  const row = document.querySelector(`#search-results .search-result[data-key="${CSS.escape(res.key || '')}"]`);
+  openSearchMessageFloat(res, {
+    onError: (msg) => { if (row instanceof HTMLElement) mountRowNotice(row, msg); },
+  });
 }
 
 // Re-apply labels when the locale changes while the modal is open.
