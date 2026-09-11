@@ -118,11 +118,16 @@ class NeblinkRelayStatusRouteSpec extends CatsEffectSuite:
           // The fixture (Auth403 mode) accepts nothing: once the session is
           // kicked the upgrade is rejected forever — the incident's shape.
           _ <- IO { fix.kickSessionOf(Device, Net); () }
-          tunnel = new NeblinkRelayTunnel(ms, fix.url, () => IO(client.currentSessionToken))(dispatcher)
+          // 2026-09-11：隧道 URL 改为连接期 live 解析（构造参已移除）⇒
+          // 测试改为把 server 址写进 config ref（= 生产里 updateConfig/enrollment 的等价物）。
+          tunnel = new NeblinkRelayTunnel(ms, () => IO(client.currentSessionToken))(dispatcher)
           _ = ms.setRelayTunnel(tunnel)
           ps = new NeblinkPresenceService(ms, 0)(dispatcher)
           discovery = new NeblinkDiscovery(ms, 0, ps, Some(client))
-          _ <- ms.updateConfig(_.copy(enabled = true))
+          _ <- ms.updateConfig(_.copy(
+            enabled = true,
+            neblinkServer = Some(NeblinkServerConfig(url = fix.url, networkId = Net, secret = "qa-secret"))
+          ))
           _ <- DeviceCredential.save(DeviceCredential(fix.url, Net, Device, "dev-tok"))
           // Keep the session permanently dead: the fixture rejects the upgrade
           // (403) AND refuses further logins, so the tunnel stays parked on the

@@ -4,6 +4,7 @@ import cats.effect.IO
 import cats.effect.std.Dispatcher
 import com.sun.net.httpserver.{HttpExchange, HttpServer}
 import io.circe.Json
+import io.circe.parser.parse
 import io.circe.syntax.*
 import munit.CatsEffectSuite
 import nebflow.agent.SharedResources
@@ -155,12 +156,19 @@ class NeblinkLogoutRoutesSpec extends CatsEffectSuite:
       ms <- NeblinkService.create(0, dispatcher)
       client = new NeblinkClient(NeblinkServerConfig(url = serverUrl, networkId = "n1", secret = "s"), 0)
       ps = new NeblinkPresenceService(ms, 0)(dispatcher)
-      tunnel = new NeblinkRelayTunnel(ms, serverUrl, () => IO.pure(client.currentSessionToken))(dispatcher)
+      // 2026-09-11：隧道 URL 改为连接期 live 解析（构造参已移除）
+      tunnel = new NeblinkRelayTunnel(ms, () => IO.pure(client.currentSessionToken))(dispatcher)
       _ = ms.setRelayClient(Some(client))
       _ = ms.setRelayTunnel(tunnel)
+      // 装配 owner（GatewayMain）的等价登记：enrollment 只发 ensure 信号。
+      // （setRelayTunnelStarter 返回 IO ⇒ 必须走生成器）
+      _ <- ms.setRelayTunnelStarter(tunnel.ensure())
       _ = ms.setPresenceService(ps)
       discovery = new NeblinkDiscovery(ms, 0, ps, Some(client))
-      _ <- ms.updateConfig(_.copy(enabled = true))
+      _ <- ms.updateConfig(_.copy(
+        enabled = true,
+        neblinkServer = Some(NeblinkServerConfig(url = serverUrl, networkId = "n1", secret = "s"))
+      ))
       _ <- DeviceCredential.save(DeviceCredential(serverUrl, "n1", "d1", "dev-tok"))
       // A peer that must not survive logout.
       _ <- ms.upsertPeer(PeerInfo("ghost", "GhostPC", "macos", "http://127.0.0.1:9"))
@@ -224,6 +232,48 @@ class NeblinkLogoutRoutesSpec extends CatsEffectSuite:
             assertEquals(peers, Nil)
             assertEquals(cred, None)
         }
+      }
+    }
+  }
+
+  // ── 2026-09-11 隧道生命周期：stop() 不再是终局 ──────────────────────────
+
+  test("logout -> re-enroll -> ensure revives the relay tunnel (stop() is no longer terminal)") {
+    // 缺陷：`stop()`（logout 第 2 步）把 running 置 false，全仓无任何复位路径
+    // ⇒「登出 → 再登录」后 relay 永久缺席到进程重启（/neblink/status 恒
+    // relayAvailable:false、RemoteExecutor 恒判 relay 不可用）。
+    Dispatcher.parallel[IO].use { dispatcher =>
+      startMockServer.flatMap { (server, url, _) =>
+        mkStack(url, dispatcher).flatMap { st =>
+          for
+            _ <- st.client.login("d1", "dev", "macos", Nil)
+            _ <- st.tunnel.connect()
+            _ <- IO(assert(st.tunnel.isRunning, "connect() 后隧道必须在跑"))
+            resp <- st.routes.routes(logoutRequest).value.map(_.getOrElse(fail("route fell through")))
+            afterLogout <- IO(st.tunnel.isRunning)
+            spawnsAfterLogout <- IO(st.tunnel.loopSpawnCount)
+            // 重新 enroll（device-flow / AC+PKCE 的等价物）：persist 内部发 ensure 信号
+            _ <- NeblinkEnrollment.persist(
+              st.ms,
+              resolvedUrl = url,
+              json = parse("""{"deviceToken":"tok-re","networkId":"n1"}""").toOption.get,
+              logtoRefresh = None,
+              discovery = Some(st.discovery),
+              gatewayPort = 0,
+              reloginHook = None
+            )
+            revived <- IO(st.tunnel.isRunning)
+            spawns <- IO(st.tunnel.loopSpawnCount)
+          yield
+            assertEquals(resp.status, Status.Ok)
+            assertEquals(afterLogout, false, "logout 必须停隧道（既有语义不变）")
+            assertEquals(
+              revived,
+              true,
+              "重新 enroll（ensure）后隧道必须复活 —— 此前 running 无复位路径，只有进程重启能救"
+            )
+            assertEquals(spawns, spawnsAfterLogout + 1, "ensure 只能拉起一条连接链（不得双隧道）")
+        }.guarantee(IO.blocking(server.stop(0)))
       }
     }
   }
