@@ -305,6 +305,37 @@ function consumeTurnDuration(sid) {
   return Date.now() - startTime;
 }
 
+// Helper: schedule the queued-message drain. SINGLE definition of the drain
+// wiring shared by every turn-terminal signal — the terminal-frame family
+// (clearBusyFor: done / error / interrupted / timeout / maxTokens /
+// compactFailed) and, since ①-2 (2026-09-11), the backend's authoritative
+// sessionBusy{busy:false}. Keeping one body means the two entry points cannot
+// drift apart (the whole point of ①-2: the idle signal had NO drain wiring, so
+// a lost 'done' stranded the local queue forever — 症状① G1/G3).
+function scheduleQueueDrain(sid) {
+  // Delay lets the UI finalize the finished turn first (unchanged 50ms).
+  if (sid) setTimeout(() => drainMessageQueue(sid), 50);
+}
+
+// Helper: ①-2 (2026-09-11) busy re-arm gate for STREAMING frames.
+// A streaming frame that lands after this session's terminal frame must not
+// re-arm busy: `state.lastTerminalAt[sid]` is stamped by clearBusyFor (every
+// terminal event) and superseded by facts that prove a NEW turn began
+// (sessionBusy{busy:true} / a locally dispatched user message). Without the
+// gate, one late frame leaves busy on with no further terminal event ⇒ every
+// later Enter goes into the local queue and is never sent (症状① G3).
+// The bounded window keeps depth>0 (sub-agent) sessions — which emit no
+// sessionBusy frame at all — out of a permanent lock: a frame arriving later
+// than the window cannot be a straggler of the finished turn (WS frames are
+// ordered, so a frame delivered after `done` was emitted after it).
+const TERMINAL_ARM_GUARD_MS = 5000;
+function armBusyFromStream(sid) {
+  if (!sid || state.busySessionIds.has(sid)) return;
+  const termAt = state.lastTerminalAt[sid];
+  if (termAt && Date.now() - termAt <= TERMINAL_ARM_GUARD_MS) return;
+  setBusy(sid);
+}
+
 // Helper: clear busy for a specific session, then drain any queued messages.
 // Called by ALL terminal events (done, error, interrupted, timeout, maxTokens,
 // compactFailed) — not just 'done' — so the queue drains regardless of how the
@@ -314,6 +345,9 @@ function clearBusyFor(msg) {
   if (state.busySessionIds.has(sid)) {
     clearBusy(sid);
   }
+  // ①-2 (2026-09-11): record this terminal frame — armBusyFromStream gates on it
+  // until a new turn supersedes it.
+  if (sid) state.lastTerminalAt[sid] = Date.now();
   if (state.sessionBusyTimeouts[sid]) {
     clearTimeout(state.sessionBusyTimeouts[sid]);
     delete state.sessionBusyTimeouts[sid];
@@ -348,9 +382,8 @@ function clearBusyFor(msg) {
     }
   }
   // Drain queued messages after a short delay to let the UI finalize first
-  if (sid) {
-    setTimeout(() => drainMessageQueue(sid), 50);
-  }
+  // (①-2: same helper the sessionBusy{busy:false} path now calls).
+  scheduleQueueDrain(sid);
   // Release the send lock for the view displaying this session
   const view = findViewBySessionId(sid);
   if (view) view.isSending = false;
@@ -676,7 +709,7 @@ onMessage('thinkingDelta', (msg, view) => {
   if (sid) state.sessionThinkingBuffers[sid] = (state.sessionThinkingBuffers[sid] || '') + msg.delta;
   resetStreamTimeout(sid);
   state.lastStreamActivity = Date.now();
-  if (sid && !state.busySessionIds.has(sid)) setBusy(sid);
+  armBusyFromStream(sid); // ①-2: gated — a late frame must not re-arm busy after a terminal frame
   if (view) {
     stopThinkingTimer();
     // Remove the generic thinking placeholder if it exists
@@ -703,7 +736,7 @@ onMessage('textDelta', (msg, view) => {
   if (sid) state.sessionTexts[sid] = (state.sessionTexts[sid] || '') + msg.delta;
   resetStreamTimeout(sid);
   state.lastStreamActivity = Date.now();
-  if (sid && !state.busySessionIds.has(sid)) setBusy(sid);
+  armBusyFromStream(sid); // ①-2: gated (see armBusyFromStream)
   if (view) {
     stopThinkingTimer();
     clearRetryStatus();
@@ -742,7 +775,7 @@ onMessage('thinking', (msg, view) => {
   const sid = msg.sessionId || state.activeSessionId;
   if (sid && !state.turnStartTimes[sid]) state.turnStartTimes[sid] = Date.now();
   resetStreamTimeout(sid);
-  if (sid && !state.busySessionIds.has(sid)) setBusy(sid);
+  armBusyFromStream(sid); // ①-2: gated (see armBusyFromStream)
   if (view) {
     // Guard against duplicate thinking bubbles: check both state ref and DOM.
     const existing = activeView.dom.chat.querySelector('.thinking-placeholder');
@@ -782,7 +815,7 @@ onMessage('toolCallDetected', (msg, view) => {
     if (state.sessionThinkingBuffers[sid]) delete state.sessionThinkingBuffers[sid];
   }
 
-  if (sid && !state.busySessionIds.has(sid)) setBusy(sid);
+  armBusyFromStream(sid); // ①-2: gated (see armBusyFromStream)
   if (view) {
     clearRetryStatus();
     if (activeView.stream.currentThinkingBubble) finishThinking();
@@ -838,7 +871,10 @@ onMessage('toolStart', (msg, view) => {
   }
 
   if (view) {
-    if (!state.busySessionIds.has(msg.sessionId || state.activeSessionId)) setBusy(msg.sessionId || state.activeSessionId);
+    // ①-2 (2026-09-11): the tool frame used to arm busy unconditionally — a
+    // toolStart straggler after `done` switched busy back on with no future
+    // terminal event to clear it (症状① G3, diagnosis §1.2). Gated now.
+    armBusyFromStream(msg.sessionId || state.activeSessionId);
     clearRetryStatus();
     // Finish the current AI bubble so that text after tool execution goes into a new bubble
     if (activeView.stream.currentThinkingBubble) finishThinking();
@@ -2561,11 +2597,31 @@ onMessage('messageRecalled', (msg) => {
 onMessage('sessionBusy', (msg, view) => {
   const sid = msg.sessionId || state.activeSessionId;
   if (msg.busy) {
+    // ①-2 (2026-09-11): the backend authoritatively started a NEW turn — supersede
+    // this session's terminal stamp so the new turn's streaming frames may arm
+    // busy again (without this the re-arm gate would lock the session out).
+    if (sid) delete state.lastTerminalAt[sid];
     setBusy(msg.sessionId);
     // Server explicitly set busy — mark as expecting a turn (e.g. pendingEvents round)
     if (sid) state.turnExpecting[sid] = true;
   } else {
     clearBusy(msg.sessionId);
+    // ①-2 (2026-09-11, 队列不自动发出 症状①): sessionBusy{busy:false} is the
+    // AUTHORITATIVE end-of-turn signal — it is what drives state.busySessionIds —
+    // yet it had NO drain wiring, so when the 'done' frame was lost the local
+    // queue stayed parked forever (diagnosis §1.2 G1/G3). It now rides the SAME
+    // drain as the terminal-frame family (clearBusyFor → scheduleQueueDrain,
+    // 50ms), reusing the existing drain path rather than adding one.
+    // Two decidable properties of doing it here:
+    //   (a) no double delivery: drainMessageQueue shifts the head BEFORE sending
+    //       and returns early on an empty queue (input.js:919/925), so a
+    //       'done' + sessionBusy{false} pair in the same window delivers two
+    //       DISTINCT queued items, never the same one twice.
+    //   (b) compaction window: no drain while compacting — same rule as the
+    //       compactComplete handler below (`!busySessionIds.has(sid)`) and
+    //       input.js:494 (`isBusy = busy || compacting`); the resume turn right
+    //       after compactComplete performs the drain.
+    if (sid && !state.compactingSessionIds.has(sid)) scheduleQueueDrain(sid);
     // Defensive: if the 'done' event was lost but backend sent busy=false,
     // finish any active streaming bubble so the cursor disappears and the
     // duration badge is rendered.

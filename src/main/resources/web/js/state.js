@@ -119,6 +119,16 @@ export default {
   // Timestamp of the last textDelta/thinkingDelta received (ms).
   lastStreamActivity: 0,
 
+  // ①-2 (2026-09-11, queue-direct-pass diagnosis §1.2 G3): per-session timestamp
+  // of the last TERMINAL frame (done/error/interrupted/timeout/maxTokens/
+  // compactFailed — everything clearBusyFor handles). While an entry is live, a
+  // late streaming frame must not re-arm busy: the re-armed flag sends every
+  // later Enter into the local queue with no further terminal frame to drain it
+  // ⇒ the message never leaves the browser (症状①). Superseded only by facts
+  // that prove a NEW turn began (backend sessionBusy{busy:true} or a locally
+  // dispatched user message) — see markTerminal/canArmBusy/clearTerminal below.
+  lastTerminalAt: {},
+
   // Multi-agent (global color assignment - per-view bubbles live on ChatView)
   agentColors: {},
   agentColorIdx: 0,

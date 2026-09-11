@@ -1306,7 +1306,8 @@ class WebSocketRoutes(
             val immSessionId = immJson.hcursor.downField("sessionId").as[String].getOrElse("")
             val immContent = immJson.hcursor.downField("content").as[String].getOrElse("")
             admitWorkOrRefuse(wsSend)(
-              handleUserText(immSessionId, immContent, source = "immediateInput")
+              // 真人：用户在客户端点发送（队列条「立即发送」/输入框直投）
+              handleUserText(immSessionId, immContent, source = "immediateInput", fromUser = true)
             )
 
           // Protocol alias for immediateInput, sent by the CLI (ChatSend).
@@ -1322,7 +1323,9 @@ class WebSocketRoutes(
             val umSessionId = umJson.hcursor.downField("sessionId").as[String].getOrElse("")
             val umContent = umJson.hcursor.downField("content").as[String].getOrElse("")
             admitWorkOrRefuse(wsSend)(
-              handleUserText(umSessionId, umContent, source = "userMessage")
+              // 真人：CLI (ChatSend) 是人在终端里敲的字——实测本帧确实走
+              // handleUserText → dispatchUserText（与 immediateInput 同一腿）。
+              handleUserText(umSessionId, umContent, source = "userMessage", fromUser = true)
             )
 
           // ── 热重启触发面（P1，hot-restart 批设计 §3.2）：Web UI 按钮的 WS 命令。
@@ -3943,12 +3946,22 @@ class WebSocketRoutes(
           )
     }
 
-  private def handleUserText(sessionId: String, content: String, source: String): IO[Unit] =
+  /** @param fromUser
+    *   ② (2026-09-11, queue-direct-pass diagnosis §2): is this text a real
+    *   human message? Required (no default) so every entry point states its
+    *   origin. 真人口径（Nebula 代裁，可被作者推翻）= WS 直投（浏览器
+    *   `immediateInput` / 无 type 帧）+ CLI `userMessage`；REST headless
+    *   (`rest-turn`) 算程序 ⇒ false。The flag is threaded into
+    *   [[dispatchUserText]] → `AgentCommand.ImmediateInput(fromUser = …)` so the
+    *   idle judgement (`clientMessageId.isDefined || fromUser`) keeps the
+    *   human turn free of an injection source.
+    */
+  private def handleUserText(sessionId: String, content: String, source: String, fromUser: Boolean): IO[Unit] =
     if sessionId.nonEmpty && content.nonEmpty then
       // 第六件 QC (2026-08-30): the passthrough probe is WS-input-box ONLY —
       // headless REST turns ("rest-turn") go straight to dispatch so a P0
       // benchmark POST can never silently answer a pending card.
-      if !WebSocketRoutes.probesPassthrough(source) then dispatchUserText(sessionId, content, source)
+      if !WebSocketRoutes.probesPassthrough(source) then dispatchUserText(sessionId, content, source, fromUser)
       else
         // 第六件 (2026-08-30): if THIS session has a pending AskUser card, the
         // input-box text is the answer — deliver it straight through as the
@@ -3976,10 +3989,10 @@ class WebSocketRoutes(
                       sessionId,
                       List(UiMessage.User(content, Nil, timestamp = System.currentTimeMillis()))
                     )
-                case false => dispatchUserText(sessionId, content, source)
+                case false => dispatchUserText(sessionId, content, source, fromUser)
               }
             }
-          case None => dispatchUserText(sessionId, content, source)
+          case None => dispatchUserText(sessionId, content, source, fromUser)
         }
     else
       // P1 2026-08-27 (frontend c1d57710): the queue "send-now" branch emitted an
@@ -3997,8 +4010,15 @@ class WebSocketRoutes(
   /** Normal message dispatch: user bubble + immediate injection into the
     * agent's turn pipeline. The ONLY path that enqueues — the AskUser
     * passthrough deliberately bypasses this (第六件, 2026-08-30).
+    *
+    * ② (2026-09-11): `fromUser` rides along onto the ImmediateInput so the
+    * agent can tell 真人文本 (WS immediateInput / CLI userMessage) apart from
+    * server-side injections — without it the text lands in the
+    * `clientMessageId=None ⇒ source="tool"` fallback (idle conversion) and
+    * renders as a bogus TOOL card. `fromUser` is a required parameter so no
+    * caller can silently inherit the wrong origin.
     */
-  private def dispatchUserText(sessionId: String, content: String, source: String): IO[Unit] =
+  private def dispatchUserText(sessionId: String, content: String, source: String, fromUser: Boolean): IO[Unit] =
     logger.info(s"User text ($source) for session $sessionId (${content.length} chars)") *>
       sessionStore.appendUiMessages(
         sessionId,
@@ -4008,7 +4028,7 @@ class WebSocketRoutes(
       // SessionKickIdleSec), break it BEFORE queueing — the queued message
       // injects at the turn boundary the kick creates (user intent first).
       maybeSessionKick(sessionId, s"userMessage:$source") *>
-      ensureAgent(sessionId)(ref => ref ! AgentCommand.ImmediateInput(content))
+      ensureAgent(sessionId)(ref => ref ! AgentCommand.ImmediateInput(content, fromUser = fromUser))
 
 
   /**
@@ -4058,7 +4078,10 @@ class WebSocketRoutes(
     * REST-deterministic — this path never probes the AskUser passthrough.
     */
   def dispatchHeadlessTurn(sessionId: String, content: String): IO[Unit] =
-    handleUserText(sessionId, content, source = "rest-turn")
+    // ② 口径（Nebula 代裁，可被作者推翻）：REST headless 是「程序」在投文本
+    // （P0 benchmark / 外部脚本），不是人 ⇒ 显式 fromUser = false，保持既有
+    // 注入来源标注（rest-turn 经 probesPassthrough=false 直落 dispatchUserText）。
+    handleUserText(sessionId, content, source = "rest-turn", fromUser = false)
 
   // ============================================================
   // Local file search for smart attachment resolution
