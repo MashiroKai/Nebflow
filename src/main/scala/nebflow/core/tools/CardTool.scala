@@ -97,9 +97,6 @@ object CardTool extends Tool:
       case -1 => ""
       case i => path.substring(i + 1).toLowerCase
 
-  private def isAllowedMedia(path: String): Boolean =
-    AllowedExtensions.contains(fileExtension(path))
-
   /**
    * Why a local-looking file reference could not be turned into an
    * /api/nf-file URL.
