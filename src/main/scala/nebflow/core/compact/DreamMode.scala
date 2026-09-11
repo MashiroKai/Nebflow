@@ -137,6 +137,14 @@ object DreamMode:
    * Merge extracted facts into the stable Dream Extract section, organized by
    * category. Exact-duplicate bullets are dropped; T3 lifecycle eviction runs
    * at merge time (see object doc); the MemoryBudget gate guards the result.
+   *
+   * **SUPERSEDED（2026-09-12 记忆改造批 / spec §5 R7(4) O-A）——生产链路已关闭**：
+   * `NebulaMemoryHook` 不再调用本方法（facts 改走 `MemoryQueue` 入队
+   * `note{target:"user", action:"append", source.trigger:"dream"}`，见
+   * `NebulaMemoryHook.enqueueFacts`）；`~/.nebflow/User.md` 的直写通道（spec §3.1 W2）
+   * 由此关闭。本方法与其纯函数合并核（`mergeFactsIntoSection` / `t3Evolve` /
+   * `promotedTexts`）**保留为 T3 生命周期的参考实现与 spec 直测面**，但**没有生产
+   * 调用点**——不要重新接回：那是队列化的绕过通道。退役与否留给独立收敛批裁定。
    */
   def updateMemory(facts: List[String]): IO[MergeResult] = IO.blocking {
     val memPath = PathUtil.dataRoot / "User.md"

@@ -1,7 +1,7 @@
 ---
 name: memory-consolidation
 description: 记忆审计与整理方法论（memory-management 方案落地版）——触发时机（周审计 Schedule 周日 21:30 / 压缩后与重启后提醒 / >80% 预算即时任务 / 大重构后）、写入三问准入（hard-to-obtain / reusable / current-state-first）、取代而非追加（推翻裁定同轮 append+remove 成对）、T1/T2/T3 生命周期（T1 永久+取代收缩；T2 闭环即删兜底 7 天；T3 = Dream 稳定节 14 天未晋升自动淘 + 60 条 FIFO）、四条清理判据（stale/冗余/错位/低价值）、预算（User.md 50KB 硬顶 40KB 软警；memory.md 30KB/24KB——写入侧 MemoryEdit 预算闸强制，注入侧永不截断）。Use when 记忆膨胀、预算 WARN/超限拒绝、重大代码变更后、或周审计报告回投需要执行时。
-when_to_use: Nebula 例行或事件驱动整理自己与 User 的记忆文件（~/.nebflow/User.md、~/.nebflow/agents/Nebula/memory.md）；周审计报告（memory-consolidation flow scanner-only 产出）回投后的执行；收到 MemoryEdit 预算 WARN/拒绝后整理；大重构/架构变更后清过时条目。注意：team agent 不再有 memory（2026-08-31 裁定），不扫描不重建 teams/*/agents/*/memory.md；审计节点只产报告不写记忆（2026-09-05 职权红线），执行权在 Nebula 本人。
+when_to_use: Nebula 例行或事件驱动整理自己与 User 的记忆文件（~/.nebflow/User.md、~/.nebflow/agents/Nebula/memory.md）；周审计报告（memory-consolidation flow scanner-only 产出）回投后的执行；收到 MemoryEdit 预算 WARN/拒绝后整理；大重构/架构变更后清过时条目。注意：team agent 不再有 memory（2026-08-31 裁定），不扫描不重建 teams/*/agents/*/memory.md；审计节点只产报告不写记忆（2026-09-05 职权红线，2026-09-12 局部取代）；执行权归**记忆整理 agent**（`memory-consolidator`，压缩双轨第二轨）——Nebula 的 MemoryEdit 已退化为**纯记账**（`queued q-… (applied at next compaction)`），不再由 Nebula 本人逐条执行。
 language: zh
 status: active
 last_verified: 2026-09-05
@@ -11,7 +11,7 @@ last_verified: 2026-09-05
 
 ## 触发时机（四路）
 
-1. **周审计**：Schedule 周日 21:30 触发 memory-consolidation flow（scanner-only）→ 条目级报告回投 → Nebula 本人执行 MemoryEdit。
+1. **周审计**：Schedule 周日 21:30 触发 memory-consolidation flow（scanner-only）→ 条目级报告回投 → 发现以队列条目投入，由下一次压缩的记忆整理 agent（`memory-consolidator`）消费执行（Nebula 只记账）。
 2. **生命周期**：压缩完成后 / 宿主重启后首会话的 Memory hygiene 提醒 → 顺手做一轮 T2 闭环清扫。
 3. **阈值**：任一文件 >80% 软警线（User 40KB / memory 24KB）→ MemoryEdit 结果带 WARN 或注入 IMMEDIATE 提醒 → **当轮安排整理，不等周日**。
 4. **事件驱动**：重大代码/架构变更后（旧事实失效风险高）。
@@ -75,5 +75,5 @@ team agent 记忆已删除（内容归档于 docs/memory-archive/），不要扫
 
 - **整理以减法为主**：stale 与冗余条目对每个未来会话都是税；去留拿不准时按判据裁，倾向删（但低置信动作标「作者裁」不硬删）。
 - **现状是权威**：文件实际状态与清单矛盾时（条目已不在、章节已移动），以文件为准标 SKIP。
-- **职权红线**：审计/扫描节点只产报告；MemoryEdit 只由 Nebula 本人对两记忆文件执行。
+- **职权红线**：审计/扫描节点只产报告、**零记忆写权**；记忆文件写权归**记忆整理 agent**（`memory-consolidator`，压缩双轨第二轨，消费 `~/.nebflow/memory/queue.jsonl` 的记账条目）——Nebula 不再逐条执行 `MemoryEdit`（其已是纯记账）。
 - 报告只写计数、路径、skip 项。

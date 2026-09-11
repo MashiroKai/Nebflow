@@ -1,19 +1,23 @@
-# memory.md「记忆管理规则」节替换文本（Nebula 本人执行项）
+# memory.md「记忆管理规则」节替换文本（**记忆整理 agent** 执行项 —— Nebula 可记账入队）
 
-> 职权红线：本文件只是 staging 参考。~/.nebflow/agents/Nebula/memory.md 是 Nebula
-> 记忆本体，宿主/节点禁 cp 直写——由 Nebula 本人执行下述 MemoryEdit。
+> 职权红线（2026-09-12 局部取代）：本文件只是 staging 参考。~/.nebflow/agents/Nebula/memory.md 是 Nebula
+> 记忆本体，宿主/节点禁 cp 直写——由**记忆整理 agent**（`memory-consolidator`，压缩双轨第二轨，消费
+> `~/.nebflow/memory/queue.jsonl`）执行；Nebula 的 `MemoryEdit` 已退化为纯记账（`queued`，下次压缩应用）。
 
-## 执行指令（给 Nebula）
+## 执行指令（路径二择一）
 
 ```
+# (a) Nebula 记账入队（不落盘）：
 MemoryEdit(target="agent", action="replace_section",
            section="记忆管理规则",
            content=<下方新节全文>)
+# (b) memory-consolidator 在压缩轮直接 Write/Edit 落盘（改前手动快照三处记忆文件）。
 ```
 
 - 若报 MEMORYEDIT_NO_SECTION：错误消息会列出实际节名——按实际节名重试
   （方案 §1.2 记录该节 1,015B/4 条，标题含「记忆管理规则」字样）。
-- 替换后 `wc -c ~/.nebflow/agents/Nebula/memory.md` 应下降 ~0.6KB（旧 4 条中
+- 走 (a) 时**不立即生效**——下一次压缩由 `memory-consolidator` 消费该条队列记录后落盘；
+  走 (b) 时由整理 agent 落盘。生效后 `wc -c ~/.nebflow/agents/Nebula/memory.md` 应下降 ~0.6KB（旧 4 条中
   3 条 stale：路径错误分层条目、projectMemory 幻觉条目、save turn 四步循环条目；
   三问准入以新形态保留）。旧的「四步循环」表述随替换清除（§6.2-2.6 验收点）。
 
