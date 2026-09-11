@@ -597,6 +597,9 @@ export default {
   // === Chat area ===
   'chat.timeout': 'Response timed out',
   'chat.retry': 'Retry',
+  // A-branch scroll-follow convergence: new-message pill (N = message rows
+  // added since the user left the bottom).
+  'chat.newMessages': '↓ {n} new messages',
   'chat.confirm': 'Confirm',
   'chat.answeredViaChatInput': 'Answered via chat input',
   'chat.cancel': 'Cancel',
