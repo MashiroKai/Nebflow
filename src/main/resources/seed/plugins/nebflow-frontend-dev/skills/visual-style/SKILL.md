@@ -17,7 +17,8 @@ language: zh
    - 禁止 overlay 遮罩层：不要背景暗化、不要背景模糊，弹窗直接浮在界面上方
    - 面板本身必须是毛玻璃质感（`backdrop-filter: blur()` + 半透明背景），绝不许纯透明面板
    - 适用于**所有**弹窗（设置、聊天搜索、Agent 对话……），不是某个弹窗的特例
-2. **可交互控件**：统一玻璃质感标准（`.glass-control`）——参照发送按钮的淡绿玻璃参数（亮档 rgba(7,193,96,0.55) + 淡边框 0.30，暗档 0.62 / 0.34；blur 8px + 立体边缘），应用到所有可交互控件；具体数值以主仓 `src/main/resources/web/css/input.css` 的 `#send-btn` 为准
+2. **可交互控件**：统一玻璃质感标准（`.glass-control`）——主发送按钮 `#send-btn` 用**微信绿实色族（#07C160，白字）**；其余可交互控件复用其玻璃质感（blur + 立体边缘）。具体数值以主仓 `src/main/resources/web/css/input.css` 的 `#send-btn` 为准
+   - **灰族语义登记（中性灰玻璃族）**：三处次级「发送」语义控件——dropbox 发送（`web/js/dropbox.js:91` `#dropbox-send-btn`）、好友消息发送（`web/js/messages.js:320` `.fm-send-btn`）、联系人验证发送（`web/js/contacts.js:514`，`.fm-verify-box` 内 `.glass-control`）——保持**中性灰**：值域 rest `rgba(255,255,255,0.45)`（暗档 `0.05`），四态 rest/hover/active/disabled 齐备，规则与 token（`--glass-send-*`）落主仓 `src/main/resources/web/css/sapphire.css` 灰族块；**严禁并入微信绿实色族**（灰族无色相）
 3. **字重（方案 B 中度）**：body 400 / 标题 600 / 按钮 500 / 代码 500
 4. **消息气泡**：边缘自然不刻意——rgba(0,0,0,0.04) 极淡 border；注入消息（蓝色气泡）顶栏显示来源 `SOURCE · AGENT_NAME · EVENT_TYPE`（Team 消息标注 Team name），内容区不重复这些信息
 5. **侧边栏激活态**：用阴影，不用竖线
@@ -37,6 +38,8 @@ language: zh
 - "参考Apple多选的设计，简约一点。"（2026-05-14 15:10）
 
 补充语义（2026-08-14 同晚二次澄清）：禁的是弹窗**背后的 overlay 层**（背景暗化/模糊）；面板**本身**反而必须毛玻璃。首次实施曾误把面板毛玻璃一起去掉导致透明面板（即第一条 Evidence 的纠正场景）——两个层次不可混淆。
+
+后续裁定（**非原话，转述**）：2026-09-11 绿色基准改裁为**微信绿实色族（#07C160，白字）**，上文「淡绿玻璃 0.55」口径作废；同批裁定三处次级「发送」语义控件（dropbox / 好友消息 / 联系人）保持**中性灰**、只补缺失状态档，不并入绿族。来源：分发器 NodeMessage 2026-09-11 11:07:32（绿族改裁）+ P4 灰族裁定（实现分支 `p4-gray-impl-2`）。
 
 ## 维护
 
