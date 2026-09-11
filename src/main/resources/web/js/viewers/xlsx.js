@@ -1,13 +1,13 @@
 // viewers/xlsx.js — XLSX viewer (SheetJS, lazily loaded, multi-sheet tabs).
 // Migrated verbatim from fileViewers.js (viewXlsx).
 
-import { getToken, escapeHtml } from './shared.js';
+import { escapeHtml } from './shared.js';
+import { ticketUrl } from '../nfTicket.js';
 
 /** XLSX viewer — fetch binary, parse with SheetJS, render first sheet as table */
 async function viewXlsx(pane, { absPath, fileName }) {
   pane.innerHTML = `<div class="canvas-md-viewer" style="display:flex;align-items:center;justify-content:center;color:var(--color-text-muted);opacity:0.5;">Loading spreadsheet...</div>`;
-  const tok = getToken();
-  const url = `/api/nf-file?path=${encodeURIComponent(absPath)}&token=${encodeURIComponent(tok)}`;
+  const url = await ticketUrl(absPath);
   try {
     const resp = await fetch(url);
     if (!resp.ok) {

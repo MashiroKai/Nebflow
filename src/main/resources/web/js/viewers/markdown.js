@@ -1,7 +1,8 @@
 // viewers/markdown.js — Markdown viewer (rendered preview + source toggle).
 // Migrated verbatim from fileViewers.js (viewMarkdown).
 
-import { getToken, addSourceToggle } from './shared.js';
+import { addSourceToggle } from './shared.js';
+import { mintTickets, stripCredentialParams } from '../nfTicket.js';
 
 /** Markdown viewer - render formatted markdown (read-only preview) */
 async function viewMarkdown(pane, { content, absPath, fileName }) {
@@ -29,10 +30,13 @@ async function viewMarkdown(pane, { content, absPath, fileName }) {
   if (absPath) {
     const sep = absPath.includes('\\') ? '\\' : '/';
     const dir = absPath.substring(0, absPath.lastIndexOf(sep));
-    const tok = getToken();
-    html = html.replace(/(<img\s+[^>]*src=")([^"]+)(")/g, (m, prefix, src, suffix) => {
+    const IMG_SCAN_RE = /<img\s+[^>]*src="([^"]+)"/g;
+    const IMG_REWRITE_RE = /(<img\s+[^>]*src=")([^"]+)(")/g;
+    /** Resolve one raw markdown image src to a local absolute path (null =
+     *  remote/data/already-proxied — left untouched). */
+    const toPath = (src) => {
       // Skip remote, data, and already-resolved URLs
-      if (/^(https?:|data:|\/api\/)/.test(src)) return m;
+      if (/^(https?:|data:|\/api\/)/.test(src)) return null;
       // The HTML has already been through the markdown parser, which
       // percent-encodes link destinations — `![](assets/截屏 1.png)` and
       // `![](<assets/x 2.png>)` both arrive here as `assets/%E6%88%AA…%201.png`.
@@ -52,10 +56,40 @@ async function viewMarkdown(pane, { content, absPath, fileName }) {
       } else {
         resolved = dir ? dir + '/' + src.replace(/^\.\//, '') : src;
       }
-      return `${prefix}/api/nf-file?path=${encodeURIComponent(resolved)}&token=${encodeURIComponent(tok)}${suffix}`;
+      return resolved;
+    };
+    // Pass 1 — collect every candidate, then mint ONE batched ticket set
+    // (dozens of images in a document must not mean dozens of requests).
+    // 2026-09-11 (C batch): the credential is now a per-path ticket; the
+    // global token never appears in an image URL again (T2).
+    const candidates = new Set();
+    html.replace(IMG_SCAN_RE, (m, raw) => {
+      let src = raw;
+      try { src = decodeURIComponent(src); } catch (e) { /* keep as-is */ }
+      const p = toPath(src);
+      if (p) candidates.add(p);
+      return m;
     });
-    // Add onerror handler for debugging broken images
-    html = html.replace(/<img\b/g, '<img onerror="this.style.opacity=0.3;this.title=\'Failed: \'+this.src"');
+    const tickets = await mintTickets([...candidates]);
+    // Pass 2 — rewrite, synchronously, from the minted set.
+    html = html.replace(IMG_REWRITE_RE, (m, prefix, raw, suffix) => {
+      let src = raw;
+      try { src = decodeURIComponent(src); } catch (e) { /* keep as-is */ }
+      const p = toPath(src);
+      if (!p) return m;
+      const t = tickets.get(p);
+      const url = `/api/nf-file?path=${encodeURIComponent(p)}${t ? `&ticket=${encodeURIComponent(t)}` : ''}`;
+      return `${prefix}${url}${suffix}`;
+    });
+    // Broken-image tooltip (debugging aid). The shown URL must never carry a
+    // credential (T2 / Δ⑦): the ONE strip implementation lives in
+    // nfTicket.js and is published here because an inline attribute handler
+    // evaluates in global scope, where a module import is not visible.
+    /** @type {any} */ (window).__nfStripCredential = stripCredentialParams;
+    html = html.replace(
+      /<img\b/g,
+      '<img onerror="this.style.opacity=0.3;this.title=\'Failed: \'+(window.__nfStripCredential?window.__nfStripCredential(this.src):this.src)"'
+    );
   }
 
   pane.classList.remove('scrollable');

@@ -446,6 +446,15 @@ object GatewayMain extends IOApp:
                             nebflow.core.compact.ToolResultTtlConfig.load(config.toolResultTtl)
                           val toolResultTtlRef: Ref[IO, nebflow.core.compact.ToolResultTtlConfig] =
                             Ref.unsafe(toolResultTtlCfg)
+                          // C2-6（/api/nf-file 断凭据腿批）：按 path 短时票据存储。
+                          // TTL = nebflow.json 的 nfFile.ticketTtlSeconds（R3，默认
+                          // 1800s）；issue 路径按 mtime 节流重读，改配置无需重启。
+                          // 策略对象（凭据命名空间 + R2 启动 inode 快照）一并在此
+                          // 构造并注入，使读端点与签发端点共用同一份权威判据。
+                          val nfTicketStore: NfTicketStore =
+                            NfTicketStore.unsafeCreate(NfTicketStore.loadTtlSeconds())
+                          val nfPathPolicy: WebSocketRoutes.NfPathPolicy =
+                            WebSocketRoutes.NfPathPolicy.standard()
                           // 执行环境 provider（拆围栏批 S3 / design §4.2）：fail-safe
                           // 加载 + 按 provider 装配执行面一次缓存（provider=host 缺省
                           // = 宿主直跑不 probe；local-process 才 probe，阻塞 <1s；取值
@@ -908,7 +917,9 @@ object GatewayMain extends IOApp:
                                                       contextWindow,
                                                       sharedResourcesWithDaemon,
                                                       mcpManager,
-                                                      sttService = sttService
+                                                      sttService = sttService,
+                                                      nfTicketStore = nfTicketStore,
+                                                      nfPathPolicy = nfPathPolicy
                                                     )
                                                     wsRoutesHolder = Some(wsRoutes)
 

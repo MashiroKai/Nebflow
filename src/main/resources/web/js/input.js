@@ -13,6 +13,7 @@ import { saveInputDraft } from './sidebar.js';
 import { t } from './i18n.js';
 import { getLocale } from './i18n.js';
 import { renderQueueBar } from './chatQueue.js';
+import { ticketUrl } from './nfTicket.js';
 import { makeReference } from './reference.js';
 import { startDictation, stopDictation, isModelReady } from './voiceEngine.js';
 import { notifyVoiceState } from './micOrb.js';
@@ -1707,14 +1708,20 @@ function joinAbsPath(rootPath, path) {
 async function addPathAttachment({ path, rootPath }, view, target) {
   const name = path.split('/').pop() || path;
   const absPath = joinAbsPath(rootPath, path);
-  const token = localStorage.getItem(key('token')) || '';
   // Typed window alias — the one-shot readFile guard flag shared with explorer.js.
   const win = /** @type {Window & { __internalDragReadPath: string | null }} */ (/** @type {any} */ (window));
 
   // Phase 1: whitelisted media (images, pdf, mp4…) come back from nf-file.
   // Non-whitelisted extensions → 400 "File type not allowed" → phase 2.
+  //
+  // 2026-09-11 (C batch): the URL comes from ticketUrl() — a per-path ticket,
+  // minted here (at the moment of the drop), not the global gateway token.
+  // A path that cannot be ticketed (or a mint outage) yields the ticket-free
+  // URL, the endpoint answers 401/400, and we fall through to the readFile
+  // phase exactly as before (T4: a deterministic non-media type is not
+  // retried, it just takes the WS path).
   try {
-    const resp = await fetch(`/api/nf-file?path=${encodeURIComponent(absPath)}&token=${encodeURIComponent(token)}`);
+    const resp = await fetch(await ticketUrl(absPath));
     if (resp.ok) {
       const blob = await resp.blob();
       const file = new File([blob], name, { type: blob.type || 'application/octet-stream' });

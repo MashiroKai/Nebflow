@@ -36,6 +36,7 @@ import { readFileSync, mkdirSync } from 'node:fs';
 import { createServer } from 'node:http';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { installTicketMock, ticketGuard } from './nf-ticket-mock.mjs';
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const WEB_DIR = resolve(HERE, '../src/main/resources/web');
@@ -77,6 +78,7 @@ await new Promise((r) => server.listen(PORT, '127.0.0.1', r));
 function nfFileRoute() {
   const ALLOWED = ['png', 'jpg', 'jpeg', 'gif', 'svg', 'webp', 'ico', 'mp4', 'webm', 'mp3', 'wav', 'woff', 'woff2', 'ttf', 'otf', 'pdf', 'docx', 'xlsx', 'pptx', 'epub', 'js', 'mjs', 'css', 'json'];
   return async (route) => {
+    if (await ticketGuard(route)) return;  // C 批：票据-only，无票 = 401
     const url = new URL(route.request().url());
     const p = url.searchParams.get('path') || '';
     const ext = (p.split('.').pop() || '').toLowerCase();
@@ -99,8 +101,10 @@ async function bootPage(browser, { colorScheme = 'light' } = {}) {
   await page.emulateMedia({ colorScheme });
   const errors = [];
   page.on('pageerror', (e) => errors.push(String(e.message || e).slice(0, 200)));
+  // 后注册优先：先 catch-all，再 nf-file，最后 nf-ticket 假票（C 批票据腿）。
   await page.route('**/api/**', (r) => r.fulfill({ json: {} }));
   await page.route(/\/api\/nf-file\?/, nfFileRoute());
+  await installTicketMock(page);
   await page.routeWebSocket(/\/ws/, (ws) => {
     ws.onMessage((raw) => {
       let m; try { m = JSON.parse(raw); } catch { return; }

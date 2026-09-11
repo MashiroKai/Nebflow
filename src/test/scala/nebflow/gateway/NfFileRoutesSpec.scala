@@ -22,13 +22,35 @@ import scala.jdk.CollectionConverters.*
  * and nothing in the Canvas tab was clickable (see the header of
  * WebSocketRoutes.NfFileAllowedExt for the full chain).
  *
- * Contract points: token auth; whitelist gate (js/css/json in; scripts and
+ * 2026-09-11 (C batch, R5 = ticket-only): the credential leg is a per-path
+ * short-lived ticket, not the global gateway token. The 11 behavioural
+ * contracts below are UNCHANGED in intent — same files, same statuses — but
+ * the requests now carry `&ticket=` minted from an in-memory store, and the
+ * two credential tests were re-pointed at the new model: "no credential at
+ * all" → 401, and "a VALID gateway token with no ticket" → 401 (which is the
+ * R5 contract, and is strictly stronger than the old "wrong token → 403").
+ * The credential-namespace / hard-link / issuer assertions live in
+ * NfTicketRoutesSpec (A1–A16); this file stays the behaviour-equivalence
+ * surface (A13).
+ *
+ * Contract points: ticket auth; whitelist gate (js/css/json in; scripts and
  * unknown types out); byte-identical serving; missing file 404; missing
  * path param 400.
  */
 class NfFileRoutesSpec extends CatsEffectSuite:
 
   private val gatewayToken = "test-gateway-token"
+
+  private val store = NfTicketStore.unsafeCreate(1800)
+
+  /** Injected C1-5 policy: nothing under test lives in P1/P3, and the R2
+    * inode set is empty — the subject here is the ticket leg, not the
+    * credential namespace (that is NfTicketRoutesSpec's job). */
+  private val policy = WebSocketRoutes.NfPathPolicy(
+    java.nio.file.Paths.get("/nonexistent-nebflow-data-root"),
+    java.nio.file.Paths.get("/nonexistent-nebflow-workspace"),
+    Set.empty
+  )
 
   /** Temp dir with one seeded file per extension; absolute paths feed ?path=. */
   private def withTempFiles[A](test: os.Path => IO[A]): A =
@@ -54,30 +76,39 @@ class NfFileRoutesSpec extends CatsEffectSuite:
       Files.deleteIfExists(file)
       Files.deleteIfExists(tmp)
 
+  /** A ticket bound to the realpath of an existing file. */
+  private def ticketFor(p: String): String =
+    store.issue("spec", java.nio.file.Paths.get(p).toRealPath().toString).unsafeRunSync().token
+
+  /** A ticket for a path that need not exist (the read-leg 404 case: the
+    * issuer would never mint one, so the store is called directly). */
+  private def ticketForMissing(p: String): String =
+    store.issue("spec", p).unsafeRunSync().token
+
   private def get(path: String) =
     val req = Request[IO](Method.GET, Uri.unsafeFromString(path))
-    WebSocketRoutes.nfFileRoutes(gatewayToken)(req).value.unsafeRunSync()
+    WebSocketRoutes.nfFileRoutes(gatewayToken, store, policy)(req).value.unsafeRunSync()
 
   private def bodyOf(resp: org.http4s.Response[IO]): String =
     resp.bodyText.compile.string.unsafeRunSync()
 
-  test("rejects unauthenticated requests") {
+  test("rejects requests that present no credential at all") {
     withTempFiles { dir =>
       IO {
         assertEquals(
           get(s"/api/nf-file?path=${dir / "data.js"}").get.status,
-          Status.Forbidden
+          Status.Unauthorized
         )
       }
     }
   }
 
-  test("rejects a wrong token") {
+  test("rejects the global gateway token alone (R5: the token leg is gone)") {
     withTempFiles { dir =>
       IO {
         assertEquals(
-          get(s"/api/nf-file?path=${dir / "data.js"}&token=wrong").get.status,
-          Status.Forbidden
+          get(s"/api/nf-file?path=${dir / "data.js"}&token=$gatewayToken").get.status,
+          Status.Unauthorized
         )
       }
     }
@@ -86,7 +117,7 @@ class NfFileRoutesSpec extends CatsEffectSuite:
   test("serves a companion .js module (Canvas interactive-HTML fix core)") {
     withSeedFile("snapshot-data.js", "window.FM_SNAPSHOT={active:[]};".getBytes(StandardCharsets.UTF_8)) { js =>
       IO {
-        val resp = get(s"/api/nf-file?path=${js.toString}&token=$gatewayToken").get
+        val resp = get(s"/api/nf-file?path=${js.toString}&ticket=${ticketFor(js.toString)}").get
         assertEquals(resp.status, Status.Ok)
         assertEquals(bodyOf(resp), "window.FM_SNAPSHOT={active:[]};")
       }
@@ -96,8 +127,14 @@ class NfFileRoutesSpec extends CatsEffectSuite:
   test("serves .css and .json companions") {
     withTempFiles { dir =>
       IO {
-        assertEquals(get(s"/api/nf-file?path=${dir / "style.css"}&token=$gatewayToken").get.status, Status.Ok)
-        assertEquals(get(s"/api/nf-file?path=${dir / "data.json"}&token=$gatewayToken").get.status, Status.Ok)
+        assertEquals(
+          get(s"/api/nf-file?path=${dir / "style.css"}&ticket=${ticketFor((dir / "style.css").toString)}").get.status,
+          Status.Ok
+        )
+        assertEquals(
+          get(s"/api/nf-file?path=${dir / "data.json"}&ticket=${ticketFor((dir / "data.json").toString)}").get.status,
+          Status.Ok
+        )
       }
     }
   }
@@ -105,7 +142,7 @@ class NfFileRoutesSpec extends CatsEffectSuite:
   test("still serves whitelisted media (png regression guard)") {
     withSeedFile("shot.png", Array[Byte](1, 2, 3)) { png =>
       IO {
-        val resp = get(s"/api/nf-file?path=${png.toString}&token=$gatewayToken").get
+        val resp = get(s"/api/nf-file?path=${png.toString}&ticket=${ticketFor(png.toString)}").get
         assertEquals(resp.status, Status.Ok)
         val bytes = resp.body.compile.toVector.unsafeRunSync().toArray
         assert(java.util.Arrays.equals(bytes, Array[Byte](1, 2, 3)))
@@ -117,7 +154,7 @@ class NfFileRoutesSpec extends CatsEffectSuite:
     withSeedFile("evil.sh", "#!/bin/sh\n".getBytes(StandardCharsets.UTF_8)) { sh =>
       IO {
         assertEquals(
-          get(s"/api/nf-file?path=${sh.toString}&token=$gatewayToken").get.status,
+          get(s"/api/nf-file?path=${sh.toString}&ticket=${ticketFor(sh.toString)}").get.status,
           Status.BadRequest
         )
       }
@@ -128,7 +165,9 @@ class NfFileRoutesSpec extends CatsEffectSuite:
     withTempFiles { _ =>
       IO {
         assertEquals(
-          get(s"/api/nf-file?path=/nonexistent/snapshot-data.js&token=$gatewayToken").get.status,
+          get(
+            s"/api/nf-file?path=/nonexistent/snapshot-data.js&ticket=${ticketForMissing("/nonexistent/snapshot-data.js")}"
+          ).get.status,
           Status.NotFound
         )
       }

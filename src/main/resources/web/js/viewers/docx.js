@@ -1,17 +1,17 @@
 // viewers/docx.js — DOCX viewer (mammoth.js, lazily loaded).
 // Migrated verbatim from fileViewers.js (viewDocx).
 
-import { getToken, escapeHtml } from './shared.js';
+import { escapeHtml } from './shared.js';
+import { ticketUrl } from '../nfTicket.js';
 
 /** DOCX viewer — fetch binary, convert to HTML via mammoth.js */
 async function viewDocx(pane, { absPath, fileName }) {
   pane.innerHTML = `<div class="canvas-md-viewer" style="display:flex;align-items:center;justify-content:center;color:var(--color-text-muted);opacity:0.5;">Loading document...</div>`;
-  const tok = getToken();
   if (!absPath) {
     pane.innerHTML = `<div class="canvas-error">No file path provided for DOCX viewer.</div>`;
     return;
   }
-  const url = `/api/nf-file?path=${encodeURIComponent(absPath)}&token=${encodeURIComponent(tok)}`;
+  const url = await ticketUrl(absPath);
   try {
     const resp = await fetch(url);
     if (!resp.ok) {

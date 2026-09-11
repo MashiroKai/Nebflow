@@ -296,20 +296,28 @@ let authParamFallback = false;
 let authProbePromise = null;
 let authProbeSettled = false;
 
-// Probe target: GET /api/nf-file (no path param) — authenticated via
-// extractToken (param → Authorization header → cookie), so a bare
-// same-origin fetch exercises exactly the cookie path the WS handshake
-// relies on. Semantics: invalid cookie → 403 (fallback to token param);
-// valid cookie → 400 BadRequest (missing 'path') — the probe only branches
-// on 401/403, so 400 reads as "cookie auth works".
+// Probe target: GET /api/nf-authcheck — authenticated via extractToken
+// (param → Authorization header → cookie), so a bare same-origin fetch
+// exercises exactly the cookie path the WS handshake relies on. Semantics
+// are now unambiguous: valid credential → 204, invalid → 403. The endpoint
+// touches zero disk and has no other side effect.
+//
+// 2026-09-11 (C batch, R9 = O-A): this used to point at a bare
+// GET /api/nf-file and read "400 = missing path ⇒ cookie works". The read
+// endpoint is now ticket-only, so a credential-less request answers 401 —
+// the SAME status a broken cookie produces — and the old probe could no
+// longer tell the two apart. The fallback trigger therefore moved to 403
+// (the only "your credential is wrong" signal left) while 401 stays
+// conclusive-but-harmless: it means "no ticket", which is exactly what this
+// unauthenticated probe expects to see from a healthy endpoint.
 // (曾用 /api/nf-tasks?limit=1 — 任务工具重做 2026-08-30 删除该路由后改此。)
 function probeCookieAuth() {
-  return fetch('/api/nf-file', {
+  return fetch('/api/nf-authcheck', {
     credentials: 'same-origin',
     cache: 'no-store',
     signal: AbortSignal.timeout(3000),
   }).then(resp => {
-    if (resp.status === 401 || resp.status === 403) {
+    if (resp.status === 403) {
       authParamFallback = true;
     }
   }).catch(() => { /* inconclusive - proceed cookie-first */ });

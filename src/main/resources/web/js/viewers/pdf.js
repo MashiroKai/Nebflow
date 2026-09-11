@@ -7,7 +7,8 @@
 // pdf.js (UMD build, window.pdfjsLib) is lazy-loaded on first PDF open —
 // 320KB script + 1MB worker must not tax sessions that never open a PDF.
 
-import { getToken, escapeHtml } from './shared.js';
+import { escapeHtml } from './shared.js';
+import { ticketUrl } from '../nfTicket.js';
 import { enableViewerZoom } from './zoom.js';
 
 /** @type {Promise<any>|null} */
@@ -48,8 +49,10 @@ async function viewPdf(pane, { absPath, fileName, anchor }) {
   let doc;
   try {
     const pdfjsLib = await loadPdfJs();
-    const tok = getToken();
-    const url = `/api/nf-file?path=${encodeURIComponent(absPath)}&token=${encodeURIComponent(tok)}`;
+    // One ticket covers the whole document: pdf.js issues a Range request per
+    // chunk/page, and R4 keeps tickets valid for unlimited reads inside the
+    // TTL — a one-shot ticket would break page 2 onwards (and every seek).
+    const url = await ticketUrl(absPath);
     doc = await pdfjsLib.getDocument({ url }).promise;
   } catch (e) {
     if (!pane.isConnected) return;

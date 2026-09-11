@@ -1,6 +1,7 @@
 // 全链路递归实证：预置 canvas_tabs（含 deck 文件标签）→ 嵌套 app restore 必然重开
 import { chromium } from 'playwright';
 import { readFileSync } from 'node:fs';
+import { installTicketMock } from './nf-ticket-mock.mjs';
 const BASE = 'http://127.0.0.1:8977';
 const FILE = process.env.HOME + '/.nebflow/projects/html-deck-studio/ai-fpga-deck/ppt/index.html';
 const sleep = ms => new Promise(r => setTimeout(r, ms));
@@ -15,6 +16,10 @@ await ctx.addInitScript(([tok, file]) => {
 }, ['t', FILE]);
 const page = await ctx.newPage();
 await page.route('**/api/**', r => r.fulfill({ json: {} }));
+// C 批（票据腿）：restore → viewHtml → resolveLocalFiles 会 POST /api/nf-ticket。
+// 没有这条假票 mock，catch-all 会回 `{}` → 无票 URL → 401；该件以 frame 计数
+// 为信号，静默失败的素材会改读数（mint 失败必须被隔离在 mock 之外）。
+const mint = await installTicketMock(page);
 let readFileCount = 0;
 await page.routeWebSocket(/\/ws/, ws => {
   ws.onMessage(raw => {
