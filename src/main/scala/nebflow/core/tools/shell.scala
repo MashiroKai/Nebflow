@@ -18,6 +18,42 @@ import scala.concurrent.duration.*
 import scala.jdk.StreamConverters.*
 import scala.util.Using
 
+/** T2（2026-09-11，Q1 裁定 = 方案 §5 隐含采纳 D5-b）：Bash cwd 不存在 / 非法
+  * ⇒ **显式失败**，不做任何形式的静默回退——旧行为回退 `user.home`（或 `C:\\`
+  * / `/tmp`）已删除，「回退到专用 scratch 根」同样禁止。接收端确认卡 D5-a 仍未决，
+  * 本类不做任何接收端语义。
+  *
+  * 为什么必须显式：回退把「工作目录不可用」伪装成**命令执行成功**——命令在 home
+  * 里静默跑、产物落错目录、事后 `pwd` 与日志都看不出差别，排障成本全甩给下游。
+  * 失败信息自带诊断三件套：**原始入参路径 + 解析后绝对路径 + 判定触发点（符号名）**。
+  *
+  * 为什么继承 `IllegalArgumentException` 而非 `IOException`：`runProcess` 的
+  * `catch case e: IOException` 会把一切 IOException 改写成「bash not found. Please
+  * install bash…」文案，继承 IOException 会让本诊断信息被吞掉、退回误导性报错。
+  */
+final class InvalidCwdError(
+  val rawCwd: String,
+  val resolvedPath: String,
+  val site: String,
+  val reason: String
+) extends IllegalArgumentException(InvalidCwdError.render(rawCwd, resolvedPath, site, reason))
+
+object InvalidCwdError:
+
+  /** 诊断文本装配单点（测试按片段断言；措辞变更即契约变更）。 */
+  def render(rawCwd: String, resolvedPath: String, site: String, reason: String): String =
+    val raw =
+      if rawCwd == null then "<null>"
+      else if rawCwd.isEmpty then "<empty>"
+      else rawCwd
+    s"""Bash cwd 不可用 —— 显式失败（不回退 user.home，也不回退任何 scratch 根）
+       |  raw cwd（原始入参路径）: $raw
+       |  resolved（解析后绝对路径，相对路径基准 = JVM user.dir）: $resolvedPath
+       |  site（判定触发点）: $site
+       |  reason（判定依据）: $reason
+       |  fix: 传入已存在且是目录的 cwd（会话初 cwd 来源 = ShellSession.forSession 的
+       |       initialDir / 沙箱根 SandboxPolicy.root），或先创建该目录后重试。""".stripMargin
+
 /** Tracks process health for heartbeat / progress detection. Thread-safe via atomics. */
 private[tools] class JobHealth(
   val processRef: AtomicReference[Process] = new AtomicReference[Process](null),
@@ -358,11 +394,11 @@ final class ShellSession private (
           case Some(wrapped) => new ProcessBuilder(wrapped*)
           case None => plain
       else plain
-    // Empty or invalid working directory causes failures. Fall back to user home.
-    val safeCwd =
-      if cwd == null || cwd.isEmpty || !new File(cwd).exists() then
-        sys.props.getOrElse("user.home", if isWindows then "C:\\" else "/tmp")
-      else cwd
+    // cwd 判定（T2，2026-09-11，Q1 裁定）：不存在 / 非法 ⇒ **显式失败**。
+    // 旧行为（`cwd == null || cwd.isEmpty || !exists` ⇒ 回退 user.home）已删除——
+    // 它把工作目录不可用伪装成命令执行成功（命令在 home 里静默跑）。诊断三件套
+    // （原始入参 / 解析后绝对路径 / 触发点）见 InvalidCwdError。
+    val safeCwd = ShellSession.resolveCwdOrFail(cwd, ShellSession.CwdSiteBuildProcessBuilder)
     pb.directory(new File(safeCwd))
     if isWindows then
       pb.redirectInput(ProcessBuilder.Redirect.PIPE)
@@ -1023,6 +1059,36 @@ final class ShellSession private (
 end ShellSession
 
 object ShellSession:
+
+  /** cwd 判定触发点符号（T2）：错误文本逐字引用，验红 / 日志排障按此串 grep。
+    * 调用点只有一处——`buildProcessBuilder` 内 `safeCwd`（前台 execute、
+    * 后台 executeBackground、命令后 `pwd` 复核三条路径都经 `runProcess` 到此）。 */
+  private[tools] val CwdSiteBuildProcessBuilder: String = "ShellSession.buildProcessBuilder/safeCwd"
+
+  /** cwd 判定单点（T2，Q1 裁定）：返回可用 cwd，否则抛 [[InvalidCwdError]]。
+    *
+    * 判定面（全部只读文件系统元数据，不做任何「换成别的目录」的动作）：
+    *   - `null` / 空串             → cwd 缺失
+    *   - 路径不存在（exists=false） → 主体反例（旧行为在此静默回退 user.home）
+    *   - 存在但不是目录             → 「非法」面（旧行为同样静默回退）
+    *
+    * `site` 由调用方传入符号名，保证错误文本里的触发点与实际判定点不漂移。
+    */
+  private[tools] def resolveCwdOrFail(cwd: String, site: String): String =
+    // 解析后绝对路径：与判定用同一个 File，避免「报的路径」与「查的路径」不是同一个。
+    val resolved: String =
+      if cwd == null || cwd.isEmpty then "<n/a — 入参无路径可解析>"
+      else
+        try new File(cwd).getAbsolutePath
+        catch case _: RuntimeException => s"<unresolvable — 无法解析该路径: $cwd>"
+    def fail(reason: String): Nothing = throw new InvalidCwdError(cwd, resolved, site, reason)
+    if cwd == null then fail("cwd 为 null（null cwd）")
+    else if cwd.isEmpty then fail("cwd 为空串（empty cwd）")
+    else
+      val f = new File(cwd)
+      if !f.exists() then fail("路径不存在（does not exist）")
+      else if !f.isDirectory then fail("路径存在但不是目录（not a directory）")
+      else resolved
 
   private val sessions: Ref[IO, Map[String, ShellSession]] =
     Ref.unsafe[IO, Map[String, ShellSession]](Map.empty)
