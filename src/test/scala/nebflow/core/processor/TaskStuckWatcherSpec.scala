@@ -613,10 +613,16 @@ class TaskStuckWatcherSpec extends CatsEffectSuite:
       agentCmds <- agentReceived.get
       counts <- stopCounts.get
     yield
+      // ⚠ P2（stuck 自动恢复批，2026-09-11 R-1=B）口径更新（**有意行为变化，非回归**）：
+      // 改造前 L3 腿 = `bridgeCancelled`（停 actor **+ 节点终态化**）→ sleep 5s → resume，
+      // 桥**无条件**收到一条 Cancelled；改造后 L3 腿 = **锚探测 → suspendNode（只停
+      // actor）→ 有界等待 → CAS + resume**，且锚探测是**恢复前置步骤**——本用例的
+      // SessionStore 是空的（A1 transcript 不可用）⇒ 按设计 §3.3 条件 1「无恢复锚 ⇒
+      // 不重试，直接一次上报」，**挂起腿根本不启动**、故不发任何桥信号（这是负控① 的
+      // 预期读数）。本用例保留的核心断言（**零 raw Stop** + 计数保留 ⇒ 可上报）逐字不变。
       val cancelled = bridgeEvts.collect { case c: AgentEvent.Cancelled => c }
-      assertEquals(cancelled.size, 1, s"bridge must receive exactly one Cancelled (L3 release), got: $bridgeEvts")
-      assertEquals(cancelled.head.sessionId, "node-aaaa1111")
-      assert(cancelled.head.reason.contains("stuck"), s"reason must carry stuck context: ${cancelled.head.reason}")
+      assertEquals(cancelled, Nil,
+        s"无恢复锚（A1 空）⇒ 不启动挂起腿、不发桥信号（负控①：直接一次上报），got: $bridgeEvts")
       // 全程零 raw Stop（即便 giveUp 也走桥 Cancelled）
       assert(agentCmds.isEmpty, s"flow session must never receive raw Stop, got $agentCmds")
       // L3 resume 失败（无 project runtime）→ 计数保留 → L4 "failed" 拍可达

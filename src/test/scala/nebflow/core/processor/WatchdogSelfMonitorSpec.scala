@@ -308,6 +308,14 @@ class WatchdogSelfMonitorSpec extends CatsEffectSuite:
       agentRef <- system.spawn(mkRecordingActor(Ref.unsafe(Nil)), s"agent-$tag")
       _ <- IO(sys.props.remove(ShadowProp))
       _ <- IO(if shadow then sys.props.update(ShadowProp, "true") else sys.props.remove(ShadowProp))
+      // ── P2（stuck 自动恢复批，2026-09-11 R-1=B）夹具补充：**可读 transcript** ──
+      // 恢复腿的锚探测（设计 §3.1 的 A1）是**恢复前置步骤**：transcript 为空 ⇒ 按
+      // 负控①「不重试，直接一次上报」，**不发任何桥信号**（挂起腿不启动）。本用例要
+      // 观测「L3 开火 ⇒ 桥收到中断信号」，故必须给 A1 一份非空 transcript——这不是
+      // 放松断言，而是让夹具满足恢复腿的真实前置条件（空 transcript 的分支由本 spec
+      // 新增的「A1 不可用」用例单独覆盖）。
+      _ <- res.sessionStore.saveMessagesForSession(sid, List(
+        nebflow.shared.Message(role = nebflow.shared.MessageRole.User, content = Left("fixture: stuck session transcript"))))
       _ <- res.agentRegistry.set(Map(sid -> mkRecord(sid, AgentKind.Flow, agentRef, rootSid,
         lastActivityMs = System.currentTimeMillis() - threshold - 1000L, toolStartedAt = 0L,
         supervisorRef = Some(bridgeRef))))
@@ -328,6 +336,12 @@ class WatchdogSelfMonitorSpec extends CatsEffectSuite:
       // T+N：延迟注入 0 = 立刻到期（生产为常量 120s，测试唯一注入点）
       _ <- TaskStuckWatcher.scan(res, wsHub, threshold, stopCounts, pending, l3VerifyDelayMs = 0L)
       alerts <- l3Alerts(sid)
+      // P2（2026-09-11）：L3 恢复腿的**锚探测 + 挂起**在 forked fiber 里跑（锚探测含
+      // 两条只读 git 调用，几十毫秒量级），桥消息（挂起哨兵）要等该 fiber 调度到才
+      // 发出 ⇒ 读桥事件前补一个短歇（本 spec 的既有惯例：读异步 tell/WS 帧前
+      // `IO.sleep`）。这是**测试夹具**的时序等待，不是把生产行为改成同步——生产侧
+      // 「开火 ⇒ 挂起信号」仍由 forked 恢复腿发出，扫描循环不等。
+      _ <- IO.sleep(500.millis)
       bridgeEvts <- bridgeReceived.get
       _ <- IO(system.stopAll.attempt.void.unsafeRunSync())
     yield (reg, nodeBefore.map(_.status), alerts, bridgeEvts, sid)
@@ -362,7 +376,13 @@ class WatchdogSelfMonitorSpec extends CatsEffectSuite:
       _ <- TaskStuckWatcher.scan(res, wsHub, threshold, stopCounts, pending, l3VerifyDelayMs = 0L)
       alerts <- l3Alerts(sid)
       // 无 project runtime（跨项目/未挂载）→ 裁决不可得 ⇒ 保守不告警（设计 §3.8 容忍重启丢 pending）
-      _ <- IO(ProjectRuntimeRegistry.clear)
+      //
+      // ⚠ P2（2026-09-11）夹具订正：原写法 `IO(ProjectRuntimeRegistry.clear)` 只是把
+      // 返回的 `IO[Unit]` **包进另一个 IO** 后丢弃——clear 从未执行（既有 latent bug，
+      // 旧定位键 `rootSessionId` 把它掩盖了：传一个不存在的 root 也能得到「无 runtime」
+      // 的效果）。P2 把定位键改为「会话属于哪个 store」后，本用例必须**真的**清空
+      // registry 才能构造出「无 runtime 拥有该会话」——故改为直接执行。
+      _ <- ProjectRuntimeRegistry.clear
       _ <- TaskStuckWatcher.scan(res, wsHub, threshold, cats.effect.Ref.unsafe(Map.empty[String, Int]),
         cats.effect.Ref.unsafe(List(TaskStuckWatcher.PendingL3(sid, "root-gone", 0L, TaskStuckWatcher.BranchMerged, 0L, 0L, 3))),
         l3VerifyDelayMs = 0L)

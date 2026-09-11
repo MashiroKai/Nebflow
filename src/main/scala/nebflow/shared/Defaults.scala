@@ -434,6 +434,28 @@ object Defaults:
   def StuckProgressSignalWindowMs: Long =
     sys.props.getOrElse("nebflow.stuck.progressSignalWindowMs", "60000").toLong
 
+  // ---- stuck 自动恢复：挂起腿有界等待（P2，2026-09-11）----
+
+  /**
+   * 挂起腿的**有界等待**上限（默认 15s）——替代 L3 里那个固定 `IO.sleep(5s)`。
+   *
+   * 设计 §6.2 风险 1 的原话：「`IO.sleep(5s)` 是固定时序竞态……**未证「永远 ≤5s」**」。
+   * 改法（§3.6 选项 B 的代价点）= 轮询**可观测的终止确认**（会话从
+   * `agentRegistry` 摘除 = 引擎 fiber 的清理段已完成）而不是赌一个固定时长：
+   *   - 确认到达 ⇒ 立刻 resume（通常远快于 5s，恢复延迟下降）；
+   *   - 超时未确认 ⇒ **降级**：不 resume，按恢复未生效走一次上报（诚实失败，
+   *     不把「可能仍在运行的旧会话」与「新 resume 会话」叠在一起）。
+   *
+   * 轮询步长见 [[StuckSuspendPollMs]]。
+   * system prop `nebflow.stuck.suspendWaitMs`（kill-switch 先例，测试可缩窗）。
+   */
+  def StuckSuspendWaitMs: Long =
+    sys.props.getOrElse("nebflow.stuck.suspendWaitMs", "15000").toLong
+
+  /** 挂起腿终止确认的轮询步长（默认 250ms）。system prop `nebflow.stuck.suspendPollMs`。 */
+  def StuckSuspendPollMs: Long =
+    sys.props.getOrElse("nebflow.stuck.suspendPollMs", "250").toLong
+
   /**
    * 流式请求的 per-request HttpClient 开关（设计 D-1 方案 A）：默认 true——
    * sendStream 每个 attempt 独立 HttpClient + backend + dispatcher，transport
