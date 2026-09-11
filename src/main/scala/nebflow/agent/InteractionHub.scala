@@ -188,15 +188,24 @@ object InteractionHub:
         .add("sourceSession", req.sourceSession.asJson)
     )
 
-  /** Build the askUser question JSON, rendered at sessionId=rootSessionId. */
+  /** Build the askUser question JSON, rendered at sessionId=rootSessionId.
+    *
+    * `agentName` 的来源：**payload 显式携带者优先**（内核会话的 U3 来源标注
+    * `subagent · <任务摘要>` 由 `AgentActor` 写在 payload.agentName 上——它是
+    * 前端 badge/待办条的回落标签来源），缺省才用 `sourceAgent`。两条既有路径
+    * 逐字节不变：项目节点/分发器/Nebula 的 payload.agentName 恒等于 sourceAgent
+    * （`buildAskUserJson` 首参），重放路径（`ListPendingAsks`）用的也是同一
+    * 存储 payload ⇒ 渲染结果不变。 */
   private def renderAskUser(req: InteractionRequest): Json =
     val base = req.payload.asObject.getOrElse(JsonObject.empty)
+    val withAgentName =
+      if base.contains("agentName") then base
+      else base.add("agentName", req.sourceAgent.asJson)
     Json.fromJsonObject(
-      base
+      withAgentName
         .add("type", "askUser".asJson)
         .add("sessionId", req.rootSessionId.asJson)
         .add("requestId", req.requestId.asJson)
-        .add("agentName", req.sourceAgent.asJson)
         .add("sourceAgent", req.sourceAgent.asJson)
         .add("sourceSession", req.sourceSession.asJson)
     )
