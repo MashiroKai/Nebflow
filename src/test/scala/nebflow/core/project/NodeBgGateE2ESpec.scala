@@ -162,7 +162,9 @@ class NodeBgGateE2ESpec extends CatsEffectSuite:
       _ <- NodeEditTool.call(
         Json.obj("project" -> "bg-e2e".asJson, "nodename" -> "e2e-a".asJson,
           "description" -> "e2e bg gate node".asJson, "task" -> "run the marker bg task".asJson,
-          "out" -> "Nebula".asJson).asObject.get,
+          // 2026-09-12 批 A1：投递到根的断言需要**显式门集**（`{pass,failed}/result`）；
+          // bare `"Nebula"` 今日 = 纯出口标记（零根投递）。
+          "out" -> "(pass,failed)Nebula".asJson).asObject.get,
         ctx
       ).map {
         case Left(err) => fail(s"NodeEdit failed: $err")
