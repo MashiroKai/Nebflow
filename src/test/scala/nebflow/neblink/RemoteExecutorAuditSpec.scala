@@ -77,7 +77,17 @@ class RemoteExecutorAuditSpec extends CatsEffectSuite:
           )
           _ <- client.login(Device, "qa-host", "macos", Nil)
           _ <- IO(client.currentSessionToken.getOrElse(fail("client must have a session")))
-          tunnel = new NeblinkRelayTunnel(ms, fix.url, () => IO(client.currentSessionToken))(dispatcher)
+          // 2026-09-11（隧道常驻批 10ecea1f）：测试树的编译修复——`serverUrl` 构造参
+          // 已从 NeblinkRelayTunnel 移除（URL 改为连接期从 config ref live 解析），
+          // 这里仍按旧签名传 `fix.url` ⇒ main 上 Test/compile 直接失败。接线方式与
+          // RemoteExecutorClientConvergenceSpec 对齐：fixture URL 写进 config。
+          _ <- ms.updateConfig(
+            _.copy(
+              enabled = true,
+              neblinkServer = Some(NeblinkServerConfig(url = fix.url, networkId = Net, secret = "qa-secret"))
+            )
+          )
+          tunnel = new NeblinkRelayTunnel(ms, () => IO(client.currentSessionToken))(dispatcher)
           _ = ms.setRelayClient(Some(client))
           _ = ms.setRelayTunnel(tunnel)
           fiber <- tunnel.connect().start
