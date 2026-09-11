@@ -209,6 +209,7 @@ export default {
   'contacts.relogin': 'Log in again',
   'contacts.neblinkOff': 'NebLink is not enabled — friend features unavailable',
   'contacts.listError': 'Friend list failed to load',
+  'contacts.requestsError': 'Friend requests failed to load',
   'contacts.retry': 'Retry',
   'header.memory': 'Memory',
   'header.bgTasks': 'Background tasks',
