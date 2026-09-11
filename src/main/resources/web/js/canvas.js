@@ -1076,9 +1076,11 @@ export function initCanvas() {
   }
 
   // canvasdrop: OS file dropped onto a pane → copy into `<fileDir>/assets/`
-  // and insert a relative reference at the cursor. The resolver hands the drop
-  // handler the tab's own absPath / write root / itemType; panel tabs (no file
-  // behind them) resolve to null and get a visible "not editable here" notice.
+  // and insert a relative reference at the cursor; clipboard paste (⌘V /
+  // screenshot) rides the same pipeline; an OS file dropped on the tab strip
+  // (R6 ④) opens as a new tab. The resolver hands the drop handler the tab's own
+  // absPath / write root / itemType; panel tabs (no file behind them) resolve to
+  // null and get a visible "not editable here" notice.
   const canvasContent = document.getElementById('canvas-content');
   if (canvasContent) {
     initCanvasDrop(canvasContent, (pane) => {
@@ -1090,7 +1092,7 @@ export function initCanvas() {
         rootPath: entry.rootPath || null,
         itemType: entry.type,
       };
-    });
+    }, tabBar);
   }
 
   // Listen for workspace-open-item events (dispatched on window by explorer.js).

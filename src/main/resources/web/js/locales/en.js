@@ -941,14 +941,20 @@ export default {
   // === Canvas save feedback ===
   'canvas.saved': 'Saved {name}',
   'canvas.saveFailed': 'Failed to save {name}: {error}',
-  // === Canvas external file drop (canvasdrop, 2026-09-11 author rulings R1–R7) ===
+  // === Canvas external file drop / paste (canvasdrop, 2026-09-11 author rulings R1–R7) ===
   'canvas.dropInserted': 'Inserted {ref}',
+  'canvas.dropBatchInserted': 'Inserted {count} image references',
   'canvas.dropFailed': 'Insert failed: {error}',
-  'canvas.dropUnsupported': 'Unsupported type: {name} (droppable images: png / jpg / jpeg / gif / svg / webp / bmp / ico / avif / tiff / tif)',
-  'canvas.dropBatchUnsupported': 'Batch drop is not supported yet — drop one image at a time',
+  'canvas.dropUnsupported': 'Unsupported type: {name} (droppable images: {types})',
   'canvas.dropNotEditable': 'This is a preview / read-only view — switch to source view before dropping',
   'canvas.dropNoTarget': 'No editable file here — drop inside the file being edited',
   'canvas.dropTooLarge': '{name} exceeds the 20MB limit and was not written',
+  'canvas.dropOutsideRoot': '{name} was not written: the file lives outside the workspace, so the image cannot land next to it. Move the file into the workspace, or reference the original file path instead.',
+  'canvas.pasteInserted': 'Pasted and inserted {ref}',
+  'canvas.pasteUnsupported': 'Unsupported type: {name} (pasted images: {types})',
+  'canvas.pasteNotEditable': 'This is a preview / read-only view — switch to source view before pasting',
+  'canvas.pasteNoTarget': 'No editable file here — open a file and focus the cursor first',
+  'canvas.tabDropOpened': 'Opened {name}',
   // === Lightbox (image preview) ===
   'lightbox.ariaLabel': 'Image preview',
   'lightbox.close': 'Close preview',
