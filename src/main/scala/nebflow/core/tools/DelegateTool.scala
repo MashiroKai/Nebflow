@@ -72,6 +72,8 @@ object DelegateTool extends Tool:
 
 **When NOT to use:** anything project-owned, anything whose output is a work unit needing review, or anything you can finish yourself — use Task(project=...) or do it directly.
 
+**Capability boundary (hard):** the kernel has NO plugin surface and NO project context — it cannot mount plugins, read project AGENTS.md, or see the Plugin Catalog. For any deliverable-production task (PPT/decks, cards, diagrams, websites, papers, research reports) use Task(project=...) instead, and never ask the kernel to pick a technology route or to reject an existing capability route.
+
 **Parameters:**
 - `task` (required): self-contained brief. Include the target device (if any), ABSOLUTE paths, the exact command/limits, and what "done" looks like. State explicit non-goals when the risk matters (e.g. "do not delete anything").
 - `description` (required): short UI label (session name, sub-agent panel row, ask-card attribution).
