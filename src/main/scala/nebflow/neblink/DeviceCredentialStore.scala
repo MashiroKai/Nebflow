@@ -5,13 +5,13 @@ import io.circe.generic.semiauto.*
 import io.circe.parser.decode
 import io.circe.syntax.*
 import io.circe.{Decoder, Encoder, Json, JsonObject}
-import nebflow.core.PathUtil
-
-import java.nio.file.attribute.PosixFilePermissions
+import nebflow.core.{CredentialFileAcl, NebflowLogger, PathUtil}
 
 /**
  * Long-lived per-device NebLink credential, persisted to
- * `~/.nebflow/neblink/device.json` with owner-only permissions (rw-------).
+ * `~/.nebflow/neblink/device.json` with owner-only access control (POSIX
+ * `rw-------`; on Windows a DACL holding a single ACE for the current user —
+ * see [[nebflow.core.CredentialFileAcl]] for the Q2/2026-09-11 rationale).
  *
  * Produced by pairing-code enrollment (`POST /api/device/enroll`), the
  * device flow, or the Logto AC+PKCE callback. The raw `deviceToken` is the
@@ -90,6 +90,8 @@ object DeviceCredential:
     yield DeviceCredential(serverUrl, networkId, deviceId, deviceToken, logto)
   }
 
+  private val log = NebflowLogger.forName("nebflow.neblink.devicecred")
+
   // def, not val: PathUtil.dataRoot is redirectable (setDataRoot); a val would
   // freeze the path at object-init and break per-test data roots (f1cd3709 rule).
   private def credPath = PathUtil.dataRoot / "neblink" / "device.json"
@@ -101,16 +103,39 @@ object DeviceCredential:
     }
 
   def save(cred: DeviceCredential): IO[Unit] =
+    save(cred, CredentialFileAcl.systemPort, CredentialFileAcl.currentOsName)
+
+  /** Seam overload (T3, 2026-09-11): `aclPort` + `osName` are parameters so the
+    * branch selection is unit-testable on macOS (no NTFS ACL view, no icacls).
+    * Public [[save]] delegates with the production port and the live `os.name`,
+    * so production behaviour is identical.
+    *
+    * The ACL failure path is deliberately non-fatal (the credential is already
+    * on disk) but never silent: a warning is logged, because "could not narrow
+    * the ACL" is exactly the state in which the device token is readable by
+    * other principals (Q2 defect). */
+  private[neblink] def save(
+    cred: DeviceCredential,
+    aclPort: CredentialFileAcl.Port,
+    osName: String
+  ): IO[Unit] =
     IO.blocking {
       os.write.over(credPath, cred.asJson.spaces2, createFolders = true)
-      // Restrict file permissions to owner-only (rw-------), mirroring Auth.
+      // Owner-only access control: rw------- on POSIX, single-owner DACL on
+      // Windows (the platform where the old POSIX call was a silent no-op).
       try
-        val perms = PosixFilePermissions.fromString("rw-------")
-        java.nio.file.Files.setPosixFilePermissions(
-          java.nio.file.Paths.get(credPath.toString),
-          perms
+        CredentialFileAcl.restrict(java.nio.file.Paths.get(credPath.toString), osName, aclPort)
+        None
+      catch
+        case e: Exception =>
+          Some(s"os=$osName ${e.getClass.getSimpleName}: ${Option(e.getMessage).getOrElse("")}")
+    }.flatMap {
+      case None => IO.unit
+      case Some(msg) =>
+        log.warn(
+          s"device.json owner-only ACL not applied ($msg) — the credential file may be " +
+            "readable by principals other than the current user"
         )
-      catch case _: Exception => () // best effort on non-POSIX systems
     }
 
   /** Write back the latest rotated refresh token (no-op when nothing is
