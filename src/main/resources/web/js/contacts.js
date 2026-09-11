@@ -11,6 +11,8 @@ import { onMessage } from './ws.js';
 import * as api from './friendsApi.js';
 import { openChatWithFriend, fmtTime, isFriendTrusted, setFriendTrusted } from './messages.js';
 import { showPopupMenu } from './contextMenu.js';
+// ⑥ 信任好友封存（作者裁定 2026-09-12）：静态常量，非配置读取、不过 latch。
+import { TRUST_SEALED } from './featureFlags.js';
 
 let friends = [];
 let incoming = [];
@@ -229,7 +231,10 @@ function friendRow(f) {
   row.addEventListener('contextmenu', (e) => {
     e.preventDefault();
     const items = [];
-    if (!blocked) {
+    // SEALED (author ruling 2026-09-12): 信任好友入口隐藏——`TRUST_SEALED`
+    // 为 true（默认）时菜单项不推入；整块代码保留原样，回退 = featureFlags.js
+    // 把常量改回 false（回退步骤见该文件注释）。
+    if (!blocked && !TRUST_SEALED) {
       const trusted = isFriendTrusted(f.userId);
       items.push({
         label: trusted ? t('contacts.menuUntrust') : t('contacts.menuTrust'),
