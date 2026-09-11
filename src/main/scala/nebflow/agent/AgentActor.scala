@@ -64,6 +64,37 @@ object TurnBoundaryDrains:
     if compactionPending then (Nil, queue)
     else (queue, Nil)
 
+  /**
+   * Q1-A2′（任务分发器收件规则，2026-09-11）：在 tools-complete 边界把
+   * `pendingUserInputs` 里「可内联合批」的 UserInput 取出，与 ImmediateInput 同批
+   * 注入本 turn 的续轮请求（1 批 = 1 次注入 = 1 个 turn）；其余保持全元数据队列，
+   * 仍由 turn 末回 idle 逐条重投。
+   *
+   * 可内联判据：`replyTo` 为空（无完成目标可丢）**或** `replyTo` ∈ 本 turn 的完成
+   * 目标集（`tc.replyTo ++ owedCompletion`）。内联后该件的完成结算由本 turn 的
+   * completionTargets 承担；一个携带**外来** replyTo 的 UserInput 一旦内联，其
+   * AgentEvent.Completed 就没有出口（完成目标搁浅）——与
+   * [[AgentActor.drainQueuesAfterCompaction]] 只内联 replyTo-free 件的守卫同源，
+   * 本处放宽到「replyTo 与本 turn 目标集一致」这一可证安全的超集。
+   *
+   * 非 UserInput 命令（SkillActivate / AskQuestion）不内联：它们需要全元数据路径
+   * （idle 处理器）逐条处理。`compactionPending` 时一律不消费——与 [[drainAll]] /
+   * [[drainHead]] 同款守卫（注入后被摘要替换即丢失，CompactionComplete 再排）。
+   * 两段内部各自保持到达顺序。
+   */
+  def drainUserBatch(
+    queue: List[AgentCommand],
+    compactionPending: Boolean,
+    turnTargets: List[ActorRef[AgentEvent]]
+  ): (List[AgentCommand.UserInput], List[AgentCommand]) =
+    if compactionPending then (Nil, queue)
+    else
+      val (inline, kept) = queue.partition {
+        case ui: AgentCommand.UserInput => ui.replyTo.isEmpty || ui.replyTo.exists(turnTargets.contains)
+        case _                          => false
+      }
+      (inline.collect { case ui: AgentCommand.UserInput => ui }, kept)
+
   /** True for ExternalEvents carrying a Delegate/SubTask result. */
   def isSubagentResult(e: AgentCommand.ExternalEvent): Boolean =
     e.source == "subtask" || e.source == "delegate"
@@ -1862,6 +1893,47 @@ object AgentActor extends AgentCore with AgentSession:
             )
           )
         }.sequence_
+        // Q1-A2′（任务分发器收件规则，2026-09-11）：pendingUserInputs 也在本边界整队
+        // 合批注入——不只 turn 末逐条重投。分发器卡在长工具批期间收到的任务，**最早**
+        // 就在本边界被看到（mid-turn 直投的最早生效点 = 当前工具批返回）；N 件 = 1 次
+        // 注入 = 1 个 turn（续轮请求），蓝气泡逐条带各自来源标签，完成结算仍由本 turn
+        // 的 completionTargets（tc.replyTo / owedCompletion）承担——见
+        // TurnBoundaryDrains.drainUserBatch 的内联判据。
+        val (inlineUserCmds, remainingUserCmds) =
+          TurnBoundaryDrains.drainUserBatch(
+            state.execution.pendingUserInputs,
+            state.pendingCompaction.isDefined,
+            (tc.replyTo.toList ++ state.execution.owedCompletion).distinct
+          )
+        val userBatchMessages = inlineUserCmds match
+          case Nil => Nil
+          case cmds =>
+            logAgentEvent(
+              agentDef,
+              depth,
+              state.sessionId,
+              state.sessionName,
+              "queued-user-input-injected-at-tools-complete",
+              s"batch=${cmds.size} sources=${cmds.map(_.source.getOrElse("-")).mkString(",")} " +
+                s"remaining=${remainingUserCmds.size}"
+            )
+            cmds.map(userCmdToMessage)
+        // ② (2026-09-11): 真人输入不产注入气泡（fromUser 优先于 source）——与
+        // immEventIO 同一判据。
+        val userBatchEventIO = inlineUserCmds.flatMap { ui =>
+          injectionSourceFor(ui.fromUser, ui.source).map(src =>
+            emitInjectedUserEvent(
+              state.wsSend,
+              state.sessionId,
+              ui.text,
+              src,
+              ui.eventType,
+              ui.sender,
+              ui.senderTeam,
+              ui.delivery
+            )
+          )
+        }.sequence_
         // Block 3 循环检测器 L0（supervision trio §D3）：LoopGuard Warn 提醒以
         // user system-reminder 追加在工具结果之后（同系统 reminder 形态）
         // ——零成本给模型自纠机会；不阻断轮次。
@@ -1869,7 +1941,7 @@ object AgentActor extends AgentCore with AgentSession:
           case Some(rem) => List(Message(MessageRole.User, Left(rem)))
           case None      => Nil
         val newMessages =
-          baseMessages ++ List(assistantMsg, resultMsg) ++ imageMsgs ++ eventMessages ++ immediateMessages ++ loopReminderMsgs
+          baseMessages ++ List(assistantMsg, resultMsg) ++ imageMsgs ++ eventMessages ++ immediateMessages ++ userBatchMessages ++ loopReminderMsgs
         // Increment delegate count for Delegate/SubTask calls
         val delegateIncrement = toolCalls.count(c => c.name == "Delegate" || c.name == "SubTask")
         val newDelegateCount = state.delegateCount + delegateIncrement
@@ -1900,6 +1972,9 @@ object AgentActor extends AgentCore with AgentSession:
                 interaction = state.execution.interaction.filter(_.pendingPermission.isDefined),
                 pendingEvents = remainingEvents,
                 pendingImmediateInputs = remainingImmInputs,
+                // Q1-A2′：本边界已内联合批的 UserInput 出队，其余（外来 replyTo /
+                // SkillActivate / AskQuestion）留在全元数据队列由 turn 末逐条重投。
+                pendingUserInputs = remainingUserCmds,
                 delegateCount = newDelegateCount,
                 outstandingSubagentResults = newOutstanding,
                 mailUsedThisTurn = state.mailUsedThisTurn ||
@@ -1981,6 +2056,8 @@ object AgentActor extends AgentCore with AgentSession:
                   )
               )
               _ <- immEventIO
+              // Q1-A2′：合批注入的 queued UserInput 同样逐条发注入气泡（同源判据）。
+              _ <- userBatchEventIO
               _ <- touchBarrierSnapshot(resources, state.sessionId, newOutstanding, remainingEvents.size)
               result <- pipeLlmCall(agentDef, resources, depth, parentRef, updatedState, tc.replyTo)
             yield result
