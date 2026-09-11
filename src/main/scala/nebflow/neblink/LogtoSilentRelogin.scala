@@ -18,6 +18,25 @@ import cats.syntax.all.*
   * call time. The freshly-enrolled client receives THIS SAME hook (rebuilt
   * from the same late-bound provider), so relogin capability survives
   * hot-swaps.
+  *
+  * O5 decision (2026-09-11, refresh-revoke plan §2 O5 row / §3④): after the
+  * client stopped requesting `offline_access` ([[LogtoAuthCode.authorizeUrl]])
+  * this hook loses its token source, so it is KEPT AS A NO-REFRESH-TOKEN
+  * ATTEMPT rather than disabled or re-pointed:
+  *  - "disable" was rejected — it would delete a working fallback for every
+  *    install enrolled BEFORE the scope change (those device.json files
+  *    still hold a usable refresh token) on an intuition, not on evidence;
+  *  - "re-login via the device credential" is not an alternative: this hook
+  *    IS the reaction to the server rejecting that very credential with
+  *    HTTP 401 (`NeblinkClient.reloginAllowed` — 401 + relogin budget); the
+  *    routine device-credential re-login is the primary path that already
+  *    ran and failed before this hook is entered.
+  * Evidence for the call site / trigger (falsifiable): the hook is passed as
+  * `NeblinkClient.onDeviceTokenRejected` from `RestApiRoutes.persistEnrollment`
+  * and from the GatewayMain startup wiring, and is reachable ONLY through
+  * `NeblinkClient.doLogin`'s 401 branch (`NeblinkClient.scala:261`). It has
+  * zero callers otherwise (`LogtoSilentRelogin.make` has exactly those two).
+  * The degradation is observable, never silent: see [[startRefresh]].
   */
 object LogtoSilentRelogin:
 
@@ -50,8 +69,22 @@ object LogtoSilentRelogin:
       out <- IO.defer(dispatchRefresh(fresh, ms, discovery, gatewayPort, serverUrl, serverUrlOf))
     yield out
 
+  /** O5 degradation notice (2026-09-11) — shared rationale, logged at the
+    * exact moment this path is entered or found unusable so an operator can
+    * tell "the scope change removed the token source" apart from "the
+    * provider rejected the rotation". */
+  private val o5Reason =
+    "O5: authorize no longer requests offline_access (alwaysIssueRefreshToken=false), " +
+      "so no refresh_token is issued for a new login"
+
   /** Refresh-token rotation (grant_type=refresh_token). Unavailable when
-    * there is no stored refresh token or no AC app configured. */
+    * there is no stored refresh token or no AC app configured.
+    *
+    * O5 (2026-09-11): a refresh token can now only come from a PRE-O5
+    * enrollment, so both branches are explicitly observable at ≥INFO with
+    * the timing (entering the attempt / degrading to unavailable) and the
+    * reason ([o5Reason]). Nothing here returns an empty request silently —
+    * the absent-token case yields a Left that the caller logs at WARN. */
   private def startRefresh(
     refreshToken: Option[String],
     endpoint: Option[String],
@@ -59,9 +92,19 @@ object LogtoSilentRelogin:
   ): IO[Either[String, LogtoAuthCode.TokenResult]] =
     (refreshToken, endpoint, pkceClientId) match
       case (Some(rt), Some(ep), Some(pc)) =>
-        LogtoAuthCode.tokenCall(LogtoDeviceFlow.jdkSend)(LogtoAuthCode.refreshTokenRequest(ep, pc, rt))
+        // Timing: the device credential was just rejected with 401 and a
+        // stored refresh token exists — the credential is therefore a pre-O5
+        // one (post-O5 logins persist none). Rotation degrades on its own
+        // once that token is consumed / expired / revoked.
+        log(s"attempting refresh-token rotation with a stored pre-O5 credential — $o5Reason") *>
+          LogtoAuthCode.tokenCall(LogtoDeviceFlow.jdkSend)(LogtoAuthCode.refreshTokenRequest(ep, pc, rt))
       case _ =>
-        IO.pure(Left("silent re-login unavailable: no stored refresh token or AC app id"))
+        // Timing: hook entered, nothing to rotate — the frontend will be
+        // asked for a fresh login (NeblinkClient surfaces the original 401).
+        log(
+          s"silent re-login degraded to login-required (storedRefreshToken=${refreshToken.isDefined}, " +
+            s"acApp=${pkceClientId.isDefined}) — $o5Reason"
+        ).as(Left(s"silent re-login unavailable: no stored refresh token or AC app id ($o5Reason)"))
 
   /** Rotation write-back FIRST (using the token invalidates it — a failed
     * register must still leave a usable refresh credential), then register
