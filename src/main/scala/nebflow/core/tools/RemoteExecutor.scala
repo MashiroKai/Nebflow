@@ -88,12 +88,14 @@ class RemoteExecutor(
     ctxOpt: Option[ToolContext] = None
   ): IO[Either[ToolError, String]] =
     val isBackground = params("run_in_background").flatMap(_.asBoolean).getOrElse(false)
+    // T4 审计用：projectRoot 随 ctx 传递（无 ctx 的 REST/兜底路径记空串）
+    val projectRoot = ctxOpt.map(_.projectRoot).getOrElse("")
 
     def runOnPeer(peer: PeerInfo): IO[Either[ToolError, String]] =
       if peer.address.isEmpty then IO.pure(Left(ToolError(s"Device '${peer.deviceName}' has no address.")))
       else if isBackground && ctxOpt.isDefined then executeRemoteBackground(peer, toolName, params, ctxOpt.get)
       else if ctxOpt.isDefined then executeForegroundSync(peer, toolName, params, ctxOpt.get)
-      else executeViaBestPath(peer, toolName, params, SyncTimeout)
+      else executeViaBestPath(peer, toolName, params, SyncTimeout, projectRoot)
 
     neblinkService.peers.flatMap { peers =>
       resolvePeer(deviceName, peers) match
@@ -192,7 +194,7 @@ class RemoteExecutor(
       // **processActivityMs**（不再是 lastActivityMs——远程等待中的「进程/网络
       // 还活着」不等于 agent 侧有进展；旧写点与 BashTool 活动桥同属事故根因族）。
       hbFiber <- (IO.sleep(30.seconds) *> touchAgentActivity(ctx)).foreverM.start
-      r <- executeViaBestPath(peer, toolName, remoteParams, BgTimeout)
+      r <- executeViaBestPath(peer, toolName, remoteParams, BgTimeout, ctx.projectRoot)
       _ <- hbFiber.cancel
     yield r
   end executeForegroundSync
@@ -221,7 +223,7 @@ class RemoteExecutor(
     doneRef: Ref[IO, Boolean]
   ): Unit =
     val completionIO =
-      executeViaBestPath(peer, toolName, params, BgTimeout)
+      executeViaBestPath(peer, toolName, params, BgTimeout, ctx.projectRoot)
         .flatMap {
           case Right(output) => notifyRemoteBgResult(ctx, jobId, description, Right(output))
           case Left(err) => notifyRemoteBgResult(ctx, jobId, description, Left(err.message))
@@ -412,6 +414,7 @@ class RemoteExecutor(
     toolName: String,
     params: JsonObject,
     timeout: FiniteDuration,
+    projectRoot: String,
     maxRetries: Int = 3
   ): IO[Either[ToolError, String]] =
     def attempt(n: Int): IO[Either[ToolError, String]] =
@@ -423,7 +426,9 @@ class RemoteExecutor(
             IO.sleep(delay) *> attempt(n + 1)
         case Left(err) => IO.pure(Left(err))
       }
-    attempt(0)
+    // T4：一次逻辑下发的审计行（在第一次网络尝试前落——重试是同一行下发，
+    // 不重复记行；下发本身失败也记，审计关心「试图驱动了哪台设备」）。
+    auditDispatch(peer, toolName, params, projectRoot, "p2p") *> attempt(0)
 
   end p2pExecuteWithRetry
 
@@ -470,7 +475,8 @@ class RemoteExecutor(
     peer: PeerInfo,
     toolName: String,
     params: JsonObject,
-    timeout: FiniteDuration
+    timeout: FiniteDuration,
+    projectRoot: String
   ): IO[Either[ToolError, String]] =
     // F1 sweep (2026-09-10 隧道鉴权自愈批): resolve the client per dispatch —
     // never dispatch through a constructor-time snapshot whose session the
@@ -478,7 +484,7 @@ class RemoteExecutor(
     currentRelayClient.flatMap {
       case None =>
         // No relay available — P2P only
-        p2pExecuteWithRetry(peer, toolName, params, timeout).flatMap {
+        p2pExecuteWithRetry(peer, toolName, params, timeout, projectRoot).flatMap {
           case r @ Right(_) => recordPathMemory(peer.deviceId, "p2p").as(r)
           case l @ Left(_)  => IO.pure(l)
         }
@@ -504,22 +510,22 @@ class RemoteExecutor(
                 )
               else
                 // Relay only — with cold-start retry for tunnel reconnection latency
-                relayWithColdStartRetry(client, peer, toolName, params).flatMap {
+                relayWithColdStartRetry(client, peer, toolName, params, projectRoot).flatMap {
                   case Right(output) => recordPathMemory(peer.deviceId, "relay").as(Right(output))
                   case Left(err)     => clearPathMemory(peer.deviceId).as(Left(ToolError(s"Relay failed: $err")))
                 }
             else if ReadOnlyTools.contains(toolName) then
               // P1: parallel race for read-only tools (safe cancellation)
-              raceP2PAndRelay(peer, toolName, params, timeout, client)
+              raceP2PAndRelay(peer, toolName, params, timeout, client, projectRoot)
             else
               // Write tools: serial P2P → relay fallback
-              p2pExecuteWithRetry(peer, toolName, params, timeout).flatMap {
+              p2pExecuteWithRetry(peer, toolName, params, timeout, projectRoot).flatMap {
                 case Right(output) => recordPathMemory(peer.deviceId, "p2p").as(Right(output))
                 case Left(err) if shouldRelayFallback(err) =>
                   logger.info(
                     s"P2P unavailable for ${peer.deviceName} (${err.message.take(80)}), falling back to relay"
                   ) *>
-                    relayWithColdStartRetry(client, peer, toolName, params).flatMap {
+                    relayWithColdStartRetry(client, peer, toolName, params, projectRoot).flatMap {
                       case Right(output) => recordPathMemory(peer.deviceId, "relay").as(Right(output))
                       case Left(relayErr) =>
                         IO.pure(Left(ToolError(s"P2P failed: ${err.message}; Relay also failed: $relayErr")))
@@ -529,6 +535,48 @@ class RemoteExecutor(
         yield result
     }
   end executeViaBestPath
+
+  // ---- T4 (2026-09-11): relay/P2P 远端执行审计 ----
+
+  /**
+   * 落一条远端执行审计行（见 [[RelayExecAudit]]）。**每次逻辑下发一次**，在首次
+   * 网络尝试前调用（重试不重复记行）。审计失败绝不影响下发：[[RelayExecAudit.record]]
+   * 自身吞异常 + WARN，这里再兜一层（取本机身份失败时也不能挡住下发）。
+   *
+   * 与 dangerLevel 无关——auto-all 下权限卡不出现，正是这一行承担可见性。
+   */
+  private def auditDispatch(
+    peer: PeerInfo,
+    toolName: String,
+    params: JsonObject,
+    projectRoot: String,
+    via: String
+  ): IO[Unit] =
+    neblinkService.identity
+      .map(_.deviceId)
+      .flatMap(src =>
+        RelayExecAudit.record(
+          sourceDeviceId = src,
+          targetDeviceId = peer.deviceId,
+          via = via,
+          action = toolName,
+          command = RelayExecAudit.summarizeParams(toolName, params),
+          projectRoot = projectRoot,
+          cwd = Option(System.getProperty("user.dir")).getOrElse("")
+        )
+      )
+      .handleErrorWith(e => logger.warn(s"relay-exec audit line skipped: ${e.getMessage}"))
+
+  /** relay 下发 + 审计（唯一 relay 出口——避免某条分支漏记）。 */
+  private def relayExecAudited(
+    client: NeblinkClient,
+    peer: PeerInfo,
+    toolName: String,
+    params: JsonObject,
+    projectRoot: String
+  ): IO[Either[String, String]] =
+    auditDispatch(peer, toolName, params, projectRoot, "relay") *>
+      client.relayExec(peer.deviceId, toolName, params)
 
   // ---- BUG 4: Relay cold-start retry ----
 
@@ -543,9 +591,10 @@ class RemoteExecutor(
     client: NeblinkClient,
     peer: PeerInfo,
     toolName: String,
-    params: JsonObject
+    params: JsonObject,
+    projectRoot: String
   ): IO[Either[String, String]] =
-    client.relayExec(peer.deviceId, toolName, params).flatMap {
+    relayExecAudited(client, peer, toolName, params, projectRoot).flatMap {
       case Right(output) => IO.pure(Right(output))
       case Left(err)     =>
         // Cold start retry — relay tunnel might have just reconnected
@@ -570,11 +619,12 @@ class RemoteExecutor(
     toolName: String,
     params: JsonObject,
     timeout: FiniteDuration,
-    client: NeblinkClient
+    client: NeblinkClient,
+    projectRoot: String
   ): IO[Either[ToolError, String]] =
-    val p2pIO: IO[Either[ToolError, String]] = p2pExecuteWithRetry(peer, toolName, params, timeout)
+    val p2pIO: IO[Either[ToolError, String]] = p2pExecuteWithRetry(peer, toolName, params, timeout, projectRoot)
     val relayIO: IO[Either[ToolError, String]] =
-      client.relayExec(peer.deviceId, toolName, params).map {
+      relayExecAudited(client, peer, toolName, params, projectRoot).map {
         case Right(output) => Right(output)
         case Left(err)     => Left(ToolError(s"Relay failed: $err"))
       }
