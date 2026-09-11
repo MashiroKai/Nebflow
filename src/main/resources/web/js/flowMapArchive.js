@@ -25,7 +25,7 @@
 import { esc, fmtTime } from './flowHelpers.js';
 import { t } from './i18n.js';
 import { renderMarkdownWithMath } from './utils.js';
-import { fetchNodeResult, fetchFlowMapArchive } from './nodeData.js';
+import { fetchNodeResultDetail, fetchFlowMapArchive } from './nodeData.js';
 
 // P2-4 cycle cut（同 sidebar.js → modal 先例）：静态链 modal → sidebar → taskList
 // → flowMapArchive → modal 成环（68de01d6 引入 taskList 边后闭合），showToast
@@ -734,7 +734,7 @@ function closeDetail(/** @type {LayerCtx} */ ctx) {
  *  渲染异常纯文本兜底 §5.8；同步渲染与全文升级换装共用，形态逻辑单点）。 */
 function resultInnerHtml(/** @type {string} */ text) {
   try {
-    return renderMarkdownWithMath(text) || `<span class="md-empty">${esc(t('flowmap.archive.noResult'))}</span>`;
+    return renderMarkdownWithMath(text) || emptyStateHtml();
   } catch (_) {
     return `<pre>${esc(text)}</pre>`;
   }
@@ -880,12 +880,12 @@ function renderDetail(/** @type {LayerCtx} */ ctx, /** @type {ChainMember} */ n)
   let resultHtml;
   if (fb) {
     // blocked：结构化反馈面板在上；原文折叠区先占位，异步按需换装
-    resultHtml = `<details class="flow-blocked-raw"><summary>${esc(t('flowmap.blockedRawTitle'))}</summary><div class="flow-agent-block-readonly">…</div></details>`;
+    resultHtml = `<details class="flow-blocked-raw"><summary>${esc(t('flowmap.blockedRawTitle'))}</summary><div class="flow-agent-block-readonly">${RESULT_PLACEHOLDER}</div></details>`;
   } else if (hasResult) {
-    // 正文先占位，upgradeDetailResult 静默换装全文（失败落 noResult）
-    resultHtml = '<span class="md-empty">…</span>';
+    // 正文先占位，upgradeDetailResult 换装全文（取全文失败落明确错误态，空结果落空态）
+    resultHtml = `<span class="md-empty">${RESULT_PLACEHOLDER}</span>`;
   } else {
-    resultHtml = `<span class="md-empty">${esc(t('flowmap.archive.noResult'))}</span>`;
+    resultHtml = emptyStateHtml();
   }
   ctx.detailBody.innerHTML = `
     <div class="fm-detail-meta">${metaRows}</div>
@@ -897,10 +897,13 @@ function renderDetail(/** @type {LayerCtx} */ ctx, /** @type {ChainMember} */ n)
     ${taskText ? `<div class="fm-detail-sec">${esc(t('flowmap.archive.taskLabel'))}</div><div class="fm-detail-task">${esc(taskText)}</div>` : ''}
     <div class="fm-detail-sec">${esc(t('flowmap.archive.resultLabel'))}</div>
     <div class="fm-detail-result fm-md">${resultHtml}</div>`;
+  // 初始状态落地（2026-09-11 fmresult 批）：有全文待取 → loading（占位，**必须**
+  // 被 loaded/empty/error 替换）；无全文 → empty（已是终态，不发请求）。
+  markResultState(ctx, fb || hasResult ? RESULT_LOADING : RESULT_EMPTY);
   // 按需全文拉取（20260904 全文完整显示 + 20260905 载荷收敛改无条件触发）：
   // hasResult 即取全文换装（不再依赖「摘要长度 ≥500 才可能截断」的旧判据——
   // 新载荷根本没有摘要）。只替换 .fm-detail-result，不重建详情窗；响应按
-  // ctx.detailRenderSeq 守卫。blocked 原文换装进 .flow-agent-block-readonly。
+  // ctx.detailRenderSeq 守卫（swapCurrent）。blocked 原文换装进 .flow-agent-block-readonly。
   if (hasResult) upgradeDetailResult(ctx, seq, n.id, fb);
 }
 
@@ -910,11 +913,92 @@ function renderDetail(/** @type {LayerCtx} */ ctx, /** @type {ChainMember} */ n)
 const resultFullCache = new Map();
 const RESULT_FULL_CACHE_CAP = 30;
 
-/** 按需取全文（nodeData.fetchNodeResult，活动区/归档区后端单点）并换装：
+// ── 结果区四态（2026-09-11 fmresult 批：占位必须有终态）──────────────────
+// 结果区状态机（互斥四态，落 data-fm-result-state 供 harness/QA 与文案解耦断言）：
+//   loading → 占位「…」（详情已渲染、全文在途；**只允许是中间态**）
+//   loaded  → 真实全文（markdown 渲染串 / blocked 原文纯文本）
+//   empty   → 结果为空（节点无结果 / 结果空白：不是错误）
+//   error   → 明确错误态（可读原因 + 可操作提示）
+// 收敛不变式：任一 loading 必被 loaded/empty/error 之一替换（本批把「换装守卫」
+// 与「取全文失败态」两处缺口补上——旧实现两处都会让占位永久停留）。
+/** 占位文本（纯省略号，零 i18n 键）。 */
+const RESULT_PLACEHOLDER = '…';
+/** 结果区状态取值。 */
+const RESULT_LOADING = 'loading';
+const RESULT_LOADED = 'loaded';
+const RESULT_EMPTY = 'empty';
+const RESULT_ERROR = 'error';
+
+/** blocked 原文区元素（blocked 节点的结果落此处，非结果容器）。
+ *  @param {LayerCtx} ctx @returns {HTMLElement|null} */
+function blockedRawEl(/** @type {LayerCtx} */ ctx) {
+  return /** @type {HTMLElement|null} */ (ctx.detailBody.querySelector('.flow-blocked-raw .flow-agent-block-readonly'));
+}
+
+/** 结果区内容宿主：blocked 原文区优先（renderDetail 的 fb 分支产出），否则结果
+ *  容器 .fm-detail-result（卡内唯一竖向滚动容器）。两者皆无 = 详情结构未就绪。
+ *  @param {LayerCtx} ctx @returns {HTMLElement|null} */
+function resultSlot(/** @type {LayerCtx} */ ctx) {
+  return blockedRawEl(ctx) || /** @type {HTMLElement|null} */ (ctx.detailBody.querySelector('.fm-detail-result'));
+}
+
+/** 结果区状态落地（四态互斥；宿主 = resultSlot）。
+ *  @param {LayerCtx} ctx @param {string} state */
+function markResultState(/** @type {LayerCtx} */ ctx, /** @type {string} */ state) {
+  const el = resultSlot(ctx);
+  if (el) el.dataset.fmResultState = state;
+}
+
+/** 结果区空态 HTML（无结果/结果为空——非错误，与 error 分形）。 @returns {string} */
+function emptyStateHtml() {
+  return `<span class="md-empty">${esc(t('flowmap.archive.noResult'))}</span>`;
+}
+
+/** 错误态原因文案（i18n；404 单列——归档 24h 过期后节点已出活动区/归档区）。
+ *  @param {string} state @param {number=} status @returns {string} */
+function resultErrorReason(/** @type {string} */ state, /** @type {number=} */ status) {
+  if (state === 'timeout') return t('flowmap.archive.resultFailTimeout');
+  if (state === 'http') {
+    return Number(status) === 404
+      ? t('flowmap.archive.resultFailGone')
+      : t('flowmap.archive.resultFailHttp', { status: String(status ?? '') });
+  }
+  return t('flowmap.archive.resultFailNetwork');
+}
+
+/** 错误态文案（原因 + 可操作提示）。 @param {string} state @param {number=} status @returns {string} */
+function resultErrorText(/** @type {string} */ state, /** @type {number=} */ status) {
+  return `${t('flowmap.archive.resultLoadFail', { reason: resultErrorReason(state, status) })} · ${t('flowmap.archive.resultLoadFailHint')}`;
+}
+
+/** 错误态 HTML（可读原因 + 可操作提示）。色用既有 --color-error token（与卡片
+ *  failed 状态同源），inline 覆盖仅因结果区无对应错误类且 flowMap.css 在飞——
+ *  CSS 解冻后应收编为 .md-error 一类（见批报告「需拍板项」）。
+ *  @param {string} state @param {number=} status @returns {string} */
+function resultErrorHtml(/** @type {string} */ state, /** @type {number=} */ status) {
+  return `<span class="md-empty" style="font-style:normal;opacity:1;color:var(--color-error)">${esc(resultErrorText(state, status))}</span>`;
+}
+
+/** 换装守卫（2026-09-11 fmresult 批）＝**仅「渲染代未变」**。
+ *  detailRenderSeq 唯一自增点 = renderDetail ⇒ seq 唯一标识最新一次详情渲染：
+ *  换节点/关详情/重开后的迟到响应代不符必被丢弃（竞态防护语义不变）。
+ *  **可见性（ctx.detail.hidden）不再参与判定**——这正是旧缺陷根因：openDetail 的
+ *  时序是「先 renderDetail 落占位、后置 hidden=false」，而 LRU 命中/已取回全文
+ *  的换装是**同步**的，于是被 hidden 早退吞掉且再无第二次写入机会 ⇒ 重开同一节点
+ *  占位「…」永久停留（实测 stuckPlaceholder=true）。隐藏窗上的换装无副作用：内容
+ *  宿主随重开必被 renderDetail 重建，且同 tick 内完成不产生可见中间帧。
+ *  @param {LayerCtx} ctx @param {number} seq @returns {boolean} */
+function swapCurrent(/** @type {LayerCtx} */ ctx, /** @type {number} */ seq) {
+  return seq === ctx.detailRenderSeq;
+}
+
+/** 按需取全文（nodeData.fetchNodeResultDetail，活动区/归档区后端单点）并换装：
  *  常规 → 只替换 .fm-detail-result（markdown 渲染单点 resultInnerHtml）；
  *  blocked（fb=true）→ 换装 .flow-agent-block-readonly（原文折叠区）。
- *  响应按 ctx.detailRenderSeq 守卫：换节点/关详情后的迟到响应丢弃；404/网络
- *  异常静默落 noResult（升级失败不扰详情窗）。 */
+ *  响应按 ctx.detailRenderSeq 守卫（swapCurrent）：换节点/关详情后的迟到响应丢弃。
+ *  **三态分流（2026-09-11 fmresult 批）**：ok → 全文换装并入 LRU；empty → 空态；
+ *  http/network/timeout → 明确错误态。旧实现把「失败」静默折成空态 noResult ——
+ *  「错误态与空态混淆」且挂死请求永无终态；现三条路径皆有终态，占位不留悬。 */
 function upgradeDetailResult(/** @type {LayerCtx} */ ctx, /** @type {number} */ seq, /** @type {string} */ nodeId, /** @type {boolean} */ blocked) {
   const cacheKey = `${ctx.project}\u0000${nodeId}`;
   const cached = resultFullCache.get(cacheKey);
@@ -924,38 +1008,60 @@ function upgradeDetailResult(/** @type {LayerCtx} */ ctx, /** @type {number} */ 
     applyFullResult(ctx, seq, cached, blocked);
     return;
   }
-  fetchNodeResult(ctx.project, nodeId)
-    .then((full) => {
-      if (typeof full !== 'string' || !full.trim()) { applyNoResult(ctx, seq); return; }
-      resultFullCache.set(cacheKey, full);
+  fetchNodeResultDetail(ctx.project, nodeId)
+    .then((res) => {
+      if (res.state === 'empty') { applyNoResult(ctx, seq); return; }
+      if (res.state !== 'ok') { applyResultError(ctx, seq, res.state, res.state === 'http' ? res.status : 0); return; }
+      resultFullCache.set(cacheKey, res.result);
       if (resultFullCache.size > RESULT_FULL_CACHE_CAP) {
         resultFullCache.delete(resultFullCache.keys().next().value); // 最老淘汰
       }
-      applyFullResult(ctx, seq, full, blocked);
+      applyFullResult(ctx, seq, res.result, blocked);
     })
-    .catch(() => { applyNoResult(ctx, seq); /* 全文不可达：落 noResult（后端未挂载/节点出库/网络故障） */ });
+    .catch(() => { applyResultError(ctx, seq, 'network', 0); /* 数据层意外抛出：仍落明确错误态，不留悬 */ });
 }
 
-/** 全文换装：仅替换结果容器 innerHTML（渲染代守卫），详情窗本体与滚动状态零扰动。 */
+/** 全文换装：仅替换结果区内容（渲染代守卫），详情窗本体与滚动状态零扰动。
+ *  形态错位兜底（2026-09-11 fmresult 批）：blocked 标记与 block 原文区不一致时
+ *  内容照落结果容器——绝不因宿主解析落空留下永不收敛的占位。
+ *  @param {LayerCtx} ctx @param {number} seq @param {string} full @param {boolean=} blocked */
 function applyFullResult(/** @type {LayerCtx} */ ctx, /** @type {number} */ seq, /** @type {string} */ full, /** @type {boolean=} */ blocked) {
-  if (seq !== ctx.detailRenderSeq || ctx.detail.hidden) return;
-  if (blocked) {
-    const raw = ctx.detailBody.querySelector('.flow-blocked-raw .flow-agent-block-readonly');
-    if (raw) raw.textContent = full;
+  if (!swapCurrent(ctx, seq)) return;
+  const slot = resultSlot(ctx);
+  if (!slot) return;
+  if (blocked && slot === blockedRawEl(ctx)) {
+    slot.textContent = full; // blocked 原文：纯文本（结构化反馈面板在独立区块，不受影响）
+    slot.dataset.fmResultState = RESULT_LOADED;
     return;
   }
-  const box = ctx.detailBody.querySelector('.fm-detail-result');
-  if (!box) return;
-  box.innerHTML = resultInnerHtml(full);
+  slot.innerHTML = resultInnerHtml(full);
+  // markdown 渲染为空（全文存在但渲染不出内容）→ empty 而非 loaded：状态诚实。
+  slot.dataset.fmResultState = slot.querySelector('.md-empty') ? RESULT_EMPTY : RESULT_LOADED;
 }
 
-/** 全文不可达兜底：结果区落 noResult（渲染代守卫；仅占位态替换，不覆盖已换装全文）。 */
+/** 结果区落终态·空（节点无结果 / 结果为空——非错误）：槽位形态无关（结果容器与
+ *  blocked 原文区都收敛），不再依赖「容器 textContent 恰为占位」的脆弱判据——旧判据
+ *  在 blocked 形态下永不成立（原文区嵌套在详情 details 内，textContent 含标题），
+ *  blocked 节点取全文失败时占位「…」永久停留（本批同类缺陷之二）。 */
 function applyNoResult(/** @type {LayerCtx} */ ctx, /** @type {number} */ seq) {
-  if (seq !== ctx.detailRenderSeq || ctx.detail.hidden) return;
-  const box = ctx.detailBody.querySelector('.fm-detail-result');
-  if (box && box.textContent.trim() === '…') {
-    box.innerHTML = `<span class="md-empty">${esc(t('flowmap.archive.noResult'))}</span>`;
-  }
+  if (!swapCurrent(ctx, seq)) return;
+  const slot = resultSlot(ctx);
+  if (!slot) return;
+  if (slot === blockedRawEl(ctx)) slot.textContent = t('flowmap.archive.noResult'); // 原文区 = textContent 宿主（无 HTML 解析）
+  else slot.innerHTML = emptyStateHtml();
+  slot.dataset.fmResultState = RESULT_EMPTY;
+}
+
+/** 结果区落明确错误态（取全文失败：http / network / timeout）。原因 + 可操作提示，
+ *  与空态（empty）和占位（loading）严格分形。
+ *  @param {LayerCtx} ctx @param {number} seq @param {string} state @param {number=} status */
+function applyResultError(/** @type {LayerCtx} */ ctx, /** @type {number} */ seq, /** @type {string} */ state, /** @type {number=} */ status) {
+  if (!swapCurrent(ctx, seq)) return;
+  const slot = resultSlot(ctx);
+  if (!slot) return;
+  if (slot === blockedRawEl(ctx)) slot.textContent = resultErrorText(state, status);
+  else slot.innerHTML = resultErrorHtml(state, status);
+  slot.dataset.fmResultState = RESULT_ERROR;
 }
 
 // ── hover 联动（§5.6：条目 → 全员可见下游；成员行 → 该员下游）─────────

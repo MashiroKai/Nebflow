@@ -108,6 +108,14 @@ export default {
   'flowmap.archive.taskLabel': '任务',
   'flowmap.archive.resultLabel': '结果',
   'flowmap.archive.noResult': '暂无结果',
+  // 结果区明确错误态（2026-09-11 fmresult 批）：占位「…」必须有终态——取全文失败
+  // 不再静默折成空态「暂无结果」（错误态与空态混淆），改为可读原因 + 可操作提示。
+  'flowmap.archive.resultLoadFail': '结果加载失败：{reason}',
+  'flowmap.archive.resultLoadFailHint': '关闭详情窗后重开可重试',
+  'flowmap.archive.resultFailTimeout': '请求超时（网关无响应）',
+  'flowmap.archive.resultFailNetwork': '请求未送达或响应异常（网络错误）',
+  'flowmap.archive.resultFailHttp': '服务返回 {status}',
+  'flowmap.archive.resultFailGone': '结果已不可达（节点不在活动区/归档区）',
   'flowmap.archive.created': '创建',
   'flowmap.archive.completed': '完成',
   'flowmap.archive.ttlPurged': '24h 到期清理：{n} 条链已从归档移除',
