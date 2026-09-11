@@ -14,6 +14,10 @@
 # [2026-09-10] JDK baseline 17 -> 21 (declaration only): the requirement text
 # below plus a build-machine JDK assertion before jlink (A5 §4.3). Bundle
 # layout and packaging flow unchanged.
+# [2026-09-11] R5 delete-guard residue fix (guard-only insertion): lib/delguard.sh
+# now blacklist-checks every default allow-root ($PWD//tmp/$TMPDIR) and the
+# allow-root itself before any rm -rf; no change to this script's bundle layout,
+# staging or packaging flow.
 # ----------------------------------------------------------------------------
 # Build the Windows .msi of Nebflow from the sbt-assembly fat jar via jpackage.
 #

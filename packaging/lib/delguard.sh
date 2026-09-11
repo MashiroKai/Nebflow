@@ -12,12 +12,21 @@
 #
 # 断言口径：非空 / 非字面量 `~` / 长度 ≤ 1024 / 可解析 / 不命中黑名单
 #   （`/`、`$HOME`、用户目录根、卷根、盘根）。黑名单对**目标**无条件生效，白名单不能翻案。
+# [2026-09-11 R5 残两修复] 黑名单同样适用于**每个默认放行根本身**与**allow-root 本身**：
+#   ① 默认根（$PWD / /tmp / $TMPDIR）解析失败或命中黑名单 → 整体 REFUSE
+#      （`cwd=$HOME` 起跑时 `$PWD` 不再是放行根，home 下的相对路径目标不再能删）；
+#   ② allow-root 解析失败或命中黑名单 → 整体 REFUSE（`ALLOW_ROOT=$HOME` 拒，escape hatch 封死）。
+#   两处均 fail-closed：解析失败 / 命中即 refuse + 非零退出，绝不 catch 后跳过断言。
 # 显式放行非标准输出根（默认**不放行**）：NEBFLOW_PKG_ALLOW_ROOT=<绝对路径> + CONFIRM_DELETE=yes-i-mean-it
-#   → 目标必须严格位于该根之下且 ≠ 根本身；白名单根本身不得是 `/`。
+#   → 目标必须严格位于该根之下且 ≠ 根本身；白名单根本身不得是 `/`，也不得命中黑名单
+#   （R-7：`ALLOW_ROOT=$HOME` 本身拒；`$HOME` 的**子目录**如 `$HOME/build` 自身能过黑名单 → 放行）。
 #
 # 非破坏性探测（负控不需要真跑打包；只断言、不删除）：
 #   bash -c '. packaging/lib/delguard.sh; delguard_assert_paths probe "$HOME"; echo rc=$?'      # rc=1（拒）
 #   bash -c '. packaging/lib/delguard.sh; delguard_assert_paths probe build/dist; echo rc=$?'  # rc=0（通过）
+#   bash -c 'cd "$HOME"; . <abs>/packaging/lib/delguard.sh; delguard_assert_paths probe nb-tmp; echo rc=$?'  # rc=1（拒，残①）
+#   NEBFLOW_PKG_ALLOW_ROOT="$HOME" CONFIRM_DELETE=yes-i-mean-it \
+#     bash -c '. packaging/lib/delguard.sh; delguard_assert_paths probe "$HOME/x"; echo rc=$?'  # rc=1（拒，残②）
 #   DRY_RUN=1 packaging/build-dmg.sh --out build/dist      # 只跑断言 + 跳过删除
 #
 # 注：本文件的**运行期消息一律用 ASCII**。原因：本机 bash 5.3.9 + zh_CN.UTF-8 下，
@@ -75,15 +84,17 @@ delguard_resolve() {
 }
 
 # 默认落点根（除黑名单外仍须落在其中之一）：$PWD / $TMPDIR / /tmp（均取 realpath）
+# R5 残两修复①：任一默认根解析失败 → 返回 1（fail-closed，不再静默丢弃该根）；
+# 黑名单判定由调用方对**每个根**执行（命中即整体 REFUSE，见 delguard_assert_paths）。
 _delguard_default_roots() {
   local c t
-  c="$(cd "$PWD" 2>/dev/null && pwd -P)" || c=""
-  [ -n "$c" ] && printf '%s\n' "$c"
-  t="$(cd /tmp 2>/dev/null && pwd -P)" || t=""
-  [ -n "$t" ] && printf '%s\n' "$t"
+  c="$(cd "$PWD" 2>/dev/null && pwd -P)" || return 1
+  printf '%s\n' "$c"
+  t="$(cd /tmp 2>/dev/null && pwd -P)" || return 1
+  printf '%s\n' "$t"
   if [ -n "${TMPDIR:-}" ]; then
-    t="$(cd "$TMPDIR" 2>/dev/null && pwd -P)" || t=""
-    [ -n "$t" ] && printf '%s\n' "$t"
+    t="$(cd "$TMPDIR" 2>/dev/null && pwd -P)" || return 1
+    printf '%s\n' "$t"
   fi
   return 0
 }
@@ -126,16 +137,35 @@ delguard_assert_paths() {
   [ "$#" -gt 0 ] || { echo "delguard: internal error - no path given" >&2; return 1; }
   local p r reason aroot allow default_roots root ok
   allow="${NEBFLOW_PKG_ALLOW_ROOT:-}"
-  default_roots="$(_delguard_default_roots)"
+  default_roots="$(_delguard_default_roots)" || {
+    echo "delguard[$label]: REFUSE default allow-root unresolvable (\$PWD/\$TMPDIR//tmp) -> ABORT" >&2
+    return 1
+  }
+  # R5 残两修复①：每个默认放行根**自身**必须过黑名单。
+  # 否则 cwd=$HOME 时 $PWD=$HOME 会成为放行根，相对路径目标（$HOME/nb-tmp）绕过黑名单被删。
+  while IFS= read -r root; do
+    [ -n "$root" ] || continue
+    reason="$(_delguard_blacklist_reason "$root")"
+    if [ -n "$reason" ]; then
+      echo "delguard[$label]: REFUSE default allow-root blacklist hit [$reason] -> ABORT: resolved=[$root]" >&2
+      return 1
+    fi
+  done <<< "$default_roots"
   if [ -n "$allow" ] && [ "${CONFIRM_DELETE:-}" != "yes-i-mean-it" ]; then
     echo "delguard[$label]: REFUSE NEBFLOW_PKG_ALLOW_ROOT set without CONFIRM_DELETE=yes-i-mean-it (deny by default)" >&2
     return 1
   fi
   aroot=""
   if [ -n "$allow" ]; then
-    aroot="$(delguard_resolve "$allow")" || { echo "delguard[$label]: REFUSE unresolvable allow-root [$allow]" >&2; return 1; }
+    aroot="$(delguard_resolve "$allow")" || { echo "delguard[$label]: REFUSE unresolvable allow-root [$allow] -> ABORT" >&2; return 1; }
     if [ "$aroot" = "/" ]; then
-      echo "delguard[$label]: REFUSE allow-root = filesystem root" >&2; return 1
+      echo "delguard[$label]: REFUSE allow-root = filesystem root -> ABORT: resolved=[$aroot]" >&2; return 1
+    fi
+    # R5 残两修复②：allow-root **自身**必须过黑名单（$HOME 本身拒 = escape hatch 封死；
+    # $HOME 子目录如 $HOME/build 自身能过黑名单 → 放行，R-7）。
+    reason="$(_delguard_blacklist_reason "$aroot")"
+    if [ -n "$reason" ]; then
+      echo "delguard[$label]: REFUSE allow-root blacklist hit [$reason] -> ABORT: resolved=[$aroot]" >&2; return 1
     fi
     echo "delguard[$label]: allow-root active [$aroot] (CONFIRM_DELETE=yes-i-mean-it)" >&2
   fi
