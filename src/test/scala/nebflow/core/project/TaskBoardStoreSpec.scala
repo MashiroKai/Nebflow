@@ -611,4 +611,70 @@ class TaskBoardStoreSpec extends FunSuite:
     assert(nb > sb, s"状态类不得主导（字节 note=$nb state=$sb）⇒ 否则须给精简方案")
     assert(sb * 3 < nb, s"状态类占比应远低于主线（state=$sb vs note=$nb）")
 
+  // ===== ⑮ 修复轮（独立复核判红 2 项）=====
+  // 红项 1：logSync 结果行的史落地提示曾被 Scala 插值里的方法引用 eta-expansion 吃掉
+  //（打出 lambda 身份串，非确定性）；本用例锁死文案（含史路径 + show 提示，且零对象身份特征）。
+  test("修复轮①log 结果行文案：逐字含 `History: <path> (see it with action=show id=N)`，且绝不含 lambda/对象身份串"):
+    resetFile()
+    assert(create("任务A").isRight)
+    val r = store.logSync("1", "一段记录", actor = TaskBoardHistory.Actors.Dispatcher)
+    assert(r.isRight, r)
+    val txt = r.toOption.get
+    println("[fix-1] log 结果行原文:\n" + txt)
+    assert(txt.contains("#1 (4 chars appended; note untouched, board unchanged)"), txt)
+    assert(txt.contains(s"History: ${hist.file} (see it with action=show id=1)."),
+      s"史落地提示必须逐字在结果行（点明史路径才能被后续 show 找到）:\n$txt")
+    assert(!txt.contains("Lambda") && !txt.contains("histNoteFor("),
+      s"不得出现方法引用/eta-expansion 泄漏:\n$txt")
+    assert(!txt.contains("@"), s"不得把 JVM 对象身份串（@<hash>，非确定性）写进工具结果:\n$txt")
+    // 带 links 的路径同样成立（linkNote 与史提示并存）
+    val r2 = store.logSync("1", "带锚记录", Some(List("docs/x.md", "abc1234")))
+    assert(r2.isRight && r2.toOption.get.contains("links=2") && r2.toOption.get.contains("History: "),
+      r2.toString)
+
+  // 红项 2：prune 后 id 复用（旧 nextId = 现存 max+1）⇒ 新条目 show 混入已剪旧任务的
+  // note 版本、被剪 id 查不回 [gone]。本用例 = 复核方最自然构造的回归版。
+  test("修复轮②id 单调（RK-2）：max-id 条目被 prune 后新建不复用其 id ⇒ 新条目时间线零混入、旧 id 仍 [#<id>gone]；库史皆无仍 TBOARD_NOT_FOUND"):
+    resetFile()
+    assert(create("旧任务ZZOLD", note = Some("旧任务版本一")).isRight)
+    assert(update("1", note = Some("旧任务版本二")).isRight)
+    assert(store.closeSync("1", Some("旧任务收尾")).isRight)
+    val old = Instant.now().minusSeconds(40L * 24 * 3600).toString
+    val disk = readDisk.get
+    os.write.over(file, disk.copy(tasks = disk.tasks.map(t =>
+      if t.id == "1" then t.copy(closedAt = Some(old)) else t)).asJson.noSpaces)
+    assert(create("新任务ZZNEW", note = Some("新任务当前 note")).isRight) // 顺带 prune 掉 #1
+    val ids = store.entriesSync().map(_.id)
+    println("[fix-2] prune 后板面 id = " + ids.mkString(","))
+    assertEquals(ids, List("2"), "id 不复用（水位单调：剪掉 #1 后新条目取 #2，不回收 1）")
+    assertEquals(readDisk.get.nextId, 2, "水位随板面一并回写")
+    val fresh = store.showSync("2").toOption.get
+    val mixed = List("旧任务版本一", "旧任务版本二", "旧任务收尾").filter(fresh.contains)
+    println("[fix-2] 新条目 show 里混入的旧任务内容 = " + (if mixed.isEmpty then "(无)" else mixed.mkString(" | ")))
+    assert(fresh.startsWith("#2[open @dispatcher] 新任务ZZNEW"), fresh.split("\n").head)
+    assertEquals(mixed, Nil, s"新条目时间线不得混入已剪旧任务的事件（主区只含该 id 自己的事件）:\n$fresh")
+    assert(fresh.contains("新任务当前 note"), "自己的 note 照常可读")
+    val gone = store.showSync("1").toOption.get
+    println("[fix-2] 已剪旧 id 的降级视图头行 = " + gone.split("\n").head)
+    assert(gone.startsWith("#1[gone]"), gone.split("\n").head)
+    assert(gone.contains("旧任务版本一") && gone.contains("旧任务版本二") && gone.contains("旧任务收尾"),
+      s"旧任务史仍完整挂在 #1 上（史不随任务消失，禁回填禁编造）:\n$gone")
+    assert(!gone.contains("新任务ZZNEW") && !gone.contains("新任务当前 note"), "降级视图不得混入他任务事件")
+    val absent = store.showSync("99999")
+    assert(absent.isLeft && absent.swap.toOption.get.message.contains("TBOARD_NOT_FOUND"),
+      s"库史皆无的随机 id 仍走原报错路径: $absent")
+
+  test("修复轮②零迁移：旧库无 nextId 键照常解码（回默认 0）；create 续接存量 max+1 并回写水位"):
+    resetFile()
+    os.makeDir.all(home / ".nebflow")
+    val legacy =
+      """{"version":1,"tasks":[{"id":"7","title":"旧条目","status":"open","assignee":"dispatcher","nodeId":null,""" +
+        """"note":"旧 note 正文","blocks":[],"createdAt":"2026-09-01T00:00:00Z","updatedAt":"2026-09-01T00:00:00Z","closedAt":null}]}"""
+    os.write(file, legacy)
+    assertEquals(readDisk.get.nextId, 0, "缺键回默认 ⇒ 零迁移（无迁移脚本）")
+    assert(create("新条目").isRight)
+    val disk2 = readDisk.get
+    assertEquals(disk2.tasks.map(_.id), List("7", "8"), "存量 max 参与取 max ⇒ 续接 8，不撞既有 id")
+    assertEquals(disk2.nextId, 8, "水位回写（旧文件首次写入即补上该键）")
+
 end TaskBoardStoreSpec

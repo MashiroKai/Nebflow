@@ -60,6 +60,12 @@ import nebflow.core.tools.ToolError
  *    + 修法（长内容走 `action=log`）。读路径零校验（存量数据不受影响）。
  * 零迁移：旧 10 键 schema 原样解码（新字段回默认）；四态状态机、done 单通道、blocks
  * 依赖闸与环检测逐字保留。
+ *
+ * ── 修复轮（独立复核判红 2 项，2026-09-11）──
+ * ① `logSync` 结果行：`$histNoteFor(id)` 是 Scala 插值里的方法引用 eta-expansion
+ *    （打出的不是文案而是 lambda 身份串，且丢掉史落地提示）⇒ 改 `${histNoteFor(id)}`；
+ * ② id 单调化（RK-2）：`TaskBoardData.nextId` 水位 + [[nextNumId]] ⇒ create 永不复用
+ *    id（否则 prune 后 id 复用会让新条目的 show 混入已剪旧任务的 note 版本）。
  */
 
 /** TaskBoard 条目（§1g wire schema；TaskListEntry 同款顶层 case class + companion
@@ -82,8 +88,13 @@ object TaskBoardEntry:
   given Configuration = Configuration.default.withDefaults
   given Codec[TaskBoardEntry] = ConfiguredCodec.derived
 
-/** task-board.json 顶层结构：version + tasks（§1g envelope）。 */
-case class TaskBoardData(version: Int = 1, tasks: List[TaskBoardEntry] = Nil)
+/** task-board.json 顶层结构：version + tasks + nextId（§1g envelope）。
+  *
+  * `nextId` = **id 水位**（最后一次发放的 id；0 = 从未发放）——升级批修复轮新增
+  * （RK-2：id 复用会让新条目把已剪旧任务的 note 版本混进自己的时间线）。缺键回默认
+  * 0 ⇒ **旧库零迁移**（存量 max 仍参与取 max，见 `nextNumId`），旧文件首次写入时
+  * 自然补上该键。 */
+case class TaskBoardData(version: Int = 1, tasks: List[TaskBoardEntry] = Nil, nextId: Int = 0)
 object TaskBoardData:
   given Configuration = Configuration.default.withDefaults
   given Codec[TaskBoardData] = ConfiguredCodec.derived
@@ -227,7 +238,7 @@ class TaskBoardStore private (val project: String, workspace: String):
         val blocks = blocksRaw.map(normalizeBlocks).getOrElse(Nil)
         for
           _ <- checkBlockIds(store, blocks).toLeft(())
-          nextId = store.tasks.flatMap(_.id.toIntOption).maxOption.getOrElse(0) + 1
+          nextId = nextNumId(store)
           now = nowStr
           entry = Entry(
             id = nextId.toString,
@@ -242,7 +253,8 @@ class TaskBoardStore private (val project: String, workspace: String):
             updatedAt = Some(now)
           )
           _ <- {
-            writeSync(store.copy(tasks = store.tasks :+ entry))
+            // 水位随条目一并回写（id 单调 ⇒ 史归属键永不复用）
+            writeSync(store.copy(tasks = store.tasks :+ entry, nextId = nextId))
             Right(())
           }
         yield
@@ -423,7 +435,7 @@ class TaskBoardStore private (val project: String, workspace: String):
               case None =>
                 val linkNote = if links.isEmpty then "" else s" links=${links.size}"
                 Right(
-                  s"""[OK] TaskBoard logged #$id (${body.length} chars appended; note untouched, board unchanged)$linkNote.$histNoteFor(id)""")
+                  s"""[OK] TaskBoard logged #$id (${body.length} chars appended; note untouched, board unchanged)$linkNote.${histNoteFor(id)}""")
   }
 
   /** R3/R8 详情查询：全字段 + note 全文 + links + 依赖当前态 + 依赖反查（谁依赖我）
@@ -718,6 +730,19 @@ object TaskBoardStore:
     if s.length <= max then s else s.take(max) + "…"
 
   private[project] def nowStr: String = Instant.now().toString
+
+  /** 下一个 id（**单调水位**，修复轮 RK-2）：`max(存量数字 id 的 max, 持久化水位 nextId) + 1`。
+    *
+    * 为何必须单调：id 是变更史（per-workspace JSONL）的**唯一归属键**——prune 只过滤
+    * `store.tasks`（史零接触，见 [[TaskBoardHistory]] 头注），若 id 复用，新条目会把它
+    * 之前那条旧任务的 note 版本读进自己的时间线（「史不随任务消失」就变成「史串到别人
+    * 头上」）。所以水位随 `task-board.json` 持久化、剪条目**不回收** id。
+    *
+    * 双输入取 max 的理由：①水位覆盖「max id 条目被 prune 掉」的空档（旧算法 = 现任
+    * max+1 在这里退化成复用）；②存量 max 覆盖「手写/外部生成的库」（含 `nextId:<旧值>`
+    * 或压根没这个键的旧文件）——两者都不需要迁移脚本。 */
+  private[project] def nextNumId(store: Store): Int =
+    math.max(store.tasks.flatMap(_.id.toIntOption).maxOption.getOrElse(0), store.nextId) + 1
 
   /** done 条目惰性清理（closedAt 超 30d；解析失败保守保留）。返回 (清理后, 被清条目)。
     * 升级批：返回被清条目本体（而非计数），供调用方逐条写 `prune` 史行——
