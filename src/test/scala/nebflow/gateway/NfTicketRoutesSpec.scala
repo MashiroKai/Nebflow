@@ -366,3 +366,45 @@ class NfTicketRoutesSpec extends CatsEffectSuite:
       }
     }
   }
+
+  test("policy: P3 namespace is <workspace>/.nebflow — repo files pass, the project .nebflow is denied, evidence*/** is allowlisted") {
+    // Pins R1's P3 boundary at the pure-judge level (no HTTP, no existence
+    // race). The 2026-09-11 regression this catches: rooting P3 at the
+    // workspace/repo ROOT instead of the project's `.nebflow` dir makes every
+    // repo file "the project .nebflow directory" and therefore 403 — which the
+    // real-backend smoke spec hit as an unrenderable image.
+    val ws = Files.createTempDirectory("nebflow-nfp3-test").toRealPath()
+    try
+      val projNf = Files.createDirectories(ws.resolve(".nebflow"))
+      val repoFile = Files.write(ws.resolve("README.md"), "hi".getBytes(StandardCharsets.UTF_8))
+      val denied = Files.write(projNf.resolve("memory.md"), "- a".getBytes(StandardCharsets.UTF_8))
+      val evidenceDir = Files.createDirectories(projNf.resolve("evidence"))
+      val evidence =
+        Files.write(evidenceDir.resolve("plot.svg"), "<svg/>".getBytes(StandardCharsets.UTF_8))
+      val policy = WebSocketRoutes.NfPathPolicy(
+        Files.createDirectories(ws.resolve("data-root")),
+        projNf,
+        Set.empty
+      )
+      assertEquals(WebSocketRoutes.nfCredentialDeny(repoFile.toRealPath(), policy), None)
+      assert(
+        WebSocketRoutes.nfCredentialDeny(denied.toRealPath(), policy).isDefined,
+        "a file in the project .nebflow dir must be refused (P3)"
+      )
+      assertEquals(WebSocketRoutes.nfCredentialDeny(evidence.toRealPath(), policy), None)
+    finally
+      Files
+        .walk(ws)
+        .sorted(java.util.Comparator.reverseOrder())
+        .iterator()
+        .asScala
+        .foreach(p => Files.deleteIfExists(p))
+  }
+
+  test("policy: production P3 root is <cwd>/.nebflow (R1), not the workspace root") {
+    val cwd = Paths.get(System.getProperty("user.dir"))
+    val expected = WebSocketRoutes.NfPathPolicy.canonicalOrSelf(cwd.resolve(".nebflow"))
+    val actual = WebSocketRoutes.NfPathPolicy.standard().workspaceRoot
+    assertEquals(actual, expected)
+    assertNotEquals(actual, WebSocketRoutes.NfPathPolicy.canonicalOrSelf(cwd))
+  }

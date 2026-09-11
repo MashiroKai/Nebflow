@@ -4926,6 +4926,10 @@ object WebSocketRoutes:
 
   /** The filesystem coordinates the C1 verdict is computed against.
     *
+    * `dataRoot` = P1 (`PathUtil.dataRoot`); `workspaceRoot` = P3 = the project's
+    * OWN `<workspace>/.nebflow` directory (R1), whose only allowlisted subtree
+    * is the `evidence*` subtree; `credentialInodes` = the R2 `(dev,ino)` snapshot.
+    *
     * Injectable so the route stays instance-free and unit-testable with a
     * synthesized data root / workspace root / inode set
     * (`NfFileRoutesSpec` / `NfTicketRoutesSpec`), and so the (dev,ino) scan
@@ -4979,11 +4983,20 @@ object WebSocketRoutes:
           filesUnder(home.resolve(".ssh"), 8)
       seeds.flatMap(inodeKey).toSet
 
-    /** Production policy: the real data root, the process workspace, and the
-      * startup inode snapshot. */
+    /** Production policy: the real data root, the PROCESS WORKSPACE's own
+      * `.nebflow` directory (= P3, R1: "项目内 `<workspace>/.nebflow`"), and the
+      * startup inode snapshot.
+      *
+      * The workspace namespace is the project's `.nebflow` dir, NOT the
+      * workspace/repo root — rooting it at the root classifies every file of
+      * the checkout as "the project .nebflow directory" and then denies it
+      * (only the `evidence*` subtree is allowlisted), which 403'd every repo file until
+      * `tests/smoke.spec.mjs` caught it end to end (2026-09-11, real backend).
+      * Rooted at `.nebflow`, repo files fall through to the pattern rules
+      * (allowed unless credential-shaped) exactly as R1's P3 intends. */
     def standard(): NfPathPolicy =
       val root = canonicalOrSelf(java.nio.file.Paths.get(PathUtil.dataRoot.toString))
-      val workspace = canonicalOrSelf(java.nio.file.Paths.get(os.pwd.toString))
+      val workspace = canonicalOrSelf(java.nio.file.Paths.get(os.pwd.toString).resolve(".nebflow"))
       NfPathPolicy(root, workspace, scanCredentialInodes(root))
 
     /** Memoized so the inode scan is a startup cost, not a per-request one. */
