@@ -325,4 +325,114 @@ class PromptSectionsSpec extends munit.FunSuite:
     assertEquals(MountedProjectList.delta("- a\n- b", "- a\n- b"), "")
     assertEquals(MountedProjectList.delta("- a", "- a"), "")
 
+  // ============================================================
+  // 文档溯源规范（order 350，always 段；作者 2026-09-11 裁定 / 方案 #165）
+  //
+  // 系统提示词 = 唯一权威面。运行时（~/.nebflow/**）9 处本地重述删除由
+  // 并行节点负责、存量文档（CONVENTIONS.md）按作者裁定冻结——本 spec 只
+  // 钉提示词面的三条不变量：恒注入、位置（env 后 / voice 前）、不被剥离。
+  // ============================================================
+
+  /** 作者逐字规格的正文行（单行，反引号与全角括号原样）。 */
+  private val traceBodyLine =
+    "- 溯源只进文件名尾：阶段文档 `<YYYYMMDD>_<HHMMSS>_<topic>__<chainId>.md`（无归属不带尾段）；正文零元数据头。"
+
+  test("文档溯源段恒注入（最小 PromptContext，order 350）：段名 + 正文行逐字"):
+    withIsolatedDataRoot {
+      val blocks = buildConditionalBlocks(PromptContext())
+      assert(blocks.contains("## 文档溯源"), s"order-350 段必须恒注入（always）：$blocks")
+      assert(blocks.contains(traceBodyLine), s"正文行必须逐字出现：$blocks")
+    }
+
+  test("文档溯源段位于 env(order 100) 之后、## Voice Output(order 500) 之前"):
+    withIsolatedDataRoot {
+      // 隔离数据根内自建 order-100 env 文件段（沿用 envInfoSection 用例写法）。
+      val envDir = PathUtil.dataRoot / "prompts" / "sections" / "environment"
+      os.makeDir.all(envDir)
+      os.write.over(envDir / "condition.json", """{"order": 100, "condition": "always"}""")
+      os.write.over(envDir / "prompt.md", "## Environment\n\n| Chat width | 1024px |")
+
+      val blocks = buildConditionalBlocks(PromptContext(voiceEnabled = true))
+      val envIdx = blocks.indexOf("## Environment")
+      val traceIdx = blocks.indexOf("## 文档溯源")
+      val voiceIdx = blocks.indexOf("## Voice Output")
+      assert(envIdx >= 0, s"env 段应存在：$blocks")
+      assert(traceIdx >= 0, s"溯源段应存在：$blocks")
+      assert(voiceIdx >= 0, s"voice 段应存在：$blocks")
+      assert(envIdx < traceIdx, "溯源段必须在 env(100) 之后")
+      assert(traceIdx < voiceIdx, "溯源段必须在 Voice Output(500) 之前")
+
+      // 读数：注册表 order 分布——env 文件段(100) < 溯源(350) < voice(500)。
+      val orders = PromptSections.all.map(_.order).sorted
+      assertEquals(orders.head, 100, s"env(100) 仍是首个段：$orders")
+      assert(orders.contains(350), s"注册表须含 order 350：$orders")
+      assert(orders.contains(500), s"voice(500) 仍在：$orders")
+      assert(orders.indexOf(350) > orders.indexOf(100), s"350 在 100 之后：$orders")
+      assert(orders.indexOf(350) < orders.indexOf(500), s"350 在 500 之前：$orders")
+    }
+
+  test("文档溯源段是静态体（无动态字段）——落在稳定前缀的读数依据"):
+    withIsolatedDataRoot {
+      val s350 = PromptSections.all.filter(_.order == 350)
+      assertEquals(s350.size, 1, "注册表中恰一个 order-350 段")
+      val sec = s350.head
+      assertEquals(sec.content, PromptSections.traceSection, "静态体 = traceSection 常量")
+      assertEquals(sec.render(PromptContext()), PromptSections.traceSection, "render 不依赖 PromptContext")
+      assertEquals(
+        sec.content,
+        sec.render(PromptContext(agentCategory = "team", isRootAgent = true, voiceEnabled = false)),
+        "任意上下文渲染结果相同 ⇒ 无动态字段"
+      )
+    }
+
+  test("文档溯源段不被剥离路径剥掉（stripAllMigrated / SubTaskPrompt.stripTeamContent）"):
+    withIsolatedDataRoot {
+      val trace = PromptSections.traceSection
+      // 文本级剥离对整段无效：stripAllMigrated 只剥 Voice Output；
+      // stripTeamContent 剥 Teams & Flows / Team Catalog 块 + 团队交互模式行，
+      // 溯源段的段头与正文行都不匹配任何 stripPattern。
+      assertEquals(stripAllMigrated(trace), trace)
+      assertEquals(SubTaskPrompt.stripTeamContent(trace), trace)
+
+      // 实证：复现 AgentCore.buildSystemPrompt 的剥离顺序
+      // （rawPrompt → isSubTaskWorker 则 stripTeamContent → stripAllMigrated
+      //  → 拼 buildConditionalBlocks）——剥离只作用于 agent system.md，
+      // 条件块（含 order 350）在剥离之后拼接，故必达。
+      val rawSystemMd =
+        """## Team Workflow
+          |
+          |## Teams & Flows
+          |
+          |- Mail 你的团队 Lead 汇报进度。
+          |
+          |## Domain Knowledge
+          |
+          |- 保持最小改动。""".stripMargin
+      val cleanedForWorker = stripAllMigrated(SubTaskPrompt.stripTeamContent(rawSystemMd))
+      val subtaskPrompt = assembleSystemPrompt(
+        cleanedForWorker,
+        buildConditionalBlocks(PromptContext(isSubTaskWorker = true, voiceEnabled = false))
+      )
+      val teamPrompt = assembleSystemPrompt(
+        stripAllMigrated(rawSystemMd),
+        buildConditionalBlocks(
+          PromptContext(
+            agentCategory = "team",
+            agentName = "Backend",
+            isTeamLead = false,
+            guardrailsOn = true,
+            voiceEnabled = false
+          )
+        )
+      )
+      assert(subtaskPrompt.contains("## 文档溯源"), s"SubTask 路径不得剥掉溯源段：$subtaskPrompt")
+      assert(subtaskPrompt.contains(traceBodyLine), s"SubTask 路径正文行必达：$subtaskPrompt")
+      assert(teamPrompt.contains("## 文档溯源"), s"team 路径不得剥掉溯源段：$teamPrompt")
+      assert(teamPrompt.contains(traceBodyLine), s"team 路径正文行必达：$teamPrompt")
+      // 对照组：剥离确实生效（团队交互内容被移除）——排除「剥离根本没跑」的假绿。
+      assert(!subtaskPrompt.contains("你的团队 Lead 汇报"), "对照组：团队交互行应已剥离")
+      assert(!subtaskPrompt.contains("## Teams & Flows"), "对照组：Teams & Flows 块应已剥离")
+      assert(!rawSystemMd.equals(cleanedForWorker), "对照组：剥离确有差异")
+    }
+
 end PromptSectionsSpec

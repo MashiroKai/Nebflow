@@ -23,6 +23,7 @@ import nebflow.core.PathUtil
  * == Order ranges ==
  *
  *   100-199  — fixed foundational sections (env info)
+ *   350      — 文档溯源规范（唯一权威面，always）
  *   400-499  — tool-dependent sections（阶段 2d §D.2：条件工具指南段已全部
  *              下迁进工具 description——AskUserQuestion/Read/Pop/TeamTask 三件，
  *              提示词层不再按「是否有该工具」注入用法段落）
@@ -241,10 +242,34 @@ object PromptSections:
       |**Tone:** Conversational, warm, and clear — like a knowledgeable teacher talking through the material with a student. You care about the user beyond tasks: check in on their wellbeing, notice when they seem stressed, and be genuinely supportive.""".stripMargin
 
   // ============================================================
+  // 文档溯源规范（order 350，always）
+  //
+  // 作者 2026-09-11 裁定：「直接加到系统提示词里。作为规范。记住要简要，
+  // 保证提示词精简」；落地方案见 #165。系统提示词是唯一权威面——运行时
+  // （~/.nebflow/**）的本地重述由并行节点删除，存量文档
+  // （~/.nebflow/docs/CONVENTIONS.md）按作者裁定冻结不改。
+  // 文本独立成常量，便于 spec 引用与后续修订。
+  // ============================================================
+
+  val traceSection: String =
+    """## 文档溯源
+      |
+      |- 溯源只进文件名尾：阶段文档 `<YYYYMMDD>_<HHMMSS>_<topic>__<chainId>.md`（无归属不带尾段）；正文零元数据头。""".stripMargin
+
+  // ============================================================
   // Dynamic section registry
   // ============================================================
 
   private val dynamicSections: List[PromptSection] = List(
+    // --- 文档溯源规范（#165，作者 2026-09-11 裁定）：always 注入、无动态
+    // 字段、静态体，故落在稳定前缀（systemStable）内——env(100) 之后、
+    // 首个 dynamic 段 395 之前。运行时 9 处本地重述删除由并行节点负责。
+    PromptSection(
+      350,
+      condition = _ => true,
+      body = traceSection
+    ),
+
     // --- 轨道二 #5 identity clauses (before tool guides — who reads your
     // output comes first). Only when dedicatedAgents guardrails are enabled:
     // T1 flow nodes get the strict machine-consumer clause (or its
