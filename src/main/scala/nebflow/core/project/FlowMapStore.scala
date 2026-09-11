@@ -68,17 +68,31 @@ class FlowMapStore private (
       a <- archive.get
     yield s.nodes ++ a.nodes
 
-  /** 节点所属链 id（载荷 chainId 条件键判据单点，链级抽象 P0）：合并集分量成员数
-    * ≥2 才返回（孤立单节点链不带——payload 零膨胀）；节点已不在双区（已被移除且
-    * 查无归档）→ None。WS 事件经 NodeEngine.emitWithChain、快照经
-    * NodeTools.buildNodeListPayload 消费本判据，两处口径恒同源。 */
-  def chainIdOf(nodeId: String): IO[Option[String]] =
+  /** 节点链归属判据单点（链级抽象 P0 + U1 多链归属批）：一次分量派生同时产出两个
+    * 值——`_1` = 主链 id（载荷 `chainId` 条件键；合并集分量成员数 ≥2 才 Some，孤立
+    * 单节点链不带 = payload 零膨胀）、`_2` = 多链归属集（载荷 `chainIds` 条件键 =
+    * **主链 id 首项 + 全量成员链**，[[mergeChainIds]]；**仅 merge 节点**且可达成员链数
+    * ≥2 才 Some——普通节点恒 None，单值 `chainId` 语义不变）。节点已不在双区
+    * （已被移除且查无归档）→ (None, None)。两值同出一次分量派生 ⇒ `chainIds.head`
+    * 恒与 `_1` 逐字同值（主链恒首项）。
+    * WS 事件经 NodeEngine.emitWithChain、快照/详情经 NodeTools.buildNodeListPayload
+    * 消费本判据，三处口径恒同源；分量只派生一次（旧 `chainIdOf` 单独派生会让
+    * 「chainId + chainIds」两值各算一次全量分量 —— 本方法即为此而合并）。 */
+  def chainAttrsOf(nodeId: String): IO[(Option[String], Option[List[String]])] =
     combinedNodes.map { combined =>
-      FlowMapStore.topologicalChains(combined.values)
-        .find(_.memberIds.contains(nodeId))
-        .filter(_.memberIds.size >= 2)
-        .map(_.id)
+      val chains = FlowMapStore.topologicalChains(combined.values)
+      val cid = chains.find(_.memberIds.contains(nodeId)).filter(_.memberIds.size >= 2).map(_.id)
+      (cid, FlowMapStore.mergeChainIds(combined, chains, nodeId))
     }
+
+  /** 节点所属主链 id（载荷 chainId 条件键，链级抽象 P0 判据单点）：见
+    * [[chainAttrsOf]]（本方法为其单值投影，语义与判据逐字同源）。 */
+  def chainIdOf(nodeId: String): IO[Option[String]] =
+    chainAttrsOf(nodeId).map(_._1)
+
+  /** merge 节点多链归属集（载荷 chainIds 条件键，U1 判据单点）：见 [[chainAttrsOf]]。 */
+  def chainIdsOf(nodeId: String): IO[Option[List[String]]] =
+    chainAttrsOf(nodeId).map(_._2)
 
   /** 事务变更：f 应用到当前状态 → Ref 更新 → 落盘。返回新活动区。 */
   def mutate(f: FlowMapState => FlowMapState): IO[FlowMapState] =
@@ -685,6 +699,71 @@ object FlowMapStore:
           .sortBy(e => (e.from, e.to, e.via))
       )
     }.sortBy(_.id).toList
+
+  /** merge 节点多链归属派生（U1 批 · 2026-09-11 作者裁定①「多链归属只对合并节点做」）。
+    *
+    * **判定单位**：链归属的身份层仍是 [[topologicalChains]] 的弱连通分量（分区单值，
+    * 每节点恰属一个分量）；「多链」指的**不是**一个节点落在多个分量里（弱连通分量是
+    * 节点集划分，恒不可能），而是**合并节点被多条「成员链」共享**——成员链 = 分量内
+    * 按**入口可达分解**得到的枝线（每个入口 e，即 `in ∧ deps` 双空节点，对应一条
+    * 独立派发的支线；其链 id 与它独占分量时该有的 id 同构 = `chain-<e>`）。合并节点
+    * 的多个上游 `in` 边把各支线汇聚进同一分量，于是它同时属于这些支线：
+    * `chainIds(M) = 主链（= 分量链 id，[[topologicalChains]] id）:: 全量成员链 id
+    * （可达 M 的入口链，分量 entries 序）`，全部列出、**无上限、无降级路径**
+    * （作者裁定①；原「上限 4 + 超限降级」方案已废）。**主链恒首项**
+    * （`chainIds.head == chainId`）；主链本身同时是可达成员链时只出现一次
+    * （`.distinct`，首位保留主链）。两键分工：`chainId` = 分区归属单值
+    * （折叠/归档/落点），`chainIds` = 主链 + 多链成员归属 —— 主链值在两键中冗余
+    * 出现，属**有意的形态契约**（对应文档元数据头 §0bis.3 `chains: [主链, 支链…]`
+    * 首项恒主链；作者裁定①逐字「主链 chainId + 全量成员链」）。
+    *
+    * 定向可达（§12.2.3-B 最小自洽定义，与「in 代理接线为主」的现状拓扑吻合）：
+    * 沿 **in 正向（u → 引用 u 的下游）∪ out 正向（跳过 Nebula/悬空名）∪ deps 正向**
+    * 遍历；入口 e 可达 M ⇔ M ∈ chainIds(M) 的成员链之一。分量外无边（弱分量定义），
+    * 故遍历在分量内闭包。
+    *
+    * **门控**：仅 `n.merge == true` 且**可达该 merge 的成员链数 ≥2** 才返回 Some
+    * （普通节点保持现有单值 `chainId` 不变，禁改成全员数组，作者裁定①；单链合并节点
+    * 仅 1 条成员链可达 ⇒ None = 前端按单链语义处理）。计量口径 = **入口可达分解得到的
+    * 成员链条数**（`memberChains` 的长度，「除自身主链外」按该分解计量）——**不是**拼上
+    * 前置主链项后的裸长度（`chainIds.size`）：后者会让「主链 + 1 条成员链」形态凑够 2
+    * 而被误判多链。门控口径与本次形态恢复**无关**（本批只改组成，门控、成员链派生、
+    * 无上限无降级三者不变）。
+    * 确定性：成员链按分量 entries 序（createdAt, id 升序），主链恒首项。 */
+  def mergeChainIds(
+      combined: Map[String, NodeDef],
+      chains: List[ChainInfo],
+      nodeId: String
+  ): Option[List[String]] =
+    combined.get(nodeId).filter(_.merge).flatMap { _ =>
+      chains.find(_.memberIds.contains(nodeId)).flatMap { comp =>
+        val nodeMap = comp.memberIds.flatMap(id => combined.get(id).map(id -> _)).toMap
+        // in 反向索引（u → 引用 u 的成员节点）：in 边在存储上只由下游持有，
+        // 正向遍历必须自建反向表（与 wouldCreateCycle 的 depsReverse 同法）。
+        val inRev = scala.collection.mutable.HashMap.empty[String, List[String]]
+        nodeMap.values.foreach(n => n.in.foreach(up => inRev.update(up, n.id :: inRev.getOrElse(up, Nil))))
+        def reachFrom(entry: String): Set[String] =
+          val seen = scala.collection.mutable.HashSet(entry)
+          val stack = scala.collection.mutable.Stack(entry)
+          while stack.nonEmpty do
+            val cur = stack.pop()
+            val viaOut = nodeMap.get(cur).toList.flatMap(_.out)
+              .filter(_.to != OutEdge.NebulaTarget)
+              .flatMap(e => OutEdge.resolveTargetId(nodeMap, e.to))
+            val viaDeps = nodeMap.get(cur).toList.flatMap(_.deps).filter(nodeMap.contains)
+            val viaIn = inRev.getOrElse(cur, Nil)
+            (viaOut ++ viaDeps ++ viaIn).foreach { x =>
+              if !seen.contains(x) then
+                seen += x
+                stack.push(x)
+            }
+          seen.toSet
+        val memberChains = comp.entries.filter(e => reachFrom(e).contains(nodeId)).map(e => s"chain-$e")
+        if memberChains.size < 2 then None
+        // 主链恒首项 + 全量成员链（主链同时可达时去重保首位）——形态契约见 doc block。
+        else Some((comp.id :: memberChains.filterNot(_ == comp.id)).distinct)
+      }
+    }
 
   /** 链名三级推导单点（链级抽象 P0 · spec §6.2，后端下发前端零派生）：
     * ① 链上首个 description（成员 createdAt 升序第一个非空）→ ② 首节点 task 预览

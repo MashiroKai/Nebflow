@@ -100,6 +100,11 @@ function statusClass(st) {
  * @property {boolean=} notifyDispatcher 终态回流通知分发器（条件：true 才带）
  * @property {string=} chainId 所属链 id（NodePayload 条件键，链级抽象 P0 契约：
  *   后端拓扑链单源下发；可能缺失——缺失 = 孤立节点，链 UI 自然降级）
+ * @property {string[]=} chainIds 多链归属集（U1 批·作者裁定① NodePayload 条件键：
+ *   **仅 merge 节点且可达成员链数 ≥2 带**，值 = 主链 :: 全量成员链（主链恒首项 =
+ *   chainId 逐字同值）；普通节点恒缺失。前端「多链 vs 单链合并节点」判据 =
+ *   **除自身主链外的成员链数 ≥2**（见 chainHighlightIds——不是拼上主链项后的裸长度，
+ *   否则「主链 + 1 条成员链」形态会被误判多链）；缺失 = 单链或非 merge，走整链语义）
  * @property {number=} notifySentAt 异常终态（failed/cancelled）上报分发器时间戳
  *   （NodePayload 条件序列化：已上报才带。P0 起归档资格判定唯一在后端，前端
  *   不再消费此键做链判据。）
@@ -402,6 +407,105 @@ export function chainOfNode(project, nodeId) {
     status: chainStatusOf(members),
     completedAt: members.reduce((mx, m) => Math.max(mx, m.completedAt || 0), 0),
   };
+}
+
+/** 节点所属链的**全量成员 id**（U1 批·链高亮集合数据源）。两路查证、零本地派生：
+ *  ① 活动节点 payload 的 chainId 条件键 → 快照 chains 旁挂 memberIds（后端分量全量，
+ *     含已归档成员）；② 归档成员不在快照（不带动节点）→ remoteChains 条目 members。
+ *  链不可知（孤立单节点链 / 旧后端缺键）→ 只含自身（降级为单节点集合，零 crash）。
+ *  @param {string} project @param {string} nodeId @returns {string[]} */
+export function chainMembersOf(project, nodeId) {
+  const s = stores.get(project);
+  if (!s) return [nodeId];
+  const n = s.input.get(nodeId) || s.remoteMembers.get(nodeId);
+  const cid = n && n.chainId ? String(n.chainId) : '';
+  if (cid) {
+    const sc = s.snapshotChains.get(cid);
+    if (sc && Array.isArray(sc.memberIds) && sc.memberIds.length) return sc.memberIds.map(String);
+  }
+  for (const rc of s.remoteChains.values()) {
+    if (rc.members.some((m) => m.id === nodeId)) return rc.members.map((m) => String(m.id));
+  }
+  return [nodeId];
+}
+
+/**
+ * 点击 / 悬浮的高亮集合（U1 批 · 作者 2026-09-11 裁定③④，图上零视觉标识）。
+ *
+ * 语义（**只对合并节点分叉**，普通节点零改动）：
+ *  - **多链合并节点**（`merge === true` 且**除自身主链外的成员链数 ≥2**）⇒ 集合 = 仅自身
+ *    ——它同属多条成员链，「整条链」指向歧义 ⇒ 只亮自己，不牵动任何其他链节点（裁定③）。
+ *  - **单链合并节点 / 普通节点** ⇒ 集合 = 该链全部成员（含链上全部合并节点——
+ *    裁定④「不能漏掉合并节点」）。
+ *  多链判据 = 引擎下发字段（`chainIds`，普通节点恒缺席）+ **剔除自身主链项后计数**
+ *  （`chainIds` 首项恒 = `chainId`，故等价于「除自身主链外的成员链数 ≥2」）：
+ *  按裸长度判会把「主链 + 1 条成员链」载荷误判为多链（该形态应按单链处理），
+ *  前端零派生拓扑。
+ * @param {string} project @param {string} nodeId
+ * @returns {{ ids: string[], multi: boolean, chainId: string | null }} */
+export function chainHighlightIds(project, nodeId) {
+  const s = stores.get(project);
+  const n = s ? (s.input.get(nodeId) || s.remoteMembers.get(nodeId)) : null;
+  const chainId = n && n.chainId ? String(n.chainId) : null;
+  const ids = n && Array.isArray(n.chainIds) ? n.chainIds : null;
+  const otherChains = ids ? ids.filter((id) => id !== chainId).length : 0;
+  const multi = !!(n && n.merge === true && ids !== null && otherChains >= 2);
+  return { ids: multi ? [nodeId] : chainMembersOf(project, nodeId), multi, chainId };
+}
+
+/** merge 节点「收的是哪些 worktree/分支」（U1 批 · 作者裁定⑤；详情卡数据源）。
+ *  **数据源 = 引擎已持有的节点载荷 `worktree` 字段**（= worktree 目录名，与同名分支
+ *  一致；含 `hasWorktree`/`worktree` 的 NodePayload 恒带键、未配为 null）——沿 **in
+ *  边**（合并账本，指南 §0.1）向上做闭包遍历，收集所有带 worktree 的上游节点值；
+ *  零新增引擎字段、零硬编码、零臆造。
+ *  闭包记三个集合（**不含起点自身**）：`visited` = 全部可达上游 id；`hit` = 其中在
+ *  前端缓存（活动快照 `input` / 归档成员 `remoteMembers`）命中的；`absent` =
+ *  `visited \ hit`；`found` = 已收集到的 worktree 值。
+ *  **取不到（`found` 为空）不得单一归因**（复核轮2 打回点：真实成因是「上游在载荷内
+ *  但未配 worktree」，旧文案却断言「不在当前载荷缓存」= 假陈述）——按可见性落三态，
+ *  渲染层按键读取（判定顺序即 1 → 2 → 3）：
+ *    ① `absent` 为空（可达上游全在缓存、worktree 全为 null）
+ *       ⇒ `flowmap.detail.mergeUpstreamsNone`；
+ *    ② `hit` 为空（可达上游全不在缓存——归档超窗 / 悬空引用），
+ *       ⇒ `flowmap.detail.mergeUpstreamsAbsent`；
+ *    ③ 两者皆非空（部分上游不可见，可见上游又未配 worktree）
+ *       ⇒ `flowmap.detail.mergeUpstreamsMixed`。
+ *  每条文案在其对应态下恒为真：混合态不得归入任一单一成因键。
+ *  @param {string} project @param {string} nodeId
+ *  @returns {{ found: string[], state: 1 | 2 | 3 }} 去重升序 worktree 名 + 空结果成因态 */
+export function mergeUpstreamWorktrees(project, nodeId) {
+  const s = stores.get(project);
+  if (!s) return { found: [], state: 1 };
+  const seen = new Set([nodeId]);
+  const found = new Set();
+  let hit = 0;    // 可达上游中在缓存命中的
+  let absent = 0; // 可达上游中不在缓存的（不贡献 worktree 值，且其上游不可遍历）
+  let frontier = [nodeId];
+  while (frontier.length) {
+    const next = [];
+    for (const id of frontier) {
+      const n = s.input.get(id) || s.remoteMembers.get(id);
+      if (!n) continue;
+      for (const up of (Array.isArray(n.in) ? n.in : [])) {
+        if (seen.has(up)) continue;
+        seen.add(up);
+        const un = s.input.get(up) || s.remoteMembers.get(up);
+        if (un) {
+          hit++;
+          if (un.worktree) found.add(String(un.worktree));
+        } else {
+          absent++;
+        }
+        next.push(up);
+      }
+    }
+    frontier = next;
+  }
+  const list = Array.from(found).sort();
+  /** @type {1 | 2 | 3} */
+  let state = 1;
+  if (!list.length) state = absent === 0 ? 1 : (hit === 0 ? 2 : 3);
+  return { found: list, state };
 }
 
 // ══ 悬浮层 UI（悬浮钮 + 归档面板 + 右侧详情，§4/§5）═══
@@ -855,7 +959,22 @@ function renderDetail(/** @type {LayerCtx} */ ctx, /** @type {ChainMember} */ n)
     if (rtParts.length) execRows.push([t('flowmap.detail.loopState'), esc(rtParts.join(' · '))]);
     if (n.loopLastVerdict) execRows.push([t('flowmap.detail.loopVerdict'), esc(String(n.loopLastVerdict))]);
   }
-  if (n.merge === true) execRows.push([t('flowmap.flag.merge'), esc(t('flowmap.detail.yes'))]);
+  if (n.merge === true) {
+    execRows.push([t('flowmap.flag.merge'), esc(t('flowmap.detail.yes'))]);
+    // U1 批 · 作者裁定⑤：合并节点卡补「收的是哪些 worktree/分支」一行——数据源 =
+    // 上游 in 边闭包内节点载荷的 worktree 字段（引擎已持有；见 mergeUpstreamWorktrees）。
+    // 取不到（found 为空）→ 按闭包内上游的可见性**分因**落「不可得 + 原因」，每条
+    // 文案在其对应态下恒为真（态①上游在缓存但未配 worktree / 态②上游全不在缓存 /
+    // 态③混合；单一成因键会造出「不在载荷缓存」这类假陈述——复核轮2 打回点）。
+    const ups = mergeUpstreamWorktrees(ctx.project, String(n.id || ''));
+    const upsKey = ups.state === 1 ? 'flowmap.detail.mergeUpstreamsNone'
+      : ups.state === 2 ? 'flowmap.detail.mergeUpstreamsAbsent'
+        : 'flowmap.detail.mergeUpstreamsMixed';
+    execRows.push([
+      t('flowmap.detail.mergeUpstreams'),
+      esc(ups.found.length ? ups.found.join(' · ') : t(upsKey)),
+    ]);
+  }
   if (n.notifyDispatcher === true) execRows.push([t('flowmap.detail.notify'), esc(t('flowmap.detail.yes'))]);
   const execHtml = execRows.length
     ? `<div class="fm-detail-sec">${esc(t('flowmap.detail.secExec'))}</div>${kvHtml(execRows)}`
