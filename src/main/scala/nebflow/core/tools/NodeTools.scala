@@ -2110,7 +2110,7 @@ object ProjectCreateTool extends Tool:
             case Some(pd) if pd.archived.contains(true) =>
               IO.pure(Left(ToolError(
                 s"Project '$resolvedName' is archived (hidden from the Projects panel). " +
-                  s"Remove the 'archived'/'archivedAt' keys in ~/.nebflow/projects/$resolvedName/project.json to restore it first."
+                  s"Remove the 'archived'/'archivedAt' keys in ${PathUtil.dataRootRenderValue}/projects/$resolvedName/project.json to restore it first."
               )))
             case None => IO.pure(Left(ToolError(err)))
             case Some(pd) if sameWorkspace(pd.workspace, workspace) => mountProject(pd, created = false)

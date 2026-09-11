@@ -101,7 +101,7 @@ Git safety:
   )
 
   // Security rules: patterns that require user approval
-  private val DangerousPatterns = List(
+  private val FixedDangerousPatterns = List(
     """rm\s+-rf\s+""".r,
     """rm\s+-fr\s+""".r,
     """git\s+push\s+.*--force""".r,
@@ -112,7 +112,6 @@ Git safety:
     """git\s+branch\s+-D\s+(main|master)""".r,
     """>\s*~/.ssh/""".r,
     """rm\s+.*\.env""".r,
-    """rm\s+.*~/.nebflow""".r,
     """>\s*~/.gnupg/""".r,
     """>\s*~/.aws/""".r,
     // Database destructive operations
@@ -152,6 +151,23 @@ Git safety:
     // Obfuscation: env/env -i used to inject commands bypassing direct detection
     """(?i)\benv\s+(-i\s+)?\w+=.*\$\w+""".r
   )
+
+  /** `rm` against the data root — derived at call time from PathUtil.dataRoot
+    * （home 硬编码 → 运行时动态化批 2026-09-11）。
+    *
+    * 旧实现是固定字面 `rm\s+.*~/.nebflow`：隔离实例（--home /tmp/...）下护错对象
+    * ——真正要护的是**本实例**的数据根。此处同时覆盖两种写法，保护面只增不减：
+    *   - `~/<homeDirName>`（默认 home 的字面形态，当前品牌 = `~/\.nebflow`）——
+    *     与旧正则同一目标串（Regex.quote 精确转义，等价面不缩水）；
+    *   - dataRoot 绝对路径（隔离实例 / 显式 --home 实例的真实写根）。
+    * `def` on purpose：dataRoot 可在对象初始化后被换根 —— 正则必须现算。 */
+  private def dataRootWipePatterns: List[scala.util.matching.Regex] =
+    List("~/" + nebflow.core.Branding.homeDirName, nebflow.core.PathUtil.dataRoot.toString)
+      .distinct
+      .map(root => ("""rm\s+.*""" + scala.util.matching.Regex.quote(root)).r)
+
+  private def allDangerousPatterns: List[scala.util.matching.Regex] =
+    FixedDangerousPatterns ++ dataRootWipePatterns
 
   // Interactive command patterns: commands that require terminal interaction.
   // These cannot work in this environment because stdin is /dev/null and there is no tty.
@@ -215,7 +231,7 @@ Git safety:
   )
 
   def isDangerous(command: String): Boolean =
-    DangerousPatterns.exists(_.findFirstIn(command).isDefined)
+    allDangerousPatterns.exists(_.findFirstIn(command).isDefined)
 
   /** Returns a danger level: 0 = safe, 1 = warning (git ops / network egress), 2 = dangerous (deletion/kill), 3 = critical (system destruction). */
   def dangerLevel(command: String): Int =

@@ -114,8 +114,14 @@ object SkillService:
       |Describe the expected output format.
       |""".stripMargin
 
-  private val skillCreatorMd: String =
-    """---
+  // `def` + s-interpolation（home 硬编码 → 运行时动态化批 2026-09-11）：本模板首次
+  // 运行写盘成 ~/.nebflow/skills/skill-creator/SKILL.md —— 路径示例必须指向**本
+  // 实例**的数据根（旧实现里 `~/${nebflow.core.Branding.homeDirName}` 因缺 `s` 前缀
+  // 原样落盘，是一条真实泄漏）。`$${SKILL_DIR}` = 转义：该 token 仍原样写入文件，
+  // 由 loadSkill 在读时替换（语义不变）。`def` on purpose：dataRoot 可在对象初始化
+  // 后被换根（--home / 测试）。
+  private def skillCreatorMd: String =
+    s"""---
       |name: skill-creator
       |description: Create and update Nebflow skills — directory structure, frontmatter fields, scripts, and best practices. Use when the user asks to create, modify, or learn about skills.
       |language: zh
@@ -135,7 +141,7 @@ object SkillService:
       |└── assets/               # Optional — output files (templates, icons, fonts, etc.)
       |```
       |
-      |Skills live at `~/${nebflow.core.Branding.homeDirName}/skills/<skill-name>/`. The `name` field in frontmatter must match the directory name. Namespaced skills live two levels deep: `~/${nebflow.core.Branding.homeDirName}/skills/<ns>/<name>/SKILL.md` — their identifier is the relative path (`<ns>/<name>`, e.g. `nebflow/visual-style`), and agent.json `skills` entries must use the full path.
+      |Skills live at `${PathUtil.dataRootRenderValue}/skills/<skill-name>/`. The `name` field in frontmatter must match the directory name. Namespaced skills live two levels deep: `${PathUtil.dataRootRenderValue}/skills/<ns>/<name>/SKILL.md` — their identifier is the relative path (`<ns>/<name>`, e.g. `nebflow/visual-style`), and agent.json `skills` entries must use the full path.
       |
       |## Frontmatter (YAML)
       |
@@ -157,14 +163,14 @@ object SkillService:
       || `allowed-tools` | No | all | Comma-separated tool allowlist |
       || `arguments` | No | — | Argument names (YAML block list or comma-separated) |
       |
-      |## ${SKILL_DIR} Variable
+      |## $${SKILL_DIR} Variable
       |
-      |`${SKILL_DIR}` is replaced with the skill's absolute directory path at load time. Use it to reference bundled resources:
+      |`$${SKILL_DIR}` is replaced with the skill's absolute directory path at load time. Use it to reference bundled resources:
       |
       |```bash
-      |python ${SKILL_DIR}/scripts/analyze.py --input data.csv
-      |cat ${SKILL_DIR}/references/spec.md
-      |cp ${SKILL_DIR}/assets/template.tex output/
+      |python $${SKILL_DIR}/scripts/analyze.py --input data.csv
+      |cat $${SKILL_DIR}/references/spec.md
+      |cp $${SKILL_DIR}/assets/template.tex output/
       |```
       |
       |## Progressive Disclosure
@@ -175,7 +181,7 @@ object SkillService:
       |## How to Create a Skill
       |
       |1. Choose a kebab-case name (e.g., `code-reviewer`, `api-tester`)
-      |2. Create `~/.nebflow/skills/<name>/SKILL.md` with frontmatter + instructions
+      |2. Create `${PathUtil.dataRootRenderValue}/skills/<name>/SKILL.md` with frontmatter + instructions
       |3. Add `scripts/`, `references/`, or `assets/` subdirectories as needed
       |4. Test: ask the agent to use it, or invoke via `/<name>`
       |
@@ -240,7 +246,7 @@ object SkillService:
           }.mkString("\n")
           s"""# Skills
              |
-             |Skills live at ~/${nebflow.core.Branding.homeDirName}/skills/<name>/SKILL.md. When a task matches a skill, read its file for detailed instructions, scripts, and resources.
+             |Skills live at ${PathUtil.dataRootRenderValue}/skills/<name>/SKILL.md. When a task matches a skill, read its file for detailed instructions, scripts, and resources.
              |
              |$entries""".stripMargin
       }

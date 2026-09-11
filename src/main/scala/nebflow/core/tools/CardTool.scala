@@ -236,9 +236,14 @@ object CardTool extends Tool:
   /** Cached design prompt (reloaded on each access via mtime check). */
   @volatile private var designPromptCache: (Long, String) = (0L, "")
 
-  /** Default design guidelines — written to disk on first access if file doesn't exist. */
-  private val defaultDesignPrompt: String =
-    """## Card Visual Design Guidelines
+  /** Default design guidelines — written to disk on first access if file doesn't exist.
+    *
+    * `def` + s-interpolation（home 硬编码 → 运行时动态化批 2026-09-11）：路径示例
+    * 里的 `{{data_root}}` 由 PathUtil.dataRootRenderValue 插值——默认 home 渲染为
+    * `~/.nebflow`（字节与旧字面一致），隔离实例渲染为本实例 home 的绝对路径。
+    * `def` on purpose：dataRoot 可在对象初始化后被换根（--home / 测试）。 */
+  private def defaultDesignPrompt: String =
+    s"""## Card Visual Design Guidelines
 
 Follow these strictly. They override any conflicting defaults.
 
@@ -331,7 +336,7 @@ dot -Tsvg -o /tmp/output.svg input.dot
 
 HTML must be self-contained (all styles/tags inline, no external CSS/JS).
 
-Local file paths in `src`/`href` are proxied by the backend to `/api/nf-file`, so **you MUST use absolute paths** — `/Users/you/project/plot.png`, `/tmp/output.svg`, or `~/.nebflow/projects/<name>/reports/plot.svg`. `~` expands to the user's home directory, and project workspaces live under `~/.nebflow/projects/<name>/` — write that full path, not `~/projects/<name>/…`. Relative paths are never resolved.
+Local file paths in `src`/`href` are proxied by the backend to `/api/nf-file`, so **you MUST use absolute paths** — `/Users/you/project/plot.png`, `/tmp/output.svg`, or `${nebflow.core.PathUtil.dataRootRenderValue}/projects/<name>/reports/plot.svg`. `~` expands to the user's home directory, and project workspaces live under `${nebflow.core.PathUtil.dataRootRenderValue}/projects/<name>/` — write that full path, not `~/projects/<name>/…`. Relative paths are never resolved.
 
 Every reference that could not be proxied is reported in this tool's result under `warnings` (`ref` → `resolvedPath` → `reason`: not-found / unresolvable / extension-not-allowed / size-exceeded / not-regular-file, plus `fileRefs` counts) and renders as a visible placeholder in the card instead of a silent blank box. Scanned: `src=`, `href=`, every `srcset` candidate, every CSS `url(...)`, a bare `@import "..."`. The app's own routes (`/js/`, `/css/`, `/assets/`, `/vendor/`, `/uploads/`, `/agents/`, `/voice-models/`, plus `/style.css` `/app.js` `/logo.svg` `/favicon.*`) are exempt — the app serves them, not the disk — and are counted in `fileRefs.exempt` instead of being reported. Read `warnings` and fix the references before finishing."""
 
@@ -357,9 +362,13 @@ Every reference that could not be proxied is reported in this tool's result unde
         else designPromptCache._2
     catch case _: Exception => designPromptCache._2
 
-  /** Base description without user design prompt. */
-  private val baseDescription =
-    """Renders an interactive HTML card embedded in the chat.
+  /** Base description without user design prompt.
+    *
+    * `def` + s-interpolation（home 硬编码 → 运行时动态化批 2026-09-11）：路径示例
+    * 走 PathUtil.dataRootRenderValue（默认 home ⇒ `~/.nebflow`，隔离实例 ⇒ 实例
+    * 绝对路径）。`def` on purpose：dataRoot 可被换根，val 会在对象初始化时冻结。 */
+  private def baseDescription =
+    s"""Renders an interactive HTML card embedded in the chat.
 
 ## Frontend / Design Change Protocol — MANDATORY
 
@@ -428,7 +437,7 @@ Card is for **presenting** results, not for drawing them. Always generate images
 - html (string, required): HTML with CSS and JS. Dark mode via var(--color-*).
 - title (string, optional): title above card.
 
-Note: Local file paths in `src`/`href` are proxied by the backend to `/api/nf-file`, so **you MUST use absolute paths** — `/Users/you/project/plot.png`, `/tmp/output.svg`, or `~/.nebflow/projects/<name>/reports/plot.svg`. `~` expands to the user's home directory, and project workspaces live under `~/.nebflow/projects/<name>/` — write that full path, not `~/projects/<name>/…`. Relative paths are never resolved.
+Note: Local file paths in `src`/`href` are proxied by the backend to `/api/nf-file`, so **you MUST use absolute paths** — `/Users/you/project/plot.png`, `/tmp/output.svg`, or `${nebflow.core.PathUtil.dataRootRenderValue}/projects/<name>/reports/plot.svg`. `~` expands to the user's home directory, and project workspaces live under `${nebflow.core.PathUtil.dataRootRenderValue}/projects/<name>/` — write that full path, not `~/projects/<name>/…`. Relative paths are never resolved.
 
 Every reference that could not be proxied is reported in this tool's result under `warnings` (`ref` → `resolvedPath` → `reason`: not-found / unresolvable / extension-not-allowed / size-exceeded / not-regular-file, plus `fileRefs` counts) and renders as a visible placeholder in the card instead of a silent blank box. Read `warnings` and fix the references before finishing.
 
