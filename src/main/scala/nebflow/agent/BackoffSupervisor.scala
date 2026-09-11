@@ -73,7 +73,17 @@ object BackoffSupervisor:
     withinTimeRange: FiniteDuration = 5.minutes
   ): Behavior[AgentEvent] =
     Behaviors.setup { ctx =>
-      ctx.watch(childRef) *>
+      // R11 第 4 层（作者裁定 U1=C-a / U8=(ii)）：**仅 Delegate 轨**装配 3600s
+      // wall-clock 预算（SubTask/其它 source 零行为变化）。超时走既有 cancel 链
+      // ——向本监督者投 AgentEvent.Cancelled(reason="timeout")，其余（父通知 /
+      // barrier 释放 / registry 清理 / child Stop）全部复用既有终态路径。
+      // 计时生命周期：register（此处）→ pause/resume（ask 两个既有单点）→
+      // release（notifyParentAndStop / respawn）。
+      val budgetArmedIO: IO[Unit] =
+        if source == "delegate" then
+          DelegateBudget.register(subagentId)(ctx.self ! AgentEvent.Cancelled(subagentId, "timeout"))
+        else IO.unit
+      budgetArmedIO *> ctx.watch(childRef) *>
         logger.info(s"BackoffSupervisor: watching $childName for crash recovery (maxRestarts=$maxRestarts)").as(
           active(
             childRef,
@@ -228,6 +238,13 @@ object BackoffSupervisor:
                 // Spec C2 (restart): registry 记录跨 respawn 刷新——先取崩溃前
                 // 记录，spawn 后以新 ref 回写。缺了这步 respawn 的 child 会从
                 // agentRegistry 消失（AgentControl list / TaskStuckWatcher 全盲）。
+                // 本设计新增项（R2-c §2.3 / §7#4）：崩溃前的槽位清理——旧内核的
+                // pending ask 卡是僵尸卡（答了也没人接），respawn 后新 child 会
+                // 重新提问（新 requestId）。清理 = 移除全部 sourceSession 命中的
+                // hub 槽 + 广播 askUserClosed（前端待办条行消失，重连不再重放）。
+                _ <- cleanupPendingAsks(resources, subagentId)
+                // 预算：旧通道释放（respawn 视为一次新的执行窗口 → 重新计时）。
+                _ <- DelegateBudget.release(subagentId)
                 oldRecord <- resources.agentRegistry.get.map(_.get(subagentId))
                 // Crash recovery: load persisted messages from the session store
                 // so the child can resume from where it left off (断点续跑).
@@ -277,6 +294,10 @@ object BackoffSupervisor:
                     s"recovered ${recoveredMessages.size} messages" +
                     (if recoveredMessages.nonEmpty then " (resuming from checkpoint)" else " (re-injected original prompt)")
                 )
+                // respawn 后重新装配预算（Delegate 轨）——上一条已在释放时退出。
+                _ <- if source == "delegate" then
+                  DelegateBudget.register(subagentId)(ctx.self ! AgentEvent.Cancelled(subagentId, "timeout"))
+                else IO.unit
               yield active(
                 newChild,
                 childSpawnFn,
@@ -353,12 +374,28 @@ object BackoffSupervisor:
             )
           case None => IO.unit
 
-        (notify *> taskUpdate *> resources.agentRegistry.update(_ - subagentId) *>
+        // 终态三清（R2-c §7#4 + 本设计）：① hub 槽（僵尸 ask 卡：内核已死，
+        // 卡片再没人能接——全仓唯一的其它清理入口是项目引擎，触及不到内核这种
+        // 非项目会话）② 预算通道（不再计时）③ registry 行（既有）。
+        (notify *> taskUpdate *> cleanupPendingAsks(resources, subagentId) *>
+          DelegateBudget.release(subagentId) *>
+          resources.agentRegistry.update(_ - subagentId) *>
           (childRef ! AgentCommand.Stop(s"$source-complete")) *>
           IO.pure(Behaviors.stopped[AgentEvent]))
           .handleErrorWith(_ => IO.pure(Behaviors.stopped[AgentEvent]))
 
       end notifyParentAndStop
+
+      /** source-death 清理（InteractionHub.CleanupForSession 的第二个调用点；
+        * 第一个是项目引擎 NodeEngine）：终态 / respawn 时清掉该会话的 pending
+        * ask 槽并广播 askUserClosed。hub 未装配（早期 boot / 测试）或无槽 = no-op。 */
+      private def cleanupPendingAsks(resources: SharedResources, sessionId: String): IO[Unit] =
+        resources.interactionHubRef.get.flatMap {
+          case Some(hub) =>
+            (hub ! InteractionHubCommand.CleanupForSession(sessionId)).void
+              .handleErrorWith(e => logger.warn(s"CleanupForSession($sessionId) failed: ${e.getMessage}"))
+          case None => IO.unit
+        }
 
   private def extractLastAssistantText(messages: List[Message]): String =
     messages.reverse
