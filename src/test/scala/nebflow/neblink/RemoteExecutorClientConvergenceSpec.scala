@@ -79,7 +79,12 @@ class RemoteExecutorClientConvergenceSpec extends CatsEffectSuite:
           _ = ms.setRelayClient(Some(clientA))
           _ <- clientA.login(Device, "qa-host", "macos", Nil)
           tokenA <- IO(clientA.currentSessionToken.getOrElse(fail("clientA must have a session")))
-          tunnel = new NeblinkRelayTunnel(ms, fix.url, () => IO(clientA.currentSessionToken))(dispatcher)
+          // 2026-09-11：URL 改为连接期 live 解析（构造参已移除）⇒ 写进 config ref。
+          _ <- ms.updateConfig(_.copy(
+            enabled = true,
+            neblinkServer = Some(NeblinkServerConfig(url = fix.url, networkId = Net, secret = "qa-secret"))
+          ))
+          tunnel = new NeblinkRelayTunnel(ms, () => IO(clientA.currentSessionToken))(dispatcher)
           _ = ms.setRelayTunnel(tunnel)
           fiber <- tunnel.connect().start
           out <-
