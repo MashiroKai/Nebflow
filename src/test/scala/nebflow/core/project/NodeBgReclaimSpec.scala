@@ -41,8 +41,15 @@ import scala.concurrent.duration.*
  *    WS cancelled 帧（收殓原语本身零改动）
  *  - R4 窗口内禁 spawn（新会话 / 新后台任务各一次被拒读数）
  *  - R5 窗口撤销：带 destroyAt 的节点已非终态 ⇒ 扫描腿撤销窗口 + 解禁 spawn
- *  - R6 FlowMapEventLog ts 求值时点（构造期 → 执行期修复的回归断言）
- */
+  *  - R6 FlowMapEventLog ts 求值时点（构造期 → 执行期修复的回归断言）
+  *  - R7 真实进程：窗口内进程仍在 → 到点被杀 + 会话条目释放
+  *  - R8（批 F1 = 复核 D1 修复）**归档 ↔ 销毁窗口交互**：带未到期 `destroyAt` 的终态节点
+  *    所在链**不得被链级归档吞掉**（连续多拍归档 sweep 空手、节点留活动区），到点仍被
+  *    收殓（进程被杀 + `node-destroyed` 恰 1 条）；收殓清字段后**恢复归档资格**（同拍出库）
+  *  - R9（批 D4 追认 + 断言）NodeCancel 腿**不登记**销毁窗口（行为契约断言；复核给出的
+  *    「即时收殓」理由经本批实测不成立 ⇒ 该腿实际无任何收殓路径，登记为 finding D4b
+  *    交作者裁定，读数打印在用例内不作断言）
+  */
 class NodeBgReclaimSpec extends CatsEffectSuite:
 
   override def munitIOTimeout: FiniteDuration = 120.seconds
@@ -144,7 +151,10 @@ class NodeBgReclaimSpec extends CatsEffectSuite:
     // noderpt 批 B 段：终态延迟销毁窗口压到 0 ⇒ `destroyAt <= now`，扫描腿可即时执行
     // （生产默认 30min 由 Defaults 现读；spec 走构造入参避开全局 prop）。
     destroyWindowMs: Long = 0L,
-    withBgHold: Boolean = true
+    withBgHold: Boolean = true,
+    // noderpt 批 A 段腿 2（未申报 hold）。R9（NodeCancel 腿）用它把节点停成
+    // 「Running + 活 fiber + agent 空闲」——取消信号才有落点（走 NodeCancel 腿而非 reap）。
+    reportGateHold: Boolean = false
   ): IO[ProjectRuntime] =
     for
       store <- FlowMapStore.open(name, ws.toString)
@@ -162,7 +172,7 @@ class NodeBgReclaimSpec extends CatsEffectSuite:
         // 腿 2（生产默认开）不在本 spec 主题内，显式关（默认开行为由
         // NodeReportReminderSpec 覆盖）。
         bgGateCompletionHold = Some(withBgHold),
-        reportGateHold = Some(false),
+        reportGateHold = Some(reportGateHold),
         // noderpt 批 B 段：销毁窗口接缝（压 0 = 窗口当期到点）。
         destroyWindowMs = Some(destroyWindowMs)
       )
@@ -531,6 +541,165 @@ class NodeBgReclaimSpec extends CatsEffectSuite:
       assert(postForSession.isLeft,
         s"the ShellSession entry must be released (a fresh forSession hits the finalized-session guard): $postForSession")
       assertEquals(after.destroyAt, None, "destroyAt cleared after the sweep")
+  }
+
+  // ── R8 归档 ↔ 销毁窗口交互（批 F1 = 复核 D1 修复）────────────────────────
+  //
+  // 判据盲区修复（复核 §2 第三条）：R1/R7 用 `destroyWindowMs=0`（窗口当期到点）把
+  // 「窗口与**链级归档**同拍竞争」这一交互压没了——生产默认窗口 30min ≫ 链完成耗时，
+  // 链尾节点必然在窗口到期前满足归档资格。改前：归档 sweep 把带 `destroyAt` 的成员整链
+  // 搬进归档区，而销毁扫描腿只遍历活动区 ⇒ 到点永不收殓（进程/persistent 任务永久泄漏，
+  // 复核 D1 实例读数 + 探针 P4）。本用例按生产同拍顺序（销毁扫描 → 链级归档）连续多拍
+  // 驱动，钉住三条：①窗口未收殓 ⇒ 不出库；②到点仍被收殓（恰 1 条 node-destroyed）；
+  // ③收殓清 `destroyAt` ⇒ 同拍恢复归档资格（不永久阻塞出库）。
+
+  test("R8 (F1): a chain with an open destroy window is not archived, and is archived once the window is reclaimed") {
+    val ws = tempRoot / "ws-r8"
+    os.makeDir.all(ws)
+    val system = ActorSystem(s"bg-r8-${scala.util.Random.nextInt(100000)}")
+    val llm = BgStubLlm()
+    val sid = s"archive-probe-${scala.util.Random.nextInt(100000)}"
+    val jobId = "archive-probe-job"
+    val pidFile = tempRoot / s"r8-$sid.pid"
+    for
+      res <- mkResources(system, tempRoot, llm.handle)
+      wsFrames <- Ref.of[IO, List[Json]](Nil)
+      rt <- mountProject("bg-r8", ws, system, res, wsFrames, destroyWindowMs = 1_800_000L)
+      shell <- ShellSession.forSession(sid)
+      _ <- shell.executeBackground(s"""echo $$$$ > "$pidFile"; sleep 120""", jobIdOverride = Some(jobId))
+      _ <- BgTaskRegistry.register(jobId, sid, "archive probe bg task", "local")
+      _ <- waitUntil(15.seconds)(IO.blocking(os.exists(pidFile)))
+      pid <- IO.blocking(os.read(pidFile).trim.toLong)
+      at = System.currentTimeMillis() + 1500L // 窗口**未到期**（= 生产 `scheduleDestroy` 刚登记的时刻）
+      // 终态节点 + 未到期窗口（等价于终态登记后的下一拍）
+      _ <- rt.store.mutate { s =>
+        s.copy(nodes = s.nodes + ("n-r8" -> NodeDef(
+          id = "n-r8", name = "archive-probe-node", agent = "general",
+          status = NodeLifecycle.Completed, task = Some("probe"),
+          createdAt = System.currentTimeMillis(),
+          sessionRef = Some(sid), destroyAt = Some(at))))
+      }
+      _ <- BgTaskRegistry.markSessionFinalized(sid, at)
+      // 生产 TtlTick 同拍顺序：销毁扫描（未到点 ⇒ 零动作）→ 链级归档 sweep。连续两拍。
+      _ <- rt.engine.sweepDestroyWindows()
+      swept1 <- rt.store.sweepCompletedChainsDetailed(System.currentTimeMillis())
+      _ <- IO.sleep(200.millis)
+      _ <- rt.engine.sweepDestroyWindows()
+      swept2 <- rt.store.sweepCompletedChainsDetailed(System.currentTimeMillis())
+      activeWhileOpen <- rt.store.snapshot.map(_.nodes.keySet.toList)
+      archivedWhileOpen <- rt.store.archiveSnapshot
+      aliveInWindow <- IO(java.lang.ProcessHandle.of(pid).map(_.isAlive).orElse(false))
+      // 越过窗口到期：同拍「销毁扫描 → 收殓清字段 → 链级归档」⇒ 本拍即可出库
+      _ <- IO.sleep(1600.millis)
+      _ <- rt.engine.sweepDestroyWindows()
+      _ <- waitUntil(15.seconds)(
+        IO(java.lang.ProcessHandle.of(pid).map(!_.isAlive).orElse(true))).attempt
+      dead <- IO(java.lang.ProcessHandle.of(pid).map(!_.isAlive).orElse(true))
+      sweptAfterReclaim <- rt.store.sweepCompletedChainsDetailed(System.currentTimeMillis())
+      tasksAfter <- BgTaskRegistry.waitingFor(sid)
+      activeAfter <- rt.store.snapshot.map(_.nodes.keySet.toList)
+      archivedAfter <- rt.store.archiveSnapshot
+      frames <- wsFrames.get
+      events <- readEvents(ws)
+      // 幂等：再一拍零新增
+      _ <- rt.engine.sweepDestroyWindows()
+      _ <- rt.store.sweepCompletedChainsDetailed(System.currentTimeMillis())
+      eventsSecond <- readEvents(ws)
+      _ <- BgTaskRegistry.reopenSession(sid).attempt.void
+      _ <- ShellSession.destroySession(sid).attempt.void
+      _ <- BgTaskRegistry.unregisterSession(Some(sid)).attempt.void
+      _ <- system.stopAll.handleErrorWith(_ => IO.unit)
+    yield
+      // ① 窗口未收殓 ⇒ 不得出库（改前此处为红：整链被搬进归档区，销毁腿读不到）
+      assertEquals(swept1, Nil,
+        "F1: the chain sweep must NOT archive a chain whose member still has an open destroy window")
+      assertEquals(swept2, Nil, "F1: repeated ticks (≤30s apart in production) must stay empty while the window is open")
+      assert(activeWhileOpen.contains("n-r8"),
+        s"F1: the node must stay in the active map (only the active map is swept for destroy windows): $activeWhileOpen")
+      assert(!archivedWhileOpen.nodes.contains("n-r8"),
+        "F1: the node must not be moved to the archive while its destroy window is open")
+      assert(aliveInWindow, s"inside the window the real process (pid $pid) must stay alive")
+      // ② 到点仍被收殓（恰 1 条 node-destroyed）
+      assert(dead, s"F1: the sweep must still kill the archived-risk process at expiry (pid $pid is alive)")
+      assertEquals(tasksAfter, Nil, "at expiry the bg task must be unregistered")
+      assertEquals(events.count(_.contains("\"node-destroyed\"")), 1,
+        s"exactly one node-destroyed event expected: ${events.mkString("|").take(600)}")
+      assert(hasCancelledFrame(frames, sid), "the reclaim must emit its WS cancelled frame")
+      assertEquals(eventsSecond.count(_.contains("\"node-destroyed\"")), 1,
+        "a second tick must be a no-op (idempotent destruction)")
+      // ③ 收殓清字段 ⇒ 同拍恢复归档资格（不永久阻塞出库）
+      assert(sweptAfterReclaim.exists(_.nodeIds.contains("n-r8")),
+        s"F1: once the window is reclaimed the chain must become archivable again: $sweptAfterReclaim")
+      assert(archivedAfter.nodes.get("n-r8").exists(_.destroyAt.isEmpty),
+        s"the archived copy must carry a cleared window: ${archivedAfter.nodes.get("n-r8").map(_.destroyAt)}")
+      assert(!activeAfter.contains("n-r8"), "the node must have left the active map once archived")
+  }
+
+  // ── R9 NodeCancel 腿不登记销毁窗口（批 D4：偏差追认 + 覆盖空白补断言）──────────
+  //
+  // D4（复核观察项）= 该腿**不登记**销毁窗口，此**行为**按任务书追认并在此钉死。
+  // **但复核给出的理由（「即时收殓：Stop ⇒ killSessionShellProcesses ⇒ reclaimSession
+  // 全套即时执行，窗口对该腿无意义」）经本批实测不成立**，故本用例只断言行为契约
+  // （不登记窗口 / 无禁 spawn 项 / 无窗口事件 / 计时清表），**不断言**「即时收殓」。
+  //
+  // 实测（本批临时探针，两态对照，均前台跑完即清）：
+  //   A) 直接 `ref ! AgentCommand.Stop` ⇒ `tasksAfterDirectStop=List()`（Stop 处理链本身
+  //      确实会跑 killSessionShellProcesses ⇒ reclaimSession）；
+  //   B) 走 `cancelNodeById`（NodeCancel 腿）⇒ 2s 后
+  //      `tasksAfterCancel=List(r9-b-job, r9-b-proc) pid=<真实进程> procAlive=true`
+  //      ——run fiber 的 `ref ! Stop`（排队）紧随 `system.stop(ref)`（`LocalActorRef.stop`
+  //      = fiber.cancel，队列中消息丢弃）⇒ 排队的 Stop 被抢跑丢弃，即时收殓**未发生**。
+  // ⇒ 该腿既无即时收殓、又无窗口兜底 ⇒ 会话进程/后台任务**无任何路径收殓**（既有面，
+  //    本批未触及该序列：`git show a944e159` 同款顺序）。登记为 finding D4b 交作者裁定
+  //    （两条候选：该腿同样登记窗口；或 run fiber 取消腿直接 `reclaimSession`）。
+  //    本用例把该读数打进测试输出（`[R9 reading]`）供取证，不作断言（避免把缺陷钉成契约）。
+
+  test("R9 (D4): the NodeCancel leg finalizes without registering a destroy window") {
+    val ws = tempRoot / "ws-r9"
+    os.makeDir.all(ws)
+    val system = ActorSystem(s"bg-r9-${scala.util.Random.nextInt(100000)}")
+    val llm = BgStubLlm()
+    for
+      res <- mkResources(system, tempRoot, llm.handle)
+      _ <- IO(llm.res = res)
+      wsFrames <- Ref.of[IO, List[Json]](Nil)
+      // 腿 1 封存（生产 ① 口径）；腿 2 开（未申报 hold）⇒ 节点停在「Running + 活 fiber +
+      // agent 空闲」——取消信号才有落点（走 NodeCancel 腿而非 reap 腿）
+      rt <- mountProject("bg-r9", ws, system, res, wsFrames, withBgHold = false, reportGateHold = true)
+      _ <- createNode("bg-r9", ws, "cancel-leg-a", "result-CANCELLEG", res = res, system = system)
+      _ <- waitUntil(20.seconds)(byName(rt, "cancel-leg-a").map(_.reportPendingSince.isDefined))
+      held <- byName(rt, "cancel-leg-a")
+      _ <- waitUntil(20.seconds)(rt.engine.isRunning(held.id))
+      sid <- IO.fromOption(held.sessionRef)(new AssertionError("node sessionRef must be set"))
+      _ <- waitUntil(20.seconds)(res.agentRegistry.get.map(_.contains(sid)))
+      // 该腿收殓对象的取证载体（注册表级任务；D4b 读数见下）
+      _ <- BgTaskRegistry.register("cancel-leg-job", sid, "cancel leg bg task", "local")
+      _ <- rt.engine.cancelNodeById(held.id)
+      _ <- waitUntil(20.seconds)(byName(rt, "cancel-leg-a").map(n => NodeLifecycle.Terminal.contains(n.status)))
+      _ <- IO.sleep(1500.millis) // 给「若真被处理」的 Stop 留出到场时间
+      done <- byName(rt, "cancel-leg-a")
+      finalized <- BgTaskRegistry.finalizedAt(sid)
+      tasksAfter <- BgTaskRegistry.waitingFor(sid)
+      events <- readEvents(ws)
+      _ <- IO(println(s"[R9 reading] NodeCancel leg: status=${done.status} destroyAt=${done.destroyAt} " +
+        s"spawnBanEntry=${finalized.isDefined} tasksStillRegistered=${tasksAfter.map(_.jobId)} " +
+        "— D4b: the queued Stop is dropped by the immediately-following system.stop(ref), so this leg " +
+        "reclaims nothing AND registers no window (open finding, reported for adjudication)"))
+      _ <- BgTaskRegistry.unregisterSession(Some(sid)).attempt.void
+      _ <- system.stopAll.handleErrorWith(_ => IO.unit)
+    yield
+      assertEquals(held.status, NodeLifecycle.Running, "the held node must be Running with a live fiber before the cancel")
+      assertEquals(done.status, NodeLifecycle.Cancelled, "the NodeCancel leg finalizes the node as cancelled")
+      assertEquals(done.destroyAt, None,
+        "D4: the NodeCancel leg must NOT register a destroy window (ratified deviation — asserted as-is)")
+      assertEquals(finalized, None, "D4: no spawn-ban ledger entry may be created for this leg")
+      assert(!events.exists(_.contains("\"node-destroy-scheduled\"")),
+        s"no destroy-scheduled event may exist for the NodeCancel leg: ${events.mkString("|").take(400)}")
+      assert(!events.exists(_.contains("\"node-destroyed\"")),
+        "no destroy-window sweep event may exist for this leg")
+      assertEquals(done.reportPendingSince, None,
+        "the NodeCancel terminal write point clears the pending clock (⑧-3 coverage, same as the other 6)")
+      assertEquals(done.reportReminderCount, 0, "the rung counter is cleared with the clock")
   }
 
 end NodeBgReclaimSpec
