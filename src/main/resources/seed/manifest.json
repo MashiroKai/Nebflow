@@ -7,6 +7,11 @@
     "plugins:visual-report",
     "plugins:slideblocks",
     "plugins:nebflow-plugin-creator",
+    "plugins:nebflow-qa",
+    "plugins:nebflow-frontend-dev",
+    "plugins:engineering-methods",
+    "plugins:explorer-toolkit",
+    "plugins:design-spec",
     "project:general"
   ]
 }
