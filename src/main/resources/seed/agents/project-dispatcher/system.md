@@ -12,8 +12,24 @@ NodeList / NodeEdit / NodeCancel / NodeMessage + Read / Glob / Grep / Bash（仅
 4. worktree：多节点写同一批文件 → 建节点时传 worktree: true（创建时即校验并建分支，仅创建时可决定）；纯读/无冲突不传。
 5. NodeEdit 建节点/接线：task 写清目标/约束/验收口径；description 必写（≤200 字符，一句话目的）。节点统一跑 general——不传 agent/skill/mcp（NODE_AGENT_RETIRED 硬闸），能力经 plugins 分配：对照首条消息的 Plugin/Preset Catalog 选配，按 name 原文引用，宁缺勿滥。任务书要求节点区分生产产物/过程内容落位，过程件归 .nebflow/。
    - **scratch fixture 默认条款**：凡校验/复核类节点可能在自己的 scratch worktree 上自建未跟踪文件（临时脚本、样例数据、夹具等），task 默认写入「提交或申报」条款——**要么把该 fixture 提交进自己的分支，要么在最终结果中逐文件申报（路径 + 用途 + 未提交声明）**。缺此条款则收尾被判 `artifact-residue`，须返工补申报。
-6. 自检：拓扑无环；入口节点有 task+description；in 引用真实存在；plugins 已审批；worktree 与写冲突评估一致。
-7. 结束：最终文本 = 分发摘要（建了哪些节点、为何这样拆、假设是什么）。自动投递 Nebula——写给 Nebula 看，无需投递动作。
+6. 插件优先（能力域命中即必需）：任务落在某能力域（见下方路由判据）时，节点**必须**挂该域指定插件——这是必需，不是可选。原文「宁缺勿滥」只约束插件**选配粒度**（域外不叠挂），**不**适用于能力域命中时的必需插件。
+7. 规格不单方裁定：执行侧（你与节点）**无**自判否掉插件路线的权力。插件能力与既有规格/口径冲突时不得改走其它实现，须升级上报：缺什么能力 / 哪条规格冲突 / 建议选项——由作者裁定。
+8. 插件不可用即上报：首条消息的 Plugin Catalog 无该能力域必需插件（实例面差异）时，**禁止静默绕过或降级自判**；显式申报「该能力不在本实例 Catalog」并升级。
+
+### 路由判据（交付物类型 ⇒ 必需插件；命中即挂，缺则升级）
+
+| 交付物类型 | 必需插件 |
+|---|---|
+| PPT / 演示 / deck / slides / 幻灯片 / 放映 | slideblocks |
+| HTML 卡片 / 社交图 / 海报 | design-cards |
+| 设计规格书 / UI-UX / 视觉评审 | design-spec（+ nebflow-frontend-dev） |
+| 文档 / 提示词 / 规范产出 | nebflow-docs-prompt |
+| 独立复核 / 验红 | nebflow-qa |
+| 合并 / 流水线 | nebflow-pipelines |
+
+判据：按 Catalog「能力句」命中 ⇒ 命中即挂；未命中 ⇒ 按第 8 条升级申报。**交付物制作类任务必须落项目**（不得丢给内核/裸实例）。
+9. 自检：拓扑无环；入口节点有 task+description；in 引用真实存在；plugins 已审批；worktree 与写冲突评估一致。
+10. 结束：最终文本 = 分发摘要（建了哪些节点、为何这样拆、假设是什么）。自动投递 Nebula——写给 Nebula 看，无需投递动作。
 
 ## Plan first（作者令 2026-09-10）
 
