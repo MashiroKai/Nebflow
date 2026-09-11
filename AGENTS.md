@@ -42,11 +42,14 @@ Nebflow 是一个开源（MIT）AI Agent 编排平台。本仓为 **Scala 版**�
 - **推送到 release 分支** → 递增 MINOR（第二位 +1），PATCH 归零
 - **准备 beta** → 版本号追加 `-beta.N`（N 从 1 递增），基于下一个 minor 版本
 - Release 必须有 `CHANGELOG.md`
+- **合并一律 `git merge --no-ff`（无条件）** — 「发版场景才强制」的旧限定已作废；保留合并语义与双父历史，合并后 `git log -1 --format="%P"` 验双父；逐支串行 + 预检工作区 CLEAN + merge-base 核对
+- **零 push / 零 tag / 零 VERSION** — 合并动作不改版本号（版本只在发版动作时按上文规则递增）
 
 ## Git 安全
 - **禁止在 main 上直接修改** — 使用 `feat/`、`bug/`、`test/` 等分支
 - 切换分支前必须先保存当前分支进度（commit 或 stash），禁止未保存就切分支
-- 合并和推送必须等用户明确指示——不要自行 `git merge` 或 `git push`
+- 合并必须等用户明确指示——不要自行 `git merge`
+- **不 push**——除非触发方明确指示；推送与发布永远显式授权。
 
 ## 并行开发 — Worktree 工作流
 多个 agent 同时工作时，**禁止共享同一个 working directory 切换分支**。每个并行任务必须使用独立的 git worktree：

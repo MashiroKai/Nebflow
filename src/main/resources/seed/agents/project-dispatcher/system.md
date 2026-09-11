@@ -11,6 +11,7 @@ NodeList / NodeEdit / NodeCancel / NodeMessage + Read / Glob / Grep / Bash（仅
 3. 分解：单节点 = 一个 agent 一次会话可完成的最小可验收单元；有产出依赖才连 in/out；能并行则并行。
 4. worktree：多节点写同一批文件 → 建节点时传 worktree: true（创建时即校验并建分支，仅创建时可决定）；纯读/无冲突不传。
 5. NodeEdit 建节点/接线：task 写清目标/约束/验收口径；description 必写（≤200 字符，一句话目的）。节点统一跑 general——不传 agent/skill/mcp（NODE_AGENT_RETIRED 硬闸），能力经 plugins 分配：对照首条消息的 Plugin/Preset Catalog 选配，按 name 原文引用，宁缺勿滥。任务书要求节点区分生产产物/过程内容落位，过程件归 .nebflow/。
+   - **scratch fixture 默认条款**：凡校验/复核类节点可能在自己的 scratch worktree 上自建未跟踪文件（临时脚本、样例数据、夹具等），task 默认写入「提交或申报」条款——**要么把该 fixture 提交进自己的分支，要么在最终结果中逐文件申报（路径 + 用途 + 未提交声明）**。缺此条款则收尾被判 `artifact-residue`，须返工补申报。
 6. 自检：拓扑无环；入口节点有 task+description；in 引用真实存在；plugins 已审批；worktree 与写冲突评估一致。
 7. 结束：最终文本 = 分发摘要（建了哪些节点、为何这样拆、假设是什么）。自动投递 Nebula——写给 Nebula 看，无需投递动作。
 
@@ -61,7 +62,7 @@ NodeList / NodeEdit / NodeCancel / NodeMessage + Read / Glob / Grep / Bash（仅
 
 ## 合并节点（有 worktree 的批次必备）
 
-- 每个任务节点 out 多对一接同一合并节点：merge: true、不配 worktree（merge+worktree 组合被拒）、out: Nebula。纯读/零产物批次不接。
+- 每个任务节点 out 多对一接同一合并节点：merge: true、不配 worktree（merge+worktree 组合被拒）。**合并节点自身的 out 形态按「通知路由」节**：中间节点 out 只接下游；链末端/收口节点（含末位合并节点）才投 Nebula。原口径「out: Nebula」**已被取代**（取代源 = 2026-09-10 通知路由规范，即本节上方「通知路由」节；2026-09-11 U7 消除本处与该节的自相冲突）。纯读/零产物批次不接。
 - in ≤4，超限拆多个合并节点。未触发的合并节点 in=账本可追加；已触发（running/blocked/completed）后新 worktree 配新合并节点，禁向已触发节点加 in。
 - task 必含三要素：上游清单（分支↔worktree 对应）、落地命令全集（CMD: … END 包裹，逐支 --no-ff merge + worktree remove + branch -d + 对账命令）、复核命令+完成标准。合并执行逐支门禁、全程 0 push。
 - completed ⇔ 分支全合并进 main 且 worktree/分支零残留；有残留以 BLOCKED 开头申报明细。真实交付分支以 git 事实为准（git log main..<branch>），勿信清单名。

@@ -684,14 +684,17 @@ class NodeEngine(
     * failed 链语义，非本路径引入）。「引擎接管失败且通知从未发出」同样不是本路径的新形态。
     *
     * 幂等：状态守卫（非 Cancelled → 零动作）+ failed 回流/事件/告警各自去重。
-    * 找不到节点（会话未绑定/已归档）→ 响亮 ERROR（诚实失败），零动作。 */
+    *
+    * **查无节点的出口（U3/B 修复，2026-09-11 作者拍板）**：旧口径只 ERROR、**零动作**
+    * ⇒ 既不摘除也不登记「待承接」，下游 barrier 永久停等且无任何可见账（09-11 全天
+    * 15 例 L3 全数落此出口）。现改为 [[lateDetachUnlocatableSession]] 收口——见该方法
+    * 的「哪条路径摘除、哪条不摘除」逐条说明。**「已能定位节点」分支（本方法下面
+    * `Some(n)` 两支）行为逐字不变**：改判 failed 全链 + D5 零结算停等、不摘除。 */
   def settleFailedHardResume(sessionId: String): IO[Unit] =
     store.snapshot.flatMap { snap =>
-      snap.nodes.values.find(n => n.sessionRef.contains(sessionId) || n.sessionRefVerify.contains(sessionId)) match
+      NodeEngine.findNodeForSession(snap, sessionId) match
         case None =>
-          logger.error(
-            s"[hard-recovery] L3 resume failed but no node owns session $sessionId — nothing to re-judge (manual intervention required)"
-          )
+          lateDetachUnlocatableSession(sessionId)
         case Some(n) if n.status != NodeLifecycle.Cancelled =>
           logger.info(
             s"[hard-recovery] L3 resume failed for session $sessionId but node '${n.name}' (${n.id}) is ${n.status} — no fallback action needed"
@@ -711,6 +714,96 @@ class NodeEngine(
                 "out kept (no detach), successors keep waiting (D5 zero-settlement)" +
                 (if keptTargets.nonEmpty then s"; downstream still in=${keptTargets.mkString(",")}" else "")) *>
             failNode(n.id, err)
+    }
+
+  /** U3/B 兜底腿（2026-09-11 作者拍板）：L3 resume 失败且**活动区查无**该会话归属节点
+    * 时的收口——把「找不到节点归属」从静默死路改成有账的迟到摘除。
+    *
+    * **哪条路径摘除、哪条不摘除（逐条）**：
+    *   - ① **能定位节点**（[[settleFailedHardResume]] 的 `Some(n)` 支；P2① 修好定位键后
+    *     L3 场景恒走此路）→ 改判 **failed**（[[failNode]] 全链）⇒ failed 侧 D5 零结算
+    *     停等：**不摘除、不打 pendingSuccession**，下游 in 镜像原样保留，等上游
+    *     NodeEdit 重激活后自动续跑。这是 R4/R5 裁定的**永久拒绝**项（「failed 也自动
+    *     摘」会掐死 reactivate 恢复路径），本批不回退、不越界。
+    *   - ② **查无节点但它在归档区**（本方法 `Some(archived)` 支）→ 节点以 **cancelled**
+    *     终态离场（不是 failed），而 cancelled 侧的 R4 语义**就是摘除**（[[cancelNode]]
+    *     头注 ③）。L3 路径因 `deferDetach = true` 把摘除推迟到 resume 结果；resume
+    *     失败且节点已不可定位 ⇒ 没有任何腿会再补这一步 ⇒ **在此补**：反向扫活动区全部
+    *     节点，凡 `in` 仍引用该 id 的 → prune `in` + 追加 `pendingSuccession`（「待承接」
+    *     标）+ 补发 `nodeUpdated` + 事件流留痕，并把 L3 中间态的回流占位归还（节点已
+    *     离场，占位留着只会是永不清除的陈旧标记）。
+    *     **为什么反向扫**：节点已不在活动区，前向 `out` 遍历不可达（这正是
+    *     [[detachCancelledUpstream]] 的 `targets.isEmpty` 零操作形态）；而「谁还引用我」
+    *     在活动区恒可算。摘除方向（引用方 in）与 R4 摘除逐字同源，故语义一致。
+    *   - ③ **连归档区也查无**（会话从未绑定到任何节点 / 记录已注销）→ ERROR **+ 事件流
+    *     留痕**（`hard-recovery`，nodeId 空串）：不能再静默——这正是 09-11 的事故形态
+    *     （35 行日志里 15 例只有 ERROR、事件流零行，事后无法 join 出「哪次 L3 失败了」）。
+    *     此支**不摘除**（没有任何 id 可摘），但已可见、可检索、可 join。
+    *
+    * 幂等：反向 prune 后该 id 不再出现在任何 `in` 中 ⇒ 重复调用零写、零帧；事件流只在
+    * 真正到达本方法时追加一行（可重放审计，与 [[FlowMapEventLog]] 的追加-only 纪律一致）。 */
+  private def lateDetachUnlocatableSession(sessionId: String): IO[Unit] =
+    store.archiveSnapshot.flatMap { arch =>
+      arch.nodes.values.find(n =>
+        n.sessionRef.contains(sessionId) || n.sessionRefVerify.contains(sessionId)
+      ) match
+        case None =>
+          logger.error(
+            s"[hard-recovery] L3 resume failed and no node owns session $sessionId — it is in neither the active " +
+              "region nor this project's archive; no re-judge and no detach is possible (manual intervention required)"
+          ) *> FlowMapEventLog.append(workspace, projectName, "", "hard-recovery",
+            s"L3 resume FAILED (session=$sessionId) — no node owns this session in project '$projectName' " +
+              "(active + archive both empty for it): nothing to re-judge, nothing to detach — manual intervention required")
+        case Some(archived) =>
+          reversePruneReferences(archived.id).flatMap { pruned =>
+            dispatchNotify.releaseTerminalNotify(archived.id) *>
+              FlowMapEventLog.append(workspace, projectName, archived.id, "hard-recovery",
+                s"L3 resume FAILED (session=$sessionId) — node '${archived.name}' (${archived.id}) is no longer in the " +
+                  "active region (archived), so it cannot be re-judged as failed; cancelled-side R4 detach applied " +
+                  "late instead: " +
+                  (if pruned.nonEmpty then
+                     s"pruned the in-mirror of ${pruned.size} active referrer(s) ${pruned.mkString(",")} + marked " +
+                       "pendingSuccession (their barrier is unblocked for a handover node)"
+                   else
+                     "no active node references it any more (idempotent zero-write)"))
+          }
+    }
+
+  /** 反向引用 prune **单点**（本批新增；服务两处：B 的迟到摘除 [[lateDetachUnlocatableSession]]
+    * 与 E 的不一致拓扑 [[detachCancelledUpstream]] `targets.isEmpty` 出口）。
+    *
+    * 语义 = 活动区内凡 `n.in.contains(nodeId)` 的节点 → 从其 `in` 摘除该 id + 追加
+    * `pendingSuccession`（「待承接」）+ 补发 `nodeUpdated`（可见性口径与
+    * [[detachCancelledUpstream]] 逐字一致：标记只落盘不推帧，前端要等下一次全量快照才见）。
+    *
+    * **为什么必须有反向方向**：`detachCancelledUpstream` 旧口径用前向 `out` 遍历目标，
+    * 在两种形态下 `targets.isEmpty` ⇒ 静默零操作（U5/E 的问题）：
+    *   ① out 已改接 Nebula（只剩 Nebula 边）而下游 `in` 镜像仍引用本节点（不一致拓扑）；
+    *   ② 节点已不在活动区（归档/移除），`s.nodes.get(nodeId)` 直接 None。
+    * 而「谁还引用我」在活动区恒可算——引用方向是这一族的唯一可靠方向。
+    *
+    * 幂等：prune 后该 id 不再出现在任何 `in` ⇒ 重复调用零写、零帧（满足 U5 的「不破坏
+    * 重入幂等」）。返回被 prune 的下游 id 集（升序，审计/事件文案用）。 */
+  private def reversePruneReferences(nodeId: String): IO[List[String]] =
+    store.mutateWithResult { s =>
+      val referrers = s.nodes.values.filter(_.in.contains(nodeId)).map(_.id).toList.sorted
+      if referrers.isEmpty then (s, Nil)
+      else
+        val pruned = referrers.foldLeft(s.nodes) { (acc, tid) =>
+          acc.get(tid) match
+            case Some(tn) => acc.updated(tid, tn.copy(
+              in = tn.in.filterNot(_ == nodeId),
+              pendingSuccession = (tn.pendingSuccession :+ nodeId).distinct))
+            case None => acc
+        }
+        (s.copy(nodes = pruned), referrers)
+    }.flatMap { case (_, pruned) =>
+      pruned.foldLeft(IO.unit) { (acc, tid) =>
+        acc >> store.getNode(tid).flatMap {
+          case Some(n) => emitUpdated(n)
+          case None    => IO.unit
+        }
+      }.as(pruned)
     }
 
   /** WS nodeRemoved（TTL 移除/归档后通知前端移除卡片）。payload = 节点最终态
@@ -2163,7 +2256,21 @@ class NodeEngine(
                     completedNode(nodeId, resultText)
                   case CompletionGate.Reject(reason, diag) =>
                     logger.warn(s"Node '${fresh.name}' completion gate reject: $reason")
-                    blockedNode(nodeId, CompletionGate.feedback(diag))
+                    // U6/F 修复（2026-09-11）：闸门 Reject 转 blocked 时**必须带上原结论文本**
+                    // ——旧口径只传 feedback ⇒ `blockedNode` 把 result 写成「闸门反馈」单段，
+                    // 节点辛苦跑出来的结论文本（今日实测 24 分钟复核结论）被**整段替换且
+                    // 不可恢复**（磁盘上再无副本）。修法 = 复用 `blockedNode` 既有的
+                    // `finalText` 并列落盘能力（与 `node_report` 工具申报 BLOCKED 分支
+                    // @:1970 同一机制、同一格式：`render(feedback) + "\n\n" + finalText`）：
+                    // 闸门反馈在**前**（保住 `BlockedReader` 的裸 BLOCKED 锚定与重入 prompt
+                    // 语义，零回归），原结论文本以空行分隔并列在**后**（一条 result 字段里
+                    // 两段可各自取用，无 schema 变更、无前端改动、无新字段）。
+                    // 取回原文的具体命令（U6/F 判据，<ws> = 项目工作区，<id> = 节点 id）：
+                    //   python3 -c "import json;r=json.load(open('<ws>/.nebflow/flow-map.json'))\
+                    //     ['nodes']['<id>']['result'];print(r.split('[original-conclusion]',1)[1])"
+                    // → 打印闸门 Reject 前该节点会话产出的结论文本全文（未被闸门文本污染）。
+                    blockedNode(nodeId, CompletionGate.feedback(diag),
+                      finalText = Some(CompletionGate.withOriginalText(resultText)))
                 }
               case _ => completedNode(nodeId, resultText)
             }
@@ -2537,16 +2644,33 @@ class NodeEngine(
     * 幂等：out 已无节点目标（重复调用 / 本就悬空）→ 返回 Nil 且零写。
     * 返回被 prune 的下游 id 集（供审计事件与 R1 通知文本使用）。
     *
+    * **U5/E 修复（2026-09-11）**：目标集从「纯前向 out 遍历」扩为
+    * `前向目标 ∪ 反向引用方`（[[reversePruneReferences]] 的判据，本方法内联同一事务
+    * 计算）。原因：`out` 已被改接 Nebula 而下游 `in` 镜像仍引用本节点的**不一致拓扑**
+    * 下，前向遍历恒空 ⇒ 旧口径 `targets.isEmpty` 静默零操作，下游 barrier 无人解救
+    * （也不会有任何留痕）。反向引用集在活动区恒可算，恰好覆盖该形态。
+    * **零行为漂移保证**：镜像边一致（常态）时反向集 ⊆ 前向集，`distinct` 后结果集与
+    * 元素顺序均与旧口径**逐字相同**——本改动只在不一致拓扑下新增 prune。
+    *
     * 可见性（R4 验收项「自动摘除 + 标记可见」）：prune 生效时对每个受影响下游补发
     * `nodeUpdated`（payload 走 NodePayload 条件字段 `pendingSuccession`，前端卡片/
     * 分发器 NodeList 同一序列化点）——与 NodeTools.emitWiringUpdates 同款：标记若只
-    * 落盘不推帧，前端要等下一次全量快照才见。幂等（无 prune → 零帧）。 */
+    * 落盘不推帧，前端要等下一次全量快照才见。幂等（无 prune → 零帧）。
+    *
+    * `case None`（节点不在活动区）保持旧口径 `(s, Nil)`：调用方 [[cancelNode]] 的
+    * `store.mutate` 同样查无该节点 ⇒ 整个取消是 no-op 且已有 `Node nodeId vanished
+    * before cancel finalize` 响亮留痕（非静默）；离线节点的迟到摘除由 L3 失败腿的
+    * [[lateDetachUnlocatableSession]]（含归档区解析）承担，不在本方法范围内。 */
   private def detachCancelledUpstream(nodeId: String): IO[List[String]] =
     store.mutateWithResult { s =>
       s.nodes.get(nodeId) match
         case Some(from) =>
-          val targets = from.out.map(_.to).filterNot(_ == OutEdge.NebulaTarget).distinct
+          val forward = from.out.map(_.to).filterNot(_ == OutEdge.NebulaTarget).distinct
             .flatMap(OutEdge.resolveTargetId(s.nodes, _)).distinct
+          // U5/E：反向引用方（谁还在 in 里引用我）——不一致拓扑下前向遍历恒空，反向恒可算。
+          val reverseOnly =
+            s.nodes.values.filter(n => n.id != nodeId && n.in.contains(nodeId)).map(_.id).toList.sorted
+          val targets = (forward ++ reverseOnly).distinct
           if targets.isEmpty then (s, Nil)
           else
             val pruned = targets.foldLeft(s.nodes) { (acc, tid) =>
