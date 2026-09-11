@@ -574,11 +574,12 @@ final class DispatchNotify(
        |结果全文：NodeList(detail="${node.id}", project=$projectName)。
        |处置指引（cancelled 是终态，但**与 failed 不同：不可重激活** —— NodeEdit 的重激活闸只放行 blocked/failed，编辑 cancelled 节点只会走普通编辑路径、不会复活它；因此 failed 的「NodeEdit 编辑触发 reactivate 重跑」那套指引对本节点**无效，请勿照用**）：
        |1. 承接（首选）：NodeEdit 新建承接节点（建议命名 <原名>-retry 或语义新名），接原拓扑位置（in 同源、out 同目标）；再把该承接节点 append 进受影响下游的 in（NodeEdit 的 in 参数只增）——对该下游的任意实际变更会清掉它的「待承接」标记，其 barrier 才放行。
-       |2. 改接（该轨确实不再需要）：**引擎已自动处理**——取消终态写点即把本节点 out 摘除并改接 Nebula（下游 in 镜像随之 prune，下游登记「待承接」标）；L3 硬恢复路径的摘除延后到 resume 失败分支。若下游 in 里仍见本节点，NodeEdit 把本节点 out 改为 Nebula 即可（幂等）。
+       |2. 改接（该轨确实不再需要）：**普通取消路径引擎已自动处理**——取消终态写点即把本节点 out 摘除并改接 Nebula（下游 in 镜像随之 prune，下游登记「待承接」标）。若下游 in 里仍见本节点，NodeEdit 把本节点 out 改为 Nebula 即可（幂等）。
+       |   **L3 硬恢复路径语义不同（U4，2026-09-11 与代码对齐）**：该路径取消时**不摘除**（resume 成功后拓扑必须完整，提前 prune 会让下游永远拿不到结果）；resume 失败则节点被**改判 failed**（不是留在 cancelled）——failed 侧按 D5 零结算停等，**同样不摘除**，下游 in 保持完整、等上游 NodeEdit 重激活重跑后自动续跑；此时若该轨确实不再需要，请用于该节点 out→Nebula 的 NodeEdit 触发 prune（幂等）。兜底腿：仅当引擎已无法定位该会话归属节点（节点已离活动区/归档）时，引擎才代做 cancelled 侧的**迟到摘除**（反向 prune 活动区引用 + 登记「待承接」+ 事件流留痕）；两者都查无则记 ERROR + 事件流（人工介入）。
        |3. 放弃该轨：NodeEdit abandon=true 标记放弃；下游的「待承接」标记仍需按 1/2 处置，否则其 barrier 永久停等。
        |4. 需人工/外部条件 → 在你的最终输出中写明上报内容（自动投递 Nebula）。
        |$waiterLine
-       |前置检查：本节点可能在 L3 硬恢复中已被引擎复活（status 已非 cancelled）——先 NodeList(detail="${node.id}") 读现状；若已 running/pending 则本轮无需动作。
+       |前置检查：本节点可能在 L3 硬恢复中已被引擎复活（status 已非 cancelled）**或被改判 failed**——先 NodeList(detail="${node.id}") 读现状；若已 running/pending 则本轮无需动作（若已是 failed，按 failed 版通知的处置指引处理：首选 NodeEdit 重激活重跑）。
        |无需回报——拓扑与状态已落 Flow Map。""".stripMargin
 
   /** failed 版通知任务文本（2026-09-07 批设计 §2.3 + 作者 09:24 裁定③——failed 可

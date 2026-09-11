@@ -38,7 +38,8 @@ import scala.concurrent.duration.*
  *  - R5 **方案 4**：`settleFailedHardResume` 失败腿把 L3 中间态 Cancelled **改判
  *    failed**（经 `failNode` 全链：result 含 sessionId + L3 语义 / nodeUpdated /
  *    failed 回流恰好一次 / D5 零结算停等），**不摘除、不打 pendingSuccession**；
- *    两条无动作腿（非 cancelled 节点 / 无归属会话）与状态守卫幂等
+ *    两条无动作腿（非 cancelled 节点 / 无法定位会话——后者 U3/B 2026-09-11 起补
+ *    事件流留痕，仍零动作）与状态守卫幂等
  *
  * ⚠ 隔离实例（真 gateway）实测 Δ 读数不在本文件——见批报告证据目录。
  */
@@ -571,9 +572,12 @@ class CancelDeadlockFixSpec extends CatsEffectSuite:
       live <- node(rt, "n-live")
       down <- node(rt, "n-down")
       audit <- readAudit(ws)
-      // 未知会话（无节点归属）→ 响亮 ERROR 留痕，零动作
+      // 未知会话（无活动区节点归属）→ 响亮 ERROR + **事件流留痕**（U3/B 2026-09-11：
+      // 旧口径只 ERROR 零动作 ⇒ 事件流零行、事后无法 join「哪次 L3 失败了」）；
+      // 仍**零动作**（没有任何 id 可摘 ⇒ 不摘除、不打标）
       _ <- rt.engine.settleFailedHardResume("node-sess-ghost")
       fired <- triggered.get
+      audit2 <- readAudit(ws)
       _ <- system.stopAll.handleErrorWith(_ => IO.unit)
     yield
       assertEquals(live.out, List(OutEdge("n-down")), "non-cancelled node must not be detached")
@@ -581,6 +585,13 @@ class CancelDeadlockFixSpec extends CatsEffectSuite:
       assertEquals(audit.filter(_._1 == "hard-recovery"), Nil, "no hard-recovery failure line for the live leg")
       assertEquals(audit.filter(_._1 == "barrier-blocked"), Nil, "no barrier alert while the upstream is alive")
       assertEquals(fired, Nil, "no dispatcher notification in either no-op leg")
+      // U3/B：不可定位会话出口的可见性（同为「零动作」但**有账**）
+      val ghostLines = audit2.filter(_._1 == "hard-recovery")
+      assertEquals(ghostLines.size, 1,
+        s"U3/B: the unlocatable-session leg must leave an audit line (old behaviour: silent ERROR only), got ${ghostLines.size}")
+      assert(ghostLines.forall(_._2 == ""), s"the orphan audit line must carry an empty nodeId, got ${ghostLines.map(_._2)}")
+      assert(ghostLines.head._3.contains("no node owns this session"),
+        s"orphan audit text must be self-explanatory, got ${ghostLines.head._3}")
   }
 
   // ── R3 去重 + failed 侧零摘除 ───────────────────────────────────

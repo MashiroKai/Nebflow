@@ -64,6 +64,25 @@ object CompletionGate:
   /** status 样本截取行数（诊断里最多带前 10 行，防 feedback 串膨胀）。 */
   val StatusSampleLines = 10
 
+  /** **U6/F（2026-09-11 作者拍板）**：Reject 转 blocked 时**原结论文本必须保留**——
+    * 今日实测一次 24 分钟的复核结论被闸门文本**整段替换、不可恢复**（旧口径
+    * `blockedNode(nodeId, feedback(diag))` 未带 finalText）。
+    *
+    * 取舍（二选一：并列落盘 vs 另存独立字段）→ 取 **并列落盘**：单 `result` 字段里
+    * 两段并存（`blockedNode` 既有渲染 = `render(feedback) + "\n\n" + finalText`，
+    * 与 `node_report` 申报 BLOCKED 分支**同一机制同一格式**）。理由：① 零 schema
+    * 变更、零前端改动、零新字段迁移；② 闸门反馈仍在**最前**，`BlockedReader` 的裸
+    * BLOCKED 锚定与 FeedbackRouter 重入 prompt 语义**零回归**；③ 节点 result 本就是
+    * 「分发器/前端读到的权威文本」单点，两段同处一地最不易被后续流程拆散。
+    *
+    * 本标记（[[withOriginalText]] 写在原文首行）是**取回原文的稳定锚**：
+    *   `result.split("[original-conclusion]", 2)(1)` —— 之后全部内容即原结论文本。
+    * 具体取回命令见 NodeEngine.completeNode 的 Reject 分支注释。 */
+  val OriginalTextMarker = "[original-conclusion]"
+
+  /** 原结论文本的并列落盘包装（标记行 + 原文）。见 [[OriginalTextMarker]]。 */
+  def withOriginalText(resultText: String): String = s"$OriginalTextMarker\n$resultText"
+
   /** gate 单次执行整体超时（含两条 git 命令）；超时按 fail-open 放行。 */
   private val GateTimeout: FiniteDuration = 15.seconds
 

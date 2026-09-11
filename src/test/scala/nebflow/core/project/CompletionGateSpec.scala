@@ -473,6 +473,16 @@ class CompletionGateSpec extends CatsEffectSuite:
       assert(a.blockedFeedback.exists(_.detail.contains("领先 main 1 commit")), s"feedback must carry ahead, got: ${a.blockedFeedback}")
       assert(a.blockedFeedback.exists(_.suggestion.contains("commit-ready")), s"suggestion must teach marker contract, got: ${a.blockedFeedback}")
       assert(a.result.exists(_.startsWith("[blocked:artifact-residue]")), s"result is rendered feedback string, got: ${a.result}")
+      // U6/F（2026-09-11，数据丢失类）：闸门 Reject 不得吃掉节点结论文本——旧口径
+      // `blockedNode(nodeId, feedback(diag))` 整段替换（今日实测 24 分钟复核结论
+      // 不可恢复）。改为并列落盘：反馈在前（保 BLOCKED 锚定），原结论文本以
+      // [original-conclusion] 标记并列在后。
+      assert(a.result.exists(_.contains(CompletionGate.OriginalTextMarker)),
+        s"U6/F red: the gate Reject must keep the node's conclusion under the marker, got: ${a.result.map(_.take(400))}")
+      assert(a.result.exists { r =>
+        val i = r.indexOf(CompletionGate.OriginalTextMarker)
+        i >= 0 && r.substring(i + CompletionGate.OriginalTextMarker.length).contains("ok-done")
+      }, s"U6/F red: the original conclusion text must survive the Reject (retrieval = everything after the marker), got: ${a.result.map(_.take(400))}")
       // 不走 out 投递、结果不丢弃（作者规格）
       assertEquals(b.status, NodeLifecycle.Wiring, "downstream must NOT be settled by gate-blocked")
       assertEquals(b.deliveredTo, Nil, "no delivery to out target")
