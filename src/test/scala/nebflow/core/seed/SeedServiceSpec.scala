@@ -10,7 +10,7 @@ import java.nio.file.Files
 /**
  * SeedService cold-start 播种引擎验证（cold-start seed 批 2026-09-07）。
  *
- * 覆盖定稿四项：① fresh home 完整播种（三 keeper + 8 插件 + projects/general）、
+ * 覆盖定稿四项：① fresh home 完整播种（四 keeper + 8 插件 + projects/general）、
  * ② 幂等 / 不覆盖用户编辑、③ fresh-home 守卫（已有用户数据 → 只写 marker 不播种）、
  * ④ 升级 add-only（低版本 marker + 已有文件 → 只补缺失，不重写）。
  *
@@ -36,10 +36,10 @@ class SeedServiceSpec extends FunSuite:
   private def dataRoot: os.Path = PathUtil.dataRoot
 
   // ── ① fresh home：完整播种 ├────────────────────────────────
-  test("fresh home seeds three keepers + plugins + project:general"):
+  test("fresh home seeds four keepers + plugins + project:general"):
     ensure()
 
-    // 三 keeper：Nebula 由 seedDefaults 管（本测不触发）；补的两个在此断言
+    // 四 keeper：Nebula 由 seedDefaults 管（本测不触发）；补的两个在此断言
     val pdAgentJson = home / "agents" / "project-dispatcher" / "agent.json"
     val genAgentJson = home / "agents" / "general" / "agent.json"
     assert(os.exists(pdAgentJson), "project-dispatcher/agent.json seeded")
@@ -108,9 +108,10 @@ class SeedServiceSpec extends FunSuite:
     val state = io.circe.parser.parse(os.read(marker)).toOption.get
     assert(state.hcursor.downField("version").as[String].toOption.contains("1.0.0"))
     assert(state.hcursor.downField("items").as[List[String]].toOption.exists(_.nonEmpty), "items recorded")
-    // marker 记录 = 本轮实际写入 item 数：3 agents + 8 plugins（默认插件集全量） + 1 project = 12
-    assert(state.hcursor.downField("items").as[List[String]].toOption.exists(_.size == 12),
-      "marker records 12 items (3 agents + 8 plugins + 1 project)")
+    // marker 记录 = 本轮实际写入 item 数：4 agents + 8 plugins（默认插件集全量） + 1 project = 13
+    // （memory-consolidator 由记忆队列批 2026-09-12 纳入种子 manifest）
+    assert(state.hcursor.downField("items").as[List[String]].toOption.exists(_.size == 13),
+      "marker records 13 items (4 agents + 8 plugins + 1 project)")
 
   // ── ② 幂等 / 不覆盖用户编辑 ───────────────────────────────
   test("re-seed is idempotent and never overwrites user edits"):
