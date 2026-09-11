@@ -40,10 +40,11 @@ class Phase2dToolRefactorSpec extends FunSuite:
 
   // ===== D.1-1：三角色静态集收口，工具面逐件不变 =====
 
-  test("D.1-1: Nebula fixed set == §C.1 恰十四件、零 Issue、零写手、零 NodeList、零旧体系四件（逐件不变）"):
+  test("D.1-1: Nebula fixed set == §C.1 清单（在飞 15 件，终态 14）、零 Issue、零写手、零 NodeList（逐件不变）"):
     val fixed = AgentCore.fixedToolsFor(mkDef("Nebula"))
     val expected =
       Set("Task", "ProjectCreate", "AgentControl",
+        "Delegate",                                            // 编排触发（2026-09-11 极简内核回归，+1）
         "TaskList",                                            // 任务编排（2026-09-06 TaskList 批：快变状态出记忆）
         "SendMessage",
         "Read", "Glob", "Grep",                                // 读三件（08:40 解禁四件；23:34 裁定收走写手）
@@ -52,12 +53,15 @@ class Phase2dToolRefactorSpec extends FunSuite:
         "Schedule", "TransferFile",
         "MemoryEdit")
     assertEquals(fixed, expected,
-      "Nebula 静态集恰十四件（2026-09-06 TaskList 批：+TaskList，作者 00:07 提议 + 00:11 首期无前端拍板；00:48 作者裁定：NodeList 摘除——节点结果沿 out 边自动投递，主动查图与裁定职责重叠，dispatcher 自身面不受影响；2026-09-05 23:34 作者裁定：Nebula 回归纯编排——Bash/Write/Edit 移除；08:40 作者裁定：+Card 解封/−Mail/Delegate/FlowTrigger/FlowExecute 旧体系退役；2026-09-04 终裁：Issue/CheckIssues 退役）")
+      "Nebula 静态集件数 == 单点常量 AgentCore.NebulaOrchestrationToolsExpectedSize（在飞 15 = 终态 14 + 本批 Delegate −1 待 TransferFile 退役批；2026-09-06 TaskList 批：+TaskList，作者 00:07 提议 + 00:11 首期无前端拍板；00:48 作者裁定：NodeList 摘除——节点结果沿 out 边自动投递，主动查图与裁定职责重叠，dispatcher 自身面不受影响；2026-09-05 23:34 作者裁定：Nebula 回归纯编排——Bash/Write/Edit 移除；08:40 作者裁定：+Card 解封/−Mail/Delegate/FlowTrigger/FlowExecute 旧体系退役；2026-09-04 终裁：Issue/CheckIssues 退役）")
     assert(!fixed.contains("Issue"), "Nebula fixedTools 零 Issue（2026-09-04 终裁退役）")
     assert(!fixed.contains("NodeList"), "Nebula fixedTools 零 NodeList（2026-09-06 00:48 裁定摘除——变异验红锚）")
-    Set("Mail", "Delegate", "FlowTrigger", "FlowExecute").foreach { t =>
-      assert(!fixed.contains(t), s"旧体系四件已从 Nebula 固定面退役（2026-09-05 裁定）: $t")
+    Set("Mail", "FlowTrigger", "FlowExecute").foreach { t =>
+      assert(!fixed.contains(t), s"旧体系三件维持退役（2026-09-05 裁定）: $t")
     }
+    assertEquals(fixed.size, AgentCore.NebulaOrchestrationToolsExpectedSize,
+      "件数断言单点来源（同一常量）——本批在飞 15，终态目标 14 待 TransferFile 退役批同窗抵平")
+    assert(fixed.contains("Delegate"), "Delegate 以极简内核形态回归（2026-09-11）——不携带 Team/Flow/Mail 语义")
     // 钉死断言（2026-09-05 23:34 作者裁定）：Nebula 机制集不含 Bash、不含
     // Write、不含 Edit——变异验红锚
     assert(!fixed.contains("Bash"), "Nebula 机制集不含 Bash（23:34 裁定：回归纯编排）")
@@ -146,14 +150,15 @@ class Phase2dToolRefactorSpec extends FunSuite:
 
   // 工具面收敛 批① A 轨（2026-09-10）：通信工具纯名字迁移（旧名 = LegacyToolName
   // 拼接值，见下；「好友消息」→ 中性「消息」，语义/件数零变化）。
-  // 三条不变式必须齐——件数恰十四 ∧ 新名在 ∧ 旧名零残留。本文件刻意不写裸旧名
+  // 三条不变式必须齐——件数 == 单点常量 ∧ 新名在 ∧ 旧名零残留。本文件刻意不写裸旧名
   // 字面量：既让「引号精确 grep 旧名 → 0」的验收口径成立（注释本身也不许破口径），
   // 又保住零残留断言——裸字面量会同时打破这两条中的一条。
   private val LegacyToolName = "SendFriend" + "Message"
 
-  test("A轨(批①): 改名后三条不变式齐——交付面恰十四件 ∧ 含 SendMessage ∧ 旧名零残留"):
+  test("A轨(批①): 改名后三条不变式齐——交付面件数 == 单点常量 ∧ 含 SendMessage ∧ 旧名零残留"):
     val delivered = CoreProbe.allowed(mkDef("Nebula"))
-    assertEquals(delivered.size, 14, "纯名字迁移不改件数——Nebula 交付面仍恰十四件")
+    assertEquals(delivered.size, AgentCore.NebulaOrchestrationToolsExpectedSize,
+      "交付面件数与机制集单点常量一致（本批在飞 15：Delegate 回归 +1；终态 14 待 TransferFile 退役批）")
     assert(delivered.contains("SendMessage"), "新名进交付面（改名承重点：LLM 可见名）")
     assert(!delivered.exists(_.contains(LegacyToolName)), "旧名零残留（LLM 交付面）")
     assert(!AgentCore.NebulaOrchestrationTools.exists(_.contains(LegacyToolName)),
