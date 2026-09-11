@@ -270,16 +270,39 @@
    values, so the rest rendering stays byte-identical to before.
    Ramp (author ruling 2026-09-11 P4): light fill .45 / .58 / .66 / .18,
    light border .40 / .50 / .56 / .20; dark fill .05 / .11 / .15 / .03,
-   dark border .08 / .12 / .15 / .05. */
+   dark border .08 / .12 / .15 / .05.
+   Feedback (author ruling 2026-09-11, option B — light batch): the light
+   fill ramp above is visually flat on a light plate, so light hover/active
+   are now carried by (a) the border: white .50/.56 → black .10/.18, and
+   (b) light-scoped box-shadow layers. Rest fill (.45) and rest border (.40)
+   are untouched, and the dark ramp is untouched. */
 :root {
   --glass-send-bg: rgba(255, 255, 255, 0.45);
   --glass-send-bg-hover: rgba(255, 255, 255, 0.58);
   --glass-send-bg-active: rgba(255, 255, 255, 0.66);
   --glass-send-bg-disabled: rgba(255, 255, 255, 0.18);
   --glass-send-border: rgba(255, 255, 255, 0.40);
-  --glass-send-border-hover: rgba(255, 255, 255, 0.50);
-  --glass-send-border-active: rgba(255, 255, 255, 0.56);
+  --glass-send-border-hover: rgba(0, 0, 0, 0.10);
+  --glass-send-border-active: rgba(0, 0, 0, 0.18);
   --glass-send-border-disabled: rgba(255, 255, 255, 0.20);
+  /* Light-only feedback layers (author ruling 2026-09-11, option B: keep the
+     white glass material, express hover/active through border + shadow). The
+     white-alpha fill ramp is unreadable on a light plate (composite luminance
+     rest/hover/active = 253.00/253.33/254.00 ⇒ Δ ≤ 0.67/255), so the ramp is
+     left as-is and the shadow does the work. --glass-send-stack re-states
+     today's glass material (it resolves through the theme-aware
+     --glass-control-* tokens, so it is correct in both themes); the three
+     --glass-send-shadow* layers carry the new feedback and are used by
+     light-scoped rules only — in dark they are `none` and no rule consumes
+     them, so dark rendering stays byte-identical. */
+  --glass-send-stack:
+    inset 0 1px 0 var(--glass-control-highlight),
+    inset 0 -1px 0 var(--glass-control-underedge),
+    0 1px 3px var(--glass-control-glow),
+    0 2px 8px var(--glass-control-shadow);
+  --glass-send-shadow: 0 1px 2px rgba(0, 0, 0, 0.04);
+  --glass-send-shadow-hover: 0 2px 7px rgba(0, 0, 0, 0.14);
+  --glass-send-shadow-active: inset 0 1px 3px rgba(0, 0, 0, 0.16);
 }
 
 @media (prefers-color-scheme: dark) {
@@ -292,6 +315,14 @@
     --glass-send-border-hover: rgba(255, 255, 255, 0.12);
     --glass-send-border-active: rgba(255, 255, 255, 0.15);
     --glass-send-border-disabled: rgba(255, 255, 255, 0.05);
+    /* Dark nullification of the light-only feedback layers. Belt: the rules
+       that consume them live in `@media (prefers-color-scheme: light)`, so
+       dark never reads these; they are declared so a future light-block edit
+       cannot silently leak a shadow into dark. Nothing else in this block
+       changes — dark rendering is byte-identical to before. */
+    --glass-send-shadow: none;
+    --glass-send-shadow-hover: none;
+    --glass-send-shadow-active: none;
   }
 }
 
@@ -327,9 +358,46 @@
   border-color: var(--glass-send-border-active);
 }
 
+/* Light-only shadow feedback (author ruling 2026-09-11, option B). Scoped to
+   `light` on purpose: `none` is only a legal box-shadow value on its own, so
+   it cannot be appended to the preserved glass stack in the shared rules —
+   scoping the layers keeps dark's inherited shadow (and every other dark
+   declaration) byte-for-byte untouched. The border half of the feedback is
+   already theme-split via --glass-send-border-hover/active above.
+   Specificity ledger (all three selectors outrank their competitors, and
+   sapphire.css is the last stylesheet, see index.html:47-50):
+   · #dropbox-send-btn        (1,0,0) > .cfg-btn:not(.cfg-btn-primary) (0,2,0)
+     [sapphire.css:219-229] and .cfg-btn (0,1,0) [sidebar.css:1149];
+   · .cfg-btn.fm-send-btn     (0,2,0) ties Pattern B base (0,2,0) → source
+     order wins, this block sits after :219; .cfg-btn:hover (0,2,0)
+     [sidebar.css:1160] is outranked here by the :hover form (0,3,0);
+   · .fm-verify-box button.glass-control:not(.fm-verify-cancel) (0,3,1) >
+     .glass-control (0,1,0) [sapphire.css:139] and friends.css:252 (0,2,0). */
+@media (prefers-color-scheme: light) {
+  #dropbox-send-btn,
+  .cfg-btn.fm-send-btn,
+  .fm-verify-box button.glass-control:not(.fm-verify-cancel) {
+    box-shadow: var(--glass-send-stack), var(--glass-send-shadow);
+  }
+  #dropbox-send-btn:hover,
+  .cfg-btn.fm-send-btn:hover,
+  .fm-verify-box button.glass-control:not(.fm-verify-cancel):hover {
+    box-shadow: var(--glass-send-stack), var(--glass-send-shadow-hover);
+  }
+  #dropbox-send-btn:active,
+  .cfg-btn.fm-send-btn:active,
+  .fm-verify-box button.glass-control:not(.fm-verify-cancel):active {
+    box-shadow: var(--glass-send-stack), var(--glass-send-shadow-active);
+  }
+}
+
 /* disabled — declared last on purpose: :disabled may co-match :hover
    (equal specificity ⇒ source order decides), and disabled text is the
-   dim text token at half alpha, so we never rely on element opacity. */
+   dim text token at half alpha, so we never rely on element opacity.
+   The explicit box-shadow stops the rest-state feedback layer from leaking
+   onto the disabled chip; it re-states the inherited glass stack, which is
+   what these chips render today, so disabled stays pixel-identical to the
+   pre-change build (a bare `none` here would strip the glass shadow). */
 #dropbox-send-btn:disabled,
 .cfg-btn.fm-send-btn:disabled,
 .fm-verify-box button.glass-control:not(.fm-verify-cancel):disabled {
@@ -337,4 +405,5 @@
   border-color: var(--glass-send-border-disabled);
   color: color-mix(in srgb, var(--color-frame-text-dim) 50%, transparent);
   cursor: not-allowed;
+  box-shadow: var(--glass-send-stack);
 }
