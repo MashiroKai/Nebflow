@@ -140,7 +140,14 @@ class NodeBgGateE2ESpec extends CatsEffectSuite:
         workspace = ws.toString,
         rootSessionId = "nebula-root",
         projectName = "bg-e2e",
-        emitEvent = (_, _, _) => IO.unit
+        emitEvent = (_, _, _) => IO.unit,
+        // noderpt 批 A 段：本 fixture 主题 = 完成门腿 1（后台任务存活拦终态化）的
+        // 真实 E2E ⇒ 必须显式开腿 1（生产默认 **false = 封存**，见
+        // Defaults#BgGateCompletionHold；封存态行为由 NodeBgCompletionGateSpec#G9 覆盖）；
+        // 腿 2（node_report 未申报 hold）与本 fixture 主题正交 ⇒ 显式关
+        // （生产默认开；默认开行为由 NodeReportReminderSpec 覆盖）。
+        reportGateHold = Some(false),
+        bgGateCompletionHold = Some(true)
       )
       pd = ProjectDef(name = "bg-e2e", workspace = ws.toString, agentFile = (ws / "AGENTS.md").toString, createdAt = System.currentTimeMillis())
       rt = ProjectRuntime(pd, store, engine, system, res, None)
