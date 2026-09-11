@@ -41,6 +41,7 @@ class AgentConvergenceSpec extends FunSuite:
     val delivered = CoreProbe.toolList(mkDef("Nebula")).toSet
     val expected = Set(
       "Task", "ProjectCreate", "AgentControl",
+      "Delegate",                                           // 编排触发（2026-09-11 极简内核回归，+1）
       "TaskList",                                           // 任务编排（2026-09-06 TaskList 批：快变状态出记忆）
       "SendMessage",
       "Read", "Glob", "Grep",                                // 读三件（08:40 解禁四件；23:34 裁定收走写手）
@@ -50,7 +51,7 @@ class AgentConvergenceSpec extends FunSuite:
       "MemoryEdit"
     )
     assertEquals(delivered, expected,
-      "Nebula 面向 LLM 的工具清单必须逐项等于 §C.1 固定矩阵（2026-09-06 TaskList 批：+TaskList，作者 00:07 提议 + 00:11 首期无前端拍板，恰十四件；00:48 作者裁定：NodeList 摘除；2026-09-05 23:34 作者裁定：Nebula 回归纯编排；零 Issue）")
+      "Nebula 面向 LLM 的工具清单必须逐项等于 §C.1 固定矩阵（件数以 AgentCore.NebulaOrchestrationToolsExpectedSize 为单点来源：在飞 15）（2026-09-06 TaskList 批：+TaskList，作者 00:07 提议 + 00:11 首期无前端拍板，恰十四件；00:48 作者裁定：NodeList 摘除；2026-09-05 23:34 作者裁定：Nebula 回归纯编排；零 Issue）")
     assert(!delivered.contains("Issue"), "交付面零 Issue（2026-09-04 终裁退役）")
     // 钉死断言（2026-09-05 23:34 作者裁定）：Nebula 机制集不含 Bash、不含 Write、
     // 不含 Edit——变异验红锚（机制集加回任一件本组断言即红）
@@ -58,7 +59,7 @@ class AgentConvergenceSpec extends FunSuite:
     assert(!delivered.contains("Write"), "Nebula 无写手：Write 已移除（23:34 裁定）")
     assert(!delivered.contains("Edit"), "Nebula 无写手：Edit 已移除（23:34 裁定）")
 
-  test("Nebula 清单含读三件、零写手（Bash/Write/Edit 均不在）；零 NodeList、零 MultiEdit、零 Web 系、零旧体系四件、零 TeamTask/SubTask/NodeEdit/NodeCancel"):
+  test("Nebula 清单含读三件、零写手（Bash/Write/Edit 均不在）；零 NodeList、零 MultiEdit、零 Web 系、零旧体系三件、零 TeamTask/SubTask/NodeEdit/NodeCancel"):
     val delivered = CoreProbe.toolList(mkDef("Nebula")).toSet
     Set("Read", "Glob", "Grep").foreach { t =>
       assert(delivered.contains(t), s"读三件必须机制固定（2026-09-05 23:34 裁定）: $t")
@@ -67,7 +68,7 @@ class AgentConvergenceSpec extends FunSuite:
       assert(!delivered.contains(t), s"写手三件不得出现在 Nebula 交付面（23:34 裁定）: $t")
     }
     val forbidden = Set("Bash", "Write", "Edit", "MultiEdit", "NodeList",  // NodeList（00:48 裁定摘除，dispatcher 面不受影响）
-      "Mail", "Delegate", "FlowTrigger", "FlowExecute",     // 旧体系四件（2026-09-05 裁定退役）
+      "Mail", "FlowTrigger", "FlowExecute",                 // 旧体系三件维持退役（Delegate 2026-09-11 以极简内核形态回归，不在此列）
       "WebSearch", "WebFetch", "Curl",
       "TeamTaskCreate", "TeamTaskUpdate", "TeamTaskList", "SubTask",
       "NodeEdit", "NodeCancel", "FlowReport", "Load")
