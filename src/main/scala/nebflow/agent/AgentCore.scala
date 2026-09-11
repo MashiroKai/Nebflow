@@ -2185,13 +2185,15 @@ object AgentCore:
    * Nebula-exclusive tools: stripped from every identity except per
    * exclusiveToolsFor (Nebula keeps all; dream admitted for MemoryEdit only —
    * see DreamAdmittedTools below).
-   * - Schedule: session-scoped scheduled tasks
-   * - Delegate: 调度器/根 agent 专用——指派 standalone agent。
+   * - Delegate: Nebula 专属执行件（极简内核，2026-09-11 以新形态回归——旧
+   *   「指派 standalone agent」语义已退役，目标恒为内置 `kernel` def）。
    *   Team 成员委派走 SubTaskTool（self-clone + ephemeral）。
    *   Flow 触发不在此列——FlowTrigger 由 agent.json flows 白名单驱动注入。
-   *   2026-09-05 08:40 作者裁定后 Delegate 已不在 Nebula 固定面
-   *   （NebulaOrchestrationTools 不再携带）——本集对非 Nebula 的防逃逸剥离
-   *   语义防御性保留（legacy team/flow 成员若声明 Delegate 仍被剥）。
+   *   2026-09-05 08:40 作者裁定曾把 Delegate 移出 Nebula 固定面（旧 Team/Flow
+   *   体系过渡件退出）；2026-09-10 作者指令 + 2026-09-11 R2-c 裁定使其以
+   *   「极简内核」形态回归 NebulaOrchestrationTools（不携带任何 Team/Flow/Mail
+   *   语义）。本集对非 Nebula 的防逃逸剥离语义不变（legacy team/flow 成员若
+   *   声明 Delegate 仍被剥）。
    * - AgentControl: 后台 agent 管控（list/status/cancel/restart，spec §4 安全
    *   边界矩阵——危险能力只交给根调度者）。
    * - Issue/CheckIssues（已退役，2026-09-04 作者终裁）：不再在本集——工具整体
@@ -2271,8 +2273,17 @@ object AgentCore:
     * 拍板）：+TaskList——Nebula 专属持久任务清单（快变状态出记忆、入
     * ~/.nebflow/tasks.json 运行时数据层；生命周期节点注入一行 open 摘要，
     * MemoryHygieneSignal 先例）——本集恰十四件。
+    * 2026-09-11 Delegate 恢复批（作者 2026-09-10 指令 + R2-c 裁定 U3/U6）：
+    * +Delegate（极简内核入口，目标恒为内置 `kernel` def——内核工具面 =
+    * KernelFixedTools 恰七件 = BaseTools 六件 + AskUserQuestion）。本件是**加法**
+    * 而非翻案：08:40 裁定的理由（旧 Team/Flow 双轨过渡件退出）不变，回归的
+    * Delegate 不携带任何 Team/Flow/Mail 语义；Mail/FlowTrigger/FlowExecute
+    * 维持退役。**在飞实测件数 = 15**（同一清单常量即单点来源，
+    * NebulaOrchestrationToolsExpectedSize）；**终态目标 14** 由「TransferFile
+    * 退役批（−1）」落地后达成——两批同窗抵平（+1 −1）。本批不得把 15 写成 14。
     * 分组与矩阵行一一对应：
     *   - 编排触发：Task / ProjectCreate / AgentControl（list/status/cancel/restart）
+    *     / Delegate（2026-09-11 极简内核回归）
     *   - 任务编排：TaskList（2026-09-06 TaskList 批；NebulaExclusiveTools 同批
     *     防声明逃逸——dispatcher/general/"*" 一律剥离）
     *   - 通信：SendMessage（好友功能非旧体系，保留机制固定）
@@ -2297,6 +2308,11 @@ object AgentCore:
     "Task",
     "ProjectCreate",
     "AgentControl",
+    // Delegate（2026-09-11 恢复批）：极简内核入口——无项目归属的单次执行任务。
+    // 是**编排件**不是能力件：执行能力 = 内核的 BaseTools 六件（早已存在于
+    // general/节点/legacy standalone），本件只新增一个入口。判据（哪些任务走
+    // Delegate）在工具 description 与本常量注释里钉死，不新增项目触发通道。
+    "Delegate",
     // 任务编排（2026-09-06 TaskList 批：快变状态出记忆；首期无前端）
     "TaskList",
     // 通信（好友功能非旧体系）
@@ -2322,7 +2338,16 @@ object AgentCore:
     * buildAllowedToolSet 中整体失效（base=∅）——机制固定不可配置（裁定 11），
     * 存量 agent.json 里的文件工具声明（8684acd Nebula 六件 / dispatcher Write/
     * Edit）自动变 no-op，无需定义层先行迁移。 */
-  val ConvergedAgentNames = Set("Nebula", "project-dispatcher", "general")
+  val ConvergedAgentNames = Set("Nebula", "project-dispatcher", "general", "kernel")
+
+  /** Nebula 工具面**在飞实测件数**（单点来源：所有件数断言只许引用本常量，
+    * 不得各处写裸数字）。
+    *
+    * 值 = 15 = `NebulaOrchestrationTools` 现成员数（2026-09-11 Delegate 恢复批
+    * +1）。**终态目标 = 14**：与 TransferFile 退役批（−1）同窗抵平后达成；该批
+    * 未落地前本批树内实测值恒为 15。差异已在恢复批结果里显式登记（口径冲突 =
+    * 待协调项），**不得为凑「14」放宽/改写断言**。 */
+  val NebulaOrchestrationToolsExpectedSize: Int = 15
 
   /** 分发器固定工具集（§C.1）：Node 四件（List/Edit/Cancel/Message）+ 读四件
     * （Read/Glob/Grep/Bash，读现状 + git worktree 管理）。不给 Write/Edit（分发器只
@@ -2365,6 +2390,24 @@ object AgentCore:
     "Grep",
     "Bash"
   )
+
+  /** 极简内核（Delegate 内核）固定工具面（2026-09-11 恢复批，R2-c 裁定）：
+    * 恰七件 = BaseTools 六件 + AskUserQuestion。
+    *
+    * - 六件 = `BaseTools`（:2360-2367）**同集合** = `RemoteExecutor.remoteableTools`
+    *   同集合 ⇒ `device` 参数由 registry.scala 逐件 augmentSchema 自动注入，
+    *   零改动拿到跨设备路径。
+    * - +AskUserQuestion（R2-c，作者 2026-09-11 拍板采纳）：内核遇「必须用户拍板
+    *   才能继续」的信息（凭据/目标/口径）可直接提问，卡片渲染在派发方窗口，
+    *   来源标注 `subagent · <任务摘要>`（U3）。
+    * - 显式**不含**：Delegate/SubTask/Task（叶子纪律——内核不再派生）、Mail
+    *   （已退役）、AgentControl/Card/Pop（管控与用户面归 Nebula）、TaskBoard/
+    *   node_report/Node*/TaskList/MemoryEdit/Schedule（项目与编排面）、
+    *   plugin/MCP 工具（极简 = 机制固定、零配置面，裁定 11）。
+    *
+    * 零配置面：内核名在 ConvergedAgentNames 内 ⇒ agents/kernel/agent.json 的
+    * tools/mcpServers 声明整体失效，本常量即唯一来源。 */
+  val KernelFixedTools: Set[String] = BaseTools + "AskUserQuestion"
 
   /** 通用模版固定工具集（§C.1/§C.5）：恰七件 = BaseTools 六件 + AskUserQuestion。
     *
@@ -2429,6 +2472,10 @@ object AgentCore:
             AgentCore.NebulaOrchestrationTools
           case "project-dispatcher" => AgentCore.DispatcherFixedTools
           case "general"            => AgentCore.GeneralFixedTools
+          // 极简内核（2026-09-11 恢复批）：机制固定单点，与 general/Nebula 同款
+          // 先例；不经 legacyFixedTools 的 catch-all（该路径注释自陈「随阶段
+          // 2e/3 归档一并退役」，依赖它有漂移风险）。
+          case "kernel"             => AgentCore.KernelFixedTools
           case _                    => legacyFixedTools(agentDef)
 
   /** 双轨期 legacy 固定工具（team/flow 分支 + standalone BaseTools catch-all）。
