@@ -159,7 +159,26 @@ class AgentLibrary(
               voiceEnabled = j.voice.getOrElse(false),
               model = Some(resolvedModel),
               preset = j.preset,
-              category = j.category.getOrElse("standalone"),
+              // ── 收敛名 category 收敛（2026-09-11 agentdef-tidy 批，安全优先）──
+              // 本行是全树**唯一**读 agent.json `category` 的位置（EntityLoader
+              // 按路径推断、不读 JSON）。收敛集四定义（AgentCore.ConvergedAgentNames
+              // = Nebula / project-dispatcher / general / kernel）无视 JSON 声明，
+              // category 恒 "standalone"。
+              //
+              // 不堵即后门：给任一 keeper 写 `"category":"team"` 后，per-turn
+              // 重载路径（ContextRefresher.loadCurrentDef → agentLibrary.get →
+              // loadFromDir）会把 category 带进 ① AgentCore.fixedToolsFor 首分支
+              // （`case "team" | "flow" => legacyFixedTools` → Mail/SubTask/TeamTask*）
+              // 与 ② PromptContext.agentCategory → PromptSections order-395 身份段
+              // （`agentCategory == "team"` ⇒ team 成员身份块）。今天无人走，结构上开着。
+              //
+              // 非收敛名逐字节 parity（team/flow/legacy standalone 的推断、工具面、
+              // 身份段零变化）：`category` 解析能力本身保留（EntityTypes 解码 /
+              // EntityLoader 路径推断 / 面板回显不受影响）。
+              // 纵深 = AgentCore.fixedToolsFor 同款收敛名短路（唯一注入点兜底）。
+              category =
+                if AgentCore.ConvergedAgentNames.contains(j.name) then "standalone"
+                else j.category.getOrElse("standalone"),
               mcpServers = j.mcpServers.getOrElse(Nil),
               skills = j.skills.getOrElse(Nil),
               flows = j.flows.getOrElse(Nil)
