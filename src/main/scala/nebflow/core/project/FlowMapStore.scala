@@ -620,14 +620,27 @@ object FlowMapStore:
     * 成员（归档区成员恒终态天然放行，资格实际由活动成员决定，sweep §4.3-3）。
     * 注意：前端 flowMapArchive.js chainEligible 仍是 20:38 旧判据镜像，本批未同步
     * （P1 引擎单侧先行，前端批跟进）——后端归档先行的 ≤30s 窗口内前端派生链仍按旧
-    * 判据留主图，nodeRemoved 墓碑幂等兜底出图，无归档泄漏。 */
+    * 判据留主图，nodeRemoved 墓碑幂等兜底出图，无归档泄漏。
+    *
+    * **销毁窗口成员拒收**（noderpt 批 F1，2026-09-11 复核 D1 修复）：成员带
+    * `destroyAt`（终态延迟销毁窗口**未收殓**）⇒ 整分量不可归档。理由：窗口语义
+    * 「终态一律存活 30 分钟再销毁」与归档节拍（TtlTick 30s）在**链尾节点**上必然
+    * 冲突——链全终态即出库，而销毁扫描腿 `NodeEngine.sweepDestroyWindows` 只遍历
+    * **活动区** snapshot ⇒ 被搬进归档区的成员到点永不收殓，进程/persistent 任务
+    * 永久泄漏（正是本批要消灭的孤儿形态），且重启后的禁 spawn 表自愈也读不到它。
+    * 判据形态 = 「窗口未收殓不得出库」：到点收殓会清 `destroyAt`（`destroyNodeSessions`）
+    * ⇒ 下一拍正常归档（**不永久阻塞出库**）；窗口内被重激活则由
+    * `withdrawDestroyWindow` 清字段 ⇒ 同理恢复资格。cancelled 放行分支不受影响
+    * （两者独立判据，本条件只加不减）。 */
   def chainArchivable(members: Iterable[NodeDef]): Boolean =
     members.forall { n =>
-      n.status match
-        case s if ChainTerminalStatuses.contains(s) => true
-        case NodeLifecycle.Cancelled                => true
-        case NodeLifecycle.Failed                   => n.notifySentAt.isDefined
-        case _                                      => false
+      if n.destroyAt.isDefined then false // 窗口未收殓：不得出库（见上文「销毁窗口成员拒收」）
+      else
+        n.status match
+          case s if ChainTerminalStatuses.contains(s) => true
+          case NodeLifecycle.Cancelled                => true
+          case NodeLifecycle.Failed                   => n.notifySentAt.isDefined
+          case _                                      => false
     }
 
   /** 拓扑链派生单点（链级抽象 P0 · spec §2.1；C4 起取代旧时间批聚簇 clusterBatches
