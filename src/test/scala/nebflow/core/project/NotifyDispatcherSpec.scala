@@ -174,14 +174,19 @@ class NotifyDispatcherSpec extends CatsEffectSuite:
       .handleError(_ => Nil)
 
   /** 单测装配：真实 FlowMapStore（temp 盘）+ stub 触发/升级捕获（failed 窗口参数
-    * 可注入 tiny 值验证状态机，同 FeedbackRouterSpec 先例）。 */
+    * 可注入 tiny 值验证状态机，同 FeedbackRouterSpec 先例）。
+    *
+    * Q4 打包窗口（2026-09-11）默认关闭（`windowMs = 0` = 同步逐条触发）：本 spec
+    * 验证的是**护栏状态机**（去重/分账预算/窗口熔断），不模拟时序——窗口开着会让
+    * 断言变成 5s 墙钟等待（判据从确定性变 flaky）。窗口行为由窗口专项断面验证。 */
   private def mkUnit(
     name: String,
     budgetMax: Int = DispatchNotify.DefaultBudget,
     failedBudgetMax: Int = DispatchNotify.DefaultBudget,
     failedWindowMs: Long = DispatchNotify.FailedWindowMs,
     failedCooldownMs: Long = DispatchNotify.FailedCooldownMs,
-    failedWindowThreshold: Int = DispatchNotify.FailedWindowThreshold
+    failedWindowThreshold: Int = DispatchNotify.FailedWindowThreshold,
+    windowMs: Long = 0L
   ): IO[(FlowMapStore, DispatchNotify, Ref[IO, List[String]], Ref[IO, List[String]], os.Path)] =
     val ws = tempRoot / s"unit-$name-${scala.util.Random.nextInt(100000)}"
     os.makeDir.all(ws)
@@ -198,7 +203,8 @@ class NotifyDispatcherSpec extends CatsEffectSuite:
         failedBudgetMax = failedBudgetMax,
         failedWindowMs = failedWindowMs,
         failedCooldownMs = failedCooldownMs,
-        failedWindowThreshold = failedWindowThreshold
+        failedWindowThreshold = failedWindowThreshold,
+        windowMs = windowMs
       )
     yield (store, dn, triggered, escalated, ws)
 
@@ -443,9 +449,10 @@ class NotifyDispatcherSpec extends CatsEffectSuite:
       _ <- dn.redeliver()                                  // 再扫：全部已标记 → 零触发
       count3 <- triggered.get.map(_.size)
       // 重启模拟：全新实例（进程态清零），持久标记仍在 → 不重触发
+      // Q4：windowMs = 0（同步触发）——本 spec 判据是护栏状态机，不模拟时序。
       dn2 = new DispatchNotify(store, tempRoot.toString, store.project,
         escalate = (_, _) => IO.unit, emitUpdated = (_: NodeDef) => IO.unit,
-        trigger = _ => IO.unit, budgetMax = DispatchNotify.DefaultBudget)
+        trigger = _ => IO.unit, budgetMax = DispatchNotify.DefaultBudget, windowMs = 0L)
       _ <- dn2.redeliver()
       count4 <- triggered.get.map(_.size)
       r3 <- store.getNode("n-r3").map(_.get)
@@ -632,10 +639,11 @@ class NotifyDispatcherSpec extends CatsEffectSuite:
       _ <- dn.redeliver()
       count2 <- triggered.get.map(_.size)
       // 重启模拟：全新实例（进程态清零），持久标记仍在 → 不重触发
+      // Q4：windowMs = 0（同步触发）——判据是护栏状态机，不模拟时序。
       triggered2 <- Ref.of[IO, List[String]](Nil)
       dn2 = new DispatchNotify(store, tempRoot.toString, store.project,
         escalate = (_, _) => IO.unit, emitUpdated = (_: NodeDef) => IO.unit,
-        trigger = t => triggered2.update(_ :+ t), budgetMax = DispatchNotify.DefaultBudget)
+        trigger = t => triggered2.update(_ :+ t), budgetMax = DispatchNotify.DefaultBudget, windowMs = 0L)
       _ <- dn2.redeliver()
       count3 <- triggered2.get.map(_.size)
       fr1 <- store.getNode("n-fr1").map(_.get)
