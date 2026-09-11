@@ -412,6 +412,28 @@ object Defaults:
   def StuckShadowMode: Boolean =
     sys.props.getOrElse("nebflow.stuck.shadow", "false").trim.equalsIgnoreCase("true")
 
+  // ---- stuck 判据序 / 正信号门（stuck 自动恢复批 P1，2026-09-11 作者裁定 R-3）----
+
+  /**
+   * 正信号（**进展证据**）新鲜窗（默认 60s = 2× 工具活动桥采样间隔 30s）。
+   *
+   * 语义（作者裁定 R-3 的口径，**方向性是全部要害**）：正信号 = 上一个采样窗内
+   * 该会话的在飞工具**确有推进**（stdout 行数增长 ∨ 单窗 CPU 增量 > 活动桥阈值）。
+   * 结构化来源 = 工具活动桥采样点（[[nebflow.agent.AgentCore.markToolProgress]]），
+   * **不解析任何自有日志**（设计 §2.3 原则 2）。
+   *
+   * 判据消费方向（唯一）：
+   *   - **只阻止判死**：`currentToolStartedAt > 0 ∧ toolPhaseMs ≤ 有效阈值 ∧ 正信号新鲜`
+   *     ⇒ 归**类② 假阳性**，本拍不动作、只记 `suspect`；
+   *   - **绝不促成判死**：判死仍是 [[TaskStuckWatcher.assessDetailed]] 的两条不等式，
+   *     正信号不出现在任何「满足即判死」的合取项里 ⇒ **不构成对红线 R6-4
+   *     「判据不引进程 CPU」的放松**（作者 2026-09-11 已确认）。
+   *
+   * system prop `nebflow.stuck.progressSignalWindowMs`，每次判定现读（kill-switch 先例）。
+   */
+  def StuckProgressSignalWindowMs: Long =
+    sys.props.getOrElse("nebflow.stuck.progressSignalWindowMs", "60000").toLong
+
   /**
    * 流式请求的 per-request HttpClient 开关（设计 D-1 方案 A）：默认 true——
    * sendStream 每个 attempt 独立 HttpClient + backend + dispatcher，transport

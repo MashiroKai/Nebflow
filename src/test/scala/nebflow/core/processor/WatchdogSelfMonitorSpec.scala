@@ -414,9 +414,20 @@ class WatchdogSelfMonitorSpec extends CatsEffectSuite:
     val shadow = driveShadowArm("shd", shadow = true).unsafeRunSync()
     val (cRows, cBridge, cCmds, cAborted) = control
     val (sRows, sBridge, sCmds, sAborted) = shadow
-    // 对照：生产链未被误关（L1 真硬取消 + 至少一条桥事件在 L3 拍）
+    // 对照：生产链未被误关（L1 真硬取消在飞 LLM）
+    //
+    // ⚠ 2026-09-11 判据序改造（stuck 自动恢复批 P1，作者裁定 R-3）后的口径更新：
+    // 本臂刻意在会话上注册了一条**在飞 LLM 请求**（用作 L1 硬取消的可观测量）⇒ 按
+    // 新判据序 [[TaskStuckWatcher.classify]] 的第一档，该会话三拍**全部**归**类④
+    // provider hang**（`inflightFor > 0`）。类④ 的硬约束（任务书负控③）=
+    // 「不执行 L2 进程 kill / L3」⇒ 本臂**不应**再出现 L3 的桥 Cancelled——这正是
+    // 本断言从「L3 必须发桥 Cancelled」改为「类④ 不得发桥 Cancelled」的原因。
+    // L2/L3 腿本身的覆盖不受影响：`l3-ineffective` 用例与本 spec 外的
+    // `node-l3ok/node-l3fail` 用例都是**无在飞请求**的类① 会话，L3 腿照常开火；
+    // 本用例保留的三条 `stuck-fire` 行（L1/L2/L3 三拍）亦证明升级链未被关掉。
     assert(cAborted, "shadow=false 臂：L1 必须真实硬取消在飞 LLM（证明开关边界正确）")
-    assert(cBridge.exists(_.isInstanceOf[AgentEvent.Cancelled]), s"shadow=false 臂：L3 必须发桥 Cancelled，得 $cBridge")
+    assert(!cBridge.exists(_.isInstanceOf[AgentEvent.Cancelled]),
+      s"shadow=false 臂：类④（inflight>0）不得发桥 Cancelled——节点级 L3 腿对类④ 被结构性跳过，得 $cBridge")
     // 守门：shadow=true 全部破坏性动作被禁
     assertEquals(sBridge, Nil, "shadow=true 不得发任何 AgentEvent（含 bridgeCancelled）")
     assertEquals(sCmds, Nil, "shadow=true 不得发任何 AgentCommand")
