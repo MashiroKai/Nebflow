@@ -42,6 +42,8 @@ import scala.concurrent.duration.*
  *  - R5 quiescent 档：阶梯耗尽后不再注入、只按间隔写 stage=quiescent 事件、
  *    reminderCount 不递增、节点仍 Running（永不 failed）。
  *  - R6 关闭腿 2（reportGateHold=false）⇒ 未申报照常放行（今天的文本锚定降级面）。
+ *  - R11 释放唤醒（批 F2 = 复核 D2 修复）：桥观测不到的申报（`NodeMessage` 重入轮）由
+ *    阶梯拍点的唤醒腿放行 ⇒ 终态化 + 投递，不再「清表即静默搁死」。
  *
  * 说明：扫描腿的节拍源 = `ProjectActor.TtlTick`（30s，生产）；本 spec 直接调用
  * `NodeEngine.remindUnreportedNodes()` 逐拍驱动（确定性；节拍接线在 ProjectActor
@@ -663,6 +665,66 @@ class NodeReportReminderSpec extends CatsEffectSuite:
       assertEquals(fields.get("delivered"), Some("true"))
       assert(reqs.exists(_.contains(NodeEngine.NodeReportReminderPrefix)),
         "the reminder must be delivered into the live session's context")
+  }
+
+  // ── R11 释放唤醒（noderpt 批 F2 = 复核 D2 修复）：申报到了但桥未观测 ⇒ 必须放行 ──
+  //
+  // 病灶复现（复核探针 P3 同构）：节点交棒未申报 ⇒ 腿 2 hold + 起表；分发器 `NodeMessage`
+  // 重入（`ImmediateInput`，replyTo=None ⇒ 该轮**不产生 `Completed` 到桥**，⑧-1 根因）；
+  // 该轮里 agent 调 `node_report(pass)` ⇒ 申报进表、桥看不见。改前阶梯 `peek` 命中分支
+  // **只清表不放行** ⇒ 计时清零、节点永久 Running、零提醒零投递（D2）。
+  // 本用例钉死修复后的契约：阶梯拍到点时命中申报槽 ⇒ **唤醒桥复检 ⇒ 放行 ⇒ 终态化 + 投递**。
+
+  test("R11 (F2/D2): a declaration made on a NodeMessage turn is released by the wake (no silent stall)") {
+    // 阶梯第 1 档 700ms（第 2 档远在 3s ⇒ 单次扫描必然恰好命中第 1 档）
+    setLadder("700,3000,4000", 3, "600000")
+    val ws = tempRoot / "ws-r11"
+    os.makeDir.all(ws)
+    val system = ActorSystem(s"nrr-r11-${scala.util.Random.nextInt(100000)}")
+    // declareOnTurn = 2：第 1 轮（首轮）不申报 ⇒ hold；第 2 轮 = NodeMessage 重入轮申报 pass
+    val llm = StubLlm(declareOnTurn = 2)
+    for
+      res <- mkResources(system, tempRoot, llm.handle)
+      _ <- IO(llm.res = res)
+      recorded <- registerRecorder(res, system, "nebula-root")
+      rt <- mountProject("nrr-r11", ws, system, res)
+      _ <- createNode("nrr-r11", ws, "reentry-b", "result-REENTRY", res, system)
+      sid <- waitIdle(res)
+      _ <- waitUntil(20.seconds)(byName(rt, "reentry-b").map(_.reportPendingSince.isDefined))
+      held <- byName(rt, "reentry-b")
+      // 分发器 NodeMessage 重入（ImmediateInput ⇒ 本轮无 bridge Completed）
+      sent <- rt.engine.sendNodeMessage(held.id, "please continue and report")
+      _ <- waitUntil(20.seconds)(NodeReportRegistry.peek(sid).map(_.isDefined))
+      declared <- NodeReportRegistry.peek(sid)
+      _ <- waitUntil(20.seconds)(res.agentRegistry.get.map(_.get(sid).exists(_.status == nebflow.agent.AgentStatus.Idle)))
+      _ <- IO.sleep(900.millis) // 越过第 1 档
+      _ <- scan(rt)             // 第 1 拍：peek 见申报 ⇒ 释放唤醒（桥复检放行）
+      _ <- waitUntil(30.seconds)(byName(rt, "reentry-b").map(n => NodeLifecycle.Terminal.contains(n.status)))
+      done <- byName(rt, "reentry-b")
+      imms <- recordedImmediate(recorded)
+      events <- readEvents(ws)
+      _ <- system.stopAll.handleErrorWith(_ => IO.unit)
+    yield
+      assert(sent.isRight, s"NodeMessage to a held Running node must be accepted: $sent")
+      assert(declared.isDefined, "the re-entered turn must have registered the node_report declaration")
+      assertEquals(held.status, NodeLifecycle.Running, "the hand-off without a declaration holds the node")
+      assertEquals(done.status, NodeLifecycle.Completed,
+        "a declaration the bridge cannot observe must still be released (F2: no silent permanent Running)")
+      assertEquals(done.result, Some("reminder-turn-ack"), "result = the wake turn's text")
+      assert(done.reportPendingSince.isEmpty, "the bridge's release clears the clock (清表与放行同点)")
+      assertEquals(done.reportReminderCount, 0, "rung counter cleared with the clock")
+      assert(imms.exists(_.text.contains("[Node 'reentry-b' completed]")),
+        "the released node must deliver its result downstream")
+      // 释放腿的留痕（不是提醒腿）：release-wake 事件 1 条、delivered=true、零提醒事件
+      val wakes = events.filter(l => l.contains(s"\"${NodeEngine.NodeReportReleaseWakeEventType}\""))
+      assertEquals(wakes.size, 1, s"exactly one release-wake event expected: ${events.mkString("|").take(600)}")
+      assertEquals(
+        NodeEngine.parseReportMissingSummary(
+          io.circe.parser.parse(wakes.head).toOption.flatMap(_.hcursor.get[String]("summary").toOption).getOrElse("")
+        ).get("delivered"),
+        Some("true"), s"the wake must be delivered to the live session: ${wakes.head}")
+      assertEquals(reminderEvents(events), Nil,
+        s"a declared node must not consume reminder rungs: ${events.mkString("|").take(400)}")
   }
 
 end NodeReportReminderSpec
