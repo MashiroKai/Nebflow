@@ -10,7 +10,7 @@ import java.nio.file.Files
 /**
  * SeedService cold-start 播种引擎验证（cold-start seed 批 2026-09-07）。
  *
- * 覆盖定稿四项：① fresh home 完整播种（三 keeper + 3 插件 + projects/general）、
+ * 覆盖定稿四项：① fresh home 完整播种（三 keeper + 8 插件 + projects/general）、
  * ② 幂等 / 不覆盖用户编辑、③ fresh-home 守卫（已有用户数据 → 只写 marker 不播种）、
  * ④ 升级 add-only（低版本 marker + 已有文件 → 只补缺失，不重写）。
  *
@@ -61,17 +61,31 @@ class SeedServiceSpec extends FunSuite:
       "general preset=general")
     assert(gen.hcursor.downField("name").as[String].toOption.contains("general"))
 
-    // 现行默认插件集 = {visual-report, slideblocks, nebflow-plugin-creator}
-    // （c7501470 收缩后经 nebflow-plugin-creator 批扩为 3 包，2026-09-10）：目录就位 + trusted
-    for name <- List("visual-report", "slideblocks", "nebflow-plugin-creator")
+    // 现行默认插件集 = 8 包（manifest.json:7-14）：c7501470 收缩后经 nebflow-plugin-creator
+    // 批扩为 3 包（2026-09-10），seed7 批再扩 5 包（nebflow-qa / nebflow-frontend-dev /
+    // engineering-methods / explorer-toolkit / design-spec，2026-09-11）——目录就位 + trusted
+    for name <- List(
+        "visual-report",
+        "slideblocks",
+        "nebflow-plugin-creator",
+        "nebflow-qa",
+        "nebflow-frontend-dev",
+        "engineering-methods",
+        "explorer-toolkit",
+        "design-spec")
     do
       assert(os.exists(home / "plugins" / name / "plugin.json"), s"plugin '$name'/plugin.json present")
       assert(PluginRegistry.resolve(name).unsafeRunSync().isRight, s"plugin '$name' trusted")
-    // 收缩语义负断言：explorer-toolkit / design-spec 已移出 manifest → 不得播种
-    for name <- List("explorer-toolkit", "design-spec")
+    // 负向守卫（改为仍成立的不变量）：manifest 是播种的唯一驱动源（SeedService.runSeed 逐条
+    // 遍历 manifest.items），且 seed/plugins/ 资源树 8 目录已全在 manifest 中（该相等性由
+    // SeedManifestCoverageSpec 双向锚定）⇒ 名字既不在 manifest 也不在种子树者绝不落 home。
+    // 原「explorer-toolkit / design-spec 已移出默认集 → 不得播种」负断言随二包回归默认集
+    // 语义失效，已删除；现取「不存在的插件名」+ 「A4 登记为不入种子树的 design-cards」两者守门。
+    for name <- List("no-such-plugin-in-manifest", "design-cards")
     do
-      assert(!os.exists(home / "plugins" / name), s"plugin '$name' NOT seeded (removed from default set)")
-    // skill 包实际复制实证（3 包默认集中抽验两包，plugin.json 锚点 + 整目录递归）
+      assert(!os.exists(home / "plugins" / name),
+        s"plugin '$name' NOT seeded (absent from manifest + seed/plugins tree)")
+    // skill 包实际复制实证（8 包默认集中抽验两包，plugin.json 锚点 + 整目录递归）
     assert(os.exists(home / "plugins" / "visual-report" / "skills" / "visual-report" / "SKILL.md"),
       "visual-report skill copied")
     assert(os.exists(home / "plugins" / "slideblocks" / "skills" / "slideblocks" / "SKILL.md"),
@@ -94,9 +108,9 @@ class SeedServiceSpec extends FunSuite:
     val state = io.circe.parser.parse(os.read(marker)).toOption.get
     assert(state.hcursor.downField("version").as[String].toOption.contains("1.0.0"))
     assert(state.hcursor.downField("items").as[List[String]].toOption.exists(_.nonEmpty), "items recorded")
-    // 2 agents + 3 plugins（visual-report / slideblocks / nebflow-plugin-creator） + 1 project = 6
-    assert(state.hcursor.downField("items").as[List[String]].toOption.exists(_.size == 6),
-      "marker records 6 items (2 agents + 3 plugins + 1 project)")
+    // marker 记录 = 本轮实际写入 item 数：3 agents + 8 plugins（默认插件集全量） + 1 project = 12
+    assert(state.hcursor.downField("items").as[List[String]].toOption.exists(_.size == 12),
+      "marker records 12 items (3 agents + 8 plugins + 1 project)")
 
   // ── ② 幂等 / 不覆盖用户编辑 ───────────────────────────────
   test("re-seed is idempotent and never overwrites user edits"):
@@ -157,7 +171,14 @@ class SeedServiceSpec extends FunSuite:
     assert(os.exists(home / "plugins" / "visual-report" / "plugin.json"), "missing plugin added")
     assert(os.exists(home / "plugins" / "slideblocks" / "plugin.json"), "missing plugin added")
     assert(os.exists(home / "plugins" / "nebflow-plugin-creator" / "plugin.json"), "missing plugin added")
-    assert(!os.exists(home / "plugins" / "explorer-toolkit"), "shrink-removed plugin not replanted on upgrade")
+    // 升级 add-only 的语义是「补齐 manifest 全集」，不是「冻结旧集」：seed7 批新入 manifest 的
+    // 5 包（manifest.json:10-14）在升级 run 后同样被补种（抽验其中的 explorer-toolkit / design-spec）。
+    // 原「shrink-removed plugin not replanted on upgrade」负断言依赖「二包在 manifest 之外」，
+    // 该前提已失效（二包回归默认集）→ 改为正向补种断言。
+    for name <- List("explorer-toolkit", "design-spec")
+    do
+      assert(os.exists(home / "plugins" / name / "plugin.json"),
+        s"newly-declared plugin '$name' replanted on upgrade run")
     assert(os.exists(home / "projects" / "general" / "project.json"), "missing project added")
     // marker 升级到当前版本
     val marker = io.circe.parser.parse(os.read(home / ".seed-state.json")).toOption.get
