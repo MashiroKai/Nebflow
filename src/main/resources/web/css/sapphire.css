@@ -252,3 +252,89 @@
     0 2px 8px var(--glass-control-glow-hover),
     0 4px 12px var(--glass-control-shadow-hover);
 }
+
+/* ── Neutral-gray send chips — 4-state ramp ─────────────────────────────
+   The three secondary "send" affordances share one neutral gray material:
+     ① #dropbox-send-btn            dropbox panel   (dropbox.js:91)
+     ② .cfg-btn.fm-send-btn         friend DM bar   (messages.js:320)
+     ③ .fm-verify-box 内的发送键     contacts        (contacts.js:514)
+   Before this block ①② had rest + hover (Pattern B above) and ③ rest only,
+   so :active / :disabled were visually silent; ③ also fell back to the UA
+   defaults for color / font-family / border-radius (no global `button`
+   reset exists anywhere in css/) and was also missing hover.
+   Gray only: this family must never be merged into the green primary-send
+   family (#send-btn, input.css:793-874 — wechat solid green, owned by the
+   green batch). The shared --glass-control-* ramp is
+   deliberately left untouched so Pattern A and the rest of Pattern B keep
+   their material; the four rest values repeat today's --glass-control-*
+   values, so the rest rendering stays byte-identical to before.
+   Ramp (author ruling 2026-09-11 P4): light fill .45 / .58 / .66 / .18,
+   light border .40 / .50 / .56 / .20; dark fill .05 / .11 / .15 / .03,
+   dark border .08 / .12 / .15 / .05. */
+:root {
+  --glass-send-bg: rgba(255, 255, 255, 0.45);
+  --glass-send-bg-hover: rgba(255, 255, 255, 0.58);
+  --glass-send-bg-active: rgba(255, 255, 255, 0.66);
+  --glass-send-bg-disabled: rgba(255, 255, 255, 0.18);
+  --glass-send-border: rgba(255, 255, 255, 0.40);
+  --glass-send-border-hover: rgba(255, 255, 255, 0.50);
+  --glass-send-border-active: rgba(255, 255, 255, 0.56);
+  --glass-send-border-disabled: rgba(255, 255, 255, 0.20);
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --glass-send-bg: rgba(255, 255, 255, 0.05);
+    --glass-send-bg-hover: rgba(255, 255, 255, 0.11);
+    --glass-send-bg-active: rgba(255, 255, 255, 0.15);
+    --glass-send-bg-disabled: rgba(255, 255, 255, 0.03);
+    --glass-send-border: rgba(255, 255, 255, 0.08);
+    --glass-send-border-hover: rgba(255, 255, 255, 0.12);
+    --glass-send-border-active: rgba(255, 255, 255, 0.15);
+    --glass-send-border-disabled: rgba(255, 255, 255, 0.05);
+  }
+}
+
+/* rest */
+#dropbox-send-btn,
+.cfg-btn.fm-send-btn,
+.fm-verify-box button.glass-control:not(.fm-verify-cancel) {
+  background: var(--glass-send-bg);
+  border-color: var(--glass-send-border);
+}
+/* ③ only: take ①'s text + geometry declarations (.cfg-btn, sidebar.css:
+   1150-1157). The cancel button in the same box keeps its own styling. */
+.fm-verify-box button.glass-control:not(.fm-verify-cancel) {
+  color: var(--color-frame-text-dim);
+  font-family: inherit;
+  border-radius: 5px;
+  transition: background 0.15s, border-color 0.15s, color 0.15s;
+}
+
+/* hover */
+#dropbox-send-btn:hover,
+.cfg-btn.fm-send-btn:hover,
+.fm-verify-box button.glass-control:not(.fm-verify-cancel):hover {
+  background: var(--glass-send-bg-hover);
+  border-color: var(--glass-send-border-hover);
+}
+
+/* active */
+#dropbox-send-btn:active,
+.cfg-btn.fm-send-btn:active,
+.fm-verify-box button.glass-control:not(.fm-verify-cancel):active {
+  background: var(--glass-send-bg-active);
+  border-color: var(--glass-send-border-active);
+}
+
+/* disabled — declared last on purpose: :disabled may co-match :hover
+   (equal specificity ⇒ source order decides), and disabled text is the
+   dim text token at half alpha, so we never rely on element opacity. */
+#dropbox-send-btn:disabled,
+.cfg-btn.fm-send-btn:disabled,
+.fm-verify-box button.glass-control:not(.fm-verify-cancel):disabled {
+  background: var(--glass-send-bg-disabled);
+  border-color: var(--glass-send-border-disabled);
+  color: color-mix(in srgb, var(--color-frame-text-dim) 50%, transparent);
+  cursor: not-allowed;
+}

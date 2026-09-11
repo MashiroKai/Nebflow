@@ -587,7 +587,12 @@
 .fm-input { flex: 1; min-width: 0; }
 .fm-input:disabled { opacity: 0.5; cursor: not-allowed; }
 .fm-send-btn { flex-shrink: 0; }
-.fm-send-btn:disabled { opacity: 0.5; cursor: not-allowed; }
+/* Disabled material now lives in sapphire.css's neutral-gray send ramp
+   (--glass-send-*), so only the cursor stays here. Dropping the old
+   element-wide `opacity: 0.5` avoids a second, compounding disabled
+   expression (it would fade fill .18 to ~.09 and desync this chip from
+   ①/③, which keep `opacity: 1`). */
+.fm-send-btn:disabled { cursor: not-allowed; }
 
 /* ── Reduced motion (§8): all motion ≤0.01s, spinner static ── */
 @media (prefers-reduced-motion: reduce) {
