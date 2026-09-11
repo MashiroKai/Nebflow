@@ -10,7 +10,7 @@
 | `memory-consolidation-flow/agents/scanner/system.md` | `~/.nebflow/flows/memory-consolidation/agents/scanner/system.md` | 审计报告格式：九项指标头部 + 条目级动作 + T1/T2/T3 判据 + 职权红线（不直写；2026-09-12 局部取代：执行权归记忆整理 agent，发现以队列条目投入） |
 | `skills/memory-consolidation/SKILL.md` | `~/.nebflow/skills/memory-consolidation/SKILL.md` | 触发四路（周审计/生命周期/阈值/事件）+ 三问准入 + 取代规则 + 分级 + 预算 |
 | `agents-Nebula-system.md` | `~/.nebflow/agents/Nebula/system.md` | 整文件替换：仅「memory 维护纪律」节重写（三问/取代/分级/预算/审计回投），其余节原样保留 |
-| `memory-md-rule-section-replacement.md` | （非 cp——Nebula 本人执行项） | memory.md「记忆管理规则」节替换文本 + 执行指令，结果文本中同步给出 |
+| `memory-md-rule-section-replacement.md` | （非 cp——**记忆整理 agent** 执行项 / Nebula 可记账入队） | memory.md「记忆管理规则」节替换文本 + 执行指令，结果文本中同步给出 |
 
 宿主落地命令（cp 后各自 git commit，见结果文本「宿主落地命令全集」）：
 
@@ -27,6 +27,8 @@ cp <worktree>/staging/skills/memory-consolidation/SKILL.md ~/.nebflow/skills/mem
 # ③ Nebula system-prefix（整文件；仅 memory 维护纪律节有 diff）
 cp <worktree>/staging/agents-Nebula-system.md ~/.nebflow/agents/Nebula/system.md
 
-# ④ memory.md 规则节：禁 cp——由 Nebula 本人 MemoryEdit replace_section 执行
+# ④ memory.md 规则节：禁 cp——路径二择一：
+#    (a) Nebula 调 MemoryEdit(target="agent", action="replace_section", ...) = 记账入队，下一次压缩由 memory-consolidator 执行；
+#    (b) 由 memory-consolidator 在压缩轮直接 Write/Edit 落盘（改前手动快照）。
 #    （文本见 memory-md-rule-section-replacement.md 与结果文本）
 ```

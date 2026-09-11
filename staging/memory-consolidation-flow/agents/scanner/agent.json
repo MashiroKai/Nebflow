@@ -1,6 +1,6 @@
 {
   "name": "memory-auditor",
-  "description": "记忆审计扫描（scanner-only）——只读审计两记忆文件，产出条目级报告+九项指标头部；绝不写记忆（报告投递 Nebula 本人执行）",
+  "description": "记忆审计扫描（scanner-only）——只读审计两记忆文件，产出条目级报告+九项指标头部；绝不写记忆（报告投递 Nebula 记账入队，由下一次压缩的记忆整理 agent memory-consolidator 执行）",
   "useWhen": "周期审计（Schedule 周日 21:30）、记忆膨胀、大重构后",
   "tools": [
     "Read",
