@@ -24,6 +24,18 @@ NodeList / NodeEdit / NodeCancel / NodeMessage + Read / Glob / Grep / Bash（仅
 - 不需确认即可建：①纯只读 / 取证 / 设计产出类节点（不写生产文件、不动 worktree）；②failed 节点的 reactivate 重跑；③同一已确认方案下的批内续派与后续子批；④任务文本中明确写明作者已确认拓扑（含「直接做 / 按此实施 / 无需确认」）。
 - 任务文本给了充分的范围、裁定与验收口径，但**没有逐节点拓扑**时，**不算方案已确认**——仍须先出方案。
 
+## 先验后合硬序 + 改接三陷阱与任务书改写通道（作者令 2026-09-11）
+
+**批顺序固定：实施 → 独立复核（禁自查自批）→ merge sink → 报告。** 不得以「与本批之前的验收模式一致」为由反序（先合后验）；已反序的批回改正位，任务书同步改写。
+
+- 例外通道：「确需合并态集成验证 ⇒ 先出裁定项交回 Nebula 决定豁免，不得自行反序」。
+- 理由：脏 main 会污染攒批重启窗（引擎改动须带编译重启才生效），回滚成本远高于改边。
+- 改接（改 in/out/deps 接线）逐条对照：
+  1. **`in` 只能追加**：NodeEdit 的 in 是 append-only（`finalIn = node.in ++ adds`，NodeTools.scala:1331）。要让下游摘掉某条 in，必须改**上游 out**——只有 `setOut` 做镜像记账（NodeTools.scala:195-198：被移除边的目标 in 剔除 fromId；新增边的目标 in 追加）。
+  2. **空 barrier 会被资格回扫当合格项提前启动**：`settleRunnableSweep`（NodeEngine.scala:2077）对 pending/wiring 节点按「deps 全 completed + in 全 delivered」判合格并 fork startNode（:2104-2113）；空 in 使 `barrierOk` 恒真，空节点防御 `emptyWiring`（:2105）只兜 task 也为空者 ⇒ 「有 task + in 被摘空」会在改接中途被启动。**解法：改接前先挂过渡 deps 闸**（deps=仍要等齐的上游），改接落地后连同任务书一并撤；deps 是 replace-on-provide，在 startNode 入口硬拦（NodeEngine.scala:772-773）。
+  3. **破环先解旧下游、再回接远端**：环检查在写路径前拒（`wouldCreateCycle` NodeTools.scala:264-265 → FlowMapStore.scala:126-146，后继集 = out ∪ deps 反向；调用点 :1415 in / :1295 out）。旧下游未解就回接远端（如先改 `verify.out`）必撞 cycle 检查 ⇒ 先解旧下游，再回接远端。
+  4. **改接时同步改写任务书只能走 NodeMessage**：NodeEdit **无法替换既有节点的 task**——task 写回只存在于 blocked/failed 重激活分支（NodeTools.scala:1574 `task = appliedTask`）；wiring/pending/running 节点传 task 仅参与重激活判定（:1383 `taskChanged`）不落库，实际落库的只有 description（:1474-1480）。实证：`sandbox-batch-verify` 改接后 description 已是「合并前闸门」而 task 正文仍是「独立验收（合并后）」。⇒ 任务书改写用 NodeMessage（engine 单点 NodeEngine.scala:588-604）：running = 下个 turn 边界注入；wiring/pending = 追加进 task（「分发器补充（NodeMessage）」分节）；终态拒绝（NODE_TERMINAL_NO_MESSAGE）。
+
 ## 通知路由（Nebula 只收批级事件）
 
 作者令（2026-09-10）：Nebula 只收批级事件，节点级完成归分发器聚合。每个节点 out 的终端按「批级可见性」定：
