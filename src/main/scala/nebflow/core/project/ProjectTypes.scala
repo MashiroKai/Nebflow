@@ -411,10 +411,12 @@ object NodeDef:
  *     FlowMapStore.chainAttrsOf）——孤立单节点链不带，payload 字段集零膨胀；与
  *     deps/plugins 同构条件字段，非命中不带。WS 四事件经 NodeEngine.emitWithChain
  *     富化单点自动携带（帧外壳零改动）。
- *   - chainIds：**仅 merge 节点且多链归属（成员链数 ≥2）携带**（U1 批 · 作者裁定①；
- *     值 = 全量成员链 id（入口可达分解），无上限无降级；派生单点
+ *   - chainIds：**仅 merge 节点且多链归属（可达成员链数 ≥2）携带**（U1 批 · 作者裁定①；
+ *     值 = **主链 id 首项 + 全量成员链 id**（主链恒首项，即 `chainIds.head == chainId`；
+ *     入口可达分解，分量 entries 序），无上限无降级；派生单点
  *     FlowMapStore.mergeChainIds）——普通节点与单链 merge 节点不带（普通节点恒单值
- *     chainId，禁改成全员数组）；主链仍由单值 chainId 承载，两键正交。
+ *     chainId，禁改成全员数组）；主链值在两键中冗余出现 = 有意形态契约（对应 §0bis.3
+ *     文档元数据头 `chains: [主链, 支链…]`）。
  * skill/mcp/preset 为节点配置（2b §B.4/H-11① deprecated，新建参数已退役）：同样
  * 条件序列化——仅非 None 才带（20260907 裁定③，无三键节点字段集字节级零漂移）。 */
 object NodePayload:
@@ -541,9 +543,9 @@ object NodePayload:
       // chainId / chainIds 条件序列化（链级抽象 P0 + U1 多链归属批；与 deps/plugins
       // 条件字段同构）：chainId 仅调用方注入（FlowMapStore.chainAttrsOf 单点判据：
       // 所属合并集分量成员数 ≥2）才带——孤立单节点链与未注入调用方（如归档 REST
-      // 端点）payload 字段集零变化；chainIds 仅 **merge 节点**且成员链数 ≥2 才带
-      // （普通节点恒不带 = 单值 chainId 语义不变，作者裁定①），值 = 全量成员链
-      // （无上限、无降级）。
+      // 端点）payload 字段集零变化；chainIds 仅 **merge 节点**且可达成员链数 ≥2 才带
+      // （普通节点恒不带 = 单值 chainId 语义不变，作者裁定①），值 = 主链 id 首项 +
+      // 全量成员链（无上限、无降级）。
       val chainFields = chainId.toList.map(c => "chainId" -> c.asJson) ++
         chainIds.filter(_.size >= 2).toList.map(ids => "chainIds" -> ids.asJson)
       // pendingSuccession 条件序列化（取消静默死锁修复批 R4；与 deps/plugins 同构）：

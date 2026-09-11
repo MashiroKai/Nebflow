@@ -101,8 +101,10 @@ function statusClass(st) {
  * @property {string=} chainId 所属链 id（NodePayload 条件键，链级抽象 P0 契约：
  *   后端拓扑链单源下发；可能缺失——缺失 = 孤立节点，链 UI 自然降级）
  * @property {string[]=} chainIds 多链归属集（U1 批·作者裁定① NodePayload 条件键：
- *   **仅 merge 节点且成员链数 ≥2 带**，值 = 主链 :: 全量成员链；普通节点恒缺失
- *   ⇒ 前端「多链 vs 单链合并节点」判据；缺失 = 单链或非 merge，链高亮走整链语义）
+ *   **仅 merge 节点且可达成员链数 ≥2 带**，值 = 主链 :: 全量成员链（主链恒首项 =
+ *   chainId 逐字同值）；普通节点恒缺失。前端「多链 vs 单链合并节点」判据 =
+ *   **除自身主链外的成员链数 ≥2**（见 chainHighlightIds——不是拼上主链项后的裸长度，
+ *   否则「主链 + 1 条成员链」形态会被误判多链）；缺失 = 单链或非 merge，走整链语义）
  * @property {number=} notifySentAt 异常终态（failed/cancelled）上报分发器时间戳
  *   （NodePayload 条件序列化：已上报才带。P0 起归档资格判定唯一在后端，前端
  *   不再消费此键做链判据。）
@@ -431,18 +433,23 @@ export function chainMembersOf(project, nodeId) {
  * 点击 / 悬浮的高亮集合（U1 批 · 作者 2026-09-11 裁定③④，图上零视觉标识）。
  *
  * 语义（**只对合并节点分叉**，普通节点零改动）：
- *  - **多链合并节点**（`merge === true` 且引擎下发 `chainIds` 长度 ≥2）⇒ 集合 = 仅自身
+ *  - **多链合并节点**（`merge === true` 且**除自身主链外的成员链数 ≥2**）⇒ 集合 = 仅自身
  *    ——它同属多条成员链，「整条链」指向歧义 ⇒ 只亮自己，不牵动任何其他链节点（裁定③）。
  *  - **单链合并节点 / 普通节点** ⇒ 集合 = 该链全部成员（含链上全部合并节点——
  *    裁定④「不能漏掉合并节点」）。
- *  多链判据 = 引擎下发字段（`chainIds`，普通节点恒缺席），前端零派生。
+ *  多链判据 = 引擎下发字段（`chainIds`，普通节点恒缺席）+ **剔除自身主链项后计数**
+ *  （`chainIds` 首项恒 = `chainId`，故等价于「除自身主链外的成员链数 ≥2」）：
+ *  按裸长度判会把「主链 + 1 条成员链」载荷误判为多链（该形态应按单链处理），
+ *  前端零派生拓扑。
  * @param {string} project @param {string} nodeId
  * @returns {{ ids: string[], multi: boolean, chainId: string | null }} */
 export function chainHighlightIds(project, nodeId) {
   const s = stores.get(project);
   const n = s ? (s.input.get(nodeId) || s.remoteMembers.get(nodeId)) : null;
-  const multi = !!(n && n.merge === true && Array.isArray(n.chainIds) && n.chainIds.length >= 2);
   const chainId = n && n.chainId ? String(n.chainId) : null;
+  const ids = n && Array.isArray(n.chainIds) ? n.chainIds : null;
+  const otherChains = ids ? ids.filter((id) => id !== chainId).length : 0;
+  const multi = !!(n && n.merge === true && ids !== null && otherChains >= 2);
   return { ids: multi ? [nodeId] : chainMembersOf(project, nodeId), multi, chainId };
 }
 

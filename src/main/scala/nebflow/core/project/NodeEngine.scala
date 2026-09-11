@@ -959,10 +959,11 @@ class NodeEngine(
 
   /** WS 事件链富化单点（链级抽象 P0 + U1 多链归属批）：全部节点事件 payload 经此
     * 统一补 chainId / chainIds 条件键——判据单点 FlowMapStore.chainAttrsOf（`_1` =
-    * 主链 id，合并集分量成员数 ≥2 才带，孤立单节点链不带；`_2` = 多链归属集，
-    * **仅 merge 节点**且成员链数 ≥2 才带，普通节点恒不带 = 单值 chainId 语义不变；
-    * 与快照 buildNodeListPayload 同口径）。查无链（节点已出双区/单节点链）→ payload
-    * 原样透传。WS 帧外壳（ProjectActor.emitNodeEvent）零改动——富化只发生在载荷体。 */
+    * 主链 id，合并集分量成员数 ≥2 才带，孤立单节点链不带；`_2` = 多链归属集 =
+    * 主链 id 首项 + 全量成员链，**仅 merge 节点**且可达成员链数 ≥2 才带，普通节点恒
+    * 不带 = 单值 chainId 语义不变；与快照 buildNodeListPayload 同口径）。查无链
+    * （节点已出双区/单节点链）→ payload 原样透传。WS 帧外壳（ProjectActor.emitNodeEvent）
+    * 零改动——富化只发生在载荷体。 */
   private def emitWithChain(eventType: String, nodeId: String, payload: Json): IO[Unit] =
     store.chainAttrsOf(nodeId).flatMap { case (cid, cids) =>
       val enriched = cid.toList.map(c => "chainId" -> c.asJson) ++

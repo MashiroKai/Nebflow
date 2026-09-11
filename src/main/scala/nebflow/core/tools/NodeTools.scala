@@ -397,8 +397,9 @@ object NodeTools:
     * 条目形状 {id,title,entries,ends,memberIds}，title 由 FlowMapStore.chainTitle
     * 三级推导下发（前端零派生）；entries/ends/memberIds = 分量全量（含归档成员，
     * spec §6.2「全成员」——主图渲染由前端按节点缓存过滤）。节点级 chainIds 条件键
-    * **仅 merge 节点且成员链数 ≥2** 带（作者裁定①：多链归属只对合并节点做；普通
-    * 节点恒单值 chainId），值 = 全量成员链（无上限、无降级）。
+    * **仅 merge 节点且可达成员链数 ≥2** 带（作者裁定①：多链归属只对合并节点做；普通
+    * 节点恒单值 chainId），值 = **主链 id 首项 + 全量成员链**（主链恒首项 = `chainId`
+    * 逐字同值；无上限、无降级）。
     * WS 不带链级帧，结构变化由前端对账重拉快照消化。 */
   def buildNodeListPayload(rt: ProjectRuntime, statusFilter: Option[Set[String]] = None): IO[Json] =
     for
@@ -425,9 +426,9 @@ object NodeTools:
       val chains = FlowMapStore.topologicalChains(combined.values)
         .filter(c => c.memberIds.size >= 2 && c.memberIds.exists(s.nodes.contains))
       val chainIdByNode = chains.flatMap(c => c.memberIds.map(_ -> c.id)).toMap
-      // U1 多链归属（作者裁定①）：仅 merge 节点、成员链数 ≥2 才有值——普通节点恒
-      // 缺席（单值 chainId 语义不变）；派生与 chainId 同源（同一份 chains 分量表，
-      // 禁双端二次派生）。
+      // U1 多链归属（作者裁定①）：仅 merge 节点、可达成员链数 ≥2 才有值（值 = 主链 id
+      // 首项 + 全量成员链；普通节点恒缺席 = 单值 chainId 语义不变）；派生与 chainId
+      // 同源（同一份 chains 分量表，禁双端二次派生）。
       val chainIdsByNode = combined.values.filter(_.merge).flatMap { n =>
         FlowMapStore.mergeChainIds(combined, chains, n.id).map(n.id -> _)
       }.toMap
@@ -1794,7 +1795,7 @@ object NodeListTool extends Tool:
 - **detail** (optional): a node id — returns that ONE node's full record instead of the whole map: metadata + task + result FULL TEXT (+ historical blockedFeedback when present). Payloads carry no result text; this is the on-demand read channel, same source as the REST result endpoint.
 
 ## Returns
-Default: {nodes: [{id, name, agent, description, status, in, out, hasWorktree, worktree, blockCount, createdAt, completedAt, ttlLeftSec, + conditional: hasResult, taskPreview (legacy no-description fallback), deps, plugins, merge, loop, blockedFeedback (blocked only), skill/mcp/preset (legacy values only), liveness (running only), chainId (multi-member chain only), chainIds (merge nodes with 2+ member chains only)}], chains: [{id, title, entries, ends, memberIds}] (topological task chains derived backend-side; a node's chainId joins its entry here; members may include archived nodes — filter by your node cache for on-graph rendering), worktrees: [...], meta: {project, updatedAt, archived}} — metadata only, NO result text (Flow Map slim-payload contract: results live in per-node files, read on demand).
+Default: {nodes: [{id, name, agent, description, status, in, out, hasWorktree, worktree, blockCount, createdAt, completedAt, ttlLeftSec, + conditional: hasResult, taskPreview (legacy no-description fallback), deps, plugins, merge, loop, blockedFeedback (blocked only), skill/mcp/preset (legacy values only), liveness (running only), chainId (multi-member chain only), chainIds (merge nodes with 2+ reachable member chains only; value = main chain id first, then the full member chain list)}], chains: [{id, title, entries, ends, memberIds}] (topological task chains derived backend-side; a node's chainId joins its entry here; members may include archived nodes — filter by your node cache for on-graph rendering), worktrees: [...], meta: {project, updatedAt, archived}} — metadata only, NO result text (Flow Map slim-payload contract: results live in per-node files, read on demand).
 With detail=<nodeId>: the same node shape + task + result (full text)."""
   val inputSchema = JsonObject.fromIterable(
     List(
@@ -1835,7 +1836,8 @@ With detail=<nodeId>: the same node shape + task + result (full text)."""
               case Some(n) =>
                 // chainId / chainIds 条件键（链级抽象 P0 + U1 多链归属批）：detail
                 // 单节点记录与快照/WS 同构——判据单点 FlowMapStore.chainAttrsOf
-                // （双区可达，归档节点同样带链归属；chainIds 仅 merge 多链节点带）。
+                // （双区可达，归档节点同样带链归属；chainIds 仅 merge 多链节点带，
+                // 值 = 主链 id 首项 + 全量成员链）。
                 rt.store.chainAttrsOf(n.id).map { case (chainId, chainIds) =>
                   val now = System.currentTimeMillis()
                   val base = NodePayload.buildNodeJson(n, now, chainId, chainIds)
