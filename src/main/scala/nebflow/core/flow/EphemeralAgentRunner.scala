@@ -126,7 +126,8 @@ object EphemeralAgentRunner:
           case Left(errMsg) =>
             s"[Agent '${agentDef.name}' failed: $errMsg]"
         _ <- (replyTo ! AgentCommand.ImmediateInput(
-          s"[Agent '${agentDef.name}' completed]\n$output"
+          s"[Agent '${agentDef.name}' completed]\n$output",
+          fromUser = false // ② 服务端注入（ephemeral agent 完成回执），不是真人输入
         )).void
       yield Behaviors.stopped
 

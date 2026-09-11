@@ -783,18 +783,21 @@ object FlowTreeActor:
 
               flowName.foreach { name =>
                 cfg.parentAgentRef ! AgentCommand.ImmediateInput(
-                  s"Flow '$name' has disk changes not yet applied. Use Flow(action: \"update\", name: \"$name\") to apply."
+                  s"Flow '$name' has disk changes not yet applied. Use Flow(action: \"update\", name: \"$name\") to apply.",
+                  fromUser = false // ② 文件监视器注入（服务端），不是真人输入
                 )
               }
             else if watchDir == agentsDir || (agentsDir.getRoot == watchDir.getRoot && watchDir.startsWith(agentsDir))
             then
               cfg.parentAgentRef ! AgentCommand.ImmediateInput(
-                s"Agent definition '$fileName' has disk changes. The change will take effect on next activation."
+                s"Agent definition '$fileName' has disk changes. The change will take effect on next activation.",
+                fromUser = false
               )
             else if watchDir == teamsDir || (teamsDir.getRoot == watchDir.getRoot && watchDir.startsWith(teamsDir)) then
               val teamName = teamsDir.relativize(watchDir).getName(0).toString
               cfg.parentAgentRef ! AgentCommand.ImmediateInput(
-                s"Team '$teamName' has disk changes. Reload to apply."
+                s"Team '$teamName' has disk changes. Reload to apply.",
+                fromUser = false
               )
             end if
           }

@@ -684,7 +684,18 @@ export function send() {
   v.dom.attPreview.innerHTML = '';
   // Immediately clear the draft for this session so it is not restored after refresh
   saveInputDraft(v.sessionId);
-  setBusy(v.sessionId);
+  // ①-2 (2026-09-11) 乐观置位时序校验 —— 本地派发 = 新 turn 的起点，因此它「在
+  // 已有终止帧时间戳之后」：允许置位并取代该时间戳（main.js 的 re-arm 闸靠它复位；
+  // 否则上一 turn 的终止戳会把本次新 turn 的每一帧都挡在闸外）。
+  // 校验点 = 帧确实写出去了：ws.js:275 的 sendWs 在非 OPEN 时是静默 no-op，此时
+  // 置位会把会话顶成「无后端 turn」的假 busy —— 没有 turn 就没有终止帧，busy 永不
+  // 自清、后续 Enter 全进本地队列且无 drain（正是症状① G3 的同族缺口）。
+  if (state.ws && state.ws.readyState === WebSocket.OPEN) {
+    if (v.sessionId) delete state.lastTerminalAt[v.sessionId];
+    setBusy(v.sessionId);
+  } else {
+    console.warn('[send] frame not dispatched (ws closed) — busy not armed (①-2 guard)');
+  }
   // Start turn timer
   state.turnStartTimes[v.sessionId] = Date.now();
   // Release send lock after a short debounce to prevent double-click / rapid Enter
@@ -982,6 +993,8 @@ export function drainMessageQueue(sessionId) {
     });
   }
 
+  // ①-2: 本次 drain 派发 = 新 turn 起点 ⇒ 取代上一 turn 的终止戳（同 send()）。
+  if (sessionId) delete state.lastTerminalAt[sessionId];
   setBusy(sessionId);
   state.turnStartTimes[sessionId] = Date.now();
 
@@ -1070,6 +1083,8 @@ export function injectUserMessage(text, options = {}) {
   });
 
   // Mark session as busy
+  // ①-2: 本派发同样是新 turn 起点 ⇒ 取代上一 turn 的终止戳（同 send()/drain）。
+  if (sessionId) delete state.lastTerminalAt[sessionId];
   setBusy(sessionId);
   // Only set timer if not already running — don't reset during active turn
   if (!state.turnStartTimes[sessionId]) state.turnStartTimes[sessionId] = Date.now();
