@@ -32,7 +32,7 @@ class LogtoAuthCodeSpec extends FunSuite:
 
   // ── authorize URL ───────────────────────────────────────────────────────
 
-  test("authorizeUrl carries client_id, S256 challenge, state, offline_access, prompt=consent and the loopback redirect") {
+  test("authorizeUrl carries client_id, S256 challenge, state, openid/email/profile scope, prompt=consent and the loopback redirect") {
     val url = LogtoAuthCode.authorizeUrl(
       endpoint = "https://auth.example/",
       clientId = "pkce-app",
@@ -40,17 +40,21 @@ class LogtoAuthCodeSpec extends FunSuite:
       codeChallenge = "E9Melhoa2OwvFrEMTJguCHaoeK1t8URWbuGJSstw-cM",
       state = "st-123"
     )
-    assertEquals(url, "https://auth.example/oidc/auth?client_id=pkce-app&redirect_uri=http%3A%2F%2F127.0.0.1%3A8080%2Fauth%2Fcallback&response_type=code&scope=openid+offline_access+email+profile&prompt=consent&code_challenge=E9Melhoa2OwvFrEMTJguCHaoeK1t8URWbuGJSstw-cM&code_challenge_method=S256&state=st-123")
-    // Named regression nails: Logto silently drops offline_access (→ no
-    // refresh_token → silent re-login dead) when prompt=consent is missing.
-    // qa real-chain probe 2026-08-28, 5 controlled experiments.
-    assert(url.contains("prompt=consent"), "prompt=consent must ship on EVERY authorize — without it Logto drops offline_access and no refresh_token is issued")
-    assert(url.contains("offline_access"), "offline_access scope is the precondition for the refresh_token that LogtoSilentRelogin rotates")
+    assertEquals(url, "https://auth.example/oidc/auth?client_id=pkce-app&redirect_uri=http%3A%2F%2F127.0.0.1%3A8080%2Fauth%2Fcallback&response_type=code&scope=openid+email+profile&prompt=consent&code_challenge=E9Melhoa2OwvFrEMTJguCHaoeK1t8URWbuGJSstw-cM&code_challenge_method=S256&state=st-123")
+    // O5 (2026-09-11, refresh-revoke plan): the client MUST NOT request
+    // offline_access — the provider then issues no refresh_token for this
+    // grant, which removes the L1 credential at its source (every
+    // revocation timing inherits the fix).
+    assert(!url.contains("offline_access"), "O5: authorize must not request offline_access (no refresh_token is to be issued)")
+    // prompt=consent still ships, but it is NO LONGER a refresh-token
+    // guard — that rationale died with the offline_access scope (see the
+    // LogtoAuthCode.authorizeUrl scaladoc); it stays for the shipped UX.
+    assert(url.contains("prompt=consent"), "prompt=consent ships on EVERY authorize (UX; no longer a refresh-token guard)")
     assert(url.contains("email"), "#290 gap 1: email scope is the neblink_id source for pure-Logto accounts — the me endpoint scopes claims to the grant")
     assert(url.contains("profile"), "C2 (2026-09-01): profile scope carries the id_token picture claim — the Logto-user avatar source")
   }
 
-  test("authorizeUrl forceLogin variant ships prompt=login+consent and KEEPS offline_access (RP-logout fix)") {
+  test("authorizeUrl forceLogin variant ships prompt=login+consent and does NOT request offline_access (RP-logout fix)") {
     val url = LogtoAuthCode.authorizeUrl(
       endpoint = "https://auth.example",
       clientId = "pkce-app",
@@ -60,9 +64,10 @@ class LogtoAuthCodeSpec extends FunSuite:
       prompt = "login consent"
     )
     // `login` forces the hosted account page even with a live SSO session;
-    // `consent` must STAY (offline_access regression guard, 2026-08-28 probe).
+    // `consent` stays as the shipped UX default (its old offline_access
+    // rationale is gone — O5).
     assert(url.contains("prompt=login+consent"), "switch-account entry forces the account form")
-    assert(url.contains("offline_access"), "consent kept in the prompt list → refresh_token invariant intact")
+    assert(!url.contains("offline_access"), "O5: the switch-account authorize must not request offline_access either")
   }
 
   test("authorizeUrl appends ui_locales only when non-empty (BYUI locale handoff)") {
@@ -133,11 +138,15 @@ class LogtoAuthCodeSpec extends FunSuite:
     assert(req.bearer.isEmpty)
   }
 
-  test("refreshTokenRequest posts the refresh_token grant with offline_access") {
+  test("refreshTokenRequest posts the refresh_token grant WITHOUT offline_access (post-O5 scope)") {
     val req = LogtoAuthCode.refreshTokenRequest("https://auth.example", "pkce-app", "rt-1")
     assert(req.body.contains("grant_type=refresh_token"))
     assert(req.body.contains("refresh_token=rt-1"))
-    assert(req.body.contains("scope=openid+offline_access+email+profile"))
+    // O5: the request keeps the post-O5 scope list — RFC 6749 §6 forbids a
+    // refresh request from ADDING a scope the original grant never carried,
+    // so shipping offline_access here would contradict the authorize change.
+    assert(req.body.contains("scope=openid+email+profile"))
+    assert(!req.body.contains("offline_access"), "O5: the refresh request must not ask for offline_access")
   }
 
   // ── response mapping ────────────────────────────────────────────────────
