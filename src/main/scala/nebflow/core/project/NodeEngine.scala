@@ -311,21 +311,47 @@ class NodeEngine(
       }
     }
 
+  /** `destroyAt` 字段清除（**双区单点**，批 F1' 修复第 2 轮 2026-09-12）：活动区优先、
+    * 归档区兜底——归档成员**不得复活进活动区**（既有归档写纪律，`NodeTools.setOut`
+    * 归档分支先例），故只改归档副本的字段。
+    *
+    * CAS：只在字段仍 `== expected`（即本次扫描读到的登记值）时清除 ⇒ 并发同拍只留一个
+    * 赢家，输家得 `None`（不重复 `reclaimSession` 已完成、也不重复发事件）。
+    * 返回 `Some((清点后的节点, 是否活动区))`——调用方据此决定要不要发 `nodeUpdated`
+    * （归档区清点不发，见 [[destroyNodeSessions]] 注）。 */
+  private def clearDestroyAt(nodeId: String, expected: Option[Long]): IO[Option[(NodeDef, Boolean)]] =
+    if expected.isEmpty then IO.pure(None)
+    else
+      store.mutateWithResult { st =>
+        st.nodes.get(nodeId) match
+          case Some(fresh) if fresh.destroyAt == expected =>
+            (st.copy(nodes = st.nodes.updated(nodeId, fresh.copy(destroyAt = None))), true)
+          case _ => (st, false)
+      }.flatMap {
+        case (s, true) => IO.pure(s.nodes.get(nodeId).map(_ -> true))
+        case _ =>
+          store.mutateArchiveWithResult { ar =>
+            ar.nodes.get(nodeId) match
+              case Some(fresh) if fresh.destroyAt == expected =>
+                (ar.copy(nodes = ar.nodes.updated(nodeId, fresh.copy(destroyAt = None))), true)
+              case _ => (ar, false)
+          }.map { case (ar, cleared) => if cleared then ar.nodes.get(nodeId).map(_ -> false) else None }
+      }
+
   /** 窗口撤销（异常残留清点）：节点带着 `destroyAt` 却已非终态（窗口内被重激活/重跑）
     * ⇒ 清字段 + 解禁 spawn + `node-destroy-withdrawn` 事件。正常路径在翻转点已清零，
-    * 本方法只作扫描腿的防御兜底。 */
+    * 本方法只作扫描腿的防御兜底。
+    *
+    * 双区感知（F1' 第 2 轮）：字段清除经 [[clearDestroyAt]]——活动区优先、归档区兜底；
+    * 归档成员不发 `nodeUpdated`（同 [[destroyNodeSessions]]：nodeRemoved 墓碑已把该节点
+    * 移出主图，发 payload 会把它拉回派生图）。 */
   private def withdrawDestroyWindow(n: NodeDef, reason: String): IO[Unit] =
     val sids = destroyTargetSessions(n)
-    store.mutateWithResult { st =>
-      st.nodes.get(n.id) match
-        case Some(fresh) if fresh.destroyAt.isDefined =>
-          (st.copy(nodes = st.nodes.updated(n.id, fresh.copy(destroyAt = None))), true)
-        case _ => (st, false)
-    }.flatMap { case (s, cleared) =>
-      if !cleared then IO.unit
-      else
+    clearDestroyAt(n.id, n.destroyAt).flatMap {
+      case None => IO.unit
+      case Some((fresh, inActive)) =>
         sids.traverse_(BgTaskRegistry.reopenSession) *>
-          s.nodes.get(n.id).traverse_(emitUpdated) *>
+          IO.whenA(inActive)(emitUpdated(fresh)) *>
           FlowMapEventLog.append(workspace, projectName, n.id, NodeEngine.DestroyWithdrawnEventType,
             s"destroy window withdrawn (node no longer terminal): $reason") *>
           logger.warn(s"Node '${n.name}' (${n.id}) destroy window withdrawn: $reason")
@@ -339,37 +365,59 @@ class NodeEngine(
     * `destroyAt <= now` 且节点仍为终态 ⇒ `destroyNodeSessions`；节点已非终态 ⇒
     * `withdrawDestroyWindow`（窗口随重激活撤销）。
     *
+    * **读面 = 活动区 ∪ 归档区**（批 F1' 修复第 2 轮 2026-09-12，复核 D1 根治）：链级
+    * 归档（TtlTick 同拍，链全终态即整链出库）会把**窗口未收殓**的成员搬进归档区；本腿
+    * 若只读活动区 snapshot，则 ① 到点永不收殓（进程 / persistent·bg 任务永久泄漏）、
+    * ② 宿主重启后的禁 spawn 表自愈也读不到它——两处读面都漏。故本腿在两个读面上都
+    * 覆盖归档区：字段清除落在**归档副本**上（不复活进活动区，见 [[clearDestroyAt]]），
+    * `node-destroyed` 事件照写（归档侧可见性载体 = 事件 + 日志）。
+    * 归因对照：与归档资格解耦——`chainArchivable` **不看** `destroyAt`（撤销 F1 的前置
+    * 拒收）⇒ 归档语义与销毁窗口正交，二者都不牺牲。
+    *
     * 幂等：字段已清 ⇒ 不再入选（二次调用零副作用）；`reclaimSession` 本体亦幂等
     * （会话无进程/无任务时 no-op、已注销二次无副作用）。best-effort：单节点失败只 WARN，
     * 不影响其它节点与后续 TTL sweep。 */
   def sweepDestroyWindows(): IO[Unit] =
-    store.snapshot.flatMap { s =>
-      val registered = s.nodes.values.toList.filter(_.destroyAt.isDefined)
+    (for
+      s <- store.snapshot
+      a <- store.archiveSnapshot
+      // 双区并集（id 冲突 = 崩溃窗口「活动+归档双在」⇒ 取活动区副本，权威副本口径与
+      // FlowMapStore.combinedNodes 同源）
+      registered = (s.nodes.values ++ a.nodes.values.filterNot(n => s.nodes.contains(n.id)))
+        .toList.filter(_.destroyAt.isDefined)
       // ① 表项自愈（重启后重建；幂等覆盖）
-      registered.traverse_ { n =>
+      _ <- registered.traverse_ { n =>
         val at = n.destroyAt.getOrElse(0L)
         destroyTargetSessions(n).traverse_(sid => BgTaskRegistry.markSessionFinalized(sid, at))
-      } *>
-        // ② 到点处置（按 snapshot 逐个复核最新状态，避免用陈旧快照做终态判断）
-        IO(System.currentTimeMillis()).flatMap { now =>
-          registered.filter(_.destroyAt.exists(_ <= now)).traverse_ { snap =>
-            store.snapshot.flatMap(_.nodes.get(snap.id) match
-              case None => IO.unit
+      }
+      // ② 到点处置（逐个复核**最新**状态，避免用陈旧快照做终态判断；`findNode` =
+      //    活动区优先 + 归档区兜底，双区同一判据单点）
+      _ <- IO(System.currentTimeMillis()).flatMap { now =>
+        registered.filter(_.destroyAt.exists(_ <= now)).traverse_ { snap =>
+          store.findNode(snap.id).flatMap { latest =>
+            latest match
+              case None => IO.unit // 双区皆无（并发移除）→ no-op
               case Some(fresh) if fresh.destroyAt.isEmpty => IO.unit // 已被其它路径处置
               case Some(fresh) if !NodeLifecycle.Terminal.contains(fresh.status) =>
                 withdrawDestroyWindow(fresh,
                   s"node status is '${fresh.status}' at window expiry (reactivated/re-run inside the window) — spawn ban lifted")
               case Some(fresh) => destroyNodeSessions(fresh)
-            )
           }
         }
-    }.handleErrorWith(e => logger.warn(s"destroy-window sweep failed: ${e.getMessage}"))
+      }
+    yield ()
+    ).handleErrorWith(e => logger.warn(s"destroy-window sweep failed: ${e.getMessage}"))
 
   /** 到点对称收殓（③ 的执行体）：对节点名下全部会话执行 `reclaimSession`
     * （= 杀进程树 + 注销 BgTaskRegistry + 逐条 `BgTaskOutputStore.finalizeTask("cancelled")`
     * + 释放 `ShellSession.sessions` 条目 + WS `backgroundTaskUpdate(status="cancelled")` 帧，
     * 见 `shell.scala#killSessionProcesses` 与 `BgTaskRegistry#reclaimSession`），
     * 再清 `destroyAt` + 写 `node-destroyed` 事件。
+    *
+    * 双区（F1' 第 2 轮）：字段清除经 [[clearDestroyAt]]——活动区命中即清活动区（并发
+    * `nodeUpdated`，前端窗口字段即刻消失）；**归档区命中则只清归档副本**，且**不发
+    * `nodeUpdated`**：`nodeRemoved` 墓碑已把归档成员移出主图，发 payload 会把它拉回
+    * 派生图（归档成员禁复活纪律）；归档侧可见性由 `node-destroyed` 事件 + 日志承载。
     *
     * 幂等双保险：字段清点用「destroyAt 与本次登记值相同」的 CAS（并发同拍只留一个赢家）；
     * 输家 `reclaimSession` 亦为 no-op。清点后**禁 spawn 表项保留**（死会话不可复活——
@@ -384,21 +432,16 @@ class NodeEngine(
           .handleErrorWith(e =>
             logger.warn(s"Node '${n.name}' (${n.id}) destroy-window reclaim failed for session '$sid': ${e.getMessage}"))
       }
-      (s, cleared) <- store.mutateWithResult { st =>
-        st.nodes.get(n.id) match
-          case Some(fresh) if fresh.destroyAt.contains(at) =>
-            (st.copy(nodes = st.nodes.updated(n.id, fresh.copy(destroyAt = None))), true)
-          case _ => (st, false)
-      }
-      _ <- IO.whenA(cleared) {
-        s.nodes.get(n.id).traverse_ { fresh =>
-          emitUpdated(fresh) *>
-            FlowMapEventLog.append(workspace, projectName, n.id, NodeEngine.DestroyedEventType,
-              s"terminal destroy window expired: session(s) ${sids.mkString(",")} reclaimed " +
-                s"(processes killed + bg tasks finalized + shell sessions released), destroyAt=$at") *>
-            logger.info(
-              s"Node '${n.name}' (${n.id}) destroy window expired — reclaimed session(s) ${sids.mkString(",")}")
-        }
+      cleared <- clearDestroyAt(n.id, n.destroyAt)
+      _ <- cleared.traverse_ { case (fresh, inActive) =>
+        IO.whenA(inActive)(emitUpdated(fresh)) *>
+          FlowMapEventLog.append(workspace, projectName, n.id, NodeEngine.DestroyedEventType,
+            s"terminal destroy window expired: session(s) ${sids.mkString(",")} reclaimed " +
+              s"(processes killed + bg tasks finalized + shell sessions released), destroyAt=$at" +
+              (if inActive then "" else " [archived member: field cleared on the archived copy, node not revived into the active map]")) *>
+          logger.info(
+            s"Node '${n.name}' (${n.id}) destroy window expired — reclaimed session(s) ${sids.mkString(",")}" +
+              (if inActive then "" else " (archived member)"))
       }
     yield ()
 
