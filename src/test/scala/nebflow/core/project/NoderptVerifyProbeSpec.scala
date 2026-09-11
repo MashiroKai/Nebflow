@@ -31,13 +31,16 @@ import scala.concurrent.duration.*
  *  - P4（→ 复核 **D1**，批 F1 修）：销毁窗口被链级归档吞掉（生产盘上实测：n-future 到点前
  *    12s 被归档、永不收殓）。
  *
- * ★ 入库时的**唯一改动 = P4 的前提断言反转**（P1/P2/P3 逐字未动）：原 P4 的
- *   `assert(swept.nonEmpty)` + `assert(!activeIds.contains("n-p4"))` 是**复现 D1 的前提
- *   条件**（「链确实被归档出库」）；F1 把该前提本身定为缺陷 ⇒ 两条断言按修复后契约反转
- *   （窗口未收殓不得出库），并补第三段「收殓清 `destroyAt` 后必须恢复归档资格」。
- *   改动仅限这两条断言与新增末段；原始归档件在
- *   `.nebflow/evidence/20260911_noderpt-verify/NoderptVerifyProbeSpec.scala`
- *   （21807 B，sha256 前 8 `e374c401`）可比对。
+ * ★ 入库时的改动 = **P4 的前提断言**（P1/P2/P3 逐字未动；原始归档件在
+ *   `.nebflow/evidence/20260911_noderpt-verify/NoderptVerifyProbeSpec.scala`，21807 B，
+ *   sha256 前 8 `e374c401` 可比对）。两次改写：
+ *   - 批 F1（`6308201b`）：把原始前提（`assert(swept.nonEmpty)` + `assert(!activeIds
+ *     .contains("n-p4"))` = D1 复现前提）反转成「窗口未收殓不得出库」+ 补「收殓后恢复
+ *     归档资格」；
+ *   - 批 F1'（修复第 2 轮 2026-09-12，本节点）：F1 的反转被判为回归（`NodeDepsSpec.T4`
+ *     / `NodeEdgeRepairSpec` 6 例红），撤销 `chainArchivable` 前置拒收 ⇒ 前提**还原为
+ *     出库成立**（= 原始前提），改钉「归档后窗口到点仍收殓」不变式（归档区成员同扫、
+ *     归档副本字段清除、事件落盘、不复活进活动区）。
  */
 class NoderptVerifyProbeSpec extends CatsEffectSuite:
 
@@ -352,7 +355,14 @@ class NoderptVerifyProbeSpec extends CatsEffectSuite:
   }
 
   // ── P4：销毁窗口被链级归档吞掉（生产盘上实测：n-future 到点前 12s 被归档、永不收殓）──
-
+  //
+  // 批 F1'（修复第 2 轮，2026-09-12）口径 = **归档语义与销毁窗口正交**：
+  //   ① `chainArchivable` **不看** `destroyAt`（撤销 F1 的前置拒收）⇒ 带未到期窗口的
+  //      链**照常出库**（既有归档判据 `NodeDepsSpec.T4` / `NodeEdgeRepairSpec` 恢复）；
+  //   ② 销毁扫描腿**双区读面**（活动区 ∪ 归档区）⇒ 被搬进归档区的成员到点仍被收殓
+  //      （进程杀 / 任务注销 / 归档副本 `destroyAt` 清零 / `node-destroyed` 事件）；
+  //   ③ 归档副本清字段但**不复活**进活动区（no-revive 纪律）。
+  // 本用例按生产 TtlTick 同拍顺序（销毁扫描 → 链级归档）驱动，三段各钉一条。
   test("P4: a terminal node whose chain is archived while its destroy window is still open IS still reclaimed at expiry") {
     val ws = tempRoot / "ws-p4"
     os.makeDir.all(ws)
@@ -369,7 +379,7 @@ class NoderptVerifyProbeSpec extends CatsEffectSuite:
       _ <- BgTaskRegistry.register(jobId, sid, "probe p4 bg task", "local")
       _ <- waitUntil(15.seconds)(IO.blocking(os.exists(pidFile)))
       pid <- IO.blocking(os.read(pidFile).trim.toLong)
-      at = System.currentTimeMillis() + 1200L
+      at = System.currentTimeMillis() + 1500L
       // 终态 + 窗口**未到点**（等价于 `scheduleDestroy` 刚登记的时刻）
       _ <- rt.store.mutate { s =>
         s.copy(nodes = s.nodes + ("n-p4" -> NodeDef(
@@ -383,13 +393,20 @@ class NoderptVerifyProbeSpec extends CatsEffectSuite:
       beforeSweep <- rt.engine.sweepDestroyWindows().attempt
       sweptWhileOpen <- rt.store.sweepCompletedChainsDetailed(System.currentTimeMillis())
       activeIds <- rt.store.snapshot.map(_.nodes.keySet.toList)
-      _ <- IO.sleep(1600.millis) // 越过 destroyAt
+      archivedWhileOpen <- rt.store.archiveSnapshot.map(_.nodes.keySet.toList)
+      // 宿主重启的自愈读面（内存禁 spawn 表清空后一拍扫描必须从**归档副本**重建）
+      _ <- BgTaskRegistry.reopenSession(sid)
+      _ <- rt.engine.sweepDestroyWindows()
+      banRestored <- BgTaskRegistry.finalizedAt(sid)
+      tasksInWindow <- BgTaskRegistry.waitingFor(sid)
+      aliveInWindow <- IO(java.lang.ProcessHandle.of(pid).map(_.isAlive).orElse(false))
+      _ <- IO.sleep(1800.millis) // 越过 destroyAt
       _ <- rt.engine.sweepDestroyWindows() // 后续每一拍
       _ <- IO.sleep(300.millis)
       _ <- rt.engine.sweepDestroyWindows()
       aliveAfter <- IO(java.lang.ProcessHandle.of(pid).map(_.isAlive).orElse(false))
       tasksAfter <- BgTaskRegistry.waitingFor(sid)
-      sweptAfterReclaim <- rt.store.sweepCompletedChainsDetailed(System.currentTimeMillis())
+      activeAfter <- rt.store.snapshot.map(_.nodes.keySet.toList)
       arch <- rt.store.archiveSnapshot
       events <- readEvents(ws)
       _ <- BgTaskRegistry.reopenSession(sid).attempt.void
@@ -398,24 +415,30 @@ class NoderptVerifyProbeSpec extends CatsEffectSuite:
       _ <- system.stopAll.handleErrorWith(_ => IO.unit)
     yield
       assert(beforeSweep.isRight, s"the first (pre-expiry) sweep must not blow up: $beforeSweep")
-      // ★ 前提反转（批 F1）：窗口**未收殓** ⇒ 链不得出库、节点留活动区。原始探针此处为
-      //   `assert(swept.nonEmpty)` + `assert(!activeIds.contains("n-p4"))`（= D1 复现前提）；
-      //   F1 把该前提本身定为缺陷 ⇒ 按修复后契约反转。
-      assert(sweptWhileOpen.isEmpty,
-        s"F1: a chain that still has an open destroy window must NOT be archived: $sweptWhileOpen")
-      assert(activeIds.contains("n-p4"),
-        s"F1: the node must stay in the active map while its window is open (only the active map is swept): $activeIds")
+      // ① 窗口未到期**不阻塞**出库（＝ 原始探针的 D1 复现前提；归档语义与窗口正交）
+      assert(sweptWhileOpen.exists(_.nodeIds.contains("n-p4")),
+        s"F1': an open destroy window must NOT block the chain sweep (archive eligibility is orthogonal): $sweptWhileOpen")
+      assert(!activeIds.contains("n-p4"),
+        s"F1': the node must have left the active map once its chain was archived: $activeIds")
+      assert(archivedWhileOpen.contains("n-p4"),
+        s"F1': the node must be in the archive (with its open window) : $archivedWhileOpen")
+      // ② 归档区读面：禁 spawn 表自愈（重启后一拍内重建，源 = 归档副本）+ 窗口内任务/进程照跑
+      assertEquals(banRestored, Some(at),
+        s"F1': the spawn-ban self-heal must rebuild from the ARCHIVED copy (in-memory table was cleared): $banRestored")
+      assert(tasksInWindow.nonEmpty, "inside the window the bg task stays registered (read-only evidence window)")
+      assert(aliveInWindow, s"inside the window the real background process (pid $pid) must still be alive")
+      // ③ 到点收殓：进程被杀 + 任务注销 + 恰 1 条 node-destroyed + 归档副本清字段 + 不复活
       val diag = s"pid=$pid aliveAfterExpiry=$aliveAfter tasksStillRegistered=${tasksAfter.size} " +
-        s"destroyEvents=${events.count(_.contains("\"node-destroyed\""))} archivedDestroyAt=${arch.nodes.get("n-p4").flatMap(_.destroyAt)}"
-      assert(!aliveAfter, s"a node with an open destroy window must still be reclaimed at expiry (its processes may not leak); got $diag")
+        s"destroyEvents=${events.count(_.contains("\"node-destroyed\""))} archivedDestroyAt=${arch.nodes.get("n-p4").flatMap(_.destroyAt)} " +
+        s"activeAfter=$activeAfter"
+      assert(!aliveAfter, s"an archived member's destroy window must still be honoured at expiry (its processes may not leak); got $diag")
       assertEquals(tasksAfter, Nil, s"its bg tasks must be reclaimed at expiry; got $diag")
       assertEquals(events.count(_.contains("\"node-destroyed\"")), 1,
         s"exactly one node-destroyed event expected (idempotent sweep); got $diag")
-      // ★ 新增末段（批 F1 契约的另一半）：收殓清 `destroyAt` ⇒ 归档资格恢复（不永久阻塞出库）
-      assert(sweptAfterReclaim.exists(_.nodeIds.contains("n-p4")),
-        s"F1: once the window is reclaimed the chain must become archivable again: $sweptAfterReclaim")
       assert(arch.nodes.get("n-p4").exists(_.destroyAt.isEmpty),
-        s"F1: the archived copy must carry a cleared window: ${arch.nodes.get("n-p4").map(_.destroyAt)}")
+        s"F1': the ARCHIVED copy must carry a cleared window after the reclaim: ${arch.nodes.get("n-p4").map(_.destroyAt)}")
+      assert(!activeAfter.contains("n-p4"),
+        s"F1': clearing the window on the archived copy must NOT revive the node into the active map: $activeAfter")
   }
 
 end NoderptVerifyProbeSpec
