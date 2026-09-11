@@ -270,6 +270,21 @@ class ListFriendsToolRegistrationSpec extends CatsEffectSuite:
     val plain = FriendRoster.candidateLine(FriendSummary("u2", "wangxuan", "王选"))
     assertEquals(plain, "王选 (wangxuan)")
 
+  test("L4④：名册行里的键原样作 SendMessage.to 即命中同一好友（username / displayName）"):
+    // 名册行 = `candidateLine` ⇒ 行内两个键就是 `SendMessage` 的 L1/L2 匹配键。
+    // 完整「发送成功」腿由 `FriendMessageToolSpec`（mode=auto 按 username 发送成功）
+    // 覆盖；remark 腿属 ⑦ 待落地欠项（本批无该字段）。
+    val f = FriendSummary("u1", "lin@example.com", "林小满", blocked = Some(true))
+    val line = FriendRoster.candidateLine(f)
+    val username = "lin@example.com"
+    val displayName = "林小满"
+    assert(line.startsWith(displayName), "行首即 displayName（可直接整键取用）")
+    assert(line.contains(s"($username)"), "用户名以括号键形式在位（可直接整键取用）")
+    assertEquals(FriendRoster.resolve(username, List(f)).map(_.userId), Right("u1"), "username 键可寻址")
+    assertEquals(FriendRoster.resolve(displayName, List(f)).map(_.userId), Right("u1"), "displayName 键可寻址")
+    assertEquals(FriendRoster.resolve(line, List(f)).isLeft, true,
+      "整行不是合法 to 值（模型须取行内键，不得整行复制——L4 输出行形的用途说明）")
+
   test("L4①（⑦ 待落地欠项）：remark 预留槽与 displayName 可区分——本批不加任何模型字段"):
     val f = FriendSummary("u1", "lin@example.com", "林小满")
     // 本批无模型字段 ⇒ 数据面恒走默认 None（ListFriends / SendMessage 两侧都不传 remark）
