@@ -363,6 +363,13 @@ object ProjectActor:
                 // best-effort 同款（失败不影响后续 sweep）。
                 cfg.engine.remindUnreportedNodes()
                 .handleErrorWith(e => logger.warn(s"node-report reminder sweep failed: ${e.getMessage}")) *>
+                // 终态销毁窗口扫描（noderpt 批 B 段 2026-09-11 作者裁定「一律存活 30 分钟
+                // 再销毁」）：对 `destroyAt` 到点的终态节点执行对称收殓（`reclaimSession`：
+                // 杀进程树 + 注销 registry + 逐条 finalizeTask + 释放 ShellSession 条目 +
+                // WS cancelled 帧）并清字段；顺带按持久字段重建禁 spawn 表（重启自愈）。
+                // 幂等（字段已清 ⇒ 不再入选）；best-effort 同款（失败不影响后续 sweep）。
+                cfg.engine.sweepDestroyWindows()
+                .handleErrorWith(e => logger.warn(s"node destroy-window sweep failed: ${e.getMessage}")) *>
                 // 链级即时归档 sweep（裁定④「TTL 分开」批 2026-09-07）：整链全终态
                 // → 整批立即移归档（移除旧 24h 活动区滞留）；链未齐（含 blocked 待办）
                 // → 保留。视觉「同帧淡出」由前端派生管线承担，本 sweep 出库+落盘。

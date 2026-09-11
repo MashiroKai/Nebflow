@@ -87,15 +87,27 @@ object FlowMapEventLog:
     * [[ChainRestoredType]]）写入时带上，消费者免从 summary 反解析取链 id。 */
   def append(workspace: String, project: String, nodeId: String, typ: String, summary: String,
              chainId: Option[String] = None): IO[Unit] =
-    val base = List(
-      "ts" -> System.currentTimeMillis().asJson,
-      "type" -> typ.asJson,
-      "project" -> project.asJson,
-      "nodeId" -> nodeId.asJson,
-      "summary" -> summary.asJson
-    )
-    val fields = chainId.filter(_.trim.nonEmpty).map(id => base :+ ("chainId" -> id.asJson)).getOrElse(base)
-    val line = Json.obj(fields*).noSpaces
-    // createFolders：`.nebflow/` 缺席（未挂载工作区/测试新目录）时自建——审计写永不
-    // 因目录缺失整条丢失（既有写点均在已挂载项目内，本参数对其零行为变化）。
-    IO.blocking(os.write.append(os.Path(workspace, PathUtil.dataRoot) / ".nebflow" / FileName, line + "\n", createFolders = true)).void
+    // ts 求值时点修复（noderpt 批 B 段 2026-09-11，实测 `n-0931699e`）：此前
+    // `System.currentTimeMillis()` 在 **IO 构造期**求值（在 `IO.blocking` 之外），
+    // 事件行的 ts 因此是「构造该 IO 的时刻」而不是「真正落盘的时刻」——对
+    // **延迟触发**的写入点（`bg-wait` 武装时构造、cap 到点才执行的 `bg-wait-timeout`）
+    // 偏差可达整个等待窗口（实测 harvest − timeout = 7,199,951ms ≈ 1 个 cap，而
+    // bg-wait 与 bg-wait-timeout 两行 ts 只差 5ms ⇒ 全部按「构造时刻」写）。任何按 ts
+    // 反推「节点挂了多久」的取证都会得出错误结论。修法 = 把 ts 求值移进同一
+    // `IO.blocking`（执行时刻求值，与落盘同一时刻），构造与执行分离时 ts = 真实触发
+    // 时刻（≥ 执行开始时刻）。JSON 组装一并移入（零额外开销、字段集与顺序逐字不变）。
+    IO.blocking {
+      val ts = System.currentTimeMillis()
+      val base = List(
+        "ts" -> ts.asJson,
+        "type" -> typ.asJson,
+        "project" -> project.asJson,
+        "nodeId" -> nodeId.asJson,
+        "summary" -> summary.asJson
+      )
+      val fields = chainId.filter(_.trim.nonEmpty).map(id => base :+ ("chainId" -> id.asJson)).getOrElse(base)
+      val line = Json.obj(fields*).noSpaces
+      // createFolders：`.nebflow/` 缺席（未挂载工作区/测试新目录）时自建——审计写永不
+      // 因目录缺失整条丢失（既有写点均在已挂载项目内，本参数对其零行为变化）。
+      os.write.append(os.Path(workspace, PathUtil.dataRoot) / ".nebflow" / FileName, line + "\n", createFolders = true)
+    }.void
