@@ -2,6 +2,7 @@ package nebflow.neblink
 
 import cats.effect.IO
 import io.circe.Json
+import nebflow.core.NebflowLogger
 
 /**
   * Enrollment persistence shared by every login path (device flow poll,
@@ -13,11 +14,19 @@ import io.circe.Json
   */
 object NeblinkEnrollment:
 
+  private val logger = NebflowLogger.forName("nebflow.neblink.enroll")
+
   /** Persist the EnrollResponse fields. `logtoRefresh` carries the provider
     * refresh token (AC+PKCE / silent re-login) into device.json; `logtoIdToken`
     * (RP-logout fix, 2026-09-06) the raw id_token for the end-session
     * `id_token_hint`; `reloginHook` is wired into the hot-swapped client so
-    * IT can silent-relogin too. Returns the persisted device token. */
+    * IT can silent-relogin too. Returns the persisted device token.
+    *
+    * Isolation guard (2026-09-11): an instance running on a redirected data
+    * root must not auto-register with the production network — see
+    * [[EnrollGuard]]. The refusal is returned on the Left channel (so every
+    * caller surfaces it) AND logged; `NEBFLOW_ALLOW_PROD_ENROLL=1` bypasses it.
+    * Default data root: unchanged behaviour. */
   def persist(
     ms: NeblinkService,
     resolvedUrl: String,
@@ -27,6 +36,23 @@ object NeblinkEnrollment:
     gatewayPort: Int,
     reloginHook: Option[IO[Option[String]]],
     logtoIdToken: Option[String] = None
+  ): IO[Either[String, String]] =
+    EnrollGuard.enrollRefusal(resolvedUrl) match
+      case Some(reason) =>
+        logger.warn(s"enrollment refused by the isolation guard: $reason").as(Left(reason))
+      case None =>
+        persistImpl(ms, resolvedUrl, json, logtoRefresh, discovery, gatewayPort, reloginHook, logtoIdToken)
+
+  /** Pre-guard implementation — see [[persist]] for the entry point. */
+  private def persistImpl(
+    ms: NeblinkService,
+    resolvedUrl: String,
+    json: Json,
+    logtoRefresh: Option[String],
+    discovery: Option[NeblinkDiscovery],
+    gatewayPort: Int,
+    reloginHook: Option[IO[Option[String]]],
+    logtoIdToken: Option[String]
   ): IO[Either[String, String]] =
     val deviceToken = json.hcursor.downField("deviceToken").as[String].toOption
     val networkId = json.hcursor.downField("networkId").as[String].toOption.getOrElse("")
@@ -78,6 +104,6 @@ object NeblinkEnrollment:
         yield Right(tok)
       case None =>
         IO.pure(Left("Server did not return a device token"))
-  end persist
+  end persistImpl
 
 end NeblinkEnrollment
