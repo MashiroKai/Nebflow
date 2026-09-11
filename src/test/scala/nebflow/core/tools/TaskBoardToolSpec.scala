@@ -1,7 +1,7 @@
 package nebflow.core.tools
 
 import munit.FunSuite
-import nebflow.core.project.{NodeDef, NodeLifecycle, TaskBoardStore}
+import nebflow.core.project.{NodeDef, NodeLifecycle, TaskBoardHistory, TaskBoardStore}
 
 import java.nio.file.Files
 
@@ -35,27 +35,33 @@ class TaskBoardToolSpec extends FunSuite:
 
   private def file: os.Path = home / ".nebflow" / "task-board.json"
 
-  /** 每用例从空库开始（store 无内存态——删文件即全新）。 */
+  /** 每用例从空库开始（store 无内存态——删文件即全新；变更史一并清，防跨用例串味）。 */
   private def resetFile(): Unit =
     if os.exists(file) then os.remove(file)
     if os.exists(home / ".nebflow") then
-      os.list(home / ".nebflow").filter(_.last.startsWith("task-board.json.corrupt")).foreach(os.remove)
+      os.list(home / ".nebflow")
+        .filter(p => p.last.startsWith("task-board.json.corrupt") || p.last.startsWith("task-history"))
+        .foreach(os.remove)
 
   private def store: TaskBoardStore = TaskBoardStore.open("projT", home.toString)
 
   private def d(action: String, title: Option[String] = None, id: Option[String] = None,
       status: Option[String] = None, assignee: Option[String] = None, nodeId: Option[String] = None,
       note: Option[String] = None, blocks: Option[List[String]] = None,
+      text: Option[String] = None, links: Option[List[String]] = None,
       term: Map[String, String] = Map.empty): Either[ToolError, String] =
     TaskBoardTool.dispatchSync(store, term, BoardCaller.Dispatcher, action,
-      title = title, id = id, status = status, assignee = assignee, nodeId = nodeId, note = note, blocks = blocks)
+      title = title, id = id, status = status, assignee = assignee, nodeId = nodeId, note = note,
+      blocks = blocks, text = text, links = links)
 
   private def n(self: String)(action: String, title: Option[String] = None, id: Option[String] = None,
       status: Option[String] = None, assignee: Option[String] = None, nodeId: Option[String] = None,
       note: Option[String] = None, blocks: Option[List[String]] = None,
+      text: Option[String] = None, links: Option[List[String]] = None,
       term: Map[String, String] = Map.empty): Either[ToolError, String] =
     TaskBoardTool.dispatchSync(store, term, BoardCaller.FlowNode(self), action,
-      title = title, id = id, status = status, assignee = assignee, nodeId = nodeId, note = note, blocks = blocks)
+      title = title, id = id, status = status, assignee = assignee, nodeId = nodeId, note = note,
+      blocks = blocks, text = text, links = links)
 
   private def o(action: String, title: Option[String] = None, id: Option[String] = None): Either[ToolError, String] =
     TaskBoardTool.dispatchSync(store, Map.empty, BoardCaller.Other, action, title = title, id = id)
@@ -217,5 +223,70 @@ class TaskBoardToolSpec extends FunSuite:
     // 无映射（空 Flow Map 终态）→ 无标记
     val clean = d("list").toOption.get
     assert(!clean.contains("⚠node-done"), clean)
+
+  // ===== 升级批（2026-09-11）：log / show 两 action + links 结构字段 + schema 契约 =====
+
+  test("升级批：分发器 log/show 全板可用（log 载入史、show 出全文与 note 主线）"):
+    resetFile()
+    store.createSync("任务A", note = Some("工作记录"))
+    val log = d("log", id = Some("1"), text = Some("补充第一段"))
+    assert(log.isRight, log)
+    val hist = TaskBoardHistory.open(home.toString)
+    assertEquals(hist.readFor("1", only = TaskBoardHistory.isNoteChange).events.map(_.text), List(Some("补充第一段")))
+    assertEquals(hist.readFor("1", only = TaskBoardHistory.isNoteChange).events.head.actor, "dispatcher",
+      "actor 由身份派生（分发器）")
+    assertEquals(store.entriesSync().head.note, Some("工作记录"), "log 不改板面 note")
+    val show = d("show", id = Some("1"))
+    assert(show.isRight, show)
+    assert(show.toOption.get.contains("工作记录") && show.toOption.get.contains("note changes"), show)
+    // 缺 id → PARAM（log/show 同口径）
+    assert(code(d("log", text = Some("x"))).exists(_.contains(TaskBoardStore.Codes.Param)))
+    assert(code(d("show")).exists(_.contains(TaskBoardStore.Codes.Param)))
+
+  test("升级批：节点 log 仅自己名下（他人 → FORBIDDEN）；节点 show 全板只读"):
+    resetFile()
+    store.createSync("我的工单", assignee = Some("n-a"), note = Some("我的记录"))
+    store.createSync("他人工单", assignee = Some("n-b"), note = Some("他人记录"))
+    val mine = n("n-a")("log", id = Some("1"), text = Some("节点补充"))
+    assert(mine.isRight, mine)
+    assertEquals(TaskBoardHistory.open(home.toString).readFor("1", only = TaskBoardHistory.isNoteChange).events.head.actor,
+      "node", "actor 由身份派生（节点）")
+    val other = n("n-a")("log", id = Some("2"), text = Some("越权"))
+    assert(other.isLeft && code(other).exists(_.contains(TaskBoardStore.Codes.Forbidden)), other)
+    assertEquals(TaskBoardHistory.open(home.toString).readFor("2", only = TaskBoardHistory.isNoteChange).total, 0,
+      "越权 log 零落史")
+    val showAll = n("n-a")("show", id = Some("2"))
+    assert(showAll.isRight && showAll.toOption.get.contains("他人记录"), showAll)
+
+  test("升级批：node update 携带 links → FORBIDDEN（结构字段只读面扩展）"):
+    resetFile()
+    store.createSync("我的工单", assignee = Some("n-a"))
+    val r = n("n-a")("update", id = Some("1"), links = Some(List("docs/x.md")))
+    assert(r.isLeft && code(r).exists(_.contains(TaskBoardStore.Codes.Forbidden)), r)
+    assert(code(r).exists(_.contains("dispatcher-only")), code(r).toString)
+    assertEquals(store.entriesSync().head.links, Nil, "被拒更新零副作用")
+
+  test("升级批：schema 契约——action enum 六值、新增 text/links 参数、schema 不暴露 actor/history（客户端不可注入）"):
+    val schema = TaskBoardToolDef.inputSchema
+    val props = schema("properties").flatMap(_.asObject).get
+    val actionEnum = props("action").flatMap(_.hcursor.downField("enum").as[List[String]].toOption).get
+    assertEquals(actionEnum, List("create", "update", "list", "close", "log", "show"),
+      "action enum 六值（升级批）")
+    assert(props.contains("text") && props.contains("links"), "新增参数入 schema")
+    assert(!props.contains("actor") && !props.contains("history"),
+      "actor/history 不出现在 schema（引擎侧派生/独立文件，客户端无法注入）")
+    // 未知 action 文案 = 六值清单
+    val unknown = code(d("frobnicate")).getOrElse("")
+    assert(unknown.contains("create/update/list/close/log/show"), unknown)
+    // description 契约面：新 action、links 不校验、上限口径、史文件与轮转/清理
+    val desc = TaskBoardToolDef.description
+    assert(desc.contains("- log: required `id` + `text`"), desc)
+    assert(desc.contains("- show: required `id`"), desc)
+    assert(desc.contains("NOT validated for reachability"), desc)
+    assert(desc.contains("task-history.jsonl"), desc)
+    assert(desc.contains("5 MiB or 20,000 lines"), desc)
+    assert(desc.contains("cross-process writers are not locked"), "并发口径保留")
+    assert(desc.contains("TBOARD_HISTORY"), desc)
+    assert(desc.contains("16000") && desc.contains("10993"), "上限口径 + 存量依据进 description")
 
 end TaskBoardToolSpec

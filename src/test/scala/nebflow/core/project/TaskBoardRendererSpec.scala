@@ -29,7 +29,7 @@ class TaskBoardRendererSpec extends FunSuite:
     note: Option[String] = None,
     blocks: List[String] = Nil
   ): TaskBoardEntry =
-    TaskBoardStore.Entry(id, title, status, assignee, nodeId, note, blocks)
+    TaskBoardStore.Entry(id, title, status, assignee, nodeId, Nil, note, blocks)
 
   // ===== ① compactLine 紧凑行文法 =====
 
@@ -164,5 +164,92 @@ class TaskBoardRendererSpec extends FunSuite:
     assertEquals(TaskBoardRenderer.NoteRenderMaxChars, 300)
     assertEquals(TaskBoardRenderer.NodeSummaryMaxChars, 500)
     assertEquals(TaskBoardRenderer.NodeSummaryMaxLines, 10)
+
+  // ===== ⑥ 升级批：注入尾注含 show 提示（R4）=====
+
+  test("R4 注入尾注：超限尾注同时指向 list 与 show（旧「用 list 查看」前缀逐字保留）"):
+    val board = (1 to 50).map(i => e(i.toString, s"长标题$i-" + "很长" * 30)).toList
+    val out = TaskBoardRenderer.renderDispatcher(board)
+    assert(out.contains("more — 用 list 查看"), "旧前缀保留（既有断言兼容）")
+    assert(out.contains("show 看单条全文"), s"新 action 可发现性提示: $out")
+    val node = TaskBoardRenderer.renderNodeInject(None, Nil, board)
+    assert(node.contains("show 看单条全文"), node)
+
+  // ===== ⑦ 升级批：show 渲染（R3/R8）=====
+
+  private def ev(kind: String, at: String, field: Option[String] = None, prev: Option[String] = None,
+      next: Option[String] = None, text: Option[String] = None, from: Option[String] = None,
+      to: Option[String] = None, actor: String = "dispatcher"): TaskBoardEvent =
+    TaskBoardEvent(at = at, kind = kind, id = Some("1"), actor = actor, field = field,
+      prev = prev, next = next, text = text, from = from, to = to)
+
+  test("R3/R8 renderShow：全字段段 + note 全文 + links + 依赖反查 + 两区时间线（note 主线在前、状态类极简在后）"):
+    val tasks = List(
+      e("1", "被查条目", Open, Some("dispatcher"), note = Some("当前 note 正文"), blocks = List("2")),
+      e("2", "依赖项", Done),
+      e("3", "依赖我的", Open, Some("n-a"), blocks = List("1")))
+    val notes = TaskBoardHistory.ReadResult(events = List(
+      ev("log", "2026-09-11T09:00:00Z", text = Some("补充：第一段记录")),
+      ev("update", "2026-09-11T10:00:00Z", field = Some("note"), prev = Some("旧版做法 A"), next = Some("新版做法 B"))), total = 2)
+    val states = TaskBoardHistory.ReadResult(events = List(
+      ev("create", "2026-09-11T08:00:00Z"),
+      ev("update", "2026-09-11T08:30:00Z", field = Some("status"), from = Some("open"), to = Some("in_progress"))), total = 2)
+    val out = TaskBoardRenderer.renderShow(tasks.head, tasks, Map.empty, notes, states)
+    assert(out.startsWith("#1[open @dispatcher] 被查条目"), out)
+    assert(out.contains("note (10 chars):") && out.contains("当前 note 正文"), out)
+    assert(out.contains("deps (1, this entry depends on): #2[done] 依赖项"), out)
+    assert(out.contains("required by (1, entries depending on this): #3[open @n-a] 依赖我的"), out)
+    // 主区：note 主线（含被覆盖前的那一版 —— before/after 两侧）
+    assert(out.contains("note changes (2 shown of 2, oldest first):"), out)
+    assert(out.contains("before") && out.contains("旧版做法 A"), out)
+    assert(out.contains("after") && out.contains("新版做法 B"), out)
+    assert(out.contains("appended") && out.contains("补充：第一段记录"), "log 追加段可读")
+    // 次区：状态类极简行，且不与 note 主线平铺混杂（分区标题各自独立）
+    assert(out.contains("state events (2 shown of 2, minimal"), out)
+    assert(out.contains("field=status open→in_progress actor=dispatcher"), out)
+    val noteIdx = out.indexOf("note changes")
+    val stateIdx = out.indexOf("state events")
+    assert(noteIdx >= 0 && stateIdx > noteIdx, s"note 主区必须在状态类之前: $out")
+
+  test("R3 预算：note 超写入上限的存量 → 当前 note 明示截断；note 主线区整块丢弃明示；总长 ≤ ShowHardCapChars"):
+    val long = "长" * 20_000
+    val tasks = List(e("1", "超长条目", Open, note = Some(long)))
+    val many = (1 to 40).map(i => ev("update", f"2026-09-11T10:${i}%02d:00Z", field = Some("note"),
+      prev = Some("旧" * 12_000), next = Some("新" * 12_000))).toList
+    val notes = TaskBoardHistory.ReadResult(events = many, total = 60, skipped = 2)
+    val out = TaskBoardRenderer.renderShow(tasks.head, tasks, Map.empty, notes, TaskBoardHistory.ReadResult())
+    assert(out.contains("showing first 16000"), "当前 note 可见截断")
+    assert(out.contains("showing first 10000"), "单侧内容可见截断")
+    assert(out.contains("older note change(s) not shown"), "整块丢弃明示")
+    assert(out.contains("unreadable line(s) skipped"), "坏行计数可见")
+    assert(out.length <= TaskBoardRenderer.ShowHardCapChars, s"硬顶内: ${out.length}")
+    // 预算口径：不与工具结果硬顶 50,000 相撞；note 渲染上限 = 写入侧上限（漂移闸）
+    assert(TaskBoardRenderer.ShowHardCapChars < 50_000)
+    assertEquals(TaskBoardRenderer.NoteShowMaxChars, TaskBoardStore.NoteWriteMaxChars, "show 上限 = 写入上限")
+    assert(TaskBoardRenderer.TimelineContentMaxChars >= TaskBoardRenderer.NoteShowMaxChars / 2)
+
+  test("R8 renderArchived：主库已无该 id → [gone] 标记 + 主库字段如实「不可得」+ note 版本仍可读（禁回填）"):
+    val notes = TaskBoardHistory.ReadResult(events = List(
+      ev("update", "2026-09-11T10:00:00Z", field = Some("note"), prev = Some("第一版：做法 A"), next = Some("第二版：做法 B")),
+      ev("close", "2026-09-11T11:00:00Z", field = Some("note"), prev = Some("第二版：做法 B"),
+        next = Some("第二版：做法 B\n[done] 收尾"), from = Some("open"), to = Some("done"))), total = 2)
+    val states = TaskBoardHistory.ReadResult(events = List(ev("prune", "2026-09-11T12:00:00Z", actor = "system")), total = 1)
+    val out = TaskBoardRenderer.renderArchived("1", Nil, notes, states)
+    assert(out.startsWith("#1[gone]"), out)
+    assert(out.contains("cleaned up — NOT available"), out)
+    assert(out.contains("禁") || out.contains("nothing is reconstructed or guessed"), out)
+    assert(out.contains("第一版：做法 A") && out.contains("第二版：做法 B"), out)
+    assert(out.contains("[done] 收尾"), out)
+    assert(out.contains("state events"), out)
+
+  test("升级批常量卡值（漂移即红）"):
+    assertEquals(TaskBoardRenderer.TimelineNoteMaxVersions, 50)
+    assertEquals(TaskBoardRenderer.TimelineNoteMaxChars, 24_000)
+    assertEquals(TaskBoardRenderer.TimelineContentMaxChars, 10_000)
+    assertEquals(TaskBoardRenderer.TimelineStateMaxLines, 30)
+    assertEquals(TaskBoardRenderer.TimelineStateMaxChars, 3_000)
+    assertEquals(TaskBoardRenderer.NoteShowMaxChars, 16_000)
+    assertEquals(TaskBoardRenderer.ReverseDepsShowMax, 20)
+    assertEquals(TaskBoardRenderer.ShowHardCapChars, 48_000)
 
 end TaskBoardRendererSpec
