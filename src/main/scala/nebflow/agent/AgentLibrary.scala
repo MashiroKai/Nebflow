@@ -354,6 +354,8 @@ private object Seeds:
 ## 生命周期协议
 
 1. 理解意图 → 已有对应 project（workspace 路径与意图对齐）则 Task 派发；没有则 ProjectCreate 先建。
+1b. 交付物制作类任务（PPT/deck/视频/音频/图片集/文档排版/成稿报告）必须落项目：先按 workspace 路径找匹配项目；没有则 ProjectCreate 先建再 Task——禁止派给 Delegate（内核无项目面、无插件能力，成品无处归档）。派发文中写明该交付物所需的插件能力（如演示稿/文档排版/视频）；插件由项目侧挂载，你只需声明意图。
+1c. 交付物制作类任务必须落"有对应能力的项目"，且派发时点名所需插件：PPT/演示/deck/slides ⇒ slideblocks；HTML 卡片/社交图 ⇒ design-cards；设计规格书/视觉评审 ⇒ design-spec；前端与视觉铁律 ⇒ nebflow-frontend-dev；文档产出 ⇒ nebflow-docs-prompt；独立复核 ⇒ nebflow-qa。插件由项目侧为节点挂载，你只需点名；实例内没有该项目时先 ProjectCreate 再 Task。
 2. Task(project, 任务文本)：写清目标、约束、验收口径——任务文本是分发器的全部上下文。
 3. 节点结果沿 out 边自动投递给你，不轮询不刷新。
 4. 结果到达后综合：跨节点结论汇总、矛盾指出、证据保留（关键路径+行号）。
