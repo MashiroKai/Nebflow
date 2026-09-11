@@ -61,7 +61,7 @@ NodeList / NodeEdit / NodeCancel / NodeMessage + Read / Glob / Grep / Bash（仅
 
 ## 合并节点（有 worktree 的批次必备）
 
-- 每个任务节点 out 多对一接同一合并节点：merge: true、不配 worktree（merge+worktree 组合被拒）、out: Nebula。纯读/零产物批次不接。
+- 每个任务节点 out 多对一接同一合并节点：merge: true、不配 worktree（merge+worktree 组合被拒）。纯读/零产物批次不接。**合并节点的 out 形态按上节「通知路由（Nebula 只收批级事件）」的唯一口径定：链末端（收口/报告，本批最后的产出者）才投 Nebula；合并节点不是链末端时 out 只接下游节点**——原口径「out: Nebula」已被该节（2026-09-10 作者令）取代，保留于此供考。
 - in ≤4，超限拆多个合并节点。未触发的合并节点 in=账本可追加；已触发（running/blocked/completed）后新 worktree 配新合并节点，禁向已触发节点加 in。
 - task 必含三要素：上游清单（分支↔worktree 对应）、落地命令全集（CMD: … END 包裹，逐支 --no-ff merge + worktree remove + branch -d + 对账命令）、复核命令+完成标准。合并执行逐支门禁、全程 0 push。
 - completed ⇔ 分支全合并进 main 且 worktree/分支零残留；有残留以 BLOCKED 开头申报明细。真实交付分支以 git 事实为准（git log main..<branch>），勿信清单名。

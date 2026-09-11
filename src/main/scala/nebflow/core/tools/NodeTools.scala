@@ -27,6 +27,21 @@ import scala.util.Try
 object NodeTools:
   private val logger = NebflowLogger.forName("nebflow.node.tools")
 
+  /** ⑥ 合并节点 in 上限（merge-node 设计落实批 U2/P1，2026-09-11 作者拍板「升引擎硬闸」）。
+    * 纪律原文（分发器提示词「合并节点」节 + 设计指南 §0bis）：「in ≤4，超限拆多个合并
+    * 节点」——此前纯纪律、引擎查无校验。边界：=4 合法、≥5 拒（`NODE_MERGE_IN_CAP`）。 */
+  val MergeInCap: Int = 4
+
+  /** ⑧ 「已触发」状态集（同一裁定）：running/blocked/completed 的合并节点其 in 账本冻结
+    * ——新 worktree 配新合并节点，禁向已触发节点追加 in（`NODE_MERGE_FIRED_NO_IN`）。
+    * un-triggered（wiring/pending）追加是正常回流，放行。
+    *
+    * failed/cancelled **不在集内**（有意）：二者是 NodeEdit 重激活闸唯一放行的两个状态
+    * （`ReactivateStatuses`），把 in 追加一起拒会把「重激活时重接上游」这条恢复路径掐死
+    * ——与设计原文只列 running/blocked/completed 逐字一致。 */
+  val MergeFiredStatuses: Set[String] =
+    Set(NodeLifecycle.Running, NodeLifecycle.Blocked, NodeLifecycle.Completed)
+
   /** 解析 project（参数优先，fallback ctx.projectName；项目名大小写不敏感——
     * registry.get 已做 equalsIgnoreCase 兜底，Nebflow/nebflow 等价）。 */
   def resolveProject(project: Option[String], ctx: ToolContext): IO[Either[String, ProjectRuntime]] =
@@ -862,6 +877,15 @@ object NodeEditTool extends Tool:
                   "it can never fire (empty mount = pending forever). Create the upstream node(s) first, then create this merge " +
                   "node with in=<upstream-id(s)> (the in declaration rewires each upstream's out to this node). " +
                   "(NODE_MERGE_REQUIRES_UPSTREAM)")))
+            // ⑥ in 上限闸（U2/P1 · 2026-09-11 作者拍板）：合并节点 in ≤4，超限拆多个合并
+            // 节点。此前纯纪律、引擎查无校验 ⇒ 一条超限 merge 会把 >4 条轨道压成单点
+            // （落地冲突面与失败面同步放大）。边界 =4 合法 / ≥5 拒，码 NODE_MERGE_IN_CAP。
+            else if merge && ins.distinct.size > NodeTools.MergeInCap then
+              IO.pure(Left(ToolError(
+                s"merge=true (batch landing sink) accepts at most ${NodeTools.MergeInCap} upstreams in one ledger — " +
+                  s"this create declares ${ins.distinct.size} distinct upstream(s). Split the batch: create one merge " +
+                  s"node per ≤${NodeTools.MergeInCap} upstream group, then wire the groups' merge nodes into a " +
+                  "follow-up merge/report node. (NODE_MERGE_IN_CAP)")))
             else
               // 1. agent 存在性（新建恒 "general"——库缺 general = 环境残缺，fail-fast）
               EntityLoader.loadAgent(agentName).flatMap {
@@ -1329,6 +1353,10 @@ object NodeEditTool extends Tool:
                           // 注意 out 的「未传」与「显式 null 断开」经 parseOut 后同为 None——
                           // 必须按 outJson 是否出现区分：传了才视为断开后的 None，未传保持原 out。
                           val finalIn = node.in ++ adds
+                          // ⑥⑧ 合并节点闸门的触发面（本批 U2/P1）：只有**真的新加上游**
+                          // 才算「加 in」——重复回显既有 in（幂等重发）不是加，不触发任何
+                          // 闸门（防「同参数重编辑」被误拒的回归）。
+                          val genuinelyNewIn = adds.distinct.filterNot(node.in.contains)
                           val finalDeps = if depsProvided then newDeps else node.deps
                           val finalOut = if outJson.isDefined then newOut else node.out
                           // notifyDispatcher 校验（dispatch-notify 批）：设置/撤销域为
@@ -1357,6 +1385,27 @@ object NodeEditTool extends Tool:
                             else if !loopStatusOk then
                               Some(ToolError(
                                 s"loop can only be set or withdrawn before completion (wiring/pending/running) — node '${node.name}' is ${node.status} (result already delivered). re-activation is the exit for blocked/failed."))
+                            // ⑥ in 上限（edit 路径，U2/P1）：合并节点 in 只增（append-only），
+                            // 追加后 distinct 计数 >4 → 拒（=4 合法）。码 NODE_MERGE_IN_CAP。
+                            else if node.merge && genuinelyNewIn.nonEmpty &&
+                              finalIn.distinct.size > NodeTools.MergeInCap then
+                              Some(ToolError(
+                                s"merge node '${node.name}' accepts at most ${NodeTools.MergeInCap} upstreams in one ledger — " +
+                                  s"this edit would leave ${finalIn.distinct.size} distinct upstream(s). Split the batch: create " +
+                                  s"a second merge node for the extra upstream(s), then wire both merge nodes into a " +
+                                  "follow-up merge/report node. (NODE_MERGE_IN_CAP)"))
+                            // ⑧ 已触发禁加 in（edit 路径，U2/P1）：running/blocked/completed
+                            // 的合并节点 in 账本冻结——它已按旧账本开火/终态化，追加的上游
+                            // 永远不会被这一轮 barrier 消费（静默的半接边）。新 worktree 配新
+                            // 合并节点。码 NODE_MERGE_FIRED_NO_IN。
+                            else if node.merge && genuinelyNewIn.nonEmpty &&
+                              NodeTools.MergeFiredStatuses.contains(node.status) then
+                              Some(ToolError(
+                                s"merge node '${node.name}' has already fired (status=${node.status}) — its in ledger is " +
+                                  "frozen: an upstream appended now would never be consumed by this round's barrier " +
+                                  "(silent half-wired edge). Create a NEW merge node for the new upstream(s) and wire it " +
+                                  "downstream; un-triggered (wiring/pending) merges still accept appended upstreams. " +
+                                  "(NODE_MERGE_FIRED_NO_IN)"))
 
                             else None
                             )
