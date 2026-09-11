@@ -4,7 +4,7 @@
 
 **One entry. Every agent.**
 
-A self-hosted AI agent orchestration platform — bring all your work to one chat, and Nebflow dispatches it across agents, projects, and devices.
+A self-hosted AI agent orchestration platform — bring all your work to one entry, and Nebflow dispatches it across agents, projects, and devices.
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 [![Platform](https://img.shields.io/badge/platform-macOS%20%7C%20Linux%20%7C%20Windows-lightgrey.svg)](https://github.com/MashiroKai/Nebflow/releases)
