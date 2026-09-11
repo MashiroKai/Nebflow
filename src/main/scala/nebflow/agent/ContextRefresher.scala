@@ -294,19 +294,23 @@ object ContextRefresher:
       MemoryStore.loadUserMemory,
       agentMemory,
       MemoryHygieneSignal.takePending(),
-      nebflow.core.tools.TaskListStore.openSummaryLine()
+      nebflow.core.tools.TaskListStore.openSummaryLine(),
+      // 记忆队列 pending 计数（记忆改造批 2026-09-12，spec §5 R2）：一行注入，
+      // 复用本注入点先例（TaskList open 摘要同款）——队列为空时返回空串
+      // （不留常驻噪声行）。不新增只读回看工具。
+      nebflow.core.tools.MemoryQueue.summaryLine()
     )
   end buildMemoryBlock
 
   /** 纯渲染（spec 直测面）：两记忆内容 + (restartPending, compactPending) 信号 +
-    * TaskList open 摘要行 → 记忆块全文。文件字节直接由已加载内容计算（无第二次
-    * 读盘）。openTasksLine 为空串时不渲染（全 done 后提醒消失）；三段（记忆主体/
-    * 整理提醒/任务摘要）非空段以 --- 分隔。 */
+    * TaskList open 摘要行 + 记忆队列 pending 行 → 记忆块全文。文件字节直接由已加载
+    * 内容计算（无第二次读盘）。空串段不渲染；非空段以 --- 分隔。 */
   def renderMemoryBlock(
     userContent: Option[String],
     agentContent: Option[String],
     lifecycleSignal: (Boolean, Boolean),
-    openTasksLine: String = ""
+    openTasksLine: String = "",
+    memoryQueueLine: String = ""
   ): String =
     val sections = List(
       userContent.map(content => s"## User Memory\n\n$content"),
@@ -323,7 +327,7 @@ object ContextRefresher:
            |${sections.mkString("\n\n")}""".stripMargin
 
     val notice = memoryHygieneNotice(userContent, agentContent, lifecycleSignal)
-    List(base, notice, openTasksLine).filter(_.nonEmpty).mkString("\n\n---\n\n")
+    List(base, memoryQueueLine, notice, openTasksLine).filter(_.nonEmpty).mkString("\n\n---\n\n")
   end renderMemoryBlock
 
   /** 生命周期整理提醒（§6.2-2.5）：任一文件 >80% 软线 → 即时任务措辞（当轮安排

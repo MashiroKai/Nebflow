@@ -2404,8 +2404,19 @@ object AgentCore:
   /** 阶段 2c 收敛的三个 agent 定义名（§C.1 总览）：其 agent.json tools 声明在
     * buildAllowedToolSet 中整体失效（base=∅）——机制固定不可配置（裁定 11），
     * 存量 agent.json 里的文件工具声明（8684acd Nebula 六件 / dispatcher Write/
-    * Edit）自动变 no-op，无需定义层先行迁移。 */
-  val ConvergedAgentNames = Set("Nebula", "project-dispatcher", "general", "kernel")
+    * Edit）自动变 no-op，无需定义层先行迁移。
+    *
+    * 2026-09-12 记忆改造批（memq）：+ `memory-consolidator` —— 压缩双轨的**记忆
+    * 整理 agent**（spec §5 R5 O-A）。工具面 = `KernelFixedTools` 恰七件（与 Delegate
+    * 内核同集合，作者第④条口径）；category 锁 standalone、`effectiveMcpServers=Nil`
+    * 由本集自动生效。它**不是**「唯一记忆写入者」——机制层不设该闸（作者 2026-09-12
+    * 00:19 裁定：用通用 `Edit`/`Write` 直写记忆文件，属有意为之的设计）。 */
+  val ConvergedAgentNames = Set("Nebula", "project-dispatcher", "general", "kernel", "memory-consolidator")
+
+  /** 记忆整理 agent 定义名（spec §5 R5 O-A；seed = `src/main/resources/seed/agents/
+    * <name>/`，运行时 `~/.nebflow/agents/<name>/`）。压缩双轨的第二轨按此名解析
+    * def（[[MemoryTrack]]）——名字缺失 ⇒ 轨失败降级（照常装机，队列保留）。 */
+  val MemoryConsolidatorName = "memory-consolidator"
 
   /** Nebula 工具面**在飞实测件数**（单点来源：所有件数断言只许引用本常量，
     * 不得各处写裸数字）。
@@ -2560,6 +2571,10 @@ object AgentCore:
           // 先例；不经 legacyFixedTools 的 catch-all（该路径注释自陈「随阶段
           // 2e/3 归档一并退役」，依赖它有漂移风险）。
           case "kernel"             => AgentCore.KernelFixedTools
+          // 记忆整理 agent（2026-09-12 记忆改造批）:与内核同集合恰七件——作者第④条
+          // 「与 Delegate 内核相同的工具面」字面成立；因为它是收敛名，`base=∅`、
+          // `NebulaExclusiveTools` 全剥（交集 ∅）、MCP 面 Nil ⇒ 零配置面。
+          case n if n == AgentCore.MemoryConsolidatorName => AgentCore.KernelFixedTools
           case _                    => legacyFixedTools(agentDef)
 
   /** 双轨期 legacy 固定工具（team/flow 分支 + standalone BaseTools catch-all）。

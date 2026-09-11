@@ -1,0 +1,6 @@
+{
+  "name": "memory-consolidator",
+  "description": "记忆整理 agent（压缩双轨第二轨）：每次上下文压缩时消费 ~/.nebflow/memory/queue.jsonl 的记账条目，把四动作落到三层记忆文件（user / agent / project），逐条回写 outcome 并产出结构化计数。工具面机制固定 = AgentCore.KernelFixedTools 恰七件（Read/Write/Edit/Glob/Grep/Bash + AskUserQuestion，本文件 tools/skills 声明因 ConvergedAgentNames 含本名而整体失效）；机制层不设「唯一写入者」限制（作者 2026-09-12 裁定）。",
+  "preset": "general",
+  "skills": []
+}

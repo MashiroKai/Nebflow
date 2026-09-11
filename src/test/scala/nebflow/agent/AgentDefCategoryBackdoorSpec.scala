@@ -30,7 +30,9 @@ class AgentDefCategoryBackdoorSpec extends CatsEffectSuite:
     "Nebula" -> AgentCore.NebulaOrchestrationTools,
     "project-dispatcher" -> AgentCore.DispatcherFixedTools,
     "general" -> AgentCore.GeneralFixedTools,
-    "kernel" -> AgentCore.KernelFixedTools
+    "kernel" -> AgentCore.KernelFixedTools,
+    // 2026-09-12 记忆改造批：记忆整理 agent（压缩双轨第二轨）——与内核同集合恰七件
+    AgentCore.MemoryConsolidatorName -> AgentCore.KernelFixedTools
   )
 
   /** legacyFixedTools 的 category=team 分支产物（逐字抄自实现：BaseTools + Mail
