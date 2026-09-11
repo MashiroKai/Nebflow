@@ -9,7 +9,7 @@ import nebflow.actor.ActorSystem
 import nebflow.agent.{AgentLibrary, SharedResources}
 import nebflow.core.PathUtil
 import nebflow.core.task.FileTaskStore
-import nebflow.core.tools.{FileLockManager, NodeEditTool, ToolContext}
+import nebflow.core.tools.{BgTaskRegistry, FileLockManager, NodeEditTool, ToolContext}
 import nebflow.gateway.{RateLimiter, SessionStore}
 import nebflow.llm.{ModelCandidate, ThinkingConfig}
 import nebflow.shared.{LlmHandle, LlmRequest, LlmResponse, StreamChunk}
@@ -58,7 +58,10 @@ class LoopNodeSpec extends CatsEffectSuite:
     * 【LoopNode 验证】标记），verify 注入 = 验证模板（含【LoopNode 验证】）。 */
   private class LoopLlm(
     respond: String => String,
-    delayOf: String => FiniteDuration = _ => 0.millis
+    delayOf: String => FiniteDuration = _ => 0.millis,
+    // noderpt 批 B 段 ④：每轮副作用钩子（本轮注入文本 → IO）——用于在某一轮注入
+    // `node_report` 残留申报等探针（default no-op ⇒ 既有用例零影响）。
+    onTurn: String => IO[Unit] = _ => IO.unit
   ):
     val inputs: Ref[IO, List[String]] = Ref.unsafe[IO, List[String]](Nil)    // 全请求文本
     val lastTurns: Ref[IO, List[String]] = Ref.unsafe[IO, List[String]](Nil) // 每请求最后一条消息
@@ -71,7 +74,7 @@ class LoopNodeSpec extends CatsEffectSuite:
         val text = req.messages.map(_.textContent).mkString("\n")
         val last = req.messages.lastOption.map(_.textContent).getOrElse("")
         Stream
-          .eval(inputs.update(_ :+ text) >> lastTurns.update(_ :+ last) >> IO.sleep(delayOf(last)))
+          .eval(inputs.update(_ :+ text) >> lastTurns.update(_ :+ last) >> IO.sleep(delayOf(last)) >> onTurn(last))
           .flatMap(_ => Stream(StreamChunk.TextDelta(respond(last)), StreamChunk.Done(None, None)))
 
   private def mkResources(system: ActorSystem, tmp: os.Path, llm: LlmHandle[IO]): IO[SharedResources] =
@@ -135,22 +138,30 @@ class LoopNodeSpec extends CatsEffectSuite:
     name: String,
     ws: os.Path,
     system: ActorSystem,
-    res: SharedResources
+    res: SharedResources,
+    // noderpt 批 B 段：WS 帧捕获（默认丢弃 = 既有用例零影响）。
+    wsFrames: Option[Ref[IO, List[Json]]] = None,
+    // noderpt 批 B 段：销毁窗口压 0 ⇒ 到点即时可扫（生产默认 30min 走 Defaults 现读）。
+    destroyWindowMs: Long = 0L
   ): IO[ProjectRuntime] =
+    val send: Json => IO[Unit] = wsFrames match
+      case Some(ref) => (j: Json) => ref.update(_ :+ j)
+      case None      => (_: Json) => IO.unit
     for
       store <- FlowMapStore.open(name, ws.toString)
       engine = new NodeEngine(
         store,
         system,
         res,
-        wsSendFn = (_: Json) => IO.unit,
+        wsSendFn = send,
         workspace = ws.toString,
         rootSessionId = "nebula-root",
         projectName = name,
         emitEvent = (_, _, _) => IO.unit,
         // noderpt 批 A 段：本 fixture 主题非 node_report 语义 ⇒ 显式关腿 2（生产默认开；
         // 腿 2 默认开行为由 NodeReportReminderSpec 覆盖）。Loop 节点本就不在腿 2 判定面。
-        reportGateHold = Some(false)
+        reportGateHold = Some(false),
+        destroyWindowMs = Some(destroyWindowMs)
       )
       pd = ProjectDef(name = name, workspace = ws.toString, agentFile = (ws / "AGENTS.md").toString, createdAt = System.currentTimeMillis())
       rt = ProjectRuntime(pd, store, engine, system, res, None)
@@ -172,6 +183,12 @@ class LoopNodeSpec extends CatsEffectSuite:
         case Some(n) => IO.pure(statuses.contains(n.status))
         case None    => IO.pure(false)
       }
+    }
+
+  private def readEvents(ws: os.Path): IO[List[String]] =
+    IO.blocking {
+      val f = ws / ".nebflow" / "flow-map-events.jsonl"
+      if os.exists(f) then os.read(f).linesIterator.toList else Nil
     }
 
   /** 捕获的 lastTurns 中属于「worker 注入」（不含验证标记）的 turn 集合。 */
@@ -329,6 +346,99 @@ class LoopNodeSpec extends CatsEffectSuite:
     yield
       assertEquals(registry.keys.filter(_.startsWith("node-")), Set.empty[String],
         s"no node-* (worker/verify) session may linger after failed loop terminal, got keys=${registry.keys.filter(_.startsWith("node-"))}")
+  }
+
+  // ── ⑦ 终态销毁窗口（noderpt 批 B 段 ④：Loop 双会话同批修）────
+
+  test("⑦ destroy window: loop terminal registers BOTH sessions, clears the declaration slots and the sweep reclaims both") {
+    val ws = tempRoot / "ws-loop-window"
+    os.makeDir.all(ws)
+    val system = ActorSystem(s"loop-win-${scala.util.Random.nextInt(100000)}")
+    val K = 2
+    @volatile var resRef: SharedResources = null
+    // 在**每个 verify 轮**给 worker 会话留一条 node_report 残留申报：worker 的 drain
+    // 只发生在其自身轮次结束点（本 Loop 末轮 worker 之后直接进 verify ⇒ 该申报留到终态）
+    // ⇒ 只有 `destroyLoopSessions` 的 `NodeReportRegistry.remove` 能清（④ 直接证据）。
+    val llm = new LoopLlm(
+      t =>
+        if t.contains("【LoopNode 验证") then
+          "VERDICT: FAIL\n{\"issues\":[\"never passes\"],\"requirements\":\"n/a\"}"
+        else "ok",
+      onTurn = last =>
+        IO(Option(resRef)).flatMap {
+          case None => IO.unit
+          case Some(r) =>
+            if !last.contains("【LoopNode 验证") then IO.unit
+            else
+              r.agentRegistry.get.flatMap { reg =>
+                reg.values.find(_.displayName.exists(_ == "l-win")).map(_.sessionId) match
+                  case Some(sid) =>
+                    // category="pass"（而非 blocked 类）：worker 的 drain 对它走「pass 与无
+                    // 申报同链」，不改变 Loop 裁决路径（本用例主题是窗口收殓，不是分流）。
+                    NodeReportRegistry.register(sid, BlockedFeedback("pass", "residue before loop terminal", ""))
+                  case None => IO.unit
+              }
+        }
+    )
+    for
+      res <- mkResources(system, tempRoot, llm.handle)
+      _ <- IO { resRef = res }
+      frames <- Ref.of[IO, List[Json]](Nil)
+      rt <- mountProject("loop-window", ws, system, res, wsFrames = Some(frames))
+      ctx = mkCtx(res, system, ws.toString)
+      _ <- createLoop("loop-window", "l-win", "produce-W", K, ctx)
+      _ <- waitStatus(rt, "l-win", Set(NodeLifecycle.Failed))
+      _ <- waitSessionClean(res)
+      id <- idOf(rt, "l-win")
+      n <- nodeById(rt, id).map(_.getOrElse(fail("l-win must exist")))
+      wSid = n.sessionRef.getOrElse(fail(s"worker sessionRef must be persisted: $n"))
+      vSid = n.sessionRefVerify.getOrElse(fail(s"verify sessionRef must be persisted: $n"))
+      residueW <- NodeReportRegistry.peek(wSid)
+      residueV <- NodeReportRegistry.peek(vSid)
+      banW <- BgTaskRegistry.finalizedAt(wSid)
+      banV <- BgTaskRegistry.finalizedAt(vSid)
+      eventsScheduled <- readEvents(ws)
+      // 窗口内：双会话名下各有在跑任务（模拟 loop 两个会话的后台进程仍在）
+      _ <- BgTaskRegistry.register("loop-bg-w", wSid, "worker bg", "local")
+      _ <- BgTaskRegistry.register("loop-bg-v", vSid, "verify bg", "local")
+      inWindowW <- BgTaskRegistry.waitingFor(wSid)
+      inWindowV <- BgTaskRegistry.waitingFor(vSid)
+      framesInWindow <- frames.get
+      // 到点收殓（生产 = TtlTick 30s；spec 直驱）
+      _ <- rt.engine.sweepDestroyWindows()
+      afterW <- BgTaskRegistry.waitingFor(wSid)
+      afterV <- BgTaskRegistry.waitingFor(vSid)
+      after <- nodeById(rt, id)
+      framesAfter <- frames.get
+      eventsAfter <- readEvents(ws)
+      _ <- BgTaskRegistry.unregisterSession(Some(wSid)).attempt.void
+      _ <- BgTaskRegistry.unregisterSession(Some(vSid)).attempt.void
+      _ <- system.stopAll.handleErrorWith(_ => IO.unit)
+    yield
+      // ④ 申报槽清理（此前 Loop 双会话终态不 remove）
+      assertEquals(residueW, None, "the worker declaration slot must be cleared by destroyLoopSessions (④)")
+      assertEquals(residueV, None, "the verify declaration slot must be cleared (④)")
+      // ③/④ 窗口登记（双会话都在禁 spawn 表 + destroyAt 落库）
+      assert(n.destroyAt.isDefined, "the loop terminal must register a destroy window")
+      assert(banW.isDefined, "the worker session must be in the spawn-ban ledger")
+      assert(banV.isDefined, "the verify session must be in the spawn-ban ledger")
+      assert(eventsScheduled.exists(_.contains("\"node-destroy-scheduled\"")),
+        s"node-destroy-scheduled expected for the loop terminal: ${eventsScheduled.mkString("|").take(400)}")
+      // 窗口内两会话任务照跑（未被即时收割）
+      assert(inWindowW.nonEmpty && inWindowV.nonEmpty, "inside the window both loop sessions keep their bg tasks")
+      assertEquals(framesInWindow.count(j => j.hcursor.get[String]("type").contains("backgroundTaskUpdate")), 0,
+        "no reclaim frame inside the window")
+      // 到点：两个会话都被收殓
+      assertEquals(afterW, Nil, "the sweep must reclaim the worker session's tasks")
+      assertEquals(afterV, Nil, "the sweep must reclaim the verify session's tasks")
+      assertEquals(after.flatMap(_.destroyAt), None, "destroyAt must be cleared after the sweep")
+      val bgFrames = framesAfter.filter(j => j.hcursor.get[String]("type").contains("backgroundTaskUpdate"))
+      assert(bgFrames.exists(j => j.hcursor.get[String]("sessionId").contains(wSid)),
+        s"cancelled frame for the worker session expected: ${bgFrames.map(_.noSpaces.take(100)).mkString("|")}")
+      assert(bgFrames.exists(j => j.hcursor.get[String]("sessionId").contains(vSid)),
+        s"cancelled frame for the verify session expected: ${bgFrames.map(_.noSpaces.take(100)).mkString("|")}")
+      assert(eventsAfter.exists(_.contains("\"node-destroyed\"")),
+        s"node-destroyed audit expected: ${eventsAfter.mkString("|").take(400)}")
   }
 
   // ── ⑥ payload 序列化对照：非 loop 节点零变化 ─────────────

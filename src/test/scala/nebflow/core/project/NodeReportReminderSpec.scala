@@ -84,8 +84,11 @@ class NodeReportReminderSpec extends CatsEffectSuite:
 
   /** 桩 LLM：turn 1 应答任务首行（不申报）；`declareOnTurn` 指定的轮次登记一条申报
     * （模拟 agent 调 node_report）后应答 —— 用于「提醒 → 申报 → 放行」链。
-    * `requests` 记录每轮请求的**上下文全文**（提醒是否真进了 agent 上下文 = 注入证据）。 */
-  private class StubLlm(declareOnTurn: Int = 0, category: String = "pass"):
+    * `requests` 记录每轮请求的**上下文全文**（提醒是否真进了 agent 上下文 = 注入证据）。
+    * `replyOverride`（noderpt 批 B 段 · ⑧-4 豁免用例）：固定每轮应答文本——用来精确
+    * 控制节点**最终输出文本**（判定 `BlockedReader` 是否命中）。 */
+  private class StubLlm(declareOnTurn: Int = 0, category: String = "pass",
+      replyOverride: Option[String] = None):
     val turnCount: Ref[IO, Int] = Ref.unsafe[IO, Int](0)
     val sessions: Ref[IO, List[String]] = Ref.unsafe[IO, List[String]](Nil)
     val requests: Ref[IO, List[String]] = Ref.unsafe[IO, List[String]](Nil)
@@ -116,7 +119,8 @@ class NodeReportReminderSpec extends CatsEffectSuite:
           yield turn
         }.flatMap { turn =>
           val text = req.messages.map(_.textContent).mkString("\n")
-          val reply = if turn == 1 then text.linesIterator.nextOption().getOrElse("").take(200) else "reminder-turn-ack"
+          val reply = replyOverride.getOrElse(
+            if turn == 1 then text.linesIterator.nextOption().getOrElse("").take(200) else "reminder-turn-ack")
           Stream(StreamChunk.TextDelta(reply), StreamChunk.Done(None, None))
         }
 
@@ -576,4 +580,89 @@ class NodeReportReminderSpec extends CatsEffectSuite:
       assertEquals(reminderEvents(events), Nil, "no reminder may fire once the node is finalized")
       assert(done.reportPendingSince.isEmpty, "gate off never starts the clock")
   }
+  // ── R9/R10 文本锚定 BLOCKED 豁免（noderpt 批 B 段 · 作者代裁 ⑧-4 = (a)）──────
+  //
+  // 裁定：节点 `Completed` ∧ 申报槽空 ∧ **输出文本可被 `BlockedReader` 判为 blocked**
+  // ⇒ **不走 hold、不进提醒阶梯**，照既有行为终态化 blocked（求助上报链
+  // blocked → 分发器 → 人 完整保留）。豁免范围**严格限定**为「能被 `BlockedReader`
+  // 判定的文本」，不是「任意非空文本」——其余静默结束一律仍走 hold + 阶梯。
+  // 两条用例分别钉住这两个方向（R9 豁免命中 / R10 边界：文本里出现 "BLOCKED" 字样
+  // 但**不满足锚定**（非行首 + 非 `:`/空白 后继）⇒ 仍 hold）。
+
+  test("R9 (⑧-4): BLOCKED-anchored final text is exempt from the hold — finalized blocked, no reminder, no clock") {
+    // 阶梯压到 400ms：若豁免失效（被 hold），随后必出 node-report-missing 事件 ⇒ 断言更强。
+    setLadder("400,800,1200", 3, "600000")
+    val ws = tempRoot / "ws-r9"
+    os.makeDir.all(ws)
+    val system = ActorSystem(s"nrr-r9-${scala.util.Random.nextInt(100000)}")
+    val llm = StubLlm(replyOverride = Some("BLOCKED: spec exemption probe — 需要人工裁决"))
+    for
+      res <- mkResources(system, tempRoot, llm.handle)
+      _ <- IO(llm.res = res)
+      recorded <- registerRecorder(res, system, "nebula-root")
+      rt <- mountProject("nrr-r9", ws, system, res)
+      _ <- createNode("nrr-r9", ws, "blockedtext-a", "result-BLOCKTEXT", res, system)
+      _ <- waitUntil(30.seconds)(byName(rt, "blockedtext-a").map(n => NodeLifecycle.Terminal.contains(n.status)))
+      done <- byName(rt, "blockedtext-a")
+      // 等过一整档（400ms）+ 多次扫描：若被 hold 则提醒事件必然出现
+      _ <- IO.sleep(900.millis)
+      _ <- scan(rt, 3)
+      after <- byName(rt, "blockedtext-a")
+      events <- readEvents(ws)
+      imms <- recordedImmediate(recorded)
+      payload = NodePayload.buildNodeJson(after, System.currentTimeMillis()).noSpaces
+      _ <- system.stopAll.handleErrorWith(_ => IO.unit)
+    yield
+      assertEquals(done.status, NodeLifecycle.Blocked,
+        "a BLOCKED-anchored final text must finalize through the existing blocked chain (⑧-4 豁免)")
+      assert(done.result.exists(_.contains("[blocked:")), s"blocked render string expected: ${done.result}")
+      assert(done.blockedFeedback.isDefined, "blockedFeedback must be persisted for the dispatcher chain")
+      assertEquals(after.status, NodeLifecycle.Blocked, "no later scan may change it")
+      assert(done.reportPendingSince.isEmpty, "the exemption must never start the pending clock")
+      assertEquals(reminderEvents(events), Nil,
+        s"the reminder ladder must NOT fire for an exempted BLOCKED text: ${events.mkString("|").take(400)}")
+      assertEquals(after.reportReminderCount, 0, "no rung may be consumed")
+      assert(!payload.contains("reportPendingSince"), s"payload must not carry the pending key: $payload")
+      assert(!imms.exists(_.text.contains("[Node 'blockedtext-a' completed]")),
+        "a blocked node must not deliver a completed result downstream")
+  }
+
+  test("R10 (⑧-4 boundary): text merely CONTAINING 'BLOCKED' is NOT exempt — the node is still held + reminded") {
+    setLadder("700,3000,4000", 3, "600000")
+    val ws = tempRoot / "ws-r10"
+    os.makeDir.all(ws)
+    val system = ActorSystem(s"nrr-r10-${scala.util.Random.nextInt(100000)}")
+    // 非锚定（不在行首 + 非 `:`/空白 后继）⇒ `BlockedReader.parse` 必不命中 ⇒ 必须 hold。
+    val llm = StubLlm(replyOverride = Some("nothing is BLOCKED here — silent finish: result-SILENT"))
+    for
+      res <- mkResources(system, tempRoot, llm.handle)
+      _ <- IO(llm.res = res)
+      recorded <- registerRecorder(res, system, "nebula-root")
+      rt <- mountProject("nrr-r10", ws, system, res)
+      _ <- createNode("nrr-r10", ws, "silenttext-a", "result-SILENT", res, system)
+      _ <- waitUntil(20.seconds)(byName(rt, "silenttext-a").map(_.reportPendingSince.isDefined))
+      held <- byName(rt, "silenttext-a")
+      _ <- IO.sleep(800.millis)
+      _ <- scan(rt)
+      afterRung1 <- byName(rt, "silenttext-a")
+      events <- readEvents(ws)
+      _ <- waitUntil(20.seconds)(llm.turnCount.get.map(_ >= 2))
+      reqs <- llm.requests.get
+      _ <- system.stopAll.handleErrorWith(_ => IO.unit)
+    yield
+      assertEquals(held.status, NodeLifecycle.Running,
+        "non-anchored text must NOT be exempt (⑧-4 exempts only BlockedReader-anchored text)")
+      assert(held.reportPendingSince.isDefined, "the clock must start for a silent finish")
+      assertEquals(afterRung1.status, NodeLifecycle.Running, "still Running — the ladder never fails the node")
+      assertEquals(afterRung1.reportReminderCount, 1, "rung 1 must fire for a held node")
+      val miss = reminderEvents(events)
+      assertEquals(miss.size, 1, s"exactly one node-report-missing event expected: ${events.mkString("|").take(400)}")
+      val fields = NodeEngine.parseReportMissingSummary(miss.head)
+      assertEquals(fields.get("stage"), Some(NodeEngine.NodeReportStageActive))
+      assertEquals(fields.get("rung"), Some("1/3"))
+      assertEquals(fields.get("delivered"), Some("true"))
+      assert(reqs.exists(_.contains(NodeEngine.NodeReportReminderPrefix)),
+        "the reminder must be delivered into the live session's context")
+  }
+
 end NodeReportReminderSpec

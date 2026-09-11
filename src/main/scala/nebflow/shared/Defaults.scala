@@ -230,6 +230,26 @@ object Defaults:
   def NodeReportReminderQuiescentMs: Long =
     sys.props.getOrElse("nebflow.noderpt.remind.quiescentIntervalMs", (4 * 60 * 60 * 1000L).toString).toLong
 
+  // ── 终态延迟销毁窗口（noderpt 批 B 段，2026-09-11 作者裁定：一律存活 30 分钟再销毁）──
+
+  /**
+   * 终态延迟销毁窗口（`nebflow.noderpt.destroyWindowMs`，默认 **30 分钟**——与
+   * `ShellSession` 的内建 `SessionTTL = 30.minutes` 同量级对齐，后者为 `private`
+   * 常量不可跨包复用，故在此独立声明并显式注明对齐关系）。
+   *
+   * 语义（作者裁定形态 (b)）：节点**终态时刻只登记不杀进程**（`destroyAt = T + 本窗口`
+   * 落节点持久字段）——窗口内进程/任务照跑、输出照写、**允许读取取证**，仅**禁止新
+   * spawn**（新后台任务 / 新会话）；到点由 `NodeEngine.sweepDestroyWindows`
+   * （`ProjectActor.TtlTick` 30s 节拍）执行 `BgTaskRegistry.reclaimSession` + 逐条
+   * `finalizeTask` + 释放 `ShellSession.sessions` 条目 + 清 `destroyAt`（幂等）。
+   * 挂起腿不登记窗口（即时收割不变）。
+   *
+   * 每次调用现读（验收可压到秒级；spec 亦可走 NodeEngine 构造入参 `destroyWindowMs`
+   * 注入，避开全局 prop 的跨 suite 污染，`bgGateCompletionHold` 同款）。
+   */
+  def NodeDestroyWindowMs: Long =
+    sys.props.getOrElse("nebflow.noderpt.destroyWindowMs", (30 * 60 * 1000L).toString).toLong
+
   // ---- Tool Result Guard ----
 
   /**

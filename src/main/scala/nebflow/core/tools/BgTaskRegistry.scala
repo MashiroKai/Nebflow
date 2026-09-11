@@ -108,6 +108,63 @@ object BgTaskRegistry:
           (kept, removed.values.toList)
         }
 
+  // ── 终态延迟销毁窗口的「禁 spawn」表（noderpt 批 B 段，2026-09-11 作者裁定）──────
+  //
+  // 语义：节点终态后**一律存活 30 分钟再销毁**（作者裁定形态 (b)）——窗口内进程/任务
+  // 照跑、输出照写、允许读取取证，但**禁止新 spawn**（新后台任务 / 新会话）。本表是
+  // 那条「禁 spawn」判据的唯一载体：`sessionId -> destroyAt(epoch ms)`，写入点 =
+  // NodeEngine 终态登记（`scheduleDestroy`）/ 扫描腿表项自愈；读取点 =
+  // `ShellSession.executeBackground`（新后台任务）与 `ShellSession.forSession` 的
+  // **会话创建分支**（新会话）；清除点 = 节点重新翻转 Running（reactivate / 重跑，
+  // `NodeEngine` 翻转处的 `reopenSession`）。
+  //
+  // 为什么放这里（而不是 NodeEngine 私有 Ref）：spawn 的物理落点在 `ShellSession`
+  // （nebflow.core.tools），与 NodeEngine（core.project）之间只允许 core.project →
+  // core.tools 的依赖方向；本对象已是两层的公共会话级账本（reclaimSession/waitingFor
+  // 同键 sessionId），沿用它零新依赖、零新单例。
+  //
+  // 进程内存态（重启即空）：重启后由 `NodeEngine.sweepDestroyWindows` 按节点持久字段
+  // `destroyAt` 逐节点重建（每 30s 一拍，重启后一拍内恢复）；重启后到点者直接销毁。
+  private val finalizedSessions: Ref[IO, Map[String, Long]] = Ref.unsafe(Map.empty)
+
+  /** 登记「该会话已终态、处于延迟销毁窗口（或已销毁）」——窗口内禁新 spawn。
+    * 幂等：同 sessionId 重复登记只覆盖 destroyAt。空 id no-op。 */
+  def markSessionFinalized(sessionId: String, destroyAt: Long): IO[Unit] =
+    IO.whenA(sessionId.trim.nonEmpty)(finalizedSessions.update(_ + (sessionId -> destroyAt)))
+
+  /** 撤销登记（节点重新翻转 Running = 新生命周期，窗口与禁 spawn 一并解除）。 */
+  def reopenSession(sessionId: String): IO[Unit] =
+    finalizedSessions.update(_ - sessionId)
+
+  /** 该会话的销毁窗口登记（None = 未终态/未登记）。 */
+  def finalizedAt(sessionId: String): IO[Option[Long]] =
+    finalizedSessions.get.map(_.get(sessionId))
+
+  /** 新 spawn 是否被拒（终态窗口内 = 拒）。 */
+  def sessionFinalized(sessionId: String): IO[Boolean] =
+    finalizedSessions.get.map(_.contains(sessionId))
+
+  /** 表项快照（取证 / 测试断言用；键 = sessionId，值 = destroyAt）。 */
+  def finalizedSessionsSnapshot: IO[Map[String, Long]] = finalizedSessions.get
+
+  /** 拒绝文案单一构造点（工具面错误消息 / 日志 / 事件同源，措辞禁含 "cancelled"
+    * ——桥侧以 `contains("cancelled")` 分流 cancelNode，避免歧义）。 */
+  def spawnDeniedMessage(sessionId: String, destroyAt: Option[Long]): String =
+    val remaining = destroyAt.map(at => math.max(0L, at - System.currentTimeMillis()) / 1000L)
+    s"session '$sessionId' is finalized (terminal state) — read-only evidence window" +
+      remaining.fold("")(r => s", destroy in ~${r}s") +
+      ": new background tasks and new sessions are rejected; the session's processes stay " +
+      "alive for forensics until the window expires (then reclaimed: processes killed + tasks finalized)"
+
+  /** 禁 spawn 守卫：会话已终态 ⇒ 抛错（调用方 `IO.raiseError` 语义，工具面把它渲染成
+    * 给 LLM 的可读失败消息）。未登记 = `IO.unit`（零行为变化）。 */
+  def denySpawnIfFinalized(sessionId: String): IO[Unit] =
+    finalizedSessions.get.flatMap { m =>
+      m.get(sessionId) match
+        case None => IO.unit
+        case Some(at) => IO.raiseError(new RuntimeException(spawnDeniedMessage(sessionId, Some(at))))
+    }
+
   /** 会话级收殓（孤儿后台任务收割 D1 主钩子）：杀该会话全部 shell 进程树
     * （前台 + 后台 runProcess 注册的 OS 进程）+ 注销 BgTaskRegistry + WS
     * backgroundTaskUpdate(status="cancelled") 帧。
