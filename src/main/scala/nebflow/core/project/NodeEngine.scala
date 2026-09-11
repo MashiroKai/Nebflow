@@ -537,8 +537,21 @@ class NodeEngine(
     *     40 条）在 P3 落地，本段先构造分支文本。
     *
     * 竞态：CAS 失败（并发终态化 / 已被重排 / 已被资格回扫新鲜启动）安静返回 None；
-    * transcript 缺失 → None（由调用方走一次上报，诚实失败原则）。返回重启的 nodeId。 */
-  def hardResumeNode(sessionId: String, anchor: Option[NodeEngine.RecoveryAnchor] = None): IO[Option[String]] =
+    * transcript 缺失 → None（由调用方走一次上报，诚实失败原则）。返回重启的 nodeId。
+    *
+    * **`onResumed` 回调（硬约束② 修复，2026-09-11）**：CAS **接受瞬间**触发（在
+    * `emitUpdated` / `FlowMapEventLog` / [[startNode]] **之前**），语义 = 「恢复已
+    * 生效」。返回之后才写副作用是错的：`startNode` 同步等到被恢复会话的**整段终态**
+    * （`runWithAgent` 的 `IO.race`）——恢复后的会话可能运行数十分钟，写点落在返回值
+    * 之后 ⇒ 这段时间里「冷却窗基点 / 互斥点 2 指纹基线」不置位（独立复核实测：恢复
+    * 成功后 25s 账本仍 `lastRecoveryAt=0`，冷却窗与互斥点 2 在运行期形同不存在）。
+    * 回调**带默认值**以保源兼容（既有调用点零改动）；回调失败只留痕、**不中断恢复腿**；
+    * CAS 被拒时不触发（负控：拒绝 ⇒ 零写入）。*/
+  def hardResumeNode(
+    sessionId: String,
+    anchor: Option[NodeEngine.RecoveryAnchor] = None,
+    onResumed: IO[Unit] = IO.unit
+  ): IO[Option[String]] =
     // 互斥点 1(a)（P3，设计 §3.4）：**恢复路径禁止唤醒冻结会话**。
     // 冻结态的自动出口是「用户输入唤醒」那条路——它会调 `resetCrossTurn` 清零跨轮
     // 指纹；恢复链若走到那里，就等于把 365 天 LoopGuard 冻结**绕过**。本批不改冻结面
@@ -606,7 +619,15 @@ class NodeEngine(
                       s"Running (concurrent terminal / restart / sweep); node left as-is, manual re-trigger needed"
                   ).as(None)
                 else
-                  s.nodes.get(n.id).traverse_(emitUpdated) *>
+                  // 硬约束② 修复（2026-09-11）：**「恢复已接受」回调在 CAS 接受瞬间
+                  // 触发**，位置在 `startNode` **之前**——`startNode` 会同步阻塞到被恢复
+                  // 会话终态，回调若放在它的返回值之后，「冷却窗基点 / 互斥点 2 基线」
+                  // 就会在恢复后会话的整段运行期缺位。回调失败只 warn（不影响恢复腿）。
+                  onResumed.handleErrorWith(e =>
+                    logger.warn(
+                      s"[hard-recovery] onResumed callback failed for session $sessionId: ${e.getMessage}"
+                    )) *>
+                    s.nodes.get(n.id).traverse_(emitUpdated) *>
                     FlowMapEventLog.append(workspace, projectName, n.id, "hard-recovery",
                       s"resumed from stuck (session=$sessionId msgs=${msgs.size})") *>
                     logger.info(
