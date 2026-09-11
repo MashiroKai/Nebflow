@@ -13,6 +13,107 @@ import sttp.client4.*
 import scala.concurrent.duration.*
 
 /**
+ * Pure decision surface for the P2P-vs-relay choice (A) and path memory (C4),
+ * 2026-09-11 P2P 直连修复批.
+ *
+ * WHY pure: the two accepted criteria of the plan are behavioural
+ * ("`directOnline=false` 且无负证据 ⇒ 尝试 P2P"; "地址变化 ⇒ 记忆失效"; "TTL 过期 ⇒
+ * 重探"), and they were previously buried in IO/`@volatile` state where they could
+ * only be observed by driving a real network. Extracting them makes each rule a
+ * unit-testable function (`P2pPathDecisionSpec`) instead of a claim in a report.
+ */
+private[nebflow] object P2pPathDecision:
+
+  /**
+   * Path-memory TTL (C4). Lowered from the pre-fix 5 min to 60 s.
+   *
+   * WHY 60s: 5 min was long enough that a single relay success pinned the device
+   * to relay for the rest of the window, and every further relay success renewed
+   * it (`RemoteExecutor:514/:529`) — so a device whose P2P came back never
+   * returned to P2P. 60s bounds the worst case to "one extra P2P probe per minute
+   * per device" while keeping the memory long enough to spare the common
+   * back-to-back write burst.
+   */
+  val PathMemoryTtlMs: Long = 60_000L
+
+  /** Negative P2P evidence TTL (A): how long one real failure keeps P2P bypassed. */
+  val NegativeCacheTtlMs: Long = 60_000L
+
+  /** Short connect budget for a probe (A): unreachable addresses must fail fast. */
+  val ProbeConnectTimeout: FiniteDuration = 1500.millis
+
+  /**
+   * Probe budget. `directOnline` (is there an active presence WS?) is **demoted
+   * from decision basis to budget hint** — presence-not-connected means "the WS
+   * dial did not succeed", not "the peer is unreachable" (different transport).
+   */
+  final case class ProbeBudget(maxRetries: Int, connectTimeout: FiniteDuration, shortConnect: Boolean)
+
+  /**
+   * `directOnline=true` ⇒ trust the peer, retry like before (3 retries, 3s
+   * connect — the existing P0-1 posture). `false` ⇒ probe once with a 1.5s
+   * connect budget.
+   *
+   * Worst-case cost before falling back to relay, which is the number the plan's
+   * cost caveat is about:
+   *   - `false`: ≤ 1.5s connect + one request (no retry, no backoff).
+   *   - pre-fix behaviour this replaces: 3s connect × 4 attempts + 1+2+3s
+   *     backoff ≈ 12-15s, i.e. the reason `skipP2p` existed at all.
+   */
+  def probeBudget(directOnline: Boolean): ProbeBudget =
+    if directOnline then ProbeBudget(3, 3.seconds, false)
+    else ProbeBudget(0, ProbeConnectTimeout, true)
+
+  /**
+   * A (负证据化): bypass P2P **only** when there is real recent P2P failure
+   * evidence — a relay-route path memory, or a fresh dial/P2P failure
+   * ([[NegativeCacheTtlMs]]). Previously `skipP2p = memory=="relay" || !directOnline`
+   * turned "no presence WS" into "P2P impossible", which is how 9/9 dispatches
+   * went to relay (方案 §1.2 (F)).
+   *
+   * `relayAvailable` is part of the conjunction: without a relay there is nothing
+   * to bypass *to*, so the caller must still attempt P2P.
+   */
+  def shouldSkipP2pForRelay(
+    memoryMethod: Option[String],
+    recentP2pFailure: Boolean,
+    relayAvailable: Boolean
+  ): Boolean =
+    relayAvailable && (memoryMethod.contains("relay") || recentP2pFailure)
+
+  /**
+   * Address-sensitivity key (C4): the whole endpoint set, sorted, so that **any**
+   * change of address or endpoint set invalidates the memory (方案 §3.3 「如何更新」).
+   * Sorted (not preference-ordered) deliberately — ordering churn alone must not
+   * drop a valid memory, only an actual change of the reachable set may.
+   */
+  def addressKey(peer: PeerInfo): String =
+    val list = if peer.endpoints.nonEmpty then peer.endpoints else List(peer.address)
+    list.filter(_.nonEmpty).sorted.distinct.mkString("|")
+
+  /** Path-memory entry: which transport last succeeded, when, and for which address set. */
+  final case class PathMemory(method: String, atMs: Long, addressKey: String)
+
+  def isFresh(mem: PathMemory, nowMs: Long): Boolean = nowMs - mem.atMs < PathMemoryTtlMs
+
+  /** Memory usable for this dispatch: TTL fresh **and** same address set. */
+  def reusable(mem: Option[PathMemory], peer: PeerInfo, nowMs: Long): Option[PathMemory] =
+    mem.filter(m => m.addressKey == addressKey(peer) && isFresh(m, nowMs))
+
+  /**
+   * Write a memory entry. C4: **relay successes do not slide the window** — if a
+   * fresh relay entry already exists for the same address, its timestamp is kept,
+   * so the window always expires and P2P is re-probed at least once per TTL. P2P
+   * successes *do* renew (staying on P2P is the desired state).
+   */
+  def record(existing: Option[PathMemory], method: String, peer: PeerInfo, nowMs: Long): PathMemory =
+    val key = addressKey(peer)
+    existing match
+      case Some(m) if method == "relay" && m.method == "relay" && m.addressKey == key && isFresh(m, nowMs) =>
+        m // no renewal — see scaladoc
+      case _ => PathMemory(method, nowMs, key)
+
+/**
  * Executes tool calls on remote devices via direct P2P over NebLink.
  *
  * When a tool call specifies device="desktop-v7eucht", this executor routes
@@ -54,26 +155,68 @@ class RemoteExecutor(
 
   // ---- P0-3: Path memory — remember last successful transport per device ----
 
-  /** Map: deviceId → (method, timestamp). TTL-locked to avoid stale relay bias. */
-  @volatile private var lastSuccessPath: Map[String, (String, Long)] = Map.empty
-  private val PathMemoryTtlMs = 5.minutes.toMillis
+  /**
+   * Map: deviceId → last successful transport.
+   *
+   * C4 (2026-09-11 P2P 直连修复批): entries now carry the address set they were
+   * recorded for, so a changed address/endpoint set invalidates the memory
+   * instead of silently pinning the device to a stale transport choice.
+   */
+  @volatile private var lastSuccessPath: Map[String, P2pPathDecision.PathMemory] = Map.empty
 
-  /** Read cached transport method if fresh, else None (and clean up expired entry). */
-  private def getPathMemory(deviceId: String): Option[String] =
-    lastSuccessPath.get(deviceId) match
-      case Some((method, ts)) if System.currentTimeMillis() - ts < PathMemoryTtlMs => Some(method)
-      case Some(_) =>
-        lastSuccessPath = lastSuccessPath.removed(deviceId)
-        None
-      case None => None
+  /**
+   * Negative P2P evidence (A): deviceId → timestamp of the last real P2P
+   * failure. Only a fresh entry here (see [[P2pPathDecision.NegativeCacheTtlMs]])
+   * justifies bypassing P2P — "no presence WS" no longer does.
+   */
+  @volatile private var p2pFailures: Map[String, Long] = Map.empty
 
-  private def recordPathMemory(deviceId: String, method: String): IO[Unit] = IO {
-    lastSuccessPath = lastSuccessPath.updated(deviceId, (method, System.currentTimeMillis()))
+  /**
+   * Read the cached transport **only if** it is both TTL-fresh and still refers
+   * to the peer's current address set; an expired or address-stale entry is
+   * dropped (so the next call re-probes P2P).
+   */
+  private def getPathMemory(peer: PeerInfo): Option[String] =
+    val now = System.currentTimeMillis()
+    val usable = P2pPathDecision.reusable(lastSuccessPath.get(peer.deviceId), peer, now)
+    if usable.isEmpty && lastSuccessPath.contains(peer.deviceId) then
+      lastSuccessPath = lastSuccessPath.removed(peer.deviceId)
+    usable.map(_.method)
+
+  private def recordPathMemory(peer: PeerInfo, method: String): IO[Unit] = IO {
+    lastSuccessPath = lastSuccessPath.updated(
+      peer.deviceId,
+      P2pPathDecision.record(lastSuccessPath.get(peer.deviceId), method, peer, System.currentTimeMillis())
+    )
   }
 
   private def clearPathMemory(deviceId: String): IO[Unit] = IO {
     lastSuccessPath = lastSuccessPath.removed(deviceId)
   }
+
+  /** Record real P2P failure evidence (A) — the ONLY thing that bypasses P2P. */
+  private def recordP2pFailure(peer: PeerInfo): IO[Unit] = IO {
+    p2pFailures = p2pFailures.updated(peer.deviceId, System.currentTimeMillis())
+  }
+
+  private def hasRecentP2pFailure(deviceId: String): Boolean =
+    p2pFailures.get(deviceId).exists(ts => System.currentTimeMillis() - ts < P2pPathDecision.NegativeCacheTtlMs)
+
+  /**
+   * HTTP backend for a probe budget (A): the short-connect backend when the
+   * budget is a fast-fail probe, otherwise the shared 3s-connect backend
+   * (`NeblinkService.httpBackend`, the existing P0-1 posture).
+   */
+  private lazy val shortConnectBackend: sttp.client4.SyncBackend =
+    sttp.client4.httpclient.HttpClientSyncBackend.usingClient(
+      java.net.http.HttpClient
+        .newBuilder()
+        .connectTimeout(java.time.Duration.ofMillis(P2pPathDecision.ProbeConnectTimeout.toMillis))
+        .build()
+    )
+
+  private def backendFor(budget: P2pPathDecision.ProbeBudget): sttp.client4.SyncBackend =
+    if budget.shortConnect then shortConnectBackend else neblinkService.httpBackend
 
   /** Read-only tools safe for parallel P2P + Relay racing (no side effects on cancellation). */
   private val ReadOnlyTools = Set("Read", "Glob", "Grep")
@@ -357,57 +500,108 @@ class RemoteExecutor(
 
   // ---- P2P Direct ----
 
+  /**
+   * Candidate endpoints for a P2P dispatch (C1). `peer.endpoints` is already
+   * preference-ordered (Tailscale → 同网段 → 其余, `EndpointPreference`); peers
+   * built without a server namelist (`endpoints = Nil`) fall back to the single
+   * `address`, i.e. pre-C1 behaviour.
+   */
+  private def p2pCandidates(peer: PeerInfo): List[String] =
+    val all = if peer.endpoints.nonEmpty then peer.endpoints else List(peer.address)
+    all.filter(_.nonEmpty).distinct
+
   private def p2pExecute(
     peer: PeerInfo,
     toolName: String,
     params: JsonObject,
-    timeout: FiniteDuration
+    timeout: FiniteDuration,
+    budget: P2pPathDecision.ProbeBudget
   ): IO[Either[ToolError, String]] =
     for
-      // Send our own deviceId so the peer can authenticate us by network
-      // membership (same networkId) when its IP-based trust list is stale —
-      // e.g. after a NIC filter change or DHCP address rotation.
       selfDeviceId <- neblinkService.identity.map(_.deviceId)
-      result <- IO.blocking {
-        val body = io.circe.Json.obj(
-          "action" -> toolName.asJson,
-          "params" -> params.asJson
-        )
-        val resp = basicRequest
-          .post(sttp.model.Uri.unsafeParse(s"${peer.address}/api/neblink/remote-exec"))
-          .contentType("application/json")
-          .header(nebflow.neblink.Protocol.DeviceHeader, selfDeviceId)
-          .body(body.noSpaces)
-          .readTimeout(timeout)
-          .response(asStringAlways)
-          .send(neblinkService.httpBackend)
-
-        if !resp.code.isSuccess then
-          Left(ToolError(s"Remote device returned HTTP ${resp.code}: ${resp.body.take(200)}"))
-        else
-          decode[io.circe.Json](resp.body) match
-            case Right(json) =>
-              val output = json.hcursor.downField("output").as[String].getOrElse("")
-              val error = json.hcursor.downField("error").as[String].getOrElse("")
-              if error.nonEmpty then Left(ToolError(s"Remote error: $error"))
-              else Right(output)
-            case Left(err) =>
-              Left(ToolError(s"Invalid response from remote: ${err.getMessage}"))
-      }.handleErrorWith { e =>
-        val msg = Option(e.getMessage).getOrElse(e.getClass.getSimpleName)
-        val lower = msg.toLowerCase
-        if lower.contains("timeout") || lower.contains("timed out") then
-          IO.pure(Left(ToolError(s"Command timed out on ${peer.deviceName} after ${timeout.toSeconds}s: $msg")))
-        else IO.pure(Left(ToolError(s"Cannot reach ${peer.deviceName} at ${peer.address}: $msg")))
-      }
+      // C1: 每个候选短超时串行短路，首个成功者即本次直连端点。
+      result <- p2pExecuteCandidates(p2pCandidates(peer), peer, selfDeviceId, toolName, params, timeout, budget)
     yield result
-  end p2pExecute
+
+  /**
+   * Walk the candidate list, short-circuiting on the first success (C1 目标口径
+   * §3.3). Only a *connection-level* failure moves on to the next candidate —
+   * an HTTP 403/5xx proves the endpoint is up, so hopping would just burn the
+   * budget on a peer that is answering.
+   */
+  private def p2pExecuteCandidates(
+    candidates: List[String],
+    peer: PeerInfo,
+    selfDeviceId: String,
+    toolName: String,
+    params: JsonObject,
+    timeout: FiniteDuration,
+    budget: P2pPathDecision.ProbeBudget
+  ): IO[Either[ToolError, String]] =
+    candidates match
+      case Nil =>
+        IO.pure(Left(ToolError(s"Cannot reach ${peer.deviceName}: no usable endpoint address")))
+      case endpoint :: rest =>
+        p2pExecuteAt(peer, endpoint, selfDeviceId, toolName, params, timeout, budget).flatMap {
+          case r @ Right(_) => IO.pure(r)
+          case Left(err) if rest.nonEmpty && isTransientError(err) =>
+            p2pExecuteCandidates(rest, peer, selfDeviceId, toolName, params, timeout, budget)
+          case l => IO.pure(l)
+        }
+
+  /** One P2P HTTP dispatch against one concrete endpoint. */
+  private def p2pExecuteAt(
+    peer: PeerInfo,
+    endpoint: String,
+    selfDeviceId: String,
+    toolName: String,
+    params: JsonObject,
+    timeout: FiniteDuration,
+    budget: P2pPathDecision.ProbeBudget
+  ): IO[Either[ToolError, String]] =
+    IO.blocking {
+      val body = io.circe.Json.obj(
+        "action" -> toolName.asJson,
+        "params" -> params.asJson
+      )
+      val resp = basicRequest
+        .post(sttp.model.Uri.unsafeParse(s"$endpoint/api/neblink/remote-exec"))
+        .contentType("application/json")
+        .header(nebflow.neblink.Protocol.DeviceHeader, selfDeviceId)
+        .body(body.noSpaces)
+        .readTimeout(timeout)
+        .response(asStringAlways)
+        .send(backendFor(budget))
+
+      if !resp.code.isSuccess then
+        Left(ToolError(s"Remote device returned HTTP ${resp.code}: ${resp.body.take(200)}"))
+      else
+        decode[io.circe.Json](resp.body) match
+          case Right(json) =>
+            val output = json.hcursor.downField("output").as[String].getOrElse("")
+            val error = json.hcursor.downField("error").as[String].getOrElse("")
+            if error.nonEmpty then Left(ToolError(s"Remote error: $error"))
+            else Right(output)
+          case Left(err) =>
+            Left(ToolError(s"Invalid response from remote: ${err.getMessage}"))
+    }.handleErrorWith { e =>
+      val msg = Option(e.getMessage).getOrElse(e.getClass.getSimpleName)
+      val lower = msg.toLowerCase
+      if lower.contains("timeout") || lower.contains("timed out") then
+        IO.pure(Left(ToolError(s"Command timed out on ${peer.deviceName} after ${timeout.toSeconds}s: $msg")))
+      else IO.pure(Left(ToolError(s"Cannot reach ${peer.deviceName} at $endpoint: $msg")))
+    }
+  end p2pExecuteAt
 
   /**
    * Wraps p2pExecute with retry logic for transient network failures.
-   * Retries up to 3 times with 1s, 2s delays on connection errors only.
-   * Does NOT retry on HTTP errors or remote tool execution errors — those
-   * indicate the remote device is running but the request itself failed.
+   * Retries up to `budget.maxRetries` times with 1s, 2s ... delays on connection
+   * errors only. Does NOT retry on HTTP errors or remote tool execution errors —
+   * those indicate the remote device is running but the request itself failed.
+   *
+   * A: the budget is the caller's (see [[P2pPathDecision.probeBudget]]) — a
+   * `directOnline=false` dispatch probes once with a 1.5s connect timeout
+   * instead of paying 4 attempts + backoff before the relay fallback.
    */
   private def p2pExecuteWithRetry(
     peer: PeerInfo,
@@ -415,14 +609,14 @@ class RemoteExecutor(
     params: JsonObject,
     timeout: FiniteDuration,
     projectRoot: String,
-    maxRetries: Int = 3
+    budget: P2pPathDecision.ProbeBudget
   ): IO[Either[ToolError, String]] =
     def attempt(n: Int): IO[Either[ToolError, String]] =
-      p2pExecute(peer, toolName, params, timeout).flatMap {
+      p2pExecute(peer, toolName, params, timeout, budget).flatMap {
         case Right(result) => IO.pure(Right(result))
-        case Left(err) if n < maxRetries && isTransientError(err) =>
+        case Left(err) if n < budget.maxRetries && isTransientError(err) =>
           val delay = (n + 1).seconds
-          logger.info(s"Retrying ${peer.deviceName} in ${delay.toSeconds}s (attempt ${n + 1}/$maxRetries)") *>
+          logger.info(s"Retrying ${peer.deviceName} in ${delay.toSeconds}s (attempt ${n + 1}/${budget.maxRetries})") *>
             IO.sleep(delay) *> attempt(n + 1)
         case Left(err) => IO.pure(Left(err))
       }
@@ -458,11 +652,13 @@ class RemoteExecutor(
   /**
    * Best-path execution with performance optimizations:
    *
-   * 1. **P0-3 Path memory**: if relay was the last successful transport for this
-   *    device (within 5 min TTL), skip P2P entirely.
-   * 2. **Presence check**: if there is no active presence WS connection to the
-   *    peer (cross-network), P2P is impossible — skip to relay (fast-fail with
-   *    a clear error if the relay tunnel is also down).
+   * 1. **A — negative-evidence P2P bypass**: P2P is skipped **only** on real
+   *    recent failure evidence (relay path memory, or a fresh P2P/dial failure),
+   *    never merely because there is no presence WS. `directOnline` is demoted to
+   *    a probe-budget hint ([[P2pPathDecision.probeBudget]]).
+   * 2. **C4 — address-sensitive, re-probing path memory**: a memory is reusable
+   *    only for the same address set and only within 60s, and relay successes do
+   *    not slide the window — so P2P is re-probed at least once per TTL.
    * 3. **P1 Parallel race** (read-only tools only): send P2P and Relay concurrently,
    *    use whichever responds first. Safe because read-only tools have no side
    *    effects on cancellation.
@@ -483,50 +679,50 @@ class RemoteExecutor(
     // server may have kicked.
     currentRelayClient.flatMap {
       case None =>
-        // No relay available — P2P only
-        p2pExecuteWithRetry(peer, toolName, params, timeout, projectRoot).flatMap {
-          case r @ Right(_) => recordPathMemory(peer.deviceId, "p2p").as(r)
+        // No relay available — P2P only. NOTE (A): the probe budget is
+        // deliberately NOT downgraded here — `directOnline=false` does not mean
+        // the P2P HTTP path is down (presence WS and remote-exec HTTP are
+        // different transports), and with no relay there is nothing to fall
+        // back to, so retries remain this path's only recovery.
+        p2pExecuteWithRetry(peer, toolName, params, timeout, projectRoot, P2pPathDecision.probeBudget(true)).flatMap {
+          case r @ Right(_) => recordPathMemory(peer, "p2p").as(r)
           case l @ Left(_)  => IO.pure(l)
         }
 
       case Some(client) =>
-        // P0-3: check path memory — skip P2P if relay was last success
-        val memoryOpt = getPathMemory(peer.deviceId)
-        // Presence-based P2P check: skip P2P if no active presence WS to peer
-        val directOnline = neblinkService.presenceServiceOpt.exists(_.isConnected(peer.deviceId))
         val relayAvailable = neblinkService.relayTunnelOpt.exists(_.isAlive)
-        val skipP2p = memoryOpt.contains("relay") || !directOnline
+        // Presence-based signal — no longer a decision basis, only a budget hint.
+        val directOnline = neblinkService.presenceServiceOpt.exists(_.isConnected(peer.deviceId))
+        // A: 负证据驱动 —— 只有「有近期真实 P2P 失败证据」才旁路，否则尝试 P2P。
+        val memoryOpt = getPathMemory(peer)
+        val recentP2pFailure = hasRecentP2pFailure(peer.deviceId)
+        val skipP2p = P2pPathDecision.shouldSkipP2pForRelay(memoryOpt, recentP2pFailure, relayAvailable)
+        val budget = P2pPathDecision.probeBudget(directOnline)
 
         for
           result <-
             if skipP2p then
-              if !relayAvailable then
-                IO.pure(
-                  Left(
-                    ToolError(
-                      s"Device ${peer.deviceName} is unreachable: no direct connection and relay tunnel is down"
-                    )
-                  )
-                )
-              else
-                // Relay only — with cold-start retry for tunnel reconnection latency
-                relayWithColdStartRetry(client, peer, toolName, params, projectRoot).flatMap {
-                  case Right(output) => recordPathMemory(peer.deviceId, "relay").as(Right(output))
-                  case Left(err)     => clearPathMemory(peer.deviceId).as(Left(ToolError(s"Relay failed: $err")))
-                }
+              // Relay only — with cold-start retry for tunnel reconnection latency
+              relayWithColdStartRetry(client, peer, toolName, params, projectRoot).flatMap {
+                case Right(output) => recordPathMemory(peer, "relay").as(Right(output))
+                case Left(err)     => clearPathMemory(peer.deviceId).as(Left(ToolError(s"Relay failed: $err")))
+              }
             else if ReadOnlyTools.contains(toolName) then
               // P1: parallel race for read-only tools (safe cancellation)
-              raceP2PAndRelay(peer, toolName, params, timeout, client, projectRoot)
+              raceP2PAndRelay(peer, toolName, params, timeout, client, projectRoot, budget)
             else
-              // Write tools: serial P2P → relay fallback
-              p2pExecuteWithRetry(peer, toolName, params, timeout, projectRoot).flatMap {
-                case Right(output) => recordPathMemory(peer.deviceId, "p2p").as(Right(output))
+              // Write tools: serial P2P → relay fallback, negative cache as兜底
+              p2pExecuteWithRetry(peer, toolName, params, timeout, projectRoot, budget).flatMap {
+                case Right(output) => recordPathMemory(peer, "p2p").as(Right(output))
                 case Left(err) if shouldRelayFallback(err) =>
-                  logger.info(
-                    s"P2P unavailable for ${peer.deviceName} (${err.message.take(80)}), falling back to relay"
-                  ) *>
+                  // A: this failure IS the evidence that justifies bypassing P2P
+                  // (and, because relay renewals do not slide, it can expire).
+                  recordP2pFailure(peer) *>
+                    logger.info(
+                      s"P2P unavailable for ${peer.deviceName} (${err.message.take(80)}), falling back to relay"
+                    ) *>
                     relayWithColdStartRetry(client, peer, toolName, params, projectRoot).flatMap {
-                      case Right(output) => recordPathMemory(peer.deviceId, "relay").as(Right(output))
+                      case Right(output) => recordPathMemory(peer, "relay").as(Right(output))
                       case Left(relayErr) =>
                         IO.pure(Left(ToolError(s"P2P failed: ${err.message}; Relay also failed: $relayErr")))
                     }
@@ -620,9 +816,11 @@ class RemoteExecutor(
     params: JsonObject,
     timeout: FiniteDuration,
     client: NeblinkClient,
-    projectRoot: String
+    projectRoot: String,
+    budget: P2pPathDecision.ProbeBudget
   ): IO[Either[ToolError, String]] =
-    val p2pIO: IO[Either[ToolError, String]] = p2pExecuteWithRetry(peer, toolName, params, timeout, projectRoot)
+    val p2pIO: IO[Either[ToolError, String]] =
+      p2pExecuteWithRetry(peer, toolName, params, timeout, projectRoot, budget)
     val relayIO: IO[Either[ToolError, String]] =
       relayExecAudited(client, peer, toolName, params, projectRoot).map {
         case Right(output) => Right(output)
@@ -638,19 +836,19 @@ class RemoteExecutor(
       result <- raceResult match
         case Left(r @ Right(_)) =>
           // P2P won with success — cancel relay fiber, record memory
-          relayFiber.cancel *> recordPathMemory(peer.deviceId, "p2p").as(r)
+          relayFiber.cancel *> recordPathMemory(peer, "p2p").as(r)
         case Left(Left(_)) =>
           // P2P failed first — wait for relay
           relayFiber.joinWithNever.flatMap(r =>
-            recordPathMemory(peer.deviceId, if r.isRight then "relay" else "p2p").as(r)
+            recordPathMemory(peer, if r.isRight then "relay" else "p2p").as(r)
           )
         case Right(r @ Right(_)) =>
           // Relay won with success — cancel P2P fiber, record memory
-          p2pFiber.cancel *> recordPathMemory(peer.deviceId, "relay").as(r)
+          p2pFiber.cancel *> recordPathMemory(peer, "relay").as(r)
         case Right(Left(_)) =>
           // Relay failed first — wait for P2P
           p2pFiber.joinWithNever.flatMap(r =>
-            recordPathMemory(peer.deviceId, if r.isRight then "p2p" else "relay").as(r)
+            recordPathMemory(peer, if r.isRight then "p2p" else "relay").as(r)
           )
     yield result
   end raceP2PAndRelay

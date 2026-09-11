@@ -683,6 +683,13 @@ class RestApiRoutes(
           // P1-2: accurate per-peer connectivity. serverOnline (heartbeat) alone
           // doesn't mean the peer is reachable — cross-network peers need relay.
           directOnline = (deviceId: String) => ms.presenceServiceOpt.exists(_.isConnected(deviceId))
+          // C3 (2026-09-11 P2P 直连修复批): WHY the P2P leg is where it is.
+          // `directOnline=false` alone was unattributable — a failed presence
+          // dial only wrote a logger.debug line that root level=INFO filtered
+          // out (方案 §1.1 环③ / U-1), so "unreachable address" and "never
+          // dialed" looked identical. These are ADDITIVE fields; no existing
+          // field's meaning changes.
+          dialStatusOf = (deviceId: String) => ms.presenceServiceOpt.flatMap(_.dialStatus(deviceId))
           relayAvailable = ms.relayTunnelOpt.exists(_.isAlive)
           // F7 (2026-09-10 隧道鉴权自愈批): relayAvailable alone hides WHY the
           // tunnel is down. authRejected distinguishes "our session was
@@ -735,6 +742,9 @@ class RestApiRoutes(
                     "lastSeen" -> p.lastSeen.asJson,
                     "online" -> peerOnline(p).asJson, // freshness: seen by server within the online window
                     "directOnline" -> directOnline(p.deviceId).asJson, // P2P WS reachable
+                    "lastDialError" -> dialStatusOf(p.deviceId).flatMap(_.error).asJson, // C3: why not (None = last dial succeeded)
+                    "lastDialAt" -> dialStatusOf(p.deviceId).map(_.atMs).asJson, // C3: when that dial happened (null = never dialed)
+                    "dialEndpoint" -> dialStatusOf(p.deviceId).map(_.endpoint).asJson, // C1: candidate actually dialed / won
                     "relayAvailable" -> relayAvailable.asJson // our relay tunnel is up
                   )
                 )

@@ -26,6 +26,11 @@ import scala.jdk.CollectionConverters.*
  *
  * 传输用既有 relay 鉴权 fixture（RelayAuthFixtureServer）+ 真 relay 隧道——
  * 与 RemoteExecutorClientConvergenceSpec 同款 harness，只加审计断言。
+ *
+ * 2026-09-11 P2P 直连修复批（A）口径更新：本用例的 peer 是真实不可达地址，且无 relay
+ * 记忆 / 无负缓存 ⇒ 新语义下先试 P2P 再回落 relay，审计因此是 **p2p+relay 两行**
+ * （改前 `skipP2p = !directOnline` 压成一行）。断言已同步为成对形态——
+ * 它同时就是方案 §4.3 反控-2「回退必须可观测」的单元级证据。
  */
 class RemoteExecutorAuditSpec extends CatsEffectSuite:
 
@@ -116,8 +121,25 @@ class RemoteExecutorAuditSpec extends CatsEffectSuite:
           val (result, lines, accepted, srcId) = out
           assertEquals(result, Right("remote-ok"), s"relay 下发必须成功: $result")
           assertEquals(accepted, List(true), "且真的走了 relay（fixture 收到 live session 的 exec）")
-          assertEquals(lines.length, 1, s"恰好一行审计（一次逻辑下发一行）: $lines")
-          val c = parse(lines.head).fold(e => fail(s"invalid JSONL: $e"), identity).hcursor
+          // 2026-09-11 P2P 直连修复批（A）改口径：本用例的 peer 是**真实不可达**地址
+          // (`127.0.0.1:9`)、且无 relay 记忆也无负缓存 ⇒ 新语义下**必须**先试 P2P，
+          // 失败才回落 relay。所以「一次逻辑下发」在此形态下会产生**两行**审计——
+          // `via=p2p` 后紧跟同一调用的 `via=relay`。改前 `skipP2p = !directOnline`
+          // 恰好把这两行压成一行（也正是 9/9 relay 的成因链 (F)）。
+          // 这与方案 §4.3 反控-2「回退必须可观测」的期望形态一致：p2p→relay 成对。
+          val vias = lines.map(l => parse(l).fold(e => fail(s"invalid JSONL: $e"), identity).hcursor)
+          assertEquals(
+            vias.map(_.downField("via").as[String].toOption),
+            List(Some("p2p"), Some("relay")),
+            s"P2P 探测失败 ⇒ 回落 relay，两行审计成对（一次逻辑下发 p2p 一行 + relay 一行）: $lines"
+          )
+          assertEquals(
+            vias.flatMap(_.downField("targetDeviceId").as[String].toOption),
+            List("peer-1", "peer-1"),
+            "两行指向同一对端（同一次下发）"
+          )
+          // 成功那一行（relay）的字段与脱敏契约不变
+          val c = parse(lines.last).fold(e => fail(s"invalid JSONL: $e"), identity).hcursor
           assertEquals(
             c.downField("deviceId").as[String].toOption,
             Some(srcId),
