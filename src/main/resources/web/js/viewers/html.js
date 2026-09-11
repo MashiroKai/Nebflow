@@ -9,6 +9,11 @@ import { getToken, buildThemeVarsCSS, resolveLocalFiles, addSourceToggle, addEle
 import { makeReference } from '../reference.js';
 import { t } from '../i18n.js';
 import { enableViewerZoom } from './zoom.js';
+// The unresolved-reference notice: the SAME renderer and the SAME
+// `.html-card-warning` styles the chat card uses (toolfail batch, 2026-09-11).
+// The Pop tool reads a local HTML file; when one of its local references cannot
+// be served, the Canvas used to show a silently empty box.
+import { renderCardWarnings } from '../cardRegistry.js';
 
 /** Script injected into the iframe to listen for theme changes from the parent.
  *  When the parent switches light/dark, it posts the new CSS vars to all iframes. */
@@ -358,7 +363,7 @@ function bindZoomBridge() {
  *
  *  Unlike Card (auto-height in chat), Canvas fills the panel height and
  *  scrolls internally — like a browser viewport. */
-function viewHtml(pane, { content, absPath, fileName }) {
+function viewHtml(pane, { content, absPath, fileName, warnings }) {
   initCanvasThemeWatcher();
   bindZoomBridge();
 
@@ -371,7 +376,8 @@ function viewHtml(pane, { content, absPath, fileName }) {
   // source-mode round trip wipes innerHTML before calling back into this
   // function, so iframe is null there and the re-render must proceed.
   const prevIframe = pane.querySelector('iframe[data-nf-canvas-html]');
-  if (prevIframe && /** @type {any} */ (pane)._renderedHtmlContent === content) return;
+  if (prevIframe && /** @type {any} */ (pane)._renderedHtmlContent === content &&
+      /** @type {any} */ (pane)._renderedHtmlWarnings === (warnings ? warnings.length : 0)) return;
 
   // Capture before rebuild: when content actually changed (external edit),
   // restore the reader's position afterwards so the refresh at worst drifts
@@ -457,6 +463,19 @@ function viewHtml(pane, { content, absPath, fileName }) {
   iframe.srcdoc = srcdoc;
   pane.appendChild(iframe);
 
+  // Unresolved local references reported by the Pop tool (toolfail batch): list
+  // them above the frame so a broken asset is never a silent blank box. This is
+  // the chat card's own notice component and renderer (.html-card-warning /
+  // renderCardWarnings) — nothing is re-implemented here. The notice becomes the
+  // pane's first flex child, so the frame switches from height:100% to flex:1
+  // (the pane is already a column flex container) and keeps its own scroll.
+  const notice = renderCardWarnings(pane, iframe, warnings);
+  if (notice) {
+    iframe.style.height = '';
+    iframe.style.flex = '1 1 auto';
+    iframe.style.minHeight = '0';
+  }
+
   // ── Zoom (shared engine; transform the whole iframe, never its DOM) ───────
   // translate+scale with origin 0 0 (same math as the image viewer): the inner
   // document keeps its own layout and native scrolling; zoom pivots are
@@ -467,6 +486,11 @@ function viewHtml(pane, { content, absPath, fileName }) {
   let zs = 1, zx = 0, zy = 0;   // scale + translate (pane px)
   let zoomApi = null;
   const applyZoom = () => { iframe.style.transform = `translate(${zx}px, ${zy}px) scale(${zs})`; };
+  /** The frame's top-left inside the pane. The transform is anchored at the
+   *  frame's OWN origin, while the zoom engine reports pane-relative pivots —
+   *  without this correction the cursor anchor drifts by the warning notice's
+   *  height. Without a notice the offset is 0 and the math is unchanged. */
+  const frameOffset = () => ({ x: iframe.offsetLeft || 0, y: iframe.offsetTop || 0 });
   const zoomApply = (next, pivot) => {
     const clamped = Math.min(ZOOM_MAX, Math.max(ZOOM_MIN, next));
     if (clamped === zs) return;
@@ -475,8 +499,11 @@ function viewHtml(pane, { content, absPath, fileName }) {
     if (pivot) {
       // Zoom-to-cursor: keep the content point at the pivot stationary.
       const k = zs / old;
-      zx = pivot.x - (pivot.x - zx) * k;
-      zy = pivot.y - (pivot.y - zy) * k;
+      const off = frameOffset();
+      const px = pivot.x - off.x;
+      const py = pivot.y - off.y;
+      zx = px - (px - zx) * k;
+      zy = py - (py - zy) * k;
     }
     applyZoom();
     if (zoomApi) zoomApi.setPct(zs);
@@ -530,7 +557,7 @@ function viewHtml(pane, { content, absPath, fileName }) {
     pane.appendChild(note);
   });
 
-  addSourceToggle(pane, viewHtml, { content, absPath, fileName });
+  addSourceToggle(pane, viewHtml, { content, absPath, fileName, warnings });
   // #303 B6: element-select toggle, seated left of the source toggle.
   setupElementRefSelect(pane, iframe, { absPath, fileName });
   // Cache the rendered content for the unchanged-guard at the top. Set after
@@ -538,6 +565,7 @@ function viewHtml(pane, { content, absPath, fileName }) {
   // stale marker after a navigation-away replacement is harmless (no iframe →
   // the re-render proceeds).
   /** @type {any} */ (pane)._renderedHtmlContent = content;
+  /** @type {any} */ (pane)._renderedHtmlWarnings = warnings ? warnings.length : 0;
 }
 
 export default {

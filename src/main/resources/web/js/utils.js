@@ -4,6 +4,18 @@ import { t, getLocale } from './i18n.js';
 // ── Exported protocol typedefs (P2-3 core contracts) ──────────────────────
 
 /**
+ * One unresolved local file reference reported by a backend tool (Card payload
+ * `warnings` / Pop `popFile` item `warnings`). Renderer:
+ * cardRegistry.renderCardWarnings.
+ * @typedef {Object} FileRefWarning
+ * @property {string} [ref] - the verbatim reference as the agent wrote it
+ * @property {string|null} [resolvedPath] - resolved filesystem path, when one exists
+ * @property {string} [reason] - failure code: not-found / unresolvable / extension-not-allowed / size-exceeded / not-regular-file / other
+ * @property {string} [detail] - human-readable reason
+ * @property {number} [count] - identical references collapsed into this entry
+ */
+
+/**
  * Viewer render context - the payload canvas.js/fileViewers.js hands to a
  * viewer's render(). Binary viewers receive no `content` (backend omits it).
  * @typedef {Object} ViewerContext
@@ -15,6 +27,7 @@ import { t, getLocale } from './i18n.js';
  * @property {string} [path] - path relative to the workspace root
  * @property {string} [rootPath] - workspace root
  * @property {{pageStart?: number}} [anchor] - #303 C3: document-reference jump target (pdf page)
+ * @property {FileRefWarning[]} [warnings] - unresolved local references (Pop's popFile item); rendered as the html-card-warning notice above the frame
  */
 
 /**

@@ -326,9 +326,14 @@ function buildMediaFallbackScript() {
  *  it could not proxy in its payload (`warnings`). Replaying a persisted
  *  session keeps them, so the notice is rebuilt from the payload instead of
  *  being a one-shot render artifact. Values come from the agent's HTML —
- *  textContent only, never innerHTML. */
-function renderCardWarnings(wrap, iframe, warnings) {
-  if (!warnings || !warnings.length) return;
+ *  textContent only, never innerHTML.
+ *
+ *  2026-09-11 (toolfail batch): exported, because the Canvas HTML viewer
+ *  renders the exact same notice from the `popFile` item's `warnings` (the Pop
+ *  tool reads a local HTML file and its images may fail the same way). One
+ *  renderer, one CSS class — used as `renderCardWarnings(host, iframe, list)`. */
+export function renderCardWarnings(wrap, iframe, warnings) {
+  if (!warnings || !warnings.length) return null;
   const box = document.createElement('div');
   box.className = 'html-card-warning';
   const head = document.createElement('div');
@@ -353,6 +358,7 @@ function renderCardWarnings(wrap, iframe, warnings) {
   });
   box.appendChild(list);
   wrap.insertBefore(box, iframe);
+  return box;
 }
 
 /** Render HTML content inside a sandboxed iframe.
