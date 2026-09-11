@@ -12,6 +12,8 @@ import * as api from './friendsApi.js';
 import { makeReference } from './reference.js';
 import { appendRefToActiveView } from './input.js';
 import { showPopupMenu } from './contextMenu.js';
+// ⑥ 信任好友封存（作者裁定 2026-09-12）：静态常量，非配置读取、不过 latch。
+import { TRUST_SEALED } from './featureFlags.js';
 
 let conversations = [];
 let friendsCache = [];          // accepted friends — source of truth for §3.3 gate
@@ -278,7 +280,9 @@ function renderChatModal(conv) {
   title.appendChild(el('span', 'fm-modal-id', conv.friend?.neblinkId || ''));
   header.appendChild(title);
   // 信任模式 v1: 窗头信任状态指示（开启态一眼可辨；开关在好友行右键菜单）。
-  header.appendChild(el('span', 'fm-trust-slot'));
+  // SEALED (author ruling 2026-09-12): 封存期不挂槽；updateTrustBadge 保留
+  // （无槽即天然不产出）。回退 = featureFlags.js 常量改回 false。
+  if (!TRUST_SEALED) header.appendChild(el('span', 'fm-trust-slot'));
   const fwdBtn = el('button', 'glass-control fm-forward-btn');
   fwdBtn.innerHTML = '<i data-lucide="forward"></i>';
   fwdBtn.title = t('messages.forwardToAgent');
@@ -585,6 +589,10 @@ function stampForwarded(id) {
 // （同消息只转一次，与 forwardedIds 对齐）。起草成功立即打「已转发」角标。
 // 通知形态不变：仅好友消息既有角标三级，无横幅无提示音（08-18 裁定）。
 function maybeAutoForward(m, conv) {
+  // SEALED (author ruling 2026-09-12): 封存期行为 early-return——门禁链与函数体
+  // 完整保留（onFriendEvent 内调用点、initMessages 内 fm-trust-changed 监听
+  // 均不动）。回退 = featureFlags.js 常量改回 false。
+  if (TRUST_SEALED) return;
   if (!m || !conv || !conv.friend) return;
   if (m.senderId !== conv.friend.userId) return; // incoming only
   if (!isStillFriend(conv)) return;              // blocked/deleted beats trust
