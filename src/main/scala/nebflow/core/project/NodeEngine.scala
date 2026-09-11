@@ -558,6 +558,11 @@ class NodeEngine(
   /** 死会话 bg-wait 豁免留痕单发记账（nodeId 集合，进程内一次）。 */
   private val bgWaitExemptNotified: Ref[IO, Set[String]] = Ref.unsafe[IO, Set[String]](Set.empty)
 
+  /** 释放唤醒单发记账（nodeId → 已唤醒的 `reportPendingSince` 值，进程内）：同一**未申报
+    * 期**只注入一次唤醒轮——防 TtlTick 30s 拍连发 LLM turn。新一轮翻转/新会话重排起表
+    * （新起点值）自动重新允许；进程重启后表空 ⇒ 至多再唤醒一次（幂等冗余，不丢监督面）。 */
+  private val releaseWakeSent: Ref[IO, Map[String, Long]] = Ref.unsafe[IO, Map[String, Long]](Map.empty)
+
   /** 代裁 6「在事件里标出该态节点供人监督」：`settleStaleRunningNodes` 命中
     * 「死会话 + 仍在途后台任务」豁免时单发一条留痕（判据本身原样保留——bg 等待不算死）。 */
   private def markDeadSessionBgWaitExemption(
@@ -580,7 +585,8 @@ class NodeEngine(
     * `settleRunnableSweep` 同族——复用既有心跳点零新调度器）。
     *
     * 逐节点判据（作者裁定口径）：`status == Running ∧ reportPendingSince 已置`；
-    *   - 申报槽非空（**非消费读**）⇒ 申报已到 ⇒ 清表，不注入不写事件；
+    *   - 申报槽非空（**非消费读**）⇒ 申报已到但桥可能未观测（`NodeMessage` 重入轮不产
+    *     生 `Completed`）⇒ **唤醒桥复检放行**（[[wakeBridgeForRelease]]，不清表不注入提醒）；
     *   - `elapsed ≥ 第 N 档 ∧ N > reportReminderCount` ⇒ 发第 N 拍（注入 + 事件）；
     *   - `dueRung ≥ maxRungs` 且拍数已满 ⇒ quiescent 档（只写事件，间隔
     *     `quiescentIntervalMs`）；
@@ -620,7 +626,7 @@ class NodeEngine(
               .traverse(sid => NodeReportRegistry.peek(sid).map(sid -> _))
               .flatMap { probes =>
                 probes.collectFirst { case (sid, Some(_)) => sid } match
-                  case Some(sid) => clearReportPending(node.id, Some(sid))
+                  case Some(sid) => wakeBridgeForRelease(node, sid, since)
                   case None =>
                     val target = math.min(dueRung, maxRungs)
                     if ladderStage then
@@ -675,6 +681,63 @@ class NodeEngine(
           }
     }
 
+  /** 释放唤醒（noderpt 批 F2，2026-09-11 复核 D2 修复）：申报**已到**但桥未观测时的放行腿。
+    *
+    * 病灶（复核 D2 / 探针 P3 实证）：`NodeMessage` 重入轮（`sendNodeMessage → injectRunning
+    * → AgentCommand.ImmediateInput`）在 AgentActor 内转成 `UserInput(replyTo = None)` ⇒ 该轮
+    * 收尾的 `completionTargets` 不含节点观察桥 ⇒ **无 `AgentEvent.Completed` 到桥**（⑧-1
+    * 同一根因）。若该轮里 agent 调了 `node_report`（分发器催办后最常见的那一轮），申报就进了
+    * `NodeReportRegistry`，而桥的复检点只在 `Completed` 分支 ⇒ 永不触发。改前本腿走 `peek`
+    * 命中分支**只清表**（`clearReportPending`）不放行 ⇒ 计时清零、节点永久 Running、
+    * 零提醒零投递（安全网被无声关闭）。
+    *
+    * 本腿动作：命中申报槽 ⇒ **唤醒桥复检**（**不清表**）。桥在 `Completed` 分支里做的正是
+    * 「`clearReportPending *> releaseNow`」原子组合 ⇒ 复检即放行，清表与放行同点；申报信息
+    * 由终态点的 `NodeReportRegistry.drain` 单次消费（pass/fail/blocked 三链分流零改动）。
+    *
+    * **为什么退化为「注入一次唤醒轮」而非直接放行**（按任务书要求登记退化理由 + 代码锚）：
+    * `releaseNow` 是桥行为内的**局部闭包**（`NodeEngine.scala:2160`，闭包持有本次 `Completed`
+    * 的 `messages` 与 `resultDeferred`），扫描腿（`ProjectActor.TtlTick`）手上只有
+    * `AgentRecord`/`AgentRef`——其接收面是 `AgentEvent`，而 `Completed/Failed/Cancelled`
+    * 三者都是**终态事件**：合成一个喂给桥 = 伪造终态（`messages` 只能是编造文本），比不释放
+    * 更糟。故 **不存在等价的直接释放入口** ⇒ 退化为注入唤醒轮，让桥自己走它既有的复检放行
+    * 路径。通道 = 与提醒轮/腿 1 后台完成通知同一条已实证机制：`node-` 前缀 Flow 会话以
+    * `AgentRecord.supervisorRef`（= 本桥）作粘性 `replyTo` ⇒ 唤醒轮收尾必回 `Completed`。
+    *
+    * **为什么不清表**：若在此先清表，桥复检将见空槽 ⇒ 再次 hold，且申报已被吃掉、无法再被
+    * `drain` 消费 ⇒ 比现状更糟的静默搁死（节点永久 Running 且无监督痕迹）。清表必须与放行
+    * 同点（桥内原子组合）。
+    *
+    * 单发：同一未申报期只唤醒一次（see [[releaseWakeSent]]）。会话已不在 registry（死会话）
+    * 时**不清表**、只留痕：计时保留 ⇒ quiescent 留痕与僵尸腿（`settleStaleRunningNodes`）
+    * 两条既有出路都不丢。 */
+  private def wakeBridgeForRelease(node: NodeDef, sessionId: String, since: Long): IO[Unit] =
+    releaseWakeSent.get.flatMap { sent =>
+      if sent.get(node.id).contains(since) then IO.unit
+      else
+        releaseWakeSent.update(_ + (node.id -> since)) *>
+          injectExternalTurn(
+            sessionId,
+            NodeEngine.NodeReportReleaseWakeSource,
+            eventType = "release-wake",
+            payload = NodeEngine.reportReleaseWakeText(node.name),
+            metadata = io.circe.JsonObject("pendingSince" -> since.asJson)
+          ).flatMap { delivered =>
+            FlowMapEventLog.append(workspace, projectName, node.id, NodeEngine.NodeReportReleaseWakeEventType,
+              NodeEngine.reportReleaseWakeSummary(sessionId, since, delivered)) *>
+              (if delivered then
+                 logger.info(
+                   s"Node '${node.name}' (${node.id}) holds a node_report declaration the completion bridge never " +
+                     s"observed (immediate-injection turn produces no Completed) — release wake injected into " +
+                     s"session '$sessionId' so the bridge re-checks and releases (clock kept: $since)")
+               else
+                 logger.warn(
+                   s"Node '${node.name}' (${node.id}) holds a node_report declaration but session '$sessionId' is " +
+                     "not live — release wake undeliverable; clock kept, node stays Running (dead-session settle / " +
+                     "human action expected)"))
+          }
+    }
+
   /** 提醒轮注入（**外部事件唤醒通道**）。
     *
     * 为什么不是 `sendNodeMessage`（ImmediateInput）通道：`ImmediateInput` 在 AgentActor
@@ -690,17 +753,36 @@ class NodeEngine(
     * 返回 true = 已投递给活会话 actor（tell 语义，fire-and-forget）；false = 会话已不在
     * registry（会话非活 ⇒ 事件字段 delivered=false，节点仍保持 Running，等人工/僵尸腿）。 */
   private def injectReminderTurn(sessionId: String, text: String, rung: Int, maxRungs: Int): IO[Boolean] =
+    injectExternalTurn(
+      sessionId,
+      NodeEngine.NodeReportReminderSource,
+      eventType = "reminder",
+      payload = text,
+      metadata = io.circe.JsonObject(
+        "rung" -> rung.asJson,
+        "maxRungs" -> maxRungs.asJson
+      )
+    )
+
+  /** 外部事件唤醒轮注入**单点**（提醒轮与释放唤醒共用，见 [[wakeBridgeForRelease]]）：
+    * 查 registry 取会话 actor → `AgentCommand.ExternalEvent`（tell 语义，fire-and-forget）。
+    * 返回 true = 已投递给活会话 actor；false = 会话已不在 registry（调用方据此写
+    * `delivered=false` / 走 WARN 留痕）。 */
+  private def injectExternalTurn(
+    sessionId: String,
+    source: String,
+    eventType: String,
+    payload: String,
+    metadata: io.circe.JsonObject
+  ): IO[Boolean] =
     resources.agentRegistry.get.map(_.get(sessionId)).flatMap {
       case None => IO.pure(false)
       case Some(record) =>
         (record.ref ! AgentCommand.ExternalEvent(
-          source = NodeEngine.NodeReportReminderSource,
-          eventType = "reminder",
-          payload = text,
-          metadata = io.circe.JsonObject(
-            "rung" -> rung.asJson,
-            "maxRungs" -> maxRungs.asJson
-          )
+          source = source,
+          eventType = eventType,
+          payload = payload,
+          metadata = metadata
         )).void *> IO.pure(true)
     }
 
@@ -3971,6 +4053,37 @@ object NodeEngine:
   /** 事件 `stage` 取值：阶梯期（有注入） / quiescent（只留痕不注入）。 */
   val NodeReportStageActive: String = "active"
   val NodeReportStageQuiescent: String = "quiescent"
+
+  // ── 释放唤醒常量（noderpt 批 F2，2026-09-11 复核 D2 修复）──────────────────────
+  //
+  // 与提醒阶梯同族但**不同语义**：提醒 = 「你没申报」（注入提醒轮 + 事件）；
+  // 释放唤醒 = 「你申报了，但桥没观测到那一轮」（唤醒桥复检放行 + 事件，不提醒）。
+  // 前缀头/ source / 事件类型三者单点区分，取证侧不必猜是哪条腿。
+
+  /** 释放唤醒注入文本的专用前缀头（首行；与 `[NODE-REPORT-REMINDER]` 区分）。 */
+  val NodeReportReleaseWakePrefix: String = "[NODE-REPORT-RELEASE-WAKE]"
+
+  /** 释放唤醒注入的 ExternalEvent source 标签。 */
+  val NodeReportReleaseWakeSource: String = "node-report-release-wake"
+
+  /** 释放唤醒留痕事件类型（FlowMapEventLog）：每次唤醒一条（单发记账见 `releaseWakeSent`）。 */
+  val NodeReportReleaseWakeEventType: String = "node-report-release-wake"
+
+  /** 释放唤醒注入文案（并非「你没申报」的提醒——申报**已到**，缺的只是桥的观测）：
+    * 要求 agent 用本轮回复给出节点最终结果文本（重述即可，无需再做工作），该轮回复经桥
+    * 复检后作为节点结果投递。**不含判罚/威胁措辞**（与提醒文案同纪律：本族永不判 failed）。 */
+  def reportReleaseWakeText(nodeName: String): String =
+    s"""$NodeReportReleaseWakePrefix 节点 $nodeName 的 node_report 申报已收到，但完成观察桥未观测到产生该申报的那一轮
+       |（NodeMessage / 即时注入轮的收尾不产生完成事件，引擎据此补一次唤醒）。
+       |请直接用本轮回复给出该节点的**最终结果文本**——已无补充时重述上一轮的最终结论即可；
+       |无需再做任何工具调用或额外工作，本轮回复将作为节点结果放行并投递下游。
+       |本次唤醒不判罚失败、不终止会话、不杀进程。""".stripMargin
+
+  /** 释放唤醒留痕 summary（`k=v` 单空格分隔，与 [[reportMissingSummary]] 同构，可被
+    * [[parseReportMissingSummary]] 解析）：pendingSince（未申报起点）· delivered（注入是否达）。 */
+  def reportReleaseWakeSummary(sessionId: String, pendingSince: Long, delivered: Boolean): String =
+    s"node_report declaration present but the completion bridge never observed the declaring turn — " +
+      s"release wake injected: stage=release-wake session=$sessionId pendingSince=$pendingSince delivered=$delivered"
 
   // ── 终态延迟销毁窗口常量（noderpt 批 B 段 2026-09-11 作者裁定：一律存活 30 分钟再销毁）──
 
