@@ -64,6 +64,15 @@ object ToolRegistry:
       // only (NebulaOrchestrationTools, 2c 起) — agent.json declaration
       // channel removed (buildAllowedToolSet strips the name from base).
       "SendMessage" -> FriendMessageTool,
+      // ListFriends（好友消息改造批 ⑩，方案 `20260912_011320` §4.5 定稿）：Nebula
+      // 编排面**只读**好友名册——`SendMessage` 的寻址前置（既有候选文案只在失败
+      // 路径出现，且 displayName == username 时零区分力）。授权面 = 机制固定唯一
+      // （`NebulaOrchestrationTools` 单点；名字进 `NebulaExclusiveTools` 防声明
+      // 逃逸——agent.json 声明与 "*" 对一切非 Nebula 身份不授能）。插件白名单
+      // （`PluginRegistry.BuiltinToolWhitelist`）与远端可执行面
+      // （`RemoteExecutor.remoteableTools`）均**不含**本件（零参数 schema，
+      // 不得被 augmentSchema 注入 `device`）。
+      "ListFriends" -> ListFriendsTool,
       // Load Team/Flow from disk (validate + mount)
       "Load" -> LoadTool,
       // FlowReport 注册已随 2026-09-06 工具面裁撤批移除（见上注）。
