@@ -4,7 +4,7 @@
 
 import state from './state.js';
 import { key } from './branding.js';
-import { smartScroll } from './utils.js';
+import { smartScroll, isNearBottom } from './utils.js';
 
 let _iframeId = 0;
 
@@ -169,7 +169,9 @@ window.addEventListener('message', (e) => {
       // own a different scroll container and must never move the session the
       // user is reading.
       if (!chat.contains(iframe)) return;
-      const nearBottom = chat.scrollHeight - chat.scrollTop - chat.clientHeight < 100;
+      // A-branch: shared NEAR_BOTTOM_PX unit (was a local 100) — a card that
+      // grows while the user is reading history must not move their viewport.
+      const nearBottom = isNearBottom(chat);
       if (nearBottom) {
         requestAnimationFrame(() => {
           chat.scrollTop = chat.scrollHeight;

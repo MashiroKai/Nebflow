@@ -18,7 +18,7 @@ import { key } from './branding.js';
 import { t } from './i18n.js';
 import { buildManageBar, bindManageActions, syncManageControls } from './managePanel.js';
 import { isErrorReason, errorTileText, errorIcon } from './errorRecovery.js';
-import { truncateMiddle } from './utils.js';
+import { truncateMiddle, updateScrollSnapped, shouldFollowBottom, initScrollFollow } from './utils.js';
 import { cleanupCardIframes } from './cardRegistry.js';
 
 // ── Per-agent state ───────────────────────────────────────
@@ -524,9 +524,13 @@ export function openStepPopup(stepId, nodeLabel, agentName, flowName, nodeSessio
 
   // Auto-scroll
   entry.container.addEventListener('scroll', () => {
-    const atBottom = entry.container.scrollTop + entry.container.clientHeight >= entry.container.scrollHeight - 40;
-    entry.view.stream.scrollSnapped = atBottom;
+    // Follow-intent latch for THIS view (shared near-bottom unit, was 40)
+    updateScrollSnapped(entry.view, entry.container);
   });
+
+  // Per-view scroll-follow machinery: row counting + "↓ N new messages" pill
+  // are per ChatView (view.stream.scrollPill) — never a global singleton.
+  initScrollFollow(entry.view);
 
   // Scroll to bottom on open + set initial snapped state
   requestAnimationFrame(() => {
@@ -789,8 +793,7 @@ export function interceptFlowStep(msg) {
   if (currentStepId === msg.nodeSessionId) {
     requestAnimationFrame(() => {
       const snapped = entry.view.stream.scrollSnapped;
-      const threshold = 60;
-      if (snapped || entry.container.scrollHeight - entry.container.scrollTop - entry.container.clientHeight < threshold) {
+      if (snapped || shouldFollowBottom(entry.view, entry.container)) {
         entry.container.scrollTop = entry.container.scrollHeight;
       }
     });

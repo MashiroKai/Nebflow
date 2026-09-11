@@ -67,6 +67,7 @@
 
 import { t } from './i18n.js';
 import { formatDuration, chevronSvg } from './chat.js';
+import { isNearBottom } from './utils.js';
 
 /* ---------- row classification ---------- */
 
@@ -318,7 +319,8 @@ export function collapseTurn(view, meta = {}) {
     bindHeaderToggle(header);
     tuckRows(tuckable); // instant strip (no animation, 2026-09-06)
     // keep the viewport pinned to the bottom when it was pinned (spec §4.2)
-    if (chat.scrollHeight - chat.scrollTop - chat.clientHeight < 80) {
+    // A-branch: shared NEAR_BOTTOM_PX unit (was a local 80).
+    if (isNearBottom(chat)) {
       chat.scrollTop = chat.scrollHeight;
     }
   }

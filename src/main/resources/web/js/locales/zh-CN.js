@@ -596,6 +596,8 @@ export default {
   // === Chat area ===
   'chat.timeout': '响应超时',
   'chat.retry': '重试',
+  // A 支 · 滚动跟随收敛：新增消息胶囊（计数 = 自离开底部以来新增的消息行数）
+  'chat.newMessages': '↓ {n} 条新消息',
   'chat.confirm': '确认',
   'chat.answeredViaChatInput': '已通过输入框回答',
   'chat.cancel': '取消',
