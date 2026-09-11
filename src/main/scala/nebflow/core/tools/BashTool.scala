@@ -217,7 +217,7 @@ Git safety:
   def isDangerous(command: String): Boolean =
     DangerousPatterns.exists(_.findFirstIn(command).isDefined)
 
-  /** Returns a danger level: 0 = safe, 1 = warning (git ops), 2 = dangerous (deletion/kill), 3 = critical (system destruction). */
+  /** Returns a danger level: 0 = safe, 1 = warning (git ops / network egress), 2 = dangerous (deletion/kill), 3 = critical (system destruction). */
   def dangerLevel(command: String): Int =
     val criticalPatterns = List(
       """rm\s+-rf\s+/\s*$""".r,
@@ -254,6 +254,14 @@ Git safety:
       """git\s+clean\s+-f""".r
     )
     val warningPatterns = List(
+      // T4（2026-09-11 网络档，Q3 裁定）：出网命令统一 **1 档**——只做可见性分级，
+      // 不与 delguard 的删除形态分级（2/3）打架。任务书点名 6 条形态；PowerShell
+      // 的 `powershell -c "Invoke-WebRequest …"` 由「引号前置」分支接住。
+      // 前置 = 行首 / 空白 / shell 分隔符（; & | (）/ 引号，后置 = 空白 / 行尾，
+      // 故 `curling`、`ssh-keygen` 之类子串不误判。**别名（sftp/nc/telnet/iwr/irm）
+      // 本批不纳入**。注意：auto-all 下 dangerLevel 不参与闸门决策，可见性由
+      // relay 执行审计行（RelayExecAudit）承担。
+      """(?i)(?:^|[\s;&|("'`])(?:ssh|scp|curl|wget|ncat|Invoke-WebRequest)(?=\s|$)""".r,
       """git\s+checkout\s+(?!-b\b)(?!--\s)(?!\*\.)""".r,
       """git\s+switch\b""".r,
       """git\s+stash\s+(drop|clear)\b""".r,
