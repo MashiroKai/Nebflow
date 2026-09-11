@@ -2480,9 +2480,12 @@ object AgentCore:
   /**
    * Fixed tools for a given agent — 阶段 2d（D.1-1）后的唯一注入入口。
    *
-   * 收敛三角色（§C.1 角色-工具静态矩阵，裁定 11 机制固定零配置）直接返回
-   * 静态集常量（收口）：Nebula / project-dispatcher / general 不再经过任何
-   * legacy 分支路径——2c 建集、2d 删路，常量即唯一事实源。
+   * 收敛四定义（§C.1 角色-工具静态矩阵，裁定 11 机制固定零配置；2026-09-11
+   * 极简内核批收进 kernel）直接返回静态集常量（收口）：Nebula /
+   * project-dispatcher / general / kernel 不再经过任何 legacy 分支路径——2c
+   * 建集、2d 删路，常量即唯一事实源。收敛判据**按名**
+   * （ConvergedAgentNames），category 不再能把收敛名推去 legacy 面
+   * （2026-09-11 agentdef-tidy 批，见方法体首段注释）。
    *
    * 双轨期 legacy 路径（legacyFixedTools）保留至阶段 3：
    * - team 成员：BaseTools + Mail + SubTask + TeamTask 三件（user ruling
@@ -2494,12 +2497,24 @@ object AgentCore:
    *   等存量 agent 的 agent.json 未声明文件工具，依赖此路径（删除即断活
    *   agent 工具面），随阶段 2e/3 归档一并退役。
    *
-   * category 分支优先保持 2c 行为逐字节 parity（converged 定义不设 category，
-   * 恒为默认 standalone）。
+   * category 分支配 `if !converged` 守卫（2026-09-11 批前）：非收敛名的
+   * category 分支行为逐字节未动（2c parity 保持）。
    */
   def fixedToolsFor(agentDef: AgentDef): Set[String] =
+    // 纵深（2026-09-11 agentdef-tidy 批，安全）：收敛名短路 —— category 不再能
+    // 把收敛名推去 legacy 面。主收敛点在唯一 JSON 读取点
+    // AgentLibrary.loadFromDir（收敛名 category 恒 standalone）；此处兜的是
+    // **不经**该点而合成出带 category=team/flow 的收敛名 AgentDef 的路径
+    // （EntityLoader.toAgentDef 按路径推断 / 代码兜底 / 运行时 copy / 未来新增
+    // 构造点）。fixedToolsFor 是固定工具的**唯一注入入口**（buildAllowedToolSet
+    // 注入注释），在此一处收口 ⇒ 「收敛名拿 team 遗留工具面（Mail/SubTask/
+    // TeamTask*）」在结构上不可达，与 category 来源无关。
+    // 判据与 buildAllowedToolSet 的 base=∅ 同款：**按名**（ConvergedAgentNames），
+    // 避免同一收敛语义出现两套判据。非收敛名逐字节 parity：team/flow 仍落
+    // legacyFixedTools，name 分支逐字未动。
+    val converged = AgentCore.ConvergedAgentNames.contains(agentDef.name)
     agentDef.category match
-      case "team" | "flow" => legacyFixedTools(agentDef)
+      case "team" | "flow" if !converged => legacyFixedTools(agentDef)
       case _ =>
         agentDef.name match
           case "Nebula" =>
