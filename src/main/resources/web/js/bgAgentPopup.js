@@ -10,7 +10,7 @@
 import { ChatView, setActiveView, activeView, chatViews } from './chatView.js';
 import { sendWs, onMessage, setBgAgentStepInterceptor } from './ws.js';
 import { restoreFromBackendHistory } from './persistence.js';
-import { isBgAgentId, truncateMiddle } from './utils.js';
+import { isBgAgentId, truncateMiddle, updateScrollSnapped, shouldFollowBottom, initScrollFollow } from './utils.js';
 import state from './state.js';
 import { key } from './branding.js';
 import { t } from './i18n.js';
@@ -174,9 +174,12 @@ export function openStepPopup(nodeSessionId, agentName, taskDescription) {
   });
 
   entry.container.addEventListener('scroll', () => {
-    const atBottom = entry.container.scrollTop + entry.container.clientHeight >= entry.container.scrollHeight - 40;
-    entry.view.stream.scrollSnapped = atBottom;
+    // Follow-intent latch for THIS view (shared near-bottom unit, was 40)
+    updateScrollSnapped(entry.view, entry.container);
   });
+
+  // Per-view scroll-follow machinery: row counting + "↓ N new messages" pill
+  initScrollFollow(entry.view);
 
   requestAnimationFrame(() => {
     entry.container.scrollTop = entry.container.scrollHeight;
@@ -343,8 +346,7 @@ export function interceptBgAgentStep(msg) {
   if (currentStepId === msg.nodeSessionId) {
     requestAnimationFrame(() => {
       const snapped = entry.view.stream.scrollSnapped;
-      const threshold = 60;
-      if (snapped || entry.container.scrollHeight - entry.container.scrollTop - entry.container.clientHeight < threshold) {
+      if (snapped || shouldFollowBottom(entry.view, entry.container)) {
         entry.container.scrollTop = entry.container.scrollHeight;
       }
     });

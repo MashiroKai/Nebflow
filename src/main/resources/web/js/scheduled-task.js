@@ -4,7 +4,8 @@ import { key } from './branding.js';
 import { sendWs, onMessage, onReconnect } from './ws.js';
 import { t } from './i18n.js';
 import { addNotification } from './notificationBanner.js';
-import { createIconsIn } from './utils.js';
+import { createIconsIn, shouldFollowBottom } from './utils.js';
+import { chatViews } from './chatView.js';
 
 // Inline locale getter to avoid caching issues with module imports
 function getLocale() {
@@ -571,7 +572,11 @@ onMessage('scheduledTaskTriggered', (msg) => {
         row.appendChild(bubble);
         chat.appendChild(row);
         if (typeof lucide !== 'undefined') createIconsIn(bubble);
-        chat.scrollTop = chat.scrollHeight;
+        // A-branch (2026-09-11): conditional — a fired schedule used to yank the
+        // viewport to the bottom even when the user was reading history. Now it
+        // follows only when the user is already at/near the bottom; otherwise the
+        // row lands and the ↓ N pill counts it.
+        if (shouldFollowBottom(chatViews.primary, chat)) chat.scrollTop = chat.scrollHeight;
       }
     }
 
