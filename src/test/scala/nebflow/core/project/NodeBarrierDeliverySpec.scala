@@ -323,9 +323,11 @@ class NodeBarrierDeliverySpec extends CatsEffectSuite:
       res <- mkResources(system, tempRoot, llm.handle)
       rt <- mountProject("bar-race", ws, system, res)
       ctx = mkCtx(res, system, ws.toString)
-      // A 入口运行中（out=Nebula 仅满足连接下限；启动时捕获的快照 out 将被运行中接线改写为 C）
+      // A 入口运行中（out 仅满足连接下限；启动时捕获的快照 out 将被运行中接线改写为 C）。
+      // 2026-09-12 批 A1：字面用**显式门集** `(pass,failed)Nebula`（= 通知汇报边
+      // `OutEdge.nebula`）；bare `"Nebula"` 今日已收敛为纯出口标记（`{pass}/signal`）。
       _ <- nodeEdit(nodeInput("bar-race", "race-a", "description" -> Json.fromString("test node purpose"),
-        "task" -> Json.fromString("race-result-A"), "out" -> Json.fromString("Nebula")), ctx)
+        "task" -> Json.fromString("race-result-A"), "out" -> Json.fromString("(pass,failed)Nebula")), ctx)
       _ <- waitStatus(rt, "race-a", Set(NodeLifecycle.Running))
       // A 运行中建 C 并接线 in=[A]（NodeTools.setOut 改写运行中节点的 out）。
       // C store 直种（20260903 创建必带 out 新规范下 out-only wiring 节点不可经

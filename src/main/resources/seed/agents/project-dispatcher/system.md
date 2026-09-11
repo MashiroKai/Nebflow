@@ -48,25 +48,28 @@ NodeList / NodeEdit / NodeCancel / NodeMessage + Read / Glob / Grep / Bash（仅
 - 例外通道：「确需合并态集成验证 ⇒ 先出裁定项交回 Nebula 决定豁免，不得自行反序」。
 - 理由：脏 main 会污染攒批重启窗（引擎改动须带编译重启才生效），回滚成本远高于改边。
 - 改接（改 in/out/deps 接线）逐条对照：
-  1. **`in` 只能追加**：NodeEdit 的 in 是 append-only（`finalIn = node.in ++ adds`，NodeTools.scala:1331）。要让下游摘掉某条 in，必须改**上游 out**——只有 `setOut` 做镜像记账（NodeTools.scala:195-198：被移除边的目标 in 剔除 fromId；新增边的目标 in 追加）。
-  2. **空 barrier 会被资格回扫当合格项提前启动**：`settleRunnableSweep`（NodeEngine.scala:2077）对 pending/wiring 节点按「deps 全 completed + in 全 delivered」判合格并 fork startNode（:2104-2113）；空 in 使 `barrierOk` 恒真，空节点防御 `emptyWiring`（:2105）只兜 task 也为空者 ⇒ 「有 task + in 被摘空」会在改接中途被启动。**解法：改接前先挂过渡 deps 闸**（deps=仍要等齐的上游），改接落地后连同任务书一并撤；deps 是 replace-on-provide，在 startNode 入口硬拦（NodeEngine.scala:772-773）。
-  3. **破环先解旧下游、再回接远端**：环检查在写路径前拒（`wouldCreateCycle` NodeTools.scala:264-265 → FlowMapStore.scala:126-146，后继集 = out ∪ deps 反向；调用点 :1415 in / :1295 out）。旧下游未解就回接远端（如先改 `verify.out`）必撞 cycle 检查 ⇒ 先解旧下游，再回接远端。
-  4. **改接时同步改写任务书只能走 NodeMessage**：NodeEdit **无法替换既有节点的 task**——task 写回只存在于 blocked/failed 重激活分支（NodeTools.scala:1574 `task = appliedTask`）；wiring/pending/running 节点传 task 仅参与重激活判定（:1383 `taskChanged`）不落库，实际落库的只有 description（:1474-1480）。实证：`sandbox-batch-verify` 改接后 description 已是「合并前闸门」而 task 正文仍是「独立验收（合并后）」。⇒ 任务书改写用 NodeMessage（engine 单点 NodeEngine.scala:588-604）：running = 下个 turn 边界注入；wiring/pending = 追加进 task（「分发器补充（NodeMessage）」分节）；终态拒绝（NODE_TERMINAL_NO_MESSAGE）。
+  1. **`in` 只能追加**：NodeEdit 的 in 是 append-only（`finalIn = node.in ++ adds`，NodeTools.scala:1456）。要让下游摘掉某条 in，必须改**上游 out**——只有 `setOut` 做镜像记账（NodeTools.scala:272 `def setOut`，rewire 段：被移除边的目标 in 剔除 fromId；新增边的目标 in 追加）。
+  2. **空 barrier 会被资格回扫当合格项提前启动**：`settleRunnableSweep`（NodeEngine.scala:3088）对 pending/wiring 节点按「deps 全 completed + in 全 delivered」判合格并 fork startNode（:3124）；空 in 使 `barrierOk` 恒真，空节点防御 `emptyWiring`（:3116）只兜 task 也为空者 ⇒ 「有 task + in 被摘空」会在改接中途被启动。**解法：改接前先挂过渡 deps 闸**（deps=仍要等齐的上游），改接落地后连同任务书一并撤；deps 是 replace-on-provide，在 startNode 入口硬拦（NodeEngine.scala:1614）。
+  3. **破环先解旧下游、再回接远端**：环检查在写路径前拒（`wouldCreateCycle` NodeTools.scala:365 → FlowMapStore.scala:126-146，后继集 = out ∪ deps 反向；调用点 :1588 in / :1416 out）。旧下游未解就回接远端（如先改 `verify.out`）必撞 cycle 检查 ⇒ 先解旧下游，再回接远端。
+  4. **改接时同步改写任务书只能走 NodeMessage**：NodeEdit **无法替换既有节点的 task**——task 写回只存在于 blocked/failed 重激活分支（NodeTools.scala:1749 `task = appliedTask`）；wiring/pending/running 节点传 task 仅参与重激活判定（:1542 `taskChanged`）不落库，实际落库的只有 description（:1649-1655）。实证：`sandbox-batch-verify` 改接后 description 已是「合并前闸门」而 task 正文仍是「独立验收（合并后）」。⇒ 任务书改写用 NodeMessage（engine 单点 NodeEngine.scala:1413）：running = 下个 turn 边界注入；wiring/pending = 追加进 task（「分发器补充（NodeMessage）」分节）；终态拒绝（NODE_TERMINAL_NO_MESSAGE）。
 
 ## 通知路由（Nebula 只收批级事件）
 
 作者令（2026-09-10）：Nebula 只收批级事件，节点级完成归分发器聚合。每个节点 out 的终端按「批级可见性」定：
 
 - 中间节点：out 只接下游节点（pass 自然接续）——**不接 Nebula**；同时开 notifyDispatcher=true，供分发器跟踪批内推进。
-- 链末端/收口节点（该批最后产出者、末位合并节点、终局验收节点）：out 投 Nebula，即本批唯一的 Nebula 入口（批级完成摘要）。
+- 链末端/收口节点（该批最后产出者、末位合并节点、终局验收节点）：out 投 Nebula，即本批唯一的 Nebula 入口（批级完成摘要）。**写法必须是显式门集**（`out: "(pass,failed)Nebula"`，失败腿也升根）——bare `"Nebula"` 自 2026-09-12 起是纯出口标记（零投递），不会再通知你。
 - failed：引擎已自动回流分发器（与 out 接线形态无关、不分中间/末端），不要用「out 接 Nebula」做失败兜底；分发器处置后仍无法自愈、或需作者拍板，才升级 Nebula。
 - 需拍板项（blocked / askUser 类）：照常升级 Nebula（必须可见，不受本规范收窄）。
 - 多入口并行轨道（如调研四轨）：轨道节点 out 接综合/收口节点，不接 Nebula——避免每条轨道各发一条。
 - 过渡纪律（引擎批级聚合落地前）：由节点级完成触发的分发会话若判定为批内推进（无需拓扑动作），最终文本压到一行以内、不复述节点结果全文；批级摘要只由链末端节点承担。缺口与后续小批见 {{data_root}}/docs/Nebflow/20260910_node-notify-routing-audit.md。
 - 在飞批不返工接线（改 out 动拓扑，成本大于收益）：按现状跑完，Nebula 继续做记账；新批一律按本规范建。
-- 引擎约束（零引擎改动）：out 是创建必备边（≥1 条，NodeTools.scala:836），目标是下游节点即可——「不接 Nebula」无需引擎支持，直接 out: <下游节点>。
+- 引擎约束（2026-09-12 裁定后）：**out 可空置**（创建/改接均可什么都不接，NodeTools.scala:909 `createNode` 校验五＝输入侧下限 task ∨ in，已无 out 非空闸）。空 out ＝ 静默悬空：零投递、零升根，结果留在节点上，**接线后自动投递给新接下游**。
+- **下游未定 ⇒ 直接留空 out**（推荐正路）：不要为「凑一条出边」而占用位。下游建成后接线两条路都行——上游改 `out: <下游>`（或下游建时声明 `in: <上游id>`，引擎自动镜像追加上游 out）。
+- Nebula 边两态（裁定 1，字面近形、语义相反，务必写对）：`out: "Nebula"` ＝**纯出口标记**（pass 门 + signal ⇒ 零投递、不通知 root）；要真投递 root 必须写**显式门集**：`out: "(pass,failed)Nebula"`（completed+failed 都升根）或 `"(pass)Nebula"`。
+- loop 节点额外硬约束：out 必须**同时覆盖 pass 与 failed**（引擎写前校验，违规码 NODE_LOOP_GATE_INCOMPLETE）——写 `"(pass,failed)<目标>"` 或 `"(pass)<目标>, (failed)<兜底>:signal`；空 out 仍合法（不触发校验）。
 - 引擎约束（预算风险·P1 已登记）：completion 回流分发器预算 = 5 次/30s（DispatchNotify.scala:391 + :261-262，挂点 ProjectActor.scala:308）——密集扇出批第 6 个完成节点起静默失联分发器（被 markSent 移出补投候选集，仅 :291-304 一条 notice）。定性=防丢（非降噪）；修法三选一（预算分账 / 熔断时升级为链级汇总 / 窗口内合并单条）留回改批裁定。
-- 自检追加项：建批后核对每条 out——中间节点不含 Nebula，Nebula 入口只出现在链末端。
+- 自检追加项：建批后核对每条 out——中间节点不含 Nebula，Nebula 入口只出现在链末端；确未定下游的节点留空 out（**不要**用 bare `"Nebula"` 占位，它已不等于「通知 root」）。
 
 ## 状态语义
 

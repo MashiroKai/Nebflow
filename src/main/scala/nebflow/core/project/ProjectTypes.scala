@@ -146,7 +146,17 @@ object OutEdge:
   val Signal = "signal"
   val Modes: Set[String] = Set(Result, Signal)
   val DefaultOn: Set[String] = Set(Pass)
-  /** Nebula 边缺省门集：completed + failed 双通报（旧拓扑零漂移，G1 例外依据见上）。 */
+  /** Nebula 边**存量读路径**的缺省门集：completed + failed 双通报（旧拓扑零漂移）。
+    *
+    * **⚠ 两处语义自此分叉（2026-09-12 裁定 1 / R1-a 起）——本常量不再代表「新写一条
+    * Nebula 边」的语义**：
+    *   - **存量读路径**（＝本常量仅有的两个消费方）：`fromLegacyString("Nebula")`
+    *     （旧字符串形态落库边）+ `OutEdge.nebula`（NodeDef 字面构造，测试/工具直建）
+    *     ⇒ 仍解出 `{pass,failed}` / mode=result（历史字节零迁移、零回溯）。
+    *   - **工具写路径**（`NodeTools.parseOutSegment`）：bare `"Nebula"` 现解为
+    *     **纯出口标记** `on={pass}` + `mode=signal`（零投递、只记账）；要通知 root 必须
+    *     写**显式门集**字面（`"(pass)Nebula"` / `"(pass,failed)Nebula"`，mode=result）。
+    * 二者对同一字面 `"Nebula"` 给出**不同**落边 ⇒ 任何新增消费方必须显式声明自己属哪一侧。 */
   val NebulaDefaultOn: Set[String] = Set(Pass, Failed)
   val NebulaTarget = "Nebula"
 
@@ -494,6 +504,17 @@ object NodePayload:
       // 经 REST result 端点按需拉全文；无结果节点载荷字段集零变化。
       val hasResultFields =
         if node.result.exists(_.trim.nonEmpty) then List("hasResult" -> true.asJson) else Nil
+      // wiringGap 条件键（W2 = O-B 必做 3，2026-09-12 批「out 可空置 + 接线即投递」）：
+      // 无出边的节点携带，值为两态——"retained"（已持有结果 = 结果滞留待接线，最可行动）
+      // 优先于 "pending"（wiring/pending = 建完尚未接线）。与 hasResult 同处同风格
+      //（纯派生、零新持久字段）。**缺键 = 有 out**（消费方据此读；有 out 节点字段集
+      // 字节级零漂移）。本批**只出键**——前端渲染归后续批。
+      val wiringGapFields =
+        if node.out.nonEmpty then Nil
+        else if node.result.exists(_.trim.nonEmpty) then List("wiringGap" -> "retained".asJson)
+        else if node.status == NodeLifecycle.Wiring || node.status == NodeLifecycle.Pending then
+          List("wiringGap" -> "pending".asJson)
+        else Nil
       // taskPreview 条件序列化（存量节点回退展示）：无 description 且有 task 才带，
       // 值 = task 首行 ≤80 字符（有 description 的新节点不带——字段集零漂移）。
       val taskPreviewFields = node.description match
@@ -607,7 +628,7 @@ object NodePayload:
       val pendingSuccessionFields =
         if node.pendingSuccession.nonEmpty then List("pendingSuccession" -> node.pendingSuccession.asJson)
         else Nil
-      Json.obj((baseFields ++ outFields ++ legacyConfigFields ++ hasResultFields ++ taskPreviewFields ++ depsFields ++ feedbackFields ++ pluginFields ++ notifyFields ++ mergeFields ++ loopFields ++ bgWaitFields ++ reportPendingFields ++ destroyAtFields ++ retryFields ++ genFields ++ notifySentAtFields ++ pendingSuccessionFields ++ chainFields)*)
+      Json.obj((baseFields ++ outFields ++ legacyConfigFields ++ hasResultFields ++ wiringGapFields ++ taskPreviewFields ++ depsFields ++ feedbackFields ++ pluginFields ++ notifyFields ++ mergeFields ++ loopFields ++ bgWaitFields ++ reportPendingFields ++ destroyAtFields ++ retryFields ++ genFields ++ notifySentAtFields ++ pendingSuccessionFields ++ chainFields)*)
 
 /** Flow Map 活动区（§2.6，磁盘 flow-map.json）。 */
 case class FlowMapState(

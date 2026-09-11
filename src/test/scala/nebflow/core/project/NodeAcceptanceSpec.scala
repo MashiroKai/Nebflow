@@ -501,9 +501,9 @@ class NodeAcceptanceSpec extends CatsEffectSuite:
         s"B must start after receiving retained result, status=${b.map(_.status)}")
   }
 
-  // ── ⑤ 断开拒绝（out=null 悬空化已废除，20260903 连接规范收紧）────────
+  // ── ⑤ 断开合法（2026-09-12 裁定：out 可空置，悬空化恢复）────────
 
-  test("⑤ disconnect rejected: out=null on a node with an out edge is refused (EMPTY_NODE_CONNECTION); state untouched") {
+  test("⑤ disconnect legal: out=null on a node with an out edge → dangling (out=Nil), result retained, mirror in removed") {
     val ws = tempRoot / "ws-disc"
     os.makeDir.all(ws)
     val system = ActorSystem(s"acc-disc-${scala.util.Random.nextInt(100000)}")
@@ -514,7 +514,7 @@ class NodeAcceptanceSpec extends CatsEffectSuite:
       now = System.currentTimeMillis()
       _ <- rt.store.mutate(s =>
         s.copy(nodes = s.nodes ++ Map(
-          // 存量形态种子：A 持 out=n-x（新规范下断开操作被拒，状态必须原样保留）
+          // A 持 out=n-x（断开 = 悬空化：out 清空、镜像 in 摘除、result 保留）
           "n-a" -> NodeDef(id = "n-a", name = "A", agent = "test-agent",
             status = NodeLifecycle.Completed, result = Some("kept result"), createdAt = now,
             completedAt = Some(now - 1000), ttlExpireAt = Some(now + 99999), out = List(OutEdge("n-x")), in = List("n-seed")),
@@ -524,19 +524,18 @@ class NodeAcceptanceSpec extends CatsEffectSuite:
             status = NodeLifecycle.Wiring, createdAt = now)
         ))
       )
-      // A.out = null → 拒（校验六-a：断开废弃——改接而非断开）
+      // A.out = null → 合法（裁定①②③：断开恢复；结果保留待接线）
       r <- nodeEdit(nodeInput("acc-disc", "A", "out" -> Json.Null), ctx)
       s1 <- rt.store.snapshot
       a <- rt.store.getNode("n-a")
       x <- rt.store.getNode("n-x")
       _ <- system.stopAll.handleErrorWith(_ => IO.unit)
     yield
-      assert(r.isLeft, s"disconnect must be rejected under the tightened connection policy, got: $r")
-      assert(r.left.exists(_.contains("EMPTY_NODE_CONNECTION")), s"rejection must carry EMPTY_NODE_CONNECTION, got: $r")
-      assertEquals(a.map(_.out), Some(List(OutEdge("n-x"))), "A.out must remain (disconnect rejected)")
-      assertEquals(a.flatMap(_.result), Some("kept result"), "A.result must be retained")
-      assertEquals(x.map(_.in), Some(List("n-a")), "old target X.in must be untouched")
-      assertEquals(x.map(_.deliveredTo), Some(List.empty), "X.deliveredTo unchanged (no partial apply)")
+      assert(r.isRight, s"disconnect must be LEGAL after the 2026-09-12 out-nullable ruling, got: $r")
+      assertEquals(a.map(_.out), Some(Nil), "A.out must be cleared (dangling)")
+      assertEquals(a.flatMap(_.result), Some("kept result"), "A.result must be retained (re-delivered when re-wired)")
+      assertEquals(x.map(_.in), Some(List.empty), "old target X.in must be pruned by the setOut mirror accounting")
+      assertEquals(x.map(_.deliveredTo), Some(List.empty), "X.deliveredTo unchanged (disconnect delivers nothing)")
   }
 
   // ── ⑥ DAG 环拒（NodeEdit 工具层 E2E）──────────────────
@@ -974,7 +973,9 @@ class NodeAcceptanceSpec extends CatsEffectSuite:
       }
     }
 
-  test("⑬ bubble completed: node out=Nebula → ImmediateInput(source=node, eventType=completed, sender='project/node')") {
+  // 2026-09-12 批 A1：bare `"Nebula"` 已收敛为**纯出口标记**（`{pass}/signal`，零根投递）——
+  // 本用例主题 = 升根气泡，故接线必须写**显式门集**（`(pass)Nebula` ⇒ `{pass}/result`）。
+  test("⑬ bubble completed: node out=(pass)Nebula → ImmediateInput(source=node, eventType=completed, sender='project/node')") {
     val ws = tempRoot / "ws-bubble-c"
     os.makeDir.all(ws)
     val system = ActorSystem(s"acc-bubc-${scala.util.Random.nextInt(100000)}")
@@ -985,7 +986,7 @@ class NodeAcceptanceSpec extends CatsEffectSuite:
       rec <- Ref.of[IO, List[AgentCommand]](Nil)
       _ <- registerRecordingRoot(system, res, rec)
       r <- nodeEdit(nodeInput("acc-bubble-c", "调研-通知", "description" -> Json.fromString("test node purpose"),
-        "task" -> Json.fromString("bubble test"), "out" -> Json.fromString("Nebula")), ctx)
+        "task" -> Json.fromString("bubble test"), "out" -> Json.fromString("(pass)Nebula")), ctx)
       imm <- pollImmediateInput(rec)
       _ <- system.stopAll.handleErrorWith(_ => IO.unit)
     yield
@@ -998,6 +999,7 @@ class NodeAcceptanceSpec extends CatsEffectSuite:
       assert(imm.exists(_.text.startsWith("[Node '调研-通知' completed]")), s"text prefix, got ${imm.map(_.text.take(60))}")
   }
 
+  // 同 ⑬：失败气泡需 `failed` 腿 ⇒ 显式门集 `(pass,failed)Nebula`（`{pass,failed}/result`）。
   test("⑬ bubble failed: node LLM failure → ImmediateInput(source=node, eventType=failed, sender='project/node')") {
     val ws = tempRoot / "ws-bubble-f"
     os.makeDir.all(ws)
@@ -1009,7 +1011,7 @@ class NodeAcceptanceSpec extends CatsEffectSuite:
       rec <- Ref.of[IO, List[AgentCommand]](Nil)
       _ <- registerRecordingRoot(system, res, rec)
       r <- nodeEdit(nodeInput("acc-bubble-f", "调研-失败", "description" -> Json.fromString("test node purpose"),
-        "task" -> Json.fromString("will fail"), "out" -> Json.fromString("Nebula")), ctx)
+        "task" -> Json.fromString("will fail"), "out" -> Json.fromString("(pass,failed)Nebula")), ctx)
       imm <- pollImmediateInput(rec)
       _ <- system.stopAll.handleErrorWith(_ => IO.unit)
     yield

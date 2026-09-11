@@ -174,9 +174,9 @@ class NodeConnectionPolicySpec extends CatsEffectSuite:
       }
     }
 
-  // ── ① 创建无 out 被拒（两变体，文案含自纠指引）──────────
+  // ── ① 创建无 out 合法（2026-09-12 裁定：out 可空置）──────────
 
-  test("① create without out rejected: task-only and in-only variants, message carries guidance + EMPTY_NODE_CONNECTION") {
+  test("① dangling create legal (task-only and in-only variants); pure empty mount still rejected") {
     val ws = tempRoot / "ws-c1"
     os.makeDir.all(ws)
     val system = ActorSystem(s"connp-c1-${scala.util.Random.nextInt(100000)}")
@@ -185,26 +185,30 @@ class NodeConnectionPolicySpec extends CatsEffectSuite:
       res <- mkResources(system, tempRoot, llm.handle)
       rt <- mountProject("connp-c1", ws, system, res)
       ctx = mkCtx(res, system, ws.toString)
-      // 变体 A：有 task 无 out
+      // 变体 A：有 task 无 out ⇒ 合法（悬空入口节点，创建即运行）
       rA <- nodeEdit(nodeInput("connp-c1", "task-no-out", "description" -> Json.fromString("test node purpose"),
         "task" -> Json.fromString("work without exit")), ctx)
-      // 变体 B：有 in 无 out（需已存在上游）
       _ <- nodeEdit(nodeInput("connp-c1", "up", "description" -> Json.fromString("test node purpose"),
         "task" -> Json.fromString("up-work"), "out" -> Json.fromString("Nebula")), ctx)
       upId <- idOf(rt, "up")
+      // 变体 B：有 in 无 out ⇒ 合法（悬空下游节点）
       rB <- nodeEdit(nodeInput("connp-c1", "in-no-out", "description" -> Json.fromString("test node purpose"),
         "in" -> Json.fromString(upId)), ctx)
+      // 变体 C：纯空挂载（无 task 无 in 无 out）⇒ 仍拒（输入侧下限，拒因转移）
+      rC <- nodeEdit(nodeInput("connp-c1", "empty", "description" -> Json.fromString("test node purpose")), ctx)
       s <- rt.store.snapshot
       _ <- system.stopAll.handleErrorWith(_ => IO.unit)
     yield
-      assert(rA.isLeft, s"task-only create (no out) must be rejected, got: $rA")
-      assert(rA.left.exists(_.contains("must declare 'out'")), s"variant A message must guide to declare out, got: $rA")
-      assert(rA.left.exists(m => m.contains("Nebula") && m.contains("EMPTY_NODE_CONNECTION")),
-        s"variant A message must name the Nebula exit + error code, got: $rA")
-      assert(rB.isLeft, s"in-only create (no out) must be rejected, got: $rB")
-      assert(rB.left.exists(_.contains("must declare 'out'")), s"variant B message must guide to declare out, got: $rB")
-      assert(s.nodes.values.find(_.name == "task-no-out").isEmpty, "no node persisted after variant A rejection")
-      assert(s.nodes.values.find(_.name == "in-no-out").isEmpty, "no node persisted after variant B rejection")
+      assert(rA.isRight, s"task-only create (no out) must now be LEGAL (out nullable), got: $rA")
+      assert(rB.isRight, s"in-only create (no out) must now be LEGAL (out nullable), got: $rB")
+      assert(rC.isLeft, s"pure empty mount (no task/in/out) must still be rejected, got: $rC")
+      assert(rC.left.exists(_.contains("EMPTY_NODE_CONNECTION")), s"variant C must carry EMPTY_NODE_CONNECTION, got: $rC")
+      assert(rC.left.exists(_.contains("input side")), s"variant C must name the input-side requirement, got: $rC")
+      val a = s.nodes.values.find(_.name == "task-no-out")
+      val b = s.nodes.values.find(_.name == "in-no-out")
+      assert(a.exists(_.out.isEmpty), s"dangling entry node persists with out=Nil, got ${a.map(_.out)}")
+      assert(b.exists(_.out.isEmpty), s"dangling downstream node persists with out=Nil, got ${b.map(_.out)}")
+      assert(s.nodes.values.find(_.name == "empty").isEmpty, "no node persisted for the pure empty mount")
   }
 
   // ── ② 入口节点（task+out，无 in）创建即运行 ──────────────
@@ -230,9 +234,9 @@ class NodeConnectionPolicySpec extends CatsEffectSuite:
       assertEquals(n.status, NodeLifecycle.Completed, "entry node must have run to completion")
   }
 
-  // ── ③ out="Nebula" 出口创建合法 ─────────────────────────
+  // ── ③ bare "Nebula" = 纯出口标记；显式门集 = 通知声明（2026-09-12 裁定 1）──
 
-  test("③ out=Nebula exit creation is legal and the node completes through the Nebula exit path") {
+  test("③ bare \"Nebula\" parses as EXIT MARKER (on={pass}, mode=signal); \"(pass,failed)Nebula\" keeps the notify form") {
     val ws = tempRoot / "ws-c3"
     os.makeDir.all(ws)
     val system = ActorSystem(s"connp-c3-${scala.util.Random.nextInt(100000)}")
@@ -245,11 +249,20 @@ class NodeConnectionPolicySpec extends CatsEffectSuite:
         "task" -> Json.fromString("exit via nebula"), "out" -> Json.fromString("Nebula")), ctx)
       _ <- waitStatus(rt, "to-nebula", Set(NodeLifecycle.Completed))
       n <- idOf(rt, "to-nebula").flatMap(nodeById(rt, _)).map(_.getOrElse(fail("node must exist")))
+      // 显式门集 = 通知声明（能力保留）：落 {pass,failed}/result（= 旧 bare 形态）
+      rNotify <- nodeEdit(nodeInput("connp-c3", "to-nebula-notify", "description" -> Json.fromString("test node purpose"),
+        "task" -> Json.fromString("notify root"), "out" -> Json.fromString("(pass,failed)Nebula")), ctx)
+      _ <- waitStatus(rt, "to-nebula-notify", Set(NodeLifecycle.Completed))
+      n2 <- idOf(rt, "to-nebula-notify").flatMap(nodeById(rt, _)).map(_.getOrElse(fail("node must exist")))
       _ <- system.stopAll.handleErrorWith(_ => IO.unit)
     yield
-      assert(r.isRight, s"out=Nebula create must pass, got: $r")
-      assertEquals(n.out, List(OutEdge.nebula), "node must carry the Nebula exit edge")
-      assertEquals(n.status, NodeLifecycle.Completed, "node must complete (Nebula delivery is a no-op without a live root session)")
+      assert(r.isRight, s"bare Nebula create must pass, got: $r")
+      assertEquals(n.out, List(OutEdge(OutEdge.NebulaTarget, Set(OutEdge.Pass), OutEdge.Signal)),
+        "bare \"Nebula\" must land as the EXIT MARKER edge ({pass}, signal) — zero delivery, no root notify")
+      assertEquals(n.status, NodeLifecycle.Completed, "exit-marker node still runs to completion")
+      assert(rNotify.isRight, s"explicit-gate Nebula create must pass, got: $rNotify")
+      assertEquals(n2.out, List(OutEdge(OutEdge.NebulaTarget, Set(OutEdge.Pass, OutEdge.Failed), OutEdge.Result)),
+        "explicit gate set must keep the notify form ({pass,failed}, result)")
   }
 
   // ── ④ in+task 并存合法（wiring 等上游 + task 自足）───────
@@ -305,9 +318,9 @@ class NodeConnectionPolicySpec extends CatsEffectSuite:
       assert(s.nodes.values.find(_.name == "empty").isEmpty, "no node persisted after rejection")
   }
 
-  // ── ⑥ 编辑断开拒绝；同节点 rewire 合法 ───────────────────
+  // ── ⑥ 编辑断开合法（2026-09-12 裁定）；同节点 rewire 仍合法 ──
 
-  test("⑥ edit: setOut(null) on a node with an out edge rejected; rewiring the same node to another target legal") {
+  test("⑥ edit: setOut(null) disconnect is legal (out nullable, node goes dangling); rewiring still legal") {
     val ws = tempRoot / "ws-c6"
     os.makeDir.all(ws)
     val system = ActorSystem(s"connp-c6-${scala.util.Random.nextInt(100000)}")
@@ -317,7 +330,7 @@ class NodeConnectionPolicySpec extends CatsEffectSuite:
       rt <- mountProject("connp-c6", ws, system, res)
       ctx = mkCtx(res, system, ws.toString)
       // 全员 Wiring 种子（确定性：src 未完成 → rewire 不触发投递链，dst 不被启动——
-      // 本用例主体是 rewire/断开的接线校验语义，与投递/运行无关）
+      // 本用例主体是 rewire/断开的接线语义，与投递/运行无关）
       _ <- rt.store.mutate(s => s.copy(nodes = s.nodes ++ Map(
         "n-src" -> NodeDef(id = "n-src", name = "src", agent = "test-agent",
           status = NodeLifecycle.Wiring, out = List(OutEdge.nebula), createdAt = System.currentTimeMillis()),
@@ -329,21 +342,20 @@ class NodeConnectionPolicySpec extends CatsEffectSuite:
       bId <- idOf(rt, "dst-b")
       // rewire 到 dst-a：合法
       rw <- nodeEdit(nodeInput("connp-c6", "src", "out" -> Json.fromString(aId)), ctx)
-      // 同节点断开：拒绝
+      // 同节点断开（Json.Null）：合法（2026-09-12 裁定——out 可空置）
       rd <- nodeEdit(nodeInput("connp-c6", "src", "out" -> Json.Null), ctx)
-      // 字符串 "null"（LLM 断开常见写法）同拒
+      srcAfterDisc <- idOf(rt, "src").flatMap(nodeById(rt, _))
+      // 字符串 "null"（LLM 断开常见写法）同样合法；随后 rewire 到 dst-b 仍合法
       rd2 <- nodeEdit(nodeInput("connp-c6", "src", "out" -> Json.fromString("null")), ctx)
-      // rewire 到 dst-b：仍合法（拒绝未污染状态）
       rw2 <- nodeEdit(nodeInput("connp-c6", "src", "out" -> Json.fromString(bId)), ctx)
       src <- idOf(rt, "src").flatMap(nodeById(rt, _)).map(_.getOrElse(fail("src must exist")))
       _ <- system.stopAll.handleErrorWith(_ => IO.unit)
     yield
       assert(rw.isRight, s"rewire to dst-a must pass, got: $rw")
-      assert(rd.isLeft, s"disconnect (out=null) must be rejected, got: $rd")
-      assert(rd.left.exists(_.contains("EMPTY_NODE_CONNECTION")), s"disconnect rejection must carry code, got: $rd")
-      assert(rd.left.exists(_.contains("Rewire")), s"disconnect rejection must guide to rewire, got: $rd")
-      assert(rd2.isLeft, s"string \"null\" disconnect must be rejected too, got: $rd2")
-      assert(rw2.isRight, s"rewire to dst-b must still pass after rejections, got: $rw2")
+      assert(rd.isRight, s"disconnect (out=null) must now be LEGAL (out nullable), got: $rd")
+      assert(srcAfterDisc.exists(_.out.isEmpty), s"after disconnect src.out must be Nil, got ${srcAfterDisc.map(_.out)}")
+      assert(rd2.isRight, s"string \"null\" disconnect must be legal too, got: $rd2")
+      assert(rw2.isRight, s"rewire to dst-b must still pass after disconnects, got: $rw2")
       assertEquals(src.out, List(OutEdge(bId)), "src.out must end at dst-b (rewires applied, disconnects not)")
   }
 
@@ -388,9 +400,9 @@ class NodeConnectionPolicySpec extends CatsEffectSuite:
       assert(rTask.isRight, s"editing other fields on a legacy dangling node must be legal, got: $rTask")
   }
 
-  // ── ⑧ deps 创建路径同步受「必须带 out」约束（deps 语义零改动）──
+  // ── ⑧ deps 创建路径：out 已可空置，但输入侧下限仍拦 deps-only ──
 
-  test("⑧ deps creation path also requires out (deps-only rejected); deps semantics unchanged (task+deps+out legal, list carried)") {
+  test("⑧ deps creation path: deps-only still rejected (input-side lower bound); task+deps+out legal, list carried") {
     val ws = tempRoot / "ws-c8"
     os.makeDir.all(ws)
     val system = ActorSystem(s"connp-c8-${scala.util.Random.nextInt(100000)}")
@@ -402,20 +414,26 @@ class NodeConnectionPolicySpec extends CatsEffectSuite:
       _ <- nodeEdit(nodeInput("connp-c8", "up", "description" -> Json.fromString("test node purpose"),
         "task" -> Json.fromString("up-work"), "out" -> Json.fromString("Nebula")), ctx)
       upId <- idOf(rt, "up")
-      // deps-only（无 out）→ 拒：deps 创建同样受「必须带 out」约束
+      // deps-only（无 task 无 in，无 out）→ 仍拒：拒因 = 输入侧下限（task ∨ in），不是 out 闸
       rDepsOnly <- nodeEdit(nodeInput("connp-c8", "deps-no-out", "description" -> Json.fromString("test node purpose"),
         "deps" -> Json.fromString(upId)), ctx)
       // task+deps+out → 合法：deps 清单原样携带（语义零改动）
       rOk <- nodeEdit(nodeInput("connp-c8", "deps-ok", "description" -> Json.fromString("test node purpose"),
         "task" -> Json.fromString("deps waiter work"), "deps" -> Json.fromString(upId),
         "out" -> Json.fromString("Nebula")), ctx)
+      // deps+task 无 out → 合法（out 可空置；deps 不是输入内容，task 满足输入侧下限）
+      rDepsNoOut <- nodeEdit(nodeInput("connp-c8", "deps-task-no-out", "description" -> Json.fromString("test node purpose"),
+        "task" -> Json.fromString("deps waiter work 2"), "deps" -> Json.fromString(upId)), ctx)
       n <- idOf(rt, "deps-ok").flatMap(nodeById(rt, _)).map(_.getOrElse(fail("deps-ok must exist")))
+      n2 <- idOf(rt, "deps-task-no-out").flatMap(nodeById(rt, _)).map(_.getOrElse(fail("deps-task-no-out must exist")))
       _ <- system.stopAll.handleErrorWith(_ => IO.unit)
     yield
-      assert(rDepsOnly.isLeft, s"deps-only create (no out) must be rejected, got: $rDepsOnly")
-      assert(rDepsOnly.left.exists(_.contains("must declare 'out'")), s"deps rejection must state the out rule, got: $rDepsOnly")
+      assert(rDepsOnly.isLeft, s"deps-only create (no task/in/out) must be rejected, got: $rDepsOnly")
+      assert(rDepsOnly.left.exists(_.contains("input side")), s"deps rejection must state the input-side rule, got: $rDepsOnly")
       assert(rOk.isRight, s"task+deps+out create must pass, got: $rOk")
       assertEquals(n.deps, List(upId), "deps list must be carried unchanged (deps semantics zero change)")
+      assert(rDepsNoOut.isRight, s"task+deps create (no out) must now be LEGAL (out nullable), got: $rDepsNoOut")
+      assert(n2.out.isEmpty, s"dangling deps node persists with out=Nil, got ${n2.out}")
   }
 
 end NodeConnectionPolicySpec
