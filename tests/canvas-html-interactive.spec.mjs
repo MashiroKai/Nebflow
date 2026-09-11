@@ -36,6 +36,7 @@ import { readFileSync, mkdirSync, writeFileSync } from 'node:fs';
 import { createServer } from 'node:http';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { installTicketMock, ticketGuard } from './nf-ticket-mock.mjs';
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const WEB_DIR = resolve(HERE, '../src/main/resources/web');
@@ -81,6 +82,9 @@ function nfFileRouteBehavior(fixed) {
   const ALLOWED = ['png', 'jpg', 'jpeg', 'gif', 'svg', 'webp', 'ico', 'mp4', 'webm', 'mp3', 'wav', 'woff', 'woff2', 'ttf', 'otf', 'pdf', 'docx', 'xlsx', 'pptx', 'epub', 'js', 'mjs', 'css', 'json'];
   const TXT = { js: 'text/javascript; charset=utf-8', mjs: 'text/javascript; charset=utf-8', css: 'text/css; charset=utf-8', json: 'application/json', svg: 'image/svg+xml', png: 'image/png', jpg: 'image/jpeg' };
   return async (route) => {
+    // 票据腿批（C 批）：真实端点已票据-only —— 无票一律 401。把该判据放进
+    // mock，注入机制一旦回归这里立刻变红，而不是「渲染成功但静默无票」。
+    if (await ticketGuard(route)) return;
     const url = new URL(route.request().url());
     const p = url.searchParams.get('path') || '';
     const ext = (p.split('.').pop() || '').toLowerCase();
@@ -104,9 +108,13 @@ async function bootPage(browser, { fixed }) {
   const page = await ctx.newPage();
   const errors = [];
   page.on('pageerror', (e) => errors.push(String(e.message || e).slice(0, 200)));
-  // 注册顺序：先泛 API 兜底，后 nf-file 专属（Playwright 后注册者优先）。
+  // 注册顺序：先泛 API 兜底，后 nf-file 专属，最后 nf-ticket 假票
+  // （Playwright 后注册者优先）。票据腿批（C 批）：viewHtml 的
+  // resolveLocalFiles 会先 POST /api/nf-ticket，没有这条 mock 就被上面的
+  // catch-all `{}` 吞掉 → 无票 URL → 401 → 原型静默空白（假红）。
   await page.route('**/api/**', (r) => r.fulfill({ json: {} }));
   await page.route(/\/api\/nf-file\?/, nfFileRouteBehavior(fixed));
+  await installTicketMock(page);
   await page.routeWebSocket(/\/ws/, (ws) => {
     ws.onMessage((raw) => {
       let m; try { m = JSON.parse(raw); } catch { return; }

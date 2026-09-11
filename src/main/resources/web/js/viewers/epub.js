@@ -2,19 +2,19 @@
 // Migrated verbatim from fileViewers.js (viewEpub + renderEpubReader).
 // ZIP parsing lives in ./shared.js (parseZipEntries / decompressZipEntry).
 
-import { getToken, escapeHtml, parseZipEntries, decompressZipEntry } from './shared.js';
+import { escapeHtml, parseZipEntries, decompressZipEntry } from './shared.js';
+import { ticketUrl } from '../nfTicket.js';
 
 /** EPUB viewer — paginated reader with chapter navigation.
  *  Parses ZIP structure, extracts XHTML chapters, renders with CSS column pagination.
  *  Dispatches 'epub-page-change' events for tracking what user is reading. */
 async function viewEpub(pane, { absPath, fileName, size }) {
   pane.innerHTML = `<div class="canvas-md-viewer" style="display:flex;align-items:center;justify-content:center;color:var(--color-text-muted);opacity:0.5;">Loading ebook...</div>`;
-  const tok = getToken();
   if (!absPath) {
     pane.innerHTML = `<div class="canvas-error">No file path provided for EPUB viewer.</div>`;
     return;
   }
-  const url = `/api/nf-file?path=${encodeURIComponent(absPath)}&token=${encodeURIComponent(tok)}`;
+  const url = await ticketUrl(absPath);
   try {
     const resp = await fetch(url);
     if (!resp.ok) {

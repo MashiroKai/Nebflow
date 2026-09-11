@@ -3,8 +3,8 @@
 // Theme CSS variables are injected into iframes for dark mode support.
 
 import state from './state.js';
-import { key } from './branding.js';
 import { smartScroll, isNearBottom } from './utils.js';
+import { mintTickets, reMintAll, stripCredentialParams, nfFilePathsIn, injectTickets } from './nfTicket.js';
 
 let _iframeId = 0;
 
@@ -245,21 +245,11 @@ window.addEventListener('message', (e) => {
     });
   }
 });
-/** Read the nebflow auth token from localStorage (set by ws.js on connect). */
-function getNfToken() {
-  return localStorage.getItem(key('token')) || '';
-}
-
-/** Inject auth token into /api/nf-file URLs so the sandboxed iframe can fetch them.
- *  The iframe uses allow-same-origin, but srcdoc iframes may not send cookies
- *  reliably — token in the query string ensures the request is authenticated. */
-function injectFileTokens(html) {
-  const token = getNfToken();
-  if (!token) return html;
-  return html.replace(/(\/api\/nf-file\?path=[^"'\s]+)/g, (url) => {
-    return url + '&token=' + encodeURIComponent(token);
-  });
-}
+// The `/api/nf-file` matcher, the candidate scanner and the ticket injector
+// all live in nfTicket.js (`nfFileUrlRe` / `nfFilePathsIn` / `injectTickets`)
+// so the card path and the Canvas viewer path cannot drift apart — the
+// self-correction ⑨ boundary bug (`)`-exclusion) existed precisely because
+// two copies of the same regex could disagree.
 
 /** Build the load-failure placeholder script injected into srcdoc.
  *
@@ -274,8 +264,12 @@ function injectFileTokens(html) {
  *  carrying the alt text, a failure hint and the original src. Notes:
  *   - resource `error` events do not bubble, so the listener is registered in
  *     the capture phase on window, from <head> (before any media is parsed);
- *   - the auth token is stripped from the displayed src — a placeholder must
- *     never print `?token=…`;
+ *   - the credential is stripped from the displayed src — a placeholder must
+ *     never print `?token=…` or `?ticket=…`. The stripper is NOT reimplemented
+ *     here: the one implementation lives in nfTicket.js
+ *     (`stripCredentialParams`) and is inlined by source into this injected
+ *     script, because a srcdoc script cannot import a module. Same function
+ *     the markdown image tooltip uses — one regex, no drift (C2-19);
  *   - <video>/<audio> carry preload="none" (see renderHtmlCard), so their
  *     placeholder appears when the user presses play, not on card load;
  *   - scope is img/video/audio (+ a <source> child targets its media parent);
@@ -285,9 +279,7 @@ function buildMediaFallbackScript() {
   return `<script>
 (function(){
   var HINT='This reference was not proxied or the file is unreachable. The Card tool result lists unresolved references (warnings).';
-  function stripToken(u){
-    return String(u||'').replace(/([?&])token=[^&]*/g,'$1').replace(/[?&]$/,'');
-  }
+  var stripToken=${stripCredentialParams.toString()};
   function placeholder(el,src){
     var tag=(el.tagName||'media').toLowerCase();
     var alt=(el.getAttribute&&el.getAttribute('alt'))||'';
@@ -388,19 +380,38 @@ function renderHtmlCard(container, html, title, warnings) {
   const heightScript = buildHeightScript(id);
   const mediaFallbackScript = buildMediaFallbackScript();
 
-  // Inject auth tokens into /api/nf-file URLs (sandboxed iframe can't use cookies)
-  let processedHtml = injectFileTokens(html);
-
   // Add preload="none" to <audio>/<video> elements that don't already have it.
   // Without this, a session with 200+ audio elements causes the browser to
   // simultaneously fetch and decode all files on load, freezing the page.
+  let processedHtml = String(html || '');
   processedHtml = processedHtml.replace(/(<audio\b(?![^>]*\bpreload=)[^>]*)(\s*\/?>)/gi, '$1 preload="none"$2');
   processedHtml = processedHtml.replace(/(<video\b(?![^>]*\bpreload=)[^>]*)(\s*\/?>)/gi, '$1 preload="none"$2');
 
   // #nf-wrap: width:100% fills the available card width.
   // SVGs with width:100% scale proportionally via viewBox + height:auto.
   // No fit-content deadlock — the width chain is: chat panel → row → container → wrap → iframe → nf-wrap, all 100%.
-  const srcdoc = `<!DOCTYPE html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><style>${themeCSS}html,body{margin:0;padding:0;font-size:15px;line-height:1.5;box-sizing:border-box;word-wrap:break-word;overflow-wrap:break-word;background:var(--color-bg);color:var(--color-text);overflow:hidden;}*,*:before,*:after{box-sizing:inherit;}svg{max-width:100%;height:auto;}svg text{font-size:min(max(14px,100%),5vw);}img{max-width:100%;height:auto;}</style>${mediaFallbackScript}</head><body><div id="nf-wrap" style="width:100%">${processedHtml}</div>${heightScript}</body></html>`;
+  //
+  // 2026-09-11 (C batch, C2-15): the srcdoc is a FUNCTION of the tickets, not a
+  // template constant. The old `const srcdoc` baked the credential in at
+  // construction time and then re-used that same string for the lazy first
+  // mount, the blank-recovery re-mount and the 3s safety mount — so a ticket
+  // either expired before the card was ever shown (lazy iframes) or was
+  // replayed across mounts (T2, both forbidden). The credential now enters at
+  // exactly one point: `injectFileTickets(processedHtml, tickets)` below.
+  const srcdocHead = `<!DOCTYPE html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><style>${themeCSS}html,body{margin:0;padding:0;font-size:15px;line-height:1.5;box-sizing:border-box;word-wrap:break-word;overflow-wrap:break-word;background:var(--color-bg);color:var(--color-text);overflow:hidden;}*,*:before,*:after{box-sizing:inherit;}svg{max-width:100%;height:auto;}svg text{font-size:min(max(14px,100%),5vw);}img{max-width:100%;height:auto;}</style>${mediaFallbackScript}</head><body><div id="nf-wrap" style="width:100%">`;
+  const srcdocTail = `</div>${heightScript}</body></html>`;
+  /** @param {Map<string, string>} [tickets] */
+  const buildSrcdoc = (tickets) =>
+    srcdocHead + injectTickets(processedHtml, tickets || new Map()) + srcdocTail;
+
+  // Mint candidates, computed once: the paths this card actually references.
+  // Empty ⇒ every mint call short-circuits with zero requests (§4.3 F1).
+  const filePaths = nfFilePathsIn(processedHtml);
+  /** @param {boolean} fresh true ⇒ re-mint (never reuse the previous value) */
+  const mintForCard = (fresh) => {
+    if (filePaths.length === 0) return Promise.resolve(new Map());
+    return fresh ? reMintAll(filePaths) : mintTickets(filePaths);
+  };
 
   const iframe = document.createElement('iframe');
   iframe.className = 'html-card-iframe';
@@ -436,6 +447,9 @@ function renderHtmlCard(container, html, title, warnings) {
   // parsed at once — only visible (+ margin) cards are instantiated.
   let srcdocSet = false;
   let lastReloadCheck = 0;
+  // Set by _nfCleanup: a mint that resolves after the card was released must
+  // not write srcdoc back onto a dead iframe.
+  let disposed = false;
 
   const applySrcdoc = () => {
     if (srcdocSet) return;
@@ -444,7 +458,17 @@ function renderHtmlCard(container, html, title, warnings) {
     // during the initial load (the iframe's size change from 0→150px can
     // re-trigger the IntersectionObserver while content is still parsing).
     lastReloadCheck = Date.now();
-    iframe.setAttribute('srcdoc', srcdoc);
+    // T1: mint at the moment of mounting, i.e. after the lazy observer fired —
+    // never at construction. §4.3 F5: the mint resolves (never rejects), so a
+    // mint outage yields a ticket-free srcdoc and the existing per-element
+    // failure chain, not a blank card and never an unhandled rejection.
+    mintForCard(false)
+      .then((tickets) => {
+        if (!disposed) iframe.setAttribute('srcdoc', buildSrcdoc(tickets));
+      })
+      .catch(() => {
+        if (!disposed) iframe.setAttribute('srcdoc', buildSrcdoc());
+      });
     // Fallback: force iframe visible after 800ms even if the height postMessage
     // hasn't arrived yet. During active streaming the browser event loop may be
     // busy processing WebSocket messages, delaying postMessage handling and
@@ -491,10 +515,21 @@ function renderHtmlCard(container, html, title, warnings) {
       // attribute in the same frame doesn't always trigger a navigation,
       // so we use requestAnimationFrame to ensure the browser processes
       // the removal before re-adding.
+      //
+      // T2 ②: a re-mount must MINT AGAIN, never replay the previous srcdoc.
+      // The browser may discard a far-out-of-view iframe arbitrarily later
+      // (minutes), so the ticket from the first mount is likely expired by the
+      // time the user scrolls back — and replaying it would also keep one
+      // credential alive across two mounts.
       iframe.removeAttribute('srcdoc');
-      requestAnimationFrame(() => {
-        iframe.setAttribute('srcdoc', srcdoc);
-      });
+      mintForCard(true)
+        .then((tickets) => {
+          if (disposed) return;
+          requestAnimationFrame(() => {
+            if (!disposed) iframe.setAttribute('srcdoc', buildSrcdoc(tickets));
+          });
+        })
+        .catch(() => { /* mint never rejects; nothing to recover here */ });
     }
   };
 
@@ -516,9 +551,13 @@ function renderHtmlCard(container, html, title, warnings) {
     // reload) can release the observer + iframe browsing context instead
     // of leaking them (each leaked iframe keeps its own DOM+JS engine).
     iframe._nfCleanup = () => {
+      disposed = true;
       io.disconnect();
       widthObserver.disconnect();
       _firstHeightDone.delete(id);
+      // Drop the credential with the frame: the srcdoc attribute holds live
+      // `&ticket=` values, and a detached iframe can outlive the card node in
+      // a memory snapshot (T2 ③ — no credential in a serializable surface).
       iframe.removeAttribute('srcdoc');
     };
     // Safety timeout: load after 3s even if observer never fires

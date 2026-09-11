@@ -30,24 +30,28 @@ test.beforeEach(async ({ page }) => {
   page._consoleErrors = [];
   page._consoleErrorUrls = [];
   page._pageErrors = [];
-  // Benign-noise tracking: 400 responses from the ws.js auth probe's bare
-  // /api/nf-file GET (403 baseline sources are matched by pathname directly
-  // in filterBenignErrors)
-  page._benign400Urls = new Set();
+  // Benign-noise tracking: 403 responses from the ws.js auth probe
+  // (GET /api/nf-authcheck, R9 = O-A). A cookie-blocked context gets 403 from
+  // it by design — that IS the "cookies are blocked, fall back to ?token="
+  // signal. (Other 403 baseline sources are matched by pathname directly in
+  // filterBenignErrors.) The old benign 400 came from a bare /api/nf-file
+  // GET; that endpoint is ticket-only now and answers 401, which carries no
+  // benign meaning, so the whitelist moved with the probe target.
+  page._benign403Urls = new Set();
   // Whole-session asset watch: any /js/ or /vendor/ 404 at ANY point (not
   // just the networkidle window) means a static-route contract break — the
   // exact failure mode of the viewer plugin 404 incident.
   page._asset404s = [];
   page.on('response', (resp) => {
-    if (resp.status() === 400) {
-      // ws.js probeCookieAuth (auth probe) deliberately GETs /api/nf-file with
-      // no params: a valid cookie hits the missing-'path' BadRequest branch —
-      // 400 IS the "cookie auth works" signal (ws.js:299-314; only 401/403
-      // mean the cookie failed). Chromium logs every 4xx as an unsuppressible
-      // network-layer console error, so the probe's bare 400 is baseline noise
-      // (same whitelist口径 as scripts/e2e-askuser-source-label.mjs BASELINE_NOISE).
+    if (resp.status() === 403) {
+      // ws.js probeCookieAuth (auth probe) deliberately GETs /api/nf-authcheck
+      // with no credential in the URL: a cookie-carrying request is accepted
+      // (204) and a cookie-blocked one is refused (403). Chromium logs that
+      // 403 as an unsuppressible network-layer console error, so it is
+      // baseline noise for the cookie-blocked scenario (same whitelist口径 as
+      // scripts/e2e-askuser-source-label.mjs BASELINE_NOISE).
       const u = new URL(resp.url());
-      if (u.pathname === '/api/nf-file' && ![...u.searchParams.keys()].length) page._benign400Urls.add(resp.url());
+      if (u.pathname === '/api/nf-authcheck') page._benign403Urls.add(resp.url());
     }
     if (resp.status() === 404) {
       const path = new URL(resp.url()).pathname;
@@ -71,8 +75,8 @@ test.beforeEach(async ({ page }) => {
  *  403/400 from any other URL stays a real error — no page-wide swallowing:
  *  - 403 from /api/neblink/* (status probe fires unauthenticated by design)
  *    and the boot-time /api/canvas-tabs fetch (Bearer not yet in state).
- *  - 400 from the ws.js auth probe's bare /api/nf-file GET (400 = "cookie
- *    auth works" by design — see the beforeEach benign-400 watcher). */
+ *  - 403 from the ws.js auth probe's GET /api/nf-authcheck (403 = "cookie
+ *    blocked" by design — see the beforeEach benign-403 watcher). */
 function filterBenignErrors(page, errors) {
   const isBenign = (text, i) => {
     const url = page._consoleErrorUrls[i] ?? '';
@@ -80,10 +84,7 @@ function filterBenignErrors(page, errors) {
     let path = '';
     try { path = new URL(url).pathname; } catch { return false; }
     if (text.includes('403')) {
-      return path.startsWith('/api/neblink/') || path === '/api/canvas-tabs';
-    }
-    if (text.includes('400')) {
-      return page._benign400Urls.has(url);
+      return path.startsWith('/api/neblink/') || path === '/api/canvas-tabs' || page._benign403Urls.has(url);
     }
     return false;
   };
@@ -220,12 +221,12 @@ test.describe('Smoke — WS auth probe-first', () => {
     page.on('websocket', (ws) => wsUrls.push(ws.url()));
     const probeStatuses = [];
     page.on('response', (resp) => {
-      // Watch the CURRENT auth-probe target: probeCookieAuth GETs /api/nf-file
-      // with no params (moved off the retired /api/nf-tasks by the 2026-08-30
-      // task-tools redo). Requests WITH a path param are real file reads —
-      // their 400 means "type not allowed", a different semantic entirely.
+      // Watch the CURRENT auth-probe target: probeCookieAuth GETs
+      // /api/nf-authcheck with no credential in the URL (R9 = O-A; it used to
+      // read /api/nf-file's missing-'path' 400, which the ticket-only read leg
+      // turned into a 401 that no longer distinguishes anything).
       const u = new URL(resp.url());
-      if (u.pathname === '/api/nf-file' && !u.searchParams.has('path')) probeStatuses.push(resp.status());
+      if (u.pathname === '/api/nf-authcheck') probeStatuses.push(resp.status());
     });
 
     await page.goto(`${BASE}/?token=${TOKEN}`);
@@ -235,11 +236,17 @@ test.describe('Smoke — WS auth probe-first', () => {
     expect(wsUrls.length, 'expected at least one WebSocket connection').toBeGreaterThan(0);
     // Probe said cookies work → token must stay out of the WS URL.
     expect(wsUrls[0], `first WS URL: ${wsUrls[0]}`).not.toContain('token=');
-    // The auth probe must have run and seen the cookie: a valid cookie hits
-    // /api/nf-file's missing-'path' BadRequest branch → 400 IS "cookie auth
-    // works" (only 401/403 mean the cookie failed — if this ever flakes to
-    // those, the probe itself is racy and the diagnostic matters).
-    expect(probeStatuses, 'auth probe should have fired').toEqual([400]);
+    // Two propositions, asserted separately and at equal strength to the old
+    // single `toEqual([400])` (which compressed them into "exactly one 400"):
+    //   ① the probe really ran  → count >= 1
+    //   ② its conclusion is "the cookie is accepted" → 204 on the new target
+    // The old form also pinned the target implicitly; the new one pins it
+    // explicitly (the response watcher only records /api/nf-authcheck), which
+    // is why this is equal-or-stronger, not a weakening. The old 400 semantic
+    // no longer exists on the read leg, so keeping it would have been a gate
+    // that cannot fail for the right reason.
+    expect(probeStatuses.length, 'auth probe must fire').toBeGreaterThanOrEqual(1);
+    expect(probeStatuses[0], 'auth probe target must accept the cookie (204)').toBe(204);
 
     const wsErrors = page._consoleErrors.filter(e =>
       /WebSocket connection .* failed/i.test(e) || /handshake rejected/i.test(e)
@@ -292,9 +299,16 @@ test.describe('Smoke — lazy-load paths (real backend)', () => {
 
   test('Canvas renders files via the real readFile chain (lazy viewer modules)', async ({ page }) => {
     const assetReqs = [];
+    // Δ①c (B1'): /api/nf-file requests are recorded STRUCTURALLY — status plus
+    // whether the URL carried a ticket — never by URL text. Two reasons: the
+    // ticket is a credential and must not land in test output, and the whole
+    // point of this batch is that the URL carries a ticket and NOT a token.
+    const nfFileReqs = [];
     page.on('response', (r) => {
-      if (r.url().includes('/js/viewers/') || r.url().includes('/api/nf-file')) {
-        assetReqs.push(`${r.status()} ${r.url()}`);
+      if (r.url().includes('/js/viewers/')) assetReqs.push(`${r.status()} ${r.url()}`);
+      if (r.url().includes('/api/nf-file')) {
+        const q = new URL(r.url()).searchParams;
+        nfFileReqs.push({ status: r.status(), hasTicket: q.has('ticket'), hasToken: q.has('token') });
       }
     });
 
@@ -319,8 +333,19 @@ test.describe('Smoke — lazy-load paths (real backend)', () => {
       // through its DOM event contract (workspace-open-item) with content from
       // the REST file endpoint, and assert BEHAVIOR (rendered DOM), never a
       // specific chunk URL.
+      // Δ①d: the read leg is ticket-only (R5) — a bare `&token=` GET is 401 by
+      // design now. Mint a ticket for this path first (which also exercises the
+      // real POST /api/nf-ticket route end to end), then read.
+      const readmePath = join(process.cwd(), 'README.md');
+      const mintResp = await page.request.post(`${BASE}/api/nf-ticket`, {
+        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${TOKEN}` },
+        data: { sessionId: 'smoke', paths: [readmePath] },
+      });
+      const minted = await mintResp.json();
+      const readmeTicket = minted?.tickets?.[readmePath]?.t ?? '';
+      expect(readmeTicket, 'minting a ticket for README.md must succeed').not.toBe('');
       const content = await (await page.request.get(
-        `${BASE}/api/nf-file?path=${encodeURIComponent(join(process.cwd(), 'README.md'))}&token=${encodeURIComponent(TOKEN)}`
+        `${BASE}/api/nf-file?path=${encodeURIComponent(readmePath)}&ticket=${encodeURIComponent(readmeTicket)}`
       )).text();
       await page.evaluate(([content, absPath]) => {
         window.dispatchEvent(new CustomEvent('workspace-open-item', {
@@ -364,9 +389,16 @@ test.describe('Smoke — lazy-load paths (real backend)', () => {
     }
     await page.locator('.canvas-tab', { hasText: 'pic.png' }).waitFor({ timeout: 8000 });
     await page.waitForSelector('.canvas-image-viewer img', { timeout: 8000 });
+    // Δ①c (B1'): the image viewer must really fetch through the new mechanism —
+    // 200 AND a ticket on the URL AND no token anywhere on it.
+    const nfOk = nfFileReqs.filter(r => r.status === 200);
     expect(
-      assetReqs.some(r => r.startsWith('200') && r.includes('/api/nf-file')),
-      `image viewer must fetch /api/nf-file 200:\n${assetReqs.join('\n')}`
+      nfOk.length,
+      `image viewer must fetch /api/nf-file 200 (records: ${JSON.stringify(nfFileReqs)})`
+    ).toBeGreaterThanOrEqual(1);
+    expect(
+      nfOk.every(r => r.hasTicket && !r.hasToken),
+      `every 200 on /api/nf-file must carry ticket= and never token= (records: ${JSON.stringify(nfOk)})`
     ).toBe(true);
 
     expect(page._asset404s, `asset 404s:\n${page._asset404s.join('\n')}`).toEqual([]);
