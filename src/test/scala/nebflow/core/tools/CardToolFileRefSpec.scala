@@ -258,6 +258,18 @@ class CardToolFileRefSpec extends FunSuite:
       finally deleteRecursively(dir)
     }
 
+  test("payload leads with fileRefs/warnings so the 2048-char guard preview keeps them visible"):
+    // ToolResultGuard.persistAndReplace replaces the LLM-visible content of a
+    // >50K result with its first 2048 chars + a persisted-file pointer, so a
+    // trailing warning section would fall out of the model's view on big cards.
+    val huge = "<div>" + ("x" * 4000) + "</div>"
+    val p = card(s"""<img src="~/__carderr_missing_dir__/plot.png"/>$huge""")
+    val raw = p.noSpaces
+    assert(raw.indexOf("\"fileRefs\"") < raw.indexOf("\"html\""), "fileRefs must precede html")
+    assert(raw.indexOf("\"warnings\"") < raw.indexOf("\"html\""), "warnings must precede html")
+    assert(raw.indexOf("not-found") < 2048, "the reason must sit inside the guard preview window")
+    assert(htmlOf(p).contains(huge), "the large body still round-trips")
+
   test("summarizeResult surfaces the unresolved-reference count"):
     val p = card("""<img src="~/__carderr_missing_dir__/plot.png"/>""")
     val summary = CardTool.summarizeResult(JsonObject("title" -> Json.fromString("T")), s"${sentinel}${p.noSpaces}")
