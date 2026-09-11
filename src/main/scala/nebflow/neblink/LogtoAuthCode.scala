@@ -36,9 +36,14 @@ object LogtoAuthCode:
     * callback: `?error=...&error_description=...`). */
   final case class CallbackError(error: String, description: Option[String])
 
-  /** Token endpoint result: the access token for registration plus the
-    * refresh token (present when `offline_access` was granted). Logto
-    * rotates refresh tokens — always persist the latest value.
+  /** Token endpoint result: the access token for registration plus an
+    * OPTIONAL refresh token. O5 (2026-09-11, refresh-revoke plan): the client
+    * no longer requests `offline_access` (see [[authorizeUrl]]) and the
+    * deployed PKCE app carries `alwaysIssueRefreshToken=false`, so a NEW
+    * login is issued no refresh token at all — the field is `None` there and
+    * is only populated for a credential whose grant was minted BEFORE the
+    * scope change (an old grant still rotates). Logto rotates refresh tokens
+    * — always persist the latest value whenever one is present.
     * `picture` (2026-09-01 login-chain fix, C2): parsed from the id_token's
     * `picture` claim when the grant carried the `profile` scope — the
     * client-side avatar source for Logto users (Logto picture → device
@@ -85,25 +90,31 @@ object LogtoAuthCode:
    * 8252 §7.3): the port is added at request time and accepted by the
    * provider against the registered port-less URI.
    *
-   * `prompt=consent` is REQUIRED: this Logto build silently drops the
-   * `offline_access` scope from the grant when the authorize request lacks
-   * it — the token response then carries no refresh_token and the silent
-   * re-login chain (LogtoSilentRelogin) is dead on arrival. Real-chain
-   * probe (qa e2e 2026-08-28, 5 controlled experiments): baseline,
-   * `alwaysIssueRefreshToken=true`, and a zero-history fresh account all
-   * granted "openid" only; with prompt=consent the grant is
-   * "openid offline_access" + refresh_token. Consent is NOT remembered
-   * across authorizes (exp. 5), so the prompt ships on EVERY login — the
-   * cost is one extra consent screen on the low-frequency browser login
-   * path (daily use rides the deviceToken + refresh_token silent chain).
+   * O5 (2026-09-11, refresh-revoke plan §2/§3④): the scope list is
+   * `openid email profile` — the client does NOT request `offline_access`
+   * any more, so the provider issues no refresh_token for this grant. That
+   * is the issuance-side convergence: no L1 (Logto) refresh credential is
+   * minted for a new login, hence none can survive logout / re-login /
+   * switch-account / device-unbind. Cost (accepted by the plan): the silent
+   * re-login chain loses its token source — see [[refreshTokenRequest]] and
+   * `LogtoSilentRelogin` for the explicit degradation.
    *
-   * `prompt` is parameterized (RP-logout fix, 2026-09-06): the default
-   * stays "consent" (refresh-token invariant above MUST NOT regress); the
-   * switch-account entry passes "login consent" — `login` forces the
-   * hosted sign-in page even when the browser's Logto SSO session is
-   * alive, so the user gets the account input instead of a silent
-   * redirect back to the original account. Both values are legal
-   * space-separated OIDC prompt lists (RFC 6749-bis / Core §3.1.2.1).
+   * `prompt` is retained UNCHANGED (default "consent"; the switch-account
+   * entry passes "login consent"). The historical rationale for `consent`
+   * is now MOOT — it used to be required because this Logto build silently
+   * dropped `offline_access` from a grant whose authorize request omitted it
+   * (real-chain probe, qa e2e 2026-08-28, 5 controlled experiments: baseline,
+   * `alwaysIssueRefreshToken=true` and a zero-history fresh account all
+   * granted "openid" only; with prompt=consent the grant became
+   * "openid offline_access" + refresh_token). `offline_access` is gone, so
+   * there is no refresh-token invariant left for the prompt to protect. It
+   * stays because (a) O5's change surface is the scope list only — editing
+   * the prompt list is a separate UX decision with its own regression risk,
+   * and (b) the shipped UX depends on it: `consent` on the low-frequency
+   * browser login path, and `login` forces the hosted sign-in page even when
+   * the browser's Logto SSO session is alive (switch-account form). Both
+   * values are legal space-separated OIDC prompt lists (RFC 6749-bis /
+   * Core §3.1.2.1). Do NOT read `prompt=consent` as a refresh-token guard.
    *
    * `uiLocales` (BYUI handoff, 2026-09-09): optional OIDC standard
    * `ui_locales` hint so the hosted page renders in the CLIENT's UI
@@ -132,7 +143,7 @@ object LogtoAuthCode:
             "client_id" -> clientId,
             "redirect_uri" -> redirectUri,
             "response_type" -> "code",
-            "scope" -> "openid offline_access email profile",
+            "scope" -> "openid email profile",
             "prompt" -> prompt,
             "code_challenge" -> codeChallenge,
             "code_challenge_method" -> "S256",
@@ -192,7 +203,33 @@ object LogtoAuthCode:
 
   /** Silent re-login: rotate the refresh token for a fresh access token.
     * The response carries a NEW refresh token (Logto rotation) — callers
-    * must persist it. */
+    * must persist it.
+    *
+    * O5 degradation (2026-09-11) — THIS PATH HAS NO LEGAL TOKEN SOURCE ANY
+    * MORE: [[authorizeUrl]] no longer requests `offline_access` and the
+    * deployed PKCE app has `alwaysIssueRefreshToken=false`, so a new login
+    * receives no refresh_token and nothing new can ever be passed in here.
+    * The only caller is `LogtoSilentRelogin.startRefresh` (sole call site),
+    * which passes the token persisted BEFORE the scope change.
+    *
+    * Why it is kept rather than deleted or re-signatured: for a pre-O5
+    * enrollment the rotation still works until that stored token is
+    * consumed / expires / is revoked, which is exactly the graceful path the
+    * plan accepted (evidence: nothing has ever issued a fresh one since the
+    * change, so the path is self-limiting, not a leak). Deleting it would
+    * silently remove the only remaining fallback for existing installs, and
+    * changing the signature would force an unrelated edit in
+    * `LogtoSilentRelogin`'s contract. The degradation is NOT silent: the
+    * caller logs the entry (INFO) and the unavailable branch (INFO/WARN)
+    * with the O5 reason — see `LogtoSilentRelogin.startRefresh`.
+    *
+    * Callers must never call this with an absent token expecting an empty
+    * request: the token is a required argument and there is no default.
+    *
+    * Scope: this request carries the post-O5 list (`openid email profile`).
+    * RFC 6749 §6 forbids a refresh request from ADDING a scope the original
+    * grant never carried, so keeping `offline_access` here (as it was
+    * pre-O5) would contradict the authorize change; a subset is legal. */
   def refreshTokenRequest(endpoint: String, clientId: String, refreshToken: String): LogtoDeviceFlow.Request =
     LogtoDeviceFlow.Request(
       url = s"${endpoint.stripSuffix("/")}${Protocol.LogtoOidc.token}",
@@ -201,7 +238,7 @@ object LogtoAuthCode:
         "grant_type" -> "refresh_token",
         "refresh_token" -> refreshToken,
         "client_id" -> clientId,
-        "scope" -> "openid offline_access email profile"
+        "scope" -> "openid email profile"
       )
     )
 
