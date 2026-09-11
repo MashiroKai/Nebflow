@@ -115,8 +115,7 @@ object DelegateTool extends Tool:
   def summarize(input: JsonObject): String =
     val desc = input("description").flatMap(_.asString).getOrElse("")
     val device = input("device").flatMap(_.asString).map(_.trim).filter(_.nonEmpty)
-    val target = device.map(d => s"@ $d").getOrElse("")
-    s"Delegate($desc $target)".trim
+    device.map(d => s"Delegate($desc @ $d)").getOrElse(s"Delegate($desc)")
 
   def summarizeResult(input: JsonObject, result: String): String =
     if result.length > 200 then result.take(197) + "..." else result
@@ -237,32 +236,39 @@ object DelegateTool extends Tool:
       peer.deviceId.startsWith(target) ||
       peer.deviceName.toLowerCase.contains(target.toLowerCase)
 
+  /** 在飞快照（R9 判据的最小输入——把 registry 记录投影成可测的纯数据）。 */
+  private[tools] final case class InFlight(sessionId: String, status: AgentStatus, startedAt: Long)
+
+  /** R9 判据（**纯函数**，单点来源）：`None` = 放行；`Some(err)` = 拒绝（自描述
+    * 错误含在飞清单 + 哪些在等待答复）。U4=D1：等待答复中的内核同样占额度。 */
+  private[tools] def concurrencyError(inFlight: List[InFlight], now: Long): Option[ToolError] =
+    if inFlight.size < MaxConcurrentPerRoot then None
+    else
+      val lines = inFlight.sortBy(_.startedAt).map { r =>
+        val age = if r.startedAt > 0 then s" (up ${math.max(0L, now - r.startedAt) / 1000}s)" else ""
+        val waiting =
+          if r.status == AgentStatus.WaitingForUser then
+            " — WAITING for the user's answer (still counts toward the limit: ruling U4=D1)"
+          else ""
+        s"  - ${r.sessionId} status=${r.status}$age$waiting"
+      }
+      Some(
+        ToolError(
+          s"""Delegate concurrency limit reached: $MaxConcurrentPerRoot kernel sessions are already in flight under this root session (limit $MaxConcurrentPerRoot).
+In flight:
+${lines.mkString("\n")}
+Wait for one to finish, or cancel one with AgentControl(cancel) before delegating again. Do not retry blindly — a blind retry is rejected the same way."""
+        )
+      )
+
   /** R9 并发校验（U4=D1：等待答复中的内核同样占额度）。 */
   private def concurrencyCheck(resources: SharedResources, rootSid: String): IO[Either[ToolError, Unit]] =
     resources.agentRegistry.get.map { registry =>
       val inFlight = registry.values
         .filter(r => r.kind == AgentKind.Delegate && (rootSid.isEmpty || r.rootSessionId == rootSid))
+        .map(r => InFlight(r.sessionId, r.status, r.startedAt))
         .toList
-        .sortBy(_.startedAt)
-      if inFlight.size < MaxConcurrentPerRoot then Right(())
-      else
-        val now = System.currentTimeMillis()
-        val lines = inFlight.map { r =>
-          val age = if r.startedAt > 0 then s" (up ${(now - r.startedAt) / 1000}s)" else ""
-          val waiting =
-            if r.status == AgentStatus.WaitingForUser then
-              " — WAITING for the user's answer (still counts toward the limit: ruling U4=D1)"
-            else ""
-          s"  - ${r.sessionId} status=${r.status}$age$waiting"
-        }
-        Left(
-          ToolError(
-            s"""Delegate concurrency limit reached: $MaxConcurrentPerRoot kernel sessions are already in flight under this root session (limit $MaxConcurrentPerRoot).
-In flight:
-${lines.mkString("\n")}
-Wait for one to finish, or cancel one with AgentControl(cancel) before delegating again. Do not retry blindly — a blind retry is rejected the same way."""
-          )
-        )
+      concurrencyError(inFlight, System.currentTimeMillis()).toLeft(())
     }
 
   def call(input: JsonObject, ctx: ToolContext): IO[Either[ToolError, String]] =
