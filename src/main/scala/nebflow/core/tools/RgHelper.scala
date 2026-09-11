@@ -103,7 +103,10 @@ object RgHelper:
       case None =>
         Left(
           ToolError(
-            "ripgrep (rg) not found (checked bundled app dir, PATH, ~/.nebflow/bin). Run 'nebflow update' or reinstall to get it: https://github.com/BurntSushi/ripgrep"
+            // 路径经 PathUtil.dataRootRenderValue 插值（home 硬编码 → 运行时动态化
+            // 批 2026-09-11）：默认 home ⇒ `~/.nebflow/bin`，隔离实例 ⇒ 其实例
+            // 数据根下的 bin（该实例真正使用的缓存位）。
+            s"ripgrep (rg) not found (checked bundled app dir, PATH, ${nebflow.core.PathUtil.dataRootRenderValue}/bin). Run 'nebflow update' or reinstall to get it: https://github.com/BurntSushi/ripgrep"
           )
         )
       case Some(rgPath) =>

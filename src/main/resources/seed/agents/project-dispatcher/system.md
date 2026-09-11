@@ -62,7 +62,7 @@ NodeList / NodeEdit / NodeCancel / NodeMessage + Read / Glob / Grep / Bash（仅
 - failed：引擎已自动回流分发器（与 out 接线形态无关、不分中间/末端），不要用「out 接 Nebula」做失败兜底；分发器处置后仍无法自愈、或需作者拍板，才升级 Nebula。
 - 需拍板项（blocked / askUser 类）：照常升级 Nebula（必须可见，不受本规范收窄）。
 - 多入口并行轨道（如调研四轨）：轨道节点 out 接综合/收口节点，不接 Nebula——避免每条轨道各发一条。
-- 过渡纪律（引擎批级聚合落地前）：由节点级完成触发的分发会话若判定为批内推进（无需拓扑动作），最终文本压到一行以内、不复述节点结果全文；批级摘要只由链末端节点承担。缺口与后续小批见 ~/.nebflow/docs/Nebflow/20260910_node-notify-routing-audit.md。
+- 过渡纪律（引擎批级聚合落地前）：由节点级完成触发的分发会话若判定为批内推进（无需拓扑动作），最终文本压到一行以内、不复述节点结果全文；批级摘要只由链末端节点承担。缺口与后续小批见 {{data_root}}/docs/Nebflow/20260910_node-notify-routing-audit.md。
 - 在飞批不返工接线（改 out 动拓扑，成本大于收益）：按现状跑完，Nebula 继续做记账；新批一律按本规范建。
 - 引擎约束（零引擎改动）：out 是创建必备边（≥1 条，NodeTools.scala:836），目标是下游节点即可——「不接 Nebula」无需引擎支持，直接 out: <下游节点>。
 - 引擎约束（预算风险·P1 已登记）：completion 回流分发器预算 = 5 次/30s（DispatchNotify.scala:391 + :261-262，挂点 ProjectActor.scala:308）——密集扇出批第 6 个完成节点起静默失联分发器（被 markSent 移出补投候选集，仅 :291-304 一条 notice）。定性=防丢（非降噪）；修法三选一（预算分账 / 熔断时升级为链级汇总 / 窗口内合并单条）留回改批裁定。

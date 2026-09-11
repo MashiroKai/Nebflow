@@ -5,7 +5,7 @@ import io.circe.syntax.*
 import io.circe.{Json, JsonObject}
 import nebflow.actor.*
 import nebflow.agent.*
-import nebflow.core.NebflowLogger
+import nebflow.core.{NebflowLogger, PathUtil}
 import nebflow.core.node.NodeRunner
 import nebflow.neblink.PeerInfo
 
@@ -176,7 +176,7 @@ object DelegateTool extends Tool:
             Left(
               ToolError(
                 s"Kernel agent definition '$KernelAgentName' not found — Delegate cannot start. Expected " +
-                  s"~/.nebflow/agents/$KernelAgentName/{agent.json,system.md} (seeded from " +
+                  s"${PathUtil.dataRootRenderValue}/agents/$KernelAgentName/{agent.json,system.md} (seeded from " +
                   s"src/main/resources/seed/agents/$KernelAgentName/). Restore the definition and retry."
               )
             )

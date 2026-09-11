@@ -121,7 +121,13 @@ class DelegateToolSpec extends CatsEffectSuite:
     yield res match
       case Left(err) =>
         assert(err.message.contains("Kernel agent definition 'kernel' not found"), err.message)
-        assert(err.message.contains("~/.nebflow/agents/kernel"), err.message)
+        // 数据根渲染（home 硬编码 → 运行时动态化批 2026-09-11）：期望路径由运行期
+        // 数据根插值 —— 本 suite 已 setDataRoot(tempRoot)，故断言取渲染值（默认 home
+        // 下恰为旧字面 `~/.nebflow/agents/kernel`）。
+        assert(
+          err.message.contains(s"${PathUtil.dataRootRenderValue}/agents/kernel"),
+          err.message
+        )
         assert(!err.message.contains("Targetable standalone agents"), "standalone catalog must be gone")
       case Right(v) => fail(s"expected kernel-missing failure, got: $v")
 

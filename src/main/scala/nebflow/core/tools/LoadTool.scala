@@ -14,13 +14,16 @@ object LoadTool extends Tool:
 
   val name = "Load"
 
-  val description =
-    """Load a Team or Flow definition from disk, validate it, and activate it.
+  // `def` + s-interpolation（home 硬编码 → 运行时动态化批 2026-09-11）：定义文件
+  // 路径走 PathUtil.dataRootRenderValue —— 默认 home ⇒ `~/.nebflow/...`（与旧字面
+  // 逐字节一致），隔离实例 ⇒ 该实例 home 绝对路径。
+  def description =
+    s"""Load a Team or Flow definition from disk, validate it, and activate it.
 
 Actions:
-- type "team": Read ~/.nebflow/teams/<name>/team.json, validate structure + agent references, then mount.
+- type "team": Read ${PathUtil.dataRootRenderValue}/teams/<name>/team.json, validate structure + agent references, then mount.
   If valid, the Team is immediately ready — Mail the lead to trigger work.
-- type "flow": Read ~/.nebflow/flows/<name>.json, validate DAG structure + agent references.
+- type "flow": Read ${PathUtil.dataRootRenderValue}/flows/<name>.json, validate DAG structure + agent references.
   Reports syntax errors, missing agents, dangling routes, etc.
 
 Use this after writing or editing team.json / flow.json files. Always loads the latest from disk — no separate create/update distinction."""
