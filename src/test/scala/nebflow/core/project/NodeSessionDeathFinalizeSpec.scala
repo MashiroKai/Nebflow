@@ -356,51 +356,54 @@ class NodeSessionDeathFinalizeSpec extends FunSuite:
     }
   }
 
-  test("R5-方案4 INTEGRATION (success leg): a successful L3 resume hands the notify marker back — the revived node is NOT left flagged as already-notified (its real terminal state still flows back exactly once)") {
+  test("R-1=B 成功腿（2026-09-11 P2 口径更新）: 挂起腿的中断**不终态化、不占回流位**；CAS resume 成功后节点复活且 notifySentAt 仍为空（其真实终态仍恰好一次回流）") {
     val triggered = Ref.unsafe[IO, List[String]](Nil)
-    withFixture("r5-l3ok", notifySeam = Some(triggered)) { (store, engine, resources, system, recorded, rootSid) =>
+    withFixture("r5-l3sus", notifySeam = Some(triggered)) { (store, engine, resources, system, recorded, rootSid) =>
       val io = for
-        _ <- seedRunningCandidate(store, "n-l3ok", "node-l3ok", "long running task that will never finish")
-        _ <- engine.startNode("n-l3ok").start
-        _ <- waitUntil(30.seconds)(store.getNode("n-l3ok").map(_.exists(_.status == NodeLifecycle.Running)))
+        _ <- seedRunningCandidate(store, "n-l3sus", "node-l3sus", "long running task that will never finish")
+        _ <- engine.startNode("n-l3sus").start
+        _ <- waitUntil(30.seconds)(store.getNode("n-l3sus").map(_.exists(_.status == NodeLifecycle.Running)))
         _ <- waitUntil(30.seconds)(nodeSession(resources).map(_.isDefined))
         rec0 <- nodeSession(resources)
         rec = rec0.getOrElse(fail("node session must exist"))
         sup = rec.supervisorRef.getOrElse(fail("bridge supervisorRef must be wired"))
-        _ <- (sup ! AgentEvent.Cancelled(rec.sessionId,
-          "stuck for 1500s (L3 hard-recovery: true resume from transcript breakpoint) — released by TaskStuckWatcher")).void
-        _ <- waitUntil(30.seconds)(store.getNode("n-l3ok").map(_.exists(_.status == NodeLifecycle.Cancelled)))
-        held <- store.getNode("n-l3ok").map(_.get)
-        // 断点在磁盘上：为会话补一份可读 transcript ⇒ resume 必须成功（成功后节点复活续跑）
+        // A1 恢复锚先就位（生产链里 transcript 在判 stuck 之前已由 2s 去抖写出）
         _ <- resources.sessionStore.saveMessagesForSession(rec.sessionId,
           List(nebflow.shared.Message(nebflow.shared.MessageRole.User, Left("resume from breakpoint"))))
-        // ⚠ **不得 await `hardResumeNode`**（2026-09-11 实测挂死整轮后修正）：它的尾部
-        //   `startNode` 同步等到被启动节点**整个会话终态**（NodeEngine.forkStart 头注），而本
-        //   fixture 的 stub LLM 流是 `IO.never` ⇒ resume 一旦成功，续跑 turn 永不结束 ⇒
-        //   `resumed <- engine.hardResumeNode(...)` 无界 await 永久挂死（线程停在 io.unsafeRunSync，
-        //   无任何测试结论输出；证据 impl-r3/21_r3_ddspec_alone.log 的静默截断 +
-        //   impl-r3/22_threaddump_*.txt 的 pool-6-thread-5 栈）。
-        //   生产侧不受此影响：TaskStuckWatcher 的 L3 链整体 `.start`（fork，扫描循环不等，
-        //   见其 bridgeCancelled/`}).start.void` 处）。
-        //   本用例的断言面是**占位归还这一同步写点**（CAS 在 startNode 之前完成），故 fork 之、
-        //   只等写点对 store 可见；续跑 fiber 由 fixture 的 system.stopAll 收尾（同
-        //   CancelDeadlockFixSpec 对 parked 会话的既有做法）。
-        _ <- engine.hardResumeNode(rec.sessionId).start
-        _ <- waitUntil(30.seconds)(store.getNode("n-l3ok").map(n =>
-          n.exists(x => x.notifySentAt.isEmpty && x.status != NodeLifecycle.Cancelled)))
-        revived <- store.getNode("n-l3ok").map(_.get)
+        // 挂起腿 = **生产形态**（`NodeEngine.suspendNode` 逐字同源）：带 `(node-suspend` 哨兵
+        // 的 `AgentEvent.Cancelled`。⚠ 旧形态（`(L3 hard-recovery:` 文本）已随 R-1=B 退役——
+        // 恢复动作改在终态**之前**，watcher 不再产生「先 cancelled 再救援」的中间态；
+        // `NodeEngine:1703` 的 `deferDetach/deferNotify` 分支因此无生产调用方（失败腿用例
+        // 仍以旧形态覆盖该分支的占位归还，见上一个用例）。
+        _ <- (sup ! AgentEvent.Cancelled(rec.sessionId,
+          s"${NodeEngine.SuspendReasonPrefix}): stuck 1500s (agent-stale)")).void
+        // 确定性等挂起腿的**可观测写点**：三表清理 = 会话从 agentRegistry 摘除（不猜时长）
+        _ <- waitUntil(30.seconds)(nodeSession(resources).map(_.isEmpty))
+        suspended <- store.getNode("n-l3sus").map(_.get)
+        fires0 <- triggered.get
+        anchor <- engine.probeRecoveryAnchors(rec.sessionId)
+        // resume 腿：fork（**不得 await** —— `hardResumeNode` 尾部 `startNode` 同步等到被启动
+        // 节点**整个会话终态**（NodeEngine.forkStart 头注），本 fixture 的 stub LLM 流是
+        // `IO.never` ⇒ 续跑 turn 永不结束 ⇒ await 会挂死整轮，见 impl-r3/22_threaddump_*.txt）。
+        // 生产侧不受影响：`TaskStuckWatcher.runRecoveryLeg` 整体 `.start`（扫描循环不等）。
+        _ <- engine.hardResumeNode(rec.sessionId, Some(anchor)).start
+        // 可观测写点 = CAS（Running→Pending）之后的 startNode 重开会话 ⇒ registry 重新登记
+        _ <- waitUntil(30.seconds)(nodeSession(resources).map(_.isDefined))
+        revived <- store.getNode("n-l3sus").map(_.get)
         fires <- triggered.get
-      yield (held, revived, fires)
-      val (held, revived, fires) = io.unsafeRunSync()
-      assert(clue(held.notifySentAt).isDefined, "precondition: the L3 intermediate state holds the marker")
-      // 「resume 成功」的证据 = 占位被归还（notifySentAt 清空）+ 节点离开 Cancelled：本用例不调
-      // releaseTerminalNotify，故该写点的唯一来源 = hardResumeNode 的成功 CAS（失败腿同一条出口
-      // 走的是 failNode，见上一个用例）——等价于原 `assertEquals(resumed, Some("n-l3ok"))`，
-      // 但用可观测写点表达（resume 的 IO 本身因续跑 turn 未终止而不可 await）。
-      assertEquals(clue(revived.notifySentAt), None,
-        "the hold must be handed back on the success leg — otherwise the revived node's real terminal state would be silenced by dedup")
+      yield (suspended, fires0, revived, fires)
+      val (suspended, fires0, revived, fires) = io.unsafeRunSync()
+      // ① 挂起腿：**不终态化**（节点留 Running）+ **不占回流位**（notifySentAt 为空）
+      assertEquals(clue(suspended.status), NodeLifecycle.Running,
+        "R-1=B: the suspend leg must NOT finalize the node — it never enters Cancelled on this path")
+      assertEquals(clue(suspended.notifySentAt), None,
+        "the suspend leg places NO notify hold — R-1=B removed the Cancelled intermediate state, so there is no marker to hand back")
+      assertEquals(clue(fires0), Nil, "the suspend leg must emit ZERO outward flow")
+      // ② resume 成功（新会话重新登记 = CAS 之后的 startNode 已跑）：节点复活且**仍未被标记为已通知**
       assert(clue(revived.status) == NodeLifecycle.Pending || clue(revived.status) == NodeLifecycle.Running,
         s"the node must be revived into a live state (CAS writes Pending; the resumed run flips it to Running), got ${clue(revived.status)}")
+      assertEquals(clue(revived.notifySentAt), None,
+        "the revived node must NOT be left flagged as already-notified — otherwise its real terminal state would be silenced by dedup")
       assertEquals(clue(fires), Nil, "neither leg may emit an outward flow before the node's real terminal state")
     }
   }
