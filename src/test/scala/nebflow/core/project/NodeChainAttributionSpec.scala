@@ -20,18 +20,20 @@ import nebflow.shared.{ContentBlock, LlmHandle, LlmRequest, LlmResponse, StreamC
 import scala.concurrent.duration.*
 
 /**
- * 引擎透传：`flowChainId` + 首条消息链头 + 元数据头模板注入
- * （20260910_process-doc-chain-attribution-spec §9.2 项 1-8）spec。
+ * 引擎透传：`flowChainId` + 首条消息链头 + 文件名尾溯源提示段注入
+ * （20260910_process-doc-chain-attribution-spec §9.2 项 1-8；注入段形态 = 2026-09-11
+ * 作者裁定 R-3：正文零元数据头、链归属只进文件名尾段 `__<chainId>`）。
  *
  * 覆盖：
  *  - ①链快照单点：`NodeEngine.chainContextOf` = chainIdOf 判据同口径（合并集分量
  *    成员数 ≥2 才带值；孤立单节点分量 = 无链；title 走 chainTitle 三级推导单点）
  *  - ②首条消息链头（§9.2 项 7）：有链 → `[chain: <title> (<chainId>) · N 节点]`
  *    单行注入；无链 → 整块不注入（不注空行、零占位）
- *  - ③元数据头模板（§9.2 项 8/§3）：front matter 键数 ≤8（**键数口径**：行数 =
- *    键数 + 2 个 `---` 包围行 ⇒ ≤10 行，8 键单链 9 行 / 多链 10 行合法——2026-09-10
- *    作者裁定，`CONVENTIONS.md:7`/`:78` 权威；spec §3.1 的「≤8 行」已被取代）、
- *    键 ⊆ 八键白名单、零路径值；模板紧随链头
+ *  - ③文件名尾溯源提示段（§9.2 项 8 注入面；R-3 取代原「元数据头模板」）：段紧随
+ *    链头，教 `<YYYYMMDD>_<HHMMSS>_<topic>__<chainId>.md` 尾段形态与「正文零元数据头」
+ *    ——注入面**不得再含 front matter 段**（无 `---` 行、无八键白名单行；T1 负断言钉死）
+ *  - ③bis 存量元数据头键数口径（**历史**，2026-09-10 作者裁定）：仅作存量读取侧
+ *    （`index-backfill.py` legacy 路径）的判据记录，不再由引擎注入（T2）
  *  - ④全链透传（§9.2 项 1-5，真实引擎路径）：节点 spawn → SessionContext →
  *    AgentCore → `ToolContext.flowChainId`——探针工具在真实节点会话内读到的链值
  *    与首条消息链头逐字同源（同一快照）；上游完成结算下游
@@ -41,7 +43,8 @@ import scala.concurrent.duration.*
  *
  * 变异验红（实施记录）：`buildInput` 链块摘除 → T1/T1b/T3 红；`AgentCore` 透传行
  * 摘除 → T3 红（探针读不到链值）；`chainContextOf` 的 `size >= 2` 过滤摘除 →
- * T1b 红（孤立单节点分量被当链注入）。
+ * T1b 红（孤立单节点分量被当链注入）。R-3 追加：注入段回填 front matter 段 →
+ * T1 ③ 两条负断言红。
  */
 class NodeChainAttributionSpec extends CatsEffectSuite:
 
@@ -72,14 +75,19 @@ class NodeChainAttributionSpec extends CatsEffectSuite:
   private val ExpectedChainId = "chain-n-ca"
   private val ExpectedHeader = s"[chain: 链标题A ($ExpectedChainId) · 2 节点]"
 
-  /** 八键白名单（`CONVENTIONS.md:7` / spec §3.2）。 */
+  /** 文件名尾溯源提示段标记（`NodeEngine.DocProvenanceBlock` 首行前缀；R-3 2026-09-11）。 */
+  private val ProvenanceMarker = "[过程文档命名·溯源"
+
+  /** 八键白名单（**存量历史**：`CONVENTIONS.md:7` / spec §3.2；R-3 后仅用于
+    * 「注入面不得再含元数据头键」的负断言与 `headViolations` 存量判据）。 */
   private val KeyWhitelist =
     Set("chain", "chains", "chain-source", "chain-role", "produced-by", "produced-at", "doc-class", "root")
 
-  /** 元数据头合规判据（**键数口径**，2026-09-10 作者裁定 / `CONVENTIONS.md:7` 与
-    * `:78`）：取首个 `---` 行到配对 `---` 行的 front matter 段 → 键数 ≤8；行数为
-    * 派生量 = 键数 + 2 ⇒ ≤10 行（8 键单链 9 行 / 多链 10 行合法）；键 ⊆ 白名单；
-    * 零路径值。返回违规清单（Nil = 合规）。 */
+  /** 存量元数据头合规判据（**键数口径**，2026-09-10 作者裁定 / `CONVENTIONS.md:7` 与
+    * `:78`；R-3 后引擎不再注入正文头，本条仅作存量文档读取侧判据的历史记录——
+    * `index-backfill.py:159-161` 同口径容错读取）：取首个 `---` 行到配对 `---` 行的
+    * front matter 段 → 键数 ≤8；行数为派生量 = 键数 + 2 ⇒ ≤10 行（8 键单链 9 行 /
+    * 多链 10 行合法）；键 ⊆ 白名单；零路径值。返回违规清单（Nil = 合规）。 */
   private def headViolations(text: String): List[String] =
     val lines = text.linesIterator.toList
     val start = lines.indexWhere(_.trim == "---")
@@ -234,9 +242,9 @@ class NodeChainAttributionSpec extends CatsEffectSuite:
     ProjectRuntimeRegistry.clear
     ChainProbe.captured.set(Nil).unsafeRunSync()
 
-  // ── ① 链快照单点 + ② 有链链头 + ③ 元数据头模板 ──────────────────────
+  // ── ① 链快照单点 + ② 有链链头 + ③ 文件名尾溯源提示段（R-3） ─────────
 
-  test("T1 有链：chainContextOf 快照（chainId/title/成员数）+ buildInput 链头 + 元数据头模板（键数口径/白名单键/零路径）") {
+  test("T1 有链：chainContextOf 快照（chainId/title/成员数）+ buildInput 链头 + 文件名尾溯源提示段（紧随链头/零正文元数据头）") {
     val ws = tempRoot / "ws-chain-header"
     os.makeDir.all(ws)
     val system = ActorSystem(s"chain-hdr-${scala.util.Random.nextInt(100000)}")
@@ -259,25 +267,28 @@ class NodeChainAttributionSpec extends CatsEffectSuite:
       assert(input.contains(ExpectedHeader), s"chain header line injected verbatim, got:\n${input.take(700)}")
       assertEquals(input.linesIterator.filter(_.startsWith("[chain:")).toList, List(ExpectedHeader),
         "exactly one chain header line")
-      // ③ 元数据头模板：紧随链头 + 键数 ≤8（行数 = 键数 + 2 ≤ 10）+ 键 ⊆ 白名单 + 零路径
+      // ③ 文件名尾溯源提示段（R-3 2026-09-11）：紧随链头 + 教 `__<chainId>` 尾段
+      //    + **零正文元数据头**（负断言：无 `---` 行、无八键白名单行）
       val lines = input.linesIterator.toList
       val hIdx = lines.indexOf(ExpectedHeader)
-      assert(hIdx >= 0 && lines.lift(hIdx + 1).exists(_.startsWith("[过程文档元数据头")),
-        s"metadata template must follow the chain header, got: ${lines.slice(math.max(hIdx, 0), hIdx + 3)}")
-      assertEquals(headViolations(input), Nil, "injected metadata head template must be compliant")
-      val fm = lines.slice(lines.indexWhere(_.trim == "---"),
-        lines.indexWhere(_.trim == "---", lines.indexWhere(_.trim == "---") + 1) + 1)
-      val keys = fm.slice(1, fm.size - 1).map(_.takeWhile(ch => ch != ':' && ch != ' ').trim).filter(_.nonEmpty)
-      assertEquals(keys, List("chain", "chain-source", "chain-role", "produced-by", "produced-at", "doc-class", "root"),
-        "template carries the house single-chain form (7 keys, 9 lines — legal under the key-count cap)")
+      assert(hIdx >= 0 && lines.lift(hIdx + 1).exists(_.startsWith(ProvenanceMarker)),
+        s"provenance hint must follow the chain header, got: ${lines.slice(math.max(hIdx, 0), hIdx + 3)}")
+      assert(input.contains("__<chainId>"), "hint must teach the filename-tail chain marker")
+      assert(!lines.exists(_.trim == "---"),
+        "injected input must carry no YAML front matter delimiter (正文零元数据头)")
+      assert(!lines.exists(l => KeyWhitelist.exists(k => l.trim.startsWith(s"$k:"))),
+        "injected input must carry no legacy metadata head key line")
+      assertEquals(headViolations(input), List("no front matter block found"),
+        "R-3 负控：注入面既不是也不含合规元数据头")
       // 结构不变式：链块在自身 task 之前（首屏可见），协议脚注仍在末尾
       assert(input.indexOf(ExpectedHeader) < input.indexOf("up-task"), "chain block precedes the task text")
       assert(input.endsWith(NodeEngine.ProtocolFootnote), "protocol footnote stays last (unchanged)")
   }
 
-  // ── ③bis 上限口径：键数而非行数（2026-09-10 作者裁定）──────────────
+  // ── ③bis 存量口径（历史）：上限以键数计而非行数（2026-09-10 作者裁定；
+  //    R-3 后引擎不再注入正文头，本条只钉存量读取侧判据）────────────────
 
-  test("T2 元数据头上限 = 键数口径：8 键单链 9 行 / 多链 10 行合法，超键/越白名单/带路径为违规") {
+  test("T2 【存量历史】元数据头上限 = 键数口径：8 键单链 9 行 / 多链 10 行合法，超键/越白名单/带路径为违规") {
     val single =
       """---
         |chain: chain-n-01fcb885
@@ -302,7 +313,7 @@ class NodeChainAttributionSpec extends CatsEffectSuite:
 
   // ── ② 无链：整块不注入 + 孤立单节点分量不算链 ──────────────────────
 
-  test("T1b 无链：孤立单节点分量 → 快照 None；buildInput 无链头/无模板/无空行残留") {
+  test("T1b 无链：孤立单节点分量 → 快照 None；buildInput 无链头/无提示段/无空行残留") {
     val ws = tempRoot / "ws-chain-absent"
     os.makeDir.all(ws)
     val system = ActorSystem(s"chain-absent-${scala.util.Random.nextInt(100000)}")
@@ -320,7 +331,7 @@ class NodeChainAttributionSpec extends CatsEffectSuite:
       assertEquals(chain, None, "孤立单节点分量（成员数 1）不算链——与 payload chainId 条件键同口径")
       assertEquals(missing, None, "不在双区的节点 → None（不出 panic）")
       assert(!input.contains("[chain:"), s"no chain → no chain header line, got:\n${input.take(400)}")
-      assert(!input.contains("[过程文档元数据头"), "no chain → no metadata template (no attribution subject)")
+      assert(!input.contains(ProvenanceMarker), "no chain → no provenance hint (no attribution subject)")
       assert(!input.contains("\n\n\n"), "no chain → zero blank-line artifacts (整行不注入)")
       assert(input.contains("solo-task") && input.endsWith(NodeEngine.ProtocolFootnote),
         "task + protocol footnote unchanged")
