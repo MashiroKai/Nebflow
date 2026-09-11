@@ -76,6 +76,11 @@ object TaskStuckWatcher:
     * the stuck agent's in-flight LLM fiber via the inflight registry. */
   val StopAttempts: Int = 2
 
+  /** LoopGuard L2 冻结在 `AgentRecord.frozenReason` 里的 wire 值（P3 互斥点 1 的判据）。
+    * 单源 = `AgentRecord.toJson` 的 reason 映射（`protocol.scala`：`FreezeReason.Loop => "loop"`；
+    * `AgentActor.reasonStr` 同映射）——此处只做**只读**匹配，不改枚举、不改序列化。 */
+  val LoopFreezeReasonWire: String = "loop"
+
   /** 与 WebSocketRoutes.filterActiveAgents 相同的 task 集合（保持单一事实源意识）。 */
   private val taskKinds = Set(AgentKind.Delegate, AgentKind.Ephemeral, AgentKind.Flow, AgentKind.SubTask)
 
@@ -313,13 +318,19 @@ object TaskStuckWatcher:
         // R8 方向②：待复查的 L3 开火（内存态；宿主重启即丢——设计 §3.8 明确接受，
         // 与 stopCounts 同族，不得当作持久状态消费）。
         pendingL3 <- cats.effect.Ref.of[IO, List[PendingL3]](Nil)
-        _ <- scanLoop(stopCounts, pendingL3)
+        // P3（§3.3/§3.4）：恢复账本（跨轮累积；内存态，同族纪律）。
+        ledger <- cats.effect.Ref.of[IO, Map[String, RecoveryLedger]](Map.empty)
+        _ <- scanLoop(stopCounts, pendingL3, ledger)
       yield ()
 
-    def scanLoop(stopCounts: cats.effect.Ref[IO, Map[String, Int]], pendingL3: cats.effect.Ref[IO, List[PendingL3]]): IO[Unit] =
-      scan(resources, wsHub, thresholdMs, stopCounts, pendingL3).handleErrorWith(e =>
+    def scanLoop(
+      stopCounts: cats.effect.Ref[IO, Map[String, Int]],
+      pendingL3: cats.effect.Ref[IO, List[PendingL3]],
+      ledger: cats.effect.Ref[IO, Map[String, RecoveryLedger]]
+    ): IO[Unit] =
+      scan(resources, wsHub, thresholdMs, stopCounts, pendingL3, ledger = ledger).handleErrorWith(e =>
         logger.warn(s"TaskStuckWatcher scan failed (will retry next cycle): ${e.getMessage}")
-      ) *> IO.sleep(interval) >> scanLoop(stopCounts, pendingL3)
+      ) *> IO.sleep(interval) >> scanLoop(stopCounts, pendingL3, ledger)
     loop
 
   /** R8 方向②：一次待复查的 L3 开火（设计 §3.2-C「待验证」登记）。携带开火当时的
@@ -335,6 +346,92 @@ object TaskStuckWatcher:
     attempt: Int
   )
 
+  // ── P3（§3.3/§3.4）：恢复预算 / 退避 / 冷却账本 + 判定序闸门 ────────────────
+
+  /** 单会话的**恢复账本**（P3，进程内内存态——宿主重启即丢，与 `stopCounts` /
+    * `pendingL3` 同族；设计明确接受，**不得**当作持久状态消费）。 */
+  private[processor] final case class RecoveryLedger(
+    /** 本代次（本次卡死 episode）已消耗的恢复次数；会话离开 stuck 候选集的扫描轮复位。 */
+    genAttempts: Int = 0,
+    /** 全链（跨代次）已消耗的恢复次数；只随会话消失复位（`Defaults.StuckRecoveryMaxPerChain`）。 */
+    chainAttempts: Int = 0,
+    /** 上次**成功**恢复的时刻（冷却窗基点；0 = 从未成功恢复过）。 */
+    lastRecoveryAt: Long = 0L,
+    /** 上次恢复**尝试**的时刻（退避基点；0 = 从未尝试）。 */
+    lastAttemptAt: Long = 0L,
+    /** 恢复当时的 LoopGuard 跨轮命中计数快照（互斥点 2 的基线）。 */
+    strikeBaseline: Int = 0,
+    /** 恢复当时的指纹快照（同上；判「新指纹命中」用）。 */
+    fpBaseline: String = "",
+    /** 互斥点 2 已命中 ⇒ 恢复链停止，不再消耗预算（进程生命周期内）。 */
+    chainHalted: Boolean = false,
+    /** 本会话已发过「一次上报」的时刻（0 = 未发）。结构性地保证「**恰好一次**上报」——
+      * 不依赖 `failStuckRecovery` 内部的幂等（那是第二道防线，不是唯一防线）。 */
+    reportedAt: Long = 0L
+  )
+
+  /** §3.4 判定序的闸门结果。`report` = 是否走「一次上报」（第 2/4 步与互斥点 2 为 true；
+    * 第 3 步冷却为 false —— 只留痕，不误报）。 */
+  private[processor] final case class RecoveryGate(kind: String, report: Boolean, note: String)
+
+  /** 闸门类型词表（进事件面 `gate` 字段）。 */
+  val GateLoopFrozen: String = "loop-frozen"
+  val GateRecoveryLoopDetected: String = "recovery-loop-detected"
+  val GateCooldown: String = "cooldown"
+  val GateBackoff: String = "backoff"
+  val GateBudgetExhausted: String = "budget-exhausted"
+
+  /** 互斥点 2 的识别（§3.4；纯函数，可独立单测）：恢复**成功**后
+    * [[nebflow.shared.Defaults.StuckRecoveryLoopDetectMs]] 窗内 LoopGuard 跨轮命中
+    * 计数**上升**（或指纹变化 / 进入 Loop 冻结）⇒ 「反复卡 ⇒ 反复重试」识别点：
+    * 立即停恢复链 + 一次上报（不再消耗预算）。
+    *
+    * 数据源 = P1 落地的**只读投影** `AgentRecord.loopStrikeCount` / `lastLoopFp`
+    * （硬依赖 2 的可见性缺口补齐；`AgentState.loopCounters` 在 actor 内不可读）——
+    * 两字段**不回流任何判死不等式**（红线：只作为「停恢复链」的互斥信号）。 */
+  def loopDetectedAfterRecovery(rec: AgentRecord, led: RecoveryLedger, now: Long): Boolean =
+    led.lastRecoveryAt > 0L &&
+      (now - led.lastRecoveryAt) <= nebflow.shared.Defaults.StuckRecoveryLoopDetectMs &&
+      (rec.loopStrikeCount > led.strikeBaseline ||
+        (rec.lastLoopFp.nonEmpty && rec.lastLoopFp != led.fpBaseline) ||
+        rec.frozenReason.contains(LoopFreezeReasonWire))
+
+  /** §3.4 判定序的第 2/3/4 步（纯函数，可独立单测）：返回 `Some(gate)` = 本拍
+    * **零动作**（唯一例外是 `gate.report` 的「一次上报」）。
+    *
+    * 顺序（强制，与设计 §3.4 逐字一致）= 互斥点 1（LoopGuard 冻结）→ 互斥点 2
+    * （恢复链已停）→ 冷却窗 → 全链预算耗尽；末位补 **退避窗**（§3.3 退避曲线的唯一
+    * 判据消费点，负控④「退避生效」要求它可观测）。*/
+  def recoveryGate(rec: AgentRecord, led: RecoveryLedger, now: Long): Option[RecoveryGate] =
+    if rec.status == AgentStatus.Frozen || rec.frozenReason.contains(LoopFreezeReasonWire) then
+      Some(RecoveryGate(GateLoopFrozen, true,
+        "会话带 LoopGuard 冻结记录 ⇒ 互斥点 1：零恢复动作（冻结的恢复条件仅人工：用户输入唤醒 / " +
+          "AgentControl restart / cancel；365 天冻结不得被自动恢复绕过）"))
+    else if led.chainHalted then
+      Some(RecoveryGate(GateRecoveryLoopDetected, true,
+        "互斥点 2 已命中（恢复后循环指纹再次命中）—— 恢复链已停，不再消耗预算"))
+    else if led.lastRecoveryAt > 0L &&
+      (now - led.lastRecoveryAt) < nebflow.shared.Defaults.StuckRecoveryCooldownMs then
+      val left = (nebflow.shared.Defaults.StuckRecoveryCooldownMs - (now - led.lastRecoveryAt)) / 1000L
+      Some(RecoveryGate(GateCooldown, false,
+        s"恢复后冷却窗内（默认 ${nebflow.shared.Defaults.StuckRecoveryCooldownMs / 60000}min，剩余约 ${left}s）" +
+          "—— 零动作、只留痕（防「恢复后立刻又被同轴判死」的自激振荡）"))
+    else if led.chainAttempts >= nebflow.shared.Defaults.StuckRecoveryMaxPerChain then
+      Some(RecoveryGate(GateBudgetExhausted, true,
+        s"全链恢复预算耗尽（${led.chainAttempts}/${nebflow.shared.Defaults.StuckRecoveryMaxPerChain}）" +
+          "—— 零动作 + 一次上报"))
+    else if led.lastAttemptAt > 0L &&
+      (now - led.lastAttemptAt) < nebflow.shared.Defaults.stuckRecoveryBackoffMs(led.chainAttempts + 1) then
+      // 退避曲线（§3.3 第 3 行）：两次恢复尝试之间至少间隔 `StuckRecoveryBackoffMs` 的第
+      // n 档。设计 §3.4 的列表没单列这一步，但 §3.3 明令该曲线存在，且 N1 验收的
+      // **负控④** 逐字要求「退避生效（首次尝试后 ≥30s 才可能再判）」⇒ 它是可判据的
+      // 一步，必须落成闸门（否则该曲线只是没人读的死常量）。
+      val need = nebflow.shared.Defaults.stuckRecoveryBackoffMs(led.chainAttempts + 1)
+      Some(RecoveryGate(GateBackoff, false,
+        s"恢复退避窗内（第 ${led.chainAttempts + 1} 档 = ${need / 1000}s，剩余约 ${(need - (now - led.lastAttemptAt)) / 1000}s）" +
+          "—— 零动作、只留痕（防「恢复→再卡→再恢复」链）"))
+    else None
+
   /** 单轮扫描：识别卡死 agent 并执行恢复动作。独立成函数便于单元测试。 */
   def scan(
     resources: SharedResources,
@@ -344,7 +441,10 @@ object TaskStuckWatcher:
     /** R8 ②：L3 待复查登记（默认空 Ref = 单测一次驱动不留状态）。 */
     pendingL3: cats.effect.Ref[IO, List[PendingL3]] = cats.effect.Ref.unsafe(List.empty),
     /** R8 ②：T+N 的 N（测试注入缩短窗口；生产默认常量 120s，无 prop）。 */
-    l3VerifyDelayMs: Long = nebflow.shared.Defaults.L3VerifyDelayMs
+    l3VerifyDelayMs: Long = nebflow.shared.Defaults.L3VerifyDelayMs,
+    /** P3（§3.3/§3.4）：恢复账本（预算 / 退避 / 冷却 / 互斥点 2）。默认空 Ref = 单测
+      * 一次驱动不留状态（生产由 [[run]] 的扫描循环持有同一个 Ref 跨轮累积）。 */
+    ledger: cats.effect.Ref[IO, Map[String, RecoveryLedger]] = cats.effect.Ref.unsafe(Map.empty)
   ): IO[Unit] =
     val now = System.currentTimeMillis()
     // R8 ②：复查搭**本**扫描轮（零新增定时器，设计 §3.4）——先复查上轮到期的 L3，
@@ -377,6 +477,11 @@ object TaskStuckWatcher:
       // Drop counters for sessions that recovered (fresh activity / different
       // status / gone) so a future stuck episode starts from Stop attempt 1.
       stopCounts.modify(m => (m.view.filterKeys(stuckIds.contains).toMap, ())) *>
+        // P3（§3.3）：**episode 边界** —— 离开 stuck 候选集的扫描轮复位「本代次恢复
+        // 预算」（与 stopCounts 同点、同纪律）；全链预算 / 冷却窗 / 互斥点 2 状态
+        // **保留**（它们的语义是跨代次的）。
+        ledger.update(m =>
+          m.view.map { case (k, l) => (k, if stuckIds.contains(k) then l else l.copy(genAttempts = 0)) }.toMap) *>
         stuck.traverse_ { (rec, assessment) =>
           // 判据序（P1）：先分流根因类别，再进恢复链。`inflightFor` 是**只读**在飞
           // 计数（设计 §6.1 未证项 6 的补齐）——此前判「本会话是否有在飞 LLM」只能
@@ -384,7 +489,7 @@ object TaskStuckWatcher:
           nebflow.llm.LlmInterface.inflightFor(rec.sessionId).flatMap { inflight =>
             recover(resources, wsHub, rec, assessment,
               classify(rec, assessment, now, inflight),
-              stopCounts, pendingL3, l3VerifyDelayMs)
+              stopCounts, pendingL3, l3VerifyDelayMs, ledger)
           }
         }
     }
@@ -415,6 +520,14 @@ object TaskStuckWatcher:
     *      本函数内全部破坏性动作（设计 §4.4 表 1–9）被 [[act]] 短路，只留事件 + 日志；
     *   ③ L3 开火时登记 [[PendingL3]]（方向②的 T+N 复查输入）。
     * ①②③ 都不改变非 shadow 分支的动作序列（影子开关关闭时逐字等价）。 */
+  /** **§3.4 判定序闸门（P3，2026-09-11）**：`recover()` 入口最前，先查互斥点 1（LoopGuard
+    * 冻结）/ 互斥点 2（恢复后循环指纹再命中）/ 冷却窗 / 全链预算，命中即**零动作**
+    * （唯一例外 = `gate.report` 的「一次上报」，且由账本 `reportedAt` 保证**恰好一次**）。
+    *
+    * 默认空账本 ⇒ 首轮 / 既有测试逐字等价（闸门不改变任何既有路径的行为）；只有
+    * 「本会话确实发生过恢复」之后闸门才可能发声——这正是设计要的「防自激」。
+    *
+    * 未命中 ⇒ 交 [[recoverUngated]]（既有全部分支，**零改动**）。 */
   private def recover(
     resources: SharedResources,
     wsHub: WsHub,
@@ -423,7 +536,93 @@ object TaskStuckWatcher:
     cls: StuckClassification,
     stopCounts: cats.effect.Ref[IO, Map[String, Int]],
     pendingL3: cats.effect.Ref[IO, List[PendingL3]],
-    l3VerifyDelayMs: Long
+    l3VerifyDelayMs: Long,
+    ledger: cats.effect.Ref[IO, Map[String, RecoveryLedger]]
+  ): IO[Unit] =
+    val now = System.currentTimeMillis()
+    ledger.modify(m => (m, m.getOrElse(rec.sessionId, RecoveryLedger()))).flatMap { led0 =>
+      // 互斥点 2 先判（它把账本置为 chainHalted，从而在 [[recoveryGate]] 里生效）。
+      val detected = !led0.chainHalted && loopDetectedAfterRecovery(rec, led0, now)
+      val led = if detected then led0.copy(chainHalted = true) else led0
+      val announce = if detected then
+        logger.error(
+          s"TaskStuckWatcher: ${rec.sessionId} — recovery-loop-detected (design §3.4 mutex 2): the session hit " +
+            s"the LoopGuard fingerprint again within ${nebflow.shared.Defaults.StuckRecoveryLoopDetectMs / 1000}s of the " +
+            s"last recovery (strikes ${led0.strikeBaseline} → ${rec.loopStrikeCount}, fp '${led0.fpBaseline}' → " +
+            s"'${rec.lastLoopFp}') — the recovery chain STOPS here (repeated stall ⇒ repeated retry is not a " +
+            "recovery, it is a loop)."
+        ) *> recordRecoveryLoopDetected(rec, assessment, cls, led) *>
+          ledger.update(m => m.updated(rec.sessionId, led))
+      else IO.unit
+      announce *> (recoveryGate(rec, led, now) match
+        case None =>
+          recoverUngated(resources, wsHub, rec, assessment, cls, stopCounts, pendingL3, l3VerifyDelayMs, ledger)
+        case Some(gate) =>
+          gateActions(wsHub, rec, assessment, cls, led, gate, stopCounts, ledger))
+    }
+
+  /** §3.4 判定序命中时的**零动作**出口（唯一例外 = `gate.report` 时的「一次上报」）。
+    *
+    * 「零动作」口径逐字取自设计 §3.4：不 halt、不 abort、不 kill、不终态化、不启动
+    * 恢复腿——本拍只留痕（`stuck-detected` 由 [[recoverUngated]] 之外的本路径补一条带
+    * `gate` 的 `stuck-recovery-gated` 事件）。`gate.report=true` 的三种闸门（互斥点 1 /
+    * 互斥点 2 / 预算耗尽）额外做**恰好一次**上报（[[reportExhausted]] →
+    * `NodeEngine.failStuckRecovery` → `failNode` 全链）；冷却闸门**不**上报（会话可能
+    * 自己缓过来，误报是噪声）。 */
+  private def gateActions(
+    wsHub: WsHub,
+    rec: AgentRecord,
+    assessment: StuckAssessment,
+    cls: StuckClassification,
+    led: RecoveryLedger,
+    gate: RecoveryGate,
+    stopCounts: cats.effect.Ref[IO, Map[String, Int]],
+    ledger: cats.effect.Ref[IO, Map[String, RecoveryLedger]]
+  ): IO[Unit] =
+    // 「宽松档」的两件事（设计 §3.4 第 2 步逐字「只广播 + 一次上报」）：
+    // 广播照发（面板可见），上报**恰好一次**（由账本 reportedAt 结构性保证——
+    // 不依赖 failStuckRecovery 的内部幂等，那是第二道防线）。
+    // 上报文本的「已尝试恢复动作清单」（N1 验收 正控③ 要求）从账本派生：闸门路径
+    // 自身不动作，但**此前的**尝试记录在案（逐次 `stuck-recovery-attempt` 事件）。
+    val tried: List[String] =
+      if led.chainAttempts > 0 then
+        List(s"suspend → hard-resume leg ×${led.chainAttempts} (each logged as a stuck-recovery-attempt event; " +
+          s"last attempt at ${led.lastAttemptAt})")
+      else Nil
+    val reportPart: IO[Unit] =
+      if !gate.report then IO.unit
+      else
+        broadcastStuck(wsHub, rec, assessment.secs, "failed", assessment.reason) *>
+          (if led.reportedAt != 0L then
+             logger.info(
+               s"TaskStuckWatcher: ${rec.sessionId} gate ${gate.kind} — report already sent once, not re-sending (exactly-once)")
+           else
+             stopCounts.get.flatMap { counts =>
+               ledger.update(m => m.updated(rec.sessionId, led.copy(reportedAt = System.currentTimeMillis()))) *>
+                 reportExhausted(wsHub, rec, assessment, cls, counts.getOrElse(rec.sessionId, 0), tried,
+                   s"gated: ${gate.kind} — ${gate.note}")
+             })
+    recordClassification(rec, assessment, cls) *>
+      logger.warn(
+        s"TaskStuckWatcher: ${rec.sessionId} hit the stall judge [branch=${assessment.branch}, judge: ${assessment.reason}] " +
+          s"but the §3.4 judgement order gates it [gate=${gate.kind}; " +
+          s"chain=${led.chainAttempts}/${nebflow.shared.Defaults.StuckRecoveryMaxPerChain}, " +
+          s"gen=${led.genAttempts}/${nebflow.shared.Defaults.StuckRecoveryMaxPerGen}] — ZERO action this round. ${gate.note}"
+      ) *>
+        recordGate(rec, assessment, cls, led, gate) *>
+        reportPart
+
+  /** 判据序未命中闸门时的**既有全部分支**（P1/P2 行为逐字保留）。 */
+  private def recoverUngated(
+    resources: SharedResources,
+    wsHub: WsHub,
+    rec: AgentRecord,
+    assessment: StuckAssessment,
+    cls: StuckClassification,
+    stopCounts: cats.effect.Ref[IO, Map[String, Int]],
+    pendingL3: cats.effect.Ref[IO, List[PendingL3]],
+    l3VerifyDelayMs: Long,
+    ledger: cats.effect.Ref[IO, Map[String, RecoveryLedger]]
   ): IO[Unit] =
     val idleSecs = assessment.secs
     val reason = assessment.reason
@@ -507,6 +706,18 @@ object TaskStuckWatcher:
             // CPU），收回进程 kill，升级链走 tier-3。kill 复用收殓支 reclaimSession
             // 原语（Nebula 2026-09-07 12:41：killSessionProcesses + unregisterSession +
             // WS 帧，幂等，不另造平行 kill 机制）。
+            //
+            // **P3 §3.4 互斥点 1(b)**：会话级原语只在 `status == Processing` 时执行
+            // ——今天这本就隐含（watcher 只扫 Processing），显式化是为了「未来放宽扫描
+            // 面时闸门仍然发声」。守卫判据由引擎侧单点提供（[[NodeEngine.sessionLevelPrimitiveAllowed]]），
+            // **不改 `BgTaskRegistry`**（R-4 边界）。
+            if !nebflow.core.project.NodeEngine.sessionLevelPrimitiveAllowed(rec) then
+              logger.warn(
+                s"TaskStuckWatcher: ${rec.sessionId} attempt $attempts (L2) — SKIPPED session-level primitives " +
+                  s"(transport abort / reclaim): session status is ${rec.status}, not Processing " +
+                  "[design §3.4 mutex 1b: a session-level primitive must not touch a frozen/other-state session]"
+              )
+            else
             nebflow.llm.LlmInterface.transportAbortFor(rec.sessionId).flatMap { n =>
               logger.warn(
                 s"TaskStuckWatcher: ${rec.sessionId} attempt $attempts (L2) — transport-aborted $n in-flight LLM request(s)"
@@ -611,7 +822,7 @@ object TaskStuckWatcher:
                   pendingL3.update(_.filterNot(_.sessionId == rec.sessionId) :+
                     PendingL3(rec.sessionId, rec.rootSessionId, System.currentTimeMillis(),
                       assessment.branch, assessment.toolPhaseMs, assessment.agentIdleMs, attempts)) *>
-                  act(runRecoveryLeg(resources, wsHub, rec, assessment, cls, attempts).start.void)
+                  act(runRecoveryLeg(resources, wsHub, rec, assessment, cls, attempts, ledger).start.void)
               case 4 =>
                 // L4 响亮失败（诚实失败原则）：明确上报需人工处理、进度已落盘。
                 logger.error(
@@ -662,6 +873,13 @@ object TaskStuckWatcher:
                   // kill（工具挂死形态；按自有 PGID 击杀，会话保留）。护栏（证据 #5 ①）：
                   // 仅 transport abort 命中 ≥1 在飞请求（LLM 楔死形态）才 reclaimSession；
                   // 工具相位（容器 CPU 盲区）收回 kill，升级链走 supervisor Cancelled。
+                  // P3 §3.4 互斥点 1(b)：会话级原语的状态守卫（同 flow 分支）。
+                  if !nebflow.core.project.NodeEngine.sessionLevelPrimitiveAllowed(rec) then
+                    logger.warn(
+                      s"TaskStuckWatcher: ${rec.sessionId} attempt $attempts (L2) — SKIPPED session-level primitives " +
+                        s"(transport abort / reclaim): session status is ${rec.status}, not Processing [design §3.4 mutex 1b]"
+                    )
+                  else
                   nebflow.llm.LlmInterface.transportAbortFor(rec.sessionId).flatMap { n =>
                     logger.warn(
                       s"TaskStuckWatcher: ${rec.sessionId} attempt $attempts (L2) — transport-aborted $n in-flight LLM request(s)"
@@ -751,7 +969,14 @@ object TaskStuckWatcher:
                   ("hard-abort",
                     logger.warn(
                       s"TaskStuckWatcher: root agent ${rec.sessionId} still stuck — L2: transport abort + session process reclaim"
-                    ) *> nebflow.llm.LlmInterface.transportAbortFor(rec.sessionId).flatMap { n =>
+                    ) *>
+                      // P3 §3.4 互斥点 1(b)：会话级原语的状态守卫（同 flow 分支）。
+                      (if !nebflow.core.project.NodeEngine.sessionLevelPrimitiveAllowed(rec) then
+                         logger.warn(
+                           s"TaskStuckWatcher: root agent ${rec.sessionId} L2 — SKIPPED session-level primitives " +
+                             s"(transport abort / reclaim): session status is ${rec.status}, not Processing [design §3.4 mutex 1b]")
+                       else
+                      nebflow.llm.LlmInterface.transportAbortFor(rec.sessionId).flatMap { n =>
                       logger.warn(s"TaskStuckWatcher: L2 aborted $n in-flight LLM request(s) of ${rec.sessionId}") *>
                         // 证据 #5 ① 护栏（同 flow transportAbort）：仅 LLM 楔死形态
                         // （n>0）才 reclaimSession 进程 kill；工具相位（容器 CPU 盲区）
@@ -766,7 +991,7 @@ object TaskStuckWatcher:
                              s"TaskStuckWatcher: root agent ${rec.sessionId} L2 — no in-flight LLM request (tool-phase); " +
                                s"process kill withheld [evidence #5 container-blindness guard; class=${cls.cls} " +
                                s"destructiveAllowed=${cls.destructiveAllowed}]"))
-                    }.handleErrorWith(e => logger.warn(s"TaskStuckWatcher: L2 abort for ${rec.sessionId} failed: ${e.getMessage}")))
+                    }.handleErrorWith(e => logger.warn(s"TaskStuckWatcher: L2 abort for ${rec.sessionId} failed: ${e.getMessage}"))))
                 case 3 =>
                   ("restart",
                     logger.warn(
@@ -865,8 +1090,89 @@ object TaskStuckWatcher:
       "note" -> io.circe.Json.fromString(cls.note)
     ))
 
-  // ── R8 方向②：L3 有效性自检（T+N 行为面复查）────────────────────────────
+  // ── P3：判定序 / 恢复尝试 / 互斥点 2 的事件面（与上面两条同面可 join）────────
 
+  /** 判定序闸门命中（§3.4 第 2/3/4 步）：**零动作**拍的结构化留痕（含 gate 身份与
+    * 账本读数），使「本拍为什么什么都没做」在审计面可判定——与 `stuck-detected`
+    * （检出面）、`stuck-fire`（动作面）三面同 join 键 (sessionId, ts)。 */
+  val RecoveryGatedType: String = "stuck-recovery-gated"
+
+  private def recordGate(
+    rec: AgentRecord,
+    a: StuckAssessment,
+    cls: StuckClassification,
+    led: RecoveryLedger,
+    gate: RecoveryGate
+  ): IO[Unit] =
+    WatchdogEventLog.append(io.circe.Json.obj(
+      "ts" -> io.circe.Json.fromLong(System.currentTimeMillis()),
+      "type" -> io.circe.Json.fromString(RecoveryGatedType),
+      "sessionId" -> io.circe.Json.fromString(rec.sessionId),
+      "kind" -> io.circe.Json.fromString(rec.kind.toString),
+      "branch" -> io.circe.Json.fromString(a.branch),
+      "class" -> io.circe.Json.fromString(cls.cls),
+      "gate" -> io.circe.Json.fromString(gate.kind),
+      "reported" -> io.circe.Json.fromBoolean(gate.report),
+      "chainAttempts" -> io.circe.Json.fromInt(led.chainAttempts),
+      "genAttempts" -> io.circe.Json.fromInt(led.genAttempts),
+      "note" -> io.circe.Json.fromString(gate.note)
+    ))
+
+  /** 互斥点 2（§3.4）：恢复完成后 60s 窗内 LoopGuard 指纹再次命中 ⇒ 停恢复链。
+    * 与 §3.5 的「恢复尝试（每次）事件流 `stuck-recovery-attempt`」同面。 */
+  val RecoveryLoopDetectedType: String = "recovery-loop-detected"
+
+  private def recordRecoveryLoopDetected(
+    rec: AgentRecord,
+    a: StuckAssessment,
+    cls: StuckClassification,
+    led: RecoveryLedger
+  ): IO[Unit] =
+    WatchdogEventLog.append(io.circe.Json.obj(
+      "ts" -> io.circe.Json.fromLong(System.currentTimeMillis()),
+      "type" -> io.circe.Json.fromString(RecoveryLoopDetectedType),
+      "sessionId" -> io.circe.Json.fromString(rec.sessionId),
+      "kind" -> io.circe.Json.fromString(rec.kind.toString),
+      "branch" -> io.circe.Json.fromString(a.branch),
+      "class" -> io.circe.Json.fromString(cls.cls),
+      "strikeBaseline" -> io.circe.Json.fromInt(led.strikeBaseline),
+      "strikeNow" -> io.circe.Json.fromInt(rec.loopStrikeCount),
+      "fpBaseline" -> io.circe.Json.fromString(led.fpBaseline),
+      "fpNow" -> io.circe.Json.fromString(rec.lastLoopFp),
+      "sinceRecoveryMs" -> io.circe.Json.fromLong(System.currentTimeMillis() - led.lastRecoveryAt),
+      "note" -> io.circe.Json.fromString(
+        "recovery → LoopGuard fingerprint within the detect window: the recovery chain stops (repeated stall ⇒ repeated retry is a loop)")
+    ))
+
+  /** §3.5「恢复尝试（每次）」事件：含 attempt index / 锚探测结果 / 分支（重启 vs 续跑）。
+    * **无通知**（通知只在耗尽时恰好一次）——这是「内部静默」的可审计对应面。 */
+  val RecoveryAttemptType: String = "stuck-recovery-attempt"
+
+  private def recordRecoveryAttempt(
+    rec: AgentRecord,
+    a: StuckAssessment,
+    cls: StuckClassification,
+    led: RecoveryLedger,
+    anchor: Option[nebflow.core.project.NodeEngine.RecoveryAnchor],
+    branchText: String
+  ): IO[Unit] =
+    WatchdogEventLog.append(io.circe.Json.obj(
+      "ts" -> io.circe.Json.fromLong(System.currentTimeMillis()),
+      "type" -> io.circe.Json.fromString(RecoveryAttemptType),
+      "sessionId" -> io.circe.Json.fromString(rec.sessionId),
+      "kind" -> io.circe.Json.fromString(rec.kind.toString),
+      "branch" -> io.circe.Json.fromString(a.branch),
+      "class" -> io.circe.Json.fromString(cls.cls),
+      "chainAttemptNo" -> io.circe.Json.fromInt(led.chainAttempts),
+      "genAttemptNo" -> io.circe.Json.fromInt(led.genAttempts),
+      "anchorA1" -> io.circe.Json.fromBoolean(anchor.isDefined),
+      "anchorA3" -> io.circe.Json.fromBoolean(anchor.exists(_.worktreeAvailable)),
+      "hasOutput" -> io.circe.Json.fromBoolean(anchor.exists(_.hasOutput)),
+      "replayBranch" -> io.circe.Json.fromString(branchText),
+      "notified" -> io.circe.Json.fromBoolean(false)
+    ))
+
+  // ── R8 方向②：L3 有效性自检（T+N 行为面复查）────────────────────────────
   /** 复查到期登记（到期的取出，未到期的留待下一轮）；再逐条裁决。 */
   private def verifyL3Outcomes(
     resources: SharedResources,
@@ -1003,7 +1309,50 @@ object TaskStuckWatcher:
     rec: AgentRecord,
     assessment: StuckAssessment,
     cls: StuckClassification,
-    attempts: Int
+    attempts: Int,
+    ledger: cats.effect.Ref[IO, Map[String, RecoveryLedger]]
+  ): IO[Unit] =
+    val now = System.currentTimeMillis()
+    // ── P3（R-2）：预算闸门 + 尝试消费 ───────────────────────────────────────
+    // 预算在**尝试**时消费（不是成功后）——否则失败路径会无限重试，与
+    // 「禁无条件重试」的立论直接冲突。两个预算都记：
+    //   gen   = 本代次（episode）预算，[[Defaults.StuckRecoveryMaxPerGen]]（默认 1）
+    //   chain = 全链（跨代次）预算，[[Defaults.StuckRecoveryMaxPerChain]]（默认 2）
+    ledger.modify(m => (m, m.getOrElse(rec.sessionId, RecoveryLedger()))).flatMap { led0 =>
+      val genExhausted = led0.genAttempts >= nebflow.shared.Defaults.StuckRecoveryMaxPerGen
+      val chainExhausted = led0.chainAttempts >= nebflow.shared.Defaults.StuckRecoveryMaxPerChain
+      if genExhausted || chainExhausted then
+        val which =
+          if chainExhausted then
+            s"chain budget exhausted (${led0.chainAttempts}/${nebflow.shared.Defaults.StuckRecoveryMaxPerChain})"
+          else s"per-generation budget exhausted (${led0.genAttempts}/${nebflow.shared.Defaults.StuckRecoveryMaxPerGen})"
+        logger.error(
+          s"TaskStuckWatcher: ${rec.sessionId} recovery NOT attempted — $which (design §3.3; " +
+            "unconditional retry is forbidden: the budget is the answer to 'recovered and stalled again')"
+        ) *>
+          (if led0.reportedAt == 0L then
+             ledger.update(m => m.updated(rec.sessionId, led0.copy(reportedAt = now))) *>
+               reportExhausted(wsHub, rec, assessment, cls, attempts, Nil, s"budget exhausted: $which")
+           else
+             logger.info(s"TaskStuckWatcher: ${rec.sessionId} budget gate — report already sent once (exactly-once)"))
+      else
+        val led1 = led0.copy(
+          genAttempts = led0.genAttempts + 1,
+          chainAttempts = led0.chainAttempts + 1,
+          lastAttemptAt = now)
+        ledger.update(m => m.updated(rec.sessionId, led1)) *>
+          runRecoveryLegInner(resources, wsHub, rec, assessment, cls, attempts, ledger, led1)
+    }
+
+  private def runRecoveryLegInner(
+    resources: SharedResources,
+    wsHub: WsHub,
+    rec: AgentRecord,
+    assessment: StuckAssessment,
+    cls: StuckClassification,
+    attempts: Int,
+    ledger: cats.effect.Ref[IO, Map[String, RecoveryLedger]],
+    led: RecoveryLedger
   ): IO[Unit] =
     runtimeOwning(rec.sessionId).flatMap {
       case None =>
@@ -1023,6 +1372,10 @@ object TaskStuckWatcher:
                   _ <- logger.info(
                     s"TaskStuckWatcher: ${rec.sessionId} recovery anchors — A1 transcript=${msgs.size} msgs (available), " +
                       s"A3 worktree=${anchor.worktreeAvailable} (${anchor.probeDir}), hasOutput=${anchor.hasOutput}")
+                  // §3.5「恢复尝试（每次）」事件：attempt index / 锚探测结果 / 分支
+                  // （重启 vs 续跑）。**无通知**（通知只在耗尽时恰好一次）。
+                  _ <- recordRecoveryAttempt(rec, assessment, cls, led, Some(anchor),
+                    if anchor.hasOutput then "resume-from-breakpoint" else "restart-turn")
                   // 挂起 = **只停 actor，不终态化**（R-1=B）。同步发出（不 fork）——
                   // 「开火 ⇒ 中断信号」必须确定性成立；其后的「等终止确认 + resume」
                   // 才交给后台 fiber（见下方 .start），扫描循环不等。
@@ -1035,9 +1388,20 @@ object TaskStuckWatcher:
                       case true =>
                         rt.engine.hardResumeNode(rec.sessionId, Some(anchor)).flatMap {
                           case Some(nodeId) =>
-                            logger.info(
-                              s"TaskStuckWatcher: ${rec.sessionId} recovery OK — node '$nodeId' resumed from " +
-                                s"transcript breakpoint (hasOutput=${anchor.hasOutput})")
+                            // §3.4 步骤 6：恢复**成功** ⇒ 写冷却窗基点 + 互斥点 2 的
+                            // 指纹基线（下一个 60s 窗内指纹上升 = 反复卡识别）。
+                            ledger
+                              .update(m =>
+                                m.updated(rec.sessionId, led.copy(
+                                  lastRecoveryAt = System.currentTimeMillis(),
+                                  strikeBaseline = rec.loopStrikeCount,
+                                  fpBaseline = rec.lastLoopFp)))
+                              .handleErrorWith(e =>
+                                logger.warn(s"TaskStuckWatcher: recovery ledger update failed: ${e.getMessage}")) *>
+                              logger.info(
+                                s"TaskStuckWatcher: ${rec.sessionId} recovery OK — node '$nodeId' resumed from " +
+                                  s"transcript breakpoint (hasOutput=${anchor.hasOutput}); cooldown " +
+                                  s"${nebflow.shared.Defaults.StuckRecoveryCooldownMs / 60000}min from now")
                           case None =>
                             logger.error(
                               s"TaskStuckWatcher: ${rec.sessionId} recovery resume not effective (CAS rejected / " +

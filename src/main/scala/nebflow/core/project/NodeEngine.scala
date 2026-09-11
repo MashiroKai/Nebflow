@@ -539,6 +539,24 @@ class NodeEngine(
     * 竞态：CAS 失败（并发终态化 / 已被重排 / 已被资格回扫新鲜启动）安静返回 None；
     * transcript 缺失 → None（由调用方走一次上报，诚实失败原则）。返回重启的 nodeId。 */
   def hardResumeNode(sessionId: String, anchor: Option[NodeEngine.RecoveryAnchor] = None): IO[Option[String]] =
+    // 互斥点 1(a)（P3，设计 §3.4）：**恢复路径禁止唤醒冻结会话**。
+    // 冻结态的自动出口是「用户输入唤醒」那条路——它会调 `resetCrossTurn` 清零跨轮
+    // 指纹；恢复链若走到那里，就等于把 365 天 LoopGuard 冻结**绕过**。本批不改冻结面
+    // （`AgentActor`/`LoopGuard` 是越界面），故把该纪律落成**显式断言**：会话仍处于
+    // 冻结（`status==Frozen` / `frozenReason` 有值）⇒ 恢复**拒绝执行**。恢复的真实
+    // 入口是 `startNode(resume)` → `NodeRunner` 起的**全新会话**（全新 actor，从不进
+    // frozen behavior），这正是「不绕过」的结构性理由。
+    resources.agentRegistry.get.map(_.get(sessionId)).flatMap { live =>
+      if NodeEngine.frozenSessionBlocksResume(live) then
+        logger
+          .error(
+            s"[hard-recovery] resume REFUSED for session $sessionId — the session is frozen " +
+              s"(status=${live.map(_.status).getOrElse(AgentStatus.Idle)}, " +
+              s"reason=${live.flatMap(_.frozenReason).getOrElse("-")}): waking a frozen session would " +
+              "bypass the LoopGuard freeze via the user-input resetCrossTurn path (design §3.4 mutex 1a). " +
+              "Node left as-is; manual reactivation only.")
+          .as(None)
+      else
     store.snapshot.flatMap { snap =>
       NodeEngine.findNodeForSession(snap, sessionId) match
         case None =>
@@ -550,11 +568,15 @@ class NodeEngine(
         case Some(n) =>
           resources.sessionStore.loadMessagesForSession(sessionId).attempt.flatMap {
             case Right(msgs) if msgs.nonEmpty =>
+              // R-2：transcript 重放封顶（默认 40 条）——直击「重发全量 ~250k 上下文」
+              // 的 token 放大面。截断事实进 resume prompt（否则模型会以为上下文完整）。
+              val (replay, capped) = NodeEngine.capReplayMessages(msgs, nebflow.shared.Defaults.StuckRecoveryReplayMaxMsgs)
               val ctx = NodeEngine.ResumeContext(
                 sessionId = sessionId,
-                recoveredMessages = msgs,
-                resumePrompt = NodeEngine.nodeResumePrompt(projectName, n, msgs.size, n.bgWait) +
-                  NodeEngine.stuckResumeNote(anchor)
+                recoveredMessages = replay,
+                resumePrompt = NodeEngine.nodeResumePrompt(projectName, n, replay.size, n.bgWait) +
+                  NodeEngine.stuckResumeNote(anchor) +
+                  (if capped then NodeEngine.replayCapNote(msgs.size, replay.size) else "")
               )
               store.mutateWithResult { s =>
                 s.nodes.get(n.id) match
@@ -597,6 +619,7 @@ class NodeEngine(
                 s"[hard-recovery] no readable transcript for session $sessionId — node left terminal, manual re-trigger needed"
               ).as(None)
           }
+    }
     }
 
   /** R5 **方案 4**（取消静默死锁修复批 2026-09-10，作者裁定「L3 resume 失败 → 改判
@@ -3217,6 +3240,55 @@ object NodeEngine:
   def findNodeForSession(snap: FlowMapState, sessionId: String): Option[NodeDef] =
     snap.nodes.values.find(n =>
       n.sessionRef.contains(sessionId) || n.sessionRefVerify.contains(sessionId))
+
+  // ── P3：LoopGuard 互斥（§3.4 互斥点 1）与 R-2 的三个纯函数 ────────────────
+
+  /** 互斥点 1(a) 的判据（P3，设计 §3.4；纯函数，可独立单测）：会话仍处于冻结
+    * （`status==Frozen` 或 `frozenReason` 有值）⇒ 恢复必须**拒绝执行**——唤醒冻结
+    * 会话意味着走「用户输入」那条会 `resetCrossTurn` 的出口，等于绕过 LoopGuard 的
+    * 365 天冻结。`None`（会话已不在 registry）⇒ 不阻止（旧会话已被清场，resume 起
+    * 的是全新会话，天然不进 frozen behavior）。 */
+  def frozenSessionBlocksResume(live: Option[AgentRecord]): Boolean =
+    live.exists(r => r.status == AgentStatus.Frozen || r.frozenReason.isDefined)
+
+  /** 互斥点 1(b) 的判据（P3，设计 §3.4；纯函数，可独立单测）：**会话级原语**
+    * （`LlmInterface.transportAbortFor` / `BgTaskRegistry.reclaimSession`，即 L2 腿）
+    * 只在会话 `status == Processing` 时允许执行。
+    *
+    * 为什么必须**显式**（今日本就隐含——watcher 只扫 Processing）：会话级原语会波及
+    * 同根会话的其它状态（例如被 LoopGuard 冻结的会话仍持有同根身份），一旦将来放宽
+    * 扫描面（例如把 Frozen 纳入候选），这条约束就会**静默**失效。显式化 ⇒ 未来放宽
+    * 扫描面时本闸门仍然发声（与 §2.3 三条误报原则同款纪律）。
+    *
+    * 守卫定义在引擎侧（本函数）、**调用点在 `TaskStuckWatcher`**——与「不改
+    * `BgTaskRegistry`」的文件面纪律一致（`reclaimSession` 本体零改动）。 */
+  def sessionLevelPrimitiveAllowed(rec: AgentRecord): Boolean =
+    rec.status == AgentStatus.Processing
+
+  /** R-2：transcript 重放封顶（默认 [[nebflow.shared.Defaults.StuckRecoveryReplayMaxMsgs]]
+    * = 40 条）。保留**最近** `max` 条（越近越相关），并丢掉截断产生的**悬空
+    * tool_result 头**（其配对的 assistant `tool_use` 已被截掉——provider 侧会因
+    * 「tool_result 无对应 tool_use」拒绝请求，故必须一起丢掉）。
+    *
+    * 纯函数（零 IO、零 LLM）：边界可独立单测（≤max / 超限 / 全悬空 / 空输入）。
+    * 返回 `(封顶后的消息, 是否发生了截断)`；第二个值驱动 [[replayCapNote]]。 */
+  def capReplayMessages(msgs: List[Message], max: Int): (List[Message], Boolean) =
+    val n = math.max(1, max)
+    if msgs.size <= n then (msgs, false)
+    else
+      val tail = msgs.takeRight(n)
+      def orphanedToolResult(m: Message): Boolean = m.content match
+        case Right(blocks) =>
+          blocks.nonEmpty && blocks.forall(_.isInstanceOf[nebflow.shared.ContentBlock.ToolResult])
+        case Left(_) => false
+      val trimmed = tail.dropWhile(orphanedToolResult)
+      (if trimmed.isEmpty then tail else trimmed, true)
+
+  /** 截断事实的 resume prompt 声明（不可省略：不告知 ⇒ 模型会假定上下文完整）。
+    * 与 §3.3「超限则只带最近 40 条 + 摘要」同口径（摘要由模型自行按需读取工作区）。 */
+  def replayCapNote(total: Int, kept: Int): String =
+    s"\n（transcript 重放封顶：磁盘上有 $total 条消息，本次只重放最近 $kept 条——" +
+      "更早的上下文已省略；若需要早期细节，请自行读取工作区文件 / 项目文档。）"
 
   /** P2「挂起不终态化」哨兵（R-1=B）——见 [[NodeEngine.suspendNode]] 与
     * `runWithAgent` 的挂起分支。走既有 `AgentEvent.Cancelled` 载体（**不改跨模块消息
