@@ -248,6 +248,18 @@ class NodeEngine(
       case (_, false) => IO.unit
     }
 
+  /** 终态写点的计时清表纯函数（noderpt 批 A 段 2026-09-11）：**终态无计时语义** ⇒
+    * 状态写点与计时字段同事务清零，持久层不残留「终态节点带待申报计时」的误导态。
+    * 为什么不能只靠 [[clearReportPending]]（run fiber 收尾的 `cleanupRunTables`）：
+    * 存在**不经 run fiber** 的终态写点——boot 期 `reapStaleRunning`（死会话收殓）、
+    * `autoFailDeadRunning`、`mergeBlockedByUpstreamFailure`、NodeCancel 收殓等，
+    * 它们的节点从没有 fiber 可跑 finalizer ⇒ 计时会随节点进归档（隔离实例实跑读
+    * 数：reap 后归档的 cancelled 节点仍带 `reportPendingSince`/`reportReminderCount`）。
+    * 值已清 ⇒ 原样返回（零漂移，不发生无谓写）。 */
+  private def withoutReportPending(n: NodeDef): NodeDef =
+    if n.reportPendingSince.isEmpty && n.reportReminderCount == 0 then n
+    else n.copy(reportPendingSince = None, reportReminderCount = 0)
+
   /** 在飞登记三表的对称清理（僵尸收敛批 2026-09-06 清理硬化，根因报告漏洞①）：
     * running / nodeSessions / agentRegistry 三表在 runWithAgent 内登记后，只能由该
     * fiber 自己在 race 落定后清理——fiber 崩溃/被外部 cancel/悬死在 race 时三表泄漏
@@ -291,13 +303,13 @@ class NodeEngine(
       s <- store.mutate { st =>
         st.nodes.get(nodeId) match
           case Some(fresh) if fresh.status == NodeLifecycle.Running =>
-            st.copy(nodes = st.nodes.updated(nodeId, fresh.copy(
+            st.copy(nodes = st.nodes.updated(nodeId, withoutReportPending(fresh.copy(
               status = NodeLifecycle.Failed,
               result = Some(err),
               completedAt = Some(now),
               // 2026-09-07 作者裁定：failed/cancelled 无 TTL 强制清（同 blocked 既
               // 有语义）——死亡现场保留主图待上层裁决取消/重跑，不静默消失。
-              ttlExpireAt = None)))
+              ttlExpireAt = None))))
           case _ => st // 已终态/消失/状态已变 → 拒写（R2 竞态纪律）
       }
       _ <- s.nodes.get(nodeId) match
@@ -2604,11 +2616,11 @@ class NodeEngine(
       s <- store.mutate { st =>
         st.nodes.get(nodeId) match
           case Some(fresh) =>
-            st.copy(nodes = st.nodes.updated(nodeId, fresh.copy(
+            st.copy(nodes = st.nodes.updated(nodeId, withoutReportPending(fresh.copy(
               status = NodeLifecycle.Completed,
               result = Some(resultText),
               completedAt = Some(now),
-              ttlExpireAt = Some(now + NodeEngine.TtlDisplayMs))))
+              ttlExpireAt = Some(now + NodeEngine.TtlDisplayMs)))))
           case None => st
       }
       _ <- s.nodes.get(nodeId) match
@@ -2828,13 +2840,13 @@ class NodeEngine(
       s <- store.mutate { st =>
         st.nodes.get(nodeId) match
           case Some(fresh) if fresh.status == NodeLifecycle.Running =>
-            st.copy(nodes = st.nodes.updated(nodeId, fresh.copy(
+            st.copy(nodes = st.nodes.updated(nodeId, withoutReportPending(fresh.copy(
               status = NodeLifecycle.Blocked,
               result = Some(BlockedReader.render(feedback) + finalText.fold("")("\n\n" + _)),
               blockedFeedback = Some(feedback),
               blockCount = fresh.blockCount + 1,
               completedAt = Some(now),
-              ttlExpireAt = None)))
+              ttlExpireAt = None))))
           case _ => st // 节点已消失 / 状态已变 → 拒写（R2 竞态纪律）
       }
       _ <- s.nodes.get(nodeId) match
@@ -2856,12 +2868,12 @@ class NodeEngine(
       s <- store.mutate { st =>
         st.nodes.get(nodeId) match
           case Some(fresh) =>
-            st.copy(nodes = st.nodes.updated(nodeId, fresh.copy(
+            st.copy(nodes = st.nodes.updated(nodeId, withoutReportPending(fresh.copy(
               status = NodeLifecycle.Failed,
               result = Some(err),
               completedAt = Some(now),
               // 2026-09-07 作者裁定：failed 无 TTL 强制清——死亡现场保留待上层裁决。
-              ttlExpireAt = None)))
+              ttlExpireAt = None))))
           case None => st
       }
       _ <- s.nodes.get(nodeId) match
@@ -2927,12 +2939,12 @@ class NodeEngine(
       s <- store.mutate { st =>
         st.nodes.get(nodeId) match
           case Some(fresh) =>
-            st.copy(nodes = st.nodes.updated(nodeId, fresh.copy(
+            st.copy(nodes = st.nodes.updated(nodeId, withoutReportPending(fresh.copy(
               status = NodeLifecycle.Cancelled,
               result = Some(rendered), // R2：取消原因落盘（此前 cancelled result 恒空）
               completedAt = Some(now),
               // 2026-09-07 作者裁定：cancelled 无 TTL 强制清——保留主图待上层处置。
-              ttlExpireAt = None)))
+              ttlExpireAt = None))))
           case None => st
       }
       _ <- s.nodes.get(nodeId) match
@@ -3352,12 +3364,12 @@ class NodeEngine(
       s <- store.mutate { st =>
         st.nodes.get(target.id) match
           case Some(fresh) if MergeNodePolicy.haltsOnFailure(fresh) =>
-            st.copy(nodes = st.nodes.updated(target.id, fresh.copy(
+            st.copy(nodes = st.nodes.updated(target.id, withoutReportPending(fresh.copy(
               status = NodeLifecycle.Blocked,
               result = Some(MergeNodePolicy.renderBlocked(feedback)),
               blockedFeedback = Some(feedback),
               completedAt = Some(now),
-              ttlExpireAt = None)))
+              ttlExpireAt = None))))
           case _ => st // 状态已变（并发终态化）→ 拒写（R2 竞态纪律）
       }
       _ <- s.nodes.get(target.id) match

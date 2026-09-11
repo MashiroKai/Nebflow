@@ -517,6 +517,40 @@ class NodeReportReminderSpec extends CatsEffectSuite:
 
   // ── R6 腿 2 关闭 ⇒ 未申报照常放行（今天的降级面）─────────────────────
 
+  test("R8: a fiber-less terminal write (dead-session reap) clears the clock — no stale pending state") {
+    // 隔离实例实跑读数（noderpt-e2e，2026-09-11）：boot 期 `reapStaleRunning` 收殓的
+    // Running 节点**不经 run fiber** ⇒ 到不了 `cleanupRunTables` ⇒ 归档里残留
+    // reportPendingSince/reportReminderCount。本用例把「终态写点同事务清表」钉死。
+    setLadder("600000", 8)
+    val ws = tempRoot / "ws-r8"
+    os.makeDir.all(ws)
+    val system = ActorSystem(s"nrr-r8-${scala.util.Random.nextInt(100000)}")
+    val llm = StubLlm()
+    for
+      res <- mkResources(system, tempRoot, llm.handle)
+      _ <- IO(llm.res = res)
+      rt <- mountProject("nrr-r8", ws, system, res)
+      // store 直种一个 running 且带计时的节点（无活 fiber = boot 期僵尸形态）
+      _ <- rt.store.mutate { s =>
+        s.copy(nodes = s.nodes + ("n-r8-stale" -> NodeDef(
+          id = "n-r8-stale", name = "stale-node", agent = "general",
+          status = NodeLifecycle.Running, task = Some("probe"),
+          createdAt = System.currentTimeMillis(),
+          reportPendingSince = Some(System.currentTimeMillis() - 70000),
+          reportReminderCount = 3)))
+      }
+      _ <- rt.engine.reapStaleRunning("n-r8-stale")
+      reaped <- byName(rt, "stale-node")
+      events <- readEvents(ws)
+      _ <- system.stopAll.handleErrorWith(_ => IO.unit)
+    yield
+      assertEquals(reaped.status, NodeLifecycle.Cancelled, "reap finalizes the stale running node")
+      assertEquals(reaped.reportPendingSince, None, "terminal write must clear the pending clock")
+      assertEquals(reaped.reportReminderCount, 0, "terminal write must reset the rung counter")
+      assert(events.exists(_.contains("\"reaped\"")), s"reap audit line expected: $events")
+      assertEquals(reminderEvents(events), Nil, "a cancelled node must never be reminded")
+  }
+
   test("R6: with reportGateHold off an unreported hand-off finalizes as before (text-anchored fallback)") {
     setLadder("400", 8, "600000")
     val ws = tempRoot / "ws-r6"
