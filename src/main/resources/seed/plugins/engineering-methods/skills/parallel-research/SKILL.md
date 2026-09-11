@@ -58,7 +58,12 @@ last_verified: 2026-09-03
 - 幸存论断每条保留来源链接；结尾附合并来源清单（每条注明支撑哪个论断/章节）。
 - **不做新调研**——只综合各轨与核验给到的材料。
 - 报告结构：Executive summary（3-5 句直接回答）→ 主题章节（跨轨组织）→ Confidence & gaps（仍未验证/矛盾/无解的部分及原因）→ Sources。
-- 需要落盘时写 `~/.nebflow/docs/<域>/<YYYYMMDD>_research-<主题>.md`（阶段文档带日期前缀；配图入 `<域>/assets/`），不落 /tmp。
+- 需要落盘时写 `~/.nebflow/docs/<域>/<YYYYMMDD>_<HHMMSS>_research-<主题>.md`（阶段文档带日期前缀；配图入 `<域>/assets/`），不落 /tmp。规范见 `~/.nebflow/docs/CONVENTIONS.md`（权威：「文件名尾溯源规范」）。
+- 溯源只进**文件名尾**：阶段文档 `<YYYYMMDD>_<HHMMSS>_<topic>__<chainId>.md`（R-2 = 作者 07:56 原裁定形态）；多链 `<topic>__<主链Id>+<次链Id>.md`；**无归属不带尾段**（不得编造）；活文档（无日期前缀）同规则——有归属才带 `...__<chainId>.md`。
+- 本 discipline 的 topic 槽 = `research-<主题>`：有归属时 `20260911_095312_research-<主题>__chain-n-01fcb885.md`，无归属时 `20260911_095312_research-<主题>.md`。
+- 正文**零元数据头**：`chain`/`chains`/`chain-source`/`chain-role`/`produced-by`/`produced-at`/`doc-class`/`root` 一律不写进正文。
+- 与既有 `-<n>` 同秒消歧并存（唯一性消歧 ≠ 已禁的版本副本 `-vN`）。
+- 存量冻结：零改名、零搬移、零回改。
 
 ## 建图注记（分发器参考）
 
