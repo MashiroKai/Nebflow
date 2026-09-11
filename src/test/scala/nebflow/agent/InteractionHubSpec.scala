@@ -184,7 +184,8 @@ class InteractionHubSpec extends CatsEffectSuite:
       requestId: String,
       gotAnswers: Ref[IO, Option[List[String]]],
       rootSid: String = "root-1",
-      system: nebflow.actor.ActorSystem
+      system: nebflow.actor.ActorSystem,
+      payloadAgentName: Option[String] = None
   ): IO[InteractionRequest] =
     system
       .spawn(
@@ -197,13 +198,28 @@ class InteractionHubSpec extends CatsEffectSuite:
         InteractionRequest(
           requestId = requestId,
           kind = InteractionKind.AskUser,
-          payload = Json.obj("items" -> Json.arr(), "agentName" -> Json.fromString("Frontend")),
+          payload = Json.obj(
+            "items" -> Json.arr(),
+            "agentName" -> Json.fromString(payloadAgentName.getOrElse("Frontend"))
+          ),
           reply = InteractionReply.AskUserReply(Some(sink)),
           rootSessionId = rootSid,
           sourceAgent = "Frontend",
           sourceSession = "team-abc"
         )
       }
+
+  /** ListPendingAsks 的 reply 通道：收快照后 complete Deferred。 */
+  private def awaitReply(
+      d: Deferred[IO, List[Json]],
+      system: nebflow.actor.ActorSystem
+  ): nebflow.actor.ActorRef[List[Json]] =
+    system
+      .spawn(
+        nebflow.actor.Behaviors.receiveMessage[List[Json]] { l => d.complete(l).void.as(nebflow.actor.Behaviors.stopped) },
+        s"pending-snapshot-sink-${System.nanoTime()}"
+      )
+      .unsafeRunSync()
 
   test("chat-input passthrough: pending AskUser consumes text as tool result + card closes + slot removed") {
     val system = nebflow.actor.ActorSystem("hub-passthrough-1")
@@ -270,7 +286,12 @@ class InteractionHubSpec extends CatsEffectSuite:
     end for
   }
 
-  test("chat-input passthrough: consumes only the OLDEST AskUser — queued cards survive untouched") {
+  // U2 = B2（作者裁定 2026-09-11）：多候选并存时输入框直通**不消费**——同桶内
+  // 多张 pending 卡时，把文本当 answers 投给 oldest 那张可能答错卡（内核会按错误
+  // 答案继续执行，代价不对称）⇒ reply.complete(false) 让网关回落正常 dispatch，
+  // 用户须点卡作答。本用例是该裁定之前「consumes only the OLDEST」用例的**反向
+  // 重写**：旧行为断言（hit=true + oldest 被消费）在此即红，正是 B2 的验红锚。
+  test("B2: chat-input passthrough REFUSES when several AskUser cards are pending — no card consumed") {
     val system = nebflow.actor.ActorSystem("hub-passthrough-4")
     for
       hub <- mkHub(system)
@@ -282,9 +303,6 @@ class InteractionHubSpec extends CatsEffectSuite:
       _ <- hub ! InteractionHubCommand.Request(reqA)
       // 同步点：A 渲染可见 ⟹ A 的 pending.update（含 createdAt）已完成
       _ <- awaitCond(sent.get.map(_.exists(isCard("askUser", "pt-old"))))
-      // 时钟分辨率保险：createdAt 是毫秒粒度，且两 Request 的 forkTurn fiber
-      // 并发执行——确保 B 的注册时间严格晚于 A（同毫秒 tie 会退化成
-      // m.toList 哈希序定 OLDEST，非确定）
       _ <- IO.sleep(10.millis)
       reqB <- askRequest("pt-new", gotB, system = system)
       _ <- hub ! InteractionHubCommand.Request(reqB)
@@ -292,20 +310,75 @@ class InteractionHubSpec extends CatsEffectSuite:
       answered <- Deferred[IO, Boolean]
       _ <- hub ! InteractionHubCommand.AnswerViaChatInput("root-1", "first answer", answered)
       hit <- answered.get
-      // sink actor fire-and-forget 记账——有界轮询落定再读
+      _ <- IO.sleep(80.millis)
+      // 两张卡都还在：文本没有落到任何一张（oldest 也没有）
+      aAns0 <- gotA.get
+      // 两张卡仍可分别按 requestId 作答（B2 只是不消费，不是关卡）
+      _ <- hub ! InteractionHubCommand.Answered(
+        InteractionAnswered("pt-old", "root-1", Json.obj("answers" -> Json.arr(Json.fromString("A pick"))))
+      )
       _ <- awaitCond(gotA.get.map(_.isDefined))
       aAns <- gotA.get
-      // 场景② invariant: the QUEUED (newer) card is untouched — still answerable
       _ <- hub ! InteractionHubCommand.Answered(
-        InteractionAnswered("pt-new", "root-1", Json.obj("answers" -> Json.arr(Json.fromString("later pick"))))
+        InteractionAnswered("pt-new", "root-1", Json.obj("answers" -> Json.arr(Json.fromString("B pick"))))
       )
       _ <- awaitCond(gotB.get.map(_.isDefined))
       bAns <- gotB.get
       _ <- system.stopAll
     yield
-      assertEquals(hit, true)
-      assertEquals(aAns, Some(List("first answer"))) // oldest consumed
-      assertEquals(bAns, Some(List("later pick"))) // queued card intact
+      assertEquals(hit, false) // 网关回落正常 dispatch（文本按普通消息走）
+      assertEquals(aAns0, None) // 多卡时 0 消费——oldest 也不再被吃
+      assertEquals(aAns, Some(List("A pick"))) // 点卡路径照旧各自可达
+      assertEquals(bAns, Some(List("B pick")))
+    end for
+  }
+
+  test("B2 负控/U4 正控: single pending card still consumes chat input (B2 must not degrade to 'no passthrough')") {
+    val system = nebflow.actor.ActorSystem("hub-passthrough-4b")
+    for
+      hub <- mkHub(system)
+      sent <- Ref.of[IO, List[Json]](Nil)
+      _ <- hub ! InteractionHubCommand.RegisterRoot("root-1", (j: Json) => sent.update(_ :+ j))
+      got <- Ref.of[IO, Option[List[String]]](None)
+      req <- askRequest("pt-single", got, system = system)
+      _ <- hub ! InteractionHubCommand.Request(req)
+      _ <- awaitCond(sent.get.map(_.exists(isCard("askUser", "pt-single"))))
+      answered <- Deferred[IO, Boolean]
+      _ <- hub ! InteractionHubCommand.AnswerViaChatInput("root-1", "only card answer", answered)
+      hit <- answered.get
+      _ <- awaitCond(got.get.map(_.isDefined))
+      ans <- got.get
+      _ <- system.stopAll
+    yield
+      assertEquals(hit, true) // 单卡：直通生效（输入框仍是合法作答通道）
+      assertEquals(ans, Some(List("only card answer")))
+    end for
+  }
+
+  // U3（作者裁定 2026-09-11：显示 `subagent · <任务摘要>`）：内核会话的来源标注
+  // 由 AgentActor 写进 payload.agentName；hub 渲染时必须**保留**它（既有的
+  // `add("agentName", sourceAgent)` 会覆盖）。断言含重放路径（ListPendingAsks）。
+  test("U3: payload's explicit agentName (kernel 'subagent · <task>') survives rendering + replay") {
+    val system = nebflow.actor.ActorSystem("hub-kernel-label")
+    val label = "subagent · 拉 D:\\build 日志"
+    for
+      hub <- mkHub(system)
+      sent <- Ref.of[IO, List[Json]](Nil)
+      _ <- hub ! InteractionHubCommand.RegisterRoot("root-1", (j: Json) => sent.update(_ :+ j))
+      got <- Ref.of[IO, Option[List[String]]](None)
+      req <- askRequest("k-1", got, system = system, payloadAgentName = Some(label))
+      _ <- hub ! InteractionHubCommand.Request(req)
+      _ <- awaitCond(sent.get.map(_.exists(isCard("askUser", "k-1"))))
+      replayed <- Deferred[IO, List[Json]]
+      _ <- hub ! InteractionHubCommand.ListPendingAsks("root-1", awaitReply(replayed, system))
+      snapshot <- replayed.get
+      _ <- system.stopAll
+    yield
+      val card = sent.get.unsafeRunSync().find(isCard("askUser", "k-1")).get
+      assertEquals(card.hcursor.downField("agentName").as[String], Right(label))
+      assertEquals(card.hcursor.downField("sourceAgent").as[String], Right("Frontend"))
+      val replayedCard = snapshot.find(_.hcursor.downField("requestId").as[String].contains("k-1")).get
+      assertEquals(replayedCard.hcursor.downField("agentName").as[String], Right(label))
     end for
   }
 

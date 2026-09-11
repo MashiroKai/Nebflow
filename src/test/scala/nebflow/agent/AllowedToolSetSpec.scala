@@ -218,9 +218,10 @@ class AllowedToolSetSpec extends FunSuite:
   test("Delegate is Nebula-exclusive; SubTask is the team-member delegation tool"):
     val nebula = mkDef("Nebula", List("Read", "Delegate"))
     val teamAgent = mkDef("backend", List("Read", "SubTask"))
-    // 2026-09-05 08:40 作者裁定：旧体系对 Nebula 完全退役——Delegate 声明
-    // （converged 面声明本就失效）与机制固定携带一并移除。
-    assert(!CoreProbe.allowed(nebula).contains("Delegate"), "Nebula no longer carries Delegate (2026-09-05 旧体系退役)")
+    // 2026-09-11 Delegate 恢复批：Delegate 以「极简内核」形态回归 Nebula 固定面
+    // （机制固定携带；agent.json 声明对 converged 面依旧失效）。非 Nebula 身份
+    // 仍由 NebulaExclusiveTools 剥离（防声明逃逸语义不变，见下方断言）。
+    assert(CoreProbe.allowed(nebula).contains("Delegate"), "Nebula carries Delegate again (2026-09-11 极简内核回归)")
     assert(!CoreProbe.allowed(nebula).contains("SubTask"), "Nebula does not need SubTask (unless listed)")
     assert(!CoreProbe.allowed(teamAgent).contains("Delegate"), "non-Nebula never gets Delegate")
     assert(CoreProbe.allowed(teamAgent).contains("SubTask"), "team agent with SubTask listed keeps it")
@@ -295,8 +296,8 @@ class AllowedToolSetSpec extends FunSuite:
     val nebula = mkDef("Nebula", List("Read", "Delegate"))
     val allowed = CoreProbe.allowed(nebula)
     assert(!allowed.contains("SubTask"), "Nebula (standalone category) unchanged — no SubTask")
-    // 2026-09-05 08:40 作者裁定：Delegate 已从 Nebula 固定面移除。
-    assert(!allowed.contains("Delegate"), "Nebula no longer keeps Delegate (2026-09-05 旧体系退役)")
+    // 2026-09-11 Delegate 恢复批：以极简内核形态回归 Nebula 固定面（机制固定）。
+    assert(allowed.contains("Delegate"), "Nebula carries Delegate again (2026-09-11 极简内核回归)")
 
   // ===== Flow agents: Mail structurally disabled (08-14 P0 root cause) =====
 
@@ -367,14 +368,16 @@ class AllowedToolSetSpec extends FunSuite:
     val allowed = CoreProbe.allowed(defn)
     assert(!allowed.contains("FlowExecute"), "wildcard team member: FlowExecute retired (2026-09-06)")
 
-  test("Nebula does not get FlowExecute (2026-09-05 旧体系退役)"):
+  test("Nebula does not get FlowExecute (2026-09-05 旧体系退役；Delegate 例外已于 2026-09-11 回归)"):
     // 原口径「Nebula (root) gets FlowExecute without declaration」随
-    // 2026-09-05 08:40 作者裁定废止：旧 Team/Flow 体系对 Nebula 完全退役，
-    // FlowExecute/Delegate 均不在 Nebula 固定面。
+    // 2026-09-05 08:40 作者裁定废止：旧 Team/Flow 体系对 Nebula 完全退役。
+    // 注：Delegate 于 2026-09-11 以「极简内核」形态回归（不携带 Team/Flow 语义），
+    // FlowTrigger/FlowExecute 维持退役。
     val nebula = mkDef("Nebula", List("Read", "Delegate"))
     val allowed = CoreProbe.allowed(nebula)
     assert(!allowed.contains("FlowExecute"), "Nebula no longer carries FlowExecute (2026-09-05 旧体系退役)")
-    assert(!allowed.contains("Delegate"), "Nebula no longer carries Delegate (2026-09-05 旧体系退役)")
+    assert(!allowed.contains("FlowTrigger"), "Nebula no longer carries FlowTrigger (2026-09-05 旧体系退役)")
+    assert(!allowed.contains("Mail"), "Nebula no longer carries Mail (2026-09-05 旧体系退役)")
 
   test("standalone agents do NOT get FlowExecute"):
     val solo = mkDef("solo", List("Read", "Grep"))
@@ -532,6 +535,7 @@ class AllowedToolSetSpec extends FunSuite:
     // 必须携带完整矩阵——面板编辑/定义失误无法解除调度器武装。
     val orchestration = Set(
       "Task", "ProjectCreate", "AgentControl",             // 编排触发（NodeList 00:48 裁定摘除）
+      "Delegate",                                          // 编排触发（2026-09-11 极简内核回归）
       "TaskList",                                          // 任务编排（TaskList 批：快变状态出记忆）
       "SendMessage",                                       // 通信（好友功能非旧体系，保留）
       "Read", "Glob", "Grep",                              // 读三件（08:40 解禁四件；23:34 收走写手）
@@ -547,9 +551,11 @@ class AllowedToolSetSpec extends FunSuite:
     )
     assert(!allowed.contains("Issue"), "恰十四件、零 Issue（2026-09-04 终裁：Issue/CheckIssues 退役）")
     assert(!allowed.contains("NodeList"), "恰十四件、零 NodeList（2026-09-06 00:48 裁定摘除）")
-    Set("Mail", "Delegate", "FlowTrigger", "FlowExecute").foreach { t =>
-      assert(!allowed.contains(t), s"旧体系四件已从 Nebula 固定面退役（2026-09-05 08:40 作者裁定）: $t")
+    Set("Mail", "FlowTrigger", "FlowExecute").foreach { t =>
+      assert(!allowed.contains(t), s"旧体系三件维持退役（2026-09-05 08:40 作者裁定）: $t")
     }
+    // 2026-09-11 Delegate 恢复批：Delegate 以极简内核形态回归（本件是加法不是翻案）
+    assert(allowed.contains("Delegate"), "Delegate 以极简内核形态回归 Nebula 固定面（2026-09-11）")
     // 钉死断言（2026-09-05 23:34 作者裁定）：Nebula 机制集不含 Bash、不含
     // Write、不含 Edit——变异验红锚
     assert(!allowed.contains("Bash"), "Nebula 无写手：Bash 已移除（23:34 裁定）")

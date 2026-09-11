@@ -27,12 +27,15 @@ import nebflow.shared.{ContentBlock, Message, MessageRole}
  *     set (see AgentCore.buildAllowedToolSet), and the Worker Identity Block
  *     appended to its system prompt declares it has no team.
  *   - **Ephemeral only**: the adapter deletes the worker's session store entry
- *     on completion — no `subtask-*` residue.
+ *     on completion for the **worker** sessions it owns; historical `subtask-*`
+ *     residue from earlier batches is reaped by the tracked-cleanup sweep
+ *     (2026-09-10 批), not by this adapter alone.
  *   - Result is delivered to the parent via ExternalEvent(source="subtask")
  *     exactly like Delegate's background mode.
  *
- * Depth limit: when depth >= MaxDepth, the tool is filtered out by
- * buildToolList in AgentCore, preventing infinite recursion.
+ * Depth limit: `call` rejects at depth >= MaxDepth (`AgentCore.MaxDepth`); the
+ * worker face is then a leaf (Mail/SubTask/Delegate stripped), so recursion
+ * cannot continue past that point.
  */
 object SubTaskTool extends Tool:
   private val logger = NebflowLogger(getClass)
@@ -59,7 +62,7 @@ A task with 2+ independent parts — different file domains, or different nature
 - Steps depend on each other (Step B needs Step A's output) — do serially
 - Trivial — faster to just do it yourself
 - Subtasks touch the same files — conflict risk
-- You need to target a specific agent or trigger a flow — those are Nebula's Delegate / Mail semantics
+- You need a one-shot executor outside any project, or a flow trigger — those are Nebula-side: `Delegate` (minimal kernel sub-agent) / Mail(→flow) semantics
 
 **Rules:**
 - The prompt MUST be self-contained — the worker has no history, no memory, no team context. It must include: (1) background & goal, (2) all inputs (file paths, data, references), (3) constraints (files to touch/avoid, style, commit policy), (4) definition of done, (5) the exact report format for the worker's final message.
@@ -129,7 +132,7 @@ A task with 2+ independent parts — different file domains, or different nature
       // spawn copies of itself, even if a custom agent.json lists the tool.
       IO.pure(
         Left(ToolError(
-          "SubTask is not available to the root agent — the root orchestrator (Nebula) exists exactly once and must never be self-cloned (issue #28). Use Delegate with an explicit standalone target instead."
+          "SubTask is not available to the root agent — the root orchestrator (Nebula) exists exactly once and must never be self-cloned (issue #28). For a one-shot executor outside any project use Delegate instead (it targets the built-in kernel sub-agent)."
         ))
       )
     else

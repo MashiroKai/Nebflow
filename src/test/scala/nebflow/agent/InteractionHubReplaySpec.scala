@@ -178,7 +178,8 @@ class InteractionHubReplaySpec extends CatsEffectSuite:
   }
 
   // ============================================================
-  // (d) 多卡排队：最老在前，与输入框直通消费最老卡语义一致
+  // (d) 多卡排队：重发按创建序（最老在前）。[2026-09-11 U2=B2] 输入框直通在**多卡
+  // 并存时不消费**——旧用例的「直通消费最老卡」断言已按 B2 反向重写。
   // ============================================================
 
   test("(d) 同 root 会话多个 pending ask 按创建序重发（最老在前）") {
@@ -195,8 +196,10 @@ class InteractionHubReplaySpec extends CatsEffectSuite:
       _ <- hub ! InteractionHubCommand.Request(reqNewer)
       _ <- IO.sleep(80.millis)
       snap <- hub.?[List[Json]](reply => InteractionHubCommand.ListPendingAsks("root-1", reply))
-      // 输入框直通消费最老卡（既有语义）——快照顺序与此一致
-      _ <- hub ! InteractionHubCommand.AnswerViaChatInput("root-1", "直通答案", cats.effect.Deferred.unsafe[IO, Boolean])
+      // U2=B2：多卡并存时输入框直通不消费任何卡（文本回落正常 dispatch）
+      hitD <- cats.effect.Deferred[IO, Boolean]
+      _ <- hub ! InteractionHubCommand.AnswerViaChatInput("root-1", "直通答案", hitD)
+      hit <- hitD.get
       _ <- IO.sleep(80.millis)
       afterOlder <- gotOlder.get
       afterNewer <- gotNewer.get
@@ -207,6 +210,12 @@ class InteractionHubReplaySpec extends CatsEffectSuite:
         List("replay-d-old", "replay-d-new"),
         "快照按创建序（最老在前）"
       )
-      assertEquals(afterOlder, Some(List("直通答案")), "直通消费最老卡 —— 与快照首帧一致")
+      assertEquals(hit, false, "B2：多卡并存 ⇒ 直通拒绝（网关回落正常 dispatch）")
+      assertEquals(afterOlder, None, "最老卡不再被直通吃掉（B2）")
       assertEquals(afterNewer, None, "后问的卡保持 pending")
+      assertEquals(
+        snap.map(_.hcursor.downField("requestId").as[String].getOrElse("")),
+        List("replay-d-old", "replay-d-new"),
+        "B2 拒绝后两卡都还在（快照仍按创建序）"
+      )
   }

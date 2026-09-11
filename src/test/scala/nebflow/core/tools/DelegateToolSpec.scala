@@ -6,11 +6,25 @@ import io.circe.Json
 import io.circe.JsonObject
 import io.circe.syntax.*
 import munit.CatsEffectSuite
-import nebflow.agent.{AgentDef, AgentLibrary}
+import nebflow.agent.{AgentDef, AgentLibrary, AgentStatus}
 import nebflow.core.PathUtil
 
+/**
+ * DelegateTool 前门（2026-09-11 Delegate 恢复批 · 极简内核形态）：
+ *
+ *  1. schema 面：恰三参数 `task`/`description`/`device`（旧 `agent`/`lifecycle`/
+ *     `taskDescription`/`images`/`preset`/`prompt` 全部退役——旧断言在本文件里
+ *     逐条反向钉死）。
+ *  2. 目标解析：内置 `kernel` def；缺失给自描述错误（不再有 standalone 目录）。
+ *  3. R9 并发：每根会话 ≤ 4（U4=D1：等待答复占额度；错误含在飞清单 + 等待标注）。
+ *  4. 设备预检：无 NebLink 时带 `device=` **fail-fast**（不静默本地执行）。
+ *  5. description 硬事实：绝对路径 / Bash cwd 不保证 / 4 并发 / 3600s 预算。
+ *
+ * 无 ActorSystem 的用例停在「requires ActorSystem and SharedResources」——spawn
+ * 链本身由隔离实例 e2e 覆盖（见交付结果 §②）。
+ */
 class DelegateToolSpec extends CatsEffectSuite:
-  private val tempRoot: os.Path = os.pwd / "target" / "test-delegate-agent"
+  private val tempRoot: os.Path = os.pwd / "target" / "test-delegate-kernel"
   PathUtil.setDataRoot(tempRoot)
   private val agentsDir = tempRoot / "agents"
   private val lib = AgentLibrary(agentsDir)
@@ -19,7 +33,12 @@ class DelegateToolSpec extends CatsEffectSuite:
     IO.delay { if os.exists(tempRoot) then os.remove.all(tempRoot) } *>
       IO.delay { os.makeDir.all(agentsDir) }
 
-  private def writeAgent(name: String, category: String = "standalone"): Unit =
+  /** 写一个 agent 定义（默认写内核；`name` 可换以验证「目标恒为 kernel」）。 */
+  private def writeAgent(
+      name: String = "kernel",
+      category: String = "standalone",
+      touchSystemMd: Boolean = true
+  ): Unit =
     val dir = agentsDir / name
     os.makeDir.all(dir)
     os.write(
@@ -28,23 +47,19 @@ class DelegateToolSpec extends CatsEffectSuite:
         .obj(
           "name" -> name.asJson,
           "description" -> s"$name agent".asJson,
-          "useWhen" -> "".asJson,
           "tools" -> Json.arr("*".asJson),
           "category" -> category.asJson
         )
         .noSpaces
     )
-    os.write(dir / "system.md", s"You are $name.")
+    if touchSystemMd then os.write(dir / "system.md", s"You are $name.")
 
-  end writeAgent
-
-  // Build a minimal ToolContext with just agentLibrary set (no ActorSystem etc.)
-  private def ctxWith(lib: Option[AgentLibrary] = Some(lib)): ToolContext =
+  private def ctxWith(libOpt: Option[AgentLibrary] = Some(lib)): ToolContext =
     ToolContext(
       sessionId = Some("test"),
       sessionStore = None,
-      agentDef = Some(AgentDef(name = "Caller", description = "", tools = List("*"), systemPrompt = "")),
-      agentLibrary = lib,
+      agentDef = Some(AgentDef(name = "Nebula", description = "", tools = List("*"), systemPrompt = "")),
+      agentLibrary = libOpt,
       agentActorRef = None,
       actorSystem = None,
       sharedResources = None,
@@ -54,224 +69,153 @@ class DelegateToolSpec extends CatsEffectSuite:
       projectRoot = ""
     )
 
-  test("agent parameter with non-existent agent returns error"):
+  private def props: Set[String] =
+    DelegateTool.inputSchema("properties").flatMap(_.asObject).map(_.keys.toSet).getOrElse(Set.empty)
+
+  private def required: List[String] =
+    DelegateTool.inputSchema("required").flatMap(_.asArray).map(_.flatMap(_.asString).toList).getOrElse(Nil)
+
+  // ---------- 1. schema 面 ----------
+
+  test("schema: exactly task/description/device — the legacy parameters are gone"):
+    assertEquals(props, Set("task", "description", "device"))
+    assertEquals(required, List("task", "description"))
+    Set("prompt", "agent", "lifecycle", "taskDescription", "images", "preset").foreach { legacy =>
+      assert(!props.contains(legacy), s"legacy parameter must be deleted from the schema: $legacy")
+    }
+    assertEquals(DelegateTool.name, "Delegate")
+
+  test("description carries the hard facts (absolute paths / cwd / 4 in flight / 3600s budget)"):
+    val d = DelegateTool.description
+    assert(d.contains("ABSOLUTE paths"), "description must state the absolute-path fact")
+    assert(d.toLowerCase.contains("working directory is not guaranteed"), "description must state the cwd fact")
+    assert(d.contains("4 kernel sessions in flight"), "description must state the R9 limit")
+    assert(d.contains("3600s"), "description must state the wall-clock budget")
+    // 旧语义残留守护：不再有 standalone 目标 / persistent 模式 / images 参数
+    assert(!d.contains("standalone agent"), "standalone-target wording must be gone")
+    assert(!d.contains("persistent"), "persistent mode must be gone")
+
+  test("summarize: description + optional device target"):
+    assertEquals(DelegateTool.summarize(JsonObject("description" -> "pull log".asJson)), "Delegate(pull log)")
+    assertEquals(
+      DelegateTool.summarize(JsonObject("description" -> "pull log".asJson, "device" -> "KAI".asJson)),
+      "Delegate(pull log @ KAI)"
+    )
+
+  // ---------- 2. 目标解析 ----------
+
+  test("task is required: empty task fails with a self-describing error"):
     for
       _ <- reset()
-      input = JsonObject("prompt" -> "do work".asJson, "description" -> "task".asJson, "agent" -> "Ghost".asJson)
-      result <- DelegateTool.call(input, ctxWith())
-    yield
-      assert(result.isLeft, "should return Left")
-      assert(
-        result.swap.toOption.get.message.contains("not found"),
-        s"error should mention 'not found': ${result.swap.toOption.get.message}"
+      input = JsonObject("task" -> "  ".asJson, "description" -> "x".asJson)
+      res <- DelegateTool.call(input, ctxWith())
+    yield res match
+      case Left(err) => assert(err.message.contains("Missing required parameter: task"), err.message)
+      case Right(v)  => fail(s"expected failure for empty task, got: $v")
+
+  test("kernel definition missing → self-describing error (no standalone catalog any more)"):
+    for
+      _ <- reset()
+      input = JsonObject("task" -> "do work".asJson, "description" -> "x".asJson)
+      res <- DelegateTool.call(input, ctxWith())
+    yield res match
+      case Left(err) =>
+        assert(err.message.contains("Kernel agent definition 'kernel' not found"), err.message)
+        assert(err.message.contains("~/.nebflow/agents/kernel"), err.message)
+        assert(!err.message.contains("Targetable standalone agents"), "standalone catalog must be gone")
+      case Right(v) => fail(s"expected kernel-missing failure, got: $v")
+
+  test("no agent library → self-describing error"):
+    for res <- DelegateTool.call(JsonObject("task" -> "t".asJson), ctxWith(libOpt = None))
+    yield assert(res.left.exists(_.message.contains("No agent library")), res.toString)
+
+  test("target is fixed to the built-in kernel def — a non-kernel agent named in the call is impossible"):
+    for
+      _ <- reset()
+      _ = writeAgent(name = "kernel")
+      _ = writeAgent(name = "Coder")
+      // 合法内核定义存在 + 无 ActorSystem ⇒ 走到 spawn 前置检查（证明解析成功）
+      res <- DelegateTool.call(JsonObject("task" -> "do work".asJson, "description" -> "x".asJson), ctxWith())
+    yield res match
+      case Left(err) => assert(err.message.contains("requires ActorSystem"), err.message)
+      case Right(v)  => fail(s"expected spawn-prerequisite failure, got: $v")
+
+  test("depth limit still applies (kernel is a leaf, depth < MaxDepth required)"):
+    for
+      _ <- reset()
+      _ = writeAgent(name = "kernel")
+      deep = ctxWith().copy(depth = DelegateTool.MaxDepth)
+      res <- DelegateTool.call(JsonObject("task" -> "t".asJson, "description" -> "x".asJson), deep)
+    yield assert(res.left.exists(_.message.contains("Maximum sub-agent depth")), res.toString)
+
+  // ---------- 3. R9 并发（U4=D1） ----------
+
+  test("R9: the 5th concurrent call is rejected with the in-flight list (4 already in flight)"):
+    val three = (1 to 3).toList.map(i => DelegateTool.InFlight(s"delegate-kernel-0000000$i", AgentStatus.Processing, 1000L))
+    assert(DelegateTool.concurrencyError(three, now = 1000L).isEmpty, "3 in flight ⇒ the 4th call is admitted")
+    val four = three :+ DelegateTool.InFlight("delegate-kernel-00000004", AgentStatus.Processing, 1000L)
+    val err = DelegateTool.concurrencyError(four, now = 61_000L).getOrElse(fail("the 5th call must be rejected"))
+    assert(err.message.contains("Delegate concurrency limit reached"), err.message)
+    assertEquals(err.message.linesIterator.count(_.trim.startsWith("- delegate-kernel-")), 4)
+    assert(err.message.contains("status=Processing"), err.message)
+
+  test("R9/U4=D1: sessions waiting for an answer count toward the limit and are flagged"):
+    val waiting = DelegateTool.InFlight("delegate-kernel-wait0001", AgentStatus.WaitingForUser, 1000L)
+    val inFlight = waiting :: (2 to 4).toList.map(i => DelegateTool.InFlight(s"delegate-kernel-0000000$i", AgentStatus.Processing, 1000L))
+    val err = DelegateTool.concurrencyError(inFlight, now = 5000L).getOrElse(fail("limit must be enforced"))
+    assert(err.message.contains("delegate-kernel-wait0001"), err.message)
+    assert(err.message.contains("WAITING for the user's answer"), err.message)
+    assert(err.message.contains("ruling U4=D1"), err.message)
+
+  test("R9 负控: after one finishes (2 in flight) delegation is allowed again"):
+    val two = (1 to 2).toList.map(i => DelegateTool.InFlight(s"delegate-kernel-0000000$i", AgentStatus.Processing, 0L))
+    assert(DelegateTool.concurrencyError(two, now = 0L).isEmpty)
+    assertEquals(DelegateTool.MaxConcurrentPerRoot, 4)
+
+  // ---------- 4. 设备预检（fail-fast，不静默本地执行） ----------
+
+  test("device precheck: unknown device fails fast when NebLink is not initialized (never a silent local run)"):
+    // 隔离实例上 RemoteExecutor.current 只在 GatewayMain initialize 后非空；本
+    // 单元测试 JVM 里通常为 None。若同 JVM 的其它 spec 初始化了它，则跳过（用
+    // assume）而不是给出假绿。
+    assume(RemoteExecutor.current.isEmpty, "NebLink initialized in this JVM — covered by the isolated e2e instead")
+    for
+      _ <- reset()
+      _ = writeAgent(name = "kernel")
+      res <- DelegateTool.call(
+        JsonObject("task" -> "restart the service".asJson, "description" -> "x".asJson, "device" -> "KAI".asJson),
+        ctxWith()
       )
+    yield res match
+      case Left(err) =>
+        assert(err.message.contains("""device="KAI""""), err.message)
+        assert(err.message.contains("NebLink"), err.message)
+        assert(err.message.contains("run LOCALLY"), err.message)
+      case Right(v) => fail(s"expected fail-fast for unknown device, got: $v")
 
-  test("agent parameter with non-standalone agent returns error"):
+  test("device precheck 负控: no device parameter ⇒ no fail-fast (local runs are the default)"):
     for
       _ <- reset()
-      _ <- IO(writeAgent("TeamWorker", category = "team"))
-      input = JsonObject("prompt" -> "do work".asJson, "description" -> "task".asJson, "agent" -> "TeamWorker".asJson)
-      result <- DelegateTool.call(input, ctxWith())
-    yield
-      assert(result.isLeft, "should return Left")
-      assert(
-        result.swap.toOption.get.message.contains("not a standalone"),
-        s"error should mention 'not a standalone': ${result.swap.toOption.get.message}"
-      )
+      _ = writeAgent(name = "kernel")
+      res <- DelegateTool.call(JsonObject("task" -> "do work".asJson, "description" -> "x".asJson), ctxWith())
+    yield res match
+      case Left(err) =>
+        // 走到 spawn 前置检查即证明设备预检没有拦（它只在 device 非空时生效）
+        assert(err.message.contains("requires ActorSystem"), err.message)
+      case Right(v) => fail(s"expected spawn-prerequisite failure, got: $v")
 
-  test("agent parameter with standalone agent resolves (spawns target, not self)"):
-    for
-      _ <- reset()
-      _ <- IO(writeAgent("Coder"))
-      input = JsonObject(
-        "prompt" -> "write code".asJson,
-        "description" -> "code task".asJson,
-        "agent" -> "Coder".asJson
-      )
-      result <- DelegateTool.call(input, ctxWith())
-    yield
-      // Without ActorSystem the tool returns Left "Delegate requires ActorSystem..."
-      // — but only AFTER agent resolution succeeds. If agent resolution failed,
-      // we'd get a "not found" / "not standalone" error instead.
-      assert(result.isLeft, "should return Left (no ActorSystem)")
-      assert(
-        !result.swap.toOption.get.message.contains("not found"),
-        "should not be a 'not found' error — agent resolved OK"
-      )
-      assert(
-        !result.swap.toOption.get.message.contains("not a standalone"),
-        "should not be a 'not standalone' error — agent resolved OK"
-      )
-      assert(
-        result.swap.toOption.get.message.contains("ActorSystem"),
-        s"should be the ActorSystem error (agent resolved, spawn failed): ${result.swap.toOption.get.message}"
-      )
+  // ---------- 5. 内核工具面常量（装配面单点来源） ----------
 
-  test("no agent parameter is rejected — self-clone banned (#28)"):
-    for
-      _ <- reset()
-      _ <- IO(writeAgent("Coder"))
-      input = JsonObject("prompt" -> "do work".asJson, "description" -> "task".asJson)
-      result <- DelegateTool.call(input, ctxWith())
-    yield
-      assert(result.isLeft, "must be rejected — nothing may spawn")
-      val msg = result.swap.toOption.get.message
-      assert(msg.contains("Missing required parameter: agent"), s"must name the missing agent param: $msg")
-      assert(msg.contains("#28"), s"must cite issue #28: $msg")
-      assert(msg.contains("Coder"), s"must list targetable standalone agents: $msg")
+  test("kernel tool face = BaseTools + AskUserQuestion (7 items) and excludes Delegate/SubTask/TaskBoard"):
+    val face = nebflow.agent.AgentCore.KernelFixedTools
+    assertEquals(face, nebflow.agent.AgentCore.BaseTools + "AskUserQuestion")
+    assertEquals(face.size, 7)
+    Set("Delegate", "SubTask", "Task", "TaskBoard", "node_report", "AgentControl", "Mail").foreach { t =>
+      assert(!face.contains(t), s"kernel must not hold: $t")
+    }
+    assertEquals(nebflow.agent.AgentCore.fixedToolsFor(AgentDef(name = "kernel", description = "", tools = Nil, systemPrompt = "")), face)
 
-  test("no agent parameter rejected even without a library (#28)"):
-    for
-      _ <- reset()
-      input = JsonObject("prompt" -> "do work".asJson, "description" -> "task".asJson)
-      result <- DelegateTool.call(input, ctxWith(lib = None))
-    yield
-      assert(result.isLeft, "must be rejected before any library/spawn concern")
-      assert(
-        result.swap.toOption.get.message.contains("Missing required parameter: agent"),
-        s"got: ${result.swap.toOption.get.message}"
-      )
+  test("kernel agent.json declaration is inert (ConvergedAgentNames) — mechanism-fixed only"):
+    assert(nebflow.agent.AgentCore.ConvergedAgentNames.contains("kernel"))
 
-  test("agent='Nebula' is rejected — root orchestrator must never be spawned (#28)"):
-    for
-      _ <- reset()
-      // category defaults to "standalone" exactly like the runtime Nebula def —
-      // the category check alone must NOT let it through
-      _ <- IO(writeAgent("Nebula"))
-      _ <- IO(writeAgent("Coder"))
-      input = JsonObject("prompt" -> "do work".asJson, "description" -> "task".asJson, "agent" -> "Nebula".asJson)
-      result <- DelegateTool.call(input, ctxWith())
-    yield
-      assert(result.isLeft, "must be rejected — nothing may spawn")
-      val msg = result.swap.toOption.get.message
-      assert(msg.contains("must never be spawned"), s"must explain the #28 ban: $msg")
-      assert(!msg.contains("ActorSystem"), s"rejection happens at resolve time, before spawn: $msg")
-
-  test("agent naming the caller itself is rejected — self-clone via the back door (#28)"):
-    for
-      _ <- reset()
-      _ <- IO(writeAgent("Caller")) // ctx.agentDef is named "Caller"
-      input = JsonObject("prompt" -> "do work".asJson, "description" -> "task".asJson, "agent" -> "Caller".asJson)
-      result <- DelegateTool.call(input, ctxWith())
-    yield
-      assert(result.isLeft, "must be rejected — nothing may spawn")
-      val msg = result.swap.toOption.get.message
-      assert(msg.contains("calling agent itself"), s"must identify the self-target: $msg")
-      assert(!msg.contains("ActorSystem"), s"rejection happens at resolve time, before spawn: $msg")
-
-  test("agent parameter but no agentLibrary returns 'No agent library' error"):
-    for
-      _ <- reset()
-      input = JsonObject("prompt" -> "do work".asJson, "description" -> "task".asJson, "agent" -> "Coder".asJson)
-      result <- DelegateTool.call(input, ctxWith(lib = None))
-    yield
-      assert(result.isLeft)
-      assert(result.swap.toOption.get.message.contains("No agent library"), s"got: ${result.swap.toOption.get.message}")
-
-  test("empty prompt returns error before agent resolution"):
-    for
-      _ <- reset()
-      _ <- IO(writeAgent("Coder"))
-      input = JsonObject("prompt" -> "".asJson, "description" -> "task".asJson, "agent" -> "Coder".asJson)
-      result <- DelegateTool.call(input, ctxWith())
-    yield
-      assert(result.isLeft)
-      assert(result.swap.toOption.get.message.contains("Missing required parameter: prompt"))
-
-  test("summarize includes target agent when specified"):
-    val input = JsonObject("description" -> "task".asJson, "agent" -> "Coder".asJson)
-    val summary = DelegateTool.summarize(input)
-    assert(summary.contains("Coder"), s"summarize should include target agent: $summary")
-
-  test("summarize without agent does not include arrow"):
-    val input = JsonObject("description" -> "task".asJson)
-    val summary = DelegateTool.summarize(input)
-    assert(!summary.contains("→"), s"summarize should not include arrow without agent: $summary")
-
-  test("stray flow parameter is ignored — Delegate spawns sub-agents only (2026-09-06 retirement)"):
-    // 2026-09-06 工具面裁撤批：FlowTrigger 已退役，R1 split 时代的「flow=
-    // 引导拒绝」分支随之删除。传入 flow= 不再产生专用错误——它不是合法参数，
-    // 静默忽略后按缺 agent 正常拒绝（自含目录清单）。
-    for
-      _ <- reset()
-      input = JsonObject(
-        "prompt" -> "do work".asJson,
-        "description" -> "task".asJson,
-        "flow" -> "code-review".asJson
-      )
-      result <- DelegateTool.call(input, ctxWith())
-    yield
-      assert(result.isLeft, "missing agent must still reject the call")
-      val msg = result.swap.toOption.get.message
-      assert(msg.contains("Missing required parameter: agent"), s"normal agent-missing path: $msg")
-      assert(!msg.contains("FlowTrigger"), s"FlowTrigger guidance must be gone (retired): $msg")
-
-  test("inputSchema no longer includes the flow parameter"):
-    val props = DelegateTool.inputSchema("properties").flatMap(_.asObject)
-    assert(props.isDefined, "properties should be an object")
-    assert(!props.get.contains("flow"), "flow parameter must be gone from the schema")
-
-  test("inputSchema includes agent parameter"):
-    val schema = DelegateTool.inputSchema
-    val props = schema("properties").flatMap(_.asObject)
-    assert(props.isDefined, "properties should be an object")
-    assert(props.get.contains("agent"), "schema should include 'agent' property")
-
-  test("inputSchema requires agent (#28)"):
-    val schema = DelegateTool.inputSchema
-    val required = schema("required").flatMap(_.asArray).toList.flatten.flatMap(_.asString)
-    assert(required.contains("agent"), s"agent must be a required parameter: $required")
-
-  test("inputSchema no longer includes the fork parameter (#28)"):
-    val props = DelegateTool.inputSchema("properties").flatMap(_.asObject)
-    assert(props.isDefined, "properties should be an object")
-    assert(!props.get.contains("fork"), "fork must be gone — it only applied to the banned self-clone path")
-
-  test("inputSchema includes preset parameter (#291)"):
-    val schema = DelegateTool.inputSchema
-    val props = schema("properties").flatMap(_.asObject)
-    assert(props.isDefined, "properties should be an object")
-    assert(props.get.contains("preset"), "schema should include 'preset' property")
-
-  test("preset parameter with unknown name returns self-describing error (#291)"):
-    for
-      _ <- reset()
-      _ <- IO(writeAgent("Coder"))
-      input = JsonObject(
-        "prompt" -> "do work".asJson,
-        "description" -> "task".asJson,
-        "agent" -> "Coder".asJson,
-        "preset" -> "Bogus".asJson
-      )
-      result <- DelegateTool.call(input, ctxWith())
-    yield
-      assert(result.isLeft, "unknown preset must fail")
-      val msg = result.swap.toOption.get.message
-      assert(msg.contains("'Bogus' not found"), s"error should mention the preset name: $msg")
-      assert(msg.contains("Available presets:"), s"error should list available presets: $msg")
-
-  test("preset parameter with existing name passes preset resolution (fails later on missing ActorSystem)"):
-    // A valid preset resolves the def; with no ActorSystem the failure must be
-    // about the missing actor system, NOT about the preset.
-    for
-      _ <- reset()
-      _ <- IO(writeAgent("Coder"))
-      _ <- IO.delay {
-        os.write.over(
-          tempRoot / "model-presets.json",
-          """{"defaultPreset":"general","presets":{"general":{"name":"general","description":"","preferred":"mock/mock-model","fallbacks":[]}}}"""
-        )
-      }
-      input = JsonObject(
-        "prompt" -> "do work".asJson,
-        "description" -> "task".asJson,
-        "agent" -> "Coder".asJson,
-        "preset" -> "general".asJson
-      )
-      result <- DelegateTool.call(input, ctxWith())
-    yield
-      assert(result.isLeft, "no ActorSystem → Left")
-      val msg = result.swap.toOption.get.message
-      assert(msg.contains("ActorSystem"), s"valid preset should pass; failure is about ActorSystem: $msg")
-      assert(!msg.contains("not found"), s"valid preset must not be reported missing: $msg")
 end DelegateToolSpec

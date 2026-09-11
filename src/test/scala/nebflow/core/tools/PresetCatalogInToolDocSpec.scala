@@ -62,15 +62,14 @@ class PresetCatalogInToolDocSpec extends FunSuite:
       .flatMap(_.asString)
       .getOrElse(fail("preset parameter missing from schema"))
 
-  test("Delegate inputSchema embeds live catalog from the store"):
+  // 2026-09-11 Delegate 恢复批：`preset` 参数随「目标恒为内置 kernel def」一并退役
+  // ——内核的模型选型归 ~/.nebflow/agents/kernel/agent.json 的定义层，不再每次
+  // 调用重选。本用例是该退役的反向钉死（旧正向断言在此即红）。
+  test("Delegate inputSchema has NO preset parameter any more (per-call model override retired)"):
     val schema = DelegateTool.inputSchema
-    val doc = presetParamDoc(schema)
-    // Static semantics preserved
-    assert(doc.contains("overrides the sub-agent's own preset/model"))
-    // Catalog consistency: every preset in the real store appears in the doc
-    // (environment-independent — self-consistent with the same file both read)
-    val names = PresetStore.catalogLines().map(_.takeWhile(c => c != ' ' && c != '—').trim)
-    names.foreach(n => assert(doc.contains(n), s"preset $n missing from Delegate preset doc"))
+    val props = schema("properties").flatMap(_.asObject).map(_.keys.toSet).getOrElse(Set.empty)
+    assert(!props.contains("preset"), s"preset must be gone from Delegate schema, got: $props")
+    assertEquals(props, Set("task", "description", "device"))
 
   test("SubTask inputSchema embeds live catalog from the store"):
     val doc = presetParamDoc(SubTaskTool.inputSchema)
