@@ -97,17 +97,90 @@ object CardTool extends Tool:
       case -1 => ""
       case i => path.substring(i + 1).toLowerCase
 
-  private def isAllowedMedia(path: String): Boolean =
-    AllowedExtensions.contains(fileExtension(path))
+  /**
+   * Why a local-looking file reference could not be turned into an
+   * /api/nf-file URL.
+   *
+   * 2026-09-11 (carderr batch — author report 11:57): the Card tool used to
+   * drop such references silently — the raw value stayed in the HTML, the
+   * sandboxed iframe resolved it against about:srcdoc → 404 → an invisible
+   * blank box, and the tool result said nothing at all. The author hit
+   * exactly that with `<img src="~/projects/gamma-telescope/reports/…svg">`
+   * (empirical chain: `.nebflow/evidence/20260911_carderr-impl/`). Every
+   * rejection is now reported in the tool result under `warnings`.
+   *
+   * NOTE — `out-of-proxy-root` is deliberately NOT a member of this enum:
+   * GET /api/nf-file (WebSocketRoutes.scala:4848-4868) enforces token +
+   * extension whitelist only and confines no root, so CardTool must not
+   * invent a root the endpoint does not have.
+   */
+  enum FileRefFailure(val code: String, val what: String):
+    /** 不存在 */
+    case NotFound extends FileRefFailure("not-found", "the file does not exist")
+    /** 不可解析 */
+    case Unresolvable
+        extends FileRefFailure("unresolvable", "the reference could not be resolved to a filesystem path")
+    /** 扩展名不在白名单 */
+    case ExtensionNotAllowed
+        extends FileRefFailure("extension-not-allowed", "/api/nf-file does not serve this extension")
+    /** 超过大小上限 */
+    case SizeExceeded extends FileRefFailure("size-exceeded", "the file is larger than the proxy size limit")
+    /** 非常规文件 */
+    case NotRegularFile extends FileRefFailure("not-regular-file", "the path is not a regular file")
+    /** 其它 */
+    case Other extends FileRefFailure("other", "probing the file failed")
+
+  /** One rejected reference, as reported in the tool result + card payload. */
+  private[tools] case class RejectedRef(
+      value: String,
+      resolved: Option[String],
+      failure: FileRefFailure,
+      detail: String
+  )
+
+  /** What to do with one src/href value. */
+  private enum RefDecision:
+    case Proxy(url: String)
+    case Ignore
+    case Reject(rejected: RejectedRef)
+
+  /** One card's local-file pass: rewritten HTML plus every rejected reference. */
+  private[tools] case class EmbedOutcome(html: String, proxied: Int, rejects: List[RejectedRef])
+
+  /**
+   * Reference kinds that are never local disk files: inline data, remote URLs,
+   * in-document anchors, script URLs, mail/uuid-ish schemes, and the app's own
+   * API surface — `/api/` is excluded so an already-proxied
+   * `/api/nf-file?path=…` URL is never re-reported as a broken reference.
+   */
+  private val NonFileRefPrefixes = List(
+    "data:",
+    "http://",
+    "https://",
+    "//",
+    "#",
+    "javascript:",
+    "mailto:",
+    "tel:",
+    "blob:",
+    "about:",
+    "/api/"
+  )
 
   private def isLocalFilePath(s: String): Boolean =
-    !s.startsWith("data:") &&
-      !s.startsWith("http://") &&
-      !s.startsWith("https://") &&
-      !s.startsWith("//") &&
-      !s.startsWith("#") &&
-      !s.startsWith("javascript:") &&
-      s.nonEmpty
+    s.nonEmpty && !NonFileRefPrefixes.exists(prefix => s.toLowerCase.startsWith(prefix))
+
+  /** A file extension at the very end of the value (`~`, `/`, or `foo.png` shapes). */
+  private val FileExtensionSuffix = """\.[A-Za-z0-9]{1,6}$""".r
+
+  /**
+   * A reference "looks like a local file" when it is `~`/`/` anchored or ends
+   * in a file extension — the shapes the docs tell agents to use. Bare
+   * extension-less strings are ignored: they are not path-shaped enough to
+   * warn about (documented boundary, see the evidence file).
+   */
+  private def looksLikeFilePath(s: String): Boolean =
+    s.startsWith("~") || s.startsWith("/") || FileExtensionSuffix.findFirstIn(s).isDefined
 
   /** Resolve a path string (supports ~ expansion) to a normalized java.nio.file.Path. */
   private def resolvePath(s: String): Option[Path] =
@@ -117,58 +190,182 @@ object CardTool extends Tool:
       if p.toString.nonEmpty then Some(p) else None
     catch case _: Exception => None
 
+  /** Closest existing ancestor of `p` — the single most useful hint when a
+    *  reference points at a path root that does not exist (author's case:
+    *  `~/projects/…` while the project workspace lives under `~/.nebflow/`). */
+  @annotation.tailrec
+  private def nearestExistingParent(p: Path, hops: Int = 0): Option[Path] =
+    val parent = p.getParent
+    if parent == null || hops >= 16 then None
+    else if Files.exists(parent) then Some(parent)
+    else nearestExistingParent(parent, hops + 1)
+
+  private def hasTemplatePlaceholder(s: String): Boolean =
+    s.contains("${") || s.contains("{{")
+
+  /** Absolute, normalized form used in warnings + `resolvedPath` (a relative
+    *  candidate is reported against the JVM working directory). */
+  private def describe(path: Path): String = path.toAbsolutePath.normalize.toString
+
   /**
-   * Try to convert a local file path to an /api/nf-file URL.
-   * Returns Some(url) if the file exists and is a whitelisted media file, None otherwise.
+   * Classify one src/href value: proxy it, ignore it, or reject it with a reason.
+   *
+   * Only `~`/`/` anchored references are ever proxied. Relative references stay
+   * unproxied and now WARN instead of silently doing nothing — that also keeps
+   * `?path=images/logo.png` (resolved by the endpoint against the *server's*
+   * working directory) out of the URL space, which the docs always promised.
    */
-  private def tryEmbed(value: String): Option[String] =
-    if !isLocalFilePath(value) || !isAllowedMedia(value) then None
+  private def decideRef(rawValue: String): RefDecision =
+    val value = rawValue.trim
+    if !isLocalFilePath(value) || !looksLikeFilePath(value) then RefDecision.Ignore
+    else if !value.startsWith("~") && !value.startsWith("/") then
+      RefDecision.Reject(
+        RejectedRef(
+          value,
+          None,
+          FileRefFailure.Unresolvable,
+          "relative references are never resolved — use an absolute path (`/Users/you/…`) or `~/…`"
+        )
+      )
+    else if hasTemplatePlaceholder(value) then
+      RefDecision.Reject(
+        RejectedRef(
+          value,
+          None,
+          FileRefFailure.Unresolvable,
+          "the reference contains a template placeholder — resolve it to a real path before emitting the card"
+        )
+      )
     else
       resolvePath(value) match
-        case None => None
+        case None =>
+          RefDecision.Reject(
+            RejectedRef(value, None, FileRefFailure.Unresolvable, "the reference is not a usable filesystem path")
+          )
         case Some(path) =>
-          try
-            if !Files.exists(path) || !Files.isRegularFile(path) then None
-            else if Files.size(path) > MaxFileSize then None
-            else
-              val encoded = java.net.URLEncoder.encode(path.toString, "UTF-8")
-              Some(s"/api/nf-file?path=$encoded")
-          catch case _: Exception => None
+          val ext = fileExtension(value)
+          if !AllowedExtensions.contains(ext) then
+            RefDecision.Reject(
+              RejectedRef(
+                value,
+                Some(describe(path)),
+                FileRefFailure.ExtensionNotAllowed,
+                s"'.$ext' is not in the proxied extension whitelist (images / video / audio / fonts / pdf / office / js / css / json)"
+              )
+            )
+          else
+            try
+              if !Files.exists(path) then
+                val hint = nearestExistingParent(path)
+                  .map(parent => s"; the nearest existing parent directory is ${describe(parent)}")
+                  .getOrElse("")
+                RefDecision.Reject(
+                  RejectedRef(
+                    value,
+                    Some(describe(path)),
+                    FileRefFailure.NotFound,
+                    s"no file at ${describe(path)}$hint"
+                  )
+                )
+              else if !Files.isRegularFile(path) then
+                RefDecision.Reject(
+                  RejectedRef(
+                    value,
+                    Some(describe(path)),
+                    FileRefFailure.NotRegularFile,
+                    s"${describe(path)} is a directory or another non-regular file"
+                  )
+                )
+              else
+                val size = Files.size(path)
+                if size > MaxFileSize then
+                  RefDecision.Reject(
+                    RejectedRef(
+                      value,
+                      Some(describe(path)),
+                      FileRefFailure.SizeExceeded,
+                      s"$size bytes exceeds the ${MaxFileSize / (1024 * 1024)}MB proxy limit"
+                    )
+                  )
+                else
+                  val encoded = java.net.URLEncoder.encode(path.toString, "UTF-8")
+                  RefDecision.Proxy(s"/api/nf-file?path=$encoded")
+            catch
+              case e: Exception =>
+                RefDecision.Reject(
+                  RejectedRef(
+                    value,
+                    Some(describe(path)),
+                    FileRefFailure.Other,
+                    s"${e.getClass.getSimpleName}: ${Option(e.getMessage).getOrElse("")}"
+                  )
+                )
 
   /**
-   * Scan HTML for src= and href= attributes pointing to local files,
-   * and replace paths with /api/nf-file?path=... URLs.
-   * Non-whitelisted files are silently skipped (left as-is).
+   * Scan HTML for src= and href= attributes pointing to local files and
+   * replace the ones that can be proxied with /api/nf-file?path=... URLs.
+   *
+   * Rejected references keep their raw value (a broken reference must not
+   * take the whole card down) but are returned in `EmbedOutcome.rejects` so
+   * the caller can report them. Matches from both regexes are merged in
+   * document order — the previous src-then-href concatenation spliced a
+   * later-listed href before an earlier src and threw on such cards.
    */
-  private def embedLocalFiles(html: String): String =
-    val srcReplacements = SrcAttrRegex
-      .findAllMatchIn(html)
-      .flatMap { m =>
-        val value = m.group(1)
-        tryEmbed(value).map(url => (m.start(1), m.end(1), url))
-      }
-    val hrefReplacements = HrefAttrRegex
-      .findAllMatchIn(html)
-      .flatMap { m =>
-        val value = m.group(1)
-        tryEmbed(value).map(url => (m.start(1), m.end(1), url))
-      }
-    val replacements = (srcReplacements ++ hrefReplacements).toSeq
+  private def embedLocalFiles(html: String): EmbedOutcome =
+    val matches = (SrcAttrRegex.findAllMatchIn(html) ++ HrefAttrRegex.findAllMatchIn(html)).toList.sortBy(_.start)
+    val decisions = matches.map(m => (m.start(1), m.end(1), decideRef(m.group(1))))
+    val rejects = decisions.collect { case (_, _, RefDecision.Reject(rejected)) => rejected }
+    val replacements = decisions.collect { case (start, end, RefDecision.Proxy(url)) => (start, end, url) }
 
-    if replacements.isEmpty then html
-    else
-      val sb = new StringBuilder(html.length + replacements.size * 128)
-      var lastEnd = 0
-      for (start, end, replacement) <- replacements do
-        sb.append(html.substring(lastEnd, start))
-        sb.append(replacement)
-        lastEnd = end
-      sb.append(html.substring(lastEnd, html.length))
-      val result = sb.toString
-      if result != html then logger.debug(s"Embedded ${replacements.size} local file(s) via /api/nf-file")
-      result
-    end if
+    val rewritten =
+      if replacements.isEmpty then html
+      else
+        val sb = new StringBuilder(html.length + replacements.size * 128)
+        var lastEnd = 0
+        for (start, end, replacement) <- replacements do
+          sb.append(html.substring(lastEnd, start))
+          sb.append(replacement)
+          lastEnd = end
+        sb.append(html.substring(lastEnd, html.length))
+        sb.toString
+
+    if rewritten != html then logger.debug(s"Embedded ${replacements.size} local file(s) via /api/nf-file")
+    EmbedOutcome(rewritten, replacements.size, rejects)
   end embedLocalFiles
+
+  /** Distinct rejected references listed in the tool result; further ones are
+    *  counted but not listed, so a pathological card cannot blow up the result. */
+  private val MaxListedWarnings = 20
+
+  /** Group identical (value, reason) rejections, preserving first-seen order. */
+  private[tools] def distinctRejections(rejects: List[RejectedRef]): List[(RejectedRef, Int)] =
+    val grouped = scala.collection.mutable.LinkedHashMap.empty[(String, String), (RejectedRef, Int)]
+    rejects.foreach { rejected =>
+      val key = (rejected.value, rejected.failure.code)
+      grouped.get(key) match
+        case Some((first, count)) => grouped.update(key, (first, count + 1))
+        case None                 => grouped.update(key, (rejected, 1))
+    }
+    grouped.values.toList
+
+  /** The sentinel prefix the frontend splits the JSON payload on (cardRegistry.js
+    *  `^___\w+_HTML___`); nothing may be appended after the JSON. */
+  private val CardSentinel = "___CARD_HTML___"
+
+  /** Distinct failed file references carried by an already-built card result. */
+  private def unresolvedFileRefs(result: String): Int =
+    if !result.startsWith(CardSentinel) then 0
+    else
+      io.circe.parser
+        .parse(result.substring(CardSentinel.length))
+        .toOption
+        .flatMap(_.asObject)
+        .flatMap(_.apply("fileRefs"))
+        .flatMap(_.asObject)
+        .flatMap(_.apply("failed"))
+        .flatMap(_.asNumber)
+        .flatMap(_.toInt)
+        .getOrElse(0)
 
   val name = "Card"
 
@@ -271,7 +468,11 @@ dot -Tsvg -o /tmp/output.svg input.dot
 
 ### Embedding external content
 
-HTML must be self-contained (all styles/tags inline, no external CSS/JS). Local file paths in src/href are automatically served by the backend. **You MUST use absolute paths** (e.g. `/Users/you/project/plot.png` or `~/project/plot.png`). Relative paths will NOT be resolved."""
+HTML must be self-contained (all styles/tags inline, no external CSS/JS).
+
+Local file paths in `src`/`href` are proxied by the backend to `/api/nf-file`, so **you MUST use absolute paths** — `/Users/you/project/plot.png`, `/tmp/output.svg`, or `~/.nebflow/projects/<name>/reports/plot.svg`. `~` expands to the user's home directory, and project workspaces live under `~/.nebflow/projects/<name>/` — write that full path, not `~/projects/<name>/…`. Relative paths are never resolved.
+
+Every reference that could not be proxied is reported in this tool's result under `warnings` (`ref` → `resolvedPath` → `reason`: not-found / unresolvable / extension-not-allowed / size-exceeded / not-regular-file, plus `fileRefs` counts) and renders as a visible placeholder in the card instead of a silent blank box. Read `warnings` and fix the references before finishing."""
 
   /**
    * Load user design prompt from disk (cached by mtime).
@@ -366,7 +567,9 @@ Card is for **presenting** results, not for drawing them. Always generate images
 - html (string, required): HTML with CSS and JS. Dark mode via var(--color-*).
 - title (string, optional): title above card.
 
-Note: When referencing local files (images, videos, etc.) in `src` or `href` attributes, you MUST use absolute paths (e.g. `/Users/you/project/plot.png` or `~/project/plot.png`). The backend will automatically proxy these files. Relative paths will NOT work.
+Note: Local file paths in `src`/`href` are proxied by the backend to `/api/nf-file`, so **you MUST use absolute paths** — `/Users/you/project/plot.png`, `/tmp/output.svg`, or `~/.nebflow/projects/<name>/reports/plot.svg`. `~` expands to the user's home directory, and project workspaces live under `~/.nebflow/projects/<name>/` — write that full path, not `~/projects/<name>/…`. Relative paths are never resolved.
+
+Every reference that could not be proxied is reported in this tool's result under `warnings` (`ref` → `resolvedPath` → `reason`: not-found / unresolvable / extension-not-allowed / size-exceeded / not-regular-file, plus `fileRefs` counts) and renders as a visible placeholder in the card instead of a silent blank box. Read `warnings` and fix the references before finishing.
 
 Example (graphviz SVG via img — recommended default):
 {"html":"<img src=\"/tmp/output.svg\" style=\"width:100%;height:auto;display:block\" alt=\"Architecture\"/>","title":"Architecture"}
@@ -409,14 +612,46 @@ Example (interactive 3D with Three.js):
       case Some(rawHtml) =>
         val title = extractTitle(input)
         IO.blocking {
-          val html = embedLocalFiles(rawHtml)
+          val outcome = embedLocalFiles(rawHtml)
+          val distinct = distinctRejections(outcome.rejects)
+          val listed = distinct.take(MaxListedWarnings)
+          if distinct.nonEmpty then
+            logger.warn(
+              s"Card: ${outcome.rejects.size} local file reference(s) NOT proxied (" +
+                listed.map { case (rejected, count) => s"${rejected.value} [${rejected.failure.code}]x$count" }.mkString(", ") +
+                ")"
+            )
           val payload = Json
             .obj(
-              "html" -> html.asJson,
+              // Warnings come FIRST on purpose: ToolResultGuard replaces the
+              // LLM-visible content of a result over 50K chars with the first
+              // 2048 chars + a persisted-file pointer (ToolResultGuard.scala
+              // persistAndReplace). A big card would push a trailing warning
+              // section out of that preview — leading with fileRefs/warnings
+              // keeps the failure visible to the model in every case.
+              // Field order is irrelevant to the frontend (property access on
+              // the parsed object), so this stays contract-compatible.
+              "fileRefs" -> Json.obj(
+                "proxied" -> outcome.proxied.asJson,
+                "failed" -> distinct.size.asJson,
+                "omitted" -> (distinct.size - listed.size).asJson
+              ),
+              "warnings" -> Json.arr(
+                listed.map { case (rejected, count) =>
+                  Json.obj(
+                    "ref" -> rejected.value.asJson,
+                    "resolvedPath" -> rejected.resolved.fold(Json.Null: Json)(path => path.asJson),
+                    "reason" -> rejected.failure.code.asJson,
+                    "detail" -> rejected.detail.asJson,
+                    "count" -> count.asJson
+                  )
+                }*
+              ),
+              "html" -> outcome.html.asJson,
               "title" -> title.asJson
             )
             .noSpaces
-          Right(s"___CARD_HTML___$payload")
+          Right(s"$CardSentinel$payload")
         }
 
       case None =>
@@ -473,6 +708,9 @@ Example (interactive 3D with Three.js):
 
   def summarizeResult(input: JsonObject, result: String): String =
     val title = input("title").flatMap(_.asString).getOrElse("Card")
-    s"$title rendered"
+    val failed = unresolvedFileRefs(result)
+    // Visibility (carderr batch): a card whose local references were dropped
+    // used to look like a clean `Card rendered` in the chat header as well.
+    if failed > 0 then s"$title rendered — $failed file reference(s) NOT proxied" else s"$title rendered"
 
 end CardTool
