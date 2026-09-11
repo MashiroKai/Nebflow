@@ -323,9 +323,11 @@
 }
 .flow-blocked-raw > summary:hover { color: var(--color-text); }
 .flow-blocked-raw[open] > summary { margin-bottom: 6px; }
+/* 2026-09-11 滚动一体化批：原 max-height:300px + overflow-y:auto 的区内滚动条已删
+   ——展开后原文随详情卡同一滚动容器（.fm-detail-body）铺开。`<details>` 折叠结构
+   本身保留（既有设计，非本批对象）。共享 class `.flow-agent-block-readonly` 本体
+   （flowCss.js 注入，flowViewers.js 多处复用并自带 inline 高度）零改动。 */
 .flow-blocked-raw .flow-agent-block-readonly {
-  max-height: 300px;
-  overflow-y: auto;
   white-space: pre-wrap;
   border: 1px solid var(--color-border);
   border-radius: 8px;
@@ -761,10 +763,12 @@
 .fm-detail-close:focus-visible { outline: none; box-shadow: 0 0 0 2px rgb(var(--sapphire) / 0.55); border-radius: 4px; }
 .fm-detail-body {
   flex: 1; min-height: 0; overflow-y: auto; padding: 12px 14px;
-  display: flex; flex-direction: column; /* 结果区独占剩余高度并区内滚动（20260904 全文显示） */
+  display: flex; flex-direction: column; /* 卡内唯一竖向滚动容器（2026-09-11 滚动一体化批） */
   scrollbar-width: thin; scrollbar-color: var(--color-frame-border) transparent;
 }
-/* flex 列内 meta/blocked/task/标题不收缩（挤压守卫）；结果区 .fm-detail-result 例外 */
+/* flex 列内全部子块不收缩（挤压守卫）：meta/desc/blocked/config/task/结果 一律
+   按内容自然高度铺开，溢出由 .fm-detail-body 这一个滚动条承担（2026-09-11 滚动
+   一体化批：旧注释里「结果区 .fm-detail-result 例外」的 flex 自增口径已退役）。 */
 .fm-detail-body > * { flex: 0 0 auto; }
 .fm-detail-meta {
   font: 400 11px/1.7 -apple-system, BlinkMacSystemFont, sans-serif;
@@ -803,18 +807,19 @@
   font: 400 11.5px/1.55 -apple-system, BlinkMacSystemFont, sans-serif; color: var(--color-text-muted);
   white-space: pre-wrap; word-break: break-word;
   border: 1px solid rgba(128, 128, 128, 0.12); border-radius: 8px; background: rgba(128, 128, 128, 0.05);
-  padding: 8px 10px; max-height: 140px; overflow-y: auto; scrollbar-width: thin;
+  padding: 8px 10px;
+  /* 2026-09-11 滚动一体化批：原 max-height:140px + overflow-y:auto（区内滚动）已删
+     ——任务全文随整卡同一滚动容器铺开。 */
 }
+/* 结果区（2026-09-11 滚动一体化批，作者口径「滚动全部一起滚动，结果完全展示」）：
+   与卡内其余内容同属 `.fm-detail-body` 这一个竖向滚动容器——本块不再自持滚动条/
+   不设高度上限，按内容自然高度铺开（结果全文完全展示、无区内滚动/无截断/无折叠），
+   随 body 一起位移。flex 由上方 `.fm-detail-body > *` 的 0 0 auto 承担（旧口径的
+   flex:1 1 auto + min-height:96px「结果区独占剩余高度并区内滚动」已整体退役）。
+   全文仍由既有按需通道（fetchNodeResult → applyFullResult）换装，本块只改布局职责。 */
 .fm-detail-result {
   font: 400 11.5px/1.55 -apple-system, BlinkMacSystemFont, sans-serif;
   color: var(--color-text); word-break: break-word; overflow-wrap: anywhere;
-  /* 独立滚动（20260904 作者反馈「节点结果要能完整显示」）：结果区吃满 body 剩余高度，
-   * 超出即区内滚动、滚动被 contain 在区内（不外链动摇详情窗本体——.fm-detail 为
-   * absolute 定位契约不变）。min-height 96px 为极矮视口保底：不足 96px 时结果区不再
-   * 收缩，由 body 的 overflow-y:auto 兜底滚动。短结果 flex-basis auto 不产生空盒。 */
-  flex: 1 1 auto; min-height: 96px;
-  overflow-y: auto; overscroll-behavior: contain;
-  scrollbar-width: thin; scrollbar-color: var(--color-frame-border) transparent;
 }
 /* markdown 正文（flow-mail-content 同语言）*/
 .fm-md p { margin: 4px 0; }
@@ -827,6 +832,14 @@
   font: 400 0.9em ui-monospace, SFMono-Regular, Menlo, monospace; word-break: break-all;
 }
 .fm-md pre { background: var(--color-frame-hover); padding: 8px 12px; border-radius: 8px; overflow-x: auto; margin: 6px 0; }
+/* 代码块复制按钮的定位上下文（2026-09-11 滚动一体化批附带修复，验收口径 D）：
+   renderMarkdown 注入的 .code-copy-btn 为 absolute 定位（top:4px/right:4px），而
+   .fm-md 此前缺 `.code-block-wrap { position: relative }`（.bubble.ai 与
+   .canvas-md-viewer 两处同款范式均有）→ 按钮落到最近定位祖先 = .fm-detail 卡本体
+   右上角，恰好压住 .fm-detail-close：opacity:0 不挡命中测试，实测 elementFromPoint
+   命中 .code-copy-btn ⇒ 关闭按钮不可点（改前读数见本批 evidence）。规则同族复用，
+   零新视觉样式族。 */
+.fm-md .code-block-wrap { position: relative; margin: 6px 0; }
 .fm-md pre code { background: none; padding: 0; word-break: normal; }
 .fm-md blockquote { border-left: 3px solid var(--color-border); margin: 6px 0; padding-left: 10px; color: var(--color-text-muted); }
 .fm-md h1, .fm-md h2, .fm-md h3, .fm-md h4, .fm-md h5, .fm-md h6 { margin: 8px 0 4px; font-weight: 600; }
