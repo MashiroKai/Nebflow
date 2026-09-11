@@ -718,12 +718,12 @@ object TaskStuckWatcher:
     * 不重试、不改判、不 kill；**一期不回流分发器**（`NotifyReason` 无 stuck 类值，
     * 与 R7 taxonomy 一起做——任务书 ③ 口径）。 */
   private def checkL3Outcome(resources: SharedResources, p: PendingL3, l3VerifyDelayMs: Long): IO[Unit] =
-    nebflow.core.project.ProjectRuntimeRegistry.all.flatMap { rts =>
-      rts.find(rt => rt.engine.rootSessionId.nonEmpty && rt.engine.rootSessionId == p.rootSessionId) match
+    runtimeOwningSession(p.sessionId).flatMap {
         case None =>
           logger.warn(
-            s"TaskStuckWatcher: L3 self-check skipped for ${p.sessionId} — no project runtime (root=${p.rootSessionId}); " +
-              "verdict not derivable (restart/unmount tolerated by design §3.8)")
+            s"TaskStuckWatcher: L3 self-check skipped for ${p.sessionId} — no runtime owns this session " +
+              s"(root=${p.rootSessionId}); verdict not derivable (restart/unmount tolerated by design §3.8)"
+          )
         case Some(rt) =>
           for
             snap <- rt.store.snapshot
@@ -773,16 +773,53 @@ object TaskStuckWatcher:
     nebflow.core.project.NodeLifecycle.Completed
   )
 
+  /** 会话归属 runtime 定位**单点**（P2① 定位键修正，2026-09-11）：谁的 store 里有该会话
+    * 的节点，谁就是「这个会话的家」。
+    *
+    * **为什么废弃 `rt.engine.rootSessionId == rec.rootSessionId`**：`rootSessionId` 是启动
+    * 挂载时**统一传入的顶层 Nebula 主会话 id**（`GatewayMain.startupMount`
+    * `sessionStore.listSessionsByAgent("Nebula").headOption` →
+    * `ProjectRuntimeRegistry.mountAll(projects, rootSid, …)` → `ProjectActor.mount` 把同一个
+    * 值给每个项目）。⇒ **全部挂载项目共享同一 rootSessionId**（本机实测：15 个 Active
+    * 项目），该判据在 Map 迭代序下**恒歧义**（Map 无序 ⇒ 15 个项目时 14/15 命错引擎）。
+    * 命错的引擎 store 里当然没有该会话的节点 ⇒ 引擎侧 `no node owns session` 出口
+    * （本机实测 2026-09-11 全天 15 个不同会话 × 2 行 = 30 行全落该出口，watcher 层
+    * `no project runtime for` **0 例** ⇒ 定位永远「成功但错」）。这正是 L3 硬恢复
+    * 9/9→15/15 全失败的**唯一真因**。
+    *
+    * 判定复用引擎侧单点 [[NodeEngine.ownsSession]]（内部 `sessionRef` /
+    * `sessionRefVerify` 判据与两个 L3 出口逐字同源——杜绝「定位层与执行层口径漂移」
+    * 这一族缺陷）。多 runtime 同时声称拥有同一会话（异常数据）→ 按项目名排序取首个 +
+    * 响亮 WARN（确定性：结果不随 Map 迭代序漂移，可复现）。 */
+  private def runtimeOwningSession(sessionId: String): IO[Option[nebflow.core.project.ProjectRuntime]] =
+    nebflow.core.project.ProjectRuntimeRegistry.all
+      .flatMap(_.sortBy(_.project.name).traverse(rt => rt.engine.ownsSession(sessionId).map(b => if b then Some(rt) else None)))
+      .flatMap { owners =>
+        owners.flatten match
+          case Nil         => IO.pure(None)
+          case head :: Nil => IO.pure(Some(head))
+          case head :: rest =>
+            logger.warn(
+              s"TaskStuckWatcher: session $sessionId is claimed by ${(head :: rest).map(_.project.name).mkString(",")} " +
+                "— multiple runtimes own the same session (anomalous data); using the first by project name"
+            ).as(Some(head))
+      }
+      .handleErrorWith(e =>
+        logger.warn(s"TaskStuckWatcher: session-owner lookup failed for $sessionId: ${Option(e.getMessage).getOrElse(e.toString)}")
+          .as(None))
+
   /** L3 for Flow 节点：定位 session 所属项目的 runtime 并 hardResumeNode（跨项目
     * 按 rootSessionId 匹配 AgentRecord.rootSessionId = 项目 root 会话）。
     * R5 留痕契约：返回 `Some(nodeId)` = resume 真生效（节点已由 Cancelled/Running
     * 翻回 Pending 并从 transcript 续跑）；`None` = 未生效（无 runtime / 无
     * transcript / CAS 被拒 / 异常）——各失败出口在 NodeEngine.hardResumeNode 内
-    * 均有 WARN/ERROR 留痕（R5 补），调用方据 None 走 [[hardRecoveryFallback]]。 */
+    * 均有 WARN/ERROR 留痕（R5 补），调用方据 None 走 [[hardRecoveryFallback]]。
+    *
+    * P2① 定位键修正（2026-09-11）：`runtimeOwningSession` 取代旧的 rootSessionId
+    * 相等判据——见该方法的「为什么废弃」。 */
   private def hardResumeFlowNode(resources: SharedResources, rec: AgentRecord): IO[Option[String]] =
-    nebflow.core.project.ProjectRuntimeRegistry.all
-      .flatMap { rts =>
-        rts.find(rt => rt.engine.rootSessionId.nonEmpty && rt.engine.rootSessionId == rec.rootSessionId) match
+    runtimeOwningSession(rec.sessionId)
+      .flatMap {
           case Some(rt) =>
             rt.engine.hardResumeNode(rec.sessionId)
               .handleErrorWith(e =>
@@ -791,7 +828,7 @@ object TaskStuckWatcher:
                 ).as(None))
           case None =>
             logger.warn(
-              s"TaskStuckWatcher: no project runtime for ${rec.sessionId} (root=${rec.rootSessionId}) — L3 resume unavailable"
+              s"TaskStuckWatcher: no project runtime owns session ${rec.sessionId} (root=${rec.rootSessionId}) — L3 resume unavailable"
             ).as(None)
       }
       .handleErrorWith(e =>
@@ -806,15 +843,18 @@ object TaskStuckWatcher:
     *     **不摘除、不打 pendingSuccession**——failed 侧零标的 D5 纪律）。
     *   - 找不到 runtime（跨项目/未挂载）→ 响亮 ERROR（诚实失败；节点仍 cancelled，
     *     可见性由事件流 `cancelled` + 周期 `mount-stalled` 兜底）——此出口**无法**改判
-    *     （没有引擎实例可写节点），是本方法的已知残口，不在本批修复面内。 */
+    *     （没有引擎实例可写节点），是本方法的已知残口，不在本批修复面内。
+    *
+    * P2① 定位键修正（2026-09-11）：定位改走 [[runtimeOwningSession]]（会话归属），
+    * 不再是 rootSessionId 相等（全部挂载项目同值 ⇒ 恒歧义，正是本方法长期走到
+    * 「找错引擎 ⇒ 引擎内 no node owns session ⇒ 零动作」的根因）。 */
   private def hardRecoveryFallback(resources: SharedResources, rec: AgentRecord): IO[Unit] =
-    nebflow.core.project.ProjectRuntimeRegistry.all
-      .flatMap { rts =>
-        rts.find(rt => rt.engine.rootSessionId.nonEmpty && rt.engine.rootSessionId == rec.rootSessionId) match
+    runtimeOwningSession(rec.sessionId)
+      .flatMap {
           case Some(rt) => rt.engine.settleFailedHardResume(rec.sessionId)
           case None =>
             logger.error(
-              s"TaskStuckWatcher: L3 resume failed and no project runtime for ${rec.sessionId} " +
+              s"TaskStuckWatcher: L3 resume failed and no project runtime owns session ${rec.sessionId} " +
                 s"(root=${rec.rootSessionId}) — node left cancelled without the failed re-judge / dispatcher notify " +
                 "(manual intervention required)"
             )
