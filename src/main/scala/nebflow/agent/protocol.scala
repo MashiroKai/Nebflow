@@ -36,7 +36,16 @@ object AgentCommand:
     /** Structured event type (e.g. completion status) for the UI source label —
      *  carried through from ImmediateInput so flow results render
      *  'Flow · <name> · Completed/Failed' instead of a bare 'Flow'. */
-    eventType: Option[String] = None
+    eventType: Option[String] = None,
+    /** ② (2026-09-11, queue-direct-pass diagnosis §2): real-user origin flag.
+      * True only when this UserInput was born from a real human message
+      * (WS direct send, or an ImmediateInput forwarded from one — see
+      * [[ImmediateInput.fromUser]]). The idle judgement reads it as
+      * `clientMessageId.isDefined || fromUser ⇒ source=None`, so a real-user
+      * text that reached the agent through the ImmediateInput leg is never
+      * mislabelled with an injection source. Server-side injections keep the
+      * default false and say so explicitly at the call site. */
+    fromUser: Boolean = false
   ) extends AgentCommand
 
   case class ImmediateInput(
@@ -51,7 +60,24 @@ object AgentCommand:
     /** Team name of the sender for Mail-delivered messages. */
     senderTeam: Option[String] = None,
     /** Delivery mode marker: "queue" | "immediate" for Mail delivery. */
-    delivery: Option[String] = None
+    delivery: Option[String] = None,
+    /** ② (2026-09-11, queue-direct-pass diagnosis §2 根因): real-user origin
+      * flag. The ImmediateInput leg carries NO clientMessageId by construction,
+      * which used to make a real human text fall into the
+      * `no clientMessageId ⇒ tool injection` fallback (AgentActor.idle) —
+      * rendering a bogus blue `source:"tool"` card and dropping the turn out of
+      * `isRealUserTurn` (time/task reminders degraded).
+      *
+      *   true  → WS `immediateInput` frame (user clicked send), CLI
+      *           `userMessage` frame  [真人 = 客户端直接投递]
+      *   false → every server-side injection: Mail / Delegate / SubTask / Flow /
+      *           Node / Dispatcher / Schedule / system, AND the REST headless
+      *           turn (`rest-turn` = a program, see dispatchHeadlessTurn)
+      *
+      * Kept as an explicit, defaulted field (not inferred) so every construction
+      * site states its origin; the compiler + the explicit-argument discipline
+      * keep the two families apart. */
+    fromUser: Boolean = false
   ) extends AgentCommand
 
 

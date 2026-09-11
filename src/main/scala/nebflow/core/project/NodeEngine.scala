@@ -637,7 +637,8 @@ class NodeEngine(
                   heal *>
                     (record.ref ! AgentCommand.ImmediateInput(
                       text = s"$head\n\n$text",
-                      source = Some("system")
+                      source = Some("system"),
+                      fromUser = false // ② 服务端注入（Node 消息），不是真人输入
                     )).void *>
                     FlowMapEventLog.append(workspace, projectName, node.id, NodeEngine.NodeMessageEventType,
                       s"injected -> live session $sid: $text") *>
@@ -1116,7 +1117,7 @@ class NodeEngine(
             resources.agentRegistry.get.flatMap { reg =>
               reg.get(sessionId).map(_.ref) match
                 case Some(ref) =>
-                  (ref ! AgentCommand.ImmediateInput(text, source = Some("system"))).void
+                  (ref ! AgentCommand.ImmediateInput(text, source = Some("system"), fromUser = false)).void
                 case None => IO.unit // 会话已终结——提醒无投递面，server 已停即足够
             }
         ).void *>
@@ -2779,7 +2780,8 @@ class NodeEngine(
               text,
               source = Some("node"),
               eventType = Some(status),
-              sender = Some(s"$projectName/$nodeName")
+              sender = Some(s"$projectName/$nodeName"),
+              fromUser = false // ② 服务端注入（节点状态），不是真人输入
             )) *> nodeId.traverse_(id => markNebulaDelivered(id)).void
         }
       case None =>
@@ -2889,7 +2891,8 @@ class NodeEngine(
           text,
           source = Some("node"),
           eventType = Some(eventType),
-          sender = Some(s"$projectName/stale-redelivery-summary")
+          sender = Some(s"$projectName/stale-redelivery-summary"),
+          fromUser = false // ② 服务端注入（重投汇总），不是真人输入
         )) *> stale.traverse_(n => markNebulaDelivered(n.id))
       case None => IO.unit // 根不可达 → 不记账不丢账，下轮扫描重汇总
     }
@@ -2930,7 +2933,8 @@ class NodeEngine(
               s"$header\n$finalText",
               source = Some(NodeEngine.DispatcherSourceMarker),
               eventType = Some(NodeLifecycle.Completed),
-              sender = Some(projectName)
+              sender = Some(projectName),
+              fromUser = false // ② 服务端注入（分发器最终输出），不是真人输入
             )).void
           case None =>
             logger.warn(

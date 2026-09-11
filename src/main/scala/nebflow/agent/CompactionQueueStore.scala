@@ -48,6 +48,12 @@ object CompactionQueueStore:
       .deepMerge(imm.sender.fold(Json.obj())(v => Json.obj("sender" -> v.asJson)))
       .deepMerge(imm.senderTeam.fold(Json.obj())(v => Json.obj("senderTeam" -> v.asJson)))
       .deepMerge(imm.delivery.fold(Json.obj())(v => Json.obj("delivery" -> v.asJson)))
+      // ② (2026-09-11): the human-origin bit must survive "入队 → 崩溃恢复",
+      // otherwise the recovered input goes back through the
+      // `clientMessageId=None ⇒ source="tool"` fallback and the author sees the
+      // TOOL card again after a restart. Written only when true → all older
+      // snapshots decode as fromUser=false (backward compatible).
+      .deepMerge(if imm.fromUser then Json.obj("fromUser" -> true.asJson) else Json.obj())
   }
 
   given Decoder[AgentCommand.ImmediateInput] = Decoder.instance { c =>
@@ -59,7 +65,9 @@ object CompactionQueueStore:
       sender <- c.downField("sender").as[Option[String]]
       senderTeam <- c.downField("senderTeam").as[Option[String]]
       delivery <- c.downField("delivery").as[Option[String]]
-    yield AgentCommand.ImmediateInput(text, blocks, source, eventType, sender, senderTeam, delivery)
+      // Missing field (pre-② snapshot) → false = legacy behaviour.
+      fromUser <- c.downField("fromUser").as[Option[Boolean]]
+    yield AgentCommand.ImmediateInput(text, blocks, source, eventType, sender, senderTeam, delivery, fromUser.getOrElse(false))
   }
 
   given Encoder[AgentCommand.ExternalEvent] = Encoder.instance { e =>

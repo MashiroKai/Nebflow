@@ -74,14 +74,16 @@ object FlowDagRunner:
                 // sender/eventType feed the injected-bubble source label:
                 // 'Flow · <flow name> · Completed' (373 — flow name was invisible).
                 eventType = Some("completed"),
-                sender = Some(flowDef.name)
+                sender = Some(flowDef.name),
+                fromUser = false // ② 服务端注入（flow 完成回执），不是真人输入
               )).void
             case Left(err) =>
               (replyTo ! AgentCommand.ImmediateInput(
                 s"[Flow '${flowDef.name}' failed]\n$err",
                 source = Some("flow"),
                 eventType = Some("failed"),
-                sender = Some(flowDef.name)
+                sender = Some(flowDef.name),
+                fromUser = false // ② 服务端注入（flow 失败回执），不是真人输入
               )).void
         yield Behaviors.stopped
         end for
