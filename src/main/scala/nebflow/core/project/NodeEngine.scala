@@ -957,15 +957,19 @@ class NodeEngine(
           IO.pure(Left(s"Node '${node.id}' vanished before the message was appended (NODE_NOT_FOUND)"))
     }
 
-  /** WS 事件链富化单点（链级抽象 P0）：全部节点事件 payload 经此统一补 chainId
-    * 条件键——判据单点 FlowMapStore.chainIdOf（合并集分量成员数 ≥2 才带，孤立单
-    * 节点链不带 = payload 零膨胀；与快照 buildNodeListPayload 同口径）。查无链
-    * （节点已出双区/单节点链）→ payload 原样透传。WS 帧外壳
-    * （ProjectActor.emitNodeEvent）零改动——富化只发生在载荷体。 */
+  /** WS 事件链富化单点（链级抽象 P0 + U1 多链归属批）：全部节点事件 payload 经此
+    * 统一补 chainId / chainIds 条件键——判据单点 FlowMapStore.chainAttrsOf（`_1` =
+    * 主链 id，合并集分量成员数 ≥2 才带，孤立单节点链不带；`_2` = 多链归属集 =
+    * 主链 id 首项 + 全量成员链，**仅 merge 节点**且可达成员链数 ≥2 才带，普通节点恒
+    * 不带 = 单值 chainId 语义不变；与快照 buildNodeListPayload 同口径）。查无链
+    * （节点已出双区/单节点链）→ payload 原样透传。WS 帧外壳（ProjectActor.emitNodeEvent）
+    * 零改动——富化只发生在载荷体。 */
   private def emitWithChain(eventType: String, nodeId: String, payload: Json): IO[Unit] =
-    store.chainIdOf(nodeId).flatMap {
-      case Some(cid) => emitEvent(eventType, nodeId, payload.deepMerge(Json.obj("chainId" -> cid.asJson)))
-      case None      => emitEvent(eventType, nodeId, payload)
+    store.chainAttrsOf(nodeId).flatMap { case (cid, cids) =>
+      val enriched = cid.toList.map(c => "chainId" -> c.asJson) ++
+        cids.toList.map(ids => "chainIds" -> ids.asJson)
+      emitEvent(eventType, nodeId,
+        if enriched.isEmpty then payload else payload.deepMerge(Json.obj(enriched*)))
     }
 
   /** WS nodeCreated（NodeEdit 创建后）。payload 与 NodeList 同构。 */
