@@ -33,6 +33,14 @@ import nebflow.core.NebflowLogger
 object InteractionHub:
   private val logger = NebflowLogger.forName("nebflow.agent.interaction")
 
+  /** R10 审计面（作者裁定 U5=F-b）：ask / answer 两个**既有单点**各追加一行
+    * `nebflow.audit`（先例 `AgentControlTool`：内核持全机权限 + 远端动作不可逆 ⇒
+    * 事后可归因）。字段含 `sourceSession`——事后用 `delegate-kernel-` 前缀下过滤
+    * 即可单独看内核提问链。**不新增事件类型、不改 `WatchdogEventLog`、零新存储。**
+    * 注意作用域：hub 是全局单点，故审计行覆盖一切 ask 源（内核 + 项目节点）——
+    * 按前缀过滤即内核面。 */
+  private val audit = NebflowLogger.forName("nebflow.audit")
+
   private case class PendingRequest(
     reply: InteractionReply,
     rootSessionId: String,
@@ -95,6 +103,14 @@ object InteractionHub:
         s"InteractionRequest kind=${req.kind} requestId=${req.requestId} root=${req.rootSessionId} " +
           s"sourceAgent=${req.sourceAgent}"
       )
+      // R10/U5=F-b 审计行（ask 单点）——best-effort，绝不影响交互链。
+      _ <- audit
+        .info(
+          s"event=ask kind=${req.kind} requestId=${req.requestId} sourceSession=${req.sourceSession} " +
+            s"rootSessionId=${req.rootSessionId} sourceAgent=${req.sourceAgent} " +
+            s"firstQuestion=${firstQuestionExcerpt(req.payload)}"
+        )
+        .handleErrorWith(_ => IO.unit)
       // Register BEFORE rendering so a fast answer can never miss the slot.
       _ <- pending.update(
         _ + (req.requestId ->
@@ -154,6 +170,11 @@ object InteractionHub:
     end for
 
   end handleRequest
+
+  /** 审计用：问题首条 ≤200 字符（无内容时给 "-"；绝不抛）。 */
+  private def firstQuestionExcerpt(payload: Json): String =
+    val q = payload.hcursor.downField("items").downArray.downField("question").as[String].toOption
+    q.map(s => if s.length > 200 then s.take(200) + "..." else s).getOrElse("-")
 
   /** Build the askPermission card JSON, rendered at sessionId=rootSessionId. */
   private def renderPermission(req: InteractionRequest): Json =
@@ -310,25 +331,32 @@ object InteractionHub:
       val candidates = m.toList
         .collect { case (rid, p) if p.rootSessionId == rootSessionId && p.kind == InteractionKind.AskUser => (rid, p) }
         .sortBy(_._2.createdAt)
-      // QC (2026-08-30): parity with handleAnswered's multiWarn — with several
-      // pending AskUser cards the passthrough answers the OLDEST, which may
-      // not be the card the user was looking at. Never silent about it.
-      val multiWarn =
+      // B2（作者裁定 U2，2026-09-11 拍板）：**多候选并存时不消费**——同桶内有多张
+      // pending 卡时，输入框文本**不再**当作 answers 投给 oldest 那张（多卡并存时
+      // 答错卡的代价不对称：内核会按错误答案继续执行，可能落到远端不可逆动作）。
+      // 此时 reply.complete(false) ⇒ 网关回落到正常 dispatch（文本按普通消息走），
+      // 用户须点卡作答。语义**全局生效**（项目节点 ask 同受影响，非内核专属）；
+      // **单卡 pending 时输入框直通仍然生效**（否则 B2 退化为「禁直通」）。
+      val multiRefuse =
         if candidates.size > 1 then
           logger.warn(
-            s"Chat-input passthrough: ${candidates.size} pending AskUser cards for rootSessionId=$rootSessionId — " +
-              "answering the OLDEST; the user should answer a specific card on the card itself (#12 parity)"
-          )
+            s"Chat-input passthrough REFUSED: ${candidates.size} pending AskUser cards for rootSessionId=$rootSessionId — " +
+              "not consumed (B2: the oldest may not be the card the user is looking at). Falling back to normal dispatch; " +
+              "the user must answer on a specific card (#12 parity, ruling U2)"
+          ) *> reply.complete(false).void
         else IO.unit
-      candidates.headOption match
+      if candidates.size > 1 then (m, multiRefuse)
+      else
+        candidates.headOption match
         case Some((rid, p)) =>
           (
             m - rid,
             for
-              _ <- multiWarn
               _ <- logger.info(
                 s"Chat-input passthrough: answering pending AskUser requestId=$rid root=$rootSessionId (${text.length} chars)"
               )
+              // R10/U5=F-b 审计行（answer 单点，via=chat-input）
+              _ <- auditAnswer(rid, p, text, via = "chat-input")
               _ <- p.reply match
                 case InteractionReply.AskUserReply(Some(r)) =>
                   (r ! List(text)).void.handleErrorWith(_ => IO.unit)
@@ -400,12 +428,28 @@ object InteractionHub:
         )
     }.flatten
 
-  private def complete(p: PendingRequest, ans: InteractionAnswered): IO[Unit] =
+  /** R10/U5=F-b 审计行（answer 单点），`via` = card | chat-input。best-effort。 */
+  private def auditAnswer(requestId: String, p: PendingRequest, answersJoined: String, via: String): IO[Unit] =
+    val excerpt = if answersJoined.length > 200 then answersJoined.take(200) + "..." else answersJoined
+    audit
+      .info(
+        s"event=answer requestId=$requestId sourceSession=${p.sourceSession} rootSessionId=${p.rootSessionId} " +
+          s"kind=${p.kind} via=$via answersJoined=$excerpt"
+      )
+      .handleErrorWith(_ => IO.unit)
+
+  private def complete(p: PendingRequest, ans: InteractionAnswered, via: String = "card"): IO[Unit] =
     val approved = ans.payload.hcursor.downField("approved").as[Boolean].toOption
     val answers = ans.payload.hcursor.downField("answers").as[List[String]].toOption
     for
       _ <- logger.info(
         s"InteractionAnswered requestId=${ans.requestId} kind=${p.kind} approved=$approved answers=${answers.map(_.size)}"
+      )
+      _ <- auditAnswer(
+        ans.requestId,
+        p,
+        answers.map(_.mkString(" | ")).orElse(approved.map(a => s"approved=$a")).getOrElse("-"),
+        via
       )
       _ <- p.reply match
         case InteractionReply.PermissionReply(deferred) =>
