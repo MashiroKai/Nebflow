@@ -150,9 +150,14 @@ export default {
   'flowmap.loopPhase.worker': '生产中',
   'flowmap.loopPhase.verify': '验证中',
   // U1 多链归属批（2026-09-11）：合并节点详情卡「收的 worktree/分支」行——数据源 =
-  // 上游 in 闭包内节点载荷 worktree 字段；取不到时如实落不可得+原因。中英键集对称。
+  // 上游 in 闭包内节点载荷 worktree 字段；取不到时按上游可见性落三态文案（复核轮2
+  // 修复：单一成因会造出假陈述——上游在载荷内但未配 worktree 并非「不在缓存」）。
+  // 中英键集对称：None = 态①可达上游全在缓存且均未配 worktree；Absent = 态②可达
+  // 上游全不在缓存；Mixed = 态③部分不在缓存 + 可见上游未配 worktree。
   'flowmap.detail.mergeUpstreams': '收的 worktree/分支',
-  'flowmap.detail.mergeUpstreamsNone': '不可得（上游节点不在当前载荷缓存）',
+  'flowmap.detail.mergeUpstreamsNone': '不可得（上游节点未配置 worktree）',
+  'flowmap.detail.mergeUpstreamsAbsent': '不可得（上游节点不在当前载荷缓存）',
+  'flowmap.detail.mergeUpstreamsMixed': '不可得（部分上游不在当前载荷缓存，可见上游未配置 worktree）',
   'agentFile.hint': '此文件是项目工作区根的 agent 指令（AGENTS.md），可编辑并保存。',
 
   // === Friends & messages (A2A) ===
