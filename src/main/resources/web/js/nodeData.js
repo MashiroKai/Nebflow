@@ -126,8 +126,8 @@ export async function fetchNodeResultDetail(projectName, nodeId, timeoutMs = NOD
      *  以固定 message 标记超时（与网络拒绝区分）。 */
     const timeout = new Promise((_, rej) => {
       timer = setTimeout(() => {
+        rej(new Error(NODE_RESULT_TIMEOUT_MSG)); // 先落超时判定（abort 触发的 AbortError 会先入微任务队列抢跑）
         if (ctrl) ctrl.abort();
-        rej(new Error(NODE_RESULT_TIMEOUT_MSG));
       }, timeoutMs);
     });
     const res = await /** @type {Response} */ (await Promise.race([
@@ -139,7 +139,9 @@ export async function fetchNodeResultDetail(projectName, nodeId, timeoutMs = NOD
     const result = typeof data?.result === 'string' ? data.result : '';
     return result.trim() ? { state: 'ok', result } : { state: 'empty' };
   } catch (e) {
-    const isTimeout = !!(e && /** @type {any} */ (e).message === NODE_RESULT_TIMEOUT_MSG);
+    const err = /** @type {any} */ (e);
+    // AbortError 仅由本函数的超时 abort 产生（无其它取消源）⇒ 同样归入 timeout。
+    const isTimeout = !!(err && (err.message === NODE_RESULT_TIMEOUT_MSG || err.name === 'AbortError'));
     return { state: isTimeout ? 'timeout' : 'network' };
   } finally {
     if (timer) clearTimeout(timer);
