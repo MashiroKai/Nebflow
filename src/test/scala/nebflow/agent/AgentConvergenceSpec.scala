@@ -44,6 +44,7 @@ class AgentConvergenceSpec extends FunSuite:
       "Delegate",                                           // 编排触发（2026-09-11 极简内核回归，+1）
       "TaskList",                                           // 任务编排（2026-09-06 TaskList 批：快变状态出记忆）
       "SendMessage",
+      "ListFriends",                                        // 通信（2026-09-12 好友消息改造批 ⑩：只读名册，+1）
       "Read", "Glob", "Grep",                                // 读三件（08:40 解禁四件；23:34 裁定收走写手）
       "Card",                                               // 可视化（2026-09-05 解封恢复）
       "AskUserQuestion", "Pop",
@@ -51,7 +52,7 @@ class AgentConvergenceSpec extends FunSuite:
       "MemoryEdit"
     )
     assertEquals(delivered, expected,
-      "Nebula 面向 LLM 的工具清单必须逐项等于 §C.1 固定矩阵（件数以 AgentCore.NebulaOrchestrationToolsExpectedSize 为单点来源：在飞 15）（2026-09-06 TaskList 批：+TaskList，作者 00:07 提议 + 00:11 首期无前端拍板，恰十四件；00:48 作者裁定：NodeList 摘除；2026-09-05 23:34 作者裁定：Nebula 回归纯编排；零 Issue）")
+      "Nebula 面向 LLM 的工具清单必须逐项等于 §C.1 固定矩阵（件数以 AgentCore.NebulaOrchestrationToolsExpectedSize 为单点来源：在飞 16）（2026-09-12 好友消息改造批 ⑩ +ListFriends；2026-09-06 TaskList 批：+TaskList，作者 00:07 提议 + 00:11 首期无前端拍板；00:48 作者裁定：NodeList 摘除；2026-09-05 23:34 作者裁定：Nebula 回归纯编排；零 Issue）")
     assert(!delivered.contains("Issue"), "交付面零 Issue（2026-09-04 终裁退役）")
     // 钉死断言（2026-09-05 23:34 作者裁定）：Nebula 机制集不含 Bash、不含 Write、
     // 不含 Edit——变异验红锚（机制集加回任一件本组断言即红）
@@ -115,10 +116,10 @@ class AgentConvergenceSpec extends FunSuite:
     assert(declared.contains("MemoryEdit"), "dream 声明 MemoryEdit → 授能（exclusiveToolsFor 豁免剥离）")
     val wildcard = CoreProbe.allowed(mkDef("dream", List("*")))
     assert(wildcard.contains("MemoryEdit"), "dream wildcard 同样授能（豁免在剥离面，声明形状无关）")
-    // 豁免恰为 MemoryEdit 一件——Schedule/Delegate/AgentControl/TaskList/TaskBoard/node_report 对 dream 不得放开
+    // 豁免恰为 MemoryEdit 一件——Schedule/Delegate/AgentControl/TaskList/TaskBoard/node_report/Pop/ListFriends 对 dream 不得放开
     assertEquals(AgentCore.NebulaExclusiveTools -- AgentCore.DreamAdmittedTools,
-      Set("Schedule", "Delegate", "AgentControl", "TaskList", "TaskBoard", "node_report", "Pop"),
-      "dream 豁免面 = 仅 MemoryEdit（NodeReport 泛化批后剥离面六件 + 2026-09-10 Pop——TaskBoard/node_report/Pop 对 dream 同样剥离，真实授能在 project 会话身份末段追加 / Pop 仅 Nebula）")
+      Set("Schedule", "Delegate", "AgentControl", "TaskList", "TaskBoard", "node_report", "Pop", "ListFriends"),
+      "dream 豁免面 = 仅 MemoryEdit（NodeReport 泛化批后剥离面六件 + 2026-09-10 Pop + 2026-09-12 ⑩ ListFriends——TaskBoard/node_report/Pop/ListFriends 对 dream 同样剥离，真实授能在 project 会话身份末段追加 / Pop 仅 Nebula / ListFriends 仅 Nebula）")
     val sneakyDream = CoreProbe.allowed(mkDef("dream", List("Schedule", "Delegate", "AgentControl", "TaskList", "TaskBoard")))
     assert(!sneakyDream.contains("Schedule"), "dream 对 Schedule 仍被剥")
     assert(!sneakyDream.contains("Delegate"), "dream 对 Delegate 仍被剥")
@@ -128,8 +129,8 @@ class AgentConvergenceSpec extends FunSuite:
     // 单点函数全身份语义（Nebula 空 / dream 豁免 / 其余全集）
     assertEquals(AgentCore.exclusiveToolsFor("Nebula"), Set.empty[String], "Nebula 无剥离")
     assertEquals(AgentCore.exclusiveToolsFor("dream"),
-      Set("Schedule", "Delegate", "AgentControl", "TaskList", "TaskBoard", "node_report", "Pop"),
-      "dream 剥七件（NodeReport 泛化批后六件 + 2026-09-10 Pop）")
+      Set("Schedule", "Delegate", "AgentControl", "TaskList", "TaskBoard", "node_report", "Pop", "ListFriends"),
+      "dream 剥八件（NodeReport 泛化批后六件 + 2026-09-10 Pop + 2026-09-12 ⑩ ListFriends）")
     // 2026-09-10 作者裁定：Pop 收归 Nebula 专属——dream（及一切非 Nebula 身份）
     // 拿不到 Pop：不在 DreamAdmittedTools 豁免面内
     assert(!AgentCore.DreamAdmittedTools.contains("Pop"), "DreamAdmittedTools 不含 Pop ⇒ dream 拿不到 Pop")

@@ -2282,7 +2282,16 @@ object AgentCore:
     // 不授能（真实授能 = 末段 flowNodeSession 按身份追加）。v1 report_blocked
     // 未入本集（通配声明者 allowedSet 带 schema 泄漏面，执行侧由工具内身份拒绝
     // 兜底），泛化批补齐同款隔离；剥离与授能两点不相干扰（同 TaskBoard 注）。
-    nebflow.core.tools.NodeReportToolDef.Name
+    nebflow.core.tools.NodeReportToolDef.Name,
+    // ListFriends（好友消息改造批 ⑩，方案 `20260912_011320` §4.5 #5 推荐路线，
+    // 2026-09-12）：Nebula 专属只读好友名册——全 agent 面披露的是**全量社交图谱**
+    // （一次性给出「你是谁的好友」全集），与 TaskList/MemoryEdit 同域隔离纪律一致；
+    // 且本集同时是【防声明逃逸】通道：agent.json 声明（含 "*"）对一切非 Nebula
+    // 身份不授能。本单点被两消费点共用（`buildAllowedToolSet` 的 runtime 剥离 +
+    // `AgentLibrary` 面板/定义保存侧 strip —— 见 `exclusiveToolsFor` 注释）。
+    // 选本路线而非 `buildAllowedToolSet` 内 `- "ListFriends"`（SendMessage 先例）：
+    // 两者授能结果等价，但后者不覆盖保存侧。
+    "ListFriends"
   )
 
   /** dream 的 MemoryEdit 准入例外（2026-09-05 作者签准，修订 2026-08-31 裁定①）：
@@ -2328,15 +2337,18 @@ object AgentCore:
     * KernelFixedTools 恰七件 = BaseTools 六件 + AskUserQuestion）。本件是**加法**
     * 而非翻案：08:40 裁定的理由（旧 Team/Flow 双轨过渡件退出）不变，回归的
     * Delegate 不携带任何 Team/Flow/Mail 语义；Mail/FlowTrigger/FlowExecute
-    * 维持退役。**在飞实测件数 = 15**（同一清单常量即单点来源，
-    * NebulaOrchestrationToolsExpectedSize）；**终态目标 14** 由「TransferFile
-    * 退役批（−1）」落地后达成——两批同窗抵平（+1 −1）。本批不得把 15 写成 14。
+    * 维持退役。**在飞实测件数 = 16**（同一清单常量即单点来源，
+    * NebulaOrchestrationToolsExpectedSize；2026-09-12 好友消息改造批 ⑩ +ListFriends）；
+    * **终态目标由独立收敛批重定**（⑩-9：此前「终态 14」口径已随 ⑩ +1 失效，本批
+    * 只改注释口径，**不得**改断言常量去凑终态数——见常量注释）。
     * 分组与矩阵行一一对应：
     *   - 编排触发：Task / ProjectCreate / AgentControl（list/status/cancel/restart）
     *     / Delegate（2026-09-11 极简内核回归）
     *   - 任务编排：TaskList（2026-09-06 TaskList 批；NebulaExclusiveTools 同批
     *     防声明逃逸——dispatcher/general/"*" 一律剥离）
     *   - 通信：SendMessage（好友功能非旧体系，保留机制固定）
+    *     / ListFriends（2026-09-12 好友消息改造批 ⑩：只读好友名册——SendMessage
+    *     的寻址前置；同 NebulaExclusiveTools 防声明逃逸）
     *   - 读三件：Read / Glob / Grep（读代码读现状；无写手——一切执行走
     *     Project 派发）
     *   - 可视化：Card（2026-09-05 解封，commit 793f62c1 曾整体删除）
@@ -2351,7 +2363,7 @@ object AgentCore:
     * Mail/Delegate/FlowTrigger/FlowExecute（旧体系退役）、Web 系、
     * TeamTask*、SubTask、NodeEdit/NodeCancel。Issue/CheckIssues 已整体
     * 退役（2026-09-04 作者终裁：报 issue 走 gh cli 由节点代劳，定义层已归档
-    * .archived-tools-2d/）。本集即 Nebula 工具面唯一来源：恰十四件、零 Issue、
+    * .archived-tools-2d/）。本集即 Nebula 工具面唯一来源：在飞十六件、零 Issue、
     * 零旧体系四件。 */
   val NebulaOrchestrationTools = Set(
     // 编排触发（NodeList 2026-09-06 00:48 裁定摘除）
@@ -2367,6 +2379,11 @@ object AgentCore:
     "TaskList",
     // 通信（好友功能非旧体系）
     "SendMessage",
+    // ListFriends（好友消息改造批 ⑩，2026-09-12）：SendMessage 的**只读**前置——
+    // 名册取代「靠报错反推」。与 SendMessage 同组（通信）、同一好友数据面与词表
+    // （`nebflow.neblink.FriendRoster`），但零写面/零权限档/零限速（一次读）。
+    // 归属面 = 本集单点 + NebulaExclusiveTools 防声明逃逸（方案 §4.5 归属面 A 案）。
+    "ListFriends",
     // 读三件（08:40 解禁；23:34 裁定收走写手——Bash/Write/Edit 不在本集）
     "Read",
     "Glob",
@@ -2393,11 +2410,13 @@ object AgentCore:
   /** Nebula 工具面**在飞实测件数**（单点来源：所有件数断言只许引用本常量，
     * 不得各处写裸数字）。
     *
-    * 值 = 15 = `NebulaOrchestrationTools` 现成员数（2026-09-11 Delegate 恢复批
-    * +1）。**终态目标 = 14**：与 TransferFile 退役批（−1）同窗抵平后达成；该批
-    * 未落地前本批树内实测值恒为 15。差异已在恢复批结果里显式登记（口径冲突 =
-    * 待协调项），**不得为凑「14」放宽/改写断言**。 */
-  val NebulaOrchestrationToolsExpectedSize: Int = 15
+    * 值 = 16 = `NebulaOrchestrationTools` 现成员数（2026-09-11 Delegate 恢复批
+    * +1 → 15；2026-09-12 好友消息改造批 ⑩ +ListFriends → 16）。
+    * **终态目标由独立收敛批重定**（⑩-9 口径修订）：此前「终态目标 14 = 与
+    * TransferFile 退役批（−1）同窗抵平」的口径随本批 +1 失效——本批**只**改本注释
+    * 与断言基准值，**不得**改本常量去凑任何终态数字，也不得在树内实测值 ≠ 本常量
+    * 时放宽断言（原「不得为凑 14 改写断言」纪律不变，仅目标数字改为待重定）。 */
+  val NebulaOrchestrationToolsExpectedSize: Int = 16
 
   /** 分发器固定工具集（§C.1）：Node 四件（List/Edit/Cancel/Message）+ 读四件
     * （Read/Glob/Grep/Bash，读现状 + git worktree 管理）。不给 Write/Edit（分发器只
