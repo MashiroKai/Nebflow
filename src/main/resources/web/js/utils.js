@@ -439,17 +439,230 @@ export function attachToolClick(card) {
 }
 
 // === Scroll helpers ===
+//
+// ── A-branch convergence (fpo-scroll, 2026-09-11) ────────────────────────
+// Single source of truth for every "is the viewport still at the bottom?"
+// decision in the chat / agent-stream family. Before this, four ad-hoc
+// thresholds (40 / 60 / 80 / 100 px) were spread over main.js, utils.js,
+// chat.js, turnGroup.js, cardRegistry.js and both agent popups — and two
+// bypasses (chat.js renderInjectedBubble, main.js's second-pass timeout)
+// yanked the viewport to the bottom regardless of where the user was
+// reading. The whole family now reads NEAR_BOTTOM_PX / isNearBottom().
+
+/**
+ * NEAR_BOTTOM_PX — one rendered single-line message bubble, MEASURED on a
+ * real isolated instance (1440x900, deviceScaleFactor 2, real seeded
+ * history), not guessed:
+ *
+ *   single-line ai bubble height   44.47px  (n=16; min = p25 = median = p75 = max = 44.47)
+ *   single-line row height         65.47px  (bubble + footer/copy badge)
+ *   row-to-row pitch               75.47px  (median over 49 consecutive rows)
+ *
+ * The unit is the author's "一行气泡高度" (the bubble itself, not the row
+ * box), floored to the integer 44.
+ *
+ * Readings: .nebflow/evidence/20260911_fpo/row-px-baseline.json (baseline
+ * resources) and .nebflow/evidence/20260911_fpo/fixed-results.json
+ * (`m1_measure`) — the fixed arm re-measures the same values.
+ *
+ * Semantics: distance-to-bottom below this = "still at the bottom" → the
+ * stream keeps following and no pill is shown. Above it the user is reading
+ * history: nothing scrolls under them and the "↓ N" pill appears instead.
+ */
+export const NEAR_BOTTOM_PX = 44;
+
+/** Distance (px) between the viewport bottom and the content bottom. */
+export function scrollBottomDistance(el) {
+  if (!el) return Infinity;
+  return el.scrollHeight - el.scrollTop - el.clientHeight;
+}
+
+/** The single near-bottom judgement (within one message line of the bottom). */
+export function isNearBottom(el) {
+  return scrollBottomDistance(el) < NEAR_BOTTOM_PX;
+}
+
+/**
+ * Refresh the follow-intent latch (`view.stream.scrollSnapped`) from live
+ * geometry. This is the scroll-listener hook for every view — the latch is a
+ * *follow intent* snapshot, so it must only be written where the geometry is
+ * authoritative (a real scroll event, or an explicit programmatic jump to the
+ * bottom). See the A-branch path table for the staleness analysis.
+ */
+export function updateScrollSnapped(view, el) {
+  if (!view || !view.stream || !el) return;
+  view.stream.scrollSnapped = isNearBottom(el);
+  syncScrollPill(view);
+}
+
+/**
+ * The single follow decision used by every content-append site:
+ * follow intent (the latch, captured before the DOM grew) OR live geometry.
+ * A site that captures `snapped` at schedule time keeps its own capture (see
+ * chat.js rafScrollChat) — everything else calls this.
+ */
+export function shouldFollowBottom(view, el) {
+  if (!view || !view.stream || !el) return false;
+  return view.stream.scrollSnapped === true || isNearBottom(el);
+}
+
 export function smartScroll() {
   const view = state.getActiveView ? state.getActiveView() : null;
   if (!view) return;
   const chat = view.dom.chat;
-  const snapped = view.stream.scrollSnapped;
+  // Capture the follow intent BEFORE the pending render mutates the DOM —
+  // the same schedule-time capture the rAF scroll paths use.
+  const follow = shouldFollowBottom(view, chat);
   requestAnimationFrame(() => {
-    const threshold = 60;
-    if (snapped || chat.scrollHeight - chat.scrollTop - chat.clientHeight < threshold) {
-      chat.scrollTop = chat.scrollHeight;
-    }
+    if (follow || isNearBottom(chat)) chat.scrollTop = chat.scrollHeight;
+    syncScrollPill(view);
   });
+}
+
+// ── "↓ N new messages" pill ─────────────────────────────────────────────
+// Row-level counter of what arrived since the user left the bottom
+// (injected notifications and tool cards included — a missed row counts).
+// State is PER VIEW (view.stream.scrollPill), never a global singleton:
+// the primary window and every agent popup keep their own count, element
+// and observer.
+
+/** view -> pill record. The WeakMap is the canonical home so a session
+ *  switch (resetStream replaces view.stream) cannot orphan the DOM node. */
+const _pillRecords = new WeakMap();
+
+function pillRecord(view) {
+  let rec = _pillRecords.get(view);
+  if (!rec) {
+    rec = { el: null, count: 0, atBottom: true, obs: null };
+    _pillRecords.set(view, rec);
+  }
+  // Mirror onto the view's own stream state (per-view, as specified).
+  if (view.stream && view.stream.scrollPill !== rec) view.stream.scrollPill = rec;
+  return rec;
+}
+
+/** Where the pill lives: #main for the primary window (position:relative,
+ *  hosts #chat + the absolutely positioned #input-area), the modal for an
+ *  agent popup (its chat container's closest .flow-agent-modal). */
+function pillHost(view) {
+  const chat = view && view.dom && view.dom.chat;
+  if (!chat) return null;
+  const modal = chat.closest ? chat.closest('.flow-agent-modal') : null;
+  if (modal) return modal;
+  const main = document.getElementById('main');
+  if (main && main.contains(chat)) return main;
+  return null;
+}
+
+function ensureScrollPill(view) {
+  const rec = pillRecord(view);
+  if (rec.el && rec.el.isConnected) return rec.el;
+  const host = pillHost(view);
+  if (!host) return null;
+  const el = document.createElement('button');
+  el.type = 'button';
+  el.className = 'scroll-new-pill hidden';
+  el.setAttribute('aria-live', 'polite');
+  el.addEventListener('click', () => scrollPillDismiss(view));
+  host.appendChild(el);
+  rec.el = el;
+  return el;
+}
+
+/** Park the pill just above whatever sits at the bottom of the view:
+ *  #input-area (primary, dynamic height) or the popup footer bar. */
+function positionScrollPill(view, el) {
+  const host = el.parentElement;
+  if (!host) return;
+  if (host.classList.contains('flow-agent-modal')) {
+    const foot = host.querySelector('.flow-agent-footer');
+    el.style.bottom = `${(foot ? foot.offsetHeight : 0) + 12}px`;
+  } else {
+    const inputArea = document.getElementById('input-area');
+    el.style.bottom = `${(inputArea ? inputArea.offsetHeight : 54) + 12}px`;
+  }
+}
+
+/** Re-park a visible pill (called by main.js's #input-area ResizeObserver so a
+ *  growing multi-line input can never be covered by the pill). */
+export function refreshScrollPill(view) {
+  const rec = view ? _pillRecords.get(view) : null;
+  if (rec && rec.el && rec.el.isConnected && !rec.el.classList.contains('hidden')) {
+    positionScrollPill(view, rec.el);
+  }
+}
+
+/** Recompute pill visibility + count from live geometry for one view. */
+export function syncScrollPill(view) {
+  if (!view || !view.dom || !view.dom.chat) return;
+  const rec = pillRecord(view);
+  const el = ensureScrollPill(view);
+  if (!el) return;
+  const atBottom = isNearBottom(view.dom.chat);
+  rec.atBottom = atBottom;
+  if (atBottom) rec.count = 0; // reached the bottom (any cause) → nothing unseen
+  const show = !atBottom && rec.count > 0;
+  el.classList.toggle('hidden', !show);
+  if (show) {
+    const label = t('chat.newMessages', { n: rec.count });
+    if (el.textContent !== label) el.textContent = label;
+    positionScrollPill(view, el);
+  }
+}
+
+/** Pill click: jump to the bottom, clear the counter, resume following. */
+function scrollPillDismiss(view) {
+  const rec = pillRecord(view);
+  const chat = view.dom.chat;
+  chat.scrollTop = chat.scrollHeight;
+  rec.count = 0;
+  if (view.stream) view.stream.scrollSnapped = true;
+  syncScrollPill(view);
+}
+
+/**
+ * Attach the per-view scroll-follow machinery: row-level MutationObserver +
+ * scroll listener for one ChatView. Idempotent. Call once per view (primary
+ * at startup, popups when their ChatView is created).
+ */
+export function initScrollFollow(view) {
+  const chat = view && view.dom && view.dom.chat;
+  if (!chat) return;
+  const rec = pillRecord(view);
+  if (rec.obs) return;
+  rec.atBottom = isNearBottom(chat);
+  rec.obs = new MutationObserver((mutations) => {
+    let addedRows = 0;
+    const viewportH = chat.clientHeight || 0;
+    for (const m of mutations) {
+      // Only rows appended at the END are new messages. `previousSibling` is
+      // null for `chat.prepend(...)` (scroll-up pagination loading OLDER
+      // messages) — those rows sit above the reading position and must never
+      // count as "new".
+      if (m.previousSibling === null) continue;
+      for (const n of m.addedNodes) {
+        if (!(n instanceof HTMLElement) || !n.classList.contains('row')) continue;
+        // A row that is at least a viewport tall cannot have been below the
+        // user's reading position (a thinking placeholder filled in with
+        // streamed content reaches that size) — it never counts as "a message
+        // you have not seen".
+        if (viewportH > 0 && n.getBoundingClientRect().height >= viewportH) continue;
+        addedRows++;
+      }
+    }
+    // Rows that arrive while the user is away from the bottom are the only
+    // ones that count ("since leaving the bottom"). `rec.atBottom` is the
+    // pre-append snapshot: scroll events and the post-append rAF below keep
+    // it current, so a big card appended *while pinned* is not counted.
+    if (addedRows > 0 && rec.atBottom === false) rec.count += addedRows;
+    syncScrollPill(view);
+    // After this frame's own auto-scroll (scheduled at the append site) has
+    // run, re-read the geometry: a landing at the bottom clears the count.
+    requestAnimationFrame(() => syncScrollPill(view));
+  });
+  rec.obs.observe(chat, { childList: true });
+  chat.addEventListener('scroll', () => syncScrollPill(view), { passive: true });
+  syncScrollPill(view);
 }
 
 // === Syntax highlighting for code (highlight.js) ===

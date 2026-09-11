@@ -4,7 +4,7 @@
 import state, { AGENT_PALETTE } from './state.js';
 import { key } from './branding.js';
 import { activeView, setActiveView, findViewBySessionId } from './chatView.js';
-import { renderMarkdownWithMath, escapeHtml, buildToolDetail, buildDelegatePromptHtml, attachToolClick, smartScroll, playSpinner, stopSpinner, localizeToolLabel, localizeToolSummary, renderHighlightedContent, highlightCode, createMsgCopyButton, createIconsIn } from './utils.js';
+import { renderMarkdownWithMath, escapeHtml, buildToolDetail, buildDelegatePromptHtml, attachToolClick, smartScroll, playSpinner, stopSpinner, localizeToolLabel, localizeToolSummary, renderHighlightedContent, highlightCode, createMsgCopyButton, createIconsIn, isNearBottom, shouldFollowBottom, NEAR_BOTTOM_PX } from './utils.js';
 import { renderWithRegistry } from './cardRegistry.js';
 import { t } from './i18n.js';
 import { sendWs, onMessage } from './ws.js';
@@ -335,6 +335,9 @@ export function renderUserBubble(text, attachments, timestamp) {
   row.appendChild(createMsgFooterBadge(ts, text));
 
   chat.appendChild(row);
+  // UNCONDITIONAL by author ruling (2026-09-11 A-branch): the user's own
+  // message always brings the viewport back to the bottom — the near-bottom
+  // judgement must NOT gate this site. Do not "converge" it.
   chat.scrollTop = chat.scrollHeight;
   return { type: 'user', text, timestamp: ts, attachments: (attachments || []).map(a => ({ type: a.type, name: a.name, preview: a.preview })) };
 }
@@ -490,12 +493,17 @@ export function buildInjectedRow(text, source, timestamp, eventType, sender, sou
   return row;
 }
 
-/** Live-render an injected message into the active view. */
+/** Live-render an injected message into the active view.
+ *  A-branch (2026-09-11): the scroll is CONDITIONAL — this used to jump to the
+ *  bottom unconditionally, which yanked the user out of history they were
+ *  reading (`chat.scrollTop = chat.scrollHeight`). It now follows the shared
+ *  near-bottom judgement (utils.js shouldFollowBottom) so a notification that
+ *  arrives while the user is scrolled up stays put and raises the ↓ N pill. */
 export function renderInjectedBubble(text, source, timestamp, eventType, sender, sourceTeam, delivery) {
   const chat = activeView.dom.chat;
   const row = buildInjectedRow(text, source, timestamp || Date.now(), eventType, sender, sourceTeam, undefined, delivery);
   chat.appendChild(row);
-  chat.scrollTop = chat.scrollHeight;
+  if (shouldFollowBottom(activeView, chat)) chat.scrollTop = chat.scrollHeight;
 }
 
 /** Format epoch millis as HH:MM (24h) or h:MM AM/PM (12h), respecting user preference */
@@ -547,10 +555,10 @@ function cancelStreamRender(view, key) {
 
 /** rAF-time scroll — mirrors smartScroll()'s snapped || near-bottom logic but
  *  scrolls the chat element captured at schedule time (activeView may point
- *  elsewhere by fire time). Same approach as appendThinkingDelta's rAF. */
+ *  elsewhere by fire time). Same approach as appendThinkingDelta's rAF.
+ *  Threshold = the shared NEAR_BOTTOM_PX (utils.js). */
 function rafScrollChat(target) {
-  const threshold = 60;
-  if (target.snapped || target.chat.scrollHeight - target.chat.scrollTop - target.chat.clientHeight < threshold) {
+  if (target.snapped === true || target.chat.scrollHeight - target.chat.scrollTop - target.chat.clientHeight < NEAR_BOTTOM_PX) {
     target.chat.scrollTop = target.chat.scrollHeight;
   }
 }
@@ -1287,7 +1295,7 @@ export function appendToolStreamDelta(toolName, delta) {
 
       // Capture scroll state BEFORE content update — if content grows significantly,
       // the post-update threshold check would fail and miss the auto-scroll.
-      const wasNearBottom = bodyEl.scrollHeight - bodyEl.scrollTop - bodyEl.clientHeight < 80;
+      const wasNearBottom = isNearBottom(bodyEl);
 
       if (highlighted) {
         bodyEl.innerHTML = highlighted.replace(/<\/code><\/pre>$/, '<span class="cursor"></span></code></pre>');
@@ -1301,8 +1309,7 @@ export function appendToolStreamDelta(toolName, delta) {
       }
 
       // Auto-scroll chat — snapped captured at schedule time to match smartScroll()'s logic
-      const threshold = 60;
-      if (target.snapped || target.chat.scrollHeight - target.chat.scrollTop - target.chat.clientHeight < threshold) {
+      if (target.snapped === true || isNearBottom(target.chat)) {
         target.chat.scrollTop = target.chat.scrollHeight;
       }
     });
@@ -2660,8 +2667,7 @@ export function appendThinkingDelta(delta) {
       // Scroll the correct chat element directly — smartScroll() reads state.dom
       // at rAF time which may be the wrong window. Capture snapped at schedule
       // time to match smartScroll()'s snapped || near-bottom logic.
-      const threshold = 60;
-      if (target.snapped || target.chat.scrollHeight - target.chat.scrollTop - target.chat.clientHeight < threshold) {
+      if (target.snapped === true || isNearBottom(target.chat)) {
         target.chat.scrollTop = target.chat.scrollHeight;
       }
     });

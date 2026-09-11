@@ -2944,3 +2944,51 @@
   /* .wsp-* 无 dark 覆写——面板材质/控件全部 token 驱动（共享玻璃卡组 +
      path-picker 基准值），亮暗双主题随全局变量自动切换。 */
 }
+
+/* ---------- "↓ N new messages" pill (A-branch, 2026-09-11) ----------
+   Raised when message rows arrive while the user is reading history (see
+   utils.js syncScrollPill for the row-level counter). One element per
+   ChatView, positioned absolutely in #main (primary) or .flow-agent-modal
+   (agent popups) and parked just above the input bar / footer by JS.
+   Zero new colors: the pill is the existing glass material + text tokens. */
+.scroll-new-pill {
+  position: absolute;
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 25; /* above #chat, below #header (30) and the input bar (20) */
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  height: 28px;
+  padding: 0 12px;
+  font: 500 12px/1 -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+  letter-spacing: 0;
+  color: var(--color-text);
+  background: var(--glass-bg);
+  -webkit-backdrop-filter: blur(var(--glass-blur)) saturate(1.15);
+  backdrop-filter: blur(var(--glass-blur)) saturate(1.15);
+  border: 1px solid var(--glass-border);
+  border-radius: 999px;
+  box-shadow:
+    inset 0 1px 0 0 rgba(255, 255, 255, 0.25),
+    0 2px 8px rgba(0, 0, 0, 0.06),
+    0 8px 24px rgba(0, 0, 0, 0.08);
+  cursor: pointer;
+  white-space: nowrap;
+  transition: transform 0.18s cubic-bezier(0.4, 0, 0.2, 1), opacity 0.18s ease;
+  animation: nf-pill-in 0.18s ease;
+}
+.scroll-new-pill:hover { transform: translateX(-50%) translateY(-1px); }
+.scroll-new-pill:active { transform: translateX(-50%) translateY(0); }
+.scroll-new-pill.hidden { display: none; }
+.scroll-new-pill:focus-visible { outline: 2px solid var(--sapphire-refraction); outline-offset: 2px; }
+
+@keyframes nf-pill-in {
+  from { opacity: 0; transform: translateX(-50%) translateY(4px); }
+  to   { opacity: 1; transform: translateX(-50%) translateY(0); }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .scroll-new-pill { animation: none; transition: none; }
+  .scroll-new-pill:hover, .scroll-new-pill:active { transform: translateX(-50%); }
+}
