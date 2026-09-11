@@ -32,6 +32,13 @@ import java.nio.file.{Files, Path, Paths}
  */
 object PopTool extends Tool:
 
+  /** Shared local-reference policy (failure enum, file probe, app-route
+    *  exemption, warning/counter JSON shapes) — the same module Card uses.
+    *  Pop contributes only the resolution policy below (a Pop'd HTML file has
+    *  a containing directory, a Card does not) and inlines instead of
+    *  proxying. */
+  import FileRefs.*
+
   private val logger = nebflow.core.NebflowLogger.forName("nebflow.tools.pop")
 
   /** Max text file size to send via WS (2 MB). Larger files are read by the frontend via /api/nf-file. */
@@ -46,22 +53,10 @@ object PopTool extends Tool:
   /** Matches the src attribute value of an <img> tag (single or double quoted). */
   private val ImgSrcPattern = """(?i)<img\b[^>]*?\bsrc\s*=\s*["']([^"']+)["']""".r
 
-  private def fileExtension(path: String): String =
-    path.lastIndexOf('.') match
-      case -1 => ""
-      case i => path.substring(i + 1).toLowerCase
-
   // Binary-extension + itemType mapping now lives in a single source of
   // truth (F3): core/workspace/FileTypeRegistry — shared with the WS
   // readFile / pop.readFile routes. The local BinaryExtensions set and
   // detectItemType match were removed as duplicate #1/#2.
-
-  /** Resolve a path string (supports ~ expansion) to a normalized Path. */
-  private def resolvePath(s: String): Option[Path] =
-    try
-      val expanded = if s.startsWith("~") then sys.props("user.home") + s.substring(1) else s
-      Some(Paths.get(expanded).normalize())
-    catch case _: Exception => None
 
   /** Map image file extension to MIME type. */
   private def mimeFromExt(ext: String): String = ext.toLowerCase match
@@ -94,35 +89,133 @@ object PopTool extends Tool:
       else htmlDir.resolve(p).normalize()
     )
 
+  /** One HTML image pass: the rewritten HTML plus what happened to every local
+    *  reference (inlined / deferred / exempt / rejected). */
+  private case class PopRefOutcome(
+      html: String,
+      inlined: Int,
+      deferred: Int,
+      exempt: Int,
+      rejects: List[RejectedRef]
+  )
+
   /**
    * Embed local images referenced by <img src="..."> as base64 data URIs so
    * they render inside the Canvas iframe without /api/nf-file or auth tokens.
-   * Remote URLs and unreadable files are left unchanged (silent skip).
+   * Remote URLs are left unchanged.
+   *
+   * 2026-09-11 (toolfail batch): this pass used to answer `None` to every
+   * question and let `replaced.getOrElse(m.group(0))` keep the raw value with
+   * zero feedback — the Canvas iframe then fetched a path that does not exist
+   * and the user saw an empty box with no explanation (the Card leg had the
+   * same defect, fixed in the carderr batch, merge 52e2f58f). Every local
+   * reference now gets an explicit verdict from the SAME probe Card uses
+   * (`FileRefs.probeFile`):
+   *
+   *   - `Proxy` + embeddable extension + ≤5MB → inlined (counted `proxied`);
+   *   - `Proxy` otherwise → `deferred`: the raw value stays and the Canvas
+   *     HTML viewer's own rewrite serves it through /api/nf-file. Counted,
+   *     never warned — a 5MB+ PNG that renders fine must not appear in an
+   *     actionable defect list;
+   *   - `Exempt` (an app route such as `/js/…`) → counted only;
+   *   - `Reject` → structured warning (原始串 → 解析后路径 → 原因): the Canvas
+   *     fallback cannot serve it either, so nothing would render it.
    */
-  private def embedLocalImages(html: String, htmlDir: Path): String =
-    ImgSrcPattern.replaceAllIn(html, { m =>
-      val src = m.group(1)
-      if isRemoteOrSpecialUrl(src) then m.group(0)
+  private def processLocalImages(html: String, htmlDir: Path): PopRefOutcome =
+    val rejects = scala.collection.mutable.ListBuffer.empty[RejectedRef]
+    var inlined = 0
+    var deferred = 0
+    var exempt = 0
+
+    def record(decision: RefDecision): Unit = decision match
+      case RefDecision.Exempt(_)        => exempt += 1
+      case RefDecision.Reject(rejected) => rejects += rejected
+      case _                            => ()
+
+    /** The replacement src value, or None to keep the raw one. */
+    def newValueFor(src: String): Option[String] =
+      if isRemoteOrSpecialUrl(src) then None
       else
-        val replaced: Option[String] = resolveImgSrc(src, htmlDir).flatMap { imgPath =>
-          try
-            val ext = fileExtension(imgPath.toString)
-            if !Files.exists(imgPath) || !Files.isRegularFile(imgPath) ||
-               !EmbeddableImageExtensions.contains(ext)
-            then None
-            else if Files.size(imgPath) > MaxEmbedImageSize then None
-            else
-              val bytes = Files.readAllBytes(imgPath)
-              val b64 = java.util.Base64.getEncoder.encodeToString(bytes)
-              val dataUri = s"data:${mimeFromExt(ext)};base64,$b64"
-              // Replace only the src value: the regex guarantees group(1) is
-              // immediately before the closing quote at the end of the match.
-              val full = m.group(0)
-              Some(full.dropRight(src.length + 1) + dataUri + full.takeRight(1))
-          catch case _: Exception => None
-        }
-        replaced.getOrElse(m.group(0))
+        resolveImgSrc(src, htmlDir) match
+          case None =>
+            record(
+              applyAppRouteExemption(
+                src,
+                unresolvable(src, "the reference could not be resolved to a filesystem path")
+              )
+            )
+            None
+          case Some(p) =>
+            applyAppRouteExemption(src, probeFile(src, p)) match
+              case RefDecision.Proxy(_) =>
+                // Servable — inline it when the iframe can be spared the fetch,
+                // else leave it for the Canvas viewer's /api/nf-file rewrite.
+                try
+                  val ext = fileExtension(p.toString)
+                  if EmbeddableImageExtensions.contains(ext) && Files.size(p) <= MaxEmbedImageSize then
+                    val b64 = java.util.Base64.getEncoder.encodeToString(Files.readAllBytes(p))
+                    inlined += 1
+                    Some(s"data:${mimeFromExt(ext)};base64,$b64")
+                  else
+                    deferred += 1
+                    None
+                catch
+                  case e: Exception =>
+                    rejects += RejectedRef(
+                      src,
+                      Some(describe(p)),
+                      FileRefFailure.Other,
+                      s"${e.getClass.getSimpleName}: ${Option(e.getMessage).getOrElse("")}"
+                    )
+                    None
+              case other =>
+                record(other)
+                None
+
+    val out = ImgSrcPattern.replaceAllIn(html, { m =>
+      val src = m.group(1)
+      newValueFor(src) match
+        case Some(value) =>
+          // Replace only the src value: the regex guarantees group(1) is
+          // immediately before the closing quote at the end of the match.
+          val full = m.group(0)
+          full.dropRight(src.length + 1) + value + full.takeRight(1)
+        case None => m.group(0)
     })
+
+    if rejects.nonEmpty || deferred > 0 || exempt > 0 then
+      logger.debug(
+        s"Pop: ${rejects.size} image reference(s) not inlined (deferred=$deferred exempt=$exempt)"
+      )
+    PopRefOutcome(out, inlined, deferred, exempt, rejects.toList)
+  end processLocalImages
+
+  /** The counters + warning list for one Pop pass — the same objects Card puts
+    *  in its payload, so both tools report identically shaped warnings. */
+  private def refPayload(o: PopRefOutcome): (Json, Json) =
+    val distinct = distinctRejections(o.rejects)
+    val listed = distinct.take(MaxListedWarnings)
+    (
+      fileRefsJson(o.inlined, distinct.size, distinct.size - listed.size, o.exempt, List("deferred" -> o.deferred)),
+      warningsJson(listed)
+    )
+
+  /** Tool result text: the summary line, then — only when something needs
+    *  attention — the warnings array and the `fileRefs` counter line. A clean
+    *  Pop is byte-identical to the pre-batch result. */
+  private def describeResult(summary: String, o: PopRefOutcome, fileRefs: Json, warnings: Json): String =
+    val failed = fileRefs.hcursor.get[Int]("failed").toOption.getOrElse(0)
+    val sb = new StringBuilder(summary)
+    if failed > 0 then
+      sb.append("\n")
+        .append(
+          s"$failed local image reference(s) could NOT be inlined, and the Canvas fallback (/api/nf-file) cannot serve them either:"
+        )
+        .append("\nwarnings: ")
+        .append(warnings.noSpaces)
+    if failed > 0 || o.deferred > 0 || o.exempt > 0 then
+      sb.append("\n").append(CountsMarker).append(fileRefs.noSpaces)
+    sb.toString
 
   /** Extract hostname from a URL string. */
   private def extractHostname(url: String): String =
@@ -150,6 +243,10 @@ Pop is Nebula-exclusive: only the Nebula root session may call it. Every other a
 - You want to show a web page (e.g. a deployed site, documentation) to the user.
 
 The Canvas tab supports the same file types as the file explorer. The tab title defaults to the filename (or hostname for URLs); provide `title` to customize it.
+
+## Unresolvable image references
+
+Local `<img src>` values that exist, are embeddable image formats and are ≤5MB are inlined as base64 data URIs, so the Canvas iframe renders them with no extra request. Every local reference that could NOT be inlined is reported in this tool's result — `warnings` (`ref` → `resolvedPath` → `reason`: not-found / unresolvable / extension-not-allowed / size-exceeded / not-regular-file) plus a `fileRefs` counter line — and the same list is shown above the Canvas tab. References the Canvas can still serve through /api/nf-file (larger images, formats outside the inline set) are only counted (`fileRefs.deferred`); the app's own routes (`/js/…`, `/css/…`, `/assets/…`, `/logo.svg` …) are counted as `fileRefs.exempt`. Read `warnings` and fix the references before finishing.
 
 ## Parameters
 
@@ -259,31 +356,54 @@ Example: {"filePath": "https://example.com"}"""
 
               // Embed local images as base64 data URIs so they render in the
               // Canvas iframe. Only for HTML files with non-empty content.
+              // `refs` carries what happened to every local reference that was
+              // NOT inlined (toolfail batch, 2026-09-11) — it feeds both the
+              // tool result and the `popFile` item the Canvas viewer renders.
               val htmlDir = Option(path.getParent).getOrElse(Paths.get("."))
-              val content =
-                if itemType == "html" && rawContent.nonEmpty then embedLocalImages(rawContent, htmlDir)
-                else rawContent
+              val refs: Option[PopRefOutcome] =
+                if itemType == "html" && rawContent.nonEmpty then Some(processLocalImages(rawContent, htmlDir))
+                else None
+              val content = refs.map(_.html).getOrElse(rawContent)
 
-              // Build the WS message — dispatched as 'popFile' type.
+              // The refs keys are added only for HTML items (the only ones the
+              // pass runs on) — a markdown Pop keeps its item shape unchanged.
+              val refFields: List[(String, Json)] = refs match
+                case Some(o) =>
+                  val (counters, warnings) = refPayload(o)
+                  List("fileRefs" -> counters, "warnings" -> warnings)
+                case None => Nil
+
+              // Build the WS message — dispatched as 'popFile' type. The two
+              // extra keys carry the SAME shapes Card ships in its payload, so
+              // the Canvas HTML viewer can render them with the same notice
+              // component the chat uses.
               val msg = Json.obj(
                 "type" -> "popFile".asJson,
-                "item" -> Json.obj(
-                  "id" -> s"file:${path.toString}".asJson,
-                  "itemType" -> itemType.asJson,
-                  "title" -> tabTitle.asJson,
-                  "content" -> content.asJson,
-                  "absPath" -> path.toString.asJson,
-                  "size" -> size.asJson,
-                  "pinned" -> true.asJson
+                "item" -> Json.fromFields(
+                  List(
+                    "id" -> s"file:${path.toString}".asJson,
+                    "itemType" -> itemType.asJson,
+                    "title" -> tabTitle.asJson,
+                    "content" -> content.asJson,
+                    "absPath" -> path.toString.asJson,
+                    "size" -> size.asJson,
+                    "pinned" -> true.asJson
+                  ) ++ refFields
                 )
               )
 
-              Right((msg, tabTitle))
+              Right((msg, tabTitle, refs))
           }.flatMap {
             case Left(err) => IO.pure(Left(err))
-            case Right((msg, tabTitle)) =>
+            case Right((msg, tabTitle, refs)) =>
               val sendIO = ctx.wsSend.getOrElse((_: Json) => IO.unit)
-              sendIO(msg) >> IO.pure(Right(s"Opened $tabTitle in Canvas."))
+              val summary = s"Opened $tabTitle in Canvas."
+              val result = refs match
+                case Some(o) =>
+                  val (fileRefsJsonValue, warningsJsonValue) = refPayload(o)
+                  describeResult(summary, o, fileRefsJsonValue, warningsJsonValue)
+                case None => summary
+              sendIO(msg) >> IO.pure(Right(result))
           }
 
     end if
@@ -304,6 +424,10 @@ Example: {"filePath": "https://example.com"}"""
     val fileName =
       if isHttpUrl(filePath) then extractHostname(filePath)
       else filePath.split('/').lastOption.getOrElse(filePath)
-    s"Opened $fileName in Canvas"
+    // Visibility (toolfail batch, mirrors Card's summarizeResult): a Pop whose
+    // local images were dropped used to look like a clean `Opened X in Canvas`.
+    val failed = failedIn(result)
+    if failed > 0 then s"Opened $fileName in Canvas — $failed image reference(s) NOT inlined"
+    else s"Opened $fileName in Canvas"
 
 end PopTool

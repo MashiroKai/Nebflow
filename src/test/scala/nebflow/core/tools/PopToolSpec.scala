@@ -131,7 +131,11 @@ class PopToolSpec extends FunSuite:
     assert(c.contains("http://cdn.example.net/b.jpg"), s"remote src must stay:\n$c")
     assert(!c.contains("base64"), s"nothing to embed:\n$c")
 
-  test("missing file and non-image extension are silently skipped"):
+  test("missing file and non-image extension keep their original src (2026-09-11: no longer silently)"):
+    // toolfail batch: both cases are now REPORTED in the tool result
+    // (`warnings` + `fileRefs`) instead of being dropped without a trace — the
+    // content behaviour is unchanged, the reporting is pinned in
+    // PopToolFileRefSpec.
     val dir = tempDir("skip")
     val html = dir / "report.html"
     os.write.over(
@@ -140,11 +144,16 @@ class PopToolSpec extends FunSuite:
     )
     os.write.over(dir / "notes.txt", "not an image")
     val buf = scala.collection.mutable.ListBuffer.empty[Json]
-    PopTool.call(JsonObject("filePath" -> html.toString.asJson), captureCtx(buf)).unsafeRunSync()
+    val result = PopTool.call(JsonObject("filePath" -> html.toString.asJson), captureCtx(buf)).unsafeRunSync()
     val c = contentOf(buf)
     assert(c.contains("ghost.png"), s"missing file keeps original src:\n$c")
     assert(c.contains("notes.txt"), s"non-image keeps original src:\n$c")
     assert(!c.contains("base64"), s"no embedding expected:\n$c")
+    result match
+      case Right(text) =>
+        assert(text.contains("warnings: "), s"both references must be reported:\n$text")
+        assert(text.contains("not-found") && text.contains("extension-not-allowed"), text)
+      case Left(err) => fail(s"Pop failed: ${err.message}")
 
   test("oversized image (>5MB) keeps its original src"):
     val dir = tempDir("oversize")

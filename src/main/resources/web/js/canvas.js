@@ -843,7 +843,7 @@ export async function openWorkspaceItem(item) {
   // id is let (not const): the absPath dedupe below may rewrite it to the
   // existing tab's id for the same file.
   let { id } = item;
-  const { itemType, title, content, absPath, size, pinned, anchor } = item;
+  const { itemType, title, content, absPath, size, pinned, anchor, warnings } = item;
   if (!id) return;
 
   // URL type — render the page in a sandboxed iframe. Handled before all
@@ -921,7 +921,7 @@ export async function openWorkspaceItem(item) {
           entry.paneEl._editorHandle = null;
         }
         const { renderFile } = await import('./fileViewers.js');
-        await renderFile(entry.paneEl, { itemType, content, absPath, fileName: title, size, path: item.path, rootPath: item.rootPath });
+        await renderFile(entry.paneEl, { itemType, content, absPath, fileName: title, size, path: item.path, rootPath: item.rootPath, warnings });
       }
     }
     // Background refresh responses must not steal activation — the user may
@@ -1005,7 +1005,7 @@ export async function openWorkspaceItem(item) {
   const stashAnchor = absPath ? pendingRefAnchors.get(absPath) : undefined;
   if (absPath) pendingRefAnchors.delete(absPath);
   const renderAnchor = anchor || stashAnchor;
-  await renderFile(pane, { itemType, content, absPath, fileName: title, size, path: item.path, rootPath: item.rootPath, anchor: renderAnchor });
+  await renderFile(pane, { itemType, content, absPath, fileName: title, size, path: item.path, rootPath: item.rootPath, anchor: renderAnchor, warnings });
   entry._lastRefreshAt = Date.now();  // just rendered — don't immediately re-fetch
 }
 

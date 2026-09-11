@@ -29,62 +29,11 @@ object CardTool extends Tool:
 
   private val logger = nebflow.core.NebflowLogger.forName("nebflow.tools.card")
 
-  /** Max file size for HTTP-served files (200 MB). */
-  private val MaxFileSize = 200 * 1024 * 1024
-
-  /**
-   * Allowed extensions for /api/nf-file proxy — prevents reading arbitrary files via src=.
-   *
-   * 2026-09-05 恢复批对齐（以现行端点为准）：与 WebSocketRoutes.NfFileAllowedExt
-   * （2026-09-03 Canvas interactive-HTML fix 版）逐项一致——删除了端点已不收的
-   * avi/eot/wasm/obj/stl/gltf/glb（避免生成必然 400 的死链），补齐端点已放行的
-   * docx/xlsx/xlsm/pptx/epub（此前 src 引用不会被转成代理 URL）。若端点白名单
-   * 再演进，本表须同步（端点是权威，本表是前置过滤）。
-   */
-  private val AllowedExtensions = Set(
-    // images
-    "png",
-    "jpg",
-    "jpeg",
-    "gif",
-    "svg",
-    "webp",
-    "ico",
-    "bmp",
-    "avif",
-    "tiff",
-    "tif",
-    // video
-    "mp4",
-    "webm",
-    "ogg",
-    "ogv",
-    "mov",
-    // audio
-    "mp3",
-    "wav",
-    "oga",
-    "flac",
-    "aac",
-    "m4a",
-    // fonts
-    "woff",
-    "woff2",
-    "ttf",
-    "otf",
-    // documents
-    "pdf",
-    "docx",
-    "xlsx",
-    "xlsm",
-    "pptx",
-    "epub",
-    // web assets (scripts, styles, data)
-    "js",
-    "mjs",
-    "css",
-    "json"
-  )
+  /** The shared local-reference policy (failure enum, file probe, app-route
+    *  exemption, warning/counter JSON shapes) lives in `FileRefs` — the same
+    *  one Pop uses, so the two tools cannot drift apart. Card contributes only
+    *  the resolution policy below (a Card has no containing directory). */
+  import FileRefs.*
 
   /** Regex matching src= attributes with both single and double quotes. */
   private val SrcAttrRegex = """(?i)src\s*=\s*["']([^"']+)["']""".r
@@ -92,268 +41,173 @@ object CardTool extends Tool:
   /** Regex matching href= attributes — for <link> stylesheets and other references. */
   private val HrefAttrRegex = """(?i)href\s*=\s*["']([^"']+)["']""".r
 
-  private def fileExtension(path: String): String =
-    path.lastIndexOf('.') match
-      case -1 => ""
-      case i => path.substring(i + 1).toLowerCase
+  /** `srcset=` attribute value.
+    *
+    *  2026-09-11 (toolfail batch): `srcset` was outside the scan face, so a
+    *  responsive `<img srcset="…">` whose candidates all failed stayed silent.
+    *  The lookbehind keeps `data-srcset=` out — the two legacy regexes above
+    *  carry no such boundary (pre-existing over-match, registered as a
+    *  follow-up rather than widened here). */
+  private val SrcsetAttrRegex = """(?i)(?<![-\w])srcset\s*=\s*["']([^"']+)["']""".r
+
+  /** A CSS `url(...)` token, quoted or bare. One pattern covers `<style>`
+    *  blocks, inline `style` attributes, `@import url(…)`,
+    *  `image-set(url(…))` and `@font-face src:` — all reduce to this token. */
+  private val CssUrlRegex = """(?i)url\(\s*(['"]?)([^'")]+)\1\s*\)""".r
+
+  /** A bare `@import "…"` — the `url(…)` form is already covered above. */
+  private val ImportBareRegex = """(?i)@import\s+(['"])([^'"]+)\1""".r
+
+  /** One card's local-file pass: rewritten HTML plus every rejected reference
+    *  and the count of suppressed app-route exemptions. */
+  private[tools] case class EmbedOutcome(html: String, proxied: Int, rejects: List[RejectedRef], exempt: Int)
 
   /**
-   * Why a local-looking file reference could not be turned into an
-   * /api/nf-file URL.
-   *
-   * 2026-09-11 (carderr batch — author report 11:57): the Card tool used to
-   * drop such references silently — the raw value stayed in the HTML, the
-   * sandboxed iframe resolved it against about:srcdoc → 404 → an invisible
-   * blank box, and the tool result said nothing at all. The author hit
-   * exactly that with `<img src="~/projects/gamma-telescope/reports/…svg">`
-   * (empirical chain: `.nebflow/evidence/20260911_carderr-impl/`). Every
-   * rejection is now reported in the tool result under `warnings`.
-   *
-   * NOTE — `out-of-proxy-root` is deliberately NOT a member of this enum:
-   * GET /api/nf-file (WebSocketRoutes.scala:4848-4868) enforces token +
-   * extension whitelist only and confines no root, so CardTool must not
-   * invent a root the endpoint does not have.
-   */
-  enum FileRefFailure(val code: String, val what: String):
-    /** 不存在 */
-    case NotFound extends FileRefFailure("not-found", "the file does not exist")
-    /** 不可解析 */
-    case Unresolvable
-        extends FileRefFailure("unresolvable", "the reference could not be resolved to a filesystem path")
-    /** 扩展名不在白名单 */
-    case ExtensionNotAllowed
-        extends FileRefFailure("extension-not-allowed", "/api/nf-file does not serve this extension")
-    /** 超过大小上限 */
-    case SizeExceeded extends FileRefFailure("size-exceeded", "the file is larger than the proxy size limit")
-    /** 非常规文件 */
-    case NotRegularFile extends FileRefFailure("not-regular-file", "the path is not a regular file")
-    /** 其它 */
-    case Other extends FileRefFailure("other", "probing the file failed")
-
-  /** One rejected reference, as reported in the tool result + card payload. */
-  private[tools] case class RejectedRef(
-      value: String,
-      resolved: Option[String],
-      failure: FileRefFailure,
-      detail: String
-  )
-
-  /** What to do with one src/href value. */
-  private enum RefDecision:
-    case Proxy(url: String)
-    case Ignore
-    case Reject(rejected: RejectedRef)
-
-  /** One card's local-file pass: rewritten HTML plus every rejected reference. */
-  private[tools] case class EmbedOutcome(html: String, proxied: Int, rejects: List[RejectedRef])
-
-  /**
-   * Reference kinds that are never local disk files: inline data, remote URLs,
-   * in-document anchors, script URLs, mail/uuid-ish schemes, and the app's own
-   * API surface — `/api/` is excluded so an already-proxied
-   * `/api/nf-file?path=…` URL is never re-reported as a broken reference.
-   */
-  private val NonFileRefPrefixes = List(
-    "data:",
-    "http://",
-    "https://",
-    "//",
-    "#",
-    "javascript:",
-    "mailto:",
-    "tel:",
-    "blob:",
-    "about:",
-    "/api/"
-  )
-
-  private def isLocalFilePath(s: String): Boolean =
-    s.nonEmpty && !NonFileRefPrefixes.exists(prefix => s.toLowerCase.startsWith(prefix))
-
-  /** A file extension at the very end of the value (`~`, `/`, or `foo.png` shapes). */
-  private val FileExtensionSuffix = """\.[A-Za-z0-9]{1,6}$""".r
-
-  /**
-   * A reference "looks like a local file" when it is `~`/`/` anchored or ends
-   * in a file extension — the shapes the docs tell agents to use. Bare
-   * extension-less strings are ignored: they are not path-shaped enough to
-   * warn about (documented boundary, see the evidence file).
-   */
-  private def looksLikeFilePath(s: String): Boolean =
-    s.startsWith("~") || s.startsWith("/") || FileExtensionSuffix.findFirstIn(s).isDefined
-
-  /** Resolve a path string (supports ~ expansion) to a normalized java.nio.file.Path. */
-  private def resolvePath(s: String): Option[Path] =
-    try
-      val expanded = if s.startsWith("~") then sys.props("user.home") + s.substring(1) else s
-      val p = Paths.get(expanded).normalize()
-      if p.toString.nonEmpty then Some(p) else None
-    catch case _: Exception => None
-
-  /** Closest existing ancestor of `p` — the single most useful hint when a
-    *  reference points at a path root that does not exist (author's case:
-    *  `~/projects/…` while the project workspace lives under `~/.nebflow/`). */
-  @annotation.tailrec
-  private def nearestExistingParent(p: Path, hops: Int = 0): Option[Path] =
-    val parent = p.getParent
-    if parent == null || hops >= 16 then None
-    else if Files.exists(parent) then Some(parent)
-    else nearestExistingParent(parent, hops + 1)
-
-  private def hasTemplatePlaceholder(s: String): Boolean =
-    s.contains("${") || s.contains("{{")
-
-  /** Absolute, normalized form used in warnings + `resolvedPath` (a relative
-    *  candidate is reported against the JVM working directory). */
-  private def describe(path: Path): String = path.toAbsolutePath.normalize.toString
-
-  /**
-   * Classify one src/href value: proxy it, ignore it, or reject it with a reason.
+   * Classify one reference value (an `src`/`href` attribute, a `srcset`
+   * candidate URL, a CSS `url(...)` token or a bare `@import`): proxy it,
+   * ignore it, exempt it, or reject it with a reason.
    *
    * Only `~`/`/` anchored references are ever proxied. Relative references stay
-   * unproxied and now WARN instead of silently doing nothing — that also keeps
+   * unproxied and WARN instead of silently doing nothing — that also keeps
    * `?path=images/logo.png` (resolved by the endpoint against the *server's*
    * working directory) out of the URL space, which the docs always promised.
+   * A failing value that is simultaneously a gateway route (`/js/…`) is
+   * exempted instead of reported — see `FileRefs.applyAppRouteExemption`.
+   *
+   * The file-level probe itself is shared with Pop (`FileRefs.probeFile`);
+   * only the resolution policy in this wrapper is Card-specific.
    */
   private def decideRef(rawValue: String): RefDecision =
     val value = rawValue.trim
     if !isLocalFilePath(value) || !looksLikeFilePath(value) then RefDecision.Ignore
-    else if !value.startsWith("~") && !value.startsWith("/") then
-      RefDecision.Reject(
-        RejectedRef(
-          value,
-          None,
-          FileRefFailure.Unresolvable,
-          "relative references are never resolved — use an absolute path (`/Users/you/…`) or `~/…`"
-        )
-      )
-    else if hasTemplatePlaceholder(value) then
-      RefDecision.Reject(
-        RejectedRef(
-          value,
-          None,
-          FileRefFailure.Unresolvable,
-          "the reference contains a template placeholder — resolve it to a real path before emitting the card"
-        )
-      )
     else
-      resolvePath(value) match
-        case None =>
-          RefDecision.Reject(
-            RejectedRef(value, None, FileRefFailure.Unresolvable, "the reference is not a usable filesystem path")
+      val verdict =
+        if !value.startsWith("~") && !value.startsWith("/") then
+          unresolvable(
+            value,
+            "relative references are never resolved — use an absolute path (`/Users/you/…`) or `~/…`"
           )
-        case Some(path) =>
-          val ext = fileExtension(value)
-          if !AllowedExtensions.contains(ext) then
-            RefDecision.Reject(
-              RejectedRef(
-                value,
-                Some(describe(path)),
-                FileRefFailure.ExtensionNotAllowed,
-                s"'.$ext' is not in the proxied extension whitelist (images / video / audio / fonts / pdf / office / js / css / json)"
-              )
-            )
-          else
-            try
-              if !Files.exists(path) then
-                val hint = nearestExistingParent(path)
-                  .map(parent => s"; the nearest existing parent directory is ${describe(parent)}")
-                  .getOrElse("")
-                RefDecision.Reject(
-                  RejectedRef(
-                    value,
-                    Some(describe(path)),
-                    FileRefFailure.NotFound,
-                    s"no file at ${describe(path)}$hint"
-                  )
-                )
-              else if !Files.isRegularFile(path) then
-                RefDecision.Reject(
-                  RejectedRef(
-                    value,
-                    Some(describe(path)),
-                    FileRefFailure.NotRegularFile,
-                    s"${describe(path)} is a directory or another non-regular file"
-                  )
-                )
-              else
-                val size = Files.size(path)
-                if size > MaxFileSize then
-                  RefDecision.Reject(
-                    RejectedRef(
-                      value,
-                      Some(describe(path)),
-                      FileRefFailure.SizeExceeded,
-                      s"$size bytes exceeds the ${MaxFileSize / (1024 * 1024)}MB proxy limit"
-                    )
-                  )
-                else
-                  val encoded = java.net.URLEncoder.encode(path.toString, "UTF-8")
-                  RefDecision.Proxy(s"/api/nf-file?path=$encoded")
-            catch
-              case e: Exception =>
-                RefDecision.Reject(
-                  RejectedRef(
-                    value,
-                    Some(describe(path)),
-                    FileRefFailure.Other,
-                    s"${e.getClass.getSimpleName}: ${Option(e.getMessage).getOrElse("")}"
-                  )
-                )
+        else if hasTemplatePlaceholder(value) then
+          unresolvable(
+            value,
+            "the reference contains a template placeholder — resolve it to a real path before emitting the card"
+          )
+        else
+          resolvePath(value) match
+            case None    => unresolvable(value, "the reference is not a usable filesystem path")
+            case Some(p) => probeFile(value, p)
+      val decision = applyAppRouteExemption(value, verdict)
+      decision match
+        case RefDecision.Exempt(route) => logger.debug(s"Card: exempted app-route reference '$value' (route $route)")
+        case _                         => ()
+      decision
 
   /**
-   * Scan HTML for src= and href= attributes pointing to local files and
-   * replace the ones that can be proxied with /api/nf-file?path=... URLs.
+   * Split a `srcset` value into its image candidates and locate each URL token
+   * inside the original string, so descriptors (`2x`, `640w`) survive the
+   * rewrite. Grammar: `URL [descriptor]` separated by commas (HTML spec).
    *
-   * Rejected references keep their raw value (a broken reference must not
-   * take the whole card down) but are returned in `EmbedOutcome.rejects` so
-   * the caller can report them. Matches from both regexes are merged in
-   * document order — the previous src-then-href concatenation spliced a
-   * later-listed href before an earlier src and threw on such cards.
+   * Registered boundary: an unescaped comma is legal inside a `data:` URL — the
+   * one place a comma split is ambiguous — so a `srcset` value containing
+   * `data:` is skipped whole (never rewritten, never warned) instead of
+   * guessed at.
+   */
+  private def srcsetCandidates(m: scala.util.matching.Regex.Match): List[(Int, Int, RefDecision)] =
+    val raw = m.group(1)
+    if raw.toLowerCase.contains("data:") then Nil
+    else
+      val base = m.start(1)
+      val out = scala.collection.mutable.ListBuffer.empty[(Int, Int, RefDecision)]
+      var cursor = 0
+      raw.split(",", -1).foreach { candidate =>
+        val lead = candidate.indexWhere(ch => !ch.isWhitespace)
+        if lead >= 0 then
+          val rest = candidate.substring(lead)
+          val urlLen = rest.indexWhere(ch => ch.isWhitespace) match
+            case -1 => rest.length
+            case i  => i
+          if urlLen > 0 then
+            val start = base + cursor + lead
+            out += ((start, start + urlLen, decideRef(rest.substring(0, urlLen))))
+        cursor += candidate.length + 1
+      }
+      out.toList
+
+  /**
+   * Drop (never merge) any span that an earlier accepted span already covers.
+   *
+   * Spans arrive in document order. Two scan patterns can genuinely overlap (a
+   * `url(...)` nested inside an `src=` value that is itself proxyable), and
+   * splicing overlapping ranges would either duplicate text or cut it in half —
+   * so the later span is discarded and the earlier one wins.
+   */
+  private[tools] def nonOverlapping[A](spans: List[(Int, Int, A)]): List[(Int, Int, A)] =
+    val out = scala.collection.mutable.ListBuffer.empty[(Int, Int, A)]
+    var lastEnd = -1
+    spans.foreach { span =>
+      val (start, end, _) = span
+      if start >= lastEnd then
+        out += span
+        lastEnd = end
+    }
+    out.toList
+
+  /**
+   * Scan HTML for local file references and replace the ones that can be
+   * proxied with /api/nf-file?path=... URLs.
+   *
+   * Scan face — `src=`, `href=`, every `srcset` candidate URL, every CSS
+   * `url(...)` token and a bare `@import "…"` (2026-09-11 toolfail batch
+   * widened it from the first two; the forms that are deliberately still out
+   * of face are registered in the batch report with their reasons).
+   *
+   * Rejected references keep their raw value (a broken reference must not take
+   * the whole card down) but are returned in `EmbedOutcome.rejects` so the
+   * caller can report them. Matches from all five patterns are merged in
+   * document order — the original src-then-href concatenation spliced a
+   * later-listed href before an earlier src and threw on such cards — and an
+   * overlap guard drops (never merges) a range that an earlier accepted
+   * replacement already covers, because splicing overlapping ranges would
+   * corrupt the document.
    */
   private def embedLocalFiles(html: String): EmbedOutcome =
-    val matches = (SrcAttrRegex.findAllMatchIn(html) ++ HrefAttrRegex.findAllMatchIn(html)).toList.sortBy(_.start)
-    val decisions = matches.map(m => (m.start(1), m.end(1), decideRef(m.group(1))))
-    val rejects = decisions.collect { case (_, _, RefDecision.Reject(rejected)) => rejected }
-    val replacements = decisions.collect { case (start, end, RefDecision.Proxy(url)) => (start, end, url) }
+    val matches: List[(Int, Int, RefDecision)] =
+      (SrcAttrRegex.findAllMatchIn(html).map(m => (m.start(1), m.end(1), decideRef(m.group(1)))) ++
+        HrefAttrRegex.findAllMatchIn(html).map(m => (m.start(1), m.end(1), decideRef(m.group(1)))) ++
+        SrcsetAttrRegex.findAllMatchIn(html).flatMap(srcsetCandidates) ++
+        CssUrlRegex.findAllMatchIn(html).map(m => (m.start(2), m.end(2), decideRef(m.group(2)))) ++
+        ImportBareRegex.findAllMatchIn(html).map(m => (m.start(2), m.end(2), decideRef(m.group(2))))).toList
+        .sortBy(_._1)
+
+    val rejects = matches.collect { case (_, _, RefDecision.Reject(rejected)) => rejected }
+    val exempts = matches.count { case (_, _, RefDecision.Exempt(_)) => true; case _ => false }
+
+    val replacements = nonOverlapping(
+      matches.collect { case (start, end, RefDecision.Proxy(url)) => (start, end, url) }
+    )
 
     val rewritten =
       if replacements.isEmpty then html
       else
         val sb = new StringBuilder(html.length + replacements.size * 128)
-        var lastEnd = 0
+        var cursor = 0
         for (start, end, replacement) <- replacements do
-          sb.append(html.substring(lastEnd, start))
+          sb.append(html.substring(cursor, start))
           sb.append(replacement)
-          lastEnd = end
-        sb.append(html.substring(lastEnd, html.length))
+          cursor = end
+        sb.append(html.substring(cursor, html.length))
         sb.toString
 
     if rewritten != html then logger.debug(s"Embedded ${replacements.size} local file(s) via /api/nf-file")
-    EmbedOutcome(rewritten, replacements.size, rejects)
+    EmbedOutcome(rewritten, replacements.size, rejects, exempts)
   end embedLocalFiles
-
-  /** Distinct rejected references listed in the tool result; further ones are
-    *  counted but not listed, so a pathological card cannot blow up the result. */
-  private val MaxListedWarnings = 20
-
-  /** Group identical (value, reason) rejections, preserving first-seen order. */
-  private[tools] def distinctRejections(rejects: List[RejectedRef]): List[(RejectedRef, Int)] =
-    val grouped = scala.collection.mutable.LinkedHashMap.empty[(String, String), (RejectedRef, Int)]
-    rejects.foreach { rejected =>
-      val key = (rejected.value, rejected.failure.code)
-      grouped.get(key) match
-        case Some((first, count)) => grouped.update(key, (first, count + 1))
-        case None                 => grouped.update(key, (rejected, 1))
-    }
-    grouped.values.toList
 
   /** The sentinel prefix the frontend splits the JSON payload on (cardRegistry.js
     *  `^___\w+_HTML___`); nothing may be appended after the JSON. */
   private val CardSentinel = "___CARD_HTML___"
 
-  /** Distinct failed file references carried by an already-built card result. */
-  private def unresolvedFileRefs(result: String): Int =
+  /** One integer counter out of an already-built card result's `fileRefs`. */
+  private def fileRefCount(result: String, field: String): Int =
     if !result.startsWith(CardSentinel) then 0
     else
       io.circe.parser
@@ -362,10 +216,17 @@ object CardTool extends Tool:
         .flatMap(_.asObject)
         .flatMap(_.apply("fileRefs"))
         .flatMap(_.asObject)
-        .flatMap(_.apply("failed"))
+        .flatMap(_.apply(field))
         .flatMap(_.asNumber)
         .flatMap(_.toInt)
         .getOrElse(0)
+
+  private def unresolvedFileRefs(result: String): Int = fileRefCount(result, "failed")
+
+  /** App-route references the exemption suppressed — surfaced in the chat
+    *  header whenever it is non-zero, so a suppressed reference is never
+    *  invisible (see `FileRefs.applyAppRouteExemption`). */
+  private def exemptFileRefs(result: String): Int = fileRefCount(result, "exempt")
 
   val name = "Card"
 
@@ -472,7 +333,7 @@ HTML must be self-contained (all styles/tags inline, no external CSS/JS).
 
 Local file paths in `src`/`href` are proxied by the backend to `/api/nf-file`, so **you MUST use absolute paths** — `/Users/you/project/plot.png`, `/tmp/output.svg`, or `~/.nebflow/projects/<name>/reports/plot.svg`. `~` expands to the user's home directory, and project workspaces live under `~/.nebflow/projects/<name>/` — write that full path, not `~/projects/<name>/…`. Relative paths are never resolved.
 
-Every reference that could not be proxied is reported in this tool's result under `warnings` (`ref` → `resolvedPath` → `reason`: not-found / unresolvable / extension-not-allowed / size-exceeded / not-regular-file, plus `fileRefs` counts) and renders as a visible placeholder in the card instead of a silent blank box. Read `warnings` and fix the references before finishing."""
+Every reference that could not be proxied is reported in this tool's result under `warnings` (`ref` → `resolvedPath` → `reason`: not-found / unresolvable / extension-not-allowed / size-exceeded / not-regular-file, plus `fileRefs` counts) and renders as a visible placeholder in the card instead of a silent blank box. Scanned: `src=`, `href=`, every `srcset` candidate, every CSS `url(...)`, a bare `@import "..."`. The app's own routes (`/js/`, `/css/`, `/assets/`, `/vendor/`, `/uploads/`, `/agents/`, `/voice-models/`, plus `/style.css` `/app.js` `/logo.svg` `/favicon.*`) are exempt — the app serves them, not the disk — and are counted in `fileRefs.exempt` instead of being reported. Read `warnings` and fix the references before finishing."""
 
   /**
    * Load user design prompt from disk (cached by mtime).
@@ -630,23 +491,15 @@ Example (interactive 3D with Three.js):
               // section out of that preview — leading with fileRefs/warnings
               // keeps the failure visible to the model in every case.
               // Field order is irrelevant to the frontend (property access on
-              // the parsed object), so this stays contract-compatible.
-              "fileRefs" -> Json.obj(
-                "proxied" -> outcome.proxied.asJson,
-                "failed" -> distinct.size.asJson,
-                "omitted" -> (distinct.size - listed.size).asJson
+              // the parsed object), so this stays contract-compatible; the
+              // toolfail batch only ADDED `exempt` inside fileRefs.
+              "fileRefs" -> fileRefsJson(
+                outcome.proxied,
+                distinct.size,
+                distinct.size - listed.size,
+                outcome.exempt
               ),
-              "warnings" -> Json.arr(
-                listed.map { case (rejected, count) =>
-                  Json.obj(
-                    "ref" -> rejected.value.asJson,
-                    "resolvedPath" -> rejected.resolved.fold(Json.Null: Json)(path => path.asJson),
-                    "reason" -> rejected.failure.code.asJson,
-                    "detail" -> rejected.detail.asJson,
-                    "count" -> count.asJson
-                  )
-                }*
-              ),
+              "warnings" -> warningsJson(listed),
               "html" -> outcome.html.asJson,
               "title" -> title.asJson
             )
@@ -709,8 +562,15 @@ Example (interactive 3D with Three.js):
   def summarizeResult(input: JsonObject, result: String): String =
     val title = input("title").flatMap(_.asString).getOrElse("Card")
     val failed = unresolvedFileRefs(result)
+    val exempt = exemptFileRefs(result)
     // Visibility (carderr batch): a card whose local references were dropped
     // used to look like a clean `Card rendered` in the chat header as well.
-    if failed > 0 then s"$title rendered — $failed file reference(s) NOT proxied" else s"$title rendered"
+    // toolfail batch: a suppressed app-route exemption is surfaced too, so
+    // `fileRefs.exempt` is not a silent counter.
+    val note =
+      if failed > 0 then s" — $failed file reference(s) NOT proxied"
+      else if exempt > 0 then s" — $exempt app-route reference(s) exempt"
+      else ""
+    s"$title rendered$note"
 
 end CardTool

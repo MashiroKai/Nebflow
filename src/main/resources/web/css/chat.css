@@ -2504,6 +2504,17 @@
   color: var(--color-text);
 }
 
+/* Same notice, hosted by the Canvas HTML viewer (toolfail batch 2026-09-11):
+   the pane is a column flex container, so the notice is the first child and the
+   frame takes the remaining height. A long list scrolls inside the strip
+   instead of eating the document. */
+.canvas-tab-pane > .html-card-warning {
+  flex: none;
+  max-height: 40%;
+  overflow-y: auto;
+  background: var(--color-surface);
+}
+
 /* ===== Permission Danger Levels ===== */
 .perm-danger-banner {
   display: flex;
