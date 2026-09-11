@@ -644,6 +644,17 @@ Git safety:
    * session (if present). 2026-09-10 换轴：目标字段 = `processActivityMs`
    * （旧实现写 `lastActivityMs`，把进程活性混进 agent 侧判据——事故根因）。
    * 本戳不参与卡死判据，只作「子进程确实活着」的旁证。
+   *
+   * stuck 自动恢复批 P1（2026-09-11 作者裁定 R-3）：本方法同时是**正信号（进展
+   * 证据）的传感器**——调用点位于 `startActivityBridge` 的 `hasProgress` 分支，
+   * 即「上一个采样窗内 stdout 行数增长 ∨ 单窗 CPU 增量 > 活动桥阈值」。两个字段
+   * **同点采样、不同语义**：
+   *   - `processActivityMs`「子进程还活着」——**明文禁被 watcher 读取**（旁证）；
+   *   - `AgentRecord.lastProgressSignalAt`「本窗有进展」——写入语义单点 =
+   *     [[nebflow.agent.AgentCore.markToolProgress]]，**只阻止判死、绝不促成判死**
+   *     （消费点 = `TaskStuckWatcher.classify` 的类② 分流）。
+   * 之所以在本采样点接线：设计 §2.3 原则 2 要求正信号必须**结构化**、判据不得解析
+   * 自有日志——本桥的采样循环是全仓唯一持有「行数增量 / 单窗 CPU 增量」的结构化点。
    */
   private def touchProcessActivity(ctx: ToolContext): IO[Unit] =
     (ctx.sharedResources, ctx.sessionId) match
@@ -651,7 +662,8 @@ Git safety:
         val now = System.currentTimeMillis()
         res.agentRegistry.modify { m =>
           m.get(sid) match
-            case Some(rec) => (m.updated(sid, rec.copy(processActivityMs = now)), ())
+            case Some(rec) =>
+              (m.updated(sid, nebflow.agent.AgentCore.markToolProgress(rec.copy(processActivityMs = now), now)), ())
             case None => (m, ())
         }
       case _ => IO.unit
