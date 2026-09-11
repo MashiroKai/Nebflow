@@ -3,7 +3,7 @@ package nebflow.core.tools
 import cats.effect.IO
 import io.circe.syntax.*
 import io.circe.{Json, JsonObject}
-import nebflow.neblink.{FriendService, FriendSummary}
+import nebflow.neblink.{FriendRoster, FriendService, FriendSummary}
 
 import java.time.LocalTime
 import java.time.format.DateTimeFormatter
@@ -22,6 +22,8 @@ import java.time.format.DateTimeFormatter
  *   2. 昵称精确
  *   3. 昵称唯一前缀
  * 多命中/零命中一律返回候选列表让模型自行纠错（同 turn 内最便宜的修复点）。
+ * 解析与候选文案的**唯一实现点** = `nebflow.neblink.FriendRoster`（批 ⑩
+ * 2026-09-12 收归，`ListFriends` 同用同一份词表）——本工具只委托。
  *
  * 接线：GatewayMain 启动时 FriendMessageTool.initialize(friendService)
  * （RemoteExecutor.initialize 同款单例模式）。授权（阶段 2d，设计 D.1-11）：
@@ -63,37 +65,14 @@ object FriendMessageTool extends Tool:
     "required" -> List("to", "message").asJson
   )
 
-  /** Three-level resolution (spec §2 task item 2). Pure — public for tests. */
+  /** Three-level resolution (spec §2 task item 2). Pure — public for tests.
+    *
+    * 批 ⑩（2026-09-12，方案 `20260912_011320` §4.5 同步点 ③）：实现已收归唯一
+    * 单点 `FriendRoster.resolve`（与 `ListFriends` 共用同一份候选文案 —— 成功路径
+    * 与失败路径同一套词表）。本方法**只做委托**：对外文案、L1–L3 解析顺序与逐字
+    * 输出零变更，参数名校验与 IO 组合全在 `call` 侧不变。 */
   def resolveFriend(query: String, friends: List[FriendSummary]): Either[ToolError, FriendSummary] =
-    val q = query.trim
-    val candidatesHint =
-      if friends.isEmpty then "The friend list is empty (no accepted friendships)."
-      else s"Available friends: ${friends.map(f => s"${f.displayName} (${f.username})").mkString(", ")}"
-
-    if q.isEmpty then Left(ToolError(s"'to' is empty. $candidatesHint"))
-    else
-      // 契约词汇同步（NL 号 = Username）：byId 即按 username 精确匹配（值域
-      // 与旧 neblinkId 字段一致，仅字段更名，语义不变）。
-      val byId = friends.filter(_.username.equalsIgnoreCase(q))
-      byId match
-        case single :: Nil => Right(single)
-        case _ =>
-          val byName = friends.filter(_.displayName.equalsIgnoreCase(q))
-          byName match
-            case single :: Nil => Right(single)
-            case multi =>
-              val byPrefix = friends.filter(_.displayName.toLowerCase.startsWith(q.toLowerCase))
-              val hits     = (multi ++ byPrefix).distinct
-              hits match
-                case single :: Nil => Right(single)
-                case many =>
-                  Left(
-                    ToolError(
-                      if many.isEmpty then s"Friend '$q' not found. $candidatesHint"
-                      else s"Friend '$q' is ambiguous (${many.size} matches). Candidates: ${many.map(f => s"${f.displayName} (${f.username})").mkString(", ")} — use the exact username."
-                    )
-                  )
-  end resolveFriend
+    FriendRoster.resolve(query, friends)
 
   /** Send after resolution — extracted so the IO composition stays flat
     * (Scala 3: multi-line matches inside nested flatMap braces are fragile). */
