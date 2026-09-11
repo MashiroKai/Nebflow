@@ -957,6 +957,20 @@ export default {
   // === Canvas 保存反馈 ===
   'canvas.saved': '已保存 {name}',
   'canvas.saveFailed': '保存 {name} 失败：{error}',
+  // === Canvas 外部文件拖入 / 粘贴（canvasdrop，2026-09-11 作者裁定 R1–R7）===
+  'canvas.dropInserted': '已插入 {ref}',
+  'canvas.dropBatchInserted': '已插入 {count} 张图片引用',
+  'canvas.dropFailed': '插入失败：{error}',
+  'canvas.dropUnsupported': '暂不支持该类型：{name}（可拖入的图片：{types}）',
+  'canvas.dropNotEditable': '当前是预览/只读视图，不能插入引用 —— 切到源码视图后再拖入',
+  'canvas.dropNoTarget': '这里没有可编辑的文件，请拖到正在编辑的文件区域内',
+  'canvas.dropTooLarge': '{name} 超过 20MB 上限，未写入',
+  'canvas.dropOutsideRoot': '{name} 未写入：文档在工作区外，图片无法落到它旁边。请把文档移入工作区，或改为引用原文件的路径。',
+  'canvas.pasteInserted': '已粘贴并插入 {ref}',
+  'canvas.pasteUnsupported': '暂不支持该类型：{name}（可粘贴的图片：{types}）',
+  'canvas.pasteNotEditable': '当前是预览/只读视图，不能插入引用 —— 切到源码视图后再粘贴',
+  'canvas.pasteNoTarget': '这里没有可编辑的文件，请先打开要编辑的文件并聚焦光标',
+  'canvas.tabDropOpened': '已打开 {name}',
   // === Lightbox（图片预览） ===
   'lightbox.ariaLabel': '图片预览',
   'lightbox.close': '关闭预览',
