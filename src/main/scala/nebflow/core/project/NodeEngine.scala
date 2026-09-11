@@ -2587,7 +2587,8 @@ class NodeEngine(
     *        `reclaimSession`（杀进程树 + 注销 registry + 逐条 `finalizeTask` + 释放
     *        `ShellSession.sessions` 条目 + WS `backgroundTaskUpdate(status="cancelled")` 帧）。
     *      ⇒ 本函数**不**即时 reclaim：就地收殓会让窗口口径对 Loop 失效（与本段硬口径冲突），
-    *      故把「双会话收殓」落在窗口执行体上，并由 `NodeDestroyWindowSpec` 双会话用例钉死。
+    *      故把「双会话收殓」落在窗口执行体上，并由 `LoopNodeSpec` ⑦（双会话 + 申报槽）与
+    *      `NodeBgReclaimSpec` R1/R7（窗口/到点/幂等）钉死。
     *      停 actor / 停桥 / 注销 registry 保持不变（会话实体拆除不随窗口变——窗口保的是
     *      进程与任务（可取证面），不是已死的 agent actor）。 */
   private def destroyLoopSessions(nodeId: String, worker: LoopSession, verify: LoopSession): IO[Unit] =
