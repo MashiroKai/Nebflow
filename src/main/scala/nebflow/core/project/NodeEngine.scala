@@ -2112,7 +2112,12 @@ class NodeEngine(
                     // 闸门反馈在**前**（保住 `BlockedReader` 的裸 BLOCKED 锚定与重入 prompt
                     // 语义，零回归），原结论文本以空行分隔并列在**后**（一条 result 字段里
                     // 两段可各自取用，无 schema 变更、无前端改动、无新字段）。
-                    blockedNode(nodeId, CompletionGate.feedback(diag), finalText = Some(resultText))
+                    // 取回原文的具体命令（U6/F 判据，<ws> = 项目工作区，<id> = 节点 id）：
+                    //   python3 -c "import json;r=json.load(open('<ws>/.nebflow/flow-map.json'))\
+                    //     ['nodes']['<id>']['result'];print(r.split('[original-conclusion]',1)[1])"
+                    // → 打印闸门 Reject 前该节点会话产出的结论文本全文（未被闸门文本污染）。
+                    blockedNode(nodeId, CompletionGate.feedback(diag),
+                      finalText = Some(CompletionGate.withOriginalText(resultText)))
                 }
               case _ => completedNode(nodeId, resultText)
             }
