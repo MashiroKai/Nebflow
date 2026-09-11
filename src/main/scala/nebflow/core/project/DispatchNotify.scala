@@ -471,8 +471,25 @@ final class DispatchNotify(
     *
     * 生命周期：`cancelNode(notify = false)`（仅 L3 路径）写入；两条终局腿负责
     * 归零——resume 成功（[[NodeEngine.hardResumeNode]] CAS 复活）与改判 failed
-    * （[[NodeEngine.settleFailedHardResume]] 先归还再走 failNode 全链）。 */
-  def holdTerminalNotify(nodeId: String): IO[Unit] = markSent(nodeId)
+    * （[[NodeEngine.settleFailedHardResume]] 先归还再走 failNode 全链）。
+    *
+    * **时序守卫（2026-09-11）**：只在节点仍处 Cancelled 中间态时写占位（见方法体）。 */
+  def holdTerminalNotify(nodeId: String): IO[Unit] =
+    store.findNode(nodeId).flatMap {
+      // **时序守卫**（2026-09-11 实测补）：占位只在节点**仍处 L3 中间态**（Cancelled）时写入。
+      // 占位写点在取消尾链的**末尾**（emit → 审计事件 → cleanupPendingAsks → checkBarriersNow
+      // → 占位），若终局腿（改判 failed 的 failNode / 成功复活的 CAS）先落，这一笔占位会反向
+      // 覆盖终局的回流去重标记：最险的形态是「failed 通知被冷却窗口抑制（未 markSent）」——
+      // 占位会让 30s 补投扫描把该节点当已处置 ⇒ **静默丢通知**。终局腿最早在取消后 5s 才可能
+      // 开跑（TaskStuckWatcher L3 的 sleep 5s），窗口实际不可达；本守卫把「依赖时序余量」改成
+      // **结构性不可能**（幂等：非中间态零写）。
+      case Some(n) if n.status == NodeLifecycle.Cancelled => markSent(nodeId)
+      case Some(n) =>
+        logger.info(
+          s"Project '$projectName' node '${n.name}' (${n.id}) is ${n.status} — L3 intermediate notify hold skipped " +
+            "(the terminal leg already landed; holding now would clobber the terminal dedup marker)")
+      case None => IO.unit
+    }
 
   /** 终局腿归还占位（见 [[holdTerminalNotify]]）：清活动区 + 归档区双区标记，
     * 使节点在下一次真实终态时能正常回流（幂等：两区皆无标记 = 零写）。 */

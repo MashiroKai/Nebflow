@@ -307,25 +307,40 @@ class NodeSessionDeathFinalizeSpec extends FunSuite:
         l3Reason =
           "stuck for 1500s (L3 hard-recovery: true resume from transcript breakpoint) — released by TaskStuckWatcher"
         _ <- (sup ! AgentEvent.Cancelled(rec.sessionId, l3Reason)).void
-        _ <- waitUntil(30.seconds)(store.getNode("n-l3").map(_.exists(_.status == NodeLifecycle.Cancelled)))
+        // 确定性等待中间态的**两个写点**都可见（不猜时长）：status=Cancelled 是桥的终态写点，
+        // 而回流占位（holdTerminalNotify）在取消尾链**末尾**（emit → 审计事件 → cleanupPendingAsks
+        // → checkBarriersNow → 占位）——只等 status 会采样到「尾链未走完 ⇒ 无占位」的假象
+        // （实测：status 可见后 ~200ms 才见 barrier-blocked 与占位，见 impl-r3/23_r3_ddspec_postfix.log）。
+        _ <- waitUntil(30.seconds)(store.getNode("n-l3").map(_.exists(n =>
+          n.status == NodeLifecycle.Cancelled && n.notifySentAt.isDefined)))
         held <- store.getNode("n-l3").map(_.get)
         fires0 <- triggered.get
-        // resume 腿：本 fixture 的挂死会话无 transcript ⇒ 引擎侧 "no readable transcript" ⇒ None
-        resumed <- engine.hardResumeNode(rec.sessionId)
+        // resume 腿：本 fixture 的挂死会话无 transcript ⇒ 引擎侧 "no readable transcript" ⇒ None。
+        // ⚠ **有界化**（防「一条用例挂死整轮」，见成功腿用例的挂死机制 + 证据
+        //   impl-r3/22_threaddump_*.txt）：`hardResumeNode` 尾部 `startNode` 的语义是
+        //   「同步等到被启动节点整个会话终态」（NodeEngine.forkStart 头注），而本 fixture 的
+        //   stub LLM 流是 `IO.never` ⇒ 一旦 resume 真成功，那个续跑 turn 永不结束、无界 await
+        //   永久挂死。加 30s 上界：**断言语义不变**（仍要求返回 None），仅把无界等待换成
+        //   「超时即红」——超时（raced 为 Right）不得被当作通过（见 returnedInTime 断言）。
+        raced <- IO.race(engine.hardResumeNode(rec.sessionId), IO.sleep(30.seconds))
+        returnedInTime = raced.isLeft
+        resumed = raced.fold(identity, _ => None) // Left = 引擎返回值；Right = 30s 超时 ⇒ None 使断言红
         // 改判腿（引擎侧唯一收口）
         _ <- engine.settleFailedHardResume(rec.sessionId)
         _ <- waitUntil(30.seconds)(store.getNode("n-l3").map(_.exists(_.status == NodeLifecycle.Failed)))
         judged <- store.getNode("n-l3").map(_.get)
         down <- store.getNode("n-l3d").map(_.get)
         fires1 <- triggered.get
-      yield (held, fires0, resumed, judged, down, fires1, rec.sessionId)
-      val (held, fires0, resumed, judged, down, fires1, sid) = io.unsafeRunSync()
+      yield (held, fires0, returnedInTime, resumed, judged, down, fires1, rec.sessionId)
+      val (held, fires0, returnedInTime, resumed, judged, down, fires1, sid) = io.unsafeRunSync()
       // ① L3 中间态：Cancelled + 回流占位（deferNotify）——**对外零回流**（既不 cancelled 也不 failed）
       assertEquals(clue(held.status), NodeLifecycle.Cancelled, "the L3 bridge cancel must land as cancelled")
       assert(clue(held.result).exists(_.contains("source=engine")), s"R2: the cancel reason must be recorded: ${held.result}")
       assert(clue(held.notifySentAt).isDefined, "the L3 intermediate state must hold the notify marker (deferred flow-back)")
       assertEquals(clue(fires0), Nil, "the L3 intermediate Cancelled state must produce ZERO outward flow")
       // ② resume 失败形态 = no readable transcript（与隔离实例 e2e 同一条出口）
+      assert(clue(returnedInTime),
+        "hardResumeNode must RETURN within the 30s bound — a timeout means the resume leg hangs (unbounded await on the resumed turn)")
       assertEquals(clue(resumed), None, "resume must fail (the hanging session left no readable transcript)")
       // ③ 改判 failed：状态 / 原因 / 边保留 / D5 停等 / 恰好一条 failed 回流
       assertEquals(clue(judged.status), NodeLifecycle.Failed, "the L3 resume failure must re-judge the node as failed")
@@ -359,18 +374,33 @@ class NodeSessionDeathFinalizeSpec extends FunSuite:
         // 断点在磁盘上：为会话补一份可读 transcript ⇒ resume 必须成功（成功后节点复活续跑）
         _ <- resources.sessionStore.saveMessagesForSession(rec.sessionId,
           List(nebflow.shared.Message(nebflow.shared.MessageRole.User, Left("resume from breakpoint"))))
-        resumed <- engine.hardResumeNode(rec.sessionId)
-        _ <- waitUntil(30.seconds)(store.getNode("n-l3ok").map(_.exists(n =>
-          n.status == NodeLifecycle.Pending || n.status == NodeLifecycle.Running)))
+        // ⚠ **不得 await `hardResumeNode`**（2026-09-11 实测挂死整轮后修正）：它的尾部
+        //   `startNode` 同步等到被启动节点**整个会话终态**（NodeEngine.forkStart 头注），而本
+        //   fixture 的 stub LLM 流是 `IO.never` ⇒ resume 一旦成功，续跑 turn 永不结束 ⇒
+        //   `resumed <- engine.hardResumeNode(...)` 无界 await 永久挂死（线程停在 io.unsafeRunSync，
+        //   无任何测试结论输出；证据 impl-r3/21_r3_ddspec_alone.log 的静默截断 +
+        //   impl-r3/22_threaddump_*.txt 的 pool-6-thread-5 栈）。
+        //   生产侧不受此影响：TaskStuckWatcher 的 L3 链整体 `.start`（fork，扫描循环不等，
+        //   见其 bridgeCancelled/`}).start.void` 处）。
+        //   本用例的断言面是**占位归还这一同步写点**（CAS 在 startNode 之前完成），故 fork 之、
+        //   只等写点对 store 可见；续跑 fiber 由 fixture 的 system.stopAll 收尾（同
+        //   CancelDeadlockFixSpec 对 parked 会话的既有做法）。
+        _ <- engine.hardResumeNode(rec.sessionId).start
+        _ <- waitUntil(30.seconds)(store.getNode("n-l3ok").map(n =>
+          n.exists(x => x.notifySentAt.isEmpty && x.status != NodeLifecycle.Cancelled)))
         revived <- store.getNode("n-l3ok").map(_.get)
         fires <- triggered.get
-      yield (held, resumed, revived, fires)
-      val (held, resumed, revived, fires) = io.unsafeRunSync()
+      yield (held, revived, fires)
+      val (held, revived, fires) = io.unsafeRunSync()
       assert(clue(held.notifySentAt).isDefined, "precondition: the L3 intermediate state holds the marker")
-      assertEquals(clue(resumed), Some("n-l3ok"), "resume must succeed with a readable transcript")
-      assert(clue(revived.status) != NodeLifecycle.Cancelled, s"the node must be revived, got ${revived.status}")
+      // 「resume 成功」的证据 = 占位被归还（notifySentAt 清空）+ 节点离开 Cancelled：本用例不调
+      // releaseTerminalNotify，故该写点的唯一来源 = hardResumeNode 的成功 CAS（失败腿同一条出口
+      // 走的是 failNode，见上一个用例）——等价于原 `assertEquals(resumed, Some("n-l3ok"))`，
+      // 但用可观测写点表达（resume 的 IO 本身因续跑 turn 未终止而不可 await）。
       assertEquals(clue(revived.notifySentAt), None,
         "the hold must be handed back on the success leg — otherwise the revived node's real terminal state would be silenced by dedup")
+      assert(clue(revived.status) == NodeLifecycle.Pending || clue(revived.status) == NodeLifecycle.Running,
+        s"the node must be revived into a live state (CAS writes Pending; the resumed run flips it to Running), got ${clue(revived.status)}")
       assertEquals(clue(fires), Nil, "neither leg may emit an outward flow before the node's real terminal state")
     }
   }

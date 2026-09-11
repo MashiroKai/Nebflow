@@ -506,16 +506,22 @@ class NodeEngine(
     *      都被结构性排除：不会「同节点 cancelled + failed 双份回流」（cancelled 那条
     *      从未发出），也不会「零回流」（failed 这条经既有去重链正常发出；即便预算
     *      耗尽，[[DispatchNotify]] 也会 markSent 止重扫）。
-    *   ③ **审计可 join、不改写历史**：FlowMapEventLog 的 `cancelled`（中间态，含
-    *      source 与原因）+ 本方法追加的 `hard-recovery … L3 resume FAILED … re-judged
-    *      as failed` + `nodeUpdated(Failed)` 三行按 nodeId 可对账；**已写事件不修订**
-    *      （append-only），读者按 ts 顺序即得「被取消 → 恢复失败 → 改判失败」的完整链。
+    *   ③ **审计可 join、不改写历史**：同一 nodeId 上按 `ts` 顺序可对账的链条 =
+    *      `FlowMapEventLog` 的 `cancelled`（中间态，含 source 与原因）→ `FlowMapEventLog`
+    *      的 `hard-recovery … L3 resume FAILED … re-judged as failed`（本方法追加）→
+    *      `FlowMapEventLog` 的 `dispatch-notify`（`triggered: failed → dispatcher`，回流面）
+    *      + WS `nodeUpdated(Failed)`（对外可见终态帧，非事件日志行）。**已写事件不修订**：
+    *      `FlowMapEventLog.append` 只有追加面无 update/delete，bridge 侧历史 `cancelled`
+    *      行**永不改写**，读者按 ts 顺序即得「被取消 → 恢复失败 → 改判失败」的完整链。
     *
     * `chainArchivable` 结论（[[FlowMapStore.chainArchivable]]，见其 failed 判据）：
-    * 无需改动——failed 成员要求 `notifySentAt.isDefined`，而本路径的失败回流必然落在
-    * 该状态（发送成功 → markSent；失败预算耗尽 → 同样 markSent 止重扫），故改判后的
-    * 节点与任何 failed 节点的归档资格完全一致；「引擎接管失败且通知也没发出去」不是
-    * 本路径引入的新形态（既有 failed 链同样兜底）。
+    * **无需改动**——failed 成员要求 `notifySentAt.isDefined`，改判后的节点与任何 failed 节点
+    * 的归档资格完全一致：回流发出 → `markSent`；failed 预算耗尽 → 同样 `markSent` 止重扫。
+    * 唯一「暂时不满足」的形态 = 失败通知被失败窗口抑制（`Suppressed`/`CooldownOn` 有意
+    * **不** markSent）——此时该节点（连同其拓扑分量：归档判据是**链级** [[FlowMapStore.chainArchivable]]）
+    * 留在主图，等 `FailedCooldownMs`（30min，阈值 5 次/10min）冷却结束后的 30s 补投扫描
+    * 必然补投并 `markSent` ⇒ **不会永留主图**（仅当进程在冷却窗口内永久停机才滞留，那是既有
+    * failed 链语义，非本路径引入）。「引擎接管失败且通知从未发出」同样不是本路径的新形态。
     *
     * 幂等：状态守卫（非 Cancelled → 零动作）+ failed 回流/事件/告警各自去重。
     * 找不到节点（会话未绑定/已归档）→ 响亮 ERROR（诚实失败），零动作。 */

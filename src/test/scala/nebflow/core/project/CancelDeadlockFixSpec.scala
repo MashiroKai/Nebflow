@@ -529,6 +529,15 @@ class CancelDeadlockFixSpec extends CatsEffectSuite:
       n2 <- dn.redeliver()
       f2 <- triggered.get
       f2Texts = f2.map(_.take(60))
+      // ④ 时序守卫（2026-09-11）：终局已先落（非 Cancelled）→ 占位零写。防「迟到的占位
+      //    覆盖终局回流去重标记」——最险形态 = failed 通知被冷却抑制（未 markSent）时占位
+      //    仍写入 ⇒ 30s 补投扫描把该节点当已处置 ⇒ 静默丢通知。
+      _ <- seed(store, fNode("n-late", "late-terminal"))
+      _ <- dn.holdTerminalNotify("n-late")
+      lateHeld <- store.getNode("n-late").map(_.exists(_.notifySentAt.isDefined))
+      // 守卫不得误伤正常路径：此刻 n-h 仍是 Cancelled（占位已归还）⇒ 占位照写
+      _ <- dn.holdTerminalNotify("n-h")
+      normalHeld <- store.getNode("n-h").map(_.exists(_.notifySentAt.isDefined))
     yield
       assertEquals(n0, 1, "baseline: an unmarked cancelled node is a redeliver candidate")
       assertEquals(f0.size, 1, s"baseline sweep must notify once, got ${f0.size}")
@@ -538,6 +547,9 @@ class CancelDeadlockFixSpec extends CatsEffectSuite:
       assert(cleared, "releaseTerminalNotify must clear the marker")
       assertEquals(n2, 1, "after the hand-back the node is a candidate again")
       assertEquals(f2.size, 2, s"the next real terminal state notifies exactly once more, got ${f2.size}")
+      assert(!lateHeld,
+        "the ordering guard must NOT hold a node that already reached a terminal state (failed) — a late hold would clobber the terminal dedup marker")
+      assert(normalHeld, "the guard must not disturb the normal L3 intermediate path (still-Cancelled node still gets the hold)")
   }
 
   test("R5b: settleFailedHardResume no-op legs — node not cancelled, and unknown session (both silent, zero side effects)") {
