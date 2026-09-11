@@ -689,6 +689,29 @@ object AgentActor extends AgentCore with AgentSession:
     * D6 批 F1（G9）：project/nodeName 来源标注字段——仅在项目上下文（项目节点
     * 或分发器会话）时携带，缺省 payload 与恢复前字节一致（AskUserBuildJsonSpec
     * V11b 防线同款纪律）。 */
+  /** 内核会话判定（单一判据）：会话 id 前缀 `delegate-kernel-`（与 R10 审计行的
+    * 事后过滤口径、`SessionStore.DelegateId` 命名同源）。 */
+  private[agent] def isKernelSession(sessionId: String): Boolean =
+    sessionId.startsWith("delegate-kernel-")
+
+  /** U3（作者裁定 2026-09-11：自定义答「显示 subagent-任务」，否决裸 `kernel`）：
+    * 内核 ask 的来源标注 = `subagent · <任务摘要>`——一眼看出「这是子代理在问」，
+    * 并带上它正在做的那个任务，使多张卡可区分。摘要来源 = 调用方传入的
+    * `description`（= 会话语义名 `state.sessionName`；缺省回落到会话 id 尾段），
+    * 上限 24 字符（不把整段任务文本灌进标签）。
+    *
+    * 落点仍是**来源标注的回落分支**：payload 的 `agentName` 字段即前端 badge 的
+    * 回落来源（`askPending.js:38-41` / `chat.js:2033`）⇒ 纯后端注入标签文本，
+    * **零 web/ 改动**（读 `askPending.js:35-41` + `main.js:1297-1333` 确认：
+    * `project` 缺省时标签 = `msg.agentName` 原样渲染）。 */
+  private[agent] def subagentAskLabel(sessionName: Option[String], sessionId: String): String =
+    val raw = sessionName.map(_.trim).filter(_.nonEmpty).getOrElse {
+      // 无 description：退回会话 id 尾段（可辨识，且不编造任务语义）
+      sessionId.split('-').lastOption.filter(_.nonEmpty).getOrElse("task")
+    }
+    val summary = if raw.length > 24 then raw.take(23) + "…" else raw
+    s"subagent · $summary"
+
   private[agent] def buildAskUserJson(
     sessionId: Option[String],
     agentName: String,
@@ -2304,10 +2327,18 @@ object AgentActor extends AgentCore with AgentSession:
         val askProject = state.projectName
         val askNodeName =
           if state.isDispatcher then Some("dispatcher") else state.flowNodeName
-        val payload = buildAskUserJson(
+        val payload0 = buildAskUserJson(
           Some(rootSid), srcAgent, items, Some(srcAgent), Some(srcSession),
           askProject, askNodeName
         )
+        // U3（2026-09-11 作者裁定）：内核会话的来源标注覆盖为 `subagent · <任务摘要>`
+        // （纯后端注入——落点仍是来源标注的回落分支：payload.agentName 即前端 badge
+        // 回落来源；`project`/`nodeName` 对内核恒空）。非内核会话 payload 逐字节不变
+        // （AskUserBuildJsonSpec V11b 的字节一致性防线不受影响）。
+        val payload =
+          if isKernelSession(srcSession) then
+            payload0.deepMerge(Json.obj("agentName" -> subagentAskLabel(state.sessionName, srcSession).asJson))
+          else payload0
         // D6 批 F1（方案 A 监督补齐件，spec §3.2/§3.3）：节点提问留痕 node-ask
         // 事件——分发器监督从实时把关变审计可见（FlowMapEventLog 既有基座，
         // NodeEngine start-aborted 等写入点先例）。仅项目节点会话留痕（分发器
@@ -2343,6 +2374,11 @@ object AgentActor extends AgentCore with AgentSession:
             // True-hang coverage is intact: every exit above re-enters scanned
             // statuses, and WaitingForUser itself is never a terminal state.
             touchRegistryActivity(resources, state.sessionId, AgentStatus.WaitingForUser) *>
+              // R11 第 4 层 / U1=C-a + U8=(ii)：ask **发起单点**发暂停信号——内核
+              // 的 3600s wall-clock 预算在等待期暂停（等待无界，R1）。非 Delegate
+              // 会话无预算通道 ⇒ 无害 no-op。配对恢复点 =
+              // AskUserQuestionTool.restoreRegistryAfterAnswer。
+              DelegateBudget.pause(srcSession) *>
               (hub ! InteractionHubCommand.Request(
                 InteractionRequest(
                   requestId = requestId,

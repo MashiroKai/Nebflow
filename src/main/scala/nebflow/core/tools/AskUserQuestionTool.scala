@@ -235,11 +235,15 @@ Behavior:
     (ctx.sharedResources, ctx.sessionId) match
       case (Some(res), Some(sid)) =>
         val now = System.currentTimeMillis()
-        res.agentRegistry.modify { m =>
-          m.get(sid) match
-            case Some(rec) => (m.updated(sid, rec.copy(status = AgentStatus.Processing, lastActivityMs = now)), ())
-            case None      => (m, ())
-        }.handleErrorWith(_ => IO.unit)
+        // R11 第 4 层 / U1=C-a + U8=(ii)：ask **答复单点**发恢复信号——内核的
+        // 3600s wall-clock 预算从此刻继续累计（等待期不计入）。非 Delegate 会话
+        // 无预算通道 ⇒ 无害 no-op。发起侧配对点 = AgentActor 的 AskUser 分支。
+        nebflow.agent.DelegateBudget.resume(sid) *>
+          res.agentRegistry.modify { m =>
+            m.get(sid) match
+              case Some(rec) => (m.updated(sid, rec.copy(status = AgentStatus.Processing, lastActivityMs = now)), ())
+              case None      => (m, ())
+          }.handleErrorWith(_ => IO.unit)
       case _ => IO.unit
 
   /** Normalize a multi-select answer for the LLM: canonical compact JSON array
