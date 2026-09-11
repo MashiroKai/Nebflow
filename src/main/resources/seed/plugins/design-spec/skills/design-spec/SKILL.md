@@ -27,7 +27,7 @@ language: zh
 ### 防线 1 · 设计先行（上游，出规格书）
 1. 必读项目视觉铁律 skill（如 Nebflow 的 `visual-style`，nebflow-frontend-dev 插件，用户裁定硬规则，最高优先级）；若已有设计案例库 skill（如 `design-system`，nebflow-frontend-dev 插件）则同时必读；
 2. 检索：按功能类型命中 1-2 个权威范式（检索源清单见 §4），用 WebSearch/WebFetch 拿原文 → 提炼 3-8 条可执行规则；
-3. 产出规格书：按 §3 模板写入 `docs/<域>/<feature>-spec.md` 活文档（头部状态字段 draft→frozen→dispatch→shipped；配图存 `<域>/assets/`，禁用 /tmp 路径）；
+3. 产出规格书：按 §3 模板写入 `docs/<域>/<feature>-spec.md` 活文档（头部状态字段 draft→frozen→dispatch→shipped；禁用 /tmp 路径）；
 4. 确认：展示规格书；歧义处用 AskUserQuestion 问用户；用户/管理者确认后**冻结**。
 
 ### 防线 2 · 规格化实现（中游）
