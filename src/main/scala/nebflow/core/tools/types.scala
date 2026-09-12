@@ -70,6 +70,14 @@ case class ToolContext(
     * 矩阵判定来源；两字段皆空 = 非项目会话（工具未挂载 + 工具内拒绝双保险）。 */
   flowNodeId: Option[String] = None,
   isDispatcher: Boolean = false,
+  /** 节点角色（nrloop 一期 2026-09-12；设计 §3.2 + B1 透传链）：本节点会话所属
+    * `NodeDef.role`（`task` | `verifier`，见 `NodeRoles`）。由 AgentCore 从
+    * SessionContext 透传（引擎侧身份，不信客户端参数）——`node_report` 值域判据
+    * （`NodeReportToolDef.enumFor(role)`，错误码 `NODE_REPORT_CATEGORY_ROLE`）与
+    * 提示词面角色分支（`ProtocolFootnote`）的唯一来源。
+    * None / 非项目会话 = 回落 `NodeRoles.Task`（与 `NodeDef` 解码缺省同口径）；
+    * 挂载面过滤是另一道保险（`node_report` 仅 flowNodeSession 注入）。 */
+  flowNodeRole: Option[String] = None,
   /** 链级抽象 P2（20260910 process-doc-chain-attribution spec §9.2 项 1）：本节点
     * 所属链 id = `chain-<分量最早 createdAt 节点 id>`（FlowMapStore.chainIdOf 判据
     * 单点，分量成员数 ≥2 才带值——孤立单节点链不带，与 payload chainId 条件键

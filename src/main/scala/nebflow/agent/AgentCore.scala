@@ -1149,6 +1149,10 @@ private[agent] trait AgentCore:
         // Node 系工具 project 缺省解析生效，证据 §6-2 空置历史就此终结）。
         flowNodeId = state.session.flowNodeId,
         isDispatcher = state.session.isDispatcher,
+        // 节点角色（nrloop 一期 2026-09-12，B1 透传链第三段）：SessionContext.flowNodeRole
+        // → ToolContext.flowNodeRole——node_report 值域分化（enumFor）与 ProtocolFootnote
+        // 角色分支的引擎侧判据来源（不信客户端参数，与 flowNodeId 同款纪律）。
+        flowNodeRole = state.session.flowNodeRole,
         projectName = state.session.projectName,
         // 链级抽象 P2（20260910 process-doc-chain-attribution spec §9.2 项 3）：
         // 链身份随身份三元组同路透传——节点会话内的产出据此在过程文档**文件名

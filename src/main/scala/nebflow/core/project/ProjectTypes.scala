@@ -31,6 +31,40 @@ object NodeLifecycle:
   /** 全部合法生命周期值（NodeList status 过滤枚举校验单点，裁定⑤a 20260907）。 */
   val All: Set[String] = Set(Wiring, Pending, Running, Completed, Failed, Cancelled, Blocked)
 
+/** 节点角色（nrloop 一期 2026-09-12；设计正本
+  * `20260911_213805_node-report-per-node-type-and-loop-routing-plan__chain-n-8fc83bbe.md`
+  * §3.2 + 附 C1-1 / C2-R3：作者裁定「Loop 的校验节点 = 独立节点」）。
+  *
+  * 语义 = **节点在拓扑中的职责**，决定 `node_report` 的值域与可选路由：
+  *   - `Task`（缺省）：执行节点——申报域 `finish | blocked(+六类细分)`；完成 = 默认行为
+  *     （`finish` 为可选显式申报，附 C 代裁 R10），**不**参与 verdict 选通。
+  *   - `Verifier`：校验节点——申报域 `pass | fail` + `blocked(+六类细分)`；`fail` 是
+  *     **verdict**（被判定对象不合格），恒伴随节点自身 `completed`（永不 `failed`），
+  *     并经 `(fail)<目标>:loop` 控制边驱动重跑。
+  *
+  * 未标/标错的失败形态与观测面（设计 §2 R3 表）：非法申报由工具侧拒（
+  * `NODE_REPORT_CATEGORY_ROLE`，可行动错误）；verifier 缺 fail 路由由创建期硬拒
+  * （`NODE_VERIFIER_NEEDS_ROUTE`）。`role` **create-only**（同 `merge`，改动只能新建节点）。
+  *
+  * 值域第三值（controller/aggregator/relay）= 未定项，v1 不开（设计 §7 未定 #7）。
+  * 旧 `flow-map.json` 无此键 → withDefaults 解码 `task`（零迁移）。 */
+object NodeRoles:
+  /** 执行节点（缺省）——「任务做不成」走 blocked，`finish` 可选。 */
+  val Task: String = "task"
+  /** 校验节点——verdict 面（pass/fail）+ fail 回边（`:loop`）持有者。 */
+  val Verifier: String = "verifier"
+
+  /** 全部合法角色值（NodeEdit 参数白名单 + 工具侧申报判据共用单点）。 */
+  val All: Set[String] = Set(Task, Verifier)
+
+  /** 角色值合法性（缺省/空 = Task，与解码缺省同口径）。 */
+  def isValid(role: String): Boolean = All.contains(role.trim.toLowerCase)
+
+  /** 归一（大小写宽容 + 空值回落 Task）——写路径与工具侧判据共用。 */
+  def normalize(role: String): String =
+    val r = Option(role).map(_.trim.toLowerCase).getOrElse("")
+    if r.isEmpty then Task else r
+
 /** 取消触发源（取消静默死锁修复批 2026-09-10，作者裁定 **R7 方案 3**）：只区分
   * 「引擎发起 / 用户发起」两态（完整 taxonomy——stuck-watcher-l3 / giveup /
   * agent-control / parent-cascade / node-cancel / dead-session-reap——本批不做）。
@@ -141,11 +175,32 @@ case class OutEdge(
 object OutEdge:
   val Pass = "pass"
   val Failed = "failed"
-  val Gates: Set[String] = Set(Pass, Failed)
+  /** **verdict 门**（nrloop 一期 2026-09-12，设计 §3.3 #12 / 附 C2-R4 取 (a)）：
+    * `fail` = 「verifier 判定被判定对象不合格」——**不是** `failed`（节点自身执行失败）。
+    * 二者一字之差、语义正交，这是本批最容易写错的一处：
+    *   - `failed` = **节点状态门**：绑上游节点自身终态 `failed`（既有语义，零改动）；
+    *   - `fail`   = **verdict 门**：只出现在 `role=verifier` 的节点上（`NODE_VERDICT_GATE_ON_TASK_NODE`），
+    *     与 `:loop` 模式**成对**（`NODE_LOOP_EDGE_ROLE`），目标=被重跑的节点（worker）。
+    * 解析错误文案据此区分两种写法（`NodeTools.parseOutGates`）。 */
+  val Fail = "fail"
+  val Gates: Set[String] = Set(Pass, Failed, Fail)
   val Result = "result"
   val Signal = "signal"
-  val Modes: Set[String] = Set(Result, Signal)
+  /** **控制边模式**（同批）：`loop` = 回边——「out 里可声明、图里不连、barrier 不认、
+    * 由引擎显式驱动」（设计 §3.5 R5(a) 作者裁定）。三处图不变量按它过滤：
+    * `FlowMapStore.wouldCreateCycle.successors`（环检豁免）/ `NodeTools.setOut` 与
+    * `appendEdgeTo` 的 in 镜像（round-1 防死锁红线①）/ 投递结算（不经 `settleTo`、
+    * 不进 `deliveredTo`、不进 barrier）。 */
+  val Loop = "loop"
+  val Modes: Set[String] = Set(Result, Signal, Loop)
   val DefaultOn: Set[String] = Set(Pass)
+
+  /** verdict 选通门集（verifier 专用；`fail` 门 = 该节点的 fail 路由声明）。 */
+  def isVerdictGate(edge: OutEdge): Boolean = edge.on.contains(Fail)
+
+  /** 控制边判据（`:loop` 模式单点）——图不变量/镜像/投递三处过滤共用。 */
+  def isLoopEdge(edge: OutEdge): Boolean = edge.mode == Loop
+
   /** Nebula 边**存量读路径**的缺省门集：completed + failed 双通报（旧拓扑零漂移）。
     *
     * **⚠ 两处语义自此分叉（2026-09-12 裁定 1 / R1-a 起）——本常量不再代表「新写一条
@@ -419,7 +474,30 @@ case class NodeDef(
     * `scheduleDestroy`（挂起腿与 NodeCancel 腿不登记，见 NodeEngine 注）；清除点 =
     * 销毁完成（扫描腿）/ 新一轮翻转回 Running（窗口撤销）/ 节点非终态时扫描腿自愈。
     * 旧 flow-map.json 无此键 → `withDefaults` 解码 None（零迁移，先例 sessionRef 同款）。 */
-  destroyAt: Option[Long] = None
+  destroyAt: Option[Long] = None,
+  /** 节点角色（nrloop 一期 2026-09-12，设计 §3.2；`NodeRoles` 单点）：
+    * `task`（缺省）| `verifier`。create-only（NodeEdit `role` 参数，
+    * `NODE_ROLE_CREATE_ONLY`）——语义职责是拓扑身份，不能中途改（同 `merge` 先例）。
+    * 决定 `node_report` 值域（工具侧）+ verdict 选通合法性（创建期校验族）。
+    * 旧 flow-map.json 无此键 → withDefaults 解码 `task`（零迁移 = 旧行为：执行节点，
+    * 但旧数据仍可报 pass/fail —— 语义分化面的存量读路径零回溯，写路径由工具侧收口）。 */
+  role: String = NodeRoles.Task,
+  /** 最近一次 verdict 申报（nrloop 一期；仅 `role=verifier` 有意义）：
+    * `"pass"` / `"fail"`——喂 `NodeEngine.deliverOut` 的 verdict 感知选通
+    * （fail ⇒ 不投 pass 边、改走 `(fail)<目标>:loop` 控制边；无值 ⇒ 照旧投 pass 边）。
+    * 载荷条件键（非空才带）。旧 flow-map.json 无此键 → withDefaults 解码 None（零迁移）。 */
+  lastVerdict: Option[String] = None,
+  /** loop 预算计时起点（nrloop 一期 R6 时间维；设计 §3.6）：**回边目标节点**上的
+    * 持久字段——verifier 首次申报 `fail` 且预算未耗尽时置位（只置不重），是
+    * 「本轮 loop 从何时开始」的唯一权威。
+    *
+    * 熔断判据（TtlTick 扫描腿 `NodeEngine.sweepLoopBudgets`）：
+    * `status ∈ {wiring,pending,running} ∧ loopStartedAt.isDefined ∧ now - loopStartedAt ≥
+    * Defaults.LoopMaxWallClockMs` ⇒ 熔断（verifier 终态化 failed + `loop-budget` 事件 +
+    * 失败通知；见 `NodeEngine.circuitBreakLoop`）。落盘理由同 `reportPendingSince`
+    * （计时必须跨宿主重启存活；扫描腿挂在 `ProjectActor.TtlTick` 30s 节拍）。
+    * 旧 flow-map.json 无此键 → withDefaults 解码 None（零迁移）。 */
+  loopStartedAt: Option[Long] = None
 )
 
 object NodeDef:
@@ -446,6 +524,9 @@ object NodeDef:
  *   - reportPendingSince / reportReminderCount：**仅 status==running 且未申报计时
  *     已置携带**（noderpt 批 A 段 2026-09-11：已交棒但未 node_report 的节点——
  *     取证/前端据此辨「待申报」Running 态，两键成对、绝不在终态节点泄漏）。
+ *   - role / lastVerdict：**role 仅非 task（= verifier）携带；lastVerdict 仅非空携带**
+ *     （nrloop 一期 2026-09-12：verdict 选通态的可观测面——前端/取证据此辨校验节点
+ *     及其最近判定；执行节点与无判定节点字段集字节级零漂移）。
  *   - notifySentAt：**仅异常终态（failed/cancelled）且已上报携带**（归档语义批
  *     2026-09-07「送达即移」——前端链判据据此判断异常终态「已上报可归档」；与
  *     deps/plugins 同构条件字段，非命中不带 = 零字段漂移）。completed 无上报要求
@@ -628,7 +709,14 @@ object NodePayload:
       val pendingSuccessionFields =
         if node.pendingSuccession.nonEmpty then List("pendingSuccession" -> node.pendingSuccession.asJson)
         else Nil
-      Json.obj((baseFields ++ outFields ++ legacyConfigFields ++ hasResultFields ++ wiringGapFields ++ taskPreviewFields ++ depsFields ++ feedbackFields ++ pluginFields ++ notifyFields ++ mergeFields ++ loopFields ++ bgWaitFields ++ reportPendingFields ++ destroyAtFields ++ retryFields ++ genFields ++ notifySentAtFields ++ pendingSuccessionFields ++ chainFields)*)
+      // role / lastVerdict 条件序列化（nrloop 一期 2026-09-12；与 merge/deps 条件字段
+      // 同构）：**role 仅非 task 才带**（缺键 = task，执行节点字段集字节级零漂移——
+      // 存量全部节点不受影响）；**lastVerdict 仅非空才带**（只有 verifier 会写它）。
+      // 设计 §3.3 #19 口径：两个条件键，非命中不带。
+      val roleFields = if node.role != NodeRoles.Task then List("role" -> node.role.asJson) else Nil
+      val lastVerdictFields =
+        node.lastVerdict.filter(_.trim.nonEmpty).toList.map(v => "lastVerdict" -> v.asJson)
+      Json.obj((baseFields ++ outFields ++ legacyConfigFields ++ hasResultFields ++ wiringGapFields ++ taskPreviewFields ++ depsFields ++ feedbackFields ++ pluginFields ++ notifyFields ++ mergeFields ++ loopFields ++ bgWaitFields ++ reportPendingFields ++ destroyAtFields ++ retryFields ++ genFields ++ notifySentAtFields ++ pendingSuccessionFields ++ chainFields ++ roleFields ++ lastVerdictFields)*)
 
 /** Flow Map 活动区（§2.6，磁盘 flow-map.json）。 */
 case class FlowMapState(
