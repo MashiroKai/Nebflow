@@ -173,6 +173,17 @@ const POPUP_CSS = `<style id="bgt-output-popup-css">
    的 hover 浮现（chat.css）与玻璃主题（sapphire.css Pattern B / dark 档）
    零复制生效；padding-top 抬高给右上角浮层按钮留位（28px = 按钮高+余量）。 */
 .bgt-body { flex: 1; min-height: 0; display: flex; position: relative; padding: 0 12px 10px; }
+/* 复制按钮落进输出框内（2026-09-12 作者令：「复制按钮需要在输出框内」）。
+   公共定位（chat.css:1043-1046 .code-copy-btn）为 absolute top:4px/right:4px，
+   定位祖先是最近的 position:relative 容器 .bgt-body（padding: 0 12px 10px）
+   而非 pre ⇒ 按钮右缘落在 pre.bgt-output 右边界外 8px（12px 横向 padding − 4px）。
+   本面板就地覆盖：right:18px = 12px(.bgt-body padding-right) + 6px（pre 边内缩
+   6px，清开 .bgt-output 的 4px 细滚动条档，见下方 ::-webkit-scrollbar）；
+   top:4px 与 pre 顶边对齐（.bgt-body padding-top 为 0、pre margin 为 0）——
+   按钮四边因此全部落在 .bgt-output 矩形内（几何读数见本批 evidence）。
+   选择器限 .bgt-body 直接子级（0,2,0 > chat.css 的 .code-copy-btn 0,1,0）
+   ⇒ 公共 .code-copy-btn / chat.css 零改动，气泡代码块等其它场景不受影响。 */
+.bgt-body > .code-copy-btn { top: 4px; right: 18px; }
 .bgt-output {
   flex: 1;
   margin: 0;
@@ -237,16 +248,20 @@ const POPUP_CSS = `<style id="bgt-output-popup-css">
   min-width: 0;
   overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
 }
-/* 终端语言的状态标识（2026-09-10 作者指令③：状态在终端语言内表达，行前缀/
-   角标，禁大色块）：运行态 = meta 行前缀终端光标块（.tool-stream-body
-   pre .cursor 同源视觉：--color-primary 5×14 blink）；终态 = 美元符 prompt
-   前缀 + exit 码（如 "$ exit 0 · 3 行 · 27 B"）。 */
-.bgt-cursor {
+/* 终端语言的状态标识（2026-09-10 作者指令③；2026-09-12 作者令：「绿色光标也
+   要放在输出框内」）：运行态 = pre 文本流末尾的终端光标块（.tool-stream-body
+   pre .cursor 同源视觉：--color-primary 5×12 blink）——渲染在 .bgt-output
+   内（空输出时即其内容区左上角），随输出一起滚动、永不覆盖文本；伪元素不落
+   pre DOM ⇒ pre.textContent（window.copyCode 的读取面）零污染。
+   终态 = footer 的美元符 prompt 前缀 + exit 码（如 "$ exit 0 · 3 行 · 27 B"）。 */
+.bgt-output.bgt-running::after {
+  content: '';
   display: inline-block;
   width: 5px; height: 12px;
+  margin-left: 1px;
   background: var(--color-primary);
+  vertical-align: text-bottom;
   animation: blink 1s steps(2) infinite;
-  flex-shrink: 0;
 }
 .bgt-prompt { opacity: 0.7; flex-shrink: 0; }
 .bgt-truncated {
@@ -302,14 +317,21 @@ function renderMeta(data) {
 }
 
 // 终端语言 meta（2026-09-10 作者指令③）：终态 → `$` prompt 前缀 + exit 码
-// （复用 bg.detail.exit / 既有终态 label，零新 key）；运行态 → 闪烁光标块。
-// 只动 marker 与 exit-label 两段——meta-text（行数/字节）由 renderMeta 独占。
+// （复用 bg.detail.exit / 既有终态 label，零新 key）；运行态 → 绿光标块。
+// 2026-09-12 作者令（「绿色光标也要放在输出框内」）：光标不再落 footer 的
+// meta-marker，改为 pre 上的 bgt-running 状态类（POPUP_CSS 的
+// .bgt-output.bgt-running::after 伪元素）——光标进输出框、随输出滚动，伪元素
+// 不进 pre DOM ⇒ pre.textContent（复制面）零污染；运行态 marker 因此留空。
+// 只动 pre 状态类 / marker / exit-label 三处——meta-text（行数/字节）由
+// renderMeta 独占。
 function renderTerminalState(status, exitCode) {
   if (!cur || cur.closed) return;
+  const pre = overlayEl.querySelector('.bgt-output');
   const marker = overlayEl.querySelector('.bgt-meta-marker');
   const exitEl = overlayEl.querySelector('.bgt-exit-label');
-  if (!marker || !exitEl) return;
+  if (!pre || !marker || !exitEl) return;
   if (status && status !== 'running' && status !== 'cancelling') {
+    pre.classList.remove('bgt-running');
     marker.innerHTML = '<span class="bgt-prompt">$</span>';
     const label = (exitCode !== undefined && exitCode !== null)
       ? t('bg.detail.exit', { code: exitCode })
@@ -317,7 +339,8 @@ function renderTerminalState(status, exitCode) {
     exitEl.textContent = label;
     exitEl.classList.remove('bgt-hidden');
   } else {
-    marker.innerHTML = '<span class="bgt-cursor" aria-hidden="true"></span>';
+    pre.classList.add('bgt-running');
+    marker.textContent = '';
     exitEl.textContent = '';
     exitEl.classList.add('bgt-hidden');
   }
@@ -623,6 +646,10 @@ export function openBgTaskOutput(task) {
     // 复制按钮照常 hover 浮现（空输出点击 no-op——window.copyCode 空文本 guard）。
     showPlaceholder(t('bg.detail.remote'));
     overlayEl.querySelector('.bgt-meta').textContent = '';
+    // 远端无输出流：撤掉 pre 的运行态绿光标——改前该态的光标随 meta 清空一并
+    // 消失（`.bgt-meta` textContent 清空连 .bgt-cursor 一起抹掉），这里保持同款
+    // 视觉（降级面零变化）。
+    overlayEl.querySelector('.bgt-output').classList.remove('bgt-running');
     return;
   }
   startPoll();
