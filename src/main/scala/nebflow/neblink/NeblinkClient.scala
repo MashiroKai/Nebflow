@@ -577,7 +577,12 @@ class NeblinkClient(
    * Used as fallback when P2P direct connection is unreachable (cross-network).
    * The request goes: this device -> Server -> target device's WS tunnel.
    */
-  def relayExec(targetDeviceId: String, action: String, params: JsonObject): IO[Either[String, String]] =
+  def relayExec(
+    targetDeviceId: String,
+    action: String,
+    params: JsonObject,
+    timeout: scala.concurrent.duration.FiniteDuration = NeblinkClient.DefaultRelayTimeout
+  ): IO[Either[String, String]] =
     val body = Json.obj(
       "action" -> action.asJson,
       "params" -> params.asJson,
@@ -592,7 +597,7 @@ class NeblinkClient(
     // `error` field is a remote-tool error, not an auth signal, and must never
     // feed the trigger.
     withSession(token =>
-      sendRequest("POST", s"${config.url}/api/relay/$targetDeviceId/exec", body, Some(token))
+      dispatchRequest("POST", s"${config.url}/api/relay/$targetDeviceId/exec", body, Some(token), timeout)
     ).flatMap {
       case Right(respBody) =>
         decode[Json](respBody) match
@@ -604,6 +609,24 @@ class NeblinkClient(
           case Left(err) => IO.pure(Left(s"Decode error: ${err.getMessage}"))
       case Left(err) => IO.pure(Left(err))
     }
+
+  /**
+   * 唯一出口：**默认超时**走可覆写的 `sendRequest`（既有测试桩零改动），
+   * **自定义超时**走真实传输 `sendRequestTimed`（分块腿专用）。
+   *
+   * WHY 分流：把超时做成第 5 个参数会改掉 `sendRequest` 的签名 —— 而它是 5 个既有
+   * 测试桩的覆写点，签名一变全部编译失败（本次实施实测命中）。分流让「既有语义零改动」
+   * 与「分块腿按调用传超时」同时成立。
+   */
+  private def dispatchRequest(
+    method: String,
+    url: String,
+    body: String,
+    token: Option[String],
+    timeout: scala.concurrent.duration.FiniteDuration
+  ): IO[Either[String, String]] =
+    if timeout == NeblinkClient.DefaultRelayTimeout then sendRequest(method, url, body, token)
+    else sendRequestTimed(method, url, body, token, timeout)
 
   /** Convert NebLink Server peers to neblink PeerInfo.
    *
@@ -682,6 +705,69 @@ class NeblinkClient(
       case Left(err) => IO.pure(Left(err))
     }
 
+  // ===== Relay 分块腿（附件腿批，2026-09-12）=====
+  //
+  // 语义**收紧**（relay 腿不再是「整块 base64 + 自证 hash」）：
+  //   - 逐块承载（单块有界，不整件驻留 —— 不变量 I4）；
+  //   - 接收端**自算**并回传块摘要与（末块）整件摘要 —— 不变量 I2，禁自证；
+  //   - **按调用传超时**（禁把全局 10 s 放宽 —— 该方法是所有 relay 调用的共用路径，
+  //     放宽会改掉工具执行/好友消息的既有语义）。
+  //
+  // 通道能力**保留**：`FileTransferAction` / `relayTransferGet|Put` /
+  // `/api/neblink/transfer` / `NeblinkService.receiveFile|sendFile` 一个不删，
+  // 本组方法只是给同一条 relay 腿加上分块参数。
+
+  /** 推**一块**给远端（relay 腿）。返回远端自算的摘要回执。 */
+  def relayTransferPutChunk(
+    targetDeviceId: String,
+    path: String,
+    contentB64: String,
+    chunkIndex: Int,
+    totalBytes: Long,
+    chunkSize: Int,
+    chunkSha256: String,
+    wholeSha256: String,
+    overwrite: Boolean,
+    timeout: scala.concurrent.duration.FiniteDuration
+  ): IO[Either[String, Json]] =
+    val params = JsonObject(
+      "direction" -> "put".asJson,
+      "path" -> path.asJson,
+      "content" -> contentB64.asJson,
+      "overwrite" -> overwrite.asJson,
+      // 分块参数：缺失 ⇒ 旧端按整件语义处理（向后兼容矩阵 §3.9）
+      "chunkIndex" -> chunkIndex.asJson,
+      "totalBytes" -> totalBytes.asJson,
+      "chunkSize" -> chunkSize.asJson,
+      "chunkSha256" -> chunkSha256.asJson,
+      "wholeSha256" -> wholeSha256.asJson
+    )
+    relayExec(targetDeviceId, "FileTransfer", params, timeout).flatMap {
+      case Right(output) =>
+        decode[Json](output) match
+          case Right(json) => IO.pure(Right(json))
+          case Left(err) => IO.pure(Left(s"Decode error: ${err.getMessage}"))
+      case Left(err) => IO.pure(Left(err))
+    }
+
+  /** 续传探针（relay 腿）：问远端当前 offset 与其自算的前缀摘要。 */
+  def relayTransferProbe(
+    targetDeviceId: String,
+    path: String,
+    timeout: scala.concurrent.duration.FiniteDuration
+  ): IO[Either[String, Json]] =
+    val params = JsonObject(
+      "direction" -> "probe".asJson,
+      "path" -> path.asJson
+    )
+    relayExec(targetDeviceId, "FileTransfer", params, timeout).flatMap {
+      case Right(output) =>
+        decode[Json](output) match
+          case Right(json) => IO.pure(Right(json))
+          case Left(err) => IO.pure(Left(s"Decode error: ${err.getMessage}"))
+      case Left(err) => IO.pure(Left(err))
+    }
+
   /** Send a notification message to a remote device via relay (Notify action). */
   def relayNotify(targetDeviceId: String, channel: String, payload: Json): IO[Either[String, String]] =
     val params = JsonObject(
@@ -701,6 +787,11 @@ class NeblinkClient(
    * HTTP transport seam. `protected` (not private) so NeblinkClientReloginSpec's
    * stub subclass can inject a canned transport and observe the full retry
    * chain — hook entry count + retry-request body — without real sockets.
+   *
+   * ⚠️ 附件腿批（2026-09-12）：本方法的**签名与语义保持不变** —— 它仍是既有
+   * 测试桩的**唯一覆写点**，并承担**默认超时**（`DefaultRelayTimeout` = 10 s）的
+   * 全部调用。分块腿要「按调用传超时」，但它**不得**改掉这个共用路径的既有语义
+   * （设计件 §3.5：全局放宽会连带改掉工具执行 / 好友消息的行为）。
    */
   protected def sendRequest(
     method: String,
@@ -708,12 +799,25 @@ class NeblinkClient(
     body: String,
     token: Option[String]
   ): IO[Either[String, String]] =
+    sendRequestTimed(method, url, body, token, NeblinkClient.DefaultRelayTimeout)
+
+  /**
+   * 真实 HTTP 传输实现，**超时按调用传**。默认值 = 10 s（与既有行为一致）。
+   * 分块腿传更长超时（块级 30 s / 60 s），服务端 waiter 120 s 是其硬上界。
+   */
+  protected def sendRequestTimed(
+    method: String,
+    url: String,
+    body: String,
+    token: Option[String],
+    timeout: scala.concurrent.duration.FiniteDuration
+  ): IO[Either[String, String]] =
     IO.blocking {
       try
         val builder = HttpRequest
           .newBuilder()
           .uri(URI.create(url))
-          .timeout(java.time.Duration.ofSeconds(10))
+          .timeout(java.time.Duration.ofMillis(timeout.toMillis))
         token.foreach(t => builder.header("Authorization", s"Bearer $t"))
         if method == "POST" then
           builder.header("Content-Type", "application/json")
@@ -739,6 +843,16 @@ class NeblinkClient(
 end NeblinkClient
 
 object NeblinkClient:
+
+  /**
+   * Default per-call relay timeout — **保留既有 10 s 语义**作为默认值。
+   *
+   * 附件腿批（2026-09-12）把 `sendRequest` / `relayExec` 的超时改为**按调用可传**：
+   * 分块腿传长超时而**不动全局默认**——`sendRequest` 是全部 relay 调用的共用路径，
+   * 全局放宽会连带改掉工具执行 / 好友消息的既有语义（设计件 §3.5）。
+   */
+  val DefaultRelayTimeout: scala.concurrent.duration.FiniteDuration =
+    scala.concurrent.duration.FiniteDuration(10, scala.concurrent.duration.SECONDS)
 
   /** HTTP 401 marker from sendRequest's `HTTP <code>: <body>` error shape. */
   private[neblink] def isUnauthorized(err: String): Boolean =

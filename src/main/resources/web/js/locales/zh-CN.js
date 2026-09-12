@@ -908,6 +908,9 @@ export default {
   'dropbox.saved': '已保存',
   'dropbox.completed': '已完成',
   'dropbox.failed': '传输失败',
+  'dropbox.tooManyFiles': '附件件数超限：实际 {actual} 件，上限 {limit} 件',
+  'dropbox.fileTooLarge': '文件过大{name}：实际 {actual}（{actualBytes} 字节），上限 {limit}',
+  'dropbox.notConnected': '未连接到网关——文件未发送，请重试',
 
   // === Chat History Search ===
   'search.btnTitle': '搜索聊天记录',

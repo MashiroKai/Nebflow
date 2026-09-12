@@ -17,13 +17,22 @@ let dropboxMessages = {};
 // Currently open modal device
 let openDeviceId = null;
 
-// Pending file selected by user, waiting for offer→transferId mapping
-// { deviceId, file }
-let pendingFileSelection = null;
+// Pending file selections, keyed by deviceId (FIFO). 附件腿批（2026-09-12）：
+// 单条消息可带 ≤9 件，后端按 index 顺序串行 offer ⇒ 前端按 FIFO 逐件对号入座。
+// deviceId -> File[]
+let pendingFileQueues = {};
 
 // Files ready to upload, keyed by transferId
 // transferId -> File
 let pendingUploads = {};
+
+// ===== 附件闸位常量（必须与后端 AttachContract 逐字对齐）=====
+//
+// 🔴 量纲写死：100 MB **十进制** = 100,000,000 B（不是 100 MiB = 104,857,600 B）。
+// 两处口径一旦漂移，前端会放行一个后端必拒的文件（或反之），且都是静默的。
+const ATTACH_MAX_FILE_BYTES = 100000000;
+const ATTACH_MAX_PER_MESSAGE = 9;
+const ATTACH_MAX_FILE_LABEL = '100 MB (100,000,000 bytes)';
 
 function getAuthToken() {
   return localStorage.getItem(key('token')) || '';
@@ -232,7 +241,8 @@ function bindChatEvents(device) {
   if (attachBtn) attachBtn.addEventListener('click', () => fileInput.click());
   fileInput.onchange = () => {
     if (fileInput.files.length > 0) {
-      handleFileSelected(device.deviceId, fileInput.files[0]);
+      // 附件腿批：多件选择（≤9）。闸位在 handleFilesSelected 内统一执行。
+      handleFilesSelected(device.deviceId, fileInput.files);
       fileInput.value = '';
     }
   };
@@ -253,7 +263,7 @@ function bindChatEvents(device) {
       e.preventDefault();
       modal.classList.remove('drag-over');
       if (e.dataTransfer && e.dataTransfer.files.length > 0) {
-        handleFileSelected(device.deviceId, e.dataTransfer.files[0]);
+        handleFilesSelected(device.deviceId, e.dataTransfer.files);
       }
     });
   }
@@ -285,15 +295,80 @@ function blockBodyDragOver(e) {
   e.stopPropagation();
 }
 
-function handleFileSelected(deviceId, file) {
-  pendingFileSelection = { deviceId, file };
+/**
+ * 丢弃某设备的待发队列（R6）。
+ *
+ * 队列里的文件只能被「对应的出向 file 消息」消费。offer **失败**时那份消息永远不会来
+ * （后端闸位拒绝 / 对端不可达 / dropbox 未启用 ⇒ 只回 `dropboxError`），队列若留着，
+ * 下一次**成功** offer 的 transferId 就会对号入座到上一次的文件 —— 静默传错件。
+ * 宁可让用户重选（可见），也不许传错文件（不可见）。
+ */
+function clearPendingFileQueue(deviceId) {
+  if (deviceId && pendingFileQueues[deviceId]) delete pendingFileQueues[deviceId];
+}
+
+/**
+ * 用户选/拖了文件 —— **闸位在本地先判一次**（件数 ≤9、单件 ≤100,000,000 B），
+ * 超限**可见拒绝并回显实际值**（禁静默丢弃、禁只 console.error）。
+ * 后端闸位仍在（本地闸只是提前反馈，不是唯一防线）。
+ */
+function handleFilesSelected(deviceId, fileList) {
+  const files = Array.from(fileList || []);
+  if (files.length === 0) return;
+
+  if (files.length > ATTACH_MAX_PER_MESSAGE) {
+    showDropboxNotice(deviceId, t('dropbox.tooManyFiles')
+      .replace('{actual}', String(files.length))
+      .replace('{limit}', String(ATTACH_MAX_PER_MESSAGE)));
+    return;
+  }
+  const tooBig = files.find(f => f.size > ATTACH_MAX_FILE_BYTES);
+  if (tooBig) {
+    showDropboxNotice(deviceId, t('dropbox.fileTooLarge')
+      .replace('{name}', tooBig.name)
+      .replace('{actual}', formatSize(tooBig.size))
+      .replace('{actualBytes}', String(tooBig.size))
+      .replace('{limit}', ATTACH_MAX_FILE_LABEL));
+    return;
+  }
+
+  // offer 失败路径 ②（R6）：`sendWs` 在 socket 非 OPEN 时**静默丢弃**（ws.js:275-279）——
+  // 那样 offer 从未发出、也就永远不会有 `dropboxError` 回来，队列会**永久残留**。
+  // 故先探活再入队；未连接 ⇒ 不入队 + 可见提示。
+  if (!(state.ws && state.ws.readyState === 1 /* WebSocket.OPEN */)) {
+    clearPendingFileQueue(deviceId);
+    showDropboxNotice(deviceId, t('dropbox.notConnected'));
+    return;
+  }
+
+  pendingFileQueues[deviceId] = (pendingFileQueues[deviceId] || []).concat(files);
   sendWs({
     type: 'dropbox-file-offer',
     deviceId,
-    fileName: file.name,
-    fileSize: file.size,
-    mimeType: file.type || 'application/octet-stream'
+    files: files.map(f => ({
+      fileName: f.name,
+      fileSize: f.size,
+      mimeType: f.type || 'application/octet-stream'
+    }))
   });
+}
+
+/** 单件入口（保留既有调用面）。 */
+function handleFileSelected(deviceId, file) {
+  handleFilesSelected(deviceId, [file]);
+}
+
+/** 可见拒绝条（超限回显实际值）。 */
+function showDropboxNotice(deviceId, text) {
+  if (!dropboxMessages[deviceId]) dropboxMessages[deviceId] = [];
+  dropboxMessages[deviceId].push({
+    msgId: 'notice-' + Date.now() + '-' + Math.random().toString(36).slice(2, 8),
+    direction: 'out',
+    kind: 'notice',
+    ts: Date.now(),
+    text
+  });
+  if (deviceId === openDeviceId) renderMessages(deviceId);
 }
 
 // ===== Message rendering =====
@@ -342,6 +417,15 @@ function renderMessage(m) {
       </div>`;
   }
 
+  // 闸位拒绝 / 本地超限提示条（可见，回显实际值）
+  if (m.kind === 'notice') {
+    return `
+      <div class="dropbox-msg ${isOut ? 'out' : 'in'}">
+        <div class="dropbox-msg-bubble dropbox-notice">${escapeHtml(m.text)}</div>
+        <div class="dropbox-msg-meta"><span class="dropbox-msg-time">${time}</span></div>
+      </div>`;
+  }
+
   if (m.kind === 'file') {
     const sizeStr = formatSize(m.fileSize);
     const statusMap = {
@@ -355,6 +439,11 @@ function renderMessage(m) {
       ? (isOut ? t('dropbox.delivered') : (m.savedPath ? t('dropbox.saved') : t('dropbox.completed')))
       : (m.status === 'failed' ? t('dropbox.failed') : t('dropbox.transferring'));
 
+    // 块级进度（附件腿批）：进度独立字段，**不新增对 UI 可见的状态字符串**（沿用 5 态）。
+    const pct = (m.bytesReceived && m.totalBytes)
+      ? Math.min(100, Math.floor((m.downloadedBytes || m.bytesReceived) / m.totalBytes * 100))
+      : null;
+
     return `
       <div class="dropbox-msg ${isOut ? 'out' : 'in'}">
         <div class="dropbox-file-card msg-file-card${isOut ? ' out' : ''}">
@@ -362,10 +451,11 @@ function renderMessage(m) {
             <svg width="20" height="20" viewBox="0 0 16 16" fill="none" style="opacity:0.5;flex-shrink:0"><path d="M4 1h6l4 4v10H4V1z" stroke="currentColor" stroke-width="1.2"/><path d="M10 1v4h4" stroke="currentColor" stroke-width="1.2"/></svg>
             <div class="dropbox-file-meta">
               <span class="dropbox-file-name">${escapeHtml(m.fileName)}</span>
-              <span class="dropbox-file-info-line">${sizeStr}${m.savedPath ? ` \u00b7 ${escapeHtml(m.savedPath)}` : ''}</span>
+              <span class="dropbox-file-info-line">${sizeStr}${m.savedPath ? ` \u00b7 ${escapeHtml(m.savedPath)}` : ''}${pct !== null ? ` \u00b7 ${pct}%` : ''}</span>
             </div>
             <span class="dropbox-file-badge ${st.cls}">${st.icon}</span>
           </div>
+          ${pct !== null ? `<div class="dropbox-file-progress"><div class="dropbox-file-progress-bar" style="width:${pct}%"></div></div>` : ''}
           <div class="dropbox-file-status-text ${st.cls}">${statusText}</div>
         </div>
         <div class="dropbox-msg-time">${time}</div>
@@ -388,13 +478,41 @@ export function initDropbox() {
     if (idx >= 0) dropboxMessages[deviceId][idx] = m;
     else dropboxMessages[deviceId].push(m);
 
-    // If this is an outgoing file message and we have a pending file selection, map it
-    if (m.kind === 'file' && m.direction === 'out' && pendingFileSelection && pendingFileSelection.deviceId === deviceId) {
-      pendingUploads[m.transferId] = pendingFileSelection.file;
-      pendingFileSelection = null;
+    // If this is an outgoing file message and we have pending file selections, map it.
+    // 后端按 attachmentIndex 顺序串行 offer ⇒ 前端按 FIFO 逐件对号入座（≤9 件共用一条消息）。
+    if (m.kind === 'file' && m.direction === 'out') {
+      const queue = pendingFileQueues[deviceId] || [];
+      if (queue.length > 0) {
+        pendingUploads[m.transferId] = queue.shift();
+        if (queue.length === 0) delete pendingFileQueues[deviceId];
+      }
     }
 
     if (deviceId === openDeviceId) renderMessages(deviceId);
+  });
+
+  // 闸位拒绝 / 传输错误（后端结构化错误体：code + actual + limit）
+  onMessage('dropboxError', (msg) => {
+    const detail = msg.errorDetail || {};
+    const deviceId = msg.deviceId || openDeviceId;
+    // offer 失败路径 ①（R6）：offer 被后端拒（闸位 / 对端不可达 / dropbox 未启用）⇒
+    // 那些文件不会再收到出向 file 消息去消费队列 —— 不清空就会把下一次成功 offer 的
+    // transferId 错配到上一次的文件。清空必须与提示**同一轮**发生。
+    clearPendingFileQueue(deviceId);
+    let text = msg.error || t('dropbox.failed');
+    if (detail.code === 'ATTACH_TOO_MANY') {
+      text = t('dropbox.tooManyFiles')
+        .replace('{actual}', String(detail.actual))
+        .replace('{limit}', String(detail.limit));
+    } else if (detail.code === 'ATTACH_TOO_LARGE') {
+      text = t('dropbox.fileTooLarge')
+        .replace('{name}', '')
+        .replace('{actual}', formatSize(detail.actual))
+        .replace('{actualBytes}', String(detail.actual))
+        .replace('{limit}', ATTACH_MAX_FILE_LABEL);
+    }
+    if (deviceId) showDropboxNotice(deviceId, text);
+    else console.error('[dropbox]', text);
   });
 
   // File offer accepted/rejected (sender side)
@@ -419,6 +537,20 @@ export function initDropbox() {
     if (m) {
       m.status = success ? 'completed' : 'failed';
       if (savedPath) m.savedPath = savedPath;
+      if (msg.deviceId === openDeviceId) renderMessages(msg.deviceId);
+    }
+  });
+
+  // 块级进度（附件腿批）：进度是独立字段，**不动** 5 态状态字符串。
+  onMessage('dropbox-file-progress', (msg) => {
+    const inner = msg.msg || {};
+    const { transferId, bytesReceived, totalBytes } = inner;
+    const msgs = dropboxMessages[msg.deviceId] || [];
+    const m = msgs.find(x => x.transferId === transferId);
+    if (m) {
+      m.bytesReceived = bytesReceived;
+      m.totalBytes = totalBytes;
+      m.downloadedBytes = bytesReceived;
       if (msg.deviceId === openDeviceId) renderMessages(msg.deviceId);
     }
   });

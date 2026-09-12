@@ -62,6 +62,10 @@ final class DropboxService private (
 
   private val logger = NebflowLogger.forName("nebflow.dropbox")
 
+  /** 伴生对象里的公开契约类型（Scala 3 不把伴生成员自动纳入类作用域）。 */
+  private type FileSpec = DropboxService.FileSpec
+  private type ChunkHeaders = DropboxService.ChunkHeaders
+
   // ===== State =====
 
   /** Per-peer message history: deviceId -> messages sorted by timestamp. */
@@ -76,7 +80,29 @@ final class DropboxService private (
 
   /** Load persisted messages and register the WS data channel handler. */
   def init: IO[Unit] =
-    loadMessages *> neblinkService.addDataHandler(handleDataMessage)
+    loadMessages *> loadTransfers *> sweepOrphanTemps *> neblinkService.addDataHandler(handleDataMessage)
+
+  /**
+   * 启动清孤儿：temp 目录里有、但没有任何**活跃**会话引用的文件 ⇒ 删除。
+   * （设计件 §3.4 清理点 ⑥；防「失败分支不删 temp」的既有泄漏面长期累积。）
+   */
+  private def sweepOrphanTemps: IO[Unit] =
+    transfersRef.get.flatMap { live =>
+      IO.blocking {
+        val dir = PathUtil.dataRoot / "dropbox" / ".tmp"
+        if os.exists(dir) then
+          os.list(dir).filter { p =>
+            val id = p.last.stripSuffix(".tmp")
+            if !live.contains(id) then
+              os.remove(p)
+              true
+            else false
+          }.size
+        else 0
+      }.handleErrorWith(_ => IO.pure(0)).flatMap { removed =>
+        if removed > 0 then logger.info(s"Dropbox: swept $removed orphan temp file(s)") else IO.unit
+      }
+    }
 
   // ===== Persistence =====
 
@@ -96,6 +122,77 @@ final class DropboxService private (
       IO.blocking(os.write.over(messagesPath, msgs.asJson.spaces2, createFolders = true))
         .handleErrorWith(e => logger.warn(s"Failed to persist dropbox messages: ${e.getMessage}"))
     }
+
+  // --- 分块会话持久层（附件腿批）---
+  //
+  // 今天 transfersRef 是纯内存 Ref（DropboxModels 注释自陈 "in-memory"），进程重启后
+  // 断点续传无据可依。新增 ~/.nebflow/dropbox/transfers.json，**节流**落盘。
+  // 恢复权威仍是「temp 文件实际长度 + 重算前缀摘要」—— 持久层只是索引，不是真相。
+
+  private val transfersPath = PathUtil.dataRoot / "dropbox" / "transfers.json"
+
+  /** 落盘节流（建议值：5 s；见设计件 §9 P-5）。 */
+  private val transfersPersistThrottle = 5.seconds
+
+  private val lastTransfersPersistRef: cats.effect.Ref[IO, Long] =
+    cats.effect.Ref.unsafe[IO, Long](0L)
+
+  private def loadTransfers: IO[Unit] =
+    IO.blocking {
+      if os.exists(transfersPath) then
+        decode[Map[String, FileTransfer]](os.read(transfersPath)).toOption
+      else None
+    }.flatMap {
+      case Some(m) =>
+        // 只恢复**未终结**的会话；已终结的（completed/failed/rejected）不再参与续传。
+        val live = m.filter { case (_, t) =>
+          t.status == "pending" || t.status == "accepted" || t.status == "transferring"
+        }
+        transfersRef.set(live) *> logger.info(s"Dropbox: restored ${live.size} live transfer(s) from disk")
+      case None => IO.unit
+    }
+
+  /** 节流落盘（每块后调用不会每次都写盘）。 */
+  private def persistTransfersThrottled: IO[Unit] =
+    for
+      now <- IO.realTime.map(_.toMillis)
+      last <- lastTransfersPersistRef.get
+      _ <-
+        if now - last >= transfersPersistThrottle.toMillis then
+          lastTransfersPersistRef.set(now) *> persistTransfers
+        else IO.unit
+    yield ()
+
+  private def persistTransfers: IO[Unit] =
+    transfersRef.get.flatMap { ts =>
+      IO.blocking(os.write.over(transfersPath, ts.asJson.spaces2, createFolders = true))
+        .handleErrorWith(e => logger.warn(s"Failed to persist dropbox transfers: ${e.getMessage}"))
+    }
+
+  /** 目标 temp 路径（接收端）。发送端 temp 在 ~/.nebflow/dropbox/.tmp/<tid>.tmp。 */
+  private def senderTempPath(transferId: String): os.Path =
+    PathUtil.dataRoot / "dropbox" / ".tmp" / s"$transferId.tmp"
+
+  /** 接收端 temp 的确定性派生名（记录路径不可用时回落；同名可再定位 ⇒ 续传可重建）。 */
+  private def derivedReceiverTempPath(t: FileTransfer): os.Path =
+    DropboxUtil.downloadsDir / s".${t.fileName}.dropbox-${t.transferId.take(8)}"
+
+  /**
+   * 接收端 temp 路径 —— **唯一解析入口是 `guardedTempPath`**（P0 wtmove 守卫；
+   * 本方法里**没有**任何「把 `t.tempPath` 与 `os.pwd` 直接拼路径」的裸解析）。
+   *
+   * 分支按 `TempPathDecision` 显式处理：
+   *   - `Usable` ⇒ 复用记录路径（断点续传的前提：跨会话同一文件）；
+   *   - `Absent` ⇒ 本会话尚无记录（新入向会话的正常态，非异常）⇒ 用确定性派生名；
+   *   - `Refused` ⇒ 记录路径落在 cwd 族（旧代码会把整块数据写进工作目录）⇒ 明确
+   *     WARN + 回落派生名；**绝不**把裸 cwd 送进文件系统。
+   */
+  private def receiverTempPath(t: FileTransfer): IO[os.Path] =
+    guardedTempPath(t) match
+      case TempPathDecision.Usable(p) => IO.pure(p)
+      case TempPathDecision.Absent    => IO.pure(derivedReceiverTempPath(t))
+      case refused @ TempPathDecision.Refused(_) =>
+        warnTempPath("receiverTempPath", t, refused).as(derivedReceiverTempPath(t))
 
   // ===== Public API (called from WebSocketRoutes) =====
 
@@ -205,62 +302,137 @@ final class DropboxService private (
       case _ => IO.unit
     }
 
-  /** Offer a file to a peer. Generates a transferId and sends the offer. */
-  def offerFile(deviceId: String, fileName: String, fileSize: Long, mimeType: String): IO[Unit] =
-    neblinkService.identity.flatMap { id =>
-      neblinkService.peers.flatMap { peers =>
-        peers.find(_.deviceId == deviceId) match
-          case None => IO.unit // peer not found, ignore
-          case Some(peer) =>
-            val transferId = DropboxModels.newId
-            val msgId = DropboxModels.newId
-            val msg = DropboxMessage(
-              msgId = msgId,
-              direction = "out",
-              kind = "file",
-              ts = DropboxModels.now,
-              transferId = transferId,
-              fileName = fileName,
-              fileSize = fileSize,
-              mimeType = mimeType,
-              status = "pending"
+  /** Offer **一条**文件给对端（单件入口，兼容既有调用面）。闸位不在本方法里 ——
+   * 它统一落在 `offerFiles`，单件路径**不得**绕过闸位。 */
+  def offerFile(deviceId: String, fileName: String, fileSize: Long, mimeType: String): IO[Either[AttachContract.AttachError, String]] =
+    offerFiles(deviceId, List(DropboxService.FileSpec(fileName, fileSize, mimeType)))
+      .map(_.map(_.headOption.getOrElse("")))
+
+  /**
+   * Offer **一条消息的 N 件附件** —— 作者数两条（单件 ≤100,000,000 B / 单条消息 ≤9 件）
+   * 的**唯一闸位**。
+   *
+   * 超限 ⇒ **fail-fast**：不建 transfer、不发信令、不写消息，返回结构化错误
+   * （`ATTACH_TOO_LARGE` / `ATTACH_TOO_MANY`，带 `actual` 实际值 + `limit`）。
+   *
+   * 返回每件分配的 transferId（同一 index 顺序）。
+   */
+  def offerFiles(
+    deviceId: String,
+    files: List[FileSpec]
+  ): IO[Either[AttachContract.AttachError, List[String]]] =
+    AttachContract.checkMessage(files.map(_.fileSize)) match
+      case Left(err) =>
+        logger.warn(s"Dropbox offer rejected for $deviceId: ${err.render}")
+        IO.pure(Left(err))
+      case Right(_) if files.isEmpty =>
+        IO.pure(
+          Left(
+            AttachContract.AttachError(
+              AttachContract.Codes.InvalidArgument,
+              "No attachments in the offer",
+              phase = "offer"
             )
-            val transfer = FileTransfer(
-              transferId = transferId,
-              direction = "out",
-              peerDeviceId = deviceId,
-              peerAddress = peer.address,
-              fileName = fileName,
-              fileSize = fileSize,
-              mimeType = mimeType,
-              msgId = msgId,
-              status = "pending"
-            )
-            val payload = Json.obj(
-              "kind" -> "file-offer".asJson,
-              "senderId" -> id.deviceId.asJson,
-              "senderName" -> id.deviceName.asJson,
-              "transferId" -> transferId.asJson,
-              "msgId" -> msgId.asJson,
-              "fileName" -> fileName.asJson,
-              "fileSize" -> fileSize.asJson,
-              "mimeType" -> mimeType.asJson
-            )
-            for
-              _ <- transfersRef.update(_ + (transferId -> transfer))
-              _ <- addMessage(deviceId, msg)
-              delivered <- sendDataOrRelay(deviceId, "dropbox", payload)
-              _ <-
-                if delivered then
-                  // Arm pending-timeout: if the file-response never comes back
-                  // (peer/relay down), fail instead of parking on「传输中…」.
-                  armTransferTimeout(transferId, deviceId, msgId, offerTimeout, Set("pending")) *>
-                    notifyFrontend("dropbox-message", deviceId, msg.asJson)
-                else
-                  markTransferFailed(transferId, deviceId, msgId, "file-offer could not be delivered")
-            yield ()
-      }
+          )
+        )
+      case Right(_) =>
+        neblinkService.identity.flatMap { id =>
+          neblinkService.peers.flatMap { peers =>
+            peers.find(_.deviceId == deviceId) match
+              case None =>
+                // I3 / S1：今天的 `IO.unit // peer not found, ignore` 静默吞失败；
+                // 新契约禁复现 —— 设备不存在必须显式可见、不静默本地执行。
+                IO.pure(
+                  Left(
+                    AttachContract.AttachError(
+                      AttachContract.Codes.PeerUnreachable,
+                      s"Device $deviceId not found in the peer roster — nothing was offered or written locally",
+                      phase = "offer",
+                      actual = Some(files.size.toLong)
+                    )
+                  )
+                )
+              case Some(peer) =>
+                val batchId = DropboxModels.newId
+                val total = files.size
+                files.zipWithIndex
+                  .foldLeftM[IO, List[String]](Nil) { case (acc, (spec, idx)) =>
+                    // 串行 offer（并行度建议值 N = 1；见设计件 §9 P-6）。
+                    offerOne(id, peer, deviceId, spec, batchId, idx, total).map(acc :+ _)
+                  }
+                  .map(ids => Right(ids))
+        }
     }
+
+  /** Offer 单件（`offerFiles` 已过闸）。 */
+  private def offerOne(
+    id: nebflow.neblink.DeviceIdentity,
+    peer: nebflow.neblink.PeerInfo,
+    deviceId: String,
+    spec: FileSpec,
+    batchId: String,
+    index: Int,
+    count: Int
+  ): IO[String] =
+    val transferId = DropboxModels.newId
+    val msgId = DropboxModels.newId
+    val msg = DropboxMessage(
+      msgId = msgId,
+      direction = "out",
+      kind = "file",
+      ts = DropboxModels.now,
+      transferId = transferId,
+      fileName = spec.fileName,
+      fileSize = spec.fileSize,
+      mimeType = spec.mimeType,
+      status = "pending",
+      batchId = batchId,
+      attachmentIndex = index,
+      attachmentCount = count
+    )
+    val transfer = FileTransfer(
+      transferId = transferId,
+      direction = "out",
+      peerDeviceId = deviceId,
+      peerAddress = peer.address,
+      fileName = spec.fileName,
+      fileSize = spec.fileSize,
+      mimeType = spec.mimeType,
+      msgId = msgId,
+      status = "pending",
+      totalBytes = spec.fileSize,
+      chunkSize = AttachContract.ChunkSize,
+      proto = AttachContract.ProtoChunked
+    )
+    val payload = Json.obj(
+      "kind" -> "file-offer".asJson,
+      "senderId" -> id.deviceId.asJson,
+      "senderName" -> id.deviceName.asJson,
+      "transferId" -> transferId.asJson,
+      "msgId" -> msgId.asJson,
+      "fileName" -> spec.fileName.asJson,
+      "fileSize" -> spec.fileSize.asJson,
+      "mimeType" -> spec.mimeType.asJson,
+      // 协议协商：缺失 = 0 = 整件 legacy。双方取 min。
+      "proto" -> AttachContract.ProtoChunked.asJson,
+      "batchId" -> batchId.asJson,
+      "attachmentIndex" -> index.asJson,
+      "attachmentCount" -> count.asJson
+    )
+    for
+      _ <- transfersRef.update(_ + (transferId -> transfer))
+      _ <- addMessage(deviceId, msg)
+      delivered <- sendDataOrRelay(deviceId, "dropbox", payload)
+      _ <-
+        if delivered then
+          // Arm pending-timeout: if the file-response never comes back
+          // (peer/relay down), fail instead of parking on「传输中…」.
+          armTransferTimeout(transferId, deviceId, msgId, offerTimeout, Set("pending")) *>
+            notifyFrontend("dropbox-message", deviceId, msg.asJson)
+        else
+          markTransferFailed(transferId, deviceId, msgId, "file-offer could not be delivered")
+      _ <- persistTransfersThrottled
+    yield transferId
 
   /** Respond to a file offer (accept or reject). Called by the receiving frontend. */
   def respondToOffer(senderDeviceId: String, transferId: String, accepted: Boolean): IO[Unit] =
@@ -299,87 +471,228 @@ final class DropboxService private (
   // ===== HTTP File Transfer (called from RestApiRoutes) =====
 
   /**
-   * Sender side: receive file upload from frontend, relay to peer via HTTP.
-   * Saves to temp, sends to peer, compares SHA-256 hashes, notifies both sides.
+   * 发送端：前端上传 → 落 temp（**字节流上限兜底** + 单遍整件摘要）→ **分块**送对端
+   * （P2P 主腿 + relay 兜底共面）→ 双侧整件摘要比对 → 通知两端。
+   *
+   * `transportOverride` 仅供测试自环注入；生产为 `None` ⇒ 真实两腿。
    */
-  def uploadAndRelay(transferId: String, body: Stream[IO, Byte]): IO[Either[String, Unit]] =
+  def uploadAndRelay(
+    transferId: String,
+    body: Stream[IO, Byte],
+    transportOverride: Option[ChunkTransport] = None
+  ): IO[Either[String, Unit]] =
     transfersRef.get.map(_.get(transferId)).flatMap {
       case None => IO.pure(Left("Transfer not found"))
       case Some(t) if t.direction != "out" => IO.pure(Left("Not an outgoing transfer"))
       case Some(t) if t.status != "accepted" => IO.pure(Left("Transfer not accepted by receiver"))
       case Some(t) =>
-        val tempDir = PathUtil.dataRoot / "dropbox" / ".tmp"
-        val tempPath = tempDir / s"$transferId.tmp"
+        val tempPath = senderTempPath(transferId)
         for
-          _ <- IO.blocking(os.makeDir.all(tempDir))
-          senderHash <- streamToFileWithHash(body, tempPath)
-          // R4: persist the "transferring" phase to the message so the UI shows
-          // a real stage (was transfersRef-only), and arm a transferring
-          // timeout in case the upload fiber dies mid-flight.
-          _ <- updateTransferStatus(transferId, "transferring") *>
-            updateMessageStatus(t.peerDeviceId, t.msgId, "transferring")
-          _ <- armTransferTimeout(transferId, t.peerDeviceId, t.msgId, transferTimeout, Set("transferring"))
-          result <- sendTempToPeer(t, tempPath)
-          _ <- IO.blocking(os.remove(tempPath)).handleErrorWith(_ => IO.unit)
-          _ <- result match
-            case Right(receiverHash) =>
-              val matchResult = senderHash == receiverHash
-              for
-                _ <- sendDataOrRelay(
-                  t.peerDeviceId,
-                  "dropbox",
-                  Json.obj(
-                    "kind" -> "file-complete".asJson,
-                    "transferId" -> transferId.asJson,
-                    "msgId" -> t.msgId.asJson,
-                    "success" -> matchResult.asJson,
-                    "sha256" -> senderHash.asJson
-                  )
-                ).flatMap {
-                  case true => IO.unit
-                  case false =>
-                    // The bytes reached the peer but the completion frame did
-                    // not; the peer's own timeout/recovery handles the state.
-                    logger.warn(s"file-complete could not be delivered to ${t.peerDeviceId} — peer will time out")
-                }
-                _ <- updateTransferStatus(transferId, if matchResult then "completed" else "failed")
-                _ <- updateMessageStatus(t.peerDeviceId, t.msgId, if matchResult then "completed" else "failed")
-                _ <- notifyFrontend(
-                  "dropbox-file-complete",
-                  t.peerDeviceId,
-                  Json
-                    .obj("transferId" -> transferId.asJson, "msgId" -> t.msgId.asJson, "success" -> matchResult.asJson)
-                )
-              yield ()
-              end for
+          _ <- IO.blocking(os.makeDir.all(tempPath / os.up))
+          // ① 落 temp + 上限兜底：声明 size 撒谎（少报）也在这里被拦下 —— fail-fast、
+          //    不发送、不建会话。超限时回显**实际值**。
+          hashed <- DropboxUtil.streamToFileWithHashBounded(body, tempPath, AttachContract.MaxFileBytes)
+          res <- hashed match
             case Left(err) =>
               for
-                _ <- updateTransferStatus(transferId, "failed")
-                _ <- updateMessageStatus(t.peerDeviceId, t.msgId, "failed")
-                _ <- notifyFrontend(
-                  "dropbox-file-complete",
-                  t.peerDeviceId,
-                  Json.obj(
-                    "transferId" -> transferId.asJson,
-                    "msgId" -> t.msgId.asJson,
-                    "success" -> false.asJson,
-                    "error" -> err.asJson
-                  )
+                _ <- IO.blocking(if os.exists(tempPath) then os.remove(tempPath) else ())
+                _ <- markTransferFailed(transferId, t.peerDeviceId, t.msgId, err.render)
+              yield Left(err.render)
+            case Right(senderWhole) =>
+              for
+                _ <- updateTransferStatus(transferId, "transferring") *>
+                  updateMessageStatus(t.peerDeviceId, t.msgId, "transferring")
+                _ <- armTransferTimeout(transferId, t.peerDeviceId, t.msgId, transferTimeout, Set("transferring"))
+                transport = transportOverride.getOrElse(productionTransport(t))
+                outcome <- ChunkedSendLoop.run(
+                  transport,
+                  t,
+                  tempPath,
+                  // 会话冻结的块大小（offer 时写入 transfer）；0 = 未协商 ⇒ 契约默认值。
+                  chunkSize = if t.chunkSize > 0 then t.chunkSize else AttachContract.ChunkSize,
+                  onProgress = (idx, received) => recordProgress(transferId, t, idx, received)
                 )
-              yield ()
-        yield Right(())
-        end for
+                // ② 一切退出路径都清 temp（修今天「失败分支不删」的泄漏面）。
+                _ <- IO.blocking(if os.exists(tempPath) then os.remove(tempPath) else ())
+                out <- outcome match
+                  case Right(o) =>
+                    // 双侧 sha256 一致（ChunkedSendLoop 已做终局比对；这里落读数 + 通知）。
+                    logger.info(
+                      s"Dropbox transfer $transferId completed: ${o.chunksSent} chunk(s), ${o.bytesSent} B, " +
+                        s"sha256(sender)=$senderWhole sha256(receiver)=${o.receiverComputedSha256} leg=${o.leg}"
+                    ) *>
+                      completeTransfer(transferId, t, o.receiverComputedSha256)
+                  case Left(err) =>
+                    markTransferFailed(transferId, t.peerDeviceId, t.msgId, err.render).as(Left(err.render))
+              yield out
+        yield res
     }
 
+  /** 记录块级进展：推进 `bytesReceived` + `lastProgressAt`（看门狗按它计时），并通知前端。 */
+  private def recordProgress(transferId: String, t: FileTransfer, chunkIndex: Int, received: Long): IO[Unit] =
+    transfersRef
+      .update(m =>
+        m.get(transferId) match
+          case Some(cur) => m + (transferId -> cur.copy(bytesReceived = received, lastProgressAt = DropboxModels.now))
+          case None => m
+      ) *>
+      persistTransfersThrottled *>
+      notifyFrontend(
+        "dropbox-file-progress",
+        t.peerDeviceId,
+        Json.obj(
+          "transferId" -> transferId.asJson,
+          "msgId" -> t.msgId.asJson,
+          "chunkIndex" -> chunkIndex.asJson,
+          "bytesReceived" -> received.asJson,
+          "totalBytes" -> t.totalBytes.asJson
+        )
+      )
+
+  /** 传输成功收口（唯一一处把 outbound 置 completed）。 */
+  private def completeTransfer(transferId: String, t: FileTransfer, receiverHash: String): IO[Either[String, Unit]] =
+    for
+      _ <- transfersRef.update(m =>
+        m.get(transferId) match
+          case Some(cur) => m + (transferId -> cur.copy(status = "completed", receiverHash = receiverHash))
+          case None => m
+      )
+      _ <- updateMessageStatus(t.peerDeviceId, t.msgId, "completed")
+      delivered <- sendDataOrRelay(
+        t.peerDeviceId,
+        "dropbox",
+        Json.obj(
+          "kind" -> "file-complete".asJson,
+          "transferId" -> transferId.asJson,
+          "msgId" -> t.msgId.asJson,
+          "success" -> true.asJson,
+          "sha256" -> receiverHash.asJson // 接收端**自算**的整件摘要（禁自证）
+        )
+      )
+      _ <-
+        if delivered then IO.unit
+        else
+          // I3：今天的 `logger.warn` 静默（`DropboxService:322`）不再单独成立 ——
+          // 带重试的确认仍失败 ⇒ 显式 failed，不再靠 31 min 看门狗迟可见。
+          logger.warn(s"file-complete could not be delivered to ${t.peerDeviceId} — marking failed explicitly") *>
+            markTransferFailed(transferId, t.peerDeviceId, t.msgId, "file-complete could not be delivered to peer")
+      _ <- notifyFrontend(
+        "dropbox-file-complete",
+        t.peerDeviceId,
+        Json.obj("transferId" -> transferId.asJson, "msgId" -> t.msgId.asJson, "success" -> true.asJson)
+      )
+      _ <- persistTransfers
+    yield Right(())
+
   /**
-   * Receiver side: receive file from peer via HTTP, save to temp in Downloads.
-   * Returns the SHA-256 hash so the sender can verify.
+   * 接收端：收对端推来的字节。
+   *
+   * **两条路径并存**（兼容矩阵 §3.9）：
+   *   - 分块模式（请求带 `X-Dropbox-Proto: 1`）：走 `receiveChunk`（按 offset 追加、
+   *     幂等重放、gap 拒绝、末块整件摘要自算比对）；
+   *   - **整件 legacy 模式（无该头）**：行为与今天逐字节一致 —— 保留全量默认语义，
+   *     旧发送端不受影响。
    */
-  def receiveFromPeer(transferId: String, body: Stream[IO, Byte]): IO[Either[String, String]] =
+  def receiveFromPeer(
+    transferId: String,
+    body: Stream[IO, Byte],
+    chunk: Option[ChunkHeaders] = None
+  ): IO[Either[AttachContract.AttachError, String]] =
+    chunk match
+      case Some(headers) =>
+        // 回执字符串保留给「只要一个摘要」的调用面；分块回执的完整形态（接收端自算的
+        // 块摘要 + 权威 offset）走 `receiveChunkFromPeer`（R4）。
+        receiveChunkFromPeer(transferId, body, headers)
+          .map(_.map(ack => ack.wholeSha256.getOrElse(ack.chunkSha256)))
+      case None => receiveLegacyWholeFile(transferId, body)
+
+  /** 分块头（由 `RestApiRoutes` 从 HTTP 头解析；relay 腿由 `FileTransferAction` 解析）。 */
+
+  /**
+   * P2P 分块：请求 body = **裸块字节**（不 base64）。先查会话、再走 `ChunkReceiver`
+   * （内部先验块摘要再落盘）。返回**接收端自算**的块回执（R4：不是请求头回显）。
+   */
+  def receiveChunkFromPeer(
+    transferId: String,
+    body: Stream[IO, Byte],
+    headers: ChunkHeaders
+  ): IO[Either[AttachContract.AttachError, ChunkedTransfer.ChunkAck]] =
+    val frame = ChunkedTransfer.ChunkFrame(
+      transferId = transferId,
+      chunkIndex = headers.chunkIndex,
+      offset = AttachContract.offsetForIndex(headers.chunkIndex, headers.chunkSize),
+      totalBytes = headers.totalBytes,
+      chunkSize = headers.chunkSize,
+      bytes = math.min(headers.chunkSize.toLong, headers.totalBytes - AttachContract.offsetForIndex(headers.chunkIndex, headers.chunkSize)).toInt,
+      chunkSha256 = headers.chunkSha256,
+      wholeSha256 = headers.wholeSha256
+    )
+    for
+      transferOpt <- ensureTransfer(transferId, "in")
+      res <- transferOpt match
+        case None =>
+          IO.pure(Left(AttachContract.AttachError(AttachContract.Codes.SessionNotFound, s"No transfer session $transferId", phase = "transfer")))
+        case Some(t) if t.direction != "in" =>
+          IO.pure(Left(AttachContract.AttachError(AttachContract.Codes.SessionNotFound, s"Transfer $transferId is not inbound", phase = "transfer")))
+        case Some(t) =>
+          for
+            tempPath <- receiverTempPath(t)
+            receiver = new ChunkReceiver(transferId, headers.totalBytes, headers.chunkSize, tempPath)
+            _ <- IO.blocking(os.makeDir.all(tempPath / os.up))
+            // 权威 offset 一律从磁盘重建（不信内存/持久化字段）。
+            _ <- receiver.prime()
+            payload <- body.compile.to(Array)
+            applied <- receiver.applyChunk(frame, payload)
+            _ <- applied match
+              case Left(err) =>
+                if err.code == AttachContract.Codes.WholeDigestMismatch then
+                  // 整件不符 ⇒ 立即删 temp（绝不 commit）+ 显式失败。
+                  logger.warn(s"Dropbox transfer $transferId: ${err.render} — temp deleted, NOT committed") *>
+                    IO.blocking(if os.exists(tempPath) then os.remove(tempPath) else ())
+                else IO.unit
+              case Right(ack) =>
+                transfersRef.update(m =>
+                  m.get(transferId) match
+                    case Some(cur) => m + (transferId -> cur.copy(bytesReceived = ack.bytesReceived, tempPath = Some(tempPath.toString), receiverHash = ack.wholeSha256.getOrElse(cur.receiverHash)))
+                    case None => m
+                )
+            _ <- persistTransfersThrottled
+          yield applied
+    yield res
+
+  /**
+   * 续传探针：返回接收端**权威** offset 与其**重算**的前缀摘要。
+   * 会话不存在 ⇒ 显式 `SESSION_NOT_FOUND`（不静默返回 0 —— 那会让发送端从头重传）。
+   */
+  def probeTransfer(transferId: String): IO[Either[AttachContract.AttachError, ChunkedTransfer.ReceiveState]] =
+    ensureTransfer(transferId, "in").flatMap {
+      case None =>
+        IO.pure(Left(AttachContract.AttachError(AttachContract.Codes.SessionNotFound, s"No transfer session $transferId", phase = "transfer")))
+      case Some(t) =>
+        val chunkSize = if t.chunkSize > 0 then t.chunkSize else AttachContract.ChunkSize
+        val total = if t.totalBytes > 0 then t.totalBytes else t.fileSize
+        for
+          tempPath <- receiverTempPath(t)
+          state <- new ChunkReceiver(transferId, total, chunkSize, tempPath).prime()
+          _ <- transfersRef.update(m =>
+            m.get(transferId) match
+              case Some(cur) => m + (transferId -> cur.copy(bytesReceived = state.bytesReceived, tempPath = Some(tempPath.toString)))
+              case None => m
+          )
+        yield Right(state)
+    }
+
+  /** legacy 整件接收（proto 缺失）：与今天逐字节一致，**行为零改动**。 */
+  private def receiveLegacyWholeFile(
+    transferId: String,
+    body: Stream[IO, Byte]
+  ): IO[Either[AttachContract.AttachError, String]] =
     transfersRef.get.map(_.get(transferId)).flatMap {
-      case None => IO.pure(Left("Transfer not found"))
-      case Some(t) if t.direction != "in" => IO.pure(Left("Not an incoming transfer"))
-      case Some(t) if t.status != "accepted" => IO.pure(Left("Transfer not accepted"))
+      case None => IO.pure(Left(AttachContract.AttachError(AttachContract.Codes.SessionNotFound, "Transfer not found", phase = "transfer")))
+      case Some(t) if t.direction != "in" =>
+        IO.pure(Left(AttachContract.AttachError(AttachContract.Codes.SessionNotFound, "Not an incoming transfer", phase = "transfer")))
+      case Some(t) if t.status != "accepted" =>
+        IO.pure(Left(AttachContract.AttachError(AttachContract.Codes.SessionNotFound, "Transfer not accepted", phase = "transfer")))
       case Some(t) =>
         val dlDir = DropboxUtil.downloadsDir
         val tempName = s".${t.fileName}.dropbox-${transferId.take(8)}"
@@ -390,6 +703,13 @@ final class DropboxService private (
           _ <- transfersRef.update(_ + (transferId -> t.copy(tempPath = Some(tempPath.toString), receiverHash = hash)))
         yield Right(hash)
     }
+
+  /** 生产传输腿：P2P 主腿 + relay 兜底（两腿共面）。无 relay 客户端 ⇒ 仅 P2P。 */
+  private def productionTransport(t: FileTransfer): ChunkTransport =
+    val p2p = new P2PChunkTransport(t.peerAddress)
+    neblinkService.relayClientOpt match
+      case Some(client) => ChunkTransport.failover(p2p, new RelayChunkTransport(client))
+      case None => p2p
 
   // ===== Data Channel Handler =====
 
@@ -658,22 +978,19 @@ final class DropboxService private (
     DropboxUtil.streamToFileWithHash(stream, path)
 
   /**
-   * Send a temp file to the peer — P2P HTTP first, relay FileTransfer fallback.
-   * Returns the peer's SHA-256 (P2P) or the sender's own hash (relay — same content).
+   * **legacy 整件 P2P 推送**（保留通道能力，兼容矩阵 §3.9「旧发送 × 新接收」格）。
+   *
+   * 今天这条腿是 `uploadAndRelay` 的唯一发送路径；附件腿批起，生产发送改走
+   * `ChunkTransport` 分块两腿（P2P + relay），本方法**降级为兼容面**：
+   *   - 它 POST 的是同一个端点 `/api/neblink/dropbox/transfer/<tid>`，只是**不带分块头**
+   *     ⇒ 对端走 `receiveLegacyWholeFile`（整件流式），行为与今天逐字节一致；
+   *   - 保留它 = 「退的是工具/调用形态，不是通道能力」—— 端点与接收侧整件路径都不删。
    */
-  private def sendTempToPeer(t: FileTransfer, tempPath: os.Path): IO[Either[String, String]] =
-    p2pSendTempToPeer(t.peerAddress, t.transferId, tempPath).flatMap {
-      case r @ Right(_) => IO.pure(r)
-      case Left(p2pErr) =>
-        neblinkService.relayClientOpt match
-          case Some(client) =>
-            logger.info(s"P2P file transfer failed (${p2pErr.take(80)}), falling back to relay") *>
-              relaySendTempToPeer(t.peerDeviceId, t.fileName, tempPath, client)
-          case None => IO.pure(Left(p2pErr))
-    }
-
-  /** P2P HTTP push to the peer's dropbox endpoint. Returns the peer's SHA-256 or an error. */
-  private def p2pSendTempToPeer(peerAddress: String, transferId: String, tempPath: os.Path): IO[Either[String, String]] =
+  private[nebflow] def p2pSendWholeFileToPeer(
+    peerAddress: String,
+    transferId: String,
+    tempPath: os.Path
+  ): IO[Either[String, String]] =
     IO.blocking {
       val client = HttpClient
         .newBuilder()
@@ -700,28 +1017,17 @@ final class DropboxService private (
     }.handleErrorWith(e => IO.pure(Left(s"Transfer failed: ${e.getMessage}")))
 
   /**
-   * Relay fallback: push the file to the peer's Downloads directory via relay
-   * FileTransfer. The receiver gets the file directly in ~/Downloads (no temp
-   * rename dance) — returns the sender's hash since content is identical.
+   * relay 腿的**整件**发送已删除。
+   *
+   * WHY 删：它的 `case Right(_) => Right(hash) // same content — hash trivially matches`
+   * 使 `matchResult` **恒真** —— 校验自证（不变量 I2 直指的既有缺陷）。
+   * 任何「内容相同所以摘要必然相等」的推论都是循环论证：它把「校验」退化成了「断言」。
+   *
+   * relay 腿的**通道能力没有消失**，而是**收紧语义**后搬到 `RelayChunkTransport`
+   * （逐块 + 接收端自算摘要回传 + 按调用传超时）；
+   * `NeblinkClient.relayTransferPut` / `relayTransferGet` / `FileTransferAction` /
+   * `/api/neblink/transfer` / `NeblinkService.receiveFile|sendFile` **全部保留**。
    */
-  private def relaySendTempToPeer(
-    peerDeviceId: String,
-    fileName: String,
-    tempPath: os.Path,
-    client: NeblinkClient
-  ): IO[Either[String, String]] =
-    for
-      hash <- DropboxUtil.hashFile(tempPath)
-      b64 <- IO.blocking(java.util.Base64.getEncoder.encodeToString(os.read.bytes(tempPath)))
-      result <- client.relayTransferPut(
-        peerDeviceId,
-        s"~/Downloads/$fileName",
-        b64,
-        overwrite = true // receiver-side naming is handled by direct overwrite
-      )
-    yield result match
-      case Right(_) => Right(hash) // same content — hash trivially matches
-      case Left(err) => Left(s"Relay file transfer failed: $err")
 
   // ===== Temp-path guard (P0 wtmove) =====
   //
@@ -836,6 +1142,21 @@ final class DropboxService private (
 end DropboxService
 
 object DropboxService:
+
+  /** 单条消息里的一件附件（名字 / 字节数 / MIME）。 */
+  final case class FileSpec(fileName: String, fileSize: Long, mimeType: String)
+
+  /**
+   * 分块头（`RestApiRoutes` 从 HTTP 头解析；`FileTransferAction` 从 relay params 解析）。
+   * `bytes` 由 `totalBytes − offset` 推导，**不由发送端直传**。
+   */
+  final case class ChunkHeaders(
+    chunkIndex: Int,
+    totalBytes: Long,
+    chunkSize: Int,
+    chunkSha256: String,
+    wholeSha256: String
+  )
 
   def create(neblinkService: NeblinkService, wsHub: WsHub): IO[DropboxService] =
     val svc = new DropboxService(neblinkService, wsHub)

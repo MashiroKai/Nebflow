@@ -21,14 +21,20 @@ case class DropboxMessage(
   fileSize: Long = 0,
   mimeType: String = "",
   status: String = "", // "pending" | "accepted" | "rejected" | "transferring" | "completed" | "failed"
-  savedPath: String = "" // where the file was saved (receiver side, after completion)
+  savedPath: String = "", // where the file was saved (receiver side, after completion)
+  // ===== 单条消息多附件（附件腿批，2026-09-12）=====
+  // 一条消息最多 9 件（AttachContract.MaxAttachmentsPerMessage）；N 件共用同一 batchId，
+  // 各自一个 attachmentIndex。默认值保证旧 JSON 兼容（旧消息 = 单件）。
+  batchId: String = "",
+  attachmentIndex: Int = 0,
+  attachmentCount: Int = 1
 )
 
 object DropboxMessage:
   given Encoder[DropboxMessage] = deriveEncoder
   given Decoder[DropboxMessage] = deriveDecoder
 
-// ===== File Transfer State (in-memory, not persisted) =====
+// ===== File Transfer State (in-memory + throttled persistence) =====
 
 /** Tracks the lifecycle of a file transfer. */
 case class FileTransfer(
@@ -47,8 +53,21 @@ case class FileTransfer(
   // `None` = "no temp file recorded for this transfer" (relay direct delivery,
   // or a restart rebuild that found no leftover), which is an explicit state.
   tempPath: Option[String] = None,
-  receiverHash: String = "" // SHA-256 computed by receiver
+  receiverHash: String = "", // SHA-256 computed by receiver
+  // ===== 分块通道字段（附件腿批，2026-09-12）=====
+  // 全部带默认值 ⇒ 旧 JSON（无这些键）照旧解码，向后兼容。
+  totalBytes: Long = 0L, // 整件字节数（与 fileSize 同源，分块模式下为权威值）
+  chunkSize: Int = 0, // 会话内恒定；0 = 未协商（legacy 整件模式）
+  wholeSha256: String = "", // 发送端单遍算出的整件摘要
+  bytesReceived: Long = 0L, // 接收端权威 offset（断点续传）
+  proto: Int = 0, // 0 = legacy 整件，1 = 分块（AttachContract.ProtoChunked）
+  lastProgressAt: Long = 0L // 最后一次字节进展（看门狗按它计时，非绝对时间）
 )
+
+object FileTransfer:
+  // 会话持久层（transfers.json）用的编解码。字段全部带默认值 ⇒ 旧 JSON 可解码。
+  given Encoder[FileTransfer] = deriveEncoder
+  given Decoder[FileTransfer] = deriveDecoder
 
 object DropboxModels:
   /** Generate a short unique ID for messages and transfers. */
