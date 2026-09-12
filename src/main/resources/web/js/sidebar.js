@@ -728,6 +728,21 @@ function effortFromConfig() {
   return 'high'; // covers ≤32768 and legacy >32768 (xhigh collapsed to high)
 }
 
+const SAFETY_MODES = ['confirm-edits', 'auto-edits', 'auto-all'];
+
+/**
+ * 当前**全局**权限模式（全局单一权威源批，2026-09-12）。
+ *
+ * 来源 = 配置快照 `state.parsedConfig.safety.defaultMode`（`GET /api/config` /
+ * WS `configData` 链路写入，见 main.js）。缺省兜底 `'auto-all'` **必须**与后端
+ * `GlobalSafety.defaultMode` 的「读不到有效值」分支同值（设计 §2.3 ①/①′），
+ * 否则下拉的初始显示会与后端实际生效档位不一致。
+ */
+function globalSafetyMode() {
+  const m = state.parsedConfig?.safety?.defaultMode;
+  return SAFETY_MODES.includes(m) ? m : 'auto-all';
+}
+
 export function renderSettings() {
   const content = document.getElementById('settings-content');
   const cfg = state.parsedConfig || {};
@@ -767,6 +782,13 @@ export function renderSettings() {
         </select>
       </div>
       <div class="cfg-hint">${t('settings.thinkingEffortHint')}</div>
+      <div class="settings-row">
+        <span class="settings-label">${t('settings.safetyMode')}</span>
+        <select class="cfg-select" id="cfg-safety-mode" style="width:auto">
+          ${SAFETY_MODES.map(m => `<option value="${m}"${globalSafetyMode() === m ? ' selected' : ''}>${t('settings.safetyMode.' + m)}</option>`).join('')}
+        </select>
+      </div>
+      <div class="cfg-hint">${t('settings.safetyModeHint')}</div>
       <div class="settings-row">
         <span class="settings-label">${t('settings.llmLog')}</span>
         ${toggleHTML({ on: state.llmLogEnabled !== false, id: 'toggle-llm-log', label: t('settings.llmLog') })}
@@ -1238,6 +1260,31 @@ function bindSettingsEvents(content, cfg) {
       state.thinkingMode = { enabled: true, budgetTokens: EFFORT_BUDGETS[this.value] };
     }
     sendWs({ type: 'setThinking', thinking: state.thinkingMode });
+  });
+
+  // 权限模式「全局」下拉（全局单一权威源批，2026-09-12）：写入口 = 定向 REST
+  // `PUT /api/safety/mode`（不走 WS、不走整份配置快照 PATCH）。成功后本地同步
+  // `state.parsedConfig.safety.defaultMode`（panel 重开时回显新值），并复用既有
+  // `configUpdated → getConfig` 广播链路让所有打开的面板刷新；失败回滚下拉值
+  // （形态照 toggle-schedule 的回滚先例）+ toast。绑定点紧随 thinking effort。
+  document.getElementById('cfg-safety-mode')?.addEventListener('change', async function() {
+    const mode = this.value;
+    const prev = this.dataset.prev || globalSafetyMode();
+    try {
+      const res = await fetch('/api/safety/mode', {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json', ...providerAuthHeaders() },
+        body: JSON.stringify({ mode }),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(data.error || res.statusText);
+      this.dataset.prev = mode;
+      state.parsedConfig = { ...(state.parsedConfig || {}), safety: { defaultMode: mode } };
+      window.__showToast?.(t('settings.safetyModeSaved'), 'success');
+    } catch (e) {
+      this.value = prev;
+      window.__showToast?.((e && e.message) || t('settings.safetyModeSaveFailed'), 'error');
+    }
   });
 
   // LLM Log toggle — shared nb-toggle component; setToggleState keeps the

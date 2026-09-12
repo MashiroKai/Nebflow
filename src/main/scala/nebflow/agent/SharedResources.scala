@@ -132,4 +132,39 @@ case class SharedResources(
     * 极早期 boot / 总开关关闭）。WS restart 命令经它触发 requestRestart；进度经
     * restartStatus 帧广播（wsHub）。 */
   hotRestart: Option[nebflow.core.hotrestart.HotRestart] = None
-)
+):
+  import cats.syntax.all.*
+
+  /** **唯一解析入口**（设计 §2.1 / §13 #1）：有效档位 = 覆盖 ?? 全局。
+    *
+    * 覆盖 = `permissionPolicies[rootSid]` 的条目（仅内存，来源：WS `setSafetyMode`
+    * / 确认卡升级按钮）；无条目 ⇒ 读全局（`nebflow.json` 的 `safety.defaultMode`，
+    * 热读、零缓存）。桶 miss 是**常态路径**（"跟随全局"），不是异常兜底。
+    *
+    * @param rootSid 根会话 id（判定 / 继承面一律用它；非根会话须先解析出根 id）
+    */
+  def effectiveSafetyMode(rootSid: String): IO[nebflow.core.SafetyMode] =
+    permissionPolicies.get
+      .map(_.get(rootSid).map(_.safetyMode))
+      .flatMap {
+        case Some(m) => IO.pure(m)
+        case None    => nebflow.core.GlobalSafety.defaultMode
+      }
+
+  /** 当前内存覆盖快照（rootSessionId → 档位），供列表 overlay / 服务层复用。
+    * 与 `effectiveSafetyMode` 同源，不做任何持久化读取。 */
+  def safetyModeOverrides: IO[Map[String, nebflow.core.SafetyMode]] =
+    permissionPolicies.get.map(_.view.mapValues(_.safetyMode).toMap)
+
+  /** 会话列表出口的**权威 overlay**（设计 §13 #9）：把 `List[SessionMeta]` 序列化成
+    * `safetyMode` 恒存在的 JSON，取值 = **有效档位**（覆盖 ?? 全局），与
+    * `effectiveSafetyMode` 同源、共用 `SafetyModeAuthority.resolve`。
+    *
+    * ⚠ 只用于**线上出口**（WS `agentSessionList` / fork `sessionList` /
+    * `SessionService.sendSessionList` / REST `GET /sessions`）。**不得**用于
+    * `SessionStore.saveIndex` 的落盘序列化——方案 A 要求盘上字节零改动。 */
+  def overlaySessionList(sessions: List[nebflow.shared.SessionMeta]): IO[io.circe.Json] =
+    (safetyModeOverrides, nebflow.core.GlobalSafety.defaultMode).mapN { (overrides, global) =>
+      nebflow.shared.SessionMeta.withEffectiveSafetyModes(sessions, overrides, global)
+    }
+

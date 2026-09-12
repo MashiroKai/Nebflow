@@ -696,9 +696,12 @@ object FlowTreeActor:
             val agentDef = entry.toAgentDef
             val rootSid = cfg.sessionId.getOrElse(session.id)
             for
-              policyOpt <- cfg.resources.permissionPolicies.get.map(_.get(rootSid))
-              safetyMode =
-                policyOpt.map(p => nebflow.core.SafetyMode.toString(p.safetyMode)).getOrElse(cfg.safetyMode)
+              // 2026-09-12 权限全局单一权威源（设计 §10 #15 / §13 #12）：有效档位 =
+              // 覆盖 ?? 全局，走**唯一解析入口**；`cfg.safetyMode` 由此降级为
+              // **建树快照（展示用）**，非权威——不再作为 `getOrElse` 的兜底来源。
+              safetyMode <- cfg.resources
+                .effectiveSafetyMode(rootSid)
+                .map(nebflow.core.SafetyMode.toString)
               ref <- cfg.resources.actorSystem.spawn(
                 AgentActor(
                   agentDef = agentDef,

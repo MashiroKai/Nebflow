@@ -158,10 +158,9 @@ A task with 2+ independent parts — different file domains, or different nature
                     case Right(effectiveDef) =>
                       (ctx.actorSystem, ctx.sharedResources) match
                         case (Some(system), Some(resources)) =>
-                          // Query parent session's safety mode so the worker inherits it
-                          val safetyModeIO = (ctx.sessionStore, ctx.sessionId) match
-                            case (Some(store), Some(sid)) => store.getSafetyMode(sid)
-                            case _ => IO.pure("confirm-edits")
+                          // 2026-09-12 权限全局单一权威源（设计 §10 #15 / §13 #10）：
+                          // worker 继承的档位走**唯一解析入口**（覆盖 ?? 全局），不再读
+                          // `store.getSafetyMode` 的盘上遗留值（同 DelegateTool）。
                           // P2: resolve the caller's permission-policy bucket (root session)
                           // so the worker inherits the same policy — interactions (askUser /
                           // permission) render in the parent's window.
@@ -170,8 +169,8 @@ A task with 2+ independent parts — different file domains, or different nature
                               res.agentRegistry.get.map(_.get(sid).map(_.rootSessionId).filter(_.nonEmpty).getOrElse(sid))
                             case _ => IO.pure(ctx.sessionId.getOrElse(""))
                           for
-                            safetyMode <- safetyModeIO
                             rootSid <- callerRootIO
+                            safetyMode <- resources.effectiveSafetyMode(rootSid).map(nebflow.core.SafetyMode.toString)
                             result <- spawnWorker(
                               agentDef = effectiveDef,
                               prompt = prompt,

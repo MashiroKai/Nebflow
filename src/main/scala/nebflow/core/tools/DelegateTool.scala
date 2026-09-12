@@ -312,17 +312,17 @@ Wait for one to finish, or cancel one with AgentControl(cancel) before delegatin
   ): IO[Either[ToolError, String]] =
     (ctx.actorSystem, ctx.sharedResources) match
       case (Some(system), Some(resources)) =>
-        val safetyModeIO = (ctx.sessionStore, ctx.sessionId) match
-          case (Some(store), Some(sid)) => store.getSafetyMode(sid)
-          case _                        => IO.pure("confirm-edits")
         // 调用方根会话（权限桶锚点 / 前端路由锚点）
         val callerRootIO = (ctx.sessionId) match
           case Some(sid) =>
             resources.agentRegistry.get.map(_.get(sid).map(_.rootSessionId).filter(_.nonEmpty).getOrElse(sid))
           case None => IO.pure("")
         for
-          safetyMode <- safetyModeIO
           rootSid <- callerRootIO
+          // 2026-09-12 权限全局单一权威源（设计 §10 #15 / §13 #10）：子代理继承的档位
+          // 走**唯一解析入口**（覆盖 ?? 全局），不再读 `store.getSafetyMode`（盘上遗留
+          // 值）。否则全局 `confirm-edits` 时 fork 出的子代理会继承盘上 `auto-all`。
+          safetyMode <- resources.effectiveSafetyMode(rootSid).map(nebflow.core.SafetyMode.toString)
           quota <- concurrencyCheck(resources, rootSid)
           result <- quota match
             case Left(err) => IO.pure(Left(err))

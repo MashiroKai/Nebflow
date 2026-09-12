@@ -986,9 +986,11 @@ Message type (optional, default "INFO"):
           // Block 0 registration chain: member → its Manager; Manager → mounting
           // root; unknown → None (registration falls back to the caller sid).
           parentSid <- TeamSessionRegistry.parentForRecord(session.id)
-          policyOpt <- resources.permissionPolicies.get.map(_.get(rootSid))
-          safetyMode =
-            policyOpt.map(p => nebflow.core.SafetyMode.toString(p.safetyMode)).getOrElse(session.safetyMode)
+          // 2026-09-12 权限全局单一权威源（设计 §10 #15 / §13 #12）：有效档位 =
+          // 覆盖 ?? 全局，走**唯一解析入口**。此前 `getOrElse(session.safetyMode)`
+          // 会把 `_index.json` 的**盘上遗留值**兜进来（全局 `confirm-edits` 时被 Mail
+          // 激活的成员会继承盘上 `auto-all`）。
+          safetyMode <- resources.effectiveSafetyMode(rootSid).map(nebflow.core.SafetyMode.toString)
           entryOpt <- session.flowName match
             case Some(teamName) => EntityLoader.loadTeamAgent(teamName, agentName)
             case None => EntityLoader.loadAgent(agentName)

@@ -161,12 +161,12 @@ class WebSocketRoutes(
           IO.blocking {
             if !os.exists(projectsDir) then os.makeDir.all(projectsDir)
           }.as(Some(projectsDir.toString))
-      // F1 (#433): global safety mode from nebflow.json `safety.defaultMode`
-      // is the default when session meta carries no explicit value — the
-      // user's global auto-all must reach every seeding site, not just the
-      // session where it was set (hot-read, same source as permissionDecision
-      // bucket-miss fallback).
-      globalMode <- nebflow.core.GlobalSafety.defaultMode
+      // 2026-09-12 权限全局单一权威源：agent 参数取**有效档位**（覆盖 ?? 全局），
+      // 经唯一解析入口 SharedResources.effectiveSafetyMode。这里不再消费
+      // `SessionMeta.safetyMode`（盘上遗留值已非权威，设计 §10 #13/#5）：
+      // 已有内存覆盖的会话重连时**保留覆盖**，无覆盖的会话跟随全局值——两条都由
+      // 解析入口一条路径给出（此前是「meta ?? 全局」，会被盘上值劫持）。
+      effectiveMode <- sharedResources.effectiveSafetyMode(sessionId)
       // Resolve inherited rules from folder chain
       resolvedRules = folderId.map { fid =>
         nebflow.service.RulesStore.resolveInheritedRules(
@@ -190,8 +190,7 @@ class WebSocketRoutes(
           projectRoot = effectiveProjectRoot,
           rulesMd = resolvedRules,
           folderId = folderId,
-          safetyMode = metaOpt.map(_.safetyMode)
-            .getOrElse(nebflow.core.SafetyMode.toString(globalMode)),
+          safetyMode = nebflow.core.SafetyMode.toString(effectiveMode),
           gitBranch = metaOpt.flatMap(_.gitBranch),
           rootSessionId = sessionId,
           // Nebula 会话沙箱启用（2026-09-05 作者裁定 13:09）：写根=~/.nebflow
@@ -206,7 +205,7 @@ class WebSocketRoutes(
         s"agent-$sessionId"
       )
       pr = effectiveProjectRoot.getOrElse("")
-      safetyMode = metaOpt.map(_.safetyMode).getOrElse(nebflow.core.SafetyMode.toString(globalMode))
+      safetyMode = nebflow.core.SafetyMode.toString(effectiveMode)
     yield (ref, pr, safetyMode)
     agentIo.flatMap { case (ref, pr, safetyMode) =>
       val hookCtx = nebflow.core.hooks.HookContext(
@@ -236,11 +235,14 @@ class WebSocketRoutes(
           )
         ) *>
         // P2: register this root session as the InteractionHub render
-        // target (cards/questions appear in the Nebula window) and seed
-        // its permission-policy bucket from persisted session meta
-        // (backward compatible with per-session safetyMode).
+        // target (cards/questions appear in the Nebula window).
+        //
+        // 2026-09-12 权限全局单一权威源：**不再播种权限桶**——桶条目存在 ⇔ 该会话
+        // 有"本会话临时覆盖"（设计 §2.1 要点 1/3）。此前每建立一次 WS 连接就用
+        // 盘上 meta 值无条件写桶，既会让重连把覆盖重置成盘上遗留值、也让"桶 miss
+        // ⇒ 跟随全局"这条常态路径永远不可达（R1/T-2 得以成立的机制点）。
+        // 覆盖只由 setSafetyMode / 确认卡升级（applyPermissionUpgrade）写入。
         registerRootInteraction(sessionId, recordingWsSend) *>
-        seedPermissionPolicy(sessionId, safetyMode) *>
         initFlowTree(sessionId, ref, pr, safetyMode)
           .handleErrorWith(e => logger.error(s"initFlowTree failed for session $sessionId: ${e.getMessage}"))
           .start
@@ -289,27 +291,21 @@ class WebSocketRoutes(
         }
     }
 
-  /** P2: seed the root session's permission-policy bucket from persisted meta. */
-  private def seedPermissionPolicy(sessionId: String, safetyMode: String): IO[Unit] =
-    val mode = nebflow.core.SafetyMode.fromString(safetyMode)
-    sharedResources.permissionPolicies.update(_ + (sessionId -> nebflow.agent.PermissionPolicy(safetyMode = mode)))
-
-  /** 递进式放行链 (2026-08-30): persist + hot-apply an escalated safety mode.
+  /** 递进式放行链 (2026-08-30): hot-apply an escalated safety mode as this
+    * session's **in-memory temporary override**.
     *
-    * Scope is aligned with the existing `setSafetyMode` WS command: session
-    * meta (persisted, restored on reconnect via seedPermissionPolicy) + the
-    * in-memory policy bucket + the agent's own copy. Order matters — the
-    * bucket (the decision source) is updated BEFORE the caller forwards the
-    * answer, so the next tool decision already sees the new mode.
+    * 2026-09-12 权限全局单一权威源（作者 R-d / 设计 §3.2）：**不再落盘**——
+    * 覆盖只存在于 `SharedResources.permissionPolicies`，进程退出即消失，重启/新
+    * 会话天然回落全局值。顺序契约不变：桶（判定源）先于转发更新，下一次工具判定
+    * 已看到新档位。会话档位不再写 `SessionMeta.safetyMode`（该键已非权威）。
     */
   private def applyPermissionUpgrade(sessionId: String, mode: nebflow.core.SafetyMode): IO[Unit] =
     val modeStr = nebflow.core.SafetyMode.toString(mode)
     for
-      _ <- sessionStore.setSafetyMode(sessionId, modeStr)
       rootSid <- resolveRootSessionId(sessionId)
       _ <- sharedResources.permissionPolicies.update(_ + (rootSid -> nebflow.agent.PermissionPolicy(safetyMode = mode)))
       _ <- ensureAgent(sessionId)(ref => ref ! nebflow.agent.AgentCommand.SetSafetyMode(mode))
-      _ <- logger.info(s"Permission upgrade: session $sessionId → $modeStr (persisted + bucket + agent)")
+      _ <- logger.info(s"Permission upgrade: session $sessionId → $modeStr (in-memory override + agent; not persisted)")
     yield ()
 
   /** Create and register a FlowTreeActor for a session. Fire-and-forget via .start. */
@@ -347,6 +343,10 @@ class WebSocketRoutes(
     FlowTreeRegistry.unregister(sessionId) *>
       sharedResources.agentRegistry.update(_ - sessionId) *>
       unregisterRootInteraction(sessionId) *>
+      // 权限覆盖清理（设计 §13 #25 / §16 R-5）：会话删除后移除该 root 的内存覆盖
+      // 条目，避免留下不可达残留。仅内存、幂等；UUID 不复用 ⇒ 残留本来也永不命中，
+      // 这行只是把"靠推理不命中"换成"结构上不存在"。
+      sharedResources.permissionPolicies.update(_ - sessionId) *>
       rootAgents.modify { agents =>
         agents.get(sessionId) match
           case Some(ref) =>
@@ -980,15 +980,20 @@ class WebSocketRoutes(
   private def sendAgentSessionListByName(wsSend: io.circe.Json => IO[Unit], agentName: String): IO[Unit] =
     (sessionStore.listSessions, sessionStore.listAllFolders).flatMapN { (sessions, folders) =>
       val rulesFolderIds = folders.filter(f => nebflow.service.RulesStore.exists(f.id)).map(_.id)
-      wsSend(
-        io.circe.Json.obj(
-          "type" -> "agentSessionList".asJson,
-          "agentName" -> agentName.asJson,
-          "sessions" -> sessions.asJson,
-          "folders" -> folders.asJson,
-          "foldersWithRules" -> rulesFolderIds.asJson
+      // 出口 overlay（设计 §13 #9）：列表里的逐会话 `safetyMode` = **有效档位**
+      // （覆盖 ?? 全局），不再输出盘上遗留值——前端 `state.bypassSessions`
+      // 由此只含"有效档位 = 全部放行"的会话（A-14）。
+      sharedResources.overlaySessionList(sessions).flatMap { sessionsJson =>
+        wsSend(
+          io.circe.Json.obj(
+            "type" -> "agentSessionList".asJson,
+            "agentName" -> agentName.asJson,
+            "sessions" -> sessionsJson,
+            "folders" -> folders.asJson,
+            "foldersWithRules" -> rulesFolderIds.asJson
+          )
         )
-      )
+      }
     }
 
   /** Push memory status for the current session to the frontend. */
@@ -1430,17 +1435,20 @@ class WebSocketRoutes(
                   sourceName = sourceMetaOpt.map(_.name).getOrElse("Session")
                   _ <- logger.info(s"Forking session $forkSessionId ($sourceName)")
                   newMeta <- sessionStore.forkSession(forkSessionId, s"Fork of $sourceName")
+                  // 出口 overlay（设计 §13 #9）：fork 帧同样输出有效档位。
                   _ <- (sessionStore.listSessions, sessionStore.listAllFolders).flatMapN { (sessions, folders) =>
                     val rulesFolderIds = folders.filter(f => nebflow.service.RulesStore.exists(f.id)).map(_.id)
-                    wsSend(
-                      io.circe.Json.obj(
-                        "type" -> "sessionList".asJson,
-                        "sessions" -> sessions.asJson,
-                        "folders" -> folders.asJson,
-                        "activeId" -> forkSessionId.asJson,
-                        "foldersWithRules" -> rulesFolderIds.asJson
+                    sharedResources.overlaySessionList(sessions).flatMap { sessionsJson =>
+                      wsSend(
+                        io.circe.Json.obj(
+                          "type" -> "sessionList".asJson,
+                          "sessions" -> sessionsJson,
+                          "folders" -> folders.asJson,
+                          "activeId" -> forkSessionId.asJson,
+                          "foldersWithRules" -> rulesFolderIds.asJson
+                        )
                       )
-                    )
+                    }
                   }
                   _ <- wsSend(
                     io.circe.Json.obj(
@@ -1806,37 +1814,41 @@ class WebSocketRoutes(
             else IO.unit
 
           case "setSafetyMode" =>
+            // 2026-09-12 权限全局单一权威源（设计 §13 #6）：语义 = **本会话临时覆盖**
+            // ⇒ **不落盘**（此前 `sessionStore.setSafetyMode` 会把档位写进
+            // `_index.json` 的会话 meta，令会话持有"权威档位"，正是 R1/T-2 的承载面）。
+            // 覆盖只写 `permissionPolicies`（由 AgentActor 的 SetSafetyMode 处理），
+            // 重启 / 新会话天然回落全局值，无需任何"重置"代码。
             val json = parse(text).toOption.getOrElse(io.circe.Json.Null)
             val sid = json.hcursor.downField("sessionId").as[String].getOrElse("")
-            val mode = json.hcursor.downField("safetyMode").as[String].getOrElse("confirm-edits")
+            val rawMode = json.hcursor.downField("safetyMode").as[String].toOption
+            // 三档显式白名单：未知值**拒绝**（旧行为是静默 `getOrElse("confirm-edits")`
+            // ——把拼错/缺失的值悄悄变成最严档，用户无感且不可诊断）。
+            val modeOpt = rawMode.flatMap(nebflow.core.SafetyMode.fromWire)
             if sid.nonEmpty then
-              sessionStore
-                .setSafetyMode(sid, mode)
-                .flatMap { _ =>
-                  ensureAgent(sid)(ref => ref ! AgentCommand.SetSafetyMode(nebflow.core.SafetyMode.fromString(mode))) *>
+              modeOpt match
+                case None =>
+                  wsSend(
+                    io.circe.Json.obj(
+                      "type" -> "error".asJson,
+                      "message" -> s"unknown safetyMode '${rawMode.getOrElse("")}' — valid: confirm-edits, auto-edits, auto-all".asJson
+                    )
+                  )
+                case Some(mode) =>
+                  ensureAgent(sid)(ref => ref ! AgentCommand.SetSafetyMode(mode)) *>
                     sendAgentSessionList(wsSend, sid)
-                }
-                .handleErrorWith { e =>
-                  wsSend(io.circe.Json.obj("type" -> "error".asJson, "message" -> e.getMessage.asJson))
-                }
             else IO.unit
 
           case "setBypass" =>
             // Backward compat: old clients send { bypass: Boolean }
+            // 同 setSafetyMode：只写内存覆盖，不落盘（设计 §13 #7）。
             val json = parse(text).toOption.getOrElse(io.circe.Json.Null)
             val sid = json.hcursor.downField("sessionId").as[String].getOrElse("")
             val bypass = json.hcursor.downField("bypass").as[Boolean].getOrElse(false)
             val mode = if bypass then "auto-all" else "confirm-edits"
             if sid.nonEmpty then
-              sessionStore
-                .setSafetyMode(sid, mode)
-                .flatMap { _ =>
-                  ensureAgent(sid)(ref => ref ! AgentCommand.SetSafetyMode(nebflow.core.SafetyMode.fromString(mode))) *>
-                    sendAgentSessionList(wsSend, sid)
-                }
-                .handleErrorWith { e =>
-                  wsSend(io.circe.Json.obj("type" -> "error".asJson, "message" -> e.getMessage.asJson))
-                }
+              ensureAgent(sid)(ref => ref ! AgentCommand.SetSafetyMode(nebflow.core.SafetyMode.fromString(mode))) *>
+                sendAgentSessionList(wsSend, sid)
             else IO.unit
 
           case "ask" =>
