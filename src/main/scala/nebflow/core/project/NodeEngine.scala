@@ -1627,6 +1627,47 @@ class NodeEngine(
     node.deps.traverse(store.findNode)
       .map(_.forall(_.exists(_.status == NodeLifecycle.Completed)))
 
+  // ── verdict 闸（merge-verdict-gate 批 2026-09-12，作者裁定）────────────────────
+  //
+  // 判据：**merge 节点的 in 上游中含 verifier 时，该 verifier 的当下 `lastVerdict` 必须为
+  // `pass`**；否则本 merge 不可启动、原地保持 pending。把「先验后合」从节点自觉变成机制
+  // 保证（来源实证：`perm-global-merge`(n-9e9c385d) 的 in 含 verifier `n-6f86d028`，
+  // 该 verifier 已报 lastVerdict=fail，merge 仍被 `settleRunnableSweep` 拉起并启动）。
+  //
+  // 语义与边界（逐字口径）：
+  //   · 「上游含 verifier」= `n.in` 中 role=verifier 的节点（`deps` 不参与——deps 语义零改动）；
+  //   · 该 verifier 当下 lastVerdict ≠ "pass"（含 `fail` / 未申报 None / 空串）⇒ 挡住，**读
+  //     当下值**（每次判定现读 store，非一次性历史闩）——verifier 重跑出 `pass` 后本闸自动
+  //     放行，无需任何清账/重置动作；
+  //   · **纯闸门零副作用**：不改上游 status/lastVerdict/result、不写 blockedFeedback、不改
+  //     deliveredTo（barrier 记账照旧）、不改 in/out/deps/merge——节点保持 pending/wiring
+  //     可见（停等可见性由既有 mount-stalled 事件承载，见 mountStallReason 的 verdict 闸文案）；
+  //   · 非 merge 节点、无 verifier 上游的 merge：恒不挡（既有行为逐字不变）；
+  //   · verifier 终态 `failed`（loop 预算耗尽）不属本闸管辖：走既有「上游失败 ⇒ merge
+  //     blocked(upstream-incomplete)」（MergeNodePolicy.haltsOnFailure）路径，零新语义；
+  //   · role 经 NodeRoles.normalize（缺省/空 = task）⇒ 存量数据零回溯。
+
+  /** 挡住本 merge 的 verifier 清单（IO 版；空 = 放行）。 */
+  private def mergeVerdictHoldersOf(n: NodeDef): IO[List[NodeDef]] =
+    if !MergeNodePolicy.isMerge(n) || n.in.isEmpty then IO.pure(Nil)
+    else n.in.distinct.traverse(store.findNode).map(ups => mergeVerdictHolders(n, ups.flatten))
+
+  /** 纯判据（IO 版与 mount-stalled 可见性文案共用单点）：in 上游中「让本 merge 卡住的
+    * verifier」清单——非 merge 节点恒空（闸是 merge-only）。 */
+  private def mergeVerdictHolders(n: NodeDef, ups: List[NodeDef]): List[NodeDef] =
+    if !MergeNodePolicy.isMerge(n) then Nil
+    else ups.filter(u =>
+      NodeRoles.normalize(u.role) == NodeRoles.Verifier &&
+        !u.lastVerdict.exists(_.trim.equalsIgnoreCase(VerdictPass)))
+
+  /** 闸挡启动时的留痕（三处落点共用单点文案）：INFO 一行带 verifier id + 当下 verdict，
+    * 供事后从日志直接定位「merge 为何没动」。 */
+  private def logVerdictGateHold(where: String, n: NodeDef, holders: List[NodeDef]): IO[Unit] =
+    logger.info(
+      s"[$projectName] merge '${n.name}' (${n.id}) start held by verdict gate at $where — " +
+        holders.map(u => s"'${u.name}'(${u.id}) lastVerdict=${u.lastVerdict.getOrElse("none")}").mkString(", ") +
+        "; node stays pending (gate re-reads lastVerdict on every judgement — a verifier re-run to 'pass' unblocks it)")
+
   /** 启动节点（§2.1 创建即运行：入口节点由 NodeEdit 调；下游由投递 barrier 归零调）。
     * resume（crash-recovery 批 2026-09-07 D3）：boot sweep 认领的崩溃残留节点续跑——
     * Some 时跳过 buildInput 直接用 resume prompt（水合消息经 spawn 链 initialMessages
@@ -1674,7 +1715,7 @@ class NodeEngine(
                     // 身份恒等（不重复全量重算分量）。resume 路径跳过 buildInput（用
                     // resume prompt）但身份照旧注入：快照重取（spawn 时刻语义），非
                     // 崩溃前残值。
-                    chainContextOf(node.id).flatMap { chain =>
+                    val pastVerdictGate: IO[Unit] = chainContextOf(node.id).flatMap { chain =>
                       // resume：Some → 首轮输入 = resume prompt（任务全文经 NodeList(detail)
                       // 指引自读，BackoffSupervisor continue-prompt 直系演化）；None → buildInput。
                       val inputIO = resume.fold(buildInput(node, chain))(ctx => IO.pure(ctx.resumePrompt))
@@ -1692,6 +1733,16 @@ class NodeEngine(
                           case _: NodeEngine.StartRaceLost => IO.unit
                         }
                       }
+                    }
+                    // verdict 闸收口（merge-verdict-gate 批 2026-09-12）——**单权威落点**：
+                    // 全部启动入口（barrier 结算 settleTo / settleDeps 反结算 / 重激活补投
+                    // redeliverInAndStart / D1 补投 / settleRunnableSweep 资格回扫 / crash-recovery
+                    // 续跑 / 直接调用）都汇到本函数，闸在此处即对全部入口生效（与上方 deps/barrier
+                    // 「单闸门自动保护全部启动入口」同款纪律）。命中 ⇒ 零动作返回：节点保持
+                    // pending/wiring 可见、零副作用（见 mergeVerdictHoldersOf 注释）。
+                    mergeVerdictHoldersOf(node).flatMap { holders =>
+                      if holders.nonEmpty then logVerdictGateHold("startNode", node, holders)
+                      else pastVerdictGate
                     }
                   }
             }
@@ -3390,7 +3441,16 @@ class NodeEngine(
         // 实际变更）标记清空，此处自然放行。
         val barrierOk = !n.in.exists(up => !n.deliveredTo.contains(up)) && n.pendingSuccession.isEmpty
         if emptyWiring || !barrierOk then IO.pure(false)
-        else depsSatisfied(n)
+        else
+          depsSatisfied(n).flatMap {
+            case false => IO.pure(false)
+            // verdict 闸（merge-verdict-gate 批 2026-09-12，落点②/case (b)——**本批出处
+            // 场景**）：资格回扫不得把「in 上游 verifier 已判 fail」的 merge 拉起。被挡者
+            // 不进 qualified ⇒ 不 fork、不进 trigger-starved 记账（合法等待，不是启动失败）
+            // ——节点保持 pending/wiring，verifier 重跑出 pass 后下一轮回扫自然放行
+            //（每轮现读 lastVerdict，非一次性闩）。
+            case true => mergeVerdictHoldersOf(n).map(_.isEmpty)
+          }
       }
       _ <- qualified.traverse_(n => forkStart(s"settle-sweep -> ${n.name}(${n.id})")(startNode(n.id)))
       _ <- qualified.traverse_(n => FlowMapEventLog.append(workspace, projectName, n.id, "settle-sweep",
@@ -3474,9 +3534,19 @@ class NodeEngine(
               if n.pendingSuccession.nonEmpty then
                 s", awaiting handover (R4 pendingSuccession=[${n.pendingSuccession.mkString(",")}] — cancelled upstream detached; barrier held, dispatcher must hand over 承接 / rewire 改接 / abandon)"
               else ""
+            // verdict 闸停等（merge-verdict-gate 批 2026-09-12）：barrier 已清而 merge 仍
+            // pending 的真实原因常见形态——in 上游 verifier 判 fail（其 status=completed，
+            // 泛化文案会误指「terminal 上游堵 barrier」）。此处点名闸因与当下 verdict，
+            // 免分发器把「机制挡住的合法等待」误判为引擎故障。零新事件类型（复用既有
+            // mount-stalled 单发档位）。
+            val gateDesc = mergeVerdictHolders(n, us) match
+              case Nil => ""
+              case held =>
+                s", verdict gate held: in-upstream verifier(s) [${held.map(u => s"'${u.name}'(${u.id}):lastVerdict=${u.lastVerdict.getOrElse("none")}").mkString(", ")}]" +
+                  " not pass — merge must not start until that verifier re-runs to pass (mechanism guarantee, not a stall)"
             IO.pure(Some(
               s"mount stalled: ${stalledSec}s past triggerable point, still status=${n.status}, " +
-                s"$barrierDesc$successionDesc, no running/wiring upstream (upstreams: $upDesc) — settle sweep " +
+                s"$barrierDesc$successionDesc$gateDesc, no running/wiring upstream (upstreams: $upDesc) — settle sweep " +
                 "takeover attempted; if still stuck a terminal (failed/cancelled) upstream is blocking " +
                 "the barrier — dispatcher intervention required"))
     }
@@ -3814,7 +3884,17 @@ class NodeEngine(
               val allArrived = tn.exists(tn2 =>
                 tn2.in.forall(upId => tn2.deliveredTo.contains(upId)) && tn2.pendingSuccession.isEmpty)
               if allArrived && tn.exists(_.status != NodeLifecycle.Running) then
-                forkStart(s"deliver-out -> $tid")(startNode(tid))
+                // verdict 闸（merge-verdict-gate 批 2026-09-12，落点①/case (a)——barrier
+                // 结算后的启动判定）：verifier 判 fail 时 merge 不得启动（保持 pending），
+                // 直到该 verifier 当下 lastVerdict 变 pass。零副作用——barrier 记账
+                // （deliveredTo）已在上方 mutate 落库，本闸只挡「fork startNode」这一动作。
+                tn match
+                  case Some(t) =>
+                    mergeVerdictHoldersOf(t).flatMap { holders =>
+                      if holders.nonEmpty then logVerdictGateHold("settleTo (barrier settle)", t, holders)
+                      else forkStart(s"deliver-out -> $tid")(startNode(tid))
+                    }
+                  case None => IO.unit
               else IO.unit
             }
         }
