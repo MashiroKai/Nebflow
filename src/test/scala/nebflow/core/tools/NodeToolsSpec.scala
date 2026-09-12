@@ -18,8 +18,18 @@ class NodeToolsSpec extends FunSuite:
     assertEquals(NodeTools.parseOut(Some(Json.fromString("n-abc12345"))), Right(List(OutEdge("n-abc12345"))))
   }
 
-  test("parseOut: Nebula accepted（缺省双通报门 {pass,failed}——旧拓扑零漂移）") {
-    assertEquals(NodeTools.parseOut(Some(Json.fromString("Nebula"))), Right(List(OutEdge.nebula)))
+  test("parseOut: bare \"Nebula\" → EXIT MARKER ({pass}/signal; 2026-09-12 A1)") {
+    // 2026-09-12 批 A1：bare 字面收敛为**纯出口标记**（零根投递）；显式门集才是通知声明。
+    // 与存量读路径（`fromLegacyString` / `OutEdge.nebula` = {pass,failed}/result）分叉点见
+    // `ProjectTypes.NebulaDefaultOn` 常量注释。
+    assertEquals(
+      NodeTools.parseOut(Some(Json.fromString("Nebula"))),
+      Right(List(OutEdge(OutEdge.NebulaTarget, Set(OutEdge.Pass), OutEdge.Signal)))
+    )
+  }
+
+  test("parseOut: explicit-gate \"(pass,failed)Nebula\" keeps the notify form ({pass,failed}/result)") {
+    assertEquals(NodeTools.parseOut(Some(Json.fromString("(pass,failed)Nebula"))), Right(List(OutEdge.nebula)))
   }
 
   test("parseOut: null → disconnect (Right(Nil))") {

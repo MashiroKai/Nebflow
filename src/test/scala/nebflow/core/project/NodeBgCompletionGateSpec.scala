@@ -218,7 +218,9 @@ class NodeBgCompletionGateSpec extends CatsEffectSuite:
     val extras = List(
       "description" -> Json.fromString("bg gate spec node"),
       "task" -> Json.fromString(task),
-      "out" -> Json.fromString(extraOut.getOrElse("Nebula"))
+      // 2026-09-12 批 A1：本 spec 断言的是「投递到根」，接线须写**显式门集**
+      // （`{pass,failed}/result`）；bare `"Nebula"` 今日 = 纯出口标记（零投递）。
+      "out" -> Json.fromString(extraOut.getOrElse("(pass,failed)Nebula"))
     )
     NodeEditTool
       .call(nodeInput(project, name, extras*).asObject.get, ctx)

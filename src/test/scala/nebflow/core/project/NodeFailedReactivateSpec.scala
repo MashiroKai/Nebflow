@@ -227,9 +227,12 @@ class NodeFailedReactivateSpec extends CatsEffectSuite:
       // 同 task 原文重发 + 同 out 显式回传 → 全维度无差异 → actualChange=false → 不
       // 重激活。（out **未传**的形态见 FR5——actualChange quirk 修后未传 out 不再
       // 误判变更；本测试保留显式回传同值 out，双维度锁定 no-op 语义。）
+      // 2026-09-12 批 A1：种子 out = `OutEdge.nebula`（{pass,failed}/result），故回传
+      // 必须写**同值的显式门集**；bare `"Nebula"` 今日 = {pass}/signal 出口标记，
+      // 回传它反而是真实变更（这正是 A1 的两处语义分叉）。
       editRes <- nodeEdit(nodeInput("fr2", "fr2-node",
         "task" -> Json.fromString("same-task"),
-        "out" -> Json.fromString("Nebula")), ctx)
+        "out" -> Json.fromString("(pass,failed)Nebula")), ctx)
       _ <- IO.sleep(300.millis) // 无重激活即无异步启动——给竞态留确定性窗口后复查
       after <- byName(rt, "fr2-node")
       audit <- readAudit(ws)
