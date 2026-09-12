@@ -28,9 +28,13 @@ import nebflow.core.tools.ToolRegistry
  *     needed) — §C.1 静态矩阵恰十四件（2026-09-06 00:48 作者裁定：NodeList
  *     摘除——节点结果沿 out 边自动投递，主动查图与裁定职责重叠；dispatcher
  *     自身面不受影响。2026-09-06 TaskList 批：+TaskList——Nebula 专属持久
- *     任务清单，快变状态出记忆）. Task tools retired (任务工具重做
- *     2026-08-30 — team-only).
- *   - Mail is team-only (auto-injected for team agents, never for flow/standalone)
+ *     任务清单，快变状态出记忆）. Task/NodeMessage retired as tools,
+ *     Mail replaces them as the single message primitive (R2 2026-09-12).
+ *   - Mail is the platform's ONLY message primitive (R2「一个 Mail 统一」2026-09-12):
+ *     carried by Nebula (orchestration face, −Task +Mail net 16), the project
+ *     dispatcher (−NodeMessage +Mail net 9) and by team agents; still never for
+ *     flow nodes / standalone / node (general) face.
+ *   - Task / NodeMessage are retired tools (R2 2026-09-12) — on no agent's face.
  *   - SubTask is team-only (user ruling 2026-08-24: auto-injected at the
  *     mechanism layer — manual agent.json declarations are error-prone)
  *   - non-Nebula agents never get Nebula-exclusive tools (Schedule, Delegate,
@@ -377,7 +381,12 @@ class AllowedToolSetSpec extends FunSuite:
     val allowed = CoreProbe.allowed(nebula)
     assert(!allowed.contains("FlowExecute"), "Nebula no longer carries FlowExecute (2026-09-05 旧体系退役)")
     assert(!allowed.contains("FlowTrigger"), "Nebula no longer carries FlowTrigger (2026-09-05 旧体系退役)")
-    assert(!allowed.contains("Mail"), "Nebula no longer carries Mail (2026-09-05 旧体系退役)")
+    // R2「一个 Mail 统一」（2026-09-12）：本条为**断言反转**——原口径
+    // 「Nebula no longer carries Mail (2026-09-05 旧体系退役)」随 R2 作废：
+    // Mail 成为全平台唯一消息原语，Nebula 面必须携带（16→16：−Task +Mail）。
+    assert(allowed.contains("Mail"), "R2: Nebula carries Mail — 平台唯一消息原语（2026-09-12）")
+    assert(!allowed.contains("Task"), "R2: Task 退役，Nebula 面零 Task")
+    assert(!allowed.contains("NodeMessage"), "R2: NodeMessage 退役，Nebula 面零 NodeMessage")
 
   test("standalone agents do NOT get FlowExecute"):
     val solo = mkDef("solo", List("Read", "Grep"))
@@ -534,7 +543,7 @@ class AllowedToolSetSpec extends FunSuite:
     // 读三件/可视化/用户面/平台/记忆），机制注入不可配置。裸定义（空 tools）
     // 必须携带完整矩阵——面板编辑/定义失误无法解除调度器武装。
     val orchestration = Set(
-      "Task", "ProjectCreate", "AgentControl",             // 编排触发（NodeList 00:48 裁定摘除）
+      "Mail", "ProjectCreate", "AgentControl",              // 编排触发（R2 2026-09-12：−Task +Mail 净 16；NodeList 00:48 裁定摘除）
       "Delegate",                                          // 编排触发（2026-09-11 极简内核回归）
       "TaskList",                                          // 任务编排（TaskList 批：快变状态出记忆）
       "SendMessage",                                       // 通信（好友功能非旧体系，保留）
@@ -551,8 +560,10 @@ class AllowedToolSetSpec extends FunSuite:
     )
     assert(!allowed.contains("Issue"), "恰十四件、零 Issue（2026-09-04 终裁：Issue/CheckIssues 退役）")
     assert(!allowed.contains("NodeList"), "恰十四件、零 NodeList（2026-09-06 00:48 裁定摘除）")
-    Set("Mail", "FlowTrigger", "FlowExecute").foreach { t =>
-      assert(!allowed.contains(t), s"旧体系三件维持退役（2026-09-05 08:40 作者裁定）: $t")
+    // R2 断言反转（2026-09-12）：原「旧体系三件维持退役」含 Mail 已作废——
+    // Mail 是 R2 唯一消息原语、必在 Nebula 面；退役件改判为 Task/NodeMessage。
+    Set("Task", "NodeMessage", "FlowTrigger", "FlowExecute").foreach { t =>
+      assert(!allowed.contains(t), s"退役件（R2 2026-09-12 + 2026-09-05 旧体系）不得出现: $t")
     }
     // 2026-09-11 Delegate 恢复批：Delegate 以极简内核形态回归（本件是加法不是翻案）
     assert(allowed.contains("Delegate"), "Delegate 以极简内核形态回归 Nebula 固定面（2026-09-11）")
@@ -623,16 +634,19 @@ class AllowedToolSetSpec extends FunSuite:
     assert(!AgentCore.legacyFixedTools(mkDef("leaf", Nil).copy(category = "flow")).contains("Card"), "legacy flow 节点不授 Card")
     assert(!AgentCore.legacyFixedTools(mkDef("standalone-x", Nil)).contains("Card"), "legacy catch-all（BaseTools）不授 Card")
 
-  test("project-dispatcher 固定工具集（§C.1 + NodeMessage 20260905 机制批）：Node 四件 + 读四件，声明无效"):
+  test("project-dispatcher 固定工具集（§C.1 + R2 2026-09-12）：Node 三件 + Mail + 读四件，声明无效"):
     val declared = mkDef("project-dispatcher", List("Write", "Edit", "AskUserQuestion"))
     val allowed = CoreProbe.allowed(declared, isFlowNode = true) // 分发器会话 spawn 即 isFlowNode=true
-    Set("NodeList", "NodeEdit", "NodeCancel", "NodeMessage", "Read", "Glob", "Grep", "Bash").foreach { t =>
+    Set("NodeList", "NodeEdit", "NodeCancel", "Mail", "Read", "Glob", "Grep", "Bash").foreach { t =>
       assert(allowed.contains(t), s"dispatcher fixed tool missing: $t")
     }
     assert(!allowed.contains("Write"), "dispatcher 不给 Write（只分解不产内容，§C.1）")
     assert(!allowed.contains("Edit"), "dispatcher 不给 Edit")
     assert(!allowed.contains("AskUserQuestion"), "dispatcher 不给 AskUserQuestion（单次会话不阻塞等用户，§C.3）")
-    assert(!allowed.contains("Mail"), "dispatcher 无 Mail")
+    // R2 断言反转（2026-09-12）：原「dispatcher 无 Mail」作废——R2 分发器面
+    // −NodeMessage +Mail 净 9；NodeMessage 退役后 dispatcher 投节点消息亦走 Mail(node:)。
+    assert(!allowed.contains("NodeMessage"), "R2: NodeMessage 退役，dispatcher 面零 NodeMessage")
+    assert(!allowed.contains("Task"), "R2: Task 退役，dispatcher 面零 Task")
 
   test("general 固定 7 件（§C.4/§C.5；2026-09-10 作者裁定摘 Pop）——BaseTools + AskUserQuestion"):
     val bare = mkDef("general", Nil)
@@ -647,7 +661,10 @@ class AllowedToolSetSpec extends FunSuite:
     // out 边交链末端/Nebula，由 Nebula 决定是否展示——变异验红锚（加回即红）
     assert(!allowed.contains("Pop"), "general 节点不得持有 Pop（2026-09-10 裁定：Pop 收归 Nebula 专属）")
     assert(!AgentCore.GeneralFixedTools.contains("Pop"), "GeneralFixedTools 零 Pop（定义层摘除）")
-    assert(!allowed.contains("Mail"), "general 无 Mail")
+    // 明保留（R2 细则 2026-09-12）：节点面 9 件不变、零 Mail——节点无消息工具，
+    // 结果沿 out 边投递、终态走 node_report。本条**非** R2 反转对象（原「general 无
+    // Mail」理由换成 R2「节点面不挂 Mail」细则，结论一致、理由更新）。
+    assert(!allowed.contains("Mail"), "R2: general（节点面）不挂 Mail —— 节点无消息工具")
     assert(!allowed.contains("MultiEdit"), "general 无 MultiEdit（已从 ToolRegistry 删除）")
     // 声明无效（机制固定零配置）
     val sneaky = mkDef("general", List("WebSearch", "Delegate"))

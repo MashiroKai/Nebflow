@@ -87,7 +87,7 @@ class PluginRegistrySpec extends CatsEffectSuite:
   writeManifest(badTools, "bad-tools")
   os.write.over(badTools / "mcp.json",
     s"""{"$$schema":"${PluginRegistry.CanonicalMcpSchema}","mcpServers":{"srv":{"type":"stdio","command":"python3"}}}""")
-  writeTools(badTools, List("Task")) // 编排类工具永不进白名单（§B.6）
+  writeTools(badTools, List("Mail")) // 编排类工具永不进白名单（§B.6；R2 2026-09-12：Task 退役，改判 Mail）
 
   private val messy = pluginDir("messy")
   writeManifest(messy, "messy", extra = ""","unknownField": {"x": 1}""")
@@ -140,12 +140,12 @@ class PluginRegistrySpec extends CatsEffectSuite:
     }
   }
 
-  test("§B.8-8 白名单: 申请 Task（编排类）→ 装载校验拒绝") {
+  test("§B.8-8 白名单: 申请 Mail（编排类，R2 2026-09-12 取代已退役的 Task）→ 装载校验拒绝") {
     PluginRegistry.listWithRejected().map { case (loaded, rejected) =>
       assert(!loaded.exists(_.name == "bad-tools"), "bad-tools must NOT load")
       val entry = rejected.find(_._1 == "bad-tools")
       assert(entry.isDefined, s"bad-tools must be rejected, got $rejected")
-      assert(entry.get._2.contains("Task") && entry.get._2.contains("WebSearch"),
+      assert(entry.get._2.contains("Mail") && entry.get._2.contains("WebSearch"),
         "rejection must name the illegal tool and the whitelist")
     }
   }

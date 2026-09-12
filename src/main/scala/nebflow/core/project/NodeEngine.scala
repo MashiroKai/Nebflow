@@ -1410,6 +1410,14 @@ class NodeEngine(
   // 留痕（裁定⑤）：每条消息（含注入成功/未达/追加）一律追加 FlowMapEventLog
   // （type=node-message，append-only 持久可追溯）；Flow Map 默认载荷零膨胀
   // （不加标记不加键——载荷精简裁定「能不加就不加」）。
+  /** 本项目**派生链全集**的只读访问器（R2「一个 Mail 统一」批 2026-09-12，B2-x /
+    * 设计件 §A.7 U5-3）：`MailTool` 的 `chainId` 参数校验（只校验、不落库）经本
+    * 访问器收口——Mail 对工程存取的触点收敛到 `ProjectRuntimeRegistry` 一处
+    * （与 `node:` 腿复用 [[sendNodeMessage]] 同路径），**不**让 MailTool 直触
+    * `FlowMapStore`。判据源 = `FlowMapStore.allChainIds`（与 `chainIdsOf` /
+    * `chainAttrsOf` 同一 `topologicalChains` 单点，零新增链推导逻辑）。 */
+  def chainIds: IO[Set[String]] = store.allChainIds
+
   def sendNodeMessage(nodeId: String, message: String): IO[Either[String, String]] =
     val text = message.trim
     if text.isEmpty then
@@ -4196,49 +4204,14 @@ class NodeEngine(
       case None => IO.unit // 根不可达 → 不记账不丢账，下轮扫描重汇总
     }
 
-  /** 分发器会话最终输出投递（2026-09-05 作者裁定「任务分发器的结果没有任何人看见，
-    * 把这个接线给 nebula」）：分发器 turn 终态时由 ProjectActor 观察桥调用——取本
-    * turn 最终 assistant 文本（extractLastAssistantText），注入 Nebula 根会话。
-    * 空文本（无 assistant 文本或纯空白）不投（防御性判空，debug 级留痕）。
-    *
-    * 格式（对照节点投递家族）：text 头部标注行 [Dispatcher '<项目名>' · task:
-    * <触发任务摘要>] + 换行 + 最终输出全文，对照 "[Node '<name>' completed]"
-    * 头部行家族；蓝气泡 source="dispatcher"（DispatcherSourceMarker）走前端
-    * injectedSourceLabel 通用分支 → "Dispatcher · <项目名> · Completed"，
-    * 与 NODE/MAIL 同族蓝气泡标注体系，零前端改动。
-    *
-    * 与节点投递（deliverToNebula）的关系——独立新投递种类，刻意绕过节点投递的
-    * 全部账本机制（绕过去重直投有 deliverStaleSummary 先例）：
-    *  - 不进 V8 nebulaDeliveredAt 账本/重投扫描：分发器输出非节点结果、无持久化
-    *    载体可补投，单次会话单次投递，at-least-once 无对象；
-    *  - 不进 60s 去重窗口：同项目短窗内多次触发任务是各自独立的合法投递（每次
-    *    触发一个新 turn），按 (identity,status) 去重会吞掉合法的第二次；
-    *  - 不走夹具信封排除：分发器输出不是节点结果，夹具家族语义不适用。
-    * 忙时排队自动继承：ImmediateInput 在根会话忙 turn 时入 pendingImmediateInputs
-    * （AgentActor processing 态排队、turn 边界串行 drain），不打断不丢。
-    * 根会话 ref 缺失 → WARN 丢弃（无账本无重投，Flow Map 拓扑仍是事实来源）；
-    * 占位/跳过类极简输出照常投递（无特殊抑制——分发器一条短行也是有效反馈）。 */
-  def deliverDispatcherOutputToNebula(messages: List[Message], taskSummary: Option[String]): IO[Unit] =
-    extractLastAssistantText(messages) match
-      case "" =>
-        logger.debug(s"Dispatcher turn produced no text output (project=$projectName) — nothing to deliver")
-      case finalText =>
-        resources.agentRegistry.get.map(_.get(rootSessionId).map(_.ref)).flatMap {
-          case Some(ref) =>
-            val header = taskSummary.map(_.trim).filter(_.nonEmpty) match
-              case Some(s) => s"[Dispatcher '$projectName' · task: $s]"
-              case None    => s"[Dispatcher '$projectName']"
-            (ref ! AgentCommand.ImmediateInput(
-              s"$header\n$finalText",
-              source = Some(NodeEngine.DispatcherSourceMarker),
-              eventType = Some(NodeLifecycle.Completed),
-              sender = Some(projectName),
-              fromUser = false // ② 服务端注入（分发器最终输出），不是真人输入
-            )).void
-          case None =>
-            logger.warn(
-              s"Root session '$rootSessionId' not found — dispatcher final output not deliverable (project=$projectName, ${finalText.length} chars dropped; no ledger/no redelivery by design)")
-        }
+  // `deliverDispatcherOutputToNebula` 已删净（R2「一个 Mail 统一」批 2026-09-12，
+  // R7-b 桥收敛 + D-4 二次裁定）：分发器 turn 终态**不再**无条件把最终 assistant
+  // 文本注入 root——root 注入面 100% 由显式载体驱动（分发器显式
+  // `Mail(address="Nebula", type=RESULT, chainId=<本批链 id>, ...)`）。
+  // 该函数全仓零第三方调用者（唯一调用点 = ProjectActor.dispatcherBridge，同批移除），
+  // 按 B5-c 精神删净而不留死代码。观测口径随之而定：source=="dispatcher" 族
+  // **生产者归零**（`project-dispatcher/system.md` 的「自动投递」措辞同批改写，
+  // 否则分发器以为会自动投递 ⇒ root 面静默收不到）。
 
   private def extractLastAssistantText(messages: List[Message]): String =
     messages.reverse
@@ -4316,13 +4289,11 @@ object NodeEngine:
     * 内存窗，与 V8 nebulaDeliveredAt 持久账本正交（账本管跨重启 at-least-once）。 */
   val NebulaDedupWindowMs: Long = 60_000L
 
-  /** 分发器最终输出投递的 source 标记（2026-09-05 接线）：ImmediateInput source
-    * 值。前端 injectedSourceLabel 通用分支对未知 source 首字母大写 → 蓝气泡
-    * "Dispatcher · <项目名> · Completed"（与 NODE/MAIL 同族，零前端改动）。 */
-  val DispatcherSourceMarker = "dispatcher"
-
-  /** 分发器投递任务摘要截断长度（触发任务首行、单行空白折叠，超出截断加省略号）。 */
-  val DispatcherTaskSummaryChars: Int = 100
+  // `DispatcherSourceMarker`（`"dispatcher"`）与 `DispatcherTaskSummaryChars` 同批删净
+  // （R2「一个 Mail 统一」批 2026-09-12，R7-b）：桥收敛后 source=="dispatcher" 族
+  // **无生产者**（恒 0）。保留死常量会误导「该族仍会生产」——按 B5-c 精神随调用点一起删。
+  // 观测口径变化登记：`SessionRecorder` 六字段取值集不再出现 `dispatcher`；
+  // `web/js/chat.js` 的 `INJECTED_SOURCE_LABELS` 本无该键（走通用回退分支），前端零必需改动。
 
   /** 阶段 2b Plugins：spawn 前解析完成的分配物（§B.4 第 4 步）。
     * empty = flag 关 / 节点无分配 / 无可注入内容——旧行为零变化。 */
@@ -4649,15 +4620,15 @@ object NodeEngine:
     * `endsWith(ProtocolFootnote)` 身份断言）。 */
   val ProtocolFootnote: String =
     """── 节点协议 ──
+      |**收尾前必须调用 `node_report` 申报终态**——申报是收尾动作本身，不是「受阻才做」的例外通道。
+      |按你的节点角色传对应值：执行节点 = `finish`（正常完成）/ `blocked`；校验节点 = `pass` / `fail`（verdict，依据写在 detail 里）/ `blocked`。未申报的节点保持 running、结果不投递、按阶梯被提醒——不会被自动判 failed。
       |若你判定任务无法完成（上游依赖未就绪/任务定义不完整/能力不匹配/缺外部条件），
-      |不要硬造结果：第一优先调用 node_report 工具申报（参数 category/detail/
-      |suggestion；受阻申报 category ∈ upstream-incomplete | task-underspecified |
+      |不要硬造结果：同样走 `node_report` 受阻申报（category ∈ upstream-incomplete | task-underspecified |
       |agent-mismatch | external-dependency | needs-split | other | blocked），随后照常输出
-      |收尾报告。任务/轮次「已完成/已失败」的正式判定同样走 node_report：按你的节点角色
-      |传对应值（校验节点 = pass 或 fail，detail 写明依据；执行节点的正常完成无需申报）。工具不可用时才用文本备用通道：把最终输出的第一行写为裸 BLOCKED
+      |收尾报告。**不要**用「正常输出结果」代替申报——它不免除申报义务；也不要申报 `blocked` 却照常完成。
+      |工具不可用时才用文本备用通道：把最终输出的第一行写为裸 BLOCKED
       |（首行恰为 BLOCKED 四个字母——不加 # / ** / 导语等任何前缀），随后给出 JSON：
       |{"category":"…","detail":"…","suggestion":"…"}。
-      |可完成时正常输出结果，勿申报 blocked。
       |若上方 <task-board> 给了你工单编号，完成或受阻时用 TaskBoard 工具更新其状态（close=完成，blocked=受阻）。""".stripMargin
 
   /** verifier 专属附录段（nrloop 一期 B9；设计 §3.1 纪律③「verdict ≠ 节点状态」+

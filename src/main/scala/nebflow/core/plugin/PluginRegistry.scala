@@ -65,8 +65,9 @@ object PluginRegistry:
   private def pluginsDir: os.Path = PathUtil.dataRoot / "plugins"
 
   /** §B.6 固定安全集：plugin 只能授予既有 builtin 工具且限于白名单——
-    * 不能发明新工具、不能授予编排类（Task/Mail/NodeEdit 等永不进白名单，
-    * 角色边界由 §C.1 静态矩阵守住）。
+    * 不能发明新工具、不能授予编排类（Mail/NodeEdit 等永不进白名单，
+    * 角色边界由 §C.1 静态矩阵守住）。R2「一个 Mail 统一」（2026-09-12）后
+    * 原举例的 `Task` 已退役、`Mail` 是唯一消息原语——本条覆盖此前相关指令。
     *
     * 2026-09-10 作者裁定（Pop 收归 Nebula 专属）：Pop 移出白名单——插件再授予
     * 通道关闭（否则「第三方包声明 org.nebflow/tools:["Pop"]」可绕过

@@ -89,6 +89,9 @@ object SeedService:
           case _ => () // marker.version >= seedVersion → no-op
       // 插件一致性 pass（所有分支都跑，不受守卫/marker 门控——digest 一致时是无操作）
       reconcilePlugins(root, manifest)
+      // agents 一致性 pass（#304-④，2026-09-12）：与插件 pass 同构，但仲裁基准
+      // 换成「三条硬条件」（见 reconcileAgents 文档）；digest 一致时同样无操作。
+      reconcileAgents(root, manifest)
     catch
       case e: Exception =>
         // 种子全程 best-effort：单点失败绝不阻止 gateway 启动（与 startupMount fail-soft 同构）
@@ -267,6 +270,140 @@ object SeedService:
       .sortBy(d => -d.relativeTo(targetDir).segments.length)
       .foreach { d => if os.list(d).isEmpty then os.remove(d) }
 
+  // ── agents 一致性 reconcile（#304-④，2026-09-12）──────────
+  /** 每次启动对 manifest 声明的 agent 做 seed ↔ runtime 比对。
+    *
+    * 与 [[reconcilePlugins]] 的机制差异：plugins 有 `trustRecordDigest`（approve 时刻
+    * fingerprint）作仲裁基准，**agents 没有信任记录**。D-8 拍板取**最保守档**：
+    * 不新造基准、不做「种子为准」的自动覆盖——**仲裁基准 = seed（种子权威）**，
+    * 并以**三条硬条件**（作者 2026-09-12 裁定，取代 D-8「两条硬加」措辞）为前置，
+    * **缺一即拒**：
+    *   1. **覆盖前差集检查**：任何 seed→runtime **全量覆写**执行前，先做「运行时独有
+    *      内容并入 seed 源」的差集检查；**差集非空 ⇒ 立即停手、零覆盖、上报**
+    *      （列运行时独有行原文 + 行号），**禁静默覆盖**；
+    *   2. **覆盖前备份**：覆写前必留可回滚备份（`<root>/agents-backups/<ts>_pre-sync-<name>/`，
+    *      逐文件 pre-sha256）；
+    *   3. **运行时独有内容不得静默丢弃**：任何路径下都不得静默丢掉运行时独有内容
+    *      （与 1 的「停手上报」同源，缺一即拒）。
+    *
+    * 失败面：missing runtime → 不动（缺失不新装，既有 home 面积不扩张）；
+    * digest 一致 → 静默通过（幂等：连续两次启动第二次零动作）。
+    * 全程 best-effort：单条失败只 WARN，绝不阻止 gateway 启动。
+    *
+    * **落点纪律**：本机制**只**落代码；不在 `~/.nebflow/bin/` 或任何运维文档面
+    * 新建护栏载体，也不回改任何既有留痕件（作者 2026-09-12 裁定）。 */
+  private def reconcileAgents(root: os.Path, manifest: SeedManifest): Unit =
+    manifest.items.collect {
+      case id if id.startsWith(AgentsPrefix) => id.stripPrefix(AgentsPrefix)
+    }.foreach { name =>
+      try reconcileAgent(root, name)
+      catch
+        case e: Exception =>
+          logger.warnSync(s"Seed: agent '$name' reconcile failed: ${e.getMessage}")
+    }
+
+  private def reconcileAgent(root: os.Path, name: String): Unit =
+    val targetDir = root / "agents" / name
+    if !os.exists(targetDir) then () // 缺失 → 不在既有 home 新装（同 reconcilePlugins 注释）
+    else
+      seedResourcesIn(os.SubPath(s"seed/agents/$name"), "agent.json") match
+        case None => () // 无种子资源，无从比对
+        case Some(seedFiles) =>
+          val seedDigest = treeDigest(seedFiles)
+          val runtimeDigest = runtimeTreeDigest(targetDir)
+          if runtimeDigest == seedDigest then () // 已一致（幂等：第二次启动零动作）
+          else
+            // ── 硬条件 1（⑦(i) 护栏）：覆盖前差集检查 ──
+            val unique = runtimeUniqueLines(targetDir, seedFiles)
+            if unique.nonEmpty then
+              logger.warnSync(
+                s"Seed: agent '$name' runtime has content NOT present in seed — REFUSING to overwrite " +
+                  s"(zero files written). Merge the runtime-only content into the seed source first, then re-sync. " +
+                  s"Runtime-only: " + unique.map(e => s"${e.file}:${e.lines.size} line(s)").mkString(", ")
+              )
+              unique.foreach { e =>
+                e.lines.take(40).foreach { (ln, text) =>
+                  logger.warnSync(s"Seed:   runtime-only [$name] ${e.file}:$ln: $text")
+                }
+              }
+            else
+              // 差集为空（runtime 是 seed 的子集/一致内容）⇒ 种子权威：备份后镜像覆盖。
+              // ── 硬条件 2：覆盖前备份 ──
+              val stamp = java.time.format.DateTimeFormatter
+                .ofPattern("yyyyMMdd_HHmmss")
+                .format(java.time.LocalDateTime.now())
+              val backupDir = root / "agents-backups" / s"${stamp}_pre-sync-$name"
+              val preShas = runtimeFileShas(targetDir)
+              os.makeDir.all(backupDir)
+              os.walk(targetDir).filter(os.isFile).foreach { f =>
+                val rel = f.relativeTo(targetDir)
+                val dest = backupDir / os.SubPath(rel.toString)
+                os.makeDir.all(dest / os.up)
+                os.copy.over(f, dest)
+              }
+              os.write.over(
+                backupDir / "PRE-SHA256.txt",
+                s"# agent=$name  sampled=$stamp\n" +
+                  preShas.map((rel, sha) => s"$sha  $rel").mkString("\n") + "\n"
+              )
+              mirrorSeed(targetDir, seedFiles)
+              logger.infoSync(
+                s"Seed: agent '$name' refreshed from seed (digest ${runtimeDigest.take(12)}… → ${seedDigest.take(12)}…); " +
+                  s"pre-sync backup at ${backupDir.toString.stripPrefix(root.toString + "/")} (${preShas.size} file(s))")
+
+  /** 同 [[seedResources]]，anchor 参数化（agents 面 = `agent.json`）。 */
+  private def seedResourcesIn(base: os.SubPath, anchorFile: String): Option[SortedMap[String, Array[Byte]]] =
+    val rels = resourceDirList(base, anchorFile)
+    if rels.isEmpty then None
+    else
+      val entries = rels.flatMap { rel =>
+        readResourceBytes(join(base, rel)).map(rel.toString -> _)
+      }
+      Some(SortedMap.from(entries))
+
+  /** 运行时目录的同一 digest 算法（目录不存在 → 空串，调用方已守卫）。 */
+  private def runtimeTreeDigest(dir: os.Path): String =
+    val files = SortedMap.from(
+      os.walk(dir).filter(os.isFile).toList.map { f =>
+        f.relativeTo(dir).toString -> os.read.bytes(f)
+      }
+    )
+    treeDigest(files)
+
+  /** 运行时逐文件 sha256（备份留痕用；按 rel 路径排序保证可复算）。 */
+  private def runtimeFileShas(dir: os.Path): List[(String, String)] =
+    os.walk(dir).filter(os.isFile).toList
+      .map(f => f.relativeTo(dir).toString -> sha256File(os.read.bytes(f)))
+      .sortBy(_._1)
+
+  private def sha256File(bytes: Array[Byte]): String =
+    val md = MessageDigest.getInstance("SHA-256")
+    md.digest(bytes).map("%02x".format(_)).mkString
+
+  /** 硬条件 1 的差集计算：**运行时独有行**（逐文件比对同 rel 路径的 seed 文件；
+    * 运行时独有文件 ⇒ 其全部行都算独有）。返回「文件 → (行号, 原文) 列表」。
+    * 纯函数式读取，零写入——本方法只读不写。 */
+  private[seed] final case class RuntimeUnique(file: String, lines: List[(Int, String)])
+
+  private[seed] def runtimeUniqueLines(
+      targetDir: os.Path,
+      seedFiles: SortedMap[String, Array[Byte]]
+  ): List[RuntimeUnique] =
+    val seedLineSets: Map[String, Set[String]] = seedFiles.map { (rel, bytes) =>
+      rel -> new String(bytes, java.nio.charset.StandardCharsets.UTF_8).split("\n", -1).toSet
+    }.toMap
+    os.walk(targetDir).filter(os.isFile).toList.sortBy(_.toString).flatMap { f =>
+      val rel = f.relativeTo(targetDir).toString
+      val seedLines = seedLineSets.getOrElse(rel, Set.empty[String])
+      val runtimeLines =
+        try new String(os.read.bytes(f), java.nio.charset.StandardCharsets.UTF_8).split("\n", -1).toList
+        catch case _: Throwable => Nil
+      val unique = runtimeLines.zipWithIndex
+        .filterNot { (line, _) => seedLines.contains(line) }
+        .map { (line, idx) => (idx + 1, line) }
+      if unique.isEmpty then Nil else List(RuntimeUnique(file = rel, lines = unique))
+    }
+
   // ── helpers ──────────────────────────────────────────────
   private def writeIfAbsent(path: os.Path, content: Option[String]): Boolean =
     content match
@@ -299,8 +436,12 @@ object SeedService:
   /** 枚举 classpath 资源目录（prefix）下全部文件。Anchor 在已知文件 plugin.json 上，
     * 以覆盖「jar 无目录条目」场景。sbt（file: URL）/ assembly（jar: URL）两种协议都处理。 */
   private def resourceDirList(prefix: os.SubPath): List[os.SubPath] =
+    resourceDirList(prefix, "plugin.json")
+
+  /** 同上，anchor 文件名参数化（agents 面 anchor = `agent.json`）。 */
+  private def resourceDirList(prefix: os.SubPath, anchorFile: String): List[os.SubPath] =
     val loader = getClass.getClassLoader
-    val anchor = join(prefix, os.SubPath("plugin.json"))
+    val anchor = join(prefix, os.SubPath(anchorFile))
     Option(loader.getResource(anchor.toString)).toList.flatMap { url =>
       url.getProtocol match
         case "file" =>

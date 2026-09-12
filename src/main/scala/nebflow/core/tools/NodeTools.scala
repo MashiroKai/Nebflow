@@ -2381,72 +2381,13 @@ object NodeCancelTool extends Tool:
           }
     }
 
-/** NodeMessage（20260905 机制批，作者裁定六条语义）——任务分发器向已分发节点
-  * 注入补充消息。仅分发器工具面（AgentCore.DispatcherFixedTools 第八件）；
-  * Nebula/general 不加。六条语义（engine 单点 sendNodeMessage）：
-  * ① 签名 (nodeId, message)：目标=本项目 Flow Map 节点；nodeId 不存在→
-  *   NODE_NOT_FOUND；message 空白→NODE_MESSAGE_EMPTY。
-  * ② running：下一 turn 边界注入（复用 immediate 注入机制），[NODE-MESSAGE]
-  *   前缀（来源=分发器 NodeMessage+节点名+时间戳）；会话已终结→记录追加
-  *   「注入未达」（留痕不丢）。
-  * ③ wiring/pending（非终态无活动会话）：持久追加节点任务记录（
-  *   == 分发器补充（NodeMessage <时间戳>） == 分节），启动时随任务读到。
-  * ④ 终态（completed/failed/cancelled/blocked）拒绝 NODE_TERMINAL_NO_MESSAGE
-  *   ——应新建节点而非倒改。
-  * ⑤ 留痕：每条消息追加 FlowMapEventLog（node-message）；Flow Map 默认载荷
-  *   零膨胀。
-  * ⑥ 工具面：仅分发器（本文件注册 + AgentCore 分发器静态集）。 */
-object NodeMessageTool extends Tool:
-  val name = "NodeMessage"
-
-  val description =
-    """Send a supplementary message to an already-dispatched node in a project's Flow Map — the task dispatcher's course-correction tool.
-## When to Use
-- After dispatching: new constraints, corrections, or extra context that must reach a node WITHOUT re-dispatching or editing topology. Routing is automatic by node status.
-- **Dispatcher-only tool** (mechanism-fixed). Do not use for terminal nodes — see below.
-## Parameters
-- **project** (optional; defaults to current project): project name.
-- **nodeId** (required): target node id (from NodeList).
-- **message** (required, non-empty): the supplementary instruction text.
-## Routing semantics (by target node status)
-- **running**: the message is injected into the node's live session at the NEXT turn boundary (reuses the immediate-input mechanism — it does NOT interrupt the current turn). The injected text carries a recognizable `[NODE-MESSAGE]` header (source: dispatcher NodeMessage + node name + timestamp), clearly distinct from the node's original task and from result deliveries. Race fallback: if the session ends before delivery, the message is recorded on the node's task annotated「注入未达」— the trace is never lost.
-- **wiring / pending** (non-terminal, no live session): the message is persistently appended to the node's task record as a `== 分发器补充（NodeMessage <timestamp>） ==` section — the node reads it as part of its task when it starts.
-- **terminal (completed / failed / cancelled / blocked)**: REFUSED (NODE_TERMINAL_NO_MESSAGE). A finished node is never retro-edited — create a new node instead (NodeEdit), even for blocked/failed (their exit = NodeEdit reactivation or abandon, not messages).
-## Errors
-- `NODE_NOT_FOUND` — nodeId does not exist in the project (active or archived).
-- `NODE_MESSAGE_EMPTY` — message is blank after trim.
-- `NODE_TERMINAL_NO_MESSAGE` — target is terminal; create a new node instead.
-## Traceability
-Every message (injected / appended / not-delivered) is appended to the project's flow-map-events.jsonl audit log (type=node-message). Flow Map default payloads stay unchanged (no extra keys — the payload-slimming contract holds)."""
-  val inputSchema = JsonObject.fromIterable(
-    List(
-      "type" -> "object".asJson,
-      "properties" -> Json.obj(
-        "project" -> Json.obj("type" -> "string".asJson, "description" -> "Project name (optional; defaults to the dispatcher's current project)".asJson),
-        "nodeId" -> Json.obj("type" -> "string".asJson, "description" -> "Target node id (from NodeList)".asJson),
-        "message" -> Json.obj("type" -> "string".asJson, "description" -> "Supplementary instruction text (non-empty; injected at turn boundary if running, appended to task if not started)".asJson)
-      ),
-      "required" -> Json.arr("nodeId".asJson, "message".asJson)
-    )
-  )
-
-  def summarize(input: JsonObject): String =
-    val id = input("nodeId").flatMap(_.asString).getOrElse("?")
-    s"NodeMessage($id)"
-
-  def summarizeResult(input: JsonObject, result: String): String = result
-
-  def call(input: JsonObject, ctx: ToolContext): IO[Either[ToolError, String]] =
-    val nodeId = input("nodeId").flatMap(_.asString).getOrElse("")
-    val message = input("message").flatMap(_.asString).getOrElse("")
-    if nodeId.trim.isEmpty then IO.pure(Left(ToolError("Missing 'nodeId' — target node id is required (from NodeList)")))
-    else if message.trim.isEmpty then
-      IO.pure(Left(ToolError("'message' must be non-empty (trim) — nothing to inject (NODE_MESSAGE_EMPTY)")))
-    else
-      NodeTools.resolveProject(input("project").flatMap(_.asString).orElse(ctx.projectName), ctx).flatMap {
-        case Left(err) => IO.pure(Left(ToolError(err)))
-        case Right(rt) => rt.engine.sendNodeMessage(nodeId, message).map(_.left.map(ToolError(_)))
-      }
+// NodeMessageTool 已删净退役（R2「一个 Mail 统一」批，2026-09-12 作者裁定
+// B5-c：不留 deprecated 壳、不留别名、不留自动转发）。语义整体并入
+// `MailTool` 的 `node:<nodeId>` 腿——三态判据（终态拒绝 / wiring·pending 追加
+// task / running 注入）**不复制**，由 Mail 复用引擎侧单点
+// `NodeEngine.sendNodeMessage`（含 NODE_NOT_FOUND / NODE_MESSAGE_EMPTY /
+// NODE_TERMINAL_NO_MESSAGE 三个错误码与 flow-map-events.jsonl 留痕）。
+// 迁移指引（只产错误文案，零执行面）见 `AgentCore.RetiredToolGuides`。
 
 object ProjectCreateTool extends Tool:
   val name = "ProjectCreate"
@@ -2458,7 +2399,7 @@ object ProjectCreateTool extends Tool:
 - **Unknown workspace path**: omit `workspace` — an AskUserQuestion-style card pops up on the user's window with a prominent "选择工作区" (pick workspace) target. Clicking it opens the REAL OS folder browser (native directory dialog on macOS/Windows) where the user browses, can create folders, and confirms; the chosen path flows back into the card and creation proceeds automatically. If the native dialog is unavailable (headless JVM) or fails, the card automatically falls back to an in-app folder browser. Candidate paths (first-level directories under ~/Claude code/ not already used as project workspaces) remain on the card as secondary one-click hints, and the built-in "Other…" free input accepts a custom absolute path.
 - `name` defaults to the workspace path's basename when omitted.
 ## After Creation
-- Dispatch work with Task(project=<name>, task=...) — the project is mounted and triggerable immediately.
+- Dispatch work with Mail(address="project:<name>", message=...) — the project is mounted and triggerable immediately.
 ## Semantics
 - Same name + same workspace → idempotent (returns "already exists", re-mounts; safe to repeat).
 - Same name + different workspace → explicit error (never silently re-points an existing project).
@@ -2544,7 +2485,7 @@ object ProjectCreateTool extends Tool:
                 val verb = if created then "created" else "already exists"
                 Right(
                   s"Project '${pd.name}' $verb and mounted. Flow Map ready at ${pd.agentFile}. " +
-                    s"Dispatch work with Task(project='${pd.name}', task=...)."
+                    s"Dispatch work with Mail(address='project:${pd.name}', message=...)."
                 )
               }
           case _ =>
