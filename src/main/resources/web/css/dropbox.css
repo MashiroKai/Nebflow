@@ -205,6 +205,28 @@
 .dropbox-file-status-text.transferring { color: var(--color-frame-text-muted, #888); }
 .dropbox-file-status-text.failed { color: #e44; }
 
+/* ===== 附件腿批（2026-09-12）：块级进度条 + 闸位拒绝提示条 ===== */
+/* 复用既有配色（completed 绿 / failed 红 / muted 灰），不新造设计语言。 */
+.dropbox-file-progress {
+  margin-top: 6px;
+  height: 3px;
+  width: 100%;
+  border-radius: 2px;
+  background: var(--color-frame-border, rgba(128, 128, 128, 0.25));
+  overflow: hidden;
+}
+.dropbox-file-progress-bar {
+  height: 100%;
+  background: #34c759;
+  transition: width 0.2s ease-out;
+}
+.dropbox-notice {
+  color: #e44;
+  font-size: 12px;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
 @keyframes pulse {
   0%, 100% { opacity: 0.4; }
   50% { opacity: 1; }

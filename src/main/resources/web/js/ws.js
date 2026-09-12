@@ -143,7 +143,7 @@ const GLOBAL_MSG_TYPES = new Set([
   'updateCheckResult', 'updateStarted', 'updateCompleted',
   'remoteUpdateResult', 'peerListChanged',
   'activeBgTasks', 'activeAgents',
-  'dropbox-message', 'dropbox-file-response', 'dropbox-file-complete', 'dropbox-history', 'dropboxError',
+  'dropbox-message', 'dropbox-file-response', 'dropbox-file-complete', 'dropbox-file-progress', 'dropbox-file-probe', 'dropbox-history', 'dropboxError',
   'friend_event',
   // Project 域节点广播（#28 0b 契约 §2）：{type,project,nodeId,node}，无 sessionId，
   // 是全应用级广播。入 GLOBAL 使 onmessage 路由不把他们当会话内事件（不 setActiveView

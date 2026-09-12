@@ -17,8 +17,10 @@ import scala.concurrent.duration.*
  * Everything here goes through reflection on purpose: this file must compile —
  * and the same spec must run — against both the pre-fix code (`tempPath: String`,
  * `commitTempFile: IO[Unit]`) and the fixed code (`tempPath: Option[String]`,
- * `commitTempFile: IO[TempPathDecision]`). The only version-sensitive point is
- * `adaptTempPath`, which adapts to the *declared* parameter type.
+ * `commitTempFile: IO[TempPathDecision]`). The version-sensitive points are
+ * `adaptTempPath` (adapts to the *declared* parameter type) and the `FileTransfer`
+ * tail (any defaulted fields appended after the leading 11 are filled from the
+ * companion's generated default accessors — see `defaultArgOrZero`).
  *
  * Output protocol (one `[probe] key=value` line per fact; the logback WARN lines
  * emitted by the code under test interleave on the same stream):
@@ -52,10 +54,34 @@ object WtMoveGuardProbe:
   private def adaptTempPath(paramType: Class[?], raw: String): AnyRef =
     if paramType.getName == "scala.Option" then Some(raw) else raw
 
+  /**
+   * Trailing `FileTransfer` fields added after the P0 fix (the attach batch appends
+   * defaulted chunk-session fields) are filled from the companion's generated
+   * `$lessinit$greater$default$N` accessors, so this driver keeps working whatever
+   * the tail looks like — the leading 11 positions are the only shape it asserts.
+   */
+  private def defaultArgOrZero(i: Int, tpe: Class[?]): AnyRef =
+    val companion =
+      try Some(Class.forName(ftClass.getName + "$").getField("MODULE$").get(null))
+      catch case _: Throwable => None
+    companion
+      .flatMap(c =>
+        try Some(c.getClass.getMethod(s"$$lessinit$$greater$$default$$$i").invoke(c))
+        catch case _: Throwable => None
+      )
+      .getOrElse {
+        if tpe == java.lang.Long.TYPE then java.lang.Long.valueOf(0L)
+        else if tpe == java.lang.Integer.TYPE then java.lang.Integer.valueOf(0)
+        else if tpe == java.lang.Double.TYPE then java.lang.Double.valueOf(0.0)
+        else if tpe == java.lang.Boolean.TYPE then java.lang.Boolean.valueOf(false)
+        else if tpe == classOf[String] then ""
+        else null
+      }
+
   private def makeTransfer(raw: String): FileTransfer =
     val ps = ftCtor.getParameterTypes
-    if ps.length != 11 then sys.error(s"[probe] unexpected FileTransfer arity ${ps.length}")
-    val args: Array[AnyRef] = Array[AnyRef](
+    if ps.length < 11 then sys.error(s"[probe] unexpected FileTransfer arity ${ps.length}")
+    val head: Array[AnyRef] = Array[AnyRef](
       "t-probe",                                     // transferId
       "in",                                          // direction
       "peer-probe",                                  // peerDeviceId
@@ -68,7 +94,8 @@ object WtMoveGuardProbe:
       adaptTempPath(ps(9), raw),                     // tempPath
       ""                                             // receiverHash
     )
-    ftCtor.newInstance(args*).asInstanceOf[FileTransfer]
+    val tail: Array[AnyRef] = (12 to ps.length).map(i => defaultArgOrZero(i, ps(i - 1))).toArray
+    ftCtor.newInstance((head ++ tail)*).asInstanceOf[FileTransfer]
 
   /** Collapses `String` / `Option[String]` / decision values into one vocabulary. */
   private def normalise(v: Any): String = v match

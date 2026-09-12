@@ -3608,16 +3608,79 @@ class WebSocketRoutes(
             val fileName = hc.downField("fileName").as[String].getOrElse("")
             val fileSize = hc.downField("fileSize").as[Long].getOrElse(0L)
             val mimeType = hc.downField("mimeType").as[String].getOrElse("")
-            if deviceId.nonEmpty && fileName.nonEmpty then
+            // 附件腿批（2026-09-12）：`files: [{fileName,fileSize,mimeType}]` ⇒ 单条消息多件
+            // （≤9）。旧单件字段（fileName/fileSize/mimeType）继续有效 —— 向后兼容。
+            val batch = hc
+              .downField("files")
+              .as[List[io.circe.Json]]
+              .getOrElse(Nil)
+              .flatMap { j =>
+                val c = j.hcursor
+                c.downField("fileName").as[String].toOption.map { n =>
+                  nebflow.dropbox.DropboxService.FileSpec(
+                    n,
+                    c.downField("fileSize").as[Long].getOrElse(0L),
+                    c.downField("mimeType").as[String].getOrElse("")
+                  )
+                }
+              }
+            val specs =
+              if batch.nonEmpty then batch
+              else if fileName.nonEmpty then List(nebflow.dropbox.DropboxService.FileSpec(fileName, fileSize, mimeType))
+              else Nil
+            if deviceId.nonEmpty && specs.nonEmpty then
               sharedResources.dropboxService match
                 case None =>
                   wsSend(io.circe.Json.obj("type" -> "dropboxError".asJson, "error" -> "Dropbox not enabled".asJson))
                 case Some(svc) =>
                   svc
-                    .offerFile(deviceId, fileName, fileSize, mimeType)
+                    .offerFiles(deviceId, specs)
+                    .flatMap {
+                      case Right(_) => IO.unit
+                      case Left(err) =>
+                        // 超限 fail-fast + **回显实际值**：结构化错误体（code/actual/limit）直达前端。
+                        wsSend(
+                          io.circe.Json.obj(
+                            "type" -> "dropboxError".asJson,
+                            "deviceId" -> deviceId.asJson,
+                            "error" -> err.message.asJson,
+                            "errorDetail" -> err.toJson
+                          )
+                        )
+                    }
                     .handleErrorWith(e =>
                       wsSend(io.circe.Json.obj("type" -> "dropboxError".asJson, "error" -> e.getMessage.asJson))
                     )
+            else IO.unit
+
+          case "dropbox-file-probe" =>
+            val hc = parse(text).toOption.map(_.hcursor).getOrElse(io.circe.Json.Null.hcursor)
+            val transferId = hc.downField("transferId").as[String].getOrElse("")
+            if transferId.nonEmpty then
+              sharedResources.dropboxService match
+                case None => IO.unit
+                case Some(svc) =>
+                  svc.probeTransfer(transferId).flatMap {
+                    case Right(state) =>
+                      wsSend(
+                        io.circe.Json.obj(
+                          "type" -> "dropbox-file-probe".asJson,
+                          "transferId" -> transferId.asJson,
+                          "bytesReceived" -> state.bytesReceived.asJson,
+                          "totalBytes" -> state.totalBytes.asJson,
+                          "prefixSha256" -> state.prefixSha256.asJson
+                        )
+                      )
+                    case Left(err) =>
+                      wsSend(
+                        io.circe.Json.obj(
+                          "type" -> "dropboxError".asJson,
+                          "transferId" -> transferId.asJson,
+                          "error" -> err.message.asJson,
+                          "errorDetail" -> err.toJson
+                        )
+                      )
+                  }
             else IO.unit
 
           case "dropbox-file-respond" =>
