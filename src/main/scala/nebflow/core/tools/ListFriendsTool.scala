@@ -20,6 +20,10 @@ import nebflow.neblink.{FriendRoster, FriendService, FriendSummary}
  *    `FriendListResponse`/`FriendSummary`）。
  *  - 行文案唯一走 `FriendRoster.candidateLine`（与 `SendMessage` 失败候选同形 ——
  *    成功路径与失败路径同一套词表）。本工具**不做解析**（`resolve` 归 `SendMessage`）。
+ *  - 行内 `[remark: …]`（⑦ 2026-09-12 落地）：备注值来自数据面
+ *    （`FriendService.applyRemarks` 在 `listFriends` 出口注入），本工具零改动即渲染
+ *    （`candidateLine` 缺省取 `f.remark`）——`remark` 也是 `SendMessage` 的合法 `to`
+ *    （L4①：模型必须看得出备注键存在，否则永远不去试备注寻址）。
  *  - 只读、零副作用：一次读，不刷本地态、不动未读游标、不触发任何写。
  *
  * 授能面（方案 §4.5 #2/#5 定稿）：**仅** `AgentCore.NebulaOrchestrationTools` 单点
@@ -52,10 +56,10 @@ object ListFriendsTool extends Tool:
     """List the user's NebLink friends — the roster of accepted friendships — read-only, with no side effects. Friends are NOT devices: a device is one of the user's own other machines on the same NebLink account (a separate surface, and one this tool never lists); a friend is a different account, linked by an accepted friend request. Use this to see who can be messaged before calling SendMessage.
 
 ## Output
-One friend per line: `<display name> (<username>)[ [blocked]]`. The first line is a count line (`Friends: N`); a very long roster is capped in code and ends with an explicit `... N more friends not shown` line instead of being silently truncated. An empty roster and a failed read are reported differently: an empty roster is a successful result — `Friends: 0` followed by `The friend list is empty (no accepted friendships).` — whereas an unreadable roster (not signed in to NebLink, or the friends service is down) is an error, and must never be read as "that person is not my friend". No online / reachable / last-seen state is reported, because the friends data carries no such field: Do not assume a friend is reachable from this list. `[blocked]` marks a friend the user has blocked (the marker is absent for everyone else); it is a roster annotation only — this tool makes no claim about whether messaging that friend is permitted.
+One friend per line: `<display name> (<username>)[ [remark: <remark>]][ [blocked]]`. The first line is a count line (`Friends: N`); a very long roster is capped in code and ends with an explicit `... N more friends not shown` line instead of being silently truncated. An empty roster and a failed read are reported differently: an empty roster is a successful result — `Friends: 0` followed by `The friend list is empty (no accepted friendships).` — whereas an unreadable roster (not signed in to NebLink, or the friends service is down) is an error, and must never be read as "that person is not my friend". No online / reachable / last-seen state is reported, because the friends data carries no such field: Do not assume a friend is reachable from this list. `[remark: …]` is a local nickname the user set for that friend — it never replaces the display name, and it is itself a valid `to` value for `SendMessage`. `[blocked]` marks a friend the user has blocked (the marker is absent for everyone else); it is a roster annotation only — this tool makes no claim about whether messaging that friend is permitted.
 
 ## Notes
-Read-only, zero side effects: a single read of the friend roster — it does not refresh local state, does not move any unread cursor, and triggers no write of any kind. Hand the values from this list to `SendMessage`'s `to` parameter unchanged (the username, or the display name)."""
+Read-only, zero side effects: a single read of the friend roster — it does not refresh local state, does not move any unread cursor, and triggers no write of any kind. Hand the values from this list to `SendMessage`'s `to` parameter unchanged (the remark, the username, or the display name)."""
 
   /** 零参数（显式给出，`ToolRegistry.ALL_TOOLS` 会把 schema 交给 LLM）：
     * 不加 `filter`（会再造一条解析路径，与 `FriendRoster.resolve` 的模糊/唯一前缀
