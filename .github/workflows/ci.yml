@@ -37,6 +37,15 @@ jobs:
         # writer of el.dataset.imeComposing. Violations are listed as file:line.
         # Same logic locally: node scripts/check-ime-guard.mjs
         run: node scripts/check-ime-guard.mjs
+      - name: Message style single source (shared message surface)
+        # ③-G gate (author ruling 2026-09-12, batch ②④③): the message surface
+        # values shared by the friend chat modal and the dropbox modal (out
+        # bubble tint, bubble geometry/max-width token, meta pill, file-card
+        # class) must have exactly ONE literal home = css/sapphire.css. Any
+        # feature CSS re-typing one of them fails the job (the "edit one copy,
+        # miss the other" drift that ③A1/③A3/③A5 exist to prevent).
+        # Same logic locally: node scripts/check-msgstyle-single-source.mjs
+        run: node scripts/check-msgstyle-single-source.mjs
 
   user-knowledge-gate:
     name: User Knowledge Gate (#338)
