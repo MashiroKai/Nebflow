@@ -18,11 +18,12 @@
 // .pp-item 族）——共享玻璃卡（.wsp-panel 挂进 modal.css 共享选择器组）、蚀刻面包屑
 // 条、蚀刻列表容器 + hairline 行、footer 中性钮 + sapphire 主钮。布局样式 .wsp-*
 // 见 chat.css；面板材质由 modal.css 共享玻璃卡组承载，亮暗双主题随全局 token。
-
 import { sendWs, onMessage } from './ws.js';
 import { t } from './i18n.js';
 import { escapeHtml } from './utils.js';
 import state from './state.js';
+// ⑤ 中文输入收归（作者裁定 2026-09-12）：组字判定唯一来源 = imeGuard.js。
+import { bindImeGuard, isImeComposing } from './imeGuard.js';
 
 let openCtx = null; // 当前打开的弹窗上下文（单例重入保护）
 
@@ -170,7 +171,10 @@ export function openPicker(opts = {}) {
     };
     ok.onclick = submit;
     no.onclick = () => row.remove();
+    // ⑤ 组字期间 Enter/Esc 交还输入法（非组字态行为逐键不变）。
+    bindImeGuard(input);
     input.addEventListener('keydown', (e) => {
+      if (isImeComposing(e, input)) return;
       if (e.key === 'Enter') submit();
       else if (e.key === 'Escape') row.remove();
     });

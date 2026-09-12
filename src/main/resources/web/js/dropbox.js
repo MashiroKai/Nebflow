@@ -8,6 +8,8 @@ import { escapeHtml } from './utils.js';
 import { t } from './i18n.js';
 import { onMessage, sendWs } from './ws.js';
 import { refreshNeblink } from './neblink.js';
+// ⑤ 中文输入收归（作者裁定 2026-09-12）：组字判定唯一来源 = imeGuard.js。
+import { bindImeGuard, isImeComposing } from './imeGuard.js';
 
 // Per-device message cache: deviceId -> DropboxMessage[]
 let dropboxMessages = {};
@@ -184,7 +186,10 @@ function bindDescEditor(device) {
   };
 
   saveBtn.onclick = doSave;
+  // ⑤ 组字期间 Enter 交还输入法（非组字态行为逐键不变）。
+  bindImeGuard(input);
   input.addEventListener('keydown', (e) => {
+    if (isImeComposing(e, input)) return;
     if (e.key === 'Enter') {
       e.preventDefault();
       doSave();
@@ -209,8 +214,11 @@ function bindChatEvents(device) {
   };
 
   sendBtn.onclick = sendText;
+  // ⑤ 组字期间 Enter 交还输入法（原判定只有 `!e.isComposing` 单臂，收归为统一谓词）。
+  bindImeGuard(textInput);
   textInput.addEventListener('keydown', (e) => {
-    if (e.key === 'Enter' && !e.isComposing) {
+    if (isImeComposing(e, textInput)) return;
+    if (e.key === 'Enter') {
       e.preventDefault();
       sendText();
     }
