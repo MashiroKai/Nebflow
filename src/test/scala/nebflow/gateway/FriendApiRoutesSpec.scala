@@ -109,7 +109,8 @@ class FriendApiRoutesSpec extends CatsEffectSuite:
     // 解码并把 from/to 嵌套 + 档案四字段 snake_case 出参契约维持给 web。
     val friendsJson =
       """{"friends":[{"userId":"u1","username":"lin","display_name":"林小满","avatar":"https://example.com/a.png","blocked":false},
-         {"userId":"u2","username":null,"display_name":null,"avatar":null,"blocked":true}],
+         {"userId":"u2","username":null,"display_name":null,"avatar":null,"blocked":true,"remark":"上游不该出现的键"},
+         {"userId":"u3","username":"customnl3","display_name":"三号","avatar":null}],
          "incoming":[{"requestId":"rq-9","userId":"u-new","username":"newbie42","display_name":"新同学","avatar":null,"note":"你好","createdAt":1234560000}],
          "outgoing":[]}""".stripMargin.replaceAll("\\n\\s*", "")
     server.createContext(
@@ -350,7 +351,7 @@ class FriendApiRoutesSpec extends CatsEffectSuite:
         assertEquals(resp.status, Status.Ok)
         resp.as[Json].map { body =>
           val friends = body.hcursor.downField("friends").as[Vector[Json]].getOrElse(Vector.empty)
-          assertEquals(friends.size, 2)
+          assertEquals(friends.size, 3)
           // null username 折叠为空串；display_name 必填语义——镜像服务端
           // fallback 链（name→username→user_id）折到 userId "u2"，不毁整表；
           // null avatar 保持 null（§4.0 可 null）；blocked 透传给 web 灰显
@@ -358,6 +359,10 @@ class FriendApiRoutesSpec extends CatsEffectSuite:
           assertEquals(friends(1).hcursor.downField("display_name").as[String].toOption, Some("u2"))
           assertEquals(friends(1).hcursor.downField("avatar").as[Option[String]].toOption, Some(None))
           assertEquals(friends(1).hcursor.downField("blocked").as[Boolean].toOption, Some(true))
+          // ⑦（2026-09-12）：`remark` 键**恒在**（未设 ⇒ null，不是省略键），
+          // 且 **Decoder 不读上游同名键**（u2 的上游 wire 带了 remark，出参必须仍是 null）
+          assertEquals(friends(1).hcursor.downField("remark").focus.map(_.isNull), Some(true),
+            "remark 键恒在（null 形态；focus=None 即键缺席=红）+ 上游同名键被忽略（备注是本地态）")
         }
       }
     }
@@ -634,5 +639,118 @@ class FriendApiRoutesSpec extends CatsEffectSuite:
 
   private def mkClient(url: String): NeblinkClient =
     new NeblinkClient(NeblinkServerConfig(url = url, networkId = "n1", secret = "s"), 8080)
+
+  // ══════════ ⑦（2026-09-12）：备注端点 / 备注出参 / conversations 档案 ══════════
+
+  private def putRemark(fs: Option[FriendService], friendUserId: String, body: Json): IO[Response[IO]] =
+    runWith(fs)(
+      authed(Request[IO](Method.PUT, Uri.unsafeFromString(s"/friends/$friendUserId/remark"))).withEntity(body)
+    )
+
+  private def getFriends(fs: Option[FriendService]): IO[Response[IO]] =
+    runWith(fs)(authed(Request[IO](Method.GET, Uri.unsafeFromString("/friends"))))
+
+  /** `friends[idx].remark` 三态读：`None` = **键缺席**（= 红，键必须恒在）；
+    * `Some(None)` = 键在、值 `null`；`Some(Some(v))` = 有值。
+    *
+    * 用 `focus` 而非 `as[Option[String]]`：circe 的 `Decoder[Option[A]]` 对「键缺席」
+    * 也成功返回 `None`，两种形态不可区分（键恒在的断言会变成空转）。 */
+  private def remarkAt(resp: Response[IO], idx: Int): IO[Option[Option[String]]] =
+    resp.as[Json].map { body =>
+      body.hcursor.downField("friends").as[Vector[Json]].toOption
+        .flatMap(_.lift(idx))
+        .flatMap(_.hcursor.downField("remark").focus)
+        .map(v => if v.isNull then None else v.asString)
+    }
+
+  test("PUT /friends/:id/remark → 200 {ok:true}（本地态、零上游往返）") {
+    withMockServer { (_, client, fs) =>
+      client.login("d1", "dev", "macos", Nil) *>
+        putRemark(Some(fs), "u1", Json.obj("remark" -> "老林".asJson)).flatMap { resp =>
+          assertEquals(resp.status, Status.Ok)
+          resp.as[Json].map(body => assertEquals(body.hcursor.downField("ok").as[Boolean].toOption, Some(true)))
+        }
+    }
+  }
+
+  test("PUT /friends/:id/remark 缺参 → 400（键缺席 / null / 非字符串都算缺参）；空串 = 清除") {
+    withMockServer { (_, client, fs) =>
+      client.login("d1", "dev", "macos", Nil) *>
+        putRemark(Some(fs), "u1", Json.obj()).flatMap { missing =>
+          assertEquals(missing.status, Status.BadRequest, "键缺席 = 缺参 400")
+          putRemark(Some(fs), "u1", Json.obj("remark" -> Json.Null)).flatMap { nulled =>
+            assertEquals(nulled.status, Status.BadRequest, "null = 缺参 400（清备注走空串）")
+            putRemark(Some(fs), "u1", Json.obj("remark" -> Json.fromInt(7))).map { wrongType =>
+              assertEquals(wrongType.status, Status.BadRequest, "非字符串 = 缺参 400")
+            }
+          }
+        }
+    }
+  }
+
+  test("PUT /friends/:id/remark 未认证 → 403（withAuth 先于任何备注写面）") {
+    withMockServer { (_, client, fs) =>
+      client.login("d1", "dev", "macos", Nil) *>
+        runWith(Some(fs))(
+          Request[IO](Method.PUT, Uri.unsafeFromString("/friends/u1/remark"))
+            .withEntity(Json.obj("remark" -> "老林".asJson))
+        ).flatMap { resp =>
+          assertEquals(resp.status, Status.Forbidden)
+          // 未认证 ⇒ 零写入：随后带上 token 读，remark 仍是 null
+          getFriends(Some(fs)).flatMap(g => remarkAt(g, 0).map(r => assertEquals(r, Some(None),
+            "403 路径不得产生副作用")))
+        }
+    }
+  }
+
+  test("备注端到端：PUT → GET /friends 出参 remark 变值；空串再清回 null（键恒在）") {
+    withMockServer { (_, client, fs) =>
+      client.login("d1", "dev", "macos", Nil) *>
+        getFriends(Some(fs)).flatMap(r => remarkAt(r, 0)).flatMap { before =>
+          assertEquals(before, Some(None), "未设备注：键在、值为 null")
+          putRemark(Some(fs), "u1", Json.obj("remark" -> "  老林  ".asJson)).flatMap { put =>
+            assertEquals(put.status, Status.Ok)
+            getFriends(Some(fs)).flatMap(r => remarkAt(r, 0)).flatMap { set =>
+              assertEquals(set, Some(Some("老林")), "trim 后入库，出参即备注（applyRemarks 合并点）")
+              putRemark(Some(fs), "u1", Json.obj("remark" -> "".asJson)).flatMap { clear =>
+                assertEquals(clear.status, Status.Ok)
+                getFriends(Some(fs)).flatMap(r => remarkAt(r, 0)).map { cleared =>
+                  assertEquals(cleared, Some(None), "空串 = 清除（键仍在、值回 null）")
+                }
+              }
+            }
+          }
+        }
+    }
+  }
+
+  test("备注只按 userId 命中：好友档案 remark 不串行（u3 未设 ⇒ null）") {
+    withMockServer { (_, client, fs) =>
+      client.login("d1", "dev", "macos", Nil) *>
+        putRemark(Some(fs), "u1", Json.obj("remark" -> "老林".asJson)) *>
+        getFriends(Some(fs)).flatMap(r => remarkAt(r, 2)).map { third =>
+          assertEquals(third, Some(None), "只有被设置的那一行带值")
+        }
+    }
+  }
+
+  test("conversations 内嵌 friend 档案同样带备注值（冻结契约 2：两处下发口径一致）") {
+    withMockServer { (_, client, fs) =>
+      client.login("d1", "dev", "macos", Nil) *>
+        putRemark(Some(fs), "u1", Json.obj("remark" -> "老林".asJson)) *>
+        runWith(Some(fs))(authed(Request[IO](Method.GET, Uri.unsafeFromString("/conversations")))).flatMap { resp =>
+          assertEquals(resp.status, Status.Ok)
+          resp.as[Json].map { body =>
+            val convs = body.asArray.getOrElse(Vector.empty)
+            assertEquals(convs.size, 1)
+            val f = convs.head.hcursor.downField("friend")
+            assertEquals(f.downField("remark").focus.flatMap(_.asString), Some("老林"),
+              "会话行的 friend 档案必须带备注值（前端消息列表「备注 > 显示名」读这里）")
+            assertEquals(f.downField("display_name").as[String].toOption, Some("林小满"),
+              "显示名原样保留（备注是追加键，不顶替显示名）")
+          }
+        }
+    }
+  }
 
 end FriendApiRoutesSpec

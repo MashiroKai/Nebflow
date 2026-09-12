@@ -607,14 +607,21 @@ end NeblinkConfig
 /** 好友/请求/会话共用的档案对象。字段即 friend-search-contract v1.0 契约词汇
  *  （NL 号 = Username，作者 2026-09-05 裁定）：username 可空语义由 String 折叠
  *  ""（未设置 NL 号）；displayName 必填（服务端永不为 null，见 Decoder 镜像
- *  fallback 链）；avatar 可 null。since/blocked 为信封字段（camelCase 维持）。 */
+ *  fallback 链）；avatar 可 null。since/blocked 为信封字段（camelCase 维持）。
+ *
+ *  `remark`（2026-09-12 好友消息改造批 ⑦）：**纯本地字段**——用户设的好友备注，
+ *  持久化在 `FriendRemarkStore`（`<dataRoot>/friend-remarks.json`，键 = userId），
+ *  由 `FriendService.applyRemarks` 在出站口注入。**上游永不带该键**（协议零变更）：
+ *  Decoder 不读它，Encoder 恒出该键（`None` ⇒ `null`，⑦-D8 加性最简形态）。
+ *  形参置末且有默认值 ⇒ 既有构造点（含位置实参）零改动。 */
 case class FriendSummary(
   userId: String,
   username: String,
   displayName: String,
   avatar: Option[String] = None,
   since: Option[Long] = None,
-  blocked: Option[Boolean] = None
+  blocked: Option[Boolean] = None,
+  remark: Option[String] = None
 )
 
 /** 收到的好友请求（incoming 分组）。createdAt：请求时间透传（#290 0904 批次
@@ -710,6 +717,10 @@ object FriendCodecs:
         c.get[Option[Boolean]]("blocked").getOrElse(None)
       ))
 
+  /** 入参契约（上游 → 网关）：**不读 `remark`**（2026-09-12 ⑦）——备注是本仓
+    * 本地态（`FriendRemarkStore`），上游 wire 永不带该键；即便某天带上也必须
+    * 忽略，否则上游可覆盖用户自己的备注。`remark` 由 `FriendService.applyRemarks`
+    * 在出站口按本地 map 注入。 */
   given Decoder[FriendSummary] = Decoder.instance { c =>
     for
       userId  <- c.get[String]("userId")
@@ -749,7 +760,12 @@ object FriendCodecs:
    *  snake_case（username / display_name / avatar；relation_status 由
    *  /api/users/search 独有），信封字段维持 camelCase（userId/since/blocked，
    *  以及上层 requestId/note/createdAt 由 deriveEncoder 保持）。网关对 web 的
-   *  /api/friends、/api/conversations 内嵌档案经此 Encoder 统一切换。 */
+   *  /api/friends、/api/conversations 内嵌档案经此 Encoder 统一切换。
+   *
+   *  `remark`（2026-09-12 ⑦）：**本地备注**，加性出参键，**键恒在**——未设备注
+   *  时输出 `null`（不是省略键；⑦-D8 定稿「加性最简、前端不必容错两态」）。
+   *  前端据此在 `GET /api/friends` 与 conversations 内嵌 `friend` 档案两处拿到
+   *  备注值。 */
   given Encoder[FriendSummary] = Encoder.instance { f =>
     Json.obj(
       "userId"       -> f.userId.asJson,
@@ -757,7 +773,8 @@ object FriendCodecs:
       "display_name" -> f.displayName.asJson,
       "avatar"       -> f.avatar.asJson,
       "since"        -> f.since.asJson,
-      "blocked"      -> f.blocked.asJson
+      "blocked"      -> f.blocked.asJson,
+      "remark"       -> f.remark.asJson
     )
   }
   given Encoder[FriendRequestSummary] = deriveEncoder
@@ -784,4 +801,33 @@ object PeerDescriptionStore:
   def save(descs: Map[String, String]): IO[Unit] =
     IO.blocking {
       os.write.over(path, descs.asJson.spaces2, createFolders = true)
+    }
+
+// ===== Friend Remark Store（好友备注，2026-09-12 好友消息改造批 ⑦）=====
+
+/** 用户设置的好友备注（备注 = 本地别名），跨重启持久化：`<dataRoot>/friend-remarks.json`。
+  *
+  * **与 `PeerDescriptionStore` 完全同形**（方案 `20260912_011320` §4.3(a)1 定稿）：
+  * 形态 `Map[String, String]`，**键 = friend `userId`**（不用 username/displayName：
+  * 后者可变——NL 号可自定义、昵称可改；`userId` 是唯一稳定键，同 `⑦` 的解析与
+  * 回映射口径）。
+  *
+  * 边界（刻意不做）：**零上游协议变更、零跨设备同步**（⑦-D1 不做）——备注按 home
+  * 本地存，同族先例 `peer-descriptions.json` / `fm_blocked` / `fm_seen_requests`。
+  * 权限面：读写都只在网关进程内（`FriendService`），不经任何 REST 直读文件。
+  */
+object FriendRemarkStore:
+  // def, not val: PathUtil.dataRoot is redirectable (setDataRoot); a val would
+  // freeze the path at object-init and break per-test data roots (f1cd3709 rule).
+  private def path = PathUtil.dataRoot / "friend-remarks.json"
+
+  def load: IO[Map[String, String]] =
+    IO.blocking {
+      if os.exists(path) then decode[Map[String, String]](os.read(path)).getOrElse(Map.empty)
+      else Map.empty
+    }
+
+  def save(remarks: Map[String, String]): IO[Unit] =
+    IO.blocking {
+      os.write.over(path, remarks.asJson.spaces2, createFolders = true)
     }
