@@ -5,11 +5,18 @@
 //     skill/MCP 仅作卡片内的内容构成标注语（含 N 个技能·可展开 preview /
 //     MCP server 名+transport / 内建工具白名单 +N），不再是独立板块。
 //   • 每插件一个启停开关（页面唯一操作件）：
-//       on  = POST /api/plugins/:name/approve （trust 表记录当前目录 digest）
-//       off = POST /api/plugins/:name/revoke  （删 trust 条目，回落 untrusted）
-//     enabled ≡ trusted：不做独立 enabled 字段——trust digest 门底层语义
-//     （内容变更即回落待审）不删，开关即目录可见性（GET /plugins/catalog
-//     只列 trusted，分发器目录同源）。数据源 GET /api/plugins 全量注册表。
+//       on  = POST /api/plugins/:name/enable  （plugins.dispatch.<n>.authorEnabled=true）
+//       off = POST /api/plugins/:name/disable （…authorEnabled=false）
+//     **2026-09-12 令 1 语义变更（作者 14:14 原话「插件的开关，应该只影响任务
+//     分发器对未来节点的派发，而不能影响目前的」）**：开关 = **派发开关**，只写
+//     `plugins.dispatch`（作者意图层，durable）⇒ 关闭只挡住**未来派发**，
+//     已在飞/已派发节点零影响（引擎侧闸 B/C/E/D 只判内容面）。
+//     旧语义（enabled ≡ trusted）不删而是**降级为独立动作**：内容信任的授予/撤回
+//     仍走 POST /api/plugins/:name/approve|revoke（`revoke` = 撤回内容信任，
+//     会停用在飞节点的插件 MCP —— 别拿它当「关闭插件」用）。
+//     目录可见性（GET /plugins/catalog）与分发器目录同源：内容未受信 or 派发被关
+//     的包都不进目录行（后者另出一行点名注记）。数据源 GET /api/plugins 全量注册表
+//     （manifest.dispatch = 派发面状态）。
 //   • 智能体区块收缩为摘要行：名称/描述/preset 现状，点击进既有 agent
 //     详情编辑（openAgentDetail 深链复用）；订阅 chips（PUT skills 写回）
 //     与平铺 config row 移除——插件不再逐 agent 配置，每个插件一个开关。
@@ -77,7 +84,15 @@ async function fetchPluginRegistry() {
  *  不再是前端展示分类的单一事实。（checkjs-gate-fix 批 2026-09-05 登记） */
 function trustInfo(manifest) {
   const trust = manifest.trust || { status: 'untrusted', reason: '' };
-  if (trust.status === 'trusted') return { on: true, changed: false, reason: '' };
+  // 令 1（2026-09-12）：派发面优先——内容受信但被作者关了派发 ⇒ 开关落 off，
+  // 提示语由后端 manifest.dispatch.reason 给出（说明「只影响未来派发」）。
+  const dispatch = manifest.dispatch || {};
+  if (trust.status === 'trusted') {
+    if (dispatch.enabled === false) {
+      return { on: false, changed: false, reason: String(dispatch.reason || '') };
+    }
+    return { on: true, changed: false, reason: '' };
+  }
   const reason = String(trust.reason || '');
   // Structured code wins when the backend provides it (future reasonCode).
   const code = String(trust.reasonCode || '').toLowerCase().trim();
@@ -330,13 +345,15 @@ function releaseSwitch(card) {
   if (sw) sw.disabled = false;
 }
 
-/** Enable/disable one plugin via the trust endpoints. Optimistic UI first
+/** Enable/disable one plugin via the DISPATCH endpoints (令 1). Optimistic UI first
  *  (click already flipped the card), then converge from the registry —
  *  GET /api/plugins stays the single source of truth, applied IN PLACE
  *  (per-card state sync, never a full-list redraw). On failure: roll the
  *  optimistic flip back + toast. No page reload anywhere on this path. */
 async function setPluginEnabled(name, enable, card) {
-  const path = `/api/plugins/${encodeURIComponent(name)}/${enable ? 'approve' : 'revoke'}`;
+  // 令 1：开关走派发面（只影响未来派发；在飞节点不受影响）。
+  // 内容信任的授予/撤回是另一个动作（approve/revoke），不由此开关触发。
+  const path = `/api/plugins/${encodeURIComponent(name)}/${enable ? 'enable' : 'disable'}`;
   try {
     const resp = await api(path, { method: 'POST' });
     const body = await resp.json().catch(() => ({}));
