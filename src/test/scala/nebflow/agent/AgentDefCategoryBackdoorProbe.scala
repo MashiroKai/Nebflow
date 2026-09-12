@@ -36,8 +36,10 @@ object AgentDefCategoryBackdoorProbe:
     "kernel" -> AgentCore.KernelFixedTools
   )
 
-  /** team 面遗留件（legacyFixedTools 的 category=team 分支产物）。 */
-  private val TeamFace = Set("Mail", "SubTask", "TeamTaskCreate", "TeamTaskUpdate", "TeamTaskList")
+  /** team 面**独有**遗留件（legacyFixedTools 的 category=team 分支相对 BaseTools 的增量）。
+    * R2「一个 Mail 统一」（2026-09-12）后 `Mail` 不再是 team 面独有件——它成为
+    * Nebula 与分发器机制固定集的一员，故从本诊断集摘除（SubTask/TeamTask* 不变）。 */
+  private val TeamFace = Set("SubTask", "TeamTaskCreate", "TeamTaskUpdate", "TeamTaskList")
 
   private val NonConvergedControls = List("LegacyTeamThing", "LegacyFlowThing")
 

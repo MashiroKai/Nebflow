@@ -5,6 +5,7 @@ import cats.effect.{IO, Ref}
 import cats.syntax.all.*
 import fs2.Stream
 import io.circe.syntax.*
+import io.circe.{Json, JsonObject}
 import munit.FunSuite
 import nebflow.actor.ActorSystem
 import nebflow.agent.*
@@ -278,6 +279,45 @@ class MailDedupWiringSpec extends FunSuite:
       s"busy-queued duplicate fingerprint must not inject a second turn, got $injected (persisted=${persisted.size})"
     )
     assert(clue(queueLeft).isEmpty, "turn-end duplicate must still be consumed from the queue")
+  }
+
+  test("W5 R2：node: 地址不进 queue 指纹面 —— 显式拒绝 queue、零队列落盘、零去重记账") {
+    val system = ActorSystem(s"dd-w5-${java.util.UUID.randomUUID().toString.take(6)}")
+    val tmp = os.temp.dir(prefix = "dd-w5")
+    fixtureTeam(tmp)
+    MailDeliveryDedup.reset()
+    val llm = new RecordingLlm
+
+    val io = for
+      sessionStore <- IO.pure(SessionStore(tmp / "sessions", tmp / "tasks"))
+      meta <- sessionStore.createSession("dq/member", agentName = Some("member"), flowName = Some("dq"))
+      _ <- TeamSessionRegistry.registerSession("dq", "member", meta.id)
+      resources <- mkResources(system, tmp, llm, sessionStore)
+      suppressedBefore <- IO(MailDeliveryDedup.suppressedTotal)
+      // 分发器身份 + node: 地址 + delivery=queue（R2 腿② 必须拒 queue）
+      res <- MailTool.call(
+        JsonObject(
+          "address" -> Json.fromString("node:n-w5"),
+          "message" -> Json.fromString("改写任务书"),
+          "delivery" -> Json.fromString("queue"),
+          "chainId" -> Json.fromString("chain-n-w5")
+        ),
+        ctxFor(resources, system, "disp-w5").copy(isDispatcher = true, projectName = Some("p-w5"))
+      )
+      queueAtMember <- MailQueueStore.size(meta.id)
+      suppressedAfter <- IO(MailDeliveryDedup.suppressedTotal)
+      requests <- llm.requests.get
+      dedupFile <- IO(os.exists(PathUtil.dataRoot / "mail-dedup.json"))
+    yield (res, queueAtMember, suppressedBefore, suppressedAfter, requests, dedupFile)
+
+    val (res, queueAtMember, suppressedBefore, suppressedAfter, requests, dedupFile) = io.unsafeRunSync()
+    res match
+      case Left(err) => assert(clue(err.message).contains("always immediate"), "node: 腿必须显式拒 queue")
+      case Right(v)  => fail(s"node: + queue 不得成功，got: $v")
+    assertEquals(queueAtMember, 0, "node: 腿不得落 MailQueueStore（queue 指纹面结构上不可达）")
+    assertEquals(suppressedAfter, suppressedBefore, "node: 腿不得咨询/记账 MailDeliveryDedup（immediate 无投递级去重，R3-a）")
+    assert(!dedupFile, "node: 腿不得触发 mail-dedup.json 落盘")
+    assert(clue(requests).isEmpty, "node: 腿不得因 queue 触发任何 turn")
   }
 
 end MailDedupWiringSpec

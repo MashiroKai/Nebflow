@@ -920,8 +920,9 @@ end TaskListStore
 /**
  * TaskList 工具（Nebula 专属编排件，2026-09-06 作者提议 + 首期无前端拍板）。
  *
- * 工具面隔离（硬约束）：仅 AgentCore.NebulaOrchestrationTools 携带（15 件之一，
- * TaskList 批 +1）；
+ * 工具面隔离（硬约束）：仅 AgentCore.NebulaOrchestrationTools 携带（Nebula 固定面
+ * 成员，TaskList 批 +1；件数以 AgentCore.NebulaOrchestrationToolsExpectedSize 为单点，
+ * R2 2026-09-12 后 16 件 ⇒ 此处不再写死数字）；
  * NebulaExclusiveTools 防声明逃逸——dispatcher（DispatcherFixedTools）
  * / general（BaseTools+Pop）与任何非 Nebula 身份声明（含 "*"）均剥离。
  */

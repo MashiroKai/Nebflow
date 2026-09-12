@@ -3,12 +3,13 @@ package nebflow.core.project
 import cats.effect.{IO, Ref}
 import fs2.Stream
 import io.circe.Json
+import io.circe.syntax.*
 import munit.CatsEffectSuite
 import nebflow.actor.{ActorSystem, Behaviors}
 import nebflow.agent.{AgentCommand, AgentKind, AgentLibrary, AgentRecord, SharedResources}
 import nebflow.core.PathUtil
 import nebflow.core.task.FileTaskStore
-import nebflow.core.tools.{FileLockManager, NodeEditTool, NodeMessageTool, ToolContext}
+import nebflow.core.tools.{FileLockManager, MailTool, NodeEditTool, ToolContext}
 import nebflow.gateway.{RateLimiter, SessionStore}
 import nebflow.llm.{ModelCandidate, ThinkingConfig}
 import nebflow.shared.{LlmHandle, LlmRequest, LlmResponse, StreamChunk}
@@ -112,8 +113,17 @@ class NodeFailedReactivateSpec extends CatsEffectSuite:
   private def nodeEdit(input: Json, ctx: ToolContext): IO[Either[String, String]] =
     NodeEditTool.call(input.asObject.get, ctx).map(_.left.map(_.message))
 
+  /** R2 后 NodeMessage 工具已删净退役：语义并入 `Mail(address="node:<id>")`（同一引擎单点）。
+    * 「node:」腿是分发器专属地址面 ⇒ 以分发器身份调用（project 由 ctx.projectName 解析）。 */
   private def nodeMessage(input: Json, ctx: ToolContext): IO[Either[String, String]] =
-    NodeMessageTool.call(input.asObject.get, ctx).map(_.left.map(_.message))
+    val nodeId = input.hcursor.get[String]("nodeId").toOption.getOrElse("")
+    val msg = input.hcursor.get[String]("message").toOption.getOrElse("")
+    MailTool
+      .call(
+        Json.obj("address" -> s"node:$nodeId".asJson, "message" -> msg.asJson).asObject.get,
+        ctx.copy(isDispatcher = true, projectName = input.hcursor.get[String]("project").toOption)
+      )
+      .map(_.left.map(_.message))
 
   private def waitUntil(timeout: FiniteDuration, every: Long = 50)(cond: IO[Boolean]): IO[Unit] =
     def go(deadline: Long): IO[Unit] =

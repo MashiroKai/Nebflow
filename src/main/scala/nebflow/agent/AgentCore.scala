@@ -1718,7 +1718,13 @@ private[agent] trait AgentCore:
       case None =>
         // §2.1 收敛：此路径原先绕过 flatTap（无文本行、无结构化记录）——
         // 现补结构化写入（文本行为保持零改动仍不新增）。
-        val r = ToolExecResult(s"No such tool available: ${call.name}", isError = true)
+        // R2 批（2026-09-12，B5-c 残余形态 C-1）：退役工具的**可诊断错误**——
+        // 迁移指引表先查，命中则把「改用什么」写进错误文案，再退回通用兜底。
+        // 本表**只产错误文案、零执行面**（硬禁静默 no-op 与悄悄转发）。
+        val msg = AgentCore.RetiredToolGuides.get(call.name) match
+          case Some(guide) => s"Tool '${call.name}' has been retired. $guide"
+          case None        => s"No such tool available: ${call.name}"
+        val r = ToolExecResult(msg, isError = true)
         logToolStructured(call, ctx, r).as(r)
 
   /** WebSearch P0: Tier 2 routing for the WebSearch tool call. When the
@@ -2322,9 +2328,13 @@ object AgentCore:
     * 四件（Bash/Read/Glob/Grep——从 BaseTools 取件）+Card 解封恢复（471 行后端
     * 工具整体回归，注册表同批恢复；其前端 iframe 消费面本批不恢复，chat 可视
     * 渲染待前端批）、−旧体系四件（Mail/Delegate/FlowTrigger/FlowExecute——旧
-    * Team/Flow 体系对 Nebula 完全退役，Task 是唯一项目触发入口，节点结果沿
-    * out 边自动回流；工具类与注册表注册全部保留——team/flow 双轨期
-    * legacyFixedTools 对成员仍授能，零触碰）。2026-09-05 13:11 作者裁定曾把
+    * Team/Flow 体系对 Nebula 完全退役，节点结果沿 out 边自动回流；工具类与
+    * 注册表注册全部保留——team/flow 双轨期
+    * legacyFixedTools 对成员仍授能，零触碰）。**本条覆盖此前相关指令**：
+    * 2026-09-12「一个 Mail 统一」批（B4 取代条款）已把「`Task` = 唯一项目触发
+    * 入口」**作废**——新口径 = **Mail 唯一消息原语 + Task 已退役**；Nebula 经
+    * `Mail(address="project:<name>")` 触发项目分发器（与已退役的 `Task` 同内核
+    * `ProjectActor.TriggerDispatcher`）。2026-09-05 13:11 作者裁定曾把
     * 基础六件 Read/Glob/Edit/Write/Grep/Bash 定为全体 agent 统一默认
     * （Nebula 补齐 Write/Edit 至恰十七件）；2026-09-05 23:34 作者裁定
     * （「把你的 bash 和编辑工具收起来」）推翻 Nebula 例外：Bash/Write/Edit
@@ -2346,7 +2356,8 @@ object AgentCore:
     * **终态目标由独立收敛批重定**（⑩-9：此前「终态 14」口径已随 ⑩ +1 失效，本批
     * 只改注释口径，**不得**改断言常量去凑终态数——见常量注释）。
     * 分组与矩阵行一一对应：
-    *   - 编排触发：Task / ProjectCreate / AgentControl（list/status/cancel/restart）
+    *   - 编排触发：Mail（R2「一个 Mail 统一」批：−Task +Mail，2026-09-12）/
+    *     ProjectCreate / AgentControl（list/status/cancel/restart）
     *     / Delegate（2026-09-11 极简内核回归）
     *   - 任务编排：TaskList（2026-09-06 TaskList 批；NebulaExclusiveTools 同批
     *     防声明逃逸——dispatcher/general/"*" 一律剥离）
@@ -2364,14 +2375,21 @@ object AgentCore:
     * 显式不含：Bash/Write/Edit（2026-09-05 23:34 裁定移除——Nebula 无写手）、
     * NodeList（2026-09-06 00:48 裁定摘除——out 边自动投递取代主动查图；
     * dispatcher 自身面 DispatcherFixedTools 不受影响）、
-    * Mail/Delegate/FlowTrigger/FlowExecute（旧体系退役）、Web 系、
+    * Delegate/FlowTrigger/FlowExecute（旧体系退役）、Web 系、
     * TeamTask*、SubTask、NodeEdit/NodeCancel。Issue/CheckIssues 已整体
     * 退役（2026-09-04 作者终裁：报 issue 走 gh cli 由节点代劳，定义层已归档
     * .archived-tools-2d/）。本集即 Nebula 工具面唯一来源：在飞十六件、零 Issue、
-    * 零旧体系四件。 */
+    * 零旧体系 FlowTrigger/FlowExecute/Task 三件（`Mail` **在**本集——R2 批翻案：
+    * Mail 从「旧体系退役件」成为唯一消息原语）。 */
   val NebulaOrchestrationTools = Set(
     // 编排触发（NodeList 2026-09-06 00:48 裁定摘除）
-    "Task",
+    // **Mail**（R2「一个 Mail 统一」批，2026-09-12 作者裁定 D-1/D-2/B4 取代条款）：
+    // −`Task` +`Mail`，件数 16 → 16（本条覆盖此前「Task = 唯一项目触发入口」的
+    // 全部相关指令——`Task` 已删净退役，不留壳、不留别名）。Nebula 的 Mail
+    // **地址面按角色分层 = 仅项目分发器**（`project:<name>` 形态；裸项目名等价
+    // 接受，D-1 取 B1-a 原样）：发 `node:<id>` 或自身地址（`"Nebula"`）⇒ 显式
+    // 报错并指明合法地址面（硬禁静默兜底/模糊匹配）；入站不受限。
+    "Mail",
     "ProjectCreate",
     "AgentControl",
     // Delegate（2026-09-11 恢复批）：极简内核入口——无项目归属的单次执行任务。
@@ -2426,18 +2444,40 @@ object AgentCore:
     * 不得各处写裸数字）。
     *
     * 值 = 16 = `NebulaOrchestrationTools` 现成员数（2026-09-11 Delegate 恢复批
-    * +1 → 15；2026-09-12 好友消息改造批 ⑩ +ListFriends → 16）。
+    * +1 → 15；2026-09-12 好友消息改造批 ⑩ +ListFriends → 16；2026-09-12
+    * R2「一个 Mail 统一」批 −`Task` +`Mail` ⇒ **净 0，恒 16**）。
     * **终态目标由独立收敛批重定**（⑩-9 口径修订）：此前「终态目标 14 = 与
     * TransferFile 退役批（−1）同窗抵平」的口径随本批 +1 失效——本批**只**改本注释
     * 与断言基准值，**不得**改本常量去凑任何终态数字，也不得在树内实测值 ≠ 本常量
     * 时放宽断言（原「不得为凑 14 改写断言」纪律不变，仅目标数字改为待重定）。 */
   val NebulaOrchestrationToolsExpectedSize: Int = 16
 
-  /** 分发器固定工具集（§C.1）：Node 四件（List/Edit/Cancel/Message）+ 读四件
+  /** 退役工具迁移指引表（R2「一个 Mail 统一」批，2026-09-12；设计件 §A.3 C-1）。
+    *
+    * **本表只产错误文案，零执行面**——不是兼容壳、不是别名、不做任何转发
+    * （B5-c 硬禁静默 no-op 与悄悄转发）。消费点 = [[executeToolInner]] 的
+    * `case None`（注册表查不到该名时）：给出「它退役了 + 改用哪个工具、怎么构造
+    * 调用」。打在未注册名上的调用**只能**来自存量提示词 / 外部客户端 / 幻觉——
+    * 恰恰是最需要指引的场景；现状兜底文案 `No such tool available: <name>`
+    * 不含迁移指引，不满足「显式报错并指明改用 Mail」的要求。
+    *
+    * 表零膨胀纪律：只收「本批删净且必须给出迁移路径」的名字，不预收未来退役项。 */
+  val RetiredToolGuides: Map[String, String] = Map(
+    "Task" ->
+      """Project triggering is now Mail — use `Mail(address="project:<项目名>", message=<任务文本>)` (a bare project name is accepted too; the same engine entry, ProjectActor.TriggerDispatcher).""",
+    "NodeMessage" ->
+      """Node course-correction is now Mail — use `Mail(address="node:<节点id>", message=<补充文本>)` (same engine semantics: running = injected at the next turn boundary, wiring/pending = appended to the node task, terminal = refused)."""
+  )
+
+  /** 分发器固定工具集（§C.1）：Node 三件（List/Edit/Cancel）+ 读四件
     * （Read/Glob/Grep/Bash，读现状 + git worktree 管理）。不给 Write/Edit（分发器只
     * 分解不产内容）、不给 AskUserQuestion（单次会话不阻塞等用户，§C.3）。
-    * NodeMessage（20260905 机制批，作者裁定）第八件：向已分发节点注入补充消息
-    * （running=turn 边界注入 / wiring/pending=任务追加 / 终态拒绝）。
+    * **Mail**（R2「一个 Mail 统一」批，2026-09-12 作者裁定）：−`NodeMessage`
+    * +`Mail`，件数 9 → 9。分发器的 Mail **地址面按角色分层 = `Nebula`（root）
+    * + `node:<id>`**：不给自己项目发（`project:<name>` 形态对分发器非法 ⇒
+    * 显式报错并指明合法地址面）。旧 `NodeMessage` 已删净退役，其三态语义
+    * （running=turn 边界注入 / wiring·pending=任务追加 / 终态拒绝）整体并入
+    * `Mail(address="node:<id>")`，判据复用引擎侧单点 `NodeEngine.sendNodeMessage`。
     * TaskBoard（20260908 任务板批 2）第九件：项目任务板全权面（§1c 挂载表——
     * create 全量/update 全板含结构字段/close 全板/list 全板；权限判定的引擎侧
     * 身份=isDispatcher，工具内不信客户端参数）。 */
@@ -2445,7 +2485,7 @@ object AgentCore:
     "NodeList",
     "NodeEdit",
     "NodeCancel",
-    "NodeMessage",
+    "Mail",
     "Read",
     "Glob",
     "Grep",

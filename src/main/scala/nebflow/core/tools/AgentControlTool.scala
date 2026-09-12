@@ -48,7 +48,7 @@ Actions:
 - **cancel**: terminate an agent's current task. The parent session receives a "cancelled" notification and any wait barrier is released — nobody waits forever. Allowed kinds: Delegate, SubTask, Ephemeral, Project node/dispatcher sessions (node-*/dispatcher-*, settles via the session bridge), and Team members (permission-scoped — see Safety rules).
 - **restart**: kill the stuck turn and resume from the last persisted checkpoint (same mechanism as crash recovery — completed work is kept). Allowed kinds: Delegate (ephemeral) and SubTask (both consume the supervisor's restart budget, 2 per 5min; exceeding it fails the task), and Team members (Stop + re-activation from persisted history — no supervisor budget consumed).
 
-Safety rules: you cannot cancel/restart yourself, Root/plan sessions (self-preservation guard), or legacy dag-* Flow workers (flow cancellation goes through cancelFlow / RunningFlowRegistry). Project node/dispatcher sessions (node-*/dispatcher-*) support cancel only (single-shot — no restart; cancel the dispatcher and re-trigger Task(project=...)). Delegate/SubTask/Ephemeral sessions under your own root session are always controllable. Team members are manageable by their team's Manager (subtree scope — own team members and their sub-agents) and by Nebula (global scope); other callers are read-only for Team. Killing a team MANAGER (cancel/restart) additionally requires confirm=true plus a non-empty reason — a killed Manager leaves its members running but coordinator-less (members remain manageable by Nebula); every such kill is recorded in the audit log.
+Safety rules: you cannot cancel/restart yourself, Root/plan sessions (self-preservation guard), or legacy dag-* Flow workers (flow cancellation goes through cancelFlow / RunningFlowRegistry). Project node/dispatcher sessions (node-*/dispatcher-*) support cancel only (single-shot — no restart; cancel the dispatcher and re-trigger Mail(address="project:<name>", message=...)). Delegate/SubTask/Ephemeral sessions under your own root session are always controllable. Team members are manageable by their team's Manager (subtree scope — own team members and their sub-agents) and by Nebula (global scope); other callers are read-only for Team. Killing a team MANAGER (cancel/restart) additionally requires confirm=true plus a non-empty reason — a killed Manager leaves its members running but coordinator-less (members remain manageable by Nebula); every such kill is recorded in the audit log.
 
 When to use:
 - A delegated task has been silent far longer than expected → list, then status the suspicious session.
@@ -124,7 +124,7 @@ When to use:
         else if isProjectFlowSession(rec.sessionId) then
           Some(
             s"Session '${rec.sessionId}' is a single-shot Project session — restart is not supported. " +
-              "Cancel it and re-trigger the work (Task(project=...) for the dispatcher / NodeEdit for nodes)."
+              "Cancel it and re-trigger the work (Mail(address=\"project:<name>\", message=...) for the dispatcher / NodeEdit for nodes)."
           )
         else
           Some(

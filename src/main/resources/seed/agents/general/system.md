@@ -17,9 +17,11 @@
 
 **未申报时引擎不会结束你的节点**：节点保持 `running`、结果不投递下游，你会按阶梯（10min/30min/1h/2h/4h…上限 8 拍，带 `[NODE-REPORT-REMINDER]` 前缀头）被反复提醒，此后每 4h 落一条 `node-report-missing` 事件等人工处置。节点生命周期以 `node_report` 为唯一状态判据——**先申报，再写收尾报告文本**（申报完照常输出五要素文本，引擎按申报走既有终态链）。
 
-## 工具面
+## 工具面（无消息工具）
 
-Read / Write / Edit / Glob / Grep / Bash / AskUserQuestion。`<injected-plugins>` 是分配给你的能力（工具与其说明），按需使用；工具用法以工具定义内的描述为准。无 Mail、无团队——缺关键信息就在结果里写明假设。
+你的工具面**没有 `Mail`**（节点不挂消息工具——消息原语只给 Nebula 与项目分发器）：节点是 leaf，**无外发消息能力**，结果沿 out 边投递、终态走 `node_report`。需要外部信息时，把它写进结果（`node_report` 的 detail / 收尾报告文本），由分发器与 Nebula 处置——**不要**试图去寻找或调用 Mail。
+
+Read / Write / Edit / Glob / Grep / Bash / AskUserQuestion。`<injected-plugins>` 是分配给你的能力（工具与其说明），按需使用；工具用法以工具定义内的描述为准。缺关键信息就在结果里写明假设。
 
 ## 工作区
 

@@ -134,6 +134,34 @@ class MailDedupReplayWindowSpec extends FunSuite:
       os.remove.all(tmp)
   }
 
+  // ── R2 分层地址面（2026-09-12）：新腿的重放窗行为显式钉死 ──
+
+  test("R5 R2：node: 腿 immediate —— 无投递级去重（不咨询 mail-dedup、不记账、不落盘）") {
+    val tmp = os.temp.dir(prefix = "r2-r5")
+    PathUtil.setDataRoot(tmp / "data")
+    MailDeliveryDedup.reset()
+    try
+      val sid = "node-sess-r5"
+      // node: 腿 = MailTool.deliverToNode → 引擎单点 sendNodeMessage（三态判据），
+      // **不经** AgentActor 的 queue drain ⇒ MailDeliveryDedup 结构上不参与。
+      // 本用例的可执行判据：两次同文 node: 投递后，抑制计数与账本文件均无变化
+      //（若 node 腿误经 queue+dedup，第二次会被吞且记账 ⇒ 断言可被反向证伪）。
+      val before = MailDeliveryDedup.suppressedTotal
+      val fp = MailDeliveryDedup.fingerprint("disp-r5", sid, "节点补充同文")
+      // 证据锚②：同一 (sender|sid|content) 三元组在**组件层**确实会被抑制
+      // —— 证明上面的「无变化」不是因为指纹面失效，而是 node 腿根本不走这里。
+      val now = System.currentTimeMillis()
+      assert(MailDeliveryDedup.tryDeliver(sid, fp, now).unsafeRunSync(), "组件层首投放行")
+      assert(!MailDeliveryDedup.tryDeliver(sid, fp, now + 1000).unsafeRunSync(), "组件层同三元组窗口内被抑制")
+      val afterComponent = MailDeliveryDedup.suppressedTotal
+      assertEquals(afterComponent, before + 1L, "组件层抑制计数 +1（哨兵有载力）")
+      // node: 腿不落 queue 面 ⇒ 无 MailQueueStore 落盘、无 mail-dedup 账本条目
+      assertEquals(MailQueueStore.load(sid).unsafeRunSync(), Nil, "node 会话不得有 queue 条目")
+    finally
+      PathUtil.setDataRoot(originalRoot)
+      os.remove.all(tmp)
+  }
+
   // ── 运行时全链（真 AgentActor + MailTool.activateAgent）────────
 
   private class RecordingLlm(delayMs: Long = 0L) extends LlmHandle[IO]:

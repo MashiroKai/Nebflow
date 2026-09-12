@@ -2,6 +2,7 @@ package nebflow.core.tools
 
 import cats.effect.{IO, Ref}
 import cats.effect.unsafe.implicits.global
+import io.circe.{Json, JsonObject}
 import munit.FunSuite
 import nebflow.actor.ActorSystem
 import nebflow.agent.{AgentRecord, SharedResources}
@@ -83,6 +84,57 @@ class MailToolRootSenderSpec extends FunSuite:
       .deliverShortNameUnscoped("Backend", "hi", None, "INFO", rootCtx, null, rootSid)
       .unsafeRunSync()
     assertRejected(res, "immediate short name")
+
+  // ── R2 分层地址面（R-13/R-14/R-15，2026-09-12）：Nebula 发信者只可发 project:<name> ──
+
+  /** Nebula root 身份：判据 = agentDef.name（引擎侧身份，非字符串猜名）。 */
+  private def nebulaCtx(system: ActorSystem): ToolContext =
+    ToolContext(
+      projectRoot = tempRoot.toString,
+      sessionId = Some(rootSid),
+      agentDef = Some(nebflow.agent.AgentDef(name = "Nebula", description = "", tools = Nil)),
+      actorSystem = Some(system)
+    )
+
+  test("R2: Nebula sender + node:<id> ⇒ 显式报错并指明合法地址面（细则：Nebula 无 node 面）"):
+    val system = ActorSystem(s"mail-r2-neb-${java.util.UUID.randomUUID().toString.take(6)}")
+    try
+      val res = MailTool
+        .call(JsonObject("address" -> Json.fromString("node:n-1"), "message" -> Json.fromString("hi")), nebulaCtx(system))
+        .unsafeRunSync()
+      res match
+        case Left(err) =>
+          assert(err.message.contains("outside your address face"), s"须是越界报错：${err.message}")
+          assert(err.message.contains("project:<项目名>"), s"错误文案须指明 Nebula 的合法地址面：${err.message}")
+        case Right(v) => fail(s"Nebula 发 node: 必须显式报错，got: $v")
+    finally system.stopAll.unsafeRunSync()
+
+  test("R2: Nebula sender + \"Nebula\"（自身）⇒ 显式报错（无自身地址）"):
+    val system = ActorSystem(s"mail-r2-self-${java.util.UUID.randomUUID().toString.take(6)}")
+    try
+      val res = MailTool
+        .call(JsonObject("address" -> Json.fromString("Nebula"), "message" -> Json.fromString("hi")), nebulaCtx(system))
+        .unsafeRunSync()
+      res match
+        case Left(err) =>
+          assert(err.message.contains("self"), s"须点名自身地址：${err.message}")
+          assert(err.message.contains("project:<项目名>"), s"错误文案须指明合法地址面：${err.message}")
+        case Right(v) => fail(s"Nebula 发自身上址必须显式报错，got: $v")
+    finally system.stopAll.unsafeRunSync()
+
+  test("R2: Nebula sender + 认不出的裸名 ⇒ 显式报错（禁静默兜底/模糊匹配）"):
+    val system = ActorSystem(s"mail-r2-unk-${java.util.UUID.randomUUID().toString.take(6)}")
+    try
+      val res = MailTool
+        .call(JsonObject("address" -> Json.fromString("no-such-project-xyz"), "message" -> Json.fromString("hi")), nebulaCtx(system))
+        .unsafeRunSync()
+      res match
+        case Left(err) =>
+          assert(err.message.contains("not a recognizable target"), s"须是解析失败报错：${err.message}")
+          assert(err.message.contains("project:<项目名>"), s"错误文案须指明合法地址面：${err.message}")
+          assert(!err.message.contains("TEAM names only"), "不得回落成 team 路由口径（禁静默兜底）")
+        case Right(v) => fail(s"认不出的地址必须显式报错，got: $v")
+    finally system.stopAll.unsafeRunSync()
 
   // ── root sender + TEAM name: routes to the team Manager ──
 

@@ -94,6 +94,13 @@ class FlowMapStore private (
   def chainIdsOf(nodeId: String): IO[Option[List[String]]] =
     chainAttrsOf(nodeId).map(_._2)
 
+  /** 本派生链**全集**（R2「一个 Mail 统一」批 2026-09-12，B2-x）：`Mail` 的
+    * `chainId` 参数只校验不落库（B2-x）——校验源即本方法。判据与
+    * [[chainAttrsOf]] / [[chainIdsOf]] **同一单点**（`topologicalChains` 分量
+    * 派生），不新增第二套链推导逻辑（R3-a：不新增链级账本）。 */
+  def allChainIds: IO[Set[String]] =
+    combinedNodes.map(combined => FlowMapStore.topologicalChains(combined.values).map(_.id).toSet)
+
   /** 事务变更：f 应用到当前状态 → Ref 更新 → 落盘。返回新活动区。 */
   def mutate(f: FlowMapState => FlowMapState): IO[FlowMapState] =
     for
