@@ -773,14 +773,13 @@ object GatewayMain extends IOApp:
                                           // Frontend contract (messages.js onMessage('friend_event')):
                                           // frame type is "friend_event"; event type in msg.event;
                                           // payload fields (conversationId/messageId/body/...) flattened
-                                          // onto the frame. Strip the payload's inner "type" so it
-                                          // cannot clobber the frame envelope.
-                                          val payloadFields =
-                                            ev.payload.asObject.getOrElse(io.circe.JsonObject.empty).remove("type")
-                                          val frame = io.circe.Json
-                                            .obj("type" -> "friend_event".asJson, "event" -> ev.eventType.asJson)
-                                            .deepMerge(io.circe.Json.fromJsonObject(payloadFields))
-                                          wsHub.broadcast(frame)
+                                          // onto the frame.
+                                          // 波3 ①opt-A2：展平逻辑收归 `FriendEvent.frontendFrame`
+                                          // （唯一实现）——修前直接展平 ev.payload，而它比注释假设
+                                          // 的「字段袋」高一层（真值在 ev.payload.payload），
+                                          // 前端因此恒读不到 conversationId（L3）。纯函数实现
+                                          // 使帧形状可单测；此处只做广播。
+                                          wsHub.broadcast(nebflow.neblink.FriendEvent.frontendFrame(ev))
                                         },
                                         remarks = friendRemarks
                                       )

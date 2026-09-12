@@ -3,7 +3,9 @@ package nebflow.neblink
 import cats.effect.{IO, Ref}
 import cats.syntax.all.*
 import io.circe.Json
+import io.circe.JsonObject
 import io.circe.parser.decode
+import io.circe.syntax.*
 import nebflow.core.NebflowLogger
 
 import scala.collection.immutable.Queue
@@ -136,12 +138,24 @@ final class FriendService(
       case "message_new" =>
         // 推送总是发给接收方（我方）——该消息必为对方所发，未读 +1
         // （spec §3.4 未读口径：sender != me）。正文靠补拉（REST 是事实来源）。
-        event.hcursor.get[String]("conversationId").toOption match
+        //
+        // A2 接缝对齐（波3 2026-09-12 ①opt-A2，方案 §2.1）：服务端的 event 信封是
+        // `{"type": <eventName>, "payload": {…}}`（neblink-server friends.rs
+        // `push_to_user_excluding` / `flush_undelivered_friend_events`），
+        // **conversationId 在 payload 里**。修前在 event 顶层读 ⇒ 恒 None ⇒
+        // 落到 `case None => IO.unit`：未读 +1 与 keyset 增量补拉永不发生
+        // （即使通道健康也静默失效——L2）。顶层读取保留为**旧形状容错**分支
+        // （扁平信封不再变静默无操作），规范路径 = payload 下钻。
+        val convIdOpt = event.hcursor.downField("payload").get[String]("conversationId").toOption
+          .orElse(event.hcursor.get[String]("conversationId").toOption)
+        convIdOpt match
           case Some(convId) =>
             guard.bumpUnread(convId, 1) *>
               pullConversation(convId).void
                 .handleErrorWith(e => logger.warn(s"friend_event pull failed for $convId: ${e.getMessage}"))
-          case None => IO.unit
+          case None =>
+            logger.debug(s"message_new without conversationId ignored (neither payload nor flat)")
+            IO.unit
       case "friend_request" | "friend_accepted" =>
         refreshFriends().void.handleErrorWith(e => logger.warn(s"friend event refresh failed: ${e.getMessage}"))
       case other =>
@@ -306,6 +320,34 @@ case class FriendEvent(
   eventType: String,
   payload: Json
 )
+
+object FriendEvent:
+  /** 前端 `friend_event` 帧构造——**唯一实现**（波3 ①opt-A2，方案 §2.1）。
+    *
+    * 前端契约（`messages.js onMessage('friend_event')`/`contacts.js`）：帧的
+    * `event` = 事件名，payload 字段（conversationId/messageId/body/sender/…）**平铺
+    * 在帧顶层**。而 `FriendEvent.payload` 拿到的实参来自
+    * `FriendService.onFriendEvent` 的 `event` 子对象 = `{"type":…, "payload":{…}}`
+    * ——比注释假设的「字段袋」**高一层**。修前直接 `ev.payload.asObject.remove("type")`
+    * ⇒ 展平的是外层，帧里多出一层 `payload`，前端按扁平读 ⇒ `conversationId`
+    * 恒 `undefined` ⇒ 永远走「未知会话 → refreshConversations()」早退（L3，
+    * 打开的聊天窗永不 append）。
+    *
+    * 修法 = 下钻一级再展平；`orElse(ev.payload.asObject)` 是旧形状容错（已是
+    * 字段袋时保持原行为）。`remove("type")` 保留：防事件名键污染帧信封。
+    */
+  def frontendFrame(ev: FriendEvent): Json =
+    val payloadFields = ev.payload.hcursor
+      .downField("payload")
+      .focus
+      .filter(_.isObject)
+      .flatMap(_.asObject)
+      .orElse(ev.payload.asObject)
+      .getOrElse(JsonObject.empty)
+      .remove("type")
+    Json
+      .obj("type" -> "friend_event".asJson, "event" -> ev.eventType.asJson)
+      .deepMerge(Json.fromJsonObject(payloadFields))
 
 /**
  * FriendService 纯状态机：限速（agent 发送双层滑动窗口）+ 事件去重（eventId）
