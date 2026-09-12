@@ -127,6 +127,12 @@ class ChunkedRoundTripSpec extends CatsEffectSuite:
             assertEquals(o.chunksSent, 16, "1,000,000 B / 65,536 B = 16 块（末块非满）")
             assert(transport.puts == 16, s"每块恰好一次 put，实测 ${transport.puts}")
             assert(senderSha.length == 64)
+            println(
+              s"[READING C2] source=$size B chunks=${o.chunksSent} puts=${transport.puts} leg=${o.leg}\n" +
+                s"[READING C2] sha256(sender)  =$senderSha\n" +
+                s"[READING C2] sha256(receiver)=$receiverSha (receiver self-computed: ${o.receiverComputedSha256})\n" +
+                s"[READING C2] bytes: source=$size sender=${o.bytesSent} receiver=${receiver.bytesReceived} onDisk=${os.size(tempPath)}"
+            )
           case Left(err) => fail(s"自环往返必须成功，实得 ${err.render}")
     }
   }
@@ -241,6 +247,14 @@ class ChunkedRoundTripSpec extends CatsEffectSuite:
             assertEquals(t2.puts, 3, "接续只发剩余 3 块（0/1 不重传）")
             // 前后读数：中断时前缀摘要 vs 最终整件摘要
             assert(prefix != srcSha, s"中断时的前缀摘要($prefix)不应等于整件摘要($srcSha)")
+            println(
+              s"[READING C3] break: bytesReceived=$offsetAfterBreak/${size} (chunk 2 of 5 refused)\n" +
+                s"[READING C3] break: sha256(prefix on disk)=$prefix  (prefix != whole ⇒ NOT the whole-file hash)\n" +
+                s"[READING C3] after resume: bytesSent=${o.bytesSent} bytesReceived=${receiver.bytesReceived} resumedPuts=${t2.puts}\n" +
+                s"[READING C3] after resume: sha256(source)=$srcSha\n" +
+                s"[READING C3] after resume: sha256(receiver self-computed)=${o.receiverComputedSha256}\n" +
+                s"[READING C3] after resume: sha256(onDisk)=${sha256File(tempPath)}"
+            )
           case Left(err) => fail(s"接续必须成功，实得 ${err.render}")
     }
   }
@@ -344,6 +358,12 @@ class ChunkedRoundTripSpec extends CatsEffectSuite:
             assert(err.relayReason.isDefined, "错误体必须带 relayReason")
             assert(err.p2pReason.get.contains("p2p"), s"p2pReason=${err.p2pReason}")
             assert(err.relayReason.get.contains("relay"), s"relayReason=${err.relayReason}")
+            println(
+              s"[READING C4] code=${err.code}\n" +
+                s"[READING C4] p2pReason  =${err.p2pReason.get}\n" +
+                s"[READING C4] relayReason=${err.relayReason.get}\n" +
+                s"[READING C4] dstFilesBefore=$before dstFilesAfter=$after (no silent local write)"
+            )
           case Right(_) => fail("对端不可达必须失败")
         assertEquals(after, before, "对端不可达时**不得**在本地落任何文件（禁静默本地执行）")
     }

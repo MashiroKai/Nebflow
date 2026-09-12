@@ -63,6 +63,12 @@ class AttachGateServiceSpec extends CatsEffectSuite:
             assertEquals(err.limit, Some(9L))
           case Right(ids) => fail(s"10 attachments must be rejected, got ${ids.size} transfer ids")
         assertEquals(history, Nil, "超限必须在建 transfer / 写消息**之前**就 fail-fast")
+        println(
+          s"[READING C1] service gate: 10 files -> " +
+            s"code=${res.left.toOption.map(_.code).getOrElse("-")} " +
+            s"actual=${res.left.toOption.flatMap(_.actual).getOrElse(-1L)} " +
+            s"limit=${res.left.toOption.flatMap(_.limit).getOrElse(-1L)} historySize=${history.size}"
+        )
     }
   }
 
@@ -82,6 +88,12 @@ class AttachGateServiceSpec extends CatsEffectSuite:
         atLimit match
           case Right(ids) => assertEquals(ids.size, 1, "边界正控：100,000,000 B 必须被接受")
           case Left(err)  => fail(s"100,000,000 B must be accepted (正控防线量纲写错), got ${err.render}")
+        println(
+          s"[READING C1] service gate: 100,000,001 B -> code=${over.left.toOption.map(_.code).getOrElse("-")} " +
+            s"actual=${over.left.toOption.flatMap(_.actual).getOrElse(-1L)} limit=${over.left.toOption.flatMap(_.limit).getOrElse(-1L)}\n" +
+            s"[READING C1] service gate: 100,000,000 B -> ${if atLimit.isRight then "ACCEPTED" else "REJECTED (WRONG)"} " +
+            s"transfers=${atLimit.toOption.map(_.size).getOrElse(-1)}"
+        )
     }
   }
 
@@ -96,6 +108,7 @@ class AttachGateServiceSpec extends CatsEffectSuite:
           case Right(ids) =>
             assertEquals(ids.size, 9)
             assertEquals(ids.distinct.size, 9, "每件一个独立 transferId")
+            println(s"[READING C1] service gate: 9 files -> ACCEPTED transfers=${ids.size} batchIdCount=1")
           case Left(err) => fail(s"9 attachments must be accepted, got ${err.render}")
         val fileMsgs = history.filter(_.kind == "file")
         assertEquals(fileMsgs.size, 9)
