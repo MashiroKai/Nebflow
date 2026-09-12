@@ -121,7 +121,10 @@ class DispatcherSpawnPromptSpec extends CatsEffectSuite:
       agentFile = (ws / "AGENTS.md").toString,
       createdAt = System.currentTimeMillis()
     )
-    ProjectRuntimeRegistry.mount(pd, system, res, None, rootSessionId = "nebula-root")
+    // 令 3（2026-09-12）：本 spec 断言「分发器会话终态后无滞留」——保活落地后
+    // 该语义由 ≤0 回退档逐字保留（关闭保活）；保活档由 DispatcherIdleWindowSpec 覆盖。
+    ProjectRuntimeRegistry.mount(pd, system, res, None, rootSessionId = "nebula-root",
+      dispatcherIdleWindowMs = Some(0L))
 
   /** nebflow 规模 Flow Map：131 节点（审计附表活动区形态——96% 终态 + 少量
     * running/wiring），result 全文 ≈3.8KB/节点 + task 全文 ≈3.1KB/节点

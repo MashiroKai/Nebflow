@@ -135,7 +135,12 @@ class DispatcherOutputDeliverySpec extends CatsEffectSuite:
         agentFile = (ws / "AGENTS.md").toString,
         createdAt = System.currentTimeMillis()
       )
-      rt <- ProjectRuntimeRegistry.mount(pd, system, res, None, rootSessionId = "nebula-root")
+      // 令 3（2026-09-12）：本 spec 的判据是「分发器 turn 终态后 registry 无滞留」
+      // ——保活落地后该语义由 ≤0 回退档逐字保留（关闭保活）。理由与
+      // ProjectDispatcherSingletonSpec 同款：本 spec 验的是**投递/提示词面**，
+      // 不是生命周期；保活档语义由 DispatcherIdleWindowSpec 独立覆盖。
+      rt <- ProjectRuntimeRegistry.mount(pd, system, res, None, rootSessionId = "nebula-root",
+        dispatcherIdleWindowMs = Some(0L))
     yield rt
 
   private def waitUntil(timeout: FiniteDuration, every: FiniteDuration = 50.millis)(

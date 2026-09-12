@@ -1017,7 +1017,15 @@ object NodeEditTool extends Tool:
               case Right(rt) =>
                 rt.store.snapshot.flatMap { s =>
                   s.nodes.values.find(_.name == nodename) match
-                    case Some(existing) => editNode(rt, existing, task, description, descriptionLong, abandon, worktree.flatMap(_.asBoolean), preset, pluginsOpt, inJson, depsJson, outJson, ctx, reactivateCompleted)
+                    case Some(existing) =>
+                      // 令 1 闸 A（派发面，唯一判定点 = NodeEdit 落库时刻）：只判**新增**
+                      // 分配；节点上已有的分配 = 已做出的派发承诺（S2/S3），不重判 ⇒
+                      // 作者此后关闭该插件不会让既有节点的编辑被拒。
+                      val newlyAssigned = pluginsForCall.filterNot(existing.plugins.toSet.contains)
+                      dispatchFaceCheck(newlyAssigned).flatMap {
+                        case Left(err) => IO.pure(Left(ToolError(err)))
+                        case Right(_) => editNode(rt, existing, task, description, descriptionLong, abandon, worktree.flatMap(_.asBoolean), preset, pluginsOpt, inJson, depsJson, outJson, ctx, reactivateCompleted)
+                      }
                     case None =>
                       // 归档节点编辑兜底（fix b「已存在边+归档上游不补投递」修复 20260903）：
                       // 活动区按名未命中 → 归档区按名兜底。归档节点只支持 out 改接（悬空
@@ -1057,12 +1065,46 @@ object NodeEditTool extends Tool:
                               IO.pure(Left(ToolError(
                                 s"'reactivateCompleted' is an edit-only parameter (it re-runs an existing COMPLETED node) — no node named '$nodename' exists, " +
                                   "so create it normally first. (NODE_COMPLETED_REACTIVATION)")))
-                            else createNode(rt, nodename, task, description, descriptionLong, worktree.flatMap(_.asBoolean), preset, pluginsForCall, inJson, depsJson, outJson, merge)
+                            else
+                              dispatchFaceCheck(pluginsForCall).flatMap {
+                                case Left(err) => IO.pure(Left(ToolError(err)))
+                                case Right(_) => createNode(rt, nodename, task, description, descriptionLong, worktree.flatMap(_.asBoolean), preset, pluginsForCall, inJson, depsJson, outJson, merge)
+                              }
                       }
                   }
               }
           }
       }
+
+  /** 令 1（插件开关语义，2026-09-12）**闸 A** = 派发许可的**唯一**判定点。
+    *
+    * `dispatchFaceCheck` 只对**新派发**（新建节点的 plugins / 既有节点上新增的插件名）
+    * 生效：内容信任面仍由 `PluginRegistry.resolve` 在更早处把门（未批准 / 摘要漂移
+    * 一律拒），本函数只追加**派发面**判定 ⇒ 关闭（`plugins.dispatch.<n>.authorEnabled
+    * = false`）挡住未来派发，但**不影响**：
+    *  - 已派发/在飞节点（闸 B/C/E 只判内容面，见 `NodeEngine.prepareNodePlugins`）；
+    *  - 运行期工具面（闸 D 只判内容面，见 `PluginMcpManager.revalidate`）；
+    *  - 已启用提示词的审计面（节点首条消息里已注入的 `<injected-plugins>` 全文与
+    *    审计留存不受任何开关影响）。
+    * 名单为空 ⇒ 零开销 Right（既有调用点绝大多数不带 plugins 参数）。 */
+  private def dispatchFaceCheck(names: List[String]): IO[Either[String, Unit]] =
+    if names.isEmpty then IO.pure(Right(()))
+    else
+      names.distinct
+        .traverse { n =>
+          nebflow.core.plugin.PluginRegistry.contentTrusted(n).map { trusted =>
+            if nebflow.core.plugin.PluginDispatchPolicy.effective(n, trusted) then Right(())
+            else if !trusted then
+              Left(s"Plugin '$n' is not trusted (content face) — resolve the trust gate first (PLUGIN_UNTRUSTED)")
+            else
+              Left(
+                s"Plugin '$n' is disabled for new dispatches by the author (dispatch switch is OFF). " +
+                  "It affects FUTURE dispatches only — nodes already dispatched keep their plugin grant. " +
+                  s"To use it again either re-enable it (panel switch, POST /api/plugins/$n/enable, or CLI 'nebflow plugin enable $n'), " +
+                  s"or grant a temporary dispatch transition (POST /api/plugins/$n/dispatch/grant). (PLUGIN_DISPATCH_DISABLED)")
+          }
+        }
+        .map(_.collectFirst { case Left(e) => e }.toLeft(()))
 
   // ── 新建 ─────────────────────────────────────────────
 

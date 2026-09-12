@@ -134,7 +134,15 @@ class ProjectDispatcherSingletonSpec extends CatsEffectSuite:
       agentFile = (ws / "AGENTS.md").toString,
       createdAt = System.currentTimeMillis()
     )
-    ProjectRuntimeRegistry.mount(pd, system, res, None, rootSessionId = "nebula-root")
+    // 令 3（2026-09-12 分发器生命周期）契约变更声明：本 spec 的 4 条判据钉的是
+    // **turn 级拆除语义**（「末 turn 终态后才拆除」「终态后 spawn 新实例」）。
+    // 保活落地后该语义由 `Defaults.DispatcherIdleWindowMs` 的 **≤0 回退档**逐字
+    // 保留 ⇒ 本 spec 显式注入 `Some(0L)`（= 关闭保活），
+    // 既保持原判据语义不变，又顺带成为「回退开关零回归」的验收面。
+    // 保活档（窗口 > 0）的语义由 `DispatcherIdleWindowSpec` 独立覆盖。
+    ProjectRuntimeRegistry.mount(
+      pd, system, res, None, rootSessionId = "nebula-root", dispatcherIdleWindowMs = Some(0L)
+    )
 
   private def mkCtx(res: SharedResources, system: ActorSystem, ws: String): ToolContext =
     ToolContext(

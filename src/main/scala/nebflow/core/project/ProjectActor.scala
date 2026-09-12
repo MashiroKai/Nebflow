@@ -111,7 +111,10 @@ object ProjectRuntimeRegistry:
     rootSessionId: String,
     ttlDisplayMs: Long = NodeEngine.TtlDisplayMs,
     ttlCheckIntervalSec: Int = 30,
-    skipStaleReap: Boolean = false
+    skipStaleReap: Boolean = false,
+    /** 分发器空闲保活窗覆盖（令 3）：None = 现读 `Defaults.DispatcherIdleWindowMs`；
+      * Some(v) = spec 注入（`≤0` = 关闭保活 = 旧行为，供回退开关/零回归验收）。 */
+    dispatcherIdleWindowMs: Option[Long] = None
   ): IO[ProjectRuntime] =
     get(project.name).flatMap {
       case Some(rt) => IO.pure(rt)
@@ -154,7 +157,8 @@ object ProjectRuntimeRegistry:
                 rootSessionId = rootSessionId,
                 ttlDisplayMs = ttlDisplayMs,
                 ttlCheckIntervalSec = ttlCheckIntervalSec,
-                board = board
+                board = board,
+                dispatcherIdleWindowMs = dispatcherIdleWindowMs
               )
             ),
             s"project-${project.name.take(20)}"
@@ -261,7 +265,15 @@ object ProjectActor:
     pendingTaskTexts: List[String] = Nil,
     /** 已计入消费的注入来源消息条数（`source ∈ {task, dispatch}`）——桥跨
       * Completed 事件累计，用于算出本 turn 消费了几件（增量 ≤ 0 时降级为 1）。 */
-    consumedTaskMsgs: Int = 0
+    consumedTaskMsgs: Int = 0,
+    /** 空闲保活计时起点（**令 3 分发器生命周期**，设计 §3.1）：语义 =「本会话进入
+      * 空闲的墙钟时刻（ms）」。`None` = 有件在飞（`pendingInjected > 0`，不必计）。
+      * 置位点 = 桥 `Completed` 分支裁决 `remaining == 0` 的那一瞬（**计时起点 =
+      * 上一次派发的 turn 终态**，非会话创建）；清零点 = `dispatchTask` /
+      * `dispatchReentry` 的注入命中分支（新任务到达 ⇒ 重置计时）。到期扫描
+      * [[ProjectActor.sweepIdleDispatchers]] 挂在既有 30 s `TtlTick` 上。
+      * 不持久化（设计 R6-(a)）：宿主重启后与今天一致（新 spawn）。 */
+    idleSince: Option[Long] = None
   )
 
   /** 桥侧消费计数只认后端定名的注入来源（Q2-B2 三分中的两个分发器入口源）。 */
@@ -282,7 +294,13 @@ object ProjectActor:
     ttlCheckIntervalSec: Int = 30,
     /** 项目任务板（TaskBoard 批 2 §3a）：分发器 spawn 注入（newTaskPrompt/
       * reentryPrompt）数据源；None = 无板（注入整块省略）。mount 构造时传入。 */
-    board: Option[TaskBoardStore] = None
+    board: Option[TaskBoardStore] = None,
+    /** 分发器空闲保活窗覆盖（**令 3**）：`None`（**生产默认**）= 每拍现读
+      * `Defaults.DispatcherIdleWindowMs`（`sys.props` 热读语义，与
+      * `NodeDestroyWindowMs` 同款先例）；`Some(v)` = 测试注入固定值——spec 不碰
+      * 全局 prop（避跨 suite 污染；`NodeEngine(destroyWindowMs)` / `ttlCheckIntervalSec`
+      * 同款先例）。`≤ 0` = **关闭保活**（回退到 turn 级即拆的今天行为）。 */
+    dispatcherIdleWindowMs: Option[Long] = None
   )
 
   /** 全局 TTL 扫描：周期给所有已挂载 ProjectActor 发 TtlTick（GatewayMain 启动）。
@@ -368,6 +386,14 @@ object ProjectActor:
                 // 幂等（字段已清 ⇒ 不再入选）；best-effort 同款（失败不影响后续 sweep）。
                 cfg.engine.sweepDestroyWindows()
                 .handleErrorWith(e => logger.warn(s"node destroy-window sweep failed: ${e.getMessage}")) *>
+                // 分发器空闲到期扫描（令 3 分发器生命周期，设计 §3.1-4）：`idleSince`
+                // 有值且 `now - idleSince ≥ Defaults.DispatcherIdleWindowMs` ⇒ 走既有
+                // teardown 语义拆除（registry 注销 + AgentCommand.Stop + 桥停），下一个
+                // 派发重新 spawn 新会话。硬护栏双条件（`pendingInjected == 0` ∧
+                // registry `status == Idle`）防误杀；窗口 ≤0 = 关闭保活（零成本短路）。
+                // best-effort 同款（失败仅 WARN，不影响后续 sweep）。
+                sweepIdleDispatchers(cfg, active)
+                .handleErrorWith(e => logger.warn(s"dispatcher idle sweep failed: ${e.getMessage}")) *>
                 // loop 时间帽扫描（nrloop 一期 2026-09-12，设计 §3.6 时间维）：对
                 // 「非终态 ∧ loopStartedAt 已置位 ∧ now-loopStartedAt ≥ maxWallClockMs」
                 // 的重跑目标熔断——反查到活 verifier 驱动方 ⇒ 该 verifier 终态化 failed +
@@ -537,8 +563,27 @@ object ProjectActor:
        |
        |${reentryActions(project)}""".stripMargin
 
-  /** 分发器观察桥（单例化改造后）：Completed 按 pendingInjected 延迟拆除 /
+  /** 有效空闲保活窗（令 3）：spec 注入优先，否则现读 `Defaults.DispatcherIdleWindowMs`。
+    * 桥与扫描腿**同源读本函数**（防「桥记了 idleSince 但扫描腿永不拆」或反之的
+    * 分叉）。`≤ 0` = 关闭保活。 */
+  private def idleWindowMs(cfg: ProjectConfig): Long =
+    cfg.dispatcherIdleWindowMs.getOrElse(nebflow.shared.Defaults.DispatcherIdleWindowMs)
+
+  /** 分发器观察桥（单例化改造后）：Completed 按 pendingInjected 延迟裁决 /
     * Failed+Cancelled 立即拆除（清 activeRef 登记 + registry + 停 agent）。
+    *
+    * **令 3 分发器生命周期（2026-09-12，设计 §3.1/§3.3；作者 14:14 原话「30 mins
+    * 无新任务才销毁为新会话，保证连续任务派发的连贯性。目前是每次都是新的实例」）**：
+    * `Completed` 裁决 `remaining == 0`（本 turn 把所有注入件消费干净）时**不再
+    * 立即拆除**——改为写 `idleSince = Some(now)` 后**保活**，等
+    * [[ProjectActor.sweepIdleDispatchers]] 在 `Defaults.DispatcherIdleWindowMs`
+    * 到点后走既有 `teardown` 拆除。⇒ 空闲窗内到达的新派发复用**同一会话**（同 id
+    * + 同上下文）。`Failed`/`Cancelled` 分支**一字不改**（致命失败/取消仍即时拆除，
+    * 不享受空闲窗）。窗口 ≤0 = 关闭保活（回退到 turn 级即拆的旧行为）。
+    *
+    * 桥寿命 = 会话寿命（设计 §2.5）：桥同时是 `supervisorRef`（取消通道）与
+    * `replyTo`（注入回执通道），必须活满整个空闲窗——故保活分支**不** stop 桥。
+    *
     * rootSessionId：面板终态帧的归桶键（Sub-Agents 面板实时刷新修复）。
     */
   private def dispatcherBridge(
@@ -563,14 +608,15 @@ object ProjectActor:
           // 增量 ≤0（会话中期历史被压缩等）降级为「一 Completed 一件」（改前行为）：
           // 宁多消费不滞留。pendingInjected 与 pendingTaskTexts 恒等长（spawn 首条
           // prompt 也计 1 件，见 spawnDispatcher 的 active.set），故两者同减 k。
-          // 拆除判据：k 件消费后仍有余件（未跑完的注入件）→ 保活；归零 → 拆除。
+          // 裁决：k 件消费后仍有余件（未跑完的注入件）→ 保活（有件在飞）；
+          // 归零 → **进入空闲窗**（令 3：改前是立即拆除）。
           // **R7-b 桥收敛（R2「一个 Mail 统一」批 2026-09-12，作者裁定 D-4）**：
           // 本桥**不再**每 turn 无条件把最终 assistant 文本投递给 Nebula root
           // （旧路径 `NodeEngine.deliverDispatcherOutputToNebula` 同批删净）。root
           // 注入面 100% 由显式载体驱动——分发器必须自己
           // `Mail(address="Nebula", type=RESULT, chainId=<本批链 id>, …)`。
-          // 本桥职责收敛为：teardown（清 activeRef 登记 + registry + 停 agent）
-          // 与 Failed/Cancelled 的面板终态帧；turn 级自动摘要消失。
+          // 本桥职责 = ① 消费计数裁决（在飞 ⇒ 保活；归零 ⇒ 记 `idleSince` 进入
+          // 空闲窗）② Failed/Cancelled 的即时拆除 + 面板终态帧；turn 级自动摘要消失。
           // 观测口径：source=="dispatcher" 族自本批起**生产者恒 0**。
           val seenInjectedMsgs =
             messages.count(m => m.source.exists(DispatcherInjectedSources.contains))
@@ -586,11 +632,24 @@ object ProjectActor:
                 (Some(a.copy(
                   pendingInjected = remaining,
                   pendingTaskTexts = a.pendingTaskTexts.drop(k),
-                  consumedTaskMsgs = math.max(a.consumedTaskMsgs, seenInjectedMsgs)
+                  consumedTaskMsgs = math.max(a.consumedTaskMsgs, seenInjectedMsgs),
+                  idleSince = None // 仍在飞（有未跑完的注入件）——不计空闲
                 )), false)
+              else if idleWindowMs(cfg) > 0 then
+                // 令 3 保活：本 turn 把所有注入件消费干净 ⇒ 记空闲起点，**不拆**，
+                // 拆除移交 30 s 扫描腿（空闲窗内新任务复用同一会话）。
+                (Some(a.copy(
+                  pendingInjected = 0,
+                  pendingTaskTexts = Nil,
+                  consumedTaskMsgs = math.max(a.consumedTaskMsgs, seenInjectedMsgs),
+                  idleSince = Some(System.currentTimeMillis())
+                )), false)
+              // 窗口 ≤0 = 关闭保活 ⇒ 逐字保留今天的 turn 级即拆（回退开关）。
               else (None, true)
             case _ => (None, true)
           }.flatMap { teardownNow =>
+            // `teardownNow` 仅剩「activeRef 里已不是本会话」一支（旧会话的迟到
+            // Completed，如取消/失败后残留）——照旧拆，语义不变。
             if teardownNow then teardown
             else IO.pure(dispatcherBridge(cfg, active, ref, rootSessionId, sessionId))
           }
@@ -615,42 +674,59 @@ object ProjectActor:
     source: String = SourceTask,
     attribution: Option[InjectionAttribution] = None
   ): IO[Behavior[ProjectCommand]] =
+    // 裁定①（20260907 方向 B）：无快照获取——spawn prompt 只组任务文本+目录+记忆
+    // TaskBoard 批 2（§3a）：spawn 形态追加任务板块（注入活跃会话形态
+    // taskInjectionText 不重复注入——会话 spawn 时已带当次板快照，同项目记忆纪律）。
+    // 合并口径：spawn 腿同样透传 main 侧 `attribution`（spawn 首条 prompt 的来源标注
+    // ——main 的 bluebubble 批在 inline 形态上做过同一处改动，本批把该处抽成
+    // `spawnFresh` 复用点，故此处等价承接，功能零丢失）。
+    def spawnFresh: IO[Behavior[ProjectCommand]] =
+      pluginCatalogText().flatMap { catalog =>
+        projectMemoryText(cfg.project).flatMap { memory =>
+          dispatcherBoardText(cfg).flatMap { boardText =>
+            spawnDispatcher(cfg, active, same, newTaskPrompt(cfg.project, taskText, catalog, memory, boardText), rootSessionId, "", taskText, source, attribution)
+          }
+        }
+      }
     // 单例化裁定：先经 modify 原子占位（占位与桥终态清理在全序 Ref 操作上不可
     // 交错——占位成功则桥必见 pendingInjected>0 而延迟拆除）——有活跃会话 →
     // 任务注入现有会话（turn 边界生效：处理中排 pendingUserInputs，idle 直接
     // 开新 turn）；无（含占位瞬间会话刚终结）→ spawn 新实例。
+    // 令 3：注入命中即 `idleSince = None`（**新任务到达 = 重置空闲计时**，设计 §3.1-3）。
     // source（Q2-B2）：Task 入口 = task；DispatchNotify 回流通知 = dispatch。
     active.modify {
       case Some(a) =>
-        (Some(a.copy(pendingInjected = a.pendingInjected + 1, pendingTaskTexts = a.pendingTaskTexts :+ taskText)), Some(a))
+        (Some(a.copy(pendingInjected = a.pendingInjected + 1, pendingTaskTexts = a.pendingTaskTexts :+ taskText, idleSince = None)), Some(a))
       case None => (None, None)
     }.flatMap {
       case Some(a) =>
-        (a.agentRef ! AgentCommand.UserInput(
-          text = taskInjectionText(taskText),
-          replyTo = Some(a.bridgeRef),
-          source = Some(source),
-          // 腿① 来源标注（bluebubble 批）：Mail 发信方随注入落到蓝气泡顶栏。
-          sender = attribution.flatMap(_.sender),
-          senderTeam = attribution.flatMap(_.senderTeam),
-          eventType = attribution.flatMap(_.eventType)
-        )).void *>
-          logger
-            .info(
-              s"Project '${cfg.project.name}' task injected into active dispatcher ${a.sessionId} (pending=${a.pendingInjected}, source=$source)"
-            )
-            .as(same)
-      case None =>
-        // 裁定①（20260907 方向 B）：无快照获取——spawn prompt 只组任务文本+目录+记忆
-        // TaskBoard 批 2（§3a）：spawn 形态追加任务板块（注入活跃会话形态
-        // taskInjectionText 不重复注入——会话 spawn 时已带当次板快照，同项目记忆纪律）。
-        pluginCatalogText().flatMap { catalog =>
-          projectMemoryText(cfg.project).flatMap { memory =>
-            dispatcherBoardText(cfg).flatMap { boardText =>
-              spawnDispatcher(cfg, active, same, newTaskPrompt(cfg.project, taskText, catalog, memory, boardText), rootSessionId, "", taskText, source, attribution)
-            }
-          }
+        // R7-(c) 注入前活性前置校验（令 3）：registry 无该会话行 ⇒ activeRef 是残影
+        // （会话已被拆除/收殓），本次派发改走 spawn 新会话，绝不把任务投进死 actor
+        // 的邮箱（静默丢弃）。
+        // 合并口径（merge main be16e748，2026-09-12）：main 侧的 `attribution` 链
+        // （bluebubble 批：Mail 发信方随注入落到蓝气泡顶栏）与本批的活性前置校验
+        // **两侧都保留**——校验在外层，注入载荷带 attribution。
+        liveRegistration(cfg, a.sessionId).flatMap {
+          case true =>
+            (a.agentRef ! AgentCommand.UserInput(
+              text = taskInjectionText(taskText),
+              replyTo = Some(a.bridgeRef),
+              source = Some(source),
+              // 腿① 来源标注（bluebubble 批）：Mail 发信方随注入落到蓝气泡顶栏。
+              sender = attribution.flatMap(_.sender),
+              senderTeam = attribution.flatMap(_.senderTeam),
+              eventType = attribution.flatMap(_.eventType)
+            )).void *>
+              logger
+                .info(
+                  s"Project '${cfg.project.name}' task injected into active dispatcher ${a.sessionId} (pending=${a.pendingInjected}, source=$source)"
+                )
+                .as(same)
+          case false =>
+            logger.warn(s"Project '${cfg.project.name}' stale dispatcher registration ${a.sessionId} (no registry entry) — discarded, spawning a fresh session") *>
+              dropStale(cfg, active, a.sessionId) *> spawnFresh
         }
+      case None => spawnFresh
     }
 
   private def dispatchReentry(
@@ -666,38 +742,141 @@ object ProjectActor:
       case None =>
         logger.warn(s"Project '${cfg.project.name}' reentry skipped — node '$nodeId' not found").as(same)
       case Some(node) =>
+        // 裁定①（20260907 方向 B）：重入 spawn 同样不嵌快照（reentryActions 自带先 NodeList）
+        def spawnFresh: IO[Behavior[ProjectCommand]] =
+          pluginCatalogText().flatMap { catalog =>
+            projectMemoryText(cfg.project).flatMap { memory =>
+              dispatcherBoardText(cfg).flatMap { boardText =>
+                spawnDispatcher(cfg, active, same, reentryPrompt(cfg.project, node, feedback, blockCount, catalog, memory, boardText), rootSessionId,
+                  s" (reentry round $blockCount: ${node.name})", reentryTaskText(node, feedback, blockCount))
+              }
+            }
+          }
         // 单例化裁定 × 反馈协议（§2.2 修订）：重入调整请求同样优先投递活跃
         // 分发器会话（不并行 spawn 重入会话）；会话已不活跃才走 spawn 路径。
+        // 令 3：重入同属「新任务到达」⇒ 重置空闲计时（`idleSince = None`，
+        // 设计 §2.1 重置条件逐类结论表：blocked 升级/反馈重入 = **是**）。
         active.modify {
           case Some(a) =>
-            (Some(a.copy(pendingInjected = a.pendingInjected + 1, pendingTaskTexts = a.pendingTaskTexts :+ reentryTaskText(node, feedback, blockCount))), Some(a))
+            (Some(a.copy(pendingInjected = a.pendingInjected + 1, pendingTaskTexts = a.pendingTaskTexts :+ reentryTaskText(node, feedback, blockCount), idleSince = None)), Some(a))
           case None => (None, None)
         }.flatMap {
           case Some(a) =>
-            (a.agentRef ! AgentCommand.UserInput(
-              text = reentryInjectionText(cfg.project, node, feedback, blockCount),
-              replyTo = Some(a.bridgeRef),
-              // 重入是 task 形态入口（FeedbackRouter 独占 blocked 重入，非 DispatchNotify
-              // 回流）——来源标签与 Task 入口同值（Q2-B2 三分之外的既有语义，保持不变）。
-              source = Some(SourceTask)
-            )).void *>
-              logger
-                .info(
-                  s"Project '${cfg.project.name}' reentry (round $blockCount: ${node.name}) injected into active dispatcher ${a.sessionId}"
-                )
-                .as(same)
-          case None =>
-            // 裁定①（20260907 方向 B）：重入 spawn 同样不嵌快照（reentryActions 自带先 NodeList）
-            pluginCatalogText().flatMap { catalog =>
-              projectMemoryText(cfg.project).flatMap { memory =>
-                dispatcherBoardText(cfg).flatMap { boardText =>
-                  spawnDispatcher(cfg, active, same, reentryPrompt(cfg.project, node, feedback, blockCount, catalog, memory, boardText), rootSessionId,
-                    s" (reentry round $blockCount: ${node.name})", reentryTaskText(node, feedback, blockCount))
-                }
-              }
+            // R7-(c) 同款前置校验（与 dispatchTask 单点一致）。
+            liveRegistration(cfg, a.sessionId).flatMap {
+              case true =>
+                (a.agentRef ! AgentCommand.UserInput(
+                  text = reentryInjectionText(cfg.project, node, feedback, blockCount),
+                  replyTo = Some(a.bridgeRef),
+                  // 重入是 task 形态入口（FeedbackRouter 独占 blocked 重入，非 DispatchNotify
+                  // 回流）——来源标签与 Task 入口同值（Q2-B2 三分之外的既有语义，保持不变）。
+                  source = Some(SourceTask)
+                )).void *>
+                  logger
+                    .info(
+                      s"Project '${cfg.project.name}' reentry (round $blockCount: ${node.name}) injected into active dispatcher ${a.sessionId}"
+                    )
+                    .as(same)
+              case false =>
+                logger.warn(s"Project '${cfg.project.name}' stale dispatcher registration ${a.sessionId} (no registry entry) — discarded, spawning a fresh session for reentry") *>
+                  dropStale(cfg, active, a.sessionId) *> spawnFresh
             }
+          case None => spawnFresh
         }
     }
+
+  /** 注入前活性前置校验（令 3 设计 §4 R7 推荐优先项 (c)）：registry 是会话拆除的
+    * 单点落点（`teardown` / 空闲到期 / 异常收殓均在此注销），故「registry 无该
+    * 会话行」= 该会话已死或已拆 ⇒ `activeRef` 是残影。保活把「死会话静默吞任务」
+    * 的窗口从 ≈0 拉长到 ≤空闲窗，本校验把该风险从**注入源头**堵死（残影丢弃 +
+    * spawn 新会话，任务必达）。
+    *
+    * 局限（如实标注，属设计 R7-(b) 的未做部分）：registry **有行**但 actor 已卡死
+    * 的情形探不到——那需要 ask+超时的真探针，本批不做（不伪造覆盖）。 */
+  private def liveRegistration(cfg: ProjectConfig, sessionId: String): IO[Boolean] =
+    cfg.resources.agentRegistry.get.map(_.contains(sessionId))
+
+  /** 丢弃残影登记（仅当 activeRef 里仍是该会话——ProjectActor 单 actor 串行处理，
+    * 本调用与紧随的 spawn 在同一 handler IO 内，无并发交错窗口）。 */
+  private def dropStale(cfg: ProjectConfig, active: Ref[IO, Option[ActiveDispatcher]], sessionId: String): IO[Unit] =
+    active.update(_.filterNot(_.sessionId == sessionId)) *>
+      cfg.resources.agentRegistry.update(_ - sessionId)
+
+  /** 分发器空闲到期扫描（令 3 分发器生命周期，设计 §3.1-4 / §3.2）：挂在既有 30 s
+    * `TtlTick` 上的新增扫描腿（R2-(a)：零新 fiber，崩溃即无残留）。
+    *
+    * 到期判据 = `idleSince` 有值 ∧ `now - idleSince ≥ Defaults.DispatcherIdleWindowMs`
+    * ∧ **硬护栏双条件**（`pendingInjected == 0` ∧ registry `status == Idle`，设计
+    * §3.1-5：第二条件防御「桥计数漂移但 turn 在飞」的误杀）。
+    *
+    * 拆除动作 = 逐字复用既有 `teardown` 动作集（R3-(a)：零新增动作），另加一条
+    * `dispatcher-idle-expired` 审计事件（R4-(a) 的「已销毁」可事后对齐面）。
+    *
+    * 幂等：`active.modify` 内复检「同会话 + 同判据」的 CAS——重复 tick / 竞争只留
+    * 一个赢家。窗口 `≤ 0` ⇒ 关闭保活（短路，零开销回退开关）。
+    * **只收殓本会话**（R8-(a)）：`AgentCommand.Stop` 只杀本 session 登记的进程树
+    * （`AgentActor` → `BgTaskRegistry.reclaimSession`），已派发节点是 `node-*` 独立
+    * 会话，**零触碰**。 */
+  private def sweepIdleDispatchers(
+    cfg: ProjectConfig,
+    active: Ref[IO, Option[ActiveDispatcher]]
+  ): IO[Unit] =
+    val windowMs = idleWindowMs(cfg)
+    if windowMs <= 0 then IO.unit
+    else
+      val now = System.currentTimeMillis()
+      def due(a: ActiveDispatcher): Boolean =
+        a.pendingInjected == 0 && a.idleSince.exists(t => now - t >= windowMs)
+      active.get.flatMap {
+        case Some(a) if due(a) =>
+          cfg.resources.agentRegistry.get.flatMap { reg =>
+            reg.get(a.sessionId).map(_.status) match
+              case Some(AgentStatus.Idle) =>
+                active.modify {
+                  case Some(cur) if cur.sessionId == a.sessionId && due(cur) => (None, true)
+                  case other => (other, false)
+                }.flatMap { expired =>
+                  if expired then
+                    val idleSecs = a.idleSince.map(t => (now - t) / 1000L).getOrElse(0L)
+                    expireIdleDispatcher(cfg, a, idleSecs, windowMs)
+                  else IO.unit
+                }
+              // registry 无行 = 会话已被别处拆除（残影）⇒ 只清登记，不重复拆除。
+              case None =>
+                logger.warn(
+                  s"Project '${cfg.project.name}' dispatcher ${a.sessionId} registration cleared by idle sweep — registry entry already gone") *>
+                  active.update(_.filterNot(_.sessionId == a.sessionId))
+              // 非 Idle（turn 在飞）⇒ 本拍不拆（等下一拍，护栏生效）。
+              case Some(_) => IO.unit
+          }
+        case _ => IO.unit
+      }
+
+  /** 空闲到期的实际拆除（设计 R3-(a)：逐字复用 `teardown` 动作集——registry 注销 +
+    * `AgentCommand.Stop` + 桥停；唯一新增 = 一条 info 日志 + 一条 `dispatcher-idle-expired`
+    * 审计事件）。 */
+  private def expireIdleDispatcher(
+    cfg: ProjectConfig,
+    a: ActiveDispatcher,
+    idleSecs: Long,
+    windowMs: Long
+  ): IO[Unit] =
+    cfg.resources.agentRegistry.update(_ - a.sessionId) *>
+      (a.agentRef ! AgentCommand.Stop("dispatcher idle window expired")).void *>
+      cfg.system.stop(a.bridgeRef).handleErrorWith(_ => IO.unit) *>
+      logger
+        .info(
+          s"Project '${cfg.project.name}' dispatcher session ${a.sessionId} idle ${idleSecs}s >= window ${windowMs / 1000}s — destroyed (next dispatch spawns a fresh session)"
+        ) *>
+      FlowMapEventLog
+        .append(
+          cfg.project.workspace,
+          cfg.project.name,
+          a.sessionId,
+          FlowMapEventLog.DispatcherIdleExpiredType,
+          FlowMapEventLog.dispatcherIdleSummary(a.sessionId, idleSecs, windowMs)
+        )
+        .handleErrorWith(e => logger.warn(s"dispatcher-idle-expired audit append failed: ${e.getMessage}"))
 
   /** 重入任务的触发文本（投递标注摘要来源；一行可读描述而非全文注入 prompt）。 */
   private def reentryTaskText(node: NodeDef, feedback: BlockedFeedback, blockCount: Int): String =

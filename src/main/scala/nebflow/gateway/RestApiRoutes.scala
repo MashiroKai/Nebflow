@@ -2185,11 +2185,54 @@ class RestApiRoutes(
 
     // POST /plugins/:name/revoke — 撤审：trust 表条目删除 → 回落 untrusted
     // （默认拒绝）；运行中 plugin MCP 在下个信任重验 tick 停用（§B.5）。
+    // **令 1（2026-09-12）语义边界**：本端点 = **内容信任面**动作（撤回已授予的
+    // 内容 ⇒ 会停用在飞 MCP），**保留原义不改**。作者的「关闭插件」动作改走下方
+    // `/enable|/disable`（派发面）——两者在面板上必须视觉可分（设计 R9-A 代价①）。
     case POST -> Root / "plugins" / name / "revoke" =>
       if !isValidAgentName(name) then BadRequest(Json.obj("error" -> "Invalid plugin name".asJson))
       else
         nebflow.core.plugin.PluginRegistry.revoke(name).flatMap {
           case Right(msg) => Ok(Json.obj("ok" -> true.asJson, "message" -> msg.asJson))
+          case Left(err) => BadRequest(Json.obj("error" -> err.asJson))
+        }
+
+    // POST /plugins/:name/disable | /enable — **令 1 派发开关**（2026-09-12）：
+    // 只写 `plugins.dispatch.<name>.authorEnabled`（durable 作者意图层）⇒ **只影响
+    // 未来派发**：新节点拿不到该插件（闸 A 拒），已在飞/已派发节点**零影响**
+    // （闸 B/C/E/D 只判内容面），已注入的 `<injected-plugins>` 提示词全文与审计
+    // 留存不变。不放宽内容面（未受信的包此路依然无效）。
+    case POST -> Root / "plugins" / name / "disable" =>
+      dispatchSwitch(name, enable = false)
+    case POST -> Root / "plugins" / name / "enable" =>
+      dispatchSwitch(name, enable = true)
+
+    // POST /plugins/:name/dispatch/grant — **过渡期临时派发授权**（设计 R8：
+    // 过渡只能**放宽**、带 TTL 自动失效、不污染作者意图）。body（可选）：
+    // {"ttlSecs": 1800, "refs": ["n-…"], "reason": "…"}。缺省 ttlSecs=1800。
+    case req @ POST -> Root / "plugins" / name / "dispatch" / "grant" =>
+      if !isValidAgentName(name) then BadRequest(Json.obj("error" -> "Invalid plugin name".asJson))
+      else
+        req.as[Json].attempt.map(_.getOrElse(Json.obj())).flatMap { body =>
+          val c = body.hcursor
+          val ttl = c.downField("ttlSecs").as[Long].toOption.getOrElse(1800L)
+          val refs = c.downField("refs").as[List[String]].toOption.getOrElse(Nil)
+          val reason = c.downField("reason").as[String].toOption.getOrElse("temporary dispatch grant via REST")
+          nebflow.core.plugin.PluginDispatchPolicy.grantTransition(name, ttl, refs, reason, "rest").flatMap {
+            case Right(_) =>
+              Ok(Json.obj("ok" -> true.asJson,
+                "message" -> s"Plugin '$name' temporary dispatch grant recorded (ttlSecs=$ttl, refs=${refs.mkString(",")}) — new dispatches may use it until it expires; the author's intent is untouched".asJson))
+            case Left(err) => BadRequest(Json.obj("error" -> err.asJson))
+          }
+        }
+
+    // POST /plugins/:name/dispatch/clear — 显式结束过渡（幂等；有效值回落作者意图）。
+    case POST -> Root / "plugins" / name / "dispatch" / "clear" =>
+      if !isValidAgentName(name) then BadRequest(Json.obj("error" -> "Invalid plugin name".asJson))
+      else
+        nebflow.core.plugin.PluginDispatchPolicy.clearTransition(name, "rest").flatMap {
+          case Right(_) =>
+            Ok(Json.obj("ok" -> true.asJson,
+              "message" -> s"Plugin '$name' transition cleared — effective dispatch permission falls back to the author's intent".asJson))
           case Left(err) => BadRequest(Json.obj("error" -> err.asJson))
         }
 
@@ -2846,6 +2889,23 @@ class RestApiRoutes(
 
   private def isValidAgentName(name: String): Boolean =
     name.nonEmpty && name.matches("^[a-zA-Z0-9][a-zA-Z0-9._-]*$") && !name.contains("..")
+
+  /** 令 1 派发开关的 REST 实现单点（`/plugins/:name/enable|disable`）。写 `plugins
+    * .dispatch.<name>.authorEnabled`（作者意图层，durable）+ 一条 append-only 审计；
+    * **不影响内容信任面** ⇒ 在飞节点零影响。 */
+  private def dispatchSwitch(name: String, enable: Boolean): IO[Response[IO]] =
+    if !isValidAgentName(name) then BadRequest(Json.obj("error" -> "Invalid plugin name".asJson))
+    else
+      nebflow.core.plugin.PluginDispatchPolicy.setAuthorEnabled(name, enable, "panel/rest").flatMap {
+        case Right(_) =>
+          Ok(Json.obj(
+            "ok" -> true.asJson,
+            "message" -> (s"Plugin '$name' dispatch ${if enable then "enabled" else "disabled"} — " +
+              "affects FUTURE dispatches only; nodes already dispatched keep their plugin grant " +
+              "(content trust is untouched; use /revoke to withdraw content trust).").asJson
+          ))
+        case Left(err) => BadRequest(Json.obj("error" -> err.asJson))
+      }
 
   private def withAuth(req: Request[IO])(f: => IO[Response[IO]]): IO[Response[IO]] =
     if checkAuth(req) then f

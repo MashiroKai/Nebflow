@@ -128,7 +128,14 @@ class PluginMcpManager private (
   /** 信任运行时重验（§B.5 信任联动，周期驱动）：重扫注册表 → 运行中 server 对应
     * plugin 的当前 trusted digest ≠ acquire 时 digest（或已 untrusted / 被移除）
     * → 立即停 server + 对持有会话发系统提醒。返回受影响 plugin 名列表。
-    * 无运行中 server → 不扫描直接返回 Nil。 */
+    * 无运行中 server → 不扫描直接返回 Nil。
+    *
+    * **令 1 拆面（2026-09-12）·闸 D 的口径（重要，勿误改）**：本判定**只判内容
+    * 信任面**（`d.trust.trusted ∧ digest == digestAtAcquire`）——这正是设计 R4 推荐
+    * (b)/R5 推荐 (b) 要求的形态「内容面变化才停 MCP」。**派发面变更（作者关闭插件）
+    * 在此零动作**：关闭只写 `plugins.dispatch`，内容面 `plugins.trust` 不变 ⇒ 在飞
+    * 节点的工具面不被抽走（作者 14:14 原话「不能影响目前的」）。
+    * 要表达「收回已授予的内容」用 `revoke`（内容面动作，语义未变，会停 MCP）。 */
   def revalidate(
     rescan: IO[List[PluginRegistry.PluginDef]],
     notify: (String, String) => IO[Unit]

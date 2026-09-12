@@ -1987,7 +1987,18 @@ class NodeEngine(
 
   /** node.plugins → 可分配能力（§B.4 第 4 步 ①②，feature flag §G.2 开关）：
     * flag off / 无分配 → 空 preparation（旧行为零变化）；解析失败 → Left
-    * （failNode，错误含审批指引）。 */
+    * （failNode，错误含审批指引）。
+    *
+    * **令 1 拆面（2026-09-12）·闸 B / C / E 的口径（重要，勿误改）**：
+    * 本函数是 spawn / crash-recovery resume / loop 双会话的**装载门**，它判的**只能
+    * 是内容信任面**（`PluginRegistry.resolve` = 「存在 ∧ 装载合法 ∧ 内容未漂移且已
+    * 批准」）。**派发许可面（`PluginDispatchPolicy`）不在此判定** —— 按设计 S2/S3：
+    * 「派发许可的判定点是 NodeEdit 落库时刻，一次性；落库之后对该节点的开关变更
+    * 无效」。作者的关闭动作走派发面（`plugins.dispatch`），内容面（`plugins.trust`）
+    * 不动 ⇒ 本函数对已派发节点**零影响**（在飞节点不被拒启动）。
+    * 内容面之所以必须 live：防「先批准后夹带」（设计 S4a），digest 漂移仍在此拒启动；
+    * 要收回已授予的内容，用 `revoke`（that 是内容面动作，会停用运行中 MCP）。
+    * 闸 A（新派发）在 `NodeTools.dispatchFaceCheck`；闸 D 在 `PluginMcpManager.revalidate`。 */
   private def prepareNodePlugins(node: NodeDef): IO[Either[String, NodeEngine.PluginPreparation]] =
     PluginsConfig.enabled.flatMap {
       case false => IO.pure(Right(NodeEngine.PluginPreparation.empty))

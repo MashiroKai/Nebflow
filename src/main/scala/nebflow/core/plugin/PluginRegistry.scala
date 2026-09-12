@@ -167,6 +167,18 @@ object PluginRegistry:
         case TrustStatus.Trusted(at, d) => Json.obj("status" -> "trusted".asJson, "approvedAt" -> at.asJson, "digest" -> d.asJson)
         case TrustStatus.Untrusted(reason) => Json.obj("status" -> "untrusted".asJson, "reason" -> reason.asJson)
       ),
+      // 令 1 拆面（2026-09-12）：派发面状态随清单下发——面板开关据此渲染
+      // （`enabled=false` 只是「禁未来派发」，不是内容未受信）。
+      "dispatch" -> Json.obj(
+        "enabled" -> PluginDispatchPolicy.effective(p.name, p.trust.trusted).asJson,
+        "authorEnabled" -> PluginDispatchPolicy.authorEnabled(p.name).asJson,
+        "transitionActive" -> PluginDispatchPolicy.transitionActive(p.name, System.currentTimeMillis()).asJson,
+        "reason" -> (if !p.trust.trusted then ""
+                     else if PluginDispatchPolicy.effective(p.name, trusted = true) then ""
+                     else "Disabled for new dispatches by the author — in-flight nodes keep their plugin grant. " +
+                       s"Re-enable via the panel switch, POST /api/plugins/${p.name}/enable, or CLI 'nebflow plugin enable ${p.name}'.")
+          .asJson
+      ),
       "skills" -> p.skills
         .map(s => Json.obj("id" -> s.id.asJson, "description" -> s.description.asJson, "preview" -> previewLines(s.path).asJson))
         .asJson,
@@ -371,6 +383,13 @@ object PluginRegistry:
             "approval records the directory digest; any later file change re-triggers review. (PLUGIN_UNTRUSTED)")
         case Some(p) => Right(p)
     }
+
+  /** 内容信任面查询（**令 1 拆面** 2026-09-12）：该包是否存在且**内容面**受信
+    * （= `resolve` 的正脸，不含任何派发许可判定）。派发面单点
+    * `PluginDispatchPolicy.effective(name, trusted)` 以此为唯一输入——
+    * 两面**唯一耦合点**，其余调用点保持各自语义不变。 */
+  def contentTrusted(name: String): IO[Boolean] =
+    scan().map(_.find(_.name == name).exists(_.trust.trusted))
 
   // ── 单插件装载（§B.2 装载校验规则 + Agent Plugins 1.0.0 §4-§8）───────
 
@@ -1060,8 +1079,25 @@ object PluginRegistry:
         snapshot().flatMap { snap =>
           IO.blocking {
             val trusted = snap.plugins.filter(_.trust.trusted).sortBy(_.name)
+            // 令 1 拆面（2026-09-12）：**派发许可面**只在此过滤链生效——内容面受信
+            // 但被作者关闭的包不再出现在分发给新节点的目录里（S5：关闭后新派发拿不到）；
+            // 但它**仍受信**⇒ 闸 B/C/E/D 不受影响（在飞/已派发节点照跑）。
+            // 零 dispatch 记录时 `closed` 恒空 ⇒ 本方法输出与改前逐字节相同（零迁移）。
+            val (dispatchable, closed) =
+              trusted.partition(p => PluginDispatchPolicy.effective(p.name, trusted = true))
             val note = absenceNote(absencesOf(snap))
-            val lines = trusted.map(catalogLine) ++ Option.when(note.nonEmpty)(note)
+            // R10-C 形态（作者裁定前的推荐形态，由本实施批落地）：行消失但**点名**，
+            // 保证「能力域命中却无可用插件」与「该能力域不存在」可区分（设计 S6），
+            // 分发器据此按 system.md 显式申报/升级而非静默另找路线。
+            val closedNote =
+              if closed.isEmpty then ""
+              else
+                s"另有 ${closed.size} 个插件已关闭·禁派发（只影响未来派发，已在跑的节点不受影响）：" +
+                  closed.map(_.name).mkString(", ")
+            val lines =
+              dispatchable.map(catalogLine) ++
+                Option.when(note.nonEmpty)(note) ++
+                Option.when(closedNote.nonEmpty)(closedNote)
             if lines.isEmpty then "" else CatalogHeader + "\n" + lines.mkString("\n")
           }
         }

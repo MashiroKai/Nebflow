@@ -340,33 +340,58 @@ class ProjectCreatePanelSpec extends CatsEffectSuite:
     val ws = tempRoot / "ws-p4"
     os.makeDir.all(ws)
     val system = ActorSystem(s"pcp-4-${scala.util.Random.nextInt(100000)}")
-    for
-      res <- fullResources(system, new RecordingLlm)
-      frames <- Ref.of[IO, List[Json]](Nil)
-      created <- ProjectCreateTool.call(
-        Json.obj("name" -> Json.fromString("trigger-proj"), "workspace" -> Json.fromString(ws.toString)).asObject.get,
-        toolCtx(ws, system, res, wsSend = Some((j: Json) => frames.update(_ :+ j)))
-      )
-      triggered <- MailTool.call(
-        Json.obj("address" -> Json.fromString("project:trigger-proj"), "message" -> Json.fromString("冒烟任务")).asObject.get,
-        toolCtx(ws, system, res)
-      )
-      // 分发器会话拉起证据：engine wsSend 路由帧 agentStart.nodeSessionId = dispatcher-*
-      _ <- waitUntil(30.seconds)(frames.get.map { fs =>
-        fs.exists { j =>
-          j.hcursor.get[String]("type").toOption.contains("agentStart") &&
-          j.hcursor.get[String]("nodeSessionId").toOption.exists(_.startsWith(ProjectActor.DispatcherSessionPrefix))
-        }
-      })
-      // 录制 LLM 单 delta 即终态 → 观察桥拆除（registry 清空）——链路完整收尾
-      _ <- waitUntil(30.seconds)(res.agentRegistry.get.map(_.keys.forall(!_.startsWith(ProjectActor.DispatcherSessionPrefix))))
-      _ <- ProjectRuntimeRegistry.unregister("trigger-proj")
-      _ <- system.stopAll.handleErrorWith(_ => IO.unit)
-    yield
-      assert(created.isRight, s"create must succeed: $created")
-      assert(triggered.isRight, s"Task must trigger: $triggered")
-      assert(triggered.toOption.get.contains("dispatcher triggered"), triggered.toOption.get)
-    end for
+    // 令 3（2026-09-12）**契约变更**：turn 完成后分发器会话**保活**
+    // （`Defaults.DispatcherIdleWindowMs`，生产 30 min），不再由观察桥即时拆除；
+    // 收尾改由 TtlTick 扫描腿在窗口到期时销毁。本用例判据随之改写为
+    // 「拉起 ⇒ 保活（窗口内仍注册）⇒ 窗口到期销毁 ⇒ 注销」。
+    // 窗口用 `sys.props` 压到 8 s（该 Defaults 条目每次调用现读，spec 可即时翻转；
+    // 用完即刻还原，避免污染并发 suite）——等效性依据：只压「窗口 / 节拍」两个常量，
+    // 判定（`sweepIdleDispatchers` 的 due 判据）与销毁（`expireIdleDispatcher`）
+    // 代码路径逐行未变；节拍由 `ProjectActor.ttlScanner(1.second)` 驱动。
+    val propKey = "nebflow.dispatcher.idleWindowMs"
+    val propBefore = Option(System.getProperty(propKey))
+    val restore: IO[Unit] = IO {
+      propBefore match
+        case Some(v) => System.setProperty(propKey, v)
+        case None    => System.clearProperty(propKey)
+      ()
+    }
+    System.setProperty(propKey, "8000")
+    ProjectActor.ttlScanner(1.second).background.use { _ =>
+      for
+        res <- fullResources(system, new RecordingLlm)
+        frames <- Ref.of[IO, List[Json]](Nil)
+        created <- ProjectCreateTool.call(
+          Json.obj("name" -> Json.fromString("trigger-proj"), "workspace" -> Json.fromString(ws.toString)).asObject.get,
+          toolCtx(ws, system, res, wsSend = Some((j: Json) => frames.update(_ :+ j)))
+        )
+        triggered <- MailTool.call(
+          Json.obj("address" -> Json.fromString("project:trigger-proj"), "message" -> Json.fromString("冒烟任务")).asObject.get,
+          toolCtx(ws, system, res)
+        )
+        // 分发器会话拉起证据：engine wsSend 路由帧 agentStart.nodeSessionId = dispatcher-*
+        _ <- waitUntil(30.seconds)(frames.get.map { fs =>
+          fs.exists { j =>
+            j.hcursor.get[String]("type").toOption.contains("agentStart") &&
+            j.hcursor.get[String]("nodeSessionId").toOption.exists(_.startsWith(ProjectActor.DispatcherSessionPrefix))
+          }
+        })
+        // 令 3 保活判据：turn 已由录制 LLM 单 delta 收尾，此刻会话仍须**在场**
+        // （不再「完成即拆」——这正是「连续派发复用同一会话」的结构前提）。
+        heldRegistered <- res.agentRegistry.get.map(_.keys.exists(_.startsWith(ProjectActor.DispatcherSessionPrefix)))
+        // 窗口（8 s）到期 ⇒ TtlTick 扫描腿销毁 ⇒ 注销（链路完整收尾，无幽灵行）
+        _ <- waitUntil(30.seconds)(res.agentRegistry.get.map(_.keys.forall(!_.startsWith(ProjectActor.DispatcherSessionPrefix))))
+        gone <- res.agentRegistry.get.map(_.keys.forall(!_.startsWith(ProjectActor.DispatcherSessionPrefix)))
+        _ <- ProjectRuntimeRegistry.unregister("trigger-proj")
+        _ <- system.stopAll.handleErrorWith(_ => IO.unit)
+      yield
+        assert(created.isRight, s"create must succeed: $created")
+        assert(triggered.isRight, s"Task must trigger: $triggered")
+        assert(triggered.toOption.get.contains("dispatcher triggered"), triggered.toOption.get)
+        assert(heldRegistered, "令 3：turn 完成后（窗口内）分发器会话必须保活，而非即时拆除")
+        assert(gone, "令 3：窗口到期后必须销毁注销（ghost-row 语义保持）")
+      end for
+    }.guarantee(restore)
   }
 
   // ============================================================
