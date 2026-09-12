@@ -1,7 +1,7 @@
 // viewers/markdown.js — Markdown viewer (rendered preview + source toggle).
 // Migrated verbatim from fileViewers.js (viewMarkdown).
 
-import { addSourceToggle } from './shared.js';
+import { addSourceToggle, routeLocalHref, openLocalFileTab, openExternalUrlTab } from './shared.js';
 import { mintTickets, stripCredentialParams } from '../nfTicket.js';
 
 /** Markdown viewer - render formatted markdown (read-only preview) */
@@ -26,10 +26,16 @@ async function viewMarkdown(pane, { content, absPath, fileName }) {
   const { renderMarkdownWithMath } = await import('../utils.js');
   let html = renderMarkdownWithMath(content || '', false);
 
+  // Directory of this document — resolves BOTH the relative image paths below
+  // and the relative link hrefs in the click handler. Computed once, so the
+  // image rewrite and the link routing cannot disagree about what a relative
+  // path in this document means.
+  const baseDir = absPath
+    ? absPath.substring(0, absPath.lastIndexOf(absPath.includes('\\') ? '\\' : '/'))
+    : '';
+
   // Resolve relative image paths against the markdown file's directory.
   if (absPath) {
-    const sep = absPath.includes('\\') ? '\\' : '/';
-    const dir = absPath.substring(0, absPath.lastIndexOf(sep));
     const IMG_SCAN_RE = /<img\s+[^>]*src="([^"]+)"/g;
     const IMG_REWRITE_RE = /(<img\s+[^>]*src=")([^"]+)(")/g;
     /** Resolve one raw markdown image src to a local absolute path (null =
@@ -54,7 +60,7 @@ async function viewMarkdown(pane, { content, absPath, fileName }) {
       if (src.startsWith('/') || src.startsWith('~') || /^[A-Za-z]:[\\/]/.test(src)) {
         resolved = src; // already absolute (or ~-anchored)
       } else {
-        resolved = dir ? dir + '/' + src.replace(/^\.\//, '') : src;
+        resolved = baseDir ? baseDir + '/' + src.replace(/^\.\//, '') : src;
       }
       return resolved;
     };
@@ -121,21 +127,44 @@ async function viewMarkdown(pane, { content, absPath, fileName }) {
       else slugCounts[slug] = 0;
       h.id = slug;
     });
-    // Handle TOC anchor clicks — scroll within the pane, not the window.
-    // marked v12 URL-encodes CJK chars in href="#..." anchors, but heading
-    // IDs use raw characters. Try decoded first, fall back to raw.
+    // Link routing — the SAME criterion the HTML preview frame runs
+    // (`routeLocalHref` in viewers/shared.js, embedded by source into the
+    // frame's injected script, so there is one definition and no drift).
+    // This pane renders markdown INTO the app document: the preview surface is
+    // not a sandboxed frame and has no navigation guard, so an unhandled
+    // `[x](doc.md)` navigated the WHOLE application away (URL became /doc3.md,
+    // 404, #activity-bar gone). Local paths now open as Canvas tabs, external
+    // http(s) links as Canvas URL tabs, `#` anchors still scroll in this pane.
+    // 2026-09-12 (canvas-preview nav parity, residual face): a markdown
+    // deliverable is the same authored-markup surface as an HTML one and gets
+    // the same browser-grade link behaviour.
     mdViewer.addEventListener('click', (e) => {
-      const link = e.target.closest('a[href^="#"]');
+      const link = e.target.closest('a[href]');
       if (!link) return;
       const href = link.getAttribute('href');
-      if (!href || href === '#') return;
+      const route = routeLocalHref(href, baseDir);
+      if (route.kind === 'anchor') {
+        // TOC anchor: scroll within the pane, not the window. marked v12
+        // URL-encodes CJK chars in href="#..." anchors, but heading IDs use raw
+        // characters. Try decoded first, fall back to raw.
+        if (!href || href === '#') return;
+        e.preventDefault();
+        const raw = href.slice(1);
+        let decoded;
+        try { decoded = decodeURIComponent(raw); } catch { decoded = raw; }
+        const target = mdViewer.querySelector(`[id="${decoded}"]`) ||
+                       mdViewer.querySelector(`[id="${raw}"]`);
+        if (target) target.scrollIntoView({ behavior: 'smooth', block: 'start' });
+        return;
+      }
+      // `none`: mailto:/tel:/data:/javascript: — the browser's own business.
+      if (route.kind === 'none') return;
+      // Never let a link replace the application document: `unresolved` is a
+      // relative href in a document opened without a path (no base to resolve
+      // against) — it has no target, so the click resolves to nothing at all.
       e.preventDefault();
-      const raw = href.slice(1);
-      let decoded;
-      try { decoded = decodeURIComponent(raw); } catch { decoded = raw; }
-      const target = mdViewer.querySelector(`[id="${decoded}"]`) ||
-                     mdViewer.querySelector(`[id="${raw}"]`);
-      if (target) target.scrollIntoView({ behavior: 'smooth', block: 'start' });
+      if (route.kind === 'external') openExternalUrlTab(route.url);
+      else if (route.kind === 'local' && route.path) openLocalFileTab(route.path);
     });
   }
 

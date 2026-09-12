@@ -231,57 +231,102 @@ export async function resolveLocalFiles(html, dir) {
 // (cardRegistry.js) — so the two can never drift into two behaviours (the same
 // "one implementation" rule nfTicket.js follows for the proxy-URL regex).
 
+/** THE link-routing criterion: given an authored `href`, which leg serves it.
+ *  Deliberately ONE definition for every surface that renders authored markup
+ *  into the app document — the HTML frame's injected script (below, via
+ *  `toString()`, so the frame literally runs this code) and the parent-side
+ *  markdown viewer (viewers/markdown.js). Each surface carrying its own
+ *  predicate is how the markdown face ended up with no handler at all, and how
+ *  the frame's navigation guard ended up with a route whitelist that drifts
+ *  every time a new local-file route is added.
+ *
+ *  @param {string} href raw `href` attribute (or an already-resolved absolute
+ *    path — that is what `data-nf-local-link` carries)
+ *  @param {string} [baseDir] directory of the document the href was authored
+ *    in; required to resolve a relative href. The frame omits it: its hrefs
+ *    are already resolved to an absolute path by `resolveLocalFiles`.
+ *  @returns {{kind:'anchor'|'external'|'local'|'unresolved'|'none',
+ *             path?:string, url?:string}} `anchor` = in-page scroll (never
+ *    intercepted), `external` = http(s) URL tab, `local` = Canvas local-file
+ *    tab, `unresolved` = relative and no base to resolve against (caller shows
+ *    its own visible note), `none` = not ours (data:/javascript:/mailto:/…). */
+function routeLocalHref(href, baseDir) {
+  const h = String(href == null ? '' : href);
+  if (!h || h.charAt(0) === '#') return { kind: 'anchor' };
+  if (/^https?:\/\//i.test(h)) return { kind: 'external', url: h };
+  if (/^(data:|javascript:|blob:|mailto:|tel:|file:)/i.test(h)) return { kind: 'none' };
+  // A hand-written / replayed proxy URL is a local file, not a frame
+  // navigation: decode its path so the click stays on the local-file leg.
+  const proxied = /^\/api\/nf-file\?(?:[^"'#]*&)?path=([^&"']*)/i.exec(h);
+  if (proxied) {
+    try { return { kind: 'local', path: decodeURIComponent(proxied[1]) }; }
+    catch (_) { return { kind: 'none' }; }
+  }
+  // A fragment addresses a section INSIDE the target file (the Canvas tab
+  // opens the file, not a scroll offset) and a query is never part of a
+  // filesystem path — drop both before resolving. `%23` survives the split and
+  // decodes below, so a `#` in a filename is unaffected.
+  const bare = h.split('#')[0].split('?')[0];
+  if (!bare) return { kind: 'unresolved' };
+  if (bare.charAt(0) === '/' || bare.charAt(0) === '~' || /^[A-Za-z]:[\\/]/.test(bare)) {
+    return { kind: 'local', path: bare };
+  }
+  if (!baseDir) return { kind: 'unresolved' };
+  let rel = bare.replace(/^\.\//, '');
+  // marked percent-encodes link destinations (CJK, spaces) — decode before
+  // joining, or the path is escaped a second time and never matches a file.
+  try { rel = decodeURIComponent(rel); } catch (_) { /* literal % in a name */ }
+  return rel ? { kind: 'local', path: baseDir + '/' + rel } : { kind: 'unresolved' };
+}
+export { routeLocalHref };
+
+/** Visible inline note for a link that routes to a local file but has no path
+ *  to open — a silent dead click is the failure mode this batch exists to
+ *  remove. ONE definition, used by the parent-side bridge and embedded by
+ *  source into the frame script (see `localLinkNavScript`).
+ *  @param {any} a the anchor element */
+function markUnsolvedLink(a) {
+  if (a.getAttribute('data-nf-link-unsolved')) return;
+  a.setAttribute('data-nf-link-unsolved', '1');
+  const s = document.createElement('span');
+  s.setAttribute('data-nf-link-unsolved-note', '1');
+  s.textContent = ' (local link: no path to open from this preview)';
+  s.style.cssText = 'font-size:11px;color:var(--color-text-muted,#8b8e96);';
+  if (a.parentNode) a.parentNode.insertBefore(s, a.nextSibling);
+}
+export { markUnsolvedLink };
+
 /** Dormant script injected into an HTML frame: local-file and external link
  *  clicks are routed to the parent instead of letting the frame navigate.
  *  Registered in the capture phase on `document` (the pattern html.js's
  *  `imgClickScript` uses), so page-level handlers cannot outrun it; covers
  *  left-click, middle-click (`auxclick`) and keyboard activation (a synthetic
  *  click with detail 0). `#` anchors are left to the viewer's own in-frame
- *  scroll script, and a local link that cannot be resolved to a path gets a
- *  VISIBLE inline note rather than a silent dead click.
+ *  scroll script, and an unresolvable local link gets a VISIBLE inline note
+ *  rather than a silent dead click.
+ *
+ *  The routing decision is `routeLocalHref` embedded by source, so the frame
+ *  and the parent-side markdown viewer share one criterion by construction.
  *  @returns {string} */
 export function localLinkNavScript() {
   return `<script>
 (function(){
-  var CRED = /^\\/api\\/nf-file\\?(?:[^"'#]*&)?path=([^&"']*)/i;
-  var NOT_LOCAL = /^(https?:|data:|#|javascript:|blob:|mailto:|tel:|file:)/i;
-  function decode(u){ try { return decodeURIComponent(u); } catch (e) { return ''; } }
-  function pathOf(a){
-    var marked = a.getAttribute('data-nf-local-link');
-    if (marked) return marked;
-    var href = a.getAttribute('href') || '';
-    var m = CRED.exec(href);
-    if (m) return decode(m[1]);
-    if (!href || NOT_LOCAL.test(href)) return '';
-    if (href.charAt(0) === '/' || href.charAt(0) === '~' || /^[A-Za-z]:[\\\\/]/.test(href)) return href;
-    return '';
-  }
-  function unsolved(a){
-    if (a.getAttribute('data-nf-link-unsolved')) return;
-    a.setAttribute('data-nf-link-unsolved', '1');
-    var s = document.createElement('span');
-    s.setAttribute('data-nf-link-unsolved-note', '1');
-    s.textContent = ' (local link: no path to open from this preview)';
-    s.style.cssText = 'font-size:11px;color:var(--color-text-muted,#8b8e96);';
-    if (a.parentNode) a.parentNode.insertBefore(s, a.nextSibling);
-  }
+  var routeLocalHref = ${routeLocalHref.toString()};
+  var markUnsolvedLink = ${markUnsolvedLink.toString()};
   function onClick(e){
     if (e.defaultPrevented) return;
     var a = e.target && e.target.closest ? e.target.closest('a[href]') : null;
     if (!a) return;
-    var href = a.getAttribute('href') || '';
-    if (!href || href.charAt(0) === '#') return;
-    if (/^https?:/i.test(href)) {
-      e.preventDefault();
-      parent.postMessage({ _nfOpenExternalUrl: { url: href } }, '*');
+    var r = routeLocalHref(a.getAttribute('data-nf-local-link') || a.getAttribute('href') || '', '');
+    if (r.kind === 'anchor' || r.kind === 'none') return;
+    e.preventDefault();
+    if (r.kind === 'external') {
+      parent.postMessage({ _nfOpenExternalUrl: { url: r.url } }, '*');
       return;
     }
-    if (NOT_LOCAL.test(href)) return;
-    var path = pathOf(a);
-    e.preventDefault();
-    if (!path) { unsolved(a); return; }
+    if (r.kind !== 'local' || !r.path) { markUnsolvedLink(a); return; }
     parent.postMessage({ _nfOpenLocalFile: {
-      path: path,
+      path: r.path,
       newTab: !!(e.metaKey || e.ctrlKey || e.shiftKey || e.type === 'auxclick')
     } }, '*');
   }
@@ -334,8 +379,10 @@ function isRenderedFrame(src) {
  *  already-open path: the tab store dedupes by absPath (canvas.js:898-902) and
  *  the author's requirement is that a link behaves the same whether or not the
  *  markup writes `target` — form equivalence is the point, not tab bookkeeping.
+ *  Exported for the OTHER end of the same channel: the markdown viewer renders
+ *  into the app document (no frame, no postMessage), so it calls this directly.
  *  @param {string} path */
-function openLocalFileTab(path) {
+export function openLocalFileTab(path) {
   if (!path) return;
   window.dispatchEvent(new CustomEvent('workspace-open-item', {
     detail: { id: 'file:' + path, itemType: '', content: '', absPath: path },
@@ -346,9 +393,10 @@ function openLocalFileTab(path) {
 /** Open an external http(s) link as a Canvas URL tab (canvas.js renderUrlPane,
  *  whose sandbox already carries allow-popups), so following a link stays
  *  inside the Canvas — the browser-grade equivalent, with no detour through the
- *  real browser.
+ *  real browser. Also the direct entry point for the markdown viewer (its links
+ *  live in the app document, not in a frame).
  *  @param {string} url */
-function openExternalUrlTab(url) {
+export function openExternalUrlTab(url) {
   if (!/^https?:\/\//i.test(url)) return;
   let title = url;
   try { title = new URL(url).hostname || url; } catch (_) { /* keep the raw url */ }
@@ -366,6 +414,47 @@ function revealCanvas() {
   import('../canvas.js')
     .then((m) => { if (!m.isCanvasOpen()) m.openCanvas(); })
     .catch(() => { /* canvas module unavailable — the event still opened the tab */ });
+}
+
+let _docMarkupLinkBridgeBound = false;
+
+/** The THIRD surface of the same ruling (2026-09-12, residual faces): authored
+ *  markup rendered INTO THE APP DOCUMENT, where there is no frame and therefore
+ *  no navigation guard behind it —
+ *    · chat markdown bubbles: utils.js `renderMarkdownWithMath` → `.bubble`
+ *      innerHTML (the AI/agent/thinking/ask-answer rows);
+ *    · EPUB chapter content: viewers/epub.js `content.innerHTML = chapters[idx].content`
+ *      (`.epub-reader-content`).
+ *  Measured 2026-09-12 (isolated instance, real chromium): clicking an ordinary
+ *  link in a chat bubble or in an EPUB chapter navigated the ENTIRE application
+ *  away — app URL became `/tmp/…/target-c.md` (a chat bubble) and `/ch2.xhtml`
+ *  (an EPUB chapter), `#activity-bar` gone; an external link left the app for
+ *  example.com entirely. Not a "stopped rendering" case: the app document is
+ *  simply replaced.
+ *  Same criterion (`routeLocalHref`), same legs as the frame and markdown
+ *  viewers: local path → Canvas local-file tab, http(s) → Canvas URL tab,
+ *  `#`/`mailto:`/… → the browser's own behaviour, unresolvable relative link →
+ *  visible inline note (never a silent dead click). One listener for every such
+ *  container, bound once per app (idempotent — html.js's `bindLocalLinkBridge`
+ *  discipline). There is no base directory to resolve against here: the markup
+ *  was authored elsewhere and only its absolute paths are meaningful. */
+export function bindDocMarkupLinkBridge() {
+  if (_docMarkupLinkBridgeBound) return;
+  _docMarkupLinkBridgeBound = true;
+  const onClick = (e) => {
+    if (e.defaultPrevented) return;   // an inner surface already claimed the click
+    const t = /** @type {any} */ (e.target);
+    const a = t && t.closest ? t.closest('.bubble a[href], .epub-reader-content a[href]') : null;
+    if (!a) return;
+    const route = routeLocalHref(a.getAttribute('href') || '', '');
+    if (route.kind === 'anchor' || route.kind === 'none') return;
+    e.preventDefault();
+    if (route.kind === 'external') { openExternalUrlTab(route.url); return; }
+    if (route.kind === 'local' && route.path) { openLocalFileTab(route.path); return; }
+    markUnsolvedLink(a);
+  };
+  document.addEventListener('click', onClick);
+  document.addEventListener('auxclick', onClick);
 }
 
 // ── Render/source toggle (markdown & HTML viewers) ─────────────────────
