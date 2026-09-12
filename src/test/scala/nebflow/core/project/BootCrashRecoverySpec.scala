@@ -277,7 +277,7 @@ class BootCrashRecoverySpec extends CatsEffectSuite:
       assertEquals(a.result, Some("RECOVERED-DONE"))
       assert(reqs.exists(_.contains("WIP-HALF-CONTEXT")),
         "LLM request must carry the hydrated transcript (checkpoint resume)")
-      assert(turns.exists(t => t.contains("崩溃并已重启") && t.contains("""NodeList(detail="n-c1"""")),
+      assert(turns.exists(t => t.contains("crashed during your last turn and restarted") && t.contains("""NodeList(detail="n-c1"""")),
         s"resume prompt must carry crash notice + task pointer, got: ${turns.take(2).mkString("|").take(300)}")
       assertEquals(a.sessionRef, Some(sid), "sessionRef must be preserved (reused session id)")
       assert(persisted, "recovered session transcript must continue appending to the same file (D2)")
@@ -438,7 +438,7 @@ class BootCrashRecoverySpec extends CatsEffectSuite:
     yield
       assertEquals(n.status, NodeLifecycle.Completed)
       assertEquals(n.bgWait, None, "bgWait must be cleared on claim (wait set evaporated with the process)")
-      assert(turns.exists(t => t.contains("后台任务已死亡") && t.contains("compile")),
+      assert(turns.exists(t => t.contains("The background work awaited before the crash is dead") && t.contains("compile")),
         s"resume prompt must carry the bg-task death notice with the snapshot, got: ${turns.headOption.map(_.take(300))}")
   }
 
@@ -451,7 +451,7 @@ class BootCrashRecoverySpec extends CatsEffectSuite:
     val workerSid = "node-c7w0011"
     val verifySid = "node-c7v0022"
     val llm = ScriptLlm { last =>
-      if last.contains("【LoopNode 验证") then "VERDICT: PASS" else "W2-FINAL"
+      if last.contains("[LoopNode verification") then "VERDICT: PASS" else "W2-FINAL"
     }
     for
       res <- mkResources(system, llm.handle)
@@ -460,10 +460,10 @@ class BootCrashRecoverySpec extends CatsEffectSuite:
       _ = seedTranscript(workerSid, List(
         msg(MessageRole.User, "原始任务：产出报告"),
         msg(MessageRole.Assistant, "ROUND1-OUT"),
-        msg(MessageRole.User, "【LoopNode 返工 · 第 2 轮】…"),
+        msg(MessageRole.User, "[LoopNode rework · round 2]…"),
         msg(MessageRole.Assistant, "WIP-ROUND2-PARTIAL")))
       _ = seedTranscript(verifySid, List(
-        msg(MessageRole.User, "【LoopNode 验证 · 第 1 轮】…"),
+        msg(MessageRole.User, "[LoopNode verification · round 1]…"),
         msg(MessageRole.Assistant, "VERDICT: PASS")))
       _ <- seedRunning(rt, "n-c7a", "loop-a", "产出报告", sessionRef = Some(workerSid),
         sessionRefVerify = Some(verifySid),
@@ -485,7 +485,7 @@ class BootCrashRecoverySpec extends CatsEffectSuite:
       assertEquals(n.sessionRefVerify, Some(verifySid), "verify session ref preserved")
       assert(reqs.exists(_.contains("WIP-ROUND2-PARTIAL")),
         "worker LLM request must carry hydrated worker transcript")
-      assert(turns.exists(t => t.contains("worker 阶段") && t.contains("崩溃并已重启")),
+      assert(turns.exists(t => t.contains("(worker) and restarted")),
         "worker must receive the loop resume prompt (not fresh/rework template)")
       assert(workerPersisted, "worker session transcript continues in the same file (dual-session continuity)")
       assert(events.exists(e => e.contains("boot-recovery") && e.contains("loop dual-session resume")),
@@ -505,10 +505,10 @@ class BootCrashRecoverySpec extends CatsEffectSuite:
       "VERDICT: FAIL\n{\"issues\":[\"round-2 output not final\"],\"requirements\":\"must be final\"}",
       "VERDICT: PASS")
     val llm = ScriptLlm { last =>
-      if last.contains("【LoopNode 验证") then
+      if last.contains("[LoopNode verification") then
         val cur = verifyReplyCounter.incrementAndGet()
         verifyReplies(math.min(cur - 1, verifyReplies.size - 1))
-      else if last.contains("【LoopNode 返工") then "W3-FINAL"
+      else if last.contains("[LoopNode rework") then "W3-FINAL"
       else "W-GEN"
     }
     for
@@ -520,7 +520,7 @@ class BootCrashRecoverySpec extends CatsEffectSuite:
         msg(MessageRole.Assistant, "ROUND1-OUT"),
         msg(MessageRole.Assistant, "W2-OUTPUT")))
       _ = seedTranscript(verifySid, List(
-        msg(MessageRole.User, "【LoopNode 验证 · 第 1 轮】…"),
+        msg(MessageRole.User, "[LoopNode verification · round 1]…"),
         msg(MessageRole.Assistant, "VERDICT: PASS")))
       _ <- seedRunning(rt, "n-c7b", "loop-b", "产出报告", sessionRef = Some(workerSid),
         sessionRefVerify = Some(verifySid),
@@ -538,9 +538,9 @@ class BootCrashRecoverySpec extends CatsEffectSuite:
       assert(n.loopLastVerdict.exists(_.contains("round-2 output not final")),
         s"last FAIL verdict must be persisted, got: ${n.loopLastVerdict}")
       // 重建的 verify 输入必须带 worker 末轮产出（来自 worker transcript）+ 崩溃续接标注
-      assert(reqs.exists(r => r.contains("崩溃并已重启") && r.contains("W2-OUTPUT") && r.contains("verify 阶段")),
+      assert(reqs.exists(r => r.contains("Crashed during LoopNode round") && r.contains("W2-OUTPUT") && r.contains("(verify phase)")),
         "verify resume must rebuild the round input from the worker transcript with the crash annotation")
-      assert(reqs.exists(_.contains("【LoopNode 返工 · 第 3 轮】")),
+      assert(reqs.exists(_.contains("[LoopNode rework · round 3]")),
         "rework round 3 must be injected into the rehydrated worker session")
   }
 

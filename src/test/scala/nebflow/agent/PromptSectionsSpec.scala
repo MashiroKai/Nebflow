@@ -333,14 +333,14 @@ class PromptSectionsSpec extends munit.FunSuite:
   // 钉提示词面的三条不变量：恒注入、位置（env 后 / voice 前）、不被剥离。
   // ============================================================
 
-  /** 作者逐字规格的正文行（单行，反引号与全角括号原样）。 */
+  /** 正文行（英文批 prompt-en-slim-impl：中→英；语义与判据逐条不变）。 */
   private val traceBodyLine =
-    "- 溯源只进文件名尾：阶段文档 `<YYYYMMDD>_<HHMMSS>_<topic>__<chainId>.md`（无归属不带尾段）；正文零元数据头。"
+    "- Provenance goes only into the filename tail: stage doc `<YYYYMMDD>_<HHMMSS>_<topic>__<chainId>.md` (no suffix when unattributed); the body carries zero metadata header."
 
   test("文档溯源段恒注入（最小 PromptContext，order 350）：段名 + 正文行逐字"):
     withIsolatedDataRoot {
       val blocks = buildConditionalBlocks(PromptContext())
-      assert(blocks.contains("## 文档溯源"), s"order-350 段必须恒注入（always）：$blocks")
+      assert(blocks.contains("## Document provenance"), s"order-350 段必须恒注入（always）：$blocks")
       assert(blocks.contains(traceBodyLine), s"正文行必须逐字出现：$blocks")
     }
 
@@ -354,7 +354,7 @@ class PromptSectionsSpec extends munit.FunSuite:
 
       val blocks = buildConditionalBlocks(PromptContext(voiceEnabled = true))
       val envIdx = blocks.indexOf("## Environment")
-      val traceIdx = blocks.indexOf("## 文档溯源")
+      val traceIdx = blocks.indexOf("## Document provenance")
       val voiceIdx = blocks.indexOf("## Voice Output")
       assert(envIdx >= 0, s"env 段应存在：$blocks")
       assert(traceIdx >= 0, s"溯源段应存在：$blocks")
@@ -425,9 +425,9 @@ class PromptSectionsSpec extends munit.FunSuite:
           )
         )
       )
-      assert(subtaskPrompt.contains("## 文档溯源"), s"SubTask 路径不得剥掉溯源段：$subtaskPrompt")
+      assert(subtaskPrompt.contains("## Document provenance"), s"SubTask 路径不得剥掉溯源段：$subtaskPrompt")
       assert(subtaskPrompt.contains(traceBodyLine), s"SubTask 路径正文行必达：$subtaskPrompt")
-      assert(teamPrompt.contains("## 文档溯源"), s"team 路径不得剥掉溯源段：$teamPrompt")
+      assert(teamPrompt.contains("## Document provenance"), s"team 路径不得剥掉溯源段：$teamPrompt")
       assert(teamPrompt.contains(traceBodyLine), s"team 路径正文行必达：$teamPrompt")
       // 对照组：剥离确实生效（团队交互内容被移除）——排除「剥离根本没跑」的假绿。
       assert(!subtaskPrompt.contains("你的团队 Lead 汇报"), "对照组：团队交互行应已剥离")

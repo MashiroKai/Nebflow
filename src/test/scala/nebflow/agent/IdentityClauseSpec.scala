@@ -16,19 +16,19 @@ class IdentityClauseSpec extends FunSuite:
       )
     do
       val rendered = PromptSections.buildConditionalBlocks(ctx)
-      assert(!rendered.contains("身份与受众"), "guardrails disabled = no clause (default-off contract)")
+      assert(!rendered.contains("Identity and audience"), "guardrails disabled = no clause (default-off contract)")
 
   test("T1 strict block: machine-consumer audience, Pop ban, budget"):
     val text = clause(userFacing = false)
-    assert(text.contains("受众是编排器与下游节点"))
-    assert(text.contains("不调用 Pop"))
+    assert(text.contains("Your audience is the orchestrator and downstream nodes"))
+    assert(text.contains("no Pop"))
     assert(text.contains("≤ 500 tokens"))
     assert(text.contains("assumption"), "ambiguity routes to outputs.assumption, not a question")
 
   test("T1 userFacing variant: dual audience, no display ban, relaxed budget"):
     val text = clause(userFacing = true)
-    assert(text.contains("用户终审环节"))
-    assert(!text.contains("不调用 Pop"), "whitelisted node keeps display tools — no ban line")
+    assert(text.contains("user-facing step"))
+    assert(!text.contains("no Pop"), "whitelisted node keeps display tools — no ban line")
 
   test("T2 team member block: Lead consumer + Mail/RESULT channels"):
     assert(PromptSections.teamMemberIdentityBlock.contains("Team Lead"))
@@ -39,7 +39,7 @@ class IdentityClauseSpec extends FunSuite:
     val node = PromptSections.buildConditionalBlocks(
       PromptContext(guardrailsOn = true, isFlowNode = true, agentCategory = "standalone")
     )
-    assert(node.contains("受众是编排器与下游节点"), "flow node gets the strict T1 clause")
+    assert(node.contains("Your audience is the orchestrator and downstream nodes"), "flow node gets the strict T1 clause")
 
     val member = PromptSections.buildConditionalBlocks(
       PromptContext(guardrailsOn = true, agentCategory = "team", isTeamLead = false)
@@ -49,10 +49,10 @@ class IdentityClauseSpec extends FunSuite:
     val lead = PromptSections.buildConditionalBlocks(
       PromptContext(guardrailsOn = true, agentCategory = "team", isTeamLead = true)
     )
-    assert(!lead.contains("身份与受众"), "Manager exempt — Lead IS the user interface")
+    assert(!lead.contains("Identity and audience"), "Manager exempt — Lead IS the user interface")
 
     val whitelisted = PromptSections.buildConditionalBlocks(
       PromptContext(guardrailsOn = true, isFlowNode = true, userFacingNode = true)
     )
-    assert(whitelisted.contains("用户终审环节"), "userFacing node gets the dual-audience variant")
+    assert(whitelisted.contains("user-facing step"), "userFacing node gets the dual-audience variant")
 end IdentityClauseSpec

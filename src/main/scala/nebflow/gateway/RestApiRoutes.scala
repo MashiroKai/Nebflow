@@ -180,7 +180,12 @@ class RestApiRoutes(
           else sessionStore.listSessions
         list.flatMap { sessions =>
           sessionStore.getActiveId.flatMap { activeId =>
-            Ok(Json.obj("sessions" -> sessions.asJson, "activeId" -> activeId.asJson))
+            // 出口 overlay（设计 §13 #9）：逐会话 `safetyMode` 输出**有效档位**
+            // （覆盖 ?? 全局），与 WS 出口共用同一个 helper——CLI/QA 据此读到的是
+            // 实际生效的档位，而不是 `_index.json` 的遗留值。
+            sharedResources.overlaySessionList(sessions).flatMap { sessionsJson =>
+              Ok(Json.obj("sessions" -> sessionsJson, "activeId" -> activeId.asJson))
+            }
           }
         }
       }
@@ -200,25 +205,25 @@ class RestApiRoutes(
           val name = body.hcursor.downField("name").as[String].getOrElse("New Session")
           val agentName = body.hcursor.downField("agentName").as[Option[String]].getOrElse(None)
           val folderId = body.hcursor.downField("folderId").as[Option[String]].getOrElse(None)
-          // F1 (#433): new sessions inherit the GLOBAL safety mode instead of
-          // the hardcoded confirm-edits — a global auto-all must reach e2e/
-          // temp/secondary sessions too, otherwise their permission buckets
-          // seed restrictive and background agents hit invisible walls.
-          nebflow.core.GlobalSafety.defaultMode.flatMap { mode =>
-            sessionStore
-              .createSession(name, agentName = agentName, folderId = folderId,
-                safetyMode = nebflow.core.SafetyMode.toString(mode))
-              .flatMap { meta =>
-                Ok(meta.asJson)
-              }
-          }
+          // 2026-09-12 权限全局单一权威源（设计 §10 #16 / §13 #13）：**不再把全局档位
+          // 写进会话 meta**。新会话的**有效档位** = 全局值，由 resolver（覆盖 ?? 全局）
+          // 保证，与盘上键无关 —— 此前把全局值写进 meta 正是"会话各自持有权威档位"的
+          // 承载面（索引损坏恢复路径把顶档写回落盘 ⇒ R1/T-2）。
+          sessionStore
+            .createSession(name, agentName = agentName, folderId = folderId)
+            .flatMap { meta =>
+              Ok(meta.asJson)
+            }
         }
       }
 
     // Delete session
     case req @ DELETE -> Root / "sessions" / sessionId =>
       withAuth(req) {
-        sessionStore.deleteSession(sessionId) *> Ok(Json.obj("deleted" -> true.asJson))
+        // 权限覆盖清理（设计 §13 #25 / §16 R-5）：删会话时一并移除其内存覆盖条目。
+        sessionStore.deleteSession(sessionId) *>
+          sharedResources.permissionPolicies.update(_ - sessionId) *>
+          Ok(Json.obj("deleted" -> true.asJson))
       }
 
     // Config
@@ -243,6 +248,53 @@ class RestApiRoutes(
               )
             yield resp
           }
+        }
+      }
+
+    // ── 权限模式（全局单一权威源批，2026-09-12；设计 §5.1）──────────────
+    // GET /api/safety —— 全局权限模式的**权威观测面**（QA/CLI 可 curl 判定）：
+    //   defaultMode = 当前生效值（读不到有效值 ⇒ 启动默认顶档，见 GlobalSafety）；
+    //   configured  = 配置文件里是否写了**可识别**的显式值（三档之一）。键缺失 /
+    //                 类型不符 / 值不可识别 / 文件不可解析 一律 false。
+    case req @ GET -> Root / "safety" =>
+      withAuth(req) {
+        val configPath = PathUtil.configJsonReadPath(PathUtil.dataRoot)
+        (for
+          mode <- nebflow.core.GlobalSafety.defaultMode
+          rawValue <- IO.blocking {
+            if !os.exists(configPath) then None
+            else
+              io.circe.parser
+                .parse(os.read(configPath))
+                .toOption
+                .flatMap(_.hcursor.downField("safety").downField("defaultMode").as[String].toOption)
+          }.handleErrorWith(_ => IO.pure(None))
+        yield Json.obj(
+          "defaultMode" -> nebflow.core.SafetyMode.toString(mode).asJson,
+          "configured" -> rawValue.exists(v => nebflow.core.SafetyMode.fromWire(v).isDefined).asJson,
+          "source" -> configPath.toString.asJson
+        )).flatMap(Ok(_))
+      }
+
+    // PUT /api/safety/mode —— 全局权限模式的**唯一 REST 写入口**（定向写，
+    // 不走 `PATCH /api/config` 的全量快照语义，避免陈旧底稿回滚无关键）。
+    // 非三档显式值 ⇒ 400 且**不落盘**（不静默兜底）。
+    case req @ PUT -> Root / "safety" / "mode" =>
+      withAuth(req) {
+        req.as[Json].flatMap { body =>
+          val rawMode = body.hcursor.downField("mode").as[String].toOption.getOrElse("")
+          nebflow.core.SafetyMode.fromWire(rawMode) match
+            case None =>
+              BadRequest(
+                Json.obj(
+                  "error" -> s"unknown mode '$rawMode' — valid: confirm-edits, auto-edits, auto-all".asJson
+                )
+              )
+            case Some(mode) =>
+              val modeStr = nebflow.core.SafetyMode.toString(mode)
+              ConfigService.setSafetyDefaultMode(modeStr) *>
+                wsHub.broadcast(Json.obj("type" -> "configUpdated".asJson, "success" -> true.asJson)) *>
+                Ok(Json.obj("updated" -> true.asJson, "defaultMode" -> modeStr.asJson))
         }
       }
 
