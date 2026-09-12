@@ -12,6 +12,13 @@ import java.time.format.DateTimeFormatter
 case class SystemReminder(category: String, content: String):
   def render: String = s"<system-reminder>\n$content\n</system-reminder>"
 
+/** Plugin-surface change payload (plugins-live 批 2026-09-12): the rendered
+  * `# Plugin Catalog` section as it was last visible to the session (`previous`,
+  * = the spawn-time first-message snapshot / the last announced value) versus the
+  * current render (`current`). Produced by AgentCore's change detection and
+  * consumed by [[SystemReminders.pluginSurfaceReminder]]. */
+case class PluginSurfaceChange(previous: String, current: String)
+
 object SystemReminder:
 
   def renderAll(reminders: List[SystemReminder]): String =
@@ -78,6 +85,11 @@ object SystemReminders:
    *    supplies a pre-computed +/- delta of mounted projects; empty when no
    *    change. systemStable carries the full list at lifecycle nodes, mid-session
    *    mount/unmount/create is reported here instead of invalidating the cache.
+   *  - plugin-surface: dispatcher sessions only (plugins-live 批 2026-09-12) —
+   *    caller supplies the previous/current rendered Plugin Catalog section; the
+   *    reminder is emitted on a real change and is PERSISTED (see
+   *    SystemReminders.isPluginSurfaceReminderMessage) so a closed plugin's
+   *    capability stays retracted for every later turn of the same session.
    *
    * Reminder audit (2026-08-19): time-context (peak/off-peak + next idle
    * window) removed entirely — user flagged "Off-peak hours." as noise
@@ -94,7 +106,8 @@ object SystemReminders:
     language: Option[String] = None,
     isRootAgent: Boolean = false,
     injectTime: Boolean = true,
-    mountedProjectsDelta: String = ""
+    mountedProjectsDelta: String = "",
+    pluginSurfaceChange: Option[PluginSurfaceChange] = None
   ): IO[List[SystemReminder]] =
     if !isUserTurn then IO.pure(Nil)
     else
@@ -109,7 +122,10 @@ object SystemReminders:
           // reminder whenever text is non-empty (schedule stays Nebula-only).
           tasksReminder(taskListText) ++
           languageReminder(language) ++
-          projectsReminder(mountedProjectsDelta)
+          projectsReminder(mountedProjectsDelta) ++
+          // Plugins-live (2026-09-12): dispatcher sessions only — the caller
+          // supplies the change pair and never calls here without one.
+          pluginSurfaceReminder(pluginSurfaceChange)
       yield reminders
 
   /** Devices changed since systemStable was built (cache v2; delta lines 2026-08-20). */
@@ -134,6 +150,101 @@ object SystemReminders:
   private def projectsReminder(mountedProjectsDelta: String): Option[SystemReminder] =
     if mountedProjectsDelta.isEmpty then None
     else Some(SystemReminder("projects", s"Mounted projects changed:\n$mountedProjectsDelta"))
+
+  // ------------------------------------------------------------------
+  // Plugin surface (plugins-live 批 2026-09-12)
+  // ------------------------------------------------------------------
+
+  /** Reminder category for the plugin-surface delta (AgentCore splits it out of
+    * `collectAllIO`'s result and PERSISTS it — see [[isPluginSurfaceReminderMessage]]). */
+  val PluginSurfaceCategory: String = "plugin-surface"
+
+  /** First line of every plugin-surface reminder body — the persisted-message
+    * marker ([[isPluginSurfaceReminderMessage]]) and the human/grep anchor. */
+  val PluginSurfaceMarker: String = "Plugin surface changed"
+
+  /**
+   * Plugin trust/`plugins.enabled` changed for a session that carries a Plugin
+   * Catalog in context (dispatcher sessions — `ProjectActor.pluginCatalogText`
+   * renders it into the FIRST message only). Without this channel an already-open
+   * dispatcher session keeps seeing the spawn-time catalog forever: revoking a
+   * plugin does not refresh it, so the session still plans nodes against a
+   * capability that is no longer allocatable (author report 2026-09-12 12:52).
+   *
+   * Semantics (same shape as the devices/projects delta channels): the caller
+   * (AgentCore) compares the catalog **as last announced to this session** with
+   * the current render and calls here only on a real change — no change ⇒ `None`
+   * ⇒ zero injection.
+   *
+   * Content rules:
+   *  - closed plugins are named ONLY (no description) under an explicit VOID
+   *    clause — their capability description must not be re-advertised;
+   *  - the current catalog is carried verbatim as the authoritative value, with an
+   *    explicit supersede clause covering the first message's catalog section
+   *    (the original context is never rewritten);
+   *  - re-opened plugins get their catalog line back.
+   */
+  def pluginSurfaceReminder(change: Option[PluginSurfaceChange]): Option[SystemReminder] =
+    change.filter(c => c.previous != c.current).map(c => SystemReminder(PluginSurfaceCategory, renderPluginSurfaceChange(c)))
+
+  /** Render the authoritative plugin-surface reminder body (pure — unit-testable). */
+  private[core] def renderPluginSurfaceChange(c: PluginSurfaceChange): String =
+    val previous = catalogEntries(c.previous)
+    val current = catalogEntries(c.current)
+    val removed = (previous.keySet -- current.keySet).toList.sorted
+    val added = (current.keySet -- previous.keySet).toList.sorted
+    val sb = scala.collection.mutable.ListBuffer.empty[String]
+    sb += s"""$PluginSurfaceMarker — authoritative。本提醒是本会话**当前插件面**的权威值："""
+    sb += "取代本会话首条消息里的 `# Plugin Catalog` 段以及更早的 Plugin surface 提醒；前文目录段中已关闭插件的能力条目一律作废。"
+    if removed.nonEmpty then
+      sb += ""
+      sb += "已关闭 / 不再可用（其能力描述作废——不得据此选配 plugins，也不得建依赖该能力的节点）："
+      removed.foreach(n => sb += s"- $n")
+    if added.nonEmpty then
+      sb += ""
+      sb += "已批准 / 重新可用（可正常选配）："
+      added.foreach(n => sb += s"- ${current.getOrElse(n, n)}")
+    sb += ""
+    sb += "当前插件面（权威目录）："
+    val body = c.current.trim
+    if body.isEmpty then sb += "- （当前无可分配插件）" else sb += body
+    sb.mkString("\n")
+
+  /** `- name: rest` line map of a rendered catalog section (header and the
+    * absence note are not `- ` lines and are skipped). Values are the line body
+    * WITHOUT the list prefix (callers add `- ` themselves). */
+  private def catalogEntries(catalog: String): Map[String, String] =
+    catalog.linesIterator
+      .filter(_.startsWith("- "))
+      .map(_.drop(2))
+      .flatMap { entry =>
+        val i = entry.indexOf(':')
+        val name = if i > 0 then entry.take(i).trim else entry.trim
+        Option.when(name.nonEmpty)(name -> entry)
+      }
+      .toMap
+
+  /** True when a persisted User message is a plugin-surface reminder. */
+  def isPluginSurfaceReminderMessage(msg: Message): Boolean =
+    msg.role == MessageRole.User && (msg.content match
+      case Left(text) => text.contains(PluginSurfaceMarker)
+      case Right(_) => false)
+
+  /** Keep only the newest [[MaxPersistedPluginSurfaceReminders]] plugin-surface
+    * reminders in session history. Each reminder is authoritative and carries the
+    * full current catalog, so an older one is fully subsumed by the newer one —
+    * dropping it loses nothing and bounds history growth (mirrors
+    * [[pruneTimeReminders]]). Called at injection time. */
+  def prunePluginSurfaceReminders(messages: List[Message]): List[Message] =
+    val idx = messages.zipWithIndex.collect { case (m, i) if isPluginSurfaceReminderMessage(m) => i }
+    if idx.size <= MaxPersistedPluginSurfaceReminders then messages
+    else
+      val dropSet = idx.take(idx.size - MaxPersistedPluginSurfaceReminders).toSet
+      messages.zipWithIndex.collect { case (m, i) if !dropSet.contains(i) => m }
+
+  /** Max persisted plugin-surface reminders kept in session history (the newest
+    * one already supersedes every older one). */
+  val MaxPersistedPluginSurfaceReminders: Int = 1
 
   /** Summary of this session's pending (untriggered) scheduled tasks. */
   private def pendingScheduleReminder(pending: List[ScheduledTask]): Option[SystemReminder] =

@@ -43,6 +43,13 @@ object DispatcherContextCatalog:
     * 2026-09-10 收敛——段头/行格式/过滤链与调试预览同字节输出，无本地重复实现）。 */
   def pluginSection(): IO[String] = PluginRegistry.renderCatalog()
 
+  /** 插件段 + 数据根渲染（plugins-live 批 2026-09-12）：与 [[render]] 注入首条
+    * 消息的插件段同字节规则（`{{data_root}}` 同上渲染）——会话内收敛提醒
+    * （AgentCore 的 plugin-surface 通道）拿它当**权威现值**，与首条消息里的
+    * spawn 期快照区分开。substituteDataRoot 单点复用，勿复制实现。 */
+  def pluginSectionResolved(): IO[String] =
+    pluginSection().map(nebflow.core.PathUtil.substituteDataRoot)
+
   /** Model Preset 场景目录段：全部 preset，read-fresh（catalogLines 内部
     * Try 包裹——读失败降级 Nil = 段省略，不炸 prompt 组装）。行 = 既有渲染器
     * "name — description" 输出加列表前缀，与插件行格式对齐。 */
