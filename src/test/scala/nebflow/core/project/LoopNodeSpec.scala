@@ -206,17 +206,22 @@ class LoopNodeSpec extends CatsEffectSuite:
   override def beforeEach(context: munit.BeforeEach): Unit = ProjectRuntimeRegistry.clear
   override def afterEach(context: munit.AfterEach): Unit = ProjectRuntimeRegistry.clear
 
-  /** 创建 loop 入口节点（task + 无 in + out=Nebula + loop 配置）；auto-start 由 createNode 触发。 */
+  /** 创建 loop 入口节点（task + 无 in + 显式门集 out + loop 配置）；auto-start 由 createNode 触发。
+    * out 字面 = `"(pass,failed)Nebula"`（2026-09-12 裁定 1/2 后 loop 门集必须同时覆盖两腿；
+    * 旧字面 bare `"Nebula"` 今日已落为 `{pass}/signal` 出口标记 ⇒ 被 NODE_LOOP_GATE_INCOMPLETE
+    * 拒）。今日两写法落边逐字等价（`{pass,failed}/result`）⇒ 其余断言零变更。 */
   private def createLoop(
-    project: String, name: String, task: String, maxRounds: Int, ctx: ToolContext
+    project: String, name: String, task: String, maxRounds: Int, ctx: ToolContext,
+    // A3（2026-09-12 批）：out 字面可注入——`None` = **不传 out**（空 out 豁免面）。
+    outLiteral: Option[String] = Some("(pass,failed)Nebula")
   ): IO[Either[String, String]] =
-    nodeEdit(nodeInput(project, name,
+    val base = List(
       "description" -> Json.fromString("loop node purpose"),
       "task" -> Json.fromString(task),
       "loop" -> Json.fromBoolean(true),
       "maxRounds" -> Json.fromInt(maxRounds),
-      "verify" -> Json.fromString("general"),
-      "out" -> Json.fromString("Nebula")), ctx)
+      "verify" -> Json.fromString("general"))
+    nodeEdit(nodeInput(project, name, (base ++ outLiteral.map("out" -> Json.fromString(_))) *), ctx)
 
   // ── ① worker PASS → completed ──────────────────────────
 
@@ -463,6 +468,96 @@ class LoopNodeSpec extends CatsEffectSuite:
       assert(payload.hcursor.downField("loop").focus.isEmpty, "non-loop node payload must not carry a loop field")
       assert(payload.hcursor.downField("loopRound").focus.isEmpty, "non-loop node payload must not carry loopRound")
       assert(payload.hcursor.downField("loopPhase").focus.isEmpty, "non-loop node payload must not carry loopPhase")
+  }
+
+  // ── ⑧ loop 门集不变量（A3 · 2026-09-12 裁定 2/3）─────────────
+
+  test("⑧ loop gate invariant: bare/single-leg out rejected on create + edit + mirror-append (create & edit paths), empty out exempt, non-loop untouched") {
+    val ws = tempRoot / "ws-gate"
+    os.makeDir.all(ws)
+    val system = ActorSystem(s"loop-gate-${scala.util.Random.nextInt(100000)}")
+    val llm = LoopLlm(_ => "ok")
+    def legacyLoop(id: String, name: String, out: List[OutEdge]) =
+      NodeDef(id = id, name = name, agent = "general", out = out, loop = Some(LoopConfig(maxRounds = 3)),
+        status = NodeLifecycle.Wiring, createdAt = System.currentTimeMillis())
+    for
+      res <- mkResources(system, tempRoot, llm.handle)
+      rt <- mountProject("loop-gate", ws, system, res)
+      ctx = mkCtx(res, system, ws.toString)
+      // (a) loop + bare "Nebula"（今日 = 单腿 {pass}/signal 出口标记）→ 拒
+      rBare <- createLoop("loop-gate", "l-bare", "t-bare", 3, ctx, outLiteral = Some("Nebula"))
+      // (b) loop + 显式单腿 "(pass)Nebula" → 拒（缺 'failed' 腿）
+      rOneLeg <- createLoop("loop-gate", "l-oneleg", "t-one", 3, ctx, outLiteral = Some("(pass)Nebula"))
+      sRej <- rt.store.snapshot
+      // (c) loop + 不传 out（空 out）→ 合法（空 out 豁免：不变量只作用于已声明的边）
+      rEmpty <- createLoop("loop-gate", "l-empty", "t-empty", 3, ctx, outLiteral = None)
+      emptyId <- idOf(rt, "l-empty")
+      emptyNode <- nodeById(rt, emptyId).map(_.getOrElse(fail("l-empty must exist")))
+      // (d) 非 loop 节点 + bare "Nebula" → 合法（不变量只在 loop 生效）
+      rPlain <- nodeEdit(nodeInput("loop-gate", "plain-ok", "description" -> Json.fromString("plain node"),
+        "task" -> Json.fromString("plain-task"), "out" -> Json.fromString("Nebula")), ctx)
+      // (e) 改接侧 self 预检：把 loop 节点的 out 改成单腿 → 拒，原边集一字不动
+      _ <- createLoop("loop-gate", "l-edit", "t-edit", 3, ctx)
+      editId <- idOf(rt, "l-edit")
+      rEdit <- nodeEdit(nodeInput("loop-gate", "l-edit", "out" -> Json.fromString("(pass)Nebula")), ctx)
+      editAfter <- nodeById(rt, editId).map(_.getOrElse(fail("l-edit must exist")))
+      // (f) 镜像追加路径（下游 in: 声明 ⇒ 上游 out 追加缺省 pass 边）：上游 = 存量式单腿
+      //     loop（store 直种，零回溯）⇒ 追加后仍缺 failed ⇒ 整调用拒、下游不落库
+      _ <- rt.store.mutate(s => s.copy(nodes = s.nodes ++ Map(
+        "n-legacy-loop" -> legacyLoop("n-legacy-loop", "legacy-loop",
+          List(OutEdge(OutEdge.NebulaTarget, Set(OutEdge.Pass), OutEdge.Result))))))
+      rMirror <- nodeEdit(nodeInput("loop-gate", "down-1", "description" -> Json.fromString("downstream"),
+        "in" -> Json.fromString("n-legacy-loop")), ctx)
+      sMirror <- rt.store.snapshot
+      legacyAfter <- nodeById(rt, "n-legacy-loop")
+      // (g) 反向对照：合规 loop 上游（两腿）⇒ 镜像追加放行，in 账本落库
+      _ <- rt.store.mutate(s => s.copy(nodes = s.nodes ++ Map(
+        "n-up-ok" -> legacyLoop("n-up-ok", "up-ok",
+          List(OutEdge(OutEdge.NebulaTarget, Set(OutEdge.Pass, OutEdge.Failed), OutEdge.Result))))))
+      rMirrorOk <- nodeEdit(nodeInput("loop-gate", "down-2", "description" -> Json.fromString("downstream"),
+        "in" -> Json.fromString("n-up-ok")), ctx)
+      upOkId <- idOf(rt, "up-ok")
+      upOk <- nodeById(rt, upOkId)
+      down2Id <- idOf(rt, "down-2")
+      down2 <- nodeById(rt, down2Id)
+      // (h) 镜像追加路径的 **edit 侧**预检（R3 覆盖缺口）：对**已存在**节点补 in 声明 ⇒
+      //     adds 非空、上游 = 存量式单腿 loop ⇒ 同款判据在任何写之前整调用拒、双向零残留。
+      //     （与 (f) 的 create 侧同源判据两路各一例；缺此例时改 edit 侧预检为 None 无测试变红。）
+      _ <- nodeEdit(nodeInput("loop-gate", "down-3", "description" -> Json.fromString("downstream"),
+        "task" -> Json.fromString("downstream work")), ctx)
+      down3Id <- idOf(rt, "down-3")
+      rEditMirror <- nodeEdit(nodeInput("loop-gate", "down-3", "in" -> Json.fromString("n-legacy-loop")), ctx)
+      down3After <- nodeById(rt, down3Id)
+      legacyAfter2 <- nodeById(rt, "n-legacy-loop")
+      _ <- system.stopAll.handleErrorWith(_ => IO.unit)
+    yield
+      assert(rBare.isLeft && rBare.left.exists(_.contains("NODE_LOOP_GATE_INCOMPLETE")),
+        s"(a) loop + bare Nebula must be rejected, got: $rBare")
+      assert(rBare.left.exists(_.contains("'failed'")), s"(a) the error must name the missing leg, got: $rBare")
+      assert(rOneLeg.isLeft && rOneLeg.left.exists(_.contains("NODE_LOOP_GATE_INCOMPLETE")),
+        s"(b) loop + single-leg explicit gate set must be rejected, got: $rOneLeg")
+      assert(sRej.nodes.values.forall(n => n.name != "l-bare" && n.name != "l-oneleg"),
+        "(a)(b) rejected creates must leave NO node behind (zero residue)")
+      assert(rEmpty.isRight, s"(c) loop + EMPTY out must be legal (empty-out exemption), got: $rEmpty")
+      assertEquals(emptyNode.out, Nil, "(c) no edge is fabricated for the empty-out loop")
+      assert(rPlain.isRight, s"(d) non-loop node + bare Nebula must stay legal, got: $rPlain")
+      assert(rEdit.isLeft && rEdit.left.exists(_.contains("NODE_LOOP_GATE_INCOMPLETE")),
+        s"(e) editing a loop node to a single-leg out must be rejected, got: $rEdit")
+      assertEquals(editAfter.out, List(OutEdge(OutEdge.NebulaTarget, Set(OutEdge.Pass, OutEdge.Failed), OutEdge.Result)),
+        "(e) the rejected edit must leave the previous edge set untouched")
+      assert(rMirror.isLeft && rMirror.left.exists(_.contains("NODE_LOOP_GATE_INCOMPLETE")),
+        s"(f) mirror append onto a single-leg loop upstream must be rejected, got: $rMirror")
+      assert(sMirror.nodes.values.forall(_.name != "down-1"), "(f) the rejected call must not land the downstream node")
+      assertEquals(legacyAfter.map(_.out), Some(List(OutEdge(OutEdge.NebulaTarget, Set(OutEdge.Pass), OutEdge.Result))),
+        "(f) zero residue: the legacy upstream edge set must stay untouched")
+      assert(rMirrorOk.isRight, s"(g) mirror append onto a two-leg loop upstream must pass, got: $rMirrorOk")
+      assert(upOk.exists(_.out.exists(_.to == down2Id)), "(g) the mirror edge must be appended onto the loop upstream")
+      assert(down2.exists(_.in.contains(upOkId)), "(g) the downstream in ledger must record the upstream")
+      assert(rEditMirror.isLeft && rEditMirror.left.exists(_.contains("NODE_LOOP_GATE_INCOMPLETE")),
+        s"(h) EDIT-side mirror append onto a single-leg loop upstream must be rejected, got: $rEditMirror")
+      assertEquals(down3After.map(_.in), Some(List.empty[String]), "(h) zero residue: the downstream in ledger must stay empty")
+      assertEquals(legacyAfter2.map(_.out), Some(List(OutEdge(OutEdge.NebulaTarget, Set(OutEdge.Pass), OutEdge.Result))),
+        "(h) zero residue: the legacy upstream edge set must stay untouched")
   }
 
 end LoopNodeSpec

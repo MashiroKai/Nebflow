@@ -90,10 +90,11 @@ object NodeTools:
     *   out="B"                  → List(OutEdge("B"))                          旧单值等价
     *   out="(pass)B, (failed)C" → List(OutEdge("B"), OutEdge("C",{failed}))   扇出
     *   out="(failed)C:signal"   → List(OutEdge("C",{failed},"signal"))        失败纯信号边
-    * 段语法：(gates)? target (:mode)?——gates 逗号分隔 ⊆{pass,failed}（缺省 pass；
-    * **Nebula 缺省 {pass,failed}**=completed/failed 双通报旧形态零漂移，显式门控按
-    * 声明收紧）；mode ∈{result,signal}（缺省 result）。null/"null" → Nil = 断开
-    *（编辑侧 EMPTY_NODE_CONNECTION 守卫区分「未传」与「显式断开」，语义不变）；
+    * 段语法：(gates)? target (:mode)?——gates 逗号分隔 ⊆{pass,failed}（缺省 pass）；
+    * mode ∈{result,signal}（缺省 result）。**Nebula 两态语义（2026-09-12 裁定 1，
+    * R1-a）**：隐式门（bare `"Nebula"`）＝纯出口标记 ⇒ `on={pass}` + `mode=signal`
+    *（零投递、只记账）；显式门集 `"(pass)Nebula"` / `"(pass,failed)Nebula"` ＝通知
+    * 声明（按声明门 + 声明 mode 真投递）。null/"null" → Nil = 断开（空 out 合法）；
     * JSON 数组 → 拒（1 对多改用逗号段语法）。输出经 canonical 规范化（同 (to,mode)
     * 合并 on 集）。纯函数便于单测。 */
   def parseOut(outJson: Option[Json]): Either[String, List[OutEdge]] =
@@ -161,9 +162,18 @@ object NodeTools:
       else if target.equalsIgnoreCase("null") then Left(s"invalid out segment '$seg': null is only valid as the whole out value")
       else if !OutEdge.Modes.contains(mode) then Left(s"invalid out mode ':$mode' in '$seg' — mode ∈ {result, signal}")
       else
-        // Nebula 缺省双通报门（旧形态零漂移）；显式门控按声明
-        val on = if target == OutEdge.NebulaTarget && gatesImplicit then OutEdge.NebulaDefaultOn else declaredGates
-        Right(OutEdge(target, on, mode))
+        // 2026-09-12 裁定 1（R1-a）——Nebula 边两态分叉（隐式门 = 出口标记）：
+        //   隐式门（bare "Nebula"）→ on={pass} + mode=signal：**零投递、只记账**
+        //     （nebulaDelivery/deliverFailed 走既有 Signal 分支 ⇒ 不投 root，亦不补投）。
+        //     该分支连写的 :mode 被出口标记语义整体覆盖——裁定 1 明文「显式回传 = 写字面
+        //     门集形态」，隐式门不是声明面（要通知必须补门集）。
+        //   显式门集（"(pass)Nebula" / "(pass,failed)Nebula"）→ 按声明门 + 声明 mode
+        //     （缺省 result）真投递 = 通知声明。
+        // NebulaDefaultOn 不再经本路径：它只服务存量读路径（fromLegacyString /
+        // OutEdge.nebula）——两处语义自此分叉（见 ProjectTypes.OutEdge.NebulaDefaultOn 注释）。
+        if target == OutEdge.NebulaTarget && gatesImplicit then
+          Right(OutEdge(OutEdge.NebulaTarget, OutEdge.DefaultOn, OutEdge.Signal))
+        else Right(OutEdge(target, declaredGates, mode))
     }
 
   /** in 参数宽容解析（修复次因 B）：三形态统一接受——
@@ -190,12 +200,75 @@ object NodeTools:
         else Right(s.split(',').map(_.trim).filter(_.nonEmpty).toList)
       case Some(_) => Left("'in' must be a node id string or an array of node ids")
 
+  /** 悬空提示（W1 = O-B 必做 4，2026-09-12 批）：创建/改接成功结果尾部一行提示——与
+    * 既有 `stalledInWarning` **同款形态**（成功结果尾部附 ⚠ 行，非阻断）。判据 = 本次调用
+    * 结束态该节点无出边 ⇒ 结果将滞留（零投递、零升根，见裁定第 3 条），接线后自动投递。
+    * 0 spawn、零新字段、零持久痕迹（与 W2 的 `wiringGap` 载荷键互为「决策当下可见 /
+    * 巡检可见」两面）。 */
+  def wiringGapHint(nodeName: String, nodeId: String): List[String] =
+    List(
+      s"⚠ node '$nodeName' ($nodeId) has NO out edge — its result will be retained on the node (zero delivery, no root notify). " +
+        "Wire an out edge later (NodeEdit out=<target>, or a downstream in=<this node id>) and the retained result is delivered then.")
+
+  /** loop 门集不变量（**P-2 强读法**，2026-09-12 裁定 2/3）——判定单点（纯函数）。
+    *
+    * 判据（写死）：`loop.exists(_.enabled)`（与引擎实际路由键 `NodeEngine.spawnAndRun`
+    * 的 `node.loop.exists(_.enabled)` 同源，**不是** `loop.isDefined`）∧ 最终边集非空 ∧
+    * 未**同时覆盖** pass 与 failed 两腿 ⇒ 拒。**空 out 豁免**（out 可空置：结果留在
+    * result，接线后再投递）——否则与「out 可空置」裁定直接冲突（该形态下 P-2 不可判，
+    * 是已接受的不可判窗口）。**存量零回溯**：只在写路径入口判定（新建/改接），
+    * 落盘加载路径（`Decoder[List[OutEdge]]` / `fromLegacyString`）一行不改。
+    *
+    * 为何 loop 单独收紧：loop 是唯一「两腿终态都由引擎内部决定」的节点类型（PASS 由
+    * 内部 verify 裁决、FAIL 由轮帽/执行层失败触发）⇒ out 门集是它**唯一**的对外意图
+    * 声明面，隐式/单腿门会让「PASS 要不要升根 / 达 K 轮失败要不要升根」在拓扑上不可读。
+    *
+    * @return Some(可行动错误) = 拒；None = 合规。 */
+  def loopGateViolation(loopEnabled: Boolean, name: String, finalOut: List[OutEdge]): Option[String] =
+    if !loopEnabled || finalOut.isEmpty then None
+    else
+      val edges = OutEdge.canonical(finalOut)
+      val hasPass = edges.exists(_.on.contains(OutEdge.Pass))
+      val hasFailed = edges.exists(_.on.contains(OutEdge.Failed))
+      if hasPass && hasFailed then None
+      else
+        val missing =
+          if hasPass then "'failed'" else if hasFailed then "'pass'" else s"'pass'+'failed'"
+        Some(
+          s"loop node '$name' must route BOTH legs — its out edges must cover 'pass' and 'failed' (missing: $missing). " +
+            "A loop's PASS is decided by its inner verify and its FAIL by the round cap / execution failure, so a bare or " +
+            "one-legged route leaves one outcome invisible: write an explicit gate set, e.g. out: \"(pass,failed)<target>\" " +
+            "(one edge, both legs) or \"(pass)<target>, (failed)<fallback>:signal\". Leaving out EMPTY is legal (result " +
+            "retained, delivered when wired). (NODE_LOOP_GATE_INCOMPLETE)")
+
+  /** NodeDef 形态的重载（写路径入口用）。 */
+  def loopGateViolation(node: NodeDef, finalOut: List[OutEdge]): Option[String] =
+    loopGateViolation(node.loop.exists(_.enabled), node.name, finalOut)
+
+  /** 镜像追加路径（下游 `in:` 声明 ⇒ 上游 out 追加缺省 pass 边）的 loop 门集预检
+    * （裁定 3 明文要求覆盖的面：该路径不经 outJson 校验点，故必须在**写路径**上判）。
+    *
+    * 复算方式：逐条调用**真实的落盘收敛函数** `appendEdgeTo` 得到追加后的上游边集再判
+    * ——不复制其条件（单一真相源，避免「幂等不追加」分支被镜像成第二套语义）。归档
+    * 上游不在活动区 Map ⇒ `appendEdgeTo` 恒为 no-op（与 create 事务内行为一致）。
+    *
+    * @return Some(错误) = 拒（调用方必须在**任何写之前**拒绝整调用 ⇒ 不落库/不落边/零残留）。 */
+  def loopGateForAppends(nodes: Map[String, NodeDef], upIds: List[String], toNodeId: String): Option[String] =
+    upIds.distinct.iterator.flatMap { upId =>
+      NodeTools.appendEdgeTo(nodes, upId, toNodeId).get(upId).flatMap(up => loopGateViolation(up, up.out))
+    }.nextOption()
+
   /** 事务内设 out 边集（单权威，P1 多边版）：被移除边目标 in 移除 + 新增边目标 in
     * 追加 + 本节点 out 替换（canonical 规范化落库）。同 to 保留边不重触发 in 写
     *（幂等）。归档感知（fix a「新建边→归档上游」修复 20260903）：from 在归档区
     * 时——活动区侧照常做目标 in 增删，from.out 补写归档区（mutateArchive；归档节点
     * 不可复活，仅元数据保持单权威一致）；旧目标也在归档区时其 in 不回写（归档 in
-    * 表是死数据，避免跨区二跳写）。 */
+    * 表是死数据，避免跨区二跳写）。
+    *
+    * **loop 门集不变量（裁定 3 的落盘收敛点）**：写入前用 `loopGateViolation` 复查最终
+    * 边集——违规即**拒写**（ERROR 留痕，本函数是写路径单权威，防未来新调用方绕过前置
+    * 预检）。正常路径不可达：创建/改接的**前置预检**（`loopGateForAppends` + 改接侧
+    * self 预检）已用同一判据在任何写之前拒绝整调用 ⇒ 零残留。 */
   def setOut(rt: ProjectRuntime, fromId: String, newOut: List[OutEdge]): IO[Unit] =
     val newEdges = OutEdge.canonical(newOut)
     def rewire(nodes: Map[String, NodeDef], from: NodeDef): Map[String, NodeDef] =
@@ -212,9 +285,14 @@ object NodeTools:
       val afterAdded = newIds.diff(oldIds).foldLeft(afterRemoved)((acc, tid) =>
         acc.get(tid).map(tn => acc.updated(tid, tn.copy(in = (tn.in :+ fromId).distinct))).getOrElse(acc))
       afterAdded.updated(fromId, from.copy(out = newEdges))
+    def sinkGuard(node: NodeDef): Option[String] = NodeTools.loopGateViolation(node, newEdges)
     rt.store.getNode(fromId).flatMap {
-      case Some(_) =>
-        rt.store.mutate { s => s.copy(nodes = rewire(s.nodes, s.nodes(fromId))) }.void
+      case Some(from) =>
+        sinkGuard(from) match
+          case Some(err) =>
+            IO(logger.errorSync(s"[loop-gate] setOut REFUSED (write skipped, sink invariant): $err"))
+          case None =>
+            rt.store.mutate { s => s.copy(nodes = rewire(s.nodes, s.nodes(fromId))) }.void
       case None =>
         rt.store.findNode(fromId).flatMap {
           case None => IO.unit // 两区皆无（并发 TTL 迁移已删）→ no-op
@@ -222,14 +300,22 @@ object NodeTools:
             // 归档分支：活动侧做目标 in 增删（rewire），但 rewire 会把 from 按
             // 活动节点回插（updated(fromId, …)）——归档原件必须剔除，不复活进活动区
             //（历史损伤 n-52670d20 形态回归面：NodeEdgeRepairSpec ③）。
-            rt.store.mutate { s => s.copy(nodes = rewire(s.nodes, archFrom) - fromId) }.void *>
-              rt.store.mutateArchive(a => a.copy(nodes = a.nodes.updatedWith(fromId)(_.map(_.copy(out = newEdges))))).void
+            sinkGuard(archFrom) match
+              case Some(err) =>
+                IO(logger.errorSync(s"[loop-gate] setOut REFUSED (archive write skipped, sink invariant): $err"))
+              case None =>
+                rt.store.mutate { s => s.copy(nodes = rewire(s.nodes, archFrom) - fromId) }.void *>
+                  rt.store.mutateArchive(a => a.copy(nodes = a.nodes.updatedWith(fromId)(_.map(_.copy(out = newEdges))))).void
         }
     }
 
   /** in 声明的边侧镜像（P1 事务内纯函数）：上游 out **追加**指向本节点的缺省 pass
     * 边——上游已有指向本节点的边（任意门控）则保持不变（in 声明不覆盖既有门控声明，
-    * 扇出拓扑的其它边零扰动；旧单值世界的「改指」语义由多边追加天然兼容）。 */
+    * 扇出拓扑的其它边零扰动；旧单值世界的「改指」语义由多边追加天然兼容）。
+    *
+    * **loop 门集不变量面（裁定 3）**：本函数是镜像追加路径的落盘收敛点，调用方
+    * （create 事务 / edit 侧 `setOut`）必须在写前用 `loopGateForAppends` 预检——它
+    * 直接调用本函数复算追加后的上游边集，故「幂等不追加」分支零复制。 */
   def appendEdgeTo(nodes: Map[String, NodeDef], upId: String, toNodeId: String): Map[String, NodeDef] =
     nodes.get(upId) match
       case Some(up) if !up.out.exists(_.to == toNodeId) =>
@@ -520,7 +606,7 @@ object NodeEditTool extends Tool:
 - in (optional): upstream id(s) added as barrier inputs (multi-in = barrier); each upstream's out gains a default pass edge here (existing edges kept).
 - deps (optional, replace-on-provide): upstream id(s) awaited for COMPLETION SIGNAL only — no result injected (input = own task; needs result? in, ordering only? deps). Passed (any form, incl []/null) = whole-list replacement. failed/cancelled/blocked upstream never triggers; running upstream legal; editing deps on RUNNING node rejected (input frozen).
 - retry (optional, downstream-held like deps): failed auto-retry {upstream:"<in/deps-neighbor>", max:N} or "<id>:<N>"; null clears. On FAIL with gen<N: auto-reactivates self (gen+1) and re-runs that upstream — fresh result re-delivers via the pass edge (replaces that round's failed notify; retry logged); gen≥N → failed + RetryCap escalation. max 1-10; neighbor-only (NODE_RETRY_NEIGHBOR); chain acyclic (NODE_RETRY_CYCLE).
-- out (required on create; rewrites the edge set on edit): "B" = pass edge with result payload (legacy); "Nebula" = root notify on completed+failed; fan-out "(pass)B, (failed)C"; failure edge to a node = "(failed)C:signal". Gates ⊆ pass,failed (default pass — legacy zero-drift; implicit-gate Nebula = pass+failed); mode :result (payload; default) | :signal (signal only — deps parity). null disconnect rejected — rewire (EMPTY_NODE_CONNECTION). on-failed edge into a merge node rejected (NODE_MERGE_PASS_ONLY).
+- out (optional; rewrites the edge set on edit; empty/null = dangling — result retained, auto-delivered when wired): "B" = pass edge with payload (legacy); "Nebula" = EXIT MARKER (pass/signal ⇒ no root notify); root notify = gate set "(pass)Nebula" / "(pass,failed)Nebula"; fan-out "(pass)B, (failed)C"; failure edge = "(failed)C:signal". Gates ⊆ pass,failed (default pass); mode :result (payload; default) | :signal (signal only — deps parity). Loop nodes must cover pass AND failed. on-failed edge into a merge node rejected (NODE_MERGE_PASS_ONLY).
 - plugins (optional, replace-on-provide): plugin name(s) — THE capability mechanism (no per-node agent; nodes run general). A plugin = skills + mcp.json (either alone valid); allocation injects skills into the first message, starts MCP servers (mcp__plugin_<p>_<s>__<t>), grants builtin tools. Names must be in the Plugin Catalog AND trusted (default-deny).
 - worktree (optional boolean, create-time only): true = isolated git worktree auto-created at .nebflow/worktrees/<derived-from-name> (same-name branch, baseline main HEAD); immediate + fail-fast. Refused on edits.
 - preset: legacy (unused).
@@ -528,13 +614,13 @@ object NodeEditTool extends Tool:
 - notifyDispatcher (optional, default false): on COMPLETION (flag on), trigger a dispatcher session with this node's result reference (independent channel, no out-edge cost). Completion-only — failed notifies automatically (never flag-gated); blocked reserved. Settable/withdrawable while wiring/pending/running; dispatcher-created nodes default false.
 - Retired (rejected, NODE_AGENT_RETIRED): agent / skill / mcp — capability = plugins; legacy values display-only.
 ## Semantics
-- Create requires out AND an input side (task or in; coexist ok) → else EMPTY_NODE_CONNECTION. Entry (task + out) runs on create (async).
+- Create requires an input side (task or in; coexist ok) → else EMPTY_NODE_CONNECTION; out may be empty. Entry (task) runs on create (async).
 - out delivery: completed → pass edges fire (:result payload / :signal bare start; ≤1 delivery per (target,mode)). failed → on-failed :signal edges fire; the rest keeps waiting (D5 zero-settlement — fix + reactivate the upstream; completion re-delivers via pass edges). Wiring into an already-FAILED upstream with no on-failed edge → non-blocking warning (manual fallback legal).
 - merge=true (create-only): batch landing sink — fires when ALL upstreams completed; upstream failure → blocked (upstream-incomplete). REQUIRES in ≥1 (NODE_MERGE_REQUIRES_UPSTREAM: create upstreams first); must NOT carry worktree (lands on workspace root repo).
-- Edit: in appends; deps replaces (when provided); out rewrites the whole edge set; description(s) replace (when provided). Rewire removing a consumed target (running/terminal) rejected — NodeCancel first; completed (or legacy dangling, pre-policy out=null) rewire → retained result auto-delivers to new targets (edge-gated).
+- Edit: in appends; deps replaces (when provided); out rewrites the whole edge set; description(s) replace (when provided). Rewire removing a consumed target (running/terminal) rejected — NodeCancel first; any terminal except blocked rewire → retained result auto-delivers to newly wired targets (edge-gated).
 - Blocked node edit (task/description/in/out/deps/loop changed) reactivates: status → wiring/pending, deliveredTo cleared, blockCount kept, completed upstreams re-delivered, reruns. No-op if nothing changed.
 - Failed node edit: actual change (task/description/in/out/deps/loop) on a FAILED node reactivates like blocked — first-choice recovery (topology kept); round history resets (blockCount→0; next real failure notifies again). completed/cancelled not reactivatable (create successor instead).
-- Validation (0 spawn except worktree): description rules; referenced nodes exist; DAG cycle check; running target → input frozen. Result = agent's final output, auto-saved per-node, delivered along out ("Nebula" → root session). Full result: NodeList(detail=<nodeId>)."""
+- Validation (0 spawn except worktree): description rules; referenced nodes exist; DAG cycle check; running target → input frozen. Result = agent's final output, auto-saved per-node, delivered along out (gate-set "Nebula" → root). Full result: NodeList(detail=<nodeId>)."""
   val inputSchema = JsonObject.fromIterable(
     List(
       "type" -> "object".asJson,
@@ -553,7 +639,7 @@ object NodeEditTool extends Tool:
           Json.obj("type" -> "array".asJson, "items" -> Json.obj("type" -> "string".asJson))
         ).asJson, "description" -> "Upstream node id(s) this node waits on for completion signal only (no result injected). Replace-on-provide: [] / null clears. Needs the result? Use in".asJson),
         "out" -> Json.obj("type" -> "string".asJson,
-          "description" -> "Out-edge spec (required on create; on edit replaces the whole edge set): edge = target + gates + mode. Target = node id OR node name (the engine resolves names to nodes for validation, in-edge mirrors and delivery). \"B\" = pass edge with payload (legacy); \"Nebula\" = root notify on completed+failed; fan-out \"(pass)B, (failed)C\"; node failure edge = \"(failed)C:signal\" (failure starts C on its own task — error text never injected). Gates (parens, comma-sep) ⊆ pass,failed — default pass; implicit-gate Nebula = pass+failed; explicit gates narrow. mode :result (payload; default) | :signal (barrier settle only — deps parity). On-failed edge into a merge node rejected (NODE_MERGE_PASS_ONLY); null disconnect rejected while an edge exists — rewire (EMPTY_NODE_CONNECTION); JSON arrays rejected — use segment syntax. Same (target,mode) edges merge gates".asJson),
+          "description" -> "Out-edge spec (OPTIONAL on create — empty/null leaves the node dangling: no delivery, no root notify, the result is retained and auto-delivered once wired; on edit replaces the whole edge set): edge = target + gates + mode. Target = node id OR node name (the engine resolves names to nodes for validation, in-edge mirrors and delivery). \"B\" = pass edge with payload (legacy); \"Nebula\" = EXIT MARKER (pass gate, mode=signal ⇒ zero delivery); to notify the root write an EXPLICIT gate set — \"(pass)Nebula\" / \"(pass,failed)Nebula\"; fan-out \"(pass)B, (failed)C\"; node failure edge = \"(failed)C:signal\" (failure starts C on its own task — error text never injected). Gates (parens, comma-sep) ⊆ pass,failed — default pass; explicit gates narrow. mode :result (payload; default) | :signal (barrier settle only — deps parity). Loop nodes must cover BOTH pass and failed (NODE_LOOP_GATE_INCOMPLETE). On-failed edge into a merge node rejected (NODE_MERGE_PASS_ONLY); JSON arrays rejected — use segment syntax. Same (target,mode) edges merge gates".asJson),
         "plugins" -> Json.obj("oneOf" -> Json.arr(
           Json.obj("type" -> "string".asJson),
           Json.obj("type" -> "array".asJson, "items" -> Json.obj("type" -> "string".asJson))
@@ -563,7 +649,7 @@ object NodeEditTool extends Tool:
         "merge" -> Json.obj("type" -> "boolean".asJson, "description" -> "Merge/collection node (batch landing sink, create-only): triggers only when ALL upstreams completed (in-barrier); an upstream failure converts this node to blocked (category=upstream-incomplete) instead of the collect placeholder-start. Must NOT carry 'worktree' — a merge node lands on the workspace root repo (sandbox root = workspace, .git writable); task should embed the upstream branch/worktree list + landing command set. REQUIRES 'in' (≥1 existing upstream id) on create — zero-upstream merge is rejected (NODE_MERGE_REQUIRES_UPSTREAM): create the upstreams first, then this node with in=<ids>".asJson),
         "notifyDispatcher" -> Json.obj("type" -> "boolean".asJson, "description" -> "dispatch-notify backflow: on terminal state (completion wired) trigger a dispatcher session with this node's result reference (independent signal channel, no out-edge cost). Settable/withdrawable while wiring/pending/running".asJson),
         "abandon" -> Json.obj("type" -> "boolean".asJson, "description" -> "Abandon a TERMINAL (blocked/completed/failed/cancelled), wiring/pending, or dead-session running node → cancelled, retained on map (no TTL — failed/cancelled never auto-archive; upper layer decides cleanup; audit-logged)".asJson),
-        "loop" -> Json.obj("type" -> "boolean".asJson, "description" -> "LoopNode flag (create/edit): true = this node iterates — a WORKER session produces a result, a VERIFY session checks it; PASS → delivered downstream; FAIL → worker re-runs (same session, constant input) up to maxRounds(K). false/omitted = normal single-pass node. A loop node still declares its normal in/out/deps (and may merge) — loop only adds the inner iterate-verify loop".asJson),
+        "loop" -> Json.obj("type" -> "boolean".asJson, "description" -> "LoopNode flag (create/edit): true = this node iterates — a WORKER session produces a result, a VERIFY session checks it; PASS → delivered downstream; FAIL → worker re-runs (same session, constant input) up to maxRounds(K). false/omitted = normal single-pass node. A loop node still declares its normal in/out/deps (and may merge) — loop only adds the inner iterate-verify loop. Its out MUST cover both pass and failed (NODE_LOOP_GATE_INCOMPLETE; empty out is legal).".asJson),
         "retry" -> Json.obj(
           "oneOf" -> Json.arr(
             Json.obj("type" -> "object".asJson, "properties" -> Json.obj(
@@ -851,17 +937,13 @@ object NodeEditTool extends Tool:
           case (_, Left(err), _) => IO.pure(Left(ToolError(err)))
           case (_, _, Left(err)) => IO.pure(Left(ToolError(err)))
           case (Right(ins), Right(deps), Right(out)) =>
-            // 校验五（连接规范收紧 v2，20260903 裁定①②③）：创建必须 (task ∨ in) ∧ out。
-            // out 是唯一出口权威边——悬空新节点不再支持，「先创建后补 out」工作流废弃；
-            // in 侧 task 即连接（入口节点 task+out 创建即运行语义保持），in 边与 task 可
-            // 并存；纯空挂载（无 task 无 in 无 out）由 out 检查一并拒绝。deps 是完成信号
-            // 不是输入内容，不计入 in 侧（deps+out 纯信号中继仍须 task 或 in 承载输入
-            // 语义）。错误码沿用 EMPTY_NODE_CONNECTION（两条文案都携带，供分发器自纠）。
-            if out.isEmpty then
-              IO.pure(Left(ToolError(
-                s"Node '$nodename' must declare 'out' on creation — a downstream node id or \"Nebula\" (flow exit). " +
-                  "Dangling nodes are no longer supported (create-then-wire-out is retired): wire the out edge in the same NodeEdit. (EMPTY_NODE_CONNECTION)")))
-            else if !task.exists(_.trim.nonEmpty) && ins.isEmpty then
+            // 校验五（**2026-09-12 作者裁定重写**：out 可空置）：创建必须 (task ∨ in)——
+            // **out 不再是创建必备边**（dangling 创建恢复合法：空 out = 零投递、零升根，
+            // 结果保留在 result，接线后自动投递给新接下游）。给 out 则目标必须存在（存在性/
+            // 环检在 proceed）且不得成环。in 侧 task 即连接（入口节点 task 创建即运行语义
+            // 保持），in 边与 task 可并存；纯空挂载（无 task 无 in）仍由此拒（deps 是完成
+            // 信号不是输入内容，不计入 in 侧）。错误码沿用 EMPTY_NODE_CONNECTION（供分发器自纠）。
+            if !task.exists(_.trim.nonEmpty) && ins.isEmpty then
               IO.pure(Left(ToolError(
                 s"Node '$nodename' must declare an input side — 'task' (entry semantics: starts running on create) or 'in' (barrier upstream). " +
                   "Out-only relay nodes are no longer supported. (EMPTY_NODE_CONNECTION)")))
@@ -977,6 +1059,13 @@ object NodeEditTool extends Tool:
       // P1 校验层②（spec §2.2）：下游持 in 边而上游已 failed 无 on-failed 边且非 merge →
       // WARNING（不阻断，人工兜底合法）——补投链/死锁可见性由既有 mount-stalled 承载
       stallWarn <- NodeTools.stalledInWarning(rt, nodeId, nodename, ins, merge)
+      // loop 门集预检（2026-09-12 裁定 2/3，0 spawn）：本次创建会写入两条路径的最终边集
+      // ——① 本节点 out（`(pass)Nebula` 单腿等形态）；② 每个 in 上游的 out 镜像追加
+      //（`appendEdgeTo`，下游 in: 声明路）。任一违规 ⇒ 整调用拒绝（节点不落库、上游零改边）。
+      loopGate <- rt.store.snapshot.map { s =>
+        NodeTools.loopGateViolation(loopFlag.config.exists(_.enabled), nodename, out)
+          .orElse(NodeTools.loopGateForAppends(s.nodes, ins, nodeId))
+      }
       // 批E2 retry 风暴防护（spec §2.3，0 spawn）：邻居限定 + retry 环。值域 =
       // 本次声明的 in ∪ deps（节点尚未落库，in 邻接关系沿声明）。
       retryGate <- retryFlag.policy match
@@ -1004,6 +1093,8 @@ object NodeEditTool extends Tool:
           IO.pure(Left(ToolError(mergeGate.get)))
         else if retryGate.isDefined then
           IO.pure(Left(ToolError(retryGate.get)))
+        else if loopGate.isDefined then
+          IO.pure(Left(ToolError(loopGate.get)))
         else if dup.isDefined then
           IO.pure(Left(ToolError(s"疑似重复派发: agent '$agentName' already has a ${dup.get.status} node with the same task (node '${dup.get.name}'). Check NodeList before re-dispatching.")))
         else IO.pure(Right(()))
@@ -1142,7 +1233,8 @@ object NodeEditTool extends Tool:
                     (retryFlag.policy match
                       case Some(p) => s" retry ← ${p.upstream}:max=${p.max}"
                       case None => "") +
-                    (if stallWarn.nonEmpty then "\n" + stallWarn.mkString("\n") else "")
+                    (if stallWarn.nonEmpty then "\n" + stallWarn.mkString("\n") else "") +
+                    (if out.isEmpty then "\n" + NodeTools.wiringGapHint(nodename, nodeId).mkString("\n") else "")
                 ))
             }
           createIO
@@ -1242,21 +1334,16 @@ object NodeEditTool extends Tool:
       IO.pure(Left(ToolError(
         s"Node '${node.name}' is running — its input is frozen. NodeCancel it first, then rewire.")))
     else
-      // out 处理（单值替换/断开）——同步校验先 match，再进 IO 链
+      // out 处理（整体替换 / 显式断开）——同步校验先 match，再进 IO 链
       NodeTools.parseOut(outJson) match
         case Left(err) => IO.pure(Left(ToolError(err)))
-        // 校验六-a（连接规范收紧 v2，裁定④）：out 断开（显式 null/"null" 且节点现有
-        // out）→ 拒绝——改接新目标而非断开（「先断开再改接」废弃）。存量悬空节点
-        //（out 已 null）显式传 null = 无状态变更 no-op，放行（口径⑤ 存量不回溯）。
-        case Right(newOut) if outJson.isDefined && newOut.isEmpty && node.out.nonEmpty =>
-          IO.pure(Left(ToolError(
-            s"Node '${node.name}' has an out edge — disconnecting (out=null) is no longer supported. " +
-              "Rewire to a new target instead (out=<node-id|\"Nebula\">); every node keeps its out edge. (EMPTY_NODE_CONNECTION)")))
+        // 校验六-a 已按 2026-09-12 作者裁定**删除**（out 可空置）：显式 null/"null" 断开
+        // 恢复合法（节点回到 dangling 形态——零投递、零升根，结果保留在 result，接线后
+        // 自动投递）。「先断开再改接」工作流随裁定复活；重复投递面由 consumedGuard
+        //（被移除旧目标已消费 ⇒ 拒）与投递侧逐目标去重共同兜住。
         case Right(newOut) =>
           // deps 处理（deps 设计 §1.2，replace-on-provide 语义裁定）：未传不改；
-          // 传了（任何形态，含 [] / null）整体替换——清空是合法改接动作（清空后仍须
-          // 剩至少一种连接，校验六）。deps 上游侧无句柄（下游单侧持有），replace 是
-          // 下游自持列表唯一完整 CRUD 原语，对分发器幂等。
+          // 传了（任何形态，含 [] / null）整体替换。
           NodeTools.parseIn(depsJson).left.map(err => err.replace("'in'", "'deps'")) match
             case Left(err) => IO.pure(Left(ToolError(err)))
             case Right(newDeps) =>
@@ -1361,12 +1448,11 @@ object NodeEditTool extends Tool:
                               }
                             else IO.pure(Nil)
                           depsChecks.flatMap { dChecks =>
-                          // 校验六（裁定①零连接下限，改接侧）：断开/清空单边合法，但编辑
-                          // 后交互终态连接集（in ∪ deps ∪ out）为空 → 拒绝（同码，改接侧
-                          // 文案）。in 只增（finalIn = 既有 + 追加）；result 不因断开清除
-                          //（既有语义，裁定①边界注记）。与 deps 校验一/二一起构成前置拒绝集。
+                          // 校验六（**2026-09-12 作者裁定删除零连接下限**）：断开/清空 out
+                          // 合法 ⇒ 「编辑后 in ∪ deps ∪ out 全空」不再拒（该判据已被裁定①②
+                          // 推翻）。输入侧下限仍在创建侧（task ∨ in）把守纯空挂载。
                           // 注意 out 的「未传」与「显式 null 断开」经 parseOut 后同为 None——
-                          // 必须按 outJson 是否出现区分：传了才视为断开后的 None，未传保持原 out。
+                          // 仍须按 outJson 是否出现区分：传了才视为断开后的 None，未传保持原 out。
                           val finalIn = node.in ++ adds
                           // ⑥⑧ 合并节点闸门的触发面（本批 U2/P1）：只有**真的新加上游**
                           // 才算「加 in」——重复回显既有 in（幂等重发）不是加，不触发任何
@@ -1386,12 +1472,21 @@ object NodeEditTool extends Tool:
                           // 节点 loop 变更走 actualChange → 重激活（下方 reactivate 分支应用）。
                           val loopStatusOk = !loopFlag.provided ||
                             (node.status == NodeLifecycle.Wiring || node.status == NodeLifecycle.Pending || node.status == NodeLifecycle.Running)
+                          // loop 门集预检（2026-09-12 裁定 2/3，改接侧 self 面）：本次编辑的
+                          // 最终 out（未传 out = 保持原边集）也要过同一不变量。loop 开关本身
+                          // 可能在本调用内变化（loopFlag.provided）⇒ 用**生效后**的开关判定
+                          //（未传 = 保持 node.loop；传了 = 本调用的声明值，与 loopStatusOk
+                          // / reactivate 的 appliedLoop 同源口径）。
+                          val effectiveLoopEnabled =
+                            if loopFlag.provided then loopFlag.config.exists(_.enabled)
+                            else node.loop.exists(_.enabled)
+                          val loopSelfGate =
+                            NodeTools.loopGateViolation(effectiveLoopEnabled, node.name, finalOut)
                           val earlyReject: Option[ToolError] =
                             validateDescription(description, creating = false).orElse(
                             validateDescriptionLong(descriptionLong)).orElse(
-                            if finalIn.isEmpty && finalDeps.isEmpty && finalOut.isEmpty then
-                              Some(ToolError(
-                                s"Node '${node.name}' must keep at least one connection — this rewiring would leave it disconnected. (EMPTY_NODE_CONNECTION)"))
+                            if loopSelfGate.isDefined then
+                              Some(ToolError(loopSelfGate.get))
                             else if dChecks.exists(_.isLeft) then
                               Some(ToolError(dChecks.collectFirst { case Left(e) => e }.getOrElse("invalid deps")))
                             else if !notifyStatusOk then
@@ -1424,7 +1519,7 @@ object NodeEditTool extends Tool:
 
                             else None
                             )
-                          // 前置拒绝集统一闸（description 校验 + 零连接 + deps 校验）
+                          // 前置拒绝集统一闸（description 校验 + loop 门集 + deps 校验）
                           if earlyReject.isDefined then IO.pure(Left(earlyReject.get))
                           // 批E2 retry 风暴防护（spec §2.3，0 spawn）：邻居限定（值域 =
                           // 应用本次改动后的最终 in ∪ deps）+ retry 环。校验失败卡在
@@ -1475,9 +1570,25 @@ object NodeEditTool extends Tool:
                                   NodeTools.ensureNodeExists(rt, upId).flatMap {
                                     case Left(e) => IO.pure(Left(e): Either[String, Unit])
                                     case Right(_) =>
-                                      NodeTools.wouldCreateCycle(rt, upId, node.id).map {
-                                        case true => Left(s"Cycle detected: adding in from '$upId' would create a loop (A→B→A) — DAG must stay acyclic")
-                                        case false => Right(())
+                                      // loop 门集预检（2026-09-12 裁定 2/3，**镜像追加路径**——
+                                      // 该路径不经 outJson 校验点，故必须在写路径上判）：本调用会
+                                      // 给每个上游 out 追加一条 pass 边（活动区经 setOut / 归档区
+                                      // 经其归档分支）⇒ 上游若是 loop 节点，最终边集可能违反两腿
+                                      // 覆盖判据（尤其空 out / 单腿形态被追加后）。findNode 双区
+                                      // 兜底；复算用 **appendEdgeTo 本身**（幂等条件单一真相源）。
+                                      rt.store.findNode(upId).flatMap { upOpt =>
+                                        val gate = upOpt.flatMap { up =>
+                                          val after = NodeTools.appendEdgeTo(Map(up.id -> up), upId, node.id)
+                                          val prospective = after.get(upId).map(_.out).getOrElse(up.out)
+                                          NodeTools.loopGateViolation(up, prospective)
+                                        }
+                                        gate match
+                                          case Some(e) => IO.pure(Left(e): Either[String, Unit])
+                                          case None =>
+                                            NodeTools.wouldCreateCycle(rt, upId, node.id).map {
+                                              case true => Left(s"Cycle detected: adding in from '$upId' would create a loop (A→B→A) — DAG must stay acyclic")
+                                              case false => Right(())
+                                            }
                                       }
                                     }
                                 }
@@ -1687,20 +1798,37 @@ object NodeEditTool extends Tool:
                                             }
                                           )
                                       else IO.unit
-                                      // 已完成节点改接 → 立即投递（§2.3：结果缓冲/归档 → 向新目标
-                                      // 投递）。P1 多边：向全部新声明目标投（Nebula/门控判定由
-                                      // deliverOutTo 内部处理）。
+                                      // 终态节点改接 → 立即投递（§2.3：结果缓冲/归档 → 向新目标
+                                      // 投递）。P1 多边 + 本批两处收敛：
+                                      // ① **判据与路径 B 同口径**（O-B 必做 1 / N1 收敛，2026-09-12
+                                      //    批）：`result.isDefined ∧ status != Blocked ∧
+                                      //    Terminal.contains(status)`——**逐字同句**见下方 in 追加
+                                      //    补投递支与 `proceed` 的创建侧谓词（三处同款，禁止第二种
+                                      //    写法）；旧口径只认 `Completed`，使 failed/cancelled 源的
+                                      //    滞留结果永远投不出去。
+                                      // ② **投递对象 = 新接线目标**（O-B 必做 5 / N4 收敛）：不得对
+                                      //    「新声明的全部目标」逐条投——那样会在只新增一条边时把已投过
+                                      //    的 Nebula 边（无目标侧去重账本）再投一次。Nebula 腿只在
+                                      //    「此前未曾声明」时进入本次投递（首次接线）；与 A9 的持久
+                                      //    守卫（nebulaDeliveredAt）互为纵深防御。
                                       // 后台化（收口③）：deliverOutTo 内 startNode 同步等下游终态，
                                       // 直接调用会阻塞 NodeEdit 工具 fiber（见 runDetached 注释）。
-                                      _ <- (outProvided, node.status) match
-                                        case (true, NodeLifecycle.Completed) if newOut.nonEmpty =>
-                                          node.result match
-                                            case Some(res) =>
-                                              NodeTools.runDetached(rt, s"deliver retained result ${node.id} -> ${newTargets.mkString(",")}")(
-                                                newOut.traverse_(e => rt.engine.deliverOutTo(node, e.to, res))
-                                              )
-                                            case None => IO.unit
-                                        case _ => IO.unit
+                                      _ <- (
+                                        outProvided && newOut.nonEmpty && node.result.isDefined
+                                          && node.status != NodeLifecycle.Blocked && NodeLifecycle.Terminal.contains(node.status)
+                                      ) match
+                                        case true =>
+                                          val res = node.result.get
+                                          val hadNebula = node.out.exists(_.to == OutEdge.NebulaTarget)
+                                          val newlyWired = newOut.filter(e =>
+                                            if e.to == OutEdge.NebulaTarget then !hadNebula
+                                            else !oldTargets.contains(e.to))
+                                          if newlyWired.isEmpty then IO.unit
+                                          else
+                                            NodeTools.runDetached(rt, s"deliver retained result ${node.id} -> ${newlyWired.map(_.to).mkString(",")}")(
+                                              newlyWired.traverse_(e => rt.engine.deliverOutTo(node, e.to, res))
+                                            )
+                                        case false => IO.unit
                                       // 修复次因 A（edit 路径补 D1 等价投递 + barrier 结算复查，
                                       // create 路径见 proceed 内 D1 注释）：新追加上游中已终态且
                                       // 有结果的 → 立即投递（findNode 活动/归档兜底；含悬空完成的
@@ -1772,7 +1900,10 @@ object NodeEditTool extends Tool:
                                          else "") +
                                         (if outProvided && newOut.nonEmpty then s" — out → ${newOut.map(_.to).mkString(",")}" else "") +
                                         (if adds.nonEmpty then s" — in += ${adds.mkString(",")}" else "") +
-                                        (if depsProvided && depsChanged then s" — deps → [${newDeps.mkString(",")}]" else "")
+                                        (if depsProvided && depsChanged then s" — deps → [${newDeps.mkString(",")}]" else "") +
+                                        // W1 悬空提示（O-B 必做 4）：本次编辑把该节点留在无出边
+                                        // 形态 ⇒ 尾部 ⚠ 行（与 stalledInWarning 同款形态）。
+                                        (if outProvided && finalOut.isEmpty then "\n" + NodeTools.wiringGapHint(node.name, node.id).mkString("\n") else "")
                                     )
                                 // P1 校验层②（spec §2.2）：下游持 in 边而上游已 failed 无 on-failed
                                 // 边且非 merge → WARNING 级提示（不阻断，附成功结果尾部；死锁持续

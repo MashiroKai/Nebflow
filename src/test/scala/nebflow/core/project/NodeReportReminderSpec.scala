@@ -228,7 +228,9 @@ class NodeReportReminderSpec extends CatsEffectSuite:
     val extras = List(
       "description" -> Json.fromString("node_report reminder spec node"),
       "task" -> Json.fromString(task),
-      "out" -> Json.fromString("Nebula")
+      // 2026-09-12 批 A1：投递到根的断言需要**显式门集**（`{pass,failed}/result`）；
+      // bare `"Nebula"` 今日 = 纯出口标记（`{pass}/signal`，零根投递）。
+      "out" -> Json.fromString("(pass,failed)Nebula")
     )
     NodeEditTool
       .call(nodeInput(project, name, extras*).asObject.get, ctx)

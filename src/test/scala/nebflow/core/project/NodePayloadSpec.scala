@@ -63,10 +63,15 @@ class NodePayloadSpec extends FunSuite:
     val j = NodePayload.buildNodeJson(node, now = 2000L)
     // P1 out 语义门控：out 条件序列化（Nil 不带键，同 blockedFeedback/plugins 同构）
     // → 基础键集不再恒含 out；有边节点 = 基础集 + out
-    val expected = Set("id", "name", "agent", "description", "status", "in", "hasWorktree", "worktree", "blockCount", "createdAt", "completedAt", "ttlLeftSec")
-    assertEquals(j.asObject.map(_.keys.toSet), Some(expected), "key set must be exactly the base set (no skill/mcp/preset; out omitted when Nil)")
+    // A7（2026-09-12 批 W2「out 可空置」）：**无出边**节点另带条件键 `wiringGap`
+    // （"pending"/"retained"，缺键 = 有 out）——有 out 节点字段集**字节级零漂移**。
+    // 本用例主题（skill/mcp/preset 三键移除）不变，故无出边基准集显式并入该键；
+    // 键值语义由 OutNullableDeliverySpec ⑦D 覆盖。
+    val base = Set("id", "name", "agent", "description", "status", "in", "hasWorktree", "worktree", "blockCount", "createdAt", "completedAt", "ttlLeftSec")
+    val expected = base + "wiringGap"
+    assertEquals(j.asObject.map(_.keys.toSet), Some(expected), "key set must be exactly the no-out base set (no skill/mcp/preset; out omitted when Nil)")
     val withOut = NodePayload.buildNodeJson(node.copy(out = List(OutEdge.nebula)), now = 2000L)
-    assertEquals(withOut.asObject.map(_.keys.toSet), Some(expected + "out"), "node with out edges must carry the canonical edge array key")
+    assertEquals(withOut.asObject.map(_.keys.toSet), Some(base + "out"), "node with out edges must carry the canonical edge array key (and no wiringGap)")
     // 存量节点（三键有值）照常携带——条件序列化而非删除
     val legacy = node.copy(skill = Some("s"), mcp = Some("m"), preset = Some("p"))
     val jl = NodePayload.buildNodeJson(legacy, now = 2000L)

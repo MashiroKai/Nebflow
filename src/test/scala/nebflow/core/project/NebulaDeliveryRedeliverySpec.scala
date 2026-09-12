@@ -223,21 +223,103 @@ class NebulaDeliveryRedeliverySpec extends FunSuite:
     }
   }
 
-  test("R5 manual edit-redelivery (deliverOutTo) delivers and refreshes the ledger") {
+  test("R5 manual edit-redelivery (deliverOutTo): unmarked node delivers and marks (first wiring passes)") {
     withFixture("r5") { (store, engine, resources, system, recorded, rootSid, rootRef) =>
       val io = for
         _ <- registerRoot(resources, rootSid, rootRef)
         node = completedNode("n-manual", NodeLifecycle.Completed, "r5 manual")
-        _ <- store.mutate(s => s.copy(nodes = s.nodes + ("n-manual" -> node.copy(nebulaDeliveredAt = Some(System.currentTimeMillis() - 3600_000L)))))
-        // 人工改接投递：已记账也必须再投（用户显式意图——审计确认的既有恢复通道）。
+        _ <- store.mutate(s => s.copy(nodes = s.nodes + ("n-manual" -> node)))
+        // 人工接线首次投递（nebulaDeliveredAt 空 = 首次接线）⇒ M1 守卫放行。
         _ <- engine.deliverOutTo(node, "Nebula", "r5 manual")
         msgs <- awaitImms(recorded, min = 1)
         fresh <- store.getNode("n-manual")
       yield (msgs, fresh)
       val (msgs, fresh) = io.unsafeRunSync()
       val imms = msgs.collect { case m: AgentCommand.ImmediateInput => m }
-      assertEquals(clue(imms.size), 1, "manual redelivery passes even though a ledger entry existed")
-      assert(clue(fresh.flatMap(_.nebulaDeliveredAt)).exists(_ >= System.currentTimeMillis() - 60_000L), "ledger refreshed")
+      assertEquals(clue(imms.size), 1, "first-wiring manual redelivery must deliver")
+      assert(clue(fresh.flatMap(_.nebulaDeliveredAt)).isDefined, "ledger written after delivery")
+    }
+  }
+
+  test("R5b M1 guard: manual redelivery of an ALREADY-MARKED node is suppressed (persistent anchor)") {
+    withFixture("r5b") { (store, engine, resources, system, recorded, rootSid, rootRef) =>
+      val io = for
+        _ <- registerRoot(resources, rootSid, rootRef)
+        node = completedNode("n-marked", NodeLifecycle.Completed, "r5b marked")
+        // 已记账（= 结果早已投达 root）：再走一遍人工改接不得重复投
+        //（旧口径「已记账也再投一次」＝本批 N4/M1 要堵的重复面）。
+        _ <- store.mutate(s => s.copy(nodes = s.nodes + ("n-marked" ->
+          node.copy(nebulaDeliveredAt = Some(System.currentTimeMillis() - 3600_000L)))))
+        marked <- store.getNode("n-marked").map(_.get)
+        _ <- engine.deliverOutTo(marked, "Nebula", "r5b marked")
+        _ <- IO.sleep(300.millis)
+        msgs <- recorded.get
+      yield msgs
+      val msgs = io.unsafeRunSync()
+      assert(msgs.isEmpty, s"a marked Nebula edge must not be re-delivered (persistent anchor), got $msgs")
+    }
+  }
+
+  test("R6 N3: the redelivery scan skips mode=signal EXIT-MARKER edges (never promotes them to a root notify)") {
+    withFixture("r6") { (store, engine, resources, system, recorded, rootSid, rootRef) =>
+      val io = for
+        _ <- registerRoot(resources, rootSid, rootRef)
+        // bare "Nebula" 落边形态：{pass}/signal 出口标记 —— 崩溃/重启窗口内扫描不得补投
+        exitMarker = completedNode("n-exit", NodeLifecycle.Completed, "R6_EXIT_MARKER_RESULT")
+          .copy(out = List(OutEdge(OutEdge.NebulaTarget, Set(OutEdge.Pass), OutEdge.Signal)))
+        // 对照：显式门集 {pass,failed}/result 通知声明仍须被扫描补投
+        notifyEdge = completedNode("n-notify", NodeLifecycle.Completed, "R6_NOTIFY_RESULT")
+        _ <- store.mutate(s => s.copy(nodes = s.nodes + ("n-exit" -> exitMarker) + ("n-notify" -> notifyEdge)))
+        n <- engine.redeliverUnconsumedNebulaResults()
+        msgs <- awaitImms(recorded, min = 1)
+      yield (n, msgs)
+      val (n, msgs) = io.unsafeRunSync()
+      val imms = msgs.collect { case m: AgentCommand.ImmediateInput => m }
+      assertEquals(clue(n), 1, "only the explicit-gate (mode=result) node is a redelivery candidate")
+      assertEquals(clue(imms.size), 1)
+      assert(clue(imms.head.text).contains("R6_NOTIFY_RESULT"), "explicit-gate notify still redelivers")
+      assert(!imms.exists(_.text.contains("R6_EXIT_MARKER_RESULT")), "signal exit marker must never be redelivered to root")
+    }
+  }
+
+  test("R7 source-status gate selection: failed source needs a failed edge; cancelled source never delivers") {
+    withFixture("r7") { (store, engine, resources, system, recorded, rootSid, rootRef) =>
+      val io = for
+        _ <- registerRoot(resources, rootSid, rootRef)
+        now <- IO(System.currentTimeMillis())
+        // (a) failed 源 + 只有 pass 腿 ⇒ 跳过（旧口径方向相反的缺口）
+        failedPass = NodeDef(id = "n-fp", name = "fp", agent = "worker",
+          out = List(OutEdge("n-down", Set(OutEdge.Pass))), status = NodeLifecycle.Failed,
+          result = Some("FAILED_ERR_TEXT"), createdAt = now - 60_000L, completedAt = Some(now))
+        // (b) failed 源 + failed 腿 ⇒ 投递（按源 status 选门）
+        failedFail = NodeDef(id = "n-ff", name = "ff", agent = "worker",
+          out = List(OutEdge("n-down2", Set(OutEdge.Failed), OutEdge.Signal)), status = NodeLifecycle.Failed,
+          result = Some("FAILED_EDGE_TEXT"), createdAt = now - 60_000L, completedAt = Some(now))
+        // (c) cancelled 源 ⇒ 整体不投（仅 info）
+        cancelled = NodeDef(id = "n-cx", name = "cx", agent = "worker",
+          out = List(OutEdge("n-down3", Set(OutEdge.Pass))), status = NodeLifecycle.Cancelled,
+          result = Some("CANCELLED_TEXT"), createdAt = now - 60_000L, completedAt = Some(now))
+        // 目标节点（wiring）——投递 = deliveredTo 记账 + startNode 尝试
+        down = NodeDef(id = "n-down", name = "down", agent = "worker", in = List("n-fp"), createdAt = now)
+        down2 = NodeDef(id = "n-down2", name = "down2", agent = "worker", in = List("n-ff"), createdAt = now)
+        down3 = NodeDef(id = "n-down3", name = "down3", agent = "worker", in = List("n-cx"), createdAt = now)
+        _ <- store.mutate(s => s.copy(nodes = s.nodes ++ Map(
+          "n-fp" -> failedPass, "n-ff" -> failedFail, "n-cx" -> cancelled,
+          "n-down" -> down, "n-down2" -> down2, "n-down3" -> down3)))
+        _ <- engine.deliverOutTo(failedPass, "n-down", "FAILED_ERR_TEXT")
+        _ <- engine.deliverOutTo(failedFail, "n-down2", "FAILED_EDGE_TEXT")
+        _ <- engine.deliverOutTo(cancelled, "n-down3", "CANCELLED_TEXT")
+        d1 <- store.getNode("n-down")
+        d2 <- store.getNode("n-down2")
+        d3 <- store.getNode("n-down3")
+      yield (d1, d2, d3)
+      val (d1, d2, d3) = io.unsafeRunSync()
+      assertEquals(clue(d1.map(_.deliveredTo)), Some(List.empty[String]),
+        "failed source on a pass-only edge must NOT deliver (gate selected by source status)")
+      assertEquals(clue(d2.map(_.deliveredTo)), Some(List("n-ff")),
+        "failed source on a failed edge must deliver")
+      assertEquals(clue(d3.map(_.deliveredTo)), Some(List.empty[String]),
+        "cancelled source never delivers (no input semantics)")
     }
   }
 

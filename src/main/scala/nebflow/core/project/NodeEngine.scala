@@ -1554,16 +1554,22 @@ class NodeEngine(
     emitWithChain("nodeUpdated", node.id, NodePayload.buildNodeJson(node, System.currentTimeMillis()))
 
   /** 显式投递（改接投递 §2.3：已完成节点结果 → 指定目标）。P1（spec §2.2 #4/#6）：
-    * 人工改接 / D1 补投 / 重激活补投链统一经本函数，目标解析加门控判定——沿
-    * node.out 中指向该目标的边：on ∌ pass → 跳过投递（failed-only 边不接收完成结果，
-    * 停等可见性由 mount-stalled 承载）；无边（修复路径的悬空/孤儿 barrier）→ 按
-    * {pass} 兜底投递（修复语义优先）。Nebula 分支：mode=result 通报 + V8 记账，
-    * mode=signal 只记账。V8: 记账避免周期扫描对同一结果再补投。缺口3：夹具信封
-    * 排除——名字 ∧ 载荷双确认 → WARN + 不投（结果滞留节点不删）。 */
+    * 人工改接 / D1 补投 / 重激活补投链统一经本函数。**门控按源 status 选门**（2026-09-12
+    * 批，O-B 必做 2 / N2 收敛）：completed → `pass`、failed → `failed`（旧口径只查
+    * 「on ∋ pass」，对 failed 源方向相反——`"(failed)B"` 边被静默跳过，而默认 pass 边
+    * 反而把错误文本投出去）；cancelled → 不投（只留 info，取消节点的结果不构成输入）；
+    * 无边（修复路径的悬空/孤儿 barrier）→ 保留既有「兜底放行」修复语义。
+    * Nebula 分支：mode=result 通报 + V8 记账（**直投前查持久去重锚**，见下 M1 段），
+    * mode=signal 只记账。缺口3：夹具信封排除——名字 ∧ 载荷双确认 → WARN + 不投
+    *（结果滞留节点不删）。 */
   def deliverOutTo(node: NodeDef, target: String, resultText: String): IO[Unit] =
     val edge = node.out.find(_.to == target)
-    if edge.exists(e => !e.on.contains(OutEdge.Pass)) then
-      logger.info(s"[gating] redelivery '${node.name}' -> '$target' skipped: edge on=[${edge.get.on.mkString(",")}] excludes pass")
+    // 源 status 选门（完成腿 pass / 失败腿 failed）；cancel 源整体不投。
+    val requiredGate = if node.status == NodeLifecycle.Failed then OutEdge.Failed else OutEdge.Pass
+    if node.status == NodeLifecycle.Cancelled then
+      logger.info(s"[gating] redelivery '${node.name}' -> '$target' skipped: source status=cancelled (a cancelled node's result is never a downstream input)")
+    else if edge.exists(e => !e.on.contains(requiredGate)) then
+      logger.info(s"[gating] redelivery '${node.name}' -> '$target' skipped: edge on=[${edge.get.on.mkString(",")}] excludes $requiredGate (source status=${node.status})")
     else
       target match
         case "Nebula" =>
@@ -1571,6 +1577,12 @@ class NodeEngine(
             logger.warn(
               s"[fixture-guard] excluded fixture envelope from manual redelivery: node '${node.name}' (${node.id}) status=${node.status} — name matches fixture family and task carries fixture marker")
           else if edge.exists(_.mode == OutEdge.Signal) then markNebulaDelivered(node.id)
+          // M1（U9-b，2026-09-12 批）：Nebula 腿直投前查**持久**去重锚 `nebulaDeliveredAt`
+          // ——本分支旧口径只查 mode、不查账本 ⇒ 已投过的节点被改接/重复声明时会再投一次
+          // （deliverToNebula 的 60s 窗是进程内抖动抑制，不承担持久幂等）。signal 出口
+          //（上一分支）与**首次接线**（nebulaDeliveredAt 空）照常放行；零新字段。
+          else if node.nebulaDeliveredAt.isDefined then
+            logger.info(s"[dedup] redelivery '${node.name}' -> Nebula suppressed: nebulaDeliveredAt already set (persistent anchor; result already delivered)")
           else deliverToNebula(s"[Node '${node.name}' completed]\n$resultText", node.name, "completed", Some(node.id))
         case t => settleTo(node, t)
 
@@ -1616,7 +1628,9 @@ class NodeEngine(
                 if node.in.exists(up => !node.deliveredTo.contains(up)) || node.pendingSuccession.nonEmpty then IO.unit
                 else
                   // 防御：wiring 空节点（无 task 无 in 无 deps）不空跑（防浪费 token）。
-                  // 裁定①后降级为纵深防御：零连接主责在 NodeEdit 校验五/六，此处只兜
+                  // 裁定①后降级为纵深防御**：零连接主责在创建侧输入侧下限
+                  //（`NodeTools.createNode` 校验五：task ∨ in；2026-09-12 裁定后 out 可空置，
+                  // 零连接闸已在改接侧删除），此处只兜
                   // 历史遗留数据（校验生效前落盘的零连接旧节点）与校验层外瞬态。
                   if node.status == NodeLifecycle.Wiring && node.task.isEmpty && node.in.isEmpty && node.deps.isEmpty then IO.unit
                   else {
@@ -3856,7 +3870,13 @@ class NodeEngine(
                 // P1（spec §2.2 #5）：按边判定——存在指向 Nebula 且 on 含「status 对应门」
                 // 的边（completed→pass / failed→failed）。旧 "Nebula" 双读为 {pass,failed}
                 // 双通报边 → 两态恒命中（旧拓扑零漂移）；显式门控按声明收窄。
+                // N3（2026-09-12 批）：**再按 mode 收窄**——本扫描的补投调用不经
+                // nebulaDelivery/deliverFailed 的 mode 分支（直调 deliverToNebula）⇒
+                // 只看门集会把 mode=signal 的**出口标记**边当成通知声明补投（bare
+                // "Nebula" 出口标记节点若在 markNebulaDelivered 之前崩溃/重启，30s 扫描
+                // 就把它投到 root，绕过「默认不升根」）。补 e.mode == Result 这一合取项。
                 n.out.exists(e => e.to == OutEdge.NebulaTarget &&
+                  e.mode == OutEdge.Result &&
                   e.on.contains(if n.status == NodeLifecycle.Completed then OutEdge.Pass else OutEdge.Failed)) &&
                 n.result.exists(_.trim.nonEmpty) &&
                 n.nebulaDeliveredAt.isEmpty
