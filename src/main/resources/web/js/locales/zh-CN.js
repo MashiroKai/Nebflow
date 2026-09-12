@@ -216,6 +216,8 @@ export default {
   'messages.trustedHint': '已开启信任：新消息将自动转发给 agent',
   'messages.loadingOlder': '加载更早消息',
   'messages.loading': '加载中…',
+  'messages.loadOlderFailed': '更早消息加载失败，请重试',
+  'messages.attachUnsupported': '好友消息暂不支持附件',
   'messages.agentBadge': 'Agent 代发',
   'messages.notFriendBlocked': '对方已不是你的好友，无法发送消息',
   'messages.loginRequired': '登录 nebflow 账号后使用消息与联系人',
@@ -889,7 +891,8 @@ export default {
   // Dropbox
   'dropbox.tabChat': '对话',
   'dropbox.tabDesc': '描述',
-  'dropbox.dropHint': '拖拽文件到此处，或点击选择',
+  'dropbox.dropHint': '拖拽文件到对话框任意位置，或用纸夹键选择',
+  'dropbox.attachFile': '选择文件',
   'dropbox.inputPlaceholder': '输入消息…',
   'dropbox.send': '发送',
   'dropbox.transferring': '传输中…',

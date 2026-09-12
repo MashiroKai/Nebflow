@@ -222,14 +222,21 @@ async function bootPage({ seed, locale = 'zh-CN', loggedIn = true, reducedMotion
     a8chip && !!a8frame && a8frame.question.startsWith('[来自 Alice] ') && a8frame.sessionId === SID && a8toast,
     JSON.stringify(a8frame || null));
 
-  // ── A9: header 钮转发最近一条 in ────────────────────────
-  await page.click('.fm-forward-btn');
+  // ── A9: 转发最近一条对方消息 ────────────────────────────
+  // 【2026-09-12 注记 · 历史临时验证件】本断言原驱动窗头 `.fm-forward-btn`，
+  // 该入口已随作者 2026-09-12 裁定废弃（方案 §3.1 S5 / 判据 ②A8：`.fm-forward-btn`
+  // 零残留）。转发入口现只保留按消息的两条（气泡内按钮 + 气泡右键），语义等价，
+  // 故此处改走**气泡内按钮**而非删除断言（保持本文件的回归能力）。历史证据件
+  // `assets/friends-ui-qa/run-friends.mjs` 按「存量文档零回改」保持原样。
+  const lastIn = page.locator('.fm-msg[data-message-id="m-a2"]');
+  await lastIn.hover();
+  await lastIn.locator('.fm-msg-act[title="转发给 agent"]').click();
   await sleep(300);
   const a9 = await page.evaluate(() => ({
     latestIn: !!document.querySelector('.fm-msg[data-message-id="m-a2"] .fm-msg-forwarded-badge'),
   }));
   const a9frame = clientFrames.filter(f => f.type === 'ask').pop();
-  ok('A9 header 钮转发最近一条对方消息（m-a2 非 m-a0 之外的）', a9.latestIn && !!a9frame && a9frame.question === '[来自 Alice] Alice 的最新消息', a9frame?.question);
+  ok('A9 转发最近一条对方消息（气泡内按钮，原窗头入口已废弃）', a9.latestIn && !!a9frame && a9frame.question === '[来自 Alice] Alice 的最新消息', a9frame?.question);
 
   // ── A18: Esc 关闭 + 焦点归还触发会话行 ──────────────────
   await page.keyboard.press('Escape');

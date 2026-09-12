@@ -71,6 +71,11 @@ export function personLabel(person) {
 
 function loggedIn() { return !!getNeblinkState().loggedIn; }
 
+/** drag 事件是否携带文件（③A8 判定用；无 dataTransfer 的合成事件一律视为无文件）。 */
+function hasFiles(e) {
+  return !!(e.dataTransfer && Array.from(e.dataTransfer.types || []).includes('Files'));
+}
+
 function el(tag, cls, text) {
   const e = document.createElement(tag);
   if (cls) e.className = cls;
@@ -263,7 +268,10 @@ async function openConversation(conversationId, rowEl) {
   if (openConvId !== conversationId) return; // replaced meanwhile
   chatMsgs = msgs.slice();
   oldestLoadedId = chatMsgs.length ? (Number(chatMsgs[0].id) || 0) : 0;
-  hasMoreHistory = chatMsgs.length > 0 && oldestLoadedId > 1;
+  // ②-7 方案 A「不自证不显示」：`oldestLoadedId > 1` 只是「表级自增号不等于 1」，
+  // **不构成**「本会话还有更早」的证明（他人会话占号 ⇒ 判据恒真 = 按钮常亮的
+  // 病灶）。这里先一律不渲染按钮，交给后台探针探到更早再插入。
+  hasMoreHistory = false;
   renderMessages(chatMsgs);
   const last = chatMsgs[chatMsgs.length - 1];
   if (last) {
@@ -273,6 +281,11 @@ async function openConversation(conversationId, rowEl) {
     renderList();
   }
   if (modalEls) modalEls.input.focus();
+  // 确定态 ①：本会话第一条 id = 表首 id(1) ⇒ 确定没有更早，探针无需发。
+  // 否则后台探针（与首屏解耦：气泡已渲染，按钮命中后再插入）。
+  if (chatMsgs.length && oldestLoadedId > 1) {
+    probeOlderHistory(conversationId, oldestLoadedId);
+  }
 }
 
 function renderChatModal(conv) {
@@ -285,7 +298,9 @@ function renderChatModal(conv) {
   modal.setAttribute('role', 'dialog');
   modal.setAttribute('aria-label', personLabel(conv.friend));
 
-  // header: name · neblinkId | forward-btn ×
+  // header: name · neblinkId | trust slot | ×
+  // 窗头转发按钮已移除（作者 2026-09-12 裁定，方案 §3.1 S5）：转发入口只保留
+  // 按消息的两条 —— 气泡内按钮 + 气泡右键，共用 forwardBubble（无第二实现）。
   const header = el('div', 'fm-modal-header');
   const title = el('div', 'fm-modal-title');
   title.appendChild(el('span', 'fm-modal-name', personLabel(conv.friend)));
@@ -295,16 +310,6 @@ function renderChatModal(conv) {
   // SEALED (author ruling 2026-09-12): 封存期不挂槽；updateTrustBadge 保留
   // （无槽即天然不产出）。回退 = featureFlags.js 常量改回 false。
   if (!TRUST_SEALED) header.appendChild(el('span', 'fm-trust-slot'));
-  const fwdBtn = el('button', 'glass-control fm-forward-btn');
-  fwdBtn.innerHTML = '<i data-lucide="forward"></i>';
-  fwdBtn.title = t('messages.forwardToAgent');
-  fwdBtn.setAttribute('aria-label', t('messages.forwardToAgent'));
-  fwdBtn.addEventListener('click', () => {
-    // header button forwards the latest INCOMING message (A9)
-    const last = [...(modalEls?.flow.querySelectorAll('.fm-msg.in') || [])].pop();
-    if (last) forwardBubble(last, conv);
-  });
-  header.appendChild(fwdBtn);
   const closeBtn = el('span', 'fm-modal-close');
   closeBtn.textContent = '×';
   closeBtn.setAttribute('role', 'button');
@@ -350,6 +355,18 @@ function renderChatModal(conv) {
 
   overlay.addEventListener('click', (e) => { if (e.target === overlay) closeChat(); });
   document.addEventListener('keydown', escClose);
+
+  // ③A8 / ③-B：好友面零附件入口（不挂入口、也不做灰置假入口），但**静默吞文件
+  // 不可接受**（项目纪律：失败必须可见）——好友窗内落文件 ⇒ 一次显式提示，文件
+  // 不被任何通道接收、无副作用。附件通道（跨账号字节通路）本轮零动作。
+  overlay.addEventListener('dragover', (e) => {
+    if (hasFiles(e)) e.preventDefault();
+  });
+  overlay.addEventListener('drop', (e) => {
+    if (!hasFiles(e)) return;
+    e.preventDefault();
+    modalToast(t('messages.attachUnsupported'));
+  });
 
   const doSend = () => sendCurrent(conv);
   sendBtn.addEventListener('click', doSend);
@@ -441,12 +458,14 @@ function bubbleEl(m, conv) {
   const copyBtn = el('button', 'fm-msg-act');
   copyBtn.innerHTML = '<i data-lucide="copy"></i>';
   copyBtn.title = t('messages.copy');
+  copyBtn.setAttribute('aria-label', t('messages.copy')); // title 不保证被 AT 播报
   copyBtn.addEventListener('click', () => {
     navigator.clipboard?.writeText(m.body || '');
   });
   const fwd = el('button', 'fm-msg-act');
   fwd.innerHTML = '<i data-lucide="forward"></i>';
   fwd.title = t('messages.forwardToAgent');
+  fwd.setAttribute('aria-label', t('messages.forwardToAgent'));
   fwd.addEventListener('click', () => forwardBubble(wrap, conv));
   actions.appendChild(copyBtn);
   actions.appendChild(fwd);
@@ -468,6 +487,42 @@ function renderMessages(msgs) {
 }
 
 // ── 加载更早消息（keyset id-window backward walk）────────
+/** 后台探针（②-7 方案 A）：从 oldestLoadedId-1 起按 HISTORY_WINDOW 步回退，找
+ *  任何 id < oldestLoadedId 的消息。命中 ⇒ 确定有更早 ⇒ 插入按钮行；一路空窗
+ *  退到 after == 0 ⇒ 确定没有更早 ⇒ 不渲染。steps 上限沿既有 20 步：号段稀疏
+ *  时可能在退到 0 之前用尽上限（= 未定态）——未定态**一律不渲染**（「不自证
+ *  不显示」的安全方向）。纯客户端，零后端改动；与首屏解耦（气泡先出）。 */
+async function probeOlderHistory(convId, fromId) {
+  let after = Math.max(0, fromId - 1 - HISTORY_WINDOW);
+  let steps = 0;
+  while (steps < 20) {
+    let fetched = [];
+    try { fetched = await api.getMessages(convId, { after, limit: HISTORY_WINDOW }); }
+    catch { return; } // 探针失败：保持「不显示」，绝不冒泡成用户可见错误
+    if (openConvId !== convId || !modalEls) return; // 会话已换/窗已关
+    if ((fetched || []).some(m => Number(m.id) < fromId)) {
+      hasMoreHistory = true;
+      insertLoadMoreRowAnchored();
+      return;
+    }
+    if (after <= 0) { hasMoreHistory = false; return; } // 确定态：退到 0 仍空
+    after = Math.max(0, after - HISTORY_WINDOW);
+    steps++;
+  }
+}
+
+/** 插入按钮行并补偿滚动高度 —— 探针命中可能在用户阅读中途到达，按钮行会改变
+ *  flow 上方高度；复用 prependMessages 的 scrollHeight 补偿思路，保证视口不跳。 */
+function insertLoadMoreRowAnchored() {
+  if (!modalEls) return;
+  const flow = modalEls.flow;
+  if (flow.querySelector('.fm-load-more-row')) return; // 幂等
+  const prevHeight = flow.scrollHeight;
+  const prevTop = flow.scrollTop;
+  updateLoadMoreRow();
+  flow.scrollTop = flow.scrollHeight - prevHeight + prevTop;
+}
+
 function updateLoadMoreRow() {
   if (!modalEls) return;
   modalEls.flow.querySelector('.fm-load-more-row')?.remove();
@@ -482,8 +537,11 @@ function updateLoadMoreRow() {
 function setLoadMoreState(state) {
   const btn = modalEls && modalEls.flow.querySelector('.fm-load-more');
   if (!btn) return;
-  btn.disabled = state === 'loading';
-  btn.textContent = state === 'loading' ? t('messages.loading') : t('messages.loadingOlder');
+  const loading = state === 'loading';
+  btn.disabled = loading;
+  if (loading) btn.setAttribute('aria-busy', 'true');
+  else btn.removeAttribute('aria-busy');
+  btn.textContent = loading ? t('messages.loading') : t('messages.loadingOlder');
 }
 
 async function loadOlderMessages() {
@@ -494,30 +552,44 @@ async function loadOlderMessages() {
   setLoadMoreState('loading');
   try {
     let fetched = [];
+    let fresh = [];
     let after = Math.max(0, oldestLoadedId - 1 - HISTORY_WINDOW);
     let steps = 0;
+    const existing = new Set(chatMsgs.map(x => String(x.id)));
     // Ids are table-wide AUTOINCREMENT — a window may contain zero messages of
     // THIS conversation (ids owned by others). Auto-step further back, bounded.
+    // 共同口径修正（② 方案 §3.3）：空窗判据从 `fetched.length` 改为 **fresh.length**
+    // ——窗口里全是已加载消息时 fetched 非空但 fresh 为空，旧的判据会提前 break
+    // 并把 hasMoreHistory 置回 `after > 0`（= true）⇒ 按钮留着重点的死路。
     while (steps < 20) {
       fetched = await api.getMessages(convId, { after, limit: HISTORY_WINDOW });
       if (openConvId !== convId) return; // modal replaced mid-flight
-      if (fetched.length > 0 || after <= 0) break;
+      fresh = (fetched || []).filter(m => !existing.has(String(m.id)));
+      if (fresh.length > 0 || after <= 0) break;
       after = Math.max(0, after - HISTORY_WINDOW);
       steps++;
     }
     if (openConvId !== convId || !modalEls) return;
-    const existing = new Set(chatMsgs.map(x => String(x.id)));
-    const fresh = fetched.filter(m => !existing.has(String(m.id)));
     if (fresh.length) {
       chatMsgs = fresh.concat(chatMsgs);
       oldestLoadedId = Number(chatMsgs[0].id) || oldestLoadedId;
-      hasMoreHistory = oldestLoadedId > 1;
       prependMessages(fresh);
+      if (oldestLoadedId > 1) {
+        // id 1 是表首（确定无更早）；否则继续探针判定，绝不按「id ≠ 1」自证。
+        hasMoreHistory = true;
+        await probeOlderHistory(convId, oldestLoadedId);
+      } else {
+        hasMoreHistory = false;
+      }
     } else {
-      // Nothing found all the way to id 0 → this is the history start.
-      hasMoreHistory = after > 0;
+      // 退到 after == 0 仍全是已加载消息（或窗口耗尽）→ 确定态：没有更早了。
+      hasMoreHistory = false;
     }
-  } catch { /* keep state; button stays for retry */ }
+  } catch {
+    // ②-8：加载失败不得静默 —— 回 idle 文案 + 一次性可见反馈（可重试）。
+    setLoadMoreState('idle');
+    modalToast(t('messages.loadOlderFailed'));
+  }
   loadingHistory = false;
   if (modalEls) {
     if (hasMoreHistory) setLoadMoreState('idle');

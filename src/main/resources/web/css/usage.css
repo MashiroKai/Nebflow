@@ -293,9 +293,10 @@
 .ud-cell.ud-active { box-shadow: 0 0 0 2px rgb(var(--sapphire)); }
 .ud-pad { visibility: hidden; pointer-events: none; }
 
-/* cost levels (spec §5.3) */
+/* cost levels (spec §5.3) — level-1 的 15% tint 与消息面出向气泡底同值，
+   统一走 --sapphire-tint-15（sapphire.css 单源；值不变，纯去重）。 */
 .ud-cell.level-0 { background: var(--glass-etched-bg); }
-.ud-cell.level-1 { background: rgba(91, 127, 191, 0.15); }
+.ud-cell.level-1 { background: var(--sapphire-tint-15); }
 .ud-cell.level-2 { background: rgba(91, 127, 191, 0.32); }
 .ud-cell.level-3 { background: rgba(91, 127, 191, 0.55); }
 .ud-cell.level-4 { background: rgba(91, 127, 191, 0.85); }
@@ -304,7 +305,7 @@
   background: var(--glass-etched-bg);
   background-image: repeating-linear-gradient(45deg, transparent 0 2px, rgba(128, 128, 128, 0.08) 2px 4px);
 }
-.ud-cell.hit-1 { background: rgba(91, 127, 191, 0.15); }
+.ud-cell.hit-1 { background: var(--sapphire-tint-15); }
 .ud-cell.hit-2 { background: rgba(91, 127, 191, 0.32); }
 .ud-cell.hit-3 { background: rgba(91, 127, 191, 0.55); }
 .ud-cell.hit-4 { background: rgba(91, 127, 191, 0.85); }

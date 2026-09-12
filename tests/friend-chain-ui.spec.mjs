@@ -44,16 +44,21 @@ const SEED = {
     { conversationId: 'c-p', friend: { userId: 'u-p', neblinkId: 'pagfriend', name: '分页君', avatarUrl: '' },
       lastMessage: { id: 220, senderId: 'u-p', kind: 'text', body: '历史消息 #220', createdAt: epochSec(now - 60e3) }, unreadCount: 0 },
     { conversationId: 'c-few', friend: { userId: 'u-a', neblinkId: 'alice01', name: 'Alice', avatarUrl: '' },
-      lastMessage: { id: 'f3', senderId: 'u-a', kind: 'text', body: 'few-3', createdAt: iso(now - 90e3) }, unreadCount: 0 },
+      lastMessage: { id: 9003, senderId: 'u-a', kind: 'text', body: 'few-3', createdAt: iso(now - 90e3) }, unreadCount: 0 },
     { conversationId: 'c-a', friend: { userId: 'u-a2', neblinkId: 'alice01', name: 'Alice', avatarUrl: '' },
       lastMessage: { id: 'm-a2', senderId: 'u-a2', kind: 'text', body: 'Alice 的最新消息', createdAt: iso(now - 60e3) }, unreadCount: 1 },
   ],
   messages: {
     'c-p': PAG_MSGS,
+    // T3e 种子 id 必须是**数字大 id**：旧种子是字符串 'f1'/'f2'/'f3'，经
+    // `Number('f1') → NaN → || 0` 得到 oldestLoadedId = 0，于是「会话仅 3 条却
+    // 无更早消息」这一断言**恰好绕过了真实路径**（生产 id 恒为数字），既有测试
+    // 因此漏拦「按钮常亮」病灶。改为 9001..9003（表级自增号段里的大 id）后，
+    // 断言走的是与生产同形的判据路径（② 方案 §3.3 实测复现）。
     'c-few': [
-      { id: 'f1', senderId: 'u-a', kind: 'text', body: 'few-1', createdAt: iso(now - 300e3) },
-      { id: 'f2', senderId: 'me', kind: 'text', body: 'few-2', createdAt: iso(now - 180e3) },
-      { id: 'f3', senderId: 'u-a', kind: 'text', body: 'few-3', createdAt: iso(now - 90e3) },
+      { id: 9001, senderId: 'u-a', kind: 'text', body: 'few-1', createdAt: iso(now - 300e3) },
+      { id: 9002, senderId: 'me', kind: 'text', body: 'few-2', createdAt: iso(now - 180e3) },
+      { id: 9003, senderId: 'u-a', kind: 'text', body: 'few-3', createdAt: iso(now - 90e3) },
     ],
     'c-a': [
       { id: 'm-a0', senderId: 'u-a2', kind: 'text', body: 'Alice 的第一条', createdAt: iso(now - 300e3) },
@@ -143,8 +148,16 @@ async function bootPage({ locale = 'zh-CN', sessions = [{ id: SID, agentName: 'N
   await page.fill('.fm-search-input', 'slowpoke1');
   await page.click('.fm-search-btn');
   await sleep(120); // mock delay=350ms → 窗口期内按钮应处于 loading 态
-  const loadingBtn = await page.$eval('.fm-search-btn', e => ({ txt: e.textContent, disabled: e.disabled })).catch(() => null);
-  ok('T2b 搜索中按钮 loading 态禁用', !!loadingBtn && loadingBtn.disabled && loadingBtn.txt.includes('搜索中'), JSON.stringify(loadingBtn));
+  // ④-P5（作者 2026-09-12 裁定 / ④ 控件面视觉规格 §8）：加载态**不换文案**——
+  // label 保持「搜索」，改用禁用材质 + 区域三点脉冲 + aria-busy 表达。
+  // 旧断言期望切「搜索中…」，而该文案会把按钮从 50px 撑到 74px（en 64→92），
+  // 180px 侧栏下把输入框压到 60.73px。
+  const loadingBtn = await page.$eval('.fm-search-btn', e => ({
+    txt: e.textContent, disabled: e.disabled, busy: e.getAttribute('aria-busy'),
+  })).catch(() => null);
+  ok('T2b 搜索中：label 不变 + disabled + aria-busy',
+    !!loadingBtn && loadingBtn.disabled && loadingBtn.txt === '搜索' && loadingBtn.busy === 'true',
+    JSON.stringify(loadingBtn));
   await sleep(600);
   await sleep(800); // 间隔恢复
   await page.fill('.fm-search-input', 'newbie42');
@@ -205,13 +218,14 @@ async function bootPage({ locale = 'zh-CN', sessions = [{ id: SID, agentName: 'N
   });
   ok('T3c 补载后 220 条（1..220）按钮消失', state.count === 220 && state.first === '1' && state.last === '220' && !state.btn, JSON.stringify(state));
   ok('T3d 无重复 + 视口未跳底', !state.dup && !state.atBottom, `atBottom=${state.atBottom}`);
-  // 短会话无按钮
+  // 短会话无按钮（种子 = 数字大 id 9001..9003，走生产同形判据路径：探针一路空窗
+  // → 「不自证不显示」→ 无按钮，且不会先亮后灭）
   await page.click('.fm-modal-close');
   await sleep(400);
   await page.click('#fm-conversations .fm-conv-row[data-conversation-id="c-few"]');
   await sleep(600);
   const fewBtn = await page.$eval('.fm-flow .fm-load-more', () => true).catch(() => false);
-  ok('T3e 短会话（3 条）无加载按钮', !fewBtn);
+  ok('T3e 短会话（3 条，数字大 id）无加载按钮', !fewBtn);
 
   // ── T4 转发链：引用块入框 → 发送 → chip ────────────────
   await page.click('.fm-modal-close');
