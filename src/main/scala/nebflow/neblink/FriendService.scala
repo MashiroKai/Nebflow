@@ -150,9 +150,21 @@ final class FriendService(
           .orElse(event.hcursor.get[String]("conversationId").toOption)
         convIdOpt match
           case Some(convId) =>
-            guard.bumpUnread(convId, 1) *>
-              pullConversation(convId).void
-                .handleErrorWith(e => logger.warn(s"friend_event pull failed for $convId: ${e.getMessage}"))
+            // #309：cursor 缺席（boot 期空 map / 全新会话，推送先于会话刷新到达）
+            // 时 bumpUnread 会建条目并回落 +1；返回值为回落信号 ⇒ 显式留痕。
+            // 禁静默吞掉这条 +1（本仓反复复现的「错误路径折成静默成功」缺陷族）。
+            guard.bumpUnread(convId, 1).flatMap { materialized =>
+              val trace =
+                if materialized then
+                  logger.warn(
+                    s"message_new for $convId arrived with no local cursor — materialized with unread=1 " +
+                      "(push preceded conversations refresh; server unreadCount stays authoritative baseline)"
+                  )
+                else IO.unit
+              trace *>
+                pullConversation(convId).void
+                  .handleErrorWith(e => logger.warn(s"friend_event pull failed for $convId: ${e.getMessage}"))
+            }
           case None =>
             logger.debug(s"message_new without conversationId ignored (neither payload nor flat)")
             IO.unit
@@ -407,12 +419,31 @@ final class FriendMessagingGuard(
       s.copy(cursors = s.cursors.updated(conversationId, cur.copy(lastReadMessageId = Math.max(cur.lastReadMessageId, maxMessageId))))
     }
 
-  /** 未读增量（message_new 事件：推送必为对方所发 → +1）。 */
-  def bumpUnread(conversationId: String, delta: Int): IO[Unit] =
-    state.update { s =>
+  /** 未读增量（message_new 事件：推送必为对方所发 → +1）。
+    *
+    * 返回值 = 本次是否因 cursor **缺席**而新建了条目（回落信号，供调用方留痕，
+    * #309）。**cursor 缺席时建条目再 +delta，不得 no-op**——缺席不是异常态：
+    * cursor map 在进程 boot 时为空（本类 `Ref.unsafe(St(…, Map.empty))`），由
+    * `refreshAll → refreshConversations → mergeUnread` 才逐会话填充，而 relay
+    * 隧道推送可能先于/独立于该刷新到达（重连窗口、全新会话的首条推送）。此前
+    * 本方法是 cursor 变更面**唯一**不 materialize 条目的入口（`advanceAnchor` /
+    * `mergeUnread` / `setRead` 三条兄弟路径都走
+    * `getOrElse(id, ConversationCursor(id, 0L, 0))`）⇒ 该窗口内的 +1 被静默吞掉，
+    * 未读角标永不亮（#309）。
+    *
+    * 口径不变（spec §3.4）：本方法只做**增量**；服务端 `unreadCount` 仍是权威
+    * 基线（`mergeUnread` 全量覆盖 ⇒ 此处预置的 delta 会在下一次会话刷新时被对齐，
+    * 不产生重复计数），`setRead` 清零——不新增第二套口径。
+    */
+  def bumpUnread(conversationId: String, delta: Int): IO[Boolean] =
+    state.modify { s =>
       s.cursors.get(conversationId) match
-        case Some(c) => s.copy(cursors = s.cursors.updated(conversationId, c.copy(unreadCount = c.unreadCount + delta)))
-        case None => s
+        case Some(c) =>
+          (s.copy(cursors = s.cursors.updated(conversationId, c.copy(unreadCount = c.unreadCount + delta))), false)
+        case None =>
+          // 缺席回落：materialize 条目（锚点 0 = 尚未见过消息，与三条兄弟路径
+          // 的缺省构造逐字一致），未读直接落 delta 而不是被吞掉。
+          (s.copy(cursors = s.cursors.updated(conversationId, ConversationCursor(conversationId, 0L, delta))), true)
     }
 
   /** 合并服务端会话未读数（服务端权威口径：自己发的消息不计，spec §3.4）。 */
