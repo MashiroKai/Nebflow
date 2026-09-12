@@ -5,6 +5,15 @@
 import state from './state.js';
 import { smartScroll, isNearBottom } from './utils.js';
 import { mintTickets, reMintAll, stripCredentialParams, nfFilePathsIn, injectTickets } from './nfTicket.js';
+// Local-link routing (2026-09-12, canvas-preview nav parity). A card is a
+// second surface that renders agent HTML, so it injects the SAME in-frame
+// handler the Canvas HTML viewer does (viewers/shared.js) and binds the same
+// parent bridge. Without it, an `<a>` in a card is a dead click: a relative
+// href navigates the card frame onto the app URL (cardRegistry has no render
+// guard, the frame is simply gone), and `target="_blank"` does nothing at all —
+// the card sandbox has no allow-popups, so the browser swallows the popup with
+// no tab, no navigation and no message.
+import { localLinkNavScript, bindLocalLinkBridge } from './viewers/shared.js';
 
 let _iframeId = 0;
 
@@ -371,6 +380,9 @@ export function renderCardWarnings(wrap, iframe, warnings) {
  *  never auto-fetches media files; the user must click play. */
 function renderHtmlCard(container, html, title, warnings) {
   container.innerHTML = '';
+  // One global listener for the whole app (idempotent) — the chat card is a
+  // second producer of the same _nfOpenLocalFile / _nfOpenExternalUrl messages.
+  bindLocalLinkBridge();
 
   const wrap = document.createElement('div');
   wrap.className = 'html-card-wrap';
@@ -399,7 +411,10 @@ function renderHtmlCard(container, html, title, warnings) {
   // replayed across mounts (T2, both forbidden). The credential now enters at
   // exactly one point: `injectFileTickets(processedHtml, tickets)` below.
   const srcdocHead = `<!DOCTYPE html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><style>${themeCSS}html,body{margin:0;padding:0;font-size:15px;line-height:1.5;box-sizing:border-box;word-wrap:break-word;overflow-wrap:break-word;background:var(--color-bg);color:var(--color-text);overflow:hidden;}*,*:before,*:after{box-sizing:inherit;}svg{max-width:100%;height:auto;}svg text{font-size:min(max(14px,100%),5vw);}img{max-width:100%;height:auto;}</style>${mediaFallbackScript}</head><body><div id="nf-wrap" style="width:100%">`;
-  const srcdocTail = `</div>${heightScript}</body></html>`;
+  // localLinkNavScript(): the card's half of the local-link channel (parent
+  // half = bindLocalLinkBridge below). Inside #nf-wrap's sibling position so
+  // the height script's measurement of the wrapper is unaffected.
+  const srcdocTail = `</div>${localLinkNavScript()}${heightScript}</body></html>`;
   /** @param {Map<string, string>} [tickets] */
   const buildSrcdoc = (tickets) =>
     srcdocHead + injectTickets(processedHtml, tickets || new Map()) + srcdocTail;
