@@ -850,6 +850,15 @@ async function scenarioOverflow(shootShots) {
 
 // ── 主流程 ──────────────────────────────────────────────────────────
 await mkdir(SHOTS, { recursive: true });
+if (ONLY === 'page') {
+  // 仅用已有 readings.json 重生成证据索引页（不跑场景）
+  const r = JSON.parse(await readFile(join(OUT, 'readings.json'), 'utf8'));
+  await writeFile(join(OUT, 'index.html'), evidencePage(r));
+  await browser.close();
+  server.close();
+  console.log(`[page] → ${join(OUT, 'index.html')}`);
+  process.exit(0);
+}
 if (ONLY === 'controls') {
   await mkdir(SHOTS, { recursive: true });
   await scenarioControls();
@@ -1033,5 +1042,15 @@ img{max-width:420px;display:block}figcaption{font-size:11px;color:#666;margin-to
 <h1>好友消息改造批 · 波2 视觉证据（真实渲染 + 几何读数）</h1>
 <p>渲染面 = 本 worktree <code>src/main/resources/web</code> 原样文件（静态服务 8976），API/WS 为桩。截图为 2x DPR 真实 Chromium 渲染。</p>
 <h2>截图（shots/）</h2>${imgs}
+<h2>同目录其它证据件</h2>
+<ul>
+<li><code>readings.json</code> — 本页读数全量（②A*/④C*/③A* 逐条实测值，含亮/暗两档）</li>
+<li><code>run.log</code> — harness 全量 stdout（96 项判据判定逐行 + 末尾 failures 计数）</li>
+<li><code>gates.log</code> — 门禁复跑：check-msgstyle-single-source / check-circular / check-ime-guard / check-js-types / build-web</li>
+<li><code>specs.log</code> — 既有 spec 复跑（分支）：friend-chain-ui / friend-remark-ui / friends-dev-default-on / friend-trust-sealed / friends-username-unify / friend-search-layout / release-strip-friends.static</li>
+<li><code>specs-baseline.log</code> / <code>specs-baseline-friend-chain-full.log</code> — 基线 7dd894c0 同款复跑（base 同红判定依据）</li>
+<li><code>i18n-sweep.log</code> — verify-i18n-sweep.cjs（A7 parity 1076=1076；A2/A1 与脚本自身崩溃为基线同红）</li>
+<li><code>baseline-overflow.json</code> + <code>overflow-compare.json</code> — ③A11 三档溢出的基线对照（allIdentical）</li>
+</ul>
 <h2>读数（readings.json 全量）</h2><table>${rows}</table>`;
 }
