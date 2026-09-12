@@ -815,9 +815,16 @@ class NodeAcceptanceSpec extends CatsEffectSuite:
       rt: ProjectRuntime,
       system: ActorSystem,
       res: SharedResources,
-      name: String
+      name: String,
+      idleWindowMs: Option[Long] = None
     ): IO[ActorRef[ProjectActor.ProjectCommand]] =
-    system.spawn(ProjectActor(ProjectActor.ProjectConfig(rt.project, rt.engine, system, res, "nebula-root")), name)
+    system.spawn(
+      ProjectActor(
+        ProjectActor.ProjectConfig(rt.project, rt.engine, system, res, "nebula-root",
+          dispatcherIdleWindowMs = idleWindowMs)
+      ),
+      name
+    )
 
   /** 门控 LLM（Task① 用）：sendStream 首段等待 gate —— 分发器 turn 保持
     * in-flight，注册窗口确定性可观测。 */
@@ -834,30 +841,42 @@ class NodeAcceptanceSpec extends CatsEffectSuite:
     val ws = tempRoot / "ws-task1"
     os.makeDir.all(ws)
     val system = ActorSystem(s"acc-task1-${scala.util.Random.nextInt(100000)}")
-    for
-      // #28 可观测接线后分发器是「运行中注册、完成即注销」的单次会话——gate 卡住
-      // turn，注册窗口确定性可观测。
-      gate <- cats.effect.Deferred[IO, Unit]
-      res <- mkResources(system, tempRoot, new GatedLlm(gate))
-      rt0 <- mountProject("acc-task1", ws, system, res)
-      ref <- spawnProjectActor(rt0, system, res, "proj-task1")
-      _ <- ProjectRuntimeRegistry.register(rt0.copy(actorRef = Some(ref)))
-      ctx = mkCtx(res, system, ws.toString)
-      r <- MailTool.call(Json.obj(
-        "address" -> Json.fromString("project:acc-task1"), "message" -> Json.fromString("调研 X")).asObject.get, ctx)
-      // 1) 运行中必须注册（getActiveAgents 快照依赖）——agent 被 gate 卡在 turn 内，
-      //    注册条目稳定存在，轮询必命中。
-      seen <- pollRegistryFor(res.agentRegistry, _.startsWith("dispatcher-"), 100, 20.millis)
-      _ <- gate.complete(()) // 释放 turn → 完成 → bridge 注销
-      _ <- waitRegistryGone(res.agentRegistry, _.startsWith("dispatcher-"), 100, 20.millis) // 等待注销
-      regAfter <- res.agentRegistry.get
-      _ <- system.stopAll.handleErrorWith(_ => IO.unit)
-    yield
-      assert(r.exists(_.contains("dispatcher triggered")), s"got: $r")
-      assert(seen.exists(_.nonEmpty),
-        s"dispatcher session must be registered while running (snapshot/面板可见性前提), seen: $seen")
-      assert(!regAfter.keys.exists(_.startsWith("dispatcher-")),
-        s"dispatcher must unregister after completion (ghost-row fix), still present: ${regAfter.keys}")
+    // 令 3（2026-09-12）**契约变更**：分发器会话不再在 turn 完成时即拆，改为
+    // 「30 min 无新任务才销毁」（`Defaults.DispatcherIdleWindowMs`）。本用例的
+    // 判据随之改写为「运行中注册 → 完成后**保活**（窗口内仍注册，下一次派发可复用）
+    // → 窗口到期由 TtlTick 扫描腿销毁 ⇒ 注销」——ghost-row 语义（无永久幽灵行）仍在，
+    // 只是收尾时点由「完成即拆」变为「窗口到期」。窗口压到 2 s（等效性依据：只压
+    // 窗口/节拍两个常量，判定与销毁代码路径逐行未变），节拍由 ttlScanner 1 s 驱动。
+    ProjectActor.ttlScanner(1.second).background.use { _ =>
+      for
+        gate <- cats.effect.Deferred[IO, Unit]
+        res <- mkResources(system, tempRoot, new GatedLlm(gate))
+        rt0 <- mountProject("acc-task1", ws, system, res)
+        ref <- spawnProjectActor(rt0, system, res, "proj-task1", idleWindowMs = Some(2000L))
+        _ <- ProjectRuntimeRegistry.register(rt0.copy(actorRef = Some(ref)))
+        ctx = mkCtx(res, system, ws.toString)
+        r <- MailTool.call(Json.obj(
+          "address" -> Json.fromString("project:acc-task1"), "message" -> Json.fromString("调研 X")).asObject.get, ctx)
+        // 1) 运行中必须注册（getActiveAgents 快照依赖）——agent 被 gate 卡在 turn 内，
+        //    注册条目稳定存在，轮询必命中。
+        seen <- pollRegistryFor(res.agentRegistry, _.startsWith("dispatcher-"), 100, 20.millis)
+        _ <- gate.complete(()) // 释放 turn → turn 完成（令 3：不再即拆，进空闲保活窗）
+        // 2) 保活：窗口（2 s）内该会话必须**始终**在场——这是「30 min 内复用同一会话」
+        //    的最小可等效观测面（窗口内不得出现注销）。
+        held <- pollRegistryStill(res.agentRegistry, _.startsWith("dispatcher-"), 40, 20.millis)
+        // 3) 窗口到期 ⇒ TtlTick 扫描腿销毁 ⇒ 注销（ghost-row 语义保持）
+        _ <- waitRegistryGone(res.agentRegistry, _.startsWith("dispatcher-"), 400, 25.millis)
+        regAfter <- res.agentRegistry.get
+        _ <- system.stopAll.handleErrorWith(_ => IO.unit)
+      yield
+        assert(r.exists(_.contains("dispatcher triggered")), s"got: $r")
+        assert(seen.exists(_.nonEmpty),
+          s"dispatcher session must be registered while running (snapshot/面板可见性前提), seen: $seen")
+        assert(held.nonEmpty && held.forall(identity),
+          s"令 3：turn 完成后的空闲窗口内会话必须保活（仍注册），采样: $held")
+        assert(!regAfter.keys.exists(_.startsWith("dispatcher-")),
+          s"dispatcher must be destroyed after the idle window expires (ghost-row fix), still present: ${regAfter.keys}")
+    }
   }
 
   /** 轮询 agentRegistry 直到出现满足 pred 的键或超时。返回每次采样快照。 */
@@ -876,9 +895,22 @@ class NodeAcceptanceSpec extends CatsEffectSuite:
       }
     }
 
-  /** 轮询直到不再存在满足 pred 的键（等待完成注销）。 */
-  private def waitRegistryGone(
+  /** 反向轮询（**令 3 保活判据**）：在 attempts × interval 的时间窗内，该键必须每次
+    * 采样都在场——返回逐次布尔（窗口内不允许出现一次缺席）。 */
+  private def pollRegistryStill(
     registry: cats.effect.Ref[IO, Map[String, nebflow.agent.AgentRecord]],
+    pred: String => Boolean,
+    attempts: Int,
+    interval: FiniteDuration
+  ): IO[List[Boolean]] =
+    (1 to attempts).toList.foldLeft(IO.pure(List.empty[Boolean])) { (acc, _) =>
+      acc.flatMap { xs =>
+        registry.get.map(_.keySet).flatMap(keys => IO.sleep(interval).as(xs :+ keys.exists(pred)))
+      }
+    }
+
+  /** 轮询直到不再存在满足 pred 的键（等待完成注销）。 */
+  private def waitRegistryGone(    registry: cats.effect.Ref[IO, Map[String, nebflow.agent.AgentRecord]],
     pred: String => Boolean,
     attempts: Int,
     interval: FiniteDuration
