@@ -493,6 +493,7 @@ object AgentActor extends AgentCore with AgentSession:
   /** WS bubble emission for every injected immediate/user input that carries a source.
     * ② (2026-09-11): fromUser 优先于 source —— 真人输入不产注入气泡。 */
   private def emitInjectedBubbles(
+    resources: SharedResources,
     state: AgentState,
     drain: PostCompactDrain
   )(using ctx: ActorContext[AgentCommand]): IO[Unit] =
@@ -500,6 +501,7 @@ object AgentActor extends AgentCore with AgentSession:
       injectionSourceFor(imm.fromUser, imm.source) match
         case Some(src) =>
           emitInjectedUserEvent(
+            resources,
             state.wsSend, state.sessionId, imm.text, src, imm.eventType, imm.sender, imm.senderTeam, imm.delivery
           )
         case None => IO.unit
@@ -508,6 +510,7 @@ object AgentActor extends AgentCore with AgentSession:
       injectionSourceFor(ui.fromUser, ui.source) match
         case Some(src) =>
           emitInjectedUserEvent(
+            resources,
             state.wsSend, state.sessionId, ui.text, src, ui.eventType, ui.sender, ui.senderTeam, ui.delivery
           )
         case None => IO.unit
@@ -540,6 +543,7 @@ object AgentActor extends AgentCore with AgentSession:
    * user input (SessionRecorder records it as UiMessage.User with injected=true).
    */
   private def emitInjectedUserEvent(
+    resources: SharedResources,
     wsSend: Json => IO[Unit],
     sessionId: Option[String],
     text: String,
@@ -569,8 +573,41 @@ object AgentActor extends AgentCore with AgentSession:
       val withWaiting =
         if waitingForBatch then withDelivery.deepMerge(Json.obj("waitingForBatch" -> true.asJson))
         else withDelivery
+      // bluebubble 批（2026-09-12）：注入行的落盘**在唯一发射点收口**。
+      // 本方法是全仓唯一的 injected user 帧发射点（grep `"injected" -> true` 单命中），
+      // 故它也是这条 .ui.json 记录的唯一写者——此前落盘依赖 WS 录制层
+      // （`WebSocketRoutes#makeRecordingWsSend` 的 `user` 分支按帧内 nodeSessionId 嗅探），
+      // 而**启动挂载**的项目 engine.wsSendFn = 裸 `wsHub.broadcast`（非录制 send，
+      // GatewayMain.startupMount）⇒ 分发器/节点会话的注入气泡只在 live 广播里存在、
+      // 永不落盘 ⇒ 会话抽屉/行内视图「看不到蓝气泡」（作者 2026-09-12 19:42 现象）。
+      // 此处 `sid` 恒 = 发射者自身会话（= 帧内 `sessionId`，与既有 WS 路由目标
+      // 一致：routeWsSend/routeSubagentWsSend 只在缺省时改写 sessionId，而本帧
+      // 必带自身 sid；二者重合使落盘目标与前端 live 路由目标严格同源）。
+      // 落盘判据与旧录制层逐字保持（`text.nonEmpty && injected` ⇒ 空文本注入
+      // 只广播不落盘），写入顺序也保持「先落盘、后广播」单链（同一条 forkTurn
+      // 内串行，避免两条 fiber 竞争导致 .ui.json 行序与旧读法不一致）。
+      val persist =
+        if text.nonEmpty then
+          resources.sessionStore
+            .appendUiMessages(
+              sid,
+              List(UiMessage.User(
+                text,
+                Nil,
+                injected = true,
+                timestamp = System.currentTimeMillis(),
+                source = Some(source),
+                eventType = eventType,
+                sender = sender,
+                senderTeam = senderTeam,
+                delivery = delivery
+              ))
+            )
+            .handleErrorWith(e => logger.warn(s"injected user event persist failed: ${e.getMessage}"))
+        else IO.unit
       ctx.forkTurn(
-        wsSend(withWaiting).handleErrorWith(e => logger.warn(s"injected user event failed: ${e.getMessage}"))
+        persist *> wsSend(withWaiting)
+          .handleErrorWith(e => logger.warn(s"injected user event failed: ${e.getMessage}"))
       )
     }
 
@@ -868,6 +905,7 @@ object AgentActor extends AgentCore with AgentSession:
           val injectedEventIO = injectionSource match
             case Some(src) =>
               emitInjectedUserEvent(
+                resources,
                 stateWithWidth.wsSend,
                 stateWithWidth.sessionId,
                 text,
@@ -928,7 +966,7 @@ object AgentActor extends AgentCore with AgentSession:
           else IO.unit
         for
           _ <- sessionBusyIO2
-          _ <- emitInjectedUserEvent(state.wsSend, state.sessionId, input, "skill", None)
+          _ <- emitInjectedUserEvent(resources, state.wsSend, state.sessionId, input, "skill", None)
           result <- pipeLlmCall(agentDef, resources, depth, parentRef, processingState, None, DispatchCause.UserWake)
         yield result
 
@@ -1051,6 +1089,7 @@ object AgentActor extends AgentCore with AgentSession:
             case Some(s) =>
               val agentName = metadata("agentName").flatMap(_.asString)
               emitInjectedUserEvent(
+                resources,
                 state.wsSend,
                 state.sessionId,
                 payload,
@@ -1600,6 +1639,7 @@ object AgentActor extends AgentCore with AgentSession:
               _ <- immInputs.flatMap { imm =>
                 injectionSourceFor(imm.fromUser, imm.source).map(src =>
                   emitInjectedUserEvent(
+                    resources,
                     state.wsSend,
                     state.sessionId,
                     imm.text,
@@ -1888,6 +1928,7 @@ object AgentActor extends AgentCore with AgentSession:
         val immEventIO = immInputs.flatMap { imm =>
           injectionSourceFor(imm.fromUser, imm.source).map(src =>
             emitInjectedUserEvent(
+              resources,
               state.wsSend,
               state.sessionId,
               imm.text,
@@ -1929,6 +1970,7 @@ object AgentActor extends AgentCore with AgentSession:
         val userBatchEventIO = inlineUserCmds.flatMap { ui =>
           injectionSourceFor(ui.fromUser, ui.source).map(src =>
             emitInjectedUserEvent(
+              resources,
               state.wsSend,
               state.sessionId,
               ui.text,
@@ -2260,7 +2302,7 @@ object AgentActor extends AgentCore with AgentSession:
                   _ <- ctx.forkTurn(compactEmitIO)
                   _ <- persistDrainIO
                   _ <- logPostCompactInjection(agentDef, depth, state, drain)
-                  _ <- emitInjectedBubbles(state, drain)
+                  _ <- emitInjectedBubbles(resources, state, drain)
                   result <- pipeLlmCall(
                     agentDef,
                     resources,
@@ -2284,7 +2326,7 @@ object AgentActor extends AgentCore with AgentSession:
                   result <- if drain.appended.nonEmpty then
                     for
                       _ <- logPostCompactInjection(agentDef, depth, state, drain)
-                      _ <- emitInjectedBubbles(state, drain)
+                      _ <- emitInjectedBubbles(resources, state, drain)
                       res <- pipeLlmCall(
                         agentDef,
                         resources,
@@ -2405,7 +2447,7 @@ object AgentActor extends AgentCore with AgentSession:
         val bubbleIO = visSource match
           case Some(s) =>
             val agentName = metadata("agentName").flatMap(_.asString)
-            emitInjectedUserEvent(state.wsSend, state.sessionId, payload, s, Some(eventType), agentName)
+            emitInjectedUserEvent(resources, state.wsSend, state.sessionId, payload, s, Some(eventType), agentName)
           case None => IO.unit
         bubbleIO *>
           emitStream(
@@ -3244,6 +3286,7 @@ object AgentActor extends AgentCore with AgentSession:
         _ <- immInputs.flatMap { imm =>
           injectionSourceFor(imm.fromUser, imm.source).map(src =>
             emitInjectedUserEvent(
+              resources,
               state.wsSend,
               state.sessionId,
               imm.text,
@@ -3327,6 +3370,7 @@ object AgentActor extends AgentCore with AgentSession:
                       if !isSubagent then emitSessionBusy(state.wsSend, sid, busy = true)
                       else IO.unit
                     _ <- emitInjectedUserEvent(
+                      resources,
                       state.wsSend, state.sessionId, item.message,
                       "mail-queue", Some("queue"), Some(item.from), None, Some("queue")
                     )
@@ -3883,7 +3927,7 @@ object AgentActor extends AgentCore with AgentSession:
           _ <- currentNextChange(resources).flatMap { nextChange =>
             emitStream(state.wsSend, AgentStreamEvent.Resumed(nextChange), isSubagent = depth > 0, state.sessionId) *> updateRegistryFrozenReason(resources, state.sessionId, None)
           }
-          _ <- emitInjectedUserEvent(state.wsSend, state.sessionId, input, "skill", None)
+          _ <- emitInjectedUserEvent(resources, state.wsSend, state.sessionId, input, "skill", None)
           result <- pipeLlmCall(agentDef, resources, depth, parentRef, processingState, None, DispatchCause.UserWake)
         yield result
 

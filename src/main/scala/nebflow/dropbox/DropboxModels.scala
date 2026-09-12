@@ -41,7 +41,12 @@ case class FileTransfer(
   mimeType: String,
   msgId: String,
   status: String, // "pending" | "accepted" | "rejected" | "transferring" | "completed" | "failed"
-  tempPath: String = "", // temp file path on receiver
+  // P0 wtmove: `Option`, never a blank sentinel — an empty string used to
+  // resolve to `os.pwd` downstream, i.e. a transfer with no located temp file
+  // silently renamed the *process working directory* into ~/Downloads.
+  // `None` = "no temp file recorded for this transfer" (relay direct delivery,
+  // or a restart rebuild that found no leftover), which is an explicit state.
+  tempPath: Option[String] = None,
   receiverHash: String = "" // SHA-256 computed by receiver
 )
 

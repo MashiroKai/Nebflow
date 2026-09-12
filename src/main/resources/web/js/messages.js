@@ -965,12 +965,29 @@ function resortAndRender() {
 }
 
 // ── friend_event (arch §6.2) ─────────────────────────────
+/** 事件名判据**单点**（K-2 段 A 2026-09-12）：与 Scala 侧
+ *  `FriendService.MessageNew / MessageNewSelf` **逐字同名** —— 两侧不得各写一套
+ *  字面量（事件名漂移 = 分支静默失配，正是本批 K-2 的病灶形态：`message_new_self`
+ *  两侧都无分支、且字面量各写一套时无人能发现）。
+ *  `message_new` = 对方所发；`message_new_self` = **本账号在他处所发**（agent 代发 /
+ *  同账号另一台设备）——后者**不计未读**。 */
+const EV_MESSAGE_NEW = 'message_new';
+const EV_MESSAGE_NEW_SELF = 'message_new_self';
+
+/** 帧 → 本地消息对象（**唯一实现**）：网关 `FriendEvent.frontendFrame` 已把
+ *  `payload` 展平到帧顶层，两个 `message_*` 分支共用本函数 ⇒ 字段名只此一处
+ *  （不得各写一套读法）。
+ *  @param {any} p 网关 friend_event 帧（扁平） */
+function frameMessage(p) {
+  return { id: p.messageId, senderId: p.senderId || p.sender?.userId, kind: p.kind, body: p.body, createdAt: p.createdAt };
+}
+
 async function onFriendEvent(msg) {
-  if (msg.event === 'message_new') {
+  if (msg.event === EV_MESSAGE_NEW) {
     const p = msg;
     const conv = conversations.find(c => c.conversationId === p.conversationId);
     if (!conv) { await refreshConversations({ friends: 'force' }); return; } // REST is truth
-    const m = { id: p.messageId, senderId: p.senderId || p.sender?.userId, kind: p.kind, body: p.body, createdAt: p.createdAt };
+    const m = frameMessage(p);
     conv.lastMessage = m;
     const isOpen = openConvId === p.conversationId;
     if (isOpen) {
@@ -987,6 +1004,23 @@ async function onFriendEvent(msg) {
     // Note: 全新会话的首条消息走上方 refreshConversations 早退分支，不在此
     // 自动转发（会话缓存缺失时的已知边界，后续消息正常覆盖）。
     maybeAutoForward(m, conv);
+    resortAndRender();
+    updateBadge();
+    return;
+  }
+  if (msg.event === EV_MESSAGE_NEW_SELF) {
+    // K-2（段 A）：**本账号在他处所发**（agent/工具代发，或同账号的另一台设备）。
+    // 修前无此分支 ⇒ 帧被整条忽略：会话预览/角标/开着窗全都不动，只有「关窗再开」
+    // （重挂载取数）才可见。语义 = 上屏 + 列表预览/角标刷新，**不涨未读**
+    // （自送消息不计未读，§4 口径 sender != me）——`unreadCount` 两条支路一律不动，
+    // 与上方 message_new 的 inbound 支路形成显式对照。也不触发 maybeAutoForward
+    // （信任模式自动转发只面向对方来件，自送件回灌进 agent 输入是反语义）。
+    const conv = conversations.find(c => c.conversationId === msg.conversationId);
+    if (!conv) { await refreshConversations({ friends: 'force' }); return; } // REST is truth
+    const m = frameMessage(msg);
+    conv.lastMessage = m;
+    if (openConvId === msg.conversationId) appendMessage(m); // 复用既有 append 腿
+    // 未开会话：仅下方刷新（列表预览 + 角标），不 append、不计未读。
     resortAndRender();
     updateBadge();
     return;
@@ -1020,10 +1054,20 @@ async function backfillTick() {
   if (!loggedIn() || document.hidden) return;
   if (relayUsable() && state.connected) return; // 健康路径：零请求
   const convId = openConvId;
-  if (!convId || String(convId).startsWith('__pending__')) return; // 会话尚未建立
   const now = Date.now();
   if (now - lastBackfillAt < BACKFILL_THROTTLE_MS) return;
   lastBackfillAt = now;
+  // K-4（段 A 2026-09-12）：**列表/角标兜底**。修前此处是 `if (!convId) return`
+  // ——用户停在列表态（没开任何会话）时，通道失效期间零补偿：列表预览与角标停在
+  // 旧值，只有手动重挂载（切面板 / 关窗再开）才更新（正本 §2(c) 的结构性残余）。
+  // 现在退化为一次 `refreshConversations()`（列表 + 角标，与 M1② 同一条既有腿，
+  // 默认 `'reuse'` = 1 次往返）。
+  // 红线不动：本支路**不发任何消息窗口请求**（`limit=200` 尾窗零命中），有
+  // `openConvId` 时继续走 keyset 增量 `syncConversation`（`after=水位`，M1③ 红线）。
+  if (!convId || String(convId).startsWith('__pending__')) {
+    await refreshConversations();
+    return;
+  }
   await syncConversation(convId, { pages: MAX_SYNC_PAGES });
 }
 
