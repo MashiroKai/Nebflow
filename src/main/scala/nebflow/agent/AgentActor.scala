@@ -612,6 +612,11 @@ object AgentActor extends AgentCore with AgentSession:
       * isDispatcher+projectName；经 AgentCore 透传 ToolContext。默认空=非项目会话。 */
     flowNodeId: Option[String] = None,
     isDispatcher: Boolean = false,
+    /** 节点角色（nrloop 一期 2026-09-12；设计 §3.2 + B1 透传链）：NodeDef.role 随
+      * spawn 注入（NodeEngine 节点/loop 会话），经 AgentCore 透传
+      * ToolContext.flowNodeRole——node_report 值域分化 + ProtocolFootnote 角色分支
+      * 的来源。默认 None = 非项目会话/旧路径（判据回落 NodeRoles.Task）。 */
+    flowNodeRole: Option[String] = None,
     projectName: Option[String] = None,
     /** D6 批 F1（G9 路径 a）：节点人类可读名随 spawn 注入——AskUser payload
       * nodeName 字段来源。详见 SessionContext.flowNodeName。 */
@@ -683,6 +688,7 @@ object AgentActor extends AgentCore with AgentSession:
             userFacingNode = userFacingNode,
             flowNodeId = flowNodeId,
             isDispatcher = isDispatcher,
+            flowNodeRole = flowNodeRole,
             projectName = projectName,
             flowNodeName = flowNodeName,
             flowChainId = flowChainId,
