@@ -133,47 +133,12 @@
   gap: 6px;
 }
 
-/* Individual message wrapper */
-.dropbox-msg {
-  display: flex;
-  flex-direction: column;
-  max-width: 75%;
-}
-.dropbox-msg.out { align-self: flex-end; align-items: flex-end; }
-.dropbox-msg.in  { align-self: flex-start; align-items: flex-start; }
-
-/* Text bubble */
-.dropbox-msg-bubble {
-  padding: 6px 12px;
-  border-radius: 12px;
-  font-size: 13px;
-  line-height: 1.4;
-  word-break: break-word;
-}
-.dropbox-msg.out .dropbox-msg-bubble {
-  background: rgba(91, 127, 191, 0.15);
-  color: var(--color-frame-text, #333);
-}
-.dropbox-msg.in .dropbox-msg-bubble {
-  background: var(--glass-etched-bg, rgba(128, 128, 128, 0.06));
-  border: 1px solid var(--glass-etched-border, rgba(128, 128, 128, 0.12));
-  color: var(--color-frame-text, #333);
-}
-
-/* Message meta row (timestamp + copy) */
-.dropbox-msg-meta {
-  display: flex;
-  align-items: center;
-  gap: 4px;
-  margin-top: 2px;
-  padding: 0 4px;
-}
-
-/* Message timestamp */
-.dropbox-msg-time {
-  font-size: 10px;
-  color: var(--color-frame-text-muted, #aaa);
-}
+/* Individual message wrapper / text bubble / meta / time
+   ── 已在 sapphire.css 的 "Shared message surface" 段与好友面同源（2026-09-12 波2）：
+   结构与形态（wrapper 的 flex 列 + 方向对齐、气泡 padding 8px 12px / r14 / 13px /
+   行高 1.5 / 出向无描边 + 方向尾角 4px、元信息 pill、时间 10px 等宽 tabular-nums）+
+   max-width token（--msg-bubble-max-w = 78%，与好友面同 token）。
+   本文件只留 dropbox 面专有声明：文件卡子层、复制键、dropzone 提示条。 */
 
 /* Inline copy button */
 .dropbox-msg-copy {
@@ -193,20 +158,8 @@
 .dropbox-msg-copy.copied { color: #34c759; opacity: 1; }
 .dropbox-msg:hover .dropbox-msg-copy { opacity: 1; }
 
-/* File card */
-.dropbox-file-card {
-  padding: 8px 12px;
-  border-radius: 12px;
-  background: var(--glass-etched-bg, rgba(128, 128, 128, 0.06));
-  border: 1px solid var(--glass-etched-border, rgba(128, 128, 128, 0.12));
-  min-width: 180px;
-}
-.dropbox-msg.out .dropbox-file-card {
-  background: rgba(91, 127, 191, 0.10);
-  border-color: rgba(91, 127, 191, 0.15);
-}
-
-/* File card layout */
+/* File card — 卡片本体是共享类 .msg-file-card（sapphire.css，③A5 单一类名），
+   本处只留 dropbox 面的子层排版。 */
 .dropbox-file-row {
   display: flex;
   align-items: center;
@@ -257,7 +210,9 @@
   50% { opacity: 1; }
 }
 
-/* Drop zone */
+/* Drop hint strip — 纯提示文案（2026-09-12 波2 ③-F 双入口）：不再是拖拽目标、
+   也不再是可点击入口（点击/拖拽已上移到整个对话框与输入条纸夹键），故去掉
+   cursor/hover/drag-over 交互态，只留静态提示的外观。 */
 .dropbox-dropzone {
   margin: 6px 16px;
   padding: 10px;
@@ -266,16 +221,18 @@
   text-align: center;
   font-size: 12px;
   color: var(--color-frame-text-muted, #888);
-  cursor: pointer;
-  transition: border-color 0.2s, background 0.2s;
 }
-.dropbox-dropzone:hover {
-  border-color: rgba(91, 127, 191, 0.4);
+
+/* 拖拽目标 = 整个对话框（③-F/③A6）。outline（不是 border）承载拖拽态：不参与
+   布局、不推动任何内容；dashed 与提示条同族。 */
+.dropbox-modal.drag-over {
+  outline: 1.5px dashed rgba(91, 127, 191, 0.6);
+  outline-offset: -6px;
 }
-.dropbox-dropzone.drag-over {
-  border-color: rgba(91, 127, 191, 0.6);
-  background: rgba(91, 127, 191, 0.05);
-}
+
+/* 输入条纸夹键（第二入口）：复用 .icon-btn 玻璃表达，尺寸收到输入条尺度 */
+.dropbox-attach-btn { width: 32px; height: 32px; flex-shrink: 0; }
+.dropbox-attach-btn svg { width: 18px; height: 18px; }
 
 /* Input bar */
 .dropbox-input-bar {

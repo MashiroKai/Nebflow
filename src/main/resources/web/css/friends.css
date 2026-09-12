@@ -83,6 +83,39 @@
   white-space: nowrap;
 }
 
+/* ── 换行口径 R1–R7（2026-09-12 波2 · 作者令「一行内容不够显示的时候要换行」）──
+   作用域 = 请求行（.fm-req-row）+ 搜索结果卡（.fm-result-card）+ 好友行
+   （.fm-friend-row，同一 primitive 随动）。会话列表摘要 .fm-conv-summary 与
+   弹窗标题 .fm-modal-name/.fm-modal-id 保持单行省略（R7，避免回归既有 A6 断言）。
+   撤 nowrap（不再单行截断）→ 断词（overflow-wrap:anywhere 吃长 URL/无空格串，
+   word-break:normal 保 CJK 自然断行）→ 多行上限 3 行 + 尾省略号。
+   文本区保底 .fm-row-meta flex:1 1 96px / min-width:72px（11px 字号下 6 个 CJK 字，
+   最小可读宽），动作区 flex:0 0 auto 永不被挤压（R5）；四层容器任一不得
+   scrollWidth > clientWidth（R6，禁用 overflow-x:hidden 掩盖）。 */
+.fm-req-row .fm-row-name,
+.fm-req-row .fm-row-sub,
+.fm-result-card .fm-row-name,
+.fm-result-card .fm-row-sub,
+.fm-friend-row .fm-row-name,
+.fm-friend-row .fm-row-sub {
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 3;
+  white-space: normal;
+  text-overflow: clip;
+  overflow-wrap: anywhere;
+  word-break: normal;
+  line-height: 1.45;
+  overflow: hidden;
+}
+
+.fm-req-row .fm-row-meta,
+.fm-result-card .fm-row-meta,
+.fm-friend-row .fm-row-meta {
+  flex: 1 1 96px;
+  min-width: 72px;
+}
+
 .fm-row-badge {
   flex-shrink: 0;
   min-width: 16px;
@@ -205,7 +238,62 @@
 
 .fm-search-input:focus-visible { border-color: rgb(var(--sapphire) / 0.5); }
 
-.fm-search-btn { flex-shrink: 0; font-size: 12px; padding: 6px 12px; }
+/* ── ④ 控件面：搜索键 / 同意 / 拒绝（2026-09-12 波2）──────────────────────
+   材质全部落既有 token（--glass-send-* 中性灰族 + --color-text + 亮档
+   --glass-send-shadow*），零新色值。`button.` 前缀提高特异度：本键同时带
+   `.glass-control` 类，而 sapphire.css 后加载 ⇒ 同特异度会退回玻璃基底值。
+   修复的既有缺陷：圆角 0 → 8px（D1）、未声明 color 吃 UA buttontext（暗档
+   1.32:1，D2）、hover/active 与 rest 逐值相同（D3）、disabled 用元素 opacity
+   .55（P4 已退役表达，D5）、焦点环走 UA 蓝环（D6）。
+   作者 2026-09-12 裁定 1：同意/拒绝两键 = 中性玻璃（方案件推荐的绿实色作废），
+   亮/暗两档都必须可辨 —— 同意取族内顶档填充（--glass-send-bg-active）+ 字重
+   500 + 描边随态递进；拒绝取族内 rest 档 + 字重 400 + 全量四态 ramp。主次由
+   「填充差 + 字重差」表达，暗档背景 Δ = .10（≥ 裁定红线 .08）。 */
+button.fm-search-btn {
+  flex-shrink: 0;
+  font-size: 12px;
+  font-family: inherit;
+  font-weight: 500;
+  padding: 6px 12px;
+  border-radius: 8px;
+  color: var(--color-text, #000);
+  background: var(--glass-send-bg);
+  border: 1px solid var(--glass-send-border);
+  box-shadow: var(--glass-send-stack);
+  cursor: pointer;
+  transition: background 0.15s ease, border-color 0.15s ease,
+              color 0.15s ease, box-shadow 0.15s ease;
+}
+button.fm-search-btn:hover {
+  background: var(--glass-send-bg-hover);
+  border-color: var(--glass-send-border-hover);
+}
+button.fm-search-btn:active {
+  background: var(--glass-send-bg-active);
+  border-color: var(--glass-send-border-active);
+}
+/* 禁用 = 禁用材质（非元素 opacity）。加载态不换文案（④-P5）：label 保持
+   「搜索/Search」+ 区域三点脉冲 + aria-busy，消除 50→74 的宽度跳动。 */
+button.fm-search-btn:disabled {
+  background: var(--glass-send-bg-disabled);
+  border-color: var(--glass-send-border-disabled);
+  color: color-mix(in srgb, var(--color-text, #000) 50%, transparent);
+  cursor: not-allowed;
+  box-shadow: var(--glass-send-stack);
+}
+button.fm-search-btn:focus-visible {
+  outline: none;
+  box-shadow: 0 0 0 2px var(--glass-control-border);
+}
+
+/* 亮档反馈层（作者 2026-09-11 P4 裁定：亮底衬上白 alpha 填充递进肉眼不可辨，
+   改用边框 + 投影）。暗档 --glass-send-shadow* = none 且无规则消费，故只挂在
+   light 媒体查询里（none 不能参与逗号列表）。 */
+@media (prefers-color-scheme: light) {
+  button.fm-search-btn { box-shadow: var(--glass-send-stack), var(--glass-send-shadow); }
+  button.fm-search-btn:hover { box-shadow: var(--glass-send-stack), var(--glass-send-shadow-hover); }
+  button.fm-search-btn:active { box-shadow: var(--glass-send-stack), var(--glass-send-shadow-active); }
+}
 
 /* 结果区（命中 / 未找到 / 加载 / 失败 共用容器卡）：独立块，整宽 */
 .fm-result-card {
@@ -326,25 +414,85 @@
   margin: 8px 10px 2px;
 }
 
-.fm-req-row { cursor: default; }
+/* 请求行：放不下就换行（R5/R6）——动作区整体落到第二行右对齐，绝不挤压文本、
+   绝不被 .panel{overflow:hidden} 裁掉（180px 现状：拒绝键右缘 268.6 > 面板右缘
+   239 被裁；.fm-row-meta 仅 8.42px / 0px）。 */
+.fm-req-row { cursor: default; flex-wrap: wrap; row-gap: 6px; }
 .fm-req-row:hover { background: transparent; }
 
-.fm-req-btns { display: flex; gap: 6px; flex-shrink: 0; }
+.fm-req-btns { display: flex; gap: 6px; flex: 0 0 auto; margin-left: auto; }
 
-.fm-req-accept { font-size: 12px; padding: 4px 10px; }
-
-.fm-req-decline {
+/* 同意 = 主操作（中性玻璃顶档 + 500 字重；描边随态递进） */
+button.fm-req-accept {
   font-size: 12px;
-  padding: 4px 10px;
+  font-family: inherit;
+  font-weight: 500;
+  padding: 4px 12px;
   border-radius: 8px;
-  border: 1px solid var(--glass-control-border);
-  background: transparent;
   color: var(--color-text, #000);
+  background: var(--glass-send-bg-active);
+  border: 1px solid var(--glass-send-border);
+  box-shadow: var(--glass-send-stack);
   cursor: pointer;
-  transition: background 0.15s ease;
+  transition: border-color 0.15s ease, box-shadow 0.15s ease, color 0.15s ease;
+}
+button.fm-req-accept:hover { border-color: var(--glass-send-border-hover); }
+button.fm-req-accept:active { border-color: var(--glass-send-border-active); }
+button.fm-req-accept:disabled {
+  background: var(--glass-send-bg-disabled);
+  border-color: var(--glass-send-border-disabled);
+  color: color-mix(in srgb, var(--color-text, #000) 50%, transparent);
+  cursor: not-allowed;
+  box-shadow: var(--glass-send-stack);
+}
+button.fm-req-accept:focus-visible {
+  outline: none;
+  box-shadow: 0 0 0 2px var(--glass-control-border);
 }
 
-.fm-req-decline:hover { background: var(--glass-control-bg-hover); }
+/* 拒绝 = 次操作（中性玻璃 rest 档 + 400 字重 + 全量四态 ramp） */
+button.fm-req-decline {
+  font-size: 12px;
+  font-family: inherit;
+  font-weight: 400;
+  padding: 4px 12px;
+  border-radius: 8px;
+  color: var(--color-text, #000);
+  background: var(--glass-send-bg);
+  border: 1px solid var(--glass-send-border);
+  box-shadow: var(--glass-send-stack);
+  cursor: pointer;
+  transition: background 0.15s ease, border-color 0.15s ease,
+              color 0.15s ease, box-shadow 0.15s ease;
+}
+button.fm-req-decline:hover {
+  background: var(--glass-send-bg-hover);
+  border-color: var(--glass-send-border-hover);
+}
+button.fm-req-decline:active {
+  background: var(--glass-send-bg-active);
+  border-color: var(--glass-send-border-active);
+}
+button.fm-req-decline:disabled {
+  background: var(--glass-send-bg-disabled);
+  border-color: var(--glass-send-border-disabled);
+  color: color-mix(in srgb, var(--color-text, #000) 50%, transparent);
+  cursor: not-allowed;
+  box-shadow: var(--glass-send-stack);
+}
+button.fm-req-decline:focus-visible {
+  outline: none;
+  box-shadow: 0 0 0 2px var(--glass-control-border);
+}
+
+@media (prefers-color-scheme: light) {
+  button.fm-req-accept { box-shadow: var(--glass-send-stack), var(--glass-send-shadow); }
+  button.fm-req-accept:hover { box-shadow: var(--glass-send-stack), var(--glass-send-shadow-hover); }
+  button.fm-req-accept:active { box-shadow: var(--glass-send-stack), var(--glass-send-shadow-active); }
+  button.fm-req-decline { box-shadow: var(--glass-send-stack), var(--glass-send-shadow); }
+  button.fm-req-decline:hover { box-shadow: var(--glass-send-stack), var(--glass-send-shadow-hover); }
+  button.fm-req-decline:active { box-shadow: var(--glass-send-stack), var(--glass-send-shadow-active); }
+}
 
 /* ── Messages panel: conversation list (§3.2) ───────────── */
 #fm-conversations {
@@ -416,18 +564,9 @@
   white-space: nowrap;
 }
 
-.fm-forward-btn {
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  width: 28px;
-  height: 28px;
-  padding: 0;
-  border-radius: 8px;
-  flex-shrink: 0;
-}
-
-.fm-forward-btn svg { width: 15px; height: 15px; }
+/* 窗头转发按钮（.fm-forward-btn）规则已删除：作者 2026-09-12 裁定移除窗头转发
+   入口（转发只保留按消息的两条：气泡内按钮 + 气泡右键，共用 forwardBubble）。
+   规则一并删掉，避免成为死 CSS。 */
 
 /* 信任模式 v1: 窗头信任状态指示。sapphire chip（开启态一眼可辨），色相复用
    既有 --sapphire token 的 alpha 变体（零新色），形态对齐 fm-msg-*-badge pill。 */
@@ -492,7 +631,9 @@
   border-radius: 8px;
 }
 
-/* Message flow — bubbles per spec §5 (dropbox token values) */
+/* Message flow — 气泡几何 / 出向底色 / 元信息 pill / 时间排版 = 与 dropbox 面
+   同源，写在 sapphire.css 的 "Shared message surface" 段（同一批值只写一次）。
+   本文件只留好友面专有声明：消息流布局、pre-wrap 正文、chip、操作组。 */
 .fm-flow {
   flex: 1;
   overflow-y: auto;
@@ -503,40 +644,8 @@
   border-top: 1px solid var(--glass-etched-border);
 }
 
-.fm-msg { display: flex; flex-direction: column; max-width: 78%; }
-.fm-msg.out { align-self: flex-end; align-items: flex-end; }
-.fm-msg.in  { align-self: flex-start; align-items: flex-start; }
-
-.fm-msg-bubble {
-  padding: 8px 12px;
-  border-radius: 14px;
-  font-size: 13px;
-  line-height: 1.5;
-  word-break: break-word;
-  white-space: pre-wrap;
-  color: var(--color-text, #000);
-}
-
-.fm-msg.out .fm-msg-bubble {
-  background: rgba(91, 127, 191, 0.15);
-  border: 1px solid rgba(91, 127, 191, 0.18);
-}
-
-.fm-msg.in .fm-msg-bubble {
-  background: var(--glass-etched-bg);
-  border: 1px solid var(--glass-etched-border);
-}
-
-.fm-msg-meta {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  margin-top: 3px;
-  font-size: 11px;
-  color: var(--color-text-muted, #888);
-}
-
-.fm-msg-time { font-variant-numeric: tabular-nums; }
+/* 好友消息正文保留换行语义（dropbox 面走纯文本渲染，不共享此条） */
+.fm-msg-bubble { white-space: pre-wrap; }
 
 /* Chips: agent-sent + forwarded (§3.3 R6/R7) — pill, etched bg, no new color */
 .fm-msg-agent-badge,
@@ -549,15 +658,32 @@
   padding: 1px 8px;
 }
 
+/* 操作组（复制 / 转发）= 常显。作者 2026-09-12 裁定 3：「复制和转发按钮一直
+   显示」（派工单「改 hover」的方向以本条为准）。显隐只能用 opacity——
+   display:none / visibility:hidden 会跳版（占位恒 42px）并把按钮移出 Tab 序；
+   现状实测悬停前后气泡与时间几何逐值不变。 */
 .fm-msg-actions {
   display: inline-flex;
+  align-items: center;
   gap: 2px;
-  opacity: 0;
+  opacity: 1;
   transition: opacity 0.12s ease;
 }
 
-.fm-msg:hover .fm-msg-actions,
-.fm-msg:focus-within .fm-msg-actions { opacity: 1; }
+/* 时间与按钮之间的分隔线 1px×10px currentColor @ .2（主对话框 chat.css:1150-1156） */
+.fm-msg-actions::before {
+  content: '';
+  width: 1px;
+  height: 10px;
+  background: currentColor;
+  opacity: 0.2;
+}
+
+/* 触摸端兜底（全仓首个 (hover: none) 分支）：常显档下天然可见，本规则为零成本
+   显式声明，防将来回退到揭示式显隐时触摸端不可达。 */
+@media (hover: none) {
+  .fm-msg-actions { opacity: 1; }
+}
 
 .fm-msg-act {
   display: flex;
@@ -576,6 +702,12 @@
 
 .fm-msg-act:hover { color: var(--color-text, #000); background: var(--color-frame-hover); }
 .fm-msg-act svg { width: 12px; height: 12px; }
+
+/* 焦点环补齐（现状 = 浏览器默认蓝环）：与 .fm-row:focus-visible 同款 */
+.fm-msg-act:focus-visible {
+  outline: none;
+  box-shadow: 0 0 0 2px var(--glass-control-border);
+}
 
 /* sending → spinner pulse (§6.2); failed → red ! + click resend */
 .fm-sending .fm-msg-time {
@@ -653,6 +785,9 @@
 .fm-load-more {
   font-size: 12px;
   padding: 5px 14px;
+  /* 同族按钮圆角档（.fm-forward-btn 8px / .fm-search-input 8px /
+     .fm-req-decline 8px）——现状 0px 方角是全站按钮族（5/8/10px）之外的孤例。 */
+  border-radius: 8px;
   opacity: 0.85;
 }
 .fm-load-more:hover { opacity: 1; }
@@ -674,8 +809,10 @@
   align-self: center;
   font-size: 11px;
   color: var(--color-text-muted, #888);
-  margin-left: 8px;
+  margin-left: auto;
+  padding-left: 8px;
 }
 
-/* 搜索按钮 loading 态 */
-.fm-search-btn:disabled { opacity: 0.55; cursor: default; }
+/* 搜索按钮 disabled 态已迁到本文件上方的中性灰族块（button.fm-search-btn:disabled
+   = 禁用材质 + color-mix 文字色 + cursor:not-allowed）。旧的元素级 `opacity: .55`
+   是 P4 批已退役的表达（缺陷 D5），已删除。 */
