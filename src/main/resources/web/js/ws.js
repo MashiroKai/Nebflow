@@ -629,11 +629,30 @@ function checkConnection() {
   }
 }
 
+/**
+ * 数据面唤醒信号（clientconn item 2，2026-09-12 客户端长连接批）。
+ *
+ * 现状缺口（现场重取）：回前台 / 回网**只**走 `checkConnection()` —— 它探的是
+ * 浏览器↔本机网关那条 WS 的死活，**完全不碰好友/消息数据**。后台期间丢掉的
+ * `friend_event`（隧道断、WS 重连窗口内没人收帧）因此不会补回来，会话列表预览 /
+ * 角标 / 开着的会话要等用户**手动关窗重开或切面板**才更新 —— 即「关窗才显示」
+ * 的结构性残余。
+ *
+ * 收发分离：ws.js 是唤醒事件的天然属主（visibility / online 两个监听器都在本文件），
+ * 它只负责**广播**；数据面动作（复用既有 REST 腿 + keyset `after=` 增量，禁尾窗全量）
+ * 由 `messages.js` 消费。用 window CustomEvent 而非 import：messages.js 本来就 import
+ * 本模块，反向 import 会成环（同 flowStepInterceptor 的注释口径）。
+ */
+function notifyWake(reason) {
+  try { window.dispatchEvent(new CustomEvent('fm-wake', { detail: { reason } })); }
+  catch (e) { console.error('[ws] fm-wake dispatch failed:', e.message); }
+}
+
 document.addEventListener('visibilitychange', () => {
-  if (document.visibilityState === 'visible') checkConnection();
+  if (document.visibilityState === 'visible') { checkConnection(); notifyWake('visibility'); }
 });
 
 window.addEventListener('online', () => {
   // Network came back - give it a moment then check
-  setTimeout(checkConnection, 500);
+  setTimeout(() => { checkConnection(); notifyWake('online'); }, 500);
 });

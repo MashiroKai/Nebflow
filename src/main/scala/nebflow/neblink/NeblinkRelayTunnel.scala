@@ -12,7 +12,7 @@ import nebflow.core.tools.{ToolContext, ToolRegistry}
 import java.net.URI
 import java.net.http.{HttpClient, WebSocket}
 import java.util.concurrent.*
-import java.util.concurrent.atomic.{AtomicBoolean, AtomicInteger, AtomicLong}
+import java.util.concurrent.atomic.{AtomicBoolean, AtomicInteger, AtomicLong, AtomicReference}
 
 import scala.concurrent.duration.*
 
@@ -75,6 +75,12 @@ final class NeblinkRelayTunnel(
     * connect. Drives shouldHealAuthFailure. */
   private val authFailStreak = new AtomicInteger(0)
 
+  /** clientconn item 1: consecutive SHORT-LIVED connections (each dropped
+    * before `StableConnectionMs`). Drives the stability gate of the backoff
+    * reset — the first short-lived drop retries immediately (pre-fix speed for
+    * a transient blip); a repeated streak means a flap loop and escalates. */
+  private val shortLivedStreak = new AtomicInteger(0)
+
   /** When the last self-heal re-login was attempted (0 = never). */
   @volatile private var lastHealAtMs = 0L
 
@@ -113,6 +119,51 @@ final class NeblinkRelayTunnel(
     * every successful connect, so a later outage gets a visible first line. */
   private val noTokenInfoLogged = new AtomicBoolean(false)
 
+  /** Wake latch (clientconn item 1): `start()` / `ensure()` completes it, which
+    * cuts an in-flight idle nap short.
+    *
+    * WHY: `ensure()` used to be a pure no-op whenever `running == true` — so an
+    * enrollment that lands while the loop is idling (no URL ⇒ nap ceiling 300s,
+    * no token ⇒ 30s) could not wake it. The freshly enrolled device therefore
+    * spent minutes unreachable on relay before the tunnel noticed the new
+    * config (worst case = one full 5-minute nap; measured in the item-1 spec).
+    *
+    * Lost-wakeup analysis: the latch is RE-ARMED right before each nap. A wake
+    * that arrives while the loop is awake (between naps) is dropped on purpose —
+    * in that state the loop is about to re-read the config / token anyway, so
+    * the wake is redundant rather than lost. */
+  private val wakeLatch = new AtomicReference[Deferred[IO, Unit]](null)
+
+  /** A wake that has not been consumed yet. `nap` consumes it at entry: the
+    * first wait after a wake does NOT sleep (the wake's intent is "re-evaluate
+    * now — config / token / connection state just changed"). This is what makes
+    * `ensure()` effective on a two-sleep iteration (retry delay + idle wait):
+    * cutting the in-flight nap alone would still leave the second sleep ahead. */
+  private val wakePending = new AtomicBoolean(false)
+
+  /** Interruptible sleep: returns when `d` elapses OR `signalWake()` fires.
+    * A pending (unconsumed) wake short-circuits the wait entirely. */
+  private[neblink] def nap(d: FiniteDuration): IO[Unit] =
+    if wakePending.getAndSet(false) then IO.unit
+    else if d.toMillis <= 0L then IO.unit
+    else
+      Deferred[IO, Unit].flatMap { latch =>
+        IO(wakeLatch.set(latch)) *>
+          IO.race(latch.get, IO.sleep(d)).void <*
+          IO(wakeLatch.compareAndSet(latch, null)).void
+      }
+
+  /** Cut the current nap short (and arm the "do not sleep next time" flag).
+    * Idempotent: a second call while nothing is sleeping only sets the flag. */
+  private[neblink] def signalWake(): IO[Unit] =
+    IO(wakePending.set(true)) *> IO(wakeLatch.get()).flatMap {
+      case null  => IO.unit
+      case latch => latch.complete(()).void
+    }
+
+  /** Test seam: is a nap currently armed (i.e. the loop is sleeping)? */
+  private[neblink] def napArmed: Boolean = wakeLatch.get() != null
+
   /** Spawn one connection loop chain (fire-and-forget; the loop ends on
     * running == false). */
   private def spawnLoop(): IO[Unit] =
@@ -139,7 +190,7 @@ final class NeblinkRelayTunnel(
     */
   def start(): IO[Unit] =
     IO(running.compareAndSet(false, true)).flatMap {
-      case false => IO.unit // already running — nothing to do
+      case false => signalWake() // already running — the only useful semantics left
       case true  => logger.info("Relay tunnel (re)starting after stop()") *> spawnLoop()
     }
 
@@ -149,7 +200,7 @@ final class NeblinkRelayTunnel(
 
   /** Gracefully stop the tunnel. */
   def stop(): IO[Unit] =
-    IO.blocking {
+    signalWake() *> IO.blocking {
       running.set(false)
       alive.set(false)
       heartbeat.foreach { hb => try hb.shutdownNow() catch case _: Exception => () }
@@ -168,62 +219,90 @@ final class NeblinkRelayTunnel(
   private def connectLoop(attempt: Int): IO[Unit] =
     if !running.get() then IO.unit
     else
-      val delay = if attempt == 0 then 0.seconds else math.min(30, 1 << (attempt - 1)).seconds
-      IO.sleep(delay).flatMap { _ =>
-        if !running.get() then IO.unit
-        else
-          currentServerUrl.flatMap {
+      // 每拍**只睡一次**（clientconn item 1）：修前是「拍首 delay + 分支 wait」双睡，
+      // 而唤醒只能掐断其中一次 ⇒ 唤醒语义被打折（掐断 300s 空转后还要再睡一拍的
+      // 30s 上限）。现在按状态选等待：未配置 / 无 token 走各自的安静梯子（可被
+      // `ensure()`/`stop()` 掐断），建连退避走重连梯子（0,1,2,4,8,16,30 上限 + 抖动）。
+      currentServerUrl.flatMap {
+        case None =>
+          // Not configured (fresh home / never enrolled): the tunnel is
+          // installed unconditionally, so this state must idle QUIETLY.
+          // DEBUG + backoff ceiling raised to 5 minutes (N3): a permanent
+          // INFO line here would be pure noise for users who never use
+          // NebLink.
+          // The idle wait is INTERRUPTIBLE (clientconn item 1): enrollment calls
+          // `ensure()` the moment the config lands, and that signal must not have
+          // to wait out a 5-minute nap (pre-fix: ensure() was a pure no-op while
+          // running ⇒ relay stayed dark for minutes after the user finished
+          // enrolling).
+          val wait = math.min(300L, 1L << math.min(attempt, 9)).seconds
+          logger
+            .debug(s"Relay tunnel: no NebLink server configured yet, retrying in ${wait.toSeconds}s...")
+            .flatMap { _ => nap(wait) *> connectLoop(attempt + 1) }
+        case Some(url) =>
+          // 建连退避基值：0,1,2,4,8,16,30,30… (+ 抖动)。`backoffSeconds` 把移位量
+          // 钉在上限内并用 Long —— 修前写法 `min(30, 1 << (attempt-1))` 在 attempt=32
+          // 处 Int 溢出成负数（`nap(负)` 立即返回 ⇒ 断网中段凭空一次 0 延迟重连），
+          // 此后又从 1s 重爬：长断网（>16min）每 32 拍丢一次上限。
+          // **睡在 tokenGetter 之前**（修前同一顺序）：tokenGetter 是 live 读取，
+          // 睡醒后再读才不会拿着「等待期间已被重新登录替换掉」的旧 token 去升级
+          // （那样会凭空多一次 403 自愈——实测在 R3 上复现过）。
+          val pre =
+            if attempt == 0 then 0.seconds
+            else NeblinkRelayTunnel.jittered(NeblinkRelayTunnel.backoffSeconds(attempt).seconds, scala.util.Random.nextDouble())
+          nap(pre) *> (if !running.get() then IO.unit else
+          tokenGetter().flatMap {
             case None =>
-              // Not configured (fresh home / never enrolled): the tunnel is
-              // installed unconditionally, so this state must idle QUIETLY.
-              // DEBUG + backoff ceiling raised to 5 minutes (N3): a permanent
-              // INFO line here would be pure noise for users who never use
-              // NebLink.
-              val wait = math.min(300, 1 << math.min(attempt, 9)).seconds
-              logger
-                .debug(s"Relay tunnel: no NebLink server configured yet, retrying in ${wait.toSeconds}s...")
-                .flatMap { _ =>
-                  IO.sleep(wait).flatMap { _ => connectLoop(attempt + 1) }
+              val wait = math.min(30L, 1L << math.min(attempt, 4)).seconds
+              // R2 visibility: this branch used to log at DEBUG only — a login
+              // that never completes left the tunnel dark for hours with zero
+              // trace. INFO keeps the retry loop observable (≤2 lines/min).
+              // N3: this state is STEADY after logout (the server URL is
+              // kept), so only the FIRST occurrence is INFO.
+              val line = s"Relay tunnel: no session token yet, retrying in ${wait.toSeconds}s..."
+              val voice =
+                if noTokenInfoLogged.compareAndSet(false, true) then logger.info(line)
+                else logger.debug(line)
+              voice.flatMap { _ => nap(wait) *> connectLoop(attempt + 1) }
+            case Some(token) =>
+              val attemptConnect =
+                IO(System.currentTimeMillis()).flatMap { startedAtMs =>
+                  neblinkService.identity
+                    .flatMap(id => connectOnce(id, url, token))
+                    .flatMap { _ =>
+                      if running.get() then
+                        // Backoff RESET is stability-gated (clientconn item 1):
+                        // pre-fix every disconnect went back to `connectLoop(0)` —
+                        // a 0-delay reconnect even for a connection the server
+                        // accepted and dropped immediately (kick-after-upgrade,
+                        // half-open flap) ⇒ unbounded upgrade storm at wire speed.
+                        // Now the FIRST short-lived drop still retries immediately
+                        // (transient blips recover at pre-fix speed), while a
+                        // REPEATED short-lived streak escalates the ladder.
+                        val heldMs = System.currentTimeMillis() - startedAtMs
+                        val streakBefore = shortLivedStreak.get()
+                        val next = NeblinkRelayTunnel.nextAttemptAfterDrop(attempt, heldMs, streakBefore)
+                        if heldMs >= NeblinkRelayTunnel.StableConnectionMs then shortLivedStreak.set(0)
+                        else shortLivedStreak.incrementAndGet()
+                        logger
+                          .info(s"Relay tunnel disconnected after ${heldMs / 1000}s, reconnecting (step $next, short-lived streak $streakBefore)...")
+                          .flatMap { _ => connectLoop(next) }
+                      else IO.unit
+                    }
                 }
-            case Some(url) =>
-              tokenGetter().flatMap {
-                case None =>
-                  val wait = math.min(30, 1 << math.min(attempt, 4)).seconds
-                  // R2 visibility: this branch used to log at DEBUG only — a login
-                  // that never completes left the tunnel dark for hours with zero
-                  // trace. INFO keeps the retry loop observable (≤2 lines/min).
-                  // N3: this state is STEADY after logout (the server URL is
-                  // kept), so only the FIRST occurrence is INFO.
-                  val line = s"Relay tunnel: no session token yet, retrying in ${wait.toSeconds}s..."
-                  val voice =
-                    if noTokenInfoLogged.compareAndSet(false, true) then logger.info(line)
-                    else logger.debug(line)
-                  voice.flatMap { _ => IO.sleep(wait).flatMap { _ => connectLoop(attempt + 1) } }
-                case Some(token) =>
-                  val attemptConnect =
-                    neblinkService.identity
-                      .flatMap(id => connectOnce(id, url, token))
-                      .flatMap { _ =>
-                        if running.get() then
-                          logger.info("Relay tunnel disconnected, reconnecting...").flatMap { _ =>
-                            connectLoop(0) // reset for immediate retry
-                          }
-                        else IO.unit
-                      }
-                  attemptConnect.handleErrorWith { e =>
-                    // F3 (report §3): never log e.getMessage here — it is null for
-                    // WebSocketHandshakeException and carries only the class NAME
-                    // when wrapped in ExecutionException. describe() extracts the
-                    // HTTP status (+ a redacted body snippet) instead.
-                    val failure = RelayTunnelDiagnostics.describe(e)
-                    if failure.authRejected then handleAuthRejection(failure, attempt)
-                    else
-                      logger.warn(s"Relay tunnel error: ${failure.summary}").flatMap { _ =>
-                        if running.get() then connectLoop(attempt + 1) else IO.unit
-                      }
+              attemptConnect.handleErrorWith { e =>
+                // F3 (report §3): never log e.getMessage here — it is null for
+                // WebSocketHandshakeException and carries only the class NAME
+                // when wrapped in ExecutionException. describe() extracts the
+                // HTTP status (+ a redacted body snippet) instead.
+                val failure = RelayTunnelDiagnostics.describe(e)
+                if failure.authRejected then handleAuthRejection(failure, attempt)
+                else
+                  logger.warn(s"Relay tunnel error: ${failure.summary}").flatMap { _ =>
+                    if running.get() then connectLoop(attempt + 1) else IO.unit
                   }
               }
-          }
+          })
       }
 
   /**
@@ -513,6 +592,73 @@ object NeblinkRelayTunnel:
    * 阈值原样搬移，未改任何既有默认值（H-1）。
    */
   private[neblink] val LivenessTimeoutMs = 30_000L
+
+  /** Backoff ceiling of the reconnect ladder (unchanged value — the pre-fix
+    * expression also capped at 30s; what changed is that the cap now holds for
+    * every attempt, see [[backoffSeconds]]). */
+  private[neblink] val BackoffCapSeconds = 30L
+
+  /**
+   * Reconnect-ladder base (seconds): 0, 1, 2, 4, 8, 16, 30, 30, 30… for
+   * `attempt` = 0, 1, 2, 3, 4, 5, 6, 7, …
+   *
+   * clientconn item 1 (退避上限修正): the pre-fix call site was
+   * `math.min(30, 1 << (attempt - 1))` on `Int`. At `attempt = 32` the shift
+   * `1 << 31` yields `Int.MinValue`, so `IO.sleep(negative)` returned instantly
+   * (a 0-delay reconnect in the middle of an outage) and every later attempt
+   * restarted the ladder from 1s — the 30s ceiling silently collapsed once per
+   * 32 attempts, i.e. every ~16 minutes of continuous outage. Clamping the shift
+   * amount and computing in `Long` makes the ladder monotone up to the cap.
+   */
+  private[neblink] def backoffSeconds(attempt: Int): Long =
+    if attempt <= 0 then 0L
+    else math.min(BackoffCapSeconds, 1L << math.min(attempt - 1, 20))
+
+  /**
+   * Connection lifetime that marks a connection as STABLE (clientconn item 1,
+   * 退避复位判据).
+   *
+   * A connection that held for at least this long counts as "the tunnel was
+   * genuinely working, this drop is new" ⇒ the ladder resets (attempt 0 = the
+   * immediate retry the pre-fix code always did). Anything shorter is a flap.
+   */
+  private[neblink] val StableConnectionMs = 30_000L
+
+  /**
+   * Attempt index for the next reconnect after a connection that held for
+   * `heldMs`, given how many consecutive short-lived connections already
+   * preceded it (`shortLivedStreak`).
+   *
+   * clientconn item 1: pre-fix EVERY disconnect went back to `connectLoop(0)`
+   * — a 0-delay reconnect even for a connection the server accepted and dropped
+   * immediately (kick-after-upgrade, half-open NIC flap) ⇒ an unbounded upgrade
+   * storm at wire speed. Policy now:
+   *   - stable connection (`heldMs >= StableConnectionMs`) ⇒ 0: immediate retry,
+   *     the pre-fix behaviour for a real outage;
+   *   - FIRST short-lived drop of a streak ⇒ 0 as well: a transient blip still
+   *     recovers at pre-fix speed (no needless backoff on the common case);
+   *   - a REPEATED short-lived streak ⇒ escalate from the attempt that failed,
+   *     i.e. the ladder (1s, 2s, 4s…) finally engages.
+   */
+  private[neblink] def nextAttemptAfterDrop(attempt: Int, heldMs: Long, shortLivedStreak: Int): Int =
+    if heldMs >= StableConnectionMs then 0
+    else if shortLivedStreak <= 0 then 0
+    else math.max(1, attempt + 1)
+
+  /** Relative jitter applied to every backoff sleep (± this fraction). */
+  private[neblink] val JitterFraction = 0.2
+
+  /**
+   * Spread reconnect attempts (clientconn item 1, 退避抖动): all devices of an
+   * account share the same server and the same outage windows (network blip,
+   * server restart), so a fixed ladder makes them retry in lockstep. ±20%
+   * jitter breaks the alignment without changing the ladder's order of
+   * magnitude. `unitRand` ∈ [0,1) is injected so the ladder stays testable
+   * (0.5 = no jitter).
+   */
+  private[neblink] def jittered(base: FiniteDuration, unitRand: Double): FiniteDuration =
+    val f = 1.0 - JitterFraction + unitRand * (2 * JitterFraction)
+    math.max(0L, math.round(base.toMillis * f)).millis
 
   /**
    * `ws.abort()` 之后给闩的宽限窗口（①opt-A1）：到点 `closed` 仍未完成 ⇒ 看门狗

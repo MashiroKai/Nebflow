@@ -1050,10 +1050,30 @@ function relayUsable() {
 /** 节流 > beacon 周期 ⇒ 至多一拍一次；`document.hidden` 守卫与 beacon 同语义。 */
 const BACKFILL_THROTTLE_MS = 9000;
 
+/**
+ * **增量复同步单点**（K-4 降级回补 与 本批「回前台/回网即增量拉」**共用同一实现**，
+ * 禁造第二份 —— 两处若各写一套分派，红线（禁尾窗全量）会在其中一处悄悄失守）。
+ *
+ * 分派判据（与列表/开窗两态一一对应）：
+ *  · 列表态（未开任何会话 / `__pending__` 占位）⇒ `refreshConversations()`
+ *    —— 列表预览 + 角标，既有腿，默认 `'reuse'` = 1 次往返；
+ *  · 开窗态 ⇒ `syncConversation(convId, { pages: MAX_SYNC_PAGES })`
+ *    —— 只走 keyset `after=<水位>` 前进拉取，**永不重取尾窗**（M1③ 红线）。
+ *
+ * @param {{withList?: boolean}} [opts] withList = 开窗态是否**顺带**刷列表。
+ *   唤醒面需要（后台期间别的会话的预览/角标也停了）；K-4 的 10s beacon 只在通道
+ *   失效时动作、必须保持最省，故默认 false（= 修前 backfillTick 的逐字节语义）。
+ */
+async function incrementalResync({ withList = false } = {}) {
+  const convId = openConvId;
+  const open = !!convId && !String(convId).startsWith('__pending__');
+  if (!open || withList) await refreshConversations();
+  if (open) await syncConversation(convId, { pages: MAX_SYNC_PAGES });
+}
+
 async function backfillTick() {
   if (!loggedIn() || document.hidden) return;
   if (relayUsable() && state.connected) return; // 健康路径：零请求
-  const convId = openConvId;
   const now = Date.now();
   if (now - lastBackfillAt < BACKFILL_THROTTLE_MS) return;
   lastBackfillAt = now;
@@ -1064,11 +1084,33 @@ async function backfillTick() {
   // 默认 `'reuse'` = 1 次往返）。
   // 红线不动：本支路**不发任何消息窗口请求**（`limit=200` 尾窗零命中），有
   // `openConvId` 时继续走 keyset 增量 `syncConversation`（`after=水位`，M1③ 红线）。
-  if (!convId || String(convId).startsWith('__pending__')) {
-    await refreshConversations();
-    return;
+  // 分派收口到 incrementalResync（clientconn item 2）：与唤醒面同一实现。
+  await incrementalResync();
+}
+
+// ── 回前台 / 回网即增量拉（clientconn item 2 的正解落点）────────────────
+// 唤醒源 = ws.js 的 `fm-wake`（visibilitychange→visible / online 两个监听器广播）。
+// 与 K-4 的分工：K-4 是「通道失效时的 10s beacon 兜底」（后台时 beacon 也被挂起，
+// 覆盖不到唤醒窗口）；本支路是「用户回到前台/网络刚恢复」这一刻的**确定性**补拉。
+// 两态都被覆盖（停在列表态 / 开着会话），且都落在 incrementalResync 同一实现上。
+/** 唤醒面节流：连点标签页不该一次翻转打一次请求；3s 既远低于人眼可辨的陈旧阈值，
+ *  又高于正常翻转节奏。数据面正确性不依赖它（拉取本身幂等：`after=` 水位过滤 +
+ *  `fresh` 去重 ⇒ 重复唤醒不会重复上屏）。 */
+const WAKE_THROTTLE_MS = 3000;
+let lastWakeAt = 0;
+
+async function wakeResync() {
+  if (!loggedIn() || document.hidden) return;
+  const now = Date.now();
+  if (now - lastWakeAt < WAKE_THROTTLE_MS) return;
+  lastWakeAt = now;
+  try {
+    await incrementalResync({ withList: true });
+  } catch (e) {
+    // 数据面失败不得冒泡成用户可见错误（与 syncConversation 的 catch 同口径）：
+    // 窗口保留已渲染内容，下一次唤醒/beacon 再试。
+    console.error('[messages] wake resync failed:', e.message);
   }
-  await syncConversation(convId, { pages: MAX_SYNC_PAGES });
 }
 
 // ── Wiring ───────────────────────────────────────────────
@@ -1083,6 +1125,9 @@ export function initMessages() {
   // ①opt-A3：挂上既有 10s beacon（返回的注销函数本模块生命周期内不需要 ——
   // initMessages 本身是一次性 latch，整页生命周期只装一次）。
   onStatusTick(() => { void backfillTick(); });
+  // clientconn item 2：回前台 / 回网即增量拉（唤醒源 = ws.js 的 `fm-wake`）。
+  // 只在登录态 + 前台动作（wakeResync 内部守卫）。
+  window.addEventListener('fm-wake', () => { void wakeResync(); });
   // #290: deleting/blocking a friend (contacts panel) flips the open chat
   // into the read-only gate - resync the friend cache and re-apply.
   window.addEventListener('fm-friends-changed', async () => {
