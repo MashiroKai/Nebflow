@@ -193,6 +193,10 @@ export default {
   'contacts.menuTrust': 'Trust this friend',
   'contacts.menuUntrust': 'Remove trust',
   'contacts.blocked': 'Blocked',
+  // ⑦ friend remark (2026-09-12 batch): single entry = friend-row context menu → inline edit.
+  'contacts.menuSetRemark': 'Set remark',
+  'contacts.remarkPlaceholder': 'Remark (empty clears)',
+  'contacts.remarkHint': 'Enter saves · Esc cancels · empty clears the remark',
   'contacts.deleteTitle': 'Delete friend',
   'contacts.deleteConfirm': 'This removes {name} from your friends. Chat history is kept.',
   'contacts.blockTitle': 'Block',

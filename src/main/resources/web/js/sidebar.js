@@ -23,6 +23,8 @@ import { toggleHTML, setToggleState } from './toggle.js';
 import { preloadModelCapabilities, renderVisionBadge } from './modelCapabilities.js';
 import * as presets from './presets.js';
 import { renderAppearanceSection, bindAppearanceEvents } from './orbSettingsUI.js';
+// ⑤ 中文输入收归（作者裁定 2026-09-12）：组字判定唯一来源 = imeGuard.js。
+import { bindImeGuard, isImeComposing } from './imeGuard.js';
 
 // 2026-09-03 作者裁定：光球（micOrb）按预设驱动，设置页隐藏光球配置区。
 // 仅 UI 门控——orbSettingsUI/orbPresets/micOrb 代码与配置读取逻辑全部保留，
@@ -1938,9 +1940,10 @@ function renderOneSessionItem(s, container, opts = {}) {
       }
     };
     nameEl.addEventListener('blur', finishRename);
+    bindImeGuard(nameEl);
     nameEl.addEventListener('keydown', (e) => {
+      if (isImeComposing(e, nameEl)) return; // ⑤ 组字期间 ↑↓/Enter/Esc 交还输入法
       if (e.key === 'Enter') {
-        if (e.isComposing || e.keyCode === 229) return;
         e.preventDefault(); nameEl.blur();
       }
       if (e.key === 'Escape') { nameEl.textContent = s.name; nameEl.blur(); }
@@ -3049,7 +3052,10 @@ export function createNewFolder(parentFolderId) {
     }
   };
 
+  // ⑤ 组字期间 Enter/Esc 交还输入法（非组字态行为逐键不变）。
+  bindImeGuard(input);
   input.addEventListener('keydown', (e) => {
+    if (isImeComposing(e, input)) return;
     if (e.key === 'Enter') { e.preventDefault(); confirm(); }
     if (e.key === 'Escape') { e.preventDefault(); cancel(); }
   });
@@ -3193,9 +3199,10 @@ function renderFolderItem(folder, sessions, container) {
     }
   };
   folderNameEl.addEventListener('blur', finishFolderRename);
+  bindImeGuard(folderNameEl);
   folderNameEl.addEventListener('keydown', (e) => {
+    if (isImeComposing(e, folderNameEl)) return; // ⑤ 组字期间交还输入法
     if (e.key === 'Enter') {
-      if (e.isComposing || e.keyCode === 229) return;
       e.preventDefault(); folderNameEl.blur();
     }
     if (e.key === 'Escape') { folderNameEl.textContent = folder.name; folderNameEl.blur(); }

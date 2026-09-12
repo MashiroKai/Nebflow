@@ -6,6 +6,8 @@ import { t } from './i18n.js';
 import { addNotification } from './notificationBanner.js';
 import { createIconsIn, shouldFollowBottom } from './utils.js';
 import { chatViews } from './chatView.js';
+// ⑤ 中文输入收归（作者裁定 2026-09-12）：组字判定唯一来源 = imeGuard.js。
+import { bindImeGuard, isImeComposing } from './imeGuard.js';
 
 // Inline locale getter to avoid caching issues with module imports
 function getLocale() {
@@ -315,7 +317,10 @@ function buildInlineCreate() {
   }
 
   if (input) {
+    // ⑤ 组字期间 Enter/Esc 交还输入法（非组字态行为逐键不变）。
+    bindImeGuard(input);
     input.addEventListener('keydown', (e) => {
+      if (isImeComposing(e, input)) return;
       if (e.key === 'Enter' && !e.shiftKey) {
         e.preventDefault();
         saveInlineTask();

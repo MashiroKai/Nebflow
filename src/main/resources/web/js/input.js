@@ -18,6 +18,8 @@ import { makeReference } from './reference.js';
 import { startDictation, stopDictation, isModelReady } from './voiceEngine.js';
 import { notifyVoiceState } from './micOrb.js';
 import { showToast } from './modal.js';
+// ⑤ 中文输入收归（作者裁定 2026-09-12）：组字判定唯一来源 = imeGuard.js。
+import { bindImeGuard, isImeComposing } from './imeGuard.js';
 
 // ---------- Large text auto-attachment (paste detection) ----------
 const LARGE_TEXT_THRESHOLD = 1000;
@@ -1163,7 +1165,13 @@ export function initInput(view) {
     import('./chat.js').then(({ clearBusy }) => clearBusy(sid));
   };
 
-  // Composition start/end (IME)
+  // Element-level IME bookkeeping (⑤ 收归) — the keyboard decision below reads
+  // `input.dataset.imeComposing`, written only by bindImeGuard.
+  bindImeGuard(input);
+
+  // @deprecated ⑤-A4（作者裁定 2026-09-12）：视图级 `view.composing` 已由
+  // imeGuard 的元素级判定取代（14 个分叉点里 13 个根本没有 view 对象）。
+  // 保留一版不删——本批未穷尽潜在读者面；新代码一律走 imeGuard，勿再读它。
   input.addEventListener('compositionstart', () => { view.composing = true; });
   input.addEventListener('compositionend', () => { view.composing = false; });
 
@@ -1213,6 +1221,12 @@ export function initInput(view) {
   // Keydown handler — slash autocomplete navigation, input history navigation, Enter-to-send
   input.onkeydown = (e) => {
     setActiveView(view);
+    // ⑤ IME 收归（作者裁定 2026-09-12，方案 §4.1 步骤 2）：组字判定上提到处理器
+    // 首行统一短路——在 setActiveView 之后、任何 `e.key` 分支之前。组字期间
+    // 每一个键都属于输入法（Enter 确认候选 / ↑↓ 选候选词 / Esc 取消组字 /
+    // Backspace 删拼音），一律不 preventDefault、不动作，交还浏览器。
+    // 该短路同时修掉「斜杠下拉抢先消费组字 Enter」的既有缺陷（⑤-A 同批修）。
+    if (isImeComposing(e, input)) return;
     // Escape cancels ask/skill/compact mode
     if (e.key === 'Escape') {
       if (view.stream.askMode) {
@@ -1271,8 +1285,11 @@ export function initInput(view) {
         return;
       }
     }
-    // Input history navigation (up/down arrows)
-    if (!slashDropdown.classList.contains('on') && !view.composing && !e.isComposing && e.keyCode !== 229) {
+    // Input history navigation (up/down arrows). The composition arm that used
+    // to sit here (`!view.composing && !e.isComposing && e.keyCode !== 229`) is
+    // gone: the hoisted guard above already short-circuits every composed key
+    // (⑤ 收归，方案 §4.1 步骤 2「删除 :1275 的重复判定」)。
+    if (!slashDropdown.classList.contains('on')) {
       if (e.key === 'ArrowUp' && input.selectionStart === 0 && input.selectionEnd === 0) {
         e.preventDefault();
         if (state.inputHistory.length === 0) return;
@@ -1304,10 +1321,9 @@ export function initInput(view) {
         return;
       }
     }
+    // Enter sends. The composition arm is covered by the hoisted guard, so the
+    // gate is a plain Shift test now (⑤ 收归，方案 §4.1 步骤 2；语义等价、仅实现搬位)。
     if (e.key === 'Enter' && !e.shiftKey) {
-      if (view.composing || e.isComposing || e.keyCode === 229) {
-        return; // Let browser handle composition confirmation
-      }
       e.preventDefault();
       send();
     }

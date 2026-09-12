@@ -187,6 +187,10 @@ export default {
   'contacts.menuTrust': '信任此好友',
   'contacts.menuUntrust': '取消信任',
   'contacts.blocked': '已拉黑',
+  // ⑦ 好友备注（2026-09-12 批）：入口仅一处 = 好友行右键菜单 → 行内编辑。
+  'contacts.menuSetRemark': '设置备注',
+  'contacts.remarkPlaceholder': '备注（留空清除）',
+  'contacts.remarkHint': 'Enter 保存 · Esc 取消 · 留空清除备注',
   'contacts.deleteTitle': '删除好友',
   'contacts.deleteConfirm': '删除后，将解除与 {name} 的好友关系，聊天记录保留。',
   'contacts.blockTitle': '加入黑名单',

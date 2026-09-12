@@ -68,6 +68,9 @@ export class ChatView {
     // ── Input state ──
     this.pendingAttachments = [];
     this.inputDrafts = {};      // sessionId -> { text, attachments, skillMode }
+    // @deprecated ⑤-A4（作者裁定 2026-09-12）：IME 组字态现由 imeGuard.js 的
+    // 元素级判定承担（`el.dataset.imeComposing`，写入点唯一 = bindImeGuard）。
+    // 本字段保留一版不删（本批未穷尽潜在读者面），新代码勿再读写。
     this.composing = false;
 
     // ── Skill mode ──

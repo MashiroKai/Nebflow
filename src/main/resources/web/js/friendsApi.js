@@ -126,19 +126,25 @@ function matchUser(m, s) {
   return m.users.find(u => uName(u).toLowerCase() === norm || uEmail(u).toLowerCase() === norm) || null;
 }
 
-/** 契约 wire 档案 {userId, username, display_name, avatar, ...} → 内部 wire
- *  对象 {userId, neblinkId, name, avatarUrl}（值域=同一人；无 snake_case 键
- *  的对象原样透传——内部/mock 形态单点判定安全）。 */
+/** 契约 wire 档案 {userId, username, display_name, avatar, ..., remark} → 内部
+ *  wire 对象 {userId, neblinkId, name, avatarUrl, remark}（值域=同一人；无
+ *  snake_case 键的对象原样透传——内部/mock 形态单点判定安全）。
+ *  ⑦ 备注（作者裁定 2026-09-12，冻结契约 §2）：`remark` 键恒在，`string|null`
+ *  （null = 无备注）——这里**必须同步加键**，否则 wire 键在此边界被丢弃，
+ *  下游三处显示面永远看不到备注。 */
 function personFromWire(p) {
   if (!p || typeof p !== 'object') return p;
   if (p.username === undefined && p.display_name === undefined && p.avatar === undefined) return p;
-  return { userId: p.userId, neblinkId: p.username ?? '', name: p.display_name ?? '', avatarUrl: p.avatar ?? '' };
+  return { userId: p.userId, neblinkId: p.username ?? '', name: p.display_name ?? '', avatarUrl: p.avatar ?? '', remark: p.remark ?? null };
 }
 
 /** 搜索响应归一：契约 {found:true, user:{username,display_name,avatar},
  *  relation_status} → 内部扁平 {found, userId?, username, displayName,
- *  avatar, relation_status}。miss 恒 {found:false}（无 user/relation_status
- *  冗余键，防枚举形状一致 §4.1/§5.1）。 */
+ *  avatar, relation_status, remark?}。miss 恒 {found:false}（无 user/
+ *  relation_status 冗余键，防枚举形状一致 §4.1/§5.1）。
+ *  ⑦ 备注：搜索命中若带 `remark` 则原样透传（缺省 null）——`/api/users/search`
+ *  本身不下发备注（备注只是好友属性），此处仅为「搜索回落路径」保持同一 wire
+ *  形状，不让键在中途丢掉。 */
 function normalizeSearch(raw) {
   if (!raw || typeof raw !== 'object' || raw.found !== true) return { found: false };
   const u = raw.user && typeof raw.user === 'object' ? raw.user : {};
@@ -148,6 +154,7 @@ function normalizeSearch(raw) {
     username: u.username ?? '',
     displayName: u.display_name ?? '',
     avatar: u.avatar ?? '',
+    remark: u.remark ?? null,
     relation_status: raw.relation_status,
   };
 }
@@ -180,10 +187,10 @@ function mockStore() {
   if (!seed) {
     seed = {
       users: [{ userId: 'u-lin', username: 'lin', email: 'lin@example.com', displayName: '林小满', avatar: '' }],
-      friends: [{ userId: 'u-lin', neblinkId: 'lin@example.com', name: '林小满', avatarUrl: '', since: new Date().toISOString() }],
+      friends: [{ userId: 'u-lin', neblinkId: 'lin@example.com', name: '林小满', avatarUrl: '', remark: null, since: new Date().toISOString() }],
       conversations: [{
         conversationId: 'c-lin',
-        friend: { userId: 'u-lin', neblinkId: 'lin@example.com', name: '林小满', avatarUrl: '' },
+        friend: { userId: 'u-lin', neblinkId: 'lin@example.com', name: '林小满', avatarUrl: '', remark: null },
         lastMessage: null,
         unreadCount: 0,
       }],
@@ -222,12 +229,15 @@ export async function searchUser(q) {
   const isSelf = [uName(m.self), uEmail(m.self)].some(v => v && v.toLowerCase() === norm);
   const hit = isSelf ? m.self : matchUser(m, s);
   if (!hit) return { found: false };
+  // ⑦ 搜索回落路径与好友表同步备注（mock 面同形；无备注 = null）。
+  const fr = m.friends.find(x => x.userId === hit.userId);
   return {
     found: true,
     userId: hit.userId,
     username: uName(hit),
     displayName: uDisplay(hit) || uName(hit) || hit.userId || '',  // display_name 永不空 fallback 链镜像（§3.1）
     avatar: uAvatar(hit),
+    remark: (fr && fr.remark) || null,
     relation_status: relationOf(m, hit),
   };
 }
@@ -365,6 +375,24 @@ export async function unblockFriend(friendUserId) {
   const f = m.friends.find(f => f.userId === friendUserId);
   if (f) f.blocked = false;
   return {};
+}
+
+/** PUT /api/friends/{friendUserId}/remark {remark} → 200 {ok:true}
+ *  ⑦ 好友备注（作者裁定 2026-09-12，冻结契约 §1/§4）：body `{"remark":"<string>"}`
+ *  （提交前 trim，长度 ≤64 由调用方 maxlength 与 trim 共同保证）；空串 = 清除备注。
+ *  缺参 ⇒ 400、未认证 ⇒ 403（走 req() 错误面）；mock 面同形实现（含会话档案同步，
+ *  否则 mock 下三处显示面看不到备注）。 */
+export async function setFriendRemark(friendUserId, remark) {
+  const body = { remark: String(remark ?? '') };
+  if (!MOCK) return req('PUT', `/api/friends/${encodeURIComponent(friendUserId)}/remark`, body);
+  await delay();
+  const m = mockStore();
+  const f = m.friends.find(x => x.userId === friendUserId);
+  if (!f) throw mockError('not a friend', 403);
+  const v = body.remark.trim();
+  f.remark = v ? v : null;
+  for (const c of m.conversations) if (c.friend && c.friend.userId === friendUserId) c.friend.remark = f.remark;
+  return { ok: true };
 }
 
 /** POST /api/conversations/{id}/read {lastReadMessageId} → 200 */
