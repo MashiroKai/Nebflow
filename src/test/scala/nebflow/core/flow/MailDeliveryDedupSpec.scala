@@ -100,4 +100,36 @@ class MailDeliveryDedupSpec extends FunSuite:
     assert(bob, "different sender's identical content is a distinct delivery")
   }
 
+  test("M-1 R2 分层地址面：指纹面 = (sender|recipientSessionId|content)，地址形态与 chainId 均无独立字段") {
+    // R2 三腿（project:<name> / Nebula / node:<id>）在投递前一律解析成**会话 id**
+    //（MailTool.deliverToNode / deliverToProject / deliverToNebulaRoot），投递层
+    // 只见会话 ⇒ 去重口径与地址形态解耦。
+    val sid = "node-sess-r2"
+    val fp = MailDeliveryDedup.fingerprint("disp-1", sid, "same content")
+    // 手算复核：SHA-256("from|sid|content") —— 恰好三元组，无第四个字段
+    val expect = java.security.MessageDigest
+      .getInstance("SHA-256")
+      .digest("disp-1|node-sess-r2|same content".getBytes(java.nio.charset.StandardCharsets.UTF_8))
+      .map(b => f"${b & 0xff}%02x")
+      .mkString
+    assertEquals(fp, expect, "指纹面必须是 SHA-256(sender|recipientSessionId|content) —— 无 chainId 字段")
+    // 同一收件会话 + 同内容 + 同发送者 ⇒ 同指纹，与地址写法无关（地址不进指纹）
+    assertEquals(
+      MailDeliveryDedup.fingerprint("disp-1", sid, "same content"), fp,
+      "地址形态（node:<id> vs 解析后会话 id）不进指纹 —— 同会话同内容恒同指纹"
+    )
+    // B2-x「chainId 只校验不落库、零链级账本」：指纹面没有 chainId 维度；它只经
+    // MailTool.withChainAnnotation 作为注入文本前缀进入 content ⇒ 指纹差异来自
+    // **内容差异**，不是链级账本去重（此处显式钉死两个方向）。
+    val withChain = MailDeliveryDedup.fingerprint("disp-1", sid, "[mail chainId: chain-n-abc]\nsame content")
+    assertNotEquals(withChain, fp, "chainId 只经注入文本影响 content ⇒ 指纹随之不同（内容差异，非账本）")
+    val now = System.currentTimeMillis()
+    assert(MailDeliveryDedup.tryDeliver(sid, fp, now).unsafeRunSync(), "first delivery passes")
+    assert(!MailDeliveryDedup.tryDeliver(sid, fp, now + 1000).unsafeRunSync(), "same triple inside window suppressed")
+    assert(
+      MailDeliveryDedup.tryDeliver(sid, withChain, now + 1000).unsafeRunSync(),
+      "带 chainId 的注入体与不带者指纹不同 ⇒ 不被当作同一投递吞掉"
+    )
+  }
+
 end MailDeliveryDedupSpec

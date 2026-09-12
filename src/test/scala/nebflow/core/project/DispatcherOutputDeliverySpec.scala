@@ -154,19 +154,18 @@ class DispatcherOutputDeliverySpec extends CatsEffectSuite:
   private def imms(recorded: Ref[IO, List[AgentCommand]]): IO[List[AgentCommand.ImmediateInput]] =
     recorded.get.map(_.collect { case m: AgentCommand.ImmediateInput => m })
 
-  /** 有界轮询：等 dispatcher 会话拆干净（桥 teardown 后本轮投递已发生）。 */
-  private def waitDelivered(recorded: Ref[IO, List[AgentCommand]], min: Int): IO[List[AgentCommand.ImmediateInput]] =
-    def go(deadline: Long): IO[List[AgentCommand.ImmediateInput]] =
-      imms(recorded).flatMap { msgs =>
-        if msgs.size >= min || System.currentTimeMillis() >= deadline then IO.pure(msgs)
-        else IO.sleep(50.millis) >> go(deadline)
-      }
-    go(System.currentTimeMillis() + 20_000L)
+  // ── R7-b（2026-09-12 R2「一个 Mail 统一」批）：桥收敛 ⇒ 零自动投递 ──────
+  //
+  // 旧行为（本文件 2026-09-05 起验证的 D1–D4）已被**取代**：`ProjectActor.
+  // dispatcherBridge` 不再每 turn 无条件把最终 assistant 文本投给 root，
+  // `NodeEngine.deliverDispatcherOutputToNebula` / `DispatcherSourceMarker` /
+  // `DispatcherTaskSummaryChars` 同批删净（D-4）。root 注入面 100% 由显式载体
+  // 驱动（分发器自己 `Mail(address="Nebula", …)`）。本 spec 断言**逆命题**：
+  // 分发器 turn 终态后，root 会话收到的注入恒为 0——这正是 R7-b 的验收判据，
+  // 也是「分发器以为会自动投递」这类静默失败的最佳哨兵。
 
-  // ── D1 非空文本 → 带标注投递 ────────────────────────────────────
-
-  test("D1: dispatcher 非空最终输出 → 根会话收到 [Dispatcher '<proj>' · task: <单行摘要>] 标注投递") {
-    val project = "delivery-d1"
+  test("R7-b-1: dispatcher turn 终态 → 根会话零自动投递（旧 D1 逆命题；含长输出与长任务）") {
+    val project = "delivery-r7b1"
     val ws = tempRoot / s"ws-$project"
     os.makeDir.all(ws)
     val system = ActorSystem(s"$project-${scala.util.Random.nextInt(100000)}")
@@ -177,92 +176,21 @@ class DispatcherOutputDeliverySpec extends CatsEffectSuite:
       resources <- mkResources(system, tempRoot, llm.handle)
       rt <- mountWithRoot(project, ws, system, resources, recorded)
       actorRef = rt.actorRef.getOrElse(sys.error("ProjectActor must be spawned by mount"))
-      // 多行长任务（>100 字符 + 换行）→ 摘要必须单行截断
       longTask = "做一个 login 功能：\n" + ("拆解前后端节点并接线。详细需求描述。" * 6)
       _ <- (actorRef ! ProjectActor.ProjectCommand.TriggerDispatcher(longTask, "nebula-root")).void
-      _ <- waitUntil(30.seconds)(llm.inputs.get.map(_.nonEmpty)) // turn 1 gated 在飞
-      _ <- g1.complete(()).void // turn 1 终态 → 桥投递 + 拆除
-      msgs <- waitDelivered(recorded, min = 1)
-      _ <- system.stopAll.handleErrorWith(_ => IO.unit)
-    yield
-      assertEquals(msgs.size, 1, s"恰好一条投递，got ${msgs.size}")
-      val m = msgs.head
-      // 契约：ImmediateInput = Nebula 忙 turn 时 pendingImmediateInputs 排队的消息类型
-      // （AgentActor "immediate-input-queued"）——忙时排队语义自动继承
-      assert(clue(m.text).startsWith(s"[Dispatcher '$project' · task: "), s"标注行格式: ${m.text.take(160)}")
-      assert(clue(m.text).contains("TOPOLOGY_BUILT"), "投递必须携带分发器最终输出全文")
-      assert(clue(m.text).contains("做一个 login 功能： 拆解前后端节点并接线。详细需求描述。"),
-        "任务摘要必须折叠为单行（换行→空格）")
-      val summary = m.text.split('\n').head
-      assert(!summary.contains('\n'), "标注行必须单行")
-      val expectPrefix = s"[Dispatcher '$project' · task: " // + ≤100 摘要 + "…" + "]"
-      assert(clue(summary.length) <= expectPrefix.length + NodeEngine.DispatcherTaskSummaryChars + 2, // 摘要+…+尾]
-        s"摘要 ≤100 字符截断+省略号，got len=${summary.length}")
-      assert(summary.endsWith("…]"), "截断摘要以省略号收尾（标注行以 ] 闭合）")
-      assertEquals(clue(m.source), Some(NodeEngine.DispatcherSourceMarker), "source=dispatcher（蓝气泡 Dispatcher · proj · Completed）")
-      assertEquals(clue(m.eventType), Some("completed"), "eventType=completed")
-      assertEquals(clue(m.sender), Some(project), "sender=project 名")
-  }
-
-  // ── D2 空文本不投 ────────────────────────────────────────────────
-
-  test("D2: 纯空白最终输出 → 不投递（防御性判空）") {
-    val project = "delivery-d2"
-    val ws = tempRoot / s"ws-$project"
-    os.makeDir.all(ws)
-    val system = ActorSystem(s"$project-${scala.util.Random.nextInt(100000)}")
-    for
-      llm <- mkScriptedLlm
-      g1 <- llm.offerGate
-      recorded <- Ref.of[IO, List[AgentCommand]](Nil)
-      resources <- mkResources(system, tempRoot, llm.handle)
-      rt <- mountWithRoot(project, ws, system, resources, recorded)
-      actorRef = rt.actorRef.getOrElse(sys.error("ProjectActor must be spawned by mount"))
-      _ <- (actorRef ! ProjectActor.ProjectCommand.TriggerDispatcher("EMPTY_TURN 空输出任务", "nebula-root")).void
       _ <- waitUntil(30.seconds)(llm.inputs.get.map(_.nonEmpty))
-      _ <- g1.complete(()) // turn 终态：空白输出 → 不投
-      _ <- IO.sleep(1.second) // 给误投留窗口（若判空失效会有投递到达）
+      _ <- g1.complete(()).void
+      // 给误投留充分窗口（旧实现此处必有 1 条 ImmediateInput 到达）
+      _ <- IO.sleep(2.seconds)
       msgs <- imms(recorded)
+      _ <- waitUntil(30.seconds)(resources.agentRegistry.get.map(_.keys.forall(!_.startsWith(ProjectActor.DispatcherSessionPrefix))))
       _ <- system.stopAll.handleErrorWith(_ => IO.unit)
     yield
-      assertEquals(msgs, Nil, s"空文本不得投递，got ${msgs.map(_.text.take(80))}")
+      assertEquals(msgs, Nil, s"R7-b：桥收敛后不得有任何自动投递，got ${msgs.map(_.text.take(120))}")
   }
 
-  // ── D3 短窗多次触发 → 各自投递不丢（绕过去重 + 注入 turn 带摘要）──
-
-  test("D3: 同项目短窗两次触发（spawn + 注入各一 turn）→ 两次独立投递、各带任务摘要、零丢失") {
-    val project = "delivery-d3"
-    val ws = tempRoot / s"ws-$project"
-    os.makeDir.all(ws)
-    val system = ActorSystem(s"$project-${scala.util.Random.nextInt(100000)}")
-    for
-      llm <- mkScriptedLlm
-      g1 <- llm.offerGate
-      g2 <- llm.offerGate
-      recorded <- Ref.of[IO, List[AgentCommand]](Nil)
-      resources <- mkResources(system, tempRoot, llm.handle)
-      rt <- mountWithRoot(project, ws, system, resources, recorded)
-      actorRef = rt.actorRef.getOrElse(sys.error("ProjectActor must be spawned by mount"))
-      _ <- (actorRef ! ProjectActor.ProjectCommand.TriggerDispatcher("任务甲：建拓扑", "nebula-root")).void
-      _ <- waitUntil(30.seconds)(llm.inputs.get.map(_.size >= 1))
-      _ <- (actorRef ! ProjectActor.ProjectCommand.TriggerDispatcher("任务乙：改接线", "nebula-root")).void // 注入排队
-      _ <- IO.sleep(1.second) // 乙占位完成（串行化保证）
-      _ <- g1.complete(()) // 甲 turn 终态 → 投递甲摘要
-      _ <- waitUntil(30.seconds)(llm.inputs.get.map(_.size >= 2)) // 乙 turn 消费注入
-      _ <- g2.complete(()) // 乙 turn 终态 → 投递乙摘要
-      msgs <- waitDelivered(recorded, min = 2)
-      _ <- system.stopAll.handleErrorWith(_ => IO.unit)
-    yield
-      assertEquals(msgs.size, 2, s"两次触发各一条投递（60s 去重窗口对分发器投递不生效），got ${msgs.size}")
-      assert(clue(msgs(0).text).contains("task: 任务甲：建拓扑"), s"首条带甲摘要: ${msgs(0).text.take(120)}")
-      assert(clue(msgs(1).text).contains("task: 任务乙：改接线"), s"次条带乙摘要（注入 turn 同样标注）: ${msgs(1).text.take(120)}")
-      assert(msgs.forall(_.source == Some(NodeEngine.DispatcherSourceMarker)), "全部走 dispatcher 通道")
-  }
-
-  // ── D4 占位/极简输出照常投递 ────────────────────────────────────
-
-  test("D4: 占位类单行极简输出 → 照常投递（无特殊抑制）") {
-    val project = "delivery-d4"
+  test("R7-b-2: 分发器输出含占位/极简文本时同样零自动投递；桥的拆除职责保留") {
+    val project = "delivery-r7b2"
     val ws = tempRoot / s"ws-$project"
     os.makeDir.all(ws)
     val system = ActorSystem(s"$project-${scala.util.Random.nextInt(100000)}")
@@ -276,12 +204,14 @@ class DispatcherOutputDeliverySpec extends CatsEffectSuite:
       _ <- (actorRef ! ProjectActor.ProjectCommand.TriggerDispatcher("PLACEHOLDER_TURN 检查现状", "nebula-root")).void
       _ <- waitUntil(30.seconds)(llm.inputs.get.map(_.nonEmpty))
       _ <- g1.complete(())
-      msgs <- waitDelivered(recorded, min = 1)
+      _ <- IO.sleep(2.seconds)
+      msgs <- imms(recorded)
+      // 桥的非投递职责仍在：Completed 后 activeRef 清空 → 会话注销（拆除裁决未受影响）
+      gone <- waitUntil(30.seconds)(resources.agentRegistry.get.map(_.keys.forall(!_.startsWith(ProjectActor.DispatcherSessionPrefix)))).attempt
       _ <- system.stopAll.handleErrorWith(_ => IO.unit)
     yield
-      assertEquals(msgs.size, 1, "极简输出也必须投递（分发器一条短行也是有效反馈）")
-      assert(clue(msgs.head.text).contains("ok, nothing to split — answered inline"))
-      assert(clue(msgs.head.text).startsWith(s"[Dispatcher '$project'"), "标注照常")
+      assertEquals(msgs, Nil, "极简输出同样零自动投递（旧 D4 逆命题）")
+      assert(gone.isRight, "R7-b 只摘投递，不摘拆除：Completed 后分发器会话仍应注销")
   }
 
 end DispatcherOutputDeliverySpec

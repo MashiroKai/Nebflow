@@ -66,13 +66,13 @@ object DelegateTool extends Tool:
     """Delegate a one-shot task to the minimal kernel sub-agent — a throwaway session with Read/Write/Edit/Glob/Grep/Bash (each accepts device= for another machine) plus AskUserQuestion. It has no project context, no memory and no history: the task text must be fully self-contained.
 
 **When to use — all three must hold:**
-- The target does NOT live in a mounted project workspace, needs no project AGENTS.md / review / merge chain, and will not write a git repo (those go to Task(project=...)).
+- The target does NOT live in a mounted project workspace, needs no project AGENTS.md / review / merge chain, and will not write a git repo (those go to Mail(address="project:<name>", message=...)).
 - It is a single action ending in one text result (no artifact to review or archive, no multi-step plan).
 - You cannot do it yourself: you have no Bash/Write/Edit.
 
-**When NOT to use:** anything project-owned, anything whose output is a work unit needing review, or anything you can finish yourself — use Task(project=...) or do it directly.
+**When NOT to use:** anything project-owned, anything whose output is a work unit needing review, or anything you can finish yourself — use Mail(address="project:<name>", message=...) or do it directly.
 
-**Capability boundary (hard):** the kernel has NO plugin surface and NO project context — it cannot mount plugins, read project AGENTS.md, or see the Plugin Catalog. For any deliverable-production task (PPT/decks, cards, diagrams, websites, papers, research reports) use Task(project=...) instead, and never ask the kernel to pick a technology route or to reject an existing capability route.
+**Capability boundary (hard):** the kernel has NO plugin surface and NO project context — it cannot mount plugins, read project AGENTS.md, or see the Plugin Catalog. For any deliverable-production task (PPT/decks, cards, diagrams, websites, papers, research reports) use Mail(address="project:<name>", message=...) instead, and never ask the kernel to pick a technology route or to reject an existing capability route.
 
 **Parameters:**
 - `task` (required): self-contained brief. Include the target device (if any), ABSOLUTE paths, the exact command/limits, and what "done" looks like. State explicit non-goals when the risk matters (e.g. "do not delete anything").

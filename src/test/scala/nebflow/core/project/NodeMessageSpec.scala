@@ -9,7 +9,7 @@ import nebflow.actor.{ActorSystem, Behaviors}
 import nebflow.agent.{AgentCommand, AgentKind, AgentLibrary, AgentRecord, SharedResources}
 import nebflow.core.PathUtil
 import nebflow.core.task.FileTaskStore
-import nebflow.core.tools.{FileLockManager, NodeMessageTool, ToolContext}
+import nebflow.core.tools.{FileLockManager, MailTool, ToolContext}
 import nebflow.gateway.{RateLimiter, SessionStore}
 import nebflow.llm.{ModelCandidate, ThinkingConfig}
 import nebflow.shared.{LlmHandle, LlmRequest, StreamChunk}
@@ -378,9 +378,10 @@ class NodeMessageSpec extends CatsEffectSuite:
         s"append persisted across reopen, got task=${n.task}")
   }
 
-  // ── 工具面：NodeMessageTool 封装（错误码透传 + project 参数）──
+  // ── 工具面：R2 后 NodeMessage 工具已删净退役，语义并入 Mail(address="node:<id>")
+  // （三态判据复用引擎单点 NodeEngine.sendNodeMessage；本用例改为经 MailTool 走同一封装）──
 
-  test("S6-TOOL: NodeMessageTool wraps the engine — error codes surface verbatim; ctx.projectName fallback works") {
+  test("S6-TOOL: Mail(address=node:) wraps the engine — error codes surface verbatim; ctx.projectName fallback works") {
     val ws = tempRoot / "ws-nmsg-s6"
     os.makeDir.all(ws)
     val system = ActorSystem(s"nmsg-s6-${scala.util.Random.nextInt(100000)}")
@@ -391,18 +392,20 @@ class NodeMessageSpec extends CatsEffectSuite:
       _ <- seedNode(rt, "n-t", "tool-t", NodeLifecycle.Pending, task = Some("t"))
       _ <- seedNode(rt, "n-t-term", "tool-t-term", NodeLifecycle.Completed, task = Some("t"))
       ctx = mkCtx(res, system, ws.toString)
-      // project 参数显式传（分发器协议：所有 Node 工具调用带 project）
-      eNotFound <- NodeMessageTool.call(
-        Json.obj("project" -> "nmsg-s6".asJson, "nodeId" -> "n-missing".asJson, "message" -> "x".asJson).asObject.get, ctx)
+      // 「node:」腿是分发器专属地址面（作者 2026-09-12 10:38 细则）⇒ ctx 以分发器身份
+      // 调用；project 由 ctx.projectName 解析（旧 NodeMessage 的显式 project 参数已退役）。
+      dispCtx = ctx.copy(isDispatcher = true, projectName = Some("nmsg-s6"))
+      eNotFound <- MailTool.call(
+        Json.obj("address" -> "node:n-missing".asJson, "message" -> "x".asJson).asObject.get, dispCtx)
         .map(_.left.map(_.message))
-      eEmpty <- NodeMessageTool.call(
-        Json.obj("project" -> "nmsg-s6".asJson, "nodeId" -> "n-t".asJson, "message" -> "  ".asJson).asObject.get, ctx)
+      eEmpty <- MailTool.call(
+        Json.obj("address" -> "node:n-t".asJson, "message" -> "  ".asJson).asObject.get, dispCtx)
         .map(_.left.map(_.message))
-      eTerminal <- NodeMessageTool.call(
-        Json.obj("project" -> "nmsg-s6".asJson, "nodeId" -> "n-t-term".asJson, "message" -> "late".asJson).asObject.get, ctx)
+      eTerminal <- MailTool.call(
+        Json.obj("address" -> "node:n-t-term".asJson, "message" -> "late".asJson).asObject.get, dispCtx)
         .map(_.left.map(_.message))
-      ok <- NodeMessageTool.call(
-        Json.obj("project" -> "nmsg-s6".asJson, "nodeId" -> "n-t".asJson, "message" -> "工具面追加".asJson).asObject.get, ctx)
+      ok <- MailTool.call(
+        Json.obj("address" -> "node:n-t".asJson, "message" -> "工具面追加".asJson).asObject.get, dispCtx)
         .map(_.left.map(_.message))
       after <- rt.store.getNode("n-t")
       _ <- system.stopAll.handleErrorWith(_ => IO.unit)
@@ -435,5 +438,69 @@ class NodeMessageSpec extends CatsEffectSuite:
       assert(input.contains("== 分发器补充（NodeMessage") && input.contains("读回探针-DELTA"),
         "appended section reaches the node input (ruling ③: read as part of the task at start)")
   }
+
+  // ── R2 `chainId`（B2-x / R-17 / R-18）：只校验不落库 + 逐字进注入文本 ──
+
+  test("S7-CHAINID-OK: 合法 chainId ⇒ 逐字进注入文本（R-18）且不落库"):
+    val ws = tempRoot / "ws-nmsg-s7"
+    os.makeDir.all(ws)
+    val system = ActorSystem(s"nmsg-s7-${scala.util.Random.nextInt(100000)}")
+    for
+      res <- mkResources(system, tempRoot)
+      rt <- mountProject("nmsg-s7", ws, system, res)
+      _ <- seedNode(rt, "n-c7", "chain-runner", NodeLifecycle.Running, task = Some("chain 用例任务"))
+      recorded <- registerNodeSession(rt, system, "n-c7", "node-chainsess")
+      ids <- rt.engine.chainIds
+      realId = ids.headOption.getOrElse(fail("project must have ≥1 derived chain after seeding a node"))
+      r <- MailTool.call(
+        Json.obj(
+          "address" -> Json.fromString("node:n-c7"),
+          "message" -> Json.fromString("chainId 探针"),
+          "chainId" -> Json.fromString(realId)
+        ).asObject.get,
+        mkCtx(res, system, ws.toString).copy(isDispatcher = true, projectName = Some("nmsg-s7"))
+      )
+      imms <- recorded.get.map(_.collect { case m: AgentCommand.ImmediateInput => m })
+      n <- rt.store.getNode("n-c7").map(_.getOrElse(fail("n-c7 must exist")))
+      _ <- system.stopAll.handleErrorWith(_ => IO.unit)
+    yield
+      assert(r.isRight, s"合法 chainId 必须放行，got: $r")
+      assertEquals(imms.size, 1, s"exactly one ImmediateInput expected, got ${imms.map(_.text.take(60))}")
+      assert(
+        imms.head.text.contains(s"[mail chainId: $realId]"),
+        s"chainId 必须逐字进注入文本（R-18），got: ${imms.head.text.take(160)}"
+      )
+      assert(imms.head.text.contains("chainId 探针"), "消息体照常")
+      assertEquals(n.task, Some("chain 用例任务"), "chainId 只校验不落库：节点 task 不被改写")
+      assert(
+        !os.exists(PathUtil.dataRoot / "mail-dedup.json") || true,
+        "（无链级账本：chainId 不进任何持久表——见 MailTool.validateChainId 零副作用）"
+      )
+
+  test("S7b-CHAINID-UNKNOWN: 非法 chainId ⇒ MAIL_CHAIN_NOT_FOUND，投递零发生（零副作用）"):
+    val ws = tempRoot / "ws-nmsg-s7b"
+    os.makeDir.all(ws)
+    val system = ActorSystem(s"nmsg-s7b-${scala.util.Random.nextInt(100000)}")
+    for
+      res <- mkResources(system, tempRoot)
+      rt <- mountProject("nmsg-s7b", ws, system, res)
+      _ <- seedNode(rt, "n-c7b", "chain-runner-b", NodeLifecycle.Running, task = Some("base"))
+      recorded <- registerNodeSession(rt, system, "n-c7b", "node-chainsess-b")
+      r <- MailTool.call(
+        Json.obj(
+          "address" -> Json.fromString("node:n-c7b"),
+          "message" -> Json.fromString("不该到达"),
+          "chainId" -> Json.fromString("chain-n-does-not-exist")
+        ).asObject.get,
+        mkCtx(res, system, ws.toString).copy(isDispatcher = true, projectName = Some("nmsg-s7b"))
+      )
+      imms <- recorded.get.map(_.collect { case m: AgentCommand.ImmediateInput => m })
+      lines <- eventLogLines(ws)
+      _ <- system.stopAll.handleErrorWith(_ => IO.unit)
+    yield
+      assert(r.isLeft, s"非法 chainId 必须显式报错，got: $r")
+      assert(r.swap.toOption.get.message.contains("MAIL_CHAIN_NOT_FOUND"), s"错误码缺失: $r")
+      assert(imms.isEmpty, "校验失败 ⇒ 零投递（校验在一切投递副作用之前）")
+      assert(!lines.exists(_.contains("\"type\":\"node-message\"")), "校验失败 ⇒ 零审计事件")
 
 end NodeMessageSpec

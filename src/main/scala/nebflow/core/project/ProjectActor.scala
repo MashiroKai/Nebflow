@@ -209,13 +209,16 @@ object ProjectActor:
     case Shutdown
 
   /** 注入来源权威定名（Q2-B2，2026-09-11 任务分发器收件规则批）。三分：
-    *  - [[SourceTask]] = Task 入口（Task 工具 / Mail(→project) / 重入 / spawn 首条 prompt）；
+    *  - [[SourceTask]] = 项目触发入口（`Mail(address="project:<name>")` / 重入 /
+    *    spawn 首条 prompt；**值不改名**——R2 批 D-5 裁定观测面零断代。
+    *    本条覆盖此前相关指令：旧注释里的 `Task` 工具已删净退役，
+    *    入口唯一 = Mail）；
     *  - [[SourceDispatch]] = 回流通知（DispatchNotify → TriggerDispatcher）；
     *  - `"node"` = 节点消息（NodeEngine.deliverToNebula 侧，本批不动）。
     * 前端 `INJECTED_SOURCE_LABELS` 有对应显式标签（web/js/chat.js）——
     * **后端是唯一定名源**，前端不得靠首字母大写兜底。
-    * `TriggerDispatcher.source` 默认 [[SourceTask]] ⇒ 既有调用点（TaskTool /
-    * MailTool / ProjectCrashRecovery）零改动即落 task 语义。 */
+    * `TriggerDispatcher.source` 默认 [[SourceTask]] ⇒ 既有调用点（MailTool /
+    * ProjectCrashRecovery）零改动即落 task 语义。 */
   val SourceTask: String = "task"
   val SourceDispatch: String = "dispatch"
 
@@ -232,14 +235,14 @@ object ProjectActor:
     * 尚未终结的件数：注入任务以 UserInput(replyTo=观察桥) 进入，**spawn 首条
     * prompt 也计 1 件**。
     * pendingTaskTexts = 未消费件的触发任务全文队列（队首=最早未消费件）；不变量
-    * `pendingInjected == pendingTaskTexts.size`，桥 Completed 时以 k 同减两者，
-    * pop 出的 k 件作为该 turn 最终输出投递 Nebula 的任务摘要来源（2026-09-05 接线）。
+    * `pendingInjected == pendingTaskTexts.size`，桥 Completed 时以 k 同减两者。
+    * （R7-b 后不再 pop 出摘要投递——本队列仅用于**拆除裁决**；投递改由分发器
+    * 显式 `Mail(address="Nebula", …)` 承担。）
     *
     * Q3-a（2026-09-11 收件规则批）：mid-turn 直投让**一个 turn 可以消费多件**
     * （tools-complete 边界整队合批，AgentActor.drainUserBatch）——一个 Completed
     * 不再恒等于一件。本 turn 消费几件由 [[ActiveDispatcher.consumedTaskMsgs]]
-    * 增量判定（会话历史里带注入来源标签的消息条数），k 件只投**一条合并摘要**
-    * （见 [[batchSummaryLine]]）；余件 > 0 → 保活，归零 → 拆除。 */
+    * 增量判定（会话历史里带注入来源标签的消息条数）；余件 > 0 → 保活，归零 → 拆除。 */
   case class ActiveDispatcher(
     sessionId: String,
     agentRef: ActorRef[AgentCommand],
@@ -254,25 +257,10 @@ object ProjectActor:
   /** 桥侧消费计数只认后端定名的注入来源（Q2-B2 三分中的两个分发器入口源）。 */
   private val DispatcherInjectedSources: Set[String] = Set(SourceTask, SourceDispatch)
 
-  /** 触发任务摘要（投递标注用）：折叠全部空白为单空格（多行任务→单行），超出
-    * DispatcherTaskSummaryChars 截断加省略号。空文本 → None（标注省略 task 段）。 */
-  private def taskSummaryLine(taskText: String): Option[String] =
-    val oneLine = taskText.replaceAll("\\s+", " ").trim
-    if oneLine.isEmpty then None
-    else if oneLine.length <= NodeEngine.DispatcherTaskSummaryChars then Some(oneLine)
-    else Some(oneLine.take(NodeEngine.DispatcherTaskSummaryChars) + "…")
-
-  /** Q3-a 合并摘要（2026-09-11）：一个 turn 消费 k 件时投 **一条**合并件
-    * （「本批 k 件触发」+ 各件任务文本清单），禁止拆成 k 条末态投递（Q3-b 禁项）。
-    * k = 1 → 逐字沿用 [[taskSummaryLine]]（单件路径行为零变化）。 */
-  private def batchSummaryLine(taskTexts: List[String]): Option[String] =
-    taskTexts match
-      case Nil      => None
-      case List(one) => taskSummaryLine(one)
-      case many =>
-        val items = many.flatMap(taskSummaryLine)
-        if items.isEmpty then None
-        else Some(s"本批 ${many.size} 件触发：" + items.mkString("；"))
+  // `taskSummaryLine` / `batchSummaryLine` 同批删净（R2「一个 Mail 统一」批
+  // 2026-09-12，R7-b）：二者唯一消费点 = 桥侧 turn 级自动投递的标注行，随
+  // `NodeEngine.deliverDispatcherOutputToNebula` 一起移除（D-4 删净，不留死代码）。
+  // 分发器的批级回传改由显式 `Mail(address="Nebula", type=RESULT, chainId=…, …)` 承载。
 
   case class ProjectConfig(
     project: ProjectDef,
@@ -566,11 +554,14 @@ object ProjectActor:
           // 宁多消费不滞留。pendingInjected 与 pendingTaskTexts 恒等长（spawn 首条
           // prompt 也计 1 件，见 spawnDispatcher 的 active.set），故两者同减 k。
           // 拆除判据：k 件消费后仍有余件（未跑完的注入件）→ 保活；归零 → 拆除。
-          // 2026-09-05 接线保持：同一 modify 内同步 pop 本 turn 消费的件全文——该 turn
-          // 的最终 assistant 文本自动投递 Nebula 根会话（deliverDispatcherOutputToNebula：
-          // 空文本不投、忙时 ImmediateInput 排队、占位类极简输出照常投；k>1 时投
-          // **一条合并摘要**，Q3-b「拆末态各发一条」为禁项）。投递失败仅 WARN 不影响
-          // 拆除裁决（fire-and-forget，无账本无重投）。
+          // **R7-b 桥收敛（R2「一个 Mail 统一」批 2026-09-12，作者裁定 D-4）**：
+          // 本桥**不再**每 turn 无条件把最终 assistant 文本投递给 Nebula root
+          // （旧路径 `NodeEngine.deliverDispatcherOutputToNebula` 同批删净）。root
+          // 注入面 100% 由显式载体驱动——分发器必须自己
+          // `Mail(address="Nebula", type=RESULT, chainId=<本批链 id>, …)`。
+          // 本桥职责收敛为：teardown（清 activeRef 登记 + registry + 停 agent）
+          // 与 Failed/Cancelled 的面板终态帧；turn 级自动摘要消失。
+          // 观测口径：source=="dispatcher" 族自本批起**生产者恒 0**。
           val seenInjectedMsgs =
             messages.count(m => m.source.exists(DispatcherInjectedSources.contains))
           active.modify {
@@ -580,24 +571,18 @@ object ProjectActor:
                 else if a.pendingInjected > 0 then 1
                 else 0
               val k = math.max(0, math.min(consumed, math.min(a.pendingInjected, a.pendingTaskTexts.size)))
-              val consumedTexts = a.pendingTaskTexts.take(k)
               val remaining = a.pendingInjected - k
               if remaining > 0 then
                 (Some(a.copy(
                   pendingInjected = remaining,
                   pendingTaskTexts = a.pendingTaskTexts.drop(k),
                   consumedTaskMsgs = math.max(a.consumedTaskMsgs, seenInjectedMsgs)
-                )), (false, consumedTexts))
-              else (None, (true, consumedTexts))
-            case _ => (None, (true, Nil))
-          }.flatMap {
-            case (teardownNow, consumedTexts) =>
-              cfg.engine
-                .deliverDispatcherOutputToNebula(messages, batchSummaryLine(consumedTexts))
-                .handleErrorWith(e =>
-                  logger.warn(s"Project '${cfg.project.name}' dispatcher output delivery failed: ${e.getMessage}")) *>
-                (if teardownNow then teardown
-                 else IO.pure(dispatcherBridge(cfg, active, ref, rootSessionId, sessionId)))
+                )), false)
+              else (None, true)
+            case _ => (None, true)
+          }.flatMap { teardownNow =>
+            if teardownNow then teardown
+            else IO.pure(dispatcherBridge(cfg, active, ref, rootSessionId, sessionId))
           }
         case AgentEvent.Failed(_, _) | AgentEvent.Cancelled(_, _) =>
           // 面板实时终态帧（Sub-Agents 面板取消/终止实时刷新修复）：取消与

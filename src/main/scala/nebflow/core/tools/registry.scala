@@ -43,7 +43,14 @@ object ToolRegistry:
       "TeamTaskList" -> TeamTaskListTool,
       // Scheduled tasks
       "Schedule" -> ScheduleTool,
-      // Unified agent communication (message + ask modes)
+      // Unified agent communication —— **唯一消息原语**（R2「一个 Mail 统一」，
+      // 2026-09-12 作者裁定）。三条腿共用一套地址语法：`project:<name>`（Nebula →
+      // 项目分发器；裸项目名等价接受）/ `Nebula`（分发器 → root；解析到真正的
+      // Nebula root 会话，认不出即显式报错）/ `node:<nodeId>`（分发器 → 节点；
+      // 复用引擎侧 NodeEngine.sendNodeMessage 三态判据）+ 既有 team 腿。
+      // 授权面按角色分层（Nebula 只见 `project:`；分发器只见 `Nebula`/`node:`；
+      // 节点不挂 Mail）。旧注释「message + ask modes」已过时：ask 模式由
+      // 2026-08-27 作者裁定整体移除。
       "Mail" -> MailTool,
       // Sub-agent delegation → 内置极简内核（2026-09-11 恢复批）：Nebula 专属
       // 执行件，目标恒为 `kernel` def（无 agent 目标参数）；persistent 模式已退役。
@@ -79,17 +86,16 @@ object ToolRegistry:
       // #28 阶段 0：Project + Node 模型工具集（分发器白名单声明；全局注册使
       // agent.json tools 可解析）。NodeEdit/NodeList/NodeCancel = 分发器用；
       // ProjectCreate = Nebula 用（建项目 + 工作区脚手架；workspace 缺省/不可用
-      // 时弹 AskUser 式路径面板复用 pending 机制）；Task = Nebula 侧
-      // 项目任务触发（阶段 2 迁移第一步，与 Mail(→project) 同内核、入口不同）。
+      // 时弹 AskUser 式路径面板复用 pending 机制）。
+      // 本条覆盖此前相关指令：**`Task` 已删净退役**（2026-09-12「一个 Mail
+      // 统一」批，B3-a + B5-c）——项目触发入口唯一 = `Mail(address="project:<name>")`；
+      // 打到 `Task` 的调用走 AgentCore 的退役工具迁移指引表（只产错误文案，
+      // 非兼容壳，零执行面）。**`NodeMessage` 已删净退役**——并入
+      // `Mail(address="node:<id>")`（三态判据复用引擎侧 NodeEngine.sendNodeMessage）。
       "NodeEdit" -> NodeEditTool,
       "NodeList" -> NodeListTool,
       "NodeCancel" -> NodeCancelTool,
-      // NodeMessage（20260905 机制批，作者裁定）：分发器向已分发节点注入补充
-      // 消息（running=turn 边界注入 / 未启动=任务追加 / 终态拒绝）。仅分发器
-      // 工具面（AgentCore.DispatcherFixedTools 第八件），Nebula/general 不加。
-      "NodeMessage" -> NodeMessageTool,
       "ProjectCreate" -> ProjectCreateTool,
-      "Task" -> TaskTool,
       // 阶段 2c（§C.2）：记忆维护工具——target 白名单硬编码 User.md +
       // agents/Nebula/memory.md（H-1①：工具内建路径校验，非沙箱对象）。
       // 授能面：Nebula 固定携带；dream 经 2026-09-05 作者签准备入

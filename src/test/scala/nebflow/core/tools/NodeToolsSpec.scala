@@ -186,10 +186,14 @@ class NodeToolsSpec extends FunSuite:
     // NodeCancel: node-id 仍必填
     assert(!requiredOf(NodeCancelTool).contains("project") && requiredOf(NodeCancelTool).contains("node-id"),
       s"NodeCancel required should drop project, keep node-id; got ${requiredOf(NodeCancelTool)}")
-    // NodeMessage: nodeId + message 仍必填
-    val msgReq = requiredOf(NodeMessageTool)
-    assert(!msgReq.contains("project") && msgReq.contains("nodeId") && msgReq.contains("message"),
-      s"NodeMessage required should drop project, keep nodeId+message; got $msgReq")
+    // NodeMessage 工具已删净退役（R2 2026-09-12）⇒ 其必填面断言同批删除；语义并入
+    // `Mail(address="node:<id>", message=...)`（Mail 的必填面 = address + message，
+    // 见 MailTool.inputSchema 与 MailToolCheckTeamScopeSpec/MailQueueNebulaSpec）。
+    val mailReq = requiredOf(MailTool)
+    assert(mailReq.contains("address") && mailReq.contains("message"),
+      s"Mail required should be address+message; got $mailReq")
+    assert(!mailReq.contains("nodeId") && !mailReq.contains("project"),
+      s"Mail must not carry the retired NodeMessage params; got $mailReq")
   }
 
 end NodeToolsSpec

@@ -39,10 +39,13 @@ class AgentDefCategoryBackdoorSpec extends CatsEffectSuite:
     *  + SubTask ++ TeamTaskTools）——用常量拼装，不写裸清单。 */
   private val LegacyTeamFace: Set[String] = AgentCore.BaseTools + "Mail" + "SubTask" ++ AgentCore.TeamTaskTools
 
-  /** team 面**独有**件（相对 BaseTools 的增量：Mail / SubTask / TeamTask 三件）。
+  /** team 面**独有**件（相对 BaseTools 的增量：SubTask / TeamTask 三件）。
     * 收敛名的机制固定集与 BaseTools 有正当交集（Read/Glob/Grep 等），故「遗留件
-    * 零出现」只能按 team 面独有件判定，不能拿整集求交。 */
-  private val LegacyTeamOnlyTools: Set[String] = Set("Mail", "SubTask") ++ AgentCore.TeamTaskTools
+    * 零出现」只能按 team 面独有件判定，不能拿整集求交。
+    * R2「一个 Mail 统一」（2026-09-12）后 `Mail` 从本集合摘除——它已是 Nebula
+    * （NebulaOrchestrationTools）与分发器（DispatcherFixedTools）机制固定集的
+    * 正当成员，不再标志「team 面遗留件」。SubTask/TeamTask* 维持原判。 */
+  private val LegacyTeamOnlyTools: Set[String] = Set("SubTask") ++ AgentCore.TeamTaskTools
 
   private def fixture(name: String, json: String): os.Path =
     val dir = os.temp.dir(prefix = "agentdef-cat-spec-") / name
@@ -77,7 +80,7 @@ class AgentDefCategoryBackdoorSpec extends CatsEffectSuite:
 
   // ===== ① 收敛名 × JSON category 后门：工具面 =====
 
-  test("收敛名 keeper 的 JSON category=team 被无视 —— fixedToolsFor 恒为机制固定集（零 Mail/SubTask/TeamTask*）"):
+  test("收敛名 keeper 的 JSON category=team 被无视 —— fixedToolsFor 恒为机制固定集（零 SubTask/TeamTask*）"):
     AgentCore.ConvergedAgentNames.toList.sorted.foreach { name =>
       val defn = keeper(name, "team")
       assertEquals(defn.category, "standalone", s"$name: 收敛名 category 必须恒 standalone（无视 JSON）")
