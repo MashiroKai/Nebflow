@@ -22,7 +22,7 @@ import scala.concurrent.duration.*
  *
  * - ① 显式开启节点完成 → 分发器会话被触发，通知文本含节点名/终态/原因码；
  *   结果全文可达（results/<id>.md 持久化 + NodeList detail 指引）
- * - ② 未开启节点零触发；out=Nebula 投递零回归
+ * - ② 未开启节点零触发；**显式门集** out="(pass)Nebula" 完成投递零回归
  * - ③ 防循环收敛（completion）：同节点去重（notifySentAt 持久标记）；链级预算耗尽 →
  *   节点**保持 completed + 落 notifySentAt 止重扫 + 单条监督通知（notice 语义非
  *   blocked）**；预算按回合边界重置，single-flight 仅首次一条
@@ -35,9 +35,16 @@ import scala.concurrent.duration.*
  * - ⑦-⑫ failed 用例组（2026-09-07 批）：同节点去重 / 预算分账与耗尽 /
  *   窗口熔断（Suppress 不标记、冷却结束补投不丢失）/ redeliver 欠账 /
  *   重激活后再失败必须再通知（inFlight 释放 + notifySentAt 清零配套）
- * - ⑬-⑮ failed 集成（真实引擎 zombie 收敛路径）：out=Nebula 双收（Nebula
- *   eventType=failed + 分发器同收）/ out=None 无 out 依赖 / out=节点下游 D5 零结算
+ * - ⑬-⑮ failed 集成（真实引擎 zombie 收敛路径）：**显式双通报边** out="(pass,failed)Nebula"
+ *   双收（Nebula eventType=failed + 分发器同收）/ out=None 无 out 依赖 / out=节点下游 D5 零结算
  *   停等 + 分发器触发（附等待者清单，20260908 wf1cde E-③）
+ *
+ * **批 A 回改（B1，2026-09-12）**：bare `"Nebula"` 已于批 A 收敛为**出口标记**
+ * （`on={pass}` + `mode=signal`，零 root 投递、只记账）⇒ 本 spec 全部 bare 接线迁移为
+ * **显式门集**（`"(pass)Nebula"` = 完成投递腿；`"(pass,failed)Nebula"` = 通知腿/双收腿，
+ * ＝迁移前 bare 字面经 `fromLegacyString` 解出的 `{pass,failed}/result` 语义逐字等价）。
+ * 同时 `mountReal` 显式注入 `reportGateHold = Some(false)`——否则完成门腿 2 会让节点永不
+ * 终态化，使上述断言不可达（掩蔽，见该夹具注释）。
  */
 class NotifyDispatcherSpec extends CatsEffectSuite:
 
@@ -129,10 +136,46 @@ class NotifyDispatcherSpec extends CatsEffectSuite:
   private def nodeInput(project: String, nodename: String, extra: (String, Json)*): Json =
     Json.obj(("project" -> Json.fromString(project)) :: ("nodename" -> Json.fromString(nodename)) :: extra.toList*)
 
-  /** 完整挂载（真实 ProjectActor——notify 直触发 spawn 路径需要）。 */
+  /** 完整挂载（真实 ProjectActor——notify 直触发 spawn 路径需要）。
+    *
+    * **批 A 回改（B1 掩蔽处置，2026-09-12）**：此前本夹具走
+    * `ProjectRuntimeRegistry.mount`——该入口不注入 `reportGateHold` ⇒ 引擎按生产默认
+    * （`Defaults.NodeReportCompletionHold` = true）判「未申报 node_report 不终态化」⇒
+    * 本 spec 的 mock-LLM 节点永不 completed，`waitStatus(..., Completed)` 20s 先超时，
+    * ①②⑥ 的投递/通知断言**恒不可达**（与范围外既有红同因 ⇒ 被掩蔽）。
+    *
+    * 改为**自有挂载夹具**（NodeAcceptanceSpec / OutNullableDeliverySpec 同款先例）：
+    * 显式注入 `reportGateHold = Some(false)`——**仅测试面、零生产改动**；本 spec 主题是
+    * 「通知/投递」语义，未申报提醒阶梯语义由 NodeReportReminderSpec 覆盖。
+    *
+    * 其余装配与 `ProjectRuntimeRegistry.mount` 逐项同构（store/board 打开 + ProjectActor
+    * spawn + 注册）；mount 另跑的两个动作——僵尸 running 收殓 + Nebula 欠账补投扫描——
+    * 对本 spec 的全新工作区恒为空操作，故此处省略。 */
   private def mountReal(name: String, ws: os.Path, system: ActorSystem, res: SharedResources): IO[ProjectRuntime] =
     val pd = ProjectDef(name = name, workspace = ws.toString, agentFile = (ws / "AGENTS.md").toString, createdAt = System.currentTimeMillis())
-    ProjectRuntimeRegistry.mount(pd, system, res, None, "nebula-root")
+    for
+      store <- FlowMapStore.open(name, ws.toString)
+      board <- IO(TaskBoardStore.open(name, ws.toString)).map(Some(_): Option[TaskBoardStore])
+        .handleErrorWith(_ => IO.pure(None))
+      engine = new NodeEngine(
+        store, system, res,
+        wsSendFn = (_: Json) => IO.unit,
+        workspace = ws.toString,
+        rootSessionId = "nebula-root",
+        projectName = name,
+        feedbackMode = pd.feedbackMode.getOrElse(FeedbackRouter.ModeAuto),
+        emitEvent = (_, _, _) => IO.unit,
+        board = board,
+        projectGoal = pd.description,
+        reportGateHold = Some(false)
+      )
+      ref <- system.spawn(
+        ProjectActor(ProjectActor.ProjectConfig(pd, engine, system, res, "nebula-root", board = board)),
+        s"project-${name.take(20)}"
+      )
+      rt = ProjectRuntime(pd, store, engine, system, res, Some(ref), board)
+      _ <- ProjectRuntimeRegistry.register(rt)
+    yield rt
 
   /** Nebula 根会话捕获 actor（out=Nebula 投递零回归断言点）。 */
   private def registerNebulaCapture(res: SharedResources, system: ActorSystem): IO[Ref[IO, List[(String, Option[String])]]] =
@@ -242,7 +285,7 @@ class NotifyDispatcherSpec extends CatsEffectSuite:
       rt <- mountReal("ntf-hit", ws, system, res)
       ctx = mkCtx(res, system, ws.toString)
       _ <- nodeEdit(nodeInput("ntf-hit", "notify-one", "description" -> Json.fromString("test node purpose"),
-        "task" -> Json.fromString("notify-one"), "out" -> Json.fromString("Nebula"),
+        "task" -> Json.fromString("notify-one"), "out" -> Json.fromString("(pass,failed)Nebula"),
         "notifyDispatcher" -> Json.fromBoolean(true)), ctx)
       _ <- waitStatus(rt, "notify-one", Set(NodeLifecycle.Completed))
       // 分发器 spawn prompt 捕获（通知文本经 newTaskPrompt 注入）
@@ -282,7 +325,7 @@ class NotifyDispatcherSpec extends CatsEffectSuite:
       nebula <- registerNebulaCapture(res, system)
       ctx = mkCtx(res, system, ws.toString)
       _ <- nodeEdit(nodeInput("ntf-off", "plain-one", "description" -> Json.fromString("test node purpose"),
-        "task" -> Json.fromString("plain-one"), "out" -> Json.fromString("Nebula")), ctx)
+        "task" -> Json.fromString("plain-one"), "out" -> Json.fromString("(pass)Nebula")), ctx)
       _ <- waitStatus(rt, "plain-one", Set(NodeLifecycle.Completed))
       // 确定性同步：等 out=Nebula 完成投递实际到达（等具体事件文本+事件类型，替代固定 sleep
       // 与「恰好一次」之间的时序假设；引擎去重兜底，这里是回归断言而非时序依赖）
@@ -481,13 +524,13 @@ class NotifyDispatcherSpec extends CatsEffectSuite:
       ctx = mkCtx(res, system, ws.toString)
       // create 显式开启
       _ <- nodeEdit(nodeInput("ntf-flag", "flagged", "description" -> Json.fromString("test node purpose"),
-        "task" -> Json.fromString("flagged"), "out" -> Json.fromString("Nebula"),
+        "task" -> Json.fromString("flagged"), "out" -> Json.fromString("(pass,failed)Nebula"),
         "notifyDispatcher" -> Json.fromBoolean(true)), ctx)
       flaggedId <- idOf(rt, "flagged")
       flagged <- rt.store.snapshot.map(_.nodes(flaggedId))
       // create 缺省关（分发器新建节点默认不继承）
       _ <- nodeEdit(nodeInput("ntf-flag", "unflagged", "description" -> Json.fromString("test node purpose"),
-        "task" -> Json.fromString("unflagged"), "out" -> Json.fromString("Nebula")), ctx)
+        "task" -> Json.fromString("unflagged"), "out" -> Json.fromString("(pass,failed)Nebula")), ctx)
       unflaggedId <- idOf(rt, "unflagged")
       unflagged <- rt.store.snapshot.map(_.nodes(unflaggedId))
       // wiring 节点（store 直种）：edit 开 → 撤 → 载荷条件字段
@@ -500,7 +543,7 @@ class NotifyDispatcherSpec extends CatsEffectSuite:
       wOff <- rt.store.snapshot.map(_.nodes("n-wiring-w"))
       // running 节点合法（完成时行为开关）
       _ <- nodeEdit(nodeInput("ntf-flag", "slow-runner", "description" -> Json.fromString("test node purpose"),
-        "task" -> Json.fromString("slow-runner"), "out" -> Json.fromString("Nebula"),
+        "task" -> Json.fromString("slow-runner"), "out" -> Json.fromString("(pass,failed)Nebula"),
         "notifyDispatcher" -> Json.fromBoolean(true)), ctx)
       _ <- waitStatus(rt, "slow-runner", Set(NodeLifecycle.Running))
       runningEdit <- nodeEdit(nodeInput("ntf-flag", "slow-runner", "notifyDispatcher" -> Json.fromBoolean(false)), ctx)
@@ -685,6 +728,9 @@ class NotifyDispatcherSpec extends CatsEffectSuite:
       res <- mkResources(system, tempRoot, llm.handle)
       rt <- mountReal("ntf-fn", ws, system, res)
       nebula <- registerNebulaCapture(res, system)
+      // 显式双通报边（`OutEdge.nebula` = {pass,failed}/result，与迁移后的 "(pass,failed)Nebula"
+      // 字面同落边形态）——⑬ 断言的正是 **failed 腿** 投递（:717），故绝不可写成 bare
+      // "Nebula"（批 A 后 = 出口标记 {pass}/signal ⇒ 零投递 ⇒ 该断言恒不可满足）。
       _ <- seedZombie(rt, "n-fn1", "fail-nebula", "dead task", List(OutEdge.nebula))
       _ <- rt.engine.settleStaleRunningNodes()
       // out=Nebula 投递（eventType=failed）零回归
