@@ -211,6 +211,8 @@ export default {
   'messages.trustedHint': 'Trust is on: new messages are auto-forwarded to your agent',
   'messages.loadingOlder': 'Load earlier messages',
   'messages.loading': 'Loading…',
+  'messages.loadOlderFailed': 'Could not load earlier messages — please retry',
+  'messages.attachUnsupported': 'Attachments are not supported in friend messages yet',
   'messages.agentBadge': 'Sent by agent',
   'messages.notFriendBlocked': 'You can no longer message this contact',
   'messages.loginRequired': 'Log in to your nebflow account to use messages and contacts',
@@ -888,7 +890,8 @@ export default {
   // Dropbox
   'dropbox.tabChat': 'Chat',
   'dropbox.tabDesc': 'Description',
-  'dropbox.dropHint': 'Drop a file here, or click to select',
+  'dropbox.dropHint': 'Drop a file anywhere in this dialog, or use the paperclip button',
+  'dropbox.attachFile': 'Choose file',
   'dropbox.inputPlaceholder': 'Type a message…',
   'dropbox.send': 'Send',
   'dropbox.transferring': 'Transferring…',

@@ -430,8 +430,12 @@ function buildSearch() {
     if (e.key === 'Enter') { e.preventDefault(); submit(); }
   });
   if (searching) {
+    // ④-P5：加载态**不换文案**（label 保持「搜索/Search」），只走禁用材质 +
+    // 区域三点脉冲 + aria-busy/aria-label 无障碍语义。旧实现切「搜索中…」会把
+    // 按钮从 50px 撑到 74px（en 64.03→92.05），180px 侧栏下把输入框压到 60.73px。
     btn.disabled = true;
-    btn.textContent = t('contacts.searching');
+    btn.setAttribute('aria-busy', 'true');
+    btn.setAttribute('aria-label', t('contacts.searching'));
   }
   block.appendChild(row);
   row.appendChild(input);

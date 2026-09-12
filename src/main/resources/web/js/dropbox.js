@@ -86,12 +86,13 @@ function renderModal(device) {
       <div class="dropbox-messages" id="dropbox-messages"></div>
       <div class="dropbox-dropzone" id="dropbox-dropzone">
         <span>${t('dropbox.dropHint')}</span>
-        <input type="file" id="dropbox-file-input" style="display:none">
       </div>
       <div class="dropbox-input-bar">
         <input type="text" id="dropbox-text-input" class="cfg-input" placeholder="${t('dropbox.inputPlaceholder')}" autocomplete="off">
+        <button id="dropbox-attach-btn" class="icon-btn dropbox-attach-btn" title="${t('dropbox.attachFile')}" aria-label="${t('dropbox.attachFile')}"><i data-lucide="paperclip"></i></button>
         <button id="dropbox-send-btn" class="cfg-btn">${t('dropbox.send')}</button>
       </div>
+      <input type="file" id="dropbox-file-input" style="display:none">
     </div>` : '';
 
   // Description tab content (always present)
@@ -202,8 +203,11 @@ function bindDescEditor(device) {
 function bindChatEvents(device) {
   const sendBtn = document.getElementById('dropbox-send-btn');
   const textInput = document.getElementById('dropbox-text-input');
-  const dropzone = document.getElementById('dropbox-dropzone');
+  const attachBtn = document.getElementById('dropbox-attach-btn');
   const fileInput = document.getElementById('dropbox-file-input');
+  // HTMLElement（非 Element）标注：drag/drop 事件类型只能从 HTMLElementEventMap
+  // 解析出来，否则回调参数退化成 Event（dataTransfer/relatedTarget 不可见）。
+  const modal = /** @type {HTMLElement | null} */ (document.querySelector('.dropbox-modal'));
 
   // Send text
   const sendText = () => {
@@ -224,8 +228,8 @@ function bindChatEvents(device) {
     }
   });
 
-  // File selection via click
-  dropzone.onclick = () => fileInput.click();
+  // 入口 ①：纸夹键 → 同一个 input[type=file]（③A6 第一格）
+  if (attachBtn) attachBtn.addEventListener('click', () => fileInput.click());
   fileInput.onchange = () => {
     if (fileInput.files.length > 0) {
       handleFileSelected(device.deviceId, fileInput.files[0]);
@@ -233,37 +237,52 @@ function bindChatEvents(device) {
     }
   };
 
-  // File drag-drop
-  dropzone.addEventListener('dragover', (e) => {
-    e.preventDefault();
-    dropzone.classList.add('drag-over');
-  });
-  dropzone.addEventListener('dragleave', () => dropzone.classList.remove('drag-over'));
-  dropzone.addEventListener('drop', (e) => {
-    e.preventDefault();
-    dropzone.classList.remove('drag-over');
-    if (e.dataTransfer.files.length > 0) {
-      handleFileSelected(device.deviceId, e.dataTransfer.files[0]);
-    }
-  });
+  // 入口 ②：拖拽目标 = 整个对话框（③-F 双入口：dropzone 条降为纯提示文案）。
+  // 监听挂 body 捕获相位，理由与本文件既有的 blockBody{ Drop,DragOver} 一致：
+  // 未拦截时浏览器会对落点文件执行默认打开动作。落点必须落在对话框内才生效。
+  if (modal) {
+    modal.addEventListener('dragover', (e) => {
+      e.preventDefault();
+      modal.classList.add('drag-over');
+    });
+    modal.addEventListener('dragleave', (e) => {
+      const to = e.relatedTarget;
+      if (!(to instanceof Node) || !modal.contains(to)) modal.classList.remove('drag-over');
+    });
+    modal.addEventListener('drop', (e) => {
+      e.preventDefault();
+      modal.classList.remove('drag-over');
+      if (e.dataTransfer && e.dataTransfer.files.length > 0) {
+        handleFileSelected(device.deviceId, e.dataTransfer.files[0]);
+      }
+    });
+  }
 
-  // Prevent body-level drop from intercepting when modal is open
+  // Prevent body-level drop from navigating away while the modal is open
   document.body.addEventListener('drop', blockBodyDrop, true);
   document.body.addEventListener('dragover', blockBodyDragOver, true);
 }
 
+// body 捕获相位的兜底：对话框外的落点不触发设备动作，但必须 preventDefault，
+// 否则浏览器会用该文件替换整个页面。对话框内的落点交给 modal 自身的监听（它在
+// 捕获相位之后、冒泡相位之前不会被执行——所以这里对内部落点直接放行）。
+function insideDropboxModal(e) {
+  const modal = document.querySelector('.dropbox-modal');
+  return !!(modal && e.target instanceof Node && modal.contains(e.target));
+}
+
 function blockBodyDrop(e) {
-  if (document.getElementById('dropbox-overlay')) {
-    e.preventDefault();
-    e.stopPropagation();
-  }
+  if (!document.getElementById('dropbox-overlay')) return;
+  if (insideDropboxModal(e)) return; // 由 modal 自身监听处理
+  e.preventDefault();
+  e.stopPropagation();
 }
 
 function blockBodyDragOver(e) {
-  if (document.getElementById('dropbox-overlay')) {
-    e.preventDefault();
-    e.stopPropagation();
-  }
+  if (!document.getElementById('dropbox-overlay')) return;
+  if (insideDropboxModal(e)) return;
+  e.preventDefault();
+  e.stopPropagation();
 }
 
 function handleFileSelected(deviceId, file) {
@@ -338,7 +357,7 @@ function renderMessage(m) {
 
     return `
       <div class="dropbox-msg ${isOut ? 'out' : 'in'}">
-        <div class="dropbox-file-card">
+        <div class="dropbox-file-card msg-file-card${isOut ? ' out' : ''}">
           <div class="dropbox-file-row">
             <svg width="20" height="20" viewBox="0 0 16 16" fill="none" style="opacity:0.5;flex-shrink:0"><path d="M4 1h6l4 4v10H4V1z" stroke="currentColor" stroke-width="1.2"/><path d="M10 1v4h4" stroke="currentColor" stroke-width="1.2"/></svg>
             <div class="dropbox-file-meta">

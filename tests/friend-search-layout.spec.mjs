@@ -220,10 +220,13 @@ try {
         dots: s ? s.querySelectorAll('i').length : 0,
         role: s?.getAttribute('role') || '',
         btnTxt: btn?.textContent || '', btnDisabled: !!btn?.disabled,
+        btnBusy: btn?.getAttribute('aria-busy') || '',
       };
     });
     ok('L4a 加载态：区域三点 + role=status', loading.dots === 3 && loading.role === 'status', JSON.stringify(loading));
-    ok('L4b 加载态：按钮「搜索中…」禁用', loading.btnDisabled && loading.btnTxt.includes('搜索中'), JSON.stringify(loading));
+    // ④-P5（2026-09-12）：加载态不换文案 —— label 保持「搜索」，禁用态由材质 +
+    // aria-busy 表达（旧断言期望「搜索中…」，那会把按钮 50px 撑到 74px）。
+    ok('L4b 加载态：label 不变 + 禁用 + aria-busy', loading.btnDisabled && loading.btnTxt === '搜索' && loading.btnBusy === 'true', JSON.stringify(loading));
     await sleep(600);
     const g = await geometry(page);
     ok('L4c 加载结束 → 结果卡替代（无残留 loading）', !g.cardInRow && g.cardBelowRow && !g.cardText.includes('搜索中'), '');
