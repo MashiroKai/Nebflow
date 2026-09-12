@@ -164,8 +164,14 @@ class FlowMapStore private (
             n.deps.foldLeft(acc)((a, d) => a.updated(d, n.id :: a.getOrElse(d, Nil)))
           }
         def successors(id: String): List[String] =
-          // P1 多边：全部 out 边目标（跳过 Nebula）；环检测目标仍是单 id（to 参数）
-          val viaOut = s.nodes.get(id).map(_.out.map(_.to).filterNot(_ == "Nebula")).getOrElse(Nil)
+          // P1 多边：全部 out 边目标（跳过 Nebula）；环检测目标仍是单 id（to 参数）。
+          // **控制边豁免（nrloop 一期 2026-09-12，设计 §3.3 #14 / 红线①）**：`mode==loop`
+          // 的 out 边是「回边」——图上**不连**（不进邻接表、不进环检、不进谱系邻接）。
+          // 若不豁免，verifier 的 `(fail)worker:loop` 会被判成 DAG 环而拒建（作者裁定
+          // R5(a)：`reloopTo` 是唯一执行入口，回边纯控制信号）。
+          val viaOut = s.nodes.get(id)
+            .map(_.out.filterNot(OutEdge.isLoopEdge).map(_.to).filterNot(_ == "Nebula"))
+            .getOrElse(Nil)
           viaOut ++ depsReverse.getOrElse(id, Nil)
         def reachable(start: String, visited: Set[String]): Boolean =
           if start == from then true
@@ -668,7 +674,10 @@ object FlowMapStore:
     * 链尾追加成员 → 最早节点不变 → id 稳定；分量合并 → 归并为最早 createdAt 者
     * 的 id。entries = 分量内 in=Nil ∧ deps=Nil 双空（D2，与创建期入口判据对齐）；
     * ends = 分量内 out 无节点目标的成员（仅 Nebula 边/悬空名/out=Nil 都算，D7）。
-    * edges = 谱系边表（同双端不同 via 各自保留；方向恒上游→下游）。
+    * edges = 谱系边表（同双端不同 via 各自保留；方向恒上游→下游）——**via 按 mode
+    * 细化（nrloop 一期 2026-09-12）**：`:loop` 控制边标 `"loop"`、普通 out 边标
+    * `"out"`（`"in"`/`"deps"` 不变）；`loop` 边**仍连**（弱连通分量本就是无向的，
+    * 回边不破坏链归属，D3/D4 的「loop 节点 = 普通成员」口径沿用到「回边」上）。
     * 确定性：分量列表按 id 排序、成员按 (createdAt, id) 升序、edges 全排序——同输入
     * 恒同输出。纯函数（无 IO、不读 store），数据源由调用方给定（合并集 = 双区）。 */
   def topologicalChains(nodes: Iterable[NodeDef]): List[ChainInfo] =
@@ -686,7 +695,11 @@ object FlowMapStore:
       n.in.foreach(up => link(up, n.id, "in"))
       n.out.foreach { e =>
         if e.to != OutEdge.NebulaTarget then
-          OutEdge.resolveTargetId(nodeMap, e.to).foreach(t => link(n.id, t, "out"))
+          // via 按 mode 细化（nrloop 一期 2026-09-12，设计 §3.3 #16）：`:loop` 控制边
+          // 标 "loop"，与普通 out 边区分——谱系/取证侧据此辨「这条边是回边，图上不连、
+          // barrier 不认」；链口径不变（弱连通分量本来就是无向的，回边不破坏它）。
+          OutEdge.resolveTargetId(nodeMap, e.to).foreach(t =>
+            link(n.id, t, if OutEdge.isLoopEdge(e) then "loop" else "out"))
       }
       n.deps.foreach(up => link(up, n.id, "deps"))
     }

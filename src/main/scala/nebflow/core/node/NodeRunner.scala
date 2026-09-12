@@ -57,6 +57,13 @@ object NodeRunner:
       * 分发器 spawn 置 isDispatcher=true+projectName。默认空=非项目会话（零变化）。 */
     flowNodeId: Option[String] = None,
     isDispatcher: Boolean = false,
+    /** 节点角色（nrloop 一期 2026-09-12；设计 §3.2 + B1 透传链）：NodeDef.role
+      * （`task` | `verifier`）随 spawn 注入 —— NodeEngine 节点/loop 会话 spawn 点
+      * 置 `Some(node.role)`；分发器与非项目轨（Delegate/SubTask/flow）保持 None。
+      * 经 SessionContext → AgentCore → ToolContext.flowNodeRole 全链透传，是
+      * `node_report` 值域分化与 ProtocolFootnote 角色分支的来源。None = 判据侧
+      * 回落 `NodeRoles.Task`（缺省语义）。 */
+    flowNodeRole: Option[String] = None,
     projectName: Option[String] = None,
     /** D6 批 F1（G9 路径 a）：节点人类可读名随 spawn 注入（NodeEngine 置
       * node.name）——AskUser payload nodeName 字段来源。详见 SessionContext。 */
@@ -115,6 +122,7 @@ object NodeRunner:
           userFacingNode = p.userFacingNode,
           flowNodeId = p.flowNodeId,
           isDispatcher = p.isDispatcher,
+          flowNodeRole = p.flowNodeRole,
           projectName = p.projectName,
           flowNodeName = p.flowNodeName,
           flowChainId = p.flowChainId,
