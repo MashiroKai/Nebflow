@@ -535,7 +535,17 @@ object Defaults:
   // ---- stuck 判据序 / 正信号门（stuck 自动恢复批 P1，2026-09-11 作者裁定 R-3）----
 
   /**
-   * 正信号（**进展证据**）新鲜窗（默认 60s = 2× 工具活动桥采样间隔 30s）。
+   * 正信号（**进展证据**）新鲜窗的**基础值**（默认 60s = 2× 工具活动桥采样间隔 30s）。
+   *
+   * **wd-fix 批（2026-09-12 作者裁定「方向 A」，第 ii 刀）：有效窗不再恒等于本值**——
+   * 有效窗 = `max(本值, [[declaredToolTimeoutMs]] / [[StuckProgressSignalWindowDivisor]])`
+   * （**单调不减**：命令声明的授权越长，窗不得越小 ⇒ 禁出现「授权越长反而越容易被判死」；
+   * **未声明 `timeout` ⇒ 本值，行为逐字零变化**）。计算单点 =
+   * `TaskStuckWatcher.effectiveProgressWindowMs`。
+   * 动因（取证 §3.1 第 2 条 / §3.3 第 ii 刀）：本值与工具自己声明的授权时长**零耦合**，
+   * 使「声明 3600s 授权、安静 74s / 61s」的两条真实命令被判死（生产样本
+   * `node-8920254c` / `node-35ad3b69`，有效阈值 3660s）⇒ R6「尊重命令自己声明的合法
+   * 时长」被 60s 正信号窗**部分抵消**。联动后声明 3600s ⇒ 窗 360s，两样本不再判死。
    *
    * 语义（作者裁定 R-3 的口径，**方向性是全部要害**）：正信号 = 上一个采样窗内
    * 该会话的在飞工具**确有推进**（stdout 行数增长 ∨ 单窗 CPU 增量 > 活动桥阈值）。
@@ -543,8 +553,10 @@ object Defaults:
    * **不解析任何自有日志**（设计 §2.3 原则 2）。
    *
    * 判据消费方向（唯一）：
-   *   - **只阻止判死**：`currentToolStartedAt > 0 ∧ toolPhaseMs ≤ 有效阈值 ∧ 正信号新鲜`
-   *     ⇒ 归**类② 假阳性**，本拍不动作、只记 `suspect`；
+   *   - **只阻止判死**：`currentToolStartedAt > 0 ∧ 正信号新鲜（有效窗内）` ⇒ 归
+   *     **类② 假阳性**，本拍不动作、只记 `suspect`；**与「是否已超授权」解耦**
+   *     （wd-fix 批第 i 刀：去掉旧的 `toolPhaseMs ≤ 有效阈值 ∧` 前置——超授权的处置权
+   *     交回工具自身授权超时 / 前台 no-progress ceiling，watcher 不越权判死）；
    *   - **绝不促成判死**：判死仍是 [[TaskStuckWatcher.assessDetailed]] 的两条不等式，
    *     正信号不出现在任何「满足即判死」的合取项里 ⇒ **不构成对红线 R6-4
    *     「判据不引进程 CPU」的放松**（作者 2026-09-11 已确认）。
@@ -553,6 +565,17 @@ object Defaults:
    */
   def StuckProgressSignalWindowMs: Long =
     sys.props.getOrElse("nebflow.stuck.progressSignalWindowMs", "60000").toLong
+
+  /**
+   * 正信号新鲜窗**随授权联动**的除数（wd-fix 批，2026-09-12 作者裁定「方向 A」第 ii 刀）：
+   * 有效窗 = `max([[StuckProgressSignalWindowMs]], [[declaredToolTimeoutMs]] / 本值)`
+   * （声明 3600s ⇒ 窗 360s > 实测安静段 74s，两样本不再判死；未声明 ⇒ 基础窗 60s）。
+   *
+   * **常量，不做 system prop**：生产只有一个值（设计参考实现 `N/10`，无标定需求），
+   * 而窗的边界由 `TaskStuckWatcher.effectiveProgressWindowMs` **单点**计算——测试直接
+   * 传参即可覆盖联动口径，不必翻转 prop（与 `L3VerifyDelayMs` 同款「第一版为常量」纪律）。
+   */
+  val StuckProgressSignalWindowDivisor: Long = 10L
 
   // ---- stuck 自动恢复：挂起腿有界等待（P2，2026-09-11）----
 
