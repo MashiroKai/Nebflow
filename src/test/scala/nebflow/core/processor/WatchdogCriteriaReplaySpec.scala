@@ -2,7 +2,8 @@ package nebflow.core.processor
 
 import cats.effect.IO
 import munit.CatsEffectSuite
-import nebflow.agent.{AgentCommand, AgentKind, AgentRecord, AgentStatus}
+
+import WatchdogReplayCore.{Result, SessionCase, SessionExpectation, Status}
 
 /**
  * **wd-fix 批离线回归器**（2026-09-12，作者裁定「只做方向 A」）——看门狗假阳修复的
@@ -13,22 +14,31 @@ import nebflow.agent.{AgentCommand, AgentKind, AgentRecord, AgentStatus}
  * 路径可用 system prop `nebflow.watchdog.replayLog` 覆盖；**语料不存在 ⇒ 整 spec
  * ignore**（`munitIgnore`，不是失败）——CI / 干净工作区没有生产日志时按 skip 处置。
  *
- * 重放口径（逐字，供复核）：
- *   - `lastActivityMs      = ts - agentIdleMs`
- *   - `currentToolStartedAt = ts - toolPhaseMs`（事件里 `toolPhaseMs == 0` ⇒ 0，无工具相位）
- *   - `authorised`（秒）从 `note` 抽取（class-1 形态 `authorised Ns`；class-2 形态 `≤ Ns`）
- *     ⇒ `effectiveMs = authorised * 1000`；`declaredMs = max(0, effectiveMs - ToolDeadlineSlackMs)`
- *     **当且仅当** `effectiveMs > ToolPhaseStuckMs`（否则取 0——此时 `max(默认档, 声明+宽限)`
- *     与「声明 = 0」逐字同解，故重放**精确**，不是近似）。
- *   - `lastProgressSignalAt  = ts - progressAgoMs`（`progress signal Ns ago` /
- *     `last=Ns ago`；`never` ⇒ 0）
- *   - 事件 `ts` = 判定后写事件时的墙钟（与 `classify` 的 `now` 差 <1ms 量级），
- *     秒级读数照此重建。
+ * ## 2026-09-12 `wdreplayfix` 批（R1′）：断言按**构建出处**分段
  *
- * **旧判据**在本 spec 内**逐字重实现**（`legacyClassify`，与 wd-fix 批改动前的
- * `TaskStuckWatcher.classify` 同构）——它不进生产代码；其正确性自证 = 重放 class 必须
- * 与日志登记的 `class` 完全一致（保真度断言）。**新判据**直接调生产
- * [[TaskStuckWatcher.classify]]，不重实现（避免「重放器自己写一套新逻辑」的漂移）。
+ * 原形态「全语料一律断言旧判据保真（`legacyMismatch == Nil`）」隐含前提是
+ * **「当日语料全部由修复前构建产出」**；宿主一旦换成含修复的构建（本轮 19:38:54 重启），
+ * 窗口后新行由新判据写成 ⇒ 旧判据重放必然不一致、mismatch **单调增长**、`sbt test` 常红。
+ * 修法 = 把断言按**窗口起点**分成两段，并把**时不变**的口径不变式留成全语料口径：
+ *
+ *   - **窗口前段**（旧构建出处行）：旧判据保真度自证（class / branch / 两侧计数）——保留；
+ *   - **窗口后段**（修复构建出处行）：新判据保真度自证（`newCls == 日志 class`）；
+ *   - **全语料（含窗口后行）**：只断言三条口径不变式——`false-positive → true-stuck` 翻转 = 0、
+ *     `violations`（放走真卡死）= 0、命名会话 `newTrue = 0`。
+ *
+ * **窗口起点不写死任何日期常量**：`nebflow.watchdog.replayWindowStart`（epoch 毫秒或
+ * ISO-8601 本地时刻）可覆盖；缺省 = 从**语料自身的构建出处标记**推导（修复前/后的 note
+ * 文案形态不同：修复后两条臂的 note 都带 `, window Ns)` 读数）⇒ 换一次宿主重启、换一份
+ * 语料都稳定；**出处不明的行**（两构建文案逐字相同的分支，如「无工具相位」）只计数、
+ * **不参与任何保真度断言**并显式申报；窗口前段/后段任一段无出处已定的行 ⇒ 该段判定
+ * **显式 skip 并申报「未证」**（缺什么证据写进 detail），**不用松弛手段换绿**。
+ *
+ * 判据实现、分段口径与判定层全部在 [[WatchdogReplayCore]]（可注入语料路径/行内容），
+ * 本 spec 与对照 fixture 用例（[[WatchdogReplaySegmentationSpec]]）**共用同一实现**；
+ * 本批**零生产行为改动**（改动面 = 测试面 + 仓内 sink 驱动模板）。
+ *
+ * 重放口径（`lastActivityMs` / `currentToolStartedAt` / `authorised` / 声明时长 /
+ * 正信号年龄）逐字见 [[WatchdogReplayCore]] 头注（与 wd-fix 批报告 §3、窗口验证报告 §③ 同源）。
  *
  * 报告落 `<repo>/.nebflow/wd-fix/replay-report.txt`（过程件，gitignore 面；同内容同时
  * 打到 stdout 供复核）。
@@ -40,214 +50,131 @@ class WatchdogCriteriaReplaySpec extends CatsEffectSuite:
       "nebflow.watchdog.replayLog",
       (os.home / ".nebflow" / "logs" / "watchdog" / "2026-09-12_events.jsonl").toString))
 
-  /** 无生产语料（CI / 干净工作区）⇒ 整 spec skip，不当失败。 */
+  /** 无生产语料（CI / 干净工作区）⇒ 整 spec skip，不当失败（**该行为不得回退**）。 */
   override def munitIgnore: Boolean = !os.exists(replayLog)
 
-  private val sl = nebflow.shared.Defaults.ToolDeadlineSlackMs
+  /** 窗口起点的**参数覆盖**（缺省 = 语料自校准，见头注）；两种形态都接受。 */
+  private val windowStartProp: Option[Long] =
+    sys.props.get("nebflow.watchdog.replayWindowStart").map(WatchdogReplayCore.parseWindowStart)
 
-  // ── 事件行 → AgentRecord 重建 ────────────────────────────────────────────
+  /** 任务书 / 批报告点名的会话期望（语料特定数据，故留在 spec 而非核内）。
+    *   - 5 个生产误判会话：修复后**不得再判** true-stuck（口径不变式）；
+    *   - 2 个窗联动样本（声明 3600s）：修复后 true-stuck 必须减少。
+    */
+  private val namedSessions: Vector[SessionCase] = Vector(
+    SessionCase("node-eb8a9c70", SessionExpectation.NewTrueZero),
+    SessionCase("node-3880729d", SessionExpectation.NewTrueZero),
+    SessionCase("node-6885c027", SessionExpectation.NewTrueZero),
+    SessionCase("dispatcher-ef548490", SessionExpectation.NewTrueZero),
+    SessionCase("dispatcher-1f54460c", SessionExpectation.NewTrueZero),
+    SessionCase("node-8920254c", SessionExpectation.Reduced),
+    SessionCase("node-35ad3b69", SessionExpectation.Reduced)
+  )
 
-  private val AuthorisedRe = """authorised (\d+)s""".r
-  private val AuthorisedLeRe = """≤ (\d+)s""".r
-  private val ProgressRe = """progress signal (\d+)s ago""".r
-  private val LastRe = """last=(\d+)s ago""".r
-
-  private def authorisedSecs(note: String): Option[Long] =
-    AuthorisedRe.findFirstMatchIn(note).map(_.group(1).toLong)
-      .orElse(AuthorisedLeRe.findFirstMatchIn(note).map(_.group(1).toLong))
-
-  private def progressAgoMs(note: String): Option[Long] =
-    ProgressRe.findFirstMatchIn(note).map(_.group(1).toLong).map(_ * 1000L)
-      .orElse(LastRe.findFirstMatchIn(note).map(_.group(1).toLong).map(_ * 1000L))
-
-  private def rebuild(ts: Long, toolPhaseMs: Long, agentIdleMs: Long, note: String): AgentRecord =
-    val authorisedMs =
-      authorisedSecs(note).getOrElse(nebflow.shared.Defaults.ToolPhaseStuckMs / 1000L) * 1000L
-    val declaredMs =
-      if authorisedMs > nebflow.shared.Defaults.ToolPhaseStuckMs then authorisedMs - sl else 0L
-    AgentRecord(
-      sessionId = "replay",
-      ref = null.asInstanceOf[nebflow.actor.ActorRef[AgentCommand]],
-      kind = AgentKind.Flow,
-      rootSessionId = "replay-root",
-      startedAt = ts - 24 * 60 * 60 * 1000L,
-      status = AgentStatus.Processing,
-      lastActivityMs = if agentIdleMs > 0 then ts - agentIdleMs else 0L,
-      currentToolName = Some("Bash"),
-      currentToolStartedAt = if toolPhaseMs > 0 then ts - toolPhaseMs else 0L,
-      currentToolDeadlineMs = declaredMs,
-      lastProgressSignalAt = progressAgoMs(note).fold(0L)(age => ts - age)
-    )
-
-  // ── 旧判据（wd-fix 批改动前形态；逐字重实现，仅重放用，不进生产）──────────
-
-  private def legacyClassify(rec: AgentRecord, a: TaskStuckWatcher.StuckAssessment, now: Long): String =
-    val effective = ToolStuckJudgment.effectiveToolPhaseMs(
-      nebflow.shared.Defaults.ToolPhaseStuckMs, rec.currentToolDeadlineMs,
-      nebflow.shared.Defaults.ToolDeadlineSlackMs)
-    val progress = TaskStuckWatcher.hasProgressSignal(
-      rec, now, nebflow.shared.Defaults.StuckProgressSignalWindowMs)
-    if rec.currentToolStartedAt > 0 then
-      if a.toolPhaseMs <= effective && progress then TaskStuckWatcher.ClassFalsePositive
-      else TaskStuckWatcher.ClassTrueStuck
-    else TaskStuckWatcher.ClassTrueStuck
-
-  /** 正信号在**新窗**下是否新鲜 + 新窗实值——「放走真卡死」的机械检查用。 */
-  private def freshness(rec: AgentRecord, now: Long): (Boolean, Long) =
-    val w = TaskStuckWatcher.effectiveProgressWindowMs(rec.currentToolDeadlineMs)
-    (TaskStuckWatcher.hasProgressSignal(rec, now, w), w)
-
-  // ── 重放主体 ─────────────────────────────────────────────────────────────
-
-  test("wd-fix 重放: 当日 378 条 stuck-detected 同输入同跑 旧/新 判据 → 前后对照 + 翻转明细") {
+  test("wd-fix 重放: 当日 stuck-detected 语料同输入同跑 旧/新 判据 → 分段断言（窗口前段自证 / 窗口后段自证 / 全语料口径不变式）") {
     IO.blocking {
-      val rows = os.read.lines(replayLog).toList
-        .flatMap(l => io.circe.parser.parse(l).toOption)
-        .filter(_.hcursor.get[String]("type").toOption.contains(TaskStuckWatcher.StuckDetectedType))
+      val rows = WatchdogReplayCore.rowsFromFile(replayLog)
+      val r = WatchdogReplayCore.run(rows, windowStartProp)
+      val verdicts =
+        WatchdogReplayCore.segmentedVerdicts(r, namedSessions) ++ WatchdogReplayCore.fixEffectVerdicts(r)
 
-      val sb = new StringBuilder
-      def emit(s: String): Unit = sb.append(s).append('\n')
-
-      val branchMismatch = scala.collection.mutable.ListBuffer.empty[String]
-      val legacyMismatch = scala.collection.mutable.ListBuffer.empty[String]
-      val flipped = scala.collection.mutable.ListBuffer.empty[(String, Long, String, Long, Long)]
-      val leakedTrueStuck = scala.collection.mutable.ListBuffer.empty[String]
-      val newFalseFromTrue = scala.collection.mutable.ListBuffer.empty[String]
-      val fpToTrue = scala.collection.mutable.ListBuffer.empty[String]
-      var loggedTrue = 0
-      var loggedFalse = 0
-      var newTrue = 0
-      var newFalse = 0
-      var oldTrue = 0
-      var oldFalse = 0
-      val bySession = scala.collection.mutable.LinkedHashMap.empty[String, (Int, Int, Int, Int)]
-
-      emit("=== wd-fix 离线重放（看门狗假阳修复批 · 方向 A）===")
-      emit("语料: " + replayLog.toString + "（只读）")
-      emit("stuck-detected 行数: " + rows.size)
-
-      rows.foreach { row =>
-        val h = row.hcursor
-        val ts = h.get[Long]("ts").getOrElse(0L)
-        val sid = h.get[String]("sessionId").getOrElse("?")
-        val loggedClass = h.get[String]("class").getOrElse("?")
-        val loggedBranch = h.get[String]("branch").getOrElse("?")
-        val toolPhaseMs = h.get[Long]("toolPhaseMs").getOrElse(0L)
-        val agentIdleMs = h.get[Long]("agentIdleMs").getOrElse(0L)
-        val note = h.get[String]("note").getOrElse("")
-        if loggedClass == TaskStuckWatcher.ClassTrueStuck then loggedTrue += 1 else loggedFalse += 1
-        val rec = rebuild(ts, toolPhaseMs, agentIdleMs, note)
-        TaskStuckWatcher.assessDetailed(rec, ts) match
-          case None =>
-            legacyMismatch += (sid + "@" + ts + ": 重放判据未命中（日志却有 class）——重建口径有误")
-          case Some(a) =>
-            if a.branch != loggedBranch then
-              branchMismatch += (sid + "@" + ts + ": 重放 branch=" + a.branch + " ≠ 日志 " + loggedBranch)
-            val oldCls = legacyClassify(rec, a, ts)
-            if oldCls == TaskStuckWatcher.ClassTrueStuck then oldTrue += 1 else oldFalse += 1
-            if oldCls != loggedClass then
-              legacyMismatch += (sid + "@" + ts + ": 旧判据重放=" + oldCls + " ≠ 日志 " + loggedClass +
-                "（toolPhaseMs=" + toolPhaseMs + " authorised=" + authorisedSecs(note) +
-                " progressAgo=" + progressAgoMs(note) + "）")
-            val newCls = TaskStuckWatcher.classify(rec, a, ts, inflight = 0).cls
-            if newCls == TaskStuckWatcher.ClassTrueStuck then newTrue += 1 else newFalse += 1
-            val (fresh, window) = freshness(rec, ts)
-            if loggedClass == TaskStuckWatcher.ClassTrueStuck && !fresh &&
-               newCls != TaskStuckWatcher.ClassTrueStuck then
-              leakedTrueStuck += (sid + "@" + ts + "（新窗 " + (window / 1000) + "s 下正信号不新鲜却翻了：" + newCls + "）")
-            if loggedClass == TaskStuckWatcher.ClassTrueStuck && newCls == TaskStuckWatcher.ClassFalsePositive then
-              flipped += ((sid, ts, note, progressAgoMs(note).getOrElse(-1L), window))
-              newFalseFromTrue += sid
-            if loggedClass == TaskStuckWatcher.ClassFalsePositive &&
-               newCls == TaskStuckWatcher.ClassTrueStuck then
-              fpToTrue += (sid + "@" + ts)
-            val cur = bySession.getOrElse(sid, (0, 0, 0, 0))
-            bySession.update(sid, (cur._1 + 1,
-              cur._2 + (if loggedClass == TaskStuckWatcher.ClassTrueStuck then 1 else 0),
-              cur._3 + (if newCls == TaskStuckWatcher.ClassTrueStuck then 1 else 0),
-              cur._4 + (if loggedClass == TaskStuckWatcher.ClassTrueStuck &&
-                          newCls == TaskStuckWatcher.ClassFalsePositive then 1 else 0)))
-      }
-
-      emit("")
-      emit("── 前后对照（stuck-detected 判定面，两侧数字齐全）──")
-      emit("修复前（日志登记）    : true-stuck " + loggedTrue + " / false-positive " + loggedFalse +
-        "  (合计 " + rows.size + ")")
-      emit("修复前（旧判据重放）  : true-stuck " + oldTrue + " / false-positive " + oldFalse)
-      emit("修复后（新判据重放）  : true-stuck " + newTrue + " / false-positive " + newFalse)
-      emit("true-stuck 变化       : " + loggedTrue + " → " + newTrue +
-        "（- " + (loggedTrue - newTrue) + " 条）")
-      emit("false-positive 变化   : " + loggedFalse + " → " + newFalse +
-        "（+ " + (newFalse - loggedFalse) + " 条）")
-      emit("false-positive → true-stuck 的翻转: " + fpToTrue.size + " 条（必须为 0 —— 修法只准减少误判，不准新增真判）")
-      fpToTrue.foreach(s => emit("  VIOLATION " + s))
-      emit("")
-      emit("── 保真度自证 ──")
-      emit("重放 branch 与日志不一致: " + branchMismatch.size + " 条")
-      branchMismatch.take(20).foreach(s => emit("  " + s))
-      emit("旧判据重放 class 与日志不一致: " + legacyMismatch.size + " 条")
-      legacyMismatch.take(40).foreach(s => emit("  " + s))
-      emit("")
-      emit("── 逐会话（总数 / 日志 true-stuck / 新 true-stuck / 翻走）──")
-      bySession.foreach { case (sid, t) =>
-        emit("  " + sid + ": n=" + t._1 + " loggedTrue=" + t._2 + " newTrue=" + t._3 + " flipped=" + t._4)
-      }
-      emit("")
-      emit("── 从 true-stuck 翻走的条目（共 " + flipped.size + " 条）──")
-      flipped.groupBy(_._1).toList.sortBy(_._1).foreach { case (sid, rs) =>
-        val ages = rs.map(_._4).map(a => s"${a / 1000}s").distinct.sorted
-        emit("  " + sid + ": " + rs.size + " 条，正信号新鲜度 ∈ {" + ages.mkString(", ") +
-          "}，新窗 " + (rs.head._5 / 1000) + "s")
-      }
-      emit("")
-      emit("── 「放走真卡死」检查（日志 true-stuck ∧ 新窗下正信号不新鲜 ⇒ 必须仍 true-stuck）──")
-      emit("  violations: " + leakedTrueStuck.size)
-      leakedTrueStuck.foreach(s => emit("  VIOLATION " + s))
-      emit("")
-      emit("── 任务书点名的生产误判会话（修复后必须不再判 true-stuck）──")
-      List("node-eb8a9c70", "node-3880729d", "node-6885c027", "dispatcher-ef548490",
-        "dispatcher-1f54460c", "node-8920254c", "node-35ad3b69").foreach { sid =>
-        bySession.get(sid) match
-          case Some(t) => emit("  " + sid + ": n=" + t._1 + " loggedTrue=" + t._2 +
-            " → newTrue=" + t._3 + "（翻走 " + t._4 + "）")
-          case None => emit("  " + sid + ": 语料中无记录")
-      }
-
-      val report = sb.toString
+      val report = render(r, verdicts)
       val outDir = os.pwd / ".nebflow" / "wd-fix"
       os.makeDir.all(outDir)
       os.write.over(outDir / "replay-report.txt", report, createFolders = true)
       println(report)
 
-      // ── 断言 ────────────────────────────────────────────────────────────
+      // ── 断言 ──────────────────────────────────────────────────────────────
       assert(rows.nonEmpty, "语料必须含 stuck-detected 行")
-      assertEquals(branchMismatch.toList, Nil,
-        "重放 branch 必须与日志一致（重建口径自证），mismatch=" + branchMismatch.take(5).toList)
-      assertEquals(legacyMismatch.toList, Nil,
-        "旧判据重放必须复现日志 class（重放保真度自证），mismatch=" + legacyMismatch.take(5).toList)
-      assertEquals(leakedTrueStuck.toList, Nil,
-        "正信号不新鲜的真卡死一条都不准翻（放走一个 = FAIL）")
-      assertEquals(oldClsCountsOk(oldTrue, oldFalse, loggedTrue, loggedFalse), true,
-        "旧判据重放的两侧计数必须与日志两侧计数相等")
-      assertEquals(fpToTrue.toList, Nil, "不得有 false-positive 翻成 true-stuck")
-      assert(newFalseFromTrue.size > 0, "至少要有 true-stuck 翻成 false-positive（修复面）")
-      assert(newTrue < loggedTrue, "修复后 true-stuck 必须减少：得 " + newTrue + " vs " + loggedTrue)
-      assert(newTrue > 0, "必须有真卡死仍被判 true-stuck（真判不减少）")
-      // 5 个误判会话必须全部不再判 true-stuck
-      List("node-eb8a9c70", "node-3880729d", "node-6885c027", "dispatcher-ef548490",
-        "dispatcher-1f54460c").foreach { sid =>
-        val t = bySession.getOrElse(sid, (0, 0, 0, 0))
-        assert(t._1 > 0, sid + " 必须在语料中（前提）")
-        assertEquals(t._3, 0, sid + " 修复后不得再判 true-stuck（logged " + t._2 + " → new " + t._3 + "）")
-      }
-      // 窗联动的两个样本（声明 3600s、安静 74s / 61s+）同样不再判死
-      List("node-8920254c", "node-35ad3b69").foreach { sid =>
-        val t = bySession.getOrElse(sid, (0, 0, 0, 0))
-        assert(t._1 > 0, sid + " 必须在语料中（前提）")
-        assert(t._3 < t._2, sid + " 必须因窗联动减少 true-stuck（logged " + t._2 + " → new " + t._3 + "）")
-      }
+      val fails = verdicts.filter(_.status == Status.Fail)
+      assertEquals(fails.map(v => v.name + " → " + v.detail), Vector.empty[String],
+        "分段断言不得有 FAIL（分段机制见 [[WatchdogReplayCore]] 头注）")
     }
   }
 
-  private def oldClsCountsOk(oldTrue: Int, oldFalse: Int, loggedTrue: Int, loggedFalse: Int): Boolean =
-    oldTrue == loggedTrue && oldFalse == loggedFalse
+  // ── 报告渲染（读数与判定同源；未证/异常单列）─────────────────────────────────
+
+  private def segLine(label: String, s: WatchdogReplayCore.Segment): String =
+    label + ": 行 " + s.rows + "（参与断言 " + s.asserted + " / 出处不明或异常 " + s.excluded +
+      "）| 旧判据不一致 " + s.legacyMismatch.size + " | 新判据不一致 " + s.newMismatch.size +
+      " | branch 不一致 " + s.branchMismatch.size
+
+  private def render(r: Result, verdicts: Vector[WatchdogReplayCore.Verdict]): String =
+    val sb = new StringBuilder
+    def emit(s: String): Unit = sb.append(s).append('\n')
+    emit("=== wd-fix 离线重放（看门狗假阳修复批 · 方向 A）===")
+    emit("语料: " + replayLog.toString + "（只读）")
+    emit("stuck-detected 行数: " + r.total)
+    emit("")
+    emit("── 窗口与分段（起点 = 参数覆盖或语料自校准，禁日期常量）──")
+    emit("窗口起点: " + r.window.start.map(_.toString).getOrElse("(不可判定)") + "  来源: " + r.window.source)
+    emit(segLine("窗口前段（旧构建出处 ⇒ 旧判据保真度自证）", r.pre))
+    emit(segLine("窗口后段（修复构建出处 ⇒ 新判据保真度自证）", r.post))
+    emit("")
+    emit("── 前后对照（stuck-detected 判定面，两侧数字齐全）──")
+    emit("修复前（日志登记）    : true-stuck " + r.loggedTrue + " / false-positive " + r.loggedFalse +
+      "  (合计 " + r.total + ")")
+    emit("修复前（旧判据重放）  : true-stuck " + r.pre.oldTrue + " / false-positive " + r.pre.oldFalse +
+      "（窗口前段口径）")
+    emit("修复后（新判据重放）  : true-stuck " + r.newTrue + " / false-positive " + r.newFalse)
+    emit("true-stuck 变化       : " + r.loggedTrue + " → " + r.newTrue +
+      "（" + r.trueStuckDelta + " 条）")
+    emit("false-positive → true-stuck 的翻转: " + r.fpToTrue.size +
+      " 条（必须为 0 —— 修法只准减少误判，不准新增真判）")
+    r.fpToTrue.foreach(s => emit("  VIOLATION " + s))
+    emit("")
+    emit("── 保真度自证（分段）──")
+    emit("窗口前段 旧判据重放 class 与日志不一致: " + r.pre.legacyMismatch.size + " 条（参与断言 " +
+      r.pre.asserted + " 行）")
+    r.pre.legacyMismatch.take(40).foreach(s => emit("  " + s))
+    emit("窗口前段 重放 branch 与日志不一致: " + r.pre.branchMismatch.size + " 条")
+    r.pre.branchMismatch.take(20).foreach(s => emit("  " + s))
+    emit("窗口前段 两侧计数: 旧判据重放 " + r.pre.oldTrue + "/" + r.pre.oldFalse + " vs 日志 " +
+      r.pre.loggedTrue + "/" + r.pre.loggedFalse)
+    emit("窗口后段 新判据重放 class 与日志不一致: " + r.post.newMismatch.size + " 条（参与断言 " +
+      r.post.asserted + " 行）")
+    r.post.newMismatch.take(40).foreach(s => emit("  " + s))
+    emit("旧形态读数（全语料一律断言旧判据保真）: " + r.allLegacyMismatch.size +
+      " 条 —— 该形态在含窗口后行的语料上必然非零（R1′ 现象本体）")
+    emit("")
+    emit("── 逐会话（总数 / 日志 true-stuck / 新 true-stuck / 翻走）──")
+    r.bySession.toList.foreach { case (sid, t) =>
+      emit("  " + sid + ": n=" + t.n + " loggedTrue=" + t.loggedTrue + " newTrue=" + t.newTrue +
+        " flipped=" + t.flipped)
+    }
+    emit("")
+    emit("── 从 true-stuck 翻走的条目（共 " + r.flipped.size + " 条）──")
+    r.flipped.groupBy(_.sid).toList.sortBy(_._1).foreach { case (sid, rs) =>
+      val ages = rs.map(_.progressAgoMs).map(a => s"${a / 1000}s").distinct.sorted
+      emit("  " + sid + ": " + rs.size + " 条，正信号新鲜度 ∈ {" + ages.mkString(", ") +
+        "}，新窗 " + (rs.head.windowMs / 1000) + "s")
+    }
+    emit("")
+    emit("── 「放走真卡死」检查（日志 true-stuck ∧ 新窗下正信号不新鲜 ⇒ 必须仍 true-stuck）──")
+    emit("  violations: " + r.leakedTrueStuck.size)
+    r.leakedTrueStuck.foreach(s => emit("  VIOLATION " + s))
+    emit("")
+    emit("── 判定表（本 spec 的断言面；[未证] 行 = 该段无法判定，已在下方申明缺什么证据）──")
+    verdicts.foreach(v => emit("  " + WatchdogReplayCore.label(v) + v.name + " | " + v.detail))
+    emit("")
+    emit("── 未证 / 异常申报（显式，禁粉饰）──")
+    emit("未证① 出处不明的行（两构建文案逐字相同 ⇒ 不参与任何保真度断言）: " +
+      r.unknownRows.size + " 条" + (if r.unknownRows.isEmpty then "" else
+        "（" + r.unknownRows.take(10).mkString(", ") +
+          (if r.unknownRows.size > 10 then ", …" else "") + "）") +
+      " —— 缺证据: 事件行本身不含构建出处标记（该分支文案未被 wd-fix 改动）")
+    emit("未证② 语料自相矛盾行（出处与窗口分段不符）: " + r.anomalies.size + " 条")
+    r.anomalies.take(10).foreach(s => emit("  ANOMALY " + s))
+    verdicts.filter(_.status == Status.Skipped).foreach(v => emit("未证③ " + v.name + " | " + v.detail))
+    if verdicts.forall(_.status != Status.Skipped) then
+      emit("未证③ 无（窗口前段与后段均有出处已定的行 ⇒ 两段保真度自证均可判定）")
+    emit("")
+    emit("── 任务书点名的生产误判会话（修复后必须不再判 true-stuck）──")
+    List("node-eb8a9c70", "node-3880729d", "node-6885c027", "dispatcher-ef548490",
+      "dispatcher-1f54460c", "node-8920254c", "node-35ad3b69").foreach { sid =>
+      r.bySession.get(sid) match
+        case Some(t) => emit("  " + sid + ": n=" + t.n + " loggedTrue=" + t.loggedTrue +
+          " → newTrue=" + t.newTrue + "（翻走 " + t.flipped + "）")
+        case None => emit("  " + sid + ": 语料中无记录")
+    }
+    sb.toString
