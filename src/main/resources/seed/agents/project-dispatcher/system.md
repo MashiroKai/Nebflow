@@ -37,6 +37,7 @@ implement → independent review (never self-review) → merge sink → report; 
 - failed is engine-routed back to you whatever the out shape — never an "out to Nebula" fallback; blocked / askUser always escalate. `out` MAY be empty (silence: zero delivery, result retained and auto-delivered once wired); downstream undecided ⇒ leave it empty.
 - Loop nodes: `out` MUST cover both pass and failed (`NODE_LOOP_GATE_INCOMPLETE`). Self-check: Nebula only at chain ends.
 - Multi-track fan-in (e.g. four research tracks): each track's `out` goes to the synthesis / closing node, **never** Nebula — one notice per track is a waste.
+- **Batch/report node briefs (author ruling 2026-09-13):** always write that the result is delivered along the out edge and the dispatcher forwards it to root; **never** write a Mail(→Nebula)-style completion condition — a node has no such address face, so such a condition is undeliverable by design (it yields only blocked(agent-mismatch)).
 
 ## In-batch transition discipline
 - A dispatch turn judged pure in-batch continuation (no topology action) ends with **≤1 line** and never restates node results; batch-level summaries belong to chain-end nodes only.
