@@ -13,6 +13,57 @@ sealed trait AgentCommand
 enum RestartLevel:
   case Soft, Rollback, Prune, Full
 
+/** 注入来源标注 —— blue injected bubble（浅蓝注入气泡）顶栏字段的**单点定义**
+  * （bluebubble 批 2026-09-12）。
+  *
+  * 字段名与取值域**与前端判据同源**，两侧不得各写一套：
+  *  - 后端载体：本 case class → [[AgentCommand.UserInput]] / [[AgentCommand.ImmediateInput]]
+  *    的同名参数 → 唯一发射点 `AgentActor#emitInjectedUserEvent`（WS 帧
+  *    `{type:"user", injected:true, source, sender, senderTeam, eventType, delivery}`）
+  *    → 唯一落盘点（同方法内 `SessionStore.appendUiMessages`）→ `UiMessage.User`。
+  *  - 前端消费：`web/js/persistence.js#isOutgoingInjection`（**判据**：`sender`
+  *    与该会话自身 agent 名相等 ⇒ 本会话自己的外发，不渲染）＋
+  *    `web/js/chat.js#injectedSourceLabel` / `#INJECTED_SOURCE_LABELS`（**呈现**：
+  *    `SOURCE · AGENT · EVENT_TYPE`，Team 消息走 `team/agent`）。
+  *    ⇒ `sender` 的取值域恒 = **发送方 agent 自身名**（与 `ownAgentName()` 同名空间）；
+  *      `eventType` 取邮件类型(mailType.toLowerCase) / 终态码；`senderTeam` 取团队名。
+  *
+  * 空值语义：`None` = 该段不显示（向后兼容——既有调用点不传即保持既有呈现，
+  * 前端旧历史行缺字段同样优雅降级）。 */
+case class InjectionAttribution(
+  sender: Option[String] = None,
+  senderTeam: Option[String] = None,
+  eventType: Option[String] = None
+)
+
+object InjectionAttribution:
+
+  /** 显式空标注（调用点表态用；等价于 Option 的 None）。 */
+  val Empty: InjectionAttribution = InjectionAttribution()
+
+  /** 腿②（分发器 → `node:<id>`）的注入 source 定名（D-3 裁定：保持节点侧既有
+    * 呈现，`mail` 只出现在真实邮件来源处）。 */
+  val SourceSystem: String = "system"
+
+  /** 后端**自定名**（非用户可传）的 source 取值域 —— 前端
+    * `web/js/chat.js#INJECTED_SOURCE_LABELS` 必须逐值**显式登记**（或由
+    * `injectedSourceLabel` 的显式分支处理），**禁靠首字母大写兜底**。
+    * 契约门 = `InjectionSourceContractSpec`（后端是唯一定名源，前端登记面
+    * 落后于本集合即红）。
+    *
+    * 出处（逐个可溯源）：
+    *   mail                MailTool#sendMail（腿③ / team 腿）
+    *   task / dispatch     ProjectActor.SourceTask / SourceDispatch（腿①）
+    *   system              NodeEngine#injectRunning（腿②，见 SourceSystem）
+    *   node                NodeEngine#deliverToNebula（节点完成通报）
+    *   skill               AgentActor SkillActivate 分支
+    *   delegate / subtask / flow / tool   AgentActor#inferInjectionSource
+    *   background          AgentActor#visibleExternalEventSource（源名 background-task）
+    * 例外：`eventType=="inject"` 的 API 注入 source 由调用方提供（用户域），
+    * 不受本集合约束 —— 前端对其走既有兜底分支。 */
+  val BackendNamedSources: Set[String] =
+    Set("mail", "task", "dispatch", "system", "node", "skill", "delegate", "subtask", "flow", "tool", "background")
+
 object AgentCommand:
 
   case class UserInput(
