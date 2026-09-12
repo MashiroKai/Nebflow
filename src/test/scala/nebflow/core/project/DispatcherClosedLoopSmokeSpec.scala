@@ -109,7 +109,9 @@ class DispatcherClosedLoopSmokeSpec extends CatsEffectSuite:
                     "nodename" -> Json.fromString("闭环-执行A"),
                     "description" -> Json.fromString("闭环冒烟入口节点"),
                     "task" -> Json.fromString("produce A"),
-                    "out" -> Json.fromString("Nebula")
+                    // 显式双通报门集（批 A 回改 B1）：迁移前 bare "Nebula" 经旧解析 = {pass,failed}/result
+                    // ⇒ 此处字面与 :211 断言 `OutEdge.nebula` 逐字节等价（断言零改动）。
+                    "out" -> Json.fromString("(pass,failed)Nebula")
                   ))
                 }
               case "a_created" => // turn 3: 建 A 回执（历史扫描取 A id）→ 建下游 B（in=[A]，接线）
@@ -121,7 +123,8 @@ class DispatcherClosedLoopSmokeSpec extends CatsEffectSuite:
                     "description" -> Json.fromString("闭环冒烟下游节点"),
                     "task" -> Json.fromString("assemble B"),
                     "in" -> Json.arr(Json.fromString(aId)),
-                    "out" -> Json.fromString("Nebula")
+                    // 同上（:212 断言 `OutEdge.nebula` 零改动）。
+                    "out" -> Json.fromString("(pass,failed)Nebula")
                   ))
                 }
               case _ => // turn 4: B 建成 → 分发器收尾（纯文本，session Completed → 拆桥）
@@ -171,6 +174,17 @@ class DispatcherClosedLoopSmokeSpec extends CatsEffectSuite:
       }
     go(System.currentTimeMillis() + timeout.toMillis)
 
+  /** 完整挂载（真实 ProjectActor——分发器 spawn 路径需要）。
+    *
+    * **批 A 回改（B1 掩蔽处置，2026-09-12）**：此前走 `ProjectRuntimeRegistry.mount`
+    * （不注入 `reportGateHold`）⇒ 引擎按生产默认（`Defaults.NodeReportCompletionHold`
+    * = true）判「未申报 node_report 不终态化」⇒ A/B 永不 completed，:196 的 60s
+    * waitUntil 先超时、:207-:212 的目标断言**恒不可达**（与范围外既有红同因 ⇒ 被掩蔽）。
+    * 改为**自有挂载夹具**（NodeAcceptanceSpec / OutNullableDeliverySpec 同款先例）：显式注入
+    * `reportGateHold = Some(false)`——**仅测试面、零生产改动**（本 spec 主题是「建节点→接线→
+    * 投递」闭环，未申报提醒语义由 NodeReportReminderSpec 覆盖）。其余装配与 mount 逐项同构；
+    * mount 另跑的两个动作（僵尸 running 收殓 + Nebula 欠账补投扫描）对本 spec 的全新工作区
+    * 恒为空操作，故省略。 */
   private def mount(name: String, ws: os.Path, system: ActorSystem, res: SharedResources): IO[ProjectRuntime] =
     val pd = ProjectDef(
       name = name,
@@ -178,7 +192,29 @@ class DispatcherClosedLoopSmokeSpec extends CatsEffectSuite:
       agentFile = (ws / "AGENTS.md").toString,
       createdAt = System.currentTimeMillis()
     )
-    ProjectRuntimeRegistry.mount(pd, system, res, None, rootSessionId = "nebula-root")
+    for
+      store <- FlowMapStore.open(name, ws.toString)
+      board <- IO(TaskBoardStore.open(name, ws.toString)).map(Some(_): Option[TaskBoardStore])
+        .handleErrorWith(_ => IO.pure(None))
+      engine = new NodeEngine(
+        store, system, res,
+        wsSendFn = (_: Json) => IO.unit,
+        workspace = ws.toString,
+        rootSessionId = "nebula-root",
+        projectName = name,
+        feedbackMode = pd.feedbackMode.getOrElse(FeedbackRouter.ModeAuto),
+        emitEvent = (_, _, _) => IO.unit,
+        board = board,
+        projectGoal = pd.description,
+        reportGateHold = Some(false)
+      )
+      ref <- system.spawn(
+        ProjectActor(ProjectActor.ProjectConfig(pd, engine, system, res, "nebula-root", board = board)),
+        s"project-${name.take(20)}"
+      )
+      rt = ProjectRuntime(pd, store, engine, system, res, Some(ref), board)
+      _ <- ProjectRuntimeRegistry.register(rt)
+    yield rt
 
   test("闭环：NodeList → 建入口A → 接线下游B → A/B 双 completed → B 投递 Nebula 记账") {
     val ws = tempRoot / "ws-closed-loop"

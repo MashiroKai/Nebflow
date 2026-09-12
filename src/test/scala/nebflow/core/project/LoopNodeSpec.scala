@@ -472,7 +472,7 @@ class LoopNodeSpec extends CatsEffectSuite:
 
   // ── ⑧ loop 门集不变量（A3 · 2026-09-12 裁定 2/3）─────────────
 
-  test("⑧ loop gate invariant: bare/single-leg out rejected on create + edit + mirror-append, empty out exempt, non-loop untouched") {
+  test("⑧ loop gate invariant: bare/single-leg out rejected on create + edit + mirror-append (create & edit paths), empty out exempt, non-loop untouched") {
     val ws = tempRoot / "ws-gate"
     os.makeDir.all(ws)
     val system = ActorSystem(s"loop-gate-${scala.util.Random.nextInt(100000)}")
@@ -520,6 +520,15 @@ class LoopNodeSpec extends CatsEffectSuite:
       upOk <- nodeById(rt, upOkId)
       down2Id <- idOf(rt, "down-2")
       down2 <- nodeById(rt, down2Id)
+      // (h) 镜像追加路径的 **edit 侧**预检（R3 覆盖缺口）：对**已存在**节点补 in 声明 ⇒
+      //     adds 非空、上游 = 存量式单腿 loop ⇒ 同款判据在任何写之前整调用拒、双向零残留。
+      //     （与 (f) 的 create 侧同源判据两路各一例；缺此例时改 edit 侧预检为 None 无测试变红。）
+      _ <- nodeEdit(nodeInput("loop-gate", "down-3", "description" -> Json.fromString("downstream"),
+        "task" -> Json.fromString("downstream work")), ctx)
+      down3Id <- idOf(rt, "down-3")
+      rEditMirror <- nodeEdit(nodeInput("loop-gate", "down-3", "in" -> Json.fromString("n-legacy-loop")), ctx)
+      down3After <- nodeById(rt, down3Id)
+      legacyAfter2 <- nodeById(rt, "n-legacy-loop")
       _ <- system.stopAll.handleErrorWith(_ => IO.unit)
     yield
       assert(rBare.isLeft && rBare.left.exists(_.contains("NODE_LOOP_GATE_INCOMPLETE")),
@@ -544,6 +553,11 @@ class LoopNodeSpec extends CatsEffectSuite:
       assert(rMirrorOk.isRight, s"(g) mirror append onto a two-leg loop upstream must pass, got: $rMirrorOk")
       assert(upOk.exists(_.out.exists(_.to == down2Id)), "(g) the mirror edge must be appended onto the loop upstream")
       assert(down2.exists(_.in.contains(upOkId)), "(g) the downstream in ledger must record the upstream")
+      assert(rEditMirror.isLeft && rEditMirror.left.exists(_.contains("NODE_LOOP_GATE_INCOMPLETE")),
+        s"(h) EDIT-side mirror append onto a single-leg loop upstream must be rejected, got: $rEditMirror")
+      assertEquals(down3After.map(_.in), Some(List.empty[String]), "(h) zero residue: the downstream in ledger must stay empty")
+      assertEquals(legacyAfter2.map(_.out), Some(List(OutEdge(OutEdge.NebulaTarget, Set(OutEdge.Pass), OutEdge.Result))),
+        "(h) zero residue: the legacy upstream edge set must stay untouched")
   }
 
 end LoopNodeSpec

@@ -27,7 +27,9 @@ import scala.concurrent.duration.*
  *  - ③D 空 out 创建合法：节点完成 ⇒ 零投递、零升根（绝不默认 Nebula），结果保留在 result；
  *       且创建回执尾部带悬空提示（W1，A8）；
  *  - ④D 悬空 completed 经**路径 B**（下游 `in:` 声明）接线 ⇒ 补投递（接线即投递第二路）；
- *  - ⑦D `NodePayload.wiringGap` 条件键（A7）：空 out ⇒ pending/retained；有 out ⇒ 缺键。
+ *  - ⑦D `NodePayload.wiringGap` 条件键（A7）：空 out ⇒ pending/retained；有 out ⇒ 缺键；
+ *  - ⑧D/A10·N4 终态节点改接只投**新接线**目标（本批回改 B2 守卫）：保留旧下游 + 旧 Nebula
+ *       边 + 新增目标 ⇒ 旧目标/旧 Nebula 边**零重复投递**（投 newlyWired，不投 newOut）。
  */
 class OutNullableDeliverySpec extends CatsEffectSuite:
 
@@ -190,8 +192,11 @@ class OutNullableDeliverySpec extends CatsEffectSuite:
       r <- nodeEdit(nodeInput("outnull-exit", "exit-node", "description" -> Json.fromString("exit marker node"),
         "task" -> Json.fromString("finish through the marker"), "out" -> Json.fromString("Nebula")), ctx)
       _ <- waitStatus(rt, "exit-node", Set(NodeLifecycle.Completed))
-      node <- idOf(rt, "exit-node").flatMap(nodeById(rt, _))
       _ <- IO.sleep(500.millis)
+      // 读序加固（2026-09-12 回改批实测假红）：终态化与 nebula 记账是同一完成链的两个
+      // 顺序 store 写（status 先、`markNebulaDelivered` 后）⇒ 紧贴 waitStatus 读 node
+      // 在负载下会读到「已完成但未记账」，把断言变成时序依赖。先睡再读（同断言、零语义变化）。
+      node <- idOf(rt, "exit-node").flatMap(nodeById(rt, _))
       msgs <- imms(recorded)
       _ <- system.stopAll.handleErrorWith(_ => IO.unit)
     yield
@@ -306,6 +311,74 @@ class OutNullableDeliverySpec extends CatsEffectSuite:
     assertEquals(completedEmpty.hcursor.get[String]("wiringGap").toOption, Some("retained"),
       "empty out + result ⇒ wiringGap=retained (more actionable than pending)")
     assert(withOut.hcursor.get[String]("wiringGap").isLeft, "缺键 = 有 out（有出边节点字段集零漂移）")
+  }
+
+  // ── ⑧D/A10·N4：终态节点改接只投**新接线**目标（旧目标 + 旧 Nebula 边零重复投递）──
+
+  test("⑧D/A10·N4 terminal-node rewire delivers ONLY the newly-wired target: kept downstream + kept Nebula edge get no second delivery") {
+    val ws = tempRoot / "ws-rewire-a10"
+    os.makeDir.all(ws)
+    val system = ActorSystem(s"outnull-a10-${scala.util.Random.nextInt(100000)}")
+    val llm = new CaptureLlm("retained upstream result")
+    for
+      res <- mkResources(system, tempRoot, llm.handle)
+      // root 会话**故意缺席**（A 完成时）⇒ deliverToNebula 走 root-ref 缺失分支：零投递 +
+      // **不落 M1 持久锚**（`nebulaDeliveredAt` 保持空）。这正是 A10/N4 的**承重窗口**——
+      // 锚未置位时若口径回退为「投 newOut」，被保留的旧 Nebula 边会漏出第二条投递。
+      rt <- mountProject("outnull-a10", ws, system, res)
+      ctx = mkCtx(res, system, ws.toString)
+      // A：显式门集（= 通知声明）⇒ 完成走投递腿；root 缺席 ⇒ 零投递、零记账
+      _ <- nodeEdit(nodeInput("outnull-a10", "A-源", "description" -> Json.fromString("retained producer"),
+        "task" -> Json.fromString("produce"), "out" -> Json.fromString("(pass,failed)Nebula")), ctx)
+      _ <- waitStatus(rt, "A-源", Set(NodeLifecycle.Completed))
+      aId <- idOf(rt, "A-源")
+      aBefore <- nodeById(rt, aId)
+      // B：下游以 in=[A] 声明接线（路径 B 镜像追加 + 补投递）⇒ 成为 A 的**旧目标**，此刻已收结果
+      rB <- nodeEdit(nodeInput("outnull-a10", "B-旧目标", "description" -> Json.fromString("kept downstream"),
+        "task" -> Json.fromString("consume"), "in" -> Json.fromString(aId)), ctx)
+      _ <- IO.raiseWhen(rB.isLeft)(new AssertionError(s"B create (in-declaration wiring) must pass, got: $rB"))
+      _ <- waitStatus(rt, "B-旧目标", Set(NodeLifecycle.Completed))
+      bId <- idOf(rt, "B-旧目标")
+      _ <- waitUntil(10.seconds)(nodeById(rt, bId).map(_.exists(_.deliveredTo.contains(aId))))
+      // C：本次改接**新增**的目标（无 in、无 out —— 纯新增）；task 文本与 A/B 不同——
+      // 同 agent 同 task 的已完成节点会触发「疑似重复派发」拒（findDuplicateDispatch），
+      // 与本守卫主题无关
+      rC <- nodeEdit(nodeInput("outnull-a10", "C-新目标", "description" -> Json.fromString("newly wired target"),
+        "task" -> Json.fromString("assemble the newly wired target")), ctx)
+      _ <- IO.raiseWhen(rC.isLeft)(new AssertionError(s"C create must pass, got: $rC"))
+      // 先等终态（创建回执与落库/spawn 之间无同步点，本 spec 惯例：涉及派发后果先等终态）
+      _ <- waitStatus(rt, "C-新目标", Set(NodeLifecycle.Completed))
+      cId <- idOf(rt, "C-新目标")
+      // 改接**之前**登记 root 会话：此后任何重复升根都可观测
+      recorded <- Ref.of[IO, List[AgentCommand]](Nil)
+      _ <- registerRoot(res, system, recorded)
+      before <- imms(recorded)
+      // 改接：保留旧目标 B + 保留旧 Nebula 边 + 新增 C（＝本守卫要求的拓扑）
+      r <- nodeEdit(nodeInput("outnull-a10", "A-源",
+        "out" -> Json.fromString(s"(pass,failed)Nebula,(pass)$bId,(pass)$cId")), ctx)
+      _ <- waitUntil(10.seconds)(nodeById(rt, cId).map(_.exists(_.deliveredTo.contains(aId))))
+      _ <- IO.sleep(500.millis) // 观察窗：等「若有」的重复投递落地（正确口径下无物可等）
+      after <- imms(recorded)
+      bAfter <- nodeById(rt, bId)
+      cAfter <- nodeById(rt, cId)
+      aAfter <- nodeById(rt, aId)
+      _ <- system.stopAll.handleErrorWith(_ => IO.unit)
+    yield
+      assert(r.isRight, s"terminal-node rewire must pass, got: $r")
+      assert(aBefore.flatMap(_.nebulaDeliveredAt).isEmpty,
+        "precondition: A 的完成期投递因 root 缺席被跳过（零记账）⇒ M1 持久锚未置位 = A10 的承重窗口")
+      // 正向半：新接线目标收到滞留结果（接线即投递）
+      assert(cAfter.exists(_.deliveredTo.contains(aId)),
+        s"the NEWLY-wired target must receive the retained result, got: ${cAfter.map(_.deliveredTo)}")
+      // 旧目标半：被保留的旧下游**零重复投递**（投 newlyWired，不投 newOut）
+      assertEquals(bAfter.map(_.deliveredTo), Some(List(aId)),
+        "the KEPT old downstream must not be delivered a second time (newlyWired, not newOut)")
+      // 旧 Nebula 边半：零重复升根（**承重断言**——口径回退为 newOut 时此条变红）
+      assertEquals(before.size, 0, s"no root delivery before the rewire, got: ${before.map(_.text)}")
+      assertEquals(after.size, 0,
+        s"the KEPT old Nebula edge must NOT re-deliver to root on rewire (newlyWired, not newOut), got: ${after.map(_.text)}")
+      assert(aAfter.flatMap(_.nebulaDeliveredAt).isEmpty,
+        "no re-delivery happened ⇒ the persistent Nebula anchor must still be unset")
   }
 
 end OutNullableDeliverySpec
