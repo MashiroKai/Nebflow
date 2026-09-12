@@ -27,11 +27,16 @@ const ALPHA = 'spec-plugin-alpha';
 const BETA = 'spec-plugin-beta';
 
 function pluginJson(name) {
+  // §5.2/§5.3（PluginRegistry.CanonicalSchema）: manifest 缺 $schema 会被**拒载**
+  // （`rejected[]`，卡片无开关）⇒ fixture 必须带 canonical $schema，否则本 spec
+  // 的开关断言没有承载物。2026-09-12 R2 记账：此缺省为 spec 侧 fixture 缺陷
+  // （main jar 上同红，见 impl-r2/11_r2-main-ablation.log），非产品行为。
   return JSON.stringify({
+    $schema: 'https://agent-plugins.org/schemas/1.0.0/plugin.schema.json',
     name,
     version: '1.0.0',
     description: `Fixture plugin ${name} for the plugins-panel-redesign spec`,
-    author: 'plugins-panel-redesign spec',
+    author: { name: 'plugins-panel-redesign spec' },
   }, null, 2);
 }
 
