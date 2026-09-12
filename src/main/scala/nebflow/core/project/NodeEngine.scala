@@ -1568,6 +1568,12 @@ class NodeEngine(
     val requiredGate = if node.status == NodeLifecycle.Failed then OutEdge.Failed else OutEdge.Pass
     if node.status == NodeLifecycle.Cancelled then
       logger.info(s"[gating] redelivery '${node.name}' -> '$target' skipped: source status=cancelled (a cancelled node's result is never a downstream input)")
+    // **`:loop` 控制边零投递（nrloop 一期 2026-09-12，红线①/B3 第四条）**：回边是
+    // verdict 选通的控制信号，不是投递腿——`settleTo` 会把目标节点的 in-barrier 记成
+    // 已消费并启动它（round-1 barrier 死锁 + 语义污染）。本分支把「改接补投递」等
+    // 直投入口对控制边整体挡掉（执行腿由引擎显式驱动，见二期 `reloopTo`）。
+    else if edge.exists(OutEdge.isLoopEdge) then
+      logger.info(s"[gating] redelivery '${node.name}' -> '$target' skipped: ':loop' control edge (verdict routing — no delivery, no barrier settlement; the engine drives the re-run leg)")
     else if edge.exists(e => !e.on.contains(requiredGate)) then
       logger.info(s"[gating] redelivery '${node.name}' -> '$target' skipped: edge on=[${edge.get.on.mkString(",")}] excludes $requiredGate (source status=${node.status})")
     else
@@ -1755,7 +1761,7 @@ class NodeEngine(
           case None => None
         }
       }.map { upstream =>
-        (chainBlock ++ List(boardBlock, ownTask).filter(_.nonEmpty) ++ upstream).mkString("\n\n") + "\n\n" + NodeEngine.ProtocolFootnote
+        (chainBlock ++ List(boardBlock, ownTask).filter(_.nonEmpty) ++ upstream).mkString("\n\n") + "\n\n" + NodeEngine.protocolFootnoteFor(Some(node.role))
       }
     }
 
@@ -1858,6 +1864,9 @@ class NodeEngine(
                             // loop 节点——flowNodeId 身份与普通节点同源（权限矩阵
                             // 同面：仅自己名下任务 status+note）。
                             flowNodeId = Some(nodeId),
+                            // nrloop 一期（§3.2 透传表）：loop 双会话角色 = 该 loop
+                            // 节点自身 role（与普通节点同源口径，worker/verify 同值）。
+                            flowNodeRole = Some(node.role),
                             // D6 批 F1（G9 路径 a）：节点名随路注入（AskUser 归因）。
                             flowNodeName = Some(node.name),
                             // 链级抽象 P2（§9.2 项 5）：worker/verify 同属该 loop
@@ -1866,6 +1875,7 @@ class NodeEngine(
                           verify <- spawnLoopSession(verifyBase, prepared, vGrant, verifySessionId, s"${node.name}-verify", projectRoot,
                             initialMessages = resume.fold(List.empty[Message])(_.verifyMessages),
                             flowNodeId = Some(nodeId),
+                            flowNodeRole = Some(node.role),
                             flowNodeName = Some(node.name),
                             flowChainId = chain.map(_.chainId))
                           _ <- runLoopNode(node, worker, verify, inputText, cancelSig, resume)
@@ -2143,6 +2153,11 @@ class NodeEngine(
           // 上下文——AgentCore 透传 ToolContext 后 TaskBoard 权限矩阵据此判定
           // （仅自己名下任务、仅 status+note），project 缺省解析随之生效。
           flowNodeId = Some(nodeId),
+          // nrloop 一期（设计 §3.2 透传表，B1 第一段）：节点角色随 spawn 注入 →
+          // AgentCore 透传 ToolContext.flowNodeRole——node_report 值域分化
+          // （verifier ⇒ pass/fail；task ⇒ finish）与 ProtocolFootnote 角色分支的
+          // 引擎侧判据来源。task 也显式带值（判据侧 normalize 宽容，但显式 = 可审计）。
+          flowNodeRole = Some(node.role),
           projectName = Some(projectName),
           // D6 批 F1（G9 路径 a）：节点人类可读名随 spawn 注入——AskUser payload
           // nodeName 字段来源（badge「project · nodeName」+ node-ask 留痕事件）。
@@ -2594,6 +2609,11 @@ class NodeEngine(
     /** TaskBoard 批 2（§1d）：loop 会话引擎侧节点身份（所属 NodeDef.id——worker/
       * verify 同属该 loop 节点，TaskBoard 权限矩阵与普通节点同面）。 */
     flowNodeId: Option[String] = None,
+    /** 节点角色（nrloop 一期 2026-09-12，B1 透传链第一段 loop 支）：所属
+      * `NodeDef.role`——worker/verify 同属该 loop 节点（设计 §3.2 表：旧 loop
+      * 双会话置 `Some(node.role)`，与普通节点同源口径）。详见
+      * SessionContext.flowNodeRole。 */
+    flowNodeRole: Option[String] = None,
     /** D6 批 F1（G9 路径 a）：loop 节点人类可读名（worker/verify 同名——
       * 提问归因到节点而非会话分身），AskUser payload nodeName 字段来源。 */
     flowNodeName: Option[String] = None,
@@ -2624,6 +2644,7 @@ class NodeEngine(
           // TaskBoard 批 2（§1d）：loop 会话同置节点身份 + 项目上下文（普通节点
           // runWithAgent 同款——worker/verify 更新自己工单与普通节点同权限面）。
           flowNodeId = flowNodeId,
+          flowNodeRole = flowNodeRole,
           projectName = Some(projectName),
           flowNodeName = flowNodeName,
           // 链级抽象 P2（§9.2 项 5）：loop worker/verify 会话链身份与 loop 节点同源
@@ -2944,21 +2965,37 @@ class NodeEngine(
   /** blocked 结构化信号批（20260909 spec §5.3；同日作者裁定泛化 NodeReport
     * 统一三语义）：declared = 节点会话经 node_report 工具申报的结构化反馈
     * （NodeEngine 终态分流处 drain 登记表所得）；默认 None 向后兼容全部既有
-    * 调用点。分流顺序【结构化信号优先，按申报类别三分流，全部锚定既有链零新链】：
-    * pass → 既有 completed 语义链（回落 declared=None 原路径：BlockedReader
-    * 降级面 → CompletionGate 闸门 → completedNode——闸门是完成链的产物完整性
-    * owner，pass 申报不绕闸、零放宽）；fail → 既有 failed 语义链（failNode：
-    * deliverFailed / merge 兜底 / retry 挂点原样接管）；blocked（细分六类/泛值）
-    * → 既有 blockedNode/FeedbackRouter 链。 */
+    * 调用点。分流顺序【结构化信号优先，**按角色 × 类别分流**（nrloop 一期 2026-09-12
+    * 语义轴分离：执行状态 vs 内容判定），全部锚定既有链零新链】：
+    *
+    *   - `finish`（执行节点显式完成）→ 既有 completed 语义链（回落 declared=None
+    *     原路径：BlockedReader 降级面 → CompletionGate 闸门 → completedNode——闸门
+    *     是完成链的产物完整性 owner，finish 申报不绕闸、零放宽）；
+    *   - `pass`（verifier verdict）→ 记 `lastVerdict=pass` + completed 链（pass 边
+    *     照常投递，verdict 感知的 deliverOut 只看 fail）；
+    *   - `fail`（verifier verdict）→ **不调 `failNode`**（这正是 0911 secstore-audit
+    *     误判 failed 的机制根因）：记 `lastVerdict=fail` + completed 链 + 沿
+    *     `(fail)<目标>:loop` 控制边选通（`verifierFail`）；预算耗尽则熔断
+    *     （`circuitBreakLoop`，verifier 终态化 failed + 计量数字）；无 fail 边
+    *     （存量/畸形数据）⇒ 只记 verdict + 照常 completed，不误杀；
+    *   - blocked（细分六类/泛值，两个角色共有，协议事实优先）→ 既有 blockedNode/
+    *     FeedbackRouter 链（工具申报即节点对任务可完成性的正式判断，blocked 可重激活
+    *     无损，completed 伪终态不可逆）。
+    *
+    * 纪律（设计 §3.1 三条，工具 description 同文）：**执行失败没有申报通道**——执行
+    * 真的挂了仍由引擎 `failNode` 判（LLM 错误/会话死亡/LoopGuard L1），不由 agent 申报。 */
   private def completeNode(nodeId: String, resultText: String,
       declared: Option[BlockedFeedback] = None): IO[Unit] =
     declared match
-      // pass 申报：节点正式声明完成 → 与无申报同链走既有完成路径（降级面+闸门原样）
-      case Some(fb) if nebflow.core.tools.NodeReportToolDef.isPass(fb.category) =>
+      // finish 申报（执行节点显式完成）：与无申报同链走既有完成路径（降级面+闸门原样）
+      case Some(fb) if nebflow.core.tools.NodeReportToolDef.isFinish(fb.category) =>
         completeNode(nodeId, resultText)
-      // fail 申报：节点正式声明失败 → 既有 failed 链（result=渲染串，观测面单点格式）
+      // pass 申报（verifier verdict=pass）：记 lastVerdict 后走 completed 链（pass 边照投）
+      case Some(fb) if nebflow.core.tools.NodeReportToolDef.isPass(fb.category) =>
+        recordVerdict(nodeId, VerdictPass) *> completeNode(nodeId, resultText)
+      // fail 申报（verifier verdict=fail）：**不再 failNode**——verdict ≠ 节点状态
       case Some(fb) if nebflow.core.tools.NodeReportToolDef.isFail(fb.category) =>
-        failNode(nodeId, nebflow.core.tools.NodeReportToolDef.renderFail(fb))
+        verifierFail(nodeId, fb, resultText)
       // blocked 申报（细分六类/泛值，协议事实优先）：工具申报即节点对任务可完成性
       // 的正式判断，blocked 可重激活无损，completed 伪终态不可逆（spec §6 语义裁定）。
       case Some(fb) => blockedNode(nodeId, fb, finalText = Some(resultText))
@@ -3031,6 +3068,212 @@ class NodeEngine(
         case None =>
           logger.warn(s"Node '$nodeId' vanished before completion — result not persisted")
     yield ()
+
+  // ── verdict 选通与 loop 预算熔断（nrloop 一期 2026-09-12）──────────────────
+  //
+  // 语义轴分离的引擎侧落点（设计 §3.1 / §3.3 #6–#8 / §3.5–§3.6）：
+  //   · verifier 的 `fail` = **verdict**（被判定对象不合格），**不是**节点失败 ⇒
+  //     本节点照常 `completed`（消除 0911 secstore-audit 被误判 failed 的机制根因）；
+  //   · 选通 = `(fail)<worker>:loop` **控制边**（作者裁定 R5(a)）：图上不连、不写 in
+  //     镜像、不进 barrier/deliveredTo，由引擎显式驱动（执行腿 `reloopTo` 落二期，
+  //     本一期只做「记 verdict + 轮次/时间预算 + 熔断」）；
+  //   · 预算 = 轮次帽（verifier.loopRound）+ 时间帽（目标节点 loopStartedAt），
+  //     阈值全 prop 化（`Defaults.LoopMaxRounds` / `Defaults.LoopMaxWallClockMs`）；
+  //   · 熔断动作（§3.6 三档统一）：不投任何 `:loop` 边 / verifier 终态化 `failed`
+  //     且 result 写 reason + 计量数字 / `FlowMapEventLog` 记 `loop-budget` /
+  //     失败通知（经 failNode 尾部的 dispatchNotify，与既有 failed 链同源）。
+
+  /** verdict 取值（`NodeDef.lastVerdict`；verifier 专用）。 */
+  val VerdictPass: String = "pass"
+  val VerdictFail: String = "fail"
+
+  /** loop 预算事件类型：熔断（`circuitBreakLoop`）。 */
+  val LoopBudgetEventType: String = "loop-budget"
+
+  /** loop 轮次事件类型：每次 fail 选通消费一轮（执行腿二期的对齐锚）。
+    * 一期语义 = 「本轮 fail 已消费、verifier 照常 completed、重跑意图已登记」；执行腿
+    * 落地后同一事件承担「已驱动第 N 轮重跑」。 */
+  val LoopRoundEventType: String = "loop-round"
+
+  /** completed 重激活的显式授权入口名（附 C5①；NodeEdit 参数 `reactivateCompleted`
+    * 与事件留痕 `auth=` 字段共用同一字面，供事后对齐）。 */
+  val CompletedReactivationAuth: String = "NODE_COMPLETED_REACTIVATION"
+
+  /** verdict 落库（+ 可选轮次 +1）并推 WS：`lastVerdict` 是 `deliverOut` 的 verdict
+    * 感知判据来源（fail ⇒ 不投 pass 边），轮次是轮帽判据来源（§3.6 轮次维）。
+    * 事务内现读（节点可能已并发终态化）——非活动区/已消失 ⇒ no-op。 */
+  private def recordVerdict(nodeId: String, verdict: String, bumpRound: Boolean = false): IO[Unit] =
+    IO(System.currentTimeMillis()).flatMap { now =>
+      store.mutateWithResult { st =>
+        st.nodes.get(nodeId) match
+          case Some(fresh) =>
+            val updated = fresh.copy(
+              lastVerdict = Some(verdict),
+              loopRound = if bumpRound then fresh.loopRound + 1 else fresh.loopRound)
+            (st.copy(nodes = st.nodes.updated(nodeId, updated)), Some(updated))
+          case None => (st, None)
+      }.flatMap { case (_, opt) => opt.traverse_(emitUpdated) }
+    }
+
+  /** fail 回边目标解析（`(fail)<target>:loop` 的**解析后节点 id**）：无此边 / 目标是
+    * "Nebula" / 悬空（含目标已在归档区——归档 = 已过期，重跑无意义）⇒ None。 */
+  private def loopRouteTargetId(v: NodeDef): IO[Option[String]] =
+    OutEdge.canonical(v.out)
+      .filter(e => OutEdge.isLoopEdge(e) && e.on.contains(OutEdge.Fail))
+      .map(_.to).filterNot(_ == OutEdge.NebulaTarget).distinct.headOption match
+      case None => IO.pure(None)
+      case Some(raw) => store.snapshot.map(s => OutEdge.resolveTargetId(s.nodes, raw))
+
+  /** loop 计时起点置位（目标节点 `loopStartedAt`，只置不重——跨轮不重置，
+    * 「本轮 loop 从何时开始」的唯一权威；扫描腿据此算时间帽）。 */
+  private def stampLoopStartedAt(targetId: String, now: Long): IO[Unit] =
+    store.mutate { st =>
+      st.nodes.get(targetId) match
+        case Some(t) if t.loopStartedAt.isEmpty =>
+          st.copy(nodes = st.nodes.updated(targetId, t.copy(loopStartedAt = Some(now))))
+        case _ => st
+    }.void
+
+  /** 计时起点清除（CAS，返回是否由本次调用清掉——熔断幂等的账本：同一拍并发/重复
+    * 命中只有赢家发事件与终态化，与 `fireReminderRung` 的 CAS 单发同款纪律）。 */
+  private def clearLoopStartedAt(targetId: String): IO[Boolean] =
+    store.mutateWithResult { st =>
+      st.nodes.get(targetId) match
+        case Some(t) if t.loopStartedAt.isDefined =>
+          (st.copy(nodes = st.nodes.updated(targetId, t.copy(loopStartedAt = None))), true)
+        case _ => (st, false)
+    }.map(_._2)
+
+  /** verifier 的 `fail` 申报落点（**替代旧的 `failNode(nodeId, renderFail(fb))`**）：
+    *  1. 解析 `(fail)<target>:loop` 回边（无此边 ⇒ 畸形/存量数据：只记 verdict + 照常
+    *     completed，绝不误杀）；
+    *  2. 预算判定（`LoopBudget.decide`：目标节点的 `loopStartedAt` 时间帽 + 本节点的
+    *     `loopRound` 轮帽）⇒ 命中 ⇒ [[circuitBreakLoop]]（verifier 终态化 failed，本
+    *     节点的 verdict 照旧记 fail）；
+    *  3. 预算内 ⇒ 记 `lastVerdict=fail` + 轮次 +1、给目标置计时起点、写 `loop-round`
+    *     事件（含 `deferred` 标注：执行腿二期）、随后 `completeNode` 走 **completed**
+    *     链（verdict 感知的 deliverOut 不投 pass 边）。 */
+  private def verifierFail(nodeId: String, fb: BlockedFeedback, resultText: String): IO[Unit] =
+    IO(System.currentTimeMillis()).flatMap { now =>
+      store.snapshot.flatMap { s =>
+        s.nodes.get(nodeId) match
+          case None =>
+            logger.warn(s"Node '$nodeId' vanished before its verdict could be recorded — fail verdict dropped")
+          case Some(v) =>
+            loopRouteTargetId(v).flatMap {
+              case None =>
+                recordVerdict(nodeId, VerdictFail) *>
+                  logger.warn(
+                    s"Node '${v.name}' (${nodeId}) reported a fail verdict but declares no '(fail)<target>:loop' edge — " +
+                      "verdict recorded, no re-run route (the node still completes; see NODE_VERIFIER_NEEDS_ROUTE)") *>
+                  FlowMapEventLog.append(workspace, projectName, nodeId, LoopRoundEventType,
+                    "verdict=fail but NO fail-route edge is declared — no re-run route exists (loop inert); " +
+                      "node completes with the verdict recorded") *>
+                  completeNode(nodeId, resultText)
+              case Some(targetId) =>
+                store.findNode(targetId).flatMap { tOpt =>
+                  val startedAt = tOpt.flatMap(_.loopStartedAt)
+                  val maxRounds = nebflow.shared.Defaults.LoopMaxRounds
+                  val maxWall = nebflow.shared.Defaults.LoopMaxWallClockMs
+                  LoopBudget.decide(v.loopRound, maxRounds, startedAt, now, maxWall) match
+                    case Some(reason) =>
+                      circuitBreakLoop(v, Some(targetId), reason, now)
+                    case None =>
+                      for
+                        _ <- recordVerdict(nodeId, VerdictFail, bumpRound = true)
+                        _ <- stampLoopStartedAt(targetId, now)
+                        _ <- FlowMapEventLog.append(workspace, projectName, nodeId, LoopRoundEventType,
+                          s"verdict=fail round=${v.loopRound + 1}/$maxRounds target=$targetId " +
+                            s"deferred=execution-leg-phase-2 (control edge: not delivered via settleTo/barrier)")
+                        _ <- logger.info(
+                          s"Node '${v.name}' (${nodeId}) verdict=fail (round ${v.loopRound + 1}/$maxRounds) — re-run target " +
+                            s"'$targetId' registered on the :loop control edge; this node completes normally (verdict != node status)")
+                        _ <- completeNode(nodeId, resultText)
+                      yield ()
+                }
+            }
+      }
+    }
+
+  /** loop 预算熔断（§3.6 三档统一动作）：
+    *  ① **不投任何 `:loop` 边**（控制边本就不进 settleTo/barrier 结算；`deliverFailed`
+    *     的 nodeTargets 亦按 mode 过滤——见该函数）；
+    *  ② **verifier 终态化 `failed`**，result = reason + 计量数字（经既有 `failNode`
+    *     链：WS 事件 + `deliverFailed` + 尾部 `retryOrNotify` ⇒ ④ 失败通知）；
+    *  ③ `FlowMapEventLog` 记 `loop-budget`（含 reason + 计量）；
+    *  ④ 目标节点计时起点清除（CAS 单发，幂等——同一拍重复命中不重复写事件/不重复终态化）。
+    *
+    * `reason` 形如 `rounds=3/3` / `wallClock=14400000ms/14400000ms`，`metering` 再附
+    * 轮次与预算上限——取证侧据此对齐「哪一维先耗尽」。 */
+  private def circuitBreakLoop(v: NodeDef, targetId: Option[String], reason: String, now: Long): IO[Unit] =
+    val maxRounds = nebflow.shared.Defaults.LoopMaxRounds
+    val metering = s"rounds=${v.loopRound}/$maxRounds wallClockMaxMs=${nebflow.shared.Defaults.LoopMaxWallClockMs}"
+    val msg = s"loop budget exhausted: $reason — $metering"
+    val cleared = targetId.traverse(clearLoopStartedAt).map(_.getOrElse(true))
+    cleared.flatMap {
+      case false =>
+        // 同一拍/并发已由另一路熔断（CAS 败者）⇒ 零重复副作用（幂等）。
+        logger.info(s"Node '${v.name}' (${v.id}) loop circuit-break skipped — already handled this round (idempotent)")
+      case true =>
+        recordVerdict(v.id, VerdictFail) *>
+          FlowMapEventLog.append(workspace, projectName, v.id, LoopBudgetEventType,
+            s"$msg target=${targetId.getOrElse("<none>")} verdict=fail") *>
+          logger.warn(s"Node '${v.name}' (${v.id}) loop circuit-break: $msg") *>
+          // ② + ④：既有 failed 链（deliverFailed → merge 兜底/停等留痕 → dispatchNotify failed）
+          failNode(v.id, msg)
+    }
+
+  /** loop 时间帽扫描腿（`ProjectActor.TtlTick` 30s 驱动，与 `remindUnreportedNodes` /
+    * `settleStaleRunningNodes` / `sweepDestroyWindows` 同族——复用既有心跳点零新调度器）。
+    *
+    * 判据（§3.6 时间维逐字）：`status ∈ {wiring,pending,running} ∧ loopStartedAt.isDefined
+    * ∧ now - loopStartedAt >= maxWallClockMs` ⇒ 熔断。命中者反查「回边驱动方」（持有
+    * `(fail)<命中节点>:loop` 边且非终态的 verifier）：
+    *   - 找到 ⇒ `circuitBreakLoop`（verifier → failed + `loop-budget` 事件 + 失败通知）；
+    *   - 找不到（计时起点成孤儿：驱动方已终态/被删/手改数据）⇒ 清起点 + 单发一条
+    *     `loop-budget` 事件（`stage=orphan`）——不终态化无关节点，也绝不留一个每 30s
+    *     重复命中的扫描热点。
+    *
+    * 幂等：起点清除是 CAS 单发（重复命中/并发拍 ⇒ 只一个赢家做动作）。best-effort
+    * （调用方 handleErrorWith，失败不影响后续 sweep）。 */
+  def sweepLoopBudgets(): IO[Unit] =
+    val maxWall = nebflow.shared.Defaults.LoopMaxWallClockMs
+    if maxWall <= 0 then IO.unit
+    else
+      IO(System.currentTimeMillis()).flatMap { now =>
+        store.snapshot.flatMap { s =>
+          val due = s.nodes.values.toList.filter(n =>
+            (n.status == NodeLifecycle.Wiring || n.status == NodeLifecycle.Pending || n.status == NodeLifecycle.Running)
+              && n.loopStartedAt.exists(st => now - st >= maxWall))
+          due.traverse_ { t =>
+            val elapsed = t.loopStartedAt.map(st => now - st).getOrElse(0L)
+            loopDriverOf(s.nodes.values.toList, t.id) match
+              case Some(v) =>
+                circuitBreakLoop(v, Some(t.id), s"wallClock=${elapsed}ms/${maxWall}ms", now)
+              case None =>
+                clearLoopStartedAt(t.id).flatMap {
+                  case false => IO.unit
+                  case true =>
+                    FlowMapEventLog.append(workspace, projectName, t.id, LoopBudgetEventType,
+                      s"loop wall-clock budget exceeded with no live fail-route driver: wallClock=${elapsed}ms/${maxWall}ms " +
+                        "stage=orphan — timer cleared (no node terminalized)") *>
+                      logger.warn(
+                        s"Node '${t.name}' (${t.id}) carries an expired loop timer but no live verifier routes a fail edge " +
+                          s"to it (${elapsed}ms >= ${maxWall}ms) — timer cleared, nothing terminalized")
+                }
+          }
+        }
+      }
+
+  /** 回边驱动方反查（时间帽熔断用）：活动区内持有 `(fail)<targetId>:loop` 边、且自身
+    * 非终态的 verifier 节点。目标串支持 id/名字两形态（与 `resolveTargetId` 同源）。 */
+  private def loopDriverOf(nodes: List[NodeDef], targetId: String): Option[NodeDef] =
+    nodes.find { n =>
+      n.role == NodeRoles.Verifier && !NodeLifecycle.Terminal.contains(n.status) &&
+        OutEdge.canonical(n.out).exists(e =>
+          OutEdge.isLoopEdge(e) && e.on.contains(OutEdge.Fail) &&
+            (e.to == targetId || nodes.find(_.id == targetId).exists(t => t.name == e.to)))
+    }
 
   /** deps 完成信号 → 触发依赖者（deps 设计 §1.3）：反向扫描活动区，对每个
     * deps 含本次完成节点、且自身非 running/终态的依赖者调 startNode——闸门在
@@ -3549,15 +3792,30 @@ class NodeEngine(
         }
     }
 
-  /** 完成投递（P1 语义门控，spec §2.2 #2）：沿 on ∋ pass 过滤出边后投递。fan-out：
-    * Nebula 通报与多个节点目标并存（旧单值拓扑 = 单边，行为等价）。mode=result →
-    * 投载荷（经 buildInput 注入）+ Nebula 通报；mode=signal → 只记账归零 barrier，
-    * Nebula 只记账不通报（重投扫描按同门公式判定，不会重投）。dedup 用 deliveredTo
-    * （防改接重投）；canonical 合并同 (to,mode) 多边 on 集——一次终态至多投一次。 */
+  /** 完成投递（P1 语义门控，spec §2.2 #2；nrloop 一期加 **verdict 感知**）：
+    * 沿 on ∋ pass 过滤出边后投递。fan-out：Nebula 通报与多个节点目标并存（旧单值
+    * 拓扑 = 单边，行为等价）。mode=result → 投载荷（经 buildInput 注入）+ Nebula
+    * 通报；mode=signal → 只记账归零 barrier，Nebula 只记账不通报（重投扫描按同门
+    * 公式判定，不会重投）。dedup 用 deliveredTo（防改接重投）；canonical 合并同
+    * (to,mode) 多边 on 集——一次终态至多投一次。
+    *
+    * **verdict 感知（设计 §3.3 #7）**：`role=verifier ∧ lastVerdict=fail` 的节点**不投
+    * pass 边**（含 Nebula 通报）——被判定对象不合格时上游污染结果不得前递；选通由
+    * `(fail)<target>:loop` **控制边**承载（`verifierFail` 已登记：记 verdict + 轮次 +
+    * 计时；执行腿二期）。无 verdict（= 全部执行节点，及 verifier 的 pass/无申报）⇒
+    * 照旧投 pass 边，行为逐字不变。
+    *
+    * 控制边不经本函数（`:loop` 不是 pass 边，且 `settleTo`/barrier/deliveredTo 三面
+    * 都与它无关——红线①：控制边不进图、不进 barrier）。 */
   private def deliverOut(node: NodeDef, resultText: String): IO[Unit] =
-    val passEdges = OutEdge.canonical(node.out).filter(_.on.contains(OutEdge.Pass))
-    nebulaDelivery(node, resultText, passEdges.partition(_.to == OutEdge.NebulaTarget)._1) *>
-      passEdges.filterNot(_.to == OutEdge.NebulaTarget).traverse_(e => settleTo(node, e.to))
+    if node.role == NodeRoles.Verifier && node.lastVerdict.contains(VerdictFail) then
+      logger.info(
+        s"Node '${node.name}' (${node.id}) verdict=fail — pass edges NOT delivered (the judged target was rejected; " +
+          "the re-run leg rides the ':loop' control edge, never settleTo/barrier)")
+    else
+      val passEdges = OutEdge.canonical(node.out).filter(_.on.contains(OutEdge.Pass)).filterNot(OutEdge.isLoopEdge)
+      nebulaDelivery(node, resultText, passEdges.partition(_.to == OutEdge.NebulaTarget)._1) *>
+        passEdges.filterNot(_.to == OutEdge.NebulaTarget).traverse_(e => settleTo(node, e.to))
 
   private def nebulaDelivery(node: NodeDef, resultText: String, nebulaEdges: List[OutEdge]): IO[Unit] =
     if nebulaEdges.isEmpty then IO.unit // 悬空/无 pass 边：结果保留在 result（持久化）
@@ -3570,6 +3828,8 @@ class NodeEngine(
     *    中 MergeNodePolicy.haltsOnFailure 命中 → mergeBlocked（**与门控无关**——覆盖
     *    校验生效前落盘的旧拓扑 pass-only 边；创建期 NODE_MERGE_PASS_ONLY 已硬拒新
     *    failed 入边）。先于 signal 结算执行（merge blocked 优先于下游触发，D5 原序）。
+    *    **`:loop` 控制边不在 nodeTargets 内**（nrloop 一期：verdict 选通面与 failed
+    *    结算面正交，见下方 nodeTargets 计算处）。
     * ② Nebula 上报（on ∋ failed）：mode=result → 通报（旧 "Nebula" 双通报形态零漂移）；
     *    mode=signal → 只记账。
     * ③ on-failed signal 节点目标：settleTo 记账归零 barrier + 启动（buildInput 按边
@@ -3581,7 +3841,11 @@ class NodeEngine(
   private def deliverFailed(node: NodeDef, err: String): IO[Unit] =
     val edges = OutEdge.canonical(node.out)
     val failedEdges = edges.filter(_.on.contains(OutEdge.Failed))
-    val nodeTargets = edges.map(_.to).filterNot(_ == OutEdge.NebulaTarget).distinct
+    // **`:loop` 控制边排除（nrloop 一期 2026-09-12，B3 末条 / 设计 §3.5）**：`:loop`
+    // 边是 verdict 选通的控制边（`on={fail}`，与 `failed` 门正交），不进任何 failed
+    // 结算面——否则 vera 的 loop 目标会被误当「失败下游」做 merge 兜底/停等留痕
+    // （无 failed 门覆盖 ⇒ 恒落 waiting 分支，每轮刷一条误导日志）。
+    val nodeTargets = edges.filterNot(OutEdge.isLoopEdge).map(_.to).filterNot(_ == OutEdge.NebulaTarget).distinct
     val signalTargets = failedEdges
       .filter(e => e.to != OutEdge.NebulaTarget && e.mode == OutEdge.Signal).map(_.to).distinct
     val mergeFallback: IO[Unit] = nodeTargets.traverse_(t =>
@@ -4173,17 +4437,20 @@ object NodeEngine:
     else if ms > 0 && ms % 60000L == 0 then s"${ms / 60000L}min"
     else s"${ms / 1000L}s"
 
-  /** 提醒轮注入文案（作者裁定逐字要素：「你已交棒但未调用 node_report；请立即申报
-    * pass/fail/blocked」+ 当前档位）。**不含任何判罚/威胁措辞**——本阶梯永不判 failed
-    * （相对设计稿 §4.2 的核心改判），文案不得暗示「否则会失败」。
+  /** 提醒轮注入文案（nrloop 一期 2026-09-12 **中性化**，设计 §2 R9 / 附 C2-R9：
+    * 文案不按角色分支、不并列值域——「合法取值以工具说明为准」一句把值域解释权收归
+    * `node_report` description（按角色单一权威），提醒只做「你还没申报」这一件事）。
+    * 适用范围 = **全部节点会话**（`remindUnreportedNodes` 本就按 Running 全扫、无角色
+    * 过滤 ⇒ 判据零改动，见该函数头注）。**不含任何判罚/威胁措辞**——本阶梯永不判
+    * failed（相对设计稿 §4.2 的核心改判），文案不得暗示「否则会失败」。
     * 实际投递文本 = 本文案**原文**（首行前缀头 `[NODE-REPORT-REMINDER]`），经
     * `AgentCommand.ExternalEvent(source = NodeReportReminderSource, eventType = "reminder")`
     * 进节点会话唤醒轮——不叠 `[NODE-MESSAGE]` 头（那条是分发器 NodeMessage 通道专用，
     * 前缀头单点区分来源；注入通道差异见 [[injectReminderTurn]]）。 */
   def reportReminderText(nodeName: String, rung: Int, maxRungs: Int, rungMs: Long, elapsedMs: Long): String =
-    s"""$NodeReportReminderPrefix 你已交棒但未调用 node_report；请立即申报 pass/fail/blocked。
+    s"""$NodeReportReminderPrefix 你已交棒但未调用 node_report；请立即申报本节点的终态。
        |（引擎未申报兜底 · 第 $rung/$maxRungs 拍 · 档位 ${reportRungLabel(rungMs)} · 已等待 ${elapsedMs / 1000}s · 节点 $nodeName）
-       |你的 turn 已结束但引擎没有收到终态申报，节点因此保持 Running、结果未投递下游。请调用 node_report 申报 pass / fail / blocked（附 detail），随后照常输出收尾报告。
+       |你的 turn 已结束但引擎没有收到终态申报，节点因此保持 Running、结果未投递下游。请调用 node_report 申报本节点终态（合法取值以该工具说明为准，附 detail），随后照常输出收尾报告。
        |本提醒不判罚失败、不终止会话、不杀进程——只是提醒；你不申报则该节点一直保持 Running 等人工处置。""".stripMargin
 
   /** `node-report-missing` 的结构化 summary（`k=v` 单空格分隔，含 `=` 的 token 由
@@ -4372,19 +4639,49 @@ object NodeEngine:
     * 同日作者裁定泛化（NodeReport 统一三语义）：工具更名 node_report，blocked
     * 细分六类之外 pass/fail 语义同走结构化申报；三语义文本锚定（首行裸 BLOCKED
     * / VERDICT: PASS/FAIL）降级为「工具不可用时」备用通道，措辞强调首行裸形态
-    * 要求（6 例实证：markdown 标题/加粗/前置导语均锚定失败）。 */
+    * 要求（6 例实证：markdown 标题/加粗/前置导语均锚定失败）。
+    *
+    * nrloop 一期 2026-09-12（设计 §3.1 / B9）：值域**按节点角色分化**后，本文案
+    * 只保留角色中立表述（「按你的节点角色传对应值」+ 括号注明校验节点 = pass/fail），
+    * verifier 专属段（verdict ≠ 节点状态）由 [[protocolFootnoteFor]] 追加——避免把
+    * 两套值域并列塞进一篇脚注（R9 中性化同款纪律：解释权收归工具 description）。
+    * 本 val 逐字保持旧文本除该句外的全文（下游断言锚：末行 TaskBoard 指引行、
+    * `endsWith(ProtocolFootnote)` 身份断言）。 */
   val ProtocolFootnote: String =
     """── 节点协议 ──
       |若你判定任务无法完成（上游依赖未就绪/任务定义不完整/能力不匹配/缺外部条件），
       |不要硬造结果：第一优先调用 node_report 工具申报（参数 category/detail/
       |suggestion；受阻申报 category ∈ upstream-incomplete | task-underspecified |
       |agent-mismatch | external-dependency | needs-split | other | blocked），随后照常输出
-      |收尾报告。任务/轮次「已完成/已失败」的正式判定同样走 node_report：category
-      |传 pass 或 fail（detail 写明依据）。工具不可用时才用文本备用通道：把最终输出的第一行写为裸 BLOCKED
+      |收尾报告。任务/轮次「已完成/已失败」的正式判定同样走 node_report：按你的节点角色
+      |传对应值（校验节点 = pass 或 fail，detail 写明依据；执行节点的正常完成无需申报）。工具不可用时才用文本备用通道：把最终输出的第一行写为裸 BLOCKED
       |（首行恰为 BLOCKED 四个字母——不加 # / ** / 导语等任何前缀），随后给出 JSON：
       |{"category":"…","detail":"…","suggestion":"…"}。
       |可完成时正常输出结果，勿申报 blocked。
       |若上方 <task-board> 给了你工单编号，完成或受阻时用 TaskBoard 工具更新其状态（close=完成，blocked=受阻）。""".stripMargin
+
+  /** verifier 专属附录段（nrloop 一期 B9；设计 §3.1 纪律③「verdict ≠ 节点状态」+
+   * §3.2 verifier 语义）。**仅 `role=verifier` 注入**（[[protocolFootnoteFor]]），
+   * 逐字回答校验节点最容易搞错的一件事：申报 `fail` 不等于自己失败。
+   * 与 `node_report` description 该段同源同措辞（双面同文纪律，设计 §3.1）。 */
+  val VerifierVerdictFootnote: String =
+    """── 校验节点（verifier）──
+      |你的申报是 **verdict**（被判定对象合格/不合格），不是你自己节点的状态：
+      |   · `pass` = 判定对象合格；`fail` = 判定对象不合格（**不是**你执行失败）。
+      |   · 两者都意味着**本节点正常完成**（引擎记 lastVerdict，节点照常 completed）。
+      |   · `fail` 不会把你判 failed；它经 `(fail)<目标>:loop` 回边把重跑意图交给引擎
+      |     （重跑由引擎驱动，不由你直接重做）。
+      |   · 真正的执行失败（会话死亡 / LLM 错误）由引擎判定，**没有** agent 申报通道。
+      |   · 遇到做不下去的情况仍走 `blocked`（与任务节点同值域）。
+      |verdict ≠ node status —— 不要因为「对象不合格」而认为本节点失败了。""".stripMargin
+
+  /** 角色分支脚注（nrloop 一期 B9 单点）：`verifier` = 基线 + [[VerifierVerdictFootnote]]
+    * 附录；其余（含 None / 未知）= 基线**逐字原文**（旧行为零漂移——既有
+    * `endsWith(ProtocolFootnote)` / 末行断言全部保持）。 */
+  def protocolFootnoteFor(role: Option[String]): String =
+    if NodeRoles.normalize(role.getOrElse("")) == NodeRoles.Verifier then
+      ProtocolFootnote + "\n" + VerifierVerdictFootnote
+    else ProtocolFootnote
 
   // ── 链级抽象 P2：链上下文透传（20260910_process-doc-chain-attribution-spec §9.2）──
 
@@ -4602,3 +4899,46 @@ object BlockedReader:
   private def fallback(trimmed: String): BlockedFeedback =
     val rest = trimmed.replaceFirst("^BLOCKED\\s*:?\\s*", "").trim
     BlockedFeedback("other", capped(rest, DetailCap), "")
+
+/** loop 预算判定单点（nrloop 一期 2026-09-12；设计 §3.6「轮次帽 + 时间帽」维）。
+  *
+  * 纯函数（无 IO / 无状态）：引擎两条调用腿共用同一判据——
+  *   ① `verifierFail` 入口（轮次维的实时判定）：拿**本 verifier** 的 `loopRound`
+  *      与**目标节点**的 `loopStartedAt`；
+  *   ② `NodeEngine.sweepLoopBudgets`（时间维的 30s 扫描）：拿命中节点的
+  *      `loopStartedAt` 与驱动方的轮次（驱动方反查后同走本判据）。
+  *
+  * 语义（两维独立、**任一命中即熔断**）：自 `loopStartedAt` 起累计的
+  *   - 轮次：`rounds >= maxRounds`（`maxRounds <= 0` ⇒ 该维关闭）；
+  *   - 时间：`now - startedAt >= maxWallMs`（`maxWallMs <= 0` ⇒ 该维关闭；
+  *     `startedAt` 缺失 = 计时未起 ⇒ 该维未命中）。
+  * 返回 `Some(reason)` 时 reason 附**实际读数/上限**（取证侧据此判断哪一维先耗尽）：
+  *   `rounds=3/3` 或 `wallClock=14400000ms/14400000ms`；两维同时命中则并列返回
+  *   （`rounds=… ; wallClock=…`）。
+  *
+  * 两阈值全部经 `nebflow.shared.Defaults` prop 化（`LoopMaxRounds` /
+  * `LoopMaxWallClockMs`），本判定体零常量、零现读——调用方传值 ⇒ 单测可全矩阵覆盖。
+  */
+object LoopBudget:
+
+  /** 预算判定：`Some(reason)` = 熔断（reason 含读数/上限），`None` = 预算内。 */
+  def decide(
+    rounds: Int,
+    maxRounds: Int,
+    startedAt: Option[Long],
+    now: Long,
+    maxWallMs: Long
+  ): Option[String] =
+    val roundHit  = maxRounds > 0 && rounds >= maxRounds
+    val wallHit   = maxWallMs > 0 && startedAt.exists(st => now - st >= maxWallMs)
+    val roundPart = if roundHit then Some(s"rounds=$rounds/$maxRounds") else None
+    val wallPart  =
+      if wallHit then
+        val elapsed = startedAt.map(st => now - st).getOrElse(0L)
+        Some(s"wallClock=${elapsed}ms/${maxWallMs}ms")
+      else None
+    (roundPart, wallPart) match
+      case (None, None)           => None
+      case (Some(r), None)        => Some(r)
+      case (None, Some(w))        => Some(w)
+      case (Some(r), Some(w))     => Some(s"$r ; $w")
