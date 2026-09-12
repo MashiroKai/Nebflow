@@ -18,17 +18,25 @@
 //   A6   斜杠下拉 on + 组字 Enter 不选命令；组字后 Enter 选中（⑤A6）
 //   A7   非组字全路径不变：Shift+Enter 换行不发送 / Esc 关下拉（⑤A7）
 //   G1   「单一写入点」静态证明：`dataset.imeComposing` 全树只出现在 imeGuard.js
+//   G4   哨兵 `scripts/check-ime-guard.mjs` 自身语义（F-1 修复回归网）：出现点级判定、
+//        允许清单锚定文本（不得掩盖其替代者）、注释提及的边界处置——全部在 /tmp 夹具
+//        副本上变异，仓库业务文件零改动
 //
 // 隔离：自包含——静态文件按 route 直接读盘（无静态服务器、无端口）、WS =
 // routeWebSocket mock、好友 REST 面走 `fm_api_mock` seed。不碰宿主 8080 /
 // 宿主进程；跑完 browser.close()（无残留进程）。
 // Run: node tests/ime-guard.spec.mjs
 import { chromium } from 'playwright-core';
-import { readFileSync, readdirSync } from 'node:fs';
+import { execFileSync } from 'node:child_process';
+import { cpSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
 import { join, dirname, extname, normalize } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 const WEB = join(dirname(fileURLToPath(import.meta.url)), '..', 'src', 'main', 'resources', 'web');
+let SCRIPT_SRC = '';
+try { SCRIPT_SRC = readFileSync(join(dirname(fileURLToPath(import.meta.url)), '..', 'scripts', 'check-ime-guard.mjs'), 'utf8'); }
+catch { SCRIPT_SRC = ''; }
 const MIME = { '.html': 'text/html', '.js': 'text/javascript', '.css': 'text/css', '.svg': 'image/svg+xml', '.png': 'image/png', '.json': 'application/json', '.woff2': 'font/woff2' };
 
 const FRIEND = { userId: 'u-f', neblinkId: 'buddy7', name: '老友', avatarUrl: '' };
@@ -448,6 +456,85 @@ try {
       readLeft.length === 0, JSON.stringify(composingOccurrences));
     ok('G3 ⑤-A4：`view.composing` 字段 + @deprecated 注释保留一版（不删）', chatViewDeprecated === true,
       `chatViewDeprecated=${chatViewDeprecated}`);
+  }
+
+  // ══ G4 · 哨兵自身语义（出现点级 + 允许清单锚定，F-1 修复回归网）══════
+  // 装置：把 `scripts/check-ime-guard.mjs` **复制**进 /tmp 夹具树（脚本把 ROOT 解析为
+  // 自身所在目录的父级，故副本 + web/js 副本即一个完整被测仓），只对副本做变异——
+  // 仓库内任何业务文件零改动（本 spec 自身对真仓只读）。G4-2 即 F-1 最小反例。
+  {
+    const WT = join(dirname(fileURLToPath(import.meta.url)), '..');
+    const fixtures = [];
+    /** Build a fixture: scripts/<script> + src/main/resources/web/js copy. Returns its root. */
+    const buildFixture = (mutate) => {
+      const dir = mkdtempSync(join(tmpdir(), 'ime-guard-sentinel-'));
+      fixtures.push(dir);
+      mkdirSync(join(dir, 'scripts'), { recursive: true });
+      mkdirSync(join(dir, 'src', 'main', 'resources', 'web'), { recursive: true });
+      writeFileSync(join(dir, 'scripts', 'check-ime-guard.mjs'), SCRIPT_SRC);
+      const jsDir = join(dir, 'src', 'main', 'resources', 'web', 'js');
+      cpSync(join(WEB, 'js'), jsDir, { recursive: true });
+      if (mutate) mutate(jsDir);
+      return dir;
+    };
+    /** Run the sentinel inside a fixture. Returns {code, out}. */
+    const runSentinel = (dir) => {
+      try {
+        return { code: 0, out: execFileSync(process.execPath, [join(dir, 'scripts', 'check-ime-guard.mjs')], { encoding: 'utf8', stdio: 'pipe' }) };
+      } catch (e) {
+        return { code: e.status, out: `${e.stdout || ''}${e.stderr || ''}` };
+      }
+    };
+    const patchLines = (file, fn) => {
+      const lines = readFileSync(file, 'utf8').split('\n');
+      fn(lines);
+      writeFileSync(file, lines.join('\n'));
+    };
+    try {
+      // G4-1 干净树 ⇒ exit 0
+      const clean = runSentinel(buildFixture(null));
+      ok('G4-1 哨兵在干净仓上 exit 0（出现点级语义下全仓零裸判定）', clean.code === 0 && /^ime-guard PASS: \d+ files scanned/.test(clean.out),
+        `exit=${clean.code} ${clean.out.split('\n')[0]}`);
+
+      // G4-2 F-1 最小反例：向**已 import** imeGuard 的 messages.js 插 2 行手搓判定 ⇒ 必红
+      const ce = runSentinel(buildFixture((jsDir) => patchLines(join(jsDir, 'messages.js'), (l) => l.splice(1, 0,
+        '// hand-rolled fork (F-1 counterexample)',
+        'if (e.isComposing || e.keyCode === 229) return;'))));
+      ok('G4-2 F-1 反例：已 import 文件内手搓判定 ⇒ exit≠0 且逐条列 file:line',
+        ce.code === 1 && ce.out.includes('js/messages.js:3') && ce.out.includes('[isComposing, keyCode === 229]'),
+        `exit=${ce.code} ${(ce.out.split('\n').find(l => l.includes('messages.js')) || '').trim()}`);
+
+      // G4-3 允许清单内两行仍 PASS（且不被计入违规）
+      const al = runSentinel(buildFixture(null));
+      ok('G4-3 允许清单承载 input.js:1175-1176 ⇒ exit 0 且输出可见豁免条目',
+        al.code === 0 && al.out.includes('allowlisted occurrence: js/input.js:1175,1176'),
+        `exit=${al.code} ${(al.out.split('\n').find(l => l.includes('allowlisted occurrence')) || '').trim()}`);
+
+      // G4-4 反掩蔽：允许清单锚定的是**文本**——同两行被换成真代码（行号不变）⇒ 必红
+      const swap = runSentinel(buildFixture((jsDir) => patchLines(join(jsDir, 'input.js'), (l) => {
+        l[1174] = '  if (e.isComposing || e.keyCode === 229) return;';
+        l[1175] = '  if (e.keyCode === 229) return;';
+      })));
+      ok('G4-4 反掩蔽：允许清单同两行被换成手搓判定 ⇒ 仍红（豁免不得掩盖其替代者）',
+        swap.code === 1 && swap.out.includes('js/input.js:1175') && swap.out.includes('js/input.js:1176'),
+        `exit=${swap.code} ${(swap.out.split('\n').filter(l => l.includes('input.js:')).join(' | ') || '').trim()}`);
+
+      // G4-5 清单外新增裸判定（新文件）⇒ 必红
+      const nf = runSentinel(buildFixture((jsDir) => writeFileSync(join(jsDir, 'zz-probe.js'),
+        'export function g(e) { if (e.isComposing || e.keyCode === 229) return; }\n')));
+      ok('G4-5 清单外新文件裸判定 ⇒ exit≠0 并列出 js/zz-probe.js:1',
+        nf.code === 1 && nf.out.includes('js/zz-probe.js:1'),
+        `exit=${nf.code} ${(nf.out.split('\n').find(l => l.includes('zz-probe')) || '').trim()}`);
+
+      // G4-6 边界申报：注释里的提及是文档（不计），且以「not counted」显式列出
+      const cm = runSentinel(buildFixture((jsDir) => writeFileSync(join(jsDir, 'zz-doc.js'),
+        '// Every composition test goes through isImeComposing (isComposing / keyCode 229).\nexport const x = 1;\n')));
+      ok('G4-6 注释行提及触发词 ⇒ exit 0 且列为 not counted（边界可见，不静默）',
+        cm.code === 0 && cm.out.includes('not counted') && cm.out.includes('js/zz-doc.js:1'),
+        `exit=${cm.code} ${(cm.out.split('\n').find(l => l.includes('not counted')) || '').trim()}`);
+    } finally {
+      for (const dir of fixtures) rmSync(dir, { recursive: true, force: true });
+    }
   }
 } finally {
   await browser.close();
