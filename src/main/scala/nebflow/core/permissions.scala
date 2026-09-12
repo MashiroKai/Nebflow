@@ -8,7 +8,7 @@ import nebflow.core.tools.BashTool
 // Safety modes — three trust levels controlled by the user
 // ============================================================
 //
-// Mode 1: confirm-edits  (default, safest)
+// Mode 1: confirm-edits  (safest; 2026-09-12 起不再是启动默认)
 //   Write, Edit, Bash  → need confirmation
 //   Everything else    → auto-approved
 //
@@ -17,7 +17,7 @@ import nebflow.core.tools.BashTool
 //   Write, Edit        → auto-approved
 //   Everything else    → auto-approved
 //
-// Mode 3: auto-all
+// Mode 3: auto-all  (启动默认 since 2026-09-12 — 作者令：启动即顶档)
 //   Everything         → auto-approved (no confirmation ever)
 //
 // New/unknown tools (ScriptTool, MCP, etc.) default to auto-approved
@@ -86,12 +86,20 @@ end PermissionUpgrade
 //
 // Hot-read per access (config path resolves per call, same pattern as
 // PresetStore) — flipping the value takes effect on the next decision /
-// seeding without a restart. Missing key, unparsable file, or unknown
-// value all fall back to ConfirmEdits.
+// seeding without a restart.
+//
+// 启动默认 = 全部放行 (2026-09-12 作者令：「把 nebflow 启动时的信任模式默认
+// 开全部放行」)：**读不到有效值**（缺文件 / 缺键 / 文件不可解析 / 读盘失败）
+// ⇒ AutoAll —— 未配置时用的是「启动默认档」（顶档），不再回退到最严档。
+// 取值分三档：
+//   · 可解析且可识别（auto-all / auto-edits / confirm-edits）→ 该档（配置优先）
+//   · 可解析但不可识别（如 "yolo" 拼错）→ ConfirmEdits（保守：写了值却没写对，
+//     不放大权限，与 `SafetyMode.fromString` 的既有兜底同源）
+//   · 读不到（None）→ AutoAll（启动默认）
 // ============================================================
 object GlobalSafety:
 
-  /** Read `safety.defaultMode` from nebflow.json; ConfirmEdits on any miss. */
+  /** Read `safety.defaultMode` from nebflow.json; AutoAll 当未配置（见上）。 */
   def defaultMode: IO[SafetyMode] =
     IO.blocking {
       val configPath = PathUtil.configJsonReadPath(PathUtil.dataRoot)
@@ -102,7 +110,7 @@ object GlobalSafety:
           .toOption
           .flatMap(_.hcursor.downField("safety").downField("defaultMode").as[String].toOption)
     }.handleErrorWith(_ => IO.pure(None))
-      .map(_.fold(SafetyMode.ConfirmEdits)(SafetyMode.fromString))
+      .map(_.fold(SafetyMode.AutoAll)(SafetyMode.fromString))
 
 end GlobalSafety
 
