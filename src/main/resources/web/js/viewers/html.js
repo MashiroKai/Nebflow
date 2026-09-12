@@ -5,7 +5,7 @@
 // ctrl/cmd+wheel and ⌘/ctrl key presses over the iframe reach the parent
 // through zoomBridgeScript postMessage (cross-frame events don't bubble).
 
-import { buildThemeVarsCSS, resolveLocalFiles, addSourceToggle, addElementRefToggle } from './shared.js';
+import { buildThemeVarsCSS, resolveLocalFiles, addSourceToggle, addElementRefToggle, localLinkNavScript, bindLocalLinkBridge } from './shared.js';
 import { makeReference } from '../reference.js';
 import { t } from '../i18n.js';
 import { enableViewerZoom } from './zoom.js';
@@ -30,7 +30,15 @@ const themePropScript = `<script>
 <\/script>`;
 
 /** Script injected into the iframe to intercept # anchor clicks and scroll
- *  within the iframe instead of navigating to the parent URL. */
+ *  within the iframe instead of navigating to the parent URL.
+ *
+ *  2026-09-12 (canvas-preview nav parity): the OTHER half of link routing — a
+ *  local-file or external link — is handled by `localLinkNavScript()` from
+ *  viewers/shared.js, injected into the same srcdoc below. It lives there (not
+ *  here) because the chat card renders the same kind of documents and must get
+ *  the identical handler: one implementation, no drift. The two scripts do not
+ *  overlap — this one only ever claims `a[href^="#"]`, the shared one returns
+ *  early for `#` hrefs. */
 const anchorNavScript = `<script>
 (function(){
   document.addEventListener('click', function(e) {
@@ -389,6 +397,8 @@ function bindZoomBridge() {
 async function viewHtml(pane, { content, absPath, fileName, warnings }) {
   initCanvasThemeWatcher();
   bindZoomBridge();
+  // Parent half of the local-link channel (idempotent, one listener per app).
+  bindLocalLinkBridge();
 
   // Content-unchanged guard (mirrors markdown.js viewMarkdown). Focus/visibility
   // refreshes re-fetch the same file and re-render every open tab; rebuilding
@@ -398,8 +408,13 @@ async function viewHtml(pane, { content, absPath, fileName, warnings }) {
   // canvas.js openWorkspaceItem. The guard also requires a live iframe: a
   // source-mode round trip wipes innerHTML before calling back into this
   // function, so iframe is null there and the re-render must proceed.
+  // `_nfRenderForce` is the one-shot override for a remount that MUST happen
+  // even though the content did not change (the navigation guard's "back to
+  // document" action — the frame holds a foreign document, not this one).
   const prevIframe = pane.querySelector('iframe[data-nf-canvas-html]');
-  if (prevIframe && /** @type {any} */ (pane)._renderedHtmlContent === content &&
+  const forceRemount = /** @type {any} */ (pane)._nfRenderForce === true;
+  /** @type {any} */ (pane)._nfRenderForce = false;
+  if (!forceRemount && prevIframe && /** @type {any} */ (pane)._renderedHtmlContent === content &&
       /** @type {any} */ (pane)._renderedHtmlWarnings === (warnings ? warnings.length : 0)) return;
 
   // Capture before rebuild: when content actually changed (external edit),
@@ -473,7 +488,7 @@ async function viewHtml(pane, { content, absPath, fileName, warnings }) {
   <\/script>`;
 
   // 6. Assemble srcdoc with base styles (transparent bg, theme-aware, scrollable)
-  const srcdoc = `<!DOCTYPE html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><style>${themeCSS}${graphvizCSS}html,body{margin:0;padding:0;font-size:15px;line-height:1.5;box-sizing:border-box;word-wrap:break-word;overflow-wrap:break-word;background:var(--color-bg,var(--color-surface,white));color:var(--color-text,#1a1a1a);overflow:auto;}*,*:before,*:after{box-sizing:inherit;}svg{max-width:100%;height:auto;}img{max-width:100%;height:auto;}</style></head><body>${html}${refSelectScript}${zoomBridgeScript}${svgInlineScript}${imgClickScript}${anchorNavScript}${themePropScript}</body></html>`;
+  const srcdoc = `<!DOCTYPE html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><style>${themeCSS}${graphvizCSS}html,body{margin:0;padding:0;font-size:15px;line-height:1.5;box-sizing:border-box;word-wrap:break-word;overflow-wrap:break-word;background:var(--color-bg,var(--color-surface,white));color:var(--color-text,#1a1a1a);overflow:auto;}*,*:before,*:after{box-sizing:inherit;}svg{max-width:100%;height:auto;}img{max-width:100%;height:auto;}</style></head><body>${html}${refSelectScript}${localLinkNavScript()}${zoomBridgeScript}${svgInlineScript}${imgClickScript}${anchorNavScript}${themePropScript}</body></html>`;
 
   const iframe = document.createElement('iframe');
   iframe.style.width = '100%';
@@ -564,20 +579,73 @@ async function viewHtml(pane, { content, absPath, fileName, warnings }) {
     }, { once: true });
   }
 
-  // Navigation-away fallback: srcdoc documents inherit the app's base URL, so
-  // a client-side router (slidev etc.) may navigate the frame onto the app
-  // itself — the embedded-boot guard in index.html stops the recursion, and
-  // this replaces the pane with a clear notice instead of a nested app shell.
+  // ── In-frame navigation handling (narrowed 2026-09-12) ────────────────────
+  // The criterion used to be "the frame navigated at all" — any readable
+  // `location.href` other than about:srcdoc — and that destroyed the pane for a
+  // proxy URL, an image and a 404 body alike, while a CROSS-ORIGIN navigation
+  // (unreadable location) fell through the `catch{}` into a silent no-op that
+  // left the pane showing a foreign page with its zoom engine still attached.
+  // With `<a href>` routed to the Canvas tab leg (viewers/shared.js) the real
+  // remaining case is what this guard was written for: a client-side router
+  // (slidev etc.) navigating the frame ONTO THE APPLICATION itself, which would
+  // boot a second app shell inside the pane — index.html's embedded-boot guard
+  // stops the recursion, and this replaces the pane with a notice first.
+  const isAppNavigation = (href) => {
+    try {
+      const u = new URL(href, location.href);
+      return u.origin === location.origin && !u.pathname.startsWith('/api/');
+    } catch (_) { return false; }
+  };
+  /** Re-render this viewer's own document in place (drops the foreign frame). */
+  const backToDocument = () => {
+    /** @type {any} */ (pane)._nfRenderForce = true;
+    return viewHtml(pane, { content, absPath, fileName, warnings });
+  };
+  /** Keep the frame, dock a visible return bar above it. Used for every
+   *  non-fatal in-frame navigation: a proxy URL / image / 404 (same-origin,
+   *  readable) and a cross-origin page (unreadable). Never destroys the pane,
+   *  and retires the zoom engine, which belongs to the document that is gone. */
+  const showReturnBar = () => {
+    if (pane.querySelector('.nf-frame-nav-bar')) return;   // idempotent — later loads land here too
+    /** @type {any} */ (pane)._nfZoomDestroy?.();
+    /** @type {any} */ (pane)._nfZoomDestroy = null;
+    const bar = document.createElement('div');
+    bar.className = 'nf-frame-nav-bar';
+    bar.dataset.nfFrameNavigated = '1';
+    bar.style.cssText = 'flex:none;display:flex;align-items:center;gap:10px;padding:6px 12px;' +
+      'border-bottom:1px solid var(--color-border);background:var(--color-surface);' +
+      'color:var(--color-text-muted);font-size:12px;line-height:1.4';
+    const text = document.createElement('span');
+    text.textContent = 'This preview frame navigated away from the document.';
+    text.style.cssText = 'flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap';
+    const back = document.createElement('button');
+    back.type = 'button';
+    back.className = 'glass-control nf-frame-nav-back';
+    back.textContent = 'Back to document';
+    back.style.cssText = 'flex:none;cursor:pointer;font-size:12px;white-space:nowrap';
+    back.addEventListener('click', () => { backToDocument(); });
+    bar.append(text, back);
+    pane.insertBefore(bar, iframe);
+    // The frame is no longer the pane's only flex child — keep it filling the rest.
+    iframe.style.height = '';
+    iframe.style.flex = '1 1 auto';
+    iframe.style.minHeight = '0';
+  };
+
   iframe.addEventListener('load', () => {
     let href = null;
-    try { href = iframe.contentWindow?.location?.href; } catch { /* cross-origin */ }
-    if (!href || href === 'about:srcdoc') return;
-    /** @type {any} */ (pane)._nfZoomDestroy?.();  // frame navigated away — retire the zoom engine with it
-    pane.innerHTML = '';
-    const note = document.createElement('div');
-    note.style.cssText = 'padding:32px;text-align:center;color:var(--color-text-muted);font-size:13px;line-height:1.6';
-    note.textContent = 'This HTML page navigated its preview frame to the application URL (client-side router). Rendering was stopped to prevent recursive nesting.';
-    pane.appendChild(note);
+    try { href = iframe.contentWindow?.location?.href; } catch { /* cross-origin — unreadable by design */ }
+    if (href === 'about:srcdoc') return;   // our own document: the normal case
+    if (href && isAppNavigation(href)) {
+      /** @type {any} */ (pane)._nfZoomDestroy?.();  // frame navigated away — retire the zoom engine with it
+      pane.innerHTML = '';
+      const note = document.createElement('div');
+      note.style.cssText = 'padding:32px;text-align:center;color:var(--color-text-muted);font-size:13px;line-height:1.6';
+      note.textContent = 'This HTML page navigated its preview frame to the application URL (client-side router). Rendering was stopped to prevent recursive nesting.';
+      pane.appendChild(note);
+      return;
+    }
+    showReturnBar();
   });
 
   addSourceToggle(pane, viewHtml, { content, absPath, fileName, warnings });
