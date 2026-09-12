@@ -271,15 +271,15 @@ Message type (optional, default "INFO"):
             "\"node:\" addresses are always immediate — the engine decides inject-at-turn-boundary vs append-to-task " +
               "based on the target node's status. Drop delivery=queue (or target a team agent in queue mode)."
           )))
-        else deliverToNode(nodeId, withChainAnnotation(message, chainId), ctx)
+        else deliverToNode(nodeId, withChainAnnotation(message, chainId), mailType, ctx)
       )
     else if address.startsWith(ProjectPrefix) then
       val pname = address.stripPrefix(ProjectPrefix).trim
       Some(
         if pname.isEmpty then IO.pure(Left(ToolError(s"Malformed address '$address' — expected \"project:<项目名>\".")))
         else if role == SenderRole.Dispatcher then IO.pure(Left(outOfFaceError(address, role)))
-        else if delivery == "queue" then deliverToProject(pname, message, ctx)
-        else deliverToProject(pname, message, ctx)
+        else if delivery == "queue" then deliverToProject(pname, message, mailType, ctx)
+        else deliverToProject(pname, message, mailType, ctx)
       )
     else if address == MailTool.NebulaAgentName then
       role match
@@ -298,7 +298,7 @@ Message type (optional, default "INFO"):
       // Nebula 的裸名形态 = 裸项目名（等价接受）；认不出的地址显式报错。
       Some(
         ProjectRuntimeRegistry.get(address).flatMap {
-          case Some(_) => deliverToProject(address, message, ctx)
+          case Some(_) => deliverToProject(address, message, mailType, ctx)
           case None    => IO.pure(Left(unresolvableError(address, role)))
         }
       )
@@ -338,10 +338,26 @@ Message type (optional, default "INFO"):
                 }
             }
 
+  /** 本会话作为发信方的**来源标注**（bluebubble 批 2026-09-12，单点构造）：
+    * 接管方 agent 自身名（与前端 `ownAgentName()` 同名空间，见
+    * [[nebflow.agent.InjectionAttribution]] 的字段名/取值域契约）+ 所属 Team 名
+    * + 邮件类型（eventType）。两条项目腿（腿① 项目、腿② 节点）与 leg③
+    * `sendMail` 共用同一取值口径 —— 三种 Mail 形态的气泡顶栏因此同源。 */
+  private def mailAttribution(mailType: String, ctx: ToolContext): IO[InjectionAttribution] =
+    val senderName = ctx.agentDef.map(_.name).getOrElse(MailTool.NebulaAgentName)
+    TeamSessionRegistry.teamOfSession(ctx.sessionId.getOrElse("")).map { team =>
+      InjectionAttribution(
+        sender = Some(senderName),
+        senderTeam = team,
+        eventType = Some(mailType.toLowerCase)
+      )
+    }
+
   /** 腿②（分发器 → 节点）：**复用引擎侧单点** `NodeEngine.sendNodeMessage`——三态判据
     * 与三个错误码**不复制**（复制必然漂移）。注入 source 保持 `"system"`（D-3：
-    * 节点侧既有呈现零 UI 行为变化）。 */
-  private def deliverToNode(nodeId: String, message: String, ctx: ToolContext): IO[Either[ToolError, String]] =
+    * 节点侧既有呈现零 UI 行为变化）；来源标注经 attribution 参数传（sender/
+    * senderTeam/eventType），节点会话蓝气泡顶栏因此可辨「来自谁」。 */
+  private def deliverToNode(nodeId: String, message: String, mailType: String, ctx: ToolContext): IO[Either[ToolError, String]] =
     ctx.projectName match
       case None | Some("") =>
         IO.pure(Left(ToolError(
@@ -349,7 +365,10 @@ Message type (optional, default "INFO"):
         )))
       case Some(projectName) =>
         ProjectRuntimeRegistry.get(projectName).flatMap {
-          case Some(rt) => rt.engine.sendNodeMessage(nodeId, message).map(_.left.map(ToolError(_)))
+          case Some(rt) =>
+            mailAttribution(mailType, ctx).flatMap { attribution =>
+              rt.engine.sendNodeMessage(nodeId, message, Some(attribution)).map(_.left.map(ToolError(_)))
+            }
           case None =>
             IO.pure(Left(ToolError(
               s"Project '$projectName' is not mounted — cannot route to node '$nodeId'. Re-mount / restart (projects mount at startup)."
@@ -357,8 +376,8 @@ Message type (optional, default "INFO"):
         }
 
   /** 腿①（Nebula → 项目分发器）：保留既有内核（`ProjectActor.TriggerDispatcher`）。 */
-  private def deliverToProject(name: String, message: String, ctx: ToolContext): IO[Either[ToolError, String]] =
-    routeToProject(name, message, ctx).flatMap {
+  private def deliverToProject(name: String, message: String, mailType: String, ctx: ToolContext): IO[Either[ToolError, String]] =
+    routeToProject(name, message, mailType, ctx).flatMap {
       case Some(r) => IO.pure(r)
       case None =>
         IO.pure(Left(ToolError(
@@ -417,6 +436,7 @@ Message type (optional, default "INFO"):
   private def routeToProject(
       address: String,
       message: String,
+      mailType: String,
       ctx: ToolContext
     ): IO[Option[Either[ToolError, String]]] =
     ProjectRuntimeRegistry.get(address).flatMap {
@@ -427,8 +447,12 @@ Message type (optional, default "INFO"):
             IO.pure(Some(Left(ToolError(s"Project '$address' has no mounted ProjectActor — re-mount it"))))
           case Some(ref) =>
             val rootSid = ctx.rootSessionId.orElse(ctx.sessionId).getOrElse("")
-            (ref ! ProjectActor.ProjectCommand.TriggerDispatcher(message, rootSid)).void
-              .as(Some(Right(s"Project '$address' dispatcher triggered")))
+            // 腿① 来源标注（bluebubble 批 2026-09-12）：发信方随触发消息落到分发器
+            // 会话的注入气泡顶栏（source 仍 = task，D-5 裁定：值不改名）。
+            mailAttribution(mailType, ctx).flatMap { attribution =>
+              (ref ! ProjectActor.ProjectCommand.TriggerDispatcher(message, rootSid, ProjectActor.SourceTask, Some(attribution))).void
+                .as(Some(Right(s"Project '$address' dispatcher triggered")))
+            }
     }
 
   private[tools] def deliverQueue(
@@ -485,7 +509,7 @@ Message type (optional, default "INFO"):
             // project 名 → ProjectActor.TriggerDispatcher（触发分发器会话）。
             // 团队名路由优先（旧体系照常）；project 名兜底（新体系试点）。
             // Mail 仅做触发、无回报——节点结果沿 out 边投递（§2.7），不靠 Mail。
-            pr <- routeToProject(address, message, ctx).flatMap {
+            pr <- routeToProject(address, message, mailType, ctx).flatMap {
               case Some(r) => IO.pure(r)
               case None =>
                 for
@@ -782,7 +806,7 @@ Message type (optional, default "INFO"):
         case None =>
           // Mail(→project) 路由（§3.2，immediate 路径对称）——先于旧 short-name 解析。
           for
-            pr <- routeToProject(address, message, ctx).flatMap {
+            pr <- routeToProject(address, message, mailType, ctx).flatMap {
               case Some(r) => IO.pure(r)
               case None =>
                 // Not a team name — short agent name. Routable only for senders

@@ -200,7 +200,17 @@ object ProjectActor:
   private val logger = NebflowLogger.forName("nebflow.project.actor")
 
   enum ProjectCommand:
-    case TriggerDispatcher(taskText: String, rootSessionId: String, source: String = ProjectActor.SourceTask)
+    /** @param attribution
+      *   注入来源标注（bluebubble 批 2026-09-12）：腿① 由 MailTool 传出邮件发信方
+      *   （sender/senderTeam/eventType），使分发器会话的蓝气泡顶栏能标注「来自谁」。
+      *   默认 None ⇒ 既有调用点（DispatchNotify / ProjectCrashRecovery / 重入）
+      *   零改动、呈现逐字不变。 */
+    case TriggerDispatcher(
+      taskText: String,
+      rootSessionId: String,
+      source: String = ProjectActor.SourceTask,
+      attribution: Option[InjectionAttribution] = None
+    )
     /** blocked 反馈重入（设计 §2.2）：FeedbackRouter 裁决通过 → spawn 全新分发器会话
       * 注入重入 prompt。无 rootSessionId 参数——重入是系统发起，用挂载时的 root。 */
     case ReenterDispatcher(nodeId: String, feedback: BlockedFeedback, blockCount: Int)
@@ -299,13 +309,13 @@ object ProjectActor:
       Ref.of[IO, Option[ActiveDispatcher]](None).map { active =>
         lazy val behavior: Behavior[ProjectCommand] =
           Behaviors.receiveMessage {
-            case ProjectCommand.TriggerDispatcher(taskText, rootSessionId, source) =>
+            case ProjectCommand.TriggerDispatcher(taskText, rootSessionId, source, attribution) =>
               // 热重启 draining 准入闸（hot-restart 批设计 §3.3 choke 点清单）：
               // draining 期间拒绝新分发器会话/新节点派发（新工作准入关闭）；
               // completion/failed 回流被拒时 notifySentAt 未标记 → 重启后
               // redeliver 扫描补投（延迟触发非丢失）。非 draining 零开销旁路。
               nebflow.core.hotrestart.HotRestart.admissionGate.flatMap {
-                case Right(()) => dispatchTask(cfg, active, behavior, taskText, rootSessionId, source)
+                case Right(()) => dispatchTask(cfg, active, behavior, taskText, rootSessionId, source, attribution)
                 case Left(reason) =>
                   logger.warn(s"[hot-restart] dispatcher trigger refused during draining: $reason").as(behavior)
               }
@@ -602,7 +612,8 @@ object ProjectActor:
     same: Behavior[ProjectCommand],
     taskText: String,
     rootSessionId: String,
-    source: String = SourceTask
+    source: String = SourceTask,
+    attribution: Option[InjectionAttribution] = None
   ): IO[Behavior[ProjectCommand]] =
     // 单例化裁定：先经 modify 原子占位（占位与桥终态清理在全序 Ref 操作上不可
     // 交错——占位成功则桥必见 pendingInjected>0 而延迟拆除）——有活跃会话 →
@@ -618,7 +629,11 @@ object ProjectActor:
         (a.agentRef ! AgentCommand.UserInput(
           text = taskInjectionText(taskText),
           replyTo = Some(a.bridgeRef),
-          source = Some(source)
+          source = Some(source),
+          // 腿① 来源标注（bluebubble 批）：Mail 发信方随注入落到蓝气泡顶栏。
+          sender = attribution.flatMap(_.sender),
+          senderTeam = attribution.flatMap(_.senderTeam),
+          eventType = attribution.flatMap(_.eventType)
         )).void *>
           logger
             .info(
@@ -632,7 +647,7 @@ object ProjectActor:
         pluginCatalogText().flatMap { catalog =>
           projectMemoryText(cfg.project).flatMap { memory =>
             dispatcherBoardText(cfg).flatMap { boardText =>
-              spawnDispatcher(cfg, active, same, newTaskPrompt(cfg.project, taskText, catalog, memory, boardText), rootSessionId, "", taskText, source)
+              spawnDispatcher(cfg, active, same, newTaskPrompt(cfg.project, taskText, catalog, memory, boardText), rootSessionId, "", taskText, source, attribution)
             }
           }
         }
@@ -696,7 +711,8 @@ object ProjectActor:
     rootSessionId: String,
     tag: String,
     firstTaskText: String,
-    source: String = SourceTask
+    source: String = SourceTask,
+    attribution: Option[InjectionAttribution] = None
   ): IO[Behavior[ProjectCommand]] =
     val project = cfg.project
     EntityLoader.loadAgent(DispatcherAgentName).flatMap {
@@ -791,7 +807,15 @@ object ProjectActor:
           // 也打同源标签（source）：桥的消费增量按「历史里带源消息条数」判定，
           // 首条缺标签会让增量恒差 1（批量场景下演变成少消费 → 会话滞留）。
           _ <- active.set(Some(ActiveDispatcher(sessionId, ref, bridgeRef, pendingInjected = 1, pendingTaskTexts = List(firstTaskText))))
-          _ <- (ref ! AgentCommand.UserInput(text = prompt, replyTo = Some(bridgeRef), source = Some(source))).void
+          _ <- (ref ! AgentCommand.UserInput(
+            text = prompt,
+            replyTo = Some(bridgeRef),
+            source = Some(source),
+            // spawn 首条 prompt 同源标注（与注入形态同一份 attribution）。
+            sender = attribution.flatMap(_.sender),
+            senderTeam = attribution.flatMap(_.senderTeam),
+            eventType = attribution.flatMap(_.eventType)
+          )).void
           _ <- logger.info(s"Project '${project.name}' dispatcher session spawned: $sessionId$tag")
         yield same
     }
