@@ -340,9 +340,72 @@ final class FriendService(
       case Left(err) => IO.pure(Left(err))
       case Right(json) =>
         val convId = json.hcursor.get[String]("conversationId").toOption
-        convId.traverse_(pullConversation).void *>
+        // K-3（段 B 2026-09-12）：**先自播（通知本机 UI），再补拉**。次序理由与 K-1
+        // 同源——补拉是一次串行 REST 往返（本机实测 135.9–499.0 ms），不得挡在
+        // 「通知 UI」之前；自播走 wsHub 广播，零上游往返。
+        convId.traverse_(replaySelfSend(_, json, body)) *>
+          convId.traverse_(pullConversation).void *>
           IO.pure(Right("Message sent"))
     }
+
+  /** K-3（段 B 2026-09-12）：agent 代发的**本机自播**——把刚发出的消息按服务端
+    * `message_new_self` 帧**同形**回放给本机浏览器。
+    *
+    * 为什么本机收不到服务端那条 self 帧：服务端 self 扇出是
+    * `push_to_user_excluding(&user_id, origin_device.as_deref(), …)`
+    * （neblink-server `friends.rs#send_message`，**排除发起设备**），而本网关正是发起
+    * 设备（`NeblinkClient` 用 pairing 换来的 device session token ⇒ 服务端
+    * `require_user_or_device_with_device` 解出 `origin_device`）。于是 agent 代发
+    * （`SendMessage` 工具）这条消息在本机 UI 上**零事件**：会话预览 / 角标 / 开着窗
+    * 全都不动，只有「关窗再开」（重挂载取数）才可见（正本 §3 表末行 / §4-K3）。
+    *
+    * 复用**既有装配缝**（禁新造第二条广播路径）：走构造期注入的 `onFriendEvent`
+    * 回调——生产接线即 `GatewayMain.scala:782` 的
+    * `wsHub.broadcast(FriendEvent.frontendFrame(ev))`，与本函数是**同一条**
+    * `frontendFrame` 通道 ⇒ 前端契约形状零改动，不需要任何 web 侧改动。
+    *
+    * 信封与真 push **逐字段同形**（`{"type": <事件名>, "payload": {messageId,
+    * conversationId, kind, body, origin, createdAt}}`）：`frontendFrame` 的
+    * 下钻 → 展平对两种来源走**同一段代码**，「本机自播」与「他机 push」在前端落到
+    * 同一分支（K-2 的 `EV_MESSAGE_NEW_SELF`）同一解析器。
+    *
+    * 红线：
+    *  - **不计未读**：本函数**不**经 `handleEvent`（故绝不触 `bumpUnread`）；前端
+    *    self 分支亦不动 `unreadCount`（§3.4 口径 sender != me）。
+    *  - 发送侧只此一处：`doSend` 的两条调用点（auto 直发 / ask 批准后直发）互斥，
+    *    本函数不在任何重试或循环里 ⇒ 一条消息至多一帧。
+    *  - 用户 UI 直发（`sendAsUser`）**不经过本函数**（本文件 `sendAsUser` 只补拉），
+    *    故乐观上屏路径零影响。
+    *
+    * 缺 `messageId` / `createdAt` 时**不发帧**并留 WARN：帧没有消息身份 ⇒ 前端
+    * keyed diff（⑨-E 按 `data-message-id` 复用节点）会落一个 `undefined` 幽灵
+    * 气泡，比「不动」更坏；此时退化为改动前形态（挂载时取数）且**显式留痕**，不静默。
+    */
+  private def replaySelfSend(conversationId: String, resp: Json, body: String): IO[Unit] =
+    val h = resp.hcursor
+    (h.get[Long]("messageId").toOption, h.get[Long]("createdAt").toOption) match
+      case (Some(messageId), Some(createdAt)) =>
+        val envelope = Json.obj(
+          "type" -> MessageNewSelf.asJson,
+          "payload" -> Json.obj(
+            "messageId" -> Json.fromLong(messageId),
+            "conversationId" -> conversationId.asJson,
+            "kind" -> "text".asJson,
+            "body" -> body.asJson,
+            "origin" -> "agent".asJson,
+            "createdAt" -> Json.fromLong(createdAt)
+          )
+        )
+        onFriendEvent.traverse_(cb =>
+          cb(FriendEvent(MessageNewSelf, envelope)).handleErrorWith(e =>
+            logger.warn(s"self-send replay broadcast failed for $conversationId: ${e.getMessage}")
+          )
+        )
+      case _ =>
+        logger.warn(
+          s"agent send response lacks messageId/createdAt (conversationId=$conversationId) — " +
+            "local self replay skipped (UI falls back to the pull-on-mount path)"
+        )
 
   // ===== 暴露给 UI 的查询 =====
 
