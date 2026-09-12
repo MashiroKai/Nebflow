@@ -39,28 +39,28 @@ class TaskBoardInjectionSpec extends FunSuite:
   test("newTaskPrompt: 空板块零注入（旧行为不变）"):
     val p = ProjectActor.newTaskPrompt(pd, "任务文本X", "", "", "")
     assert(!p.contains("<task-board>"), p)
-    assert(p.contains("任务：任务文本X"), p)
+    assert(p.contains("Task: 任务文本X"), p)
 
-  test("newTaskPrompt: 板块在「任务：」之前（…记忆→任务板→任务文本顺序）"):
+  test("newTaskPrompt: 板块在「Task:」之前（…记忆→任务板→任务文本顺序）"):
     val p = ProjectActor.newTaskPrompt(pd, "任务文本X", "", "", boardBlock)
     val boardIdx = p.indexOf("<task-board>")
-    val taskIdx = p.indexOf("任务：任务文本X")
+    val taskIdx = p.indexOf("Task: 任务文本X")
     assert(boardIdx >= 0 && taskIdx >= 0, p)
     assert(boardIdx < taskIdx, s"board block must precede the task text:\n$p")
     assert(p.contains("#1[open @n-inj] 夹具工单"), p)
 
   test("newTaskPrompt: 目录/记忆/任务板三段全量时的相对顺序（目录→记忆→任务板→任务）"):
     val p = ProjectActor.newTaskPrompt(pd, "T", "CATALOG-段", "MEMORY-段", boardBlock)
-    val idx = List(p.indexOf("CATALOG-段"), p.indexOf("MEMORY-段"), p.indexOf("<task-board>"), p.indexOf("任务：T"))
+    val idx = List(p.indexOf("CATALOG-段"), p.indexOf("MEMORY-段"), p.indexOf("<task-board>"), p.indexOf("Task: T"))
     assert(idx.forall(_ >= 0) && idx == idx.sorted, s"order broken:\n$p")
 
   test("reentryPrompt: 空板块零注入；非空时板块在四动作块之前"):
     val plain = ProjectActor.reentryPrompt(pd, node, feedback, 1, "", "", "")
     assert(!plain.contains("<task-board>"), plain)
-    assert(plain.contains("先 NodeList 读现状"), plain) // 四动作块仍在
+    assert(plain.contains("Read the current state first (NodeList"), plain) // 四动作块仍在
     val withBoard = ProjectActor.reentryPrompt(pd, node, feedback, 1, "", "", boardBlock)
     val boardIdx = withBoard.indexOf("<task-board>")
-    val actionsIdx = withBoard.indexOf("先 NodeList 读现状")
+    val actionsIdx = withBoard.indexOf("Read the current state first (NodeList")
     assert(boardIdx >= 0 && boardIdx < actionsIdx, s"board must precede the four-action block:\n$withBoard")
 
   // ===== 节点侧脚注（§3c，措辞原文固化）=====
@@ -69,7 +69,7 @@ class TaskBoardInjectionSpec extends FunSuite:
     val last = NodeEngine.ProtocolFootnote.linesIterator.toList.last
     assertEquals(
       last,
-      "若上方 <task-board> 给了你工单编号，完成或受阻时用 TaskBoard 工具更新其状态（close=完成，blocked=受阻）。")
+      "TaskBoard work order ⇒ close = done, blocked = stuck.")
     // blocked 协议本体不动（既有断言锚）
     assert(NodeEngine.ProtocolFootnote.contains("needs-split"))
 
@@ -77,9 +77,9 @@ class TaskBoardInjectionSpec extends FunSuite:
     val fn = NodeEngine.ProtocolFootnote
     assert(fn.contains("node_report"), s"第一优先=工具申报:\n$fn")
     assert(fn.contains("pass"), s"pass/fail 语义同走结构化申报（泛化面）:\n$fn")
-    assert(fn.contains("随后照常输出"), s"申报后照常收尾（申报≠终止输出）:\n$fn")
-    assert(fn.contains("工具不可用时才用文本备用通道"), s"文本通道降级定位:\n$fn")
-    assert(fn.contains("不加 # / ** / 导语等任何前缀"), s"裸形态强调（6 例 markdown 形态侵蚀实证）:\n$fn")
+    assert(fn.contains("still write your wrap-up report"), s"申报后照常收尾（申报≠终止输出）:\n$fn")
+    assert(fn.contains("No tool ⇒ first line exactly `BLOCKED`"), s"文本通道降级定位:\n$fn")
+    assert(fn.contains("first line exactly `BLOCKED`"), s"裸形态强调（6 例 markdown 形态侵蚀实证）:\n$fn")
 
   // ===== 身份透传链（§1d-2）=====
 

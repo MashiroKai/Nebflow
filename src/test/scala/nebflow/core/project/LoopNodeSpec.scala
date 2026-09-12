@@ -55,7 +55,7 @@ class LoopNodeSpec extends CatsEffectSuite:
 
   /** 按输入内容返回不同 LLM 响应的捕获桩（worker/verify 双会话共用一个 llm handle）。
     * respond 以「本轮注入的 last 消息文本」为键：worker 注入 = 任务/返工模板（不含
-    * 【LoopNode 验证】标记），verify 注入 = 验证模板（含【LoopNode 验证】）。 */
+    * [LoopNode verification】标记），verify 注入 = 验证模板（含[LoopNode verification】）。 */
   private class LoopLlm(
     respond: String => String,
     delayOf: String => FiniteDuration = _ => 0.millis,
@@ -193,11 +193,11 @@ class LoopNodeSpec extends CatsEffectSuite:
 
   /** 捕获的 lastTurns 中属于「worker 注入」（不含验证标记）的 turn 集合。 */
   private def workerTurns(l: LoopLlm): IO[List[String]] =
-    l.lastTurns.get.map(_.filterNot(_.contains("【LoopNode 验证")))
+    l.lastTurns.get.map(_.filterNot(_.contains("[LoopNode verification")))
 
   /** 捕获的 lastTurns 中属于「verify 注入」（含验证标记）的 turn 集合。 */
   private def verifyTurns(l: LoopLlm): IO[List[String]] =
-    l.lastTurns.get.map(_.filter(_.contains("【LoopNode 验证")))
+    l.lastTurns.get.map(_.filter(_.contains("[LoopNode verification")))
 
   /** 终态双销毁反向断言：loop 会话（node-*）须从 agentRegistry 清空。 */
   private def waitSessionClean(res: SharedResources): IO[Unit] =
@@ -230,7 +230,7 @@ class LoopNodeSpec extends CatsEffectSuite:
     os.makeDir.all(ws)
     val system = ActorSystem(s"loop-pass-${scala.util.Random.nextInt(100000)}")
     // verify 一律 PASS；worker 产 "ok"
-    val llm = LoopLlm(t => if t.contains("【LoopNode 验证") then "VERDICT: PASS" else "ok")
+    val llm = LoopLlm(t => if t.contains("[LoopNode verification") then "VERDICT: PASS" else "ok")
     for
       res <- mkResources(system, tempRoot, llm.handle)
       rt <- mountProject("loop-pass", ws, system, res)
@@ -262,8 +262,8 @@ class LoopNodeSpec extends CatsEffectSuite:
     val WorkerAnswer = "DISTINCTIVE_WORKER_ANSWER"
     // verify 第 1 轮 FAIL、第 2 轮 PASS；worker 任何轮产出 WorkerAnswer
     val llm = LoopLlm(t =>
-      if t.contains("【LoopNode 验证") then
-        if t.contains("第 2 轮") then "VERDICT: PASS"
+      if t.contains("[LoopNode verification") then
+        if t.contains("round 2]") then "VERDICT: PASS"
         else "VERDICT: FAIL\n{\"issues\":[\"need more detail\"],\"requirements\":\"be precise\"}"
       else WorkerAnswer)
     for
@@ -276,7 +276,7 @@ class LoopNodeSpec extends CatsEffectSuite:
       n <- nodeById(rt, bId).map(_.getOrElse(fail("loop-b must exist")))
       wTurns <- workerTurns(llm)
       vTurns <- verifyTurns(llm)
-      wFull <- llm.inputs.get.map(_.filter(_.contains("【LoopNode 返工 · 第 2 轮】")))
+      wFull <- llm.inputs.get.map(_.filter(_.contains("[LoopNode rework · round 2]")))
       _ <- waitSessionClean(res)
       _ <- system.stopAll.handleErrorWith(_ => IO.unit)
     yield
@@ -285,7 +285,7 @@ class LoopNodeSpec extends CatsEffectSuite:
       assertEquals(wTurns.size, 2, s"worker must run exactly 2 turns, got ${wTurns.size}")
       assertEquals(vTurns.size, 2, s"verify must run exactly 2 turns, got ${vTurns.size}")
       // ④ 输入恒定：重跑输入 = 返工模板（含第 2 轮标记 + 意见），且**不重注入产出全文**
-      val reworkTurn = wTurns.find(_.contains("【LoopNode 返工 · 第 2 轮】"))
+      val reworkTurn = wTurns.find(_.contains("[LoopNode rework · round 2]"))
       assert(reworkTurn.isDefined, s"worker must receive a rework template for round 2, got $wTurns")
       assert(!reworkTurn.get.contains(WorkerAnswer),
         s"rework input must NOT re-inject the full round-1 output (输入恒定), got: ${reworkTurn.get.take(200)}")
@@ -293,8 +293,8 @@ class LoopNodeSpec extends CatsEffectSuite:
       assert(wFull.exists(_.contains(WorkerAnswer)),
         s"persistent worker session must carry round-1 output into round-2 context, got ${wFull.headOption.map(_.take(300))}")
       // verify 第 2 轮输入 = 短模板（持久上下文，不重复原始任务段）
-      val v2 = vTurns.find(_.contains("第 2 轮"))
-      assert(v2.exists(t => t.contains("== 待验证产出") && !t.contains("== 原始任务（验收基准） ==")),
+      val v2 = vTurns.find(_.contains("round 2]"))
+      assert(v2.exists(t => t.contains("== Output under review") && !t.contains("== Original task (acceptance baseline) ==")),
         s"verify round-2 input must be the short template (persistent context), got: ${v2.map(_.take(200))}")
   }
 
@@ -306,7 +306,7 @@ class LoopNodeSpec extends CatsEffectSuite:
     val system = ActorSystem(s"loop-k-${scala.util.Random.nextInt(100000)}")
     val K = 3
     val llm = LoopLlm(t =>
-      if t.contains("【LoopNode 验证") then "VERDICT: FAIL\n{\"issues\":[\"never passes\"],\"requirements\":\"n/a\"}"
+      if t.contains("[LoopNode verification") then "VERDICT: FAIL\n{\"issues\":[\"never passes\"],\"requirements\":\"n/a\"}"
       else "ok")
     for
       res <- mkResources(system, tempRoot, llm.handle)
@@ -337,7 +337,7 @@ class LoopNodeSpec extends CatsEffectSuite:
     val system = ActorSystem(s"loop-destroy-${scala.util.Random.nextInt(100000)}")
     val K = 2
     val llm = LoopLlm(t =>
-      if t.contains("【LoopNode 验证") then "VERDICT: FAIL\n{\"issues\":[\"never passes\"],\"requirements\":\"n/a\"}"
+      if t.contains("[LoopNode verification") then "VERDICT: FAIL\n{\"issues\":[\"never passes\"],\"requirements\":\"n/a\"}"
       else "ok")
     for
       res <- mkResources(system, tempRoot, llm.handle)
@@ -366,14 +366,14 @@ class LoopNodeSpec extends CatsEffectSuite:
     // ⇒ 只有 `destroyLoopSessions` 的 `NodeReportRegistry.remove` 能清（④ 直接证据）。
     val llm = new LoopLlm(
       t =>
-        if t.contains("【LoopNode 验证") then
+        if t.contains("[LoopNode verification") then
           "VERDICT: FAIL\n{\"issues\":[\"never passes\"],\"requirements\":\"n/a\"}"
         else "ok",
       onTurn = last =>
         IO(Option(resRef)).flatMap {
           case None => IO.unit
           case Some(r) =>
-            if !last.contains("【LoopNode 验证") then IO.unit
+            if !last.contains("[LoopNode verification") then IO.unit
             else
               r.agentRegistry.get.flatMap { reg =>
                 reg.values.find(_.displayName.exists(_ == "l-win")).map(_.sessionId) match

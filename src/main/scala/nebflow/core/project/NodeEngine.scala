@@ -2038,9 +2038,7 @@ class NodeEngine(
         SkillService.loadSkill(sk.path).flatMap {
           case Some(content) =>
             IO.pure[Either[String, String]](Right(
-              s"""<plugin name="${defn.name}" skill="${sk.name}">
-                 |${PathUtil.substituteDataRoot(content.content)}
-                 |</plugin>""".stripMargin))
+              s"""<plugin name="${defn.name}" skill="${sk.name}">\n${PathUtil.substituteDataRoot(content.content)}\n</plugin>"""))
           case None =>
             IO.pure[Either[String, String]](Left(
               s"Plugin '${defn.name}' skill '${sk.id}' file unreadable: ${sk.path} — allocation refused (no silent degradation)"))
@@ -4486,11 +4484,8 @@ object NodeEngine:
     * 要求 agent 用本轮回复给出节点最终结果文本（重述即可，无需再做工作），该轮回复经桥
     * 复检后作为节点结果投递。**不含判罚/威胁措辞**（与提醒文案同纪律：本族永不判 failed）。 */
   def reportReleaseWakeText(nodeName: String): String =
-    s"""$NodeReportReleaseWakePrefix 节点 $nodeName 的 node_report 申报已收到，但完成观察桥未观测到产生该申报的那一轮
-       |（NodeMessage / 即时注入轮的收尾不产生完成事件，引擎据此补一次唤醒）。
-       |请直接用本轮回复给出该节点的**最终结果文本**——已无补充时重述上一轮的最终结论即可；
-       |无需再做任何工具调用或额外工作，本轮回复将作为节点结果放行并投递下游。
-       |本次唤醒不判罚失败、不终止会话、不杀进程。""".stripMargin
+    s"""$NodeReportReleaseWakePrefix node $nodeName's node_report arrived, but the completion bridge never saw the declaring turn.
+       |Give this turn's text as the node's **final result** — restate the last conclusion, no further tools needed; it is released as the node result and delivered downstream. No failure verdict, no kill.""".stripMargin
 
   /** 释放唤醒留痕 summary（`k=v` 单空格分隔，与 [[reportMissingSummary]] 同构，可被
     * [[parseReportMissingSummary]] 解析）：pendingSince（未申报起点）· delivered（注入是否达）。 */
@@ -4530,10 +4525,8 @@ object NodeEngine:
     * 进节点会话唤醒轮——不叠 `[NODE-MESSAGE]` 头（那条是分发器 NodeMessage 通道专用，
     * 前缀头单点区分来源；注入通道差异见 [[injectReminderTurn]]）。 */
   def reportReminderText(nodeName: String, rung: Int, maxRungs: Int, rungMs: Long, elapsedMs: Long): String =
-    s"""$NodeReportReminderPrefix 你已交棒但未调用 node_report；请立即申报本节点的终态。
-       |（引擎未申报兜底 · 第 $rung/$maxRungs 拍 · 档位 ${reportRungLabel(rungMs)} · 已等待 ${elapsedMs / 1000}s · 节点 $nodeName）
-       |你的 turn 已结束但引擎没有收到终态申报，节点因此保持 Running、结果未投递下游。请调用 node_report 申报本节点终态（合法取值以该工具说明为准，附 detail），随后照常输出收尾报告。
-       |本提醒不判罚失败、不终止会话、不杀进程——只是提醒；你不申报则该节点一直保持 Running 等人工处置。""".stripMargin
+    s"""$NodeReportReminderPrefix you handed off without calling node_report — declare this node's terminal state now (beat $rung/$maxRungs, rung ${reportRungLabel(rungMs)}, waited ${elapsedMs / 1000}s, node $nodeName).
+       |The node stays Running, result undelivered, until you declare: call node_report (values per its description, with detail), then write your wrap-up report. This reminder never fails the node or kills the session.""".stripMargin
 
   /** `node-report-missing` 的结构化 summary（`k=v` 单空格分隔，含 `=` 的 token 由
     * [[parseReportMissingSummary]] 单点解析——`FlowMapEventLog.append` 的顶层只有
@@ -4697,18 +4690,18 @@ object NodeEngine:
     * ∨ `git status --porcelain` 非空（未提交产出）。语义一致（都是「本代次是否
     * 改变了工作产物」），但**不是逐字公式**——须由验收/后续批知悉。 */
   def stuckResumeNote(anchor: Option[RecoveryAnchor]): String =
+    val prefix = "\n(hard-recovery: the hung session was interrupted and resumed from the disk breakpoint."
     anchor match
       case Some(a) if !a.hasOutput =>
-        "\n（hard-recovery：该节点会话此前卡死，已被引擎分级接管中断并从磁盘断点恢复续跑。" +
-          s"**上次尝试零产出**（${a.outputEvidence}；worktree " +
-          s"${if a.worktreeAvailable then s"可用：${a.probeDir}" else "不可用（目录缺失/非 git 工作树）"}）" +
-          "——请从头完成本节点任务，不要假定任何工作已完成。）"
+        prefix +
+          s" **No output last attempt** (${a.outputEvidence}; worktree " +
+          s"${if a.worktreeAvailable then s"available: ${a.probeDir}" else "unavailable"})" +
+          " — do the task from scratch; assume nothing was done.)"
       case Some(a) =>
-        "\n（hard-recovery：该节点会话此前卡死，已被引擎分级接管中断并从磁盘断点恢复续跑。" +
-          s"**已有产出**（${a.outputEvidence}）——请先核验上一轮未落盘的副作用（git 状态、关键文件），" +
-          "已完成的工作无需重复，从中断点继续。）"
+        prefix +
+          s" **Output exists** (${a.outputEvidence}) — verify unpersisted side effects first (git state, key files); continue from the breakpoint.)"
       case None =>
-        "\n（hard-recovery：该节点会话此前卡死，已被引擎分级接管中断并从磁盘断点恢复续跑。）"
+        prefix + ")"
 
   /** 节点级 blocked 重入上限（设计 §3.1/§7.2）：blockCount 1/2 → 重入调整；
     * count=3（> 2）→ 升级 Nebula 不再重入。 */
@@ -4730,32 +4723,21 @@ object NodeEngine:
     * 本 val 逐字保持旧文本除该句外的全文（下游断言锚：末行 TaskBoard 指引行、
     * `endsWith(ProtocolFootnote)` 身份断言）。 */
   val ProtocolFootnote: String =
-    """── 节点协议 ──
-      |**收尾前必须调用 `node_report` 申报终态**——申报是收尾动作本身，不是「受阻才做」的例外通道。
-      |按你的节点角色传对应值：执行节点 = `finish`（正常完成）/ `blocked`；校验节点 = `pass` / `fail`（verdict，依据写在 detail 里）/ `blocked`。未申报的节点保持 running、结果不投递、按阶梯被提醒——不会被自动判 failed。
-      |若你判定任务无法完成（上游依赖未就绪/任务定义不完整/能力不匹配/缺外部条件），
-      |不要硬造结果：同样走 `node_report` 受阻申报（category ∈ upstream-incomplete | task-underspecified |
-      |agent-mismatch | external-dependency | needs-split | other | blocked），随后照常输出
-      |收尾报告。**不要**用「正常输出结果」代替申报——它不免除申报义务；也不要申报 `blocked` 却照常完成。
-      |工具不可用时才用文本备用通道：把最终输出的第一行写为裸 BLOCKED
-      |（首行恰为 BLOCKED 四个字母——不加 # / ** / 导语等任何前缀），随后给出 JSON：
-      |{"category":"…","detail":"…","suggestion":"…"}。
-      |若上方 <task-board> 给了你工单编号，完成或受阻时用 TaskBoard 工具更新其状态（close=完成，blocked=受阻）。""".stripMargin
+    """── Node protocol ──
+      |**Call `node_report` before wrapping up** — reporting IS the wrap-up action, not a blocked-only channel.
+      |Values by role: task = `finish` / `blocked`; verifier = `pass` / `fail` (verdict — evidence in `detail`) / `blocked`; a wrong value is rejected with your role's legal list.
+      |Cannot finish (upstream not ready / brief incomplete / capability mismatch / missing external condition)? Never fabricate: `blocked`, category ∈ upstream-incomplete | task-underspecified | agent-mismatch | external-dependency | needs-split | other | blocked — then still write your wrap-up report; a normal result is no substitute.
+      |Unreported ⇒ stays running, result undelivered, reminders only — never auto-failed. No tool ⇒ first line exactly `BLOCKED` + JSON {"category":"…","detail":"…","suggestion":"…"}.
+      |TaskBoard work order ⇒ close = done, blocked = stuck.""".stripMargin
 
   /** verifier 专属附录段（nrloop 一期 B9；设计 §3.1 纪律③「verdict ≠ 节点状态」+
    * §3.2 verifier 语义）。**仅 `role=verifier` 注入**（[[protocolFootnoteFor]]），
    * 逐字回答校验节点最容易搞错的一件事：申报 `fail` 不等于自己失败。
    * 与 `node_report` description 该段同源同措辞（双面同文纪律，设计 §3.1）。 */
   val VerifierVerdictFootnote: String =
-    """── 校验节点（verifier）──
-      |你的申报是 **verdict**（被判定对象合格/不合格），不是你自己节点的状态：
-      |   · `pass` = 判定对象合格；`fail` = 判定对象不合格（**不是**你执行失败）。
-      |   · 两者都意味着**本节点正常完成**（引擎记 lastVerdict，节点照常 completed）。
-      |   · `fail` 不会把你判 failed；它经 `(fail)<目标>:loop` 回边把重跑意图交给引擎
-      |     （重跑由引擎驱动，不由你直接重做）。
-      |   · 真正的执行失败（会话死亡 / LLM 错误）由引擎判定，**没有** agent 申报通道。
-      |   · 遇到做不下去的情况仍走 `blocked`（与任务节点同值域）。
-      |verdict ≠ node status —— 不要因为「对象不合格」而认为本节点失败了。""".stripMargin
+    """── Verifier node ──
+      |`pass` / `fail` = verdict on the object under review, never this node's status: `fail` ≠ your failure (this node still completes; verdict ≠ status). The engine routes the re-run along `(fail)<target>:loop` — you never redo the work.
+      |A real execution failure (dead session / LLM error) is engine-judged — no agent channel. Stuck ⇒ `blocked`, as for a task node.""".stripMargin
 
   /** 角色分支脚注（nrloop 一期 B9 单点）：`verifier` = 基线 + [[VerifierVerdictFootnote]]
     * 附录；其余（含 None / 未知）= 基线**逐字原文**（旧行为零漂移——既有
@@ -4796,13 +4778,10 @@ object NodeEngine:
     * 只在有链时注入（紧随链头）——无链会话无归属对象，注入只会诱导编造 chain id
     * （裁定理由同原交付报告）。 */
   val DocProvenanceBlock: String =
-    """[过程文档命名·溯源（正文零元数据头；链归属只进文件名尾段 `__<chainId>`；有归属时复制改值：]
-      |# 正文零元数据头：chain/chains/chain-source/chain-role/produced-by/produced-at/doc-class/root 一律不写进正文
-      |20260911_082530_<topic>__<chainId>.md          # 阶段文档 = <YYYYMMDD>_<HHMMSS>_<topic>__<chainId>
-      |<topic>__<chainId>.md                          # 活文档（无日期前缀）同规则：有归属才带尾段
-      |20260911_082530_<topic>.md                     # 无归属不带尾段（不得编造）
-      |20260911_082530_<topic>__<主链Id>+<次链Id>.md  # 多链：__<主链Id>+<次链Id>
-      |# chainId 取自上方链头行；时间取与内容同刻的秒级本地时间；同秒重名加 -<n> 消歧；存量文档零改名/零搬移/零回改""".stripMargin
+    """[Process doc naming · provenance — body: NO metadata header; chain attribution only in the filename suffix `__<chainId>`:]
+      |20260911_082530_<topic>__<chainId>.md = stage doc (<YYYYMMDD>_<HHMMSS>_<topic>__<chainId>) · <topic>__<chainId>.md = living doc (date-less; suffix only when attributed)
+      |20260911_082530_<topic>.md = unattributed (no suffix — never invent one) · ...__<mainId>+<secondId>.md = multi-chain
+      |Body never carries chain/chains/chain-source/chain-role/produced-by/produced-at/doc-class/root; chainId = the header line above; time = local second; same-second clash ⇒ -<n>; existing docs: no rename / move / retro-edit.""".stripMargin
 
   // ── LoopNode（LoopNode 批 2026-09-06，主设计 §2.2/§2.3）──────────────────
 
@@ -4844,52 +4823,48 @@ object NodeEngine:
     * 未确认的副作用先核验）。bgWaitNote = 认领时清空的等待集快照（G4 死亡告知）。 */
   def nodeResumePrompt(projectName: String, node: NodeDef, recoveredCount: Int, bgWaitNote: Option[String]): String =
     val bgSection = bgWaitNote match
-      case Some(w) => s"\n崩溃前等待中的后台任务已死亡（$w）——等待集已随进程消失，其结果文件若在盘上请自行核验，按需重启该后台工作。\n"
+      case Some(w) => s"\nThe background work awaited before the crash is dead ($w) — verify its result file on disk; restart it as needed.\n"
       case None => ""
-    s"""[system] 进程在你上一轮工作期间崩溃并已重启。你的会话历史已从磁盘恢复
-       |（共恢复 ${recoveredCount} 条消息，断点 = 最后一个已持久化的工具轮边界）。请继续完成节点任务「${node.name}」。
-       |注意：上一轮工具调用可能未完成即中断——请先核验关键副作用（git 状态、关键文件）再继续，已完成的工作无需重复。
-       |$bgSection
-       |任务全文（原始要求）：NodeList(detail="${node.id}", project="$projectName") 可读；本 prompt 只负责续跑告知。""".stripMargin
+    s"""[system] The process crashed during your last turn and restarted; history restored from disk (${recoveredCount} messages; breakpoint = last persisted tool round). Continue task "${node.name}".
+       |The interrupted turn may have left side effects unfinished — verify them first (git state, key files); do not repeat completed work.$bgSection
+       |Full task text: NodeList(detail="${node.id}", project="$projectName").""".stripMargin
 
   /** loop worker 相位 resume prompt（裁定③：worker→verify 迭代跨崩溃续接——本轮
     * 产出从最后持久轮边界续作，verify 照常裁决本轮）。 */
   def loopWorkerResumePrompt(node: NodeDef, round: Int, phase: String, recoveredCount: Int): String =
-    s"""[system] 进程在 LoopNode 第 $round 轮（$phase 阶段）执行期间崩溃并已重启。你的会话历史已从磁盘恢复
-       |（共恢复 ${recoveredCount} 条消息，断点 = 最后一个已持久化的工具轮边界）。请继续完成本轮产出——
-       |从断点继续工作，上一轮工具调用可能未完成即中断，请先核验关键副作用（git 状态、关键文件）再继续，已完成的工作无需重复；
-       |完成后给出本轮最终产出（后续由验证会话裁决）。
-       |原始任务全文：NodeList(detail="${node.id}") 可读；本 prompt 只负责续跑告知。""".stripMargin
+    s"""[system] The process crashed during LoopNode round $round ($phase) and restarted; history restored from disk (${recoveredCount} messages; breakpoint = last persisted tool round).
+       |Continue this round from the breakpoint — verify side effects first (git state, key files); do not repeat completed work; then give this round's final output (the verify session rules on it).
+       |Full task text: NodeList(detail="${node.id}").""".stripMargin
 
   /** loop verify 相位续跑标注（verify 输入由 worker transcript 末条 assistant 文本
     * 重建——旧输入可能未持久/已消费，重注入是操作侧消息）。 */
   def loopVerifyResumeAnnotation(round: Int): String =
-    s"[system] 进程在 LoopNode 第 $round 轮（verify 阶段）执行期间崩溃并已重启，verify 会话历史已恢复；" +
-      s"下方为重建的本轮验证输入（worker 本轮产出），请按验证协议对本轮给出 verdict。"
+    s"[system] Crashed during LoopNode round $round (verify phase) and restarted; below is this round's rebuilt input — give your verdict."
 
   // ── LoopNode 模板（续）────────────────────────────────────────
 
   /** verify 文法脚注（主设计 §2.3 原文单点注入，模板三末尾）——与 ProtocolFootnote
     * 同机制，覆盖所有 verify 会话，防「verify 意图 FAIL 但忘写锚定行」被降级放行。 */
   val VerifyVerdictFootnote: String =
-    """── 验证协议 ──
-      |你的最终输出第一行必须是且只能是：VERDICT: PASS 或 VERDICT: FAIL（大写，冒号后半角）。
-      |判 FAIL 时随后给出 JSON：{"issues":["问题1","问题2"],"requirements":"通过标准"}
-      |issues 必须具体到修改点；可 PASS 时第一行写 VERDICT: PASS，不要附加其他内容。""".stripMargin
+    """── Verification protocol ──
+      |First line of your final output, exactly: VERDICT: PASS or VERDICT: FAIL (upper case, half-width colon).
+      |On FAIL follow it with JSON: {"issues":["issue 1","issue 2"],"requirements":"pass criteria"} — issues must name concrete fixes. On PASS write only that first line.""".stripMargin
 
-  /** verify 清单默认模板（loopSpec.verifyTask 为空时兜底注入）。 */
+  /** verify 清单默认模板（loopSpec.verifyTask 为空时兜底注入）。
+    * 语言：本批令 2 ①「全部提示词面英文」⇒ 由中文改为英文（设计 §3.1-B 把 B9 记为
+    * 「保留原文」的例外，是针对**字节硬线**的计账例外；语言面以任务书 ① 为准）。 */
   val VerifyDefaultTask: String =
-    "按原始任务与验收基准逐条核对 worker 产出，判断是否达到通过标准；" +
-      "指出必须修改的具体问题（issues 逐条列出），达到标准则判 PASS。"
+    "Check the worker's output item by item against the original task and the acceptance baseline; " +
+      "list every issue that must be fixed (one bullet each) and rule PASS when the bar is met."
 
   /** worker 返工模板二（第 N≥2 轮同会话注入；产出全文/历史不重复注入——持久会话
     * 上下文已持有，主设计 §2.2 模板二）。 */
   def loopReworkInput(round: Int, issues: List[String], requirements: String): String =
     val reqLine =
-      if requirements.trim.nonEmpty then s"== 通过标准 ==\n$requirements" else ""
-    val iss = if issues.nonEmpty then issues.map(i => s"- $i").mkString("\n") else "- （verify 未给出具体意见）"
-    s"""【LoopNode 返工 · 第 $round 轮】
-       |== 验证意见 ==
+      if requirements.trim.nonEmpty then s"== Pass criteria ==\n$requirements" else ""
+    val iss = if issues.nonEmpty then issues.map(i => s"- $i").mkString("\n") else "- (the verifier gave no concrete issue)"
+    s"""[LoopNode rework · round $round]
+       |== Verifier issues ==
        |$iss
        |$reqLine
        |
@@ -4906,18 +4881,18 @@ object NodeEngine:
   ): String =
     if round <= 1 then
       val up = if upstreamSection.nonEmpty then s"\n$upstreamSection" else ""
-      s"""【LoopNode 验证 · 第 $round 轮】
-         |== 原始任务（验收基准） ==
+      s"""[LoopNode verification · round $round]
+         |== Original task (acceptance baseline) ==
          |$nodeTask$up
-         |== 待验证产出（worker 第 $round 轮） ==
+         |== Output under review (worker round $round) ==
          |$workerOutput
-         |== 验证清单 ==
+         |== Verification checklist ==
          |${if verifyTask.trim.nonEmpty then verifyTask else VerifyDefaultTask}
          |
          |${VerifyVerdictFootnote}""".stripMargin
     else
-      s"""【LoopNode 验证 · 第 $round 轮】
-         |== 待验证产出（worker 第 $round 轮） ==
+      s"""[LoopNode verification · round $round]
+         |== Output under review (worker round $round) ==
          |$workerOutput""".stripMargin
 
 /** blocked 声明解析器（设计 §1.3 文法）。独立 object 便于单测。

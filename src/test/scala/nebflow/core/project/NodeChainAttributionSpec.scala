@@ -75,8 +75,9 @@ class NodeChainAttributionSpec extends CatsEffectSuite:
   private val ExpectedChainId = "chain-n-ca"
   private val ExpectedHeader = s"[chain: 链标题A ($ExpectedChainId) · 2 节点]"
 
-  /** 文件名尾溯源提示段标记（`NodeEngine.DocProvenanceBlock` 首行前缀；R-3 2026-09-11）。 */
-  private val ProvenanceMarker = "[过程文档命名·溯源"
+  /** 文件名尾溯源提示段标记（`NodeEngine.DocProvenanceBlock` 首行前缀；R-3 2026-09-11；
+    * prompt-en-slim-impl 批：段首行随提示词英文化改为英文前缀，锚点同步）。 */
+  private val ProvenanceMarker = "[Process doc naming · provenance"
 
   /** 八键白名单（**存量历史**：`CONVENTIONS.md:7` / spec §3.2；R-3 后仅用于
     * 「注入面不得再含元数据头键」的负断言与 `headViolations` 存量判据）。 */
