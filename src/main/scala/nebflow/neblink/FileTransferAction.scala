@@ -121,17 +121,31 @@ object FileTransferAction:
       val zeroChunks = totalBytes == 0L
       val existing = if os.exists(path) && os.isFile(path) then os.size(path) else 0L
       val alreadyAtOrPastTotal = totalBytes > 0L && existing >= totalBytes
-      if zeroChunks then Right(chunkAckJson(0L, chunkSha, None, totalBytes))
+      // 接收端**自算**的块摘要（禁自证，R4）：回执一律回传这个值，不回显 `chunkSha`
+      // 请求参数 —— 回显会让发送端的 `ack.chunkSha256 == frame.chunkSha256` 比对恒真。
+      val computedChunk = ChunkedTransfer.sha256Hex(java.util.Base64.getDecoder.decode(contentB64))
+      if zeroChunks then Right(chunkAckJson(0L, computedChunk, None, totalBytes))
       else if alreadyAtOrPastTotal then
         // 幂等：整件已落盘 ⇒ 回当前 offset + 自算整件摘要（重放安全）。
-        Right(chunkAckJson(existing, chunkSha, Some(ChunkedTransfer.hashFileStreaming(path)), totalBytes))
+        Right(chunkAckJson(existing, computedChunk, Some(ChunkedTransfer.hashFileStreaming(path)), totalBytes))
       else if !overwrite && !os.exists(path) then
-        Right(chunkAckJson(0L, chunkSha, None, totalBytes))
+        // R5：此前的 `chunkAckJson(0L, …)` **不回写却回执 0 字节** ⇒ 首块静默停滞
+        // （发送端以为已应用 0 字节，次块因 gap 报 OFFSET_OUT_OF_RANGE）。
+        // 分块 put 是「按 offset 追加」语义，本就不该在 overwrite=false 下走 —— 显式拒绝。
+        Left(
+          AttachContract.AttachError(
+            AttachContract.Codes.InvalidArgument,
+            s"Chunked put requires overwrite=true (path $path does not exist yet and overwrite=false would silently apply nothing)",
+            phase = "transfer",
+            chunkIndex = Some(chunkIndex),
+            bytesReceived = Some(existing)
+          ).toJson.noSpaces
+        )
       else
         val expectedIndex = AttachContract.indexForOffset(existing, chunkSize)
         if chunkIndex < expectedIndex then
-          // 幂等 no-op：不重放、不报错、不重复写。
-          Right(chunkAckJson(existing, chunkSha, None, totalBytes))
+          // 幂等 no-op：不重放、不报错、不重复写（摘要同样是自算的）。
+          Right(chunkAckJson(existing, computedChunk, None, totalBytes))
         else if chunkIndex > expectedIndex then
           Left(
             AttachContract.AttachError(

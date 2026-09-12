@@ -143,7 +143,10 @@ final class P2PChunkTransport(
                 transferId = frame.transferId,
                 chunkIndex = frame.chunkIndex,
                 bytesReceived = hc.downField("bytesReceived").as[Long].getOrElse(frame.offset + frame.bytes),
-                chunkSha256 = hc.downField("chunkSha256").as[String].getOrElse(frame.chunkSha256),
+                // 接收端**自算**的块摘要（禁自证，R4）：缺失 ⇒ 回落到本地摘要（= 请求头回显）
+                // 会让发送端的 `ack.chunkSha256 == frame.chunkSha256` 比对恒真 ——
+                // 故此处与 relay 腿同口径，回落空串 ⇒ 显式 `CHUNK_DIGEST_MISMATCH`。
+                chunkSha256 = hc.downField("chunkSha256").as[String].getOrElse(""),
                 wholeSha256 = hc.downField("wholeSha256").as[String].toOption
               )
             )

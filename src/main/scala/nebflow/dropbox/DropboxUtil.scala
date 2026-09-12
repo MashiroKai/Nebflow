@@ -49,6 +49,11 @@ object DropboxUtil:
    *
    * WHY：声明大小会撒谎 —— offer 阶段按 `fileSize` 过闸后，真实 body 仍可能超限。
    * 闸位必须在**字节流上**再判一次，否则上限可被「少报 size」绕过（fail-fast 面）。
+   *
+   * ⚠️ `actual` 的量纲（R7）：超限是**流式提前中止**，那一刻流的总长度尚不可知 ——
+   * 错误体里的 `actual` = **已接受并落盘的字节数（下界）**，不是真实流长。
+   * 例：100,000,001 B 的流在 99,942,400 B 处止步 ⇒ `actual = 99942400`（`limit = 100000000`）。
+   * 文案里逐字注明「lower bound」，避免被读成「实际流长 = 99,942,400」。
    */
   def streamToFileWithHashBounded(
     stream: Stream[IO, Byte],
@@ -80,6 +85,8 @@ object DropboxUtil:
         // 会在构造期看到 totalWritten == 0，把上限判定整个变成死代码（自环测试同族缺陷）。
         .flatMap { _ =>
           if totalWritten > maxBytes then
+            // 防御性分支（逐块前置判定已在上游拦下超限块 ⇒ 实际不可达）；此处 `totalWritten`
+            // 若真超限，它是精确值，与 tooLarge 分支的「下界」语义不同，故文案不加 lower bound。
             IO.pure(
               Left(
                 AttachContract.AttachError(
@@ -99,7 +106,9 @@ object DropboxUtil:
           Left(
             AttachContract.AttachError(
               AttachContract.Codes.AttachTooLarge,
-              s"Attachment too large: $total bytes exceeds the $maxBytes-byte limit",
+              // R7：`actual` 是**下界**（已接受字节），不是真实流长 —— 流在此处被提前中止，
+              // 剩余字节从未被读出。文案逐字注明，避免被读成精确值。
+              s"Attachment too large: already accepted $total bytes (lower bound — the stream was aborted at the first chunk that would exceed the limit) exceeds the $maxBytes-byte limit",
               phase = "transfer",
               actual = Some(total),
               limit = Some(maxBytes)

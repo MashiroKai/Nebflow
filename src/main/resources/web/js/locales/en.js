@@ -901,6 +901,7 @@ export default {
   'dropbox.failed': 'Transfer failed',
   'dropbox.tooManyFiles': 'Too many attachments: {actual} selected, limit is {limit}',
   'dropbox.fileTooLarge': 'File too large{name}: actual {actual} ({actualBytes} bytes), limit is {limit}',
+  'dropbox.notConnected': 'Not connected to the gateway — the file was not sent; please retry',
 
   // === Chat History Search ===
   'search.btnTitle': 'Search chat history',

@@ -4,6 +4,7 @@ import cats.effect.{IO, Ref}
 import cats.effect.std.Dispatcher
 import cats.syntax.all.*
 import io.circe.Json
+import io.circe.syntax.*
 import munit.CatsEffectSuite
 import nebflow.core.PathUtil
 import nebflow.gateway.WsHub
@@ -157,6 +158,58 @@ class AttachGateServiceSpec extends CatsEffectSuite:
         case Right(state) =>
           fail(s"missing session must not be reported as offset=0 (silent restart of the whole transfer): $state")
       }
+    }
+  }
+
+  // ===== R4（服务面）：分块回执 = 接收端自算摘要（改前 RestApiRoutes 回显请求头） =====
+
+  test("R4 服务面：receiveChunkFromPeer 回执带接收端自算块摘要 —— 重放错块不再恒真放行") {
+    withStack { (ms, svc) =>
+      val transferId = "tid-r4-svc"
+      val total = 64L
+      val chunkSize = 32
+      val src = Array.tabulate(total.toInt)(i => (i * 7 % 251).toByte)
+      val whole = ChunkedTransfer.sha256Hex(src)
+      val first = src.slice(0, chunkSize)
+      // 重放同一 index 但字节被改：声明的块摘要仍是**正确**那一份 ⇒
+      // 只有「回执 = 接收端自算」才能让发送端发现（改前 route 回显请求头 ⇒ 恒真）。
+      val forged = first.clone()
+      forged(0) = (forged(0) ^ 0x03).toByte
+      val tempFile = DropboxUtil.downloadsDir / s".r4-svc.bin.dropbox-${transferId.take(8)}"
+      val body = for
+        _ <- ms.handleDataMessage(
+          Json.obj(
+            "kind" -> "file-offer".asJson,
+            "senderId" -> "peer-r4".asJson,
+            "transferId" -> transferId.asJson,
+            "msgId" -> "m-r4".asJson,
+            "fileName" -> "r4-svc.bin".asJson,
+            "fileSize" -> total.asJson,
+            "mimeType" -> "application/octet-stream".asJson
+          )
+        )
+        h0 = DropboxService.ChunkHeaders(0, total, chunkSize, ChunkedTransfer.sha256Hex(first), whole)
+        a0 <- svc.receiveChunkFromPeer(transferId, fs2.Stream.emits(first).covary[IO], h0)
+        a1 <- svc.receiveChunkFromPeer(transferId, fs2.Stream.emits(forged).covary[IO], h0)
+      yield
+        assertEquals(
+          a0.map(_.chunkSha256),
+          Right(ChunkedTransfer.sha256Hex(first)),
+          "非末块回执必须带接收端自算摘要"
+        )
+        a1 match
+          case Right(ack) =>
+            assertEquals(ack.chunkSha256, ChunkedTransfer.sha256Hex(forged), "回执摘要必须是收到字节的自算值")
+            assertNotEquals(ack.chunkSha256, h0.chunkSha256, "R4 负控：不得回显请求头（否则发送端比对恒真）")
+            assertEquals(ack.bytesReceived, chunkSize.toLong, "重放不得推进 offset")
+          case Left(err) => fail(s"幂等重放应回执成功（no-op）：${err.render}")
+      // 接收端 temp 落在真实 ~/Downloads（下载目录与 dataRoot 无关）⇒ 测试后自清。
+      body.guarantee(
+        IO.blocking {
+          if os.exists(tempFile) then os.remove(tempFile)
+          ()
+        }.handleErrorWith(_ => IO.unit)
+      )
     }
   }
 

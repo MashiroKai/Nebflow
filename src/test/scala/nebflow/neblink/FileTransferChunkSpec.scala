@@ -268,4 +268,73 @@ class FileTransferChunkSpec extends CatsEffectSuite:
     }
   }
 
+  // ===== R4：回执 = 接收端**自算**块摘要（禁回显请求参数）=====
+
+  test("R4：幂等重放回执的 chunkSha256 = 接收端自算（改前回显请求参数 ⇒ 错块静默放行）") {
+    withTmp { dir =>
+      val p = dir / "r4-replay.bin"
+      val total = 32L
+      val src = Array.tabulate(total.toInt)(i => (i * 5).toByte)
+      val whole = ChunkedTransfer.sha256Hex(src)
+      val first = src.slice(0, Chunk)
+      // 重放 index 0，但字节被改；声明摘要仍是**正确**那一份（改前回显 ⇒ 发送端 `ack == frame` 恒真）。
+      val forged = first.clone()
+      forged(0) = (forged(0) ^ 0x01).toByte
+      for
+        a1 <- FileTransferAction.handle(putParams(p.toString, first, 0, total, whole))
+        a2 <- FileTransferAction.handle(putParams(p.toString, forged, 0, total, whole))
+        size <- IO.blocking(os.size(p))
+      yield
+        assert(a1.isRight && a2.isRight, s"重放必须被回执为成功（no-op）：$a1 $a2")
+        val hc = a2.toOption.get.hcursor
+        assertEquals(
+          hc.downField("chunkSha256").as[String].toOption,
+          Some(ChunkedTransfer.sha256Hex(forged)),
+          "R4：回执摘要必须是收到字节的自算值（改前 = 请求参数 chunkSha256 回显）"
+        )
+        assertNotEquals(
+          hc.downField("chunkSha256").as[String].toOption,
+          Some(ChunkedTransfer.sha256Hex(first)),
+          "R4 负控：不得回显请求参数（回显会让发送端的比对恒真）"
+        )
+        assertEquals(size, Chunk.toLong, "重放不得增长字节数")
+    }
+  }
+
+  // ===== R5：分块 put 在 overwrite=false 下不得「不回写却回执 0 字节」=====
+
+  test("R5：overwrite=false + 目标不存在 ⇒ 显式 INVALID_ARGUMENT（改前：回执 0 字节、首块静默停滞）") {
+    withTmp { dir =>
+      val p = dir / "r5.bin"
+      val total = 32L
+      val src = Array.tabulate(total.toInt)(i => (i * 3).toByte)
+      val whole = ChunkedTransfer.sha256Hex(src)
+      val first = src.slice(0, Chunk)
+      def params(index: Int, payload: Array[Byte]) =
+        JsonObject(
+          "direction" -> "put".asJson,
+          "path" -> p.toString.asJson,
+          "content" -> b64(payload).asJson,
+          "overwrite" -> false.asJson,
+          "chunkIndex" -> index.asJson,
+          "totalBytes" -> total.asJson,
+          "chunkSize" -> Chunk.asJson,
+          "chunkSha256" -> ChunkedTransfer.sha256Hex(payload).asJson,
+          "wholeSha256" -> whole.asJson
+        )
+      for
+        a0 <- FileTransferAction.handle(params(0, first))
+        exists0 <- IO.blocking(os.exists(p))
+        a1 <- FileTransferAction.handle(params(1, src.slice(Chunk, Chunk * 2)))
+        exists1 <- IO.blocking(os.exists(p))
+      yield
+        List((0, a0), (1, a1)).foreach { case (i, res) =>
+          assert(res.isLeft, s"chunk $i 在 overwrite=false 下必须显式失败，实得 $res")
+          assert(res.left.toOption.get.contains("INVALID_ARGUMENT"), res.left.toOption.get)
+          assert(res.left.toOption.get.contains("requires overwrite=true"), res.left.toOption.get)
+        }
+        assert(!exists0 && !exists1, "拒绝路径不得落盘（改前是「不回写却回执 0 字节」）")
+    }
+  }
+
 end FileTransferChunkSpec

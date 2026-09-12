@@ -599,20 +599,24 @@ final class DropboxService private (
     chunk: Option[ChunkHeaders] = None
   ): IO[Either[AttachContract.AttachError, String]] =
     chunk match
-      case Some(headers) => receiveWholeBodyAsSingleChunk(transferId, body, headers)
+      case Some(headers) =>
+        // 回执字符串保留给「只要一个摘要」的调用面；分块回执的完整形态（接收端自算的
+        // 块摘要 + 权威 offset）走 `receiveChunkFromPeer`（R4）。
+        receiveChunkFromPeer(transferId, body, headers)
+          .map(_.map(ack => ack.wholeSha256.getOrElse(ack.chunkSha256)))
       case None => receiveLegacyWholeFile(transferId, body)
 
   /** 分块头（由 `RestApiRoutes` 从 HTTP 头解析；relay 腿由 `FileTransferAction` 解析）。 */
 
   /**
    * P2P 分块：请求 body = **裸块字节**（不 base64）。先查会话、再走 `ChunkReceiver`
-   * （内部先验块摘要再落盘）。
+   * （内部先验块摘要再落盘）。返回**接收端自算**的块回执（R4：不是请求头回显）。
    */
-  private def receiveWholeBodyAsSingleChunk(
+  def receiveChunkFromPeer(
     transferId: String,
     body: Stream[IO, Byte],
     headers: ChunkHeaders
-  ): IO[Either[AttachContract.AttachError, String]] =
+  ): IO[Either[AttachContract.AttachError, ChunkedTransfer.ChunkAck]] =
     val frame = ChunkedTransfer.ChunkFrame(
       transferId = transferId,
       chunkIndex = headers.chunkIndex,
@@ -653,9 +657,7 @@ final class DropboxService private (
                     case None => m
                 )
             _ <- persistTransfersThrottled
-          yield applied match
-            case Left(err) => Left(err)
-            case Right(ack) => Right(ack.wholeSha256.getOrElse(ack.chunkSha256))
+          yield applied
     yield res
 
   /**

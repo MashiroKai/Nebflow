@@ -213,6 +213,47 @@ class ChunkedRoundTripSpec extends CatsEffectSuite:
     }
   }
 
+  // ===== ②b R4：每块回执 = 接收端**自算**（禁回显请求头）=====
+
+  test("R4：非末块回执的 chunkSha256 = 接收端自算（改前回显请求头 ⇒ 重放错块放行）") {
+    withDirs { (src, dst) =>
+      val size = 200_000L
+      for
+        source <- makeSource(src, "r4.bin", size)
+        tempPath = dst / ".r4.bin"
+        receiver = new ChunkReceiver("tid-r4", size, Chunk, tempPath)
+        _ <- receiver.prime()
+        sender <- ChunkSender.open(source, "tid-r4", 0L, Chunk)
+        c0 <- sender.readNext().map(_.get)
+        (frame0, payload0) = c0
+        a0 <- receiver.applyChunk(frame0, payload0)
+        // 重放同 index，但字节被改；声明的块摘要仍是**正确**那一份 ⇒
+        // 改前回执回显 frame.chunkSha256 ⇒ 发送端 `ack == frame` 恒真、错块被静默放行。
+        forged = payload0.clone()
+        _ = forged(0) = (forged(0) ^ 0x01).toByte
+        a1 <- receiver.applyChunk(frame0, forged)
+        last <- receiver.applyChunk(frame0, payload0)
+      yield
+        assertEquals(
+          a0.map(_.chunkSha256),
+          Right(ChunkedTransfer.sha256Hex(payload0)),
+          "非末块回执必须带接收端自算摘要（改前 = frame.chunkSha256 回显）"
+        )
+        a1 match
+          case Right(ack) =>
+            assertEquals(ack.chunkSha256, ChunkedTransfer.sha256Hex(forged), "回执摘要必须是收到字节的自算值")
+            assertNotEquals(
+              ack.chunkSha256,
+              frame0.chunkSha256,
+              "R4 负控：回执不得回显请求头 —— 否则发送端 `ack.chunkSha256 == frame.chunkSha256` 恒真"
+            )
+          case Left(err) => fail(s"幂等重放应回执成功（no-op），实得 ${err.render}")
+        // 非末块的 ack 必须仍然只带自算块摘要（整件摘要留到末块）
+        assertEquals(last.map(_.wholeSha256), Right(None))
+        assertEquals(receiver.bytesReceived, Chunk.toLong, "重放不得推进 offset")
+    }
+  }
+
   // ===== ③ 断点续传 =====
 
   test("判据③：中断后接续 —— 中断前 offset > 0，接续后最终双侧 sha256 一致（给前后读数）") {

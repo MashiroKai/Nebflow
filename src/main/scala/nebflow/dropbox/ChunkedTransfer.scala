@@ -11,7 +11,8 @@ import java.security.MessageDigest
  *   - 每块：`{transferId, chunkIndex, offset, totalBytes, chunkSize, bytes, chunkSha256, wholeSha256}`；
  *     `offset` **恒由** `chunkIndex × chunkSize` 推导，禁发送端自由填；
  *   - 末块 `bytes = totalBytes − offset`；恰整除时**不补零长末块**；
- *   - 每块校验：摘要覆盖**原始字节**（未 base64、不含信封）；接收端**必须自己算**（禁自证）；
+ *   - 每块校验：摘要覆盖**原始字节**（未 base64、不含信封）；接收端**必须自己算**（禁自证），
+ *     且回执必须**回传接收端自算**的块摘要（R4）—— 回显请求头会让发送端的比对恒真；
  *   - 整件 sha256：发送端分块读盘**同一遍**增量更新；接收端写盘**同一遍**增量更新；
  *     唯一比对点 = 末块应用后、commit 之前；
  *   - 幂等键 = `(transferId, chunkIndex)`；重复块 = no-op；空洞块 = 拒绝（gap 检测）；
@@ -32,7 +33,12 @@ object ChunkedTransfer:
     proto: Int = AttachContract.ProtoChunked
   )
 
-  /** 接收端对一块的回执。末块必带接收端**自算**的整件摘要（I2 禁自证）。 */
+  /**
+   * 接收端对一块的回执。
+   *   - `chunkSha256` = **接收端自算**的块摘要（R4：不得回显请求头，否则发送端的
+   *     `ack.chunkSha256 == frame.chunkSha256` 比对恒真）；
+   *   - 末块必带接收端**自算**的整件摘要（I2 禁自证）。
+   */
   final case class ChunkAck(
     transferId: String,
     chunkIndex: Int,
@@ -83,10 +89,14 @@ object ChunkedTransfer:
 
   // ===== 校验（纯函数，可单测）=====
 
-  /** 块摘要校验：摘要不符 ⇒ `CHUNK_DIGEST_MISMATCH` + 期望/实际 + index。 */
-  def verifyChunkDigest(frame: ChunkFrame, payload: Array[Byte]): Either[AttachContract.AttachError, Unit] =
+  /**
+   * 块摘要校验：摘要不符 ⇒ `CHUNK_DIGEST_MISMATCH` + 期望/实际 + index。
+   * **成功时返回接收端自算的摘要** —— 回执必须回传这个值（R4：回执回显请求头
+   * 会让发送端的 `ack.chunkSha256 == frame.chunkSha256` 恒真，校验退化成自证）。
+   */
+  def verifyChunkDigest(frame: ChunkFrame, payload: Array[Byte]): Either[AttachContract.AttachError, String] =
     val computed = sha256Hex(payload)
-    if computed == frame.chunkSha256 then Right(())
+    if computed == frame.chunkSha256 then Right(computed)
     else
       Left(
         AttachContract.AttachError(
@@ -357,11 +367,22 @@ final class ChunkReceiver(
           case Left(err) => IO.pure(Left(err))
           case Right(ChunkedTransfer.ChunkDecision.AlreadyApplied) =>
             // 幂等 no-op：返回当前 offset，不重放、不报错、不重复写。
-            IO.pure(Right(ChunkedTransfer.ChunkAck(transferId, frame.chunkIndex, bytes, frame.chunkSha256)))
+            // R4：回执摘要同样是**接收端自算**（对重放的块也把收到的字节算一遍），
+            // 不回显请求头 —— 否则发送端的比对恒真。
+            IO.pure(
+              Right(
+                ChunkedTransfer.ChunkAck(
+                  transferId,
+                  frame.chunkIndex,
+                  bytes,
+                  ChunkedTransfer.sha256Hex(payload)
+                )
+              )
+            )
           case Right(ChunkedTransfer.ChunkDecision.Proceed) =>
             ChunkedTransfer.verifyChunkDigest(frame, payload) match
               case Left(err) => IO.pure(Left(err))
-              case Right(_) =>
+              case Right(computedChunk) =>
                 // ⚠️ 分支判定必须在 IO **运行期**做（`flatMap` 里），不能在构造期。
                 // `ioA *> { if bytes < totalBytes then … }` 的 `{…}` 是**急求值**的：
                 // 它在 `applyChunk` 被调用的那一刻就求值，而此刻本块还没落盘
@@ -373,7 +394,8 @@ final class ChunkReceiver(
                   bytes
                 }.flatMap { nowBytes =>
                   if nowBytes < totalBytes then
-                    IO.pure(Right(ChunkedTransfer.ChunkAck(transferId, frame.chunkIndex, nowBytes, frame.chunkSha256)))
+                    // R4：回执带**接收端自算**的块摘要（发送端据此真比对，非恒真）。
+                    IO.pure(Right(ChunkedTransfer.ChunkAck(transferId, frame.chunkIndex, nowBytes, computedChunk)))
                   else
                     // 唯一比对点：接收端自算整件摘要（流式，禁整件驻留）。
                     IO.blocking(ChunkedTransfer.hashFileStreaming(tempPath)).flatMap { computed =>
@@ -391,7 +413,7 @@ final class ChunkReceiver(
                                 transferId,
                                 frame.chunkIndex,
                                 nowBytes,
-                                frame.chunkSha256,
+                                computedChunk,
                                 wholeSha256 = Some(computed)
                               )
                             )

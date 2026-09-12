@@ -1280,36 +1280,29 @@ class RestApiRoutes(
             case None => NotFound(Json.obj("error" -> "Dropbox not enabled".asJson))
             case Some(svc) =>
               val chunkHeaders = parseDropboxChunkHeaders(req)
-              svc.receiveFromPeer(transferId, req.body, chunkHeaders).flatMap {
-                case Right(hash) =>
-                  // 分块模式：回执形状对齐契约（接收端自算摘要 / offset）。
-                  chunkHeaders match
-                    case Some(h) =>
-                      svc.probeTransfer(transferId).map { probe =>
-                        probe match
-                          case Right(state) =>
-                            Response[IO](Status.Ok).withEntity(
-                              Json.obj(
-                                "ok" -> true.asJson,
-                                "chunkSha256" -> h.chunkSha256.asJson,
-                                "bytesReceived" -> state.bytesReceived.asJson,
-                                "wholeSha256" -> (if state.bytesReceived >= h.totalBytes then hash.asJson else Json.Null)
-                              )
-                            )
-                          case Left(_) =>
-                            Response[IO](Status.Ok)
-                              .withEntity(Json.obj("ok" -> true.asJson, "chunkSha256" -> h.chunkSha256.asJson))
-                      }
-                    case None =>
-                      IO.pure(Response[IO](Status.Ok).withEntity(Json.obj("sha256" -> hash.asJson)))
-                case Left(err) =>
-                  val status =
-                    if err.code == nebflow.dropbox.AttachContract.Codes.SessionNotFound
-                    then Status.NotFound
-                    else Status.InternalServerError
-                  IO.pure(Response[IO](status).withEntity(err.toJson))
-              }
-              .handleErrorWith(e =>
+              val receive: IO[Response[IO]] = chunkHeaders match
+                case Some(h) =>
+                  // 分块模式：回执 = **接收端自算**的块摘要 + 权威 offset（R4：不是请求头回显
+                  // —— 回显会让发送端 `ack.chunkSha256 == frame.chunkSha256` 的比对恒真）。
+                  // 末块的 `wholeSha256` 同样只由接收端自算后写入（`ChunkAck.wholeSha256`）。
+                  svc.receiveChunkFromPeer(transferId, req.body, h).map {
+                    case Right(ack) =>
+                      Response[IO](Status.Ok).withEntity(
+                        Json.obj(
+                          "ok" -> true.asJson,
+                          "chunkSha256" -> ack.chunkSha256.asJson,
+                          "bytesReceived" -> ack.bytesReceived.asJson,
+                          "wholeSha256" -> ack.wholeSha256.map(_.asJson).getOrElse(Json.Null)
+                        )
+                      )
+                    case Left(err) => chunkErrorResponse(err)
+                  }
+                case None =>
+                  svc.receiveFromPeer(transferId, req.body, None).map {
+                    case Right(hash) => Response[IO](Status.Ok).withEntity(Json.obj("sha256" -> hash.asJson))
+                    case Left(err) => chunkErrorResponse(err)
+                  }
+              receive.handleErrorWith(e =>
                 IO.pure(
                   Response[IO](Status.InternalServerError)
                     .withEntity(Json.obj("ok" -> false.asJson, "error" -> e.getMessage.asJson))
@@ -3007,6 +3000,13 @@ class RestApiRoutes(
       chunkSha <- h("x-dropbox-chunk-sha256")
       wholeSha <- h("x-dropbox-whole-sha256")
     yield nebflow.dropbox.DropboxService.ChunkHeaders(index, total, chunkSize, chunkSha, wholeSha)
+
+  /** 分块接收失败的结构化回执（会话不存在 ⇒ 404，其余 ⇒ 500）。 */
+  private def chunkErrorResponse(err: nebflow.dropbox.AttachContract.AttachError): Response[IO] =
+    val status =
+      if err.code == nebflow.dropbox.AttachContract.Codes.SessionNotFound then Status.NotFound
+      else Status.InternalServerError
+    Response[IO](status).withEntity(err.toJson)
 
   private def verifyPeerAccess(req: Request[IO]): IO[Either[Response[IO], NeblinkService]] =    neblinkService match
       case None =>

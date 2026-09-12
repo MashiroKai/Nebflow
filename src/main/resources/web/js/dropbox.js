@@ -296,6 +296,18 @@ function blockBodyDragOver(e) {
 }
 
 /**
+ * 丢弃某设备的待发队列（R6）。
+ *
+ * 队列里的文件只能被「对应的出向 file 消息」消费。offer **失败**时那份消息永远不会来
+ * （后端闸位拒绝 / 对端不可达 / dropbox 未启用 ⇒ 只回 `dropboxError`），队列若留着，
+ * 下一次**成功** offer 的 transferId 就会对号入座到上一次的文件 —— 静默传错件。
+ * 宁可让用户重选（可见），也不许传错文件（不可见）。
+ */
+function clearPendingFileQueue(deviceId) {
+  if (deviceId && pendingFileQueues[deviceId]) delete pendingFileQueues[deviceId];
+}
+
+/**
  * 用户选/拖了文件 —— **闸位在本地先判一次**（件数 ≤9、单件 ≤100,000,000 B），
  * 超限**可见拒绝并回显实际值**（禁静默丢弃、禁只 console.error）。
  * 后端闸位仍在（本地闸只是提前反馈，不是唯一防线）。
@@ -317,6 +329,15 @@ function handleFilesSelected(deviceId, fileList) {
       .replace('{actual}', formatSize(tooBig.size))
       .replace('{actualBytes}', String(tooBig.size))
       .replace('{limit}', ATTACH_MAX_FILE_LABEL));
+    return;
+  }
+
+  // offer 失败路径 ②（R6）：`sendWs` 在 socket 非 OPEN 时**静默丢弃**（ws.js:275-279）——
+  // 那样 offer 从未发出、也就永远不会有 `dropboxError` 回来，队列会**永久残留**。
+  // 故先探活再入队；未连接 ⇒ 不入队 + 可见提示。
+  if (!(state.ws && state.ws.readyState === 1 /* WebSocket.OPEN */)) {
+    clearPendingFileQueue(deviceId);
+    showDropboxNotice(deviceId, t('dropbox.notConnected'));
     return;
   }
 
@@ -474,6 +495,10 @@ export function initDropbox() {
   onMessage('dropboxError', (msg) => {
     const detail = msg.errorDetail || {};
     const deviceId = msg.deviceId || openDeviceId;
+    // offer 失败路径 ①（R6）：offer 被后端拒（闸位 / 对端不可达 / dropbox 未启用）⇒
+    // 那些文件不会再收到出向 file 消息去消费队列 —— 不清空就会把下一次成功 offer 的
+    // transferId 错配到上一次的文件。清空必须与提示**同一轮**发生。
+    clearPendingFileQueue(deviceId);
     let text = msg.error || t('dropbox.failed');
     if (detail.code === 'ATTACH_TOO_MANY') {
       text = t('dropbox.tooManyFiles')
