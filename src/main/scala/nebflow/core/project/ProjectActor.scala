@@ -370,6 +370,15 @@ object ProjectActor:
                 // 幂等（字段已清 ⇒ 不再入选）；best-effort 同款（失败不影响后续 sweep）。
                 cfg.engine.sweepDestroyWindows()
                 .handleErrorWith(e => logger.warn(s"node destroy-window sweep failed: ${e.getMessage}")) *>
+                // loop 时间帽扫描（nrloop 一期 2026-09-12，设计 §3.6 时间维）：对
+                // 「非终态 ∧ loopStartedAt 已置位 ∧ now-loopStartedAt ≥ maxWallClockMs」
+                // 的重跑目标熔断——反查到活 verifier 驱动方 ⇒ 该 verifier 终态化 failed +
+                // result 写 reason/计量 + `loop-budget` 事件 + 失败通知（经既有 failNode
+                // 链）；反查不到（计时起点成孤儿）⇒ 清起点 + 单发 orphan 事件，绝不终态化
+                // 无关节点。闸门前置（maxWallClockMs ≤ 0 = 该维关闭 ⇒ 零成本短路）。
+                // 幂等（起点清除 CAS 单发）；best-effort 同款（失败不影响后续 sweep）。
+                cfg.engine.sweepLoopBudgets()
+                .handleErrorWith(e => logger.warn(s"loop budget sweep failed: ${e.getMessage}")) *>
                 // 链级即时归档 sweep（裁定④「TTL 分开」批 2026-09-07）：整链全终态
                 // → 整批立即移归档（移除旧 24h 活动区滞留）；链未齐（含 blocked 待办）
                 // → 保留。视觉「同帧淡出」由前端派生管线承担，本 sweep 出库+落盘。

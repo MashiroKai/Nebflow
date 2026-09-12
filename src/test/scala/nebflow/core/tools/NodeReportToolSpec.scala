@@ -16,15 +16,19 @@ import scala.concurrent.duration.*
  * - detail 必填非空 → NODE_REPORT_DETAIL
  * - 合法 blocked 申报 → register 登记表（sessionId 键控）+ [OK] 确认文本
  * - 合法申报不带 sessionId → 确定性兜底键（不吞申报）
- * - 泛化面：enum 白名单 9 值（三语义状态 + 六类 blocked 细分）；
+ * - 泛化面：enum 白名单 10 值（finish/pass/fail + blocked 泛值 + 六类细分）；
  *   pass/fail 主动申报 → 登记表可 drain（drain 分流由引擎侧集成测试覆盖）
+ * - nrloop 一期（2026-09-12）：值域**按节点角色分化**（`enumFor(role)`）——角色不匹配
+ *   → NODE_REPORT_CATEGORY_ROLE（可行动错误，含本节点 role 与合法值清单）；
+ *   task 值域 = finish+blocked 面；verifier 值域 = pass/fail+blocked 面。
  */
 class NodeReportToolSpec extends CatsEffectSuite:
 
   override def munitIOTimeout: FiniteDuration = 30.seconds
 
-  private def ctx(flowNodeId: Option[String], sessionId: Option[String] = Some("node-testsid")): ToolContext =
-    ToolContext(projectRoot = "/tmp", sessionId = sessionId, flowNodeId = flowNodeId)
+  private def ctx(flowNodeId: Option[String], sessionId: Option[String] = Some("node-testsid"),
+      role: Option[String] = None): ToolContext =
+    ToolContext(projectRoot = "/tmp", sessionId = sessionId, flowNodeId = flowNodeId, flowNodeRole = role)
 
   private def input(category: Json, detail: Json, suggestion: Json*): JsonObject =
     JsonObject.fromIterable(
@@ -83,69 +87,126 @@ class NodeReportToolSpec extends CatsEffectSuite:
       assertEquals(drained.map(_.category), Some("needs-split"))
   }
 
-  test("schema shape: category enum carries the 9-value generalized whitelist; required = category+detail") {
+  test("schema shape: category enum carries the 10-value union (role-dependent); required = category+detail") {
     val schema = NodeReportToolDef.inputSchema
     val enumVals = schema("properties").flatMap(_.asObject).flatMap(_("category"))
       .flatMap(_.asObject).flatMap(_("enum")).flatMap(_.asArray).map(_.flatMap(_.asString)).getOrElse(Nil)
     val required = schema("required").flatMap(_.asArray).map(_.flatMap(_.asString)).getOrElse(Nil)
     assertEquals(enumVals.sorted, List(
-      "agent-mismatch", "blocked", "external-dependency", "fail", "needs-split", "other",
+      "agent-mismatch", "blocked", "external-dependency", "fail", "finish", "needs-split", "other",
       "pass", "task-underspecified", "upstream-incomplete"),
-      "enum whitelist must be StatusValues {blocked,pass,fail} ++ BlockedReader.Categories")
+      "enum whitelist = TaskCategories ++ VerifierCategories (finish/pass/fail + blocked generic + BlockedReader.Categories)")
+    assertEquals(enumVals.size, 10, "union size = 10")
     assertEquals(required, List("category", "detail"))
   }
 
   // ===== NodeReport 泛化批扩面：pass/fail 主动申报（作者裁定三语义统一迁移）=====
 
-  test("pass declaration: registers under sessionId with the [OK] confirmation (drain分流 to completed chain is engine-side)") {
+  test("pass declaration (role=verifier): registers under sessionId with the [OK] confirmation (drain分流 to completed chain is engine-side)") {
     for
       r <- call(
         input("pass".asJson, "验收条件逐条核对通过".asJson, "——".asJson),
-        ctx(flowNodeId = Some("n-p"), sessionId = Some("node-passsid")))
+        ctx(flowNodeId = Some("n-p"), sessionId = Some("node-passsid"), role = Some("verifier")))
       drained <- nebflow.core.project.NodeReportRegistry.drain("node-passsid")
     yield
       assert(r.isRight, s"pass declaration must succeed, got: $r")
-      assert(r.exists(_.contains("[OK] node report (pass) recorded")), s"confirmation text, got: $r")
+      assert(r.exists(_.contains("[OK] verdict recorded (pass)")), s"confirmation text, got: $r")
+      assert(r.exists(_.contains("pass edge")), s"pass confirmation must say the pass edges are delivered, got: $r")
       assertEquals(drained, Some(nebflow.core.project.BlockedFeedback("pass", "验收条件逐条核对通过", "——")),
         "registry must hold the pass declaration under the session id")
   }
 
-  test("fail declaration: registers under sessionId with the [OK] confirmation") {
+  test("fail declaration (role=verifier): registers under sessionId with the verdict != node status confirmation") {
     for
       r <- call(
         input("fail".asJson, "产物编译红，无法在本会话内修复".asJson, "回滚上游依赖后重派".asJson),
-        ctx(flowNodeId = Some("n-f"), sessionId = Some("node-failsid")))
+        ctx(flowNodeId = Some("n-f"), sessionId = Some("node-failsid"), role = Some("verifier")))
       drained <- nebflow.core.project.NodeReportRegistry.drain("node-failsid")
     yield
       assert(r.isRight, s"fail declaration must succeed, got: $r")
-      assert(r.exists(_.contains("[OK] node report (fail) recorded")), s"confirmation text, got: $r")
+      assert(r.exists(_.contains("[OK] verdict recorded (fail)")), s"confirmation text, got: $r")
+      assert(r.exists(_.contains("verdict ≠ node status")), s"fail confirmation must spell out verdict != node status, got: $r")
       assertEquals(drained.map(_.category), Some("fail"),
         "registry must hold the fail declaration under the session id")
+  }
+
+  // ===== nrloop 一期：值域按角色分化（NODE_REPORT_CATEGORY_ROLE）=====
+
+  test("role=task (and role omitted) rejects pass/fail with NODE_REPORT_CATEGORY_ROLE + the legal list") {
+    for
+      rDefault <- call(input("pass".asJson, "完成".asJson), ctx(flowNodeId = Some("n-t")))
+      rExplicit <- call(input("fail".asJson, "失败".asJson), ctx(flowNodeId = Some("n-t"), role = Some("task")))
+      rFinish <- call(input("finish".asJson, "完成".asJson), ctx(flowNodeId = Some("n-t"), sessionId = Some("node-tfin")))
+    yield
+      List(rDefault, rExplicit).foreach { r =>
+        assert(r.isLeft, s"a task node must not be able to report a verdict, got: $r")
+        assert(r.left.exists(_.message.contains("NODE_REPORT_CATEGORY_ROLE")), s"error must carry the code, got: $r")
+        assert(r.left.exists(_.message.contains("role=task")), s"error must name this node's role, got: $r")
+        assert(r.left.exists(_.message.contains("finish")), s"error must list the legal values for the role, got: $r")
+      }
+      assert(rFinish.isRight, s"finish is legal for role=task (optional explicit completion), got: $rFinish")
+      assert(rFinish.exists(_.contains("[OK] node report (finish) recorded")), s"finish confirmation, got: $rFinish")
+  }
+
+  test("role=verifier rejects finish with NODE_REPORT_CATEGORY_ROLE; blocked stays legal for both roles") {
+    for
+      rFinish <- call(input("finish".asJson, "完成".asJson), ctx(flowNodeId = Some("n-v"), role = Some("verifier")))
+      rBlockedV <- call(input("blocked".asJson, "受阻".asJson),
+        ctx(flowNodeId = Some("n-v"), sessionId = Some("node-vblk"), role = Some("verifier")))
+      rBlockedT <- call(input("needs-split".asJson, "拆".asJson),
+        ctx(flowNodeId = Some("n-t2"), sessionId = Some("node-tblk")))
+    yield
+      assert(rFinish.isLeft, s"a verifier node must not report finish, got: $rFinish")
+      assert(rFinish.left.exists(_.message.contains("NODE_REPORT_CATEGORY_ROLE")), s"code, got: $rFinish")
+      assert(rFinish.left.exists(_.message.contains("verifier")), s"error must name the role, got: $rFinish")
+      assert(rBlockedV.isRight, s"blocked is shared by both roles, got: $rBlockedV")
+      assert(rBlockedT.isRight, s"blocked six-category split is shared too, got: $rBlockedT")
+  }
+
+  test("enumFor: the single role→value-domain point (verifier vs task/default)") {
+    assertEquals(NodeReportToolDef.enumFor(Some("verifier")), NodeReportToolDef.VerifierCategories)
+    assertEquals(NodeReportToolDef.enumFor(Some("VERIFIER ")), NodeReportToolDef.VerifierCategories, "normalize is case/space tolerant")
+    assertEquals(NodeReportToolDef.enumFor(Some("task")), NodeReportToolDef.TaskCategories)
+    assertEquals(NodeReportToolDef.enumFor(None), NodeReportToolDef.TaskCategories, "no role = task (decode default)")
+    assert(NodeReportToolDef.VerifierCategories.contains("pass") && NodeReportToolDef.VerifierCategories.contains("fail"))
+    assert(!NodeReportToolDef.TaskCategories.contains("pass") && !NodeReportToolDef.TaskCategories.contains("fail"))
+    assert(!NodeReportToolDef.VerifierCategories.contains("finish"))
+    assert(NodeReportToolDef.TaskCategories.contains("finish"))
   }
 
   test("generic blocked value is accepted and classified as blocked semantics") {
     for
       r <- call(input("blocked".asJson, "受阻，原因无法细分".asJson), ctx(flowNodeId = Some("n-b"), sessionId = Some("node-gensid")))
+      rV <- call(input("blocked".asJson, "受阻，原因无法细分".asJson),
+        ctx(flowNodeId = Some("n-bv"), sessionId = Some("node-genvsid"), role = Some("verifier")))
       drained <- nebflow.core.project.NodeReportRegistry.drain("node-gensid")
+      _ <- nebflow.core.project.NodeReportRegistry.drain("node-genvsid")
     yield
       assert(r.isRight, s"generic blocked declaration must succeed, got: $r")
+      assert(rV.isRight, s"generic blocked must be legal for a verifier too, got: $rV")
       assert(r.exists(_.contains("[OK] blocked declaration recorded")), s"confirmation text, got: $r")
       assertEquals(drained.map(_.category), Some("blocked"))
   }
 
-  test("drain分流 predicates: blocked six+generic vs pass/fail partition the 9-value whitelist") {
-    // 分流判据与 enum 白名单的划分一致：9 值恰被三分流覆盖、互斥、无遗漏
+  test("drain分流 predicates: blocked domain vs pass/fail/finish partition the 10-value union") {
+    // 分流判据与角色值域的划分一致：两角色并集恰被四分流覆盖、互斥、无遗漏
     val all = NodeReportToolDef.EnumWhitelist
     val blockedPart = all.filter(NodeReportToolDef.isBlockedSemantics)
     val passPart = all.filter(NodeReportToolDef.isPass)
     val failPart = all.filter(NodeReportToolDef.isFail)
-    assertEquals(blockedPart, NodeReportToolDef.BlockedCategories + "blocked", "blocked part = six categories + generic")
+    val finishPart = all.filter(NodeReportToolDef.isFinish)
+    assertEquals(blockedPart, NodeReportToolDef.BlockedDomain, "blocked part = six categories + generic")
     assertEquals(passPart, Set("pass"), "pass part")
     assertEquals(failPart, Set("fail"), "fail part")
-    assertEquals((blockedPart ++ passPart ++ failPart), all, "three-way partition must cover the whole whitelist")
-    assertEquals(all.size, 9, "whitelist size")
+    assertEquals(finishPart, Set("finish"), "finish part")
+    assertEquals((blockedPart ++ passPart ++ failPart ++ finishPart), all, "four-way partition must cover the whole union")
+    assertEquals(all.size, 10, "union size")
     assertEquals(NodeReportToolDef.BlockedCategories, nebflow.core.project.BlockedReader.Categories,
       "six blocked categories must stay source-anchored to BlockedReader (降级面同源零漂移)")
+    assertEquals(NodeReportToolDef.BlockedDomain, NodeReportToolDef.BlockedCategories + "blocked",
+      "the generic blocked value is part of the blocked domain (old 9-value whitelist equivalence)")
+    assertEquals(NodeReportToolDef.StatusValues, NodeReportToolDef.TaskCategories ++ NodeReportToolDef.VerifierCategories,
+      "StatusValues = the union of the two role domains")
   }
 
   test("renderFail: fail report renders [node-report:fail] head + detail + optional suggestion") {

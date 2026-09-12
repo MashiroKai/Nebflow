@@ -75,9 +75,15 @@ class NodeBlockedToolSignalSpec extends CatsEffectSuite:
   private class ToolCallLlm(category: String, detail: String, suggestion: String, closing: String):
     val inputs: Ref[IO, List[String]] = Ref.unsafe[IO, List[String]](Nil)
     private def ackText: String =
+      // nrloop 一期（2026-09-12）：confirm 回执按角色/类别分支——blocked 面文本不变；
+      // verdict 面（pass/fail）与 finish 面的回执改为 `[OK] verdict recorded (<cat>)`
+      // / `[OK] node report (finish) recorded`。回执文本变了 ⇒ 本探测串同步（否则
+      // stub 认不出申报已被登记 ⇒ 重发同一工具调用 ⇒ LoopGuard 8 连击冻结会话）。
       if nebflow.core.tools.NodeReportToolDef.isBlockedSemantics(category)
       then "[OK] blocked declaration recorded"
-      else s"[OK] node report ($category) recorded"
+      else if nebflow.core.tools.NodeReportToolDef.isFinish(category)
+      then s"[OK] node report ($category) recorded"
+      else s"[OK] verdict recorded ($category)"
     private def sawDeclarationAck(req: LlmRequest): Boolean =
       req.messages.exists { m =>
         m.content match
@@ -320,13 +326,13 @@ class NodeBlockedToolSignalSpec extends CatsEffectSuite:
 
   // ── NodeReport 泛化批扩面：pass/fail 主动申报集成重放（作者裁定三语义统一迁移）──
 
-  test("pass declaration: node_report(pass) drives the existing completed chain — no blockedFeedback, downstream settled") {
+  test("finish declaration (role=task): node_report(finish) drives the existing completed chain — no blockedFeedback, downstream settled") {
     val ws = tempRoot / "ws-tool-pass"
     os.makeDir.all(ws)
     val system = ActorSystem(s"bts-pass-${scala.util.Random.nextInt(100000)}")
     val closing = "验收条件逐条核对通过，正式声明完成。本节点收尾。"
     val llm = new ToolCallLlm(
-      category = "pass",
+      category = "finish",
       detail = "验收条件逐条核对通过",
       suggestion = "",
       closing = closing)
@@ -334,7 +340,7 @@ class NodeBlockedToolSignalSpec extends CatsEffectSuite:
       res <- mkResources(system, tempRoot, llm.handle)
       (rt, events) <- mountEngineOnly("bts-pass", ws, system, res)
       ctx = mkCtx(res, system, ws.toString)
-      // 下游 wiring（pass 走 completed 链 → out 结算断言面；store 直种同上）
+      // 下游 wiring（completed 链 → out 结算断言面；store 直种同上）
       _ <- rt.store.mutate(s => s.copy(nodes = s.nodes ++ Map(
         "n-down-p" -> NodeDef(id = "n-down-p", name = "down-p", agent = "test-agent",
           status = NodeLifecycle.Wiring, out = List(OutEdge.nebula), createdAt = System.currentTimeMillis()))))
@@ -349,24 +355,63 @@ class NodeBlockedToolSignalSpec extends CatsEffectSuite:
       dAfter <- rt.store.snapshot.map(_.nodes.values.find(_.name == "down-p")).map(_.getOrElse(fail("D must exist")))
       _ <- system.stopAll.handleErrorWith(_ => IO.unit)
     yield
-      // 既有 completed 链（pass 申报与无申报同链：CompletionGate → completedNode）
-      assertEquals(p.status, NodeLifecycle.Completed, "pass declaration must follow the existing completed chain")
-      assertEquals(p.blockedFeedback, None, "pass must NOT land a blockedFeedback")
+      // 既有 completed 链（finish 申报与无申报同链：CompletionGate → completedNode）
+      assertEquals(p.status, NodeLifecycle.Completed, "finish declaration must follow the existing completed chain")
+      assertEquals(p.blockedFeedback, None, "finish must NOT land a blockedFeedback")
       assertEquals(p.blockCount, 0)
       assertEquals(p.result, Some(closing), "completed result is the raw output (no render-string rewrite)")
+      assertEquals(p.role, NodeRoles.Task, "role stays the create-time default (task)")
       // down-p 与完成节点无 in/deps 边：零杂散结算（有边投递由 FlowDag 既有 spec 覆盖）
       assertEquals(dAfter.status, NodeLifecycle.Wiring, "no edge → no settlement (unchanged)")
       assertEquals(dAfter.deliveredTo, Nil, "no edge → no delivery (unchanged)")
       // 完成链证据：nodeCompleted 事件 + 零 blocked 痕迹
-      assert(evs.exists((t, id, _) => t == "nodeCompleted" && id == pId), "pass must emit nodeCompleted (existing chain)")
+      assert(evs.exists((t, id, _) => t == "nodeCompleted" && id == pId), "finish must emit nodeCompleted (existing chain)")
       assert(!audit.exists((t, id) => t == "blocked" && id == pId), s"no blocked audit line, got: $audit")
   }
 
-  test("fail declaration: node_report(fail) drives the existing failed chain — result carries the render string, no blocked flip") {
+  test("verifier verdict=pass: node completes with lastVerdict=pass and ITS pass edge is delivered (verifier pass is not node failure/success of a task)") {
+    val ws = tempRoot / "ws-tool-vpass"
+    os.makeDir.all(ws)
+    val system = ActorSystem(s"bts-vpass-${scala.util.Random.nextInt(100000)}")
+    val closing = "被判定对象合格，正式给出 pass verdict。本节点收尾。"
+    val llm = new ToolCallLlm(category = "pass", detail = "验收条件逐条核对通过", suggestion = "", closing = closing)
+    for
+      res <- mkResources(system, tempRoot, llm.handle)
+      (rt, events) <- mountEngineOnly("bts-vpass", ws, system, res)
+      ctx = mkCtx(res, system, ws.toString)
+      // 回边目标（worker，待二期执行腿驱动重跑）+ 落点（pass 边下游）
+      _ <- rt.store.mutate(s => s.copy(nodes = s.nodes ++ Map(
+        "n-work-vp" -> NodeDef(id = "n-work-vp", name = "work-vp", agent = "test-agent",
+          status = NodeLifecycle.Wiring, out = List(OutEdge.nebula), createdAt = System.currentTimeMillis()),
+        "n-land-vp" -> NodeDef(id = "n-land-vp", name = "land-vp", agent = "test-agent",
+          status = NodeLifecycle.Wiring, out = List(OutEdge.nebula), createdAt = System.currentTimeMillis()))))
+      _ <- nodeEdit(nodeInput("bts-vpass", "tool-vpass-a", "description" -> Json.fromString("verifier node purpose"),
+        "task" -> Json.fromString("will-verdict-pass"),
+        "role" -> Json.fromString("verifier"),
+        "out" -> Json.fromString("(pass)n-land-vp, (fail)n-work-vp:loop")), ctx)
+      _ <- waitStatus(rt, "tool-vpass-a", Set(NodeLifecycle.Completed))
+      vId <- idOf(rt, "tool-vpass-a")
+      v <- nodeById(rt, vId)
+      audit <- readAuditTypes(ws)
+      _ <- IO.sleep(300.millis)
+      land <- rt.store.snapshot.map(_.nodes.get("n-land-vp").getOrElse(fail("landing node must exist")))
+      work <- rt.store.snapshot.map(_.nodes.get("n-work-vp").getOrElse(fail("worker node must exist")))
+      _ <- system.stopAll.handleErrorWith(_ => IO.unit)
+    yield
+      assertEquals(v.status, NodeLifecycle.Completed, "a pass verdict completes the verifier node normally")
+      assertEquals(v.role, NodeRoles.Verifier, "role=verifier persists (create-only)")
+      assertEquals(v.lastVerdict, Some("pass"), "lastVerdict must be recorded (deliverOut's verdict awareness reads it)")
+      assertEquals(v.result, Some(closing), "raw output kept (no render rewrite for pass)")
+      assert(land.deliveredTo.contains(vId), s"the pass edge must deliver to the landing node, got: ${land.deliveredTo}")
+      assertEquals(work.status, NodeLifecycle.Wiring, "a pass verdict must not touch the re-run target")
+      assert(!audit.exists((t, id) => t == "loop-round" && id == vId), "pass must not consume a loop round")
+  }
+
+  test("verifier verdict=fail: THIS node still completes; the pass edge is NOT delivered; the fail control edge is recorded (no failNode)") {
     val ws = tempRoot / "ws-tool-fail"
     os.makeDir.all(ws)
     val system = ActorSystem(s"bts-fail-${scala.util.Random.nextInt(100000)}")
-    val closing = "产物编译红，无法在本会话内修复，正式声明失败。本节点收尾。"
+    val closing = "被判定对象不合格，正式给出 fail verdict。本节点收尾。"
     val llm = new ToolCallLlm(
       category = "fail",
       detail = "产物编译红",
@@ -377,28 +422,38 @@ class NodeBlockedToolSignalSpec extends CatsEffectSuite:
       (rt, events) <- mountEngineOnly("bts-fail", ws, system, res)
       ctx = mkCtx(res, system, ws.toString)
       _ <- rt.store.mutate(s => s.copy(nodes = s.nodes ++ Map(
-        "n-down-f" -> NodeDef(id = "n-down-f", name = "down-f", agent = "test-agent",
+        "n-work-f" -> NodeDef(id = "n-work-f", name = "work-f", agent = "test-agent",
+          status = NodeLifecycle.Wiring, out = List(OutEdge.nebula), createdAt = System.currentTimeMillis()),
+        "n-land-f" -> NodeDef(id = "n-land-f", name = "land-f", agent = "test-agent",
           status = NodeLifecycle.Wiring, out = List(OutEdge.nebula), createdAt = System.currentTimeMillis()))))
-      _ <- nodeEdit(nodeInput("bts-fail", "tool-fail-a", "description" -> Json.fromString("test node purpose"),
-        "task" -> Json.fromString("will-fail-tool-A"), "out" -> Json.fromString("Nebula")), ctx)
-      _ <- waitStatus(rt, "tool-fail-a", Set(NodeLifecycle.Failed))
+      _ <- nodeEdit(nodeInput("bts-fail", "tool-fail-a", "description" -> Json.fromString("verifier node purpose"),
+        "task" -> Json.fromString("will-verdict-fail"),
+        "role" -> Json.fromString("verifier"),
+        "out" -> Json.fromString("(pass)n-land-f, (fail)n-work-f:loop")), ctx)
+      _ <- waitStatus(rt, "tool-fail-a", Set(NodeLifecycle.Completed))
       fId <- idOf(rt, "tool-fail-a")
       f <- nodeById(rt, fId)
       evs <- events.get
       audit <- readAuditTypes(ws)
       _ <- IO.sleep(300.millis)
-      dAfter <- rt.store.snapshot.map(_.nodes.values.find(_.name == "down-f")).map(_.getOrElse(fail("D must exist")))
+      land <- rt.store.snapshot.map(_.nodes.get("n-land-f").getOrElse(fail("landing node must exist")))
+      work <- rt.store.snapshot.map(_.nodes.get("n-work-f").getOrElse(fail("worker node must exist")))
       _ <- system.stopAll.handleErrorWith(_ => IO.unit)
     yield
-      // 既有 failed 链（failNode：deliverFailed / retry 挂点原样接管）
-      assertEquals(f.status, NodeLifecycle.Failed, "fail declaration must follow the existing failed chain")
+      // 核心语义翻转（设计 §3.1 纪律③）：fail 是 verdict，**不是**节点失败
+      assertEquals(f.status, NodeLifecycle.Completed, "a fail VERDICT must NOT fail the verifier node (verdict ≠ node status)")
+      assertEquals(f.lastVerdict, Some("fail"), "lastVerdict=fail recorded")
       assertEquals(f.blockedFeedback, None, "fail must NOT land a blockedFeedback (fail ≠ blocked)")
-      assertEquals(f.ttlExpireAt, None, "failed never expires (死亡现场保留，2026-09-07 作者裁定)")
-      assert(f.result.exists(_.startsWith("[node-report:fail] 产物编译红")), s"result head must be the fail render string, got: ${f.result}")
-      assert(f.result.exists(_.contains("建议: 回滚上游依赖后重派")), s"result carries the suggestion tail, got: ${f.result}")
-      // 零结算（failed 停等语义：下游不被 completed 结算）
-      assertEquals(dAfter.deliveredTo, Nil, "failed must NOT deliver to downstream (D6 零结算)")
-      assert(!evs.exists((t, id, _) => t == "nodeCompleted" && id == fId), "failed must NOT emit nodeCompleted")
+      assertEquals(f.result, Some(closing), "result = the raw closing output (旧 render 串改写已被取代)")
+      assert(!f.result.exists(_.startsWith("[node-report:fail]")), s"the old render-string rewrite must be gone, got: ${f.result}")
+      // 选通面：pass 边**不投**；回边只登记（执行腿落二期）
+      assertEquals(land.deliveredTo, Nil, "verdict=fail must NOT deliver along the pass edge (verdict-aware deliverOut)")
+      assertEquals(work.status, NodeLifecycle.Wiring, "the :loop control edge never settles the target's barrier (execution leg is phase 2)")
+      assert(work.loopStartedAt.isDefined, "the target's loop timer starts on the first in-budget fail (wall-clock cap source)")
+      assert(audit.exists((t, id) => t == "loop-round" && id == fId), s"a loop-round event must be logged, got: $audit")
+      assert(!audit.exists((t, id) => t == "loop-budget" && id == fId), "budget not exhausted yet — no circuit-break")
+      // 既有 completed 链照样走；零 blocked 痕迹
+      assert(evs.exists((t, id, _) => t == "nodeCompleted" && id == fId), "the verifier emits nodeCompleted (completed chain)")
       assert(!audit.exists((t, id) => t == "blocked" && id == fId), s"no blocked audit line, got: $audit")
   }
 

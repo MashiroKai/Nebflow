@@ -73,7 +73,11 @@ NodeList / NodeEdit / NodeCancel / NodeMessage + Read / Glob / Grep / Bash（仅
 
 ## 状态语义
 
-- **节点任务书必须含终态申报纪律（2026-09-11 noderpt 批裁定，硬要求）**：每个节点的 task 文本必须写明「收尾前调用 `node_report` 申报 pass/fail/blocked」。理由 = 完成门腿 2 默认开：未申报的节点**不终态化**（保持 running、结果不投递、下游 barrier 不停等结算），只会按阶梯被提醒（10min/30min/1h/2h/4h，上限 8 拍；此后每 4h 一条 `node-report-missing` 事件）等人工处置——节点永不判 failed、永不自动杀，靠人监督。任务书漏写这条 = 把该节点变成待人工处置的滞留节点。
+- **节点任务书必须含终态申报纪律（2026-09-11 noderpt 批裁定；2026-09-12 nrloop 一期按角色细化，硬要求）**：每个节点的 task 文本必须写明「收尾前调用 `node_report` 申报终态」。**申报值域取决于节点角色（NodeEdit 参数 `role`，create-only——建节点时定，之后不可改）**：
+  - `role: "task"`（缺省，执行节点）：`finish`（可选显式完成——正常完成不申报也走完成链）/ `blocked`（含六类细分）。**`pass`/`fail` 对执行节点非法**（引擎拒，错误码 `NODE_REPORT_CATEGORY_ROLE`）。
+  - `role: "verifier"`（校验节点）：`pass` / `fail`（**verdict**：被判定对象合格/不合格）+ `blocked`。**`finish` 对校验节点非法**。任务书必须显式写明「`fail` 不是本节点失败——节点照常 completed，verdict ≠ node status」。
+  - 理由 = 完成门腿 2 默认开：未申报的节点**不终态化**（保持 running、结果不投递、下游 barrier 不停等结算），只会按阶梯被提醒（10min/30min/1h/2h/4h，上限 8 拍；此后每 4h 一条 `node-report-missing` 事件）等人工处置——节点永不判 failed、永不自动杀，靠人监督。任务书漏写这条 = 把该节点变成待人工处置的滞留节点。
+- **校验节点与 fail 回边（`role: "verifier"`，nrloop 一期）**：校验节点用 `out: "(fail)<重跑目标>:loop"` 声明 fail 回边——`:loop` 是 verdict 选通**控制边**（不上图、不写 in 镜像、不进 barrier/deliveredTo），与 `(failed)` 门正交：`failed` = 节点状态失败（引擎判），`fail` = verdict（校验节点申报）。**一期执行腿未落地**：引擎只记账（`lastVerdict` + 轮次 + `loop-round` 事件），不会自动重跑目标节点；预算耗尽（轮次帽 3 / 时间帽 4h）时校验节点终态化 `failed` 并留 `loop-budget` 事件。
 - BLOCKED：做不下去时最终输出首行 BLOCKED + JSON（category ∈ upstream-incomplete | task-underspecified | agent-mismatch | external-dependency | needs-split | other）。blocked 合法出口 = NodeEdit 改 task/in/out 后重激活。
 - failed 节点可 reactivate 重跑（NodeEdit 任意实际改动即触发：轮次计数清零，in/out 拓扑保持）。处置首选：瞬时/基础设施类失败 → NodeEdit 改动该节点任意实际字段触发 reactivate，原节点复活重跑，停等下游自动续跑；需换基线/重派 → NodeEdit 新建承接节点（命名 <原名>-retry 或语义新名，in 同源 out 同目标）；任务无意义 → abandon=true 标记放弃；需人工/外部条件 → 最终输出写明上报内容（自动投递 Nebula）。原 failed 节点留审计，不删改。
 - failed 上游零结算（D5）：下游停等 pending/wiring 不启动、错误文本不投递——处置首选 reactivate 修复上游，重跑完成后停等下游自动以干净结果续跑；放弃修复则同步处置等待者（改接/换承接/abandon）。cancelled 上游永不投递且不可重激活——从 barrier 摘除（其 out 改接 Nebula）或换名承接后修 in，否则 barrier 死锁。
