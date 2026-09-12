@@ -14,6 +14,8 @@ import { t } from './i18n.js';
 import { makeReference } from './reference.js';
 import { appendRefToActiveView } from './input.js';
 import { showSidePanel } from './activityBar.js';
+// ⑤ 中文输入收归（作者裁定 2026-09-12）：组字判定唯一来源 = imeGuard.js。
+import { bindImeGuard, isImeComposing } from './imeGuard.js';
 
 // ── State ──────────────────────────────────────────────────────────────
 
@@ -1217,7 +1219,10 @@ function startCreateNode(isDir, dirPath) {
 
   const cancel = () => inputRow.remove();
 
+  // ⑤ 组字期间 Enter/Esc 交还输入法（非组字态行为逐键不变）。
+  bindImeGuard(input);
   input.addEventListener('keydown', (e) => {
+    if (isImeComposing(e, input)) return;
     if (e.key === 'Enter') { e.preventDefault(); commit(); }
     else if (e.key === 'Escape') { e.preventDefault(); cancel(); }
   });

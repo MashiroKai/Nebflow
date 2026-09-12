@@ -13,6 +13,10 @@ import { openChatWithFriend, fmtTime, isFriendTrusted, setFriendTrusted } from '
 import { showPopupMenu } from './contextMenu.js';
 // ⑥ 信任好友封存（作者裁定 2026-09-12）：静态常量，非配置读取、不过 latch。
 import { TRUST_SEALED } from './featureFlags.js';
+// ⑤ 中文输入收归（作者裁定 2026-09-12）：组字判定唯一来源 = imeGuard.js。
+// 本模块三个面：搜索框 / 验证附言 / ⑦ 备注行内编辑器（新增面必须同批接入，
+// 否则就是第 16 个分叉点）。
+import { bindImeGuard, isImeComposing } from './imeGuard.js';
 
 let friends = [];
 let incoming = [];
@@ -218,19 +222,30 @@ function friendRow(f) {
   row.setAttribute('aria-selected', 'false');
   row.appendChild(avatarEl(f, 36));
   const meta = el('div', 'fm-row-meta');
-  meta.appendChild(el('div', 'fm-row-name', f.name || f.neblinkId));
+  // ⑦ 显示优先级：备注 > 显示名（第三字段 username/NL 号不变，仍在次行）。
+  meta.appendChild(el('div', 'fm-row-name', f.remark || f.name || f.neblinkId));
   meta.appendChild(el('div', 'fm-row-sub', f.neblinkId));
   row.appendChild(meta);
   if (blocked) row.appendChild(el('span', 'fm-status-text fm-blocked-tag', t('contacts.blocked')));
   const open = () => openChatWithFriend(f);
-  row.addEventListener('click', open);
-  row.addEventListener('keydown', (e) => { if (e.key === 'Enter') { e.preventDefault(); open(); } });
+  // ⑦ 行内编辑器在场时行激活让位：编辑器里的 click / Enter 会**冒泡**到本行，
+  // 若不挡就会一边编辑一边开会话窗（Enter 提交后直接开窗）。既有同款先例 =
+  // sidebar.js 会话行 `e.target.closest('.session-name[contenteditable="true"]')` 让位。
+  const inInlineEditor = (e) => !!(e.target instanceof Element && e.target.closest('.fm-remark-edit'));
+  row.addEventListener('click', (e) => { if (inInlineEditor(e)) return; open(); });
+  row.addEventListener('keydown', (e) => {
+    if (inInlineEditor(e)) return; // 编辑器的 Enter/Esc 自管，不触发行激活
+    if (e.key === 'Enter') { e.preventDefault(); open(); }
+  });
   // #290 §1.1/§1.2: WeChat-style row context menu (delete / block / unblock).
   // 信任模式 v1: 非拉黑好友多出「信任此好友/取消信任」（纯本地标记；拉黑态
   // 不显示——黑名单优先于信任，trusted 标记对 blocked 行无意义）。
+  // ⑦ 备注（作者裁定 2026-09-12）：入口**仅此一处** = 右键菜单「设置备注」
+  // → 行内编辑（⑦-D2 否决玻璃弹窗 / 否决会话窗头第二入口）。
   row.addEventListener('contextmenu', (e) => {
     e.preventDefault();
     const items = [];
+    items.push({ label: t('contacts.menuSetRemark'), onClick: () => startRemarkEdit(f, row) });
     // SEALED (author ruling 2026-09-12): 信任好友入口隐藏——`TRUST_SEALED`
     // 为 true（默认）时菜单项不推入；整块代码保留原样，回退 = featureFlags.js
     // 把常量改回 false（回退步骤见该文件注释）。
@@ -250,6 +265,74 @@ function friendRow(f) {
     showPopupMenu(e.clientX, e.clientY, items);
   });
   return row;
+}
+
+// ── ⑦ 好友备注：行内编辑（新增面；⑤ 同批接入 imeGuard）─────────────
+// 形态对齐既有行内编辑惯例（sidebar.js 的 .folder-new-row、explorer.js 的
+// .explorer-name-input、modal.js 的 startInlineNewSession）：就在行内把名字那
+// 一行换成输入框，Enter 提交 / Esc 取消 / blur 取消；trim 空串 = 清除备注；
+// 长度 ≤64（maxlength + 提交前 trim）。禁第二入口、禁玻璃弹窗（⑦-D2）。
+const REMARK_MAX = 64;
+
+function startRemarkEdit(f, row) {
+  if (!row || row.querySelector('.fm-remark-edit')) return;
+  const nameEl = row.querySelector('.fm-row-name');
+  if (!nameEl || !nameEl.parentNode) return;
+
+  const input = document.createElement('input');
+  input.className = 'fm-remark-edit';
+  input.type = 'text';
+  input.maxLength = REMARK_MAX;
+  input.value = f.remark || '';
+  input.placeholder = t('contacts.remarkPlaceholder');
+  input.title = t('contacts.remarkHint');
+  input.setAttribute('aria-label', t('contacts.menuSetRemark'));
+  input.autocomplete = 'off';
+  bindImeGuard(input);
+
+  let done = false;
+  const restore = () => {
+    if (done) return;
+    done = true;
+    input.remove();
+    nameEl.hidden = false;
+  };
+  const commit = () => {
+    if (done) return;
+    // trim + 长度上限：maxlength 只管键盘输入，程序化赋值不受其约束 ⇒ 提交边界
+    // 再夹一次（冻结契约 §4「长度 ≤64（trim 后）」在 PUT 出口处必然成立）。
+    const next = input.value.trim().slice(0, REMARK_MAX);
+    restore(); // 先还原行（PUT 失败时列表照旧可读），再落库
+    const prev = f.remark || '';
+    if (next === prev) return; // 无变化：零请求
+    persistRemark(f, next);
+  };
+  const cancel = () => restore();
+
+  input.addEventListener('keydown', (e) => {
+    if (isImeComposing(e, input)) return; // 组字期间所有键交还输入法（⑤）
+    if (e.key === 'Enter') { e.preventDefault(); commit(); return; }
+    if (e.key === 'Escape') { e.preventDefault(); cancel(); }
+  });
+  input.addEventListener('blur', cancel);
+
+  nameEl.hidden = true;
+  nameEl.parentNode.insertBefore(input, nameEl);
+  input.focus();
+  input.setSelectionRange(input.value.length, input.value.length);
+}
+
+async function persistRemark(f, remark) {
+  try {
+    await api.setFriendRemark(f.userId, remark);
+    f.remark = remark || null;
+    // 三处显示面同步：本行 render() 就地重画；会话列表行 / 聊天窗头由
+    // messages.js 订阅该事件就地更新（③ 处显示优先级）。
+    render();
+    window.dispatchEvent(new CustomEvent('fm-remark-changed', { detail: { userId: f.userId, remark: f.remark } }));
+  } catch (err) {
+    friendErrToast(err);
+  }
 }
 
 // ── Delete / block flows (#290 §1.1/§1.2, WeChat-style confirm) ─────────
@@ -277,7 +360,7 @@ function confirmBlockFriend(f) {
       await api.blockFriend(f.userId);
       const cache = loadBlockedCache();
       if (!cache.some(b => b.userId === f.userId)) {
-        cache.push({ userId: f.userId, neblinkId: f.neblinkId || '', name: f.name || '', avatarUrl: f.avatarUrl || '' });
+        cache.push({ userId: f.userId, neblinkId: f.neblinkId || '', name: f.name || '', avatarUrl: f.avatarUrl || '', remark: f.remark || null });
         saveBlockedCache(cache);
       }
       const row = friends.find(x => x.userId === f.userId);
@@ -340,7 +423,12 @@ function buildSearch() {
     render();
   };
   btn.addEventListener('click', submit);
-  input.addEventListener('keydown', (e) => { if (e.key === 'Enter') { e.preventDefault(); submit(); } });
+  // ⑤ A4：搜索框组字 Enter 不得提交（此前零判定）。
+  bindImeGuard(input);
+  input.addEventListener('keydown', (e) => {
+    if (isImeComposing(e, input)) return;
+    if (e.key === 'Enter') { e.preventDefault(); submit(); }
+  });
   if (searching) {
     btn.disabled = true;
     btn.textContent = t('contacts.searching');
@@ -545,7 +633,12 @@ function buildResultCard() {
     };
     sendBtn.addEventListener('click', doSend);
     // Enter 直发 + 取消回退（微信常识：附言后点发送；不想发可退出）
-    input.addEventListener('keydown', (e) => { if (e.key === 'Enter') { e.preventDefault(); doSend(); } });
+    // ⑤ A4：验证附言组字 Enter 不得直发（此前零判定）。
+    bindImeGuard(input);
+    input.addEventListener('keydown', (e) => {
+      if (isImeComposing(e, input)) return;
+      if (e.key === 'Enter') { e.preventDefault(); doSend(); }
+    });
     const cancelBtn = el('button', 'glass-control fm-verify-cancel', t('contacts.cancelVerify'));
     cancelBtn.addEventListener('click', () => { verifyFor = null; render(); });
     box.appendChild(input);
