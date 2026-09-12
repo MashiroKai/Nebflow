@@ -688,6 +688,30 @@ private[agent] trait AgentCore:
             else IO.pure("")
           nowMs = System.currentTimeMillis()
           injectTime = isUserTurn && (isRealUserTurn || nowMs - lastTimeReminderMs >= TimeReminderMinGapMs)
+          // Plugin surface live convergence (plugins-live 批 2026-09-12). The Plugin
+          // Catalog enters the session ONLY via its first message
+          // (ProjectActor.pluginCatalogText → newTaskPrompt/newPrompt), so an
+          // already-open dispatcher session kept advertising a revoked plugin's
+          // capability forever (author report 2026-09-12 12:52). Change detection
+          // lives here, delta reporting in SystemReminders — same shape as the
+          // devices / mounted-projects channels: no change ⇒ no injection, and the
+          // first message is never rewritten.
+          // dispatcher-only gate: no other session has a plugin face in context, so
+          // no other session pays the read or risks a spurious reminder.
+          pluginSurfaceText <-
+            if stateForLlm.isDispatcher then
+              nebflow.core.plugin.DispatcherContextCatalog.pluginSectionResolved()
+            else IO.pure("")
+          pluginSurfaceChange =
+            // Baseline = what this session was last TOLD (spawn-time snapshot, then
+            // advanced per emitted reminder) — not the raw first message text, which
+            // is immutable. Lifecycle nodes (new session / compaction / restart)
+            // rebuild the baseline from the current render; ask turns skip the
+            // channel entirely (same gate as every other reminder).
+            val baseline = stateForLlm.stableSnapshot.map(_.pluginCatalog).getOrElse(pluginSurfaceText)
+            Option.when(!isLifecycleRebuild && !isAskTurn && baseline != pluginSurfaceText)(
+              PluginSurfaceChange(baseline, pluginSurfaceText)
+            )
           // Tasks: team 成员 only（任务工具重做 2026-08-30——任务=进展展示，
           // Nebula 不再有任务工具、不再注入；成员 reminder 用 team scope 的
           // 进展列表）。renderForPrompt returns the FULL list; the delta
@@ -716,7 +740,7 @@ private[agent] trait AgentCore:
             PromptContext(chatWidth = stateForLlm.session.chatWidth)
           )
           // Snapshot of the dynamic values at systemStable build time.
-          currentSnapshot = SystemStableSnapshot(devInfo, sessionsText, stateForLlm.language, envInfo, mountedProjectsText)
+          currentSnapshot = SystemStableSnapshot(devInfo, sessionsText, stateForLlm.language, envInfo, mountedProjectsText, pluginSurfaceText)
           promptCtx = PromptContext(
             availableTools = allowedTools,
             depth = depth,
@@ -775,7 +799,8 @@ private[agent] trait AgentCore:
             language = changeLanguage,
             isRootAgent = isRootAgent,
             injectTime = injectTime,
-            mountedProjectsDelta = changeProjects
+            mountedProjectsDelta = changeProjects,
+            pluginSurfaceChange = pluginSurfaceChange
           )
           // Branch change: persist synchronously (no async message needed)
           _ <- turnCtx.branchChange match
@@ -796,7 +821,15 @@ private[agent] trait AgentCore:
           // history growth. Dynamic context (peak/idle windows, pending
           // schedules) stays request-only — injected per-turn, never persisted.
           timeReminders = loggedReminders.filter(_.category == "time")
-          contextReminders = loggedReminders.filterNot(_.category == "time")
+          // Plugins-live (2026-09-12): the plugin-surface reminder is PERSISTED (like
+          // the time reminder) instead of request-only — the stale catalog sits in
+          // the first message for the whole session, so the retraction has to stay
+          // in history to keep the session's plugin face correct on every later
+          // turn. Older ones are pruned on injection (each one is authoritative).
+          pluginSurfaceReminders = loggedReminders.filter(_.category == SystemReminders.PluginSurfaceCategory)
+          contextReminders = loggedReminders.filterNot(r =>
+            r.category == "time" || r.category == SystemReminders.PluginSurfaceCategory
+          )
           timeMsg =
             if isCompactTurn || isAskTurn || timeReminders.isEmpty then Nil
             else List(Message(MessageRole.User, Left(SystemReminder.renderAll(timeReminders))))
@@ -804,6 +837,9 @@ private[agent] trait AgentCore:
           // a time reminder actually fires — the ≥1h system-event gap is
           // measured from the last REAL injection, not the last turn.
           _ = if timeMsg.nonEmpty then lastTimeReminderMs = System.currentTimeMillis()
+          pluginSurfaceMsg =
+            if isCompactTurn || isAskTurn || pluginSurfaceReminders.isEmpty then Nil
+            else List(Message(MessageRole.User, Left(SystemReminder.renderAll(pluginSurfaceReminders))))
           contextMsg =
             if isCompactTurn || isAskTurn || contextReminders.isEmpty then Nil
             else List(Message(MessageRole.User, Left(SystemReminder.renderAll(contextReminders))))
@@ -811,13 +847,20 @@ private[agent] trait AgentCore:
             if isCompactTurn || isAskTurn then Nil
             else turnCtx.branchChange.toList.map(r => Message(MessageRole.User, Left(r.render)))
           stateWithReminder =
-            if timeMsg.isEmpty then stateForLlm
-            else stateForLlm.withMessages(SystemReminders.pruneTimeReminders(stateForLlm.messages ++ timeMsg))
+            if pluginSurfaceMsg.isEmpty && timeMsg.isEmpty then stateForLlm
+            else
+              val withPluginSurface =
+                if pluginSurfaceMsg.isEmpty then stateForLlm.messages
+                else SystemReminders.prunePluginSurfaceReminders(stateForLlm.messages ++ pluginSurfaceMsg)
+              stateForLlm.withMessages(SystemReminders.pruneTimeReminders(withPluginSurface ++ timeMsg))
           // Cache v2: persist the rebuilt systemStable + snapshot in state at
           // lifecycle nodes (next turns reuse it). Non-lifecycle turns keep the
-          // existing cache untouched.
+          // existing cache untouched — except the plugin baseline, which advances
+          // only when the session was actually told about a plugin-surface change
+          // (otherwise the pending change stays pending).
           stateWithCache =
             if isLifecycleRebuild then stateWithReminder.withSystemStableCache(systemStable, currentSnapshot)
+            else if pluginSurfaceMsg.nonEmpty then stateWithReminder.withPluginSurfaceBaseline(pluginSurfaceText)
             else stateWithReminder
           // Maintenance check: every N delegate/flow calls
           maintenanceMsg =
