@@ -38,6 +38,19 @@ object SafetyMode:
     case AutoEdits => "auto-edits"
     case AutoAll => "auto-all"
 
+  /** wire 契约的**三档显式值域** —— 写入口（WS `setSafetyMode`、REST
+    * `PUT /api/safety/mode`）的白名单。写入口**不得**用 `fromString` 的静默兜底
+    * （`case _ => ConfirmEdits`）处理用户输入：那会把拼错/缺失的值悄悄变成最严档。
+    * 该兜底只保留给**配置文件**的"写了值却没写对"路径（见 `GlobalSafety` 三分支）。 */
+  val wireValues: Set[String] = Set("confirm-edits", "auto-edits", "auto-all")
+
+  /** 严格解析 wire 值：非三档显式值 ⇒ None（调用方回 400 / error 帧）。 */
+  def fromWire(s: String): Option[SafetyMode] = s match
+    case "confirm-edits" => Some(ConfirmEdits)
+    case "auto-edits"    => Some(AutoEdits)
+    case "auto-all"      => Some(AutoAll)
+    case _               => None
+
   given io.circe.Encoder[SafetyMode] =
     io.circe.Encoder.encodeString.contramap(toString)
 
@@ -75,7 +88,20 @@ object PermissionUpgrade:
 end PermissionUpgrade
 
 // ============================================================
-// F1 (#433): global safety mode
+// F1 (#433): global safety mode —— **唯一持久权威源 = 应用的权限模式**
+//
+// 语义（2026-09-12 权限全局单一权威源批，作者 R-a「不需要逐会话设置」）：
+// 本对象读出的值是**整个应用**的权限模式，不是"会话缺省值"。会话内切换
+// （顶栏三档 / 确认卡升级）降级为**仅内存的临时覆盖**，存放于
+// `SharedResources.permissionPolicies`（条目存在 ⇔ 该会话有覆盖）：
+//
+//     有效档位 = 覆盖 ?? 本对象读出的全局值        （唯一解析入口见
+//                     `SharedResources.effectiveSafetyMode` / §2.1）
+//
+// ⇒ 进程重启 / 新会话天然回落到本值（覆盖不落盘，无需任何"重置"代码）；
+// ⇒ `SessionMeta.safetyMode`（`sessions/_index.json` 的逐会话键）**已降级为
+//    非权威字段**：存量字节一字不动，但不再是任何权威读取点的来源（其值取什么
+//    都不影响有效档位，由 `SafetyModeAuthoritySpec` 承重钉住）。
 //
 // The user's auto-all was only ever a single session's meta field — the
 // system had no global channel, and ~/.nebflow/permission_policy.json was
@@ -96,6 +122,10 @@ end PermissionUpgrade
 //   · 可解析但不可识别（如 "yolo" 拼错）→ ConfirmEdits（保守：写了值却没写对，
 //     不放大权限，与 `SafetyMode.fromString` 的既有兜底同源）
 //   · 读不到（None）→ AutoAll（启动默认）
+//   · 键存在但类型不符（`null` / 数字 / 对象）→ `.as[String]` 失败 ⇒ 归入
+//     「读不到」⇒ AutoAll（与缺键同路）；注意 `ConfigService.mergeConfig` 把
+//     `null` 当**删键**语义 ⇒ 前端"清空"动作会落成"删键 = 回顶档"。UI 只写三档
+//     显式值，不暴露"未设置"态（设计 §2.3 / §6.4）。
 // ============================================================
 object GlobalSafety:
 
@@ -113,6 +143,23 @@ object GlobalSafety:
       .map(_.fold(SafetyMode.AutoAll)(SafetyMode.fromString))
 
 end GlobalSafety
+
+// ============================================================
+// 权限模式「有效档位」的唯一解析规则（2026-09-12 全局单一权威源批）
+//
+//   有效档位 = 覆盖（仅内存，按 rootSessionId） ?? 全局（GlobalSafety）
+//
+// 本 object 是**全仓唯一**做这个合并的地方（设计 §13 #1）：任何消费点
+// （判定 / 卡帧 / 会话列表出口 / 子代理与流程继承）都必须经它，
+// 不得各自实现。有覆盖 ⇔ `SharedResources.permissionPolicies` 里存在该
+// rootSessionId 的条目（条目缺失 = 跟随全局，这是常态路径而非异常兜底）。
+// ============================================================
+object SafetyModeAuthority:
+
+  inline def resolve(overrides: Map[String, SafetyMode], rootSid: String, global: SafetyMode): SafetyMode =
+    overrides.getOrElse(rootSid, global)
+
+end SafetyModeAuthority
 
 // ============================================================
 // Reversibility check — drives the confirm/auto-approve decision

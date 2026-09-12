@@ -1440,24 +1440,32 @@ private[agent] trait AgentCore:
   ): IO[PermissionDecision] =
     resources.permissionPolicies.get.flatMap { policies =>
       val rootSid = Option(state.session.rootSessionId).filter(_.nonEmpty).getOrElse(state.sessionId.getOrElse(""))
-      // F1 (#433): a bucket miss no longer silently falls back to the
-      // hardcoded ConfirmEdits default — background agents (Mail-activated
-      // team members, flow nodes, restored zombies) resolve the GLOBAL
-      // safety mode from nebflow.json `safety.defaultMode` instead, so a
-      // user-set global auto-all reaches every session source (I1/I2).
+      // F1 (#433) → 2026-09-12 全局单一权威源：桶条目存在 ⇔ 该根会话有"本会话
+      // 临时覆盖"（见 SharedResources.effectiveSafetyMode）。桶 miss 不再是
+      // "异常兜底"，而是常态的**跟随全局**路径 —— 全局值一改，所有未覆盖的已连
+      // 会话在下一个判定即生效，无需重连/重启。
+      //
+      // 判定使用的 mode 与卡帧档位（askUserPermission）同源，一律经唯一解析入口
+      // `effectiveSafetyMode`（覆盖 ?? 全局），因此本分支不再自行读 GlobalSafety。
+      // 条目存在时的取值 = 覆盖值，与解析入口的 `overrides[rootSid]` 逐字等价。
+      //
+      // 日志降级（debug）：miss 已是常态路径，warn 会在每次无覆盖判定刷一条，
+      // 属日志污染（可观测性代价登记在设计 §15 U-4）。
       policies.get(rootSid) match
         case Some(policy) =>
           IO.pure(decide(policy, call))
         case None =>
-          val permLogger = nebflow.core.NebflowLogger.forName("nebflow.agent.permissions")
-          nebflow.core.GlobalSafety.defaultMode.flatMap { mode =>
-            permLogger
-              .warn(
-                s"permission bucket miss for rootSid=${rootSid.take(8)} — falling back to global safety mode " +
-                  s"${nebflow.core.SafetyMode.toString(mode)} (#433 F1)"
-              )
-              .as(decide(nebflow.agent.PermissionPolicy(safetyMode = mode), call))
-          }
+          resources
+            .effectiveSafetyMode(rootSid)
+            .flatTap(mode =>
+              nebflow.core.NebflowLogger
+                .forName("nebflow.agent.permissions")
+                .debug(
+                  s"no session override for rootSid=${rootSid.take(8)} — following global safety mode " +
+                    s"${nebflow.core.SafetyMode.toString(mode)} (覆盖 ?? 全局, 常态路径)"
+                )
+            )
+            .map(mode => decide(nebflow.agent.PermissionPolicy(safetyMode = mode), call))
     }
 
   private def decide(policy: PermissionPolicy, call: ToolCall): PermissionDecision =
@@ -1477,11 +1485,15 @@ private[agent] trait AgentCore:
     // 递进式放行链 (2026-08-30): the card carries the session's CURRENT mode so
     // the frontend can decide which escalation button to render (confirm-edits
     // + Write/Edit → "upgrade to auto-edits"; auto-edits + Bash/Curl →
-    // "upgrade to auto-all"). Bucket read = same source as permissionDecision.
-    resources.permissionPolicies.get.flatMap { policies =>
-      val rootSid = Option(state.session.rootSessionId).filter(_.nonEmpty).getOrElse(state.sessionId.getOrElse(""))
-      val currentMode =
-        policies.get(rootSid).map(p => nebflow.core.SafetyMode.toString(p.safetyMode)).getOrElse("confirm-edits")
+    // "upgrade to auto-all").
+    //
+    // 2026-09-12 全局单一权威源：卡帧档位与判定（permissionDecision）**同源**——
+    // 一律经唯一解析入口 effectiveSafetyMode（覆盖 ?? 全局）。此前桶 miss 分支
+    // 写死字面量 "confirm-edits"，与判定侧读全局**不同源**，导致全局为
+    // auto-edits/auto-all 的无覆盖会话渲染出缺失/错误的升级按钮（设计 §10 #1）。
+    val rootSid = Option(state.session.rootSessionId).filter(_.nonEmpty).getOrElse(state.sessionId.getOrElse(""))
+    resources.effectiveSafetyMode(rootSid).flatMap { effectiveMode =>
+      val currentMode = nebflow.core.SafetyMode.toString(effectiveMode)
       permissionDeferredRef.modify {
       case existing @ Some(_) =>
         val r = ToolExecResult("Another permission request is already pending", isError = true)

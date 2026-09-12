@@ -159,6 +159,32 @@ object ConfigService:
     }
   end updateConfig
 
+  /** 定向写 `safety.defaultMode`（= 应用的权限模式，全局唯一持久权威源）。
+    *
+    * 2026-09-12 权限全局单一权威源批（设计 §5.1 / §13 #16）：REST
+    * `PUT /api/safety/mode` 与 Settings UI 的写入口。
+    *
+    * 形态 = 「读双读路径 → parse → 定向覆写子树 → 写品牌名」，照
+    * `WebSocketRoutes.persistMcpServerEnabled` 的既有先例：
+    *   · **整体包在 `writeLocked`** 内 —— 与其它 read-modify-write 写者（updateConfig
+    *     / persistWorkSchedule / persistThinkingConfig / persistMcpServerEnabled /
+    *     setToolResultTtl）串行，避免同秒双写互踩（`:14-23` 注释记载的踩踏族）；
+    *   · **不走 `mergeConfig`** ⇒ `null = 删键`语义不参与（调用方已做枚举白名单校验，
+    *     只传三档显式值）；
+    *   · 密钥遮蔽 / `***` 规则不涉及 `safety` 子树；
+    *   · 写盘失败**上浮**（fail-loud，与冻结修复批同族）——调用方据此回 4xx/5xx，
+    *     不让用户看到"已保存"而实际未落盘。
+    */
+  def setSafetyDefaultMode(mode: String): IO[Unit] =
+    writeLocked {
+      IO.blocking {
+        val existing = if os.exists(configPath) then os.read(configPath) else "{}"
+        val parsed = parse(existing).getOrElse(Json.obj())
+        val updated = parsed.mapObject(_.add("safety", Json.obj("defaultMode" -> mode.asJson)))
+        os.write.over(PathUtil.configJsonWritePath(PathUtil.dataRoot), updated.spaces2, createFolders = true)
+      }
+    }
+
   private val sensitiveKeyPattern = "(?i)(api[_-]?key|secret|app[_-]?secret|encrypt[_-]?key|token|password)".r
 
   /**

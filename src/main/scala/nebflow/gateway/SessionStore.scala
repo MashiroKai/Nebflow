@@ -290,8 +290,22 @@ class SessionStore(sessionsDir: os.Path, tasksDir: os.Path):
 
   end recoverFolderName
 
-  /** Scan disk for session files not in the index and recover them. */
+  /** Scan disk for session files not in the index and recover them.
+    *
+    * ⚠ T-2/R1 = C（2026-09-12 作者裁定）：恢复出的会话档位**显式**取全局权威源
+    * （`GlobalSafety.defaultMode`），不再落到 `SessionMeta` 的构造缺省（字面量
+    * "auto-all"）。回归钉 = `SessionStoreRecoverAuthoritySpec`（把全局设为
+    * confirm-edits ⇒ 恢复出的 meta 必须是 confirm-edits，硬编码缺省会变红）。
+    */
   private def recoverOrphans(indexed: List[SessionMeta]): IO[List[SessionMeta]] =
+    nebflow.core.GlobalSafety.defaultMode.flatMap { authorityMode =>
+      recoverOrphansWith(indexed, authorityMode)
+    }
+
+  private def recoverOrphansWith(
+    indexed: List[SessionMeta],
+    authorityMode: nebflow.core.SafetyMode
+  ): IO[List[SessionMeta]] =
     IO.blocking {
       val indexedIds = indexed.map(_.id).toSet
       os.list(sessionsDir)
@@ -314,7 +328,26 @@ class SessionStore(sessionsDir: os.Path, tasksDir: os.Path):
                   case _: Exception => "Recovered Session"
               // Restore folderId from sidecar (if it exists)
               val folderId = readMetaSidecar(id)
-              List(SessionMeta(id, name, mtime, mtime, hasUnread = false, folderId = folderId))
+              // T-2/R1 = C（2026-09-12 作者裁定 + 设计 §10 #13 / A-10）：恢复路径
+              // **不得静默 fail-open** —— 此前这里靠 `SessionMeta` 的构造缺省
+              // （字面量 "auto-all"）落盘，"恢复出的会话 = 顶档"由此而生（读盘口径
+              // 与全局值无关）。现在**显式取全局权威源**（`GlobalSafety.defaultMode`，
+              // 由外层线程下来）写入 meta：盘上值即权威源当时的值，不再是硬编码缺省。
+              //
+              // 注意：meta 本轮已降级为非权威字段（有效档位 = 覆盖 ?? 全局），因此
+              // 本改动**不改变**任何会话的有效档位；它消除的是"恢复路径写顶档"这一
+              // **可观测的 fail-open 痕迹**与"硬编码缺省冒充权威"的耦合。
+              List(
+                SessionMeta(
+                  id,
+                  name,
+                  mtime,
+                  mtime,
+                  hasUnread = false,
+                  folderId = folderId,
+                  safetyMode = nebflow.core.SafetyMode.toString(authorityMode)
+                )
+              )
             }
           else IO.pure(Nil)
           end if
@@ -904,12 +937,28 @@ class SessionStore(sessionsDir: os.Path, tasksDir: os.Path):
       (activeId, updated, folders)
     } *> saveIndex
 
+  /** ⚠ **@deprecated（非权威）** —— 2026-09-12 权限全局单一权威源批起，会话不再持有
+    * 权威档位：**权威 = 内存覆盖桶 ?? 全局**（`SharedResources.effectiveSafetyMode`
+    * → `SafetyModeAuthority.resolve`，见 `core/permissions.scala` 与设计 §2.1）。
+    *
+    * 本方法把档位写进 `sessions/_index.json` 的会话 meta —— 正是 R1/T-2 的承载面
+    * （索引损坏恢复路径把它写回顶档）。**新代码不得调用**：会话内切换（WS
+    * `setSafetyMode` / 确认卡升级）只写内存覆盖，不落盘；`_index.json` 的存量字节
+    * 一字不动（方案 A 读时忽略）。
+    *
+    * 方法体保留（避免无关编译面扩散）；验证口径：本批改动后全仓调用点应为零
+    * （`AgentCore` / WS 路由 / 工具与流程继承面全部改走 resolver）。
+    */
   def setSafetyMode(id: String, mode: String): IO[Unit] =
     indexRef.update { case (activeId, sessions, folders) =>
       val updated = sessions.map(s => if s.id == id then s.copy(safetyMode = mode) else s)
       (activeId, updated, folders)
     } *> saveIndex
 
+  /** ⚠ **@deprecated（非权威）** —— 读的是 `_index.json` 的盘上遗留值，取任何值都
+    * **不改变**该会话的有效档位（有效档位 = 覆盖 ?? 全局；见 `setSafetyMode` 注释与
+    * 设计 §2.1 要点 2）。子代理/流程继承面**不得**再用它（本批已全部改走
+    * `SharedResources.effectiveSafetyMode`）。 */
   def getSafetyMode(id: String): IO[String] =
     indexRef.get.map { case (_, sessions, _) =>
       sessions.find(_.id == id).map(_.safetyMode).getOrElse("confirm-edits")
