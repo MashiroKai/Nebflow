@@ -4,6 +4,7 @@ import cats.effect.unsafe.implicits.global
 import cats.effect.{IO, Ref}
 import cats.syntax.all.*
 import fs2.Stream
+import io.circe.{Json, JsonObject}
 import munit.FunSuite
 import nebflow.actor.{ActorSystem, Behaviors}
 import nebflow.agent.*
@@ -523,5 +524,38 @@ class MailIdleGateWiringSpec extends FunSuite:
     assert(clue(secondIdx) >= 0, "second item never drained")
     assert(clue(firstIdx) < clue(secondIdx), s"FIFO order broken: first=$firstIdx second=$secondIdx")
     assert(clue(queueAfter).isEmpty, s"queue not fully drained: $queueAfter")
+
+  // ---------- AC-14（R2 2026-09-12）：node: 腿绕行本闸（结构性） ----------
+
+  test("AC-14 R2：node:<id> 腿不经 idle gate —— 显式拒 queue、零队列落盘、零 turn") {
+    val system = ActorSystem(s"cqi-a14-${java.util.UUID.randomUUID().toString.take(6)}")
+    val tmp = os.temp.dir(prefix = "cqi-a14")
+    fixtureTeam(tmp, "cqi14")
+    val llm = new RecordingLlm
+
+    val io = for
+      sessionStore <- IO.pure(SessionStore(tmp / "sessions", tmp / "tasks"))
+      memberMeta <- sessionStore.createSession("cqi14/member", agentName = Some("member"), flowName = Some("cqi14"))
+      _ <- TeamSessionRegistry.registerSession("cqi14", "member", memberMeta.id)
+      resources <- mkResources(system, tmp, llm, sessionStore)
+      res <- MailTool.call(
+        JsonObject(
+          "address" -> Json.fromString("node:n-14"),
+          "message" -> Json.fromString("节点补充"),
+          "delivery" -> Json.fromString("queue")
+        ),
+        ctxFor(resources, system, "disp-sid").copy(isDispatcher = true, projectName = Some("p14"))
+      )
+      queueCount <- MailQueueStore.size(memberMeta.id)
+      reqs <- llm.requests.get
+    yield (res, queueCount, reqs)
+
+    val (res, queueCount, reqs) = io.unsafeRunSync()
+    res match
+      case Left(err) => assert(clue(err.message).contains("always immediate"), "node: 腿必须显式拒 queue（不得落入本闸）")
+      case Right(v)  => fail(s"node: + queue 不得成功，got: $v")
+    assertEquals(queueCount, 0, "node: 腿不得落 MailQueueStore（idle gate 结构上不可达）")
+    assert(clue(reqs).isEmpty, "node: 腿不得触发任何 turn（注入/追加由引擎三态决定）")
+  }
 
 end MailIdleGateWiringSpec

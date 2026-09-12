@@ -216,7 +216,9 @@ class DelegateToolSpec extends CatsEffectSuite:
     val face = nebflow.agent.AgentCore.KernelFixedTools
     assertEquals(face, nebflow.agent.AgentCore.BaseTools + "AskUserQuestion")
     assertEquals(face.size, 7)
-    Set("Delegate", "SubTask", "Task", "TaskBoard", "node_report", "AgentControl", "Mail").foreach { t =>
+    // R2 2026-09-12：kernel 面照旧零 Mail（节点面不挂 Mail），并在排除清单中
+    // 加挂两个已删净退役件 Task/NodeMessage——他们不得因 R2 回潮。
+    Set("Delegate", "SubTask", "Task", "NodeMessage", "TaskBoard", "node_report", "AgentControl", "Mail").foreach { t =>
       assert(!face.contains(t), s"kernel must not hold: $t")
     }
     assertEquals(nebflow.agent.AgentCore.fixedToolsFor(AgentDef(name = "kernel", description = "", tools = Nil, systemPrompt = "")), face)

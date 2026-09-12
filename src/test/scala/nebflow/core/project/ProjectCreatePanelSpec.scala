@@ -9,7 +9,7 @@ import nebflow.actor.{ActorRef, ActorSystem, Behavior, Behaviors}
 import nebflow.agent.*
 import nebflow.core.PathUtil
 import nebflow.core.task.FileTaskStore
-import nebflow.core.tools.{FileLockManager, ProjectCreateTool, TaskTool, ToolContext}
+import nebflow.core.tools.{FileLockManager, MailTool, ProjectCreateTool, ToolContext}
 import nebflow.gateway.{RateLimiter, SessionStore}
 import nebflow.llm.{ModelCandidate, ThinkingConfig}
 import nebflow.shared.{LlmHandle, LlmRequest, LlmResponse, StreamChunk}
@@ -20,7 +20,7 @@ import scala.concurrent.duration.*
  * ProjectCreate「未知路径 AskUser 式交互面板」全链验收（阶段2迁移 §6.2 口径②）。
  *
  * 口径/语义映射：
- *  ① 已知路径直建（test ①）——name 缺省 = basename、脚手架、幂等挂载、Task 提示；
+ *  ① 已知路径直建（test ①）——name 缺省 = basename、脚手架、幂等挂载、Mail 提示（R2 后）；
  *  ② 未知/缺省 path → AskUser 式面板 pending 产生（test ②，真实 InteractionHub）；
  *  ③ 面板点选 → 创建链走通（test ③，含 #43 兼容断言：agent 侧负载不消费面板槽）；
  *  ④ 创建后 Task(project=…) 可触发（test ④，真实分发器会话拉起证据）；
@@ -193,7 +193,7 @@ class ProjectCreatePanelSpec extends CatsEffectSuite:
   // ① 已知路径直建
   // ============================================================
 
-  test("① 已知路径直建：project.json 字段落盘 + 脚手架 + 幂等挂载 + Task 提示") {
+  test("①（R2 后）已知路径直建：project.json 字段落盘 + 脚手架 + 幂等挂载 + Mail 提示") {
     val ws = tempRoot / "ws-alpha"
     os.makeDir.all(ws)
     val system = ActorSystem(s"pcp-1-${scala.util.Random.nextInt(100000)}")
@@ -212,7 +212,8 @@ class ProjectCreatePanelSpec extends CatsEffectSuite:
     yield
       assert(result.isRight, s"direct create must succeed: $result")
       val msg = result.toOption.get
-      assert(msg.contains("Task(project='ws-alpha'"), s"success message must carry the Task usage hint: $msg")
+      // R2（2026-09-12）：提示语由 Task(...) 改为 Mail(address="project:...")——旧工具已删净退役
+      assert(msg.contains("Mail(address='project:ws-alpha'"), s"success message must carry the Mail usage hint: $msg")
       assert(pd.isDefined, "project.json must be persisted")
       val defn = pd.get
       assertEquals(defn.name, "ws-alpha", "name must derive from workspace basename when omitted")
@@ -346,8 +347,8 @@ class ProjectCreatePanelSpec extends CatsEffectSuite:
         Json.obj("name" -> Json.fromString("trigger-proj"), "workspace" -> Json.fromString(ws.toString)).asObject.get,
         toolCtx(ws, system, res, wsSend = Some((j: Json) => frames.update(_ :+ j)))
       )
-      triggered <- TaskTool.call(
-        Json.obj("project" -> Json.fromString("trigger-proj"), "task" -> Json.fromString("冒烟任务")).asObject.get,
+      triggered <- MailTool.call(
+        Json.obj("address" -> Json.fromString("project:trigger-proj"), "message" -> Json.fromString("冒烟任务")).asObject.get,
         toolCtx(ws, system, res)
       )
       // 分发器会话拉起证据：engine wsSend 路由帧 agentStart.nodeSessionId = dispatcher-*

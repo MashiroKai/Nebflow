@@ -10,7 +10,7 @@ import nebflow.actor.{ActorRef, ActorSystem, Behavior, Behaviors}
 import nebflow.agent.{AgentCommand, AgentKind, AgentLibrary, AgentRecord, SharedResources}
 import nebflow.core.PathUtil
 import nebflow.core.task.FileTaskStore
-import nebflow.core.tools.{FileLockManager, MailTool, NodeEditTool, NodeListTool, TaskTool, ToolContext}
+import nebflow.core.tools.{FileLockManager, MailTool, NodeEditTool, NodeListTool, ToolContext}
 import nebflow.core.flow.TeamSessionRegistry
 import nebflow.gateway.{RateLimiter, SessionStore}
 import nebflow.llm.{ModelCandidate, ThinkingConfig}
@@ -843,8 +843,8 @@ class NodeAcceptanceSpec extends CatsEffectSuite:
       ref <- spawnProjectActor(rt0, system, res, "proj-task1")
       _ <- ProjectRuntimeRegistry.register(rt0.copy(actorRef = Some(ref)))
       ctx = mkCtx(res, system, ws.toString)
-      r <- TaskTool.call(Json.obj(
-        "project" -> Json.fromString("acc-task1"), "task" -> Json.fromString("调研 X")).asObject.get, ctx)
+      r <- MailTool.call(Json.obj(
+        "address" -> Json.fromString("project:acc-task1"), "message" -> Json.fromString("调研 X")).asObject.get, ctx)
       // 1) 运行中必须注册（getActiveAgents 快照依赖）——agent 被 gate 卡在 turn 内，
       //    注册条目稳定存在，轮询必命中。
       seen <- pollRegistryFor(res.agentRegistry, _.startsWith("dispatcher-"), 100, 20.millis)
@@ -896,15 +896,15 @@ class NodeAcceptanceSpec extends CatsEffectSuite:
     for
       res <- mkResources(system, tempRoot, new RecordingLlm)
       ctx = mkCtx(res, system, tempRoot.toString)
-      r <- TaskTool.call(Json.obj(
-        "project" -> Json.fromString("no-such"), "task" -> Json.fromString("x")).asObject.get, ctx)
+      r <- MailTool.call(Json.obj(
+        "address" -> Json.fromString("project:no-such"), "message" -> Json.fromString("x")).asObject.get, ctx)
       _ <- system.stopAll.handleErrorWith(_ => IO.unit)
     yield
       assert(r.isLeft, s"must fail, got: $r")
       assert(r.left.exists(_.message.contains("not mounted")), s"error must say not mounted, got: $r")
   }
 
-  test("Task③: same-name collision — Task→project dispatcher vs Mail→team (channels distinct)") {
+  test("Task③（R2 后）: same-name collision — Mail(project:)→dispatcher vs Mail→team (channels distinct)") {
     writeDispatcherAgent()
     val ws = tempRoot / "ws-task3"
     os.makeDir.all(ws)
@@ -920,16 +920,16 @@ class NodeAcceptanceSpec extends CatsEffectSuite:
       _ <- ProjectRuntimeRegistry.register(rt0.copy(actorRef = Some(ref)))
       _ <- TeamSessionRegistry.registerSession("slideblocks", "boss", "boss-sid")
       rootCtx = mkCtx(res, system, ws.toString).copy(sessionId = Some("root-sid"))
-      // Task(project=slideblocks) → project dispatcher（新渠道）
-      rTask <- TaskTool.call(Json.obj(
-        "project" -> Json.fromString("slideblocks"), "task" -> Json.fromString("做 PPT")).asObject.get, rootCtx)
+      // Mail(address="project:slideblocks") → project dispatcher（新渠道；旧 Task 工具已删净退役）
+      rTask <- MailTool.call(Json.obj(
+        "address" -> Json.fromString("project:slideblocks"), "message" -> Json.fromString("做 PPT")).asObject.get, rootCtx)
       // Mail(→slideblocks) → team（Mail 保持团队优先不翻转——immediate 全链）
       rMail <- MailTool.call(Json.obj(
         "address" -> Json.fromString("slideblocks"), "message" -> Json.fromString("hi")).asObject.get, rootCtx)
       leadSid <- TeamSessionRegistry.findTeamAgent("slideblocks", "boss")
       _ <- system.stopAll.handleErrorWith(_ => IO.unit)
     yield
-      assert(rTask.exists(_.contains("dispatcher triggered")), s"Task must hit project dispatcher, got: $rTask")
+      assert(rTask.exists(_.contains("dispatcher triggered")), s"Mail(project:) must hit project dispatcher, got: $rTask")
       // Mail 路由事实：同名团队命中（lead 可解析）→ 团队路由优先，完全不碰 project 分支
       assertEquals(leadSid, Some("boss-sid"), "same-named team lead must resolve (team routing premise)")
       assert(!rMail.exists(_.contains("dispatcher triggered")), s"Mail must NOT hit project dispatcher, got: $rMail")

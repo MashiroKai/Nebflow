@@ -154,6 +154,19 @@ object PromptSections:
   def requiresTools(names: String*): PromptContext => Boolean =
     ctx => names.forall(ctx.availableTools.contains)
 
+  /** 节点会话 always-on 最小段正文（#304-②，2026-09-12）。公开常量 = 段长门的
+    * 断言对象（spec 直接量本常量的 UTF-8 字节数 ≤ [[NodeSessionAlwaysOnSectionMaxBytes]]）。
+    * 内容边界（硬）：只放最小硬动作——一句申报义务 + 一句未申报后果 + 一句受阻出口；
+    * 禁复述 seed 全文（段进每次 node LLM 调用，token 是经常性成本）。 */
+  val NodeSessionAlwaysOnSection: String =
+    """## 节点终态申报（Flow Map 节点会话）
+
+结束前必须调用 `node_report` 申报：执行节点 `finish`/`blocked`，校验节点 `pass`/`fail`/`blocked`。
+未申报 ⇒ 节点保持 running、结果不投递、按阶梯被提醒，不会自动判 failed。做不下去 ⇒ `blocked`。"""
+
+  /** 段长门阈值（字节）：段正文 UTF-8 字节数必须 ≤ 本值。 */
+  val NodeSessionAlwaysOnSectionMaxBytes: Int = 400
+
   // ============================================================
   // Built-in section text constants
   //
@@ -268,6 +281,23 @@ object PromptSections:
       350,
       condition = _ => true,
       body = traceSection
+    ),
+
+    // --- 节点终态申报段（#304-②，2026-09-12）：**node 会话 always-on 最小硬动作**
+    // 引擎侧抗漂移——运行时副本陈旧是 #304 的主因（noderept-usage-recon：今日
+    // 39/39 node 会话实收系统提示词零命中 node_report 纪律），提示词面单靠 seed
+    // 播种（add-only）做不到「引擎改了、运行时一定跟上」。本段由**引擎**注入，
+    // 条件判据用**现成字段** `PromptContext.availableTools`（== seed 里那句
+    // 「若 node_report 工具在你的工具集里」的机械等价形式），**零新增字段**
+    // （`promptCtx = PromptContext(` 构造点不动）。只放**最小硬动作**：禁止复述
+    // seed 全文、禁止流程图/长条款/工具用法（用法归工具 description）。
+    // 段长门：`NodeSessionAlwaysOnSectionMaxBytes`（≤400 B）——段进每次 node LLM
+    // 调用，token 是经常性成本。段序 360 = 落在 stable 段之后、dynamic identity
+    // 段（395）之前，不破坏 system.md 前缀缓存锚（`assembleSystemPrompt` 契约）。
+    PromptSection(
+      360,
+      condition = ctx => ctx.availableTools.contains(nebflow.core.tools.NodeReportToolDef.Name),
+      body = NodeSessionAlwaysOnSection
     ),
 
     // --- 轨道二 #5 identity clauses (before tool guides — who reads your

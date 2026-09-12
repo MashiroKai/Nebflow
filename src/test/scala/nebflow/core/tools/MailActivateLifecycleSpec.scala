@@ -5,6 +5,7 @@ import cats.effect.unsafe.implicits.global
 import cats.effect.{IO, Ref}
 import cats.syntax.all.*
 import fs2.Stream
+import io.circe.{Json, JsonObject}
 import munit.FunSuite
 import nebflow.actor.{ActorSystem, Behaviors}
 import nebflow.agent.*
@@ -244,6 +245,49 @@ class MailActivateLifecycleSpec extends FunSuite:
     assert(mgrRec.isDefined, "registerActor 4-arg did not write the AgentRecord")
     assertEquals(mgrRec.get.parentSessionId, "root-1")
     assertEquals(mgrRec.get.rootSessionId, "root-1")
+  }
+
+  // ---- R2 腿③（2026-09-12）：分发器身份发 root 不触发激活路径 ----
+
+  test("M-3 R2：分发器身份发 root 走显式 root 解析 —— 解析不到即报错，且不触发任何激活路径") {
+    val system = ActorSystem(s"mail-lc-r2-${java.util.UUID.randomUUID().toString.take(6)}")
+    val tmp = os.temp.dir(prefix = "mail-r2-root")
+    fixtureTeam(tmp)
+    val llm = new RecordingLlm
+
+    val io = for
+      sessionStore <- IO.pure(SessionStore(tmp / "sessions", tmp / "tasks"))
+      resources <- mkResources(system, tmp, llm, sessionStore)
+      registryBefore <- resources.agentRegistry.get
+      // 未注册任何 Root 会话（无 Nebula 窗口）⇒ 档①/档② 双双落空
+      res <- MailTool.call(
+        JsonObject(
+          "address" -> Json.fromString("Nebula"),
+          "message" -> Json.fromString("批级回传"),
+          "chainId" -> Json.fromString("chain-n-m3")
+        ),
+        ToolContext(
+          projectRoot = os.pwd.toString,
+          sessionId = Some("disp-sid-m3"),
+          isDispatcher = true,
+          projectName = Some("p-m3"),
+          sharedResources = Some(resources),
+          actorSystem = Some(system)
+        )
+      )
+      registryAfter <- resources.agentRegistry.get
+      requests <- llm.requests.get
+    yield (res, registryBefore, registryAfter, requests)
+
+    val (res, registryBefore, registryAfter, requests) = io.unsafeRunSync()
+    res match
+      case Left(err) =>
+        assert(clue(err.message).contains("NEBULA_ROOT_UNRESOLVED"), "解析不到必须显式报错（硬禁静默成功）")
+        assert(clue(err.message).contains("legal address face"), "错误须指明合法地址面")
+        assert(clue(err.message).contains("Nebula"), "错误须点名 Nebula（期待形态说明）")
+      case Right(v) => fail(s"无 root 会话时不得报成功（硬禁三种静默），got: $v")
+    assertEquals(registryAfter, registryBefore, "解析失败路径不得新增/改写 AgentRecord（激活路径未触发）")
+    assert(clue(requests).isEmpty, "解析失败路径不得 spawn 任何 agent 会话（零 LLM 请求 = 激活路径未触发）")
   }
 
 end MailActivateLifecycleSpec

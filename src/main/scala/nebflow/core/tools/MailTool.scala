@@ -34,24 +34,44 @@ object MailTool extends Tool:
   private val TeamOnlyRoutingError =
     "Agents outside a team mail TEAM names only (e.g. \"nebflow-project\") — the team Manager dispatches to members. \"team/agent\" explicit addresses and bare short names are not routable from outside a team."
 
+  /** Nebula root agent 定义名（分层地址面与 root 解析的判据单点）。 */
+  private val NebulaAgentName = "Nebula"
+
   val name: String = "Mail"
 
   val description: String =
-    """Send a message to an agent within your team.
+    """Send a message to another agent — the platform's **only message primitive**
+(2026-09-12 「一个 Mail 统一」；the former `Task` and `NodeMessage` tools are retired —
+this note supersedes all earlier instructions naming them as entry points).
 
 Required: address, message
 
-The address depends on your team context:
-- OUTSIDE any team (Nebula root / standalone agents): use a TEAM name
-  (e.g. "nebflow-project") — the message goes to the team's lead agent
-  (Manager), who dispatches to members. Bare member short names and
-  "team/agent" addresses are NOT routable from outside a team.
-- INSIDE a team: use a member short name (e.g. "backend") — resolved within
-  your team first (same-team priority).
-- "team/agent" (e.g. "nebflow-project/Backend") — explicit scoped route to a
-  specific member, usable from inside a team context.
+## Address face (role-scoped — an address outside your face is an explicit error)
+- **Nebula (root)**: `project:<name>` — triggers that project's dispatcher (a bare
+  mounted project name is accepted as an equivalent form). You have no `node:`
+  address and no self-address.
+- **Project dispatcher**: `Nebula` — the root session; `node:<nodeId>` — a node in
+  your current project (from NodeList). You do not mail your own project.
+- **Team context (legacy)**: a team name (e.g. "nebflow-project") routed to its
+  lead agent, a bare member short name (resolved within your team first), or an
+  explicit "team/agent" route.
 
-For a one-shot executor outside any project (no team/mail identity), use the Delegate tool — it starts the built-in minimal kernel sub-agent.
+An address that is not recognizable in your face is an **explicit error** — there
+is no silent fallback and no fuzzy matching.
+
+## `node:<id>` routing semantics (by target node status; same engine as the retired
+`NodeMessage` tool — `NodeEngine.sendNodeMessage`)
+- **running**: injected into the node's live session at the NEXT turn boundary
+  (does NOT interrupt the current turn), carrying a `[NODE-MESSAGE]` header.
+- **wiring / pending** (non-terminal, no live session): persistently appended to
+  the node's task as a「分发器补充」section — read when the node starts.
+- **terminal (completed / failed / cancelled / blocked)**: REFUSED
+  (`NODE_TERMINAL_NO_MESSAGE`) — a finished node is never retro-edited; create a
+  new node instead (NodeEdit).
+- Errors: `NODE_NOT_FOUND` / `NODE_MESSAGE_EMPTY` / `NODE_TERMINAL_NO_MESSAGE`.
+- Every message (injected / appended / not-delivered) is appended to the project's
+  flow-map-events.jsonl audit log (type=node-message).
+- `delivery` is always immediate for `node:` — the engine decides inject vs append.
 
 Images (optional `images` parameter): up to 5 absolute local image paths
 (PNG/JPG/JPEG/GIF/WEBP/BMP) sent as attachments — the recipient sees the images
@@ -83,7 +103,7 @@ Message type (optional, default "INFO"):
       "properties" -> Json.obj(
         "address" -> Json.obj(
           "type" -> "string".asJson,
-          "description" -> "Outside a team: a team name (e.g. \"nebflow-project\") routed to its Manager. Inside a team: a member short name (e.g. \"backend\") or an explicit \"team/agent\" route (e.g. \"nebflow-project/Backend\").".asJson
+          "description" -> "Role-scoped address. Nebula (root): \"project:<name>\" (a bare mounted project name is equivalent). Project dispatcher: \"Nebula\" or \"node:<nodeId>\". Team context: a team name, a member short name, or \"team/agent\". An address outside your face is an explicit error.".asJson
         ),
         "message" -> Json.obj(
           "type" -> "string".asJson,
@@ -98,8 +118,12 @@ Message type (optional, default "INFO"):
         "delivery" -> Json.obj(
           "type" -> "string".asJson,
           "enum" -> Json.arr("queue".asJson, "immediate".asJson),
-          "description" -> "Delivery mode: 'queue' = serialized FIFO (survives restart, processed one at a time after current task completes); 'immediate' = inject like user input (merged into current turn at next boundary). Default: 'immediate'. [INTERRUPT] type must use 'immediate' — queue would delay it past the current task, breaking the interrupt semantics.".asJson,
+          "description" -> "Delivery mode: 'queue' = serialized FIFO (survives restart, processed one at a time after current task completes); 'immediate' = inject like user input (merged into current turn at next boundary). Default: 'immediate'. [INTERRUPT] type must use 'immediate' — queue would delay it past the current task, breaking the interrupt semantics. 'node:' addresses are always immediate (the engine decides inject vs append).".asJson,
           "default" -> "immediate".asJson
+        ),
+        "chainId" -> Json.obj(
+          "type" -> "string".asJson,
+          "description" -> "Optional chain id (e.g. \"chain-n-933b5a8c\") of the batch this Mail belongs to. Validated against the project's derived chain set — an unknown id is an explicit error (MAIL_CHAIN_NOT_FOUND). Not persisted anywhere; when provided it is embedded verbatim in the injected text so the recipient can quote it back. REQUIRED when reporting a batch close-out to Nebula.".asJson
         ),
         "images" -> Json.obj(
           "type" -> "array".asJson,
@@ -125,50 +149,261 @@ Message type (optional, default "INFO"):
   def summarizeResult(input: JsonObject, result: String): String = result
 
   def call(input: JsonObject, ctx: ToolContext): IO[Either[ToolError, String]] =
-    val address = input("address").flatMap(_.asString).getOrElse("")
+    val address = input("address").flatMap(_.asString).getOrElse("").trim
     val message = input("message").flatMap(_.asString).getOrElse("")
     val mailType = input("type").flatMap(_.asString).getOrElse("INFO")
 
     val delivery = input("delivery").flatMap(_.asString).getOrElse("immediate")
+    val chainIdRaw = input("chainId").flatMap(_.asString).map(_.trim).filter(_.nonEmpty).filter(_ != "null")
 
     if address.isEmpty then IO.pure(Left(ToolError("Missing required parameter: address")))
     else if message.isEmpty then IO.pure(Left(ToolError("Missing required parameter: message")))
     else
-      ImageInject.parseImagesParam(input) match
+      // B2-x：chainId 只校验不落库（零链级账本）——校验在一切投递副作用之前。
+      validateChainId(chainIdRaw, ctx).flatMap {
         case Left(err) => IO.pure(Left(err))
-        case Right(imagePaths) =>
-          // G3: resolve attachments BEFORE any delivery side effect (fail fast
-          // at the point of action — actor activation / queue persist must not
-          // happen for an invalid attachment). Queue mode persists the paths
-          // and re-reads at drain time (D6), so only the validation result is
-          // used there.
-          ImageInject.resolveImages(imagePaths).flatMap {
+        case Right(chainId) =>
+          ImageInject.parseImagesParam(input) match
             case Left(err) => IO.pure(Left(err))
-            case Right(attachments) =>
-              val blocks = ImageInject.messageBlocks(message, attachments)
-              ctx.actorSystem match
-                case None =>
-                  IO.pure(Left(ToolError("No actor system available")))
-                case Some(system) =>
-                  // Observability (qa #8 note): unknown delivery values (e.g. an
-                  // old caller still sending "ask") silently converge to the
-                  // immediate path — warn so stale callers surface in logs.
-                  delivery match
-                    case "queue" =>
-                      if address.contains("://") then
-                        IO.pure(Left(ToolError("Queue mode is only for team agents (short names), not URLs.")))
-                      else deliverQueue(address, message, mailType, imagePaths, ctx, system)
-                    case "immediate" =>
-                      if address.contains("://") then deliverToAddress(address, message, blocks, mailType, ctx, system)
-                      else deliverToShortName(address, message, blocks, mailType, ctx, system)
-                    case other =>
-                      IO(logger.warnSync(
-                        s"[mail] unknown delivery mode '$other' from ${ctx.sessionId.getOrElse("?").take(8)} — falling back to immediate"
-                      )) *>
-                        (if address.contains("://") then deliverToAddress(address, message, blocks, mailType, ctx, system)
-                         else deliverToShortName(address, message, blocks, mailType, ctx, system))
-          }
+            case Right(imagePaths) =>
+              // G3: resolve attachments BEFORE any delivery side effect (fail fast
+              // at the point of action — actor activation / queue persist must not
+              // happen for an invalid attachment). Queue mode persists the paths
+              // and re-reads at drain time (D6), so only the validation result is
+              // used there.
+              ImageInject.resolveImages(imagePaths).flatMap {
+                case Left(err) => IO.pure(Left(err))
+                case Right(attachments) =>
+                  val blocks = ImageInject.messageBlocks(message, attachments)
+                  ctx.actorSystem match
+                    case None =>
+                      IO.pure(Left(ToolError("No actor system available")))
+                    case Some(system) =>
+                      // R2 分层地址面（作者 2026-09-12 10:38 细则 + B1-a）：角色专属
+                      // 地址形态先在这一层定判——命中即处理（含**显式报错**），未命中
+                      // （= 该地址不属于本角色的分层面）才落回既有 team/短名瀑布。
+                      // 硬禁静默兜底与模糊匹配：认不出的地址一律显式报错并指明合法面。
+                      layeredRoute(address, message, blocks, mailType, delivery, imagePaths, chainId, ctx, system) match
+                        case Some(action) => action
+                        case None =>
+                          // Observability (qa #8 note): unknown delivery values (e.g. an
+                          // old caller still sending "ask") silently converge to the
+                          // immediate path — warn so stale callers surface in logs.
+                          delivery match
+                            case "queue" =>
+                              if address.contains("://") then
+                                IO.pure(Left(ToolError("Queue mode is only for team agents (short names), not URLs.")))
+                              else deliverQueue(address, message, mailType, imagePaths, ctx, system)
+                            case "immediate" =>
+                              if address.contains("://") then deliverToAddress(address, message, blocks, mailType, ctx, system)
+                              else deliverToShortName(address, message, blocks, mailType, ctx, system)
+                            case other =>
+                              IO(logger.warnSync(
+                                s"[mail] unknown delivery mode '$other' from ${ctx.sessionId.getOrElse("?").take(8)} — falling back to immediate"
+                              )) *>
+                                (if address.contains("://") then deliverToAddress(address, message, blocks, mailType, ctx, system)
+                                 else deliverToShortName(address, message, blocks, mailType, ctx, system))
+              }
+      }
   end call
+
+  // ============================================================
+  // R2 分层地址面（「一个 Mail 统一」批 2026-09-12）
+  // ============================================================
+
+  /** 发送者角色（授权面分层判据 = **引擎侧身份**，不用 senderName 字符串匹配）。 */
+  private enum SenderRole:
+    case NebulaRoot, Dispatcher, Teamish
+
+  private def roleOf(ctx: ToolContext): SenderRole =
+    if ctx.isDispatcher then SenderRole.Dispatcher
+    else if ctx.agentDef.exists(_.name == MailTool.NebulaAgentName) then SenderRole.NebulaRoot
+    else SenderRole.Teamish
+
+  private val NodePrefix = "node:"
+  private val ProjectPrefix = "project:"
+
+  private def nebulaFace: String = "\"project:<项目名>\"（裸项目名等价接受）"
+  private def dispatcherFace: String = "\"Nebula\"（root）或 \"node:<节点id>\""
+
+  /** 分层地址面的显式越界报错（细则：错误消息必须指明**该角色的合法地址面**）。 */
+  private def outOfFaceError(address: String, role: SenderRole): ToolError =
+    val face = role match
+      case SenderRole.NebulaRoot => nebulaFace
+      case SenderRole.Dispatcher => dispatcherFace
+      case SenderRole.Teamish    => "a team name, a member short name, or \"team/agent\""
+    ToolError(
+      s"Address '$address' is outside your address face. Your role may only mail: $face. " +
+        "There is no silent fallback and no fuzzy matching — use one of the listed forms."
+    )
+
+  private def unresolvableError(address: String, role: SenderRole): ToolError =
+    ToolError(
+      s"Cannot resolve address '$address' — it is not a recognizable target in your address face (${
+          role match
+            case SenderRole.NebulaRoot => nebulaFace
+            case SenderRole.Dispatcher => dispatcherFace
+            case SenderRole.Teamish    => "a team name, a member short name, or \"team/agent\""
+        }). No fallback was applied."
+    )
+
+  /** 分层地址分派。返回 Some(结果) = 本地址形态属分层面（已处理，含显式报错）；
+    * None = 不属分层面（调用方继续既有 team/短名瀑布——D-6：legacy 面不随批收口）。 */
+  private def layeredRoute(
+      address: String,
+      message: String,
+      blocks: Option[List[ContentBlock]],
+      mailType: String,
+      delivery: String,
+      imagePaths: List[String],
+      chainId: Option[String],
+      ctx: ToolContext,
+      system: ActorSystem
+  ): Option[IO[Either[ToolError, String]]] =
+    val role = roleOf(ctx)
+    if address.startsWith(NodePrefix) then
+      val nodeId = address.stripPrefix(NodePrefix).trim
+      Some(
+        if nodeId.isEmpty then IO.pure(Left(ToolError(s"Malformed address '$address' — expected \"node:<节点id>\".")))
+        else if role != SenderRole.Dispatcher then IO.pure(Left(outOfFaceError(address, role)))
+        else if delivery == "queue" then
+          IO.pure(Left(ToolError(
+            "\"node:\" addresses are always immediate — the engine decides inject-at-turn-boundary vs append-to-task " +
+              "based on the target node's status. Drop delivery=queue (or target a team agent in queue mode)."
+          )))
+        else deliverToNode(nodeId, withChainAnnotation(message, chainId), ctx)
+      )
+    else if address.startsWith(ProjectPrefix) then
+      val pname = address.stripPrefix(ProjectPrefix).trim
+      Some(
+        if pname.isEmpty then IO.pure(Left(ToolError(s"Malformed address '$address' — expected \"project:<项目名>\".")))
+        else if role == SenderRole.Dispatcher then IO.pure(Left(outOfFaceError(address, role)))
+        else if delivery == "queue" then deliverToProject(pname, message, ctx)
+        else deliverToProject(pname, message, ctx)
+      )
+    else if address == MailTool.NebulaAgentName then
+      role match
+        case SenderRole.NebulaRoot =>
+          Some(IO.pure(Left(ToolError(
+            s"Address \"Nebula\" is your own (self) address — it is not in your address face ($nebulaFace)."
+          ))))
+        case SenderRole.Dispatcher =>
+          Some(
+            if delivery == "queue" then
+              queueToNebula(message, mailType, imagePaths, ctx, system, ctx.sessionId.getOrElse(""), address, chainId)
+            else deliverToNebulaRoot(address, withChainAnnotation(message, chainId), blocks, mailType, ctx, system)
+          )
+        case SenderRole.Teamish => None // 既有 canMailNebula 闸不变
+    else if role == SenderRole.NebulaRoot then
+      // Nebula 的裸名形态 = 裸项目名（等价接受）；认不出的地址显式报错。
+      Some(
+        ProjectRuntimeRegistry.get(address).flatMap {
+          case Some(_) => deliverToProject(address, message, ctx)
+          case None    => IO.pure(Left(unresolvableError(address, role)))
+        }
+      )
+    else if role == SenderRole.Dispatcher then
+      // 分发器不给自己项目发（细则）——裸名一律越界报错。
+      Some(IO.pure(Left(outOfFaceError(address, role))))
+    else None
+  end layeredRoute
+
+  /** chainId 逐字进注入文本（R-18；腿②③一致）。只影响注入体，不落库。 */
+  private def withChainAnnotation(message: String, chainId: Option[String]): String =
+    chainId match
+      case Some(id) => s"[mail chainId: $id]\n$message"
+      case None     => message
+
+  /** B2-x / R-17：`chainId` **只校验、不落库**（零链级账本）。本方法零副作用。
+    * 无项目上下文时只做形态校验（无链集可对）；有项目上下文则对派生链全集。
+    * 错误码 = `MAIL_CHAIN_NOT_FOUND`（非空但不在链集内）。 */
+  private[tools] def validateChainId(chainId: Option[String], ctx: ToolContext): IO[Either[ToolError, Option[String]]] =
+    chainId match
+      case None => IO.pure(Right(None: Option[String]))
+      case Some(id) =>
+        ctx.projectName match
+          case None => IO.pure(Right(Some(id): Option[String]))
+          case Some(projectName) =>
+            ProjectRuntimeRegistry.get(projectName).flatMap {
+              case None => IO.pure(Right(Some(id): Option[String])) // 项目未挂载：无链集可对，交投递侧报错
+              case Some(rt) =>
+                rt.engine.chainIds.map { ids =>
+                  if ids.contains(id) then Right(Some(id): Option[String])
+                  else
+                    Left(ToolError(
+                      s"Unknown chainId '$id' in project '$projectName' (MAIL_CHAIN_NOT_FOUND). " +
+                        s"Known chains: ${if ids.isEmpty then "(none derived)" else ids.toList.sorted.mkString(", ")}. " +
+                        "chainId is validated only — it is never persisted; omit it if the Mail does not belong to a batch."
+                    ))
+                }
+            }
+
+  /** 腿②（分发器 → 节点）：**复用引擎侧单点** `NodeEngine.sendNodeMessage`——三态判据
+    * 与三个错误码**不复制**（复制必然漂移）。注入 source 保持 `"system"`（D-3：
+    * 节点侧既有呈现零 UI 行为变化）。 */
+  private def deliverToNode(nodeId: String, message: String, ctx: ToolContext): IO[Either[ToolError, String]] =
+    ctx.projectName match
+      case None | Some("") =>
+        IO.pure(Left(ToolError(
+          s"Cannot route to node '$nodeId' — this session has no project context (the 'node:' leg resolves the project from the calling session)."
+        )))
+      case Some(projectName) =>
+        ProjectRuntimeRegistry.get(projectName).flatMap {
+          case Some(rt) => rt.engine.sendNodeMessage(nodeId, message).map(_.left.map(ToolError(_)))
+          case None =>
+            IO.pure(Left(ToolError(
+              s"Project '$projectName' is not mounted — cannot route to node '$nodeId'. Re-mount / restart (projects mount at startup)."
+            )))
+        }
+
+  /** 腿①（Nebula → 项目分发器）：保留既有内核（`ProjectActor.TriggerDispatcher`）。 */
+  private def deliverToProject(name: String, message: String, ctx: ToolContext): IO[Either[ToolError, String]] =
+    routeToProject(name, message, ctx).flatMap {
+      case Some(r) => IO.pure(r)
+      case None =>
+        IO.pure(Left(ToolError(
+          s"Project '$name' is not mounted — Mail to a project triggers its dispatcher (ProjectActor.TriggerDispatcher). " +
+            "Mounted projects mount at gateway startup; re-mount / restart, or check the exact name."
+        )))
+    }
+
+  /** 腿③（分发器 → root）：**解析到真正的 Nebula root 会话**（追加条款②，2026-09-12）。
+    * 硬禁三种静默行为：① 回落成发信者自身 ② 落到非 Nebula 的 Root 会话
+    * ③ 解析失败仍报成功——解析不到即**显式报错**（并不指明合法地址面）。 */
+  private def deliverToNebulaRoot(
+      address: String,
+      message: String,
+      blocks: Option[List[ContentBlock]],
+      mailType: String,
+      ctx: ToolContext,
+      system: ActorSystem
+  ): IO[Either[ToolError, String]] =
+    val senderSessionId = ctx.sessionId.getOrElse("")
+    ctx.sharedResources match
+      case None => IO.pure(Left(ToolError("Cannot resolve the Nebula root session: missing resources.")))
+      case Some(res) =>
+        resolveNebulaRootRef(res, senderSessionId, ctx.rootSessionId).flatMap {
+          case Some((sid, ref)) =>
+            sendMail(ref, NebulaAgentName, message, blocks, mailType, ctx, system).flatMap {
+              case Right(_) => onMailDelivered(senderSessionId, sid, NebulaAgentName, message, ctx).as(Right(
+                  s"Message sent to Nebula (root session ${sid.take(8)}). The root agent will process it."
+                ))
+              case Left(err) => IO.pure(Left(err))
+            }
+          case None => IO.pure(Left(nebulaUnresolvedError(senderSessionId)))
+        }
+  end deliverToNebulaRoot
+
+  private def nebulaUnresolvedError(senderSessionId: String): ToolError =
+    ToolError(
+      "Cannot resolve the Nebula root session (NEBULA_ROOT_UNRESOLVED). No Mail was delivered — this is an explicit " +
+        "failure, not a silent success. Expected: exactly one live Root session whose session meta names agent 'Nebula' " +
+        s"and which is not the sender itself (${
+            if senderSessionId.isEmpty then "sender session unknown" else senderSessionId.take(8)
+          }). Check that the gateway's Nebula window session is running, then retry; your legal address face is " +
+        s"$dispatcherFace."
+    )
+
 
   // ============================================================
   // Queue mode: persisted FIFO, drained one-per-turn
@@ -209,17 +444,14 @@ Message type (optional, default "INFO"):
 
     TeamSessionRegistry.teamOfSession(senderSessionId).flatMap {
       case None =>
-        if address == "Nebula" && senderName != "Nebula" then
-          canMailNebula(senderName, senderSessionId).flatMap { canMail =>
+        if address == NebulaAgentName && senderName != NebulaAgentName then
+          canMailNebula(ctx, senderName, senderSessionId).flatMap { canMail =>
             if canMail then resolveAndQueue(address, message, mailType, imagePaths, ctx, system, senderSessionId)
-            else
-              IO.pure(
-                Left(ToolError("Cannot mail Nebula directly. You are a team worker. Report to your Manager via Mail."))
-              )
+            else IO.pure(Left(nebulaDeniedError(senderName)))
           }
         else resolveAndQueue(address, message, mailType, imagePaths, ctx, system, senderSessionId)
       case Some(teamName) =>
-        checkTeamScope(address, teamName, senderSessionId, senderName).flatMap {
+        checkTeamScope(address, teamName, senderSessionId, senderName, ctx).flatMap {
           case Some(error) => IO.pure(Left(ToolError(error)))
           case None        => resolveAndQueue(address, message, mailType, imagePaths, ctx, system, senderSessionId)
         }
@@ -259,7 +491,7 @@ Message type (optional, default "INFO"):
                 for
                   senderTeamOpt <- TeamSessionRegistry.teamOfSession(senderSessionId)
                   sr <- senderTeamOpt match
-                    case None if address != "Nebula" =>
+                    case None if address != NebulaAgentName =>
                       IO.pure(Left(ToolError(TeamOnlyRoutingError)))
                     case _ =>
                       for
@@ -270,8 +502,8 @@ Message type (optional, default "INFO"):
                           case Left(ambErr) => IO.pure(Left(ToolError(ambErr)))
                           case Right(Some(targetSid)) =>
                             queueToSession(targetSid, address, message, mailType, imagePaths, ctx, system, senderSessionId)
-                          case Right(None) if address == "Nebula" =>
-                            queueToNebula(message, mailType, imagePaths, ctx, system, senderSessionId, address)
+                          case Right(None) if address == NebulaAgentName =>
+                            queueToNebula(message, mailType, imagePaths, ctx, system, senderSessionId, address, None)
                           case Right(None) => mailNotFound(address)
                       yield sr2
                 yield sr
@@ -300,20 +532,67 @@ Message type (optional, default "INFO"):
       ctx: ToolContext,
       system: ActorSystem,
       senderSessionId: String,
-      address: String
+      address: String,
+      chainId: Option[String]
     ): IO[Either[ToolError, String]] =
     ctx.sharedResources match
       case Some(res) =>
-        resolveNebulaRootSession(res).flatMap {
+        resolveNebulaRootSession(res, senderSessionId, ctx.rootSessionId).flatMap {
           case Some(nebulaSid) =>
-            queueToSession(nebulaSid, address, message, mailType, imagePaths, ctx, system, senderSessionId)
-          case None => mailNotFound(address)
+            queueToSession(nebulaSid, address, withChainAnnotation(message, chainId), mailType, imagePaths, ctx, system, senderSessionId)
+          case None => IO.pure(Left(nebulaUnresolvedError(senderSessionId)))
         }
-      case None => mailNotFound(address)
+      case None => IO.pure(Left(ToolError("Cannot resolve the Nebula root session: missing resources.")))
 
-  /** The Nebula root agent's sessionId from the unified agent registry (Root kind). */
-  private[tools] def resolveNebulaRootSession(res: SharedResources): IO[Option[String]] =
-    res.agentRegistry.get.map(_.collectFirst { case (_, rec) if rec.kind == AgentKind.Root => rec.sessionId })
+  /** The Nebula root agent's sessionId — **the true Nebula root**, not "any Root record"
+    * (追加条款② 2026-09-12). 解析序（两档，任一档解析不出 ⇒ None ⇒ 调用方显式报错）：
+    *   ① **preferredRootSid**（调用方会话的 `ctx.rootSessionId`）——spawn 本分发器会话的
+    *      那个 root 会话，确定性最高、零歧义；命中失败**不**静默改选别的 Root 会话；
+    *   ② 无 preferred 时按 **session meta**（`agentName == "Nebula"`）判定，且必须唯一。
+    * 两档都**排除发信者自身**（硬禁「回落成发信者自身」）。 */
+  private[tools] def resolveNebulaRootSession(
+      res: SharedResources,
+      senderSessionId: String,
+      preferredRootSid: Option[String] = None
+  ): IO[Option[String]] =
+    resolveNebulaRoots(res, senderSessionId, preferredRootSid).map(_.headOption.map(_._1))
+
+  /** Root records eligible as "the Nebula root"（判据见 [[resolveNebulaRootSession]] 文档）。
+    * 返回 0 或 ≥2 项都由调用方判为「解析不出」——**绝不**静默挑一条。 */
+  private def resolveNebulaRoots(
+      res: SharedResources,
+      senderSessionId: String,
+      preferredRootSid: Option[String]
+  ): IO[List[(String, ActorRef[AgentCommand])]] =
+    res.agentRegistry.get.flatMap { reg =>
+      val rootRecs = reg.values.toList
+        .filter(rec => rec.kind == AgentKind.Root && rec.ref != null && rec.sessionId != senderSessionId)
+        .sortBy(_.sessionId)
+      preferredRootSid.map(_.trim).filter(_.nonEmpty) match
+        case Some(pid) =>
+          // 档①：确定性解析（本分发器会话的触发 root）。找不到 ⇒ 空（不回落、不改选）。
+          IO.pure(rootRecs.find(_.sessionId == pid).map(rec => List((rec.sessionId, rec.ref))).getOrElse(Nil))
+        case None =>
+          // 档②：session meta 判定（agentName == "Nebula"）——要求唯一。
+          val store = res.sessionStore
+          if store == null then IO.pure(Nil)
+          else
+            rootRecs.flatTraverse { rec =>
+              store.getSessionMeta(rec.sessionId).map { meta =>
+                if meta.flatMap(_.agentName).contains(NebulaAgentName) then List((rec.sessionId, rec.ref)) else Nil
+              }
+            }
+    }
+
+  private def resolveNebulaRootRef(
+      res: SharedResources,
+      senderSessionId: String,
+      preferredRootSid: Option[String]
+  ): IO[Option[(String, ActorRef[AgentCommand])]] =
+    resolveNebulaRoots(res, senderSessionId, preferredRootSid).map {
+      case List(one) => Some(one)
+      case _         => None // 0 命中或 ≥2 命中（歧义）都算解析不出 → 显式报错
+    }
 
   /** Persist to MailQueueStore, activate target, send MailQueued command.
     * private[tools] for ColdQueueActivationSpec (issue #22). */
@@ -419,21 +698,14 @@ Message type (optional, default "INFO"):
 
     TeamSessionRegistry.teamOfSession(senderSessionId).flatMap {
       case None =>
-        if address == "Nebula" && senderName != "Nebula" then
-          canMailNebula(senderName, senderSessionId).flatMap { canMail =>
+        if address == NebulaAgentName && senderName != NebulaAgentName then
+          canMailNebula(ctx, senderName, senderSessionId).flatMap { canMail =>
             if canMail then deliverShortNameUnscoped(address, message, blocks, mailType, ctx, system, senderSessionId)
-            else
-              IO.pure(
-                Left(
-                  ToolError(
-                    "Cannot mail Nebula directly. You are a team worker. Report to your Manager via Mail."
-                  )
-                )
-              )
+            else IO.pure(Left(nebulaDeniedError(senderName)))
           }
         else deliverShortNameUnscoped(address, message, blocks, mailType, ctx, system, senderSessionId)
       case Some(teamName) =>
-        checkTeamScope(address, teamName, senderSessionId, senderName).flatMap {
+        checkTeamScope(address, teamName, senderSessionId, senderName, ctx).flatMap {
           case Some(error) => IO.pure(Left(ToolError(error)))
           case None =>
             deliverShortNameUnscoped(address, message, blocks, mailType, ctx, system, senderSessionId)
@@ -442,22 +714,37 @@ Message type (optional, default "INFO"):
   end deliverToShortName
 
   /**
-   * Who may mail Nebula directly: a registered team Manager (managerMap) OR
-   * any team lead by definition (agent.json lead of a mounted/defined team).
-   * The name-based fallback covers fork/temporary sessions — a forked Manager
-   * keeps the Manager agentDef (and its lead role) but its sessionId is not
-   * registered in managerMap, so sid-only checks would wrongly reject it.
+   * Who may mail Nebula directly: **a project dispatcher (engine-side role judge
+   * `ctx.isDispatcher`)** — the 2026-09-12 细则 narrows "who can reach root" to that
+   * single role — OR a registered team Manager (managerMap) OR any team lead by
+   * definition (agent.json lead of a mounted/defined team). The name-based fallback
+   * covers fork/temporary sessions — a forked Manager keeps the Manager agentDef
+   * (and its lead role) but its sessionId is not registered in managerMap, so
+   * sid-only checks would wrongly reject it.
+   *
+   * The dispatcher judge is deliberately an **engine-side identity**, not a
+   * `senderName` string match (a name-based judge breaks the moment an agent is
+   * renamed, and can be bypassed).
    */
-  private def canMailNebula(senderName: String, senderSessionId: String): IO[Boolean] =
-    TeamSessionRegistry.isManager(senderSessionId).flatMap { isMgr =>
-      if isMgr then IO.pure(true)
-      else if senderName.isEmpty then IO.pure(false)
-      else EntityLoader.listTeams().map(_.values.exists(_.lead == senderName))
-    }
+  private[tools] def canMailNebula(ctx: ToolContext, senderName: String, senderSessionId: String): IO[Boolean] =
+    if ctx.isDispatcher then IO.pure(true)
+    else
+      TeamSessionRegistry.isManager(senderSessionId).flatMap { isMgr =>
+        if isMgr then IO.pure(true)
+        else if senderName.isEmpty then IO.pure(false)
+        else EntityLoader.listTeams().map(_.values.exists(_.lead == senderName))
+      }
 
-  /** Locate the Nebula root agent's actor in the unified AgentRegistry (kind == Root). */
-  private def resolveNebulaRef(resources: SharedResources): IO[Option[ActorRef[AgentCommand]]] =
-    resources.agentRegistry.get.map(_.collectFirst { case (_, rec) if rec.kind == AgentKind.Root => rec.ref })
+  /** 「不能给 root 发」的显式归因文案（R-15）：对**项目分发器**身份，旧文案
+    * 「You are a team worker」是错误归因（它不是 team worker）——分发器走
+    * `ctx.isDispatcher` 判据本就不会命中本分支；此处文案按身份分档。 */
+  private def nebulaDeniedError(senderName: String): ToolError =
+    val who = if senderName.isEmpty then "This sender" else s"'$senderName'"
+    ToolError(
+      s"Cannot mail Nebula directly: $who is not a project dispatcher and not a team lead. " +
+        "Report to your Team Lead / Manager via Mail, and let it escalate to Nebula. " +
+        "Your legal address face is not \"Nebula\"."
+    )
 
   private[tools] def deliverShortNameUnscoped(
     address: String,
@@ -505,7 +792,7 @@ Message type (optional, default "INFO"):
                 for
                   senderTeamOpt <- TeamSessionRegistry.teamOfSession(senderSessionId)
                   sr <- senderTeamOpt match
-                    case None if address != "Nebula" =>
+                    case None if address != NebulaAgentName =>
                       IO.pure(Left(ToolError(TeamOnlyRoutingError)))
                     case _ =>
                       for
@@ -522,25 +809,28 @@ Message type (optional, default "INFO"):
                                 case Left(_) => IO.unit
                             yield res
                           case Right(None) =>
-                            val isNebulaTarget = address == "Nebula" || address.endsWith("/Nebula")
+                            val isNebulaTarget = address == NebulaAgentName || address.endsWith(s"/$NebulaAgentName")
                             if isNebulaTarget then
-                              for
-                                // Prefer the parent-actor route (team agents have their
-                                // parent registered at mount time). Fork/temporary sessions
-                                // have no registered parent — fall back to the Nebula root
-                                // session's actor in the unified AgentRegistry.
-                                parentActorOpt <- TeamSessionRegistry.getParentActor(senderSessionId)
-                                res <- parentActorOpt match
-                                  case Some(ref) => sendMail(ref, "Nebula", message, blocks, mailType, ctx, system)
-                                  case None =>
-                                    ctx.sharedResources match
-                                      case Some(res) =>
-                                        resolveNebulaRef(res).flatMap {
-                                          case Some(ref) => sendMail(ref, "Nebula", message, blocks, mailType, ctx, system)
-                                          case None => mailNotFound(address)
-                                        }
-                                      case None => mailNotFound(address)
-                              yield res
+                              // 追加条款②（2026-09-12）：**必须**落到真正的 Nebula root 会话。
+                              // 旧实现取 `getParentActor(senderSessionId)`（last-writer-wins 注册）
+                              // 并在缺失时取「第一条 Root 记录」——两条都可能落到发信者自身或
+                              // 其它 Root 会话，且解析失败仍返回成功文案（静默）。现改为单点解析
+                              // `resolveNebulaRootRef`（session meta agentName == "Nebula" ∧ 排除
+                              // 发信者自身 ∧ 唯一），解析不到即**显式报错**，不投递。
+                              ctx.sharedResources match
+                                case Some(res) =>
+                                  resolveNebulaRootRef(res, senderSessionId, ctx.rootSessionId).flatMap {
+                                    case Some((sid, ref)) =>
+                                      for
+                                        res <- sendMail(ref, NebulaAgentName, message, blocks, mailType, ctx, system)
+                                        _ <- res match
+                                          case Right(_) => onMailDelivered(senderSessionId, sid, NebulaAgentName, message, ctx)
+                                          case Left(_)  => IO.unit
+                                      yield res
+                                    case None => IO.pure(Left(nebulaUnresolvedError(senderSessionId)))
+                                  }
+                                case None =>
+                                  IO.pure(Left(ToolError("Cannot resolve the Nebula root session: missing resources.")))
                             else mailNotFound(address)
                             end if
                       yield sr2
@@ -584,23 +874,24 @@ Message type (optional, default "INFO"):
 
   /** Visible for tests (package-private). */
   private[tools] def checkTeamScope(
-    address: String,
-    teamName: String,
-    senderSessionId: String,
-    senderName: String
-  ): IO[Option[String]] =
+      address: String,
+      teamName: String,
+      senderSessionId: String,
+      senderName: String,
+      ctx: ToolContext
+    ): IO[Option[String]] =
     for
       teamOpt <- EntityLoader.loadTeam(address)
-      canNebula <- canMailNebula(senderName, senderSessionId)
+      canNebula <- canMailNebula(ctx, senderName, senderSessionId)
       crossTeam <- checkCrossTeamExplicitRoute(address, teamName, canNebula)
     yield teamOpt match
       case Some(_) if address == teamName =>
         None
       case Some(_) =>
         Some(s"Cannot mail outside your team. You are in team '$teamName'. Use your Manager to escalate to Nebula.")
-      case None if address == "Nebula" && canNebula =>
+      case None if address == NebulaAgentName && canNebula =>
         None
-      case None if address == "Nebula" =>
+      case None if address == NebulaAgentName =>
         Some("Cannot mail Nebula directly. Use Mail(\"manager\", ...) to report to your Team Lead.")
       case None =>
         crossTeam
@@ -905,8 +1196,9 @@ Message type (optional, default "INFO"):
 
   private def mailNotFound(address: String): IO[Either[ToolError, String]] =
     val msg =
-      if address == "Nebula" then
-        s"Cannot deliver to 'Nebula': only Team Lead can communicate with Nebula. Use Mail(\"manager\", ...) to report to your Team Lead."
+      if address == NebulaAgentName then
+        s"Cannot deliver to '$NebulaAgentName': no Nebula root session could be resolved (NEBULA_ROOT_UNRESOLVED). " +
+          "Legacy gate: only a project dispatcher or a team lead may mail root. Use Mail(\"manager\", ...) to report to your Team Lead."
       else s"Cannot deliver to '$address'. Use a team name or agent short name."
     IO.pure(Left(ToolError(msg)))
 

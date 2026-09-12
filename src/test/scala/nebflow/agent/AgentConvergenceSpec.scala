@@ -40,7 +40,7 @@ class AgentConvergenceSpec extends FunSuite:
   test("Nebula LLM tool list == §C.1 NebulaSet exactly（编排/任务/通信/读三件/可视化/用户/平台/记忆）"):
     val delivered = CoreProbe.toolList(mkDef("Nebula")).toSet
     val expected = Set(
-      "Task", "ProjectCreate", "AgentControl",
+      "Mail", "ProjectCreate", "AgentControl",
       "Delegate",                                           // 编排触发（2026-09-11 极简内核回归，+1）
       "TaskList",                                           // 任务编排（2026-09-06 TaskList 批：快变状态出记忆）
       "SendMessage",
@@ -69,7 +69,9 @@ class AgentConvergenceSpec extends FunSuite:
       assert(!delivered.contains(t), s"写手三件不得出现在 Nebula 交付面（23:34 裁定）: $t")
     }
     val forbidden = Set("Bash", "Write", "Edit", "MultiEdit", "NodeList",  // NodeList（00:48 裁定摘除，dispatcher 面不受影响）
-      "Mail", "FlowTrigger", "FlowExecute",                 // 旧体系三件维持退役（Delegate 2026-09-11 以极简内核形态回归，不在此列）
+      // R2 反转（2026-09-12）："Mail" 从本集**摘除**——Mail 已翻案为唯一消息原语并进入
+      // Nebula 面（−Task +Mail，16→16）；新增 "Task"/"NodeMessage" 两个已删净退役件。
+      "Task", "NodeMessage", "FlowTrigger", "FlowExecute",  // 已退役/维持退役（Delegate 2026-09-11 以极简内核形态回归，不在此列）
       "WebSearch", "WebFetch", "Curl",
       "TeamTaskCreate", "TeamTaskUpdate", "TeamTaskList", "SubTask",
       "NodeEdit", "NodeCancel", "FlowReport", "Load")
@@ -80,12 +82,14 @@ class AgentConvergenceSpec extends FunSuite:
 
   test("dispatcher LLM tool list == Node 四件 + 读四件（isFlowNode spawn 形态；NodeMessage 20260905 机制批）"):
     val delivered = CoreProbe.toolList(mkDef("project-dispatcher"), isFlowNode = true).toSet
-    assertEquals(delivered, Set("NodeList", "NodeEdit", "NodeCancel", "NodeMessage", "Read", "Glob", "Grep", "Bash"),
+    assertEquals(delivered, Set("NodeList", "NodeEdit", "NodeCancel", "Mail", "Read", "Glob", "Grep", "Bash"),
       "分发器固定工具集（§C.1 + NodeMessage 20260905 机制批第八件）：不给 Write/Edit/AskUserQuestion")
 
   test("NodeMessage 仅分发器（20260905 机制批裁定⑥）：Nebula/general 交付面均不含"):
-    assert(!CoreProbe.toolList(mkDef("Nebula")).toSet.contains("NodeMessage"), "Nebula 不加 NodeMessage")
-    assert(!CoreProbe.toolList(mkDef("general"), isFlowNode = true).toSet.contains("NodeMessage"), "general 不加 NodeMessage")
+    assert(!CoreProbe.toolList(mkDef("Nebula")).toSet.contains("NodeMessage"), "NodeMessage 已删净退役（Nebula 面不加）")
+    assert(!CoreProbe.toolList(mkDef("general"), isFlowNode = true).toSet.contains("NodeMessage"), "NodeMessage 已删净退役（节点面不加）")
+    // R2 细则：节点会话**零 Mail 入口**（工具面结构性摘除）
+    assert(!CoreProbe.toolList(mkDef("general"), isFlowNode = true).toSet.contains("Mail"), "节点面零 Mail（R2 细则）")
 
   // ===== general 固定 7 件（2026-09-08 恢复 AskUser；2026-09-10 摘 Pop）=====
 
