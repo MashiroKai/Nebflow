@@ -1211,7 +1211,15 @@ case class SystemStableSnapshot(
   envInfo: String = "",
   /** Mounted-project list body at systemStable build time (cache v2 change
     * detection). Only populated for the root Nebula agent; "" for others. */
-  mountedProjects: String = ""
+  mountedProjects: String = "",
+  /** Rendered `# Plugin Catalog` section the session was last TOLD about
+    * (plugins-live 批 2026-09-12 change detection). Dispatcher sessions only:
+    * ProjectActor injects the catalog into the session's first message at spawn,
+    * so this field starts as that snapshot and is advanced by AgentCore whenever a
+    * plugin-surface reminder is actually emitted (trust/enabled change) — the
+    * reminder is the only refresh path for an open session. "" = no plugin face
+    * in context (non-dispatcher sessions). */
+  pluginCatalog: String = ""
 )
 
 case class AgentState(
@@ -1494,6 +1502,15 @@ extension (s: AgentState)
   /** Mark the cache for rebuild (called at compaction complete / session reset). */
   def invalidateSystemStableCache: AgentState =
     s.copy(cachedSystemStable = None, stableSnapshot = None)
+
+  /** Advance ONLY the plugin-catalog baseline of the current snapshot (plugins-live
+    * 批 2026-09-12): called when a plugin-surface reminder was actually emitted, so
+    * the next turn compares against the value the session has just been told. The
+    * other snapshot fields keep their systemStable-era values (their own delta
+    * channels must not be reset). No snapshot at all ⇒ no-op — the baseline then
+    * falls back to the current render inside the change detection (no reminder). */
+  def withPluginSurfaceBaseline(catalog: String): AgentState =
+    s.copy(stableSnapshot = s.stableSnapshot.map(_.copy(pluginCatalog = catalog)))
 
   def delegateCount: Int = s.execution.delegateCount
   def lastMaintenanceDelegateCount: Int = s.execution.lastMaintenanceDelegateCount
