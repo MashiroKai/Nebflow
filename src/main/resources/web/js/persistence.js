@@ -4,6 +4,10 @@
 
 import state, { LS_KEY, LS_SESSIONS_KEY, LS_HISTORY_KEY, AGENT_PALETTE } from './state.js';
 import { key } from './branding.js';
+// ⑨ 淘汰顺序挂靠点（作者 2026-09-12 口径）：好友消息缓存是纯缓存且已硬封顶
+// （512 KB / 30 会话，见 fmMessageCache.js）——配额压力下**先丢它**，
+// session 缓存（用户主聊天）永远不是第一个牺牲品。单向依赖，无环。
+import { dropFriendMessageCache } from './fmMessageCache.js';
 import { activeView } from './chatView.js';
 import { t } from './i18n.js';
 import { renderMarkdownWithMath, escapeHtml, smartScroll, buildToolDetail, buildDelegatePromptHtml, attachToolClick, esc, localizeToolLabel, localizeToolSummary, renderHighlightedContent } from './utils.js';
@@ -35,6 +39,9 @@ function safeSetItem(key, value) {
 // ---------- Prune old sessions from the cache and retry writing once ----------
 // Removes roughly half of the non-active sessions to free space. Returns true on success.
 function pruneAndRetrySetSessions(all, keepSid) {
+  // ⑨ 淘汰顺序（作者 2026-09-12）：好友消息缓存 = 纯缓存，配额压力下先丢它；
+  // 丢掉后能写进就**不剪 session**（剪的是用户的会话缓存，主聊天被伤不可接受）。
+  if (dropFriendMessageCache() && safeSetItem(LS_SESSIONS_KEY, JSON.stringify(all))) return true;
   const otherSids = Object.keys(all).filter(k => k !== keepSid);
   if (otherSids.length === 0) return false; // nothing to prune
   const removeCount = Math.ceil(otherSids.length / 2);
@@ -52,6 +59,10 @@ export function emergencyCacheCleanup() {
     if (!raw) return;
     // If already under 2MB, no need to clean
     if (raw.length < 2_000_000) return;
+    // ⑨ 淘汰顺序第一步：好友消息缓存（fmMessageCache.js）是纯缓存且已硬封顶，
+    // 先丢它再动 session 缓存 —— 否则好友缓存占满配额时，下面的
+    // pruneAndRetrySetSessions 会去剪会话缓存（方案 §2.3 明确判定「不可接受」）。
+    dropFriendMessageCache();
     console.debug('[persistence] cache size ' + Math.round(raw.length / 1024) + 'KB — running emergency cleanup');
     const all = JSON.parse(raw);
     // Re-sanitize every entry in every session and enforce message cap
