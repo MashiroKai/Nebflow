@@ -476,22 +476,22 @@ object ProjectActor:
     * 上限 1200 字符/20 行）——拼装相对顺序 …→插件目录→项目记忆→任务板→任务文本
     * （任务板在任务文本之前；空串不注空段）。 */
   private[project] def newTaskPrompt(project: ProjectDef, taskText: String, pluginCatalog: String, projectMemory: String, taskBoard: String = ""): String =
-    s"""你是项目「${project.name}」的任务分发器。
+    s"""You are the task dispatcher for project "${project.name}".
        |
-       |${if pluginCatalog.nonEmpty then pluginCatalog + "\n" else ""}${if projectMemory.nonEmpty then projectMemory + "\n" else ""}${if taskBoard.nonEmpty then taskBoard + "\n" else ""}任务：$taskText
+       |${if pluginCatalog.nonEmpty then pluginCatalog + "\n" else ""}${if projectMemory.nonEmpty then projectMemory + "\n" else ""}${if taskBoard.nonEmpty then taskBoard + "\n" else ""}Task: $taskText
        |
-       |先 NodeList 读 Flow Map 现状（拓扑与节点状态按需拉取），再按需用 NodeEdit 建节点/接线/改接。所有 Node 工具调用必须带 project=${project.name} 参数。无需回报——拓扑与状态已落 Flow Map。""".stripMargin
+       |Read the Flow Map first (NodeList — topology and node status on demand), then create / wire / rewire nodes with NodeEdit as needed. Every Node tool call carries project=${project.name}. No report needed — topology and status live in the Flow Map.""".stripMargin
 
   /** 重入协议四动作块（reentryPrompt 与 reentryInjectionText 共用，单点维护；
     * 设计 §2.2 原文照抄——四动作选择/abandon 说明/「无需回报」）。 */
   private def reentryActions(project: ProjectDef): String =
-    s"""先 NodeList 读现状（重点关注：status=blocked 节点、其下游 pending 节点），
-       |再从以下动作中选择并执行（NodeEdit / NodeCancel）：
-       |1. 任务可修 → NodeEdit 编辑该节点（改 task/agent/in/out）触发重激活（blockCount 自动 +1）；
-       |2. 任务应拆分 → 建新节点子图替换，NodeEdit abandon=true 标记旧节点放弃；
-       |3. agent 能力不匹配 → 换 agent 重建；
-       |4. 需外部条件 / 无法提出与上轮实质不同的调整 → abandon + 不重派（避免无效循环）。
-       |所有 Node 工具调用必须带 project=${project.name}。无需回报——拓扑与状态已落 Flow Map。""".stripMargin
+    s"""Read the current state first (NodeList — focus on blocked nodes and their pending downstreams),
+       |then pick and execute one action (NodeEdit / NodeCancel):
+       |1. Task fixable → NodeEdit the node (task/agent/in/out) to reactivate it (blockCount +1 automatically);
+       |2. Task should be split → create a replacement subgraph, mark the old node with NodeEdit abandon=true;
+       |3. Agent mismatch → rebuild with a different agent;
+       |4. External condition needed / no materially different adjustment available → abandon and do not re-dispatch (avoid a futile loop).
+       |Every Node tool call carries project=${project.name}. No report needed — topology and status live in the Flow Map.""".stripMargin
 
   /** 重入调整形态 prompt（spawnDispatcher 双形态之二，设计 §2.2 原文照抄——
     * 含节点名/id/blockCount/反馈三字段/四动作选择/abandon 说明/「无需回报」）。
@@ -500,30 +500,30 @@ object ProjectActor:
     * TaskBoard 批 2（§3a）：taskBoard 注入块同 newTaskPrompt——拼装在项目记忆
     * 之后、四动作块之前（任务板在任务文本之前语义的重入对应位）。 */
   private[project] def reentryPrompt(project: ProjectDef, node: NodeDef, feedback: BlockedFeedback, blockCount: Int, pluginCatalog: String, projectMemory: String, taskBoard: String = ""): String =
-    s"""你是项目「${project.name}」的任务分发器——本轮是【节点反馈重入调整】，不是新任务。
+    s"""You are the task dispatcher for project "${project.name}" — this round is a [node-feedback re-entry], not a new task.
        |
-       |节点 ${node.name}（${node.id}）报告 blocked（第 $blockCount 轮）：
-       |  原因分类：${feedback.category}
-       |  说明：${feedback.detail}
-       |  对拓扑的建议：${feedback.suggestion}
+       |Node ${node.name} (${node.id}) reported blocked (round $blockCount):
+       |  category: ${feedback.category}
+       |  detail: ${feedback.detail}
+       |  topology suggestion: ${feedback.suggestion}
        |
        |${if pluginCatalog.nonEmpty then pluginCatalog + "\n" else ""}${if projectMemory.nonEmpty then projectMemory + "\n" else ""}${if taskBoard.nonEmpty then taskBoard + "\n" else ""}${reentryActions(project)}""".stripMargin
 
   /** 注入现有会话的新任务文本（单例化裁定：标注「新任务到达」来源；与进行中
     * 工作按 turn 串行——处理中排 pendingUserInputs，turn 边界消费）。 */
   private def taskInjectionText(taskText: String): String =
-    s"""── 新任务到达（注入现有分发器会话；与进行中工作按 turn 串行执行）──
+    s"""── New task arrived (injected into the live dispatcher session; serialized with in-flight work turn by turn) ──
        |
        |$taskText""".stripMargin
 
   /** 注入现有会话的重入调整文本（单例化裁定 × §2.2 修订：重入优先投活跃会话）。 */
   private def reentryInjectionText(project: ProjectDef, node: NodeDef, feedback: BlockedFeedback, blockCount: Int): String =
-    s"""── 节点反馈重入调整（注入现有分发器会话；与进行中工作按 turn 串行执行）──
+    s"""── Node-feedback re-entry (injected into the live dispatcher session; serialized with in-flight work turn by turn) ──
        |
-       |节点 ${node.name}（${node.id}）报告 blocked（第 $blockCount 轮）：
-       |  原因分类：${feedback.category}
-       |  说明：${feedback.detail}
-       |  对拓扑的建议：${feedback.suggestion}
+       |Node ${node.name} (${node.id}) reported blocked (round $blockCount):
+       |  category: ${feedback.category}
+       |  detail: ${feedback.detail}
+       |  topology suggestion: ${feedback.suggestion}
        |
        |${reentryActions(project)}""".stripMargin
 

@@ -293,27 +293,27 @@ class NodeBlockedReentrySpec extends CatsEffectSuite:
         "task" -> Json.fromString("will-block-R"), "out" -> Json.fromString("Nebula")), ctx)
       _ <- waitStatus(rt, "reentry-node", Set(NodeLifecycle.Blocked))
       // 重入分发器会话 spawn → prompt 经 LLM 捕获
-      _ <- waitUntil(15.seconds)(llm.inputs.get.map(_.exists(_.contains("节点反馈重入调整"))))
+      _ <- waitUntil(15.seconds)(llm.inputs.get.map(_.exists(_.contains("[node-feedback re-entry]"))))
       prompts <- llm.inputs.get
       nodeId <- idOf(rt, "reentry-node")
       node <- nodeById(rt, nodeId)
       audit <- readAuditTypes(ws)
       _ <- system.stopAll.handleErrorWith(_ => IO.unit)
     yield
-      val prompt = prompts.find(_.contains("节点反馈重入调整")).getOrElse(fail("reentry prompt must be captured"))
-      assert(prompt.contains("不是新任务"), "reentry prompt must declare reentry nature")
+      val prompt = prompts.find(_.contains("[node-feedback re-entry]")).getOrElse(fail("reentry prompt must be captured"))
+      assert(prompt.contains("not a new task"), "reentry prompt must declare reentry nature")
       assert(prompt.contains("reentry-node") && prompt.contains(nodeId), s"prompt must carry node name+id")
-      assert(prompt.contains("第 1 轮"), "prompt must carry blockCount round")
-      assert(prompt.contains("原因分类：task-underspecified"), "prompt must carry category")
-      assert(prompt.contains("说明：任务缺少交付物定义"), "prompt must carry detail")
-      assert(prompt.contains("对拓扑的建议：补充验收标准"), "prompt must carry suggestion")
+      assert(prompt.contains("reported blocked (round 1)"), "prompt must carry blockCount round")
+      assert(prompt.contains("category: task-underspecified"), "prompt must carry category")
+      assert(prompt.contains("detail: 任务缺少交付物定义"), "prompt must carry detail")
+      assert(prompt.contains("topology suggestion: 补充验收标准"), "prompt must carry suggestion")
       // 裁定①（观测面上下文经济学批 20260907 方向 B）：重入 spawn prompt 不再嵌
       // Flow Map 快照——拓扑由分发器首轮 NodeList 按需拉取（旧实现断言
       // `contains("```json") && contains("Flow Map 快照")`，随快照移除翻转）。
       assert(!prompt.contains("```json") && !prompt.contains("Flow Map 快照"), "reentry prompt must NOT embed Flow Map snapshot (ctx-econ 裁定①)")
       assert(!prompt.contains("\"result\":") && !prompt.contains("\"task\":"), "reentry prompt must not carry hydrated result/task JSON fields")
       assert(prompt.contains("abandon=true"), "prompt must carry abandon action hint")
-      assert(prompt.contains("无需回报"), "prompt must carry no-report note")
+      assert(prompt.contains("No report needed"), "prompt must carry no-report note")
       assert(prompt.contains("project=blk-reentry"), "prompt must carry project param note")
       assert(node.blockCount == 1, "first blocked round")
       assert(audit.exists((t, _) => t == "reentry-triggered"), s"reentry-triggered audit line must exist, got: $audit")
@@ -339,11 +339,11 @@ class NodeBlockedReentrySpec extends CatsEffectSuite:
       _ <- nodeEdit(nodeInput("blk-loopcap", "loop-node", "description" -> Json.fromString("test node purpose"),
         "task" -> Json.fromString("round-one"), "out" -> Json.fromString("Nebula")), ctx)
       _ <- waitStatus(rt, "loop-node", Set(NodeLifecycle.Blocked))
-      _ <- waitUntil(15.seconds)(llm.inputs.get.map(_.count(_.contains("节点反馈重入调整")) >= 1))
+      _ <- waitUntil(15.seconds)(llm.inputs.get.map(_.count(_.contains("[node-feedback re-entry]")) >= 1))
       // 第 2 轮：重激活（task 实际变更）→ blocked（count=2 → 重入）
       _ <- nodeEdit(nodeInput("blk-loopcap", "loop-node", "task" -> Json.fromString("round-two")), ctx)
       _ <- waitStatus(rt, "loop-node", Set(NodeLifecycle.Blocked))
-      _ <- waitUntil(15.seconds)(llm.inputs.get.map(_.count(_.contains("节点反馈重入调整")) >= 2))
+      _ <- waitUntil(15.seconds)(llm.inputs.get.map(_.count(_.contains("[node-feedback re-entry]")) >= 2))
       // 第 3 轮：重激活 → blocked（count=3 → 升级，不再重入）
       _ <- nodeEdit(nodeInput("blk-loopcap", "loop-node", "task" -> Json.fromString("round-three")), ctx)
       _ <- waitStatus(rt, "loop-node", Set(NodeLifecycle.Blocked))
@@ -359,7 +359,7 @@ class NodeBlockedReentrySpec extends CatsEffectSuite:
       audit <- readAuditTypes(ws)
       _ <- system.stopAll.handleErrorWith(_ => IO.unit)
     yield
-      val reentryCount = prompts.count(_.contains("节点反馈重入调整"))
+      val reentryCount = prompts.count(_.contains("[node-feedback re-entry]"))
       assertEquals(reentryCount, 2, "rounds 1&2 reenter; round 3 must NOT reenter")
       assertEquals(escalations.size, 1, "exactly one escalation to Nebula")
       val (text, eventType) = escalations.head
@@ -413,7 +413,7 @@ class NodeBlockedReentrySpec extends CatsEffectSuite:
       assert(a.deliveredTo.contains(cId), "completed upstream re-delivered after deliveredTo cleared")
       assert(a.completedAt.isDefined && a.ttlExpireAt.isDefined, "completed rerun re-arms display TTL")
       assert(secondRunInput.isDefined, s"second run input must carry re-delivered upstream result, got: ${llm.inputs.get.unsafeRunSync().map(_.take(120))}")
-      assert(secondRunInput.exists(_.contains("── 节点协议 ──")), "protocol footnote must be injected (§1.5)")
+      assert(secondRunInput.exists(_.contains("── Node protocol ──")), "protocol footnote must be injected (§1.5)")
       assert(audit.exists((t, id) => t == "reactivated" && id == aId), s"reactivated audit line, got: $audit")
   }
 

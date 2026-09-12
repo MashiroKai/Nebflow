@@ -193,9 +193,9 @@ class ProjectDispatcherSingletonSpec extends CatsEffectSuite:
       assertEquals(during.size, 1, s"turn 1 终态后桥必须延迟拆除（注入 turn 未跑完），got $during")
       assertEquals(after, Nil, "最后一 turn 终态后清 registry")
       assertEquals(ins.size, 2, "全程恰好 2 个分发器 turn——不得出现第二 spawn")
-      assert(ins(1).contains("新任务到达"), s"第二个 turn 必须是注入形态（含「新任务到达」标注），got: ${ins(1).take(120)}")
+      assert(ins(1).contains("New task arrived"), s"第二个 turn 必须是注入形态（含「新任务到达」标注），got: ${ins(1).take(120)}")
       assert(ins(1).contains("任务乙"), "注入文本必须携带任务内容")
-      assert(!ins(0).contains("新任务到达"), "首个 turn 是 spawn prompt，非注入形态")
+      assert(!ins(0).contains("New task arrived"), "首个 turn 是 spawn prompt，非注入形态")
   }
 
   // ── 2. 并发到达只 spawn 一个 ─────────────────────────────────────
@@ -233,9 +233,9 @@ class ProjectDispatcherSingletonSpec extends CatsEffectSuite:
       assertEquals(one.size, 1, s"三连发只允许一个会话，got $one")
       assertEquals(two.size, 1, s"串行消费期间桥必须保持会话存活，got $two")
       assertEquals(ins.size, 3, "三条任务恰好三个 turn（同一会话串行消费）")
-      assert(ins(0).contains("任务甲") && !ins(0).contains("新任务到达"), "turn 1 = spawn prompt 形态")
-      assert(ins(1).contains("新任务到达") && ins(1).contains("任务乙"), "turn 2 = 注入排队消费（乙）")
-      assert(ins(2).contains("新任务到达") && ins(2).contains("任务丙"), "turn 3 = 注入排队消费（丙）")
+      assert(ins(0).contains("任务甲") && !ins(0).contains("New task arrived"), "turn 1 = spawn prompt 形态")
+      assert(ins(1).contains("New task arrived") && ins(1).contains("任务乙"), "turn 2 = 注入排队消费（乙）")
+      assert(ins(2).contains("New task arrived") && ins(2).contains("任务丙"), "turn 3 = 注入排队消费（丙）")
   }
 
   // ── 3. 终态后 spawn 新实例 ───────────────────────────────────────
@@ -267,7 +267,7 @@ class ProjectDispatcherSingletonSpec extends CatsEffectSuite:
       assertEquals(sids.size, 1, "终态后新任务恰好 spawn 一个新会话")
       assert(!sids.contains(sid1), s"新实例必须是新 sessionId（旧=$sid1 新=${sids.mkString})")
       assertEquals(ins.size, 2)
-      assert(!ins(1).contains("新任务到达"), "终态后的新任务走 spawn 路径（fresh prompt，非注入形态）")
+      assert(!ins(1).contains("New task arrived"), "终态后的新任务走 spawn 路径（fresh prompt，非注入形态）")
       assert(ins(1).contains("任务乙"))
   }
 
@@ -302,7 +302,7 @@ class ProjectDispatcherSingletonSpec extends CatsEffectSuite:
     yield
       assertEquals(during.size, 1, "重入必须注入现有会话——不得并行 spawn 第二个会话")
       assertEquals(ins.size, 2, "全程恰好 2 个分发器 turn")
-      assert(ins(1).contains("节点反馈重入调整"), s"第二个 turn 必须是重入注入形态，got: ${ins(1).take(120)}")
+      assert(ins(1).contains("Node-feedback re-entry"), s"第二个 turn 必须是重入注入形态，got: ${ins(1).take(120)}")
       assert(ins(1).contains("blk-node"), "重入注入必须携带 blocked 节点名")
   }
 

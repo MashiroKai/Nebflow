@@ -186,7 +186,7 @@ class DispatcherSpawnPromptSpec extends CatsEffectSuite:
       assert(bytes < 30_000, s"spawn first message must stay under 30KB (audit P0-1), got $bytes bytes")
       // 形态：任务文本 + 先 NodeList 工作流指引 + 项目名
       assert(first.contains(taskText), "first message must carry the task text")
-      assert(first.contains("先 NodeList"), "first message must keep the NodeList-first workflow guidance")
+      assert(first.contains("Read the Flow Map first (NodeList"), "first message must keep the NodeList-first workflow guidance")
       assert(first.contains("spawn-prompt"), "first message must carry the project name")
       // 经济账对照（回执实测）：同规模快照 asJson 字节数（= 旧实现嵌入量）vs 实际首条
       val nodeCount = snap.nodes.size
