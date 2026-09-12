@@ -24,8 +24,11 @@
 //   A-11（隔离实例形态）纯读周期（列表出口）不重写 `_index.json`（hash 不变）
 //   A-14 客户端零自动放行（帧面）：meta=auto-all ∧ 全局=confirm-edits ⇒ 后端出卡帧档位 =
 //        全局值；会话列表帧（前端 `state.bypassSessions` 的**唯一**语义源）该 sid 的
-//        safetyMode = confirm-edits（⇒ 前端不会把它收进 bypassSessions）；全程**无**该
-//        sid 的 `{type:'permissionAnswer', approved:true}` 帧
+//        safetyMode = confirm-edits（⇒ 前端不会把它收进 bypassSessions）；
+//        **A-14c（修复轮重写）= D1 承重面**：全局=auto-all ∧ 该会话持 confirm-edits
+//        覆盖 ⇒ `SessionService` 出口（WS 连接首帧 `sessionList`）必须报**有效档位**；
+//        客户端语义复刻器（main.js:1531-1534 + chat.js:2309-2313）由此不得自动放行，
+//        且出站帧面无"非受控"`{type:'permissionAnswer', approved:true}`。
 //
 // 会话身份：探针会话用 agentName='general'（工具面 = Read/Write/Edit/Glob/Grep/Bash）。
 // Nebula 的机制工具面不含 Write/Edit/Bash（AgentCore.NebulaOrchestrationTools），测不出写面。
@@ -291,16 +294,53 @@ async function api(path, method = 'GET', body) {
   return { status: res.status, json, text };
 }
 const frames = [];
+/** 出站（client→server）帧捕获 —— A-14「客户端零自动放行」的帧面观测点。
+ *  `harness: true` = 本脚本**主动**发出的应答（permissionAnswer / setSafetyMode /
+ *  createSession）；`harness: false` = 非受控出站帧 = 自动放行形态（永不该出现）。 */
+const outbound = [];
 let ws = null;
+/** harness 主动发送的统一入口（打标记）。 */
+function hSend(obj) {
+  if (!ws) throw new Error('hSend: no ws');
+  ws.__nbHarness = true;
+  try { ws.send(JSON.stringify(obj)); } finally { ws.__nbHarness = false; }
+}
 function connectWs() {
   return new Promise((resolve, reject) => {
     const sock = new WebSocket(`ws://127.0.0.1:${GATEWAY_PORT}/ws?token=${encodeURIComponent(TOKEN)}`);
-    sock.addEventListener('open', () => { ws = sock; resolve(sock); });
+    sock.addEventListener('open', () => {
+      const origSend = sock.send.bind(sock);
+      sock.send = (data) => {
+        try { outbound.push({ at: Date.now(), harness: !!sock.__nbHarness, json: JSON.parse(data) }); } catch { /* non-json */ }
+        return origSend(data);
+      };
+      ws = sock;
+      resolve(sock);
+    });
     sock.addEventListener('error', () => reject(new Error('ws connect failed')));
     sock.addEventListener('message', (ev) => {
       try { frames.push({ at: Date.now(), json: JSON.parse(ev.data) }); } catch { /* binary/other */ }
     });
   });
+}
+/** 客户端语义复刻器（无浏览器会话；逐字复刻前端两处判定）。
+ *  · main.js:1531-1534 —— `state.bypassSessions = new Set(allSessions.filter(s => s.safetyMode === 'auto-all').map(s => s.id))`
+ *  · chat.js:2309-2313 —— 若目标会话在 `bypassSessions` 内，客户端**立即**发出
+ *    `{type:'permissionAnswer', sessionId, approved:true}`（用户零点击）。
+ *  返回 {bypass, wouldAutoApprove} —— 即"客户端会不会自动放行这个 sid"。 */
+function clientReplica(frame, sid) {
+  const all = frame?.json?.sessions || [];
+  const bypass = all.filter((s) => s.safetyMode === 'auto-all').map((s) => s.id);
+  return { bypass, wouldAutoApprove: bypass.includes(sid) };
+}
+/** 指定 WS 连接（`fromIdx` 之后）里**首帧** `type === 'sessionList'` 的帧
+ *  （= `SessionService.sendSessionList` 出口；`:675` 的每次连接首帧）。 */
+function firstConnectListFrame(fromIdx) {
+  for (let i = fromIdx; i < frames.length; i++) {
+    const j = frames[i].json;
+    if (j.type === 'sessionList' && Array.isArray(j.sessions)) return frames[i];
+  }
+  return null;
 }
 function newFramesSince(idx, pred) { return frames.slice(idx).filter((f) => pred(f.json)); }
 function startTurn(sid, content, timeoutSec = 60) {
@@ -340,7 +380,7 @@ function indexHasAutoAll() {
 }
 async function createSessionViaWs(name, agentName = 'general') {
   const before = frames.length;
-  ws.send(JSON.stringify({ type: 'createSession', name, agentName }));
+  hSend({ type: 'createSession', name, agentName });
   const isList = (j) => (j.type === 'sessionList' || j.type === 'agentSessionList') && Array.isArray(j.sessions);
   try {
     const f = await waitFor(() => newFramesSince(before, isList).slice(-1)[0],
@@ -368,6 +408,8 @@ function dumpEvidence() {
     writeFileSync(join(OUT, '03-tool-results.json'), JSON.stringify(toolResults, null, 2));
     writeFileSync(join(OUT, '04-askPermission-frames.json'), JSON.stringify(frames.filter((f) => f.json.type === 'askPermission').map((f) => f.json), null, 2));
     writeFileSync(join(OUT, '05-permissionAnswer-frames.json'), JSON.stringify(frames.filter((f) => f.json.type === 'permissionAnswer').map((f) => f.json), null, 2));
+    // 出站帧面（client→server）—— A-14c 的真观测面（旧版误查入站集）
+    writeFileSync(join(OUT, '09-outbound-frames.json'), JSON.stringify(outbound, null, 2));
     writeFileSync(join(OUT, '06-config.json'), existsSync(CONFIG_PATH) ? readFileSync(CONFIG_PATH, 'utf8') : '(missing)');
     writeFileSync(join(OUT, '07-gateway.log'), gatewayLog);
     if (existsSync(INDEX_PATH)) writeFileSync(join(OUT, '08-index-raw.json'), readFileSync(INDEX_PATH, 'utf8'));
@@ -395,7 +437,7 @@ async function writeProbe(sid, n, cardTimeoutMs = 45000) {
   if (card) {
     // 卡挂起 ⇒ 文件必须还没落盘（确认卡真的拦住了工具）
     const blocked = !existsSync(file);
-    ws.send(JSON.stringify({ type: 'permissionAnswer', sessionId: sid, requestId: card.json.requestId, approved: false }));
+    hSend({ type: 'permissionAnswer', sessionId: sid, requestId: card.json.requestId, approved: false });
     const result = await t.promise;
     return { card: card.json, blockedWhilePending: blocked, fileWritten: existsSync(file), turnResult: result, sliceStart: before };
   }
@@ -450,7 +492,7 @@ try {
     (await modeOf(s1)) === 'confirm-edits', `mode=${await modeOf(s1)}`);
 
   // ── 阶段 2（A-5 覆盖优先 / 重连保留覆盖） ──
-  ws.send(JSON.stringify({ type: 'setSafetyMode', sessionId: s1, safetyMode: 'auto-all' }));
+  hSend({ type: 'setSafetyMode', sessionId: s1, safetyMode: 'auto-all' });
   await waitFor(async () => (await modeOf(s1)) === 'auto-all', 'setSafetyMode override → auto-all', 15000);
   check('A-5a 会话内 setSafetyMode=auto-all ⇒ 出口值 = 覆盖值（全局仍是 confirm-edits）',
     (await modeOf(s1)) === 'auto-all' &&
@@ -481,7 +523,7 @@ try {
     const before = frames.length;
     const t = startTurn(s2, 'NB_PROBE=WRITE#5');
     const card = await waitFor(() => newFramesSince(before, (j) => j.type === 'askPermission')[0], 'card A-8b', 60000);
-    ws.send(JSON.stringify({ type: 'permissionAnswer', sessionId: s2, requestId: card.json.requestId, approved: true, upgradeMode: 'auto-edits' }));
+    hSend({ type: 'permissionAnswer', sessionId: s2, requestId: card.json.requestId, approved: true, upgradeMode: 'auto-edits' });
     await t.promise;
     await waitFor(async () => (await modeOf(s2)) === 'auto-edits', 'upgrade → auto-edits', 15000);
     check('A-8b 「允许本次并切编辑放行」⇒ 工具执行 + 档位升到 auto-edits',
@@ -502,7 +544,7 @@ try {
       card.json.toolName === 'Bash' && card.json.safetyMode === 'auto-edits',
       `toolName=${card.json.toolName} safetyMode=${card.json.safetyMode}`);
     check('A-8e 卡挂起期间危险命令未执行（探针目录仍在）', existsSync(BASH_TARGET));
-    ws.send(JSON.stringify({ type: 'permissionAnswer', sessionId: s2, requestId: card.json.requestId, approved: true, upgradeMode: 'auto-all' }));
+    hSend({ type: 'permissionAnswer', sessionId: s2, requestId: card.json.requestId, approved: true, upgradeMode: 'auto-all' });
     await t.promise;
     await waitFor(async () => (await modeOf(s2)) === 'auto-all', 'upgrade → auto-all', 15000);
     await waitFor(() => !existsSync(BASH_TARGET), 'dangerous bash executed', 15000).catch(() => {});
@@ -546,15 +588,61 @@ try {
   check('A-14a 会话列表帧（bypassSessions 语义源）该 sid 的 safetyMode = 有效档位 confirm-edits',
     listMode === 'confirm-edits', `listFrameMode=${listMode}`);
 
-  const framesBeforeA14 = frames.length;
   const w8 = await writeProbe(s2, 8);
   check('A-14b 盘上 auto-all + 全局 confirm-edits ⇒ 该会话 Write **出卡**，卡帧档位 = 全局值',
     !!w8.card && w8.card.safetyMode === 'confirm-edits' && w8.fileWritten === false,
     `card=${!!w8.card} safetyMode=${w8.card?.safetyMode} file=${w8.fileWritten}`);
-  const autoApproved = frames.slice(framesBeforeA14).filter((f) =>
-    f.json.type === 'permissionAnswer' && f.json.sessionId === s2 && f.json.approved === true);
-  check('A-14c 客户端零自动放行（帧面）：该 sid 全程无 `approved:true` 的 permissionAnswer 帧',
-    autoApproved.length === 0, `autoApprovedFrames=${autoApproved.length}`);
+  // ── A-14c（2026-09-12 修复轮·证据面缺陷 1 重写）──────────────────────────────
+  // 旧版判据恒真空转：它在 `frames`（**入站** server→client 帧集）里过滤
+  // `type === 'permissionAnswer'`——而 `permissionAnswer` 是 client→server 帧，
+  // 永不进入入站集 ⇒ 判据是 `0 === 0`，任何实现/任何变异下都恒绿。
+  //
+  // 新版判据（能真红）把两个面都纳入观测：
+  //   ① **客户端语义复刻器**（`clientReplica`，逐字复刻 main.js:1531-1534 +
+  //      chat.js:2309-2313）：把**本次 WS 连接的首帧 `sessionList`**（=
+  //      `SessionService.sendSessionList` 出口 —— D1 唯一漏注入面）喂进复刻器，
+  //      得到 `state.bypassSessions` 与"客户端会不会静默发出 approved:true"。
+  //   ② **出站帧面**：连接建立后 patch `sock.send` 捕获全部 client→server 载荷，
+  //      断言不存在"非 harness 主动应答"的 `permissionAnswer`（= 自动放行形态）。
+  //   ③ **D1 承重场景**（复刻器必须能分辨漏注入）：全局切回 `auto-all`，而目标会话
+  //      持有 **`confirm-edits` 覆盖**（会话内收紧）⇒ 有效档位 = 覆盖 = confirm-edits。
+  //      未修 D1 时该出口报**全局值 auto-all** ⇒ 复刻器把该 sid 收进 bypassSessions
+  //      ⇒ `wouldAutoApprove = true` ⇒ 本检查**红**；修后首帧 = 有效档位 ⇒ 绿。
+  //      （判据的自证：`frameMode === effective`，其中 effective 取 REST 出口基准。）
+  {
+    await api('/safety/mode', 'PUT', { mode: 'auto-all' });
+    hSend({ type: 'setSafetyMode', sessionId: s2, safetyMode: 'confirm-edits' });
+    await waitFor(async () => (await modeOf(s2)) === 'confirm-edits', 's2 override → confirm-edits', 15000);
+    const outboundBefore = outbound.length;
+    const framesBeforeReconnect = frames.length;
+    try { ws.close(); } catch { /* ok */ }
+    await sleep(800);
+    await connectWs();
+    await waitFor(() => firstConnectListFrame(framesBeforeReconnect) !== null,
+      'connect-time sessionList frame (SessionService.sendSessionList 出口)', 20000);
+    const connectFrame = firstConnectListFrame(framesBeforeReconnect);
+    const frameMode = norm((connectFrame.json.sessions.find((s) => s.id === s2) || {}).safetyMode);
+    const effective = await modeOf(s2);             // REST 出口 = 有效档位（修后的基准面）
+    const replica = clientReplica(connectFrame, s2);
+    // 复刻器发射（证据）：若复刻判定"客户端会自动放行"，就把客户端真正会发的那一帧
+    // 发出去并留痕（标记 clientSim，不计入 unsolicited 统计）——变异形态下它就是
+    // `{type:'permissionAnswer', sessionId, approved:true}`（无 requestId、零点击）。
+    let simEmitted = false;
+    if (replica.wouldAutoApprove) {
+      ws.__nbHarness = true;
+      try { ws.send(JSON.stringify({ type: 'permissionAnswer', sessionId: s2, approved: true })); }
+      finally { ws.__nbHarness = false; }
+      outbound[outbound.length - 1].clientSim = true;
+      simEmitted = true;
+    }
+    const unsolicited = outbound.slice(outboundBefore).filter((o) => !o.harness && o.json?.type === 'permissionAnswer');
+    check('A-14c 客户端零自动放行（D1 承重）：连接首帧 = **有效档位**（覆盖优先，非全局值）⇒ 复刻器不把该 sid 收进 bypassSessions，且出站面无自动放行帧',
+      effective === 'confirm-edits' && frameMode === effective && !replica.wouldAutoApprove && unsolicited.length === 0,
+      `connectFrameMode=${frameMode} effective(REST)=${effective} frameSessions=${(connectFrame.json.sessions || []).length} bypassFromFrame=${replica.bypass.length} wouldAutoApprove=${replica.wouldAutoApprove} clientSimEmitted=${simEmitted} unsolicitedAnswers=${unsolicited.length}`);
+    // 复原全局档（后续 A-11 / 阶段 5 的基线是 confirm-edits）
+    await api('/safety/mode', 'PUT', { mode: 'confirm-edits' });
+    await waitFor(async () => (await api('/safety')).json?.defaultMode === 'confirm-edits', 'global restored to confirm-edits', 15000);
+  }
 
   // A-11（隔离实例形态）：纯读周期（权威观测面 + 会话列表出口）不重写 `_index.json`
   const hashBefore = sha256(INDEX_PATH);

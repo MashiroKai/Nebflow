@@ -17,9 +17,15 @@ import nebflow.shared.Message
 class SessionService(
   store: SessionStore,
   /** 内存覆盖快照提供者（rootSessionId → 档位），由 GatewayMain 接
-    * `SharedResources.permissionPolicies` 的读取。默认空 map ⇒ 出口 overlay 恒等于
-    * 全局值（存量测试构造零改动；语义上等价于"无任何会话覆盖"）。 */
-  safetyModeOverrides: IO[Map[String, nebflow.core.SafetyMode]] = IO.pure(Map.empty)
+    * `SharedResources.safetyModeOverrides`。
+    *
+    * **必填、无缺省**（2026-09-12 修复轮 D1）：此前缺省 `IO.pure(Map.empty)` 让"漏注入"
+    * 静默退化为"出口恒输出全局值"——同一次连接里 `sessionList` 帧（本出口）与
+    * `agentSessionList` 帧（`SharedResources.overlaySessionList`）对同一 sid 给出两个读数，
+    * 客户端据此把已收紧的会话当顶档收进 `bypassSessions` 并静默放行（设计 §8 A-14 的
+    * 失败类反向复活）。去掉缺省 ⇒ 漏注入 = 编译期错误（**fail-loud**）。
+    * 唯一的构造点：`gateway/GatewayMain.scala`（`sharedResourcesLive` 装配处）。 */
+  safetyModeOverrides: IO[Map[String, nebflow.core.SafetyMode]]
 ):
 
   /** 新建会话。

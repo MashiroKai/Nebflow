@@ -15,6 +15,14 @@ import java.nio.file.Files
  * `auto-all`），因此恢复路径若仍用硬编码缺省，断言必红。
  *
  * 同时钉住 A-10 的语义面：恢复后所有会话的**有效档位** = 全局值（meta 已非权威）。
+ *
+ * ⚠ 2026-09-12 修复轮（证据面缺陷 2）：A-10 用例此前**恒真**——它只断言
+ * `SafetyModeAuthority.resolve(Map.empty, sid, global) == global`（对空覆盖而言这是
+ * 定义式），既不读恢复产物、也不受任何变异影响（M-A 下仍绿）。现改为**变异可分辨**：
+ * ① 断言恢复路径**写下的** meta 值 == 权威源值（M-A：落硬编码缺省 ⇒ 红）；
+ * ② 断言线上出口组合（`SessionMeta.withEffectiveSafetyModes`）不回显盘上遗留值
+ *    （出口 overlay 改读 meta ⇒ 红）；③ 前置断言"全局值 ≠ 构造缺省"且"盘上遗留值
+ *    ≠ 全局值"（分辨力前提，缺一即恒真）。实证读数见交付说明的 M-A 一节。
  */
 class SessionStoreRecoverAuthoritySpec extends CatsEffectSuite:
 
@@ -38,14 +46,20 @@ class SessionStoreRecoverAuthoritySpec extends CatsEffectSuite:
 
   /** 一个索引在册的会话 + 一个磁盘上的孤儿（`<uuid>.json` 不在索引里 ⇒
     * `loadFromIndex` → `recoverOrphans` 重建它）。孤儿**不写 safetyMode** ——
-    * 正是恢复路径要填的那一格。 */
-  private def seedDir: os.Path =
+    * 正是恢复路径要填的那一格。
+    *
+    * @param indexedSafetyMode 索引里那个在册会话的 `safetyMode`（`None` = 不写键）。
+    *   `Some("auto-all")` = **存量形态**：盘上写着顶档、全局却是 confirm-edits ——
+    *   A-10 用例用它证明"逐会话键不构成权威"，同时让该用例的观测面**可分辨**
+    *   （没有这个"盘上值 ≠ 全局值"的会话，任何断言都只能恒真）。 */
+  private def seedDir(indexedSafetyMode: Option[String] = None): os.Path =
     val sessionsDir = tmp / "sessions"
     os.makeDir.all(sessionsDir)
+    val modeKey = indexedSafetyMode.fold("")(m => s""", "safetyMode": "$m"""")
     os.write.over(
       sessionsDir / "_index.json",
       s"""{"activeId":"$indexedId",
-         | "sessions":[{"id":"$indexedId","name":"Indexed","createdAt":1,"updatedAt":2,"hasUnread":false}],
+         | "sessions":[{"id":"$indexedId","name":"Indexed","createdAt":1,"updatedAt":2,"hasUnread":false$modeKey}],
          | "folders":[]}""".stripMargin
     )
     os.write.over(sessionsDir / s"$indexedId.json", "[]")
@@ -59,7 +73,7 @@ class SessionStoreRecoverAuthoritySpec extends CatsEffectSuite:
 
   test("T-2/R1=C: recovered orphan takes the global authority value, not the hardcoded default"):
     writeGlobal("confirm-edits")
-    val store = newStore(seedDir)
+    val store = newStore(seedDir())
     store.load *> store.listSessions.map { loaded =>
       val recovered = loaded.find(_.id == orphanId).getOrElse(fail("orphan was not recovered"))
       assertEquals(recovered.name, "Recovered Session") // 消息文件解析成功的标志
@@ -73,32 +87,80 @@ class SessionStoreRecoverAuthoritySpec extends CatsEffectSuite:
 
   test("a second authority value (auto-edits) is reflected — proves it is read, not coincidental"):
     writeGlobal("auto-edits")
-    val store = newStore(seedDir)
+    val store = newStore(seedDir())
     store.load *> store.listSessions.map { loaded =>
       val recovered = loaded.find(_.id == orphanId).getOrElse(fail("orphan was not recovered"))
       assertEquals(recovered.safetyMode, "auto-edits")
     }
 
-  test("A-10: after recovery every session's EFFECTIVE level equals the global value"):
+  test("A-10: after recovery every session's EFFECTIVE level equals the global value (meta is not an authority)"):
     writeGlobal("confirm-edits")
-    val store = newStore(seedDir)
+    // 存量形态：索引里那个在册会话盘上写着 `safetyMode: auto-all`（≠ 全局值）
+    val sessionsDir = seedDir(indexedSafetyMode = Some("auto-all"))
+    val store = newStore(sessionsDir)
     for
       _ <- store.load
       loaded <- store.listSessions
       global <- GlobalSafety.defaultMode
     yield
-      assertEquals(global, SafetyMode.ConfirmEdits)
-      assert(loaded.nonEmpty, "recovery must leave a non-empty session list")
-      // 空覆盖映射 ⇒ 每个会话的有效档位 = 覆盖 ?? 全局 = 全局（恢复路径无特例）
-      val effective = loaded.map(s => s.id -> SafetyModeAuthority.resolve(Map.empty, s.id, global))
-      assert(
-        effective.forall(_._2 == SafetyMode.ConfirmEdits),
-        s"every recovered session must resolve to the global value, got $effective"
+      // 前置①：权威源 ≠ `SessionMeta` 的构造缺省（字面量 "auto-all"）——否则"读权威源"
+      // 与"落硬编码缺省"两种实现**无法分辨**（旧版本用例正是栽在这个恒真形态上）。
+      assertEquals(
+        global,
+        SafetyMode.ConfirmEdits,
+        "precondition: the global value must differ from SessionMeta's hardcoded default, else this case is vacuous"
       )
+      val recovered = loaded.find(_.id == orphanId).getOrElse(fail("orphan was not recovered"))
+      val indexed = loaded.find(_.id == indexedId).getOrElse(fail("the indexed session vanished during recovery"))
+      // 前置②：盘上遗留值必须与全局值不同 —— 观测面才有分辨力。
+      assertEquals(
+        indexed.safetyMode,
+        "auto-all",
+        "precondition: the stale per-session disk value must differ from the global value"
+      )
+
+      // 恢复后的内存覆盖快照（生产 = `SharedResources.permissionPolicies`；恢复路径不写它）
+      val overrides = Map.empty[String, SafetyMode]
+      def effective(s: SessionMeta): SafetyMode = SafetyModeAuthority.resolve(overrides, s.id, global)
+
+      // ① 恢复路径**写下的**盘上值 == 权威源值，且与有效档位一致。
+      //    变异（恢复路径落 `SessionMeta` 构造缺省 auto-all）⇒ 本条 assert 红。
+      assertEquals(
+        SafetyMode.fromString(recovered.safetyMode),
+        global,
+        "the recovered meta must carry the authority value (mutation: the hardcoded default would be auto-all)"
+      )
+      assertEquals(effective(recovered), global, "the recovered session's effective level must be the global value")
+
+      // ② 线上出口组合（唯一出口 helper `SessionMeta.withEffectiveSafetyModes`）：
+      //    盘上遗留 auto-all 的会话在出口必须仍报**全局值**。
+      //    变异（出口 overlay 改读 meta.safetyMode / 塞回 R-1=A 撤销形态）⇒ 红。
+      val exitModes: Map[String, Option[String]] =
+        SessionMeta
+          .withEffectiveSafetyModes(loaded, overrides, global)
+          .asArray
+          .getOrElse(Vector.empty)
+          .map(j => j.hcursor.get[String]("id").toOption.getOrElse("") -> j.hcursor.get[String]("safetyMode").toOption)
+          .toMap
+      assertEquals(
+        exitModes.get(indexedId).flatten,
+        Some("confirm-edits"),
+        s"the exit overlay must not echo the stale disk value (exit=$exitModes)"
+      )
+      assertEquals(exitModes.get(orphanId).flatten, Some("confirm-edits"))
+
+      // ③ 全量：恢复后的每个会话有效档位 = 全局值（A-10 字面口径）
+      val allEffective = loaded.map(s => s.id -> effective(s))
+      assert(
+        allEffective.forall(_._2 == SafetyMode.ConfirmEdits),
+        s"every recovered session must resolve to the global value, got $allEffective"
+      )
+      // ④ 对照：盘上键**没有被改写**（方案 A「读时忽略」，不是把数据改了）
+      assertEquals(indexed.safetyMode, "auto-all", "reads must not rewrite the stale disk value")
 
   test("recovery persists the authority value (re-read from disk after an index write)"):
     writeGlobal("confirm-edits")
-    val sessionsDir = seedDir
+    val sessionsDir = seedDir()
     val store = newStore(sessionsDir)
     for
       _ <- store.load
