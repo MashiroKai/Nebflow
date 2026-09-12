@@ -579,7 +579,7 @@ async function viewHtml(pane, { content, absPath, fileName, warnings }) {
     }, { once: true });
   }
 
-  // ── In-frame navigation handling (narrowed 2026-09-12) ────────────────────
+  // ── In-frame navigation handling (narrowed 2026-09-12, retargeted) ────────
   // The criterion used to be "the frame navigated at all" — any readable
   // `location.href` other than about:srcdoc — and that destroyed the pane for a
   // proxy URL, an image and a 404 body alike, while a CROSS-ORIGIN navigation
@@ -590,11 +590,25 @@ async function viewHtml(pane, { content, absPath, fileName, warnings }) {
   // (slidev etc.) navigating the frame ONTO THE APPLICATION itself, which would
   // boot a second app shell inside the pane — index.html's embedded-boot guard
   // stops the recursion, and this replaces the pane with a notice first.
-  const isAppNavigation = (href) => {
+  //
+  // The first narrowing asked "is the pathname under /api/?" — a proxy-face
+  // whitelist, i.e. the wrong KIND of question: it classifies server routes, so
+  // every other route a preview can legitimately land on (/agents/**, the real
+  // HTTP 200 local-file face, plus /uploads/**, /voice-models/**, /assets/**,
+  // /js|/css|/vendor) still counted as an app navigation and had its pane
+  // destroyed — and each new server route re-opened the same hole.
+  // The question this guard actually answers is not "which route is it" but
+  // "did this frame become the APPLICATION SHELL", and the shell answers that
+  // itself: index.html's anti-recursion script (web/index.html:12) sets
+  // `documentElement.dataset.nfEmbedded` synchronously in <head>, so the mark
+  // is on the document long before this load handler runs. Readable frame →
+  // decide by the marker; cross-origin (unreadable) → the catch keeps the
+  // non-fatal path. No route list to maintain: a new server-side file route
+  // cannot silently re-introduce this bug.
+  const isAppShellFrame = (frame) => {
     try {
-      const u = new URL(href, location.href);
-      return u.origin === location.origin && !u.pathname.startsWith('/api/');
-    } catch (_) { return false; }
+      return frame.contentDocument?.documentElement?.dataset?.nfEmbedded === '1';
+    } catch (_) { return false; }   // cross-origin — unreadable by design
   };
   /** Re-render this viewer's own document in place (drops the foreign frame). */
   const backToDocument = () => {
@@ -636,7 +650,7 @@ async function viewHtml(pane, { content, absPath, fileName, warnings }) {
     let href = null;
     try { href = iframe.contentWindow?.location?.href; } catch { /* cross-origin — unreadable by design */ }
     if (href === 'about:srcdoc') return;   // our own document: the normal case
-    if (href && isAppNavigation(href)) {
+    if (isAppShellFrame(iframe)) {
       /** @type {any} */ (pane)._nfZoomDestroy?.();  // frame navigated away — retire the zoom engine with it
       pane.innerHTML = '';
       const note = document.createElement('div');
