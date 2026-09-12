@@ -42,8 +42,11 @@ class SeedPluginReconcileSpec extends FunSuite:
 
   // ── fixtures ───────────────────────────────────────────────
   /** seed 资源字节面（rel → bytes），直接从 test classpath 读（与 SeedService 同源）。 */
-  private def seedDir: os.Path =
-    val url = getClass.getClassLoader.getResource("seed/plugins/slideblocks/plugin.json")
+  private def seedDir: os.Path = seedDirOf("slideblocks")
+
+  /** 任意种子插件的 classpath 目录（test classpath 上 `src/main/resources/seed/` 的实件）。 */
+  private def seedDirOf(name: String): os.Path =
+    val url = getClass.getClassLoader.getResource(s"seed/plugins/$name/plugin.json")
     os.Path(java.nio.file.Paths.get(url.toURI)) / os.up
 
   private def seedMap: SortedMap[String, Array[Byte]] =
@@ -168,8 +171,87 @@ class SeedPluginReconcileSpec extends FunSuite:
     assert(treeAsText(pluginDir) == asText(mutatedOldRuntime.toMap), "runtime preserved (no overwrite)")
     assert(recordSha.isEmpty, "still untrusted (seed never force-approves)")
 
+  // ── ⑥ 缺失默认集插件 → 既有 home 自愈安装 + approve（2026-09-12 批）──
+  test("missing default-set plugin in existing home is self-healed from seed and approved"):
+    makeIsolatedHome()
+    val myproj = home / "projects" / "myproj"
+    os.makeDir.all(myproj)
+    os.write.over(myproj / "project.json", """{"name":"myproj"}""")
+    // 既有形态：装了一部分默认集（visual-report），另两包（含 nebflow-plugin-creator）缺失
+    copySeedPlugin("visual-report")
+    assert(!os.exists(home / "plugins" / "nebflow-plugin-creator"), "precondition: creator absent")
+    assert(!os.exists(home / "plugins" / "slideblocks"), "precondition: slideblocks absent")
+
+    ensure()
+
+    // ① 缺失的默认集插件被自愈安装（整目录实件 + trusted）——author home 的缺口机制解
+    for name <- List("nebflow-plugin-creator", "slideblocks")
+    do
+      assert(os.exists(home / "plugins" / name / "plugin.json"), s"default-set plugin '$name' self-healed")
+      assert(PluginRegistry.resolve(name).unsafeRunSync().isRight, s"self-healed '$name' is trusted (approved)")
+    assert(
+      treeAsText(home / "plugins" / "nebflow-plugin-creator") == treeAsText(seedDirOf("nebflow-plugin-creator")),
+      "self-healed content == seed tree (byte-level)"
+    )
+    // ② 幂等：第二次 ensure 对该目录零动作（digest 已与种子一致）
+    val healed = dirDigest(home / "plugins" / "nebflow-plugin-creator")
+    ensure()
+    assert(dirDigest(home / "plugins" / "nebflow-plugin-creator") == healed, "second ensure is a no-op")
+
+  // ── ⑦ 自愈面 = 默认集（不向种子树全集扩张）───────────────
+  test("self-heal installs only the default set — never the whole seed tree"):
+    makeIsolatedHome()
+    val myproj = home / "projects" / "myproj"
+    os.makeDir.all(myproj)
+    os.write.over(myproj / "project.json", """{"name":"myproj"}""")
+
+    ensure()
+
+    // 种子树里但不在默认集的 5 包：零安装（作者 09-12 裁定：种子文件保留可手动装、默认集只三条）
+    for name <- List(
+        "nebflow-qa",
+        "nebflow-frontend-dev",
+        "engineering-methods",
+        "explorer-toolkit",
+        "design-spec")
+    do
+      assert(!os.exists(home / "plugins" / name),
+        s"non-default seed plugin '$name' NOT installed by self-heal (no area expansion)")
+    // 落盘面积恰为默认集三条（枚举目录，防「遍历种子树全集」式实现）
+    val installed = os.list(home / "plugins").filter(os.isDir).map(_.last).toList.sorted
+    assert(
+      installed == List("nebflow-plugin-creator", "slideblocks", "visual-report"),
+      s"existing-home plugin area == default preinstall set (3), got: ${installed.mkString(", ")}"
+    )
+
+  // ── ⑧ 已存在目录零覆盖（自愈不改既有目录）─────────────────
+  test("self-heal never writes into an already-present plugin dir (user version kept)"):
+    makeIsolatedHome()
+    val myproj = home / "projects" / "myproj"
+    os.makeDir.all(myproj)
+    os.write.over(myproj / "project.json", """{"name":"myproj"}""")
+    copySeedPlugin("visual-report")
+    val userFile = home / "plugins" / "visual-report" / "USER-NOTES.md"
+    os.write.over(userFile, "user modification\n") // 目录漂移（≠ 种子 digest，且无信任记录）
+    val before = dirDigest(home / "plugins" / "visual-report")
+
+    ensure()
+
+    assert(os.exists(userFile), "existing dir untouched (user file kept)")
+    assert(dirDigest(home / "plugins" / "visual-report") == before, "existing dir bytes unchanged by self-heal")
+
   private def treeAsText(d: os.Path): Map[String, String] =
     os.walk(d).filter(os.isFile).map(p =>
       p.relativeTo(d).toString -> new String(os.read.bytes(p), UTF_8)).toMap
+
+  /** 既有 home 形态夹具：把种子树里的插件整目录复制到 `home/plugins/<name>`。 */
+  private def copySeedPlugin(name: String): Unit =
+    val src = seedDirOf(name)
+    val dst = home / "plugins" / name
+    os.walk(src).filter(os.isFile).foreach { f =>
+      val t = dst / os.SubPath(f.relativeTo(src).toString)
+      os.makeDir.all(t / os.up)
+      os.copy.over(f, t)
+    }
 
 end SeedPluginReconcileSpec
