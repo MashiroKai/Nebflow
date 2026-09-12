@@ -27,7 +27,7 @@
 //        safetyMode = confirm-edits（⇒ 前端不会把它收进 bypassSessions）；
 //        **A-14c（修复轮重写）= D1 承重面**：全局=auto-all ∧ 该会话持 confirm-edits
 //        覆盖 ⇒ `SessionService` 出口（WS 连接首帧 `sessionList`）必须报**有效档位**；
-//        客户端语义复刻器（main.js:1531-1534 + chat.js:2309-2313）由此不得自动放行，
+//        客户端语义复刻器（main.js `state.bypassSessions = new Set(...)` @1536-1537 + chat.js `bypassSessions.has(targetSid)` @2317-2319；行号 2026-09-12 merge main@064b0922 后现场重取）由此不得自动放行，
 //        且出站帧面无"非受控"`{type:'permissionAnswer', approved:true}`。
 //
 // 会话身份：探针会话用 agentName='general'（工具面 = Read/Write/Edit/Glob/Grep/Bash）。
@@ -324,8 +324,8 @@ function connectWs() {
   });
 }
 /** 客户端语义复刻器（无浏览器会话；逐字复刻前端两处判定）。
- *  · main.js:1531-1534 —— `state.bypassSessions = new Set(allSessions.filter(s => s.safetyMode === 'auto-all').map(s => s.id))`
- *  · chat.js:2309-2313 —— 若目标会话在 `bypassSessions` 内，客户端**立即**发出
+ *  · main.js:1536-1537（符号锚：`state.bypassSessions = new Set(...)`，`onMessage('sessionList')` 处理器内）—— `state.bypassSessions = new Set(allSessions.filter(s => s.safetyMode === 'auto-all').map(s => s.id))`
+ *  · chat.js:2317-2319（符号锚：`if (state.bypassSessions.has(targetSid))` → `ws.send(permissionAnswer{approved:true})`）—— 若目标会话在 `bypassSessions` 内，客户端**立即**发出
  *    `{type:'permissionAnswer', sessionId, approved:true}`（用户零点击）。
  *  返回 {bypass, wouldAutoApprove} —— 即"客户端会不会自动放行这个 sid"。 */
 function clientReplica(frame, sid) {
@@ -598,8 +598,8 @@ try {
   // 永不进入入站集 ⇒ 判据是 `0 === 0`，任何实现/任何变异下都恒绿。
   //
   // 新版判据（能真红）把两个面都纳入观测：
-  //   ① **客户端语义复刻器**（`clientReplica`，逐字复刻 main.js:1531-1534 +
-  //      chat.js:2309-2313）：把**本次 WS 连接的首帧 `sessionList`**（=
+  //   ① **客户端语义复刻器**（`clientReplica`，逐字复刻 main.js:1536-1537 +
+  //      chat.js:2317-2319）：把**本次 WS 连接的首帧 `sessionList`**（=
   //      `SessionService.sendSessionList` 出口 —— D1 唯一漏注入面）喂进复刻器，
   //      得到 `state.bypassSessions` 与"客户端会不会静默发出 approved:true"。
   //   ② **出站帧面**：连接建立后 patch `sock.send` 捕获全部 client→server 载荷，
