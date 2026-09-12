@@ -14,6 +14,10 @@ import { appendRefToActiveView } from './input.js';
 import { showPopupMenu } from './contextMenu.js';
 // ⑥ 信任好友封存（作者裁定 2026-09-12）：静态常量，非配置读取、不过 latch。
 import { TRUST_SEALED } from './featureFlags.js';
+// ⑤ 中文输入收归（作者裁定 2026-09-12）：组字判定唯一来源 = imeGuard.js。
+// 本模块的好友会话输入框（作者点名的面）此前**零组字判定** —— 组字 Enter 会
+// 直接 doSend()。
+import { bindImeGuard, isImeComposing } from './imeGuard.js';
 
 let conversations = [];
 let friendsCache = [];          // accepted friends — source of truth for §3.3 gate
@@ -56,6 +60,14 @@ let chatMsgs = [];              // ascending messages currently loaded in the mo
 let oldestLoadedId = 0;         // keyset anchor for load-more
 let hasMoreHistory = false;
 let loadingHistory = false;
+
+// ── ⑦ 好友备注显示（作者裁定 2026-09-12，方案 §4.3(c)）────────────
+// 显示优先级「备注 > 显示名」；`username`（neblinkId，NL 号）显示面不变。
+// 备注缺失（null/undefined）⇒ 回落显示名，绝不渲染 null 字面。
+export function personLabel(person) {
+  if (!person) return '';
+  return person.remark || person.name || person.neblinkId || '';
+}
 
 function loggedIn() { return !!getNeblinkState().loggedIn; }
 
@@ -170,7 +182,7 @@ function convRow(conv) {
   row.appendChild(avatarEl(conv.friend, 40));
   const meta = el('div', 'fm-row-meta');
   const top = el('div', 'fm-conv-top');
-  top.appendChild(el('span', 'fm-row-name', conv.friend?.name || conv.friend?.neblinkId || ''));
+  top.appendChild(el('span', 'fm-row-name', personLabel(conv.friend)));
   top.appendChild(el('span', 'fm-conv-time', fmtTime(conv.lastMessage?.createdAt)));
   meta.appendChild(top);
   const bottom = el('div', 'fm-conv-bottom');
@@ -271,12 +283,12 @@ function renderChatModal(conv) {
 
   const modal = el('div', 'cfg-modal fm-modal');
   modal.setAttribute('role', 'dialog');
-  modal.setAttribute('aria-label', conv.friend?.name || '');
+  modal.setAttribute('aria-label', personLabel(conv.friend));
 
   // header: name · neblinkId | forward-btn ×
   const header = el('div', 'fm-modal-header');
   const title = el('div', 'fm-modal-title');
-  title.appendChild(el('span', 'fm-modal-name', conv.friend?.name || ''));
+  title.appendChild(el('span', 'fm-modal-name', personLabel(conv.friend)));
   title.appendChild(el('span', 'fm-modal-id', conv.friend?.neblinkId || ''));
   header.appendChild(title);
   // 信任模式 v1: 窗头信任状态指示（开启态一眼可辨；开关在好友行右键菜单）。
@@ -341,11 +353,26 @@ function renderChatModal(conv) {
 
   const doSend = () => sendCurrent(conv);
   sendBtn.addEventListener('click', doSend);
-  input.addEventListener('keydown', (e) => { if (e.key === 'Enter') { e.preventDefault(); doSend(); } });
+  // ⑤ 中文输入（作者点名的面）：组字期间 Enter 属于输入法（确认候选），不得
+  // 触发 doSend()；组字结束后的 Enter 照旧发送（⑤A3）。
+  bindImeGuard(input);
+  input.addEventListener('keydown', (e) => {
+    if (isImeComposing(e, input)) return;
+    if (e.key === 'Enter') { e.preventDefault(); doSend(); }
+  });
 
   applyBlockState(conv);
   updateTrustBadge(conv);
   createIconsIn(overlay);
+}
+
+// ⑦ 窗头标题面（显示优先级第三处）：备注改动后就地重打，不整窗重建。
+function updateModalTitle(conv) {
+  if (!modalEls) return;
+  const nameEl = modalEls.overlay.querySelector('.fm-modal-name');
+  if (nameEl) nameEl.textContent = personLabel(conv && conv.friend);
+  const dlg = modalEls.overlay.querySelector('.fm-modal');
+  if (dlg) dlg.setAttribute('aria-label', personLabel(conv && conv.friend));
 }
 
 // 信任状态指示：trusted → sapphire chip（shield-check + 「已信任」），未信任
@@ -737,6 +764,18 @@ export function initMessages() {
   // 信任开关在 contacts 右键菜单——开着的聊天窗头指示随之刷新。
   window.addEventListener('fm-trust-changed', () => {
     if (modalEls) updateTrustBadge(currentConv());
+  });
+  // ⑦ 备注改动（contacts 行内编辑提交 / 清除）——会话列表行与开着的聊天窗头
+  // 标题面同步（三处显示优先级「备注 > 显示名」；server 端 remark 落到
+  // conversations 的 friend 档案是下一次 refresh 的事，本地先就地更新）。
+  window.addEventListener('fm-remark-changed', (e) => {
+    const d = /** @type {CustomEvent<{userId?: string, remark?: string|null}>} */ (e).detail || {};
+    if (!d.userId) return;
+    const remark = d.remark || null;
+    for (const c of conversations) if (c.friend && c.friend.userId === d.userId) c.friend.remark = remark;
+    for (const f of friendsCache) if (f.userId === d.userId) f.remark = remark;
+    renderList();
+    updateModalTitle(modalEls ? currentConv() : null);
   });
   // P3 error surface — friendsApi dispatches on auth failure / network error.
   window.addEventListener('fm-auth-required', () => { openLoginModal(); });
