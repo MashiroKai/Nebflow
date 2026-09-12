@@ -13,7 +13,11 @@ case class SessionMeta(
   modelRef: Option[String] = None,
   bridges: Map[String, Json] = Map.empty,
   folderId: Option[String] = None,
-  safetyMode: String = "confirm-edits",
+  // 启动默认 = 全部放行（2026-09-12 作者令）：未显式传 mode 的构造点正是**启动/
+  // 首启**类路径（createDefaultSession / migrateFromLegacy / ensureAgentSession），
+  // 它们的初始档取顶档。Decoder 侧的缺省（:66 「absent ⇒ confirm-edits」）**不受
+  // 影响** —— 历史会话的档位照旧，只有新构造的会话用这里。
+  safetyMode: String = "auto-all",
   gitBranch: Option[String] = None,
   flowName: Option[String] = None
 )
