@@ -1407,6 +1407,28 @@ class RestApiRoutes(
           case Some(fs) => fs.unblockFriend(friendUserId).flatMap(friendResultRaw)
       }
 
+    /** 设置 / 清除好友备注（⑦，2026-09-12）。body `{remark}` → 200 `{ok:true}`。
+      *
+      * 逐行镜像 `PUT /neblink/peer-description` 的形态（withAuth + 缺参 400），
+      * 差别只有一处：**备注是 home 本地态、不触上游** ⇒ 本端点**没有** 502 /
+      * `friendErr` 分态（唯一失败面 = 400 缺参；未认证 = withAuth 403）。
+      * 语义：`trim` 后空串 = 清除（删键）；`remark` 键缺席 / null / 非字符串 =
+      * 缺参 400（冻结契约形 `{"remark":"<string>"}`——清备注用 `""`，不用 null）。
+      * 回显：响应恒 `{ok:true}`，不回带 remark（前端本地已有值，无二次真相源）。
+      */
+    case req @ PUT -> Root / "friends" / friendUserId / "remark" =>
+      withAuth(req) {
+        sharedResources.friendService match
+          case None => NotFound(Json.obj("error" -> "NebLink not enabled".asJson))
+          case Some(fs) =>
+            req.as[Json].flatMap { body =>
+              body.hcursor.downField("remark").as[String].toOption match
+                case Some(remark) =>
+                  fs.setRemark(friendUserId, remark) *> Ok(Json.obj("ok" -> true.asJson))
+                case None => BadRequest(Json.obj("error" -> "Missing remark".asJson))
+            }
+      }
+
     /** 会话列表（按 last_message_id 倒序，含 unreadCount）。 */
     case req @ GET -> Root / "conversations" =>
       withAuth(req) {

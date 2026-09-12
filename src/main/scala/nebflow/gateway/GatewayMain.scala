@@ -749,6 +749,23 @@ object GatewayMain extends IOApp:
                                       // 由 FriendService.withClient → Left("Not logged in") 表达，
                                       // 不靠「服务不存在」表达。
                                       val amConfig = neblinkService.neblinkConfig.unsafeRunSync().agentMessaging
+                                      // ⑦（2026-09-12）：本地好友备注（<dataRoot>/friend-remarks.json）
+                                      // 启动读一次 → SharedResources 里那个 friendService 的内存 Ref。
+                                      // 与 PeerDescriptionStore 同族：先例 NeblinkService.createInternal
+                                      // 的 `PeerDescriptionStore.load → Ref.of`；此处调用点同 amConfig
+                                      // 字节相邻的 boot 读形态（都在 IO 链的装配段内）。
+                                      // 读失败（文件损坏 / 权限 / 半写）⇒ 折成空 map + WARN：
+                                      // 备注是**可丢弃的本地态**（最坏情况 = 用户重设一次），绝不
+                                      // 允许它把整条 boot 装配链掀翻（GatewayMain 这段是 val 求值，
+                                      // 未捕获的 IO 失败 = 启动崩）。
+                                      val friendRemarks =
+                                        nebflow.neblink.FriendRemarkStore.load
+                                          .handleErrorWith { e =>
+                                            logger.warn(
+                                              s"friend-remarks load failed (falling back to empty): ${e.getMessage}"
+                                            ) *> IO.pure(Map.empty[String, String])
+                                          }
+                                          .unsafeRunSync()
                                       val friendService = nebflow.neblink.NeblinkWiring.friendService(
                                         tsDiscovery.currentClient,
                                         amConfig,
@@ -764,7 +781,8 @@ object GatewayMain extends IOApp:
                                             .obj("type" -> "friend_event".asJson, "event" -> ev.eventType.asJson)
                                             .deepMerge(io.circe.Json.fromJsonObject(payloadFields))
                                           wsHub.broadcast(frame)
-                                        }
+                                        },
+                                        remarks = friendRemarks
                                       )
                                       // A2A 一期（#290 域 A）：SendMessage 工具接线——
                                       // 授权仅 Nebula agent.json 声明（作者特批 2026-08-28），

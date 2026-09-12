@@ -19,7 +19,9 @@ import scala.concurrent.duration.*
  *    spec §5.2，推荐先只做逐会话补拉）；
  *  - 事件去重：friend_event.eventId 幂等（推送与补拉可能重叠，spec §5.2）；
  *  - agent 发送限速：auto 模式每好友 20 条/h、全局 60 条/h，超限自动降级
- *    ask（弹确认）而非硬失败（spec §7.2-7.3，用户裁定 auto 为一期默认）。
+ *    ask（弹确认）而非硬失败（spec §7.2-7.3，用户裁定 auto 为一期默认）；
+ *  - 本地好友备注（⑦）：`remarkRef` 持内存态、`FriendRemarkStore` 持久化，出站
+ *    口（refreshFriends / listFriends / refreshConversations）统一注入。
  *
  * 事件与确认回调由 GatewayMain 接线（UI/通知中心/AskUser 交互），FriendService
  * 本身不依赖任何 UI 层——纯逻辑（限速/去重/cursor）在 FriendMessagingGuard，
@@ -39,9 +41,57 @@ final class FriendService(
   config: AgentMessagingConfig,
   guard: FriendMessagingGuard = new FriendMessagingGuard(),
   onFriendEvent: Option[FriendEvent => IO[Unit]] = None,
-  askConfirm: Option[String => IO[Boolean]] = None
+  askConfirm: Option[String => IO[Boolean]] = None,
+  remarkRef: Ref[IO, Map[String, String]] = Ref.unsafe[IO, Map[String, String]](Map.empty)
 ):
   private val logger = NebflowLogger.forName("nebflow.neblink.friends")
+
+  // ===== 本地好友备注（2026-09-12 好友消息改造批 ⑦）=====
+
+  /** 备注覆盖应用（唯一合并点）：把本地备注（键 = `userId`）盖到档案上。
+    *
+    * 先例逐行同源：`NeblinkService.applyDescOverride`（`peersRef` + `.filter(_.nonEmpty)`）。
+    * 空/缺席一律**保持**档案原样（`None`）——不写空串，前端与工具两侧都不必容错
+    * 「空备注」第二种形态。 */
+  private def applyRemark(f: FriendSummary, remarks: Map[String, String]): FriendSummary =
+    remarks.get(f.userId).filter(_.nonEmpty) match
+      case Some(r) => f.copy(remark = Some(r))
+      case None    => f
+
+  /** 好友列表出站口统一注入备注。`ListFriends` / `SendMessage` 走 `refreshFriends`、
+   *  REST `GET /api/friends` 走 `listFriends` —— 两条取数路径在此收口，备注只在
+   *  一处合并（禁各调用点自行 map，防第二套合并语义）。 */
+  private def applyRemarks(resp: FriendListResponse): IO[FriendListResponse] =
+    remarkRef.get.map { remarks =>
+      resp.copy(friends = resp.friends.map(f => applyRemark(f, remarks)))
+    }
+
+  /** 会话列表内嵌 `friend` 档案同样带备注值（冻结契约 2：`remark` 经
+    *  `GET /api/friends` 与 conversations 的 `friend` 档案下发——前端消息列表行
+    *  的「备注 > 显示名」显示优先级读的就是这里的值）。 */
+  private def applyRemarksToConvs(convs: List[ConversationSummary]): IO[List[ConversationSummary]] =
+    remarkRef.get.map { remarks =>
+      convs.map(c => c.copy(friend = applyRemark(c.friend, remarks)))
+    }
+
+  /** 设置 / 清除某好友的备注（本地态，**零上游往返** ⇒ 无 502 面）。
+    *
+    * `trim` 后空串 = **清除**（从 map 删除，语义对齐 `NeblinkService.updatePeerDescription`
+    * 消费侧的 `.filter(_.nonEmpty)`）。持久化同族先例：改 Ref → `save`（写失败
+    * 即上抛，不由本层吞掉）。
+    */
+  def setRemark(friendUserId: String, remark: String): IO[Unit] =
+    val r = remark.trim
+    for
+      updated <- remarkRef.modify { m =>
+        val next = if r.isEmpty then m - friendUserId else m + (friendUserId -> r)
+        (next, next)
+      }
+      _ <- FriendRemarkStore.save(updated)
+    yield ()
+
+  /** 当前备注快照（键 = `userId`）。仅供查询/seam；写面唯一入口是 `setRemark`。 */
+  def remarks: IO[Map[String, String]] = remarkRef.get
 
   /** F1: resolve the authoritative live client per call. None (logged out /
     * never configured) mirrors NeblinkClient.withSession's own "Not logged in"
@@ -105,14 +155,15 @@ final class FriendService(
       convs.traverse_(c => pullConversation(c.conversationId))
     } *> refreshFriends().void
 
-  /** 拉会话列表，合并未读 cursor。 */
+  /** 拉会话列表，合并未读 cursor。内嵌 `friend` 档案同样盖本地备注（⑦：
+    * conversations 面与 `GET /api/friends` 面出参口径一致）。 */
   def refreshConversations(): IO[List[ConversationSummary]] =
     withClient(_.listConversations).flatMap {
       case Left(err) => logger.warn(s"listConversations failed: $err").as(Nil)
       case Right(convs) =>
-        convs
-          .traverse(c => guard.mergeUnread(c).map(_ => c))
-          .flatTap(_ => logger.debug(s"Refreshed ${convs.size} conversations"))
+        applyRemarksToConvs(convs)
+          .flatMap(_.traverse(c => guard.mergeUnread(c).map(_ => c)))
+          .flatTap(cs => logger.debug(s"Refreshed ${cs.size} conversations"))
     }
 
   /** 逐会话 keyset 补拉（after=本地最大消息 id），推进本地锚点。未读由
@@ -130,19 +181,24 @@ final class FriendService(
     }
 
   /** 好友列表快照（后台刷新语义：失败折叠空列表——refreshAll/事件触发链
-    * 不该把上游故障转成 REST 错误）。REST 直通面用 listFriends（F4）。 */
+    * 不该把上游故障转成 REST 错误）。REST 直通面用 listFriends（F4）。
+    * 出口统一注入本地备注（⑦）：`SendMessage` 走本方法 ⇒ 工具侧零取数改动即
+    * 拿到备注（`FriendRoster.resolve` 的 L0 层与候选文案都读它）。 */
   def refreshFriends(): IO[FriendListResponse] =
     withClient(_.listFriends).flatMap {
       case Left(err) => logger.warn(s"listFriends failed: $err").as(FriendListResponse(Nil))
-      case Right(resp) => IO.pure(resp)
+      case Right(resp) => applyRemarks(resp)
     }
 
   /** F4 分态穿透（2026-09-10 好友搜索批）：好友列表 REST 直通——上游 Left
     * 原样上抛（网关折叠 502），前端得以区分「空列表」与「加载失败」。
     * 后台刷新链（refreshAll / friend_event）仍走折叠版 refreshFriends，
-    * 不把后台拉取失败泄成 UI 错误。 */
+    * 不把后台拉取失败泄成 UI 错误。出口同样注入本地备注（⑦）。 */
   def listFriends: IO[Either[String, FriendListResponse]] =
-    withClient(_.listFriends)
+    withClient(_.listFriends).flatMap {
+      case Right(resp) => applyRemarks(resp).map(Right(_))
+      case Left(err)   => IO.pure(Left(err))
+    }
 
   /** 标记已读（本地 cursor + 服务端）。 */
   def markRead(conversationId: String, lastReadMessageId: Long): IO[Either[String, String]] =
