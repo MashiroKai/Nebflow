@@ -198,12 +198,32 @@ object TransferFileTool extends Tool:
     if peers.isEmpty then "Available devices: none (no NebLink peer discovered)."
     else s"Available devices: ${peers.map(p => s"${p.deviceName} [deviceId ${p.deviceId}]").mkString(", ")}."
 
+  /** 好友候选（**已登记偏差，见下**）：文案形态 `displayName [username …]`，与
+    * `FriendRoster.candidateLine` 的 `displayName (username)` **不同形**。
+    *
+    * ⚠ 偏差登记（2026-09-12 好友消息改造批 ⑦-D7，**本批有意不对齐**）：
+    *  - 本文件的 `friendCandidates` 与 `resolveFriend` 是**好友面第二份内联实现**
+    *    （备忘记号层 L0 与邮箱层 L4 也一概不在此文件出现）。
+    *  - `FriendRoster` 的「单点收归」范围**仅覆盖** `SendMessage`（`FriendMessageTool`）
+    *    与 `ListFriends`；`TransferFileTool` 的对齐属**另批**（⑦-D7 定稿：不同批对齐
+    *    ⇒ 两个工具对同一 query 的解析结果/候选文案**可能不同**，这是**已登记的第二处
+    *    偏差**，见方案 §7.2 M-8）。
+    *  - 因此**同一 query** 在本工具与 `SendMessage` 下可能给出不同结论（本文件无备注
+    *    层、无邮箱层），调用方不得跨工具推断解析结果。
+    *  - 本文件**行为零变更**（⑦-D7）；允许清单由只读哨兵 spec
+    *    `FriendRosterSinglePointSpec` 登记，哨兵红即代表新增了第三处解析/候选文案实现。
+    */
   private[tools] def friendCandidates(friends: List[FriendSummary]): String =
     if friends.isEmpty then "Available friends: none (friend list empty or the NebLink friends service is unavailable)."
     else s"Available friends: ${friends.map(f => s"${f.displayName} [username ${f.username}]").mkString(", ")}."
 
-  /** 好友解析（纯函数，public for tests）：沿用好友消息支的三级口径——username
-    * 精确 → displayName 精确 → displayName 唯一前缀；多命中/零命中一律带候选列表。
+  /** 好友解析（纯函数，public for tests）：沿用好友消息支的**改动前**三级口径——
+    * username 精确 → displayName 精确 → displayName 唯一前缀；多命中/零命中一律带
+    * 候选列表。
+    *
+    * ⚠ 已登记偏差（⑦-D7）：本实现**不含** `FriendRoster` 的 L0 备忘记号层，也不含
+    * `SendMessage` 的 L4 邮箱层 ⇒ 同一 query 两工具结果可能不同；对齐属另批（本批
+    * 行为零变更，仅此注释）。**禁**在此处新增第三份候选文案/解析口径。
     *
     * 刻意**内联**而非复用 `FriendMessageTool.resolveFriend`：并行改名支（A1）会改该
     * 工具的符号名，跨支引用会在合并时炸；批① 的约束是「各自内联、不抽公共 helper」。 */

@@ -1,6 +1,6 @@
 package nebflow.neblink
 
-import cats.effect.IO
+import cats.effect.{IO, Ref}
 import nebflow.core.NebflowLogger
 
 /**
@@ -32,14 +32,26 @@ object NeblinkWiring:
     * the whole process keeps `FriendMessagingGuard` state (unread cursors /
     * eventId dedupe set / rate-limit windows) intact — rebuilding the service on
     * every login would reset all three.
+    *
+    * `remarks`（2026-09-12 ⑦）：启动期由调用方（`GatewayMain`）从
+    * `FriendRemarkStore.load` 读入并透传 —— 工厂保持**纯函数**（不自己跑 IO），
+    * 与 `NeblinkService.createInternal` 的 `PeerDescriptionStore.load → Ref.of`
+    * 同族形态；测试可注入任意初始 map。默认空 map ⇒ 既有调用点零改动。
     */
   def friendService(
     clientProvider: IO[Option[NeblinkClient]],
     config: AgentMessagingConfig,
     guard: FriendMessagingGuard = new FriendMessagingGuard(),
-    onFriendEvent: Option[FriendEvent => IO[Unit]] = None
+    onFriendEvent: Option[FriendEvent => IO[Unit]] = None,
+    remarks: Map[String, String] = Map.empty
   ): FriendService =
-    new FriendService(clientProvider, config, guard, onFriendEvent)
+    new FriendService(
+      clientProvider,
+      config,
+      guard,
+      onFriendEvent,
+      remarkRef = Ref.unsafe[IO, Map[String, String]](remarks)
+    )
 
   /** The value written into `SharedResources.friendService` (A 案, 2026-09-11).
     *
