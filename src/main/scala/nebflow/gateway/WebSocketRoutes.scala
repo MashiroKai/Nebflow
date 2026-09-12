@@ -503,6 +503,16 @@ class WebSocketRoutes(
       }
 
   /**
+   * **口径如实（wd-fix 批 2026-09-12 实读订正）**：本函数**不调用**
+   * `TaskStuckWatcher.assess` / `#classify` —— 它是同一组不等式的**第二份内联副本**，
+   * 与 [TaskStuckWatcher] 头注旧文所称的「三处同源」**不符**：
+   *   - **阈值不同**：本处 `Defaults.SessionKickIdleSec` = **150s**（设计 D-3），
+   *     watcher 的 `Defaults.StuckThresholdMs` = **600s**；
+   *   - **多一条护栏**：`toolInFlight`（本处独有，watcher 在 `classify` 里做根因分流）。
+   * ⇒ 判据源实为 2 同源（watcher 扫描 + `AgentControlTool`）+ 1 副本（本处）。
+   * 副本改走 `assess`/`classify` 属**行为变更**（阈值/护栏/分级语义全变），
+   * **不在 wd-fix 批范围内**（建议另立条目）。
+   *
    * 2026-09-10 卡死判据换轴：kick 判据与 lastActivityMs 一并收紧为 **agent 侧**
    * 信号，并加一条工具相位护栏（与 TaskStuckWatcher.assess 同轴）：
    *
