@@ -359,6 +359,14 @@ const INJECTED_SOURCE_LABELS = {
   mail: 'Mail', delegate: 'Delegate', subtask: 'SubTask', skill: 'Skill',
   ask: 'Ask', flow: 'Flow', tool: 'Tool', api: 'API',
   task: 'Task', dispatch: 'Dispatch',
+  // bluebubble 批（2026-09-12）：后端 `InjectionAttribution.BackendNamedSources`
+  // 是唯一定名源（`src/main/scala/nebflow/agent/protocol.scala`）。system /
+  // background 此前靠 `charAt(0).toUpperCase()` 兜底——偶然正确但不受保护
+  // （兜底对多词源名/大小写变体不设防，且后端加新源会静默以错误标签展示），
+  // 故显式登记。登记面 ⊇ 后端集合由 `InjectionSourceContractSpec` 硬门守住。
+  // `node` 不在本表：它在 injectedSourceLabel 里有专用格式分支（NODE · 项目 ·
+  // 节点 · 状态），spec 认「表项 ∪ 显式分支」为已登记。
+  system: 'System', background: 'Background',
 };
 
 /** Map backend eventType → display suffix for the source label.

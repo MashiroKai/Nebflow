@@ -289,12 +289,15 @@ export function saveMsg(entry, sessionId) {
 // ---------- Injected-bubble direction filter ----------
 // The blue injected bubble is for content RECEIVED by this session's agent
 // (Mail from others, Delegate/SubTask completion notifications, ExternalEvent
-// results). The backend currently records EVERY injected user event flowing
-// through the root WS connection into the ROOT session's ui.json
-// (makeRecordingWsSend's "user" case ignores the event's own session id), so a
-// restored history can contain injections that were actually delivered
-// elsewhere — including this agent's own OUTGOING sends. Those are not
-// received content: never render them as injected bubbles.
+// results). Historically the backend recorded EVERY injected user event that
+// flowed through the root WS connection into the ROOT session's ui.json
+// (makeRecordingWsSend's "user" case fell back to the *recording session* when
+// the frame carried no nodeSessionId), so a restored history could contain
+// injections that were actually delivered elsewhere — including this agent's
+// own OUTGOING sends. Those are not received content: never render them as
+// injected bubbles. Since 2026-09-12 the record is written at the single
+// emission point (AgentActor#emitInjectedUserEvent) into the event's OWN
+// session, but the filter stays: old histories still contain legacy rows.
 //   - sender === own agent name  → a Mail this agent SENT (the bubble belongs
 //     to the recipient's session)
 //   - source delegate/subtask without eventType → a task prompt this agent

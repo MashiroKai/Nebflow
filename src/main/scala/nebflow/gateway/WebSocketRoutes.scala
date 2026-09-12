@@ -4583,49 +4583,13 @@ class WebSocketRoutes(
         else IO.unit
 
       case "user" =>
-        // Injected user events (from emitInjectedUserEvent) — persist so the
-        // blue injection bubble survives page refresh. Regular user messages
-        // are persisted separately in the WS message handler (not here).
-        //
-        // CRITICAL: the record target must be the event's own nodeSessionId
-        // (normalized), NOT the root WS sessionId. Sub-agent injected events
-        // (Mail delivery, Delegate/SubTask prompts) flow through the root
-        // wsSend — recording them to sessionId would accumulate every
-        // cross-agent injection into Nebula's ui.json. Matching the
-        // agentTextDelta / agentToolEnd cases above.
-        val text = hc.downField("text").as[String].getOrElse("")
-        val injected = hc.downField("injected").as[Boolean].getOrElse(false)
-        val source = hc.downField("source").as[Option[String]].getOrElse(None)
-        val evtType = hc.downField("eventType").as[Option[String]].getOrElse(None)
-        val sender = hc.downField("sender").as[Option[String]].getOrElse(None)
-        val senderTeam = hc.downField("senderTeam").as[Option[String]].getOrElse(None)
-        val delivery = hc.downField("delivery").as[Option[String]].getOrElse(None)
-        val targetSession = hc
-          .downField("nodeSessionId")
-          .as[String]
-          .toOption
-          .filter(_.nonEmpty)
-          .map(normalizeNodeSessionId)
-          .getOrElse(sessionId)
-        if text.nonEmpty && injected then
-          sharedResources.sessionStore.appendUiMessages(
-            targetSession,
-            List(
-              UiMessage.User(
-                text,
-                Nil,
-                injected = true,
-                timestamp = System.currentTimeMillis(),
-                source = source,
-                eventType = evtType,
-                sender = sender,
-                senderTeam = senderTeam,
-                delivery = delivery
-              )
-            )
-          )
-        else IO.unit
-        end if
+        // bluebubble 批（2026-09-12）：注入行（injected:true）的落盘**已上收到唯一
+        // 发射点** `AgentActor#emitInjectedUserEvent` —— 本层不再按帧嗅探重复落盘
+        // （同一行会被写两次）。理由：本层只在 wsSend 恰为**录制 send** 时生效，
+        // 而启动挂载的项目 engine.wsSendFn = 裸 wsHub.broadcast（GatewayMain.startupMount）
+        // ⇒ 分发器/节点会话的注入气泡永不落盘（作者 2026-09-12 19:42「任务分发器看不到
+        // 蓝气泡」的根因之一）。普通用户消息本就不经此处（WS message handler 单独落盘）。
+        IO.unit
 
       case "system" =>
         val content = hc.downField("content").as[String].getOrElse("")
