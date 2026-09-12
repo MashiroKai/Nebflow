@@ -29,6 +29,26 @@ import { key } from './branding.js';
 let initialized = false;
 let statusPollTimer = null;
 
+// ── 状态 beacon 订阅点（①opt-A3 载体）─────────────────────
+// 既有 10s 状态轮询是页面唯一的「活着」节拍（只看可见性、不新增定时器）。
+// 订阅者复用这一拍做降级动作（好友消息面：relay 不可用时的 REST 增量回补），
+// 因此**不引入第二个定时器**、频率与可见性守卫与 beacon 完全同源。
+// 返回注销函数（当前唯一订阅者 messages.js 整页生命周期只装一次，保留注销
+// 能力是为了不把「只能加不能减」的隐含约束写进接口语义）。
+/** @type {Set<() => void>} */
+const statusTickListeners = new Set();
+
+/**
+ * 订阅既有 10s 状态 beacon 的每一拍（仅页面可见时触发）。
+ * @param {() => void} cb
+ * @returns {() => void} unsubscribe
+ */
+export function onStatusTick(cb) {
+  if (typeof cb !== 'function') return () => {};
+  statusTickListeners.add(cb);
+  return () => { statusTickListeners.delete(cb); };
+}
+
 export function initActivityBar() {
   if (initialized) return;
   initialized = true;
@@ -40,7 +60,15 @@ export function initActivityBar() {
   // Refresh NebLink state now and periodically (only while the page is visible)
   // so the avatar reflects logged-in / pairing state.
   refresh();
-  statusPollTimer = setInterval(() => { if (!document.hidden) refresh(); }, 10000);
+  statusPollTimer = setInterval(() => {
+    if (document.hidden) return;
+    refresh();
+    // ①opt-A3：beacon 的同一拍上跑订阅者（好友消息面降级回补）。订阅者自身
+    // 负责「健康路径零请求」的判据与节流 —— 这里不做任何策略判断。
+    for (const cb of [...statusTickListeners]) {
+      try { cb(); } catch { /* 订阅者异常不得打断状态轮询 */ }
+    }
+  }, 10000);
 
   observeSettingsModal();
 

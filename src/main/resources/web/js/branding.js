@@ -33,9 +33,18 @@ const LEGACY_PREFIX = 'nebflow_';
 // Legacy keys whose spelling does not follow `nebflow_<suffix>`. Values map
 // suffix -> literal. Normalized on every boot (not only on rename day) so
 // these pre-standardization spellings disappear immediately.
+//
+// ⑨-6（作者 2026-09-12 预授权令）：好友域三个裸键（好友信任标记 / 已看请求 /
+// 拉黑镜像）此前无视命名空间纪律直接写死在 messages.js / contacts.js 里 ——
+// 迁到 `key()` 命名空间（`nebflow_fm_trusted` 等），存量值经本表**启动即迁移**
+// （migrateKey 是「新键已有数据则不动」的幂等拷贝，数据不丢；裸键字面自此只
+// 存在于这一张兼容表里）。
 const LEGACY_IRREGULAR = {
   task_collapsed: 'nebflow-task-collapsed',
   time_format: 'nebflow:timeFormat',
+  fm_trusted: 'fm_trusted',
+  fm_seen_requests: 'fm_seen_requests',
+  fm_blocked: 'fm_blocked',
 };
 
 /**

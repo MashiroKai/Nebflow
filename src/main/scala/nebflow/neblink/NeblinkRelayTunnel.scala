@@ -78,8 +78,18 @@ final class NeblinkRelayTunnel(
   /** When the last self-heal re-login was attempted (0 = never). */
   @volatile private var lastHealAtMs = 0L
 
-  /** Check if the relay tunnel is currently connected (for status reporting). */
-  def isAlive: Boolean = alive.get()
+  /** Check if the relay tunnel is currently connected (for status reporting).
+    *
+    * ①-2 语义诚实化（2026-09-12 波3，方案 §2.1 ①opt-A1 / §6.2 ①-2）：修前
+    * `alive` 单点——它只在 `closed.get` 返回之后才被清假（:313-317），而闩在
+    * 「abort 不回调 Listener」的僵尸态里永不返回（E3 探针复现）⇒ 通道死了 4 小时
+    * 而 `/api/neblink/status` 仍报 `relay.available:true`（E4 假阳性）。
+    * 现语义 = **连线在册 且 最近一次 pong 在 30s 窗口内**——判据与心跳的僵尸
+    * 判据同源（同一个 `LivenessTimeoutMs`，不新增第二个阈值）。消费面：
+    * status 端点的 `relay.available`（含 per-peer reachable 提示）与
+    * `RemoteExecutor` 的 P2P/relay 选路（僵尸隧道不再被当作可用 relay）。 */
+  def isAlive: Boolean =
+    alive.get() && (System.currentTimeMillis() - lastPong.get()) < NeblinkRelayTunnel.LivenessTimeoutMs
 
   /** F7: last upgrade auth rejection (status code + self-heal outcome).
     * Surfaces on /neblink/status as an INDEPENDENT "auth rejected" state —
@@ -298,7 +308,7 @@ final class NeblinkRelayTunnel(
         wsRef = Some(w)
         alive.set(true)
         lastPong.set(System.currentTimeMillis())
-        startHeartbeat(w)
+        startHeartbeat(w, closed)
         // Anti-loop reset + F7: a successful upgrade means the credential
         // problem is over — the next rejection gets a fresh heal budget and the
         // status stops claiming "auth rejected" (code/time stay as history).
@@ -413,7 +423,31 @@ final class NeblinkRelayTunnel(
 
   // ===== Heartbeat =====
 
-  private def startHeartbeat(ws: WebSocket): Unit =
+  /**
+   * ①opt-A1 通道自愈（2026-09-12 波3，方案 §2.1）：`WebSocket.abort()` 只撕
+   * socket（服务端看到 FIN），**不回调 Listener 的 onError/onClose**——JDK
+   * 实机探针复现（`.nebflow/evidence/20260912_friendmsg-batch/fm-realtime-recon/AbortProbe.java`，
+   * Temurin 23.0.1，同宿主 JDK）。因此 `closed`（connectOnce 唯一等待的闩，
+   * :312）永不完成：`alive.set(false)` / `stopHeartbeat()` 那半段收尾
+   * （:313-317）不执行，`connectLoop` 停在 `closed.get` 上不再前进，心跳继续
+   * 每 10s 一条「heartbeat timeout」刷日志——正是 2026-09-11 20:41 之后约 3.3
+   * 小时（1192 条超时 / 0 条重连）的形态。
+   *
+   * 修法 = 看门狗：abort 之后给闩一个宽限窗（`ZombieLatchGrace`），到点仍未
+   * 完成就由我们补 `complete(())`。`Deferred#complete` 完成过的再调是
+   * **幂等 no-op**（返回 false），故「Listener 稍后真的回调」与「看门狗先到」
+   * 两条路不竞态、不重复收尾（收尾动作在 `connectOnce` 的 `guarantee` 半段，
+   * 只会跑一次）。
+   */
+  private def armZombieLatchWatchdog(closed: Deferred[IO, Unit]): Unit =
+    dispatcher.unsafeRunAndForget(
+      IO.sleep(NeblinkRelayTunnel.ZombieLatchGrace) *>
+        closed.complete(()).void.handleErrorWith { e =>
+          logger.debug(s"Relay tunnel latch watchdog errored (${e.getClass.getSimpleName})")
+        }
+    )
+
+  private def startHeartbeat(ws: WebSocket, closed: Deferred[IO, Unit]): Unit =
     val hb = Executors.newSingleThreadScheduledExecutor { r =>
       val t = new Thread(r, "relay-tunnel-hb")
       t.setDaemon(true)
@@ -424,7 +458,7 @@ final class NeblinkRelayTunnel(
       { () =>
         try
           if alive.get() then
-            if System.currentTimeMillis() - lastPong.get() > 30_000L then
+            if System.currentTimeMillis() - lastPong.get() > NeblinkRelayTunnel.LivenessTimeoutMs then
               // Zombie-connection fix (diag-transfer-stuck R2): a half-open TCP
               // connection never delivers sendClose to the peer and the JDK
               // listener's onError/onClose never fire, so `closed` (the
@@ -432,8 +466,11 @@ final class NeblinkRelayTunnel(
               // stalled silently for hours. abort() tears the connection down
               // LOCALLY — the listener fires immediately, connectOnce returns
               // and connectLoop reconnects.
+              // 波3（①opt-A1）：该注释里的「listener fires immediately」经探针证伪
+              // ——abort 不回调，故此处补看门狗把闩补完（幂等）。
               logger.infoSync("Relay tunnel heartbeat timeout — aborting zombie connection for reconnect")
               ws.abort()
+              armZombieLatchWatchdog(closed)
             else
               try ws.sendText("""{"type":"ping"}""", true)
               catch case _: Exception =>
@@ -442,6 +479,7 @@ final class NeblinkRelayTunnel(
                 // window with a dead connection (alive must track reality).
                 logger.debugSync("Relay tunnel ping send failed — aborting broken connection")
                 ws.abort()
+                armZombieLatchWatchdog(closed)
         catch case _: Exception => ()
       },
       10,
@@ -467,6 +505,22 @@ final class NeblinkRelayTunnel(
 end NeblinkRelayTunnel
 
 object NeblinkRelayTunnel:
+
+  /**
+   * Liveness window (①-2 / ①opt-A1，波3 2026-09-12）：pong 超出此窗口 = 连接是
+   * 僵尸。**同一个值**同时供心跳的僵尸判据与 `isAlive` 使用（不新增第二个
+   * 阈值——两处判据若漂移，status 会与自愈动作各说各话）。数值 30s 沿既有心跳
+   * 阈值原样搬移，未改任何既有默认值（H-1）。
+   */
+  private[neblink] val LivenessTimeoutMs = 30_000L
+
+  /**
+   * `ws.abort()` 之后给闩的宽限窗口（①opt-A1）：到点 `closed` 仍未完成 ⇒ 看门狗
+   * 补完成。取值 5s = 「远小于一次心跳间隔的一半」且远小于验收判据的 60s 上限，
+   * 使自愈时延可见地落在判据内（心跳超时 → ≤5s 收尾 → 立即重连）。
+   */
+  private[neblink] val ZombieLatchGrace: scala.concurrent.duration.FiniteDuration =
+    scala.concurrent.duration.DurationInt(5).seconds
 
   /**
    * Minimum interval between two auth-rejection self-heals inside the SAME

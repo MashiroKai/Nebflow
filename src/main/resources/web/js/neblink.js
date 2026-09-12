@@ -4,6 +4,10 @@
  */
 import state from './state.js';
 import { key } from './branding.js';
+// ⑨ 消息缓存生命周期挂靠点（作者 2026-09-12 口径：v1 介质 = localStorage 持久
+// 落盘；登出清缓存）。方向是单向的：fmMessageCache 只依赖 branding.js，
+// 本模块依赖它 —— 无环（scripts/check-circular.mjs 守）。
+import { setCacheAccount, clearMessageCache } from './fmMessageCache.js';
 import { escapeHtml } from './utils.js';
 import { t, getLocale } from './i18n.js';
 import { onMessage, sendWs } from './ws.js';
@@ -36,7 +40,12 @@ let neblinkState = {
   // Device-flow state: 'idle' | 'waiting' | 'success'
   flowState: 'idle',
   userCode: '',
-  deviceCode: ''
+  deviceCode: '',
+  // ①opt-A3（方案 §2.1）：relay 隧道状态进 state，供「降级增量回补」判据消费
+  // （`relay.available === true` 才算通道可用）。形状 = /api/neblink/status 的
+  // `relay` 对象原文 {available, authRejected, lastRejectedStatusCode,
+  // lastRejectedAt, selfHeal}（NeblinkRelayTunnel.statusJson）；未取到 = null。
+  relay: /** @type {{available?: boolean, authRejected?: boolean, lastRejectedStatusCode?: number|null, lastRejectedAt?: number|null, selfHeal?: string}|null} */ (null)
 };
 
 // ── NL 号（Username）入口说明 ────────────────────────────
@@ -107,6 +116,7 @@ export async function fetchNeblinkStatus() {
     });
     if (!resp.ok) return;
     const data = await resp.json();
+    const wasLoggedIn = neblinkState.loggedIn;
     neblinkState.loggedIn = !!data.loggedIn;
     // Normalize local device fields to match peer field names.
     // githubLogin is deliberately NOT mapped: the client is Logto-only now
@@ -139,6 +149,17 @@ export async function fetchNeblinkStatus() {
     // 无），此处兜底；幽灵注册属服务端数据缺口（S3/S4），不在本修复面。
     const selfId = d ? d.id : null;
     neblinkState.peers = (data.peers || []).filter(p => !selfId || p.deviceId !== selfId);
+
+    // ①opt-A3：relay 隧道状态（本批新增字段，加法语义——老网关缺该字段 ⇒ null，
+    // 消费方按「不可用」处理 = 降级兜底方向）。
+    neblinkState.relay = (data.relay && typeof data.relay === 'object') ? data.relay : null;
+
+    // ⑨ 消息缓存账号分区（作者 2026-09-12 落盘口径）：登出/凭证失效 ⇒ 清缓存；
+    // 分区键 = deviceId|email 复合（任一变化即「另一个账号」，跨账号绝不串数据）。
+    if (wasLoggedIn && !neblinkState.loggedIn) clearMessageCache();
+    setCacheAccount(neblinkState.device
+      ? `${neblinkState.device.deviceId || ''}|${neblinkState.device.email || ''}`
+      : '');
   } catch (e) {
     // neblink not available yet
   }
@@ -560,6 +581,9 @@ export function bindNeblinkEvents(rerender) {
     window.open('/api/neblink/auth/end-session', '_blank', 'noopener');
     setTimeout(async () => {
       forgetAvatarProfile(); // drop the last-known snapshot: a logged-out user must not resurrect offline
+      // ⑨ 登出清除（作者口径：消息持久落盘，但换账号/登出必须清）——与头像
+      // last-known 同一条链、同一时机，不留「登出后本地仍躺着上一位的聊天记录」。
+      clearMessageCache();
       await fetchNeblinkStatus();
       _rerender?.();
     }, 1000);
