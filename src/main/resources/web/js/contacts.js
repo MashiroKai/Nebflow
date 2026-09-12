@@ -11,6 +11,9 @@ import { onMessage } from './ws.js';
 import * as api from './friendsApi.js';
 import { openChatWithFriend, fmtTime, isFriendTrusted, setFriendTrusted } from './messages.js';
 import { showPopupMenu } from './contextMenu.js';
+// ⑨-6（作者 2026-09-12 预授权令）：本模块两个裸键（已看请求 / 拉黑镜像）迁入
+// `key()` 品牌命名空间；存量值经 branding.js 的 LEGACY_IRREGULAR 启动即迁移。
+import { key } from './branding.js';
 // ⑥ 信任好友封存（作者裁定 2026-09-12）：静态常量，非配置读取、不过 latch。
 import { TRUST_SEALED } from './featureFlags.js';
 // ⑤ 中文输入收归（作者裁定 2026-09-12）：组字判定唯一来源 = imeGuard.js。
@@ -39,7 +42,7 @@ let listErrorKind = null;   // null | 'auth' | 'neblinkOff' | 'retryable'（好�
 // ── 红点语义（0904 批次，微信常识）：未看过的请求才亮。展开「新的朋友」
 // 即视为已看（与查看后即清的微信口径一致），新 friend_event 再亮；同意/
 // 拒绝后条目离开 pending，自然熄灭。seen 集合持久化 localStorage。
-const LS_SEEN_REQ = 'fm_seen_requests';
+const LS_SEEN_REQ = key('fm_seen_requests');
 function loadSeenRequests() {
   try { return new Set(JSON.parse(localStorage.getItem(LS_SEEN_REQ) || '[]')); } catch { return new Set(); }
 }
@@ -59,7 +62,7 @@ function unseenIncomingCount() {
 // (localStorage) and merged back into the list on refresh. When the server
 // starts returning blocked rows (with a blocked flag), the server data wins
 // and the cache entry is dropped.
-const LS_BLOCKED = 'fm_blocked';
+const LS_BLOCKED = key('fm_blocked');
 function loadBlockedCache() {
   try { return JSON.parse(localStorage.getItem(LS_BLOCKED) || '[]'); } catch { return []; }
 }

@@ -60,6 +60,15 @@ final class RelayAuthFixtureServer extends AutoCloseable:
   @volatile var loginDelayMs: Long = 0L
   /** Answer login with 500 (server-side failure) instead of issuing a token. */
   @volatile var failLogins: Boolean = false
+  /** 波3（①opt-A1 通道自愈）健康路径开关：true ⇒ 解析客户端 WS 文本帧并对
+    * `{"type":"ping"}` 回 `{"type":"pong"}`（= 真服务端 relay.rs 的
+    * `ClientToServer::Ping` 分支）。**默认 false**：升级完成后只吞帧不回话，
+    * 这就是 2026-09-11 事故的僵尸形态（`lastPong` 永不刷新 ⇒ 30s 存活窗到点
+    * 判僵尸 ⇒ abort ⇒ 闩永不完成）。两个方向都要能测：
+    * false = 僵尸/自愈路径，true = 健康路径不误杀（无 flap）。 */
+  @volatile var pongReplies: Boolean = false
+  /** How many client ping frames were answered with a pong (health knob readout). */
+  val pongsSent = new AtomicInteger(0)
 
   // ---- observations ----
   /** Every issued session token, in order (includes impersonator logins). */
@@ -257,19 +266,70 @@ final class RelayAuthFixtureServer extends AutoCloseable:
     out.write(resp.getBytes(StandardCharsets.ISO_8859_1))
     out.flush()
     openRelaySockets.add(sock)
+    // 升级后的连接必须**保持安静且不自我关闭**：serve() 给 socket 设了 10s
+    // SO_TIMEOUT，只读不写的排空循环会在 10s 后抛 SocketTimeoutException ⇒
+    // fixture 自己把连接关掉（僵尸场景根本走不到 30s 存活窗）。置 0 = 无限等待，
+    // 让「对端静默」成为真正可观测的形态。
+    try sock.setSoTimeout(0) catch case _: Exception => ()
     // Drain frames (ping/pong/close) so the client's writes never block. The
     // tunnel's own heartbeat would otherwise stall against a full socket buffer.
+    // pongReplies=true 时顺带应答 ping（健康路径开关，见字段注释）。
     spawn {
       try
-        val buf = new Array[Byte](4096)
         val is = sock.getInputStream
-        var n = is.read(buf)
-        while n >= 0 do n = is.read(buf)
+        if pongReplies then
+          var frame = readFrame(is)
+          while frame.isDefined do
+            val (op, payload) = frame.get
+            if op == 0x1 && new String(payload, StandardCharsets.UTF_8).contains("\"ping\"") then
+              pongsSent.incrementAndGet()
+              writeTextFrame(sock.getOutputStream, """{"type":"pong"}""")
+            frame = readFrame(is)
+        else
+          val buf = new Array[Byte](4096)
+          var n = is.read(buf)
+          while n >= 0 do n = is.read(buf)
       catch case _: Throwable => ()
       finally
         openRelaySockets.remove(sock)
         closeQuietly(sock)
     }
+
+  /** Read one client→server RFC 6455 frame (masked). None = stream end. */
+  private def readFrame(in: InputStream): Option[(Int, Array[Byte])] =
+    val h = in.readNBytes(2)
+    if h.length < 2 then None
+    else
+      val op = h(0) & 0x0f
+      val masked = (h(1) & 0x80) != 0
+      var len = (h(1) & 0x7f).toLong
+      if len == 126L then
+        val e = in.readNBytes(2)
+        if e.length < 2 then return None
+        len = ((e(0) & 0xff) << 8 | (e(1) & 0xff)).toLong
+      else if len == 127L then
+        val e = in.readNBytes(8)
+        if e.length < 8 then return None
+        len = (0 until 8).foldLeft(0L)((acc, i) => (acc << 8) | (e(i) & 0xff).toLong)
+      val mask = if masked then in.readNBytes(4) else Array.emptyByteArray
+      val payloadBytes = if len > 0 then in.readNBytes(len.toInt) else Array.emptyByteArray
+      if payloadBytes.length < len then None
+      else
+        if masked && mask.length == 4 then
+          var i = 0
+          while i < payloadBytes.length do
+            payloadBytes(i) = (payloadBytes(i) ^ mask(i % 4)).toByte
+            i += 1
+        Some((op, payloadBytes))
+
+  /** Server→client text frame (unmasked, single frame, len ≤ 125). */
+  private def writeTextFrame(out: OutputStream, text: String): Unit =
+    try
+      val bytes = text.getBytes(StandardCharsets.UTF_8)
+      out.write(Array[Byte](0x81.toByte, bytes.length.toByte))
+      out.write(bytes)
+      out.flush()
+    catch case _: Exception => ()
 
   private def bearer(req: Request): String =
     req.headers
