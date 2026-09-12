@@ -45,6 +45,62 @@ class AttachGateServiceSpec extends CatsEffectSuite:
       yield out
     }
 
+  /**
+   * 与 [[withStack]] 同构，但先按 `seed(dataRoot)` 造出**未终结**会话写进 transfers.json
+   * （走 `loadTransfers` 的真实恢复路径），再把服务建起来。
+   */
+  private def withStackSeeded[A](
+    seed: os.Path => IO[FileTransfer]
+  )(use: (NeblinkService, DropboxService) => IO[A]): IO[A] =
+    Dispatcher.parallel[IO].use { dispatcher =>
+      for
+        prevRoot <- IO(PathUtil.dataRoot)
+        tempDir <- IO.blocking(os.temp.dir(prefix = "nb-attachgate-seed-"))
+        _ <- IO(PathUtil.setDataRoot(tempDir))
+        transfer <- seed(tempDir)
+        _ <- IO.blocking(
+          os.write.over(
+            tempDir / "dropbox" / "transfers.json",
+            Map(transfer.transferId -> transfer).asJson.spaces2,
+            createFolders = true
+          )
+        )
+        ms <- NeblinkService.create(0, dispatcher)
+        hub = new WsHub
+        seen <- Ref.of[IO, List[Json]](Nil)
+        regId <- hub.register(j => seen.update(_ :+ j))
+        svc <- DropboxService.createForTest(ms, hub, 300.millis, 400.millis, 500.millis)
+        out <- use(ms, svc)
+        _ <- hub.unregister(regId)
+        _ <- IO {
+          PathUtil.setDataRoot(prevRoot)
+          os.remove.all(tempDir)
+        }
+      yield out
+    }
+
+  private def inboundTransfer(
+    transferId: String,
+    fileName: String,
+    tempPath: Option[String],
+    total: Long
+  ): FileTransfer =
+    FileTransfer(
+      transferId = transferId,
+      direction = "in",
+      peerDeviceId = "peer-r1",
+      peerAddress = "",
+      fileName = fileName,
+      fileSize = total,
+      mimeType = "application/octet-stream",
+      msgId = "m-r1",
+      status = "accepted",
+      tempPath = tempPath,
+      totalBytes = total,
+      chunkSize = 32,
+      proto = AttachContract.ProtoChunked
+    )
+
   private def spec(name: String, size: Long): DropboxService.FileSpec =
     DropboxService.FileSpec(name, size, "application/octet-stream")
 
@@ -207,6 +263,67 @@ class AttachGateServiceSpec extends CatsEffectSuite:
       body.guarantee(
         IO.blocking {
           if os.exists(tempFile) then os.remove(tempFile)
+          ()
+        }.handleErrorWith(_ => IO.unit)
+      )
+    }
+  }
+
+  // ===== R1（守卫采纳）：接收端 temp 解析走 guardedTempPath 的显式分支 =====
+
+  test("R1 服务面：记录 tempPath 落在 cwd 族 ⇒ Refused 回落派生名落盘，工作目录零改动") {
+    val transferId = "tid-r1-refused"
+    // 记录路径 = 工作目录本身（旧代码 `os.Path(t.tempPath, os.pwd)` 会把它当 temp 用）
+    val seeded = inboundTransfer(transferId, "r1-refused.bin", Some(os.pwd.toString), 64L)
+    val derived = DropboxUtil.downloadsDir / s".r1-refused.bin.dropbox-${transferId.take(8)}"
+    val payload = Array.tabulate(32)(i => (i * 3 % 251).toByte)
+    val headers = DropboxService.ChunkHeaders(0, 64L, 32, ChunkedTransfer.sha256Hex(payload), "z" * 64)
+    withStackSeeded(_ => IO.pure(seeded)) { (_, svc) =>
+      val body = for
+        ack <- svc.receiveChunkFromPeer(transferId, fs2.Stream.emits(payload).covary[IO], headers)
+        cwdAlive <- IO.blocking(os.exists(os.pwd) && os.isDir(os.pwd))
+        landed <- IO.blocking(if os.exists(derived) then os.size(derived) else -1L)
+      yield
+        ack match
+          case Right(a) => assertEquals(a.bytesReceived, payload.length.toLong)
+          case Left(err) => fail(s"Refused 分支必须显式回落派生名并成功落盘，实得 ${err.render}")
+        assert(cwdAlive, "P0：工作目录必须原样存在（守卫拦住 cwd 族 tempPath）")
+        assertEquals(landed, payload.length.toLong, "数据必须落在 Downloads 派生 temp 上，不是 cwd")
+      body.guarantee(
+        IO.blocking {
+          if os.exists(derived) then os.remove(derived)
+          ()
+        }.handleErrorWith(_ => IO.unit)
+      )
+    }
+  }
+
+  test("R1 服务面：记录 tempPath 可用 ⇒ Usable 分支复用它（断点续传同一文件的前提）") {
+    val transferId = "tid-r1-usable"
+    val payload = Array.tabulate(32)(i => (i * 5 % 251).toByte)
+    val headers = DropboxService.ChunkHeaders(0, 64L, 32, ChunkedTransfer.sha256Hex(payload), "z" * 64)
+    val derived = DropboxUtil.downloadsDir / s".r1-usable.bin.dropbox-${transferId.take(8)}"
+    withStackSeeded { dataRoot =>
+      // 记录路径指向 dataRoot 下**已有 16 字节**的真实文件 ⇒ 本块必须**追加**在它上面
+      // （Usable ⇒ 复用记录路径；若误回落派生名，记录文件长度会停在 16 ⇒ 测试转红）。
+      val recorded = dataRoot / "recorded-temp.bin"
+      IO.blocking(os.write(recorded, payload.take(16), createFolders = true))
+        .as(inboundTransfer(transferId, "r1-usable.bin", Some(recorded.toString), 64L))
+    } { (_, svc) =>
+      val recorded = PathUtil.dataRoot / "recorded-temp.bin"
+      val body = for
+        ack <- svc.receiveChunkFromPeer(transferId, fs2.Stream.emits(payload).covary[IO], headers)
+        sizeAfter <- IO.blocking(os.size(recorded))
+        derivedExists <- IO.blocking(os.exists(derived))
+      yield
+        ack match
+          case Right(a) => assertEquals(a.bytesReceived, 16L + payload.length.toLong)
+          case Left(err) => fail(s"Usable 分支必须复用记录路径：${err.render}")
+        assertEquals(sizeAfter, 16L + payload.length.toLong, "本块必须追加在**记录路径**上（复用而非另起新文件）")
+        assert(!derivedExists, "Usable 分支不得再回落派生名（回落即等于丢失续传锚点）")
+      body.guarantee(
+        IO.blocking {
+          if os.exists(derived) then os.remove(derived)
           ()
         }.handleErrorWith(_ => IO.unit)
       )
