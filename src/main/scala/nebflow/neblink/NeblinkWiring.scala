@@ -37,12 +37,21 @@ object NeblinkWiring:
     * `FriendRemarkStore.load` 读入并透传 —— 工厂保持**纯函数**（不自己跑 IO），
     * 与 `NeblinkService.createInternal` 的 `PeerDescriptionStore.load → Ref.of`
     * 同族形态；测试可注入任意初始 map。默认空 map ⇒ 既有调用点零改动。
+    *
+    * `askConfirm`（#147 接线段，2026-09-12）：ask 档确认链的**装配缝接线点**。
+    * 此参数此前**不存在** ⇒ `FriendService.askConfirm` 恒为默认 `None` ⇒ `ask`
+    * 档一调即 `Left("ask mode requires a confirmation callback (not wired)")`
+    * （作者 2026-09-11 裁定 U-5 的事实锚）。默认 `None` 保留「未接线」这一显式
+    * 条件（既有调用点/测试零改动）；生产由 `GatewayMain` 传 fail-closed 默认值，
+    * 真实交互实现按次由调用侧注入 `FriendService.sendAsAgent(confirm = …)`
+    * （会话身份只有调用侧有；理由见 `nebflow.agent.SendConfirm` 文件头）。
     */
   def friendService(
     clientProvider: IO[Option[NeblinkClient]],
     config: AgentMessagingConfig,
     guard: FriendMessagingGuard = new FriendMessagingGuard(),
     onFriendEvent: Option[FriendEvent => IO[Unit]] = None,
+    askConfirm: Option[String => IO[Boolean]] = None,
     remarks: Map[String, String] = Map.empty
   ): FriendService =
     new FriendService(
@@ -50,6 +59,7 @@ object NeblinkWiring:
       config,
       guard,
       onFriendEvent,
+      askConfirm,
       remarkRef = Ref.unsafe[IO, Map[String, String]](remarks)
     )
 

@@ -769,6 +769,17 @@ object GatewayMain extends IOApp:
                                       val friendService = nebflow.neblink.NeblinkWiring.friendService(
                                         tsDiscovery.currentClient,
                                         amConfig,
+                                        // #147 接线段（2026-09-12）：ask 档确认链的装配缝接线。
+                                        // 此前该参数不存在 ⇒ FriendService.askConfirm 恒 None
+                                        // ⇒ ask 档一调即失败（作者 2026-09-11 裁定 U-5 的事实锚）。
+                                        // 这里接的是**服务层默认实现**：调用侧没有附加交互面时
+                                        // 显式 fail-closed（不发送、不静默批准）；真实的交互实现
+                                        // 由唯一持 ToolContext 的调用侧（SendMessage 工具）按次注入
+                                        // （FriendService.sendAsAgent(confirm = …)）—— 确认卡必须
+                                        // 渲染在提问会话的窗口，boot 期装配缝不知道任何会话
+                                        // （前端 askUser 帧按 sessionId 找 view、无 session 即丢弃；
+                                        // 理由与代码锚见 nebflow.agent.SendConfirm 文件头）。
+                                        askConfirm = Some(nebflow.agent.SendConfirm.NoInteractiveSurface),
                                         onFriendEvent = Some { ev =>
                                           // Frontend contract (messages.js onMessage('friend_event')):
                                           // frame type is "friend_event"; event type in msg.event;

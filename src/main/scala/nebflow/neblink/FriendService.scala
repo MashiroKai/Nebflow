@@ -29,6 +29,10 @@ import scala.concurrent.duration.*
  * 本身不依赖任何 UI 层——纯逻辑（限速/去重/cursor）在 FriendMessagingGuard，
  * 可独立单测。
  *
+ * 确认链（#147 接线段，2026-09-12）：`askConfirm` = 装配缝默认实现（boot 期无人
+ * 接交互面时 fail-closed），`sendAsAgent(…, confirm)` = 调用侧按次注入的真实
+ * 交互实现（唯一持会话身份的地方）。两者都只由本类消费，UI 依赖不入侵本层。
+ *
  * client 引用统一（2026-09-10 好友搜索失效根修 F1）：本服务不再持有构造期
  * NeblinkClient 快照，而是每次调用经 `currentClient` 读权威 live client
  * （NeblinkDiscovery.clientRef——enrollment hot-swap 的唯一替换点）。此前
@@ -236,33 +240,62 @@ final class FriendService(
   /**
    * 以用户身份向好友发消息（spec §7.2 权限模型）：
    *  - auto（默认）：直接发送；超双层限速自动降级 ask（不硬失败）；
-   *  - ask：每次弹确认（60s 超时=拒绝）；
+   *  - ask：每次弹确认（**确认未回 ⇒ 超时 ⇒ 不发送**，且错误文案可判定）；
    *  - off：直接返回禁用。
    * 超长消息（>4000）与服务端 403 等错误原样返回。
+   *
+   * `confirm`（#147 接线段，2026-09-12）：**按次注入**的确认实现，优先于构造期
+   * 的 `askConfirm`。装配缝接的是「无人接交互面时 fail-closed」的默认值；真实
+   * 交互实现由唯一持 `ToolContext` 的调用侧（`SendMessage` 工具，经
+   * `nebflow.agent.SendConfirm.forContext`）注入 —— 确认卡必须渲染在**提问会话
+   * 的窗口**，而装配缝（boot 期）不知道任何会话（理由见 `SendConfirm` 文件头）。
+   *
+   * 语义（三条都是 fail-closed，不存在静默路径）：
+   *  - 确认通过 ⇒ 投递；拒绝 ⇒ `Left("User declined the message")`；
+   *  - 确认**失败**（无交互面 / 超时 / hub 未起）⇒ `Left("Confirmation failed — … NOT sent")`
+   *    —— 既不投递，也不伪装成「用户拒绝」（两种条件的归因不同，调用方/模型可区分）。
    */
-  def sendAsAgent(friendUserId: String, body: String): IO[Either[String, String]] =
+  def sendAsAgent(
+    friendUserId: String,
+    body: String,
+    confirm: Option[String => IO[Boolean]] = None
+  ): IO[Either[String, String]] =
     if body.length > 4000 then IO.pure(Left(s"Message too long (${body.length} chars, max 4000)"))
     else
       config.mode match
         case "off" => IO.pure(Left("User has disabled agent messaging"))
         case "ask" =>
-          confirmOrSend(friendUserId, body)
+          confirmOrSend(friendUserId, body, confirm)
         case _ => // auto（含未知值回退 auto）
           guard.trySend(friendUserId, System.currentTimeMillis()).flatMap {
             case Right(()) => doSend(friendUserId, body)
             case Left(reason) =>
               logger.info(s"auto rate limit exceeded ($reason) — downgrading to ask") *>
-                confirmOrSend(friendUserId, body)
+                confirmOrSend(friendUserId, body, confirm)
           }
 
-  private def confirmOrSend(friendUserId: String, body: String): IO[Either[String, String]] =
-    askConfirm match
+  private def confirmOrSend(
+    friendUserId: String,
+    body: String,
+    confirm: Option[String => IO[Boolean]]
+  ): IO[Either[String, String]] =
+    confirm.orElse(askConfirm) match
       case None => IO.pure(Left("ask mode requires a confirmation callback (not wired)"))
-      case Some(confirm) =>
-        confirm(body).flatMap {
-          case true => doSend(friendUserId, body)
-          case false => IO.pure(Left("User declined the message"))
-        }
+      case Some(confirmFn) =>
+        confirmFn(body)
+          .flatMap {
+            case true => doSend(friendUserId, body)
+            case false =>
+              logger.info(s"SendMessage declined by the user — nothing sent to $friendUserId") *>
+                IO.pure(Left("User declined the message"))
+          }
+          .handleErrorWith { e =>
+            // 确认链失败 ≠ 用户拒绝：显式失败（不发送），文案带原因，供模型/用户判定。
+            // 绝不落入「静默本地执行」或「静默成功」。
+            val why = Option(e.getMessage).filter(_.nonEmpty).getOrElse(e.getClass.getSimpleName)
+            logger.warn(s"SendMessage confirmation failed (message NOT sent, friend=$friendUserId): $why") *>
+              IO.pure(Left(s"Confirmation failed — the message was NOT sent: $why"))
+          }
 
   private def doSend(friendUserId: String, body: String): IO[Either[String, String]] =
     // origin=agent：sendAsAgent 是唯一 agent 代发 choke point（#290 spec v1.1）——
