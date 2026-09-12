@@ -42,9 +42,15 @@ object NeblinkWiring:
     * 此参数此前**不存在** ⇒ `FriendService.askConfirm` 恒为默认 `None` ⇒ `ask`
     * 档一调即 `Left("ask mode requires a confirmation callback (not wired)")`
     * （作者 2026-09-11 裁定 U-5 的事实锚）。默认 `None` 保留「未接线」这一显式
-    * 条件（既有调用点/测试零改动）；生产由 `GatewayMain` 传 fail-closed 默认值，
-    * 真实交互实现按次由调用侧注入 `FriendService.sendAsAgent(confirm = …)`
-    * （会话身份只有调用侧有；理由见 `nebflow.agent.SendConfirm` 文件头）。
+    * 条件（既有调用点/测试零改动）。
+    *
+    * 生产装配（`GatewayMain`）传的值 = `nebflow.agent.SendConfirm.production`
+    * —— **运行时真正执行的就是它**（不是桩、没有第二条实现）：它会向确认卡
+    * 请求链发出 AskUser 并据此决定投递与否。会话靶（谁在问）不由本缝决定——
+    * 缝在 boot 期，不知道任何会话；靶由唯一持 `ToolContext` 的调用侧
+    * （`FriendMessageTool`）按次以 `SendConfirm.locally` 挂进 fiber-local，
+    * `production` 在本次调用内读它；无靶（REST 直调/harness）⇒ 显式 fail-closed。
+    * 理由与代码锚见 `nebflow.agent.SendConfirm` 文件头。
     */
   def friendService(
     clientProvider: IO[Option[NeblinkClient]],

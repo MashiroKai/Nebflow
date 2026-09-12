@@ -26,8 +26,9 @@ import java.time.format.DateTimeFormatter
  * 回落（见 `lookupFriendBySearch`），不在本地匹配口径内。
  *
  * 接线：GatewayMain 启动时 FriendMessageTool.initialize(friendService)
- * （RemoteExecutor.initialize 同款单例模式）+ 本工具按次把交互确认实现注入
- * `FriendService.sendAsAgent`（#147 接线段 2026-09-12：此前 `ask` 档因确认链
+ * （RemoteExecutor.initialize 同款单例模式）+ 本工具按次把**会话靶**挂进
+ * fiber-local（`SendConfirm.locally`），装配缝实现 `SendConfirm.production`
+ * 在本次调用内读它并发确认卡（#147 接线段 2026-09-12：此前 `ask` 档因确认链
  * 未接线而恒失败）。授权（阶段 2d，设计 D.1-11）：
  * 机制固定唯一——仅 Nebula 的静态集 NebulaOrchestrationTools 携带（2c 起从
  * 声明制迁机制固定）；agent.json tools 声明不再授能（buildAllowedToolSet 对
@@ -137,20 +138,19 @@ When the user's agent-messaging mode is `ask` (or the auto rate limit was hit), 
     * (Scala 3: multi-line matches inside nested flatMap braces are fragile).
     *
     * 确认链（#147 接线段，2026-09-12）：本工具是唯一持有 `ToolContext` 的调用侧
-    * ⇒ 由它按次把**真实交互实现**注入 `sendAsAgent`（`ask` 档与 auto 超限降级
-    * 档都走它）。ctx 无交互面（REST 直调 / spec harness）时 `forContext` 返回
-    * `None` ⇒ 回落装配缝默认值（同款 fail-closed，绝不静默直发）。 */
+    * ⇒ 由它把**会话靶**按次挂进 fiber-local（`SendConfirm.locally`），
+    * `sendAsAgent` 侧的装配缝实现（`SendConfirm.production`）在本次调用内读它并
+    * 发确认卡。`ask` 档与 auto 超限降级档都经此路；ctx 无交互面（REST 直调 /
+    * spec harness）⇒ `production` 读到「无靶」显式 fail-closed（绝不静默直发）。 */
   private def sendTo(
     fs: FriendService,
     friend: FriendSummary,
     message: String,
     ctx: ToolContext
   ): IO[Either[ToolError, String]] =
-    fs.sendAsAgent(
-      friend.userId,
-      message,
-      nebflow.agent.SendConfirm.forContext(ctx, recipientLabel(friend))
-    ).map {
+    nebflow.agent.SendConfirm.locally(
+      nebflow.agent.SendConfirm.targetFor(ctx, recipientLabel(friend))
+    )(fs.sendAsAgent(friend.userId, message)).map {
       // 回执形态（⑦-D6）：`备注（username）`——让用户/模型能确认「打到的是谁」。
       case Right(_) =>
         Right(s"已发送给 ${recipientLabel(friend)}（${LocalTime.now().format(TimeFormat)}）")

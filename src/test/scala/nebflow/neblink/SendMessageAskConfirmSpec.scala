@@ -37,8 +37,9 @@ import scala.concurrent.duration.*
  *  - 真实 `InteractionHub` actor —— 帧面读数 = 注册在 hub 上的 root wsSend 收到的
  *    每一帧（生产里该 wsSend 是 `WebSocketRoutes.registerRootInteraction` 的
  *    recordingWsSend，同形）；
- *  - 真实 `FriendService`（经**装配缝** `NeblinkWiring.friendService` 构造，含
- *    GatewayMain 传的 `askConfirm`）+ 真实 `FriendMessageTool.call`；
+ *  - 真实 `FriendService`（经**装配缝** `NeblinkWiring.friendService` 构造，缝上
+ *    传的字面值 = `GatewayMain:782` 传的那个 = `SendConfirm.production`）
+ *    + 真实 `FriendMessageTool.call`；
  *  - 真实答复路径 = `InteractionHubCommand.Answered`（`WebSocketRoutes` 把前端
  *    `askUserAnswer{sessionId, answers, requestId}` 翻成的就是它，
  *    `WebSocketRoutes.scala:1066-1076`）；
@@ -46,8 +47,9 @@ import scala.concurrent.duration.*
  *    它记录的 `POST /api/friends/<uid>/messages`（不投递 = 记录为空）。
  *
  * 判据：① 正向（出卡→批准→投递）；② 负控（拒绝/取消/自由文本 ⇒ 零投递）；
- * ③ 零回归（auto/off 新旧入口逐字相同且确认面零调用）；④ 超时（零投递 + 可判定
- * + 卡片撤回）；⑤ 无交互面（显式失败，禁静默）。
+ * ③ 零回归（auto/off 直发路径逐字不变且确认缝零调用/零帧）；④ 超时（零投递 +
+ * 可判定 + 卡片撤回）；⑤ 无交互面 / 无靶（显式失败，禁静默）；⑥ 装配缝可达性
+ * （`GatewayMain` 传的就是 `production`，防回退成桩）。
  */
 class SendMessageAskConfirmSpec extends CatsEffectSuite:
 
@@ -149,12 +151,12 @@ class SendMessageAskConfirmSpec extends CatsEffectSuite:
       _ <- hub ! InteractionHubCommand.RegisterRoot(RootSid, (j: Json) => wsEvents.update(_ :+ j))
       stub = StubClient()
       _ <- IO(stub.login())
-      // 装配缝（唯一生产入口）：GatewayMain 在此传 askConfirm
+      // 装配缝（唯一生产入口）：`GatewayMain:782` 在此传的字面值 = SendConfirm.production
       fs = NeblinkWiring.friendService(
         IO.pure(Some(stub.client)),
         AgentMessagingConfig(mode = mode),
         guard = guard,
-        askConfirm = Some(SendConfirm.NoInteractiveSurface)
+        askConfirm = Some(SendConfirm.production)
       )
       _ <- IO(FriendMessageTool.initialize(fs))
       ctx = ToolContext(
@@ -283,50 +285,63 @@ class SendMessageAskConfirmSpec extends CatsEffectSuite:
 
   // ═══════════════ ③ 零回归：auto / off ═══════════════
 
-  test("③ 零回归 auto：新旧入口行为逐字相同，且确认回调一次都不被调用、零确认帧") {
+  test("③ 零回归 auto：直发路径与改前逐字相同（唯一 2 参入口），确认缝零调用、零确认帧") {
     setup("auto-regression", mode = "auto").flatMap { f =>
       (for
         calls <- IO.ref(0)
-        confirm = Some((_: String) => calls.update(_ + 1).as(true))
-        // pre-change 入口 = 2 参（改前生产代码的形态）；新入口 = 3 参（本次新增）
+        // 装配缝带**计数**确认实现：auto 档若碰它一次就被抓（n 必须 = 0）
+        counted = NeblinkWiring.friendService(
+          IO.pure(Some(f.stub.client)),
+          AgentMessagingConfig(mode = "auto"),
+          askConfirm = Some((_: String) => calls.update(_ + 1).as(true))
+        )
+        // 改前形态 = 2 参入口（本批恢复的签名 ⇒ 零 API 面变更）
         legacy <- f.fs.sendAsAgent("u1", "legacy")
         postsAfterLegacy <- IO(f.stub.postedPaths.toList)
-        current <- f.fs.sendAsAgent("u1", "current", confirm)
+        countedRes <- counted.sendAsAgent("u1", "counted")
         res <- FriendMessageTool.call(input, f.ctx)
         n <- calls.get
         askFrames <- frameCount(f, "askUser")
         posts <- IO(f.stub.postedPaths.toList)
         _ <- IO {
           assertEquals(legacy, Right("Message sent"), "auto 档 2 参入口行为不变（改前形态）")
-          assertEquals(current, Right("Message sent"), "auto 档 3 参入口行为不变")
-          assertEquals(postsAfterLegacy.size, 1, "auto 档直发：2 参入口 POST 恰一次")
+          assertEquals(countedRes, Right("Message sent"), "装配缝带确认实现时 auto 档仍直发")
+          assertEquals(postsAfterLegacy.size, 1, "auto 档直发：POST 恰一次")
           assert(res.isRight, s"工具层 auto 档直发不受影响: ${res.left.toOption.map(_.message)}")
-          assertEquals(n, 0, "auto 档绝不诉诸确认（确认面零调用 = 无新语义）")
+          assertEquals(n, 0, "auto 档绝不诉诸确认（确认缝零调用 = 无新语义）")
           assertEquals(askFrames, 0, "auto 档零确认帧")
           assertEquals(posts.size, 3, s"三路 auto 直发各一次 POST: $posts")
         }
+        _ <- IO.println(s"[ZERO-REGRESSION-auto] legacy=$legacy counted=$countedRes tool=${res.toOption.get} " +
+          s"confirmCalls=$n askFrames=$askFrames posts=${posts.size}")
       yield ()).guarantee(f.cleanup)
     }
   }
 
-  test("③ 零回归 off：两入口都拒绝且零投递、零确认") {
+  test("③ 零回归 off：入口都拒绝且零投递、零确认") {
     setup("off-regression", mode = "off").flatMap { f =>
       (for
         calls <- IO.ref(0)
-        confirm = Some((_: String) => calls.update(_ + 1).as(true))
+        counted = NeblinkWiring.friendService(
+          IO.pure(Some(f.stub.client)),
+          AgentMessagingConfig(mode = "off"),
+          askConfirm = Some((_: String) => calls.update(_ + 1).as(true))
+        )
         a <- f.fs.sendAsAgent("u1", "legacy")
-        b <- f.fs.sendAsAgent("u1", "current", confirm)
+        b <- counted.sendAsAgent("u1", "counted")
         res <- FriendMessageTool.call(input, f.ctx)
         n <- calls.get
         askFrames <- frameCount(f, "askUser")
         _ <- IO {
           assertEquals(a, Left("User has disabled agent messaging"), "off 档 2 参入口行为不变")
-          assertEquals(b, Left("User has disabled agent messaging"), "off 档 3 参入口行为不变")
+          assertEquals(b, Left("User has disabled agent messaging"), "装配缝带确认实现时 off 档仍拒绝")
           assert(res.isLeft, "工具层 off 档仍拒绝")
           assertEquals(f.stub.postedPaths.toList, Nil, "off 档零投递")
           assertEquals(n, 0, "off 档绝不诉诸确认")
           assertEquals(askFrames, 0, "off 档零确认帧")
         }
+        _ <- IO.println(s"[ZERO-REGRESSION-off] a=$a b=$b tool=${res.left.toOption.get.message} " +
+          s"confirmCalls=$n askFrames=$askFrames posts=${f.stub.postedPaths.toList.size}")
       yield ()).guarantee(f.cleanup)
     }
   }
@@ -418,6 +433,42 @@ class SendMessageAskConfirmSpec extends CatsEffectSuite:
         }
       yield ()).guarantee(f.cleanup)
     }
+  }
+
+  test("⑤ 装配缝实现的「无靶」分支（调用侧未进 locally，如 REST 直调 sendAsAgent）：显式 fail-closed") {
+    setup("seam-no-target").flatMap { f =>
+      (for
+        // 绕过工具（工具总会挂靶）直调装配缝实现：读不到 fiber-local 靶 ⇒ 必须显式失败
+        res <- f.fs.sendAsAgent("u1", "no target")
+        _ <- IO {
+          assertEquals(f.stub.postedPaths.toList, Nil, "无靶 ⇒ 零投递（禁静默本地执行）")
+          assert(res.isLeft, "无靶必须失败")
+          val msg = res.left.toOption.get
+          assert(msg.contains("Confirmation failed") && msg.contains("NOT sent"), s"got $msg")
+          assert(msg.contains("no ask target attached"), s"文案须点名缺靶，got $msg")
+        }
+        _ <- IO.println(s"[SEAM-NO-TARGET] $res | POSTs=${f.stub.postedPaths.toList}")
+      yield ()).guarantee(f.cleanup)
+    }
+  }
+
+  // ═══════════ ⑥ 装配缝可达性钉子（防回退成桩）═══════════
+
+  test("⑥ 装配缝可达性：GatewayMain 经 NeblinkWiring.friendService 传的就是 SendConfirm.production") {
+    val gateway = os.read(os.pwd / "src" / "main" / "scala" / "nebflow" / "gateway" / "GatewayMain.scala")
+    val wiring = os.read(os.pwd / "src" / "main" / "scala" / "nebflow" / "neblink" / "NeblinkWiring.scala")
+    val tool = os.read(os.pwd / "src" / "main" / "scala" / "nebflow" / "core" / "tools" / "FriendMessageTool.scala")
+    IO {
+      assert(
+        gateway.contains("askConfirm = Some(nebflow.agent.SendConfirm.production)"),
+        "GatewayMain 装配缝必须传生产实现本身（回退成桩 = ask 档在生产里走不到真实确认链）"
+      )
+      assert(!gateway.contains("NoInteractiveSurface"), "旧桩形态必须已从生产接线移除")
+      assert(wiring.contains("askConfirm: Option[String => IO[Boolean]] = None"), "装配缝参数在（默认 None 保留未接线显式条件）")
+      assert(tool.contains("SendConfirm.locally"), "调用侧必须把会话靶挂进 fiber-local（否则 production 读不到靶）")
+      assert(tool.contains("SendConfirm.targetFor"), "靶由调用侧按次构造（含收件人标签）")
+    }.as(println("[SEAM-REACHABILITY] GatewayMain:782 askConfirm=Some(SendConfirm.production); " +
+      "FriendMessageTool 挂靶 = SendConfirm.locally(targetFor(...)); NeblinkWiring 透传"))
   }
 
 end SendMessageAskConfirmSpec
