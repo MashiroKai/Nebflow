@@ -46,8 +46,13 @@ class FriendEventSeamSpec extends FunSuite:
       )
     )
 
-  /** 记录型 stub：捕获 (conversationId, after) 并回一条消息，驱动 cursor 前进。 */
-  private final class RecordingClient(pulls: Ref[IO, List[(String, Long)]]) extends NeblinkClient(
+  /** 记录型 stub：捕获 (conversationId, after) 并回一条消息，驱动 cursor 前进。
+    * `order`（段 A K-1）：把「补拉真的发生了」写进共用的次序日志，与广播侧标记
+    * 合成同一条时间线 —— 顺序断言必须落在**真实发生次序**上（不靠读代码推断）。 */
+  private final class RecordingClient(
+    pulls: Ref[IO, List[(String, Long)]],
+    order: Option[Ref[IO, List[String]]] = None
+  ) extends NeblinkClient(
     NeblinkServerConfig(url = "http://127.0.0.1:1", networkId = "n", secret = "s"),
     serverPort = 1
   ):
@@ -56,21 +61,26 @@ class FriendEventSeamSpec extends FunSuite:
       after: Long,
       limit: Int
     ): IO[Either[String, List[MessageSummary]]] =
-      pulls.update(_ :+ ((conversationId, after))).as(
-        Right(List(MessageSummary(after + 1L, "u-peer", "text", "hi", 1700000000L)))
-      )
+      order.fold(IO.unit)(_.update(_ :+ "pull")) *>
+        pulls.update(_ :+ ((conversationId, after))).as(
+          Right(List(MessageSummary(after + 1L, "u-peer", "text", "hi", 1700000000L)))
+        )
 
   private def mkService(
     pulls: Ref[IO, List[(String, Long)]],
     frames: Ref[IO, List[Json]],
-    guard: FriendMessagingGuard
+    guard: FriendMessagingGuard,
+    order: Option[Ref[IO, List[String]]] = None
   ): FriendService =
-    val client = new RecordingClient(pulls)
+    val client = new RecordingClient(pulls, order)
     new FriendService(
       IO.pure(Some(client)),
       AgentMessagingConfig(),
       guard = guard,
-      onFriendEvent = Some(ev => frames.update(_ :+ FriendEvent.frontendFrame(ev)))
+      onFriendEvent = Some(ev =>
+        order.fold(IO.unit)(_.update(_ :+ "broadcast")) *>
+          frames.update(_ :+ FriendEvent.frontendFrame(ev))
+      )
     )
 
   /** 生产同形前置：boot / 重连的 `refreshAll` → `refreshConversations` 会给每个
@@ -163,8 +173,146 @@ class FriendEventSeamSpec extends FunSuite:
     assertEquals(pulled.size, 1)
   }
 
-  test("frontendFrame 纯函数：嵌套与扁平两种入参产出同一扁平帧；畸形入参不抛") {
-    val nested = FriendEvent("message_new", serverEvent("c-x", 1L))
+  // ===== 段 A（msg-latency-client）K-1 / K-2 钉子，2026-09-12 =====
+
+  test("K-1 广播先于补拉：一次事件里 broadcast 必须先于 pull（关键路径摘掉串行 REST）") {
+    val prog = for
+      pulls <- Ref.of[IO, List[(String, Long)]](Nil)
+      frames <- Ref.of[IO, List[Json]](Nil)
+      order <- Ref.of[IO, List[String]](Nil)
+      g = new FriendMessagingGuard()
+      _ <- seedCursor(g, "c-k1")
+      svc = mkService(pulls, frames, g, Some(order))
+      _ <- svc.onFriendEvent(envelope("e-k1", serverEvent("c-k1", 7L)))
+      ord <- order.get
+      unread <- svc.unreadCounts
+      pulled <- pulls.get
+      fr <- frames.get
+    yield (ord, unread, pulled, fr)
+    val (ord, unread, pulled, fr) = prog.unsafeRunSync()
+
+    // 修前 = List("pull", "broadcast")（handleEvent *> 回调）⇒ 广播被一次 REST
+    // 往返（本机实测 135.9–499.0 ms）挡在后面。本断言即「摘下来」的判据。
+    assertEquals(ord, List("broadcast", "pull"), s"广播必须在补拉之前发生，实测次序：$ord")
+    // 语义不变：补拉与未读维护照旧发生（只是不再挡在广播前）。
+    assertEquals(unread.get("c-k1"), Some(1), "K-1 不得改变未读口径")
+    assertEquals(pulled.map(_._1), List("c-k1"))
+    assertEquals(fr.size, 1, "广播仍然恰好一帧")
+  }
+
+  test("K-1 广播回调抛错不得吃掉补拉（best-effort 广播 + 补拉照常）") {
+    val prog = for
+      pulls <- Ref.of[IO, List[(String, Long)]](Nil)
+      order <- Ref.of[IO, List[String]](Nil)
+      g = new FriendMessagingGuard()
+      _ <- seedCursor(g, "c-k1e")
+      svc = new FriendService(
+        IO.pure(
+          Some(new RecordingClient(pulls, Some(order)))
+        ),
+        AgentMessagingConfig(),
+        guard = g,
+        onFriendEvent = Some(_ => order.update(_ :+ "broadcast") *> IO.raiseError(new RuntimeException("hub down")))
+      )
+      _ <- svc.onFriendEvent(envelope("e-k1e", serverEvent("c-k1e", 1L)))
+      unread <- svc.unreadCounts
+      pulled <- pulls.get
+      ord <- order.get
+    yield (unread, pulled, ord)
+    val (unread, pulled, ord) = prog.unsafeRunSync()
+    assertEquals(ord, List("broadcast", "pull"), "广播异常被吞，流程继续到补拉")
+    assertEquals(pulled.map(_._1), List("c-k1e"), "广播异常绝不得吃掉补拉（修前的落点，现由顺序保证）")
+    assertEquals(unread.get("c-k1e"), Some(1))
+  }
+
+  test("K-2 真服务端信封 message_new_self ⇒ 补拉 + 透传，但**不得计未读**（cursor 在册）") {
+    val selfEvent = Json.obj(
+      "type" -> Json.fromString("message_new_self"),
+      "payload" -> Json.obj(
+        "messageId" -> Json.fromLong(21L),
+        "conversationId" -> Json.fromString("c-self"),
+        "sender" -> Json.obj("userId" -> Json.fromString("u-me"), "username" -> Json.fromString("me")),
+        "kind" -> Json.fromString("text"),
+        "body" -> Json.fromString("agent-sent"),
+        "origin" -> Json.fromString("agent"),
+        "createdAt" -> Json.fromLong(1700000000L)
+      )
+    )
+    val prog = for
+      pulls <- Ref.of[IO, List[(String, Long)]](Nil)
+      frames <- Ref.of[IO, List[Json]](Nil)
+      g = new FriendMessagingGuard()
+      _ <- seedCursor(g, "c-self")
+      svc = mkService(pulls, frames, g)
+      _ <- svc.onFriendEvent(envelope("e-self", selfEvent))
+      unread <- svc.unreadCounts
+      pulled <- pulls.get
+      fr <- frames.get
+    yield (unread, pulled, fr)
+    val (unread, pulled, fr) = prog.unsafeRunSync()
+
+    assertEquals(unread.get("c-self"), Some(0), "self 事件**不得**计未读（修前该类型被 case other 丢弃）")
+    assertEquals(pulled.map(_._1), List("c-self"), "self 事件仍须补拉（REST 是事实来源）")
+    assertEquals(fr.size, 1, "self 事件必须透传给前端（否则本机 UI 零事件）")
+    assertEquals(fr.head.hcursor.get[String]("event").toOption, Some("message_new_self"))
+    assertEquals(
+      fr.head.hcursor.get[String]("conversationId").toOption,
+      Some("c-self"),
+      s"帧必须扁平（前端按顶层 conversationId 命中会话）：${fr.head.noSpaces}"
+    )
+  }
+
+  test("K-2 cursor 缺席时 self 事件不得 materialize 未读条目（+1 的更隐蔽形态）") {
+    val selfEvent = Json.obj(
+      "type" -> Json.fromString("message_new_self"),
+      "payload" -> Json.obj(
+        "messageId" -> Json.fromLong(22L),
+        "conversationId" -> Json.fromString("c-self-new"),
+        "sender" -> Json.obj("userId" -> Json.fromString("u-me")),
+        "kind" -> Json.fromString("text"),
+        "body" -> Json.fromString("agent-sent"),
+        "createdAt" -> Json.fromLong(1700000001L)
+      )
+    )
+    val prog = for
+      pulls <- Ref.of[IO, List[(String, Long)]](Nil)
+      frames <- Ref.of[IO, List[Json]](Nil)
+      g = new FriendMessagingGuard() // 无 seedCursor：全新会话
+      svc = mkService(pulls, frames, g)
+      _ <- svc.onFriendEvent(envelope("e-self-new", selfEvent))
+      unread <- svc.unreadCounts
+      pulled <- pulls.get
+    yield (unread, pulled)
+    val (unread, pulled) = prog.unsafeRunSync()
+    // 条目由**补拉**的 `advanceAnchor` 建（未读 0）；若走了 bumpUnread 的缺席回落
+    // 分支（与 message_new 同路），这里会看到 `Some(1)` —— 故 Some(0) 正是
+    // 「补拉了但一个未读都没加」的判据（对照见上一条 message_new 的 Some(1)）。
+    assertEquals(unread.get("c-self-new"), Some(0), "self 事件不得计未读（不得走 bumpUnread 的 +1 回落分支）")
+    assertEquals(pulled.map(_._1), List("c-self-new"))
+  }
+
+  test("K-2 self 事件缺 conversationId ⇒ 记 debug 且零副作用（不崩、不猜）") {
+    val bad = Json.obj(
+      "type" -> Json.fromString("message_new_self"),
+      "payload" -> Json.obj("messageId" -> Json.fromLong(23L), "body" -> Json.fromString("x"))
+    )
+    val prog = for
+      pulls <- Ref.of[IO, List[(String, Long)]](Nil)
+      frames <- Ref.of[IO, List[Json]](Nil)
+      g = new FriendMessagingGuard()
+      svc = mkService(pulls, frames, g)
+      _ <- svc.onFriendEvent(envelope("e-self-bad", bad))
+      unread <- svc.unreadCounts
+      pulled <- pulls.get
+      fr <- frames.get
+    yield (unread, pulled, fr)
+    val (unread, pulled, fr) = prog.unsafeRunSync()
+    assertEquals(unread, Map.empty[String, Int])
+    assertEquals(pulled, Nil)
+    assertEquals(fr.size, 1, "帧仍透传（前端自行判会话命中）")
+  }
+
+  test("frontendFrame 纯函数：嵌套与扁平两种入参产出同一扁平帧；畸形入参不抛") {    val nested = FriendEvent("message_new", serverEvent("c-x", 1L))
     val flat = FriendEvent("message_new", Json.obj(
       "type" -> Json.fromString("message_new"),
       "messageId" -> Json.fromLong(1L),

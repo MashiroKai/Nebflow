@@ -16,6 +16,8 @@
 //      copied 反馈还原；footer 无显式按钮区（2026-09-10 hover 复制批）
 //   N8 终端化内芯：等宽栈含 Menlo、主题终端底、完成态 $ exit prompt、
 //      运行态闪烁光标（2026-09-10 终端化批）
+//   N9 运行态绿光标 + N7c 复制按钮：两者均在 .bgt-output 矩形内
+//      （2026-09-12 作者令「复制按钮需要在输出框内 / 绿色光标也要放在输出框内」）
 //
 // Run（worktree 根）：node scripts/e2e-bgtask-output-card.cjs
 const { chromium } = require('playwright');
@@ -199,10 +201,17 @@ const runResp = (taskId) => ({ contentType: 'application/json', body: JSON.strin
       const b = body.getBoundingClientRect();
       const pre = getComputedStyle(document.querySelector('.bgt-output'));
       const marker = document.querySelector('.bgt-meta-marker');
+      const preEl = document.querySelector('pre.bgt-output');
+      const pr = preEl.getBoundingClientRect();
+      const br = btn.getBoundingClientRect();
       return {
         noFooterBtns: !document.querySelector('.bgt-actions, .bgt-copy-btn'),
-        inWrap: body.classList.contains('code-block-wrap') && !!btn && !!body.querySelector('pre.bgt-output'),
+        inWrap: body.classList.contains('code-block-wrap') && !!btn && !!preEl,
         hidden: cs.opacity === '0', top: r.top - b.top, right: b.right - r.right,
+        // 2026-09-12 作者令「复制按钮需要在输出框内」：判据 = 按钮四边全在 pre 矩形内
+        btnInPre: br.left >= pr.left && br.top >= pr.top && br.right <= pr.right && br.bottom <= pr.bottom,
+        btnInsetFromPre: { top: br.top - pr.top, right: pr.right - br.right },
+        cursorElInDom: !!document.querySelector('.bgt-cursor'),
         svg: !!btn.querySelector('svg'), span: !!btn.querySelector('span'),
         font: pre.fontFamily, bg: pre.backgroundColor,
         prompt: marker.querySelector('.bgt-prompt')?.textContent,
@@ -212,7 +221,10 @@ const runResp = (taskId) => ({ contentType: 'application/json', body: JSON.strin
     });
     ok('N7a footer 无显式按钮区', struct.noFooterBtns);
     ok('N7b 按钮=代码块同款结构（code-block-wrap 内 svg+span）', struct.inWrap && struct.svg && struct.span);
-    ok('N7c 右上角定位（top≈4 right≈4）', Math.abs(struct.top - 4) < 2 && Math.abs(struct.right - 4) < 2);
+    // 2026-09-12 作者令：按钮必须落在输出框（pre.bgt-output）矩形内，不再是
+    // 「相对 .bgt-body 的 top≈4/right≈4」（旧定位让右缘落 pre 边界外 8px）。
+    console.log(`  [N7c 读数] 按钮相对 pre：top +${struct.btnInsetFromPre.top.toFixed(1)}px, right -${struct.btnInsetFromPre.right.toFixed(1)}px`);
+    ok('N7c 复制按钮四边全在输出框内（.bgt-output）', struct.btnInPre === true);
     await S.p.hover('.bgt-output');
     await sleep(350);
     ok('N7d hover 浮现', await S.p.evaluate(() => getComputedStyle(document.querySelector('.code-copy-btn')).opacity === '1'));
@@ -224,6 +236,43 @@ const runResp = (taskId) => ({ contentType: 'application/json', body: JSON.strin
     ok('N8b 终端底色 #f5f5f5', struct.bg === 'rgb(245, 245, 245)');
     ok('N8c 完成态 $ exit prompt（终端语言）', struct.prompt === '$' && struct.exitLabel === 'exit 0' && /\d/.test(struct.metaText || ''));
     ok('N8d 无 pageerror', errors.length === 0);
+    await S.p.close();
+  }
+
+  // ── N9 运行态绿光标在输出框内（2026-09-12 作者令「绿光标也要放在输出框内」）──
+  // 光标 = .bgt-output.bgt-running::after 伪元素（进 pre 文本流，不落 pre DOM ⇒
+  // 复制面 pre.textContent 零污染）。本块断言钩子/材质/几何三面。
+  {
+    const S = await newPage('running', 'n9cursor');
+    await S.open('n9cursor', 'running');
+    await sleep(700);
+    const c = await S.p.evaluate(() => {
+      const pre = document.querySelector('.bgt-output');
+      const cs = getComputedStyle(pre);
+      const after = getComputedStyle(pre, '::after');
+      const p = pre.getBoundingClientRect();
+      const w = parseFloat(after.width) || 0, h = parseFloat(after.height) || 0;
+      const tn = pre.firstChild && pre.firstChild.nodeType === 3 ? pre.firstChild : null;
+      let base;
+      if (tn) { const rg = document.createRange(); rg.setStart(tn, tn.length); rg.setEnd(tn, tn.length); const r = rg.getBoundingClientRect(); base = { left: r.left, top: r.top }; }
+      else { base = { left: p.left + parseFloat(cs.borderLeftWidth) + parseFloat(cs.paddingLeft), top: p.top + parseFloat(cs.borderTopWidth) + parseFloat(cs.paddingTop) }; }
+      const rect = { left: base.left, top: base.top, right: base.left + w, bottom: base.top + h };
+      return {
+        cls: pre.classList.contains('bgt-running'),
+        afterContent: after.content, afterBg: after.backgroundColor, afterAnim: after.animationName,
+        w, h,
+        footerCursor: !!document.querySelector('.bgt-meta-marker .bgt-cursor'),
+        rectInPre: w > 0 && h > 0 && rect.left >= p.left && rect.top >= p.top && rect.right <= p.right && rect.bottom <= p.bottom,
+        preTextEmpty: pre.textContent === '',
+        preChildNodes: pre.childNodes.length,
+      };
+    });
+    console.log(`  [N9 读数] 光标 ${c.w}x${c.h} bg=${c.afterBg} anim=${c.afterAnim} preChildNodes=${c.preChildNodes}`);
+    ok('N9a 运行态 pre 带 bgt-running 状态钩子', c.cls);
+    ok('N9b 光标=pre::after 伪元素（5x12 / --color-primary / blink）', c.afterContent !== 'none' && c.afterBg === 'rgb(7, 193, 96)' && c.afterAnim === 'blink' && c.w === 5 && c.h === 12);
+    ok('N9c footer 不再有 .bgt-cursor 元素（光标已移出页脚）', !c.footerCursor);
+    ok('N9d 光标 rect 四边全在 .bgt-output 内', c.rectInPre);
+    ok('N9e 光标不进 pre DOM（空态 pre 无子节点、textContent 为空）', c.preChildNodes === 0 && c.preTextEmpty);
     await S.p.close();
   }
 

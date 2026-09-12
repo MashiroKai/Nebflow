@@ -26,7 +26,10 @@ import java.time.format.DateTimeFormatter
  * 回落（见 `lookupFriendBySearch`），不在本地匹配口径内。
  *
  * 接线：GatewayMain 启动时 FriendMessageTool.initialize(friendService)
- * （RemoteExecutor.initialize 同款单例模式）。授权（阶段 2d，设计 D.1-11）：
+ * （RemoteExecutor.initialize 同款单例模式）+ 本工具按次把**会话靶**挂进
+ * fiber-local（`SendConfirm.locally`），装配缝实现 `SendConfirm.production`
+ * 在本次调用内读它并发确认卡（#147 接线段 2026-09-12：此前 `ask` 档因确认链
+ * 未接线而恒失败）。授权（阶段 2d，设计 D.1-11）：
  * 机制固定唯一——仅 Nebula 的静态集 NebulaOrchestrationTools 携带（2c 起从
  * 声明制迁机制固定）；agent.json tools 声明不再授能（buildAllowedToolSet 对
  * base 一律剥离本工具名，"*" 亦然——the tool name IS the permission
@@ -48,7 +51,10 @@ object FriendMessageTool extends Tool:
 
 ## Parameters
 - to (string, required): The recipient — the friend's remark (a local nickname the user set), their NebLink username (NL ID), or their email address; their display name also works. Resolution order: exact remark, exact username, exact display name, unique display-name prefix, then an account lookup by email. On no or ambiguous match the error lists available friends (remarks shown in `[remark: …]`).
-- message (string, required): Message text, max 4000 characters. Plain text only."""
+- message (string, required): Message text, max 4000 characters. Plain text only.
+
+## Confirmation (ask tier)
+When the user's agent-messaging mode is `ask` (or the auto rate limit was hit), the send first raises a confirmation card in the chat. The message is sent ONLY after the user approves it on that card; a decline, a cancel, or a timeout (60s) sends nothing and comes back as an error saying so. Wait for the tool result — do not assume the message went out."""
 
   val inputSchema: JsonObject = JsonObject(
     "type" -> "object".asJson,
@@ -118,17 +124,36 @@ object FriendMessageTool extends Tool:
               .flatMap(uid => friends.find(_.userId == uid))
       }
 
+  /** 发送后回执/确认文案里对「打到的是谁」的称呼（⑦-D6 口径，**唯一实现点**：
+    * 回执与确认卡都读它，防两处各写一套）。
+    *
+    * 形态：`备注（username）`——备注缺席退回 displayName；username 缺席（存量
+    * 账号未设 NL 号，Decoder 折叠空串）省略括号，不渲染空壳。 */
+  private def recipientLabel(friend: FriendSummary): String =
+    val label = friend.remark.filter(_.nonEmpty).getOrElse(friend.displayName)
+    val idPart = if friend.username.nonEmpty then s"（${friend.username}）" else ""
+    s"$label$idPart"
+
   /** Send after resolution — extracted so the IO composition stays flat
-    * (Scala 3: multi-line matches inside nested flatMap braces are fragile). */
-  private def sendTo(fs: FriendService, friend: FriendSummary, message: String): IO[Either[ToolError, String]] =
-    fs.sendAsAgent(friend.userId, message).map {
+    * (Scala 3: multi-line matches inside nested flatMap braces are fragile).
+    *
+    * 确认链（#147 接线段，2026-09-12）：本工具是唯一持有 `ToolContext` 的调用侧
+    * ⇒ 由它把**会话靶**按次挂进 fiber-local（`SendConfirm.locally`），
+    * `sendAsAgent` 侧的装配缝实现（`SendConfirm.production`）在本次调用内读它并
+    * 发确认卡。`ask` 档与 auto 超限降级档都经此路；ctx 无交互面（REST 直调 /
+    * spec harness）⇒ `production` 读到「无靶」显式 fail-closed（绝不静默直发）。 */
+  private def sendTo(
+    fs: FriendService,
+    friend: FriendSummary,
+    message: String,
+    ctx: ToolContext
+  ): IO[Either[ToolError, String]] =
+    nebflow.agent.SendConfirm.locally(
+      nebflow.agent.SendConfirm.targetFor(ctx, recipientLabel(friend))
+    )(fs.sendAsAgent(friend.userId, message)).map {
       // 回执形态（⑦-D6）：`备注（username）`——让用户/模型能确认「打到的是谁」。
-      // 备注缺席 ⇒ 退回 displayName；username 缺席（存量账号未设 NL 号，
-      // Decoder 折叠空串）⇒ 省略该括号，不渲染空壳。
       case Right(_) =>
-        val label = friend.remark.filter(_.nonEmpty).getOrElse(friend.displayName)
-        val idPart = if friend.username.nonEmpty then s"（${friend.username}）" else ""
-        Right(s"已发送给 $label$idPart（${LocalTime.now().format(TimeFormat)}）")
+        Right(s"已发送给 ${recipientLabel(friend)}（${LocalTime.now().format(TimeFormat)}）")
       case Left(err) => Left(ToolError(err))
     }
 
@@ -158,13 +183,13 @@ object FriendMessageTool extends Tool:
             val prepared: IO[(Either[ToolError, FriendSummary], List[FriendSummary])] =
               fs.refreshFriends().map(resp => resolveFriend(t, resp.friends) -> resp.friends)
             prepared.flatMap {
-              case (Right(friend), _) => sendTo(fs, friend, m)
+              case (Right(friend), _) => sendTo(fs, friend, m, ctx)
               case (Left(err), friends) =>
                 // L0–L3 全未命中 ⇒ 走 L4 邮箱 α（仅失败路径，+1 次上游往返）。
                 // 命中且能回映射成好友 ⇒ 发送；否则（miss / 上游故障 / 非好友）
                 // 回落**原样**的 not-found + 候选错误（不升格、不回显 query）。
                 lookupFriendBySearch(fs, t, friends).flatMap {
-                  case Some(friend) => sendTo(fs, friend, m)
+                  case Some(friend) => sendTo(fs, friend, m, ctx)
                   case None         => IO.pure(Left(err))
                 }
             }

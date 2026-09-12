@@ -29,6 +29,11 @@ import scala.concurrent.duration.*
  * 本身不依赖任何 UI 层——纯逻辑（限速/去重/cursor）在 FriendMessagingGuard，
  * 可独立单测。
  *
+ * 确认链（#147 接线段，2026-09-12）：`askConfirm` = 装配缝注入的实现
+ * （`GatewayMain` 传 `nebflow.agent.SendConfirm.production`，即生产运行时执行的
+ * 那个函数）；会话靶（提问会话 + 收件人标签）由调用侧按次挂上（fiber-local），
+ * 本层只消费 `String => IO[Boolean]` ⇒ UI/agent 依赖不入侵本层。
+ *
  * client 引用统一（2026-09-10 好友搜索失效根修 F1）：本服务不再持有构造期
  * NeblinkClient 快照，而是每次调用经 `currentClient` 读权威 live client
  * （NeblinkDiscovery.clientRef——enrollment hot-swap 的唯一替换点）。此前
@@ -106,12 +111,39 @@ final class FriendService(
 
   // ===== 事件入口（NeblinkRelayTunnel friend_event case 回调） =====
 
+  /** 事件名判据**单点**（段 A 2026-09-12）：
+    *  - `message_new`      = 对方所发 ⇒ 补拉 + 未读 +1（§3.4 未读口径 sender!=me）；
+    *  - `message_new_self` = **本账号在他处**所发（agent/工具代发，或同一账号的另一台
+    *    设备）⇒ 只透传/补拉，**严禁计未读**。
+    * 前端 `web/js/messages.js` 的同名常量（`EV_MESSAGE_NEW[_SELF]`）与本对字面量
+    * **逐字同名**：两侧不得各写一套（事件名漂移 = 分支静默失配，正是 K-2 的病灶形态）。 */
+  private val MessageNew = "message_new"
+  private val MessageNewSelf = "message_new_self"
+
+  /** 会话 id 取值的**单点**：规范路径 = `event.payload.conversationId`（服务端信封
+    * `{"type":…, "payload":{…}}`），顶层读取保留为**旧形状容错**（扁平信封不再变
+    * 静默无操作）。两个 `message_*` 分支共用本方法 ⇒ 字段名只此一处（禁各写一套）。 */
+  private def conversationIdOf(event: Json): Option[String] =
+    event.hcursor.downField("payload").get[String]("conversationId").toOption
+      .orElse(event.hcursor.get[String]("conversationId").toOption)
+
   /**
    * 处理一条服务端推送（type:"friend_event"，payload {eventId, event}）。
    * eventId 幂等去重后，按 event.type 分发：
    *  - message_new：补拉该会话增量（推送是尽力而为，REST 是事实来源），
    *    更新未读 cursor；
+   *  - message_new_self：本账号他处所发 —— 补拉（**不计未读**）；
    *  - friend_request / friend_accepted：刷新好友列表（状态变化）。
+   *
+   * **广播前移（K-1，段 A 2026-09-12）**：回调广播（GatewayMain 接 WS friendEvent
+   * 广播）现在跑在 `handleEvent` **之前**。修前是 `handleEvent *> 回调`，而
+   * `handleEvent` 的 message_new 分支是 `bumpUnread *> pullConversation`——一次
+   * 串行 REST 往返（本机实测 135.9–499.0 ms，本机 → 本地网关 → neblink-server → 回）
+   * 被挡在「通知 UI」之前，属关键路径上**可避免**的串行等待（正本 §3/§4-K1）。
+   * 语义代价（**已接受**）：广播早于 `bumpUnread` 一拍——前端未读由帧内容自算
+   * （`messages.js` 开窗置 0 / 关窗仅对「对方所发」+1），不依赖后端 cursor，故
+   * 未读口径不变；去重仍在最前（`dedupe` 未动）。异常面：广播异常被
+   * `handleErrorWith(_ => IO.unit)` 吞掉（best-effort），**不得**吃掉补拉。
    */
   def onFriendEvent(payload: Json): IO[Unit] =
     (for
@@ -126,16 +158,15 @@ final class FriendService(
           case false =>
             logger.debug(s"Duplicate friend_event $eventId ignored")
           case true =>
-            handleEvent(evType, event) *>
-              // Notify the UI-facing callback (GatewayMain wires it to a WS
-              // friendEvent broadcast) — best-effort, never blocks the handler.
-              onFriendEvent.traverse_(cb => cb(FriendEvent(evType, event)).handleErrorWith(_ => IO.unit)) *>
+            // K-1：先广播（best-effort，绝不阻塞/绝不吃掉补拉），再补拉 + 未读维护。
+            onFriendEvent.traverse_(cb => cb(FriendEvent(evType, event)).handleErrorWith(_ => IO.unit)) *>
+              handleEvent(evType, event) *>
               logger.info(s"friend_event processed: type=$evType id=$eventId")
         }
 
   private def handleEvent(evType: String, event: Json): IO[Unit] =
     evType match
-      case "message_new" =>
+      case MessageNew =>
         // 推送总是发给接收方（我方）——该消息必为对方所发，未读 +1
         // （spec §3.4 未读口径：sender != me）。正文靠补拉（REST 是事实来源）。
         //
@@ -146,9 +177,7 @@ final class FriendService(
         // 落到 `case None => IO.unit`：未读 +1 与 keyset 增量补拉永不发生
         // （即使通道健康也静默失效——L2）。顶层读取保留为**旧形状容错**分支
         // （扁平信封不再变静默无操作），规范路径 = payload 下钻。
-        val convIdOpt = event.hcursor.downField("payload").get[String]("conversationId").toOption
-          .orElse(event.hcursor.get[String]("conversationId").toOption)
-        convIdOpt match
+        conversationIdOf(event) match
           case Some(convId) =>
             // #309：cursor 缺席（boot 期空 map / 全新会话，推送先于会话刷新到达）
             // 时 bumpUnread 会建条目并回落 +1；返回值为回落信号 ⇒ 显式留痕。
@@ -167,6 +196,26 @@ final class FriendService(
             }
           case None =>
             logger.debug(s"message_new without conversationId ignored (neither payload nor flat)")
+            IO.unit
+      case MessageNewSelf =>
+        // K-2（段 A 2026-09-12）：**本账号在他处所发**（agent/工具代发，或同一账号的
+        // 另一台设备）。修前该类型落到下面的 `case other` 被**整条丢弃** ⇒ 本机既不补拉
+        // 也不进广播 ⇒ 会话预览/角标/开着窗全都不动，只有「关窗再开」（重挂载取数）
+        // 才可见（正本 §2(c)/§4-K2）。
+        // 语义 = 只透传（广播由 onFriendEvent 后置统一做）+ 补拉；**严禁 bumpUnread**
+        // ——自送消息不计未读（§3.4 口径 sender != me；前端亦按同一口径判定）。
+        // 与 `message_new` 的差别**只有**这一处（不调 bumpUnread），故不复制未读面。
+        //
+        // 归属注：本条**不含发送侧补广播**（K-3 / `doSend`、`GatewayMain`）——那属段 B，
+        // 本分支只保证「服务端已推来的 self 事件」不再被丢弃。
+        conversationIdOf(event) match
+          case Some(convId) =>
+            pullConversation(convId).void
+              .handleErrorWith(e => logger.warn(s"friend_event pull failed for $convId: ${e.getMessage}"))
+          case None =>
+            logger.debug(
+              s"$MessageNewSelf without conversationId ignored (neither payload nor flat)"
+            )
             IO.unit
       case "friend_request" | "friend_accepted" =>
         refreshFriends().void.handleErrorWith(e => logger.warn(s"friend event refresh failed: ${e.getMessage}"))
@@ -236,9 +285,19 @@ final class FriendService(
   /**
    * 以用户身份向好友发消息（spec §7.2 权限模型）：
    *  - auto（默认）：直接发送；超双层限速自动降级 ask（不硬失败）；
-   *  - ask：每次弹确认（60s 超时=拒绝）；
+   *  - ask：每次弹确认（**确认未回 ⇒ 超时 ⇒ 不发送**，且错误文案可判定）；
    *  - off：直接返回禁用。
    * 超长消息（>4000）与服务端 403 等错误原样返回。
+   *
+   * 确认链（#147 接线段，2026-09-12）：`askConfirm` = 装配缝注入的确认实现
+   * （`GatewayMain` 经 `NeblinkWiring.friendService` 接 `nebflow.agent.SendConfirm.production`；
+   * 会话靶由调用侧 `SendConfirm.locally` 按次挂上——理由与代码锚见该文件头）。
+   * 本层只见 `String => IO[Boolean]`，不依赖任何 UI/agent 类型。
+   *
+   * 语义（两条都是 fail-closed，不存在静默路径）：
+   *  - 确认通过 ⇒ 投递；拒绝 ⇒ `Left("User declined the message")`；
+   *  - 确认**失败**（无交互面 / 超时 / hub 未起）⇒ `Left("Confirmation failed — … NOT sent")`
+   *    —— 既不投递，也不伪装成「用户拒绝」（两种条件归因不同，调用方/模型可区分）。
    */
   def sendAsAgent(friendUserId: String, body: String): IO[Either[String, String]] =
     if body.length > 4000 then IO.pure(Left(s"Message too long (${body.length} chars, max 4000)"))
@@ -258,11 +317,21 @@ final class FriendService(
   private def confirmOrSend(friendUserId: String, body: String): IO[Either[String, String]] =
     askConfirm match
       case None => IO.pure(Left("ask mode requires a confirmation callback (not wired)"))
-      case Some(confirm) =>
-        confirm(body).flatMap {
-          case true => doSend(friendUserId, body)
-          case false => IO.pure(Left("User declined the message"))
-        }
+      case Some(confirmFn) =>
+        confirmFn(body)
+          .flatMap {
+            case true => doSend(friendUserId, body)
+            case false =>
+              logger.info(s"SendMessage declined by the user — nothing sent to $friendUserId") *>
+                IO.pure(Left("User declined the message"))
+          }
+          .handleErrorWith { e =>
+            // 确认链失败 ≠ 用户拒绝：显式失败（不发送），文案带原因，供模型/用户判定。
+            // 绝不落入「静默本地执行」或「静默成功」。
+            val why = Option(e.getMessage).filter(_.nonEmpty).getOrElse(e.getClass.getSimpleName)
+            logger.warn(s"SendMessage confirmation failed (message NOT sent, friend=$friendUserId): $why") *>
+              IO.pure(Left(s"Confirmation failed — the message was NOT sent: $why"))
+          }
 
   private def doSend(friendUserId: String, body: String): IO[Either[String, String]] =
     // origin=agent：sendAsAgent 是唯一 agent 代发 choke point（#290 spec v1.1）——

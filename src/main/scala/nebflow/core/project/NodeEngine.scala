@@ -1418,7 +1418,11 @@ class NodeEngine(
     * `chainAttrsOf` 同一 `topologicalChains` 单点，零新增链推导逻辑）。 */
   def chainIds: IO[Set[String]] = store.allChainIds
 
-  def sendNodeMessage(nodeId: String, message: String): IO[Either[String, String]] =
+  def sendNodeMessage(
+    nodeId: String,
+    message: String,
+    attribution: Option[InjectionAttribution] = None
+  ): IO[Either[String, String]] =
     val text = message.trim
     if text.isEmpty then
       IO.pure(Left(s"'message' must be non-empty (trim) — nothing to inject (NODE_MESSAGE_EMPTY)"))
@@ -1431,9 +1435,9 @@ class NodeEngine(
           IO.pure(Left(s"Node '${n.name}' is terminal (status=${n.status}) — messages are refused: " +
             "a finished node is never retro-edited; create a new node instead (NODE_TERMINAL_NO_MESSAGE)"))
         case Some(n) if n.status == NodeLifecycle.Running =>
-          injectRunning(n, text)
+          injectRunning(n, text, attribution)
         case Some(n) =>
-          appendToTaskRoute(n, text, retried = false)
+          appendToTaskRoute(n, text, retried = false, attribution)
       }
 
   /** 裁定② running 路由：活会话 → ImmediateInput（source="system"，text 带
@@ -1448,7 +1452,11 @@ class NodeEngine(
     * 只可能存在于缓存侧；sessionRef 每次启动原子刷新）。注入为 fire-and-forget
     * tell（与 Mail/revalidate 先例同语义）——投递本身不可回执，事件日志恒记录
     * 注入尝试（留痕不丢）。 */
-  private def injectRunning(node: NodeDef, text: String): IO[Either[String, String]] =
+  private def injectRunning(
+    node: NodeDef,
+    text: String,
+    attribution: Option[InjectionAttribution] = None
+  ): IO[Either[String, String]] =
     nodeSessions.get.map(_.get(node.id)).flatMap { cached =>
       // 候选序：sessionRef（持久权威，实时解析）→ cached（内存快路径）。去重。
       val candidates = (node.sessionRef.toList ++ cached.toList).distinct
@@ -1470,7 +1478,14 @@ class NodeEngine(
                   heal *>
                     (record.ref ! AgentCommand.ImmediateInput(
                       text = s"$head\n\n$text",
-                      source = Some("system"),
+                      source = Some(InjectionAttribution.SourceSystem),
+                      // bluebubble 批（2026-09-12）腿②：Mail(address="node:<id>") 的发信方
+                      // 随注入落到节点会话蓝气泡顶栏（sender = 分发器 agent 名）。
+                      // source 仍取 "system"（R2 D-3 裁定：保持节点侧既有定名，`mail`
+                      // 只出现在真实邮件来源处）。
+                      sender = attribution.flatMap(_.sender),
+                      senderTeam = attribution.flatMap(_.senderTeam),
+                      eventType = attribution.flatMap(_.eventType),
                       fromUser = false // ② 服务端注入（Node 消息），不是真人输入
                     )).void *>
                     FlowMapEventLog.append(workspace, projectName, node.id, NodeEngine.NodeMessageEventType,
@@ -1508,7 +1523,12 @@ class NodeEngine(
   /** 裁定③ wiring/pending 路由：持久追加 task（节点启动时随 buildInput
     * 读到）。单事务 fresh 状态守卫：仍 ∈ {wiring, pending} → 追加写成；
     * 并发启动（running）→ 单次重试走 running 路由；并发终态化 → 裁定④拒绝。 */
-  private def appendToTaskRoute(node: NodeDef, text: String, retried: Boolean): IO[Either[String, String]] =
+  private def appendToTaskRoute(
+    node: NodeDef,
+    text: String,
+    retried: Boolean,
+    attribution: Option[InjectionAttribution] = None
+  ): IO[Either[String, String]] =
     store.mutate { st =>
       st.nodes.get(node.id) match
         case Some(fresh) if fresh.status == NodeLifecycle.Wiring || fresh.status == NodeLifecycle.Pending =>
@@ -1527,7 +1547,7 @@ class NodeEngine(
         case Some(fresh) if fresh.status == NodeLifecycle.Running && !retried =>
           // 并发启动窗口：pending 在检查与追加间被投递启动 → 消息应走注入面
           logger.info(s"NodeMessage -> node '${node.name}' started concurrently during append — rerouting to live injection")
-          injectRunning(fresh, text)
+          injectRunning(fresh, text, attribution)
         case Some(fresh) if fresh.status == NodeLifecycle.Running =>
           appendUndelivered(fresh, text, "rerun-race")
         case Some(fresh) =>

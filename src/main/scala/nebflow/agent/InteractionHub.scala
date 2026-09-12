@@ -82,6 +82,13 @@ object InteractionHub:
               // while its AskUser card is pending → close the card (engine cascade:
               // cancelNode / abandon / dead-session reap).
               ctx.forkTurn(handleCleanupForSession(pending, rootWsSend, sessionId)) *> IO.pure(behavior)
+            case InteractionHubCommand.CloseRequest(requestId) =>
+              // 调用侧撤回（#147 接线段 2026-09-12）：请求方自己不等了（确认超时）
+              // ⇒ 精确回收**这一个**槽位并关掉卡片。与 CleanupForSession 的区别是
+              // 粒度：那条按 sourceSession 批量回收（源会话死亡），这条按 requestId
+              // 精确回收 —— 同一会话同时挂着别的 ask 时不得被误伤（超时撤回若走
+              // CleanupForSession 就会误杀同会话的其它 pending 卡）。
+              ctx.forkTurn(handleCloseRequest(pending, rootWsSend, requestId)) *> IO.pure(behavior)
         }
       IO.pure(behavior)
     }
@@ -437,6 +444,54 @@ object InteractionHub:
         )
     }.flatten
 
+  // ============================================================
+  // 调用侧撤回（#147 接线段，2026-09-12）：按 requestId **精确**回收单个槽位。
+  //
+  // WHY：确认链（`SendConfirm`，SendMessage ask 档）有 60s 等待上限；超时后请求方
+  // 已经带判据失败了，此时若卡片还挂在 hub 里，用户稍后点它 = 点了个「没人在听」
+  // 的动作 —— 本仓「错误路径折成静默成功」缺陷族的标准形态。CleanupForSession
+  // 不能用来干这件事：它按 sourceSession 批量回收（源会话死亡语义），会连带杀掉
+  // 同会话**其它**仍有效的 pending 卡（例如同一 turn 里 Nebula 自己还挂着一张
+  // AskUserQuestion）。
+  //
+  // 广播口径与 CleanupForSession 逐字同族（askUserClosed 走 ALL registered roots，
+  // 前端既有消费点 = `main.js onMessage('askUserClosed')` → closeAskUserCard +
+  // removePendingAsk ⇒ 零前端改动）。多一个 `reason` 字段（旧前端忽略未知键）。
+  // ============================================================
+  private def handleCloseRequest(
+    pending: Ref[IO, Map[String, PendingRequest]],
+    rootWsSend: Ref[IO, Map[String, Json => IO[Unit]]],
+    requestId: String
+  ): IO[Unit] =
+    pending.modify { m =>
+      m.get(requestId) match
+        case None =>
+          // 幂等：已答复/已回收/从未存在 —— no-op（不报错、不广播）。
+          (m, logger.debug(s"CloseRequest for unknown requestId=$requestId (already answered or closed)"))
+        case Some(p) =>
+          (
+            m - requestId,
+            for
+              _ <- logger.info(
+                s"CloseRequest $requestId (kind=${p.kind}) — caller withdrew; closing the card"
+              )
+              sends <- rootWsSend.get
+              _ <- sends.toList.traverse_ { case (sid, ws) =>
+                ws(
+                  Json.obj(
+                    "type" -> "askUserClosed".asJson,
+                    "sessionId" -> sid.asJson,
+                    "requestId" -> requestId.asJson,
+                    "sourceSession" -> p.sourceSession.asJson,
+                    "reason" -> "caller-withdrew".asJson
+                  )
+                ).handleErrorWith(e =>
+                  logger.warn(s"CloseRequest broadcast failed requestId=$requestId root=$sid: ${e.getMessage}") *> IO.unit)
+              }
+            yield ()
+          )
+    }.flatten
+
   /** R10/U5=F-b 审计行（answer 单点），`via` = card | chat-input。best-effort。 */
   private def auditAnswer(requestId: String, p: PendingRequest, answersJoined: String, via: String): IO[Unit] =
     val excerpt = if answersJoined.length > 200 then answersJoined.take(200) + "..." else answersJoined
@@ -515,3 +570,12 @@ object InteractionHubCommand:
     * session and broadcast askUserClosed{requestId} so no zombie card outlives
     * its asker. */
   final case class CleanupForSession(sessionId: String) extends InteractionHubCommand
+
+  /** #147 接线段（2026-09-12）：requester → hub — the caller itself stopped
+    * waiting for `requestId` (SendMessage ask-档 confirm timed out) and returns
+    * a judged failure. Remove exactly that slot and broadcast
+    * askUserClosed{requestId, reason:"caller-withdrew"} so the user is never
+    * left with a clickable card whose answer goes nowhere. Precise by
+    * requestId — never the session-wide sweep of CleanupForSession. Idempotent:
+    * an unknown/already-answered requestId is a no-op. */
+  final case class CloseRequest(requestId: String) extends InteractionHubCommand

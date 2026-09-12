@@ -55,6 +55,9 @@ import { initMicOrb } from './micOrb.js';
 // taskList.js 引用已随旧任务区退役移除（2026-09-05 10:54 裁定）：面板渲染
 // 由 taskList.js 自包含节点订阅驱动，session 切换重渲走 sidebar.js。
 import { renderWithRegistry, cleanupCardIframes } from './cardRegistry.js';
+// The app-document half of the preview link ruling (chat markdown bubbles /
+// EPUB chapters have no frame guarding them): bound once at boot below.
+import { bindDocMarkupLinkBridge } from './viewers/shared.js';
 import { escapeHtml, isBgAgentId } from './utils.js';
 import { showMemoryButton, handleMemoryData, handleMemoryChanged, initMemory, clearMemoryCache } from './memory.js';
 import { handleRulesData, handleRulesSaved, handleRulesDeleted, handleBrowseResult, initRulesModal, initPathPicker } from './sidebar.js';
@@ -3873,6 +3876,11 @@ window.Nebflow = {
 };
 
 // ---------- 8. Start ----------
+// Authored markup rendered into the APP DOCUMENT (chat markdown bubbles, EPUB
+// chapter content) is not a sandboxed frame — nothing catches a link there, so
+// an ordinary `[x](path)` used to replace the whole application document. Bind
+// the one shared link leg (viewers/shared.js) before the first message renders.
+bindDocMarkupLinkBridge();
 emergencyCacheCleanup(); // Purge bloated localStorage cache before any writes
 connect();
 chatViews.primary.dom.input.focus();
