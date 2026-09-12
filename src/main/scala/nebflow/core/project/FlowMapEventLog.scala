@@ -36,7 +36,11 @@ import nebflow.core.PathUtil
  *   barrier-blocked（**取消静默死锁修复批 R3**：终态写点（cancelled/failed）
  *   同步做下游 barrier 检查，已被终态上游永久闸死 → **即时**告警（0 延迟，不设
  *   60s 档）。周期回扫的 mount-stalled 保留为兜底，两者由 NodeEngine 的
- *   stallNotified + barrierAlerted 单发记账去重——同一停滞不发两条）。
+ *   stallNotified + barrierAlerted 单发记账去重——同一停滞不发两条）/
+ *   dispatcher-idle-expired（**令 3 分发器生命周期** 2026-09-12：分发器会话空闲
+ *   超过 `Defaults.DispatcherIdleWindowMs` 被 30 s 扫描腿拆除时留痕——
+ *   summary = `session=<dispatcher-xxxxxxxx> idleSecs=<n> windowMs=<n>`，
+ *   nodeId 字段承载会话 id；「活着但空闲」与「已销毁」的事后对齐面）。
  * 注册式扩展：append API 无 schema 变更，新事件类型 = 本清单加一词 + 写入点调用；
  * chainId 为顶层**可选**字段（2026-09-10 加，spec §9.2 项 9）：旧行无该键照常解析
  * （零迁移、append-only），新行仅在链族事件带上。
@@ -57,6 +61,20 @@ object FlowMapEventLog:
   /** 链拉回事件类型（对称口径，spec §6.2/§9.3：链抽象 P2 `restoreChain` 落地后由
     * 其调用点写入；**本批只定义类型 + 消费者回翻分支，无写入点**——禁止虚构调用点）。 */
   val ChainRestoredType = "chain-restored"
+
+  /** 分发器会话空闲到期销毁事件类型（**令 3 分发器生命周期** 2026-09-12 批，设计
+    * §3.2/§4 R4-(a)）：写点 = `ProjectActor.expireIdleDispatcher`（30 s `TtlTick`
+    * 扫描腿到点拆除时）。语义 = 「保活期结束 ⇒ 会话已销毁」，使「活着但空闲」与
+    * 「已销毁」在事后可对齐（面板/registry 在 turn 末即无行，空闲期无第二观察面）。
+    * `nodeId` 字段承载**会话 id**（`dispatcher-<uuid8>`）——分发器不是 Flow 节点、
+    * 无 NodeDef.id（`ProjectActor` spawn 处 `flowChainId = None` 同口径）；不写
+    * `chainId`（分发器不属任何链）。 */
+  val DispatcherIdleExpiredType = "dispatcher-idle-expired"
+
+  /** 空闲到期事件结构化 summary（`k=v` 单空格分隔，值不含空白；`session` 值形如
+    * `dispatcher-<8hex>`，天然无空白）。 */
+  def dispatcherIdleSummary(sessionId: String, idleSecs: Long, windowMs: Long): String =
+    s"session=$sessionId idleSecs=$idleSecs windowMs=$windowMs"
 
   /** 归档事件结构化 summary（`k=v` 单空格分隔，值不含空白；消费者侧解析单点
     * [[parseChainSummary]] 与本函数同源，防写读口径漂移）。 */

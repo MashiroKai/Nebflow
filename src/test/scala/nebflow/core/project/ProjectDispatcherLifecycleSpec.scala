@@ -114,41 +114,63 @@ class ProjectDispatcherLifecycleSpec extends CatsEffectSuite:
   private def dispatcherEntries(resources: SharedResources): IO[List[String]] =
     resources.agentRegistry.get.map(_.keys.toList.filter(_.startsWith(ProjectActor.DispatcherSessionPrefix)))
 
-  private def mount(name: String, ws: os.Path, system: ActorSystem, res: SharedResources, wsSend: Json => IO[Unit]): IO[ProjectRuntime] =
+  private def mount(
+    name: String,
+    ws: os.Path,
+    system: ActorSystem,
+    res: SharedResources,
+    wsSend: Json => IO[Unit],
+    idleWindowMs: Option[Long] = None,
+    ttlCheckIntervalSec: Int = 30
+  ): IO[ProjectRuntime] =
     val pd = ProjectDef(
       name = name,
       workspace = ws.toString,
       agentFile = (ws / "AGENTS.md").toString,
       createdAt = System.currentTimeMillis()
     )
-    ProjectRuntimeRegistry.mount(pd, system, res, Some(wsSend), rootSessionId = "nebula-root")
+    ProjectRuntimeRegistry.mount(
+      pd, system, res, Some(wsSend), rootSessionId = "nebula-root",
+      ttlCheckIntervalSec = ttlCheckIntervalSec,
+      dispatcherIdleWindowMs = idleWindowMs
+    )
 
   override def beforeEach(context: munit.BeforeEach): Unit = ProjectRuntimeRegistry.clear
   override def afterEach(context: munit.AfterEach): Unit = ProjectRuntimeRegistry.clear
 
-  test("正常结束：turn 完成 → 观察桥清 registry（AgentControl 视角无滞留 Processing dispatcher）") {
+  test("正常结束：turn 完成 → 会话进入空闲保活（不再即拆）；空闲窗到期 → 观察桥/扫描腿清 registry") {
+    // 令 3 契约变更（2026-09-12）：改前判据 =「正常结束后 registry 无滞留
+    // dispatcher」；保活落地后 turn 终态不再即拆 ⇒ 判据改为「窗口内保活 +
+    // 窗口到期后无滞留」。窗口压到 1.5 s、节拍 1 s（等效实验：只压两个数值
+    // 常量，被验代码路径逐行未变；详见 DispatcherIdleWindowSpec 头部声明）。
     val ws = tempRoot / "ws-normal"
     os.makeDir.all(ws)
     val system = ActorSystem(s"disp-normal-${scala.util.Random.nextInt(100000)}")
     val wsEvents = Ref.unsafe[IO, List[Json]](Nil)
-    for
-      resources <- mkResources(system, tempRoot, new RecordingLlm)
-      rt <- mount("disp-normal", ws, system, resources, j => wsEvents.update(j :: _))
-      actorRef = rt.actorRef.getOrElse(sys.error("ProjectActor must be spawned by mount"))
-      _ <- (actorRef ! ProjectActor.ProjectCommand.TriggerDispatcher("建一个调研节点", "nebula-root")).void
-      // #28 接线在位：agentStart 经路由包装到达 engine wsSend（nodeSessionId=dispatcher-*）
-      _ <- waitUntil(20.seconds)(wsEvents.get.map(
-        _.filter(_.hcursor.get[String]("type").toOption.contains("agentStart"))
-          .exists(_.hcursor.get[String]("nodeSessionId").toOption.exists(_.startsWith(ProjectActor.DispatcherSessionPrefix)))
-      ))
-      // 完成 → 桥清理：registry 无滞留 dispatcher 条目
-      _ <- waitUntil(60.seconds)(dispatcherEntries(resources).map(_.isEmpty))
-      entries <- dispatcherEntries(resources)
-      starts <- wsEvents.get.map(_.filter(_.hcursor.get[String]("type").toOption.contains("agentStart")))
-      _ <- system.stopAll.handleErrorWith(_ => IO.unit)
-    yield
-      assertEquals(entries, Nil, "no lingering dispatcher session after normal completion")
-      assert(starts.nonEmpty, "dispatcher agentStart must be observable via the routed wsSend")
+    ProjectActor.ttlScanner(1.second).background.use { _ =>
+      for
+        resources <- mkResources(system, tempRoot, new RecordingLlm)
+        rt <- mount("disp-normal", ws, system, resources, j => wsEvents.update(j :: _), Some(1500L), 1)
+        actorRef = rt.actorRef.getOrElse(sys.error("ProjectActor must be spawned by mount"))
+        _ <- (actorRef ! ProjectActor.ProjectCommand.TriggerDispatcher("建一个调研节点", "nebula-root")).void
+        // #28 接线在位：agentStart 经路由包装到达 engine wsSend（nodeSessionId=dispatcher-*）
+        _ <- waitUntil(20.seconds)(wsEvents.get.map(
+          _.filter(_.hcursor.get[String]("type").toOption.contains("agentStart"))
+            .exists(_.hcursor.get[String]("nodeSessionId").toOption.exists(_.startsWith(ProjectActor.DispatcherSessionPrefix)))
+        ))
+        // 令 3 新契约：turn 终态后会话**保活**（≥1 拍仍在）
+        _ <- waitUntil(20.seconds)(dispatcherEntries(resources).map(_.nonEmpty))
+        kept <- dispatcherEntries(resources)
+        // 空闲窗到期（1.5 s 窗 + ≤1 s 节拍）→ 拆除，registry 无滞留
+        _ <- waitUntil(60.seconds)(dispatcherEntries(resources).map(_.isEmpty))
+        entries <- dispatcherEntries(resources)
+        starts <- wsEvents.get.map(_.filter(_.hcursor.get[String]("type").toOption.contains("agentStart")))
+        _ <- system.stopAll.handleErrorWith(_ => IO.unit)
+      yield
+        assertEquals(kept.size, 1, s"turn 终态后必须保活（同 id 存活），got $kept")
+        assertEquals(entries, Nil, "idle window expired ⇒ no lingering dispatcher session")
+        assert(starts.nonEmpty, "dispatcher agentStart must be observable via the routed wsSend")
+    }
   }
 
   test("人为卡死：LLM 流挂死 → TaskStuckWatcher 升级 → 桥 Cancelled → registry 清理") {

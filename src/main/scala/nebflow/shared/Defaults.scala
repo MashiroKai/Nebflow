@@ -250,6 +250,26 @@ object Defaults:
   def NodeDestroyWindowMs: Long =
     sys.props.getOrElse("nebflow.noderpt.destroyWindowMs", (30 * 60 * 1000L).toString).toLong
 
+  /**
+   * 分发器会话空闲保活窗（`nebflow.dispatcher.idleWindowMs`，默认 **30 分钟**；
+   * 令 3 分发器生命周期设计 §3.4）。
+   *
+   * 语义：分发器会话的生命周期从「turn 级」升级为「派发批次级 + 空闲窗」——
+   * 观察桥在 `pendingInjected` 归零的那个 `Completed` **不再立即拆除**，改为记
+   * `idleSince`；此后窗口内任何经 `ProjectActor` 两个命令入口到达的派发/重入
+   * 都复用**同一会话**（含其上下文，连贯性收益）；`now - idleSince ≥ 本窗口`
+   * 时由 `TtlTick`（30 s 节拍）扫描腿走既有 `teardown` 拆除 ⇒ 下一个派发重新
+   * spawn（与今天同款）。
+   *
+   * 与 `NodeDestroyWindowMs` 同款先例：`sys.props` **每次调用现读**（spec /
+   * 运维可即时翻转——验收可把窗口压到秒级做等效实验）。
+   * **`≤ 0` = 关闭保活**（回到 turn 级即拆的旧行为）= 零风险回退开关。
+   *
+   * 有效空闲窗 = **[窗口, 窗口 + 30 s]**（`TtlTick` 节拍粒度，设计 §3.1-4）。
+   */
+  def DispatcherIdleWindowMs: Long =
+    sys.props.getOrElse("nebflow.dispatcher.idleWindowMs", (30 * 60 * 1000L).toString).toLong
+
   // ── loop 预算（nrloop 一期 2026-09-12；设计 §3.6「轮次帽 + 时间帽」）────────────
   //
   // 两维独立、**任一命中即熔断**（额度帽不做——一期范围 OUT，设计 §3.6 作者裁定 R6
