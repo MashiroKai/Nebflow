@@ -1014,6 +1014,14 @@ case class SessionContext(
     * （Nebula/team/flow 双轨/REST）→ 工具未挂载 + 工具内拒绝，双保险不可达。 */
   flowNodeId: Option[String] = None,
   isDispatcher: Boolean = false,
+  /** 节点角色（nrloop 一期 2026-09-12；设计 §3.2 + B1 透传链）：本节点会话所属
+    * `NodeDef.role`（`task` | `verifier`，见 `NodeRoles`）。NodeEngine 节点 spawn
+    * 点从 `NodeDef.role` 置位 → 经 AgentCore 透传进 `ToolContext.flowNodeRole`
+    * ——`node_report` 值域按角色分化的判据来源（错误码
+    * `NODE_REPORT_CATEGORY_ROLE`）；同时驱动 `ProtocolFootnote` 的角色分支注入。
+    * None = 非项目节点会话（分发器/Nebula/team/flow 双轨/REST）或旧会话——判据侧
+    * 回落 `NodeRoles.Task`（缺省语义，与 `NodeDef` 解码缺省同口径）。 */
+  flowNodeRole: Option[String] = None,
   /** 所属项目名（TaskBoard 批 2 身份链随路接通）：分发器/节点 spawn 注入 →
     * AgentCore 透传 ToolContext.projectName——该字段此前存在但生产代码从未赋值
     * （证据 §6-2），本批接通后 Node 系工具的 project 缺省解析（NodeTools.
@@ -1271,6 +1279,8 @@ object AgentState:
     userFacingNode: Boolean = false,
     flowNodeId: Option[String] = None,
     isDispatcher: Boolean = false,
+    /** 节点角色（nrloop 一期，详见 SessionContext.flowNodeRole）。 */
+    flowNodeRole: Option[String] = None,
     projectName: Option[String] = None,
     flowNodeName: Option[String] = None,
     /** 链级抽象 P2（§9.2 项 2）：节点所属链 id 快照（None = 无链/非项目会话）。 */
@@ -1310,6 +1320,7 @@ object AgentState:
         userFacingNode = userFacingNode,
         flowNodeId = flowNodeId,
         isDispatcher = isDispatcher,
+        flowNodeRole = flowNodeRole,
         projectName = projectName,
         flowNodeName = flowNodeName,
         flowChainId = flowChainId,

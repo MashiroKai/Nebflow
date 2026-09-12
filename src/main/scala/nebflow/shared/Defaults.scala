@@ -250,6 +250,37 @@ object Defaults:
   def NodeDestroyWindowMs: Long =
     sys.props.getOrElse("nebflow.noderpt.destroyWindowMs", (30 * 60 * 1000L).toString).toLong
 
+  // ── loop 预算（nrloop 一期 2026-09-12；设计 §3.6「轮次帽 + 时间帽」）────────────
+  //
+  // 两维独立、**任一命中即熔断**（额度帽不做——一期范围 OUT，设计 §3.6 作者裁定 R6
+  // 一期只做 (b) 轮次 + 时间）。判定单点 `LoopBudget.decide` 收两个阈值，熔断动作
+  // 三档统一在 `NodeEngine.circuitBreakLoop`。两者都是「现读」prop
+  // （`sys.props.getOrElse`，`BgGateWaitTimeoutMs` / `NodeDestroyWindowMs` 同款先例）
+  // ——spec / 运维可即时翻转；≤0 = 关闭该维（见 `LoopBudget.decide`）。
+
+  /**
+   * loop 轮次帽（`nebflow.nrloop.maxRounds`，默认 **3**）：同一 verifier 对同一
+   * 重跑目标累计申报 `fail` 达到此轮数 ⇒ 熔断（verifier 终态化 `failed` + result
+   * 写 reason + 计量、`loop-budget` 事件、失败通知）——不再登记新一轮重跑意图。
+   *
+   * 为什么 3：重跑是「同一判定再来一次」，三轮内无改善基本可判结构性缺陷（与
+   * `RetryCap` 系的量级一致）；阈值调优留给运维（改 prop 即生效，无需重建流程）。
+   */
+  def LoopMaxRounds: Int =
+    sys.props.getOrElse("nebflow.nrloop.maxRounds", "3").toInt
+
+  /**
+   * loop 时间帽（`nebflow.nrloop.maxWallClockMs`，默认 **4h**）：重跑目标节点自
+   * `loopStartedAt` 置位起累计墙钟达到此值 ⇒ 熔断（同上三档动作；由
+   * `NodeEngine.sweepLoopBudgets` 在 `ProjectActor.TtlTick` 30s 节拍扫描）。
+   *
+   * 为什么 4h：与节点会话硬上限 `BgGateNodeHardTimeoutMs` 同量级（循环重跑的总
+   * 时长不该超过单节点会话能活的时长——超了说明它早就不是在「重跑」而是在「卡住」，
+   * 该由熔断而非静默等待收场）。
+   */
+  def LoopMaxWallClockMs: Long =
+    sys.props.getOrElse("nebflow.nrloop.maxWallClockMs", (4 * 60 * 60 * 1000L).toString).toLong
+
   // ---- Tool Result Guard ----
 
   /**

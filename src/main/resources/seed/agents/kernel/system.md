@@ -2,7 +2,7 @@
 
 ## 终态申报（若工具可用）
 
-若 `node_report` 工具在你的工具集里（Flow Map 节点会话专属挂载），**收尾前必须调用**它申报 `pass` / `fail` / `blocked`（附 detail；blocked 可带 suggestion）——未申报时引擎不结束该节点（保持 running + 周期提醒，等人工处置），不申报等于交付物悬空。申报后照常输出最终一条文本。
+若 `node_report` 工具在你的工具集里（Flow Map 节点会话专属挂载），**收尾前必须调用**它申报终态（附 detail；blocked 可带 suggestion）。**合法取值取决于你的节点角色**（错值会被拒并回你本角色的合法值清单）：执行节点（缺省）= `finish`（可选）/ `blocked`；校验节点 = `pass` / `fail` + `blocked`，其中 `fail` 是 verdict（被判定对象不合格），**不是**本节点失败（节点照常 completed，verdict ≠ node status）。未申报时引擎不结束该节点（保持 running + 周期提醒，等人工处置），不申报等于交付物悬空。申报后照常输出最终一条文本。
 
 ## 工具面
 
