@@ -30,8 +30,16 @@ import scala.concurrent.duration.*
  *      EPERM，CPU 采样恒 0，见结果正文「基线红归因」）。
  *   ② 换轴判据：agent 侧戳**新鲜**（进程还在动）但同一 turn 内单个工具调用
  *      已超阈（`Defaults.ToolPhaseStuckMs`，prop 缩短为 1.5s 复现窗口）且 turn
- *      未完成 ⇒ 必须判卡死并广播 taskStuck（旧判据只认 lastActivityMs → 永不触发）。
- *      现场含真实零输出长跑进程 + 真实活动桥（生产写点本体）。
+ *      未完成 ⇒ 判据必须**命中**（检出面 `stuck-detected` 一行）。现场含真实零
+ *      输出长跑进程 + 真实活动桥（生产写点本体）。
+ *
+ * **wd-fix 批（2026-09-12 作者裁定「只做方向 A」）对本 spec 的语义变更（口径如实）**：
+ *   用例 ② 的现场同时具备「agent 侧正信号新鲜」（真活动桥对 CPU 持续微动的进程写了
+ *   `lastProgressSignalAt`）——按 wd-fix 第 i 刀（`TaskStuckWatcher#classify` 去掉
+ *   `toolPhaseMs ≤ 有效阈值` 前置），该形态现在是**类② 假阳性、本拍零动作**：超授权的
+ *   处置权交回工具自身授权超时 / 前台 no-progress ceiling（作者 2026-08-30 既有语义）。
+ *   故 ② 的**开火面**断言（taskStuck 广播 / Stop）改由新增用例 **②b**（与 ② 同形态、
+ *   唯一差异 = **零正信号**）承担——真卡死面（红线 1）由此继续被钉住，一处未松。
  */
 class ToolPhaseStuckAxisSpec extends CatsEffectSuite:
 
@@ -111,6 +119,15 @@ class ToolPhaseStuckAxisSpec extends CatsEffectSuite:
   private def recordOf(registry: Ref[IO, Map[String, AgentRecord]]): IO[AgentRecord] =
     registry.get.map(_.getOrElse(Sid, fail(s"registry lost $Sid")))
 
+  /** 读本 spec 的事件面（按 type 过滤）——供「检出面（stuck-detected）≠ 开火面
+    * （taskStuck / stuck-fire）」的断言。日志目录由 `beforeAll` 重定向到 spec 临时目录。 */
+  private def eventsOfType(tpe: String): IO[List[Json]] =
+    IO.blocking {
+      val f = watchdogLogTmp / s"${java.time.LocalDate.now()}_events.jsonl"
+      if !os.exists(f) then Nil
+      else os.read.lines(f).toList.flatMap(l => io.circe.parser.parse(l).toOption)
+    }.map(_.filter(_.hcursor.get[String]("type").toOption.contains(tpe)))
+
   /** 在测试期内覆盖 toolPhase 阈值 prop（Defaults 每次调用现读），退出时还原。 */
   private def withToolPhaseProp[A](ms: String)(body: IO[A]): IO[A] =
     IO {
@@ -164,7 +181,7 @@ class ToolPhaseStuckAxisSpec extends CatsEffectSuite:
 
   // ── ② 换轴判据（事故形态） ───────────────────────────────────────────────
 
-  test("② 零输出长跑前台命令 + agent 侧戳新鲜 + 工具相位超阈 → 判卡死并广播 taskStuck（修复前：永不判）") {
+  test("② 零输出长跑前台命令 + agent 侧正信号新鲜 + 工具相位超阈 → 判据命中但归**类② 假阳性**、本拍零动作（wd-fix 批 2026-09-12）") {
     val sessionKey = "axis-tool-phase"
     val system = ActorSystem("axis-tool-phase")
     withToolPhaseProp("1500") {
@@ -214,6 +231,7 @@ class ToolPhaseStuckAxisSpec extends CatsEffectSuite:
         _ <- IO.sleep(300.millis) // 等 tell 到达
         events <- wsEvents.get
         stopMsgs <- received.get
+        detected <- eventsOfType(TaskStuckWatcher.StuckDetectedType)
       yield
         // 活动桥不得污染 agent 侧判据字段（测试进程 CPU 采样可能为 0，此处为
         // 契约断言；写侧红证据见用例 ①）
@@ -221,10 +239,68 @@ class ToolPhaseStuckAxisSpec extends CatsEffectSuite:
           liveAfterBridge.lastActivityMs == now,
           s"活动桥必须保持 agent 侧判据字段不变：${liveAfterBridge.lastActivityMs} != $now"
         )
+        // wd-fix ①（2026-09-12 方向 A 第 i 刀）：正信号新鲜（活动桥对该进程写了
+        // `lastProgressSignalAt`）⇒ 类② 假阳性、**本拍零动作**——超授权的处置权
+        // 交回工具自身授权超时 / 前台 no-progress ceiling。
         assert(
-          events.size == 1,
-          s"期望恰好 1 条 taskStuck 广播（工具相位超阈），实得 ${events.size}: $events"
+          liveAfterBridge.lastProgressSignalAt > 0L,
+          s"前提：真活动桥必须已写正信号（否则本用例退化为 ②b 形态），实得 ${liveAfterBridge.lastProgressSignalAt}"
         )
+        assert(events.isEmpty, s"类② 假阳性 ⇒ 不得广播 taskStuck，实得 ${events.size}: $events")
+        assert(stopMsgs.isEmpty, s"类② 假阳性 ⇒ 不得发任何 AgentCommand（含 Stop），实得 $stopMsgs")
+        // 检出面 ≠ 开火面：判据必须**命中**并留一行 stuck-detected（class=false-positive）
+        val mine = detected.filter(_.hcursor.get[String]("sessionId").toOption.contains(Sid))
+        assertEquals(mine.size, 1, s"判据命中必须留一行 stuck-detected，实得 ${mine.size}")
+        assertEquals(mine.head.hcursor.get[String]("class").toOption,
+          Some(TaskStuckWatcher.ClassFalsePositive))
+        assertEquals(mine.head.hcursor.get[String]("branch").toOption,
+          Some(TaskStuckWatcher.BranchToolOverdue),
+          "本形态只命中工具相位轴（agent 侧戳新鲜）")
+        assertEquals(mine.head.hcursor.get[Boolean]("recoverable").toOption, Some(false))
+        assertEquals(mine.head.hcursor.get[Boolean]("destructiveAllowed").toOption, Some(false))
+    }.guarantee(system.stopAll.attempt.void)
+  }
+
+  test("②b 真卡死面未被削弱（红线 1）：**零正信号** + 工具相位超阈 ⇒ 仍判卡死并广播 taskStuck + 1 次 Stop") {
+    val system = ActorSystem("axis-tool-phase-realstuck")
+    withToolPhaseProp("1500") {
+      for
+        _ <- IO(system)
+        registry <- Ref.of[IO, Map[String, AgentRecord]](Map.empty)
+        resources = mkResources(registry)
+        received <- Ref.of[IO, List[AgentCommand]](Nil)
+        agentRef <- system.spawn(mkRecordingActor(received), "axis-real-agent")
+        parentCmds <- Ref.of[IO, List[AgentCommand]](Nil)
+        parentRef <- system.spawn(mkRecordingActor(parentCmds), "axis-real-parent")
+        wsHub = new WsHub()
+        wsEvents <- Ref.of[IO, List[Json]](Nil)
+        _ <- wsHub.register(json => wsEvents.update(_ :+ json))
+        now = System.currentTimeMillis()
+        // 与 ② **同形态**，唯一差异 = 零正信号（该工具从未报过任何进展证据：
+        // `lastProgressSignalAt = 0`）⇒ 必须仍落类① 并走既有开火链。
+        _ <- resources.agentRegistry.set(
+          Map(Sid -> AgentRecord(
+            sessionId = Sid,
+            ref = agentRef,
+            kind = AgentKind.Delegate,
+            rootSessionId = "root-1",
+            parentRef = Some(parentRef),
+            startedAt = now - 20 * 60 * 1000L,
+            status = AgentStatus.Processing,
+            lastActivityMs = now,
+            turnStartedAt = now - 3_000L,
+            currentToolName = Some("Bash"),
+            currentToolStartedAt = now - 3_000L,
+            lastProgressSignalAt = 0L
+          ))
+        )
+        _ <- TaskStuckWatcher.scan(resources, wsHub, thresholdMs = 10 * 60 * 1000L)
+        _ <- IO.sleep(300.millis)
+        events <- wsEvents.get
+        stopMsgs <- received.get
+      yield
+        assertEquals(events.size, 1,
+          s"零正信号 + 工具相位超阈 ⇒ 仍须判卡死并广播 taskStuck（红线 1），实得 ${events.size}: $events")
         val ev = events.head
         assertEquals(ev.hcursor.get[String]("type").toOption, Some("taskStuck"))
         assertEquals(ev.hcursor.get[String]("sessionId").toOption, Some(Sid))

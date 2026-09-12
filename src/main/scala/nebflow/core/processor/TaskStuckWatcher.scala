@@ -86,8 +86,15 @@ object TaskStuckWatcher:
 
   /**
    * 2026-09-10 卡死判据换轴（唯一判据事实源）：本 watcher 的扫描 + AgentControlTool
-   * 的 stuck?/status 展示 + WebSocketRoutes.maybeSessionKick 全部走此函数，避免三处
-   * 判据漂移（旧代码三处各写一遍 `now - lastActivityMs > 阈值`）。
+   * 的 stuck?/status 展示走此函数，避免两处判据漂移（旧代码两处各写一遍
+   * `now - lastActivityMs > 阈值`）。
+   *
+   * **口径如实（wd-fix 批 2026-09-12 实读订正，本处旧文为误述）**：
+   * `WebSocketRoutes.maybeSessionKick` / `#isKickCandidate` **不调用**本函数——它是
+   * 同一组不等式的**第二份内联副本**，且**阈值不同**（`Defaults.SessionKickIdleSec`
+   * = 150s，本函数默认 `StuckThresholdMs` = 600s）并自带 `toolInFlight` 护栏。
+   * ⇒ 判据源实为 **2 同源（watcher 扫描 + AgentControlTool）+ 1 副本（阈值不同、未复用）**。
+   * 副本改走 `assess`/`classify` 属**行为变更**，不在 wd-fix 批范围内（建议另立条目）。
    *
    * 返回 Some((停滞秒数, 原因文本)) = 判卡死；None = 不判。
    * 判据（并集，**均不读取任何进程 CPU / processActivityMs**）：
@@ -135,7 +142,9 @@ object TaskStuckWatcher:
 
   /** 类① 真卡死：无进展且无事件（判据命中后无任何「还在干活」的证据）。 */
   val ClassTrueStuck: String = "true-stuck"
-  /** 类② 假阳性：工具相位未超有效阈值**且**有正信号（还在推进）⇒ 本拍不动作。 */
+  /** 类② 假阳性：**有正信号**（还在推进）⇒ 本拍不动作。**与「是否已超授权」解耦**
+    * （wd-fix 批第 i 刀 2026-09-12）：超授权不再前置否决正信号——处置权交回工具自身
+    * 授权超时 / 前台 no-progress ceiling。 */
   val ClassFalsePositive: String = "false-positive"
   /** 类④ provider hang：本会话有在飞 LLM 请求 ⇒ 交 LLM 层三档看护，watcher 不介入。 */
   val ClassProviderHang: String = "provider-hang"
@@ -166,7 +175,10 @@ object TaskStuckWatcher:
 
   /** 正信号（进展证据）是否新鲜——**只阻止判死、绝不促成判死**（作者裁定 R-3）。
     * 读 [[AgentRecord.lastProgressSignalAt]]（写点语义单点 =
-    * `AgentCore.markToolProgress`，传感器 = 工具活动桥采样点）。 */
+    * `AgentCore.markToolProgress`，传感器 = 工具活动桥采样点）。
+    *
+    * `windowMs` 是**窗的给定值**（纯函数，不做任何授权推导）；需要「窗随授权联动」的
+    * 调用方先算 [[effectiveProgressWindowMs]]（[[classify]] 即如此）。 */
   def hasProgressSignal(
     rec: AgentRecord,
     now: Long,
@@ -174,16 +186,49 @@ object TaskStuckWatcher:
   ): Boolean =
     rec.lastProgressSignalAt > 0 && now - rec.lastProgressSignalAt <= math.max(0L, windowMs)
 
+  /** 正信号新鲜窗的**授权联动**（wd-fix 批 ②，2026-09-12 作者裁定方向 A 第 ii 刀）——
+    * 有效窗 = `max(baseWindowMs, declaredToolTimeoutMs / Defaults.StuckProgressSignalWindowDivisor)`
+    * （默认 `max(60s, 声明/10)`）。
+    *
+    * 性质（验收口径）：**单调不减**（声明时长越大 ⇒ 窗不得越小；禁出现「授权越长反而
+    * 越容易被判死」）；**未声明**（`<= 0`）⇒ `baseWindowMs` 逐字不变（未声明 `timeout`
+    * 的工具行为零变化）。取数口唯一 = `AgentRecord.currentToolDeadlineMs`
+    * （由 `Defaults.declaredToolTimeoutMs` 在工具入参上读出，**不另开取数口**）。
+    */
+  def effectiveProgressWindowMs(
+    declaredToolTimeoutMs: Long,
+    baseWindowMs: Long = nebflow.shared.Defaults.StuckProgressSignalWindowMs
+  ): Long =
+    val base = math.max(0L, baseWindowMs)
+    val divisor = nebflow.shared.Defaults.StuckProgressSignalWindowDivisor
+    if declaredToolTimeoutMs <= 0L || divisor <= 0L then base
+    else math.max(base, declaredToolTimeoutMs / divisor)
+
   /** 判据序（设计 §2.1）的**唯一实现单点**——纯函数，可独立单测；扫描面与任何
     * 将来消费者共用同一口径（防分流漂移，与 [[assessDetailed]] 唯一事实源同源）。
     *
     * 判定顺序（严格自上而下，先命中先返回）：
     *   1. `inflight > 0` ⇒ 类④ [[ClassProviderHang]]（LLM 层自管，watcher 零动作）
     *   2. 有工具相位（`currentToolStartedAt > 0`）：
-    *      a. `toolPhaseMs ≤ 有效阈值` 且**有正信号** ⇒ 类② [[ClassFalsePositive]]
-    *         （本拍不动作，只记 `suspect`——这条正是今天 11/11 样本的出口）
-    *      b. 其余 ⇒ 类① [[ClassTrueStuck]]（**非破坏档**：只允许 L1 + 恢复腿）
+    *      a. **有正信号（有效窗内新鲜）** ⇒ 类② [[ClassFalsePositive]]
+    *         （本拍不动作，只记 `suspect`）
+    *      b. **无正信号** ⇒ 类① [[ClassTrueStuck]]（**非破坏档**：只允许 L1 + 恢复腿）
     *   3. 无工具相位 ⇒ 类① [[ClassTrueStuck]]
+    *
+    * **wd-fix 批（2026-09-12 作者裁定「方向 A」，只为消误判、不为减真判）**：
+    *   - **第 i 刀（去掉前置）**：2a 旧写 `toolPhaseMs ≤ 有效阈值 ∧ 正信号新鲜`——
+    *     `toolPhaseMs > 有效阈值` 时正信号**再新鲜也救不了**，直接落 2b。改为
+    *     「正信号新鲜 ⇒ 2a，**无论工具耗时是否已超授权**」：超授权的处置权交回工具
+    *     自身（工具授权超时 / 前台 no-progress ceiling），watcher 不再越权判死
+    *     ——这是作者 2026-08-30 既有语义（判死权归工具授权 + ceiling）。
+    *     今天 5 例误判（`node-eb8a9c70` 工具相位 604810ms / 正信号 3s 前等）全部
+    *     由这条前置造成。
+    *   - **第 ii 刀（窗随授权联动）**：2a 的正信号窗不再恒为 60s，改走
+    *     [[effectiveProgressWindowMs]]（= `max(基础窗, 声明授权/10)`，单调不减）。
+    *   - **零新信号**：不读 `processActivityMs` / 进程树 CPU / 活体探针（红线 R6-4）。
+    *   - **真判不减少**：`无正信号 ∧ 确实停摆` 的形态判据与动作链**逐字未动**——
+    *     类① 仍 `recoverable=true`、`destructiveAllowed=false`，L1→L3 分级与恢复腿
+    *     闸门不受本批影响。
     *
     * **类⑤（会话纤维挂起 / 邮箱堵）本批不产出**（**未尽事项，单列**）：设计 §2.2 的
     * 判据需要 `cancelInflightFor == 0 ∧ transportAbortFor == 0` 两个**返回值**读数，
@@ -207,25 +252,45 @@ object TaskStuckWatcher:
   ): StuckClassification =
     val effectiveToolPhaseMs = ToolStuckJudgment.effectiveToolPhaseMs(
       toolPhaseThresholdMs, rec.currentToolDeadlineMs, nebflow.shared.Defaults.ToolDeadlineSlackMs)
-    val progress = hasProgressSignal(rec, now, progressWindowMs)
+    // wd-fix ②（2026-09-12）：正信号窗随授权联动（未声明 ⇒ progressWindowMs 逐字不变）。
+    val progressWindow = effectiveProgressWindowMs(rec.currentToolDeadlineMs, progressWindowMs)
+    val progress = hasProgressSignal(rec, now, progressWindow)
     val progressAgoSecs = if rec.lastProgressSignalAt > 0 then (now - rec.lastProgressSignalAt) / 1000 else -1L
+    // 机器可读读数（本批离线回归器与事件面按 note 取数；`authorised` 与
+    // `progress signal <n>s ago` 两个 token 的形态**必须保留**）。
+    val windowNote = s"window ${progressWindow / 1000}s"
+    val authorisedNote = s"authorised ${effectiveToolPhaseMs / 1000}s"
+    val toolNote = s"tool phase ${a.toolPhaseMs / 1000}s"
+    val overAuthorised = a.toolPhaseMs > effectiveToolPhaseMs
     if inflight > 0 then
       StuckClassification(ClassProviderHang,
         s"$inflight in-flight LLM request(s) for this session — provider-hang (class 4): the LLM layer's own " +
           "watchdog owns this case, the watcher takes no action this round",
         recoverable = false, destructiveAllowed = false)
     else if rec.currentToolStartedAt > 0 then
-      if a.toolPhaseMs <= effectiveToolPhaseMs && progress then
+      // wd-fix ①：正信号新鲜 ⇒ 类②，**不再前置要求 `toolPhaseMs ≤ 有效阈值`**。
+      if progress then
         StuckClassification(ClassFalsePositive,
-          s"tool '${a.toolName.getOrElse("?")}' still inside its authorised window " +
-            s"(${a.toolPhaseMs / 1000}s ≤ ${effectiveToolPhaseMs / 1000}s) and advancing " +
-            s"(progress signal ${progressAgoSecs}s ago) — false positive (class 2): no action this round",
+          s"tool '${a.toolName.getOrElse("?")}' " +
+            (if overAuthorised then
+               s"over its authorised window ($toolNote > $authorisedNote) but still advancing"
+             else s"inside its authorised window ($toolNote ≤ $authorisedNote) and advancing") +
+            s" (progress signal ${progressAgoSecs}s ago, $windowNote) — false positive (class 2): " +
+            (if overAuthorised then
+               "over-authorisation is the tool's own authorised timeout / foreground no-progress ceiling " +
+                 "to enforce, the watcher takes no action this round"
+             else "no action this round"),
           recoverable = false, destructiveAllowed = false)
       else
+        // 文案如实（wd-fix ③）：本分支按定义**无新鲜正信号**（progress == false），故不会
+        // 出现「既说没有正信号、又给出 3s 前正信号」的自相矛盾；超授权事实单列。
         StuckClassification(ClassTrueStuck,
-          s"no progress signal (last=${if progressAgoSecs < 0 then "never" else s"${progressAgoSecs}s ago"}) " +
-            s"while tool '${a.toolName.getOrElse("?")}' is in flight " +
-            s"(${a.toolPhaseMs / 1000}s, authorised ${effectiveToolPhaseMs / 1000}s) — true stuck (class 1): " +
+          (if progressAgoSecs < 0 then s"no progress signal (never seen, $windowNote)"
+           else s"no fresh progress signal (progress signal ${progressAgoSecs}s ago, $windowNote)") +
+            s" while tool '${a.toolName.getOrElse("?")}' is in flight " +
+            s"($toolNote, $authorisedNote)" +
+            (if overAuthorised then s" — $toolNote > $authorisedNote (over its authorised window)" else "") +
+            s" — true stuck (class 1): " +
             "non-destructive tier only (L1 halt + recovery leg; no process kill, no terminalization)",
           recoverable = true, destructiveAllowed = false)
     else
@@ -235,9 +300,13 @@ object TaskStuckWatcher:
         recoverable = true, destructiveAllowed = false)
 
   /** [[assess]] 的详情版（唯一判据事实源）：返回命中的**分支身份**与两条轴的原始终
-    * 读数，供 R8 事件面消费。`assess` 退化为它的投影——**既有三消费点
-    * （watcher 扫描 / `AgentControlTool` 展示 / `WebSocketRoutes` kick）签名与行为
-    * 零改动**。 */
+    * 读数，供 R8 事件面消费。`assess` 退化为它的投影——**既有两消费点
+    * （watcher 扫描 / `AgentControlTool` 展示）签名与行为零改动**。
+    *
+    * **口径如实（wd-fix 批 2026-09-12 实读订正）**：`WebSocketRoutes.maybeSessionKick`
+    * 的 kick 判据**不是**本函数的消费点——它是内联的第二份副本
+    * （`#isKickCandidate`，阈值 `Defaults.SessionKickIdleSec` 150s ≠ 本函数默认 600s，
+    * 且额外带 `toolInFlight` 护栏），故不存在「三消费点」同源关系。 */
   def assessDetailed(
     rec: AgentRecord,
     now: Long,
