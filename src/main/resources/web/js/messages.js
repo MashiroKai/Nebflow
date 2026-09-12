@@ -7,7 +7,14 @@ import { createIconsIn } from './utils.js';
 import state from './state.js';
 import { onMessage, onReconnect, onDisconnect } from './ws.js';
 import { getNeblinkState } from './neblink.js';
-import { setActivityBadge, openLoginModal } from './activityBar.js';
+import { setActivityBadge, openLoginModal, onStatusTick } from './activityBar.js';
+import { key } from './branding.js';
+// ⑨ 缓存与增量（方案 §2.3 B+E）：L2 持久层 = fmMessageCache.js（唯一属主，
+// 键/上限/账号分区都在那边）；本模块只消费 + 负责 L1（内存会话列表）新鲜度。
+import {
+  TTL_MS as CACHE_TTL_MS, SYNC_PAGE, MAX_SYNC_PAGES,
+  loadConversation, saveConversation,
+} from './fmMessageCache.js';
 import * as api from './friendsApi.js';
 import { makeReference } from './reference.js';
 import { appendRefToActiveView } from './input.js';
@@ -21,6 +28,7 @@ import { bindImeGuard, isImeComposing } from './imeGuard.js';
 
 let conversations = [];
 let friendsCache = [];          // accepted friends — source of truth for §3.3 gate
+let friendsFetchedAt = 0;       // ⑨ L1 新鲜度锚：好友列表最后一次成功拉取时刻
 let openConvId = null;          // conversation shown in the chat modal
 let modalEls = null;            // {overlay, flow, input, sendBtn, toast}
 let triggeringRow = null;       // for focus return (A18)
@@ -28,12 +36,19 @@ let triggeringConvId = null;    // row may be re-rendered after open (unread cle
 const forwardedIds = new Set(); // session-persistent 「已转发」 chips (§3.3)
 let msgSeq = 0;
 
+// ⑨ 增量同步：单飞 + 回补节流（①opt-A3 挂靠点见 backfillTick）。
+let syncingConvId = null;       // 同一会话同时只跑一条增量链
+let lastBackfillAt = 0;
+
 // ── 好友信任模式 v1（作者令：信任的好友，新消息自动走既有「转发给 agent」
 // 通道）── 纯客户端本地标记，localStorage 持久化（与 fm_seen_requests /
 // fm_blocked 同一家族）。存 userId 数组（与黑名单缓存同键——userId 比
 // neblinkId/Username 稳定，friend_event 的 senderId 匹配也用它）。零后端改动；
 // 跨设备同步 = v2 候选。本模块是 store 唯一属主，contacts.js 经导出入口读写。
-const LS_TRUSTED = 'fm_trusted';
+// ⑨-6（作者预授权令）：裸键 `fm_trusted` 迁入 `key()` 品牌命名空间
+// （`nebflow_fm_trusted` today）。存量值经 branding.js 的 LEGACY_IRREGULAR
+// 启动即迁移，数据不丢；裸键字面只保留在 branding.js 的兼容层里。
+const LS_TRUSTED = key('fm_trusted');
 function loadTrusted() {
   try { return new Set(JSON.parse(localStorage.getItem(LS_TRUSTED) || '[]')); } catch { return new Set(); }
 }
@@ -56,6 +71,13 @@ export function setFriendTrusted(userId, trusted) {
 // AUTOINCREMENT (gaps possible when other conversations interleave) — an empty
 // window auto-steps further back (bounded). Window edge = id 1 → history start.
 const HISTORY_WINDOW = 200;
+// 存在性探针的单页条数（②-7 方案 A）。**1 即够**：服务端 keyset 是
+// `id > after ORDER BY id ASC` —— 窗口里若有本会话的消息，首条必然是窗口内
+// **最小 id**；`some(id < fromId)` 的真假只取决于这条。原实现取整窗
+// （200 条 ≈ 20–25 KB）只为问一个是非题，与 ⑨ M4①「重复打开 200 条会话
+// ≤1 KB」直接冲突 —— 判据等价、载荷 1/200。这不是新数值：它是探针判定的
+// 最小可判定页（不是可调参数，不对外暴露）。
+const PROBE_LIMIT = 1;
 let chatMsgs = [];              // ascending messages currently loaded in the modal
 let oldestLoadedId = 0;         // keyset anchor for load-more
 let hasMoreHistory = false;
@@ -142,13 +164,26 @@ function updateBadge() {
 }
 
 // ── Conversation list (§3.2) ─────────────────────────────
-async function refreshConversations() {
-  if (!loggedIn()) { conversations = []; friendsCache = []; renderList(); return; }
+/** 会话列表刷新。
+ *  `friends` 语义（⑨ M1②「再次开面板 = 1」）：
+ *   · `'reuse'`（默认，面板重复切换）——好友列表命中 L1 且未过 TTL ⇒ 只取会话
+ *     列表（1 次往返）；好友列表为空或已过期 ⇒ 自动升级为 `'force'`
+ *     （正确性优先于省一次往返 —— §3.3 not-friend 门禁吃的是这份缓存）。
+ *   · `'force'`（首次装载 / 好友域变更 / reconnect / 未知会话）——会话 + 好友
+ *     并行取（2 次往返，与今天一致）。 */
+async function refreshConversations({ friends = 'reuse' } = {}) {
+  if (!loggedIn()) { conversations = []; friendsCache = []; friendsFetchedAt = 0; renderList(); return; }
+  const wantFriends = friends === 'force'
+    || friendsCache.length === 0
+    || (Date.now() - friendsFetchedAt) > CACHE_TTL_MS;
   try {
-    const [convs, friends] = await Promise.all([api.getConversations(), api.getFriends()]);
+    const [convs, fr] = await Promise.all([
+      api.getConversations(),
+      wantFriends ? api.getFriends() : Promise.resolve(null),
+    ]);
     conversations = (convs || []).sort((a, b) =>
       (toEpochMs(b.lastMessage?.createdAt) || 0) - (toEpochMs(a.lastMessage?.createdAt) || 0));
-    friendsCache = friends.friends || [];
+    if (fr) { friendsCache = fr.friends || []; friendsFetchedAt = Date.now(); }
   } catch { /* keep last known */ }
   renderList();
   updateBadge();
@@ -250,6 +285,78 @@ function isStillFriend(conv) {
   return !!(conv && conv.friend && friendsCache.some(f => f.userId === conv.friend.userId));
 }
 
+/** 已读上报 + 角标/列表同步（开窗路径与增量补齐路径共用，零第二实现）。 */
+function markConvRead(conv) {
+  const last = chatMsgs[chatMsgs.length - 1];
+  if (!conv || !last) return;
+  conv.unreadCount = 0;
+  api.markConversationRead(conv.conversationId, last.id).catch(() => {});
+  updateBadge();
+  renderList();
+}
+
+/** ⑨ 把当前已加载窗口写进 L2 缓存（水位 = 已见到过的最大数值 id）。 */
+function persistConversation(conv) {
+  if (!conv || !conv.conversationId || chatMsgs.length === 0) return;
+  let watermark = 0;
+  for (const m of chatMsgs) { const n = Number(m.id); if (Number.isFinite(n) && n > watermark) watermark = n; }
+  saveConversation(conv.conversationId, chatMsgs, {
+    watermark,
+    lastMessageAt: toEpochMs(conv.lastMessage?.createdAt),
+  });
+}
+
+/** ⑨ keyset 水位 = 已加载窗口里的最大数值 id（`after=` 游标的唯一取值来源）。 */
+function syncWatermark() {
+  let max = 0;
+  for (const m of chatMsgs) { const n = Number(m.id); if (Number.isFinite(n) && n > max) max = n; }
+  return max;
+}
+
+/**
+ * ⑨ 增量同步：把打开的会话窗口补到服务端水位。
+ *
+ * 契约：**只走 `after=<水位>` 的 keyset 前进拉取**，永不重取尾窗
+ * （M1③ 红线：出现尾窗全量 = 不合）。单页 `SYNC_PAGE` 条；返回满页才继续翻，
+ * 最多 `MAX_SYNC_PAGES` 页（4 × 50 = 200 = 既有尾窗带宽上限 ⇒ 增量补齐的
+ * 单次带宽不超过今天一次尾窗）。同一会话单飞（`syncingConvId`）。
+ *
+ * @param {string} conversationId
+ * @param {{pages?: number}} [opts] pages = 最大翻页数（默认 1：单次探测）
+ * @returns {Promise<number>} 补进来的条数
+ */
+async function syncConversation(conversationId, { pages = 1 } = {}) {
+  if (!conversationId || syncingConvId === conversationId) return 0;
+  const maxPages = Math.max(1, Math.min(Number(pages) || 1, MAX_SYNC_PAGES));
+  syncingConvId = conversationId;
+  let fetched = 0;
+  try {
+    for (let i = 0; i < maxPages; i++) {
+      const after = syncWatermark();
+      if (after <= 0) break; // 无可信水位（缺席/temp id 占位）⇒ 不猜、不改窗口
+      let batch = [];
+      try { batch = await api.getMessages(conversationId, { after, limit: SYNC_PAGE }); }
+      catch { break; } // 网络/鉴权失败：保留已渲染内容，不冒泡成用户可见错误
+      if (openConvId !== conversationId || !modalEls) break; // 会话已换/窗已关
+      const fresh = (batch || []).filter(m => !chatMsgs.some(x => String(x.id) === String(m.id)));
+      if (fresh.length) {
+        appendMessages(fresh);
+        fetched += fresh.length;
+        const conv = conversations.find(c => c.conversationId === conversationId);
+        if (conv) {
+          conv.lastMessage = fresh[fresh.length - 1];
+          markConvRead(conv);       // 窗开着 ⇒ 到即已读（与 WS 帧路径同语义）
+          persistConversation(conv);
+        }
+      }
+      if ((batch || []).length < SYNC_PAGE) break; // 不满页 ⇒ 已到服务端水位
+    }
+  } finally {
+    syncingConvId = null;
+  }
+  return fetched;
+}
+
 async function openConversation(conversationId, rowEl) {
   const conv = conversations.find(c => c.conversationId === conversationId);
   if (!conv) return;
@@ -258,6 +365,24 @@ async function openConversation(conversationId, rowEl) {
   openConvId = conversationId;
   renderChatModal(conv);
 
+  // ⑨ 热路径（有缓存）：同步读缓存首屏（零往返），随后一次极小增量核对
+  // （`after=<水位>&limit=SYNC_PAGE`）—— 无新消息 = 空响应，**不是**尾窗重取。
+  const cached = loadConversation(conversationId);
+  if (cached) {
+    chatMsgs = cached.msgs.slice();
+    oldestLoadedId = chatMsgs.length ? (Number(chatMsgs[0].id) || 0) : 0;
+    hasMoreHistory = false;
+    renderMessages(chatMsgs);
+    markConvRead(conv);
+    if (modalEls) modalEls.input.focus();
+    if (chatMsgs.length && oldestLoadedId > 1) probeOlderHistory(conversationId, oldestLoadedId);
+    // TTL 过期 ⇒ 条目「可疑」⇒ 允许多补几页（仍全部是增量页，绝无尾窗）。
+    await syncConversation(conversationId, { pages: cached.fresh ? 1 : MAX_SYNC_PAGES });
+    persistConversation(conv);
+    return;
+  }
+
+  // ⑨ 冷路径（无缓存）：= 今天的行为，一次尾窗拉取（M6 冷缓存不倒退基线）。
   // Initial window: anchor on the conversation list's cached newest message id
   // and take one window backwards (after = anchor - WINDOW). Missing anchor
   // (fresh/empty conversation) → from 0, which is then the entire history.
@@ -273,19 +398,14 @@ async function openConversation(conversationId, rowEl) {
   // 病灶）。这里先一律不渲染按钮，交给后台探针探到更早再插入。
   hasMoreHistory = false;
   renderMessages(chatMsgs);
-  const last = chatMsgs[chatMsgs.length - 1];
-  if (last) {
-    conv.unreadCount = 0;
-    api.markConversationRead(conversationId, last.id).catch(() => {});
-    updateBadge();
-    renderList();
-  }
+  markConvRead(conv);
   if (modalEls) modalEls.input.focus();
   // 确定态 ①：本会话第一条 id = 表首 id(1) ⇒ 确定没有更早，探针无需发。
   // 否则后台探针（与首屏解耦：气泡已渲染，按钮命中后再插入）。
   if (chatMsgs.length && oldestLoadedId > 1) {
     probeOlderHistory(conversationId, oldestLoadedId);
   }
+  persistConversation(conv);
 }
 
 function renderChatModal(conv) {
@@ -475,15 +595,63 @@ function bubbleEl(m, conv) {
   return wrap;
 }
 
-function renderMessages(msgs) {
+/**
+ * ⑨-E keyed diff 渲染（方案 §2.3 案 E）：按 `data-message-id` 复用既有气泡节点，
+ * 只增删差集、只移动错位节点 —— 不再 `innerHTML=''` 全量重建，因此刷新/增量补齐
+ * 不会重建全部 DOM（无闪、无滚动跳动、命中动画不重放）。
+ *
+ * 不变量：`flow` 下 `.fm-load-more-row`（若有）恒为首个子节点，消息节点按
+ * `msgs` 顺序排在其后，且每个 message id **至多一个**节点（M5 一致性门：
+ * 渲染 id 序列无重复、严格升序）。
+ */
+function keyedDiff(flow, msgs, conv) {
+  const loadMore = flow.querySelector('.fm-load-more-row');
+  /** @type {Map<string, HTMLElement>} */
+  const existing = new Map();
+  for (const node of [...flow.children]) {
+    if (node === loadMore) continue;
+    const id = node.dataset && node.dataset.messageId;
+    if (id !== undefined && id !== null && id !== '') existing.set(String(id), /** @type {HTMLElement} */ (node));
+  }
+  const wanted = new Set(msgs.map(m => String(m.id)));
+  for (const [k, node] of [...existing]) {
+    if (!wanted.has(k)) { node.remove(); existing.delete(k); }
+  }
+  let cursor = loadMore || null;
+  for (const m of msgs) {
+    const k = String(m.id);
+    const reused = existing.get(k);
+    if (reused) existing.delete(k);
+    const node = reused || bubbleEl(m, conv);
+    const after = cursor ? cursor.nextSibling : flow.firstChild;
+    if (node !== after) flow.insertBefore(node, after);
+    cursor = node;
+  }
+}
+
+function renderMessages(msgs, { stickBottom = true } = {}) {
   if (!modalEls) return;
   const conv = currentConv();
   if (!conv) return;
-  modalEls.flow.innerHTML = '';
+  const flow = modalEls.flow;
+  const prevHeight = flow.scrollHeight;
+  const prevTop = flow.scrollTop;
+  const atBottom = flow.scrollHeight - flow.scrollTop - flow.clientHeight <= 40;
   updateLoadMoreRow();
-  for (const m of msgs) modalEls.flow.appendChild(bubbleEl(m, conv));
-  createIconsIn(modalEls.flow);
-  modalEls.flow.scrollTop = modalEls.flow.scrollHeight;
+  keyedDiff(flow, msgs, conv);
+  createIconsIn(flow);
+  if (stickBottom || atBottom) flow.scrollTop = flow.scrollHeight;
+  else flow.scrollTop = prevTop + (flow.scrollHeight - prevHeight); // 阅读中：补偿高度，不拽回底部
+}
+
+/** ⑨ 增量补齐落到 DOM（保持窗口有序 + 阅读位置不跳）。
+ *  不重排：keyset 页本身 ASC、且 `after=` 恒取窗口最大 id ⇒ 追加序即升序
+ *  （不引入 `Number(id)` 排序 —— mock 面的字符串 id 会被 NaN 打乱既有顺序）。 */
+function appendMessages(msgs) {
+  for (const m of msgs) {
+    if (!chatMsgs.some(x => String(x.id) === String(m.id))) chatMsgs.push(m);
+  }
+  renderMessages(chatMsgs, { stickBottom: false });
 }
 
 // ── 加载更早消息（keyset id-window backward walk）────────
@@ -497,7 +665,7 @@ async function probeOlderHistory(convId, fromId) {
   let steps = 0;
   while (steps < 20) {
     let fetched = [];
-    try { fetched = await api.getMessages(convId, { after, limit: HISTORY_WINDOW }); }
+    try { fetched = await api.getMessages(convId, { after, limit: PROBE_LIMIT }); }
     catch { return; } // 探针失败：保持「不显示」，绝不冒泡成用户可见错误
     if (openConvId !== convId || !modalEls) return; // 会话已换/窗已关
     if ((fetched || []).some(m => Number(m.id) < fromId)) {
@@ -618,9 +786,14 @@ function appendMessage(m) {
   const conv = currentConv();
   if (!modalEls || !conv) return;
   if (!chatMsgs.some(x => String(x.id) === String(m.id))) chatMsgs.push(m);
+  // ⑨-E 同 id 幂等：WS 帧与乐观回显（sendCurrent 已把 temp id 换成真 id）撞车时
+  // 只留一个节点 —— 重复气泡会让 M5「渲染 id 序列」直接不等。
+  const dup = modalEls.flow.querySelector(`.fm-msg[data-message-id="${CSS.escape(String(m.id))}"]`);
+  if (dup) dup.remove();
   modalEls.flow.appendChild(bubbleEl(m, conv));
   createIconsIn(modalEls.flow);
   modalEls.flow.scrollTop = modalEls.flow.scrollHeight;
+  persistConversation(conv); // ⑨ 落盘：WS 帧自带 body，无需再问服务端
 }
 
 // ── Forward to agent (§3.3 R7, one-way) ──────────────────
@@ -741,6 +914,9 @@ async function sendCurrent(conv) {
 
   const tempId = 'fm-tmp-' + (++msgSeq);
   const optimistic = { id: tempId, senderId: 'me', kind: 'text', body, createdAt: new Date().toISOString() };
+  // ⑨-E：乐观回显登记进窗口 —— keyed diff 才知道这个节点「该在」，否则任何一次
+  // 增量补齐的重排都会把它当差集删掉（用户会看到自己刚发的消息凭空消失）。
+  chatMsgs.push(optimistic);
   const wrap = bubbleEl(optimistic, conv);
   wrap.classList.add('fm-sending');
   modalEls.flow.appendChild(wrap);
@@ -749,17 +925,21 @@ async function sendCurrent(conv) {
 
   try {
     const resp = await api.sendFriendMessage(conv.friend.userId, body);
+    const realId = resp.messageId || tempId;
     wrap.classList.remove('fm-sending');
-    wrap.dataset.messageId = resp.messageId || tempId;
+    wrap.dataset.messageId = realId;
+    const idx = chatMsgs.findIndex(x => x.id === tempId);
+    if (idx >= 0) chatMsgs[idx] = { ...optimistic, id: realId }; // temp id → 服务端 id
     if (!conv.conversationId && resp.conversationId) {
       // First send created the conversation (friend-addressed send)
       conv.conversationId = resp.conversationId;
       openConvId = resp.conversationId;
     }
     // delivered: silent (§6.2 克制)
-    conv.lastMessage = { ...optimistic, id: resp.messageId || tempId };
+    conv.lastMessage = { ...optimistic, id: realId };
     conv.lastMessage.agentSent = false;
     resortAndRender();
+    persistConversation(conv); // ⑨ 落盘（temp id 由缓存层过滤，不会存成幻影）
   } catch {
     wrap.classList.remove('fm-sending');
     wrap.classList.add('fm-failed');
@@ -767,6 +947,10 @@ async function sendCurrent(conv) {
     flag.title = t('messages.send');
     flag.addEventListener('click', () => {
       wrap.remove();
+      // 重试会生成新的 temp id ⇒ 旧条目必须出窗口，否则 keyed diff 把刚删掉的
+      // 失败气泡又插回来（一屏两个失败气泡）。
+      const i = chatMsgs.findIndex(x => x.id === tempId);
+      if (i >= 0) chatMsgs.splice(i, 1);
       modalEls.input.value = body;
       sendCurrent(conv);
     });
@@ -784,13 +968,13 @@ function resortAndRender() {
 async function onFriendEvent(msg) {
   if (msg.event === 'message_new') {
     const p = msg;
-    let conv = conversations.find(c => c.conversationId === p.conversationId);
-    if (!conv) { await refreshConversations(); return; } // REST is truth
+    const conv = conversations.find(c => c.conversationId === p.conversationId);
+    if (!conv) { await refreshConversations({ friends: 'force' }); return; } // REST is truth
     const m = { id: p.messageId, senderId: p.senderId || p.sender?.userId, kind: p.kind, body: p.body, createdAt: p.createdAt };
     conv.lastMessage = m;
     const isOpen = openConvId === p.conversationId;
     if (isOpen) {
-      appendMessage(m);
+      appendMessage(m); // 内部已落 ⑨ 缓存
       api.markConversationRead(p.conversationId, m.id).catch(() => {});
       conv.unreadCount = 0;
     } else {
@@ -809,13 +993,38 @@ async function onFriendEvent(msg) {
   }
   if (msg.event === 'friend_accepted') {
     // New friendship → empty conversation appears (summary: systemNowFriends)
-    await refreshConversations();
+    await refreshConversations({ friends: 'force' });
     window.dispatchEvent(new CustomEvent('fm-friends-changed'));
     return;
   }
   if (msg.event === 'friend_request') {
     window.dispatchEvent(new CustomEvent('fm-friends-changed'));
   }
+}
+
+// ── ①opt-A3：降级增量回补（方案 §2.1，判据 P4）────────────────────────
+// 载体 = activityBar.js **既有** 10s 状态 beacon（`onStatusTick`）——不新增定时器、
+// 不新增端点、不改协议。只在「推送通道不可用」时动作：健康的 WS 路径零额外请求
+// （⑨ M1②/M3 红线：不得出现多余 REST）。
+/** 通道是否可用。`relay` 未知（状态未取到 / 老网关无该字段）按**不可用**处理 ——
+ *  降级兜底的方向是「多花一次极小请求」，不是「静默不补」。 */
+function relayUsable() {
+  const r = getNeblinkState().relay;
+  return !!(r && r.available === true);
+}
+
+/** 节流 > beacon 周期 ⇒ 至多一拍一次；`document.hidden` 守卫与 beacon 同语义。 */
+const BACKFILL_THROTTLE_MS = 9000;
+
+async function backfillTick() {
+  if (!loggedIn() || document.hidden) return;
+  if (relayUsable() && state.connected) return; // 健康路径：零请求
+  const convId = openConvId;
+  if (!convId || String(convId).startsWith('__pending__')) return; // 会话尚未建立
+  const now = Date.now();
+  if (now - lastBackfillAt < BACKFILL_THROTTLE_MS) return;
+  lastBackfillAt = now;
+  await syncConversation(convId, { pages: MAX_SYNC_PAGES });
 }
 
 // ── Wiring ───────────────────────────────────────────────
@@ -827,10 +1036,13 @@ export function initMessages() {
 
   onMessage('friend_event', onFriendEvent);
   window.addEventListener('fm-refs-sent', onRefsSent);
+  // ①opt-A3：挂上既有 10s beacon（返回的注销函数本模块生命周期内不需要 ——
+  // initMessages 本身是一次性 latch，整页生命周期只装一次）。
+  onStatusTick(() => { void backfillTick(); });
   // #290: deleting/blocking a friend (contacts panel) flips the open chat
   // into the read-only gate - resync the friend cache and re-apply.
   window.addEventListener('fm-friends-changed', async () => {
-    await refreshConversations();
+    await refreshConversations({ friends: 'force' });
     if (modalEls) applyBlockState(currentConv());
   });
   // 信任开关在 contacts 右键菜单——开着的聊天窗头指示随之刷新。
@@ -857,7 +1069,7 @@ export function initMessages() {
       modalEls.offline.hidden = true;
       applyBlockState(currentConv());
     }
-    refreshConversations(); // resync after reconnect (REST is truth)
+    refreshConversations({ friends: 'force' }); // resync after reconnect (REST is truth)
   });
   onDisconnect(() => {
     if (modalEls) {
@@ -870,6 +1082,8 @@ export function initMessages() {
   const panel = document.getElementById('panel-messages');
   if (panel) {
     new MutationObserver(() => {
+      // ⑨ M1②：重复开面板 = 1 次往返（好友列表命中 L1 且在 TTL 内即复用；
+      // 过期/为空由 refreshConversations 自动升级为 force）。
       if (panel.classList.contains('active')) refreshConversations();
     }).observe(panel, { attributes: true, attributeFilter: ['class'] });
   }
