@@ -754,9 +754,18 @@ object GatewayMain extends IOApp:
                                       // 与 PeerDescriptionStore 同族：先例 NeblinkService.createInternal
                                       // 的 `PeerDescriptionStore.load → Ref.of`；此处调用点同 amConfig
                                       // 字节相邻的 boot 读形态（都在 IO 链的装配段内）。
-                                      // 读失败（文件损坏/权限）⇒ 折叠空 map，不影响好友域装配。
+                                      // 读失败（文件损坏 / 权限 / 半写）⇒ 折成空 map + WARN：
+                                      // 备注是**可丢弃的本地态**（最坏情况 = 用户重设一次），绝不
+                                      // 允许它把整条 boot 装配链掀翻（GatewayMain 这段是 val 求值，
+                                      // 未捕获的 IO 失败 = 启动崩）。
                                       val friendRemarks =
-                                        nebflow.neblink.FriendRemarkStore.load.unsafeRunSync()
+                                        nebflow.neblink.FriendRemarkStore.load
+                                          .handleErrorWith { e =>
+                                            logger.warn(
+                                              s"friend-remarks load failed (falling back to empty): ${e.getMessage}"
+                                            ) *> IO.pure(Map.empty[String, String])
+                                          }
+                                          .unsafeRunSync()
                                       val friendService = nebflow.neblink.NeblinkWiring.friendService(
                                         tsDiscovery.currentClient,
                                         amConfig,
