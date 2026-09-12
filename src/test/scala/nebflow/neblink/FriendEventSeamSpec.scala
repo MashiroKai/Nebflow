@@ -74,9 +74,12 @@ class FriendEventSeamSpec extends FunSuite:
     )
 
   /** 生产同形前置：boot / 重连的 `refreshAll` → `refreshConversations` 会给每个
-    * 已知会话建 cursor 条目（`mergeUnread`）。**没有 cursor 的会话**下
-    * `guard.bumpUnread` 是 no-op（既有行为：`case None => s`）—— 这是本批之外的
-    * 既有边界，已在交付报告「未及事项」中登记；本 spec 走生产正常路径。 */
+    * 已知会话建 cursor 条目（`mergeUnread`）。本 spec 走这条**生产正常路径**
+    * （cursor 先于推送就位），只钉 A2 接缝本身。
+    *
+    * 「cursor 缺席时首条推送的 +1」边界原为 `case None => s` no-op，已由 #309
+    * 修复（`bumpUnread` 改为缺席 materialize 条目 + 返回回落信号），回归钉子见
+    * `FriendUnreadCursorRebuildSpec`。 */
   private def seedCursor(guard: FriendMessagingGuard, convId: String): IO[Unit] =
     guard.mergeUnread(ConversationSummary(convId, FriendSummary("u-peer", "peer", "Peer"), None, 0)).void
 
