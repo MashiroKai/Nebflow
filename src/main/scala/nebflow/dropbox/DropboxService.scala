@@ -17,6 +17,27 @@ import java.net.http.{HttpClient, HttpRequest, HttpResponse}
 import scala.concurrent.duration.*
 
 /**
+ * P0 wtmove — the resolved state of a transfer's temp path, produced by the single
+ * guard `DropboxService.guardedTempPath` and consumed by `commitTempFile` /
+ * `deleteTempFile` / `handleFileComplete`.
+ *
+ * Replaces the old `""` sentinel: "no temp file recorded for this transfer" is now
+ * a visible state instead of an empty string that downstream resolved to the
+ * process working directory.
+ */
+private[dropbox] enum TempPathDecision:
+  /** The only case in which a caller may touch the filesystem. */
+  case Usable(path: os.Path)
+
+  /** No temp file recorded — relay direct delivery, or a rebuild that found no
+    * leftover. Nothing to do; not an error. */
+  case Absent
+
+  /** The cwd guard fired (source or destination side): acting would have touched
+    * the process working directory. No filesystem change. */
+  case Refused(reason: String)
+
+/**
  * Cross-device Dropbox — text messages and file transfer over the neblink P2P network.
  *
  * Transport:
@@ -366,7 +387,7 @@ final class DropboxService private (
         for
           _ <- IO.blocking(os.makeDir.all(dlDir))
           hash <- streamToFileWithHash(body, tempPath)
-          _ <- transfersRef.update(_ + (transferId -> t.copy(tempPath = tempPath.toString, receiverHash = hash)))
+          _ <- transfersRef.update(_ + (transferId -> t.copy(tempPath = Some(tempPath.toString), receiverHash = hash)))
         yield Right(hash)
     }
 
@@ -502,12 +523,28 @@ final class DropboxService private (
       _ <- transfer match
         case Some(t) =>
           for
-            _ <-
-              if success then commitTempFile(t)
-              else deleteTempFile(t)
+            // P0 wtmove: explicit branch — a completion whose temp file was never
+            // recorded or never found is NOT a failure (relay direct delivery is a
+            // normal completion path) and must never fall back to a blank path.
+            // `Absent` / `Refused` mean "nothing was moved or deleted"; the
+            // transfer still terminates below with its usual status. The WARN
+            // naming the exact operation is emitted once, by commit/delete
+            // (see `warnTempPath`) — no second copy of the predicate, no
+            // duplicate log line for the same event.
+            tempOutcome <-
+              if success then commitTempFile(t) else deleteTempFile(t)
             savedPath <-
-              if success then IO.pure(DropboxUtil.resolveFinalPath(DropboxUtil.downloadsDir, t.fileName).toString)
-              else IO.pure("")
+              // Blast radius of the no-temp-file case: nothing was moved, so the
+              // file — if it exists at all — is exactly `downloadsDir/fileName`
+              // (that is where the relay path writes it). `resolveFinalPath` would
+              // append a `_<ts>` suffix whenever a same-named file is present and
+              // report a path that need not exist; point at the real target instead.
+              tempOutcome match
+                case TempPathDecision.Absent =>
+                  if success then IO.pure((DropboxUtil.downloadsDir / t.fileName).toString) else IO.pure("")
+                case _ =>
+                  if success then IO.pure(DropboxUtil.resolveFinalPath(DropboxUtil.downloadsDir, t.fileName).toString)
+                  else IO.pure("")
             _ <- updateTransferStatus(transferId, if success then "completed" else "failed")
             _ <- updateMessageStatus(t.peerDeviceId, t.msgId, if success then "completed" else "failed", savedPath)
             _ <- notifyFrontend(
@@ -571,9 +608,12 @@ final class DropboxService private (
         case (deviceId, list) if list.exists(m => m.kind == "file" && m.transferId == transferId) =>
           (deviceId, list.find(m => m.kind == "file" && m.transferId == transferId).get)
       }.map { case (deviceId, m) =>
+        // P0 wtmove: `None` = no leftover temp file — an explicit state.
+        // (This used to be `getOrElse("")`, and the blank string then resolved to
+        // `os.pwd` in commitTempFile, moving the working directory.)
         val tempPath =
           if direction == "in" then findReceiverTempFile(m.fileName, transferId)
-          else ""
+          else None
         FileTransfer(
           transferId = transferId,
           direction = direction,
@@ -589,15 +629,20 @@ final class DropboxService private (
       }
     }
 
-  /** Scan the Downloads dir for a leftover `.fileName.dropbox-XXXX` temp file (restart recovery). */
-  private def findReceiverTempFile(fileName: String, transferId: String): String =
+  /**
+   * Scan the Downloads dir for a leftover `.fileName.dropbox-XXXX` temp file (restart recovery).
+   *
+   * P0 wtmove: returns `Option` — `None` means "no leftover temp file", which is a
+   * real answer, not a blank path. The old `getOrElse("")` / `else ""` produced an
+   * empty string that downstream resolved to `os.pwd`.
+   */
+  private def findReceiverTempFile(fileName: String, transferId: String): Option[String] =
     try
       val prefix = s".$fileName.dropbox-${transferId.take(8)}"
       val dlDir = DropboxUtil.downloadsDir
-      if os.exists(dlDir) then
-        os.list(dlDir).find(_.last.startsWith(prefix)).map(_.toString).getOrElse("")
-      else ""
-    catch case _: Exception => ""
+      if os.exists(dlDir) then os.list(dlDir).find(_.last.startsWith(prefix)).map(_.toString)
+      else None
+    catch case _: Exception => None
 
   private def notifyFrontend(msgType: String, deviceId: String, msgJson: Json): IO[Unit] =
     wsHub.broadcast(
@@ -678,24 +723,115 @@ final class DropboxService private (
       case Right(_) => Right(hash) // same content — hash trivially matches
       case Left(err) => Left(s"Relay file transfer failed: $err")
 
-  /** Rename temp file to final name in Downloads, handling name conflicts. */
-  private def commitTempFile(t: FileTransfer): IO[Unit] =
-    IO.blocking {
-      val tempPath = os.Path(t.tempPath, os.pwd)
-      if os.exists(tempPath) then
-        val finalPath = DropboxUtil.resolveFinalPath(DropboxUtil.downloadsDir, t.fileName)
-        os.move(tempPath, finalPath, replaceExisting = true)
-      ()
-    }.handleErrorWith(e => logger.warn(s"Failed to commit temp file: ${e.getMessage}"))
+  // ===== Temp-path guard (P0 wtmove) =====
+  //
+  // `commitTempFile` used to write `os.Path(t.tempPath, os.pwd)`. With a blank
+  // tempPath that expression IS `os.pwd`, so a file-complete whose temp file was
+  // never recorded (relay direct delivery) or never found (restart rebuild)
+  // unconditionally renamed the JVM's working directory into
+  // `~/Downloads/<fileName>` — an entire running worktree relocated out from
+  // under a live JVM (21 recorded cases, 2026-09-10..12).
+  //
+  // One authoritative predicate (`cwdRefusal`) + one authoritative entry point
+  // (`guardedTempPath`), shared by commit / delete / complete. Nothing else in
+  // this file may resolve a transfer temp path.
 
-  /** Delete the temp file. */
-  private def deleteTempFile(t: FileTransfer): IO[Unit] =
-    IO.blocking {
-      if t.tempPath.nonEmpty then
-        val tempPath = os.Path(t.tempPath, os.pwd)
-        if os.exists(tempPath) then os.remove(tempPath)
-      ()
-    }.handleErrorWith(_ => IO.unit)
+  /**
+   * The single authoritative "may we touch this path?" predicate.
+   *
+   * `None` = safe. `Some(reason)` = refused: the path is the process working
+   * directory, an ancestor of it, or inside it. Renaming/deleting any of those
+   * reaches outside the transfer's own scope — moving the working directory of a
+   * *running* JVM is exactly the P0 defect. Paths are compared absolute +
+   * normalized so `..` segments cannot slip an equivalent path past the check.
+   */
+  private def cwdRefusal(p: os.Path): Option[String] =
+    val cwd = os.pwd.toNIO.toAbsolutePath.normalize
+    val target = p.toNIO.toAbsolutePath.normalize
+    if target == cwd then Some(s"path IS the process working directory ($cwd)")
+    else if cwd.startsWith(target) then Some(s"path is an ancestor of the process working directory ($target ⊃ $cwd)")
+    else if target.startsWith(cwd) then Some(s"path is inside the process working directory ($target ⊂ $cwd)")
+    else None
+
+  /**
+   * The single authoritative resolution of a transfer's temp path, shared by
+   * [[commitTempFile]], [[deleteTempFile]] and [[handleFileComplete]].
+   *
+   * Replaces `os.Path(t.tempPath, os.pwd)` plus the old blank sentinel. Pure (no
+   * I/O, no logging) — the callers log the returned decision, once, with the
+   * operation name. Only `Usable` may ever reach the filesystem.
+   */
+  private def guardedTempPath(t: FileTransfer): TempPathDecision =
+    t.tempPath.map(_.trim).filter(_.nonEmpty) match
+      case None => TempPathDecision.Absent
+      case Some(raw) =>
+        try
+          val p = os.Path(raw, os.pwd)
+          cwdRefusal(p) match
+            case Some(reason) => TempPathDecision.Refused(s"source: $reason")
+            case None         => TempPathDecision.Usable(p)
+        catch
+          case e: Exception =>
+            // Pre-fix this throw happened inside `IO.blocking` and was swallowed by
+            // `handleErrorWith`; keep the same "no-op, never throw" contract, but
+            // now as an explicit refused decision.
+            TempPathDecision.Refused(
+              s"source: unresolvable path (${e.getClass.getSimpleName}: ${e.getMessage})"
+            )
+
+  /**
+   * WARN for a temp path that was *not* usable. Carries `op` / `transferId` /
+   * `direction` so a post-mortem can attribute the event, and states explicitly
+   * that no filesystem change happened.
+   */
+  private def warnTempPath(op: String, t: FileTransfer, decision: TempPathDecision): IO[Unit] =
+    decision match
+      case TempPathDecision.Usable(_) => IO.unit
+      case TempPathDecision.Absent =>
+        logger.warn(
+          s"$op: no temp file recorded for transfer ${t.transferId} (direction=${t.direction} fileName=${t.fileName}) " +
+            "— nothing moved/deleted; normal for relay direct delivery, where the sender wrote straight into Downloads"
+        )
+      case TempPathDecision.Refused(reason) =>
+        logger.warn(
+          s"$op: REFUSED for transfer ${t.transferId} (direction=${t.direction}) — $reason; no filesystem change"
+        )
+
+  /**
+   * Rename the temp file to its final name in Downloads, handling name conflicts.
+   *
+   * Both sides are guarded: the temp path (source) and the resolved Downloads
+   * target (destination — reachable when `user.home` is at or inside the working
+   * directory). Returns the decision so the caller can branch explicitly instead
+   * of falling back to a path sentinel.
+   */
+  private def commitTempFile(t: FileTransfer): IO[TempPathDecision] =
+    val decision = guardedTempPath(t)
+    warnTempPath("commitTempFile", t, decision) *> (decision match
+      case TempPathDecision.Usable(tempPath) =>
+        val finalPath = DropboxUtil.resolveFinalPath(DropboxUtil.downloadsDir, t.fileName)
+        cwdRefusal(finalPath) match
+          case Some(reason) =>
+            val refused = TempPathDecision.Refused(s"destination: $reason")
+            warnTempPath("commitTempFile", t, refused).as(refused)
+          case None =>
+            IO.blocking {
+              if os.exists(tempPath) then os.move(tempPath, finalPath, replaceExisting = true)
+              ()
+            }.handleErrorWith(e => logger.warn(s"Failed to commit temp file: ${e.getMessage}")).as(decision)
+      case refused @ TempPathDecision.Refused(_) => IO.pure(refused)
+      case TempPathDecision.Absent               => IO.pure(TempPathDecision.Absent))
+
+  /** Delete the temp file. Same guard as [[commitTempFile]] — a refused/blank path deletes nothing. */
+  private def deleteTempFile(t: FileTransfer): IO[TempPathDecision] =
+    val decision = guardedTempPath(t)
+    warnTempPath("deleteTempFile", t, decision) *> (decision match
+      case TempPathDecision.Usable(tempPath) =>
+        IO.blocking(if os.exists(tempPath) then os.remove(tempPath))
+          .handleErrorWith(_ => IO.unit)
+          .as(decision)
+      case refused @ TempPathDecision.Refused(_) => IO.pure(refused)
+      case TempPathDecision.Absent               => IO.pure(TempPathDecision.Absent))
 
 end DropboxService
 
