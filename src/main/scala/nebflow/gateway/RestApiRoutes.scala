@@ -1265,7 +1265,13 @@ class RestApiRoutes(
             }
       }
 
-    // Peer pushes a file via HTTP (peer IP auth)
+    // Peer pushes a file (or one chunk) via HTTP (peer IP auth).
+    //
+    // 附件腿批（2026-09-12）：同一端点承载两种形态，靠**分块头**区分 ——
+    //   - 带 `X-Dropbox-Proto: 1` + index/total/chunk-size/chunk-sha/whole-sha ⇒ 分块模式
+    //     （按 offset 追加、幂等重放、gap 拒绝、末块整件摘要**接收端自算**）；
+    //   - 无该头 ⇒ **legacy 整件模式**，行为与今天逐字节一致（旧发送端零回归）。
+    // 端点路径与鉴权不变（不放松）。
     case req @ POST -> Root / "neblink" / "dropbox" / "transfer" / transferId =>
       verifyPeerAccess(req).flatMap {
         case Left(resp) => IO.pure(resp)
@@ -1273,17 +1279,65 @@ class RestApiRoutes(
           sharedResources.dropboxService match
             case None => NotFound(Json.obj("error" -> "Dropbox not enabled".asJson))
             case Some(svc) =>
-              svc.receiveFromPeer(transferId, req.body).flatMap {
-                case Right(hash) => Ok(Json.obj("sha256" -> hash.asJson))
+              val chunkHeaders = parseDropboxChunkHeaders(req)
+              svc.receiveFromPeer(transferId, req.body, chunkHeaders).flatMap {
+                case Right(hash) =>
+                  // 分块模式：回执形状对齐契约（接收端自算摘要 / offset）。
+                  chunkHeaders match
+                    case Some(h) =>
+                      svc.probeTransfer(transferId).map { probe =>
+                        probe match
+                          case Right(state) =>
+                            Response[IO](Status.Ok).withEntity(
+                              Json.obj(
+                                "ok" -> true.asJson,
+                                "chunkSha256" -> h.chunkSha256.asJson,
+                                "bytesReceived" -> state.bytesReceived.asJson,
+                                "wholeSha256" -> (if state.bytesReceived >= h.totalBytes then hash.asJson else Json.Null)
+                              )
+                            )
+                          case Left(_) =>
+                            Response[IO](Status.Ok)
+                              .withEntity(Json.obj("ok" -> true.asJson, "chunkSha256" -> h.chunkSha256.asJson))
+                      }
+                    case None =>
+                      IO.pure(Response[IO](Status.Ok).withEntity(Json.obj("sha256" -> hash.asJson)))
                 case Left(err) =>
                   val status =
-                    if err.contains("not accepted") || err.contains("not found")
+                    if err.code == nebflow.dropbox.AttachContract.Codes.SessionNotFound
                     then Status.NotFound
                     else Status.InternalServerError
-                  Response[IO](status).withEntity(Json.obj("error" -> err.asJson)).pure[IO]
+                  IO.pure(Response[IO](status).withEntity(err.toJson))
               }
+              .handleErrorWith(e =>
+                IO.pure(
+                  Response[IO](Status.InternalServerError)
+                    .withEntity(Json.obj("ok" -> false.asJson, "error" -> e.getMessage.asJson))
+                )
+              )
       }
 
+    // 断点续传探针（peer IP auth）：返回接收端权威 offset 与其**重算**的前缀摘要。
+    case req @ GET -> Root / "neblink" / "dropbox" / "probe" / transferId =>
+      verifyPeerAccess(req).flatMap {
+        case Left(resp) => IO.pure(resp)
+        case Right(_) =>
+          sharedResources.dropboxService match
+            case None => NotFound(Json.obj("error" -> "Dropbox not enabled".asJson))
+            case Some(svc) =>
+              svc.probeTransfer(transferId).map { probe =>
+                probe match
+                  case Right(state) =>
+                    Response[IO](Status.Ok).withEntity(
+                      Json.obj(
+                        "bytesReceived" -> state.bytesReceived.asJson,
+                        "totalBytes" -> state.totalBytes.asJson,
+                        "prefixSha256" -> state.prefixSha256.asJson
+                      )
+                    )
+                  case Left(err) => Response[IO](Status.NotFound).withEntity(err.toJson)
+              }
+      }
     // Gateway-mediated remote update: CLI sends this, gateway does P2P first then relay
     case req @ POST -> Root / "neblink" / "remote-update" =>
       withAuth(req) {
@@ -2877,8 +2931,24 @@ class RestApiRoutes(
    * The fallback is gated on a private/LAN source IP: a claimed deviceId alone
    * never grants access to internet-sourced requests (P2P-direct is LAN-only).
    */
-  private def verifyPeerAccess(req: Request[IO]): IO[Either[Response[IO], NeblinkService]] =
-    neblinkService match
+  /**
+   * 解析 Dropbox 分块头。**只有** `X-Dropbox-Proto` 明确为 1（且其余必需头齐备）时才
+   * 返回 `Some` —— 任何缺失 ⇒ `None` ⇒ 走 legacy 整件路径（向后兼容的判定依据，
+   * 契约 §3.9「未知/缺失字段不得静默到看似成功」：这里「缺失」有明确定义的降级行为）。
+   */
+  private def parseDropboxChunkHeaders(req: Request[IO]): Option[nebflow.dropbox.DropboxService.ChunkHeaders] =
+    def h(name: String): Option[String] = req.headers.get(CIString(name)).map(_.head.value.trim).filter(_.nonEmpty)
+    for
+      proto <- h("x-dropbox-proto").flatMap(_.toIntOption)
+      if proto == nebflow.dropbox.AttachContract.ProtoChunked
+      index <- h("x-dropbox-index").flatMap(_.toIntOption)
+      total <- h("x-dropbox-total-bytes").flatMap(_.toLongOption)
+      chunkSize <- h("x-dropbox-chunk-size").flatMap(_.toIntOption)
+      chunkSha <- h("x-dropbox-chunk-sha256")
+      wholeSha <- h("x-dropbox-whole-sha256")
+    yield nebflow.dropbox.DropboxService.ChunkHeaders(index, total, chunkSize, chunkSha, wholeSha)
+
+  private def verifyPeerAccess(req: Request[IO]): IO[Either[Response[IO], NeblinkService]] =    neblinkService match
       case None =>
         IO.pure(Left(Response[IO](Status.NotFound).withEntity(Json.obj("error" -> "NebLink not enabled".asJson))))
       case Some(ms) =>

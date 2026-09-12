@@ -899,6 +899,8 @@ export default {
   'dropbox.saved': 'Saved',
   'dropbox.completed': 'Completed',
   'dropbox.failed': 'Transfer failed',
+  'dropbox.tooManyFiles': 'Too many attachments: {actual} selected, limit is {limit}',
+  'dropbox.fileTooLarge': 'File too large{name}: actual {actual} ({actualBytes} bytes), limit is {limit}',
 
   // === Chat History Search ===
   'search.btnTitle': 'Search chat history',
