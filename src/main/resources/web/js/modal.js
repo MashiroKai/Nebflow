@@ -6,6 +6,8 @@ import state from './state.js';
 import { sendWs } from './ws.js';
 import { batchDeleteSelected, deleteFolder, getTargetPath, getTargetAgent, getCurrentFolderId } from './sidebar.js';
 import { t } from './i18n.js';
+// ⑤ 中文输入收归（作者裁定 2026-09-12）：组字判定唯一来源 = imeGuard.js。
+import { bindImeGuard, isImeComposing } from './imeGuard.js';
 
 // ---------- Session Modals ----------
 export function showNewSessionModal() {
@@ -66,9 +68,10 @@ export function startInlineNewSession() {
     }
   };
   input.addEventListener('blur', finish);
+  bindImeGuard(input);
   input.addEventListener('keydown', (e) => {
+    if (isImeComposing(e, input)) return; // ⑤ 组字期间交还输入法
     if (e.key === 'Enter') {
-      if (e.isComposing || e.keyCode === 229) return;
       e.preventDefault(); input.blur();
     }
     if (e.key === 'Escape') { input.value = ''; input.blur(); }
@@ -273,9 +276,10 @@ export function initModals() {
   if (newSessionBtn) newSessionBtn.onclick = startInlineNewSession;
   modalCancel.onclick = hideModals;
   modalConfirm.onclick = confirmNewSession;
+  bindImeGuard(modalInput); // ⑤ 元素级组字登记（判定见下方 keydown）
   modalInput.onkeydown = (e) => {
+    if (isImeComposing(e, modalInput)) return;
     if (e.key === 'Enter') {
-      if (e.isComposing || e.keyCode === 229) return;
       e.preventDefault(); confirmNewSession();
     }
     if (e.key === 'Escape') hideModals();

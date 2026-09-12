@@ -30,6 +30,13 @@ jobs:
         # P2-4 gate: static-import SCC analysis - any cycle fails. Dynamic
         # import() is the sanctioned escape hatch and is not counted.
         run: node scripts/check-circular.mjs
+      - name: IME guard (single composition decision point)
+        # ⑤ gate (author ruling 2026-09-12): any file under web/js that reads
+        # isComposing / keyCode 229 / binds compositionstart|compositionend
+        # directly must import imeGuard.js - the one predicate and the one
+        # writer of el.dataset.imeComposing. Violations are listed as file:line.
+        # Same logic locally: node scripts/check-ime-guard.mjs
+        run: node scripts/check-ime-guard.mjs
 
   user-knowledge-gate:
     name: User Knowledge Gate (#338)

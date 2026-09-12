@@ -43,6 +43,8 @@ import { key } from './branding.js';
 import { t, getLocale } from './i18n.js';
 import { escapeHtml } from './utils.js';
 import { popArtifactFromInput, openPopArtifact } from './chat.js';
+// ⑤ 中文输入收归（作者裁定 2026-09-12）：组字判定唯一来源 = imeGuard.js。
+import { bindImeGuard, isImeComposing } from './imeGuard.js';
 import { renderWithRegistry, cleanupCardIframes } from './cardRegistry.js';
 import { openSearchMessageFloat } from './chatSearchFloat.js';
 
@@ -118,6 +120,8 @@ export function initChatSearch() {
   // Progressive search: typing and filter changes re-search after a 300ms
   // debounce.
   document.getElementById('search-keyword')?.addEventListener('input', scheduleSearch);
+  // ⑤ 元素级组字登记：模态键盘契约（capture 阶段）读同一个谓词。
+  bindImeGuard(document.getElementById('search-keyword'));
   for (const id of ['search-scope', 'search-agent', 'search-tool']) {
     document.getElementById(id)?.addEventListener('change', scheduleSearch);
   }
@@ -562,7 +566,8 @@ function inMessageFloat(target) {
 function onModalKeydown(e) {
   const overlay = document.getElementById('search-overlay');
   if (!overlay?.classList.contains('on')) return;
-  if (e.isComposing) return;   // never intercept IME composition keys
+  // ⑤ 收归：单一谓词（元素级 dataset 兜底 + 事件级 isComposing/keyCode 229）。
+  if (isImeComposing(e, e.target instanceof HTMLElement ? e.target : null)) return;
   if (inMessageFloat(e.target)) return;   // keys belong to the message window
 
   const modal = document.getElementById('search-modal');
