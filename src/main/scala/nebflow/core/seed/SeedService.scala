@@ -40,7 +40,12 @@ import scala.jdk.CollectionConverters.*
  * fresh home；既有 home 的已装插件会因 add-only 语义永久冻结（2026-09-09 断点：
  * author home 的 slideblocks 旧快照永不收敛）。reconcile 在每次启动对 manifest
  * 声明的插件做 seed ↔ runtime digest 比对仲裁：
- *  - runtime 目录缺失 → 不动（既有 home 不新装插件，新装仍走完整播种路径）
+ *  - runtime 目录缺失 → **自愈安装**（2026-09-12 批）：从种子整目录装 + approve。缺失永不
+ *    自愈是既有 home 的结构性缺口（author home 的 nebflow-plugin-creator 有种子无实件、
+ *    `PluginRegistry.resolve` 永远 PLUGIN_NOT_FOUND）；新装面 = manifest items 本身
+ *    （= 默认预装集），故既有 home 的插件面积只在**默认集内**收敛，绝不向种子树全集
+ *    （`seed/plugins/` 资源树 = 可手动装全集）扩张。已存在目录一律不覆盖、不改写
+ *    （既有目录走下面的 digest 仲裁，用户态 > 种子）
  *  - seed digest == runtime digest → 无动作（常态，静默通过）
  *  - 不一致且 runtime digest == 信任记录 digest（干净快照，用户未改）→ 种子镜像
  *    覆盖（含删除 runtime 独有文件）+ 自动 re-approve → 冷启动插件与最新种子一致
@@ -144,29 +149,36 @@ object SeedService:
     if os.exists(targetDir) then
       logger.infoSync(s"Seed: plugin '$name' already present — skipped (no overwrite)")
       false
+    else installPluginFromSeed(root, name, "installed")
+
+  /** 从种子整目录安装 + approve（`seedPlugin` 的安装路径与 `reconcilePlugin` 的缺失自愈
+    * 共用单点）。`outcome` 只影响日志措辞，便于把「播种安装」与「既有 home 自愈安装」
+    * 在读日志时分开（两者落盘语义相同：整目录复制 + approve）。approve 复用同一
+    * computeDigest ⇒ 信任记录 digest 与刚落盘内容天然一致。 */
+  private def installPluginFromSeed(root: os.Path, name: String, outcome: String): Boolean =
+    val targetDir = root / "plugins" / name
+    val base = os.SubPath(s"seed/plugins/$name")
+    val files = resourceDirList(base)
+    if files.isEmpty then
+      logger.warnSync(s"Seed: plugin '$name' has no seed resources — skipped")
+      false
     else
-      val base = os.SubPath(s"seed/plugins/$name")
-      val files = resourceDirList(base)
-      if files.isEmpty then
-        logger.warnSync(s"Seed: plugin '$name' has no seed resources — skipped")
-        false
-      else
-        files.foreach { rel =>
-          readResource(join(base, rel)).foreach { text =>
-            val target = targetDir / rel
-            os.makeDir.all(target / os.up)
-            os.write.over(target, text)
-          }
+      files.foreach { rel =>
+        readResource(join(base, rel)).foreach { text =>
+          val target = targetDir / rel
+          os.makeDir.all(target / os.up)
+          os.write.over(target, text)
         }
-        // 信任（digest 与目录内容天然一致——approve 复用同一 computeDigest）
-        PluginRegistry.approve(name).unsafeRunSync() match
-          case Right(_) =>
-            logger.infoSync(s"Seed: plugin '$name' installed + approved")
-            true
-          case Left(err) =>
-            // 装上了但 approve 失败 → 该插件落为 untrusted（默认拒绝），其余照常
-            logger.warnSync(s"Seed: plugin '$name' installed but approve failed: $err")
-            true
+      }
+      // 信任（digest 与目录内容天然一致——approve 复用同一 computeDigest）
+      PluginRegistry.approve(name).unsafeRunSync() match
+        case Right(_) =>
+          logger.infoSync(s"Seed: plugin '$name' $outcome + approved")
+          true
+        case Left(err) =>
+          // 装上了但 approve 失败 → 该插件落为 untrusted（默认拒绝），其余照常
+          logger.warnSync(s"Seed: plugin '$name' $outcome but approve failed: $err")
+          true
 
   /** 项目条目：按 ProjectStore.create 现行产物搭 general 脚手架（project.json +
     * AGENTS.md + .gitignore；flow-map.json 由 FlowMapStore.open 首写）。 */
@@ -190,7 +202,9 @@ object SeedService:
 
   // ── 插件一致性 reconcile（「始终保持一致」机制）──────────
   /** 每次启动对 manifest 声明的插件做 seed ↔ runtime 比对（digest 仲裁，见类注释）。
-    * 只刷新 runtime 已存在的插件；缺失不新装（既有 home 面积不扩张，新装走完整播种）。 */
+    * 迭代面 = manifest items（= 默认预装集），不遍历 `seed/plugins/` 资源树全集——故本 pass
+    * 的安装/刷新面积由 manifest 决定：缺失的默认集插件被自愈安装，非默认集的种子树包
+    * 永不因本 pass 落盘（作者 2026-09-12 裁定：种子树文件保留可手动装，默认集只三条）。 */
   private def reconcilePlugins(root: os.Path, manifest: SeedManifest): Unit =
     manifest.items.collect {
       case id if id.startsWith(PluginsPrefix) => id.stripPrefix(PluginsPrefix)
@@ -203,7 +217,11 @@ object SeedService:
 
   private def reconcilePlugin(root: os.Path, name: String): Unit =
     val targetDir = root / "plugins" / name
-    if !os.exists(targetDir) then () // 缺失 → 不在既有 home 新装（注释见 reconcilePlugins）
+    if !os.exists(targetDir) then
+      // 缺失 → 自愈安装（2026-09-12 批，见类注释）：既有 home 受 projects/ 非空守卫
+      // 永不完整播种，缺失目录因此永久不愈（author home 的 nebflow-plugin-creator 实例）。
+      // 安装面 = manifest 声明的默认集，非种子树全集；已存在目录绝不进此分支（零覆盖）。
+      installPluginFromSeed(root, name, "self-healed (missing in existing home)")
     else seedResources(name) match
       case None => () // 无种子资源，无从比对（fresh 路径 seedPlugin 已 WARN）
       case Some(seedFiles) =>
