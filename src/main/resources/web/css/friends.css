@@ -114,6 +114,34 @@
   color: var(--color-text-muted, #888);
 }
 
+/* ⑦ 好友备注行内编辑器（2026-09-12 批）：行内把 .fm-row-name 换成输入框。
+   形态对齐既有行内编辑惯例（.folder-new-input / .explorer-name-input）——
+   零新色值，全部走既有 token；字号/行高与 .fm-row-name 同档（13px / 1.4），
+   因此提交前后行高不变，只多出输入框的边框与内距。 */
+.fm-remark-edit {
+  width: 100%;
+  min-width: 0;
+  box-sizing: border-box;
+  padding: 2px 6px;
+  font-size: 13px;
+  font-family: inherit;
+  font-weight: 500;
+  line-height: 1.4;
+  border-radius: 6px;
+  border: 1px solid var(--glass-etched-border);
+  background: var(--glass-etched-bg);
+  color: var(--color-text, #000);
+  outline: none;
+  transition: border-color 0.15s ease;
+}
+
+.fm-remark-edit::placeholder {
+  color: var(--color-text-muted, #888);
+  font-weight: 400;
+}
+
+.fm-remark-edit:focus-visible { border-color: rgb(var(--sapphire) / 0.5); }
+
 .fm-empty {
   padding: 24px 12px;
   text-align: center;
