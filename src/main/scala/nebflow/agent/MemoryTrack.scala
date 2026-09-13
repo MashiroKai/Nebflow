@@ -106,16 +106,21 @@ object MemoryTrack:
     case Skipped, Completed, Failed, Timeout, DryRun, Refused
 
   /** `detail` = 整理 agent 的最终报告（截断）或失败原因；`pendingAtStart` = 起跑时待办
-    * 条数；`outcomesWritten` = 降级路径代写的结局条数；`changed` = 变更史落下的文件数；
-    * `alert` = 非空 ⇒ 调用方把它当**告警**推进前端 + 生命周期日志（方案 D「响亮失败」：
-    * 引擎 infra 失败不再只躺在日志里等着被 grep）。 */
+    * 条数；`outcomesWritten` = 降级路径代写的结局条数（含 ④ 对账标的终态）；`changed` =
+    * 变更史落下的文件数；`alert` = 非空 ⇒ 调用方把它当**告警**推进前端 + 生命周期日志
+    * （方案 D「响亮失败」：引擎 infra 失败不再只躺在日志里等着被 grep）。
+    *
+    * `reconciled`（C 批 ④，2026-09-13）：超时对账判为**已了结**而由引擎标终态的条数
+    * （⊆ `outcomesWritten`）——生命周期事件与日志用它与「照旧写 timeout 的条数」区分，
+    * 使「谁判的」在事件行上也可读。默认 0 ⇒ 既有构造点不受影响。 */
   final case class Result(
     status: Status,
     detail: String,
     pendingAtStart: Int,
     outcomesWritten: Int = 0,
     changed: Int = 0,
-    alert: Option[String] = None
+    alert: Option[String] = None,
+    reconciled: Int = 0
   )
 
   object Result:
@@ -132,7 +137,15 @@ object MemoryTrack:
     *   2. **预算闸**：`plan.refusal` 非空（超硬顶即停 ⇒ 授权集为空）⇒ 拒绝本轮落地。
     *   3. **落地前快照闸**（[[MemorySnapshot.snapshotGate]]）：三层记忆文件 + 队列 +
     *      变更史逐文件备份 + sha256 断言表；失败 ⇒ 拒绝落地（「无快照不落笔」的机制化）。
-    * 只读干跑模式（[[dryRunMode]]）在第 1 道闸后即返回，零 spawn。 */
+    *   4. **写前台账**（①，C 批 2026-09-13）：spawn 之前落**一条聚合行**（授权 ref 全集 +
+    *      每目标起始 sha256/bytes + 快照目录）——超时后 ④ 的对账基准（可审计、可复算）。
+    * 只读干跑模式（[[dryRunMode]]）在第 1 道闸后即返回，零 spawn。
+    *
+    * **超时对账（④，C 批 2026-09-13）**：硬超时截断后**先对账再降级**——
+    * [[MemoryQueue.reconcile]] 用跑后文件内容判「效果是否已在盘上」（逐字行命中 / 定位键
+    * 消失两支高精度判据），确凿者由引擎标终态（独立字样，见
+    * [[MemoryQueue.ResultAppliedByReconcile]]），其余照旧写 `timeout` 留 pending 重试。
+    * 这一条是「已落地却全留 pending ⇒ 整批重投造重复行」的机械闭合面（取证件 §0-2/§3.2）。 */
   def run(
     resources: SharedResources,
     parentSessionId: Option[String],
@@ -167,10 +180,16 @@ object MemoryTrack:
                     Some(alertOf(s"snapshot gate failed: $err"))
                   ))
                 case Right(set) =>
+                  val authorized = authorizedNotes(state0, plan)
                   IO(logger.info(
                     s"[memory-track] gate-3 snapshot ok: ${set.files.size} file(s) → ${set.dir.toString} (sha256 assertion table written)"
                   )) *>
-                    attemptRun(resources, parentSessionId, parentDepth, trigger, authorizedNotes(state0, plan), plan)
+                    // ── 闸 4 = 写前台账（①，C 批 2026-09-13）：**spawn 之前**先落一条聚合行
+                    //    （授权 ref 全集 + 每目标起始 sha256/bytes + 快照目录）。超时后 ④ 的
+                    //    判定因此可审计、可复算，不依赖 agent 自快照。落盘失败只 WARN：台账是
+                    //    审计面而非落地屏障（它本身不阻止重投；阻止重投靠 ④）。
+                    writePreflightLedger(authorized, files, before, state0.pendingCount, set, trigger) *>
+                    attemptRun(resources, parentSessionId, parentDepth, trigger, authorized, plan)
                       .timeoutTo(hardTimeoutMs.millis, IO.pure(Attempt(Status.Timeout, s"hard timeout after ${hardTimeoutMs}ms", "", None)))
                       .handleErrorWith(e => IO.pure(Attempt(Status.Failed, s"${e.getClass.getSimpleName}: ${e.getMessage}", "", None)))
         _ = MemoryTrackSignal.take() // 本轮已跑：信号消费（无论成败——重试引线由降级路径重新置位）
@@ -192,6 +211,67 @@ object MemoryTrack:
 
   private def alertOf(reason: String): String =
     s"Memory queue is NOT being consumed: $reason — every pending note stays pending (no note was marked rejected; nothing was applied). Fix the consumption chain and it will be retried on the next compaction."
+
+  // ── 内部：写前台账（C 批 ①） ──────────────────────────────────
+
+  private def sha256Hex(s: String): String =
+    java.security.MessageDigest
+      .getInstance("SHA-256")
+      .digest(s.getBytes(java.nio.charset.StandardCharsets.UTF_8))
+      .map("%02x".format(_))
+      .mkString
+
+  /** **写前台账**（C 批 ①，2026-09-13）：整理轨 spawn **之前**落**一条聚合行**到
+    * [[MemoryHistory]]（同款轮转阈值）——授权 ref 全集 + 每目标起始 sha256/bytes +
+    * 落地前快照目录。**禁逐条 273 行**（避免把 20000 行阈值烧穿）。
+    *
+    * 为什么：超时截断后，「哪条该闭合」这件事此前只能靠 agent 自快照或事后推断；有了这条
+    * 基准，④ 的对账是**可复算**的（`refs` 全集 + 起跑 sha 都在一行里），且它与 gate-3
+    * 的 sha256 断言表**独立同值**（两条独立路径算同一份跑前状态）。
+    *
+    * sha/bytes 由引擎按**跑前内容**（`before`，即 gate-3 之前那次读取）自算；记忆文件是
+    * 引擎自写的 UTF-8 文本，故与 [[MemorySnapshot.snapshotGate]] 的字节级 sha 一致。
+    *
+    * 失败只 WARN（**不阻断本轮**）：台账是审计面，不是落地屏障。 */
+  private[agent] def writePreflightLedger(
+    authorized: Vector[MemoryQueue.Note],
+    files: Vector[FileTarget],
+    before: Vector[(os.Path, String, String)],
+    pendingTotal: Int,
+    gate: MemorySnapshot.GateSet,
+    trigger: String
+  ): IO[Unit] =
+    IO.blocking {
+      val byPath = before.map((p, _, c) => p.toString -> c).toMap
+      val targets = files.map { (p, label) =>
+        val content = byPath.getOrElse(p.toString, "")
+        MemoryHistory.PreflightTarget(
+          label = label,
+          path = p.toString,
+          sha256 = sha256Hex(content),
+          bytes = content.getBytes(java.nio.charset.StandardCharsets.UTF_8).length.toLong
+        )
+      }.toList
+      MemoryHistory.appendPreflight(
+        atMs = System.currentTimeMillis(),
+        actor = AgentName,
+        trigger = trigger,
+        authorizedRefs = authorized.map(_.id).toList,
+        pendingTotal = pendingTotal,
+        targets = targets,
+        snapshotDir = gate.dir.toString,
+        snapshotLabel = gate.label
+      ) match
+        case Right(_) =>
+          logger.infoSync(
+            s"[memory-track] gate-4 pre-write ledger written: ${authorized.size}/$pendingTotal authorized ref(s), ${targets.size} target file(s) with starting sha256/bytes"
+          )
+        case Left(e) =>
+          logger.warnSync(
+            s"[memory-track] pre-write ledger append failed: $e — the round proceeds (the audit anchor for reconcile is missing)"
+          )
+    }.handleErrorWith(e =>
+      logger.warn(s"[memory-track] pre-write ledger failed: ${e.getClass.getSimpleName}: ${e.getMessage} — the round proceeds"))
 
   // ── 内部：快照 / 变更史 ─────────────────────────────────────────
 
@@ -253,7 +333,9 @@ object MemoryTrack:
 
   // ── 内部：跑 agent 会话 ─────────────────────────────────────────
 
-  private final case class Attempt(
+  /** 单轮 attempt 的结局（`private[agent]`：spec 直测面 —— 超时分支的
+    * `finish(Timeout)` 夹具直接构造它）。 */
+  private[agent] final case class Attempt(
       status: Status,
       detail: String,
       report: String,
@@ -381,8 +463,12 @@ object MemoryTrack:
     * 2026-09-13 缺失自愈批两处修订：① 待办口径与 `MemoryQueue.pending` **同源**（旧文写
     * 的「无 outcome 的 note + result ∈ {rejected, timeout} 的重试项」与实现不符——那正是
     * 「重试引线是死的」这句错话的载体）；② 简报只发**本轨授权集**（would-apply +
-    * would-obsolete），被预算闸截断的条目**不进简报**（超硬顶即停、剩余留 pending）。 */
-  private def brief(workRoot: String, trigger: String, notes: Vector[MemoryQueue.Note], plan: MemoryQueue.Plan): String =
+    * would-obsolete），被预算闸截断的条目**不进简报**（超硬顶即停、剩余留 pending）。
+    *
+    * C 批 ⑥（2026-09-13）：补一行 `already-present` 桶（= `plan` 里 `detail` 以
+    * `already-present` 开头的 would-obsolete 条目）——消费者**不必自己重推**（grep 文件
+    * 比对逐行）就知道哪些 append 是重复的，直接记 `deduped`。`private[agent]`：spec 直测面。 */
+  private[agent] def brief(workRoot: String, trigger: String, notes: Vector[MemoryQueue.Note], plan: MemoryQueue.Plan): String =
     val abs = PathUtil.dataRoot.toString
     val refs = notes.map(_.id).take(40).mkString(", ")
     val more = if notes.size > 40 then s" …(+${notes.size - 40} more)" else ""
@@ -393,11 +479,21 @@ object MemoryTrack:
     val noTargetLine =
       if noTarget.isEmpty then ""
       else s"- 这些 ref 的**目标层没有记忆文件**（${noTarget.take(20).mkString(", ")}）：不要写 rejected（`rejected` 可重试 ⇒ 会无限复现）；该层不存在 ⇒ 记 `obsolete` 并附一行原因。\n"
+    // ⑥ 简报补桶：把 plan 的 already-present 桶直接告诉消费者（免它自己 grep 逐行比对）
+    val alreadyPresent = plan.items
+      .filter(i => i.bucket == MemoryQueue.Bucket.WouldObsolete && i.detail.startsWith("already-present"))
+      .map(_.ref)
+    val alreadyPresentLine =
+      if alreadyPresent.isEmpty then ""
+      else
+        val head = alreadyPresent.take(20).mkString(", ")
+        val more = if alreadyPresent.size > 20 then s" …(+${alreadyPresent.size - 20} more)" else ""
+        s"- 这些 ref 的**目标文件里已有同一行**（already-present，逐字相同）：$head$more —— **不要动文件**（再落一次只会造重复行），直接记 `deduped`；也不要写 rejected（`rejected` 可重试 ⇒ 会无限复现）。\n"
     s"""[记忆整理轨] 触发=$trigger，本轮授权待办 ${notes.size} 条（队列 pending 总数见计划行）。
 - 数据根（绝对路径）：$abs —— 文件工具只接受绝对路径，直接用这个前缀。
 - 队列：$abs/memory/queue.jsonl。待办口径 = `MemoryQueue.pending`（无 outcome 的 note + 末条结局 ∈ {notrun, timeout, rejected, blocked} 的重试项）——与引擎折叠谓词同源，不要另立口径。
 - 本轨授权 ref 清单：${if refs.isEmpty then "(none)" else refs + more}
-$deferred$noTargetLine- 步骤与输出契约严格按本会话系统提示词：动笔前快照三处记忆文件 → 逐条执行 → 逐条回写 outcome → 报告结构化计数。
+$deferred$noTargetLine$alreadyPresentLine- 步骤与输出契约严格按本会话系统提示词：动笔前快照三处记忆文件 → 逐条执行 → 逐条回写 outcome → 报告结构化计数。
 - 只允许改 4 个目标路径（$abs/User.md、$abs/agents/Nebula/memory.md、涉及项目的 <workspace>/.nebflow/memory.md、队列）；别的文件一律不碰；禁 git 写操作。
 - 一次性会话工作根：$workRoot（临时目录，用完即弃）。"""
       .stripMargin
@@ -436,30 +532,48 @@ $deferred$noTargetLine- 步骤与输出契约严格按本会话系统提示词�
     * `rejected` 从此只可能由消费者自己写（确实跑过并判定不可落）。
     *
     * 已有终态结局的条目不动（agent 可能在被截断前已回写了部分结局）。返回实际写入条数。
+    *
+    * **C 批 ④（2026-09-13）**：`reconciled`（纯对账报告，见 [[MemoryQueue.reconcile]]）里的
+    * 条目**先判终态**（独立字样 `deduped` / `applied-by-reconcile`，`by` + detail 前缀可辨
+    * 「引擎判的」），其余才走上面的 infra 档。对账只在**超时**路径生效（`isTimeout`）——
+    * 失败路径（定义缺失 / spawn 失败）本轮根本没动过文件，不该替消费者下裁决。
     * `private[agent]`：spec 直测面。 */
-  private[agent] def degradeOutcomes(isTimeout: Boolean, detail: String): IO[Int] =
+  private[agent] def degradeOutcomes(
+    isTimeout: Boolean,
+    detail: String,
+    reconciled: MemoryQueue.ReconcileReport = MemoryQueue.ReconcileReport.empty
+  ): IO[Int] =
     IO.blocking {
       val state       = MemoryQueue.readState()
       val stillPending = state.pending
+      val judged = if isTimeout then reconciled.byRef else Map.empty[String, MemoryQueue.ReconcileVerdict]
       var written     = 0
       stillPending.foreach { n =>
-        val infraCount = state.outcomes.count(o =>
-          o.ref == n.id && MemoryQueue.EngineInfraResults.contains(o.result))
-        val alreadyBlocked = state.lastOutcomeByRef.get(n.id).exists(_.result == MemoryQueue.ResultBlocked)
-        val result =
-          if infraCount >= MemoryQueue.MaxInfraOutcomesPerRef then MemoryQueue.ResultBlocked
-          else if isTimeout then MemoryQueue.ResultTimeout
-          else MemoryQueue.ResultNotRun
-        val skip = result == MemoryQueue.ResultBlocked && alreadyBlocked
-        if !skip && MemoryQueue.recordOutcome(n.id, result, AgentName, detail, AgentName).isRight then written += 1
+        judged.get(n.id) match
+          case Some(v) =>
+            // ④ 超时对账：效果已在盘上 ⇒ 引擎标终态（对账判据只取高精度两支，宁漏不误）
+            if MemoryQueue.recordOutcome(n.id, v.result, AgentName, v.detail, AgentName).isRight then written += 1
+          case None =>
+            val infraCount = state.outcomes.count(o =>
+              o.ref == n.id && MemoryQueue.EngineInfraResults.contains(o.result))
+            val alreadyBlocked = state.lastOutcomeByRef.get(n.id).exists(_.result == MemoryQueue.ResultBlocked)
+            val result =
+              if infraCount >= MemoryQueue.MaxInfraOutcomesPerRef then MemoryQueue.ResultBlocked
+              else if isTimeout then MemoryQueue.ResultTimeout
+              else MemoryQueue.ResultNotRun
+            val skip = result == MemoryQueue.ResultBlocked && alreadyBlocked
+            if !skip && MemoryQueue.recordOutcome(n.id, result, AgentName, detail, AgentName).isRight then written += 1
       }
-      if stillPending.nonEmpty then
+      // 置位判据用**写后**的 pending 计数（C 批 ④ 口径修正）：本轮把该闭合的都闭合了 ⇒
+      // 无可重试对象 ⇒ 不置位（不制造空转重试）；还有剩 ⇒ 照旧置位。
+      val remaining = MemoryQueue.readState().pendingCount
+      if remaining > 0 then
         MemoryTrackSignal.mark(
-          s"previous memory-track run ${if isTimeout then "timeout" else "failed"} (${stillPending.size} note(s) not applied)")
+          s"previous memory-track run ${if isTimeout then "timeout" else "failed"} ($remaining note(s) not applied)")
       written
     }
 
-  private def finish(
+  private[agent] def finish(
     files: Vector[FileTarget],
     before: Vector[(os.Path, String, String)],
     notes: Vector[MemoryQueue.Note],
@@ -470,9 +584,16 @@ $deferred$noTargetLine- 步骤与输出契约严格按本会话系统提示词�
     for
       after <- readAll(files)
       changed <- recordChanges(before, after, refs, trigger, AgentName)
+      // ── ④ 超时对账（C 批 2026-09-13）：**先对账再降级**。跑后文件内容 `after` 已在手
+      //    （内存里 `readAll(files)` 就是它），对账本身是纯函数（零写入）。
+      //    只在 Timeout 分支算：失败分支（定义缺失 / spawn 失败）本轮没动过文件。
+      stateAtFinish <- IO.blocking(MemoryQueue.readState())
+      reconcile     = if attempt.status == Status.Timeout then MemoryQueue.reconcile(stateAtFinish, planInput(after))
+        else MemoryQueue.ReconcileReport.empty
       outcomesWritten <- attempt.status match
         case Status.Completed => IO.pure(0)
-        case Status.Failed | Status.Timeout => degradeOutcomes(attempt.status == Status.Timeout, attempt.detail)
+        case Status.Timeout   => degradeOutcomes(isTimeout = true, attempt.detail, reconcile)
+        case Status.Failed    => degradeOutcomes(isTimeout = false, attempt.detail)
         // 前置闸拒绝：零结局写（条目本就 pending），但置位重试引线（与降级路径同款可观测面）
         case Status.Refused =>
           IO { MemoryTrackSignal.mark(s"previous memory-track round refused by a fail-closed preflight gate: ${attempt.detail.take(160)}"); 0 }
@@ -484,7 +605,10 @@ $deferred$noTargetLine- 步骤与输出契约严格按本会话系统提示词�
           case Status.Failed =>
             logger.warn(s"[memory-track] FAILED (infra — no note marked rejected): ${attempt.detail} — memory falls back to the current files (install proceeds), queue entries stay pending, retry armed for the next compaction")
           case Status.Timeout =>
-            logger.warn(s"[memory-track] TIMEOUT after ${hardTimeoutMs}ms (infra — no note marked rejected): timeout outcomes written, entries stay pending, retry armed for the next compaction")
+            logger.warn(
+              s"[memory-track] TIMEOUT after ${hardTimeoutMs}ms (infra — no note marked rejected): " +
+                s"reconcile closed ${reconcile.count} already-landed note(s) [${reconcile.render}], " +
+                s"${outcomesWritten - reconcile.count} timeout outcome(s) written for the rest, entries stay pending, retry armed for the next compaction")
           case Status.DryRun =>
             logger.info(s"[memory-track] DRY-RUN (read-only): no agent spawned, no outcome written, no file touched")
           case Status.Refused =>
@@ -495,7 +619,7 @@ $deferred$noTargetLine- 步骤与输出契约严格按本会话系统提示词�
       attempt.status match
         case Status.Completed => Result(Status.Completed, attempt.report, notes.size, 0, changed, attempt.alert)
         case Status.Failed    => Result(Status.Failed, attempt.detail, notes.size, outcomesWritten, changed, attempt.alert)
-        case Status.Timeout   => Result(Status.Timeout, attempt.detail, notes.size, outcomesWritten, changed, attempt.alert)
+        case Status.Timeout   => Result(Status.Timeout, attempt.detail, notes.size, outcomesWritten, changed, attempt.alert, reconciled = reconcile.count)
         case Status.DryRun    => Result(Status.DryRun, attempt.report, notes.size, 0, changed, None)
         case Status.Refused   => Result(Status.Refused, attempt.detail, notes.size, 0, changed, attempt.alert)
         case Status.Skipped   => Result.Skipped

@@ -4299,7 +4299,7 @@ object AgentActor extends AgentCore with AgentSession:
                                 IO(logAgentEvent(
                                   agentDef, depth, state.sessionId, state.sessionName,
                                   "memory-track-timeout",
-                                  s"pendingAtStart=${r.pendingAtStart} outcomes=${r.outcomesWritten} hardMs=${MemoryTrack.hardTimeoutMs} detail=${r.detail.take(200)}"))
+                                  s"pendingAtStart=${r.pendingAtStart} outcomes=${r.outcomesWritten} reconciled=${r.reconciled} hardMs=${MemoryTrack.hardTimeoutMs} detail=${r.detail.take(200)}"))
                               case MemoryTrack.Status.Completed =>
                                 IO(logAgentEvent(
                                   agentDef, depth, state.sessionId, state.sessionName,
