@@ -858,7 +858,7 @@ object NodeEditTool extends Tool:
 - deps (optional, replace-on-provide): upstream ids awaited for COMPLETION SIGNAL only (need the result? use in); []/null = replaces all; failed/cancelled/blocked never triggers; editing deps on a RUNNING node rejected.
 - retry (optional, downstream-held like deps): failed auto-retry {upstream:"<in/deps-neighbor>", max:N} or "<id>:<N>"; null clears. FAIL + gen<N ⇒ self-reactivating re-run of that upstream (fresh result re-delivers over the pass edge); gen≥N ⇒ failed + RetryCap escalation. max 1-10; neighbor-only (NODE_RETRY_NEIGHBOR); acyclic (NODE_RETRY_CYCLE).
 - out (optional; rewrites edges on edit; empty/null = dangling — result retained, auto-delivered when wired): "B" = pass edge with payload (legacy); "Nebula" = EXIT MARKER (pass/signal ⇒ no root notify — ROOT NOTIFY needs a gate set: "(pass)Nebula" / "(pass,failed)Nebula"); fan-out "(pass)B, (failed)C"; failure edge "(failed)C:signal". Gates ⊆ pass,failed,fail (default pass); mode :result (default) | :signal (deps parity) | :loop. 'failed' = NODE-STATUS gate (that node itself failed); 'fail' = VERDICT gate (verifier reject) — verifier-only, always "(fail)<worker>:loop" (NODE_VERDICT_GATE_ON_TASK_NODE / NODE_LOOP_EDGE_ROLE). ':loop' = CONTROL edge: not in the DAG, no in mirror, never settles a barrier. loop=true nodes must cover pass AND failed; on-failed edge into a merge node rejected (NODE_MERGE_PASS_ONLY).
-- plugins (optional, replace-on-provide): plugin name(s) — THE capability mechanism (no per-node agent; nodes run general): skills → first message, mcp.json → MCP servers + tool grants. Must be Catalog-listed AND trusted (default-deny).
+- plugins (optional, replace-on-provide): plugin name(s) — THE capability mechanism (no per-node agent; nodes run general): skills → first message, mcp.json → MCP servers + tool grants. Must be Catalog-listed (installed = trusted); a blocked (deny-listed) package is refused.
 - worktree (optional, create-time only): true = isolated git worktree at .nebflow/worktrees/<from-name> (same-name branch off main); fail-fast; refused on edits.
 - preset: legacy (unused).
 - abandon (optional, default false): terminal / wiring / pending / STALE running node → cancelled, kept with result, no TTL. LIVE running refused (use NodeCancel).
@@ -899,7 +899,7 @@ object NodeEditTool extends Tool:
         "plugins" -> Json.obj("oneOf" -> Json.arr(
           Json.obj("type" -> "string".asJson),
           Json.obj("type" -> "array".asJson, "items" -> Json.obj("type" -> "string".asJson))
-        ).asJson, "description" -> "Plugin package name(s) allocated to this node (§B.4) — THE capability mechanism (no per-node agent): skills injected into the first message + plugin MCP servers + builtin tool grants. Replace-on-provide (like deps). Names must exist in the Plugin Catalog AND be approved (trust gate default-deny) — unapproved allocation is refused".asJson),
+        ).asJson, "description" -> "Plugin package name(s) allocated to this node (§B.4) — THE capability mechanism (no per-node agent): skills injected into the first message + plugin MCP servers + builtin tool grants. Replace-on-provide (like deps). Names must exist in the Plugin Catalog (installed = trusted, no approval step); a blocked (deny-listed) package is refused, and a package switched off for dispatch by the author is refused for NEW dispatches only".asJson),
         "worktree" -> Json.obj("type" -> "boolean".asJson, "description" -> "Create-time only: true = isolated git worktree auto-created at .nebflow/worktrees/<derived-from-node-name> (same-name branch, baseline = main HEAD; failure rejects the NodeEdit). false/omitted = workspace direct-run. Refused on edits".asJson),
         "preset" -> Json.obj("type" -> "string".asJson),
         "merge" -> Json.obj("type" -> "boolean".asJson, "description" -> "Merge/collection node (batch landing sink, create-only): triggers only when ALL upstreams completed (in-barrier); an upstream failure converts this node to blocked (category=upstream-incomplete) instead of the collect placeholder-start. Must NOT carry 'worktree' — a merge node lands on the workspace root repo (sandbox root = workspace, .git writable); task should embed the upstream branch/worktree list + landing command set. REQUIRES 'in' (≥1 existing upstream id) on create — zero-upstream merge is rejected (NODE_MERGE_REQUIRES_UPSTREAM): create the upstreams first, then this node with in=<ids>".asJson),
@@ -1186,13 +1186,14 @@ object NodeEditTool extends Tool:
       }
 
   /** 令 1（插件开关语义，2026-09-12）**闸 A** = 派发许可的**唯一**判定点。
+    * 2026-09-13 无审批批口径更新：内容面判定 = 「在位即信任 ∧ 未被封禁」。
     *
     * `dispatchFaceCheck` 只对**新派发**（新建节点的 plugins / 既有节点上新增的插件名）
-    * 生效：内容信任面仍由 `PluginRegistry.resolve` 在更早处把门（未批准 / 摘要漂移
-    * 一律拒），本函数只追加**派发面**判定 ⇒ 关闭（`plugins.dispatch.<n>.authorEnabled
-    * = false`）挡住未来派发，但**不影响**：
+    * 生效：内容面仍由 `PluginRegistry.resolve` 在更早处把门（不存在 / **被封禁** 一律拒），
+    * 本函数只追加**派发面**判定 ⇒ 关闭（`plugins.dispatch.<n>.authorEnabled = false`）
+    * 挡住未来派发，但**不影响**：
     *  - 已派发/在飞节点（闸 B/C/E 只判内容面，见 `NodeEngine.prepareNodePlugins`）；
-    *  - 运行期工具面（闸 D 只判内容面，见 `PluginMcpManager.revalidate`）；
+    *  - 运行期工具面（闸 D 只判封禁，见 `PluginMcpManager.revalidate`）；
     *  - 已启用提示词的审计面（节点首条消息里已注入的 `<injected-plugins>` 全文与
     *    审计留存不受任何开关影响）。
     * 名单为空 ⇒ 零开销 Right（既有调用点绝大多数不带 plugins 参数）。 */
@@ -1204,7 +1205,10 @@ object NodeEditTool extends Tool:
           nebflow.core.plugin.PluginRegistry.contentTrusted(n).map { trusted =>
             if nebflow.core.plugin.PluginDispatchPolicy.effective(n, trusted) then Right(())
             else if !trusted then
-              Left(s"Plugin '$n' is not trusted (content face) — resolve the trust gate first (PLUGIN_UNTRUSTED)")
+              Left(
+                s"Plugin '$n' is BLOCKED (deny-list) — a blocked package is refused on every path " +
+                  s"(no dispatch, no load, in-flight MCP stopped). Unblock it if intended: Plugin panel, " +
+                  s"REST POST /api/plugins/$n/unblock, or CLI 'nebflow plugin unblock $n'. (PLUGIN_BLOCKED)")
             else
               Left(
                 s"Plugin '$n' is disabled for new dispatches by the author (dispatch switch is OFF). " +

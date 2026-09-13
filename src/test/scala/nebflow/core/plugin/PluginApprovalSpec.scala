@@ -135,7 +135,7 @@ class PluginApprovalSpec extends CatsEffectSuite:
 
   // ── §B.3 外部导入（installFrom）────────────────────────
 
-  test("§B.3 add: 本地目录 → 以 manifest name 落盘为 untrusted（默认拒绝），可再审批") {
+  test("§B.3 add: 本地目录 → 以 manifest name 落盘**即可用**（在位即信任），无需审批动作") {
     val src = tempRoot / "install-src" / "installed-plugin"
     os.makeDir.all(src / "skills" / "s")
     os.write.over(src / "plugin.json",
@@ -148,22 +148,32 @@ class PluginApprovalSpec extends CatsEffectSuite:
         |body""".stripMargin)
 
     PluginRegistry.installFrom(src.toString).flatMap {
-      case Left(err) => fail(s"install must succeed: $err")
+      case Left(err) => IO(fail(s"install must succeed: $err"))
       case Right(msg) =>
-        assert(msg.contains("untrusted"), s"install message must state default-deny, got: $msg")
-        // 注册表可见但 untrusted（默认拒绝）
-        PluginRegistry.resolve("installed-plugin").flatMap {
-          case Right(p) => fail(s"installed plugin must be untrusted, got trusted digest=${p.digest.take(12)}")
-          case Left(err2) =>
-            assert(err2.contains("PLUGIN_UNTRUSTED"), s"got: $err2")
-            // 审批后可用
-            PluginRegistry.approve("installed-plugin").flatMap {
-              case Left(e) => fail(s"approve after install failed: $e")
-              case Right(_) =>
-                PluginRegistry.resolve("installed-plugin").map(r =>
-                  assert(r.isRight, "approved installed plugin must resolve"))
+        IO {
+          assert(!msg.contains("default-deny"),
+            s"the retired default-deny wording must be gone from the install message, got: $msg")
+          assert(msg.contains("presence = trust"), s"install message must state the new semantics, got: $msg")
+        } *>
+          // 注册表可见且**直接可用**（无审批步骤）
+          PluginRegistry.resolve("installed-plugin").flatMap {
+            case Right(p) =>
+              IO(assert(p.trust.trusted, "installed plugin must be trusted on disk (presence = trust)"))
+            case Left(err2) =>
+              IO(fail(s"installed plugin must be usable without approval, got: $err2"))
+          } *>
+          // 封禁 ⇒ 拒绝；解封 ⇒ 恢复
+          PluginBlockPolicy.block("installed-plugin", "spec", "spec").flatMap { _ =>
+            PluginRegistry.resolve("installed-plugin").flatMap {
+              case Right(p) => IO(fail(s"blocked plugin must be refused, got $p"))
+              case Left(err3) =>
+                IO(assert(err3.contains("PLUGIN_BLOCKED"), s"got: $err3")) *>
+                  PluginBlockPolicy.unblock("installed-plugin", "spec").flatMap { _ =>
+                    PluginRegistry.resolve("installed-plugin").map(r =>
+                      assert(r.isRight, "unblocked plugin must resolve again"))
+                  }
             }
-        }
+          }
     }
   }
 

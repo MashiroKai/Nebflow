@@ -37,25 +37,35 @@ import scala.util.matching.Regex
  * 路径围栏（§4.1）：plugin.json/SKILL.md/tools.json/sse 之外被读路径解析符号链接
  * 后必须仍在插件根内，越界 → 拒绝/跳过。
  *
- * 信任门（裁定 14 / §B.3）：默认拒绝。审批记录存 nebflow.json
- * `plugins.trust.<name> = {"sha256":<目录内容树 digest>,"approvedAt":..,
- * "scope":"all","files":{relPath:sha256}}`（files = 文件级快照，供审批清单
- * 「变更摘要」逐文件 diff——协议符合度批补齐简化申报①；旧记录无 files 时降级为
- * digest 级比对）。目录内容 digest ≠ 审批记录（含 version bump / 任一文件改动）
- * → untrusted——「升级即重审」（§B.8-3）。untrusted plugin：不进分发器目录、
- * 不可被分配、MCP 不启动、skill 不注入。
+ * 内容面判定（**无审批批 2026-09-13**，作者令「装了就是信任」）：**在位即信任**
+ * （default-allow）+ **点名封禁**（deny-list）。判定顺序（[[PluginRegistry.loadPlugin]]
+ * 末尾，勿交换）：① 命中 `nebflow.json → plugins.revoked.<name> = {at, by, reason}`
+ * ⇒ `TrustStatus.Blocked`（不进目录 / 拒装载 / 在飞 MCP 停）；② 否则 ⇒
+ * `TrustStatus.Trusted`（扫到即受信）。
+ *
+ * 审批记录 `plugins.trust.<name> = {"sha256":<目录内容树 digest>,"approvedAt":..,
+ * "scope":"all","files":{relPath:sha256}}` **不再决定装载**，只剩两个用途：① 审计
+ * （面板「变更摘要」逐文件 diff 的数据源）；② **seed 覆盖仲裁基准**
+ * （[[PluginRegistry.trustRecordDigest]] ⇒ `SeedService.reconcilePlugin` 的「干净快照」
+ * 判据）。**12 条存量记录零改写、零迁移**（本批不做任何数据动作）。
+ *
+ * 内容变更（目录 digest ≠ 记录 digest）**不再拦装载** ⇒ 降级为**非拦截可见性**
+ * （`PluginDef.contentChanged`）：① REST `GET /plugins` 字段 `contentChanged`；
+ * ② 目录段尾注记（[[PluginRegistry.renderCatalog]]）；③ 启动/重扫健康摘要
+ * （[[PluginRegistry.healthSummary]]）。
+ * 被封禁的包：不进目录、`resolve` 返 Left（闸 A/B/C/E 拒）、在飞 MCP ≤30s 停（闸 D）。
  *
  * 扫描节奏（§B.3）：进程内 mtime 缓存——目录树任一 mtime 变化即全量重扫
  * （对齐 skill「改后即时生效」机制）；spawn/NodeEdit 校验路径每次走 list/resolve
- * 天然新鲜。
+ * 天然新鲜。⚠️ 封禁表在 `nebflow.json` 里（不在 plugins/ 树内）⇒ 封禁/解封写面必须
+ * 显式失效该缓存（[[PluginBlockPolicy]] 已接）。
  *
- * 装载可见性（可见性批 2026-09-10，P1 静默缩容）：装载失败 / 信任未批准 / digest
- * 漂移都会让包从 Plugin Catalog 消失，此前只有逐包 WARN、目录静默缩容（2026-09-06
- * 14/16 整包拒载 → 冷启动目录只剩 2 包，作者侧无聚合信号）。现在两条聚合出口：
- * ①目录段尾缺席注记（[[PluginRegistry.renderCatalog]] 单点，分发器注入段与
- * REST GET /plugins/catalog 同字节）；②启动/重扫健康摘要（[[PluginRegistry.healthSummary]]
- * / [[PluginRegistry.logHealthSummary]]，只出异常、干净场景零输出）。两者都只加
- * 可见性——装载校验与信任门判定语义未动。
+ * 装载可见性（可见性批 2026-09-10，P1 静默缩容；无审批批 2026-09-13 口径更新）：
+ * 装载失败 / 封禁都会让包从 Plugin Catalog 消失，此前只有逐包 WARN、目录静默缩容。
+ * 现在两条聚合出口：①目录段尾缺席注记（[[PluginRegistry.renderCatalog]] 单点，分发器
+ * 注入段与 REST GET /plugins/catalog 同字节）；②启动/重扫健康摘要
+ * （[[PluginRegistry.healthSummary]] / [[PluginRegistry.logHealthSummary]]）。两者都只加
+ * 可见性——装载校验与内容面判定语义不受影响。
  */
 object PluginRegistry:
 
@@ -116,12 +126,20 @@ object PluginRegistry:
     path: String // SKILL.md 绝对路径
   )
 
+  /** 内容面可用性（2026-09-13 作者令「装了就是信任」后**唯一**的两个取值）：
+    * - [[TrustStatus.Trusted]] = **在位即信任**（`loadPlugin` 扫到即受信）+ 未被封禁；
+    * - [[TrustStatus.Blocked]] = 命中封禁面（`plugins.revoked.<name>`，deny-list）。
+    * 全部下游闸（A/B/C/E/D）、目录过滤链、面板清单都只问 [[TrustStatus.trusted]]，
+    * 故「在位即信任」与「点名封禁」两件事共用这一条链、零分叉。 */
   sealed trait TrustStatus extends Product with Serializable:
     def trusted: Boolean
   object TrustStatus:
+    /** `approvedAt` = 审批记录时刻（无记录 ⇒ 0——记录**不再决定装载**，只作审计；
+      * seed 覆盖仲裁基准走 `trustRecordDigest`，与这里无关）。 */
     final case class Trusted(approvedAt: Long, digest: String) extends TrustStatus:
       val trusted = true
-    final case class Untrusted(reason: String) extends TrustStatus:
+    /** 封禁（deny-list）：`at`/`by`/`reason` 来自 `plugins.revoked.<name>`。 */
+    final case class Blocked(at: Long, by: String, reason: String) extends TrustStatus:
       val trusted = false
 
   /** 注册表条目（§B.3 产出结构）。author 为渲染字符串（§5.4 author object 的
@@ -145,7 +163,12 @@ object PluginRegistry:
     fileCount: Int,
     warnings: List[String],
     trust: TrustStatus,
-    dir: String
+    dir: String,
+    /** **非拦截可见性**（2026-09-13 无审批批）：目录内容与审批记录 digest 不符
+      * （= 「内容已变更」）。**不拦装载**（在位即信任），只喂三处可见性：API 字段
+      * `contentChanged` / 目录段尾注记 / 启动健康摘要。无审批记录 ⇒ false
+      * （无可比对基准，不是「变更」）。 */
+    contentChanged: Boolean = false
   )
 
   /** 审批清单条目（§B.3 面板渲染数据源）：元信息 + §5.4 元数据 + skills 摘要 +
@@ -163,9 +186,19 @@ object PluginRegistry:
       "keywords" -> p.keywords.asJson,
       "digest" -> p.digest.asJson,
       "fileCount" -> p.fileCount.asJson,
+      // 无审批批（2026-09-13）三字段（面板/CLI/复核共用契约）：
+      //  - `trusted` = 内容面可用（在位即信任 ∧ 未被封禁）——无记录包首扫即 true；
+      //  - `blocked` = 命中封禁面（deny-list，独立命名空间 `plugins.revoked`）；
+      //  - `contentChanged` = 内容与审批记录不符（**非拦截**，仅可见性）。
+      "trusted" -> p.trust.trusted.asJson,
+      "blocked" -> (p.trust match
+        case TrustStatus.Blocked(_, _, _) => true
+        case _ => false).asJson,
+      "contentChanged" -> p.contentChanged.asJson,
       "trust" -> (p.trust match
         case TrustStatus.Trusted(at, d) => Json.obj("status" -> "trusted".asJson, "approvedAt" -> at.asJson, "digest" -> d.asJson)
-        case TrustStatus.Untrusted(reason) => Json.obj("status" -> "untrusted".asJson, "reason" -> reason.asJson)
+        case TrustStatus.Blocked(at, by, reason) =>
+          Json.obj("status" -> "blocked".asJson, "blockedAt" -> at.asJson, "blockedBy" -> by.asJson, "reason" -> reason.asJson)
       ),
       // 令 1 拆面（2026-09-12）：派发面状态随清单下发——面板开关据此渲染
       // （`enabled=false` 只是「禁未来派发」，不是内容未受信）。
@@ -173,7 +206,8 @@ object PluginRegistry:
         "enabled" -> PluginDispatchPolicy.effective(p.name, p.trust.trusted).asJson,
         "authorEnabled" -> PluginDispatchPolicy.authorEnabled(p.name).asJson,
         "transitionActive" -> PluginDispatchPolicy.transitionActive(p.name, System.currentTimeMillis()).asJson,
-        "reason" -> (if !p.trust.trusted then ""
+        "reason" -> (if !p.trust.trusted then
+                       "Plugin is blocked (deny-list) — unblock it to use it again: POST /api/plugins/" + p.name + "/unblock."
                      else if PluginDispatchPolicy.effective(p.name, trusted = true) then ""
                      else "Disabled for new dispatches by the author — in-flight nodes keep their plugin grant. " +
                        s"Re-enable via the panel switch, POST /api/plugins/${p.name}/enable, or CLI 'nebflow plugin enable ${p.name}'.")
@@ -366,7 +400,12 @@ object PluginRegistry:
   def listWithRejected(): IO[(List[PluginDef], List[(String, String)])] =
     snapshot().map(snap => (snap.plugins, snap.rejected))
 
-  /** 解析单个插件（信任门校验入口）。Left = 分配失败原因（含审批指引）。 */
+  /** 解析单个插件（内容面校验入口）。Left = 拒绝原因（包不存在 / **被封禁**）。
+    *
+    * 无审批批（2026-09-13 作者令「装了就是信任」）：装载不再要求人工审批记录 ⇒ 本方法
+    * 只剩两种 Left。「封禁」（deny-list，`plugins.revoked`）是唯一的点名阻止手段——
+    * 错误文案指向**存在的动作**（unblock），不再出现 `never approved (default-deny)`
+    * 与 approve 指引（无审批下那是死路）。 */
   def resolve(name: String): IO[Either[String, PluginDef]] =
     scan().map { all =>
       all.find(_.name == name) match
@@ -375,19 +414,19 @@ object PluginRegistry:
             "Check the directory name under ~/.nebflow/plugins/. (PLUGIN_NOT_FOUND)")
         case Some(p) if !p.trust.trusted =>
           val reason = p.trust match
-            case TrustStatus.Untrusted(r) => r
-            case _ => "untrusted"
-          Left(s"Plugin '$name' is NOT approved (untrusted: $reason). " +
-            s"Trust gate is default-deny (§B.3): approve it via the Plugin panel, " +
-            s"REST POST /api/plugins/$name/approve, or CLI 'nebflow plugin approve $name' — " +
-            "approval records the directory digest; any later file change re-triggers review. (PLUGIN_UNTRUSTED)")
+            case TrustStatus.Blocked(_, _, r) => r
+            case _ => "blocked"
+          Left(s"Plugin '$name' is BLOCKED (deny-list: $reason). " +
+            s"A blocked package is refused everywhere (no load, no dispatch, in-flight MCP stopped). " +
+            s"Unblock it if intended: Plugin panel, REST POST /api/plugins/$name/unblock, " +
+            "or CLI 'nebflow plugin unblock $name'. (PLUGIN_BLOCKED)")
         case Some(p) => Right(p)
     }
 
-  /** 内容信任面查询（**令 1 拆面** 2026-09-12）：该包是否存在且**内容面**受信
-    * （= `resolve` 的正脸，不含任何派发许可判定）。派发面单点
-    * `PluginDispatchPolicy.effective(name, trusted)` 以此为唯一输入——
-    * 两面**唯一耦合点**，其余调用点保持各自语义不变。 */
+  /** 内容面可用性查询（**令 1 拆面** 2026-09-12 引入，无审批批 2026-09-13 口径更新）：
+    * 该包是否存在且内容面可用（= `resolve` 的正脸，不含任何派发许可判定）。
+    * 在位即信任后 = 「装载成功 ∧ 未被封禁」；派发面单点
+    * `PluginDispatchPolicy.effective(name, trusted)` 以此为唯一输入——两面唯一耦合点。 */
   def contentTrusted(name: String): IO[Boolean] =
     scan().map(_.find(_.name == name).exists(_.trust.trusted))
 
@@ -576,13 +615,17 @@ object PluginRegistry:
           case Right(d) => d
           case Left(err) => return Left(pname -> err)
 
-        // 信任门（默认拒绝）：审批记录 digest 比对
-        val trust = trustRecord(pname) match
-          case None => TrustStatus.Untrusted("never approved (default-deny)")
-          case Some(rec) =>
-            if rec.sha256 == digest then TrustStatus.Trusted(approvedAt = rec.approvedAt, digest = digest)
-            else TrustStatus.Untrusted(
-              s"directory digest changed since approval (approved=${rec.sha256.take(12)}…, current=${digest.take(12)}…) — re-approval required (upgrade = re-review)")
+        // 内容面判定（无审批批，2026-09-13 作者令「装了就是信任」）：
+        //   ① **先查封禁（deny）**：`plugins.revoked.<name>` 命中 ⇒ Blocked（指名阻止）；
+        //   ② **再默认受信（allow）**：扫到即 Trusted —— 审批记录**不再决定装载**
+        //      （`plugins.trust` 只作审计 + seed 覆盖仲裁基准 `trustRecordDigest`）。
+        // 顺序不可交换（设计硬约束 R4：封禁是 default-allow 下唯一的点名止损手段）。
+        // 内容变更（digest 漂移）= **非拦截可见性**（`contentChanged`），不改变 trust。
+        val trustRec = trustRecord(pname)
+        val contentChanged = trustRec.exists(_.sha256 != digest)
+        val trust = PluginBlockPolicy.entryFor(pname) match
+          case Some(b) => TrustStatus.Blocked(at = b.at, by = b.by, reason = b.reason)
+          case None => TrustStatus.Trusted(approvedAt = trustRec.map(_.approvedAt).getOrElse(0L), digest = digest)
 
         Right(PluginDef(
           name = pname,
@@ -600,7 +643,8 @@ object PluginRegistry:
           fileCount = fileCount,
           warnings = warnings.toList,
           trust = trust,
-          dir = dir.toString
+          dir = dir.toString,
+          contentChanged = contentChanged
         ))
     end match
   end loadPlugin
@@ -815,12 +859,19 @@ object PluginRegistry:
         .flatMap(_.hcursor.downField("plugins").downField("trust").as[Map[String, Json]].toOption)
         .getOrElse(Map.empty)
 
-  /** 审批：计算当前 digest + 逐文件快照写入 trust 表（面板/CLI/REST 共用单点）。
-    * files 快照供审批清单「变更摘要」逐文件 diff（§B.3，协议符合度批补齐）。 */
+  /** 审批记录写入（**无审批批后不再决定装载**，2026-09-13）：计算当前 digest +
+    * 逐文件快照写入 trust 表。两个用途：① 审计（面板 `changeSummary` 逐文件 diff 的
+    * 基准）；② **seed 覆盖仲裁基准**（`trustRecordDigest` ⇒ `SeedService.reconcilePlugin`
+    * 的「干净快照」判据）。调用点：seed 首装 / 种子镜像刷新 / 面板 / REST / CLI。
+    *
+    * ⚠️ **已知代价（本批不修，设计 §3.3 ① / C5 登记）**：审批记录 = 仲裁基准 ⇒ 任何
+    * approve 都会把基准前移到当前 digest，从而改变 seed reconcile 的判定结果（面板/CLI
+    * 手动 approve 一个用户改过的默认集包，会让下一次 boot 的种子镜像覆盖视为「干净」）。
+    * 无审批批下 approve 不再是必经动作，此风险面因此收窄但未消失。 */
   def approve(name: String): IO[Either[String, String]] =
     scan().flatMap { all =>
       all.find(_.name == name) match
-        case None => IO.pure(Left(s"Plugin '$name' not found — nothing to approve"))
+        case None => IO.pure(Left(s"Plugin '$name' not found — nothing to record"))
         case Some(p) =>
           val now = System.currentTimeMillis() / 1000L
           val files = fileManifest(os.Path(p.dir))
@@ -829,33 +880,21 @@ object PluginRegistry:
             "files" -> files.asJson
           )).map {
             case Right(_) =>
-              cache.set(None) // 强制下个访问重扫 → trust 状态刷新
-              logger.infoSync(s"Plugin '$name' approved (digest ${p.digest.take(12)}…, ${p.fileCount} file(s), ${files.size} file snapshot(s))")
-              Right(s"Plugin '$name' approved — digest ${p.digest.take(16)}… recorded (version ${p.version}); next spawn/allocation takes effect immediately")
+              cache.set(None) // 强制下个访问重扫 → contentChanged / changeSummary 刷新
+              logger.infoSync(s"Plugin '$name' audit record refreshed (digest ${p.digest.take(12)}…, ${p.fileCount} file(s), ${files.size} file snapshot(s))")
+              Right(s"Plugin '$name' audit record recorded — digest ${p.digest.take(16)}… (version ${p.version}); " +
+                "loading is not gated by records any more (presence = trust), this record feeds the panel change summary and the seed-reconcile baseline")
             case l => l.map(_ => "")
           }
-    }
-
-  /** 撤审：删除 trust 表条目 → 下次重扫即 untrusted（运行中 MCP 由
-    * PluginMcpManager.revalidate 停用）。 */
-  def revoke(name: String): IO[Either[String, String]] =
-    IO.blocking {
-      if !trustRecord(name).isDefined then Left(s"Plugin '$name' has no approval record — nothing to revoke")
-      else
-        removeFromTrustTable(name) match
-          case Right(_) =>
-            cache.set(None)
-            logger.infoSync(s"Plugin '$name' approval revoked — falls back to untrusted (default-deny)")
-            Right(s"Plugin '$name' approval revoked — back to untrusted; running plugin MCP servers will be stopped at next trust revalidation")
-          case l => l.map(_ => "")
     }
 
   /** 手动清缓存（测试钩子）。 */
   def invalidateCache(): Unit = cache.set(None)
 
-  /** §B.3 外部导入（协议符合度批补齐）：`nebflow plugin add <git-url|本地路径>`
-    * → clone/copy 进 ~/.nebflow/plugins/<manifest name>/ → 落为 untrusted 待审
-    * （默认拒绝——不写任何 trust 记录）。同名已存在 → 拒绝（不覆盖）。
+  /** §B.3 外部导入（协议符合度批补齐；无审批批 2026-09-13 口径更新）：
+    * `nebflow plugin add <git-url|本地路径>` → clone/copy 进 `~/.nebflow/plugins/<manifest name>/`
+    * → **落盘即生效**（在位即信任：下个扫描周期即可派发，无需审批动作）。
+    * 同名已存在 → 拒绝（不覆盖）。
     * git 来源（http(s) 开头、git@ 开头或以 .git 结尾）走 `git clone --depth 1`；
     * 其余按本地目录 copy。
     */
@@ -906,9 +945,9 @@ object PluginRegistry:
                 os.makeDir.all(pluginsDir)
                 os.copy(staged, target, createFolders = true, mergeFolders = true, replaceExisting = true)
                 cache.set(None)
-                logger.infoSync(s"Plugin '$pname' installed from '$source' — untrusted (default-deny, §B.3)")
-                Right(s"Plugin '$pname' installed to $target — untrusted (default-deny). " +
-                  s"Approve via the Plugin panel, REST POST /api/plugins/$pname/approve, or CLI 'nebflow plugin approve $pname'.")
+                logger.infoSync(s"Plugin '$pname' installed from '$source' — active on next scan (presence = trust)")
+                Right(s"Plugin '$pname' installed to $target — active on the next scan (presence = trust: no approval step). " +
+                  s"Block it if intended: Plugin panel, REST POST /api/plugins/$pname/revoke, or CLI 'nebflow plugin revoke $pname'.")
     finally
       try os.remove.all(tmp)
       catch case _: Exception => ()
@@ -952,17 +991,6 @@ object PluginRegistry:
       }
     }
 
-  private def removeFromTrustTable(name: String): Either[String, Unit] =
-    mutateNebflowJson { root =>
-      val plugins = root.hcursor.downField("plugins").focus.getOrElse(Json.obj())
-      val trust = plugins.hcursor.downField("trust").focus.getOrElse(Json.obj())
-      val newTrust = Json.fromJsonObject(trust.asObject.getOrElse(JsonObject.empty).remove(name))
-      val newPlugins = Json.fromJsonObject(
-        plugins.asObject.getOrElse(JsonObject.empty).add("trust", newTrust)
-      )
-      Json.fromJsonObject(root.asObject.getOrElse(JsonObject.empty).add("plugins", newPlugins))
-    }
-
   /** nebflow.json 手术式改写：读全量 → transform → 原子写回（保留全部其他键）。 */
   private def mutateNebflowJson(transform: Json => Json): Either[String, Unit] =
     val configPath = PathUtil.configJsonWritePath(PathUtil.dataRoot)
@@ -977,65 +1005,72 @@ object PluginRegistry:
           AtomicJson.writeSync(configPath, transform(root).noSpaces)
           Right(())
 
-  // ── 装载可见性（P1 静默缩容，2026-09-10 可见性批）─────────────────
-  // 背景：整包拒载 / 信任未批准 / digest 漂移 → 目录静默缩容，作者侧无任何聚合
-  // 信号（2026-09-06 08:31 14/16 整包拒载只有逐包 WARN，冷启动目录只剩 2 包；
-  // 2026-09-08 digest 漂移窗口目录再次无声缺席）。本节**只加可见性**：不改装载
-  // 校验、不改信任门判定、不改目录过滤链（untrusted 依旧不进目录行）。
+  // ── 装载可见性（P1 静默缩容，2026-09-10 可见性批；无审批批 2026-09-13 口径更新）───
+  // 背景：整包拒载 / 封禁 → 目录静默缩容，作者侧无任何聚合信号。本节**只加可见性**：
+  // 不改装载校验、不改内容面判定、不改目录过滤链。「内容已变更」在无审批批下不再是
+  // 缺席（不拦装载）⇒ 从缺席分类移到独立的**非拦截可见性**段（目录段尾注记 +
+  // 健康摘要各一行 + API 字段 `contentChanged`）。
 
-  /** 目录缺席分类（可见性口径，不参与任何装载/信任判定）。 */
+  /** 目录缺席分类（可见性口径，不参与任何装载/内容面判定）。无审批批后只剩两类：
+    * 装载失败 + 封禁——「从未审批」「digest 漂移」两个分类随 default-deny 一起消亡。 */
   enum AbsenceKind(val label: String):
     /** 装载失败：manifest/校验拒载（§B.2 装载校验）。 */
     case LoadFailed extends AbsenceKind("装载失败")
-    /** 信任未批准：装载成功但信任表无审批记录（默认拒绝；含撤审回落）。 */
-    case NeverApproved extends AbsenceKind("信任未批准")
-    /** digest 漂移：有审批记录但目录内容 digest 与记录不符（升级即重审，§B.8-3）。 */
-    case DigestDrift extends AbsenceKind("digest 漂移")
+    /** 封禁：命中 `plugins.revoked` deny-list（不进目录 / 拒装载 / 停飞）。 */
+    case Blocked extends AbsenceKind("已封禁")
 
   /** 一条缺席记录：包名 + 分类 + 原因（原因文本与注册表/拒载消息同源，不另造文案）。 */
   final case class Absence(name: String, kind: AbsenceKind, reason: String)
 
-  /** 缺席清单 = 在 plugins/ 下存在、但不进 Plugin Catalog 的包：装载失败 + 未受信。
-    * 分类依据权威来源（拒载左值 / 信任表与现算 digest 比对），不做原因字符串匹配。 */
+  /** 缺席清单 = 在 plugins/ 下存在、但不进 Plugin Catalog 的包：装载失败 + 封禁。
+    * 分类依据权威来源（拒载左值 / 封禁表命中），不做原因字符串匹配。 */
   private def absencesOf(snap: Snapshot): List[Absence] =
     val rejected = snap.rejected.sortBy(_._1).map { case (n, r) =>
       Absence(n, AbsenceKind.LoadFailed, r)
     }
-    val untrusted = snap.plugins.filterNot(_.trust.trusted).sortBy(_.name).map { p =>
-      Absence(p.name, untrustedKind(p), untrustedReason(p))
+    val blocked = snap.plugins.filterNot(_.trust.trusted).sortBy(_.name).map { p =>
+      Absence(p.name, AbsenceKind.Blocked, blockedReason(p))
     }
-    rejected ++ untrusted
+    rejected ++ blocked
 
-  private def untrustedKind(p: PluginDef): AbsenceKind =
-    trustRecord(p.name) match
-      case None => AbsenceKind.NeverApproved
-      case Some(rec) if rec.sha256 != p.digest => AbsenceKind.DigestDrift
-      // 有记录且与现况 digest 一致却仍未受信：装载判定下不可达（loadPlugin 同条件
-      // 即 Trusted）；保守归入「未批准」——可见性口径，不影响判定本身。
-      case Some(_) => AbsenceKind.NeverApproved
+  private def blockedReason(p: PluginDef): String = p.trust match
+    case TrustStatus.Blocked(at, by, reason) =>
+      val who = if by.nonEmpty then s" by $by" else ""
+      val why = if reason.nonEmpty then s": $reason" else ""
+      s"blocked (deny-list, recorded at $at$who)$why"
+    case TrustStatus.Trusted(_, _) => "" // 调用点已按 trust.trusted 过滤
 
-  private def untrustedReason(p: PluginDef): String = p.trust match
-    case TrustStatus.Untrusted(r) => r
-    case TrustStatus.Trusted(_, _) => "untrusted" // 调用点已按 trust.trusted 过滤
+  /** 「内容已变更」包名单（非拦截可见性）：装载成功、有审批记录、digest 与记录不符。 */
+  private def contentChangedNames(snap: Snapshot): List[String] =
+    snap.plugins.filter(_.contentChanged).map(_.name).sorted
 
   /** 日志用分类 slug（英文，与既有 plugin 日志行文一致）。 */
   private def kindSlug(k: AbsenceKind): String = k match
     case AbsenceKind.LoadFailed => "load-failed"
-    case AbsenceKind.NeverApproved => "unapproved"
-    case AbsenceKind.DigestDrift => "digest-drift"
+    case AbsenceKind.Blocked => "blocked"
 
-  /** 目录缺席注记（段尾聚合，唯一实现）：只出计数不出包名——本注记进分发器
+  /** 目录缺席注记（段尾聚合，唯一实现）：只出**非零**分类计数——本注记进分发器
     * prompt（Token 经济优先），包名+原因清单由启动健康摘要落日志。零缺席 → ""。 */
   private def absenceNote(absences: List[Absence]): String =
     if absences.isEmpty then ""
     else
       val counts = AbsenceKind.values.toList
+        .filter(k => absences.count(_.kind == k) > 0)
         .map(k => s"${k.label} ${absences.count(_.kind == k)}")
       s"另有 ${absences.size} 个插件未载入（${counts.mkString(" / ")}）"
 
-  /** 启动/重扫健康摘要（P1 可见性）：首行 = 总包数 / 载入数 / 目录可见数 / 缺席分类
-    * 计数，随后逐条缺席明细（一行一条 `[分类] 包名: 原因`）。零缺席 → None（干净
-    * 场景零噪音）；`plugins.enabled=false` → None（插件系统整体关闭，不刷无意义告警）。 */
+  /** 「内容已变更」目录段尾注记（非拦截可见性，C2 ②）：**点名**列出（与「已关闭·禁派发」
+    * 注记同款口径——内容被替换后用户/审计需要能指名核对）。无变更 → ""。 */
+  private def contentChangedNote(changed: List[String]): String =
+    if changed.isEmpty then ""
+    else
+      s"另有 ${changed.size} 个插件内容自审批记录后已变更（**不拦截装载**，仅提示核对）：" +
+        changed.mkString(", ")
+
+  /** 启动/重扫健康摘要（P1 可见性 + 无审批批非拦截可见性）：首行 = 总包数 / 载入数 /
+    * 目录可见数 / 缺席分类计数，随后逐条缺席明细（一行一条 `[分类] 包名: 原因`）与逐条
+    * 内容变更明细（`[content-changed] 包名: 记录 digest → 当前 digest`）。
+    * 零缺席且零内容变更 → None（干净场景零噪音）；`plugins.enabled=false` → None。 */
   def healthSummary(): IO[Option[String]] =
     PluginsConfig.enabled.flatMap {
       case false => IO.pure(None)
@@ -1044,16 +1079,27 @@ object PluginRegistry:
 
   private def healthSummaryOf(snap: Snapshot): Option[String] =
     val absences = absencesOf(snap)
-    if absences.isEmpty then None
+    val changed = snap.plugins.filter(_.contentChanged).sortBy(_.name)
+    if absences.isEmpty && changed.isEmpty then None
     else
       val visible = snap.plugins.count(_.trust.trusted)
       val counts = AbsenceKind.values.toList
+        .filter(k => absences.count(_.kind == k) > 0)
         .map(k => s"${kindSlug(k)} ${absences.count(_.kind == k)}").mkString(" / ")
       val head =
         s"${snap.plugins.size + snap.rejected.size} package(s) on disk, ${snap.plugins.size} loaded, " +
-          s"$visible catalog-visible, ${absences.size} absent ($counts)"
-      val detail = absences.map(a => s"  [${kindSlug(a.kind)}] ${a.name}: ${a.reason}")
-      Some((head :: detail).mkString("\n"))
+          s"$visible catalog-visible, ${absences.size} absent" +
+          (if counts.nonEmpty then s" ($counts)" else "") +
+          (if changed.nonEmpty then s", ${changed.size} content-changed" else "")
+      // 内容变更明细：审批记录 digest → 当前 digest（两个短前缀，够人工核对）；
+      // 「不拦截」必须与「已停飞」在文案上可区分（本行不做任何拦截）。
+      val changedDetails = changed.map { p =>
+        val rec = trustRecord(p.name).map(_.sha256.take(12) + "…").getOrElse("(no record)")
+        s"  [content-changed] ${p.name}: recorded $rec → current ${p.digest.take(12)}… " +
+          "(loaded, not intercepted — re-record via approve if the change is intended)"
+      }
+      val details = absences.map(a => s"  [${kindSlug(a.kind)}] ${a.name}: ${a.reason}") ++ changedDetails
+      Some((head :: details).mkString("\n"))
 
   /** 健康摘要输出记账：同状态只出一次（重扫 tick 30s 一次，不重复刷屏），状态变化
     * 后重新输出，回到干净后复位（异常复现可再出）。 */
@@ -1100,11 +1146,15 @@ object PluginRegistry:
     val tools = if p.toolsExtension.isEmpty then "" else s" | tools: ${p.toolsExtension.mkString(", ")}"
     s"- ${p.name}: $desc [skills: $skills | mcp: $mcp$tools]"
 
-  /** Plugin Catalog 段（对齐 skillCatalog order 800 先例）。untrusted 不出现（过滤链
-    * 未动）。空段判定（可见性批改口径）：**无缺席注记时**才可能为空——无受信插件且
-    * 无缺席包（盘上无插件）/ flag 关 → ""；若一个插件都没进目录但盘上有缺席包，
-    * 则只注入段头 + 缺席注记（目录缩容到 0 也不许无声）。本方法是插件目录渲染的
-    * 唯一实现（分发器注入与调试预览共用，双渲染器重复实现已收敛于此）。 */
+  /** Plugin Catalog 段（对齐 skillCatalog order 800 先例）。**被封禁**的包不出现
+    * （内容面判定第一段过滤，无审批批 2026-09-13 后 = 「装载成功 ∧ 未被封禁」）。
+    * 空段判定（可见性批改口径）：**无缺席注记时**才可能为空——无可用插件且无缺席包
+    * （盘上无插件）/ flag 关 → ""；若一个插件都没进目录但盘上有缺席包，则只注入段头 +
+    * 缺席注记（目录缩容到 0 也不许无声）。本方法是插件目录渲染的唯一实现（分发器注入与
+    * 调试预览共用，双渲染器重复实现已收敛于此）。
+    *
+    * 段尾注记两类（都不是插件行）：缺席（装载失败/封禁）+ **内容已变更**（非拦截可见性，
+    * 包**仍在本目录**里，只是加一行提示——不得与缺席注记混读）。 */
   def renderCatalog(): IO[String] =
     PluginsConfig.enabled.flatMap {
       case false => IO.pure("")
@@ -1112,13 +1162,15 @@ object PluginRegistry:
         snapshot().flatMap { snap =>
           IO.blocking {
             val trusted = snap.plugins.filter(_.trust.trusted).sortBy(_.name)
-            // 令 1 拆面（2026-09-12）：**派发许可面**只在此过滤链生效——内容面受信
+            // 令 1 拆面（2026-09-12）：**派发许可面**只在此过滤链生效——内容面可用
             // 但被作者关闭的包不再出现在分发给新节点的目录里（S5：关闭后新派发拿不到）；
-            // 但它**仍受信**⇒ 闸 B/C/E/D 不受影响（在飞/已派发节点照跑）。
+            // 但它**仍可用**⇒ 闸 B/C/E/D 不受影响（在飞/已派发节点照跑）。
             // 零 dispatch 记录时 `closed` 恒空 ⇒ 本方法输出与改前逐字节相同（零迁移）。
             val (dispatchable, closed) =
               trusted.partition(p => PluginDispatchPolicy.effective(p.name, trusted = true))
             val note = absenceNote(absencesOf(snap))
+            // 内容已变更（非拦截可见性）：行**不消失**，只在段尾点名提示。
+            val changedNote = contentChangedNote(trusted.filter(_.contentChanged).map(_.name).sorted)
             // R10-C 形态（作者裁定前的推荐形态，由本实施批落地）：行消失但**点名**，
             // 保证「能力域命中却无可用插件」与「该能力域不存在」可区分（设计 S6），
             // 分发器据此按 system.md 显式申报/升级而非静默另找路线。
@@ -1130,6 +1182,7 @@ object PluginRegistry:
             val lines =
               dispatchable.map(catalogLine) ++
                 Option.when(note.nonEmpty)(note) ++
+                Option.when(changedNote.nonEmpty)(changedNote) ++
                 Option.when(closedNote.nonEmpty)(closedNote)
             if lines.isEmpty then "" else CatalogHeader + "\n" + lines.mkString("\n")
           }

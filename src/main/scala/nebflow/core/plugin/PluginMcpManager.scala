@@ -21,9 +21,10 @@ import scala.concurrent.duration.*
  *   failNode（不静默跳过——分配了 MCP 却没有 = 节点能力残缺）。
  * - **独立管理器**：不复用全局 McpManager 实例与 enable/disable 面（避免互相
  *   污染开关状态，§B.5）；本类持有自己的 McpManager 实例。
- * - **信任运行时联动**（§B.5）：digest 失效 → refcount>0 的运行中 server 立即
- *   停用 + 受影响 running 会话收到系统提醒（trust 是运行时属性，不只是装载时
- *   属性）。提醒经 notify 回调投递（NodeEngine 接 agentRegistry 的
+ * - **内容面运行时联动**（§B.5；2026-09-13 无审批批口径）：**被封禁**（deny-list）的
+ *   plugin ⇒ refcount>0 的运行中 server 立即停用 + 受影响 running 会话收到系统提醒。
+ *   **内容变更（digest 漂移）不再停飞**（判据已放宽，见 [[PluginMcpManager.revalidate]]）。
+ *   提醒经 notify 回调投递（NodeEngine 接 agentRegistry 的
  *   ImmediateInput——排 pendingUserInputs、turn 边界消费，不打断进行中 turn）。
  */
 class PluginMcpManager private (
@@ -33,8 +34,9 @@ class PluginMcpManager private (
 ):
   private val logger = NebflowLogger.forName("nebflow.plugin.mcp")
 
-  /** acquire：为会话注册一组 plugin 的 MCP servers（调用方已过信任门解析；
-    * 此处以 acquire 时点 digest 记账，供 revalidate 对比）。
+  /** acquire：为会话注册一组 plugin 的 MCP servers（调用方已过内容面解析；
+    * 此处以 acquire 时点 digest 记账——**审计用**，2026-09-13 无审批批后不再作为
+    * revalidate 的停用判据）。
     *
     * 返回 Right(grant)：serverIds（allowedSet 前缀来源，AgentCore 扩展消费）。
     * 任一 server 启动失败 → 本批已启动者立即回滚停用 + Left（failNode 语义，§B.5）。
@@ -125,17 +127,23 @@ class PluginMcpManager private (
       }
     yield ()
 
-  /** 信任运行时重验（§B.5 信任联动，周期驱动）：重扫注册表 → 运行中 server 对应
-    * plugin 的当前 trusted digest ≠ acquire 时 digest（或已 untrusted / 被移除）
-    * → 立即停 server + 对持有会话发系统提醒。返回受影响 plugin 名列表。
+  /** 内容面运行时重验（§B.5 信任联动，周期驱动）：重扫注册表 → 运行中 server 对应
+    * plugin **被封禁**（`plugins.revoked` deny-list）或已从注册表移除 → 立即停 server +
+    * 对持有会话发系统提醒。返回受影响 plugin 名列表。
     * 无运行中 server → 不扫描直接返回 Nil。
     *
-    * **令 1 拆面（2026-09-12）·闸 D 的口径（重要，勿误改）**：本判定**只判内容
-    * 信任面**（`d.trust.trusted ∧ digest == digestAtAcquire`）——这正是设计 R4 推荐
-    * (b)/R5 推荐 (b) 要求的形态「内容面变化才停 MCP」。**派发面变更（作者关闭插件）
-    * 在此零动作**：关闭只写 `plugins.dispatch`，内容面 `plugins.trust` 不变 ⇒ 在飞
-    * 节点的工具面不被抽走（作者 14:14 原话「不能影响目前的」）。
-    * 要表达「收回已授予的内容」用 `revoke`（内容面动作，语义未变，会停 MCP）。 */
+    * **判据口径（2026-09-13 无审批批，作者裁定 (ii)，勿误改）**：判据 = **封禁检查**
+    * （`d.trust.trusted` 在「在位即信任」下恒真，唯一取假来源 = `TrustStatus.Blocked`）。
+    * **`d.digest == digestAtAcquire` 那一半已去除**：目录内容变更**不得**停在飞 MCP
+    * （内容面在飞工具面只在下次派发换代——新 spawn 的节点装载新内容）。这正是
+    * 「装了就是信任」的字面落地（内容被替换后不再抖掉正在跑的节点）。
+    * **仍然生效的**：① 被封禁的包 ⇒ 在飞 MCP ≤30s（`GatewayMain` 的 ttlScanner tick）
+    * 内停掉 + 提醒；② 包从注册表消失（目录被删）⇒ 停掉；③ 总闸 `plugins.enabled=false`
+    * 的既有停飞行为（调用方 `NodeEngine.revalidatePluginTrust` 旁路）不回退。
+    * `ServerEntry.digestAtAcquire` 自此**仅作审计记账**（不再参与停用判定）。
+    *
+    * 派发面变更（作者关闭插件）在此**零动作**：关闭只写 `plugins.dispatch`，内容面不变
+    * ⇒ 在飞节点的工具面不被抽走（作者 2026-09-12 14:14 原话「不能影响目前的」）。 */
   def revalidate(
     rescan: IO[List[PluginRegistry.PluginDef]],
     notify: (String, String) => IO[Unit]
@@ -147,11 +155,10 @@ class PluginMcpManager private (
           val current = defs.map(d => d.name -> d).toMap
           val stale = running.toList.flatMap { case (sid, entry) =>
             current.get(entry.pluginName) match
-              case Some(d) if d.trust.trusted && d.digest == entry.digestAtAcquire => Nil
+              case Some(d) if d.trust.trusted => Nil // 内容面可用（在位即信任 ∧ 未封禁）⇒ 在飞照跑
               case other =>
                 val why = other match
-                  case Some(d) if !d.trust.trusted => "plugin fell back to untrusted"
-                  case Some(d) => "plugin directory digest changed since this server started"
+                  case Some(_) => "plugin is blocked (deny-list)"
                   case None => "plugin removed from registry"
                 List((sid, entry, why))
           }
@@ -161,11 +168,12 @@ class PluginMcpManager private (
               _ <- serverRefs.update(m => m - sid)
               holders <- sessionRefs.get.map(_.filter { case (_, set) => set(sid) }.keySet)
               _ <- holders.toList.traverse_ { s =>
-                notify(s, s"[plugin-trust] Plugin '${entry.pluginName}' failed trust revalidation ($why) — " +
-                  "its MCP server has been stopped (trust is a runtime property, §B.5). Re-approve the plugin if intended; " +
-                  "this session's tool calls to it will now fail.")
+                notify(s, s"[plugin-block] Plugin '${entry.pluginName}' $why — " +
+                  "its MCP server has been stopped. " +
+                  s"Unblock it if intended (Plugin panel, REST POST /api/plugins/${entry.pluginName}/unblock, " +
+                  s"or CLI 'nebflow plugin unblock ${entry.pluginName}'); this session's tool calls to it will now fail.")
               }
-              _ <- logger.warn(s"Plugin '${entry.pluginName}' MCP '$sid' stopped by trust revalidation: $why")
+              _ <- logger.warn(s"Plugin '${entry.pluginName}' MCP '$sid' stopped by content-face revalidation: $why")
             yield entry.pluginName
           }
         }
@@ -190,6 +198,7 @@ object PluginMcpManager:
   private final case class ServerEntry(
     pluginName: String,
     holders: Set[String],
+    /** acquire 时点 digest（**审计记账**；2026-09-13 无审批批起不参与停用判定）。 */
     digestAtAcquire: String
   )
 

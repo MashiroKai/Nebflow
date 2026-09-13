@@ -91,12 +91,13 @@ class DispatcherContextCatalogSpec extends CatsEffectSuite:
       """"description":"空白回落描述句","capability":"   "}""")
   writeSkill(capBlank, "blank-skill")
 
-  // untrusted-plugin：skill 齐全但从不审批 → 目录不得出现
-  private val untrusted = pluginDir("untrusted-plugin")
-  writeManifest(untrusted,
-    s"""{"$$schema":"${PluginRegistry.CanonicalSchema}","name":"untrusted-plugin","version":"1.0.0",""" +
-      """"description":"未信任插件描述（不应出现）"}""")
-  writeSkill(untrusted, "never")
+  // blocked-plugin：skill 齐全 + deny-list 封禁 → 目录不得出现（无审批批：受信已不再需要
+  // 审批记录，唯一的「点名不可用」手段 = 封禁）
+  private val blockedPkg = pluginDir("blocked-plugin")
+  writeManifest(blockedPkg,
+    s"""{"$$schema":"${PluginRegistry.CanonicalSchema}","name":"blocked-plugin","version":"1.0.0",""" +
+      """"description":"被封禁插件描述（不应出现）"}""")
+  writeSkill(blockedPkg, "never")
 
   // model-presets.json：含 description 与不含 description 各一
   private def writePresets(): Unit =
@@ -142,11 +143,32 @@ class DispatcherContextCatalogSpec extends CatsEffectSuite:
       assert(rendered.contains("- cap-blank: 空白回落描述句"), s"blank capability tolerated: $rendered")
   }
 
-  test("过滤链同源：untrusted 不出现") {
+  test("过滤链同源：封禁包不出现（无审批批：唯一点名阻止手段 = deny-list）") {
+    for
+      _ <- approveAll
+      _ <- PluginBlockPolicy.block("blocked-plugin", "spec", "spec")
+      rendered <- DispatcherContextCatalog.render()
+      item <- PluginRegistry.listWithRejected().map(_._1.find(_.name == "blocked-plugin").map(PluginRegistry.approvalManifest))
+      _ <- PluginBlockPolicy.unblock("blocked-plugin", "spec")
+      after <- DispatcherContextCatalog.render()
+    yield
+      assert(!rendered.contains("blocked-plugin"), "a blocked plugin must not appear")
+      assert(rendered.contains("另有 1 个插件未载入（已封禁 1）"),
+        s"the blocked package must be counted in the tail note: $rendered")
+      assert(item.exists(_.hcursor.downField("blocked").as[Boolean].getOrElse(false)),
+        "the blocked flag must be visible in the approval manifest")
+      assert(after.contains("blocked-plugin"), s"unblock must restore the catalog line: $after")
+  }
+
+  test("在位即信任：无审批记录包出现在目录（default-deny 已取消的正面断言）") {
     for
       _ <- approveAll
       rendered <- DispatcherContextCatalog.render()
-    yield assert(!rendered.contains("untrusted-plugin"), "untrusted plugin must not appear")
+    yield
+      // cap-plugin / desc-fallback / cap-blank 均已 approve，blocked-plugin 未 approve
+      // 但**未被封禁** ⇒ 在位即信任 ⇒ 必须出现在目录里
+      assert(rendered.contains("- blocked-plugin: 被封禁插件描述（不应出现）"),
+        s"a record-less (but unblocked) package must render: $rendered")
   }
 
   test("调试渲染收敛：PluginRegistry.renderCatalog 与注入段插件部分同字节") {

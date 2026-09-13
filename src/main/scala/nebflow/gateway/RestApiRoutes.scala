@@ -2274,8 +2274,11 @@ class RestApiRoutes(
         Ok(Json.obj("catalog" -> catalog.asJson))
       }
 
-    // POST /plugins/:name/approve — 审批：当前目录 digest 写入 trust 表（下个
-    // spawn/分配即时生效）。名字段白名单校验（拒绝路径穿越形态）。
+    // POST /plugins/:name/approve — **兼容保留**（无审批批 2026-09-13 起 UI 主线不再调用）：
+    // 写一条审批审计记录（digest + 逐文件快照）到 `plugins.trust`。⚠️ 该记录**不再决定
+    // 装载**（在位即信任），但它是 seed 覆盖的**仲裁基准**（`trustRecordDigest`）⇒ 手动
+    // approve 一个用户改过的默认集包会让下次 boot 的种子镜像覆盖视为「干净」。
+    // 名字段白名单校验（拒绝路径穿越形态）。
     case POST -> Root / "plugins" / name / "approve" =>
       if !isValidAgentName(name) then BadRequest(Json.obj("error" -> "Invalid plugin name".asJson))
       else
@@ -2284,16 +2287,36 @@ class RestApiRoutes(
           case Left(err) => BadRequest(Json.obj("error" -> err.asJson))
         }
 
-    // POST /plugins/:name/revoke — 撤审：trust 表条目删除 → 回落 untrusted
-    // （默认拒绝）；运行中 plugin MCP 在下个信任重验 tick 停用（§B.5）。
-    // **令 1（2026-09-12）语义边界**：本端点 = **内容信任面**动作（撤回已授予的
-    // 内容 ⇒ 会停用在飞 MCP），**保留原义不改**。作者的「关闭插件」动作改走下方
-    // `/enable|/disable`（派发面）——两者在面板上必须视觉可分（设计 R9-A 代价①）。
-    case POST -> Root / "plugins" / name / "revoke" =>
+    // POST /plugins/:name/revoke — **封禁**（deny-list；2026-09-13 无审批批语义变更）：
+    // 写 `plugins.revoked.<name> = {at, by, reason}`（**独立命名空间**，不被任何 approve
+    // 抹掉）⇒ ① 不进分发器目录 ② 闸 A/B/C/E 拒（resolve Left）③ 在飞 MCP 下个 30s
+    // 重验 tick 停掉。路径名保留（零迁移），语义从「撤回审批」翻转为「点名封禁」。
+    // body（可选）：{"reason": "…"}。**解封**走下方 /unblock。
+    case req @ POST -> Root / "plugins" / name / "revoke" =>
       if !isValidAgentName(name) then BadRequest(Json.obj("error" -> "Invalid plugin name".asJson))
       else
-        nebflow.core.plugin.PluginRegistry.revoke(name).flatMap {
-          case Right(msg) => Ok(Json.obj("ok" -> true.asJson, "message" -> msg.asJson))
+        req.as[Json].attempt.map(_.getOrElse(Json.obj())).flatMap { body =>
+          val reason = body.hcursor.downField("reason").as[String].toOption.getOrElse("")
+          nebflow.core.plugin.PluginBlockPolicy.block(name, reason, "panel/rest").flatMap {
+            case Right(_) =>
+              Ok(Json.obj("ok" -> true.asJson,
+                "message" -> (s"Plugin '$name' is now BLOCKED (deny-list) — it leaves the catalog, is refused on " +
+                  "new dispatches and at node start, and its in-flight MCP servers are stopped within 30s. " +
+                  s"Unblock with POST /api/plugins/$name/unblock or CLI 'nebflow plugin unblock $name'.").asJson))
+            case Left(err) => BadRequest(Json.obj("error" -> err.asJson))
+          }
+        }
+
+    // POST /plugins/:name/unblock — **解封**（2026-09-13 新增）：删 `plugins.revoked.<name>`
+    // ⇒ 回落「在位即信任」（目录/派发/装载恢复；已停的在飞 MCP 需重新派发才回来）。
+    case POST -> Root / "plugins" / name / "unblock" =>
+      if !isValidAgentName(name) then BadRequest(Json.obj("error" -> "Invalid plugin name".asJson))
+      else
+        nebflow.core.plugin.PluginBlockPolicy.unblock(name, "panel/rest").flatMap {
+          case Right(_) =>
+            Ok(Json.obj("ok" -> true.asJson,
+              "message" -> (s"Plugin '$name' unblocked — back to presence trust: it re-enters the catalog and is " +
+                "available for new dispatches on the next scan.").asJson))
           case Left(err) => BadRequest(Json.obj("error" -> err.asJson))
         }
 

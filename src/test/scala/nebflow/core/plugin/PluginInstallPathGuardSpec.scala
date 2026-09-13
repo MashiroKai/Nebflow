@@ -130,7 +130,8 @@ class PluginInstallPathGuardSpec extends FunSuite:
     val res = PluginRegistry.installFrom(rel).unsafeRunSync()
     println(s"""[guard-spec] installFrom("$rel") [正常相对子目录] → ${res.fold(identity, identity)}""")
     assert(res.isRight, s"正常相对子目录必须照旧安装，got: $res")
-    assert(res.toOption.exists(_.contains("untrusted")), "落盘语义不变（untrusted 待审）")
+    assert(res.toOption.exists(_.contains("presence = trust")),
+      "落盘语义：在位即信任（无审批待审步骤）——文案随无审批批更新，落盘行为不变")
     assert(os.exists(installedDir("rel-guard-plugin") / "plugin.json"), "落盘到 plugins/<manifest name>")
     assertEquals(treeAsText(installedDir("rel-guard-plugin")), treeAsText(src), "整目录字节一致（拷贝语义不变）")
 
