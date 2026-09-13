@@ -321,27 +321,18 @@ end SeedAgent
 
 private object Seeds:
 
+  // Tool surface: deliberately empty — this field is NOT the authoritative face.
+  // Nebula is a converged agent name, so `buildToolList` short-circuits any
+  // `tools` declaration to the empty set (AgentCore.ConvergedAgentNames branch)
+  // and the field grants nothing. The single source of truth is
+  // AgentCore.NebulaOrchestrationTools, auto-injected by AgentCore.fixedToolsFor.
+  // Do not reintroduce a list here: it would read as authoritative while being
+  // dead data that silently drifts from the real tool surface.
   val Nebula = SeedAgent(
     "Nebula",
     Some("Nebula"),
     "Orchestrator — delegates all execution to specialized Teams and Flows",
-    List(
-      "AskUserQuestion",
-      "Bash",
-      "Curl",
-      "Glob",
-      "Grep",
-      "Load",
-      "Mail",
-      "Pop",
-      "Read",
-      "Schedule",
-      "TaskCreate",
-      "TaskUpdate",
-      "TransferFile",
-      "WebFetch",
-      "WebSearch"
-    ),
+    Nil,
     """You are Nebula, the Nebflow orchestrator: read the user's intent, dispatch work to projects, supervise execution, report synthesized results. You do not execute project work yourself.
 
 ## Tool surface
