@@ -27,7 +27,8 @@ import scala.collection.concurrent.TrieMap
  * LlmRequest 断言首条消息注入 + 工具清单）：
  * - §B.8-1：分配后 node 首条消息含 <injected-plugins> 全文 + ${SKILL_DIR} 已替换
  * - §B.4-③：plugin MCP server 启动 + 工具进会话清单；终态回收（全终态汇合点）
- * - §B.8-3 spawn 侧：审批后改文件 → 分配节点启动即 failed（PLUGIN_UNTRUSTED）
+ * - **内容面（无审批批 2026-09-13）**：内容变更/无记录**不拦装载**（节点照常启动，
+ *   装载的是新内容）；**封禁**（deny-list）在 0 spawn 校验即拒（PLUGIN_BLOCKED）
  * - H-3①：NodePayload/节点模型带 plugins 字段
  * - §G.2：flag off → NodeEdit 忽略 plugins（不校验不存储）、不注入
  */
@@ -107,11 +108,12 @@ class NodePluginChainSpec extends CatsEffectSuite:
         "type" -> "stdio".asJson,
         "command" -> "python3".asJson, "args" -> List(echoServerFile.toString).asJson))).noSpaces)
 
-  // never-approved：本 spec 任何测试都不审批——信任门校验测试的顺序无关 fixture
+  // never-approved：本 spec 任何测试都不审批——**在位即信任**下它是正常可用包
+  // （无记录 ⇒ 首扫即受信）；「封禁」用例在此 fixture 上叠加 deny-list 验证。
   private val neverApprovedDir = tempRoot / "plugins" / "never-approved"
   os.makeDir.all(neverApprovedDir / "skills" / "s")
   os.write.over(neverApprovedDir / "plugin.json",
-    s"""{"$$schema":"${PluginRegistry.CanonicalSchema}","name":"never-approved","version":"1.0.0","description":"default-deny fixture"}""")
+    s"""{"$$schema":"${PluginRegistry.CanonicalSchema}","name":"never-approved","version":"1.0.0","description":"no-record fixture"}""")
   os.write.over(neverApprovedDir / "skills" / "s" / "SKILL.md",
     """---
       |name: s
@@ -320,9 +322,9 @@ class NodePluginChainSpec extends CatsEffectSuite:
     }
   }
 
-  // ── §B.8-3（spawn 侧）：审批后改文件 → 分配节点启动即失败 ───────
+  // ── 内容面（无审批批）：内容变更不拦装载 ───────────────────────
 
-  test("§B.8-3 spawn 侧: 分配校验通过后插件被改 → 节点启动即 failed（旧 digest 拒用）") {
+  test("内容变更不拦装载（§B.8-3 语义取消）: 分配后插件被改 → 节点照常启动并装载**新**内容") {
     val capture = TrieMap[String, LlmRequest]()
     val ws = tempRoot / "ws-stale"
     os.makeDir.all(ws)
@@ -347,30 +349,38 @@ class NodePluginChainSpec extends CatsEffectSuite:
           "in" -> Json.arr(Json.fromString(aId)), "out" -> Json.fromString("Nebula"),
           "plugins" -> Json.arr(Json.fromString("inject-skill"))), ctx)
         _ = assert(b.isRight, s"downstream B create failed: $b")
-        // 校验通过后再改插件（digest 失效——§B.8-3「升级即重审」）
+        // 校验通过后再改插件（旧语义：digest 失效 ⇒ 拒启动；新语义：**不拦**，装载新内容）
         _ <- IO.sleep(20.millis)
-        _ <- IO.blocking(os.write.append(injectSkillDir / "skills" / "howto" / "SKILL.md", "\ntampered\n"))
-        // A 完成 → 投递 → barrier 归零 → B 启动 → spawn 期 resolve 失败 → failNode
+        _ <- IO.blocking(os.write.append(injectSkillDir / "skills" / "howto" / "SKILL.md", "\ntampered-live-content\n"))
+        // A 完成 → 投递 → barrier 归零 → B 启动（内容面恒可用）→ 完成
         _ <- waitUntil(30.seconds)(rt.store.getNode(aId).map(
           _.exists(_.status == NodeLifecycle.Completed)))
         _ <- waitUntil(30.seconds)(rt.store.snapshot.map(
-          _.nodes.values.find(_.name == "B-stale").exists(_.status == NodeLifecycle.Failed)))
+          _.nodes.values.find(_.name == "B-stale").exists(_.status == NodeLifecycle.Completed)))
         bNode <- rt.store.snapshot.map(_.nodes.values.find(_.name == "B-stale")).flatMap {
           case Some(n) => IO.pure(n)
           case None => IO.raiseError(new RuntimeException("B-stale vanished"))
         }
+        catalog <- PluginRegistry.renderCatalog()
+        health <- PluginRegistry.healthSummary()
         _ <- system.stopAll.handleErrorWith(_ => IO.unit)
-      yield bNode
-    program.map { bNode =>
-      assertEquals(bNode.status, NodeLifecycle.Failed, "allocation with stale digest must fail the node (no silent degradation)")
-      val result = bNode.result.getOrElse("")
-      assert(result.contains("PLUGIN_UNTRUSTED"), s"failure must carry the trust-gate guidance, got: $result")
+      yield (bNode, capture.values.toList, catalog, health)
+    program.map { case (bNode, reqs, catalog, health) =>
+      assertEquals(bNode.status, NodeLifecycle.Completed,
+        "content change must NOT gate loading any more (tampered package keeps working)")
+      val injected = reqs.exists(r =>
+        r.messages.exists(m => m.role == nebflow.shared.MessageRole.User && m.textContent.contains("tampered-live-content")))
+      assert(injected, "the node must load the NEW content (the change is visible to the model, not intercepted)")
+      assert(catalog.contains("- inject-skill:"), s"content-changed package stays in the catalog: $catalog")
+      assert(catalog.contains("内容自审批记录后已变更"), s"catalog must note the content change: $catalog")
+      assert(health.exists(_.contains("[content-changed] inject-skill:")),
+        s"health summary must note the content change (non-blocking): $health")
     }
   }
 
-  // ── NodeEdit 校验面（§B.4 第 3 步）────────────────────────
+  // ── NodeEdit 校验面（§B.4 第 3 步；无审批批口径）────────────────────────
 
-  test("NodeEdit 校验: 不存在的插件 → PLUGIN_NOT_FOUND；未审批插件 → PLUGIN_UNTRUSTED（0 spawn 拒绝）") {
+  test("NodeEdit 校验: 不存在的插件 → PLUGIN_NOT_FOUND；无记录插件 → 受理；被封禁 → PLUGIN_BLOCKED（0 spawn 拒绝）") {
     val capture = TrieMap[String, LlmRequest]()
     val ws = tempRoot / "ws-validate"
     os.makeDir.all(ws)
@@ -380,22 +390,38 @@ class NodePluginChainSpec extends CatsEffectSuite:
         res <- mkResources(system, tempRoot, new RecordingLlm(capture))
         rt <- mountProject("plc-val", ws, system, res)
         ctx = mkCtx(res, system, ws.toString)
+        _ <- IO.blocking(os.write.over(tempRoot / "nebflow.json", "{}"))
+        _ <- IO(PluginRegistry.invalidateCache())
         missing <- nodeEdit(nodeInput("plc-val", "v1", "description" -> Json.fromString("test node purpose"),
           "task" -> Json.fromString("t"), "out" -> Json.fromString("Nebula"),
           "plugins" -> Json.arr(Json.fromString("no-such-plugin"))), ctx)
-        untrusted <- nodeEdit(nodeInput("plc-val", "v2", "description" -> Json.fromString("test node purpose"),
+        // 无审批记录 ⇒ 在位即信任 ⇒ 受理（default-deny 已取消的负面断言）
+        recordless <- nodeEdit(nodeInput("plc-val", "v2", "description" -> Json.fromString("test node purpose"),
           "task" -> Json.fromString("t"), "out" -> Json.fromString("Nebula"),
           "plugins" -> Json.arr(Json.fromString("never-approved"))), ctx)
+        _ <- PluginBlockPolicy.block("never-approved", "spec: deny-list", "spec")
+        blocked <- nodeEdit(nodeInput("plc-val", "v3", "description" -> Json.fromString("test node purpose"),
+          "task" -> Json.fromString("t"), "out" -> Json.fromString("Nebula"),
+          "plugins" -> Json.arr(Json.fromString("never-approved"))), ctx)
+        _ <- PluginBlockPolicy.unblock("never-approved", "spec")
+        after <- NodeEditTool.call(nodeInput("plc-val", "v4", "description" -> Json.fromString("test node purpose"),
+          "task" -> Json.fromString("t-after-unblock"), "out" -> Json.fromString("Nebula"),
+          "plugins" -> Json.arr(Json.fromString("never-approved"))).asObject.get, ctx).map(_.left.map(_.message))
         _ <- system.stopAll.handleErrorWith(_ => IO.unit)
-      yield (missing, untrusted)
-    program.map { case (missing, untrusted) =>
+      yield (missing, recordless, blocked, after)
+    program.map { case (missing, recordless, blocked, after) =>
       assert(missing.isLeft, s"missing plugin must be refused, got: $missing")
       val mErr = missing.swap.toOption.getOrElse("")
       assert(mErr.contains("PLUGIN_NOT_FOUND"), s"missing plugin error code expected, got: $mErr")
-      assert(untrusted.isLeft, s"untrusted plugin must be refused, got: $untrusted")
-      val uErr = untrusted.swap.toOption.getOrElse("")
-      assert(uErr.contains("PLUGIN_UNTRUSTED") && uErr.contains("approve"),
-        s"untrusted error must carry gate code + guidance, got: $uErr")
+      assert(recordless.isRight,
+        s"a record-less package must be accepted (presence = trust), got: ${recordless.swap.toOption}")
+      assert(blocked.isLeft, s"a blocked plugin must be refused, got: $blocked")
+      val uErr = blocked.swap.toOption.getOrElse("")
+      assert(uErr.contains("PLUGIN_BLOCKED") && uErr.contains("unblock"),
+        s"blocked error must carry the deny-list code + an actionable hint, got: $uErr")
+      assert(!uErr.contains("default-deny") && !uErr.contains("never approved"),
+        s"the retired default-deny wording must be gone, got: $uErr")
+      assert(after.isRight, s"unblock must restore acceptance, got: ${after.swap.toOption}")
     }
   }
 

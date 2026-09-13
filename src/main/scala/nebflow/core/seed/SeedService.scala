@@ -275,14 +275,17 @@ object SeedService:
           os.write.over(target, text)
         }
       }
-      // 信任（digest 与目录内容天然一致——approve 复用同一 computeDigest）
+      // 审批记录（digest 与目录内容天然一致——approve 复用同一 computeDigest）。
+      // 无审批批 2026-09-13：记录**不再决定装载**（在位即信任），但它是 seed 覆盖的
+      // 仲裁基准（`trustRecordDigest`）⇒ 安装路径必须继续写它（否则该包永远落入
+      // `reconcilePlugin` 的「无基准 ⇒ 保守不覆盖」分支，种子更新到不了它）。
       PluginRegistry.approve(name).unsafeRunSync() match
         case Right(_) =>
-          logger.infoSync(s"Seed: plugin '$name' $outcome + approved")
+          logger.infoSync(s"Seed: plugin '$name' $outcome + trust record written")
           true
         case Left(err) =>
-          // 装上了但 approve 失败 → 该插件落为 untrusted（默认拒绝），其余照常
-          logger.warnSync(s"Seed: plugin '$name' $outcome but approve failed: $err")
+          // 装上了但记录写失败 → 该包照常可用（在位即信任），但缺仲裁基准 ⇒ 种子不会覆盖它
+          logger.warnSync(s"Seed: plugin '$name' $outcome but the trust record write failed: $err")
           true
 
   /** 项目条目：按 ProjectStore.create 现行产物搭 general 脚手架（project.json +
@@ -359,8 +362,9 @@ object SeedService:
           PluginRegistry.computeDigest(targetDir) match
             case Right((runtimeDigest, _)) if runtimeDigest == seedDigest => () // 已一致
             case Right((runtimeDigest, _)) =>
-              // 仲裁基准 = 信任记录落库 digest（approve 时刻 fingerprint，目录漂移不影响记录本身；
-              // TrustStatus 现算漂移即 untrusted，取不到基准，不适用）
+              // 仲裁基准 = 信任记录落库 digest（approve 时刻 fingerprint，目录漂移不影响记录
+              // 本身）。无审批批 2026-09-13：记录不再决定装载（在位即信任），故**只能**从记录表
+              // 取基准——现算 TrustStatus 恒受信，取不到「用户是否改过」这一信息。
               PluginRegistry.trustRecordDigest(name) match
                 case Some(td) if td == runtimeDigest =>
                   // 干净运行时（自 approve 后零漂移）→ 种子镜像覆盖 + 自动重审（零用户操作）
@@ -373,7 +377,7 @@ object SeedService:
                   logger.warnSync(
                     s"Seed: plugin '$name' differs from seed (seed ${seedDigest.take(12)}…) — runtime is user-modified (digest ${runtimeDigest.take(12)}… ≠ trusted ${td.take(12)}…), keeping user version")
                 case None =>
-                  // 无信任记录（untrusted/未审）→ 无仲裁基准，保守不覆盖
+                  // 无信任记录（从未 approve）→ 无仲裁基准，保守不覆盖
                   logger.warnSync(
                     s"Seed: plugin '$name' differs from seed (seed ${seedDigest.take(12)}… vs runtime ${runtimeDigest.take(12)}…) and has no trust record — keeping runtime version")
             case Left(err) =>

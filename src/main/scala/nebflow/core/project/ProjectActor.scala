@@ -464,8 +464,10 @@ object ProjectActor:
     }
 
   /** Plugin Catalog 段（阶段 2b §B.4 第 2 步）：分发器 prompt 组装的注入源。
-    * 受信 plugin 目录（untrusted 不出现，§B.3）；flag 关 / 盘上无插件 → ""。可见性批
-    * （2026-09-10）：段尾缺席注记随段给出（装载失败/信任未批准/digest 漂移计数），
+    * 受信 plugin 目录（无审批批 2026-09-13 后在位即受信；未受信的唯一形态 = 已封禁，
+    * deny-list 命中者不出现，§B.3）；flag 关 / 盘上无插件 → ""。可见性批
+    * （2026-09-10）：段尾缺席注记随段给出（装载失败 / 已封禁计数；「信任未批准」「digest
+    * 漂移」两类随 default-deny 一起消亡，内容变更另走非拦截可见性注记），
     * 目录缩容时不再静默——口径见 PluginRegistry.renderCatalog。
     * 对齐 skillCatalog order 800 注入先例——用注入目录段而非新增查询工具
     * （分发器单次会话、目录规模小，不多造工具）。

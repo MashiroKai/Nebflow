@@ -1889,8 +1889,9 @@ class NodeEngine(
           failNode(nodeId, s"agent '${node.agent}' not found in global library")
         case Some(entry) =>
           // 阶段 2b Plugins（§B.4 第 4 步，spawn 前执行）：① 解析 node.plugins
-          // （untrusted/不存在/装载非法 → failNode，错误消息列明原因——分配失败是
-          // 节点级失败，不静默降级）；② skill 全文读出 + ${SKILL_DIR} 替换
+          // （不存在/被封禁/装载非法 → failNode，错误消息列明原因——分配失败是
+          // 节点级失败，不静默降级；内容变更**不**拒启动，见 prepareNodePlugins）；
+          // ② skill 全文读出 + ${SKILL_DIR} 替换
           // （SkillService.loadSkill 单点复用）组装 <injected-plugins> 块；
           // ③ MCP server 启动 + 引用记账（PluginMcpManager，启动失败 → failNode）。
           // 三步全部发生在状态翻转（status=Running）之前——失败路径零 running 残留。
@@ -2022,17 +2023,17 @@ class NodeEngine(
 
   /** node.plugins → 可分配能力（§B.4 第 4 步 ①②，feature flag §G.2 开关）：
     * flag off / 无分配 → 空 preparation（旧行为零变化）；解析失败 → Left
-    * （failNode，错误含审批指引）。
+    * （failNode，错误含可行动指引）。
     *
-    * **令 1 拆面（2026-09-12）·闸 B / C / E 的口径（重要，勿误改）**：
-    * 本函数是 spawn / crash-recovery resume / loop 双会话的**装载门**，它判的**只能
-    * 是内容信任面**（`PluginRegistry.resolve` = 「存在 ∧ 装载合法 ∧ 内容未漂移且已
-    * 批准」）。**派发许可面（`PluginDispatchPolicy`）不在此判定** —— 按设计 S2/S3：
-    * 「派发许可的判定点是 NodeEdit 落库时刻，一次性；落库之后对该节点的开关变更
-    * 无效」。作者的关闭动作走派发面（`plugins.dispatch`），内容面（`plugins.trust`）
-    * 不动 ⇒ 本函数对已派发节点**零影响**（在飞节点不被拒启动）。
-    * 内容面之所以必须 live：防「先批准后夹带」（设计 S4a），digest 漂移仍在此拒启动；
-    * 要收回已授予的内容，用 `revoke`（that 是内容面动作，会停用运行中 MCP）。
+    * **闸 B / C / E 的口径（2026-09-13 无审批批更新）**：
+    * 本函数是 spawn / crash-recovery resume / loop 双会话的**装载门**，它判的**只能是
+    * 内容面可用性**（`PluginRegistry.resolve` = 「存在 ∧ 装载合法 ∧ **未被封禁**」）。
+    * 「在位即信任」后这里恒 `Right`——除非包不存在（`PLUGIN_NOT_FOUND`）或被封禁
+    * （`PLUGIN_BLOCKED`）。**内容变更不再拒启动**（digest 漂移降级为非拦截可见性）。
+    * **派发许可面（`PluginDispatchPolicy`）不在此判定** —— 按设计 S2/S3：派发许可的
+    * 判定点是 NodeEdit 落库时刻，一次性；落库之后对该节点的开关变更无效。作者的关闭
+    * 动作走派发面（`plugins.dispatch`），内容面不动 ⇒ 本函数对已派发节点**零影响**。
+    * 要收回已派发的包，用封禁（`POST /api/plugins/:name/revoke`，会停用运行中 MCP）。
     * 闸 A（新派发）在 `NodeTools.dispatchFaceCheck`；闸 D 在 `PluginMcpManager.revalidate`。 */
   private def prepareNodePlugins(node: NodeDef): IO[Either[String, NodeEngine.PluginPreparation]] =
     PluginsConfig.enabled.flatMap {
@@ -2084,10 +2085,13 @@ class NodeEngine(
           case _ => Right(blocks.collect { case Right(b) => b }.mkString("\n\n"))
       }
 
-  /** 信任门运行时重验（§B.5 信任联动，ProjectActor.TtlTick 30s 驱动）：停用
-    * digest 失效的运行中 plugin MCP + 对持有会话发系统提醒。flag off → no-op。
-    * 可见性批（2026-09-10 P1 静默缩容）：重验即插件重扫完成点——同处聚合输出一次
-    * 装载健康摘要（拒载/未批准/digest 漂移清单；干净场景零输出、同状态去重）。 */
+  /** 内容面运行时重验（§B.5 信任联动，ProjectActor.TtlTick 30s 驱动）：停用**被封禁**
+    * （deny-list）或已从注册表移除的运行中 plugin MCP + 对持有会话发系统提醒。
+    * flag off → no-op（总闸 `plugins.enabled=false` 的既有停飞行为不回退）。
+    * 内容变更（digest 漂移）**不停飞**（2026-09-13 无审批批，见
+    * [[PluginMcpManager.revalidate]]）。可见性批（2026-09-10 P1 静默缩容）：重验即插件
+    * 重扫完成点——同处聚合输出一次装载健康摘要（拒载/封禁清单 + 内容变更清单；干净场景
+    * 零输出、同状态去重）。 */
   def revalidatePluginTrust(): IO[Unit] =
     PluginsConfig.enabled.flatMap {
       case false => IO.unit

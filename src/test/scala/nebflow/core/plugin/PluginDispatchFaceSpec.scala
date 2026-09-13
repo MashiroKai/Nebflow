@@ -183,35 +183,42 @@ class PluginDispatchFaceSpec extends CatsEffectSuite:
       }
     go(System.currentTimeMillis() + 30_000L)
 
+  /** fixture 卫生（无审批批）：记录 + **确保未封禁**——封禁写入独立命名空间，前序用例
+    * 留下的 deny-list 不会因 approve 自动消失，须显式解封；`PluginBlockPolicy.unblock`
+    * 对未封禁**不幂等**而是返回 `Left("Plugin '<name>' is not blocked — nothing to unblock")`
+    * （零静默纪律），此处 `.void` 丢弃返回值、该 Left 不作为判据。 */
   private def approveFixture: IO[Unit] =
     PluginRegistry.approve("inject-skill").flatMap {
       case Right(_) => IO.unit
       case Left(e)  => IO.raiseError(new AssertionError(s"fixture approve failed: $e"))
-    }
+    } *> PluginBlockPolicy.unblock("inject-skill", "spec-fixture").void
 
   // ── ① 零迁移 + ⑤ 内容面动作语义未变 ────────────────────────────────
 
-  test("① 零迁移：无 dispatch 记录 ⇒ 有效派发许可 == 内容受信；⑤ approve/revoke 语义未变") {
+  test("① 零迁移：无 dispatch 记录 ⇒ 有效派发许可 == 内容面可用；⑤ 封禁（deny-list）语义") {
     for
-      _ <- approveFixture
+      _ <- approveFixture // = approve + unblock（fixture 卫生：封禁跨用例不残留）
       trusted <- PluginRegistry.contentTrusted("inject-skill")
       eff = PluginDispatchPolicy.effective("inject-skill", trusted)
       catalog <- PluginRegistry.renderCatalog()
-      // ⑤ revoke 仍是内容面动作：撤审 → contentTrusted=false ⇒ 派发也不许可（安全不降级）
-      _ <- PluginRegistry.revoke("inject-skill")
+      // ⑤ 封禁（无审批批 2026-09-13：`/revoke` 语义 = deny-list）⇒ 任何路径都拿不到
+      _ <- PluginBlockPolicy.block("inject-skill", "spec", "spec")
       trustedAfter <- PluginRegistry.contentTrusted("inject-skill")
       effAfter = PluginDispatchPolicy.effective("inject-skill", trustedAfter)
       catalogAfter <- PluginRegistry.renderCatalog()
       real <- PluginRegistry.resolve("inject-skill")
+      _ <- PluginBlockPolicy.unblock("inject-skill", "spec")
+      restored <- PluginRegistry.contentTrusted("inject-skill")
     yield
-      assert(trusted, "fixture 应已受信")
-      assert(eff, "无 dispatch 记录时必须跟随内容信任面（零迁移：16 个现存包行为逐字不变）")
-      assert(catalog.contains("- inject-skill:"), "受信且未被关闭 ⇒ 目录行必须出现")
+      assert(trusted, "fixture 内容面可用")
+      assert(eff, "无 dispatch 记录时必须跟随内容面（零迁移：现存包行为逐字不变）")
+      assert(catalog.contains("- inject-skill:"), "内容面可用且未被关闭 ⇒ 目录行必须出现")
       assert(!catalog.contains("已关闭·禁派发"), "无关闭项时不得出现关闭注记（零字节变化）")
-      assert(!trustedAfter, "revoke 仍是内容面动作（撤回内容信任）")
-      assert(!effAfter, "内容未受信 ⇒ 任何路径都拿不到（安全不降级 S4a）")
-      assert(!catalogAfter.contains("- inject-skill:"), "内容未受信 ⇒ 目录行消失（既有行为未变）")
-      assert(real.isLeft, "revoke 后 resolve 必须 Left（闸 B/C/E/D 的内容面判定不变）")
+      assert(!trustedAfter, "封禁后内容面不可用（deny-list）")
+      assert(!effAfter, "内容面不可用 ⇒ 任何路径都拿不到（安全不降级）")
+      assert(!catalogAfter.contains("- inject-skill:"), "封禁 ⇒ 目录行消失")
+      assert(real.isLeft, "封禁后 resolve 必须 Left（闸 B/C/E 的内容面判定）")
+      assert(restored, "解封后回落「在位即信任」")
   }
 
   // ── ② 关闭 ⇒ 未来派发被拒 + 目录点名；内容面不受影响 ──────────────────

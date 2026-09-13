@@ -3,7 +3,7 @@ package nebflow.service
 import cats.effect.unsafe.implicits.global
 import munit.FunSuite
 import nebflow.core.PathUtil
-import nebflow.core.plugin.PluginRegistry
+import nebflow.core.plugin.{PluginBlockPolicy, PluginRegistry}
 import nebflow.core.seed.SeedService
 import nebflow.llm.{Config, NebflowServiceConfig, ProviderConfig}
 
@@ -155,18 +155,24 @@ class ConfigTrustPersistSpec extends FunSuite:
       "manually approved plugin must still be trusted after restart")
     assert(os.read(configPath).contains("manual-a"), "trust record must be on disk after restart")
 
-  test("user manual revoke persists across restart (still untrusted)"):
+  test("user manual block persists across restart (still blocked; audit record untouched)"):
     PluginRegistry.invalidateCache()
     mkPlugin("manual-b")
-    assert(PluginRegistry.approve("manual-b").unsafeRunSync().isRight, "approve must succeed")
-    val rv = PluginRegistry.revoke("manual-b").unsafeRunSync()
-    assert(rv.isRight, s"manual revoke must succeed: $rv")
-    assert(!os.read(configPath).contains("manual-b"), "trust record must be gone after revoke (on disk)")
-    // 重启加载路径不再触发恢复，revoke 状态保持
+    assert(PluginRegistry.approve("manual-b").unsafeRunSync().isRight, "audit record write must succeed")
+    val rv = PluginBlockPolicy.block("manual-b", "spec: deny-list persistence", "spec").unsafeRunSync()
+    assert(rv.isRight, s"manual block must succeed: $rv")
+    assert(os.read(configPath).contains("manual-b"), "audit record must stay on disk (seed-reconcile baseline)")
+    assert(os.read(configPath).contains("revoked"), "block record must be on disk (its own namespace)")
+    // 重启加载路径不再触发恢复，封禁状态保持
     simulateRestart()
     PluginRegistry.invalidateCache()
     assert(PluginRegistry.resolve("manual-b").unsafeRunSync().isLeft,
-      "revoked plugin must stay untrusted after restart")
-    assert(!os.read(configPath).contains("manual-b"), "revoked trust record must NOT reappear after restart")
+      "blocked plugin must stay blocked after restart")
+    assert(os.read(configPath).contains("revoked"), "the deny-list must survive the restart")
+    // 解封后回到「在位即信任」
+    assert(PluginBlockPolicy.unblock("manual-b", "spec").unsafeRunSync().isRight, "unblock must succeed")
+    PluginRegistry.invalidateCache()
+    assert(PluginRegistry.resolve("manual-b").unsafeRunSync().isRight,
+      "unblocked plugin must be usable again (presence = trust)")
 
 end ConfigTrustPersistSpec
