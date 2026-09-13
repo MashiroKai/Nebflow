@@ -17,10 +17,12 @@ import nebflow.shared.Defaults
  * server listen。
  *
  * 两段分工：
- *  - 快段（每项目串行、同步）：snapshot → status==Running 候选 → 逐节点
- *    NodeEngine.bootRecoveryClaim 三分类认领（(a)/(b) 翻 Pending 入队 / (c) failNode）
- *    → 有动作则项目级汇总通知恰一条（裁定④：TriggerDispatcher 通道直发，幂等 =
- *    「每 boot 每项目至多一条」结构性保证——boot 只发生一次，单点发送无记账）。
+ *  - 快段（每项目串行、同步）：snapshot → status==Running-**或 interrupted** 候选 →
+ *    逐节点 NodeEngine.bootRecoveryClaim 三分类认领（(a)/(b) 翻 Pending 入队 /
+ *    (c) failNode）→ 有动作则项目级汇总通知恰一条（裁定④：TriggerDispatcher 通道直发，
+ *    幂等 =「每 boot 每项目至多一条」结构性保证——boot 只发生一次，单点发送无记账）。
+ *    （interrupted = 优雅关机钩子翻态的非终态，中断恢复语义批 2026-09-13 spec §2.4
+ *    ——与 kill -9 的 Running 残留同链续跑，零新机制。）
  *  - 慢段（fork）：(a)/(b) 节点逐个 NodeEngine.bootRecoveryStart（startNode(resume)
  *    复用 runWithAgent/runLoopNode 全链，R8 禁手写 spawn）；RecoveryConcurrency 信号
  *    量（默认 3，裁定④）——节点会话终态才释放槽位，大项目 N 节点恢复的 LLM 洪峰护栏。
@@ -61,8 +63,16 @@ object ProjectCrashRecovery:
     val notify = trigger.getOrElse(DispatchNotify.defaultTrigger(rt.project.name, rt.engine.rootSessionId))
     for
       // ── 快段：逐节点分类认领（节点级 handleErrorWith——单节点异常不断项目）──
+      // 资格判据扩展（中断恢复语义批 2026-09-13，spec §2.4 #1）：Running ∪ Interrupted
+      // ——kill -9 现场（Running 残留）+ 优雅关机现场（interrupted）同一认领链。
+      // 回滚（spec §2.7）：`Defaults.ShutdownInterruptEnabled=false` ⇒ 资格集逐字回到
+      // 本批前的「只认 Running」（残留 interrupted 由人工 NodeEdit 处置，见批 R2）。
       snap <- rt.store.snapshot
-      candidates = snap.nodes.values.filter(_.status == NodeLifecycle.Running).toList
+      candidates = snap.nodes.values
+        .filter(n =>
+          n.status == NodeLifecycle.Running ||
+            (Defaults.ShutdownInterruptEnabled && n.status == NodeLifecycle.Interrupted))
+        .toList
       outcomes: List[(String, Option[Either[String, NodeEngine.ResumeContext]])] <- candidates.traverse { n =>
         rt.engine.bootRecoveryClaim(n).map(out => (n.id, out))
           .handleErrorWith(e =>

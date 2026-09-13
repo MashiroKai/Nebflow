@@ -16,7 +16,16 @@ import io.circe.syntax.*
   * blocked（20260902 反馈重入设计 §1.1）：turn 正常结束但节点声明无法继续——
   * 停止传播 + 触发重入的终态；永不过期（ttlExpireAt=None，待办语义 §1.4）。
   * hold 机制已于 2026-09-06 提案 A 彻底移除（作者拍板）：节点完成一律走
-  * blocked→gate→completed 原路径——「完成即投递 + 事后回看」，不设人工闸门。 */
+  * blocked→gate→completed 原路径——「完成即投递 + 事后回看」，不设人工闸门。
+  *
+  * interrupted（中断恢复语义批 2026-09-13，spec
+  * `20260908_interrupt-recovery-semantics.md` §2.2，作者裁定采纳方案 A）：
+  * **非终态**的「休眠」值——优雅关机（SIGINT/SIGTERM）钩子把全部 Running 节点
+  * CAS 翻成本值（唯一写入口，见 `GracefulInterruptHook`）：宕机窗口内 Flow Map
+  * 不说谎（无进程却有 Running = 说谎），boot sweep 认领续跑（资格集 Running ∪
+  * Interrupted），`crashRecovery=false` 降级时可见可人工 `NodeEdit` 重跑。
+  * 不变量（§2.2 逐条）：不入 `Terminal`（永不自动归档——无 TTL 写点）；watchdog
+  * /settle 回扫/reap/补投扫描/DispatchNotify 双 guard 结构性不触碰；零失败通知。 */
 object NodeLifecycle:
   val Wiring = "wiring"
   val Pending = "pending"
@@ -25,11 +34,13 @@ object NodeLifecycle:
   val Failed = "failed"
   val Cancelled = "cancelled"
   val Blocked = "blocked"
+  /** 优雅关机中断（非终态，「休眠」——见 object 头注）。 */
+  val Interrupted = "interrupted"
 
   val Terminal: Set[String] = Set(Completed, Failed, Cancelled, Blocked)
 
   /** 全部合法生命周期值（NodeList status 过滤枚举校验单点，裁定⑤a 20260907）。 */
-  val All: Set[String] = Set(Wiring, Pending, Running, Completed, Failed, Cancelled, Blocked)
+  val All: Set[String] = Set(Wiring, Pending, Running, Interrupted, Completed, Failed, Cancelled, Blocked)
 
 /** 节点角色（nrloop 一期 2026-09-12；设计正本
   * `20260911_213805_node-report-per-node-type-and-loop-routing-plan__chain-n-8fc83bbe.md`

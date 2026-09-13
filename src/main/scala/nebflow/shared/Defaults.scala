@@ -485,6 +485,37 @@ object Defaults:
   def CrashRecoveryConcurrency: Int =
     sys.props.getOrElse("nebflow.crashRecovery.concurrency", "3").toInt
 
+  // ---- 优雅关机 interrupted 非终态（中断恢复语义批 2026-09-13，spec
+  //      `20260908_interrupt-recovery-semantics.md` §2.3/§2.7，作者裁定方案 A）----
+
+  /**
+   * 优雅关机中断回滚总开关（spec §2.7）：默认 true——SIGINT/SIGTERM 单钩子
+   * （`GracefulInterruptHook`）按序执行「置 draining → 全部 Running 逐节点 CAS 翻
+   * interrupted → abort 在飞 LLM」，`failNode`/`autoFailDeadRunning` 的 draining
+   * 守卫拦掉 abort 诱发的失败链，boot sweep 资格集含 Interrupted 自动续跑。
+   *
+   * false = **完全回本批前现状（逐字节）**：无钩子翻态（只有原样 abort 在飞 LLM、
+   * token 燃烧防线不弱化）、无守卫（draining 永不置位）、资格集不含 Interrupted。
+   * system prop `nebflow.shutdownInterrupt.enabled`（每次调用现读——
+   * [[CrashRecoveryEnabled]] 同款，测试可即时翻转）。
+   */
+  def ShutdownInterruptEnabled: Boolean =
+    sys.props.getOrElse("nebflow.shutdownInterrupt.enabled", "true").toBoolean
+
+  /**
+   * `GracefulInterruptHook` 翻态整体超时上限（毫秒）——**全仓唯一取值点**（除本处
+   * 零散落；测试一律经 `GracefulInterruptHook.run(timeoutMs)` /
+   * `interruptRunningNodes(timeoutMs)` 的可注入参数，不经本常量）。
+   *
+   * **值待作者定（spec §5 未决①）**：spec 正文的「建议 10s」**未被本批采用**为生产
+   * 默认；此处 30s 是**占位值**（不提前触发：翻态循环 = 进程内 store 写 + 事件追加，
+   * 与节点数同阶的毫秒级操作，30s 是安全上界），作者值到 ⇒ **只改此一行**。
+   *
+   * 语义 = 翻态预算：超时 ⇒ 放弃剩余翻转（残余 Running 走 kill -9 同款 boot sweep
+   * 路径，行为安全降级——见 `GracefulInterruptHook.Report.timedOut`）。
+   */
+  val ShutdownInterruptTimeoutMs: Long = 30_000L
+
   // ---- 引擎活挂硬恢复（hard-recovery 批 2026-09-07，设计 §2/§8/§9）----
 
   /**
