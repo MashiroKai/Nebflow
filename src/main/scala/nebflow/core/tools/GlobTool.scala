@@ -150,9 +150,9 @@ object GlobTool extends Tool:
           case Left(err) => Left(err)
           case Right(canonicalRoot) =>
             // [沙箱拆围栏批 S1，R3=c1 读侧放开] agents/<agent>/memory.md 的**遍历
-            // 排除已退役**（原 `SandboxPolicy.memoryGlobExcludes` → `--glob
-            // !memory.md`）：读侧不留假闸（排除拦不住 Bash cat，保留只制造「有
-            // 保护」的错觉）。写侧例外仍由 FileSandbox.checkWrite 独立承载。
+            // 排除已退役**（原为 rg `--glob !memory.md`；其定义壳已由定义清理批
+            // v81 删除）：读侧不留假闸（排除拦不住 Bash cat，保留只制造「有保护」
+            // 的错觉）。写侧例外仍由 FileSandbox.checkWrite 独立承载。
             runGlob(relPattern, canonicalRoot, workDir, Nil, dotExplicit, limit)
       }
     }
