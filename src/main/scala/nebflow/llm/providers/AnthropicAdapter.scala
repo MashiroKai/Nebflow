@@ -418,6 +418,9 @@ class AnthropicAdapter(
             val data = line.drop(5).trim
             eventTypeRef.getAndSet(None).flatMap {
               case Some(et) => processAnthropicEvent(et, data, toolCallState, tokenRef, params)
+              // #256: this data frame carried no preceding `event:` line, so it is
+              // dispatched with an empty event type and dropped — with a WARN — by
+              // processAnthropicEvent's empty-event case.
               case None => processAnthropicEvent("", data, toolCallState, tokenRef, params)
             }
           else IO.pure(Nil)
@@ -544,5 +547,23 @@ class AnthropicAdapter(
                 )
                 List(StreamChunk.Done(stopReason, usage, Some(meta), None))
               }
+            case "" =>
+              // #256 (author ruling 2026-09-13): silent-drop path. A frame whose
+              // `event:` line is missing (or empty) reaches here as an empty event
+              // type and used to be discarded with zero trace — the frame's content
+              // is lost and nothing is logged. WARN once with locatable metadata
+              // only; the raw wire payload is never logged (R1b is deliberately out
+              // of scope). Return semantics are unchanged: still Nil, and every
+              // other event type still falls through to `case _ => Nil` below.
+              val frameType =
+                json.hcursor.downField("type").as[String].toOption.map(_.take(40)).getOrElse("(absent)")
+              nebflow.core.NebflowLogger
+                .forName("nebflow.llm.anthropic")
+                .warn(
+                  "dropped SSE frame with empty event type (data line without a preceding 'event:' line): " +
+                    s"frame_type=$frameType payloadChars=${data.length} model=${params.model} " +
+                    s"sessionId=${params.sessionId.getOrElse("(none)")} agentId=${params.agentId.getOrElse("(none)")}"
+                )
+                .as(Nil)
             case _ => IO.pure(Nil)
 end AnthropicAdapter
