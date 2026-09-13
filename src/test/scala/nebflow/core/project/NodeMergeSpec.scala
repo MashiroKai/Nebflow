@@ -165,7 +165,7 @@ class NodeMergeSpec extends CatsEffectSuite:
   private def branchNames(ws: os.Path): List[String] =
     git(ws, "for-each-ref", "refs/heads", "--format=%(refname:short)").linesIterator.toList
 
-  /** 分发器模板原文（staging/system-addendum-merge-node.md 同款命令集）。 */
+  /** 分发器模板原文（归档 ~/.nebflow/staging-archive-20260913_202752/staging/system-addendum-merge-node.md 同款命令集）。 */
   private def mergeTask(a: String, b: String): String =
     s"""MERGE-landing 合并落地：把上游分支逐支 --no-ff 合并进 main 并清理本批 worktree/分支。
        |上游清单：feat/$a (worktree $a)；feat/$b (worktree $b)。
