@@ -29,8 +29,15 @@ import nebflow.core.tools.{ToolContext, ToolError, ToolPathUtil}
  *
  * **留待清理批（②/③）的点名项**：`deniedMessage` 仍带退役前的「Writable roots /
  * Readable roots / outside sandbox root」文案（当前唯一消费者 = memory.md 写拒，
- * 文案改写属测试与文案清理批）；`SandboxPolicy.memoryGlobExcludes` /
- * `readDeniedWith` 已无生产消费点（定义保留，防扩大改动面）。
+ * 文案改写属测试与文案清理批）。
+ *
+ * **[定义清理批 v81，2026-09-13] 遍历排除定义已删**：原「rg `--glob !memory.md`
+ * 参数片段生成器」定义（零代码消费点）已删除，其点名注释（GrepTool/GlobTool）同批
+ * 改写为不含该符号的表述（`src/` 面该符号零出现，账见设计件/清理批证据件）。
+ * `readDeniedWith` **保留、逐字节未动**——**承重件，禁当残留清理**：生产消费点
+ * = `SandboxPolicy.readDenied` 的主体（`SandboxPolicy.scala:178` `readDeniedWith(
+ * canonical, exceptions)`），另有 spec 变异验红注入面
+ * `SandboxSpec.scala:536`（空集 = 旧行为）。
  *
  * 本围栏（历史上）是 containment 不是内核安全边界（§A.1 如实声明）；进程面围栏
  * （Bash 子进程树）由 `SandboxBackend.Seatbelt` 承担，其宿主路径的拆除属 S3。

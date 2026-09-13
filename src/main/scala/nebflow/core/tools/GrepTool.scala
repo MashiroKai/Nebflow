@@ -138,7 +138,7 @@ Usage:
       case Left(err) => Left(err)
       case Right(canonicalRoot) =>
         // [沙箱拆围栏批 S1，R3=c1 读侧放开] agents/<agent>/memory.md 的**遍历排除
-        // 已退役**（原 `SandboxPolicy.memoryGlobExcludes` → `--glob !memory.md`）：
+        // 已退役**（原为 rg `--glob !memory.md`；其定义壳已由定义清理批 v81 删除）：
         // 读侧不留假闸——排除只挡 rg 遍历、挡不住 Bash cat，保留只制造「有保护」
         // 的错觉（design §1 F3/F9 与 R3 推荐理由）。写侧例外仍由
         // FileSandbox.checkWrite 独立承载（数据完整性规则，与围栏无关）。

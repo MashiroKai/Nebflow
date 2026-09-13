@@ -185,15 +185,6 @@ object SandboxPolicy:
     if underAgentsMemory then !auditExceptions.contains(canonical)
     else false
 
-  /**
-   * Grep/Glob 遍历排除（红线覆盖遍历面）：搜索根落在 agents 子树内时，rg 追加
-   * basename 级排除（任意深度 memory.md）——文件级负向规则管不住 rg 目录遍历，
-   * 不排除则白名单内搜索会把 memory.md 内容扫进结果。返回 rg 参数片段（命中时）。
-   */
-  def memoryGlobExcludes(canonicalRoot: Path): List[String] =
-    val agents = os.Path(canonicalize(agentsReadRoot.wrapped))
-    if canonicalRoot.startsWith(agents.wrapped) then List("--glob", "!memory.md") else Nil
-
   /** forRoot readExtras 快照原料。[2026-09-06 读宽批] readableRoots 不再消费
     * readExtras（全盘读吸收），本推导保留供构造链与变异用例；语义 = 建议性
     * 快照，非承重面。 */
