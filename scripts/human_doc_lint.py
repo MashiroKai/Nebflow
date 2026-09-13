@@ -122,7 +122,7 @@ def lint(path, scene=None, kind="叙事"):
     # ── 附录（R10 = A：≤5× 正文 + 须有目录 + 不得载唯一结论） ──
     if appendix:
         ratio = len(appendix) / max(len(body), 1)
-        head = "\n".join(appendix.split("\n")[:12])
+        head = "\n".join(appendix.split("\n")[1:13])   # 跳过 `## 附录` 标题行本身（含「附录」二字 ⇒ 旧写法令目录判据恒真）
         toc = ("目录" in head) or bool(ARTIFACT_RE.search(head))
         item("附录", f"chars={len(appendix)} 正文={len(body)} 倍数={ratio:.2f}× 目录={toc}",
              "绿" if ratio <= APPENDIX_MULT and toc else "红",
