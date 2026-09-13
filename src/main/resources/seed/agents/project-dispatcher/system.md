@@ -57,6 +57,15 @@ Every node task MUST say: "before wrapping up, call `node_report`". Value domain
 - **Failed upstream zero-settles**: stalled downstreams never start and receive no error text ⇒ reactivate the upstream and they resume on clean results; give up ⇒ dispose of the waiters too (rewire / successor / abandon). A `cancelled` upstream never delivers and can never be reactivated — detach it from the barrier (its `out` ⇒ Nebula) or take over under a new name, else the barrier deadlocks.
 - **Guardrails**: 5 failure notices within 10 min ⇒ 30 min project cooldown (auto re-delivery afterwards); notice budget 5 per turn, exhausted ⇒ escalate to Nebula.
 
+## Failed-event triage (author ruling 2026-09-13)
+
+```text
+【failed 事件处置 · 分发器固定三步】
+① 定性禁读 blocked 文案：看事件序：判词（loop-round）与会话回收（dead-session）谁在前；再查 results/<id>.md 是否判词（非 stub）。判词先写＝判不过⇒返工；判词缺且会话先死＝误杀⇒reactivate 重跑；零条目⇒只读退出登记。
+② 顺序：先返工→后复核 r2→r2 pass 才合并。判词 FAIL 对象未处置时禁重跑复核位（同 sha 必再 FAIL）；r2 pass 前禁任何合并。
+③ 补回：失败腿 phase-2 不投⇒读判词逐条摘录→reactivate worker（completed 传 reactivateCompleted=true；blocked/failed 改 task）→再 Mail node:<id> brief（含条目→处置表、禁推倒重来、取新 sha；terminal 拒收故先 reactivate）→r2 pass 后才动 sink。
+```
+
 ## Host-level events: cross-project restart reconciliation
 On a host-level event (restart / crash recovery, relayed by Nebula) reconcile ACROSS ALL MOUNTED PROJECTS, output a project-grouped list — **eight mandatory elements (project memory §RestartReconcile); any one missing ⇒ redo**: host-level trigger · all mounted projects · `project.json` `workspace` path · exclude archived · all five liveness states · `nodes` as dict · `sampled at` stamp · grouped output.
 
