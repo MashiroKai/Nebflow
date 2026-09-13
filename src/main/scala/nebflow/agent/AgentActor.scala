@@ -511,7 +511,9 @@ object AgentActor extends AgentCore with AgentSession:
         case Some(src) =>
           emitInjectedUserEvent(
             resources,
-            state.wsSend, state.sessionId, ui.text, src, ui.eventType, ui.sender, ui.senderTeam, ui.delivery
+            state.wsSend, state.sessionId, ui.text, src, ui.eventType, ui.sender, ui.senderTeam, ui.delivery,
+            // 收件判别字段随 UserInput 同源转发（mailbadge 批 2026-09-13）。
+            ui.intake
           )
         case None => IO.unit
     }
@@ -552,6 +554,11 @@ object AgentActor extends AgentCore with AgentSession:
     sender: Option[String] = None,
     senderTeam: Option[String] = None,
     delivery: Option[String] = None,
+    /** 收件通道判别（mailbadge 批 2026-09-13，选项 C）：与 `senderTeam` /
+      * `delivery` **同款可选帧字段**（缺席即不 merge，帧逐字节不变 ⇒ 向后兼容）。
+      * 只做**呈现判别**：前端标签优先取它、缺席回落 `source` 表；`source` 的
+      * 会计语义（`"task"` = 桥的消费计数口径）不受任何影响。 */
+    intake: Option[String] = None,
     waitingForBatch: Boolean = false
   )(using ctx: ActorContext[AgentCommand]): IO[Unit] =
     sessionId.fold(IO.unit) { sid =>
@@ -566,13 +573,16 @@ object AgentActor extends AgentCore with AgentSession:
       val withSender = sender.fold(withEt)(s => withEt.deepMerge(Json.obj("sender" -> s.asJson)))
       val withTeam = senderTeam.fold(withSender)(t => withSender.deepMerge(Json.obj("senderTeam" -> t.asJson)))
       val withDelivery = delivery.fold(withTeam)(d => withTeam.deepMerge(Json.obj("delivery" -> d.asJson)))
+      // mailbadge 批（2026-09-13，选项 C）：收件通道判别字段。`source` 段逐字节不动
+      // （D-5 口径：值不改名），本段只加一枚**可选**展示判别键。
+      val withIntake = intake.fold(withDelivery)(i => withDelivery.deepMerge(Json.obj("intake" -> i.asJson)))
       // issue #31 Fix C (2026-08-20): HOLD 分支的完成气泡标注「等待同批任务」——
       // 把「COMPLETED 但父不动」从 bug 观感变成可理解的等待状态（前端展示
       // 待 Frontend 消费此字段）。顺修既有 bug：此处原发 withTeam，
       // withDelivery 被算出后丢弃（delivery 字段从未到达前端）。
       val withWaiting =
-        if waitingForBatch then withDelivery.deepMerge(Json.obj("waitingForBatch" -> true.asJson))
-        else withDelivery
+        if waitingForBatch then withIntake.deepMerge(Json.obj("waitingForBatch" -> true.asJson))
+        else withIntake
       // bluebubble 批（2026-09-12）：注入行的落盘**在唯一发射点收口**。
       // 本方法是全仓唯一的 injected user 帧发射点（grep `"injected" -> true` 单命中），
       // 故它也是这条 .ui.json 记录的唯一写者——此前落盘依赖 WS 录制层
@@ -600,7 +610,9 @@ object AgentActor extends AgentCore with AgentSession:
                 eventType = eventType,
                 sender = sender,
                 senderTeam = senderTeam,
-                delivery = delivery
+                delivery = delivery,
+                // 与帧同源（同一批名字）：历史恢复路径靠这条落盘字段重建标签。
+                intake = intake
               ))
             )
             .handleErrorWith(e => logger.warn(s"injected user event persist failed: ${e.getMessage}"))
@@ -862,7 +874,7 @@ object AgentActor extends AgentCore with AgentSession:
   )(using ctx: ActorContext[AgentCommand]): Behavior[AgentCommand] =
     Behaviors.receiveMessage:
 
-      case AgentCommand.UserInput(text, replyTo, clientMessageId, blocks, chatWidth, source, sender, senderTeam, delivery, eventType, fromUser) =>
+      case AgentCommand.UserInput(text, replyTo, clientMessageId, blocks, chatWidth, source, sender, senderTeam, delivery, eventType, intake, fromUser) =>
         val (isDuplicate, dedupedState) = checkDuplicate(clientMessageId, state)
         if isDuplicate then
           logger.info(s"Dropping duplicate message with clientMessageId=${clientMessageId.getOrElse("")}")
@@ -913,7 +925,9 @@ object AgentActor extends AgentCore with AgentSession:
                 eventType,
                 sender = sender,
                 senderTeam = senderTeam,
-                delivery = delivery
+                delivery = delivery,
+                // idle 直投腿（mailbadge 批）：收件判别字段随件同源落地。
+                intake = intake
               )
             case None => IO.unit
           for
@@ -1271,7 +1285,7 @@ object AgentActor extends AgentCore with AgentSession:
       // here is exactly what made a real human text land in the
       // `clientMessageId=None ⇒ source="tool"` fallback (diagnosis §1.4 idle row).
       case AgentCommand.ImmediateInput(text, blocks, source, eventType, sender, senderTeam, delivery, fromUser) =>
-        for _ <- ctx.self ! AgentCommand.UserInput(text, None, None, blocks, 0, source, sender, senderTeam, delivery, eventType, fromUser)
+        for _ <- ctx.self ! AgentCommand.UserInput(text, None, None, blocks, 0, source, sender, senderTeam, delivery, eventType, None, fromUser)
         yield idle(agentDef, resources, depth, parentRef, state)
 
       // Queued mail arriving in idle — drain immediately as a new turn.
@@ -1965,7 +1979,11 @@ object AgentActor extends AgentCore with AgentSession:
               ui.eventType,
               ui.sender,
               ui.senderTeam,
-              ui.delivery
+              ui.delivery,
+              // 收件判别字段同源转发（mailbadge 批）：tools-complete 边界合批注入
+              // 是分发器「持续接收」的主路径，标签判别必须同源，否则同一件 Mail
+              // 走 idle 直投与走合批注入会显示成两种标签。
+              ui.intake
             )
           )
         }.sequence_
@@ -3824,7 +3842,7 @@ object AgentActor extends AgentCore with AgentSession:
             else
               IO.pure(frozen(agentDef, resources, depth, parentRef, state, replyTo, resumeAt, reason, retryCount, escalation))
 
-      case AgentCommand.UserInput(text, replyTo2, clientMessageId, blocks, chatWidth, source, sender, senderTeam, delivery, eventType, fromUser) =>
+      case AgentCommand.UserInput(text, replyTo2, clientMessageId, blocks, chatWidth, source, sender, senderTeam, delivery, eventType, intake, fromUser) =>
         if clientMessageId.isDefined then
           // ★ 用户唤醒（B5）：注入用户消息到冻结中的上下文，立即 dispatch——
           // 冻结前组装好的工具结果 + 用户新指令同轮喂给 LLM。dedup 防止 WS
@@ -3863,7 +3881,7 @@ object AgentActor extends AgentCore with AgentSession:
           val queued = state.copy(execution =
             state.execution.copy(
               pendingUserInputs = state.execution.pendingUserInputs :+ AgentCommand.UserInput(
-                text, replyTo2, clientMessageId, blocks, chatWidth, source, sender, senderTeam, delivery, eventType, fromUser
+                text, replyTo2, clientMessageId, blocks, chatWidth, source, sender, senderTeam, delivery, eventType, intake, fromUser
               )
             )
           )

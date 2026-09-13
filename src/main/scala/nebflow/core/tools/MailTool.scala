@@ -397,14 +397,31 @@ Message type (optional, default "INFO"):
     * 接管方 agent 自身名（与前端 `ownAgentName()` 同名空间，见
     * [[nebflow.agent.InjectionAttribution]] 的字段名/取值域契约）+ 所属 Team 名
     * + 邮件类型（eventType）。两条项目腿（腿① 项目、腿② 节点）与 leg③
-    * `sendMail` 共用同一取值口径 —— 三种 Mail 形态的气泡顶栏因此同源。 */
-  private def mailAttribution(mailType: String, ctx: ToolContext): IO[InjectionAttribution] =
+    * `sendMail` 共用同一取值口径 —— 三种 Mail 形态的气泡顶栏因此同源。
+    *
+    * `intake`（mailbadge 批 2026-09-13，作者裁定「必须显示 MAIL」⇒ 选项 C）是
+    * **调用方声明的收件通道判别**，**不由本方法统一置位**：本方法是三条腿的
+    * 共用构造点，而三条腿的收件面**呈现口径不同** ——
+    *   - 腿①（`routeToProject` → 分发器收件面）：传
+    *     [[InjectionAttribution.IntakeMail]] ⇒ 标签显示 `Mail`（本批的目标）；
+    *   - 腿②（`deliverToNode` → 节点收件面）：**不传**（默认 `None`）——
+    *     `source` 保持 `"system"` ⇒ 标签恒 `System` + `[NODE-MESSAGE]` 文本头
+    *     逐字不变（节点收件面不在本批，已单独立项）；
+    *   - 腿③（`sendMail` → 非 project 面）：**不传**（默认 `None`）——
+    *     `source` 已是 `"mail"` ⇒ 标签恒 `Mail`，呈现零漂移。
+    * 若在此统一置位，腿② 的标签会被抬成 `Mail` ⇒ **越界扩面**（禁动面）。 */
+  private def mailAttribution(
+      mailType: String,
+      ctx: ToolContext,
+      intake: Option[String] = None
+  ): IO[InjectionAttribution] =
     val senderName = ctx.agentDef.map(_.name).getOrElse(MailTool.NebulaAgentName)
     TeamSessionRegistry.teamOfSession(ctx.sessionId.getOrElse("")).map { team =>
       InjectionAttribution(
         sender = Some(senderName),
         senderTeam = team,
-        eventType = Some(mailType.toLowerCase)
+        eventType = Some(mailType.toLowerCase),
+        intake = intake
       )
     }
 
@@ -504,7 +521,11 @@ Message type (optional, default "INFO"):
             val rootSid = ctx.rootSessionId.orElse(ctx.sessionId).getOrElse("")
             // 腿① 来源标注（bluebubble 批 2026-09-12）：发信方随触发消息落到分发器
             // 会话的注入气泡顶栏（source 仍 = task，D-5 裁定：值不改名）。
-            mailAttribution(mailType, ctx).flatMap { attribution =>
+            // mailbadge 批（2026-09-13，选项 C）：**只有本腿**置 `intake` ——
+            // 分发器收件面是作者口径「蓝色气泡标注 Mail」的落点；`source` 保持
+            // `"task"` 不动（桥的消费计数单点 `ProjectActor:622` 与 `idleSince`
+            // 30 min 空闲窗逐行不变）。
+            mailAttribution(mailType, ctx, Some(InjectionAttribution.IntakeMail)).flatMap { attribution =>
               (ref ! ProjectActor.ProjectCommand.TriggerDispatcher(message, rootSid, ProjectActor.SourceTask, Some(attribution))).void
                 .as(Some(Right(s"Project '$address' dispatcher triggered")))
             }

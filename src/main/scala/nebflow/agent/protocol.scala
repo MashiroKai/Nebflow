@@ -33,7 +33,19 @@ enum RestartLevel:
 case class InjectionAttribution(
   sender: Option[String] = None,
   senderTeam: Option[String] = None,
-  eventType: Option[String] = None
+  eventType: Option[String] = None,
+  /** **收件判别字段**（mailbadge 批 2026-09-13，作者裁定「必须显示 MAIL」⇒ 选项 C）：
+    * 本注入件是经**哪条收件通道**进来的，与 [[AgentCommand.UserInput.source]] 的
+    * **会计语义分离**——`source` 恒为桥的消费计数口径（`"task"`，见
+    * `ProjectActor.DispatcherInjectedSources`），本字段只承担**呈现判别**。
+    *
+    * 取值域 = [[InjectionAttribution.IntakeMarkers]]（后端唯一定名源）；前端
+    * `web/js/chat.js#injectedSourceLabel` 用它**优先**取展示标签，缺席回落
+    * `source`（回落路径逐字不变）。`None`（默认）= 无收件通道判别 ⇒ 呈现与
+    * 改前逐字节一致（向后兼容：既有调用点与旧历史行零影响）。
+    *
+    * 两侧同源门 = `InjectionIntakeContractSpec`（置位侧 ↔ 帧字段 ↔ 标签优先级）。 */
+  intake: Option[String] = None
 )
 
 object InjectionAttribution:
@@ -44,6 +56,19 @@ object InjectionAttribution:
   /** 腿②（分发器 → `node:<id>`）的注入 source 定名（D-3 裁定：保持节点侧既有
     * 呈现，`mail` 只出现在真实邮件来源处）。 */
   val SourceSystem: String = "system"
+
+  /** 收件通道判别定名（mailbadge 批 2026-09-13，选项 C）：`MailTool` 腿①
+    * （`Mail(address="project:<name>")`）——本件是**收件方视角的 Mail**。
+    * **只置位在腿①**：腿②（`node:<id>`，source 保持 `"system"` ⇒ 标签 `System`）
+    * 与腿③（非 project 面，source 已是 `"mail"` ⇒ 标签 `Mail`）**不置位**——
+    * 节点收件面不在本批（已单独立项），非 project 面呈现不得漂移。 */
+  val IntakeMail: String = "mail"
+
+  /** 后端**自定名**的收件通道取值域 —— 前端必须逐值显式登记（同
+    * [[BackendNamedSources]] 的纪律：值取自 source 词表，故共用同一张
+    * `INJECTED_SOURCE_LABELS` 表项即为显式登记）。契约门 =
+    * `InjectionIntakeContractSpec`。 */
+  val IntakeMarkers: Set[String] = Set(IntakeMail)
 
   /** 后端**自定名**（非用户可传）的 source 取值域 —— 前端
     * `web/js/chat.js#INJECTED_SOURCE_LABELS` 必须逐值**显式登记**（或由
@@ -130,6 +155,11 @@ object AgentCommand:
      *  carried through from ImmediateInput so flow results render
      *  'Flow · <name> · Completed/Failed' instead of a bare 'Flow'. */
     eventType: Option[String] = None,
+    /** 收件通道判别（mailbadge 批 2026-09-13，选项 C）：见
+      * [[InjectionAttribution.intake]]。**只影响呈现判别**——`source` 仍是桥的
+      * 消费计数口径（`"task"`），本字段不参与任何会计/去重/生命周期判定。
+      * 默认 `None` ⇒ 既有调用点与旧历史行呈现逐字不变。 */
+    intake: Option[String] = None,
     /** ② (2026-09-11, queue-direct-pass diagnosis §2): real-user origin flag.
       * True only when this UserInput was born from a real human message
       * (WS direct send, or an ImmediateInput forwarded from one — see
