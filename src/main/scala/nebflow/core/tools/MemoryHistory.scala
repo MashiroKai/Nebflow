@@ -40,6 +40,13 @@ import scala.collection.mutable
  *   - `{"kind":"change","at","atMs","actor","path","target","trigger","refs":[…],
  *      "added":[…],"removed":[…]}` —— 记忆文件真身的变更（引擎在整理轨前后对
  *      文件取快照并做行级 diff）；`added`/`removed` 为**全文行、不截断**。
+ *   - `{"kind":"preflight","at","atMs","actor","trigger","authorized","pending",
+ *      "refs":[…],"targets":[{"label","path","sha256","bytes"}],
+ *      "snapshot":{"dir","label"}}` —— **写前台账**（C 批 ①，2026-09-13）：整理轨
+ *      spawn **之前**把本轮授权集落成**一条聚合行**（**禁**逐条 273 行 —— 避免把
+ *      20000 行阈值烧穿）：授权 ref 计数 + 全量 ref + 每目标**起始 sha256/bytes**
+ *      （+ 落地前快照目录）。超时后 ④ 的对账因此有可审计、可复算的基准，且**不依赖
+ *      agent 自快照**。台账**不阻止重投**，它只让「谁该闭合」这件事事后可判。
  *
  * 三者以 `ref`（= 队列 note id `q-…`）可对账：`MemoryHistory.discrepancies`
  * 给出「队列有 note 无 history 行 / 有 outcome 无 consume 行」的差集。
@@ -60,9 +67,10 @@ object MemoryHistory:
   val MaxActiveLines: Int  = 20000
 
   /** 事件 kind 值域。 */
-  val KindQueue   = "queue"
-  val KindConsume = "consume"
-  val KindChange  = "change"
+  val KindQueue     = "queue"
+  val KindConsume   = "consume"
+  val KindChange    = "change"
+  val KindPreflight = "preflight"
 
   /** actor 值域（引擎侧派生，不信客户端参数）——`memory-consolidator` 等身份名
     * 亦经 `actorOf` 小写归一；未知来源记 `unknown`，绝不编造。 */
@@ -169,8 +177,44 @@ object MemoryHistory:
       "removed" -> removed.asJson
     ))
 
-  /** 追加一条事件。**不抛异常**：失败返回 Left（调用方按「不失败主操作 +
-   * 结果行 NOTE + WARN」处置，绝不静默）。 */
+  /** 写前台账的目标行：某目标文件在**本轮起跑线**上的 sha256 与字节数（`label` =
+    * 队列 target 名，`path` = 绝对路径）。 */
+  final case class PreflightTarget(label: String, path: String, sha256: String, bytes: Long)
+
+  /** 写前台账（C 批 ①，2026-09-13）：整轮**一条聚合行**（**禁**逐条 273 行/轮 —— 避免把
+    * 20000 行阈值烧穿）。字段见类头注：授权 ref 全集 + 计数 + 每目标起始 sha256/bytes +
+    * 落地前快照目录。写失败由调用方 WARN 处置（台账是审计面，不是落地屏障）。 */
+  def appendPreflight(
+    atMs: Long,
+    actor: String,
+    trigger: String,
+    authorizedRefs: List[String],
+    pendingTotal: Int,
+    targets: List[PreflightTarget],
+    snapshotDir: String,
+    snapshotLabel: String
+  ): Either[String, Unit] =
+    append(obj(
+      "kind"       -> KindPreflight.asJson,
+      "at"         -> isoOf(atMs).asJson,
+      "atMs"       -> atMs.asJson,
+      "actor"      -> actor.asJson,
+      "trigger"    -> trigger.asJson,
+      "authorized" -> authorizedRefs.size.asJson,
+      "pending"    -> pendingTotal.asJson,
+      "refs"       -> authorizedRefs.asJson,
+      "targets" -> targets.map(t =>
+        obj(
+          "label"  -> t.label.asJson,
+          "path"   -> t.path.asJson,
+          "sha256" -> t.sha256.asJson,
+          "bytes"  -> t.bytes.asJson
+        )).asJson,
+      "snapshot" -> obj("dir" -> snapshotDir.asJson, "label" -> snapshotLabel.asJson)
+    ))
+
+  /** 追加一条事件。**不抛异常**：失败返回 Left（调用方按「不失败主操作 + 结果行 NOTE +
+    * WARN」处置，绝不静默）。 */
   private def append(record: Json): Either[String, Unit] =
     JsonlLedger
       .appendLine(historyPath, archivePath, record.asJson.noSpaces, MaxActiveBytes, MaxActiveLines)

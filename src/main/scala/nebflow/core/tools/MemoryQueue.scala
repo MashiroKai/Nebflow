@@ -83,6 +83,16 @@ object MemoryQueue:
   val ResultDeduped  = "deduped"
   val ResultTimeout  = "timeout"
 
+  /** 引擎侧**超时对账**结局（C 批 ④）：硬超时截断后，引擎用**跑后**文件内容逐条判
+    * 「效果是否已在盘上」，确凿者由**引擎**标终态（[[MemoryQueue.reconcile]]）。
+    *
+    * **独立字样是作者硬约束**：审计必须一眼分清「谁判的」——`applied` / `modified` /
+    * `obsolete` / `deduped` 的裁决者是消费者（确实跑过并判定），本字样只可能由引擎在
+    * 超时对账路径写下（`by=memory-consolidator` + `detail` 前缀 [[ReconcileDetailPrefix]]
+    * 双保险）。判据只取高精度两支（逐字行命中 / 定位键消失），**宁漏不误**：判不准的
+    * 照旧写 [[ResultTimeout]] 留 pending 重试。 */
+  val ResultAppliedByReconcile = "applied-by-reconcile"
+
   /** 引擎侧 infra 结局（2026-09-13 缺失自愈批 / 方案 D）：消费链**根本没跑**——
     * 定义缺失 / 前置闸拒绝 / spawn 失败 / 引擎前置不满足。这**不是**消费者的裁决，
     * 故一律不用 `rejected` 冒充（作者令：`rejected` 只许用于「消费者确实跑过并判定
@@ -94,8 +104,14 @@ object MemoryQueue:
     * 「不再烧队列容量」（修复前每轮 191 行）。 */
   val ResultBlocked = "blocked"
 
-  /** 终态结局 = 唯一能闭合一条 note 的结局（消费者确实跑过并判定已了结）。 */
-  val TerminalResults: Set[String] = Set(ResultApplied, ResultModified, ResultObsolete, ResultDeduped)
+  /** 终态结局 = 唯一能闭合一条 note 的结局（消费者确实跑过并判定已了结）。
+    *
+    * C 批 ④（2026-09-13）：[[ResultAppliedByReconcile]]（引擎超时对账判的）加入本集合。
+    * **向后安全（作者硬约束 iii）**：本集合之外的值（含本字样下旧 jar 不认识的未知值）
+    * 一律走「**未闭合**」分支（见 [[State.consumed]]：`TerminalResults.contains` 为假 ⇒
+    * 条目仍 pending）⇒ 升级/回滚两个方向都不会丢记账、不会误闭合。 */
+  val TerminalResults: Set[String] =
+    Set(ResultApplied, ResultModified, ResultObsolete, ResultDeduped, ResultAppliedByReconcile)
 
   /** 可重试结局（spec §5 R3 档 1「队列条目保留 ⇒ 下次压缩重试」）。末条结局落在本集合
     * 内的 note **仍是 pending**。
@@ -591,6 +607,13 @@ object MemoryQueue:
       (s until e).find(i => lines(i).startsWith("- ") && lines(i).contains(matchText)).map(i => (i + 1, lines(i)))
     }
 
+  /** 「逐字行已在文件」判据（**单源**：`plan` 的 `already-present` 桶与超时对账 ④ 共用）。
+    * 判据 = **整行 trim 后逐字相等**（精确行匹配：误杀率 0、漏检率非 0 ⇒ 宁漏不误；
+    * 前缀匹配会误杀，故不用）。 */
+  private[tools] def alreadyPresentLine(lines: Vector[String], content: String): Boolean =
+    val t = content.trim
+    lines.exists(_.trim == t)
+
   /** 单条操作应用到内容（纯函数）。定位不到 / 节不存在 ⇒ None（不臆测、不硬改）。 */
   private def applyOp(
       content: String,
@@ -704,7 +727,7 @@ object MemoryQueue:
           val lines  = splitLines(cur)
           val loc    = if n.action == "update" || n.action == "remove" then locate(lines, n.section, n.matchText.getOrElse("")) else None
           val secOk  = n.section.forall(s => sectionBounds(lines, s).isDefined)
-          val dupApp = n.action == "append" && n.content.exists(c => lines.exists(_.trim == c.trim))
+          val dupApp = n.action == "append" && n.content.exists(c => alreadyPresentLine(lines, c))
           if (n.action == "update" || n.action == "remove") && loc.isEmpty then
             PlanItem(n.id, n.target, n.action, n.atMs, Bucket.WouldObsolete,
               if n.section.isDefined && !secOk then "locate-miss: section not found" else "locate-miss: no matching '- ' entry",
@@ -759,6 +782,98 @@ object MemoryQueue:
           s"and ${all.count(_.bucket == Bucket.WouldObsolete)} not landable. Nothing was written; every note stays pending until the cap is relieved (shrink via remove/replace_section first).")
       else None
     Plan(all, projections, authorized, deferIds, refusal)
+
+  // ── 引擎侧超时对账（C 批 ④，2026-09-13）───────────────────────────
+  //
+  // 背景（取证 plan §0-2 / §3.2）：硬超时截断后，消费者「尾部一次性回写 outcome」的
+  // step 5 一步都没跑 ⇒ 273 条全留 pending，而其中 151 条的效果**已在文件里**。下一轮
+  // 整批重投 ⇒ 已落 append 造重复行（append 不幂等）、未落条目无限空转。本段是那条缺陷
+  // 的机械闭合面：**超时后先对账、再降级**。
+
+  /** 对账 detail 前缀（审计锚之一：与 `by` 一起把「引擎判的」与「消费者判的」分开）。 */
+  val ReconcileDetailPrefix: String = "reconcile:"
+
+  /** 单条对账结论（纯数据）。 */
+  final case class ReconcileVerdict(ref: String, target: String, action: String, result: String, detail: String)
+
+  /** 对账报告（纯数据）：`closed` = 超时后用跑后文件判为**已了结**的条目。 */
+  final case class ReconcileReport(closed: Vector[ReconcileVerdict]):
+    def byRef: Map[String, ReconcileVerdict] = closed.map(v => v.ref -> v).toMap
+    def refs: Set[String]                   = closed.map(_.ref).toSet
+    def count: Int                          = closed.size
+    /** 结论直方图（日志/事件渲染用）。 */
+    def resultCounts: Map[String, Int] = closed.groupBy(_.result).view.mapValues(_.size).toMap
+    /** 单行渲染（日志用）。 */
+    def render: String =
+      if closed.isEmpty then "none"
+      else resultCounts.toVector.sortBy(_._1).map((r, n) => s"$r×$n").mkString(", ")
+
+  object ReconcileReport:
+    val empty: ReconcileReport = ReconcileReport(Vector.empty)
+
+  /** **超时对账（纯函数、零写入、可单测）**：对每条 pending note 用**跑后**文件内容判
+    * 「效果是否已在盘上」，只取作者硬约束里的**两支高精度判据**：
+    *
+    *   - `append ∧ content 行已在目标文件`（逐字行命中）⇒ 终态 `deduped`
+    *     —— 与 [[plan]] 的 `already-present` 桶**同判据单源**（[[alreadyPresentLine]]）：
+    *     再落一次只会造重复行；
+    *   - `update ∧ content 行已在目标文件`（逐字行命中）⇒ 终态 `applied-by-reconcile`
+    *     —— 目标效果已在盘上（旧文本被压缩式改写、新文本已落）。
+    *     `match` 已消失而 `content` **不在**盘的形态**不判**（那是「落空」，交回 timeout 重试）；
+    *   - `remove ∧ 定位键已消失`⇒ 终态 `applied-by-reconcile`（节点确已不在文件里）。
+    *
+    * **其余一律不判**：`replace_section`（整段替换无法用行命中判）、`content`/`match` 为空、
+    * 目标层不在 `postFiles`（本轮没点名它 / 该层无记忆文件）、目标文件跑后为空串（无凭据 ⇒
+    * 不下判），照旧写 `timeout` 留 pending 重试。判据**宁漏不误**：漏判的代价 = 下轮再重试
+    * （与修复前同），误判的代价 = 把没落地的条目记成落地（记账失真）。
+    *
+    * 调用面：[[nebflow.agent.MemoryTrack]] 的 `finish` 在 Timeout 分支用它（跑后文件内容已
+    * 在 `readAll` 手里，本函数不读盘）。 */
+  def reconcile(state: State, postFiles: Map[String, TargetFile]): ReconcileReport =
+    val closed = state.pending.flatMap { n =>
+      postFiles.get(n.target).filter(_.content.trim.nonEmpty).flatMap { tf =>
+        val lines = splitLines(tf.content)
+        n.action match
+          case "append" =>
+            n.content
+              .filter(_.trim.nonEmpty)
+              .filter(c => alreadyPresentLine(lines, c))
+              .map(_ =>
+                ReconcileVerdict(
+                  n.id,
+                  n.target,
+                  n.action,
+                  ResultDeduped,
+                  s"${ReconcileDetailPrefix} append: an identical line is already present in ${tf.path} — landing it again would only duplicate it"
+                ))
+          case "update" =>
+            n.content
+              .filter(_.trim.nonEmpty)
+              .filter(c => alreadyPresentLine(lines, c))
+              .map(_ =>
+                ReconcileVerdict(
+                  n.id,
+                  n.target,
+                  n.action,
+                  ResultAppliedByReconcile,
+                  s"${ReconcileDetailPrefix} update: the target line is already present in ${tf.path} — judged by the engine against the post-timeout file, not by the consumer"
+                ))
+          case "remove" =>
+            n.matchText
+              .filter(_.trim.nonEmpty)
+              .filter(m => locate(lines, n.section, m).isEmpty)
+              .map(_ =>
+                ReconcileVerdict(
+                  n.id,
+                  n.target,
+                  n.action,
+                  ResultAppliedByReconcile,
+                  s"${ReconcileDetailPrefix} remove: the located entry is already gone from ${tf.path} — judged by the engine against the post-timeout file"
+                ))
+          case _ => None
+      }
+    }
+    ReconcileReport(closed)
 
   // ── 注入摘要行 ──────────────────────────────────────────────────
 
