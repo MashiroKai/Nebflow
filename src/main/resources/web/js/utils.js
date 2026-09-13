@@ -520,11 +520,12 @@ export function smartScroll() {
 }
 
 // ── "↓ N new messages" pill ─────────────────────────────────────────────
-// Row-level counter of what arrived since the user left the bottom
-// (injected notifications and tool cards included — a missed row counts).
-// State is PER VIEW (view.stream.scrollPill), never a global singleton:
-// the primary window and every agent popup keep their own count, element
-// and observer.
+// Row-level counter of what arrived since the user left the bottom. Only
+// REAL new messages count — thinking blocks, tool cards, system rows and
+// sub-agent process rows are excluded (2026-09-13 口径; the criterion lives
+// in countsAsRealMessage below). State is PER VIEW
+// (view.stream.scrollPill), never a global singleton: the primary window
+// and every agent popup keep their own count, element and observer.
 
 /** view -> pill record. The WeakMap is the canonical home so a session
  *  switch (resetStream replaces view.stream) cannot orphan the DOM node. */
@@ -592,6 +593,55 @@ export function refreshScrollPill(view) {
   }
 }
 
+// ── "real new message" criterion (2026-09-13 口径裁定) ───────────────────
+// Author 2026-09-12 20:36 (verbatim): 「新消息提醒的数字统计，目前应该是把思考
+// 过程，工具都算了，只统计真的新消息。也就是没被自动收起的那些消息。」 The pill
+// is the only user-visible counter that swallowed process noise: one turn
+// (thinking + 5 tool calls + final reply) read as 9.
+//
+// COUNTED — what the author actually receives as a message:
+//   .row.user (real user message)            W1
+//   .row.ai   (assistant visible reply)      W1
+//   .row.card-content (card deliverable)     D4
+//   .row.error (failed-turn terminal)        D5
+//   .row.user + .bubble.injected (Mail / flow / Team bubbles)  D2
+//
+// NOT COUNTED — process noise / system traffic:
+//   .thinking-row  思考过程                   W2
+//   .tool          tool calls AND tool results (same class)  W2
+//   .system        system rows                D5
+//   .notice        system bubbles + compaction status cards
+//                  (chat.js renderSystemBubble / buildCompactCardRow) —
+//                  the same 系统提醒 family as .system, see D5
+//   .agent-row     sub-agent process rows     D3
+//   .bg-task-row   background-task receipts — excluded ONLY when the marker
+//                  is present; no render-side marker is added for this (D6)
+//
+// D7: the judgement is STATIC (class-based, evaluated at append time) — the
+// count never falls back when a turn later collapses, so the number stays
+// monotonic (I-5). D9: the existing "row taller than the viewport" guard in
+// initScrollFollow is untouched.
+//
+// The `.thinking-row` / `.tool` half restates the canonical tuck set from
+// `turnGroup.js#isTuckableRow` (`.row.tool` + `.row.ai.thinking-row`, the
+// "被自动收起" predicate). It is restated here rather than imported because
+// (a) that symbol is module-private to turnGroup.js and (b) importing
+// turnGroup.js from utils.js would close a new
+// `utils.js → turnGroup.js → chat.js → utils.js` ESM cycle in a module that
+// 29 files import (chat.js pulls `NEAR_BOTTOM_PX` out of here). Keep the two
+// sets in sync if the tuck set ever changes.
+export function countsAsRealMessage(row) {
+  if (!row || !row.classList || !row.classList.contains('row')) return false;
+  if (row.classList.contains('thinking-row')) return false;
+  if (row.classList.contains('tool')) return false;
+  if (row.classList.contains('system')) return false;
+  if (row.classList.contains('notice')) return false;
+  if (row.classList.contains('agent-row')) return false;
+  if (row.classList.contains('bg-task-row')) return false;
+  if (row.querySelector && row.querySelector('.bg-task-row')) return false;
+  return true;
+}
+
 /** Recompute pill visibility + count from live geometry for one view. */
 export function syncScrollPill(view) {
   if (!view || !view.dom || !view.dom.chat) return;
@@ -642,6 +692,10 @@ export function initScrollFollow(view) {
       if (m.previousSibling === null) continue;
       for (const n of m.addedNodes) {
         if (!(n instanceof HTMLElement) || !n.classList.contains('row')) continue;
+        // Only REAL new messages count: thinking blocks, tool calls/results,
+        // system rows, sub-agent rows and marked background-task receipts are
+        // process noise the turn strips anyway (countsAsRealMessage above).
+        if (!countsAsRealMessage(n)) continue;
         // A row that is at least a viewport tall cannot have been below the
         // user's reading position (a thinking placeholder filled in with
         // streamed content reaches that size) — it never counts as "a message
