@@ -356,7 +356,7 @@ export function restoreFromStorage(opts = {}) {
       // content — skip them.
       if (m.injected && m.source) {
         if (isOutgoingInjection(m)) return;
-        chat.appendChild(buildInjectedRow(m.text || '', m.source, m.timestamp, m.eventType, m.sender, m.senderTeam, undefined, m.delivery));
+        chat.appendChild(buildInjectedRow(m.text || '', m.source, m.timestamp, m.eventType, m.sender, m.senderTeam, undefined, m.delivery, m.intake));
         return;
       }
       // Look ahead: if next message is a skill-activated system message,
@@ -665,7 +665,7 @@ export function restoreFromBackendHistory(msgs, opts = {}) {
         // messages join the rAF markdown batch — no synchronous render storm
         // on hard-refresh (P0-2).
         fragment.appendChild(buildInjectedRow(m.text || '', m.source, m.timestamp, m.eventType, m.sender, m.senderTeam,
-          (el, text) => deferMd(el, text, false), m.delivery));
+          (el, text) => deferMd(el, text, false), m.delivery, m.intake));
         return;
       }
       // Look ahead: if next message is a skill-activated system message,

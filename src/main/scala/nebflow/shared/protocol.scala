@@ -267,7 +267,12 @@ object UiMessage:
     eventType: Option[String] = None,
     sender: Option[String] = None,
     senderTeam: Option[String] = None,
-    delivery: Option[String] = None
+    delivery: Option[String] = None,
+    /** 收件通道判别（mailbadge 批 2026-09-13，选项 C）：与
+      * [[nebflow.agent.InjectionAttribution.intake]] 同一批名字（帧 ↔ 落盘同源）。
+      * 前端历史恢复路径靠它重建注入气泡标签（缺席 ⇒ 回落 `source` 表，
+      * 旧历史行渲染逐字节不变）。 */
+    intake: Option[String] = None
   ) extends UiMessage:
     val typeName = "user"
 
@@ -320,7 +325,10 @@ object UiMessage:
       val withEt = m.eventType.fold(withSrc)(et => withSrc.deepMerge(Json.obj("eventType" -> et.asJson)))
       val withSender = m.sender.fold(withEt)(s => withEt.deepMerge(Json.obj("sender" -> s.asJson)))
       val withTeam = m.senderTeam.fold(withSender)(t => withSender.deepMerge(Json.obj("senderTeam" -> t.asJson)))
-      m.delivery.fold(withTeam)(d => withTeam.deepMerge(Json.obj("delivery" -> d.asJson)))
+      val withDelivery = m.delivery.fold(withTeam)(d => withTeam.deepMerge(Json.obj("delivery" -> d.asJson)))
+      // mailbadge 批（2026-09-13，选项 C）：可选判别字段——缺席即不落键
+      // （旧 .ui.json 行的字节形态与旧读法逐字不变）。
+      m.intake.fold(withDelivery)(i => withDelivery.deepMerge(Json.obj("intake" -> i.asJson)))
     case m: Ai =>
       val base = Json.obj("type" -> "ai".asJson, "text" -> m.text.asJson)
       val withDur = m.durationMs.fold(base)(d => base.deepMerge(Json.obj("durationMs" -> d.asJson)))
@@ -370,6 +378,7 @@ object UiMessage:
           sender <- cursor.downField("sender").as[Option[String]]
           senderTeam <- cursor.downField("senderTeam").as[Option[String]]
           delivery <- cursor.downField("delivery").as[Option[String]]
+          intake <- cursor.downField("intake").as[Option[String]]
         yield User(
           text,
           atts.getOrElse(Nil),
@@ -379,7 +388,8 @@ object UiMessage:
           eventType,
           sender,
           senderTeam,
-          delivery
+          delivery,
+          intake
         )
       case "ai" =>
         for

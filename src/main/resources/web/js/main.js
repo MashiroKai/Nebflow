@@ -2575,10 +2575,12 @@ onMessage('user', (msg, view) => {
   // window on restore ("outgoing Delegate prompt shows as blue bubble").
   // Sub-agent streams restore from their own backend history instead.
   if (!msg.nodeSessionId) {
-    saveMsg({ type: 'user', text: msg.text, injected: true, source: msg.source || null, eventType: msg.eventType || null, sender: msg.sender || null, senderTeam: msg.senderTeam || null, delivery: msg.delivery || null }, sid);
+    // intake (mailbadge batch 2026-09-13): 收件通道判别字段 —— 与 source 同批
+    // 落盘/读取，旧帧缺该字段 ⇒ null（回落路径逐字不变）。
+    saveMsg({ type: 'user', text: msg.text, injected: true, source: msg.source || null, eventType: msg.eventType || null, sender: msg.sender || null, senderTeam: msg.senderTeam || null, delivery: msg.delivery || null, intake: msg.intake || null }, sid);
   }
   if (sid === state.activeSessionId && view) {
-    renderInjectedBubble(msg.text, msg.source, msg.timestamp, msg.eventType, msg.sender, msg.senderTeam, msg.delivery);
+    renderInjectedBubble(msg.text, msg.source, msg.timestamp, msg.eventType, msg.sender, msg.senderTeam, msg.delivery, msg.intake);
     smartScroll();
   }
 });

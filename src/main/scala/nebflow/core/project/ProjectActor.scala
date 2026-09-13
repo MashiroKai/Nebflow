@@ -713,9 +713,13 @@ object ProjectActor:
               replyTo = Some(a.bridgeRef),
               source = Some(source),
               // 腿① 来源标注（bluebubble 批）：Mail 发信方随注入落到蓝气泡顶栏。
+              // mailbadge 批（2026-09-13，选项 C）：`intake` 同源透传（**只影响
+              // 呈现判别**——`source` 仍是 `Some(source)`=`task`，桥的消费计数
+              // 单点与 `idleSince` 空闲窗零触碰）。
               sender = attribution.flatMap(_.sender),
               senderTeam = attribution.flatMap(_.senderTeam),
-              eventType = attribution.flatMap(_.eventType)
+              eventType = attribution.flatMap(_.eventType),
+              intake = attribution.flatMap(_.intake)
             )).void *>
               logger
                 .info(
@@ -990,10 +994,13 @@ object ProjectActor:
             text = prompt,
             replyTo = Some(bridgeRef),
             source = Some(source),
-            // spawn 首条 prompt 同源标注（与注入形态同一份 attribution）。
+            // spawn 首条 prompt 同源标注（与注入形态同一份 attribution；
+            // mailbadge 批：`intake` 同步透传——首个 Mail 触发的 spawn 与后续
+            // 注入形态的收件气泡顶栏因此同源，无「首件不提标签」缺口）。
             sender = attribution.flatMap(_.sender),
             senderTeam = attribution.flatMap(_.senderTeam),
-            eventType = attribution.flatMap(_.eventType)
+            eventType = attribution.flatMap(_.eventType),
+            intake = attribution.flatMap(_.intake)
           )).void
           _ <- logger.info(s"Project '${project.name}' dispatcher session spawned: $sessionId$tag")
         yield same

@@ -387,8 +387,18 @@ function nodeStatusLabel(eventType) {
  *  sender is optional (backward compatible): absent → 'SOURCE · EventType'.
  *  sourceTeam (optional, backward compatible): present → the message came from a
  *  Team agent; the label shows the team path instead of the SOURCE prefix,
- *  e.g. 'nebflow-project/Backend · Result'. */
-export function injectedSourceLabel(source, eventType, sender, sourceTeam) {
+ *  e.g. 'nebflow-project/Backend · Result'.
+ *  intake (optional, mailbadge batch 2026-09-13 — author ruling「必须显示 MAIL」,
+ *  option C): the **intake-channel discriminant** the backend stamps next to
+ *  `source` when the injection arrived through a specific receipt channel
+ *  (`Mail(address="project:…")` at the dispatcher face ⇒ `intake='mail'`, while
+ *  `source` stays 'task' — the bridge's consumption accounting key, unchanged by
+ *  author decree). The intake value comes from the same backend-named source
+ *  vocabulary, so it resolves through the same explicitly-registered table. It
+ *  takes **presentation priority**; absent ⇒ the fallback path is byte-identical
+ *  to before (old history rows without the field, node face, non-project Mail,
+ *  dispatch notifications all render exactly as before). */
+export function injectedSourceLabel(source, eventType, sender, sourceTeam, intake) {
   if (!source && !sourceTeam) return '';
   // Node 完成通知专用格式（唯一 Node 类注入消息，source="node" 仅 NodeEngine
   // deliverToNebula 发出）：NODE · <项目名> · <节点名> · <状态>。后端把项目名
@@ -411,7 +421,9 @@ export function injectedSourceLabel(source, eventType, sender, sourceTeam) {
   if (sourceTeam) {
     parts.push(sender ? `${sourceTeam}/${sender}` : sourceTeam);
   } else {
-    const base = INJECTED_SOURCE_LABELS[source] || source.charAt(0).toUpperCase() + source.slice(1);
+    // 收件判别字段优先（缺席 ⇒ key = source，回落路径逐字不变）。
+    const key = intake || source;
+    const base = INJECTED_SOURCE_LABELS[key] || key.charAt(0).toUpperCase() + key.slice(1);
     parts.push(base);
     if (sender) parts.push(sender);
   }
@@ -449,8 +461,10 @@ function appendDeliveryBadge(label, delivery) {
  *  sourceTeam (optional): Team name for Team-agent messages — shown in the
  *  source label as 'team/agent' (see injectedSourceLabel).
  *  delivery (optional): Mail delivery mode 'queue'|'immediate' — shown
- *  as a badge in the label; absent on old messages → hidden. */
-export function buildInjectedRow(text, source, timestamp, eventType, sender, sourceTeam, deferFn, delivery) {
+ *  as a badge in the label; absent on old messages → hidden.
+ *  intake (optional): intake-channel discriminant (mailbadge batch) — takes
+ *  label priority over `source`; absent → `source` renders as before. */
+export function buildInjectedRow(text, source, timestamp, eventType, sender, sourceTeam, deferFn, delivery, intake) {
   const row = document.createElement('div');
   row.className = 'row user';
 
@@ -486,7 +500,7 @@ export function buildInjectedRow(text, source, timestamp, eventType, sender, sou
     content.style.display = 'none'; // collapsed default
     bindCollapsibleToggle(label, () => content);
   }
-  label.appendChild(document.createTextNode(injectedSourceLabel(source, eventType, sender, sourceTeam)));
+  label.appendChild(document.createTextNode(injectedSourceLabel(source, eventType, sender, sourceTeam, intake)));
   appendDeliveryBadge(label, delivery);
   bubble.appendChild(label);
   bubble.appendChild(content);
@@ -507,9 +521,9 @@ export function buildInjectedRow(text, source, timestamp, eventType, sender, sou
  *  reading (`chat.scrollTop = chat.scrollHeight`). It now follows the shared
  *  near-bottom judgement (utils.js shouldFollowBottom) so a notification that
  *  arrives while the user is scrolled up stays put and raises the ↓ N pill. */
-export function renderInjectedBubble(text, source, timestamp, eventType, sender, sourceTeam, delivery) {
+export function renderInjectedBubble(text, source, timestamp, eventType, sender, sourceTeam, delivery, intake) {
   const chat = activeView.dom.chat;
-  const row = buildInjectedRow(text, source, timestamp || Date.now(), eventType, sender, sourceTeam, undefined, delivery);
+  const row = buildInjectedRow(text, source, timestamp || Date.now(), eventType, sender, sourceTeam, undefined, delivery, intake);
   chat.appendChild(row);
   if (shouldFollowBottom(activeView, chat)) chat.scrollTop = chat.scrollHeight;
 }
