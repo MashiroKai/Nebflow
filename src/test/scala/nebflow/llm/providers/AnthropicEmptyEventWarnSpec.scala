@@ -2,9 +2,7 @@ package nebflow.llm.providers
 
 import cats.effect.IO
 import cats.effect.Ref
-import cats.effect.unsafe.implicits.global
-import cats.syntax.all.*
-import munit.FunSuite
+import munit.CatsEffectSuite
 import nebflow.llm.SendMessageParams
 import nebflow.shared.StreamChunk
 import scala.jdk.CollectionConverters.*
@@ -23,8 +21,11 @@ import sttp.client4.{GenericRequest, Response, StreamBackend}
  * `event:` line — including legitimately unknown event names and `ping` — must
  * not WARN. Anti-payload control: the WARN must not carry raw wire text
  * (author: R1b — wire-level raw-frame capture is deliberately out of scope).
+ *
+ * CatsEffectSuite (not FunSuite): the bodies are IO, and a plain FunSuite would
+ * build-but-never-run them (vacuous green — caught by the mutation check below).
  */
-class AnthropicEmptyEventWarnSpec extends FunSuite:
+class AnthropicEmptyEventWarnSpec extends CatsEffectSuite:
 
   private val LogName = "nebflow.llm.anthropic"
 
