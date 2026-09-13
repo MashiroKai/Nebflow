@@ -759,6 +759,9 @@ object NodeEditTool extends Tool:
     * cap 耗尽 RetryCap 升级/邻居与环两校验）+ NODE_MERGE_PASS_ONLY 硬拒与
     * 无 on-failed 边 WARNING 两条新校验条款 → ~5,3xx 字符（预算断言随之
     * 4700→5400，同窗合并使前缀缓存一次性失效——spec §4.2 cache 纪律）。
+    * 中断恢复语义批 R1/R2（20260908_interrupt-recovery-semantics §2.4 批 R2，
+    * 2026-09-13）：interrupted 重激活条款（语义明示 = fresh 重跑非续跑，近 200 字符）
+    * → 5,633 字符（预算断言随之 5450→5700）。
     * 该描述随 tools 数组进分发器每次请求。长度上限由 NodeSchemaSlimSpec 断言钉住）。 */
   val description =
     """Create/edit a Flow Map node — the dispatcher's single topology tool (the store owns flow-map.json).
@@ -787,7 +790,7 @@ object NodeEditTool extends Tool:
 - merge=true (create-only): batch landing sink — fires when ALL upstreams completed; upstream failure ⇒ blocked (upstream-incomplete). REQUIRES in ≥1 (NODE_MERGE_REQUIRES_UPSTREAM).
 - Edit: in appends; deps replaces; out rewrites the edge set; description(s) replace. Removing a consumed target (running/terminal) rejected — NodeCancel first; any other terminal rewire ⇒ the retained result auto-delivers to the new targets.
 - Blocked node edit (task/description/in/out/deps/loop changed) reactivates: status → wiring/pending, deliveredTo cleared, blockCount kept, completed upstreams re-delivered.
-- Failed node edit: actual change reactivates like blocked (first-choice recovery; blockCount→0). INTERRUPTED node edit (host graceful shutdown / SIGINT left it non-terminal): actual change reactivates it as a FRESH RERUN (new run, task re-read from the top — not a checkpoint resume; automatic resume is the boot sweep's job and reuses the same session). COMPLETED nodes re-run only with reactivateCompleted=true; cancelled not reactivatable (create successor).
+- Failed node edit: actual change reactivates like blocked (first-choice recovery; blockCount→0). INTERRUPTED node edit (host SIGINT/SIGTERM left it non-terminal): actual change reactivates as a FRESH RERUN (task re-read from the top — NOT a checkpoint resume; boot recovery owns resume). COMPLETED nodes re-run only with reactivateCompleted=true; cancelled not reactivatable (create successor).
 - Validation (0 spawn except worktree): description rules; referenced nodes exist; DAG cycle check; running target ⇒ input frozen. Result = the agent's final output, auto-saved and delivered along out. Full result: NodeList(detail=<nodeId>)."""
   val inputSchema = JsonObject.fromIterable(
     List(

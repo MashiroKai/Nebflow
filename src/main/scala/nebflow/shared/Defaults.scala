@@ -507,14 +507,14 @@ object Defaults:
    * 零散落；测试一律经 `GracefulInterruptHook.run(timeoutMs)` /
    * `interruptRunningNodes(timeoutMs)` 的可注入参数，不经本常量）。
    *
-   * **值待作者定（spec §5 未决①）**：spec 正文的「建议 10s」**未被本批采用**为生产
-   * 默认；此处 30s 是**占位值**（不提前触发：翻态循环 = 进程内 store 写 + 事件追加，
-   * 与节点数同阶的毫秒级操作，30s 是安全上界），作者值到 ⇒ **只改此一行**。
+   * **已定值（作者 2026-09-13 AskUser 卡逐字裁定）= 5 秒**（卡片口径：「重启最快；
+   * 来不及收尾的节点直接被标『已中断』」；经分发器 NodeMessage 2026-09-13 09:35 注入
+   * 落地）。spec §5 未决① 原「建议 10s」**自此作废**（作者口径覆盖）——改值只改本行。
    *
    * 语义 = 翻态预算：超时 ⇒ 放弃剩余翻转（残余 Running 走 kill -9 同款 boot sweep
    * 路径，行为安全降级——见 `GracefulInterruptHook.Report.timedOut`）。
    */
-  val ShutdownInterruptTimeoutMs: Long = 30_000L
+  val ShutdownInterruptTimeoutMs: Long = 5_000L
 
   // ---- 引擎活挂硬恢复（hard-recovery 批 2026-09-07，设计 §2/§8/§9）----
 

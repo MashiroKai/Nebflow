@@ -173,7 +173,7 @@ class NodeSchemaSlimSpec extends CatsEffectSuite:
 
   // ── 1. description 契约 ─────────────────────────────────
 
-  test("A⓪ tool doc budget: NodeEdit description ≤5450 chars (⑤b 7438→3742；merge语义→4308；E1 out门控→4395；E2 retry 参数行→4700；D2 描述重写→5450)") {
+  test("A⓪ tool doc budget: NodeEdit description ≤5700 chars (⑤b 7438→3742；merge语义→4308；E1 out门控→4395；E2 retry 参数行→4700；D2 描述重写→5450；中断恢复批 R2 interrupted 重激活条款→5700)") {
     val d = NodeEditTool.description
     // 3800 为 ⑤b 压缩批自钉预算；合并观测面P0P1引擎批时解冲吸收 main 后落语义
     // （failed 重激活条款 / abandon 无 TTL 裁定 / notifyDispatcher completion-only）
@@ -183,7 +183,12 @@ class NodeSchemaSlimSpec extends CatsEffectSuite:
     // 展开 + out delivery 语义 bullet（D5 零结算/WARNING）+ retry 自动回跳链 +
     // NODE_MERGE_PASS_ONLY 条款（实测 ~5,380）→ 5450。与 E1/E2 同窗合并使前缀
     // 缓存一次性失效（spec §4.2 cache 纪律），增量成本一次性支付。
-    assert(d.length <= 5450, s"NodeEdit description must stay ≤5450 chars (⑤b压缩+E1门控+E2 retry+D2重写), got ${d.length}")
+    // 中断恢复语义批 R1/R2（spec 20260908_interrupt-recovery-semantics §2.4 批 R2，
+    // 2026-09-13）：NodeEdit 描述「语义明示」要求新增 interrupted 重激活条款
+    // （新生命周期值，非续跑语义必须写进描述否则分发器会误以为 reactivate = 续跑）
+    // ——语义不可删，预算 5450→5700（实测 5,633）。单条新增近 200 字符已压到最短
+    // 表述（fresh rerun + 非 checkpoint resume + boot recovery 归口三点齐全）。
+    assert(d.length <= 5700, s"NodeEdit description must stay ≤5700 chars (⑤b压缩+E1门控+E2 retry+D2重写+R2 interrupted条款), got ${d.length}")
     // 语义锚点抽查：核心参数/错误码/机制关键词不得在压缩中丢失
     for anchor <- List("nodename", "descriptionLong", "replace-on-provide", "NODE_AGENT_RETIRED", "EMPTY_NODE_CONNECTION",
         "NODE_MERGE_REQUIRES_UPSTREAM", "worktree", "abandon", "notifyDispatcher", "Nebula", "NodeList(detail=", "retry") do
