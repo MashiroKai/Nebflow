@@ -134,6 +134,22 @@ class MemoryTrackReconcileSpec extends FunSuite:
       assertEquals(r.reconciled, 2, "Result 报出对账闭合条数（生命周期事件可读）")
       assertEquals(r.outcomesWritten, 3, "对账终态 2 + timeout 1")
       assert(!st.outcomes.exists(_.result == MemoryQueue.ResultRejected), "infra 路径零 rejected（作者令不变）")
+      // 作者纪律（写前固化 + 写后只对账）：生产路径上的显式断言 —— run_set == expected
+      assertEquals(r.reconcileDrift, 0, "写前固化集 == 写后实际写入集（漂移恒 0；非 0 会响亮 WARN 并上报 Result）")
+
+      // U4 裁定落地：引擎侧对账闭合**必须**落 history:consume 行（与 outcome 一一对账）
+      val consumeRefs = MemoryHistory.ofKind(MemoryHistory.KindConsume).flatMap(_.ref).toSet
+      assertEquals(consumeRefs, st.outcomes.map(_.ref).toSet, "每条 outcome 都有对应 consume 行（含对账终态）")
+      assertEquals(
+        MemoryHistory.discrepancies(st.notes.map(_.id).toList, st.outcomes.map(_.ref).toList),
+        Nil,
+        "队列 note / outcome / history:consume 三者零缺口（含 reconcile 闭合）")
+      val byReconcileRows = MemoryHistory
+        .ofKind(MemoryHistory.KindConsume)
+        .filter(_.result.contains(MemoryQueue.ResultAppliedByReconcile))
+      assertEquals(byReconcileRows.map(_.ref.getOrElse("")).sorted, Vector(idGone), "对账终态在变更史里可对账")
+      assert(byReconcileRows.forall(_.detail.getOrElse("").startsWith(MemoryQueue.ReconcileDetailPrefix)), "变更史 detail 同源前缀")
+      assert(byReconcileRows.forall(e => e.actor == MemoryTrack.AgentName && e.by.contains(MemoryTrack.AgentName)), "变更史 actor/by 同源")
 
       // 作者硬约束 (i)：审计一眼分清「谁判的」——独立字样 + detail 前缀 + by
       val engineJudged = st.outcomes.filter(o => o.result == MemoryQueue.ResultDeduped || o.result == MemoryQueue.ResultAppliedByReconcile)
@@ -259,5 +275,36 @@ class MemoryTrackReconcileSpec extends FunSuite:
     val cleanText = MemoryTrack.brief("/tmp/wr-reconcile", MemoryQueue.TriggerManual, st.pending, cleanPlan)
     assert(!cleanText.contains("already-present"), s"无重复桶则无该行: $cleanText")
     assert(cleanText.contains(idDup), "但授权 ref 清单照旧带全部条目")
+
+  // ===== 作者纪律（2026-09-13 立册）：禁从写后状态反推写入集 =====
+
+  test("纪律落地点：判据集写前固化、写后只对账 —— 冻结集里的条目若在写时已闭合 ⇒ drift 非空并响亮上报（不静默重推）"):
+    // 纯函数面：两个方向都报
+    assertEquals(MemoryTrack.writeSetDrift(Set("q-a", "q-b"), Set("q-b")).size, 1, "冻结却没写成 ⇒ 报")
+    assertEquals(MemoryTrack.writeSetDrift(Set("q-b"), Set("q-a", "q-b")).size, 1, "写成但不在冻结集 ⇒ 报（按构造恒空，仍显式报出）")
+    assertEquals(MemoryTrack.writeSetDrift(Set("q-a"), Set("q-a")), Nil, "相等 ⇒ 空（run_set == expected）")
+
+    reset()
+    val body = s"# User\n\n## 节\n\n$existingLine\n- 第二条已落\n"
+    writeUserFile(body)
+    val idA = enqueueAppend(existingLine)
+    val idB = enqueueAppend("- 第二条已落")
+    val frozen = MemoryQueue.reconcile(
+      MemoryQueue.readState(),
+      Map("user" -> MemoryQueue.TargetFile(MemoryStore.userMemoryPath.toString, body)))
+    assertEquals(frozen.refs, Set(idA, idB), "**写前**固化判据集 = 2 条（判定那一刻的读数）")
+
+    // 模拟「判定之后、写入之前」被消费者抢先闭合一条 ⇒ 这是 frozen != written 的唯一来源
+    assert(MemoryQueue.recordOutcome(idA, MemoryQueue.ResultApplied, "memory-consolidator", "consumer won the race").isRight)
+    val rep = MemoryTrack.degradeOutcomesReport(isTimeout = true, detail = "hard timeout", reconciled = frozen).unsafeRunSync()
+
+    assertEquals(rep.judgedWritten, List(idB), "只写写时仍 pending 的那条（**不从写后状态反推**写入集）")
+    assertEquals(rep.written, 1, "本轮实际写入 1 条")
+    assertEquals(rep.drift.size, 1, "差集被上报（frozen 2 vs written 1）")
+    assert(rep.drift.head.startsWith(idA), s"差集点名为抢先闭合的那条: ${rep.drift}")
+    assertEquals(
+      MemoryQueue.readState().lastOutcomeByRef.get(idA).map(_.result),
+      Some(MemoryQueue.ResultApplied),
+      "抢先闭合者不被动过（引擎不覆盖既有终态）")
 
 end MemoryTrackReconcileSpec

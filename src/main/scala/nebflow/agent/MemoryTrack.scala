@@ -112,7 +112,9 @@ object MemoryTrack:
     *
     * `reconciled`（C 批 ④，2026-09-13）：超时对账判为**已了结**而由引擎标终态的条数
     * （⊆ `outcomesWritten`）——生命周期事件与日志用它与「照旧写 timeout 的条数」区分，
-    * 使「谁判的」在事件行上也可读。默认 0 ⇒ 既有构造点不受影响。 */
+    * 使「谁判的」在事件行上也可读。默认 0 ⇒ 既有构造点不受影响。
+    * `reconcileDrift` = 写前固化集与写后实际写入集的差集条数（**正常恒 0**；非 0 = 引擎在
+    * 判定与写入之间被绕过或写失败，见 [[DegradeReport]] —— 写后只对账、不重推）。 */
   final case class Result(
     status: Status,
     detail: String,
@@ -120,8 +122,20 @@ object MemoryTrack:
     outcomesWritten: Int = 0,
     changed: Int = 0,
     alert: Option[String] = None,
-    reconciled: Int = 0
+    reconciled: Int = 0,
+    reconcileDrift: Int = 0
   )
+
+  /** 降级执行报告（C 批 ④）：**写前固化集** + **写后实际写入集** + 两者差集。
+    *
+    * 作者纪律（2026-09-13 立册）「**禁从写后状态反推写入集**」的落地点：
+    *   - `frozen` = 写前固化的对账判据集（来自 `finish` 里**判定那一刻**的状态读数，
+    *     与写入无关）——这就是「写前确定写入集」，并随报告**留存读数**；
+    *   - `judgedWritten` = 实际写成的对账终态 ref 集（写后读回，**不重新推导**）；
+    *   - `drift` = `frozen -- judgedWritten`（冻结了却没写成）+ `judgedWritten -- frozen`
+    *     （写成的不在冻结集里，按构造恒空）。**恒空 = 断言 `run_set == expected` 成立**；
+    *     非空 ⇒ 响亮 WARN（绝不静默重推）。 */
+  final case class DegradeReport(written: Int, judgedWritten: List[String], drift: List[String])
 
   object Result:
     val Skipped: Result = Result(Status.Skipped, "no trigger (empty queue, under soft lines, no signal)", 0)
@@ -517,6 +531,13 @@ $deferred$noTargetLine$alreadyPresentLine- 步骤与输出契约严格按本会�
 
   // ── 内部：收尾（变更史 + 降级） ─────────────────────────────────
 
+  /** 写前固化集 vs 写后实际集的差集描述（**纯函数**，两个方向都报；空 = `run_set == expected`）。
+    * 作者纪律「禁从写后状态反推写入集」的可测面：本函数只**比较**两个集合，不从任何状态重推。 */
+  private[agent] def writeSetDrift(frozen: Set[String], acted: Set[String]): List[String] =
+    val notWritten = (frozen -- acted).toList.sorted.map(r => s"$r: frozen before the write set but no outcome was written")
+    val notFrozen = (acted -- frozen).toList.sorted.map(r => s"$r: written but absent from the frozen set")
+    notWritten ++ notFrozen
+
   /** 降级（失败 / 超时同一路径，spec §5 R3 档 1/2/3；2026-09-13 缺失自愈批按作者令重写）。
     *
     * **改动前的缺陷（取证件 §0-3）**：失败/超时对本轮待办逐条写
@@ -537,22 +558,41 @@ $deferred$noTargetLine$alreadyPresentLine- 步骤与输出契约严格按本会�
     * 条目**先判终态**（独立字样 `deduped` / `applied-by-reconcile`，`by` + detail 前缀可辨
     * 「引擎判的」），其余才走上面的 infra 档。对账只在**超时**路径生效（`isTimeout`）——
     * 失败路径（定义缺失 / spawn 失败）本轮根本没动过文件，不该替消费者下裁决。
+    *
+    * **纪律落地点（作者 2026-09-13 立册）**：判据集在**写前**固化（`frozen`，来自
+    * `finish` 判定那一刻的状态，与写入无关），写后只做**对账**（`writeSetDrift` 比较
+    * frozen 与实际写入集），**绝不从写后状态反推写入集**；差集非空 ⇒ 响亮 WARN。
+    *
     * `private[agent]`：spec 直测面。 */
   private[agent] def degradeOutcomes(
     isTimeout: Boolean,
     detail: String,
     reconciled: MemoryQueue.ReconcileReport = MemoryQueue.ReconcileReport.empty
-  ): IO[Int] =
+  ): IO[Int] = degradeOutcomesReport(isTimeout, detail, reconciled).map(_.written)
+
+  /** [[degradeOutcomes]] 的报告形态（写前固化集 / 写后实际集 / 差集读数）。生产路径用它
+    * （`finish` 需要把 drift 带进 [[Result]]），兼容入口 [[degradeOutcomes]] 只取计数值。 */
+  private[agent] def degradeOutcomesReport(
+    isTimeout: Boolean,
+    detail: String,
+    reconciled: MemoryQueue.ReconcileReport = MemoryQueue.ReconcileReport.empty
+  ): IO[DegradeReport] =
     IO.blocking {
-      val state       = MemoryQueue.readState()
-      val stillPending = state.pending
+      val state = MemoryQueue.readState()
+      // ── 写前固化（作者纪律）：判据集 = 判定那一刻的对账报告；对账只在超时路径生效 ──
+      val frozen: Set[String] = if isTimeout then reconciled.refs else Set.empty[String]
       val judged = if isTimeout then reconciled.byRef else Map.empty[String, MemoryQueue.ReconcileVerdict]
-      var written     = 0
-      stillPending.foreach { n =>
+      // 写前后备读数：写时仍 pending 的 ref 集（只作对账基准，不参与「写入集」推导）
+      val pendingAtWrite = state.pending.map(_.id).toSet
+      val writtenJudged  = scala.collection.mutable.LinkedHashSet.empty[String]
+      var written        = 0
+      state.pending.foreach { n =>
         judged.get(n.id) match
           case Some(v) =>
-            // ④ 超时对账：效果已在盘上 ⇒ 引擎标终态（对账判据只取高精度两支，宁漏不误）
-            if MemoryQueue.recordOutcome(n.id, v.result, AgentName, v.detail, AgentName).isRight then written += 1
+            // ④ 超时对账：效果已在盘上 ⇒ 引擎标终态（判据只取高精度两支，宁漏不误）
+            if MemoryQueue.recordOutcome(n.id, v.result, AgentName, v.detail, AgentName).isRight then
+              written += 1
+              writtenJudged += n.id
           case None =>
             val infraCount = state.outcomes.count(o =>
               o.ref == n.id && MemoryQueue.EngineInfraResults.contains(o.result))
@@ -564,13 +604,23 @@ $deferred$noTargetLine$alreadyPresentLine- 步骤与输出契约严格按本会�
             val skip = result == MemoryQueue.ResultBlocked && alreadyBlocked
             if !skip && MemoryQueue.recordOutcome(n.id, result, AgentName, detail, AgentName).isRight then written += 1
       }
+      // ── 写后对账（不重新推导）：冻结集 == 实际写入集 ? ──
+      val actual = writtenJudged.toSet
+      val judgedNotPending = frozen -- pendingAtWrite
+      val drift = writeSetDrift(frozen, actual)
+      if judgedNotPending.nonEmpty then
+        logger.warnSync(
+          s"[memory-track] reconcile write-set NOT frozen-confirmed: ${judgedNotPending.size} note(s) were frozen as judged but were already gone from pending at write time (queue touched between judging and writing): ${judgedNotPending.toList.sorted.take(10).mkString(", ")}")
+      if drift.nonEmpty then
+        logger.warnSync(
+          s"[memory-track] reconcile write-set DRIFT (frozen != written, no re-derivation): ${drift.size} difference(s) — ${drift.take(10).mkString("; ")}")
       // 置位判据用**写后**的 pending 计数（C 批 ④ 口径修正）：本轮把该闭合的都闭合了 ⇒
       // 无可重试对象 ⇒ 不置位（不制造空转重试）；还有剩 ⇒ 照旧置位。
       val remaining = MemoryQueue.readState().pendingCount
       if remaining > 0 then
         MemoryTrackSignal.mark(
           s"previous memory-track run ${if isTimeout then "timeout" else "failed"} ($remaining note(s) not applied)")
-      written
+      DegradeReport(written, actual.toList.sorted, drift)
     }
 
   private[agent] def finish(
@@ -587,17 +637,19 @@ $deferred$noTargetLine$alreadyPresentLine- 步骤与输出契约严格按本会�
       // ── ④ 超时对账（C 批 2026-09-13）：**先对账再降级**。跑后文件内容 `after` 已在手
       //    （内存里 `readAll(files)` 就是它），对账本身是纯函数（零写入）。
       //    只在 Timeout 分支算：失败分支（定义缺失 / spawn 失败）本轮没动过文件。
+      //    `stateAtFinish` 是**写前**读数 ⇒ 判据集在写前就固化（作者纪律：写后不重推）。
       stateAtFinish <- IO.blocking(MemoryQueue.readState())
       reconcile     = if attempt.status == Status.Timeout then MemoryQueue.reconcile(stateAtFinish, planInput(after))
         else MemoryQueue.ReconcileReport.empty
-      outcomesWritten <- attempt.status match
-        case Status.Completed => IO.pure(0)
-        case Status.Timeout   => degradeOutcomes(isTimeout = true, attempt.detail, reconcile)
-        case Status.Failed    => degradeOutcomes(isTimeout = false, attempt.detail)
-        // 前置闸拒绝：零结局写（条目本就 pending），但置位重试引线（与降级路径同款可观测面）
+      degrade <- attempt.status match
+        case Status.Timeout => degradeOutcomesReport(isTimeout = true, attempt.detail, reconcile)
+        case Status.Failed  => degradeOutcomesReport(isTimeout = false, attempt.detail)
+        case _              => IO.pure(DegradeReport(0, Nil, Nil))
+      outcomesWritten = degrade.written
+      _ <- attempt.status match
         case Status.Refused =>
-          IO { MemoryTrackSignal.mark(s"previous memory-track round refused by a fail-closed preflight gate: ${attempt.detail.take(160)}"); 0 }
-        case Status.Skipped | Status.DryRun => IO.pure(0)
+          IO(MemoryTrackSignal.mark(s"previous memory-track round refused by a fail-closed preflight gate: ${attempt.detail.take(160)}"))
+        case _ => IO.unit
       _ <- IO.pure(
         attempt.status match
           case Status.Completed =>
@@ -608,7 +660,9 @@ $deferred$noTargetLine$alreadyPresentLine- 步骤与输出契约严格按本会�
             logger.warn(
               s"[memory-track] TIMEOUT after ${hardTimeoutMs}ms (infra — no note marked rejected): " +
                 s"reconcile closed ${reconcile.count} already-landed note(s) [${reconcile.render}], " +
-                s"${outcomesWritten - reconcile.count} timeout outcome(s) written for the rest, entries stay pending, retry armed for the next compaction")
+                s"${outcomesWritten - reconcile.count} timeout outcome(s) written for the rest, " +
+                s"write-set drift ${degrade.drift.size} (frozen ${reconcile.count} vs written ${degrade.judgedWritten.size}), " +
+                s"entries stay pending, retry armed for the next compaction")
           case Status.DryRun =>
             logger.info(s"[memory-track] DRY-RUN (read-only): no agent spawned, no outcome written, no file touched")
           case Status.Refused =>
@@ -619,7 +673,9 @@ $deferred$noTargetLine$alreadyPresentLine- 步骤与输出契约严格按本会�
       attempt.status match
         case Status.Completed => Result(Status.Completed, attempt.report, notes.size, 0, changed, attempt.alert)
         case Status.Failed    => Result(Status.Failed, attempt.detail, notes.size, outcomesWritten, changed, attempt.alert)
-        case Status.Timeout   => Result(Status.Timeout, attempt.detail, notes.size, outcomesWritten, changed, attempt.alert, reconciled = reconcile.count)
+        case Status.Timeout =>
+          Result(Status.Timeout, attempt.detail, notes.size, outcomesWritten, changed, attempt.alert,
+            reconciled = reconcile.count, reconcileDrift = degrade.drift.size)
         case Status.DryRun    => Result(Status.DryRun, attempt.report, notes.size, 0, changed, None)
         case Status.Refused   => Result(Status.Refused, attempt.detail, notes.size, 0, changed, attempt.alert)
         case Status.Skipped   => Result.Skipped
