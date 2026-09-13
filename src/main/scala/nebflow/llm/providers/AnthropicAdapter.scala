@@ -567,3 +567,39 @@ class AnthropicAdapter(
                 .as(Nil)
             case _ => IO.pure(Nil)
 end AnthropicAdapter
+
+/** Model-list endpoints of the Anthropic face — declared here, not derived by
+  * the gateway from a raw `baseUrl` (see `ModelListFaces` for the rule and
+  * `RestApiRoutes.probeModelList` for how candidates are probed).
+  *
+  *   1. `{base}/v1/models` — this face appends the version segment itself for
+  *      chat (`{base}/v1/messages`, see `endpoint` above), so the list lives
+  *      under the same segment. Measured 200 with the real catalogues on kimi
+  *      and zhipu.
+  *   2. `{origin}/v1/models` — the vendor's version root, declared for hosts
+  *      whose chat prefix carries a non-version segment and serves no list
+  *      under it: measured 200 on deepseek, where `/anthropic/v1/models` is 404
+  *      while `https://api.deepseek.com/v1/models` answers the catalogue.
+  *
+  * A `baseUrl` with no path segment (e.g. `https://api.example.com`) declares
+  * one candidate only — there the two forms coincide.
+  */
+object AnthropicAdapter:
+
+  def modelListUrls(baseUrl: String): List[String] =
+    val base = baseUrl.replaceAll("/+$", "")
+    val own = s"$base/v1/models"
+    val origin = originOf(base)
+    if origin.isEmpty then List(own) else List(own, s"$origin/v1/models")
+
+  /** `scheme://host[:port]` of an absolute URL, or "" when it carries no path
+    * segment (the second candidate would then duplicate the first).
+    */
+  private def originOf(baseUrl: String): String =
+    val schemeEnd = baseUrl.indexOf("://")
+    if schemeEnd < 0 then ""
+    else
+      val afterScheme = baseUrl.substring(schemeEnd + 3)
+      val slash = afterScheme.indexOf('/')
+      if slash < 0 then "" else baseUrl.substring(0, schemeEnd + 3 + slash)
+end AnthropicAdapter

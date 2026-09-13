@@ -24,7 +24,8 @@ import nebflow.core.tools.NodeTools
 import nebflow.core.schedule.FreezeSchedule.given
 import nebflow.core.task.{FileTaskStore, TaskStore}
 import cats.effect.unsafe.implicits.global
-import nebflow.llm.{HealthState, NebflowServiceConfig, SearchApiHealth}
+import nebflow.llm.{HealthState, LlmProtocol, NebflowServiceConfig, SearchApiHealth}
+import nebflow.llm.providers.ModelListFaces
 import nebflow.neblink.*
 import nebflow.neblink.FriendCodecs.given
 import nebflow.service.ConfigService
@@ -2576,33 +2577,47 @@ class RestApiRoutes(
 
     // ===== Provider model discovery =====
 
-    // POST /provider/models — fetch a provider's model list (GET {baseUrl}models)
-    // so the settings dialog can auto-populate model ids instead of hand-typing
-    // them. Body: {baseUrl, apiKey?, protocol?, name?}. When apiKey is absent or
-    // the masked "***" (edit dialog), the stored key of provider `name` is used.
+    // POST /provider/models — fetch a provider's model list (GET the endpoint
+    // its protocol face declares, see `ModelListFaces`) so the settings dialog
+    // can auto-populate model ids instead of hand-typing them. Body: {baseUrl,
+    // apiKey?, protocol?, name?}. When apiKey is absent or the masked "***"
+    // (edit dialog), the stored key of the matched provider is used. The face
+    // comes from the body protocol when one is sent, else from the stored
+    // provider matched by name or by baseUrl (the dialog posts {baseUrl,
+    // apiKey} only), else anthropic — the dialog's own default.
     // Best-effort: any failure returns 502 + message; the frontend falls back to
     // manual entry (失败降级).
     case req @ POST -> Root / "provider" / "models" =>
       withAuth(req) {
         req.as[Json].flatMap { body =>
           val baseUrl = body.hcursor.downField("baseUrl").as[String].getOrElse("").trim
-          val protocol = body.hcursor.downField("protocol").as[String].getOrElse("anthropic")
+          val protocol = body.hcursor.downField("protocol").as[String].getOrElse("").trim
           val name = body.hcursor.downField("name").as[String].toOption.filter(_.nonEmpty)
           if baseUrl.isEmpty then BadRequest(Json.obj("error" -> "Missing required field: baseUrl".asJson))
           else
-            checkHttpUrl(baseUrl) match
+            checkHttpBaseUrl(baseUrl) match
               case Left(err) => BadRequest(Json.obj("error" -> err.asJson))
-              case Right(modelsUrl) =>
+              case Right(base) =>
                 configRef.get.flatMap { cfg =>
+                  val stored = name
+                    .flatMap(n => cfg.llm.providers.get(n))
+                    .orElse(cfg.llm.providers.values.find(_.baseUrl.replaceAll("/+$", "") == base))
+                  val face =
+                    if protocol == "openai" then LlmProtocol.OpenAI
+                    else if protocol == "anthropic" then LlmProtocol.Anthropic
+                    else stored.map(_.protocol).getOrElse(LlmProtocol.Anthropic)
                   val rawKey = body.hcursor.downField("apiKey").as[String].toOption.map(_.trim).getOrElse("")
                   val apiKey =
                     // Masked key from the edit dialog — fall back to the stored one.
                     if rawKey.nonEmpty && rawKey != "***" then rawKey
-                    else name.flatMap(n => cfg.llm.providers.get(n).map(_.apiKey)).getOrElse("")
-                  fetchProviderModels(modelsUrl, apiKey, protocol).flatMap {
-                    case Right(models) => Ok(Json.obj("models" -> models.asJson))
-                    case Left(err)    => BadGateway(Json.obj("error" -> err.asJson))
-                  }
+                    else stored.map(_.apiKey).getOrElse("")
+                  ModelListFaces.models(face, base) match
+                    case Nil => BadGateway(Json.obj("error" -> ModelListFaces.noEndpointMessage(face).asJson))
+                    case urls =>
+                      fetchProviderModels(urls, apiKey, face.name).flatMap {
+                        case Right(models) => Ok(Json.obj("models" -> models.asJson))
+                        case Left(err)    => BadGateway(Json.obj("error" -> err.asJson))
+                      }
                 }
         }
       }
@@ -3166,25 +3181,47 @@ class RestApiRoutes(
    * SSRF guard for provider model discovery: only absolute http(s) URLs with a
    * non-empty host are fetchable. Blocks other schemes (file:, jar:, ftp:...)
    * and URLs the JDK client would resolve to something unexpected. Returns the
-   * fully-joined `{baseUrl}models` URL on success.
+   * validated base URL with trailing slashes trimmed.
+   *
+   * The model-list PATH is deliberately NOT built here: `baseUrl` is a chat
+   * prefix and the two protocol faces place the version segment differently, so
+   * each face declares its own list endpoint (`ModelListFaces`, whose
+   * declarations carry the measurements that pin the paths).
    */
-  private def checkHttpUrl(baseUrl: String): Either[String, java.net.URI] =
+  private def checkHttpBaseUrl(baseUrl: String): Either[String, String] =
     try
-      val normalized = if baseUrl.endsWith("/") then baseUrl else baseUrl + "/"
-      val uri = java.net.URI.create(normalized + "models")
+      val normalized = baseUrl.trim.replaceAll("/+$", "")
+      val uri = java.net.URI.create(normalized)
       val scheme = Option(uri.getScheme).map(_.toLowerCase).getOrElse("")
       val host = Option(uri.getHost).map(_.trim).getOrElse("")
-      if (scheme == "http" || scheme == "https") && host.nonEmpty then Right(uri)
+      if (scheme == "http" || scheme == "https") && host.nonEmpty then Right(normalized)
       else Left("baseUrl must be an absolute http(s) URL with a host")
     catch case _: Exception => Left("Invalid baseUrl")
 
   /**
-   * GET {baseUrl}models with protocol-specific auth headers and extract the
-   * model entries (both OpenAI-compatible and Anthropic reply
-   * `{"data":[{"id":..}]}`, normalized with empty ids removed and duplicates
-   * collapsed). Each entry is `{id}` plus `contextLength` when the provider
-   * reports one (OpenRouter `context_length`, others `context_window`) —
-   * absent/unparsable means the field is simply omitted. Uses the same JDK
+   * One model-list probe outcome. `NoEndpoint` is the only verdict that lets
+   * the caller move on to the next declared candidate; `Failed` already carries
+   * a user-facing message.
+   */
+  private enum ModelsProbe:
+    case Found(models: List[Json])
+    case NoEndpoint(detail: String)
+    case Failed(detail: String)
+
+  /**
+   * GET every model-list endpoint declared for one provider face, in probe
+   * order (`ModelListFaces`), and extract the model entries (both
+   * OpenAI-compatible and Anthropic reply `{"data":[{"id":..}]}`, normalized
+   * with empty ids removed and duplicates collapsed). Each entry is `{id}` plus
+   * `contextLength` when the provider reports one (OpenRouter
+   * `context_length`, others `context_window`) — absent/unparsable means the
+   * field is simply omitted.
+   *
+   * Only a "no such endpoint" verdict advances to the next declared candidate
+   * (`ModelsProbe.NoEndpoint`: HTTP 404, or a 2xx body carrying the provider's
+   * own 404 envelope — measured on zhipu, whose gateway answers `HTTP 200` with
+   * `{"code":500,"msg":"404 NOT_FOUND"}`). Every other failure is final, so a
+   * later candidate can never mask a real error. Uses the same JDK
    * HttpClient posture as the LLM adapters (`OutboundHttpClients.Policy.SystemProxy10s`:
    * HTTP/1.1 forced, system proxy honored) — a probe must see the same network
    * path real completions take.
@@ -3205,15 +3242,45 @@ class RestApiRoutes(
    *     h1 p95 × 1.2. Do NOT relax this pin as part of a neblink-Caddy review.
    */
   private def fetchProviderModels(
-    modelsUrl: java.net.URI,
+    modelsUrls: List[String],
     apiKey: String,
     protocol: String
   ): IO[Either[String, List[Json]]] =
     IO.blocking {
       val client = OutboundHttpClients.client(OutboundHttpClients.Policy.SystemProxy10s)
+
+      // Declared candidates, probed in order; only a missing endpoint advances.
+      def probe(urls: List[String], missing: Option[String]): Either[String, List[Json]] =
+        urls match
+          case Nil =>
+            val tried = missing.map(d => s" — tried $d").getOrElse("")
+            Left(s"No model-list endpoint found for this provider$tried: enter model ids manually")
+          case url :: rest =>
+            probeModelList(client, url, apiKey, protocol) match
+              case ModelsProbe.Found(models)      => Right(models)
+              case ModelsProbe.NoEndpoint(detail) => probe(rest, Some(s"$url -> $detail"))
+              case ModelsProbe.Failed(detail)     => Left(detail)
+
+      probe(modelsUrls, None)
+    }.handleErrorWith(e => IO.pure(Left(unreachable(e))))
+
+  /**
+   * GET one declared endpoint with protocol-specific auth headers and classify
+   * the reply. A 2xx body that still carries the provider's own error envelope
+   * counts as a failure: the zhipu gateway answers `HTTP 200` with
+   * `{"code":500,"msg":"404 NOT_FOUND",...}` on an endpoint it does not serve,
+   * and reporting that as "no models" hid the real 404 from the dialog.
+   */
+  private def probeModelList(
+    client: java.net.http.HttpClient,
+    url: String,
+    apiKey: String,
+    protocol: String
+  ): ModelsProbe =
+    try
       val reqBuilder = java.net.http.HttpRequest
         .newBuilder()
-        .uri(modelsUrl)
+        .uri(java.net.URI.create(url))
         .timeout(java.time.Duration.ofSeconds(15))
         .GET()
       if protocol == "openai" then
@@ -3222,38 +3289,98 @@ class RestApiRoutes(
         // anthropic
         reqBuilder.header("x-api-key", apiKey)
         reqBuilder.header("anthropic-version", "2023-06-01")
-      try
-        val response = client.send(reqBuilder.build(), java.net.http.HttpResponse.BodyHandlers.ofString())
-        val status = response.statusCode()
-        if status >= 200 && status < 300 then
-          parser.parse(response.body()) match
-            case Right(json) =>
-              val entries = json.hcursor
-                .downField("data")
-                .as[List[Json]]
-                .getOrElse(Nil)
-                .flatMap(j => j.hcursor.downField("id").as[String].toOption.map(_.trim).filter(_.nonEmpty).map(id => (id, j)))
-              // distinct by id, first occurrence wins
-              val seen = scala.collection.mutable.LinkedHashSet.empty[String]
-              val models = entries.collect { case (id, raw) if seen.add(id) =>
-                val ctx = List("context_length", "context_window")
-                  .flatMap(k => raw.hcursor.downField(k).as[Long].toOption)
-                  .headOption
-                ctx match
-                  case Some(n) => Json.obj("id" -> id.asJson, "contextLength" -> n.asJson)
-                  case None    => Json.obj("id" -> id.asJson)
-              }
-              if models.isEmpty then Left("Provider returned no models")
-              else Right(models)
-            case Left(err) => Left(s"Invalid JSON from provider: ${err.message}")
-        else
-          val detail = parser.parse(response.body()).toOption
-            .flatMap(_.hcursor.downField("error").downField("message").as[String].toOption)
-            .getOrElse(response.body().take(200))
-          Left(s"Provider returned HTTP $status: $detail")
-      catch case e: Exception => Left(e.getMessage)
-      end try
-    }.handleErrorWith(e => IO.pure(Left(e.getMessage)))
+      val response = client.send(reqBuilder.build(), java.net.http.HttpResponse.BodyHandlers.ofString())
+      val status = response.statusCode()
+      val body = response.body()
+      val parsed = parser.parse(body)
+      val detail = parsed.toOption.flatMap(errorDetail).getOrElse(body.take(200))
+      if status == 404 || parsed.toOption.exists(saysNoEndpoint) then ModelsProbe.NoEndpoint(detail)
+      else if status >= 200 && status < 300 then
+        parsed match
+          case Left(err) => ModelsProbe.Failed(s"Invalid JSON from provider: ${err.message}")
+          case Right(json) =>
+            val models = extractModels(json)
+            if models.nonEmpty then ModelsProbe.Found(models)
+            else if isErrorEnvelope(json) then
+              ModelsProbe.Failed(s"Provider returned HTTP $status with an error body: $detail")
+            else ModelsProbe.Failed("Provider returned no models")
+      else ModelsProbe.Failed(s"Provider returned HTTP $status: $detail")
+    catch case e: Exception => ModelsProbe.Failed(unreachable(e))
+    end try
+
+  /**
+   * Extract `data[].id` from a provider reply (both OpenAI-compatible and
+   * Anthropic replies) with empty ids dropped and duplicates collapsed (first
+   * occurrence wins). Each entry is `{id}` plus `contextLength` when the
+   * provider reports one (OpenRouter `context_length`, others
+   * `context_window`).
+   */
+  private def extractModels(json: Json): List[Json] =
+    val entries = json.hcursor
+      .downField("data")
+      .as[List[Json]]
+      .getOrElse(Nil)
+      .flatMap(j => j.hcursor.downField("id").as[String].toOption.map(_.trim).filter(_.nonEmpty).map(id => (id, j)))
+    // distinct by id, first occurrence wins
+    val seen = scala.collection.mutable.LinkedHashSet.empty[String]
+    entries.collect { case (id, raw) if seen.add(id) =>
+      val ctx = List("context_length", "context_window")
+        .flatMap(k => raw.hcursor.downField(k).as[Long].toOption)
+        .headOption
+      ctx match
+        case Some(n) => Json.obj("id" -> id.asJson, "contextLength" -> n.asJson)
+        case None    => Json.obj("id" -> id.asJson)
+    }
+
+  /**
+   * Provider-side error text, when the reply carries one (`error.message`,
+   * `error` as a string, `msg`, or `message`).
+   */
+  private def errorDetail(json: Json): Option[String] =
+    val c = json.hcursor
+    List(
+      c.downField("error").downField("message").as[String].toOption,
+      c.downField("error").as[String].toOption,
+      c.downField("msg").as[String].toOption,
+      c.downField("message").as[String].toOption
+    ).flatten.map(_.trim).find(_.nonEmpty)
+
+  /**
+   * A reply that is an error even under a 2xx status: `{"error":…}`,
+   * `{"success":false}`, or the `{"code":…,"msg":…}` envelope a gateway uses to
+   * carry an HTTP-level error code. Such a body must never be reported as
+   * "no models".
+   */
+  private def isErrorEnvelope(json: Json): Boolean =
+    val c = json.hcursor
+    c.downField("error").focus.isDefined ||
+      c.downField("success").as[Boolean].toOption.contains(false) ||
+      (c.downField("code").focus.isDefined && c.downField("msg").focus.isDefined)
+
+  /**
+   * The reply says the endpoint does not exist (a 2xx carrier of
+   * `404 NOT_FOUND`, or a `resource_not_found_error`) — the only verdict that
+   * lets `fetchProviderModels` try the face's next declared candidate.
+   */
+  private def saysNoEndpoint(json: Json): Boolean =
+    val c = json.hcursor
+    val code = c.downField("code").as[Int].toOption
+      .orElse(c.downField("code").as[String].toOption.flatMap(_.trim.toIntOption))
+    val text = List(
+      c.downField("msg").as[String].toOption,
+      c.downField("message").as[String].toOption,
+      c.downField("error").downField("message").as[String].toOption,
+      c.downField("error").downField("type").as[String].toOption
+    ).flatten.mkString(" ").toLowerCase
+    code.contains(404) || text.contains("not_found") || text.contains("not found")
+
+  /**
+   * Transport-level failure text: a provider whose declared endpoints answer
+   * nothing at all (proxy, DNS, TLS, timeout) is reported through this branch,
+   * never as a silent empty list.
+   */
+  private def unreachable(e: Throwable): String =
+    s"Provider unreachable: ${Option(e.getMessage).filter(_.nonEmpty).getOrElse(e.getClass.getSimpleName)}"
 
   /**
    * Generic POST proxy to the NebLink Server. Returns the parsed JSON on
