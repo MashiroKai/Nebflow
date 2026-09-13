@@ -1,39 +1,49 @@
 // plugins.js — Plugins page (Canvas tab, activity-bar entry «插件»/Plugins).
 //
-// 2026-09-04 作者裁定（插件面板重设计——统一插件系统 + 每插件一开关）：
-//   • 统一插件系统：Skill 与 MCP 已统一为「插件」。页面只呈现插件卡片，
-//     skill/MCP 仅作卡片内的内容构成标注语（含 N 个技能·可展开 preview /
-//     MCP server 名+transport / 内建工具白名单 +N），不再是独立板块。
-//   • 每插件**两个**操作件（2026-09-12 令 1 收口，设计件 R1 代价① / R9-A：
-//     「两个动作在面板上必须视觉可分」）：
-//       ┌ 内容开关（主开关，卡片右上，与 state pill 同行）
-//       │    on  = POST /api/plugins/:name/approve （授予内容信任，按当前 digest）
-//       │    off = POST /api/plugins/:name/revoke  （撤回内容信任——会停用在飞节点的
-//       │                                           插件 MCP，**不是**「关闭插件」）
-//       └ 派发开关（副控件，卡片底部独立一行 + 分隔线，带自己的标签）
-//            on  = POST /api/plugins/:name/enable  （plugins.dispatch.<n>.authorEnabled=true）
-//            off = POST /api/plugins/:name/disable （…authorEnabled=false）
-//     **令 1 语义（作者 2026-09-12 14:14 原话「插件的开关，应该只影响任务分发器对
-//     未来节点的派发，而不能影响目前的」）**：派发开关只写 `plugins.dispatch`
-//     （作者意图层，durable）⇒ 关闭只挡住**未来派发**，已在飞/已派发节点零影响
-//     （引擎侧闸 B/C/E/D 只判内容面）。
-//     **两动作的分家口径（勿混）**：文案分家（本文件 `plugins.switch*` = 内容面、
-//     `plugins.dispatch*` = 派发面）；DOM 钩子分家（`data-plugin-switch` = 内容、
-//     `data-plugin-dispatch` = 派发）——tests/sidebar-plugins.spec.mjs 与
-//     tests/plugins-panel-{redesign,autosync}.spec.mjs 的 approve/revoke 契约
-//     挂在 `data-plugin-switch` 上，不得挪用。
-//     **未受信插件上零静默空操作**：内容未审批时写 authorEnabled 无论如何都不会
-//     生效（`PluginDispatchPolicy.effective = trusted ∧ (authorEnabled ∨ transition)`）
-//     ⇒ 派发开关渲染为 disabled + 一行**可行动**注记（「先审批内容」），而不是
-//     允许点击后回弹。临时派发授权（transition）生效期间同理（它的有效值由授权层
-//     拥有，作者开关写下去也不改变有效值）。
-//     目录可见性（GET /plugins/catalog）与分发器目录同源：内容未受信 or 派发被关
-//     的包都不进目录行（后者另出一行点名注记）。数据源 GET /api/plugins 全量注册表
-//     （manifest.dispatch = 派发面状态）。
+// 2026-09-13 作者裁定（插件「无审批」批——「装了就是信任」）：
+//   ① 方案 = A「在位即信任 + 保留封禁」（引擎轨；`plugins.trust.*` 记录不再决定
+//      装载、零迁移）；② 内容变更 = 不停（内容一变**不**抖掉在飞节点的插件 MCP）。
+//   本文件是该批的**前端主交付**，消费两轨共用的**冻结契约 C6**：GET /api/plugins
+//   每项含 `trusted` / `blocked`（新）/ `contentChanged`（新）。
+//
+//   • 统一插件系统（2026-09-04 重设计，形态不变）：Skill 与 MCP 统一为「插件」，
+//     页面只呈现插件卡片，skill/MCP 仅作卡片内的内容构成标注语（含 N 个技能·
+//     可展开 preview / MCP server 名+transport / 内建工具白名单 +N）。
+//
+//   • **卡片形态（C7，2026-09-13 令）**：
+//       ┌ 内容审批开关 `[data-plugin-switch]` **退场**——「在位即信任」下它恒 on，
+//       │   留着只是噪声；且它的 off 会停掉在飞节点的插件 MCP（作者 09-12 踩过的坑）。
+//       ├ 状态药丸（右上）改绑 `blocked` / `contentChanged`（**不再绑 `trusted`**）：
+//       │   已封禁 > 内容已变更 > 已启用 三态（优先级见 pluginStatus）。
+//       ├ 封禁 = **次级动作**：右上「更多」按钮 → 展开就地菜单行，内含
+//       │   「封禁该插件 / 解封该插件」。端点：POST /api/plugins/:name/revoke
+//       │   （保留路径名 ⇒ 零迁移，语义 = **封禁**）/ POST :name/unblock（新增）。
+//       │   🔴 封禁标记落在独立命名空间（`plugins.revoked.<n>`），不在
+//       │   `plugins.trust` 内——理由见方案 §4 R4（自动 approve 会整对象替换 trust 表）。
+//       └ 派发开关 `[data-plugin-dispatch]` **保留**：卡片底部独立一行（上缘
+//           hairline 分隔 + 自有文字标签），与封禁动作**视觉可分**（既有 F1 纪律
+//           「两个动作在面板上必须视觉可分」）。
+//
+//   • **派发开关语义（2026-09-12 令 1，作者原话「插件的开关，应该只影响任务分发器对
+//     未来节点的派发，而不能影响目前的」）**：只写 `plugins.dispatch`（作者意图层，
+//     durable）⇒ 关闭只挡住**未来派发**，已在飞/已派发节点零影响。
+//     有效值 = `trusted ∧ (authorEnabled ∨ transition)`；内容恒受信后 =
+//     `authorEnabled ∨ transition` ⇒ 本开关仅在下面两种情形不可用（渲染 disabled +
+//     一行**可行动**注记，而不是允许点击后回弹）：
+//       (a) 该包**被封禁**（封禁 ⇒ 不进目录 + 闸拒）⇒ 先解封；
+//       (b) 临时派发授权（transition）生效中 ⇒ 有效值由授权层拥有。
+//     目录可见性（GET /plugins/catalog）与分发器目录同源。
+//
+//   • **F1「零静默、可行动」纪律（本批延续）**：任何用户动作都必须产生可行动结果。
+//     封禁/解封落盘后**回读注册表核对**——若后端回 `ok:true` 而注册表未反映该状态，
+//     显式报错（`plugins.actionNoEffect`），绝不让动作静默无效。
+//
+//   • `/approve` 端点**兼容保留但 UI 主线不再调用**（审批语义已退场）。
 //   • 智能体区块收缩为摘要行：名称/描述/preset 现状，点击进既有 agent
 //     详情编辑（openAgentDetail 深链复用）；订阅 chips（PUT skills 写回）
 //     与平铺 config row 移除——插件不再逐 agent 配置，每个插件两个开关
-//     （内容 / 派发，见上一条）。
+//     （内容 / 派发 —— 其中「内容」面已随 2026-09-13 无审批批退场，现为
+//     「派发开关 + 封禁次级动作」，见本文件头）。
 //   • 独立 MCP（state.mcpServers）展示从本页移除；设置页入口亦随 0905
 //     设置清理批移除（MCP 概念由本插件系统全面取代）——前端已不消费
 //     state.mcpServers / mcpServersUpdate，底层 MCP 机制保留。
@@ -43,14 +53,15 @@
 //   • 实时自动同步：面板可见（document.visibilityState=visible）且激活
 //     （canvas 开启 + plugins tab 为 active pane）时，每 6s GET /api/plugins；
 //     registry 名称集 diff——新插件按排序位插入卡片（plugins-card-entering
-//     短动画）；消失的插件回退整页重渲（renderPlugins 同一管线）；仅信任
-//     状态变化时逐卡原地更新，零全列表重绘。智能体区块不参与轮询（轻量，
-//     只轮插件注册表一个端点）。
-//   • 启停原地状态切换：开关点击乐观翻转（switch/pill 即时反馈）→ POST
-//     approve/revoke → 成功后后台拉 registry 逐卡原地收敛（UI ≡ backend，
+//     短动画）；消失的插件回退整页重渲（renderPlugins 同一管线）；状态
+//     （blocked / contentChanged / 派发）变化时逐卡原地更新，零全列表重绘。
+//     智能体区块不参与轮询（轻量，只轮插件注册表一个端点）。
+//   • 原地状态切换：派发开关点击乐观翻转（switch/pill 即时反馈）→ POST
+//     enable/disable → 成功后后台拉 registry 逐卡原地收敛（UI ≡ backend，
 //     无全列表重绘）；失败回滚乐观态 + toast 报错。全程无 page reload。
-//     （2026-09-12 令 1 收口：两条动作各走各的端点——内容开关 approve/revoke、
-//     派发开关 enable/disable，乐观翻转 + registry 原地收敛同一条管线。）
+//     （2026-09-13 无审批批：封禁/解封走同一条收敛管线，但**不做乐观翻转**——
+//     破坏性次级动作不在后端确认前先把 UI 画成「已封禁」；改为按钮在途闩 +
+//     收敛后核对注册表。派发开关仍乐观翻转。）
 //   • 开关换用共享组件 js/toggle.js（nb-toggle：插件面板与设置页统一契约，
 //     role=switch + 键盘可操作 + 全局 token 双主题自适应）。
 // No new backend contract is invented anywhere; every endpoint above is
@@ -88,34 +99,35 @@ async function fetchPluginRegistry() {
   return resp.json();
 }
 
-/** Classify a manifest's CONTENT-trust state (drives the card's primary
- *  switch + the state pill — the `approve`/`revoke` action).
- *  • trusted → switch on.
- *  • untrusted + digest-changed reason → off + 「内容已变更」 hint
- *  • untrusted otherwise（never approved / 其他）→ off + 常规提示。
+/** Classify a manifest's CONTENT state from the frozen contract fields
+ *  (C6, 2026-09-13 无审批批) — drives the status pill, the card classes and
+ *  the block/unblock secondary action.
+ *  • `blocked: true`       → 已封禁（引擎轨：不进目录 + 闸拒 + 在飞 MCP ≤30s 停）
+ *  • `contentChanged: true`→ 内容已变更（**非拦截**可见性信号——内容已按新版本
+ *                            生效；三处各一行：API 字段 / 目录段尾注记 / 启动健康摘要）
+ *  • 其余                  → 已启用（在位即信任）
  *
- *  TODO(plugin-protocol 线吸收): reason 文案匹配是 legacy 兜底——建议后端在
- *  approvalManifest 的 trust 块增加结构化 `reasonCode` 字段（建议枚举
- *  'digest_changed' | 'never_approved' | 'other'），前端优先消费 reasonCode、
- *  仅在缺失时回落到文案匹配。届时后端 reason 文案可自由改写/本地化，
- *  不再是前端展示分类的单一事实。（checkjs-gate-fix 批 2026-09-05 登记） */
-function contentState(manifest) {
-  const trust = manifest.trust || { status: 'untrusted', reason: '' };
-  if (trust.status === 'trusted') return { trusted: true, changed: false, reason: '' };
-  const reason = String(trust.reason || '');
-  // Structured code wins when the backend provides it (future reasonCode).
-  const code = String(trust.reasonCode || '').toLowerCase().trim();
-  if (code) {
-    if (code === 'digest_changed' || code === 'changed') return { trusted: false, changed: true, reason };
-    return { trusted: false, changed: false, reason }; // unknown code → generic hint
-  }
-  // Legacy fallback: loose phrase matching over the backend's English copy.
-  // i-flag + synonym stems + 中英双语关键词，文案微调不致翻转展示分类；
-  // 无法识别的文案按「未变更」处理（保守默认，与既有行为一致）。
-  const neverApproved = /never\s+approved|unapproved|no\s+(?:prior\s+)?approval|未(?:曾|经)?(?:批准|审核)|尚未批准/i.test(reason);
-  const digestChanged = /digest|changed|modified|mismatch|hash|re-?approv|内容(?:已)?(?:变更|修改)|重新批准/i.test(reason);
-  const changed = neverApproved ? false : digestChanged;
-  return { trusted: false, changed, reason };
+ *  🔴 本函数**不再读 `trusted` 决定展示**：审批语义已退场（作者 2026-09-13 令），
+ *  药丸绑 `trusted` 会恒显「已启用」成噪声。`trusted` 字段仍在 payload 里
+ *  （契约保留），但本页不消费它。
+ *
+ *  优先级：blocked > contentChanged > enabled（药丸只能显示一个态；封禁压过其余）。 */
+function pluginStatus(manifest) {
+  return {
+    blocked: manifest.blocked === true,
+    contentChanged: manifest.contentChanged === true,
+  };
+}
+
+/** Pill text + pill/card class for a status triple — single source shared by
+ *  the full render (renderPluginCard) and the in-place convergence
+ *  (applyPluginCardState), so the two can never drift apart. */
+function pillOf(status) {
+  const key = status.blocked ? 'blocked' : (status.contentChanged ? 'changed' : 'on');
+  const textKey = status.blocked
+    ? 'plugins.stateBlocked'
+    : (status.contentChanged ? 'plugins.stateChanged' : 'plugins.stateOn');
+  return { key, text: t(textKey) };
 }
 
 /** Classify a manifest's DISPATCH-permission state (令 1 派发面,
@@ -126,19 +138,19 @@ function contentState(manifest) {
  *  value. Whenever it is not, the control is rendered `disabled` + an actionable
  *  note (`blocked`) instead of accepting a click that the backend would echo as
  *  `ok:true` while the effective value never moved (设计件 R1 代价① / R9-A）：
- *    • 内容未受信 ⇒ 有效值恒 false（`effective = trusted ∧ (authorEnabled ∨
- *      transition)`）⇒ 先审批内容（主开关）；
+ *    • 该包**被封禁** ⇒ 有效值恒 false（封禁 ⇒ 不进目录 + 闸拒）⇒ 先解封；
  *    • 临时派发授权（transition）生效中 ⇒ 有效值由授权层拥有 ⇒ 到期/清除后
  *      本开关自动按作者意图生效。
- *  标签/提示文案与内容面完全分家（`plugins.dispatch*`），保证两动作可辨。 */
-function dispatchState(manifest, trusted) {
+ *  标签/提示文案与封禁动作完全分家（`plugins.dispatch*` vs `plugins.block*`），
+ *  保证两动作可辨。 */
+function dispatchState(manifest, blocked) {
   const d = manifest.dispatch || {};
   // 兼容默认（零迁移）：无 dispatch 记录 ⇒ 跟随内容信任面 = true。
   const authorEnabled = typeof d.authorEnabled === 'boolean' ? d.authorEnabled : true;
   const transitionActive = d.transitionActive === true;
-  if (!trusted) {
-    return { on: false, blocked: 'untrusted',
-      title: t('plugins.dispatchBlockedUntrusted'), note: t('plugins.dispatchBlockedUntrusted') };
+  if (blocked) {
+    return { on: false, blocked: 'blocked',
+      title: t('plugins.dispatchBlockedBlocked'), note: t('plugins.dispatchBlockedBlocked') };
   }
   if (transitionActive) {
     return { on: d.enabled !== false, blocked: 'transition',
@@ -147,6 +159,13 @@ function dispatchState(manifest, trusted) {
   return { on: authorEnabled, blocked: '',
     title: authorEnabled ? t('plugins.dispatchOnTitle') : t('plugins.dispatchOffTitle'),
     note: authorEnabled ? '' : t('plugins.dispatchOffNote') };
+}
+
+/** Read the block flag back off a registry payload (C6) — used by the
+ *  零静默 post-action check (see setPluginBlocked). */
+function registryBlocked(registry, name) {
+  const m = (registry.plugins || []).find(p => p.name === name);
+  return m ? m.blocked === true : false;
 }
 
 // ── Data assembly ──────────────────────────────────────────
@@ -237,13 +256,35 @@ function compositionTools(tools) {
   return `<span class="plugins-comp" title="${esc(tools.join(', '))}">${esc(t('plugins.compositionTools', { n: tools.length }))}</span>`;
 }
 
+/** "More" (⋯) glyph for the secondary-action menu — inline SVG, no emoji
+ *  (visual-style hard rule), same construction as the agent-row chevron. */
+const MORE_ICON = '<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor"'
+  + ' stroke-width="2" stroke-linecap="round" stroke-linejoin="round">'
+  + '<circle cx="12" cy="12" r="1"/><circle cx="19" cy="12" r="1"/><circle cx="5" cy="12" r="1"/></svg>';
+
 /** Plugin card: identity + description summary + composition annotations
- *  + the TWO controls（内容开关 approve/revoke；派发开关 enable/disable）。
- *  `[data-plugin-switch]` = 内容面（既有契约钩子，勿挪）；`[data-plugin-dispatch]`
- *  = 派发面（令 1 新增）。 */
+ *  + the status pill + the 更多 secondary action + the dispatch switch.
+ *
+ *  DOM hooks (contract for tests AND for any future refactor):
+ *    `[data-plugin-more]`     — 「更多」按钮（展开次级动作行）
+ *    `[data-plugin-menu]`     — 次级动作行容器（封禁/解封入口）
+ *    `[data-plugin-block]`    — 封禁/解封按钮（`data-blocked` 暴露当前态）
+ *    `[data-plugin-dispatch]` — 派发许可开关（令 1 既有钩子，保留不动）
+ *  🔴 内容审批开关（hook `data-plugin-switch`）已随 2026-09-13 无审批批**退场**：
+ *  生产代码零功能性使用。现场判据（逐字可复算）：
+ *    • `grep -rn "data-plugin-switch" src/main/resources/web/ | grep -vcE ':[0-9]+:[[:space:]]*(\*|//)'`
+ *      ⇒ **0**（该 hook 的全部命中都在本文件的注释内：`:14` 与本节；无选择器、
+ *      模板或事件绑定的功能性使用）；
+ *    • `grep -rn "data-plugin-switch" src/main/scala/` ⇒ **0**；
+ *    • `grep -rn "data-plugin-switch" tests/` ⇒ 命中全为注释与「零残留」断言读取
+ *      （`contentSwitchCount` / `contentSwitchThere` ⇒ `=== 0` / `false`），
+ *      无任何正向使用。
+ *  （2026-09-13 复核 R2：原判据 `grep -rn "pluginSwitch\|plugin-switch" src/ tests/`
+ *  = 0 为**假**——实测 13 命中，且该式能匹配到自身 ⇒ 按上列可复算判据重写。） */
 function renderPluginCard(manifest) {
-  const { trusted, changed, reason } = contentState(manifest);
-  const disp = dispatchState(manifest, trusted);
+  const status = pluginStatus(manifest);
+  const disp = dispatchState(manifest, status.blocked);
+  const pill = pillOf(status);
   const skills = Array.isArray(manifest.skills) ? manifest.skills : [];
   const servers = Array.isArray(manifest.mcpServers) ? manifest.mcpServers : [];
   const tools = Array.isArray(manifest.toolsExtension) ? manifest.toolsExtension : [];
@@ -259,25 +300,27 @@ function renderPluginCard(manifest) {
   if (manifest.version) metaBits.push(`v${manifest.version}`);
   if (manifest.author) metaBits.push(t('plugins.author', { author: manifest.author }));
 
-  const switchTitle = trusted
-    ? t('plugins.switchDisableTitle')
-    : (changed ? t('plugins.switchReenableTitle') : t('plugins.switchEnableTitle'));
+  const blockTitle = status.blocked ? t('plugins.unblockTitle') : t('plugins.blockTitle');
+  const blockLabel = status.blocked ? t('plugins.unblockAction') : t('plugins.blockAction');
 
-  return `<div class="plugins-card${trusted ? ' on' : ''}${changed ? ' changed' : ''}" data-plugin="${esc(manifest.name)}">
+  return `<div class="plugins-card${status.blocked ? ' blocked' : (status.contentChanged ? ' changed' : ' on')}" data-plugin="${esc(manifest.name)}">
     <div class="plugins-card-head">
       <div class="plugins-card-id">
         <span class="plugins-card-name">${esc(manifest.name)}</span>
         ${metaBits.length ? `<span class="plugins-card-meta">${esc(metaBits.join(' · '))}</span>` : ''}
       </div>
       <div class="plugins-card-state">
-        <span class="plugins-state-pill${trusted ? ' on' : ''}">${esc(trusted ? t('plugins.stateOn') : t('plugins.stateOff'))}</span>
-        ${toggleHTML({
-          on: trusted,
-          label: t('plugins.switchLabel'),
-          title: switchTitle,
-          attrs: `data-plugin-switch="${esc(manifest.name)}"`,
-        })}
+        <span class="plugins-state-pill ${pill.key}">${esc(pill.text)}</span>
+        <button type="button" class="plugins-more-btn" data-plugin-more="${esc(manifest.name)}"
+          aria-haspopup="true" aria-expanded="false"
+          aria-label="${esc(t('plugins.moreLabel'))}" title="${esc(t('plugins.moreLabel'))}">${MORE_ICON}</button>
       </div>
+    </div>
+    <div class="plugins-card-more" data-plugin-menu="${esc(manifest.name)}" hidden>
+      <button type="button" class="plugins-block-btn${status.blocked ? ' unblock' : ''}"
+        data-plugin-block="${esc(manifest.name)}" data-blocked="${status.blocked ? '1' : '0'}"
+        title="${esc(blockTitle)}">${esc(blockLabel)}</button>
+      <span class="plugins-block-note">${esc(t('plugins.blockNote'))}</span>
     </div>
     ${manifest.description ? `<div class="plugins-card-desc">${esc(manifest.description)}</div>` : ''}
     ${(skills.length || servers.length || tools.length)
@@ -295,8 +338,8 @@ function renderPluginCard(manifest) {
       })}
     </div>
     <div class="plugins-dispatch-note"${disp.note ? '' : ' hidden'}>${esc(disp.note)}</div>
-    ${changed ? `<div class="plugins-card-hint">${esc(t('plugins.changedHint'))}</div>` : ''}
-    ${(!trusted && !changed && reason) ? `<div class="plugins-card-hint dim" title="${esc(reason)}">${esc(t('plugins.offHint'))}</div>` : ''}
+    ${status.contentChanged ? `<div class="plugins-card-hint changed">${esc(t('plugins.changedHint'))}</div>` : ''}
+    ${status.blocked ? `<div class="plugins-card-hint blocked">${esc(t('plugins.blockedHint'))}</div>` : ''}
     ${skillExpandHtml(expandId, skills)}
   </div>`;
 }
@@ -376,24 +419,9 @@ export function renderPlugins() {
   });
 }
 
-/** Optimistic in-place flip of one card's CONTENT switch + pill (no re-render).
- *  Used on click; the same helper rolled back (= set the OPPOSITE state)
- *  when the POST fails. */
-function flipCardState(card, trusted) {
-  const sw = card.querySelector('[data-plugin-switch]');
-  if (sw) {
-    setToggleState(sw, trusted);
-    sw.disabled = true; // in-flight guard — released by state convergence
-  }
-  const pill = card.querySelector('.plugins-state-pill');
-  if (pill) {
-    pill.textContent = t(trusted ? 'plugins.stateOn' : 'plugins.stateOff');
-    pill.classList.toggle('on', trusted);
-  }
-}
-
 /** Optimistic in-place flip of one card's DISPATCH switch (no re-render) —
- *  the 派发面 twin of flipCardState; same in-flight latch discipline. */
+ *  the only optimistic path left on the card (the content switch retired
+ *  2026-09-13), same in-flight latch discipline. */
 function flipDispatchState(card, on) {
   const sw = card.querySelector('[data-plugin-dispatch]');
   if (sw) {
@@ -403,42 +431,51 @@ function flipDispatchState(card, on) {
 }
 
 /** Release the in-flight guards after a terminal state (converged or rolled
- *  back) so both switches are clickable again. The dispatch control is only
- *  released when it is NOT blocked — blocked means "a click could not move the
- *  effective value", which is carried as `data-dispatch-blocked` on the element
- *  (see dispatchState); a blocked control stays disabled by design (零静默空操作). */
-function releaseSwitch(card) {
-  const sw = card.querySelector('[data-plugin-switch]');
-  if (sw) sw.disabled = false;
-  const dsw = card.querySelector('[data-plugin-dispatch]');
+ *  back) so the card's controls are clickable again. The dispatch control is
+ *  only released when it is NOT blocked — blocked means "a click could not move
+ *  the effective value", which is carried as `data-dispatch-blocked` on the
+ *  element (see dispatchState); a blocked control stays disabled by design
+ *  (零静默空操作). */
+function releaseCardActions(card) {
+  const dsw = card?.querySelector('[data-plugin-dispatch]');
   if (dsw && !dsw.hasAttribute('data-dispatch-blocked')) dsw.disabled = false;
+  const btn = card?.querySelector('[data-plugin-block]');
+  if (btn) btn.disabled = false;
 }
 
-/** Content-trust action (approve / revoke) — POST /api/plugins/:name/(approve|revoke).
- *  Optimistic UI first (click already flipped the switch), then converge from
- *  the registry — GET /api/plugins stays the single source of truth, applied
- *  IN PLACE (per-card state sync, never a full-list redraw). On failure: roll
- *  the optimistic flip back + toast the BACKEND's message (PluginRegistry.approve
- *  / .revoke return actionable errors such as "not found — nothing to approve"),
- *  so no user action can end in a silent no-op. No page reload on this path. */
-async function setPluginTrust(name, approve, card) {
-  const path = `/api/plugins/${encodeURIComponent(name)}/${approve ? 'approve' : 'revoke'}`;
+/** Secondary action — 封禁 / 解封 (2026-09-13 无审批批 C5/C7).
+ *  `block=true`  ⇒ POST /api/plugins/:name/revoke  （保留路径名，语义 = 封禁）
+ *  `block=false` ⇒ POST /api/plugins/:name/unblock （本批新增）
+ *
+ *  与派发开关的两点差异（刻意的）：
+ *   1. **不做乐观翻转**——破坏性次级动作不在后端确认前先把 UI 画成「已封禁」；
+ *      按钮带在途闩，收敛后才落态。
+ *   2. **落盘后核对**（F1 零静默）：后端 `ok:true` 但注册表未反映该状态时
+ *      显式报错，绝不让动作静默无效（禁 `ok:true` 静默无效）。
+ *  UI 状态一律以 GET /api/plugins 为单一事实源，收敛**原地**应用（不重绘列表）。 */
+async function setPluginBlocked(name, block, card) {
+  const path = `/api/plugins/${encodeURIComponent(name)}/${block ? 'revoke' : 'unblock'}`;
+  const btn = card?.querySelector('[data-plugin-block]');
+  if (btn) btn.disabled = true; // in-flight latch
   try {
     const resp = await api(path, { method: 'POST' });
     const body = await resp.json().catch(() => ({}));
     if (!resp.ok || body.error) throw new Error(body.error || `HTTP ${resp.status}`);
     const registry = await fetchPluginRegistry().catch(() => null);
-    if (registry) applyRegistryStates(registry); // re-enables the switch too
-    else releaseSwitch(card); // registry unreachable — keep optimistic state
+    if (registry) applyRegistryStates(registry);
+    // 零静默核对：注册表真值必须与该动作的目的态一致。
+    if (!registry || registryBlocked(registry, name) !== block) {
+      window.__showToast?.(t('plugins.actionNoEffect', { name }), 'error');
+    }
   } catch (e) {
-    flipCardState(card, !approve); // roll back the optimistic flip
-    releaseSwitch(card);
     window.__showToast?.(String(e?.message || e), 'error');
+  } finally {
+    if (btn) btn.disabled = false;
   }
 }
 
 /** Dispatch-permission action (令 1 派发面) — POST /api/plugins/:name/(enable|disable).
- *  Separate endpoint, separate DOM hook, separate copy from the content action
+ *  Separate endpoint, separate DOM hook, separate copy from the 封禁 action
  *  (设计件 R9-A：两个动作在面板上必须视觉可分). Only bound on cards where the
  *  control is interactive (see dispatchState) — the backend write would not move
  *  the effective value otherwise. */
@@ -450,10 +487,10 @@ async function setPluginDispatch(name, enable, card) {
     if (!resp.ok || body.error) throw new Error(body.error || `HTTP ${resp.status}`);
     const registry = await fetchPluginRegistry().catch(() => null);
     if (registry) applyRegistryStates(registry); // re-derives both controls
-    else releaseSwitch(card); // registry unreachable — keep optimistic state
+    else releaseCardActions(card); // registry unreachable — keep optimistic state
   } catch (e) {
     flipDispatchState(card, !enable); // roll back the optimistic flip
-    releaseSwitch(card);
+    releaseCardActions(card);
     window.__showToast?.(String(e?.message || e), 'error');
   }
 }
@@ -468,22 +505,37 @@ function registryOrder(registry) {
   return { plugins, rejected };
 }
 
-/** Update one card's DOM in place to match its manifest (content trust state,
- *  dispatch state, pill, hints, both switches). Preserves node identity,
- *  listeners and the expanded skill block — this is how state changes avoid
- *  any list redraw. */
+/** Update one card's DOM in place to match its manifest (status pill / card
+ *  classes, dispatch state, the 更多 secondary action, hints). Preserves node
+ *  identity, listeners and the expanded skill block — this is how state changes
+ *  avoid any list redraw.
+ *
+ *  次级动作行（`[data-plugin-menu]`）的**展开态不在这里重置**：它是用户的
+ *  瞬时选择，不随注册表轮询收拢（否则 6s 轮询会把用户刚打开的菜单关掉）。 */
 function applyPluginCardState(card, manifest) {
-  const { trusted, changed, reason } = contentState(manifest);
-  const disp = dispatchState(manifest, trusted);
-  card.classList.toggle('on', trusted);
-  card.classList.toggle('changed', changed);
-  const sw = card.querySelector('[data-plugin-switch]');
-  if (sw) {
-    setToggleState(sw, trusted);
-    sw.disabled = false;
-    sw.title = trusted
-      ? t('plugins.switchDisableTitle')
-      : (changed ? t('plugins.switchReenableTitle') : t('plugins.switchEnableTitle'));
+  const status = pluginStatus(manifest);
+  const disp = dispatchState(manifest, status.blocked);
+  const pill = pillOf(status);
+  card.classList.toggle('on', !status.blocked && !status.contentChanged);
+  card.classList.toggle('changed', status.contentChanged);
+  card.classList.toggle('blocked', status.blocked);
+  // 状态药丸：绑 blocked / contentChanged（不再绑 trusted）。
+  const pillEl = card.querySelector('.plugins-state-pill');
+  if (pillEl) {
+    pillEl.textContent = pill.text;
+    pillEl.classList.remove('on', 'changed', 'blocked');
+    pillEl.classList.add(pill.key);
+  }
+  // 封禁/解封按钮：标签 + data-blocked 随状态翻转。
+  const btn = card.querySelector('[data-plugin-block]');
+  if (btn) {
+    const blockedAttr = status.blocked ? '1' : '0';
+    if (btn.dataset.blocked !== blockedAttr) {
+      btn.dataset.blocked = blockedAttr;
+      btn.textContent = status.blocked ? t('plugins.unblockAction') : t('plugins.blockAction');
+      btn.title = status.blocked ? t('plugins.unblockTitle') : t('plugins.blockTitle');
+      btn.classList.toggle('unblock', status.blocked);
+    }
   }
   // 派发面（令 1）：开关态 = 作者意图层；blocked 时 disabled + 注明原因。
   const dsw = card.querySelector('[data-plugin-dispatch]');
@@ -499,49 +551,39 @@ function applyPluginCardState(card, manifest) {
     dnote.hidden = !disp.note;
     dnote.textContent = disp.note;
   }
-  const pill = card.querySelector('.plugins-state-pill');
-  if (pill) {
-    pill.textContent = t(trusted ? 'plugins.stateOn' : 'plugins.stateOff');
-    pill.classList.toggle('on', trusted);
-  }
-  // Amber re-approval hint (digest changed) and the dim off-hint.
-  let hint = card.querySelector('.plugins-card-hint:not(.dim)');
-  if (changed) {
-    if (!hint) {
-      hint = document.createElement('div');
-      hint.className = 'plugins-card-hint';
-      card.insertBefore(hint, card.querySelector('.plugins-skill-expand'));
-    }
-    hint.textContent = t('plugins.changedHint');
-  } else hint?.remove();
-  let dim = card.querySelector('.plugins-card-hint.dim');
-  if (!trusted && !changed && reason) {
-    if (!dim) {
-      dim = document.createElement('div');
-      dim.className = 'plugins-card-hint dim';
-      card.insertBefore(dim, card.querySelector('.plugins-skill-expand'));
-    }
-    dim.textContent = t('plugins.offHint');
-    dim.title = reason;
-  } else dim?.remove();
+  // 两条卡片级提示：内容已变更（amber，非拦截可见性）/ 已封禁（error 族，可行动）。
+  setCardHint(card, 'changed', status.contentChanged, t('plugins.changedHint'));
+  setCardHint(card, 'blocked', status.blocked, t('plugins.blockedHint'));
 }
 
-/** Derived per-card rendering signature (content + dispatch面). Convergence
+/** Insert / update / remove one card-level hint row (kept before the skill
+ *  expand block, created on demand). */
+function setCardHint(card, kind, show, text) {
+  let el = card.querySelector(`.plugins-card-hint.${kind}`);
+  if (!show) { el?.remove(); return; }
+  if (!el) {
+    el = document.createElement('div');
+    el.className = `plugins-card-hint ${kind}`;
+    card.insertBefore(el, card.querySelector('.plugins-skill-expand'));
+  }
+  el.textContent = text;
+}
+
+/** Derived per-card rendering signature (status + dispatch面). Convergence
  *  only touches a card whose signature drifted, so a steady backend still
  *  costs zero DOM writes. */
 function cardSignature(manifest) {
-  const { trusted, changed } = contentState(manifest);
-  const disp = dispatchState(manifest, trusted);
-  return `${trusted ? 1 : 0}|${changed ? 1 : 0}|${disp.on ? 1 : 0}|${disp.blocked}|${disp.note}`;
+  const status = pluginStatus(manifest);
+  const disp = dispatchState(manifest, status.blocked);
+  return `${status.blocked ? 1 : 0}|${status.contentChanged ? 1 : 0}|${disp.on ? 1 : 0}|${disp.blocked}|${disp.note}`;
 }
 
 /** The same signature read back off the DOM (used to detect drift). */
 function domCardSignature(card) {
-  const sw = card.querySelector('[data-plugin-switch]');
   const dsw = card.querySelector('[data-plugin-dispatch]');
   const note = card.querySelector('.plugins-dispatch-note');
   return [
-    sw?.classList.contains('on') ? 1 : 0,
+    card.classList.contains('blocked') ? 1 : 0,
     card.classList.contains('changed') ? 1 : 0,
     dsw?.classList.contains('on') ? 1 : 0,
     dsw?.getAttribute('data-dispatch-blocked') || '',
@@ -569,13 +611,13 @@ function insertCardSorted(list, cardHtml, name, isRejected) {
 }
 
 /** Converge the visible list with a fresh registry — the ONLY sync entry:
- *  • trust-state drift → per-card in-place update (no redraw);
- *  • brand-new trusted plugins → inserted at sorted position with a short
- *    enter animation;
+ *  • status / dispatch drift → per-card in-place update (no redraw);
+ *  • brand-new plugins → inserted at sorted position with a short enter
+ *    animation;
  *  • new rejected entries → inserted (informational cards);
  *  • disappeared plugins → full re-render fallback (renderPlugins, same
  *    pipeline as the initial load).
- *  Returns the list of newly inserted trusted card elements (may be []). */
+ *  Returns the list of newly inserted card elements (may be []). */
 function applyRegistryStates(registry) {
   const content = pluginsContentEl();
   const list = content?.querySelector('#plugins-section-plugins .plugins-card-list');
@@ -592,7 +634,7 @@ function applyRegistryStates(registry) {
     if (domCardSignature(card) !== cardSignature(m)) {
       applyPluginCardState(card, m);
     } else {
-      releaseSwitch(card); // states agree — just make sure the switches are live
+      releaseCardActions(card); // states agree — just make sure the controls are live
     }
   }
 
@@ -658,28 +700,42 @@ function startPluginsPolling() {
   });
 }
 
-/** Bind one plugin card's interactions (content switch + dispatch switch +
- *  skill-expand toggles). Shared by the full render and the live-sync insert
- *  path. Idempotent via WeakSets (not expando properties — checkJs zero-new-
- *  errors discipline). */
-const boundPluginSwitches = new WeakSet();
+/** Bind one plugin card's interactions (the 更多 secondary action + the
+ *  dispatch switch + skill-expand toggles). Shared by the full render and the
+ *  live-sync insert path. Idempotent via WeakSets (not expando properties —
+ *  checkJs zero-new-errors discipline). */
+const boundMoreButtons = new WeakSet();
+const boundBlockButtons = new WeakSet();
 const boundDispatchSwitches = new WeakSet();
 const boundCompToggles = new WeakSet();
 
 function bindCardEvents(card) {
-  const sw = card.querySelector('[data-plugin-switch]');
-  if (sw && !boundPluginSwitches.has(sw)) {
-    boundPluginSwitches.add(sw);
-    sw.addEventListener('click', () => {
-      if (sw.disabled) return;
-      const name = sw.dataset.pluginSwitch;
-      const approve = !sw.classList.contains('on');
-      const cardEl = sw.closest('.plugins-card');
-      flipCardState(cardEl, approve); // optimistic — converged/rolled back async
-      setPluginTrust(name, approve, cardEl);
+  // 更多菜单开合（次级动作的承载）：就地展开/收起，不弹浮层（零定位复杂度、
+  // 键盘可达、可被 spec 直接断言）。
+  const more = card.querySelector('[data-plugin-more]');
+  if (more && !boundMoreButtons.has(more)) {
+    boundMoreButtons.add(more);
+    more.addEventListener('click', () => {
+      const menu = card.querySelector('[data-plugin-menu]');
+      if (!menu) return;
+      const show = menu.hidden;
+      menu.hidden = !show;
+      more.setAttribute('aria-expanded', show ? 'true' : 'false');
     });
   }
-  // 派发开关（令 1 第二动作）：只写 plugins.dispatch；blocked 时控制件自带
+  // 封禁 / 解封（次级动作）。按钮自带在途闩，点击不可达即不动作（零静默空操作）。
+  const blockBtn = card.querySelector('[data-plugin-block]');
+  if (blockBtn && !boundBlockButtons.has(blockBtn)) {
+    boundBlockButtons.add(blockBtn);
+    blockBtn.addEventListener('click', () => {
+      if (blockBtn.disabled) return;
+      const name = blockBtn.dataset.pluginBlock;
+      const block = blockBtn.dataset.blocked !== '1'; // 当前未封禁 ⇒ 本次动作为封禁
+      const cardEl = blockBtn.closest('.plugins-card');
+      setPluginBlocked(name, block, cardEl);
+    });
+  }
+  // 派发开关（令 1 派发面）：只写 plugins.dispatch；blocked 时控制件自带
   // disabled，故此处点击不可达（零静默空操作）。
   const dsw = card.querySelector('[data-plugin-dispatch]');
   if (dsw && !boundDispatchSwitches.has(dsw)) {
@@ -707,8 +763,9 @@ function bindCardEvents(card) {
   });
 }
 
-/** Bind interactions: per-plugin switches (optimistic in-place toggling),
- *  skill-expand toggles, agent summary rows → per-agent detail tab.
+/** Bind interactions: the 更多 secondary action, the dispatch switch
+ *  (optimistic in-place toggling), skill-expand toggles, agent summary rows →
+ *  per-agent detail tab.
  *  (The manual refresh button was removed 2026-09-05 — the poller keeps the
  *  list live; see startPluginsPolling.) */
 function bindPluginsEvents(content) {

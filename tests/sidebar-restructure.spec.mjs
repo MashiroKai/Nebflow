@@ -192,15 +192,15 @@ test('T2 § toggle consolidation: same .nb-toggle class + identical computed sty
   await expect(settingsToggleLoc).toHaveAttribute('aria-checked', before === 'true' ? 'false' : 'true');
 });
 
-test('T2b § cross-panel toggle equality (activates once the plugins-ux branch merges)', async ({ page }) => {
+test('T2b § cross-panel toggle equality (plugin card dispatch switch vs settings toggle)', async ({ page }) => {
   await boot(page);
   await page.goto(base);
-  // The plugin card switch ships with the plugins-ux branch (plugins.js :200
-  // toggleHTML + attrs data-plugin-switch). Until that branch merges, this
-  // worktree's plugins.js is still the baseline — skip, rerun post-merge.
-  const pluginSwitchCount = await page.locator('[data-plugin-switch].nb-toggle').count();
-  test.skip(pluginSwitchCount === 0, 'plugin-side nb-toggle lands with the plugins-ux branch merge — rerun then');
-  const pluginToggle = page.locator('[data-plugin-switch]').first();
+  // 2026-09-13 无审批批：插件卡片上的**内容审批开关已退场**，卡片剩下的
+  // nb-toggle 是**派发开关**（`data-plugin-dispatch`）——跨面板样式等值断言
+  // 挂到它上面（旧钩子 data-plugin-switch 已不存在于任何卡片）。
+  const pluginSwitchCount = await page.locator('[data-plugin-dispatch].nb-toggle').count();
+  test.skip(pluginSwitchCount === 0, 'plugins panel not rendered here (no plugin cards in this fixture) — rerun against a fixture with plugins');
+  const pluginToggle = page.locator('[data-plugin-dispatch]').first();
   expect(await pluginToggle.getAttribute('role')).toBe('switch');
 
   // Settings page toggle for comparison.
