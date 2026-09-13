@@ -204,7 +204,7 @@ class DispatcherIdleWindowSpec extends CatsEffectSuite:
           "上下文连贯性：第二轮请求必须带上第一轮任务的全文（同会话历史复用）——got: " + ins(1).take(200)
         )
         assert(ins(1).contains("任务乙-交付物Y"), "第二轮请求必须携带本轮注入文本")
-        assert(ins(1).contains("新任务到达"), "第二轮必须是注入形态（既有标注行），非 spawn prompt")
+        assert(ins(1).contains("New task arrived"), "第二轮必须是注入形态（既有标注行），非 spawn prompt")
     }
   }
 
@@ -249,7 +249,7 @@ class DispatcherIdleWindowSpec extends CatsEffectSuite:
         )
         // ④ 的新会话是 spawn 形态（fresh prompt），不复用旧上下文
         assertEquals(ins.size, 2, "两轮：旧会话一轮 + 新会话一轮")
-        assert(!ins(1).contains("新任务到达"), "新实例走 spawn 路径（fresh prompt），非注入形态")
+        assert(!ins(1).contains("New task arrived"), "新实例走 spawn 路径（fresh prompt），非注入形态")
         assert(!ins(1).contains("任务甲"), "新实例不得携带旧会话上下文（确为新建）")
     }
   }
@@ -279,7 +279,7 @@ class DispatcherIdleWindowSpec extends CatsEffectSuite:
         _ <- system.stopAll.handleErrorWith(_ => IO.unit)
       yield
         assertEquals(ins.size, 2, "回退档：两次派发 = 两个独立 turn（无任何注入复用）")
-        assert(!ins(1).contains("新任务到达"), "回退档第二次必须是 spawn 形态（新实例）")
+        assert(!ins(1).contains("New task arrived"), "回退档第二次必须是 spawn 形态（新实例）")
         assert(!ins(1).contains("任务甲"), "回退档新实例不得携带上一实例的上下文")
         assert(
           !events.exists(_.contains("dispatcher-idle-expired")),
