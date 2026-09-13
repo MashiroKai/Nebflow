@@ -363,14 +363,11 @@ export default {
   'settings.thinkingEffort.medium': '中',
   'settings.thinkingEffort.high': '高',
   'settings.thinkingEffortHint': '思考档位（OpenAI 风格）：关闭=禁用推理；低=快速响应；中=均衡；高=深度推理。内部按模型自动映射（Anthropic 预算 / GLM 与 DeepSeek 开关）。',
-  // === 权限模式（全局单一权威源批，2026-09-12）===
-  'settings.safetyMode': '权限模式（全局）',
-  'settings.safetyMode.confirm-edits': '确认编辑',
-  'settings.safetyMode.auto-edits': '自动编辑',
-  'settings.safetyMode.auto-all': '全部放行',
-  'settings.safetyModeHint': '全局权限模式：新会话与重启后的会话使用此档位；顶栏盾牌的三档切换只作用于当前会话、重启后回到此处设置。',
-  'settings.safetyModeSaved': '全局权限模式已保存',
-  'settings.safetyModeSaveFailed': '全局权限模式保存失败',
+  // === 权限模式设置页控件（2026-09-12 批）已于 permshield F1（2026-09-13）删除 ===
+  // 7 个 `settings.safetyMode*` 键随控件一并移除（作者重裁候选 B ①「删设置页」）。
+  // 档位指引改由盾牌承载：`bypass.title.*`（三档 tooltip）+ `bypass.modeSetGlobal`
+  // （切换后的持久化反馈）——旧键 `settings.safetyModeHint` 里「顶栏盾牌…重启后回到
+  // 此处设置」的悬空指引随之消失（控件已不存在，指引不再指向死入口）。
   'settings.language': '语言',
   'settings.autostart': '开机自启动',
   'settings.autostartUnsupported': '当前运行形态不支持开机自启',
@@ -618,10 +615,13 @@ export default {
   'chat.allow': '允许',
   'chat.deny': '拒绝',
   'chat.skipTool': '跳过此工具调用',
-  'chat.permUpgradeAutoEdits': '允许本次，并切换到编辑放行',
-  'chat.permUpgradeAutoEditsDesc': '本会话后续 Write/Edit 调用不再询问',
-  'chat.permUpgradeAutoAll': '允许本次，并切换到全部放行',
-  'chat.permUpgradeAutoAllDesc': '本会话后续工具调用全部自动放行',
+  // 递进链（作者边界一「保留递进链路」）：升级落点已由 permshield F1 改为**全局持久
+  // 档位**（同盾牌一条路）⇒ 文案去掉「本次」语义，并显式说明全局 + 重启后仍生效。
+  'chat.permUpgradeAutoEdits': '允许并切换到编辑放行',
+  'chat.permUpgradeAutoEditsDesc': '全局档位改为编辑放行：所有会话生效，重启后仍生效',
+  'chat.permUpgradeAutoAll': '允许并切换到全部放行',
+  'chat.permUpgradeAutoAllDesc': '全局档位改为全部放行：所有会话生效，重启后仍生效',
+  'chat.permUpgradeApplied': '已切换为{mode}（全局档位）：重启后仍生效',
   'chat.other': '其他...',
   'chat.frozenNoTime': '已冻结 · 等待恢复',
   'chat.frozenShort': '已冻结 · {time} 恢复',
@@ -677,7 +677,6 @@ export default {
   'chat.askLabel': '询问',
   'chat.skillLabel': 'skill: {skill}',
   'chat.allowTool': '允许 {tool}？',
-  'chat.autoApproved': '自动通过（自动放行模式）',
   'chat.permSource': '来自: {agent} ({session})',
   'chat.permLevel.warning': '注意：此操作可能导致数据丢失',
   'chat.permLevel.dangerous': '危险操作：{detail}',
@@ -745,7 +744,12 @@ export default {
   'slash.confirmDelete': '确定要删除技能「{skill}」吗？此操作不可撤销。',
   'slash.skillDeleted': '技能「{skill}」已删除',
   'slash.skillDeleteFailed': '删除技能「{skill}」失败：可能不是用户级技能',
-  'bypass.toggle': '安全模式：点击切换 确认编辑 / 放行编辑 / 全部放行',
+  // 盾牌（档位的唯一 UI 入口）——三档 tooltip + 切换后的持久化反馈（permshield F1）
+  'bypass.toggle': '安全模式：点击切换 确认编辑 / 编辑放行 / 全部放行（全局档位，重启后仍生效）',
+  'bypass.title.confirm-edits': '安全模式：确认编辑（全局档位，重启后仍生效）',
+  'bypass.title.auto-edits': '安全模式：编辑放行（全局档位，重启后仍生效）',
+  'bypass.title.auto-all': '安全模式：全部放行（全局档位，重启后仍生效）',
+  'bypass.modeSetGlobal': '全局权限模式已切换为{mode}：重启后仍生效',
 
   // === Background tasks ===
   'bg.cancel': '取消',

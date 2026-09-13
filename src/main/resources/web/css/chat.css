@@ -2590,17 +2590,8 @@
   white-space: pre-wrap;
 }
 
-/* Auto-approved indicator */
-.perm-auto-approved {
-  margin-top: 8px;
-  padding: 6px 12px;
-  border-radius: 6px;
-  font-size: 12px;
-  color: var(--color-text-muted);
-  background: var(--color-surface);
-  text-align: center;
-  font-style: italic;
-}
+/* `.perm-auto-approved` ("auto-approved" badge of the silent bypass path) was
+   deleted with that path in permshield F1 (2026-09-13) — no producer remains. */
 
 /* ── Error-recovery escalation card (frozen-error-recovery plan §5.3.2) ──
    Amber decision card rendered at the top of a session view when auto-recovery

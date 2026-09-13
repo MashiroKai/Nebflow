@@ -728,21 +728,11 @@ function effortFromConfig() {
   return 'high'; // covers ≤32768 and legacy >32768 (xhigh collapsed to high)
 }
 
-const SAFETY_MODES = ['confirm-edits', 'auto-edits', 'auto-all'];
-
-/**
- * 当前**全局**权限模式（全局单一权威源批，2026-09-12）。
- *
- * 来源 = 配置快照 `state.parsedConfig.safety.defaultMode`（`GET /api/config` /
- * WS `configData` 链路写入，见 main.js）。缺省兜底 `'auto-all'` **必须**与后端
- * `GlobalSafety.defaultMode` 的「读不到有效值」分支同值（设计 §2.3 ①/①′），
- * 否则下拉的初始显示会与后端实际生效档位不一致。
- */
-function globalSafetyMode() {
-  const m = state.parsedConfig?.safety?.defaultMode;
-  return SAFETY_MODES.includes(m) ? m : 'auto-all';
-}
-
+// 权限模式（全局档位）设置页控件已于 permshield F1（2026-09-13，作者重裁
+// 「候选 B」①「删设置页，盾牌改成写全局」）**整体删除**——控件、事件绑定与
+// 7 个 i18n 键一并移除；`PUT /api/safety/mode` 的前端调用点随之归零（REST 端点
+// 由后端保留，供外部/脚本使用）。档位的**唯一 UI 入口 = 顶栏盾牌**
+// （`web/js/main.js` `initSafetyToggle`，写的是同一条全局持久路径）。
 export function renderSettings() {
   const content = document.getElementById('settings-content');
   const cfg = state.parsedConfig || {};
@@ -782,13 +772,6 @@ export function renderSettings() {
         </select>
       </div>
       <div class="cfg-hint">${t('settings.thinkingEffortHint')}</div>
-      <div class="settings-row">
-        <span class="settings-label">${t('settings.safetyMode')}</span>
-        <select class="cfg-select" id="cfg-safety-mode" style="width:auto">
-          ${SAFETY_MODES.map(m => `<option value="${m}"${globalSafetyMode() === m ? ' selected' : ''}>${t('settings.safetyMode.' + m)}</option>`).join('')}
-        </select>
-      </div>
-      <div class="cfg-hint">${t('settings.safetyModeHint')}</div>
       <div class="settings-row">
         <span class="settings-label">${t('settings.llmLog')}</span>
         ${toggleHTML({ on: state.llmLogEnabled !== false, id: 'toggle-llm-log', label: t('settings.llmLog') })}
@@ -1262,30 +1245,10 @@ function bindSettingsEvents(content, cfg) {
     sendWs({ type: 'setThinking', thinking: state.thinkingMode });
   });
 
-  // 权限模式「全局」下拉（全局单一权威源批，2026-09-12）：写入口 = 定向 REST
-  // `PUT /api/safety/mode`（不走 WS、不走整份配置快照 PATCH）。成功后本地同步
-  // `state.parsedConfig.safety.defaultMode`（panel 重开时回显新值），并复用既有
-  // `configUpdated → getConfig` 广播链路让所有打开的面板刷新；失败回滚下拉值
-  // （形态照 toggle-schedule 的回滚先例）+ toast。绑定点紧随 thinking effort。
-  document.getElementById('cfg-safety-mode')?.addEventListener('change', async function() {
-    const mode = this.value;
-    const prev = this.dataset.prev || globalSafetyMode();
-    try {
-      const res = await fetch('/api/safety/mode', {
-        method: 'PUT',
-        headers: { 'Content-Type': 'application/json', ...providerAuthHeaders() },
-        body: JSON.stringify({ mode }),
-      });
-      const data = await res.json().catch(() => ({}));
-      if (!res.ok) throw new Error(data.error || res.statusText);
-      this.dataset.prev = mode;
-      state.parsedConfig = { ...(state.parsedConfig || {}), safety: { defaultMode: mode } };
-      window.__showToast?.(t('settings.safetyModeSaved'), 'success');
-    } catch (e) {
-      this.value = prev;
-      window.__showToast?.((e && e.message) || t('settings.safetyModeSaveFailed'), 'error');
-    }
-  });
+  // 权限模式「全局」下拉的 change 绑定已随控件一并删除（permshield F1，2026-09-13
+  // 作者重裁候选 B ①）：档位写入的唯一 UI 入口 = 顶栏盾牌（main.js
+  // `initSafetyToggle` → WS `setSafetyMode` → 后端 `persistGlobalSafetyMode` 落盘
+  // `nebflow.json` 的 `safety.defaultMode`），此处不再有第二个写入口。
 
   // LLM Log toggle — shared nb-toggle component; setToggleState keeps the
   // class and aria-checked in lockstep.

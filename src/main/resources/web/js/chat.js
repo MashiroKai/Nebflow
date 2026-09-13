@@ -14,8 +14,12 @@ import { sendWs, onMessage } from './ws.js';
 import { askSourceLabel, removePendingAsk } from './askPending.js';
 import { renderRefBlock, normalizeTaskRef, parseTaskReturnText, buildTaskRefLine } from './reference.js';
 
-// ---------- Time format preference (12h / 24h toggle) ----------
-// 实现已抽到 timeFormat.js（三面共享）。此处保留同名再次导出，模块公开面不缩水
+// Permission-card escalation targets → shield label keys (permshield F1): the
+// upgrade toast must name the mode exactly like the header shield does, so both
+// read from the shared `bypass.*` labels instead of inventing a third wording.
+const UPGRADE_MODE_LABEL = { 'auto-edits': 'bypass.autoEdits', 'auto-all': 'bypass.autoAll' };
+
+// ---------- Time format preference (12h / 24h toggle) ----------// 实现已抽到 timeFormat.js（三面共享）。此处保留同名再次导出，模块公开面不缩水
 // （全仓无外部 importer，纯兼容保留）。Legacy spelling 'nebflow:timeFormat' is
 // still normalized into the storage key by branding.js at module init.
 export { formatHm, toggleTimeFormat };
@@ -2293,19 +2297,14 @@ export function renderPermissionPrompt(toolName, summary, inputJson, permSession
 
   const targetSid = permSessionId || activeView.sessionId;
 
-  // If bypass is enabled for this session, auto-approve immediately
-  if (state.bypassSessions.has(targetSid)) {
-    if (state.ws && state.ws.readyState === WebSocket.OPEN) {
-      state.ws.send(JSON.stringify({ type: 'permissionAnswer', sessionId: targetSid, approved: true, ...(requestId && { requestId }) }));
-    }
-    const autoBadge = document.createElement('div');
-    autoBadge.className = 'perm-auto-approved';
-    autoBadge.textContent = t('chat.autoApproved');
-    bubble.appendChild(autoBadge);
-    window.dispatchEvent(new CustomEvent('session-attention', { detail: { sessionId: targetSid, attention: false } }));
-    smartScroll();
-    return;
-  }
+  // 🔴 Silent auto-approve REMOVED (permshield F1, 2026-09-13): this is where
+  // `state.bypassSessions` used to answer `permissionAnswer{approved:true}` for
+  // the user with no interaction and no visible card. Per S1's backend
+  // disposition the set is structurally unreachable anyway (global `auto-all`
+  // ⇒ `ToolReversibility.isReversible` is true for every tool ⇒ AgentCore
+  // never emits `askPermission`), so the only thing the branch could still do
+  // was approve a card silently. Every permission answer on the frontend now
+  // originates from a user click on a rendered option.
 
   // Build the question text
   let questionText = t('chat.allowTool', { tool: toolName });
@@ -2320,11 +2319,16 @@ export function renderPermissionPrompt(toolName, summary, inputJson, permSession
     { label: allowLabel, desc: allowDesc },
     { label: denyLabel, desc: t('chat.skipTool') }
   ];
-  /* Permission escalation chain (Backend contract a56f7437): when the card's
-     session safety mode is one step below the tool's class, offer an upgrade
-     option that approves this call AND switches the session mode:
+  /* Permission escalation chain (Backend contract a56f7437; target changed by
+     permshield S1, 2026-09-13): when the card's mode is one step below the
+     tool's class, offer an upgrade option that approves this call AND changes
+     the mode — now the **application-level persisted** mode (global), not a
+     session override, so it applies to every session and survives a restart
+     (`WebSocketRoutes.applyPermissionUpgrade` → `setSafetyDefaultMode`):
        confirm-edits + Write/Edit -> auto-edits; auto-edits + Bash/Curl -> auto-all.
-     Missing/unknown safetyMode (older backend) -> no upgrade option. */
+     Missing/unknown safetyMode (older backend) -> no upgrade option.
+     The card frame's mode is the same global value the shield renders
+     (`AgentCore.askUserPermission` → `SharedResources.effectiveSafetyMode`). */
   let upgradeLabel = null;
   let upgradeMode = null;
   if (safetyMode === 'confirm-edits' && (toolName === 'Write' || toolName === 'Edit')) {
@@ -2349,11 +2353,17 @@ export function renderPermissionPrompt(toolName, summary, inputJson, permSession
       state.ws.send(JSON.stringify({ type: 'permissionAnswer', sessionId: targetSid, approved, ...(requestId && { requestId }), ...(doUpgrade && { upgradeMode: doUpgrade }) }));
     }
     if (doUpgrade) {
-      // Optimistic local mirror; the backend's session broadcast is authoritative.
-      state.safetyModes[targetSid] = doUpgrade;
-      if (doUpgrade === 'auto-all') state.bypassSessions.add(targetSid);
-      else state.bypassSessions.delete(targetSid);
-      if (state.updateSafetyToggle) state.updateSafetyToggle();
+      // The escalation lands on the SAME application-level persisted mode as the
+      // shield (permshield S1: `applyPermissionUpgrade` → ConfigService
+      // `.setSafetyDefaultMode` + `configUpdated` broadcast) — it is NOT a
+      // session-scoped override and it survives a restart. Mirror it globally
+      // (optimistic; the configData broadcast is authoritative) and refresh the
+      // shield so the header agrees with the card the user just answered.
+      if (state.applyGlobalSafetyMode) state.applyGlobalSafetyMode(doUpgrade);
+      // 🔴 No silent persistence: the option label no longer promises "this time
+      // only", so the click has to say what actually happened — the app-wide
+      // mode changed and it stays changed after a restart.
+      window.__showToast?.(t('chat.permUpgradeApplied', { mode: t(UPGRADE_MODE_LABEL[doUpgrade] || 'bypass.autoEdits') }), 'success');
     }
     // Track answered permission: prevents re-creating interactive prompt on
     // session switch-back while tool is still executing (askPermission is still

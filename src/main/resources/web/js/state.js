@@ -81,8 +81,12 @@ export default {
   answeredPermissions: new Set(),
   legacyMigrated: false,
 
-  // Per-session safety mode: "confirm-edits" | "auto-edits" | "auto-all"
-  safetyModes: {},  // sessionId → mode string
+  // Permission mode: "confirm-edits" | "auto-edits" | "auto-all".
+  // Application-level since permshield S1/F1 (2026-09-13) — the session
+  // dimension no longer exists, so every entry holds the same global value.
+  // Kept as a per-session map purely because the header shield resolves the
+  // mode by the active session id (see main.js `applyGlobalSafetyMode`).
+  safetyModes: {},  // sessionId → mode string (all entries = the global mode)
 
   // Chat streaming (per-session status sets - view-level state lives on ChatView)
   busySessionIds: new Set(),

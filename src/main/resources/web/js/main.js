@@ -1470,24 +1470,17 @@ onMessage('askPermission', (msg, view) => {
     }
     return;
   }
-  // Bypass mode: auto-approve immediately without showing attention indicator.
-  // This must run for BOTH active and non-active sessions — previously only
-  // active sessions got bypass treatment (inside renderPermissionPrompt),
-  // leaving non-active sessions stuck with a yellow indicator that never clears.
-  if (sid && state.bypassSessions.has(sid)) {
-    if (view) {
-      // Active session: renderPermissionPrompt detects bypass, sends approval,
-      // and shows the "auto-approved" badge. Let it handle everything.
-      renderPermissionPrompt(msg.toolName, msg.summary, msg.input, msg.sessionId, msg.dangerLevel, msg.sourceAgent, msg.sourceSession, msg.sourceTeam, msg.requestId, msg.safetyMode);
-    } else {
-      // Non-active session: auto-approve directly (renderPermissionPrompt is never called).
-      if (state.ws && state.ws.readyState === WebSocket.OPEN) {
-        state.ws.send(JSON.stringify({ type: 'permissionAnswer', sessionId: sid, approved: true, ...(msg.requestId && { requestId: msg.requestId }) }));
-      }
-      saveMsg({ type: 'askPermission', toolName: msg.toolName, summary: msg.summary, input: msg.input, dangerLevel: msg.dangerLevel, autoApproved: true, sourceAgent: msg.sourceAgent, sourceSession: msg.sourceSession, sourceTeam: msg.sourceTeam, requestId: msg.requestId }, sid);
-    }
-    return;
-  }
+  // 🔴 Silent auto-approve path REMOVED (permshield F1, 2026-09-13, per S1's
+  // backend disposition): this block used to auto-answer `permissionAnswer
+  // {approved:true}` with zero user interaction for any session the client had
+  // collected into `state.bypassSessions` (derived from the list frame's
+  // `safetyMode === 'auto-all'`). Post-S1 there is no session-scoped dimension
+  // and an `auto-all` global makes `ToolReversibility.isReversible` return true
+  // for every tool (AgentCore `permissionDecision` → Allow), so the backend
+  // never emits `askPermission` in that mode — the branch had no card left to
+  // answer while still being able to approve silently if one ever arrived.
+  // No silent permission write remains on the frontend: every permission answer
+  // now originates from a user click on a rendered card.
   if (sid) setSessionAttention(sid, true);
   // Permission prompt waits for human response — suppress stream timeout indefinitely
   if (sid && state.sessionBusyTimeouts[sid]) {
@@ -1531,11 +1524,14 @@ onMessage('sessionList', (msg, view) => {
   const allFolders = msg.folders || [];
   allSessions.forEach(s => { state.sessionAgentMap[s.id] = s.agentName || 'Nebula'; });
 
-  // Restore safety mode from persisted session metadata
+  // Safety mode (permshield S1/F1, 2026-09-13): the mode is APPLICATION-level —
+  // the session dimension was deleted backend-side, so every session's frame
+  // value is the same global value. `state.safetyModes` stays as a per-session
+  // mirror only because the shield lookup is keyed by the active session id.
+  // The old `state.bypassSessions` derivation (and the silent auto-approve it
+  // fed) is gone — see chat.js `renderPermissionPrompt`.
   state.safetyModes = {};
   allSessions.forEach(s => { if (s.safetyMode) state.safetyModes[s.id] = s.safetyMode; });
-  // Derive bypassSessions (auto-all) for chat.js auto-approve compatibility
-  state.bypassSessions = new Set(allSessions.filter(s => s.safetyMode === 'auto-all').map(s => s.id));
 
   state.folders = allFolders;
   state.foldersWithRules = new Set(msg.foldersWithRules || []);
@@ -1543,6 +1539,12 @@ onMessage('sessionList', (msg, view) => {
   const activeId = msg.activeId;
 
   renderSessionSidebar(allSessions, activeId);
+  // F-1 (permshield F1, 2026-09-13): a session list frame is one of the two
+  // "another writer changed the global mode" arrival paths (the other is
+  // configData). Without this refresh the header shield kept the stale mode
+  // after a global change until the user switched sessions — the pre-fix code
+  // updated state.safetyModes and stopped there.
+  state.updateSafetyToggle?.();
   initHeaderModelInfo();
   // Mark the initial session as restored — getHistory is already sent by
   // resetChatForActiveSession (called inside renderSessionSidebar when activeId changes).
@@ -2415,13 +2417,14 @@ onMessage('agentSessionList', (msg, view) => {
   // Build sessionId -> agentName mapping
   sessions.forEach(s => { state.sessionAgentMap[s.id] = s.agentName || agentName; });
 
-  // Restore bypass state from persisted session metadata
-  state.bypassSessions = new Set(sessions.filter(s => s.safetyMode === 'auto-all').map(s => s.id));
+  // Safety mode mirror (global, permshield S1/F1) — no bypassSessions anymore.
   state.safetyModes = {};
   sessions.forEach(s => { if (s.safetyMode) state.safetyModes[s.id] = s.safetyMode; });
 
   // Render sidebar — active highlight shows the current active session
   renderSessionSidebar(sessions, state.activeSessionId);
+  // F-1: same second arrival path as `sessionList` above (agent-scoped list).
+  state.updateSafetyToggle?.();
   initHeaderModelInfo();
 });
 
@@ -2481,6 +2484,15 @@ onMessage('configData', (msg, view) => {
   state._freshConfigText = state.configText; // Cache for slider's fetch-before-save
   try { state.parsedConfig = JSON.parse(state.configText); } catch { state.parsedConfig = null; }
   state.configDirty = false;
+  // F-1 (permshield F1, 2026-09-13): the config snapshot carries the ONE
+  // authoritative global mode (`safety.defaultMode`) and is re-fetched on every
+  // `configUpdated` broadcast — i.e. this is the arrival path for "another
+  // writer changed the global mode" (shield write from another window, REST
+  // `PUT /api/safety/mode`, or the permission card's escalation). Applying it
+  // here keeps the header shield in sync within this frame; the old code
+  // re-rendered only the settings modal and left the shield stale.
+  const cfgMode = state.parsedConfig?.safety?.defaultMode;
+  if (cfgMode) state.applyGlobalSafetyMode?.(cfgMode);
   // Friends release gating (2026-09-08, see featureFlags.js): latch the flag
   // decision on the first configData of the boot — configData re-fires on
   // every config save, but the gate does not live-toggle; a flag edit takes
@@ -3584,22 +3596,42 @@ initDropbox();
 const _idleCb = window.requestIdleCallback || ((fn) => setTimeout(fn, 2000));
 _idleCb(() => import('./monacoEditor.js').then(({ preloadMonaco }) => preloadMonaco().catch(() => {})));
 
-// ---------- Safety mode dropdown ----------
+// ---------- Safety mode dropdown (header shield) ----------
+// permshield S1/F1 (2026-09-13): the shield is the **only** UI entry point for
+// the permission ladder. It writes the application-level persisted mode
+// (`nebflow.json → safety.defaultMode`; WS `setSafetyMode` → backend
+// `persistGlobalSafetyMode`) — the same single path as REST `PUT /api/safety/mode`
+// and the permission card's escalation ⇒ in force for every session and still
+// in force after a restart. The settings-page dropdown that used to duplicate
+// this control was deleted (作者重裁候选 B ①「删设置页，盾牌改成写全局」).
 (function initSafetyToggle() {
-  const TITLES = {
-    'confirm-edits': '安全模式：确认编辑 (Write/Edit/Bash 需确认)',
-    'auto-edits': '安全模式：编辑放行 (仅 Bash 需确认)',
-    'auto-all': '安全模式：全部放行 (无需确认)',
-  };
+  const SAFETY_MODES = ['confirm-edits', 'auto-edits', 'auto-all'];
+  // Per-mode tooltip (bilingual). Reuses the shield-menu labels for the mode
+  // name and states the "global + persists across restarts" semantics — the
+  // guidance that used to live in the settings page hint now lives here, at the
+  // only remaining control (the old hint claimed the shield applied to the
+  // current session only and reverted after a restart — no longer true).
+  const titleFor = (mode) => t('bypass.title.' + (SAFETY_MODES.includes(mode) ? mode : 'confirm-edits'));
+
+  /** Effective mode: local per-session mirror first, then the config snapshot.
+   *  Fallback `'auto-all'` MUST equal the backend's missing-key branch
+   *  (`GlobalSafety.defaultMode` → `fold(SafetyMode.AutoAll)`,
+   *  permissions.scala:146) or the shield would show a mode the backend is not
+   *  actually enforcing. */
+  function currentMode(view) {
+    const v = view || activeView;
+    const m = (v && v.sessionId && state.safetyModes[v.sessionId]) || state.parsedConfig?.safety?.defaultMode;
+    return SAFETY_MODES.includes(m) ? m : 'auto-all';
+  }
 
   state.updateSafetyToggle = function(view) {
     const v = view || activeView;
     if (!v || !v.sessionId) return;
-    const mode = state.safetyModes[v.sessionId] || 'confirm-edits';
+    const mode = currentMode(v);
     const btn = document.getElementById('bypass-toggle');
     if (btn) {
       btn.setAttribute('data-mode', mode);
-      btn.title = TITLES[mode] || TITLES['confirm-edits'];
+      btn.title = titleFor(mode);
     }
     // Highlight active option in dropdown
     document.querySelectorAll('#bypass-menu button').forEach(b => {
@@ -3608,6 +3640,23 @@ _idleCb(() => import('./monacoEditor.js').then(({ preloadMonaco }) => preloadMon
   };
 
   state.updateBypassToggle = state.updateSafetyToggle;
+
+  /**
+   * Apply the **global** mode to the local mirror and refresh the shield
+   * (single exit point for F-1). Both arrival paths must go through here:
+   *   ① the shield's own write (click handler below);
+   *   ② **another writer changed the global** — `configData` snapshot arrival
+   *      (REST PUT / another window / permission-card escalation) and
+   *      `sessionList` / `agentSessionList` frame arrival.
+   * The mode is application-level ⇒ every session in the mirror gets the same
+   * value, so the shield reads identically under any active session.
+   */
+  state.applyGlobalSafetyMode = function(mode, view) {
+    if (!SAFETY_MODES.includes(mode)) return false;
+    Object.keys(state.safetyModes).forEach(id => { state.safetyModes[id] = mode; });
+    state.updateSafetyToggle(view);
+    return true;
+  };
 
   const btn = document.getElementById('bypass-toggle');
   const menu = document.getElementById('bypass-menu');
@@ -3625,14 +3674,15 @@ _idleCb(() => import('./monacoEditor.js').then(({ preloadMonaco }) => preloadMon
         e.stopPropagation();
         const mode = item.dataset.mode;
         if (!v.sessionId) return;
-        state.safetyModes[v.sessionId] = mode;
-        if (mode === 'auto-all') {
-          state.bypassSessions.add(v.sessionId);
-        } else {
-          state.bypassSessions.delete(v.sessionId);
-        }
-        state.updateSafetyToggle(v);
+        // Global mode: mirror it for every session locally (optimistic), then
+        // let the server frame be authoritative — the backend persists FIRST
+        // and broadcasts `configUpdated`; a persist failure comes back as an
+        // error frame and the next configData/sessionList restores the truth.
+        state.applyGlobalSafetyMode(mode, v);
         sendWs({ type: 'setSafetyMode', sessionId: v.sessionId, safetyMode: mode });
+        // 🔴 No silent persistence: say out loud that this is the app-wide
+        // stored mode and that it survives a restart (作者：禁静默持久化).
+        window.__showToast?.(t('bypass.modeSetGlobal', { mode: t(modeLabelKey(mode)) }), 'success');
         menu.classList.remove('show');
       });
     });
@@ -3642,8 +3692,18 @@ _idleCb(() => import('./monacoEditor.js').then(({ preloadMonaco }) => preloadMon
         menu.classList.remove('show');
       }
     }, true);
+    // Locale switch: this tooltip is mode-specific i18n, so the generic
+    // `bypass.toggle` data-i18n binding cannot restore it — re-render from the
+    // current mode rather than leaving a stale-language title.
+    window.addEventListener('locale-changed', () => state.updateSafetyToggle(v));
   }
 })();
+
+/** Mode string → shield-menu label key (shared with the dropdown buttons so the
+ *  toast and the menu can never disagree on a label). */
+function modeLabelKey(mode) {
+  return { 'confirm-edits': 'bypass.confirmEdits', 'auto-edits': 'bypass.autoEdits', 'auto-all': 'bypass.autoAll' }[mode] || 'bypass.confirmEdits';
+}
 
 // Sidebar collapse toggle — visibility is owned by the activityBar panel
 // registry (single state source); both entries below call the same API.

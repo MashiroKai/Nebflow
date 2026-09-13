@@ -40,12 +40,14 @@
 //        有效档位 = 全局值（且 T-2/R1=C：恢复到盘上的档位 = 权威源当时的值，非硬编码缺省）
 //   A-11（隔离实例形态）纯读周期（列表出口）不重写 `_index.json`（hash 不变）
 //   A-14 客户端零自动放行（帧面）：meta=auto-all ∧ 全局=confirm-edits ⇒ 后端出卡帧档位 =
-//        全局值；会话列表帧（前端 `state.bypassSessions` 的**唯一**语义源）该 sid 的
-//        safetyMode = confirm-edits（⇒ 前端不会把它收进 bypassSessions）；
-//        **A-14c（S1 重写）**：全局=confirm-edits（由盾牌通道写入）⇒ 连接首帧
-//        `sessionList` 对**所有**会话（含目标 sid）必须报全局值；客户端语义复刻器
-//        （main.js `state.bypassSessions = new Set(...)` @1536-1537 + chat.js `bypassSessions.has(targetSid)` @2317-2319）
-//        由此不得自动放行，且出站帧面无"非受控"`{type:'permissionAnswer', approved:true}`。
+//        全局值；会话列表帧（旧前端 `state.bypassSessions` 的语义源）该 sid 的
+//        safetyMode = confirm-edits；
+//        **A-14c（S1 重写；F1 后复刻器降级为最坏情形模型）**：全局=confirm-edits（由盾牌
+//        通道写入）⇒ 连接首帧 `sessionList` 对**所有**会话（含目标 sid）必须报全局值；
+//        复刻器（旧规则：`bypass = sessions.filter(safetyMode==='auto-all')`，见下方
+//        `clientReplica`）由此不得自动放行，且出站帧面无"非受控"
+//        `{type:'permissionAnswer', approved:true}`。F1（2026-09-13）已删除前端该路径，
+//        故复刻器现在检验的是"最坏情形客户端"。
 //
 // 会话身份：探针会话用 agentName='general'（工具面 = Read/Write/Edit/Glob/Grep/Bash）。
 // Nebula 的机制工具面不含 Write/Edit/Bash（AgentCore.NebulaOrchestrationTools），测不出写面。
@@ -340,11 +342,18 @@ function connectWs() {
     });
   });
 }
-/** 客户端语义复刻器（无浏览器会话；逐字复刻前端两处判定）。
- *  · main.js:1536-1537（符号锚：`state.bypassSessions = new Set(...)`，`onMessage('sessionList')` 处理器内）—— `state.bypassSessions = new Set(allSessions.filter(s => s.safetyMode === 'auto-all').map(s => s.id))`
- *  · chat.js:2317-2319（符号锚：`if (state.bypassSessions.has(targetSid))` → `ws.send(permissionAnswer{approved:true})`）—— 若目标会话在 `bypassSessions` 内，客户端**立即**发出
- *    `{type:'permissionAnswer', sessionId, approved:true}`（用户零点击）。
- *  返回 {bypass, wouldAutoApprove} —— 即"客户端会不会自动放行这个 sid"。 */
+/** 客户端语义复刻器（无浏览器会话）。
+ *
+ *  **2026-09-13 permshield F1 重登记**：前端 `state.bypassSessions` 及其静默放行路径
+ *  **已删除**（main.js 的 `new Set(allSessions.filter(...))` 派生 + chat.js
+ *  `if (state.bypassSessions.has(targetSid)) → permissionAnswer{approved:true}`）——
+ *  前端现在**任何**权限应答都必须来自用户对渲染卡的点击。
+ *  因此本复刻器不再是"逐字复刻前端判定"，而是**最坏情形客户端模型**（强度提升）：
+ *  它仍按旧规则从列表帧派生一个 bypass 集合并判定会不会静默放行 —— 即"若某个老客户端
+ *  仍带该路径"。断言 `wouldAutoApprove === false` 于是同时覆盖：①后端在全局 auto-all
+ *  下从不发卡（`ToolReversibility.isReversible` 恒 true ⇒ AgentCore 不发 askPermission），
+ *  ②即便发了卡，出口帧的逐会话档位恒 = 全局值、与"派生集合"同源 ⇒ 不产生自动放行。
+ *  返回 {bypass, wouldAutoApprove} —— 即"这种客户端会不会自动放行这个 sid"。 */
 function clientReplica(frame, sid) {
   const all = frame?.json?.sessions || [];
   const bypass = all.filter((s) => s.safetyMode === 'auto-all').map((s) => s.id);
@@ -408,7 +417,7 @@ async function createSessionViaWs(name, agentName = 'general') {
   const found = (await sessionsRaw()).find((s) => s.name === name);
   return found ? found.id : null;
 }
-/** 最近一条会话列表帧里该 sid 的 safetyMode（前端 bypassSessions 的语义源）。 */
+/** 最近一条会话列表帧里该 sid 的 safetyMode（旧前端 bypassSessions 的语义源；F1 已删除该集合）。 */
 function lastListFrameMode(sid) {
   for (let i = frames.length - 1; i >= 0; i--) {
     const j = frames[i].json;
@@ -610,7 +619,7 @@ try {
   check('A-9b 对照：盘上键本身仍是 auto-all（= 方案 A「读时忽略」，不是把数据改了）',
     indexRawModes()[s2] === 'auto-all', `disk=${indexRawModes()[s2]}`);
 
-  // A-14 承重（帧面）：前端 `state.bypassSessions` 的语义源 = 会话列表帧的逐会话
+  // A-14 承重（帧面）：旧前端 `state.bypassSessions`（F1 已删除）的语义源 = 会话列表帧的逐会话
   // safetyMode；该值必须 = 有效档位（confirm-edits）⇒ 前端不会把该会话当"顶档"静默放行。
   try {
     await waitFor(() => lastListFrameMode(s2) !== '<no-list-frame>', 'initial session list frame after reconnect', 20000);
@@ -630,10 +639,10 @@ try {
   // 2026-09-12 修复轮曾把它重写成"D1 承重面（覆盖优先 vs 全局值）"；**该对偶在
   // S1 后已不存在**（覆盖面删除 ⇒ 出口恒 = 全局值），故本段再次重锚为**全局单一
   // 来源**的观测：
-  //   ① **客户端语义复刻器**（`clientReplica`，逐字复刻 main.js:1536-1537 +
-  //      chat.js:2317-2319）：把**本次 WS 连接的首帧 `sessionList`**
-  //      （= `SessionService.sendSessionList` 出口）喂进复刻器，得到
-  //      `state.bypassSessions` 与"客户端会不会静默发出 approved:true"。
+  //   ① **客户端语义复刻器**（`clientReplica`；F1 后 = **最坏情形客户端模型**，
+  //      旧规则 `bypass = sessions.filter(safetyMode==='auto-all')` 保留）：把**本次
+  //      WS 连接的首帧 `sessionList`**（= `SessionService.sendSessionList` 出口）
+  //      喂进复刻器，得到"这种客户端会不会静默发出 approved:true"。
   //   ② **出站帧面**：连接建立后 patch `sock.send` 捕获全部 client→server 载荷，
   //      断言不存在"非 harness 主动应答"的 `permissionAnswer`（= 自动放行形态）。
   //   ③ **S1 场景**：全局（由**盾牌通道**写入）切到 `confirm-edits` ⇒ 连接首帧对

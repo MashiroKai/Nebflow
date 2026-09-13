@@ -370,14 +370,13 @@ export default {
   'settings.thinkingEffort.medium': 'Medium',
   'settings.thinkingEffort.high': 'High',
   'settings.thinkingEffortHint': 'Thinking effort (OpenAI-style): Off = disable reasoning; Low = fast; Medium = balanced; High = deep reasoning. Mapped per model automatically (Anthropic budget / GLM & DeepSeek switches).',
-  // === Permission mode (global single source of authority, 2026-09-12) ===
-  'settings.safetyMode': 'Permission mode (global)',
-  'settings.safetyMode.confirm-edits': 'Confirm edits',
-  'settings.safetyMode.auto-edits': 'Auto edits',
-  'settings.safetyMode.auto-all': 'Allow everything',
-  'settings.safetyModeHint': 'Global permission mode: new sessions and sessions after a restart use this level. The shield menu in the top bar changes only the current session and reverts to this setting after a restart.',
-  'settings.safetyModeSaved': 'Global permission mode saved',
-  'settings.safetyModeSaveFailed': 'Failed to save the global permission mode',
+  // === Settings-page permission-mode control (2026-09-12 batch) was deleted by
+  // permshield F1 (2026-09-13): all 7 `settings.safetyMode*` keys went with it
+  // (author re-ruling candidate B ① "delete the settings page"). The guidance now
+  // lives on the shield: `bypass.title.*` (per-mode tooltip) + `bypass.modeSetGlobal`
+  // (persistence feedback after a switch). The old `settings.safetyModeHint` text
+  // ("…the shield … reverts to this setting after a restart") is gone with the
+  // control — no dangling pointer to a non-existent entry is left.
   'settings.language': 'Language',
   'settings.autostart': 'Launch at Login',
   'settings.autostartUnsupported': 'Autostart is not supported in this runtime mode',
@@ -620,10 +619,14 @@ export default {
   'chat.allow': 'Allow',
   'chat.deny': 'Deny',
   'chat.skipTool': 'Skip this tool call',
-  'chat.permUpgradeAutoEdits': 'Allow, and switch to auto-edits',
-  'chat.permUpgradeAutoEditsDesc': 'Future Write/Edit calls in this session run without asking',
-  'chat.permUpgradeAutoAll': 'Allow, and switch to auto-all',
-  'chat.permUpgradeAutoAllDesc': 'All future tool calls in this session run without asking',
+  // Escalation chain (author boundary ① "keep the escalation chain"): permshield
+  // F1 retargeted the upgrade to the **global persisted** mode (same path as the
+  // shield) ⇒ no "this time only" semantics; state global + survives a restart.
+  'chat.permUpgradeAutoEdits': 'Allow and switch to auto-edits',
+  'chat.permUpgradeAutoEditsDesc': 'Global mode becomes auto-edits: applies to every session and persists across restarts',
+  'chat.permUpgradeAutoAll': 'Allow and switch to auto-all',
+  'chat.permUpgradeAutoAllDesc': 'Global mode becomes auto-all: applies to every session and persists across restarts',
+  'chat.permUpgradeApplied': 'Switched to {mode} (global mode): still in force after a restart',
   'chat.other': 'Other...',
   'chat.frozenNoTime': 'Frozen · waiting to resume',
   'chat.frozenShort': 'Frozen · {time} resume',
@@ -676,7 +679,6 @@ export default {
   'chat.askLabel': 'Ask',
   'chat.skillLabel': 'skill: {skill}',
   'chat.allowTool': 'Allow {tool}?',
-  'chat.autoApproved': 'Auto-approved (bypass all)',
   'chat.permSource': 'From: {agent} ({session})',
   'chat.permLevel.warning': 'Caution: may cause data loss',
   'chat.permLevel.dangerous': 'Dangerous: {detail}',
@@ -744,7 +746,13 @@ export default {
   'slash.confirmDelete': 'Delete skill "{skill}"? This cannot be undone.',
   'slash.skillDeleted': 'Skill "{skill}" deleted',
   'slash.skillDeleteFailed': 'Failed to delete skill "{skill}": not a user-level skill',
-  'bypass.toggle': 'Safety mode: click to cycle Confirm Edits / Auto Edits / Auto All',
+  // Shield (the only UI entry for the mode) — per-mode tooltip + persistence
+  // feedback after a switch (permshield F1).
+  'bypass.toggle': 'Safety mode: click to cycle Confirm Edits / Auto Edits / Auto All (global mode, still in force after a restart)',
+  'bypass.title.confirm-edits': 'Safety mode: Confirm edits (global mode, still in force after a restart)',
+  'bypass.title.auto-edits': 'Safety mode: Auto edits (global mode, still in force after a restart)',
+  'bypass.title.auto-all': 'Safety mode: Auto all (global mode, still in force after a restart)',
+  'bypass.modeSetGlobal': 'Global permission mode switched to {mode}: still in force after a restart',
 
   // === Background tasks ===
   'bg.cancel': 'Cancel',
