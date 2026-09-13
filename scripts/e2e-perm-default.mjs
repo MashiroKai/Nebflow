@@ -17,14 +17,20 @@
 //      general 面调 Mail 被丢弃）——顶档下**不出卡且仍然拒/仍然丢**；其余硬保护逐条见批报告（代码锚）。
 //   E. 默认值边界：safety.defaultMode 热读（免重启）→ confirm-edits / auto-edits 新建即随配置；
 //      键移除 ⇒ 回落到启动默认（顶档）。
-//      ⚠ **两处判据已重锚**（2026-09-12 权限全局单一权威源批，设计 §6.1 ⚠ 行 /
-//      §10 #16）：(1) 旧口径「既有会话档位不被改写（零回溯）」在新模型下**整体作废**
-//      ——会话不再持有权威档位（有效档位 = 内存覆盖 ?? 全局），E4 判据改为
-//      「**出口有效档位 = 全局值**」，盘上键未变只作「方案 A 未动用户数据」的可证面；
-//      (2) A3 不再读 REST POST 响应/盘上的 `safetyMode` 键（新模型不写 meta ⇒ Encoder
-//      省略该键），改读 `GET /api/sessions` 的 **overlay 出口值**（设计 A-7 形态）。
+//      ⚠ **判据已重锚两次**：
+//      ① 2026-09-12 权限全局单一权威源批（设计 §6.1 ⚠ 行 / §10 #16）：
+//         (1) 旧口径「既有会话档位不被改写（零回溯）」**整体作废**——会话不再持有权威
+//             档位（当时有效档位 = 内存覆盖 ?? 全局），E4 判据改为「**出口有效档位 = 全局值**」，
+//             盘上键未变只作「未动用户数据」的可证面；
+//         (2) A3 不再读 REST POST 响应/盘上的 `safetyMode` 键（新模型不写 meta ⇒ Encoder
+//             省略该键），改读 `GET /api/sessions` 的 **overlay 出口值**（设计 A-7 形态）。
+//      ② 2026-09-13 permshield S1（作者重裁「候选 B」；施行件 `permshield-S1-backend`）：
+//         **会话级覆盖层已整体删除** ⇒ 有效档位 = 应用级全局持久值（`safety.defaultMode`），
+//         且 **WS `setSafetyMode`（盾牌）改判据为"写全局持久"**（旧「仅内存、不落盘」作废，
+//         ⇒ 本脚本 :12 的旧头注恢复成立）。受影响断言逐条改判：
+//         B1（不落盘 → 落盘）、E4（不再排除任何会话）、E4b（覆盖优先对偶作废 → 随全局）。
 //      新模型端的完整覆盖见 `scripts/e2e-perm-global.mjs`
-//      （A-4/A-5/A-6/A-8/A-9/A-10/A-11/A-14）。
+//      （A-4/A-5/A-6/A-8/A-9/A-10/A-11/A-14；其头部含 S1 作废面登记表）。
 //
 // 会话身份说明：探针会话用 agentName='general'（收敛通用执行 agent，工具面 = BaseTools 六件
 // Read/Write/Edit/Glob/Grep/Bash）。Nebula 的机制固定工具面**不含** Write/Edit/Bash
@@ -379,7 +385,7 @@ try {
   // A3 **重锚**（设计 §10 #16：上批 W-6a 判据③「读盘上 `"safetyMode":"auto-all"` 作为
   // 代码默认顶档的硬证据」在新模型下失效，必须改锚 `GET /api/sessions` 的 overlay 值）：
   // REST POST 的响应 = 原始 meta，而新模型**不再写**会话 meta 的档位 ⇒ Encoder 省略该键。
-  // 判据 = **出口有效档位**（= 覆盖 ?? 全局 = 全局值 auto-all）。
+  // 判据 = **出口有效档位**（= 应用级全局持久值 = auto-all；S1 起无会话覆盖面）。
   const restExit = restId ? await modeOf(restId) : '<not-created>';
   check('A3（重锚）REST 新建会话的有效档位 = auto-all（判据 = GET /api/sessions 出口 overlay 值）',
     rest.status === 200 && restExit === 'auto-all',
@@ -399,13 +405,17 @@ try {
   check('A5b 顶档 Write 轮零 askPermission 帧', frames.filter((f) => f.json.type === 'askPermission').length === 0,
     `askPermission frames=${frames.filter((f) => f.json.type === 'askPermission').length}`);
 
-  // ── 阶段 B：会话内回退到 confirm-edits（②） ──
+  // ── 阶段 B：会话内回退到 confirm-edits（②；2026-09-13 S1 改判据） ──
   const sid = wsCreatedId;
   ws.send(JSON.stringify({ type: 'setSafetyMode', sessionId: sid, safetyMode: 'confirm-edits' }));
   await waitFor(async () => (await modeOf(sid)) === 'confirm-edits', 'setSafetyMode → confirm-edits effective', 15000);
-  // 2026-09-12 起 `setSafetyMode` **不落盘**（会话内切换 = 仅内存临时覆盖）；本断言
-  // 读的是**出口有效档位**（覆盖 ?? 全局），语义正确且不再依赖盘上键（见 e2e-perm-global.mjs A-8g）。
-  check('B1 会话内切回 confirm-edits 已即时生效（出口有效档位；不落盘）', (await modeOf(sid)) === 'confirm-edits', `mode=${await modeOf(sid)}`);
+  // 2026-09-13（permshield S1）起 `setSafetyMode` 的语义 = **写全局持久档位**
+  // （`nebflow.json` 的 `safety.defaultMode`，与 REST PUT /api/safety/mode 同一个
+  // 函数）——旧口径「仅内存临时覆盖、不落盘」**已作废**（本脚本 :12 头注恢复成立）。
+  check('B1 会话内切回 confirm-edits 已生效，且**落盘**为全局档（safety.defaultMode）',
+    (await modeOf(sid)) === 'confirm-edits' &&
+      JSON.parse(readFileSync(CONFIG_PATH, 'utf8')).safety?.defaultMode === 'confirm-edits',
+    `mode=${await modeOf(sid)}`);
   modesSnapshot.B_confirmEdits = await indexModes();
 
   const bFile = `${WRITE_BASE}-6.txt`;
@@ -499,25 +509,27 @@ try {
   const e3Id = await createSessionViaWs('perm-cfg-unset');
   check('E3 键移除 ⇒ 新建会话回落到启动默认 = auto-all',
     (await modeOf(e3Id)) === 'auto-all', `mode=${await modeOf(e3Id)}`);
-  // ── E4 **重锚**（设计 §6.1 ⚠ 行 / §11.1 D-f）────────────────────────────
-  // 新模型下「既有会话档位零改写 / 零回溯」**整体作废**——会话不再持有权威档位，
+  // ── E4 **重锚**（设计 §6.1 ⚠ 行 / §11.1 D-f；2026-09-13 permshield S1 再锚）──
+  // 新模型下「既有会话档位零改写 / 零回溯」**整体作废**——会话不持有权威档位，
   // 「是否回溯」不再有判据意义（本脚本 :19 头注已同步更新）。
-  // 判据改为 **出口有效档位 = 全局值**：
-  //   (i)  全局改 confirm-edits ⇒ 所有**无内存覆盖**会话经 GET /api/sessions 读到
+  // S1 起**连"会话级覆盖"这一层也已删除** ⇒ 判据 = **出口有效档位 = 全局值，对所有会话**：
+  //   (i)  全局改 confirm-edits ⇒ **每一个**会话经 GET /api/sessions 都读到
   //        confirm-edits（盘上 meta 取什么值都不影响，A-9 承重）；
-  //   (ii) 盘上键逐字未变 = 「方案 A 未动用户数据」的**可证面**（不再作为权威判据）。
+  //   (ii) 盘上键逐字未变 = 「未动用户数据」的**可证面**（不再作为权威判据）。
+  // 旧 E4b「有内存覆盖的会话不跟随全局（覆盖优先，进程内）」**已作废**（覆盖面删除，
+  // 该对偶不存在）⇒ 改判据为「盾牌通道写入的就是全局值，故该会话也报全局值」。
   writeConfig('confirm-edits');
   const exitModes = {};
   for (const s of await sessionsRaw()) exitModes[s.id] = norm(s.safetyMode);
-  const uncovered = Object.keys(exitModes).filter((id) => id !== sid);   // sid 持内存覆盖
+  const allIds = Object.keys(exitModes);
   const modesAfterE = await indexModes();
   const unchanged = Object.entries(modesBeforeE).every(([id, m]) => modesAfterE[id] === m);
-  check('E4（重锚）全局 confirm-edits ⇒ 所有无覆盖会话的**出口有效档位** = confirm-edits'
-      + '（判据已从「盘上键未变」改为「出口有效值」）',
-    uncovered.length > 0 && uncovered.every((id) => exitModes[id] === 'confirm-edits'),
-    `uncovered=${uncovered.length} values=${[...new Set(uncovered.map((id) => exitModes[id]))].join(',')}`);
-  check('E4b 有内存覆盖的会话不跟随全局（覆盖优先，进程内）',
-    (await modeOf(sid)) === 'auto-all', `sid=${await modeOf(sid)}`);
+  check('E4（重锚）全局 confirm-edits ⇒ **所有**会话的**出口有效档位** = confirm-edits'
+      + '（判据已从「盘上键未变」改为「出口有效值」；覆盖面删除后不再排除任何会话）',
+    allIds.length > 0 && allIds.every((id) => exitModes[id] === 'confirm-edits'),
+    `sessions=${allIds.length} values=${[...new Set(allIds.map((id) => exitModes[id]))].join(',')}`);
+  check('E4b（S1 改判据）盾牌通道写的是全局值 ⇒ 该 sid 也随全局（旧「覆盖优先」对偶已不存在）',
+    (await modeOf(sid)) === 'confirm-edits', `sid=${await modeOf(sid)}`);
   check('E4c 盘上键零改动（**可证面**：方案 A 未动用户数据；不再作为权威判据）',
     unchanged, `sessions checked=${Object.keys(modesBeforeE).length} unchanged=${unchanged}`);
   modesSnapshot.E_final = modesAfterE;
