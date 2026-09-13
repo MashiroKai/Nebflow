@@ -157,6 +157,50 @@ class NodeFailedReactivateSpec extends CatsEffectSuite:
       }
     }
 
+  /** 完成门腿 2 关闭面挂载（**FR1/FR6 断点修复面**）——与 `NotifyDispatcherSpec.mountReal`
+    * 同款**自有挂载夹具**（同一 `reportGateHold` 起因）。
+    *
+    * 为什么不能走 `ProjectRuntimeRegistry.mount`：该入口不注入 `reportGateHold`
+    * ⇒ 引擎按生产默认（`Defaults.NodeReportCompletionHold` = true）判「本会话未申报
+    * node_report ⇒ 不终态化」⇒ 本 spec 的 mock-LLM 节点重跑 turn 交棒后停在 Running，
+    * 故 FR1/FR6 的 `waitStatus(..., Completed)` 恒超时，其后的 `result` / 重连 `out` /
+    * `reactivated` 审计断言**恒不可达**。
+    *
+    * 显式注入 `reportGateHold = Some(false)` = 本批之前的文本锚定降级面（**仅测试面、
+    * 零生产改动**）：本 spec 主题是「failed 重激活」语义（重激活生效 → 重跑至完成 →
+    * 轮次历史复位）；「未申报 `node_report` 不终态化」的完成门口径由
+    * `NodeReportReminderSpec` 承担验证。
+    *
+    * 其余装配与 `ProjectRuntimeRegistry.mount` 逐项同构（store/board 打开 + ProjectActor
+    * spawn + 注册）；mount 另跑的两个动作——僵尸 running 收殓 + Nebula 欠账补投扫描——
+    * 对本 spec 的**挂载即空工作区**恒为空操作（僵尸由各用例显式
+    * `settleStaleRunningNodes()` 播种后驱动），故此处省略。 */
+  private def mountGateOff(name: String, ws: os.Path, system: ActorSystem, res: SharedResources): IO[ProjectRuntime] =
+    val pd = ProjectDef(name = name, workspace = ws.toString, agentFile = (ws / "AGENTS.md").toString, createdAt = System.currentTimeMillis())
+    for
+      store <- FlowMapStore.open(name, ws.toString)
+      board <- IO(TaskBoardStore.open(name, ws.toString)).map(Some(_): Option[TaskBoardStore])
+        .handleErrorWith(_ => IO.pure(None))
+      engine = new NodeEngine(
+        store, system, res,
+        wsSendFn = (_: Json) => IO.unit,
+        workspace = ws.toString,
+        rootSessionId = "nebula-root",
+        projectName = name,
+        feedbackMode = pd.feedbackMode.getOrElse(FeedbackRouter.ModeAuto),
+        emitEvent = (_, _, _) => IO.unit,
+        board = board,
+        projectGoal = pd.description,
+        reportGateHold = Some(false)
+      )
+      ref <- system.spawn(
+        ProjectActor(ProjectActor.ProjectConfig(pd, engine, system, res, "nebula-root", board = board)),
+        s"project-${name.take(20)}"
+      )
+      rt = ProjectRuntime(pd, store, engine, system, res, Some(ref), board)
+      _ <- ProjectRuntimeRegistry.register(rt)
+    yield rt
+
   private def readAudit(ws: os.Path): IO[List[(String, String)]] =
     IO.blocking(os.read(ws / ".nebflow" / FlowMapEventLog.FileName))
       .map(_.linesIterator.toList.filter(_.trim.nonEmpty))
@@ -191,7 +235,7 @@ class NodeFailedReactivateSpec extends CatsEffectSuite:
       else IO.pure("unexpected-run"))
     for
       res <- mkResources(system, tempRoot, llm.handle)
-      rt <- mountReal("fr1", ws, system, res)
+      rt <- mountGateOff("fr1", ws, system, res) // 腿 2 关闭面挂载（FR1 断点修复面，见 mountGateOff）
       ctx = mkCtx(res, system, ws.toString)
       _ <- seedZombie(rt, "n-fr1", "fr-node", "original-task", List(OutEdge.nebula))
       _ <- rt.engine.settleStaleRunningNodes()
@@ -356,7 +400,7 @@ class NodeFailedReactivateSpec extends CatsEffectSuite:
       else IO.pure("ok"))
     for
       res <- mkResources(system, tempRoot, llm.handle)
-      rt <- mountReal("fr6", ws, system, res)
+      rt <- mountGateOff("fr6", ws, system, res) // 腿 2 关闭面挂载（FR6 断点修复面，见 mountGateOff）
       ctx = mkCtx(res, system, ws.toString)
       now = System.currentTimeMillis()
       // 下游 sink（wiring，带 task）：out 改指它 → 重跑完成 barrier 归零后被 start，
