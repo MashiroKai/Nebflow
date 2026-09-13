@@ -550,7 +550,7 @@ try {
     !!w4.card && w4.card.safetyMode === 'confirm-edits' && !w4.fileWritten,
     `safetyMode=${w4.card?.safetyMode} file=${w4.fileWritten}`);
 
-  // allow + upgradeMode=auto-edits（= 用户在卡上点"允许本次并切换到编辑放行"）
+  // allow + upgradeMode=auto-edits（= 用户在卡上点"允许并切换到编辑放行"；F1 起该升级写的是**全局持久**档位）
   {
     const file = `${WRITE_BASE}-5.txt`;
     const before = frames.length;
@@ -559,7 +559,7 @@ try {
     hSend({ type: 'permissionAnswer', sessionId: s2, requestId: card.json.requestId, approved: true, upgradeMode: 'auto-edits' });
     await t.promise;
     await waitFor(async () => (await modeOf(s2)) === 'auto-edits', 'upgrade → auto-edits', 15000);
-    check('A-8b 「允许本次并切编辑放行」⇒ 工具执行 + 档位升到 auto-edits',
+    check('A-8b 「允许并切换到编辑放行」（全局持久）⇒ 工具执行 + 档位升到 auto-edits',
       existsSync(file) && (await modeOf(s2)) === 'auto-edits',
       `file=${existsSync(file)} mode=${await modeOf(s2)}`);
   }
@@ -581,7 +581,7 @@ try {
     await t.promise;
     await waitFor(async () => (await modeOf(s2)) === 'auto-all', 'upgrade → auto-all', 15000);
     await waitFor(() => !existsSync(BASH_TARGET), 'dangerous bash executed', 15000).catch(() => {});
-    check('A-8f 「允许本次并切全部放行」⇒ 危险命令执行 + 档位升到 auto-all',
+    check('A-8f 「允许并切换到全部放行」（全局持久）⇒ 危险命令执行 + 档位升到 auto-all',
       !existsSync(BASH_TARGET) && (await modeOf(s2)) === 'auto-all',
       `targetExists=${existsSync(BASH_TARGET)} mode=${await modeOf(s2)}`);
   }

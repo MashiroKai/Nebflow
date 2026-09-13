@@ -439,7 +439,7 @@ try {
   ws.send(JSON.stringify({ type: 'permissionAnswer', sessionId: sid, requestId: cardC1.json.requestId, approved: true, upgradeMode: 'auto-edits' }));
   r = await t.promise;
   await waitFor(async () => (await modeOf(sid)) === 'auto-edits', 'upgrade → auto-edits', 15000);
-  check('C1b 「允许本次并切编辑放行」：工具执行 + 档位升到 auto-edits',
+  check('C1b 「允许并切换到编辑放行」（F1 后为全局持久档位）：工具执行 + 档位升到 auto-edits',
     existsSync(c1File) && (await modeOf(sid)) === 'auto-edits',
     `file=${existsSync(c1File)} mode=${await modeOf(sid)}`);
 
@@ -463,7 +463,7 @@ try {
   r = await t.promise;
   await waitFor(async () => (await modeOf(sid)) === 'auto-all', 'upgrade → auto-all', 15000);
   await waitFor(() => !existsSync(BASH_TARGET), 'dangerous bash executed', 15000).catch(() => {});
-  check('C3c 「允许本次并切全部放行」：危险命令执行 + 档位升到 auto-all',
+  check('C3c 「允许并切换到全部放行」（F1 后为全局持久档位）：危险命令执行 + 档位升到 auto-all',
     !existsSync(BASH_TARGET) && (await modeOf(sid)) === 'auto-all',
     `target exists=${existsSync(BASH_TARGET)} mode=${await modeOf(sid)}`);
 
