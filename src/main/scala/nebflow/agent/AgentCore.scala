@@ -1859,7 +1859,7 @@ private[agent] trait AgentCore:
     // 阶段 2b Plugins（§B.4 第 4 步）：node 分配的 plugin MCP 前缀来源——
     // serverId `plugin_<p>_<s>` → 工具名 `mcp__plugin_<p>_<s>__<t>`。分配链
     // （NodeEdit plugins 参数 → 信任门解析 → PluginMcpManager 启动）是唯一授权
-    // 源；untrusted plugin 根本到不了这里（resolve 即 failNode）。
+    // 源；未受信（即被封禁）plugin 根本到不了这里（resolve 即 failNode）。
     // 注：这是「追加」而非「保留」——base 宇宙（agentDef.tools + fixed）天然
     // 不含 mcp__* 名，须从注册表按前缀捞取并入（蓝图 §B.4-③「追加对应前缀」）；
     // 配额期间 server 未注册的工具名自然落空（注册表即事实源）。

@@ -184,7 +184,9 @@ class PluginDispatchFaceSpec extends CatsEffectSuite:
     go(System.currentTimeMillis() + 30_000L)
 
   /** fixture 卫生（无审批批）：记录 + **确保未封禁**——封禁写入独立命名空间，前序用例
-    * 留下的 deny-list 不会因 approve 自动消失，须显式解封（unblock 幂等：未封禁 → no-op）。 */
+    * 留下的 deny-list 不会因 approve 自动消失，须显式解封；`PluginBlockPolicy.unblock`
+    * 对未封禁**不幂等**而是返回 `Left("Plugin '<name>' is not blocked — nothing to unblock")`
+    * （零静默纪律），此处 `.void` 丢弃返回值、该 Left 不作为判据。 */
   private def approveFixture: IO[Unit] =
     PluginRegistry.approve("inject-skill").flatMap {
       case Right(_) => IO.unit

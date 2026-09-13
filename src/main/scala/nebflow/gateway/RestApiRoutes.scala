@@ -2257,7 +2257,8 @@ class RestApiRoutes(
 
     // ── Plugins（阶段 2b §B.3：面板审批清单 + CLI 对等）─────────────
 
-    // GET /plugins — 注册表全量（含 untrusted / 拒载原因 + 审批清单数据）。
+    // GET /plugins — 注册表全量（含已封禁项 / 拒载原因 + 清单数据；无审批批 2026-09-13
+    // 后条目面无「待审」形态，受信与否 = 在位 ∧ 未被封禁）。
     // 审批清单区块（§B.3）：元信息 / skills 摘要（前 20 行）/ mcp（env 只出键名，
     // 值打码）/ org.nebflow/tools 申请 / 信任状态与 digest。
     case GET -> Root / "plugins" =>
