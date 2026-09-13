@@ -3533,7 +3533,7 @@ class RestApiRoutes(
       //     requests 200 with ALPN=h2, 0 GOAWAY, 0 TLS alert, 5/5 TLS 1.3
       //     resumptions accepted ⇒ the old "HTTP/2 reuse + TLS 1.3 resumption
       //     clashes with Caddy" sentence has no support on this link; it was
-      //     copied from the 2026-08-11 USTC (nginx/one-api) incident (42fd15b6
+      //     copied from the 2026-08-11 upstream (nginx/one-api) incident (42fd15b6
       //     self-describes it as "same TLS fix as 3773699b"). 未证 either way:
       //     the original symptom was intermittent and left no logs, so one
       //     green local window does not prove the trap absent.

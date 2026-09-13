@@ -46,7 +46,7 @@ object AvatarProxy:
     *   · Evidence: **none on this peer.** The avatar origin is a static host on
     *     the neblink-server side; no reading has ever been taken on this path,
     *     and the "HTTP/2 reuse + TLS 1.3 resumption clash" rationale was copied
-    *     in from the 2026-08-11 USTC LLM-gateway incident (commit a9672dc2).
+    *     in from the 2026-08-11 upstream LLM-gateway incident (commit a9672dc2).
     *     Topology-wise it shares the neblink Caddy front, where the 2026-09-12
     *     probe saw 14/14 HTTP_2 200 with 0 TLS alerts — that is 未证 for the
     *     trap's absence (intermittent symptom, no logs kept), not evidence.
