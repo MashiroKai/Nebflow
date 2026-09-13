@@ -1645,12 +1645,28 @@ class WebSocketRoutes(
             sharedResources.voiceMutedRef.set(muted)
 
           case "setLlmLog" =>
+            // 默认关批（2026-09-13）：缺字段不再视为「开」——与新默认态一致
+            // （fail-safe：无明确指令不改状态；UI 恒带 enabled，见 sidebar.js）。
             val enabled = parse(text).toOption
               .flatMap(_.hcursor.downField("enabled").as[Boolean].toOption)
-              .getOrElse(true)
-            LlmLogWriter.setEnabled(enabled)
-            logger.info(s"LLM log set to: $enabled") *>
-              wsSend(io.circe.Json.obj("type" -> "llmLogState".asJson, "enabled" -> enabled.asJson))
+              .getOrElse(false)
+            // 持久化优先（D-A：显式改动过的值须跨重启保持）：落盘成功才热更
+            // 内存态，镜像 setToolResultTtl 的「persist 成功才热更」排序——
+            // 不产生「内存已改、盘上未改」的窗口。落盘失败 = fail-loud：
+            // WARN + configUpdateFailed，并回**权威现值**让 UI 与实际一致。
+            nebflow.service.ConfigService.setLlmLogEnabled(enabled).attempt.flatMap {
+              case Right(_) =>
+                LlmLogWriter.setEnabled(enabled)
+                logger.info(s"LLM log set to: $enabled") *>
+                  wsSend(io.circe.Json.obj("type" -> "llmLogState".asJson, "enabled" -> enabled.asJson))
+              case Left(e) =>
+                logger.warn(s"Failed to persist llmLog.enabled=$enabled: ${e.getMessage}") *>
+                  wsSend(io.circe.Json.obj(
+                    "type" -> "configUpdateFailed".asJson,
+                    "message" -> s"LLM 日志开关保存失败: ${e.getMessage}".asJson
+                  )) *>
+                  wsSend(io.circe.Json.obj("type" -> "llmLogState".asJson, "enabled" -> LlmLogWriter.isEnabled.asJson))
+            }
 
           case "getLlmLog" =>
             wsSend(io.circe.Json.obj("type" -> "llmLogState".asJson, "enabled" -> LlmLogWriter.isEnabled.asJson))
