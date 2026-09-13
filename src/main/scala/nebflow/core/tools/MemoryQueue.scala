@@ -487,19 +487,41 @@ object MemoryQueue:
   // 时限定该节；节名 `## ` 前缀可选），消费侧提示词 `agents/memory-consolidator/system.md`
   // 引用同一口径、不另起一套。D0（只读脚本）与本实现互为独立复算面，分桶须逐条一致。
 
-  /** 分桶（方案 §5 D1 的三段输出）。`WouldDefer` = 预算 fail-closed 截断
-    * （超硬顶即停、剩余留 pending）。 */
+  /** 分桶（方案 §5 D1 的三段输出 + 2026-09-13 r3 批的第四段）。
+    *
+    * 分档判据 = **该条的内容是否还能落**：
+    *   - `WouldObsolete`（**终态族**）：内容已被**后来的记账**取代（`superseded-by-later`）
+    *     或**逐字已在文件里**（`already-present`）——这类条目的意图已了结，文件再变也不会
+    *     让它可落 ⇒ 终态词成立。
+    *   - `WouldRetry`（**可重试族**，2026-09-13 r3 批新增）：**目标定位不到**——目标文件
+    *     不存在（`target-missing`）/ 目标节不存在（`locate-miss: section not found`）/
+    *     该节内定位不到条目（`locate-miss: no matching '- ' entry`）/ 落笔时定位器失效
+    *     （`apply-miss`）。**内容本身没有作废**，只是**这一时点找不到落点**；文件/节出现
+    *     或被改写后即可落 ⇒ **不得打终态词**（终态 ⇒ `State.consumed` 为真 ⇒ 条目永不再
+    *     pending ⇒ 内容永久丢失 = 「失败被伪装成成功」）。
+    *   - `WouldDefer`：预算 fail-closed 截断（超硬顶即停、剩余留 pending）。
+    *
+    * `WouldRetry` **仍进 `authorized`**（与 `WouldObsolete` 同为「零文件写、只回写结局」的
+    * 裁决面）——不授权的活锁后果：消费者永远看不到、条目永不闭合、pending 只增不减。 */
   enum Bucket:
-    case WouldApply, WouldObsolete, WouldDefer
+    case WouldApply, WouldObsolete, WouldRetry, WouldDefer
 
   object Bucket:
     def label(b: Bucket): String = b match
       case WouldApply    => "would-apply"
       case WouldObsolete => "would-obsolete"
+      case WouldRetry    => "would-retry"
       case WouldDefer    => "would-defer"
 
-  /** dry-run 的输入面：某目标**当前磁盘内容**的只读快照（`path` 仅供渲染）。 */
-  final case class TargetFile(path: String, content: String)
+  /** dry-run 的输入面：某目标**当前磁盘内容**的只读快照（`path` 仅供渲染）。
+    *
+    * `exists`（2026-09-13 r3 批新增，缺省 `true` 保持向后兼容）：**目标文件在不在**。
+    * 改动前 `readAll` 把「文件不存在」与「空文件」都归成 `""` ⇒ 对不存在的项目记忆文件
+    * 的 append 被当「空文件追加」⇒ 判 `would-apply`，投影 `0 → N B`，消费侧据此**新建了
+    * 文件**（生产实证 2026-09-13 18:25，`project:neblink-server`，引擎投影 1,032 B vs
+    * 实盘 1,104 B）——缺陷①。存在性必须作为**独立输入位**传进来，`content == ""` 不足以
+    * 区分。 */
+  final case class TargetFile(path: String, content: String, exists: Boolean = true)
 
   final case class PlanItem(
       ref: String,
@@ -528,31 +550,35 @@ object MemoryQueue:
 
   /** dry-run 计划：逐条分桶 + 逐文件投影 + 前置闸结论。
     *
-    * `authorized` = 本落轮**允许消费**的 ref（would-apply + would-obsolete；后者零文件
-    * 写、只回写结局），`deferred` = 预算截断的 ref（**不进简报、保持 pending**），
-    * `refusal` 非空 = 前置闸 fail-closed 拒绝本轮落地（authorized 为空而仍有 pending）。 */
+    * `authorized` = 本落轮**允许消费**的 ref（would-apply + would-obsolete + would-retry；
+    * 后两者零文件写、只回写结局），`deferred` = 预算截断的 ref（**不进简报、保持 pending**），
+    * `retryable` = 目标缺失族的 ref（**可重试口径的响亮面**：进简报、零新建、条目保持
+    * pending），`refusal` 非空 = 前置闸 fail-closed 拒绝本轮落地（authorized 为空而仍有 pending）。 */
   final case class Plan(
       items: Vector[PlanItem],
       projections: Vector[TargetProjection],
       authorized: Vector[String],
       deferred: Vector[String],
+      retryable: Vector[String],
       refusal: Option[String]
   ):
     def refsOf(b: Bucket): Vector[String] = items.filter(_.bucket == b).map(_.ref)
     def countOf(b: Bucket): Int           = items.count(_.bucket == b)
 
-    /** 三段结构化文本（进日志；dry-run 模式下同时是实测输出）。 */
+    /** 四段结构化文本（进日志；dry-run 模式下同时是实测输出）。 */
     def render(maxPerBucket: Int = 400): String =
       val sb = new StringBuilder
       sb ++= s"memory queue plan (read-only): pending=${items.size} "
       sb ++= s"${Bucket.label(Bucket.WouldApply)}=${countOf(Bucket.WouldApply)} "
       sb ++= s"${Bucket.label(Bucket.WouldObsolete)}=${countOf(Bucket.WouldObsolete)} "
+      sb ++= s"${Bucket.label(Bucket.WouldRetry)}=${countOf(Bucket.WouldRetry)} "
       sb ++= s"${Bucket.label(Bucket.WouldDefer)}=${countOf(Bucket.WouldDefer)}\n"
       sb ++= s"GATE: ${refusal.getOrElse("landable (no item deferred by the budget cap)")}\n"
       List(
-        Bucket.WouldApply -> "will be landed (authorized)",
-        Bucket.WouldObsolete -> "NOT landed — verdict only (obsolete/rejected are the consumer's call)",
-        Bucket.WouldDefer -> "NOT authorized this round — stays pending (budget fail-closed)"
+        Bucket.WouldApply    -> "will be landed (authorized)",
+        Bucket.WouldObsolete -> "NOT landed — terminal verdict only (superseded / already present; obsolete is the consumer's call)",
+        Bucket.WouldRetry    -> "NOT landed — RETRYABLE missing target (file / section / entry); never a terminal word, stays pending, the target file must NOT be created by the consumer",
+        Bucket.WouldDefer    -> "NOT authorized this round — stays pending (budget fail-closed)"
       ).foreach { (b, why) =>
         val rows = items.filter(_.bucket == b)
         sb ++= s"-- ${Bucket.label(b)} (${rows.size}) — $why\n"
@@ -662,7 +688,11 @@ object MemoryQueue:
     *
     * 取代检测（与 D0 机械近似同规）：同一 (target, located line) 上多条 update/remove
     * 只有**末条**有效、其余 `would-obsolete`；append 的 content 被同目标后续 remove 的
-    * match 命中 ⇒ 同样 `would-obsolete`。 */
+    * match 命中 ⇒ 同样 `would-obsolete`。**「末条」按真时序 `(atMs, id)` 判**（与
+    * [[after]] 同规，2026-09-13 r3 批缺陷②），不是按相位序的落地位置。
+    *
+    * **目标缺失族**（目标文件不存在 / 目标节不存在 / 该节内定位不到条目）落
+    * `would-retry`——**非终态、条目保持 pending、零新建**（2026-09-13 r3 批缺陷① A′）。 */
   def plan(state: State, files: Map[String, TargetFile]): Plan =
     planWith(state, files, enforceBudgetCap = true)
 
@@ -685,16 +715,24 @@ object MemoryQueue:
         case "update" | "remove" => locate(lines, n.section, n.matchText.getOrElse("\u0000"))
         case _                   => None)
     }.toMap
-    val byLine: Map[(String, Int), Vector[String]] =
+    val byLine: Map[(String, Int), Vector[Note]] =
       ordered
         .filter(n => n.action == "update" || n.action == "remove")
-        .flatMap(n => staticLocate.getOrElse(n.id, None).map((ln, _) => (n.target, ln) -> n.id))
+        .flatMap(n => staticLocate.getOrElse(n.id, None).map((ln, _) => (n.target, ln) -> n))
         .groupBy(_._1)
         .view
         .mapValues(_.map(_._2).toVector)
         .toMap
+    // 2026-09-13 r3 批（缺陷②）：同一 (target, 定位行) 上「谁取代谁」按**真时序**判，
+    // 与 `after()` 的声明同规（改动前用 `ordered` 的**位置**= 相位序：`phase` 为主键 ⇒
+    // 时间更晚的 remove（phase 0）会输给时间更早的 update（phase 1）；生产实测 8 条分歧、
+    // 最大早 16.3 h）。**只改本行的迭代序**：`ordered` 仍按相位序累计预算闸（§8.2 硬序：
+    // 收缩先落）——落地调度 ≠ 取代裁决，两层基准不同是设计，不是同一个量。
     val supersededByLine: Set[String] =
-      byLine.values.filter(_.sizeIs > 1).flatMap(ids => ids.dropRight(1)).toSet
+      byLine.values
+        .filter(_.sizeIs > 1)
+        .flatMap(ns => ns.sortWith((a, b) => after(b, a)).dropRight(1).map(_.id))
+        .toSet
     val supersededByRemove: Set[String] =
       ordered.filter(_.action == "append").flatMap { a =>
         val body = a.content.getOrElse("")
@@ -715,9 +753,18 @@ object MemoryQueue:
       val targetLabel = fileOpt.map(_.path).getOrElse(n.target)
       def bucketOf(supersededDetail: String): PlanItem =
         PlanItem(n.id, n.target, n.action, n.atMs, Bucket.WouldObsolete, supersededDetail, None, 0L)
+      // ── 缺陷①（2026-09-13 r3 批，A′）：目标**文件不存在** ≠ **空文件** ──
+      // 改动前「label 在面里但文件不存在」与「文件是空的」在输入面不可分 ⇒ append 走
+      // 「空文件追加」⇒ 判 would-apply ⇒ 消费侧据此**新建**项目记忆文件（生产实证）。
+      // A′：缺文件 ⇒ **零新建**（本判词不进 authorized） + 条目**留 pending 可重试** +
+      // 响亮告警（`Plan.retryable` 进简报）。判据 = 显式存在位，非 `content.isEmpty`。
+      // 口径是**通则**（任一层的目标文件缺失一律照此办），不是项目层专例。
+      val targetMissing = fileOpt.exists(f => !f.exists)
+      def retryOf(detail: String): PlanItem =
+        PlanItem(n.id, n.target, n.action, n.atMs, Bucket.WouldRetry, detail, None, 0L)
       val item: PlanItem =
-        if fileOpt.isEmpty then
-          PlanItem(n.id, n.target, n.action, n.atMs, Bucket.WouldObsolete, s"target-missing: no memory file for '$targetLabel'", None, 0L)
+        if targetMissing then retryOf(s"target-missing: target file does not exist ('$targetLabel') — do NOT create it; retryable")
+        else if fileOpt.isEmpty then retryOf(s"target-missing: no memory file for '$targetLabel' — retryable")
         else if supersededByLine.contains(n.id) then bucketOf("superseded-by-later: same located line, a later note wins")
         else if supersededByRemove.contains(n.id) then bucketOf("superseded-by-later: a later remove matches this append")
         else if stopped.contains(n.target) then
@@ -729,19 +776,17 @@ object MemoryQueue:
           val secOk  = n.section.forall(s => sectionBounds(lines, s).isDefined)
           val dupApp = n.action == "append" && n.content.exists(c => alreadyPresentLine(lines, c))
           if (n.action == "update" || n.action == "remove") && loc.isEmpty then
-            PlanItem(n.id, n.target, n.action, n.atMs, Bucket.WouldObsolete,
-              if n.section.isDefined && !secOk then "locate-miss: section not found" else "locate-miss: no matching '- ' entry",
-              None, 0L)
+            retryOf(if n.section.isDefined && !secOk then "locate-miss: section not found — retryable" else "locate-miss: no matching '- ' entry — retryable")
           else if n.action == "replace_section" && !secOk then
-            PlanItem(n.id, n.target, n.action, n.atMs, Bucket.WouldObsolete, "locate-miss: section not found", None, 0L)
+            retryOf("locate-miss: section not found — retryable")
           else if n.action == "append" && !secOk then
-            PlanItem(n.id, n.target, n.action, n.atMs, Bucket.WouldObsolete, "locate-miss: section not found", None, 0L)
+            retryOf("locate-miss: section not found — retryable")
           else if dupApp then
             PlanItem(n.id, n.target, n.action, n.atMs, Bucket.WouldObsolete, "already-present: an identical entry is already in the file (consumer verdict: deduped)", None, 0L)
           else
             applyOp(cur, n.action, n.section, n.matchText, n.content) match
               case None =>
-                PlanItem(n.id, n.target, n.action, n.atMs, Bucket.WouldObsolete, "apply-miss: locator no longer resolves on the simulated content", loc.map(_._1), 0L)
+                retryOf("apply-miss: locator no longer resolves on the simulated content — retryable")
               case Some(next) =>
                 val projected = utf8Bytes(next)
                 if enforceBudgetCap && projected > caps._2 then
@@ -759,8 +804,11 @@ object MemoryQueue:
     val all       = items.result()
     val applyIds  = all.filter(_.bucket == Bucket.WouldApply).map(_.ref)
     val obsIds    = all.filter(_.bucket == Bucket.WouldObsolete).map(_.ref)
+    val retryIds  = all.filter(_.bucket == Bucket.WouldRetry).map(_.ref)
     val deferIds  = all.filter(_.bucket == Bucket.WouldDefer).map(_.ref)
-    val authorized = applyIds ++ obsIds
+    // would-retry 与 would-obsolete 同为「零文件写、只回写结局」的裁决面 ⇒ 一并进授权集。
+    // 不进的理由只能是「本轮不能给消费者任何落笔授权」，而这两族都不落笔。
+    val authorized = applyIds ++ obsIds ++ retryIds
     // 无闸对照面：同一逻辑关掉预算停点重跑一次，只取逐文件投影。
     val fullByTarget =
       if enforceBudgetCap then
@@ -777,11 +825,12 @@ object MemoryQueue:
         val stop = all.find(_.bucket == Bucket.WouldDefer)
           .map(i => s"${i.ref} ${i.target}/${i.action}: ${i.detail}")
           .getOrElse("no landable item")
-        Some(s"REFUSED (fail-closed): ${notes.size} pending note(s), none authorized — " +
-          s"${deferIds.size} deferred by the budget cap (stopped at ${stop}) " +
-          s"and ${all.count(_.bucket == Bucket.WouldObsolete)} not landable. Nothing was written; every note stays pending until the cap is relieved (shrink via remove/replace_section first).")
+        Some(s"REFUSED (fail-closed): ${notes.size} pending note(s), none landable — " +
+          s"${deferIds.size} deferred by the budget cap (stopped at $stop). " +
+          s"Nothing was written; every note stays pending until the cap is relieved " +
+          s"(shrink via remove/replace_section first).")
       else None
-    Plan(all, projections, authorized, deferIds, refusal)
+    Plan(all, projections, authorized, deferIds, retryIds, refusal)
 
   // ── 引擎侧超时对账（C 批 ④，2026-09-13）───────────────────────────
   //
