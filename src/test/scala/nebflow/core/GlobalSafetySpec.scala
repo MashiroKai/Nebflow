@@ -67,14 +67,15 @@ class GlobalSafetySpec extends CatsEffectSuite:
       assertEquals(before, SafetyMode.ConfirmEdits)
       assertEquals(after, SafetyMode.AutoAll)
 
-  // ── 有效档位 resolver（覆盖 ?? 全局）——2026-09-12 全局单一权威源批 ──────────
-  // 设计 §13 #1 / #21：`SharedResources.effectiveSafetyMode` 是**唯一解析入口**。
-  // 三个语义：① 覆盖优先；② 无覆盖跟随全局；③ 全局热改后下一判定即生效。
+  // ── 唯一解析入口（`SharedResources.effectiveSafetyMode`）—— 应用级全局单一来源 ──
+  // permshield S1（2026-09-13 作者重裁「候选 B」）：会话级覆盖面**已删除**，
+  // 解析入口不再接受会话参数 ⇒ 有效档位恒 = 全局持久值。本段同时承担
+  // **负控**：原「覆盖优先」用例（覆盖存在时不看全局）已改为不可成立的形态 ——
+  // 没有任何入参可以表达"某个会话有自己的档位"，故旧行为在类型上被排除。
 
-  /** 最小 SharedResources：只填 resolver 会读的两个槽位（permissionPolicies +
-    * 隔离的 dataRoot），其余为 null（`ListFriendsToolRegistrationSpec` 先例）。 */
-  private def resourcesWith(policies: Map[String, nebflow.agent.PermissionPolicy] = Map.empty)
-    : nebflow.agent.SharedResources =
+  /** 最小 SharedResources：只填 resolver 会读的槽位（隔离 dataRoot 的配置文件），
+    * 其余为 null（`ListFriendsToolRegistrationSpec` 先例）。 */
+  private def resourcesWith(): nebflow.agent.SharedResources =
     nebflow.agent.SharedResources(
       llm = null,
       dispatcher = null,
@@ -92,44 +93,40 @@ class GlobalSafetySpec extends CatsEffectSuite:
       providerRegistry = null,
       healthMonitor = null,
       actorSystem = null,
-      voiceMutedRef = null,
-      permissionPolicies =
-        cats.effect.Ref.unsafe[IO, Map[String, nebflow.agent.PermissionPolicy]](policies)
+      voiceMutedRef = null
     )
 
-  test("resolver: an existing override wins over the global value (覆盖优先)"):
-    writeConfig("""{"safety": {"defaultMode": "auto-all"}}""")
-    val res = resourcesWith(Map("root-1" -> nebflow.agent.PermissionPolicy(safetyMode = SafetyMode.ConfirmEdits)))
-    res.effectiveSafetyMode("root-1").map(m => assertEquals(m, SafetyMode.ConfirmEdits))
-
-  test("resolver: no override follows the global value (无覆盖随全局)"):
+  test("resolver: no per-session input exists — the effective level is the global value"):
     writeConfig("""{"safety": {"defaultMode": "auto-edits"}}""")
-    val res = resourcesWith()
-    res.effectiveSafetyMode("root-1").map(m => assertEquals(m, SafetyMode.AutoEdits))
+    resourcesWith().effectiveSafetyMode.map(m => assertEquals(m, SafetyMode.AutoEdits))
 
-  test("resolver: another session's override does not leak into an uncovered session"):
+  test("resolver: 负控 — a second read is no longer session-dependent (the old 覆盖优先 path is gone)"):
+    // 旧行为「覆盖 ?? 全局」需要两个入参（覆盖桶 + rootSessionId）才能表达；本批
+    // 把覆盖桶与 `SafetyModeAuthority.resolve` 一并删除后，签名上就没有第二个可变
+    // 来源 ⇒ 相同全局值下任何会话的读数必须**完全相同**（本断言即负控：旧"某会话
+    // 有独立档位"形态无法复现）。
     writeConfig("""{"safety": {"defaultMode": "confirm-edits"}}""")
-    val res = resourcesWith(Map("root-1" -> nebflow.agent.PermissionPolicy(safetyMode = SafetyMode.AutoAll)))
+    val res = resourcesWith()
     for
-      covered <- res.effectiveSafetyMode("root-1")
-      other <- res.effectiveSafetyMode("root-2")
+      a <- res.effectiveSafetyMode
+      b <- res.effectiveSafetyMode
     yield
-      assertEquals(covered, SafetyMode.AutoAll)
-      assertEquals(other, SafetyMode.ConfirmEdits)
+      assertEquals(a, SafetyMode.ConfirmEdits)
+      assertEquals(a, b)
 
   test("resolver: global hot-change reaches the next resolution without restart (已连会话即时生效)"):
     writeConfig("""{"safety": {"defaultMode": "auto-all"}}""")
     val res = resourcesWith()
     for
-      before <- res.effectiveSafetyMode("root-1")
+      before <- res.effectiveSafetyMode
       _ = writeConfig("""{"safety": {"defaultMode": "confirm-edits"}}""")
-      after <- res.effectiveSafetyMode("root-1")
+      after <- res.effectiveSafetyMode
     yield
       assertEquals(before, SafetyMode.AutoAll)
       assertEquals(after, SafetyMode.ConfirmEdits)
 
-  test("resolver: an uncovered session with no config falls back to AutoAll (启动默认)"):
+  test("resolver: with no config the single entry falls back to AutoAll (启动默认)"):
     // 无 nebflow.json（beforeEach 只建空 tmp 目录）
-    resourcesWith().effectiveSafetyMode("root-1").map(m => assertEquals(m, SafetyMode.AutoAll))
+    resourcesWith().effectiveSafetyMode.map(m => assertEquals(m, SafetyMode.AutoAll))
 
 end GlobalSafetySpec

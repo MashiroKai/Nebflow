@@ -76,8 +76,7 @@ class WebSearchWiringSpec extends CatsEffectSuite:
   private def mkResources(
       system: ActorSystem,
       tmp: os.Path,
-      llm: LlmHandle[IO],
-      rootSessionId: String
+      llm: LlmHandle[IO]
   ): IO[SharedResources] =
     for
       dispatcher <- Dispatcher.parallel[IO].allocated.map(_._1)
@@ -87,8 +86,16 @@ class WebSearchWiringSpec extends CatsEffectSuite:
       thinkingRef <- Ref.of[IO, ThinkingConfig](ThinkingConfig())
       modelOverrides <- Ref.of[IO, Map[String, ModelCandidate]](Map.empty)
       voiceMuted <- Ref.of[IO, Boolean](false)
-      policies <- Ref.of[IO, Map[String, PermissionPolicy]](
-        Map(rootSessionId -> PermissionPolicy(safetyMode = nebflow.core.SafetyMode.AutoAll))
+      // permshield S1（2026-09-13）：档位只有应用级全局持久一源 ⇒ 本 fixture 不再
+      // 往"每 root 会话的覆盖桶"塞 AutoAll（桶已删除），改为在隔离 dataRoot 里写
+      // 全局配置键——即生产里"把权限模式设为全部放行"的那条真实路径。
+      // 前置：调用方已 `PathUtil.setDataRoot(tmp / "data")`。
+      _ <- IO.blocking(
+        os.write.over(
+          PathUtil.configJsonWritePath(PathUtil.dataRoot),
+          """{"safety":{"defaultMode":"auto-all"}}""",
+          createFolders = true
+        )
       )
     yield SharedResources(
       llm = llm,
@@ -108,8 +115,7 @@ class WebSearchWiringSpec extends CatsEffectSuite:
       healthMonitor = ProviderHealthMonitor(null),
       actorSystem = system,
       subAgentTaskStore = new SubAgentTaskStore(tmp / "subagent-tasks"),
-      voiceMutedRef = voiceMuted,
-      permissionPolicies = policies
+      voiceMutedRef = voiceMuted
     )
 
   /** NOT named Nebula — an empty agents dir makes the per-turn def reload
@@ -175,7 +181,7 @@ class WebSearchWiringSpec extends CatsEffectSuite:
         )
       )
       val program = for
-        resources <- mkResources(system, tmp, llm, "ws-kimi-root")
+        resources <- mkResources(system, tmp, llm)
         wsEvents <- IO.ref(List.empty[Json])
         agent <- system.spawn(
           AgentActor(
@@ -244,7 +250,7 @@ class WebSearchWiringSpec extends CatsEffectSuite:
         List(sendResp)
       )
       val program = for
-        resources <- mkResources(system, tmp, llm, "ws-tier2-root")
+        resources <- mkResources(system, tmp, llm)
         wsEvents <- IO.ref(List.empty[Json])
         agent <- system.spawn(
           AgentActor(
@@ -316,7 +322,7 @@ class WebSearchWiringSpec extends CatsEffectSuite:
       // reordering must route the Tier 2 sub-request to kimi (fallback).
       val mainModel = Some(AgentModelConfig(Some("deepseek/v4"), List("kimi/k3")))
       val program = for
-        resources <- mkResources(system, tmp, llm, "ws-route356-root")
+        resources <- mkResources(system, tmp, llm)
         wsEvents <- IO.ref(List.empty[Json])
         agent <- system.spawn(
           AgentActor(

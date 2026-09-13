@@ -1,22 +1,39 @@
 #!/usr/bin/env node
-// e2e-perm-global.mjs — 权限「全局单一权威源」批（2026-09-12，链 chain-n-931a7e0a）
+// e2e-perm-global.mjs — 权限档位「应用级全局持久单一路径」批（链 chain-n-931a7e0a；
+//                       2026-09-13 permshield S1 已按作者重裁「候选 B」改判据）
 //
-// 设计正本：~/.nebflow/docs/Nebflow/20260912_200602_perm-global-authority-design-r2__chain-n-931a7e0a.md
-// 被验语义：**唯一持久权威源 = nebflow.json 的 safety.defaultMode**；会话内切换降级为
-// 仅内存的临时覆盖（有效档位 = 覆盖 ?? 全局）；`SessionMeta.safetyMode`（盘上逐会话键）
-// 已降级为非权威字段（存量字节零改动 = 方案 A）。
+// 设计正本（历史）：~/.nebflow/docs/Nebflow/20260912_200602_perm-global-authority-design-r2__chain-n-931a7e0a.md
+// 🔴 **被验语义已于 2026-09-13 变更**（作者重裁「候选 B」+ permshield S1 后端切片，
+//    施行件 = 分支 `permshield-S1-backend`）：
+//    · 档位 = **应用级全局持久值**（`nebflow.json` → `safety.defaultMode`）——**唯一**
+//      来源；2026-09-12 的「会话内临时覆盖（仅内存）」层**已整体停用并删除**。
+//    · 顶栏盾牌 WS `setSafetyMode` 与确认卡递进升级**都写这个键**（落盘）⇒
+//      **重启后仍生效**（作者逐字：「落全局持久（跟盾牌走同一条路，重启后仍生效）」）。
+//    · `SessionMeta.safetyMode`（盘上逐会话键）是**非权威遗留字段**：存量字节零改动
+//      （读时忽略）。存量陈旧键的实际清理由独立节点 `permshield-dataclean` 承接。
+//    · 递进链本身**保留**（作者边界一）。
 //
-// 本脚本覆盖设计 §8 的端到端断言（真隔离实例 + 真 stub LLM + 真权限卡 + 真重启）：
+// ⚠ **本件作废面登记（S1 逐条处置；禁留旧语义断言）**：
+//    | 旧断言 | 处置 | 现形态 |
+//    |---|---|---|
+//    | A-5a「出口值 = 覆盖值，全局仍是 confirm-edits」 | **改判据** | setSafetyMode 写全局 ⇒ 盘上 = auto-all，出口 = auto-all |
+//    | A-5b「覆盖存在时全局值不冲掉它」 | **改判据** | 无覆盖面 ⇒ 判定直接读全局（无卡） |
+//    | A-6「重启回落全局（覆盖消失）」 | **改判据（反向）** | 重启后**仍是** setSafetyMode 写入的值（持久化承重面） |
+//    | A-2b「重启后全局仍为 confirm-edits」 | **改判据** | 重启后全局 = 上一步持久化的值 |
+//    | A-8g「递进升级**不落盘**」 | **改判据（反向）** | 升级**落盘到 nebflow.json**；`_index.json` 会话键仍不变（两条分开断言） |
+//    | A-14c「连接首帧 = 覆盖优先（非全局值）」 | **改判据** | 连接首帧对**所有**会话 = 全局值（无覆盖面）⇒ 复刻器不收任何 sid |
+//
+// 本脚本覆盖的端到端断言（真隔离实例 + 真 stub LLM + 真权限卡 + 真重启）：
 //   A-1/A-3（顺带）  PUT/GET /api/safety/mode|safety —— 写盘 + 权威观测面
-//   A-4  热生效：全局 auto-all → confirm-edits 后，**已连接且无覆盖**的会话下一个 Write
+//   A-4  热生效：全局 auto-all → confirm-edits 后，**已连接**的会话下一个 Write
 //        即出卡（卡帧 safetyMode=confirm-edits），无需重连/重启
-//   A-5  覆盖不被全局冲掉：会话内 setSafetyMode=auto-all（覆盖）→ 全局改 confirm-edits
-//        → 同会话 Write 无卡；**WS 重连后仍无卡**
-//   A-6  重启回落：隔离实例重启后，同会话有效档位 = 全局值（覆盖消失 = 设计意图）
-//   A-8  递进链不变：confirm-edits+Write ⇒ 卡带升级项 → allow+upgradeMode=auto-edits ⇒
-//        档升 auto-edits（后续 Write 无卡）；auto-edits+危险 Bash ⇒ 卡带升级项 →
-//        allow+upgradeMode=auto-all ⇒ 档升 auto-all；**且升级前后该会话在 `_index.json`
-//        的 safetyMode 值/存在性不变（不落盘）**
+//   A-5  盾牌通道改判据：会话内 setSafetyMode=auto-all ⇒ **写全局持久**（盘上变 auto-all、
+//        出口对**所有**会话 = auto-all），不再有"仅本会话生效"的形态
+//   A-6  重启继承：隔离实例重启后，同会话有效档位 = **上一步持久化的值**（不再回落）
+//   A-8  递进链不变 + **落盘**：confirm-edits+Write ⇒ 卡带升级项 → allow+upgradeMode=auto-edits
+//        ⇒ 档升 auto-edits（后续 Write 无卡）；auto-edits+危险 Bash ⇒ 卡带升级项 →
+//        allow+upgradeMode=auto-all ⇒ 档升 auto-all；**且升级写入 nebflow.json 的
+//        safety.defaultMode（落盘），而该会话在 `_index.json` 的 safetyMode 值/存在性不变**
 //   A-9  承重：手改某会话 `_index.json` 的 safetyMode=auto-all、全局 confirm-edits ⇒
 //        该会话有效档位仍 = confirm-edits（Write 出卡）
 //   A-10 R1 失效：制造索引损坏（截断 JSON）触发 recoverOrphans ⇒ 恢复后所有会话的
@@ -25,10 +42,10 @@
 //   A-14 客户端零自动放行（帧面）：meta=auto-all ∧ 全局=confirm-edits ⇒ 后端出卡帧档位 =
 //        全局值；会话列表帧（前端 `state.bypassSessions` 的**唯一**语义源）该 sid 的
 //        safetyMode = confirm-edits（⇒ 前端不会把它收进 bypassSessions）；
-//        **A-14c（修复轮重写）= D1 承重面**：全局=auto-all ∧ 该会话持 confirm-edits
-//        覆盖 ⇒ `SessionService` 出口（WS 连接首帧 `sessionList`）必须报**有效档位**；
-//        客户端语义复刻器（main.js `state.bypassSessions = new Set(...)` @1536-1537 + chat.js `bypassSessions.has(targetSid)` @2317-2319；行号 2026-09-12 merge main@064b0922 后现场重取）由此不得自动放行，
-//        且出站帧面无"非受控"`{type:'permissionAnswer', approved:true}`。
+//        **A-14c（S1 重写）**：全局=confirm-edits（由盾牌通道写入）⇒ 连接首帧
+//        `sessionList` 对**所有**会话（含目标 sid）必须报全局值；客户端语义复刻器
+//        （main.js `state.bypassSessions = new Set(...)` @1536-1537 + chat.js `bypassSessions.has(targetSid)` @2317-2319）
+//        由此不得自动放行，且出站帧面无"非受控"`{type:'permissionAnswer', approved:true}`。
 //
 // 会话身份：探针会话用 agentName='general'（工具面 = Read/Write/Edit/Glob/Grep/Bash）。
 // Nebula 的机制工具面不含 Write/Edit/Bash（AgentCore.NebulaOrchestrationTools），测不出写面。
@@ -467,12 +484,12 @@ try {
     bad.status === 400 && String(bad.json?.error || '').includes('confirm-edits'),
     `status=${bad.status} error=${bad.json?.error}`);
 
-  // ── 阶段 1（A-4 热生效）：无覆盖会话，全局 auto-all → confirm-edits 即时生效 ──
+  // ── 阶段 1（A-4 热生效）：全局 auto-all → confirm-edits 即时生效 ──
   const s1 = await createSessionViaWs('perm-global-s1', 'general');
   check('S1 created (no override => effective = global auto-all)', !!s1 && (await modeOf(s1)) === 'auto-all',
     `id=${s1?.slice(0, 8)} mode=${await modeOf(s1)}`);
   const w1 = await writeProbe(s1, 1, 20000);
-  check('A-4a 全局 auto-all 下无覆盖会话 Write 无卡且落盘（热切换前的基线）',
+  check('A-4a 全局 auto-all 下 Write 无卡且落盘（热切换前的基线）',
     !w1.card && w1.fileWritten, `card=${!!w1.card} file=${w1.fileWritten}`);
 
   const put1 = await api('/safety/mode', 'PUT', { mode: 'confirm-edits' });
@@ -488,27 +505,34 @@ try {
   check('A-4c 卡挂起期间文件未落盘 + deny 后仍未落盘（拦得住，非空转）',
     w2.blockedWhilePending === true && w2.fileWritten === false,
     `blocked=${w2.blockedWhilePending} afterDenyFile=${w2.fileWritten}`);
-  check('A-4d 出口有效档位同步为 confirm-edits（未覆盖会话跟随全局）',
+  check('A-4d 出口有效档位同步为 confirm-edits（出口 = 应用级全局值）',
     (await modeOf(s1)) === 'confirm-edits', `mode=${await modeOf(s1)}`);
 
-  // ── 阶段 2（A-5 覆盖优先 / 重连保留覆盖） ──
+  // ── 阶段 2（A-5 改造后：盾牌通道 = 写全局持久）──
+  // S1 起 `setSafetyMode` 的写入目标 = `nebflow.json` 的 `safety.defaultMode`
+  // （与 REST PUT /api/safety/mode 同一函数）⇒ 盘上必须变化，且对所有会话一致。
   hSend({ type: 'setSafetyMode', sessionId: s1, safetyMode: 'auto-all' });
-  await waitFor(async () => (await modeOf(s1)) === 'auto-all', 'setSafetyMode override → auto-all', 15000);
-  check('A-5a 会话内 setSafetyMode=auto-all ⇒ 出口值 = 覆盖值（全局仍是 confirm-edits）',
+  await waitFor(async () => (await modeOf(s1)) === 'auto-all', 'setSafetyMode → global auto-all', 15000);
+  check('A-5a 盾牌通道写全局持久：setSafetyMode=auto-all ⇒ 盘上 safety.defaultMode = auto-all（落盘）',
     (await modeOf(s1)) === 'auto-all' &&
-      JSON.parse(readFileSync(CONFIG_PATH, 'utf8')).safety?.defaultMode === 'confirm-edits',
-    `mode=${await modeOf(s1)}`);
+      JSON.parse(readFileSync(CONFIG_PATH, 'utf8')).safety?.defaultMode === 'auto-all',
+    `mode=${await modeOf(s1)} disk=${JSON.parse(readFileSync(CONFIG_PATH, 'utf8')).safety?.defaultMode}`);
   const w3 = await writeProbe(s1, 3, 20000);
-  check('A-5b 覆盖存在时全局值不冲掉它：Write 无卡且落盘',
+  check('A-5b 无覆盖面 ⇒ 判定直接读全局：auto-all 下 Write 无卡且落盘',
     !w3.card && w3.fileWritten, `card=${!!w3.card} file=${w3.fileWritten}`);
 
-  await restartGateway('A-6 重启回落');
-  check('A-6 重启后同会话有效档位 = 全局值（覆盖仅内存，进程退出即消失）',
-    (await modeOf(s1)) === 'confirm-edits', `mode=${await modeOf(s1)}`);
-  check('A-2b 重启后全局值仍为 confirm-edits（PUT 的写盘是持久的）',
-    (await api('/safety')).json?.defaultMode === 'confirm-edits');
+  await restartGateway('A-6 重启继承（持久化承重面）');
+  check('A-6 重启后同会话有效档位 = 上一步持久化的值（**不再回落**；作者口径「重启后仍生效」）',
+    (await modeOf(s1)) === 'auto-all', `mode=${await modeOf(s1)}`);
+  check('A-2b 重启后全局值仍为 auto-all（盾牌通道的写盘是持久的，与 PUT 同一条路）',
+    (await api('/safety')).json?.defaultMode === 'auto-all');
 
-  // ── 阶段 3（A-8 递进链不变 + 不落盘） ──
+  // 阶段 3 的基线需要 confirm-edits：显式用 REST 写入口复位全局档（S1 起盾牌与 REST
+  // 等价，二者都写同一个键；此处用 REST 以便与「档位是应用级的」这一事实一致）。
+  await api('/safety/mode', 'PUT', { mode: 'confirm-edits' });
+  await waitFor(async () => (await api('/safety')).json?.defaultMode === 'confirm-edits', 'global reset → confirm-edits', 15000);
+
+  // ── 阶段 3（A-8 递进链不变 + **落盘**） ──
   const s2 = await createSessionViaWs('perm-global-s2', 'general');
   const indexBeforeA8 = indexRawModes()[s2] ?? '<no-entry>';
   log(`[A-8] s2=${s2?.slice(0, 8)} 盘上 safetyMode=${indexBeforeA8}`);
@@ -553,11 +577,18 @@ try {
       `targetExists=${existsSync(BASH_TARGET)} mode=${await modeOf(s2)}`);
   }
   const indexAfterA8 = indexRawModes()[s2] ?? '<no-entry>';
-  check('A-8g 递进升级**不落盘**：升级前后该会话在 `_index.json` 的 safetyMode 值/存在性不变',
-    indexAfterA8 === indexBeforeA8,
-    `before=${indexBeforeA8} after=${indexAfterA8}`);
+  check('A-8g 递进升级**落盘到 nebflow.json**（safety.defaultMode = auto-all），且**不写会话键**（_index.json 该 sid 值/存在性不变）',
+    indexAfterA8 === indexBeforeA8 &&
+      JSON.parse(readFileSync(CONFIG_PATH, 'utf8')).safety?.defaultMode === 'auto-all',
+    `indexBefore=${indexBeforeA8} indexAfter=${indexAfterA8} disk=${JSON.parse(readFileSync(CONFIG_PATH, 'utf8')).safety?.defaultMode}`);
 
   // ── 阶段 4（A-9 + A-14 + A-11）：手改盘上键 = auto-all，全局 = confirm-edits ──
+  // S1 起递进升级会**持久化**（A-8f 后全局 = auto-all），故阶段 4 前必须显式把全局
+  // 复位成 confirm-edits —— 否则 A-9/A-14 的观测面（"盘上 auto-all vs 全局 confirm-edits"）
+  // 就没有分辨力。复位走 REST 写入口（与盾牌同一条持久路径）。
+  await api('/safety/mode', 'PUT', { mode: 'confirm-edits' });
+  await waitFor(async () => (await api('/safety')).json?.defaultMode === 'confirm-edits', 'global reset → confirm-edits (stage 4 baseline)', 15000);
+
   // 模拟存量会话（盘上带 `safetyMode: "auto-all"`）：直接改 `_index.json`，再重启让
   // 运行中的实例把它读进内存索引（这正是"盘上遗留值"的真实形态）。
   {
@@ -592,27 +623,30 @@ try {
   check('A-14b 盘上 auto-all + 全局 confirm-edits ⇒ 该会话 Write **出卡**，卡帧档位 = 全局值',
     !!w8.card && w8.card.safetyMode === 'confirm-edits' && w8.fileWritten === false,
     `card=${!!w8.card} safetyMode=${w8.card?.safetyMode} file=${w8.fileWritten}`);
-  // ── A-14c（2026-09-12 修复轮·证据面缺陷 1 重写）──────────────────────────────
+  // ── A-14c（2026-09-13 permshield S1 重写）────────────────────────────────────
   // 旧版判据恒真空转：它在 `frames`（**入站** server→client 帧集）里过滤
   // `type === 'permissionAnswer'`——而 `permissionAnswer` 是 client→server 帧，
   // 永不进入入站集 ⇒ 判据是 `0 === 0`，任何实现/任何变异下都恒绿。
-  //
-  // 新版判据（能真红）把两个面都纳入观测：
+  // 2026-09-12 修复轮曾把它重写成"D1 承重面（覆盖优先 vs 全局值）"；**该对偶在
+  // S1 后已不存在**（覆盖面删除 ⇒ 出口恒 = 全局值），故本段再次重锚为**全局单一
+  // 来源**的观测：
   //   ① **客户端语义复刻器**（`clientReplica`，逐字复刻 main.js:1536-1537 +
-  //      chat.js:2317-2319）：把**本次 WS 连接的首帧 `sessionList`**（=
-  //      `SessionService.sendSessionList` 出口 —— D1 唯一漏注入面）喂进复刻器，
-  //      得到 `state.bypassSessions` 与"客户端会不会静默发出 approved:true"。
+  //      chat.js:2317-2319）：把**本次 WS 连接的首帧 `sessionList`**
+  //      （= `SessionService.sendSessionList` 出口）喂进复刻器，得到
+  //      `state.bypassSessions` 与"客户端会不会静默发出 approved:true"。
   //   ② **出站帧面**：连接建立后 patch `sock.send` 捕获全部 client→server 载荷，
   //      断言不存在"非 harness 主动应答"的 `permissionAnswer`（= 自动放行形态）。
-  //   ③ **D1 承重场景**（复刻器必须能分辨漏注入）：全局切回 `auto-all`，而目标会话
-  //      持有 **`confirm-edits` 覆盖**（会话内收紧）⇒ 有效档位 = 覆盖 = confirm-edits。
-  //      未修 D1 时该出口报**全局值 auto-all** ⇒ 复刻器把该 sid 收进 bypassSessions
-  //      ⇒ `wouldAutoApprove = true` ⇒ 本检查**红**；修后首帧 = 有效档位 ⇒ 绿。
-  //      （判据的自证：`frameMode === effective`，其中 effective 取 REST 出口基准。）
+  //   ③ **S1 场景**：全局（由**盾牌通道**写入）切到 `confirm-edits` ⇒ 连接首帧对
+  //      **所有**会话（含目标 sid）必须报 confirm-edits，复刻器不收任何 sid
+  //      ⇒ `wouldAutoApprove = false`。变异（出口改读盘上逐会话键 / 塞回任一
+  //      "会话级档位"形态）⇒ 帧值与全局值分叉 ⇒ 本检查红。
   {
-    await api('/safety/mode', 'PUT', { mode: 'auto-all' });
+    // 用**盾牌通道**（WS setSafetyMode）把全局档切到 confirm-edits —— 这正是 S1 的
+    // 改造承重面：该帧现在写 nebflow.json（落盘），不再是内存覆盖。
     hSend({ type: 'setSafetyMode', sessionId: s2, safetyMode: 'confirm-edits' });
-    await waitFor(async () => (await modeOf(s2)) === 'confirm-edits', 's2 override → confirm-edits', 15000);
+    await waitFor(async () => (await api('/safety')).json?.defaultMode === 'confirm-edits',
+      'shield frame → global persisted confirm-edits', 15000);
+    await waitFor(async () => (await modeOf(s2)) === 'confirm-edits', 's2 effective → confirm-edits', 15000);
     const outboundBefore = outbound.length;
     const framesBeforeReconnect = frames.length;
     try { ws.close(); } catch { /* ok */ }
@@ -622,7 +656,12 @@ try {
       'connect-time sessionList frame (SessionService.sendSessionList 出口)', 20000);
     const connectFrame = firstConnectListFrame(framesBeforeReconnect);
     const frameMode = norm((connectFrame.json.sessions.find((s) => s.id === s2) || {}).safetyMode);
-    const effective = await modeOf(s2);             // REST 出口 = 有效档位（修后的基准面）
+    const globalMode = norm((await api('/safety')).json?.defaultMode); // 权威面基准
+    const effective = await modeOf(s2);                               // REST 出口基准
+    // 无覆盖面 ⇒ **每一个**会话的帧值都必须等于全局值（不是只有目标 sid）
+    const otherModes = (connectFrame.json.sessions || [])
+      .filter((s) => s.id !== s2)
+      .map((s) => norm(s.safetyMode));
     const replica = clientReplica(connectFrame, s2);
     // 复刻器发射（证据）：若复刻判定"客户端会自动放行"，就把客户端真正会发的那一帧
     // 发出去并留痕（标记 clientSim，不计入 unsolicited 统计）——变异形态下它就是
@@ -636,12 +675,11 @@ try {
       simEmitted = true;
     }
     const unsolicited = outbound.slice(outboundBefore).filter((o) => !o.harness && o.json?.type === 'permissionAnswer');
-    check('A-14c 客户端零自动放行（D1 承重）：连接首帧 = **有效档位**（覆盖优先，非全局值）⇒ 复刻器不把该 sid 收进 bypassSessions，且出站面无自动放行帧',
-      effective === 'confirm-edits' && frameMode === effective && !replica.wouldAutoApprove && unsolicited.length === 0,
-      `connectFrameMode=${frameMode} effective(REST)=${effective} frameSessions=${(connectFrame.json.sessions || []).length} bypassFromFrame=${replica.bypass.length} wouldAutoApprove=${replica.wouldAutoApprove} clientSimEmitted=${simEmitted} unsolicitedAnswers=${unsolicited.length}`);
-    // 复原全局档（后续 A-11 / 阶段 5 的基线是 confirm-edits）
-    await api('/safety/mode', 'PUT', { mode: 'confirm-edits' });
-    await waitFor(async () => (await api('/safety')).json?.defaultMode === 'confirm-edits', 'global restored to confirm-edits', 15000);
+    check('A-14c 客户端零自动放行（S1 全局单一来源）：连接首帧 = **全局值**（对每个会话一致）⇒ 复刻器不收任何 sid 进 bypassSessions，且出站面无自动放行帧',
+      effective === 'confirm-edits' && globalMode === 'confirm-edits' && frameMode === globalMode &&
+        otherModes.every((m) => m === globalMode) &&
+        !replica.wouldAutoApprove && unsolicited.length === 0,
+      `connectFrameMode=${frameMode} global(REST)=${globalMode} effective(REST)=${effective} otherSessionModes=${JSON.stringify(otherModes)} frameSessions=${(connectFrame.json.sessions || []).length} bypassFromFrame=${replica.bypass.length} wouldAutoApprove=${replica.wouldAutoApprove} clientSimEmitted=${simEmitted} unsolicitedAnswers=${unsolicited.length}`);
   }
 
   // A-11（隔离实例形态）：纯读周期（权威观测面 + 会话列表出口）不重写 `_index.json`

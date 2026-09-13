@@ -13,11 +13,12 @@ case class SessionMeta(
   modelRef: Option[String] = None,
   bridges: Map[String, Json] = Map.empty,
   folderId: Option[String] = None,
-  // ⚠ **非权威字段**（2026-09-12 权限全局单一权威源批，设计 §2.1 要点 2）：
-  // 本键（`sessions/_index.json` 的逐会话 `safetyMode`）**已不再被任何权威读取点
-  // 消费**——有效档位 = 内存覆盖 ?? 全局（`SharedResources.effectiveSafetyMode`）。
-  // 存量字节一字不动（方案 A 读时忽略），但**不得**把它接回权威读取点：
-  // meta 取任何值都不改变有效档位（`SafetyModeAuthoritySpec` 承重钉住）。
+  // ⚠ **非权威字段**（2026-09-13 permshield S1；2026-09-12 全局单一权威源批已降级）：
+  // 本键（`sessions/_index.json` 的逐会话 `safetyMode`）**不被任何权威读取点消费**
+  // ——有效档位 = 应用级全局持久档位（`SharedResources.effectiveSafetyMode` ⇒
+  // `nebflow.json` 的 `safety.defaultMode`），已无会话覆盖面。
+  // 存量字节一字不动（读时忽略），但**不得**把它接回权威读取点：
+  // meta 取任何值都不改变有效档位（`SafetyModeGlobalOnlySpec` 承重钉住）。
   //
   // 启动默认 = 全部放行（2026-09-12 作者令）历史沿革：未显式传 mode 的构造点
   // （createDefaultSession / migrateFromLegacy / ensureAgentSession）曾把顶档写进
@@ -31,24 +32,21 @@ case class SessionMeta(
 
 object SessionMeta:
 
-  /** 会话列表**出口**的权威 overlay（设计 §13 #9 的公共 helper 本体）；
-    * 调用方经 `SharedResources.overlaySessionList` 取快照后落到这里，全仓只此一处
+  /** 会话列表**出口**的权威 overlay（公共 helper 本体）；调用方经
+    * `SharedResources.overlaySessionList` 取全局档位后落到这里，全仓只此一处
     * 构造这个 JSON。逐会话 `safetyMode` **显式写出**（三档值在 wire 上恒存在，
     * 不再依赖 Encoder「= confirm-edits 时省略键」的隐式契约），取值 = 有效档位
-    * = 覆盖 ?? 全局（同一个 `SafetyModeAuthority.resolve`）。
+    * = **应用级全局值**（permshield S1：已无会话覆盖面，故无 per-session 入参）。
     *
     * ⚠ 线上出口专用，**禁**用于 `SessionStore.saveIndex` 的落盘序列化（盘上零改动）。 */
   def withEffectiveSafetyModes(
     sessions: List[SessionMeta],
-    overrides: Map[String, nebflow.core.SafetyMode],
     global: nebflow.core.SafetyMode
   ): Json =
     import io.circe.syntax.*
+    val modeJson = nebflow.core.SafetyMode.toString(global).asJson
     sessions
-      .map { s =>
-        val effective = nebflow.core.SafetyModeAuthority.resolve(overrides, s.id, global)
-        s.asJson.deepMerge(Json.obj("safetyMode" -> nebflow.core.SafetyMode.toString(effective).asJson))
-      }
+      .map(s => s.asJson.deepMerge(Json.obj("safetyMode" -> modeJson)))
       .asJson
 
   given Encoder[SessionMeta] = Encoder.instance { m =>

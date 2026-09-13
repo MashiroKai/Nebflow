@@ -937,32 +937,16 @@ class SessionStore(sessionsDir: os.Path, tasksDir: os.Path):
       (activeId, updated, folders)
     } *> saveIndex
 
-  /** ⚠ **@deprecated（非权威）** —— 2026-09-12 权限全局单一权威源批起，会话不再持有
-    * 权威档位：**权威 = 内存覆盖桶 ?? 全局**（`SharedResources.effectiveSafetyMode`
-    * → `SafetyModeAuthority.resolve`，见 `core/permissions.scala` 与设计 §2.1）。
-    *
-    * 本方法把档位写进 `sessions/_index.json` 的会话 meta —— 正是 R1/T-2 的承载面
-    * （索引损坏恢复路径把它写回顶档）。**新代码不得调用**：会话内切换（WS
-    * `setSafetyMode` / 确认卡升级）只写内存覆盖，不落盘；`_index.json` 的存量字节
-    * 一字不动（方案 A 读时忽略）。
-    *
-    * 方法体保留（避免无关编译面扩散）；验证口径：本批改动后全仓调用点应为零
-    * （`AgentCore` / WS 路由 / 工具与流程继承面全部改走 resolver）。
-    */
-  def setSafetyMode(id: String, mode: String): IO[Unit] =
-    indexRef.update { case (activeId, sessions, folders) =>
-      val updated = sessions.map(s => if s.id == id then s.copy(safetyMode = mode) else s)
-      (activeId, updated, folders)
-    } *> saveIndex
-
-  /** ⚠ **@deprecated（非权威）** —— 读的是 `_index.json` 的盘上遗留值，取任何值都
-    * **不改变**该会话的有效档位（有效档位 = 覆盖 ?? 全局；见 `setSafetyMode` 注释与
-    * 设计 §2.1 要点 2）。子代理/流程继承面**不得**再用它（本批已全部改走
-    * `SharedResources.effectiveSafetyMode`）。 */
-  def getSafetyMode(id: String): IO[String] =
-    indexRef.get.map { case (_, sessions, _) =>
-      sessions.find(_.id == id).map(_.safetyMode).getOrElse("confirm-edits")
-    }
+  // ── 2026-09-13（permshield S1）已删除：`setSafetyMode` / `getSafetyMode` ─────────
+  //
+  // 这两个方法写/读 `sessions/_index.json` 的逐会话 `safetyMode` 键。2026-09-12 起
+  // 它们已被标 `@deprecated（非权威）`+「新代码不得调用」（调用点 = 0）；作者
+  // 2026-09-13 重裁「候选 B」后档位只有 **应用级持久** 一个来源
+  // （`nebflow.json` → `safety.defaultMode`，见 `core/permissions.scala`），
+  // 故一并删除，使"会话持有权威档位"在类型上不可能（零悬空引用）。
+  //
+  // 🔴 数据面无副作用：删除的只是**写入/读取方法**，`SessionMeta.safetyMode` 字段与
+  // 其 Encoder/Decoder 原样保留 ⇒ `_index.json` 的存量字节仍逐字不动（读时忽略）。
 
   /** Persist git branch change so it survives restarts. */
   def updateGitBranch(id: String, branch: Option[String]): IO[Unit] =

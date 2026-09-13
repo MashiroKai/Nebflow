@@ -158,11 +158,10 @@ A task with 2+ independent parts — different file domains, or different nature
                     case Right(effectiveDef) =>
                       (ctx.actorSystem, ctx.sharedResources) match
                         case (Some(system), Some(resources)) =>
-                          // 2026-09-12 权限全局单一权威源（设计 §10 #15 / §13 #10）：
-                          // worker 继承的档位走**唯一解析入口**（覆盖 ?? 全局），不再读
-                          // `store.getSafetyMode` 的盘上遗留值（同 DelegateTool）。
-                          // P2: resolve the caller's permission-policy bucket (root session)
-                          // so the worker inherits the same policy — interactions (askUser /
+                          // permshield S1（2026-09-13）：worker 继承的档位 = 应用级全局
+                          // 持久值（唯一入口），不再读 `store.getSafetyMode` 的盘上遗留值
+                          // （同 DelegateTool）。
+                          // P2: resolve the caller's root session so interactions (askUser /
                           // permission) render in the parent's window.
                           val callerRootIO = (ctx.sharedResources, ctx.sessionId) match
                             case (Some(res), Some(sid)) =>
@@ -170,7 +169,10 @@ A task with 2+ independent parts — different file domains, or different nature
                             case _ => IO.pure(ctx.sessionId.getOrElse(""))
                           for
                             rootSid <- callerRootIO
-                            safetyMode <- resources.effectiveSafetyMode(rootSid).map(nebflow.core.SafetyMode.toString)
+                            // permshield S1（2026-09-13）：档位 = 应用级全局持久值
+                            // （唯一入口；不再读 `store.getSafetyMode` 的盘上遗留值，
+                            // 同 DelegateTool）。
+                            safetyMode <- resources.effectiveSafetyMode.map(nebflow.core.SafetyMode.toString)
                             result <- spawnWorker(
                               agentDef = effectiveDef,
                               prompt = prompt,

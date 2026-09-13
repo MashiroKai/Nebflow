@@ -88,11 +88,11 @@ object FlowTreeRegistry:
       case None =>
         (ctx.actorSystem, ctx.sharedResources, ctx.agentActorRef) match
           case (Some(system), Some(resources), Some(parentRef)) =>
-            // 2026-09-12 权限全局单一权威源（设计 §10 #15 / §13 #11）：建树快照的档位
-            // 走**唯一解析入口**（覆盖 ?? 全局），不再读 `store.getSafetyMode` 的
-            // 盘上遗留值；`TreeConfig.safetyMode` 因此降级为**展示用快照**，非权威。
+            // permshield S1（2026-09-13）：建树快照的档位走**唯一入口** = 应用级全局
+            // 持久值（不再读 `store.getSafetyMode` 的盘上遗留值，也无会话覆盖面）；
+            // `TreeConfig.safetyMode` 因此是**展示用快照**，非权威。
             val safetyModeIO = resources
-              .effectiveSafetyMode(ctx.sessionId.getOrElse(sessionId))
+              .effectiveSafetyMode
               .map(nebflow.core.SafetyMode.toString)
 
             // Mark restore in flight BEFORE the actor spawns (via the

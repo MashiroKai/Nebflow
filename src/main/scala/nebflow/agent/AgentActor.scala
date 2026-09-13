@@ -1234,22 +1234,9 @@ object AgentActor extends AgentCore with AgentSession:
             ) *> IO.pure(idle(agentDef, resources, depth, parentRef, staleState))
           case None => IO.pure(idle(agentDef, resources, depth, parentRef, staleState))
 
-      case AgentCommand.SetSafetyMode(mode) =>
-        // P2: write the root session's permission-policy bucket (dynamic
-        // inheritance). The per-agent safetyMode copy is kept in sync for P3
-        // cleanup; the decision point reads the policy, not this field.
-        val policy = PermissionPolicy(safetyMode = mode)
-        resources.permissionPolicies
-          .update(_ + (state.session.rootSessionId -> policy)) *>
-          IO.pure(
-            idle(
-              agentDef,
-              resources,
-              depth,
-              parentRef,
-              state.withSafetyMode(nebflow.core.SafetyMode.toString(mode))
-            )
-          )
+      // 2026-09-13（permshield S1）：`AgentCommand.SetSafetyMode` 已退役（档位 =
+      // 应用级持久值，WS/REST 写入口直接落盘 + 热读，无需通知活 agent 改副本）；
+      // 由下方 catch-all 兜底为状态不变。三处（idle/processing/frozen）同。
 
       case _: AgentCommand.LlmComplete | _: AgentCommand.LlmFailed | _: AgentCommand.ToolsComplete |
           _: AgentCommand.SetPermissionDeferred =>
@@ -2563,21 +2550,7 @@ object AgentActor extends AgentCore with AgentSession:
       case AgentCommand.SetPermissionDeferred(deferred) =>
         IO.pure(processing(agentDef, resources, depth, parentRef, state.withPendingPermission(Some(deferred)), pending))
 
-      // --- Bypass toggled while processing ---
-      case AgentCommand.SetSafetyMode(mode) =>
-        val policy = PermissionPolicy(safetyMode = mode)
-        resources.permissionPolicies
-          .update(_ + (state.session.rootSessionId -> policy)) *>
-          IO.pure(
-            processing(
-              agentDef,
-              resources,
-              depth,
-              parentRef,
-              state.withSafetyMode(nebflow.core.SafetyMode.toString(mode)),
-              pending
-            )
-          )
+      // --- Bypass toggled while processing（permshield S1：命令已退役，catch-all 兜底）---
 
       // --- Session model switched ---
       case AgentCommand.UpdateContextWindow(window) =>
@@ -4133,22 +4106,8 @@ object AgentActor extends AgentCore with AgentSession:
         )
         IO.pure(frozen(agentDef, resources, depth, parentRef, queued, replyTo, resumeAt, reason, retryCount, escalation))
 
-      case AgentCommand.SetSafetyMode(mode) =>
-        // 镜像 processing 的轻量状态更新（保持一致性）。
-        val policy = PermissionPolicy(safetyMode = mode)
-        resources.permissionPolicies
-          .update(_ + (state.session.rootSessionId -> policy)) *>
-          IO.pure(
-            frozen(
-              agentDef,
-              resources,
-              depth,
-              parentRef,
-              state.withSafetyMode(nebflow.core.SafetyMode.toString(mode)),
-              replyTo,
-              resumeAt
-            )
-          )
+      // 2026-09-13（permshield S1）：`SetSafetyMode` 已退役（见 idle 分支注释），
+      // frozen 下由下方 catch-all 兜底（留在 frozen，状态不变）。
 
       case AgentCommand.UpdateContextWindow(window) =>
         // 轻量存储：恢复后下一次 dispatch 的 autoCompact 自会按新窗口评估溢出。

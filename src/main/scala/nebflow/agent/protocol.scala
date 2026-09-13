@@ -266,8 +266,11 @@ object AgentCommand:
 
   case class UpdateContextWindow(window: Int) extends AgentCommand
 
-  /** Frontend → agent: update safety mode for this session. */
-  case class SetSafetyMode(mode: nebflow.core.SafetyMode) extends AgentCommand
+  // 2026-09-13（permshield S1）：`SetSafetyMode` 命令**已退役** —— 档位是应用级
+  // 持久值（`nebflow.json` 的 `safety.defaultMode`），写入口只有两条（WS
+  // `setSafetyMode` 帧 / REST `PUT /api/safety/mode`），二者都直接落盘并热读，
+  // 无需（也无处）通知某个活的 agent 改本地副本。删除它也一并消除了三个 actor
+  // 状态分支里的"本会话覆盖"写入点。
 
   case class ResumeTurn(
     turnStartMessageCount: Int,
@@ -539,25 +542,14 @@ case class AgentRecord(
 )
 
 // ============================================================
-// P2 — Permission policy (per root session) + InteractionHub protocol
+// P2 — InteractionHub protocol
+//
+// 2026-09-13（permshield S1）：`PermissionPolicy` 与其每-root-会话桶**已删除**。
+// 它是「会话级覆盖」的载体（`safetyMode` 档位），而档位自本批起只有应用级唯一
+// 来源（`GlobalSafety.defaultMode`）；`allow`/`deny` 两个"模型预留"集合在全仓
+// **从未被任何写入点写过**（恒空 ⇒ 判定恒等于 `ToolReversibility` 一条规则），
+// 因此一并删除，不留无人消费的字段。
 // ============================================================
-
-/**
- * One permission policy per Nebula root session (P2). All agents in a root
- * session's tree (Team/Flow/Delegate/Ephemeral/itself) *dynamically inherit*
- * the bucket — the decision point reads it at request time, never copies it.
- *
- * `allow`/`deny` are model-reserved tool-name sets (UI exposes them later);
- * while empty the behavior is identical to the old per-session safetyMode.
- */
-case class PermissionPolicy(
-  safetyMode: nebflow.core.SafetyMode = nebflow.core.SafetyMode.ConfirmEdits,
-  allow: Set[String] = Set.empty,
-  deny: Set[String] = Set.empty
-)
-
-object PermissionPolicy:
-  val default: PermissionPolicy = PermissionPolicy()
 
 /** Interaction kind — what the user is being asked (P2). */
 enum InteractionKind:
@@ -1588,8 +1580,10 @@ extension (s: AgentState)
     s.copy(execution = s.execution.copy(escalation = esc))
   def withGitBranch(branch: Option[String]): AgentState = s.copy(session = s.session.copy(gitBranch = branch))
 
-  def withSafetyMode(mode: String): AgentState =
-    s.copy(session = s.session.copy(safetyMode = mode))
+  // 2026-09-13（permshield S1）：`withSafetyMode` 随 `AgentCommand.SetSafetyMode`
+  // 一并删除（唯一调用点）。`SessionContext.safetyMode` 字段保留 = 历史序列化兼容
+  // （存量会话文件仍带该键）；它**不是权威档位**，判定/卡帧一律读
+  // `SharedResources.effectiveSafetyMode`。
 
   // --- Cache v2: systemStable + dynamic snapshot (lifecycle-node updates) ---
 

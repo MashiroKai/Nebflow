@@ -1,7 +1,7 @@
 package nebflow.gateway
 
 import munit.CatsEffectSuite
-import nebflow.core.{GlobalSafety, PathUtil, SafetyMode, SafetyModeAuthority}
+import nebflow.core.{GlobalSafety, PathUtil, SafetyMode}
 
 import java.nio.file.Files
 
@@ -14,11 +14,16 @@ import java.nio.file.Files
  * 为什么承重：本 spec 把全局设为 **confirm-edits / auto-edits**（≠ 缺省
  * `auto-all`），因此恢复路径若仍用硬编码缺省，断言必红。
  *
- * 同时钉住 A-10 的语义面：恢复后所有会话的**有效档位** = 全局值（meta 已非权威）。
+ * 同时钉住 A-10 的语义面：恢复后所有会话的**有效档位** = 全局值（meta 是遗留键）。
+ *
+ * ⚠ 2026-09-13（permshield S1）改判据：**覆盖层已删除**，有效档位恒 = 全局值，
+ * 故本 spec 里原 `Map.empty[String, SafetyMode]` 覆盖快照参数随之消失（唯一变化，
+ * 断言语义不变：恢复路径仍写权威源值 / 出口仍不回显盘上遗留值）。
  *
  * ⚠ 2026-09-12 修复轮（证据面缺陷 2）：A-10 用例此前**恒真**——它只断言
- * `SafetyModeAuthority.resolve(Map.empty, sid, global) == global`（对空覆盖而言这是
- * 定义式），既不读恢复产物、也不受任何变异影响（M-A 下仍绿）。现改为**变异可分辨**：
+ * （当时的）`SafetyModeAuthority.resolve(Map.empty, sid, global) == global`
+ * （对空覆盖而言这是定义式；该 object 已于 2026-09-13 随覆盖层删除），既不读恢复
+ * 产物、也不受任何变异影响（M-A 下仍绿）。现改为**变异可分辨**：
  * ① 断言恢复路径**写下的** meta 值 == 权威源值（M-A：落硬编码缺省 ⇒ 红）；
  * ② 断言线上出口组合（`SessionMeta.withEffectiveSafetyModes`）不回显盘上遗留值
  *    （出口 overlay 改读 meta ⇒ 红）；③ 前置断言"全局值 ≠ 构造缺省"且"盘上遗留值
@@ -119,9 +124,10 @@ class SessionStoreRecoverAuthoritySpec extends CatsEffectSuite:
         "precondition: the stale per-session disk value must differ from the global value"
       )
 
-      // 恢复后的内存覆盖快照（生产 = `SharedResources.permissionPolicies`；恢复路径不写它）
-      val overrides = Map.empty[String, SafetyMode]
-      def effective(s: SessionMeta): SafetyMode = SafetyModeAuthority.resolve(overrides, s.id, global)
+      // 2026-09-13（permshield S1）：会话覆盖面已删除 ⇒ 有效档位恒 = 全局值，
+      // 没有任何 per-session 入参可传（旧 `overrides: Map[String, SafetyMode]` 参数
+      // 随覆盖层一并消失，这里正是"旧覆盖面不成立"的机械证据）。
+      def effective(s: SessionMeta): SafetyMode = global
 
       // ① 恢复路径**写下的**盘上值 == 权威源值，且与有效档位一致。
       //    变异（恢复路径落 `SessionMeta` 构造缺省 auto-all）⇒ 本条 assert 红。
@@ -137,7 +143,7 @@ class SessionStoreRecoverAuthoritySpec extends CatsEffectSuite:
       //    变异（出口 overlay 改读 meta.safetyMode / 塞回 R-1=A 撤销形态）⇒ 红。
       val exitModes: Map[String, Option[String]] =
         SessionMeta
-          .withEffectiveSafetyModes(loaded, overrides, global)
+          .withEffectiveSafetyModes(loaded, global)
           .asArray
           .getOrElse(Vector.empty)
           .map(j => j.hcursor.get[String]("id").toOption.getOrElse("") -> j.hcursor.get[String]("safetyMode").toOption)
