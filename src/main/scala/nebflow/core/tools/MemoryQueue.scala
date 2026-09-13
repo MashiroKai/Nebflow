@@ -751,9 +751,11 @@ object MemoryQueue:
     }
     val refusal =
       if notes.nonEmpty && authorized.isEmpty then
+        val stop = all.find(_.bucket == Bucket.WouldDefer)
+          .map(i => s"${i.ref} ${i.target}/${i.action}: ${i.detail}")
+          .getOrElse("no landable item")
         Some(s"REFUSED (fail-closed): ${notes.size} pending note(s), none authorized — " +
-          s"${deferIds.size} deferred by the budget cap " +
-          s"(${projections.filter(_.overHard).map(p => s"${p.target} projected ${p.projectedBytes} B > hard ${p.hardCap} B").mkString("; ")}) " +
+          s"${deferIds.size} deferred by the budget cap (stopped at ${stop}) " +
           s"and ${all.count(_.bucket == Bucket.WouldObsolete)} not landable. Nothing was written; every note stays pending until the cap is relieved (shrink via remove/replace_section first).")
       else None
     Plan(all, projections, authorized, deferIds, refusal)
