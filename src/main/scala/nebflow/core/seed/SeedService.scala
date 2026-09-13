@@ -52,7 +52,9 @@ import scala.jdk.CollectionConverters.*
  *    见「插件存在台账」段）：只有**用户主动删掉**的默认集插件不装回，其余缺失情形
  *    （无历史 / 存储级重置）的自愈语义逐字不变
  *  - seed digest == runtime digest → 无动作（常态，静默通过）
- *  - 不一致且 runtime digest == 信任记录 digest（干净快照，用户未改）→ 种子镜像
+ *  - 不一致且 runtime digest == 信任记录 digest（干净快照，用户未改）→ **覆盖前备份**
+ *    （`<root>/plugins-backups/<ts>_pre-sync-<name>/`，逐文件 pre-sha256；与
+ *    [[reconcileAgent]] 硬条件 2 的 `agents-backups` 形态逐项对称）→ 种子镜像
  *    覆盖（含删除 runtime 独有文件）+ 自动 re-approve → 冷启动插件与最新种子一致
  *  - 不一致且 runtime digest ≠ 信任记录 digest（用户改过）→ 跳过 + WARN（用户编辑 > 种子）
  *  - 不一致且无信任记录 → 跳过 + WARN（无仲裁基准，保守不覆盖）
@@ -367,11 +369,32 @@ object SeedService:
               // 取基准——现算 TrustStatus 恒受信，取不到「用户是否改过」这一信息。
               PluginRegistry.trustRecordDigest(name) match
                 case Some(td) if td == runtimeDigest =>
-                  // 干净运行时（自 approve 后零漂移）→ 种子镜像覆盖 + 自动重审（零用户操作）
+                  // 干净运行时（自 approve 后零漂移）→ 覆盖前备份 + 种子镜像覆盖 + 自动重审
+                  // 覆盖前备份（与 [[reconcileAgent]] 的硬条件 2 对称）：**凡覆盖写必须有
+                  // pre-sync 备份**，不因「按设计这是安全覆盖」而豁免——「本路径按设计安全」
+                  // 与「覆盖后有可回滚材料」是两件事，后者是回滚材料完整性的要求。
+                  val stamp = java.time.format.DateTimeFormatter
+                    .ofPattern("yyyyMMdd_HHmmss")
+                    .format(java.time.LocalDateTime.now())
+                  val backupDir = root / "plugins-backups" / s"${stamp}_pre-sync-$name"
+                  val preShas = runtimeFileShas(targetDir)
+                  os.makeDir.all(backupDir)
+                  os.walk(targetDir).filter(os.isFile).foreach { f =>
+                    val rel = f.relativeTo(targetDir)
+                    val dest = backupDir / os.SubPath(rel.toString)
+                    os.makeDir.all(dest / os.up)
+                    os.copy.over(f, dest)
+                  }
+                  os.write.over(
+                    backupDir / "PRE-SHA256.txt",
+                    s"# plugin=$name  sampled=$stamp\n" +
+                      preShas.map((rel, sha) => s"$sha  $rel").mkString("\n") + "\n"
+                  )
                   mirrorSeed(targetDir, seedFiles)
                   PluginRegistry.approve(name).unsafeRunSync()
                   logger.infoSync(
-                    s"Seed: plugin '$name' refreshed from seed (digest ${runtimeDigest.take(12)}… → ${seedDigest.take(12)}…) and re-approved")
+                    s"Seed: plugin '$name' refreshed from seed (digest ${runtimeDigest.take(12)}… → ${seedDigest.take(12)}…) and re-approved; " +
+                      s"pre-sync backup at ${backupDir.toString.stripPrefix(root.toString + "/")} (${preShas.size} file(s))")
                 case Some(td) =>
                   // 用户改过（runtime 漂移出 trust 记录）→ 用户编辑 > 种子
                   logger.warnSync(
@@ -413,7 +436,9 @@ object SeedService:
     md.digest().map("%02x".format(_)).mkString
 
   /** 种子镜像覆盖：字节保真写全部种子文件 → 删 runtime 独有文件 → 清理删空目录。
-    * 仅在「runtime digest == trusted digest」已证干净后调用（脏目录绝不进此路径）。 */
+    * 仅在「runtime digest == trusted digest」已证干净后调用（脏目录绝不进此路径）。
+    * **调用方契约：覆写前必先落 pre-sync 备份**（两处调用点均已满足——
+    * [[reconcileAgent]] 落 `agents-backups/`、[[reconcilePlugin]] 落 `plugins-backups/`）。 */
   private def mirrorSeed(targetDir: os.Path, seedFiles: SortedMap[String, Array[Byte]]): Unit =
     seedFiles.foreach { (rel, bytes) =>
       val target = targetDir / os.SubPath(rel)
