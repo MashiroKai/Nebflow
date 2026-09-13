@@ -41,6 +41,12 @@ class FlowMapStore private (
 ):
   private val logger = NebflowLogger.forName("nebflow.flowmap")
 
+  /** 拉回重挂窗口记账（链级抽象 P2）：链 id → 最近一次拉回时刻。见
+    * [[FlowMapStore.RestoreReattachWindowMs]]。内存态、不落盘（重启即空：重启后
+    * 「刚拉回还没重挂」的时序已不存在，崩溃残留由 [[FlowMapStore.open]] 的双区
+    * 对账处理）。 */
+  private val restoredRecently: Ref[IO, Map[String, Long]] = Ref.unsafe[IO, Map[String, Long]](Map.empty)
+
   /** 当前活动区快照。 */
   def snapshot: IO[FlowMapState] = state.get
 
@@ -226,7 +232,12 @@ class FlowMapStore private (
     for
       s <- state.get
       a <- archive.get
+      // 拉回重挂窗口（链级抽象 P2）：刚被 restoreChain 拉回的链在窗口内不参与 sweep——
+      // 否则「拉回 → 新节点落库」之间的 30s TtlTick 抢跑会把终态成员立即再归档
+      // （判据正确、时序抢跑；见 FlowMapStore.RestoreReattachWindowMs）。
+      recent <- restoredRecently.get
       chains = FlowMapStore.topologicalChains(s.nodes.values ++ a.nodes.values)
+        .filterNot(c => recent.get(c.id).exists(t => now - t < FlowMapStore.RestoreReattachWindowMs))
       doneChains = chains.flatMap { c =>
         val activeMembers = c.memberIds.flatMap(id => s.nodes.get(id))
         if activeMembers.isEmpty || !FlowMapStore.chainArchivable(activeMembers) then None
@@ -259,6 +270,98 @@ class FlowMapStore private (
         archivedAt = now
       )
     }
+
+  /** 链拉回（链级抽象 P2 · spec §5.3-③）：把 `nodeIds` 所属的**归档批整体**移回活动区。
+    *
+    * **定域**（两步，确定性）：① 批次索引反查——目标节点所属归档批（
+    * [[ArchiveBatchMeta]].nodeIds 含该 id）⇒ 整批成员集；② 索引查无（直种归档等防呆
+    * 路径）⇒ 在**归档区**上派生拓扑分量（[[FlowMapStore.topologicalChains]]），取含
+    * 目标节点的分量成员（与 [[persistArchiveDiff]] 的孤儿重聚簇同口径、同 id 规则）。
+    * 两源皆不含的目标被忽略（不在归档区 = 无需拉回；调用方据返回集判「本次是否真
+    * 拉回」，空集 = 幂等零动作）。
+    *
+    * **恒整批**（spec §5.3-⑧）：不做单节点拉回——链 = 整体单位（作者定义），部分拉回
+    * 会让链跨区劈半，违背链抽象初衷。
+    *
+    * **移动顺序（安全侧，与 sweep 反向对称）**：活动区**先写**、归档区**后删**——
+    * 崩溃落在两步之间 ⇒ 双区同在，由 [[FlowMapStore.open]] 对账自愈（活动区优先、
+    * 归档副本剔除 + WARN 留痕）；反向（先删归档）崩溃则节点双失。批次索引的清除必须
+    * 排在归档区删除**之后**——顺序颠倒会让 [[persistArchiveDiff]] 把成员判成「无批次
+    * 归属的孤儿」并现场重聚簇注册回来，批文件永远删不掉。
+    *
+    * **重挂窗口**：拉回到「新节点落库使分量重新有活跃成员」之间有极短窗口，若恰好
+    * 命中 30s TtlTick sweep，刚拉回的终态成员会被判「分量内无活跃成员」而立即再归档
+    * （判据本身正确，纯时序抢跑）⇒ 记 [[FlowMapStore.RestoreReattachWindowMs]] 把刚
+    * 拉回的链挡在 sweep 之外；窗口内操作失败（校验拒绝）的链路留在活动区，窗口过后
+    * 照常再归档（自愈，无泄漏）。
+    *
+    * 返回每批的链级事实（批 id = 链 id、成员集、成员数、拉回时刻），供调用方追加
+    * `chain-restored` 审计事件——与 [[sweepCompletedChainsDetailed]] 的
+    * [[FlowMapStore.SweptChain]] 对称，**派生只发生在本类内部**（spec §6.2 双端派生
+    * 禁令），调用方不得二次派生。 */
+  def restoreChainsFromArchiveDetailed(nodeIds: List[String]): IO[List[FlowMapStore.RestoredChain]] =
+    val wanted = nodeIds.map(_.trim).filter(_.nonEmpty).distinct
+    if wanted.isEmpty then IO.pure(Nil)
+    else
+      val now = System.currentTimeMillis()
+      for
+        a <- archive.get
+        bt <- batches.get
+        // ① 批次索引反查：目标 → 其归档批 id
+        fromIndex: Map[String, String] = wanted.flatMap { id =>
+          bt.collectFirst { case (bid, m) if m.nodeIds.contains(id) => id -> bid }
+        }.toMap
+        // ② 索引查无的孤儿目标 → 归档区拓扑分量兜底（分量 id 与批 id 同口径）
+        orphanTargets = wanted.filterNot(fromIndex.contains)
+        archChains =
+          if orphanTargets.isEmpty then Nil else FlowMapStore.topologicalChains(a.nodes.values)
+        fromChain: Map[String, String] = orphanTargets.flatMap { id =>
+          archChains.find(_.memberIds.contains(id)).map(c => id -> c.id)
+        }.toMap
+        ownerOf: Map[String, String] = fromIndex ++ fromChain
+        // 每批的成员集：索引优先（与归档区实存求交）；索引查无 → 分量成员（同求交）
+        plans: List[(String, List[String])] = ownerOf.values.toSet.toList.sorted.flatMap { bid =>
+          val declared = bt.get(bid).map(_.nodeIds.toList).filter(_.nonEmpty)
+            .getOrElse(archChains.find(_.id == bid).map(_.memberIds).getOrElse(Nil))
+          val present = declared.filter(a.nodes.contains)
+          if present.isEmpty then None else Some(bid -> present)
+        }
+        moved: List[(String, List[NodeDef])] =
+          plans.map { case (bid, ids) => bid -> ids.flatMap(a.nodes.get) }.filter(_._2.nonEmpty)
+        _ <-
+          if moved.isEmpty then IO.unit
+          else
+            val nodes = moved.flatMap(_._2)
+            val ids = nodes.map(_.id).toSet
+            val bids = moved.map(_._1).toSet
+            for
+              // ① 活动区先写（安全侧；persistState 落盘 + result 文件水合）
+              _ <- mutate(st => st.copy(nodes = st.nodes ++ nodes.map(n => n.id -> n).toMap))
+              // ② 归档区后删（diff 落盘：批成员全移除 → 批文件删除，见 persistBatchFiles）
+              _ <- mutateArchive(arc => arc.copy(nodes = arc.nodes -- ids))
+              // ③ 批次索引清除（必须在②之后，见方法头注）
+              _ <- batches.update(_ -- bids)
+              // ④ 重挂窗口记账（同时顺带清过期项，防无界增长）
+              _ <- restoredRecently.update { m =>
+                (m.filter { case (_, t) => now - t < FlowMapStore.RestoreReattachWindowMs } ++
+                  bids.map(_ -> now)).toMap
+              }
+              _ <- IO(
+                logger.infoSync(
+                  s"FlowMap[$project] chain restore: ${bids.toList.sorted.mkString(", ")} (${ids.size} node(s)) ← archive"))
+            yield ()
+      yield moved.map { case (bid, ns) =>
+        FlowMapStore.RestoredChain(chainId = bid, nodeIds = ns.map(_.id), members = ns.size, restoredAt = now)
+      }
+
+  /** 链拉回的 NodeDef 形态（spec §5.3-③ 签名）：[[restoreChainsFromArchiveDetailed]] 的
+    * 兼容外壳，返回拉回后的活动区节点（按 id 排序，确定性）。 */
+  def restoreFromArchive(nodeIds: List[String]): IO[List[NodeDef]] =
+    for
+      restored <- restoreChainsFromArchiveDetailed(nodeIds)
+      ids = restored.flatMap(_.nodeIds).toSet
+      s <- state.get
+    yield ids.toList.sorted.flatMap(s.nodes.get)
 
   // ── 持久化 ─────────────────────────────────────────────
 
@@ -622,6 +725,26 @@ object FlowMapStore:
     archivedAt: Long
   )
 
+  /** 拉回明细载体（链级抽象 P2 · spec §5.3-③；与 [[SweptChain]] 对称）：链 id
+    * （= 归档批 id）、本次拉回成员、成员数、拉回时刻（供 `chain-restored` 审计事件的
+    * `restoredAt` 键位——与 `archivedAt` 同键位语义，见
+    * [[FlowMapEventLog.chainRestoredSummary]]）。**派生只发生在本类内部**，调用方
+    * 不得二次派生（spec §6.2 双端派生禁令）。 */
+  case class RestoredChain(
+    chainId: String,
+    nodeIds: List[String],
+    members: Int,
+    restoredAt: Long
+  )
+
+  /** 拉回重挂窗口（链级抽象 P2，默认 60s）：restore 的「活动区先写」与「新节点落库使
+    * 分量重新有活跃成员」之间的窗口内，sweep 对刚拉回的链**让路**——否则 30s TtlTick
+    * 恰好落在窗口里时，刚拉回的终态成员被判「分量内无活跃成员」而立即再归档（sweep
+    * 资格判据本身正确，纯时序抢跑），用户看到「拉回了但没回来」。窗口取 60s（≥2 个
+    * TtlTick 周期，覆盖单次工具调用全程含 worktree 创建/校验等慢路径）。窗口内操作
+    * 失败的链路留在活动区，窗口过后照常再归档（自愈，无泄漏——不是「永不归档」）。 */
+  val RestoreReattachWindowMs: Long = 60 * 1000L
+
   /** per-node task 文件目录名（相对 workspace/.nebflow/；与 results/ 同域，
     * 2026-09-06 存储瘦身批）。A/B 硬契约：存量迁移脚本与 store 读写同路径同字节。 */
   val TasksDirName: String = "tasks"
@@ -853,6 +976,28 @@ object FlowMapStore:
       _ <- store.state.set(initial)
       _ <- store.archive.set(arch)
       _ <- store.batches.set(batchMetas)
+      // 拉回崩溃窗口对账（链级抽象 P2 · spec §5.3-③）：restore 的移动顺序是「活动区先写、
+      // 归档区后删」，崩溃落在两步之间 ⇒ 同一节点双区同在。**活动区优先**（与 sweep 的
+      // 「归档先行」反向对称的安全侧——活动区是写入目的地，归档副本是待删侧）：剔除归档
+      // 副本 + 清批次索引 + WARN 留痕。幂等（无交集 = 零动作零写盘）。
+      dupIds = initial.nodes.keySet.intersect(arch.nodes.keySet)
+      _ <-
+        if dupIds.isEmpty then IO.unit
+        else
+          for
+            _ <- store.mutateArchive(a0 => a0.copy(nodes = a0.nodes -- dupIds))
+            // 批次索引只清「无成员残留」的批（其余批的 meta 保留成员声明，批文件由
+            // persistArchiveDiff 的 diff 落盘自动改写为幸存成员——与 sweep 的批 meta
+            // 「声明集」语义一致）
+            arch2 <- store.archiveSnapshot
+            _ <- store.batches.update(m => m.filterNot { case (_, meta) =>
+              meta.nodeIds.forall(id => !arch2.nodes.contains(id)) })
+            _ <- IO(
+              store.logger.warnSync(
+                s"flow-map '$project': ${dupIds.size} node(s) present in BOTH zones (restore interrupted between " +
+                  "zone writes) — active zone wins, archive copies dropped: " +
+                  dupIds.toList.sorted.grouped(8).map(_.mkString(",")).mkString(" ")))
+          yield ()
       // 首写：确保 flow-map.json 存在（验收①「只有 flow-map.json 被 store 写」）；
       // 同时完成存量 JSON 的摘要收敛（水合后内存全文 → 落盘自动拆分）。
       _ <- store.persistState(initial)
