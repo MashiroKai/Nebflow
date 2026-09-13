@@ -124,6 +124,34 @@ H8080_AFTER=$(lsof -nP -iTCP:8080 -sTCP:LISTEN -t | sort | tr '\n' ' ')
 
 **原则：代码改了，文档/提示词/记忆也要跟着改。不留过时内容。**
 
+## Prompt hygiene (hard rules)
+
+Agent prompt text is engineer-written text, not memory: keep it English, keep it stable, keep every face identical. Scope = agent prompt text: `~/.nebflow/agents/*/system.md`, `src/main/resources/seed/agents/*/system.md`, and the code-embedded prompt literals (`Seeds.*.systemPrompt`). Memory files and project docs are not prompt text — they are where the content banned by rule 2 belongs.
+
+**1. English only.** Prompt prose is English — zero CJK characters, zero full-width punctuation, zero full-width brackets (the machine-checkable part; check 1 below also catches the Chinese spellings of the markers named in rules 2-4). Keep the rest ASCII. The only tolerated non-ASCII is the typographic punctuation already widespread in the existing English prompts (em dash, en dash, arrows, `≤`, `×`) — keep those inside English sentences, never let one carry a Chinese fragment, and never read this carve-out as licence for non-English prose. Code identifiers, file paths, tool names, JSON enum values and necessary proper nouns pass through unchanged. A non-ASCII literal demanded by an external contract (a fixed output heading, a quoted user-visible string) is owned by the plugin/spec that defines it — reference the spec instead of inlining the literal.
+
+**2. Stable rules only — no dated rulings, no history.** Prompt text carries the standing rule, never its provenance or its timeline. Forbidden: dated rulings (`(author decree <date>)`, `(author ruling <date>)`), supersede/void narratives (`supersedes the earlier version`, `the old rule is void`), incident and event-history narrative, and one-off ruling text pasted verbatim. Time-bound content belongs in memory, at its own layer: `~/.nebflow/User.md` (user-facing) / `~/.nebflow/agents/<name>/memory.md` (agent-facing) / `<workspace>/.nebflow/memory.md` (project-facing). The rule itself stays, rewritten as a dateless, sourceless English sentence — "Route every open question through AskUserQuestion" carries the full force of the same sentence followed by a dated citation.
+
+**3. Violation test (mechanical).** Run from the repo root; a hit on any of checks 1-5 is a violation — rewrite the line as a dateless stable English rule and move the dated/incident content to the memory layer named in rule 2. Check 1 shadows the Chinese spellings of checks 2-5, so no Chinese pattern is needed.
+
+```bash
+P=(src/main/resources/seed/agents "$HOME/.nebflow/agents")
+rg -n  --pcre2 --glob system.md '[\x{2E80}-\x{9FFF}\x{F900}-\x{FAFF}\x{FE30}-\x{FE4F}\x{FF00}-\x{FFEF}\x{3000}-\x{303F}]' "${P[@]}"   # 1 CJK / full-width
+rg -n  --pcre2 --glob system.md '\b(19|20)[0-9]{2}[-/.][0-9]{1,2}[-/.][0-9]{1,2}\b' "${P[@]}"                                        # 2 dates
+rg -ni --pcre2 --glob system.md '\bdecree\b|\b(author|user|owner)[- ](decree|ruling|injunction|order)\b' "${P[@]}"                  # 3 provenance citations
+rg -ni --pcre2 --glob system.md '\bsupersede[sd]?\b|(?<!["`|])\bobsolet(e|ed)\b|\bdeprecat\w*\b|\bno longer (processed|supported|used|valid|in force)\b|\breplaces? (the|its) (old|previous|earlier)\b' "${P[@]}"   # 4 lineage / void narrative
+rg -ni --pcre2 --glob system.md '\bincident\b|\bpost-?mortem\b|\boutage\b|\baccident\b|\bretrospective\b|\blearnings? (from|learned)\b' "${P[@]}"      # 5 incident / event history
+rg -nc --pcre2 --glob system.md '[^\x00-\x7F]' "${P[@]}"   # advisory only: remaining non-ASCII (typographic marks fine, prose not)
+```
+
+Two properties the check must keep: (a) the CJK class is written with `\x{...}` escapes, so the checker itself contains no Chinese; (b) check 1 is the narrow class (CJK + full-width), not "any non-ASCII" — every compliant English prompt already carries typographic marks, so a blanket non-ASCII gate would be red on the whole corpus and carry no signal. Quoted enum values (`result="obsolete"`) are exempt as code identifiers; the narrative around them is not.
+
+**4. One prompt, three faces — change them together, then byte-compare.** A prompt change must land on every face it exists on and be verified byte-for-byte, because the faces drift silently (`seed/general` and `seed/project-dispatcher` already differ from their runtime copies, while `seed/kernel` and `seed/memory-consolidator` are byte-identical):
+- faces: `src/main/resources/seed/agents/<name>/system.md` ↔ the code-embedded literal `Seeds.<Name>.systemPrompt` (`src/main/scala/nebflow/agent/AgentLibrary.scala`) ↔ runtime `~/.nebflow/agents/<name>/system.md`;
+- verify with `cmp`, not `diff`. Two traps: the code literal ends without a trailing newline (`AgentLibrary.scala:383` closes the delimiter on the text line) while every on-disk `system.md` ends in `0a`, so a blind copy flips the last byte; and `{{data_root}}` must stay a literal placeholder on the seed/code faces (it is substituted at runtime — expanding it in the seed breaks every install);
+- the runtime file is seeded only when missing (`AgentLibrary.scala:67`), never overwritten afterwards — a seed edit does not reach an existing install by itself;
+- existing exception: `src/main/resources/seed/manifest.json` does not list `Nebula`, so Nebula has no repo-side seed copy — its faces are the runtime file `~/.nebflow/agents/Nebula/system.md` plus the code literal `Seeds.Nebula.systemPrompt` (`AgentLibrary.scala:324-384`). For Nebula, three-face sync means runtime ↔ code literal.
+
 ## 前端规范
 - 设计风格必须统一——弹窗、按钮、字体、配色等，能复用已有设计就复用，不要造新轮子
 - 前端修改先预览确认再推送：主仓经宿主 8080（改动需宿主重启生效，重启窗口由 Nebula 统一安排，见「作者预览与端口纪律」）；其他项目走各自 daemon 固定端口——禁止另起新端口旁路
