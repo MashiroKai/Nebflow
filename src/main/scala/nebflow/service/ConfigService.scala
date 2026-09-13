@@ -5,7 +5,7 @@ import cats.syntax.all.*
 import io.circe.parser.parse
 import io.circe.syntax.*
 import io.circe.{Json, JsonObject}
-import nebflow.core.PathUtil
+import nebflow.core.{AtomicJson, PathUtil}
 import nebflow.llm.Config
 
 object ConfigService:
@@ -182,6 +182,37 @@ object ConfigService:
         val parsed = parse(existing).getOrElse(Json.obj())
         val updated = parsed.mapObject(_.add("safety", Json.obj("defaultMode" -> mode.asJson)))
         os.write.over(PathUtil.configJsonWritePath(PathUtil.dataRoot), updated.spaces2, createFolders = true)
+      }
+    }
+
+  /** 定向写顶层 `llmLog` 节（LLM 日志记录开关的持久化权威源）。
+    *
+    * 2026-09-13「LLM 日志记录默认关」批（D-A：开关不持久化 ⇒ 宿主重启回落 true）：
+    * WS `setLlmLog` 的写入口。只有落盘成功，调用方才热更 `LlmLogWriter` 内存态
+    * （持久化优先排序，镜像 `setToolResultTtl` 的「persist 成功才热更 ref」）——
+    * 保证「显式改动过的值跨重启保持」不被「内存已改、盘上未改」的窗口破坏。
+    *
+    * 形态照 [[setSafetyDefaultMode]]：整体包在 `writeLocked` 内与其它
+    * read-modify-write 写者串行；只覆写顶层 `llmLog` 节的 `enabled`（**其余顶层
+    * 键与本节其它字段原样保留**；`llmLog` 无其它写者）；写盘走既有
+    * [[nebflow.core.AtomicJson]]（temp + ATOMIC_MOVE）；失败**上浮**（fail-loud）。 */
+  def setLlmLogEnabled(enabled: Boolean): IO[Unit] =
+    writeLocked {
+      IO.blocking {
+        val existing = if os.exists(configPath) then os.read(configPath) else "{}"
+        val parsed = parse(existing).getOrElse(Json.obj())
+        val section = parsed.hcursor
+          .downField(nebflow.core.LlmLogWriter.configSection)
+          .focus
+          .flatMap(_.asObject)
+          .getOrElse(JsonObject.empty)
+        val updated = parsed.mapObject(
+          _.add(
+            nebflow.core.LlmLogWriter.configSection,
+            Json.fromJsonObject(section.add("enabled", enabled.asJson))
+          )
+        )
+        AtomicJson.writeSync(PathUtil.configJsonWritePath(PathUtil.dataRoot), updated.spaces2)
       }
     }
 
@@ -414,7 +445,12 @@ object ConfigService:
   // Provider delete/rename → model-presets.json cleanup (B2)
   // ============================================================
 
-  private val presetsPath: os.Path = PathUtil.dataRoot / "model-presets.json"
+  // def (not val) — 同 `configPath` 的既有理由（`:31-33`）：val 会把**首个触碰
+  // ConfigService 对象时**的 dataRoot 冻进路径（object 初始化逐 val 求值），
+  // 后续 setDataRoot 重定向失效 ⇒ 跨 suite 顺序相关的假红（实测：新 spec 在自己
+  // 的隔离 home 下触碰本对象 ⇒ 本路径被冻到该临时目录，ConfigServiceSpec 的
+  // preset 改写断言随即失败）。生产端 dataRoot 启动即定，行为零变。
+  private def presetsPath: os.Path = PathUtil.dataRoot / "model-presets.json"
 
   /** Atomically write a JSON file (temp + rename), mirroring PresetStore.save. */
   private def atomicWriteJson(path: os.Path, json: Json): Unit =

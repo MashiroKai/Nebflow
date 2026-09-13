@@ -369,6 +369,12 @@ object GatewayMain extends IOApp:
           // 安装的种子源走 providers 推导。
           try nebflow.core.presets.PresetStore.migrateGlobalModelChain()
           catch case e: Exception => logger.warn(s"llm.model migration failed: ${e.getMessage}")
+          // LLM 日志记录（2026-09-13「默认关」批 + D-A 持久化）：启动时以
+          // nebflow.json 顶层 `llmLog.enabled` 落盘值为准；**无落盘值 ⇒ 保持
+          // 默认关**（`LlmLogWriter` 初值 = false）。显式改动过的值由此跨重启
+          // 保持（旧缺陷：内存开关不落盘，宿主重启静默回落 true）。
+          // fail-safe：节缺失 / 非法 ⇒ None ⇒ 默认关（loadEnabled 纯解析）。
+          nebflow.core.LlmLogWriter.loadEnabled(config.llmLog).foreach(nebflow.core.LlmLogWriter.setEnabled)
           Auth.loadOrCreateToken.flatMap { token =>
             // Global session state shared across all connections
             val sessionStore = new SessionStore(PathUtil.dataRoot / "sessions", PathUtil.dataRoot / "tasks")

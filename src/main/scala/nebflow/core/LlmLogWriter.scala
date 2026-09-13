@@ -34,11 +34,46 @@ object LlmLogWriter:
 
   private val logger = NebflowLogger.forName("nebflow.llm.logger")
 
-  /** Runtime toggle. When false, log() is a no-op. */
-  private val enabled = java.util.concurrent.atomic.AtomicBoolean(true)
+  /** **默认态 = 关**（无落盘值时的兜底；2026-09-13 只改默认值批）。
+    * 全仓**单点**定义——禁第二份「默认 true」（boot 读侧 [[loadEnabled]] 返回
+    * None 时即落到本值）。声明序**必须**在 [[enabled]] 之前：object 初始化按
+    * 声明序执行，常量后置会被读到默认 false（前向引用陷阱）。
+    * 钉版：`LlmLogDefaultSpec`（本常量的回归门）。 */
+  private[nebflow] val DefaultEnabled = false
+
+  /** Runtime toggle. When false, log() is a no-op.
+    *
+    * **默认关（2026-09-13 作者裁定「只改默认值」批）**：能力全保留——
+    * [[setEnabled]] 显式打开后四道门（`:logRequest` / `:logResponse` /
+    * `:logStreamEvent` / `:logIntake`）全开、四个写入面（summary / full /
+    * sse / objects）照写，**开启时仍完整落盘、不降采样**（既有「完整性优先」
+    * 裁定管的是「开启时不得降采样」，与默认态是两件事，未被本批取代）。
+    * 默认关 ≠ 降采样：关态是门控短路，一行不写。
+    *
+    * 本初值只是**无落盘值时的兜底**；落盘值（nebflow.json 顶层 `llmLog` 节，
+    * 见 [[configSection]] / [[loadEnabled]]）在 boot 时覆写（GatewayMain），
+    * WS `setLlmLog` 落盘后热更——故用户显式改动过的值**跨重启保持**
+    * （D-A：旧缺陷「宿主重启回落 true」已修）。 */
+  private val enabled = java.util.concurrent.atomic.AtomicBoolean(DefaultEnabled)
 
   def setEnabled(v: Boolean): Unit = enabled.set(v)
   def isEnabled: Boolean = enabled.get()
+
+  /** 持久化落点 = nebflow.json **顶层节点名**（读 / 写两侧单源：读 =
+    * [[loadEnabled]]（boot），写 = `nebflow.service.ConfigService.setLlmLogEnabled`
+    * （WS `setLlmLog` 经 ConfigService 的既有配置写锁 + 原子写））。
+    * 复用既有配置存储（同一 nebflow.json，与 `toolResultTtl` / `safety` /
+    * `workSchedule` 同族形态）；**不新增配置文件格式**。 */
+  val configSection = "llmLog"
+
+  /** 解析落盘值 → 显式开关态。**fail-safe**：`llmLog` 节缺失 / 非对象 /
+    * `enabled` 非布尔 ⇒ `None`（= 「无落盘值」⇒ 调用方保持默认关）。
+    * 纯函数（无副作用、不读盘），boot 与 spec 共用。 */
+  def loadEnabled(config: Option[Json]): Option[Boolean] =
+    config.flatMap(_.hcursor.downField("enabled").as[Boolean].toOption)
+
+  /** 落盘载荷（[[loadEnabled]] 的逆）。 */
+  def toConfigJson(v: Boolean): Json = Json.obj("enabled" -> v.asJson)
 
   private val logDirOverride = AtomicReference[Option[Path]](None)
 

@@ -229,7 +229,12 @@ case class NebflowServiceConfig(
     * 解析（absent → 缺省 provider=host / enabled=true）。provider 取值非法或
     * container/auto 未实现 ⇒ 显式失败（不静默回落宿主执行）；enabled=false 保留为
     * 旧行为回退点（§4.5）。 */
-  sandbox: Option[io.circe.Json] = None
+  sandbox: Option[io.circe.Json] = None,
+  /** LLM 日志记录开关持久化（2026-09-13「默认关」批，D-A）：顶层 `llmLog` 节
+    * 原样 JSON——`LlmLogWriter.loadEnabled` fail-safe 解析（缺失 / 非法 ⇒ None
+    * ⇒ 保持默认关）。None（既有安装无落盘值）与 `{"enabled":false}` 行为等价；
+    * 仅用户显式开/关（WS `setLlmLog`）才写入本键。 */
+  llmLog: Option[io.circe.Json] = None
 )
 
 object NebflowServiceConfig:

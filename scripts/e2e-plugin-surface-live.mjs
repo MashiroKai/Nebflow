@@ -363,6 +363,14 @@ try {
 
   globalThis.__TOKEN = TOKEN = JSON.parse(readFileSync(join(HOME, 'auth.json'), 'utf8'));
 
+  // LLM 日志「默认关」批（2026-09-13）：`LlmLogWriter` 默认关闭后，本脚本读
+  // `logs/router` 作第二证据源（H1）必须**先显式打开**——走真实入口
+  // `POST /api/command {type:'setLlmLog'}`（= WS 同一 handler，落盘 + 回
+  // llmLogState）。这一步同时是「可显式打开」链路的实测点。
+  const llmOn = await api('/command', 'POST', { type: 'setLlmLog', enabled: true });
+  check('LLM logging explicitly enabled on the isolated instance (default-off batch)',
+    llmOn.status === 200 && llmOn.json?.enabled === true, JSON.stringify(llmOn.json || llmOn.text).slice(0, 140));
+
   // A. 审批 cap-a → 派 task-1 → 分发器 spawn
   const appr = await api('/plugins/cap-a/approve', 'POST');
   check('approve cap-a (isolated instance only)', appr.status === 200, JSON.stringify(appr.json || appr.text).slice(0, 140));
