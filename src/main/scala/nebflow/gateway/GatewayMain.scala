@@ -621,6 +621,29 @@ object GatewayMain extends IOApp:
                                       else IO.unit
                                     }
                                   else IO.unit
+                                // 宿主启动自动重入（boot-wake 批 2026-09-13，方案件 A 档 A1；
+                                // 作者 09-13 裁定「重启后唤醒源 = 直接上 A」）：**独立于
+                                // crash-recovery** 的第二条 boot 扫描腿——crash-recovery 只认
+                                // `status == Running` 残留，故「零 running 但有未完成工作」的项目
+                                // 重启后没有任何东西叫醒控制面（分发器不是节点、不在任何扫描面），
+                                // 停摆窗无上界（实测 89.34s / 150.93s，且靠一封无关 Mail 偶然结束）。
+                                // 本腿对每个在册项目读**落盘事实**（flow-map.json + tasks/ +
+                                // results/ + transcript 存在性）派生需重入清单，非空则经**既有通道**
+                                // DispatchNotify.defaultTrigger 发一条 TriggerDispatcher（文本 =
+                                // 清单正文）。零新调度器（boot 单次执行）、零节点写（不重激活
+                                // blocked / 不自动清 pendingSuccession / 不重投任何边）、零重试
+                                // （单次尝试，失败只记录）。触发面 = 仅本 boot 链（每进程恰一次、
+                                // 早于 server listen）；普通会话启动/工具调用/TtlTick 扫描腿均无
+                                // 本入口。开关 nebflow.boot.dispatcherWake（默认 true）——false 时
+                                // 本步空转，完全回到本批前现状。
+                                val projectBootWake: IO[Unit] =
+                                  if nebflow.shared.Defaults.BootDispatcherWakeEnabled then
+                                    nebflow.core.project.BootDispatcherWake.wakeAll().flatMap { r =>
+                                      // 无条件汇总行（含零命中）：使「零唤醒 boot」也可审计——
+                                      // 本批前该形态在日志里零痕迹，缺陷只能靠人肉发现。
+                                      logger.info(s"Boot dispatcher wake: ${r.summary}")
+                                    }
+                                  else IO.unit
                                 // #28 阶段 0：Project Flow Map **completed** 节点 TTL 扫描
                                 // （24h 显示消失 → 移归档 + WS nodeRemoved；failed/cancelled
                                 // 无 TTL 不过期——2026-09-07 裁定，死亡现场保留待上层裁决；
@@ -646,7 +669,7 @@ object GatewayMain extends IOApp:
                                 )
                                 val sharedResourcesWithRestart =
                                   sharedResources.copy(hotRestart = Some(hotRestart))
-                                hubSetup *> taskTtlSweep *> subagentCrashSweep *> seedMinimalSet *> startupMount *> projectCrashSweep *> projectTtlScanner *> succeedPortGate(cfg) *> {
+                                hubSetup *> taskTtlSweep *> subagentCrashSweep *> seedMinimalSet *> startupMount *> projectCrashSweep *> projectBootWake *> projectTtlScanner *> succeedPortGate(cfg) *> {
                                   val sharedResourcesLive = sharedResourcesWithRestart
                                   // 2026-09-13（permshield S1）：`SessionService` 不再需要
                                   // "档位覆盖快照"入参——档位只有应用级全局持久一源
