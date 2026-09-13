@@ -96,10 +96,15 @@ class SeedPluginReconcileSpec extends FunSuite:
     finally in.close()
 
   /** 隔离基线：无 agents/projects、marker=当前版本（marker 分支 no-op）、插件目录清空、
-    * 信任表清空（config json 删除——否则前序用例的 approve 记录会污染仲裁分支）。 */
+    * 信任表清空（config json 删除——否则前序用例的 approve 记录会污染仲裁分支）。
+    *
+    * 2026-09-13（#105 P-1 批）：**一并清插件存在台账**——本 fixture 把 home 重置成
+    * 「没有这些插件」的形态，而台账（`.plugin-presence.json`）也是 home 状态的一部分；
+    * 只清插件目录而留台账，语义上等价于「用户定向删除」（见 SeedPluginDeletionMarkerSpec），
+    * 与本 fixture 的意图（无历史的首装/自愈态）不同。断言零改动。 */
   private def makeIsolatedHome(): Unit =
     rm(home / "plugins"); rm(home / "agents"); rm(home / "projects"); rm(home / ".seed-state.json")
-    rm(PathUtil.configJsonReadPath(home))
+    rm(PathUtil.configJsonReadPath(home)); rm(SeedService.pluginLedgerPath(home))
     os.write.over(home / ".seed-state.json",
       s"""{"version":"$manifestVersion","seededAt":1,"items":[]}""")
 

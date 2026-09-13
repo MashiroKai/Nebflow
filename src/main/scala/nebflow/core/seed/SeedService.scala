@@ -48,6 +48,9 @@ import scala.jdk.CollectionConverters.*
  *    （= 默认预装集），故既有 home 的插件面积只在**默认集内**收敛，绝不向种子树全集
  *    （`seed/plugins/` 资源树 = 可手动装全集）扩张。已存在目录一律不覆盖、不改写
  *    （既有目录走下面的 digest 仲裁，用户态 > 种子）
+ *  - **`userRemoved` 标记在位 → 跳过自愈**（2026-09-13 批，#105 P-1「用户主动删除」；
+ *    见「插件存在台账」段）：只有**用户主动删掉**的默认集插件不装回，其余缺失情形
+ *    （无历史 / 存储级重置）的自愈语义逐字不变
  *  - seed digest == runtime digest → 无动作（常态，静默通过）
  *  - 不一致且 runtime digest == 信任记录 digest（干净快照，用户未改）→ 种子镜像
  *    覆盖（含删除 runtime 独有文件）+ 自动 re-approve → 冷启动插件与最新种子一致
@@ -56,6 +59,24 @@ import scala.jdk.CollectionConverters.*
  * 仲裁语义：trusted digest 是 approve 时刻的目录内容 fingerprint——runtime 现算
  * digest 与之一致 ⇔ 该目录自审批后未被任何一方改动，种子更新可安全接管；任何漂移
  * （用户编辑、.DS_Store 等异物）都视为「用户态」，种子永不覆盖。
+ *
+ * 插件存在台账（2026-09-13 批，#105 P-1「用户主动删除的不装回」）：载体 =
+ * `<root>/.plugin-presence.json`（home 数据根、与 `.seed-state.json` 同级；随 home 走、
+ * 跨重启存活、不落 repo）。两字段：
+ *  - `seen` = **推断性「曾就位」历史**（某默认集插件在本 home 被观察到在位过，无论谁装的）。
+ *    推断的证据是**插件存储自身** ⇒ **容器规则**：`<root>/plugins/` 整体缺失（存储级重置）
+ *    时 `seen` **作废**（等价「从未装过」），按现行口径补齐——粗粒度手势（整个存储被删）
+ *    保持旧语义，「缺失即自愈」只在**存储仍在而某个包目录消失**时才被判为用户定向删除。
+ *  - `userRemoved` = **用户显式删除意图标记**（tombstone，name → 检出时刻 epoch 秒）：
+ *    在一次 boot 上观察到「名字在 `seen` 中且目录已消失」时落盘，**不随存储级重置作废**
+ *    （显式意图 > 推断历史）。在位时自愈面**跳过**（零 install、零 approve）；
+ *    该插件目录**再次存在**时清除（清理三问：谁清 = 本 pass；何时清 = 目录再次存在后的
+ *    首次 boot；依据 = `os.exists(<root>/plugins/<name>)`）。
+ * 写入者唯一 = 本 pass（无第二写点）；读者唯一 = `reconcilePlugin` 缺失分支；幂等 =
+ * 状态未变则不写盘（连续两次 boot 第二次零动作）；损坏/缺失 ⇒ 当空台账 + WARN（fail-soft）。
+ * **来源边界（诚实申报）**：产品无卸载入口，删除只能带外（`rm -rf`）⇒ 标记由**观察**
+ * 得出（比较历史在位与当前缺失），故上线后**首次**启动无法回溯判定历史删除（无基线，
+ * 按现行口径补齐）；非用户来源的消失会被判为「用户删除」（保守方向 = 不装回）。
  *
  * 幂等 + fail-soft（§4.3/§4.4）：每条目独立 try/catch，失败仅 WARN 跳过、不中断；
  * agent/project 任何已有文件绝不覆盖（用户编辑 > 种子）；插件仅在 digest 仲裁干净时
@@ -70,8 +91,84 @@ object SeedService:
   private val GeneralProjectName = "general"
   private val DataRootPlaceholder = "<DATA_ROOT>"
 
+  /** 插件存在台账文件名（home 数据根下、与 `.seed-state.json` 同级；随 home 走、不落 repo）。
+    * 语义 / 生命周期见类注释「插件存在台账」段。 */
+  private val PluginLedgerFileName = ".plugin-presence.json"
+  private val PluginLedgerVersion = 1
+
   /** 记忆队列的消费者 agent 名（单点引用 `AgentCore` 常量，不复制字面量）。 */
   private val MemoryConsumptionAgent: String = nebflow.agent.AgentCore.MemoryConsolidatorName
+
+  // ── 插件存在台账（#105 P-1「用户主动删除」标记）──────────
+  /** 台账（`seen` = 曾就位的默认集插件名，单调只增；`userRemoved` = 用户主动删除标记）。
+    * 纯值对象 + 三个转移函数，便于逐条断言与幂等（无变化 ⇒ `equals` 为真 ⇒ 不写盘）。 */
+  private[seed] final case class PluginLedger(seen: Set[String], userRemoved: Map[String, Long]):
+    /** 该插件在位（含用户手动装回）⇒ 记名 + **清 tombstone**（清理语义的落点）。 */
+    def observe(name: String): PluginLedger = PluginLedger(seen + name, userRemoved - name)
+    /** 检出「曾就位、现已消失」⇒ 落用户删除标记（幂等：同值覆盖不改变状态）。 */
+    def tombstone(name: String, at: Long): PluginLedger =
+      PluginLedger(seen + name, userRemoved.updated(name, at))
+    def isEmpty: Boolean = seen.isEmpty && userRemoved.isEmpty
+    /** 存储级重置（`<root>/plugins/` 整体缺失）⇒ 推断历史作废、显式删除意图保留。 */
+    def withoutHistory: PluginLedger = PluginLedger(Set.empty, userRemoved)
+
+  private[seed] object PluginLedger:
+    val empty: PluginLedger = PluginLedger(Set.empty, Map.empty)
+
+  /** 台账路径（home 数据根下；`private[seed]` = spec 直读面）。 */
+  private[seed] def pluginLedgerPath(root: os.Path): os.Path = root / PluginLedgerFileName
+
+  /** 读台账：缺失 / 损坏 / 字段非法 ⇒ 空台账 + WARN（fail-soft，绝不阻断启动）。 */
+  private def readPluginLedger(root: os.Path): PluginLedger =
+    val p = pluginLedgerPath(root)
+    if !os.exists(p) then PluginLedger.empty
+    else
+      io.circe.parser.parse(os.read(p)) match
+        case Left(e) =>
+          logger.warnSync(
+            s"Seed: plugin presence ledger unreadable (${e.getMessage}) — treating as empty (existing install/self-heal semantics)")
+          PluginLedger.empty
+        case Right(json) =>
+          val c = json.hcursor
+          // tombstone 条目：`{"at": <epoch秒>}`（现行格式）或裸 epoch 数字（读侧容错——
+          // 写侧格式见 writePluginLedger；两侧必须同形，否则标记读不回来）
+          val rawRemoved = c.downField("userRemoved").as[Map[String, Json]].toOption.getOrElse(Map.empty)
+          val removed = rawRemoved.flatMap { (name, j) =>
+            val at = j.asNumber.flatMap(_.toLong).orElse(j.hcursor.downField("at").as[Long].toOption)
+            at.map(name -> _)
+          }
+          PluginLedger(
+            seen = c.downField("seen").as[List[String]].toOption.getOrElse(Nil).toSet,
+            userRemoved = removed
+          )
+
+  /** 读台账 + 容器规则（`<root>/plugins/` 整体缺失 ⇒ 推断历史作废，见类注释）。 */
+  private def pluginLedgerFor(root: os.Path): PluginLedger =
+    val stored = readPluginLedger(root)
+    if os.exists(root / "plugins") then stored
+    else
+      val voided = stored.withoutHistory
+      if !stored.seen.isEmpty then
+        logger.infoSync(
+          "Seed: plugin store is absent — presence history voided (store-level reset; the current install/self-heal semantics apply to the default set)")
+      voided
+
+  /** 写台账：**内容未变则不写盘**（幂等 ⇒ 连续两次启动第二次零动作、mtime 不变）；
+    * 空台账不落盘（若残留则删除，保持 home 无冗余文件）。 */
+  private def writePluginLedger(root: os.Path, before: PluginLedger, after: PluginLedger): Unit =
+    if after == before then ()
+    else if after.isEmpty then
+      val p = pluginLedgerPath(root)
+      if os.exists(p) then os.remove(p)
+    else
+      val json = Json.obj(
+        "version" -> PluginLedgerVersion.asJson,
+        "seen" -> after.seen.toList.sorted.asJson,
+        "userRemoved" -> Json.fromFields(
+          after.userRemoved.toList.sortBy(_._1).map((name, at) => name -> Json.obj("at" -> at.asJson))
+        )
+      )
+      AtomicJson.writeSync(pluginLedgerPath(root), json.noSpaces)
 
   // ── 公共入口 ─────────────────────────────────────────────
   /** 冷启动播种（幂等、add-only、best-effort）+ 插件一致性 reconcile。
@@ -212,50 +309,81 @@ object SeedService:
   /** 每次启动对 manifest 声明的插件做 seed ↔ runtime 比对（digest 仲裁，见类注释）。
     * 迭代面 = manifest items（= 默认预装集），不遍历 `seed/plugins/` 资源树全集——故本 pass
     * 的安装/刷新面积由 manifest 决定：缺失的默认集插件被自愈安装，非默认集的种子树包
-    * 永不因本 pass 落盘（作者 2026-09-12 裁定：种子树文件保留可手动装，默认集只三条）。 */
+    * 永不因本 pass 落盘（作者 2026-09-12 裁定：种子树文件保留可手动装，默认集只三条）。
+    * 本 pass 同时是**插件存在台账的唯一写入者**（逐包判定 → 末尾一次写盘，见类注释）。 */
   private def reconcilePlugins(root: os.Path, manifest: SeedManifest): Unit =
-    manifest.items.collect {
+    val names = manifest.items.collect {
       case id if id.startsWith(PluginsPrefix) => id.stripPrefix(PluginsPrefix)
-    }.foreach { name =>
-      try reconcilePlugin(root, name)
+    }
+    val ledgerBefore = pluginLedgerFor(root)
+    val ledgerAfter = names.foldLeft(ledgerBefore) { (ledger, name) =>
+      try reconcilePlugin(root, name, ledger)
       catch
         case e: Exception =>
           logger.warnSync(s"Seed: plugin '$name' reconcile failed: ${e.getMessage}")
+          ledger
     }
+    try writePluginLedger(root, ledgerBefore, ledgerAfter)
+    catch
+      case e: Exception =>
+        logger.warnSync(s"Seed: plugin presence ledger write failed: ${e.getMessage}")
 
-  private def reconcilePlugin(root: os.Path, name: String): Unit =
+  private def reconcilePlugin(root: os.Path, name: String, ledger: PluginLedger): PluginLedger =
     val targetDir = root / "plugins" / name
     if !os.exists(targetDir) then
-      // 缺失 → 自愈安装（2026-09-12 批，见类注释）：既有 home 受 projects/ 非空守卫
-      // 永不完整播种，缺失目录因此永久不愈（author home 的 nebflow-plugin-creator 实例）。
-      // 安装面 = manifest 声明的默认集，非种子树全集；已存在目录绝不进此分支（零覆盖）。
-      installPluginFromSeed(root, name, "self-healed (missing in existing home)")
-    else seedResources(name) match
-      case None => () // 无种子资源，无从比对（fresh 路径 seedPlugin 已 WARN）
-      case Some(seedFiles) =>
-        val seedDigest = treeDigest(seedFiles)
-        PluginRegistry.computeDigest(targetDir) match
-          case Right((runtimeDigest, _)) if runtimeDigest == seedDigest => () // 已一致
-          case Right((runtimeDigest, _)) =>
-            // 仲裁基准 = 信任记录落库 digest（approve 时刻 fingerprint，目录漂移不影响记录本身；
-            // TrustStatus 现算漂移即 untrusted，取不到基准，不适用）
-            PluginRegistry.trustRecordDigest(name) match
-              case Some(td) if td == runtimeDigest =>
-                // 干净运行时（自 approve 后零漂移）→ 种子镜像覆盖 + 自动重审（零用户操作）
-                mirrorSeed(targetDir, seedFiles)
-                PluginRegistry.approve(name).unsafeRunSync()
-                logger.infoSync(
-                  s"Seed: plugin '$name' refreshed from seed (digest ${runtimeDigest.take(12)}… → ${seedDigest.take(12)}…) and re-approved")
-              case Some(td) =>
-                // 用户改过（runtime 漂移出 trust 记录）→ 用户编辑 > 种子
-                logger.warnSync(
-                  s"Seed: plugin '$name' differs from seed (seed ${seedDigest.take(12)}…) — runtime is user-modified (digest ${runtimeDigest.take(12)}… ≠ trusted ${td.take(12)}…), keeping user version")
-              case None =>
-                // 无信任记录（untrusted/未审）→ 无仲裁基准，保守不覆盖
-                logger.warnSync(
-                  s"Seed: plugin '$name' differs from seed (seed ${seedDigest.take(12)}… vs runtime ${runtimeDigest.take(12)}…) and has no trust record — keeping runtime version")
-          case Left(err) =>
-            logger.warnSync(s"Seed: plugin '$name' runtime digest failed: $err — skipped")
+      if ledger.userRemoved.contains(name) then
+        // ① 用户主动删除标记在位 ⇒ 不装回（负控）：零 install、零 approve
+        val at = ledger.userRemoved(name)
+        logger.infoSync(
+          s"Seed: plugin '$name' is missing and carries the user-removed marker (recorded at $at) — " +
+            s"skipping self-heal (no install, no approve). Reinstall the package to bring it back, or delete that entry in " +
+            s"${pluginLedgerPath(root).toString.stripPrefix(root.toString + "/")} to let the seed manage it again")
+        ledger
+      else if ledger.seen.contains(name) then
+        // ② 曾就位 + 目录消失（存储仍在）⇒ 判为用户定向删除：落标记并跳过自愈，本次即生效
+        val at = System.currentTimeMillis() / 1000L
+        logger.warnSync(
+          s"Seed: plugin '$name' was present in this home at an earlier boot and its directory is now gone — " +
+            s"reading this as a deliberate user removal: recording the marker (${pluginLedgerPath(root).toString.stripPrefix(root.toString + "/")}) " +
+            s"and skipping self-heal (no install, no approve). Reinstall the package to bring it back; the marker is cleared automatically once its directory exists again")
+        ledger.tombstone(name, at)
+      else
+        // ③ 无标记 / 无历史（含存储级重置）⇒ 现行自愈语义逐字不变（正控）
+        installPluginFromSeed(root, name, "self-healed (missing in existing home)")
+        ledger.observe(name)
+    else
+      seedResources(name) match
+        case None => () // 无种子资源，无从比对（fresh 路径 seedPlugin 已 WARN）
+        case Some(seedFiles) =>
+          val seedDigest = treeDigest(seedFiles)
+          PluginRegistry.computeDigest(targetDir) match
+            case Right((runtimeDigest, _)) if runtimeDigest == seedDigest => () // 已一致
+            case Right((runtimeDigest, _)) =>
+              // 仲裁基准 = 信任记录落库 digest（approve 时刻 fingerprint，目录漂移不影响记录本身；
+              // TrustStatus 现算漂移即 untrusted，取不到基准，不适用）
+              PluginRegistry.trustRecordDigest(name) match
+                case Some(td) if td == runtimeDigest =>
+                  // 干净运行时（自 approve 后零漂移）→ 种子镜像覆盖 + 自动重审（零用户操作）
+                  mirrorSeed(targetDir, seedFiles)
+                  PluginRegistry.approve(name).unsafeRunSync()
+                  logger.infoSync(
+                    s"Seed: plugin '$name' refreshed from seed (digest ${runtimeDigest.take(12)}… → ${seedDigest.take(12)}…) and re-approved")
+                case Some(td) =>
+                  // 用户改过（runtime 漂移出 trust 记录）→ 用户编辑 > 种子
+                  logger.warnSync(
+                    s"Seed: plugin '$name' differs from seed (seed ${seedDigest.take(12)}…) — runtime is user-modified (digest ${runtimeDigest.take(12)}… ≠ trusted ${td.take(12)}…), keeping user version")
+                case None =>
+                  // 无信任记录（untrusted/未审）→ 无仲裁基准，保守不覆盖
+                  logger.warnSync(
+                    s"Seed: plugin '$name' differs from seed (seed ${seedDigest.take(12)}… vs runtime ${runtimeDigest.take(12)}…) and has no trust record — keeping runtime version")
+            case Left(err) =>
+              logger.warnSync(s"Seed: plugin '$name' runtime digest failed: $err — skipped")
+      // ③ 清理语义：目录再次存在（用户手动装回）⇒ 记 seen + 清 tombstone（内容零改写：
+      // 在位目录只走上面的 digest 仲裁），此后该包重新纳入自愈面
+      if ledger.userRemoved.contains(name) then
+        logger.infoSync(
+          s"Seed: plugin '$name' is present again — clearing its user-removed marker (seed reconciliation resumes for it)")
+      ledger.observe(name)
 
   /** seed 资源字节面（rel POSIX 路径 → bytes）。复用 resourceDirList（file/jar 双协议）。 */
   private def seedResources(name: String): Option[SortedMap[String, Array[Byte]]] =
