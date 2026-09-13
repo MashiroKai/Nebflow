@@ -3,10 +3,9 @@ package nebflow.core.tools
 import cats.effect.IO
 import io.circe.{Json, JsonObject}
 import io.circe.syntax.*
-import nebflow.core.project.BlockedFeedback
-import nebflow.core.project.NodeReportRegistry
+import nebflow.core.project.{BlockedFeedback, NodeReportRegistry, NodeRoles}
 import nebflow.core.project.BlockedReader
-import nebflow.core.project.NodeRoles
+import nebflow.shared.ToolDefinition
 
 /**
  * node_report — Flow Map 节点专属终态语义申报工具（20260909 blocked-signal
@@ -115,6 +114,48 @@ object NodeReportToolDef extends Tool:
 (2) role=verifier (verification node) — (a) PASS: you formally declare the target verified; (b) FAIL: you formally declare the target REJECTED — this is a VERDICT about the object you judged, NOT node failure: the engine keeps THIS node completed and routes the fail verdict along the "(fail)<target>:loop" edge (the target re-runs). (c) BLOCKED works exactly as above.
 Either role: BLOCKED semantics (visible terminal state + dispatcher re-entry + blockCount) are unchanged. Never report "failed" — engine-side execution failure has no declaration channel.
 Pass category (the verdict + why), detail (what exactly, actionable), suggestion (what would unblock / fix). After calling, finish your report normally — the engine routes the declaration to the matching terminal chain."""
+
+  // ============================================================
+  // Q4 试点（2026-09-13 作者裁定）：**按节点角色分化 description**（定义层变体
+  // 机制，落点 `AgentCore.schemaVariantFor` / 装配 `buildToolList`）。
+  //
+  // 做法 = **段投影（纯删段）**：分化的那一段是基础 `description` 里**既有的**
+  // 角色行（`(1) role=task …` / `(2) role=verifier …`），分化变体 = 基础**逐行删去
+  // 另一角色的那一行**。零新造字（spec `ToolFaceVariantSpec` 断言行级删除关系）。
+  //
+  // 未动面（登记在交付说明「待作者给措辞 / 待裁」）：① `inputSchema` 逐字节不变
+  // （enum 仍是两角色并集 10 值 + `category.description` 仍是角色并集）——本批范围
+  // = description 变体机制；② verifier 变体里 `(c) BLOCKED works exactly as above.`
+  // 的「as above」指代被删的 task 段（纯删段的必然残留）⇒ 措辞待作者给。
+  // ============================================================
+
+  /** **基础变体**（= 上面的 `description`）：**逐字节不变**——缺省/非法/未登记
+    * 节点角色看到的那一份（fail-closed 默认面）。 */
+  val descriptionBase: String = description
+
+  /** 另角色段的**行首标记**（基础 `description` 里既有的字面量，非新造文案）。 */
+  private val TaskParagraphPrefix: String = "(1) role=task"
+  private val VerifierParagraphPrefix: String = "(2) role=verifier"
+
+  /** 行级删段（保持行序与其余字节原样）。 */
+  private def withoutParagraph(prefix: String): String =
+    description.split("\n", -1).filterNot(_.startsWith(prefix)).mkString("\n")
+
+  /** **分化变体 · 执行节点**（基础 − verifier 段，5 行 → 4 行）。 */
+  val descriptionTask: String = withoutParagraph(VerifierParagraphPrefix)
+
+  /** **分化变体 · 校验节点**（基础 − task 段，5 行 → 4 行）。 */
+  val descriptionVerifier: String = withoutParagraph(TaskParagraphPrefix)
+
+  /** 定义期变体（[[nebflow.agent.AgentCore.schemaVariantFor]] 消费）：**只替换
+    * `description`**（`inputSchema` 逐字节不变）。`nodeRole` 恒为
+    * `AgentCore.toolFaceIdentity` 归一 + 白名单校验后的值（`task` | `verifier`）；
+    * `None`（非节点会话 / 非法 / 未登记）⇒ **基础面**（fail-closed，不猜缺省即 task）。 */
+  def roleVariant(base: ToolDefinition, nodeRole: Option[String]): ToolDefinition =
+    nodeRole match
+      case Some(r) if r == NodeRoles.Task     => base.copy(description = descriptionTask)
+      case Some(r) if r == NodeRoles.Verifier => base.copy(description = descriptionVerifier)
+      case _                                  => base
 
   override def inputSchema: JsonObject = JsonObject(
     "type" -> "object".asJson,

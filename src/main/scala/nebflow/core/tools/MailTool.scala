@@ -10,7 +10,7 @@ import nebflow.core.NebflowLogger
 import nebflow.core.entity.EntityLoader
 import nebflow.core.flow.{FlowMailStore, MailQueueStore, TeamSessionRegistry}
 import nebflow.core.project.{ProjectActor, ProjectRuntimeRegistry}
-import nebflow.shared.{ContentBlock, Message, MessageRole}
+import nebflow.shared.{ContentBlock, Message, MessageRole, ToolDefinition}
 
 
 /**
@@ -96,6 +96,61 @@ Message type (optional, default "INFO"):
   5. **[RESULT]** — work results or status report from another agent. Acknowledge if needed. Continue your own work unless this changes your task.
 
   Default: Mail supplements your work, not replaces it. Switch tasks only on [INTERRUPT] or when your current task is complete."""
+
+  // ============================================================
+  // Q5（2026-09-13 作者裁定 = (b)）：地址面**只分化 `description`**，`inputSchema`
+  // 逐字节不变（规格 §4.4 D-2 的差距 = 一个角色读到另两个角色的地址面：
+  // `:49-60` 工具级 address 节 + `:106` 参数级 description）。
+  //
+  // 做法 = **段投影（纯删段）**：地址面按角色切成逐字段常量（全部取自基础
+  // `description` 的既有字节），分化变体 = 基础里**只保留本角色的那一段**。
+  // 零新造字（spec `ToolFaceVariantSpec` 断言每个段常量逐字节出现在基础里 +
+  // 变体 = 基础删去他角色段的结果）；非地址面字节一律**逐字节原样**（子串手术，
+  // 不重排、不改写）。
+  //
+  // 未分化面（登记在交付说明「待作者给措辞」）：`team context` 段 —— 定义层
+  // 无 team 成员身份维度；`inputSchema.properties.address.description`（参数级
+  // 三面并集）—— Q5 口径冻结 `inputSchema`，本批不动。
+  // ============================================================
+
+  /** **基础变体**（= 上面的 `description`）：**逐字节不变**——未登记/未知身份的
+    * 会话看到的那一份（fail-closed 默认面）。 */
+  val descriptionBase: String = description
+
+  /** 地址面各段的**逐字常量**（逐字节取自基础 `description`；由 spec 逐段断言）。 */
+  private[nebflow] val AddressFaceHeader: String =
+    "## Address face (role-scoped — an address outside your face is an explicit error)\n"
+  private[nebflow] val AddressFaceNebulaRoot: String =
+    "- **Nebula (root)**: `project:<name>` — triggers that project's dispatcher (a bare\n  mounted project name is accepted as an equivalent form). You have no `node:`\n  address and no self-address.\n"
+  private[nebflow] val AddressFaceDispatcher: String =
+    "- **Project dispatcher**: `Nebula` — the root session; `node:<nodeId>` — a node in\n  your current project (from NodeList). You do not mail your own project.\n"
+  private[nebflow] val AddressFaceTeam: String =
+    "- **Team context (legacy)**: a team name (e.g. \"nebflow-project\") routed to its\n  lead agent, a bare member short name (resolved within your team first), or an\n  explicit \"team/agent\" route.\n"
+  private[nebflow] val AddressFaceClosing: String =
+    "\nAn address that is not recognizable in your face is an **explicit error** — there\nis no silent fallback and no fuzzy matching."
+
+  /** 地址面投影：保留首尾公共段 + **本角色的段**，其余字节原样。任一段定位失败
+    * （文案被改动）⇒ **fail-closed 回落基础 description**（绝不产出半截地址面）。 */
+  private def addressFaceProjection(keep: String): String =
+    val h = descriptionBase.indexOf(AddressFaceHeader)
+    val c = descriptionBase.indexOf(AddressFaceClosing)
+    if h < 0 || c < 0 then descriptionBase
+    else
+      descriptionBase.substring(0, h) + AddressFaceHeader + keep + AddressFaceClosing +
+        descriptionBase.substring(c + AddressFaceClosing.length)
+
+  /** **分化变体 · Nebula root**：地址面只留 root 自己的那一面（`project:<name>`）。 */
+  val descriptionNebulaRoot: String = addressFaceProjection(AddressFaceNebulaRoot)
+
+  /** **分化变体 · project dispatcher**：地址面只留分发器自己的面（`Nebula` / `node:<id>`）。 */
+  val descriptionDispatcher: String = addressFaceProjection(AddressFaceDispatcher)
+
+  /** 定义期变体（[[nebflow.agent.AgentCore.schemaVariantFor]] 消费）：**只替换
+    * `description`**——`inputSchema` 逐字节不变（Q5 判据）。身份未知 ⇒ 基础面。 */
+  def addressFaceVariant(base: ToolDefinition, nebulaRoot: Boolean, dispatcher: Boolean): ToolDefinition =
+    if nebulaRoot then base.copy(description = descriptionNebulaRoot)
+    else if dispatcher then base.copy(description = descriptionDispatcher)
+    else base
 
   val inputSchema: JsonObject = JsonObject.fromIterable(
     List(
