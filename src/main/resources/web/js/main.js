@@ -2084,6 +2084,25 @@ function renderBgAgentDropdown() {
   };
 }
 
+// Snapshot-on-open (2026-09-13 memory-track visibility forensics, fix B).
+// The registry snapshot used to be fetched ONCE per WS (re)connect (the
+// getActiveAgents send inside onReconnect below) — enough for every sub-agent
+// whose live frames reach the client, but NOT for the memory-consolidation
+// track: the backend silences that track's frames on purpose (MemoryTrack.scala
+// passes a no-op wsSend — track events must not pollute the parent view), so a
+// run is invisible unless the browser happens to refresh inside its window.
+// Fetch on open instead: user-driven, reuses the existing getActiveAgents
+// request and the existing activeAgents full-rebuild consumer (zero backend
+// change, no new protocol). The 1s cooldown only debounces rapid open/close
+// taps — a normal open sends exactly one frame, closing sends none.
+let lastActiveAgentsFetchAt = 0;
+function fetchActiveAgentsOnOpen() {
+  const now = Date.now();
+  if (now - lastActiveAgentsFetchAt < 1000) return;
+  lastActiveAgentsFetchAt = now;
+  sendWs({ type: 'getActiveAgents' });
+}
+
 // Toggle dropdown on indicator click — register for ALL views
 Object.values(chatViews).forEach(v => {
   const indicator = v.dom.bgagentIndicatorEl;
@@ -2094,6 +2113,7 @@ Object.values(chatViews).forEach(v => {
     setActiveView(v);
     const opening = dropdown.classList.contains('hidden');
     if (opening) {
+      fetchActiveAgentsOnOpen();
       renderBgAgentDropdown();
       dropdown.classList.remove('hidden');
       armBgUptimeTick(v);
