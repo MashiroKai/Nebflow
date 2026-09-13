@@ -379,9 +379,16 @@ object GatewayMain extends IOApp:
           locally {
             val persistedLlmLog = nebflow.core.LlmLogWriter.loadEnabled(config.llmLog)
             persistedLlmLog.foreach(nebflow.core.LlmLogWriter.setEnabled)
+            // 回收腿武装（2026-09-13 回收解耦批）：保留窗执行**不再挂写入开关**
+            // （关态下也必须淘汰出窗文件），改为绑「本实例已启动」——武装后
+            // `logResponse` 的回收 tick 才会真正跑。默认**不武装**：非实例调用者
+            // （spec / e2e 脚本在真实 dataRoot 上跑完整轮次）绝不能触发破坏性回收
+            // （事故取证见 .nebflow/evidence/20260913_091215_llmlogprune-impl/）。
+            nebflow.core.LlmLogWriter.armRetention()
             logger.infoSync(
               s"LLM log recording: ${if nebflow.core.LlmLogWriter.isEnabled then "enabled" else "disabled"} " +
-                s"(persisted=${persistedLlmLog.map(_.toString).getOrElse("none → default off")})"
+                s"(persisted=${persistedLlmLog.map(_.toString).getOrElse("none → default off")}) " +
+                s"| retention=armed (3-day window, independent of the write switch)"
             )
           }
           Auth.loadOrCreateToken.flatMap { token =>

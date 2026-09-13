@@ -218,13 +218,15 @@ object ToolsLogWriter:
       }
 
   /** Delete tools JSONL files older than the shared retention window. Reuses the
-    * tested date-prefix deletion scan from LlmLogWriter (tools files carry no
-    * object refs — the scan's ref collection simply never triggers here). */
+    * router writer's **删除腿**（[[LlmLogWriter.deleteOutOfWindowJsonl]]）——tools
+    * 文件不携带对象引用（system_ref/tools_ref/message_refs），引用扫描腿在这里
+    * 无事可做。2026-09-13 回收解耦批：旧的共享入口 `scanFullLogsForRefs`
+    * （「单文件超 128 MiB ⇒ 整体放弃扫描」语义）已随 D-B 修复移除，删除腿与扫描腿
+    * 从此是两条独立路径。 */
   private def pruneOldLogs(): Unit =
     try
       val cutoff = clock().minusSeconds(retentionDays * 86400L).toString.take(10)
-      val usedHashes = scala.collection.mutable.Set.empty[String]
-      LlmLogWriter.scanFullLogsForRefs(logDir, cutoff, usedHashes, 64L * 1024 * 1024)
+      LlmLogWriter.deleteOutOfWindowJsonl(logDir, cutoff)
       logger.infoSync(s"Tools log retention: pruned files older than $cutoff")
     catch case e: Exception => logger.warnSync(s"Tools log retention error: ${e.getMessage}")
 
