@@ -204,7 +204,7 @@ function archiveProject(name) {
  *  视图骨架与返回导航；body 挂 .flowmap-view-body 类供 flowMapTab 的 TTL ticker 定位。
  *  highlightNodeId：渲染完成后滚动定位并高亮该节点（任务列表节点条目点击跳转）。
  *  同项目视图已打开时走快速路径：不重建 pane DOM（轨道动画不被打断），仅重渲 + 高亮。 */
-function openFlowMapInPlace(projectName, highlightNodeId) {
+function openFlowMapInPlace(projectName, highlightNodeId, highlightChainId) {
   if (!projectName) return;
   openTab('projects', t('project.title'), { type: 'projects', closable: true });
   const pane = getTabPane('projects');
@@ -231,13 +231,26 @@ function openFlowMapInPlace(projectName, highlightNodeId) {
   }
   ensureFlowCss(); // same-view 快速路径（如 tab 恢复后直接跳转）也要保证样式在
   renderFlowMapInto(pane.querySelector('.flowmap-view-body'), projectName,
-    { highlightNodeId: highlightNodeId || '' });
+    { highlightNodeId: highlightNodeId || '', highlightChainId: highlightChainId || '' });
 }
 
 /** 任务列表节点条目点击跳转入口（taskList.js 动态 import）：打开（或聚焦）某项目
  *  的 Flow Map 就地视图并高亮该节点。 */
 export function openProjectFlowMapAt(projectName, nodeId) {
   openFlowMapInPlace(projectName, nodeId);
+}
+
+/** 任务列表链徽标点击入口（链级抽象 P1 · spec §7-B ⭐）：打开（或聚焦）该项目的
+ *  Flow Map 就地视图并 fit 到该链（相机 bbox，见 flowMapTab.highlightFlowMapChain）
+ *  ——与节点定位入口（openProjectFlowMapAt）对称，二者互不叠加。 */
+export function openProjectFlowMapChain(projectName, chainId) {
+  if (!projectName || !chainId) return;
+  openTab('projects', t('project.title'), { type: 'projects', closable: true });
+  const pane = getTabPane('projects');
+  if (!pane) return;
+  // 链定位随渲染入口下发（视图未打开时首渲完成即 fit 该链；已打开走快速路径重渲）——
+  // 不在 openTab 后直接调 highlight（首渲是异步 fetch，那时卡还没入场）。
+  openFlowMapInPlace(projectName, '', chainId);
 }
 
 /** 返回项目列表：重置视图状态并重渲列表（projects 标签页同页切换回列表视图）。 */

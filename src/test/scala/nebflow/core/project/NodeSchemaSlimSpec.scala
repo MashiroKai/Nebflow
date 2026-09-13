@@ -173,7 +173,7 @@ class NodeSchemaSlimSpec extends CatsEffectSuite:
 
   // ── 1. description 契约 ─────────────────────────────────
 
-  test("A⓪ tool doc budget: NodeEdit description ≤5700 chars (⑤b 7438→3742；merge语义→4308；E1 out门控→4395；E2 retry 参数行→4700；D2 描述重写→5450；中断恢复批 R2 interrupted 重激活条款→5700)") {
+  test("A⓪ tool doc budget: NodeEdit description ≤6050 chars (⑤b 7438→3742；merge语义→4308；E1 out门控→4395；E2 retry 参数行→4700；D2 描述重写→5450；中断恢复批 R2 interrupted 重激活条款→5700；链级抽象 P2 restoreChain 参数行 + 归档编辑语义→6050)") {
     val d = NodeEditTool.description
     // 3800 为 ⑤b 压缩批自钉预算；合并观测面P0P1引擎批时解冲吸收 main 后落语义
     // （failed 重激活条款 / abandon 无 TTL 裁定 / notifyDispatcher completion-only）
@@ -188,10 +188,13 @@ class NodeSchemaSlimSpec extends CatsEffectSuite:
     // （新生命周期值，非续跑语义必须写进描述否则分发器会误以为 reactivate = 续跑）
     // ——语义不可删，预算 5450→5700（实测 5,633）。单条新增近 200 字符已压到最短
     // 表述（fresh rerun + 非 checkpoint resume + boot recovery 归口三点齐全）。
-    assert(d.length <= 5700, s"NodeEdit description must stay ≤5700 chars (⑤b压缩+E1门控+E2 retry+D2重写+R2 interrupted条款), got ${d.length}")
+    // 链级抽象 P2（spec 20260910_flowmap-chain-abstraction-spec §5）：「拉回」是新参数
+    // 面（restoreChain 显式旗标）且打开归档节点编辑域——分发器不知道它有这条通道就
+    // 只能建重复节点。参数行 + 归档编辑语义行两条（实测 5,991）→ 预算 5700→6050。
+    assert(d.length <= 6050, s"NodeEdit description must stay ≤6050 chars (⑤b压缩+E1门控+E2 retry+D2重写+R2 interrupted条款+P2 restoreChain条款), got ${d.length}")
     // 语义锚点抽查：核心参数/错误码/机制关键词不得在压缩中丢失
     for anchor <- List("nodename", "descriptionLong", "replace-on-provide", "NODE_AGENT_RETIRED", "EMPTY_NODE_CONNECTION",
-        "NODE_MERGE_REQUIRES_UPSTREAM", "worktree", "abandon", "notifyDispatcher", "Nebula", "NodeList(detail=", "retry") do
+        "NODE_MERGE_REQUIRES_UPSTREAM", "worktree", "abandon", "notifyDispatcher", "Nebula", "NodeList(detail=", "retry", "restoreChain") do
       assert(d.contains(anchor), s"compressed description must keep '$anchor'")
   }
 

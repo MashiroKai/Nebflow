@@ -626,6 +626,89 @@ object NodeTools:
       .start
       .void
 
+  /** 链拉回包装（链级抽象 P2 · spec §5.3-④）：`restoreChain=true` 时**先**把目标所属
+    * 归档链整体拉回活动区、写审计、再执行 `body`（原创建/编辑流）；按需在结果串前加
+    * 拉回告知块（未拉回 ⇒ 结果逐字不变，含错误文案——`Either.map` 只作用于成功侧，
+    * 错误码断言零影响）。`body` 以 by-value 传入但**执行在拉回之后**（scala `IO` 是
+    * 描述——`body` 内的 `store.snapshot` 到 `flatMap` 真正运行时才求值，看到的是拉回
+    * 后的活动区）。 */
+  def withChainRestore(
+      rt: ProjectRuntime,
+      flag: Boolean,
+      inJson: Option[Json],
+      depsJson: Option[Json],
+      nodename: String
+  )(body: IO[Either[ToolError, String]]): IO[Either[ToolError, String]] =
+    maybeRestoreChains(rt, flag, inJson, depsJson, nodename).flatMap { restored =>
+      logChainRestored(rt, restored) *>
+        body.map(_.map(r => restoreNotice(restored) + r))
+    }
+
+  /** `restoreChain` 旗标的拉回单点（链级抽象 P2 · spec §5.3-①②）。
+    *
+    * **触发集** = 本次调用的 `in` ∪ `deps` 引用（id 或名字，三形态宽容解析同上游校验）
+    * ∪ `nodename`（编辑归档节点本身的情形——拉回后该名在活动区命中，归档节点编辑的
+    * 「只放行 out 改接」闸自然让位）。**解析次序**与 findNode / resolveOutTarget 同序：
+    * 活动区命中 = 无需拉回（现状语义零变化）；归档区按 id 或按名命中 = 拉回目标；
+    * 两区皆无 = 忽略（交给既有「引用不存在」校验报错，不改变其文案）。
+    *
+    * 旗标 false 或触发集空 ⇒ 零 IO 零动作（`restoreChain` 缺省 = 纯引用，今日行为
+    * 逐字不变）。 */
+  def maybeRestoreChains(
+      rt: ProjectRuntime,
+      flag: Boolean,
+      inJson: Option[Json],
+      depsJson: Option[Json],
+      nodename: String
+  ): IO[List[FlowMapStore.RestoredChain]] =
+    if !flag then IO.pure(Nil)
+    else
+      val refs = (NodeTools.parseIn(inJson).getOrElse(Nil)
+        ++ NodeTools.parseIn(depsJson).getOrElse(Nil)
+        ++ List(nodename)).map(_.trim).filter(_.nonEmpty).distinct
+      for
+        active <- rt.store.snapshot
+        archived <- rt.store.archiveSnapshot
+        targets = refs.flatMap { r =>
+          if active.nodes.contains(r) then None
+          else if archived.nodes.contains(r) then Some(r)
+          else OutEdge.resolveTargetId(archived.nodes, r)
+        }.distinct
+        restored <- rt.store.restoreChainsFromArchiveDetailed(targets)
+      yield restored
+
+  /** 拉回告知块（链级抽象 P2 · spec §5.3-⑦ 的工具面）：空集 → **空串**（未拉回 ⇒
+    * 调用方结果逐字不变）；有拉回 → 每链一行前导块，链 id 可继续用于节点引用与谱系
+    * 追踪。工具结果 = 分发器唯一即时反馈面（主图重现是异步 WS 面）。 */
+  def restoreNotice(restored: List[FlowMapStore.RestoredChain]): String =
+    if restored.isEmpty then ""
+    else restored.map(c => s"[chain-restored] ${c.chainId} back on the active map (${c.members} node(s))").mkString("", "\n", "\n")
+
+  /** 拉回审计（链级抽象 P2 · spec §5.3）：逐链一条 `chain-restored`——
+    * [[FlowMapEventLog.ChainRestoredType]] 的**唯一生产写入点**（此前全仓只有接口点
+    * 与消费侧回翻分支，本方法激活之）。`nodeId` = 分量内 createdAt 最早成员（= 链 id
+    * 派生源节点，与 `chain-archived` 的 nodeId 口径对称）、summary =
+    * [[FlowMapEventLog.chainRestoredSummary]]、顶层 `chainId` 同值——消费者
+    * [[DocIndexConsumer]] 据此把 INDEX.md 的链块从「已归档」分区翻回「活跃」分区。
+    * best-effort：写失败不阻断拉回与后续创建/编辑（与 chain-archived 写点同纪律）。 */
+  def logChainRestored(rt: ProjectRuntime, restored: List[FlowMapStore.RestoredChain]): IO[Unit] =
+    if restored.isEmpty then IO.unit
+    else
+      rt.store.snapshot.flatMap { s =>
+        restored.traverse_ { c =>
+          val anchor = c.nodeIds.flatMap(s.nodes.get).sortBy(n => (n.createdAt, n.id)).headOption.map(_.id)
+            .orElse(c.nodeIds.headOption).getOrElse(c.chainId)
+          FlowMapEventLog
+            .append(rt.project.workspace, rt.project.name, anchor,
+              FlowMapEventLog.ChainRestoredType,
+              FlowMapEventLog.chainRestoredSummary(c.chainId, c.restoredAt, c.members),
+              Some(c.chainId))
+            .handleErrorWith(e =>
+              IO(logger.warnSync(
+                s"[chain-restored] audit append failed for ${c.chainId}: ${Option(e.getMessage).getOrElse(e.toString)}")))
+        }
+      }
+
   /** NodeList 工具 / REST flow-map 端点共用的载荷（nodes/worktrees/chains/meta，
     * §2.2 NodeList 返回结构）。节点序列化统一走 NodePayload.buildNodeJson（与 WS
     * 事件 payload 同构）。
@@ -781,6 +864,7 @@ object NodeEditTool extends Tool:
 - abandon (optional, default false): terminal / wiring / pending / STALE running node → cancelled, kept with result, no TTL. LIVE running refused (use NodeCancel).
 - role (optional, CREATE-ONLY): "task" (default; node_report: finish | blocked) | "verifier" (judges another node's output; node_report: pass | fail | blocked). A verifier's out MUST declare one "(fail)<worker>:loop" route (NODE_VERIFIER_NEEDS_ROUTE); on edit ⇒ NODE_ROLE_CREATE_ONLY.
 - reactivateCompleted (optional, edit only): explicit authorization NODE_COMPLETED_REACTIVATION — re-run a COMPLETED node (status → wiring/pending, result cleared, upstreams re-delivered; logged). Omitted ⇒ a completed-node edit only rewires + auto-delivers the retained result.
+- restoreChain (optional, default false): when in/deps reference an ARCHIVED node (or this nodename is archived), true pulls that node's whole chain back onto the active map FIRST, then runs this create/edit normally.
 - notifyDispatcher (optional, default false): on COMPLETION, trigger a dispatcher session holding this node's result reference. Completion-only — failed always notifies; blocked reserved; settable while wiring/pending/running.
 - Retired (rejected, NODE_AGENT_RETIRED): agent / skill / mcp — capability = plugins.
 ## Semantics
@@ -791,6 +875,7 @@ object NodeEditTool extends Tool:
 - Edit: in appends; deps replaces; out rewrites the edge set; description(s) replace. Removing a consumed target (running/terminal) rejected — NodeCancel first; any other terminal rewire ⇒ the retained result auto-delivers to the new targets.
 - Blocked node edit (task/description/in/out/deps/loop changed) reactivates: status → wiring/pending, deliveredTo cleared, blockCount kept, completed upstreams re-delivered.
 - Failed node edit: actual change reactivates like blocked (first-choice recovery; blockCount→0). INTERRUPTED node edit (host SIGINT/SIGTERM left it non-terminal): actual change reactivates as a FRESH RERUN (task re-read from the top — NOT a checkpoint resume; boot recovery owns resume). COMPLETED nodes re-run only with reactivateCompleted=true; cancelled not reactivatable (create successor).
+- Archived nodes (TTL-expired, result retained): only 'out' rewiring is accepted; other edits refused unless restoreChain=true (see above).
 - Validation (0 spawn except worktree): description rules; referenced nodes exist; DAG cycle check; running target ⇒ input frozen. Result = the agent's final output, auto-saved and delivered along out. Full result: NodeList(detail=<nodeId>)."""
   val inputSchema = JsonObject.fromIterable(
     List(
@@ -829,6 +914,15 @@ object NodeEditTool extends Tool:
           "description" -> ("Explicit authorization NODE_COMPLETED_REACTIVATION (default false): re-run a COMPLETED node on this edit — status → wiring/pending, result and delivery ledger cleared, upstreams re-delivered, the node runs again (its old result is discarded). " +
             "Only valid on a completed node (else rejected). Without this flag an edit of a completed node keeps today's behaviour: rewiring only, the retained result is auto-delivered to newly wired targets, no re-run. " +
             "Audit: every reactivation is logged (preStatus / source / gen / blockCount / loopRound). The routed-loop re-run leg (fail edge) lands in a later batch; this flag is the phase-1 authorization entry.").asJson),
+        "restoreChain" -> Json.obj("type" -> "boolean".asJson,
+          "description" -> ("Chain restore flag (default false = today's behaviour: a pure reference). " +
+            "When 'in'/'deps' names a node that has been ARCHIVED (or the edited node itself is archived), passing true pulls " +
+            "that node's WHOLE archived chain back onto the active map FIRST, then runs this create/edit as usual — the " +
+            "returned node(s) land on the map and the new node joins the same chain (chain membership is derived from the " +
+            "topology, so nothing else is needed). Restore is always whole-chain (never a single node): a chain is one task " +
+            "unit. Use it to continue an archived line of work (a follow-up node wired onto an archived upstream, or rewiring " +
+            "an archived node's out); without the flag the archived node stays archived and still delivers its retained result " +
+            "along the new edge. The tool result starts with one '[chain-restored] <chainId> ...' line per restored chain.").asJson),
         "loop" -> Json.obj("type" -> "boolean".asJson, "description" -> "LoopNode flag (create/edit): true = this node iterates — a WORKER session produces a result, a VERIFY session checks it; PASS → delivered downstream; FAIL → worker re-runs (same session, constant input) up to maxRounds(K). false/omitted = normal single-pass node. A loop node still declares its normal in/out/deps (and may merge) — loop only adds the inner iterate-verify loop. Its out MUST cover both pass and failed (NODE_LOOP_GATE_INCOMPLETE; empty out is legal).".asJson),
         "retry" -> Json.obj(
           "oneOf" -> Json.arr(
@@ -868,6 +962,11 @@ object NodeEditTool extends Tool:
     // 布尔参数，**仅 completed 节点有意义**（适用范围闸在 editNode 首段；创建路径
     // 显式拒——新节点无「重激活」语义）。默认 false ⇒ 今日行为逐字不变。
     val reactivateCompleted = input("reactivateCompleted").flatMap(_.asBoolean).getOrElse(false)
+    // restoreChain（链级抽象 P2 · spec §5.3-②③）：**拉回显式旗标**——缺省 false ⇒
+    // 纯引用语义（今日行为逐字不变）：in/deps 引用归档节点只走既有 D1 补投递通道
+    // （findNode 双区兜底），节点留在归档区；传 true 才把目标所属归档链**整体**搬回
+    // 活动区（恒整批，不做单节点拉回——链是整体单位）。
+    val restoreChain = input("restoreChain").flatMap(_.asBoolean).getOrElse(false)
     // merge（merge-node 批 20260905）：create-only 标记——edit 路径不接收（对既有
     // 节点传 merge 会被静默忽略；归档节点传 merge 走 forbidden 拒绝）。
     val merge = input("merge").flatMap(_.asBoolean).getOrElse(false)
@@ -1018,6 +1117,12 @@ object NodeEditTool extends Tool:
             NodeTools.resolveProject(project, ctx).flatMap {
               case Left(err) => IO.pure(Left(ToolError(err)))
               case Right(rt) =>
+                // 链拉回（链级抽象 P2 · spec §5.3-④）：restoreChain=true 时**先拉回**
+                // 再执行原创建/编辑流——拉回把目标节点搬回活动区，于是后续的按名查找、
+                // in/deps 接线、归档节点「只放行 out 改接」闸全部按活动区语义走（拉回
+                // 即打开了 spec §5.1 列出的全部拒绝点）；新节点落库后与拉回成员同属一个
+                // 合并分量（§5.3-⑤ 派生式链身份，零代码并链）。
+                NodeTools.withChainRestore(rt, restoreChain, inJson, depsJson, nodename) {
                 rt.store.snapshot.flatMap { s =>
                   s.nodes.values.find(_.name == nodename) match
                     case Some(existing) =>
@@ -1075,6 +1180,7 @@ object NodeEditTool extends Tool:
                               }
                       }
                   }
+                }
               }
           }
       }

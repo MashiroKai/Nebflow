@@ -144,6 +144,15 @@ export default {
   'flowmap.detail.notify': 'Dispatcher notify',
   'flowmap.detail.yes': 'Yes',
   'flowmap.chain.archivedToast': 'Chain "{chain}" archived ({n} nodes together)',
+  // Chain fold (P1 · spec §3.3): main-graph collapsed-chain summary card; expand =
+  // click the card body or its chevron.
+  'flowmap.chain.nodes': '{n} nodes',
+  'flowmap.chain.expand': 'Expand chain',
+  'flowmap.chain.collapse': 'Collapse chain ({chain} · {n} nodes)',
+  'flowmap.chain.cardHint': 'Collapsed chain "{chain}" ({n} nodes) — click to expand',
+  // Task panel chain badge (P1 · spec §7-B): row-level capsule (short chain title +
+  // same-chain color dot); click jumps to the node on the main graph.
+  'flowmap.chain.badgeHint': 'Chain "{chain}" · click to jump to the graph',
   // Special-node flag badges (badge batch 2026-09-05): head-row capsule labels;
   // appended at the tail of the flowmap block to minimize merge-conflict surface
   // with other locales branches in this batch

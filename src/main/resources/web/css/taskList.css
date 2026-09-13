@@ -203,13 +203,56 @@
 
 .task-node-text { flex: 1; min-width: 0; }
 
+/* 首行 = 节点名 + 链徽标（P1 链级抽象 spec §7-B ⭐）。名可收缩省略、徽标不收缩
+   （窄栏下先牺牲名字，链归属恒可读——信息优先级）。 */
+.task-node-label-row { display: flex; align-items: center; gap: 5px; min-width: 0; }
+
 .task-node-label {
   display: block;
+  flex: 0 1 auto;
+  min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
   color: var(--color-text, #000);
 }
+
+/* 链徽标：小胶囊（复用 .fm-flag-badge / .fm-worktree-badge 胶囊语言：圆角 + 半透明
+   底 + 彩色描边文字），链短名 + 同链同色圆点。色板 = 6 色循环（c0..c5），由 chainId
+   稳定散列选取——5 色全部取自仓内既有值（sapphire token / .fm-flag-merge teal /
+   .fm-flag-loop purple / --amber token / .solar-node-status.ok green），零新色值；
+   同链行恒同色。 */
+.task-node-chain {
+  flex: 0 0 auto;
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  max-width: 92px;
+  padding: 1px 5px;
+  border-radius: 6px;
+  border: 1px solid currentColor;
+  background: color-mix(in srgb, currentColor 12%, transparent);
+  font-size: 9px;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  line-height: 1.5;
+  cursor: pointer;
+  transition: background 0.15s;
+}
+.task-node-chain:hover { background: color-mix(in srgb, currentColor 22%, transparent); }
+.task-node-chain-dot {
+  flex: 0 0 auto;
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: currentColor;
+}
+.task-node-chain-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.task-node-chain.c0 { color: rgb(var(--sapphire, 91 127 191)); }
+.task-node-chain.c1 { color: rgb(45 212 191); }              /* teal（.fm-flag-merge 同值） */
+.task-node-chain.c2 { color: rgb(192 132 252); }             /* purple（.fm-flag-loop 同值） */
+.task-node-chain.c3 { color: rgb(var(--amber, 255 152 0)); } /* amber（.fm-flag-pending 同值） */
+.task-node-chain.c4 { color: #4caf50; }                      /* green（.solar-node-status.ok 同值） */
 
 /* meta = 节点 description（缺失回落 agent 名；project 已由分组头承载——信息减法）。
    窄栏省略号截断，全文由 metaEl.title 悬停承载（沿用既有原生 tooltip 形态） */

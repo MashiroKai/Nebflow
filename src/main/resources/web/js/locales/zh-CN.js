@@ -141,6 +141,16 @@ export default {
   'flowmap.detail.notify': '回流通知',
   'flowmap.detail.yes': '是',
   'flowmap.chain.archivedToast': '链「{chain}」整链归档（{n} 节点一起进归档）',
+  // 链折叠（P1 · spec §3.3）：主图折叠链摘要卡文案（链名/成员数由后端 chains 旁挂
+  // 下发，此处只放可翻译的壳文案）；展开动作 = 点击卡本体或卡内 chevron。
+  'flowmap.chain.nodes': '{n} 节点',
+  'flowmap.chain.expand': '展开链',
+  // 展开态折叠控件（链入口卡 chevron）：带链名与成员数，压掉「这箭头收的是谁」的歧义。
+  'flowmap.chain.collapse': '折叠链（{chain} · {n} 节点）',
+  'flowmap.chain.cardHint': '折叠的链「{chain}」（{n} 节点）— 点击展开',
+  // 任务面板链徽标（P1 · spec §7-B ⭐）：行级链胶囊（链短名 + 同链同色圆点，色板由
+  // 前端按链 id 稳定映射）；点击跳主图定位该节点。
+  'flowmap.chain.badgeHint': '链「{chain}」· 点击跳到主图',
   // 特殊节点标识徽标（badge 批 2026-09-05）：head 行胶囊文案；追加锚在 flowmap 块
   // 尾部，最小化与同批其他 locales 支的合并冲突面
   'flowmap.flag.merge': '合并',

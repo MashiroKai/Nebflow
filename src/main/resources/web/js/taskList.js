@@ -36,6 +36,15 @@ function sessionShowsNodeEntries(sid) {
 
 /** project → Map(nodeId → node)。node 附带 _wsTs（本帧落地时刻，防快照回滚）。 */
 const nodeCache = new Map();
+
+// ── 链徽标数据源（P1 · spec §7-B ⭐）：节点 payload 的 chainId 条件键 → 快照 chains
+//   旁挂 title。**面板侧零链派生**（前端已有 chainEligible 漂移教训，spec §7-B 红线）：
+//   只按后端下发的 chainId/memberIds/title 建映射缓存，绝不自行聚簇/判链。
+//   缓存生命周期与 nodeCache 同（项目粒度，随快照整体替换）。WS 无链级帧 → 链标题
+//   随快照到达；WS 帧携带陌生 chainId（新链首现）时防抖拉一次快照补齐（下方
+//   scheduleChainSnapshot），避免「新链徽标永不出现」。
+/** @type {Map<string, Map<string, {id: string, title: string, memberIds: string[]}>>} */
+const chainCache = new Map();
 let nodeSnapshotLoaded = false;
 let nodeSnapshotSeq = 0;
 /** 最近一次渲染面板的会话：WS 事件到达时按它判断是否重渲（Nebula 统一面板）。 */
@@ -85,9 +94,23 @@ export function applyNodeWsEvent(msg) {
     byId.delete(String(msg.nodeId || (node && node.id) || ''));
   } else if (node && node.id) {
     byId.set(node.id, { ...node, _wsTs: Date.now() });
+    // 链徽标（spec §7-B）：帧带 chainId 但链标题缓存未知（新链首现）→ 防抖补一次
+    // 快照（WS 无链级帧，chainId→title 只能来自快照 chains 旁挂）。
+    const cid = node.chainId ? String(node.chainId) : '';
+    if (cid && !(chainCache.get(project) || new Map()).has(cid)) scheduleChainSnapshot();
   }
   if (byId.size === 0) nodeCache.delete(project);
   rerenderWithNodes();
+}
+
+/** 未知链 id 出现时的防抖快照补齐（多帧并发合并为一次；与 rerenderProjectsTab 同式）。 */
+let chainSnapshotTimer = null;
+function scheduleChainSnapshot() {
+  if (chainSnapshotTimer) return;
+  chainSnapshotTimer = setTimeout(() => {
+    chainSnapshotTimer = null;
+    refreshNodeSnapshot();
+  }, 500);
 }
 
 function rerenderWithNodes() {
@@ -121,6 +144,21 @@ async function refreshNodeSnapshot() {
       next.set(n.id, (cached && (cached._wsTs || 0) > fetchStart) ? cached : { ...n });
     }
     if (next.size) nodeCache.set(name, next); else nodeCache.delete(name);
+    // 链标题缓存（spec §7-B）：快照 chains 旁挂整体替换（同 nodeCache 粒度与生命周期）。
+    // 键缺失（旧后端/中间态）→ 保留现缓存（与 ingestNodes 的 undefined 语义一致）。
+    if (Array.isArray(fm.chains)) {
+      /** @type {Map<string, {id: string, title: string, memberIds: string[]}>} */
+      const chains = new Map();
+      for (const c of fm.chains) {
+        if (!c || !c.id) continue;
+        chains.set(String(c.id), {
+          id: String(c.id),
+          title: String(c.title || ''),
+          memberIds: (Array.isArray(c.memberIds) ? c.memberIds : []).map(String),
+        });
+      }
+      if (chains.size) chainCache.set(name, chains); else chainCache.delete(name);
+    }
   }
   // 项目删除收敛（D5，mem-diag 20260907）：快照项目清单来自 fetchProjects()
   // 全集——不在清单里的项目 = 已删除（后端无 projectRemoved 帧），其缓存条目
@@ -128,6 +166,9 @@ async function refreshNodeSnapshot() {
   const seenProjects = new Set(results.map(([name]) => name));
   for (const name of Array.from(nodeCache.keys())) {
     if (!seenProjects.has(name)) nodeCache.delete(name);
+  }
+  for (const name of Array.from(chainCache.keys())) {
+    if (!seenProjects.has(name)) chainCache.delete(name);
   }
   rerenderWithNodes();
 }
@@ -228,6 +269,59 @@ function buildNodeGlyph(st, cls) {
   return g;
 }
 
+// ── 链徽标（P1 · spec §7-B ⭐ 任务面板标识）──────────────────────────────
+// 行级胶囊：同链同色圆点 + 链短名（title 截断 ≤12 字符）。色 = chainId 稳定散列取
+// 6 色循环（同链恒同色、无序入——禁把「链序」做成隐含语义）。数据单源 = 快照 chains
+// 旁挂（title 后端三级推导下发）；无 chainId（孤立节点/旧后端）或无标题缓存（新链
+// 快照未到）→ 不渲染徽标（零空胶囊，优雅缺席）。面板侧**零链派生**（spec 红线）。
+const CHAIN_COLOR_CYCLE = 5; // 与 taskList.css .task-node-chain.c0..c4 一一对应
+/** 链短名截断长度（字符；CSS 另有 max-width 省略号兜底）。 */
+const CHAIN_NAME_MAX = 12;
+
+/** @param {string} chainId @returns {number} 0..CHAIN_COLOR_CYCLE-1（确定性散列）。 */
+function chainColorIndex(chainId) {
+  const s = String(chainId);
+  let h = 0;
+  for (let i = 0; i < s.length; i++) h = (h * 31 + s.charCodeAt(i)) >>> 0;
+  return h % CHAIN_COLOR_CYCLE;
+}
+
+/** 链短名（超长截断 + 省略号；空 title 回落 id）。 @param {string} title @returns {string} */
+function chainShortName(title) {
+  const s = String(title || '');
+  return s.length > CHAIN_NAME_MAX ? `${s.slice(0, CHAIN_NAME_MAX)}…` : s;
+}
+
+/** 行级链徽标元素（无链上下文 → null；点击 = 跳主图并 fit 整链，不冒泡到行点击）。 */
+function buildChainBadge(node, project) {
+  const cid = node && node.chainId ? String(node.chainId) : '';
+  if (!cid) return null;
+  const meta = (chainCache.get(project) || new Map()).get(cid);
+  if (!meta) return null; // 链标题未知 → 优雅缺席（不臆造名）
+  const badge = document.createElement('span');
+  badge.className = `task-node-chain c${chainColorIndex(cid)}`;
+  badge.dataset.chainId = cid;
+  const hint = t('flowmap.chain.badgeHint', { chain: meta.title || cid });
+  badge.title = hint;
+  badge.setAttribute('role', 'button');
+  badge.setAttribute('aria-label', hint);
+  const dot = document.createElement('span');
+  dot.className = 'task-node-chain-dot';
+  dot.setAttribute('aria-hidden', 'true');
+  badge.appendChild(dot);
+  const name = document.createElement('span');
+  name.className = 'task-node-chain-name';
+  name.textContent = chainShortName(meta.title || cid);
+  badge.appendChild(name);
+  badge.addEventListener('click', (e) => {
+    e.stopPropagation(); // 徽标 = 链定位（行点击语义是节点定位，二者不叠加）
+    import('./projectTab.js').then(({ openProjectFlowMapChain }) => {
+      openProjectFlowMapChain(project, cid);
+    }).catch(() => {});
+  });
+  return badge;
+}
+
 function buildNodeRow(node, project) {
   const st = String(node.status || 'pending');
   const cls = NODE_STATUS_CLS[st] || ''; // wiring → pending（等待色）；未知 → ''
@@ -247,10 +341,17 @@ function buildNodeRow(node, project) {
 
   const text = document.createElement('div');
   text.className = 'task-node-text';
+  // 首行 = 节点名 + 链徽标（P1 链级抽象 spec §7-B ⭐：徽标紧贴节点名之后）。
+  // 包一层 flex 行容器：名保持 ellipsis 收缩，徽标不收缩（徽标略先于名让位）。
+  const labelRow = document.createElement('span');
+  labelRow.className = 'task-node-label-row';
   const label = document.createElement('span');
   label.className = 'task-node-label';
   label.textContent = node.name || node.id;
-  text.appendChild(label);
+  labelRow.appendChild(label);
+  const chainBadge = buildChainBadge(node, project);
+  if (chainBadge) labelRow.appendChild(chainBadge);
+  text.appendChild(labelRow);
   // project 已由分组头承载，meta 只标节点自身信息：description 优先（agent 字段已
   // 退役——新建节点恒 "general" 零信息量，节点行副行显示它等于空信息）；缺失
   // （存量节点）→ 回落 agent 名；两者皆无 → 不渲染（行更矮更净，零空行）。

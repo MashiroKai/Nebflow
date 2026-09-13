@@ -441,6 +441,59 @@
   .fm-node.fm-node-flash { animation: none; box-shadow: 0 0 0 4px rgba(7, 193, 96, 0.3); }
 }
 
+/* ══ 链摘要卡（折叠态，链级抽象 P1 · spec §3.3 方案 b）════════════════
+   折叠链的成员卡出图，代之以一张链摘要卡（伪节点，id=chainId）。视觉对齐归档链条目
+   （.fm-entry 一行式语言）：状态词 + 链名 + `N 节点` + 分状态计数 + chevron；几何沿用
+   .solar-node（124px 宽、绝对定位 left/top），故与节点卡同框共存、同色板。零新色值
+   （token 全取 flowCss/本文件既有变量）。状态色由卡根状态类（running/completed…）
+   沿用节点卡着色，状态词/计数 glyph 各自着色（与 .fm-st-word / .solar-node-status 同源）。 */
+.fm-chain-card { gap: 2px; }
+/* 状态词活动态色（running=链色 / pending=弱化 / blocked=琥珀）：终态三色已在
+   .fm-st-word.completed/.failed/.cancelled 定义（2026-09-07 状态保真批），此处补活动态。 */
+.fm-st-word.running { color: rgb(var(--sapphire)); }
+.fm-st-word.blocked { color: var(--color-warning); }
+.fm-st-word.pending { color: var(--color-text-muted); }
+/* 折叠 chevron（点击展开；图标指向右 = 展开语义）。button 载体现成矩形归零。 */
+.fm-chain-chev {
+  margin-left: auto; flex: 0 0 auto;
+  display: inline-flex; align-items: center; justify-content: center;
+  width: 16px; height: 16px; padding: 0; border: 0; background: none;
+  cursor: pointer; color: var(--color-text-muted); opacity: 0.75; border-radius: 4px;
+  transition: opacity 0.15s ease, background 0.15s ease;
+}
+.fm-chain-chev:hover { opacity: 1; background: rgba(128, 128, 128, 0.14); }
+.fm-chain-chev:focus-visible { outline: none; box-shadow: 0 0 0 2px rgb(var(--sapphire) / 0.55); }
+.fm-chain-chev svg { width: 10px; height: 10px; display: block; }
+/* 展开态控件（链入口成员卡 head 行右端）：chevron 转 90° 朝下 = 「已展开，点击折起」，
+   与归档条目 .fm-entry.expanded .fm-entry-chev 同一语义语言。 */
+.fm-chain-chev-open svg { transform: rotate(90deg); }
+.fm-chain-chev-open { width: 14px; height: 14px; margin-top: 1px; }
+/* 分状态计数行（spec §3.3「✓n · 跑n · ✗n」；零计数桶不渲染，故恒 ≤5 项）。
+   复用节点卡 glyph 色板类（.solar-node-status.ok/.err/.warn），running 用链色圆点。 */
+.fm-chain-counts {
+  display: flex; align-items: center; gap: 7px; flex-wrap: wrap; margin-top: 1px;
+  font: 500 9px/1 -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+  font-variant-numeric: tabular-nums;
+}
+.fm-chain-count { display: inline-flex; align-items: center; gap: 2px; color: var(--color-text-muted); }
+.fm-chain-count.completed { color: var(--color-success); }
+.fm-chain-count.failed { color: var(--color-error); }
+.fm-chain-count.cancelled { color: var(--color-text-muted); }
+.fm-chain-count.blocked { color: var(--color-warning); }
+.fm-chain-count.running { color: rgb(var(--sapphire)); }
+/* glyph 尺寸/边距收紧到计数行上下文（.fm-node .solar-node-status svg 为 10px/带边距）。 */
+.fm-chain-count .solar-node-status { margin-left: 0; animation: none; }
+.fm-chain-count .solar-node-status svg { width: 9px; height: 9px; }
+
+/* 折叠重渲无动画窗口（spec §3.3「直落直剥」；flowMapTab.holdNoAnim 加类，700ms 后摘）：
+   压掉节点位移（left/top）、画布尺寸与边色的 CSS 过渡——与 prefers-reduced-motion 同判据。
+   选择器多一层类（.fm-noanim 前缀）→ 特异性恒高于上方基础声明（385 / 422 行），
+   与该块的位置无关，故不受后续同名前缀规则顺序影响。 */
+.fm-noanim .solar-node.fm-node { transition: none; }
+.fm-noanim .flowmap-card .solar-canvas,
+.flowmap-card.fm-noanim .solar-canvas { transition: none; }
+.fm-noanim .flow-edge.fm-edge, .fm-noanim .fm-edge-arrow { transition: none; }
+
 /* ══ deps 依赖连接（deps 设计 §1.4，20260903）════════════════
    视觉三重编码（不依赖单一色觉通道，亮暗主题经 CSS 变量自适应）：
    ① 虚线线型 stroke-dasharray: 3 4（类型编码——与输出边实线区分）
