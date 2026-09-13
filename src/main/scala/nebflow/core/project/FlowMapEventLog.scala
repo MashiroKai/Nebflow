@@ -40,7 +40,11 @@ import nebflow.core.PathUtil
  *   dispatcher-idle-expired（**令 3 分发器生命周期** 2026-09-12：分发器会话空闲
  *   超过 `Defaults.DispatcherIdleWindowMs` 被 30 s 扫描腿拆除时留痕——
  *   summary = `session=<dispatcher-xxxxxxxx> idleSecs=<n> windowMs=<n>`，
- *   nodeId 字段承载会话 id；「活着但空闲」与「已销毁」的事后对齐面）。
+ *   nodeId 字段承载会话 id；「活着但空闲」与「已销毁」的事后对齐面）/
+ *   dispatcher-wake（**宿主启动自动重入批** 2026-09-13，方案件 A 档 A1：boot 链
+ *   `projectBootWake` 腿对每个在册项目做一次唤醒判定，写点 = `BootDispatcherWake.record`
+ *   ——「谁 / 何时 / 结果」的正向留痕，取代此前「零动作 boot 零日志行、只能靠缺失行
+ *   推断」的取证面；summary 见 [[dispatcherWakeSummary]]，nodeId 字段承载项目名）。
  * 注册式扩展：append API 无 schema 变更，新事件类型 = 本清单加一词 + 写入点调用；
  * chainId 为顶层**可选**字段（2026-09-10 加，spec §9.2 项 9）：旧行无该键照常解析
  * （零迁移、append-only），新行仅在链族事件带上。
@@ -75,6 +79,35 @@ object FlowMapEventLog:
     * `dispatcher-<8hex>`，天然无空白）。 */
   def dispatcherIdleSummary(sessionId: String, idleSecs: Long, windowMs: Long): String =
     s"session=$sessionId idleSecs=$idleSecs windowMs=$windowMs"
+
+  /** 宿主启动自动重入事件类型（boot-wake 批 2026-09-13，方案件 A 档 A1「控制面唤醒腿」）。
+    *
+    * 写点 = `BootDispatcherWake.record`（GatewayMain boot 链 `projectBootWake` 腿）：
+    * 每 boot 每在册项目**恰一条**——含未唤醒形态（`skipped` + reason），使「零唤醒 boot」
+    * 在事件流里可审计（方案 §1.4(c)/R9：此前唯一正证据只有 `mount-stalled`，其余全是
+    * 「缺失的日志行」）。
+    *
+    * `nodeId` 字段承载**项目名**（分发器不是 Flow 节点、无 `NodeDef.id`；同
+    * [[DispatcherIdleExpiredType]] 以会话 id 承载该字段的先例：此字段承载发起者标识）。
+    * 不写 `chainId`（唤醒是项目级动作，不属任何链）。清单正文只进分发器首条输入与
+    * `boot-wake.json`（事件行必须保持单行 `k=v`）。 */
+  val DispatcherWakeType: String = "dispatcher-wake"
+
+  /** 唤醒事件结构化 summary（`k=v` 单空格分隔，**值不含空白**——reason 内的空白
+    * 归一为 `_` 并截断，防 k=v 解析被破坏）。`counts` = (nodes, B1, B2, B3, B4)。 */
+  def dispatcherWakeSummary(
+    bootId: String,
+    atMs: Long,
+    result: String,
+    reason: String,
+    counts: (Int, Int, Int, Int, Int),
+    items: Int,
+    truncated: Int
+  ): String =
+    val (nodes, b1, b2, b3, b4) = counts
+    val r = if reason.isEmpty then "-" else reason.replaceAll("\\s+", "_").take(80)
+    s"boot=${bootId.replaceAll("\\s+", "_")} at=$atMs result=$result reason=$r" +
+      s" nodes=$nodes b1=$b1 b2=$b2 b3=$b3 b4=$b4 items=$items truncated=$truncated"
 
   /** 归档事件结构化 summary（`k=v` 单空格分隔，值不含空白；消费者侧解析单点
     * [[parseChainSummary]] 与本函数同源，防写读口径漂移）。 */

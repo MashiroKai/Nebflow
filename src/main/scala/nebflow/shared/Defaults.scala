@@ -485,6 +485,23 @@ object Defaults:
   def CrashRecoveryConcurrency: Int =
     sys.props.getOrElse("nebflow.crashRecovery.concurrency", "3").toInt
 
+  /**
+   * 宿主启动自动重入总开关（boot-wake 批 2026-09-13；方案件 A 档 A1「控制面唤醒腿」，
+   * 作者 09-13 裁定「重启后唤醒源 = 直接上 A（自动重入）」）。
+   *
+   * 默认 **true**：方案 §2 A ⑤ 给出的 prop 名与回滚形态（`nebflow.boot.dispatcherWake`
+   * + 「回滚 = 置 false + 重启宿主」）即本字段；方案 §7.6 把「默认值」列为待作者回答项，
+   * 但默认关会让本轮缺陷（重启后控制面缺席、停摆窗无上界）原样保留 ⇒ 与裁定反向，
+   * 故取 true，并在实现节点如实登记该判断（分歧时改一行默认值即可）。
+   *
+   * false = GatewayMain 不挂本腿，且 `BootDispatcherWake.wakeAll` 自身零动作（零事件、
+   * 零标记、零触发、零日志）——**完全回到本批前现状**；本腿纯唤醒、零节点写，回滚后
+   * 无半恢复态残留。system prop 每次调用现读（`CrashRecoveryEnabled` 同款 kill-switch
+   * 先例，测试/运维可即时翻转）。
+   */
+  def BootDispatcherWakeEnabled: Boolean =
+    sys.props.getOrElse("nebflow.boot.dispatcherWake", "true").toBoolean
+
   // ---- 引擎活挂硬恢复（hard-recovery 批 2026-09-07，设计 §2/§8/§9）----
 
   /**
