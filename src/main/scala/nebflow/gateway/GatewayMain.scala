@@ -847,7 +847,22 @@ object GatewayMain extends IOApp:
                                           // 使帧形状可单测；此处只做广播。
                                           wsHub.broadcast(nebflow.neblink.FriendEvent.frontendFrame(ev))
                                         },
-                                        remarks = friendRemarks
+                                        remarks = friendRemarks,
+                                        // D-B（2026-09-13）：送达确证（ack）生产者接线。
+                                        // 隧道对象在本行**之后**才创建（且 logout/ensure 会
+                                        // 反复重连），故此处按**每次调用 live 读**解析
+                                        // （`neblinkService.relayTunnelOpt`），不捕获快照
+                                        // —— 与 `setRelayTunnelStarter` / `ensureRelayTunnel`
+                                        // 的既有 live 读口径一致。未注册（boot 早期 / logout）
+                                        // ⇒ 显式 no-op（`sendAck` 亦自带「无 socket 即跳过」兜底）。
+                                        // 帧编码与语义边界见 `NeblinkRelayTunnel.sendAck`
+                                        // 与 `FriendService.ackProcessed`。
+                                        ackSender = Some { eventId =>
+                                          IO(neblinkService.relayTunnelOpt).flatMap {
+                                            case Some(t) => t.sendAck(eventId)
+                                            case None    => IO.unit
+                                          }
+                                        }
                                       )
                                       // A2A 一期（#290 域 A）：SendMessage 工具接线——
                                       // 授权仅 Nebula agent.json 声明（作者特批 2026-08-28），

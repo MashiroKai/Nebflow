@@ -999,12 +999,44 @@ function frameMessage(p) {
   return { id: p.messageId, senderId: p.senderId || p.sender?.userId, kind: p.kind, body: p.body, createdAt: p.createdAt };
 }
 
+/** U-a 幂等前置（本批）：**帧级 messageId 去重**（有界 FIFO）。
+ *
+ *  为什么需要：网关侧 `FriendMessagingGuard.dedupe` 只按 **eventId** 去重，而同一个
+ *  messageId 可以带**不同 eventId** 二次到达（live 推送 + 服务端重放 / 本机代发自播 +
+ *  另一台设备推送 / REST 回补与推送撞车；自播帧的 eventId 是 fresh uuid，
+ *  与服务端 message-<id> 恒不同）。修前该形态在**未开会话**时把
+ *  `conv.unreadCount` 重复 +1（角标虚高），并让 `maybeAutoForward` 把同一条消息
+ *  重复草拟进 agent 输入 —— `appendMessage` 自身的同 id 幂等只覆盖**开着窗**的
+ *  DOM 节点，这两条路都不在它的覆盖面内（实测读数见下）。
+ *  幂等方向 = 「不猜」：缺席 messageId（帧里读不到）**不拦**，照旧走原路径。
+ *  有界：FIFO ≤512（前端只做近窗；网关侧同族上限 `maxSeenEvents=2048`）。 */
+const seenFrameMessageIds = new Set();
+const seenFrameMessageIdOrder = [];
+const SEEN_FRAME_MESSAGE_MAX = 512;
+/** @returns {boolean} true = 首次见到（继续原路径）；false = 重复（调用方直接 return）。 */
+function markFrameMessageSeen(id) {
+  if (id === undefined || id === null || id === '') return true;
+  const k = String(id);
+  if (seenFrameMessageIds.has(k)) return false;
+  seenFrameMessageIds.add(k);
+  seenFrameMessageIdOrder.push(k);
+  if (seenFrameMessageIdOrder.length > SEEN_FRAME_MESSAGE_MAX) {
+    const oldest = seenFrameMessageIdOrder.shift();
+    if (oldest !== undefined) seenFrameMessageIds.delete(oldest);
+  }
+  return true;
+}
+
 async function onFriendEvent(msg) {
+  // 帧静默门控的唯一打点（**任何** friend 帧都算：判据是「通道还在不在送帧」）。
+  lastFriendFrameAt = Date.now();
   if (msg.event === EV_MESSAGE_NEW) {
     const p = msg;
     const conv = conversations.find(c => c.conversationId === p.conversationId);
     if (!conv) { await refreshConversations({ friends: 'force' }); return; } // REST is truth
     const m = frameMessage(p);
+    // U-a 幂等：同 messageId 的重复到达不得二次计未读 / 二次自动转发 / 二次上屏。
+    if (!markFrameMessageSeen(m.id)) return;
     conv.lastMessage = m;
     const isOpen = openConvId === p.conversationId;
     if (isOpen) {
@@ -1035,6 +1067,8 @@ async function onFriendEvent(msg) {
     const conv = conversations.find(c => c.conversationId === msg.conversationId);
     if (!conv) { await refreshConversations({ friends: 'force' }); return; } // REST is truth
     const m = frameMessage(msg);
+    // U-a 幂等：与 message_new 同判据、同实现（同 id 只做一次上屏/落盘）。
+    if (!markFrameMessageSeen(m.id)) return;
     conv.lastMessage = m;
     if (openConvId === msg.conversationId) appendMessage(m); // 复用既有 append 腿
     // 未开会话：仅下方刷新（列表预览 + 角标），不 append、不计未读。
@@ -1053,10 +1087,23 @@ async function onFriendEvent(msg) {
   }
 }
 
-// ── ①opt-A3：降级增量回补（方案 §2.1，判据 P4）────────────────────────
+// ── ①opt-A3 + 帧静默门控（方案 §2.1，判据 P4 / 本批 §12.1）────────────
 // 载体 = activityBar.js **既有** 10s 状态 beacon（`onStatusTick`）——不新增定时器、
-// 不新增端点、不改协议。只在「推送通道不可用」时动作：健康的 WS 路径零额外请求
-// （⑨ M1②/M3 红线：不得出现多余 REST）。
+// 不新增端点、不改协议。
+//
+// 🔴 红线口径变更（作者 2026-09-13 裁定放行）：原文是「健康的 WS 路径零额外请求
+// （⑨ M1②/M3 红线：不得出现多余 REST）」——那条红线判的是**通道还活着**，而不是
+// **本机真的收到了帧**：`relayUsable()` 探的是「网关 ↔ 服务端隧道」（真源
+// `RestApiRoutes relayAvailable = relayTunnelOpt.exists(_.isAlive)`），隧道报活
+// 而帧不来（上游丢帧 / 隧道半死假活 / 网关广播时浏览器正处 WS 重连窗口）时，
+// 客户端**恒零请求、陈旧无上界**，只能等用户动作（切面板 / 关窗再开）——
+// 这正是「不自己出来，要切页面才出现」的机制（取证正本 §7.2 RC-C1 / §10.2-4）。
+// 新口径 = **「已确证送达的健康路径零额外请求」**：门控判据从「隧道是否活」换成
+// **「距上次收到任何 friend_event 帧是否超过 N 秒（帧静默）」**；帧静默 ⇒ 执行
+// 一次增量核对。代价 = 健康态每 beacon 拍最多 1 次极小请求（列表态 1 次
+// `GET /api/conversations`；开窗态另加 1 次 `after=<水位>&limit=50` 的空响应
+// keyset，约 6 次/分钟），换来**陈旧上界 ≤ N + 1 次往返 ≈ 10.2 s**（原为无界）。
+// 唤醒面（回前台/回网 `wakeResync`）与「隧道判死」腿语义不变。
 /** 通道是否可用。`relay` 未知（状态未取到 / 老网关无该字段）按**不可用**处理 ——
  *  降级兜底的方向是「多花一次极小请求」，不是「静默不补」。 */
 function relayUsable() {
@@ -1066,6 +1113,27 @@ function relayUsable() {
 
 /** 节流 > beacon 周期 ⇒ 至多一拍一次；`document.hidden` 守卫与 beacon 同语义。 */
 const BACKFILL_THROTTLE_MS = 9000;
+
+/** 帧静默阈值（毫秒）。配置键 `messages.frameSilenceMs`（`<home>/nebflow.json`
+ *  顶层 `messages` 节，走既有 WS `configData` → `state.parsedConfig` 通道，
+ *  与 `features.friends` 同源同语义：改配置后刷新页面生效，无 live toggle）。
+ *  缺省 **10000**（= 既有 beacon 周期 10 s ⇒ 静默一拍的语义即「整整一拍没帧」）。
+ *  读取点 = 本函数（唯一），非法值（非数 / ≤0）一律回落缺省。 */
+const FRAME_SILENCE_MS_DEFAULT = 10000;
+function frameSilenceMs() {
+  const v = Number(state.parsedConfig?.messages?.frameSilenceMs);
+  return Number.isFinite(v) && v > 0 ? v : FRAME_SILENCE_MS_DEFAULT;
+}
+
+/** 最近一次收到 friend_event 帧的时刻（毫秒）。写入点唯一 = `onFriendEvent` 入口
+ *  （**任何** friend 帧都算：message_new / message_new_self / friend_request /
+ *  friend_accepted —— 判据是「通道是否还在给我们送帧」，不是某一个事件类型）。 */
+let lastFriendFrameAt = 0;
+
+/** 距上次收帧是否已超过静默阈值（含义 = 该做一次增量核对了）。 */
+function frameSilent() {
+  return Date.now() - lastFriendFrameAt > frameSilenceMs();
+}
 
 /**
  * **增量复同步单点**（K-4 降级回补 与 本批「回前台/回网即增量拉」**共用同一实现**，
@@ -1090,7 +1158,12 @@ async function incrementalResync({ withList = false } = {}) {
 
 async function backfillTick() {
   if (!loggedIn() || document.hidden) return;
-  if (relayUsable() && state.connected) return; // 健康路径：零请求
+  // 帧静默门控（作者 2026-09-13 裁定放行，口径见上方红线段）：
+  //   · 最近 N 秒内收到过 friend 帧 且 隧道报活 且 WS 在连 ⇒ 已确证送达，零请求
+  //     （= 修前「健康路径零请求」的**保真子集**：帧真的在流）；
+  //   · 任一不成立 ⇒ 做一次增量核对（隧道判死腿沿用修前语义：不因「刚有过帧」
+  //     而跳过；帧静默腿为本批新增）。
+  if (!frameSilent() && relayUsable() && state.connected) return; // 已确证送达：零请求
   const now = Date.now();
   if (now - lastBackfillAt < BACKFILL_THROTTLE_MS) return;
   lastBackfillAt = now;
@@ -1141,6 +1214,9 @@ export function initMessages() {
   window.addEventListener('fm-refs-sent', onRefsSent);
   // ①opt-A3：挂上既有 10s beacon（返回的注销函数本模块生命周期内不需要 ——
   // initMessages 本身是一次性 latch，整页生命周期只装一次）。
+  // 帧静默门控的计时基准在此起点：boot 后 **整整 N 秒**没有任何帧 ⇒ 首拍即核对
+  // （不是「boot 立刻额外多一次」——首次 tick 前已过一拍）。
+  lastFriendFrameAt = Date.now();
   onStatusTick(() => { void backfillTick(); });
   // clientconn item 2：回前台 / 回网即增量拉（唤醒源 = ws.js 的 `fm-wake`）。
   // 只在登录态 + 前台动作（wakeResync 内部守卫）。

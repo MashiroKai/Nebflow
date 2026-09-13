@@ -49,7 +49,11 @@ final class FriendService(
   guard: FriendMessagingGuard = new FriendMessagingGuard(),
   onFriendEvent: Option[FriendEvent => IO[Unit]] = None,
   askConfirm: Option[String => IO[Boolean]] = None,
-  remarkRef: Ref[IO, Map[String, String]] = Ref.unsafe[IO, Map[String, String]](Map.empty)
+  remarkRef: Ref[IO, Map[String, String]] = Ref.unsafe[IO, Map[String, String]](Map.empty),
+  /** D-B（2026-09-13）：送达确证发送面。`None` = 未接线（测试 / 旧装配）——显式
+    * no-op，不静默走「第二条实现」。生产由 `GatewayMain` 接到 `NeblinkRelayTunnel.sendAck`
+    * （帧编码只在那一边，本层只决定「什么时候 ack 哪个 eventId」）。 */
+  ackSender: Option[String => IO[Unit]] = None
 ):
   private val logger = NebflowLogger.forName("nebflow.neblink.friends")
 
@@ -120,6 +124,32 @@ final class FriendService(
   private val MessageNew = "message_new"
   private val MessageNewSelf = "message_new_self"
 
+  /** 消息推送 eventId 前缀 —— 与 neblink-server `message_event_id`
+    * （`format!("message-{message_id}")`，`src/relay.rs:133-134`）**逐字同名**；
+    * 服务端用 `message_receipt_message_id`（`:141-145`）反解成消息 id。
+    * 本侧只**透传原帧 eventId**，不二次拼装（帧形状冻结，只此一处前缀判据）。 */
+  private val MessageEventIdPrefix = "message-"
+
+  /** D-B ack 生产者（客户端半边）：把「本设备已持久处理该事件」告诉服务端。
+    *
+    * 何时 ack（语义边界）：**处理完成之后**，且**重复帧也 ack**——
+    *   · 首次：处理（广播 + 补拉 + 未读）完成后 ack；
+    *   · 重复（eventId 已见）：这是 at-least-once 重放路径。首帧的 ack 若在链路上
+    *     丢了，服务端下次隧道注册会重放；客户端去重后若**不再** ack，重放将永远
+    *     退不掉（活锁）⇒ 重复路径必须补 ack。
+    *
+    * 只 ack 消息面（`message-<id>`）：那是本批冻结的靶（写 `sent` 回执）；
+    * `friend-evt-<rowId>` 那支会推进服务端 durable 重放游标，属 S2 服务端账本批
+    * 的范畴（🔴 本批禁跨仓），本侧不越界。
+    *
+    * 失败口径：best-effort，绝不抛出 —— ack 挂在消费链尾部，任何异常都不得反过来
+    * 吃掉消费/广播（那才是会丢消息的方向）。ack 丢 = 服务端下次重放 = 无正确性代价。 */
+  private def ackProcessed(eventId: String): IO[Unit] =
+    ackSender match
+      case Some(send) if eventId.startsWith(MessageEventIdPrefix) =>
+        send(eventId).handleErrorWith(e => logger.debug(s"ack send failed for $eventId: ${e.getMessage}"))
+      case _ => IO.unit
+
   /** 会话 id 取值的**单点**：规范路径 = `event.payload.conversationId`（服务端信封
     * `{"type":…, "payload":{…}}`），顶层读取保留为**旧形状容错**（扁平信封不再变
     * 静默无操作）。两个 `message_*` 分支共用本方法 ⇒ 字段名只此一处（禁各写一套）。 */
@@ -156,12 +186,16 @@ final class FriendService(
       case Some((eventId, event, evType)) =>
         guard.dedupe(eventId).flatMap {
           case false =>
-            logger.debug(s"Duplicate friend_event $eventId ignored")
+            logger.debug(s"Duplicate friend_event $eventId ignored") *>
+              // at-least-once 重放：去重后仍须 ack（否则服务端重放永不退掉）。
+              ackProcessed(eventId)
           case true =>
             // K-1：先广播（best-effort，绝不阻塞/绝不吃掉补拉），再补拉 + 未读维护。
-            onFriendEvent.traverse_(cb => cb(FriendEvent(evType, event)).handleErrorWith(_ => IO.unit)) *>
+            (onFriendEvent.traverse_(cb => cb(FriendEvent(evType, event)).handleErrorWith(_ => IO.unit)) *>
               handleEvent(evType, event) *>
-              logger.info(s"friend_event processed: type=$evType id=$eventId")
+              logger.info(s"friend_event processed: type=$evType id=$eventId")) *>
+              // D-B：**处理完成后**才 ack（「已持久处理」而不是「已收帧」）。
+              ackProcessed(eventId)
         }
 
   private def handleEvent(evType: String, event: Json): IO[Unit] =

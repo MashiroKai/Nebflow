@@ -482,6 +482,45 @@ final class NeblinkRelayTunnel(
     lastPong.set(System.currentTimeMillis())
 
   /**
+   * D-B ack 生产者（2026-09-13 好友推送修复批）——**帧形状冻结**，唯一编码点：
+   *   `{"type":"ack","eventId":"<eventId>"}`
+   *
+   * 与 neblink-server 的对应关系（现场读服务端源码，非猜）：
+   *   · `ClientToServer::Ack { #[serde(rename="eventId")] event_id }`，枚举
+   *     `#[serde(tag="type", rename_all="snake_case")]` ⇒ 线上就是 `"ack"` + `eventId`
+   *     （`src/relay.rs:77-94`）；
+   *   · 收帧分支 `Ok(ClientToServer::Ack { event_id })`（`src/relay.rs:630-651`）：
+   *     `friend-evt-<rowId>` ⇒ 推进该设备的 durable 重放游标；
+   *     `message-<id>` ⇒ 写 `sent` 回执（`message_receipt_message_id`，`:141-145`）
+   *     —— 后者正是本批的靶（消息推送的送达确证）。
+   *   · 不可解析的 eventId 一律被服务端忽略（幂等；伪 id 也跳不了真帧）⇒ 本侧
+   *     发送失败/多发的代价是「零」，故整条腿 **best-effort，绝不抛出**：
+   *     它挂在 friend_event 处理链的尾部，任何异常都不得影响消费/广播（那个方向
+   *     才是真正会丢消息的方向）。
+   *
+   * 语义边界（🔴 本侧只做客户端半边）：ack = 「本设备已**持久处理**该事件」，
+   * 不是「本设备已收帧」。因此**重复帧也要 ack**（见 `FriendService.onFriendEvent`）：
+   * 首帧的 ack 若在链路上丢了，服务端会在下次隧道注册时重放，客户端按 eventId
+   * 去重后若不再 ack，重放将**永远**退不掉（at-least-once 的活锁）。服务端侧
+   * 的账本/重放（S2 的其余半边）由 neblink-server 另案交付，本仓不发单、不改其码。
+   *
+   * 可见性 = **public**（与 `connect` / `ensure` / `statusJson` 同档）：唯一调用方是
+   * `GatewayMain` 的 ack 装配缝（包 `nebflow.gateway`），`private[neblink]` 够不着；
+   * 帧编码仍只此一处（不加第二实现）。
+   */
+  def sendAck(eventId: String): IO[Unit] =
+    val frame = NeblinkRelayTunnel.ackFrame(eventId)
+    wsRef match
+      case None => logger.debug(s"ack skipped (no live relay socket): $eventId")
+      case Some(w) =>
+        IO.blocking {
+          try
+            w.sendText(frame.noSpaces, true)
+            ()
+          catch case e: Exception => logger.debugSync(s"ack send failed for $eventId: ${e.getMessage}")
+        }.handleErrorWith(e => logger.debug(s"ack send error for $eventId: ${e.getMessage}"))
+
+  /**
    * presence v2 (C6): handle a server-pushed DeviceStatusUpdate frame.
    *
    * Wire schema (dual-field tolerant — fixes the interop mismatch where the
@@ -594,6 +633,18 @@ final class NeblinkRelayTunnel(
 end NeblinkRelayTunnel
 
 object NeblinkRelayTunnel:
+
+  /**
+   * D-B（2026-09-13）ack 帧 —— **帧形状的唯一定义点**（可独立单测，无需真 socket）。
+   *
+   * 冻结形状：`{"type":"ack","eventId":"<eventId>"}`，与 neblink-server
+   * `ClientToServer::Ack`（`#[serde(tag="type", rename_all="snake_case")]` +
+   * `#[serde(rename="eventId")]`，`src/relay.rs:77-94`）逐字对齐；消息面 eventId
+   * 形如 `message-<id>`（服务端 `message_event_id`，`src/relay.rs:133-134`），
+   * 由服务端 `message_receipt_message_id`（`:141-145`）反解。键名/取值改动 = 断链。
+   */
+  private[neblink] def ackFrame(eventId: String): Json =
+    Json.obj("type" -> "ack".asJson, "eventId" -> eventId.asJson)
 
   /**
    * Liveness window (①-2 / ①opt-A1，波3 2026-09-12）：pong 超出此窗口 = 连接是
