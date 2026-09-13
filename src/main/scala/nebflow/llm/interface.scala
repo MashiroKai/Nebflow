@@ -236,7 +236,20 @@ object LlmInterface:
     * Defaults.PerRequestTransport is disabled (legacy shared client, L2
     * degrades to no-op → callers escalate). Cost: one TLS handshake + one
     * selector thread per request (~100-300ms, negligible next to LLM
-    * latency — 设计 §2.2). */
+    * latency — 设计 §2.2).
+    *
+    * D1 — the HTTP/1.1 pin on the per-attempt client below, and what would
+    * flip it: this peer is the LLM gateway, a DIFFERENT reverse proxy from
+    * neblink's Caddy and the closest one to the original 2026-08-11 USTC
+    * (nginx/one-api) incident ⇒ the neblink 2026-09-12 probe (14/14 HTTP_2
+    * 200, 0 TLS alerts) does not transfer here. What is measured on this peer
+    * since the incident: nothing — the original alert text and frequency were
+    * never retained ⇒ the pin is UNPROVEN, not refuted. Judge-red: a
+    * reproduced bad_record_mac / TLS alert on this path, or a GOAWAY /
+    * closed-reset bucket in the outbound-failure counters.
+    * This client stays per-attempt by design (its shutdownNow() is the abort
+    * primitive described above), so it is NOT a D5 convergence candidate.
+    */
   private[llm] def makeAttemptTransport(
       key: String,
       sessionId: String,
@@ -347,12 +360,22 @@ object LlmInterface:
     options: Option[LlmOptions] = None,
     configRef: Option[Ref[IO, NebflowServiceConfig]] = None
   ): IO[(LlmHandle[IO], ProviderRegistry, ProviderHealthMonitor, IO[Unit])] =
-    // Force HTTP/1.1: the JDK HttpClient's HTTP/2 connection-reuse + TLS 1.3
-    // session resumption clashes with certain reverse proxies
-    // (nginx/one-api style API gateways), producing intermittent bad_record_mac TLS alerts
-    // on reused connections. curl never hits it — each request is a fresh
-    // connection. HTTP/1.1 removes the multiplexed-reuse path entirely; if
-    // bad_record_mac persists, next step is disabling TLS 1.3 resumption.
+    // HTTP/1.1 pin (D1) — evidence, then judge-red:
+    //   · Evidence: the 2026-08-11 USTC gateway incident (commit 3773699b —
+    //     bad_record_mac TLS alerts on reused multiplexed connections; curl
+    //     with a fresh connection per request never triggered it). That is an
+    //     incident report, not a reproduction: the alert text and its
+    //     frequency were never retained, and this peer (nginx/one-api style API
+    //     gateway) has not been re-probed since ⇒ 未证. Do not read the
+    //     neblink/Caddy probe (2026-09-12: 14/14 HTTP_2 200, 0 TLS alerts) as
+    //     evidence here — different reverse proxy, and one green local window
+    //     is not evidence a trap is absent.
+    //   · Judge-red: a reproduced bad_record_mac / TLS alert on this path, or a
+    //     GOAWAY / closed-reset bucket in the outbound-failure counters, or
+    //     same-window h2 p95 > h1 p95 × 1.2 (n ≥ 100/arm). Only then revisit
+    //     the pin; the documented next diagnostic step is disabling TLS 1.3
+    //     session resumption (a switch for diagnosing, not a speed-up: it
+    //     costs ~222 ms per cold request).
     val httpClient = java.net.http.HttpClient
       .newBuilder()
       .version(java.net.http.HttpClient.Version.HTTP_1_1)
