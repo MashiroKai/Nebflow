@@ -19,6 +19,15 @@ Nebflow 是一个开源（MIT）AI Agent 编排平台。本仓为 **Scala 版**�
 - 规格（引擎运行期消费）→ `.nebflow/Spec/`
 - 人类交付/阶段文档 → `~/.nebflow/docs/<域>/`（命名/溯源见 `~/.nebflow/docs/CONVENTIONS.md` §1/§2 与「文件名尾溯源规范」）
 - 人工备份 → `~/.nebflow/backups/`
+- 定义层/数据根落地中转（交宿主消费）→ `<ws>/.nebflow/incoming/<YYYYMMDD>_<批次名>/`（显式契约见下）
+
+**`incoming/` 通道契约（宿主落地中转；取代仓内 `staging/`——该树已 untracked + 被 `.gitignore` 的 `staging/` 忽略，工作区副本仅存主仓、worktree 内不存在）**——落位 `<ws>/.nebflow/incoming/<YYYYMMDD>_<批次名>/`，通道自述 = `.nebflow/incoming/README.md`：
+
+1. **用途**：节点（含 worktree 内节点）把「定义层 / 数据根」的落地件**交给宿主**时的中转——**不是存档**。本目录随 repo `.gitignore` 的 `/.nebflow/` 整体忽略 ⇒ 中转件**永不进公开面**、**永不需要 `git rm`**。
+2. **谁写（写入者身份与入口）**：写入者 = 在项目工作区内执行任务的 **agent 节点**（含 worktree 内节点），入口 = 本文件内的落位条目 + 该通道 `README.md`，逐件按**工作区根绝对路径**写入（相对路径随 `git worktree remove` 消失）；**宿主/作者是消费方，不写**。
+3. **写什么（内容形态与命名）**：每批一份 `MANIFEST.md`，逐件一行 `<源绝对路径> | <目标绝对路径> | <sha256> | <动作：cp|rm|none>`；`sha256` 写入后**现取**（`shasum -a 256 <file>`），禁抄旧值；**禁写任何 git 跟踪路径**、**禁写 `~/.nebflow/agents/**` 与 `~/.nebflow/memory/**`**；**零凭据纪律**——任何凭据 / 密钥 / 令牌（API key / OAuth token / 私钥 / 会话 cookie / `auth.json` 类件）**一律不得入通道**（不加密、无访问控制），发现即在**写入侧**停手上报，不得先写上再补处置。
+4. **何时清空（触发条件与执行者）**：① 探针批次（验证 / 冒烟 / 勘察）**由写入方在收尾时即删**，不等消费；② 交付批次由**写入方在宿主消费完成**（逐件 `cp` + 双侧 `shasum -a 256` 比对一致）**后删除**；③ 双侧 sha 不一致、或消费时发现凭据类件 ⇒ **消费方停手上报**，不得继续；④ 删除后三方断言：批次目录已删 / `ls <ws>/.nebflow/incoming` 仅剩 `README.md` / `git status --porcelain` 为 0 行。
+5. **保留策略（保留期 / 上限 / 归档去向）**：**保留期** = 见第 4 条（探针批次收尾即删、交付批次消费完成即删、**用完即清**；**通道无固定天数、无归档职能**）；**上限（兜底）** = **空闲满 24h 的批次条目应清空**——判据 = 通道内除自述件 `README.md` 外的条目与批次目录的 **`mtime`**：早于 `now-24h` 者不得留存（与巡检 I-1 的 24h 宽限**同源同值**，可机械核：`find <ws>/.nebflow/incoming -mindepth 1 -maxdepth 1 ! -name README.md -mmin +1440` 应无输出），超限即违约，由巡检 / 宿主上报；**归档去向** = 需留存者落 `~/.nebflow/docs/<域>/`（人类交付 / 阶段文档，遵 `CONVENTIONS.md` §1/§2）或 `~/.nebflow/staging-archive-<YYYYMMDD_HHMMSS>/`（整树历史）。
 
 **零存量处置**：本节不要求、也不授权对任何现存文件做搬移/改名/删除——存量处置另立实施批，前置 = 逐件引用面断言 + 回滚快照 + 悬空门禁。规范全文 = `~/.nebflow/docs/CONVENTIONS.md` §6。
 
