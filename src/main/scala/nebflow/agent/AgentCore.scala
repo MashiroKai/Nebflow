@@ -11,7 +11,7 @@ import nebflow.agent.PromptSections.*
 import nebflow.core.*
 import nebflow.core.compact.*
 import nebflow.core.hooks.*
-import nebflow.core.project.ProjectRuntimeRegistry
+import nebflow.core.project.{NodeRoles, ProjectRuntimeRegistry}
 import nebflow.core.tools.*
 import nebflow.llm.{Fallback, TurnBudgetExceeded}
 import nebflow.shared.*
@@ -591,7 +591,7 @@ private[agent] trait AgentCore:
         // Phase-aware compaction: Compact turn disables tools (existing behavior).
         val isCompactTurn = state.pendingCompaction.exists(_.phase == CompactionPhase.Compact)
         val isAskTurn = state.askMode.isDefined
-        val tools = if isCompactTurn then Some(Nil) else buildToolList(agentDef, depth, state.isSubTaskWorker, state.isFlowNode, projectBoardSession = state.isDispatcher || state.flowNodeId.isDefined, flowNodeSession = state.flowNodeId.isDefined)
+        val tools = if isCompactTurn then Some(Nil) else buildToolList(agentDef, depth, state.isSubTaskWorker, state.isFlowNode, projectBoardSession = state.isDispatcher || state.flowNodeId.isDefined, flowNodeSession = state.flowNodeId.isDefined, flowNodeRole = state.session.flowNodeRole, isDispatcher = state.isDispatcher)
         val isSubagent = depth > 0
         val sessionIdOpt = state.sessionId
         // Track the first model that failed (for modelChanged notification)
@@ -869,7 +869,7 @@ private[agent] trait AgentCore:
             else Nil
           freshTools =
             if isCompactTurn then Some(Nil)
-            else buildToolList(freshDef, depth, stateForLlm.isSubTaskWorker, stateForLlm.isFlowNode, isTeamLead, userFacingNode = stateForLlm.userFacingNode, guardrailsOn = guardrailsOn, projectBoardSession = stateForLlm.isDispatcher || stateForLlm.flowNodeId.isDefined, flowNodeSession = stateForLlm.flowNodeId.isDefined)
+            else buildToolList(freshDef, depth, stateForLlm.isSubTaskWorker, stateForLlm.isFlowNode, isTeamLead, userFacingNode = stateForLlm.userFacingNode, guardrailsOn = guardrailsOn, projectBoardSession = stateForLlm.isDispatcher || stateForLlm.flowNodeId.isDefined, flowNodeSession = stateForLlm.flowNodeId.isDefined, flowNodeRole = stateForLlm.session.flowNodeRole, isDispatcher = stateForLlm.isDispatcher)
           // 冷启动路由已删除（2026-08-19 用户裁决：「这是错误的，按 preset」）：
           // 它把闲置唤醒/重启后的第一发改道到 LowCost preset，偏离用户设置的
           // preset 链。模型选择现在严格 = freshDef.model（preset 解析结果）。
@@ -1990,20 +1990,22 @@ private[agent] trait AgentCore:
     userFacingNode: Boolean = false,
     guardrailsOn: Boolean = false,
     projectBoardSession: Boolean = false,
-    flowNodeSession: Boolean = false
+    flowNodeSession: Boolean = false,
+    flowNodeRole: Option[String] = None,
+    isDispatcher: Boolean = false
   ): Option[List[ToolDefinition]] =
     val allowedSet = buildAllowedToolSet(agentDef, depth, isSubTaskWorker, isFlowNode, isTeamLead, userFacingNode, guardrailsOn, projectBoardSession, flowNodeSession)
     // 2026-09-06 工具面裁撤批：FlowReport 的 per-node contract describe 注入
     // 随工具退役一并移除（contract 数据本体仍在 AgentDef.flowContract，引擎
     // spawn 注入路径零触碰）。
-    // 工具面按角色分化批 B2（2026-09-13）：定义期 schema 分组——**第一性机制**。
-    // 判据 = 单点 AgentCore.isNebulaRoot（本文件顶部；禁在此内联第二份表达式），
-    // 默认分支恒基础变体（fail-closed）。成员资格逐位不变，只有 root 会话的
-    // AskUserQuestion 那一段 schema/description 不同。
-    val isNebulaRootSession = AgentCore.isNebulaRoot(Some(agentDef), depth)
+    // 工具面按角色分化批 B2（2026-09-13）+ Q4/Q5 批（同日）：定义期分组——**第一性
+    // 机制**。判据 = 身份装配单点 [[toolFaceIdentity]]（内部委托 [[isNebulaRoot]] /
+    // `NodeRoles`；禁在此内联第二份表达式），默认分支恒基础变体（fail-closed）。
+    // 成员资格逐位不变，只有目标工具那一段 `description` 因身份不同。
+    val identity = AgentCore.toolFaceIdentity(agentDef, depth, flowNodeRole, isDispatcher)
     Some(ToolRegistry.ALL_TOOLS.flatMap { td =>
       if !allowedSet.contains(td.name) then None
-      else Some(AgentCore.schemaVariantFor(td, isNebulaRootSession))
+      else Some(AgentCore.schemaVariantFor(td, identity))
     })
 
   protected def emitStream(
@@ -2264,21 +2266,61 @@ object AgentCore:
   def isNebulaRoot(agentDef: Option[AgentDef], depth: Int): Boolean =
     agentDef.exists(_.name == "Nebula") && depth == 0
 
-  /** 定义期 schema 分组（B2/L13）：**唯一的变体选择点**。
+  /** 会话工具面身份（Q4/Q5 批 2026-09-13）：定义期变体选择的**唯一输入**。
    *
-   * 纪律（fail-closed，规格 §3.4 新降级面 (a)）：**默认分支恒为基础变体**——
-   * 未登记/未来新增的会话形态自动落在「面外」，绝不静默拿到 root 变体。变异
-   * 「默认分支改成 root 变体」⇒ `AskUserDualModeSpec` 必红。
+   * 三个分量各有**既有单点**来源（禁在任何消费点重写判据表达式）：
+   *   - `isNebulaRoot` ⟵ [[isNebulaRoot]]（含 `depth` 分量）；
+   *   - `isDispatcher` ⟵ `AgentState/session.isDispatcher`（`ProjectActor` spawn 置位）；
+   *   - `nodeRole` ⟵ `SessionContext.flowNodeRole`，经 `NodeRoles` **归一 + 白名单校验**；
+   *     **缺省 / 非法 / 未登记 ⇒ `None`**（= 基础面，fail-closed）——定义层**不**
+   *     替运行期做「缺省就是 task」的身份推断：那是 `NodeReportTool.enumFor` 的
+   *     运行期口径，定义层据此分化会让「无身份的旁支会话」静默落到 task 变体。
+   */
+  private[agent] final case class ToolFaceIdentity(
+    isNebulaRoot: Boolean = false,
+    isDispatcher: Boolean = false,
+    nodeRole: Option[String] = None
+  )
+
+  private[agent] object ToolFaceIdentity:
+    /** **fail-closed 默认**：未知 / 未登记 / 缺身份的会话形态一律基础面。 */
+    val Base: ToolFaceIdentity = ToolFaceIdentity()
+
+  /** 身份装配单点（[[buildToolList]] 内唯一调用点）。 */
+  private[agent] def toolFaceIdentity(
+    agentDef: AgentDef,
+    depth: Int,
+    flowNodeRole: Option[String],
+    isDispatcher: Boolean
+  ): ToolFaceIdentity =
+    ToolFaceIdentity(
+      isNebulaRoot = isNebulaRoot(Some(agentDef), depth),
+      isDispatcher = isDispatcher,
+      nodeRole = flowNodeRole.filter(NodeRoles.isValid).map(NodeRoles.normalize)
+    )
+
+  /** 定义期 schema/描述分组：**唯一的变体选择点**（B2/L13 建立；Q4/Q5 批扩到
+   * 三个目标工具，仍是**一处选择**）。
    *
-   * 只替换**同一元素**的 schema/description（不插删元素）⇒ `ALL_TOOLS` 的迭代序
-   * 与工具数组逐位不变；**不得**给 `ALL_TOOLS` 加无身份维度的缓存（加了分化立即
-   * 失效，规格 §3.4 新降级面 (b)）。
+   * 纪律（fail-closed）：**默认分支恒为基础变体**——未登记/未来新增的会话形态
+   * 自动落基础面，绝不静默拿到分化变体。变异「默认分支改分化变体」⇒
+   * `ToolFaceVariantSpec` 必红。
+   *
+   * 只替换**同一元素**的 `description`（不插删工具元素、零成员资格改动）⇒
+   * `ALL_TOOLS` 的迭代序与工具数组逐位不变；**不得**给 `ALL_TOOLS` 加无身份维度的
+   * 缓存（加了分化立即失效，规格 §3.4 新降级面 (b)）。
+   *
+   * 身份维度优先级：root 面先判（互斥形态取 root），再 dispatcher，再节点角色。
    */
   private[agent] def schemaVariantFor(
     td: ToolDefinition,
-    isNebulaRoot: Boolean
+    identity: ToolFaceIdentity
   ): ToolDefinition =
-    if isNebulaRoot && AskUserQuestionTool.Name == td.name then AskUserQuestionTool.nebulaRootVariant(td)
+    if AskUserQuestionTool.Name == td.name then
+      if identity.isNebulaRoot then AskUserQuestionTool.nebulaRootVariant(td) else td
+    else if NodeReportToolDef.Name == td.name then NodeReportToolDef.roleVariant(td, identity.nodeRole)
+    else if MailTool.name == td.name then
+      MailTool.addressFaceVariant(td, identity.isNebulaRoot, identity.isDispatcher)
     else td
 
   /**
