@@ -270,9 +270,17 @@ const MORE_ICON = '<svg width="12" height="12" viewBox="0 0 24 24" fill="none" s
  *    `[data-plugin-menu]`     — 次级动作行容器（封禁/解封入口）
  *    `[data-plugin-block]`    — 封禁/解封按钮（`data-blocked` 暴露当前态）
  *    `[data-plugin-dispatch]` — 派发许可开关（令 1 既有钩子，保留不动）
- *  🔴 内容审批开关（hook `data-plugin-` + `switch`）已随 2026-09-13 无审批批
- *  **退场**；除本文件这两行文档说明外，全仓不再有任何代码/测试引用该 hook
- *  （判据：`grep -rn "pluginSwitch\|plugin-switch" src/ tests/` = 0，见批报告）。 */
+ *  🔴 内容审批开关（hook `data-plugin-switch`）已随 2026-09-13 无审批批**退场**：
+ *  生产代码零功能性使用。现场判据（逐字可复算）：
+ *    • `grep -rn "data-plugin-switch" src/main/resources/web/ | grep -vcE ':[0-9]+:[[:space:]]*(\*|//)'`
+ *      ⇒ **0**（该 hook 的全部命中都在本文件的注释内：`:14` 与本节；无选择器、
+ *      模板或事件绑定的功能性使用）；
+ *    • `grep -rn "data-plugin-switch" src/main/scala/` ⇒ **0**；
+ *    • `grep -rn "data-plugin-switch" tests/` ⇒ 命中全为注释与「零残留」断言读取
+ *      （`contentSwitchCount` / `contentSwitchThere` ⇒ `=== 0` / `false`），
+ *      无任何正向使用。
+ *  （2026-09-13 复核 R2：原判据 `grep -rn "pluginSwitch\|plugin-switch" src/ tests/`
+ *  = 0 为**假**——实测 13 命中，且该式能匹配到自身 ⇒ 按上列可复算判据重写。） */
 function renderPluginCard(manifest) {
   const status = pluginStatus(manifest);
   const disp = dispatchState(manifest, status.blocked);

@@ -11,8 +11,14 @@
 //      plugins.dispatchLabel，不硬编码文案）、几何可分（派发行在「更多」按钮
 //      与其菜单行**下方**、上缘有 hairline 分隔、行盒非零）
 //   ③ 状态药丸绑 blocked / contentChanged（🔴 不绑 trusted）：未封禁 ⇒ 已启用
-//   ④ **无记录包首扫即受信并在面板表现为已启用**（正面断言，本批的核心口径）：
-//      fixture 插件在实例上没有 trust 记录 ⇒ 卡片「已启用」+ 派发开关可用
+//   ④ 前端判据面（🔴 **不是**引擎语义的正面断言）：fixture 插件在实例上没有 trust
+//      记录 ⇒ 卡片「已启用」+ 派发开关可用 + 旧审批开关零残留。**引擎侧**「无记录包
+//      首扫即受信」的正面断言在 Scala 侧 `PluginRegistrySpec`（「在位即信任（正面
+//      断言）」+「无记录包进目录」）——本 spec 不含该语义断言：前端按设计不消费
+//      `trusted`，对「引擎是否在位即信任」无区分度（old default-deny 引擎上同样绿）；
+//      本用例的区分度在「药丸/派发面被重新绑回审批面」这一**前端回归**上——本实例
+//      载荷带旧 default-deny 判词（`trust.status='untrusted'`，`trusted` 布尔字段在
+//      未合入引擎轨的实例上**不存在**）⇒ 绑回去即转红（返工轮变异实测）。
 //   ⑤ 零静默：封禁动作必打 POST /revoke，且**必须落到注册表**——注册表回
 //      blocked 或（未落地时）出 error toast，二者必居其一，绝不 ok:true 静默
 //   ⑥ 解封打 POST /unblock；两条动作的 wire 互不污染
@@ -227,19 +233,26 @@ test.describe('plugins panel — dispatch permission vs block (real backend)', (
     expect(st.dispatchDisabled, '未封禁 ⇒ 派发开关可用').toBe(false);
   });
 
-  test('④ 无记录包首扫即受信：面板表现为「已启用」且派发开关可用（正面断言）', async ({ page }) => {
-    // fixture 插件在本实例上**没有 trust 记录**（原「never approved (default-deny)」
-    // 场景）——无审批批后它必须在面板上表现为「已启用」，且派发开关不再要求
-    // 「先审批内容」（那个前提已消失）。
+  test('④ 前端判据面：无 trust 记录的包 ⇒ 「已启用」+ 派发可用 + 旧审批开关零残留（引擎语义断言见 Scala PluginRegistrySpec）', async ({ page }) => {
+    // 本用例断言的是**前端契约**：无论引擎处于哪个世界（在位即信任 / 回退
+    // default-deny），只要载荷没有 blocked/contentChanged，面板就必须「已启用」+
+    // 派发可用 + 无「先审批内容」前提（前端按设计不消费 `trusted`——引擎侧的
+    // 语义正面断言在 `PluginRegistrySpec`，不在本 spec）。
+    // 区分度：药丸/派发面若被重新绑回审批面（`pluginStatus` 读 `trusted`/`trust`、
+    // `dispatchState` 缺省 false）⇒ 本实例上该包（未合入引擎轨时载荷带旧
+    // default-deny 判词 `trust.status='untrusted'`、无 `trusted` 布尔字段）即转红
+    // （返工轮变异实测：变异实例上本用例红、pristine 绿）。下面把实例载荷的信任面
+    // 读数写进断言消息，便于判读本用例当前落在哪个世界。
     await unblockQuietly(PLUGIN);
     const { body } = await rest('GET', '/api/plugins');
     const man = (body.plugins || []).find((p) => p.name === PLUGIN);
     expect(!!man, 'fixture 插件已被扫描装载（8 步内出现在注册表）').toBe(true);
+    const needWorld = `实例载荷 trust.status=${String(man?.trust?.status)} / trusted=${String(man?.trusted)}`;
 
     await loadPluginsPage(page);
     const st = await cardState(page, PLUGIN);
     const pillOn = await locale(page, 'plugins.stateOn');
-    expect(st.pill, '无记录包在面板上表现为已启用').toBe(pillOn);
+    expect(st.pill, `无 trust 记录的包在面板上表现为已启用（${needWorld}；前端不消费该字段）`).toBe(pillOn);
     expect(st.pillClass, 'pill 带 on class').toContain('on');
     expect(st.cardClass, '卡片无 blocked/changed 痕').not.toContain('blocked');
     await waitDispatchLive(page, PLUGIN);

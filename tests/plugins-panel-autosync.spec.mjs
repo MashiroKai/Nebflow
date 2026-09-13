@@ -18,8 +18,13 @@
 //      开关同帧锁死；解封 ⇒ POST /unblock ⇒ 回「已启用」+ 派发开关解锁
 //   ⑥ 零静默（F1）：后端 ok:true 但注册表**未**反映封禁态 ⇒ 必须出 error toast，
 //      绝不静默无效（禁 `ok:true` + 零效果）
-//   ⑦ 正面断言：无记录包（C6 trusted/blocked=false/contentChanged=false）在面板上
-//      表现为「已启用」且派发开关可用（在位即信任的可见结果）
+//   ⑦ 前端判据面（🔴 **不是**引擎语义的正面断言）：载荷缺 blocked/contentChanged
+//      ⇒ 卡片「已启用」+ 派发开关可用 + 内容审批开关零残留。夹具**故意**取旧
+//      default-deny 形态（`trusted:false` + `reason:'never approved (default-deny)'`）
+//      ⇒ 可对「药丸被重新绑回审批面」这一前端回归转红；对「引擎是否在位即信任」
+//      **无区分度**（前端按设计不消费 `trusted`）。引擎侧「无记录包首扫即受信」的
+//      正面断言在 Scala 侧 `PluginRegistrySpec`（「在位即信任（正面断言）」+
+//      「无记录包进目录」两例），不在本 spec。
 //
 // Self-contained: static server on 127.0.0.1:8181; WS/API mocked in-page;
 // server closed at end.
@@ -69,10 +74,12 @@ const MOCK_MODEL = { preferred: 'gpt/test-model', current: 'gpt/test-model', pre
 
 /** C6 (2026-09-13 无审批批): the payload no longer carries a gate verdict the
  *  UI consults — `trusted` stays for compatibility, the card binds to
- *  `blocked` / `contentChanged`. The legacy `trust` block is deliberately kept
- *  in the fixture (and deliberately NOT read) so a regression that re-binds
- *  the pill to trust shows up here. */
-const LEGACY_TRUST = { status: 'untrusted', reason: 'legacy gate record — no longer decides loading' };
+ *  `blocked` / `contentChanged`. 🔴 fixture 缺省 = **新引擎世界**（`trusted:true`、
+ *  无 `trust` 块）；**旧 default-deny 形态**（`trusted:false` + 下面这个 trust 块
+ *  = 改造前引擎对无记录包的载荷，即复核判词 M1 的变异输入）**只在 ⑦ 显式注入**
+ *  ——那里它是「药丸不得再绑审批面」这一断言的**区分度**来源（夹具不带
+ *  `trusted:false` 时该用例双向恒绿，正是判词 R1 判红的原因）。 */
+const LEGACY_TRUST = { status: 'untrusted', reason: 'never approved (default-deny)' };
 
 /** Mutable registry — tests mutate it to simulate backend-side plugin
  *  appearances (live-sync path). Reset per test in beforeEach. */
@@ -91,10 +98,11 @@ function manifest(name, over = {}) {
     author: 'autosync-spec',
     digest: 'a'.repeat(72),
     fileCount: 1,
+    // 缺省 = 新引擎世界（在位即信任：包受信、无 trust 记录块）。
+    // 旧 default-deny 形态（`trusted:false` + `trust` 块）只在 ⑦ 显式注入。
     trusted: true,
     blocked: false,
     contentChanged: false,
-    trust: { ...LEGACY_TRUST },
     skills: [{ id: `${name}/s`, description: 'Skill', preview: 'body' }],
     mcpServers: [],
     toolsExtension: [],
@@ -355,7 +363,7 @@ test('③b dispatch rollback: failed POST reverts the optimistic flip + error to
     { timeout: 8000 });
 });
 
-// ══ ⑤ 封禁/解封（C7 次级动作）＋ ⑥ 零静默 ＋ ⑦ 无记录包正面断言 ═══════════
+// ══ ⑤ 封禁/解封（C7 次级动作）＋ ⑥ 零静默 ＋ ⑦ 前端判据面（缺 blocked/contentChanged）══
 
 /** 卡片形态读数（⑤/⑥/⑦ 共用）。 */
 async function cardState(page, name) {
@@ -438,14 +446,30 @@ test('⑥ 零静默：后端 ok:true 但注册表未反映封禁 ⇒ 必须出 e
   expect(dump.btnDisabled, '在途闩已释放（可重试）').toBe(false);
 });
 
-test('⑦ 无记录包：面板表现为「已启用」且派发开关可用（在位即信任的可见结果）', async ({ page }) => {
-  // 无记录包 = 载荷里没有 trust 记录、blocked/contentChanged 均为 false。
+test('⑦ 前端判据面：载荷缺 blocked/contentChanged（旧 default-deny 形态）⇒ 已启用 + 派发可用 + 内容开关零残留', async ({ page }) => {
+  // 🔴 本用例**不**宣称引擎语义（「无记录包首扫即受信」的正面断言在 Scala 侧
+  // `PluginRegistrySpec`，见文件头）。它断言前端自己的契约面：夹具取「无记录包 +
+  // 引擎**未**在位即信任」这一**最不利**世界 —— 旧 default-deny 形态
+  // （`trusted:false` + `reason:'never approved (default-deny)'`，即复核判词 M1 的
+  // 变异输入）。前端只读 blocked/contentChanged ⇒ 该世界下仍必须是「已启用」+
+  // 派发可用 + 旧审批开关零残留。
+  // 区分度（返工轮实测）：把 `pluginStatus` 的药丸重新绑回 `trusted`（复核判词 M2
+  // 变异）⇒ 本用例**转红**；旧夹具（缺省 `trusted:true`）在 M1/M2 双向恒绿。
   // （e2e-hello 保留在注册表里是 loadShell 的锚点插件。）
-  registry.plugins = [manifest('e2e-hello'), manifest('no-record-pkg', { trust: undefined }), manifest('m-mid')];
+  registry.plugins = [
+    manifest('e2e-hello'),
+    manifest('no-record-pkg', { trusted: false, trust: { ...LEGACY_TRUST } }),
+    manifest('m-mid'),
+  ];
+  // 夹具自检：注入的确实是旧 default-deny 载荷（否则本用例退化为恒绿）。
+  const injected = registry.plugins.find(p => p.name === 'no-record-pkg');
+  expect(injected.trusted, '夹具携带旧 default-deny 判词 trusted=false').toBe(false);
+  expect(injected.trust?.reason, '夹具携带旧 default-deny 原因串').toContain('default-deny');
+
   await loadShell(page);
   await page.waitForSelector('.plugins-card[data-plugin="no-record-pkg"]', { timeout: 10000 });
   const st = await cardState(page, 'no-record-pkg');
-  expect(st.pill, '无记录包在面板上表现为已启用').toBe('已启用');
+  expect(st.pill, '载荷 trusted=false（旧 default-deny 世界）下仍表现为已启用').toBe('已启用');
   expect(st.pillClass, 'pill on class').toContain('on');
   expect(st.dispatchDisabled, '派发开关可用（不再要求先审批内容）').toBe(false);
   expect(st.noteText, '无「先审批内容」注记（该前提已消失）').toBe(null);
