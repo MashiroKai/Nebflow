@@ -336,7 +336,14 @@ object MemoryTrack:
           projectRoot = Some(workRoot),
           rootSessionId = root
         ),
-        s"memory-consolidator-$sessionId"
+        // actor 名 == sessionId（**契约，非风格**）：快照面的行键是 sessionId
+        // （`WebSocketRoutes.activeAgentEntryJson` 注释「Contract: agentId == sessionId」），
+        // 而活帧的 agentId = `ctx.self.path.name`（`protocol.scala:803`）——两者不一致
+        // 即同一会话落两个键，`agentDone` 清不掉快照行（幽灵行，同 Mail 路径旧缺陷）。
+        // `NodeRunner.spawnAgentActor:99` 对全部子代理 spawn 路径即此规则；本轨绕过它
+        // 直接 spawn，故在此显式对齐（2026-09-13 面板可见性取证 C-2 判红；
+        // `MemoryTrackActorIdContractSpec` 现场读数钉死）。
+        sessionId
       )
       // 桥 actor：收 AgentEvent → 完成 Deferred → 自停。必须 watch(agentRef)：直接
       // 对 agent 发 Stop（超时清理）时 Terminated 在此完成 deferred(Left)，否则
