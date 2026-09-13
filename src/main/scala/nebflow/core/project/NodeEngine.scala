@@ -499,31 +499,39 @@ class NodeEngine(
     * 完成/取消不被本路径覆盖成 failed）。审计事件独立（dead-session-reaped），
     * 与既有 reaped/abandoned 区分。 */
   private def autoFailDeadRunning(nodeId: String, err: String): IO[Unit] =
-    for
-      now <- IO(System.currentTimeMillis())
-      s <- store.mutate { st =>
-        st.nodes.get(nodeId) match
-          case Some(fresh) if fresh.status == NodeLifecycle.Running =>
-            st.copy(nodes = st.nodes.updated(nodeId, withoutReportPending(fresh.copy(
-              status = NodeLifecycle.Failed,
-              result = Some(err),
-              completedAt = Some(now),
-              // 2026-09-07 作者裁定：failed/cancelled 无 TTL 强制清（同 blocked 既
-              // 有语义）——死亡现场保留主图待上层裁决取消/重跑，不静默消失。
-              ttlExpireAt = None))))
-          case _ => st // 已终态/消失/状态已变 → 拒写（R2 竞态纪律）
-      }
-      _ <- s.nodes.get(nodeId) match
-        case Some(failed) if failed.status == NodeLifecycle.Failed =>
-          emitWithChain("nodeUpdated", nodeId, NodePayload.buildNodeJson(failed, now)) *>
-            logger.warn(s"Node '${failed.name}' auto-finalized failed (dead session): ${err.take(200)}") *>
-            FlowMapEventLog.append(workspace, projectName, nodeId, "dead-session-reaped",
-              s"dead-session node auto-converged to failed: ${err.take(220)}") *>
-            deliverFailed(failed, err) *>
-            // R3：与 failNode 同款的终态写点即时 barrier 告警（failed 侧仅此新增）。
-            checkBarriersNow(failed.id, cause = "failed")
-        case _ => IO.unit
-    yield ()
+    // draining 守卫（中断恢复语义批 2026-09-13，spec §2.3-3，与 failNode 头部同款）：
+    // 优雅关机窗口内 watchdog 若把「内存态已蒸发」误读成死会话，会把节点的中断现场
+    // 收敛成 failed 终态 + 失败通知（方案 B 的噪音链复发形态）。置位时拒绝。
+    if ShutdownState.draining then
+      FlowMapEventLog.append(workspace, projectName, nodeId, NodeEngine.InterruptedEventType,
+        s"dead-session failed write suppressed while draining (graceful shutdown): ${err.take(200)}") *>
+        logger.warn(s"Node $nodeId dead-session convergence suppressed while draining (graceful shutdown): ${err.take(200)}")
+    else
+      for
+        now <- IO(System.currentTimeMillis())
+        s <- store.mutate { st =>
+          st.nodes.get(nodeId) match
+            case Some(fresh) if fresh.status == NodeLifecycle.Running =>
+              st.copy(nodes = st.nodes.updated(nodeId, withoutReportPending(fresh.copy(
+                status = NodeLifecycle.Failed,
+                result = Some(err),
+                completedAt = Some(now),
+                // 2026-09-07 作者裁定：failed/cancelled 无 TTL 强制清（同 blocked 既
+                // 有语义）——死亡现场保留主图待上层裁决取消/重跑，不静默消失。
+                ttlExpireAt = None))))
+            case _ => st // 已终态/消失/状态已变 → 拒写（R2 竞态纪律）
+        }
+        _ <- s.nodes.get(nodeId) match
+          case Some(failed) if failed.status == NodeLifecycle.Failed =>
+            emitWithChain("nodeUpdated", nodeId, NodePayload.buildNodeJson(failed, now)) *>
+              logger.warn(s"Node '${failed.name}' auto-finalized failed (dead session): ${err.take(200)}") *>
+              FlowMapEventLog.append(workspace, projectName, nodeId, "dead-session-reaped",
+                s"dead-session node auto-converged to failed: ${err.take(220)}") *>
+              deliverFailed(failed, err) *>
+              // R3：与 failNode 同款的终态写点即时 barrier 告警（failed 侧仅此新增）。
+              checkBarriersNow(failed.id, cause = "failed")
+          case _ => IO.unit
+      yield ()
 
   /** 死会话 running 周期对账（僵尸收敛批 2026-09-06；ProjectActor.TtlTick 30s 驱动
     * ——复用既有心跳点零新调度器，与 settleRunnableSweep 同族）。对每个 status=Running
@@ -863,7 +871,9 @@ class NodeEngine(
 
   // ── boot-time 崩溃恢复（crash-recovery 批 2026-09-07，设计 §3.2 快段/慢段）──
   //
-  // 快段（同步秒级）：对崩溃残留 status=Running 节点按持久层完整性三分类（§3.3）：
+  // 快段（同步秒级）：对崩溃残留 status=Running（kill -9 / 无钩子机会）**或**
+  // status=Interrupted（优雅关机钩子翻态，中断恢复语义批 2026-09-13 spec §2.4）
+  // 节点按持久层完整性三分类（§3.3）：
   //   (a) checkpoint 完整 / (b) mid-turn —— 磁盘不可区分，统一同路径：认领 = 翻回
   //       Pending + 清 bgWait + boot-recovery 事件 + 入 bootRecoveryQueue，续跑交慢段；
   //   (c) sessionRef 无值 / transcript 缺失/损坏/空 —— failNode("crash recovery:
@@ -881,29 +891,45 @@ class NodeEngine(
     *   startNode(ctx) 续跑；
     * - Some(Left(reason))：(c) 类已 failNode（reason 含 transcript 指针），下游走
     *   deliverFailed 既有链；
-    * - None：非候选（非 Running）或认领事务败给并发状态变更（fresh 守卫拒写）。
+    * - None：非候选（非 Running|Interrupted）或认领事务败给并发状态变更（fresh 守卫拒写）。
     * 节点级异常不在此吞——调用方（sweep）逐节点 handleErrorWith，残余 Running 由
     * watchdog 兜底（R4）。 */
   def bootRecoveryClaim(n: NodeDef): IO[Option[Either[String, NodeEngine.ResumeContext]]] =
-    if n.status != NodeLifecycle.Running then IO.pure(None)
+    // 资格判据扩展（中断恢复语义批 2026-09-13，spec §2.4 #2）：Running ∪ Interrupted
+    // ——优雅关机现场（interrupted）与崩溃现场（Running，kill -9 / 无钩子机会）同一
+    // 认领链（R8 复用纪律：零新机制）。非二者 ⇒ 非候选。
+    if n.status != NodeLifecycle.Running && n.status != NodeLifecycle.Interrupted then IO.pure(None)
     else
       def failClaim(reason: String): IO[Option[Either[String, NodeEngine.ResumeContext]]] =
-        // (c) 类：仍 Running 才处置（fresh 守卫——与并发终态化互斥）；failNode 自带
-        // deliverFailed + WS；boot-recovery 事件留痕（禁止静默自愈）。
+        // (c) 类：仍 ∈ {Running, Interrupted} 才处置（fresh 守卫——与并发终态化互斥）；
+        // failNode 自带 deliverFailed + WS；boot-recovery 事件留痕（禁止静默自愈）。
+        // draining 诚实性（中断恢复语义批）：failNode 可能被守卫拒写（关机窗口）——此时
+        // **不得**假装已失败（会让「boot-recovery failed」事件与真实状态说谎），故写后
+        // 复核：真落 failed 才记事件并报 Left，否则返回 None（留痕已由守卫自身给出）。
         store.getNode(n.id).flatMap {
-          case Some(fresh) if fresh.status == NodeLifecycle.Running =>
+          case Some(fresh) if fresh.status == NodeLifecycle.Running || fresh.status == NodeLifecycle.Interrupted =>
             failNode(n.id, reason) *>
-              FlowMapEventLog.append(workspace, projectName, n.id, NodeEngine.BootRecoveryEventType,
-                s"failed (class c): $reason") *>
-              logger.warn(s"[boot-recovery] node '${n.name}' (${n.id}) failed: $reason").as(Some(Left(reason)))
+              store.getNode(n.id).flatMap {
+                case Some(now) if now.status == NodeLifecycle.Failed =>
+                  FlowMapEventLog.append(workspace, projectName, n.id, NodeEngine.BootRecoveryEventType,
+                    s"failed (class c): $reason") *>
+                    logger.warn(s"[boot-recovery] node '${n.name}' (${n.id}) failed: $reason").as(Some(Left(reason)))
+                case _ =>
+                  logger.warn(
+                    s"[boot-recovery] node '${n.name}' (${n.id}) failure write was refused (host draining) — claim left undone")
+                    .as(None)
+              }
           case _ => IO.pure(None)
         }
       def resumeClaim(ctx: NodeEngine.ResumeContext, claimNote: String): IO[Option[Either[String, NodeEngine.ResumeContext]]] =
-        // (a)/(b) 类认领：Running → Pending 单事务翻转（CAS：并发终态化/已处置 → 拒写
-        // 返回 None）+ 清 bgWait（等待集随进程蒸发 G4，resume prompt 已附死亡告知）。
+        // (a)/(b) 类认领：Running|Interrupted → Pending 单事务翻转（CAS：并发终态化/
+        // 已处置 → 拒写返回 None）+ 清 bgWait（等待集随进程蒸发 G4，resume prompt
+        // 已附死亡告知）。interrupted 的其余字段原样：sessionRef（恢复依据）、
+        // deliveredTo（in-barrier 已收投递，既有 claim 行为一致）保留——续跑用的
+        // 就是中断前的会话与断点。
         store.mutateWithResult { s =>
           s.nodes.get(n.id) match
-            case Some(f) if f.status == NodeLifecycle.Running =>
+            case Some(f) if f.status == NodeLifecycle.Running || f.status == NodeLifecycle.Interrupted =>
               (s.copy(nodes = s.nodes.updated(n.id, f.copy(
                 status = NodeLifecycle.Pending,
                 bgWait = None,
@@ -1435,6 +1461,15 @@ class NodeEngine(
           IO.pure(Left(s"Node '${n.name}' is terminal (status=${n.status}) — messages are refused: " +
             "a finished node is never retro-edited; create a new node instead (NODE_TERMINAL_NO_MESSAGE)"))
         case Some(n) if n.status == NodeLifecycle.Running =>
+          injectRunning(n, text, attribution)
+        // interrupted（中断恢复语义批 2026-09-13 spec §2.2 不变量第 4 条）：
+        // 节点非终态但「休眠」——**不得按终态拒收**（spec 原口径「现状即兼容」经实读
+        // 核验**不成立**：旧路由落到 appendToTaskRoute 的终态分支，会把 interrupted
+        // 误报成 terminal 并丢消息）。改走注入面：活会话（钩子窗口）→ ImmediateInput；
+        // 会话已死/未登记（重启后未认领 / crashRecovery=false 降级）→ injectRunning
+        // 的既有兜底 appendUndelivered（记录在 task 上「注入未达」，续跑/重跑经
+        // NodeList(detail) 可读）——与 spec §2.2 期望语义一致且零丢失。
+        case Some(n) if n.status == NodeLifecycle.Interrupted =>
           injectRunning(n, text, attribution)
         case Some(n) =>
           appendToTaskRoute(n, text, retried = false, attribution)
@@ -3608,33 +3643,49 @@ class NodeEngine(
     yield ()
 
   private def failNode(nodeId: String, err: String): IO[Unit] =
-    for
-      now <- IO(System.currentTimeMillis())
-      s <- store.mutate { st =>
-        st.nodes.get(nodeId) match
-          case Some(fresh) =>
-            st.copy(nodes = st.nodes.updated(nodeId, withoutReportPending(fresh.copy(
-              status = NodeLifecycle.Failed,
-              result = Some(err),
-              completedAt = Some(now),
-              // 2026-09-07 作者裁定：failed 无 TTL 强制清——死亡现场保留待上层裁决。
-              ttlExpireAt = None))))
-          case None => st
-      }
-      _ <- s.nodes.get(nodeId) match
-        case Some(failed) =>
-          emitWithChain("nodeUpdated", nodeId, NodePayload.buildNodeJson(failed, now)) *>
-            logger.warn(s"Node '${failed.name}' failed: ${err.take(200)}") *>
-            // 失败投递（§2.7 + D5 零结算）：out=Nebula → failed 消息；out=节点 →
-            // 下游停等零结算（merge 例外转 blocked），停等等待者经尾部通知告知分发器。
-            deliverFailed(failed, err) *>
-            // R3（取消静默死锁修复批）：failed 侧**唯一**新增行为 = 终态写点同步的
-            // barrier 即时告警（作者硬约束：failed 一栏只多 R3 的 barrier 检查，无摘除/
-            // 无结算改动——deliverFailed 的 D5 零结算语义逐字不变）。
-            checkBarriersNow(failed.id, cause = "failed")
-        case None =>
-          logger.warn(s"Node '$nodeId' vanished before failure finalize — error not persisted")
-    yield ()
+    // ── draining 守卫（中断恢复语义批 2026-09-13，spec §2.3-3）────────────────
+    // 优雅关机窗口内，abort 钩子（GracefulInterruptHook 第 3 腿 / ShutdownAbort）
+    // 会让每个在飞 agent turn 以「真实失败」形态回落本函数——那是「进程要死了」，
+    // 不是「节点干砸了」。置位时**拒绝写 failed**（节点已被钩子翻成 interrupted，
+    // 或停留 Running 交 boot sweep）+ **拒绝 deliverFailed**（零失败通知、零 D5
+    // 结算、零分发器噪音），WARN + 事件留痕后返回。
+    // 顺序保证：钩子先置 draining 再 abort ⇒ 不存在「失败链先落 failed」的窗口；
+    // 竞态面：draining 置位前已自然失败并落 failed 的节点 → 钩子的 CAS fresh 守卫
+    // 自动跳过（合法 failed 保留 D5 语义与通知，未及发出的通知由重启后
+    // DispatchNotify.redeliver 补投）。回滚开关 false ⇒ draining 永不置位 ⇒ 本守卫
+    // 结构性失效（现行为逐字节）。
+    if ShutdownState.draining then
+      FlowMapEventLog.append(workspace, projectName, nodeId, NodeEngine.InterruptedEventType,
+        s"failed write suppressed while draining (graceful shutdown; the node is interrupted/awaits boot recovery): ${err.take(200)}") *>
+        logger.warn(s"Node $nodeId failure suppressed while draining (graceful shutdown): ${err.take(200)}")
+    else
+      for
+        now <- IO(System.currentTimeMillis())
+        s <- store.mutate { st =>
+          st.nodes.get(nodeId) match
+            case Some(fresh) =>
+              st.copy(nodes = st.nodes.updated(nodeId, withoutReportPending(fresh.copy(
+                status = NodeLifecycle.Failed,
+                result = Some(err),
+                completedAt = Some(now),
+                // 2026-09-07 作者裁定：failed 无 TTL 强制清——死亡现场保留待上层裁决。
+                ttlExpireAt = None))))
+            case None => st
+        }
+        _ <- s.nodes.get(nodeId) match
+          case Some(failed) =>
+            emitWithChain("nodeUpdated", nodeId, NodePayload.buildNodeJson(failed, now)) *>
+              logger.warn(s"Node '${failed.name}' failed: ${err.take(200)}") *>
+              // 失败投递（§2.7 + D5 零结算）：out=Nebula → failed 消息；out=节点 →
+              // 下游停等零结算（merge 例外转 blocked），停等等待者经尾部通知告知分发器。
+              deliverFailed(failed, err) *>
+              // R3（取消静默死锁修复批）：failed 侧**唯一**新增行为 = 终态写点同步的
+              // barrier 即时告警（作者硬约束：failed 一栏只多 R3 的 barrier 检查，无摘除/
+              // 无结算改动——deliverFailed 的 D5 零结算语义逐字不变）。
+              checkBarriersNow(failed.id, cause = "failed")
+          case None =>
+            logger.warn(s"Node '$nodeId' vanished before failure finalize — error not persisted")
+      yield ()
 
   /** cancelled 终态化（**取消静默死锁修复批 2026-09-10 重写**——此前只写 status/
     * completedAt/ttlExpireAt，四条出口全截断：无 result / 无事件 / 不结算 / 不通知）：
@@ -4794,6 +4845,11 @@ object NodeEngine:
   /** 恢复认领事件类型（FlowMapEventLog append-only JSONL，「禁止静默自愈」纪律——
     * 每个认领/处置动作一条，summary 含三分类与 transcript 指针）。 */
   val BootRecoveryEventType: String = "boot-recovery"
+
+  /** 优雅关机翻态事件类型（中断恢复语义批 2026-09-13，spec §2.3-2）：钩子把
+    * Running 节点翻成 interrupted 时的唯一审计留痕点（与 draining 守卫的 WARN 留痕
+    * 区分：本类型 = 翻态事实，守卫留痕 = 被拒的 failed 写）。 */
+  val InterruptedEventType: String = "interrupted"
 
   /** 崩溃恢复续跑上下文（D3）：spawnAndRun/runWithAgent/spawnAndRunLoop 全链的
     * resume 增量——Some 时跳过 buildInput、复用旧会话 id（D2：transcript 单文件

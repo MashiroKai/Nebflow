@@ -190,11 +190,15 @@ object Main extends IOApp:
           IO.pure(ExitCode.Error)
       case Right(ctx) =>
         nebflow.core.hotrestart.SuccessorContext.set(ctx)
-        // Hooks mirror bootGateway (pid cleanup + in-flight LLM abort on
+        // Hooks mirror bootGateway (pid cleanup + graceful-interrupt on
         // SIGINT/SIGTERM) — minus the eager pid write (see doc above).
         Runtime.getRuntime.addShutdownHook(new Thread(() => ProcessManager.removePid()))
+        // Single graceful-interrupt hook (中断恢复语义批 2026-09-13, spec
+        // 20260908_interrupt-recovery-semantics §2.3-2): draining flag →
+        // Running → interrupted CAS per node → in-flight LLM abort (the
+        // 2026-08-19 P0 token-burn defence, order preserved last).
         Runtime.getRuntime.addShutdownHook(
-          new Thread(() => nebflow.llm.LlmInterface.cancelAllInflightSync())
+          new Thread(() => nebflow.core.project.GracefulInterruptHook.run())
         )
         // GatewayMain.run(Nil): Nil is load-bearing (arg gate) — the successor
         // context travels via the static holder, not argv.
@@ -222,8 +226,18 @@ object Main extends IOApp:
     // the JVM drained — a token-burn path (2亿 token 事故潜在路径). Abort
     // every active FS2/sttp stream on shutdown so no request continues past
     // the hook. Idempotent + exception-safe (runs on IORuntime.global).
+    //
+    // 2026-09-13 (中断恢复语义批, spec 20260908_interrupt-recovery-semantics
+    // §2.3-2 单钩子): the two cancelAllInflightSync registrations are merged
+    // into ONE GracefulInterruptHook, strictly ordered inside its thread —
+    // draining.set(true) → CAS every Running node Running → interrupted
+    // (WS + audit trail) → cancelAllInflightSync(). The abort leg is unchanged
+    // and stays LAST (order is correctness: the draining flag must be visible
+    // before the abort-induced failure chain can reach failNode). Rollback
+    // switch Defaults.ShutdownInterruptEnabled=false restores the pre-batch
+    // behaviour byte-for-byte (abort only).
     Runtime.getRuntime.addShutdownHook(
-      new Thread(() => nebflow.llm.LlmInterface.cancelAllInflightSync())
+      new Thread(() => nebflow.core.project.GracefulInterruptHook.run())
     )
     // GatewayMain.run(Nil): boot the real gateway. Nil is load-bearing — the
     // P0 2026-09-06 arg gate in GatewayMain.run rejects ANY argument, and Main

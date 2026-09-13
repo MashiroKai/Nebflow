@@ -502,6 +502,37 @@ object Defaults:
   def BootDispatcherWakeEnabled: Boolean =
     sys.props.getOrElse("nebflow.boot.dispatcherWake", "true").toBoolean
 
+  // ---- 优雅关机 interrupted 非终态（中断恢复语义批 2026-09-13，spec
+  //      `20260908_interrupt-recovery-semantics.md` §2.3/§2.7，作者裁定方案 A）----
+
+  /**
+   * 优雅关机中断回滚总开关（spec §2.7）：默认 true——SIGINT/SIGTERM 单钩子
+   * （`GracefulInterruptHook`）按序执行「置 draining → 全部 Running 逐节点 CAS 翻
+   * interrupted → abort 在飞 LLM」，`failNode`/`autoFailDeadRunning` 的 draining
+   * 守卫拦掉 abort 诱发的失败链，boot sweep 资格集含 Interrupted 自动续跑。
+   *
+   * false = **完全回本批前现状（逐字节）**：无钩子翻态（只有原样 abort 在飞 LLM、
+   * token 燃烧防线不弱化）、无守卫（draining 永不置位）、资格集不含 Interrupted。
+   * system prop `nebflow.shutdownInterrupt.enabled`（每次调用现读——
+   * [[CrashRecoveryEnabled]] 同款，测试可即时翻转）。
+   */
+  def ShutdownInterruptEnabled: Boolean =
+    sys.props.getOrElse("nebflow.shutdownInterrupt.enabled", "true").toBoolean
+
+  /**
+   * `GracefulInterruptHook` 翻态整体超时上限（毫秒）——**全仓唯一取值点**（除本处
+   * 零散落；测试一律经 `GracefulInterruptHook.run(timeoutMs)` /
+   * `interruptRunningNodes(timeoutMs)` 的可注入参数，不经本常量）。
+   *
+   * **已定值（作者 2026-09-13 AskUser 卡逐字裁定）= 5 秒**（卡片口径：「重启最快；
+   * 来不及收尾的节点直接被标『已中断』」；经分发器 NodeMessage 2026-09-13 09:35 注入
+   * 落地）。spec §5 未决① 原「建议 10s」**自此作废**（作者口径覆盖）——改值只改本行。
+   *
+   * 语义 = 翻态预算：超时 ⇒ 放弃剩余翻转（残余 Running 走 kill -9 同款 boot sweep
+   * 路径，行为安全降级——见 `GracefulInterruptHook.Report.timedOut`）。
+   */
+  val ShutdownInterruptTimeoutMs: Long = 5_000L
+
   // ---- 引擎活挂硬恢复（hard-recovery 批 2026-09-07，设计 §2/§8/§9）----
 
   /**

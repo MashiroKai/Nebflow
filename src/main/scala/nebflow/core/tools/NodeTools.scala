@@ -759,6 +759,9 @@ object NodeEditTool extends Tool:
     * cap 耗尽 RetryCap 升级/邻居与环两校验）+ NODE_MERGE_PASS_ONLY 硬拒与
     * 无 on-failed 边 WARNING 两条新校验条款 → ~5,3xx 字符（预算断言随之
     * 4700→5400，同窗合并使前缀缓存一次性失效——spec §4.2 cache 纪律）。
+    * 中断恢复语义批 R1/R2（20260908_interrupt-recovery-semantics §2.4 批 R2，
+    * 2026-09-13）：interrupted 重激活条款（语义明示 = fresh 重跑非续跑，近 200 字符）
+    * → 5,633 字符（预算断言随之 5450→5700）。
     * 该描述随 tools 数组进分发器每次请求。长度上限由 NodeSchemaSlimSpec 断言钉住）。 */
   val description =
     """Create/edit a Flow Map node — the dispatcher's single topology tool (the store owns flow-map.json).
@@ -787,7 +790,7 @@ object NodeEditTool extends Tool:
 - merge=true (create-only): batch landing sink — fires when ALL upstreams completed; upstream failure ⇒ blocked (upstream-incomplete). REQUIRES in ≥1 (NODE_MERGE_REQUIRES_UPSTREAM).
 - Edit: in appends; deps replaces; out rewrites the edge set; description(s) replace. Removing a consumed target (running/terminal) rejected — NodeCancel first; any other terminal rewire ⇒ the retained result auto-delivers to the new targets.
 - Blocked node edit (task/description/in/out/deps/loop changed) reactivates: status → wiring/pending, deliveredTo cleared, blockCount kept, completed upstreams re-delivered.
-- Failed node edit: actual change reactivates like blocked (first-choice recovery; blockCount→0). COMPLETED nodes re-run only with reactivateCompleted=true; cancelled not reactivatable (create successor).
+- Failed node edit: actual change reactivates like blocked (first-choice recovery; blockCount→0). INTERRUPTED node edit (host SIGINT/SIGTERM left it non-terminal): actual change reactivates as a FRESH RERUN (task re-read from the top — NOT a checkpoint resume; boot recovery owns resume). COMPLETED nodes re-run only with reactivateCompleted=true; cancelled not reactivatable (create successor).
 - Validation (0 spawn except worktree): description rules; referenced nodes exist; DAG cycle check; running target ⇒ input frozen. Result = the agent's final output, auto-saved and delivered along out. Full result: NodeList(detail=<nodeId>)."""
   val inputSchema = JsonObject.fromIterable(
     List(
@@ -1611,7 +1614,7 @@ object NodeEditTool extends Tool:
     else if reactivateCompleted && node.status != NodeLifecycle.Completed then
       IO.pure(Left(ToolError(
         s"'reactivateCompleted' is the explicit authorization to re-run a COMPLETED node — node '${node.name}' is ${node.status}, " +
-          "so the flag is not applicable. blocked/failed nodes reactivate on any actual edit (no flag needed); " +
+          "so the flag is not applicable. blocked/failed/interrupted nodes reactivate on any actual edit (no flag needed); " +
           "wiring/pending/running nodes have never run to completion. (NODE_COMPLETED_REACTIVATION)")))
     else if abandon then abandonNode(rt, node)
     // worktree 创建期绑定闸（2026-09-05 显式布尔改造）：worktree 是 create-time
@@ -1886,9 +1889,17 @@ object NodeEditTool extends Tool:
                           // 需要重跑时分发器显式传 `reactivateCompleted=true`。
                           // 执行腿（`reloopTo` 回边驱动）仍落二期 —— 其触发源经引擎侧同点进来
                           //（事件留痕 `source=loop`），判据本体已在此就位。
+                          //   · interrupted（中断恢复语义批 2026-09-13 spec §2.4 批 R2）：
+                          //     与 blocked/failed 同判据（实际改动才重激活）——语义 =
+                          //     **fresh 重跑，非续跑**（自动续跑走 boot sweep：同 session
+                          //     + transcript 断点；人工 reactivate 是「换任务书从头跑」的
+                          //     兜底入口，`crashRecovery=false` 降级时节点停留 interrupted
+                          //     的可见可处置出口）。
+                          //   · cancelled：**不放开**（create successor）。
                           val completedAuthorized = node.status == NodeLifecycle.Completed && reactivateCompleted
                           val reactivate =
-                            ((node.status == NodeLifecycle.Blocked || node.status == NodeLifecycle.Failed) && actualChange)
+                            ((node.status == NodeLifecycle.Blocked || node.status == NodeLifecycle.Failed
+                              || node.status == NodeLifecycle.Interrupted) && actualChange)
                               || completedAuthorized
                           val appliedTask = task.orElse(node.task)
                           val appliedDeps = if depsProvided then newDeps else node.deps
@@ -2078,8 +2089,14 @@ object NodeEditTool extends Tool:
                                         if reactivate then
                                           rt.store.mutate { s =>
                                             s.nodes.get(node.id) match
-                                              case Some(fresh) if fresh.status == NodeLifecycle.Blocked || fresh.status == NodeLifecycle.Failed || fresh.status == NodeLifecycle.Completed =>
+                                              case Some(fresh) if fresh.status == NodeLifecycle.Blocked || fresh.status == NodeLifecycle.Failed || fresh.status == NodeLifecycle.Completed || fresh.status == NodeLifecycle.Interrupted =>
                                                 val fromFailed = fresh.status == NodeLifecycle.Failed
+                                                // interrupted 面（批 R2）：与 failed 面**同清**
+                                                // notifySentAt——重激活 = 新一轮身份重跑，之后再
+                                                // 真失败必须能重新通知分发器（成功验收 §2.8-6）；
+                                                // blockCount/blockedFeedback 按 blocked 口径保留
+                                                // （中断不是语义阻塞轮次，也不是失败轮次）。
+                                                val fromInterrupted = fresh.status == NodeLifecycle.Interrupted
                                                 val nextStatus =
                                                   if appliedTask.exists(_.trim.nonEmpty) && fresh.in.isEmpty then NodeLifecycle.Pending
                                                   else NodeLifecycle.Wiring
@@ -2100,7 +2117,7 @@ object NodeEditTool extends Tool:
                                                   ttlExpireAt = None,
                                                   blockCount = if fromFailed then 0 else fresh.blockCount, // blocked 保留轮次 / failed 复位
                                                   blockedFeedback = if fromFailed then None else fresh.blockedFeedback,
-                                                  notifySentAt = if fromFailed then None else fresh.notifySentAt)))
+                                                  notifySentAt = if fromFailed || fromInterrupted then None else fresh.notifySentAt)))
                                               case _ => s
                                           }.map(s2 =>
                                             s2.nodes.get(node.id).exists(n => n.status == NodeLifecycle.Wiring || n.status == NodeLifecycle.Pending))
@@ -2122,6 +2139,8 @@ object NodeEditTool extends Tool:
                                              s"failed node edited (round history reset: blockCount→0, notifySentAt cleared) → rerun: ${appliedTask.map(t => s"task=${t.take(80)}").getOrElse("")}"
                                            else if preStatus == NodeLifecycle.Completed then
                                              s"completed node reactivated (NODE_COMPLETED_REACTIVATION) → rerun: ${appliedTask.map(t => s"task=${t.take(80)}").getOrElse("")}"
+                                           else if preStatus == NodeLifecycle.Interrupted then
+                                             s"interrupted node edited (host graceful-shutdown interrupt; fresh rerun — NOT a checkpoint resume, boot recovery owns that) → rerun: ${appliedTask.map(t => s"task=${t.take(80)}").getOrElse("")}"
                                            else
                                              s"blocked node edited (round ${node.blockCount} preserved) → ${appliedTask.map(t => s"task=${t.take(80)}").getOrElse("")}") +
                                             s" [preStatus=$preStatus source=human gen=${node.gen} blockCount=${node.blockCount} loopRound=${node.loopRound}" +
