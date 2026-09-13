@@ -3,10 +3,10 @@
 # [FROZEN 2026-09-06] Desktop packaging sealed (script-install-release v2, batch 5)
 # Zero code changes below this header - file kept byte-identical for the
 # certificate-era restore. See:
-#   - ~/.nebflow/memory/aliyun-icp.md  (ICP baseline - replaces the retired
-#     .nebflow/Spec/desktop-trust-and-icp-filing-plan.md)
-#   - ~/.nebflow/memory/script-install-release.md  (script-install ruling -
-#     replaces the retired .nebflow/Spec/script-install-release-v2.md section 2.7)
+#   - ~/.nebflow/memory/aliyun-icp.md  (ICP baseline; replaces the retired
+#     desktop-trust-and-icp-filing-plan.md Spec, untracked 2026-09-08)
+#   - ~/.nebflow/memory/script-install-release.md  (script-install ruling;
+#     replaces the retired script-install-release-v2.md Spec section 2.7)
 # CI package jobs (release.yml / auto-release.yml) are disabled via `if: false`.
 # Restore = certificates + CI notarytool/signtool integration, then unseal CI.
 # G3 audit note: AutoStartService only branches on `.app/Contents` (jpackage
