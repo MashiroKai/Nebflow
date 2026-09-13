@@ -3273,10 +3273,24 @@ class WebSocketRoutes(
                 save *> wsSend(io.circe.Json.obj("type" -> "memorySaved".asJson, "scope" -> scope.asJson))
               })
               .handleErrorWith { e =>
-                logger.warn(s"saveMemory error: ${e.getMessage}")
-                wsSend(
-                  io.circe.Json.obj("type" -> "error".asJson, "message" -> s"saveMemory failed: ${e.getMessage}".asJson)
-                )
+                // M4 落盘单点闸（MemoryWriteGate）：预算超硬顶 / 快照失败 = **结构化拒绝**，
+                // 与 infra 失败**可判**区分 —— code 同码进日志与错误帧。拒绝不是 no-op，
+                // 也不是静默跳过：前端拿到 error 帧（附 code），日志拿到同一码。
+                val (code, detail) = e match
+                  case r: nebflow.service.MemoryWriteGate.Rejected =>
+                    (r.code, r.detail)
+                  case other =>
+                    ("SAVEMEMORY_FAILED", Option(other.getMessage).getOrElse(other.getClass.getSimpleName))
+                // `logger.warn` 返回 IO —— 必须 *> 进链才会真的执行（旧写法把它当语句丢弃 ⇒
+                // 该 WARN 从不落日志：一处既有的静默出口，随本批一并接上）。
+                logger.warn(s"saveMemory error [$code]: $detail") *>
+                  wsSend(
+                    io.circe.Json.obj(
+                      "type" -> "error".asJson,
+                      "code" -> code.asJson,
+                      "message" -> s"saveMemory failed: $detail".asJson
+                    )
+                  )
               }
 
           case "memoryStatus" =>
