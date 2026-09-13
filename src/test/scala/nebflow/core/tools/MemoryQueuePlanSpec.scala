@@ -35,12 +35,13 @@ class MemoryQueuePlanSpec extends FunSuite:
     MemoryQueue.State(notes, outcomes, Set.empty, 0, 0)
 
   private def tf(path: String, content: String): MemoryQueue.TargetFile = MemoryQueue.TargetFile(path, content)
+  private def tfMissing(path: String): MemoryQueue.TargetFile           = MemoryQueue.TargetFile(path, "", exists = false)
 
   private val userFile = "/tmp/x/User.md"
 
   // ── 定位语义 + 分桶 ────────────────────────────────────────
 
-  test("分桶：locate 命中 ⇒ would-apply；locate miss / section miss / target missing ⇒ would-obsolete"):
+  test("分桶：locate 命中 ⇒ would-apply；locate miss / section miss / target missing ⇒ would-retry（可重试族，非终态）"):
     val content = "# User\n\n## 工作风格\n\n- 早睡早起\n- 喜欢简洁\n"
     val notes = Vector(
       note("q-1", 1L, "user", "update", None, Some("早睡早起"), Some("- 晚睡晚起")),
@@ -51,17 +52,46 @@ class MemoryQueuePlanSpec extends FunSuite:
     )
     val plan = MemoryQueue.plan(stateOf(notes), Map("user" -> tf(userFile, content)))
     assertEquals(plan.countOf(MemoryQueue.Bucket.WouldApply), 1, s"只有 q-1 可落: ${plan.items}")
-    assertEquals(plan.authorized, Vector("q-1", "q-2", "q-3", "q-4", "q-5"),
+    assertEquals(plan.authorized.sorted, Vector("q-1", "q-2", "q-3", "q-4", "q-5"),
       "可落条目 + 只回写裁决的条目都进授权集（后者零文件写）")
     assertEquals(plan.deferred, Vector.empty[String], "无预算截断")
     assert(plan.refusal.isEmpty, "有可落条目 ⇒ 闸不拒")
     val byRef = plan.items.map(i => i.ref -> (i.bucket, i.detail)).toMap
-    assertEquals(byRef("q-2")._1, MemoryQueue.Bucket.WouldObsolete)
+    assertEquals(byRef("q-2")._1, MemoryQueue.Bucket.WouldRetry, "定位不到条目 ⇒ 可重试族")
     assert(byRef("q-2")._2.contains("locate-miss"), s"${byRef("q-2")}")
+    assertEquals(byRef("q-3")._1, MemoryQueue.Bucket.WouldRetry, "目标节不存在 ⇒ 可重试族")
     assert(byRef("q-3")._2.contains("section not found"), s"${byRef("q-3")}")
+    assertEquals(byRef("q-4")._1, MemoryQueue.Bucket.WouldRetry, "目标文件不存在 ⇒ 可重试族")
     assert(byRef("q-4")._2.contains("target-missing"), s"${byRef("q-4")}")
+    assertEquals(byRef("q-5")._1, MemoryQueue.Bucket.WouldObsolete, "逐字已在文件里 ⇒ 终态族（deduped）")
     assert(byRef("q-5")._2.contains("already-present"), s"q-5 已存在同条目 ⇒ 不重复落: ${byRef("q-5")}")
+    // 可重试族不得打终态词：桶名 + detail 里都不许出现 obsolete
+    Vector("q-2", "q-3", "q-4").foreach { r =>
+      assert(!byRef(r)._2.toLowerCase.contains("obsolete"), s"$r 的可重试判词不得含终态词: ${byRef(r)}")
+    }
+    assertEquals(plan.retryable.sorted, Vector("q-2", "q-3", "q-4"), "可重试族清单（简报的响亮面）")
     assertEquals(plan.refusal, None, "有可落条目 ⇒ 闸不拒")
+
+  test("①（A′）：目标文件**不存在** ≠ **空文件** ⇒ would-retry、零新建（投影 0 B、不进落笔面）"):
+    // 同一个空内容：exists=true ⇒ append 走「空文件追加」（would-apply）；exists=false ⇒ 零新建
+    val notes = Vector(note("q-1", 1L, "project:neblink-server", "append", None, None, Some("- [DECISION] 新条")))
+    val ghost = "/tmp/x/neblink-server/.nebflow/memory.md"
+    val absent = MemoryQueue.plan(stateOf(notes), Map("project:neblink-server" -> tfMissing(ghost)))
+    assertEquals(absent.countOf(MemoryQueue.Bucket.WouldApply), 0, s"缺文件不得判可落（否则消费侧会新建）: ${absent.items}")
+    assertEquals(absent.countOf(MemoryQueue.Bucket.WouldRetry), 1)
+    assert(absent.items.head.detail.contains("does not exist"), s"${absent.items.head}")
+    val pj = absent.projections.find(_.target == "project:neblink-server").get
+    assertEquals(pj.beforeBytes, 0L)
+    assertEquals(pj.projectedBytes, 0L, "零新建：投影恒 0（不许出现 0→N 的新建行）")
+    assertEquals(pj.delta, 0L)
+    // 对照：真·空文件（存在但 0 字节）照旧可落
+    val empty = MemoryQueue.plan(stateOf(notes), Map("project:neblink-server" -> tf(ghost, "")))
+    assertEquals(empty.countOf(MemoryQueue.Bucket.WouldApply), 1, s"存在且为空 ⇒ 追加到空文件（旧行为，未回退）: ${empty.items}")
+    assertEquals(empty.projections.head.projectedBytes, "- [DECISION] 新条\n".getBytes(UTF_8).length.toLong)
+    // 缺文件是**通则**（不止项目层）
+    val userNotes = Vector(notes.head.copy(target = "user"))
+    val noUser    = MemoryQueue.plan(stateOf(userNotes), Map("user" -> tfMissing(userFile)))
+    assertEquals(noUser.countOf(MemoryQueue.Bucket.WouldRetry), 1, "任一层文件缺失一律同办")
 
   test("`## ` 前缀在 section/match 参数里可选（与 MemoryEditTool 归一化同规）"):
     val content = "# U\n\n## 工具环境\n\n- 主仓路径含空格不必转义\n"
@@ -86,6 +116,35 @@ class MemoryQueuePlanSpec extends FunSuite:
     assertEquals(plan.items.filter(_.detail.startsWith("superseded")).map(_.ref).sorted, Vector("q-1", "q-3"))
     assertEquals(plan.countOf(MemoryQueue.Bucket.WouldApply), 1,
       s"只有 q-2 可落（q-1 同线 superseded、q-3 被后续 remove 命中 superseded、q-4 静态定位不到 ⇒ 均 would-obsolete）: ${plan.items}")
+
+  test("②（真时序）：同一行上**时间更晚的 remove** 胜过**时间更早的 update**（相位序会判反）"):
+    // 生产实测 8 条分歧的 4 条同形（最大早 16.3 h）。相位序 = remove(0) 先、update(1) 后
+    // ⇒ 改动前 `dropRight(1)` 留下 update ⇒ 更晚的 remove 被更早的 update 吃掉。
+    val content = "# U\n\n## 节\n\n- 甲条目\n"
+    val early   = note("q-early", 1000L, "user", "update", None, Some("甲条目"), Some("- 甲条目（改）"))
+    val late    = note("q-late", 9000L, "user", "remove", None, Some("甲条目"), None)
+    val plan    = MemoryQueue.plan(stateOf(Vector(early, late)), Map("user" -> tf(userFile, content)))
+    val byRef   = plan.items.map(i => i.ref -> (i.bucket, i.detail)).toMap
+    assertEquals(byRef("q-late")._1, MemoryQueue.Bucket.WouldApply, s"更晚的意图赢: ${plan.items}")
+    assertEquals(byRef("q-early")._1, MemoryQueue.Bucket.WouldObsolete, s"更早的 update 转被取代: ${plan.items}")
+    assert(byRef("q-early")._2.startsWith("superseded-by-later"), s"${byRef("q-early")}")
+    // 同毫秒 ⇒ 以 id 定序（与 after() 逐字同规）
+    val a = note("q-a", 500L, "user", "update", None, Some("甲条目"), Some("- 甲条目（A）"))
+    val b = note("q-b", 500L, "user", "update", None, Some("甲条目"), Some("- 甲条目（B）"))
+    val tie = MemoryQueue.plan(stateOf(Vector(a, b)), Map("user" -> tf(userFile, content)))
+    assertEquals(tie.items.find(_.ref == "q-a").get.bucket, MemoryQueue.Bucket.WouldObsolete, "同毫秒：id 大者胜")
+
+  test("② 的反面：预算闸的**落地顺序仍是相位序**（收缩先落）——两层基准互不干扰"):
+    // remove（phase 0）先于 append（phase 2）累计预算；若把时序当落地序 ⇒ 净减条目排到最后
+    val base = "# U\n\n## 节\n\n- " + ("v" * 400) + "\n"
+    val notes = Vector(
+      note("q-late-rm", 9000L, "user", "remove", None, Some("v" * 20), None),
+      note("q-early-ap", 1000L, "user", "append", None, None, Some("- 新条目"))
+    )
+    val plan = MemoryQueue.plan(stateOf(notes), Map("user" -> tf(userFile, base)))
+    assertEquals(plan.items.map(_.ref), Vector("q-late-rm", "q-early-ap"), "落地模拟按相位序（时序更晚的 remove 仍先落）")
+    assertEquals(plan.countOf(MemoryQueue.Bucket.WouldApply), 2, s"收缩先落 ⇒ 两条都进落笔面: ${plan.items}")
+    assert(plan.projections.head.delta < 0, s"净减（remove 先生效）: ${plan.projections.head}")
 
   test("顺序模拟（比静态近似更准）：前序 update 让后续 match 可定位 ⇒ 判 would-apply 而非 locate-miss"):
     val content = "# U\n\n## 节\n\n- 甲条目\n"
@@ -174,9 +233,16 @@ class MemoryQueuePlanSpec extends FunSuite:
     // 内部一致性：每条 pending note 恰有一个桶；分桶计数之和 = pending 数
     assertEquals(plan.items.size, st.pending.size, "每条 pending 都有去向（禁静默丢）")
     assertEquals(
-      plan.countOf(MemoryQueue.Bucket.WouldApply) + plan.countOf(MemoryQueue.Bucket.WouldObsolete) + plan.countOf(MemoryQueue.Bucket.WouldDefer),
+      plan.countOf(MemoryQueue.Bucket.WouldApply) + plan.countOf(MemoryQueue.Bucket.WouldObsolete) +
+        plan.countOf(MemoryQueue.Bucket.WouldRetry) + plan.countOf(MemoryQueue.Bucket.WouldDefer),
       plan.items.size)
-    assertEquals(plan.authorized.size, plan.countOf(MemoryQueue.Bucket.WouldApply) + plan.countOf(MemoryQueue.Bucket.WouldObsolete))
+    assertEquals(
+      plan.authorized.size,
+      plan.countOf(MemoryQueue.Bucket.WouldApply) + plan.countOf(MemoryQueue.Bucket.WouldObsolete) +
+        plan.countOf(MemoryQueue.Bucket.WouldRetry))
+    assertEquals(plan.retryable.size, plan.countOf(MemoryQueue.Bucket.WouldRetry), "retryable = would-retry 的 ref 集")
+    // 🔴 可重试族（目标缺失族）一律不得落进终态桶——否则「文件还没建」被当成「内容已作废」
+    assert(!plan.retryable.exists(r => plan.items.exists(i => i.ref == r && i.bucket == MemoryQueue.Bucket.WouldObsolete)))
     assertEquals(os.read(queue), raw, "实测全程只读：队列逐字未变")
 
 end MemoryQueuePlanSpec

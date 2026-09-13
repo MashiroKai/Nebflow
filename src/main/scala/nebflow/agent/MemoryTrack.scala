@@ -147,7 +147,8 @@ object MemoryTrack:
     * 2026-09-13 缺失自愈批（方案 E-D1 + §6）：起跑线之后先过**三道只读前置闸**
     * （全部 fail-closed，闸不过 = 零 spawn、零文件写、零结局写，条目保持 pending）：
     *   1. **引擎侧 dry-run 计划**（[[MemoryQueue.plan]]）：分桶 would-apply /
-    *      would-obsolete / would-defer + 逐文件投影；计划与日志落地（三段结构化文本）。
+    *      would-obsolete（终态族）/ would-retry（目标缺失族，可重试）/ would-defer + 逐文件
+    *      投影；计划与日志落地（四段结构化文本）。
     *   2. **预算闸**：`plan.refusal` 非空（超硬顶即停 ⇒ 授权集为空）⇒ 拒绝本轮落地。
     *   3. **落地前快照闸**（[[MemorySnapshot.snapshotGate]]）：三层记忆文件 + 队列 +
     *      变更史逐文件备份 + sha256 断言表；失败 ⇒ 拒绝落地（「无快照不落笔」的机制化）。
@@ -176,8 +177,18 @@ object MemoryTrack:
         files <- memoryFilesOf(notesAtStart)
         before <- readAll(files)
         // ── 闸 1（只读）：dry-run 计划。计划文本进日志＝可复算的落地前观测面 ──
-        plan = MemoryQueue.plan(state0, planInput(before))
+        input <- planInput(before)
+        plan = MemoryQueue.plan(state0, input)
         _    <- IO(logger.info(s"[memory-track] gate-1 plan (read-only)\n${plan.render()}"))
+        // 目标缺失族（缺文件 / 缺节 / 定位不到条目）：**响亮告警**（A′ 三件之三）。
+        // 不是 WARN-and-continue 的客气话：这一族的条目本轮**不可落且不得新建目标文件**，
+        // 只写一行日志就没人会去修 ⇒ 同一行里给出「谁该做什么」。
+        _ <- IO.whenA(plan.retryable.nonEmpty)(IO(logger.warn(
+          s"[memory-track] MISSING TARGET (retryable, no file created): ${plan.retryable.size} note(s) cannot be located — " +
+            s"${plan.retryable.take(10).mkString(", ")}${if plan.retryable.size > 10 then s" …(+${plan.retryable.size - 10} more)" else ""}. " +
+            "They stay pending (never marked obsolete) and will be retried once the target exists; " +
+            "the target file must be created OUTSIDE this track (project-memory initialisation is not this track's job)."
+        )))
         attempt <- if dryRunMode then IO.pure(Attempt(Status.DryRun, plan.render(40), "", None))
           else plan.refusal match
             case Some(reason) =>
@@ -210,15 +221,26 @@ object MemoryTrack:
         result <- finish(files, before, notesAtStart, attempt, trigger)
       yield result
 
-  /** dry-run 的输入面：`readAll` 的 (path, label, content) → 计划用的 label → 只读快照。 */
-  private def planInput(before: Vector[(os.Path, String, String)]): Map[String, MemoryQueue.TargetFile] =
-    before.map((p, label, content) => label -> MemoryQueue.TargetFile(p.toString, content)).toMap
+  /** dry-run 的输入面：`readAll` 的 (path, label, content) → 计划用的 label → 只读快照。
+    *
+    * 2026-09-13 r3 批（缺陷① A′）：**同时带上存在位**。改动前只传 `content`，而
+    * [[readAll]] 对「文件不存在」与「空文件」都返回 `""` ⇒ 引擎对不存在的项目记忆文件的
+    * append 判 `would-apply`（投影 `0 → N B`）⇒ 消费侧据此**新建了文件**（生产实证
+    * 2026-09-13 18:25 `project:neblink-server`）。`private[agent]`：spec 直测面。 */
+  private[agent] def planInput(before: Vector[(os.Path, String, String)]): IO[Map[String, MemoryQueue.TargetFile]] =
+    IO.blocking(
+      before
+        .map((p, label, content) =>
+          label -> MemoryQueue.TargetFile(p.toString, content, exists = os.exists(p) && os.isFile(p)))
+        .toMap
+    )
 
   /** 快照闸的目标面：三层记忆文件（仅本轮点名到的）+ 队列 + 变更史。 */
   private def snapshotTargets(files: Vector[FileTarget]): Vector[os.Path] =
     (files.map(_._1) :+ MemoryQueue.queuePath :+ MemoryHistory.historyPath).distinct
 
-  /** 闸 2 通过后简报允许消费的条目：would-apply（落笔）+ would-obsolete（只回写裁决）。 */
+  /** 闸 2 通过后简报允许消费的条目：would-apply（落笔）+ would-obsolete / would-retry
+    * （零文件写、只回写裁决；后者是**可重试**口径 ⇒ 只许 `rejected`，不许 `obsolete`）。 */
   private def authorizedNotes(state: MemoryQueue.State, plan: MemoryQueue.Plan): Vector[MemoryQueue.Note] =
     val ok = plan.authorized.toSet
     state.pending.filter(n => ok.contains(n.id))
@@ -291,8 +313,9 @@ object MemoryTrack:
 
   private type FileTarget = (os.Path, String) // (path, target label)
 
-  /** 本轨可能触及的文件：user / agent 两层 + 待办点名的 project 层（经注册表解析）。 */
-  private def memoryFilesOf(notes: Vector[MemoryQueue.Note]): IO[Vector[FileTarget]] =
+  /** 本轨可能触及的文件：user / agent 两层 + 待办点名的 project 层（经注册表解析）。
+    * `private[agent]`：spec 直测面（真实输入面复算，见 `MemoryTargetRetryDomainSpec`）。 */
+  private[agent] def memoryFilesOf(notes: Vector[MemoryQueue.Note]): IO[Vector[FileTarget]] =
     val base = Vector(
       nebflow.service.MemoryStore.userMemoryPath -> "user",
       nebflow.service.MemoryStore.agentMemoryPath("Nebula") -> "agent"
@@ -307,7 +330,8 @@ object MemoryTrack:
       yield acc ++ pd.map(d => ProjectMemory.path(d.workspace) -> s"project:$name").toVector
     }
 
-  private def readAll(files: Vector[FileTarget]): IO[Vector[(os.Path, String, String)]] =
+  /** `private[agent]`：spec 直测面（真实输入面复算）。 */
+  private[agent] def readAll(files: Vector[FileTarget]): IO[Vector[(os.Path, String, String)]] =
     IO.blocking(files.map { (p, t) =>
       val content = try if os.exists(p) && os.isFile(p) then os.read(p) else "" catch case _: Exception => ""
       (p, t, content)
@@ -488,7 +512,15 @@ object MemoryTrack:
     *
     * C 批 ⑥（2026-09-13）：补一行 `already-present` 桶（= `plan` 里 `detail` 以
     * `already-present` 开头的 would-obsolete 条目）——消费者**不必自己重推**（grep 文件
-    * 比对逐行）就知道哪些 append 是重复的，直接记 `deduped`。`private[agent]`：spec 直测面。 */
+    * 比对逐行）就知道哪些 append 是重复的，直接记 `deduped`。
+    *
+    * 2026-09-13 r3 批（缺陷① A′ + 值域口径三处一致）：**目标缺失族**（`would-retry`：
+    * 目标文件不存在 / 目标节不存在 / 该节内定位不到条目 / apply-miss）整族的指引一并写明
+    * ——改动前只对 `target-missing` 子集有指引，且指引写的是**终态词**（「记 `obsolete` 并
+    * 附一行原因」）⇒ 引擎自己的终态词 + 消费侧照办 = 内容永久丢失（= 作者裁定明确否掉的 A）。
+    * 现口径 = **可重试族**：回写 `rejected`（本引擎的可重试词 ⇒ 条目保持 pending）、
+    * **禁写 `obsolete`/`deduped`**、**禁新建目标文件**。三处（引擎 / `system.md` / 本简报）
+    * 同口径，由 `MemoryTargetRetryDomainSpec` 逐处断言。`private[agent]`：spec 直测面。 */
   private[agent] def brief(workRoot: String, trigger: String, notes: Vector[MemoryQueue.Note], plan: MemoryQueue.Plan): String =
     val abs = PathUtil.dataRoot.toString
     val refs = notes.map(_.id).take(40).mkString(", ")
@@ -496,10 +528,23 @@ object MemoryTrack:
     val deferred =
       if plan.deferred.isEmpty then ""
       else s"- ${plan.deferred.size} pending note(s) are NOT authorized this round (budget fail-closed: they would push a file over its hard cap) — leave them; they stay pending.\n"
-    val noTarget = plan.items.filter(i => i.bucket == MemoryQueue.Bucket.WouldObsolete && i.detail.startsWith("target-missing")).map(_.ref)
+    // 目标缺失族（would-retry）的简报指引——2026-09-13 r3 批（缺陷① A′ + 值域口径三处一致）。
+    val retryItems = plan.items.filter(_.bucket == MemoryQueue.Bucket.WouldRetry)
+    def refsOf(prefix: String): Vector[String] = retryItems.filter(_.detail.startsWith(prefix)).map(_.ref)
+    val missFile   = refsOf("target-missing")
+    val missLoc    = refsOf("locate-miss")
+    val missApply  = refsOf("apply-miss")
+    def show(v: Vector[String]): String = if v.isEmpty then "(none)" else v.take(20).mkString(", ")
     val noTargetLine =
-      if noTarget.isEmpty then ""
-      else s"- 这些 ref 的**目标层没有记忆文件**（${noTarget.take(20).mkString(", ")}）：不要写 rejected（`rejected` 可重试 ⇒ 会无限复现）；该层不存在 ⇒ 记 `obsolete` 并附一行原因。\n"
+      if retryItems.isEmpty then ""
+      else
+        s"""- 🔴 **目标缺失族（${retryItems.size} 条，可重试——不得打终态词）**：
+- 目标文件不存在（${show(missFile)}）：🔴 **禁止新建该文件**（项目记忆文件的初始化不由本轨负责）；不动任何文件，逐条回写 `outcome(result="rejected", detail="<ABS 目标路径> 不存在")`。
+- 目标节不存在（${show(missLoc)}）：不动任何文件，逐条回写 `result="rejected"`（可重试），detail 写明缺哪个节 + 该文件现有节名。
+- 节内定位不到条目（同上族）：逐条回写 `result="rejected"`，detail 带上定位线索（该节条目前缀）。
+- apply-miss（${show(missApply)}）：同上，`result="rejected"`。
+- 🔴 这一族**一律不得写 `obsolete`/`deduped`**：`obsolete` 是终态词 ⇒ 条目永不再 pending ⇒ 内容永久丢失（「本次定位不到」被伪装成「含义已消失」）。`rejected` 在本引擎是可重试词 ⇒ 条目保持 pending，条件改变后自动再落。
+"""
     // ⑥ 简报补桶：把 plan 的 already-present 桶直接告诉消费者（免它自己 grep 逐行比对）
     val alreadyPresent = plan.items
       .filter(i => i.bucket == MemoryQueue.Bucket.WouldObsolete && i.detail.startsWith("already-present"))
