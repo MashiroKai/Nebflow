@@ -135,7 +135,7 @@ class NeblinkClient(
   // alert, TLS 1.3 ticket resumption was accepted 5/5, and the connection
   // reuse boundary measured (28.6 s, 32.8 s]. Source chain: the neblink pin
   // landed as 42fd15b6, whose own message says "same TLS fix as 3773699b" —
-  // i.e. it is an analogy carried over from the 2026-08-11 USTC LLM gateway
+  // i.e. it is an analogy carried over from the 2026-08-11 upstream LLM gateway
   // (nginx/one-api style reverse proxy), not a reproduction here.
   // 未证 (both directions): the original failure was intermittent and no log
   // of it survives, so a green local window does NOT prove the trap is absent

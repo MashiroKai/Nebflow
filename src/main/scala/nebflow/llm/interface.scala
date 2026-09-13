@@ -240,7 +240,7 @@ object LlmInterface:
     *
     * D1 — the HTTP/1.1 pin on the per-attempt client below, and what would
     * flip it: this peer is the LLM gateway, a DIFFERENT reverse proxy from
-    * neblink's Caddy and the closest one to the original 2026-08-11 USTC
+    * neblink's Caddy and the closest one to the original 2026-08-11 upstream
     * (nginx/one-api) incident ⇒ the neblink 2026-09-12 probe (14/14 HTTP_2
     * 200, 0 TLS alerts) does not transfer here. What is measured on this peer
     * since the incident: nothing — the original alert text and frequency were
@@ -361,7 +361,7 @@ object LlmInterface:
     configRef: Option[Ref[IO, NebflowServiceConfig]] = None
   ): IO[(LlmHandle[IO], ProviderRegistry, ProviderHealthMonitor, IO[Unit])] =
     // HTTP/1.1 pin (D1) — evidence, then judge-red:
-    //   · Evidence: the 2026-08-11 USTC gateway incident (commit 3773699b —
+    //   · Evidence: the 2026-08-11 upstream gateway incident (commit 3773699b —
     //     bad_record_mac TLS alerts on reused multiplexed connections; curl
     //     with a fresh connection per request never triggered it). That is an
     //     incident report, not a reproduction: the alert text and its
