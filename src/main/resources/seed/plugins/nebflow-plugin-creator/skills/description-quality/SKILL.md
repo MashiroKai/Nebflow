@@ -82,7 +82,7 @@ manifest 的 `description` 是**唯一描述源**：分发器目录行渲染的�
 定位句谓词（补「节点获得」）。
 
 **好例② visual-report（补触发句即范本）**：定位句点名工具链（matplotlib/
-graphviz/plotly/Pop）——分发器能据「任务涉及出图」精确匹配；skills 明细+分流句
+graphviz/plotly）——分发器能据「任务涉及出图」精确匹配；skills 明细+分流句
 +组件面句齐备。补「适用于需要出图/配图的汇报与报告任务」（落字：图表、架构图、
 流程图、出图）与谓词即完型。
 
