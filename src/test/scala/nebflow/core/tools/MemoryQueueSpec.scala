@@ -104,13 +104,34 @@ class MemoryQueueSpec extends FunSuite:
     assertEquals(MemoryQueue.readState().pendingCount, 0)
     assert(queueLines.size >= 3)
 
-  test("无 outcome 的 note 才算 pending：obsolete / rejected / timeout 均闭合折叠"):
+  test("折叠谓词（2026-09-13 语义变更）：终态闭合，rejected/timeout/notrun/blocked 保持 pending"):
     reset()
-    val ids = (1 to 4).map(i => enqueue(s"- 条目 $i").toOption.get.id)
-    MemoryQueue.recordOutcome(ids(0), MemoryQueue.ResultObsolete, "b", "d")
-    MemoryQueue.recordOutcome(ids(1), MemoryQueue.ResultRejected, "b", "d")
-    MemoryQueue.recordOutcome(ids(2), MemoryQueue.ResultTimeout, "b", "d")
-    assertEquals(MemoryQueue.readState().pendingCount, 1)
+    val ids = (1 to 6).map(i => enqueue(s"- 条目 $i").toOption.get.id)
+    MemoryQueue.recordOutcome(ids(0), MemoryQueue.ResultObsolete, "b", "d")   // 终态
+    MemoryQueue.recordOutcome(ids(1), MemoryQueue.ResultApplied, "b", "d")    // 终态
+    MemoryQueue.recordOutcome(ids(2), MemoryQueue.ResultDeduped, "b", "d")    // 终态
+    MemoryQueue.recordOutcome(ids(3), MemoryQueue.ResultRejected, "b", "d")   // 可重试
+    MemoryQueue.recordOutcome(ids(4), MemoryQueue.ResultTimeout, "b", "d")    // 可重试
+    MemoryQueue.recordOutcome(ids(5), MemoryQueue.ResultNotRun, "b", "d")     // 可重试（infra）
+    val st = MemoryQueue.readState()
+    assertEquals(st.pendingCount, 3, "6 条 - 3 条终态闭合并 = 3 条仍未闭合（rejected/timeout/notrun）")
+    assertEquals(st.pending.map(_.id).toSet, Set(ids(3), ids(4), ids(5)),
+      "rejected / timeout / notrun 三条仍是 pending（spec §5 R3 档 1 的重试引线恢复）")
+    assertEquals(st.notRunPendingCount, 1, "notrun 计入 infra 未跑档（注入行 ALERT 判据）")
+
+  test("重试引线真的活：可重试结局后写一条 applied ⇒ 该条闭合（末条结局胜）"):
+    reset()
+    val id = enqueue("- 条目一").toOption.get.id
+    MemoryQueue.recordOutcome(id, MemoryQueue.ResultRejected, "b", "locate miss")
+    assertEquals(MemoryQueue.readState().pendingCount, 1, "rejected 不再是终态")
+    MemoryQueue.recordOutcome(id, MemoryQueue.ResultApplied, "memory-consolidator", "landed on retry")
+    assertEquals(MemoryQueue.readState().pendingCount, 0, "重试成功后末条结局（applied）闭合该条")
+
+  test("unknown 结局值不得静默闭合一条 note（宁保留勿丢）"):
+    reset()
+    val id = enqueue("- 条目一").toOption.get.id
+    MemoryQueue.recordOutcome(id, "some-future-verdict", "b", "d")
+    assertEquals(MemoryQueue.readState().pendingCount, 1, "未知值 ⇒ 仍 pending")
 
   test("容量上限：pending 超 500 → 按 atMs 保留最近 N，被弃者写 drop 记录（禁静默丢）"):
     reset()

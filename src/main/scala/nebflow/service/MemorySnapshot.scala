@@ -63,6 +63,59 @@ object MemorySnapshot:
     catch case e: Exception =>
       Left(s"${e.getClass.getSimpleName}: ${Option(e.getMessage).getOrElse("(no message)")}")
 
+  /** 落地前快照闸（fail-closed，2026-09-13 缺失自愈批 / 方案 §6 补齐项「把落地前快照做成
+    * 可执行前置闸」）。
+    *
+    * 动机：`MemorySnapshot` 自诞生起只有单文件 [[snapshotBeforeWrite]]，而记忆整理的
+    * **直接写通道**（通用 Edit/Write）不经过它 ⇒ 唯一回滚锚只剩「动笔前手动快照」这条
+    * **纪律**（无 fail-closed）。本方法把那条纪律升级成引擎侧**可执行前置闸**：一次落地
+    * 前把全部目标文件（三层记忆 + 队列 + 变更史）逐文件备份 + 落一张 sha256 断言表，并在
+    * 写表后用 `sha(副本) == sha(源)` **逐文件复核**。任何一步失败（不可写、读回不一致、
+    * 表写不出）⇒ `Left`，调用方**必须中止落地**（零文件写）。
+    *
+    * 与 [[snapshotBeforeWrite]] 的分工：后者是单文件写前快照（写路径调用方自持）；
+    * 本方法是**批次闸**（多目标 + 断言表 + 读回复核）。
+    *
+    * 目标不存在（首次写入 / 本轮没点名它）⇒ 记为 `absent`，不阻断（无可回滚对象）。 */
+  final case class GateFile(path: String, sha256: String, bytes: Long, absent: Boolean)
+  final case class GateSet(dir: Path, files: Vector[GateFile], label: String)
+
+  def snapshotGate(
+      targets: Vector[Path],
+      label: String,
+      root: Path = backupRoot
+  ): Either[String, GateSet] =
+    try
+      val dir  = allocateDir(root)
+      val rows = targets.distinct.map { t =>
+        if !os.exists(t) then GateFile(t.toString, "", 0L, absent = true)
+        else
+          val content = os.read.bytes(t)
+          val src     = sha256(content)
+          val dest    = dir / backupFileName(t)
+          os.write(dest, content, createFolders = true)
+          val copy = sha256(os.read.bytes(dest))
+          if copy != src then
+            throw new IllegalStateException(s"snapshot sha mismatch for ${t.toString} ($src != $copy)")
+          GateFile(t.toString, src, content.length.toLong, absent = false)
+      }
+      val table = dir / "SNAPSHOT-SHA256.txt"
+      val header =
+        s"# memory-track pre-landing snapshot  label=$label  at=${LocalDateTime.now(ZoneId.systemDefault())}\n" +
+          s"# files=${rows.count(!_.absent)}  absent=${rows.count(_.absent)}  (absent = nothing to back up: the target does not exist yet)\n"
+      os.write.over(
+        table,
+        header + rows.map(f => s"${if f.absent then "(absent)" else f.sha256}  ${f.bytes}  ${f.path}").mkString("\n") + "\n"
+      )
+      if !os.exists(table) then throw new IllegalStateException("snapshot assertion table not written")
+      rows.filterNot(_.absent).foreach(t => prune(os.Path(t.path), root))
+      Right(GateSet(dir, rows, label))
+    catch case e: Exception =>
+      Left(s"${e.getClass.getSimpleName}: ${Option(e.getMessage).getOrElse("(no message)")}")
+
+  private def sha256(bytes: Array[Byte]): String =
+    java.security.MessageDigest.getInstance("SHA-256").digest(bytes).map("%02x".format(_)).mkString
+
   /** 时间戳目录名分配：同毫秒冲突时 seq 递增直到不存在（防互覆）。 */
   private def allocateDir(root: Path): Path =
     val base = LocalDateTime.now(ZoneId.systemDefault()).format(fmt)

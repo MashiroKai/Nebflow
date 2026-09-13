@@ -63,7 +63,7 @@ object MemoryEditTool extends Tool:
   // 路径走 PathUtil.dataRootRenderValue —— 默认 home ⇒ `~/.nebflow/...`，隔离实例
   // ⇒ 该实例 home 的绝对路径。`def` on purpose：dataRoot 可在对象初始化后被换根。
   def description =
-    s"""Record a memory-change request into the append-only queue. NOTHING is written to memory files by this tool: entries are applied at the next context compaction by the memory-consolidation agent. The return value always states what was queued — never claim or assume the change is live.
+    s"""Record a memory-change request into the append-only queue. NOTHING is written to memory files by this tool: entries are applied at the next context compaction by the memory-consolidation agent (only if that agent is installed and the engine preflight gates pass — see Queue below). The return value always states what was queued — never claim or assume the change is live.
 ## Targets (no path parameter exists — targets are names resolved to fixed files)
 - target=user → ${PathUtil.dataRootRenderValue}/User.md — user facts: identity, preferences, working style, environment.
 - target=agent → ${PathUtil.dataRootRenderValue}/agents/Nebula/memory.md — routing experience, technical lessons, domain knowledge.
@@ -78,14 +78,16 @@ object MemoryEditTool extends Tool:
 - Entries are markdown list lines ("- ..."); convention: `- <fact>（→<id> detail at ${PathUtil.dataRootRenderValue}/memory/<id>.md）`.
 - `section` matches a "## Heading" line exactly (the "## " prefix is optional in the parameter).
 - No whole-file rewrite exists by design — memory cannot be wiped in one call.
-- Recording validates the target, the action, the required parameters and the entry format. It does NOT check that `section`/`match` exist in the file today: the queue carries intent, the executor locates at apply time, and a miss is reported back as `obsolete` (never silently dropped).
+- Recording validates the target, the action, the required parameters and the entry format. It does NOT check that `section`/`match` exist in the file today: the queue carries intent, the executor locates at apply time, and a miss is reported back either as `obsolete` (the meaning is gone too) or as `rejected` (the meaning persists — retryable, so the note stays pending), never silently dropped.
 - Identity: Nebula may record all four actions. dream is admitted for revision actions only (remove/update/replace_section) — append is denied (DREAM_APPEND_DENIED): dream must not create new memories (2026-09-05 author-approved iron rule, enforced at this tool's dispatch layer).
 - append/update `content` must be ONE entry: a single line starting with "- ". Multi-line content is rejected (MEMORYEDIT_ENTRY_FORMAT). Use replace_section for a multi-line section body.
 ## Queue
-- Ledger: ${PathUtil.dataRootRenderValue}/memory/queue.jsonl (append-only JSONL; `note` = queued request, `outcome` = consumer's verdict: applied / modified / rejected / obsolete / deduped / timeout). Change history: ${PathUtil.dataRootRenderValue}/memory/history.jsonl.
+- Ledger: ${PathUtil.dataRootRenderValue}/memory/queue.jsonl (append-only JSONL; `note` = queued request, `outcome` = consumer's verdict: applied / modified / rejected / obsolete / deduped / timeout / notrun / blocked). Change history: ${PathUtil.dataRootRenderValue}/memory/history.jsonl.
+- Verdict classes: `applied`/`modified`/`obsolete`/`deduped` are TERMINAL (the note is closed). `rejected`/`timeout`/`notrun`/`blocked` are RETRYABLE (the note stays pending and is retried on the next compaction) — `rejected` means "the consumer ran and could not land it now", `notrun`/`blocked` mean "the engine never got to run" (infra, never written as `rejected`).
 - Idempotent: an identical request (same target+action+section+match+content) already pending returns the EXISTING q-id and appends nothing.
 - Capacity: at most 500 pending notes; beyond that the oldest (by atMs) are dropped and recorded in a `drop` line with their ids — drops are never silent.
 - Consumption is the memory-consolidation agent's job (it runs on compaction, reads the queue and the three memory files, and writes an `outcome` per note). Do not re-record a note you can see pending.
+- **The consumption chain is not guaranteed.** Application happens only when that agent's definition exists AND the engine preflight gates pass (a read-only plan, the budget cap and the pre-landing snapshot gate are all fail-closed). When it is missing/broken nothing is applied, the notes stay pending, and the engine raises a loud alert (gateway startup log + a `memoryQueueAlert` banner in the UI + an ALERT line in the injected memory queue summary). So: a `queued` result means "recorded", never "will be applied".
 ## Budget & snapshot (enforced at apply time, not here)
 - Write-side budget enforcement moved with the write: the executor checks the POST-WRITE file size before saving (hard caps: User.md 50KB, agent memory.md 30KB, project memory.md 10KB) and must consolidate first when over. replace_section stays exempt — it is the shrinking channel.
 - Snapshot: the executor snapshots the memory files before writing (manual snapshot discipline). This tool performs no snapshot because it writes nothing; rollback anchors are ${PathUtil.dataRootRenderValue}/memory-backups/<ts>/ plus the change history above.
@@ -293,7 +295,7 @@ object MemoryEditTool extends Tool:
       detail,
       s"pending: ${res.pending} note(s) in ${PathUtil.dataRootRenderValue}/memory/queue.jsonl" +
         (if res.dropped > 0 then s" — capacity cap reached, oldest ${res.dropped} note(s) dropped (recorded in a drop line, never silent)" else ""),
-      "The memory-consolidation agent applies the queue at the next context compaction; expect the change in memory only after that.",
+      "The memory-consolidation agent applies the queue at the next context compaction — conditional on that agent being installed and the engine's fail-closed preflight gates (read-only plan / budget cap / pre-landing snapshot) passing. If they do not, nothing is applied: the note stays pending and the engine raises a loud alert (gateway startup log + a banner in the UI). Expect the change in memory only after a successful pass.",
       "Do not re-record the same entry — see `pending` above."
     )
     val histNote = if res.historyNote.nonEmpty then s"\nNOTE: ${res.historyNote}." else ""

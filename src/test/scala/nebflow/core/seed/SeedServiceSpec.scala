@@ -131,8 +131,8 @@ class SeedServiceSpec extends FunSuite:
     ensure()
     assert(os.exists(home / "projects" / "general" / "project.json"))
 
-  // ── ③ fresh-home 守卫：已有用户数据 → 只写 marker ────────
-  test("existing user data skips full seeding, only records marker"):
+  // ── ③ fresh-home 守卫：已有用户数据 → 不完整播种（但默认集 agent 自愈）──
+  test("existing user data skips full seeding (no project scaffold), self-heals default-set agents"):
     // 模拟已有项目（非 fresh home）
     val myproj = home / "projects" / "myproj"
     os.makeDir.all(myproj)
@@ -145,12 +145,18 @@ class SeedServiceSpec extends FunSuite:
 
     ensure()
 
-    assert(!os.exists(home / "agents" / "project-dispatcher"), "no dispatcher seeded when user data present")
+    // 守卫语义（不变）：不完整播种 ⇒ 不建 general 项目脚手架、marker.items 为空
     assert(!os.exists(home / "projects" / "general"), "no general project seeded when user data present")
     val marker = home / ".seed-state.json"
     assert(os.exists(marker), "marker recorded")
     val state = io.circe.parser.parse(os.read(marker)).toOption.get
     assert(state.hcursor.downField("items").as[List[String]].toOption.contains(Nil), "no items for existing-user-data run")
+    // 2026-09-13 语义变更（作者令「改成缺失自愈」，取代 D-8「缺失不新装」）：默认集 agent
+    // 在既有 home 也要自愈补装——否则消费链（memory-consolidator）在既有 home 永不可能
+    // 就位，记忆队列只进不出。原断言「no dispatcher seeded when user data present」已按
+    // 新口径改写（这是预期的判红样例：改测试，不改守卫）。
+    for name <- List("project-dispatcher", "memory-consolidator")
+    do assert(os.exists(home / "agents" / name / "agent.json"), s"default-set agent '$name' self-healed under the guard")
 
   // ── ④ 升级 add-only：低版本 marker + 已有文件 → 只补缺失 ──
   test("upgrade run is add-only: fills missing files, does not rewrite existing"):

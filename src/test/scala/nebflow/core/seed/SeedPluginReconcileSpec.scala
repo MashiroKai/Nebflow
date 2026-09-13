@@ -154,9 +154,12 @@ class SeedPluginReconcileSpec extends FunSuite:
 
     ensure()
 
-    // 守卫语义保持：不完整播种（防误建 general / 不补 agent）
-    assert(!os.exists(home / "agents" / "project-dispatcher"), "full seeding still skipped under guard")
+    // 守卫语义保持：不完整播种（不建 general 项目脚手架）；**默认集 agent 自愈补装**
+    // （2026-09-13 语义变更：作者令「改成缺失自愈」取代 D-8「缺失不新装」——原断言
+    // 「no project-dispatcher agent under guard」已按新口径改写，预期判红样例）
     assert(!os.exists(home / "projects" / "general"), "no general project planted under guard")
+    assert(os.exists(home / "agents" / "project-dispatcher" / "agent.json"),
+      "default-set agent self-healed even under the guard (2026-09-13)")
     // reconcile 穿透守卫：干净旧插件刷新为 seed 形态（2026-09-09 断点的机制解）
     assert(treeAsText(pluginDir) == seedText, "clean stale plugin refreshed even under guard")
     assert(recordSha.get != trustedOld, "re-approved under guard")
