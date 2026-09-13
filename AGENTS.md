@@ -22,7 +22,8 @@ Nebflow 是一个开源（MIT）AI Agent 编排平台。本仓为 **Scala 版**�
 
 **零存量处置**：本节不要求、也不授权对任何现存文件做搬移/改名/删除——存量处置另立实施批，前置 = 逐件引用面断言 + 回滚快照 + 悬空门禁。规范全文 = `~/.nebflow/docs/CONVENTIONS.md` §6。
 
-巡检（只读）：`node .nebflow/tools/check-root-hygiene.mjs`（退出码非 0 = 存在基线之后的新增越界件）；名单与代码一致性：`node .nebflow/tools/gen-root-whitelist.mjs --check`。
+巡检（只读）：`node .nebflow/tools/check-root-hygiene.mjs`（退出码非 0 = 基线之后的新增越界件）；名单一致性 `node .nebflow/tools/gen-root-whitelist.mjs --check`（**判据 = 允许类集合**：阶段文档等过程件落根**不判名单过期**，归巡检 I-1/I-2 + 基线增量，含 24h 宽限）；索引新鲜度 `node .nebflow/tools/gen-root-index.mjs --check`（表内条目集 vs 根层 `.md` 实数）。
+**何时跑**：合并 / verify / 报告节点**收尾前**各一次（收口清单项）＋每日一次。**红了谁看见**：读数写进该节点报告（沿 `out` 边投递）⇒ 合并 sink 与分发器当轮可见 ⇒ 分类处置；🔴 禁长挂 RED。
 
 ## 技术栈
 - **后端**: Scala 3, Pekko actors, http4s, cats-effect。源码在 `src/main/scala/`
