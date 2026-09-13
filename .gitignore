@@ -78,6 +78,7 @@ node_modules/
 
 # upload-deps.sh staging (batch artifacts, never committed)
 deps-staging/
+staging/
 
 # Python bytecode cache (packaging/gen-icons.py side artifacts)
 __pycache__/
