@@ -96,7 +96,9 @@ class SeedPluginReconcileSpec extends FunSuite:
     finally in.close()
 
   /** 隔离基线：无 agents/projects、marker=当前版本（marker 分支 no-op）、插件目录清空、
-    * 信任表清空（config json 删除——否则前序用例的 approve 记录会污染仲裁分支）。
+    * 信任表清空（config json 删除——否则前序用例的 approve 记录会污染仲裁分支）、
+    * 覆盖前备份树清空（`plugins-backups/`——备份件同样是 home 状态，留着会让「本次覆盖
+    * 恰产生一件备份」的断言看到前序用例的残留）。
     *
     * 2026-09-13（#105 P-1 批）：**一并清插件存在台账**——本 fixture 把 home 重置成
     * 「没有这些插件」的形态，而台账（`.plugin-presence.json`）也是 home 状态的一部分；
@@ -105,6 +107,9 @@ class SeedPluginReconcileSpec extends FunSuite:
   private def makeIsolatedHome(): Unit =
     rm(home / "plugins"); rm(home / "agents"); rm(home / "projects"); rm(home / ".seed-state.json")
     rm(PathUtil.configJsonReadPath(home)); rm(SeedService.pluginLedgerPath(home))
+    // 覆盖前备份树也是 home 状态的一部分（本批新增）：清掉，否则前序用例的备份件会
+    // 污染「本次覆盖恰产生一件备份」的断言。
+    rm(home / "plugins-backups")
     os.write.over(home / ".seed-state.json",
       s"""{"version":"$manifestVersion","seededAt":1,"items":[]}""")
 
@@ -120,6 +125,34 @@ class SeedPluginReconcileSpec extends FunSuite:
     assert(treeAsText(pluginDir) == seedText, "runtime mirrored to seed exactly (byte-level)")
     assert(recordSha.get != trustedOld, "trust record moved to new digest (auto re-approve)")
     assert(recordSha.get == dirDigest(pluginDir), "re-approved digest == mirrored runtime digest")
+
+    // ── 覆盖前备份（本批：插件覆盖路径与 agents 面对称，规范 = SeedService:502-518）──
+    // 本用例即「trust == runtime ⇒ 覆盖」场景 ⇒ **覆盖前必须出现备份件**（负控：无备份即判红）。
+    val backupRoot = home / "plugins-backups"
+    assert(os.exists(backupRoot), "overwrite path left a pre-sync backup root (plugins-backups)")
+    val backups = os.list(backupRoot).filter(os.isDir).toList
+    assert(backups.size == 1, s"exactly one pre-sync backup dir, got: ${backups.map(_.last)}")
+    val backup = backups.head
+    assert(
+      backup.last.endsWith("_pre-sync-slideblocks") && backup.last.length > "_pre-sync-slideblocks".length,
+      s"backup name carries stamp + source face + package: ${backup.last}")
+    // 备份件 == 被覆盖前内容（逐字节）⇒ 覆盖结果与旧行为内容面等价（正控：逐件 blob 对照）。
+    val backupFiles = os.walk(backup).filter(os.isFile)
+      .map(p => p.relativeTo(backup).toString -> os.read.bytes(p)).toMap
+    assert(backupFiles.keySet - "PRE-SHA256.txt" == mutatedOldRuntime.keySet,
+      s"backup holds exactly the pre-overwrite file set: ${backupFiles.keySet}")
+    mutatedOldRuntime.foreach { (rel, bytes) =>
+      assert(java.util.Arrays.equals(backupFiles(rel), bytes),
+        s"backup '$rel' is byte-identical to the pre-overwrite content")
+    }
+    // 留痕件形态 = agents 面既有形态（仅来源面名词不同）。
+    val manifest = os.read(backup / "PRE-SHA256.txt")
+    assert(manifest.startsWith("# plugin=slideblocks  sampled="),
+      "manifest header carries source face + package + stamp")
+    mutatedOldRuntime.foreach { (rel, bytes) =>
+      assert(manifest.contains(s"${sha256(bytes)}  $rel"),
+        s"manifest records the pre-overwrite sha256 of '$rel'")
+    }
 
   // ── ② 用户改过 → 跳过 + 用户编辑保留 ├─────────────────────
   test("user-modified runtime (digest!=trusted) is skipped, user edits preserved"):
@@ -251,6 +284,10 @@ class SeedPluginReconcileSpec extends FunSuite:
   private def treeAsText(d: os.Path): Map[String, String] =
     os.walk(d).filter(os.isFile).map(p =>
       p.relativeTo(d).toString -> new String(os.read.bytes(p), UTF_8)).toMap
+
+  /** 与 SeedService.sha256File 同一算法（备份留痕件的逐文件 sha256 复算）。 */
+  private def sha256(bytes: Array[Byte]): String =
+    java.security.MessageDigest.getInstance("SHA-256").digest(bytes).map("%02x".format(_)).mkString
 
   /** 既有 home 形态夹具：把种子树里的插件整目录复制到 `home/plugins/<name>`。 */
   private def copySeedPlugin(name: String): Unit =
