@@ -1,7 +1,0 @@
-{
-  "$schema": "https://agent-plugins.org/schemas/1.0.0/plugin.schema.json",
-  "name": "nebflow-human-report",
-  "version": "1.0.0",
-  "description": "人类可读汇报包——节点获得把交付件写成给人读的一屏结论、并按读者轴分流落位的能力（结论先行骨架、体量硬顶、术语翻译、场景档位、出图预算、人读件与取证件分置）。适用于写给人看的汇报、交付文档、验收报告、调研报告、复盘报告、写给作者的总结、报告太长要压缩、过程件与交付件分开等任务。内含 skill：human-report（人读汇报规范：标记行与路径判定、首屏/正文/附录三级体量预算、四段骨架、五场景档位、禁项与自检、可视化门槛与 ≤3 图预算、交付通道）。不适用于图表本身的生成与审美（另配 visual-report 插件）；插件封装与描述体检另配 nebflow-plugin-creator 插件。组件面：无 mcp.json、无工具扩展。",
-  "author": {"name": "Nebflow"}
-}
