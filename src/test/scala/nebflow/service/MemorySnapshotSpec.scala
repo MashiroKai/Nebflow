@@ -120,3 +120,50 @@ class MemorySnapshotSpec extends FunSuite:
     assert(gate.isLeft, s"不可写根必须 Left（无快照不落笔）: $gate")
     assert(gate.left.exists(_.nonEmpty), "原因非空")
   }
+
+  // ── R8-B（2026-09-13 记忆归档批）：人工快照钉住、不计滚动槽位 ──
+
+  test("R8-B：pinned 子树不计槽位，人工快照永不被 prune 淘汰") {
+    val rootP = home / "memory-backups-pinned"
+    os.write.over(agentFile, "- pinned probe\n", createFolders = true)
+    val key = MemorySnapshot.backupFileName(agentFile)
+    // 1 份「钉住」的人工快照（pinned 子树）
+    val pinned = MemorySnapshot.pinnedRoot(rootP) / "20260913_0300_manual"
+    os.makeDir.all(pinned)
+    os.write(pinned / key, "- manual snapshot (pinned)\n")
+    // 填满自动槽位：KeepPerFile 份自动时间戳目录（名字序全部低于 pinned 之外的同池目录）
+    for i <- 0 until MemorySnapshot.KeepPerFile do
+      val d = rootP / f"20260905-000000-000000-$i%03d"
+      os.makeDir.all(d)
+      os.write(d / key, s"- snapshot $i\n")
+
+    MemorySnapshot.pruneForTest(agentFile, rootP)
+
+    assert(os.exists(pinned / key), "pinned 子树必须不受 prune 影响（人工快照 = 钉住）")
+    val auto = os.list(rootP).filter(os.isDir(_))
+      .filter(_.last != MemorySnapshot.PinnedDirName)
+      .filter(d => os.exists(d / key))
+    assertEquals(auto.size, MemorySnapshot.KeepPerFile, "pinned 不占槽位，自动槽位仍为 KeepPerFile")
+  }
+
+  test("R8-B：槽位满时 pinned 存在不改变自动快照的滚动行为（同池仍按名字序淘汰最老）") {
+    val rootP = home / "memory-backups-pinned-2"
+    os.write.over(agentFile, "- roll probe\n", createFolders = true)
+    val key = MemorySnapshot.backupFileName(agentFile)
+    val pinned = MemorySnapshot.pinnedRoot(rootP) / "manual-dream-0908"
+    os.makeDir.all(pinned)
+    os.write(pinned / key, "- pinned\n")
+    for i <- 0 until MemorySnapshot.KeepPerFile + 2 do
+      val d = rootP / f"20260906-000000-000000-$i%03d"
+      os.makeDir.all(d)
+      os.write(d / key, s"- s$i\n")
+
+    MemorySnapshot.pruneForTest(agentFile, rootP)
+
+    val auto = os.list(rootP).filter(os.isDir(_))
+      .filter(_.last != MemorySnapshot.PinnedDirName)
+      .map(_.last).sorted
+    assertEquals(auto.size, MemorySnapshot.KeepPerFile, "自动槽位 = KeepPerFile")
+    assertEquals(auto.head, "20260906-000000-000000-002", "同池最老 2 份被淘汰（名字序不变）")
+    assert(os.exists(pinned / key), "pinned 不参与淘汰")
+  }
