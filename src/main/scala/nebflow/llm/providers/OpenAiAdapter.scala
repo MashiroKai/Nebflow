@@ -722,3 +722,24 @@ class OpenAiAdapter(baseUrl: String, apiKey: String, backend: StreamBackend[IO, 
     toolCallState.getAndSet(Map.empty).flatMap(logEmptyIdNameSummaries(_, params))
 
 end OpenAiAdapter
+
+/** Model-list endpoints of the OpenAI-compatible face — declared here, not
+  * derived by the gateway from a raw `baseUrl` (see `ModelListFaces`).
+  *
+  *   1. `{base}/models` — for this face `baseUrl` IS the version root (chat goes
+  *      to `{base}/chat/completions`), which is also the shape the settings
+  *      dialog's placeholder suggests (`https://api.example.com/v1`). Measured
+  *      200 with 12 models on the Aliyun compatible-mode root.
+  *   2. `{base}/v1/models` — declared for a `baseUrl` that stops above the
+  *      version segment (vendor origin or a non-version prefix), where the
+  *      implied segment still resolves the list: measured 200 on
+  *      `https://api.deepseek.com/v1/models`. Omitted when `baseUrl` already
+  *      ends in `/v1`, where it would build `…/v1/v1/models`.
+  */
+object OpenAiAdapter:
+
+  def modelListUrls(baseUrl: String): List[String] =
+    val base = baseUrl.replaceAll("/+$", "")
+    if base.endsWith("/v1") then List(s"$base/models")
+    else List(s"$base/models", s"$base/v1/models")
+end OpenAiAdapter

@@ -92,6 +92,7 @@ CI runs the smoke suite against a freshly built JAR, so a green local run plus g
 ```bash
 node scripts/check-js-types.mjs    # checkJs vs tests/type-baseline.json (baseline only goes down)
 node scripts/check-circular.mjs    # static-import cycle gate
+node scripts/check-provider-modellist.mjs   # provider model-list endpoints stay per-face declared
 ```
 
-`check-js-types.mjs --update` regenerates the baseline after intentional type fixes. Dynamic `import()` is the sanctioned way to break a genuine cycle; static import cycles fail the gate.
+`check-js-types.mjs --update` regenerates the baseline after intentional type fixes. Dynamic `import()` is the sanctioned way to break a genuine cycle; static import cycles fail the gate. `check-provider-modellist.mjs` is hermetic (`--live` adds the environment/proxy, provider and gateway layers; see its header comment and the `ModelListFaces` scaladoc).

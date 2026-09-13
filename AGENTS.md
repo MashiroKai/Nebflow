@@ -51,6 +51,7 @@ Nebflow 是一个开源（MIT）AI Agent 编排平台。本仓为 **Scala 版**�
 
 ## 开发约定
 - 先设计文档再写代码。最小最精准改动，避免过早抽象
+- **provider 模型列表端点逐面声明（禁全局拼接）**：模型列表端点必须由各协议面自己声明（`nebflow.llm.providers.ModelListFaces` + `AnthropicAdapter` / `OpenAiAdapter` 的 `modelListUrls`），**禁止**在网关侧对 `baseUrl` 拼路径——`baseUrl` 是对话前缀，两个面对「版本段在哪」的约定不同（Anthropic 面自己补 `/v1`）。面的声明允许**有序候选**（只在「端点不存在」时前进）与**显式「不支持」态**（必须给出可判读的拒绝，不得报成空清单成功）；2xx 体内携带厂家错误信封（如 zhipu 的 `{"code":500,"msg":"404 NOT_FOUND"}`）判失败并带出原文，**不得**降级成「无模型」。改这两面（`src/main/scala/nebflow/llm/providers/**`、`RestApiRoutes` 的 provider 路由面）合并前必须过 `node scripts/check-provider-modellist.mjs`（离线静态、与 CI `provider-modellist` step 同判据；红了修代码，不得放宽断言）；需要行为面读数时跑 `--live`（含代理探活环境面前置）。判据详述见 `scripts/check-provider-modellist.mjs` 头部注释与 `src/main/scala/nebflow/llm/providers/ModelListFaces.scala` 的 scaladoc
 
 ## 版本与发布管理
 - **VERSION 文件是唯一版本号来源**，格式 `MAJOR.MINOR.PATCH`（如 `1.1.12`）

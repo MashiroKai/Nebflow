@@ -46,6 +46,17 @@ jobs:
         # miss the other" drift that ③A1/③A3/③A5 exist to prevent).
         # Same logic locally: node scripts/check-msgstyle-single-source.mjs
         run: node scripts/check-msgstyle-single-source.mjs
+      - name: Provider model-list endpoints (per-face declaration)
+        # Gate: the provider model-list endpoint must be declared by each
+        # protocol face (`ModelListFaces` + the adapters), never built in the
+        # gateway by appending "models" to a posted baseUrl — that global concat
+        # only ever worked for a baseUrl that already ends in `/v1` (kimi 404,
+        # zhipu "HTTP 200 + body 404 NOT_FOUND"). Also asserts the caller keeps
+        # the declaration, the explicit "no list endpoint" refusal, and the
+        # pseudo-200 / unreachable classifications. Offline and hermetic: no
+        # network, no credentials.
+        # Same logic locally: node scripts/check-provider-modellist.mjs
+        run: node scripts/check-provider-modellist.mjs
 
   user-knowledge-gate:
     name: User Knowledge Gate (#338)
