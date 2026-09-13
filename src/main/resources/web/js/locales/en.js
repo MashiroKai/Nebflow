@@ -776,6 +776,8 @@ export default {
 
   // === Time ===
   'time.yesterday': 'Yesterday',
+  // tooltip / aria-label of the 12/24-hour toggle hot zone (all three faces).
+  'time.toggleFormat': 'Click to switch 12/24-hour clock',
 
   // === Task list ===
   // Task panel = pure Flow Map node view (2026-09-05 10:54 ruling): the old

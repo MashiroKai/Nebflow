@@ -25,6 +25,8 @@ import { TRUST_SEALED } from './featureFlags.js';
 // 本模块的好友会话输入框（作者点名的面）此前**零组字判定** —— 组字 Enter 会
 // 直接 doSend()。
 import { bindImeGuard, isImeComposing } from './imeGuard.js';
+// 时制（12h/24h）：与主对话框/设备对话框共享同一偏好与同一实现。
+import { formatHm, bindTimeToggle, TIME_FORMAT_CHANGED } from './timeFormat.js';
 
 let conversations = [];
 let friendsCache = [];          // accepted friends — source of truth for §3.3 gate
@@ -132,15 +134,22 @@ function toEpochMs(ts) {
 export function fmtTime(ts) {
   const ms = toEpochMs(ts);
   if (!ms) return '';
+  // 同日 = 纯时钟文本 ⇒ 走共享的 12h/24h 偏好（formatHm）。
+  if (isSameDayMs(ms)) return formatHm(ms);
   const d = new Date(ms);
   const now = new Date();
-  const sameDay = d.getFullYear() === now.getFullYear() && d.getMonth() === now.getMonth() && d.getDate() === now.getDate();
-  if (sameDay) return `${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`;
   const y = new Date(now); y.setDate(now.getDate() - 1);
   if (d.getFullYear() === y.getFullYear() && d.getMonth() === y.getMonth() && d.getDate() === y.getDate()) {
     return t('messages.yesterday');
   }
   return `${d.getMonth() + 1}/${d.getDate()}`;
+}
+
+/** Same calendar day as now (local) — the only branch that is a pure clock. */
+function isSameDayMs(ms) {
+  const d = new Date(ms);
+  const now = new Date();
+  return d.getFullYear() === now.getFullYear() && d.getMonth() === now.getMonth() && d.getDate() === now.getDate();
 }
 
 // #290: origin column (R2=A, contract-first with the Rust batch) - a message
@@ -572,7 +581,15 @@ function bubbleEl(m, conv) {
   const meta = el('div', 'fm-msg-meta');
   if (out && isAgentSent(m)) meta.appendChild(el('span', 'fm-msg-agent-badge', t('messages.agentBadge')));
   if (hasForwarded(m.id)) meta.appendChild(el('span', 'fm-msg-forwarded-badge', t('messages.forwarded')));
-  meta.appendChild(el('span', 'fm-msg-time', fmtTime(m.createdAt)));
+  const timeMs = toEpochMs(m.createdAt);
+  const timeSpan = el('span', 'fm-msg-time', fmtTime(m.createdAt));
+  // 仅同日分支（纯时钟文本）参与 12/24 切换：挂 data-ts-text 即声明「本节点文本
+  // 整体 = formatHm(ts)」。「昨天」/「M/D」带日期语义，挂上会被刷新覆写成裸时钟。
+  if (timeMs && isSameDayMs(timeMs)) {
+    timeSpan.setAttribute('data-ts-text', String(timeMs));
+    bindTimeToggle(timeSpan);
+  }
+  meta.appendChild(timeSpan);
 
   const actions = el('span', 'fm-msg-actions');
   const copyBtn = el('button', 'fm-msg-act');
@@ -1150,6 +1167,10 @@ export function initMessages() {
     renderList();
     updateModalTitle(modalEls ? currentConv() : null);
   });
+  // 时制偏好变更 → 会话列表行时间（`.fm-conv-time`）就地重渲染随之刷新。列表行
+  // 本身已是 role=option 按钮，**不挂**热区（嵌套可交互元素 = 点击语义冲突）；
+  // 打开中的聊天窗消息时间由 refreshAllTimestamps 的 [data-ts-text] 就地刷新覆盖。
+  window.addEventListener(TIME_FORMAT_CHANGED, () => { renderList(); });
   // P3 error surface — friendsApi dispatches on auth failure / network error.
   window.addEventListener('fm-auth-required', () => { openLoginModal(); });
   window.addEventListener('fm-network-error', () => { window.__showToast?.(t('messages.networkError'), 'error'); });
