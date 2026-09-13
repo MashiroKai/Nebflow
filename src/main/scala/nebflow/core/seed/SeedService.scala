@@ -377,7 +377,7 @@ object SeedService:
                   logger.warnSync(
                     s"Seed: plugin '$name' differs from seed (seed ${seedDigest.take(12)}…) — runtime is user-modified (digest ${runtimeDigest.take(12)}… ≠ trusted ${td.take(12)}…), keeping user version")
                 case None =>
-                  // 无信任记录（untrusted/未审）→ 无仲裁基准，保守不覆盖
+                  // 无信任记录（从未 approve）→ 无仲裁基准，保守不覆盖
                   logger.warnSync(
                     s"Seed: plugin '$name' differs from seed (seed ${seedDigest.take(12)}… vs runtime ${runtimeDigest.take(12)}…) and has no trust record — keeping runtime version")
             case Left(err) =>

@@ -363,9 +363,11 @@ object PluginRegistry:
   private case class Cache(sig: List[(String, Long)], snapshot: Snapshot)
   private val cache = new java.util.concurrent.atomic.AtomicReference[Option[Cache]](None)
 
-  /** 一次全量扫描的完整产出：可装载条目（含 untrusted——审批清单/面板需要看到待审
-    * 插件）+ 拒载清单（§B.2 左值）。可见性批（2026-09-10 P1 静默缩容）：拒载清单与
-    * 条目同缓存，目录缺席注记 / 启动健康摘要 / 渲染共用同一次扫描（单点、零重复装载）。 */
+  /** 一次全量扫描的完整产出：可装载条目（含**被封禁**项——面板/审计需要看到 deny-list
+    * 命中者及其 block 元数据；无审批批 2026-09-13 后条目面不再有「待审」形态，受信与否
+    * 只取决于「盘上在位 ∧ 未被封禁」）+ 拒载清单（§B.2 左值）。可见性批（2026-09-10 P1
+    * 静默缩容）：拒载清单与条目同缓存，目录缺席注记 / 启动健康摘要 / 渲染共用同一次扫描
+    * （单点、零重复装载）。 */
   private final case class Snapshot(plugins: List[PluginDef], rejected: List[(String, String)])
 
   private def treeSig(dir: os.Path): List[(String, Long)] =
@@ -393,7 +395,7 @@ object PluginRegistry:
             snap
     }
 
-  /** 全量注册表（含 untrusted——审批清单/面板需要看到待审插件）。 */
+  /** 全量注册表（含**被封禁**项——面板/审计需要看到 deny-list 命中者及其 block 元数据）。 */
   def scan(): IO[List[PluginDef]] = snapshot().map(_.plugins)
 
   /** 审批清单渲染数据：全部插件 + 拒载原因（同缓存快照，与 scan 同源同时点）。 */
@@ -846,8 +848,9 @@ object PluginRegistry:
     }
 
   /** 信任记录落库 digest（approve 时刻的目录 fingerprint；之后目录漂移不影响记录本身）。
-    * 与 TrustStatus（现算状态：漂移即 untrusted 重审）互补——需要「approve 时刻基准」
-    * 做对比仲裁的场景（seed reconcile 判「用户是否改过」）用本方法。 */
+    * 与 TrustStatus（现算状态；无审批批 2026-09-13 后在位即受信、漂移只降级为
+    * `contentChanged` 可见性）互补——需要「approve 时刻基准」做对比仲裁的场景
+    * （seed reconcile 判「用户是否改过」）用本方法。 */
   def trustRecordDigest(name: String): Option[String] =
     trustRecord(name).map(_.sha256)
 
