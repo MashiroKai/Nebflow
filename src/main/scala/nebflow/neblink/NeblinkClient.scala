@@ -122,9 +122,33 @@ class NeblinkClient(
   private val logger = NebflowLogger.forName("nebflow.neblink.client")
 
   // HTTP client: force HTTP/1.1 and bypass system proxy (direct LAN/WAN access).
-  // HTTP/1.1 avoids the JDK HttpClient's HTTP/2 connection-reuse + TLS 1.3
-  // session resumption clash with the Caddy reverse proxy in front of
-  // neblink.nebflow.space (connect timeouts / bad_record_mac TLS alerts).
+  //
+  // ── D1: why HTTP/1.1 here — evidence, then judge-red ──────────────────────
+  // The sentence that used to stand here ("HTTP/2 connection-reuse + TLS 1.3
+  // session resumption clash with the Caddy reverse proxy … connect timeouts /
+  // bad_record_mac TLS alerts") was a causal claim with **no evidence bound to
+  // it**, copied verbatim into 8 sites.
+  //
+  // Evidence (2026-09-12 read-only probe of this exact topology, Caddy in
+  // front of neblink.nebflow.space): the default version (i.e. h2, ALPN=h2
+  // signed by this Caddy) served 14/14 requests 200 with 0 GOAWAY and 0 TLS
+  // alert, TLS 1.3 ticket resumption was accepted 5/5, and the connection
+  // reuse boundary measured (28.6 s, 32.8 s]. Source chain: the neblink pin
+  // landed as 42fd15b6, whose own message says "same TLS fix as 3773699b" —
+  // i.e. it is an analogy carried over from the 2026-08-11 USTC LLM gateway
+  // (nginx/one-api style reverse proxy), not a reproduction here.
+  // 未证 (both directions): the original failure was intermittent and no log
+  // of it survives, so a green local window does NOT prove the trap is absent
+  // — it only says "not triggered here, in this window, on this JDK build".
+  //
+  // Judge-red (any one ⇒ reopen the pin + a rollback review; until then
+  // HTTP/1.1 stays and no h1/h2 decision moves):
+  //   ① the outbound-failure buckets logged by sendRequestTimed report
+  //      IOException(GOAWAY) or IOException(closed/reset) on a non-idempotent
+  //      POST (those are never retried);
+  //   ② bad_record_mac or any TLS alert reproduces against this topology;
+  //   ③ a same-window h1-vs-h2 comparison (n ≥ 100 per arm) shows h2 p95 >
+  //      h1 p95 × 1.2.
   private val httpClient = HttpClient
     .newBuilder()
     .version(HttpClient.Version.HTTP_1_1)
@@ -834,6 +858,9 @@ class NeblinkClient(
         else Left(s"HTTP ${response.statusCode()}: ${response.body()}")
         catch
           case e: Exception =>
+            // D4(a) instrument: bucket + count + log before the value is
+            // collapsed (the Left text below is deliberately unchanged).
+            NeblinkClient.noteOutboundFailure(e, method, url, logger)
             // Some JDK-native exceptions (e.g. bare ConnectException) carry a
             // null message — fall back to toString so downstream Left values
             // never NPE on encoding/logging.
@@ -853,6 +880,113 @@ object NeblinkClient:
    */
   val DefaultRelayTimeout: scala.concurrent.duration.FiniteDuration =
     scala.concurrent.duration.FiniteDuration(10, scala.concurrent.duration.SECONDS)
+
+  // ────────────────────────────────────────────────────────────────────────
+  // Outbound failure buckets — the D4(a) instrument (clientperf 批, 2026-09-13)
+  // ────────────────────────────────────────────────────────────────────────
+  //
+  // WHY: every transport failure in sendRequestTimed used to collapse into one
+  // `String` (`Left(e.getMessage)`), so nothing downstream could tell a connect
+  // timeout from a GOAWAY from a closed connection. Without that separation the
+  // h1/h2 re-evaluation (设计件 §3.4 R4) has no judge-red signal at all — one
+  // green run proves nothing about an intermittent failure.
+  //
+  // WHAT is unchanged (hard constraints of this batch): the returned value keeps
+  // exactly the same shape (`Left(message)` text untouched), no wire change (no
+  // request/response/header touched), no new file, no protocol change, no new
+  // dependency — the buckets only ADD one WARN line each through the existing
+  // NebflowLogger pipeline.
+
+  /** Bucket labels — the judge-red vocabulary (设计件 §3.1/§3.2). */
+  object Bucket:
+    val ConnectTimeout = "HttpConnectTimeoutException"
+    val Timeout = "HttpTimeoutException"
+    val Goaway = "IOException(GOAWAY)"
+    val ConnClosed = "IOException(closed/reset)"
+    val Other = "other"
+
+  private val outboundFailureCounts =
+    new java.util.concurrent.ConcurrentHashMap[String, java.util.concurrent.atomic.AtomicLong]()
+
+  /** Classify one transport failure. NOTE the order: `HttpConnectTimeoutException`
+    * extends `HttpTimeoutException` extends `IOException`, so the most specific
+    * class must be matched first or every connect timeout would land in the
+    * plain-timeout bucket. A GOAWAY is only distinguishable by message text
+    * (the JDK raises a bare `IOException`), hence the message probes.
+    */
+  private[neblink] def bucketOf(e: Throwable): String =
+    e match
+      case _: java.net.http.HttpConnectTimeoutException => Bucket.ConnectTimeout
+      case _: java.net.http.HttpTimeoutException        => Bucket.Timeout
+      case io: java.io.IOException =>
+        val m = Option(io.getMessage).getOrElse("").toLowerCase
+        if m.contains("goaway") then Bucket.Goaway
+        else if m.contains("closed") || m.contains("reset") then Bucket.ConnClosed
+        else Bucket.Other
+      case _ => Bucket.Other
+
+  /** One classified failure: bump the bucket, then log the raw evidence line.
+    * Called from inside `sendRequestTimed`'s catch — sync logger on purpose
+    * (we are already on `IO.blocking`). Never throws: the instrument must not
+    * be able to change the request outcome.
+    */
+  private[neblink] def noteOutboundFailure(e: Exception, method: String, url: String, logger: NebflowLogger): Unit =
+    try
+      val bucket = bucketOf(e)
+      val count = outboundFailureCounts
+        .computeIfAbsent(bucket, _ => new java.util.concurrent.atomic.AtomicLong(0L))
+        .incrementAndGet()
+      // Single self-contained line (the 1-arg `warnSync`) so all fields form one
+      // greppable token stream for the judge-red greps. Style choice, not a
+      // workaround: the kv overload renders its pairs fine (probe-measured —
+      // see the clientperf evidence dir, 19-temp-kvprobe.log).
+      logger.warnSync(
+        s"NebLink outbound request failed bucket=$bucket bucketCount=$count method=$method" +
+          s" path=${pathShapeOf(url)} at=${java.time.Instant.now()}" +
+          s" errorClass=${e.getClass.getSimpleName} error=${scrub(Option(e.getMessage).getOrElse(e.toString))}"
+      )
+    catch case _: Throwable => ()
+
+  /** Per-bucket totals since JVM start (observation seam). */
+  private[neblink] def outboundFailureSnapshot: Map[String, Long] =
+    outboundFailureCounts.asScala.map { case (k, v) => k -> v.get() }.toMap
+
+  /** Test seam — the counters are JVM-global, so specs reset them. */
+  private[neblink] def resetOutboundFailureCounters(): Unit = outboundFailureCounts.clear()
+
+  /** Path SHAPE only, for logs: no query string, no host, no token. Segments
+    * that look like identifiers (any digit, or a non `[A-Za-z0-9._-]` byte —
+    * UUIDs, hex ids, percent-encoded values) collapse to `:id`, so
+    * `/api/friends/<id>/messages?token=…` logs as `/api/friends/:id/messages`.
+    */
+  private[neblink] def pathShapeOf(url: String): String =
+    val cut =
+      val q = url.indexOf('?')
+      val h = url.indexOf('#')
+      List(q, h).filter(_ >= 0).minOption.getOrElse(url.length)
+    val pathOnly = url.substring(0, cut)
+    val schemeEnd = pathOnly.indexOf("://")
+    val path =
+      if schemeEnd >= 0 then
+        val slash = pathOnly.indexOf('/', schemeEnd + 3)
+        if slash < 0 then "/" else pathOnly.substring(slash)
+      else pathOnly
+    if path.isEmpty then "/" else path.split("/", -1).map(maskPathSegment).mkString("/")
+
+  private def maskPathSegment(s: String): String =
+    if s.isEmpty then ""
+    else if s.exists(_.isDigit) then ":id"
+    else if s.forall(c => c.isLetter || c == '-' || c == '_' || c == '.') then s
+    else ":id"
+
+  /** Belt-and-braces scrub for the logged message: a query string, a bearer
+    * token or a `secret=…` pair must never reach the log line (the path shape
+    * is already host- and query-free, this covers the free-text message).
+    */
+  private def scrub(s: String): String =
+    s.replaceAll("(?i)bearer\\s+\\S+", "Bearer <redacted>")
+      .replaceAll("(?i)(token|secret|password|api[_-]?key)=[^\\s&]+", "$1=<redacted>")
+      .replaceAll("(?i)(https?://[^\\s]*)\\?[^\\s]*", "$1?<redacted>")
 
   /** HTTP 401 marker from sendRequest's `HTTP <code>: <body>` error shape. */
   private[neblink] def isUnauthorized(err: String): Boolean =

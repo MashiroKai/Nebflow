@@ -5,7 +5,7 @@ import io.circe.syntax.*
 import io.circe.{Json, parser}
 
 import java.net.{URI, URLEncoder}
-import java.net.http.{HttpClient, HttpRequest, HttpResponse}
+import java.net.http.{HttpRequest, HttpResponse}
 
 /**
   * RFC 8628 device-flow client against an external OIDC provider (Logto).
@@ -192,19 +192,29 @@ object LogtoDeviceFlow:
 
   // ── production transport ────────────────────────────────────────────────
 
-  /** JDK-backed Send: HTTP/1.1, system proxy bypassed, 15s timeouts — the
-    * same transport policy as RestApiRoutes.proxyPost (Caddy fronting the
-    * public endpoints breaks HTTP/2 connection reuse). Transport failures
-    * surface as (0, errorMessage) so callers degrade to error responses
-    * instead of unhandled IO failures. */
+  /** JDK-backed Send on the shared `OutboundHttpClients.Policy.Direct15s`
+    * client (HTTP/1.1, system proxy bypassed, 15 s connect) — the same policy
+    * as RestApiRoutes.proxyPost. Previously this built a fresh `HttpClient` on
+    * every device-flow poll tick; it now reuses one memoized instance (D5,
+    * 2026-09-13). Transport failures surface as (0, errorMessage) so callers
+    * degrade to error responses instead of unhandled IO failures.
+    *
+    * D1 — why HTTP/1.1 here, and what would flip it:
+    *   · Evidence: **none on this peer.** Logto (`auth.*`) is fronted by an
+    *     unknown reverse proxy — whether it is the same Caddy as neblink is
+    *     未证, and no TLS/ALPN reading has ever been taken on it. The
+    *     "HTTP/2 reuse + TLS 1.3 resumption clash with the reverse proxy"
+    *     rationale on the old comment was carried over from RestApiRoutes
+    *     (commit 4c0f618f), not measured here. The 2026-09-12 Caddy probe
+    *     (14/14 HTTP_2 200, 0 TLS alerts) does not transfer: different peer,
+    *     and "green in one local window" is not evidence a trap is absent.
+    *   · Judge-red: a reproduced TLS alert / bad_record_mac against this peer,
+    *     or a GOAWAY / closed-reset bucket on the token exchange (a
+    *     non-idempotent POST) in the outbound-failure counters.
+    */
   val jdkSend: Send = req =>
     IO.blocking {
-      val client = HttpClient
-        .newBuilder()
-        .version(HttpClient.Version.HTTP_1_1)
-        .proxy(java.net.ProxySelector.of(null))
-        .connectTimeout(java.time.Duration.ofSeconds(15))
-        .build()
+      val client = OutboundHttpClients.client(OutboundHttpClients.Policy.Direct15s)
       val builder = HttpRequest
         .newBuilder()
         .uri(URI.create(req.url))

@@ -3159,8 +3159,24 @@ class RestApiRoutes(
    * collapsed). Each entry is `{id}` plus `contextLength` when the provider
    * reports one (OpenRouter `context_length`, others `context_window`) —
    * absent/unparsable means the field is simply omitted. Uses the same JDK
-   * HttpClient posture as the LLM adapters: HTTP/1.1 forced, system proxy
-   * honored — a probe must see the same network path real completions take.
+   * HttpClient posture as the LLM adapters (`OutboundHttpClients.Policy.SystemProxy10s`:
+   * HTTP/1.1 forced, system proxy honored) — a probe must see the same network
+   * path real completions take.
+   *
+   * D1 — why HTTP/1.1 here, and what would flip it (this peer is NOT the
+   * neblink Caddy face, so the two must not share a conclusion):
+   *   · Evidence: **this call faces a different reverse proxy** — the provider
+   *     API gateway, the same family as the nginx/one-api endpoint that
+   *     produced the original 2026-08-11 `bad_record_mac` incident, so its
+   *     trap evidence is *closer* to the original finding than neblink's. What
+   *     we actually have measured here is nothing: the incident's alert text
+   *     and frequency were never retained, and no reading on this path since.
+   *     The 2026-09-12 probe covered neblink/Caddy only ⇒ the neblink
+   *     14/14-green result says nothing about this peer.
+   *   · Judge-red: a reproduced `bad_record_mac` / TLS alert on this path, or a
+   *     GOAWAY / closed-reset bucket here in the outbound-failure counters, or
+   *     an h2-vs-h1 same-window comparison (n ≥ 100/arm) showing h2 p95 >
+   *     h1 p95 × 1.2. Do NOT relax this pin as part of a neblink-Caddy review.
    */
   private def fetchProviderModels(
     modelsUrl: java.net.URI,
@@ -3168,11 +3184,7 @@ class RestApiRoutes(
     protocol: String
   ): IO[Either[String, List[Json]]] =
     IO.blocking {
-      val client = java.net.http.HttpClient
-        .newBuilder()
-        .version(java.net.http.HttpClient.Version.HTTP_1_1)
-        .connectTimeout(java.time.Duration.ofSeconds(10))
-        .build()
+      val client = OutboundHttpClients.client(OutboundHttpClients.Policy.SystemProxy10s)
       val reqBuilder = java.net.http.HttpRequest
         .newBuilder()
         .uri(modelsUrl)
@@ -3485,16 +3497,25 @@ class RestApiRoutes(
 
   private def proxyPost(serverUrl: String, path: String, body: String): IO[Either[String, Json]] =
     IO.blocking {
-      // Force HTTP/1.1 + bypass system proxy. The JDK HttpClient's HTTP/2
-      // connection-reuse + TLS 1.3 session resumption clashes with the Caddy
-      // reverse proxy in front of neblink.nebflow.space, producing
-      // connect timeouts / bad_record_mac TLS alerts on reused connections.
-      val client = java.net.http.HttpClient
-        .newBuilder()
-        .version(java.net.http.HttpClient.Version.HTTP_1_1)
-        .proxy(java.net.ProxySelector.of(null))
-        .connectTimeout(java.time.Duration.ofSeconds(15))
-        .build()
+      // The shared OutboundHttpClients.Policy.Direct15s client: HTTP/1.1, system
+      // proxy bypassed, 15 s connect. Previously built per call (device-flow
+      // code/token/enroll) — now one memoized instance (D5, 2026-09-13).
+      //
+      // D1 — why HTTP/1.1 here, and what would flip it:
+      //   · Evidence: this peer is the neblink-server, behind the SAME Caddy as
+      //     NeblinkClient. The 2026-09-12 probe of that topology served 14/14
+      //     requests 200 with ALPN=h2, 0 GOAWAY, 0 TLS alert, 5/5 TLS 1.3
+      //     resumptions accepted ⇒ the old "HTTP/2 reuse + TLS 1.3 resumption
+      //     clashes with Caddy" sentence has no support on this link; it was
+      //     copied from the 2026-08-11 USTC (nginx/one-api) incident (42fd15b6
+      //     self-describes it as "same TLS fix as 3773699b"). 未证 either way:
+      //     the original symptom was intermittent and left no logs, so one
+      //     green local window does not prove the trap absent.
+      //   · Judge-red: a GOAWAY / closed-reset bucket on this non-idempotent
+      //     POST in the outbound-failure counters, or a reproduced TLS alert,
+      //     or same-window h2 p95 > h1 p95 × 1.2 (n ≥ 100/arm) — then re-review
+      //     the pin (not before; no version decision moves on this evidence).
+      val client = OutboundHttpClients.client(OutboundHttpClients.Policy.Direct15s)
       val request = java.net.http.HttpRequest
         .newBuilder()
         .uri(java.net.URI.create(s"${serverUrl.stripSuffix("/")}$path"))

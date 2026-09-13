@@ -3,7 +3,7 @@ package nebflow.neblink
 import cats.effect.IO
 
 import java.net.URI
-import java.net.http.{HttpClient, HttpRequest, HttpResponse}
+import java.net.http.{HttpRequest, HttpResponse}
 import java.time.Duration
 
 /** Server-side fetch of the local account avatar, backing the web local-first
@@ -36,18 +36,26 @@ object AvatarProxy:
         else Left(s"upstream HTTP $status")
     }
 
-  /** Production transport: JDK client, HTTP/1.1, system proxy bypassed, 15s
-    * timeouts — the same policy as LogtoDeviceFlow.jdkSend. Transport failures
-    * surface as Left so the route degrades to 502 instead of an unhandled IO
-    * failure. */
+  /** Production transport: the shared `OutboundHttpClients.Policy.Direct15s`
+    * client (HTTP/1.1, system proxy bypassed, 15 s connect) — the same policy
+    * as LogtoDeviceFlow.jdkSend. One memoized instance instead of a new
+    * `HttpClient` per avatar miss (D5, 2026-09-13). Transport failures surface
+    * as Left so the route degrades to 502 instead of an unhandled IO failure.
+    *
+    * D1 — why HTTP/1.1 here, and what would flip it:
+    *   · Evidence: **none on this peer.** The avatar origin is a static host on
+    *     the neblink-server side; no reading has ever been taken on this path,
+    *     and the "HTTP/2 reuse + TLS 1.3 resumption clash" rationale was copied
+    *     in from the 2026-08-11 USTC LLM-gateway incident (commit a9672dc2).
+    *     Topology-wise it shares the neblink Caddy front, where the 2026-09-12
+    *     probe saw 14/14 HTTP_2 200 with 0 TLS alerts — that is 未证 for the
+    *     trap's absence (intermittent symptom, no logs kept), not evidence.
+    *   · Judge-red: a reproduced TLS alert / bad_record_mac, or a GOAWAY /
+    *     closed-reset bucket for this path in the outbound-failure counters.
+    */
   val jdkFetch: Fetch = url =>
     IO.blocking {
-      val client = HttpClient
-        .newBuilder()
-        .version(HttpClient.Version.HTTP_1_1)
-        .proxy(java.net.ProxySelector.of(null))
-        .connectTimeout(Duration.ofSeconds(15))
-        .build()
+      val client = OutboundHttpClients.client(OutboundHttpClients.Policy.Direct15s)
       val request = HttpRequest
         .newBuilder(URI.create(url))
         .timeout(Duration.ofSeconds(15))

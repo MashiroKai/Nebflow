@@ -373,9 +373,19 @@ final class NeblinkRelayTunnel(
       IO.blocking {
         val wsUri = buildRelayWsUri(url, id)
         val listener = new RelayWsListener(this, closed, dispatcher)
+        // HTTP/1.1 pinned (D1). Evidence: this peer is neblink-server behind
+        // the SAME Caddy as NeblinkClient — see the canonical note there. The
+        // old "avoid HTTP/2 TLS issues with Caddy" wording asserted a cause
+        // that no reading on this link supports (2026-09-12 probe: 14/14
+        // HTTP_2 200, 0 GOAWAY, 0 TLS alert); 未证 either way (intermittent
+        // original symptom, no logs kept). Judge-red: a WS upgrade failure
+        // whose classified outbound-failure bucket is GOAWAY / closed-reset
+        // while h2 is selected. Not converged into OutboundHttpClients: one
+        // client per WS connection is the tunnel's own lifecycle, not a
+        // per-call construction (D5 scope = 4 sites).
         val client = HttpClient
           .newBuilder()
-          .version(HttpClient.Version.HTTP_1_1) // avoid HTTP/2 TLS issues with Caddy
+          .version(HttpClient.Version.HTTP_1_1)
           .proxy(java.net.ProxySelector.of(null)) // bypass system proxy
           .connectTimeout(java.time.Duration.ofSeconds(15))
           .build()
