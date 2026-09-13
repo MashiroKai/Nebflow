@@ -16,7 +16,7 @@
  * 退出码：默认 0（警告而已）；--fail-on-red 时红 >0 ⇒ 1。
  */
 import { execFileSync } from 'node:child_process';
-import { existsSync, readdirSync, readFileSync, statSync } from 'node:fs';
+import { existsSync, lstatSync, readdirSync, readFileSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -55,9 +55,14 @@ export function classify(path) {
 
 function walkMd(dir, depth = 0) {
   if (depth > 3 || !existsSync(dir)) return [];
-  return readdirSync(dir).flatMap((n) => {
+  let names = [];
+  try { names = readdirSync(dir); } catch { return []; }
+  return names.flatMap((n) => {
     const p = join(dir, n);
-    if (statSync(p).isDirectory()) return walkMd(p, depth + 1);
+    let st;
+    try { st = lstatSync(p); } catch { return []; }
+    if (st.isSymbolicLink()) return [];               // 悬空 symlink 会让 statSync 抛 ENOENT（真实 corpus 实跑发现）
+    if (st.isDirectory()) return walkMd(p, depth + 1);
     return n.endsWith('.md') ? [p] : [];
   });
 }
