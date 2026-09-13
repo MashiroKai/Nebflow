@@ -1,5 +1,7 @@
 package nebflow.core
 
+import java.nio.file.{Files, Paths}
+import java.nio.file.attribute.FileTime
 import java.security.MessageDigest
 
 /**
@@ -125,4 +127,107 @@ class DataRootPlaceholderSpec extends munit.FunSuite:
       !nebflow.core.tools.BashTool.isDangerous("ls -la"),
       "安全命令不被误判"
     )
+
+  // ── Environment 段（prompt.md ↔ data.sh JSON 通道）消费侧 ────────────────────
+  // 作者 2026-09-13 裁定（#303 U-1(a) 的处置）：Environment 段**加一行**
+  // `{{data_root}}`（不删 data.sh 键）。上面 7 例只覆盖 substituteDataRoot 通道
+  // （agent system.md / 插件注入块 / 分发器目录段）+ 工具描述 + BashTool 保护面，
+  // **不含** Environment 段的 JSON 替换通道（PromptSections.scala:462-478 建段 →
+  // :550-580 渲染）。下两例补该缺口：
+  //  - 正控：该行渲染为**本实例 dataRoot 绝对路径**（值源 = renderWithScript 的
+  //    env 表 `NEBFLOW_DATA_ROOT` ← PathUtil.dataRoot.toString，:559）且零残留；
+  //  - 负控：供键缺失 ⇒ 占位符静默留原样、不抛异常（依据 :574-578：只对 JSON
+  //    对象里**存在**的键做 replace，无残留检查、无 raiseError）。
+  // 注意与 substituteDataRoot 通道的差异：后者默认 home 下渲染 `~/.nebflow` 字面
+  // （renderDataRootValue），本通道恒为绝对路径 —— 同指一个目录，形态不同。
+  test("Environment 段（data.sh JSON 通道）：{{data_root}} → 本实例数据根绝对路径，零占位符残留"):
+    val prevRoot = PathUtil.dataRoot
+    val tempRoot = os.pwd / "target" / "test-data-root-envline"
+    val envDir = tempRoot / "prompts" / "sections" / "environment"
+    try
+      os.remove.all(tempRoot)
+      os.makeDir.all(envDir)
+      os.write.over(envDir / "condition.json", """{"order": 100, "condition": "always"}""")
+      // fixture 与 home 实件同形（~/.nebflow/prompts/sections/environment/{prompt.md,data.sh}）
+      os.write.over(
+        envDir / "prompt.md",
+        """## Environment
+          |
+          || Property | Value |
+          ||----------|-------|
+          || Working directory | `{{working_dir}}` |
+          || Gateway port | {{gateway_port}} |
+          || Data root | `{{data_root}}` |
+          |""".stripMargin
+      )
+      os.write.over(
+        envDir / "data.sh",
+        """#!/usr/bin/env bash
+          |set -euo pipefail
+          |cat << JSON
+          |{
+          |  "working_dir": "$(pwd)",
+          |  "gateway_port": "${NEBFLOW_GATEWAY_PORT:-8080}",
+          |  "data_root": "${NEBFLOW_DATA_ROOT:-unknown}"
+          |}
+          |JSON
+          |""".stripMargin
+      )
+      // fixture mtime 拨到极早：loadFileSectionsCached 按 max-mtime 判缓存，
+      // 恢复真实 root 后（真实 mtime ≫ 1000）必然重读，不污染后续套件
+      val old = FileTime.fromMillis(1000L)
+      for p <- List("condition.json", "prompt.md", "data.sh") do
+        Files.setLastModifiedTime(Paths.get((envDir / p).toString), old)
+
+      PathUtil.setDataRoot(tempRoot)
+      val env = nebflow.agent.PromptSections.envInfoSection(nebflow.agent.PromptSections.PromptContext())
+
+      assert(
+        env.contains(s"| Data root | `$tempRoot` |"),
+        s"data_root 行必须渲染为**本实例**数据根绝对路径（值源 NEBFLOW_DATA_ROOT = PathUtil.dataRoot.toString，PromptSections.scala:559）：$env"
+      )
+      assert(!env.contains("{{"), s"渲染后不得残留任何占位符：$env")
+    finally
+      PathUtil.setDataRoot(prevRoot)
+      os.remove.all(tempRoot)
+
+  test("Environment 段负控：data.sh 缺 data_root 键 ⇒ 占位符静默留原样（既有语义，不抛异常）"):
+    val prevRoot = PathUtil.dataRoot
+    val tempRoot = os.pwd / "target" / "test-data-root-envline-nokey"
+    val envDir = tempRoot / "prompts" / "sections" / "environment"
+    try
+      os.remove.all(tempRoot)
+      os.makeDir.all(envDir)
+      os.write.over(envDir / "condition.json", """{"order": 100, "condition": "always"}""")
+      os.write.over(
+        envDir / "prompt.md",
+        "## Environment\n\n| Gateway port | {{gateway_port}} |\n| Data root | `{{data_root}}` |\n"
+      )
+      os.write.over(
+        envDir / "data.sh",
+        """#!/usr/bin/env bash
+          |set -euo pipefail
+          |echo "{\"gateway_port\": \"${NEBFLOW_GATEWAY_PORT:-8080}\"}"
+          |""".stripMargin
+      )
+      val old = FileTime.fromMillis(1000L)
+      for p <- List("condition.json", "prompt.md", "data.sh") do
+        Files.setLastModifiedTime(Paths.get((envDir / p).toString), old)
+
+      PathUtil.setDataRoot(tempRoot)
+      val env = nebflow.agent.PromptSections.envInfoSection(nebflow.agent.PromptSections.PromptContext())
+
+      // 既有语义（已知事实，非理想态）：缺键 ⇒ 静默留原样。若未来改为显式 WARN /
+      // 抛错（更响的契约），本用例须同步改写 —— 断言的是「当前语义」而非「最佳语义」。
+      assert(
+        env.contains("| Data root | `{{data_root}}` |"),
+        s"缺键时既有语义为静默透传（PromptSections.scala:574-578 只替换 JSON 中存在键），实测：$env"
+      )
+      assert(
+        env.contains("| Gateway port | 8080 |"),
+        s"同段其它键仍被正常替换（缺键不得拖垮整段渲染）：$env"
+      )
+    finally
+      PathUtil.setDataRoot(prevRoot)
+      os.remove.all(tempRoot)
 
