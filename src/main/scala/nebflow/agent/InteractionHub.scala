@@ -77,6 +77,12 @@ object InteractionHub:
             case InteractionHubCommand.ListPendingAsks(rootSessionId, reply) =>
               // 刷新存活 (2026-09-03): read-only snapshot for reconnect replay.
               ctx.forkTurn(handleListPendingAsks(pending, rootSessionId, reply)) *> IO.pure(behavior)
+            case InteractionHubCommand.RootReachable(rootSessionId, reply) =>
+              // 工具面按角色分化批 B6 (2026-09-13): read-only reachability probe —
+              // the non-blocking AskUserQuestion preflights with this before it
+              // registers a slot (nobody waits in non-blocking mode ⇒ a card
+              // rendered into an unreachable root = a silently lost answer).
+              ctx.forkTurn(handleRootReachable(rootWsSend, rootSessionId, reply)) *> IO.pure(behavior)
             case InteractionHubCommand.CleanupForSession(sessionId) =>
               // P2 G11 (20260908 spec §3.4): source-death cleanup — node cancelled
               // while its AskUser card is pending → close the card (engine cascade:
@@ -263,6 +269,36 @@ object InteractionHub:
       else IO.unit
     ).flatMap(list => (reply ! list).void)
 
+
+  // ============================================================
+  // 工具面按角色分化批 B6 (2026-09-13): read-only reachability probe.
+  //
+  // Returns whether a root session currently has a client window registered
+  // (`RegisterRoot`). Used by AskUserQuestion's **non-blocking** preflight:
+  // in non-blocking mode nobody waits for the answer, so a card rendered into
+  // an unreachable root (hub only warns, `handleRequest` None branch) would
+  // lose the answer **silently** — the one "必修" item of spec §5.4. The
+  // preflight makes that path an explicit refusal with ZERO slot registered.
+  //
+  // Read-only: never touches `pending` (no slot create/remove) and never
+  // renders. Pure query ⇒ safe to call before any side effect.
+  // ============================================================
+  private def handleRootReachable(
+    rootWsSend: Ref[IO, Map[String, Json => IO[Unit]]],
+    rootSessionId: String,
+    reply: ActorRef[Boolean]
+  ): IO[Unit] =
+    rootWsSend.get.flatMap { m =>
+      val reachable = rootSessionId.nonEmpty && m.contains(rootSessionId)
+      val note =
+        if reachable then IO.unit
+        else
+          logger.info(
+            s"RootReachable check: no wsSend registered for rootSessionId=$rootSessionId " +
+              s"(${m.size} registered) — non-blocking ask will be declined fail-closed (B6)"
+          )
+      note *> (reply ! reachable).void
+    }
 
   // ============================================================
   // Answer: complete the reply target (multi-slot by requestId)
@@ -579,3 +615,14 @@ object InteractionHubCommand:
     * requestId — never the session-wide sweep of CleanupForSession. Idempotent:
     * an unknown/already-answered requestId is a no-op. */
   final case class CloseRequest(requestId: String) extends InteractionHubCommand
+
+  /** 工具面按角色分化批 B6（2026-09-13）：**只读**可达性查询 ——
+    * `rootSessionId` 当前是否有已注册的客户端窗口（`RegisterRoot` 的 wsSend）。
+    * 非阻塞 AskUserQuestion 在注册槽位**之前**用它做前置预检：非阻塞下没人等待
+    * ⇒ 卡渲染进不可达 root（`handleRequest` 的 None 分支只 warn）= 答案静默丢失。
+    * 预检把这条路径变成**显式拒绝 + 零槽位**（fail-closed）。
+    *
+    * 读侧纪律：不碰 `pending`（不建/不删槽位）、不渲染、不广播 —— 纯查询，故可安全
+    * 放在任何副作用之前。阻塞模式**不用**它（阻塞路径 root 不可达时的扇出回落
+    * `fallback:true` 语义保持不变）。 */
+  final case class RootReachable(rootSessionId: String, reply: ActorRef[Boolean]) extends InteractionHubCommand

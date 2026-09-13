@@ -4,11 +4,17 @@ import cats.effect.IO
 import io.circe.JsonObject
 import io.circe.syntax.*
 import nebflow.actor.ActorRef
-import nebflow.agent.{AgentCommand, AgentStatus}
+import nebflow.agent.{AgentCommand, AgentStatus, AskMode, AskUserAnswerBridge, InteractionHubCommand}
 import nebflow.core.{AskItem, AskOption, AskPreview, HeadlessMode, QuestionDependency}
+import nebflow.shared.ToolDefinition
+
+import scala.concurrent.duration.*
 
 object AskUserQuestionTool extends Tool:
-  val name = "AskUserQuestion"
+  /** 工具名（`AgentCore.schemaVariantFor` 与本工具共用此一处字面量）。 */
+  val Name = "AskUserQuestion"
+
+  val name = Name
 
   val description =
     """Ask the user one or more questions. Each question can have predefined options or be open-ended. The tool gives the user clickable options and a structured UI, which is faster and clearer than reading a text question — never ask clarifying questions in plain text.
@@ -42,6 +48,24 @@ Conditional branching (dependsOn):
 
 Behavior:
 - This tool blocks until the user responds. Your turn pauses and resumes automatically when the user answers."""
+
+  /** 基础变体（= 上面 `description`）**逐字节保持不变**（规格 §5.1 补充条）——
+    * 非 root 会话看到的永远是这一份，分化只许在 root 变体上「加」，不许在基础
+    * 变体上「改/删/美化」（否则非 root 会话的请求前缀会漂移，且语义面被扩大）。
+    * spec `AskUserDualModeSpec` 用字节比对钉住本不变量。 */
+  val descriptionBase: String = description
+
+  /** root 变体的增量段（工具面按角色分化批 B1/L5）：只在
+    * [[nebulaRootVariant]] 里拼接，绝不并入基线段。三段内容 = ① 非阻塞的确切
+    * 语义（发起即返回 + 答复稍后以消息到达 + 未答按最佳判断继续）、② 默认值、
+    * ③ 适用面声明（本形态仅本会话可见）。 */
+  private val nebulaRootExtraDescription =
+    """
+- Non-blocking mode (`mode` = "non-blocking", default "blocking"): the tool returns immediately with an acknowledgement instead of waiting. Your turn does NOT pause; the question card is shown to the user exactly as in blocking mode, and the answer arrives later as a new user message in this session (it wakes a new turn when you are idle, or lands at the next turn boundary). The acknowledgement carries the requestId — match the incoming answer to it. If no answer arrives and you cannot decide, proceed with your best judgment and say so in your wrap-up.
+- `mode` is available to this session only (Nebula root); every other session sees the blocking form alone."""
+
+  /** root 变体 description（B1/L5）：基础变体 + 增量段（基础文本一字不改）。 */
+  val descriptionNebulaRoot: String = description + nebulaRootExtraDescription
 
   val inputSchema = JsonObject.fromIterable(
     List(
@@ -122,6 +146,42 @@ Behavior:
     )
   )
 
+  // ============================================================
+  // 两份 schema 变体（B1/L4）：基础变体 = 上面 `inputSchema`（**逐字节不变**，
+  // 非 root 会话看到的那份，**属性缺席**——不是 enum 收窄、也不是「有属性但值
+  // 非法」，T9=(a)）；root 变体 = 基础 + `mode` 属性（enum + default）。
+  // 不接落点（= 无 buildToolList 分组）时本对象对外行为零变化。
+  // ============================================================
+
+  /** `mode` 属性的 schema（线上字面量取自 [[AskMode]] —— 与解析端共用一处）。 */
+  val modePropertySchema: io.circe.Json = io.circe.Json.obj(
+    "type" -> "string".asJson,
+    "enum" -> io.circe.Json.arr(AskMode.BlockingWire.asJson, AskMode.NonBlockingWire.asJson),
+    "default" -> AskMode.BlockingWire.asJson,
+    "description" -> ("How this question is asked. \"blocking\" (default) parks your turn until the user answers — " +
+      "the answer comes back as this tool's result. \"non-blocking\" returns immediately and the answer arrives later " +
+      "as a user message in this session; the card is identical. Non-blocking is available to the Nebula root session only.").asJson
+  )
+
+  /** root 变体 schema：基础 schema + `properties.mode`（从传入的基础定义派生 ⇒
+    * 与基础变体的字节一致性由构造方式保证）。 */
+  def schemaNebulaRoot(base: JsonObject): JsonObject =
+    val props = base("properties").flatMap(_.asObject).getOrElse(JsonObject.empty)
+    base.add("properties", io.circe.Json.fromJsonObject(props.add("mode", modePropertySchema)))
+
+  /** 不变式：基础 schema 里**没有** `mode`（防「顺手把并集 schema 写回来」）。 */
+  def baseHasModeProperty: Boolean =
+    inputSchema("properties").flatMap(_.asObject).exists(_.contains("mode"))
+
+  /** root 变体定义（B1）：从**已注册的定义**（`ToolRegistry.ALL_TOOLS` 那份，
+    * 已经过 `RemoteExecutor.augmentSchema`）派生 ⇒ 变体只多一个属性 + 一段描述，
+    * 基础面逐字节不受影响；工具名不变（成员资格与权限边界零变化）。 */
+  def nebulaRootVariant(base: ToolDefinition): ToolDefinition =
+    base.copy(
+      description = descriptionNebulaRoot,
+      inputSchema = schemaNebulaRoot(base.inputSchema)
+    )
+
   def summarize(input: JsonObject): String =
     val questions = input("questions").flatMap(_.asArray).getOrElse(Nil)
     if questions.isEmpty then "AskUser()"
@@ -184,22 +244,91 @@ Behavior:
   def askGuard(headless: Boolean = HeadlessMode.enabled): Option[ToolError] =
     if headless then Some(ToolError(HeadlessErrorMessage)) else None
 
+  // ============================================================
+  // 运行期兜底闸（B3/L3，规格 §0.4 第二道）：`mode` 解析 + 非 root 显式拒绝。
+  // 位置 = `askGuard` **之后**、`askUser` **之前**，**先于任何副作用**（此点之后
+  // 才可能有 hub 槽位 / 卡片 / 状态标记）。三层分层里 schema 分化是**第一性**，
+  // 本闸兜住 schema 兜不到的四类边角：① 模型硬造面外参数（引擎无 schema 校验器
+  // ⇒ 面外参数本来会被静默忽略）② 进程外调用方（ScriptTool / spec harness /
+  // REST 直调）③ 分化实现 bug（漏分支）④ 未来新增会话形态漏传身份。
+  // **不得**因 schema 分化而删除本闸——删即把硬造参数变成静默降级。
+  // ============================================================
+
+  /** 非法 `mode` 值的错误码（第三种伪处理：静默按阻塞跑）。 */
+  val BadModeCode = "ASKUSER_BAD_MODE"
+
+  /** 非 root 携带非阻塞的错误码（规格 §3.3 定稿文案的机器可读锚）。 */
+  val NonBlockingNotRootCode = "ASKUSER_NONBLOCK_NOT_ROOT"
+
+  /** 非阻塞**无窗口可投**的错误码（B6 可达性预检；规格 §3.4#4）。 */
+  val NoRootWindowCode = "ASKUSER_NONBLOCK_NO_ROOT_WINDOW"
+
+  /** `mode` 解析（B3）：**缺席 ⇒ 默认阻塞**（既有调用点零行为漂移）；**出现但
+    * 非法 ⇒ 显式 ToolError**（类型不对 / 值域外 / 空串一律显式，绝不静默回落
+    * 到阻塞——那正是明禁的「静默忽略参数」伪处理）。 */
+  def parseMode(input: JsonObject): Either[ToolError, AskMode] =
+    input("mode") match
+      case None => Right(AskMode.Blocking)
+      case Some(j) =>
+        j.asString.flatMap(AskMode.parse) match
+          case Some(m) => Right(m)
+          case None =>
+            Left(ToolError(
+              s"AskUserQuestion: invalid `mode` value ${j.noSpaces} — legal values are " +
+                s""""${AskMode.BlockingWire}" | "${AskMode.NonBlockingWire}" (omit `mode` for the default "Blocking"); """ +
+                s"nothing was asked ($BadModeCode)."
+            ))
+
+  /** 非 root 携带非阻塞的拒答（规格 §3.3 定稿文案：错在哪 / 期望是什么 / 合法
+    * 选项 / 错误码；并显式禁止重试）。 */
+  def nonBlockingNotRootError(ctx: ToolContext): ToolError =
+    val who = ctx.agentDef.map(_.name).getOrElse("<no agent session>")
+    ToolError(
+      s"AskUserQuestion: non-blocking mode is Nebula-root-only — this session is '$who' (depth=${ctx.depth}), " +
+        s"so `mode=\"${AskMode.NonBlockingWire}\"` is not permitted here ($NonBlockingNotRootCode). " +
+        "Legal options: (a) omit `mode` (blocking is the default and IS available to you); " +
+        "(b) if you must not block, use a different channel (node: text result along the out edge / BLOCKED report) instead. " +
+        s"Do not retry with mode=\"${AskMode.NonBlockingWire}\"."
+    )
+
+  /** 非阻塞可达性预检失败（B6）：问题**发不到任何窗口** ⇒ fail-closed 拒绝，
+    * 且**零槽位**（预检是只读的，发生在任何 hub 注册之前）。 */
+  def noRootWindowError(ctx: ToolContext): ToolError =
+    val root = ctx.rootSessionId.orElse(ctx.sessionId).getOrElse("<unknown>")
+    ToolError(
+      "AskUserQuestion: non-blocking mode needs an open window — this session's root " +
+        s"'$root' has no live client window registered with the interaction hub, so a non-blocking question " +
+        s"would never be shown (and nobody is waiting for it). Nothing was asked ($NoRootWindowCode). " +
+        "Legal options: (a) omit `mode` (blocking falls back to any other registered window); " +
+        "(b) ask again once a window is connected."
+    )
+
   def call(input: JsonObject, ctx: ToolContext): IO[Either[ToolError, String]] =
     // Headless benchmark mode: fail fast at the entry — no AskUser dispatch,
     // no wait; the error message pushes the agent to proceed on its own.
     askGuard() match
       case Some(err) => IO.pure(Left(err))
-      case None      => askUser(input, ctx)
+      case None =>
+        // B3 兜底闸：解析 + 角色判定，**先于任何副作用**（纯函数，无 IO）。
+        parseMode(input) match
+          case Left(err) => IO.pure(Left(err))
+          case Right(AskMode.Blocking) => askUser(input, ctx)
+          case Right(AskMode.NonBlocking) =>
+            if !ctx.isNebulaRoot then IO.pure(Left(nonBlockingNotRootError(ctx)))
+            else askUserNonBlocking(input, ctx)
 
-  private def askUser(input: JsonObject, ctx: ToolContext): IO[Either[ToolError, String]] =
+  /** 入参校验（阻塞/非阻塞共用；错误文案与历史逐字节一致）。 */
+  private def parseOrError(input: JsonObject): Either[ToolError, List[AskItem]] =
     val questionsJson = input("questions").flatMap(_.asArray).getOrElse(Nil)
-
-    if questionsJson.isEmpty then IO.pure(Left(ToolError("No valid questions provided")))
+    if questionsJson.isEmpty then Left(ToolError("No valid questions provided"))
     else
       val items = parseItems(questionsJson)
+      if items.isEmpty then Left(ToolError("No valid questions provided")) else Right(items)
 
-      if items.isEmpty then IO.pure(Left(ToolError("No valid questions provided")))
-      else
+  private def askUser(input: JsonObject, ctx: ToolContext): IO[Either[ToolError, String]] =
+    parseOrError(input) match
+      case Left(err) => IO.pure(Left(err))
+      case Right(items) =>
         ctx.agentActorRef match
           case Some(agentRef) =>
             val requestId = java.util.UUID.randomUUID().toString.take(8)
@@ -218,9 +347,71 @@ Behavior:
               }
           case None =>
             IO.pure(Left(ToolError("AskUserQuestion requires agent actor")))
-      end if
-    end if
+      end match
   end askUser
+
+  // ============================================================
+  // 非阻塞分支（B5/L6，仅 Nebula root 可达——B3 闸已在本方法之前判过）
+  // ============================================================
+
+  /** 预检上限（B6）：只读查询的有界等待；超时 = fail-closed 拒绝（不静默放行）。 */
+  val PreflightTimeout: FiniteDuration = 5.seconds
+
+  /** 非阻塞 ack（L6）：机器可读（requestId + 问题数）+ 明确「不要在此等待」+
+    * 未答兜底指令（D6：丢答案的降级必须是**设计内**的，不是静默的）。 */
+  def nonBlockingAck(items: List[AskItem], requestId: String): String =
+    s"requestId=$requestId · ${items.size} question(s) · non-blocking: the answer will arrive later as a " +
+      "message in this session — do not wait for it; if no answer arrives and you cannot decide, proceed with your best judgment."
+
+  /** 可达性预检（B6/M10）：**只读**问 hub「本会话 root 的窗口是否已注册」。
+    *
+    * WHY：非阻塞下没人等待 ⇒ root 不可达时卡被丢弃（hub 仅 warn）就会变成**静默
+    * 丢失答案**（规格 §5.4 root 不可达风险行的唯一「必修正」项）。fail-closed：
+    * 无 hub / 无 root 窗口 / hub 未在有界窗口内应答 ⇒ 显式拒绝。**零槽位**：预检
+    * 不注册任何 pending（发生在 `AgentCommand.AskUser` 派发之前）。 */
+  private def rootWindowReachable(ctx: ToolContext): IO[Either[ToolError, Unit]] =
+    val rootSid = ctx.rootSessionId.filter(_.nonEmpty).orElse(ctx.sessionId.filter(_.nonEmpty)).getOrElse("")
+    if rootSid.isEmpty then IO.pure(Left(noRootWindowError(ctx)))
+    else
+      ctx.sharedResources match
+        case None => IO.pure(Left(noRootWindowError(ctx)))
+        case Some(res) =>
+          res.interactionHubRef.get.flatMap {
+            case None => IO.pure(Left(noRootWindowError(ctx)))
+            case Some(hub) =>
+              hub
+                .?(
+                  (replyTo: ActorRef[Boolean]) => InteractionHubCommand.RootReachable(rootSid, replyTo),
+                  timeout = Some(PreflightTimeout)
+                )
+                .map(reachable => if reachable then Right(()) else Left(noRootWindowError(ctx)))
+                .handleErrorWith(_ => IO.pure(Left(noRootWindowError(ctx))))
+          }
+
+  /** 非阻塞执行链（L6）：同校验、同 items、同 hub 卡片链（`AgentCommand.AskUser`
+    * → `AgentActor` → `InteractionHubCommand.Request`），两处不同：
+    *  ① `replyTo` = 一次性桥接引用（[[AskUserAnswerBridge]]）而非工具 fiber 的回执；
+    *  ② **不做 `.?`**（不等待）⇒ 派发后立刻返回 ack，turn 不暂停。
+    * `AgentCommand.AskUser` 携带 `AskMode.NonBlocking` ⇒ `AgentActor` 跳过
+    * `WaitingForUser` 标注与 `DelegateBudget.pause`（等待从未发生，无配对物）。 */
+  private def askUserNonBlocking(input: JsonObject, ctx: ToolContext): IO[Either[ToolError, String]] =
+    parseOrError(input) match
+      case Left(err) => IO.pure(Left(err))
+      case Right(items) =>
+        ctx.agentActorRef match
+          case None => IO.pure(Left(ToolError("AskUserQuestion requires agent actor")))
+          case Some(agentRef) =>
+            rootWindowReachable(ctx).flatMap {
+              case Left(err) => IO.pure(Left(err))
+              case Right(_) =>
+                val requestId = java.util.UUID.randomUUID().toString.take(8)
+                val bridge = AskUserAnswerBridge.ref(agentRef, items, requestId, ctx)
+                (agentRef ! AgentCommand.AskUser(requestId, items, Some(bridge), AskMode.NonBlocking))
+                  .as(Right(nonBlockingAck(items, requestId)))
+            }
+      end match
+  end askUserNonBlocking
+
 
   /** R2 (wait-timeout-fix): paired un-mark for the WaitingForUser status the
     * agent's AskUser handler set when this question was dispatched. Registry

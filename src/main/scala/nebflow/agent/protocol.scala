@@ -64,6 +64,48 @@ object InjectionAttribution:
   val BackendNamedSources: Set[String] =
     Set("mail", "task", "dispatch", "system", "node", "skill", "delegate", "subtask", "flow", "tool", "background")
 
+/** AskUserQuestion 双模式（工具面按角色分化批 B4，2026-09-13 作者裁定 T2=(a)）：
+  *  - [[AskMode.Blocking]]（默认，**全角色**可用）= 现状语义：工具挂起 turn，答复
+  *    作为该次工具调用的返回值回投；
+  *  - [[AskMode.NonBlocking]]（**仅 Nebula 根会话**）= 工具发起即返回 ack，卡片与
+  *    requestId 与阻塞模式同构地注册进 hub，答复不作为返回值，而是以注入式用户
+  *    输入（[[AgentCommand.ImmediateInput]]，`fromUser=true`）在下一个 turn 边界
+  *    到达本会话。
+  *
+  * 授权面三层（规格书 §0/§3，作者 2026-09-13 令）：① 第一性 = **定义层分化**
+  * （非 root 会话的 `AskUserQuestion` 定义里**整体不含** `mode`，落点
+  * `AgentCore.buildToolList`）；② 第二道 = 运行期显式拒绝
+  * （`AskUserQuestionTool.call` 的 `ASKUSER_NONBLOCK_NOT_ROOT`，先于任何副作用）；
+  * ③ 第三道 = description（仅描述性，不承担机制）。**schema 分化不替代授权判定**：
+  * 引擎无 JSON-Schema 校验器 ⇒ 面外参数会被静默忽略，故 ② 不得删除。
+  *
+  * 判据单点 = [[AgentCore.isNebulaRoot]]（`name=="Nebula" && depth==0`），
+  * 定义期（挑变体）与运行期（兜底闸）**同一份实现**，禁第二份同表达式。 */
+enum AskMode:
+  case Blocking, NonBlocking
+
+object AskMode:
+  /** 线上字面量（`AskUserQuestionTool` 的 schema enum 与本枚举**共用此一处**，
+    * 防两份字面量漂移）。 */
+  val BlockingWire = "blocking"
+  val NonBlockingWire = "non-blocking"
+
+  /** 非阻塞 ack（`ImmediateInput.source`）的定名——真人点卡作答的答案，故
+    * 与 `fromUser=true` 同行；`fromUser=true` 时 source 被
+    * `AgentActor.injectionSourceFor` 单点折成 None（答案呈现为普通 user 气泡，
+    * 与 `main.js` 的 chat-input 直答口径一致）⇒ 不需要前端登记面。 */
+  val AnswerSource = "askUserAnswer"
+
+  def parse(raw: String): Option[AskMode] = raw match
+    case BlockingWire    => Some(AskMode.Blocking)
+    case NonBlockingWire => Some(AskMode.NonBlocking)
+    case _               => None
+
+  /** 该模式是否把 turn 停在等待态（`AgentActor` 的 `WaitingForUser` 标注 +
+    * `DelegateBudget.pause` 只在阻塞模式发生——非阻塞从未等待，无配对物，误标
+    * 即造出「永不解除的等待」）。 */
+  def parksTurn(mode: AskMode): Boolean = mode == AskMode.Blocking
+
 object AgentCommand:
 
   case class UserInput(
@@ -137,7 +179,12 @@ object AgentCommand:
   case class AskUser(
     requestId: String,
     items: List[AskItem],
-    replyTo: Option[ActorRef[List[String]]] = None
+    replyTo: Option[ActorRef[List[String]]] = None,
+    /** 双模式（B4）：**带默认值** ⇒ 两个既有构造点（`AskUserQuestionTool` /
+     * `ProjectCreateTool` 的 pathPanel）不传即逐字节维持阻塞语义；`AgentActor`
+     * 的共享处理链据此决定是否标 `WaitingForUser` / `DelegateBudget.pause`
+     * （仅阻塞模式标——见 [[AskMode.parksTurn]]）。 */
+    mode: AskMode = AskMode.Blocking
   ) extends AgentCommand
 
   case class LlmComplete(

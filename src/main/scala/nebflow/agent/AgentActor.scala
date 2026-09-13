@@ -2460,7 +2460,7 @@ object AgentActor extends AgentCore with AgentSession:
           )
 
       // --- AskUser from tool ---
-      case AgentCommand.AskUser(requestId, items, replyToOpt) =>
+      case AgentCommand.AskUser(requestId, items, replyToOpt, askMode) =>
         // P2: every agent (root or sub-agent) sends the question straight to
         // the InteractionHub — no ForwardAskUser relay chain. The hub holds
         // replyTo, renders the question in the Nebula window (sessionId =
@@ -2521,12 +2521,23 @@ object AgentActor extends AgentCore with AgentSession:
             //   turn end → finishTurnCont (Idle) — pre-existing backstop.
             // True-hang coverage is intact: every exit above re-enters scanned
             // statuses, and WaitingForUser itself is never a terminal state.
-            touchRegistryActivity(resources, state.sessionId, AgentStatus.WaitingForUser) *>
-              // R11 第 4 层 / U1=C-a + U8=(ii)：ask **发起单点**发暂停信号——内核
-              // 的 3600s wall-clock 预算在等待期暂停（等待无界，R1）。非 Delegate
-              // 会话无预算通道 ⇒ 无害 no-op。配对恢复点 =
-              // AskUserQuestionTool.restoreRegistryAfterAnswer。
-              DelegateBudget.pause(srcSession) *>
+            // 工具面按角色分化批 B4（2026-09-13）：**只有阻塞模式**才是
+            // human-in-the-loop 等待 —— 非阻塞发起即返回、答复稍后以注入用户输入
+            // 到达（D5），**从未等待** ⇒ 不得标 WaitingForUser，也不得 pause 预算
+            // （无配对物；误标即造出「永不解除的等待」，误 pause 即把没暂停的预算
+            // 重复 resume）。`AskMode.parksTurn` 是单点判据（可独立单测）。
+            // 判据由 `AskUserQuestionTool` 侧的运行期闸（B3）保证：非 root 会话
+            // 根本发不出 NonBlocking（硬造 ⇒ 显式 ToolError，先于本分支）。
+            val waitMarks: IO[Unit] =
+              if AskMode.parksTurn(askMode) then
+                touchRegistryActivity(resources, state.sessionId, AgentStatus.WaitingForUser) *>
+                  // R11 第 4 层 / U1=C-a + U8=(ii)：ask **发起单点**发暂停信号——内核
+                  // 的 3600s wall-clock 预算在等待期暂停（等待无界，R1）。非 Delegate
+                  // 会话无预算通道 ⇒ 无害 no-op。配对恢复点 =
+                  // AskUserQuestionTool.restoreRegistryAfterAnswer。
+                  DelegateBudget.pause(srcSession)
+              else IO.unit
+            waitMarks *>
               (hub ! InteractionHubCommand.Request(
                 InteractionRequest(
                   requestId = requestId,
