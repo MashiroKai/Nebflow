@@ -58,7 +58,11 @@ object NeblinkWiring:
     guard: FriendMessagingGuard = new FriendMessagingGuard(),
     onFriendEvent: Option[FriendEvent => IO[Unit]] = None,
     askConfirm: Option[String => IO[Boolean]] = None,
-    remarks: Map[String, String] = Map.empty
+    remarks: Map[String, String] = Map.empty,
+    /** D-B（2026-09-13 好友推送修复批）：送达确证发送面（帧形状冻结见
+      * `NeblinkRelayTunnel.sendAck`）。缺省 `None` = 未接线（既有调用点/测试零改动），
+      * 生产由 `GatewayMain` 接 `neblinkService.relayTunnelOpt` 的 **live** 读取。 */
+    ackSender: Option[String => IO[Unit]] = None
   ): FriendService =
     new FriendService(
       clientProvider,
@@ -66,7 +70,8 @@ object NeblinkWiring:
       guard,
       onFriendEvent,
       askConfirm,
-      remarkRef = Ref.unsafe[IO, Map[String, String]](remarks)
+      remarkRef = Ref.unsafe[IO, Map[String, String]](remarks),
+      ackSender = ackSender
     )
 
   /** The value written into `SharedResources.friendService` (A 案, 2026-09-11).
