@@ -2501,7 +2501,10 @@ object AgentCore:
     * 退役（2026-09-04 作者终裁：报 issue 走 gh cli 由节点代劳，定义层已归档
     * .archived-tools-2d/）。本集即 Nebula 工具面唯一来源：在飞十六件、零 Issue、
     * 零旧体系 FlowTrigger/FlowExecute/Task 三件（`Mail` **在**本集——R2 批翻案：
-    * Mail 从「旧体系退役件」成为唯一消息原语）。 */
+    * Mail 从「旧体系退役件」成为唯一消息原语）。
+    * **反向指路**：`AgentLibrary.Seeds.Nebula`（代码 fallback 定义）的工具字段
+    * **恒空且非权威面**——收敛名短路（本文件 ConvergedAgentNames 分支）使它授不
+    * 了任何件；要找 Nebula 的工具清单，只有本集。 */
   val NebulaOrchestrationTools = Set(
     // 编排触发（NodeList 2026-09-06 00:48 裁定摘除）
     // **Mail**（R2「一个 Mail 统一」批，2026-09-12 作者裁定 D-1/D-2/B4 取代条款）：
