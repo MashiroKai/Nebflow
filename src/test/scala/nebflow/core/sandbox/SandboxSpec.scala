@@ -177,14 +177,39 @@ class SandboxSpec extends CatsEffectSuite:
   // §A.8-2：.. 逃逸拒；词法冗余归一放行
   // ------------------------------------------------------------------
 
-  /** 沙箱工作区会话逃生门（见 beforeEach 注释）：宿主/CI = os.home（不在任何
-    * 读写面，「项目根/外部目标」语义成立）；注入 NB_SANDBOX_SPEC_DATAROOT 时
-    * 落到注入根下（由测试驱动方指定在既非系统读面、也非 policy root/tmp 的
-    * 目录，语义等价）。 */
-  private def homeLikeRoot(tag: String): os.Path =
+  // ------------------------------------------------------------------
+  // 隔离根（本 suite 的夹具根）——唯一推导，见 homeLikeRoot
+  // ------------------------------------------------------------------
+
+  /** 系统临时根（java.io.tmpdir；未置位时回落 /tmp）。 */
+  private val systemTempRoot: os.Path =
+    os.Path(Paths.get(sys.props.getOrElse("java.io.tmpdir", "/tmp")))
+
+  /** 隔离根基址：注入 NB_SANDBOX_SPEC_DATAROOT ⇒ 用注入根（留证/隔离实例驱动
+    * 时显式指定，由驱动方保证既非系统读面、也非 policy root/tmp）；未注入 ⇒
+    * 临时目录下一级 `java.io.tmpdir/nb-sbx-spec`。🔴 默认绝不落 $HOME（旧默认
+    * os.home 会把夹具写进用户 home 并跨运行累积）。 */
+  private val specScratchRoot: os.Path =
     sys.env.get("NB_SANDBOX_SPEC_DATAROOT") match
-      case Some(dir) => os.Path(dir) / s".nb-sbx-$tag"
-      case None      => os.home / s".nb-sbx-$tag"
+      case Some(dir) => os.Path(dir)
+      case None      => systemTempRoot / "nb-sbx-spec"
+
+  /** 留证开关：显式 NB_SANDBOX_SPEC_KEEP=1（或 true）⇒ afterEach 保留隔离根与
+    * 夹具（默认关闭 = 无条件清理）。 */
+  private val keepFixtures: Boolean =
+    sys.env.get("NB_SANDBOX_SPEC_KEEP").exists(v => v == "1" || v.equalsIgnoreCase("true"))
+
+  /** 整棵清隔离根前的保险：注入根若被误配成共享目录（/、/tmp、java.io.tmpdir、
+    * home 本身），只跳过整棵清——绝不删共享根。 */
+  private def isSharedScratchRoot(p: os.Path): Boolean =
+    List(os.root, os.Path("/tmp"), systemTempRoot, os.home)
+      .exists(s => SandboxPolicy.canonicalize(p.wrapped) == SandboxPolicy.canonicalize(s.wrapped))
+
+  /** 沙箱工作区会话逃生门（见 beforeEach 注释）：宿主/CI = 隔离根（临时目录下
+    * 一级，不在任何读写面，「项目根/外部目标」语义成立）；注入
+    * NB_SANDBOX_SPEC_DATAROOT 时落到注入根下（语义等价）。 */
+  private def homeLikeRoot(tag: String): os.Path =
+    specScratchRoot / s".nb-sbx-$tag"
 
   test("A.8-2: <root>/../escape.txt 拒；<root>//sub//new.txt 归一后放行且返回 fresh 路径") {
     // root 用 home 下目录（模拟真实 project root）——tmpdir 本身在 java.io.tmpdir
@@ -685,11 +710,13 @@ class SandboxSpec extends CatsEffectSuite:
     // 恢复真实后端注册（GatewayMain 语义），避免污染其他 spec
     SandboxRuntime.backend = SandboxBackend.Unavailable
     // [verify-fix] 还原被钉住的 dataRoot（见 beforeEach 注释）
-    pinnedDataRoot.foreach { p =>
-      os.remove.all(p)
-      // 逃生门模式：外层注入根也一并清理（保留注入根自身，供下轮复用）
-      if sys.env.contains("NB_SANDBOX_SPEC_DATAROOT") then os.remove.all(p / os.up)
-    }
+    pinnedDataRoot.foreach(os.remove.all)
+    // 隔离根清理 = 无条件（脱离 env 条件化）：整棵清掉本 suite 的 scratch 根，
+    // 覆盖 homeLikeRoot/outsideDir 全部夹具——含断言中途失败提前返回的路径。
+    // 旧形态只在 env 命中时才清，env 缺席的默认跑法会把 .nb-sbx-* 留在 $HOME
+    // 跨运行累积；唯一例外 = 显式留证开关 NB_SANDBOX_SPEC_KEEP=1。
+    if !keepFixtures && os.exists(specScratchRoot) && !isSharedScratchRoot(specScratchRoot) then
+      os.remove.all(specScratchRoot)
     savedDataRoot.foreach(PathUtil.setDataRoot)
     pinnedDataRoot = None
     savedDataRoot = None
