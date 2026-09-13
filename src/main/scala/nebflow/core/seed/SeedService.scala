@@ -31,10 +31,12 @@ import scala.jdk.CollectionConverters.*
  * 触发（§4.2）：gateway boot 装配点调用 `ensureSeeded()`，位置 = 项目挂载前。
  * 判定顺序：
  *  1. `projects/` 非空（≥1 个 project.json）→ 判定「已有用户数据」：只写/更新
- *     marker（记录当前 SeedVersion），不完整播种（防在 author 现役 home 误建 general）。
+ *     marker（记录当前 SeedVersion），不完整播种（防在 author 现役 home 误建 general）；
+ *     **默认集内的缺失 agent 仍由 reconcile 自愈补装**（2026-09-13 批，见 reconcileAgents）。
  *  2. else（fresh home）：marker 缺失 → 完整冷启动播种；marker.version < seedVersion
  *     → 升级 add-only 补种（每条 `!os.exists` 守卫，只补缺失文件）；>= → no-op。
- *  3. 最后（所有分支、不受守卫/marker 门控）：插件一致性 reconcile（见下）。
+ *  3. 最后（所有分支、不受守卫/marker 门控）：插件一致性 reconcile（见下）
+ *     + agents 一致性 reconcile（缺失自愈）+ 记忆消费链启动校验（消费链缺失 ⇒ 响亮 WARN）。
  *
  * 插件一致性 reconcile（「始终保持一致」机制，2026-09-09 批）：完整播种只解决
  * fresh home；既有 home 的已装插件会因 add-only 语义永久冻结（2026-09-09 断点：
@@ -68,6 +70,9 @@ object SeedService:
   private val GeneralProjectName = "general"
   private val DataRootPlaceholder = "<DATA_ROOT>"
 
+  /** 记忆队列的消费者 agent 名（单点引用 `AgentCore` 常量，不复制字面量）。 */
+  private val MemoryConsumptionAgent: String = nebflow.agent.AgentCore.MemoryConsolidatorName
+
   // ── 公共入口 ─────────────────────────────────────────────
   /** 冷启动播种（幂等、add-only、best-effort）+ 插件一致性 reconcile。
     * 失败绝不阻止 gateway 启动。 */
@@ -96,7 +101,10 @@ object SeedService:
       reconcilePlugins(root, manifest)
       // agents 一致性 pass（#304-④，2026-09-12）：与插件 pass 同构，但仲裁基准
       // 换成「三条硬条件」（见 reconcileAgents 文档）；digest 一致时同样无操作。
+      // 缺失 → 自愈补装（2026-09-13 批，作者令「改成缺失自愈」）。
       reconcileAgents(root, manifest)
+      // 启动期消费链校验（2026-09-13 批）：把「记忆队列没有消费者」变成启动即可见的告警
+      verifyMemoryConsumptionChain(root)
     catch
       case e: Exception =>
         // 种子全程 best-effort：单点失败绝不阻止 gateway 启动（与 startupMount fail-soft 同构）
@@ -304,9 +312,17 @@ object SeedService:
     *   3. **运行时独有内容不得静默丢弃**：任何路径下都不得静默丢掉运行时独有内容
     *      （与 1 的「停手上报」同源，缺一即拒）。
     *
-    * 失败面：missing runtime → 不动（缺失不新装，既有 home 面积不扩张）；
+    * 失败面（2026-09-13 缺失自愈批 / 作者令「改成缺失自愈」，取代 D-8「缺失不新装」口径）：
+    * **missing runtime → 从种子整目录补装**（与 [[reconcilePlugin]] 的 `:218-224` 自愈分支
+    * 对称；安装面严格限定在 **manifest 声明的默认集**，不向种子树全集扩张、既有目录零覆盖）；
     * digest 一致 → 静默通过（幂等：连续两次启动第二次零动作）。
     * 全程 best-effort：单条失败只 WARN，绝不阻止 gateway 启动。
+    *
+    * 为什么要改（取证件 §0-3 的鸡生蛋）：既有 home 受 `projects/` 非空守卫**永不完整播种**，
+    * 而旧 reconcile 遇缺失直接 return ⇒ 「seed 只填新 home、reconcile 只修旧 home，交集为空」
+    * ⇒ 默认集 agent（`memory-consolidator`）在既有 home **永不可能就位** ⇒ 记忆队列的
+    * 唯一消费者结构性缺席，队列只进不出。插件面对同类缺口已于 2026-09-12 自愈，agents 面
+    * 本批对齐。
     *
     * **落点纪律**：本机制**只**落代码；不在 `~/.nebflow/bin/` 或任何运维文档面
     * 新建护栏载体，也不回改任何既有留痕件（作者 2026-09-12 裁定）。 */
@@ -322,7 +338,11 @@ object SeedService:
 
   private def reconcileAgent(root: os.Path, name: String): Unit =
     val targetDir = root / "agents" / name
-    if !os.exists(targetDir) then () // 缺失 → 不在既有 home 新装（同 reconcilePlugins 注释）
+    if !os.exists(targetDir) then
+      // 缺失 → 自愈补装（2026-09-13 批，见 reconcileAgents 文档）：既有 home 受 projects/
+      // 非空守卫永不完整播种，缺失目录因此永久不愈（本机 memory-consolidator 实例）。
+      // 安装面 = manifest 声明的默认集；已存在目录绝不进此分支（零覆盖）。
+      installAgentFromSeed(root, name, "self-healed (missing in existing home)")
     else
       seedResourcesIn(os.SubPath(s"seed/agents/$name"), "agent.json") match
         case None => () // 无种子资源，无从比对
@@ -368,6 +388,48 @@ object SeedService:
               logger.infoSync(
                 s"Seed: agent '$name' refreshed from seed (digest ${runtimeDigest.take(12)}… → ${seedDigest.take(12)}…); " +
                   s"pre-sync backup at ${backupDir.toString.stripPrefix(root.toString + "/")} (${preShas.size} file(s))")
+
+  /** 从种子整目录安装一个 agent（[[reconcileAgent]] 的缺失自愈路径与 [[seedAgent]] 的
+    * 播种路径共用单点）。缺种子资源（jar 陈旧 / 资源缺失）⇒ WARN 且**不落盘**——
+    * 消费链缺失必须以响亮日志收口，绝不留静默空目录（否则 `AgentLibrary.get` 仍解析
+    * 不到、队列仍无消费者，而现场看起来「装过了」）。 */
+  private def installAgentFromSeed(root: os.Path, name: String, outcome: String): Boolean =
+    val targetDir = root / "agents" / name
+    val base      = os.SubPath(s"seed/agents/$name")
+    val files     = resourceDirList(base, "agent.json")
+    if files.isEmpty then
+      logger.warnSync(
+        s"Seed: agent '$name' is missing in this home but has no seed resources on the classpath — cannot self-heal " +
+          s"(stale jar / missing seed/agents/$name). The memory queue would then have no consumer; nothing was written")
+      false
+    else
+      files.foreach { rel =>
+        readResource(join(base, rel)).foreach { text =>
+          val target = targetDir / rel
+          os.makeDir.all(target / os.up)
+          os.write.over(target, text)
+        }
+      }
+      logger.infoSync(
+        s"Seed: agent '$name' $outcome (${files.size} file(s) from seed/agents/$name/, zero overwrite of existing dirs)")
+      true
+
+  /** 启动期消费链校验（2026-09-13 缺失自愈批 / 方案 D「启动明确告警」）：播种 + reconcile
+    * 跑完之后，默认集里**记忆队列的消费者**（[[MemoryConsumptionAgent]]）是否真的就位。
+    * 不就位 ⇒ 响亮 WARN（说明后果：队列只进不出、`MemoryEdit` 是纯记账、没有任何东西会
+    * 被应用）——这是把「静默 no-op」变成「启动即可见」的最后一道门。
+    * 零副作用：只读文件系统，不建目录、不写 marker。`private[seed]`：spec 直测面。 */
+  private[seed] def verifyMemoryConsumptionChain(root: os.Path): Unit =
+    val dir = root / "agents" / MemoryConsumptionAgent
+    val ok  = os.exists(dir / "agent.json") && os.exists(dir / "system.md")
+    if !ok then
+      logger.warnSync(
+        s"Seed: MEMORY CONSUMPTION CHAIN MISSING — 'agents/$MemoryConsumptionAgent/{agent.json,system.md}' is not in this home " +
+          s"(seed = src/main/resources/seed/agents/$MemoryConsumptionAgent/). The memory queue (${root.toString}/memory/queue.jsonl) " +
+          s"therefore has NO consumer: every recorded MemoryEdit note stays pending forever, nothing is ever applied to the " +
+          s"memory files, and the queue only accumulates. Fix = restore the seed resources and restart, or install that agent manually."
+      )
+    else logger.infoSync(s"Seed: memory consumption chain present (agents/$MemoryConsumptionAgent)")
 
   /** 同 [[seedResources]]，anchor 参数化（agents 面 = `agent.json`）。 */
   private def seedResourcesIn(base: os.SubPath, anchorFile: String): Option[SortedMap[String, Array[Byte]]] =

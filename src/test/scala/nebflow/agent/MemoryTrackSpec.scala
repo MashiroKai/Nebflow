@@ -1,5 +1,6 @@
 package nebflow.agent
 
+import cats.effect.{IO, Ref}
 import cats.effect.unsafe.implicits.global
 import munit.FunSuite
 import nebflow.core.PathUtil
@@ -42,6 +43,30 @@ class MemoryTrackSpec extends FunSuite:
   private def enqueue(content: String): String =
     MemoryQueue.enqueue("user", "append", None, None, Some(content), Some("s"), MemoryQueue.TriggerManual, "Nebula").toOption.get.id
 
+  /** 最小 SharedResources 夹具（本 spec 只走到「前置闸拒绝」路径 ⇒ 全程不触资源位；
+    * 形态沿用 ToolPhaseStuckAxisSpec 的同款 null 夹具）。 */
+  private def mkResources(): SharedResources =
+    SharedResources(
+      llm = null,
+      dispatcher = null,
+      sessionStore = null,
+      projectRoot = os.pwd,
+      thinkingConfigRef = Ref.unsafe[IO, nebflow.llm.ThinkingConfig](nebflow.llm.ThinkingConfig()),
+      rateLimiter = null,
+      fileChangeTracker = null,
+      contextWindow = 0,
+      agentLibrary = null,
+      taskStore = null,
+      historyArchiver = null,
+      fileLockManager = null,
+      sessionModelOverrides = Ref.unsafe[IO, Map[String, nebflow.llm.ModelCandidate]](Map.empty),
+      providerRegistry = null,
+      healthMonitor = null.asInstanceOf[nebflow.llm.ProviderHealthMonitor],
+      actorSystem = null,
+      voiceMutedRef = Ref.unsafe[IO, Boolean](false),
+      agentRegistry = Ref.unsafe[IO, Map[String, nebflow.agent.AgentRecord]](Map.empty)
+    )
+
   // ===== 触发谓词（spec §5 R4 / R9 VC3）=====
 
   test("谓词三支全否 ⇒ false（空队列 + 未超软线 + 无信号 = 零记忆轨 LLM 请求）"):
@@ -76,33 +101,93 @@ class MemoryTrackSpec extends FunSuite:
       sys.props.remove(hardKey)
     assert(MemoryTrack.hardTimeoutMs >= MemoryTrack.softTimeoutMs, "硬顶必须 ≥ 软线")
 
+  // ===== 前置闸（fail-closed，2026-09-13 缺失自愈批）=====
+
+  test("run 级 fail-closed：计划超硬顶（授权集空）⇒ Status.Refused + 零 spawn / 零结局写 / 零快照 / 条目留 pending + 告警"):
+    reset()
+    // 造一份「再 append 一条必超硬顶」的 User.md，并排一条 append
+    val hard = MemoryBudget.UserHardBytes
+    os.write.over(MemoryStore.userMemoryPath, "# U\n\n## 节\n\n- " + ("y" * (hard - 40).toInt) + "\n", createFolders = true)
+    val before = os.read(MemoryStore.userMemoryPath)
+    enqueue("- " + ("z" * 30))
+    val queueBefore = os.read(MemoryQueue.queuePath)
+    val backupDirsBefore = if os.exists(home / "memory-backups") then os.list(home / "memory-backups").size else 0
+
+    val r = MemoryTrack.run(mkResources(), parentSessionId = Some("s"), parentDepth = 0).unsafeRunSync()
+
+    assertEquals(r.status, MemoryTrack.Status.Refused, s"超预算 ⇒ 拒绝落地: $r")
+    assert(r.detail.contains("REFUSED"), s"拒绝原因必须写明: ${r.detail}")
+    assert(r.alert.isDefined, "必须带告警（前端 + 生命周期日志）")
+    assert(r.alert.exists(_.contains("NOT being consumed")), s"告警文案: ${r.alert}")
+    assertEquals(r.outcomesWritten, 0, "零结局写（infra 失败不得记 rejected）")
+    assertEquals(os.read(MemoryQueue.queuePath), queueBefore, "队列逐字未变")
+    assertEquals(os.read(MemoryStore.userMemoryPath), before, "记忆文件零写入")
+    assertEquals(MemoryQueue.pendingCount(), 1, "条目保持 pending（超硬顶即停、剩余留 pending）")
+    val backupDirsAfter = if os.exists(home / "memory-backups") then os.list(home / "memory-backups").size else 0
+    assertEquals(backupDirsAfter, backupDirsBefore, "预算闸先于快照闸 ⇒ 拒绝时零快照副作用")
+    assert(MemoryTrackSignal.peek().isDefined, "重试引线置位（下轮压缩重试）")
+
+  test("run 级：dryRun 模式与阈值 prop 化同规（-Dnebflow.memory.track.dryRun）"):
+    val key = "nebflow.memory.track.dryRun"
+    try
+      assertEquals(MemoryTrack.dryRunMode, false)
+      sys.props.update(key, "true")
+      assertEquals(MemoryTrack.dryRunMode, true)
+      sys.props.update(key, "1")
+      assertEquals(MemoryTrack.dryRunMode, true)
+    finally sys.props.remove(key)
+    assertEquals(MemoryTrack.dryRunMode, false)
+
   // ===== 降级（失败 / 超时同一路径）=====
 
-  test("降级（失败）：本轮待办逐条写 outcome(rejected)，队列条目保留，重试引线置位"):
+  test("降级（infra 失败）：写 outcome(notrun) 而非 rejected，条目保持 pending，重试引线置位 + 注入行 ALERT"):
     reset()
     val ids = List(enqueue("- 条目一"), enqueue("- 条目二"))
     assertEquals(MemoryQueue.pendingCount(), 2)
     val written = MemoryTrack.degradeOutcomes(isTimeout = false, detail = "boom").unsafeRunSync()
     assertEquals(written, 2)
     val st = MemoryQueue.readState()
-    assertEquals(st.pendingCount, 0, "每条 note 都有结局（不静默丢）")
-    assertEquals(st.outcomes.map(_.result).distinct, Vector(MemoryQueue.ResultRejected))
+    assertEquals(st.outcomes.map(_.result).distinct, Vector(MemoryQueue.ResultNotRun), "infra 失败写 notrun")
+    assert(!st.outcomes.exists(_.result == MemoryQueue.ResultRejected), "**零 rejected**（作者令：rejected 只许消费者写）")
     assertEquals(st.outcomes.map(_.by).distinct, Vector(MemoryTrack.AgentName))
+    assertEquals(st.pendingCount, 2, "条目仍是 pending（notrun 可重试 ⇒ 重试引线真的活）")
     assertEquals(st.notes.size, 2, "note 行保留（append-only：队列条目不被改写/删除）")
     assertEquals(ids, st.notes.map(_.id).toList)
     assert(MemoryTrackSignal.peek().isDefined, "重试引线置位（否则失败一次即永久搁置）")
     assertEquals(MemoryHistory.stats().consumed, 2, "降级也落变更史 consume 行")
+    val line = MemoryQueue.summaryLine()
+    assert(line.contains("ALERT:"), s"注入行必须响亮（消费链没跑）: $line")
+    assert(line.contains("never ran"), s"ALERT 说清「消费者没跑」而不是「判定不可落」: $line")
+    assert(line.contains("oldest "), s"注入行报最老 pending 年龄: $line")
 
-  test("降级（超时）：outcome(timeout)；已有 outcome 的条目不动（不覆盖已落地结局）"):
+  test("降级（infra 上限）：达 MaxInfraOutcomesPerRef 后只补一条 blocked 然后闭嘴（条目仍 pending）"):
+    reset()
+    val id = enqueue("- 条目一")
+    val results = (1 to MemoryQueue.MaxInfraOutcomesPerRef + 2).map { _ =>
+      MemoryTrack.degradeOutcomes(isTimeout = false, detail = "boom").unsafeRunSync()
+      MemoryQueue.readState().outcomes.last.result
+    }.toList
+    assertEquals(
+      results,
+      List.fill(MemoryQueue.MaxInfraOutcomesPerRef)(MemoryQueue.ResultNotRun) :+ MemoryQueue.ResultBlocked :+ MemoryQueue.ResultBlocked,
+      "前 N 轮 notrun，随后 blocked（写一次后不再追加）")
+    val st = MemoryQueue.readState()
+    val infraWrites = st.outcomes.count(o => o.ref == id && MemoryQueue.EngineInfraResults.contains(o.result))
+    assertEquals(infraWrites, MemoryQueue.MaxInfraOutcomesPerRef + 1, "infra 结局行数有界（防队列膨胀）")
+    assertEquals(st.pendingCount, 1, "blocked 不影响重试性：条目仍 pending")
+    assert(MemoryQueue.summaryLine().contains("blocked×1"), s"注入行报 blocked 计数: ${MemoryQueue.summaryLine()}")
+
+  test("降级（超时）：outcome(timeout) + 条目仍 pending；已有终态结局的条目不动"):
     reset()
     val id1 = enqueue("- 条目一")
     val id2 = enqueue("- 条目二")
     assert(MemoryQueue.recordOutcome(id2, MemoryQueue.ResultApplied, "memory-consolidator", "已写入").isRight)
     val written = MemoryTrack.degradeOutcomes(isTimeout = true, detail = "hard timeout").unsafeRunSync()
-    assertEquals(written, 1, "只对仍无结局的条目补写")
+    assertEquals(written, 1, "只对未闭合条目补写")
     val st = MemoryQueue.readState()
     assertEquals(st.outcomes.find(_.ref == id2).map(_.result), Some(MemoryQueue.ResultApplied), "已落地结局未被覆盖")
     assertEquals(st.outcomes.find(_.ref == id1).map(_.result), Some(MemoryQueue.ResultTimeout))
+    assertEquals(st.pending.map(_.id), Vector(id1), "timeout 可重试 ⇒ 该条仍 pending（终态条目不在列）")
     assert(MemoryTrackSignal.take().isDefined, "取走即清零（一次性语义）")
     assertEquals(MemoryTrackSignal.peek(), None)
 

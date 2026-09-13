@@ -4280,11 +4280,28 @@ object AgentActor extends AgentCore with AgentSession:
                               logAgentEvent(
                                 agentDef, depth, state.sessionId, state.sessionName,
                                 "memory-track-failed", s"err=${e.getMessage}")
-                              MemoryTrack.Result(MemoryTrack.Status.Failed, e.getMessage, 0)
+                              MemoryTrack.Result(
+                                MemoryTrack.Status.Failed,
+                                e.getMessage,
+                                0,
+                                alert = Some(
+                                  s"Memory queue is NOT being consumed: the memory-track run crashed (${e.getClass.getSimpleName}: ${e.getMessage}) — no note was marked rejected, everything stays pending and will be retried on the next compaction."))
                             }
                           }
                           .flatMap { r =>
-                            r.status match
+                            // 告警面（2026-09-13 缺失自愈批 / 方案 D「响亮失败」）：infra
+                            // 失败/拒绝不再只躺在 lifecycle 日志里等着被 grep——同一句推进
+                            // 前端（`memoryQueueAlert` → 常驻通知条，前端 main.js 订阅）。
+                            val alertIO: IO[Unit] = r.alert match
+                              case None => IO.unit
+                              case Some(text) =>
+                                state.wsSend(io.circe.Json.obj(
+                                  "type" -> "memoryQueueAlert".asJson,
+                                  "sessionId" -> state.sessionId.asJson,
+                                  "level" -> "warn".asJson,
+                                  "text" -> text.asJson
+                                ))
+                            val logIO: IO[Unit] = r.status match
                               case MemoryTrack.Status.Failed =>
                                 IO(logAgentEvent(
                                   agentDef, depth, state.sessionId, state.sessionName,
@@ -4300,7 +4317,18 @@ object AgentActor extends AgentCore with AgentSession:
                                   agentDef, depth, state.sessionId, state.sessionName,
                                   "memory-track-completed",
                                   s"pendingAtStart=${r.pendingAtStart} changed=${r.changed}"))
+                              case MemoryTrack.Status.Refused =>
+                                IO(logAgentEvent(
+                                  agentDef, depth, state.sessionId, state.sessionName,
+                                  "memory-track-refused",
+                                  s"pendingAtStart=${r.pendingAtStart} detail=${r.detail.take(300)}"))
+                              case MemoryTrack.Status.DryRun =>
+                                IO(logAgentEvent(
+                                  agentDef, depth, state.sessionId, state.sessionName,
+                                  "memory-track-dry-run",
+                                  s"pendingAtStart=${r.pendingAtStart} detail=${r.detail.take(300)}"))
                               case MemoryTrack.Status.Skipped => IO.unit
+                            logIO *> alertIO
                           }
                     for
                       _ <- ctx.forkTurn(postHookIO)

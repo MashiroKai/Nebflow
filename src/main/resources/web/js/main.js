@@ -60,6 +60,7 @@ import { renderWithRegistry, cleanupCardIframes } from './cardRegistry.js';
 import { bindDocMarkupLinkBridge } from './viewers/shared.js';
 import { escapeHtml, isBgAgentId } from './utils.js';
 import { showMemoryButton, handleMemoryData, handleMemoryChanged, initMemory, clearMemoryCache } from './memory.js';
+import { addNotification } from './notificationBanner.js';
 import { handleRulesData, handleRulesSaved, handleRulesDeleted, handleBrowseResult, initRulesModal, initPathPicker } from './sidebar.js';
 import { t, getLocale } from './i18n.js';
 import { applyLocaleToHtml } from './i18n.js';
@@ -3242,6 +3243,14 @@ onMessage('memoryData', (msg, view) => handleMemoryData(msg));
 onMessage('memoryChanged', (msg, view) => handleMemoryChanged(msg));
 onMessage('memorySaved', () => { /* saved confirmation, no action needed */ });
 onMessage('memoryStatus', (msg, view) => showMemoryButton());
+// Memory-queue alert (2026-09-13 memory-pipeline self-heal batch): the memory
+// queue has no consumer / the track refused to run — persistent banner instead
+// of a lifecycle-log-only failure. Text comes from the engine (English, same
+// wording as the injected memory-queue line); no auto-dismiss: the user must
+// see that recorded memory changes are NOT being applied.
+onMessage('memoryQueueAlert', (msg) => {
+  if (msg && msg.text) addNotification('memory', msg.text, { dismissAfter: 0 });
+});
 
 // --- Rules ---
 onMessage('rulesData', (msg, view) => handleRulesData(msg));

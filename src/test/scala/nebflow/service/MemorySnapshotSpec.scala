@@ -83,3 +83,40 @@ class MemorySnapshotSpec extends FunSuite:
     val names = mine.map(_.last).sorted
     assertEquals(names.head, "20260905-000000-000000-003", "oldest 3 pruned — head must be counter 003")
   }
+
+  // ── 落地前快照闸（2026-09-13 缺失自愈批 / 方案 §6「现无 fail-closed」补齐）──
+
+  test("snapshotGate：多目标一次性备份 + sha256 断言表 + 读回复核（含 absent 目标）") {
+    val rootG = home / "memory-backups-gate"
+    val userF = home / "User.md"
+    os.write.over(userF, "- 用户条目\n", createFolders = true)
+    os.write.over(agentFile, "- agent 条目\n", createFolders = true)
+    val missing = home / "no-such.md"
+
+    val gate = MemorySnapshot.snapshotGate(Vector(userF, agentFile, missing), "unit-test", rootG)
+    val set  = gate.toOption.getOrElse(fail(s"expected Right, got $gate"))
+    assertEquals(set.files.size, 3)
+    assertEquals(set.files.count(_.absent), 1, "不存在的目标记为 absent（无可回滚对象，不阻断）")
+    assertEquals(set.label, "unit-test")
+    // 断言表落盘且逐行含 sha / 字节 / 路径
+    val table = set.dir / "SNAPSHOT-SHA256.txt"
+    assert(os.exists(table), "sha256 断言表必须落盘（回滚锚的可核对面）")
+    val text = os.read(table)
+    assert(text.contains("# memory-track pre-landing snapshot  label=unit-test"), text.linesIterator.next())
+    assert(text.contains("(absent)  ") || text.contains("(absent) "), s"absent 行标注: $text")
+    // 备份内容 = 写前磁盘真身（逐字节）
+    set.files.filterNot(_.absent).foreach { f =>
+      val backup = set.dir / MemorySnapshot.backupFileName(os.Path(f.path))
+      assertEquals(os.read(backup), os.read(os.Path(f.path)), s"备份必须等于写前字节: ${f.path}")
+    }
+  }
+
+  test("snapshotGate fail-closed：快照根不可写 ⇒ Left（调用方据此中止落地）") {
+    val userF = home / "User.md"
+    os.write.over(userF, "- x\n", createFolders = true)
+    val badRoot = home / "User.md.badroot" // 文件占位 ⇒ 无法建目录
+    os.write.over(badRoot, "not a dir\n")
+    val gate = MemorySnapshot.snapshotGate(Vector(userF), "fail-closed", badRoot)
+    assert(gate.isLeft, s"不可写根必须 Left（无快照不落笔）: $gate")
+    assert(gate.left.exists(_.nonEmpty), "原因非空")
+  }
