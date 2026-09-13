@@ -90,18 +90,21 @@ end PermissionUpgrade
 // ============================================================
 // F1 (#433): global safety mode —— **唯一持久权威源 = 应用的权限模式**
 //
-// 语义（2026-09-12 权限全局单一权威源批，作者 R-a「不需要逐会话设置」）：
-// 本对象读出的值是**整个应用**的权限模式，不是"会话缺省值"。会话内切换
-// （顶栏三档 / 确认卡升级）降级为**仅内存的临时覆盖**，存放于
-// `SharedResources.permissionPolicies`（条目存在 ⇔ 该会话有覆盖）：
+// 语义（2026-09-13 作者重裁「候选 B」；permshield S1 后端切片）：
+// 本对象读出的值是**整个应用**的权限模式，也是**档位的唯一来源**。
+// 2026-09-12 引入的「会话内临时覆盖」（仅内存、按 rootSessionId 存放于
+// `SharedResources.permissionPolicies`）层**已整体停用并删除**：
 //
-//     有效档位 = 覆盖 ?? 本对象读出的全局值        （唯一解析入口见
-//                     `SharedResources.effectiveSafetyMode` / §2.1）
+//     有效档位 = 本对象读出的全局值        （全仓唯一一条路径）
 //
-// ⇒ 进程重启 / 新会话天然回落到本值（覆盖不落盘，无需任何"重置"代码）；
-// ⇒ `SessionMeta.safetyMode`（`sessions/_index.json` 的逐会话键）**已降级为
-//    非权威字段**：存量字节一字不动，但不再是任何权威读取点的来源（其值取什么
-//    都不影响有效档位，由 `SafetyModeAuthoritySpec` 承重钉住）。
+// ⇒ 顶栏盾牌（WS `setSafetyMode`）与确认卡递进升级（`applyPermissionUpgrade`）
+//    写入的就是**本键**（`nebflow.json` → `safety.defaultMode`，落盘）——
+//    与 REST `PUT /api/safety/mode` 同一条持久路径，故**重启后仍生效**；
+// ⇒ 档位是**应用级**的：换会话 / 新会话 / 重启都读同一个值，不再有"本会话
+//    临时收紧/放宽"这种第二介质（作者：「不需要两个位置可调」）；
+// ⇒ `SessionMeta.safetyMode`（`sessions/_index.json` 的逐会话键）是**非权威
+//    遗留字段**：存量字节一字不动（读时忽略），其值取什么都不影响有效档位
+//    （由 `SafetyModeGlobalOnlySpec` / `SessionStoreRecoverAuthoritySpec` 承重钉住）。
 //
 // The user's auto-all was only ever a single session's meta field — the
 // system had no global channel, and ~/.nebflow/permission_policy.json was
@@ -145,21 +148,11 @@ object GlobalSafety:
 end GlobalSafety
 
 // ============================================================
-// 权限模式「有效档位」的唯一解析规则（2026-09-12 全局单一权威源批）
-//
-//   有效档位 = 覆盖（仅内存，按 rootSessionId） ?? 全局（GlobalSafety）
-//
-// 本 object 是**全仓唯一**做这个合并的地方（设计 §13 #1）：任何消费点
-// （判定 / 卡帧 / 会话列表出口 / 子代理与流程继承）都必须经它，
-// 不得各自实现。有覆盖 ⇔ `SharedResources.permissionPolicies` 里存在该
-// rootSessionId 的条目（条目缺失 = 跟随全局，这是常态路径而非异常兜底）。
+// 2026-09-13（permshield S1）：此前的 `SafetyModeAuthority`（唯一合并点
+// `有效档位 = 覆盖 ?? 全局`）**已删除** —— 覆盖层停用后合并规则不再存在，
+// 「有效档位 = GlobalSafety.defaultMode」就是唯一定义，无需第二个 object 转述。
+// 原来经它解析的消费点一律改走 `SharedResources.effectiveSafetyMode`（单一入口）。
 // ============================================================
-object SafetyModeAuthority:
-
-  inline def resolve(overrides: Map[String, SafetyMode], rootSid: String, global: SafetyMode): SafetyMode =
-    overrides.getOrElse(rootSid, global)
-
-end SafetyModeAuthority
 
 // ============================================================
 // Reversibility check — drives the confirm/auto-approve decision

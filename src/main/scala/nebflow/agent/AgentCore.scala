@@ -1232,7 +1232,7 @@ private[agent] trait AgentCore:
                 )
               ).as(ToolExecResult(nebflow.llm.SearchProviderResolver.kimiEchoContent(call)))
                 .flatTap(r => logToolStructured(call, callCtx, r))
-            else permissionDecision(resources, state, call)
+            else permissionDecision(resources, call)
               .flatMap {
                 case PermissionDecision.Allow =>
                   // 2026-09-10 卡死判据换轴：工具**开始**点——记当前工具相位
@@ -1258,10 +1258,6 @@ private[agent] trait AgentCore:
                   withToolHeartbeat(nebflow.core.summarizeToolCall(call), state.wsSend, isSubagent, sessionIdOpt)(
                     executeTool(call, callCtx)
                   )
-                case PermissionDecision.Deny =>
-                  val denied =
-                    ToolExecResult(s"Tool ${call.name} is denied by the session permission policy", isError = true)
-                  logToolStructured(call, callCtx, denied).as(denied)
                 case PermissionDecision.Ask => askUserPermission(call, state, resources, permissionDeferredRef, permissionDenialsRef, callCtx)
               }
           )
@@ -1425,54 +1421,26 @@ private[agent] trait AgentCore:
   end pipeToolExecutions
 
   /**
-   * P2: permission decision reads the root session's PermissionPolicy bucket
-   * (permissionPolicies[rootSessionId]) — dynamic inheritance, NOT the
-   * per-agent state.safetyMode copy (D5). Decision order: deny → reject
-   * (no card); allow → auto-approve; otherwise reversible-by-safetyMode.
+   * 权限判定（permshield S1 / 2026-09-13 作者重裁「候选 B」）：档位只有一个来源 ——
+   * 应用级全局持久值（`SharedResources.effectiveSafetyMode` → `nebflow.json` 的
+   * `safety.defaultMode`）。会话级覆盖桶已删除，故本判定**不接受会话参数**：
+   * 任何会话/子代理/流程节点在同一时刻读到同一个档位。
+   *
+   * 判定顺序：可逆（按档位规则）→ 直接放行；否则 → 出确认卡（Ask）。
+   * （此前的 `deny`/`allow` 工具名单来自每会话 `PermissionPolicy`，全仓从未有写入点
+   * ——恒空，随桶一并删除；`Deny` 分支因此不可达，已移除。）
    */
   private enum PermissionDecision:
-    case Allow, Deny, Ask
+    case Allow, Ask
 
   private def permissionDecision(
     resources: SharedResources,
-    state: AgentState,
     call: ToolCall
   ): IO[PermissionDecision] =
-    resources.permissionPolicies.get.flatMap { policies =>
-      val rootSid = Option(state.session.rootSessionId).filter(_.nonEmpty).getOrElse(state.sessionId.getOrElse(""))
-      // F1 (#433) → 2026-09-12 全局单一权威源：桶条目存在 ⇔ 该根会话有"本会话
-      // 临时覆盖"（见 SharedResources.effectiveSafetyMode）。桶 miss 不再是
-      // "异常兜底"，而是常态的**跟随全局**路径 —— 全局值一改，所有未覆盖的已连
-      // 会话在下一个判定即生效，无需重连/重启。
-      //
-      // 判定使用的 mode 与卡帧档位（askUserPermission）同源，一律经唯一解析入口
-      // `effectiveSafetyMode`（覆盖 ?? 全局），因此本分支不再自行读 GlobalSafety。
-      // 条目存在时的取值 = 覆盖值，与解析入口的 `overrides[rootSid]` 逐字等价。
-      //
-      // 日志降级（debug）：miss 已是常态路径，warn 会在每次无覆盖判定刷一条，
-      // 属日志污染（可观测性代价登记在设计 §15 U-4）。
-      policies.get(rootSid) match
-        case Some(policy) =>
-          IO.pure(decide(policy, call))
-        case None =>
-          resources
-            .effectiveSafetyMode(rootSid)
-            .flatTap(mode =>
-              nebflow.core.NebflowLogger
-                .forName("nebflow.agent.permissions")
-                .debug(
-                  s"no session override for rootSid=${rootSid.take(8)} — following global safety mode " +
-                    s"${nebflow.core.SafetyMode.toString(mode)} (覆盖 ?? 全局, 常态路径)"
-                )
-            )
-            .map(mode => decide(nebflow.agent.PermissionPolicy(safetyMode = mode), call))
+    resources.effectiveSafetyMode.map { mode =>
+      if ToolReversibility.isReversible(call.name, call.input, mode) then PermissionDecision.Allow
+      else PermissionDecision.Ask
     }
-
-  private def decide(policy: PermissionPolicy, call: ToolCall): PermissionDecision =
-    if policy.deny.contains(call.name) then PermissionDecision.Deny
-    else if policy.allow.contains(call.name) then PermissionDecision.Allow
-    else if ToolReversibility.isReversible(call.name, call.input, policy.safetyMode) then PermissionDecision.Allow
-    else PermissionDecision.Ask
 
   private def askUserPermission(
     call: ToolCall,
@@ -1482,17 +1450,15 @@ private[agent] trait AgentCore:
     permissionDenialsRef: Ref[IO, Map[String, Int]],
     toolCtx: ToolContext
   )(using ctx: ActorContext[AgentCommand]): IO[ToolExecResult] =
-    // 递进式放行链 (2026-08-30): the card carries the session's CURRENT mode so
-    // the frontend can decide which escalation button to render (confirm-edits
-    // + Write/Edit → "upgrade to auto-edits"; auto-edits + Bash/Curl →
-    // "upgrade to auto-all").
+    // 递进式放行链 (2026-08-30)：卡帧带**当前档位**，前端据此渲染升级项
+    // （confirm-edits + Write/Edit → 升 auto-edits；auto-edits + Bash/Curl →
+    // 升 auto-all）。递进链**保留**（作者 09-13 边界一）。
     //
-    // 2026-09-12 全局单一权威源：卡帧档位与判定（permissionDecision）**同源**——
-    // 一律经唯一解析入口 effectiveSafetyMode（覆盖 ?? 全局）。此前桶 miss 分支
-    // 写死字面量 "confirm-edits"，与判定侧读全局**不同源**，导致全局为
-    // auto-edits/auto-all 的无覆盖会话渲染出缺失/错误的升级按钮（设计 §10 #1）。
-    val rootSid = Option(state.session.rootSessionId).filter(_.nonEmpty).getOrElse(state.sessionId.getOrElse(""))
-    resources.effectiveSafetyMode(rootSid).flatMap { effectiveMode =>
+    // permshield S1（2026-09-13）：卡帧档位与判定（permissionDecision）**同源**，
+    // 都取应用级全局持久值（`SharedResources.effectiveSafetyMode`，唯一入口）。
+    // 升级后的落点也变了：不再是本会话内存覆盖，而是写同一个全局键（见
+    // `WebSocketRoutes.applyPermissionUpgrade` ⇒ 重启后仍生效）。
+    resources.effectiveSafetyMode.flatMap { effectiveMode =>
       val currentMode = nebflow.core.SafetyMode.toString(effectiveMode)
       permissionDeferredRef.modify {
       case existing @ Some(_) =>

@@ -9,23 +9,15 @@ import nebflow.shared.Message
 
 /** 会话服务层。
   *
-  * 2026-09-12 权限全局单一权威源：本层的档位相关职责收敛为**出口 overlay** ——
-  * 会话列表里逐会话 `safetyMode` 输出**有效档位**（覆盖 ?? 全局），与
-  * `SharedResources.effectiveSafetyMode` 同源（共用 `SafetyModeAuthority.resolve`）。
-  * 新建会话**不再把档位写进 meta**（meta 已非权威，盘上键取什么值都不影响有效档位）。
+  * 2026-09-13（permshield S1）：档位相关职责收敛为**出口 overlay** —— 会话列表里
+  * 逐会话 `safetyMode` 输出**有效档位** = 应用级全局持久档位
+  * （`GlobalSafety.defaultMode`，与 `SharedResources.effectiveSafetyMode` 同源）。
+  * 会话级覆盖面已删除 ⇒ 本层**没有任何档位入参**（构造参数里原来那个"覆盖快照
+  * 提供者"随之删除：它唯一的存在理由就是漏注入会让出口报全局值，而现在出口**就是**
+  * 全局值）。新建会话**不再把档位写进 meta**（meta 是非权威遗留键）。
   */
 class SessionService(
-  store: SessionStore,
-  /** 内存覆盖快照提供者（rootSessionId → 档位），由 GatewayMain 接
-    * `SharedResources.safetyModeOverrides`。
-    *
-    * **必填、无缺省**（2026-09-12 修复轮 D1）：此前缺省 `IO.pure(Map.empty)` 让"漏注入"
-    * 静默退化为"出口恒输出全局值"——同一次连接里 `sessionList` 帧（本出口）与
-    * `agentSessionList` 帧（`SharedResources.overlaySessionList`）对同一 sid 给出两个读数，
-    * 客户端据此把已收紧的会话当顶档收进 `bypassSessions` 并静默放行（设计 §8 A-14 的
-    * 失败类反向复活）。去掉缺省 ⇒ 漏注入 = 编译期错误（**fail-loud**）。
-    * 唯一的构造点：`gateway/GatewayMain.scala`（`sharedResourcesLive` 装配处）。 */
-  safetyModeOverrides: IO[Map[String, nebflow.core.SafetyMode]]
+  store: SessionStore
 ):
 
   /** 新建会话。
@@ -100,12 +92,11 @@ class SessionService(
       sessions <- store.listSessions
       folders <- store.listFolders(agentName)
       activeId <- store.getActiveId
-      // 出口 overlay（设计 §13 #9）：逐会话 `safetyMode` = 有效档位（覆盖 ?? 全局），
-      // 与 SharedResources 的列表出口共用同一 helper（键恒存在，不再依赖 Encoder
-      // 「= confirm-edits 时省略键」的隐式契约）。
-      overrides <- safetyModeOverrides
+      // 出口 overlay：逐会话 `safetyMode` = 有效档位 = 应用级全局持久值
+      // （permshield S1：已无会话覆盖面），与 SharedResources 的列表出口共用同一
+      // helper（键恒存在，不再依赖 Encoder「= confirm-edits 时省略键」的隐式契约）。
       global <- nebflow.core.GlobalSafety.defaultMode
-      sessionsJson = nebflow.shared.SessionMeta.withEffectiveSafetyModes(sessions, overrides, global)
+      sessionsJson = nebflow.shared.SessionMeta.withEffectiveSafetyModes(sessions, global)
       rulesFolderIds = folders.filter(f => nebflow.service.RulesStore.exists(f.id)).map(_.id)
       _ <- wsSend(
         Json.obj(

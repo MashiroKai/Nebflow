@@ -319,10 +319,11 @@ Wait for one to finish, or cancel one with AgentControl(cancel) before delegatin
           case None => IO.pure("")
         for
           rootSid <- callerRootIO
-          // 2026-09-12 权限全局单一权威源（设计 §10 #15 / §13 #10）：子代理继承的档位
-          // 走**唯一解析入口**（覆盖 ?? 全局），不再读 `store.getSafetyMode`（盘上遗留
-          // 值）。否则全局 `confirm-edits` 时 fork 出的子代理会继承盘上 `auto-all`。
-          safetyMode <- resources.effectiveSafetyMode(rootSid).map(nebflow.core.SafetyMode.toString)
+          // permshield S1（2026-09-13）：子代理继承的档位 = 应用级全局持久档位
+          // （`SharedResources.effectiveSafetyMode`，唯一入口）。既不读
+          // `store.getSafetyMode` 的盘上遗留值（那会让全局 confirm-edits 时 fork 出的
+          // 子代理继承盘上 auto-all），也不再有"本会话覆盖"可继承——档位对全应用一致。
+          safetyMode <- resources.effectiveSafetyMode.map(nebflow.core.SafetyMode.toString)
           quota <- concurrencyCheck(resources, rootSid)
           result <- quota match
             case Left(err) => IO.pure(Left(err))

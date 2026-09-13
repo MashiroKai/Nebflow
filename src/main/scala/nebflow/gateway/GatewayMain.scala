@@ -641,16 +641,13 @@ object GatewayMain extends IOApp:
                                   sharedResources.copy(hotRestart = Some(hotRestart))
                                 hubSetup *> taskTtlSweep *> subagentCrashSweep *> seedMinimalSet *> startupMount *> projectCrashSweep *> projectTtlScanner *> succeedPortGate(cfg) *> {
                                   val sharedResourcesLive = sharedResourcesWithRestart
-                                  // 2026-09-12 修复轮（D1）：`SessionService` 的列表出口必须注入
-                                  // **有效档位**的覆盖快照 —— 与 `sharedResources` 的 resolver
-                                  // 同源（`safetyModeOverrides` = `permissionPolicies` 的读取）。
-                                  // 漏注入 ⇒ WS `sessionList` 帧输出全局值而非有效档位，同一连接内
-                                  // 同 sid 两个读数（`sessionList` vs `agentSessionList`）⇒ 客户端
-                                  // 把"会话内已收紧"的会话当顶档收进 bypassSessions 并静默放行
-                                  // （设计 §8 A-14 的失败类反向复活）。构造参数已改为**必需**，
-                                  // 同类漏注入自此是编译期错误。
-                                  val sessionService =
-                                    new SessionService(sessionStore, sharedResourcesLive.safetyModeOverrides)
+                                  // 2026-09-13（permshield S1）：`SessionService` 不再需要
+                                  // "档位覆盖快照"入参——档位只有应用级全局持久一源
+                                  // （`GlobalSafety.defaultMode`），两个列表出口
+                                  // （`sessionList` / `agentSessionList`）天然同源，
+                                  // 2026-09-12 修复轮 D1 的"漏注入 ⇒ 同连接两个读数"
+                                  // 失败类在类型上已不可能（无投入可漏）。
+                                  val sessionService = new SessionService(sessionStore)
                                   val agentService = new AgentService(agentLibrary)
                                   val configService = ConfigService
 

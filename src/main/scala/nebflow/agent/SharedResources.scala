@@ -66,13 +66,6 @@ case class SharedResources(
    */
   agentRegistry: Ref[IO, Map[String, AgentRecord]] = Ref.unsafe[IO, Map[String, AgentRecord]](Map.empty),
   /**
-   * P2 全局权限策略: one PermissionPolicy per Nebula root session, keyed by
-   * rootSessionId. Every agent in a root session's tree reads this bucket at
-   * decision time (dynamic inheritance — never a per-agent snapshot).
-   * Seeded by ensureRootAgent from session meta; written by SetSafetyMode.
-   */
-  permissionPolicies: Ref[IO, Map[String, PermissionPolicy]] = Ref.unsafe[IO, Map[String, PermissionPolicy]](Map.empty),
-  /**
    * P2 InteractionHub: spawned once by GatewayMain at startup. Agents send
    * InteractionRequest here for permission/AskUser; gateway forwards frontend
    * answers as InteractionAnswered. Option so SharedResources can be built
@@ -133,38 +126,27 @@ case class SharedResources(
     * restartStatus 帧广播（wsHub）。 */
   hotRestart: Option[nebflow.core.hotrestart.HotRestart] = None
 ):
-  import cats.syntax.all.*
-
-  /** **唯一解析入口**（设计 §2.1 / §13 #1）：有效档位 = 覆盖 ?? 全局。
+  /** **唯一解析入口**（permshield S1 / 2026-09-13 作者重裁「候选 B」）：有效档位
+    * **恒等于**全局持久档位（`nebflow.json` 的 `safety.defaultMode`，热读、零缓存）。
     *
-    * 覆盖 = `permissionPolicies[rootSid]` 的条目（仅内存，来源：WS `setSafetyMode`
-    * / 确认卡升级按钮）；无条目 ⇒ 读全局（`nebflow.json` 的 `safety.defaultMode`，
-    * 热读、零缓存）。桶 miss 是**常态路径**（"跟随全局"），不是异常兜底。
-    *
-    * @param rootSid 根会话 id（判定 / 继承面一律用它；非根会话须先解析出根 id）
+    * 2026-09-12 的「会话内临时覆盖」（仅内存 `permissionPolicies[rootSid]`）层已整体
+    * 停用并删除 ⇒ 本方法**不再接受会话参数**：没有任何按会话分叉的档位来源，因此
+    * "某个会话有自己的档位"在类型上就不可能存在（漏用/漏注入从运行时缺陷降为编译期
+    * 不可能）。所有消费点（工具判定 / 卡帧档位 / 会话列表出口 / 子代理与流程继承）
+    * 一律经此读，不得各自读配置文件。
     */
-  def effectiveSafetyMode(rootSid: String): IO[nebflow.core.SafetyMode] =
-    permissionPolicies.get
-      .map(_.get(rootSid).map(_.safetyMode))
-      .flatMap {
-        case Some(m) => IO.pure(m)
-        case None    => nebflow.core.GlobalSafety.defaultMode
-      }
+  def effectiveSafetyMode: IO[nebflow.core.SafetyMode] =
+    nebflow.core.GlobalSafety.defaultMode
 
-  /** 当前内存覆盖快照（rootSessionId → 档位），供列表 overlay / 服务层复用。
-    * 与 `effectiveSafetyMode` 同源，不做任何持久化读取。 */
-  def safetyModeOverrides: IO[Map[String, nebflow.core.SafetyMode]] =
-    permissionPolicies.get.map(_.view.mapValues(_.safetyMode).toMap)
-
-  /** 会话列表出口的**权威 overlay**（设计 §13 #9）：把 `List[SessionMeta]` 序列化成
-    * `safetyMode` 恒存在的 JSON，取值 = **有效档位**（覆盖 ?? 全局），与
-    * `effectiveSafetyMode` 同源、共用 `SafetyModeAuthority.resolve`。
+  /** 会话列表出口的**权威 overlay**：把 `List[SessionMeta]` 序列化成
+    * `safetyMode` 恒存在的 JSON，取值 = **有效档位** = 全局持久档位
+    * （与 `effectiveSafetyMode` 同源）。
     *
     * ⚠ 只用于**线上出口**（WS `agentSessionList` / fork `sessionList` /
     * `SessionService.sendSessionList` / REST `GET /sessions`）。**不得**用于
-    * `SessionStore.saveIndex` 的落盘序列化——方案 A 要求盘上字节零改动。 */
+    * `SessionStore.saveIndex` 的落盘序列化——盘上字节零改动。 */
   def overlaySessionList(sessions: List[nebflow.shared.SessionMeta]): IO[io.circe.Json] =
-    (safetyModeOverrides, nebflow.core.GlobalSafety.defaultMode).mapN { (overrides, global) =>
-      nebflow.shared.SessionMeta.withEffectiveSafetyModes(sessions, overrides, global)
+    effectiveSafetyMode.map { global =>
+      nebflow.shared.SessionMeta.withEffectiveSafetyModes(sessions, global)
     }
 

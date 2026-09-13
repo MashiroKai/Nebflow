@@ -6,7 +6,7 @@ import io.circe.{JsonObject, Json as CJson}
 import io.circe.syntax.*
 import munit.CatsEffectSuite
 import nebflow.actor.{ActorSystem, Behaviors}
-import nebflow.agent.{AgentCommand, AgentKind, AgentLibrary, AgentRecord, PermissionPolicy, SharedResources}
+import nebflow.agent.{AgentCommand, AgentKind, AgentLibrary, AgentRecord, SharedResources}
 import nebflow.core.PathUtil
 import nebflow.core.sandbox.{SandboxConfig, SandboxRuntime}
 import nebflow.core.task.FileTaskStore
@@ -283,11 +283,21 @@ class NodeMergeSpec extends CatsEffectSuite:
       _ <- ProjectRuntimeRegistry.register(rt)
     yield rt
 
-  /** 合并节点 Bash 落地的权限放行：root 会话桶 seed AutoAll（真实施 = 用户对根
-    * 会话开 auto-all；桶缺失会回落 nebflow.json 全局档=ConfirmEdits → Bash 逐条
-    * 判可逆性，git merge 非可逆会被 Ask 卡死）。 */
-  private def allowBash(res: SharedResources): IO[Unit] =
-    res.permissionPolicies.update(_ + ("nebula-root" -> PermissionPolicy(safetyMode = nebflow.core.SafetyMode.AutoAll)))
+  /** 合并节点 Bash 落地的权限放行：把**隔离 dataRoot 的全局档位**设为 AutoAll
+    * （真实施 = 用户对应用开 auto-all）。
+    *
+    * permshield S1（2026-09-13）：档位只有应用级全局持久一源（`nebflow.json` 的
+    * `safety.defaultMode`），"每 root 会话的覆盖桶"已删除 ⇒ 本 fixture 改为写全局
+    * 配置键（正是生产里"全部放行"那条路）。不写则回落 ConfirmEdits → Bash 逐条判
+    * 可逆性，git merge 非可逆会被 Ask 卡死。 */
+  private def allowBash(): IO[Unit] =
+    IO.blocking(
+      os.write.over(
+        PathUtil.configJsonWritePath(PathUtil.dataRoot),
+        """{"safety":{"defaultMode":"auto-all"}}""",
+        createFolders = true
+      )
+    )
 
   private def byName(rt: ProjectRuntime, name: String): IO[NodeDef] =
     rt.store.snapshot.map(_.nodes.values.find(_.name == name)).map {
@@ -382,7 +392,7 @@ class NodeMergeSpec extends CatsEffectSuite:
     val llm = MergeLlm(delayEcho = 400.millis)
     for
       res <- mkResources(system, tempRoot, llm.handle)
-      _ <- allowBash(res)
+      _ <- allowBash()
       rt <- mountProject("merge-s1", ws, system, res)
       ctx = mkCtx(res, system, ws.toString)
       // 新合法顺序（mount-enforce 批）：上游任务节点先建（out 暂指 Nebula，入口即启）
@@ -446,7 +456,7 @@ class NodeMergeSpec extends CatsEffectSuite:
     val llm = MergeLlm()
     for
       res <- mkResources(system, tempRoot, llm.handle)
-      _ <- allowBash(res)
+      _ <- allowBash()
       recorded <- registerRecorder(res, system, "nebula-root")
       // escalate-only：blocked 直接升级 Nebula（可观测），不自动重派（重派语义
       // 归 NodeBlockedReentrySpec；本断言焦点 = 合并节点不被触发）
@@ -509,7 +519,7 @@ class NodeMergeSpec extends CatsEffectSuite:
     val llm = MergeLlm()
     for
       res <- mkResources(system, tempRoot, llm.handle)
-      _ <- allowBash(res)
+      _ <- allowBash()
       recorded <- registerRecorder(res, system, "nebula-root")
       rt <- mountProject("merge-s3", ws, system, res)
       ctx = mkCtx(res, system, ws.toString)
@@ -576,7 +586,7 @@ class NodeMergeSpec extends CatsEffectSuite:
     val llm = MergeLlm(delayEcho = 4000.millis)
     for
       res <- mkResources(system, tempRoot, llm.handle)
-      _ <- allowBash(res)
+      _ <- allowBash()
       rt <- mountProject("merge-s4", ws, system, res)
       ctx = mkCtx(res, system, ws.toString)
       // 上游先建（入口即启，均处于 running 窗口）

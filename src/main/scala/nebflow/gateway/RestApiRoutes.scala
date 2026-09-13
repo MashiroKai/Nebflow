@@ -180,9 +180,9 @@ class RestApiRoutes(
           else sessionStore.listSessions
         list.flatMap { sessions =>
           sessionStore.getActiveId.flatMap { activeId =>
-            // 出口 overlay（设计 §13 #9）：逐会话 `safetyMode` 输出**有效档位**
-            // （覆盖 ?? 全局），与 WS 出口共用同一个 helper——CLI/QA 据此读到的是
-            // 实际生效的档位，而不是 `_index.json` 的遗留值。
+            // 出口 overlay：逐会话 `safetyMode` 输出**有效档位** = 应用级全局持久值
+            // （permshield S1 后已无会话覆盖面）。与 WS 出口共用同一个 helper——
+            // CLI/QA 据此读到的是实际生效的档位，而不是 `_index.json` 的遗留值。
             sharedResources.overlaySessionList(sessions).flatMap { sessionsJson =>
               Ok(Json.obj("sessions" -> sessionsJson, "activeId" -> activeId.asJson))
             }
@@ -220,9 +220,9 @@ class RestApiRoutes(
     // Delete session
     case req @ DELETE -> Root / "sessions" / sessionId =>
       withAuth(req) {
-        // 权限覆盖清理（设计 §13 #25 / §16 R-5）：删会话时一并移除其内存覆盖条目。
+        // 2026-09-13（permshield S1）：此处原为"清该会话的内存权限覆盖条目"。覆盖层
+        // 删除后档位是应用级的 ⇒ 删除会话**不得**（也无从）改动档位，本清理点移除。
         sessionStore.deleteSession(sessionId) *>
-          sharedResources.permissionPolicies.update(_ - sessionId) *>
           Ok(Json.obj("deleted" -> true.asJson))
       }
 
@@ -251,7 +251,7 @@ class RestApiRoutes(
         }
       }
 
-    // ── 权限模式（全局单一权威源批，2026-09-12；设计 §5.1）──────────────
+    // ── 权限模式（应用级全局单一来源；permshield S1 / 2026-09-13 作者重裁）──────
     // GET /api/safety —— 全局权限模式的**权威观测面**（QA/CLI 可 curl 判定）：
     //   defaultMode = 当前生效值（读不到有效值 ⇒ 启动默认顶档，见 GlobalSafety）；
     //   configured  = 配置文件里是否写了**可识别**的显式值（三档之一）。键缺失 /
@@ -276,8 +276,10 @@ class RestApiRoutes(
         )).flatMap(Ok(_))
       }
 
-    // PUT /api/safety/mode —— 全局权限模式的**唯一 REST 写入口**（定向写，
-    // 不走 `PATCH /api/config` 的全量快照语义，避免陈旧底稿回滚无关键）。
+    // PUT /api/safety/mode —— 全局权限模式的 REST 写入口（定向写，不走
+    // `PATCH /api/config` 的全量快照语义，避免陈旧底稿回滚无关键）。
+    // permshield S1 起这是**两个写入口之一**：另一个是 WS `setSafetyMode`（盾牌），
+    // 二者共用同一个 `ConfigService.setSafetyDefaultMode` ⇒ 同一条持久路径。
     // 非三档显式值 ⇒ 400 且**不落盘**（不静默兜底）。
     case req @ PUT -> Root / "safety" / "mode" =>
       withAuth(req) {
