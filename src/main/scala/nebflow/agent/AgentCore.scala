@@ -1996,9 +1996,14 @@ private[agent] trait AgentCore:
     // 2026-09-06 工具面裁撤批：FlowReport 的 per-node contract describe 注入
     // 随工具退役一并移除（contract 数据本体仍在 AgentDef.flowContract，引擎
     // spawn 注入路径零触碰）。
+    // 工具面按角色分化批 B2（2026-09-13）：定义期 schema 分组——**第一性机制**。
+    // 判据 = 单点 AgentCore.isNebulaRoot（本文件顶部；禁在此内联第二份表达式），
+    // 默认分支恒基础变体（fail-closed）。成员资格逐位不变，只有 root 会话的
+    // AskUserQuestion 那一段 schema/description 不同。
+    val isNebulaRootSession = AgentCore.isNebulaRoot(Some(agentDef), depth)
     Some(ToolRegistry.ALL_TOOLS.flatMap { td =>
       if !allowedSet.contains(td.name) then None
-      else Some(td)
+      else Some(AgentCore.schemaVariantFor(td, isNebulaRootSession))
     })
 
   protected def emitStream(
@@ -2222,6 +2227,59 @@ private[agent] trait AgentCore:
 end AgentCore
 
 object AgentCore:
+
+  /**
+   * 「Nebula 本体根会话」身份判据 —— **全仓唯一单点实现**（工具面按角色分化批
+   * B1/B2，2026-09-13 作者裁定 T1=(a)）：
+   *
+   * {{{
+   *   name == "Nebula" && depth == 0
+   * }}}
+   *
+   * 两个分量各自的必要性：
+   *  - `name == "Nebula"`：身份按名判（`AgentLibrary` 以名为唯一键），排除
+   *    standalone 非 Nebula 的 WS 根会话 / team Manager / flow 入口等 depth=0 的
+   *    其余根会话（T1=(a)：它们**不算** root）；
+   *  - `depth == 0`：排除 `NodeDef.agent="Nebula"` 的**节点**会话（depth=1）——
+   *    成员资格面按**名**判（`fixedToolsFor` / `exclusiveToolsFor`）⇒ 该形态照样
+   *    持有 `AskUserQuestion`，只按名判会把它误放行到 root 变体（规格 §3.1 末）。
+   *
+   * **三个消费点，一处实现**：
+   *  ① 定义期 schema 分组（[[buildToolList]]，第一性机制）；
+   *  ② 运行期兜底闸（`ToolContext.isNebulaRoot` → `AskUserQuestionTool.call`）；
+   *  ③ PopTool 身份闸（同批改为委托本单点）。
+   * ⇒ **禁第二份同表达式**（含在 buildToolList 内联手写一份）；spec
+   * `AskUserDualModeSpec` 有 grep 级静态断言。
+   *
+   * `agentDef = None`（REST 直调 / spec harness / 非 agent 上下文）⇒ **fail-closed**：
+   * 非 Nebula 身份一律 false（与 PopTool 既有取舍同款）。形参取 `Option` 是为了让
+   * 两个求值面（定义期有 `AgentDef`、运行期有 `Option[AgentDef]`）用**同一个**函数，
+   * 而不是各写一份 `exists` 包装。
+   *
+   * **不采用**的同类判据（逐个理由见规格书 §3.1）：`SandboxPolicy.isNebulaRootSession`
+   * （含 `sandboxEnabled` feature flag 分量，非身份分量）、`AgentRecord.kind ==
+   * AgentKind.Root` 与 `rootSessionId == sessionId`（需 registry 查询 = IO + 依赖注册
+   * 时序，且 kind 口径更宽：standalone 根会话也置 kind=Root）。
+   */
+  def isNebulaRoot(agentDef: Option[AgentDef], depth: Int): Boolean =
+    agentDef.exists(_.name == "Nebula") && depth == 0
+
+  /** 定义期 schema 分组（B2/L13）：**唯一的变体选择点**。
+   *
+   * 纪律（fail-closed，规格 §3.4 新降级面 (a)）：**默认分支恒为基础变体**——
+   * 未登记/未来新增的会话形态自动落在「面外」，绝不静默拿到 root 变体。变异
+   * 「默认分支改成 root 变体」⇒ `AskUserDualModeSpec` 必红。
+   *
+   * 只替换**同一元素**的 schema/description（不插删元素）⇒ `ALL_TOOLS` 的迭代序
+   * 与工具数组逐位不变；**不得**给 `ALL_TOOLS` 加无身份维度的缓存（加了分化立即
+   * 失效，规格 §3.4 新降级面 (b)）。
+   */
+  private[agent] def schemaVariantFor(
+    td: ToolDefinition,
+    isNebulaRoot: Boolean
+  ): ToolDefinition =
+    if isNebulaRoot && AskUserQuestionTool.Name == td.name then AskUserQuestionTool.nebulaRootVariant(td)
+    else td
 
   /**
    * stuck 自动恢复批 P1（2026-09-11 作者裁定 R-3）：**正信号（进展证据）写入语义的

@@ -283,14 +283,13 @@ Example: {"filePath": "https://example.com"}"""
   /** 身份闸判据（2026-09-10 作者裁定）：两层同真才放行。
     *
     *  1. `ctx.agentDef.exists(_.name == "Nebula")` —— 身份来源 = ctx.agentDef
-    *     （AgentCore toolCtx 构造处注入 effectiveDef，AgentCore.scala:1131）；
+    *     （AgentCore toolCtx 构造处注入 effectiveDef）；
     *     MemoryEditTool.scala:325-338 的 dream 闸先例同款，禁用全局状态猜身份。
-    *  2. `ctx.depth == 0` —— 「Nebula 本体根会话」判据（SandboxPolicy.
-    *     isNebulaRootSession 同款：depth==0 排除 NodeDef.agent="Nebula" 的节点
-    *     会话，它们的 depth=1）。子会话判定口径 = depth：Nebula 派生的 SubTask
-    *     worker / 节点会话 / 子 agent 全部 depth≥1；depth==0 只有全仓唯一
-    *     根会话 spawn 点（WebSocketRoutes.doSpawnRootAgent）——「Nebula 自己」
-    *     与「Nebula 派生的会话」由此分开。
+    *  2. `ctx.depth == 0` —— 「Nebula 本体根会话」判据（depth==0 排除
+    *     NodeDef.agent="Nebula" 的节点会话，它们的 depth=1）。子会话判定口径 =
+    *     depth：Nebula 派生的 SubTask worker / 节点会话 / 子 agent 全部 depth≥1；
+    *     depth==0 只有全仓唯一根会话 spawn 点（WebSocketRoutes.doSpawnRootAgent）
+    *     ——「Nebula 自己」与「Nebula 派生的会话」由此分开。
     *
     * `ctx.agentDef == None`（REST 直调 / spec harness）→ **fail-closed**：非
     * Nebula 身份一律拒。实测无合法非 agent 调用面被误伤：Pop 不在
@@ -299,9 +298,15 @@ Example: {"filePath": "https://example.com"}"""
     * （RestApiRoutes.scala:1154-1158 / NeblinkRelayTunnel.scala:275）不传
     * agentDef 也不传 wsSend，那里的 Pop 本来只回声、不发送、无功能面。spec
     * harness 显式传 Nebula ctx（PopToolSpec.captureCtx）。
+    *
+    * **工具面按角色分化批（2026-09-13）**：谓词本体已上移为全仓唯一单点
+    * [[nebflow.agent.AgentCore.isNebulaRoot]]（同批新增：定义期 schema 分组的
+    * 分组依据 + AskUserQuestion 非阻塞兜底闸——三消费点一处实现）。本方法退化为
+    * **纯委托**（行为逐字节不变，PopToolSpec 钉住）；此处**不得**重写
+    * `name=="Nebula" && depth==0`（可判红：`AskUserDualModeSpec` 的 grep 级静态断言）。
     */
   private def isNebulaRootSession(ctx: ToolContext): Boolean =
-    ctx.agentDef.exists(_.name == "Nebula") && ctx.depth == 0
+    nebflow.agent.AgentCore.isNebulaRoot(ctx.agentDef, ctx.depth)
 
   def call(input: JsonObject, ctx: ToolContext): IO[Either[ToolError, String]] =
     // 身份闸最前——先于任何副作用（filePath 解析 / 文件读 / HTML 图片内联 /

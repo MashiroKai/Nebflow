@@ -94,7 +94,15 @@ case class ToolContext(
     * SandboxPolicy.off = 全部闸门旁路（旧行为，§G.1 回滚语义；存量测试零改动）。
     * 相对路径一律以 sandbox.root 为基准解析（修掉 Glob/Grep 默认根=user.dir）。 */
   sandbox: nebflow.core.sandbox.SandboxPolicy = nebflow.core.sandbox.SandboxPolicy.off
-)
+):
+  /** 「Nebula 本体根会话」身份判据的**运行期求值面**（工具面按角色分化批 B1，
+    * 2026-09-13）——**纯委托**给单点 [[nebflow.agent.AgentCore.isNebulaRoot]]
+    * （同一份实现的第二个求值面；第一个 = 定义期挑 schema 变体）。**禁**在此
+    * 重写 `name=="Nebula" && depth==0`（判红：spec 的静态断言）。
+    *
+    * 派生 def（不是字段）⇒ 零构造点改动；`agentDef=None`（REST 直调 / harness）
+    * fail-closed 为 false。 */
+  def isNebulaRoot: Boolean = AgentCore.isNebulaRoot(agentDef, depth)
 
 case class ToolError(message: String)
 case class ProcessResult(stdout: String, stderr: String, exitCode: Int, cwd: String)
