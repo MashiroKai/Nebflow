@@ -777,6 +777,9 @@ export default {
 
   // === Time ===
   'time.yesterday': '昨天',
+  // 12/24 小时制切换热区的 tooltip / aria-label（三面共用；原为主对话框里的
+  // 硬编码中文字面量，en locale 下也是中文 —— 本键收归 i18n）。
+  'time.toggleFormat': '点击切换 12/24 小时制',
 
   // === Task list ===
   // 任务面板 = 纯 Flow Map 节点视图（2026-09-05 10:54 裁定）：旧任务区退役，

@@ -10,6 +10,8 @@ import { onMessage, sendWs } from './ws.js';
 import { refreshNeblink } from './neblink.js';
 // ⑤ 中文输入收归（作者裁定 2026-09-12）：组字判定唯一来源 = imeGuard.js。
 import { bindImeGuard, isImeComposing } from './imeGuard.js';
+// 时制（12h/24h）：与主对话框/好友对话框共享同一偏好与同一实现。
+import { formatHm, bindTimeToggle } from './timeFormat.js';
 
 // Per-device message cache: deviceId -> DropboxMessage[]
 let dropboxMessages = {};
@@ -46,10 +48,9 @@ function formatSize(bytes) {
 }
 
 function formatTime(ts) {
-  const d = new Date(ts);
-  const hh = String(d.getHours()).padStart(2, '0');
-  const mm = String(d.getMinutes()).padStart(2, '0');
-  return `${hh}:${mm}`;
+  // 时制（12h/24h）与主对话框共享同一偏好（timeFormat.js）。dropbox 的 ts 是
+  // **epoch 毫秒**（DropboxModels.now = System.currentTimeMillis()），formatHm 同吃毫秒。
+  return formatHm(ts);
 }
 
 // ===== Open / close modal =====
@@ -380,6 +381,10 @@ function renderMessages(deviceId) {
   const msgs = dropboxMessages[deviceId] || [];
   container.innerHTML = msgs.map(m => renderMessage(m)).join('');
 
+  // 时制热区（每次 innerHTML 重建后重绑）：消息时间成为可点击/可键盘触发的
+  // 切换入口，与主对话框/好友对话框共享同一偏好（timeFormat.js）。
+  container.querySelectorAll('.dropbox-msg-time').forEach(bindTimeToggle);
+
   // Copy button delegation (re-bound each render since innerHTML replaces children)
   container.querySelectorAll('.dropbox-msg-copy').forEach(btn => {
     btn.onclick = async (e) => {
@@ -409,7 +414,7 @@ function renderMessage(m) {
       <div class="dropbox-msg ${isOut ? 'out' : 'in'}">
         <div class="dropbox-msg-bubble">${escapeHtml(m.text)}</div>
         <div class="dropbox-msg-meta">
-          <span class="dropbox-msg-time">${time}</span>
+          <span class="dropbox-msg-time" data-ts-text="${m.ts}">${time}</span>
           <button class="dropbox-msg-copy" data-text="${escapeHtml(m.text).replace(/"/g,'&quot;')}" title="${t('chat.copy')}">
             <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>
           </button>
@@ -422,7 +427,7 @@ function renderMessage(m) {
     return `
       <div class="dropbox-msg ${isOut ? 'out' : 'in'}">
         <div class="dropbox-msg-bubble dropbox-notice">${escapeHtml(m.text)}</div>
-        <div class="dropbox-msg-meta"><span class="dropbox-msg-time">${time}</span></div>
+        <div class="dropbox-msg-meta"><span class="dropbox-msg-time" data-ts-text="${m.ts}">${time}</span></div>
       </div>`;
   }
 
@@ -458,7 +463,7 @@ function renderMessage(m) {
           ${pct !== null ? `<div class="dropbox-file-progress"><div class="dropbox-file-progress-bar" style="width:${pct}%"></div></div>` : ''}
           <div class="dropbox-file-status-text ${st.cls}">${statusText}</div>
         </div>
-        <div class="dropbox-msg-time">${time}</div>
+        <div class="dropbox-msg-time" data-ts-text="${m.ts}">${time}</div>
       </div>`;
   }
 

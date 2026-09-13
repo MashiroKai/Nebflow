@@ -487,6 +487,14 @@
   font-variant-numeric: tabular-nums;
 }
 
+/* 12/24 小时制切换热区（三面共用；与 chat.css 的 .duration-badge-time 同款反馈，
+   零新颜色 token —— 只复用 cursor + opacity）。 */
+.time-toggle {
+  cursor: pointer;
+  transition: opacity 0.15s;
+}
+.time-toggle:hover { opacity: 0.6; }
+
 /* file card — 单一类名 .msg-file-card（③A5）；out 变体是修饰态，不是第二份规则 */
 .msg-file-card {
   padding: 8px 12px;

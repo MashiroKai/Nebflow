@@ -3,6 +3,9 @@
 
 import state, { AGENT_PALETTE } from './state.js';
 import { key } from './branding.js';
+// 时制（12h/24h）：偏好、格式化与热区绑定的唯一属主 = timeFormat.js（主对话框
+// / 设备对话框 / 好友对话框三面共享同一偏好与同一实现；本模块只消费）。
+import { formatHm, toggleTimeFormat, bindTimeToggle } from './timeFormat.js';
 import { activeView, setActiveView, findViewBySessionId } from './chatView.js';
 import { renderMarkdownWithMath, escapeHtml, buildToolDetail, buildDelegatePromptHtml, attachToolClick, smartScroll, playSpinner, stopSpinner, localizeToolLabel, localizeToolSummary, renderHighlightedContent, highlightCode, createMsgCopyButton, createIconsIn, isNearBottom, shouldFollowBottom, NEAR_BOTTOM_PX } from './utils.js';
 import { renderWithRegistry } from './cardRegistry.js';
@@ -12,23 +15,10 @@ import { askSourceLabel, removePendingAsk } from './askPending.js';
 import { renderRefBlock, normalizeTaskRef, parseTaskReturnText, buildTaskRefLine } from './reference.js';
 
 // ---------- Time format preference (12h / 24h toggle) ----------
-// Legacy spelling 'nebflow:timeFormat' is normalized into this key by
-// branding.js at module init (see LEGACY_IRREGULAR there).
-const TIME_FORMAT_KEY = key('time_format');
-let _timeFormat = localStorage.getItem(TIME_FORMAT_KEY) || '24h';
-
-function refreshAllTimestamps() {
-  document.querySelectorAll('[data-ts]').forEach(el => {
-    const ts = parseInt(el.getAttribute('data-ts'), 10);
-    if (ts) el.textContent = formatHm(ts);
-  });
-}
-
-export function toggleTimeFormat() {
-  _timeFormat = _timeFormat === '24h' ? '12h' : '24h';
-  localStorage.setItem(TIME_FORMAT_KEY, _timeFormat);
-  refreshAllTimestamps();
-}
+// 实现已抽到 timeFormat.js（三面共享）。此处保留同名再次导出，模块公开面不缩水
+// （全仓无外部 importer，纯兼容保留）。Legacy spelling 'nebflow:timeFormat' is
+// still normalized into the storage key by branding.js at module init.
+export { formatHm, toggleTimeFormat };
 
 // ---------- Voice TTS player ----------
 // Module-level singleton. Manages sequential playback of <voice> blocks:
@@ -520,19 +510,6 @@ export function renderInjectedBubble(text, source, timestamp, eventType, sender,
   if (shouldFollowBottom(activeView, chat)) chat.scrollTop = chat.scrollHeight;
 }
 
-/** Format epoch millis as HH:MM (24h) or h:MM AM/PM (12h), respecting user preference */
-export function formatHm(ms) {
-  const d = new Date(ms);
-  const mm = String(d.getMinutes()).padStart(2, '0');
-  if (_timeFormat === '12h') {
-    let h = d.getHours();
-    const ampm = h >= 12 ? 'PM' : 'AM';
-    h = h % 12 || 12;
-    return h + ':' + mm + ' ' + ampm;
-  }
-  return String(d.getHours()).padStart(2, '0') + ':' + mm;
-}
-
 // ---------- rAF stream render scheduler ----------
 // Coalesces high-frequency streaming deltas into one DOM render per frame.
 // Slots are keyed per (view, key) so concurrent views (main window + an open
@@ -742,10 +719,12 @@ export function createMsgFooterBadge(timestamp, copyText) {
   if (timestamp && timestamp > 0) {
     const timeSpan = document.createElement('span');
     timeSpan.className = 'duration-badge-time';
+    // data-ts = 搜索跳转锚点（chatSearchFloat.js 消费，容器级挂载点同用此属性）；
+    // data-ts-text = 时制刷新的显式声明（纯时钟文本节点，见 timeFormat.js 契约）。
     timeSpan.setAttribute('data-ts', timestamp);
+    timeSpan.setAttribute('data-ts-text', String(timestamp));
     timeSpan.textContent = formatHm(timestamp);
-    timeSpan.title = '点击切换 12/24 小时制';
-    timeSpan.addEventListener('click', toggleTimeFormat);
+    bindTimeToggle(timeSpan);
     badge.appendChild(timeSpan);
   }
   if (copyText) {
@@ -798,10 +777,11 @@ export function createDurationBadgeElement(durationMs, model, seed, timestamp, c
     appendDivider();
     const timeSpan = document.createElement('span');
     timeSpan.className = 'duration-badge-time';
+    // data-ts = jump anchor (chatSearchFloat.js); data-ts-text = refresh target.
     timeSpan.setAttribute('data-ts', timestamp);
+    timeSpan.setAttribute('data-ts-text', String(timestamp));
     timeSpan.textContent = formatHm(timestamp);
-    timeSpan.title = '点击切换 12/24 小时制';
-    timeSpan.addEventListener('click', toggleTimeFormat);
+    bindTimeToggle(timeSpan);
     badge.appendChild(timeSpan);
   }
 
