@@ -33,6 +33,19 @@ object MemorySnapshot:
   /** 每目标文件保留的快照份数（超出按时间戳目录名升序淘汰最老）。 */
   val KeepPerFile: Int = 20
 
+  /** 人工（钉住）快照子树名（R8-B，2026-09-13 记忆归档批落地）。
+    *
+    * 淘汰键是**目录名字符串序**（见 [[prune]]）：人工目录（`manual-*` / `slim-*` / `*_manual`）
+    * 与自动时间戳目录同池参与排序 ⇒ 既顶掉自动快照，自己也会被更晚日期的目录淘汰。
+    * 人工快照语义 = 「钉住」（永不自动淘汰）⇒ 约定落 `memory-backups/pinned/` 子树；
+    * [[prune]] 只扫快照根的**直接子目录**，故 pinned 子树天然不在槽位内——下面的显式
+    * 过滤把该语义钉在代码里（防未来把 pin 目录改成直接子目录时静默回退）。
+    */
+  val PinnedDirName: String = "pinned"
+
+  /** 人工快照根（pinned 子树）；gate 脚本 / 整理批的人工快照落此处，不计槽位。 */
+  def pinnedRoot(root: Path = backupRoot): Path = root / PinnedDirName
+
   private val fmt: DateTimeFormatter = DateTimeFormatter.ofPattern("yyyyMMdd-HHmmss-SSS")
 
   /** 快照根（def 而非 val：跟随 setDataRoot——spec 钉临时目录即生效）。 */
@@ -127,11 +140,15 @@ object MemorySnapshot:
     dir
 
   /** 保留修剪：按目录名（时间戳序）倒序，仅统计含本目标快照的目录，
-    * 超出 KeepPerFile 的最老目录整目录删除（目录内单文件，一比一）。 */
+    * 超出 KeepPerFile 的最老目录整目录删除（目录内单文件，一比一）。
+    * `pinned/` 子树（人工快照，R8-B）不计槽位、永不自动淘汰。 */
   private def prune(target: Path, root: Path): Unit =
     if os.exists(root) then
       val key = backupFileName(target)
-      val mine = os.list(root).filter(os.isDir(_)).filter(d => os.exists(d / key)).sortBy(_.last).reverse
+      val mine = os.list(root).filter(os.isDir(_))
+        .filter(_.last != PinnedDirName) // R8-B：人工快照（pinned 子树）不进滚动槽位
+        .filter(d => os.exists(d / key))
+        .sortBy(_.last).reverse
       mine.drop(KeepPerFile).foreach { d =>
         try os.remove.all(d)
         catch case _: Exception => () // 修剪尽力而为，不影响主流程

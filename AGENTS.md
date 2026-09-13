@@ -8,6 +8,22 @@ Nebflow 是一个开源（MIT）AI Agent 编排平台。本仓为 **Scala 版**�
 ## 工作区
 `/Users/dev/Claude code/Nebflow`（主仓；`.nebflow/` 已 gitignore，不落 repo）
 
+## 过程件落位（禁落根 · 2026-09-13 作者裁定落地）
+
+`.nebflow/` 根（`<workspace>/.nebflow/` 与 `~/.nebflow/` 的 `maxdepth=1` 层）只放两类东西：**引擎必需条目**（名单由脚本从 `src/main/scala` 机械生成，落 `.nebflow/tools/root-whitelist.json`，**禁手工增补**）与**索引/自述件**（`INDEX.md` / `README.md`）。**新产出禁止直接写根**：
+
+- 证据（截图/原始输出/复现材料）→ `.nebflow/evidence/<YYYYMMDD>_<topic>/`
+- 报告/台账（agent 读）→ `.nebflow/reports/<YYYYMMDD>_<topic>.md`
+- 一次性脚本（验证/门禁/冒烟）→ `.nebflow/tools/<YYYYMMDD>_<topic>.{sh,py,mjs}`
+- 日志/临时中间件（可弃）→ `/tmp`；引擎对账件落 `.nebflow/tmp/`（agent 禁写）
+- 规格（引擎运行期消费）→ `.nebflow/Spec/`
+- 人类交付/阶段文档 → `~/.nebflow/docs/<域>/`（命名/溯源见 `~/.nebflow/docs/CONVENTIONS.md` §1/§2 与「文件名尾溯源规范」）
+- 人工备份 → `~/.nebflow/backups/`
+
+**零存量处置**：本节不要求、也不授权对任何现存文件做搬移/改名/删除——存量处置另立实施批，前置 = 逐件引用面断言 + 回滚快照 + 悬空门禁。规范全文 = `~/.nebflow/docs/CONVENTIONS.md` §6。
+
+巡检（只读）：`node .nebflow/tools/check-root-hygiene.mjs`（退出码非 0 = 存在基线之后的新增越界件）；名单与代码一致性：`node .nebflow/tools/gen-root-whitelist.mjs --check`。
+
 ## 技术栈
 - **后端**: Scala 3, Pekko actors, http4s, cats-effect。源码在 `src/main/scala/`
 - **前端**: Vanilla JS (ES modules), CSS, HTML。源码在 `src/main/resources/web/`

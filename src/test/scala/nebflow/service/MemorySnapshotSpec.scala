@@ -120,3 +120,102 @@ class MemorySnapshotSpec extends FunSuite:
     assert(gate.isLeft, s"不可写根必须 Left（无快照不落笔）: $gate")
     assert(gate.left.exists(_.nonEmpty), "原因非空")
   }
+
+  // ── R8-B（2026-09-13 记忆归档批）：人工快照钉住、不计滚动槽位 ──
+  //
+  // 布局覆盖声明（2026-09-13 复核缺陷「R8-B spec 不具载力」修正）：`prune` 只扫快照根的
+  // **直接子目录**、且要求该目录**直接含** `key` ⇒ 两种布局的判定路径不同，本节分别覆盖：
+  //   (a) 生产布局 `pinned/<batch>/<key>`（`memory-archive-gate.sh begin-batch` 落此形态）
+  //       —— `pinned` 顶层不含 key ⇒ **过滤行不参与判定**（下面两条属「布局不变性」断言：
+  //       删掉 `MemorySnapshot.scala` 的 `.filter(_.last != PinnedDirName)` 后仍全绿）。
+  //   (b) 防御性布局 `pinned/<key>`（`pinned` 本身即快照目录、直接含 key）—— 此时**过滤行
+  //       是唯一防线**：没有它 `pinned` 会以「最新目录」身份占掉一个槽位、把最老的自动快照
+  //       挤掉。**载力由本节最后一条 spec 提供**（其注释给变异自证法）。
+
+  // 布局不变性断言（对过滤行不敏感；载力见本节末「R8-B 载力」spec）
+  test("R8-B：pinned 子树不计槽位，人工快照永不被 prune 淘汰") {
+    val rootP = home / "memory-backups-pinned"
+    os.write.over(agentFile, "- pinned probe\n", createFolders = true)
+    val key = MemorySnapshot.backupFileName(agentFile)
+    // 1 份「钉住」的人工快照（pinned 子树）
+    val pinned = MemorySnapshot.pinnedRoot(rootP) / "20260913_0300_manual"
+    os.makeDir.all(pinned)
+    os.write(pinned / key, "- manual snapshot (pinned)\n")
+    // 填满自动槽位：KeepPerFile 份自动时间戳目录（名字序全部低于 pinned 之外的同池目录）
+    for i <- 0 until MemorySnapshot.KeepPerFile do
+      val d = rootP / f"20260905-000000-000000-$i%03d"
+      os.makeDir.all(d)
+      os.write(d / key, s"- snapshot $i\n")
+
+    MemorySnapshot.pruneForTest(agentFile, rootP)
+
+    assert(os.exists(pinned / key), "pinned 子树必须不受 prune 影响（人工快照 = 钉住）")
+    val auto = os.list(rootP).filter(os.isDir(_))
+      .filter(_.last != MemorySnapshot.PinnedDirName)
+      .filter(d => os.exists(d / key))
+    assertEquals(auto.size, MemorySnapshot.KeepPerFile, "pinned 不占槽位，自动槽位仍为 KeepPerFile")
+  }
+
+  // 布局不变性断言（对过滤行不敏感；载力见本节末「R8-B 载力」spec）
+  test("R8-B：槽位满时 pinned 存在不改变自动快照的滚动行为（同池仍按名字序淘汰最老）") {
+    val rootP = home / "memory-backups-pinned-2"
+    os.write.over(agentFile, "- roll probe\n", createFolders = true)
+    val key = MemorySnapshot.backupFileName(agentFile)
+    val pinned = MemorySnapshot.pinnedRoot(rootP) / "manual-dream-0908"
+    os.makeDir.all(pinned)
+    os.write(pinned / key, "- pinned\n")
+    for i <- 0 until MemorySnapshot.KeepPerFile + 2 do
+      val d = rootP / f"20260906-000000-000000-$i%03d"
+      os.makeDir.all(d)
+      os.write(d / key, s"- s$i\n")
+
+    MemorySnapshot.pruneForTest(agentFile, rootP)
+
+    val auto = os.list(rootP).filter(os.isDir(_))
+      .filter(_.last != MemorySnapshot.PinnedDirName)
+      .map(_.last).sorted
+    assertEquals(auto.size, MemorySnapshot.KeepPerFile, "自动槽位 = KeepPerFile")
+    assertEquals(auto.head, "20260906-000000-000000-002", "同池最老 2 份被淘汰（名字序不变）")
+    assert(os.exists(pinned / key), "pinned 不参与淘汰")
+  }
+
+  /** **载力断言（R8-B）**：`prune` 的 `.filter(_.last != PinnedDirName)` 是「pinned 不占槽位」
+    * 在**防御性布局**（`pinned` 直接含 key）下的唯一防线。
+    *
+    * 变异自证（2026-09-13 复核缺陷 1 的返工验证法）：删掉 `MemorySnapshot.prune` 里那行
+    * `.filter(_.last != PinnedDirName)` → 本 spec **必须转红**（`pinned` 以「最新目录」身份
+    * 占掉一个槽位 ⇒ 最老的自动快照 `...-000` 被挤掉 ⇒ `autoNames.size = 19`、
+    * `autoNames.head = "...-001"`）；恢复该行 → 复绿。
+    *
+    * 断言刻意**不复用生产 filter 语义**（逐个数 `2026…` 前缀的自动目录），否则断言会随实现
+    * 一起漂、给出假绿。 */
+  test("R8-B 载力：pinned 直下含 key（防御性布局）⇒ 过滤行缺席时最老自动快照被挤掉") {
+    val rootP = home / "memory-backups-pinned-direct"
+    os.write.over(agentFile, "- pinned direct probe\n", createFolders = true)
+    val key = MemorySnapshot.backupFileName(agentFile)
+    // 防御性布局：pinned 本身 = 快照目录（快照根的直接子目录，且**直接含** key）
+    val pinned = MemorySnapshot.pinnedRoot(rootP)
+    os.makeDir.all(pinned)
+    os.write(pinned / key, "- manual snapshot (pinned, direct layout)\n")
+    // 自动槽位恰好满额（目录名尾零填充计数器 ⇒ 字典序 == 时间序）
+    for i <- 0 until MemorySnapshot.KeepPerFile do
+      val d = rootP / f"20260905-000000-000000-$i%03d"
+      os.makeDir.all(d)
+      os.write(d / key, s"- snapshot $i\n")
+
+    MemorySnapshot.pruneForTest(agentFile, rootP)
+
+    assert(os.exists(pinned / key), "pinned 必须存活（钉住语义）")
+    val autoNames = os.list(rootP).filter(os.isDir(_)).map(_.last)
+      .filter(_.startsWith("2026")).sorted
+    assertEquals(
+      autoNames.size,
+      MemorySnapshot.KeepPerFile,
+      s"pinned 不得占槽位（过滤行缺席时会少 1 份）：${autoNames.mkString(",")}"
+    )
+    assertEquals(
+      autoNames.head,
+      "20260905-000000-000000-000",
+      "最老自动快照不得被 pinned 挤掉（过滤行缺席时它会被整目录删除）"
+    )
+  }
