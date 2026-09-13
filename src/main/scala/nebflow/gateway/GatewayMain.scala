@@ -374,7 +374,16 @@ object GatewayMain extends IOApp:
           // 默认关**（`LlmLogWriter` 初值 = false）。显式改动过的值由此跨重启
           // 保持（旧缺陷：内存开关不落盘，宿主重启静默回落 true）。
           // fail-safe：节缺失 / 非法 ⇒ None ⇒ 默认关（loadEnabled 纯解析）。
-          nebflow.core.LlmLogWriter.loadEnabled(config.llmLog).foreach(nebflow.core.LlmLogWriter.setEnabled)
+          // 生效读数落一行启动日志（infoSync：本块为语句序列，非 IO 组合）——
+          // 供「重启后只读复验」直接 grep，无需触碰运行实例。
+          locally {
+            val persistedLlmLog = nebflow.core.LlmLogWriter.loadEnabled(config.llmLog)
+            persistedLlmLog.foreach(nebflow.core.LlmLogWriter.setEnabled)
+            logger.infoSync(
+              s"LLM log recording: ${if nebflow.core.LlmLogWriter.isEnabled then "enabled" else "disabled"} " +
+                s"(persisted=${persistedLlmLog.map(_.toString).getOrElse("none → default off")})"
+            )
+          }
           Auth.loadOrCreateToken.flatMap { token =>
             // Global session state shared across all connections
             val sessionStore = new SessionStore(PathUtil.dataRoot / "sessions", PathUtil.dataRoot / "tasks")
