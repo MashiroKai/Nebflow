@@ -3,8 +3,10 @@
 # [FROZEN 2026-09-06] Desktop packaging sealed (script-install-release v2, batch 5)
 # Zero code changes below this header - file kept byte-identical for the
 # certificate-era restore. See:
-#   - .nebflow/Spec/desktop-trust-and-icp-filing-plan.md  (trust chain / restore gates)
-#   - .nebflow/Spec/script-install-release-v2.md section 2.7  (sealing scope)
+#   - ~/.nebflow/memory/aliyun-icp.md  (ICP baseline; replaces the retired
+#     desktop-trust-and-icp-filing-plan.md Spec, untracked 2026-09-08)
+#   - ~/.nebflow/memory/script-install-release.md  (script-install ruling;
+#     replaces the retired script-install-release-v2.md Spec section 2.7)
 # CI package jobs (release.yml / auto-release.yml) are disabled via `if: false`.
 # Restore = certificates + CI notarytool/signtool integration, then unseal CI.
 # G3 audit note: AutoStartService only branches on `.app/Contents` (jpackage
@@ -18,6 +20,9 @@
 # now blacklist-checks every default allow-root ($PWD, /tmp, $TMPDIR) and the
 # allow-root itself before any rm -rf; no change to this script's bundle layout,
 # staging or packaging flow.
+# [2026-09-13] Spec pointers above repointed to their live landing spots: both
+# .nebflow/Spec files were untracked on 2026-09-08 (commit 4f285811), so the
+# originals recover via `git show 4f285811^:<path>`. Freeze semantics unchanged.
 # ----------------------------------------------------------------------------
 # Build a macOS .dmg of Nebflow from the sbt-assembly fat jar via jpackage.
 #
