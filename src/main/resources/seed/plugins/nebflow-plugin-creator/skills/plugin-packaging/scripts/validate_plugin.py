@@ -374,7 +374,7 @@ def main():
     record("M15", "占位残留", not hits,
            "全包零残留" if not hits else f"命中：{'、'.join(hits[:8])}{'…' if len(hits) > 8 else ''}")
 
-    # 附加产出：包 digest（approve 后可与 GET /api/plugins 的 digest 人工比对闭环）
+    # 附加产出：包 digest（可与 GET /api/plugins 返回的 digest 字段比对闭环）
     digest, file_count = compute_digest(pkg)
     print("")
     print(f"[INFO] digest   sha256:{digest}  files={file_count}")

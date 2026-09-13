@@ -15,7 +15,7 @@
 //     → `<button type="button" class="nb-toggle[ on][ disabled]" role="switch"
 //        aria-checked="true|false" aria-label=label title=title [attrs]>`
 //     `attrs` is a pre-escaped string of extra attributes for caller hooks
-//     (e.g. `data-plugin-switch="name"`), keeping the class contract intact.
+//     (e.g. `data-plugin-dispatch="name"`), keeping the class contract intact.
 //     Knob is drawn by CSS (::after) — no child elements, one class.
 //   bindToggle(root, onChange) → HTMLElement[]
 //     Binds every .nb-toggle inside root. Fires on click (real <button>, so

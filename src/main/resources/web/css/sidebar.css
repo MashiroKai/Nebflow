@@ -2083,6 +2083,12 @@
   transition: border-color 0.15s;
 }
 .plugins-card.on { border-color: rgb(var(--sapphire) / 0.28); }
+/* 内容已变更 / 已封禁（2026-09-13 无审批批）：两条非「已启用」态的卡片边缘提示。
+   已封禁用 error 色族的 color-mix 合成（复用 base.css 的 --color-error 令牌，
+   零手造色值；不新增色令牌——本块的 `#`/rgba 字面量禁令见本文件 748 行注释节，
+   tests/plugins-panel-autosync.spec.mjs ④ 对 indexOf 切片做零字面量断言）。 */
+.plugins-card.changed { border-color: rgb(var(--amber) / 0.28); }
+.plugins-card.blocked { border-color: color-mix(in srgb, var(--color-error) 32%, transparent); }
 .plugins-card.rejected { opacity: 0.75; }
 .plugins-card-head {
   display: flex;
@@ -2131,6 +2137,19 @@
   color: rgb(var(--sapphire));
   background: rgb(var(--sapphire) / 0.1);
   border-color: rgb(var(--sapphire) / 0.22);
+}
+/* 药丸三态（2026-09-13 无审批批）：绑 blocked / contentChanged（**不再绑 trusted**）。
+   优先级 blocked > changed > on——与 plugins.js `pillOf()` 同一口径，勿各自为政。
+   已封禁 = error 族（拦截态），内容已变更 = amber 族（**非拦截**可见性信号）。 */
+.plugins-state-pill.changed {
+  color: rgb(var(--amber));
+  background: rgb(var(--amber) / 0.1);
+  border-color: rgb(var(--amber) / 0.25);
+}
+.plugins-state-pill.blocked {
+  color: var(--color-error);
+  background: color-mix(in srgb, var(--color-error) 10%, transparent);
+  border-color: color-mix(in srgb, var(--color-error) 25%, transparent);
 }
 .plugins-card-desc {
   font: 400 11px -apple-system, sans-serif;
@@ -2182,12 +2201,83 @@
   border-radius: 7px;
   padding: 5px 8px;
 }
-.plugins-card-hint.dim {
-  color: var(--color-frame-text-dim);
+/* 已封禁提示（2026-09-13 无审批批）——可行动文案，error 族与 amber 的「内容已
+   变更」明确可分：前者是拦截态，后者只是可见性。 */
+/* （原 `.plugins-card-hint.dim` 的「未启用（默认拒绝）」灰字提示已随内容审批
+   面退场一并删除——该状态在新语义下不存在。） */
+.plugins-card-hint.blocked {
+  color: var(--color-error);
+  background: color-mix(in srgb, var(--color-error) 8%, transparent);
+  border-color: color-mix(in srgb, var(--color-error) 25%, transparent);
+}
+/* ── 次级动作：更多菜单 + 封禁/解封（2026-09-13 无审批批 C7）───────────────
+   内容审批开关退场后，卡片只剩**一个**开关（派发，卡片底部）。封禁降级为
+   次级动作：右上「更多」⇄ 就地展开的动作行（不弹浮层——零定位复杂度、键盘
+   可达、可被 spec 直接断言），与底部派发行**位置分离 + 形态不同**（开关 vs
+   按钮），保证两动作视觉可分（既有 F1 纪律）。
+   不复用 nb-toggle：封禁不是开关（它没有「当前开度」，只有一次动作），套开关
+   形态会把封禁误读成可长期驻留的状态控件。 */
+.plugins-more-btn {
+  flex-shrink: 0;
+  width: 20px;
+  height: 20px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+  border: 1px solid transparent;
+  border-radius: 6px;
   background: transparent;
-  border: none;
-  padding: 0 2px;
-  cursor: help;
+  color: var(--color-frame-text-muted);
+  cursor: pointer;
+  transition: color 0.15s, background 0.15s, border-color 0.15s;
+}
+.plugins-more-btn:hover {
+  color: var(--color-frame-text);
+  background: var(--glass-control-bg);
+  border-color: var(--glass-control-border);
+}
+.plugins-more-btn[aria-expanded="true"] {
+  color: rgb(var(--sapphire));
+  border-color: rgb(var(--sapphire) / 0.3);
+  background: rgb(var(--sapphire) / 0.08);
+}
+.plugins-card-more {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+  padding-top: 6px;
+  border-top: 1px solid var(--glass-etched-border);
+}
+.plugins-card-more[hidden] { display: none; }
+.plugins-block-btn {
+  font: 500 10px -apple-system, sans-serif;
+  padding: 3px 9px;
+  border-radius: 7px;
+  border: 1px solid var(--glass-control-border);
+  background: var(--glass-control-bg);
+  color: var(--color-frame-text-muted);
+  cursor: pointer;
+  white-space: nowrap;
+  transition: color 0.15s, background 0.15s, border-color 0.15s;
+}
+.plugins-block-btn:hover:not(:disabled) {
+  color: var(--color-error);
+  border-color: color-mix(in srgb, var(--color-error) 35%, transparent);
+  background: color-mix(in srgb, var(--color-error) 8%, transparent);
+}
+.plugins-block-btn.unblock { color: rgb(var(--sapphire)); border-color: rgb(var(--sapphire) / 0.3); }
+.plugins-block-btn.unblock:hover:not(:disabled) {
+  color: rgb(var(--sapphire));
+  border-color: rgb(var(--sapphire) / 0.45);
+  background: rgb(var(--sapphire) / 0.08);
+}
+.plugins-block-btn:disabled { opacity: 0.5; cursor: default; }
+.plugins-block-note {
+  font: 400 10px -apple-system, sans-serif;
+  line-height: 1.4;
+  color: var(--color-frame-text-dim);
 }
 /* ── 每卡第二控件：派发开关（令 1，2026-09-12）───────────────────────────
    设计件 R1 代价① / R9-A：内容重审（approve/revoke）与派发许可（enable/

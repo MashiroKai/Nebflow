@@ -1,17 +1,19 @@
-// plugins-panel-redesign.spec.mjs — 2026-09-04 插件面板重设计验收 spec
-// （统一插件系统 + 每插件一开关）。
-//
-// 开关状态机（真后端）：隔离实例（NEBFLOW_HOME fixture + 端口 ≥8285，绝非
-// 宿主 8080）+ fixture 插件目录。断言链：
-//   停（untrusted）→ 卡片 off + GET /api/plugins/catalog 不含该插件
-//   启（点击开关 = POST approve）→ 卡片 on + catalog 含该插件（目录可见性
-//   ≡ 开关态，分发器目录同源）
-//   内容变更（改 fixture 文件 → digest 不匹配）→ 卡片 off + 「内容已变更，
-//   重新启用将按新内容审批」标注 → 重新启用 = 按新内容审批 → on
-//   停（点击开关 = POST revoke）→ 卡片 off + catalog 不含
+// plugins-panel-redesign.spec.mjs — 2026-09-13 无审批批（装了就是信任）验收 spec
+// 真后端（隔离实例，NEBFLOW_HOME fixture + 端口 ≥8285，绝非宿主 8080）+ fixture
+// 插件目录。重写自 2026-09-04 的「开关状态机」版本——内容审批开关退场后，
+// 原断言链整体作废，新链：
+//   A 卡片形态（任意引擎）：无内容审批开关；药丸 = 已启用；次级动作入口（更多 →
+//     封禁/解封）+ 派发开关（独立一行）都在且可交互
+//   B 目录可见性 + 内容变更**非拦截**（需引擎轨 C6 字段）：
+//     无记录包 ⇒ 进分发器目录（在位即信任的可见结果）；
+//     改 fixture 文件 ⇒ digest 变 ⇒ **仍进目录**、仍有派发许可，只在面板上标
+//     「内容已变更」（可见性，不提供任何拦截）——这是本批与旧语义的分水岭
+//   C 封禁 ⇒ 出目录 + 面板「已封禁」+ 派发开关锁死；解封 ⇒ 回目录（需 C6 字段）
+//   D 双主题截图（形态留档）
 //
 // 未设 NEBFLOW_HOME_DIR 时显式 skip（shell 级 mock 覆盖由
 // sidebar-plugins.spec.mjs 承担——两层互补，不静默降级）。
+// 引擎轨 C6 字段（blocked / contentChanged）未合入时，B/C 显式 skip 并注明原因。
 
 import { test, expect } from '@playwright/test';
 import { mkdir, rm, writeFile, readFile, stat } from 'node:fs/promises';
@@ -28,8 +30,8 @@ const BETA = 'spec-plugin-beta';
 
 function pluginJson(name) {
   // §5.2/§5.3（PluginRegistry.CanonicalSchema）: manifest 缺 $schema 会被**拒载**
-  // （`rejected[]`，卡片无开关）⇒ fixture 必须带 canonical $schema，否则本 spec
-  // 的开关断言没有承载物。2026-09-12 R2 记账：此缺省为 spec 侧 fixture 缺陷
+  // （`rejected[]`，卡片无控件）⇒ fixture 必须带 canonical $schema，否则本 spec
+  // 的控件断言没有承载物。2026-09-12 R2 记账：此缺省为 spec 侧 fixture 缺陷
   // （main jar 上同红，见 impl-r2/11_r2-main-ablation.log），非产品行为。
   return JSON.stringify({
     $schema: 'https://agent-plugins.org/schemas/1.0.0/plugin.schema.json',
@@ -59,9 +61,12 @@ async function writePlugin(pluginsDir, name, skillBody) {
   return dir;
 }
 
+/** 引擎轨 C6 字段是否已在载荷里（不在 ⇒ 依赖它们的用例显式 skip）。 */
+let hasC6 = false;
+
 test.describe.configure({ mode: 'serial' });
 
-test.describe('plugins panel redesign — switch state machine (real backend)', () => {
+test.describe('plugins panel redesign — card form + non-blocking content change (real backend)', () => {
   test.skip(!HOME, 'NEBFLOW_HOME_DIR not set — isolated-instance E2E skipped (shell-level spec covers the mocked path)');
 
   let token = '';
@@ -78,6 +83,12 @@ test.describe('plugins panel redesign — switch state machine (real backend)', 
     pluginsDir = join(HOME, 'plugins');
     await writePlugin(pluginsDir, ALPHA, { name: 'greet', description: 'Greets from the alpha fixture', line: 'Hello from alpha.' });
     await writePlugin(pluginsDir, BETA, { name: 'echo', description: 'Echoes from the beta fixture', line: 'Echo from beta.' });
+
+    const probe = await fetch(`${BASE}/api/plugins`, { headers: { Authorization: `Bearer ${token}` } });
+    const body = await probe.json().catch(() => ({}));
+    const item = (body.plugins || []).find((p) => p.name === ALPHA);
+    hasC6 = !!item && Object.prototype.hasOwnProperty.call(item, 'blocked')
+      && Object.prototype.hasOwnProperty.call(item, 'contentChanged');
   });
 
   /** Node-side REST helper (Bearer auth). */
@@ -88,26 +99,16 @@ test.describe('plugins panel redesign — switch state machine (real backend)', 
     return { status: resp.status, body };
   }
 
-  /** catalog 是分发器目录段同源（trusted only）——断言插件名是否在内。 */
+  /** catalog 是分发器目录段同源——断言插件名是否在内。 */
   async function catalogContains(name) {
     const { body } = await rest('GET', '/api/plugins/catalog');
     const text = typeof body?.catalog === 'string' ? body.catalog : JSON.stringify(body);
     return text.includes(`- ${name}:`);
   }
 
-  async function revokeQuietly(name) {
-    await rest('POST', `/api/plugins/${name}/revoke`); // 404/400 when never approved — fine
-  }
-
-  /** 2026-09-05 体验批：开关是乐观原地翻转——click 后 class 立即变化，不再
-   *  隐含 POST 已完成（旧行为 = POST 后全列表重渲，on ⟹ POST done）。在途
-   *  期间开关带 disabled 闩，收敛/回滚时释放；等闩释放 = 等后端事务落地，
-   *  之后的 catalog 断言才与后端状态同步。 */
-  async function waitSwitchSettled(page, name) {
-    await page.waitForFunction((plugin) => {
-      const sw = document.querySelector(`.plugins-card[data-plugin="${plugin}"] [data-plugin-switch]`);
-      return !!sw && !sw.disabled;
-    }, name, { timeout: 10000 });
+  /** 幂等解封（老实例无 /unblock ⇒ 404，忽略）。 */
+  async function unblockQuietly(name) {
+    await rest('POST', `/api/plugins/${name}/unblock`).catch(() => {});
   }
 
   /** Load the real shell against the isolated instance; the boot fallback
@@ -127,105 +128,98 @@ test.describe('plugins panel redesign — switch state machine (real backend)', 
   async function cardState(page, name) {
     return page.evaluate((plugin) => {
       const card = document.querySelector(`.plugins-card[data-plugin="${plugin}"]`);
-      const sw = card?.querySelector('[data-plugin-switch]');
+      const dw = card?.querySelector('[data-plugin-dispatch]');
+      const btn = card?.querySelector('[data-plugin-block]');
       return {
         exists: !!card,
-        on: sw?.classList.contains('on') ?? null,
-        ariaChecked: sw?.getAttribute('aria-checked') ?? null,
+        classes: card?.className ?? null,
+        contentSwitchCount: card ? card.querySelectorAll('[data-plugin-switch]').length : null,
         pill: card?.querySelector('.plugins-state-pill')?.textContent.trim() ?? null,
-        changedHint: card?.querySelector('.plugins-card-hint:not(.dim)')?.textContent.trim() ?? null,
-        changedClass: card?.classList.contains('changed') ?? false,
+        pillClass: card?.querySelector('.plugins-state-pill')?.className ?? null,
+        changedHint: card?.querySelector('.plugins-card-hint.changed')?.textContent.trim() ?? null,
+        blockedHint: card?.querySelector('.plugins-card-hint.blocked')?.textContent.trim() ?? null,
+        hasMore: !!card?.querySelector('[data-plugin-more]'),
+        blockLabel: btn?.textContent.trim() ?? null,
+        blockState: btn?.dataset.blocked ?? null,
+        dispatchOn: dw?.classList.contains('on') ?? null,
+        dispatchDisabled: dw ? dw.disabled : null,
       };
     }, name);
   }
 
-  test('off → on: approve puts the plugin into the catalog; card reflects trusted state', async ({ page }) => {
-    await revokeQuietly(ALPHA);
+  test('A card form: content switch retired; pill 已启用; 更多 secondary action + dispatch switch present', async ({ page }) => {
+    await unblockQuietly(ALPHA);
     await loadPluginsPage(page);
-
-    let st = await cardState(page, ALPHA);
-    expect(st.on, 'initial (never approved) renders the switch off').toBe(false);
-    expect(st.pill, 'state pill 未启用').toBe('未启用');
-    expect(await catalogContains(ALPHA), 'untrusted plugin must NOT be in the catalog').toBe(false);
-
-    // The page's only control: click → optimistic flip → POST approve →
-    // in-place registry convergence → on (settled = POST done).
-    await page.click(`.plugins-card[data-plugin="${ALPHA}"] [data-plugin-switch]`);
-    await page.waitForFunction(
-      (plugin) => document.querySelector(`.plugins-card[data-plugin="${plugin}"] [data-plugin-switch]`)?.classList.contains('on'),
-      ALPHA, { timeout: 10000 });
-    await waitSwitchSettled(page, ALPHA);
-
-    st = await cardState(page, ALPHA);
-    expect(st.ariaChecked, 'aria-checked=true when trusted').toBe('true');
-    expect(st.pill, 'state pill 已启用').toBe('已启用');
-    expect(await catalogContains(ALPHA), 'trusted plugin must appear in the catalog (switch ≡ visibility)').toBe(true);
-
-    await revokeQuietly(ALPHA); // cleanup for the next tests
+    const st = await cardState(page, ALPHA);
+    expect(st.exists, 'fixture card rendered').toBe(true);
+    expect(st.contentSwitchCount, '内容审批开关退场（卡片级零残留）').toBe(0);
+    expect(st.pill, '药丸 = 已启用（绑 blocked/contentChanged）').toBe('已启用');
+    expect(st.pillClass, 'pill 带 on class').toContain('on');
+    expect(st.classes, '卡片无 blocked/changed 痕').not.toContain('blocked');
+    expect(st.hasMore, '次级动作入口「更多」在').toBe(true);
+    expect(st.blockLabel, '封禁动作文案').toBe('封禁该插件');
+    expect(st.blockState, 'data-blocked=0').toBe('0');
+    expect(st.dispatchOn, '派发开关 on（兼容默认 authorEnabled=true）').toBe(true);
+    expect(st.dispatchDisabled, '派发开关可用（封禁是唯一的禁用前提）').toBe(false);
   });
 
-  test('digest change: edited fixture content → off + 内容已变更 hint; re-enable approves the new content', async ({ page }) => {
-    // Precondition: approved at digest D1.
-    await revokeQuietly(ALPHA);
-    await (async () => { const r = await rest('POST', `/api/plugins/${ALPHA}/approve`); if (r.status !== 200) throw new Error(`approve failed: ${JSON.stringify(r.body)}`); })();
-
-    // Mutate the plugin directory → digest D2 ≠ D1 (listWithRejected is
-    // uncached; the scan mtime cache keys on file mtimes — both pick this up).
+  test('B 内容变更**非拦截**：改 fixture 内容 ⇒ 仍进目录 + 仍可派发，面板只多一条可见性提示', async ({ page }) => {
+    test.skip(!hasC6, 'engine track C6 (`contentChanged`) not live on this instance — content change still blocks loading here; rerun after the plugin-nogate engine track merges');
+    // Precondition: 已有 trust 记录（旧语义的「已审批」基准），随后改内容。
+    await rest('POST', `/api/plugins/${ALPHA}/approve`);
     const skillPath = join(pluginsDir, ALPHA, 'skills', 'greet', 'SKILL.md');
     await writeFile(skillPath, skillMd({ name: 'greet', description: 'Greets from the alpha fixture (v2)', line: 'Hello from alpha — EDITED.' }));
 
     await loadPluginsPage(page);
     const st = await cardState(page, ALPHA);
-    expect(st.on, 'digest mismatch renders the switch off').toBe(false);
-    expect(st.changedClass, 'card carries the changed state class').toBe(true);
-    expect(st.changedHint, 'card shows the 内容已变更 re-approval hint')
-      .toBe('内容已变更，重新启用将按新内容审批');
-    expect(await catalogContains(ALPHA), 'changed plugin must NOT be in the catalog').toBe(false);
-
-    // Re-enable = approve the NEW content → trusted again.
-    await page.click(`.plugins-card[data-plugin="${ALPHA}"] [data-plugin-switch]`);
-    await page.waitForFunction(
-      (plugin) => document.querySelector(`.plugins-card[data-plugin="${plugin}"] [data-plugin-switch]`)?.classList.contains('on'),
-      ALPHA, { timeout: 10000 });
-    await waitSwitchSettled(page, ALPHA);
-    expect(await catalogContains(ALPHA), 're-approved (new digest) plugin back in the catalog').toBe(true);
-
-    await revokeQuietly(ALPHA);
+    expect(st.pill, '内容已变更 ⇒ 药丸 = 内容已变更').toBe('内容已变更');
+    expect(st.pillClass, 'pill 带 changed class').toContain('changed');
+    expect(st.changedHint, '可见性提示（非拦截）').toBeTruthy();
+    expect(st.dispatchDisabled, '内容变更不锁派发开关（非拦截）').toBe(false);
+    expect(await catalogContains(ALPHA), '内容已变更的包**仍进目录**（不拦装载）').toBe(true);
+    expect(st.classes, '卡片带 changed 态但**不**带 blocked 态').not.toContain('blocked');
   });
 
-  test('on → off: revoke removes the plugin from the catalog; card reflects untrusted state', async ({ page }) => {
-    // Precondition: on.
-    const pre = await rest('POST', `/api/plugins/${BETA}/approve`);
-    expect(pre.status, 'fixture beta approves cleanly').toBe(200);
-
+  test('C 封禁 ⇒ 出目录 + 派发锁死；解封 ⇒ 回目录', async ({ page }) => {
+    test.skip(!hasC6, 'engine track C6 (`blocked`) not live on this instance — block cannot take effect here; rerun after the plugin-nogate engine track merges');
+    await unblockQuietly(BETA);
+    await rest('POST', `/api/plugins/${BETA}/approve`);
     await loadPluginsPage(page);
-    const betaPre = await cardState(page, BETA);
-    expect(betaPre.on, 'precondition: beta switch on').toBe(true);
-    expect(await catalogContains(BETA), 'precondition: beta in the catalog').toBe(true);
+    const pre = await cardState(page, BETA);
+    expect(pre.dispatchDisabled, 'precondition: 未封禁 ⇒ 派发可用').toBe(false);
+    expect(await catalogContains(BETA), 'precondition: beta 在目录里').toBe(true);
 
-    // Click → optimistic flip → POST revoke → in-place convergence → off.
-    await page.click(`.plugins-card[data-plugin="${BETA}"] [data-plugin-switch]`);
-    await page.waitForFunction(
-      (plugin) => !document.querySelector(`.plugins-card[data-plugin="${plugin}"] [data-plugin-switch]`)?.classList.contains('on'),
+    // 次级动作：更多 → 封禁。
+    await page.click(`.plugins-card[data-plugin="${BETA}"] [data-plugin-more]`);
+    await page.click(`.plugins-card[data-plugin="${BETA}"] [data-plugin-block]`);
+    await page.waitForFunction((n) =>
+      document.querySelector(`.plugins-card[data-plugin="${n}"] .plugins-state-pill`)?.textContent.trim() === '已封禁',
       BETA, { timeout: 10000 });
-    await waitSwitchSettled(page, BETA);
-
     const st = await cardState(page, BETA);
-    expect(st.ariaChecked, 'aria-checked=false after revoke').toBe('false');
-    expect(st.pill, 'state pill back to 未启用').toBe('未启用');
-    expect(await catalogContains(BETA), 'revoked plugin must leave the catalog').toBe(false);
+    expect(st.pillClass, 'pill 带 blocked class').toContain('blocked');
+    expect(st.blockLabel, '封禁入口翻为解封').toBe('解封该插件');
+    expect(st.blockedHint, '一行可行动提示').toBeTruthy();
+    expect(st.dispatchDisabled, '封禁 ⇒ 派发开关锁死').toBe(true);
+    expect(await catalogContains(BETA), '封禁 ⇒ 出目录').toBe(false);
+
+    // 解封回位。
+    await page.click(`.plugins-card[data-plugin="${BETA}"] [data-plugin-block]`);
+    await page.waitForFunction((n) =>
+      document.querySelector(`.plugins-card[data-plugin="${n}"] .plugins-state-pill`)?.textContent.trim() !== '已封禁',
+      BETA, { timeout: 10000 });
+    const after = await cardState(page, BETA);
+    expect(after.pill, '解封后回已启用').toBe('已启用');
+    expect(after.dispatchDisabled, '派发开关解锁').toBe(false);
+    expect(await catalogContains(BETA), '解封 ⇒ 回目录').toBe(true);
   });
 
-  test('dual-theme screenshots of the redesigned plugins page', async ({ page }) => {
-    await revokeQuietly(ALPHA);
-    // Give the page something to show: alpha on (with expandable skills), beta off.
-    await rest('POST', `/api/plugins/${ALPHA}/approve`);
-
+  test('D dual-theme screenshots of the redesigned plugins page', async ({ page }) => {
+    await unblockQuietly(ALPHA);
     const shots = [];
     for (const scheme of ['dark', 'light']) {
       await loadPluginsPage(page, scheme);
-      // Expand the skill previews so the shot shows the full annotation story.
-      await page.click(`.plugins-card[data-plugin="${ALPHA}"] .plugins-comp-toggle`).catch(() => {});
+      // 展开「更多」菜单，让形态图含次级动作入口。
+      await page.click(`.plugins-card[data-plugin="${ALPHA}"] [data-plugin-more]`).catch(() => {});
       await page.waitForTimeout(400);
       const path = join(SHOTS, `plugins-redesign-${scheme}.png`);
       const content = page.locator('#plugins-content');
