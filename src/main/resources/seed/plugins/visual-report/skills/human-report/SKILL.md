@@ -5,7 +5,7 @@ description: 人类可读汇报规范。写给人看的汇报/交付/验收/调�
 
 # Human Report — 人类可读汇报规范
 
-给**人**看的文档与给机器看的取证件是两类东西，本 skill 管前者（后者见 `CONVENTIONS.md` §6 的落位表）。
+给**人**看的文档与给机器看的取证件是两类东西，本 skill 管前者（后者见 `CONVENTIONS.md` §6 的落位表）。图表本身的生成与审美见**同插件**的 `visual-report` skill（本 skill 只管人读化的体例、预算与交付通道）。
 规范取值 = 作者 2026-09-13 裁定 **R1–R10 全裁**；逐条真源 = `~/.nebflow/docs/Nebflow/visual-report-human-readable-spec.md` §B/§C/§D/§E/§F/§H（本文件是它的执行面，冲突时以 spec 原文为准）。
 
 ## 一、读者轴：路径优先 + 标记行（R2 = 不扩白名单）
