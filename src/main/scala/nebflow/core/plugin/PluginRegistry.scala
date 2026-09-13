@@ -877,6 +877,15 @@ object PluginRegistry:
       else
         val src = os.Path(source, os.pwd)
         if !os.isDir(src) then return Left(s"source is not a directory: $source")
+        // ── 点路径 / 祖先路径守卫（2026-09-13 批，#344 点路径）────────────────
+        // 规范化后源 == cwd 自身（`.`、`./`、cwd 的绝对形式）或为 cwd 的祖先 ⇒ os.copy
+        // 会把**整个工作目录**递归拷进临时目录（磁盘/耗时放大；非破坏性且 finally 清理，
+        // 但退化）。字符串空判（CLI 侧 isEmpty）盖不住点路径 ⇒ 判据 = canonical 路径比对。
+        if isCwdOrAncestor(src) then
+          return Left(
+            s"refusing to install from '$source': it resolves to the current working directory (${os.pwd}) or one of its " +
+              s"parents — installing it would recursively copy the whole workspace into a temp dir. Pass the plugin package " +
+              s"itself: a subdirectory (e.g. 'nebflow plugin add ./my-plugin') or an absolute path (e.g. '/path/to/my-plugin').")
         os.copy(src, staged, createFolders = true, mergeFolders = true, replaceExisting = true)
 
       // manifest name 为准（§5.5 校验复用装载规则）
@@ -903,6 +912,30 @@ object PluginRegistry:
     finally
       try os.remove.all(tmp)
       catch case _: Exception => ()
+
+  /** canonical 化后 `src` == cwd 自身或为 cwd 的**祖先** ⇒ true（该源一旦拷贝就是整个 cwd 树）。
+    *
+    * 规范化口径（2026-09-13 批，#344）：主判据 = `toRealPath` —— **两侧都先 canonical 化**
+    * （相对基准 = `os.pwd`，因为 `os.Path(source, os.pwd)` 以 cwd 为基准解析），因此
+    * 符号链接（macOS `/tmp` → `/private/tmp`）与 `.`/`..`/重复分隔符都被消除后再比对；
+    * `toRealPath` 失败（权限/竞态等 IO 异常）回落 `normalize`（纯词法，仍消除
+    * `.`/`./`/`..`，不解符号链接）⇒ 退化形态（点路径）仍被拦。两侧都拿不到 canonical
+    * 形态（极端 IO 异常）⇒ **不拦**（保持既有行为：非破坏性拷贝 + `finally` 清理）。
+    * 字符串空判（`source.isEmpty`，CLI 侧既有守卫）与 canonical 比对是两层：点路径非空串。
+    * `os.Path("", os.pwd)`（空串形态，CLI 侧不可达）在规范化后同样命中本判据——那是同一
+    * 判据的自然覆盖面，不是另立的第二道守卫。 */
+  private[plugin] def isCwdOrAncestor(src: os.Path): Boolean =
+    (for
+      cwd <- canonicalPath(os.pwd)
+      s <- canonicalPath(src)
+    yield cwd == s || cwd.startsWith(s)).getOrElse(false)
+
+  private def canonicalPath(p: os.Path): Option[java.nio.file.Path] =
+    try Some(p.toNIO.toRealPath())
+    catch
+      case _: Exception =>
+        try Some(p.toNIO.normalize())
+        catch case _: Exception => None
 
   private def writeTrustEntry(name: String, entry: Json): IO[Either[String, Unit]] =
     IO.blocking {
