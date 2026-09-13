@@ -48,8 +48,11 @@ import scala.collection.mutable
  *      （+ 落地前快照目录）。超时后 ④ 的对账因此有可审计、可复算的基准，且**不依赖
  *      agent 自快照**。台账**不阻止重投**，它只让「谁该闭合」这件事事后可判。
  *
- * 三者以 `ref`（= 队列 note id `q-…`）可对账：`MemoryHistory.discrepancies`
- * 给出「队列有 note 无 history 行 / 有 outcome 无 consume 行」的差集。
+ * 三者以 `ref`（= 队列 note id `q-…`）对账，且**逐 occurrence 配对**：同一 ref 可被
+ * 消费多次（重试 / 对账闭合）⇒ 同一 ref 可有多条 outcome 行与多条 consume 行，
+ * 「集合差」口径对这种重复缺口恒报 0（同 ref 至少各有一条即视为一致）。
+ * `MemoryHistory.reconciliation` 给出 occurrence 级 `Gaps`（三差集 + 计数），
+ * `discrepancies` 返回其逐条描述（旧签名与三分类不变）。
  */
 object MemoryHistory:
 
@@ -303,16 +306,91 @@ object MemoryHistory:
   /** 按 kind 过滤。 */
   def ofKind(kind: String): Vector[Event] = readAll().events.filter(_.kind == kind)
 
+  // ------------------------------------------------------------------
+  // 对账（occurrence 级）
+  // ------------------------------------------------------------------
+  //
+  // 配对语义（1:1，由写侧保证）：`MemoryQueue.enqueue` 落 1 条 `history:queue` 行/note；
+  // `MemoryQueue.recordOutcome` 在**同一次**调用里落 1 条 queue `outcome` 行 + 1 条
+  // `history:consume` 行（`MemoryQueue.scala:458-476`）⇒ 同一 ref 的第 i 次 outcome 与
+  // 第 i 条 consume 行互为一对。**任何绕过 `recordOutcome` 直写 queue.jsonl 的通道
+  // （如运维只读对账脚本）都会只增 outcome 不增 consume** —— 这正是集合口径看不见、
+  // occurrence 口径必须报出的缺口形态。
+
+  /** occurrence 级对账结果：三差集（人读描述）+ 计数（阈值/接线面）。
+    * `missing*` 的每条 = **一个未配对的 occurrence**（同 ref 缺失 N 条就有 N 条）。 */
+  final case class Gaps(
+    missingQueue: Vector[String],
+    missingConsume: Vector[String],
+    orphanConsume: Vector[String]
+  ):
+    def total: Int       = missingQueue.size + missingConsume.size + orphanConsume.size
+    def isEmpty: Boolean = total == 0
+
+    /** 差集描述（旧 `discrepancies` 的返回面：顺序与分类与旧口径一致）。 */
+    def messages: List[String] = (missingQueue ++ missingConsume ++ orphanConsume).toList
+
+  object Gaps:
+    val empty: Gaps = Gaps(Vector.empty, Vector.empty, Vector.empty)
+
+  /** ref → occurrence 数（保**首次出现序**：结果确定性，不依赖哈希迭代序）。 */
+  private def occurrenceCount(refs: Iterable[String]): Vector[(String, Int)] =
+    val m = mutable.LinkedHashMap.empty[String, Int]
+    refs.foreach(r => m.update(r, m.getOrElse(r, 0) + 1))
+    m.toVector
+
+  /** occurrence 级对账（纯函数；`events` 由调用方给，spec 可对任意账本直测）。 */
+  def reconciliationOf(noteRefs: List[String], outcomeRefs: List[String], events: Vector[Event]): Gaps =
+    val queuedOcc   = occurrenceCount(events.filter(_.kind == KindQueue).flatMap(_.ref))
+    val consumedOcc = occurrenceCount(events.filter(_.kind == KindConsume).flatMap(_.ref))
+    val noteOcc     = occurrenceCount(noteRefs)
+    val outcomeOcc  = occurrenceCount(outcomeRefs)
+    val queuedMap   = queuedOcc.toMap
+    val consumedMap = consumedOcc.toMap
+    val noteSet     = noteOcc.map(_._1).toSet
+    val outcomeMap  = outcomeOcc.toMap
+
+    // 队列有 note（第 i 次）无 history:queue（第 i 条）
+    val missingQueue = noteOcc.flatMap { (r, n) =>
+      val m = queuedMap.getOrElse(r, 0)
+      if n <= m then Nil
+      else (m + 1 to n).toList.map(i =>
+        s"note $r occurrence $i of $n on the queue side has no history:queue line (history:queue has $m)")
+    }
+
+    // 队列有 outcome（第 i 次）无 history:consume（第 i 条）—— 重复消费缺口在此显形
+    val missingConsume = outcomeOcc.flatMap { (r, n) =>
+      val m = consumedMap.getOrElse(r, 0)
+      if n <= m then Nil
+      else (m + 1 to n).toList.map(i =>
+        s"outcome $r occurrence $i of $n on the queue side has no history:consume line (history:consume has $m)")
+    }
+
+    // history 有 consume（第 i 条）无配对 outcome（第 i 次）；ref 侧无 note 时一并标注
+    val orphanConsume = consumedOcc.flatMap { (r, n) =>
+      val m      = outcomeMap.getOrElse(r, 0)
+      val noNote = if noteSet.contains(r) then "" else " (no note on the queue side)"
+      if n > m then
+        (m + 1 to n).toList.map(i =>
+          s"history:consume $r occurrence $i of $n in history has no paired outcome occurrence (outcomes on the queue side: $m)$noNote")
+      else if !noteSet.contains(r) then List(s"history:consume $r has no note")
+      else Nil
+    }
+
+    Gaps(missingQueue, missingConsume, orphanConsume)
+
+  /** occurrence 级对账（读盘面）。 */
+  def reconciliation(noteRefs: List[String], outcomeRefs: List[String]): Gaps =
+    reconciliationOf(noteRefs, outcomeRefs, readAll().events)
+
   /** 对账（IMPL-1 验收口径：history ↔ note/outcome 三者可对账）：返回差集描述。
-    * 空 = 三者一致。队列侧 refs 由调用方传入（避免 core 内两账本互相 import 成环）。 */
+    * 空 = 三者一致。队列侧 refs 由调用方传入（避免 core 内两账本互相 import 成环）。
+    *
+    * **occurrence 级**：`noteRefs` / `outcomeRefs` 的**列表多重度即 occurrence 数**
+    * （同 ref 出现 N 次 = N 个 occurrence），逐条与账本里的 `history:queue` /
+    * `history:consume` 行配对；缺第 i 条即报一条。集合差口径对该形态恒 0。 */
   def discrepancies(noteRefs: List[String], outcomeRefs: List[String]): List[String] =
-    val events = readAll().events
-    val queued = events.filter(_.kind == KindQueue).flatMap(_.ref).toSet
-    val consumed = events.filter(_.kind == KindConsume).flatMap(_.ref).toSet
-    val missingQueue = noteRefs.filterNot(queued.contains).map(r => s"note $r has no history:queue line")
-    val missingConsume = outcomeRefs.filterNot(consumed.contains).map(r => s"outcome $r has no history:consume line")
-    val orphanConsume = consumed.filterNot(noteRefs.contains).map(r => s"history:consume $r has no note").toList
-    missingQueue ++ missingConsume ++ orphanConsume
+    reconciliation(noteRefs, outcomeRefs).messages
 
   /** 计数摘要（运维/诊断；不消费任何状态）。 */
   final case class Stats(queued: Int, consumed: Int, changed: Int, unreadable: Int)

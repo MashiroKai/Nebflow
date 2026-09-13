@@ -84,7 +84,13 @@ object MemoryOccurrenceProbe:
     val (orphN, orphD)   = deficits(hcOcc, outcOcc)
     val orphanTotal      = missQN + missCN + orphN
 
-    val gaps = MemoryHistory.discrepancies(noteRefs, outcRefs)
+    val gaps = MemoryHistory.reconciliation(noteRefs, outcRefs)
+
+    // 成因面：运维对账台账行（`kind=reconcile`，由只读对账脚本直写，非 MemoryHistory 产出
+    // ——故不设 KindReconcile 常量）。其 `refs` 集合与 occurrence 缺口集合恒等 ⇒ 缺口不是
+    // 「丢行」而是「绕过 recordOutcome 直写 queue.jsonl 的通道只增 outcome 不增 consume」。
+    val recRefs = hist.events.filter(_.kind == "reconcile").flatMap(_.refs).toSet
+    val gapRefs = missCD.map(_._1).toSet
 
     def line(k: String, v: Any): Unit = println(f"$k%-28s = $v")
 
@@ -100,18 +106,28 @@ object MemoryOccurrenceProbe:
     println("--- history ledger ---")
     line("history:queue", s"${hQueue.size} occurrences / ${hqOcc.size} distinct refs")
     line("history:consume", s"${hConsume.size} occurrences / ${hcOcc.size} distinct refs")
-    println("--- criterion under test (MemoryHistory.discrepancies) ---")
-    line("criterion gaps", gaps.size)
+    println("--- criterion under test (MemoryHistory.reconciliation) ---")
+    line("criterion missingQueue", gaps.missingQueue.size)
+    line("criterion missingConsume", gaps.missingConsume.size)
+    line("criterion orphanConsume", gaps.orphanConsume.size)
+    line("criterion gaps", gaps.total)
+    gaps.messages.take(2).foreach(m => line("criterion message", m))
     println("--- oracle (independent occurrence recount, no criterion reuse) ---")
     line("missingQueue", s"$missQN   [${listing(missQD)}]")
     line("missingConsume", s"$missCN   [${listing(missCD)}]")
     line("orphanConsume", s"$orphN   [${listing(orphD)}]")
     line("oracle gaps", orphanTotal)
+    println("--- cause (ops-level reconcile ledger, kind=reconcile) ---")
+    line("reconcile refs", recRefs.size)
+    if recRefs.nonEmpty then
+      line("gap-refs == reconcile-refs", s"${gapRefs == recRefs} (${gapRefs.size}/${recRefs.size})")
     println("--- verdict ---")
     line("threshold", o.threshold)
-    if gaps.size == orphanTotal then line("cross-check", s"MATCH (criterion=${gaps.size} == oracle=$orphanTotal)")
-    else line("cross-check", s"ORACLE-MISMATCH (criterion=${gaps.size} vs oracle=$orphanTotal)")
-    val exit = if gaps.size > o.threshold then 1 else 0
+    if gaps.total == orphanTotal then line("cross-check", s"MATCH (criterion=${gaps.total} == oracle=$orphanTotal)")
+    else line("cross-check", s"ORACLE-MISMATCH (criterion=${gaps.total} vs oracle=$orphanTotal)")
+    val exit = if gaps.total > o.threshold then 1 else 0
     println(s"EXIT $exit")
+    // 真退出码（接线面）：不能只打印 —— 门禁/CI 读的是进程退出码
+    if exit != 0 then sys.exit(exit)
 
 end MemoryOccurrenceProbe
