@@ -157,7 +157,12 @@ object NodeRunner:
     json =>
       json.asObject match
         case Some(obj) =>
-          val withRoot = obj.add("rootSessionId", rootSessionId.asJson)
+          // freshinstall-rootsessionid 批 M4（展示面非空才注入）：判据 = `rootSessionId`
+          // **只有在非空时才可作为键出现**（空 = 该面显式缺失）。空串无条件下发会让
+          // 前端 `||` 链把非法值洗白成看似正常的分桶键；前端对「键缺失」的兜底分支
+          // 早已存在（main.js Defensive fallback），非新增兼容面。
+          val withRoot =
+            if rootSessionId.nonEmpty then obj.add("rootSessionId", rootSessionId.asJson) else obj
           // 已有 sessionId（如 usageUpdate 的自身会话 id）不覆盖——避免把
           // 子会话用量写入根会话的 sessionModelInfo；仅缺省时注入路由键。
           val withSession =

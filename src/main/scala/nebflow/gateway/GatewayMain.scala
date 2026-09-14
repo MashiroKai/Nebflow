@@ -401,9 +401,12 @@ object GatewayMain extends IOApp:
                 // has exactly one session and that it is the active session shown in
                 // the Main window, before any WS client connects. Adopts legacy
                 // agentless sessions (preserving history) and activates as needed.
-                sessionStore.ensureActiveAgentSession("Nebula").void
+                // freshinstall-rootsessionid 批 M1：返回值**不再丢弃**——它就是
+                // 「开机补建」的产物，是启动挂载根的唯一真源（此前 startupMount
+                // 另起一次 listSessionsByAgent 现查 + `getOrElse("")`）。
+                sessionStore.ensureActiveAgentSession("Nebula")
               }
-              .flatMap { _ =>
+              .flatMap { bootRoot =>
                 // Flow-node supervision P3: llm.streamTimeouts watchdog overrides
                 // (boot-time; config changes take effect on restart).
                 configRef.get.flatMap { bootCfg =>
@@ -582,29 +585,48 @@ object GatewayMain extends IOApp:
                                 // 挂载期僵尸收殓（cancelled）——崩溃残留 running 节点留给
                                 // 紧随其后的 projectCrashSweep 认领（rehydrate/failed）；
                                 // 恢复关闭时保持既有收殓行为（回滚语义=回到现状）。
+                                // freshinstall-rootsessionid 批 M1-b（作者 09-14 裁定 (b)：
+                                // **跳过挂载、继续启动**）：挂载根 = 上一步「开机补建」的
+                                // 产物 `bootRoot`（唯一真源），不再现查索引 + `getOrElse("")`。
+                                // 空 ⇒ 跳过本次 mountAll + ERROR + 事件（命名根因 = **开机
+                                // 补建未产出会话**），🔴 绝不把空串当 rootSessionId 挂载。
                                 val startupMount: IO[Unit] =
-                                  for
-                                    rootSid <- sessionStore
-                                      .listSessionsByAgent("Nebula")
-                                      .map(_.headOption.map(_.id).getOrElse(""))
-                                    projects <- ProjectStore.list()
-                                    mounted <- ProjectRuntimeRegistry.mountAll(
-                                      projects,
-                                      rootSid,
-                                      actorSystem,
-                                      sharedResources,
-                                      // #28 可观测接线：启动挂载传入真实广播 wsSend——
-                                      // engine 的节点/分发器事件经 wsHub 到达前端 subagent
-                                      // 面板（此前 None → no-op，事件静默丢失）。
-                                      Some((json: io.circe.Json) => wsHub.broadcast(json)),
-                                      skipStaleReap = nebflow.shared.Defaults.CrashRecoveryEnabled
-                                    )
-                                    _ <- if mounted > 0 then
-                                      logger.info(
-                                        s"Startup mount: $mounted project(s) mounted (rootSessionId=$rootSid)"
+                                  if bootRoot.id.isEmpty then
+                                    logger.error(
+                                      "Startup mount SKIPPED: 开机补建未产出会话 " +
+                                        "(boot backfill ensureActiveAgentSession(\"Nebula\") returned an EMPTY " +
+                                        "session id) — no rootSessionId is available to attribute startup-mounted " +
+                                        "projects; refusing to mount with an empty rootSessionId (projects stay " +
+                                        "unmounted until a restart whose boot backfill yields a real session)"
+                                    ) *> wsHub.broadcast(
+                                      io.circe.Json.obj(
+                                        "type" -> "startupMountSkipped".asJson,
+                                        "reason" -> "boot-backfill-produced-no-session".asJson,
+                                        "detail" -> ("startup mount skipped: 开机补建未产出会话" +
+                                          "（ensureActiveAgentSession(\"Nebula\") 的返回 id 为空）；" +
+                                          "已跳过挂载——禁以空串 rootSessionId 挂载").asJson
                                       )
-                                    else IO.unit
-                                  yield ()
+                                    )
+                                  else
+                                    for
+                                      projects <- ProjectStore.list()
+                                      mounted <- ProjectRuntimeRegistry.mountAll(
+                                        projects,
+                                        bootRoot.id,
+                                        actorSystem,
+                                        sharedResources,
+                                        // #28 可观测接线：启动挂载传入真实广播 wsSend——
+                                        // engine 的节点/分发器事件经 wsHub 到达前端 subagent
+                                        // 面板（此前 None → no-op，事件静默丢失）。
+                                        Some((json: io.circe.Json) => wsHub.broadcast(json)),
+                                        skipStaleReap = nebflow.shared.Defaults.CrashRecoveryEnabled
+                                      )
+                                      _ <- if mounted > 0 then
+                                        logger.info(
+                                          s"Startup mount: $mounted project(s) mounted (rootSessionId=${bootRoot.id})"
+                                        )
+                                      else IO.unit
+                                    yield ()
                                 // boot-time 崩溃断点恢复（crash-recovery 批 2026-09-07）：
                                 // 挂载后、TtlTick 首拍前同步跑快段（分类+认领，秒级——被认领
                                 // 节点翻 Pending 即刻脱离 watchdog 判死口径，竞速由挂载顺序

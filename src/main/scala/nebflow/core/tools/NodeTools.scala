@@ -2924,15 +2924,35 @@ object ProjectCreateTool extends Tool:
             // P0 接线修复（Explorer c759e8c）：mount 传**上链 rootSessionId**（真正顶层），
             // 非挂载者自身会话——否则 out="Nebula" 投递目标是挂载者（如 qa-backend），
             // 节点完成消息注入执行者形成自维持循环。fallback ctx.sessionId（老调用方）。
-            ProjectRuntimeRegistry
-              .mount(pd, system, res, ctx.wsSend, ctx.rootSessionId.orElse(ctx.sessionId).getOrElse("default"))
-              .as {
-                val verb = if created then "created" else "already exists"
-                Right(
-                  s"Project '${pd.name}' $verb and mounted. Flow Map ready at ${pd.agentFile}. " +
-                    s"Dispatch work with Mail(address='project:${pd.name}', message=...)."
-                )
-              }
+            // freshinstall-rootsessionid 批 M3（作者 09-14 裁定 ②）：**无会话上下文的
+            // 挂载视为非法**——逐字对齐既有正例（SendConfirm.scala 的「先过滤非空、
+            // 再显式拒绝」）：`orElse` 不过滤非空（`Some("")` 取胜 ⇒ 空桶），且末档
+            // 伪造占位 `"default"` 是**凭空造的桶键**（作者明禁伪造兜底）⇒ 两处都走。
+            // 调用面枚举（详见本批报告「M3 调用面枚举」）：ProjectCreate 的 ToolContext
+            // 生产构造面共 4 处 —— AgentCore 会话面（有身份）/ WS AgentControl（不达本
+            // 工具）/ neblink relay 与 neblink REST remote-exec（**两者都不携带任何会话
+            // 身份**：请求体仅 action/params/projectRoot，无 sessionId 字段）⇒ 后者
+            // 无法「显式传自己的身份」（凭空造身份=伪造）⇒ 走显式拒绝。
+            val rootKey =
+              ctx.rootSessionId.filter(_.nonEmpty).orElse(ctx.sessionId.filter(_.nonEmpty))
+            rootKey match
+              case None =>
+                IO.pure(Left(ToolError(
+                  "ProjectCreate refused to mount: this call carries no session context " +
+                    "(both rootSessionId and sessionId are empty or absent), so the project's delivery root " +
+                    "cannot be attributed — and inventing a placeholder root is not allowed. " +
+                    "Re-invoke ProjectCreate from an agent session (Nebula / project dispatcher / project node)."
+                )))
+              case Some(root) =>
+                ProjectRuntimeRegistry
+                  .mount(pd, system, res, ctx.wsSend, root)
+                  .as {
+                    val verb = if created then "created" else "already exists"
+                    Right(
+                      s"Project '${pd.name}' $verb and mounted. Flow Map ready at ${pd.agentFile}. " +
+                        s"Dispatch work with Mail(address='project:${pd.name}', message=...)."
+                    )
+                  }
           case _ =>
             IO.pure(Right(s"Project '${pd.name}' definition ready. Mount requires an agent session."))
 
