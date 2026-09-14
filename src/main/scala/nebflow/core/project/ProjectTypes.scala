@@ -72,7 +72,9 @@ object NodeLifecycle:
   *
   * 未标/标错的失败形态与观测面（设计 §2 R3 表）：非法申报由工具侧拒（
   * `NODE_REPORT_CATEGORY_ROLE`，可行动错误）；verifier 缺 fail 路由由创建期硬拒
-  * （`NODE_VERIFIER_NEEDS_ROUTE`）。`role` **create-only**（同 `merge`，改动只能新建节点）。
+  * （`NODE_VERIFIER_NEEDS_ROUTE`；nodegate 方案件 §1(i) 后判据覆盖**空 out 与镜像
+  * 补边两条通道**——空 out 仅 `verifierRoutePending=true` 令牌放行）。`role`
+  * **create-only**（同 `merge`，改动只能新建节点）。
   *
   * 值域第三值（controller/aggregator/relay）= 未定项，v1 不开（设计 §7 未定 #7）。
   * 旧 `flow-map.json` 无此键 → withDefaults 解码 `task`（零迁移）。 */

@@ -158,6 +158,7 @@ class Phase2dSkillCatalogSpec extends CatsEffectSuite:
     io.circe.Json.obj(
       ("project" -> io.circe.Json.fromString(project)) ::
         ("nodename" -> io.circe.Json.fromString(nodename)) ::
+        ("plugins" -> io.circe.Json.arr()) ::
         extra.toList*
     )
 

@@ -238,7 +238,7 @@ class NodeMergeSpec extends CatsEffectSuite:
     go(System.currentTimeMillis() + timeout.toMillis)
 
   private def nodeInput(project: String, nodename: String, extra: (String, CJson)*): CJson =
-    CJson.obj(("project" -> CJson.fromString(project)) :: ("nodename" -> CJson.fromString(nodename)) :: extra.toList*)
+    CJson.obj(("project" -> CJson.fromString(project)) :: ("nodename" -> CJson.fromString(nodename)) :: ("plugins" -> CJson.arr()) :: extra.toList*)
 
   private def registerRecorder(res: SharedResources, system: ActorSystem, sid: String): IO[Ref[IO, List[AgentCommand]]] =
     for

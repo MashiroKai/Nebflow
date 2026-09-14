@@ -588,6 +588,7 @@ class BootCrashRecoverySpec extends CatsEffectSuite:
           "nodename" -> io.circe.Json.fromString("fresh-a"),
           "description" -> io.circe.Json.fromString("sessionRef path spec node"),
           "task" -> io.circe.Json.fromString("fresh task"),
+          "plugins" -> io.circe.Json.arr(),
           "out" -> io.circe.Json.fromString("Nebula")).asObject.get, ctx).void
       }
       _ <- waitUntil(20.seconds)(byName(rt, "fresh-a").map(n => NodeLifecycle.Terminal.contains(n.status)))
