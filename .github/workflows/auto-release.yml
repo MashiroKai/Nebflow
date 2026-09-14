@@ -94,9 +94,31 @@ jobs:
         if: steps.check.outputs.skipped == 'false'
         run: sbt test
 
+      - name: Setup Node.js
+        if: steps.check.outputs.skipped == 'false'
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: npm
+
+      - name: Build web bundle (P1)
+        if: steps.check.outputs.skipped == 'false'
+        # Same chain as ci.yml's assembly job: esbuild bundle -> build/web-dist,
+        # mounted into the jar by `-D${LOWER_NAME}.webdist=1` below. Without
+        # this step the shipped jar falls back to the SOURCE tree
+        # (WebSocketRoutes: web-dist/index.html missing -> serve web/), i.e. the
+        # release artifact was never the built tree. Friends ship UNSEALED
+        # (author ruling 2026-09-14, D1②); build-web.mjs keeps stripping as an
+        # opt-in switch — add `--strip-friends` to re-seal.
+        run: |
+          npm ci
+          node scripts/build-web.mjs
+
       - name: Build assembly
         if: steps.check.outputs.skipped == 'false'
-        run: sbt assembly
+        # -D<lowerName>.webdist=1 mounts build/web-dist into the jar (opt-in so
+        # a dev machine's plain `sbt run` never serves a stale dist tree).
+        run: sbt -D${LOWER_NAME}.webdist=1 assembly
 
       - name: Upload jar artifact
         if: steps.check.outputs.skipped == 'false'

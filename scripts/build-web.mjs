@@ -65,14 +65,25 @@ if (cssOrphans.length > 0) {
 }
 
 // ── 3. JS bundle (splitting preserves lazy boundaries) ─────────
-// RELEASE STRIP MARKER (author ruling 2026-09-10, friends feature): every
-// bundle produced HERE is a CI/CD release artifact — the ONLY build step the
-// frontend has. Local dev (sbt run) serves the source tree directly and never
-// passes through this file, so it keeps dev-tree semantics. featureFlags.js
-// reads the marker inline; esbuild folds `if (true === true)` and DCE strips
-// the dev branch (friendsEnabled() → physical `return false` in the bundle).
-// Member-expression define (same shape as process.env.NODE_ENV).
-const RELEASE_DEFINES = { 'window.__NEBFLOW_RELEASE__': 'true' };
+// FRIENDS RELEASE STRIP MARKER — a REUSABLE OPT-IN SWITCH (author ruling
+// 2026-09-14, friend-gate unseal D1②): the mechanism is kept, the DEFAULT is
+// flipped. Every bundle produced HERE is a CI/CD release artifact — the ONLY
+// build step the frontend has; local dev (sbt run) serves the source tree
+// directly and never passes through this file, so it keeps dev-tree semantics.
+//   · default (no flag)   = UNSEALED — the marker is NOT injected, so the
+//     inline guard in featureFlags.js falls through to the dev config chain
+//     and friends stay VISIBLE in the shipped bundle.
+//   · `--strip-friends`   = RE-SEAL — the marker is injected via esbuild
+//     `define`; esbuild folds `if (true === true)` and DCE strips the dev
+//     branch (friendsEnabled() → physical `return false` in the bundle).
+// Both forms are asserted by tests/release-strip-friends.static.mjs
+// (`--expect present` | `--expect stripped`).
+// Member-expression define (same shape as process.env.NODE_ENV); the empty
+// define map is the no-injection form.
+const STRIP_FRIENDS = process.argv.includes('--strip-friends');
+const RELEASE_DEFINES = STRIP_FRIENDS
+  ? { 'window.__NEBFLOW_RELEASE__': 'true' }
+  : {};
 const result = await esbuild.build({
   entryPoints: [join(SRC, 'js', 'main.js')],
   bundle: true,
@@ -168,3 +179,4 @@ console.log(`  chunks   : ${chunks.length} lazy chunks (dynamic import boundarie
 console.log(`  css      : assets/${cssName} (${appCss.length} files concatenated in link order, sapphire last)`);
 console.log(`  js files : ${jsFiles.length} sources, all in bundle graph (orphans: 0, exemptions: ${ORPHAN_EXEMPTIONS.size})`);
 console.log(`  vendor   : copied through (${vendorCss.length} vendor css links kept separate)`);
+console.log(`  form     : ${STRIP_FRIENDS ? 'SEALED (--strip-friends: release marker injected, dev branch DCE-stripped)' : 'UNSEALED (default: no release marker, friends visible)'}`);
