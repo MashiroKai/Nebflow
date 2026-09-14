@@ -921,6 +921,32 @@ function recallQueuedItem(sessionId, item) {
     // Place cursor at end
     const len = view.dom.input.value.length;
     view.dom.input.setSelectionRange(len, len);
+    // A-batch (msgqueue-recall-attach, 2026-09-14): the splice above removed the
+    // last live reference to item.attachments, so the attachment payload used to
+    // vanish right here with no trace. Feed it back through the SAME path send()
+    // and appendRefToActiveView() use — no new mechanism. Mixed set (the input
+    // box already holds pending attachments) = append, never drop either side.
+    const queuedAtts = Array.isArray(item.attachments) ? item.attachments : [];
+    if (queuedAtts.length > 0) {
+      if (!Array.isArray(view.pendingAttachments)) view.pendingAttachments = [];
+      const before = view.pendingAttachments.length;
+      view.pendingAttachments.push(...queuedAtts.map(a => ({ ...a })));
+      console.warn('[input] recallQueuedItem: restored ' + queuedAtts.length
+        + ' attachment(s) from queued item #' + item.id
+        + ' (pending ' + before + ' -> ' + view.pendingAttachments.length + ')');
+      if (view.dom.attPreview) {
+        renderAttachmentPreview({ attPreviewEl: view.dom.attPreview, attachments: view.pendingAttachments });
+      }
+      // Refresh blind spot: persistQueue() reduces images/large payloads to a
+      // {type, name} skeleton, so such an item cannot be restored for real.
+      // Warn (never stay silent) without adding a locale key.
+      const stripped = view.pendingAttachments.filter(a => a.type !== 'taskRef' && a.type !== 'ref'
+        && !a.data && !a.preview && !a.hash && !a.mimeType);
+      if (stripped.length > 0) {
+        console.warn('[input] recallQueuedItem: ' + stripped.length
+          + ' attachment(s) lost their payload to page-refresh persistence and must be re-added');
+      }
+    }
     saveInputDraft(sessionId);
   }
 }
