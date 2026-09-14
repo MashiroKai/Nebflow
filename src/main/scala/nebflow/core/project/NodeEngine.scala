@@ -90,9 +90,10 @@ class NodeEngine(
   /** mount-stalled **告警升级**间隔覆盖（engine-defects 批 #85，2026-09-15；接缝形态
     * 与 `destroyWindowMs` / `notifyQuietMs` 同款）：None = 现读
     * [[nebflow.shared.Defaults.StallReNotifyMs]]（生产默认 10min）；Some = spec 显式
-    * 注入毫秒级窗口做确定性断言（**避开全局 prop 的跨 suite 污染**——本工程测试 JVM
-    * 下 system property 写读不可靠，实测见
-    * `.nebflow/evidence/20260915_engine-defects/01-stall-escalation/15_m8_final.log`）。 */
+    * 注入毫秒级窗口做确定性断言（**避开全局 prop 的跨 suite 污染**——本工程测试 JVM 下
+    * `sys.props.update` 与 `System.setProperty` **写入后同进程读回均为空**（实测
+    * `Obtained: None` / `Obtained: null`）⇒ 用 prop 做 spec 注入口会**静默失效**，
+    * 断言只会看到默认值；故走构造器接缝）。 */
   stallReNotifyMs: Option[Long] = None
 ):
   private val logger = NebflowLogger.forName("nebflow.node.engine")
@@ -5337,9 +5338,8 @@ object NodeEngine:
     * 生产值 = [[nebflow.shared.Defaults.StallReNotifyMs]]（现读 prop）；spec 走构造器
     * 接缝 `stallReNotifyMs`（`destroyWindowMs` / `notifyQuietMs` 同款「避开全局 prop
     * 的跨 suite 污染」纪律——实测本工程测试 JVM 下 `sys.props.update` 与
-    * `System.setProperty` **同进程读回均为空**，见
-    * `.nebflow/evidence/20260915_engine-defects/01-stall-escalation/14_probe.log` 与
-    * `15_m8_final.log` ⇒ 用 prop 做 spec 注入口会**静默失效**，断言看到默认值）。 */
+    * `System.setProperty` **写入后同进程读回均为空**（`Obtained: None`）⇒ 用 prop 做
+    * spec 注入口会**静默失效**，断言只会看到默认值）。 */
   def StallReNotifyMs: Long = nebflow.shared.Defaults.StallReNotifyMs
 
   /** 死会话自动收敛的 spawn 窗口宽限（僵尸收敛批 2026-09-06）：节点 status 翻

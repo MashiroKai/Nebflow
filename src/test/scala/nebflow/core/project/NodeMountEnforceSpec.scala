@@ -469,7 +469,7 @@ class NodeMountEnforceSpec extends CatsEffectSuite:
     for
         res <- mkResources(system, tempRoot, llm.handle)
         // 窗口压到 300ms（spec 档，**构造器接缝**——本工程测试 JVM 下 system property
-        // 写读不可靠，读数见 .nebflow/evidence/20260915_engine-defects/01-stall-escalation/15_m8_final.log）
+        // 写入后同进程读回为空（`Obtained: None`）⇒ prop 注入口会静默失效）
         rt <- mountProject("me-m8", ws, system, res, stallReNotifyMs = Some(300L))
         _ = assertEquals(rt.engine.stallReNotifyWindowMs, 300L,
           "precondition: the escalation window must reach the engine through the constructor seam")
