@@ -65,11 +65,13 @@ class PresetCatalogInToolDocSpec extends FunSuite:
   // 2026-09-11 Delegate 恢复批：`preset` 参数随「目标恒为内置 kernel def」一并退役
   // ——内核的模型选型归 ~/.nebflow/agents/kernel/agent.json 的定义层，不再每次
   // 调用重选。本用例是该退役的反向钉死（旧正向断言在此即红）。
+  // 2026-09-14 工具面 `device` 摘除批（作者裁定 U1/U2）：`device` 亦随 schema 摘除
+  // ⇒ 期望键集由 {task, description, device} 收紧为 {task, description}。
   test("Delegate inputSchema has NO preset parameter any more (per-call model override retired)"):
     val schema = DelegateTool.inputSchema
     val props = schema("properties").flatMap(_.asObject).map(_.keys.toSet).getOrElse(Set.empty)
     assert(!props.contains("preset"), s"preset must be gone from Delegate schema, got: $props")
-    assertEquals(props, Set("task", "description", "device"))
+    assertEquals(props, Set("task", "description"))
 
   test("SubTask inputSchema embeds live catalog from the store"):
     val doc = presetParamDoc(SubTaskTool.inputSchema)

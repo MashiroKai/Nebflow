@@ -12,12 +12,14 @@ import nebflow.core.PathUtil
 /**
  * DelegateTool 前门（2026-09-11 Delegate 恢复批 · 极简内核形态）：
  *
- *  1. schema 面：恰三参数 `task`/`description`/`device`（旧 `agent`/`lifecycle`/
+ *  1. schema 面：恰两参数 `task`/`description`（旧 `agent`/`lifecycle`/
  *     `taskDescription`/`images`/`preset`/`prompt` 全部退役——旧断言在本文件里
- *     逐条反向钉死）。
+ *     逐条反向钉死；`device` 亦于 2026-09-14 作者裁定 U1/U2 随 schema 摘除）。
  *  2. 目标解析：内置 `kernel` def；缺失给自描述错误（不再有 standalone 目录）。
  *  3. R9 并发：每根会话 ≤ 4（U4=D1：等待答复占额度；错误含在飞清单 + 等待标注）。
- *  4. 设备预检：无 NebLink 时带 `device=` **fail-fast**（不静默本地执行）。
+ *  4. 设备面：**本工具已无 `device` 参数**（本地编排件；远端只发生在内核六件上）。
+ *     本文件反向钉死该摘除：stray `device` 键**不被消费**（无预检、不拦、不出现在
+ *     摘要），调用照常走到 spawn 前置检查。
  *  5. description 硬事实：绝对路径 / Bash cwd 不保证 / 4 并发 / 3600s 预算。
  *
  * 无 ActorSystem 的用例停在「requires ActorSystem and SharedResources」——spawn
@@ -77,12 +79,14 @@ class DelegateToolSpec extends CatsEffectSuite:
 
   // ---------- 1. schema 面 ----------
 
-  test("schema: exactly task/description/device — the legacy parameters are gone"):
-    assertEquals(props, Set("task", "description", "device"))
+  test("schema: exactly task/description — the legacy parameters AND device are gone"):
+    assertEquals(props, Set("task", "description"))
     assertEquals(required, List("task", "description"))
     Set("prompt", "agent", "lifecycle", "taskDescription", "images", "preset").foreach { legacy =>
       assert(!props.contains(legacy), s"legacy parameter must be deleted from the schema: $legacy")
     }
+    // 2026-09-14 作者裁定 U1/U2：`device` 是摘除目标（非 legacy 参数）——逐字钉死。
+    assert(!props.contains("device"), s"device must be gone from the Delegate schema, got: $props")
     assertEquals(DelegateTool.name, "Delegate")
 
   test("description carries the hard facts (absolute paths / cwd / 4 in flight / 3600s budget)"):
@@ -95,11 +99,13 @@ class DelegateToolSpec extends CatsEffectSuite:
     assert(!d.contains("standalone agent"), "standalone-target wording must be gone")
     assert(!d.contains("persistent"), "persistent mode must be gone")
 
-  test("summarize: description + optional device target"):
+  test("summarize: description only — a stray device key must NOT surface (device face removed)"):
     assertEquals(DelegateTool.summarize(JsonObject("description" -> "pull log".asJson)), "Delegate(pull log)")
+    // 摘除前本行断言 `"Delegate(pull log @ KAI)"`；摘除后 stray 键**不被消费**：
+    // 摘要与不带 device 时逐字相同（反向钉死，防 device 面回潮）。
     assertEquals(
       DelegateTool.summarize(JsonObject("description" -> "pull log".asJson, "device" -> "KAI".asJson)),
-      "Delegate(pull log @ KAI)"
+      DelegateTool.summarize(JsonObject("description" -> "pull log".asJson))
     )
 
   // ---------- 2. 目标解析 ----------
@@ -178,13 +184,12 @@ class DelegateToolSpec extends CatsEffectSuite:
     assert(DelegateTool.concurrencyError(two, now = 0L).isEmpty)
     assertEquals(DelegateTool.MaxConcurrentPerRoot, 4)
 
-  // ---------- 4. 设备预检（fail-fast，不静默本地执行） ----------
+  // ---------- 4. 设备面摘除后的行为（2026-09-14 作者裁定 U1/U2） ----------
+  // 摘除前本段 = 「设备预检 fail-fast 正控 + 负控」两条（预检函数已随 S1b 全删）。
+  // 同步到新形态（同条数、非弱化）：**stray `device` 键不再被本工具消费**——
+  // 既无预检也无拦截，调用与不带 device 时走同一条路（spawn 前置检查）。
 
-  test("device precheck: unknown device fails fast when NebLink is not initialized (never a silent local run)"):
-    // 隔离实例上 RemoteExecutor.current 只在 GatewayMain initialize 后非空；本
-    // 单元测试 JVM 里通常为 None。若同 JVM 的其它 spec 初始化了它，则跳过（用
-    // assume）而不是给出假绿。
-    assume(RemoteExecutor.current.isEmpty, "NebLink initialized in this JVM — covered by the isolated e2e instead")
+  test("device face removed: a stray device key is NOT consumed — the call proceeds to the spawn prerequisite"):
     for
       _ <- reset()
       _ = writeAgent(name = "kernel")
@@ -194,19 +199,21 @@ class DelegateToolSpec extends CatsEffectSuite:
       )
     yield res match
       case Left(err) =>
-        assert(err.message.contains("""device="KAI""""), err.message)
-        assert(err.message.contains("NebLink"), err.message)
-        assert(err.message.contains("run LOCALLY"), err.message)
-      case Right(v) => fail(s"expected fail-fast for unknown device, got: $v")
+        assert(err.message.contains("requires ActorSystem"), err.message)
+        // 旧 fail-fast 文案必须已删净（否则就是「schema 摘了、实现还在处理」的漂移）
+        assert(!err.message.contains("""device="KAI""""), err.message)
+        assert(!err.message.toLowerCase.contains("neblink"), err.message)
+        assert(!err.message.contains("run LOCALLY"), err.message)
+      case Right(v) => fail(s"expected spawn-prerequisite failure, got: $v")
 
-  test("device precheck 负控: no device parameter ⇒ no fail-fast (local runs are the default)"):
+  test("device face removed 负控: no device parameter ⇒ identical behaviour (local runs are the only mode)"):
     for
       _ <- reset()
       _ = writeAgent(name = "kernel")
       res <- DelegateTool.call(JsonObject("task" -> "do work".asJson, "description" -> "x".asJson), ctxWith())
     yield res match
       case Left(err) =>
-        // 走到 spawn 前置检查即证明设备预检没有拦（它只在 device 非空时生效）
+        // 走到 spawn 前置检查即证明没有设备面拦截（工具本体已不读 device）
         assert(err.message.contains("requires ActorSystem"), err.message)
       case Right(v) => fail(s"expected spawn-prerequisite failure, got: $v")
 

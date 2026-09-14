@@ -7,7 +7,6 @@ import nebflow.actor.*
 import nebflow.agent.*
 import nebflow.core.{NebflowLogger, PathUtil}
 import nebflow.core.node.NodeRunner
-import nebflow.neblink.PeerInfo
 
 /**
  * DelegateTool — Nebula 专属的一次性执行入口（极简内核形态，2026-09-11 恢复批）。
@@ -40,11 +39,12 @@ import nebflow.neblink.PeerInfo
  * 任务简报首行，并作为会话 `projectRoot` 传入——**绝不静默作用在网关安装目录或
  * Bash 的 `user.dir`**。调用方可在任务文本里点名绝对工作目录（以任务为准）。
  *
- * 设备（`device=`）：仅作**简报预绑定提示**（写进简报头部一行），不新增路由机制
- * ——真正的远端路由由内核自己在工具调用上带 `device=` 完成。但**无 NebLink 的
- * 实例上必须 fail-fast**（否则 `device=` 被静默忽略、命令在本机执行——这是既有
- * 静默降级坑，见 `AgentCore.executeToolInner` 的 `RemoteExecutor.current` 前置
- * 条件）。
+ * **设备面（2026-09-14 作者裁定 U1/U2：schema 层结构性摘除）**：本工具**没有**
+ * `device` 参数——它是**本地编排件**，永远在本机 spawn 内核子会话，不存在把整条
+ * `Delegate` 调用投到对端的路径（旧的 `device` 处理链已随 schema 一并删除）。
+ * 远端执行只发生在**内核自己的六件工具**上（`Read/Write/Edit/Glob/Grep/Bash` 带
+ * `device=`，集合单点来源 = `RemoteExecutor.remoteableTools`）；委派任务要作用在
+ * 对端时，目标设备写进**任务简报文本**，由内核逐条工具调用自行带 `device=`。
  */
 object DelegateTool extends Tool:
   private val logger = NebflowLogger(getClass)
@@ -77,7 +77,6 @@ object DelegateTool extends Tool:
 **Parameters:**
 - `task` (required): self-contained brief. Include the target device (if any), ABSOLUTE paths, the exact command/limits, and what "done" looks like. State explicit non-goals when the risk matters (e.g. "do not delete anything").
 - `description` (required): short UI label (session name, sub-agent panel row, ask-card attribution).
-- `device` (optional): target device name from the # Devices section. It only pre-binds the brief header — the kernel still passes device= on each tool call itself. If the device is unknown, or NebLink is not configured on this instance, the call FAILS FAST (it is never silently executed locally).
 
 **Path semantics (hard facts, measured):**
 - The file tools require ABSOLUTE paths — relative paths are rejected (no sandbox root in this session). `~` is not expanded.
@@ -104,10 +103,6 @@ object DelegateTool extends Tool:
         "description" -> io.circe.Json.obj(
           "type" -> "string".asJson,
           "description" -> "Short label for the task (shown in UI: session name, sub-agent panel, ask-card attribution).".asJson
-        ),
-        "device" -> io.circe.Json.obj(
-          "type" -> "string".asJson,
-          "description" -> "Optional target device name (from the # Devices section). Pre-binds the brief header only — the kernel routes each call itself via device=. Unknown device / no NebLink ⇒ fail-fast error (never a silent local run).".asJson
         )
       ),
       "required" -> io.circe.Json.arr("task".asJson, "description".asJson)
@@ -116,8 +111,7 @@ object DelegateTool extends Tool:
 
   def summarize(input: JsonObject): String =
     val desc = input("description").flatMap(_.asString).getOrElse("")
-    val device = input("device").flatMap(_.asString).map(_.trim).filter(_.nonEmpty)
-    device.map(d => s"Delegate($desc @ $d)").getOrElse(s"Delegate($desc)")
+    s"Delegate($desc)"
 
   def summarizeResult(input: JsonObject, result: String): String =
     if result.length > 200 then result.take(197) + "..." else result
@@ -185,59 +179,6 @@ object DelegateTool extends Tool:
         IO.pure(Left(ToolError("No agent library available — Delegate cannot resolve the kernel definition.")))
   end resolveKernelDef
 
-  /** 设备预检（fail-fast，§5.2 静默降级坑）：无 NebLink / 设备不存在时**拒绝**
-    * spawn——否则 `device=` 会被静默忽略、命令在本机执行（用户以为在远端）。
-    * 与 `RemoteExecutor.execute` 同款语义：先查 peer 名册，未命中触发一次
-    * discovery scan 再判（避免名册瞬时过期造成假阴性）。 */
-  private def devicePrecheck(device: Option[String]): IO[Either[ToolError, Unit]] =
-    device match
-      case None => IO.pure(Right(()))
-      case Some(target) =>
-        RemoteExecutor.current match
-          case None =>
-            IO.pure(
-              Left(
-                ToolError(
-                  s"""device="$target" was requested, but NebLink is NOT initialized on this instance — the kernel's device= parameter would be silently ignored and the command would run LOCALLY. Refusing to delegate. Fix: configure and sign in to NebLink, or omit the device parameter to run locally on purpose."""
-                )
-              )
-            )
-          case Some(re) =>
-            re.neblinkServiceOpt match
-              case None =>
-                IO.pure(
-                  Left(
-                    ToolError(
-                      s"""device="$target" was requested, but no NebLink service is wired on this instance — refusing to delegate (the command would run locally instead of on "$target")."""
-                    )
-                  )
-                )
-              case Some(svc) =>
-                def hit(peers: List[PeerInfo]): Boolean = peers.exists(peerMatches(_, target))
-                def unavailable(peers: List[PeerInfo]): ToolError =
-                  val names = peers.map(_.deviceName)
-                  val available =
-                    if names.isEmpty then "peers = [] (NebLink Server not configured / no device online)"
-                    else s"available devices: ${names.mkString(", ")}"
-                  ToolError(
-                    s"""Device "$target" not found — $available. Nothing was started. Check /api/neblink/status on both machines before retrying; if the target machine is offline, run the task locally by omitting the device parameter."""
-                  )
-                svc.peers.flatMap { peers =>
-                  if hit(peers) then IO.pure(Right(()))
-                  else
-                    svc.scanNow.flatMap { refreshed =>
-                      if hit(refreshed) then IO.pure(Right(())) else IO.pure(Left(unavailable(refreshed)))
-                    }
-                }
-  end devicePrecheck
-
-  /** 设备名匹配（与 `RemoteExecutor.resolvePeer` 同口径：等名 / deviceId 前缀 /
-    * 大小写不敏感包含）。 */
-  private def peerMatches(peer: PeerInfo, target: String): Boolean =
-    peer.deviceName.equalsIgnoreCase(target) ||
-      peer.deviceId.startsWith(target) ||
-      peer.deviceName.toLowerCase.contains(target.toLowerCase)
-
   /** 在飞快照（R9 判据的最小输入——把 registry 记录投影成可测的纯数据）。 */
   private[tools] final case class InFlight(sessionId: String, status: AgentStatus, startedAt: Long)
 
@@ -276,7 +217,6 @@ Wait for one to finish, or cancel one with AgentControl(cancel) before delegatin
   def call(input: JsonObject, ctx: ToolContext): IO[Either[ToolError, String]] =
     val task = input("task").flatMap(_.asString).getOrElse("")
     val description = input("description").flatMap(_.asString).map(_.trim).filter(_.nonEmpty).getOrElse("subtask")
-    val device = input("device").flatMap(_.asString).map(_.trim).filter(_.nonEmpty)
 
     if task.trim.isEmpty then
       IO.pure(
@@ -292,10 +232,7 @@ Wait for one to finish, or cancel one with AgentControl(cancel) before delegatin
       resolveKernelDef(ctx).flatMap {
         case Left(err) => IO.pure(Left(err))
         case Right(kernelDef) =>
-          devicePrecheck(device).flatMap {
-            case Left(err) => IO.pure(Left(err))
-            case Right(_)  => spawnKernel(kernelDef, task, description, device, ctx)
-          }
+          spawnKernel(kernelDef, task, description, ctx)
       }
   end call
 
@@ -307,7 +244,6 @@ Wait for one to finish, or cancel one with AgentControl(cancel) before delegatin
     kernelDef: AgentDef,
     task: String,
     description: String,
-    device: Option[String],
     ctx: ToolContext
   ): IO[Either[ToolError, String]] =
     (ctx.actorSystem, ctx.sharedResources) match
@@ -333,7 +269,6 @@ Wait for one to finish, or cancel one with AgentControl(cancel) before delegatin
                   agentDef = kernelDef,
                   task = task,
                   description = description,
-                  device = device,
                   workRoot = workRoot.toString,
                   system = system,
                   resources = resources,
@@ -355,7 +290,6 @@ Wait for one to finish, or cancel one with AgentControl(cancel) before delegatin
     agentDef: AgentDef,
     task: String,
     description: String,
-    device: Option[String],
     workRoot: String,
     system: ActorSystem,
     resources: SharedResources,
@@ -386,12 +320,11 @@ Wait for one to finish, or cancel one with AgentControl(cancel) before delegatin
       rootSessionId = resolvedRoot
     )
     val brief =
-      val deviceLine = device.map(d => s"\n[target device] $d — pass device=\"$d\" on every tool call that must run there (paths on that machine must be absolute).").getOrElse("")
-      s"""[session work root] $workRoot (throwaway; file tools need absolute paths, Bash cwd is not guaranteed)$deviceLine
+      s"""[session work root] $workRoot (throwaway; file tools need absolute paths, Bash cwd is not guaranteed)
 
 $task"""
     val ack =
-      s"""Kernel task '$description' started in the background (device: ${device.getOrElse("local")}).
+      s"""Kernel task '$description' started in the background.
 It runs in session $subagentId with the minimal kernel toolset (Read/Write/Edit/Glob/Grep/Bash + AskUserQuestion), no project context and no memory.
 You will be notified when it completes via a system message. Do NOT duplicate this task — wait for the result or work on something unrelated."""
     for
@@ -414,7 +347,7 @@ You will be notified when it completes via a system message. Do NOT duplicate th
         wsSend = Some(childWsSend)
       )
       _ = logger.info(
-        s"Spawned supervised kernel session: $subagentId (depth=$childDepth, workRoot=$workRoot, device=${device.getOrElse("local")})"
+        s"Spawned supervised kernel session: $subagentId (depth=$childDepth, workRoot=$workRoot)"
       )
       _ <- NodeRunner.registerAgent(
         resources,
