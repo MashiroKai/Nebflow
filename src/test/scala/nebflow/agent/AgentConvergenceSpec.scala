@@ -70,7 +70,7 @@ class AgentConvergenceSpec extends FunSuite:
     }
     val forbidden = Set("Bash", "Write", "Edit", "MultiEdit", "NodeList",  // NodeList（00:48 裁定摘除，dispatcher 面不受影响）
       // R2 反转（2026-09-12）："Mail" 从本集**摘除**——Mail 已翻案为唯一消息原语并进入
-      // Nebula 面（−Task +Mail，16→16）；新增 "Task"/"NodeMessage" 两个已删净退役件。
+      // Nebula 面（−Task +Mail；史实 16→16 净 0，当前/终态 = 15）；新增 "Task"/"NodeMessage" 两个已删净退役件。
       "Task", "NodeMessage", "FlowTrigger", "FlowExecute",  // 已退役/维持退役（Delegate 2026-09-11 以极简内核形态回归，不在此列）
       "TransferFile",                                       // #145 附件腿批退役（2026-09-14）：能力并入 SendMessage 设备附件腿
       "WebSearch", "WebFetch", "Curl",

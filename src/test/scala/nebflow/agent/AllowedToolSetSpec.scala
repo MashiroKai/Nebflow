@@ -384,7 +384,7 @@ class AllowedToolSetSpec extends FunSuite:
     assert(!allowed.contains("FlowTrigger"), "Nebula no longer carries FlowTrigger (2026-09-05 旧体系退役)")
     // R2「一个 Mail 统一」（2026-09-12）：本条为**断言反转**——原口径
     // 「Nebula no longer carries Mail (2026-09-05 旧体系退役)」随 R2 作废：
-    // Mail 成为全平台唯一消息原语，Nebula 面必须携带（16→16：−Task +Mail）。
+    // Mail 成为全平台唯一消息原语，Nebula 面必须携带（史实 16→16 净 0：−Task +Mail；当前/终态 = 15）。
     assert(allowed.contains("Mail"), "R2: Nebula carries Mail — 平台唯一消息原语（2026-09-12）")
     assert(!allowed.contains("Task"), "R2: Task 退役，Nebula 面零 Task")
     assert(!allowed.contains("NodeMessage"), "R2: NodeMessage 退役，Nebula 面零 NodeMessage")
