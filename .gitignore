@@ -40,6 +40,8 @@ cloud/node_modules/
 *.env
 *.secret
 credentials.json
+.env
+*.env
 dist/
 beta.md
 # Root-level scratch file only (51c0882d). Must NOT match the vendored monaco

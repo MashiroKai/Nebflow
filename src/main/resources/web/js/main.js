@@ -34,7 +34,7 @@ import {
   appendToolStreamDelta, cancelToolStreamRAF,
   formatResumeClock
 } from './chat.js';
-import { notePendingAsk, removePendingAsk, resetPendingAsks, initPendingAsks } from './askPending.js';
+import { notePendingAsk, removePendingAsk, applyPendingAskSnapshot, pendingSnapshotFailed, initPendingAsks } from './askPending.js';
 import {
   initNavTabs, renderSessionSidebar, renderAgentList, renderSettings,
   deleteSession, formatSessionTime, setSessionAttention,
@@ -1397,8 +1397,39 @@ onMessage('askUserAnswered', (msg) => {
 // handling is in place ahead of it). Lock the card with the source-closed
 // note and drop the bar entry.
 onMessage('askUserClosed', (msg) => {
-  closeAskUserCard(msg.sessionId, msg.requestId, t('askUser.sourceClosed'));
+  // #250 ②: the hub now also closes pending cards when the owning turn is
+  // interrupted (`reason:"turn-interrupted"`), not only when the source session
+  // died — map the reason to a matching lock note (unknown/absent reason keeps
+  // the historical text).
+  const note = msg.reason === 'turn-interrupted' ? t('askUser.turnInterrupted') : t('askUser.sourceClosed');
+  closeAskUserCard(msg.sessionId, msg.requestId, note);
   removePendingAsk(msg.requestId);
+});
+
+// #250 ③: global pending-AskUser snapshot (hub ListAllPendingAsks). One frame
+// for every root — the mirror is reconciled against the single authority in one
+// pass (drop what the hub no longer has, add what it has), independent of which
+// session is subscribed/re-fetched. Replaces the old reconnect-time global clear
+// whose rebuild only happened for the (re)subscribed session. `failed:true`
+// keeps the local mirror and shows a notice (never silently claims "nothing
+// pending").
+let pendingSnapshotSince = 0;
+onMessage('pendingAsksSnapshot', (msg) => {
+  if (msg.failed) { pendingSnapshotFailed(); return; }
+  applyPendingAskSnapshot(msg.asks, pendingSnapshotSince);
+});
+
+// #250 ⑥: the hub dropped an answer (shape mismatch / unknown requestId / no
+// kind-compatible slot) and, by #12, deliberately kept the card. That used to be
+// a WARN log only — the user saw a click that did nothing. Surface it (glass
+// toast, no overlay dimming — 弹窗禁令).
+onMessage('interactionAnswerRejected', (msg) => {
+  const key = {
+    'shape-mismatch': 'askUser.rejectShape',
+    'unknown-request-id': 'askUser.rejectUnknown',
+    'no-kind-compatible': 'askUser.rejectNoMatch'
+  }[msg.reason] || 'askUser.rejectGeneric';
+  window.__showToast?.(t(key), 'error');
 });
 
 // F4 (#433): global actionable toast for permission cards whose target root
@@ -3782,10 +3813,16 @@ document.getElementById('new-folder-btn')?.addEventListener('click', () => creat
 // while the frontend was disconnected. On reconnect, re-fetch the active
 // session's history so the user sees the latest state.
 onReconnect(() => {
-  // D6 批 F2: reset the pending-ask mirror — the hub replays the still-pending
-  // snapshot (ListPendingAsks) right after the history refresh below, so the
-  // bar rebuilds from the single authority and never strands stale entries.
-  resetPendingAsks();
+  // D6 批 F2 + #250 ③: rebuild the pending-ask mirror from the hub's GLOBAL
+  // snapshot (pendingAsksSnapshot) instead of clearing it locally — clearing
+  // globally while the backend only replayed for the (re)subscribed session
+  // stranded the bar/badge at 0 whenever the active session was not the root
+  // session carrying the cards (silently lost todo signal).
+  // `pendingSnapshotSince` bounds the reconciliation: entries that arrive after
+  // the query are kept (a live askUser frame racing the round trip), everything
+  // older and absent from the snapshot is retired.
+  pendingSnapshotSince = Date.now();
+  sendWs({ type: 'getPendingAsks' });
   const sid = state.activeSessionId;
   if (sid) {
     const view = findViewBySessionId(sid);

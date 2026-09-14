@@ -67,7 +67,7 @@ object InteractionHub:
             case InteractionHubCommand.Request(req) =>
               ctx.forkTurn(handleRequest(pending, rootWsSend, req)) *> IO.pure(behavior)
             case InteractionHubCommand.Answered(ans) =>
-              ctx.forkTurn(handleAnswered(pending, ans)) *> IO.pure(behavior)
+              ctx.forkTurn(handleAnswered(pending, rootWsSend, ans)) *> IO.pure(behavior)
             case InteractionHubCommand.AnswerViaChatInput(rootSessionId, text, reply) =>
               // 第六件 (2026-08-30): chat-input passthrough — the gateway asks
               // on behalf of the input box; single atomic modify = query + slot
@@ -77,17 +77,25 @@ object InteractionHub:
             case InteractionHubCommand.ListPendingAsks(rootSessionId, reply) =>
               // 刷新存活 (2026-09-03): read-only snapshot for reconnect replay.
               ctx.forkTurn(handleListPendingAsks(pending, rootSessionId, reply)) *> IO.pure(behavior)
+            case InteractionHubCommand.ListAllPendingAsks(reply) =>
+              // #250 第③项 (2026-09-13): global snapshot — the frontend's pending
+              // mirror (bar/badge) rebuilds from ONE global read instead of
+              // depending on which session happens to be (re)subscribed.
+              ctx.forkTurn(handleListAllPendingAsks(pending, reply)) *> IO.pure(behavior)
             case InteractionHubCommand.RootReachable(rootSessionId, reply) =>
               // 工具面按角色分化批 B6 (2026-09-13): read-only reachability probe —
               // the non-blocking AskUserQuestion preflights with this before it
               // registers a slot (nobody waits in non-blocking mode ⇒ a card
               // rendered into an unreachable root = a silently lost answer).
               ctx.forkTurn(handleRootReachable(rootWsSend, rootSessionId, reply)) *> IO.pure(behavior)
-            case InteractionHubCommand.CleanupForSession(sessionId) =>
+            case InteractionHubCommand.CleanupForSession(sessionId, reason) =>
               // P2 G11 (20260908 spec §3.4): source-death cleanup — node cancelled
               // while its AskUser card is pending → close the card (engine cascade:
               // cancelNode / abandon / dead-session reap).
-              ctx.forkTurn(handleCleanupForSession(pending, rootWsSend, sessionId)) *> IO.pure(behavior)
+              // #250 第②项：同一命令新增 `reason`（缺省 ""）——turn 被用户中断时
+              // root 会话没有清理入口，是同一「等待方已死、槽位仍在」面（见
+              // handleCleanupForSession 注释）。
+              ctx.forkTurn(handleCleanupForSession(pending, rootWsSend, sessionId, reason)) *> IO.pure(behavior)
             case InteractionHubCommand.CloseRequest(requestId) =>
               // 调用侧撤回（#147 接线段 2026-09-12）：请求方自己不等了（确认超时）
               // ⇒ 精确回收**这一个**槽位并关掉卡片。与 CleanupForSession 的区别是
@@ -244,30 +252,64 @@ object InteractionHub:
     rootSessionId: String,
     reply: ActorRef[List[Json]]
   ): IO[Unit] =
-    pending.get.map { m =>
-      m.toList
-        .collect {
-          case (rid, p) if p.rootSessionId == rootSessionId && p.kind == InteractionKind.AskUser => (rid, p)
-        }
-        .sortBy(_._2.createdAt)
-        .map { case (rid, p) =>
-          renderAskUser(
-            InteractionRequest(
-              requestId = rid,
-              kind = p.kind,
-              payload = p.payload,
-              reply = p.reply,
-              rootSessionId = p.rootSessionId,
-              sourceAgent = p.sourceAgent,
-              sourceSession = p.sourceSession
-            )
-          ).deepMerge(Json.obj("replayed" -> Json.fromBoolean(true)))
-        }
-    }.flatTap(list =>
-      if list.nonEmpty then
-        logger.info(s"ListPendingAsks root=$rootSessionId → ${list.size} pending ask(s) replayed")
-      else IO.unit
-    ).flatMap(list => (reply ! list).void)
+    pending.get
+      .map(m => snapshotFrames(m, Some(rootSessionId)))
+      .flatTap(list =>
+        if list.nonEmpty then
+          logger.info(s"ListPendingAsks root=$rootSessionId → ${list.size} pending ask(s) replayed")
+        else IO.unit
+      )
+      .flatMap(list => (reply ! list).void)
+
+  /** 多 AskUser 并发批（#250 第③项，2026-09-13 作者裁定「6 项全补」）：
+    * **全局** pending-AskUser 快照（跨 root，按 createdAt 升序）。
+    *
+    * 口径不一致（改前）：前端重连做的是**全局**清空（`resetPendingAsks`，askPending.js），
+    * 而后端重建只在「某会话 getHistory 首帧」触发（`WebSocketRoutes` 的
+    * `replayPendingAsks`，按会话订阅）⇒ 重连时活动会话 ≠ 承载卡片的 root 会话时，
+    * 镜像清空后**永不重建**：待办条/badge 显示 0，而卡片其实还挂着
+    * （hub 是唯一权威、等待无超时）＝ 待办信号静默丢失。
+    *
+    * 统一口径：清空与重建都走**全局快照**这一条路（前端 `pendingAsksSnapshot`
+    * 帧 = 一次性全局对账：丢权威已无的、补权威仍有的），与「按会话订阅重放」解耦
+    * ——后者保留原职责（把卡片渲染进对应会话的聊天流），不再承担镜像重建。 */
+  private def handleListAllPendingAsks(
+    pending: Ref[IO, Map[String, PendingRequest]],
+    reply: ActorRef[List[Json]]
+  ): IO[Unit] =
+    pending.get
+      .map(m => snapshotFrames(m, None))
+      .flatTap(list =>
+        logger.info(s"ListAllPendingAsks → global pending-ask snapshot: ${list.size} card(s)")
+      )
+      .flatMap(list => (reply ! list).void)
+
+  /** 快照帧构造（按 root 过滤可选 = None 即全局）。只读：不触碰槽位。
+    * 只有 AskUser 类进快照（权限卡不进——前端权限卡走各自会话的历史/渲染链，
+    * 与 `handleListPendingAsks` 既有口径逐字一致）。 */
+  private def snapshotFrames(
+    m: Map[String, PendingRequest],
+    rootFilter: Option[String]
+  ): List[Json] =
+    m.toList
+      .collect {
+        case (rid, p)
+            if p.kind == InteractionKind.AskUser && rootFilter.forall(_ == p.rootSessionId) => (rid, p)
+      }
+      .sortBy(_._2.createdAt)
+      .map { case (rid, p) =>
+        renderAskUser(
+          InteractionRequest(
+            requestId = rid,
+            kind = p.kind,
+            payload = p.payload,
+            reply = p.reply,
+            rootSessionId = p.rootSessionId,
+            sourceAgent = p.sourceAgent,
+            sourceSession = p.sourceSession
+          )
+        ).deepMerge(Json.obj("replayed" -> Json.fromBoolean(true)))
+      }
 
 
   // ============================================================
@@ -306,6 +348,7 @@ object InteractionHub:
 
   private def handleAnswered(
     pending: Ref[IO, Map[String, PendingRequest]],
+    rootWsSend: Ref[IO, Map[String, Json => IO[Unit]]],
     ans: InteractionAnswered
   ): IO[Unit] =
     pending.modify { m =>
@@ -320,9 +363,14 @@ object InteractionHub:
               // and since R1, wait-timeout-fix, no timeout would ever release it).
               (
                 m,
-                logMissing(ans, s"answer shape does not match kind=${p.kind} of requestId=${ans.requestId} — card RETAINED")
+                rejectAnswer(
+                  rootWsSend,
+                  ans,
+                  "shape-mismatch",
+                  s"answer shape does not match kind=${p.kind} of requestId=${ans.requestId} — card RETAINED"
+                )
               )
-          case None => (m, logMissing(ans, s"unknown requestId=${ans.requestId}"))
+          case None => (m, rejectAnswer(rootWsSend, ans, "unknown-request-id", s"unknown requestId=${ans.requestId}"))
       else
         // Old-frontend fallback: no requestId — among this root session's
         // pending cards, take the OLDEST one this answer can complete.
@@ -343,7 +391,15 @@ object InteractionHub:
         candidates.find { case (_, p) => answerCompletes(p, ans) } match
           case Some((rid, p)) => (m - rid, multiWarn *> complete(p, ans))
           case None =>
-            (m, multiWarn *> logMissing(ans, s"no kind-compatible pending request for rootSessionId=${ans.rootSessionId}"))
+            (
+              m,
+              multiWarn *> rejectAnswer(
+                rootWsSend,
+                ans,
+                "no-kind-compatible",
+                s"no kind-compatible pending request for rootSessionId=${ans.rootSessionId}"
+              )
+            )
     }.flatten
 
   /** #12: does this answer payload have the shape required to complete `p`?
@@ -358,8 +414,47 @@ object InteractionHub:
       case InteractionReply.AskUserReply(_) =>
         ans.payload.hcursor.downField("answers").as[List[String]].isRight
 
-  private def logMissing(ans: InteractionAnswered, why: String): IO[Unit] =
-    logger.warn(s"InteractionAnswered dropped: $why (requestId=${ans.requestId}, root=${ans.rootSessionId})") *> IO.unit
+  /** 多 AskUser 并发批（#250 第⑥项，2026-09-13 作者裁定「6 项全补」）：
+    * 被丢弃的回答**必须用户可见**。
+    *
+    * 改前现象（代码判据）：形态不符 / requestId 未知 / 无 kind 兼容槽三条丢弃路径
+    * 只留一行 `WARN` 日志（`logMissing`），用户侧零提示——点下按钮后界面毫无反应，
+    * 而卡片按 #12 语义**保留**（不得消费），用户唯一的反馈是「什么都没发生」=
+    * 「错误路径折成静默成功」缺陷族的标准形态（本项要修的正是「静默」）。
+    *
+    * 现口径：保留原 WARN 行（可归因），并**广播**一条
+    * `interactionAnswerRejected{requestId, rootSessionId, reason, detail}` 到所有已注册
+    * root 窗口（与 `askUserClosed` 同族：卡片可能因 #433 F4 fallback 渲染在别的窗口，
+    * 反馈必须到达每一个可能显示该卡片的窗口）。前端消费点 = `main.js`
+    * `onMessage('interactionAnswerRejected')` → 既有 `__showToast`。reason 是稳定码
+    * （shape-mismatch | unknown-request-id | no-kind-compatible），文案在前端 i18n。
+    *
+    * best-effort：广播失败只加一行 WARN，绝不影响槽位状态（丢弃语义不变）。 */
+  private def rejectAnswer(
+    rootWsSend: Ref[IO, Map[String, Json => IO[Unit]]],
+    ans: InteractionAnswered,
+    reason: String,
+    why: String
+  ): IO[Unit] =
+    for
+      _ <- logger.warn(
+        s"InteractionAnswered dropped: $why (requestId=${ans.requestId}, root=${ans.rootSessionId})"
+      )
+      sends <- rootWsSend.get
+      _ <- sends.toList.traverse_ { case (sid, ws) =>
+        ws(
+          Json.obj(
+            "type" -> "interactionAnswerRejected".asJson,
+            "sessionId" -> sid.asJson,
+            "rootSessionId" -> ans.rootSessionId.asJson,
+            "requestId" -> ans.requestId.asJson,
+            "reason" -> reason.asJson,
+            "detail" -> why.asJson
+          )
+        ).handleErrorWith(e =>
+          logger.warn(s"answerRejected broadcast failed requestId=${ans.requestId} root=$sid: ${e.getMessage}"))
+      }
+    yield ()
 
   // ============================================================
   // 第六件 (2026-08-30): chat-input passthrough for pending AskUser cards.
@@ -451,7 +546,8 @@ object InteractionHub:
   private def handleCleanupForSession(
     pending: Ref[IO, Map[String, PendingRequest]],
     rootWsSend: Ref[IO, Map[String, Json => IO[Unit]]],
-    sessionId: String
+    sessionId: String,
+    reason: String = ""
   ): IO[Unit] =
     pending.modify { m =>
       val victims = m.toList.collect { case (rid, p) if p.sourceSession == sessionId => rid -> p }
@@ -465,14 +561,16 @@ object InteractionHub:
             sends <- rootWsSend.get
             _ <- victims.traverse_ { case (rid, p) =>
               sends.toList.traverse_ { case (sid, ws) =>
-                ws(
-                  Json.obj(
-                    "type" -> "askUserClosed".asJson,
-                    "sessionId" -> sid.asJson,
-                    "requestId" -> rid.asJson,
-                    "sourceSession" -> sessionId.asJson
-                  )
-                ).handleErrorWith(e =>
+                // 帧形状逐字节兼容（reason 缺省时零新增键，旧前端忽略未知键）；非空
+                // reason 让前端把卡片文案从「来源已关闭」改成更贴合的中断文案。
+                val base = Json.obj(
+                  "type" -> "askUserClosed".asJson,
+                  "sessionId" -> sid.asJson,
+                  "requestId" -> rid.asJson,
+                  "sourceSession" -> sessionId.asJson
+                )
+                ws(if reason.nonEmpty then base.deepMerge(Json.obj("reason" -> reason.asJson)) else base)
+                  .handleErrorWith(e =>
                   logger.warn(s"askUserClosed broadcast failed requestId=$rid root=$sid: ${e.getMessage}") *> IO.unit)
               }
             }
@@ -604,8 +702,19 @@ object InteractionHubCommand:
     * (sourceSession of its asks) reached cancelled (cancelNode / abandon /
     * dead-session reap cascade). Remove every pending slot sourced from that
     * session and broadcast askUserClosed{requestId} so no zombie card outlives
-    * its asker. */
-  final case class CleanupForSession(sessionId: String) extends InteractionHubCommand
+    * its asker.
+    *
+    * #250 第②项（2026-09-13 作者裁定「6 项全补」）：同一语义也覆盖**用户中断
+    * turn**（root 会话此前没有清理入口）。`reason` 是可选来源标注
+    * （"turn-interrupted"），缺省 "" 时广播帧逐字节不变（旧前端忽略未知键）。 */
+  final case class CleanupForSession(sessionId: String, reason: String = "") extends InteractionHubCommand
+
+  /** 多 AskUser 并发批（#250 第③项，2026-09-13 作者裁定「6 项全补」）：
+    * gateway → hub — **全局** pending-AskUser 快照（跨 root，按 createdAt 升序），
+    * 每帧与 `ListPendingAsks` 逐字节同构（`replayed: true`，`sessionId` = 各自 root）。
+    * 前端重连时用它把待办条/badge 的本地镜像与 hub 权威一次性对齐，不再依赖
+    * 「哪个会话恰好被（重新）订阅」。只读：不触碰 pending map 或 reply 槽位。 */
+  final case class ListAllPendingAsks(reply: ActorRef[List[Json]]) extends InteractionHubCommand
 
   /** #147 接线段（2026-09-12）：requester → hub — the caller itself stopped
     * waiting for `requestId` (SendMessage ask-档 confirm timed out) and returns

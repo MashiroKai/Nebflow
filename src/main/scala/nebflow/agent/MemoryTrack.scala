@@ -691,7 +691,11 @@ $deferred$noTargetLine$alreadyPresentLine- 步骤与输出契约严格按本会�
       //    只在 Timeout 分支算：失败分支（定义缺失 / spawn 失败）本轮没动过文件。
       //    `stateAtFinish` 是**写前**读数 ⇒ 判据集在写前就固化（作者纪律：写后不重推）。
       stateAtFinish <- IO.blocking(MemoryQueue.readState())
-      reconcile     = if attempt.status == Status.Timeout then MemoryQueue.reconcile(stateAtFinish, planInput(after))
+      // 跑后输入面与 dry-run 同源（[[planInput]] 带存在位，读盘故为 IO）：只在 Timeout 分支取。
+      postFiles <-
+        if attempt.status == Status.Timeout then planInput(after)
+        else IO.pure(Map.empty[String, MemoryQueue.TargetFile])
+      reconcile = if attempt.status == Status.Timeout then MemoryQueue.reconcile(stateAtFinish, postFiles)
         else MemoryQueue.ReconcileReport.empty
       degrade <- attempt.status match
         case Status.Timeout => degradeOutcomesReport(isTimeout = true, attempt.detail, reconcile)

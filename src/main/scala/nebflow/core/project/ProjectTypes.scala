@@ -282,6 +282,124 @@ object OutEdge:
     case list => Json.fromValues(list.map(e => summon[Codec[OutEdge]].apply(e)))
   }
 
+/** 通知策略三值（out 语义与通知路由重设计 · b64 实施批 2026-09-13，作者裁定 R1/R2/R3/R5/R14 + M1–M5）。
+  *
+  * 设计源 = `~/.nebflow/docs/Nebflow/20260910_node-out-semantics-notification-routing-design.md`
+  *（下称 spec；R 项号即 spec §7 编号）。本对象是**唯一裁决单点**：`NodeDef.notify`
+  * 的读侧语义、legacy 解析、值域校验、配置键解析全部收在此处（禁第二处口径）。
+  *
+  * == 三值 ==
+  *  - [[Silent]]     = 该节点的完成事件不通知任何人（仅落 Flow Map + 结果持久化）；
+  *  - [[Dispatcher]] = 完成事件回流项目分发器，**不上根**（spec §5 行 2）；新建默认值；
+  *  - [[Root]]       = 完成事件直投根（spec §5 行 1）。
+  *
+  * == 与 out 的关系（R5，本批唯一语义变更点）==
+  * `Nebula` 出边**保留为声明**（不改拓扑、不返工在飞批），其效力在运行时由策略裁决：
+  * 策略 = root ⇒ 该边照投根；策略 = dispatcher/silent ⇒ 该边被**抑制**（不投递）且
+  * `markNebulaDelivered` 记账（防 30s 补投扫描把它复活，spec §5 表尾推论 2）。
+  * **`:signal` 模式的 Nebula 边不受策略影响**：它是出口标记（只记账不通报），
+  * 策略不得使之升根——M1 作者裁定「先不定义 ⇒ 沿用现网代码口径」，本批**不为它
+  * 新增裁决分支**（`nebulaDelivery` 的 `mode == Result` 前置判据原样保留）。
+  *
+  * == legacy 解析（R3；存量/在飞零漂移是硬约束）==
+  * `notify == None`（缺键 = 存量节点）时**两条腿各自沿用今天的行为**，即
+  * [[legacyRootVisible]]（out 含 `:result` 的 pass Nebula 边 ⇒ 今天确实投根）与
+  * [[NodeDef.notifyDispatcher]]（flag ⇒ 今天确实回分发器）**channel-additive**。
+  * ⚠ spec §4.4 的 legacy 解析表是**单值**表；「out 含 Nebula **且** flag=true」这一
+  * 存量形态（现网 4 个）在单值表里无格可落（单值只能二选一），照单值表实现会让这
+  * 4 个节点丢掉分发器腿 = 破坏 R3「零漂移」与「在飞批不返工」。故本批按**两腿
+  * 独立判据**落 legacy（逐字节等价），单值表仅用于**显式声明**节点的裁决。
+  * 出处与逐格对照见实施报告「legacy 解析表」节。
+  */
+object NotifyPolicy:
+  val Silent = "silent"
+  val Dispatcher = "dispatcher"
+  val Root = "root"
+
+  /** 合法值域三值（等价 `silent | dispatcher | root`）。 */
+  val All: Set[String] = Set(Silent, Dispatcher, Root)
+
+  /** 新建/编辑未传 `notify` 时的**显式落盘**值（R2：写盘，非缺键）。 */
+  val Default: String = Dispatcher
+
+  /** 值域校验（可行动错误：合法值域 + 实收值；先例 = `invalid out mode ':$mode'`）。
+    * 错误码 [[InvalidCode]]，与 NodeTools 的 `NODE_*` 家族同风格。 */
+  def validate(raw: String): Either[String, String] =
+    val v = raw.trim
+    if All.contains(v) then Right(v)
+    else
+      Left(s"invalid notify policy '$raw' — legal values: ${All.toList.sorted.mkString(" | ")} " +
+        s"(the notification target for this node's completed event; got '$v'). ($InvalidCode)")
+
+  val InvalidCode = "NODE_NOTIFY_INVALID"
+
+  /** completed 事件的**根可见性**（Nebula `:result` pass 边的效力，R5 裁决点）。
+    * 显式声明 ⇒ 值域裁决；缺键 ⇒ legacy（今天的行为：`:result` 的 pass Nebula 边即投根）。 */
+  def completedRootVisible(node: NodeDef): Boolean =
+    node.notifyPolicy match
+      case Some(v) => v == Root
+      case None    => legacyRootVisible(node)
+
+  /** legacy 根可见性（存量读路径，逐字 = 今天 `deliverOut`/`nebulaDelivery` 的判据）：
+    * out 中存在指向 `Nebula` 且 `mode=result` 且门含 `pass` 的边。
+    * ⚠ 与「补投扫描」的口径同源（`NodeEngine.redeliverUnconsumedNebulaResults` 的
+    * N3 收窄：`mode == Result` 合取项），bare `Nebula`（`:signal` 出口标记）不算投根声明。 */
+  def legacyRootVisible(node: NodeDef): Boolean =
+    node.out.exists(e =>
+      e.to == OutEdge.NebulaTarget && e.mode == OutEdge.Result && e.on.contains(OutEdge.Pass))
+
+  /** completed 事件是否回流分发器（DispatchNotify completion 腿的判定，R2/R3）。
+    * 显式声明 ⇒ 仅 `dispatcher`；缺键 ⇒ legacy flag（今天的行为）。 */
+  def completionNotifiesDispatcher(node: NodeDef): Boolean =
+    node.notifyPolicy match
+      case Some(v) => v == Dispatcher
+      case None    => node.notifyDispatcher
+
+  /** failed 事件是否受策略管辖（R14：**不豁免**——failed 恒 ≥ dispatcher）。
+    * 本函数恒 true 并单点声明，供实施面/report 侧断言「silent 不吞 failed」；
+    * 调用方（DispatchNotify）对 failed/cancelled **不查策略**（spec §5 行 4）。 */
+  def failedAlwaysDispatched: Boolean = true
+
+  // ── M4：`notify.quietMs` 配置键（对外冻结命名，2026-09-13）────────────────
+  //
+  // 键路径 = `notify.quietMs`（嵌套在 `notify` 对象下，形态仿先例 `feedbackMode`）。
+  // **本键名为对外冻结命名**（作者裁定 M4：「键名一经使用不宜改名」）——一经发布
+  // 不再更名；若要调整语义，只能新增键 + 保留本键读取。
+  // 缺键 = 缺省 [[NotifyQuietMsDefaultMs]]（不是 0、不是禁用）；上界 [[NotifyQuietMsMaxMs]]。
+  // 超限 ⇒ **可行动报错**（键名 + 允许区间 + 当前值），**禁静默截断到上界**。
+
+  /** 配置键路径（对外冻结命名，错误信息与文档登记逐字用此串）。 */
+  val QuietMsKey = "notify.quietMs"
+
+  /** 缺省静默/去抖窗口（R9：5s；与 `DispatchNotify.DefaultWindowMs` 同值同源）。 */
+  val NotifyQuietMsDefaultMs: Long = 5000L
+
+  /** 窗口上界（R9：60s；超限 = 可行动报错，不截断）。 */
+  val NotifyQuietMsMaxMs: Long = 60_000L
+
+  /** `quietMs` 解析单点（M4）：缺键 ⇒ 缺省 5s；给出值 ⇒ 值域 `(0, 60000]` 校验。
+    * 错误文案三要素齐备（①哪个键 ②允许区间 ③当前值）。 */
+  def parseQuietMs(raw: Option[Long]): Either[String, Long] =
+    raw match
+      case None => Right(NotifyQuietMsDefaultMs)
+      case Some(v) if v <= 0 || v > NotifyQuietMsMaxMs =>
+        Left(s"'$QuietMsKey' must be within (0, ${NotifyQuietMsMaxMs}ms] (default ${NotifyQuietMsDefaultMs}ms when the key is absent) " +
+          s"— got ${v}ms. Refusing to apply (no silent clamping to the bound); fix the value in project.json. (NODE_NOTIFY_QUIET_MS_RANGE)")
+      case Some(v) => Right(v)
+
+/** `notify` 配置块（M4，project.json 可选嵌套对象）：目前仅 `quietMs` 一键。
+  * 键名 `notify.quietMs` 为**对外冻结命名**（作者裁定 M4）；缺键 ⇒ 缺省 5s。
+  * 旧 project.json 无本键 → withDefaults 解码 None（零迁移）。 */
+case class NotifyConfig(
+  /** 静默/去抖窗口（毫秒）：同 reason 的节点级通知在该窗口内合并为一次投递
+    * （投递条数合并，非 token 压缩）；链级摘要**不**并入本窗口。 */
+  quietMs: Option[Long] = None
+)
+
+object NotifyConfig:
+  given Configuration = Configuration.default.withDefaults
+  given Codec[NotifyConfig] = ConfiguredCodec.derived
+
 /** P2 failed 回跳 retry 策略（20260908 spec §2.3，wf3 §4.2 方案①「回跳不是图边
   * 而是策略字段」）：挂**下游单侧**（沿 deps「下游单侧持有、不回写上游」设计先例）。
   * 本节点 failed 且 gen < max → 引擎自动化执行既有重激活协议全链（本节点重激活 +
@@ -389,8 +507,37 @@ case class NodeDef(
     * completion）后触发项目分发器新会话（带原因码的独立信号通道，不占 out 边；
     * 防循环/预算/去重见 DispatchNotify）。NodeEdit 按需开启，默认关——分发器
     * 因通知新建的节点不继承本标志（显式开启才通知，保证收敛）。
-    * 旧 flow-map.json 无此键 → withDefaults 解码为 false（零迁移）= 旧行为。 */
+    * 旧 flow-map.json 无此键 → withDefaults 解码为 false（零迁移）= 旧行为。
+    *
+    * **b64 批（作者 2026-09-13 裁定 R1）后降级为 legacy alias**：新权威字段 =
+    * [[notify]]（三值）。本键保留**一版**（写侧兼容 + 读侧归一），缺 `notify` 时
+    * 仍按今天的语义生效（`notify == None` ⇒ legacy 解析，见 [[NotifyPolicy]]）；
+    * 节点已显式声明 `notify` 时本键不再参与裁决（写侧出现即 WARN 忽略）。 */
   notifyDispatcher: Boolean = false,
+  /** **通知策略三值**（out 语义与通知路由重设计 · b64 实施批 2026-09-13，作者裁定
+    * R1/R2/R3/R5）：`silent` | `dispatcher` | `root`。
+    *
+    * `None` = **未声明**（存量/在飞节点，含旧 flow-map.json 缺键）→ 读侧按
+    * [[NotifyPolicy]] 的 legacy 解析回落，**逐字节等价今天的行为**（R3 零漂移）。
+    * `Some(v)` = 显式声明 ⇒ 由 v 裁决**两条腿**：`root` 放行 out 中的 `:result` Nebula
+    * 边投根、`dispatcher`/`silent` 抑制该边（保留声明不返工拓扑，R5）；同时
+    * `dispatcher` 独享「完成回流分发器」（`silent` 二者皆无）。
+    *
+    * **为什么是 `Option[String]` 而不是默认 `Some(dispatcher)`**（spec §3-B1 注）：
+    * `NodeDef` 走 circe `withDefaults`，带默认值会把**缺键**静默解码成默认值，从而
+    * 丢失「存量缺键」与「显式声明」的区分——而缺键正是「在飞批零漂移」的唯一依据。
+    * ⇒ 缺键必须解出 `None`；新建/编辑路径由 NodeEdit **显式落盘**实际值（新节点落
+    * `Some(dispatcher)`，R2）。
+    *
+    * failed 事件**不受本字段管辖**（R14 不豁免：failed 恒 ≥ dispatcher；显式
+    * `(failed)Nebula` 边的失败通报根语义亦零改动）。
+    *
+    * **命名注（实施强制）**：Scala 侧字段名必须叫 [[notifyPolicy]]——`notify` 是
+    * `java.lang.Object` 的 final 方法，case class 成员同名即编译错（E164
+    * declaration error）。**对外/落盘键仍逐字 = `notify`**（spec §4.2 载荷键），
+    * 由 `NodeDef` 的 circe `Configuration.withTransformMemberNames` 做这一个字段的
+    * 改名（见 companion）——键名是契约面，Scala 标识符只是实现细节。 */
+  notifyPolicy: Option[String] = None,
   /** dispatch-notify 投递记账（at-least-once：tell-then-mark，V8 nebulaDeliveredAt
     * 同款）：通知触发后落时间戳；空 = 未触发/未标记（重启后由 TtlTick 补投扫描
     * 重触发）。旧 flow-map.json 无此键 → withDefaults 解码为 None（零迁移）。 */
@@ -512,7 +659,12 @@ case class NodeDef(
 )
 
 object NodeDef:
+  /** 落盘/载荷键名契约（b64 批 2026-09-13）：`notifyPolicy` 是 Scala 侧唯一可行的
+    * 字段名（`notify` 与 `java.lang.Object.notify()` 冲突 ⇒ E164），而**对外键名
+    * 逐字为 `notify`**（spec §4.2）。改名只此一处，读/写两侧同源（derived codec
+    * 的 member-name transform 同时作用于 encoder 与 decoder）。 */
   given Configuration = Configuration.default.withDefaults
+    .withTransformMemberNames(name => if name == "notifyPolicy" then "notify" else name)
   given Codec[NodeDef] = ConfiguredCodec.derived
 
 /** NodeList 载荷同构的节点 JSON（NodeList 工具 / REST flow-map / WS 事件共用单一序列化点）。
@@ -644,6 +796,10 @@ object NodePayload:
       // 同构）：true 才带——未开启节点的 payload 字段集零变化（NodeList 上分发器可辨哪些
       // 节点会回流通知）。
       val notifyFields = if node.notifyDispatcher then List("notifyDispatcher" -> node.notifyDispatcher.asJson) else Nil
+      // notify 条件序列化（b64 批 2026-09-13，R1/R2 并存过渡）：**仅显式声明才带键**
+      // ——存量缺键节点 payload 字段集字节级零漂移；旧键 notifyDispatcher 过渡期并存
+      // （前端 detail 窗消费旧键，故旧键序列化口径本批不动）。
+      val notifyPolicyFields = node.notifyPolicy.toList.map(v => "notify" -> v.asJson)
       // merge 条件序列化（mount-enforce 批 20260905 payload 契约；与 deps 条件字段
       // 同构）：仅 merge 节点带 "merge": true——缺省/缺失 = 非 merge（前端按缺省
       // 防御，非 merge 节点 payload 字段集零变化）。
@@ -727,7 +883,7 @@ object NodePayload:
       val roleFields = if node.role != NodeRoles.Task then List("role" -> node.role.asJson) else Nil
       val lastVerdictFields =
         node.lastVerdict.filter(_.trim.nonEmpty).toList.map(v => "lastVerdict" -> v.asJson)
-      Json.obj((baseFields ++ outFields ++ legacyConfigFields ++ hasResultFields ++ wiringGapFields ++ taskPreviewFields ++ depsFields ++ feedbackFields ++ pluginFields ++ notifyFields ++ mergeFields ++ loopFields ++ bgWaitFields ++ reportPendingFields ++ destroyAtFields ++ retryFields ++ genFields ++ notifySentAtFields ++ pendingSuccessionFields ++ chainFields ++ roleFields ++ lastVerdictFields)*)
+      Json.obj((baseFields ++ outFields ++ legacyConfigFields ++ hasResultFields ++ wiringGapFields ++ taskPreviewFields ++ depsFields ++ feedbackFields ++ pluginFields ++ notifyFields ++ notifyPolicyFields ++ mergeFields ++ loopFields ++ bgWaitFields ++ reportPendingFields ++ destroyAtFields ++ retryFields ++ genFields ++ notifySentAtFields ++ pendingSuccessionFields ++ chainFields ++ roleFields ++ lastVerdictFields)*)
 
 /** Flow Map 活动区（§2.6，磁盘 flow-map.json）。 */
 case class FlowMapState(
@@ -763,7 +919,15 @@ case class FlowMapArchiveBatch(
   project: String,
   batch: String,
   archivedAt: Long,
-  nodes: Map[String, NodeDef] = Map.empty
+  nodes: Map[String, NodeDef] = Map.empty,
+  /** 链摘要投递账（R8，b64 批 2026-09-13）：随批文件落盘，重启不丢。
+    * 三态由 [[summaryLedgerOn]] 区分：`summaryLedgerOn=false`（键缺失的存量批 =
+    * 账本启用前归档，不补发）/ `Some(None)`（已启用未投递）/ `Some(Some(t))`（已投递）。 */
+  summarySentAt: Option[Long] = None,
+  /** 账本启用标记：**键存在性**即语义（Key present = 本批由账本启用后的代码归档）。
+    * 存量 720 个批文件无此键 → None ⇒ 入册后 `summaryLedgerOn=false` ⇒ 永不成为
+    * 补投候选（防首轮扫描把整库历史链灌进根会话——见 FlowMapStore.chainSummaryCandidates）。 */
+  summaryLedgerOn: Option[Boolean] = None
 )
 
 object FlowMapArchiveBatch:
@@ -776,7 +940,15 @@ object FlowMapArchiveBatch:
 case class ArchiveBatchMeta(
   id: String,
   archivedAt: Long,
-  nodeIds: Set[String]
+  nodeIds: Set[String],
+  /** 链摘要投递账（R8，b64 批 2026-09-13；at-least-once：tell-then-mark，与
+    * `nebulaDeliveredAt`/`notifySentAt` 同款）：链归档 sweep 投出摘要成功后落时间戳，
+    * 使该链退出补投候选集（「恰一次」的载体）。空 = 已启用但未投递（含投递失败：
+    * 根 ref 缺失 ⇒ 不标记 ⇒ 下个 TtlTick 补投，宁重复不丢失）。 */
+  summarySentAt: Option[Long] = None,
+  /** 账本启用标记（见 [[FlowMapArchiveBatch.summaryLedgerOn]]）：`false` = 账本启用前
+    * 归档的存量批（不补发、不计入候选）；`true` = 本批链路走账本。 */
+  summaryLedgerOn: Boolean = false
 )
 
 /** 链谱系边（链级抽象 P0 · D3）：via ∈ {in, out, deps} 标注连接语义——deps 为弱关联
@@ -812,6 +984,11 @@ case class ProjectDef(
   /** blocked 反馈档位（设计 §7.1）：auto（默认，自动重入）| escalate-only（blocked 直接升级 Nebula）。
     * 可选字段——存量 project.json 无此字段时反序列化默认 None → 挂载时取 auto。 */
   feedbackMode: Option[String] = None,
+  /** 通知路由配置块（M4，b64 批 2026-09-13）：目前仅 `notify.quietMs`（静默/去抖窗口，
+    * 缺省 5s、上界 60s，键名为对外冻结命名）。可选字段——存量 project.json 无此键时
+    * 反序列化默认 None → 挂载时取缺省值。超限由 `NotifyPolicy.parseQuietMs` 给可行动
+    * 报错（**不截断**），挂载面据此 fail-fast（禁静默降级）。 */
+  notifyConfig: Option[NotifyConfig] = None,
   createdAt: Long,
   /** 归档标记（迁移方案 v2 §6.1）：只有显式人工动作（面板归档按钮 → POST
     * /api/projects/<name>/archive）会设置；无任何自动归档路径。归档后项目不出现在
@@ -825,5 +1002,9 @@ case class ProjectDef(
 )
 
 object ProjectDef:
+  /** M4：`notify.quietMs` 是**对外冻结的配置键路径**（作者裁定「键名一经使用不宜
+    * 改名」）——Scala 字段名 `notifyConfig`（`notify` 与 `java.lang.Object.notify()`
+    * 冲突），对外键名仍为 `notify`（含嵌套 `quietMs`）。 */
   given Configuration = Configuration.default.withDefaults
+    .withTransformMemberNames(name => if name == "notifyConfig" then "notify" else name)
   given Codec[ProjectDef] = ConfiguredCodec.derived

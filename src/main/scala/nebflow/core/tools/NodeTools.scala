@@ -518,6 +518,53 @@ object NodeTools:
         }
       }.map(_.flatten)
 
+  /** 通知策略声明自检（**WARNING 族**，b64 批 2026-09-13；形态仿 [[stalledInWarning]]：
+    * 成功结果尾部附 ⚠ 行，**非阻断**）。三条判据（spec §4.2 + 作者裁定 M3）：
+    *
+    *   ① **M3（作者裁定「只警告，不拦」）**：`silent` ∧ **链末端**（out 里没有任何
+    *      「可解析为节点的目标」——仅 Nebula 边 / 悬空名 / out=Nil 都算末端，D7 口径
+    *      与 `FlowMapStore.topologicalChains` 的 `hasNodeTarget` 同源）。语义 = 该节点
+    *      是链的收口位，自身静默 + 下游无节点 ⇒ 完成事实在根面**完全没有**节点级入口，
+    *      只能等链归档时的链摘要。**不动引擎投递、不新增错误码、不硬拒**。
+    *   ② `silent` ∧ failed：spec §4.2「`silent` ∧ failed | 不阻断（failed 由引擎恒定回
+    *      分发器）但校验期 WARNING 提示『silent 不豁免 failed』」（R14）。
+    *   ③ `root` ∧ out 无 Nebula 边：spec §4.2「WARNING 不阻断：声明 root 但无根出口
+    *      ——因链摘要由引擎聚合派发，无 Nebula 边不等于无根可见性」。
+    *
+    * 返回 ⚠ 行列表（空 = 无告警）。判据纯读（0 spawn、0 写）。 */
+  def notifyPolicyWarnings(
+      rt: ProjectRuntime,
+      nodeName: String,
+      policy: Option[String],
+      legacyFlag: Boolean,
+      finalOut: List[OutEdge]
+  ): IO[List[String]] =
+    rt.store.snapshot.map { s =>
+      val edges = OutEdge.canonical(finalOut).filterNot(OutEdge.isLoopEdge)
+      val hasNodeTarget = edges.exists(e =>
+        e.to != OutEdge.NebulaTarget && OutEdge.resolveTargetId(s.nodes, e.to).isDefined)
+      val nebulaRootEdge = edges.exists(e =>
+        e.to == OutEdge.NebulaTarget && e.mode == OutEdge.Result && e.on.contains(OutEdge.Pass))
+      // 生效策略（缺键 ⇒ legacy 三态：投根 ⇒ root / flag ⇒ dispatcher / else silent）
+      val effective = policy.getOrElse(
+        if nebulaRootEdge then NotifyPolicy.Root
+        else if legacyFlag then NotifyPolicy.Dispatcher
+        else NotifyPolicy.Silent)
+      val isChainEnd = !hasNodeTarget
+      val lines = List(
+        if effective == NotifyPolicy.Silent && isChainEnd then
+          Some(s"⚠ notify=silent on a CHAIN-END node ('$nodeName': no out-edge resolves to a node) — its completion will reach the root ONLY through the chain summary emitted when the chain is archived, and a single-member (isolated) chain emits NO summary at all. Declare notify=root if this node's result must be seen as it completes. (warning only — nothing is blocked)")
+        else None,
+        if effective == NotifyPolicy.Silent then
+          Some(s"⚠ notify=silent does NOT exempt failures ('$nodeName'): a failed node always notifies the dispatcher (and an explicit '(failed)Nebula' edge still reports to the root). silent suppresses COMPLETED events only.")
+        else None,
+        if effective == NotifyPolicy.Root && !nebulaRootEdge then
+          Some(s"⚠ notify=root but no root outlet declared ('$nodeName': no '(pass)Nebula' :result edge) — the node itself will not post to the root; chain-level visibility still arrives with the archived chain summary. Add an explicit '(pass)Nebula' out-edge if a per-node root bubble is required.")
+        else None
+      ).flatten
+      lines
+    }
+
   // ── 环检测（对外暴露给测试）────────────────────────────
 
   def wouldCreateCycle(rt: ProjectRuntime, fromId: String, to: String): IO[Boolean] =
@@ -805,7 +852,20 @@ object NodeTools:
   * （flag, provided）经 implicit 从 call() 词法作用域自动填入 createNode/proceed/
   * editNode——三者的既有调用点零文本改动（在飞批 trigger-chain-fix 占用了这些
   * 调用点行，碰撞规避；implicit 参数解析为 Scala 标准机制，非 hack）。 */
-final case class NodeEditNotify(flag: Boolean, provided: Boolean)
+/** @param flag            legacy `notifyDispatcher` 实参（true/false）
+  * @param provided        legacy `notifyDispatcher` 是否显式传入
+  * @param policy          **新权威字段** `notify` 的声明值（None = 显式清除/未传，
+  *                        由 [[policyProvided]] 区分；b64 批 2026-09-13）
+  * @param policyProvided  `notify` 是否显式传入（true 且 policy=None ⇒ 显式清除，
+  *                        节点回落 legacy 解析） */
+final case class NodeEditNotify(
+    flag: Boolean,
+    provided: Boolean,
+    policy: Option[String] = None,
+    policyProvided: Boolean = false,
+    /** `notify` 值域校验失败的可行动报错（NODE_NOTIFY_INVALID）：非空 ⇒ 创建/编辑
+      * 路径**前置拒绝**（`call()` 词法作用域解析单点，与 retry/loop 门同款短路）。 */
+    invalid: Option[String] = None)
 
 /** loop 参数载体（LoopNode 批 2026-09-06）：call() 解析的（config, provided）经
   * implicit 自动填入 createNode/proceed/editNode——调用点零文本改动（与
@@ -865,7 +925,8 @@ object NodeEditTool extends Tool:
 - role (optional, CREATE-ONLY): "task" (default; node_report: finish | blocked) | "verifier" (judges another node's output; node_report: pass | fail | blocked). A verifier's out MUST declare one "(fail)<worker>:loop" route (NODE_VERIFIER_NEEDS_ROUTE); on edit ⇒ NODE_ROLE_CREATE_ONLY.
 - reactivateCompleted (optional, edit only): explicit authorization NODE_COMPLETED_REACTIVATION — re-run a COMPLETED node (status → wiring/pending, result cleared, upstreams re-delivered; logged). Omitted ⇒ a completed-node edit only rewires + auto-delivers the retained result.
 - restoreChain (optional, default false): when in/deps reference an ARCHIVED node (or this nodename is archived), true pulls that node's whole chain back onto the active map FIRST, then runs this create/edit normally.
-- notifyDispatcher (optional, default false): on COMPLETION, trigger a dispatcher session holding this node's result reference. Completion-only — failed always notifies; blocked reserved; settable while wiring/pending/running.
+- notify (optional; create default "dispatcher"): who sees this node's COMPLETED event — "silent" | "dispatcher" (dispatcher session, NOT root) | "root". It also arbitrates an existing 'Nebula' out-edge: with dispatcher/silent the edge stays declared but its runtime delivery is suppressed (no rewiring needed); failed events are never suppressed. null clears the declaration (legacy behaviour). Settable while wiring/pending/running; any other value ⇒ NODE_NOTIFY_INVALID.
+- notifyDispatcher (optional; LEGACY alias of notify, one version): true ≈ notify=dispatcher. Ignored with a warning when the node already declares notify. Completion-only — failed always notifies; blocked reserved; settable while wiring/pending/running.
 - Retired (rejected, NODE_AGENT_RETIRED): agent / skill / mcp — capability = plugins.
 ## Semantics
 - Create requires an input side (task or in) → else EMPTY_NODE_CONNECTION; out may be empty. Entry (task) runs on create (async).
@@ -903,7 +964,16 @@ object NodeEditTool extends Tool:
         "worktree" -> Json.obj("type" -> "boolean".asJson, "description" -> "Create-time only: true = isolated git worktree auto-created at .nebflow/worktrees/<derived-from-node-name> (same-name branch, baseline = main HEAD; failure rejects the NodeEdit). false/omitted = workspace direct-run. Refused on edits".asJson),
         "preset" -> Json.obj("type" -> "string".asJson),
         "merge" -> Json.obj("type" -> "boolean".asJson, "description" -> "Merge/collection node (batch landing sink, create-only): triggers only when ALL upstreams completed (in-barrier); an upstream failure converts this node to blocked (category=upstream-incomplete) instead of the collect placeholder-start. Must NOT carry 'worktree' — a merge node lands on the workspace root repo (sandbox root = workspace, .git writable); task should embed the upstream branch/worktree list + landing command set. REQUIRES 'in' (≥1 existing upstream id) on create — zero-upstream merge is rejected (NODE_MERGE_REQUIRES_UPSTREAM): create the upstreams first, then this node with in=<ids>".asJson),
-        "notifyDispatcher" -> Json.obj("type" -> "boolean".asJson, "description" -> "dispatch-notify backflow: on terminal state (completion wired) trigger a dispatcher session with this node's result reference (independent signal channel, no out-edge cost). Settable/withdrawable while wiring/pending/running".asJson),
+        "notify" -> Json.obj("type" -> "string".asJson,
+          "description" -> ("Notification policy for this node's COMPLETED event (create default: dispatcher). " +
+            "\"silent\" = nobody is notified (Flow Map + persisted result only); \"dispatcher\" = the project dispatcher is notified, NOT the root; \"root\" = the root sees it. " +
+            "The policy also decides whether an existing 'Nebula' out-edge actually posts: with dispatcher/silent that edge is kept as a DECLARATION but its runtime delivery is suppressed (markNebulaDelivered bookkeeping, so no redelivery revival) — you never need to rewire an existing topology to silence it. " +
+            "A ':signal' Nebula edge is an inert exit marker either way (ledger only) — the policy cannot promote it to a root notify. " +
+            "FAILED events are never suppressed: a failed node always notifies the dispatcher, and an explicit '(failed)Nebula' edge still reports to the root. " +
+            "Chains with 2+ members also emit ONE aggregated 'source=chain' summary to the root when the chain is archived — that is independent of this field. " +
+            "Legal values: silent | dispatcher | root; null clears the declaration (legacy resolution applies again). " +
+            "Settable/withdrawable while wiring/pending/running (NODE_NOTIFY_INVALID on any other value).").asJson),
+        "notifyDispatcher" -> Json.obj("type" -> "boolean".asJson, "description" -> "LEGACY alias of 'notify' (kept for one version): completion backflow toggle. Ignored (warned) when the node already declares 'notify'; prefer 'notify' in new calls (notifyDispatcher=true ≈ notify=dispatcher). Settable/withdrawable while wiring/pending/running".asJson),
         "abandon" -> Json.obj("type" -> "boolean".asJson, "description" -> "Abandon a TERMINAL (blocked/completed/failed/cancelled), wiring/pending, or dead-session running node → cancelled, retained on map (no TTL — failed/cancelled never auto-archive; upper layer decides cleanup; audit-logged)".asJson),
         "role" -> Json.obj("type" -> "string".asJson,
           "description" -> ("Node role — CREATE-ONLY (NODE_ROLE_CREATE_ONLY; rejected on edit: a node's role decides its node_report value domain and whether it may route a verdict, so it is a topology identity, not a runtime switch). " +
@@ -975,7 +1045,29 @@ object NodeEditTool extends Tool:
     // （缺省 = 不改动——同 plugins 缺省不改动形态）。载体经 implicit 传入 createNode/
     // proceed/editNode——三者的既有调用点零改动（碰撞规避：在飞批占用了这些调用点行）。
     val notifyProvided = input("notifyDispatcher").flatMap(_.asBoolean)
-    implicit val notifyFlag: NodeEditNotify = NodeEditNotify(notifyProvided.getOrElse(false), notifyProvided.isDefined)
+    // notify 三值（b64 批 2026-09-13，R1/R2/R3/R5）：**新权威字段**。
+    // 三形态（replace-on-provide，与 deps/retry 同款）：
+    //   未传          → policyProvided=false（创建落缺省 `dispatcher`；编辑零改动）
+    //   传 null       → 显式**清除**（回落 legacy 解析）
+    //   传 "silent"…  → 校验（NODE_NOTIFY_INVALID）后落盘
+    val notifyPolicyJson = input("notify")
+    // **provided = 键存在**（含 `null`）：`null` 是「显式清除」这一动作（回落 legacy 解析），
+    // 必须与「未传 = 不改动」区分开——否则 edit 路径的 replace-on-provide 闸门会把清除
+    // 当成 no-op（`policyProvided=false` ⇒ 写回腿整条跳过）。
+    val notifyPolicyProvided = notifyPolicyJson.isDefined
+    val notifyPolicyParsed: Either[String, Option[String]] =
+      notifyPolicyJson match
+        case None                => Right(None)
+        case Some(j) if j.isNull => Right(None)
+        case Some(j) =>
+          j.asString match
+            case Some(s) => NotifyPolicy.validate(s).map(Some.apply)
+            case None    => Left(s"'notify' must be a string (silent | dispatcher | root) or null to clear it, got ${j.noSpaces}. (${NotifyPolicy.InvalidCode})")
+    implicit val notifyFlag: NodeEditNotify = NodeEditNotify(
+      notifyProvided.getOrElse(false), notifyProvided.isDefined,
+      policy = notifyPolicyParsed.getOrElse(None),
+      policyProvided = notifyPolicyProvided,
+      invalid = notifyPolicyParsed.left.toOption)
     // loop 参数（LoopNode 批 2026-09-06）：Option 区分「未传」（编辑不改动 / 创建 None，
     // provided=false）与「传了」（loop true 启用 / false 停用）。载体经 implicit 传入
     // createNode/proceed/editNode——调用点零文本改动（与 notifyFlag 同机制）。maxRounds
@@ -1427,6 +1519,9 @@ object NodeEditTool extends Tool:
       // P1 校验层②（spec §2.2）：下游持 in 边而上游已 failed 无 on-failed 边且非 merge →
       // WARNING（不阻断，人工兜底合法）——补投链/死锁可见性由既有 mount-stalled 承载
       stallWarn <- NodeTools.stalledInWarning(rt, nodeId, nodename, ins, merge)
+      // 通知策略自检（b64 批；M3/R14/spec §4.2 三条，仅 WARNING 不阻断）
+      notifyWarn <- NodeTools.notifyPolicyWarnings(rt, nodename,
+        Some(notify.policy.getOrElse(NotifyPolicy.Default)), notify.flag, out)
       // loop 门集预检（2026-09-12 裁定 2/3，0 spawn）：本次创建会写入两条路径的最终边集
       // ——① 本节点 out（`(pass)Nebula` 单腿等形态）；② 每个 in 上游的 out 镜像追加
       //（`appendEdgeTo`，下游 in: 声明路）。任一违规 ⇒ 整调用拒绝（节点不落库、上游零改边）。
@@ -1465,6 +1560,9 @@ object NodeEditTool extends Tool:
           IO.pure(Left(ToolError(outOk.collectFirst { case Left(e) => e }.getOrElse("invalid out"))))
         else if cycleOut.exists(identity) then
           IO.pure(Left(ToolError(s"Cycle detected: out → ${outTargets.mkString(", ")} would create a loop — DAG must stay acyclic")))
+        else if notify.invalid.isDefined then
+          // notify 值域（b64 批 R1/R2；错误码 NODE_NOTIFY_INVALID，文案含合法值域 + 实收值）
+          IO.pure(Left(ToolError(notify.invalid.get)))
         else if mergeGate.isDefined then
           IO.pure(Left(ToolError(mergeGate.get)))
         else if retryGate.isDefined then
@@ -1502,6 +1600,11 @@ object NodeEditTool extends Tool:
             // dispatch-notify 回流标志（创建期按需开启；缺省 false=分发器新建节点
             // 不继承——收敛保证见 DispatchNotify）
             notifyDispatcher = notify.flag,
+            // **通知策略（b64 批 R2）**：创建期**显式落盘**——传了就用传的值，
+            // 未传落缺省 `dispatcher`（写盘，非缺键；缺键只属于存量/在飞节点）。
+            // 这是「新默认」的落点：存量批不受扰动（R3 零漂移），新批的中间节点不再
+            // 因 out 里的 Nebula 边投根（R5 抑制）。
+            notifyPolicy = Some(notify.policy.getOrElse(NotifyPolicy.Default)),
             out = OutEdge.canonical(out),
             status = if task.isDefined && ins.isEmpty then NodeLifecycle.Pending else NodeLifecycle.Wiring,
             createdAt = now,
@@ -1619,6 +1722,8 @@ object NodeEditTool extends Tool:
                       case Some(p) => s" retry ← ${p.upstream}:max=${p.max}"
                       case None => "") +
                     (if stallWarn.nonEmpty then "\n" + stallWarn.mkString("\n") else "") +
+                    // 通知策略自检（b64 批；WARNING 族，含 M3「silent ∧ 链末端只警告」）
+                    (if notifyWarn.nonEmpty then "\n" + notifyWarn.mkString("\n") else "") +
                     (if out.isEmpty then "\n" + NodeTools.wiringGapHint(nodename, nodeId).mkString("\n") else "")
                 ))
             }
@@ -1887,6 +1992,12 @@ object NodeEditTool extends Tool:
                           // 终态拒（blocked 出口=重激活）。
                           val notifyStatusOk = !notify.provided ||
                             (node.status == NodeLifecycle.Wiring || node.status == NodeLifecycle.Pending || node.status == NodeLifecycle.Running)
+                          // notify 策略（b64 批 R1）可设置时机与 notifyDispatcher **同域**
+                          //（spec §4.2「可设置时机」行：仅 wiring/pending/running——终态节点
+                          // 改策略无意义）。b64：两个参数共用上一条闸门。
+                          val notifyPolicyStatusOk = !notify.policyProvided || notifyStatusOk
+                          // notify 值域错误优先短路（NODE_NOTIFY_INVALID）
+                          val notifyPolicyInvalid = notify.invalid
                           // loop 校验（LoopNode 批 2026-09-06）：设置/撤销域同 hold——enabled
                           // 开关是行为开关（loop 迭代仅在 running 期驱动、PASS 完成时经
                           // completeNode 走 hold/merge/投递），wiring/pending/running 可设；
@@ -1911,9 +2022,14 @@ object NodeEditTool extends Tool:
                               Some(ToolError(loopSelfGate.get))
                             else if dChecks.exists(_.isLeft) then
                               Some(ToolError(dChecks.collectFirst { case Left(e) => e }.getOrElse("invalid deps")))
+                            else if notifyPolicyInvalid.isDefined then
+                              Some(ToolError(notifyPolicyInvalid.get))
                             else if !notifyStatusOk then
                               Some(ToolError(
                                 s"notifyDispatcher can only be set or withdrawn before completion (wiring/pending/running) — node '${node.name}' is ${node.status} (result already delivered). re-activation is the exit for blocked/failed."))
+                            else if !notifyPolicyStatusOk then
+                              Some(ToolError(
+                                s"notify can only be set or cleared before completion (wiring/pending/running) — node '${node.name}' is ${node.status} (result already delivered). re-activation is the exit for blocked/failed. (${NotifyPolicy.InvalidCode})"))
                             else if !loopStatusOk then
                               Some(ToolError(
                                 s"loop can only be set or withdrawn before completion (wiring/pending/running) — node '${node.name}' is ${node.status} (result already delivered). re-activation is the exit for blocked/failed."))
@@ -2148,10 +2264,31 @@ object NodeEditTool extends Tool:
                                       // （完成时行为开关）。事务内现读 fresh（R2 纪律）+ 状态双重保险。
                                       _ <-
                                         if notify.provided then
+                                          // R1 并存过渡（b64 批）：`notify` 已是权威值时
+                                          // 本键不再参与裁决 ⇒ **写侧拒绝静默改动**，只 WARN
+                                          // 告知（B1-b「二者冲突时 notify 优先并 WARN」）。
+                                          rt.store.findNode(node.id).flatMap {
+                                            case Some(fresh) if fresh.notifyPolicy.isDefined =>
+                                              logger.warn(
+                                                s"NodeEdit notifyDispatcher=${notify.flag} ignored on node '${node.name}' (${node.id}): the node declares notify=${fresh.notifyPolicy.get} (authoritative since the b64 batch) — use 'notify' to change its notification policy")
+                                            case _ =>
+                                              rt.store.mutate { s =>
+                                                s.nodes.get(node.id) match
+                                                  case Some(fresh) if fresh.status == NodeLifecycle.Wiring || fresh.status == NodeLifecycle.Pending || fresh.status == NodeLifecycle.Running =>
+                                                    s.copy(nodes = s.nodes.updated(node.id, fresh.copy(notifyDispatcher = notify.flag)))
+                                                  case _ => s
+                                              }.void
+                                          }
+                                        else IO.unit
+                                      // notify 策略写回（b64 批 R1）：replace-on-provide（传 null
+                                      // = 显式清除 ⇒ 回落 legacy 解析）。校验已在 earlyReject
+                                      // 拦截；状态域与 notifyDispatcher 同（wiring/pending/running）。
+                                      _ <-
+                                        if notify.policyProvided then
                                           rt.store.mutate { s =>
                                             s.nodes.get(node.id) match
                                               case Some(fresh) if fresh.status == NodeLifecycle.Wiring || fresh.status == NodeLifecycle.Pending || fresh.status == NodeLifecycle.Running =>
-                                                s.copy(nodes = s.nodes.updated(node.id, fresh.copy(notifyDispatcher = notify.flag)))
+                                                s.copy(nodes = s.nodes.updated(node.id, fresh.copy(notifyPolicy = notify.policy)))
                                               case _ => s
                                           }.void
                                         else IO.unit
@@ -2394,8 +2531,17 @@ object NodeEditTool extends Tool:
                                 // 边且非 merge → WARNING 级提示（不阻断，附成功结果尾部；死锁持续
                                 // 可见性由既有 mount-stalled 事件承载）
                                 stallWarn <- NodeTools.stalledInWarning(rt, node.id, node.name, finalIn, node.merge)
-                              yield inResult.map(r =>
-                                if stallWarn.isEmpty then r else r + "\n" + stallWarn.mkString("\n"))
+                                // 通知策略自检（b64 批）：按**本次编辑后的生效声明**判
+                                //（传了 notify 用新值，否则沿用节点现值；legacy flag 同源）。
+                                notifyWarn <- NodeTools.notifyPolicyWarnings(
+                                  rt, node.name,
+                                  if notify.policyProvided then notify.policy else node.notifyPolicy,
+                                  if notify.provided then notify.flag else node.notifyDispatcher,
+                                  finalOut)
+                              yield inResult.map { r =>
+                                val warn = stallWarn ++ notifyWarn
+                                if warn.isEmpty then r else r + "\n" + warn.mkString("\n")
+                              }
                           }
                           }
                           }
@@ -2794,7 +2940,8 @@ object ProjectCreateTool extends Tool:
               s"ProjectCreate 需要项目工作区路径 — 点击上方「选择工作区」打开应用内目录浏览器" +
                 s"（可逐级浏览、新建文件夹，含隐藏目录）；或在下方输入框手输绝对路径（支持 ~ 展开）。"
             val item = AskItem(question, List.empty, dirPicker = true)
-            val requestId = java.util.UUID.randomUUID().toString.take(8)
+            // #250 第⑤项：requestId 熵强化（单点生成器，作用域 panel-）
+            val requestId = nebflow.agent.InteractionRequestId.forDirPanel()
             for
               answers <- agentRef
                 .?(

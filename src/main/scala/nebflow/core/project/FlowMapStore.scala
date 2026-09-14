@@ -251,9 +251,14 @@ class FlowMapStore private (
           bt0 <- batches.get
           // 批 id 合并（跨区续做分量）：拓扑链 id 可能与既有归档批 id 重合（归档上游
           // 是分量内 createdAt 最早节点）——memberIds 并集，旧批成员保持批次归属。
+          // 链摘要账（R8，b64 批）：本次出库 = 一个**新的**「链完成」事实 ⇒ 账本启用
+          // 并复位为未投递（跨区续做分量并入既有批时同理——链条在长大，新成员的完成
+          // 需要被宣告一次）。复位不会造成重复宣告：本链已无活跃成员 ⇒ 不再命中
+          // sweep（:174 判据），除非又有新节点接入（那是一次真实的新完成）。
           metas: Map[String, ArchiveBatchMeta] = doneChains.map { case (c, members) =>
             val merged = bt0.get(c.id).map(_.nodeIds).getOrElse(Set.empty)
-            c.id -> ArchiveBatchMeta(c.id, now, members.map(_.id).toSet ++ merged)
+            c.id -> ArchiveBatchMeta(c.id, now, members.map(_.id).toSet ++ merged,
+              summarySentAt = None, summaryLedgerOn = true)
           }.toMap
           _ <- batches.update(_ ++ metas)
           newArc <- archive.updateAndGet(a2 => a2.copy(nodes = a2.nodes ++ moved.map(n => n.id -> n).toMap))
@@ -270,6 +275,78 @@ class FlowMapStore private (
         archivedAt = now
       )
     }
+
+  /** ── 链级摘要（out 语义与通知路由重设计 · b64 批 2026-09-13；R6/R7/R8/R11/R15 + M2）──
+    *
+    * 触发点 = **归档 sweep**（R7 = spec §3-B2-2a 推荐：`chainArchivable` + `:174
+    * activeMembers.isEmpty` 是引擎**已经算出**「链全终态」的唯一位置，归档即链事实终结）
+    * ——本类在 [[sweepCompletedChainsDetailed]] 出库时把该链的批次账本置「已启用未投递」
+    * （见 sweep 内注），投递与记账由调用方（ProjectActor.TtlTick）在本 API 上完成。
+    *
+    * == M2（作者 2026-09-13 裁定）==
+    * **只对 ≥2 成员的链发摘要**：孤立单成员链（现网归档区 357/720 = 49.6%）不发链摘要、
+    * 保持节点级通道；且**禁向单成员链下发 `chainId`**（与 `chainIdOf` 的「分量成员
+    * ≥2 才返回」判据同源）。判据单点 = [[MinChainMembersForSummary]]。
+    *
+    * == R8（可靠性）==
+    * tell-then-mark + `summarySentAt` 记账 + 本 API 的补投候选扫描：投递成功才
+    * [[markChainSummarySent]]（⇒ 恰一次）；根 ref 缺失/进程崩溃 ⇒ 不记账 ⇒ 下个
+    * TtlTick 由候选扫描补投（⇒ at-least-once，宁重复不丢失）。
+    * **存量批不补发**：账本启用（`summaryLedgerOn`）只对启用后归档的批为真 ⇒ 首轮扫描
+    * 不会把整库历史链（720 批）灌进根会话。
+    *
+    * == R11（护栏，分账）==
+    * 单设上限——独立链摘要 ≤ [[ChainSummaryMaxPerRound]] 条/回合，**超出部分合并为一条**
+    * 「本回合 N 条链完成」计数摘要；与 `DispatchNotify` 的 completion/failed 预算**分账**
+    * （不挤占，见 [[DispatchNotify]] 的独立账本）。
+    *
+    * == R15（结构）==
+    * 头行 + 起止 + 每成员一行（≤[[ChainSummaryPerNodeChars]]，与
+    * `NodeEngine.StaleSummaryPerNodeChars` 同值同源）+ 读取指引；成员 >
+    * [[ChainSummaryFoldMembers]] 时 completed 折叠为计数（failed/cancelled 逐条留）；
+    * 总长 ≤ [[ChainSummaryMaxChars]]。 */
+
+  /** 补投候选 + R11 分档（唯一出口：调用方只负责投递与记账）。
+    * @param maxIndividual 本回合允许的**独立**链摘要条数（R11 = 3）
+    * @return (独立摘要（≤maxIndividual，按 (archivedAt, chainId) 确定性排序）, 溢出条目
+    *         （由调用方经 [[FlowMapStore.renderChainSummaryOverflow]] 合成**一条**计数摘要）) */
+  def chainSummaryBatch(maxIndividual: Int): IO[(List[FlowMapStore.ChainSummary], List[FlowMapStore.ChainSummary])] =
+    for
+      bt <- batches.get
+      a <- archiveSnapshot
+      s <- snapshot
+      due = bt.values
+        .filter(m => m.summaryLedgerOn && m.summarySentAt.isEmpty && m.nodeIds.size >= FlowMapStore.MinChainMembersForSummary)
+        .toList
+        .sortBy(m => (m.archivedAt, m.id))
+      rendered = due.flatMap(m => FlowMapStore.renderChainSummary(m, a, s).toList)
+      (head, tail) = rendered.splitAt(math.max(0, maxIndividual))
+    yield (head, tail)
+
+  /** 单条链摘要渲染（按 chainId 现渲染；供测试与按需排查用）。 */
+  def renderChainSummaryById(chainId: String): IO[Option[FlowMapStore.ChainSummary]] =
+    for
+      bt <- batches.get
+      a <- archiveSnapshot
+      s <- snapshot
+    yield bt.get(chainId).flatMap(m => FlowMapStore.renderChainSummary(m, a, s))
+
+  /** 链摘要投递记账（tell-then-mark 的 mark 端）：置 `summarySentAt` 并**重写该批文件**
+    * （账本随批落盘 ⇒ 重启后不再投）。幂等：已置位的批不被候选扫描选中，本方法只由
+    * 成功投递路径调用。 */
+  def markChainSummarySent(chainId: String, at: Long): IO[Unit] =
+    for
+      before <- batches.get
+      a <- archiveSnapshot // 必须是**真档**：persistBatchFiles 对空成员集会删批文件
+      updated = before.get(chainId) match
+        case Some(m) => before.updated(chainId, m.copy(summarySentAt = Some(at), summaryLedgerOn = true))
+        case None    => before
+      _ <- if before.get(chainId).isDefined then
+        // 先写账后落盘（崩溃窗口：账在内存 = 已投递，落盘失败下个 tick 会重投一次
+        // ——at-least-once 语义内可接受；反向顺序会在崩溃后重复投且无账可查）。
+        batches.set(updated) *> persistBatchFiles(Set(chainId), a, updated)
+      else IO.unit
+    yield ()
 
   /** 链拉回（链级抽象 P2 · spec §5.3-③）：把 `nodeIds` 所属的**归档批整体**移回活动区。
     *
@@ -402,7 +479,13 @@ class FlowMapStore private (
               writeResultFiles(nodes)
               // 归档不写 task 文件（writeTaskFiles 仅活动区）——存量活动期 task 文件
               // 留存为孤儿（不删不引用），JSON 侧 task 键剥除。
-              val file = FlowMapArchiveBatch(project, bid, meta.archivedAt, nodes)
+              // 链摘要账随批文件落盘（R8）：仅账本已启用的批写键（`summaryLedgerOn:
+              // Some(true)` 即「键存在」= 账本启用，见 FlowMapArchiveBatch 注释）；
+              // 存量批保持**零新键**（键缺失 = 账本启用前归档 ⇒ 永不成为补投候选）。
+              val file = FlowMapArchiveBatch(
+                project, bid, meta.archivedAt, nodes,
+                summarySentAt = meta.summarySentAt,
+                summaryLedgerOn = if meta.summaryLedgerOn then Some(true) else None)
               AtomicJson.writeSync(batchPath(bid), stripNodeTasks(slimNodeResults(file.asJson)).noSpaces)
           }
         }
@@ -654,7 +737,11 @@ class FlowMapStore private (
                 val bid = if b.batch.nonEmpty then b.batch else f.last.stripSuffix(".json")
                 val normalized = b.nodes.transform((_, n) => normalizeOut(n))
                 val (hydrated, migrated) = hydrateAndMigrate(normalized, f, migrateTasks = false)
-                Some((ArchiveBatchMeta(bid, b.archivedAt, hydrated.keySet), hydrated, migrated))
+                // 链摘要账回读（R8）：`summaryLedgerOn` 键**存在**（Some(true)）才认账本
+                // 启用——存量 720 个批文件无此键 ⇒ None ⇒ 账本关闭（不补发历史链）。
+                Some((ArchiveBatchMeta(bid, b.archivedAt, hydrated.keySet,
+                  summarySentAt = b.summarySentAt,
+                  summaryLedgerOn = b.summaryLedgerOn.contains(true)), hydrated, migrated))
               case Left(e) =>
                 logger.warnSync(s"flow-map '$project': archive batch file corrupt: ${f.last}: $e — skipped")
                 None
@@ -724,6 +811,121 @@ object FlowMapStore:
     members: Int,
     archivedAt: Long
   )
+
+  /** ── 链级摘要载体与常量（R6/R7/R8/R11/R15 + M2；b64 批 2026-09-13）──────────── */
+
+  /** M2 判据单点（作者裁定）：**成员数 ≥2 的链才发链摘要**；孤立单成员链不发、
+    * 保持节点级通道，且不下发 `chainId`（与 `chainIdOf` 的「≥2 才返回」同源）。
+    * 现网实证（只读复取，720 个批文件）：单成员 357 / ≥2 成员 363 ⇒ 该判据把
+    * 近半数归档链排除在摘要面之外（正是作者给样本要防的噪声面）。 */
+  val MinChainMembersForSummary: Int = 2
+
+  /** R11 护栏：每回合独立链摘要条数上限（超出部分合并为一条计数摘要，见
+    * [[chainSummaryBatch]]）。与 `DispatchNotify` 的 completion/failed 预算分账。 */
+  val ChainSummaryMaxPerRound: Int = 3
+
+  /** R15：每成员行 result 首行截断长度——**与 `NodeEngine.StaleSummaryPerNodeChars`
+    * 同值同源**（160；历史欠账汇总已有同款行格式）。 */
+  val ChainSummaryPerNodeChars: Int = 160
+
+  /** R15：每成员行 description 截断长度（≤60，与创建期 description 上限同源）。 */
+  val ChainSummaryDescriptionChars: Int = 60
+
+  /** R15：成员数超过本值时 completed 折叠为计数（failed/cancelled 逐条留）。 */
+  val ChainSummaryFoldMembers: Int = 20
+
+  /** R15：摘要总长上限（字符；超出按「先折叠、再截断尾部」收敛，恒带计数尾注）。 */
+  val ChainSummaryMaxChars: Int = 4000
+
+  /** 事件类型（前端 `EVENT_TYPE_LABELS` 既有键）：全 completed → `completed`；
+    * 含 failed → `failed`（强提醒）——与 `deliverStaleSummary` 同口径。 */
+  val ChainSummaryEventCompleted: String = NodeLifecycle.Completed
+  val ChainSummaryEventFailed: String = NodeLifecycle.Failed
+
+  /** 注入来源定名（R12/R16：新 `source` 值，前端 `INJECTED_SOURCE_LABELS` 显式登记）。 */
+  val ChainSummarySource: String = "chain"
+
+  /** 链摘要载体（渲染完成态）：文本 + 链级事实 + 事件类型（投递面用）。 */
+  case class ChainSummary(
+    chainId: String,
+    title: String,
+    members: Int,
+    completed: Int,
+    failed: Int,
+    cancelled: Int,
+    eventType: String,
+    text: String
+  )
+
+  /** 本地时格式化（`yyyy-MM-dd HH:mm`；与前端气泡可读性口径一致，只用于摘要文本）。 */
+  private[project] def fmtLocal(ms: Long): String =
+    val z = java.time.Instant.ofEpochMilli(ms).atZone(java.time.ZoneId.systemDefault())
+    f"${z.getYear}%04d-${z.getMonthValue}%02d-${z.getDayOfMonth}%02d ${z.getHour}%02d:${z.getMinute}%02d"
+
+  /** 用时格式化（`<T>`：秒级 < 60 ⇒ `Ns`，否则 `Hh Mm` / `Mm`）。 */
+  private[project] def fmtDuration(ms: Long): String =
+    val s = math.max(0L, ms / 1000L)
+    if s < 60 then s"${s}s"
+    else if s < 3600 then s"${s / 60}m"
+    else s"${s / 3600}h ${(s % 3600) / 60}m"
+
+  /** 单条链摘要渲染（R15 结构）：头行 + 起止 + 成员行（>20 折叠）+ 读取指引。
+    * 成员集 = 批次账本的 `nodeIds`（跨区续做分量的**全链**成员），节点定义取归档区，
+    * 归档缺失时回落活动区（sweep 与投递之间的窗口）。纯函数（无 IO，便于单测）。 */
+  def renderChainSummary(
+      meta: ArchiveBatchMeta,
+      archive: FlowMapArchive,
+      active: FlowMapState
+  ): Option[ChainSummary] =
+    val members = meta.nodeIds.toList.distinct
+      .flatMap(id => archive.nodes.get(id).orElse(active.nodes.get(id)))
+    if members.size < MinChainMembersForSummary then None
+    else
+      val sorted = members.sortBy(n => (n.createdAt, n.id))
+      val title = chainTitle(sorted, meta.id)
+      val completed = sorted.count(_.status == NodeLifecycle.Completed)
+      val failed = sorted.count(_.status == NodeLifecycle.Failed)
+      val cancelled = sorted.count(_.status == NodeLifecycle.Cancelled)
+      val other = sorted.size - completed - failed - cancelled
+      val start = sorted.map(_.createdAt).min
+      val end = sorted.flatMap(_.completedAt).maxOption.getOrElse(meta.archivedAt)
+      val head = s"[Chain '$title' · ${sorted.size} nodes · $completed completed · $failed failed · $cancelled cancelled" +
+        (if other > 0 then s" · $other other" else "") + s" · 用时 ${fmtDuration(end - start)}]"
+      val span = s"起止：${fmtLocal(start)} → ${fmtLocal(end)}"
+      def row(n: NodeDef, i: Int): String =
+        val desc = n.description.map(d => s"${d.take(ChainSummaryDescriptionChars)}｜").getOrElse("")
+        if n.status == NodeLifecycle.Failed then
+          s"$i. [failed] ${n.name} (${n.id}) — $desc${n.result.map(_.linesIterator.next().take(ChainSummaryPerNodeChars)).getOrElse("failed")}（已回分发器处置；详情见 NodeList(detail=\"${n.id}\")）"
+        else
+          s"$i. [${n.status}] ${n.name} (${n.id}) — $desc${n.result.map(_.linesIterator.next().take(ChainSummaryPerNodeChars)).getOrElse("(无结果文本)")}"
+      // R15 折叠：成员 > 阈值 ⇒ completed 折叠为计数，failed/cancelled 逐条留
+      val rows =
+        if sorted.size > ChainSummaryFoldMembers then
+          val notable = sorted.filter(n => n.status != NodeLifecycle.Completed)
+          (if completed > 0 then List(s"· completed ×$completed（折叠：成员数 ${sorted.size} > $ChainSummaryFoldMembers）") else Nil) ++
+            notable.zipWithIndex.map((n, i) => row(n, i + 1))
+        else sorted.zipWithIndex.map((n, i) => row(n, i + 1))
+      val guide = "读取指引：NodeList(detail=\"<id>\") · REST results 端点按需取全文"
+      val raw = (head :: span :: rows ::: List(guide)).mkString("\n")
+      val text =
+        if raw.length <= ChainSummaryMaxChars then raw
+        else
+          val kept = scala.collection.mutable.ListBuffer.empty[String]
+          var used = 0
+          raw.linesIterator.zipWithIndex.foreach { (l, idx) =>
+            if used + l.length + 1 <= ChainSummaryMaxChars - 40 then
+              kept += l; used += l.length + 1
+          }
+          (kept.toList :+ s"… (摘要按 ${ChainSummaryMaxChars} 字符上限截断，共 ${sorted.size} 成员；全文见 NodeList(detail=\"<id>\") 与 REST results 端点)").mkString("\n")
+      val eventType = if failed > 0 then ChainSummaryEventFailed else ChainSummaryEventCompleted
+      Some(ChainSummary(meta.id, title, sorted.size, completed, failed, cancelled, eventType, text))
+
+  /** R11 溢出合并条（>maxIndividual 条链的剩余部分）：一条计数摘要（含链清单）。 */
+  def renderChainSummaryOverflow(rest: List[ChainSummary]): String =
+    val lines = rest.map(c =>
+      s"- ${c.chainId}「${c.title}」${c.members} nodes（${c.completed} completed / ${c.failed} failed / ${c.cancelled} cancelled）")
+    val head = s"[Chain] 本回合另有 ${rest.size} 条链完成（超过每回合 ${ChainSummaryMaxPerRound} 条的独立摘要上限，合并为一条；逐链明细见 NodeList 与 REST results 端点）"
+    (head :: lines).mkString("\n")
 
   /** 拉回明细载体（链级抽象 P2 · spec §5.3-③；与 [[SweptChain]] 对称）：链 id
     * （= 归档批 id）、本次拉回成员、成员数、拉回时刻（供 `chain-restored` 审计事件的

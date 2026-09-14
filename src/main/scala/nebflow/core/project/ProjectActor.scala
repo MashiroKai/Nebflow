@@ -129,6 +129,13 @@ object ProjectRuntimeRegistry:
             .handleErrorWith(e => logger
               .warn(s"Project '${project.name}' task board mount failed (board disabled): ${e.getMessage}")
               .as(None))
+          // M4（b64 批 2026-09-13）：`notify.quietMs` 校验单点 —— 缺键 = 缺省 5s；
+          // 超上界（60s）/非正 ⇒ **可行动报错**（键名 + 允许区间 + 当前值）并
+          // **fail-fast 本项目挂载**，禁静默截断到上界（作者裁定 M4）。
+          quietMs <- IO.fromEither(
+            NotifyPolicy
+              .parseQuietMs(project.notifyConfig.flatMap(_.quietMs))
+              .leftMap(msg => new RuntimeException(s"Project '${project.name}' config rejected: $msg")))
           engine <- IO.pure(
             new NodeEngine(
               store,
@@ -144,7 +151,9 @@ object ProjectRuntimeRegistry:
               // TaskBoard 批 2（§3a）：节点 buildInput 头部板块数据源——板 store
               // + 项目目标行（ProjectDef.description，None 则目标行省略）。
               board = board,
-              projectGoal = project.description
+              projectGoal = project.description,
+              // M4（b64 批）：`notify.quietMs` 生效值（上一步已校验；缺省 5s）。
+              notifyQuietMs = Some(quietMs)
             )
           )
           actorRef <- system.spawn(
@@ -454,7 +463,12 @@ object ProjectActor:
                     .handleErrorWith(e =>
                       logger.warn(s"doc-index reconcile tick failed: ${e.getMessage}").as(None))
                     .void
-                  removals *> audits *> flip *> reconcile
+                  // ④ 链级摘要投递（R6/R7/R8/R11/R15 + M2，b64 批 2026-09-13）：本次
+                  //    出库的链已在上一步把批次账本置「已启用未投递」；本腿投递 +
+                  //    **tell-then-mark**（投递成功才落 summarySentAt），并顺带补投
+                  //    历史欠账（根 ref 缺失/崩溃窗口留下的未记账批）。
+                  //    best-effort：失败仅 WARN，不回滚归档、不影响后续 tick。
+                  removals *> audits *> flip *> reconcile *> deliverChainSummaries(cfg)
                 }.as(behavior)
             case ProjectCommand.Shutdown =>
               IO.pure(Behaviors.stopped)
@@ -462,6 +476,54 @@ object ProjectActor:
         behavior
       }
     }
+
+  /** 链级摘要投递腿（R6/R7/R8/R11/R15 + M2；b64 批 2026-09-13）。
+    *
+    * 每拍做两件事（同一出口，幂等）：
+    *   ① **本回合出库链**：sweep 已把账本置「已启用未投递」⇒ 本腿投递；
+    *   ② **历史欠账补投**：上一拍投递失败（根 ref 缺失/进程崩溃）的批账本仍为空
+    *      ⇒ 本腿继续尝试（at-least-once：宁重复不丢失；账本置位即退出候选集 ⇒ 恰一次）。
+    *
+    * **M2**：单成员（孤立）链**不发摘要**（判据在 `FlowMapStore.MinChainMembersForSummary`，
+    * 与 `chainIdOf ≥2` 同源），其可见性仍由节点级通道承担。
+    * **R11**：独立摘要 ≤ `ChainSummaryMaxPerRound`（3）条，超出部分合并为**一条**计数摘要
+    *（消息数上界 = 4）；与 `DispatchNotify` 的 completion/failed 预算**分账**（本腿不读写
+    * 任何 `DispatchNotify` 账本 ⇒ 链摘要不挤占节点通知预算，R10 规则 2）。
+    * **R9 硬约束①**：链摘要不经节点级短窗（`notify.quietMs`）——自身就是「链完成」事实的
+    * 唯一落根载体。
+    * 全部 best-effort（投递/记账失败只 WARN，下拍重试）。 */
+  private def deliverChainSummaries(cfg: ProjectConfig): IO[Unit] =
+    cfg.engine.store
+      .chainSummaryBatch(FlowMapStore.ChainSummaryMaxPerRound)
+      .flatMap { case (head, tail) =>
+        val deliverOne = (c: FlowMapStore.ChainSummary) =>
+          cfg.engine
+            .deliverChainSummary(c.text, c.chainId, c.eventType)
+            .flatMap {
+              case true =>
+                cfg.engine.store.markChainSummarySent(c.chainId, System.currentTimeMillis()) *>
+                  logger.info(
+                    s"Project '${cfg.project.name}' chain summary delivered: ${c.chainId} (${c.members} members, ${c.completed}c/${c.failed}f/${c.cancelled}x)")
+              case false => IO.unit // 根不可达：不记账，下拍补投（at-least-once）
+            }
+        val overflow =
+          if tail.isEmpty then IO.unit
+          else
+            val text = FlowMapStore.renderChainSummaryOverflow(tail)
+            val eventType =
+              if tail.exists(_.eventType == FlowMapStore.ChainSummaryEventFailed) then FlowMapStore.ChainSummaryEventFailed
+              else FlowMapStore.ChainSummaryEventCompleted
+            cfg.engine
+              .deliverChainSummary(text, s"overflow-${tail.size}", eventType)
+              .flatMap {
+                case true =>
+                  tail.traverse_(c => cfg.engine.store.markChainSummarySent(c.chainId, System.currentTimeMillis())) *>
+                    logger.info(s"Project '${cfg.project.name}' chain summary overflow delivered: ${tail.size} chain(s) merged (R11 cap ${FlowMapStore.ChainSummaryMaxPerRound})")
+                case false => IO.unit
+              }
+        head.traverse_(deliverOne) *> overflow
+      }
+      .handleErrorWith(e => logger.warn(s"chain summary delivery failed: ${e.getMessage}"))
 
   /** Plugin Catalog 段（阶段 2b §B.4 第 2 步）：分发器 prompt 组装的注入源。
     * 受信 plugin 目录（无审批批 2026-09-13 后在位即受信；未受信的唯一形态 = 已封禁，
