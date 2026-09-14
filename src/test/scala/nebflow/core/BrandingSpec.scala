@@ -45,7 +45,7 @@ class BrandingSpec extends FunSuite:
     assertEquals(Branding.githubRepo, "Nebflow")
     assertEquals(Branding.homeDirName, ".nebflow")
     assertEquals(Branding.envPrefix, "NEBFLOW")
-    assertEquals(Branding.cosBucket, "nebflow-releases-1411212853")
+    assertEquals(Branding.cosBucket, "nebflow-releases")
     assertEquals(Branding.subsystemName, "neblink")
   }
 

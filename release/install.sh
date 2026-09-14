@@ -23,7 +23,7 @@ set -e
 # keeps existing user data working - old dirs/env/config fall back.
 PRODUCT_NAME=Nebflow
 LOWER_NAME=nebflow
-COS_BUCKET=nebflow-releases-1411212853
+COS_BUCKET=nebflow-releases
 HOME_DIR=.nebflow
 CONFIG_FILE=nebflow.json
 WRAPPER_NAME=nebflow

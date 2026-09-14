@@ -52,7 +52,8 @@ object BrandingBuild {
 
   def githubRepo: String = get("githubRepo")
 
-  /** COS release mirror bucket. */
+  /** Release mirror bucket. Key name is historical (COS era) — since the
+    * 2026-09-14 COS→OSS switch the value names an Aliyun OSS bucket. */
   def cosBucket: String = get("cosBucket")
 
   /** Data directory name (install scripts render it; runtime dual-reads). */
