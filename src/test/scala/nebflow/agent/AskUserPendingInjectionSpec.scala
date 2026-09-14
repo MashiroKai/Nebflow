@@ -1,6 +1,6 @@
 package nebflow.agent
 
-import cats.effect.{Deferred, IO, Ref}
+import cats.effect.{IO, Ref}
 import cats.syntax.all.*
 import io.circe.Json
 import munit.CatsEffectSuite
@@ -18,9 +18,10 @@ import scala.concurrent.duration.*
  * 后端契约（本 spec 用真实 InteractionHub actor + 生产 drain 决策钉住）：
  *  1. 答案来源校验：agent 消息形态的负载（无 answers 字段的 delegate 汇报文本）
  *     永远不能完成 pending 的 AskUser 槽 —— 卡片保留、延迟保持 pending（b）；
- *  2. 用户路径回归：卡片点击（Answered with answers）与输入框直通
- *     （AnswerViaChatInput）在「pending → agent 消息到达 → 用户回答」的完整
- *     事故时序下仍正常解除 pending（c）；
+ *  2. 用户路径回归：卡片点击（Answered with answers）在「pending → agent 消息到达
+ *     → 用户回答」的完整事故时序下仍正常解除 pending（c）；
+ *     （输入框直通 `AnswerViaChatInput` 于 2026-09-14 作者令退役 ⇒ 该腿及其断言
+ *     已删，本 spec 的作答入口只剩卡片这一条。）
  *  3. 排队语义：pending 期间到达的 delegate 结果走 AgentActor processing 梯的
  *     pendingEvents 队列（:2312-2315），turn 恢复后由生产 drain 决策
  *     TurnBoundaryDrains.drainBarrier 按到达顺序完整注入 —— 不丢不改序（b/d）。
@@ -134,7 +135,7 @@ class AskUserPendingInjectionSpec extends CatsEffectSuite:
     end for
   }
 
-  test("(c) 输入框直通回答：pending 期间 agent 消息排队不占槽，用户自由文本成为工具结果") {
+  test("(c) 卡片作答：pending 期间 agent 消息不占槽，用户答案成为工具结果（输入框直通已退役）") {
     val system = nebflow.actor.ActorSystem("askuser-guard-c2")
     for
       hub <- system.spawn(InteractionHub(), "interaction-hub-c2")
@@ -144,29 +145,34 @@ class AskUserPendingInjectionSpec extends CatsEffectSuite:
       req <- askRequest("guard-c2", gotAnswers, system = system)
       _ <- hub ! InteractionHubCommand.Request(req)
       _ <- IO.sleep(50.millis)
-      // agent 消息形态负载先到（不得消费直通以外的任何槽位）
+      // agent 消息形态负载先到（形态不符 ⇒ 不得消费槽位）
       _ <- hub ! InteractionHubCommand.Answered(
         InteractionAnswered("guard-c2", "root-1", agentMessagePayload(delegateReport1))
       )
       _ <- IO.sleep(50.millis)
-      // 用户从输入框输入真实回答（2026-08-29 裁定：直通 = 工具结果）
-      answered <- Deferred[IO, Boolean]
-      _ <- hub ! InteractionHubCommand.AnswerViaChatInput("root-1", "如果 delegate 结果丢失，那更是严重的 bug", answered)
-      hit <- answered.get
+      afterAgent <- gotAnswers.get
+      // 用户作答：卡片入口 = 唯一入口（输入框直通腿 2026-09-14 作者令退役）
+      _ <- hub ! InteractionHubCommand.Answered(
+        InteractionAnswered("guard-c2", "root-1", userAnswerPayload("如果 delegate 结果丢失，那更是严重的 bug"))
+      )
+      _ <- IO.sleep(100.millis)
       slot <- gotAnswers.get
       _ <- IO.sleep(50.millis)
       events <- sent.get
       _ <- system.stopAll
     yield
-      assertEquals(hit, true, "直通必须消费 pending 卡片")
+      assertEquals(afterAgent, None, "agent 消息不得替代用户作答（卡片保持 pending）")
       assertEquals(
         slot,
         Some(List("如果 delegate 结果丢失，那更是严重的 bug")),
-        "用户的自由文本就是工具结果（1 槽），未被 agent 消息污染"
+        "用户的答案就是工具结果（1 槽），未被 agent 消息污染"
       )
-      val close = events.find(_.hcursor.downField("type").as[String].contains("askUserAnswered")).get
-      assertEquals(close.hcursor.downField("requestId").as[String], Right("guard-c2"))
-      assertEquals(close.hcursor.downField("via").as[String], Right("chat-input"))
+      // 退役负控（本批新增）：hub 不再广播 askUserAnswered —— 该帧曾只由输入框
+      // 直通腿（handleChatInputAnswer）发出，随其一并删除；卡片作答路径本就不发它。
+      assert(
+        !events.exists(_.hcursor.downField("type").as[String].contains("askUserAnswered")),
+        "输入框直通退役后 hub 不得再广播 askUserAnswered"
+      )
     end for
   }
 

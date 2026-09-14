@@ -2996,7 +2996,7 @@ class WebSocketRoutes(
                 // answered before this point is not in the snapshot. The frames
                 // carry the live requestId — the frontend dedups against the
                 // history-restored (requestId-less) card and rebinds the answer
-                // channel (chat-input close + #12 precise routing).
+                // channel (#12 precise routing).
                 .flatMap { _ =>
                   if beforeIndex.isEmpty then replayPendingAsks(sessionId, wsSend)
                   else IO.unit
@@ -4053,48 +4053,22 @@ class WebSocketRoutes(
                               // injection blocks; refType=task fail-open 跳过。
                               processRefs(json, blocks).flatMap { _ =>
                                 val blocksList = blocks.toList
-                                // 刷新存活 (2026-09-03): the typeless browser send
-                                // (input.js normal Enter path) must honor the 第六件
-                                // (2026-08-30) input-passthrough contract as well.
-                                // The check used to live only in handleUserText —
-                                // reachable via WS immediateInput/userMessage, i.e.
-                                // the busy→queue→drain path. After a page refresh the
-                                // frontend busy flag is gone, so the typed text lands
-                                // on THIS branch and was queued as a NEW turn while a
-                                // pending ask blocked the session — the refreshed
-                                // input box could never answer (the #43-domain gap).
-                                // Hub hit → the text IS the answer (the user bubble is
-                                // already appended above); miss → normal dispatch,
-                                // byte-identical behavior. Ref/attachment-carrying
-                                // frames keep the default dispatch: their payloads
-                                // are structured returns, not free-text answers.
-                                val frameHasRefsPayload =
-                                  json.hcursor.downField("taskRefs").as[List[io.circe.Json]].fold(_ => false, _.nonEmpty) ||
-                                    json.hcursor.downField("refs").as[List[io.circe.Json]].fold(_ => false, _.nonEmpty)
-                                // NOTE: `blocks` always contains the content text itself
-                                // (ContentBlock.Text(content) above), so it can't
-                                // discriminate — guard on the frame's structured
-                                // payloads instead (refs fields + attachments).
-                                if attachments.isEmpty && !frameHasRefsPayload then
-                                  askPassthroughOrDispatch(
-                                    msgSessionId,
-                                    content,
-                                    clientMessageId,
-                                    blocksList,
-                                    chatWidth,
-                                    source = "typeless"
-                                  )
-                                else
-                                  ensureAgent(msgSessionId)(ref =>
-                                    ref ! AgentCommand
-                                      .UserInput(
-                                        content,
-                                        None,
-                                        clientMessageId,
-                                        Some(blocksList).filter(_.nonEmpty),
-                                        chatWidth
-                                      )
-                                  )
+                                // 输入框直通退役（2026-09-14 作者令）：typeless 帧不再探
+                                // hub 的 pending AskUser 槽位 —— 文本一律按普通消息投
+                                // AgentCommand.UserInput（= 引入直通之前的既有通道）。
+                                // 曾以直通覆盖的「刷新后 busy 标志丢失」窗口（#43-domain）
+                                // 随之回到功能前口径：pending 卡保持 pending、须点卡作答。
+                                // ref/附件携带帧本就只走本通道，形态逐字节不变。
+                                ensureAgent(msgSessionId)(ref =>
+                                  ref ! AgentCommand
+                                    .UserInput(
+                                      content,
+                                      None,
+                                      clientMessageId,
+                                      Some(blocksList).filter(_.nonEmpty),
+                                      chatWidth
+                                    )
+                                )
                               }
                       }
                   }
@@ -4106,67 +4080,6 @@ class WebSocketRoutes(
       end for
     end if
   end handleMessage
-
-  /**
-    * Shared body for the user-text input cases ("immediateInput" from the
-    * frontend, "userMessage" from the CLI). Persists the user message as a
-    * UiMessage bubble, then dispatches ImmediateInput to the session's agent.
-    * The headless turn endpoint (POST /api/sessions/:id/turn) mirrors this
-    * same sequence via [dispatchUserText] — keep the two in sync.
-    *
-    * 2026-08-25 22:28 裁定（覆盖同日 14:40 的「用户消息=全局跳过」）：发送
-    * 文字消息**不再**触发全局解冻——冻结态下解冻的唯一入口 = skipFreeze 命令
-    * （前端「跳过本次」按钮）或冻结段自然结束。消息到达 Frozen agent 后由
-    * dispatch gate 拦截排队（B5 系统输入排队语义），不唤醒不解冻。前端在
-    * 冻结态禁用输入栏，此处不再调 skipCurrentFreezeWindow 保持语义干净。
-    */
-  /** 刷新存活 (2026-09-03): shared tail of the input-box send paths — probe the
-    * hub for a pending AskUser card; a hit delivers the text as the tool result
-    * (第六件 2026-08-30 semantics), a miss falls through to the normal dispatch
-    * byte-identically. Used by BOTH the typeless browser send and the
-    * immediateInput/userMessage path inside [[handleUserText]].
-    *
-    * @param passthroughAlreadyRecorded
-    *   true when the caller already persisted the user bubble (typeless branch
-    *   appends UiMessage.User before deciding); the hub never appends, so this
-    *   only documents ownership — kept for symmetry with handleUserText, which
-    *   appends on the hit path itself.
-    */
-  private def askPassthroughOrDispatch(
-      sessionId: String,
-      content: String,
-      clientMessageId: Option[String],
-      blocks: List[ContentBlock],
-      chatWidth: Int,
-      source: String
-  ): IO[Unit] =
-    if sessionId.nonEmpty && content.nonEmpty then
-      sharedResources.interactionHubRef.get.flatMap {
-        case Some(hub) =>
-          resolveRootSessionId(sessionId).flatMap { rootSid =>
-            Deferred[IO, Boolean].flatMap { answered =>
-              (hub ! nebflow.agent.InteractionHubCommand.AnswerViaChatInput(rootSid, content, answered)) *>
-                // QC: bounded wait — a hub crash / swallowed forkTurn must not
-                // park this gateway fiber forever; on timeout fall back to
-                // the normal dispatch path (message still reaches the agent).
-                answered.get.timeout(1.second).handleError(_ => false)
-            }.flatMap {
-              case true =>
-                logger.info(
-                  s"User text ($source) → AskUser passthrough for session $sessionId (${content.length} chars)"
-                )
-              case false =>
-                ensureAgent(sessionId)(ref =>
-                  ref ! AgentCommand.UserInput(content, None, clientMessageId, Some(blocks).filter(_.nonEmpty), chatWidth)
-                )
-            }
-          }
-        case None =>
-          ensureAgent(sessionId)(ref =>
-            ref ! AgentCommand.UserInput(content, None, clientMessageId, Some(blocks).filter(_.nonEmpty), chatWidth)
-          )
-      }
-    else IO.unit
 
   /** 热重启 draining 工作准入闸（hot-restart 批设计 §3.3，WS 侧 choke 点）：包裹
     * 工作型消息入口（userMessage / immediateInput——REST 的 handleMessagePublic
@@ -4187,6 +4100,19 @@ class WebSocketRoutes(
           )
     }
 
+  /**
+    * Shared body for the user-text input cases ("immediateInput" from the
+    * frontend, "userMessage" from the CLI). Persists the user message as a
+    * UiMessage bubble, then dispatches ImmediateInput to the session's agent.
+    * The headless turn endpoint (POST /api/sessions/:id/turn) mirrors this
+    * same sequence via [dispatchUserText] — keep the two in sync.
+    *
+    * 2026-08-25 22:28 裁定（覆盖同日 14:40 的「用户消息=全局跳过」）：发送
+    * 文字消息**不再**触发全局解冻——冻结态下解冻的唯一入口 = skipFreeze 命令
+    * （前端「跳过本次」按钮）或冻结段自然结束。消息到达 Frozen agent 后由
+    * dispatch gate 拦截排队（B5 系统输入排队语义），不唤醒不解冻。前端在
+    * 冻结态禁用输入栏，此处不再调 skipCurrentFreezeWindow 保持语义干净。
+    */
   /** @param fromUser
     *   ② (2026-09-11, queue-direct-pass diagnosis §2): is this text a real
     *   human message? Required (no default) so every entry point states its
@@ -4199,42 +4125,11 @@ class WebSocketRoutes(
     */
   private def handleUserText(sessionId: String, content: String, source: String, fromUser: Boolean): IO[Unit] =
     if sessionId.nonEmpty && content.nonEmpty then
-      // 第六件 QC (2026-08-30): the passthrough probe is WS-input-box ONLY —
-      // headless REST turns ("rest-turn") go straight to dispatch so a P0
-      // benchmark POST can never silently answer a pending card.
-      if !WebSocketRoutes.probesPassthrough(source) then dispatchUserText(sessionId, content, source, fromUser)
-      else
-        // 第六件 (2026-08-30): if THIS session has a pending AskUser card, the
-        // input-box text is the answer — deliver it straight through as the
-        // tool result (free-text). The agent's injection queue is untouched:
-        // queued Mails/external events stay queued with the SAME length (场景②),
-        // and the user's text itself never enqueues (no ImmediateInput on this
-        // path). Miss (no pending AskUser) → normal dispatch, byte-identical
-        // behavior (场景③).
-        sharedResources.interactionHubRef.get.flatMap {
-          case Some(hub) =>
-            resolveRootSessionId(sessionId).flatMap { rootSid =>
-              Deferred[IO, Boolean].flatMap { answered =>
-                (hub ! nebflow.agent.InteractionHubCommand.AnswerViaChatInput(rootSid, content, answered)) *>
-                  // QC: bounded wait — a hub crash / swallowed forkTurn must not
-                  // park this gateway fiber forever; on timeout fall back to
-                  // the normal dispatch path (message still reaches the agent).
-                  answered.get.timeout(1.second).handleError(_ => false)
-              }.flatMap {
-                case true =>
-                  logger.info(
-                    s"User text ($source) → AskUser passthrough for session $sessionId (${content.length} chars)"
-                  ) *>
-                    // user bubble still lands (same shape as the card "Other" path)
-                    sessionStore.appendUiMessages(
-                      sessionId,
-                      List(UiMessage.User(content, Nil, timestamp = System.currentTimeMillis()))
-                    )
-                case false => dispatchUserText(sessionId, content, source, fromUser)
-              }
-            }
-          case None => dispatchUserText(sessionId, content, source, fromUser)
-        }
+      // 输入框直通退役（2026-09-14 作者令）：输入框文本一律按普通消息投递 ——
+      // 不再探 hub 的 pending AskUser 槽位，文本也不再成为卡片答案
+      // （[[dispatchUserText]] = 唯一入队路径）。pending 卡保持 pending，
+      // 只能在卡片上作答；headless REST (`rest-turn`) 与输入框同腿，形态不变。
+      dispatchUserText(sessionId, content, source, fromUser)
     else
       // P1 2026-08-27 (frontend c1d57710): the queue "send-now" branch emitted an
       // empty-content frame (attachments dropped), which reached this path and was
@@ -4249,8 +4144,9 @@ class WebSocketRoutes(
   end handleUserText
 
   /** Normal message dispatch: user bubble + immediate injection into the
-    * agent's turn pipeline. The ONLY path that enqueues — the AskUser
-    * passthrough deliberately bypasses this (第六件, 2026-08-30).
+    * agent's turn pipeline. The ONLY path that enqueues user text — the
+    * input-box AskUser passthrough that used to bypass it was retired
+    * 2026-09-14 (作者令「把 AskUserQuestion 通过输入框回答的功能关了」).
     *
     * ② (2026-09-11): `fromUser` rides along onto the ImmediateInput so the
     * agent can tell 真人文本 (WS immediateInput / CLI userMessage) apart from
@@ -4316,12 +4212,15 @@ class WebSocketRoutes(
     * exactly like the WS "immediateInput"/"userMessage" cases do. Exposed for
     * RestApiRoutes' synchronous turn endpoint. Named distinctly from the WS
     * dispatch (QC nit, 2026-08-30): no overload shadowing, and the name says
-    * REST-deterministic — this path never probes the AskUser passthrough.
+    * REST-deterministic — this path and the WS input box share the same leg
+    * ([[dispatchUserText]]); the AskUser passthrough probe they used to differ
+    * on was retired 2026-09-14.
     */
   def dispatchHeadlessTurn(sessionId: String, content: String): IO[Unit] =
     // ② 口径（Nebula 代裁，可被作者推翻）：REST headless 是「程序」在投文本
     // （P0 benchmark / 外部脚本），不是人 ⇒ 显式 fromUser = false，保持既有
-    // 注入来源标注（rest-turn 经 probesPassthrough=false 直落 dispatchUserText）。
+    // 注入来源标注（rest-turn 与输入框同腿：直落 dispatchUserText；输入框直通
+    // 已于 2026-09-14 退役，此处不再有来源分叉）。
     handleUserText(sessionId, content, source = "rest-turn", fromUser = false)
 
   // ============================================================
@@ -5483,15 +5382,6 @@ object WebSocketRoutes:
       if Auth.validateToken(extractToken(req), token) then NoContent()
       else Forbidden("Invalid token")
   }
-
-  /**
-    * 第六件 QC (2026-08-30): which input sources may probe the AskUser
-    * chat-input passthrough. ONLY the WS input-box family does — the headless
-    * REST turn entry ("rest-turn", P0 benchmark) must stay deterministic and
-    * must NEVER silently answer a pending card. Pure + testable on purpose:
-    * the gate is the whole behavioral delta of the REST fix.
-    */
-  def probesPassthrough(source: String): Boolean = source != "rest-turn"
 
   /**
     * F1 batch delete — pure, testable core for the `deletePaths` WS case.

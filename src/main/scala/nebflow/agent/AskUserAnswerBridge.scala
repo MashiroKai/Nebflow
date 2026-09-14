@@ -35,7 +35,7 @@ import scala.concurrent.duration.*
  *    「答案到达了一个已不存在的会话」，并放弃投递。**这是显式日志面，不是静默面。**
  *
  * 线程/IO 归属：本对象不自己跑 IO——`!` 返回的 IO 由**调用方**（hub 的
- * `handleAnswered`/`handleChatInputAnswer` fiber）执行。真正的 Actor 层（
+ * `handleAnswered` fiber）执行。真正的 Actor 层（
  * `AgentActor`）仍是唯一的状态机；本桥只做「一条消息 → 一条注入」的搬运，符合
  * 「Keep your Actors out of your cats-effect」铁律。
  */
@@ -63,8 +63,8 @@ object AskUserAnswerBridge:
         ))
 
   /** 答复 → 注入（D4）。`fromUser = true`（裁定 T6=(a)：真人点了卡）——该标志使
-    * `AgentActor.injectionSourceFor` 把 `source` 折成 None（呈现为普通 user 气泡，
-    * 与 `main.js` 的 chat-input 直答口径一致）⇒ 不需要前端登记面、零前端改动。 */
+    * `AgentActor.injectionSourceFor` 把 `source` 折成 None（呈现为普通 user 气泡）
+    * ⇒ 不需要前端登记面、零前端改动。 */
   private def deliver(
     target: ActorRef[AgentCommand],
     items: List[AskItem],

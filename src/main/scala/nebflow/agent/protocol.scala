@@ -119,8 +119,8 @@ object AskMode:
 
   /** 非阻塞 ack（`ImmediateInput.source`）的定名——真人点卡作答的答案，故
     * 与 `fromUser=true` 同行；`fromUser=true` 时 source 被
-    * `AgentActor.injectionSourceFor` 单点折成 None（答案呈现为普通 user 气泡，
-    * 与 `main.js` 的 chat-input 直答口径一致）⇒ 不需要前端登记面。 */
+    * `AgentActor.injectionSourceFor` 单点折成 None（答案呈现为普通 user 气泡）
+    * ⇒ 不需要前端登记面。 */
   val AnswerSource = "askUserAnswer"
 
   def parse(raw: String): Option[AskMode] = raw match
