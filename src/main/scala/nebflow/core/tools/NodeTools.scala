@@ -1532,8 +1532,11 @@ object NodeEditTool extends Tool:
       // WARNING（不阻断，人工兜底合法）——补投链/死锁可见性由既有 mount-stalled 承载
       stallWarn <- NodeTools.stalledInWarning(rt, nodeId, nodename, ins, merge)
       // 通知策略自检（b64 批；M3/R14/spec §4.2 三条，仅 WARNING 不阻断）
-      notifyWarn <- NodeTools.notifyPolicyWarnings(rt, nodename,
-        Some(notify.policy.getOrElse(NotifyPolicy.Default)), notify.flag, out)
+      // B-3 修（2026-09-14）：此处传**未声明即缺键**（不再用 `NotifyPolicy.Default` 填
+      // `Some`）。本函数的 `policy` 形参语义即「生效策略（缺键 ⇒ legacy 三态推断）」
+      // ——旧写法把「用户未声明」合成 `Some("dispatcher")`，等于让默认值顶掉 legacy
+      // 推断（与落盘点同一处回归），警告面会与实际生效策略不一致。
+      notifyWarn <- NodeTools.notifyPolicyWarnings(rt, nodename, notify.policy, notify.flag, out)
       // loop 门集预检（2026-09-12 裁定 2/3，0 spawn）：本次创建会写入两条路径的最终边集
       // ——① 本节点 out（`(pass)Nebula` 单腿等形态）；② 每个 in 上游的 out 镜像追加
       //（`appendEdgeTo`，下游 in: 声明路）。任一违规 ⇒ 整调用拒绝（节点不落库、上游零改边）。
@@ -1612,11 +1615,17 @@ object NodeEditTool extends Tool:
             // dispatch-notify 回流标志（创建期按需开启；缺省 false=分发器新建节点
             // 不继承——收敛保证见 DispatchNotify）
             notifyDispatcher = notify.flag,
-            // **通知策略（b64 批 R2）**：创建期**显式落盘**——传了就用传的值，
-            // 未传落缺省 `dispatcher`（写盘，非缺键；缺键只属于存量/在飞节点）。
-            // 这是「新默认」的落点：存量批不受扰动（R3 零漂移），新批的中间节点不再
-            // 因 out 里的 Nebula 边投根（R5 抑制）。
-            notifyPolicy = Some(notify.policy.getOrElse(NotifyPolicy.Default)),
+            // **通知策略（b64 批 R2；B-3 修 2026-09-14）**：创建期按**用户是否显式
+            // 声明**落盘——传了就是传的值；**未传 = 缺键 `None`**（与显式 `null` 同落
+            // 缺键 ⇒ 回落 legacy 解析）。
+            // B-3 裁定：**默认值不得覆盖显式门集**。旧写法 `Some(getOrElse(Default))`
+            // 让每个新建节点恒落 `Some("dispatcher")`，于是「显式写 `(pass,failed)Nebula`
+            // = 上根声明」这条 08:04 前契约被一个**用户从未声明的默认值**静默覆盖
+            //（引擎自证：`has Nebula out-edge(s) but notify=dispatcher ... SUPPRESSED`）。
+            // 缺键节点的效力 = legacy 解析（`NotifyPolicy.completedRootVisible` 的
+            // `None` 分支：`:result` 且门含 `pass` 的 Nebula 边 ⇒ 投根），与
+            // `NodeEditTool.description` 中「ROOT NOTIFY needs a gate set」的承诺一致。
+            notifyPolicy = notify.policy,
             out = OutEdge.canonical(out),
             status = if task.isDefined && ins.isEmpty then NodeLifecycle.Pending else NodeLifecycle.Wiring,
             createdAt = now,
