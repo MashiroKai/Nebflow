@@ -37,7 +37,9 @@ import java.nio.charset.StandardCharsets
  *
  * 改动前（现状）：`enqueueFacts` 不论目标面余量**一律** `target="user"` ⇒ 该面已满时
  * 每轮 dream 产出持续灌进队列、由 plan 侧的硬顶停点逐条扣发（`MemoryQueue.plan`
- * `:792-796`（逐条停点）/ `:770-771`（后续同面全停））⇒ 队列只增不落（净消费≈0），
+ * `:794-795`（逐条停点，`projected > caps._2 ⇒ stopped += n.target`）/
+ * `:772`（后续同面全停，`stopped.contains(n.target) ⇒ WouldDefer`）；行号**现取**，非抄件）⇒
+ * 队列只增不落（净消费≈0），
  * 到顶即按 `atMs` 自最老淘汰（淘汰顺序与价值无关）。
  *
  * 改动（三支，判词单一 = **面余量 ≥ 本条目字节**）：
@@ -82,7 +84,7 @@ import java.nio.charset.StandardCharsets
  * **落点节**：user 面 = `## Dream Extract`（既有稳定节，零改动）；agent 面**无该节**
  * （现场 `~/.nebflow/agents/Nebula/memory.md` 的 17 个 `## ` 标题里无 Dream Extract）⇒
  * `section=None`（文件尾追加）。理由：带**缺节**的 append 会被 plan 判
- * `locate-miss: section not found — retryable`（`MemoryQueue.scala:788`）**永不能落**；
+ * `locate-miss: section not found — retryable`（`MemoryQueue.scala:785`，行号现取）**永不能落**；
  * 新建节不在本批口径内（同 `MemoryQueue` A′ 的「零新建」精神）。**已知后果（如实登记）**：
  * 文件尾追加的条目落在该文件**末尾小节**名下，节归属由整理 agent 按 T3 规则重排
  * （提示词纪律，非机制闸）。
