@@ -173,9 +173,13 @@ final class DropboxService private (
   private def senderTempPath(transferId: String): os.Path =
     PathUtil.dataRoot / "dropbox" / ".tmp" / s"$transferId.tmp"
 
-  /** 接收端 temp 的确定性派生名（记录路径不可用时回落；同名可再定位 ⇒ 续传可重建）。 */
+  /** 接收端 temp 的确定性派生名（记录路径不可用时回落；同名可再定位 ⇒ 续传可重建）。
+    *
+    * 契约升版批（设备腿 `targetDir`）：派生名的**父目录改取会话落点**
+    * （[[DropboxService.landingDirFor]]）—— 判定通过时 = 接收端裁定的请求目录，
+    * 其余情况 = `downloadsDir`（缺省语义与今天**逐字节一致**）。 */
   private def derivedReceiverTempPath(t: FileTransfer): os.Path =
-    DropboxUtil.downloadsDir / s".${t.fileName}.dropbox-${t.transferId.take(8)}"
+    DropboxService.landingDirFor(t) / s".${t.fileName}.dropbox-${t.transferId.take(8)}"
 
   /**
    * 接收端 temp 路径 —— **唯一解析入口是 `guardedTempPath`**（P0 wtmove 守卫；
@@ -337,6 +341,7 @@ final class DropboxService private (
   def sendLocalFiles(
     deviceId: String,
     files: List[os.Path],
+    targetDir: Option[String] = None,
     transportOverride: Option[ChunkTransport] = None,
     acceptWait: FiniteDuration = 20.seconds,
     uploadWait: FiniteDuration = 15.minutes
@@ -383,16 +388,43 @@ final class DropboxService private (
         AttachContract.checkMessage(sized.map(_._2)) match
           case Left(err) => IO.pure(Left(err))
           case Right(_) =>
-            val specs = sized.map { case (p, size) => DropboxService.FileSpec(p.last, size, guessMime(p.last)) }
-            offerFiles(deviceId, specs).flatMap {
-              case Left(err) => IO.pure(Left(err))
-              case Right(transferIds) =>
-                sized.zip(transferIds).foldLeftM[IO, List[DropboxService.LocalFileOutcome]](Nil) {
-                  case (acc, ((p, size), tid)) =>
-                    sendLocalOne(tid, p, size, transportOverride, acceptWait, uploadWait).map(acc :+ _)
-                }.map(outcomes => Right(outcomes))
+            // 设备腿 targetDir（契约升版批）：发送端只发**请求**，落点由接收端裁定。
+            // §4.2 候选 1：**未确认对端等级前不发** —— 唯一的自报通道是 `file-response.proto`
+            // （旧端不回带 ⇒ 视为等级 1 ⇒ 走缺省语义 + 显式回显，禁静默降级）。
+            // 形态合法性**不由发送端预判**（唯一权威 = 接收端 `TargetDirGuard`）：
+            // 空串 / 相对串等由接收端回拒码，发送端只做 NFC 归一化。
+            val requestedDir = targetDir.map(d => TargetDirGuard.normalize(d))
+            knownPeerLevel(deviceId).flatMap { lvl =>
+              val peerConfirmed = lvl.exists(l =>
+                AttachContract.negotiate(AttachContract.ProtoAssignDir, l) >= AttachContract.ProtoAssignDir
+              )
+              val wireTargetDir = if peerConfirmed then requestedDir else None
+              val deferred      = requestedDir.isDefined && !peerConfirmed
+              val specs = sized.map { case (p, size) => DropboxService.FileSpec(p.last, size, guessMime(p.last)) }
+              offerFiles(deviceId, specs, wireTargetDir).flatMap {
+                case Left(err) => IO.pure(Left(err))
+                case Right(transferIds) =>
+                  sized.zip(transferIds).foldLeftM[IO, List[DropboxService.LocalFileOutcome]](Nil) {
+                    case (acc, ((p, size), tid)) =>
+                      sendLocalOne(tid, p, size, transportOverride, acceptWait, uploadWait, requestedDir, deferred)
+                        .map(acc :+ _)
+                  }.map(outcomes => Right(outcomes))
+              }
             }
   end sendLocalFiles
+
+  /** 对端已自报的 proto 等级（唯一来源 = `file-response.proto`，记在 out 会话记录上）。
+    * `None` = 未确认 / 旧端 ⇒ §1.4 Q1 侧（禁发 `targetDir`）。
+    *
+    * ⚠️ 等级记忆的载体是会话记录（`transfers.json` 持久化的**未终结**会话）——进程重启后
+    * 首次投递会回落 Q1，代价 = spec §4.2 已承认的「一次额外能力自报往返」。 */
+  private def knownPeerLevel(deviceId: String): IO[Option[Int]] =
+    transfersRef.get.map(
+      _.values
+        .filter(t => t.direction == "out" && t.peerDeviceId == deviceId)
+        .flatMap(_.peerProto)
+        .maxOption
+    )
 
   /** 单件本地发送：等 auto-accept → 从盘流式上传（复用 [[uploadAndRelay]] 全链）。 */
   private def sendLocalOne(
@@ -401,34 +433,42 @@ final class DropboxService private (
     size: Long,
     transportOverride: Option[ChunkTransport],
     acceptWait: FiniteDuration,
-    uploadWait: FiniteDuration
+    uploadWait: FiniteDuration,
+    requestedTargetDir: Option[String],
+    targetDirDeferred: Boolean
   ): IO[DropboxService.LocalFileOutcome] =
+    val base =
+      DropboxService.LocalFileOutcome(
+        p.last,
+        size,
+        transferId,
+        delivered = false,
+        None,
+        targetDir = requestedTargetDir,
+        targetDirDeferred = targetDirDeferred
+      )
     awaitAccepted(transferId, acceptWait).flatMap {
       case Some(reason) =>
-        IO.pure(DropboxService.LocalFileOutcome(p.last, size, transferId, delivered = false, Some(reason)))
+        IO.pure(base.copy(error = Some(reason)))
       case None =>
         uploadAndRelay(transferId, localFileStream(p), transportOverride)
           .timeout(uploadWait)
           .map {
-            case Right(_) => DropboxService.LocalFileOutcome(p.last, size, transferId, delivered = true, None)
+            case Right(_) => base.copy(delivered = true)
             case Left(err) =>
-              DropboxService.LocalFileOutcome(p.last, size, transferId, delivered = false, Some(err))
+              base.copy(error = Some(err))
           }
           .handleErrorWith {
             case _: java.util.concurrent.TimeoutException =>
               IO.pure(
-                DropboxService.LocalFileOutcome(
-                  p.last,
-                  size,
-                  transferId,
-                  delivered = false,
-                  Some(
+                base.copy(
+                  error = Some(
                     s"upload timed out after ${uploadWait.toSeconds}s — the transfer may still be running; the peer's panel shows live progress"
                   )
                 )
               )
             case e =>
-              IO.pure(DropboxService.LocalFileOutcome(p.last, size, transferId, delivered = false, Some(e.getMessage)))
+              IO.pure(base.copy(error = Some(e.getMessage)))
           }
     }
 
@@ -439,8 +479,8 @@ final class DropboxService private (
     def poll: IO[Option[String]] =
       transfersRef.get.map(_.get(transferId)).flatMap {
         case Some(t) if t.status == "accepted" => IO.pure(None)
-        case Some(t) if t.status == "rejected" =>
-          IO.pure(Some("the receiver rejected the offer"))
+      case Some(t) if t.status == "rejected" =>
+        IO.pure(Some(s"the receiver rejected the offer" + t.targetDirCode.map(c => s" — $c").getOrElse("")))
         case Some(t) if t.status == "failed" =>
           IO.pure(Some("the offer could not be delivered (peer unreachable on both legs)"))
         case _ =>
@@ -498,7 +538,8 @@ final class DropboxService private (
    */
   def offerFiles(
     deviceId: String,
-    files: List[FileSpec]
+    files: List[FileSpec],
+    targetDir: Option[String] = None
   ): IO[Either[AttachContract.AttachError, List[String]]] =
     AttachContract.checkMessage(files.map(_.fileSize)) match
       case Left(err) =>
@@ -537,7 +578,7 @@ final class DropboxService private (
                 files.zipWithIndex
                   .foldLeftM[IO, List[String]](Nil) { case (acc, (spec, idx)) =>
                     // 串行 offer（并行度建议值 N = 1；见设计件 §9 P-6）。
-                    offerOne(id, peer, deviceId, spec, batchId, idx, total).map(acc :+ _)
+                    offerOne(id, peer, deviceId, spec, batchId, idx, total, targetDir).map(acc :+ _)
                   }
                   .map(ids => Right(ids))
         }
@@ -551,7 +592,8 @@ final class DropboxService private (
     spec: FileSpec,
     batchId: String,
     index: Int,
-    count: Int
+    count: Int,
+    targetDir: Option[String]
   ): IO[String] =
     val transferId = DropboxModels.newId
     val msgId = DropboxModels.newId
@@ -581,9 +623,10 @@ final class DropboxService private (
       status = "pending",
       totalBytes = spec.fileSize,
       chunkSize = AttachContract.ChunkSize,
-      proto = AttachContract.ProtoChunked
+      proto = AttachContract.ProtoAssignDir,
+      targetDir = targetDir
     )
-    val payload = Json.obj(
+    val payloadBase = Json.obj(
       "kind" -> "file-offer".asJson,
       "senderId" -> id.deviceId.asJson,
       "senderName" -> id.deviceName.asJson,
@@ -592,12 +635,18 @@ final class DropboxService private (
       "fileName" -> spec.fileName.asJson,
       "fileSize" -> spec.fileSize.asJson,
       "mimeType" -> spec.mimeType.asJson,
-      // 协议协商：缺失 = 0 = 整件 legacy。双方取 min。
-      "proto" -> AttachContract.ProtoChunked.asJson,
+      // 协议协商：缺失 = 0 = 整件 legacy。双方取 min。本键 = **JSON 面**的等级自报，
+      // 与 P2P 头 `X-Dropbox-Proto`（**恒 1**，见 AttachContract.ProtoAssignDir 文档）**不同轴**。
+      "proto" -> AttachContract.ProtoAssignDir.asJson,
       "batchId" -> batchId.asJson,
       "attachmentIndex" -> index.asJson,
       "attachmentCount" -> count.asJson
     )
+    // targetDir 只在**对端等级已确认（proto >= 2）**时才上 wire（spec §4.2 候选 1）；
+    // 缺省 = 现状（键不出现 ⇒ 旧接收端天然忽略）。
+    val payload = targetDir match
+      case Some(d) => payloadBase.deepMerge(Json.obj("targetDir" -> d.asJson))
+      case None    => payloadBase
     for
       _ <- transfersRef.update(_ + (transferId -> transfer))
       _ <- addMessage(deviceId, msg)
@@ -813,6 +862,19 @@ final class DropboxService private (
           IO.pure(Left(AttachContract.AttachError(AttachContract.Codes.SessionNotFound, s"No transfer session $transferId", phase = "transfer")))
         case Some(t) if t.direction != "in" =>
           IO.pure(Left(AttachContract.AttachError(AttachContract.Codes.SessionNotFound, s"Transfer $transferId is not inbound", phase = "transfer")))
+        case Some(t) if t.status == "rejected" =>
+          // 契约升版批：被拒会话（`targetDir` 裁定不通过）**不得**再接受任何字节 ——
+          // 否则「拒 + 零副作用」（spec §3.1 / §3.4）会被一次事后推块绕过（建目录、写 temp）。
+          // 与 legacy 整件路径的 `status != "accepted"` 守卫同口径（`receiveLegacyWholeFile`）。
+          IO.pure(
+            Left(
+              AttachContract.AttachError(
+                AttachContract.Codes.SessionNotFound,
+                s"Transfer $transferId was refused (${t.targetDirCode.getOrElse("rejected")}) — refusing chunk; no directory created, no file written",
+                phase = "transfer"
+              )
+            )
+          )
         case Some(t) =>
           for
             tempPath <- receiverTempPath(t)
@@ -925,6 +987,27 @@ final class DropboxService private (
     val fileName = hc.downField("fileName").as[String].getOrElse("unknown")
     val fileSize = hc.downField("fileSize").as[Long].getOrElse(0L)
     val mimeType = hc.downField("mimeType").as[String].getOrElse("")
+    // ===== 设备腿 targetDir（契约升版批）=====
+    // 对端自报等级（JSON 面；缺失 = 0 = legacy）。头面 `X-Dropbox-Proto` 恒 1，不参与本判定。
+    val peerProto = hc.downField("proto").as[Int].toOption.getOrElse(AttachContract.ProtoLegacy)
+    val requestedTargetDir = hc.downField("targetDir").as[String].toOption
+    // 🔴 判定链**只在此处执行一次**，结果固化进会话记录（`FileTransfer.targetDir`）；
+    // 收块/commit 阶段不得重新解释字符串。必须早于任何 `os.makeDir` —— 收块阶段
+    // （`receiveChunkFromPeer`）在建 temp 目录前不做任何校验，判定放这里才能保证
+    // 「拒绝 ⇒ 零副作用」（spec §3.4）。
+    val negotiated = AttachContract.negotiate(AttachContract.ProtoAssignDir, peerProto)
+    val (landingDir, targetDirCode): (Option[String], Option[String]) =
+      requestedTargetDir match
+        case None => (None, None) // 缺省语义：与今天逐字节一致（不落任何新字段）
+        case Some(raw) if negotiated >= AttachContract.ProtoAssignDir =>
+          TargetDirGuard.resolveFor(raw) match
+            case Right(p)  => (Some(p.toString), None)
+            case Left(err) => (None, Some(err.code))
+        case Some(_) =>
+          // 等级 < 2 的发送端不应发该键（§4.2 候选 1）；收到即显式拒（禁把它当缺省静默吞掉）。
+          (None, Some(AttachContract.Codes.TargetDirInvalid))
+    val refused = targetDirCode.isDefined
+    val status  = if refused then "rejected" else "accepted"
     val msg = DropboxMessage(
       msgId = msgId,
       direction = "in",
@@ -934,7 +1017,7 @@ final class DropboxService private (
       fileName = fileName,
       fileSize = fileSize,
       mimeType = mimeType,
-      status = "accepted"
+      status = status
     )
     val transfer = FileTransfer(
       transferId = transferId,
@@ -945,13 +1028,26 @@ final class DropboxService private (
       fileSize = fileSize,
       mimeType = mimeType,
       msgId = msgId,
-      status = "accepted"
+      status = status,
+      proto = negotiated,
+      peerProto = Some(peerProto),
+      targetDir = landingDir,
+      targetDirCode = targetDirCode
     )
     // Auto-accept: immediately notify sender to start uploading
+    // （拒绝 ⇒ accepted=false + 结构化拒码：发送端据此显式回显，不静默降级）
     val acceptPayload = Json.obj(
       "kind" -> "file-response".asJson,
       "transferId" -> transferId.asJson,
-      "accepted" -> true.asJson
+      "accepted" -> (!refused).asJson,
+      // 接收端等级自报（§1.4「等级自报通道」）：旧发送端忽略未知键，新发送端据此
+      // 决定是否可发 targetDir。
+      "proto" -> AttachContract.ProtoAssignDir.asJson,
+      "targetDirAccepted" -> (!refused).asJson
+    ).deepMerge(
+      targetDirCode.fold(Json.obj())(c => Json.obj("targetDirCode" -> c.asJson))
+    ).deepMerge(
+      landingDir.fold(Json.obj())(d => Json.obj("targetDir" -> d.asJson))
     )
     for
       _ <- transfersRef.update(_ + (transferId -> transfer))
@@ -959,13 +1055,27 @@ final class DropboxService private (
       _ <- notifyFrontend("dropbox-message", senderId, msg.asJson)
       delivered <- sendDataOrRelay(senderId, "dropbox", acceptPayload)
       _ <-
-        if delivered then
+        if !delivered then
+          markTransferFailed(transferId, senderId, msgId, "auto-accept response could not be delivered")
+        else if refused then
+          // 拒绝：**绝不** arm accepted-timeout（没有任何字节会来）；通知前端使拒绝可见。
+          logger.warn(
+            s"Dropbox transfer $transferId refused: targetDir rejected with ${targetDirCode.getOrElse("")} — no directory created, no file written"
+          ) *> notifyFrontend(
+            "dropbox-file-complete",
+            senderId,
+            Json.obj(
+              "transferId" -> transferId.asJson,
+              "msgId" -> msgId.asJson,
+              "success" -> false.asJson,
+              "error" -> targetDirCode.getOrElse("").asJson
+            )
+          )
+        else
           // Auto-accept sent (arm accepted-timeout: this side waits for the
           // sender to push the bytes; an abandoned upload fails rather than
           // pinging「传输中…」).
           armTransferTimeout(transferId, senderId, msgId, acceptedTimeout, Set("accepted"))
-        else
-          markTransferFailed(transferId, senderId, msgId, "auto-accept response could not be delivered")
     yield ()
 
   end handleIncomingOffer
@@ -975,6 +1085,9 @@ final class DropboxService private (
     val hc = payload.hcursor
     val transferId = hc.downField("transferId").as[String].getOrElse("")
     val accepted = hc.downField("accepted").as[Boolean].getOrElse(false)
+    // 对端等级自报（JSON 面）：旧端不回带 ⇒ None ⇒ 一律按等级 1 处理（§4.2 候选 1）。
+    val peerProto = hc.downField("proto").as[Int].toOption
+    val targetDirCode = hc.downField("targetDirCode").as[String].toOption
     for
       // R5: if the in-memory record is gone (restart / very late frame after
       // a reconnect), rebuild a minimal outbound transfer from the persisted
@@ -985,7 +1098,7 @@ final class DropboxService private (
         case Some(t) =>
           val newStatus = if accepted then "accepted" else "rejected"
           for
-            _ <- transfersRef.update(_ + (transferId -> t.copy(status = newStatus)))
+            _ <- transfersRef.update(_ + (transferId -> t.copy(status = newStatus, peerProto = peerProto, targetDirCode = targetDirCode)))
             _ <- updateMessageStatus(t.peerDeviceId, t.msgId, newStatus)
             _ <-
               if accepted then
@@ -1040,9 +1153,9 @@ final class DropboxService private (
               // report a path that need not exist; point at the real target instead.
               tempOutcome match
                 case TempPathDecision.Absent =>
-                  if success then IO.pure((DropboxUtil.downloadsDir / t.fileName).toString) else IO.pure("")
+                  if success then IO.pure((DropboxService.landingDirFor(t) / t.fileName).toString) else IO.pure("")
                 case _ =>
-                  if success then IO.pure(DropboxUtil.resolveFinalPath(DropboxUtil.downloadsDir, t.fileName).toString)
+                  if success then IO.pure(DropboxUtil.resolveFinalPath(DropboxService.landingDirFor(t), t.fileName).toString)
                   else IO.pure("")
             _ <- updateTransferStatus(transferId, if success then "completed" else "failed")
             _ <- updateMessageStatus(t.peerDeviceId, t.msgId, if success then "completed" else "failed", savedPath)
@@ -1294,7 +1407,7 @@ final class DropboxService private (
     val decision = guardedTempPath(t)
     warnTempPath("commitTempFile", t, decision) *> (decision match
       case TempPathDecision.Usable(tempPath) =>
-        val finalPath = DropboxUtil.resolveFinalPath(DropboxUtil.downloadsDir, t.fileName)
+        val finalPath = DropboxUtil.resolveFinalPath(DropboxService.landingDirFor(t), t.fileName)
         cwdRefusal(finalPath) match
           case Some(reason) =>
             val refused = TempPathDecision.Refused(s"destination: $reason")
@@ -1332,7 +1445,13 @@ object DropboxService:
     fileSize: Long,
     transferId: String,
     delivered: Boolean,
-    error: Option[String]
+    error: Option[String],
+    /** 本次请求的 `targetDir`（NFC 形态）；`None` = 未请求（缺省语义）。 */
+    targetDir: Option[String] = None,
+    /** 🔴 §4.2 候选 1：请求了 `targetDir` 但**对端等级未确认**（`file-response` 未回带
+      * `proto >= 2`）⇒ 该字段**未上 wire**，落点 = 对端缺省目录。调用方（工具面）
+      * **必须显式回显**（禁静默降级，spec §4.1）。 */
+    targetDirDeferred: Boolean = false
   )
 
   /**
@@ -1346,6 +1465,25 @@ object DropboxService:
     chunkSha256: String,
     wholeSha256: String
   )
+
+  /**
+   * 会话落点目录（契约升版批：设备腿 `targetDir`）—— **接收端落点的唯一解释点**。
+   *
+   * - `targetDir` 为空 / 不可解释 / 非绝对 ⇒ `DropboxUtil.downloadsDir`
+   *   （缺省语义，与今天**逐字节一致**）；
+   * - 否则 = `file-offer` 阶段由 [[TargetDirGuard]] 判定通过后固化进会话记录的
+   *   **canonical 落点**（收块/commit 阶段**不得**重新解释字符串）。
+   *
+   * 纯函数、零 IO —— 除 test 外只被接收端落点派生（temp 名 / commit 目标 / 回显
+   * `savedPath`）调用，三处共用本函数（单一实现点，禁第二份判据）。
+   */
+  private[dropbox] def landingDirFor(t: FileTransfer): os.Path =
+    t.targetDir.map(_.trim).filter(_.nonEmpty) match
+      case None => DropboxUtil.downloadsDir
+      case Some(s) =>
+        try
+          if s.startsWith("/") then os.Path(java.nio.file.Paths.get(s)) else DropboxUtil.downloadsDir
+        catch case _: Exception => DropboxUtil.downloadsDir
 
   def create(neblinkService: NeblinkService, wsHub: WsHub): IO[DropboxService] =
     val svc = new DropboxService(neblinkService, wsHub)

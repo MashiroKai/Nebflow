@@ -51,6 +51,11 @@ final class P2PChunkTransport(
           .newBuilder()
           .uri(URI.create(s"$peerAddress/api/neblink/dropbox/transfer/${frame.transferId}"))
           .header("Content-Type", "application/octet-stream")
+          // 🔴 `X-Dropbox-Proto` 头**恒为 1**，**不得**随契约升版改成 2：接收端
+          // `parseDropboxChunkHeaders` 的判据是**等值**（`== ProtoChunked`），头升 2 会让
+          // **旧接收端** guard 为假 ⇒ 走 legacy 整件路径 ⇒ 把第一块当整件落盘（静默数据损坏）。
+          // 版本数值轴（`AttachContract.ProtoAssignDir = 2`）**只走 JSON 面**
+          // （`file-offer` / `file-response`）。常绿钉：`AttachProtoHeaderPinSpec`。
           .header("X-Dropbox-Proto", AttachContract.ProtoChunked.toString)
           .header("X-Dropbox-Index", frame.chunkIndex.toString)
           .header("X-Dropbox-Total-Bytes", frame.totalBytes.toString)
