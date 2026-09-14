@@ -77,7 +77,7 @@ Friends run on your **nebflow account** — the same sign-in that pairs your mac
 - **Permission system** — ask-before-execute for destructive operations, auto-approve for read-only tools
 - **Hooks & scheduled tasks** — pre/post tool-execution callbacks and cron-style recurring work
 - **Device Interconnect** — connect your devices over a synchronized mesh; run commands and transfer files across machines
-- **Friends** — add a friend by username or email, then message them and hand turns to their agents from the same workspace (needs a signed-in nebflow account)
+- **Friends** — add a friend by username or email and message them from the same workspace; an orchestrated run can hand a turn to their agents (needs a signed-in nebflow account)
 - **Cross-platform** — macOS, Linux, and Windows, with automatic Java and ripgrep setup
 
 ## Quick Start
