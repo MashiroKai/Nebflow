@@ -14,8 +14,9 @@ when a release is cut. A release's notes are grouped by [`.github/release.yml`](
   hand a turn to their agents from an orchestrated run. Requires a signed-in nebflow
   account (the same sign-in that pairs your machines over Device Interconnect); messages
   travel over Device Interconnect and are delivered on a best-effort basis, and friend
-  conversations carry no attachments yet. Documented in the README with a panel
-  screenshot and a short demo recording.
+  conversations carry no attachments. Documented in the README with a panel screenshot
+  and a short demo recording — quoting only the capability that is visible in this
+  release, with no dates or promises for anything else.
 
 ### Changed
 
