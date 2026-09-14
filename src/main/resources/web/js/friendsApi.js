@@ -386,6 +386,30 @@ export async function downloadAttachment(attachmentId) {
   return { blob, filename: filenameFromDisposition(resp.headers.get('Content-Disposition')) };
 }
 
+/** POST /api/friends/attachments/{id}/received —— E4 接收完毕回执（补件批 4b1 · §B.1 E4 / §F.1b）。
+ *
+ *  🔴 **纯上报，不判定**：本函数只把「客户端持有的落盘证据」交给网关；**能不能发 E4**
+ *  由引擎侧的 fail-closed 闸决定（`AttachmentAck.decide`）。禁在前端复制第二套判定 ——
+ *  复制即双实现，两侧判据迟早漂移，正是 §F.1b② 「防误删」最怕的形态。
+ *
+ *  🔴 **调用方必须 fire-and-forget**：本函数**不抛**（传输/4xx/5xx 一律吞成 null），
+ *  且**不得**被 await 进下载/保存/UI 路径 —— 回执失败对用户零影响（§F.1b 规则 4：
+ *  丢 ack 的兜底 = 服务端 24 h 强删，用户侧零损失、盘不泄漏）。
+ *
+ *  @param {string} attachmentId 附件 id（E1/E3 同一个 id）
+ *  @param {{wholeSha256: (string|null), declaredSha256: string, receivedBytes: (number|null),
+ *           expectedBytes: (number|null), landedFinal: boolean}} evidence 落盘证据（见 §F.1b①）
+ *  @returns {Promise<any>} 网关结局体 `{ack, reason?}`；失败 ⇒ null（调用方无需区分）
+ */
+export async function ackAttachmentReceived(attachmentId, evidence) {
+  if (MOCK) return null; // mock 面没有字节也没有服务端 ⇒ 零回执（不伪造）
+  try {
+    return await req('POST', `/api/friends/attachments/${encodeURIComponent(attachmentId)}/received`, evidence);
+  } catch {
+    return null; // 静默：回执面永不弹错、永不改调用方结果
+  }
+}
+
 /** `Content-Disposition: attachment; filename*=UTF-8''<pct-encoded>`（§B.1 E3 恒定头）
  *  → 文件名；解析不出 ⇒ null（调用方回落附件元数据的 `name`）。 */
 function filenameFromDisposition(cd) {

@@ -502,6 +502,53 @@ final class FriendService(
   def downloadAttachment(attachmentId: String): IO[Either[String, AttachmentFetch]] =
     withClient(_.downloadAttachment(attachmentId))
 
+  /** E4 接收完毕回执（补件批 4b1 · §B.1 / §F.1b）——**唯一**回执调用点。
+    *
+    * 调用链：前端（`friendsApi.js#ackAttachmentReceived`，只**上报证据**）→ 网关鉴权路由
+    * `POST /api/friends/attachments/{id}/received` → 本方法。判定**全部**在
+    * [[AttachmentAck.decide]]（fail-closed：缺证据一律不发 ⇒ 服务端 blob 不动，TTL 兜底）。
+    *
+    * 三条硬语义：
+    *   ① **fail-closed**：`Skip` ⇒ **零 E4**（不删服务端 blob）；
+    *   ② **失败静默容忍**：本方法**永不失败** —— `IO` 不抛、不改任何调用方返回码、
+    *      不弹错、不写用户可见状态；网络/超时/4xx/5xx 只记日志；
+    *   ③ **重试从简**：**零自动重试**（一次事件至多一次 E4；禁自旋、禁后台队列堆积）。
+    *      丢 ack 的兜底 = 服务端 24 h 强删（§F.1b 规则 4：用户侧零损失，盘不泄漏）。
+    *
+    * `404`/`410` ⇒ **信息级**（无需回执：未就绪件 / 已按瞬态口径删除）；`422`/其余 ⇒ WARN。
+    * 入参 `attachmentId` 仅用于日志与请求路径，**不**参与判定（判定只看证据）。 */
+  def ackAttachmentReceived(attachmentId: String, evidence: AttachmentAck.Evidence): IO[AttachmentAck.Result] =
+    AttachmentAck.decide(evidence) match
+      case AttachmentAck.Decision.Skip(reason) =>
+        logger
+          .info(s"attachment ack skipped ($reason) for $attachmentId — server blob untouched (24h TTL is the safety net)")
+          .as(AttachmentAck.Result.Skipped(reason))
+      case AttachmentAck.Decision.Fire(digest) =>
+        withClient(_.confirmAttachmentReceived(attachmentId, digest))
+          .map {
+            case Right((200, _)) => AttachmentAck.Result.Acknowledged
+            case Right((code, _)) if code == 404 || code == 410 =>
+              // 信息级：无需回执（§F.1b ⑥ 未就绪 / 已删除）；**不是**失败 ⇒ 不重试。
+              logger.info(s"attachment ack for $attachmentId needs no receipt (HTTP $code) — nothing to delete")
+              AttachmentAck.Result.Skipped(s"no-ack-needed-$code")
+            case Right((code, body)) =>
+              logger.warn(s"attachment ack for $attachmentId failed: HTTP $code ${truncate(body)}")
+              AttachmentAck.Result.Failed(s"HTTP $code")
+            case Left(err) =>
+              logger.warn(s"attachment ack for $attachmentId failed: ${truncate(err)}")
+              AttachmentAck.Result.Failed(err)
+          }
+          // 兜底：**任何**上抛（含日志/编解码侧意外）都收敛成失败结局 ⇒ 用户面零影响。
+          .handleErrorWith(e => logger.warn(s"attachment ack for $attachmentId raised: ${truncate(msg(e))}").as(AttachmentAck.Result.Failed("raised")))
+
+  /** 日志截断（服务端 body / 异常文案）：单行、有上限，防日志面被大 body 灌满。 */
+  private def truncate(s: String, max: Int = 200): String =
+    val one = Option(s).getOrElse("").replace('\n', ' ')
+    if one.length <= max then one else one.take(max) + "…"
+
+  private def msg(e: Throwable): String =
+    Option(e.getMessage).filter(_.nonEmpty).getOrElse(e.getClass.getSimpleName)
+
   /** K-3（段 B 2026-09-12）：agent 代发的**本机自播**——把刚发出的消息按服务端
     * `message_new_self` 帧**同形**回放给本机浏览器。
     *

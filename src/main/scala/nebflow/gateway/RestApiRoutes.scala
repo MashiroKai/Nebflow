@@ -1601,7 +1601,53 @@ class RestApiRoutes(
             }
       }
 
-    /** 标记已读。body: {lastReadMessageId} */    case req @ POST -> Root / "conversations" / conversationId / "read" =>
+    /** 附件接收完毕回执（补件批 4b1 · §B.1 E4 / §F.1b）。
+      *
+      * 与上一条 E3 下载路由**同族**：前端拿不到服务端地址/凭证 ⇒ 回执也**只能**走本网关的
+      * 应用内鉴权路由（`withAuth`，同其余 `/friends*` 面；服务端侧对应 `POST /api/attachments/{id}/received`）。
+      * 关系闸（§F.1b 规则 5：`received` 只对「能读该件的人」开放）在**服务端** E4 上，本层**不复制**
+      * 第二套权限判定（禁双实现）。
+      *
+      * 🔴 **判定不在此层**：本路由只把请求体整理成 [[AttachmentAck.Evidence]] 交给
+      * `FriendService.ackAttachmentReceived`；fail-closed 判定只有一处实现（[[AttachmentAck.decide]]），
+      * 前端只上报证据（`friendsApi.js#ackAttachmentReceived`）。缺证据 / sha 不符 / 未申报落盘
+      * ⇒ 上游**不发** E4 ⇒ 服务端 blob 不动（24 h TTL 兜底）。
+      *
+      * 🔴 **永不改变用户面**：无论结局是 acknowledged / skipped / failed，一律 `200` + 结局体
+      * `{"ack": …, "reason": …}`；调用方（前端）**不 await、不看**该结果 ⇒ 回执失败不影响
+      * 下载/保存/UI（失败静默容忍，§F.1b 规则 4）。「E4 失败 ⇒ 用户面与成功路径逐字相同」
+      * 因此是**结构保证**：两条路径的唯一差异位就在本体的 `ack`/`reason` 字段。
+      */
+    case req @ POST -> Root / "friends" / "attachments" / attachmentId / "received" =>
+      withAuth(req) {
+        sharedResources.friendService match
+          case None => NotFound(Json.obj("error" -> "NebLink not enabled".asJson))
+          case Some(fs) =>
+            req.as[Json].attempt.flatMap {
+              case Left(_) =>
+                // 证据体不可解析 ⇒ 按「无法验证」处理（fail-closed：零 E4），且不改用户面。
+                Ok(Json.obj("ack" -> "skipped".asJson, "reason" -> "malformed-evidence".asJson))
+              case Right(body) =>
+                val h = body.hcursor
+                val evidence = AttachmentAck.Evidence(
+                  localSha256 = h.get[String]("wholeSha256").toOption,
+                  declaredSha256 = h.get[String]("declaredSha256").toOption.getOrElse(""),
+                  receivedBytes = h.get[Long]("receivedBytes").toOption,
+                  expectedBytes = h.get[Long]("expectedBytes").toOption,
+                  landedFinal = h.get[Boolean]("landedFinal").toOption.getOrElse(false)
+                )
+                fs.ackAttachmentReceived(attachmentId, evidence).flatMap {
+                  case AttachmentAck.Result.Acknowledged => Ok(Json.obj("ack" -> "acknowledged".asJson))
+                  case AttachmentAck.Result.Skipped(reason) =>
+                    Ok(Json.obj("ack" -> "skipped".asJson, "reason" -> reason.asJson))
+                  case AttachmentAck.Result.Failed(reason) =>
+                    Ok(Json.obj("ack" -> "failed".asJson, "reason" -> reason.asJson))
+                }
+            }
+      }
+
+    /** 标记已读。body: {lastReadMessageId} */
+    case req @ POST -> Root / "conversations" / conversationId / "read" =>
       withAuth(req) {
         sharedResources.friendService match
           case None => NotFound(Json.obj("error" -> "NebLink not enabled".asJson))

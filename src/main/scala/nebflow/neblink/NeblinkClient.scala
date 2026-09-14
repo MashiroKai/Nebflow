@@ -603,6 +603,32 @@ class NeblinkClient(
   def downloadAttachment(attachmentId: String): IO[Either[String, AttachmentFetch]] =
     withSession(token => sendRequestBinary("GET", s"${config.url}/api/attachments/${enc(attachmentId)}", Some(token)))
 
+  /** E4 接收完毕回执（补件批 4b1 · §B.1 / §F.1b ②）：`POST /api/attachments/{id}/received`，
+    * body **逐字** `{"wholeSha256":"<64 位小写 hex>"}`。
+    *
+    * 调用方 = 网关鉴权路由 → `FriendService.ackAttachmentReceived`（**唯一**调用链；
+    * 前端只上报证据，判定在引擎侧 [[AttachmentAck]]）。本方法**不含任何判定**：
+    * 「能不能发」在闸里，「发出去成没成」由状态码回给调用方。
+    *
+    * 三态**不折叠**（同 E3 的设计要点，理由见 [[AttachmentFetch]] 的注释）：
+    *   - `200` ⇒ 服务端已置 `deleted`（含 `state='deleted'` 的**幂等**重复 ack，§B.1）；
+    *   - `404`/`410` ⇒ **无需回执**（未就绪 `uploading`/`staged` §F.1b ⑥ / 已按瞬态口径删除）
+    *     ⇒ 调用方记**信息级**日志，不是失败；
+    *   - `422` ⇒ `WHOLE_DIGEST_MISMATCH`（本地与服务端 digest 不符 ⇒ 服务端零副作用）。
+    *
+    * 鉴权/自愈缝 = 既有 `withSession`（禁新造 HTTP 客户端、禁复制鉴权与关系闸——禁双实现）。
+    * 超时 = `DefaultRelayTimeout`（10 s）：回执是**尽力而为**面，**不给**它长尾
+    * （失败静默容忍 + 24 h TTL 兜底，§F.1b 规则 4）。 */
+  def confirmAttachmentReceived(attachmentId: String, wholeSha256: String): IO[Either[String, (Int, String)]] =
+    withSession(token =>
+      sendRequestJsonWithStatus(
+        "POST",
+        s"${config.url}/api/attachments/${enc(attachmentId)}/received",
+        Json.obj("wholeSha256" -> wholeSha256.asJson).noSpaces,
+        Some(token)
+      )
+    )
+
   private def enc(s: String): String = java.net.URLEncoder.encode(s, "UTF-8")
 
   private def json(body: String): Either[String, Json] = decode[Json](body).left.map(_.getMessage)
@@ -659,6 +685,39 @@ class NeblinkClient(
             sha256Header = Option(hs.firstValue("x-attachment-sha256").orElse(null))
           )
         )
+      catch
+        case e: Exception =>
+          NeblinkClient.noteOutboundFailure(e, method, url, logger)
+          Left(if e.getMessage == null then e.toString else e.getMessage)
+    }.handleErrorWith(e => IO.pure(Left(e.getMessage)))
+
+  /** JSON **请求**通道，**保留状态码**（E4 回执专用）。与 [[sendRequestTimed]] 的差别
+    * 只有一处：非 2xx **不是** `Left`，而是 `Right((<code>, <body>))` —— `404`/`410`
+    * 是**可判读态**（无需回执）而非失败，折叠成 `Left` 会让调用方只能靠解析字符串
+    * 区分它们（同 [[sendRequestBinary]] 与 [[sendRequestBytes]] 的关系）。只有传输层
+    * 异常才是 `Left`（其文案与 [[sendRequestTimed]] 逐字同形，下游日志口径不变）。
+    *
+    * 超时**按调用传**：默认 `DefaultRelayTimeout`，与 [[sendRequest]] 同值 ⇒ 不动任何
+    * 既有语义（E2/E3 的长超时各有自己的常量，本通道不碰）。 */
+  protected def sendRequestJsonWithStatus(
+    method: String,
+    url: String,
+    body: String,
+    token: Option[String],
+    timeout: scala.concurrent.duration.FiniteDuration = NeblinkClient.DefaultRelayTimeout
+  ): IO[Either[String, (Int, String)]] =
+    IO.blocking {
+      try
+        val builder = HttpRequest
+          .newBuilder()
+          .uri(URI.create(url))
+          .timeout(java.time.Duration.ofMillis(timeout.toMillis))
+        token.foreach(t => builder.header("Authorization", s"Bearer $t"))
+        builder.header("Content-Type", "application/json")
+        val request = if method == "POST" then builder.POST(HttpRequest.BodyPublishers.ofString(body)).build()
+          else builder.method(method, HttpRequest.BodyPublishers.ofString(body)).build()
+        val response = httpClient.send(request, HttpResponse.BodyHandlers.ofString())
+        Right((response.statusCode(), response.body()))
       catch
         case e: Exception =>
           NeblinkClient.noteOutboundFailure(e, method, url, logger)
