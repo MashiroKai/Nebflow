@@ -43,6 +43,32 @@ const V_SPACING = 150;
 const H_SPACING = 168;
 const PAD = 48;
 
+// 实测高驱动层距（作者 2026-09-14 裁定①「画布根治」，批二）：
+// 卡是 height:auto——徽标行换行 / barrier 提示 / 等待脚注 / desc 行让实卡高远超标称 108px
+// （实测高卡 203.5px），按常量 150 平铺必然压叠下一层（实测交集 2140px²）。根治 = 挂载后
+// 逐层取实测 getBoundingClientRect 高（层内最高卡）重算层心 y，再用既有 400ms 位移动画
+// 把节点与边端点一起挪到位。
+// 🔴 常量一字不改（禁上调 V_SPACING 充当修法，与 09-04「压空白」裁定相悖）：LAYER_GAP 只是
+// V_SPACING 与 NODE_H 的差（标称卡下的层间净距，42px），实测高 ≤ NODE_H 时层心距恒等
+// V_SPACING（逐像素回归），仅当实卡更高时才把层距顶开。
+const LAYER_GAP = V_SPACING - NODE_H;
+/** 标称卡高下限（层高与层心定位共用）：实卡 ≤ 标称时不改变既有几何。 */
+const effNodeH = (h) => (h > NODE_H ? h : NODE_H);
+
+/** project → (nodeId → 实测卡高 px)：measureNodeHeights 写、layoutNodes 读。
+ *  按项目隔离（同 id 跨项目不复用读数）；未实测节点回落标称 NODE_H。 */
+const measuredHByProject = new Map();
+function heightsFor(project) {
+  let m = measuredHByProject.get(project);
+  if (!m) { m = new Map(); measuredHByProject.set(project, m); }
+  return m;
+}
+
+/** 卡左上角（画布局部坐标 = world）。x 由层内水平排布定（卡宽恒 NODE_W）；
+ *  y 以 pos.y 为**竖直中心**（与 collectEdges 的边端点锚点「位置即节点中心」同口径），
+ *  卡高取 pos.h（实测高，标称下限 108）——标称卡与旧式 `pos.y - NODE_H/2` 逐像素一致。 */
+function cardTopOf(pos) { return pos.y - (pos.h || NODE_H) / 2 + PAD; }
+
 // 增量动画节奏：节点位移走 CSS left/top 过渡、边端点跟随走 rAF 插值，两者同曲线
 // （easeInOutCubic ≙ cubic-bezier(0.645,0.045,0.355,1)）同时长，视觉上同步滑动。
 const MOVE_MS = 400;
@@ -641,7 +667,11 @@ function openFlowMapPanes() {
 // ── 布局：按 out 边 + deps 边 + in 边算深度层 ──────────────
 // v3（规格 §3.1）：主图含链未齐终态保留卡，barrier 上游在图——in 边并入层级
 // 推导（childrenMap），否则保留卡全部塌到 depth 0 平排（原型实测）。
-function layoutNodes(fm) {
+// 层心 y（裁定①）：逐层按**层内最高实卡**（实测高，下限标称 108）累加——
+//   y_k = y_{k-1} + h_{k-1}/2 + h_k/2 + LAYER_GAP
+// 标称高时恒等旧值 k * V_SPACING（回归零位移）；高卡层距被顶开，不再压叠。
+// heights（可选）= 逐节点实测读数（measureNodeHeights 写）；缺读数 = 标称高。
+function layoutNodes(fm, heights) {
   const nodes = fm?.nodes || [];
   const nodeIds = new Set(nodes.map((n) => n.id));
   const childrenMap = new Map();
@@ -679,14 +709,28 @@ function layoutNodes(fm) {
   });
   const positions = {};
   const maxAt = Object.values(atDepth).reduce((m, ids) => Math.max(m, ids.length), 0);
-  Object.entries(atDepth).forEach(([d, ids]) => {
-    const y = Number(d) * V_SPACING;
+  const hOf = (id) => effNodeH(heights && heights.get(id));
+  const depths = Object.keys(atDepth).map(Number).sort((a, b) => a - b);
+  let y = 0;
+  let prevD = 0;
+  let prevH = NODE_H;
+  depths.forEach((d, layerIdx) => {
+    const ids = atDepth[d];
+    const layerH = ids.reduce((m, id) => Math.max(m, hOf(id)), NODE_H);
+    if (layerIdx > 0) {
+      // 层距 = 上层最高卡半高 + 本层最高卡半高 + 净距 LAYER_GAP（标称高时 = V_SPACING）；
+      // 缺层（拓扑空档）按旧式每层补一个 V_SPACING
+      y += (d - prevD - 1) * V_SPACING + prevH / 2 + layerH / 2 + LAYER_GAP;
+    }
     const total = (ids.length - 1) * H_SPACING;
-    ids.forEach((id, i) => { positions[id] = { x: i * H_SPACING - total / 2, y }; });
+    ids.forEach((id, i) => { positions[id] = { x: i * H_SPACING - total / 2, y, h: hOf(id) }; });
+    prevD = d;
+    prevH = layerH;
   });
-  const maxDepth = Math.max(0, ...Object.keys(atDepth).map(Number));
   const width = Math.max((maxAt - 1) * H_SPACING + NODE_W + PAD * 2, 360);
-  const height = maxDepth * V_SPACING + PAD * 2;
+  // 高 = 末层层心 + 末层最高卡半高 + 底部余量（PAD*2 - NODE_H/2 = 42：标称层高下与旧式
+  // maxDepth * V_SPACING + PAD * 2 逐像素一致）。空图恒 PAD*2（旧式同值）。
+  const height = depths.length ? y + prevH / 2 + (PAD * 2 - NODE_H / 2) : PAD * 2;
   return { positions, width, height };
 }
 
@@ -831,7 +875,7 @@ function chainCardHtml(n, pos, originX) {
   const st = String(n.status || 'pending');
   const cls = NODE_STATUS_CLS[st] || 'pending';
   const left = pos.x - NODE_W / 2 + originX;
-  const top = pos.y - NODE_H / 2 + PAD;
+  const top = cardTopOf(pos);
   const statusIcon = st === 'completed' ? fmSvgIcon('ok', FM_STATUS_SVG.ok, 1.5)
     : st === 'failed' ? fmSvgIcon('err', FM_STATUS_SVG.err, 1.5)
     : st === 'cancelled' ? fmSvgIcon('cancelled', FM_STATUS_SVG.cancelled, 1.5)
@@ -871,7 +915,7 @@ function nodeHtml(n, pos, originX, nameOf) {
   const cls = NODE_STATUS_CLS[st] || 'pending';
   const term = isTerminalStatus(st); // v3 链未齐终态保留卡（规格 §3.2 终态色卡）
   const left = pos.x - NODE_W / 2 + originX;
-  const top = pos.y - NODE_H / 2 + PAD;
+  const top = cardTopOf(pos);
   const statusIcon = st === 'completed' ? fmSvgIcon('ok', FM_STATUS_SVG.ok, 1.5)
     : st === 'failed' ? fmSvgIcon('err', FM_STATUS_SVG.err, 1.5)
     : st === 'blocked' ? fmSvgIcon('warn', FM_STATUS_SVG.warn, 1.4)
@@ -1554,9 +1598,9 @@ function applyNodeDiff(canvas, prevFm, fm, positions, width, projectName) {
   const seen = new Set();
   for (const n of vis) {
     seen.add(n.id);
-    const pos = positions[n.id] || { x: 0, y: 0 };
+    const pos = positions[n.id] || { x: 0, y: 0, h: NODE_H };
     const left = `${(pos.x - NODE_W / 2 + originX).toFixed(1)}px`;
-    const top = `${(pos.y - NODE_H / 2 + PAD).toFixed(1)}px`;
+    const top = `${cardTopOf(pos).toFixed(1)}px`;
     let el = existing.get(n.id);
     if (el && el.classList.contains('fm-exit')) {
       el.remove(); // 快速删后又重建：不复用正在退场的元素（退场定时器随后空移除）
@@ -1662,8 +1706,8 @@ function renderFlowMapDiff(container, baseline, fm, projectName) {
   const g = svg ? svg.querySelector('g') : null;
   if (!svg || !g) return false;
   if (visibleNodes(fm).length === 0 || visibleNodes(baseline).length === 0) return false; // 图⇄空态走全量
-  const prevLayout = layoutNodes(baseline);
-  const { positions, width, height } = layoutNodes(fm);
+  const prevLayout = layoutNodes(baseline, heightsFor(projectName));
+  const { positions, width, height } = layoutNodes(fm, heightsFor(projectName));
 
   // 画布尺寸：节点增删导致重排时宽度连续过渡（.flowmap-card .solar-canvas transition），
   // 居中 margin-auto 的偏移随之连续，配合节点 left 过渡整图不跳。
@@ -1675,6 +1719,9 @@ function renderFlowMapDiff(container, baseline, fm, projectName) {
 
   applyNodeDiff(canvas, baseline, fm, positions, width, projectName);
   applyEdgeDiff(g, collectEdges(baseline, prevLayout.positions), collectEdges(fm, positions));
+  geomByCanvas.set(canvas, { positions, width, height });
+  // 实测高重算（裁定①）：新卡/内容变化的卡量到新读数后即时重排（读数未变 ⇒ 空转）
+  scheduleMeasuredLayout(container, fm, projectName);
 
   // 摘要增量（2026-09-06 顶栏合并批）：就地视图摘要已迁入 nav-bar（view-body 之外），
   // 查找提升到 pane 口径；legacy 独立标签页摘要仍在 container 内 card-header——
@@ -1698,6 +1745,90 @@ function renderFlowMapDiff(container, baseline, fm, projectName) {
     }
   }
   return true;
+}
+
+/** 画布 → 最近一次落地的几何 {positions,width,height}：实测高重算的比较基准
+ *  （与 renderedFmByContainer 同式：DOM 即真相的旁挂缓存）。 */
+const geomByCanvas = new WeakMap();
+
+/** 逐卡实测高（getBoundingClientRect，裁定①「挂载后逐层取 max」），按项目写读数表。
+ *  · 退场卡（fm-exit）不量；隐藏 pane（rect 高 0）不写读数（保留旧读数/标称高）；
+ *  · 入场动画中的卡带 transform scale(0.85) ⇒ rect 被缩 15%，取未变换布局高 offsetHeight。
+ *  @returns {{changed:boolean, measured:number, visible:number}} */
+function measureNodeHeights(container, fm, projectName) {
+  const byId = new Map(visibleNodes(fm).map((n) => [n.id, n]));
+  const heights = heightsFor(projectName);
+  let changed = false;
+  let measured = 0;
+  for (const el of container.querySelectorAll('.fm-node')) {
+    if (el.classList.contains('fm-exit')) continue;
+    const id = el.getAttribute('data-node-id');
+    if (!id || !byId.has(id)) continue;
+    const h = Math.round((el.classList.contains('fm-enter')
+      ? el.offsetHeight : el.getBoundingClientRect().height) * 10) / 10;
+    if (!(h > 0)) continue;
+    measured += 1;
+    const prev = heights.get(id);
+    if (prev === undefined || Math.abs(prev - h) > 0.5) changed = true;
+    heights.set(id, h);
+  }
+  return { changed, measured, visible: byId.size };
+}
+
+/** 按新读数重算层距并就地挪位：画布尺寸（CSS 0.4s 过渡）/ g 平移 / 节点 left-top
+ *  （CSS 0.4s 过渡）/ 边端点（rAF 跟随）/ 邻接表 / autoFit —— 与 renderFlowMapDiff 同一口径，
+ *  几何落地函数复用同一条路径（不新造第二套动画）。读数未变 ⇒ 零 DOM 写、无动画。
+ *  @returns {boolean} 是否真的挪了位。 */
+function applyMeasuredLayout(container, fm, projectName) {
+  const canvas = container.querySelector('.solar-canvas');
+  const svg = canvas ? canvas.querySelector('svg.solar-edges') : null;
+  const g = svg ? svg.querySelector('g') : null;
+  if (!canvas || !svg || !g) return false;
+  const prev = geomByCanvas.get(canvas) || layoutNodes(fm);
+  const next = layoutNodes(fm, heightsFor(projectName));
+  const same = prev.width === next.width && prev.height === next.height
+    && Object.keys(next.positions).every((id) => {
+      const a = prev.positions[id];
+      const b = next.positions[id];
+      return !!a && a.x === b.x && a.y === b.y;
+    })
+    && Object.keys(prev.positions).length === Object.keys(next.positions).length;
+  if (same) return false;
+  canvas.style.width = `${next.width}px`;
+  canvas.style.height = `${next.height}px`;
+  svg.setAttribute('width', String(next.width));
+  svg.setAttribute('height', String(next.height));
+  animateGTranslate(g, prev.width / 2, next.width / 2);
+  applyNodeDiff(canvas, fm, fm, next.positions, next.width, projectName);
+  applyEdgeDiff(g, collectEdges(fm, prev.positions), collectEdges(fm, next.positions));
+  geomByCanvas.set(canvas, next);
+  rebuildAdjacency(canvas, fm, collectEdges(fm, next.positions));
+  const vp = canvas.parentElement;
+  if (vp && vp.classList.contains('fm-viewport')) {
+    const cam = camByViewport.get(vp);
+    if (cam && cam.autoFit) {
+      const fit = camFit(vp, canvas, cam);
+      if (fit) { camByViewport.set(vp, fit); camApply(vp, canvas, fit, true); }
+    }
+  }
+  return true;
+}
+
+/** 挂载后实测重算（rAF：等首帧布局与入场类落定）。量到全部可见卡后即止；隐藏 pane /
+ *  尚未布局（量不到）⇒ 有限次重试（最多 3 次、间隔递增），耗尽即停（打开标签页时
+ *  渲染路径会重新挂一次，不自旋）。 */
+function scheduleMeasuredLayout(container, fm, projectName) {
+  let tries = 0;
+  const tick = () => {
+    if (!container.isConnected) return;
+    const m = measureNodeHeights(container, fm, projectName);
+    if (m.changed) { applyMeasuredLayout(container, fm, projectName); return; }
+    if (m.measured < m.visible && tries < 3) {
+      tries += 1;
+      setTimeout(tick, 250 * tries);
+    }
+  };
+  requestAnimationFrame(tick);
 }
 
 /** 全量渲染后让整图「长出来」（图⇄空态切换走全量路径时的入场动画）。 */
@@ -1737,9 +1868,9 @@ export function renderFlowMap(container, fm, projectName, opts = {}) {
     syncArchiveUi(container, projectName);
     return;
   }
-  const { positions, width, height } = layoutNodes(fm);
+  const { positions, width, height } = layoutNodes(fm, heightsFor(projectName));
   const nameOf = nameResolverOf(projectName);
-  const nodesHtml = nodes.map((n) => nodeHtml(n, positions[n.id] || { x: 0, y: 0 }, width / 2, nameOf)).join('');
+  const nodesHtml = nodes.map((n) => nodeHtml(n, positions[n.id] || { x: 0, y: 0, h: NODE_H }, width / 2, nameOf)).join('');
   // 空态三分（旧版一律"暂无节点，项目空闲"，把「未挂载」「已归档」两种
   // 有数据的情况说成没数据 —— qa 取证「后端有 3 节点、视图显示暂无节点」即此）。
   // v3（§7.3）：图空但有已归档链 → 「全部节点已完成，结果收入右上角归档」，
@@ -1785,12 +1916,15 @@ export function renderFlowMap(container, fm, projectName, opts = {}) {
     bindCamera(vp, canvas);
     bindHover(canvas, projectName);
     rebuildAdjacency(canvas, fm, collectEdges(fm, positions));
+    geomByCanvas.set(canvas, { positions, width, height });
   }
   bindFlowMapClicks(container, projectName);
   if (!navSummary) bindToggle(container, onViewFilterChange); // legacy card-header 内嵌开关
   if (opts.animateAll) animateAllIn(container);
   syncArchiveUi(container, projectName);
   import('./utils.js').then(({ createIconsIn }) => createIconsIn(container));
+  // 实测高驱动层距（裁定①）：挂载后下一帧量实卡高，需要时按实测重算层心并挪位
+  scheduleMeasuredLayout(container, fm, projectName);
 }
 
 function bindFlowMapClicks(container, projectName) {
