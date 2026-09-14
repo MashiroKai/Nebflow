@@ -231,6 +231,8 @@ export default {
   'messages.forwarded': '已转发给 agent',
   'messages.forwardToast': '已加入输入框，可附言后发送',
   'messages.forwardNoSession': '请先在主界面打开一个会话，再转发消息',
+  // B+C 批 · 方案 B（不可恢复标记的**文案**半边）：{n} = 无法恢复的附件数。
+  'messages.queueAttachUnrecoverable': '{n} 个附件因页面刷新无法恢复，请重新添加',
   'messages.trusted': '已信任',
   'messages.trustedHint': '已开启信任：新消息将自动转发给 agent',
   'messages.loadingOlder': '加载更早消息',

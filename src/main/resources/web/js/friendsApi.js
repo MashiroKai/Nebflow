@@ -249,15 +249,101 @@ export async function searchUser(q) {
 export async function getFriends() {
   if (!MOCK) {
     const data = await req('GET', '/api/friends');
-    return {
+    return rememberFriendState(convergeRequests({
       friends: (data.friends || []).map(f => ({ ...personFromWire(f), since: f.since, blocked: f.blocked })),
       incoming: (data.incoming || []).map(r => ({ ...r, from: personFromWire(r.from) })),
       outgoing: (data.outgoing || []).map(r => ({ ...r, to: personFromWire(r.to) })),
-    };
+    }));
   }
   await delay();
   const m = mockStore();
-  return { friends: [...m.friends], incoming: [...m.incoming], outgoing: [...m.outgoing] };
+  return rememberFriendState(
+    convergeRequests({ friends: [...m.friends], incoming: [...m.incoming], outgoing: [...m.outgoing] })
+  );
+}
+
+// ── 批 B（§3.4）：申请状态机收敛 + 判据单点 ────────────────────────────
+// **真源 = 服务端关系态**。跨仓已证（neblink-server 报告 `## 跨仓引用节` §6.1）：
+//  · `friendships` 一对一行（`UNIQUE(user_lo,user_hi)`）⇒ accept 是**原地 UPDATE**，
+//    建立关系即**双向**收敛（一行即两侧），服务端**不存在 pending 残留路径**；
+//  · `GET /api/friends` 的 `outgoing[]` **只可能含 pending** —— accepted 行按 `status`
+//    分流进 `friends[]`，随即从 `outgoing[]` 消失（`store.rs:4238` / `:4245-4257`）；
+//  · `outgoing[]`/`incoming[]` 行走上**没有 `status` 键** ⇒ 客户端必须按「数组成员
+//    资格 + `friends[]` 成员资格」判态，不能靠行内 `status`。
+// ⇒ 本端**唯一**合法的收敛判据 = `friends[]` 命中；**禁**按本地点击 / `sentTo` 乐观态
+// 收敛（红线③：收敛过早会掩盖真实未决请求）。
+//
+// `convergeRequests` 是这条判据的**单点**（`getFriends` 出口唯一经它）：命中 `friends[]`
+// 的对方行从 incoming/outgoing 两侧**同时**移除 ⇒ 双向待处理在源头上就不可能残留。
+// 为什么放在**取数出口**而不是各渲染点：出参面只有一个缝，渲染点有四处（搜索卡 /
+// 请求区 / 行内编辑 / 面板重建）——放到渲染点就是四份判据，必然漂移。
+let lastFriendState = { fetchedAt: 0, friends: [], incoming: [], outgoing: [] };
+
+function convergeRequests(data) {
+  const friends = data.friends || [];
+  const friendIds = new Set(friends.map(f => f.userId).filter(Boolean));
+  return {
+    friends,
+    incoming: (data.incoming || []).filter(r => !(r.from?.userId && friendIds.has(r.from.userId))),
+    outgoing: (data.outgoing || []).filter(r => !(r.to?.userId && friendIds.has(r.to.userId))),
+  };
+}
+
+/** 最近一次 `getFriends()` 的**已收敛**快照（供判据函数与断言面读取；不落盘）。
+ *  `fetchedAt` 是「无证据 vs 已收敛」的判别子（见 `friendStateLoaded`）。 */
+function rememberFriendState(data) {
+  lastFriendState = {
+    fetchedAt: Date.now(),
+    friends: data.friends || [],
+    incoming: data.incoming || [],
+    outgoing: data.outgoing || [],
+  };
+  return data;
+}
+
+/** 判据②（§3.4）的**判据函数**：该 userId 是否仍「我方出站待处理」。
+ *  语义 = `relationOf`（本文件 `:169`）同判据，但作用在**真服务端快照**上而不是 mock 仓：
+ *  ① `friends[]` 命中 ⇒ **false**（关系已建立，出站待处理必然已终结）；
+ *  ② 否则按 `outgoing[]` 成员资格 + `status` 缺省视为 pending（与既有行内口径逐字一致）。
+ *  导出面：机械断言与面板渲染**同源** ⇒ 「判据绿」与「UI 无待处理行」不会各说各话。 */
+export function pendingOutgoing(userId) {
+  if (!userId) return false;
+  if (lastFriendState.friends.some(f => f.userId === userId)) return false;
+  return lastFriendState.outgoing.some(r => r.to?.userId === userId && (r.status || 'pending') === 'pending');
+}
+
+/** `pendingOutgoing` 的入站同族判据（双向互加后两侧必须**同时**为 false）。 */
+export function pendingIncoming(userId) {
+  if (!userId) return false;
+  if (lastFriendState.friends.some(f => f.userId === userId)) return false;
+  return lastFriendState.incoming.some(r => r.from?.userId === userId && (r.status || 'pending') === 'pending');
+}
+
+/** 快照是否**已装载**（`getFriends()` 至少成功过一次）。
+ *
+ *  为什么必须能判它：`pendingOutgoing`/`pendingIncoming` 在**无快照**时返回 `false`
+ *  ——那一态的 `false` 是「无证据」，不是「已收敛」。若断言只看 `false`，一个**从未
+ *  取过数**的环境会被读成「判据成立」= 假的绿。⇒ 判据必须同时要求 `friendStateLoaded()
+ *  === true`（机械可判），把「无证据」与「收敛」分开。
+ *  `lastFriendState.fetchedAt` 亦可用于断言快照**在事件之后**刷新过（时效面）。 */
+export function friendStateLoaded() {
+  return lastFriendState.fetchedAt > 0;
+}
+
+/** 快照的只读副本（判据面用；返回浅拷贝，调用方改不动内部态）。 */
+export function friendStateSnapshot() {
+  return {
+    fetchedAt: lastFriendState.fetchedAt,
+    friends: [...lastFriendState.friends],
+    incoming: [...lastFriendState.incoming],
+    outgoing: [...lastFriendState.outgoing],
+  };
+}
+
+/** mock 链路的 `GET /api/friends` 注入点（既有测试夹具用）：注入后**同一套**收敛
+ *  判据生效（判据面与生产链路同源，禁两份）。 */
+export function __convergeForTest(data) {
+  return rememberFriendState(convergeRequests(data));
 }
 
 /** POST /api/friends/requests {query, note?} → {requestId} (201)。

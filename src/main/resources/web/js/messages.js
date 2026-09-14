@@ -1493,6 +1493,31 @@ function markFrameMessageSeen(id) {
   return true;
 }
 
+/** 批 C：**未读计数的幂等集**（与渲染去重 `seenFrameMessageIds` **分离**，理由见
+ *  `onFriendEvent` 的 message_new 分支注释）。
+ *
+ *  为什么不能与渲染去重共用一个集合：两件事的**权威顺序不同** —— 渲染的权威是
+ *  「这条消息的正文在不在窗口里」（任一种帧都算），未读的权威是「这次到达是不是
+ *  **新的一条对方消息**」（只有真事件帧算）。共用一个集合就让「哪种帧先到」变成
+ *  计数的隐藏输入（非确定、且跨实例不同）。分开后判定与到达顺序无关。
+ *  有界：FIFO ≤512（与 `seenFrameMessageIds` 同上限，同族先例）。 */
+const countedUnreadIds = new Set();
+const countedUnreadIdOrder = [];
+const COUNTED_UNREAD_MAX = 512;
+/** @returns {boolean} true = 本条尚未计过未读（调用方 +1）；false = 已计过（跳过）。 */
+function markUnreadCounted(id) {
+  if (id === undefined || id === null || id === '') return true;
+  const k = String(id);
+  if (countedUnreadIds.has(k)) return false;
+  countedUnreadIds.add(k);
+  countedUnreadIdOrder.push(k);
+  if (countedUnreadIdOrder.length > COUNTED_UNREAD_MAX) {
+    const oldest = countedUnreadIdOrder.shift();
+    if (oldest !== undefined) countedUnreadIds.delete(oldest);
+  }
+  return true;
+}
+
 // ── W13 待补队列（会话缓存缺失时不静默丢帧）────────────────
 // 帧可能**先于**会话列表到达（重连窗口 / 全新会话首条 / 面板未挂载）。修前那条分支
 // 只 `refreshConversations()` 后 `return` —— 帧**零日志地消失**；刷新之后没人再把它
@@ -1522,8 +1547,13 @@ async function onFriendEvent(msg, retried = false) {
     const conv = conversations.find(c => c.conversationId === p.conversationId);
     if (!conv) {
       // W13（§3.3）：修前**零日志**地丢帧。必须留痕 + **入待补队列**（刷新后补投）。
+      // 🔴 批 C 去歧义（W13 一名两处）：补 `branch=` 键，取值**唯一**（W13a=入站面）。
+      // 机械计数一律读 `branch=`（**精确值**）而不是 `reason=` —— 后者两侧存在前缀
+      // 关系（`conversation_not_cached` ⊂ `conversation_not_cached_self`），按
+      // `contains` 计数会让「应报数 == 出现数」对 W13 不可判（与 W1 同族形态）。
+      // `reason=` 取值**保持批 A 原值**（跨批契约，禁改）。
       console.warn(`[fm] friend_event 帧到达但会话缓存缺失（REST 为权威）event=${msg.event} `
-        + `conversationId=${p.conversationId} messageId=${p.messageId} `
+        + `branch=W13a conversationId=${p.conversationId} messageId=${p.messageId} `
         + `reason=conversation_not_cached retried=${retried}`);
       if (!retried) {
         if (pendingFriendFrames.length >= PENDING_FRIEND_FRAME_MAX) pendingFriendFrames.shift();
@@ -1534,10 +1564,26 @@ async function onFriendEvent(msg, retried = false) {
       return;
     }
     const m = frameMessage(p);
-    // U-a 幂等：同 messageId 的重复到达不得二次计未读 / 二次自动转发 / 二次上屏。
+    const isOpen = openConvId === p.conversationId;
+    // 🔴 批 C（批 A §11.3 划归本批的**回放帧前端幂等去重**实现面）：
+    // 「**已渲染**去重」与「**已计未读**去重」必须**分开**，不能共用一套集合。
+    //
+    // 为什么：批 A 的「拉取即派发」使**同一个 messageId** 可能以两种帧先后到达
+    // （回放帧 `backfill:true` + 真事件帧）。共用 `markFrameMessageSeen` 时，**先到的
+    // 那一帧决定后一帧的生死**：
+    //   · 回放帧先到 ⇒ id 被标成「见过」⇒ 随后真事件帧在下面 `markFrameMessageSeen`
+    //     处**早退** ⇒ 未读**不涨**（角标少 1，且全程静默 —— 正是本仓缺陷族形态）；
+    //   · 事件帧先到 ⇒ 无害（回放帧本就不计数、不回放不涨未读）。
+    // ⇒ 未读计数走**自己的**幂等集（`countedUnreadIds`）：与渲染去重解耦，两集各有界。
+    // 计数口径**零变化**（判据与修前逐字一致）：仅在**未开会话** + **非回放帧** +
+    // **发送方确为对方**（正向证据，`sender != me`）时 +1 ⇒ 「self 不计未读」不变。
+    if (!isOpen && p.backfill !== true) {
+      const fromPeer = m.senderId && conv.friend && m.senderId === conv.friend.userId;
+      if (fromPeer && markUnreadCounted(m.id)) conv.unreadCount = (conv.unreadCount || 0) + 1;
+    }
+    // U-a 幂等：同 messageId 的重复到达不得二次上屏 / 二次自动转发（**渲染面**）。
     if (!markFrameMessageSeen(m.id)) return;
     conv.lastMessage = m;
-    const isOpen = openConvId === p.conversationId;
     // §3.2① 补拉回放帧（`backfill: true`）：只做**渲染/预览**，不计数、不转发、不认领。
     // 未读的权威来源是事件增量 + 服务端 `unreadCount` 基线；补拉是渲染修复，不是计数
     // 依据 —— 否则冷启动后的一页历史回补会把角标刷成虚高（冲垮「self 不计未读」口径）。
@@ -1555,12 +1601,10 @@ async function onFriendEvent(msg, retried = false) {
       appendMessage(m); // 内部已落 ⑨ 缓存
       api.markConversationRead(p.conversationId, m.id).catch(() => {});
       conv.unreadCount = 0;
-    } else {
-      // inbound only counts; our own/agent-sent never unread (§4)
-      if (m.senderId && conv.friend && m.senderId === conv.friend.userId) {
-        conv.unreadCount = (conv.unreadCount || 0) + 1;
-      }
     }
+    // 未开会话的未读 +1 已在上方（渲染去重之前）按「已计未读」判据落账 —— 修前它在
+    // 这里，落在 `markFrameMessageSeen` **之后** ⇒ 被回放帧抢先时整条不涨（批 C 修复面）。
+    // 口径本身零变化：inbound only counts / our own / agent-sent never unread（§4）。
     // 信任模式 v1：trusted 好友的新到消息自动起草进 agent 输入（单向）。
     // Note: 全新会话的首条消息走上方 refreshConversations 早退分支，不在此
     // 自动转发（会话缓存缺失时的已知边界，后续消息正常覆盖）。
@@ -1579,8 +1623,9 @@ async function onFriendEvent(msg, retried = false) {
     const conv = conversations.find(c => c.conversationId === msg.conversationId);
     if (!conv) {
       // W13（self 面同族）：同样必须留痕 + 入待补队列。
+      // 🔴 批 C 去歧义（W13 一名两处）：同族**self 面**子分支 ⇒ `branch=W13b`。
       console.warn(`[fm] friend_event 帧到达但会话缓存缺失（REST 为权威）event=${msg.event} `
-        + `conversationId=${msg.conversationId} messageId=${msg.messageId} `
+        + `branch=W13b conversationId=${msg.conversationId} messageId=${msg.messageId} `
         + `reason=conversation_not_cached_self retried=${retried}`);
       if (!retried) {
         if (pendingFriendFrames.length >= PENDING_FRIEND_FRAME_MAX) pendingFriendFrames.shift();
@@ -1621,6 +1666,16 @@ async function onFriendEvent(msg, retried = false) {
     return;
   }
   if (msg.event === 'friend_request') {
+    // §3.1①（批 B）：修前本分支**只**派发 `fm-friends-changed`（= 好友列表/申请面），
+    // 申请状态与「新的朋友」列表的可见性因此完全依赖**下游监听者当时是否在册**
+    // （取证稿 §3.1 现状读数：「friend_request：只派发 fm-friends-changed，不刷新
+    // 申请状态/列表」）。补一次**同拍强刷**（`friends:'force'` ⇒ 会话 + `GET /api/friends`
+    // 并行取，与 `friend_accepted` 分支**逐字同形**）——判据①要求的是「帧到达后
+    // ≤1 个 beacon 拍内 GET /api/friends 状态翻转」，不能让这条保证挂在监听器挂载
+    // 时序上。🔴 禁新端点：`getFriends()` 已返回双向 pending（`friendsApi.js:249`）。
+    // `await` 不改变事件语义（帧处理本身已是异步，且 `onFriendEvent` 的调用方不
+    // 依赖本分支的返回值）。
+    await refreshConversations({ friends: 'force' });
     window.dispatchEvent(new CustomEvent('fm-friends-changed'));
   }
 }
