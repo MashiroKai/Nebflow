@@ -137,3 +137,47 @@ class FriendMessageToolTargetDirSpec extends CatsEffectSuite:
         _ <- IO(os.remove.all(src))
       yield ()
     }
+
+  // ===== A3：模型可见文案钉（r2 返工项，判词 `fail` §F） =====
+
+  /** 复核位判词 `fail`（`n-f1e658c7` §F）：**模型可见契约**仍逐字写着 device 目标
+    * 「Rejected for device targets」（prose `:81` + JSON schema `:105`），与已落地的
+    * **受控支持**行为直接矛盾 ⇒ 新能力对主消费面不可达。本钉防该失效断言回归
+    * —— 🔴 两处必须**同时**改（只改一处即红）。 */
+  private val staleDeviceRefusalClaims = List(
+    "Rejected for device targets",
+    "not supported for device targets"
+  )
+
+  /** 🔴 口径锚（spec §4.1 禁静默 / §4.2 候选 1 / §⑥① 受控支持）：发送端只发**请求**、
+    * 落点由**接收端**判定；对端未确认支持 ⇒ 请求不上 wire、落对端 Downloads。 */
+  private val requiredDeviceClaims = List("the receiver decides", "Downloads")
+
+  test("A3 文案钉：description 与 targetDir schema 不再含失效 device 拒绝断言，且含接收端裁定口径"):
+    val schemaDirDesc = FriendMessageTool.inputSchema("properties").flatMap(_.asObject)
+      .flatMap(_.apply("targetDir")).flatMap(_.hcursor.get[String]("description").toOption)
+      .getOrElse(fail("inputSchema.properties.targetDir.description 缺失"))
+    val surfaces = List(
+      "FriendMessageTool.description"                -> FriendMessageTool.description,
+      "inputSchema.properties.targetDir.description" -> schemaDirDesc
+    )
+    for
+      (label, text) <- surfaces
+      stale         <- staleDeviceRefusalClaims
+    do
+      assert(
+        !text.contains(stale),
+        s"$label 仍含已失效的 device 拒绝断言「$stale」—— 必须改述为受控支持：$text"
+      )
+    for
+      (label, text) <- surfaces
+      claim         <- requiredDeviceClaims
+    do
+      assert(
+        text.contains(claim),
+        s"$label 缺接收端裁定口径锚「$claim」（spec §4.1 禁静默 / §⑥① 受控支持）：$text"
+      )
+    assert(
+      FriendMessageTool.description.contains("off the wire"),
+      "prose description 必须写明「对端未确认支持 ⇒ 请求不上 wire + 落对端 Downloads」（§4.2 候选 1）"
+    )

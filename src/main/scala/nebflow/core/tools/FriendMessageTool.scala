@@ -78,7 +78,7 @@ object FriendMessageTool extends Tool:
 - to (string, required): `device:<deviceName|deviceId>`, `local`, or a friend (bare remark/username/email/displayName, or explicit `friend:<…>`).
 - message (string, required): text sent to friend/device targets, max 4000 characters, plain text. Ignored for `local`.
 - attachments (array of string, optional): ABSOLUTE paths of files on this machine. Device targets: max 9 files per message, each up to 100 MB (100,000,000 bytes, decimal) — exceeding fails and echoes the actual value. Friend targets: NOT supported (the server-side attachment channel does not exist yet) — send text only. `local`: required — these files are copied into `targetDir`.
-- targetDir (string, optional): destination directory for `local` (created if missing). Rejected for device targets (the receiver's landing directory is managed by the channel).
+- targetDir (string, optional): destination directory for `local` (created if missing). Device targets: optional — a request only, the receiver decides (it accepts only directories on its own allow-list; anything else is rejected with a structured code and nothing is written). Sent only after the peer confirms support; if the peer does not, the request stays off the wire and the files land in the peer's Downloads (the result says so).
 - overwrite (boolean, optional, default false): `local` only — replace existing files in `targetDir`.
 
 ## Confirmation (ask tier, friend targets only)
@@ -102,7 +102,7 @@ When the user's agent-messaging mode is `ask` (or the auto rate limit was hit), 
       ),
       "targetDir" -> Json.obj(
         "type"        -> "string".asJson,
-        "description" -> "Destination directory for `local` (created if missing). Rejected for device targets.".asJson
+        "description" -> "Destination directory for `local` (created if missing). Device targets: a request the receiver decides on (only its own allow-listed directories; otherwise rejected with a structured code, nothing written); if the peer does not confirm support, the files land in its Downloads.".asJson
       ),
       "overwrite" -> Json.obj(
         "type"        -> "boolean".asJson,
