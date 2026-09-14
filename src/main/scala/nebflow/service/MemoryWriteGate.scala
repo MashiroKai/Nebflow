@@ -3,6 +3,8 @@ package nebflow.service
 import cats.effect.IO
 import nebflow.core.NebflowLogger
 
+import java.nio.charset.StandardCharsets
+
 /**
  * 记忆落盘单点闸（M4 —— 工具面收敛设计 §4 Q2-④ ④-b / M2 表 M4 行；作者 2026-09-13
  * 裁定「M4 闸下沉 = 独立小批立刻立项」）。
@@ -10,7 +12,7 @@ import nebflow.core.NebflowLogger
  * 动机：预算闸与写前快照闸此前的**实现在调用方**（旧 MemoryEdit 路径内 / Dream hook 内），
  * 而落盘单点 [[MemoryStore.saveUserMemory]] / [[MemoryStore.saveAgentMemory]] 与
  * `ProjectMemory.save` 自身**零闸** ⇒ 不经调用方闸的写入没有任何闸。今天生产面上唯一的
- * 这类写入 = WS `saveMemory` 旁路（`WebSocketRoutes`），它直调 `MemoryStore.save*`。
+ * 这类写入 = WS `saveMemory` 旁路（`WebSocketRoutes:3265/3271`），它直调 `MemoryStore.save*`。
  * 本对象把两道闸下沉到落盘单点，使「过闸」成为**落盘的必要条件**，而不是调用方的自觉。
  *
  * 边界（写死，越界即不合）：
@@ -19,11 +21,31 @@ import nebflow.core.NebflowLogger
  *   - **不退役** MemoryEdit（Q2 组已落「保留」）；
  *   - **不动**授能面 / 静态集 / 注册表（非本项范围）。
  *
- * 闸序 = **快照 → 预算 → 落盘**。理由：
- *   ① 快照的既有纪律就是「快照先行 = 硬护栏」（写前备份是写的前置条件）；
- *   ② 被预算拒的那一次写入**也留下当前盘上真身的快照**（拒绝不减少回滚锚）；
- *   ③ 与旧 MemoryEdit 路径的次序（预算 → 快照，拒绝时不快照）**不同**，这是有意的：
- *      本项正控要求「预算超限 ⇒ 被拒绝，且产生快照」。
+ * ## 闸序 = 预算 → 快照 → 落盘（作者 2026-09-14 两处裁定；**取代** 09-13 任务书旧序）
+ *
+ *   - **① 预算闸前置**：超硬顶 ⇒ **结构化拒绝**，且**拒绝路径零文件写（含 `backups/` 面）**
+ *     ——快照**不在**拒绝路径上发生。理由：契约一致性（「闸不过 ⇒ 拒绝落地、零文件写」的
+ *     不变式不得降级为「只不写记忆面、备份面照写」）｜拒绝是高频路径（每次压缩可能触发
+ *     ⇒ 备份面只增不减）｜留痕已有承载（`queue.jsonl` outcome `rejected`/`deferred`
+ *     + 引擎日志）。
+ *   - **② 快照的唯一触发点 = 「预算闸放行、即将落盘」**；快照失败 ⇒ 结构化拒绝 + **零写入**
+ *     （fail-closed，与 hook 侧「跳过合并零写入」同形）。
+ *   - 旧序（快照 → 预算，拒绝时也快照）是 09-13 任务书的正控口径，**已被 09-14 裁定取代**：
+ *     拒绝路径的判据从「不快照」升级为「零文件写」。
+ *
+ * ## 纯收缩豁免（作者 2026-09-14 裁定 (b)，边界写死）
+ *
+ *   - 豁免判据 = **字节比**（新内容字节 ≤ 现文件字节；逐文件 POST-WRITE vs PRE-WRITE），
+ *     🔴 **不按动作名豁免**；适格面 = 收缩通道（`replace_section`，工具契约原文
+ *     「`replace_section` stays exempt — it is the shrinking channel」，`MemoryEditTool:92`）
+ *     ⇒ 调用方以 `shrinkChannel = true` 声明**适格身份**，闸再用字节比拦「夹带净增」；
+ *   - 适格 + 真收缩 ⇒ 只豁免**预算闸**：路径白名单 / 条目格式校验（工具层职责）、快照前置
+ *     （按 ① 新序）、「闸不过 ⇒ 零写」不变式 **全部照旧**；
+ *   - 适格 + 实际净增 ⇒ **照过闸**（判据是字节比，不是动作名）；
+ *   - `shrinkChannel = false`（缺省 = 现全部生产调用方）⇒ **永不豁免**（WS `saveMemory`
+ *     的整文件覆盖不是收缩通道：超限文件的自救路径是 `replace_section`）。
+ *   - 🔴 现场读数：本参数当前**零生产 true 调用方**——`MemoryEdit` 已零落盘（只入队），
+ *     队列消费方落地时应为 `replace_section` 条目传 `true`；本批先落**契约锚点**。
  *
  * 判据来源（零新语义）：硬顶 / 软线一律取自 [[MemoryBudget]]（唯一常量源），本对象
  * 不复制数值、不新增阈值、不改判据函数。
@@ -57,31 +79,47 @@ object MemoryWriteGate:
   final class Rejected(val code: String, val detail: String)
       extends RuntimeException(s"MemoryWriteGate: rejected [$code] — $detail")
 
+  /** 现文件字节 = 豁免判据的 PRE-WRITE 腿。目标不存在 ⇒ 0（首次写入 ⇒ 任何内容都是净增，
+    * 不豁免）；读元数据失败 ⇒ 也按 0（保守：不豁免；后续预算闸与快照照走，无静默分支）。
+    * 只读元数据，从不写盘。 */
+  private def preSizeBytes(path: os.Path): Long =
+    try if os.exists(path) then os.size(path).toLong else 0L
+    catch case _: Exception => 0L
+
   /** 过闸判定（fail-closed）。`Right` = 允许落盘；`Left` = 调用方**必须中止**（零写入）。
     *
-    * 纯于 IO 之外（除快照与日志两处副作用），便于 spec 直测；生产入口见 [[guard]]。 */
-  def decide(target: String, path: os.Path, newContent: String): Either[Rejected, Unit] =
-    MemorySnapshot.snapshotBeforeWrite(path) match
-      case Left(reason) =>
-        // 闸 1（fail-closed）：无快照不落笔。零写入由「调用方中止」保证（本对象不落盘）。
-        Left(Rejected(Code.Snapshot, snapshotDetail(target, path, reason)))
-      case Right(_) =>
-        // 闸 2：预算（超硬顶 = 结构化拒绝；超软线 = 放行 + 可见 WARN）。
-        // 判据是【新内容的总字节】——落盘单点拿到的就是整文件新内容。
-        val bytes = newContent.getBytes(java.nio.charset.StandardCharsets.UTF_8).length.toLong
+    * `shrinkChannel` = 调用方声明自己走收缩通道（`replace_section`）；是否真豁免由本方法用
+    * **字节比**独立判定（见头注「纯收缩豁免」）——适格 + 净增照过闸。
+    *
+    * 副作用三处（便于 spec 直测）：软线 WARN 日志、PRE-WRITE 字节读（只读元数据）、
+    * 放行路径上的写前快照。**拒绝路径零文件写**：不落目标文件、不落快照。 */
+  def decide(target: String, path: os.Path, newContent: String, shrinkChannel: Boolean = false): Either[Rejected, Unit] =
+    val bytes = newContent.getBytes(StandardCharsets.UTF_8).length.toLong
+    val exempt = shrinkChannel && bytes <= preSizeBytes(path)
+    val budget: Either[Rejected, Unit] =
+      if exempt then Right(())
+      else
         MemoryBudget.verdict(target, bytes) match
           case MemoryBudget.Exceeded(_, hard) =>
+            // 闸 1（前置）：超硬顶 = 结构化拒绝。🔴 此处**不得有任何文件写**（含备份面）——
+            // 快照在预算放行之后才发生（作者 09-14 裁定 (a)）。
             Left(Rejected(Code.Budget, budgetDetail(target, path, bytes, hard, newContent)))
           case MemoryBudget.Warn(_, soft, hard) =>
             logger.warnSync(warnDetail(target, path, bytes, soft, hard))
             Right(())
           case MemoryBudget.Within =>
             Right(())
+    budget.flatMap { _ =>
+      // 闸 2（唯一触发点 = 「预算闸放行、即将落盘」）：无快照不落笔（fail-closed）。
+      MemorySnapshot.snapshotBeforeWrite(path) match
+        case Left(reason) => Left(Rejected(Code.Snapshot, snapshotDetail(target, path, reason)))
+        case Right(_)     => Right(())
+    }
 
   /** IO 形态：`Left` ⇒ `raiseError`（错误沿 IO 通道向上；调用方无法在不知不觉中吞掉，
     * 与旧路径 `Either[ToolError, …]` 的「结构化拒绝」同形）。 */
-  def guard(target: String, path: os.Path, newContent: String): IO[Unit] =
-    IO.blocking(decide(target, path, newContent)).flatMap {
+  def guard(target: String, path: os.Path, newContent: String, shrinkChannel: Boolean = false): IO[Unit] =
+    IO.blocking(decide(target, path, newContent, shrinkChannel)).flatMap {
       case Right(()) => IO.unit
       case Left(err) => IO.raiseError(err)
     }
@@ -98,14 +136,15 @@ object MemoryWriteGate:
   private def budgetDetail(target: String, path: os.Path, bytes: Long, hard: Long, newContent: String): String =
     val pct = if hard > 0 then f"${bytes * 100.0 / hard}%.0f%%" else "?"
     val label = target match
-      case "user"    => "~/.nebflow/User.md"
-      case "agent"   => "~/.nebflow/agents/Nebula/memory.md"
-      case other     => path.toString
+      case "user"  => "~/.nebflow/User.md"
+      case "agent" => "~/.nebflow/agents/Nebula/memory.md"
+      case other   => path.toString
     s"""$path would reach $bytes bytes ($pct of the $hard-byte hard budget for target='$target'), so the write was refused; $label is untouched.
        |Budget is enforced on the WRITE side (injection is never truncated — an over-budget memory taxes every future session instead).
        |Consolidate first, then write. Largest sections:
        |${MemoryBudget.topSections(newContent)}
-       |Trim stale/duplicate entries, or demote detail into ~/.nebflow/memory/<id>.md files. (${Code.Budget})""".stripMargin
+       |Trim stale/duplicate entries, or demote detail into ~/.nebflow/memory/<id>.md files.
+       |If this write only shrinks the file, use the shrinking channel (MemoryEdit replace_section) — it is exempt from the hard cap. (${Code.Budget})""".stripMargin
 
   private def warnDetail(target: String, path: os.Path, bytes: Long, soft: Long, hard: Long): String =
     s"$WarnMarker target='$target' $path is now $bytes bytes (over the 80% soft line of $soft bytes; hard budget $hard) — " +
