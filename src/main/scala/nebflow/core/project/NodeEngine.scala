@@ -3888,13 +3888,6 @@ class NodeEngine(
   private val barrierAlerted: Ref[IO, Set[String]] =
     Ref.unsafe[IO, Set[String]](Set.empty)
 
-  /** settle-sweep 判词挡投的单发记账（settle-sweep 判词感知，2026-09-14）：键 =
-    * `"<下游 id>::<上游 verifier id>"`。与 [[stallNotified]] 同款纪律——**每轮 sweep 全量
-    * 替换为当轮挡投集**：挡投一经解除（verifier 重跑出 pass / 目标被重激活 / 拓扑改写）
-    * 即自动出集，同一停滞期只写一条 `settle-sweep` 事件（否则 30s 一轮刷屏）。 */
-  private val verdictHealSkips: Ref[IO, Set[String]] =
-    Ref.unsafe[IO, Set[String]](Set.empty)
-
   /** 资格回扫（根因报告 §6.2，TtlTick 30s 驱动，ProjectActor 挂点）：对活动区
     * pending/wiring 节点做声明式启动资格重估，一次性关死「有资格但没人叫」的悬
     * 挂族（孤儿 barrier、D1 缺口、投递丢失、触发消费错位——案例 B 收口C 96min
@@ -3902,20 +3895,19 @@ class NodeEngine(
     *   1. 孤儿 barrier 自愈：in 中「completed+有 result+deliveredTo 未记」的上游
     *      逐个 deliverOutTo（自带 deliveredTo 去重幂等；语义 = NodeTools fix-b
     *      补投从「仅 edit 时」提升为周期性；barrier 随之归零者由其内部启动）；
-    *      **判词感知（settle-sweep 判词感知批 2026-09-14）**：上游是**
-    *      `lastVerdict=fail` 的 verifier** 时**不补投**——它的「result」是「被判定对象
-    *      不合格」的判词，不是可前递的产物；补投会绕开 `deliverOut` 的 verdict 抑投
-    *      （该 verifier 自己完成时 pass 边已被抑制），把下游 sink 的 barrier 结算掉并
-    *      fork 启动 ⇒ 「报告先出、返工在后」的抢跑（09-14 官网链 `08:51:25` 实证：
-    *      `bpm-verify`(fail) 的结论被本腿补投给非 merge 收口位 `bpm-report`，
-    *      `mergeVerdictHolders` 是 merge-only ⇒ 结构性不适用，sink 照常跑完）。
-    *      挡投留痕 = 一条 `settle-sweep` 事件带 `skipped-by-verdict`（机械可判），
-    *      单发由 [[verdictHealSkips]] 承担；下游保持 pending/wiring 可见（停等可见性
-    *      仍由既有 mount-stalled/barrier-blocked 承载），verifier 重跑出 pass 后本腿
-    *      自然放行（每轮现读 lastVerdict，非一次性闩）。
-    *      **守点纪律**：本判据只落在资格回扫这一处——**不得**下沉到 `deliverOutTo`
-    *      公共门（它被改接投递 / D1 补投 / 重激活链共用，一刀切会误杀人工补投返工
-    *      结果的合法路径；见 verdict-routing-recon §4 选项 (a) 的红线）；
+    *      **判词面（原样保留，非本批改动）**：本腿**不做**判词感知——fail-verifier 的
+    *      result 照旧进 `deliverOutTo`（既有 `deliveredTo` 记账语义逐字不变），"fail ⇒ 不
+    *      拉起 merge sink" 由 **merge verdict 闸**承担（`mergeVerdictHolders` +
+    *      `mergeVerdictHoldersOf`，落点② = 下方第 2 步 `qualified` 判定；出处
+    *      perm-global-merge(n-9e9c385d)，`MergeVerdictGateSpec` V1–V8 覆盖）。🔴 本批
+    *      曾在**本腿**加「fail-verifier 一律不补投」的挡投腿，实测**打红
+    *      `MergeVerdictGateSpec.V1`**（其前提断言 = 本腿自愈确实跑了、`deliveredTo` 记全；
+    *      该闸的设计口径亦明文「不改 deliveredTo 记账」）⇒ 判定为与既有闸重复且违约，
+    *      **已撤除**（读数见 `.nebflow/evidence/20260914_stability-hotfix/`）。
+    *      另注：非 merge 下游**不**受该闸覆盖（`mergeVerdictHolders` 是 merge-only）——
+    *      该缝（09-14 官网链 `bpm-verify`(fail) → 非 merge 收口位的补投抢跑）**本批未动**，
+    *      作观察项上报（改动面最小化 + verdict-routing-recon §4 红线：不得下沉
+    *      `deliverOutTo` 公共门）；
     *   2. barrier/deps 均满足者 fork startNode（幂等；fork 化后不阻塞 tick）。
     * 资格口径与 startNode 闸门同源（非终态 + deps 全 completed + in 全归零 + 非
     * 零接线防御）——合格即应启动；同一节点连续 ≥StarvedRounds 轮合格却仍
@@ -3933,35 +3925,19 @@ class NodeEngine(
       candidates = s0.nodes.values.filter(n =>
         (n.status == NodeLifecycle.Pending || n.status == NodeLifecycle.Wiring) && !recovering.contains(n.id)).toList
       // 第 1 步：孤儿 barrier 自愈（deliverOutTo 自带 deliveredTo 去重，重复扫描幂等）
-      dispatched <- candidates.traverse { n =>
+      healed <- candidates.traverse { n =>
         n.in.traverse { upId =>
           if n.deliveredTo.contains(upId) then IO.pure(None)
           else
             store.findNode(upId).flatMap {
-              // 判词感知（本批 ③）：completed 的 fail-verifier 的 result 是**判词**不是产物。
-              case Some(up) if up.role == NodeRoles.Verifier
-                  && up.lastVerdict.contains(VerdictFail) && up.status == NodeLifecycle.Completed =>
-                IO.pure(Some(Left((
-                  s"${n.id}::$upId",
-                  n.id -> (s"skipped-by-verdict: upstream verifier '${up.name}' (${up.id}) lastVerdict=fail — " +
-                    "its result is a rejection (never a deliverable); NOT redelivered (re-run the judged target first)")))))
               case Some(up) if up.status == NodeLifecycle.Completed && up.result.exists(_.trim.nonEmpty) =>
                 deliverOutTo(up, n.id, up.result.get)
-                  .as(Some(Right(n.id -> s"orphan barrier healed: redelivered completed upstream '${up.name}' (${up.id})")))
+                  .as(Some(n.id -> s"orphan barrier healed: redelivered completed upstream '${up.name}' (${up.id})"))
               case _ => IO.pure(None)
             }
         }.map(_.flatten)
       }.map(_.flatten)
-      healed = dispatched.collect { case Right(idDesc) => idDesc }
-      skips = dispatched.collect { case Left(keyIdDesc) => keyIdDesc }
-      _ <- healed.traverse_ { case (id, desc) => FlowMapEventLog.append(workspace, projectName, id, "settle-sweep", desc) }
-      // 挡投单发（每轮全量替换为当轮挡投集 ⇒ 解除即出集；同一停滞期只写一条事件）
-      freshSkips <- verdictHealSkips.modify { old =>
-        val keys = skips.map(_._1).toSet
-        (keys, skips.filterNot(s => old.contains(s._1)))
-      }
-      _ <- freshSkips.traverse_ { case (_, (id, desc)) =>
-        FlowMapEventLog.append(workspace, projectName, id, "settle-sweep", desc) }
+      _ <- healed.traverse_((id, desc) => FlowMapEventLog.append(workspace, projectName, id, "settle-sweep", desc))
       // 第 2 步：重读后资格判定（补投可能已归零部分 barrier）+ fork 启动
       s1 <- store.snapshot
       actives = s1.nodes.values.filter(n =>

@@ -35,10 +35,18 @@ import scala.concurrent.duration.*
  *         不发事件、不通知分发器）。
  *     (c) 时间维的驱动方判据 = **判词边**而非节点生命周期 ⇒ `completed` + `lastVerdict=fail`
  *         的 verifier 仍是驱动方（走熔断），**不再**被误判成孤儿（清表 + 零终态化）。
- *  ③ **settle-sweep 判词感知**：资格回扫的孤儿 barrier 自愈**不补投** `lastVerdict=fail`
- *     的 verifier 的「结果」（它是判词不是产物）⇒ 下游 sink 的 barrier 不结算、不被拉起；
- *     留痕 = `settle-sweep` 事件带 `skipped-by-verdict`（单发）。对照组：普通 task 上游
- *     照旧补投（无 verifier 上游的既有行为逐字不变）。
+ *  ③ **settle-sweep 判词感知（判定：main 已交付 ⇒ 本批零改动，改为验收读数）**：
+ *     任务书 ③ 的判据「sweep 拉起 merge sink 前须核上游 verifier `lastVerdict=pass`；
+ *     fail ⇒ 不拉起」在 main 上**已由既有 merge verdict 闸承担**（`7fd0f2fc5` 2026-09-12，
+ *     出处同为 perm-global-merge(n-9e9c385d)：`mergeVerdictHolders` + 三处落点，其中
+ *     落点② = `settleRunnableSweep` 资格回扫；权威 spec = `MergeVerdictGateSpec` V1–V8，
+ *     本批回归臂整跑）。本 spec 因此**不**复刻该闸，只做本批在 sweep 面上的
+ *     **零回归对照**：普通 task 上游的孤儿 barrier 照旧自愈补投并启动（既有行为逐字不变），
+ *     而 `lastVerdict=fail` 的 verifier 上游 ⇒ 自愈**照旧发生**（`deliveredTo` 记全，闸的
+ *     前提契约不改）但 **merge 不得被拉起**（闸持有，`mount-stalled` 点名 verdict 闸）。
+ *     🔴 记录：本批曾在该处加「fail-verifier 一律不补投」的挡投腿，实测打红
+ *     `MergeVerdictGateSpec.V1`（其前提断言 = 自愈确实跑了）⇒ 已撤除；读数见
+ *     `.nebflow/evidence/20260914_stability-hotfix/rawlogs/regress-before-revert.sbt.log`。
  *
  * 驱动方式（确定性，零真实 LLM）：`ToolCallLlm` 在 verifier 会话里发 `node_report(fail)`
  * 工具调用后收尾 ⇒ 真实引擎路径 `completeNode(declared=fail)` → `verifierFail`。
@@ -167,14 +175,15 @@ class LoopExecutionLegSpec extends CatsEffectSuite:
     lastVerdict: Option[String] = None,
     loopRound: Int = 0,
     loopStartedAt: Option[Long] = None,
-    withTask: Boolean = false
+    withTask: Boolean = false,
+    merge: Boolean = false
   ): NodeDef =
     NodeDef(
       id = id, name = name, agent = "test-agent",
       task = if withTask then Some(s"$name task") else None,
       status = status, in = in, out = out, deps = deps, result = result,
       deliveredTo = deliveredTo, role = role, lastVerdict = lastVerdict,
-      loopRound = loopRound, loopStartedAt = loopStartedAt,
+      loopRound = loopRound, loopStartedAt = loopStartedAt, merge = merge,
       createdAt = System.currentTimeMillis())
 
   /** verifier 驱动方（`(fail)n-work:loop`）——被判对象的返工回边持有者。 */
@@ -389,9 +398,10 @@ class LoopExecutionLegSpec extends CatsEffectSuite:
       LoopProps.foreach(System.clearProperty)
   }
 
-  // ── ③ settle-sweep 判词感知（+ 对照组：无 verifier 上游行为不变）────────
+  // ── ③ sweep 面：判据本体在既有 merge verdict 闸（权威 = MergeVerdictGateSpec V1–V8）
+  //      本用例 = 本批在 sweep 面上的**零回归对照**（既有行为逐字不变）────────────
 
-  test("③ settle-sweep: a fail-verifier upstream is NOT redelivered (skipped-by-verdict, single shot); a plain task upstream is healed as before") {
+  test("③ sweep zero-regression: a plain task upstream is still healed by the orphan-barrier sweep; a fail-verifier upstream is healed as before (deliveredTo recorded) BUT its merge sink is NOT started (pre-existing verdict gate)") {
     val ws = tempRoot / "ws-sweep"
     os.makeDir.all(ws)
     val system = ActorSystem(s"lsweep-${scala.util.Random.nextInt(100000)}")
@@ -400,33 +410,35 @@ class LoopExecutionLegSpec extends CatsEffectSuite:
       res <- mkResources(system, tempRoot, llm.handle)
       rt <- mountEngineOnly("lsweep", ws, system, res)
       _ <- seed(rt,
-        // 被判对象仍待返工；收口位（非 merge）的 barrier 只有 verifier 一轨未结算
-        mkNode("n-sink", "n-sink", NodeLifecycle.Wiring, in = List("n-ver"), deps = List("n-absent")),
+        // merge 收口位：barrier 只差 fail-verifier 一轨未结算（deps 空 ⇒ 唯一持有者 = 判词闸）
+        mkNode("n-merge", "n-merge", NodeLifecycle.Wiring, in = List("n-ver"), withTask = true, merge = true),
         mkNode("n-ver", "n-ver", NodeLifecycle.Completed, role = NodeRoles.Verifier,
-          in = List("n-work"), result = Some("REJECTION: the artifact does not compile"),
+          in = List("n-earlier"), result = Some("REJECTION: the artifact does not compile"),
           lastVerdict = Some("fail")),
-        // 对照组：普通 task 上游（合法产物）⇒ 照旧补投
+        // 对照组：普通 task 上游（合法产物）⇒ 照旧补投（无 verifier 上游的既有行为不变）
         mkNode("n-sink2", "n-sink2", NodeLifecycle.Wiring, in = List("n-task"), deps = List("n-absent")),
         mkNode("n-task", "n-task", NodeLifecycle.Completed, result = Some("REAL DELIVERABLE")))
       _ <- rt.engine.settleRunnableSweep()
-      sink1 <- rt.store.snapshot.map(_.nodes("n-sink"))
+      m1 <- rt.store.snapshot.map(_.nodes("n-merge"))
       sink2 <- rt.store.snapshot.map(_.nodes("n-sink2"))
       audit1 <- readAudit(ws)
-      _ <- rt.engine.settleRunnableSweep()
-      audit2 <- readAudit(ws)
+      _ <- rt.engine.settleRunnableSweep() *> IO.sleep(200.millis) *> rt.engine.settleRunnableSweep()
+      m2 <- rt.store.snapshot.map(_.nodes("n-merge"))
       _ <- system.stopAll.handleErrorWith(_ => IO.unit)
     yield
-      // ③ 判词挡投：verdict=fail 的 verifier 的「结果」不是可前递的产物
-      assertEquals(sink1.deliveredTo, Nil, s"a fail-verifier's judgement must NOT be redelivered, got: ${sink1.deliveredTo}")
-      assertEquals(sink1.status, NodeLifecycle.Wiring, "the sink stays pending/wiring (the re-run must land first)")
-      assert(audit1.exists((t, id, s) => t == "settle-sweep" && id == "n-sink" && s.contains("skipped-by-verdict")),
-        s"the skip must be traceable (mechanical marker), got: $audit1")
-      // 单发：同一停滞期不得每轮刷屏
-      assertEquals(audit2.count { case (t, id, s) => t == "settle-sweep" && id == "n-sink" && s.contains("skipped-by-verdict") }, 1,
-        s"the skip event must be single-shot per stagnation window, got: $audit2")
-      // 对照组：无 verifier 上游的既有行为逐字不变（孤儿 barrier 照旧自愈）
+      // ③ 判据本体：fail-verifier 上游 ⇒ sweep 不得把 merge 拉起（既有权威 = merge verdict 闸）
+      assertEquals(m1.status, NodeLifecycle.Wiring,
+        "a merge whose in-upstream verifier judged fail must not be started by the sweep")
+      assert(m1.startedAt.isEmpty, "no session may be spawned for a held merge")
+      assertEquals(m1.result, None, "the gate must not fabricate a result")
+      assertEquals(m2.status, NodeLifecycle.Wiring, "repeated sweeps must keep holding (idempotent)")
+      // 既有契约逐字不改：孤儿 barrier 自愈照旧跑、deliveredTo 记全
+      //（🔴 这正是本批一度加上的「fail-verifier 一律不补投」挡投腿所打红的面，见 spec 头注）
+      assert(m1.deliveredTo.contains("n-ver"),
+        s"the sweep must still heal the orphan barrier (pre-existing contract), got: ${m1.deliveredTo}")
+      assert(audit1.exists((t, id, _) => t == "settle-sweep" && id == "n-merge"),
+        s"the heal must stay traceable, got: $audit1")
+      // 对照组：无 verifier 上游的既有行为逐字不变（孤儿 barrier 照旧自愈补投）
       assert(sink2.deliveredTo.contains("n-task"),
         s"a plain completed upstream is still redelivered (no-verifier behaviour unchanged), got: ${sink2.deliveredTo}")
-      assert(!audit1.exists((t, id, s) => t == "settle-sweep" && id == "n-sink2" && s.contains("skipped-by-verdict")),
-        "the control sink must never be reported as verdict-skipped")
   }
