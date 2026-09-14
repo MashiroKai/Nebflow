@@ -429,7 +429,9 @@ async function syncConversation(conversationId, { pages = 1, trigger = 'open' } 
   // W14（§3.3）：修前零日志 `return 0`。单飞命中 = 「本拍这条补拉**没发生**」——
   // 若把它吞掉，「用户看到没变化」与「链正在跑、稍后自愈」就不可分。
   if (!conversationId || syncingConvId === conversationId) {
-    console.warn(`[fm] syncConversation 跳过 convId=${conversationId} reason=`
+    // 字段口径（判据②）：与后端 `droppedWarn` **同形**——`conversationId=` + `messageId=`
+    // （本分支无消息面 ⇒ 显式写 `<none>`，不允许「键缺席」这一形态）+ `reason=`。
+    console.warn(`[fm] syncConversation 跳过 conversationId=${conversationId} messageId=<none> reason=`
       + `${!conversationId ? 'no_conversation_id' : 'single_flight_in_progress'} trigger=${trigger}`
       + ` syncingConvId=${syncingConvId}`);
     return 0;
@@ -443,8 +445,8 @@ async function syncConversation(conversationId, { pages = 1, trigger = 'open' } 
       // W15（§3.3）：无可信水位（缓存缺席/temp id 占位）⇒ 不猜、不改窗口；但必须留痕，
       // 否则「补拉链空转」与「已到水位」同形。
       if (after <= 0) {
-        console.warn(`[fm] syncConversation 无可信水位（不猜、不改窗口）convId=${conversationId} `
-          + `reason=no_trusted_watermark after=${after} page=${i} trigger=${trigger}`);
+        console.warn(`[fm] syncConversation 无可信水位（不猜、不改窗口）conversationId=${conversationId} `
+          + `messageId=<none> reason=no_trusted_watermark after=${after} page=${i} trigger=${trigger}`);
         break;
       }
       let batch = [];
@@ -452,14 +454,14 @@ async function syncConversation(conversationId, { pages = 1, trigger = 'open' } 
       catch (e) {
         // W16（§3.3）：修前零日志 break。网络/鉴权失败**保留已渲染内容不冒泡**（不变），
         // 但必须留痕带 err.message —— 否则「服务端挂了」看起来像「没有新消息」。
-        console.warn(`[fm] syncConversation 取数失败（保留已渲染内容）convId=${conversationId} `
-          + `reason=fetch_failed after=${after} page=${i} trigger=${trigger} err=${e && e.message}`);
+        console.warn(`[fm] syncConversation 取数失败（保留已渲染内容）conversationId=${conversationId} `
+          + `messageId=<none> reason=fetch_failed after=${after} page=${i} trigger=${trigger} err=${e && e.message}`);
         break;
       }
       if (openConvId !== conversationId || !modalEls) {
         // W17（§3.3）：正常态（会话已换/窗已关）⇒ 低噪 `debug` 档，不报 warn。
-        console.debug(`[fm] syncConversation 停止（会话已换/窗已关）convId=${conversationId} `
-          + `reason=conversation_switched after=${after} page=${i} openConvId=${openConvId} trigger=${trigger}`);
+        console.debug(`[fm] syncConversation 停止（会话已换/窗已关）conversationId=${conversationId} `
+          + `messageId=<none> reason=conversation_switched after=${after} page=${i} openConvId=${openConvId} trigger=${trigger}`);
         break;
       }
       const fresh = (batch || []).filter(m => !chatMsgs.some(x => String(x.id) === String(m.id)));
@@ -1073,8 +1075,8 @@ async function probeOlderHistory(convId, fromId) {
     catch (e) {
       // W18（§3.3）：探针失败**保持「不显示」**（不自证不显示，行为不变）——但低噪留痕
       // （`debug` 档：探针本身是后台行为，失败是常态，不该刷 warn）。
-      console.debug(`[fm] probeOlderHistory 探针取数失败（保持不显示）convId=${convId} `
-        + `reason=probe_fetch_failed after=${after} step=${steps} err=${e && e.message}`);
+      console.debug(`[fm] probeOlderHistory 探针取数失败（保持不显示）conversationId=${convId} `
+        + `messageId=<none> reason=probe_fetch_failed after=${after} step=${steps} err=${e && e.message}`);
       return;
     }
     if (openConvId !== convId || !modalEls) return; // 会话已换/窗已关
@@ -1482,7 +1484,8 @@ async function onFriendEvent(msg, retried = false) {
     if (!conv) {
       // W13（§3.3）：修前**零日志**地丢帧。必须留痕 + **入待补队列**（刷新后补投）。
       console.warn(`[fm] friend_event 帧到达但会话缓存缺失（REST 为权威）event=${msg.event} `
-        + `conversationId=${p.conversationId} messageId=${p.messageId} retried=${retried}`);
+        + `conversationId=${p.conversationId} messageId=${p.messageId} `
+        + `reason=conversation_not_cached retried=${retried}`);
       if (!retried) {
         if (pendingFriendFrames.length >= PENDING_FRIEND_FRAME_MAX) pendingFriendFrames.shift();
         pendingFriendFrames.push(msg);
@@ -1538,7 +1541,8 @@ async function onFriendEvent(msg, retried = false) {
     if (!conv) {
       // W13（self 面同族）：同样必须留痕 + 入待补队列。
       console.warn(`[fm] friend_event 帧到达但会话缓存缺失（REST 为权威）event=${msg.event} `
-        + `conversationId=${msg.conversationId} messageId=${msg.messageId} retried=${retried}`);
+        + `conversationId=${msg.conversationId} messageId=${msg.messageId} `
+        + `reason=conversation_not_cached_self retried=${retried}`);
       if (!retried) {
         if (pendingFriendFrames.length >= PENDING_FRIEND_FRAME_MAX) pendingFriendFrames.shift();
         pendingFriendFrames.push(msg);
