@@ -6,7 +6,7 @@ import munit.FunSuite
 import nebflow.core.PathUtil
 import nebflow.core.project.ProjectStore
 import nebflow.core.tools.MemoryQueue
-import nebflow.service.{MemoryBudget, MemoryStore}
+import nebflow.service.MemoryStore
 
 import java.nio.file.Files
 import java.security.MessageDigest
@@ -48,8 +48,9 @@ class MemoryTrackPauseSpec extends FunSuite:
   private def outcomeLines(queue: os.Path): Int =
     if !os.exists(queue) then 0 else os.read(queue).linesIterator.count(_.contains("\"kind\":\"outcome\""))
 
-  /** 最小 SharedResources 夹具（暂停臂不触资源位；形态沿用 `MemoryTrackSpec.mkResources`）。 */
-  private def mkResources(): SharedResources =
+  /** 最小 SharedResources 夹具（暂停臂不触资源位；形态沿用 `MemoryTrackSpec.mkResources`）。
+    * `agentLibrary` 可换成 [[MissingLibrary]]（对照臂用）。 */
+  private def mkResources(agentLibrary: AgentLibrary = null): SharedResources =
     SharedResources(
       llm = null,
       dispatcher = null,
@@ -59,7 +60,7 @@ class MemoryTrackPauseSpec extends FunSuite:
       rateLimiter = null,
       fileChangeTracker = null,
       contextWindow = 0,
-      agentLibrary = null,
+      agentLibrary = agentLibrary,
       taskStore = null,
       historyArchiver = null,
       fileLockManager = null,
@@ -70,6 +71,11 @@ class MemoryTrackPauseSpec extends FunSuite:
       voiceMutedRef = Ref.unsafe[IO, Boolean](false),
       agentRegistry = Ref.unsafe[IO, Map[String, nebflow.agent.AgentRecord]](Map.empty)
     )
+
+  /** 定义缺失的库桩：`get` 恒 `None` ⇒ `attemptRun` 干净返回 `Status.Failed`（不 spawn、不 NPE）。
+    * 形态沿用 `MemoryTrackReconcileSpec.HangLibrary`（同款子类覆盖）。 */
+  private class MissingLibrary extends AgentLibrary(os.Path("/nonexistent-agents-for-pause-spec")):
+    override def get(name: String): IO[Option[AgentDef]] = IO.pure(None)
 
   private final case class Fixture(
     root: os.Path,
@@ -187,22 +193,23 @@ class MemoryTrackPauseSpec extends FunSuite:
 
   // ===== 对照臂（负控：判据确由标记驱动，不是恒真）=====
 
-  test("对照臂：标记缺席 ⇒ 同一夹具下 run 不短路（走到闸 2 得 Refused，非 Paused）"):
+  test("对照臂（负控）：标记缺席 ⇒ 同一夹具下不短路（本轮照常执行并写盘 ⇒ 非 Paused）"):
     withFixture { fx =>
       assert(!MemoryTrack.isPaused, "夹具未创建标记")
-      // 造「再 append 一条必超硬顶」的 User.md ⇒ 闸 2 拒绝（同一形态见 MemoryTrackSpec）
-      val hard = MemoryBudget.UserHardBytes
-      os.write.over(
-        MemoryStore.userMemoryPath,
-        "# U\n\n## Dream Extract\n\n- " + ("y" * (hard - 40).toInt) + "\n",
-        createFolders = true)
-      val before = sha(fx.userMd)
+      val treeBefore     = tree(fx.root)
+      val outcomesBefore = outcomeLines(fx.queue)
 
-      val r = MemoryTrack.run(mkResources(), parentSessionId = Some("s"), parentDepth = 0).unsafeRunSync()
+      val r = MemoryTrack
+        .run(mkResources(new MissingLibrary), parentSessionId = Some("s"), parentDepth = 0)
+        .unsafeRunSync()
 
-      assertEquals(r.status, MemoryTrack.Status.Refused, s"标记缺席 ⇒ 不短路、继续执行到前置闸: $r")
-      assert(r.status != MemoryTrack.Status.Paused, "暂停态只能由标记产生（判据非恒真）")
-      assertEquals(sha(fx.userMd), before, "拒绝路径同样零文件写")
+      assert(r.status != MemoryTrack.Status.Paused, s"暂停态只能由标记产生（判据非恒真）: $r")
+      assertEquals(r.status, MemoryTrack.Status.Failed, s"夹具无 consolidator 定义 ⇒ 轨内回合失败降级: $r")
+      assert(r.alert.isDefined, "轨内失败 ⇒ 响亮告警")
+      assert(
+        outcomeLines(fx.queue) > outcomesBefore,
+        "**未暂停轮真的写盘**（降级 outcome 行）——与修复臂的零写入构成同一夹具的反差读数")
+      assert(tree(fx.root).size > treeBefore.size, "数据根新增文件（落地前快照目录 + 变更史）")
     }
 
 end MemoryTrackPauseSpec
