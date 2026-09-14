@@ -115,8 +115,15 @@ object Defaults:
    * 5 minutes is long enough for legitimate slow commands (npm install, sbt
    * compile) that produce no output for a while, but short enough to recover
    * a stuck agent within a reasonable timeframe.
+   *
+   * **I2 prop 面（nodestate-bash 批 2026-09-14；设计件 §4.4.1 **T5**）**：
+   * system prop `nebflow.shell.bgIdleTimeoutSec`，默认 `300` = **旧行为现行取值**
+   *（现场读数出处 = 本行；I2 前为 `val BgIdleTimeoutSec = 300`）。每次调用现读
+   *（`BgGateWaitTimeoutMs` / `NodeDestroyWindowMs` 同款先例）。🔴 I2 **只落参数面、
+   * 不上调**——设计件 T5 的提案值 900s（15min）归 I5 翻值；本层默认不变 ⇒ 零行为变化。
    */
-  val BgIdleTimeoutSec: Int = 300
+  def BgIdleTimeoutSec: Int =
+    sys.props.getOrElse("nebflow.shell.bgIdleTimeoutSec", "300").toInt
 
   // ---- Bash 卡死防护（#26，2026-08-30 用户裁定：恢复前台直跑语义）----
   // 08-25 #391「5 分钟自动转后台」已推翻：前台命令不再自动转后台、不设命令级
@@ -353,8 +360,16 @@ object Defaults:
    * this long is considered stuck. 10min is far above the llm-fail retry chain
    * upper bound (8s×3 + provider probe 120s) — every retry action touches the
    * activity stamp, so a healthy agent in the retry chain is never misjudged.
+   *
+   * **I2 prop 面（nodestate-bash 批 2026-09-14；设计件 §4.4.1 **T3**）**：
+   * system prop `nebflow.stuck.thresholdMs`，默认 `600000` = **旧行为现行取值**
+   *（现场读数出处 = 本行；I2 前为 `val StuckThresholdMs = 10 * 60 * 1000L`）。每次
+   * 调用现读（`ToolPhaseStuckMs` 已同款）。🔴 I2 **只落参数面、不上调**——设计件 T3 的
+   * 提案值 1800s 归 I5 翻值；本层默认不变 ⇒ 零行为变化（含 `TaskStuckWatcher` 两个
+   * 默认参数位与 `GatewayMain` 取数点，`val → def` 对调用方零改动）。
    */
-  val StuckThresholdMs: Long = 10 * 60 * 1000L
+  def StuckThresholdMs: Long =
+    sys.props.getOrElse("nebflow.stuck.thresholdMs", "600000").toLong
 
   /** TaskStuckWatcher scan interval. */
   val StuckWatcherIntervalSec: Int = 30
@@ -464,6 +479,138 @@ object Defaults:
    */
   def ForegroundNoProgressTimeoutMs: Long =
     sys.props.getOrElse("nebflow.shell.foregroundNoProgressTimeoutMs", "600000").toLong
+
+  // ── 节点状态机 × 前台 Bash 终态重构批 —— **I2「参数与开关层」**（2026-09-14）──────
+  //
+  // 设计件（唯一权威）：
+  //   ~/.nebflow/docs/Nebflow/20260914_075109_nodestate-bash-terminal-redesign__chain-n-6ff25c31.md
+  //   §1.3 阈值唯一取值点 / §4.2 自动转后台 / §4.3.3 A1 豁免预算 / §4.4.1 T1–T8 /
+  //   §4.4.2 G1–G3 分级 / §7.2 O1–O7 裁定值。
+  //
+  // I2 纪律（三条，即验收面）：
+  //   ① **只落参数面、不接线** —— 本节全部取值在 I2 内**零消费点**（消费点 = I3–I7）
+  //      ⇒「零行为变化」是**结构性**的（没有任何活代码读它们），不靠默认值凑；
+  //   ② **既存现网阈值（T1–T8 中的已生效项）默认值 = 旧行为现行取值**，逐项注明
+  //      「现场读数出处」；🔴 I2 **禁上调**——设计件提案值（1800s / 900s / 300s / 1e9）
+  //      的翻值归 I5；
+  //   ③ **本批新增腿的参数**（旧行为 = 无此腿）默认值 = 设计件逐字给定值，并给出
+  //      `≤ 0 = 关闭本腿 = 回到逐字现状` 的 kill-switch（设计 §2 的唯一例外形态）。
+  //
+  // 形态：一律 `sys.props.getOrElse` **每次调用现读**（`BgGateWaitTimeoutMs` /
+  // `NodeDestroyWindowMs` / `LoopMaxRounds` 同款先例）⇒ 验收「翻转 prop 后现读生效」。
+  //
+  // 索引（现状值 = I2 落笔前现读的树，逐项 file:line）：
+  //   T1 `ForegroundNoProgressTimeoutMs` ……… 本文件（上方，**已有** prop）  600000
+  //   T2 `ToolPhaseStuckMs` ………………………… 本文件（上方，**已有** prop）  600000
+  //   T3 `StuckThresholdMs` ………………………… 本文件（本节上方，I2 **新加**） 600000
+  //   T4 `SessionKickIdleSec` ……………………… 本文件（下方，**已有** prop）    150
+  //   T5 `BgIdleTimeoutSec` ………………………… 本文件（上方，I2 **新加**）      300
+  //   T6 `StuckDetectionGracePeriod` ……… `core/tools/shell.scala`（I2 收数点 → 本节） 30s
+  //   T7 `CpuActiveThresholdNanos` ……… `core/tools/shell.scala`（I2 收数点 → 本节） 1e7ns
+  //   T8 死会话 bg-wait **无时限**豁免 …… `core/project/NodeEngine.scala`（本批新增腿）
+  // 🔴 T6/T7 的取数点按 §1.3「阈值唯一取值点」纪律**收敛到本节**（与 T1–T5 同点），
+  //    `shell.scala` 的两个既有名字降为 delegating def（零调用点改动）——差异已登记。
+  // ───────────────────────────────────────────────────────────────────────────────
+
+  /**
+   * **I2 新参**（设计 §4.2；O1 裁定值）：前台命令的**非 sleep 墙钟**预算（ms）——
+   * `Σ(非 sleep 相位的墙钟) ≥ 本值` ⇒ 该前台命令自动转后台（同一进程树移交后台监护，
+   * 复用既有后台链）。计时定义（相位累加 / `sleep` 区分）见
+   * [[ForegroundSleepExemptBudgetMs]]；转场动作与抑制条件 S1–S5 归 I4。
+   *
+   * 默认 `300_000`（5min）= 设计 §4.2 逐字给定值（O1 备选：作者可改；#391 原值即 5min）。
+   * **`≤ 0` = 关闭本腿 = 回到逐字现状**（前台直跑、不自动转后台 = #26 语义）。
+   *
+   * 🔴 I2 零消费点（消费点 = I4）⇒ 现值不改变任何行为。
+   */
+  def ForegroundAutoBackgroundMs: Long =
+    sys.props.getOrElse("nebflow.shell.autoBackgroundMs", "300000").toLong
+
+  /**
+   * **I2 新参**（设计 §4.3.3 **A1**；O2 裁定值）：`sleep` 相位**豁免预算上限**（ms）——
+   * 累计豁免（`sleepExempt`）达到本值后动态相位识别**不再暂停计时**（相位照常识别与
+   * 留痕，A5）⇒「豁免不是免检牌，只买 A1 这么多时间」。
+   *
+   * 默认 `600_000`（10min）= 设计 A1 逐字给定值。**`≤ 0` = 无上限 = 回到逐字旧行为**
+   * （无期限豁免的形态由 I5 删除；本层只提供上限参数）。
+   *
+   * 🔴 I2 零消费点（消费点 = I3 识别器 + I5 四消费点切换）。
+   */
+  def ForegroundSleepExemptBudgetMs: Long =
+    sys.props.getOrElse("nebflow.shell.sleepExemptBudgetMs", "600000").toLong
+
+  /**
+   * **I2 新参**（设计 §4.1 出口 B；**O5** 裁定值）：已申报（armed）节点在
+   * `AgentEvent.Completed` 未到达时的**结果冻结宽限**（ms）——到期且会话仍活 ⇒
+   * 引擎自冻结果（transcript tail）并走既有单咽喉 drain 分流。
+   *
+   * 默认 `120_000` = 4×`TtlTick`（30s 节拍）= 设计 O5 逐字给定值。
+   * **`≤ 0` = 关闭自冻出口 = 回到逐字现状**（终态仍只由 `Completed` / 会话死亡驱动）。
+   *
+   * 🔴 I2 零消费点（消费点 = I7 三出口）。
+   */
+  def ReportFreezeGraceMs: Long =
+    sys.props.getOrElse("nebflow.noderpt.reportFreezeGraceMs", "120000").toLong
+
+  /**
+   * **I2 新参**（设计 §4.4.1 **T8**）：死会话（registry 无记录）+ 在途后台任务时收敛
+   * 豁免的上限（ms）——超时仍收敛 `failed`（reason 注明「会话死 + 后台任务仍在跑」）。
+   * 修的是今天「死会话 + 在途后台任务 ⇒ **无时限**永久滞留 Running」。
+   *
+   * 默认 `1_800_000`（30min）= 设计 T8 逐字给定值。
+   * **`≤ 0` = 无上限 = 回到逐字旧行为**（今天的无时限豁免）。
+   *
+   * 🔴 I2 零消费点（消费点 = I6 死会话收敛腿）。
+   */
+  def DeadSessionBgWaitGraceMs: Long =
+    sys.props.getOrElse("nebflow.noderpt.deadSessionBgWaitGraceMs", "1800000").toLong
+
+  /**
+   * **I2 新参**（设计 §4.4.2 **G2** `demand-report`）：G1 标记可疑后仍持续本值（s）⇒
+   * 注入一条提醒轮要求节点显式 report（进程保留）。
+   *
+   * 默认 `300` = 设计 G2 逐字给定值。**`≤ 0` = 关闭分级腿 = 回到逐字现状**
+   * （判据命中 ⇒ 直接收割，无 G1/G2 可见性）。
+   *
+   * 🔴 I2 零消费点（消费点 = I5 的 G1/G2/G3 分级）。
+   */
+  def StuckSuspectTickSec: Int =
+    sys.props.getOrElse("nebflow.stuck.suspectTickSec", "300").toInt
+
+  /**
+   * **I2 新参**（设计 §4.4.2 **G3** `harvest`）：G2 要求申报后仍持续本值（s）且无任何
+   * agent 侧事件 ⇒ 升级为现状收割动作（前台 kill 树 / 工具相位 L1→L4；
+   * `destructiveAllowed` 闸门不变）。
+   *
+   * 默认 `900` = 设计 G3 逐字给定值。**`≤ 0` = 关闭分级腿 = 回到逐字现状**（直接收割）。
+   *
+   * 🔴 I2 零消费点（消费点 = I5）。
+   */
+  def StuckDemandTickSec: Int =
+    sys.props.getOrElse("nebflow.stuck.demandTickSec", "900").toInt
+
+  /**
+   * **T6 prop 面**（设计 §4.4.1 T6；I2 在本层新建取数点）：静默后台进程的**停滞探测
+   * 宽限期**（s）——本值之后才开始「零输出 ∧ CPU 增量 < 阈值」的判死采样。
+   *
+   * 现状值 = 30（`core/tools/shell.scala` 原 `private val StuckDetectionGracePeriod =
+   * 30.seconds`）⇒ **默认 `30` = 旧行为现行取值**；设计提案值 300s（#462 涓流/零输出族
+   * 过激）归 I5 翻值。每次调用现读。
+   */
+  def StuckDetectionGraceSec: Int =
+    sys.props.getOrElse("nebflow.shell.stuckDetectionGraceSec", "30").toInt
+
+  /**
+   * **T7 prop 面**（设计 §4.4.1 T7；I2 在本层新建取数点）：**后台**判据仍在用的 CPU
+   * 活动阈值（ns / 采样窗）——`(cpu2 - cpu1) > 本值` 才算「本窗有进展」。
+   *
+   * 现状值 = 10ms（`core/tools/shell.scala` 原 `private[tools] val
+   * CpuActiveThresholdNanos = 10_000_000L`）⇒ **默认 `10000000` = 旧行为现行取值**；
+   * 设计提案值 `1_000_000_000`（与前台 [[ForegroundCpuProgressNanos]] 重新对齐，
+   * 修「10ms/2s = 0.5% 单核即算忙」的同型盲区）归 I5 翻值。每次调用现读。
+   */
+  def CpuActiveThresholdNanos: Long =
+    sys.props.getOrElse("nebflow.shell.cpuActiveThresholdNanos", "10000000").toLong
 
   // ---- boot-time 崩溃恢复（crash-recovery 批 2026-09-07）----
 
