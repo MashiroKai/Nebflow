@@ -589,7 +589,7 @@ class TaskStuckWatcherSpec extends CatsEffectSuite:
       assert(bridgeEvts.isEmpty, s"bridge must not receive events before giveUp, got $bridgeEvts")
   }
 
-  test("Project flow 会话连续分级接管 → L3 桥 Cancelled 释放；resume 失败计数保留 → L4 failed 可达") {
+  test("Project flow 会话连续分级接管 → L3 挂起腿（无恢复锚 ⇒ 不发桥信号）；resume 失败计数保留 → L4 failed 可达") {
     val system = ActorSystem("test-flow-giveup")
     for
       _ <- IO(system)

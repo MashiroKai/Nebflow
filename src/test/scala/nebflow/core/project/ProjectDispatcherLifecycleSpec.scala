@@ -29,6 +29,14 @@ import scala.concurrent.duration.*
  * 2. 人为卡死可处置：LLM 流挂死 → TaskStuckWatcher 按新恢复分支（kind=Flow +
  *    supervisorRef=观察桥）硬取消升级 → giveUp 经桥 Cancelled → registry 清理。
  *    修复前分发器（parentRef=None）落入根 agent 分支只 notice，幽灵行永滞留。
+ *
+ * ⚠ 口径登记（有意行为变化，非回归）：生产默认已由「4 拍 giveUp」升级为**分级链**
+ * L1 halt → L2 hard-abort → L3 suspend/resume → L4 failed（`Defaults.HardRecoveryEnabled`
+ * 默认 true；姊妹 spec `TaskStuckWatcherSpec` 的分级链用例按新口径断言）。本用例锁定的是
+ * **回滚分支**（`!hard`，仍是现行产品代码：每轮 hard-cancel，`StopAttempts+2` 轮后经桥
+ * Cancelled 终态收殓 ⇒ registry 清理）——通过 `TaskStuckWatcher.scan(hardRecovery = Some(false))`
+ * 注入缝显式进入该分支，使其断言保持确定性。分级链本身就「不发桥信号 ⇒ 不自动释放」
+ * （dispatcher 会话无 owning node，L3 释放腿空转）是**新口径的显式语义**，不由本用例覆盖。
  */
 class ProjectDispatcherLifecycleSpec extends CatsEffectSuite:
 
@@ -187,13 +195,17 @@ class ProjectDispatcherLifecycleSpec extends CatsEffectSuite:
       _ <- (actorRef ! ProjectActor.ProjectCommand.TriggerDispatcher("会卡死的任务", "nebula-root")).void
       // 分发器出现（注册先于 UserInput——挂死在流上也必已注册）
       _ <- waitUntil(20.seconds)(dispatcherEntries(resources).map(_.nonEmpty))
-      // 4 轮扫描（attempt ≥ StopAttempts+2 → giveUp）：threshold 300ms，先静置 600ms
+      // giveUp 形态（回滚分支，4 轮扫描：attempt ≥ StopAttempts+2 → giveUp）：threshold
+      // 300ms，先静置 600ms。🔴 显式 `hardRecovery = Some(false)` 进回滚分支——生产默认
+      // 走分级链 L1→L4（有意行为变化，见类头「口径登记」），而本用例锁的是 giveUp 契约
+      // （桥 Cancelled ⇒ registry 清理）；不注入则该断点恒不可达（L3 释放腿对无 owning
+      // node 的会话空转、L4 只广播 failed）。
       _ <- IO.sleep(600.millis)
       stopCounts <- cats.effect.Ref.of[IO, Map[String, Int]](Map.empty)
-      _ <- TaskStuckWatcher.scan(resources, wsHub, 300L, stopCounts)
-      _ <- TaskStuckWatcher.scan(resources, wsHub, 300L, stopCounts)
-      _ <- TaskStuckWatcher.scan(resources, wsHub, 300L, stopCounts)
-      _ <- TaskStuckWatcher.scan(resources, wsHub, 300L, stopCounts)
+      _ <- TaskStuckWatcher.scan(resources, wsHub, 300L, stopCounts, hardRecovery = Some(false))
+      _ <- TaskStuckWatcher.scan(resources, wsHub, 300L, stopCounts, hardRecovery = Some(false))
+      _ <- TaskStuckWatcher.scan(resources, wsHub, 300L, stopCounts, hardRecovery = Some(false))
+      _ <- TaskStuckWatcher.scan(resources, wsHub, 300L, stopCounts, hardRecovery = Some(false))
       // giveUp → 桥 Cancelled → 清 registry + 停 agent
       _ <- waitUntil(20.seconds)(dispatcherEntries(resources).map(_.isEmpty))
       entries <- dispatcherEntries(resources)

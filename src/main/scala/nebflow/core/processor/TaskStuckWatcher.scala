@@ -569,7 +569,13 @@ object TaskStuckWatcher:
       * （经 `ProjectRuntimeRegistry` → `NodeEngine.sessionCwdAlive`）。spec 注入假探针
       * ⇒ 无需起真实 project runtime 即可验正负控。三态：`None` = 未知（不得判死）/
       * `Some(true)` = cwd 实存（负控）/ `Some(false)` = cwd 已消失。 */
-    cwdProbe: String => IO[Option[Boolean]] = TaskStuckWatcher.probeEnvLost
+    cwdProbe: String => IO[Option[Boolean]] = TaskStuckWatcher.probeEnvLost,
+    /** 分级链口径注入缝（测试专用）：`None` = 生产默认值
+      * [[nebflow.shared.Defaults.HardRecoveryEnabled]]（活挂硬恢复 L1→L4 分级链）。
+      * 注入 `Some(false)` 即回到分级链之前的 giveUp 形态（每轮 hard-cancel，
+      * `StopAttempts+2` 轮后经桥 Cancelled 终态收殓）——该形态仍是现行产品代码
+      * （回滚开关可达，非历史遗留），由 `ProjectDispatcherLifecycleSpec` 以本缝承重。 */
+    hardRecovery: Option[Boolean] = None
   ): IO[Unit] =
     val now = System.currentTimeMillis()
     // R8 ②：复查搭**本**扫描轮（零新增定时器，设计 §3.4）——先复查上轮到期的 L3，
@@ -625,7 +631,7 @@ object TaskStuckWatcher:
               nebflow.llm.LlmInterface.inflightFor(rec.sessionId).flatMap { inflight =>
                 recover(resources, wsHub, rec, assessment,
                   classify(rec, assessment, now, inflight, cwdAlive = aliveOf(rec)),
-                  stopCounts, pendingL3, l3VerifyDelayMs, ledger)
+                  stopCounts, pendingL3, l3VerifyDelayMs, ledger, hardRecovery)
               }
             } *>
             // 类③ **快速失败**面：cwd 已失 ∧ 静默满 EnvLostGraceMs ∧ 尚未到判死阈值
@@ -647,7 +653,7 @@ object TaskStuckWatcher:
                     toolName = rec.currentToolName)
                   recover(resources, wsHub, rec, assessment,
                     classify(rec, assessment, now, inflight, cwdAlive = Some(false)),
-                    stopCounts, pendingL3, l3VerifyDelayMs, ledger)
+                    stopCounts, pendingL3, l3VerifyDelayMs, ledger, hardRecovery)
                 }
               }
         }
@@ -696,7 +702,9 @@ object TaskStuckWatcher:
     stopCounts: cats.effect.Ref[IO, Map[String, Int]],
     pendingL3: cats.effect.Ref[IO, List[PendingL3]],
     l3VerifyDelayMs: Long,
-    ledger: cats.effect.Ref[IO, Map[String, RecoveryLedger]]
+    ledger: cats.effect.Ref[IO, Map[String, RecoveryLedger]],
+    /** 分级链口径注入缝（见 [[scan]] 同名参数）：`None` = 生产默认。 */
+    hardRecovery: Option[Boolean] = None
   ): IO[Unit] =
     val now = System.currentTimeMillis()
     ledger.modify(m => (m, m.getOrElse(rec.sessionId, RecoveryLedger()))).flatMap { led0 =>
@@ -715,7 +723,8 @@ object TaskStuckWatcher:
       else IO.unit
       announce *> (recoveryGate(rec, led, now) match
         case None =>
-          recoverUngated(resources, wsHub, rec, assessment, cls, stopCounts, pendingL3, l3VerifyDelayMs, ledger)
+          recoverUngated(resources, wsHub, rec, assessment, cls, stopCounts, pendingL3, l3VerifyDelayMs, ledger,
+            hardRecovery)
         case Some(gate) =>
           gateActions(wsHub, rec, assessment, cls, led, gate, stopCounts, ledger))
     }
@@ -781,11 +790,13 @@ object TaskStuckWatcher:
     stopCounts: cats.effect.Ref[IO, Map[String, Int]],
     pendingL3: cats.effect.Ref[IO, List[PendingL3]],
     l3VerifyDelayMs: Long,
-    ledger: cats.effect.Ref[IO, Map[String, RecoveryLedger]]
+    ledger: cats.effect.Ref[IO, Map[String, RecoveryLedger]],
+    /** 分级链口径注入缝（见 [[scan]] 同名参数）：`None` = 生产默认。 */
+    hardRecovery: Option[Boolean] = None
   ): IO[Unit] =
     val idleSecs = assessment.secs
     val reason = assessment.reason
-    val hard = nebflow.shared.Defaults.HardRecoveryEnabled
+    val hard = hardRecovery.getOrElse(nebflow.shared.Defaults.HardRecoveryEnabled)
     // R8 ③：影子模式每次开火现读（不缓存，支持不重启翻转；设计 §4.3）。
     val shadow = nebflow.shared.Defaults.StuckShadowMode
     /** 破坏性动作闸门：shadow=true 时短路为 no-op（只记录不动作）。
@@ -993,15 +1004,28 @@ object TaskStuckWatcher:
                 // 此时为真（P7 诚实语义）。resume 成功才清计数（会话状态翻转/Running
                 // → watcher 不再见其 stuck）；失败保留计数 → 第 4 拍 L4 failed 可达。
                 logger.warn(
-                  s"TaskStuckWatcher: ${rec.sessionId} attempt $attempts (L3) — releasing via bridge Cancelled, then hard-resume from transcript breakpoint"
+                  s"TaskStuckWatcher: ${rec.sessionId} attempt $attempts (L3) — suspending the session (stop actor, node kept Running), then hard-resume from transcript breakpoint"
                 ) *> classifyNote *> recordFire("L3", attempts) *> act(broadcastStuck(wsHub, rec, idleSecs, "restart", reason)) *>
                   // P2（R-1=B）：L3 从「先终态化再救援」改成「**终态之前挂起并恢复**」。
                   // 旧写法是 bridgeCancelled（停 actor + 节点终态 cancelled）→ sleep 5s
                   // → hardResumeNode；新写法是 suspendNode（只停 actor，节点留 Running）
                   // → **有界等待终止确认** → 锚探测 → CAS + resume。全程不进 Cancelled。
-                  // 副作用：不再需要「面板终态帧」补发（节点未终态，面板行由 nodeUpdated
-                  // 驱动），故原 emitSubagentPanelDone 调用随之移除——这是**语义变化**，
-                  // 不是遗漏：挂起腿不产生终态帧。
+                  // 面板终态帧在此**仍必须补发**：挂起腿停掉旧会话后该会话不再产出任何帧
+                  // （面板行不由 nodeUpdated 驱动——`grep -rn nodeUpdated src/main/resources/web/js/*.js`
+                  // 无一处触及 `sessionBgAgents`），而前端行的清除出口只有 agentDone /
+                  // 会话级 done（ws.js convertAgentEvent → main.js 的 node-/dispatcher-
+                  // 前缀立即删行）⇒ 少了这一帧，死会话的行会滞留到面板重开
+                  // （activeAgents 快照重建）或浏览器刷新。仅 node-* 补发——dispatcher-*
+                  // 归观察桥拆除点（ProjectActor）统一补发。与恢复腿无耦合：先删旧行，
+                  // resume 成功则以 agentStart 重建新行。
+                  act(if rec.sessionId.startsWith(nebflow.core.project.NodeEngine.SessionPrefix)
+                   then
+                     nebflow.core.node.NodeRunner
+                       .emitSubagentPanelDone(wsHub.broadcast, rec.sessionId, rec.rootSessionId)
+                       .handleErrorWith(e =>
+                         logger.warn(s"TaskStuckWatcher: panel done frame for ${rec.sessionId} failed: ${e.getMessage}")
+                       )
+                   else IO.unit) *>
                   // R8 ②：登记 T+N 复查（**无条件**——shadow 与否都登记，复查本身只告警
                   // 不动作）。登记在 `.start` 之前 ⇒ 复查输入不依赖 resume fiber 的调度。
                   pendingL3.update(_.filterNot(_.sessionId == rec.sessionId) :+
@@ -1053,7 +1077,7 @@ object TaskStuckWatcher:
               // abort——parked read 的唯一解法（取证 §1.3），让 StuckAbort 真正浮出、
               // mailbox 恢复轮转、排队的 Stop 被消费、BackoffSupervisor 重启。
               val transportEscalate =
-                if nebflow.shared.Defaults.HardRecoveryEnabled && attempts >= StopAttempts + 1 then
+                if hard && attempts >= StopAttempts + 1 then
                   // L2 双管（裁定① tier-2）：LLM 流 transport abort + 会话自有进程组
                   // kill（工具挂死形态；按自有 PGID 击杀，会话保留）。护栏（证据 #5 ①）：
                   // 仅 transport abort 命中 ≥1 在飞请求（LLM 楔死形态）才 reclaimSession；
@@ -1130,7 +1154,7 @@ object TaskStuckWatcher:
           // 其取消走 cancelFlow / RunningFlowRegistry（TaskStuckWatcherSpec
           // :651 notice-only 铁律）——分级只适用于真 root（General/Team 根会话），
           // 不得对 dag- 施加任何硬取消/kill 动作。
-          if !nebflow.shared.Defaults.HardRecoveryEnabled || rec.kind == nebflow.agent.AgentKind.Flow then
+          if !hard || rec.kind == nebflow.agent.AgentKind.Flow then
             logger.warn(
               s"TaskStuckWatcher: root agent ${rec.sessionId} (kind=${rec.kind}) stuck in Processing for ${idleSecs}s " +
                 s"[judge: $reason] — not auto-restarting, broadcast taskStuck for user decision"
@@ -1694,13 +1718,21 @@ object TaskStuckWatcher:
     actions: List[String],
     cause: String
   ): IO[Unit] =
+    // 终局措辞按会话类型分流：只有 node-* 会话**有节点可改判**（failStuckRecovery 改的是
+    // 节点状态）。dispatcher-* / dag- 等无节点会话若照抄「node re-judged as failed」就是
+    // 自称一件不会发生的事（它们的上报只落日志/事件，不改任何节点状态）。
+    val settlement =
+      if rec.sessionId.startsWith(nebflow.core.project.NodeEngine.SessionPrefix) then
+        "node re-judged as failed (D5 zero-settlement: downstream keeps waiting; reactivate via NodeEdit or rewire)."
+      else
+        "no node to re-judge (this session has no owning node: dispatcher/standalone flow), so it is left as-is " +
+          "(D5 zero-settlement: downstream keeps waiting; manual attention required)."
     val text =
       s"stuck auto-recovery exhausted for session ${rec.sessionId} (class=${cls.cls}, judge branch=${assessment.branch}, " +
         s"agentIdle=${assessment.agentIdleMs / 1000}s, toolPhase=${assessment.toolPhaseMs / 1000}s, " +
         s"tool=${assessment.toolName.getOrElse("-")}, attempts=$attempts): $cause; " +
         s"recovery actions tried: ${if actions.isEmpty then "none (not recoverable)" else actions.mkString(" → ")}. " +
-        "The engine suspended (not killed) the session and could not revive it from the on-disk transcript; " +
-        "node re-judged as failed (D5 zero-settlement: downstream keeps waiting; reactivate via NodeEdit or rewire)."
+        s"The engine suspended (not killed) the session and could not revive it from the on-disk transcript; $settlement"
     val rendered = s"cancelled[source=engine]: reason=$text" // 仅日志/事件用，不改节点状态
     runtimeOwning(rec.sessionId).flatMap {
       case Some(rt) => rt.engine.failStuckRecovery(rec.sessionId, text)
