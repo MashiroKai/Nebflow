@@ -29,9 +29,15 @@ class FriendMessageFooterBadgeSpec extends FunSuite:
 
   // ── 夹具 ────────────────────────────────────────────────
 
-  /** 完整 5 键旧形态 + 可注入的 origin 片段（缺键 / null / 取值三态）。 */
+  /** 完整 5 键旧形态 + 可注入的 origin 片段（缺键 / null / 取值三态）。
+    * 🔴 片段用**转义双引号**而非三引号字面量：`"""...agent""""` 形态（内容以 `"` 收尾
+    * 再紧跟三引号）在三引号词法下是**歧义面**，判据不该建在词法边角上。 */
   private def raw(originFragment: String = ""): String =
     s"""{"id":7,"senderId":"u1","kind":"text","body":"hi","createdAt":1700000000$originFragment}"""
+
+  private val FragAgent = ",\"origin\":\"agent\""
+  private val FragUser  = ",\"origin\":\"user\""
+  private val FragNull  = ",\"origin\":null"
 
   private val Legacy5Key = """{"id":1,"senderId":"u1","kind":"text","body":"b","createdAt":1}"""
 
@@ -41,12 +47,12 @@ class FriendMessageFooterBadgeSpec extends FunSuite:
   // ===== (A) 网关模型 / codec（REST 出参面）=====
 
   test("D-A1 解码三态互不折叠：agent / user / 缺键 / null") {
-    assertEquals(decodeMessage(raw(""","origin":"agent"""")).origin, Some("agent"))
-    assertEquals(decodeMessage(raw(""","origin":"user"""")).origin, Some("user"))
+    assertEquals(decodeMessage(raw(FragAgent)).origin, Some("agent"))
+    assertEquals(decodeMessage(raw(FragUser)).origin, Some("user"))
     // 「不可判」与「服务端明说 user」是两态：缺键 / null 一律 None，
     // **禁**折叠成 Some("user")（折叠会把老服务端的缺键伪装成确证值）。
     assertEquals(decodeMessage(raw()).origin, None, "缺键 ⇒ None")
-    assertEquals(decodeMessage(raw(""","origin":null""")).origin, None, "null ⇒ None（与缺键同义）")
+    assertEquals(decodeMessage(raw(FragNull)).origin, None, "null ⇒ None（与缺键同义）")
   }
 
   test("D-A2 缺 origin 键的旧形态**整体可解**（加性字段不改变解码门槛）") {
@@ -67,7 +73,7 @@ class FriendMessageFooterBadgeSpec extends FunSuite:
   test("D-A4 编码：origin=Some ⇒ 键在且值原样出（网关 REST 重编码不再抹掉它）") {
     val j = MessageSummary(1L, "u1", "text", "b", 1L, None, Some("agent")).asJson
     assertEquals(j.hcursor.get[String]("origin").toOption, Some("agent"))
-    assert(j.asObject.exists(_.contains("origin")), s"出参必须带 origin 键：${j.noSpaces}")
+    assert(j.asObject.map(_.keys.toList).exists(_.contains("origin")), s"出参必须带 origin 键：${j.noSpaces}")
   }
 
   test("D-A5 出参键序：legacy 5 键不动，加性键 origin → attachments 追加在后") {
