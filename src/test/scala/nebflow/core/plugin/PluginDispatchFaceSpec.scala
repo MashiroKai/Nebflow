@@ -30,8 +30,10 @@ import scala.concurrent.duration.*
  *
  * 覆盖：
  *  ① 零迁移：无 dispatch 记录 ⇒ 有效派发许可 == 内容受信（16 个现存包零改动）；
- *  ② 关闭 ⇒ 未来派发被拒（闸 A，`PLUGIN_DISPATCH_DISABLED`）+ 目录行消失且**点名**
- *     注记（S6/R10-C）；内容面**不受影响**（`resolve` 仍 Right ⇒ 闸 B/C/E/D 零变化）；
+ *  ② 关闭 ⇒ 未来派发被拒（闸 A，`PLUGIN_DISPATCH_DISABLED`）+ 目录输出**零痕迹**
+ *     （能力行与点名行皆无：2026-09-14 面板收敛批删除段尾「已关闭·禁派发」点名，
+ *     对照面 = 未被关闭的包仍出现在目录里）；内容面**不受影响**（`resolve` 仍 Right
+ *     ⇒ 闸 B/C/E/D 零变化）；
  *  ③ **已派发节点不受关闭影响**（核心验收，复现 R2 P0：wiring 节点在关闭前已派发，
  *     关闭后 barrier 归零启动 ⇒ 必须照常跑完 + 提示词注入全文在位）；
  *  ④ 过渡授权只放宽 + 到期自动失效（幂等回落作者意图）；
@@ -213,7 +215,7 @@ class PluginDispatchFaceSpec extends CatsEffectSuite:
       assert(trusted, "fixture 内容面可用")
       assert(eff, "无 dispatch 记录时必须跟随内容面（零迁移：现存包行为逐字不变）")
       assert(catalog.contains("- inject-skill:"), "内容面可用且未被关闭 ⇒ 目录行必须出现")
-      assert(!catalog.contains("已关闭·禁派发"), "无关闭项时不得出现关闭注记（零字节变化）")
+      assert(!catalog.contains("已关闭·禁派发"), "关闭注记字面量已退场 ⇒ 任何目录输出里都不得出现（零残留哨兵）")
       assert(!trustedAfter, "封禁后内容面不可用（deny-list）")
       assert(!effAfter, "内容面不可用 ⇒ 任何路径都拿不到（安全不降级）")
       assert(!catalogAfter.contains("- inject-skill:"), "封禁 ⇒ 目录行消失")
@@ -221,9 +223,23 @@ class PluginDispatchFaceSpec extends CatsEffectSuite:
       assert(restored, "解封后回落「在位即信任」")
   }
 
-  // ── ② 关闭 ⇒ 未来派发被拒 + 目录点名；内容面不受影响 ──────────────────
+  // ── ② 关闭 ⇒ 未来派发被拒 + 目录零痕迹；内容面不受影响 ──────────────────
 
-  test("② 关闭派发 ⇒ 新派发被拒（PLUGIN_DISPATCH_DISABLED）+ 目录点名；内容面 resolve 仍 Right") {
+  test("② 关闭派发 ⇒ 新派发被拒（PLUGIN_DISPATCH_DISABLED）+ 目录**零痕迹**（能力行与点名行皆无）；内容面 resolve 仍 Right") {
+    // 对照面夹具：另建一个**未被关闭**的包（仅本条用例内建、用例内删除 ⇒ 不影响
+    // 其他用例）。判据「关闭的包零痕迹 / 未关闭的包仍出现」必须**同一份目录输出**
+    // 里同时成立，否则「消失」可能只是段空了。
+    val keepDir = tempRoot / "plugins" / "keep-skill"
+    os.makeDir.all(keepDir / "skills" / "contrast")
+    os.write.over(keepDir / "plugin.json",
+      s"""{"$$schema":"${PluginRegistry.CanonicalSchema}","name":"keep-skill","version":"1.0.0","description":"contrast face fixture"}""")
+    os.write.over(keepDir / "skills" / "contrast" / "SKILL.md",
+      """---
+        |name: contrast
+        |description: contrast face skill
+        |---
+        |body""".stripMargin)
+    PluginRegistry.invalidateCache()
     for
       _ <- approveFixture
       _ <- PluginDispatchPolicy.setAuthorEnabled("inject-skill", false, "spec")
@@ -235,15 +251,21 @@ class PluginDispatchFaceSpec extends CatsEffectSuite:
         val f = tempRoot / "logs" / "plugin-dispatch.jsonl"
         if os.exists(f) then os.read(f) else ""
       }
+      _ <- IO.blocking(os.remove.all(keepDir))
+      _ <- IO(PluginRegistry.invalidateCache())
     yield
       assert(!eff, "关闭后有效派发许可必须为 false（将来派发被挡）")
       assert(trusted, "关闭**不得**动内容信任面（trusted 仍 true）")
       assert(res.isRight,
         "内容面 resolve 必须仍 Right ⇒ 闸 B/C/E（spawn/resume/loop 装载门）与闸 D（30s 重验）" +
           "对已派发节点零影响——这正是「不影响目前的」的结构保证")
-      assert(!catalog.contains("- inject-skill:"), "已关闭 ⇒ 目录行消失（S5/R10-C）")
-      assert(catalog.contains("已关闭·禁派发") && catalog.contains("inject-skill"),
-        s"已关闭 ⇒ 段尾必须**点名**（判据可区分：能力域命中却无可用插件 vs 域不存在）。catalog=\n$catalog")
+      assert(!catalog.contains("- inject-skill:"), "已关闭 ⇒ 能力行消失（S5）")
+      assert(!catalog.contains("inject-skill"),
+        s"已关闭 ⇒ 目录输出**零痕迹**（能力行与点名行皆无；2026-09-14 面板收敛批删除段尾点名）。catalog=\n$catalog")
+      assert(!catalog.contains("已关闭·禁派发"),
+        s"关闭注记字面量不得再出现（零残留哨兵）。catalog=\n$catalog")
+      assert(catalog.contains("- keep-skill:"),
+        s"对照面：未被关闭的包仍出现在同一份目录输出里。catalog=\n$catalog")
       assert(auditRaw.contains("\"event\":\"authorEnabled\"") && auditRaw.contains("\"name\":\"inject-skill\""),
         s"写侧动作必须落 append-only 审计（设计 R8-C），got: $auditRaw")
   }

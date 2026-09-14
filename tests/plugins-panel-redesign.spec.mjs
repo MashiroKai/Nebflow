@@ -1,14 +1,17 @@
-// plugins-panel-redesign.spec.mjs — 2026-09-13 无审批批（装了就是信任）验收 spec
+// plugins-panel-redesign.spec.mjs — 2026-09-13 无审批批（装了就是信任）验收 spec；
+// **2026-09-14 插件面板收敛批（作者三裁之批一）再重写**。
 // 真后端（隔离实例，NEBFLOW_HOME fixture + 端口 ≥8285，绝非宿主 8080）+ fixture
-// 插件目录。重写自 2026-09-04 的「开关状态机」版本——内容审批开关退场后，
-// 原断言链整体作废，新链：
-//   A 卡片形态（任意引擎）：无内容审批开关；药丸 = 已启用；次级动作入口（更多 →
-//     封禁/解封）+ 派发开关（独立一行）都在且可交互
+// 插件目录。重写自 2026-09-04 的「开关状态机」版本（内容审批开关退场）；本批再
+// 砍掉封禁 UI 面，新链：
+//   A 卡片形态（任意引擎）：无内容审批开关、无「更多」/封禁入口（卡片级零残留）；
+//     药丸 = 已启用；**唯一控件** = 右上「任务分发器可见性」开关（在头行内、
+//     与药丸同排、在药丸右侧、行盒右对齐）
 //   B 目录可见性 + 内容变更**非拦截**（需引擎轨 C6 字段）：
 //     无记录包 ⇒ 进分发器目录（在位即信任的可见结果）；
 //     改 fixture 文件 ⇒ digest 变 ⇒ **仍进目录**、仍有派发许可，只在面板上标
-//     「内容已变更」（可见性，不提供任何拦截）——这是本批与旧语义的分水岭
-//   C 封禁 ⇒ 出目录 + 面板「已封禁」+ 派发开关锁死；解封 ⇒ 回目录（需 C6 字段）
+//     「内容已变更」（可见性，不提供任何拦截）——这是与旧语义的分水岭
+//   C 封禁（**引擎侧** API / CLI 发起——面板已无该入口）⇒ 出目录 + 面板「已封禁」
+//     + 派发开关锁死 + 封禁态下也不得长回入口；解封 ⇒ 回目录（需 C6 字段）
 //   D 双主题截图（形态留档）
 //
 // 未设 NEBFLOW_HOME_DIR 时显式 skip（shell 级 mock 覆盖由
@@ -129,36 +132,58 @@ test.describe('plugins panel redesign — card form + non-blocking content chang
     return page.evaluate((plugin) => {
       const card = document.querySelector(`.plugins-card[data-plugin="${plugin}"]`);
       const dw = card?.querySelector('[data-plugin-dispatch]');
-      const btn = card?.querySelector('[data-plugin-block]');
+      const pill = card?.querySelector('.plugins-state-pill');
+      const head = card?.querySelector('.plugins-card-head');
+      const geom = (() => {
+        if (!card || !pill || !dw || !head) return null;
+        const r = (el) => el.getBoundingClientRect();
+        const pr = r(pill), dr = r(dw), hr = r(head);
+        return {
+          inHead: head.contains(dw),
+          sameRowAsPill: Math.abs((pr.y + pr.height / 2) - (dr.y + dr.height / 2)) <= 2,
+          rightOfPill: dr.x >= pr.right - 1,
+          rightAlignedInHead: (hr.right - dr.right) <= 4,
+        };
+      })();
       return {
         exists: !!card,
         classes: card?.className ?? null,
         contentSwitchCount: card ? card.querySelectorAll('[data-plugin-switch]').length : null,
-        pill: card?.querySelector('.plugins-state-pill')?.textContent.trim() ?? null,
-        pillClass: card?.querySelector('.plugins-state-pill')?.className ?? null,
+        // 2026-09-14 面板收敛批：退场件（更多/菜单/封禁）卡片级零残留
+        moreCount: card ? card.querySelectorAll('[data-plugin-more]').length : null,
+        menuCount: card ? card.querySelectorAll('[data-plugin-menu]').length : null,
+        blockCount: card ? card.querySelectorAll('[data-plugin-block]').length : null,
+        dispatchCount: card ? card.querySelectorAll('[data-plugin-dispatch]').length : null,
+        dispatchLabel: card?.querySelector('.plugins-dispatch-label')?.textContent.trim() ?? null,
+        geom,
+        pill: pill?.textContent.trim() ?? null,
+        pillClass: pill?.className ?? null,
         changedHint: card?.querySelector('.plugins-card-hint.changed')?.textContent.trim() ?? null,
         blockedHint: card?.querySelector('.plugins-card-hint.blocked')?.textContent.trim() ?? null,
-        hasMore: !!card?.querySelector('[data-plugin-more]'),
-        blockLabel: btn?.textContent.trim() ?? null,
-        blockState: btn?.dataset.blocked ?? null,
         dispatchOn: dw?.classList.contains('on') ?? null,
         dispatchDisabled: dw ? dw.disabled : null,
       };
     }, name);
   }
 
-  test('A card form: content switch retired; pill 已启用; 更多 secondary action + dispatch switch present', async ({ page }) => {
+  test('A card form: content switch + block UI retired; pill 已启用; 唯一控件 = 右上「任务分发器可见性」开关', async ({ page }) => {
     await unblockQuietly(ALPHA);
     await loadPluginsPage(page);
     const st = await cardState(page, ALPHA);
     expect(st.exists, 'fixture card rendered').toBe(true);
     expect(st.contentSwitchCount, '内容审批开关退场（卡片级零残留）').toBe(0);
+    expect(st.moreCount, '「更多」入口退场（卡片级零残留）').toBe(0);
+    expect(st.menuCount, '次级动作行退场（卡片级零残留）').toBe(0);
+    expect(st.blockCount, '封禁/解封入口退场（卡片级零残留）').toBe(0);
+    expect(st.dispatchCount, '卡片唯一控件 = 派发开关').toBe(1);
+    expect(st.dispatchLabel, '开关文案 = 「任务分发器可见性」').toBe('任务分发器可见性');
+    expect(st.geom?.inHead, '开关在卡片头行内（不是底部独立一行）').toBe(true);
+    expect(st.geom?.sameRowAsPill, '开关与状态药丸同排').toBe(true);
+    expect(st.geom?.rightOfPill, '开关在药丸右侧').toBe(true);
+    expect(st.geom?.rightAlignedInHead, '开关行盒右对齐（「右上」）').toBe(true);
     expect(st.pill, '药丸 = 已启用（绑 blocked/contentChanged）').toBe('已启用');
     expect(st.pillClass, 'pill 带 on class').toContain('on');
     expect(st.classes, '卡片无 blocked/changed 痕').not.toContain('blocked');
-    expect(st.hasMore, '次级动作入口「更多」在').toBe(true);
-    expect(st.blockLabel, '封禁动作文案').toBe('封禁该插件');
-    expect(st.blockState, 'data-blocked=0').toBe('0');
     expect(st.dispatchOn, '派发开关 on（兼容默认 authorEnabled=true）').toBe(true);
     expect(st.dispatchDisabled, '派发开关可用（封禁是唯一的禁用前提）').toBe(false);
   });
@@ -180,33 +205,36 @@ test.describe('plugins panel redesign — card form + non-blocking content chang
     expect(st.classes, '卡片带 changed 态但**不**带 blocked 态').not.toContain('blocked');
   });
 
-  test('C 封禁 ⇒ 出目录 + 派发锁死；解封 ⇒ 回目录', async ({ page }) => {
+  test('C 封禁（引擎侧 API/CLI）⇒ 出目录 + 派发锁死 + 面板零封禁入口；解封 ⇒ 回目录', async ({ page }) => {
     test.skip(!hasC6, 'engine track C6 (`blocked`) not live on this instance — block cannot take effect here; rerun after the plugin-nogate engine track merges');
     await unblockQuietly(BETA);
     await rest('POST', `/api/plugins/${BETA}/approve`);
     await loadPluginsPage(page);
     const pre = await cardState(page, BETA);
     expect(pre.dispatchDisabled, 'precondition: 未封禁 ⇒ 派发可用').toBe(false);
+    expect(pre.blockCount, 'precondition: 面板无封禁入口').toBe(0);
     expect(await catalogContains(BETA), 'precondition: beta 在目录里').toBe(true);
 
-    // 次级动作：更多 → 封禁。
-    await page.click(`.plugins-card[data-plugin="${BETA}"] [data-plugin-more]`);
-    await page.click(`.plugins-card[data-plugin="${BETA}"] [data-plugin-block]`);
+    // 封禁走**引擎侧**（API / CLI）——面板已无该入口（作者三裁之批一）；
+    // 面板必须把引擎侧状态收敛出来（轮询/重渲），而不是自己发起该动作。
+    await rest('POST', `/api/plugins/${BETA}/revoke`);
+    await page.reload();
     await page.waitForFunction((n) =>
       document.querySelector(`.plugins-card[data-plugin="${n}"] .plugins-state-pill`)?.textContent.trim() === '已封禁',
-      BETA, { timeout: 10000 });
+      BETA, { timeout: 20000 });
     const st = await cardState(page, BETA);
     expect(st.pillClass, 'pill 带 blocked class').toContain('blocked');
-    expect(st.blockLabel, '封禁入口翻为解封').toBe('解封该插件');
-    expect(st.blockedHint, '一行可行动提示').toBeTruthy();
+    expect(st.blockCount, '封禁态下也不得长回封禁入口').toBe(0);
+    expect(st.blockedHint, '一行可行动提示（指向 API / CLI）').toBeTruthy();
     expect(st.dispatchDisabled, '封禁 ⇒ 派发开关锁死').toBe(true);
     expect(await catalogContains(BETA), '封禁 ⇒ 出目录').toBe(false);
 
-    // 解封回位。
-    await page.click(`.plugins-card[data-plugin="${BETA}"] [data-plugin-block]`);
+    // 解封回位（同样引擎侧）。
+    await rest('POST', `/api/plugins/${BETA}/unblock`);
+    await page.reload();
     await page.waitForFunction((n) =>
       document.querySelector(`.plugins-card[data-plugin="${n}"] .plugins-state-pill`)?.textContent.trim() !== '已封禁',
-      BETA, { timeout: 10000 });
+      BETA, { timeout: 20000 });
     const after = await cardState(page, BETA);
     expect(after.pill, '解封后回已启用').toBe('已启用');
     expect(after.dispatchDisabled, '派发开关解锁').toBe(false);
@@ -218,8 +246,8 @@ test.describe('plugins panel redesign — card form + non-blocking content chang
     const shots = [];
     for (const scheme of ['dark', 'light']) {
       await loadPluginsPage(page, scheme);
-      // 展开「更多」菜单，让形态图含次级动作入口。
-      await page.click(`.plugins-card[data-plugin="${ALPHA}"] [data-plugin-more]`).catch(() => {});
+      // 2026-09-14 面板收敛批：卡片唯一控件（右上派发开关）已随初始渲染在位，
+      // 无「更多」菜单需要展开（该入口已退场）。
       await page.waitForTimeout(400);
       const path = join(SHOTS, `plugins-redesign-${scheme}.png`);
       const content = page.locator('#plugins-content');
