@@ -1039,7 +1039,16 @@ class NodeEngine(
   def suspendNode(sessionId: String, reason: String): IO[Boolean] =
     store.snapshot.map(snap => NodeEngine.findNodeForSession(snap, sessionId)).flatMap {
       case None =>
-        logger.warn(s"[stuck-recovery] suspend skipped — no node owns session $sessionId").as(false)
+        // ③ 恢复路径语义（#159/#176，2026-09-14；取证件 §4.4「恢复失败路径」）：
+        // 「**no node owns session**」= 承接失败的一种——本引擎 store 里查无该会话的
+        // 归属节点（从未绑定 / 已归档）⇒ **无可挂起之物**。此前只有 WARN、事件流零行
+        // ⇒ 事后无法 join 出「哪次承接失败」。本行补事件留痕（`nodeId` 字段承载
+        // **会话 id**——与 `FlowMapEventLog.DispatcherIdleExpiredType` 同款先例：
+        // 查无节点时无 NodeDef.id 可写）。**零行为变更**（仍返回 false）。
+        FlowMapEventLog.append(workspace, projectName, sessionId, "hard-recovery",
+          s"no-owner session=$sessionId stage=suspend verdict=recovery-impossible " +
+            "(session never bound to a node in this project's store / node already archived)") *>
+          logger.warn(s"[stuck-recovery] suspend skipped — no node owns session $sessionId").as(false)
       case Some(n) =>
         resources.agentRegistry.get.map(_.get(sessionId).flatMap(_.supervisorRef)).flatMap {
           case Some(sup) =>
@@ -1089,11 +1098,128 @@ class NodeEngine(
           val evidence =
             s"git status --porcelain = ${if dirty then "non-empty" else "clean"}, " +
               s"commits since node start = $newCommits"
-          IO.pure(NodeEngine.RecoveryAnchor(worktreeOk, dir, hasOutput, evidence))
+          val anchor = NodeEngine.RecoveryAnchor(worktreeOk, dir, hasOutput, evidence)
+          // ③（#159/#176）：A3 锚不可用 = **J1 形态**（目录消失）⇒ 单发留痕一行
+          // `worktree-missing` 事件（把「静默消失」变成事件流上可 join 的一等信号；
+          // 取证件 §6.1 建议 4）。**零行为变更**：锚探测结果与恢复分支逐字不变。
+          if worktreeOk then IO.pure(anchor)
+          else noteWorktreeMissingOnce(n.id, n.worktree.getOrElse(""), dir).as(anchor)
     }.handleErrorWith(e =>
       logger
         .warn(s"[stuck-recovery] anchor probe for $sessionId failed: ${Option(e.getMessage).getOrElse(e.toString)}")
         .as(NodeEngine.RecoveryAnchor(false, "", false, "anchor probe failed (see log)")))
+
+  // ── #159/#176（wtsurv 批，2026-09-14）：**worktree 目录中途消失**面 ────────────
+  //
+  // **① 定因（机制类表述；禁指认责任人——责任者未证）**：两例消失
+  // （`delegate-kernel-impl-2` / `-retry`，2026-09-11）的观测签名 =「**目录消失 +
+  // `.git/worktrees/<name>` 注册残留** ⇒ `git worktree list` 标 **prunable**」。逐条
+  // 排除后**唯一自洽类** = 「**git 之外的、未经注册的递归删除**」——`git worktree prune`
+  // 语义上**从不删工作目录**（只清注册）、`git worktree remove` 会**同时**清注册 ⇒
+  // 二者都造不出 prunable 签名。候选路径（D-1 agent/分发器手工 `rm -rf`、D-2 UI
+  // file-explorer `os.remove.all`，见 `WebSocketRoutes.deletePath`）只作**机制类**候选
+  // 并列，**不指认**任何具体要求责任人。取证全文 =
+  // `~/.nebflow/docs/Nebflow/20260913_100008_worktree-vanish-forensics.md`
+  // （§1.2 机制 D / §1.4 未证清单 / §4.3 J1–J7 判据表 / §6.1 建议 1–4）。
+  //
+  // **② 补上可用信号**（原状：`TaskStuckWatcher` 类③ 注释自陈 `AgentRecord` 无 cwd
+  // 字段 ⇒ registry 快照上「无信号可用」）：
+  //   - [[sessionCwdAlive]] 会话运行时 cwd 的**存在性**判据（fail-safe 三态）；
+  //   - [[failEnvLostNode]] 环境失效的**快速失败**出口（终态化 + 显式错误 + 事件留痕）；
+  //   - [[noteWorktreeMissingOnce]] J1 形态的**事件面一等信号**（`worktree-missing`）。
+  // ⚠ 这三个信号只做「环境失效」分类与留痕，**不参与任何判死不等式**（与
+  // `TaskStuckWatcher` 红线 R6-4 同款纪律：不得用它们促成判死）。
+
+  /** 会话运行时工作目录（**只读**）：本引擎 store 里拥有该会话的节点的运行时
+    * projectRoot——与 `runWithAgent` 的会话 cwd **同源单点**
+    * （[[PathUtil.resolveNodeProjectRoot]] 的双位置实存解析）。
+    * `None` = 本引擎不拥有该会话（未绑定 / 已归档）⇒ 调用方据此避开「查无 ⇒ 误判失效」。 */
+  def sessionRuntimeRoot(sessionId: String): IO[Option[String]] =
+    store.snapshot
+      .map { snap =>
+        NodeEngine.findNodeForSession(snap, sessionId).map { n =>
+          try PathUtil.resolveNodeProjectRoot(workspace, n.worktree)
+          catch case _: Throwable => workspace
+        }
+      }
+      .handleErrorWith(e =>
+        logger
+          .warn(s"[env-lost] runtime root probe for $sessionId failed: ${Option(e.getMessage).getOrElse(e.toString)}")
+          .as(None))
+
+  /** **环境失效判据**（类③ `env-lost` 的唯一取数口）——fail-safe 三态：
+    *   - `None` = **未知**（本引擎不拥有该会话 / 探测自身失败）⇒ 调用方**不得**据此判死；
+    *   - `Some(true)` = 运行时 cwd 实存且是目录 ⇒ 环境正常（**负控**：绝不发 env-lost）；
+    *   - `Some(false)` = 运行时 cwd **已消失** ⇒ J1/J2 形态的机器可读判据。
+    *
+    * 口径：`os.exists ∧ os.isDir`（沿软链，与 [[PathUtil.resolveWorktreeDir]] 同语义）；
+    * 位置**双查**由 `resolveNodeProjectRoot` 单点给出（权威位置 `worktrees/<名>` 优先、
+    * 顶层存量 fallback）⇒ **J3**（目录在而报 cwd 缺失 = 路径解析面问题，查
+    * `paths.scala:162-186`）不会被本判据读成「消失」。异常一律回落 `true`（判活）。 */
+  def sessionCwdAlive(sessionId: String): IO[Option[Boolean]] =
+    sessionRuntimeRoot(sessionId).map(
+      _.map(dir =>
+        try
+          val p = os.Path(dir)
+          os.exists(p) && os.isDir(p)
+        catch case _: Throwable => true)
+    )
+
+  /** **环境失效快速失败**（#159/#176 ② 的引擎侧出口）：把「运行时目录消失 ⇒ 该会话
+    * 不可能再产生有效副作用」从「静默 ~10min 后判 stuck（L1→L3 三段阶梯，实测
+    * 671s/683s）」改成**显式终态 + 明确错误**。
+    *
+    * 语义与 [[failStuckRecovery]] **同族**（引擎接管失败 = `failed`；`failed` 可经
+    * `NodeEdit` 重激活，`cancelled` 不可）——差异只在**触发判据**（环境失效 vs 恢复腿
+    * 未生效）与**时限**（静默窗 vs 三段阶梯）。
+    *
+    * 返回 `true` = 本引擎确实把节点改判为 `failed`（调用方据此只广播一次）；
+    * `false` = 本引擎不拥有该会话 / 节点已终态 ⇒ **幂等**：零写、零重复通知。
+    *
+    * 事件面：写一条 `env-lost` 事件（session + cwd + J 判据号），使「目录消失」在
+    * `flow-map-events.jsonl` 上可 join；`DispatchNotify.releaseTerminalNotify` 归还
+    * 可能的回流占位（与 [[failStuckRecovery]] 逐字同款）。 */
+  def failEnvLostNode(sessionId: String, reason: String): IO[Boolean] =
+    store.snapshot.flatMap { snap =>
+      NodeEngine.findNodeForSession(snap, sessionId) match
+        case None =>
+          logger
+            .warn(s"[env-lost] fast-fail skipped — no node owns session $sessionId in this project's store")
+            .as(false)
+        case Some(n) if NodeLifecycle.Terminal.contains(n.status) =>
+          logger
+            .info(s"[env-lost] fast-fail skipped for node '${n.name}' (${n.id}) — already ${n.status} (idempotent)")
+            .as(false)
+        case Some(n) =>
+          val dir =
+            try PathUtil.resolveNodeProjectRoot(workspace, n.worktree)
+            catch case _: Throwable => workspace
+          dispatchNotify.releaseTerminalNotify(n.id) *>
+            FlowMapEventLog.append(workspace, projectName, n.id, "env-lost",
+              s"session=$sessionId cwd=${FlowMapEventLog.noWs(dir)} judge=J1 " +
+                "(dir missing; a git worktree registration may remain ⇒ recursive delete outside git)") *>
+            failNode(n.id, reason).as(true)
+    }
+
+  /** J1 形态的**单发**事件留痕（`worktree-missing`；取证件 §6.1 建议 4）：节点声明的
+    * worktree 裸名在权威位置与顶层存量**两处均不存在** ⇒ 写一行事件 + 一行 WARN。
+    * 同名只写一次（避免每轮扫描刷屏）；**零行为变更**（不终态化、不改状态）。 */
+  private val worktreeMissingNoted = Ref.unsafe[IO, Set[String]](Set.empty)
+
+  private def noteWorktreeMissingOnce(nodeId: String, bare: String, dir: String): IO[Unit] =
+    worktreeMissingNoted
+      .modify(set => if set.contains(bare) then (set, false) else (set + bare, true))
+      .flatMap { fresh =>
+        if !fresh then IO.unit
+        else
+          FlowMapEventLog.append(workspace, projectName, nodeId, "worktree-missing",
+            s"bare=${FlowMapEventLog.noWs(bare)} path=${FlowMapEventLog.noWs(dir)} judge=J1") *>
+            logger.warn(
+              s"[worktree-missing] node '$nodeId' declares worktree '$bare' but '$dir' does not exist — " +
+                "J1 signature (directory gone; a `.git/worktrees/<name>` registration may remain ⇒ prunable). " +
+                "Machine class: a recursive delete performed OUTSIDE git (prune never removes the work tree, " +
+                "worktree remove also clears the registration) — no responsible party is identified here.")
+      }
 
   /** P2：恢复腿未生效时的终局写点（R-1=B 形态）。
     *
@@ -1176,9 +1302,15 @@ class NodeEngine(
         case None =>
           // R5（取消静默死锁修复批）：此前静默 `IO.pure(None)`——L3 6/6 零留痕的一个
           // 候选出口。留痕不改行为（仍返回 None）。
-          logger.warn(
-            s"[hard-recovery] no node owns session $sessionId — L3 resume skipped (session never bound to a node / node already archived)"
-          ).as(None)
+          // ③（#159/#176，2026-09-14）：**事件流留痕补齐**——WARN 之外再写一行
+          // `hard-recovery` 事件（`nodeId` 字段承载会话 id，同 suspendNode 同款先例），
+          // 使「L3 resume 被跳过」这一**承接失败路径**在 flow-map 事件面可 join。
+          FlowMapEventLog.append(workspace, projectName, sessionId, "hard-recovery",
+            s"no-owner session=$sessionId stage=l3-resume verdict=resume-skipped " +
+              "(session never bound to a node / node already archived)") *>
+            logger.warn(
+              s"[hard-recovery] no node owns session $sessionId — L3 resume skipped (session never bound to a node / node already archived)"
+            ).as(None)
         case Some(n) =>
           resources.sessionStore.loadMessagesForSession(sessionId).attempt.flatMap {
             case Right(msgs) if msgs.nonEmpty =>
@@ -4974,13 +5106,38 @@ object NodeEngine:
       case Some(a) if !a.hasOutput =>
         prefix +
           s" **No output last attempt** (${a.outputEvidence}; worktree " +
-          s"${if a.worktreeAvailable then s"available: ${a.probeDir}" else "unavailable"})" +
+          s"${if a.worktreeAvailable then s"available: ${a.probeDir}" else NodeEngine.a3UnavailableNote(a.probeDir)})" +
           " — do the task from scratch; assume nothing was done.)"
       case Some(a) =>
         prefix +
-          s" **Output exists** (${a.outputEvidence}) — verify unpersisted side effects first (git state, key files); continue from the breakpoint.)"
+          s" **Output exists** (${a.outputEvidence}" +
+          (if a.worktreeAvailable then "" else s"; worktree ${NodeEngine.a3UnavailableNote(a.probeDir)}") +
+          ") — verify unpersisted side effects first (git state, key files); continue from the breakpoint.)"
       case None =>
         prefix + ")"
+
+  /** **A3 锚不可用时的承接语义说明**（#159/#176 ③，2026-09-14）。
+    *
+    * 语义（设计态 + 实现态，逐条对应）：
+    *   - **S1 就地续跑**：A3 可用 ⇒ 恢复腿在与上轮**同一**目录里续跑（现行为，未改）；
+    *   - **S2 失锚续跑**：A3 不可用（J1 形态）∧ A1（transcript）可用 ⇒ 恢复腿**仍然**执行，
+    *     但运行时 cwd **回落项目 workspace**（`PathUtil.resolveNodeProjectRoot` 的两处均
+    *     不存在 ⇒ 旧公式路径兜底），且必须把「上轮产物不可信」**显式**告知被恢复会话
+    *     ——本函数即该告知的载体（否则恢复后的会话会拿「不存在的目录」当下事实）；
+    *   - **S3 承接失败**：`no node owns session` ⇒ 恢复腿无法接管（[[suspendNode]] /
+    *     [[hardResumeNode]] 各自留痕 + 跳过，[[failStuckRecovery]] / [[settleFailedHardResume]]
+    *     兜终态）；事件流留痕见那两处（本批补）。
+    *   - **S4 零产出空支**（J7）：`hasOutput=false` ⇒ 无产物可救，重激活 = 重跑本 turn 或
+    *     经 `NodeEdit` 重激活/换名承接；**禁** `branch -D` 强删（审计血缘保留）。
+    *
+    * 本字符串进被恢复会话的 resume prompt（`ResumeContext.resumePrompt`），故措辞以
+    * 「对会话下指令」的口吻写成。**禁指认责任人**（责任者未证；只写机制类）。 */
+  private def a3UnavailableNote(dir: String): String =
+    s"UNAVAILABLE — the directory '$dir' no longer exists (judge J1: directory gone + a git worktree " +
+      "registration may remain ⇒ a recursive delete performed OUTSIDE git; #159/#176 forensics §4.3). " +
+      "This run therefore starts OUTSIDE that directory (the runtime cwd falls back to the project " +
+      "workspace) and the previous run's artifacts are UNRELIABLE: do not assume any file written last " +
+      "round is still present — re-check before building on it"
 
   /** 节点级 blocked 重入上限（设计 §3.1/§7.2）：blockCount 1/2 → 重入调整；
     * count=3（> 2）→ 升级 Nebula 不再重入。 */

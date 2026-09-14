@@ -148,9 +148,30 @@ object TaskStuckWatcher:
   val ClassFalsePositive: String = "false-positive"
   /** 类④ provider hang：本会话有在飞 LLM 请求 ⇒ 交 LLM 层三档看护，watcher 不介入。 */
   val ClassProviderHang: String = "provider-hang"
+  /** **类③ 环境失效**（`env-lost`；#159/#176 wtsurv 批，2026-09-14）：该会话的
+    * **运行时 cwd 已消失**（判定代码 = [[probeEnvLost]] + `NodeEngine.sessionCwdAlive`
+    * ⇒ 见 [[scan]] 与 [[classify]]）。语义 = 「本会话不可能再产生有效副作用」——
+    * 目录没了 ⇒ 之后每条命令都无法 spawn。**快速失败**出口见 [[recoverUngated]]
+    * 的 env-lost 分支（不进 L1→L3 三段阶梯）。
+    *
+    * 动机（真实事故，#159/#176 取证 §2.1/§4.4）：目录中途消失 ⇒ 会话静默 ⇒
+    * `agent idle Ns (no LLM/tool event)` 判词 ⇒ **671s / 683s** 才判死。 */
+  val ClassEnvLost: String = "env-lost"
+  /** 类③ 的分类身份串（R8 事件面 `branch` 字段取值；与 [[BranchMerged]] 等同类）。 */
+  val BranchEnvLost: String = "env-lost"
+  /** 类③ 的**静默窗**（ms）：目录消失后须**连续静默**满此窗才判环境失效。
+    *
+    * 为什么需要它（负控口径）：`currentToolStartedAt` 命中时**已启动**的进程不会因
+    * 目录被删而停止——正在推进的工具仍可能产出（这正是类② 的保护面）。静默窗把
+    * 「还在动」与「已停摆」分开，且**远小于** [[nebflow.shared.Defaults.StuckThresholdMs]]
+    * （600s）：本判据的全部价值就是不让「cwd 失效」退化成 10 分钟静默。
+    * 触发到失败的时限口径 = `EnvLostGraceMs` + 一个扫描间隔（默认 60s + 30s ≈ ≤90s），
+    * 对照现状 671s/683s。 */
+  val EnvLostGraceMs: Long = 60 * 1000L
   /** 判据序的分流结果（设计 §2.1）。 */
   final case class StuckClassification(
-    /** ∈ [[ClassTrueStuck]] / [[ClassFalsePositive]] / [[ClassProviderHang]]。 */
+    /** ∈ [[ClassTrueStuck]] / [[ClassFalsePositive]] / [[ClassProviderHang]] /
+      * [[ClassEnvLost]]（类③，wtsurv 批 2026-09-14 起产出）。 */
     cls: String,
     /** 该类的机器可读判据读数（进事件面与上报文本；**不回流判据**）。 */
     note: String,
@@ -163,10 +184,15 @@ object TaskStuckWatcher:
 
   /** 类③（环境失效）与类⑥/⑦ 不在本 watcher 的产出面，此处显式记录归属以免被误
     * 读成遗漏：
-    *   - 类③ 工具显式失败 / cwd 失效：其可观测形态 = 工具相位被清（`currentToolStartedAt`
-    *     归零）或 agent 事件恢复 ⇒ 本 watcher 不会把它判成停滞；剩余窗口（工具尚未
-    *     返回而 cwd 已失效）在 registry 快照上**无信号可用**（`AgentRecord` 无 cwd
-    *     字段）⇒ 本批**不产出该类**，正确出口仍是 agent 自纠（未证项，见报告）。
+    *   - 类③ **工具显式失败 / cwd 失效**——**（wtsurv 批 2026-09-14 起已产出，见
+    *     [[ClassEnvLost]]）**。原状（stuck 自动恢复批 P1，2026-09-11）的措辞是
+    *     「剩余窗口（工具尚未返回而 cwd 已失效）在 registry 快照上**无信号可用**
+    *     （`AgentRecord` 无 cwd 字段）⇒ 本批不产出该类」——本批正是**补上该信号**：
+    *     取数口 = `NodeEngine.sessionCwdAlive(sessionId)`（fail-safe 三态：未知 /
+    *     实存 / 已消失），由 [[probeEnvLost]] 注入。判据仍**不回流**判死不等式
+    *     （与 `inflight` 同款：分类输入，不是判死依据），且**有正信号时绝不判死**
+    *     （类② 优先于类③——正信号的定义是「还在推进」，与目录是否存在无关）。
+    *     形态 = #159/#176 的 J1（目录消失 + 注册残留 ⇒ git 之外的递归删除）。
     *   - 类⑥ bgWait cap / bg idle：**R-4 裁定不并入本批**（归 home 板 #5），仅在
     *     「无正信号不得终态化」口径上与类② 同源。
     *   - 类⑦ `bg-harvest` 无 cause：本批 **P2 附加小项**（R-5），发射点
@@ -209,11 +235,15 @@ object TaskStuckWatcher:
     *
     * 判定顺序（严格自上而下，先命中先返回）：
     *   1. `inflight > 0` ⇒ 类④ [[ClassProviderHang]]（LLM 层自管，watcher 零动作）
-    *   2. 有工具相位（`currentToolStartedAt > 0`）：
-    *      a. **有正信号（有效窗内新鲜）** ⇒ 类② [[ClassFalsePositive]]
-    *         （本拍不动作，只记 `suspect`）
-    *      b. **无正信号** ⇒ 类① [[ClassTrueStuck]]（**非破坏档**：只允许 L1 + 恢复腿）
-    *   3. 无工具相位 ⇒ 类① [[ClassTrueStuck]]
+    *   2. 有工具相位（`currentToolStartedAt > 0`）**且有正信号**（有效窗内新鲜）
+    *      ⇒ 类② [[ClassFalsePositive]]（本拍不动作，只记 `suspect`）
+    *   2'. **`cwdAlive == Some(false)`**（wtsurv 批插入位）⇒ 类③ [[ClassEnvLost]]：
+    *      运行时 cwd 已消失 ⇒ 环境失效。**插入位说明**：必须在类② **之后**（红线
+    *      「有正信号不得促成判死」——已启动的进程不会因目录被删而停止，工具仍在推进
+    *      时不得判死）、在类① **之前**（否则该形态会被读成普通真卡死而走 10min 阶梯）。
+    *   3. 有工具相位（`currentToolStartedAt > 0`）且**无正信号** ⇒ 类① [[ClassTrueStuck]]
+    *      （**非破坏档**：只允许 L1 + 恢复腿）
+    *   4. 无工具相位 ⇒ 类① [[ClassTrueStuck]]
     *
     * **wd-fix 批（2026-09-12 作者裁定「方向 A」，只为消误判、不为减真判）**：
     *   - **第 i 刀（去掉前置）**：2a 旧写 `toolPhaseMs ≤ 有效阈值 ∧ 正信号新鲜`——
@@ -248,7 +278,11 @@ object TaskStuckWatcher:
     now: Long,
     inflight: Int,
     toolPhaseThresholdMs: Long = nebflow.shared.Defaults.ToolPhaseStuckMs,
-    progressWindowMs: Long = nebflow.shared.Defaults.StuckProgressSignalWindowMs
+    progressWindowMs: Long = nebflow.shared.Defaults.StuckProgressSignalWindowMs,
+    /** **类③ 环境失效**的取数（wtsurv 批 2026-09-14）：`None` = 未知（**不得**据此
+      * 判死）/ `Some(true)` = cwd 实存（负控）/ `Some(false)` = cwd 已消失。
+      * 默认 `None` ⇒ 既有调用点（含全部既有 spec）**逐字不变**。 */
+    cwdAlive: Option[Boolean] = None
   ): StuckClassification =
     val effectiveToolPhaseMs = ToolStuckJudgment.effectiveToolPhaseMs(
       toolPhaseThresholdMs, rec.currentToolDeadlineMs, nebflow.shared.Defaults.ToolDeadlineSlackMs)
@@ -262,37 +296,54 @@ object TaskStuckWatcher:
     val authorisedNote = s"authorised ${effectiveToolPhaseMs / 1000}s"
     val toolNote = s"tool phase ${a.toolPhaseMs / 1000}s"
     val overAuthorised = a.toolPhaseMs > effectiveToolPhaseMs
+    /** 类①/③ 共用的「无正信号」前缀（**token 形态逐字保留**——既有断言取此串）。 */
+    def noProgressNote: String =
+      if progressAgoSecs < 0 then s"no progress signal (never seen, $windowNote)"
+      else s"no fresh progress signal (progress signal ${progressAgoSecs}s ago, $windowNote)"
     if inflight > 0 then
       StuckClassification(ClassProviderHang,
         s"$inflight in-flight LLM request(s) for this session — provider-hang (class 4): the LLM layer's own " +
           "watchdog owns this case, the watcher takes no action this round",
         recoverable = false, destructiveAllowed = false)
-    else if rec.currentToolStartedAt > 0 then
+    else if rec.currentToolStartedAt > 0 && progress then
       // wd-fix ①：正信号新鲜 ⇒ 类②，**不再前置要求 `toolPhaseMs ≤ 有效阈值`**。
-      if progress then
-        StuckClassification(ClassFalsePositive,
-          s"tool '${a.toolName.getOrElse("?")}' " +
-            (if overAuthorised then
-               s"over its authorised window ($toolNote > $authorisedNote) but still advancing"
-             else s"inside its authorised window ($toolNote ≤ $authorisedNote) and advancing") +
-            s" (progress signal ${progressAgoSecs}s ago, $windowNote) — false positive (class 2): " +
-            (if overAuthorised then
-               "over-authorisation is the tool's own authorised timeout / foreground no-progress ceiling " +
-                 "to enforce, the watcher takes no action this round"
-             else "no action this round"),
-          recoverable = false, destructiveAllowed = false)
-      else
-        // 文案如实（wd-fix ③）：本分支按定义**无新鲜正信号**（progress == false），故不会
-        // 出现「既说没有正信号、又给出 3s 前正信号」的自相矛盾；超授权事实单列。
-        StuckClassification(ClassTrueStuck,
-          (if progressAgoSecs < 0 then s"no progress signal (never seen, $windowNote)"
-           else s"no fresh progress signal (progress signal ${progressAgoSecs}s ago, $windowNote)") +
-            s" while tool '${a.toolName.getOrElse("?")}' is in flight " +
-            s"($toolNote, $authorisedNote)" +
-            (if overAuthorised then s" — $toolNote > $authorisedNote (over its authorised window)" else "") +
-            s" — true stuck (class 1): " +
-            "non-destructive tier only (L1 halt + recovery leg; no process kill, no terminalization)",
-          recoverable = true, destructiveAllowed = false)
+      StuckClassification(ClassFalsePositive,
+        s"tool '${a.toolName.getOrElse("?")}' " +
+          (if overAuthorised then
+             s"over its authorised window ($toolNote > $authorisedNote) but still advancing"
+           else s"inside its authorised window ($toolNote ≤ $authorisedNote) and advancing") +
+          s" (progress signal ${progressAgoSecs}s ago, $windowNote) — false positive (class 2): " +
+          (if overAuthorised then
+             "over-authorisation is the tool's own authorised timeout / foreground no-progress ceiling " +
+               "to enforce, the watcher takes no action this round"
+           else "no action this round"),
+        recoverable = false, destructiveAllowed = false)
+    else if cwdAlive.contains(false) then
+      // ── 类③ 环境失效（wtsurv 批，2026-09-14；#159/#176）────────────────────
+      // 插入位：**类② 之后**（有正信号时绝不判死——那是「还在推进」的证据，与目录
+      // 是否存在无关）、**类① 之前**（否则该形态被读成普通真卡死，走 10min 阶梯）。
+      // 判据来源 = `NodeEngine.sessionCwdAlive`（fail-safe：未知 ⇒ None ⇒ 落到类①）。
+      StuckClassification(ClassEnvLost,
+        noProgressNote +
+          s" and this session's runtime cwd is GONE (env-lost, class 3)" +
+          (if rec.currentToolStartedAt > 0 then
+             s" [tool '${a.toolName.getOrElse("?")}' still in flight: $toolNote, $authorisedNote]"
+           else "") +
+          " — the directory no longer exists, so every subsequent command in this session fails to spawn " +
+          "(judge J1: dir missing + a git worktree registration may remain ⇒ recursive delete outside git; " +
+          "forensics §4.3). Fast-fail: terminalize with an explicit error instead of the silent 10-minute ladder.",
+        recoverable = true, destructiveAllowed = false)
+    else if rec.currentToolStartedAt > 0 then
+      // 文案如实（wd-fix ③）：本分支按定义**无新鲜正信号**（progress == false），故不会
+      // 出现「既说没有正信号、又给出 3s 前正信号」的自相矛盾；超授权事实单列。
+      StuckClassification(ClassTrueStuck,
+        noProgressNote +
+          s" while tool '${a.toolName.getOrElse("?")}' is in flight " +
+          s"($toolNote, $authorisedNote)" +
+          (if overAuthorised then s" — $toolNote > $authorisedNote (over its authorised window)" else "") +
+          s" — true stuck (class 1): " +
+          "non-destructive tier only (L1 halt + recovery leg; no process kill, no terminalization)",
+        recoverable = true, destructiveAllowed = false)
     else
       StuckClassification(ClassTrueStuck,
         s"no tool phase in flight, no in-flight LLM request, no progress signal — " +
@@ -513,7 +564,12 @@ object TaskStuckWatcher:
     l3VerifyDelayMs: Long = nebflow.shared.Defaults.L3VerifyDelayMs,
     /** P3（§3.3/§3.4）：恢复账本（预算 / 退避 / 冷却 / 互斥点 2）。默认空 Ref = 单测
       * 一次驱动不留状态（生产由 [[run]] 的扫描循环持有同一个 Ref 跨轮累积）。 */
-    ledger: cats.effect.Ref[IO, Map[String, RecoveryLedger]] = cats.effect.Ref.unsafe(Map.empty)
+    ledger: cats.effect.Ref[IO, Map[String, RecoveryLedger]] = cats.effect.Ref.unsafe(Map.empty),
+    /** **类③ 环境失效探针**（wtsurv 批 2026-09-14）；默认 = 生产实现 [[probeEnvLost]]
+      * （经 `ProjectRuntimeRegistry` → `NodeEngine.sessionCwdAlive`）。spec 注入假探针
+      * ⇒ 无需起真实 project runtime 即可验正负控。三态：`None` = 未知（不得判死）/
+      * `Some(true)` = cwd 实存（负控）/ `Some(false)` = cwd 已消失。 */
+    cwdProbe: String => IO[Option[Boolean]] = TaskStuckWatcher.probeEnvLost
   ): IO[Unit] =
     val now = System.currentTimeMillis()
     // R8 ②：复查搭**本**扫描轮（零新增定时器，设计 §3.4）——先复查上轮到期的 L3，
@@ -521,7 +577,7 @@ object TaskStuckWatcher:
     // 恢复动作」时序更直观）。
     verifyL3Outcomes(resources, pendingL3, now, l3VerifyDelayMs) *>
     resources.agentRegistry.get.flatMap { registry =>
-      val stuck = registry.values.toList
+      val candidates = registry.values.toList
         .filter(rec => scannedKinds.contains(rec.kind))
         .filter(rec => rec.status == AgentStatus.Processing)
         // R2 (wait-timeout-fix, 2026-09-03 作者裁定): WaitingForUser is a
@@ -537,29 +593,63 @@ object TaskStuckWatcher:
         // Processing with a fresh lastActivityMs — AgentActor AskUser handler
         // / AgentCore.askUserPermission), so true hangs stay reachable.
         .filter(rec => rec.status != AgentStatus.WaitingForUser)
-        // 2026-09-10 换轴：判据收敛到 assess（agent 侧事件停滞 ∪ 工具相位超时，
-        // 二者都不引用进程 CPU）。旧行 `now - rec.lastActivityMs > thresholdMs`
-        // 保留为 assess 的判据 ①，其余语义不变。
-        // R8 ①：改用详情版（assess 的投影），事件面取分支身份与原始读数。
-        .flatMap(rec => assessDetailed(rec, now, thresholdMs).map((rec, _)))
+      // 2026-09-10 换轴：判据收敛到 assess（agent 侧事件停滞 ∪ 工具相位超时，
+      // 二者都不引用进程 CPU）。旧行 `now - rec.lastActivityMs > thresholdMs`
+      // 保留为 assess 的判据 ①，其余语义不变。
+      // R8 ①：改用详情版（assess 的投影），事件面取分支身份与原始读数。
+      val stuck = candidates.flatMap(rec => assessDetailed(rec, now, thresholdMs).map((rec, _)))
       val stuckIds = stuck.map(_._1.sessionId).toSet
-      // Drop counters for sessions that recovered (fresh activity / different
-      // status / gone) so a future stuck episode starts from Stop attempt 1.
-      stopCounts.modify(m => (m.view.filterKeys(stuckIds.contains).toMap, ())) *>
-        // P3（§3.3）：**episode 边界** —— 离开 stuck 候选集的扫描轮复位「本代次恢复
-        // 预算」（与 stopCounts 同点、同纪律）；全链预算 / 冷却窗 / 互斥点 2 状态
-        // **保留**（它们的语义是跨代次的）。
-        ledger.update(m =>
-          m.view.map { case (k, l) => (k, if stuckIds.contains(k) then l else l.copy(genAttempts = 0)) }.toMap) *>
-        stuck.traverse_ { (rec, assessment) =>
-          // 判据序（P1）：先分流根因类别，再进恢复链。`inflightFor` 是**只读**在飞
-          // 计数（设计 §6.1 未证项 6 的补齐）——此前判「本会话是否有在飞 LLM」只能
-          // 靠破坏性的 cancelInflightFor 反推。stopAttempts 取当轮值（内存态）。
-          nebflow.llm.LlmInterface.inflightFor(rec.sessionId).flatMap { inflight =>
-            recover(resources, wsHub, rec, assessment,
-              classify(rec, assessment, now, inflight),
-              stopCounts, pendingL3, l3VerifyDelayMs, ledger)
-          }
+      // ── 类③ 环境失效探针（wtsurv 批，2026-09-14；#159/#176）───────────────────
+      // 取数面收窄（成本纪律）：只对**已静默满 [[EnvLostGraceMs]]** 的候选探一次
+      // cwd。理由：目录消失的**唯一终局形态**就是「之后静默」（命令 spawn 不出来 ⇒
+      // 零 agent 侧事件），故静默窗之外的会话不需要探；这同时避开「每一轮对全部
+      // Processing 会话各探一次」的常态开销。
+      val silent = candidates.filter(rec => rec.lastActivityMs > 0 && now - rec.lastActivityMs > EnvLostGraceMs)
+      silent
+        .traverse(rec => cwdProbe(rec.sessionId).map(rec.sessionId -> _))
+        .map(_.toMap)
+        .flatMap { cwdBySid =>
+          def aliveOf(rec: AgentRecord): Option[Boolean] = cwdBySid.getOrElse(rec.sessionId, None)
+          // Drop counters for sessions that recovered (fresh activity / different
+          // status / gone) so a future stuck episode starts from Stop attempt 1.
+          stopCounts.modify(m => (m.view.filterKeys(stuckIds.contains).toMap, ())) *>
+            // P3（§3.3）：**episode 边界** —— 离开 stuck 候选集的扫描轮复位「本代次恢复
+            // 预算」（与 stopCounts 同点、同纪律）；全链预算 / 冷却窗 / 互斥点 2 状态
+            // **保留**（它们的语义是跨代次的）。
+            ledger.update(m =>
+              m.view.map { case (k, l) => (k, if stuckIds.contains(k) then l else l.copy(genAttempts = 0)) }.toMap) *>
+            stuck.traverse_ { (rec, assessment) =>
+              // 判据序（P1）：先分流根因类别，再进恢复链。`inflightFor` 是**只读**在飞
+              // 计数（设计 §6.1 未证项 6 的补齐）——此前判「本会话是否有在飞 LLM」只能
+              // 靠破坏性的 cancelInflightFor 反推。stopAttempts 取当轮值（内存态）。
+              nebflow.llm.LlmInterface.inflightFor(rec.sessionId).flatMap { inflight =>
+                recover(resources, wsHub, rec, assessment,
+                  classify(rec, assessment, now, inflight, cwdAlive = aliveOf(rec)),
+                  stopCounts, pendingL3, l3VerifyDelayMs, ledger)
+              }
+            } *>
+            // 类③ **快速失败**面：cwd 已失 ∧ 静默满 EnvLostGraceMs ∧ 尚未到判死阈值
+            // （已在 `stuck` 里的由上面的 classify 归为类③，不重复动作）。
+            // 走的仍是 [[recover]]（同一判据序闸门 / 账本 / 留痕），只是判据由本批的
+            // 环境探针给出、且不必等 600s 阈值。
+            silent
+              .filter(rec => !stuckIds.contains(rec.sessionId) && aliveOf(rec).contains(false))
+              .traverse_ { rec =>
+                nebflow.llm.LlmInterface.inflightFor(rec.sessionId).flatMap { inflight =>
+                  val idleMs = now - rec.lastActivityMs
+                  val toolPhaseMs = if rec.currentToolStartedAt > 0 then now - rec.currentToolStartedAt else 0L
+                  val assessment = StuckAssessment(
+                    secs = idleMs / 1000,
+                    reason = s"runtime cwd gone, session silent for ${idleMs / 1000}s (env-lost probe; class 3)",
+                    branch = BranchEnvLost,
+                    agentIdleMs = idleMs,
+                    toolPhaseMs = toolPhaseMs,
+                    toolName = rec.currentToolName)
+                  recover(resources, wsHub, rec, assessment,
+                    classify(rec, assessment, now, inflight, cwdAlive = Some(false)),
+                    stopCounts, pendingL3, l3VerifyDelayMs, ledger)
+                }
+              }
         }
     }
 
@@ -720,6 +810,32 @@ object TaskStuckWatcher:
           s"[branch=${assessment.branch}, judge: $reason] but is classified ${cls.cls} — " +
           s"no action this round (suspect only). ${cls.note}"
       ) *> classifyNote
+    // ── 类③ 环境失效 ⇒ **快速失败**（wtsurv 批 2026-09-14；#159/#176 ②）──────────
+    // 不进 L1→L3 三段阶梯：阶梯的前提是「挂住的会话也许还能救」，而 cwd 已消失 ⇒
+    // 该前提**结构性不成立**（之后每条命令都 spawn 不出来）。动作四件：
+    //   ① 引擎侧显式终态（`NodeEngine.failEnvLostNode`；语义 = failed、可经 NodeEdit
+    //      重激活——与 `failStuckRecovery` 同族）；
+    //   ② **明确错误文本**（[[envLostErrorText]]，进节点 result / 广播 / 日志三面）；
+    //   ③ `taskStuck` 广播（action=`failed`，前端可变可见）；
+    //   ④ 事件留痕（引擎侧 `env-lost`；A3 锚探测侧 `worktree-missing`）。
+    // 破坏档收回：`ClassEnvLost.destructiveAllowed = false` ⇒ 即使未来放宽分支，
+    // 也不会静默获得进程 kill 能力（与类① 同款「显式化」纪律）。
+    else if cls.cls == ClassEnvLost then
+      val err = envLostErrorText(rec, cls.note)
+      logger.error(
+        s"TaskStuckWatcher: ${rec.sessionId} (kind=${rec.kind}) ENV-LOST (class 3) — fast-fail, " +
+          s"no L1→L3 ladder [branch=${assessment.branch}, judge: $reason]"
+      ) *> classifyNote *> recordFire("env-lost", 0) *>
+        act(broadcastStuck(wsHub, rec, idleSecs, "failed", err)) *>
+        act(runtimeOwning(rec.sessionId).flatMap {
+          case None => IO.unit
+          case Some(rt) =>
+            rt.engine
+              .failEnvLostNode(rec.sessionId, err)
+              .void
+              .handleErrorWith(e =>
+                logger.warn(s"TaskStuckWatcher: env-lost fast-fail for ${rec.sessionId} failed: ${e.getMessage}"))
+        })
     // 类④ provider hang：**只走 LLM 侧处置**（L1 halt / L2 transport abort 都是 LLM 层
     // 原语），**绝不进节点级腿**——`destructiveAllowed=false` 收回 L2 进程 kill，
     // `recoverable=false` 使 L3 节点级腿被跳过（见下方各分支的门）；`classifyNote`
@@ -1358,6 +1474,36 @@ object TaskStuckWatcher:
         logger
           .error(s"TaskStuckWatcher: project runtime lookup failed: ${Option(e.getMessage).getOrElse(e.toString)}")
           .as(None))
+
+  /** **类③ 环境失效的生产探针**（wtsurv 批 2026-09-14；#159/#176 ②）：
+    * [[runtimeOwning]] → 该项目的 `NodeEngine.sessionCwdAlive`。三态**原样透传**
+    * （`None` = 查无/未知 ⇒ 调用方不得判死）。全程只读；探测链自身失败 ⇒ `None`
+    * ——**fail-safe**：绝不因探针故障终态化一个会话。 */
+  private[processor] def probeEnvLost(sessionId: String): IO[Option[Boolean]] =
+    runtimeOwning(sessionId)
+      .flatMap {
+        case None     => IO.pure(None)
+        case Some(rt) => rt.engine.sessionCwdAlive(sessionId)
+      }
+      .handleErrorWith(e =>
+        logger
+          .warn(
+            s"TaskStuckWatcher: env-lost probe for $sessionId failed: ${Option(e.getMessage).getOrElse(e.toString)}"
+          )
+          .as(None))
+
+  /** **类③ 的明确错误文案**（#159/#176 ②「明确错误」的交付物）：同一字符串进**三面**
+    * （节点 `result` / `taskStuck` 广播 / ERROR 日志），故必须自解释——现象 + 判据 +
+    * 处置 + 时限口径。**禁指认责任人**（责任者未证；只写机制类）。 */
+  private[processor] def envLostErrorText(rec: AgentRecord, note: String): String =
+    s"env-lost (class 3): the runtime working directory of this session no longer exists — every " +
+      s"subsequent command in it fails to spawn, so the session cannot make progress. " +
+      s"This is NOT a silent hang: judged after ${EnvLostGraceMs / 1000}s of silence " +
+      s"(vs the ${nebflow.shared.Defaults.StuckThresholdMs / 1000}s stuck threshold). " +
+      s"Judge J1 (#159/#176 forensics §4.3): directory gone + a git worktree registration may remain " +
+      s"(prunable) ⇒ a recursive delete performed OUTSIDE git (`worktree prune` never removes the work " +
+      s"tree; `worktree remove` also clears the registration); no responsible party is identified. " +
+      s"Node re-activatable via NodeEdit. Readings: $note"
 
   /** L3 恢复腿（Flow 节点）：**挂起 → 有界等待 → 锚探测 → CAS + resume**（R-1=B）。
     *
