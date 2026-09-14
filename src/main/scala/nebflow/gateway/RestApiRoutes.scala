@@ -1551,8 +1551,53 @@ class RestApiRoutes(
             fs.listMessages(conversationId, after, limit).flatMap(r => friendResult(r.map(_.asJson)))
       }
 
-    /** 标记已读。body: {lastReadMessageId} */
-    case req @ POST -> Root / "conversations" / conversationId / "read" =>
+    /** 附件下载（4b 腿 A-3，裁定②：「下载面走**应用内鉴权路由**」）。
+      *
+      * **唯一取字节入口**：前端（`friendsApi.js#downloadFriendAttachment`）只能经本路由
+      * 取字节，拿不到服务端地址/凭证；服务端附件目录**不挂 Caddy**（§D.1、§A.2 N3）
+      * ⇒ 全链路不存在任何静态/公开 URL 面（🔴 红线：禁直出静态 URL 绕过鉴权）。
+      *
+      * 鉴权 = 本网关的既有 `withAuth`（同其余 `/friends*`、`/conversations*` 面）；
+      * 关系闸（`friendship_accepted`，含拉黑）在服务端 E3 上，本层**不复制**第二套
+      * 权限判定（禁双实现）。
+      *
+      * 状态码**逐字透传**上游，不折叠：`410` = 附件已过期（**终态**，§B.7 ③ 要求客户端
+      * 能把「已过期」与「下载失败」分开）；`404` = 不存在/对调用方不可见；`403` = 非好友。
+      * 其余（含 5xx）⇒ 502 + 逐字原因（可重试态）。
+      */
+    case req @ GET -> Root / "friends" / "attachments" / attachmentId =>
+      withAuth(req) {
+        sharedResources.friendService match
+          case None => NotFound(Json.obj("error" -> "NebLink not enabled".asJson))
+          case Some(fs) =>
+            fs.downloadAttachment(attachmentId).flatMap {
+              case Left(err) => friendErr(err)
+              case Right(fetch) =>
+                fetch.status match
+                  case 200 =>
+                    // 显式字节流实体（同 /neblink/avatar 先例：裸 Ok(Array[Byte]) 会命中
+                    // circe 的 byte 数组编码器，把字节变成 JSON 数字数组 ⇒ 文件损坏）。
+                    val attHeaders = Headers(
+                      List(
+                        Some(Header.Raw(CIString("Content-Type"), "application/octet-stream")),
+                        fetch.contentDisposition.map(d => Header.Raw(CIString("Content-Disposition"), d)),
+                        fetch.sha256Header.map(h => Header.Raw(CIString("X-Attachment-Sha256"), h))
+                      ).flatten
+                    )
+                    IO.pure(
+                      Response[IO](Status.Ok)
+                        .withEntity(fs2.Stream.emits(fetch.bytes).covary[IO])
+                        .withHeaders(attHeaders)
+                    )
+                  case 410 => Gone(Json.obj("error" -> "attachment_expired".asJson))
+                  case 404 => NotFound(Json.obj("error" -> "attachment_not_found".asJson))
+                  case 403 => Forbidden(Json.obj("error" -> "not_friends".asJson))
+                  case other =>
+                    BadGateway(Json.obj("error" -> s"attachment download failed upstream: HTTP $other".asJson))
+            }
+      }
+
+    /** 标记已读。body: {lastReadMessageId} */    case req @ POST -> Root / "conversations" / conversationId / "read" =>
       withAuth(req) {
         sharedResources.friendService match
           case None => NotFound(Json.obj("error" -> "NebLink not enabled".asJson))

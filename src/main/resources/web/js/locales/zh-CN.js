@@ -238,7 +238,16 @@ export default {
   // ⑩ 消息流状态行（消息区永不为空）：冷路径回包为空 ⇒ 空态（不是永远转圈）。
   'messages.noMessages': '暂无消息',
   'messages.loadOlderFailed': '更早消息加载失败，请重试',
-  'messages.attachUnsupported': '好友消息暂不支持附件',
+  'messages.attachUnsupported': '好友窗暂无附件发送入口（附件可正常接收与下载）',
+  // 4b 腿 A-2：附件卡片文案（§B.7 三态可判读；「已过期」与「下载失败」**必须**分得开）
+  'messages.attachDownload': '下载',
+  'messages.attachDownloading': '下载中…',
+  'messages.attachDownloaded': '已下载',
+  'messages.attachDownloadFailed': '下载失败，点击重试',
+  'messages.attachExpired': '附件已过期',
+  'messages.attachUploading': '上传中，暂不可下载',
+  'messages.attachUnreadable': '附件状态不可判读，暂不可下载',
+  'messages.attachUnnamed': '未命名附件',
   'messages.agentBadge': 'Agent 代发',
   'messages.notFriendBlocked': '对方已不是你的好友，无法发送消息',
   'messages.loginRequired': '登录 nebflow 账号后使用消息与联系人',

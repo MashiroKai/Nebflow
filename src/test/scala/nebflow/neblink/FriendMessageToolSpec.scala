@@ -370,7 +370,11 @@ class FriendMessageToolSpec extends CatsEffectSuite:
     val d = FriendMessageTool.description
     assert(d.contains("remark"), "description 必须点名备注（模型据此知道备注可寻址）")
     assert(d.contains("username") && d.contains("email"), "description 必须点名 username + email")
-    assert(d.contains("Plain text only."), "「只支持文本」事实句保留（末句不动）")
+    // 4b 腿 A 更新：旧事实句「Plain text only.」**已不成立**（好友腿现支持附件）——
+    // 防回归：不得再写回该陈旧断言，也不得留下任何「好友不支持附件」的文案。
+    assert(!d.contains("Plain text only."), "陈旧事实句必须消失（好友腿已支持附件）")
+    assert(!d.contains("NOT supported"), "不得再声明好友附件不支持")
+    assert(d.contains("Files") || d.contains("files"), "description 必须说明附件可用")
     val toDesc = FriendMessageTool.inputSchema("properties").flatMap(_.asObject)
       .flatMap(_("to")).flatMap(_.hcursor.get[String]("description").toOption).getOrElse("")
     assert(toDesc.contains("remark") && toDesc.contains("username") && toDesc.contains("email"),

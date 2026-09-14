@@ -588,7 +588,10 @@ function renderChatModal(conv) {
 
   // ③A8 / ③-B：好友面零附件入口（不挂入口、也不做灰置假入口），但**静默吞文件
   // 不可接受**（项目纪律：失败必须可见）——好友窗内落文件 ⇒ 一次显式提示，文件
-  // 不被任何通道接收、无副作用。附件通道（跨账号字节通路）本轮零动作。
+  // 不被任何通道接收、无副作用。
+  // 4b 腿 A 更新：附件**接收/呈现/下载**面本批已通（附件卡片 + 鉴权下载路由），
+  // 但**本窗仍无发送入口**（发送面走 SendMessage 工具 / agent 腿）⇒ 该提示保留，
+  // 文案已改为不误导的说法（原文「好友消息暂不支持附件」已不成立）。
   overlay.addEventListener('dragover', (e) => {
     if (hasFiles(e)) e.preventDefault();
   });
@@ -658,6 +661,156 @@ function applyBlockState(conv) {
   modalEls.sendBtn.disabled = disabled;
 }
 
+// ── 附件卡片（4b 腿 A-2；线面契约 §B.2 M6 / §B.4 / §B.7）─────────────────────
+//
+// 🔴 本节的**唯一职责**：把服务端下发的附件元数据渲染成**可判读**的卡片。
+//    判据优先级逐字照 §B.7 ③：**先看元数据 `state`，再看下载时的 HTTP 码**。
+//    三条禁令（同节）：
+//      ① 禁静默丢弃 —— 任何 state（含未知值）都要出卡片，绝不从消息里消失；
+//      ② 禁把「已过期」与「下载失败」折叠成一个态：前者终态不可重试，后者可重试；
+//      ③ 禁渲染成「可点但点了报错」的按钮 —— 不可下载的件不挂下载按钮。
+
+/** 附件呈现态（客户端**唯一**映射点）。`ready` = 可下载；其余一律不可下载。 */
+function attStateOf(att) {
+  if (!att || typeof att !== 'object') return 'unreadable';
+  const s = typeof att.state === 'string' ? att.state : '';
+  if (s === 'ready') return att.id ? 'ready' : 'unreadable'; // 有 ready 无 id = 不可下载（降级而非假按钮）
+  if (s === 'expired') return 'expired';
+  if (s === 'uploading') return 'uploading';
+  return 'unreadable'; // 越界值 / 键缺失：可判读的降级态（不是「无附件」）
+}
+
+const ATT_NOTE_KEY = {
+  expired: 'messages.attachExpired',
+  uploading: 'messages.attachUploading',
+  unreadable: 'messages.attachUnreadable',
+};
+
+/** 人类可读体积（十进制，与作者给定数的「100 MB = 100,000,000 B」同量纲）。 */
+function fmtBytes(n) {
+  const v = Number(n);
+  if (!isFinite(v) || v < 0) return '';
+  if (v < 1000) return `${v} B`;
+  const units = ['KB', 'MB', 'GB'];
+  let x = v / 1000, i = 0;
+  while (x >= 1000 && i < units.length - 1) { x /= 1000; i++; }
+  return `${x < 10 ? x.toFixed(1) : Math.round(x)} ${units[i]}`;
+}
+
+/** §B.4 占位正文的**逐字**复算（用于识别服务端生成的占位文本，见 `fillBubble`）。 */
+function attPlaceholderName(name) {
+  const cp = Array.from(String(name == null ? '' : name));
+  return cp.length <= 24 ? cp.join('') : cp.slice(0, 23).join('') + '…';
+}
+function attPlaceholderBody(atts) {
+  const names = atts.map(a => attPlaceholderName(a && a.name));
+  if (names.length === 0) return '';
+  if (names.length === 1) return `[附件] ${names[0]}`;
+  const joined = names.length <= 3 ? names.join(', ') : names.slice(0, 3).join(', ') + ' …';
+  const s = `[附件] ${names.length} 个文件：${joined}`;
+  const cp = Array.from(s);
+  return cp.length <= 200 ? s : cp.slice(0, 199).join('') + '…';
+}
+
+/** 附件签名的**唯一**形态（keyedDiff 的两路字段集收敛判据，见 §5.3-J）。 */
+function attSig(m) {
+  const a = m && Array.isArray(m.attachments) ? m.attachments : [];
+  return a.map(x => `${(x && x.id) || ''}:${(x && x.state) || ''}`).join(',');
+}
+
+function saveBlob(blob, filename) {
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = filename || 'attachment';
+  a.style.display = 'none';
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  setTimeout(() => URL.revokeObjectURL(url), 10000);
+}
+
+/** 单件卡片。`kind` 由元数据判定；下载失败**就地**改文案（可重试），
+  * 410（服务端权威）**就地**升级为已过期（终态）。 */
+function attachmentCard(att) {
+  const kind = attStateOf(att);
+  const card = el('div', `fm-att fm-att-${kind}`);
+  card.dataset.attState = kind;
+  card.dataset.attId = (att && att.id) || '';
+
+  const name = el('span', 'fm-att-name', (att && att.name) || t('messages.attachUnnamed'));
+  card.appendChild(name);
+  const sizeText = fmtBytes(att && att.size);
+  if (sizeText) card.appendChild(el('span', 'fm-att-size', sizeText));
+
+  /** @type {HTMLElement} */
+  const note = el('span', 'fm-att-note',
+    kind === 'ready' ? t('messages.attachDownload') : t(ATT_NOTE_KEY[kind] || 'messages.attachUnreadable'));
+  if (kind === 'ready') {
+    const btn = el('button', 'fm-att-dl', t('messages.attachDownload'));
+    btn.type = 'button';
+    btn.setAttribute('aria-label', `${t('messages.attachDownload')}: ${(att && att.name) || ''}`);
+    btn.addEventListener('click', () => downloadAttachment(att, card, btn, note));
+    card.appendChild(btn);
+    card.appendChild(note);
+    note.classList.add('visually-hidden-note'); // 常态下只显示按钮；状态文案在失败/成功后就地显示
+  } else {
+    card.appendChild(note);
+    card.setAttribute('aria-disabled', 'true');
+  }
+  return card;
+}
+
+/** 取字节：**只走应用内鉴权路由**（`/api/friends/attachments/{id}`，裁定②）。
+  * 🔴 前端不拼任何静态/公开 URL（服务端附件目录不挂 Caddy）。 */
+async function downloadAttachment(att, card, btn, note) {
+  if (card.dataset.busy === '1') return;
+  card.dataset.busy = '1';
+  btn.disabled = true;
+  note.classList.remove('visually-hidden-note');
+  note.textContent = t('messages.attachDownloading');
+  try {
+    const { blob, filename } = await api.downloadAttachment(att.id);
+    saveBlob(blob, filename || (att && att.name));
+    note.textContent = t('messages.attachDownloaded');
+  } catch (err) {
+    if (err && err.status === 410) {
+      // 服务端权威：元数据说 ready 但字节已按瞬态口径删除（§B.7 ③ 表）——
+      // **就地升级为终态**，并撤掉重试可能（不是「下载失败」）。
+      card.dataset.attState = 'expired';
+      card.classList.remove('fm-att-ready');
+      card.classList.add('fm-att-expired');
+      btn.remove();
+      note.textContent = t('messages.attachExpired');
+      card.setAttribute('aria-disabled', 'true');
+      return;
+    }
+    // 传输/本地失败：**可重试**（§B.7 ③ 表第二行），绝不标成「已过期」。
+    card.dataset.attState = 'failed';
+    note.textContent = t('messages.attachDownloadFailed');
+    window.dispatchEvent(new CustomEvent('fm-attachment-failed'));
+  } finally {
+    card.dataset.busy = '0';
+    btn.disabled = false;
+  }
+}
+
+/** 气泡内容填充（**单点**：新建与就地升级共用，禁两套渲染）。 */
+function fillBubble(bubble, m) {
+  bubble.innerHTML = '';
+  const atts = m && Array.isArray(m.attachments) ? m.attachments : [];
+  const body = (m && m.body) || '';
+  // §B.4：附件消息的 `body` 是服务端生成的占位正文 —— 只有当它与「本消息附件的
+  // 占位文本」**逐字相等**时才隐藏（否则照旧显示用户原文，不误吞任何真实文本）。
+  const hidePlaceholder = atts.length > 0 && body !== '' && body === attPlaceholderBody(atts);
+  if (body && !hidePlaceholder) bubble.appendChild(el('div', 'fm-msg-text', body));
+  if (atts.length > 0) {
+    const list = el('div', 'fm-att-list');
+    atts.forEach(att => list.appendChild(attachmentCard(att)));
+    bubble.appendChild(list);
+  }
+}
+
 // ── Bubbles ──────────────────────────────────────────────
 function bubbleEl(m, conv) {
   const out = m.senderId !== conv.friend?.userId; // not from the friend = ours
@@ -665,9 +818,12 @@ function bubbleEl(m, conv) {
   wrap.dataset.messageId = m.id;
   wrap.dataset.body = m.body || '';
   wrap.dataset.createdAt = String(toEpochMs(m.createdAt) || '');
+  // QA 断言面（附件）：条目数 + 逐条呈现态 + 签名（keyedDiff 收敛判据同源）。
+  wrap.dataset.attachments = attSig(m);
+  wrap.dataset.attCount = String(Array.isArray(m.attachments) ? m.attachments.length : 0);
 
   const bubble = el('div', 'fm-msg-bubble');
-  bubble.textContent = m.body || '';
+  fillBubble(bubble, m);
   wrap.appendChild(bubble);
 
   // #290 addendum §3.3: bubble right-click = primary desktop entry for
@@ -743,6 +899,20 @@ function keyedDiff(flow, msgs, conv) {
     const reused = existing.get(k);
     if (reused) existing.delete(k);
     const node = reused || bubbleEl(m, conv);
+    if (reused) {
+      // 🔴 两路字段集收敛（信息包 §5.3-J：WS 帧 raw 透传、REST 重编码）——
+      // 同一 messageId 先到的那一路可能**不带**附件元数据（或带的是旧态：
+      // 例如先到 ready、后到 expired）。幂等上屏「命中即 skip」会把先到者钉死
+      // ⇒ 刷新/重挂载后附件消失（或过期态不更新）。此处按**附件签名**就地重填
+      // 气泡内容（不换节点 ⇒ 乐观项锚定与滚动锚点都不受影响）。
+      if (node.dataset.attachments !== attSig(m)) {
+        node.dataset.attachments = attSig(m);
+        node.dataset.attCount = String(Array.isArray(m.attachments) ? m.attachments.length : 0);
+        const b = node.querySelector('.fm-msg-bubble');
+        if (b) fillBubble(b, m);
+        if (m.body !== undefined) node.dataset.body = m.body || '';
+      }
+    }
     const after = cursor ? cursor.nextSibling : flow.firstChild;
     if (node !== after) flow.insertBefore(node, after);
     cursor = node;
@@ -1167,7 +1337,16 @@ const EV_MESSAGE_NEW_SELF = 'message_new_self';
  *  （不得各写一套读法）。
  *  @param {any} p 网关 friend_event 帧（扁平） */
 function frameMessage(p) {
-  return { id: p.messageId, senderId: p.senderId || p.sender?.userId, kind: p.kind, body: p.body, createdAt: p.createdAt };
+  return {
+    id: p.messageId,
+    senderId: p.senderId || p.sender?.userId,
+    kind: p.kind,
+    body: p.body,
+    createdAt: p.createdAt,
+    // 4b 腿 A：推送帧与 REST 面**同形**（服务端 §B.2 推送 builder 单点）——
+    // 键缺席 = 无附件（老服务端/纯文本消息，逐字节现状）。
+    attachments: p.attachments,
+  };
 }
 
 /** U-a 幂等前置（本批）：**帧级 messageId 去重**（有界 FIFO）。

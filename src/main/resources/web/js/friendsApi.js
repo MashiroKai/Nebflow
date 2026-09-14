@@ -348,6 +348,56 @@ export async function sendFriendMessage(friendUserId, body) {
   return { messageId: msg.id, conversationId: conv.conversationId, createdAt: msg.createdAt };
 }
 
+/** GET /api/friends/attachments/{id} → {blob, filename}（4b 腿 A-3）。
+ *
+ *  🔴 **唯一取字节入口 = 应用内鉴权路由**（作者裁定②）：本函数只打网关的
+ *  `/api/friends/attachments/{id}`（`withAuth`），带 Bearer 应用令牌 —— 前端
+ *  **拿不到也拼不出**服务端地址或静态/公开 URL（服务端附件目录不挂 Caddy，
+ *  跨仓契约件 §D.1/§A.2 N3）。禁在此另写第二条取字节路径。
+ *
+ *  错误面**保状态码**（`err.status`）× 语义：`410` = 附件已过期（**终态**，
+ *  UI 据此升级为「附件已过期」，不提供重试）；`404` = 不存在/不可见；
+ *  `403` = 非好友（关系被拉黑等）；其余（含 5xx/网络）⇒ 可重试的下载失败。 */
+export async function downloadAttachment(attachmentId) {
+  const path = `/api/friends/attachments/${encodeURIComponent(attachmentId)}`;
+  if (MOCK) {
+    // Mock 模式没有字节面：**显式失败**（不伪造文件），UI 落「下载失败，点击重试」。
+    const e = /** @type {Error & {status?: number}} */ (new Error(`mock mode: no attachment bytes for ${attachmentId}`));
+    e.status = 0;
+    throw e;
+  }
+  let resp;
+  try {
+    resp = await fetch(path, { headers: { 'Authorization': `Bearer ${getAuthToken()}` } });
+  } catch (e) {
+    window.dispatchEvent(new CustomEvent('fm-network-error'));
+    throw e;
+  }
+  if (!resp.ok) {
+    const err = /** @type {Error & {status?: number, data?: any}} */ (new Error(`${path} -> ${resp.status}`));
+    err.status = resp.status;
+    try { err.data = await resp.json(); } catch { /* no body */ }
+    if (resp.status === 401 || resp.status === 403) {
+      window.dispatchEvent(new CustomEvent('fm-auth-required'));
+    }
+    throw err;
+  }
+  const blob = await resp.blob();
+  return { blob, filename: filenameFromDisposition(resp.headers.get('Content-Disposition')) };
+}
+
+/** `Content-Disposition: attachment; filename*=UTF-8''<pct-encoded>`（§B.1 E3 恒定头）
+ *  → 文件名；解析不出 ⇒ null（调用方回落附件元数据的 `name`）。 */
+function filenameFromDisposition(cd) {
+  if (!cd) return null;
+  const star = /filename\*=UTF-8''([^;]+)/i.exec(cd);
+  if (star) {
+    try { return decodeURIComponent(star[1].trim()); } catch { return null; }
+  }
+  const plain = /filename="?([^";]+)"?/i.exec(cd);
+  return plain ? plain[1].trim() : null;
+}
+
 /** DELETE /api/friends/{friendUserId} → 200 (#290 addendum §1.1) */
 export async function removeFriend(friendUserId) {
   if (!MOCK) return req('DELETE', `/api/friends/${encodeURIComponent(friendUserId)}`);

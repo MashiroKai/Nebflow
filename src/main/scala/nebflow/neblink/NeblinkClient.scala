@@ -113,6 +113,23 @@ import FriendCodecs.{given, *}
  *   login/enrollment on this device) trigger ONE silent re-login + replay.
  *   None disables the heal (tests / pure-transport construction sites).
  */
+/** E3 下载响应（4b 腿 A-3）：**状态码 + 原始字节 + 两个透传头**。
+  *
+  * 设计要点：非 2xx **不折叠成 `Left`** —— 410 `attachment_expired` / 404
+  * `attachment_not_found` / 403 `not_friends` 是**三个语义不同的可判读态**
+  * （§B.7 ③ 要求「已过期」与「下载失败」在客户端**可区分**），折叠会把它们
+  * 压成一个「失败」。
+  *
+  * 已知代价（如实登记）：字节**整件进内存**（上限 = 作者给定数 100,000,000 B）。
+  * 网关代理腿因此多一份 100 MB 级缓冲；后续若要消除，需走流式管道（未做，
+  * 见报告「未证/开放项」）。 */
+case class AttachmentFetch(
+  status: Int,
+  bytes: Array[Byte],
+  contentDisposition: Option[String] = None,
+  sha256Header: Option[String] = None
+)
+
 class NeblinkClient(
   config: NeblinkServerConfig,
   serverPort: Int,
@@ -467,14 +484,136 @@ class NeblinkClient(
     * 传 Some("agent")——否则 agent 发的消息被标成 user，origin 语义
     * （前端徽章/审计/spec §7.2 限速区分）整体失效。
     */
-  def sendFriendMessage(friendUserId: String, body: String, origin: Option[String] = None): IO[Either[String, Json]] =
+  def sendFriendMessage(
+    friendUserId: String,
+    body: String,
+    origin: Option[String] = None,
+    attachmentIds: List[String] = Nil,
+    clientMsgId: Option[String] = None
+  ): IO[Either[String, Json]] =
     withSession { token =>
-      val payload = origin match
-        case Some(o) => Json.obj("body" -> body.asJson, "origin" -> o.asJson).noSpaces
-        case None    => Json.obj("body" -> body.asJson).noSpaces
-      sendRequest("POST", s"${config.url}/api/friends/$friendUserId/messages", payload, Some(token))
+      val fields = List(
+        Some("body" -> body.asJson),
+        origin.map(o => "origin" -> o.asJson),
+        // 4b 腿 A-4（§B.2 M4）：`attachments` = **attachmentId 列表**，顺序即展示顺序，
+        // 键缺省 = 现状（旧服务端也据此走原校验 ⇒ 旧端容忍，§B.3）。空列表 ⇒ **省键**
+        // （与 `None` 同形：不带附件的消息逐字节等于今天）。
+        Option.when(attachmentIds.nonEmpty)("attachments" -> attachmentIds.asJson),
+        clientMsgId.map(id => "clientMsgId" -> id.asJson)
+      ).flatten
+      sendRequest("POST", s"${config.url}/api/friends/$friendUserId/messages", Json.fromFields(fields).noSpaces, Some(token))
         .map(_.flatMap(resp => decode[Json](resp).left.map(_.getMessage)))
     }
+
+  // ===== 4b 好友附件（腿 A）：能力探测 / 声明 / 分块上传 / 鉴权取字节 =====
+  //
+  // 全部经同一 `withSession` 缝（401/403 会话自愈语义与其余好友面逐字相同）。
+  // 线面逐字对齐跨仓契约件 §B.1（E1–E4）；本仓**不新增**任何端点号/协议号
+  // （红线：4b 不占 `AttachContract` proto 号）。
+
+  /** A-5：**服务端附件能力存在性探测** —— 裁定④（不加自报字段）下唯一判据，
+    * 三态语义/理由见 [[AttachmentCapability]]。
+    *
+    * 探测体故意非法（`name` 空 + `size = 0`）⇒ 按 §B.1 E1 的校验顺序，新服务端
+    * **零副作用**地答 422；老服务端（无该路由）答 404。两码互斥 ⇒ 判据单调。 */
+  def probeAttachmentCapability(friendUserId: String): IO[AttachmentCapability] =
+    val path = AttachmentCapability.probePath(friendUserId)
+    withSession(token => sendRequest("POST", s"${config.url}$path", AttachmentCapability.ProbeBody, Some(token)))
+      .map(AttachmentCapability.judge)
+
+  /** E1 创建上传会话（§B.1）：`{name,size,sha256}` → 201 `{attachmentId,receivedBytes,state}`。
+    * 错误码逐字按 §E.3（403 `not_friends` / 422 `ATTACH_TOO_LARGE`/`INVALID_ARGUMENT` / 429）。 */
+  def createAttachment(friendUserId: String, name: String, size: Long, sha256: String): IO[Either[String, Json]] =
+    withSession { token =>
+      val payload = Json.obj("name" -> name.asJson, "size" -> size.asJson, "sha256" -> sha256.asJson).noSpaces
+      val url     = s"${config.url}/api/friends/${enc(friendUserId)}/attachments"
+      sendRequest("POST", url, payload, Some(token)).map(_.flatMap(json(_)))
+    }
+
+  /** E2 追加一块（§B.1）：raw bytes + `X-Chunk-Sha256` 头；`offset` 由
+    * [[nebflow.dropbox.AttachContract.plan]] 推导（**唯一**来源，禁自由填）。
+    * `offset < receivedBytes` 的重传语义由服务端负责（截断重写）⇒ 本方法天然可重试。 */
+  def uploadAttachmentChunk(
+    attachmentId: String,
+    offset: Long,
+    bytes: Array[Byte],
+    chunkSha256: String
+  ): IO[Either[String, Json]] =
+    withSession { token =>
+      val url = s"${config.url}/api/attachments/${enc(attachmentId)}/chunks?offset=$offset"
+      sendRequestBytes("POST", url, bytes, Some(token), Map("X-Chunk-Sha256" -> chunkSha256))
+        .map(_.flatMap(json(_)))
+    }
+
+  /** E3 下载（腿 A-3）：**应用内鉴权**取字节。
+    *
+    * 只被网关的鉴权代理路由（`GET /api/friends/attachments/{id}`）调用 ⇒ 前端拿不到
+    * 服务端地址/凭证，也不存在任何静态/公开 URL 面（裁定②；服务端附件目录不挂 Caddy）。
+    * 非 2xx **不抛**：调用方按状态码分派可判读态（410 已过期 / 404 不存在 / 403 非好友）。 */
+  def downloadAttachment(attachmentId: String): IO[Either[String, AttachmentFetch]] =
+    withSession(token => sendRequestBinary("GET", s"${config.url}/api/attachments/${enc(attachmentId)}", Some(token)))
+
+  private def enc(s: String): String = java.net.URLEncoder.encode(s, "UTF-8")
+
+  private def json(body: String): Either[String, Json] = decode[Json](body).left.map(_.getMessage)
+
+  /** 二进制**请求**通道（E2 分块上传专用；本批唯一新增传输面）。
+    * 返回约定与 [[sendRequest]] 逐字同形：非 2xx ⇒ `Left("HTTP <code>: <body>")`。 */
+  protected def sendRequestBytes(
+    method: String,
+    url: String,
+    body: Array[Byte],
+    token: Option[String],
+    headers: Map[String, String]
+  ): IO[Either[String, String]] =
+    IO.blocking {
+      try
+        val builder = HttpRequest
+          .newBuilder()
+          .uri(URI.create(url))
+          .timeout(java.time.Duration.ofMillis(NeblinkClient.ChunkUploadTimeout.toMillis))
+          .header("Content-Type", "application/octet-stream")
+        token.foreach(t => builder.header("Authorization", s"Bearer $t"))
+        headers.foreach { case (k, v) => builder.header(k, v) }
+        val response = httpClient.send(builder.method(method, HttpRequest.BodyPublishers.ofByteArray(body)).build(), HttpResponse.BodyHandlers.ofString())
+        if response.statusCode() >= 200 && response.statusCode() < 300 then Right(response.body())
+        else Left(s"HTTP ${response.statusCode()}: ${response.body()}")
+      catch
+        case e: Exception =>
+          NeblinkClient.noteOutboundFailure(e, method, url, logger)
+          Left(if e.getMessage == null then e.toString else e.getMessage)
+    }.handleErrorWith(e => IO.pure(Left(e.getMessage)))
+
+  /** 二进制**响应**通道（E3 下载专用）。与 [[sendRequestBytes]] 的差别只有一处：
+    * **非 2xx 也返回 `Right`**（携状态码 + 原始字节）—— 410/404/403 是**可判读态**，
+    * 不是「失败」；只有传输层异常才是 `Left`。 */
+  protected def sendRequestBinary(
+    method: String,
+    url: String,
+    token: Option[String]
+  ): IO[Either[String, AttachmentFetch]] =
+    IO.blocking {
+      try
+        val builder = HttpRequest
+          .newBuilder()
+          .uri(URI.create(url))
+          .timeout(java.time.Duration.ofMillis(NeblinkClient.AttachmentDownloadTimeout.toMillis))
+        token.foreach(t => builder.header("Authorization", s"Bearer $t"))
+        val response = httpClient.send(builder.method(method, HttpRequest.BodyPublishers.noBody()).build(), HttpResponse.BodyHandlers.ofByteArray())
+        val hs = response.headers()
+        Right(
+          AttachmentFetch(
+            status = response.statusCode(),
+            bytes = response.body(),
+            contentDisposition = Option(hs.firstValue("content-disposition").orElse(null)),
+            sha256Header = Option(hs.firstValue("x-attachment-sha256").orElse(null))
+          )
+        )
+      catch
+        case e: Exception =>
+          NeblinkClient.noteOutboundFailure(e, method, url, logger)
+          Left(if e.getMessage == null then e.toString else e.getMessage)
+    }.handleErrorWith(e => IO.pure(Left(e.getMessage)))
 
   /** 更新未读 cursor（仅本地角标口径，无回执）。 */
   def markConversationRead(conversationId: String, lastReadMessageId: Long): IO[Either[String, String]] =
@@ -880,6 +1019,16 @@ object NeblinkClient:
    */
   val DefaultRelayTimeout: scala.concurrent.duration.FiniteDuration =
     scala.concurrent.duration.FiniteDuration(10, scala.concurrent.duration.SECONDS)
+
+  /** E2 单块上传超时（工程值，非冻结口径）：一块 ≤ `AttachContract.ChunkSize`
+    * （4 MiB）；60 s 对局域网/公网都留足余量，且**不**改动 [[DefaultRelayTimeout]]。 */
+  val ChunkUploadTimeout: scala.concurrent.duration.FiniteDuration =
+    scala.concurrent.duration.FiniteDuration(60, scala.concurrent.duration.SECONDS)
+
+  /** E3 整件下载超时（工程值）：单件上限 = 作者给定数 100,000,000 B；慢链（1 Mbps
+    * 量级）也要能取完 ⇒ 300 s。 */
+  val AttachmentDownloadTimeout: scala.concurrent.duration.FiniteDuration =
+    scala.concurrent.duration.FiniteDuration(300, scala.concurrent.duration.SECONDS)
 
   // ────────────────────────────────────────────────────────────────────────
   // Outbound failure buckets — the D4(a) instrument (clientperf 批, 2026-09-13)
