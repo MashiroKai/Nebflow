@@ -4,8 +4,9 @@
 // 插件目录。重写自 2026-09-04 的「开关状态机」版本（内容审批开关退场）；本批再
 // 砍掉封禁 UI 面，新链：
 //   A 卡片形态（任意引擎）：无内容审批开关、无「更多」/封禁入口（卡片级零残留）；
-//     药丸 = 已启用；**唯一控件** = 右上「任务分发器可见性」开关（在头行内、
-//     与药丸同排、在药丸右侧、行盒右对齐）
+//     药丸默认态**无可见文字**（2026-09-15 文案微批：删「已启用」小字）+ on 类；
+//     **唯一控件** = 卡片右上派发开关（在头行内、与药丸同排、在药丸右侧、行盒右对齐；
+//     🔴 开关旁**无**可见 label 小字——2026-09-15 令，aria-label 保留）
 //   B 目录可见性 + 内容变更**非拦截**（需引擎轨 C6 字段）：
 //     无记录包 ⇒ 进分发器目录（在位即信任的可见结果）；
 //     改 fixture 文件 ⇒ digest 变 ⇒ **仍进目录**、仍有派发许可，只在面板上标
@@ -155,6 +156,7 @@ test.describe('plugins panel redesign — card form + non-blocking content chang
         blockCount: card ? card.querySelectorAll('[data-plugin-block]').length : null,
         dispatchCount: card ? card.querySelectorAll('[data-plugin-dispatch]').length : null,
         dispatchLabel: card?.querySelector('.plugins-dispatch-label')?.textContent.trim() ?? null,
+        dispatchAria: dw?.getAttribute('aria-label') ?? null,
         geom,
         pill: pill?.textContent.trim() ?? null,
         pillClass: pill?.className ?? null,
@@ -166,7 +168,7 @@ test.describe('plugins panel redesign — card form + non-blocking content chang
     }, name);
   }
 
-  test('A card form: content switch + block UI retired; pill 已启用; 唯一控件 = 右上「任务分发器可见性」开关', async ({ page }) => {
+  test('A card form: content switch + block UI retired; 默认态药丸无文字; 唯一控件 = 卡片右上派发开关', async ({ page }) => {
     await unblockQuietly(ALPHA);
     await loadPluginsPage(page);
     const st = await cardState(page, ALPHA);
@@ -176,12 +178,15 @@ test.describe('plugins panel redesign — card form + non-blocking content chang
     expect(st.menuCount, '次级动作行退场（卡片级零残留）').toBe(0);
     expect(st.blockCount, '封禁/解封入口退场（卡片级零残留）').toBe(0);
     expect(st.dispatchCount, '卡片唯一控件 = 派发开关').toBe(1);
-    expect(st.dispatchLabel, '开关文案 = 「任务分发器可见性」').toBe('任务分发器可见性');
+    // 2026-09-15 作者令：开关旁的**可见** label 小字删除；aria-label（可访问性面）保留。
+    expect(st.dispatchLabel, '开关旁无可见 label 小字（「任务分发器可见性」已删）').toBe(null);
+    expect(st.dispatchAria, '开关 aria-label 保留 = 「任务分发器可见性」').toBe('任务分发器可见性');
     expect(st.geom?.inHead, '开关在卡片头行内（不是底部独立一行）').toBe(true);
     expect(st.geom?.sameRowAsPill, '开关与状态药丸同排').toBe(true);
     expect(st.geom?.rightOfPill, '开关在药丸右侧').toBe(true);
     expect(st.geom?.rightAlignedInHead, '开关行盒右对齐（「右上」）').toBe(true);
-    expect(st.pill, '药丸 = 已启用（绑 blocked/contentChanged）').toBe('已启用');
+    // 2026-09-15 作者令：默认态药丸**不出文字**；状态样式（on 类）保留。
+    expect(st.pill, '药丸默认态无可见文字（「已启用」小字已删）').toBe('');
     expect(st.pillClass, 'pill 带 on class').toContain('on');
     expect(st.classes, '卡片无 blocked/changed 痕').not.toContain('blocked');
     expect(st.dispatchOn, '派发开关 on（兼容默认 authorEnabled=true）').toBe(true);
@@ -220,10 +225,11 @@ test.describe('plugins panel redesign — card form + non-blocking content chang
     await rest('POST', `/api/plugins/${BETA}/revoke`);
     await page.reload();
     await page.waitForFunction((n) =>
-      document.querySelector(`.plugins-card[data-plugin="${n}"] .plugins-state-pill`)?.textContent.trim() === '已封禁',
+      document.querySelector(`.plugins-card[data-plugin="${n}"] .plugins-state-pill`)?.classList.contains('blocked'),
       BETA, { timeout: 20000 });
     const st = await cardState(page, BETA);
     expect(st.pillClass, 'pill 带 blocked class').toContain('blocked');
+    expect(st.pill, 'blocked pill 仍出文字 = 已封禁').toBe('已封禁');
     expect(st.blockCount, '封禁态下也不得长回封禁入口').toBe(0);
     expect(st.blockedHint, '一行可行动提示（指向 API / CLI）').toBeTruthy();
     expect(st.dispatchDisabled, '封禁 ⇒ 派发开关锁死').toBe(true);
@@ -233,10 +239,10 @@ test.describe('plugins panel redesign — card form + non-blocking content chang
     await rest('POST', `/api/plugins/${BETA}/unblock`);
     await page.reload();
     await page.waitForFunction((n) =>
-      document.querySelector(`.plugins-card[data-plugin="${n}"] .plugins-state-pill`)?.textContent.trim() !== '已封禁',
+      document.querySelector(`.plugins-card[data-plugin="${n}"] .plugins-state-pill`)?.classList.contains('on'),
       BETA, { timeout: 20000 });
     const after = await cardState(page, BETA);
-    expect(after.pill, '解封后回已启用').toBe('已启用');
+    expect(after.pill, '解封后回默认态（药丸无可见文字）').toBe('');
     expect(after.dispatchDisabled, '派发开关解锁').toBe(false);
     expect(await catalogContains(BETA), '解封 ⇒ 回目录').toBe(true);
   });

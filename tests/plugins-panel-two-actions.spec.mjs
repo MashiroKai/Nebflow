@@ -2,19 +2,25 @@
 // **2026-09-14 插件面板收敛批（作者三裁之批一）再重写**（上一版 = 2026-09-12 令 1
 // 的「两控件并存」版本，再上一版 = 内容审批开关版）。真后端（隔离实例）。
 // 本批砍掉**封禁/解封 UI 面**（在飞止损只走 API / CLI）⇒ 卡片上只剩**一个**控件：
-//   • 任务分发器可见性开关（`data-plugin-dispatch`）：**卡片右上、与状态药丸同排**，
+//   • 派发开关（`data-plugin-dispatch`）：**卡片右上、与状态药丸同排**，
 //     乐观翻转，只写 `plugins.dispatch`（令 1 派发面）
+//
+// **2026-09-15 UI 文案微批（作者令）叠加**：该开关旁的**可见 label 小字**
+// 「任务分发器可见性」整体删除（toggle 本体自明；`plugins.dispatchLabel` 只留作
+// aria-label），默认态药丸也不再出「已启用」文字（药丸本体 + 状态样式保留；
+// blocked / contentChanged 仍出字）。
 //
 // 断言链：
 //   ① 退场件页面级零残留：`[data-plugin-switch]`（2026-09-13 退场）+
 //      `[data-plugin-more]` / `[data-plugin-menu]` / `[data-plugin-block]`（本批退场）
-//   ② 唯一控件存在且位置正确：role=switch、aria-label / 可见标签 = locale 真值
-//      `plugins.dispatchLabel`（不硬编码文案）、落在卡片头行内（`.plugins-card-head`
-//      ≥ `.plugins-card-state`）、与药丸**同排**、在药丸**右侧**、行盒右对齐（「右上」）、
+//   ② 唯一控件存在且位置正确：role=switch、aria-label = locale 真值
+//      `plugins.dispatchLabel`（不硬编码文案）、**无**可见 label 小字、
+//      落在卡片头行内（`.plugins-card-head` ≥ `.plugins-card-state`）、与药丸**同排**、
+//      在药丸**右侧**、行盒右对齐（「右上」）、
 //      行盒非零、**无**旧底部行的 hairline 分隔
-//   ③ 状态药丸绑 blocked / contentChanged（🔴 不绑 trusted）：未封禁 ⇒ 已启用
+//   ③ 状态药丸绑 blocked / contentChanged（🔴 不绑 trusted）：默认态**无可见文字** + on 类
 //   ④ 前端判据面（🔴 **不是**引擎语义的正面断言）：fixture 插件在实例上没有 trust
-//      记录 ⇒ 卡片「已启用」+ 派发开关可用 + 旧审批开关零残留。**引擎侧**「无记录包
+//      记录 ⇒ 卡片落默认态（药丸无可见文字）+ 派发开关可用 + 旧审批开关零残留。**引擎侧**「无记录包
 //      首扫即受信」的正面断言在 Scala 侧 `PluginRegistrySpec`（「在位即信任（正面
 //      断言）」+「无记录包进目录」）——本 spec 不含该语义断言：前端按设计不消费
 //      `trusted`，对「引擎是否在位即信任」无区分度（old default-deny 引擎上同样绿）；
@@ -23,8 +29,8 @@
 //      未合入引擎轨的实例上**不存在**）⇒ 绑回去即转红（返工轮变异实测）。
 //   ⑤ 封禁（**引擎侧** API / CLI 发起——面板已无该入口）⇒ 面板必须把状态收敛出来
 //      （药丸「已封禁」+ 派发开关锁死 + 可行动注记指向 API / CLI + REST 真值
-//      blocked=true）；**整轮 UI 交互零 revoke 调用**（UI 入口退场 = wire 可验）
-//   ⑥ 解封（同样引擎侧）⇒ 回「已启用」+ 开关解锁；**面板 wire 零 unblock**；
+//       blocked=true）；**整轮 UI 交互零 revoke 调用**（UI 入口退场 = wire 可验）
+//   ⑥ 解封（同样引擎侧）⇒ 回默认态（药丸无可见文字）+ 开关解锁；**面板 wire 零 unblock**；
 //      派发开关仍只打 /disable（不掺 /revoke），且落盘 dispatch.authorEnabled=false
 //
 // 端点与 C6 字段由**两轨共用冻结契约 v1** 固定（🔴 本批零改动）：
@@ -197,15 +203,12 @@ test.describe('plugins panel — dispatch permission vs block (real backend)', (
     }, name);
   }
 
-  test('①+②+③ 退场件零残留；唯一控件 = 右上「任务分发器可见性」开关（与药丸同排）；药丸绑新字段', async ({ page }) => {
+  test('①+②+③ 退场件零残留；唯一控件 = 卡片右上派发开关（与药丸同排）；药丸绑新字段', async ({ page }) => {
     await unblockQuietly(PLUGIN);
     await loadPluginsPage(page);
     const st = await cardState(page, PLUGIN);
 
-    const [dispatchLabel, pillOn] = await Promise.all([
-      locale(page, 'plugins.dispatchLabel'),
-      locale(page, 'plugins.stateOn'),
-    ]);
+    const dispatchLabel = await locale(page, 'plugins.dispatchLabel');
 
     // ① 退场件页面级零残留（内容审批开关 + 封禁/「更多」三钩子）
     expect(st.contentSwitchCount, '内容审批开关页面级零残留（C7 主控件退场）').toBe(0);
@@ -217,8 +220,8 @@ test.describe('plugins panel — dispatch permission vs block (real backend)', (
     expect(st.dispatchCount, '页面唯一控件 = 派发开关（计数 1）').toBe(1);
     expect(st.hasDispatch, '派发控件存在（既有钩子 data-plugin-dispatch）').toBe(true);
     expect(st.dispatchRole, '派发控件 role=switch').toBe('switch');
-    expect(st.dispatchLabel, '派发控件 aria-label = locale plugins.dispatchLabel').toBe(dispatchLabel);
-    expect(st.rowLabelText, '派发行自有文字标签 = locale plugins.dispatchLabel').toBe(dispatchLabel);
+    expect(st.dispatchLabel, '派发控件 aria-label = locale plugins.dispatchLabel（可访问性面保留）').toBe(dispatchLabel);
+    expect(st.rowLabelText, '开关旁无可见 label 小字（2026-09-15 令：「任务分发器可见性」已整体删除，toggle 本体自明）').toBe(null);
     expect(st.inHead, '控件在卡片头行内（不再是底部独立行）').toBe(true);
     expect(st.inState, '控件落在状态区（卡片右上）').toBe(true);
     expect(st.sameRowAsPill, '控件与状态药丸**同排**').toBe(true);
@@ -227,17 +230,17 @@ test.describe('plugins panel — dispatch permission vs block (real backend)', (
     expect(st.rowBox.w > 0 && st.rowBox.h > 0, '控件真实渲染（有非零盒）').toBe(true);
     expect(parseFloat(st.rowBorderTop), '旧底部行的 hairline 分隔已随该形态退场（border-top = 0）').toBe(0);
 
-    // ③ 药丸绑 blocked/contentChanged（未封禁 ⇒ 已启用）
-    expect(st.pill, '状态药丸 = 已启用（绑 blocked/contentChanged，不绑 trusted）').toBe(pillOn);
+    // ③ 药丸绑 blocked/contentChanged（未封禁 ⇒ 默认态：药丸**无可见文字** + on 类）
+    expect(st.pill, '状态药丸默认态无可见文字（「已启用」小字已删，2026-09-15 令）').toBe('');
     expect(st.pillClass, 'pill 带 on class').toContain('on');
     expect(st.dispatchDisabled, '未封禁 ⇒ 派发开关可用').toBe(false);
   });
 
-  test('④ 前端判据面：无 trust 记录的包 ⇒ 「已启用」+ 派发可用 + 旧审批开关零残留（引擎语义断言见 Scala PluginRegistrySpec）', async ({ page }) => {
+  test('④ 前端判据面：无 trust 记录的包 ⇒ 默认态（药丸无可见文字）+ 派发可用 + 旧审批开关零残留（引擎语义断言见 Scala PluginRegistrySpec）', async ({ page }) => {
     // 本用例断言的是**前端契约**：无论引擎处于哪个世界（在位即信任 / 回退
-    // default-deny），只要载荷没有 blocked/contentChanged，面板就必须「已启用」+
-    // 派发可用 + 无「先审批内容」前提（前端按设计不消费 `trusted`——引擎侧的
-    // 语义正面断言在 `PluginRegistrySpec`，不在本 spec）。
+    // default-deny），只要载荷没有 blocked/contentChanged，面板就必须落默认态
+    // （药丸无可见文字 + on 类）+ 派发可用 + 无「先审批内容」前提（前端按设计不
+    // 消费 `trusted`——引擎侧的语义正面断言在 `PluginRegistrySpec`，不在本 spec）。
     // 区分度：药丸/派发面若被重新绑回审批面（`pluginStatus` 读 `trusted`/`trust`、
     // `dispatchState` 缺省 false）⇒ 本实例上该包（未合入引擎轨时载荷带旧
     // default-deny 判词 `trust.status='untrusted'`、无 `trusted` 布尔字段）即转红
@@ -251,8 +254,7 @@ test.describe('plugins panel — dispatch permission vs block (real backend)', (
 
     await loadPluginsPage(page);
     const st = await cardState(page, PLUGIN);
-    const pillOn = await locale(page, 'plugins.stateOn');
-    expect(st.pill, `无 trust 记录的包在面板上表现为已启用（${needWorld}；前端不消费该字段）`).toBe(pillOn);
+    expect(st.pill, `无 trust 记录的包在面板上落默认态（药丸无可见文字）（${needWorld}；前端不消费该字段）`).toBe('');
     expect(st.pillClass, 'pill 带 on class').toContain('on');
     expect(st.cardClass, '卡片无 blocked/changed 痕').not.toContain('blocked');
     await waitDispatchLive(page, PLUGIN);
@@ -280,10 +282,12 @@ test.describe('plugins panel — dispatch permission vs block (real backend)', (
     await rest('POST', `/api/plugins/${PLUGIN}/revoke`);
     await page.reload();
     await page.waitForFunction((n) =>
-      document.querySelector(`.plugins-card[data-plugin="${n}"] .plugins-state-pill`)?.textContent.trim() === '已封禁',
+      document.querySelector(`.plugins-card[data-plugin="${n}"] .plugins-state-pill`)?.classList.contains('blocked'),
       PLUGIN, { timeout: 20000 });
     const st = await cardState(page, PLUGIN);
     expect(st.pillClass, 'pill 带 blocked class').toContain('blocked');
+    // 例外态仍出文字（可行动信号；删的只是默认态冗余小字）。
+    expect(st.pill, 'blocked pill 仍出文字 = 已封禁').toBe('已封禁');
     expect(st.dispatchDisabled, '封禁 ⇒ 派发开关 disabled（写下去也不会生效）').toBe(true);
     expect(st.dispatchBlocked, 'blocked 原因随元素暴露').toBe('blocked');
     expect(st.noteHidden, '可行动注记可见').toBe(false);
@@ -299,7 +303,7 @@ test.describe('plugins panel — dispatch permission vs block (real backend)', (
     await rest('POST', `/api/plugins/${PLUGIN}/unblock`);
   });
 
-  test('⑥ 解封（引擎侧）⇒ 回「已启用」+ 开关解锁；面板 wire 零 unblock；派发开关仍只写 /disable', async ({ page }) => {
+  test('⑥ 解封（引擎侧）⇒ 回默认态（药丸无可见文字）+ 开关解锁；面板 wire 零 unblock；派发开关仍只写 /disable', async ({ page }) => {
     test.skip(!hasC6, 'engine track C6 (`blocked`) not live on this instance — /unblock cannot move the state yet; rerun after the plugin-nogate engine track merges');
     await unblockQuietly(PLUGIN);
     await loadPluginsPage(page);
@@ -307,7 +311,7 @@ test.describe('plugins panel — dispatch permission vs block (real backend)', (
     await rest('POST', `/api/plugins/${PLUGIN}/revoke`);
     await page.reload();
     await page.waitForFunction((n) =>
-      document.querySelector(`.plugins-card[data-plugin="${n}"] .plugins-state-pill`)?.textContent.trim() === '已封禁',
+      document.querySelector(`.plugins-card[data-plugin="${n}"] .plugins-state-pill`)?.classList.contains('blocked'),
       PLUGIN, { timeout: 20000 });
 
     const posts = [];
@@ -317,11 +321,10 @@ test.describe('plugins panel — dispatch permission vs block (real backend)', (
     await rest('POST', `/api/plugins/${PLUGIN}/unblock`);
     await page.reload();
     await page.waitForFunction((n) =>
-      document.querySelector(`.plugins-card[data-plugin="${n}"] .plugins-state-pill`)?.textContent.trim() !== '已封禁',
+      document.querySelector(`.plugins-card[data-plugin="${n}"] .plugins-state-pill`)?.classList.contains('on'),
       PLUGIN, { timeout: 20000 });
     const st = await cardState(page, PLUGIN);
-    const pillOn = await locale(page, 'plugins.stateOn');
-    expect(st.pill, '解封后回「已启用」').toBe(pillOn);
+    expect(st.pill, '解封后回默认态（药丸无可见文字）').toBe('');
     expect(st.dispatchDisabled, '派发开关解锁').toBe(false);
     expect(st.dispatchBlocked, 'blocked 属性清除').toBe(null);
     expect(posts.filter((p) => /\/revoke$|\/unblock$/.test(p)), `面板不得打 revoke/unblock，got ${posts}`).toEqual([]);

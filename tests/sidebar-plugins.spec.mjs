@@ -4,9 +4,12 @@
 // （上一版 = 2026-09-13「无审批」批）：
 //   B1 统一插件卡片：每插件一卡 = 名称/版本/作者 + 描述摘要 + 内容构成
 //      标注（N 个技能·可展开 / MCP server+transport / 内建工具 +N）+
-//      **状态药丸（绑 blocked / contentChanged，🔴 不绑 trusted）** +
-//      **派发开关（2026-09-14 改口径：卡片**右上**、与状态药丸**同排**、文案 =
-//      「任务分发器可见性」/ Dispatcher visibility）= 卡片唯一控件**。
+//      **状态药丸（绑 blocked / contentChanged，🔴 不绑 trusted；2026-09-15
+//      作者令：默认态**不出文字**——「已启用」小字删除，药丸本体/状态样式保留）** +
+//      **派发开关（2026-09-14 改口径：卡片**右上**、与状态药丸**同排**）
+//      = 卡片唯一控件**；🔴 **2026-09-15 作者令：开关旁的可见 label 小字
+//      「任务分发器可见性」/ Dispatcher visibility 整体删除**（toggle 本体自明），
+//      该 key 只作 aria-label 保留（可访问性面）。
 //      拒载插件出信息卡（无任何控件）。智能体区块 = 摘要行。独立 skills/MCP
 //      板块、订阅 chips、平铺 config row 不复存在；插件页不再请求 /api/skills
 //      与 /api/mcp（独立 MCP 管理入口在设置页）。
@@ -284,7 +287,7 @@ test('B1: unified plugin cards + agent summary rows; no subscription/config bloc
         dispatchRole: q('.plugins-card[data-plugin="e2e-hello"] [data-plugin-dispatch]')?.getAttribute('role'),
         dispatchDisabled: q('.plugins-card[data-plugin="e2e-hello"] [data-plugin-dispatch]')?.disabled,
         dispatchAriaLabel: q('.plugins-card[data-plugin="e2e-hello"] [data-plugin-dispatch]')?.getAttribute('aria-label'),
-        dispatchVisibleLabel: txt(q('.plugins-card[data-plugin="e2e-hello"] .plugins-dispatch-label')),
+        dispatchVisibleLabel: txt(q('.plugins-card[data-plugin="e2e-hello"] .plugins-dispatch-label')) ?? null,
         dispatchGeom: (() => {
           const card = q('.plugins-card[data-plugin="e2e-hello"]');
           const head = card?.querySelector('.plugins-card-head');
@@ -303,10 +306,10 @@ test('B1: unified plugin cards + agent summary rows; no subscription/config bloc
         })(),
         // expandable skill previews
         expandHiddenBefore: q('[data-expand-for="skills-e2e-hello"]')?.hidden,
-        // rejected card：信息卡，任何控件（含派发开关与其标签）都不得出现
+        // rejected card：信息卡，任何控件（含派发开关及其状态注记）都不得出现
         rejectedPill: txt(q('.plugins-card[data-plugin="broken-plugin"] .plugins-rejected-pill')),
         rejectedNoControls: !q('.plugins-card[data-plugin="broken-plugin"] [data-plugin-dispatch]')
-          && !q('.plugins-card[data-plugin="broken-plugin"] .plugins-dispatch-label')
+          && !q('.plugins-card[data-plugin="broken-plugin"] .plugins-dispatch-note:not([hidden])')
           && !q('.plugins-card[data-plugin="broken-plugin"] [data-plugin-block]')
           && !q('.plugins-card[data-plugin="broken-plugin"] [data-plugin-more]'),
         // old forms must be gone
@@ -337,7 +340,9 @@ test('B1: unified plugin cards + agent summary rows; no subscription/config bloc
     expect(dump.comps[0], `[${locale}] skills annotation with count`).toBe(locale === 'zh-CN' ? '2 个技能' : '2 skill(s)');
     expect(dump.comps[1], `[${locale}] mcp annotation with server + transport`).toBe(locale === 'zh-CN' ? 'MCP：fs-server (stdio)' : 'MCP: fs-server (stdio)');
     expect(dump.comps[2], `[${locale}] tools annotation with count`).toBe(locale === 'zh-CN' ? '内建工具 +2' : 'builtin tools +2');
-    expect(dump.statePill, `[${locale}] state pill = 已启用 (bound to blocked/contentChanged, NOT to trust)`).toBe(locale === 'zh-CN' ? '已启用' : 'Enabled');
+    // 2026-09-15 作者令：默认态药丸**不出文字**（「已启用」小字整体删除——在位即
+    // 信任下它恒显，是冗余说明）；药丸本体 + 状态样式（`on` 类）保留。
+    expect(dump.statePill, `[${locale}] 默认态药丸无可见文字（「已启用」小字已删）`).toBe('');
     expect(dump.pillClass, `[${locale}] pill carries the on class`).toContain('on');
     // C7 主控件退场 + 2026-09-14 面板收敛批：封禁 UI 三钩子零残留 + 唯一控件在右上
     expect(dump.contentSwitchCount, `[${locale}] content approval switch retired — zero on the page`).toBe(0);
@@ -347,9 +352,10 @@ test('B1: unified plugin cards + agent summary rows; no subscription/config bloc
     expect(dump.dispatchCount, `[${locale}] exactly one dispatch control on the page`).toBe(1);
     expect(dump.dispatchRole, `[${locale}] dispatch switch still on the card (role=switch)`).toBe('switch');
     expect(dump.dispatchDisabled, `[${locale}] dispatch switch NOT blocked when the plugin is not blocked`).toBe(false);
-    expect(dump.dispatchVisibleLabel, `[${locale}] 开关文案 = locale plugins.dispatchLabel`)
-      .toBe(locale === 'zh-CN' ? '任务分发器可见性' : 'Dispatcher visibility');
-    expect(dump.dispatchAriaLabel, `[${locale}] 开关 aria-label = locale plugins.dispatchLabel`)
+    // 2026-09-15 作者令：开关旁的**可见** label 小字整体删除（toggle 本体自明）；
+    // 可访问性面保留 ⇒ aria-label 仍 = locale `plugins.dispatchLabel`（🔴 非空）。
+    expect(dump.dispatchVisibleLabel, `[${locale}] 开关旁无可见 label 小字（「任务分发器可见性」已删）`).toBe(null);
+    expect(dump.dispatchAriaLabel, `[${locale}] 开关 aria-label 仍 = locale plugins.dispatchLabel（可访问性面保留）`)
       .toBe(locale === 'zh-CN' ? '任务分发器可见性' : 'Dispatcher visibility');
     expect(dump.dispatchGeom?.inState, `[${locale}] 开关落在状态区（卡片右上）`).toBe(true);
     expect(dump.dispatchGeom?.inHead, `[${locale}] 开关在卡片头行内（非底部独立行）`).toBe(true);
@@ -457,11 +463,12 @@ test('B3: 封禁 UI 退场契约 — 面板零 revoke/unblock wire；引擎侧�
   await loadShell(page, 'zh-CN');
   await page.waitForSelector('#plugins-content .plugins-card[data-plugin="e2e-hello"]', { timeout: 10000 });
 
-  // 起点：未封禁 ⇒ 已启用 + 唯一控件（派发开关）可用 + 封禁 UI 零残留。
+  // 起点：未封禁 ⇒ 默认态药丸无可见文字 + 唯一控件（派发开关）可用 + 封禁 UI 零残留。
   const before = await cardDump(page);
-  expect(before.pill, 'start: 已启用').toBe('已启用');
+  expect(before.pill, 'start: 默认态药丸无可见文字（「已启用」小字已删，2026-09-15 令）').toBe('');
+  expect(before.pillClass, 'start: 药丸状态样式在（on 类）').toContain('on');
   expect(before.dispatchDisabled, 'start: dispatch switch usable').toBe(false);
-  expect(before.dispatchLabel, 'start: 开关文案 = 任务分发器可见性').toBe('任务分发器可见性');
+  expect(before.dispatchLabel, 'start: 开关旁无可见 label 小字（「任务分发器可见性」已删）').toBe(null);
   expect([before.moreCount, before.menuCount, before.blockCount], 'start: 封禁 UI 三钩子零残留').toEqual([0, 0, 0]);
   expect(before.dispatchCount, 'start: 页面唯一控件 = 派发开关').toBe(1);
 
@@ -483,10 +490,12 @@ test('B3: 封禁 UI 退场契约 — 面板零 revoke/unblock wire；引擎侧�
   pluginState.blocked = true;
   await page.evaluate(async () => { const m = await import('/js/plugins.js'); m.renderPlugins(); });
   await page.waitForFunction(() =>
-    document.querySelector('.plugins-card[data-plugin="e2e-hello"] .plugins-state-pill')?.textContent.trim() === '已封禁',
+    document.querySelector('.plugins-card[data-plugin="e2e-hello"] .plugins-state-pill')?.classList.contains('blocked'),
     { timeout: 8000 });
   const blocked = await cardDump(page);
   expect(blocked.pillClass, 'blocked pill class').toContain('blocked');
+  // 例外态仍出文字（可行动信号；删的只是默认态的冗余小字）。
+  expect(blocked.pill, 'blocked pill 仍出文字 = 已封禁').toBe('已封禁');
   expect(blocked.dispatchDisabled, 'blocked ⇒ dispatch switch disabled（写 authorEnabled 不会生效）').toBe(true);
   expect(blocked.dispatchBlockedAttr, 'blocked reason exposed on the element').toBe('blocked');
   expect(blocked.blockedHint, 'blocked hint is actionable and non-empty').toBeTruthy();
@@ -495,14 +504,15 @@ test('B3: 封禁 UI 退场契约 — 面板零 revoke/unblock wire；引擎侧�
   expect([blocked.moreCount, blocked.menuCount, blocked.blockCount],
     'blocked 态下封禁 UI 仍零残留（不得长回入口）').toEqual([0, 0, 0]);
 
-  // 解封（同样引擎侧）⇒ 回「已启用」+ 开关恢复可用。
+  // 解封（同样引擎侧）⇒ 回默认态（药丸无文字）+ 开关恢复可用。
   pluginState.blocked = false;
   await page.evaluate(async () => { const m = await import('/js/plugins.js'); m.renderPlugins(); });
   await page.waitForFunction(() =>
-    document.querySelector('.plugins-card[data-plugin="e2e-hello"] .plugins-state-pill')?.textContent.trim() === '已启用',
+    document.querySelector('.plugins-card[data-plugin="e2e-hello"] .plugins-state-pill')?.classList.contains('on'),
     { timeout: 8000 });
   const after = await cardDump(page);
   expect(after.pillClass, 'pill back to on').toContain('on');
+  expect(after.pill, 'pill back to 无文字（默认态）').toBe('');
   expect(after.dispatchDisabled, 'dispatch switch usable again').toBe(false);
   expect(after.dispatchBlockedAttr, 'blocked attribute cleared').toBe(null);
   expect(after.blockedHint, 'blocked hint removed').toBe(null);

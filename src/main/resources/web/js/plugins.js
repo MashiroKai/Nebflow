@@ -14,10 +14,15 @@
 //       ┌ 内容审批开关 `[data-plugin-switch]` **退场**——「在位即信任」下它恒 on，
 //       │   留着只是噪声；且它的 off 会停掉在飞节点的插件 MCP（作者 09-12 踩过的坑）。
 //       ├ 状态药丸（右上）绑 `blocked` / `contentChanged`（**不绑 `trusted`**）：
-//       │   已封禁 > 内容已变更 > 已启用 三态（优先级见 pluginStatus）。
+//       │   已封禁 > 内容已变更 > 默认（在位即信任）三态（优先级见 pluginStatus）。
+//       │   🔴 **2026-09-15 作者令：默认态不出文字**——「已启用」小字整体删除
+//       │   （开关态由 toggle 本体自明）；药丸本体 + 状态样式保留，封禁 / 内容已变更
+//       │   仍出字（那是可行动信号，不是说明性小字）。
 //       └ 派发开关 `[data-plugin-dispatch]` = **卡片右上、与状态药丸同排**的**唯一控件**
-//           （`.plugins-card-state` 内，药丸右侧）；文案 = 「任务分发器可见性」
-//           （`plugins.dispatchLabel`，2026-09-14 作者三裁之批一）。
+//           （`.plugins-card-state` 内，药丸右侧）；🔴 **2026-09-15 作者令：可见文案
+//           「任务分发器可见性」小字整体删除**（toggle 本体自明）——
+//           `plugins.dispatchLabel` 仅作 **aria-label** 保留（可访问性面；
+//           2026-09-14 作者三裁之批一引入，2026-09-15 只删可见文本）。
 //
 //   • **封禁 / 解封 UI 全量退场（2026-09-14 作者三裁之批一）**：右上「更多」按钮、
 //     其就地菜单行、封禁/解封按钮（`[data-plugin-more]` / `[data-plugin-menu]` /
@@ -124,15 +129,20 @@ function pluginStatus(manifest) {
   };
 }
 
-/** Pill text + pill/card class for a status triple — single source shared by
- *  the full render (renderPluginCard) and the in-place convergence
- *  (applyPluginCardState), so the two can never drift apart. */
+/** Pill class (always) + pill text (exceptional states only) for a status
+ *  triple — single source shared by the full render (renderPluginCard) and
+ *  the in-place convergence (applyPluginCardState), so the two can never
+ *  drift apart.
+ *
+ *  🔴 在位即信任 ⇒「已启用」是默认态的冗余小字（2026-09-15 作者令：开关态由
+ *  toggle 本体自明，面板不留说明性小字）⇒ 默认态**不出文字**，药丸本体与状态
+ *  样式（`on` 类 + 药丸视觉）保留；`blocked` / `changed` 仍出字——那是可行动信号。 */
 function pillOf(status) {
   const key = status.blocked ? 'blocked' : (status.contentChanged ? 'changed' : 'on');
-  const textKey = status.blocked
-    ? 'plugins.stateBlocked'
-    : (status.contentChanged ? 'plugins.stateChanged' : 'plugins.stateOn');
-  return { key, text: t(textKey) };
+  const text = status.blocked
+    ? t('plugins.stateBlocked')
+    : (status.contentChanged ? t('plugins.stateChanged') : '');
+  return { key, text };
 }
 
 /** Classify a manifest's DISPATCH-permission state (令 1 派发面,
@@ -162,9 +172,12 @@ function dispatchState(manifest, blocked) {
     return { on: d.enabled !== false, blocked: 'transition',
       title: t('plugins.dispatchBlockedTransition'), note: t('plugins.dispatchBlockedTransition') };
   }
+  // 2026-09-15 作者令：「派发已关闭——只影响未来派发；已在跑的节点保持其插件许可」
+  // 小字整体删除（开关态由 toggle 本体自明）⇒ 普通关态不再出 note。
+  // （blocked / transition 两态的 note 保留——那是**可行动**注记，非说明性小字。）
   return { on: authorEnabled, blocked: '',
     title: authorEnabled ? t('plugins.dispatchOnTitle') : t('plugins.dispatchOffTitle'),
-    note: authorEnabled ? '' : t('plugins.dispatchOffNote') };
+    note: '' };
 }
 
 // ── Data assembly ──────────────────────────────────────────
@@ -305,10 +318,12 @@ function renderPluginCard(manifest) {
       <div class="plugins-card-state">
         <span class="plugins-state-pill ${pill.key}">${esc(pill.text)}</span>
         <span class="plugins-card-dispatch">
-          <span class="plugins-dispatch-label">${esc(t('plugins.dispatchLabel'))}</span>
           ${toggleHTML({
             on: disp.on,
             disabled: !!disp.blocked,
+            // 可见的「任务分发器可见性」小字已整体删除（2026-09-15 作者令：开关
+            // 本体自明）。取舍 = 保留**可访问性面**：aria-label 仍用该 key
+            // （🔴 不得把 toggle 的 aria-label 删成空）。
             label: t('plugins.dispatchLabel'),
             title: disp.title,
             attrs: `data-plugin-dispatch="${esc(manifest.name)}"`
