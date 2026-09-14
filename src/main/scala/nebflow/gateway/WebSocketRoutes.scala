@@ -2629,7 +2629,24 @@ class WebSocketRoutes(
                 // whole subtree; previously os.remove failed on non-empty dirs
                 // and only the batch deletePaths channel could remove them).
                 // On a plain file remove.all behaves exactly like remove.
-                _ <- IO.blocking { if os.exists(basePath) then os.remove.all(basePath) }
+                wasDir <- IO.blocking { os.isDir(basePath) }
+                existed <- IO.blocking { os.exists(basePath) }
+                _ <- IO.blocking { if existed then os.remove.all(basePath) }
+                // ── 补盲区：删除**成功分支**留痕（#159/#176 wtsurv 批，2026-09-14）────
+                // 取证件 `20260913_100008_worktree-vanish-forensics.md` §1.4 第 1 条 /
+                // §6.1 第 2 条：WS `deletePath` 是**非网关通道**（UI 触发，不是 agent
+                // 工具调用），递归删目录用 `os.remove.all` ⇒ **不碰** `.git/worktrees/
+                // <name>` 注册 ⇒ 精确制造「目录消失 + 注册残留 = prunable」签名；而成功
+                // 路径**零日志**（失败才 `logger.warn`）⇒ 该类路径在取证面不存在。
+                // 本行把该通道纳入可审计面：记录**被删路径**（canonical，与包含校验同一
+                // 参照系）与**来源会话**。语义边界（硬）：只证「本通道删过 X」，
+                // **不指认**任何历史事件的责任人（责任者未证；见取证件 §1.4）。
+                // ⚠ 只在路径**实存**时写（`existed`）：对已被删掉的路径，单删语义是
+                // 「no-op 成功」，写「removed」会**误报**（审计面第一条纪律：不写没发生的事）。
+                _ <-
+                  if existed then
+                    logger.info(WebSocketRoutes.deleteAuditLine("deletePath", canonicalBase, dpSessionId, wasDir))
+                  else IO.unit
               yield dpPath)
                 .flatMap { p =>
                   wsSend(io.circe.Json.obj("type" -> "pathDeleted".asJson, "path" -> p.asJson))
@@ -2705,7 +2722,7 @@ class WebSocketRoutes(
                       folderId = metaOpt.flatMap(_.folderId)
                       prOpt <- sessionStore.resolveProjectRoot(folderId)
                     yield prOpt.getOrElse((PathUtil.dataRoot / "projects").toString)
-                (deleted, failed) <- WebSocketRoutes.deletePathsSafely(dpsPaths, os.Path(pr))
+                (deleted, failed) <- WebSocketRoutes.deletePathsSafely(dpsPaths, os.Path(pr), dpsSessionId)
               yield (deleted, failed))
                 .flatMap { case (deleted, failed) =>
                   wsSend(
@@ -4960,6 +4977,31 @@ end WebSocketRoutes
 
 object WebSocketRoutes:
 
+  /** 伴生对象侧 logger（#159/#176 wtsurv 批，2026-09-14）：`deletePathsSafely` 是
+    * **纯核**（companion 成员，spec 直接静态调用），其**成功分支的审计留痕**必须
+    * 在本层落笔 ⇒ 需要本层自己的 logger（与类侧 `nebflow.ws` 同名，日志面同源）。 */
+  private val logger = nebflow.core.NebflowLogger.forName("nebflow.ws")
+
+  /** UI 文件浏览器**删除成功分支**的审计行（#159/#176 ④「补盲区」）。
+    *
+    * **单一出处**：单删（WS `deletePath`）与批量删（`deletePathsSafely`）两处共用同一
+    * 生成函数——措辞与字段集只定义一次，防两处漂移（`deletePath` / `deletePaths` 的
+    * 排除理由在取证件 §1.2 机制 D-2 里是同一段代码）。字段 = **被删路径**（canonical，
+    * 与包含校验同一参照系）+ **来源会话** + 形态（目录递归 / 单文件）+ 通道名。
+    *
+    * 语义边界（硬）：只证「本通道删过 X」，**不指认**任何历史事件的责任人（取证件
+    * §1.4「直接删除者未证」）。
+    *
+    * `channel` 取 `"deletePath"` / `"deletePaths"`（与 WS case 名同字，便于按通道 grep）。 */
+  private[gateway] def deleteAuditLine(
+      channel: String,
+      canonicalPath: String,
+      sessionId: String,
+      isDir: Boolean
+  ): String =
+    s"$channel: removed '$canonicalPath' (session=$sessionId, " +
+      s"kind=${if isDir then "dir-recursive" else "file"}, channel=ui-file-explorer)"
+
   /** Extract token from query param (localStorage), Authorization header, or
     * cookie. Pure — shared by every authenticated route through the
     * class-side alias. */
@@ -5440,7 +5482,10 @@ object WebSocketRoutes:
     */
   def deletePathsSafely(
       paths: List[String],
-      root: os.Path
+      root: os.Path,
+      /** 来源会话（审计用；#159/#176 wtsurv 批）。默认空串 ⇒ 既有调用点（含
+        * `BatchDeleteSpec` 四例）零改动。 */
+      sessionId: String = ""
   ): IO[(List[String], List[(String, String)])] =
     paths.foldLeftM((List.empty[String], List.empty[(String, String)])) { (acc, p) =>
       resolveGuardedForDelete(p, root) match
@@ -5449,12 +5494,26 @@ object WebSocketRoutes:
           // remove.all: batch delete from the file explorer explicitly covers
           // non-empty directories (F1 acceptance), unlike the single-file
           // deletePath case.
-          IO.blocking { if os.exists(basePath) then os.remove.all(basePath) }
-            .attempt
-            .map {
-              case Right(_)   => (acc._1 :+ p, acc._2)
-              case Left(e)    => (acc._1, acc._2 :+ (p -> Option(e.getMessage).getOrElse(e.toString)))
-            }
+          for
+            wasDir <- IO.blocking { os.isDir(basePath) }
+            existed <- IO.blocking { os.exists(basePath) }
+            res <- IO.blocking { if existed then os.remove.all(basePath) }.attempt
+            out <- res match
+              // ── 补盲区（同 `deletePath`）：批量删除的**成功分支**留痕 ──────────
+              // 同一 `os.remove.all` 语义、同一「目录消失 + 注册残留 = prunable」签名
+              // （取证件 §1.2 机制 D-2 / §6.1 第 2 条）。失败分支沿用原「进 failed」
+              // 语义，**不误报**成功（本行只在 `Right` 分支执行）；**且**只在路径
+              // **实存**时写——不存在的路径是「no-op 成功」（既有语义，见
+              // `BatchDeleteSpec`），写 removed 会误报。
+              case Right(_) =>
+                val canonical = try basePath.toIO.getCanonicalPath catch case _: Throwable => basePath.toString
+                val audit =
+                  if existed then
+                    logger.info(WebSocketRoutes.deleteAuditLine("deletePaths", canonical, sessionId, wasDir))
+                  else IO.unit
+                audit.as((acc._1 :+ p, acc._2))
+              case Left(e) => IO.pure((acc._1, acc._2 :+ (p -> Option(e.getMessage).getOrElse(e.toString))))
+          yield out
     }
 
   /** Resolve + guard one delete candidate (mirror of deletePath's checks). */
