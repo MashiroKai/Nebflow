@@ -65,3 +65,26 @@ api\.llm\.ustc\.edu\.cn
 # sbt-launch 单源 curl、另 Makefile 注释），离线无法证明可移除 ⇒ 登记豁免。
 # 此前审计的桶 B/BK-* 表无兜底行，本行即该缺口的闭合项（禁口头豁免）。
 maven\.aliyun\.com
+
+# `.nebflow/Spec/` 引用类（内部真源锚点）——显式兜底行（#491 批 1，root 裁定
+# 2026-09-14 豁免类 A）。机读依据：该类成员是**仓内相对路径**的真源锚点（既非
+# 绝对路径、也非用户知识、更非凭据），且被**运行期 agent 指令逐字消费**——
+# `src/main/resources/seed/agents/project-dispatcher/system.md:124,127` 要求把该
+# 规格件 §7.1 片段**全文逐字**附入 merge-sink 任务书（「禁以路径引用代替全文」
+# 是派发侧断言），`src/main/scala/nebflow/core/project/MergeMutexPolicy.scala:13`
+# 同法引用；规格件按既定边界**不入公开面** ⇒ 改写该路径 = 改行为，属设计决策，
+# 另批处置，故登记豁免（禁口头豁免）。按类限定：本行只覆盖 `.nebflow/Spec/`
+# 前缀一类；`.nebflow/evidence/**`、占位/目录形 `.nebflow/` 引用不在本行内（后
+# 者由上方 WIDE 的 `\.nebflow/` 单独承担）⇒ 不吞同类之外的命中项。
+\.nebflow/Spec/
+
+# IANA 时区标识符 / `--cn|--global` 区域 case 表 —— 显式兜底行（#491 批 1，
+# root 裁定 2026-09-14 豁免类 B）。机读依据：`release/install.sh:341` 的 case 表
+# （`Asia/Shanghai|Asia/Chongqing|Asia/Hong_Kong|Asia/Taipei|Asia/Macau|PRC|Asia/Urumqi`）
+# 是 `detect_region()` 的**代码形功能判据**（决定 cn 分支走 COS/镜像链），并被
+# `--cn` / `--global` 旗标（同文件 :330-331）显式覆盖 ⇒ 它是**通用产品数据**，
+# 非用户知识、非本机耦合（IANA tzid 全球一致、不含贡献者身份）。按类限定：本行
+# 只覆盖 IANA 的 Area/City 形与同表 legacy 别名 `PRC`，不覆盖任何其它路径/主机形
+# 字面 ⇒ 不吞同类之外的命中项。词边界不写成 `\b`（BSD grep 的 ERE 无词边界、
+# 会静默零命中 —— 见 scripts/check-local-coupling.mjs 头注释 S2），故用可移植形。
+(Africa|America|Antarctica|Arctic|Asia|Atlantic|Australia|Europe|Indian|Pacific)/[A-Za-z_]+|(^|[^0-9A-Za-z_])PRC([^0-9A-Za-z_]|$)

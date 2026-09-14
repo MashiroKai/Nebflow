@@ -58,6 +58,35 @@
 //                           re-tested — a line whose only hit was the excluded
 //                           token is suppressed (and counted).
 //
+//   S10 Fallback lines    = the explicit-exemption register (author ruling
+//                           2026-09-14; the aliyun entry of batch 1 is the first
+//                           one). SYNTAX — identical to S1, the gate has no second
+//                           parser: a fallback line IS an ordinary pattern line of
+//                           `scripts/user-knowledge-patterns.txt`, preceded by a
+//                           comment block; the line is parsed by parseJudgementSource()
+//                           under the same rules (full-line `#` = comment, inline `#`
+//                           starts a trailing comment, blank lines ignored), and it is
+//                           counted by `[src ] … wide=N`. CRITERION — a fallback entry
+//                           is admissible only when all four hold:
+//                             (a) it sits in the WIDE layer, i.e. outside the enforced
+//                                 set, so an entry can never suppress a STRICT hit —
+//                                 "the gate is green because of it" is not a thing this
+//                                 gate does;
+//                             (b) it is CLASS-SCOPED: the pattern covers the members of
+//                                 one named class and nothing else. Blanket forms
+//                                 (`.*`, `\S+`, `/`) are forbidden — they would swallow
+//                                 hits outside the class (routing surface for a real
+//                                 leak);
+//                             (c) its comment block names the class, the concrete
+//                                 in-repo member(s) (`file:line`) and the machine-checkable
+//                                 reason the member is legitimate — never a verbal-only
+//                                 exemption;
+//                             (d) it is grep-able in the tree: `grep -n '<pattern>'
+//                                 scripts/user-knowledge-patterns.txt` is the audit read.
+//                           A contributor adds their own machine's class the same way.
+//                           `(^|[^0-9A-Za-z_])…` is the portable word-boundary form (S2);
+//                           do not write `\b` into a fallback line.
+//
 // NOT in this gate (deliberate): the WIDE layer is reference-only in the source
 // itself (合法 product references, human review), and the "dangling design-note
 // reference" class (author-local doc paths) is a cleanliness concern, not an
