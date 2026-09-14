@@ -32,7 +32,7 @@ try {
 # keeps existing user data working - old dirs/env/config fall back.
 $ProductName = "Nebflow"
 $LowerName = "nebflow"
-$CosBucket = "nebflow-releases-1411212853"
+$CosBucket = "nebflow-releases"
 $HomeDir = ".nebflow"
 $ConfigFile = "nebflow.json"
 $WrapperName = "nebflow"

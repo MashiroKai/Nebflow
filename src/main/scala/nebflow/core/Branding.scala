@@ -104,7 +104,9 @@ object Branding:
     * name (first read-modify-write completes the rename migration). */
   val configFileName: String = get("configFileName")
 
-  /** Release mirror bucket (COS). */
+  /** Release mirror bucket. Key name is historical (COS era); since the
+    * 2026-09-14 COS→OSS switch the value names an Aliyun OSS bucket and the
+    * key is deliberately kept (no `ossBucket` dual-read). */
   val cosBucket: String = get("cosBucket")
 
   /** Device-interop subsystem name (D2: stays as-is across the rename). */

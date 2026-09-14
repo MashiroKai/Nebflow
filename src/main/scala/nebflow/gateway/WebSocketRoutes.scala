@@ -3397,14 +3397,16 @@ class WebSocketRoutes(
             val result = IO
               .blocking {
                 try
-                  // #29: 仓库 private 后 GH API 未认证不可用——版本检查读 COS
+                  // #29: 仓库 private 后 GH API 未认证不可用——版本检查读发布镜像
                   // latest-version.txt（stable 通道，与旧 releases/latest 同语义）。
-                  val url = "https://nebflow-releases-1411212853.cos.ap-nanjing.myqcloud.com/latest-version.txt"
+                  // COS→OSS 切仓（2026-09-14）：桶名走 Branding.cosBucket 派生
+                  // （brand.conf 为唯一事实源，禁再硬编码桶名）；端点 = 阿里云 OSS 杭州。
+                  val url = s"https://${Branding.cosBucket}.oss-cn-hangzhou.aliyuncs.com/latest-version.txt"
                   val conn = java.net.URI.create(url).toURL.openConnection()
                   conn.setConnectTimeout(5000)
                   conn.setReadTimeout(5000)
                   val raw = new String(conn.getInputStream.readAllBytes(), java.nio.charset.StandardCharsets.UTF_8).trim
-                  if raw.nonEmpty then Some((raw, raw)) // (tag, releaseName)——COS 无 release 名，版本号兜底
+                  if raw.nonEmpty then Some((raw, raw)) // (tag, releaseName)——OSS 镜像无 release 名，版本号兜底
                   else None
                 catch case _: Exception => None
               }

@@ -305,24 +305,29 @@ jobs:
           files: release-assets/*
           generate_release_notes: true
 
-      - name: Upload to COS (China mirror)
+      - name: Upload to OSS (China mirror)
         env:
-          COS_SECRET_ID: ${{ secrets.COS_SECRET_ID }}
-          COS_SECRET_KEY: ${{ secrets.COS_SECRET_KEY }}
+          OSS_ACCESS_KEY_ID: ${{ secrets.OSS_ACCESS_KEY_ID }}
+          OSS_ACCESS_KEY_SECRET: ${{ secrets.OSS_ACCESS_KEY_SECRET }}
         run: |
-          if [ -z "$COS_SECRET_ID" ] || [ -z "$COS_SECRET_KEY" ]; then
-            echo "::warning::COS secrets absent — China mirror NOT updated (GitHub Release is the primary source)"
+          if [ -z "$OSS_ACCESS_KEY_ID" ] || [ -z "$OSS_ACCESS_KEY_SECRET" ]; then
+            echo "::warning::OSS secrets absent — China mirror NOT updated (GitHub Release is the primary source)"
             exit 0
           fi
-          pip install coscmd 2>/dev/null
-          coscmd config -a "$COS_SECRET_ID" -s "$COS_SECRET_KEY" -b "$COS_BUCKET" -e cos.accelerate.myqcloud.com
+          # Object-storage switch 2026-09-14: pinned ossutil release (zip sha256
+          # dcc512e4a893e16bbee63bc769339d8e56b21744fd83c8212a9d8baf28767343).
+          curl -fsSL -o /tmp/ossutil.zip "https://gosspublic.alicdn.com/ossutil/1.7.19/ossutil-v1.7.19-linux-amd64.zip"
+          unzip -q -j -o /tmp/ossutil.zip -d /tmp/ossutil-bin
+          OSSUTIL=/tmp/ossutil-bin/ossutil64
+          chmod +x "$OSSUTIL"
+          "$OSSUTIL" config -e oss-cn-hangzhou.aliyuncs.com -i "$OSS_ACCESS_KEY_ID" -k "$OSS_ACCESS_KEY_SECRET" -L EN
           for f in release-assets/*; do
-            coscmd upload "$f" "$(basename "$f")" -f
-            echo "  Uploaded $(basename "$f") to COS"
+            "$OSSUTIL" cp "$f" "oss://$COS_BUCKET/$(basename "$f")" -f
+            echo "  Uploaded $(basename "$f") to OSS"
           done
           echo -n "${{ needs.build-jar.outputs.version }}" > /tmp/latest-version.txt
-          coscmd upload /tmp/latest-version.txt latest-version.txt -f
-          echo "  Uploaded latest-version.txt to COS"
+          "$OSSUTIL" cp /tmp/latest-version.txt "oss://$COS_BUCKET/latest-version.txt" -f
+          echo "  Uploaded latest-version.txt to OSS"
 
       # --- Sync version back to main ---
 

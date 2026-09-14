@@ -26,11 +26,11 @@
 - [ ] 新建 org；Settings → Transfer repository（旧 URL 自动重定向）
 - [ ] OAuth App（`Ov23liu3nC6jzBmNIQNB`）回调 URL 更新（新域名 + 新仓库路径）；Client Secret 更新到 VPS `.env`
 
-## 4. COS（发布镜像）
+## 4. OSS（发布镜像）
 
 - [ ] 新桶开通（brand.conf `cosBucket` 值）
 - [ ] CI 双写开关（新旧桶同时上传）灰度期开启
-- [ ] 旧桶 `nebflow-releases-1411212853` 保留 ≥12 月；最后推送一个版本文件指向新桶
+- [ ] 旧桶 `nebflow-releases` 保留 ≥12 月；最后推送一个版本文件指向新桶
 
 ## 5. 官网（Vercel）
 
