@@ -139,11 +139,16 @@ class NodeEventPushSpec extends CatsEffectSuite:
     Set("id", "name", "agent", "description", "status", "in", "out", "hasWorktree", "worktree", "blockCount", "createdAt", "completedAt", "ttlLeftSec")
   /** 有结果节点（终态）的载荷键集 = 基集合 + hasResult。 */
   private val NodeListKeysWithResult: Set[String] = NodeListKeys + "hasResult"
-  /** **NodeEdit 创建路径**节点的载荷键集（b64 批 2026-09-13，R1/R2 三值通知策略）：
-  * `notify` 是条件键（存量缺键 / 显式清除两种形态缺键），但创建路径**显式落盘**
-  *（未传 ⇒ `dispatcher`）⇒ 经 NodeEdit 创建的节点恒带该键。直接 seed 的存量形态
-  * 节点（E⑤）仍用上面的 [[NodeListKeys]]。 */
-  private val NodeListKeysCreated: Set[String] = NodeListKeys + "notify"
+  /** **NodeEdit 创建路径**节点的载荷键集。
+  *
+  * b64 批（2026-09-13，R1/R2）曾为 `NodeListKeys + "notify"`：当时口径 = 创建路径
+  * **显式落盘** notify（未传 ⇒ `dispatcher`）⇒ 经 NodeEdit 创建的节点恒带该键。
+  * **B-3 裁定（2026-09-14）按语义变更调整本期望值**：缺键才是「未声明」⇒ 未显式传
+  * `notify` 的创建节点**与存量节点同形**（`notify` 为条件键、缺省不带）⇒ 本集合
+  * 回落到基集合。显式声明 notify 的创建节点带该键属条件键正常形态，不在本判据内
+  * （E④ 的创建调用未传 notify）。依据 = 本任务书裁定三项之 B-3。
+  */
+  private val NodeListKeysCreated: Set[String] = NodeListKeys
   /** NodeEdit 创建 + 有结果（终态）的载荷键集。 */
   private val NodeListKeysCreatedWithResult: Set[String] = NodeListKeysCreated + "hasResult"
 
