@@ -1164,7 +1164,13 @@ private[agent] trait AgentCore:
         contextWindow = state.contextWindow,
         sessionId = state.sessionId,
         sessionName = state.sessionName,
-        rootSessionId = Some(state.rootSessionId),
+        // freshinstall-rootsessionid 批 M2（源头归一）：`ToolContext.rootSessionId`
+        // 的契约是 `None = 非 agent 会话上下文`（core/tools/types.scala:21-26），
+        // `Some("")` 是违反该契约的第三态——下游 `orElse` 不过滤非空 ⇒ `Some("")`
+        // 会取胜并顶掉真实 `sessionId`（空桶/落错桶）。此处一行归一为 `None`，
+        // 覆盖全部 ToolContext 消费者（Mail/Bash/RemoteExecutor/BgTaskRegistry/
+        // NodeTools），消费者侧不再重复修。
+        rootSessionId = Some(state.rootSessionId).filter(_.nonEmpty),
         taskStore = Some(resources.taskStore),
         wsSend = Some(state.wsSend),
         readTracker = state.readTracker,
