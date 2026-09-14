@@ -322,7 +322,7 @@ final class DropboxService private (
 
   /**
    * 服务端本地文件 → 对端设备的**工具入口**。与前端通道（`dropbox-file-offer` WS）
-   * 走**同一条**链：同一闸位（`offerFiles`：≤9 件 / 单件 ≤100,000,000 B 十进制，
+   * 走**同一条**链：同一闸位（`offerFiles`：≤9 件 / 单件 ≤1,073,741,824 B = 1024 MB = 1 GiB，
    * 超限 fail-fast 回显实际值）+ 同一分块传输（`uploadAndRelay`：P2P 主腿 + relay
    * 兜底、每块校验、整件双侧 sha256、断点续传）。唯一差别 = **字节源是本机磁盘**
    * （不经浏览器）。
@@ -528,7 +528,7 @@ final class DropboxService private (
 
 
   /**
-   * Offer **一条消息的 N 件附件** —— 作者数两条（单件 ≤100,000,000 B / 单条消息 ≤9 件）
+   * Offer **一条消息的 N 件附件** —— 作者数两条（单件 ≤1,073,741,824 B（1024 MB = 1 GiB）/ 单条消息 ≤9 件）
    * 的**唯一闸位**。
    *
    * 超限 ⇒ **fail-fast**：不建 transfer、不发信令、不写消息，返回结构化错误

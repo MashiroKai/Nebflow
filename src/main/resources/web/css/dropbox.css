@@ -152,7 +152,8 @@
    结构与形态（wrapper 的 flex 列 + 方向对齐、气泡 padding 8px 12px / r14 / 13px /
    行高 1.5 / 出向无描边 + 方向尾角 4px、元信息 pill、时间 10px 等宽 tabular-nums）+
    max-width token（--msg-bubble-max-w = 78%，与好友面同 token）。
-   本文件只留 dropbox 面专有声明：文件卡子层、复制键、dropzone 提示条。 */
+   本文件只留 dropbox 面专有声明：文件卡子层、复制键、拖拽态轮廓（dropzone 提示条
+   已随引导语删除，见下方注释）。 */
 
 /* Inline copy button */
 .dropbox-msg-copy {
@@ -246,25 +247,15 @@
   50% { opacity: 1; }
 }
 
-/* Drop hint strip — 纯提示文案（2026-09-12 波2 ③-F 双入口）：不再是拖拽目标、
-   也不再是可点击入口（点击/拖拽已上移到整个对话框与输入条纸夹键），故去掉
-   cursor/hover/drag-over 交互态，只留静态提示的外观。 */
-.dropbox-dropzone {
-  margin: 6px 16px;
-  padding: 10px;
-  border: 1.5px dashed var(--glass-etched-border, rgba(128, 128, 128, 0.3));
-  border-radius: 10px;
-  text-align: center;
-  font-size: 12px;
-  color: var(--color-frame-text-muted, #888);
-}
-
 /* 拖拽目标 = 整个对话框（③-F/③A6）。outline（不是 border）承载拖拽态：不参与
    布局、不推动任何内容；dashed 与提示条同族。 */
 .dropbox-modal.drag-over {
   outline: 1.5px dashed rgba(91, 127, 191, 0.6);
   outline-offset: -6px;
 }
+/* 注：原「拖拽提示条」样式（drop zone 提示文案条）已随作者 2026-09-14 09:14 删引导句
+   一并删除 —— 元素不存在、类名零引用 ⇒ 死 CSS 不留。拖拽目标仍是整个对话框
+   （上面的 .dropbox-modal.drag-over），交互形态零变化。 */
 
 /* 输入条纸夹键（第二入口）：复用 .icon-btn 玻璃表达，尺寸收到输入条尺度 */
 .dropbox-attach-btn { width: 32px; height: 32px; flex-shrink: 0; }

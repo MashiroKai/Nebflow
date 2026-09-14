@@ -126,9 +126,18 @@ import FriendCodecs.{given, *}
   * （§B.7 ③ 要求「已过期」与「下载失败」在客户端**可区分**），折叠会把它们
   * 压成一个「失败」。
   *
-  * 已知代价（如实登记）：字节**整件进内存**（上限 = 作者给定数 100,000,000 B）。
-  * 网关代理腿因此多一份 100 MB 级缓冲；后续若要消除，需走流式管道（未做，
-  * 见报告「未证/开放项」）。 */
+  * 已知代价（如实登记）：字节**整件进内存**（`BodyHandlers.ofByteArray()`）—— 4b 腿 A
+  * 立项时上限 = 100,000,000 B，该代价按 100 MB 级登记并接受。
+  *
+  * 🔴 **上限升到 1024 MB = 1 GiB 后本代价放大 10.7 倍，已不再可接受**（2026-09-14
+  * 附件上限批 r2 实测登记，**本批未改此腿**）：宿主 JVM 堆 = `MaxRAMPercentage=12.5`
+  * ⇒ 本机 2 GB，且配 `-XX:+ExitOnOutOfMemoryError`（OOM = 硬退出，看门狗再拉起）。
+  * 一次 1 GiB 附件的 E3 下载会在该堆里一次分配 ≈1 GiB（`Array[Byte]`），叠加
+  * `RestApiRoutes` 的 `Stream.emits(fetch.bytes)` 还会再留一份引用 ⇒ 逼近/触顶 2 GB
+  * 堆。**修复方向（未实施，交下一批）**：E3 改流式落盘（`BodyHandlers.ofFile` /
+  * 分块 GET），`AttachmentFetch` 由 `bytes: Array[Byte]` 换成临时文件句柄 + 响应
+  * 完成即删；或对**好友下载腿**单列一个内存可承载的上限（与作者给定数解耦）。
+  * 详见报告 `.nebflow/reports/20260914_dropbox-attach-fix-impl2-r2.md` 的开放项。 */
 case class AttachmentFetch(
   status: Int,
   bytes: Array[Byte],
@@ -1143,8 +1152,12 @@ object NeblinkClient:
   val ChunkUploadTimeout: scala.concurrent.duration.FiniteDuration =
     scala.concurrent.duration.FiniteDuration(60, scala.concurrent.duration.SECONDS)
 
-  /** E3 整件下载超时（工程值）：单件上限 = 作者给定数 100,000,000 B；慢链（1 Mbps
-    * 量级）也要能取完 ⇒ 300 s。 */
+  /** E3 整件下载超时（工程值）：单件上限 = 作者给定数 1,073,741,824 B（1024 MB = 1 GiB）。
+    *
+    * ⚠️ 上限升到 1 GiB 后本超时的**有效含义变了**（2026-09-14 r2 登记，本批未改值）：
+    * 300 s 走完 1 GiB 需要 ≥3.6 MB/s 的持续吞吐；更慢的链路会在中途 `HttpTimeout`
+    * 失败（该腿是**整件一个请求**，不是分块 ⇒ 没有断点续传兜底）。是否放宽/改分块
+    * 属设计裁定，见报告开放项。 */
   val AttachmentDownloadTimeout: scala.concurrent.duration.FiniteDuration =
     scala.concurrent.duration.FiniteDuration(300, scala.concurrent.duration.SECONDS)
 

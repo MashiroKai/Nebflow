@@ -317,11 +317,12 @@ class SendMessageAttachSpec extends CatsEffectSuite:
     assert(fixed.contains("SendMessage"))
     assertEquals(fixed.size, AgentCore.NebulaOrchestrationToolsExpectedSize)
 
-  test("dimension guard: 100 MB 十进制 / ≤9 件 / 标签含 100,000,000（量纲写死）"):
-    assertEquals(AttachContract.MaxFileBytes, 100_000_000L)
-    assert(AttachContract.MaxFileBytes != (100 * 1024 * 1024).toLong, "must be decimal 100 MB, not 100 MiB")
+  test("dimension guard: 1024 MB = 1 GiB = 1,073,741,824 B / ≤9 件 / 标签含 1,073,741,824（量纲写死）"):
+    assertEquals(AttachContract.MaxFileBytes, 1_073_741_824L)
+    assertEquals(AttachContract.MaxFileBytes, 1024L * 1024 * 1024, "1024 MB = 1 GiB")
+    assert(AttachContract.MaxFileBytes != 1_024_000_000L, "must not be 1024 decimal MB")
     assertEquals(AttachContract.MaxAttachmentsPerMessage, 9)
-    assert(AttachContract.MaxFileBytesLabel.contains("100,000,000"), AttachContract.MaxFileBytesLabel)
+    assert(AttachContract.MaxFileBytesLabel.contains("1,073,741,824"), AttachContract.MaxFileBytesLabel)
 
   test("schema surface: attachments/targetDir/overwrite 参数在面；to+message 必填"):
     val schema = FriendMessageTool.inputSchema
