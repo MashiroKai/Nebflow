@@ -940,7 +940,7 @@ object NodeEditTool extends Tool:
 - plugins (optional, replace-on-provide): plugin name(s) — THE capability mechanism (no per-node agent): skills → first message, mcp.json → MCP servers + tool grants. Must be Catalog-listed (installed = trusted); a blocked (deny-listed) package is refused.
 - worktree (optional, create-time only): true = isolated git worktree at .nebflow/worktrees/<from-name> (same-name branch off main); fail-fast; refused on edits.
 - preset: legacy (unused).
-- abandon (optional, default false): terminal / wiring / pending / STALE running node → cancelled, kept with result, no TTL. LIVE running refused (use NodeCancel).
+- abandon (optional, default false): terminal / wiring / pending / STALE running node → cancelled + edges detached, no TTL. LIVE running refused (use NodeCancel).
 - role (optional, CREATE-ONLY): "task" (default; node_report: finish | blocked) | "verifier" (judges another node's output; node_report: pass | fail | blocked). A verifier's out MUST declare one "(fail)<worker>:loop" route (NODE_VERIFIER_NEEDS_ROUTE); edit ⇒ NODE_ROLE_CREATE_ONLY.
 - reactivateCompleted (optional, edit only): explicit authorization NODE_COMPLETED_REACTIVATION: re-run a COMPLETED node (status → wiring/pending, result cleared, upstreams re-delivered; logged). Omitted ⇒ edit only rewires + auto-delivers the retained result.
 - restoreChain (optional, default false): when in/deps reference an ARCHIVED node (or this nodename is archived), true pulls that whole chain back onto the active map FIRST, then proceeds normally.
@@ -992,7 +992,7 @@ object NodeEditTool extends Tool:
             "Legal values: silent | dispatcher | root; null clears the declaration (legacy resolution applies again). " +
             "Settable/withdrawable while wiring/pending/running (NODE_NOTIFY_INVALID on any other value).").asJson),
         "notifyDispatcher" -> Json.obj("type" -> "boolean".asJson, "description" -> "LEGACY alias of 'notify' (kept for one version): completion backflow toggle. Ignored (warned) when the node already declares 'notify'; prefer 'notify' in new calls (notifyDispatcher=true ≈ notify=dispatcher). Settable/withdrawable while wiring/pending/running".asJson),
-        "abandon" -> Json.obj("type" -> "boolean".asJson, "description" -> "Abandon a TERMINAL (blocked/completed/failed/cancelled), wiring/pending, or dead-session running node → cancelled, retained on map (no TTL — failed/cancelled never auto-archive; upper layer decides cleanup; audit-logged)".asJson),
+        "abandon" -> Json.obj("type" -> "boolean".asJson, "description" -> "Abandon a TERMINAL (blocked/completed/failed/cancelled), wiring/pending, or dead-session running node → cancelled + edges detached; no node-level TTL/eviction — the chain sweep archives it; audit-logged".asJson),
         "role" -> Json.obj("type" -> "string".asJson,
           "description" -> ("Node role — CREATE-ONLY (NODE_ROLE_CREATE_ONLY; rejected on edit: a node's role decides its node_report value domain and whether it may route a verdict, so it is a topology identity, not a runtime switch). " +
             "\"task\" (default) = execution node: reports finish/blocked; \"verifier\" = verification node: it judges another node's output and reports pass/fail/blocked, routing the reject verdict along its '(fail)<worker>:loop' edge. " +
@@ -1760,10 +1760,21 @@ object NodeEditTool extends Tool:
 
   // ── 编辑 ─────────────────────────────────────────────
 
-  /** abandon 动作（blocked 反馈重入设计 §7.7）：终态节点 → status=cancelled + 审计
-    * 事件（无显示 TTL——2026-09-07 裁定：failed/cancelled 永不自动归档，主图保留
-    * 待上层处置）。分发器处置 blocked 节点的「放弃」载体；NodeCancel 语义不动（仅 running）。
-    * R2 纪律：mutate 内现读 fresh，fresh 已非终态（并发重激活）→ 拒写。
+  /** abandon 动作（blocked 反馈重入设计 §7.7）：终态节点 → status=cancelled + **摘边**
+    * （案 A，2026-09-14 作者 17:24 拍板）+ 审计事件。
+    *
+    * **归档语义订正（2026-09-14）**：旧措辞「failed/cancelled 永不自动归档」**过强**
+    * 且易被读成「cancelled 永不出图」——准确表述 = **无节点级出图路径（无节点级 TTL），
+    * 但可随其全终态分量被 30s 链级 sweep 自动归档**（`FlowMapStore.chainArchivable`
+    * 自 2026-09-08 P1 起对 cancelled **显式放行**）。本批摘边正是把「分量永不全终态」
+    * 这一堵点摘掉：退役节点自成全终态分量后由 sweep 正常出库（**归档留底，非删除**）。
+    * 场景存档（provisional）：措辞订正的权威 = 作者 2026-09-14 17:24 裁定。
+    *
+    * 分发器处置 blocked 节点的「放弃」载体；NodeCancel 语义不动（仅 running——
+    * `cancelNode` 路径判据 / `detach` 默认 / `notify` 抑制口径**逐字不变**，回归钉见
+    * `AbandonDetachSpec`）。
+    * R2 纪律：mutate 内现读 fresh，fresh 已非终态（并发重激活）→ 拒写（拒写时**不摘边、
+    * 不清理**——写点没发生就不申报已发生的事实）。
     *
     * 接受域扩展（裁定①待实施语义，deps 设计 §1.6）：终态 ∪ wiring/pending——拓扑
     * 清场时退役节点常是活的 wiring/pending（「悬空活节点」无处置出口），abandon 是
@@ -1772,7 +1783,7 @@ object NodeEditTool extends Tool:
     *
     * 死会话 running 收殓（清场 c-②，20260903 03:04 清场误杀事故复盘）：running 且
     * 无在飞执行 fiber（会话死于传输中断/实例重启泄漏）→ 可收殓（cancelled，无 TTL，
-    * 留主图——2026-09-07 裁定）。
+    * 摘边后由链级 sweep 归档——2026-09-14 口径）。
     * 误杀防护（硬约束）：活 running（isRunning=true = 有在飞 fiber，取消信号可达）
     * 绝对拒绝，只能走 NodeCancel。无复活竞态：running 节点不会被 startNode 二次
     * spawn（入口状态幂等跳过），死会话不可能复活 → 预检后无需事务内复查 IO 信号。 */
@@ -1800,16 +1811,35 @@ object NodeEditTool extends Tool:
               // 第 8 个写点再漏）。
             case _ => st // 状态已变（并发重激活/移除）→ 拒写
         }
-        _ <- s.nodes.get(node.id) match
+        out <- s.nodes.get(node.id) match
           case Some(c) if c.status == NodeLifecycle.Cancelled =>
-            rt.engine.emitUpdated(c) *>
-              FlowMapEventLog.append(rt.project.workspace, rt.project.name, node.id, "abandoned",
-                s"node abandoned via NodeEdit (${node.status}${if allowDeadRunning && node.status == NodeLifecycle.Running then "/dead-session" else ""} → cancelled, retained on map)") *>
-              // P2 G11（spec §3.4）：cancelled 级联清理该会话 pending asks（与
-              // cancelNode/reap 同款单点——问出问题的节点被放弃，卡片必须关闭）。
-              rt.engine.cleanupPendingAsks(c.sessionRef)
-          case _ => IO.unit
-      yield Right(s"Node '${node.name}' abandoned — cancelled (retained on map, no TTL; result retained)")
+            // ── 案 A 摘边（cancelled 滞留主图修复批 2026-09-14，作者 17:24 拍板）──
+            // 语义全文与自决项 = `NodeEngine.detachAbandonedNode` 头注；本处只负责
+            // 「先落终态、再摘边」（顺序与 cancelNode 的 detach-first 相反，理由：
+            // 状态写点有 R2 并发拒写分支，先摘边会在被拒时留下「没退役却已摘边」
+            // 的不一致；`priorStatus` 传**写前**现值，供 deps 轨「已满足否」判定）。
+            rt.engine.detachAbandonedNode(c.id, node.status).flatMap { d =>
+              rt.engine.emitUpdated(c) *>
+                // 顺带小件②（零提交 worktree 回收腿）：先跑完再落审计，好把结果写进
+                // 同一行 `abandoned` 事件（不新增事件类型）。
+                reclaimAbandonedWorktree(rt, c).flatMap { wtNote =>
+                  FlowMapEventLog.append(rt.project.workspace, rt.project.name, node.id, "abandoned",
+                    s"node abandoned via NodeEdit (${node.status}${if allowDeadRunning && node.status == NodeLifecycle.Running then "/dead-session" else ""} → cancelled, retained on map)" +
+                      (if d.referrers.nonEmpty then
+                         s"; incident edges detached — repaired referrers: ${d.referrers.mkString(",")}" +
+                           s" (in-mirrors=${d.inMirrors.size} out-refs=${d.outRefs.size} deps-refs=${d.depsRefs.size})"
+                       else "; no incident edges (already a lone node)") +
+                      (if wtNote.nonEmpty then s"; $wtNote" else "")) *>
+                    // P2 G11（spec §3.4）：cancelled 级联清理该会话 pending asks（与
+                    // cancelNode/reap 同款单点——问出问题的节点被放弃，卡片必须关闭）。
+                    rt.engine.cleanupPendingAsks(c.sessionRef).as(abandonReceipt(c))
+                }
+            }
+          case _ =>
+            // 状态未落（并发重激活/移除 → R2 拒写）：文案与本批前逐字一致（未摘边、
+            // 未清理——写点没发生就不该申报已发生的事实）。
+            IO.pure(s"Node '${node.name}' abandoned — cancelled (retained on map, no TTL; result retained)")
+      yield Right(out)
 
     if node.status == NodeLifecycle.Running then
       rt.engine.isRunning(node.id).flatMap {
@@ -1820,6 +1850,77 @@ object NodeEditTool extends Tool:
           doAbandon(allowDeadRunning = true)
       }
     else doAbandon(allowDeadRunning = false)
+
+  /** abandon 回执（顺带小件①，2026-09-14）：「result retained」对**从未开工**的目标
+    * （`startedAt=null ∧ result=null`，考古批实测 4/4 如此）是**空承诺**——abandon 分支
+    * 不写 result（与 `cancelNode` 写 `cancelled[source=…]: reason=…` 不同），那类节点没有
+    * 「已保留的结果」可言。故按「有没有产出」分叉：无产出如实写「已取消并摘边；无产出」，
+    * **有产出件文案逐字照旧**（零回归）。这是本次「以为是 bug」的助燃剂之一（案 F）。 */
+  private def abandonReceipt(c: NodeDef): String =
+    val noOutput = c.startedAt.isEmpty && c.result.isEmpty
+    if noOutput then
+      s"Node '${c.name}' abandoned — cancelled + incident edges detached; no output was produced " +
+        "(nothing to retain, no TTL — the chain sweep archives it once its component is terminal)"
+    else s"Node '${c.name}' abandoned — cancelled (retained on map, no TTL; result retained)"
+
+  /** abandon 的**零提交 worktree 回收腿**（顺带小件②，2026-09-14）：退役节点不留空
+    * 工作目录 + 空分支（考古批实测存量遗留 = 1 个零提交 worktree + 同名空分支，
+    * `git log main..<branch>` 零提交，且**无人工清理入口**）。
+    *
+    * 两条判据**同时**成立才动手（任一不成立 ⇒ 一行不动，返回「不动的原因」）：
+    *   ① 工作目录 `git status --porcelain` **零行**（干净）；
+    *   ② 分支相对基线（main；无 main 回落 HEAD）**零提交**（`rev-list --count <base>..<branch>` = 0）。
+    * 动作 = `git worktree remove <dir>` 然后 `git branch -d <name>`。
+    * 🔴 **禁 `-D` / 禁 `--force`**（2026-09-10 J7 纪律：强删丢弃审计血缘；`branch -d`
+    * 自带的「未合并即拒」正是本腿的第二道保险）。**非零提交 ⇒ 分支与目录原样保留**。
+    *
+    * best-effort：任何异常/非零退出 ⇒ 只回落成「不动 + 原因」（写进 `abandoned` 事件），
+    * **绝不影响 abandon 本身的成功**（状态与审计已落盘）。幂等：目录/分支已不在 ⇒
+    * 前置查询直接给出 no-op。 */
+  private def reclaimAbandonedWorktree(rt: ProjectRuntime, n: NodeDef): IO[String] =
+    n.worktree match
+      case None => IO.pure("")
+      case Some(raw) =>
+        IO.blocking {
+          try
+            val ws = os.Path(rt.project.workspace)
+            def git(cwd: os.Path, args: String*): Either[String, String] =
+              val res = os.proc(Seq("git") ++ args).call(cwd = cwd, check = false, mergeErrIntoOut = true)
+              if res.exitCode != 0 then Left(res.out.trim().take(300)) else Right(res.out.trim())
+            PathUtil.normalizeWorktree(raw) match
+              case Left(_) =>
+                s"worktree value '${raw.take(40)}' is not a normalizable name — left untouched"
+              case Right(bare) =>
+                PathUtil.resolveWorktreeDir(ws, bare) match
+                  case None =>
+                    s"worktree '$bare' is not present in either location — nothing to reclaim"
+                  case Some(dir) =>
+                    val base = if git(ws, "rev-parse", "--verify", "--quiet", "main").isRight then "main" else "HEAD"
+                    git(dir, "status", "--porcelain") match
+                      case Left(e) =>
+                        s"worktree '$bare' left untouched — 'git status' failed: $e"
+                      case Right(st) if st.nonEmpty =>
+                        s"worktree '$bare' left untouched — dirty (${st.linesIterator.size} line(s) in status --porcelain)"
+                      case Right(_) =>
+                        git(ws, "rev-list", "--count", s"$base..$bare") match
+                          case Left(e) =>
+                            s"worktree '$bare' left untouched — commit count unreadable: $e"
+                          case Right(c) if c != "0" =>
+                            s"worktree '$bare' kept — $c commit(s) ahead of $base (non-zero-commit is never reclaimed)"
+                          case Right(_) =>
+                            git(ws, "worktree", "remove", dir.toString) match
+                              case Left(e) =>
+                                s"zero-commit worktree '$bare' left untouched — 'git worktree remove' refused: $e"
+                              case Right(_) =>
+                                git(ws, "branch", "-d", bare) match
+                                  case Left(e) =>
+                                    s"zero-commit worktree '$bare' removed; branch kept — 'git branch -d' refused: $e"
+                                  case Right(_) =>
+                                    s"zero-commit worktree '$bare' removed + branch deleted (-d)"
+          catch
+            case e: Throwable =>
+              s"worktree reclaim skipped — ${Option(e.getMessage).getOrElse(e.toString).take(200)}"
+        }
 
   private def editNode(
     rt: ProjectRuntime,

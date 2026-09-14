@@ -235,6 +235,8 @@ export default {
   'messages.trustedHint': '已开启信任：新消息将自动转发给 agent',
   'messages.loadingOlder': '加载更早消息',
   'messages.loading': '加载中…',
+  // ⑩ 消息流状态行（消息区永不为空）：冷路径回包为空 ⇒ 空态（不是永远转圈）。
+  'messages.noMessages': '暂无消息',
   'messages.loadOlderFailed': '更早消息加载失败，请重试',
   'messages.attachUnsupported': '好友消息暂不支持附件',
   'messages.agentBadge': 'Agent 代发',
@@ -947,6 +949,10 @@ export default {
   'dropbox.tooManyFiles': '附件件数超限：实际 {actual} 件，上限 {limit} 件',
   'dropbox.fileTooLarge': '文件过大{name}：实际 {actual}（{actualBytes} 字节），上限 {limit}',
   'dropbox.notConnected': '未连接到网关——文件未发送，请重试',
+  // ⑩ 消息区状态行（消息区永不为空）：无本地缓存且请求在飞 ⇒ 加载态；
+  // 无缓存且无在飞请求 ⇒ 空态。
+  'dropbox.loadingMessages': '正在加载消息…',
+  'dropbox.noMessages': '暂无消息',
 
   // === Chat History Search ===
   'search.btnTitle': '搜索聊天记录',

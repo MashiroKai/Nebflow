@@ -12,12 +12,25 @@ import { refreshNeblink } from './neblink.js';
 import { bindImeGuard, isImeComposing } from './imeGuard.js';
 // 时制（12h/24h）：与主对话框/好友对话框共享同一偏好与同一实现。
 import { formatHm, bindTimeToggle } from './timeFormat.js';
+// ⑩ L2 本地持久层（作者 2026-09-14 17:21 令「缓存优先直出」）：本面此前**零本地层**
+// ⇒ 首帧恒等挂在 `dropbox-history` 回包上（考古位实测 Δ=0.0–0.1 ms，13/13 全等；
+// 回包静默 ⇒ 永不显示）。本模块补的正是这一层。
+import { loadDeviceMessages, saveDeviceMessages } from './fmDropboxCache.js';
+// ⑩ 合并期滚动位保持（与好友消息面**共用一份实现**，无第二个公式）。
+import { preserveScrollAnchor } from './msgScrollAnchor.js';
 
 // Per-device message cache: deviceId -> DropboxMessage[]
+// ⑩ 语义变更：本对象从「服务端回包的镜像」升级为「**先缓存、后增量合并**的工作集」
+// —— 开窗时先由 `hydrateFromCache` 从 L2 灌入，回包再就地收敛（见 `mergeDeviceMessages`）。
 let dropboxMessages = {};
 
 // Currently open modal device
 let openDeviceId = null;
+
+// ⑩ 已发出 `dropbox-get-history` 且尚未回包的设备集合：决定「无缓存设备」显示
+// **加载态**还是**空态**。这是「仅无本地缓存才走加载态」的唯一判据来源
+// （有缓存的设备首帧就是消息本身，不进加载态 —— 加载态不参与掩盖慢）。
+const historyPending = new Set();
 
 // Pending file selections, keyed by deviceId (FIFO). 附件腿批（2026-09-12）：
 // 单条消息可带 ≤9 件，后端按 index 顺序串行 offer ⇒ 前端按 FIFO 逐件对号入座。
@@ -55,8 +68,25 @@ function formatTime(ts) {
 
 // ===== Open / close modal =====
 
+/** ⑩ 本地缓存 → 内存工作集。**只在内存为空时灌**：已有活体数据（本次会话收到的
+ *  消息）绝不被缓存回退覆盖 —— 缓存是首帧来源，不是真相来源。
+ *  @returns {boolean} 是否真的灌入了缓存 */
+function hydrateFromCache(deviceId) {
+  if ((dropboxMessages[deviceId] || []).length > 0) return false;
+  const cached = loadDeviceMessages(deviceId);
+  if (!cached || cached.length === 0) return false;
+  dropboxMessages[deviceId] = cached;
+  return true;
+}
+
 export function openDropbox(device) {
   openDeviceId = device.deviceId;
+  // ⑩ stale-while-revalidate 的**顺序即契约**：本地缓存渲染必须发生在
+  // `dropbox-get-history` 出帧**之前**。顺序一旦反过来，首帧就又挂回网络腿。
+  if (!device.isLocal) {
+    hydrateFromCache(device.deviceId);
+    historyPending.add(device.deviceId);
+  }
   renderModal(device);
   // Request message history (only for remote devices)
   if (!device.isLocal) {
@@ -369,40 +399,137 @@ function showDropboxNotice(deviceId, text) {
     ts: Date.now(),
     text
   });
-  if (deviceId === openDeviceId) renderMessages(deviceId);
+  // ⑩ 新到消息：走合并路径（非钉底）——阅读中的用户不被推走；已在底部则自然跟随。
+  if (deviceId === openDeviceId) renderMessages(deviceId, { stickBottom: false });
 }
 
 // ===== Message rendering =====
 
-function renderMessages(deviceId) {
+/** 渲染签名：**只有会改变已渲染外观的字段**参与。
+ *  签名相同 ⇒ 复用同一节点对象（身份保持 / 无闪 / 滚动不跳 / 热区不重绑）；
+ *  签名不同（文件传输状态推进、进度推进）⇒ 只重建**那一条**，不是全量重建。 */
+function msgSignature(m) {
+  return [
+    m.kind, m.direction, m.ts, m.text, m.status, m.fileName, m.fileSize,
+    m.savedPath, m.bytesReceived, m.totalBytes, m.downloadedBytes,
+  ].map(v => (v === undefined || v === null ? '' : String(v))).join('\u0001');
+}
+
+/** 复制键热区：**建节点时绑一次**（不再每次渲染后全容器重扫重绑）。 */
+function bindCopyButton(btn) {
+  btn.onclick = async (e) => {
+    e.stopPropagation();
+    try {
+      await navigator.clipboard.writeText(btn.dataset.text);
+      const origSvg = btn.innerHTML;
+      btn.innerHTML = '<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg>';
+      btn.classList.add('copied');
+      setTimeout(() => { btn.innerHTML = origSvg; btn.classList.remove('copied'); }, 1500);
+    } catch (err) {
+      console.error('[dropbox] Copy failed:', err);
+    }
+  };
+}
+
+/** 单条消息 → 元素节点（模板仍是 `renderMessage` 的 HTML **单源**，无第二份）。 */
+function messageNode(m) {
+  const tpl = document.createElement('div');
+  tpl.innerHTML = renderMessage(m);
+  const node = /** @type {HTMLElement | null} */ (tpl.firstElementChild);
+  if (!node) return null;
+  node.dataset.msgId = String(m.msgId);
+  node.dataset.renderSig = msgSignature(m);
+  // 时制热区：与主对话框/好友对话框共享同一偏好与同一实现（timeFormat.js）；
+  // `bindTimeToggle` 以 `data-time-toggle-bound` 幂等。
+  node.querySelectorAll('.dropbox-msg-time').forEach(bindTimeToggle);
+  const copy = /** @type {HTMLElement | null} */ (node.querySelector('.dropbox-msg-copy'));
+  if (copy) bindCopyButton(copy);
+  return node;
+}
+
+/**
+ * ⑩-E keyed diff 渲染：按 `msgId` 复用既有气泡节点，只增删差集、只移动错位节点
+ * —— 不再 `innerHTML=''` 全量重建。因此 `dropbox-history` 回包与增量消息到达时
+ * **已渲染节点身份保持**（节点引用不变、无全量重建、滚动位不重置）。
+ *
+ * 不变量：消息节点按 `msgs` 顺序排列，状态行（若有）恒为**首个子节点**，
+ * 且每个 `msgId` **至多一个**节点。
+ */
+function keyedDiffMessages(container, msgs) {
+  /** @type {Map<string, HTMLElement>} */
+  const existing = new Map();
+  for (const node of [...container.children]) {
+    const e = /** @type {HTMLElement} */ (node);
+    if (e.classList && e.classList.contains('dropbox-flow-status')) continue;
+    const id = e.dataset && e.dataset.msgId;
+    if (id !== undefined && id !== null && id !== '') existing.set(String(id), e);
+  }
+  const wanted = new Set(msgs.map(m => String(m.msgId)));
+  for (const [k, node] of [...existing]) {
+    if (!wanted.has(k)) { node.remove(); existing.delete(k); }
+  }
+  const status = /** @type {HTMLElement | null} */ (container.querySelector('.dropbox-flow-status'));
+  let cursor = status || null;
+  for (const m of msgs) {
+    const k = String(m.msgId);
+    const sig = msgSignature(m);
+    let node = existing.get(k) || null;
+    if (node && node.dataset.renderSig !== sig) {
+      const fresh = messageNode(m);
+      if (!fresh) { existing.delete(k); continue; }
+      node.replaceWith(fresh);
+      node = fresh;
+    } else if (!node) {
+      node = messageNode(m);
+      if (!node) continue;
+    }
+    existing.delete(k);
+    const after = cursor ? cursor.nextSibling : container.firstChild;
+    if (node !== after) container.insertBefore(node, after);
+    cursor = node;
+  }
+}
+
+/**
+ * 消息区状态行 —— **消息区永不为空**（作者令「打开应该能够直接显示，而不是空白」）。
+ * 只有**真正没有本地缓存**的设备才会看到它：有缓存时首帧就是消息本身。
+ * 加载态**只**用于「无缓存且请求在飞」这一种情形，绝不用来掩盖有缓存却慢的路径。
+ */
+function renderStatusRow(container, deviceId, hasMsgs) {
+  container.querySelector('.dropbox-flow-status')?.remove();
+  if (hasMsgs) return;
+  const row = document.createElement('div');
+  row.className = 'dropbox-flow-status';
+  if (historyPending.has(deviceId)) {
+    row.classList.add('loading');
+    row.setAttribute('aria-busy', 'true');
+    row.textContent = t('dropbox.loadingMessages');
+  } else {
+    row.classList.add('empty');
+    row.textContent = t('dropbox.noMessages');
+  }
+  container.appendChild(row);
+}
+
+function renderMessages(deviceId, { stickBottom = true } = {}) {
   const container = document.getElementById('dropbox-messages');
   if (!container) return;
 
   const msgs = dropboxMessages[deviceId] || [];
-  container.innerHTML = msgs.map(m => renderMessage(m)).join('');
-
-  // 时制热区（每次 innerHTML 重建后重绑）：消息时间成为可点击/可键盘触发的
-  // 切换入口，与主对话框/好友对话框共享同一偏好（timeFormat.js）。
-  container.querySelectorAll('.dropbox-msg-time').forEach(bindTimeToggle);
-
-  // Copy button delegation (re-bound each render since innerHTML replaces children)
-  container.querySelectorAll('.dropbox-msg-copy').forEach(btn => {
-    btn.onclick = async (e) => {
-      e.stopPropagation();
-      try {
-        await navigator.clipboard.writeText(btn.dataset.text);
-        const origSvg = btn.innerHTML;
-        btn.innerHTML = '<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg>';
-        btn.classList.add('copied');
-        setTimeout(() => { btn.innerHTML = origSvg; btn.classList.remove('copied'); }, 1500);
-      } catch (err) {
-        console.error('[dropbox] Copy failed:', err);
-      }
-    };
-  });
-
-  // Auto-scroll to bottom
-  container.scrollTop = container.scrollHeight;
+  const apply = () => {
+    keyedDiffMessages(container, msgs);
+    renderStatusRow(container, deviceId, msgs.length > 0);
+  };
+  if (stickBottom) {
+    // 开窗首帧（缓存/空态）：直接钉到底部。
+    apply();
+    container.scrollTop = container.scrollHeight;
+    return;
+  }
+  // 合并/增量路径：以**可视锚点**为准补偿，阅读位置不被推走（作者令「不跳动」）。
+  // 🔴 不能再走「scrollTop += 新高−旧高」：Dropbox 的增量加在**下方**，该公式会把
+  //    正在阅读的用户整体下移一个增量高度（实测 scrollTop 0 → 433、锚点 dm-0 → dm-4）。
+  preserveScrollAnchor(container, apply, 'msgId');
 }
 
 function renderMessage(m) {
@@ -472,6 +599,41 @@ function renderMessage(m) {
 
 // ===== WS message handlers =====
 
+/** ⑩ 回包 → 就地收敛（stale-while-revalidate 的 revalidate 腿）。
+ *
+ *  帧是**全量历史**（网关 `DropboxService.getHistory` 内存直读该设备全量），
+ *  故帧定义**集合与顺序**；缓存里帧未携带的条目 = 服务端已不存在的消息，
+ *  按「服务端是真相来源」丢弃。
+ *
+ *  但**已渲染节点的身份必须保持**：命中同一 `msgId` 的既有对象**就地更新**
+ *  （`Object.assign`，不换引用）并保留其在数组中的原序 —— 这才让 `keyedDiffMessages`
+ *  的签名比较落到「没变 ⇒ 复用同一 DOM 节点」上，而不是「全量重建」。
+ *  @returns {any[]} 收敛后的工作集
+ */
+function mergeDeviceMessages(deviceId, incoming) {
+  const prev = dropboxMessages[deviceId] || [];
+  /** @type {Map<string, any>} */
+  const byId = new Map();
+  for (const m of prev) {
+    const k = (m && m.msgId !== undefined && m.msgId !== null) ? String(m.msgId) : '';
+    if (k && !byId.has(k)) byId.set(k, m);
+  }
+  /** @type {any[]} */
+  const next = [];
+  const seen = new Set();
+  for (const m of incoming) {
+    if (!m || m.msgId === undefined || m.msgId === null) continue;
+    const k = String(m.msgId);
+    if (seen.has(k)) continue; // 帧内去重（保留首条，保序）
+    seen.add(k);
+    const old = byId.get(k);
+    if (old && old !== m) { Object.assign(old, m); next.push(old); }
+    else next.push(m);
+  }
+  dropboxMessages[deviceId] = next;
+  return next;
+}
+
 export function initDropbox() {
   // Incoming/outgoing message (text or file record)
   onMessage('dropbox-message', (msg) => {
@@ -493,7 +655,9 @@ export function initDropbox() {
       }
     }
 
-    if (deviceId === openDeviceId) renderMessages(deviceId);
+    if (deviceId === openDeviceId) renderMessages(deviceId, { stickBottom: false });
+    // ⑩ 增量落盘：下次开窗的首帧来源。写入按每设备上限截尾（fmDropboxCache 单一落点）。
+    saveDeviceMessages(deviceId, dropboxMessages[deviceId] || []);
   });
 
   // 闸位拒绝 / 传输错误（后端结构化错误体：code + actual + limit）
@@ -542,7 +706,7 @@ export function initDropbox() {
     if (m) {
       m.status = success ? 'completed' : 'failed';
       if (savedPath) m.savedPath = savedPath;
-      if (msg.deviceId === openDeviceId) renderMessages(msg.deviceId);
+      if (msg.deviceId === openDeviceId) renderMessages(msg.deviceId, { stickBottom: false });
     }
   });
 
@@ -556,14 +720,18 @@ export function initDropbox() {
       m.bytesReceived = bytesReceived;
       m.totalBytes = totalBytes;
       m.downloadedBytes = bytesReceived;
-      if (msg.deviceId === openDeviceId) renderMessages(msg.deviceId);
+      if (msg.deviceId === openDeviceId) renderMessages(msg.deviceId, { stickBottom: false });
     }
   });
 
-  // Message history response
+  // Message history response —— ⑩ **增量合并**，不再整体替换（整体替换 ⇒ 全量重绘）。
+  // 已渲染的节点身份、滚动位、复制/时间热区全部保持；回包只把差集补进当前视图。
   onMessage('dropbox-history', (msg) => {
-    dropboxMessages[msg.deviceId] = msg.messages || [];
-    if (msg.deviceId === openDeviceId) renderMessages(msg.deviceId);
+    const deviceId = msg.deviceId;
+    historyPending.delete(deviceId);
+    mergeDeviceMessages(deviceId, msg.messages || []);
+    if (deviceId === openDeviceId) renderMessages(deviceId, { stickBottom: false });
+    saveDeviceMessages(deviceId, dropboxMessages[deviceId] || []);
   });
 }
 
@@ -574,7 +742,7 @@ function updateFileMessageStatus(deviceId, transferId, status) {
   const m = msgs.find(x => x.transferId === transferId);
   if (m) {
     m.status = status;
-    if (deviceId === openDeviceId) renderMessages(deviceId);
+    if (deviceId === openDeviceId) renderMessages(deviceId, { stickBottom: false });
   }
 }
 

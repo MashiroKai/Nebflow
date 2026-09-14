@@ -8,6 +8,9 @@ import { key } from './branding.js';
 // 落盘；登出清缓存）。方向是单向的：fmMessageCache 只依赖 branding.js，
 // 本模块依赖它 —— 无环（scripts/check-circular.mjs 守）。
 import { setCacheAccount, clearMessageCache } from './fmMessageCache.js';
+// ⑩ Dropbox 消息缓存（fmDropboxCache.js）：与好友消息缓存**同一登出链、同一时机**。
+// 分区键仍只有一份来源（`fmMessageCache.getCacheAccount()`），此处只补整槽清除。
+import { clearDeviceMessageCache } from './fmDropboxCache.js';
 import { escapeHtml } from './utils.js';
 import { t, getLocale } from './i18n.js';
 import { onMessage, sendWs } from './ws.js';
@@ -156,7 +159,7 @@ export async function fetchNeblinkStatus() {
 
     // ⑨ 消息缓存账号分区（作者 2026-09-12 落盘口径）：登出/凭证失效 ⇒ 清缓存；
     // 分区键 = deviceId|email 复合（任一变化即「另一个账号」，跨账号绝不串数据）。
-    if (wasLoggedIn && !neblinkState.loggedIn) clearMessageCache();
+    if (wasLoggedIn && !neblinkState.loggedIn) { clearMessageCache(); clearDeviceMessageCache(); }
     setCacheAccount(neblinkState.device
       ? `${neblinkState.device.deviceId || ''}|${neblinkState.device.email || ''}`
       : '');
@@ -584,6 +587,7 @@ export function bindNeblinkEvents(rerender) {
       // ⑨ 登出清除（作者口径：消息持久落盘，但换账号/登出必须清）——与头像
       // last-known 同一条链、同一时机，不留「登出后本地仍躺着上一位的聊天记录」。
       clearMessageCache();
+      clearDeviceMessageCache(); // ⑩ 与好友缓存同轮：登出后不留上一位的 Dropbox 记录
       await fetchNeblinkStatus();
       _rerender?.();
     }, 1000);

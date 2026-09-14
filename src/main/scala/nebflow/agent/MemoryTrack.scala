@@ -230,16 +230,16 @@ object MemoryTrack:
         // ── 闸 1（只读）：dry-run 计划。计划文本进日志＝可复算的落地前观测面 ──
         input <- planInput(before)
         plan = MemoryQueue.plan(state0, input)
-        _    <- IO(logger.info(s"[memory-track] gate-1 plan (read-only)\n${plan.render()}"))
+        _    <- logger.info(s"[memory-track] gate-1 plan (read-only)\n${plan.render()}")
         // 目标缺失族（缺文件 / 缺节 / 定位不到条目）：**响亮告警**（A′ 三件之三）。
         // 不是 WARN-and-continue 的客气话：这一族的条目本轮**不可落且不得新建目标文件**，
         // 只写一行日志就没人会去修 ⇒ 同一行里给出「谁该做什么」。
-        _ <- IO.whenA(plan.retryable.nonEmpty)(IO(logger.warn(
+        _ <- IO.whenA(plan.retryable.nonEmpty)(logger.warn(
           s"[memory-track] MISSING TARGET (retryable, no file created): ${plan.retryable.size} note(s) cannot be located — " +
             s"${plan.retryable.take(10).mkString(", ")}${if plan.retryable.size > 10 then s" …(+${plan.retryable.size - 10} more)" else ""}. " +
             "They stay pending (never marked obsolete) and will be retried once the target exists; " +
             "the target file must be created OUTSIDE this track (project-memory initialisation is not this track's job)."
-        )))
+        ))
         attempt <- if dryRunMode then IO.pure(Attempt(Status.DryRun, plan.render(40), "", None))
           else plan.refusal match
             case Some(reason) =>
@@ -257,9 +257,9 @@ object MemoryTrack:
                   ))
                 case Right(set) =>
                   val authorized = authorizedNotes(state0, plan)
-                  IO(logger.info(
+                  logger.info(
                     s"[memory-track] gate-3 snapshot ok: ${set.files.size} file(s) → ${set.dir.toString} (sha256 assertion table written)"
-                  )) *>
+                  ) *>
                     // ── 闸 4 = 写前台账（①，C 批 2026-09-13）：**spawn 之前**先落一条聚合行
                     //    （授权 ref 全集 + 每目标起始 sha256/bytes + 快照目录）。超时后 ④ 的
                     //    判定因此可审计、可复算，不依赖 agent 自快照。落盘失败只 WARN：台账是

@@ -644,6 +644,21 @@ button.fm-req-decline:focus-visible {
   border-top: 1px solid var(--glass-etched-border);
 }
 
+/* ⑩ 消息流状态行（作者 2026-09-14 17:21 令「不要空白」）：消息区**永不为空** ——
+   无本地缓存且尾窗在飞 ⇒ 「加载中…」；回包为空 ⇒ 「暂无消息」。
+   `margin:auto` 让它在纵向 flex 的消息流里居中；取色只用既有主题 token
+   （亮/暗同源，无新字面量色值）。 */
+.fm-flow-status {
+  margin: auto;
+  padding: 6px 10px;
+  font-size: 12px;
+  line-height: 1.5;
+  text-align: center;
+  color: var(--color-frame-text-muted, var(--color-text-muted, #888));
+  background: var(--glass-etched-bg);
+  border-radius: 9999px;
+}
+
 /* 好友消息正文保留换行语义（dropbox 面走纯文本渲染，不共享此条） */
 .fm-msg-bubble { white-space: pre-wrap; }
 
