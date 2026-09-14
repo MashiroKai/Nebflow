@@ -1897,7 +1897,11 @@ function updateBgAgentIndicator(targetSid) {
   if (!el) return;
   const sid = view.sessionId;
   const bgAgents = (sid && state.sessionBgAgents[sid]) || {};
-  const count = Object.keys(bgAgents).length;
+  // Author ruling 2026-09-14 16:30: the badge counts RUNNING rows only (an idle
+  // dispatcher inside its keep-alive window counts zero). Same predicate as the
+  // list (visibleBgAgentEntries) — the two must never disagree (see the view
+  // resolution note above: count>0 with an empty dropdown was a real defect).
+  const count = visibleBgAgentEntries(bgAgents).length;
   if (count > 0) {
     el.classList.remove('hidden');
     el.querySelector('.bgagent-count').textContent = count;
@@ -1958,6 +1962,47 @@ function bgRowState(info) {
   return 'active';
 }
 
+/** Session-id prefix predicate (single point): `dispatcher-` = Project task
+ *  dispatcher session. `node-` = Project Flow Map node session (its panel
+ *  visibility口径 is deliberately UNCHANGED by this batch), `delegate-` /
+ *  `subtask-` = Delegate / SubTask sub-agents. */
+function isDispatcherSession(id) {
+  return typeof id === 'string' && id.startsWith('dispatcher-');
+}
+
+/** Panel admission口径 (author ruling 2026-09-14 16:30, asknb-6d626dd4307a4d31):
+ *  「只显示运行中的，计数也只计算运行中的，空闲不显示。」
+ *
+ *  The dispatcher session survives its turn inside the keep-alive window
+ *  (Defaults.DispatcherIdleWindowMs, default 30min — ProjectActor.scala:702-712
+ *  keeps the registry entry, :888-947 sweeps it later), so the registry
+ *  snapshot legitimately reports it with status Idle. This is a display-side
+ *  (呈现出/计数) rule only — NOT a liveness change: inside the window the
+ *  dispatcher is still alive and still holds the singleton slot, so an empty
+ *  panel does not mean no dispatcher exists.
+ *
+ *  「运行中」 is nailed down as `bgRowState(info) === 'active'` — the bottom
+ *  rung of the done > stuck > frozen > error > idle > active ladder, i.e. not
+ *  Idle / WaitingForUser and not done / stuck / frozen / error. Admitting only
+ *  'active' covers the 2s `agentDone` window too (the row keeps done=true
+ *  before its delayed delete — main.js agentDone handler).
+ *
+ *  `dispatcher-` rows are admitted ONLY while active; every other prefix keeps
+ *  its existing口径 (hidden = not rendered AND not counted — same bucket, same
+ *  口径 as the list, so the badge can never disagree with the dropdown). */
+function isBgRowVisible(id, info) {
+  const dispatcher = isDispatcherSession(id) || isDispatcherSession(info && info.sessionId);
+  if (!dispatcher) return true;
+  return bgRowState(info) === 'active';
+}
+
+/** The visible rows of a bucket — the ONE read used by the badge count, the
+ *  panel-header count and the list rendering. The bucket itself keeps the raw
+ *  set (presentation never rewrites the data面). */
+function visibleBgAgentEntries(bgAgents) {
+  return Object.entries(bgAgents || {}).filter(([id, info]) => isBgRowVisible(id, info));
+}
+
 // Uptime tick: while the dropdown is open, refresh .bg-task-uptime text in
 // place every 15s (no full re-render — keeps keyboard focus). Self-terminates
 // once the dropdown hides, regardless of which close path ran.
@@ -1984,7 +2029,11 @@ function renderBgAgentDropdown() {
   if (!listEl) return;
   const sid = activeView?.sessionId;
   const bgAgents = (sid && state.sessionBgAgents[sid]) || {};
-  const entries = Object.entries(bgAgents);
+  // Author ruling 2026-09-14 16:30: an idle dispatcher row is neither listed nor
+  // counted (it survives in the keep-alive window and the snapshot reports it —
+  // see isBgRowVisible). Header count, empty state and rows all read this one
+  // filtered set — 0 visible ⇒ count 0 + empty text, never a self-contradiction.
+  const entries = visibleBgAgentEntries(bgAgents);
   // Panel header carries the live count (aria-live polite, spec §5).
   const headerEl = dropdownEl ? dropdownEl.querySelector('.bg-dropdown-header') : null;
   if (headerEl) headerEl.textContent = t('subagents.header', { count: entries.length });
