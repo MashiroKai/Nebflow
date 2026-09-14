@@ -4,7 +4,7 @@
  */
 import state from './state.js';
 import { key } from './branding.js';
-import { escapeHtml } from './utils.js';
+import { escapeHtml, createIconsIn } from './utils.js';
 import { t } from './i18n.js';
 import { onMessage, sendWs } from './ws.js';
 import { refreshNeblink } from './neblink.js';
@@ -43,11 +43,14 @@ let pendingUploads = {};
 
 // ===== 附件闸位常量（必须与后端 AttachContract 逐字对齐）=====
 //
-// 🔴 量纲写死：100 MB **十进制** = 100,000,000 B（不是 100 MiB = 104,857,600 B）。
+// 🔴 量纲写死：**1024 MB = 1 GiB = 1,073,741,824 B**（作者 2026-09-14 09:14 原话
+// 「把文件传输的上限增加到一个g。1024MB」⇒ 按 1 GiB 取数，取代 2026-09-12 的
+// 「100 MB 十进制 = 100,000,000 B」口径；单条消息 ≤9 件不变）。
 // 两处口径一旦漂移，前端会放行一个后端必拒的文件（或反之），且都是静默的。
-const ATTACH_MAX_FILE_BYTES = 100000000;
+// 权威面 = 后端 `AttachContract.MaxFileBytes` / `MaxFileBytesLabel`（本处为镜像）。
+const ATTACH_MAX_FILE_BYTES = 1073741824;
 const ATTACH_MAX_PER_MESSAGE = 9;
-const ATTACH_MAX_FILE_LABEL = '100 MB (100,000,000 bytes)';
+const ATTACH_MAX_FILE_LABEL = '1024 MB = 1 GiB (1,073,741,824 bytes)';
 
 function getAuthToken() {
   return localStorage.getItem(key('token')) || '';
@@ -121,12 +124,14 @@ function renderModal(device) {
     </div>` : '';
 
   // Chat tab content
+  // 作者 2026-09-14 09:14 令：删掉引导句（dropbox 拖拽提示那一句，中英双语）。
+  // —— **只删文案，功能零变化**：拖拽目标仍是整个对话框（`.dropbox-modal` 的
+  // dragover/dragleave/drop 三监听，见 bindChatEvents），纸夹键与粘贴两条路径不动。
+  // 该句唯一的宿主 = 原 dropzone 提示条元素，随本次一并整体删除 ⇒ 无死 key
+  // （i18n 双语 entry 同批删）+ 无死 CSS（原提示条规则同批删）。
   const chatHtml = hasChat ? `
     <div class="dropbox-tab-content active" id="dropbox-tab-chat">
       <div class="dropbox-messages" id="dropbox-messages"></div>
-      <div class="dropbox-dropzone" id="dropbox-dropzone">
-        <span>${t('dropbox.dropHint')}</span>
-      </div>
       <div class="dropbox-input-bar">
         <input type="text" id="dropbox-text-input" class="cfg-input" placeholder="${t('dropbox.inputPlaceholder')}" autocomplete="off">
         <button id="dropbox-attach-btn" class="icon-btn dropbox-attach-btn" title="${t('dropbox.attachFile')}" aria-label="${t('dropbox.attachFile')}"><i data-lucide="paperclip"></i></button>
@@ -163,6 +168,16 @@ function renderModal(device) {
     </div>`;
 
   document.body.appendChild(overlay);
+
+  // 🔴 件 1 真因面（2026-09-14 作者报「附件的按钮不可见」）：图标渲染必须显式触发。
+  // 本模态是**运行时**创建的 DOM，而全局的 `lucide.createIcons()`（main.js:269）只在
+  // 启动时扫一次静态 DOM —— 模态里的 `<i data-lucide="paperclip">` 从未被替换成 `<svg>`。
+  // 后果不是「图标缺失」而是**整键不可见**：`.icon-btn` 是 `background:none` +
+  // `border:1px solid transparent` + `color:var(--color-frame-text-muted)`，唯一的可见
+  // 像素来自 svg 的 `currentColor` 描边 ⇒ 空 `<i>` 下留一个 32×32 全透明热区。
+  // 同族先例：messages.js 的好友窗（renderChatModal 末尾 `createIconsIn(overlay)`）、
+  // daemons/contacts/scheduled-task 等所有运行时面板都显式调它。
+  createIconsIn(overlay);
 
   // Bind events
   document.getElementById('dropbox-close-btn').onclick = closeDropbox;
@@ -339,7 +354,7 @@ function clearPendingFileQueue(deviceId) {
 }
 
 /**
- * 用户选/拖了文件 —— **闸位在本地先判一次**（件数 ≤9、单件 ≤100,000,000 B），
+ * 用户选/拖了文件 —— **闸位在本地先判一次**（件数 ≤9、单件 ≤1,073,741,824 B），
  * 超限**可见拒绝并回显实际值**（禁静默丢弃、禁只 console.error）。
  * 后端闸位仍在（本地闸只是提前反馈，不是唯一防线）。
  */

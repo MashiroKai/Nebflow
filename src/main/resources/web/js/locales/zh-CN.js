@@ -950,7 +950,6 @@ export default {
   // Dropbox
   'dropbox.tabChat': '对话',
   'dropbox.tabDesc': '描述',
-  'dropbox.dropHint': '拖拽文件到对话框任意位置，或用纸夹键选择',
   'dropbox.attachFile': '选择文件',
   'dropbox.inputPlaceholder': '输入消息…',
   'dropbox.send': '发送',

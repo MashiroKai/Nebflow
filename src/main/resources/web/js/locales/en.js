@@ -952,7 +952,6 @@ export default {
   // Dropbox
   'dropbox.tabChat': 'Chat',
   'dropbox.tabDesc': 'Description',
-  'dropbox.dropHint': 'Drop a file anywhere in this dialog, or use the paperclip button',
   'dropbox.attachFile': 'Choose file',
   'dropbox.inputPlaceholder': 'Type a message…',
   'dropbox.send': 'Send',

@@ -129,26 +129,26 @@ class AttachGateServiceSpec extends CatsEffectSuite:
     }
   }
 
-  test("服务面闸位：100,000,001 B ⇒ ATTACH_TOO_LARGE + actual=100000001 + limit=100000000；100,000,000 B 通过") {
+  test("服务面闸位：1,073,741,825 B ⇒ ATTACH_TOO_LARGE + actual=1073741825 + limit=1073741824；1,073,741,824 B 通过") {
     withStack { (ms, svc) =>
       for
         _ <- ms.upsertPeer(peer("peer1"))
-        over <- svc.offerFiles("peer1", List(spec("big.bin", 100_000_001L)))
-        atLimit <- svc.offerFiles("peer1", List(spec("exact.bin", 100_000_000L)))
+        over <- svc.offerFiles("peer1", List(spec("big.bin", 1_073_741_825L)))
+        atLimit <- svc.offerFiles("peer1", List(spec("exact.bin", 1_073_741_824L)))
       yield
         over match
           case Left(err) =>
             assertEquals(err.code, AttachContract.Codes.AttachTooLarge)
-            assertEquals(err.actual, Some(100_000_001L))
-            assertEquals(err.limit, Some(100_000_000L))
-          case Right(ids) => fail(s"100,000,001 B must be rejected, got $ids")
+            assertEquals(err.actual, Some(1_073_741_825L))
+            assertEquals(err.limit, Some(1_073_741_824L))
+          case Right(ids) => fail(s"1,073,741,825 B must be rejected, got $ids")
         atLimit match
-          case Right(ids) => assertEquals(ids.size, 1, "边界正控：100,000,000 B 必须被接受")
-          case Left(err)  => fail(s"100,000,000 B must be accepted (正控防线量纲写错), got ${err.render}")
+          case Right(ids) => assertEquals(ids.size, 1, "边界正控：1,073,741,824 B 必须被接受")
+          case Left(err)  => fail(s"1,073,741,824 B must be accepted (正控防线量纲写错), got ${err.render}")
         println(
-          s"[READING C1] service gate: 100,000,001 B -> code=${over.left.toOption.map(_.code).getOrElse("-")} " +
+          s"[READING C1] service gate: 1,073,741,825 B -> code=${over.left.toOption.map(_.code).getOrElse("-")} " +
             s"actual=${over.left.toOption.flatMap(_.actual).getOrElse(-1L)} limit=${over.left.toOption.flatMap(_.limit).getOrElse(-1L)}\n" +
-            s"[READING C1] service gate: 100,000,000 B -> ${if atLimit.isRight then "ACCEPTED" else "REJECTED (WRONG)"} " +
+            s"[READING C1] service gate: 1,073,741,824 B -> ${if atLimit.isRight then "ACCEPTED" else "REJECTED (WRONG)"} " +
             s"transfers=${atLimit.toOption.map(_.size).getOrElse(-1)}"
         )
     }

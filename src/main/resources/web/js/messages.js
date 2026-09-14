@@ -712,7 +712,7 @@ const ATT_NOTE_KEY = {
   unreadable: 'messages.attachUnreadable',
 };
 
-/** 人类可读体积（十进制，与作者给定数的「100 MB = 100,000,000 B」同量纲）。 */
+/** 人类可读体积（十进制，与作者给定数的「1024 MB = 1 GiB = 1,073,741,824 B」同量纲）。 */
 function fmtBytes(n) {
   const v = Number(n);
   if (!isFinite(v) || v < 0) return '';

@@ -850,7 +850,9 @@ final class FriendService(
               }
       loop(plan)
 
-    // 逐件**顺序**上传（件数 ≤9，总字节 ≤900 MB）：显式递归，不用 foldLeftM
+    // 逐件**顺序**上传（件数 ≤9，总字节 ≤9 GiB —— 单件上限 1024 MB = 1 GiB × 9，2026-09-14 r2 口径）。
+    // 每件内部按 4 MiB 分块 ⇒ 单块在内存里的峰值 = 4 MiB（`readRange` 读一块，
+    // 裸字节 `BodyPublishers.ofByteArray` 直发、**不经 base64**），与文件大小无关。
     // （2026-09-14 编译教训：该形状下类型推断会塌成 Either[Any,Any]）。
     def loopFiles(rest: List[os.Path], acc: List[String]): IO[Either[String, List[String]]] =
       rest match

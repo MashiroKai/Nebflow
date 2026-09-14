@@ -2600,7 +2600,7 @@ object AgentCore:
     "NodeMessage" ->
       """Node course-correction is now Mail — use `Mail(address="node:<节点id>", message=<补充文本>)` (same engine semantics: running = injected at the next turn boundary, wiring/pending = appended to the node task, terminal = refused).""",
     "TransferFile" ->
-      """TransferFile retired 2026-09-14 (#145) — its capabilities moved into SendMessage: files to another of the user's devices use `SendMessage(to="device:<deviceName|deviceId>", message=<note>, attachments=[<absolute local paths>])` (chunked + both-side SHA-256, max 9 files x 100 MB decimal each); local copies use `SendMessage(to="local", attachments=[...], targetDir=<dir>)`. Device-to-device pulls with a remote source (A->B) are retired with no replacement (0 recorded uses; the author accepted the loss, U-6)."""
+      """TransferFile retired 2026-09-14 (#145) — its capabilities moved into SendMessage: files to another of the user's devices use `SendMessage(to="device:<deviceName|deviceId>", message=<note>, attachments=[<absolute local paths>])` (chunked + both-side SHA-256, max 9 files x 1024 MB = 1 GiB each); local copies use `SendMessage(to="local", attachments=[...], targetDir=<dir>)`. Device-to-device pulls with a remote source (A->B) are retired with no replacement (0 recorded uses; the author accepted the loss, U-6)."""
   )
 
   /** 分发器固定工具集（§C.1）：Node 三件（List/Edit/Cancel）+ 读四件

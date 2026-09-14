@@ -5,40 +5,43 @@ import munit.CatsEffectSuite
 /**
  * 附件闸位（作者数三条）逐条判定 —— 硬判据 ①。
  *
+ * 口径 = 作者 2026-09-14 09:14「把文件传输的上限增加到一个g。1024MB」⇒ 单件
+ * `1024 MB = 1 GiB = 1,073,741,824 B`；件数 ≤9 不变。
+ *
  * 边界值一律**实测**，禁静态论证：
- *   - 单文件：`100,000,000 B` **通过** / `100,000,001 B` **拒绝**（十进制量纲，非 MiB）；
+ *   - 单文件：`1,073,741,824 B` **通过** / `1,073,741,825 B` **拒绝**（+1 B）；
  *   - 件数：`9` 通过 / `10` 拒绝；
  *   - 超限错误体**回显实际值**（`actual`）与上限（`limit`）。
  */
 class AttachLimitsSpec extends CatsEffectSuite:
 
-  private val MaxBytes = 100_000_000L
+  private val MaxBytes = 1_073_741_824L
 
-  test("量纲冻结：上限 = 100 MB 十进制 = 100,000,000 B（≠ 100 MiB = 104,857,600 B）") {
-    assertEquals(AttachContract.MaxFileBytes, 100_000_000L)
+  test("量纲冻结：上限 = 1024 MB = 1 GiB = 1,073,741,824 B（= 1024 MiB）") {
+    assertEquals(AttachContract.MaxFileBytes, 1_073_741_824L)
     assertEquals(AttachContract.MaxAttachmentsPerMessage, 9)
-    assert(AttachContract.MaxFileBytes != 100L * 1024 * 1024, "must not be the binary MiB value")
+    assertEquals(AttachContract.MaxFileBytes, 1024L * 1024 * 1024, "1024 MB = 1 GiB = 2^30 B")
+    assert(AttachContract.MaxFileBytes != 1_024_000_000L, "must not be 1024 decimal MB (1.024e9)")
   }
 
-  test("单文件边界：100,000,000 B 通过（正控，防量纲写错）") {
+  test("单文件边界：1,073,741,824 B 通过（正控，防量纲写错）") {
     assertEquals(AttachContract.checkFileSize(MaxBytes), Right(()))
   }
 
-  test("单文件边界：100,000,001 B 拒绝（+1 B）且回显实际值 + 上限") {
+  test("单文件边界：1,073,741,825 B 拒绝（+1 B）且回显实际值 + 上限") {
     AttachContract.checkFileSize(MaxBytes + 1) match
       case Left(err) =>
         assertEquals(err.code, AttachContract.Codes.AttachTooLarge)
         assertEquals(err.actual, Some(MaxBytes + 1))
         assertEquals(err.limit, Some(MaxBytes))
-        assert(err.message.contains("100000001"), s"message must echo the actual byte count: ${err.message}")
-        assert(err.message.contains("100,000,000"), s"message must echo the limit: ${err.message}")
-      case Right(_) => fail("100,000,001 B must be rejected")
+        assert(err.message.contains("1073741825"), s"message must echo the actual byte count: ${err.message}")
+        assert(err.message.contains("1,073,741,824"), s"message must echo the limit: ${err.message}")
+      case Right(_) => fail("1,073,741,825 B must be rejected")
   }
 
-  test("单文件边界：100 MiB（104,857,600 B）必须被拒 —— 量纲混用会被这一条抓住") {
-    AttachContract.checkFileSize(104_857_600L) match
-      case Left(err) => assertEquals(err.code, AttachContract.Codes.AttachTooLarge)
-      case Right(_)  => fail("100 MiB must be rejected (the limit is 100 MB decimal)")
+  test("旧上限已作废（回归）：100 MB 十进制 / 100 MiB 现都必须通过 —— 不留 100 MB 假上限") {
+    assertEquals(AttachContract.checkFileSize(100_000_000L), Right(()))
+    assertEquals(AttachContract.checkFileSize(104_857_600L), Right(()))
   }
 
   test("件数边界：9 件通过（正控）") {
@@ -94,14 +97,14 @@ class AttachLimitsSpec extends CatsEffectSuite:
     assertEquals(AttachContract.plan(0, chunk), Nil)
   }
 
-  test("100,000,000 B 的块数（4 MiB 块）= 24，末块 = 100,000,000 − 23×4,194,304 = 3,531,008") {
+  test("1,073,741,824 B 的块数（4 MiB 块）= 256 整除，无短末块") {
     val plan = AttachContract.plan(AttachContract.MaxFileBytes)
-    assertEquals(plan.size, 24)
+    assertEquals(plan.size, 256)
     assertEquals(plan.head.bytes, AttachContract.ChunkSize)
     assertEquals(plan.zip(plan.tail).map((a, b) => b.offset - a.offset).distinct, List(AttachContract.ChunkSize.toLong))
-    assertEquals(plan.last.offset, 96_468_992L)
+    assertEquals(plan.last.offset, 1_069_547_520L)
     assertEquals(plan.last.offset + plan.last.bytes, AttachContract.MaxFileBytes)
-    assertEquals(plan.last.bytes, 3_531_008)
+    assertEquals(plan.last.bytes, AttachContract.ChunkSize)
   }
 
 end AttachLimitsSpec

@@ -24,8 +24,8 @@ import java.time.format.DateTimeFormatter
  *     附件既不上传也不静默丢弃（§5.1-C 静默不达是本条唯一禁形）。
  *   - `to = device:<deviceName|deviceId>`：发给**同账号**的另一台设备（G5：设备面
  *     「文本+附件」消息面既有，本批工具化）。字节走 Dropbox 分块通道（P2P 主腿 +
- *     relay 兜底、每块校验、整件双侧 sha256、断点续传；单件 ≤100,000,000 B 十进制、
- *     单条 ≤9 件，超限 fail-fast 回显实际值）；接收端 auto-accept，落对端 Downloads、
+ *     relay 兜底、每块校验、整件双侧 sha256、断点续传；单件 ≤1,073,741,824 B（1024 MB
+ *     = 1 GiB，作者 2026-09-14 09:14 数）、单条 ≤9 件，超限 fail-fast 回显实际值）；接收端 auto-accept，落对端 Downloads、
  *     面板可见。**不套**好友限速/权限档（U-2），带附件时落一条审计行
  *     （`RelayExecAudit` 同族）。
  *   - `to = local`：本机搬运显式分支（R3=3b）——把 `attachments` 复制进 `targetDir`
@@ -80,7 +80,7 @@ object FriendMessageTool extends Tool:
 ## Parameters
 - to (string, required): `device:<deviceName|deviceId>`, `local`, or a friend (bare remark/username/email/displayName, or explicit `friend:<…>`).
 - message (string, required): text sent to friend/device targets, max 4000 characters, plain text. Ignored for `local`. May be EMPTY for a friend target **only when** `attachments` is non-empty (the server then generates the placeholder line the receiving client shows).
-- attachments (array of string, optional): ABSOLUTE paths of files on this machine. Friend targets: max 9 files per message, each up to 100 MB (100,000,000 bytes, decimal) — the same authored limits as the device leg; the file is uploaded in 4 MiB chunks (per-chunk checksum, whole-file SHA-256) before the message is sent. If the server does not support attachments (or support cannot be verified) the whole send is refused with a readable reason and NOTHING is uploaded. Device targets: same limits, transfer over the device channel. `local`: required — these files are copied into `targetDir`.
+- attachments (array of string, optional): ABSOLUTE paths of files on this machine. Friend targets: max 9 files per message, each up to 1024 MB = 1 GiB (1,073,741,824 bytes) — the same authored limits as the device leg; the file is uploaded in 4 MiB chunks (per-chunk checksum, whole-file SHA-256) before the message is sent. If the server does not support attachments (or support cannot be verified) the whole send is refused with a readable reason and NOTHING is uploaded. Device targets: same limits, transfer over the device channel. `local`: required — these files are copied into `targetDir`.
 - targetDir (string, optional): destination directory for `local` (created if missing). Device targets: optional — a request only, the receiver decides (it accepts only directories on its own allow-list; anything else is rejected with a structured code and nothing is written). Sent only after the peer confirms support; if the peer does not, the request stays off the wire and the files land in the peer's Downloads (the result says so).
 - overwrite (boolean, optional, default false): `local` only — replace existing files in `targetDir`.
 
@@ -101,7 +101,7 @@ When the user's agent-messaging mode is `ask` (or the auto rate limit was hit), 
       "attachments" -> Json.obj(
         "type"  -> "array".asJson,
         "items" -> Json.obj("type" -> "string".asJson),
-        "description" -> "Absolute local file paths. Friend and device: ≤9 files, each ≤100 MB (100,000,000 bytes, decimal); friend uploads go in 4 MiB chunks with per-chunk checksum + whole-file SHA-256. Friend sends are refused (nothing uploaded) when the server lacks the attachment route. Local: required (copied into targetDir).".asJson
+        "description" -> "Absolute local file paths. Friend and device: ≤9 files, each ≤1024 MB = 1 GiB (1,073,741,824 bytes); friend uploads go in 4 MiB chunks with per-chunk checksum + whole-file SHA-256. Friend sends are refused (nothing uploaded) when the server lacks the attachment route. Local: required (copied into targetDir).".asJson
       ),
       "targetDir" -> Json.obj(
         "type"        -> "string".asJson,
