@@ -212,6 +212,12 @@ class LoopExecutionLegSpec extends CatsEffectSuite:
   private def waitTerminal(rt: ProjectRuntime, id: String): IO[Unit] =
     waitUntil(30.seconds)(rt.store.snapshot.map(_.nodes.get(id).exists(n => NodeLifecycle.Terminal.contains(n.status))))
 
+  /** 等待某节点的 `loop-round` 事件落盘（= `verifierFail` 走到「已处置」的唯一同步点）。
+    * ⚠ **不能等「节点终态」**：执行腿落地后驱动方被复位出 completed（那正是修复本体），
+    * 终态等待会永远超时——旧口径下「fail 恒 completed 且无人复位」才是终态可等的。 */
+  private def waitLoopRound(ws: os.Path, id: String): IO[Unit] =
+    waitUntil(30.seconds)(readAudit(ws).map(_.exists((t, nid, _) => t == "loop-round" && nid == id)))
+
   override def beforeEach(context: munit.BeforeEach): Unit = ProjectRuntimeRegistry.clear
   override def afterEach(context: munit.AfterEach): Unit = ProjectRuntimeRegistry.clear
 
@@ -235,7 +241,7 @@ class LoopExecutionLegSpec extends CatsEffectSuite:
           failVerifier("n-ver", NodeLifecycle.Wiring, loopRound = 0, deliveredTo = List("n-work")),
           mkNode("n-land", "n-land", NodeLifecycle.Wiring))
         _ <- rt.engine.startNode("n-ver")
-        _ <- waitTerminal(rt, "n-ver")
+        _ <- waitLoopRound(ws, "n-ver")
         ver <- rt.store.snapshot.map(_.nodes("n-ver"))
         work <- rt.store.snapshot.map(_.nodes("n-work"))
         land <- rt.store.snapshot.map(_.nodes("n-land"))

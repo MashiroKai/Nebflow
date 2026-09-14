@@ -3648,8 +3648,13 @@ class NodeEngine(
     * `rounds` = 本次熔断的轮次读数（1-based；调用方传**消费后**的轮次，故轮次维熔断
     * 恒读作 `rounds=<maxRounds>/<maxRounds>`，即那句话字面意义上的「3/3 用尽」）。
     *
-    * 幂等：入口 fresh-read 复核驱动方是否已被终态化（并发/重复命中 ⇒ 只留一句 INFO，
-    * 零重复事件、零重复失败通知）。 */
+    * 幂等：入口 fresh-read 复核驱动方是否**已由另一次熔断终态化**（⇒ 只留一句 INFO，
+    * 零重复事件、零重复失败通知）。
+    *
+    * ⚠ 复核对的是 `failed`/`cancelled` 两个**熔断产物态**，**不是** `Terminal` 全集：
+    * nrloop 的常态恰恰是「驱动方 `completed` 且判词 = fail」（`verdict ≠ 节点状态`），
+    * 若把 completed 也当「已处理」，本批要修的 ② 又会被自己的幂等闸吞掉（实测：
+    * 终态 fail-verifier 的时间维熔断被跳过，节点停留 completed、零事件、零通知）。 */
   private def circuitBreakLoop(v: NodeDef, targetId: Option[String], reason: String, now: Long, rounds: Int): IO[Unit] =
     val maxRounds = nebflow.shared.Defaults.LoopMaxRounds
     val metering = s"rounds=$rounds/$maxRounds wallClockMaxMs=${nebflow.shared.Defaults.LoopMaxWallClockMs}"
@@ -3663,8 +3668,9 @@ class NodeEngine(
         // ② + ④：既有 failed 链（deliverFailed → merge 兜底/停等留痕 → dispatchNotify failed）
         failNode(v.id, msg)
     store.getNode(v.id).flatMap {
-      case Some(fresh) if NodeLifecycle.Terminal.contains(fresh.status) =>
-        logger.info(s"Node '${v.name}' (${v.id}) loop circuit-break skipped — the fail-route driver is already terminal (idempotent)")
+      case Some(fresh) if fresh.status == NodeLifecycle.Failed || fresh.status == NodeLifecycle.Cancelled =>
+        logger.info(s"Node '${v.name}' (${v.id}) loop circuit-break skipped — the fail-route driver is already " +
+          s"terminalized by another breaker (status=${fresh.status}, idempotent)")
       case _ => drive
     }
 
@@ -3935,9 +3941,10 @@ class NodeEngine(
               // 判词感知（本批 ③）：completed 的 fail-verifier 的 result 是**判词**不是产物。
               case Some(up) if up.role == NodeRoles.Verifier
                   && up.lastVerdict.contains(VerdictFail) && up.status == NodeLifecycle.Completed =>
-                IO.pure(Some(Left((s"${n.id}::$upId", n.id ->
-                  s"skipped-by-verdict: upstream verifier '${up.name}' (${up.id}) lastVerdict=fail — " +
-                    "its result is a rejection (never a deliverable); NOT redelivered (re-run the judged target first)"))))
+                IO.pure(Some(Left((
+                  s"${n.id}::$upId",
+                  n.id -> (s"skipped-by-verdict: upstream verifier '${up.name}' (${up.id}) lastVerdict=fail — " +
+                    "its result is a rejection (never a deliverable); NOT redelivered (re-run the judged target first)")))))
               case Some(up) if up.status == NodeLifecycle.Completed && up.result.exists(_.trim.nonEmpty) =>
                 deliverOutTo(up, n.id, up.result.get)
                   .as(Some(Right(n.id -> s"orphan barrier healed: redelivered completed upstream '${up.name}' (${up.id})")))
@@ -3947,13 +3954,14 @@ class NodeEngine(
       }.map(_.flatten)
       healed = dispatched.collect { case Right(idDesc) => idDesc }
       skips = dispatched.collect { case Left(keyIdDesc) => keyIdDesc }
-      _ <- healed.traverse_((id, desc) => FlowMapEventLog.append(workspace, projectName, id, "settle-sweep", desc))
+      _ <- healed.traverse_ { case (id, desc) => FlowMapEventLog.append(workspace, projectName, id, "settle-sweep", desc) }
       // 挡投单发（每轮全量替换为当轮挡投集 ⇒ 解除即出集；同一停滞期只写一条事件）
       freshSkips <- verdictHealSkips.modify { old =>
         val keys = skips.map(_._1).toSet
         (keys, skips.filterNot(s => old.contains(s._1)))
       }
-      _ <- freshSkips.traverse_((_, idDesc) => FlowMapEventLog.append(workspace, projectName, idDesc._1, "settle-sweep", idDesc._2))
+      _ <- freshSkips.traverse_ { case (_, (id, desc)) =>
+        FlowMapEventLog.append(workspace, projectName, id, "settle-sweep", desc) }
       // 第 2 步：重读后资格判定（补投可能已归零部分 barrier）+ fork 启动
       s1 <- store.snapshot
       actives = s1.nodes.values.filter(n =>
