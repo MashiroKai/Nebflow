@@ -464,7 +464,9 @@
   border-bottom-left-radius: 4px;
 }
 
-/* meta pill — 逐条搬主对话框 .duration-badge（chat.css:1138-1149） */
+/* meta pill — 逐条搬主对话框 .duration-badge（chat.css:1138-1149）
+   三窗口 footer 统一（2026-09-14 作者七答 · 方向 A）：S01 补齐主对话已有的
+   `user-select:none` / `width:fit-content`（消除隐式默认，友/设备原缺）。 */
 .fm-msg-meta,
 .dropbox-msg-meta {
   display: inline-flex;
@@ -477,14 +479,52 @@
   box-shadow: 0 0 0 1px rgba(0, 0, 0, 0.04), 0 1px 3px rgba(0, 0, 0, 0.03);
   font-size: 11px;
   color: var(--color-text-muted, #888);
+  user-select: none;
+  width: fit-content;
 }
 
-/* time — 10px 等宽栈 + tabular-nums（主对话框 chat.css:1157-1162） */
+/* pill 暗档（S04/A2）：主对话有专属暗档覆盖（chat.css:1564-1567），友/设备两面
+   原先沿亮档值 ⇒ 黑 alpha 叠暗底「描边几乎不可见」。此处补上主对话取值（单环、
+   去 3px 落影），三面同值。 */
+@media (prefers-color-scheme: dark) {
+  .fm-msg-meta,
+  .dropbox-msg-meta {
+    background: rgba(255, 255, 255, 0.04);
+    box-shadow: 0 0 0 1px rgba(255, 255, 255, 0.06);
+  }
+}
+
+/* time — 10px 等宽栈 + tabular-nums（主对话框 chat.css:1157-1162）
+   S06/S07：取色与不透明度收敛到主对话口径 = `--color-text` + opacity .35
+   （原先友/设备只声明字号/字体族/数字特性，颜色继承 pill 的 muted **实色**、
+   且无 opacity ⇒ 与主对话「半透明浅档」不一致）。R6 = 保持现状「浅」档。 */
 .fm-msg-time,
 .dropbox-msg-time {
   font-size: 10px;
   font-family: ui-monospace, SFMono-Regular, monospace;
   font-variant-numeric: tabular-nums;
+  color: var(--color-text);
+  opacity: 0.35;
+  cursor: pointer;
+  transition: opacity 0.15s;
+}
+
+@media (prefers-color-scheme: dark) {
+  .fm-msg-time,
+  .dropbox-msg-time { opacity: 0.28; }
+}
+
+/* 分隔符（S16/A5）：主对话口径 = 真 DOM 节点 1px×10px currentColor @ .2 +
+   `flex-shrink:0`（chat.css:1150-1156）。设备面原先**无任何分隔符**（仅 6px flex
+   gap）⇒ 新增真节点；好友面原用 `.fm-msg-actions::before` 伪元素（A 方向保留，
+   视觉等价）但缺 `flex-shrink:0`，在 friends.css 补。 */
+.fm-msg-divider,
+.dropbox-msg-divider {
+  width: 1px;
+  height: 10px;
+  background: currentColor;
+  opacity: 0.2;
+  flex-shrink: 0;
 }
 
 /* 12/24 小时制切换热区（三面共用；与 chat.css 的 .duration-badge-time 同款反馈，

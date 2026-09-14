@@ -154,23 +154,36 @@
    max-width token（--msg-bubble-max-w = 78%，与好友面同 token）。
    本文件只留 dropbox 面专有声明：文件卡子层、复制键、dropzone 提示条。 */
 
-/* Inline copy button */
+/* Inline copy button —— 三窗口 footer 统一（2026-09-14 作者七答 · 方向 A）：
+   S08/S09/S10 收敛到主对话口径（chat.css:783-789）= 13×13 盒 / padding 1px / svg 11px
+   / r4 / `--color-text` / **常驻** opacity .35；hover 仅透明度 .6（去色变）。
+   R2 顺带：设备面原「平时隐藏（opacity:0）、悬停才显」⇒ 改常驻半透明，同时消除
+   「Tab 可聚焦但屏幕零可见」的可达性缺陷；揭示规则
+   `.dropbox-msg:hover .dropbox-msg-copy{opacity:1}` 已随之删除（常显档下无意义）。 */
 .dropbox-msg-copy {
   display: inline-flex;
   align-items: center;
   justify-content: center;
+  width: 13px;
+  height: 13px;
   border: none;
   background: transparent;
   cursor: pointer;
-  opacity: 0;
-  color: var(--color-frame-text-muted, #aaa);
-  padding: 2px;
+  opacity: 0.35;
+  color: var(--color-text);
+  padding: 1px;
   border-radius: 4px;
   transition: opacity 0.15s;
 }
-.dropbox-msg-copy:hover { color: var(--color-frame-text, #666); }
+.dropbox-msg-copy svg { width: 11px; height: 11px; }
+.dropbox-msg-copy:hover { opacity: 0.6; }
 .dropbox-msg-copy.copied { color: #34c759; opacity: 1; }
-.dropbox-msg:hover .dropbox-msg-copy { opacity: 1; }
+
+/* S13 触摸端兜底（好友面同款声明在 friends.css）：常显档下天然可见，本规则为零成本
+   显式声明，防将来回退到揭示式显隐时触摸端不可达。 */
+@media (hover: none) {
+  .dropbox-msg-copy { opacity: 1; }
+}
 
 /* File card — 卡片本体是共享类 .msg-file-card（sapphire.css，③A5 单一类名），
    本处只留 dropbox 面的子层排版。 */
