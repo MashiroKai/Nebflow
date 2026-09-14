@@ -134,16 +134,32 @@ lazy val root = (project in file("."))
       )
     },
 
-    // Java options
-    javaOptions ++= Seq(
-      "--add-opens", "java.base/java.lang=ALL-UNNAMED",
-      "-XX:+UseZGC",
-      "-XX:+ZGenerational",
-      "-Xms512m",
-      "-Xmx2g",
-      "-XX:+UseStringDeduplication",
-      "-XX:+AlwaysPreTouch",
-    ),
+    // Java options —— 本工程 JVM 选项的唯一来源（🔴 禁在第二处散落同名选项）。
+    // JVM 不会自建 -Xlog:gc:file / -XX:HeapDumpPath 的父目录，而 fork 的 JVM 是在
+    // javaOptions 求值之后才 spawn ⇒ 目录前置创建只能放在本单点、且先于 JVM 启动。
+    // 两条路径均为仓内相对形态（.nebflow/ 由根 .gitignore 整体覆盖；禁用户绝对路径）。
+    javaOptions ++= {
+      IO.createDirectory(baseDirectory.value / ".nebflow" / "logs" / "jvm")
+      Seq(
+        "--add-opens", "java.base/java.lang=ALL-UNNAMED",
+        "-XX:+UseZGC",
+        "-XX:+ZGenerational",
+        "-Xms512m",
+        // 堆上限按机器比例（12.5%：本机 16GB ⇒ 2GB，与旧 -Xmx2g 等价、零行为变化，
+        // 换机自适应）。作者已显式拒绝「升 3GB」⇒ 🔴 不得取 25%（本机即 4GB）；
+        // 日后加大配额 = 只改这一个数（须新裁）。🔴 不得与任何 -Xmx 并存（会被覆盖成死码）。
+        "-XX:MaxRAMPercentage=12.5",
+        "-XX:+UseStringDeduplication",
+        "-XX:+AlwaysPreTouch",
+        // OOM 即硬退出（失败语义 = 硬退出 → 看门狗拉起 → 约几分钟不可用；作者已知并接受）。
+        "-XX:+ExitOnOutOfMemoryError",
+        // OOM 时转储；单发磁盘代价 ≈ 堆大小（本机 ≈ 2GB）。路径为相对形态。
+        "-XX:+HeapDumpOnOutOfMemoryError",
+        "-XX:HeapDumpPath=.nebflow/logs/jvm/",
+        // GC 日志自带上限轮转（5 个文件 × 10M），同样落相对运行时路径。
+        "-Xlog:gc*:file=.nebflow/logs/jvm/gc.log:time,uptime:filecount=5,filesize=10M",
+      )
+    },
 
     // Assembly settings (fat JAR fallback)
     assembly / assemblyMergeStrategy := {
