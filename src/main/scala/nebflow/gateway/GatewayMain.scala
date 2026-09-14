@@ -727,10 +727,21 @@ object GatewayMain extends IOApp:
                                       // Check if NebLink Server is configured; if so, create client for NebLink-based discovery
                                       val neblinkConfigAtBoot = neblinkService.neblinkConfig.unsafeRunSync()
                                       // 隔离护栏（2026-09-11 作者裁定，见 EnrollGuard）：非默认 home
-                                      // 的实例（--home / <PREFIX>_HOME）默认**不**自动向生产网注册——
-                                      // 同账号重复登录会踢掉作者主客户端，没必要每跑一次测试就踢一次。
+                                      // 的实例（--home / <PREFIX>_HOME）默认**不**自动向生产网注册。
+                                      // 2026-09-14 订正（踢旧批 ③，**纯注释，零行为改动**）：原文写
+                                      // 「同账号重复登录会踢掉作者主客户端」与实现不符——自
+                                      // 2026-09-11 起 deviceId = UUIDv5(机器码|scope)，非默认 home 的
+                                      // scope = dataRoot 路径 ⇒ 派生**不同** id（NeblinkModel.scala
+                                      // 的 deviceIdScope / deriveDeviceId），而服务端踢旧维度是
+                                      // (device_id, network_id) ⇒ 隔离实例登录**不会**踢主客户端
+                                      // （该表述是随机 deviceId 时代的残留，取证见
+                                      // .nebflow/reports/20260914_170224_kickold-forensics__chain-n-07d47ec4.md
+                                      // §2.5 不一致②）。
+                                      // 闸的真实理由 = 别让一次性实例在生产设备表里**新增**设备行
+                                      // （2026-09-11 /tmp/nebflow-coldstart 污染即此类）。
                                       // NEBFLOW_ALLOW_PROD_ENROLL=1 显式放行；默认 home 零行为变化；
-                                      // 本地/自定义 host 不受影响。
+                                      // 本地/自定义 host 不受影响。显式用户登录的放行面见
+                                      // EnrollGuard 的 explicitUserAction（案 C）。
                                       val bootEnrollRefusal: Option[String] =
                                         neblinkConfigAtBoot.neblinkServer
                                           .flatMap(s => nebflow.neblink.EnrollGuard.enrollRefusal(s.url))
