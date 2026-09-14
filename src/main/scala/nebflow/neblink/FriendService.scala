@@ -7,6 +7,13 @@ import io.circe.JsonObject
 import io.circe.parser.decode
 import io.circe.syntax.*
 import nebflow.core.NebflowLogger
+// 补拉帧（`dispatchPulled:521`）要对 `attachments` 做 `asJson` ⇒ 需
+// `Encoder[AttachmentSummary]`。该类码与全部 neblink 线上 codec 同在 `FriendCodecs`
+// —— 它是**普通 object**（非 `AttachmentSummary` 伴生对象）⇒ given **不在**隐式域内，
+// 必须显式引入；本文件此前只编原生类型故从未引入（批 A 首次落 `.asJson` 时漏掉）。
+// 形式与同包两个既有消费点逐字一致（`NeblinkClient.scala:96`、`RestApiRoutes.scala:30`）。
+// 🔴 只**引入**既有 given：不新增第二份 codec、不改写既有 given、不遮蔽任何候选。
+import nebflow.neblink.FriendCodecs.given
 
 import scala.collection.immutable.Queue
 import scala.concurrent.duration.*
@@ -1262,6 +1269,21 @@ final class FriendMessagingGuard(
     * 已拉取消息 id」，只是不再与**已读**水位共用一格。 */
   def localMaxId(conversationId: String): IO[Long] =
     state.get.map(_.cursors.get(conversationId).map(_.pullAnchor).getOrElse(0L))
+
+  /** **补拉（pull/replay）锚点**的读取面 —— 与 `dispatchedMaxOf` / `readAnchor`
+    * 同形同域：**同一条 `cursors` 记录**（键 = `conversationId`）、**同一个去重域**
+    * （`pullAnchor`；`advanceAnchor` 按构造使它与 `dispatchedMax` 恒等）⇒ 同一消息
+    * 经**真 push** 或**补拉**任一路径派发后，另一路径读到的水位已越过它 ⇒ 不重复投递
+    * （统一去重优先于路径分离）。
+    *
+    * 补拉腿的**签名真源** = 两个调用点（`dispatchPull` 读回终态装配对账行、
+    * `pullConversation` 判冷/温锚），二者皆取 `(conversationId: String) => IO[Long]`。
+    *
+    * 🔴 单实现：本方法**委托** `localMaxId`（§3.5 拆字段时被保留的同一读取，见其
+    * scaladoc）而**不另写一份**字段读法 —— 两份实现 = 两套语义，本仓缺陷族形态。
+    * 二名一物（生产走本名、单测走旧名）的收口需动既有调用点/单测，本批按最小加性边界
+    * 不动，已登记为遗留项。 */
+  def pullAnchor(conversationId: String): IO[Long] = localMaxId(conversationId)
 
   /** **已派发**水位（已构造帧并投给 UI 的最大消息 id）。判据③读它做
     * `pullAnchor == dispatchedMax` 断言。 */

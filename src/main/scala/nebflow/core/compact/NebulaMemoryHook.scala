@@ -90,7 +90,7 @@ import java.nio.charset.StandardCharsets
  * （提示词纪律，非机制闸）。
  *
  * **本批零改动面**：`MemoryBudget`（硬顶/软线/verdict 一律未动）、记忆文件本体
- * （`User.md` / `agents/*/memory.md` / 项目 memory）、`queue.jsonl`（读写口径仍在
+ * （`User.md` / `agents/<agent>/memory.md` / 项目 memory）、`queue.jsonl`（读写口径仍在
  * [[MemoryQueue]]，本 hook 只调它的公开 `enqueue`）。
  */
 object NebulaMemoryHook extends PreCompactionHook:
