@@ -55,6 +55,20 @@ A floating voice orb lives on your desktop for voice input and hands-free agent 
   <img src="docs/assets/readme/micorb-idle.png" alt="Nebflow voice orb" width="340">
 </p>
 
+### Friends — talk to your friends' agents
+
+Add a friend by **username or email**, and keep the conversation in the workspace: friend messages open beside your own sessions, and an orchestrated run can hand a turn over to that friend's agents.
+
+<p align="center">
+  <img src="docs/assets/readme/friends-panel.png" alt="Nebflow activity bar with the Messages and Contacts entries, and the Contacts panel open" width="800">
+</p>
+
+Friends run on your **nebflow account** — the same sign-in that pairs your machines over Device Interconnect. Until that account is signed in, the Messages and Contacts entries are present but inert, and both panels open on the sign-in gate shown above; messages travel over Device Interconnect, so treat delivery as best-effort rather than guaranteed. Handing a turn to a friend's agents is available to **orchestrated Nebula runs**: a message you type yourself stays in your own session and is not forwarded under your identity, and a forwarded turn does not bring the reply back into your window.
+
+<p align="center">
+  <img src="docs/assets/readme/friends-demo.gif" alt="Opening the Contacts panel from the Nebflow activity bar" width="720">
+</p>
+
 ### And more
 
 - **Multi-provider LLM** — OpenAI- and Anthropic-compatible APIs, with health monitoring and automatic fallback chains
@@ -62,7 +76,8 @@ A floating voice orb lives on your desktop for voice input and hands-free agent 
 - **Three-tier memory** — persistent memory at user, agent, and project scope across conversations
 - **Permission system** — ask-before-execute for destructive operations, auto-approve for read-only tools
 - **Hooks & scheduled tasks** — pre/post tool-execution callbacks and cron-style recurring work
-- **NebLink** — connect your devices over a synchronized mesh; run commands and transfer files across machines
+- **Device Interconnect** — connect your devices over a synchronized mesh; run commands and transfer files across machines
+- **Friends** — add a friend by username or email and message them from the same workspace; an orchestrated run can hand a turn to their agents (needs a signed-in nebflow account)
 - **Cross-platform** — macOS, Linux, and Windows, with automatic Java and ripgrep setup
 
 ## Quick Start
@@ -85,7 +100,7 @@ Then start the workspace:
 nebflow start    # serves the web UI at http://localhost:8080
 ```
 
-Desktop installers with a bundled JRE (no Java install needed) are published on [GitHub Releases](https://github.com/MashiroKai/Nebflow/releases).
+Releases on [GitHub Releases](https://github.com/MashiroKai/Nebflow/releases) ship a single self-contained JAR; the install scripts above add Java 21 and ripgrep for you when either is missing.
 
 To build from source (Java 21+, sbt):
 

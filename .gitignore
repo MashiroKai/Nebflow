@@ -29,7 +29,9 @@ temp/
 tmp/
 docs/
 test-envs.sh
-CHANGELOG.md
+# CHANGELOG.md was ignored here until 2026-09-14: the release contract
+# (`AGENTS.md` → Release 必须有 CHANGELOG.md) needs it as a normal tracked
+# file, and an ignored CHANGELOG meant every edit required `git add -f`.
 *demo*.html
 /nebflow
 nul
