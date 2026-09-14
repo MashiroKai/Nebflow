@@ -420,8 +420,15 @@ final class ShellSession private (
 
   private[tools] val SleepCommandRe = """\bsleep\s+\d+""".r
 
-  /** Grace period before checking if a quiet background process is stuck. */
-  private val StuckDetectionGracePeriod: FiniteDuration = 30.seconds
+  /** Grace period before checking if a quiet background process is stuck.
+    *
+    * I2（nodestate-bash 批 2026-09-14；设计件 §4.4.1 **T6**）：取值收敛到**唯一取数点**
+    * `Defaults.StuckDetectionGraceSec`（system prop `nebflow.shell.stuckDetectionGraceSec`，
+    * 默认 `30` = **旧行为现行取值**，每次调用现读）——本名降为 delegating def，
+    * **零调用点改动**（下方 `IO.sleep` 与错误文案两处消费点逐字不变）。
+    * 🔴 本处**禁再出现独立字面量**（阈值唯一取值点纪律，§1.3）。
+    */
+  private def StuckDetectionGracePeriod: FiniteDuration = Defaults.StuckDetectionGraceSec.seconds
 
   /**
    * #22 (2026-08-19): foreground no-progress ceiling. A foreground command
@@ -459,8 +466,15 @@ final class ShellSession private (
    * 前台 dev server 1.786 ms/s = 5.4 倍阈值 ⇒ 10 分钟安全网被微动无条件解除，
    * 命令跑了 2h50m 未被杀）。ceiling 改用
    * Defaults.ForegroundCpuProgressNanos（1s/30s 窗 = 3.3% 单核，与采样窗同量纲）。
+   *
+   * I2（nodestate-bash 批 2026-09-14；设计件 §4.4.1 **T7**）：取值收敛到**唯一取数点**
+   * `Defaults.CpuActiveThresholdNanos`（system prop `nebflow.shell.cpuActiveThresholdNanos`，
+   * 默认 `10000000` ns = 10ms/采样窗 = **旧行为现行取值**，每次调用现读）——本名降为
+   * delegating def，**零调用点改动**（本文件 B1/B2 判据 + `BashTool` 活动桥共三处消费点
+   * 逐字不变）。设计提案值 `1e9`（与前台 `ForegroundCpuProgressNanos` 重新对齐）归 I5
+   * 翻值。🔴 本处**禁再出现独立字面量**（阈值唯一取值点纪律，§1.3）。
    */
-  private[tools] val CpuActiveThresholdNanos: Long = 10_000_000L
+  private[tools] def CpuActiveThresholdNanos: Long = Defaults.CpuActiveThresholdNanos
 
   /** Sum total CPU duration (nanos) of a process and all its descendants. */
   private[tools] def sampleProcessCpuTime(proc: Process): Long =
