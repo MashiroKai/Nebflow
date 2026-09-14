@@ -1847,9 +1847,57 @@ class NodeEngine(
     * verifier」清单——非 merge 节点恒空（闸是 merge-only）。 */
   private def mergeVerdictHolders(n: NodeDef, ups: List[NodeDef]): List[NodeDef] =
     if !MergeNodePolicy.isMerge(n) then Nil
-    else ups.filter(u =>
+    else staleVerdictUps(ups)
+
+  /** 「当下判词非 pass」的上游 verifier（**纯判据单点**，闸与缝可见性共用）。
+    * `fail` / 未申报 `None` / 空串同判（保守口径，见 [[mergeVerdictHolders]] 头注）。 */
+  private def staleVerdictUps(ups: List[NodeDef]): List[NodeDef] =
+    ups.filter(u =>
       NodeRoles.normalize(u.role) == NodeRoles.Verifier &&
         !u.lastVerdict.exists(_.trim.equalsIgnoreCase(VerdictPass)))
+
+  /** 判词闸**覆盖缝**（O-1）单发记账（下游 id → 上次留痕的持有者 key 序列）——
+    * 同一 (下游, 持有者+判词) 组合只留一条，防每启动路径刷屏。 */
+  private val verdictGapLogged: Ref[IO, Map[String, List[String]]] =
+    Ref.unsafe[IO, Map[String, List[String]]](Map.empty)
+
+  /** 判词闸覆盖缝（O-1）**机械可见化**（engine-defects 批 #238，2026-09-15；写点 =
+    * [[startNode]] 闸收口）。
+    *
+    * 缝本体（只读侦察 [[.nebflow/reports/20260914_verdict-routing-recon]] §结论②）：判词闸
+    * 是 **merge-only**（[[mergeVerdictHolders]] 前置 `MergeNodePolicy.isMerge`）⇒ 非 merge
+    * 收口位/sink 遇 `fail`/未申报判词的 verifier 上游**照旧被拉起**（今夜官网链
+    * `bpm-verify`(fail) → `bpm-report`(merge=False) 实例），sink 侧只能靠任务书里
+    * **人肉口径**「注意上游判词」补。本批**不扩闸**（泛化到非 merge 属语义裁定——
+    * `MergeVerdictGateSpec.V6` 正是钉该口径的既有判据），改为**机械可见**：该形态被
+    * 拉起时单发 [[FlowMapEventLog.VerdictGateGapType]] 事件（含 verifier id + 当下判词），
+    * 把「人肉口径」变成事件流里可 grep 的一行。
+    *
+    * 🔴 零行为面：不改闸判据、不改任何节点字段、不阻塞启动（照旧拉起，只是留痕）。 */
+  private def logNonMergeVerdictGateGap(where: String, n: NodeDef): IO[Unit] =
+    if MergeNodePolicy.isMerge(n) then IO.unit
+    else
+      (n.in ++ n.deps).distinct.traverse(store.findNode).flatMap { ups =>
+        val held = staleVerdictUps(ups.flatten)
+        if held.isEmpty then IO.unit
+        else
+          val key = held.map(u => s"${u.id}:${u.lastVerdict.getOrElse("none")}").sorted
+          verdictGapLogged.modify { m =>
+            if m.get(n.id).contains(key) then (m, false) else (m.updated(n.id, key), true)
+          }.flatMap { first =>
+            if !first then IO.unit
+            else
+              val desc = held.map(u =>
+                s"'${u.name}'(${u.id}):lastVerdict=${u.lastVerdict.getOrElse("none")}").mkString(", ")
+              val summary =
+                s"verdict-gate gap: started at $where while the in/deps upstream verifier(s) [$desc] " +
+                  "carry no pass verdict — the verdict gate is merge-only, so this NON-merge downstream runs on a " +
+                  "non-pass verdict (O-1 seam). Observability only: the node is started as before; " +
+                  "widen the gate to non-merge sinks = author decision"
+              logger.warn(s"[$projectName] node '${n.name}' (${n.id}) $summary") *>
+                FlowMapEventLog.append(workspace, projectName, n.id, FlowMapEventLog.VerdictGateGapType, summary)
+          }
+      }
 
   /** 闸挡启动时的留痕（三处落点共用单点文案）：INFO 一行带 verifier id + 当下 verdict，
     * 供事后从日志直接定位「merge 为何没动」。 */
@@ -2129,12 +2177,17 @@ class NodeEngine(
                     // pending/wiring 可见、零副作用（见 mergeVerdictHoldersOf 注释）。
                     // mergefifo-engine 批 2026-09-13：**互斥闸**逐字接在同一收口点之后（先 verdict
                     // 后互斥，与设计件 §7.2 状态机同序；verdict 闸判据/留痕零改动）。
+                    // engine-defects 批 #238（2026-09-15）：闸是 merge-only ⇒ 非 merge 下游
+                    // 遇非 pass 判词**照旧被拉起**（覆盖缝 O-1）。本批不扩闸（语义裁定项），
+                    // 改为在**同一点**把该形态留成可 grep 的一行（零行为面：照旧启动）。
                     mergeVerdictHoldersOf(node).flatMap { holders =>
                       if holders.nonEmpty then logVerdictGateHold("startNode", node, holders)
-                      else mergeMutexHoldersOf(node).flatMap { queued =>
-                        if queued.nonEmpty then logMutexHold("startNode", node, queued)
-                        else pastVerdictGate
-                      }
+                      else
+                        logNonMergeVerdictGateGap("startNode", node) *>
+                          mergeMutexHoldersOf(node).flatMap { queued =>
+                            if queued.nonEmpty then logMutexHold("startNode", node, queued)
+                            else pastVerdictGate
+                          }
                     }
                   }
             }

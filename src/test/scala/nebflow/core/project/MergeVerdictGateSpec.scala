@@ -332,11 +332,15 @@ class MergeVerdictGateSpec extends CatsEffectSuite:
       _ <- rt.engine.settleRunnableSweep()
       _ <- waitStatus(rt, "n-merge", Set(NodeLifecycle.Completed))
       m <- node(rt, "n-merge")
+      audit <- readAudit(ws)
       _ <- system.stopAll.handleErrorWith(_ => IO.unit)
     yield
       assertEquals(m.status, NodeLifecycle.Completed,
         "a verifier-free merge must keep its旧 behavior (gate is inert without a verifier upstream)")
       assertEquals(m.deliveredTo.sorted, List("n-a", "n-b"), "barrier accounting unchanged")
+      // engine-defects 批 #238 GREEN 臂：上游无 verifier ⇒ 覆盖缝事件**不得**出现（不误报）
+      assert(!audit.exists((t, _, _) => t == FlowMapEventLog.VerdictGateGapType),
+        s"no verifier upstream => no gap event may be emitted, got ${audit.filter((t, _, _) => t == FlowMapEventLog.VerdictGateGapType)}")
   }
 
   // ── V6 case (c)：闸是 merge-only（非 merge 下游不受影响）─────────────────
@@ -358,10 +362,22 @@ class MergeVerdictGateSpec extends CatsEffectSuite:
       _ <- rt.engine.deliverOutTo(v, "n-plain", "verdict report for ver")
       _ <- waitStatus(rt, "n-plain", Set(NodeLifecycle.Completed))
       p <- node(rt, "n-plain")
+      audit <- readAudit(ws)
       _ <- system.stopAll.handleErrorWith(_ => IO.unit)
     yield
       assertEquals(p.status, NodeLifecycle.Completed,
         "non-merge node behavior must be unchanged — the gate is merge-only")
+      // ── engine-defects 批 #238 · RED 臂（覆盖缝 = 机械可见化）──────────────
+      // 本 spec 用例面 = 引擎判据；此处追加的**是本批新增的可见性判据**（非既有闸口径）：
+      // 非 merge 下游遇非 pass 判词仍被拉起 ⇒ 必须单发 `verdict-gate-gap`（含判词原文），
+      // 使「sink 任务书里的人肉口径」变成事件流里可 grep 的一行。
+      // 变异臂：删掉 `logNonMergeVerdictGateGap` 调用 ⇒ 本断言必红。
+      val gaps = audit.filter { case (t, id, _) => t == FlowMapEventLog.VerdictGateGapType && id == "n-plain" }
+      assertEquals(gaps.size, 1, s"exactly one gap line expected for the started non-merge downstream, got $gaps")
+      assert(gaps.head._3.contains("n-ver") && gaps.head._3.contains("lastVerdict=fail"),
+        s"the gap line must name the holder verifier and its verdict, got: ${gaps.head._3}")
+      assert(gaps.head._3.contains("merge-only"),
+        s"the gap line must state the gate's scope, got: ${gaps.head._3}")
   }
 
   // ── V7 case (d)：verifier 未申报 ⇒ 保守不放行 ────────────────────────────

@@ -84,6 +84,19 @@ object FlowMapEventLog:
     * 其调用点写入；**本批只定义类型 + 消费者回翻分支，无写入点**——禁止虚构调用点）。 */
   val ChainRestoredType = "chain-restored"
 
+  /** **判词闸覆盖缝（O-1）可见性**事件类型（engine-defects 批 #238，2026-09-15）。
+    *
+    * 写点 = [[NodeEngine.startNode]] 的 verdict 闸收口（`logNonMergeVerdictGateGap`）：
+    * **非 merge** 下游的 `in ∪ deps` 中含「当下判词非 pass」（`fail` / 未申报）的
+    * verifier 上游、而该下游仍被**拉起**时，单发一条（nodeId = 被拉起的下游；
+    * 同一 (下游, 持有者清单) 只发一次）。语义 = 「人肉口径 → 机械口径」：今日这种
+    * 形态只能靠 sink 任务书里手写「注意上游判词」，本行把它变成事件流里可 grep 的
+    * 事实（`grep 'verdict-gate-gap' <ws>/.nebflow/flow-map-events.jsonl`）。
+    *
+    * 🔴 本事件**只报不改**：判词闸是 merge-only（`MergeVerdictGateSpec.V6` 钉住该
+    * 口径），把闸泛化到非 merge 收口位属**语义裁定**（裁决项），不在本批。 */
+  val VerdictGateGapType = "verdict-gate-gap"
+
   /** 分发器会话空闲到期销毁事件类型（**令 3 分发器生命周期** 2026-09-12 批，设计
     * §3.2/§4 R4-(a)）：写点 = `ProjectActor.expireIdleDispatcher`（30 s `TtlTick`
     * 扫描腿到点拆除时）。语义 = 「保活期结束 ⇒ 会话已销毁」，使「活着但空闲」与
