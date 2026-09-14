@@ -47,14 +47,22 @@
 //                           (HOME basename / `hostname -s` / `whoami`) must not
 //                           appear in the scan face. Tokens shorter than 4 chars are
 //                           ignored (they would only produce noise).
-//                           MATCH FORM (author ruling 2026-09-14): such a token is
-//                           matched as a WHOLE WORD — `\btoken\b`, in the same
-//                           native + portable pair as S2 — never as a substring of a
-//                           longer identifier. The CI first-red of 2026-09-14 was
-//                           exactly that: on a GitHub Actions runner the derived
-//                           token is `runner` (HOME=/home/runner), and substring
-//                           matching reported `NodeRunner` / `defaultRunner` /
-//                           `GitRunner` … = 74 hits on a provably clean tree.
+//                           MATCH FORM (author ruling 2026-09-14; precision fixed in
+//                           r2): such a token is enrolled in TWO forms — (a) a
+//                           WHOLE-WORD arm `\btoken\b`, in the same native +
+//                           portable pair as S2, and (b) a GLUE arm (S5c) whose
+//                           substring form still catches the token inside a longer
+//                           identifier. The CI first-red of 2026-09-14 was that the
+//                           derived token on a GitHub Actions runner is `runner`
+//                           (HOME=/home/runner) and substring matching reported
+//                           `NodeRunner` / `defaultRunner` / `GitRunner` … = 74 hits
+//                           on a provably clean tree — but the same narrowing ALONE
+//                           also loses real coverage (`myMashiros-MacBook-Pro` went
+//                           RED → GREEN; the r2 review finding, on an arm with no
+//                           backing in S1). The two jobs are therefore split: false
+//                           positives are killed by the S5b stopword table (such a
+//                           word never becomes an arm at all), and coverage is
+//                           restored by (b). They are not interchangeable.
 //   S5b Stopword table    = a derived token whose VALUE is a CI / generic environment
 //                           word (STOPWORDS below: `runner` `home` `host` `ubuntu`
 //                           `user` `work`) is NOT a contributor-machine identity, so
@@ -73,6 +81,27 @@
 //                           other machine and defends nothing. That is why S5
 //                           derives the tokens on the machine that runs the gate,
 //                           and why S1 consumes a list contributors can extend.
+//   S5c Glue coverage     = the closure assertion of the S5 match form. A derived
+//                           identity token must be caught not only as a whole word
+//                           but also INSIDE a longer identifier (glue forms:
+//                           `user_<token>`, `<token>_notes`, `X<token>Y`) — that is
+//                           what makes the arm a defence for a contributor whose
+//                           directory name is a segment of a longer symbol. A
+//                           narrowing that drops it is a SILENT coverage loss (the
+//                           r2 fail: `myMashiros-MacBook-Pro` RED → GREEN on an arm
+//                           whose token has no S1 backing). Mechanics: a token is
+//                           enrolled with a glue arm UNLESS the arm set already
+//                           catches its glue witness (S1's own form is an unbounded
+//                           substring, so `kaiyu` needs no glue arm — the arm set is
+//                           asked, not a hand-written list), and the closure is then
+//                           re-asserted per token on the FULL arm set: a token whose
+//                           glue witness is caught by NO arm is RED
+//                           (`COVERAGE-GAP` line), never a silent green. A witness
+//                           blanked by the S6 exclusion table (W5 masks the project's
+//                           own org constant inside the token) is reported as
+//                           `masked`, not counted as a gap — that masking layer's
+//                           semantics are out of this batch's scope (r1 review §13.7
+//                           defers it to a separate batch).
 //   S6  Exclusion table   = same source as R4 table 2: W1/W2 (generic placeholder
 //                           home dirs), W5 (project's own org constant), W6 (this
 //                           repo's own documented placeholder precedent),
@@ -118,7 +147,8 @@
 // product wording. Batch 1 clears that class in the tree; this gate does not
 // re-introduce a second list to police it.
 //
-// Exit codes: 0 = clean, 1 = violation (or a vacuous/divergent matcher = RED),
+// Exit codes: 0 = clean, 1 = violation (or a vacuous/divergent matcher, or an
+//   identity token with no glue coverage = RED),
 //   2 = malformed invocation.
 //
 // Usage:
@@ -320,8 +350,12 @@ const identity = derived.arms;
 const stopwordTokens = derived.stopped;
 for (const d of identity) {
   const escaped = d.token.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-  // S5 match form: whole word, native + portable (S2) — a longer identifier that
-  // merely CONTAINS the token is not the token.
+  // S5 (a) whole-word arm: native + portable (S2) — a longer identifier that merely
+  // CONTAINS the token is not the token. Kept FIRST in the arm list on purpose: this
+  // is the arm whose `\b`/portable pair makes the S2 control assertion live on the
+  // derived arms (a token that starts or ends with a non-word char makes the two
+  // forms disagree, and the divergence is RED) — the glue arm below is `\b`-free and
+  // structurally cannot carry that witness.
   const pattern = `\\b${escaped}\\b`;
   arms.push({
     id: `ID:${d.src}`,
@@ -330,6 +364,55 @@ for (const d of identity) {
     native: new RegExp(pattern, 'i'),
     portable: new RegExp(toPortable(pattern), 'i'),
   });
+}
+
+// ── S5c: glue coverage (the arm S5 (a) alone loses) ─────────────────────────
+// A derived identity token must also be caught inside a longer identifier: the
+// contributor this gate defends is not only the one whose directory name is a
+// standalone word. The token is enrolled with a glue arm unless the arm set built
+// so far (S1 STRICT + S5 (a)) already catches its glue witness — S1's own form is an
+// unbounded substring, so `kaiyu` is covered there and needs no second arm; the
+// decision is asked of the arm set, never hand-listed here.
+function glueWitness(token) {
+  // Word characters on BOTH sides: the tightest form of "inside a longer token".
+  return `X${token}Y`;
+}
+function anyArmHits(text) {
+  const { line } = scrub(text);
+  return arms.some((arm) => arm.native.test(line) || arm.portable.test(line));
+}
+
+// Decided against the S1 + S5 (a) arm set (no glue arm enrolled yet), so the
+// outcome does not depend on the order the tokens were derived in.
+const glueTokens = identity.filter((d) => !anyArmHits(glueWitness(d.token)));
+for (const d of glueTokens) {
+  const escaped = d.token.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  // No `\b` — catching the token inside a longer identifier is the whole point of
+  // this arm. A `\b`-free pattern IS its own portable form (`toPortable` rewrites
+  // `\b` and nothing else), so the S2 pair here is structurally equal by definition,
+  // not by a copied reference: the `\b`/portable control witness of the derived arm
+  // set is carried by the S5 (a) arm above.
+  arms.push({
+    id: `ID:${d.src}:glue`,
+    kind: 'DERIVED',
+    pattern: escaped,
+    native: new RegExp(escaped, 'i'),
+    portable: new RegExp(toPortable(escaped), 'i'),
+  });
+}
+
+// Closure assertion (S5c): on the FULL arm set, every identity token's glue form
+// must be caught — by S1, by S5 (a), or by its own glue arm.
+const glueGaps = [];
+const glueMasked = [];
+for (const d of identity) {
+  const witness = glueWitness(d.token);
+  const { line: blanked } = scrub(witness);
+  if (!blanked.includes(d.token)) {
+    glueMasked.push({ token: d.token, src: d.src });
+    continue;
+  }
+  if (!anyArmHits(witness)) glueGaps.push({ token: d.token, src: d.src });
 }
 
 // ── probe: prove the matcher is not vacuous (S6 / the `\b` lesson) ──────────
@@ -519,7 +602,7 @@ function redact(line, arm) {
 scan(judged, hits);
 scan(warned, warnings);
 
-const red = hits.length + probeFailures + controlMismatches.length;
+const red = hits.length + probeFailures + controlMismatches.length + glueGaps.length;
 
 // ── output ──────────────────────────────────────────────────────────────────
 const sha = createHash('sha256').update(sourceText).digest('hex');
@@ -531,6 +614,9 @@ const summary = {
   widePatterns: layers.WIDE.length,
   derivedIdentityArms: identity.length,
   derivedStopwords: stopwordTokens.length,
+  derivedGlueArms: glueTokens.length,
+  glueCoverageGaps: glueGaps.length,
+  glueCoverageMasked: glueMasked.length,
   judgedFiles: judged.length,
   testFilesWarned: warned.length,
   vendorExemptFiles: vendorSkipped,
@@ -544,7 +630,14 @@ const summary = {
 };
 
 if (flags.json) {
-  process.stdout.write(`${JSON.stringify({ summary, hits, warnings, controlMismatches, stopwordTokens }, null, 2)}\n`);
+  process.stdout.write(`${JSON.stringify({
+    summary,
+    hits,
+    warnings,
+    controlMismatches,
+    stopwordTokens,
+    glueCoverage: { enrolled: glueTokens.map((d) => `${d.token} [${d.src}]`), masked: glueMasked, gaps: glueGaps },
+  }, null, 2)}\n`);
 } else if (!flags.quiet) {
   const L = [];
   L.push(`[gate] local-coupling (STRICT source) root=${flags.root}`);
@@ -552,6 +645,8 @@ if (flags.json) {
   L.push(`[face] ship=${judged.length} files (judged) | test=${warned.length} files (warning only) | vendor=${vendorSkipped} files (exempt)`);
   L.push(`[arm ] source-patterns=${layers.STRICT.length} + runtime-derived-identity=${identity.length}${identity.length ? ` (${identity.map((d) => d.src).join(', ')})` : ''}`);
   if (stopwordTokens.length) L.push(`[stop] ${stopwordTokens.length} runtime-derived token(s) classified as a CI/generic environment word — NOT enrolled as an arm (S5b): ${stopwordTokens.map((s) => `${s.token} [${s.src}] ${s.why}`).join('; ')}`);
+  L.push(`[glue] S5c glue coverage: ${identity.length - glueGaps.length - glueMasked.length}/${identity.length} identity token(s) caught inside a longer identifier (${glueTokens.length} enrolled with a glue arm${glueTokens.length ? `: ${glueTokens.map((d) => `${d.token} [${d.src}]`).join(', ')}` : ''})${glueMasked.length ? `; mask-blanked, not counted: ${glueMasked.map((m) => `${m.token} [${m.src}]`).join(', ')}` : ''}`);
+  for (const g of glueGaps) L.push(`COVERAGE-GAP ${g.token} [${g.src}] — no arm catches this identity token inside a longer identifier (S5c)`);
   L.push(`[probe] ${arms.length - probeFailures}/${arms.length} arms hit their generated witness (a matcher that hits nothing is vacuous, not green)`);
   L.push(`[ctl ] native \\b form vs portable form: ${controlComparisons} comparisons, ${controlMismatches.length} divergences`);
   if (suppressed > 0) L.push(`[skip] ${suppressed} token(s) blanked by the S6 exclusion table (W1/W2/W5/W6/W8/W9)`);
