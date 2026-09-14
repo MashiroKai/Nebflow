@@ -948,6 +948,12 @@ function recallQueuedItem(sessionId, item) {
       }
     }
     saveInputDraft(sessionId);
+  } else if (Array.isArray(item.attachments) && item.attachments.length > 0) {
+    // J5 residual path: no mounted input box means the payload can be neither
+    // restored nor edited — say so instead of letting it vanish silently.
+    console.warn('[input] recallQueuedItem: no mounted input view for ' + sessionId
+      + ' — ' + item.attachments.length + ' attachment(s) of queued item #' + item.id
+      + ' could not be restored');
   }
 }
 

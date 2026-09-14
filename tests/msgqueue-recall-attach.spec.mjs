@@ -451,6 +451,41 @@ test('J6 刷新盲区不静默：persistQueue 剥离后的项撤回 ⇒ 必须�
 });
 
 // ═══════════════════════════════════════════════════════════════════════════
+// J5 残余路径 · 视图未挂载 ⇒ 仍须不静默（不得纯静默丢弃）
+// ═══════════════════════════════════════════════════════════════════════════
+test('J5 残余路径：无挂载输入视图时撤回带附件的项 ⇒ 也必须可判读（禁纯静默）', async ({ page }) => {
+  const pageErrors = [];
+  page.on('pageerror', (e) => pageErrors.push(e.message));
+  const warns = collectWarns(page);
+  await bootApp(page);
+
+  const enq = await enqueueViaSend(page, 'MQ-RECALL-NOVIEW', ENQ_ATTS);
+  expect(enq.enqueued.length).toBe(2);
+  // 让 findViewBySessionId 返回 null（视图卸载），队列条 DOM 仍是陈态 ⇒ 撤回入口仍在
+  await page.evaluate(async (sid) => {
+    const cv = await import('/js/chatView.js');
+    const view = cv.findViewBySessionId(sid);
+    view.mounted = false;
+  }, SID);
+
+  warns.length = 0;
+  const sel = `.queue-item[data-queue-id="${enq.itemId}"] .queue-item-btn.recall`;
+  await page.waitForSelector(sel, { state: 'visible', timeout: 8000 });
+  await page.click(sel);
+  await page.waitForTimeout(150);
+
+  const w = recallWarns(warns);
+  expect(w.some((t) => t.includes('no mounted input view') && t.includes('2 attachment(s)')),
+    'J5 残余路径: 无法恢复时必须有可判读告警（纯静默 = 验红）').toBe(true);
+  const q = await page.evaluate(async (sid) => {
+    const state = (await import('/js/state.js')).default;
+    return (state.messageQueue[sid] || []).length;
+  }, SID);
+  expect(q, '该路径下项照样出队（既有行为不变）').toBe(0);
+  expect(pageErrors).toEqual([]);
+});
+
+// ═══════════════════════════════════════════════════════════════════════════
 // J7 · 队列条附件指示锚（3 缩略 + 「+N」；chatQueue.js:136/140/147/153）——两侧均绿
 // ═══════════════════════════════════════════════════════════════════════════
 test('J7 锚：队列条附件指示 ≤3 缩略 + 「+N」（既有面，两侧均绿）+ 撤回后 4 件全绘（修复面）', async ({ page }) => {
