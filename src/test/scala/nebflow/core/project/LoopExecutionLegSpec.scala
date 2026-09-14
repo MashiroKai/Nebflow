@@ -75,6 +75,9 @@ class LoopExecutionLegSpec extends CatsEffectSuite:
     * 首 turn 发 `node_report(fail)`，见到回执后输出无锚定收尾文本 ⇒ 终态由**工具通道**
     * 驱动，而不是文本形态（证明 `verifierFail` 是被真实引擎路径调到的）。 */
   private class FailReportLlm(closing: String):
+    /** 结论文本（= 会话最后一轮 assistant 输出，落 result 的那一段）；断言「熔断不得
+      * 吞掉判词全文」（engine-defects 批 #239）时按它对照。 */
+    val closingText: String = closing
     val inputs: Ref[IO, List[String]] = Ref.unsafe[IO, List[String]](Nil)
     private val ackText = "[OK] verdict recorded (fail)"
     private def sawAck(req: LlmRequest): Boolean =
@@ -411,6 +414,22 @@ class LoopExecutionLegSpec extends CatsEffectSuite:
         assert(ver.result.exists(_.contains("rounds=3/3")), s"the metering must read the consumed round 3/3, got: ${ver.result}")
         assert(audit.exists((t, id, s) => t == "loop-budget" && id == "n-ver" && s.contains("rounds=3/3")),
           s"a loop-budget event must be logged with the consumed round, got: $audit")
+        // ── engine-defects 批 #239（RED 臂）：熔断**不得吞掉判词全文** ──────────────
+        // 旧口径只把计量串写进 result ⇒「判词已落盘、node_report 的终止申报与结论全文
+        // 丢失、结果被降级成 stub」。修后 = 计量串在前后并列原结论文本（既有
+        // `[original-conclusion]` 稳定锚，与 completeNode 闸门 Reject 分支同机制）。
+        val conclusion = llm.closingText
+        assert(conclusion.trim.nonEmpty, "precondition: this fixture reports a real closing text")
+        assert(ver.result.exists(_.contains(conclusion)),
+          s"the circuit break MUST retain the verdict's conclusion text (not degrade the result to a metering stub), got: ${ver.result}")
+        assert(ver.result.exists(_.contains(CompletionGate.OriginalTextMarker)),
+          s"the retained conclusion must carry the retrieval anchor ${CompletionGate.OriginalTextMarker}, got: ${ver.result}")
+        assert(ver.result.exists { r =>
+          val m = r.indexOf("loop budget exhausted"); val a = r.indexOf(CompletionGate.OriginalTextMarker)
+          m >= 0 && a >= 0 && m < a
+        }, s"the metering line must come FIRST (dispatcher-first readability; existing assertions preserved), got: ${ver.result}")
+        assert(audit.exists((t, id, s) => t == "loop-budget" && id == "n-ver" && s.contains("conclusion=retained")),
+          s"the loop-budget event must record that the conclusion was retained, got: $audit")
         // 不再派发该轮（旧口径在 3/3 仍派发，须等第 4 次判词才熔断）
         assertEquals(work.status, NodeLifecycle.Completed, "3/3 must NOT dispatch one more re-run")
         assert(!audit.exists((t, id, _) => t == "reactivated" && id == "n-work"),

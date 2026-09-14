@@ -3671,7 +3671,7 @@ class NodeEngine(
                   val consumed = v.loopRound + 1
                   LoopBudget.decide(consumed, maxRounds, startedAt, now, maxWall) match
                     case Some(reason) =>
-                      circuitBreakLoop(v, Some(targetId), reason, now, consumed)
+                      circuitBreakLoop(v, Some(targetId), reason, now, consumed, Some(resultText))
                     case None =>
                       val issues = List(if fb.detail.trim.isEmpty then VerdictReader.PlaceholderIssues else fb.detail.trim)
                       for
@@ -3708,18 +3708,33 @@ class NodeEngine(
     * nrloop 的常态恰恰是「驱动方 `completed` 且判词 = fail」（`verdict ≠ 节点状态`），
     * 若把 completed 也当「已处理」，本批要修的 ② 又会被自己的幂等闸吞掉（实测：
     * 终态 fail-verifier 的时间维熔断被跳过，节点停留 completed、零事件、零通知）。 */
-  private def circuitBreakLoop(v: NodeDef, targetId: Option[String], reason: String, now: Long, rounds: Int): IO[Unit] =
+  private def circuitBreakLoop(v: NodeDef, targetId: Option[String], reason: String, now: Long, rounds: Int,
+      finalText: Option[String] = None): IO[Unit] =
     val maxRounds = nebflow.shared.Defaults.LoopMaxRounds
     val metering = s"rounds=$rounds/$maxRounds wallClockMaxMs=${nebflow.shared.Defaults.LoopMaxWallClockMs}"
     val msg = s"loop budget exhausted: $reason — $metering"
+    // engine-defects 批 #239（2026-09-15）：**熔断不得吞掉判词全文**。旧口径只把计量串
+    // 写进 result ⇒「判词已落盘（`recordVerdict` 先跑）、`node_report` 的终止申报与结论
+    // 全文丢失、结果被降级成 stub」。修法 = 复用**既有**原结论文本并列落盘机制
+    //（[[CompletionGate.withOriginalText]] 的 `[original-conclusion]` 稳定锚，与
+    // `completeNode` 的闸门 Reject 分支同一机制、同一格式、同一取回方式）：
+    // 计量串在**前**（保住既有「result 必含 loop budget exhausted」断言与分发器可读性），
+    // 原结论文本以空行分隔并列在**后**（一条 result 两段各自取用，无 schema 变更）。
+    // 取回命令（U6/F 同款，<ws> = 项目工作区，<id> = 节点 id）：
+    //   python3 -c "import json;r=json.load(open('<ws>/.nebflow/flow-map.json'))\
+    //     ['nodes']['<id>']['result'];print(r.split('[original-conclusion]',1)[1])"
+    val msgWithConclusion = finalText.filter(_.trim.nonEmpty) match
+      case Some(t) => s"$msg\n\n${CompletionGate.withOriginalText(t)}"
+      case None    => msg
     def drive: IO[Unit] =
       targetId.traverse_(clearLoopStartedAt) *>
         recordVerdict(v.id, VerdictFail) *>
         FlowMapEventLog.append(workspace, projectName, v.id, LoopBudgetEventType,
-          s"$msg target=${targetId.getOrElse("<none>")} verdict=fail") *>
+          s"$msg target=${targetId.getOrElse("<none>")} verdict=fail" +
+            (if finalText.exists(_.trim.nonEmpty) then " conclusion=retained" else " conclusion=<none>")) *>
         logger.warn(s"Node '${v.name}' (${v.id}) loop circuit-break: $msg") *>
         // ② + ④：既有 failed 链（deliverFailed → merge 兜底/停等留痕 → dispatchNotify failed）
-        failNode(v.id, msg)
+        failNode(v.id, msgWithConclusion)
     store.getNode(v.id).flatMap {
       case Some(fresh) if fresh.status == NodeLifecycle.Failed || fresh.status == NodeLifecycle.Cancelled =>
         logger.info(s"Node '${v.name}' (${v.id}) loop circuit-break skipped — the fail-route driver is already " +
@@ -3871,7 +3886,10 @@ class NodeEngine(
             val elapsed = t.loopStartedAt.map(st => now - st).getOrElse(0L)
             loopDriverOf(s.nodes.values.toList, t.id) match
               case Some(v) =>
-                circuitBreakLoop(v, Some(t.id), s"wallClock=${elapsed}ms/${maxWall}ms", now, v.loopRound)
+                circuitBreakLoop(v, Some(t.id), s"wallClock=${elapsed}ms/${maxWall}ms", now, v.loopRound,
+                  // 时间维熔断：驱动方此刻是 completed 的 fail-verifier，其结论全文在 result
+                  // 字段上（`completeNode` 已落库）——同样不得丢（#239 同款口径）。
+                  finalText = v.result)
               case None =>
                 clearLoopStartedAt(t.id) *>
                   FlowMapEventLog.append(workspace, projectName, t.id, LoopBudgetEventType,
