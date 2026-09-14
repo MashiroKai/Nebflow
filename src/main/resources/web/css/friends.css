@@ -303,6 +303,20 @@ button.fm-search-btn:focus-visible {
   border: 1px solid var(--glass-etched-border);
 }
 
+/* ② 动效（2026-09-14 交付批 · 作者令「动画也可以设计的流畅一点」）：
+   卡入场 = 纯淡入（160ms ease-out，**无位移**）——卡片在每次 render() 重建，
+   故背景刷新（friend_event / 面板重激活）也会重放一次；纯淡入在这个重放场景
+   下几乎不可察觉，而「位移 + 淡入」会读成跳动。发送成功后的卡态翻转
+   （「发送」→「等待对方处理」）同样走这条入场，即发送反馈。 */
+.fm-result-card {
+  animation: fm-card-in 160ms ease-out both;
+}
+
+@keyframes fm-card-in {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+
 /* 结果人区块（微信式分层）：头像 / 显示名 / @Username 两行 */
 .fm-result-person {
   display: flex;
@@ -347,10 +361,19 @@ button.fm-search-btn:focus-visible {
 
 .fm-add-btn { flex-shrink: 0; font-size: 12px; padding: 5px 12px; }
 
+/* ② 验证附言框入场：旧形态「点加好友 → 框瞬间出现」是突兀跳变。淡入 + 2px 上浮
+   220ms ease-out（作者常例 200–400ms ease-out）；只在用户动作后出现
+   （verify 态仅由「加好友」/ 搜索提交进入，非背景刷新重建）。 */
 .fm-verify-box {
   display: flex;
   gap: 6px;
   margin-top: 8px;
+  animation: fm-rise-in 220ms ease-out both;
+}
+
+@keyframes fm-rise-in {
+  from { opacity: 0; transform: translateY(-2px); }
+  to { opacity: 1; transform: none; }
 }
 
 .fm-verify-input {
@@ -366,6 +389,55 @@ button.fm-search-btn:focus-visible {
 }
 
 .fm-verify-box .glass-control { flex-shrink: 0; font-size: 12px; padding: 5px 12px; }
+
+/* ③ 同框「取消」键（2026-09-14 交付批）：旧形态**零自有样式**——sapphire.css 的
+   发送族选择器用 `:not(.fm-verify-cancel)` 把它排除后，本键吃 UA 默认（实测
+   `border-radius: 0px`、`color: rgb(0,0,0)` 纯黑 = D2 类「吃 UA buttontext」缺陷），
+   与同框发送键（10px / 全对比正文色）并排即成方角黑字异类 ⇒ 同框按钮对的
+   主次关系无法读。本块按 09-12 裁定「次操作 = 族内 rest 档 + 400 字重 + 全量
+   四态 ramp」补齐（模板 = 同文件 `button.fm-req-decline` 拒绝键），圆角随发送组
+   取 10px。🔴 单独可退：删除本块即回到旧形态，零耦合其它面。 */
+button.fm-verify-cancel {
+  font-family: inherit;
+  font-weight: 400;
+  border-radius: 10px;
+  color: var(--color-text, #000);
+  background: var(--glass-send-bg);
+  border: 1px solid var(--glass-send-border);
+  box-shadow: var(--glass-send-stack);
+  transition: background 0.15s ease, border-color 0.15s ease,
+              color 0.15s ease, box-shadow 0.15s ease;
+}
+
+button.fm-verify-cancel:hover {
+  background: var(--glass-send-bg-hover);
+  border-color: var(--glass-send-border-hover);
+}
+
+button.fm-verify-cancel:active {
+  background: var(--glass-send-bg-active);
+  border-color: var(--glass-send-border-active);
+}
+
+button.fm-verify-cancel:disabled {
+  background: var(--glass-send-bg-disabled);
+  border-color: var(--glass-send-border-disabled);
+  color: color-mix(in srgb, var(--color-text, #000) 50%, transparent);
+  cursor: not-allowed;
+  box-shadow: var(--glass-send-stack);
+}
+
+button.fm-verify-cancel:focus-visible {
+  outline: none;
+  box-shadow: 0 0 0 2px var(--glass-control-border);
+}
+
+@media (prefers-color-scheme: light) {
+  button.fm-verify-cancel { box-shadow: var(--glass-send-stack), var(--glass-send-shadow); }
+  button.fm-verify-cancel:hover { box-shadow: var(--glass-send-stack), var(--glass-send-shadow-hover); }
+  button.fm-verify-cancel:active { box-shadow: var(--glass-send-stack), var(--glass-send-shadow-active); }
+}
+
 
 /* 「新的朋友」 entry */
 .fm-nf-entry {
@@ -405,7 +477,8 @@ button.fm-search-btn:focus-visible {
 .fm-nf-chevron { color: var(--color-text-muted, #888); display: flex; }
 .fm-nf-chevron svg { width: 14px; height: 14px; }
 
-.fm-requests { padding: 2px 0 4px; }
+/* ②「新的朋友」区展开入场（旧形态 = 瞬间插入）。与验证框共用 fm-rise-in。 */
+.fm-requests { padding: 2px 0 4px; animation: fm-rise-in 200ms ease-out both; }
 
 .fm-req-group {
   font-size: 11px;
@@ -856,6 +929,10 @@ button.fm-req-decline:focus-visible {
   .fm-sending .fm-msg-time { animation: none; opacity: 0.6; }
   .fm-sending .fm-msg-time::after { content: '…'; }
   .fm-searching i { animation: none; opacity: 0.5; }
+  /* ② 本批新增的三条入场动画：尊重偏好 ⇒ 直接不播（不是加速播，避免位移残影）。 */
+  .fm-result-card,
+  .fm-verify-box,
+  .fm-requests { animation: none; }
   /* A16: chat modal open animation ≤0.01s (overlay fade is sidebar.css's
      cfg-fade-in 0.15s — squash only our instance, shared class untouched). */
   #fm-chat-overlay { animation-duration: 0.01s !important; }
