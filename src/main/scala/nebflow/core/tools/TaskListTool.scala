@@ -922,7 +922,8 @@ end TaskListStore
  *
  * 工具面隔离（硬约束）：仅 AgentCore.NebulaOrchestrationTools 携带（Nebula 固定面
  * 成员，TaskList 批 +1；件数以 AgentCore.NebulaOrchestrationToolsExpectedSize 为单点，
- * R2 2026-09-12 后 16 件 ⇒ 此处不再写死数字）；
+ * 此处不再写死数字——当前/终态 = 15（作者 2026-09-14 拍板）。沿革：R2 2026-09-12 后
+ * 为 16 件（史实），再经 #145 `TransferFile` 退役 −1 ⇒ 15）；
  * NebulaExclusiveTools 防声明逃逸——dispatcher（DispatcherFixedTools）
  * / general（BaseTools+Pop）与任何非 Nebula 身份声明（含 "*"）均剥离。
  */

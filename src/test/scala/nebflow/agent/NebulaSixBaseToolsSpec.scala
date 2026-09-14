@@ -10,13 +10,15 @@ import munit.FunSuite
  * （节点结果沿 out 边自动投递 Nebula，主动查图与裁定职责重叠；dispatcher
  * 自身面不受影响）——本集彼时恰十三件。
  * 【2026-09-06 TaskList 批增补】+TaskList（作者 00:07 提议 + 00:11 首期无前端
- * 拍板：任务=快变状态出记忆、入 tasks.json 运行时数据层）——本集恰十四件。
+ * 拍板：任务=快变状态出记忆、入 tasks.json 运行时数据层）——本集恰十四件（史实，
+ * 时点 2026-09-06；当前/终态 = 15，作者 2026-09-14 拍板）。
  * 本文件原为 13:11「基础六件补齐」spec（nebula-toolface@21bc2e74 四件 → 13:11
  * 补齐六件），随 23:34 裁定同点改写断言语义。
  *
  * - ① 读三件 ⊆ Nebula 机制集（fixedToolsFor 静态集 + buildAllowedToolSet
  *   交付面双层）∧ Bash/Write/Edit ∉ Nebula 集 + TaskList ∈ Nebula 集 +
- *   恰十四件计数——本文件即变异验红锚点：机制集加回写手或 NodeList 任一件
+ *   件数计数（史实 2026-09-06 时点恰十四件，当前/终态 = 15）——本文件即变异验红锚
+ *   点：机制集加回写手或 NodeList 任一件
  *   （或摘掉 TaskList、或计数漂移）即红。
  * - ② 六件基础 ⊆ general 机制集（GeneralFixedTools = BaseTools +
  *   AskUserQuestion 恰七件；2026-09-08 作者修订恢复 AskUser，D6 批D1；
@@ -70,10 +72,11 @@ class NebulaSixBaseToolsSpec extends FunSuite:
     assert(!delivered.contains("NodeList"), "Nebula 交付面零 NodeList（00:48 裁定摘除）")
     assert(delivered.contains("TaskList"), "Nebula 交付面含 TaskList（注册层已挂）")
     // 件数以单点常量 AgentCore.NebulaOrchestrationToolsExpectedSize 为准：
-    // #145 附件腿批后 15 = 在飞 16 − TransferFile 退役（2026-09-14）；
-    // 终态目标由独立收敛批重定（⑩-9 口径修订）。
+    // 15 = 终态（作者 2026-09-14 拍板）；沿革（史实）：16 经 #145 附件腿批
+    // −TransferFile 退役（2026-09-14）⇒ 15。⑩-9 的「终态待定」悬置口径已被本次
+    // 拍板取代——归档，不得重提。
     assertEquals(fixed.size, AgentCore.NebulaOrchestrationToolsExpectedSize,
-      "Nebula 机制集件数 == 单点常量（不得各处写裸数字；#145 后在飞 15）")
+      "Nebula 机制集件数 == 单点常量（不得各处写裸数字；在飞 15 = 终态，作者 2026-09-14 拍板）")
 
   // ===== ② 六件基础 ⊆ general 机制集（回归钉死）=====
 
