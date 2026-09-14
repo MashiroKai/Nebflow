@@ -433,6 +433,19 @@ object ProjectActor:
                 //    幂等）再只读对账；索引区无 INDEX.md 即零开销 no-op；只写
                 //    `<workspace>/.nebflow/tmp/` 报表，不改任何文档本体。
                 //    索引根单点 = DocIndexConsumer.indexRootsFor（home 域 + ws 域）。
+                // 存量回填摘边（**案 A 腿 2**，cancelled 滞留主图修复批 2026-09-14，
+                // 作者 17:24 拍板）：已 cancelled 且**仍挂在活链上**的退役节点（考古批
+                // 现场 11 件，机械根因样例 = 一条 `deps` 边粘住 32 成员分量）先补做与
+                // 工具路径同语义的摘边（NodeEngine.detachAbandonedNode），使它们自成
+                // **全终态分量** ⇒ 紧随其后的链级 sweep **同一 tick** 即可出库（不等
+                // 下一个 30s）。**restart-effect**：本腿每次 tick 重算，宿主重启后自动
+                // 继续；**幂等**：摘净后候选集为空 ⇒ 零写零帧。幂等设计是硬要求——
+                // 一次性手工改 flow-map.json 既不可复跑也逃过审计（写点单点在引擎）。
+                // 顺序 = 摘边在前、sweep 在后（顺序即语义，禁调换）。best-effort：
+                // 失败只 WARN，绝不阻塞归档 sweep 与后续腿。
+                cfg.engine.backfillAbandonedDetach()
+                  .handleErrorWith(e => logger.warn(s"abandon detach backfill failed: ${e.getMessage}").as(Nil))
+                  .void *>
                 cfg.engine.store.sweepCompletedChainsDetailed(System.currentTimeMillis()).flatMap { swept =>
                   val removals = swept.flatMap(_.nodeIds).traverse_(id => cfg.engine.emitRemoved(id))
                   val audits = swept.traverse_ { c =>

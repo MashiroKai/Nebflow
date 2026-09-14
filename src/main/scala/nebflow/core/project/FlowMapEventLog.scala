@@ -48,8 +48,11 @@ import nebflow.core.PathUtil
  *   merge-queue（**mergefifo-engine 批** 2026-09-13：合并窗 FIFO 互斥闸的停等留痕
  *   （`kind=hold`）+ **O-1 已知缺口告警**（`kind=same-git-dir-multi-project`：两项目
  *   共用同一 git 目录 ⇒ 引擎侧漏互斥，本批只检测告警不实现 claim；写点 =
- *   `NodeEngine.logMutexHold` / `NodeEngine.alarmSameGitDirProjects`，summary 见
- *   [[mergeQueueHoldSummary]] / [[mergeQueueSameGitDirSummary]]）。
+ *    `NodeEngine.logMutexHold` / `NodeEngine.alarmSameGitDirProjects`，summary 见
+ *   [[mergeQueueHoldSummary]] / [[mergeQueueSameGitDirSummary]]）/
+ *   abandoned-detach（**cancelled 滞留主图修复批 · 案 A** 2026-09-14：存量回填腿
+ *   对被 retired 却仍挂在活链上的 cancelled 节点补做摘边时的留痕，写点 =
+ *   `NodeEngine.backfillAbandonedDetach`；见 [[AbandonedDetachType]]）。
  * 注册式扩展：append API 无 schema 变更，新事件类型 = 本清单加一词 + 写入点调用；
  * chainId 为顶层**可选**字段（2026-09-10 加，spec §9.2 项 9）：旧行无该键照常解析
  * （零迁移、append-only），新行仅在链族事件带上。
@@ -66,6 +69,16 @@ object FlowMapEventLog:
 
   /** 链归档事件类型（写点：ProjectActor TtlTick → sweep 出库后追加）。 */
   val ChainArchivedType = "chain-archived"
+
+  /** **abandon 回填摘边事件类型**（cancelled 滞留主图修复批 · 案 A 腿 2，2026-09-14
+    * 作者 17:24 拍板）。写点 = [[NodeEngine.backfillAbandonedDetach]]（30s `TtlTick`
+    * 扫描腿，排在链级归档 sweep 之前）——对**已 cancelled 且仍有挂线**的滞留节点补做
+    * 摘边（`NodeEngine.detachAbandonedNode`）时逐件留痕。
+    *
+    * 与同批的 `abandoned`（工具路径 `NodeEditTool.abandonNode` 的写点）**分开记账**：
+    * 本条回答的是「我没动过这个节点，它的拓扑为什么变了」——回填是引擎自主动作，
+    * 与被退役时刻的 `abandoned` 行不是同一事实。幂等：`RetireDetach.isEmpty` 时零写。 */
+  val AbandonedDetachType = "abandoned-detach"
 
   /** 链拉回事件类型（对称口径，spec §6.2/§9.3：链抽象 P2 `restoreChain` 落地后由
     * 其调用点写入；**本批只定义类型 + 消费者回翻分支，无写入点**——禁止虚构调用点）。 */
