@@ -133,6 +133,20 @@
   gap: 6px;
 }
 
+/* ⑩ 消息区状态行（作者 2026-09-14 17:21 令「不要空白」）：消息区**永不为空** ——
+   无本地缓存且 `dropbox-get-history` 在飞 ⇒ 「正在加载消息…」；无缓存且无在飞请求
+   ⇒ 「暂无消息」。取色只用既有主题 token（亮/暗两主题同源，无新字面量色值）。 */
+.dropbox-flow-status {
+  margin: auto;
+  padding: 6px 10px;
+  font-size: 12px;
+  line-height: 1.5;
+  text-align: center;
+  color: var(--color-frame-text-muted, var(--color-text-muted, #888));
+  background: var(--glass-etched-bg);
+  border-radius: 9999px;
+}
+
 /* Individual message wrapper / text bubble / meta / time
    ── 已在 sapphire.css 的 "Shared message surface" 段与好友面同源（2026-09-12 波2）：
    结构与形态（wrapper 的 flex 列 + 方向对齐、气泡 padding 8px 12px / r14 / 13px /
