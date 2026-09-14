@@ -4,7 +4,8 @@ import io.circe.{Json, JsonObject}
 import io.circe.parser.parse
 import io.circe.syntax.*
 import nebflow.core.{NebflowLogger, PathUtil}
-import nebflow.service.MemoryBudget
+import nebflow.core.project.{ProjectDef, ProjectMemory, ProjectStore}
+import nebflow.service.{MemoryBudget, MemoryStore}
 
 import java.nio.charset.StandardCharsets
 import java.security.MessageDigest
@@ -116,9 +117,10 @@ object MemoryQueue:
   /** 可重试结局（spec §5 R3 档 1「队列条目保留 ⇒ 下次压缩重试」）。末条结局落在本集合
     * 内的 note **仍是 pending**。
     *
-    * `rejected` 为何在此：消费侧 `system.md:39` 定义 `rejected` =「本次定位失败但含义
-    * 仍在（节改名 / 条目被改写）」——**本就是暂态、本该重试**；把它当终态的正是同一
-    * 缺陷的另一半（降级路径用 rejected 代笔 infra 失败 + 折叠谓词把 rejected 当终态）。
+    * `rejected` 为何在此：消费侧 `system.md:46`（step 4，行内原话「Location failed but the
+    * meaning still exists」）定义 `rejected` =「本次定位失败但含义仍在（节改名 / 条目被
+    * 改写）」——**本就是暂态、本该重试**；把它当终态的正是同一缺陷的另一半（降级路径用
+    * rejected 代笔 infra 失败 + 折叠谓词把 rejected 当终态）。
     * 「含义已消失 / 已实现于别处」走 `obsolete`（终态），两者分工不变。 */
   val RetryableResults: Set[String] =
     Set(ResultNotRun, ResultTimeout, ResultRejected, ResultBlocked)
@@ -933,11 +935,20 @@ object MemoryQueue:
     * 2026-09-13 缺失自愈批（方案 D「响亮失败」）：注入行由「无条件承诺」改为**条件承诺**
     * ——后端照旧报 pending 数，另加两段可观测信息：① 最老 pending 的年龄（堆积了多久）；
     * ② 一旦存在 `notrun`/`blocked` 结局（= 消费链**根本没跑**，不是消费者裁定不可落）
-    * 就在同一行挂 ALERT 段。没有这两段时行长与旧版逐字一致（不引入常驻噪声）。 */
+    * 就在同一行挂 ALERT 段。没有这两段时行长与旧版逐字一致（不引入常驻噪声）。
+    *
+    * 缺文件族批（A′ 三件之三）：再挂第三段 ALERT —— pending 里存在**目标层没有记忆文件**
+    * 的条目（[[targetLayerHasFile]] 判据，与 [[nebflow.agent.MemoryTrack]] 的计划输入面
+    * 同源）时，该族判 `target-missing` ⇒ 可重试族：**不落笔、不新建、不打终态词、条目留
+    * pending**，靠整理轨那一行的 WARN 与简报里的段只在「有会话在跑整理」时可见 ⇒ 注入面
+    * 必须自己挂响一项，否则缺层条目静默堆着。分层去重后逐层只探一次盘（pending 可达数百）。
+    *
+    * 三段段位互不遮蔽（`List(...).flatten` 逐个拼接）：同一条件可同时成立。 */
   def summaryLine(): String =
     try
       val s = readState()
-      val n = s.pendingCount
+      val pending = s.pending
+      val n = pending.size
       val drops = if s.droppedTotal > 0 then s" (${s.droppedTotal} dropped by the $MaxPending-pending cap)" else ""
       val last = s.outcomes.lastOption.map(o => s"last outcome: ${o.result} (${o.ref})")
       if n == 0 && s.droppedTotal == 0 then ""
@@ -962,8 +973,50 @@ object MemoryQueue:
                  |engine precondition), NOT a judgement that the entries are unlandable. Nothing is being applied and
                  |the queue only grows. Fix the consumption chain (see the gateway startup log) — the entries stay
                  |pending and will be retried on the next compaction.""".stripMargin.replace("\n", " "))
-        List(Some(head), alert, last).flatten.mkString(" ")
+        val strandedLayers =
+          pending.map(_.target).distinct.filterNot(targetLayerHasFile).sorted
+        val missingAlert =
+          if strandedLayers.isEmpty then None
+          else
+            val strandedSet = strandedLayers.toSet
+            val stranded    = pending.count(note => strandedSet.contains(note.target))
+            val shown       = strandedLayers.take(6).mkString(", ") + (if strandedLayers.size > 6 then ", …" else "")
+            Some(
+              s"""ALERT: $stranded pending note(s) name a target layer that has no memory file ($shown) — no file and no
+                 |section is created for them, and no terminal word is written for them (a terminal verdict on a note that
+                 |cannot land would throw its content away); they keep their retryable status and stay pending. Nothing
+                 |lands until that layer exists: register the project / create the layer's memory file outside the
+                 |consolidation track, and the next compaction applies them.""".stripMargin.replace("\n", " "))
+        List(Some(head), alert, missingAlert, last).flatten.mkString(" ")
     catch case e: Exception => ""
+
+  /** 注入行的缺文件族判据（A′ 三件之三「响亮告警」）：该 target 层**是否存在记忆文件**。
+    *
+    * 与计划输入面 [[nebflow.agent.MemoryTrack.memoryFilesOf]] **同源**（判据不另起一套）：
+    * `user` / `agent` 按 [[nebflow.service.MemoryStore]] 的路径取；`project:<name>` 取注册表
+    * `{{dataRoot}}/projects/<name>/project.json` 的 `workspace`（[[ProjectStore.projectJsonPath]]
+    * + [[ProjectDef]] 的 decoder + [[ProjectMemory.path]]）。
+    *
+    * **不调 [[ProjectStore.load]]**：它在加载时跑旧位迁移（写工作区根），注入面（每次上下文
+    * 构建都过这里）不产出副作用 ⇒ 只做只读解析。未注册 / 名称非法 / 未识别的 target 一律判
+    * 「无文件」（与计划面 `fileOpt.isEmpty ⇒ target-missing` 同判）；判据自身抛异常按「有文件」
+    * 处理（不因判据出错而误报，宁漏不误）。 */
+  private[tools] def targetLayerHasFile(target: String): Boolean =
+    try
+      target match
+        case "user"  => os.exists(MemoryStore.userMemoryPath)
+        case "agent" => os.exists(MemoryStore.agentMemoryPath("Nebula"))
+        case p if p.startsWith("project:") =>
+          val name = p.stripPrefix("project:")
+          val named =
+            name.nonEmpty && !name.contains("/") && !name.contains("\\") && name != "." && name != ".."
+          if !named then false
+          else
+            val pj = ProjectStore.projectJsonPath(name)
+            os.exists(pj) && parse(os.read(pj)).flatMap(_.as[ProjectDef]).toOption
+              .exists(pd => os.exists(ProjectMemory.path(pd.workspace)))
+        case _ => false
+    catch case _: Exception => true
 
   /** 年龄渲染（注入行用；粗粒度即可，不引入时钟依赖）。 */
   private[tools] def ageLabel(ms: Long): String =
