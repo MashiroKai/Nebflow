@@ -4358,6 +4358,15 @@ object AgentActor extends AgentCore with AgentSession:
                                   "memory-track-dry-run",
                                   s"pendingAtStart=${r.pendingAtStart} detail=${r.detail.take(300)}"))
                               case MemoryTrack.Status.Skipped => IO.unit
+                              // 暂停轮（#440 ①）：跳过是**有意为之**、不是空转 ⇒ 必须有
+                              // 事件行（与兄弟事件同族同处落；`Status.Skipped` 保持
+                              // IO.unit 不动——它是「无触发」的静默轮）。
+                              // 行形：`… event=memory-track-skipped detail=reason=paused: …`
+                              case MemoryTrack.Status.Paused =>
+                                IO(logAgentEvent(
+                                  agentDef, depth, state.sessionId, state.sessionName,
+                                  "memory-track-skipped",
+                                  s"${r.detail.take(300)} pendingAtStart=${r.pendingAtStart}"))
                             logIO *> alertIO
                           }
                     for
