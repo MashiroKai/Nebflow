@@ -470,7 +470,8 @@ ensure_brew() {
         /bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)" || return 1
     fi
     # Make brew visible in this session (prefix derived, not hardcoded —
-    # covers both Apple Silicon and Intel layouts)
+    # covers both Apple Silicon and Intel layouts, including a brew the
+    # installer just placed but did not export into this shell)
     local brew_pfx
     brew_pfx="$(brew_prefix)"
     if [ -n "$brew_pfx" ]; then
@@ -486,7 +487,10 @@ ensure_brew() {
 # prefix and not a macOS-only one).
 # Contract: non-empty output <=> "$prefix/bin/brew" is executable; always
 # returns 0 (brew absent/unavailable => empty string => caller no-ops, same
-# as before).
+# as before). Legs 1-2 consume state the caller may not have; leg 3 is the
+# absolute-path probe that covers the first-install window (brew just placed
+# by the installer — a child process — so not yet on PATH and no prefix
+# variable exported into this shell).
 brew_prefix() {
     # 1) explicit env override (portable; caller/CI may inject it)
     if [ -n "${HOMEBREW_PREFIX:-}" ] && [ -x "${HOMEBREW_PREFIX}/bin/brew" ]; then
@@ -502,7 +506,17 @@ brew_prefix() {
             return 0
         fi
     fi
-    # 3) pre-existing Intel default prefix fallback
+    # 3) per-architecture install roots, probed by absolute path (needs neither
+    #    PATH nor any prefix variable). Vendor-neutral glob first — that is the
+    #    Apple Silicon layout — then the pre-existing Intel default below; this
+    #    keeps the preference order the hardcoded form had.
+    local c
+    for c in /opt/*/bin/brew; do
+        [ -x "$c" ] || continue
+        printf '%s' "${c%/bin/brew}"
+        return 0
+    done
+    # 4) pre-existing Intel default prefix fallback
     if [ -x /usr/local/bin/brew ]; then
         printf '%s' "/usr/local"
         return 0
