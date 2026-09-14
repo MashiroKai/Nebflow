@@ -239,6 +239,54 @@ export function renderRefBlock(ref, { mode = 'input' } = {}, onRemove) {
   return renderInputRef(ref, onRemove);
 }
 
+// ── 转发消息引用块「按需展开按钮」溢出重估基座（作者 2026-09-14 17:26 裁定）──
+// 触发面 = ①元素尺寸变化（ResizeObserver：视口/容器宽度变 ⇒ 折行数变；图片
+// 加载完成、字体度量变最终也落成盒尺寸变化）②窗口 resize（无 RO 环境兜底）
+// ③主题切换（亮⇄暗，字体度量可能变）④字体就绪（document.fonts.ready）。
+// 形态 = 模块级单例监听器 + wrap→sync 登记表；遍历时按 isConnected 剔除（chip
+// 随 renderAttachmentPreview 的 innerHTML 重渲被丢弃 ⇒ 零监听/观测泄漏）。
+// 重估 idempotent、无副作用、不打断用户已展开态（sync 在 .expanded 早退）。
+const fmOverflowSyncs = new Map();
+let fmOverflowArmed = false;
+let fmOverflowRO = null;
+function runFmOverflowSyncs() {
+  for (const [el, sync] of fmOverflowSyncs) {
+    if (!el.isConnected) {
+      fmOverflowSyncs.delete(el);
+      if (fmOverflowRO) fmOverflowRO.unobserve(el);
+      continue;
+    }
+    sync();
+  }
+}
+/** Arm the shared listeners (once) + observe this chip, then measure on the
+ *  next frame — renderRefBlock returns a DETACHED node (the caller appends it),
+ *  so the first real measurement must wait for layout. */
+function armFmOverflow(wrap, sync) {
+  // 天然回收点：新建 chip 时旧 chip 已被 renderAttachmentPreview 的整条重渲剔除，
+  // 在此清掉已断连条目（新 wrap 此刻尚未挂载，故先 prune 后 set）。
+  for (const [el] of fmOverflowSyncs) {
+    if (!el.isConnected) {
+      fmOverflowSyncs.delete(el);
+      if (fmOverflowRO) fmOverflowRO.unobserve(el);
+    }
+  }
+  fmOverflowSyncs.set(wrap, sync);
+  if (!fmOverflowArmed) {
+    fmOverflowArmed = true;
+    window.addEventListener('resize', runFmOverflowSyncs, { passive: true });
+    window.matchMedia?.('(prefers-color-scheme: dark)')?.addEventListener?.('change', runFmOverflowSyncs);
+    document.fonts?.ready?.then?.(() => runFmOverflowSyncs());
+    if (typeof ResizeObserver !== 'undefined') fmOverflowRO = new ResizeObserver(runFmOverflowSyncs);
+  }
+  if (fmOverflowRO) fmOverflowRO.observe(wrap);
+  if (typeof requestAnimationFrame === 'function') {
+    // 第 1 帧（挂载同 task 完成时 → 移除发生在首绘之前，无可见闪烁），
+    // 第 2 帧兜底（挂载晚于本调用 / 字体与图片度量尚未落定）。
+    requestAnimationFrame(() => { runFmOverflowSyncs(); requestAnimationFrame(runFmOverflowSyncs); });
+  }
+}
+
 // #290 A2A (addendum §3.4): friend-message input block - etched surface,
 // header 来自 {好友名} + date corner badge, body 2-line clamp, expand = full
 // text (content.fullText). Fixed footprint, zero new color tokens.
@@ -284,6 +332,31 @@ function renderFriendInputRef(ref, onRemove) {
   expand.setAttribute('aria-expanded', 'false');
   expand.innerHTML = EXPAND_SVG;
   const fullText = ref.content?.fullText || '';
+
+  // 作者 2026-09-14 17:26 裁定（逐字）：「从好友那转发过来的消息，有一个展开的
+  // 按钮，这个按钮应该是转发的消息过多的时候才显示呀，位置够的情况下不用显示。」
+  // ⇒ 本控件**按需渲染**：装得下 ⇒ DOM 里不出现该控件（不是 visibility/透明占位）。
+  // 判定一律**渲染后实测**：折叠态（-webkit-line-clamp:2）下 text.scrollHeight
+  // 超过 clientHeight 才算溢出——长英文与 CJK 宽度不同，**禁按字符数静态猜测**。
+  // 初始**不渲染**该控件（连一帧的预置都不给：DOM 里从头就不出现），溢出时由
+  // 落定后的实测补上；未挂载/未布局（clientHeight=0）⇒ 不可判（null）⇒ 维持现状
+  // 等下一次重估（rAF/RO/字体就绪/resize/主题）。
+  const overflowNow = () => {
+    if (!text.isConnected) return null;
+    const clampedH = text.clientHeight;
+    if (clampedH <= 0) return null;
+    return text.scrollHeight > clampedH + 1;   // +1 = 亚像素取整容差
+  };
+  const syncExpand = () => {
+    // 已展开 ⇒ 按钮语义 = 收起，必须在场（展开态 line-clamp 解除，实测恒不溢出）。
+    if (wrap.classList.contains('expanded')) return;
+    const over = overflowNow();
+    if (over === true) {
+      if (!expand.isConnected) wrap.insertBefore(expand, rm);  // 次序：body 之后、✕ 之前
+    } else if (over === false && expand.isConnected) {
+      expand.remove();
+    }
+  };
   const toggle = (e) => {
     if (e && e.stopPropagation) e.stopPropagation();
     const expanded = wrap.classList.toggle('expanded');
@@ -291,6 +364,7 @@ function renderFriendInputRef(ref, onRemove) {
     expand.title = expanded ? t('ref.collapse') : t('ref.expand');
     expand.innerHTML = expanded ? COLLAPSE_SVG : EXPAND_SVG;
     text.textContent = expanded ? fullText : (ref.content?.preview || '');
+    if (!expanded) syncExpand();               // 收起后重估（幂等）
   };
   expand.addEventListener('click', toggle);
   wrap.addEventListener('click', toggle);
@@ -303,7 +377,8 @@ function renderFriendInputRef(ref, onRemove) {
   rm.setAttribute('aria-label', t('ref.remove'));
   rm.addEventListener('click', (e) => { e.stopPropagation(); onRemove?.(ref); });
 
-  wrap.append(icon, body, expand, rm);
+  wrap.append(icon, body, rm);                 // expand 按需挂载（溢出才进 DOM）
+  armFmOverflow(wrap, syncExpand);             // 渲染后实测 ⇒ 落定即补正显隐
   return wrap;
 }
 
