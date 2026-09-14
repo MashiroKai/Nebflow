@@ -26,6 +26,21 @@ import java.net.URI
   *
   * Local / custom hosts are unaffected (small blast radius): the gate only
   * fires for the production domain.
+  *
+  * Explicit-user-action release (2026-09-14 作者裁定「案 C」): the gate exists to
+  * stop **automatic** enrollment side effects on a redirected data root — it was
+  * never meant to refuse a login the user started by hand. A caller that can
+  * PROVE the user initiated the login (`explicitUserAction = true`) is let
+  * through; the gate's own semantics are untouched for every other path (boot,
+  * silent re-login, device-flow poll, tests), which all pass `false`.
+  *
+  * The proof is mechanical, not a convention — see
+  * `RestApiRoutes.handleAuthCallback`: the flag is set only downstream of
+  * `PkceLoginSession.take(state)` returning `Some`, i.e. the loopback callback
+  * matched a single-use in-memory attempt created by `POST /api/neblink/auth/start`
+  * (the login button's endpoint). An automatic path cannot carry that marker:
+  * it never calls `/auth/start`, and the marker is consumed on first use and
+  * expires after 15 min (`PkceLoginSession.ExpiryMs`).
   */
 object EnrollGuard:
 
@@ -55,18 +70,31 @@ object EnrollGuard:
       Option(URI.create(withScheme).getHost).map(_.toLowerCase).filter(_.nonEmpty)
     catch case _: Exception => None
 
-  /** Live decision — reads the current data root and the explicit switch. */
+  /** Live decision — reads the current data root and the explicit switch.
+    * Automatic paths (boot client, silent re-login, device-flow poll) use this
+    * and are gated exactly as before. */
   def enrollRefusal(serverUrl: String): Option[String] =
     enrollRefusal(serverUrl, DeviceIdentity.isNonDefaultHome, explicitAllowEnv)
 
+  /** Live decision with the explicit-user-action release (案 C ①(b), 2026-09-14).
+    *
+    * `explicitUserAction = true` ⇒ the gate returns `None` (allowed). Only the
+    * PKCE loopback callback sets it, and only after the single-use state marker
+    * proved the user drove the login (see the object doc). */
+  def enrollRefusal(serverUrl: String, explicitUserAction: Boolean): Option[String] =
+    enrollRefusal(serverUrl, DeviceIdentity.isNonDefaultHome, explicitAllowEnv, explicitUserAction)
+
   /** Pure decision core (testable): `Some(reason)` = the automatic enroll must
-    * be refused; `None` = proceed exactly as before. */
+    * be refused; `None` = proceed exactly as before. `explicitUserAction`
+    * defaults to `false` so the pre-案-C call shape keeps its old semantics. */
   def enrollRefusal(
     serverUrl: String,
     nonDefaultHome: Boolean,
-    explicitAllow: Boolean
+    explicitAllow: Boolean,
+    explicitUserAction: Boolean = false
   ): Option[String] =
-    if !nonDefaultHome then None
+    if explicitUserAction then None
+    else if !nonDefaultHome then None
     else if explicitAllow then None
     else if !isProdHost(serverUrl) then None
     else
