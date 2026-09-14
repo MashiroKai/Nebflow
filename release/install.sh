@@ -469,23 +469,53 @@ ensure_brew() {
         log_i "Fetching official Homebrew installer..."
         /bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)" || return 1
     fi
-    # Make brew visible in this session (Apple Silicon vs Intel prefix)
-    if [ -x /opt/homebrew/bin/brew ]; then
-        eval "$(/opt/homebrew/bin/brew shellenv)" 2>/dev/null || export PATH="/opt/homebrew/bin:$PATH"
-    elif [ -x /usr/local/bin/brew ]; then
-        eval "$(/usr/local/bin/brew shellenv)" 2>/dev/null || export PATH="/usr/local/bin:$PATH"
+    # Make brew visible in this session (prefix derived, not hardcoded —
+    # covers both Apple Silicon and Intel layouts)
+    local brew_pfx
+    brew_pfx="$(brew_prefix)"
+    if [ -n "$brew_pfx" ]; then
+        eval "$("$brew_pfx/bin/brew" shellenv)" 2>/dev/null || export PATH="$brew_pfx/bin:$PATH"
     fi
     command -v brew > /dev/null 2>&1
+}
+
+# Homebrew prefix resolver — derived, not hardcoded. One prescription, both
+# call sites ([2026-09-14 coupling audit · plan A]: the former hardcoded
+# macOS/Apple-Silicon-only prefix literal is replaced by this derivation;
+# the /usr/local fallback is the pre-existing Intel default, a standard Unix
+# prefix and not a macOS-only one).
+# Contract: non-empty output <=> "$prefix/bin/brew" is executable; always
+# returns 0 (brew absent/unavailable => empty string => caller no-ops, same
+# as before).
+brew_prefix() {
+    # 1) explicit env override (portable; caller/CI may inject it)
+    if [ -n "${HOMEBREW_PREFIX:-}" ] && [ -x "${HOMEBREW_PREFIX}/bin/brew" ]; then
+        printf '%s' "$HOMEBREW_PREFIX"
+        return 0
+    fi
+    # 2) brew on PATH: ask brew itself (correct prefix on Apple Silicon and Intel)
+    if command -v brew > /dev/null 2>&1; then
+        local p
+        p="$(brew --prefix 2>/dev/null)"
+        if [ -n "$p" ] && [ -x "$p/bin/brew" ]; then
+            printf '%s' "$p"
+            return 0
+        fi
+    fi
+    # 3) pre-existing Intel default prefix fallback
+    if [ -x /usr/local/bin/brew ]; then
+        printf '%s' "/usr/local"
+        return 0
+    fi
+    printf '%s' ""
+    return 0
 }
 
 link_brew_jdk() {
     # brew openjdk@21 needs a symlink into /Library/Java/JavaVirtualMachines
     local prefix
-    if [ -d "/opt/homebrew/opt/openjdk@21" ]; then
-        prefix="/opt/homebrew"
-    elif [ -d "/usr/local/opt/openjdk@21" ]; then
-        prefix="/usr/local"
-    else
+    prefix="$(brew_prefix)"
+    if [ -z "$prefix" ] || [ ! -d "${prefix}/opt/openjdk@21" ]; then
         return 0
     fi
     sudo ln -sfn "${prefix}/opt/openjdk@21/libexec/openjdk.jdk" \

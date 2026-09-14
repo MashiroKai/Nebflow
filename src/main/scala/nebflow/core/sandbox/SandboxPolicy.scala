@@ -37,10 +37,16 @@ import nebflow.core.PathUtil
  * memory.md 精确豁免）。凭据纪律不变（不建 deny 名单，08-19 裁定维持）；
  * agents/**/memory.md 非 Nebula 份读/写双闸一票拒红线延续（非新增 deny）。
  *
- * readExtras（系统只读面，§A.2/H-10①/H-12①）：/usr /System /opt/homebrew
+ * readExtras（系统只读面，§A.2/H-10①/H-12①）：/usr /System
  * /private/etc /private/var + ~/.nebflow 白名单子目录（skills/prompts/docs +
  * 系统运行数据目录 tool-results/uploads/logs/sessions/projects/agents——节点读
  * 自己的工具结果缓存/上传附件/日志/会话/项目元数据/agent 定义是正常工作需求）。
+ * [2026-09-14 耦合审计案 A] 系统面原含一条 macOS/Apple Silicon 专有的 Homebrew
+ * 前缀字面量（本批删除的条目；该字面量此后不落本文件，避免再成悬空引用）：
+ * 该条目**已退出读面承重**（全盘读吸收，见上段；readableRoots 恒为 "/"）⇒ 按
+ * 「不承重 ⇒ 删除」处置：条目删除，systemReadExtras 定义保留为 forRoot 构造链/
+ * 变异用例的快照锚点，读面语义零变化（见证 = SandboxSpec SUBSUME：剔除全部
+ * readExtras 后读面不变）。
  * §4.2-B 审计只读例外（2026-09-05 memory-management 批次二机制四，作者裁定：
  * 全局白名单加两路径）：~/.nebflow/User.md + ~/.nebflow/agents/Nebula/memory.md
  * 两个【精确文件路径】进读面（审计节点直读记忆真身，替代日志重建通道）——
@@ -131,9 +137,10 @@ object SandboxPolicy:
   val off: SandboxPolicy = SandboxPolicy(os.Path("/"), Nil, Nil, enabled = false)
 
   /** 系统只读面（§A.2）：够编译器/工具链/系统命令使用。[2026-09-06 读宽批]
-    * 被全盘读吸收（定义保留，退出读面承重）。 */
+    * 被全盘读吸收（定义保留，退出读面承重）。[2026-09-14 耦合审计案 A]：原
+    * macOS/Apple Silicon 专有的 Homebrew 前缀条目（不承重）按案 A 处置并删除。 */
   def systemReadExtras: List[os.Path] =
-    List("/usr", "/System", "/opt/homebrew", "/private/etc", "/private/var").map(os.Path(_))
+    List("/usr", "/System", "/private/etc", "/private/var").map(os.Path(_))
 
   /** ~/.nebflow 读取白名单（H-12① + 读白名单补全）：skills/prompts/docs 三子目录
     * + 系统运行数据目录 tool-results/uploads/logs/sessions/projects/agents（只读，
