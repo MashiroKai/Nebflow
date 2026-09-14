@@ -38,6 +38,92 @@ let triggeringConvId = null;    // row may be re-rendered after open (unread cle
 const forwardedIds = new Set(); // session-persistent 「已转发」 chips (§3.3)
 let msgSeq = 0;
 
+// ── U-b 乐观项锚定（作者报障 2026-09-14「发送的消息本地重复显示」）────────
+// 「发送中的乐观项」登记表：一条待锚定的本地消息 = `{ tempId, convId, body, node,
+// entry, anchoredTo }`。生命期 = 一个聊天窗（`renderChatModal` 重置、`closeChat`
+// 清空，与 `chatMsgs` 同拍），条目在 POST 响应回来即出表 ⇒ 长度 ≈ 同时在飞条数。
+let pendingSends = [];
+
+/**
+ * 乐观项 → 真 id 的**唯一锚定点**（数据层收敛，U-b）。
+ *
+ * 后置条件（POST 响应腿 与 回显认领腿 **完全一致**）：
+ *  · `chatMsgs` 里该 id 恰有一条 —— 乐观项**原地换键**；服务端副本若已先到
+ *    （「回显先到 · 响应后到」形态），把它移出窗口（同一条消息不得两存）；
+ *  · DOM 里该 id 恰有一个节点 —— **复用乐观节点**，删掉同 id 的其它节点
+ *    （「认领/替换乐观项」：不新增气泡，节点数不变）。
+ *
+ * 为什么必须存在（病灶）：乐观项在 POST 响应回来前挂在临时 id（`fm-tmp-N`）上，
+ * 而服务端同一条消息可以经 **WS 自播帧 `message_new_self`** 或 **REST keyset 增量
+ * `after=<水位>`** 两条腿先一步进窗；两条腿都按**真 messageId** 判「是不是已经在
+ * 窗口里」，临时 id 让判据失配 ⇒ 真 id 那条新上一屏；随后响应再把乐观节点改键成
+ * **同一个真 id** ⇒ 一个 messageId 两个节点 + 两条 chatMsgs 条目 = 视觉重复
+ * （作者截图：同文同刻、两个独立气泡）。收敛必须落在**数据层**：`keyedDiff` 的
+ * `existing` 是 Map（同 id 只认一个节点），幽灵节点不会被后续任何一次渲染回收
+ * ⇒ 「重开窗还在」（且缓存里同 id 两条，重挂载再放大一次）。
+ *
+ * @param {{node: HTMLElement, entry: any, anchoredTo: string|null}} p 乐观项登记
+ * @param {string|number} realId 服务端真 id
+ * @returns {boolean} true = 已锚定（调用方不得再新增节点/条目）
+ */
+function anchorSendToRealId(p, realId) {
+  const key = String(realId ?? '');
+  // 窗口已关/重开（乐观节点已脱离文档）⇒ 锚定无意义，交调用方走最小改键回落。
+  if (!p || !modalEls || !p.node || !p.node.isConnected) return false;
+  if (!key) return false;
+  p.anchoredTo = key;
+  const rekeyed = { ...p.entry, id: realId };
+  const i = chatMsgs.indexOf(p.entry);
+  if (i >= 0) chatMsgs[i] = rekeyed;
+  p.entry = rekeyed;
+  p.node.dataset.messageId = key;
+  for (const n of [...modalEls.flow.querySelectorAll('.fm-msg')]) {
+    if (n !== p.node && n.dataset.messageId === key) n.remove();
+  }
+  // 数据面同键去重：**保留乐观项那一条**（= 这个节点对应的一条），服务端副本条目
+  // 出窗。保留顺序不动（窗口恒升序，keyset 水位只认最大数值 id）。
+  for (let j = chatMsgs.length - 1; j >= 0; j--) {
+    if (chatMsgs[j] !== rekeyed && String(chatMsgs[j].id) === key) chatMsgs.splice(j, 1);
+  }
+  return true;
+}
+
+/**
+ * **回显认领**：把一条**本机所发**的服务端消息认领到本会话未决的乐观项上
+ * （「回显先到 · 响应后到」的解 —— 不新增气泡、不新增条目）。
+ *
+ * 只在**唯一可判**时认领（三条同时成立）：① 调用方已确证这条是本机所发
+ * （WS 面判据 = 事件类型 `message_new_self`；REST 面判据 = 服务端记录里的
+ * `senderId` **权威且非好友**）② 该 id 尚未归属任何已载入条目 ③ 本会话存在
+ * 未锚定、正文逐字相同的乐观项。多条同正文未决（罕见）取**最老**一条 ——
+ * 服务端 id 升序 = 发送序。
+ *
+ * 已知边界（**登记为残余风险，不掩盖**）：同一账号**另一台设备**在同一会话、
+ * 同一在飞窗口内发出**逐字相同**正文的消息时，该帧会与本机乐观项同判据 ⇒ 归错。
+ * 代价有界（窗口重开即自愈）；判据无法更紧：wire 上没有任何客户端令牌可回带。
+ * @param {any} m 服务端消息（含真 id）
+ * @param {string} convId 该消息所属会话
+ * @param {boolean} ours 调用方确证「这是本机所发」
+ * @returns {boolean} true = 已认领（调用方禁止再 append）
+ */
+function claimPendingSend(m, convId, ours) {
+  if (!ours || !modalEls || !m) return false;
+  const key = m.id;
+  if (key === undefined || key === null || key === '') return false;
+  if (!convId || String(convId) !== String(openConvId)) return false;
+  if (chatMsgs.some(x => String(x.id) === String(key))) return false; // 已归属 ⇒ 无未决项
+  const body = m.body || '';
+  const p = pendingSends.find(x => !x.anchoredTo && x.node && x.node.isConnected
+    && (!x.convId || String(x.convId) === String(convId)) && x.body === body);
+  return p ? anchorSendToRealId(p, key) : false;
+}
+
+/** 出表（锚定完成 / 发送失败 / 重试换号）：登记表不随发送条数增长。 */
+function forgetPendingSend(p) {
+  const i = pendingSends.indexOf(p);
+  if (i >= 0) pendingSends.splice(i, 1);
+}
+
 // ⑨ 增量同步：单飞 + 回补节流（①opt-A3 挂靠点见 backfillTick）。
 let syncingConvId = null;       // 同一会话同时只跑一条增量链
 let lastBackfillAt = 0;
@@ -274,6 +360,9 @@ function closeChat() {
     modalEls.overlay.remove();
     modalEls = null;
   }
+  // U-b：窗口一关，在飞乐观项的节点即脱离文档 ⇒ 登记随之作废（在飞 POST 的
+  // 续接腿会因 `node.isConnected === false` 自动走最小回落）。
+  pendingSends = [];
   openConvId = null;
   renderList(); // refresh aria-selected + any unread changes
   // A18: focus return — the triggering row may have been detached by the
@@ -478,6 +567,9 @@ function renderChatModal(conv) {
   // Fresh modal → reset history-window state (a stale older conversation's
   // tail must never leak into this one).
   chatMsgs = [];
+  // U-b：旧窗口的乐观项登记随之作废（其节点已脱离文档）——登记表与 chatMsgs
+  // 同拍，绝不跨窗残留。
+  pendingSends = [];
   oldestLoadedId = 0;
   hasMoreHistory = false;
   loadingHistory = false;
@@ -665,7 +757,15 @@ function renderMessages(msgs, { stickBottom = true } = {}) {
  *  不重排：keyset 页本身 ASC、且 `after=` 恒取窗口最大 id ⇒ 追加序即升序
  *  （不引入 `Number(id)` 排序 —— mock 面的字符串 id 会被 NaN 打乱既有顺序）。 */
 function appendMessages(msgs) {
+  const conv = currentConv();
   for (const m of msgs) {
+    // U-b 回显认领：REST keyset 增量先于 POST 响应到达时，就地锚定乐观项
+    // （不新增气泡/条目）。「本机所发」判据 = 服务端记录里的 `senderId` ——
+    // REST 面该字段权威且必带；**缺席 ⇒ 不认领**（照旧走原路径，与 U-a
+    // 「不猜」同向）。
+    const ours = !!conv && m.senderId !== undefined && m.senderId !== null && m.senderId !== ''
+      && m.senderId !== conv.friend?.userId;
+    if (claimPendingSend(m, conv && conv.conversationId, ours)) continue;
     if (!chatMsgs.some(x => String(x.id) === String(m.id))) chatMsgs.push(m);
   }
   renderMessages(chatMsgs, { stickBottom: false });
@@ -799,9 +899,21 @@ function prependMessages(older) {
   flow.scrollTop = flow.scrollHeight - prevHeight + prevTop;
 }
 
-function appendMessage(m) {
+/**
+ * @param {any} m 服务端消息
+ * @param {boolean} [ours] 调用方确证「这是本机所发」（WS 面 = 事件类型
+ *   `message_new_self`）—— 只有本机所发的帧才可能是乐观项的回显。
+ */
+function appendMessage(m, ours = false) {
   const conv = currentConv();
   if (!modalEls || !conv) return;
+  // U-b 回显认领：本条就是本地未决乐观项的回显 ⇒ 就地锚定真 id 并**复用原节点**
+  // （气泡数不变、条目数不变）。锚定后与「响应腿」同后置条件 ⇒ 幂等。
+  if (claimPendingSend(m, conv.conversationId, ours)) {
+    modalEls.flow.scrollTop = modalEls.flow.scrollHeight;
+    persistConversation(conv);
+    return;
+  }
   if (!chatMsgs.some(x => String(x.id) === String(m.id))) chatMsgs.push(m);
   // ⑨-E 同 id 幂等：WS 帧与乐观回显（sendCurrent 已把 temp id 换成真 id）撞车时
   // 只留一个节点 —— 重复气泡会让 M5「渲染 id 序列」直接不等。
@@ -939,14 +1051,24 @@ async function sendCurrent(conv) {
   modalEls.flow.appendChild(wrap);
   createIconsIn(modalEls.flow);
   modalEls.flow.scrollTop = modalEls.flow.scrollHeight;
+  // U-b：登记为「发送中的乐观项」——回显（WS 自播帧 / REST keyset 增量）若先于
+  // 响应到达，由 claimPendingSend 认领回这一条（不新增气泡）。
+  const pending = { tempId, convId: conv.conversationId || '', body, node: wrap, entry: optimistic, anchoredTo: null };
+  pendingSends.push(pending);
 
   try {
     const resp = await api.sendFriendMessage(conv.friend.userId, body);
     const realId = resp.messageId || tempId;
     wrap.classList.remove('fm-sending');
-    wrap.dataset.messageId = realId;
-    const idx = chatMsgs.findIndex(x => x.id === tempId);
-    if (idx >= 0) chatMsgs[idx] = { ...optimistic, id: realId }; // temp id → 服务端 id
+    // U-b 唯一锚定点：回显已先到时此处**幂等**（同一后置条件，节点/条目数不变）；
+    // 回显未到时即既有的「temp id → 服务端 id」换键。
+    if (!anchorSendToRealId(pending, realId)) {
+      // 窗口已关/重开（乐观节点脱离文档）⇒ 退回最小改键（不触碰新窗口的状态）。
+      wrap.dataset.messageId = realId;
+      const idx = chatMsgs.findIndex(x => x.id === tempId);
+      if (idx >= 0) chatMsgs[idx] = { ...optimistic, id: realId }; // temp id → 服务端 id
+    }
+    forgetPendingSend(pending);
     if (!conv.conversationId && resp.conversationId) {
       // First send created the conversation (friend-addressed send)
       conv.conversationId = resp.conversationId;
@@ -958,6 +1080,7 @@ async function sendCurrent(conv) {
     resortAndRender();
     persistConversation(conv); // ⑨ 落盘（temp id 由缓存层过滤，不会存成幻影）
   } catch {
+    forgetPendingSend(pending);
     wrap.classList.remove('fm-sending');
     wrap.classList.add('fm-failed');
     const flag = el('button', 'fm-retry', '!');
@@ -1070,7 +1193,10 @@ async function onFriendEvent(msg) {
     // U-a 幂等：与 message_new 同判据、同实现（同 id 只做一次上屏/落盘）。
     if (!markFrameMessageSeen(m.id)) return;
     conv.lastMessage = m;
-    if (openConvId === msg.conversationId) appendMessage(m); // 复用既有 append 腿
+    // U-b：`message_new_self` 事件的语义 = 本机所发⇒ 是本机在飞乐观项的回显形态，
+    // 允许认领（`message_new`= 对方所发，**不认领**：缺席 senderId 的入站帧与
+    // 本机乐观项同判据会归错，判据宁缺勿滥）。
+    if (openConvId === msg.conversationId) appendMessage(m, true); // 复用既有 append 腿
     // 未开会话：仅下方刷新（列表预览 + 角标），不 append、不计未读。
     resortAndRender();
     updateBadge();
