@@ -3920,11 +3920,26 @@ class NodeEngine(
   private val starveRounds: Ref[IO, Map[String, Int]] =
     Ref.unsafe[IO, Map[String, Int]](Map.empty)
 
-  /** mount-stalled 单发记账（mount-enforce 批）：当前停滞期已发过事件的节点 id 集。
-    * 每轮 sweep 全量替换为当轮停滞集——节点恢复（被补触发/合法等待）即自动出集，
-    * 再次停滞 = 新停滞期再发一次。 */
-  private val stallNotified: Ref[IO, Set[String]] =
-    Ref.unsafe[IO, Set[String]](Set.empty)
+  /** mount-stalled 告警**升级**记账（mount-enforce 批 + engine-defects 批 #85，2026-09-15）：
+    * nodeId → (上次发射时刻 ms, 本停滞期已发射条数)。
+    *
+    * 前身 =「单发 Set」——一个停滞期**全生命周期只发一条** `mount-stalled`，其后永久
+    * 静默。实际形态（真身 `.nebflow/flow-map-events.jsonl:5553`，2026-09-15 夹具）：
+    * 上游被 R4 摘除并写入 `pendingSuccession` ⇒ barrier 被**永久** hold（唯一出口 =
+    * 分发器 `NodeEdit` 人工介入，`NodeTools.scala:2373-2390`），节点 `wiring` 不动、
+    * 却仍以「开态 rank 更小者」身份占着合并队列临界区 ⇒ **整条合并队列静默死锁**
+    * （真身 `:5581`：两个 `wiring` 持有者挡死 `n-25e6daf7`）。单发档位在此形态下
+    * 等于零告警。
+    *
+    * 本批改为**有界重复告警**：首次仍是 60s 档（逐字保留今日行为，`NodeMountEnforceSpec`
+    * M5/M6/M7 零变化）；此后只要该节点**仍在当轮停滞集内**，每过
+    * [[NodeEngine.StallReNotifyMs]] 再发一条，summary 带升级标 `escalation=#N`。
+    * 节点出集（恢复/承接/启动）即自动出表 ⇒ 下次停滞 = 新停滞期、重新从 #1 起算。
+    *
+    * 🔴 本批**不改** R4「待承接槽位不自动结算」的裁定：自动放行会让下游按**缺轨输入**
+    * 启动并产出缺轨结论（R4 头注逐字）；故只做告警可见性，不做语义放行。 */
+  private val stallNotified: Ref[IO, Map[String, (Long, Int)]] =
+    Ref.unsafe[IO, Map[String, (Long, Int)]](Map.empty)
 
   /** R3 即时 barrier 告警单发记账（取消静默死锁修复批）：已由**终态写点同步**
     * （[[checkBarriersNow]]）发过 `barrier-blocked` 的下游 id 集。与 [[stallNotified]]
@@ -4052,14 +4067,34 @@ class NodeEngine(
       // R3 去重（取消静默死锁修复批）：本轮发射集排除「终态写点已即时告警」的节点
       // ——同一停滞期不得发两条（即时 barrier-blocked + 周期 mount-stalled）。
       prevAlerted <- barrierAlerted.get
-      stallToEmit = stalledNow.filter { case (id, _) => !prevStall.contains(id) && !prevAlerted.contains(id) }
-      _ <- stallNotified.set(stalledNow.map(_._1).toSet)
+      // 升级发射判定（engine-defects 批 #85）：①首条 = 本停滞期尚未发过（逐字保留
+      // 今日行为）；②续发 = 本停滞期已发过且距上次发射 ≥ StallReNotifyMs（有界重复，
+      // 把「静默死锁」变成持续可见）；③被即时 barrier 告警覆盖者不出（R3 原样）。
+      stallEmits = stalledNow.flatMap { case (id, reason) =>
+        if prevAlerted.contains(id) then None // R3 原样：即时 barrier 告警已覆盖本停滞期
+        else
+          prevStall.get(id) match
+            case None => Some((id, reason, 1, nowMs)) // 首条（逐字保留今日行为）
+            case Some((_, 0)) => Some((id, reason, 1, nowMs)) // 曾被 R3 抑制、现补发首条
+            case Some((lastAt, n)) if nowMs - lastAt >= NodeEngine.StallReNotifyMs =>
+              Some((id, s"escalation=#${n + 1} ACTION REQUIRED — this node has now been stalled for " +
+                s"${(nowMs - lastAt) / 1000L}s since the previous alert; $reason", n + 1, nowMs))
+            case _ => None
+      }
+      // 记账**必须把「仍停滞但本轮未发射」的节点原样留在表内**（否则下一轮会把它当
+      // 「首条」重发 ⇒ 每 tick 刷屏，单发纪律当场失效）；出表 = 该节点已脱离停滞集。
+      stallNext = stalledNow.map { case (id, _) =>
+        stallEmits.find(_._1 == id) match
+          case Some((_, _, n, at)) => id -> (at, n)
+          case None                => id -> prevStall.getOrElse(id, (nowMs, 0))
+      }.toMap
+      _ <- stallNotified.set(stallNext)
       // 即时告警记账剪枝：仅保留「此刻仍被终态上游闸住」的下游（恢复即出集）。
       heldNow = actives.collect { case n if barrierHeldReason(s1.nodes, n).isDefined => n.id }.toSet
       _ <- barrierAlerted.set(prevAlerted.intersect(heldNow))
-      _ <- stallToEmit.traverse_ { case (id, reason) =>
+      _ <- stallEmits.traverse_ { case (id, reason, n, _) =>
         FlowMapEventLog.append(workspace, projectName, id, "mount-stalled", reason) *>
-          logger.warn(s"[$projectName] node $id mount-stalled: $reason")
+          logger.warn(s"[$projectName] node $id mount-stalled (alert #$n): $reason")
       }
       actions = healed.map(_._2) ++ qualified.map(n => s"start ${n.name}(${n.id})")
       _ <- if actions.nonEmpty then
@@ -4116,12 +4151,32 @@ class NodeEngine(
             // 文案给持有者 id/status + FIFO 次序说明，免分发器误判（零新事件类型——复用
             // 既有 mount-stalled 单发档位；闸自身的 `merge-queue` 事件另在闸落点单发）。
             mergeMutexHoldersOf(n).map { queued =>
+              // engine-defects 批 #2/#85（2026-09-15）：把「谁**在**临界区」与「谁只是
+              // 排在前面」分开点名——旧文案对**开态排队者**也写「hold the critical
+              // section … mechanism guarantee, not a stall」；真身 `flow-map-events.jsonl:5581`
+              // 里两个持有者**都是 `wiring`**（无一在临界区），该断言当场为假，且那个
+              // 队头正被 R4 `pendingSuccession` 永久 hold ⇒「机制的保证」不成立。
+              val inSection = queued.filter(_.status == NodeLifecycle.Running)
+              val queuedAhead = queued.filter(_.status != NodeLifecycle.Running)
               val queueDesc =
                 if queued.isEmpty then ""
                 else
-                  s", merge-queue held: same-key merge node(s) [${queued.map(h => s"'${h.name}'(${h.id}):${h.status}").mkString(", ")}]" +
-                    " hold the critical section — this node starts only in FIFO order (rank = readyAt,createdAt,id);" +
-                    " the holder's terminal write releases it (mechanism guarantee, not a stall)"
+                  val sectionPart =
+                    if inSection.nonEmpty then
+                      s"critical-section holder(s) [${inSection.map(h => s"'${h.name}'(${h.id}):${h.status}").mkString(", ")}]"
+                    else
+                      s"NO holder is inside the critical section (every listed node is still open: none is running)"
+                  val aheadPart =
+                    if queuedAhead.isEmpty then ""
+                    else s"; queued ahead (not in the section) [${queuedAhead.map(h => s"'${h.name}'(${h.id}):${h.status}").mkString(", ")}]"
+                  val guarantee =
+                    if inSection.nonEmpty then
+                      "the running holder's terminal write releases it (mechanism guarantee)"
+                    else
+                      "no running holder exists to release it — the queue advances only when an open-state " +
+                        "predecessor actually starts, which may require dispatcher intervention"
+                  s", merge-queue held: $sectionPart$aheadPart — this node starts only in FIFO order " +
+                    s"(rank = readyAt,createdAt,id); $guarantee"
               Some(
                 s"mount stalled: ${stalledSec}s past triggerable point, still status=${n.status}, " +
                   s"$barrierDesc$successionDesc$gateDesc$queueDesc, no running/wiring upstream (upstreams: $upDesc) — settle sweep " +
@@ -5166,6 +5221,20 @@ object NodeEngine:
     * 上游）→ mount-stalled 事件留痕（含节点 id+等待原因）+ settleSweep 既有资格回扫
     * 接管补触发。双保险的时间维度信号（轮次维度由 trigger-starved 承担）。 */
   val MountStalledMs: Long = 60_000L
+
+  /** mount-stalled **告警升级**间隔（engine-defects 批 #85，2026-09-15）：同一停滞期在
+    * 首条之后每过本间隔**再发一条**（summary 带 `escalation=#N`），直到节点脱离停滞集。
+    *
+    * 动因（真身 `.nebflow/flow-map-events.jsonl:5553` + `:5581`）：R4 `pendingSuccession`
+    * 形态下 barrier 被永久 hold，唯一出口是分发器人工 `NodeEdit`（`NodeTools.scala:2373-2390`）；
+    * 旧「单发 Set」让一个可持续数十分钟、并且会**堵死整条合并队列**的停滞只留下一条
+    * 事件 = 事实上的静默。取 10min（≥ MountStalledMs 的 10 倍）：既足以在 30s tick 上
+    * 反复提醒，又不会把事件流刷成噪音（一个停滞期 1 小时 ≈ 6 条）。
+    *
+    * **现读 prop**（`nebflow.stall.reNotifyMs`，`LoopMaxRounds` / `BgateWaitTimeoutMs`
+    * 同款先例）——spec 可即时把间隔压到毫秒级做确定性断言，无需等真实 10min。 */
+  def StallReNotifyMs: Long =
+    sys.props.getOrElse("nebflow.stall.reNotifyMs", (10 * 60 * 1000L).toString).toLong
 
   /** 死会话自动收敛的 spawn 窗口宽限（僵尸收敛批 2026-09-06）：节点 status 翻
     * Running 后，agent registry 登记发生在 spawn 之后（runWithAgent :816）——Flipped
