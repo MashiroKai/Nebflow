@@ -557,7 +557,7 @@ object MemoryTrack:
         s"- 这些 ref 的**目标文件里已有同一行**（already-present，逐字相同）：$head$more —— **不要动文件**（再落一次只会造重复行），直接记 `deduped`；也不要写 rejected（`rejected` 可重试 ⇒ 会无限复现）。\n"
     s"""[记忆整理轨] 触发=$trigger，本轮授权待办 ${notes.size} 条（队列 pending 总数见计划行）。
 - 数据根（绝对路径）：$abs —— 文件工具只接受绝对路径，直接用这个前缀。
-- 队列：$abs/memory/queue.jsonl。待办口径 = `MemoryQueue.pending`（无 outcome 的 note + 末条结局 ∈ {notrun, timeout, rejected, blocked} 的重试项）——与引擎折叠谓词同源，不要另立口径。
+- 队列：$abs/memory/queue.jsonl。待办口径 = `MemoryQueue.pending`（有 note ∧ **未被任何 drop 行的 refs 引用** ∧ 末条结局**非终态**：终态 = applied / modified / obsolete / deduped / applied-by-reconcile，其余值——含本系统还不认识的值——一律仍 pending）——与引擎折叠谓词同源，不要另立口径。
 - 本轨授权 ref 清单：${if refs.isEmpty then "(none)" else refs + more}
 $deferred$noTargetLine$alreadyPresentLine- 步骤与输出契约严格按本会话系统提示词：动笔前快照三处记忆文件 → 逐条执行 → 逐条回写 outcome → 报告结构化计数。
 - 只允许改 4 个目标路径（$abs/User.md、$abs/agents/Nebula/memory.md、涉及项目的 <workspace>/.nebflow/memory.md、队列）；别的文件一律不碰；禁 git 写操作。

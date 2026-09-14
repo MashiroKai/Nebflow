@@ -3,6 +3,7 @@ package nebflow.core.tools
 import cats.effect.unsafe.implicits.global
 import munit.FunSuite
 import nebflow.core.PathUtil
+import nebflow.core.project.{ProjectMemory, ProjectStore}
 import nebflow.service.MemoryStore
 
 import java.nio.file.Files
@@ -154,6 +155,33 @@ class MemoryQueueSpec extends FunSuite:
     for i <- 1 to (MemoryQueue.MaxPending + 1) do enqueue(s"- 条目 $i")
     val line = MemoryQueue.summaryLine()
     assert(line.contains("dropped by the 500-pending cap"), s"摘要行报弃置: $line")
+
+  // ===== A′ 缺文件族：注入面响亮告警 =====
+
+  test("A′ 缺文件族告警：pending 的目标层无记忆文件 ⇒ 注入行挂 ALERT；层文件出现 ⇒ 该段消失"):
+    reset()
+    enqueue("- 条目一") // target=user，本 spec 的临时 home 下 User.md 不存在
+    val missing = MemoryQueue.summaryLine()
+    assert(missing.contains("has no memory file"), s"目标层无记忆文件必须挂响（A′ 响亮告警）: $missing")
+    assert(missing.contains("user"), s"告警点名缺哪一层: $missing")
+    os.write(MemoryStore.userMemoryPath, "- x\n", createFolders = true)
+    val present = MemoryQueue.summaryLine()
+    assert(!present.contains("has no memory file"), s"层文件存在 ⇒ 不出该段（不引入常驻噪声）: $present")
+
+  test("A′ 缺文件族告警：project 层未注册 / 记忆文件缺失都判缺层，文件出现才放行"):
+    reset()
+    enqueue("- 条目一", target = "project:demo")
+    assert(MemoryQueue.summaryLine().contains("project:demo"), s"未注册项目层点名: ${MemoryQueue.summaryLine()}")
+    val ws = os.Path(Files.createTempDirectory("nb-memq-ws"))
+    os.write(
+      ProjectStore.projectJsonPath("demo"),
+      s"""{"name":"demo","workspace":"$ws","agentFile":"AGENTS.md","createdAt":0}""",
+      createFolders = true
+    )
+    assert(MemoryQueue.summaryLine().contains("project:demo"), "注册了但项目记忆文件缺失 ⇒ 仍判缺层（生产形态）")
+    os.write(ProjectMemory.path(ws.toString), "- x\n", createFolders = true)
+    assert(!MemoryQueue.summaryLine().contains("project:demo"), "项目记忆文件存在 ⇒ 该层不再是缺层")
+    os.remove.all(ws)
 
   // ===== 变更史 =====
 
