@@ -278,6 +278,7 @@ When the user's agent-messaging mode is `ask` (or the auto rate limit was hit), 
     peer: PeerInfo,
     message: String,
     attachments: List[os.Path],
+    targetDir: Option[String],
     ctx: ToolContext
   ): IO[Either[ToolError, String]] =
     dbx.sendText(peer.deviceId, message).flatMap { textDelivered =>
@@ -294,26 +295,35 @@ When the user's agent-messaging mode is `ask` (or the auto rate limit was hit), 
       else
         // U-2：一条审计行（每次逻辑下发一次，首次网络尝试前；失败绝不影响发送）。
         auditAttachSend(ns, peer, attachments, ctx) *>
-          dbx.sendLocalFiles(peer.deviceId, attachments).map {
+          dbx.sendLocalFiles(peer.deviceId, attachments, targetDir).map {
             case Left(err) =>
               Left(ToolError(s"Text was delivered, but the attachments were rejected: ${err.render}"))
             case Right(outcomes) =>
               val total = outcomes.map(_.fileSize).sum
               val failed = outcomes.filterNot(_.delivered)
+              val note = targetDirEcho(outcomes)
               if failed.isEmpty then
                 Right(
-                  s"已发送到设备 ${peer.deviceName}（${LocalTime.now().format(TimeFormat)}）— 文本已送达，${outcomes.size} 件附件共 $total B 全部完成（分块传输，双侧 sha256 一致）。"
+                  s"已发送到设备 ${peer.deviceName}（${LocalTime.now().format(TimeFormat)}）— 文本已送达，${outcomes.size} 件附件共 $total B 全部完成（分块传输，双侧 sha256 一致）。$note"
                 )
               else
                 val detail = failed.map(o => s"${o.fileName}: ${o.error.getOrElse("unknown error")}").mkString("; ")
                 Left(
                   ToolError(
-                    s"Text was delivered, but ${failed.size}/${outcomes.size} attachment(s) failed — $detail. " +
+                    s"Text was delivered, but ${failed.size}/${outcomes.size} attachment(s) failed — $detail.$note " +
                       "Retrying reuses the chunked channel's resume (completed chunks are not re-sent)."
                   )
                 )
           }
     }
+
+  /** 🔴 §4.1 禁静默：发送端请求了 `targetDir`、但对端**未确认支持**（`file-response`
+    * 未回带 `proto >= 2`）⇒ 该请求**未上 wire**，落点 = 对端缺省目录。此结果必须显式
+    * 回显给调用方 —— 禁「发了但对方忽略」式的静默不达（`AttachContract` 的四条禁吞口径）。 */
+  private def targetDirEcho(outcomes: List[DropboxService.LocalFileOutcome]): String =
+    if outcomes.exists(_.targetDirDeferred) then
+      " targetDir 请求未上 wire（对端未回带 proto >= 2）—— 对端不支持指定目录，已落对端 Downloads。"
+    else ""
 
   /** U-2 审计行（`RelayExecAudit` 同族字段；零阻塞、失败只 WARN）。 */
   private def auditAttachSend(
@@ -414,13 +424,12 @@ When the user's agent-messaging mode is `ask` (or the auto rate limit was hit), 
               case Some(m) if m.length > MaxMessageLength =>
                 bad(s"Message too long (${m.length} chars, max $MaxMessageLength).")
               case Some(m) =>
-                if targetDir.isDefined then
-                  bad(
-                    "`targetDir` is not supported for device targets: the receiver's landing directory is managed by " +
-                      "the Dropbox channel (auto-accept, lands in the peer's Downloads). Supporting a receiver-side " +
-                      "targetDir would require a frozen-contract change — pending the author's call."
-                  )
-                else if attachments.exists(a => !java.nio.file.Paths.get(a.trim).isAbsolute) then
+                // 设备腿 `targetDir`（契约升版批，2026-09-14）：**受控支持**。
+                // 原先的显式拒绝（「…pending the author's call」）已被作者 16:20「现在升版」取代，
+                // 该句自 spec 起标注 provisional/存档，不得再作为待拍板项。本工具只把请求透传到
+                // 设备腿（`DropboxService.sendLocalFiles`）；**落点由接收端判定**
+                // （`TargetDirGuard`，spec §③）—— 发送端无法指定任意目录。
+                if attachments.exists(a => !java.nio.file.Paths.get(a.trim).isAbsolute) then
                   // 原始串闸（os.Path 构造会把相对段绝对化，构造后再判恒真）——
                   // description 契约「ABSOLUTE paths」在工具边界 enforcement。
                   val rel = attachments.filter(a => !java.nio.file.Paths.get(a.trim).isAbsolute)
@@ -440,7 +449,7 @@ When the user's agent-messaging mode is `ask` (or the auto rate limit was hit), 
                       ns.peers.flatMap(peers =>
                         resolveDevice(q, peers) match
                           case Left(err)      => IO.pure(Left(ToolError(s"${err.message}\n${deviceCandidates(peers)}")))
-                          case Right(peer)    => sendDevice(dbx, ns, peer, m, attachments.map(p => os.Path(PathUtil.expandTilde(p.trim), os.pwd)), ctx)
+                          case Right(peer)    => sendDevice(dbx, ns, peer, m, attachments.map(p => os.Path(PathUtil.expandTilde(p.trim), os.pwd)), targetDir, ctx)
                       )
           case Right(ToKind.Friend(q)) =>
             if attachments.nonEmpty then

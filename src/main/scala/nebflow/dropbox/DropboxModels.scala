@@ -60,7 +60,20 @@ case class FileTransfer(
   chunkSize: Int = 0, // 会话内恒定；0 = 未协商（legacy 整件模式）
   wholeSha256: String = "", // 发送端单遍算出的整件摘要
   bytesReceived: Long = 0L, // 接收端权威 offset（断点续传）
-  proto: Int = 0, // 0 = legacy 整件，1 = 分块（AttachContract.ProtoChunked）
+  proto: Int = 0, // 0 = legacy 整件，1 = 分块，2 = 分块 + 接收端指定目录（AttachContract.ProtoAssignDir）
+  // ===== 设备腿 targetDir（契约升版批，2026-09-14）=====
+  // 全部带默认值 ⇒ 旧 transfers.json（无这些键）照旧解码，向后兼容。
+  /** 落点目录。
+    *   - 接收端（direction = "in"）：§③ 判定链**通过后**的 canonical 落点 —— 判定结果
+    *     在 `file-offer` 阶段固化一次，收块/commit 阶段**不得**重新解释字符串；
+    *   - 发送端（direction = "out"）：本次请求的 `targetDir`（NFC 形态，回显用）。
+    * `None` = 缺省语义（落 `DropboxUtil.downloadsDir`），与今天逐字节一致。 */
+  targetDir: Option[String] = None,
+  /** 接收端裁定：非空 = 该请求被拒（`AttachContract.Codes.TargetDir*`），落点不生效。 */
+  targetDirCode: Option[String] = None,
+  /** 发送端：对端自报的 proto 等级（来源 `file-response.proto`）。`None` = 未知/旧端
+    * ⇒ 按 §4.2 候选 1「未确认等级 ⇒ 不发 `targetDir`」。 */
+  peerProto: Option[Int] = None,
   lastProgressAt: Long = 0L // 最后一次字节进展（看门狗按它计时，非绝对时间）
 )
 
