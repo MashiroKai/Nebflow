@@ -128,7 +128,10 @@ class SendMessageAttachSpec extends CatsEffectSuite:
     assert(msg.contains("must be absolute"), msg)
     assert(msg.contains("relative.bin"), msg)
 
-  test("device 目标 + targetDir ⇒ 冻结契约面显式拒绝（归作者，不自裁）"):
+  test("device 目标 + targetDir ⇒ 受控支持：不再走冻结契约拒绝（服务缺席时落到设备腿自己的报错）"):
+    // 契约升版批（2026-09-14，spec §⑥①）：原显式拒绝已被作者「现在升版」取代 ⇒ 本钉
+    // 断言**拒绝已解除**且**真的进入设备腿**；显式回显/落点裁定见
+    // `FriendMessageToolTargetDirSpec` A2（真服务栈 + level-1 桩）与 `TargetDirGuardSpec`。
     val res = callTool(
       obj(
         "to"        -> Json.fromString("device:KAI"),
@@ -136,8 +139,10 @@ class SendMessageAttachSpec extends CatsEffectSuite:
         "targetDir" -> Json.fromString("/tmp/whatever")
       )
     ).unsafeRunSync()
-    assert(res.isLeft)
-    assert(res.left.toOption.get.message.contains("frozen-contract"), res.left.toOption.get.message)
+    val msg = res.fold(_.message, identity)
+    assert(!msg.contains("not supported for device targets"), msg)
+    assert(!msg.contains("frozen-contract"), msg)
+    assert(msg.contains("Device messaging is unavailable"), msg)
 
   // ===== 服务级：闸位/校验/不可达（AttachGateServiceSpec 同款 harness） =====
 

@@ -3126,18 +3126,16 @@ class RestApiRoutes(
    * 解析 Dropbox 分块头。**只有** `X-Dropbox-Proto` 明确为 1（且其余必需头齐备）时才
    * 返回 `Some` —— 任何缺失 ⇒ `None` ⇒ 走 legacy 整件路径（向后兼容的判定依据，
    * 契约 §3.9「未知/缺失字段不得静默到看似成功」：这里「缺失」有明确定义的降级行为）。
+   *
+   * 🔴 **判据**（等值，非 `>=`）**与头值（恒 1）都不得改动** —— 本批契约升版（设备腿
+   * `targetDir`，`AttachContract.ProtoAssignDir = 2`）**只升 JSON 面数值轴**。把发送端
+   * 头值升成 `2` 会让旧接收端 guard 为假 ⇒ 走 legacy 整件 ⇒ 静默数据损坏；把 `==` 改成
+   * `>=` 则让新头被本次实现接受、却对旧端仍无救（掩盖破坏面）。实现体已逐字抽到
+   * [[nebflow.dropbox.DropboxChunkHeaderParser]]（可判定性抽出，语义零改动），
+   * 常绿钉见 `AttachProtoHeaderPinSpec`。
    */
   private def parseDropboxChunkHeaders(req: Request[IO]): Option[nebflow.dropbox.DropboxService.ChunkHeaders] =
-    def h(name: String): Option[String] = req.headers.get(CIString(name)).map(_.head.value.trim).filter(_.nonEmpty)
-    for
-      proto <- h("x-dropbox-proto").flatMap(_.toIntOption)
-      if proto == nebflow.dropbox.AttachContract.ProtoChunked
-      index <- h("x-dropbox-index").flatMap(_.toIntOption)
-      total <- h("x-dropbox-total-bytes").flatMap(_.toLongOption)
-      chunkSize <- h("x-dropbox-chunk-size").flatMap(_.toIntOption)
-      chunkSha <- h("x-dropbox-chunk-sha256")
-      wholeSha <- h("x-dropbox-whole-sha256")
-    yield nebflow.dropbox.DropboxService.ChunkHeaders(index, total, chunkSize, chunkSha, wholeSha)
+    nebflow.dropbox.DropboxChunkHeaderParser.parse(req.headers)
 
   /** 分块接收失败的结构化回执（会话不存在 ⇒ 404，其余 ⇒ 500）。 */
   private def chunkErrorResponse(err: nebflow.dropbox.AttachContract.AttachError): Response[IO] =
