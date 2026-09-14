@@ -22,7 +22,10 @@ import java.security.MessageDigest
  *     `pending` 计数未变（不把 pending 打成终态词）、重试引线不置位。
  *   - **变异臂**（见交付说明的 M1/M2 读数，不在本文件内以开关模拟）：移除入口闸或
  *     让标记不被读取 ⇒ 同一夹具下 `run` **不再短路**（对照臂 ② 即其常驻负控形态：
- *     标记缺席时同一 `run` 走到闸 2 得 `Status.Refused`）⇒ 主判据必红。
+ *     标记缺席时同一 `run` 走到轨内回合、`MissingLibrary` 下得 `Status.Failed`
+ *     并**写盘**）⇒ 主判据必红，且红在**写盘面**（主判据臂与对照臂用**同一桩**，
+ *     故 M1 红自带「queue 新增 outcome 行 > 0 ∧ 数据根新增文件 > 0」读数，
+ *     不以 NPE 形式逃逸）。
  *   - **事件行**（`event=memory-track-skipped detail=reason=paused`）由调用方落
  *     （`AgentActor.handleCompactResponse` 的状态匹配 + `logAgentEvent`，与
  *     `memory-track-{failed,timeout,completed,refused,dry-run}` 同族同处）——本 spec
@@ -175,9 +178,16 @@ class MemoryTrackPauseSpec extends FunSuite:
       assertEquals(pendingBefore, 2, "夹具：两条 pending")
       assertEquals(outcomesBefore, 1, "夹具：outcome 面非空（一条已闭合）")
 
-      val r = MemoryTrack.run(mkResources(), parentSessionId = Some("s"), parentDepth = 0).unsafeRunSync()
+      // 夹具用 `MissingLibrary`（定义缺失 ⇒ 轨内回合**干净** Failed），**不是** null 库：
+      // 变异臂 M1（移除入口闸）下本臂不得以 NPE 逃逸，而必须以**写盘面**转红——
+      // 见下条断言的 clue（带出 outcome 追加行数与数据根新增文件数）。
+      val r = MemoryTrack.run(mkResources(new MissingLibrary), parentSessionId = Some("s"), parentDepth = 0).unsafeRunSync()
 
-      assertEquals(r.status, MemoryTrack.Status.Paused, s"标记存在 ⇒ 跳过本轮: $r")
+      assertEquals(
+        r.status,
+        MemoryTrack.Status.Paused,
+        s"标记存在 ⇒ 跳过本轮（未短路 ⇒ 已进入执行路径：queue 新增 outcome 行 = ${outcomeLines(fx.queue) - outcomesBefore}，" +
+          s"数据根新增文件 = ${tree(fx.root).size - treeBefore.size}）: $r")
       assertEquals(r.pendingAtStart, 0, "未读队列的真实读数（不作 pending 计数承诺）")
       assert(r.detail.startsWith("reason=paused"), s"事件行字样来源（detail 起头）: ${r.detail}")
       assert(r.alert.isEmpty, "暂停不是失败 ⇒ 无告警")
