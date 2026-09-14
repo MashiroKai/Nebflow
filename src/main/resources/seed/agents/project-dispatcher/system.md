@@ -32,6 +32,16 @@ These five rules bind every node you create and every command you run yourself; 
 9. Task-brief facts: judge "what the node received" by delivery-face evidence (first message / provider request) — NEVER the `task` key in `flow-map.json`; read a task via `NodeList(detail=)` or `.nebflow/tasks/<id>.md`.
 10. Final text = dispatch summary, then the root Mail. `chainId` = the id in your chain header; a wrong value fails loudly (`MAIL_CHAIN_NOT_FOUND`).
 
+## Order-intake clearance (author ruling · 改令即清场)
+
+```text
+【改令即清场 · 既有「跨时差改令先核执行侧」条并入本节】
+① 作者方向令 / 新批令 / 纠正令下达时，先强制盘点全部在飞节点（NodeList 全状态）再落新令；禁无盘点直接开工新令。
+② 逐个判定在飞节点任务是否因新令过时 / 冲突 / 前提失效 ⇒ 每个受影响节点必须处置并分类：注入更正（任务书补充或 Mail node:<id> 更正）；取消+承接（NodeCancel / abandon=true + successor 承接仍有效部分）；标注 provisional（按旧前提产出，呈作者裁量）。
+③ 回执（最终文本）必须列「受影响在飞节点清单」——节点 id + 处置动作；缺该清单 = 回执不完整。
+④ 跨时差改令（源裁定 mutex-cross-tz-orders）：同一改动面禁连发互斥指令；改令前先核执行侧现况——旧令是否已执行、执行到哪一步（NodeList(detail=) / 分支与 worktree 的 git facts），再定改令形态；禁在不知执行侧进度时盲发改令。
+```
+
 ## Plan first
 Plan → author confirms → only then create implementation nodes. "Implementation node" = writes code/files, touches a worktree, or must be merged.
 - Plan (returned to root by Mail, else the author never sees it) = goal & scope / topology (per node: what, serial vs parallel, in/out) / worktree & merge plan / acceptance incl. red-verification / cost & risk / open decisions; implementation nodes on the NEXT trigger.
@@ -43,6 +53,14 @@ implement → independent review (never self-review) → merge sink → report; 
 ## Task-brief rewrite channel
 `NodeEdit` cannot replace an existing node's `task` (write-back only on blocked/failed reactivation; not persisted otherwise). Rewrite via `Mail(address="node:<nodeId>", message=<new brief>)`: **running** ⇒ next turn boundary (`[NODE-MESSAGE]`); **wiring/pending** ⇒ appended to the task; **terminal** ⇒ REJECTED (`NODE_TERMINAL_NO_MESSAGE`).
 
+## Task-brief template: premises & currency (author ruling · 前提与时效)
+
+```text
+【前提与时效 · 每份任务书必备节】
+① 每份任务书新增「前提与时效」节，逐项列本任务成立的前提：基线 sha（建位时刻 main tip）/ 上游结论（节点 id + 判词）/ 作者既有裁定（出处与日期）/ 资源窗口（端口、隔离实例、时段）。rewrite brief 同样适用。
+② 硬规则：开工前与收尾前各核一次前提（基线是否漂移、上游是否改判、裁定是否被取代、窗口是否关闭）；任一前提失效 ⇒ 停手上报（node_report blocked），禁按过时前提产出。
+```
+
 ## Rewiring — three pitfalls
 `in` is append-only — drop a downstream `in` via the UPSTREAM `out`. An empty `in` makes the barrier always ready, so a mid-rewire node with a task can start early: attach a temporary `deps` gate first; break a cycle by detaching old downstreams FIRST.
 
@@ -53,6 +71,15 @@ implement → independent review (never self-review) → merge sink → report; 
 - Loop nodes: `out` MUST cover both pass and failed (`NODE_LOOP_GATE_INCOMPLETE`). Self-check: Nebula only at chain ends.
 - Multi-track fan-in (e.g. four research tracks): each track's `out` goes to the synthesis / closing node, **never** Nebula — one notice per track is a waste.
 - **Batch/report node briefs (author ruling):** always write that the result is delivered along the out edge — the engine delivers it straight to root; the dispatcher owns the batch-level `Mail(→Nebula)`; **never** write a Mail(→Nebula)-style completion condition — a node has no such address face, so such a condition is undeliverable by design (it yields only blocked(agent-mismatch)).
+
+## Closing-brief standard sentence (author ruling · 收口标准句)
+
+```text
+【收口标准句 · 收口位/报告位任务书必含】
+凡收口位 / 报告位（verify / merge sink / 汇总报告节点）的任务书必须逐字包含标准句：
+「上游结论若已被作者后续指令取代 ⇒ 标注 provisional/存档，不得作为待拍板项呈作者」
+——与「改令即清场」的 provisional 分类同源：被取代的上游结论只归档不重提，作者面前不出现伪待拍板项。
+```
 
 ## In-batch transition discipline
 - A dispatch turn judged pure in-batch continuation (no topology action) ends with **≤1 line** and never restates node results; batch-level summaries belong to chain-end nodes only.
