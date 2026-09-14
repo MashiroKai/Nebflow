@@ -241,23 +241,37 @@ function bindDescEditor(device) {
 // ===== Chat events =====
 
 function bindChatEvents(device) {
-  const sendBtn = document.getElementById('dropbox-send-btn');
-  const textInput = document.getElementById('dropbox-text-input');
+  const sendBtn = /** @type {HTMLButtonElement | null} */ (document.getElementById('dropbox-send-btn'));
+  const textInput = /** @type {HTMLInputElement | null} */ (document.getElementById('dropbox-text-input'));
   const attachBtn = document.getElementById('dropbox-attach-btn');
-  const fileInput = document.getElementById('dropbox-file-input');
+  const fileInput = /** @type {HTMLInputElement | null} */ (document.getElementById('dropbox-file-input'));
   // HTMLElement（非 Element）标注：drag/drop 事件类型只能从 HTMLElementEventMap
   // 解析出来，否则回调参数退化成 Event（dataTransfer/relatedTarget 不可见）。
   const modal = /** @type {HTMLElement | null} */ (document.querySelector('.dropbox-modal'));
 
+  // ③ 同病同修（2026-09-14 交付批）：本键的「可否提交」判据 = 输入非空。
+  // 旧形态 = 按钮恒呈可用态、而空/纯空格输入点了**静默 no-op**（同族反极性
+  // 缺陷：看着能发、实际发不出去且零反馈）。现在按钮态与 Enter 路径同闸。
+  const syncSendState = () => {
+    if (!sendBtn || !textInput) return;
+    sendBtn.disabled = !textInput.value.trim();
+  };
+
   // Send text
   const sendText = () => {
+    if (!textInput) return;
     const text = textInput.value.trim();
     if (!text) return;
     sendWs({ type: 'dropbox-send-text', deviceId: device.deviceId, text });
     textInput.value = '';
+    syncSendState();
   };
 
-  sendBtn.onclick = sendText;
+  if (sendBtn) sendBtn.onclick = sendText;
+  if (textInput) {
+    textInput.addEventListener('input', syncSendState); // 空 ↔ 非空即时同步（禁两态分叉）
+  }
+  syncSendState(); // 初态：空输入 ⇒ 禁用（不再「看着可点」）
   // ⑤ 组字期间 Enter 交还输入法（原判定只有 `!e.isComposing` 单臂，收归为统一谓词）。
   bindImeGuard(textInput);
   textInput.addEventListener('keydown', (e) => {

@@ -422,7 +422,11 @@ function syncWatermark() {
  * 单次带宽不超过今天一次尾窗）。同一会话单飞（`syncingConvId`）。
  *
  * @param {string} conversationId
- * @param {{pages?: number}} [opts] pages = 最大翻页数（默认 1：单次探测）
+ * @param {{pages?: number, trigger?: string}} [opts] pages = 最大翻页数（默认 1：单次探测）；
+ *   trigger = 补拉触发点（W14 观测口径，除日志外零行为影响）
+ *   —— 本行 2026-09-14 交付批补齐：实现早已解构 `trigger`，而 JSDoc 未同步 ⇒
+ *   3 处调用点恒报 TS2339/TS2353。本文件被本批触碰，按 `check-js-types.mjs`
+ *   「new/touched files must be checkJs-clean」须自清（纯类型注释订正、零行为改动）。
  * @returns {Promise<number>} 补进来的条数
  */
 async function syncConversation(conversationId, { pages = 1, trigger = 'open' } = {}) {
@@ -629,6 +633,8 @@ function renderChatModal(conv) {
 
   const doSend = () => sendCurrent(conv);
   sendBtn.addEventListener('click', doSend);
+  // ③ 输入非空 ↔ 发送键可用态即时同步（含发送后清空 ⇒ 回禁用态；禁两态分叉）
+  input.addEventListener('input', syncComposerSend);
   // ⑤ 中文输入（作者点名的面）：组字期间 Enter 属于输入法（确认候选），不得
   // 触发 doSend()；组字结束后的 Enter 照旧发送（⑤A3）。
   bindImeGuard(input);
@@ -682,9 +688,17 @@ function applyBlockState(conv) {
     const bar = el('div', 'fm-blocked-bar', t('messages.notFriendBlocked'));
     modalEls.flow.parentNode.insertBefore(bar, modalEls.flow);
   }
-  const disabled = blocked || !state.connected;
-  modalEls.input.disabled = disabled;
-  modalEls.sendBtn.disabled = disabled;
+  modalEls.input.disabled = blocked || !state.connected;
+  syncComposerSend(); // 发送键 = 输入框可用 ∧ 输入非空（判据单源，见下）
+}
+
+/** ③ 同病同修（2026-09-14 交付批 · 好友面板「发送按钮组」同族）：
+ *  发送键可用态 = 输入框可用 ∧ 输入非空（trim）。旧形态只跟「拉黑/断连」同步，
+ *  空输入/纯空格时按键看着可用、点了**静默 no-op**（同族反极性缺陷）。
+ *  判据唯一来源：applyBlockState / onDisconnect / input 事件 / sendCurrent 共用。 */
+function syncComposerSend() {
+  if (!modalEls) return;
+  modalEls.sendBtn.disabled = modalEls.input.disabled || !modalEls.input.value.trim();
 }
 
 // ── 附件卡片（4b 腿 A-2；线面契约 §B.2 M6 / §B.4 / §B.7）─────────────────────
@@ -1374,6 +1388,7 @@ async function sendCurrent(conv) {
   const body = modalEls.input.value.trim();
   if (!body || body.length > 2000) return;
   modalEls.input.value = '';
+  syncComposerSend(); // 已清空 ⇒ 发送键回禁用态（判据单源）
 
   const tempId = 'fm-tmp-' + (++msgSeq);
   const optimistic = { id: tempId, senderId: 'me', kind: 'text', body, createdAt: new Date().toISOString() };
@@ -1426,6 +1441,7 @@ async function sendCurrent(conv) {
       const i = chatMsgs.findIndex(x => x.id === tempId);
       if (i >= 0) chatMsgs.splice(i, 1);
       modalEls.input.value = body;
+      syncComposerSend(); // 回填非空文本 ⇒ 发送键回可用态（重试路径不得留假禁用）
       sendCurrent(conv);
     });
     wrap.appendChild(flag);
@@ -1799,7 +1815,7 @@ export function initMessages() {
     if (modalEls) {
       modalEls.offline.hidden = false;
       modalEls.input.disabled = true;
-      modalEls.sendBtn.disabled = true;
+      syncComposerSend(); // 输入框已禁用 ⇒ 发送键同闸禁用（判据单源）
     }
   });
 

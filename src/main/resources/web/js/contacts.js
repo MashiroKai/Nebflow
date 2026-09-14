@@ -611,9 +611,28 @@ function buildResultCard() {
     input.className = 'fm-verify-input';
     input.maxLength = 50;
     input.placeholder = t('contacts.verifyMessagePlaceholder');
-    const sendBtn = el('button', 'glass-control', t('messages.send'));
+    // ① 发送键（作者 2026-09-14 主诉）：自带类名 `fm-verify-send`——旧形态只带
+    // 裸 `glass-control`，样式只能靠结构选择器 `.fm-verify-box button.glass-control
+    // :not(.fm-verify-cancel)` 命中（sapphire.css），断言也无从定位本键本体。
+    const sendBtn = el('button', 'glass-control fm-verify-send', t('messages.send'));
+    // ① 可提交性谓词（唯一来源）：按钮 enabled 态与 Enter 路径**共用**它，
+    // 杜绝「按钮禁用而 Enter 照发」的双写分叉。
+    // 唯一真「不能提交」态 = 在飞（sending）；附言为**可选**（i18n 逐字
+    // 「发送验证消息（可选）」/『Add a message (optional)』、friendsApi.js:263-266
+    // `note?`）⇒ 空附言是可提交的合法输入，不得按「空=禁用」处理（那会删掉
+    // 无附言发请求这条既有活路径）。username 缺失（契约允许 username 可空）时
+    // 请求无法成立 ⇒ 一并 fail-closed 为禁用（不再「看着能点、点了发不出去」）。
+    let sending = false;
+    const canSend = () => !sending && !!username;
+    const syncSendState = () => {
+      sendBtn.disabled = !canSend();
+      if (sending) sendBtn.setAttribute('aria-busy', 'true');
+      else sendBtn.removeAttribute('aria-busy');
+    };
     const doSend = async () => {
-      sendBtn.disabled = true;
+      if (!canSend()) return; // click / Enter 双路同闸（旧形态 Enter 无判定 ⇒ 在飞中再按 Enter 会重复 POST）
+      sending = true;
+      syncSendState();
       try {
         await api.sendFriendRequest(username, input.value.trim());
         sentTo.add(username.toLowerCase());
@@ -635,12 +654,15 @@ function buildResultCard() {
           friendErrToast(err); // F4：HTTP 类失败分态 toast（网络错由全局 fm-network-error 覆盖，friendErrToast 内已跳过）
         }
       }
+      sending = false;
       verifyFor = null;
       render();
     };
     sendBtn.addEventListener('click', doSend);
     // Enter 直发 + 取消回退（微信常识：附言后点发送；不想发可退出）
     // ⑤ A4：验证附言组字 Enter 不得直发（此前零判定）。
+    // ① 2026-09-14：Enter 与 click 同闸——`doSend()` 自带 `canSend()` 判定
+    // （本行不再写第二份判据，避免「按钮禁用、Enter 照发」的旧分叉复活）。
     bindImeGuard(input);
     input.addEventListener('keydown', (e) => {
       if (isImeComposing(e, input)) return;
