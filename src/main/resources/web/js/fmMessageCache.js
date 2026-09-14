@@ -193,8 +193,20 @@ export function loadConversation(conversationId) {
   // 无可信 keyset 水位（数值 id 一条都没见到）⇒ 当无缓存：`after=0` 在服务端
   // 语义是「从最早开始」而不是「从最新开始」，拿它当增量锚会拉回最旧的窗口。
   if (watermark <= 0) return null;
+  // U-b 存量排水（2026-09-14 好友消息重复上屏批）：修前形态「回显先到 · 响应后到」
+  // 会把**同一个 messageId 的两条**写进本槽（keyset 水位与渲染都按 id 认账 ⇒ 重开
+  // 窗时 `keyedDiff` 为重复 id 各建一个节点，重复气泡跨重挂载存活）。键就是
+  // messageId ⇒ 读侧按**稳定键**收敛一次（保留首条，保序）＝ 数据层归一，
+  // 不是渲染期过滤（渲染层仍不做任何去重）。
+  const seen = new Set();
+  const msgs = e.msgs.filter((m) => {
+    const k = String(m && m.id);
+    if (seen.has(k)) return false;
+    seen.add(k);
+    return true;
+  });
   return {
-    msgs: e.msgs.slice(),
+    msgs,
     watermark,
     fetchedAt,
     fresh: (Date.now() - fetchedAt) <= TTL_MS,
