@@ -84,6 +84,52 @@ final class NeblinkRelayTunnel(
   /** When the last self-heal re-login was attempted (0 = never). */
   @volatile private var lastHealAtMs = 0L
 
+  /** 踢下线停摆（案 B 客户端腿，2026-09-14 作者裁定 17:07；零 wire 新增）。
+    *
+    * 服务端在「同 (deviceId, network) 有新会话」时主动断开本隧道并推 `disconnect`
+    * 帧（`relay.rs disconnect_device`）。修前这里只打一行 debug，重连行为「pending
+    * product decision」（见下方 listener 注释）⇒ 两端各自无屏障地自动重连/重登录，
+    * 同账号双实例会互踢成乒乓（`NeblinkClient.reloginGate` / `HealCooldownMs` 只
+    * 覆盖**单实例内**）。
+    *
+    * 现语义：收到 `disconnect` ⇒ 记下时刻 + **停摆**（不再自动重连、不再自动重注册），
+    * 直到**用户显式再登录**（`resumeAfterUserLogin`，唯一调用点 =
+    * `NeblinkEnrollment.persist(explicitUserAction = true)`）。
+    *
+    * 范围（诚实边界）：停摆是**进程内**状态——重启进程（boot client 用存储的
+    * deviceToken 走 session 交换）会重新入网。跨实例语义 = **每个被踢实例各自停摆**，
+    * 互踢链因此断掉（被踢方不再自动反踢）；没有任何中央协调、也没有 wire 协商。
+    * 0 = 未被踢。 */
+  @volatile private var kickedAtMs: Long = 0L
+
+  /** Test/status seam: 本隧道是否处于「被服务端踢下线后的停摆态」。 */
+  def signedOutElsewhereAt: Long = kickedAtMs
+  def parkedAfterKick: Boolean = kickedAtMs > 0L
+
+  /** Server-forced teardown（`disconnect` 帧）落地：记录 + 被动提示 + 停摆。
+    *
+    * 零 wire 新增：帧本身不加字段、不改语义（listener 仍只按既有 `type` 分派），
+    * 提示文案由客户端本地下定。 */
+  private[neblink] def noteServerDisconnect(): IO[Unit] =
+    IO {
+      if kickedAtMs == 0L then kickedAtMs = System.currentTimeMillis()
+    } *> logger.warn(
+      "Relay tunnel: server sent Disconnect — this device was signed in elsewhere; " +
+        "auto-reconnect/re-register is parked until an explicit user login"
+    )
+
+  /** 用户显式再登录（唯一合法解除停摆的动作）。幂等；带上一行可见日志。 */
+  private[neblink] def resumeAfterUserLogin(): IO[Unit] =
+    IO {
+      val wasParked = kickedAtMs > 0L
+      kickedAtMs = 0L
+      wasParked
+    }.flatMap { wasParked =>
+      if wasParked then
+        logger.info("Relay tunnel: explicit user login — kick park lifted, reconnecting") *> signalWake()
+      else IO.unit
+    }
+
   /** Check if the relay tunnel is currently connected (for status reporting).
     *
     * ①-2 语义诚实化（2026-09-12 波3，方案 §2.1 ①opt-A1 / §6.2 ①-2）：修前
@@ -218,6 +264,16 @@ final class NeblinkRelayTunnel(
 
   private def connectLoop(attempt: Int): IO[Unit] =
     if !running.get() then IO.unit
+    else if kickedAtMs > 0L then
+      // 踢下线停摆（案 B 客户端腿）：不重连、不重注册。零连接尝试 ⇒ 服务端看不到
+      // 任何升级/登录流量（判据见 KickParkNap 注释：停摆期的重连尝试计数不增长）。
+      // 每次睡醒都重新判定（`resumeAfterUserLogin` 会连睡一起掐断 ⇒ 用户再登录即时恢复）。
+      logger
+        .debug(
+          s"Relay tunnel: parked after a server-forced sign-out (${(System.currentTimeMillis() - kickedAtMs) / 1000}s) — " +
+            "waiting for an explicit user login"
+        )
+        .flatMap(_ => nap(NeblinkRelayTunnel.KickParkNap) *> connectLoop(attempt))
     else
       // 每拍**只睡一次**（clientconn item 1）：修前是「拍首 delay + 分支 wait」双睡，
       // 而唤醒只能掐断其中一次 ⇒ 唤醒语义被打折（掐断 300s 空转后还要再睡一拍的
@@ -738,6 +794,17 @@ object NeblinkRelayTunnel:
   private[neblink] val HealCooldownMs = 60_000L
 
   /**
+   * 被服务端踢下线后的停摆轮询间隔（案 B 客户端腿，2026-09-14）。
+   *
+   * 停摆期**不发起任何连接**，只是按这个间隔醒来重新判定一次「用户是否已显式再登录」。
+   * 30s 与 ReconnectCap（30s 上限）同量级 ⇒ 用户再登录到隧道回来的时延与一次普通
+   * 重连同阶；且 `resumeAfterUserLogin` 会掐断当前这一睡（`signalWake`）⇒ 实际恢复
+   * 时延 ≈ 0。取值不引入第二个阈值轴：它只决定「多久复查一次停摆条件」。
+   */
+  private[neblink] val KickParkNap: scala.concurrent.duration.FiniteDuration =
+    scala.concurrent.duration.DurationInt(30).seconds
+
+  /**
    * Anti-loop decision for the auth-rejection self-heal (the F2 obligation:
    * "重登失败不得无界循环"), mirroring `NeblinkClient.reloginAllowed`'s
    * single-shot rule.
@@ -774,7 +841,7 @@ object NeblinkRelayTunnel:
    * drives the self-heal path and is the client-side half of the report §6
    * cross-project discriminator.
    */
-  def statusJson(available: Boolean, status: Option[TunnelAuthStatus]): io.circe.Json =
+  def statusJson(available: Boolean, status: Option[TunnelAuthStatus], kickedAtMs: Long = 0L): io.circe.Json =
     io.circe.Json.obj(
       "available" -> available.asJson,
       "authRejected" -> status.exists(_.active).asJson,
@@ -782,7 +849,13 @@ object NeblinkRelayTunnel:
       "lastRejectedAt" -> status.map(_.atMs).asJson,
       "selfHeal" -> status
         .map(s => if !s.healAttempted then "not-attempted" else if s.healSucceeded then "ok" else "failed")
-        .asJson
+        .asJson,
+      // 案 B 客户端腿（2026-09-14）——**本机网关 ↔ 浏览器**这一侧的加法字段，不是
+      // neblink-server 的 wire：服务端 `disconnect` 帧零字段变化（listener 仍只按
+      // `type` 分派），提示文案由客户端本地下定，这里只把本地已判定的状态透给 UI。
+      "signedOutElsewhere" -> (kickedAtMs > 0L).asJson,
+      "signedOutElsewhereAt" -> (if kickedAtMs > 0L then kickedAtMs.asJson else io.circe.Json.Null),
+      "autoReconnectParked" -> (kickedAtMs > 0L).asJson
     )
 
 end NeblinkRelayTunnel
@@ -825,9 +898,14 @@ private final class RelayWsListener(
               dispatcher.unsafeRunAndForget(tunnel.handleDeviceStatusUpdate(json))
             case "disconnect" =>
               // presence fix A1 (server-side): forced tunnel teardown on logout.
-              // The WS close follows; the reconnect loop's behavior after a
-              // server-forced disconnect is a pending product decision.
-              logger.debugSync("Relay tunnel: server sent Disconnect")
+              // 2026-09-14（踢旧批案 B，作者 17:07 裁定 C+B·客户端一刀）：本帧是
+              // 「本设备已在别处登录」的唯一信号（服务端 kick 同 (deviceId, network)
+              // 的旧会话）。从「只 debug」提升为：被动提示（角标/状态行级，无横幅
+              // 无声音——一期口径 /Users/kaiyu/.nebflow/User.md:36）+ 停摆（禁自动
+              // 重连/重注册，防同账号双实例互踢乒乓）。
+              // 🔴 零 wire 新增：本分支**不解析任何新字段**（仍只按既有 `type`
+              // 分派），帧形态与修前逐字节同形；提示文案由客户端本地下定。
+              dispatcher.unsafeRunAndForget(tunnel.noteServerDisconnect())
             case _ => ()
         case Left(_) => ()
     catch case _: Exception => ()

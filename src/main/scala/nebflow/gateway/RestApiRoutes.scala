@@ -750,9 +750,13 @@ class RestApiRoutes(
           // tunnel is down. authRejected distinguishes "our session was
           // rejected (401/403) — self-heal territory" from a server-side 5xx,
           // which is the report §6 cross-project discriminator.
+          // 2026-09-14（踢旧批案 B）：再补本地已判定的「已在别处登录」态
+          // （`disconnect` 帧 → 停摆）——**加法字段，本地网关↔浏览器侧**，服务端
+          // wire 零变化（见 NeblinkRelayTunnel.statusJson 注释）。
           relayStatus = nebflow.neblink.NeblinkRelayTunnel.statusJson(
             relayAvailable,
-            ms.relayTunnelOpt.flatMap(_.authStatus)
+            ms.relayTunnelOpt.flatMap(_.authStatus),
+            ms.relayTunnelOpt.map(_.signedOutElsewhereAt).getOrElse(0L)
           )
           // C3 (ghost-peer fix): `online` is a real freshness judgement — the
           // peer must have appeared in a server heartbeat/discovery response

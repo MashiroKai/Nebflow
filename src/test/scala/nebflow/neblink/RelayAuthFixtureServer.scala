@@ -127,6 +127,22 @@ final class RelayAuthFixtureServer extends AutoCloseable:
     openRelaySockets.forEach { s => try s.close() catch case _: Exception => () }
     openRelaySockets.clear()
 
+  /** Push one server→client text frame to EVERY open relay-ws connection
+    * (the real `relay.rs` push path). Returns the number of sockets written.
+    *
+    * 踢旧批（2026-09-14）新增：钉「服务端主动推 `disconnect` 帧 ⇒ 被踢端被动提示
+    * + 停摆」需要用真帧驱动，而不是直接调被测算出的方法。帧形态与生产同形
+    * （`{"type":"disconnect"}`，零新字段）。 */
+  def sendTextToRelay(text: String): Int =
+    var n = 0
+    openRelaySockets.forEach { s =>
+      try
+        writeTextFrame(s.getOutputStream, text)
+        n += 1
+      catch case _: Exception => ()
+    }
+    n
+
   def attemptCount(status: Int): Int = relayAttempts.stream().filter(_._1 == status).count().toInt
 
   // ---- lifecycle ----
@@ -323,6 +339,29 @@ final class RelayAuthFixtureServer extends AutoCloseable:
         Some((op, payloadBytes))
 
   /** Server→client text frame (unmasked, single frame, len ≤ 125). */
+  /** Close every open relay-ws connection with a proper RFC 6455 **close frame**
+    * (opcode 0x8, status 1000) and then the TCP close.
+    *
+    * 踢旧批（2026-09-14）新增：服务端 `disconnect_device` 之后的收尾是「WS 关闭」。
+    * 只做裸 socket close 时，JDK 客户端**不保证**及时回调 Listener（本仓 2026-09-11
+    * 「僵尸闩」同类问题：`closed` Deferred 迟迟不完成）⇒ 依赖它的断言会抖动。给一
+    * 个真 close 帧让对端走正常关闭握手，读数是确定的。
+    * 返回处理的连接数。 */
+  def closeRelaySocketsGracefully(): Int =
+    var n = 0
+    openRelaySockets.forEach { s =>
+      try
+        val out = s.getOutputStream
+        out.write(Array[Byte](0x88.toByte, 0x02.toByte, 0x03.toByte, 0xE8.toByte)) // close, len=2, 1000
+        out.flush()
+        Thread.sleep(30)
+        s.close()
+        n += 1
+      catch case _: Exception => ()
+    }
+    openRelaySockets.clear()
+    n
+
   private def writeTextFrame(out: OutputStream, text: String): Unit =
     try
       val bytes = text.getBytes(StandardCharsets.UTF_8)
