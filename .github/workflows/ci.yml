@@ -179,6 +179,13 @@ jobs:
         run: |
           npm ci
           node scripts/build-web.mjs
+      - name: Friends release-strip assertion (dual-form gate)
+        # Gate (author ruling 2026-09-14, D6): the build/web-dist produced just
+        # above must carry the friends feature in its UNSEALED form — the
+        # script's default expectation is `present`, i.e. exactly the default
+        # form build-web.mjs emits. `--expect stripped` is the re-seal gate for
+        # a `node scripts/build-web.mjs --strip-friends` artifact.
+        run: node tests/release-strip-friends.static.mjs
       - name: Setup sbt
         shell: bash
         run: |

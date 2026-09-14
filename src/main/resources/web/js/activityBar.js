@@ -178,9 +178,10 @@ function initSidePanels() {
     panelId: 'panel-sessions',
     i18nKey: 'activity.files',
   });
-  // Friends release gating (2026-09-08, see featureFlags.js): default-off
-  // posture — detach the Messages/Contacts entries now; main.js calls
-  // enableFriendPanels() once the first configData proves the flag on.
+  // Friends gating — single decision point: js/featureFlags.js friendsEnabled()
+  // (release marker vs. dev config chain). Detach the Messages/Contacts entries
+  // now; main.js calls enableFriendPanels() once the first configData latches
+  // the flag on. Default is ON / unsealed (author ruling 2026-09-14).
   detachFriendEntries();
   // Restore the persisted panel; unregistered ids fall back to files.
   const stored = localStorage.getItem(LS_PANEL);
