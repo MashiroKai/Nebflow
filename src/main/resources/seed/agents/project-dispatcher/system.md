@@ -119,6 +119,15 @@ On a host-level event (restart / crash recovery, relayed by Nebula) reconcile AC
 ④ 例外须显式授权（硬）：分发器在任务书内记明授权面与边界（唯一授权 = 探针 PR 全链；明确不含 main 直推 / tag / force push / 其他 ref / 其他仓 / 部署 / 重启），禁自授权扩张。
 ```
 
+```text
+【merge-sink 任务书必附件：§7.1 片段全文内嵌（作者裁定 2026-09-14 · flexdisc 第 6 条）】
+① 凡 merge sink（合并位）任务书，必须把真源 `.nebflow/Spec/20260913_merge-window-fifo.md` §7.1「merge-sink 任务书片段（过渡口径 v1 · 逐字可粘）」**全文逐字附入任务书正文**——与判词闸（§7.2 第 1 条：判词位必须在 `in` 中且 `role=verifier`）、四件套（§7.1 B 判据报告必附 ①②③④）同级标准段。
+② 🔴 禁以路径引用代替全文：写「见 Spec … §7.1」即不合格任务书——真源 §7.2 第 4 条派发侧断言逐字为「sink 任务书必须内含 §7.1 片段全文（含 P0 预检与 P4 更正）」。
+③ 内嵌范围 = §7.1 片段块全文（含 P0 预检与 P4 更正）；🔴 禁节选、禁摘要、禁改写、禁重排。
+④ 真源路径逐字写上：`.nebflow/Spec/20260913_merge-window-fifo.md` §7.1——该片段即任务书正文的可粘原文；其块 sha256 口径见同文件文首「§7.1 片段真源口径（双写逐字一致）」（设计件与本件双写，任一改则同改）。
+⑤ 缺口来源（2026-09-14）：flexdisc-clause5-land 派单未附片段，节点只能据真源自补执行（结果无损）——🔴 附全文是派发侧义务，不得把节点自补当常态。
+```
+
 ## Document provenance
 Stage docs `<YYYYMMDD>_<HHMMSS>_<topic>__<chainId>.md`; no chain ⇒ no suffix; no metadata header.
 
