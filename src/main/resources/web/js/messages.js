@@ -905,18 +905,39 @@ function markOurs(m, val) {
   } catch { /* 冻结对象：退回不标记 —— resolveOut 走 senderId 正向比对档 */ }
 }
 
+/** 方向判据②的**证据源存在性**：`senderId` 与 `conv.friend.userId` **任一在场**。
+ *  只服务 ③ 兜底档的区分（单侧在场 = 既有形态；两侧皆缺席 = P5 修点）。 */
+function hasDirectionEvidence(m, conv) {
+  const sid = m && m.senderId;
+  const fid = conv && conv.friend ? conv.friend.userId : undefined;
+  const present = (v) => v !== undefined && v !== null && v !== '';
+  return present(sid) || present(fid);
+}
+
 /** 气泡方向（`out` = 右侧 = 本机所发）。优先级：
  *  ① `m.ours` 显式标记 —— **最强证据**（补拉帧按逐条 `senderId` 判定后写入，见
  *     `frameOursHint`；事件帧按事件类型写入，见 `onFriendEvent`）；
  *  ② `senderId` 与好友档案的正向比对（REST 条目 / 带 senderId 的帧）；
- *  ③ 两者皆无 ⇒ **维持既有形态（`out`）**。这一档必须保留：本机自播帧（agent 代发那条
- *     自播帧服务端**不带** `senderId`）正落在这里，改成 `in` 会把自送消息画到左侧
- *     —— 那是本批明确不接受的回归。③ 的残留误判面被 ①② 覆盖：补拉腿恒带 `senderId`、
- *     事件腿恒带事件类型 ⇒ 两条入口都不会落到 ③。 */
+ *  ③ 兜底档（**P5 修复 · root 裁定 2026-09-14**）：**两源皆缺席 ⇒ `in`**
+ *     —— 禁静默翻成 `out`（详见函数体内注释）。 */
 function resolveOut(m, conv) {
   if (m && typeof m.ours === 'boolean') return m.ours;
   const byId = oursBySenderId(m, conv);
-  return byId === null ? true : byId;
+  if (byId !== null) return byId;
+  // ③ 兜底档：**两源皆缺席** ⇒ `in`。
+  //   修前（r2）本档恒返回 `true` —— 与 r2 **之前**的口径相反（旧判据
+  //   `m.senderId !== conv.friend?.userId` 在两侧皆 `undefined` 时得 `false` = `in`），
+  //   即 r2 引入了一次**方向翻转**：一条既无 `senderId` 又无好友档案的消息会被画到
+  //   右侧（「本机所发」）。而该形态**同样可能只是对方的消息**（帧 / REST 该字段缺席
+  //   ⇒ 见 `appendMessages` 的「REST 面该字段权威且必带；缺席 ⇒ 不认领」同族口径）。
+  //   ⇒ 无证据不下结论（方向错判会连带把「接收侧消息」误标成自己发的，并让验收矩阵
+  //   里「写死一条接收侧消息」被误判）。
+  //   🔴 本档**只**覆盖「两源皆缺席」：**单侧在场**仍走既有 `out` 回落（与 r2 前逐字
+  //   一致）—— 该残余不在本批裁定范围，已在报告内登记。
+  //   🔴 本机自播帧（agent 代发；服务端该帧**不带** `senderId`）**不落本档**：事件腿
+  //   `message_new_self` 已按事件类型正向确证并 `markOurs(m, true)`（见
+  //   `onFriendEvent`）⇒ 走 ① ⇒ 方向不受本改影响（禁把自送消息画到左侧）。
+  return hasDirectionEvidence(m, conv) ? true : false;
 }
 
 // ── Bubbles ──────────────────────────────────────────────
@@ -944,7 +965,13 @@ function bubbleEl(m, conv) {
   });
 
   const meta = el('div', 'fm-msg-meta');
-  if (out && isAgentSent(m)) meta.appendChild(el('span', 'fm-msg-agent-badge', t('messages.agentBadge')));
+  // 批 D（作者裁定 2026-09-14 20:5x「双方可见」）：徽标**两端渲染**、无抑制逻辑
+  // —— 修前判据 `out && isAgentSent(m)` 让接收侧（`out === false`）**永不进入**
+  // 本分支（即便 `origin` 已修复到位，对方也看不到）⇒ 与作者诉求相左。
+  // 放开后 `out` 只决定气泡左右 / 对齐（`resolveOut`），**不再是**徽标的可见性条件。
+  // 服务端零改动（`origin` 生产版同样具备）；`model.rs` 注文「Local rendering
+  // only」的语义摩擦已由作者裁定解除（本批附局限声明）。
+  if (isAgentSent(m)) meta.appendChild(el('span', 'fm-msg-agent-badge', t('messages.agentBadge')));
   if (hasForwarded(m.id)) meta.appendChild(el('span', 'fm-msg-forwarded-badge', t('messages.forwarded')));
   const timeMs = toEpochMs(m.createdAt);
   const timeSpan = el('span', 'fm-msg-time', fmtTime(m.createdAt));
@@ -1462,6 +1489,13 @@ function frameMessage(p) {
     // 4b 腿 A：推送帧与 REST 面**同形**（服务端 §B.2 推送 builder 单点）——
     // 键缺席 = 无附件（老服务端/纯文本消息，逐字节现状）。
     attachments: p.attachments,
+    // 批 D（agent 代发 footer 标识）：`origin` 是 #290 spec v1.1 §2.4 的**语义承载
+    // 键**（徽标 / 审计 / 限速区分），不是纯展示字段。本函数是**白名单式**字段
+    // 枚举 ⇒ 服务端 payload → 隧道 → 网关 `frontendFrame` 展平一路都在的
+    // `origin`，**在这一跳被抹掉** ⇒ `isAgentSent` 恒 false ⇒ 徽标永不渲染
+    // （丢字段，不丢消息）。与 r2 的 `attachments` 同款加性扩面：键缺席 =
+    // `undefined`（老服务端 / 无该字段）⇒ 前端按「缺键 ≠ agent」读。
+    origin: p.origin,
   };
 }
 

@@ -694,7 +694,22 @@ case class MessageSummary(
   createdAt: Long,
   /** 4b 腿 A-1 新增（§B.2 `M1`）：`Option` + 缺省 `None` ⇒ 旧端形态逐字节等价
     * （无附件消息**不含该键**，见 `FriendCodecs` 的 Encoder）。 */
-  attachments: Option[List[AttachmentSummary]] = None
+  attachments: Option[List[AttachmentSummary]] = None,
+  /** 批 D 新增（agent 代发 footer 标识）：消息来源 —— 线上取值 `"agent" | "user"`，
+    * **键可缺席**（`#290 spec v1.1 §2.4`：wire 上可选，缺席 = `"user"`）。
+    *
+    * 🔴 这是**语义承载键**，不是纯展示字段（徽标 / 审计 / §7.2 限速区分）；
+    *   本批**不得**把它降级为纯 UI 字段。
+    *
+    * 两条纪律（与 `attachments` 同款，`derive*` codec 已因 r2 扩面改手写 ⇒ 本字段
+    * **必须**在**手写** decoder / encoder 两侧同时给，缺一侧即静默丢字段）：
+    *  ① **解码**：键缺席 / `null` ⇒ `None`（不折叠成 `Some("user")` —— 「不可判」与
+    *     「服务端明说 user」是两态，折叠会把老服务端的缺键伪装成确证值）；
+    *  ② **编码**：`None` ⇒ **省键**（不是 `"origin":null`）⇒ 无来源消息的出参形态与
+    *     旧形态逐字节一致，且「缺键 = user」的线上口径端到端保持。
+    *
+    * 键序**追加在末位**：既有位置实参调用（5 参 / 6 参）零改动。 */
+  origin: Option[String] = None
 )
 
 case class ConversationSummary(
@@ -880,7 +895,10 @@ object FriendCodecs:
       kind      <- c.get[String]("kind")
       body      <- c.get[String]("body")
       createdAt <- c.get[Long]("createdAt")
-    yield MessageSummary(id, senderId, kind, body, createdAt, attachmentsOf(c))
+      // 批 D：`origin` 可选（键缺席 / null ⇒ None）。手写 decoder 的每一行都是一条
+      // 白名单 —— 漏一行即静默丢字段（本批的病灶形态），故此处与 encoder 成对维护。
+      origin    <- c.get[Option[String]]("origin")
+    yield MessageSummary(id, senderId, kind, body, createdAt, attachmentsOf(c), origin)
   }
 
   given Decoder[ConversationSummary] = deriveDecoder
@@ -933,7 +951,11 @@ object FriendCodecs:
     *  ① **无附件 ⇒ 不含 `attachments` 键**（不是 `null`）：§B.3 要求服务端→旧端
     *     路径逐字节不变；`deriveEncoder` 会输出 `"attachments":null` ⇒ 字节不等价。
     *     故此处手写编码器，前 5 键顺序与旧形态逐字一致。
-    *  ② 有附件 ⇒ 数组随消息一起出（含空数组：`Some(Nil)` 与「无附件」同义，省键）。 */
+    *  ② 有附件 ⇒ 数组随消息一起出（含空数组：`Some(Nil)` 与「无附件」同义，省键）。
+    *
+    * 批 D 加性扩面（同一条纪律）：`origin` 为 `Some` ⇒ 随消息一起出；`None` ⇒
+    * **省键**（不是 `null`）⇒ 无来源消息的出参形态与旧形态逐字节一致，且
+    * 「缺键 = `user`」的线上口径（`#290 spec v1.1 §2.4`）端到端保持。 */
   given Encoder[MessageSummary] = Encoder.instance { m =>
     val legacy = List(
       "id"        -> m.id.asJson,
@@ -942,7 +964,11 @@ object FriendCodecs:
       "body"      -> m.body.asJson,
       "createdAt" -> m.createdAt.asJson
     )
-    Json.fromFields(legacy ++ m.attachments.filter(_.nonEmpty).map(a => "attachments" -> a.asJson))
+    Json.fromFields(
+      legacy
+        ++ m.origin.map(o => "origin" -> o.asJson)
+        ++ m.attachments.filter(_.nonEmpty).map(a => "attachments" -> a.asJson)
+    )
   }
 
   given Encoder[ConversationSummary] = deriveEncoder
