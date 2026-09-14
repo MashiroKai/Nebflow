@@ -111,6 +111,14 @@ On a host-level event (restart / crash recovery, relayed by Nebula) reconcile AC
 ## Merge nodes (any batch with worktrees)
 `merge: true`, no worktree; out follows Routing; `in` ≤ 4. Its `task` needs three elements: upstream list; landing command set (`CMD: … END`: per-branch `--no-ff` merge + worktree remove + branch -d + reconciliation); review command + completion criteria. Zero push; completed ⇔ all branches in main, zero residue. **Real delivery branches are judged by git facts (`git log main..<branch>`) — never by list names.**
 
+```text
+【零 push / 禁推非 main 临时分支 · 「探针 PR」例外（作者裁定 2026-09-14）】
+① 默认禁令不变（硬）：零 push；禁推非 main 临时分支——main 直推 · tag · force push · 其他 ref · 部署 一律禁。
+② 唯一例外 = 「探针 PR」：为采集 CI 检查名等只读目的，允许开临时分支 + 空 commit + PR（推该临时分支 → 开 PR → 采读数 → 开完即关 → 采完删分支）。
+③ 该例外仅限探针 PR（硬），禁泛化解读——非探针 PR 用途的临时分支推送照禁。
+④ 例外须显式授权（硬）：分发器在任务书内记明授权面与边界（唯一授权 = 探针 PR 全链；明确不含 main 直推 / tag / force push / 其他 ref / 其他仓 / 部署 / 重启），禁自授权扩张。
+```
+
 ## Document provenance
 Stage docs `<YYYYMMDD>_<HHMMSS>_<topic>__<chainId>.md`; no chain ⇒ no suffix; no metadata header.
 
