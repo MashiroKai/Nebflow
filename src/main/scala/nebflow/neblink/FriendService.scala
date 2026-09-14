@@ -333,28 +333,28 @@ final class FriendService(
    *  - 确认**失败**（无交互面 / 超时 / hub 未起）⇒ `Left("Confirmation failed — … NOT sent")`
    *    —— 既不投递，也不伪装成「用户拒绝」（两种条件归因不同，调用方/模型可区分）。
    */
-  def sendAsAgent(friendUserId: String, body: String): IO[Either[String, String]] =
+  def sendAsAgent(friendUserId: String, body: String, attachments: List[os.Path] = Nil): IO[Either[String, String]] =
     if body.length > 4000 then IO.pure(Left(s"Message too long (${body.length} chars, max 4000)"))
     else
       config.mode match
         case "off" => IO.pure(Left("User has disabled agent messaging"))
         case "ask" =>
-          confirmOrSend(friendUserId, body)
+          confirmOrSend(friendUserId, body, attachments)
         case _ => // auto（含未知值回退 auto）
           guard.trySend(friendUserId, System.currentTimeMillis()).flatMap {
-            case Right(()) => doSend(friendUserId, body)
+            case Right(()) => doSend(friendUserId, body, attachments)
             case Left(reason) =>
               logger.info(s"auto rate limit exceeded ($reason) — downgrading to ask") *>
-                confirmOrSend(friendUserId, body)
+                confirmOrSend(friendUserId, body, attachments)
           }
 
-  private def confirmOrSend(friendUserId: String, body: String): IO[Either[String, String]] =
+  private def confirmOrSend(friendUserId: String, body: String, attachments: List[os.Path]): IO[Either[String, String]] =
     askConfirm match
       case None => IO.pure(Left("ask mode requires a confirmation callback (not wired)"))
       case Some(confirmFn) =>
         confirmFn(body)
           .flatMap {
-            case true => doSend(friendUserId, body)
+            case true => doSend(friendUserId, body, attachments)
             case false =>
               logger.info(s"SendMessage declined by the user — nothing sent to $friendUserId") *>
                 IO.pure(Left("User declined the message"))
@@ -367,20 +367,140 @@ final class FriendService(
               IO.pure(Left(s"Confirmation failed — the message was NOT sent: $why"))
           }
 
-  private def doSend(friendUserId: String, body: String): IO[Either[String, String]] =
-    // origin=agent：sendAsAgent 是唯一 agent 代发 choke point（#290 spec v1.1）——
-    // wire 缺 origin 时服务器缺省落 "user"，agent 消息语义（徽章/审计/限速区分）失效。
-    withClient(_.sendFriendMessage(friendUserId, body, origin = Some("agent"))).flatMap {
-      case Left(err) => IO.pure(Left(err))
-      case Right(json) =>
-        val convId = json.hcursor.get[String]("conversationId").toOption
-        // K-3（段 B 2026-09-12）：**先自播（通知本机 UI），再补拉**。次序理由与 K-1
-        // 同源——补拉是一次串行 REST 往返（本机实测 135.9–499.0 ms），不得挡在
-        // 「通知 UI」之前；自播走 wsHub 广播，零上游往返。
-        convId.traverse_(replaySelfSend(_, json, body)) *>
-          convId.traverse_(pullConversation).void *>
-          IO.pure(Right("Message sent"))
+  private def doSend(friendUserId: String, body: String, attachments: List[os.Path] = Nil): IO[Either[String, String]] =
+    def finish(json: Json): IO[Either[String, String]] =
+      val convId = json.hcursor.get[String]("conversationId").toOption
+      // K-3（段 B 2026-09-12）：**先自播（通知本机 UI），再补拉**。次序理由与 K-1
+      // 同源——补拉是一次串行 REST 往返（本机实测 135.9–499.0 ms），不得挡在
+      // 「通知 UI」之前；自播走 wsHub 广播，零上游往返。
+      convId.traverse_(replaySelfSend(_, json, body)) *>
+        convId.traverse_(pullConversation).void *>
+        IO.pure(Right("Message sent"))
+
+    if attachments.isEmpty then
+      // origin=agent：sendAsAgent 是唯一 agent 代发 choke point（#290 spec v1.1）——
+      // wire 缺 origin 时服务器缺省落 "user"，agent 消息语义（徽章/审计/限速区分）失效。
+      withClient(_.sendFriendMessage(friendUserId, body, origin = Some("agent"))).flatMap {
+        case Left(err)   => IO.pure(Left(err))
+        case Right(json) => finish(json)
+      }
+    else
+      // ===== 附件腿（4b 腿 A-4）=====
+      // 次序硬约束（每条都有理由，禁重排）：
+      //   ① 闸（件数/大小）= 本地 fail-fast，零上游往返；
+      //   ② **能力探测**（A-5，fail-closed）= 必须在任何上传之前 —— 否则会对一个
+      //      不支持的服务器白传字节，再以「发送失败」收场；
+      //   ③ 上传（E1 + E2×n）；
+      //   ④ 发送（`body` 可为空 —— §B.4：有附件时服务端生成占位正文）；
+      // 任一步失败都**显式回执**（禁静默降级为纯文本发送：那正是 §5.1-C 的静默不达）。
+      withClient { cli =>
+        val sizes: IO[Either[String, List[Long]]] =
+          IO.blocking(attachments.map(p => p -> os.stat(p).size)).attempt.map {
+            case Right(list) => Right(list.map(_._2))
+            case Left(e)     => Left(s"cannot stat attachment(s): ${Option(e.getMessage).getOrElse(e.toString)}")
+          }
+        sizes.flatMap {
+          case Left(err) => IO.pure(Left(err))
+          case Right(sz) =>
+            // 空件本地先拒：§B.1 E1 校验表第 4 条（`size <= 0` ⇒ 422）——在本地
+            // fail-fast 省一次上游往返，且把「为什么」写在文案里。
+            val gate: Either[String, Unit] =
+              if sz.exists(_ <= 0L) then
+                Left("Attachment gate rejected: empty file (0 bytes) — the server rejects size <= 0. Nothing was uploaded and no message was sent.")
+              else nebflow.dropbox.AttachContract.checkMessage(sz).left.map(bad => s"Attachment gate rejected: ${bad.render}")
+            gate match
+              case Left(msg) => IO.pure(Left(msg))
+              case Right(_) =>
+                cli.probeAttachmentCapability(friendUserId).flatMap {
+                  case AttachmentCapability.Supported(ev) =>
+                    logger.info(s"attachment capability probe: supported ($ev)")
+                    uploadAll(cli, friendUserId, attachments).flatMap {
+                      case Left(err) => IO.pure(Left(err))
+                      case Right(ids) =>
+                        cli
+                          .sendFriendMessage(friendUserId, body, origin = Some("agent"), attachmentIds = ids)
+                          .flatMap {
+                            case Left(err)   => IO.pure(Left(err))
+                            case Right(json) => finish(json)
+                          }
+                    }
+                  case other =>
+                    // 不对齐 / 不可判 ⇒ **明确拒绝**（文案可区分，见 AttachmentCapability.refusal）
+                    logger.warn(s"attachment capability probe: ${other.getClass.getSimpleName} — attachments NOT sent")
+                    IO.pure(Left(AttachmentCapability.refusal(other)))
+                }
+        }
+      }
+
+  /** E1 + E2×n 顺序上传（§B.1/B.6），返回 attachmentId 列表（顺序 = 入参顺序 =
+    * `SendMessageBody.attachments` 的展示顺序）。
+    *
+    * 每块**单次重试**：E2 的 `offset < receivedBytes` 语义 = 截断重写 ⇒ 同 offset
+    * 重发幂等（§B.1 E2），故块级瞬时故障可安全重试一次；再失败就**显式失败**
+    * （不带半成品发送）。块级失败不会留下「已发送」的假象：消息在全部上传成功后才发。 */
+  private def uploadAll(cli: NeblinkClient, friendUserId: String, files: List[os.Path]): IO[Either[String, List[String]]] =
+    def uploadOne(p: os.Path): IO[Either[String, List[String]]] =
+      for
+        size  <- IO.blocking(os.stat(p).size)
+        whole <- IO.blocking(NeblinkFiles.sha256OfFile(p))
+        created <- cli.createAttachment(friendUserId, p.last, size, whole)
+        out <- created match
+          case Left(err) => IO.pure(Left(s"attachment upload failed for '${p.last}' (create): $err"))
+          case Right(json) =>
+            json.hcursor.get[String]("attachmentId").toOption match
+              case None =>
+                IO.pure(Left(s"attachment upload failed for '${p.last}': server response has no attachmentId (${json.noSpaces})"))
+              case Some(id) => pushChunks(cli, id, p, size).map(_.map(_ => List(id)))
+      yield out
+
+    def pushChunks(cli: NeblinkClient, id: String, p: os.Path, size: Long): IO[Either[String, Unit]] =
+      val plan = nebflow.dropbox.AttachContract.plan(size)
+      def loop(rest: List[nebflow.dropbox.AttachContract.ChunkPlan]): IO[Either[String, Unit]] =
+        rest match
+          case Nil => IO.pure(Right(()))
+          case chunk :: tail =>
+            val sendOnce: IO[Either[String, Unit]] =
+              IO.blocking {
+                val bytes = NeblinkFiles.readRange(p, chunk.offset, chunk.bytes)
+                bytes -> nebflow.dropbox.ChunkedTransfer.sha256Hex(bytes)
+              }.flatMap { case (bytes, sha) => cli.uploadAttachmentChunk(id, chunk.offset, bytes, sha).map(_.map(_ => ())) }
+            sendOnce
+              .flatMap {
+                case Right(_)       => IO.pure[Either[String, Unit]](Right(()))
+                case Left(firstErr) => sendOnce.map(_.left.map(_ => firstErr)) // 单次重试（同 offset 幂等）
+              }
+              .flatMap {
+                case Left(err) => IO.pure(Left(s"attachment upload failed for '${p.last}' at offset ${chunk.offset}: $err"))
+                case Right(_)  => loop(tail)
+              }
+      loop(plan)
+
+    // 逐件**顺序**上传（件数 ≤9，总字节 ≤900 MB）：显式递归，不用 foldLeftM
+    // （2026-09-14 编译教训：该形状下类型推断会塌成 Either[Any,Any]）。
+    def loopFiles(rest: List[os.Path], acc: List[String]): IO[Either[String, List[String]]] =
+      rest match
+        case Nil => IO.pure(Right(acc))
+        case p :: tail =>
+          if !os.exists(p) || os.isDir(p) then IO.pure(Left(s"Attachment is not a file: $p"))
+          else
+            uploadOne(p).flatMap {
+              case Left(err)  => IO.pure(Left(err))
+              case Right(ids) => loopFiles(tail, acc ++ ids)
+            }
+
+    loopFiles(files, Nil)
+
+  /** A-5 探测透出（工具/诊断面用；三态语义见 [[AttachmentCapability]]）。
+    * 未登录 ⇒ `Undetermined`（**不是** `Unsupported`：两者对用户是不同结论、不同文案）。 */
+  def probeAttachmentCapability(friendUserId: String): IO[AttachmentCapability] =
+    currentClient.flatMap {
+      case None      => IO.pure(AttachmentCapability.Undetermined("Not logged in"))
+      case Some(cli) => cli.probeAttachmentCapability(friendUserId)
     }
+
+  /** E3 下载透出（腿 A-3）：**唯一**取字节入口 —— 只给网关的鉴权代理路由用。 */
+  def downloadAttachment(attachmentId: String): IO[Either[String, AttachmentFetch]] =
+    withClient(_.downloadAttachment(attachmentId))
 
   /** K-3（段 B 2026-09-12）：agent 代发的**本机自播**——把刚发出的消息按服务端
     * `message_new_self` 帧**同形**回放给本机浏览器。
@@ -419,15 +539,21 @@ final class FriendService(
     val h = resp.hcursor
     (h.get[Long]("messageId").toOption, h.get[Long]("createdAt").toOption) match
       case (Some(messageId), Some(createdAt)) =>
+        // 4b 腿 A（§B.2 M5）：附件元数据随响应体回本机 —— 真 push 的 `message_new_self`
+        // 被服务端显式排除发起设备，本机唯一的元数据来源就是这里。缺席 ⇒ **省键**
+        // （无附件消息的帧与今天逐字节同形；前端按「键缺席 = 无附件」读）。
         val envelope = Json.obj(
           "type" -> MessageNewSelf.asJson,
-          "payload" -> Json.obj(
-            "messageId" -> Json.fromLong(messageId),
-            "conversationId" -> conversationId.asJson,
-            "kind" -> "text".asJson,
-            "body" -> body.asJson,
-            "origin" -> "agent".asJson,
-            "createdAt" -> Json.fromLong(createdAt)
+          "payload" -> Json.fromFields(
+            List(
+              Some("messageId" -> Json.fromLong(messageId)),
+              Some("conversationId" -> conversationId.asJson),
+              Some("kind" -> "text".asJson),
+              Some("body" -> body.asJson),
+              Some("origin" -> "agent".asJson),
+              Some("createdAt" -> Json.fromLong(createdAt)),
+              h.downField("attachments").focus.filterNot(_.isNull).map("attachments" -> _)
+            ).flatten
           )
         )
         onFriendEvent.traverse_(cb =>

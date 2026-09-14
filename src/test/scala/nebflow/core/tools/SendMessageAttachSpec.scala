@@ -21,8 +21,9 @@ import scala.concurrent.duration.*
  * peers 名册为空，禁写「可用」）：
  *   - `to` 三分类语法（device:/friend:/local/裸名）；
  *   - 设备解析负控：未知设备列可用名册、歧义列逐条命中依据（**禁静默首命中**）；
- *   - 非设备前置拒：`targetDir`+device（冻结契约面，归作者）、friend+attachments
- *     （跨项目 4b 缺口）、NebLink/Dropbox 服务缺席（禁静默）；
+ *   - 非设备前置拒：`targetDir`+device（冻结契约面，归作者）、NebLink/Dropbox 服务缺席（禁静默）；
+ *     🔴 friend+attachments 的**旧前置拒已由 4b 腿 A 解除**（本件改为断言「解除后仍不静默」：
+ *     相对路径 fail-fast + 服务缺席显式报错）；
  *   - 服务级闸位复用：>9 件 / 非法路径 ⇒ fail-fast 回显实际值（offer 之前，零网络）；
  *   - 对端不可达 ⇒ 显式失败（零静默本地执行、零半投递）；
  *   - `local` 显式分支（R3=3b）：复制/覆盖闸/必填 targetDir；
@@ -94,7 +95,7 @@ class SendMessageAttachSpec extends CatsEffectSuite:
     assert(msg.contains("must be absolute"), msg)
     assert(msg.contains("relative.bin"), msg)
 
-  test("friend 目标 + attachments ⇒ 显式 4b 缺口拒绝（纯文本通道不变）"):
+  test("friend 目标 + attachments ⇒ **不再**前置拒绝（4b 腿 A 解除该缺口）；服务缺席走既有显式报错"):
     val res = callTool(
       obj(
         "to"          -> Json.fromString("alice"),
@@ -104,8 +105,28 @@ class SendMessageAttachSpec extends CatsEffectSuite:
     ).unsafeRunSync()
     assert(res.isLeft)
     val msg = res.left.toOption.get.message
-    assert(msg.contains("not supported for friend targets"), msg)
-    assert(msg.contains("4b"), msg)
+    assert(!msg.contains("not supported for friend targets"), s"该前置拒绝已被 4b 腿 A 取代，got: $msg")
+    // 该 spec **不** initialize FriendMessageTool（`service` 是全局装配缝，其它并行 suite
+    // 可能已装配）⇒ 可接受的失败面有两种，但都必须是**可判读**的显式错误：
+    //   ① 服务缺席（未装配）⇒ "Friend messaging is unavailable"；
+    //   ② 已装配 ⇒ 走好友解析，本 spec 无名册 ⇒ "not found" + 候选。
+    assert(
+      msg.contains("Friend messaging is unavailable") || msg.contains("not found"),
+      s"失败必须可判读（服务缺席或解析失败二选一），got: $msg"
+    )
+
+  test("friend 目标 + 相对附件串 ⇒ 原始串闸 fail-fast（与设备支同判据，服务访问之前）"):
+    val res = callTool(
+      obj(
+        "to"          -> Json.fromString("alice"),
+        "message"     -> Json.fromString("hi"),
+        "attachments" -> Json.arr(Json.fromString("relative.bin"))
+      )
+    ).unsafeRunSync()
+    assert(res.isLeft)
+    val msg = res.left.toOption.get.message
+    assert(msg.contains("must be absolute"), msg)
+    assert(msg.contains("relative.bin"), msg)
 
   test("device 目标 + targetDir ⇒ 受控支持：不再走冻结契约拒绝（服务缺席时落到设备腿自己的报错）"):
     // 契约升版批（2026-09-14，spec §⑥①）：原显式拒绝已被作者「现在升版」取代 ⇒ 本钉

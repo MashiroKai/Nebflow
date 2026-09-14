@@ -17,8 +17,11 @@ import java.time.format.DateTimeFormatter
  * （作者 2026-09-11 方案候选 (a) + 09-13 新数裁定）：
  *
  *   - `to = <好友解析串>` 或 `friend:<…>`：以用户身份发给 NebLink 好友（收方看到的
- *     是好友本人，冻结语义）。**纯文本**——好友附件的字节通路不存在（服务端跨项目
- *     批 4b / TaskList #131），带 `attachments` 一律显式拒绝，不静默降级。
+ *     是好友本人，冻结语义）。**文本 + 附件**（4b 腿 A，2026-09-14）：附件走服务端
+ *     存储转发（E1 建会话 → E2 分块上传 → 随消息发 id 列表），下载由对端经**应用内
+ *     鉴权路由**取字节（裁定②）。服务端能力**无自报字段**（裁定④）⇒ 上传前做一次
+ *     路由存在性探测（A-5 三态）：不支持 / 不可判 ⇒ **明确拒绝**并回执原因，
+ *     附件既不上传也不静默丢弃（§5.1-C 静默不达是本条唯一禁形）。
  *   - `to = device:<deviceName|deviceId>`：发给**同账号**的另一台设备（G5：设备面
  *     「文本+附件」消息面既有，本批工具化）。字节走 Dropbox 分块通道（P2P 主腿 +
  *     relay 兜底、每块校验、整件双侧 sha256、断点续传；单件 ≤100,000,000 B 十进制、
@@ -70,14 +73,14 @@ object FriendMessageTool extends Tool:
 
   val description =
     """Send a message on the user's behalf, or move files. Three target kinds are selected by the prefix of `to`:
-1. A NebLink friend (bare name, or `friend:<remark|username|email|displayName>`) — delivered as the user over established friend relationships; Plain text only. Subject to permission tiers and rate limits, and (depending on configuration) a confirmation card.
+1. A NebLink friend (bare name, or `friend:<remark|username|email|displayName>`) — delivered as the user over established friend relationships; text and/or files. Files ride the server's attachment channel (create session → chunked upload with per-chunk checksum + whole-file SHA-256 → sent as attachment ids), and the receiver downloads them over an authenticated in-app route. Subject to permission tiers and rate limits, and (depending on configuration) a confirmation card. Before uploading, the client probes whether the server even has the attachment route (no capability self-report exists): unsupported or unverifiable ⇒ the send is refused outright with a readable reason — attachments are never dropped silently.
 2. Another of the user's own devices (`device:<deviceName|deviceId>`) — message and/or files over the Dropbox device channel: files are chunked+streamed (per-chunk checksum, whole-file SHA-256 both sides, resume), never enter the LLM context, and land in the peer's Downloads (auto-accept, visible in their device panel). Not subject to the friend permission tiers/rate limits; size/count gated and audited. Requires an active peer roster — an unknown device fails with the available list (no silent fallback).
 3. `local` — copy `attachments` into `targetDir` on this machine (no network, no message delivered).
 
 ## Parameters
 - to (string, required): `device:<deviceName|deviceId>`, `local`, or a friend (bare remark/username/email/displayName, or explicit `friend:<…>`).
-- message (string, required): text sent to friend/device targets, max 4000 characters, plain text. Ignored for `local`.
-- attachments (array of string, optional): ABSOLUTE paths of files on this machine. Device targets: max 9 files per message, each up to 100 MB (100,000,000 bytes, decimal) — exceeding fails and echoes the actual value. Friend targets: NOT supported (the server-side attachment channel does not exist yet) — send text only. `local`: required — these files are copied into `targetDir`.
+- message (string, required): text sent to friend/device targets, max 4000 characters, plain text. Ignored for `local`. May be EMPTY for a friend target **only when** `attachments` is non-empty (the server then generates the placeholder line the receiving client shows).
+- attachments (array of string, optional): ABSOLUTE paths of files on this machine. Friend targets: max 9 files per message, each up to 100 MB (100,000,000 bytes, decimal) — the same authored limits as the device leg; the file is uploaded in 4 MiB chunks (per-chunk checksum, whole-file SHA-256) before the message is sent. If the server does not support attachments (or support cannot be verified) the whole send is refused with a readable reason and NOTHING is uploaded. Device targets: same limits, transfer over the device channel. `local`: required — these files are copied into `targetDir`.
 - targetDir (string, optional): destination directory for `local` (created if missing). Device targets: optional — a request only, the receiver decides (it accepts only directories on its own allow-list; anything else is rejected with a structured code and nothing is written). Sent only after the peer confirms support; if the peer does not, the request stays off the wire and the files land in the peer's Downloads (the result says so).
 - overwrite (boolean, optional, default false): `local` only — replace existing files in `targetDir`.
 
@@ -93,12 +96,12 @@ When the user's agent-messaging mode is `ask` (or the auto rate limit was hit), 
       ),
       "message" -> Json.obj(
         "type"        -> "string".asJson,
-        "description" -> s"Message text (max $MaxMessageLength characters) for friend/device targets; ignored for `local`.".asJson
+        "description" -> s"Message text (max $MaxMessageLength characters) for friend/device targets; ignored for `local`. Empty is allowed for a friend target only when `attachments` is non-empty.".asJson
       ),
       "attachments" -> Json.obj(
         "type"  -> "array".asJson,
         "items" -> Json.obj("type" -> "string".asJson),
-        "description" -> "Absolute local file paths. Device: ≤9 files, each ≤100 MB (100,000,000 bytes, decimal), chunked+verified transfer. Friend: unsupported. Local: required (copied into targetDir).".asJson
+        "description" -> "Absolute local file paths. Friend and device: ≤9 files, each ≤100 MB (100,000,000 bytes, decimal); friend uploads go in 4 MiB chunks with per-chunk checksum + whole-file SHA-256. Friend sends are refused (nothing uploaded) when the server lacks the attachment route. Local: required (copied into targetDir).".asJson
       ),
       "targetDir" -> Json.obj(
         "type"        -> "string".asJson,
@@ -187,14 +190,21 @@ When the user's agent-messaging mode is `ask` (or the auto rate limit was hit), 
     fs: FriendService,
     friend: FriendSummary,
     message: String,
-    ctx: ToolContext
+    ctx: ToolContext,
+    attachments: List[os.Path] = Nil
   ): IO[Either[ToolError, String]] =
     nebflow.agent.SendConfirm.locally(
       nebflow.agent.SendConfirm.targetFor(ctx, recipientLabel(friend))
-    )(fs.sendAsAgent(friend.userId, message)).map {
+    )(fs.sendAsAgent(friend.userId, message, attachments)).map {
       // 回执形态（⑦-D6）：`备注（username）`——让用户/模型能确认「打到的是谁」。
+      // 附件腿（4b A-4）：回执里显式带件数，与 `summarize` 的入参摘要同形
+      // （「成功但附件消失」是本批明令禁止的缺陷形态）。
       case Right(_) =>
-        Right(s"已发送给 ${recipientLabel(friend)}（${LocalTime.now().format(TimeFormat)}）")
+        Right(
+          if attachments.isEmpty then s"已发送给 ${recipientLabel(friend)}（${LocalTime.now().format(TimeFormat)}）"
+          else
+            s"已发送给 ${recipientLabel(friend)}（${LocalTime.now().format(TimeFormat)}）— ${attachments.size} 件附件已上传并随消息送达（分块 + 整件 sha256 由服务端校验）。"
+        )
       case Left(err) => Left(ToolError(err))
     }
 
@@ -452,20 +462,27 @@ When the user's agent-messaging mode is `ask` (or the auto rate limit was hit), 
                           case Right(peer)    => sendDevice(dbx, ns, peer, m, attachments.map(p => os.Path(PathUtil.expandTilde(p.trim), os.pwd)), targetDir, ctx)
                       )
           case Right(ToKind.Friend(q)) =>
-            if attachments.nonEmpty then
+            // 4b 腿 A-4：附件**不再一律拒绝** —— 裁定①「能发就能带附件」（下载权限跟
+            // send 闸）。逐件校验路径形态（与设备支同文案），件数/大小/能力/上传全在
+            // FriendService.sendAsAgent 单点（`AttachContract` 闸 + A-5 能力探测 +
+            // E1/E2 上传链）。🔴 能力探测不可判 ⇒ **明确拒绝**（§G.3 禁未探测即携带
+            // `attachments` 发送），禁静默降级为纯文本。
+            val relPaths = attachments.filter(a => !java.nio.file.Paths.get(a.trim).isAbsolute)
+            if relPaths.nonEmpty then
               bad(
-                "Attachments are not supported for friend targets yet: the NebLink server has no cross-account " +
-                  "attachment channel (pending cross-project batch 4b). Send text only, or use a `device:` target " +
-                  "for files."
+                "Attachment paths must be absolute, got: " + relPaths.map(a => s"'$a'").mkString(", ") +
+                  ". Pass ABSOLUTE paths of files on this machine."
               )
             else
               service match
                 case None =>
                   bad("Friend messaging is unavailable: NebLink friends service is not initialized.")
                 case Some(fs) =>
+                  // §B.4：正文可为空 —— **仅当**有附件时（服务端生成占位正文）。
+                  // 无附件时空正文仍按旧语义拒绝（逐字节不变）。
                   message match
                     case None => bad(s"Missing required parameter 'message'.")
-                    case Some(m) if m.isEmpty =>
+                    case Some(m) if m.isEmpty && attachments.isEmpty =>
                       bad("'message' is empty — nothing to send.")
                     case Some(m) if m.length > MaxMessageLength =>
                       bad(s"Message too long (${m.length} chars, max $MaxMessageLength).")
@@ -475,16 +492,17 @@ When the user's agent-messaging mode is `ask` (or the auto rate limit was hit), 
                       // then reports "friend list is empty" with no candidates).
                       // 该出口已由 FriendService.applyRemarks 注入本地备注 ⇒ L0 层与候选
                       // 文案都读得到备注（⑦：工具侧零取数改动）。
+                      val paths = attachments.map(a => os.Path(PathUtil.expandTilde(a.trim), os.pwd))
                       val prepared: IO[(Either[ToolError, FriendSummary], List[FriendSummary])] =
                         fs.refreshFriends().map(resp => resolveFriend(q, resp.friends) -> resp.friends)
                       prepared.flatMap {
-                        case (Right(friend), _) => sendTo(fs, friend, m, ctx)
+                        case (Right(friend), _) => sendTo(fs, friend, m, ctx, paths)
                         case (Left(err), friends) =>
                           // L0–L3 全未命中 ⇒ 走 L4 邮箱 α（仅失败路径，+1 次上游往返）。
                           // 命中且能回映射成好友 ⇒ 发送；否则（miss / 上游故障 / 非好友）
                           // 回落**原样**的 not-found + 候选错误（不升格、不回显 query）。
                           lookupFriendBySearch(fs, t, friends).flatMap {
-                            case Some(friend) => sendTo(fs, friend, m, ctx)
+                            case Some(friend) => sendTo(fs, friend, m, ctx, paths)
                             case None         => IO.pure(Left(err))
                           }
                       }

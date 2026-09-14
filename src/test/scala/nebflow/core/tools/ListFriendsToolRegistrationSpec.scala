@@ -101,7 +101,9 @@ class ListFriendsToolRegistrationSpec extends CatsEffectSuite:
       override def sendFriendMessage(
         friendUserId: String,
         body: String,
-        origin: Option[String] = None
+        origin: Option[String],
+        attachmentIds: List[String],
+        clientMsgId: Option[String]
       ): IO[Either[String, Json]] = unexpected("sendFriendMessage")
 
   private def withStub[A](reply: Either[String, FriendListResponse])(

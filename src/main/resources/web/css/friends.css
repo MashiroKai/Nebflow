@@ -662,6 +662,78 @@ button.fm-req-decline:focus-visible {
 /* 好友消息正文保留换行语义（dropbox 面走纯文本渲染，不共享此条） */
 .fm-msg-bubble { white-space: pre-wrap; }
 
+/* ── 附件卡片（4b 腿 A-2）─────────────────────────────────────────────
+   取色只用既有主题 token（`--glass-etched-* / --color-frame-* / --color-error`，
+   亮/暗同源 ⇒ 无新字面量色值）。三态必须**视觉可区分**（§B.7 ②1）：
+     · ready     —— 可点下载（正常前景 + 下载按钮）
+     · expired   —— 灰态卡片，真名/大小保留，明示「附件已过期」，**无按钮**
+     · uploading / unreadable —— 灰态，无按钮（不可下载者绝不渲染成可点按钮）
+   断行规则：长文件名必须能折行（`min-width:0` + `word-break`），否则窄视口溢出。 */
+.fm-att-list {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  margin-top: 4px;
+}
+
+.fm-att {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: wrap;
+  min-width: 0;
+  padding: 4px 8px;
+  border: 1px solid var(--glass-etched-border);
+  border-radius: 6px;
+  background: var(--glass-etched-bg);
+  font-size: 12px;
+  line-height: 1.5;
+}
+
+.fm-att-name {
+  min-width: 0;
+  overflow-wrap: anywhere;
+  color: var(--color-text, #000);
+}
+
+.fm-att-size,
+.fm-att-note {
+  color: var(--color-frame-text-muted, var(--color-text-muted, #888));
+  white-space: nowrap;
+}
+
+.fm-att-expired,
+.fm-att-uploading,
+.fm-att-unreadable {
+  opacity: 0.72; /* 「已过期」态：灰态卡片（§B.7 ②1），真名与大小仍在 DOM 上 */
+}
+
+.fm-att-expired .fm-att-name { text-decoration: line-through; }
+
+.fm-att-failed { border-color: var(--color-error); }
+.fm-att-failed .fm-att-note { color: var(--color-error); }
+
+.fm-att-dl {
+  border: 1px solid var(--glass-control-border);
+  border-radius: 5px;
+  background: transparent;
+  color: var(--color-text, #000);
+  font-size: 11px;
+  padding: 1px 8px;
+  cursor: pointer;
+}
+
+.fm-att-dl:hover { background: var(--color-frame-hover); }
+.fm-att-dl:focus-visible { outline: none; box-shadow: 0 0 0 2px var(--glass-control-border); }
+.fm-att-dl:disabled { opacity: 0.5; cursor: default; }
+
+/* 尚未有状态文案时收起（避免卡片里并排两个同义词；失败/成功后解除） */
+.visually-hidden-note { display: none; }
+
+/* 附件消息的正文（与占位正文区分：占位文本被隐藏时不留空行） */
+.fm-msg-text { white-space: pre-wrap; }
+.fm-msg-text:not(:last-child) { margin-bottom: 2px; }
+
 /* Chips: agent-sent + forwarded (§3.3 R6/R7) — pill, etched bg, no new color */
 .fm-msg-agent-badge,
 .fm-msg-forwarded-badge {

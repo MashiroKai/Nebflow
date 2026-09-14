@@ -646,12 +646,55 @@ case class FriendListResponse(
   outgoing: List[OutgoingRequestSummary] = Nil
 )
 
+/** 附件元数据镜像（4b 腿 A-1；逐字对齐 neblink-server 契约件 §B.2 `M6`：
+  * `{id, name, size, mime?, sha256, state}`，**camelCase**）。
+  *
+  * 🔴 `state` **必填**（不是 `Option`）：§B.7 的线上枚举恒为
+  *   `"uploading" | "ready" | "expired"` ⇒ 客户端**总能**判读。
+  *   键缺失/取值越界**不**折叠成 None（那会让「不可判」与「无附件」同形），而是
+  *   落进 [[AttachmentState.Unknown]]（可判读的降级态，见 `messages.js` 渲染面）；
+  *   这与 §B.3 的「旧端容忍」不冲突——那条只针对**键缺席**（服务端无附件时根本不发
+  *   该键，见本文件 `attachmentsOf`）。
+  *
+  * 🔴 blob 是瞬态的、**元数据永久保留**（§F.2）：`state == "expired"` 时 `name`/`size`
+  *   仍是真值，必须继续渲染（禁静默消失，§B.7 ②1）。 */
+case class AttachmentSummary(
+  id: String,
+  name: String,
+  size: Long,
+  sha256: String,
+  state: String,
+  mime: Option[String] = None
+):
+  def stateKind: AttachmentState = AttachmentState.of(state)
+
+  /** 可下载判据 = 线上就绪 **且** 有 id。非就绪态一律不可下载（§B.7 ②1 末句：
+    * 禁渲染成「可点但点了报错」的按钮）。 */
+  def downloadable: Boolean = stateKind == AttachmentState.Ready && id.nonEmpty
+
+/** `AttachmentDto.state` 的客户端口径（唯一映射点，§B.7 ① 的线上枚举 + 越界兜底）。 */
+enum AttachmentState:
+  case Uploading
+  case Ready
+  case Expired
+  case Unknown(raw: String)
+
+object AttachmentState:
+  def of(raw: String): AttachmentState = raw match
+    case "uploading" => Uploading
+    case "ready"     => Ready
+    case "expired"   => Expired
+    case other       => Unknown(other)
+
 case class MessageSummary(
   id: Long,
   senderId: String,
   kind: String,
   body: String,
-  createdAt: Long
+  createdAt: Long,
+  /** 4b 腿 A-1 新增（§B.2 `M1`）：`Option` + 缺省 `None` ⇒ 旧端形态逐字节等价
+    * （无附件消息**不含该键**，见 `FriendCodecs` 的 Encoder）。 */
+  attachments: Option[List[AttachmentSummary]] = None
 )
 
 case class ConversationSummary(
@@ -752,7 +795,61 @@ object FriendCodecs:
   }
 
   given Decoder[FriendListResponse] = deriveDecoder
-  given Decoder[MessageSummary] = deriveDecoder
+
+  // ── 附件镜像面（4b 腿 A-1，§B.2 M1/M6 + §B.3）─────────────────────────
+  //
+  // 容错方向（**单点**，与上文 FriendSummary 的 2026-09-04 审计口径同源）：
+  //   ① **键缺席 / null** ⇒ None —— 这就是 §B.3 的「旧端容忍 = 逐字节等价现状」
+  //      （服务端只在真有附件时下发该键）；
+  //   ② 数组 ⇒ 逐条解码，**任何一条都不丢弃**：字段坏掉一项就折成安全缺省并让
+  //      `state` 落 Unknown（渲染成「附件状态不可判读」灰卡），绝不把附件条目从
+  //      消息里抹掉 —— 「静默丢弃附件」正是本批（§B.7 ②1）明令禁止的缺陷形态；
+  //   ③ 出现了非数组值（越出契约）⇒ 合成一条**不可判读条目**，同样是「可见的降级」
+  //      而不是静默消失。
+  //   ④ 其余 5 个既有字段（id/senderId/kind/body/createdAt）**语义零变更**。
+  private def strField(c: HCursor, name: String): Option[String] =
+    c.downField(name).focus.flatMap(v => if v.isNull then None else v.asString)
+
+  private def longField(c: HCursor, name: String): Option[Long] =
+    c.downField(name).focus.flatMap(v => if v.isNull then None else v.asNumber.flatMap(_.toLong))
+
+  /** 不可判读条目的**唯一**构造点（id 空 ⇒ 不可下载 ⇒ 前端渲染降级卡）。 */
+  private def unreadableAttachment(rawState: String): AttachmentSummary =
+    AttachmentSummary(id = "", name = "", size = 0L, sha256 = "", state = rawState)
+
+  given Decoder[AttachmentSummary] = Decoder.instance { c =>
+    Right(
+      AttachmentSummary(
+        id = strField(c, "id").getOrElse(""),
+        name = strField(c, "name").getOrElse(""),
+        size = longField(c, "size").getOrElse(0L),
+        sha256 = strField(c, "sha256").getOrElse(""),
+        state = strField(c, "state").getOrElse(""),
+        mime = strField(c, "mime")
+      )
+    )
+  }
+
+  private def attachmentsOf(c: HCursor): Option[List[AttachmentSummary]] =
+    c.downField("attachments").focus match
+      case None => None
+      case Some(v) if v.isNull => None
+      case Some(v) =>
+        v.asArray match
+          case Some(items) =>
+            Some(items.toList.map(_.as[AttachmentSummary].getOrElse(unreadableAttachment(""))))
+          case None => Some(List(unreadableAttachment(v.noSpaces)))
+
+  given Decoder[MessageSummary] = Decoder.instance { c =>
+    for
+      id        <- c.get[Long]("id")
+      senderId  <- c.get[String]("senderId")
+      kind      <- c.get[String]("kind")
+      body      <- c.get[String]("body")
+      createdAt <- c.get[Long]("createdAt")
+    yield MessageSummary(id, senderId, kind, body, createdAt, attachmentsOf(c))
+  }
+
   given Decoder[ConversationSummary] = deriveDecoder
   // Encoders for gateway REST responses (client decodes server JSON; gateway
   // re-encodes the same domain objects for the frontend UI).
@@ -780,7 +877,41 @@ object FriendCodecs:
   given Encoder[FriendRequestSummary] = deriveEncoder
   given Encoder[OutgoingRequestSummary] = deriveEncoder
   given Encoder[FriendListResponse] = deriveEncoder
-  given Encoder[MessageSummary] = deriveEncoder
+
+  /** 附件出参（§B.2 M6）：`mime` 缺席即**省键**（`skip_serializing_if` 同形）。 */
+  given Encoder[AttachmentSummary] = Encoder.instance { a =>
+    Json.fromFields(
+      List(
+        Some("id" -> a.id.asJson),
+        Some("name" -> a.name.asJson),
+        Some("size" -> a.size.asJson),
+        a.mime.map(m => "mime" -> m.asJson),
+        Some("sha256" -> a.sha256.asJson),
+        Some("state" -> a.state.asJson)
+      ).flatten
+    )
+  }
+
+  /** 🔴 出参**不得静默丢弃**附件字段（4b 腿 A-1 的病灶：网关 REST 出口
+    * `convs.asJson` / `r.map(_.asJson)` 用本编码器重编码，`deriveEncoder` 会按
+    * case class 形状过滤掉服务端已下发的键）。
+    *
+    * 两条硬约束：
+    *  ① **无附件 ⇒ 不含 `attachments` 键**（不是 `null`）：§B.3 要求服务端→旧端
+    *     路径逐字节不变；`deriveEncoder` 会输出 `"attachments":null` ⇒ 字节不等价。
+    *     故此处手写编码器，前 5 键顺序与旧形态逐字一致。
+    *  ② 有附件 ⇒ 数组随消息一起出（含空数组：`Some(Nil)` 与「无附件」同义，省键）。 */
+  given Encoder[MessageSummary] = Encoder.instance { m =>
+    val legacy = List(
+      "id"        -> m.id.asJson,
+      "senderId"  -> m.senderId.asJson,
+      "kind"      -> m.kind.asJson,
+      "body"      -> m.body.asJson,
+      "createdAt" -> m.createdAt.asJson
+    )
+    Json.fromFields(legacy ++ m.attachments.filter(_.nonEmpty).map(a => "attachments" -> a.asJson))
+  }
+
   given Encoder[ConversationSummary] = deriveEncoder
 end FriendCodecs
 
