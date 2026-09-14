@@ -1062,8 +1062,10 @@ object PluginRegistry:
         .map(k => s"${k.label} ${absences.count(_.kind == k)}")
       s"另有 ${absences.size} 个插件未载入（${counts.mkString(" / ")}）"
 
-  /** 「内容已变更」目录段尾注记（非拦截可见性，C2 ②）：**点名**列出（与「已关闭·禁派发」
-    * 注记同款口径——内容被替换后用户/审计需要能指名核对）。无变更 → ""。 */
+  /** 「内容已变更」目录段尾注记（非拦截可见性，C2 ②）：**点名**列出（内容被替换后
+    * 用户/审计需要能指名核对）。无变更 → ""。
+    * （2026-09-14 面板收敛批：原文「与『已关闭·禁派发』注记同款口径」已失效——那条
+    * 注记已删除，被关插件在目录里完全不可见；本注记是段尾**唯一**的点名行。） */
   private def contentChangedNote(changed: List[String]): String =
     if changed.isEmpty then ""
     else
@@ -1157,7 +1159,9 @@ object PluginRegistry:
     * 调试预览共用，双渲染器重复实现已收敛于此）。
     *
     * 段尾注记两类（都不是插件行）：缺席（装载失败/封禁）+ **内容已变更**（非拦截可见性，
-    * 包**仍在本目录**里，只是加一行提示——不得与缺席注记混读）。 */
+    * 包**仍在本目录**里，只是加一行提示——不得与缺席注记混读）。
+    * 2026-09-14 面板收敛批（作者三裁之批一）：原第三类「已关闭·禁派发」点名注记**删除**
+    * ——关闭的包在目录里**完全不可见**（能力行与点名行皆无）；S5 过滤效果不变。 */
   def renderCatalog(): IO[String] =
     PluginsConfig.enabled.flatMap {
       case false => IO.pure("")
@@ -1168,25 +1172,19 @@ object PluginRegistry:
             // 令 1 拆面（2026-09-12）：**派发许可面**只在此过滤链生效——内容面可用
             // 但被作者关闭的包不再出现在分发给新节点的目录里（S5：关闭后新派发拿不到）；
             // 但它**仍可用**⇒ 闸 B/C/E/D 不受影响（在飞/已派发节点照跑）。
-            // 零 dispatch 记录时 `closed` 恒空 ⇒ 本方法输出与改前逐字节相同（零迁移）。
-            val (dispatchable, closed) =
-              trusted.partition(p => PluginDispatchPolicy.effective(p.name, trusted = true))
+            // 零 dispatch 记录时本过滤恒全通过 ⇒ 本方法输出与改前逐字节相同（零迁移）。
+            // 2026-09-14 面板收敛批（作者三裁之批一）：**段尾「已关闭·禁派发」点名注记
+            // 删除**——被关插件在本目录里**完全不可见**（既无能力行、也无点名行）。
+            // 行过滤逻辑本身不变（关闭仍使该包的能力行消失 = S5 既有效果）。
+            val dispatchable =
+              trusted.filter(p => PluginDispatchPolicy.effective(p.name, trusted = true))
             val note = absenceNote(absencesOf(snap))
             // 内容已变更（非拦截可见性）：行**不消失**，只在段尾点名提示。
             val changedNote = contentChangedNote(trusted.filter(_.contentChanged).map(_.name).sorted)
-            // R10-C 形态（作者裁定前的推荐形态，由本实施批落地）：行消失但**点名**，
-            // 保证「能力域命中却无可用插件」与「该能力域不存在」可区分（设计 S6），
-            // 分发器据此按 system.md 显式申报/升级而非静默另找路线。
-            val closedNote =
-              if closed.isEmpty then ""
-              else
-                s"另有 ${closed.size} 个插件已关闭·禁派发（只影响未来派发，已在跑的节点不受影响）：" +
-                  closed.map(_.name).mkString(", ")
             val lines =
               dispatchable.map(catalogLine) ++
                 Option.when(note.nonEmpty)(note) ++
-                Option.when(changedNote.nonEmpty)(changedNote) ++
-                Option.when(closedNote.nonEmpty)(closedNote)
+                Option.when(changedNote.nonEmpty)(changedNote)
             if lines.isEmpty then "" else CatalogHeader + "\n" + lines.mkString("\n")
           }
         }

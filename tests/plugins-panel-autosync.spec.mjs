@@ -1,23 +1,28 @@
 // plugins-panel-autosync.spec.mjs — 2026-09-05 插件面板体验批验收 spec
 //（移除手动刷新 + 列表实时自动同步 + 原地状态切换 + nb-toggle 公共组件）。
-// **2026-09-13 无审批批（装了就是信任）重写**：内容审批开关退场后，卡片上
-// 剩下的可操作件是「派发开关」（乐观原地翻转）与「封禁/解封」（次级动作，
-// 不做乐观翻转、落盘后核对注册表）。
+// **2026-09-13 无审批批（装了就是信任）重写**；**2026-09-14 插件面板收敛批
+// （作者三裁之批一）再重写**：封禁/解封 UI 全量退场 ⇒ 卡片只剩**一个**控件 =
+// 「任务分发器可见性」开关（卡片右上、与状态药丸同排，乐观原地翻转）。
 //
 // Shell 级：隔离静态服务器（127.0.0.1:8181，8100+ 纪律，绝非宿主 8080）+
 // 页内 mock，真实 UI 代码全量执行。断言链：
 //   ① 手动刷新按钮不复存在（DOM 零残留）
 //   ② mock 注入新插件 → 轮询周期内列表自动插入新卡（带 plugins-card-entering
 //      插入动画，MutationObserver 同帧捕获），全程无手动刷新、无 page reload；
-//      新卡携带**次级动作入口 + 派发开关**（🔴 不带内容审批开关）
+//      新卡携带**唯一控件（派发开关）**（🔴 不带内容审批开关，🔴 不带已退场的
+//      封禁/「更多」入口）
 //   ③ 派发开关启停：乐观原地翻转 → 注册表收敛，卡片/列表/兄弟卡 DOM 节点身份
 //      不变（零全列表重绘）、无 page reload；POST 失败回滚乐观态 + toast
 //   ④ nb-toggle 组件契约：role=switch / aria-checked / 键盘 Space+Enter /
 //      setToggleState / attrs 钩子 / 插件面板开关同 class / CSS 全 token 零手造色
-//   ⑤ 封禁/解封（C7 次级动作）：封禁 ⇒ POST /revoke ⇒ 卡片转「已封禁」+ 派发
-//      开关同帧锁死；解封 ⇒ POST /unblock ⇒ 回「已启用」+ 派发开关解锁
-//   ⑥ 零静默（F1）：后端 ok:true 但注册表**未**反映封禁态 ⇒ 必须出 error toast，
-//      绝不静默无效（禁 `ok:true` + 零效果）
+//   ⑤ 封禁态由**引擎侧**产生（API / CLI；本 spec 以夹具态翻转 + 重同步模拟其结果）
+//      ⇒ 面板必须收敛出「已封禁」+ 派发开关同帧锁死 + 可行动提示；且面板**零**
+//      revoke/unblock wire（UI 入口已退场，端点本身零改动）
+//   ⑥ （原「零静默：后端 ok:true 但注册表未反映封禁态 ⇒ error toast」用例**随该动作
+//      退场而删除**——它的唯一承载就是被删掉的封禁动作 + `plugins.actionNoEffect`。
+//      在飞的 F1 承载 = ③b：派发开关 POST 失败 ⇒ 回滚乐观态 + error toast。
+//      ⇒ 若作者希望把「ok:true 但注册表未反映」的核对搬到派发面，那是**新增行为**，
+//      属后续批，不在本批范围。）
 //   ⑦ 前端判据面（🔴 **不是**引擎语义的正面断言）：载荷缺 blocked/contentChanged
 //      ⇒ 卡片「已启用」+ 派发开关可用 + 内容审批开关零残留。夹具**故意**取旧
 //      default-deny 形态（`trusted:false` + `reason:'never approved (default-deny)'`）
@@ -251,9 +256,9 @@ test('② new plugin appears via polling with enter animation — no manual refr
   ]);
   expect(dump.prevName, 'inserted at sorted position (after m-mid)').toBe('m-mid');
   expect(dump.nextIsRejected, 'trusted block stays before the rejected card').toBe(true);
-  expect(dump.moreThere, 'new card carries the 更多 secondary-action entry').toBe(true);
-  expect(dump.blockThere, 'new card carries the block/unblock action').toBe(true);
-  expect(dump.dispatchThere, 'new card carries the dispatch switch').toBe(true);
+  expect(dump.moreThere, 'new card 零残留：退场的「更多」入口不得出现').toBe(false);
+  expect(dump.blockThere, 'new card 零残留：退场的封禁入口不得出现').toBe(false);
+  expect(dump.dispatchThere, 'new card carries the dispatch switch (唯一控件)').toBe(true);
   expect(dump.contentSwitchThere, 'new card does NOT carry the retired content switch').toBe(false);
   expect(dump.pill, 'new card pill = 已启用 (presence-trust)').toBe('已启用');
   expect(dump.cardCount, 'card count grew 3 → 4').toBe(4);
@@ -386,35 +391,42 @@ async function cardState(page, name) {
   }, name);
 }
 
-test('⑤ block/unblock: 封禁 ⇒ POST /revoke ⇒ 已封禁 + 派发锁死; 解封 ⇒ POST /unblock ⇒ 回已启用', async ({ page }) => {
+test('⑤ 封禁态来自引擎侧（API/CLI）⇒ 收敛「已封禁」+ 派发锁死；面板零 revoke/unblock wire', async ({ page }) => {
   await loadShell(page);
   const posts = [];
   page.on('request', (r) => {
     if (r.method() === 'POST' && r.url().includes('/api/plugins/')) posts.push(new URL(r.url()).pathname);
   });
 
-  // 前置：未封禁 ⇒ 已启用 + 派发开关可用。
+  // 前置：未封禁 ⇒ 已启用 + 派发开关可用 + 封禁 UI 零残留。
   const before = await cardState(page, 'e2e-hello');
   expect(before.pill, 'precondition: 已启用').toBe('已启用');
   expect(before.dispatchDisabled, 'precondition: dispatch usable').toBe(false);
+  expect(before.blockLabel, 'precondition: 封禁入口已退场（DOM 零残留）').toBe(null);
 
-  // 封禁（次级动作在「更多」菜单里）。
-  await page.click('.plugins-card[data-plugin="e2e-hello"] [data-plugin-more]');
-  await page.click('.plugins-card[data-plugin="e2e-hello"] [data-plugin-block]');
+  // 面板上唯一的用户动作（派发开关）——wire 只可能是 enable/disable。
+  await page.click('.plugins-card[data-plugin="e2e-hello"] [data-plugin-dispatch]');
+  await page.waitForFunction(() =>
+    document.querySelector('.plugins-card[data-plugin="e2e-hello"] [data-plugin-dispatch]')?.getAttribute('aria-checked') === 'false',
+    { timeout: 8000 });
+
+  // 引擎侧封禁（作者选定的在飞止损路径 = API / CLI；夹具态翻转 + 重同步模拟其结果）
+  registry.plugins.find(p => p.name === 'e2e-hello').blocked = true;
+  await page.evaluate(async () => { const m = await import('/js/plugins.js'); m.renderPlugins(); });
   await page.waitForFunction(() =>
     document.querySelector('.plugins-card[data-plugin="e2e-hello"] .plugins-state-pill')?.textContent.trim() === '已封禁',
     { timeout: 8000 });
   const blocked = await cardState(page, 'e2e-hello');
   expect(blocked.pillClass, 'blocked pill class').toContain('blocked');
-  expect(blocked.blockLabel, 'block entry flips to 解封').toBe('解封该插件');
-  expect(blocked.blockState, 'data-blocked=1').toBe('1');
-  expect(blocked.dispatchDisabled, '封禁 ⇒ 派发开关同帧锁死（零静默：写下去也不会生效）').toBe(true);
+  expect(blocked.dispatchDisabled, '封禁 ⇒ 派发开关同帧锁死（写下去也不会生效）').toBe(true);
   expect(blocked.dispatchBlocked, 'blocked 原因随元素暴露').toBe('blocked');
   expect(blocked.blockedHint, '一行可行动提示').toBeTruthy();
-  expect(posts, 'wire: 只打 /revoke').toEqual(['/api/plugins/e2e-hello/revoke']);
+  expect(blocked.blockedHint, '封禁提示指向 API / CLI（面板已无入口）').toContain('API / CLI');
+  expect(blocked.blockLabel, '封禁态下也不得长回封禁入口').toBe(null);
 
-  // 解封。
-  await page.click('.plugins-card[data-plugin="e2e-hello"] [data-plugin-block]');
+  // 解封（同样引擎侧）⇒ 回「已启用」+ 派发开关解锁。
+  registry.plugins.find(p => p.name === 'e2e-hello').blocked = false;
+  await page.evaluate(async () => { const m = await import('/js/plugins.js'); m.renderPlugins(); });
   await page.waitForFunction(() =>
     document.querySelector('.plugins-card[data-plugin="e2e-hello"] .plugins-state-pill')?.textContent.trim() === '已启用',
     { timeout: 8000 });
@@ -423,28 +435,15 @@ test('⑤ block/unblock: 封禁 ⇒ POST /revoke ⇒ 已封禁 + 派发锁死; �
   expect(after.dispatchDisabled, '派发开关解锁').toBe(false);
   expect(after.dispatchBlocked, 'blocked 属性清除').toBe(null);
   expect(after.blockedHint, '封禁提示移除').toBe(null);
-  expect(posts, 'wire: revoke → unblock，别无他写').toEqual([
-    '/api/plugins/e2e-hello/revoke', '/api/plugins/e2e-hello/unblock',
-  ]);
+  // 🔴 整轮交互的 wire：零 revoke / 零 unblock（端点面零改动，但面板不再提供入口）
+  expect(posts.filter(p => /\/revoke$|\/unblock$/.test(p)), '面板不得打 revoke/unblock').toEqual([]);
   expect(legacyApproveCalls, 'UI 主线绝不调用 /approve').toEqual([]);
 });
 
-test('⑥ 零静默：后端 ok:true 但注册表未反映封禁 ⇒ 必须出 error toast（禁 ok:true 静默无效）', async ({ page }) => {
-  await loadShell(page);
-  revokeNoEffect = true; // 注入：POST /revoke 回 ok:true，但 blocked 不变
-  await page.click('.plugins-card[data-plugin="e2e-hello"] [data-plugin-more]');
-  await page.click('.plugins-card[data-plugin="e2e-hello"] [data-plugin-block]');
-  await page.waitForSelector('.nebflow-toast-error', { timeout: 8000 });
-  const dump = await page.evaluate(() => ({
-    toasts: [...document.querySelectorAll('.nebflow-toast-error')].map(e => e.textContent.trim()),
-    pill: document.querySelector('.plugins-card[data-plugin="e2e-hello"] .plugins-state-pill')?.textContent.trim(),
-    btnDisabled: document.querySelector('.plugins-card[data-plugin="e2e-hello"] [data-plugin-block]')?.disabled,
-  }));
-  expect(dump.toasts.length, '零静默：动作未生效必须显式报错').toBeGreaterThan(0);
-  expect(dump.toasts.join(' '), 'toast 文案点名该插件（可行动）').toContain('e2e-hello');
-  expect(dump.pill, 'UI 不擅自画成已封禁（以注册表为单一事实源）').toBe('已启用');
-  expect(dump.btnDisabled, '在途闩已释放（可重试）').toBe(false);
-});
+// ⑥ 原「零静默（F1）：后端 ok:true 但注册表未反映封禁态 ⇒ error toast」——**已随
+// 封禁动作退场删除**（承载者 `setPluginBlocked` + `plugins.actionNoEffect` 与本批
+// 一并删除）。在飞的 F1 承载 = ③b（派发开关 POST 失败 ⇒ 回滚 + error toast）。
+// 若要把该核对搬到派发面，属新增行为 ⇒ 后续批，不写在这里冒充通过。
 
 test('⑦ 前端判据面：载荷缺 blocked/contentChanged（旧 default-deny 形态）⇒ 已启用 + 派发可用 + 内容开关零残留', async ({ page }) => {
   // 🔴 本用例**不**宣称引擎语义（「无记录包首扫即受信」的正面断言在 Scala 侧

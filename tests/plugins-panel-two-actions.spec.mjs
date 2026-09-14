@@ -1,15 +1,17 @@
-// plugins-panel-two-actions.spec.mjs — 2026-09-13 无审批批（装了就是信任）验收 spec
-// 真后端（隔离实例）——重写自 2026-09-12 令 1（R2/F1）的「两控件并存」版本：
-// 内容审批开关**退场**后，卡片上仍是**两个视觉可分、各打各端点**的动作：
-//   • 派发许可（`data-plugin-dispatch`，卡片底部独立一行，乐观翻转）
-//   • 封禁/解封（`data-plugin-block`，右上「更多」菜单内的**次级动作**，不做乐观翻转）
+// plugins-panel-two-actions.spec.mjs — 2026-09-13 无审批批（装了就是信任）验收 spec；
+// **2026-09-14 插件面板收敛批（作者三裁之批一）再重写**（上一版 = 2026-09-12 令 1
+// 的「两控件并存」版本，再上一版 = 内容审批开关版）。真后端（隔离实例）。
+// 本批砍掉**封禁/解封 UI 面**（在飞止损只走 API / CLI）⇒ 卡片上只剩**一个**控件：
+//   • 任务分发器可见性开关（`data-plugin-dispatch`）：**卡片右上、与状态药丸同排**，
+//     乐观翻转，只写 `plugins.dispatch`（令 1 派发面）
 //
 // 断言链：
-//   ① 主控件退场：`[data-plugin-switch]` 页面级零残留（C7）
-//   ② 两个动作同时存在且**视觉可分**：钩子分家（data-plugin-block vs
-//      data-plugin-dispatch）、标签分家（locale 真值 plugins.blockAction /
-//      plugins.dispatchLabel，不硬编码文案）、几何可分（派发行在「更多」按钮
-//      与其菜单行**下方**、上缘有 hairline 分隔、行盒非零）
+//   ① 退场件页面级零残留：`[data-plugin-switch]`（2026-09-13 退场）+
+//      `[data-plugin-more]` / `[data-plugin-menu]` / `[data-plugin-block]`（本批退场）
+//   ② 唯一控件存在且位置正确：role=switch、aria-label / 可见标签 = locale 真值
+//      `plugins.dispatchLabel`（不硬编码文案）、落在卡片头行内（`.plugins-card-head`
+//      ≥ `.plugins-card-state`）、与药丸**同排**、在药丸**右侧**、行盒右对齐（「右上」）、
+//      行盒非零、**无**旧底部行的 hairline 分隔
 //   ③ 状态药丸绑 blocked / contentChanged（🔴 不绑 trusted）：未封禁 ⇒ 已启用
 //   ④ 前端判据面（🔴 **不是**引擎语义的正面断言）：fixture 插件在实例上没有 trust
 //      记录 ⇒ 卡片「已启用」+ 派发开关可用 + 旧审批开关零残留。**引擎侧**「无记录包
@@ -19,11 +21,13 @@
 //      本用例的区分度在「药丸/派发面被重新绑回审批面」这一**前端回归**上——本实例
 //      载荷带旧 default-deny 判词（`trust.status='untrusted'`，`trusted` 布尔字段在
 //      未合入引擎轨的实例上**不存在**）⇒ 绑回去即转红（返工轮变异实测）。
-//   ⑤ 零静默：封禁动作必打 POST /revoke，且**必须落到注册表**——注册表回
-//      blocked 或（未落地时）出 error toast，二者必居其一，绝不 ok:true 静默
-//   ⑥ 解封打 POST /unblock；两条动作的 wire 互不污染
+//   ⑤ 封禁（**引擎侧** API / CLI 发起——面板已无该入口）⇒ 面板必须把状态收敛出来
+//      （药丸「已封禁」+ 派发开关锁死 + 可行动注记指向 API / CLI + REST 真值
+//      blocked=true）；**整轮 UI 交互零 revoke 调用**（UI 入口退场 = wire 可验）
+//   ⑥ 解封（同样引擎侧）⇒ 回「已启用」+ 开关解锁；**面板 wire 零 unblock**；
+//      派发开关仍只打 /disable（不掺 /revoke），且落盘 dispatch.authorEnabled=false
 //
-// 端点与 C6 字段由**两轨共用冻结契约 v1** 固定：
+// 端点与 C6 字段由**两轨共用冻结契约 v1** 固定（🔴 本批零改动）：
 //   POST /api/plugins/:name/revoke  = 封禁（路径名保留，语义翻转）
 //   POST /api/plugins/:name/unblock = 解封（新增）
 //   GET  /api/plugins 每项含 trusted / blocked / contentChanged
@@ -151,33 +155,35 @@ test.describe('plugins panel — dispatch permission vs block (real backend)', (
   async function cardState(page, name) {
     return page.evaluate((plugin) => {
       const card = document.querySelector(`.plugins-card[data-plugin="${plugin}"]`);
-      const more = card?.querySelector('[data-plugin-more]');
-      const menu = card?.querySelector('[data-plugin-menu]');
-      const btn = card?.querySelector('[data-plugin-block]');
       const dw = card?.querySelector('[data-plugin-dispatch]');
+      const pill = card?.querySelector('.plugins-state-pill');
+      const head = card?.querySelector('.plugins-card-head');
+      const state = card?.querySelector('.plugins-card-state');
       const row = card?.querySelector('.plugins-card-dispatch');
       const note = card?.querySelector('.plugins-dispatch-note');
       const comp = row ? getComputedStyle(row) : null;
-      const box = (el) => { if (!el) return null; const b = el.getBoundingClientRect(); return { x: b.x, y: b.y, w: b.width, h: b.height, bottom: b.bottom }; };
+      const box = (el) => { if (!el) return null; const b = el.getBoundingClientRect(); return { x: b.x, y: b.y, w: b.width, h: b.height, right: b.right, bottom: b.bottom }; };
+      const rb = box(row), pb = box(pill), db = box(dw), hb = box(head);
       return {
         cardCount: document.querySelectorAll('#plugins-content .plugins-card').length,
-        // ① 主控件退场
+        // ① 退场件（页面级零残留）
         contentSwitchCount: document.querySelectorAll('#plugins-content [data-plugin-switch]').length,
-        // ② 两个动作
-        hasMore: !!more,
-        hasBlock: !!btn,
+        moreCount: document.querySelectorAll('#plugins-content [data-plugin-more]').length,
+        menuCount: document.querySelectorAll('#plugins-content [data-plugin-menu]').length,
+        blockCount: document.querySelectorAll('#plugins-content [data-plugin-block]').length,
+        // ② 唯一控件
+        dispatchCount: document.querySelectorAll('#plugins-content [data-plugin-dispatch]').length,
         hasDispatch: !!dw,
-        blockLabel: btn?.textContent.trim() ?? null,
-        blockState: btn?.dataset.blocked ?? null,
-        blockBox: box(btn),
-        moreBox: box(more),
-        menuHidden: menu ? menu.hidden : null,
-        menuBox: box(menu),
         dispatchRole: dw?.getAttribute('role') ?? null,
         dispatchLabel: dw?.getAttribute('aria-label') ?? null,
         rowLabelText: row?.querySelector('.plugins-dispatch-label')?.textContent.trim() ?? null,
         rowBorderTop: comp ? comp.borderTopWidth : null,
-        rowBox: box(row),
+        rowBox: rb,
+        inHead: !!(head && dw && head.contains(dw)),
+        inState: !!(state && dw && state.contains(dw)),
+        sameRowAsPill: !!(pb && db) && Math.abs((pb.y + pb.h / 2) - (db.y + db.h / 2)) <= 2,
+        rightOfPill: !!(pb && db) && db.x >= pb.right - 1,
+        rightAlignedInHead: !!(hb && db) && (hb.right - db.right) <= 4,
         dispatchDisabled: dw ? dw.disabled : null,
         dispatchBlocked: dw?.getAttribute('data-dispatch-blocked') ?? null,
         dispatchOn: dw?.classList.contains('on') ?? null,
@@ -191,45 +197,39 @@ test.describe('plugins panel — dispatch permission vs block (real backend)', (
     }, name);
   }
 
-  test('①+②+③ 主控件退场；封禁（次级）与派发（开关）并存且视觉可分；药丸绑新字段', async ({ page }) => {
+  test('①+②+③ 退场件零残留；唯一控件 = 右上「任务分发器可见性」开关（与药丸同排）；药丸绑新字段', async ({ page }) => {
     await unblockQuietly(PLUGIN);
     await loadPluginsPage(page);
-    let st = await cardState(page, PLUGIN);
-    // ② 需要「更多」菜单展开才能量到封禁入口的几何（入口本身先断言存在）。
-    expect(st.hasMore, '次级动作入口「更多」存在').toBe(true);
-    expect(st.hasBlock, '封禁/解封动作存在').toBe(true);
-    await page.click(`.plugins-card[data-plugin="${PLUGIN}"] [data-plugin-more]`);
-    await page.waitForFunction((n) =>
-      !document.querySelector(`.plugins-card[data-plugin="${n}"] [data-plugin-menu]`)?.hidden, PLUGIN, { timeout: 5000 });
-    st = await cardState(page, PLUGIN);
+    const st = await cardState(page, PLUGIN);
 
-    const [blockLabel, dispatchLabel, pillOn] = await Promise.all([
-      locale(page, 'plugins.blockAction'),
+    const [dispatchLabel, pillOn] = await Promise.all([
       locale(page, 'plugins.dispatchLabel'),
       locale(page, 'plugins.stateOn'),
     ]);
 
-    // ① 主控件退场
+    // ① 退场件页面级零残留（内容审批开关 + 封禁/「更多」三钩子）
     expect(st.contentSwitchCount, '内容审批开关页面级零残留（C7 主控件退场）').toBe(0);
+    expect(st.moreCount, '「更多」入口退场 = 页面级零残留').toBe(0);
+    expect(st.menuCount, '次级动作行退场 = 页面级零残留').toBe(0);
+    expect(st.blockCount, '封禁/解封入口退场 = 页面级零残留').toBe(0);
 
-    // ② 两动作存在 + 钩子/标签/形态分家
+    // ② 唯一控件：存在 + 钩子/标签 + 位置（右上、与药丸同排）
+    expect(st.dispatchCount, '页面唯一控件 = 派发开关（计数 1）').toBe(1);
     expect(st.hasDispatch, '派发控件存在（既有钩子 data-plugin-dispatch）').toBe(true);
     expect(st.dispatchRole, '派发控件 role=switch').toBe('switch');
     expect(st.dispatchLabel, '派发控件 aria-label = locale plugins.dispatchLabel').toBe(dispatchLabel);
     expect(st.rowLabelText, '派发行自有文字标签 = locale plugins.dispatchLabel').toBe(dispatchLabel);
-    expect(st.blockLabel, '封禁入口文案 = locale plugins.blockAction').toBe(blockLabel);
-    expect(st.blockLabel === st.dispatchLabel, '两动作文案必须不同（可辨）').toBe(false);
-    expect(st.menuBox.w > 0 && st.menuBox.h > 0, '次级动作行真实渲染（有非零盒）').toBe(true);
-    expect(st.blockBox.w > 0 && st.blockBox.h > 0, '封禁按钮真实渲染（有非零盒）').toBe(true);
-    expect(st.rowBox.w > 0 && st.rowBox.h > 0, '派发行真实渲染（有非零盒）').toBe(true);
-    expect(parseFloat(st.rowBorderTop), '派发行上缘 hairline 分隔（视觉可分）').toBeGreaterThan(0);
-    expect(st.rowBox.y >= st.moreBox.bottom - 1, '派发行在「更多」按钮下方（位置分离）').toBe(true);
-    expect(st.rowBox.y >= st.blockBox.bottom + 1, '派发行在封禁按钮行下方（不挨着）').toBe(true);
+    expect(st.inHead, '控件在卡片头行内（不再是底部独立行）').toBe(true);
+    expect(st.inState, '控件落在状态区（卡片右上）').toBe(true);
+    expect(st.sameRowAsPill, '控件与状态药丸**同排**').toBe(true);
+    expect(st.rightOfPill, '控件在药丸**右侧**').toBe(true);
+    expect(st.rightAlignedInHead, '控件行盒右对齐（「右上」）').toBe(true);
+    expect(st.rowBox.w > 0 && st.rowBox.h > 0, '控件真实渲染（有非零盒）').toBe(true);
+    expect(parseFloat(st.rowBorderTop), '旧底部行的 hairline 分隔已随该形态退场（border-top = 0）').toBe(0);
 
     // ③ 药丸绑 blocked/contentChanged（未封禁 ⇒ 已启用）
     expect(st.pill, '状态药丸 = 已启用（绑 blocked/contentChanged，不绑 trusted）').toBe(pillOn);
     expect(st.pillClass, 'pill 带 on class').toContain('on');
-    expect(st.blockState, 'data-blocked=0（未封禁）').toBe('0');
     expect(st.dispatchDisabled, '未封禁 ⇒ 派发开关可用').toBe(false);
   });
 
@@ -263,80 +263,70 @@ test.describe('plugins panel — dispatch permission vs block (real backend)', (
     expect(again.contentSwitchCount, '内容审批开关零残留').toBe(0);
   });
 
-  test('⑤ 零静默：封禁 ⇒ POST /revoke，且必须落到注册表（否则 error toast，绝不静默）', async ({ page }) => {
+  test('⑤ 封禁（引擎侧 API / CLI）⇒ 面板收敛「已封禁」+ 开关锁死 + 注记可行动；UI 零 revoke wire', async ({ page }) => {
     await unblockQuietly(PLUGIN);
     await loadPluginsPage(page);
     const posts = [];
     page.on('request', (req) => {
-      if (req.method() === 'POST' && req.url().includes(`/api/plugins/${PLUGIN}/`)) posts.push(new URL(req.url()).pathname);
+      if (req.method() === 'POST' && req.url().includes('/api/plugins/')) posts.push(new URL(req.url()).pathname);
     });
-    await page.click(`.plugins-card[data-plugin="${PLUGIN}"] [data-plugin-more]`);
-    await page.click(`.plugins-card[data-plugin="${PLUGIN}"] [data-plugin-block]`);
-    // 终态：要么（C6 在线）卡片转「已封禁」，要么（C6 未上线）出一条 error toast
-    // ——两者必居其一 = 「动作必须产生可行动结果」。
-    const outcome = await page.waitForFunction((n) => {
-      const card = document.querySelector(`.plugins-card[data-plugin="${n}"]`);
-      const pill = card?.querySelector('.plugins-state-pill')?.textContent.trim();
-      const toast = document.querySelector('.nebflow-toast-error');
-      if (toast) return { kind: 'toast', text: toast.textContent.trim() };
-      if (pill === '已封禁') return { kind: 'blocked', text: pill };
-      return null;
-    }, PLUGIN, { timeout: 10000 }).then((h) => h.jsonValue());
+    // 面板上唯一的用户动作（派发开关）——wire 只可能是 enable/disable。
+    await page.click(`.plugins-card[data-plugin="${PLUGIN}"] [data-plugin-dispatch]`);
+    await page.waitForFunction((n) =>
+      document.querySelector(`.plugins-card[data-plugin="${n}"] [data-plugin-dispatch]`)?.getAttribute('aria-checked') === 'false',
+      PLUGIN, { timeout: 10000 });
 
-    expect(posts.filter((p) => p.endsWith(`/api/plugins/${PLUGIN}/revoke`)).length,
-      `封禁必须（且只）打 /revoke，got ${posts}`).toBe(1);
+    // 封禁走**引擎侧**（作者选定的在飞止损路径；面板已无该入口）。
+    await rest('POST', `/api/plugins/${PLUGIN}/revoke`);
+    await page.reload();
+    await page.waitForFunction((n) =>
+      document.querySelector(`.plugins-card[data-plugin="${n}"] .plugins-state-pill`)?.textContent.trim() === '已封禁',
+      PLUGIN, { timeout: 20000 });
+    const st = await cardState(page, PLUGIN);
+    expect(st.pillClass, 'pill 带 blocked class').toContain('blocked');
+    expect(st.dispatchDisabled, '封禁 ⇒ 派发开关 disabled（写下去也不会生效）').toBe(true);
+    expect(st.dispatchBlocked, 'blocked 原因随元素暴露').toBe('blocked');
+    expect(st.noteHidden, '可行动注记可见').toBe(false);
+    expect(st.noteText.includes('API / CLI'), '注记指向 API / CLI（面板已无入口）').toBe(true);
+    expect(st.moreCount + st.menuCount + st.blockCount, '封禁态下也不得长回入口').toBe(0);
+    const { body } = await rest('GET', '/api/plugins');
+    const man = (body.plugins || []).find((p) => p.name === PLUGIN);
+    expect(man?.blocked, 'REST 真值：blocked=true（落盘事实源）').toBe(true);
+    // 🔴 UI 入口退场 = wire 可验：整轮交互不得出现 revoke / unblock。
+    expect(posts.filter((p) => /\/revoke$|\/unblock$/.test(p)), `UI 不得打 revoke/unblock，got ${posts}`).toEqual([]);
     expect(posts.some((p) => p.endsWith('/approve')), 'UI 主线绝不打 /approve').toBe(false);
-    expect(['blocked', 'toast'], '零静默：终态必须是已封禁或显式报错').toContain(outcome.kind);
-
-    if (outcome.kind === 'blocked') {
-      // C6 在线：封禁态必须与注册表一致 + 派发开关同帧锁死。
-      const st = await cardState(page, PLUGIN);
-      expect(st.blockState, 'data-blocked=1').toBe('1');
-      expect(st.pillClass, 'pill 带 blocked class').toContain('blocked');
-      expect(st.dispatchDisabled, '封禁 ⇒ 派发开关 disabled').toBe(true);
-      expect(st.dispatchBlocked, 'blocked 原因随元素暴露').toBe('blocked');
-      expect(st.noteHidden, '可行动注记可见').toBe(false);
-      expect(st.noteText.length, '注记非空（可行动指引）').toBeGreaterThan(0);
-      const { body } = await rest('GET', '/api/plugins');
-      const man = (body.plugins || []).find((p) => p.name === PLUGIN);
-      expect(man?.blocked, 'REST 真值：blocked=true（落盘事实源）').toBe(true);
-      // 清场：解封（下一用例与后续批次都要求未封禁起点）。
-      await page.click(`.plugins-card[data-plugin="${PLUGIN}"] [data-plugin-block]`);
-      await page.waitForFunction((n) =>
-        document.querySelector(`.plugins-card[data-plugin="${n}"] .plugins-state-pill`)?.textContent.trim() !== '已封禁',
-        PLUGIN, { timeout: 10000 });
-    }
+    // 清场：解封（下一用例与后续批次都要求未封禁起点）。
+    await rest('POST', `/api/plugins/${PLUGIN}/unblock`);
   });
 
-  test('⑥ 解封 ⇒ POST /unblock；与派发动作的 wire 互不污染', async ({ page }) => {
+  test('⑥ 解封（引擎侧）⇒ 回「已启用」+ 开关解锁；面板 wire 零 unblock；派发开关仍只写 /disable', async ({ page }) => {
     test.skip(!hasC6, 'engine track C6 (`blocked`) not live on this instance — /unblock cannot move the state yet; rerun after the plugin-nogate engine track merges');
     await unblockQuietly(PLUGIN);
     await loadPluginsPage(page);
-    // 先封禁（走真后端），再解封 —— 两条 wire 各打各的端点。
-    await page.click(`.plugins-card[data-plugin="${PLUGIN}"] [data-plugin-more]`);
-    await page.click(`.plugins-card[data-plugin="${PLUGIN}"] [data-plugin-block]`);
+    // 先封禁（引擎侧真后端），再解封 —— 面板全程不参与这两条 wire。
+    await rest('POST', `/api/plugins/${PLUGIN}/revoke`);
+    await page.reload();
     await page.waitForFunction((n) =>
       document.querySelector(`.plugins-card[data-plugin="${n}"] .plugins-state-pill`)?.textContent.trim() === '已封禁',
-      PLUGIN, { timeout: 10000 });
+      PLUGIN, { timeout: 20000 });
 
     const posts = [];
     page.on('request', (req) => {
       if (req.method() === 'POST') posts.push(new URL(req.url()).pathname);
     });
-    await page.click(`.plugins-card[data-plugin="${PLUGIN}"] [data-plugin-block]`);
+    await rest('POST', `/api/plugins/${PLUGIN}/unblock`);
+    await page.reload();
     await page.waitForFunction((n) =>
       document.querySelector(`.plugins-card[data-plugin="${n}"] .plugins-state-pill`)?.textContent.trim() !== '已封禁',
-      PLUGIN, { timeout: 10000 });
+      PLUGIN, { timeout: 20000 });
     const st = await cardState(page, PLUGIN);
     const pillOn = await locale(page, 'plugins.stateOn');
-    expect(posts.filter((p) => p.endsWith(`/api/plugins/${PLUGIN}/unblock`)).length,
-      `解封必须（且只）打 /unblock，got ${posts}`).toBe(1);
-    expect(posts.some((p) => p.endsWith('/enable') || p.endsWith('/disable')),
-      '解封动作不得写派发面').toBe(false);
     expect(st.pill, '解封后回「已启用」').toBe(pillOn);
     expect(st.dispatchDisabled, '派发开关解锁').toBe(false);
+    expect(st.dispatchBlocked, 'blocked 属性清除').toBe(null);
+    expect(posts.filter((p) => /\/revoke$|\/unblock$/.test(p)), `面板不得打 revoke/unblock，got ${posts}`).toEqual([]);
 
-    // 派发动作仍打自己的端点（且不掺 /revoke）。
+    // 派发动作仍打自己的端点（且不掺 revoke/unblock）。
     const posts2 = [];
     page.on('request', (req) => {
       if (req.method() === 'POST') posts2.push(new URL(req.url()).pathname);
@@ -347,7 +337,7 @@ test.describe('plugins panel — dispatch permission vs block (real backend)', (
       PLUGIN, { timeout: 10000 });
     expect(posts2.filter((p) => p.endsWith(`/api/plugins/${PLUGIN}/disable`)).length,
       `派发开关必须（且只）打 /disable，got ${posts2}`).toBe(1);
-    expect(posts2.some((p) => p.endsWith('/revoke')), '派发动作不得打 /revoke').toBe(false);
+    expect(posts2.some((p) => /\/revoke$|\/unblock$/.test(p)), '派发动作不得打 revoke/unblock').toBe(false);
     const after = await diskPlugins();
     expect(after.dispatch?.[PLUGIN]?.authorEnabled, '落盘：dispatch.authorEnabled=false').toBe(false);
   });
