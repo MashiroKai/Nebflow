@@ -196,8 +196,14 @@ final class DropboxService private (
 
   // ===== Public API (called from WebSocketRoutes) =====
 
-  /** Send a text message to a peer. */
-  def sendText(deviceId: String, text: String): IO[Unit] =
+  /** Send a text message to a peer.
+    *
+    * 附件腿批（2026-09-14，SendMessage `device:` 目标）返回值从 `IO[Unit]` 改为
+    * `IO[Boolean]`：true = 至少一条通道（P2P WS / relay Notify）实际接受了帧；
+    * false = 两腿皆未送达（消息已按既有语义标 failed）。前端 WS 调用点丢弃返回值，
+    * 行为零变更；工具腿需要投递真值才能给出诚实的工具结果（禁静默成功）。
+    */
+  def sendText(deviceId: String, text: String): IO[Boolean] =
     neblinkService.identity.flatMap { id =>
       val msg = DropboxMessage(
         msgId = DropboxModels.newId,
@@ -226,7 +232,7 @@ final class DropboxService private (
               _ <- updateMessageStatus(deviceId, msg.msgId, "failed")
               _ <- notifyFrontend("dropbox-message", deviceId, msg.copy(status = "failed").asJson)
             yield ()
-      yield ()
+      yield delivered
     }
 
   /**
@@ -307,6 +313,179 @@ final class DropboxService private (
   def offerFile(deviceId: String, fileName: String, fileSize: Long, mimeType: String): IO[Either[AttachContract.AttachError, String]] =
     offerFiles(deviceId, List(DropboxService.FileSpec(fileName, fileSize, mimeType)))
       .map(_.map(_.headOption.getOrElse("")))
+
+  // ===== Agent 附件腿（SendMessage `device:` 目标，2026-09-14）=====
+
+  /**
+   * 服务端本地文件 → 对端设备的**工具入口**。与前端通道（`dropbox-file-offer` WS）
+   * 走**同一条**链：同一闸位（`offerFiles`：≤9 件 / 单件 ≤100,000,000 B 十进制，
+   * 超限 fail-fast 回显实际值）+ 同一分块传输（`uploadAndRelay`：P2P 主腿 + relay
+   * 兜底、每块校验、整件双侧 sha256、断点续传）。唯一差别 = **字节源是本机磁盘**
+   * （不经浏览器）。
+   *
+   * 流程：路径校验（绝对 / 存在 / 普通文件，回显实际路径）→ 大小/件数闸 →
+   * offer（含对端名册检查，未知设备 ⇒ `PEER_UNREACHABLE`，零静默本地执行）→
+   * 等接收端 auto-accept（`acceptWait` 上限）→ 从盘上流式读入 `uploadAndRelay`
+   * （有界缓冲，峰值内存与文件大小无关）。
+   *
+   * 超时语义：`uploadWait` 到点 ⇒ 本调用以显式失败返回（transfer 可能仍在后台
+   * 跑，对端面板有实时进度；发送侧看门狗会兜底收口）。`.timeout` 取消会跳过
+   * `uploadAndRelay` 的 temp 清理路径 ⇒ 孤儿 temp 由启动清孤儿兜底（设计件 N-5）。
+   *
+   * `transportOverride` 仅供测试自环注入；生产为 `None` ⇒ 真实两腿。
+   */
+  def sendLocalFiles(
+    deviceId: String,
+    files: List[os.Path],
+    transportOverride: Option[ChunkTransport] = None,
+    acceptWait: FiniteDuration = 20.seconds,
+    uploadWait: FiniteDuration = 15.minutes
+  ): IO[Either[AttachContract.AttachError, List[DropboxService.LocalFileOutcome]]] =
+    val validated: Either[AttachContract.AttachError, List[(os.Path, Long)]] =
+      files.foldLeft[Either[AttachContract.AttachError, List[(os.Path, Long)]]](Right(Nil)) { (acc, p) =>
+        acc.flatMap { list =>
+          val s = p.toString
+          if !java.nio.file.Paths.get(s).isAbsolute then
+            Left(
+              AttachContract.AttachError(
+                AttachContract.Codes.InvalidArgument,
+                s"Attachment path must be absolute, got: '$s'",
+                phase = "validate",
+                path = Some(s)
+              )
+            )
+          else if !os.exists(p) then
+            Left(
+              AttachContract.AttachError(
+                AttachContract.Codes.InvalidArgument,
+                s"Attachment does not exist: $s",
+                phase = "validate",
+                path = Some(s)
+              )
+            )
+          else if os.isDir(p) then
+            Left(
+              AttachContract.AttachError(
+                AttachContract.Codes.InvalidArgument,
+                s"Attachment is a directory, not a file: $s",
+                phase = "validate",
+                path = Some(s)
+              )
+            )
+          else Right(list :+ (p -> os.stat(p).size))
+        }
+      }
+    validated match
+      case Left(err) => IO.pure(Left(err))
+      case Right(sized) =>
+        // 闸位（件数 + 逐件大小，actual/limit 回显）在名册检查**之前** —— 与
+        // offerFiles 内部同闸幂等，先拦住明显超限的调用，不发起任何网络。
+        AttachContract.checkMessage(sized.map(_._2)) match
+          case Left(err) => IO.pure(Left(err))
+          case Right(_) =>
+            val specs = sized.map { case (p, size) => DropboxService.FileSpec(p.last, size, guessMime(p.last)) }
+            offerFiles(deviceId, specs).flatMap {
+              case Left(err) => IO.pure(Left(err))
+              case Right(transferIds) =>
+                sized.zip(transferIds).foldLeftM[IO, List[DropboxService.LocalFileOutcome]](Nil) {
+                  case (acc, ((p, size), tid)) =>
+                    sendLocalOne(tid, p, size, transportOverride, acceptWait, uploadWait).map(acc :+ _)
+                }.map(outcomes => Right(outcomes))
+            }
+  end sendLocalFiles
+
+  /** 单件本地发送：等 auto-accept → 从盘流式上传（复用 [[uploadAndRelay]] 全链）。 */
+  private def sendLocalOne(
+    transferId: String,
+    p: os.Path,
+    size: Long,
+    transportOverride: Option[ChunkTransport],
+    acceptWait: FiniteDuration,
+    uploadWait: FiniteDuration
+  ): IO[DropboxService.LocalFileOutcome] =
+    awaitAccepted(transferId, acceptWait).flatMap {
+      case Some(reason) =>
+        IO.pure(DropboxService.LocalFileOutcome(p.last, size, transferId, delivered = false, Some(reason)))
+      case None =>
+        uploadAndRelay(transferId, localFileStream(p), transportOverride)
+          .timeout(uploadWait)
+          .map {
+            case Right(_) => DropboxService.LocalFileOutcome(p.last, size, transferId, delivered = true, None)
+            case Left(err) =>
+              DropboxService.LocalFileOutcome(p.last, size, transferId, delivered = false, Some(err))
+          }
+          .handleErrorWith {
+            case _: java.util.concurrent.TimeoutException =>
+              IO.pure(
+                DropboxService.LocalFileOutcome(
+                  p.last,
+                  size,
+                  transferId,
+                  delivered = false,
+                  Some(
+                    s"upload timed out after ${uploadWait.toSeconds}s — the transfer may still be running; the peer's panel shows live progress"
+                  )
+                )
+              )
+            case e =>
+              IO.pure(DropboxService.LocalFileOutcome(p.last, size, transferId, delivered = false, Some(e.getMessage)))
+          }
+    }
+
+  /** 轮询等接收端 auto-accept。`None` = accepted 可以上传；`Some` = 终局原因
+    * （rejected / failed / 等待超时 —— offer 仍在对端面板可见，发送侧看门狗收口）。 */
+  private def awaitAccepted(transferId: String, wait: FiniteDuration): IO[Option[String]] =
+    val deadlineMs = System.currentTimeMillis() + wait.toMillis
+    def poll: IO[Option[String]] =
+      transfersRef.get.map(_.get(transferId)).flatMap {
+        case Some(t) if t.status == "accepted" => IO.pure(None)
+        case Some(t) if t.status == "rejected" =>
+          IO.pure(Some("the receiver rejected the offer"))
+        case Some(t) if t.status == "failed" =>
+          IO.pure(Some("the offer could not be delivered (peer unreachable on both legs)"))
+        case _ =>
+          if System.currentTimeMillis() >= deadlineMs then
+            IO.pure(Some(s"receiver did not accept within ${wait.toSeconds}s (the offer stays visible in the peer's panel)"))
+          else IO.sleep(200.millis) *> poll
+      }
+    poll
+
+  /** 本机文件 → 有界缓冲字节流（fs2-core；峰值内存与文件大小无关）。 */
+  private def localFileStream(p: os.Path, bufferSize: Int = 64 * 1024): Stream[IO, Byte] =
+    Stream
+      .bracket(IO.blocking(java.nio.file.Files.newInputStream(p.toNIO)))(in => IO.blocking(in.close()).handleErrorWith(_ => IO.unit))
+      .flatMap { in =>
+        Stream
+          .repeatEval(IO.blocking {
+            val buf = new Array[Byte](bufferSize)
+            val n = in.read(buf)
+            if n < 0 then fs2.Chunk.empty[Byte] else fs2.Chunk.array(buf, 0, n)
+          })
+          .takeWhile(_.nonEmpty)
+          .flatMap(Stream.chunk)
+      }
+
+  /** 扩展名 → MIME（工具腿无浏览器 File.type，自猜小表 + 兜底 octet-stream）。 */
+  private def guessMime(fileName: String): String =
+    val ext = fileName.lastIndexOf('.') match
+      case -1  => ""
+      case idx => fileName.substring(idx + 1).toLowerCase
+    ext match
+      case "png"                  => "image/png"
+      case "jpg" | "jpeg"         => "image/jpeg"
+      case "gif"                  => "image/gif"
+      case "webp"                 => "image/webp"
+      case "svg"                  => "image/svg+xml"
+      case "pdf"                  => "application/pdf"
+      case "txt" | "md"           => "text/plain"
+      case "json"                 => "application/json"
+      case "csv"                  => "text/csv"
+      case "html" | "htm"         => "text/html"
+      case "zip"                  => "application/zip"
+      case "mp4"                  => "video/mp4"
+      case "mp3"                  => "audio/mpeg"
+      case _                      => "application/octet-stream"
+
 
   /**
    * Offer **一条消息的 N 件附件** —— 作者数两条（单件 ≤100,000,000 B / 单条消息 ≤9 件）
@@ -1145,6 +1324,16 @@ object DropboxService:
 
   /** 单条消息里的一件附件（名字 / 字节数 / MIME）。 */
   final case class FileSpec(fileName: String, fileSize: Long, mimeType: String)
+
+  /** 工具附件腿（`sendLocalFiles`）的单件终局读数：`delivered=false` 时 `error`
+    * 必带原因（禁静默）。 */
+  final case class LocalFileOutcome(
+    fileName: String,
+    fileSize: Long,
+    transferId: String,
+    delivered: Boolean,
+    error: Option[String]
+  )
 
   /**
    * 分块头（`RestApiRoutes` 从 HTTP 头解析；`FileTransferAction` 从 relay params 解析）。

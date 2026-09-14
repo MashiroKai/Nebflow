@@ -64,8 +64,12 @@ object ToolRegistry:
       // 的 verdict 数据面）抽出为独立文件保留至阶段 3。
       // Team-member task delegation (self-clone + ephemeral worker, no Mail identity)
       "SubTask" -> SubTaskTool,
-      // Cross-device file transfer
-      "TransferFile" -> TransferFileTool,
+      // TransferFile retired 2026-09-14 (#145): cross-device file moves moved into
+      // SendMessage's `device:` attachment leg (Dropbox chunked channel); local
+      // copies = SendMessage `to="local"`. Migration guide: AgentCore.RetiredToolGuides.
+      // The transfer CHANNEL stays (FileTransferAction / relayTransfer* /
+      // /api/neblink/transfer / NeblinkService.receiveFile|sendFile — the Dropbox
+      // relay fallback depends on them): we retired the tool, not the channel.
       // A2A 一期: agent sends a message to one of the user's NebLink friends
       // (#290). Authorization (阶段 2d, D.1-11): mechanism-fixed for Nebula
       // only (NebulaOrchestrationTools, 2c 起) — agent.json declaration

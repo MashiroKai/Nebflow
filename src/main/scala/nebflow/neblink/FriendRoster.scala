@@ -8,8 +8,8 @@ import nebflow.core.tools.ToolError
  * 解析逻辑」同步点 ③ 定稿）。
  *
  * 存在理由：候选文案与解析顺序此前在 `FriendMessageTool.resolveFriend` 与
- * `TransferFileTool.resolveFriend` 各有一份（`TransferFileTool.scala:205-209` 的注释
- * 自陈当初内联正是为躲开跨支改名耦合）。本批把**好友消息支**的那一份抽到这里，
+ * `TransferFileTool.resolveFriend`（2026-09-14 已随 #145 退役）各有一份。本批把
+ * **好友消息支**的那一份抽到这里，
  * `SendMessage` 改为委托；`ListFriends` 的名册行与失败候选行同用 `candidateLine` ⇒
  * 模型在成功路径与失败路径看到**同一套词表**（方案 §4.5 ③）。
  *
@@ -22,8 +22,9 @@ import nebflow.core.tools.ToolError
  * （`FriendMessageTool` 里经 `FriendService.searchUser` 取 `userId` 回映射），
  * 不引入第二条本地匹配口径。
  *
- * `TransferFileTool` 的候选文案**本批仍不对齐**（⑦-D7：只加偏差注释、行为零变更），
- * 其显式偏差由 `FriendRosterSinglePointSpec` 的允许清单登记。
+ * `TransferFileTool` 的候选文案曾是**显式登记的第二处偏差**（⑦-D7）；该工具已随
+ * #145 退役（2026-09-14），其设备面字面量迁入 `FriendMessageTool`（正交信任域，
+ * 好友面单点不变），允许清单由 `FriendRosterSinglePointSpec` 同批修订。
  */
 object FriendRoster:
 

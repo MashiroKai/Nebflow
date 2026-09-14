@@ -550,7 +550,7 @@ class AllowedToolSetSpec extends FunSuite:
       "Read", "Glob", "Grep",                              // 读三件（08:40 解禁四件；23:34 收走写手）
       "Card",                                              // 可视化（2026-09-05 解封恢复）
       "Pop", "AskUserQuestion",                            // 用户面
-      "Schedule", "TransferFile",                          // 平台
+      "Schedule",                                          // 平台（TransferFile 退役 2026-09-14 #145）
       "MemoryEdit"                                         // 记忆（§C.2 新工具）
     )
     val bare = mkDef("Nebula", Nil)
@@ -558,6 +558,7 @@ class AllowedToolSetSpec extends FunSuite:
     orchestration.foreach(t =>
       assert(allowed.contains(t), s"mechanism-fixed orchestration tool missing: $t")
     )
+    assert(!allowed.contains("TransferFile"), "TransferFile retired 2026-09-14 (#145) — must not be in the Nebula face")
     assert(!allowed.contains("Issue"), "恰十四件、零 Issue（2026-09-04 终裁：Issue/CheckIssues 退役）")
     assert(!allowed.contains("NodeList"), "恰十四件、零 NodeList（2026-09-06 00:48 裁定摘除）")
     // R2 断言反转（2026-09-12）：原「旧体系三件维持退役」含 Mail 已作废——
