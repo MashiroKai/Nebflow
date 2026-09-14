@@ -136,7 +136,11 @@ object NeblinkEnrollment:
                 newConfig,
                 gatewayPort,
                 onDeviceTokenRejected = reloginHook,
-                identity = Some(ms.identity)
+                identity = Some(ms.identity),
+                // 2026-09-14（踢旧批 r2）：自动登录的停摆门。被服务端 kick 后本客户端
+                // 不发任何登录/会话交换/重注册请求（唯一解除口 = 显式用户登录，
+                // 见下面对 `resumeAfterUserLogin` 的调用）。
+                autoLoginParked = IO(ms.kickParked)
               )
               d.setClient(Some(fresh)) *> IO(ms.setRelayClient(Some(fresh)))
             }

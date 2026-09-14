@@ -96,35 +96,39 @@ final class NeblinkRelayTunnel(
     * 直到**用户显式再登录**（`resumeAfterUserLogin`，唯一调用点 =
     * `NeblinkEnrollment.persist(explicitUserAction = true)`）。
     *
+    * ★ r2 订正（2026-09-14，复核位判词 fail 的唯一失败点）：停摆位**不在本类里**了 ——
+    * 它搬到了 `NeblinkService`（`markKickParked` / `kickParked` / `clearKickPark`）。
+    * 理由：r1 把停摆位关在隧道内，而**自动重注册腿根本不经过隧道**（心跳 401 →
+    * `NeblinkClient.doLogin` → `LogtoSilentRelogin` → `register`，且 register 在
+    * persist **之前**）⇒ 隧道腿堵住、重注册腿照样起（r1 实测踢后 ~24s 仍有
+    * `POST /api/device/register` 200）。现在本类只做**停摆位的读/写方之一**：
+    * 写 = `noteServerDisconnect`，读 = `connectLoop`；`NeblinkClient` /
+    * `LogtoSilentRelogin` 读同一真值（register 之前的那道门在后者里）。
+    *
     * 范围（诚实边界）：停摆是**进程内**状态——重启进程（boot client 用存储的
-    * deviceToken 走 session 交换）会重新入网。跨实例语义 = **每个被踢实例各自停摆**，
-    * 互踢链因此断掉（被踢方不再自动反踢）；没有任何中央协调、也没有 wire 协商。
-    * 0 = 未被踢。 */
-  @volatile private var kickedAtMs: Long = 0L
+    * deviceToken 走 session 交换）会重新入网（该 token 若已被服务端作废则 401，
+    * **不会**重注册：register 只由 `LogtoSilentRelogin` 发，而它被同一停摆位挡住）。
+    * 跨实例语义 = **每个被踢实例各自停摆**，互踢链因此断掉（被踢方不再自动反踢）；
+    * 没有任何中央协调、也没有 wire 协商。0 = 未被踢。 */
 
-  /** Test/status seam: 本隧道是否处于「被服务端踢下线后的停摆态」。 */
-  def signedOutElsewhereAt: Long = kickedAtMs
-  def parkedAfterKick: Boolean = kickedAtMs > 0L
+  /** Test/status seam: 本隧道是否处于「被服务端踢下线后的停摆态」。真值源 =
+    * `NeblinkService`（跨腿可读面）。 */
+  def signedOutElsewhereAt: Long = neblinkService.kickParkedAtMs
+  def parkedAfterKick: Boolean = neblinkService.kickParked
 
   /** Server-forced teardown（`disconnect` 帧）落地：记录 + 被动提示 + 停摆。
     *
     * 零 wire 新增：帧本身不加字段、不改语义（listener 仍只按既有 `type` 分派），
     * 提示文案由客户端本地下定。 */
   private[neblink] def noteServerDisconnect(): IO[Unit] =
-    IO {
-      if kickedAtMs == 0L then kickedAtMs = System.currentTimeMillis()
-    } *> logger.warn(
+    IO(neblinkService.markKickParked()) *> logger.warn(
       "Relay tunnel: server sent Disconnect — this device was signed in elsewhere; " +
         "auto-reconnect/re-register is parked until an explicit user login"
     )
 
   /** 用户显式再登录（唯一合法解除停摆的动作）。幂等；带上一行可见日志。 */
   private[neblink] def resumeAfterUserLogin(): IO[Unit] =
-    IO {
-      val wasParked = kickedAtMs > 0L
-      kickedAtMs = 0L
-      wasParked
-    }.flatMap { wasParked =>
+    IO(neblinkService.clearKickPark()).flatMap { wasParked =>
       if wasParked then
         logger.info("Relay tunnel: explicit user login — kick park lifted, reconnecting") *> signalWake()
       else IO.unit
@@ -264,13 +268,13 @@ final class NeblinkRelayTunnel(
 
   private def connectLoop(attempt: Int): IO[Unit] =
     if !running.get() then IO.unit
-    else if kickedAtMs > 0L then
+    else if parkedAfterKick then
       // 踢下线停摆（案 B 客户端腿）：不重连、不重注册。零连接尝试 ⇒ 服务端看不到
       // 任何升级/登录流量（判据见 KickParkNap 注释：停摆期的重连尝试计数不增长）。
       // 每次睡醒都重新判定（`resumeAfterUserLogin` 会连睡一起掐断 ⇒ 用户再登录即时恢复）。
       logger
         .debug(
-          s"Relay tunnel: parked after a server-forced sign-out (${(System.currentTimeMillis() - kickedAtMs) / 1000}s) — " +
+          s"Relay tunnel: parked after a server-forced sign-out (${(System.currentTimeMillis() - signedOutElsewhereAt) / 1000}s) — " +
             "waiting for an explicit user login"
         )
         .flatMap(_ => nap(NeblinkRelayTunnel.KickParkNap) *> connectLoop(attempt))

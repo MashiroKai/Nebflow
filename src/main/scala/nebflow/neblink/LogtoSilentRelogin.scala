@@ -56,18 +56,43 @@ object LogtoSilentRelogin:
     gatewayPort: Int,
     serverUrlOf: IO[String]
   ): IO[Option[String]] =
-    for
-      stored <- DeviceCredential.load
-      refreshToken = stored.flatMap(_.logto).map(_.refreshToken)
-      // Embedded-default fallback: missing logto block resolves to the
-      // product's hosted auth service, so a refresh token minted via the
-      // default PKCE chain stays refreshable after restart (same resolution
-      // as the auth/start endpoint).
-      logto <- ms.neblinkConfig.map(_.effectiveLogto)
-      serverUrl <- serverUrlOf
-      fresh <- startRefresh(refreshToken, logto.map(_.endpoint), logto.flatMap(_.pkceClientId))
-      out <- IO.defer(dispatchRefresh(fresh, ms, discovery, gatewayPort, serverUrl, serverUrlOf))
-    yield out
+    // ===== 踢下线停摆门（2026-09-14 踢旧批 r2）— 🔴 必须在 `.register` **之前** =====
+    //
+    // 复核位判词 fail 的唯一失败点：r1 把停摆位关在 `NeblinkRelayTunnel` 里，而本函数
+    // 的 `.register`（下方 `LogtoDeviceFlow.register`）**先于** `NeblinkEnrollment.persist`
+    // 执行 ⇒ 服务端的 kick-on-re-enroll 在客户端 persist / 护栏之前就已发生，挡 persist
+    // 挡不住重注册（r1 实测：踢后 ~24s 自愈链把 `POST /api/device/register` 打到服务端
+    // 并成功）。门放在**本函数入口**（register 的最近前驱、且在任何 I/O 之前）：
+    // 停摆期零 HTTP 请求 —— 不刷新 token、不注册、不落盘。
+    //
+    // 唯一解除口 = 用户显式登录（`NeblinkEnrollment.persist(explicitUserAction = true)`
+    // → `NeblinkService.clearKickPark()`）。自动路径（心跳失效后的 `discover` →
+    // `login` → 401 hook、API 自愈、隧道升级自愈）全部经过这里或
+    // `NeblinkClient.ensureFreshSession`，两者读同一停摆位。
+    // 🔴 判据必须**每次执行时**读停摆位 ⇒ 整个分支放进 `IO.defer`。反例（实测踩过）：
+    // 直接写 `if ms.kickParked then … else …` 是**严格求值**——`make` 在客户端装配时
+    // 就调用本函数，分支在**装配那一刻**（未停摆）被固化，之后无论停摆与否都走 else
+    // （cps 实测：建造期 at=0 被烙进 IO，运行期 `at` 已非 0 仍照发 register）。
+    IO.defer {
+      if ms.kickParked then
+        warn(
+          "silent re-login suppressed: this device was signed out elsewhere (server-forced " +
+            "disconnect) — no device re-registration is sent; an explicit user login is required"
+        ).as(None)
+      else
+        for
+          stored <- DeviceCredential.load
+          refreshToken = stored.flatMap(_.logto).map(_.refreshToken)
+          // Embedded-default fallback: missing logto block resolves to the
+          // product's hosted auth service, so a refresh token minted via the
+          // default PKCE chain stays refreshable after restart (same resolution
+          // as the auth/start endpoint).
+          logto <- ms.neblinkConfig.map(_.effectiveLogto)
+          serverUrl <- serverUrlOf
+          fresh <- startRefresh(refreshToken, logto.map(_.endpoint), logto.flatMap(_.pkceClientId))
+          out <- IO.defer(dispatchRefresh(fresh, ms, discovery, gatewayPort, serverUrl, serverUrlOf))
+        yield out
+    }
 
   /** O5 degradation notice (2026-09-11) — shared rationale, logged at the
     * exact moment this path is entered or found unusable so an operator can

@@ -768,7 +768,11 @@ object GatewayMain extends IOApp:
                                                 ),
                                                 // F2 (2026-09-10 friend-search batch): identity source
                                                 // for the API-level 401/403 session self-heal.
-                                                identity = Some(neblinkService.identity)
+                                                identity = Some(neblinkService.identity),
+                                                // 2026-09-14（踢旧批 r2）：自动登录的停摆门
+                                                // （真值源 = NeblinkService.kickParked，写侧 =
+                                                // 隧道的 `disconnect` 帧，清侧 = 显式用户登录）。
+                                                autoLoginParked = IO(neblinkService.kickParked)
                                               )
                                             )
                                           case nc if nc.neblinkServer.isDefined =>
