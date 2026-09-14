@@ -917,39 +917,45 @@ object NodeEditTool extends Tool:
     * 中断恢复语义批 R1/R2（20260908_interrupt-recovery-semantics §2.4 批 R2，
     * 2026-09-13）：interrupted 重激活条款（语义明示 = fresh 重跑非续跑，近 200 字符）
     * → 5,633 字符（预算断言随之 5450→5700）。
+    * notify 默认值回归修复批 B-3 + A-2（2026-09-14，b64 批 502 字符零压缩的补账）：
+    * ① 语义订正——`notify` 行由「create default "dispatcher"」改为**未声明 = 缺键 =
+    *   legacy**（与实现一致：显式门集边照投根，只有**显式** dispatcher/silent 才抑制）；
+    *   并把 `notifyDispatcher` 行**并入** `notify` 行尾（LEGACY 别名 + 「一个版本」期限
+    *   仍可读）；② 压缩——`description`/`descriptionLong` 两行并一行、`out` 行 Nebula
+    *   条款与 `notify` 行去重、`## Semantics` 措辞收紧 → **6,042 字符**（**未抬预算**，
+    *   仍守 6050；b64 批新增两条参数行后描述曾涨到 6,532 = 超预算 482）。
+    *   13 条语义锚（NodeSchemaSlimSpec）逐条在位，见批报告。
     * 该描述随 tools 数组进分发器每次请求。长度上限由 NodeSchemaSlimSpec 断言钉住）。 */
   val description =
-    """Create/edit a Flow Map node — the dispatcher's single topology tool (the store owns flow-map.json).
+    """Create/edit a Flow Map node — the dispatcher's single topology tool (flow-map.json is store-owned).
 ## Parameters
-- project (optional; defaults to current project).
+- project (optional; current project by default).
 - nodename: unique display name — missing = create, existing = edit.
-- description (required on create, ≤60 chars): one-line purpose (card/payload metadata); replace on edit.
-- descriptionLong (optional, ≤200 chars): longer summary — detail channel only; replace on edit.
+- description (required on create, ≤60 chars): one-line purpose (card/payload metadata). descriptionLong (optional, ≤200 chars): longer summary — detail channel only. Both replace on edit.
 - task (optional): node task; an entry node (task, no in) runs on create.
-- in (optional): upstream id(s) added as barrier inputs (multi-in = barrier); each upstream's out gains a default pass edge here.
-- deps (optional, replace-on-provide): upstream ids awaited for COMPLETION SIGNAL only (need the result? use in); []/null = replaces all; failed/cancelled/blocked never triggers; editing deps on a RUNNING node rejected.
-- retry (optional, downstream-held like deps): failed auto-retry {upstream:"<in/deps-neighbor>", max:N} or "<id>:<N>"; null clears. FAIL + gen<N ⇒ self-reactivating re-run of that upstream (fresh result re-delivers over the pass edge); gen≥N ⇒ failed + RetryCap escalation. max 1-10; neighbor-only (NODE_RETRY_NEIGHBOR); acyclic (NODE_RETRY_CYCLE).
-- out (optional; rewrites edges on edit; empty/null = dangling — result retained, auto-delivered when wired): "B" = pass edge with payload (legacy); "Nebula" = EXIT MARKER (pass/signal ⇒ no root notify — ROOT NOTIFY needs a gate set: "(pass)Nebula" / "(pass,failed)Nebula"); fan-out "(pass)B, (failed)C"; failure edge "(failed)C:signal". Gates ⊆ pass,failed,fail (default pass); mode :result (default) | :signal (deps parity) | :loop. 'failed' = NODE-STATUS gate (that node itself failed); 'fail' = VERDICT gate (verifier reject) — verifier-only, always "(fail)<worker>:loop" (NODE_VERDICT_GATE_ON_TASK_NODE / NODE_LOOP_EDGE_ROLE). ':loop' = CONTROL edge: not in the DAG, no in mirror, never settles a barrier. loop=true nodes must cover pass AND failed; on-failed edge into a merge node rejected (NODE_MERGE_PASS_ONLY).
-- plugins (optional, replace-on-provide): plugin name(s) — THE capability mechanism (no per-node agent; nodes run general): skills → first message, mcp.json → MCP servers + tool grants. Must be Catalog-listed (installed = trusted); a blocked (deny-listed) package is refused.
+- in (optional): upstream id(s) added as barrier inputs (multi-in = barrier); each gains a default pass edge here.
+- deps (optional, replace-on-provide): upstream ids awaited for COMPLETION SIGNAL only (need the result? use in); []/null clears; failed/cancelled/blocked never trigger; deps edits on RUNNING nodes rejected.
+- retry (optional, downstream-held like deps): failed auto-retry {upstream:"<in/deps-neighbor>", max:N} or "<id>:<N>"; null clears. FAIL + gen<N ⇒ that upstream re-runs (fresh result over the pass edge); gen≥N ⇒ failed + RetryCap escalation. max 1-10; neighbor-only (NODE_RETRY_NEIGHBOR); acyclic (NODE_RETRY_CYCLE).
+- out (optional; edit rewrites the edge set; empty/null = dangling: result retained, auto-delivered once wired): "B" = pass edge with payload (legacy); "Nebula" = EXIT MARKER (bare = pass/signal, zero root notify; a gate set "(pass)Nebula" / "(pass,failed)Nebula" declares root notify — see notify); fan-out "(pass)B, (failed)C"; failure edge "(failed)C:signal". Gates ⊆ pass,failed,fail (default pass); mode :result (default) | :signal (deps parity) | :loop. 'failed' = NODE-STATUS gate (that node failed); 'fail' = VERDICT gate (verifier reject), verifier-only, always "(fail)<worker>:loop" (NODE_VERDICT_GATE_ON_TASK_NODE / NODE_LOOP_EDGE_ROLE). ':loop' = CONTROL edge: not in the DAG, no in mirror, never settles a barrier; loop nodes must cover pass AND failed. On-failed into a merge node rejected (NODE_MERGE_PASS_ONLY).
+- plugins (optional, replace-on-provide): plugin name(s) — THE capability mechanism (no per-node agent): skills → first message, mcp.json → MCP servers + tool grants. Must be Catalog-listed (installed = trusted); a blocked (deny-listed) package is refused.
 - worktree (optional, create-time only): true = isolated git worktree at .nebflow/worktrees/<from-name> (same-name branch off main); fail-fast; refused on edits.
 - preset: legacy (unused).
 - abandon (optional, default false): terminal / wiring / pending / STALE running node → cancelled, kept with result, no TTL. LIVE running refused (use NodeCancel).
-- role (optional, CREATE-ONLY): "task" (default; node_report: finish | blocked) | "verifier" (judges another node's output; node_report: pass | fail | blocked). A verifier's out MUST declare one "(fail)<worker>:loop" route (NODE_VERIFIER_NEEDS_ROUTE); on edit ⇒ NODE_ROLE_CREATE_ONLY.
-- reactivateCompleted (optional, edit only): explicit authorization NODE_COMPLETED_REACTIVATION — re-run a COMPLETED node (status → wiring/pending, result cleared, upstreams re-delivered; logged). Omitted ⇒ a completed-node edit only rewires + auto-delivers the retained result.
-- restoreChain (optional, default false): when in/deps reference an ARCHIVED node (or this nodename is archived), true pulls that node's whole chain back onto the active map FIRST, then runs this create/edit normally.
-- notify (optional; create default "dispatcher"): who sees this node's COMPLETED event — "silent" | "dispatcher" (dispatcher session, NOT root) | "root". It also arbitrates an existing 'Nebula' out-edge: with dispatcher/silent the edge stays declared but its runtime delivery is suppressed (no rewiring needed); failed events are never suppressed. null clears the declaration (legacy behaviour). Settable while wiring/pending/running; any other value ⇒ NODE_NOTIFY_INVALID.
-- notifyDispatcher (optional; LEGACY alias of notify, one version): true ≈ notify=dispatcher. Ignored with a warning when the node already declares notify. Completion-only — failed always notifies; blocked reserved; settable while wiring/pending/running.
-- Retired (rejected, NODE_AGENT_RETIRED): agent / skill / mcp — capability = plugins.
+- role (optional, CREATE-ONLY): "task" (default; node_report: finish | blocked) | "verifier" (judges another node's output; node_report: pass | fail | blocked). A verifier's out MUST declare one "(fail)<worker>:loop" route (NODE_VERIFIER_NEEDS_ROUTE); edit ⇒ NODE_ROLE_CREATE_ONLY.
+- reactivateCompleted (optional, edit only): explicit authorization NODE_COMPLETED_REACTIVATION: re-run a COMPLETED node (status → wiring/pending, result cleared, upstreams re-delivered; logged). Omitted ⇒ edit only rewires + auto-delivers the retained result.
+- restoreChain (optional, default false): when in/deps reference an ARCHIVED node (or this nodename is archived), true pulls that whole chain back onto the active map FIRST, then proceeds normally.
+- notify (optional; unset = legacy: a "(pass)Nebula" :result edge DOES notify the root): "silent" | "dispatcher" (dispatcher session, NOT root) | "root" = who sees the COMPLETED event. Explicit dispatcher/silent suppress its root delivery (edge kept, no rewiring); failed never suppressed; null clears. Settable while wiring/pending/running; else NODE_NOTIFY_INVALID. Legacy one-version alias notifyDispatcher (≈ notify=dispatcher; ignored with a warning once declared); completion-only (failed always notifies; blocked reserved).
+- Retired (rejected, NODE_AGENT_RETIRED): agent / skill / mcp ⇒ plugins.
 ## Semantics
-- Create requires an input side (task or in) → else EMPTY_NODE_CONNECTION; out may be empty. Entry (task) runs on create (async).
-- Verdict routing (role=verifier): fail is a VERDICT — THE VERIFIER STILL COMPLETES (verdict ≠ node status); "(fail)<worker>:loop" routes the target's re-run. Declare "(pass)<landing>, (fail)<worker>:loop": different pass/fail targets (NODE_VERDICT_ROUTE_COLLISION), one fail target (NODE_VERIFY_MULTI_FAIL_TARGET), never "Nebula" (NODE_LOOP_TARGET_NEBULA), no retry on it (NODE_RETRY_LOOP_CONFLICT); the engine owns the round/wall-clock budget and fails the verifier when it is exhausted (loop-budget).
-- out delivery: completed ⇒ pass edges fire (:result payload / :signal bare start; ≤1 per (target,mode)); failed ⇒ on-failed :signal edges fire, the rest keeps waiting (D5). Wiring into an already-FAILED upstream with no on-failed edge ⇒ warning only.
+- Create requires an input side (task or in) → else EMPTY_NODE_CONNECTION; out may be empty; entry (task) runs at create, async.
+- Verdict routing (role=verifier): fail is a VERDICT — THE VERIFIER STILL COMPLETES; "(fail)<worker>:loop" re-runs the target. Its out: distinct pass/fail targets (NODE_VERDICT_ROUTE_COLLISION), one fail target (NODE_VERIFY_MULTI_FAIL_TARGET), never "Nebula" (NODE_LOOP_TARGET_NEBULA), no retry (NODE_RETRY_LOOP_CONFLICT); the engine owns the round/wall-clock budget and fails it on exhaustion (loop-budget).
+- out delivery: completed ⇒ pass edges fire (:result payload / :signal bare start; ≤1 per (target,mode)); failed ⇒ on-failed :signal edges fire, the rest waits (D5); wiring into a FAILED upstream with no on-failed edge ⇒ warning.
 - merge=true (create-only): batch landing sink — fires when ALL upstreams completed; upstream failure ⇒ blocked (upstream-incomplete). REQUIRES in ≥1 (NODE_MERGE_REQUIRES_UPSTREAM).
-- Edit: in appends; deps replaces; out rewrites the edge set; description(s) replace. Removing a consumed target (running/terminal) rejected — NodeCancel first; any other terminal rewire ⇒ the retained result auto-delivers to the new targets.
+- Edit: in appends; deps replaces; out rewrites the edge set; description(s) replace. Removing a consumed target (running/terminal) rejected — NodeCancel first; other terminal rewires auto-deliver the retained result to new targets.
 - Blocked node edit (task/description/in/out/deps/loop changed) reactivates: status → wiring/pending, deliveredTo cleared, blockCount kept, completed upstreams re-delivered.
-- Failed node edit: actual change reactivates like blocked (first-choice recovery; blockCount→0). INTERRUPTED node edit (host SIGINT/SIGTERM left it non-terminal): actual change reactivates as a FRESH RERUN (task re-read from the top — NOT a checkpoint resume; boot recovery owns resume). COMPLETED nodes re-run only with reactivateCompleted=true; cancelled not reactivatable (create successor).
-- Archived nodes (TTL-expired, result retained): only 'out' rewiring is accepted; other edits refused unless restoreChain=true (see above).
-- Validation (0 spawn except worktree): description rules; referenced nodes exist; DAG cycle check; running target ⇒ input frozen. Result = the agent's final output, auto-saved and delivered along out. Full result: NodeList(detail=<nodeId>)."""
+- Failed node edit: a real change reactivates like blocked (first-choice recovery; blockCount→0). INTERRUPTED edit (SIGINT/SIGTERM left it non-terminal): a real change reactivates as a FRESH RERUN (task re-read from the top — NOT a checkpoint resume; boot recovery owns resume). COMPLETED re-runs only with reactivateCompleted=true; cancelled not reactivatable (create successor).
+- Archived nodes (TTL-expired, result retained): only 'out' rewiring is accepted; other edits refused (restoreChain=true overrides).
+- Validation (0 spawn except worktree): description rules; referenced nodes exist; DAG cycle check; running target ⇒ input frozen. Result = the agent's final output, auto-saved + delivered along out. Full result: NodeList(detail=<nodeId>)."""
   val inputSchema = JsonObject.fromIterable(
     List(
       "type" -> "object".asJson,
