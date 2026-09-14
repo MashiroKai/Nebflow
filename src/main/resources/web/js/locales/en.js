@@ -159,6 +159,16 @@ export default {
   'flowmap.flag.merge': 'Merge',
   'flowmap.flag.loop': 'Loop',
   'flowmap.flag.pending': 'Awaiting',
+  // Merge-window queue position (queue-position visibility batch 2026-09-14; author
+  // ruling 16:39: show the number AND the holders). Badge on the node head row,
+  // footnote on the same waiting-note line. Degradation red line: missing key /
+  // not computable / same-git-dir multi-project => never render a number.
+  'flowmap.queue.held': 'Queued',
+  'flowmap.queue.ahead': 'Queued · {n} ahead',
+  'flowmap.queue.blockedBy': 'Blocked by {names}',
+  'flowmap.queue.badgeTitle': 'Queued on the merge window — blocked by {names}',
+  'flowmap.queue.untrustedTitle': 'Queued on the merge window — position unreliable (same git dir shared by multiple projects): blocked by {names}',
+  'flowmap.queue.untrustedSuffix': ' (position unreliable: same git dir, multiple projects)',
   // LoopNode running-phase labels (2026-09-06): loop card desc line shows worker/verify
   'flowmap.loopPhase.worker': 'Producing',
   'flowmap.loopPhase.verify': 'Verifying',
