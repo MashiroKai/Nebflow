@@ -359,7 +359,7 @@ class NodeDeclarationGateSpec extends CatsEffectSuite:
       for
         (_, system, _, rt, ctx) <- mkEnv("p4b")
         r <- nodeEdit(nodeInput("decl-p4b", "flagged", "description" -> Json.fromString("declared while flag off"),
-          "task" -> Json.fromString("work"), "plugins" -> Json.arr("some-plugin")), ctx)
+          "task" -> Json.fromString("work"), "plugins" -> Json.arr(Json.fromString("some-plugin"))), ctx)
         n <- rt.store.snapshot.map(_.nodes.values.find(_.name == "flagged"))
         _ <- system.stopAll.handleErrorWith(_ => IO.unit)
       yield
