@@ -47,6 +47,14 @@ class FriendSelfSendReplaySpec extends FunSuite:
     val client: NeblinkClient
   )
 
+  /** **非补拉回放**帧（= 事件帧 / 自播帧）。
+    *
+    * 批 A（§3.2①「拉取即派发」）后，每次补拉都会额外广播**回放帧**（`backfill: true`）。
+    * 本 spec 的计数判据（「恰一帧」）判的是**自播腿有没有重复广播**，所以一律只数非回放帧：
+    * 回放帧由前端按 `messageId` 幂等去重（`markFrameMessageSeen`），不构成「重复上屏」。 */
+  private def replayFrames(fs: List[Json]): List[Json] =
+    fs.filter(f => !f.hcursor.get[Boolean]("backfill").toOption.contains(true))
+
   /** 传输缝 stub：逐 URL 应答；每条出口都把序号写进共用次序日志。 */
   private def mkFixture(
     sendResponse: String = SendOk,
@@ -108,7 +116,8 @@ class FriendSelfSendReplaySpec extends FunSuite:
     val (res, frames, before, after) = prog.unsafeRunSync()
 
     assert(res.isRight, s"auto 档必须投递成功：$res")
-    assertEquals(frames.size, 1, s"恰好一帧（多一帧 = 重复上屏，少一帧 = K-3 未修）：$frames")
+    // 计数口径见 `replayFrames` 注释：批 A 后帧面 = 自播帧（非回放）+ 补拉回放帧。
+    assertEquals(replayFrames(frames).size, 1, s"恰好一帧**自播**帧（多一帧 = 重复上屏，少一帧 = K-3 未修）：$frames")
 
     val frame = frames.head
     val obj = frame.asObject.getOrElse(fail(s"帧必须是对象：${frame.noSpaces}"))
@@ -156,9 +165,10 @@ class FriendSelfSendReplaySpec extends FunSuite:
     )
     assertEquals(
       order,
-      List("post", "broadcast", "pull"),
-      s"真实发生次序 = POST 投递 → 广播 → 补拉；实测 $order"
+      List("post", "broadcast", "pull", "broadcast"),
+      s"真实发生次序 = POST 投递 → 自播广播 → 补拉 → 补拉回放广播；实测 $order"
     )
+    assertEquals(order.take(3), List("post", "broadcast", "pull"), "K-1 判据：通知 UI 的广播先于串行 REST 补拉")
   }
 
   // ═══════════ ③ 负控：投递失败 ⇒ 零帧 ═══════════
@@ -210,7 +220,7 @@ class FriendSelfSendReplaySpec extends FunSuite:
 
     assert(resOk.isRight, s"批准后必须投递：$resOk")
     assertEquals(okPosts.size, 1, "批准 ⇒ 恰一次 POST")
-    assertEquals(okFrames.size, 1, "批准 ⇒ 恰一帧（自播只在真投递后发生）")
+    assertEquals(replayFrames(okFrames).size, 1, "批准 ⇒ 恰一帧**自播**帧（自播只在真投递后发生；回放帧不计）")
 
     assert(resNo.isLeft, "拒绝 ⇒ 失败")
     assertEquals(noPosts, Nil, "拒绝 ⇒ 零投递（#147 fail-closed 语义）")
@@ -285,12 +295,15 @@ class FriendSelfSendReplaySpec extends FunSuite:
 
     val (framesSelf, unreadSelf, framesAll, unreadNew) = prog.unsafeRunSync()
 
-    assertEquals(framesSelf.size, 1, "他机 self 帧：恰一帧（K-2 分支）")
+    assertEquals(replayFrames(framesSelf).size, 1, "他机 self 帧：恰一帧（K-2 分支；补拉回放帧不计）")
     assertEquals(framesSelf.head.hcursor.get[String]("event").toOption, Some("message_new_self"))
     assertEquals(framesSelf.head.hcursor.get[String]("conversationId").toOption, Some("c1"))
     assertEquals(unreadSelf.getOrElse("c1", 0), 0, "他机 self 帧亦不得计未读")
 
-    assertEquals(framesAll.size, 2, "message_new 仍广播一帧（主路径不退化）")
+    // 第二条（message_new）到达时：拉取锚点已被上一条的补拉推到 9，而 stub 恒回 id=9
+    // ⇒ `id <= dispatchedMax` ⇒ 计 skipped、**不**再派发（这正是判据③「禁越过未派发条
+    // 重复派发」的正向读数）。故帧面 = self 事件帧 + self 回放帧 + message_new 事件帧。
+    assertEquals(replayFrames(framesAll).size, 2, "message_new 仍广播一帧（主路径不退化）")
     assertEquals(framesAll.last.hcursor.get[String]("event").toOption, Some("message_new"))
     assertEquals(unreadNew.getOrElse("c1", 0), 1, "message_new 未读 +1 语义未退化")
   }
@@ -308,6 +321,10 @@ class FriendSelfSendReplaySpec extends FunSuite:
 
     val (frames, posts) = prog.unsafeRunSync()
     assertEquals(posts.size, 2, "两次投递")
-    assertEquals(frames.size, 2, "两条消息 ⇒ 两帧（不是四帧：无重复广播腿）")
-    assertEquals(frames.map(_.hcursor.get[String]("body").toOption), List(Some("m-1"), Some("m-2")))
+    assertEquals(replayFrames(frames).size, 2, "两条消息 ⇒ 两帧**自播**帧（不是四帧：无重复广播腿）")
+    assertEquals(
+      replayFrames(frames).map(_.hcursor.get[String]("body").toOption),
+      List(Some("m-1"), Some("m-2")),
+      "自播帧正文序 = 投递序"
+    )
   }

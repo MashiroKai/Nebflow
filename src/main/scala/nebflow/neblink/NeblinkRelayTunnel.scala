@@ -875,6 +875,15 @@ private final class RelayWsListener(
 ) extends WebSocket.Listener:
   private val logger = NebflowLogger.forName("nebflow.neblink.relay")
 
+  /** 帧内会话 id 取值（W9/W10 的 `conversationId=` 字段用）。
+    *
+    * 与 `FriendService.conversationIdOf` **同口径**（`payload` 下钻优先，顶层为旧形状
+    * 容错）——此处是**日志字段**用途、不参与路由，故不跨类依赖该 private 方法；
+    * 两边口径若漂移，症状只是留痕字段缺失，不影响投递正确性。 */
+  private def conversationIdOfFrame(json: Json): Option[String] =
+    json.hcursor.downField("payload").get[String]("conversationId").toOption
+      .orElse(json.hcursor.get[String]("conversationId").toOption)
+
   override def onOpen(ws: WebSocket): Unit =
     ws.request(1)
 
@@ -893,9 +902,19 @@ private final class RelayWsListener(
             case "friend_event" =>
               // A2A 一期：好友/消息推送（spec §5.1 复用 relay 隧道）。尽力而为
               // 优化——REST 补拉兜底，事件丢失不影响正确性。
-              tunnel.friendService.foreach { fs =>
-                dispatcher.unsafeRunAndForget(fs.onFriendEvent(json))
-              }
+              //
+              // W9（§3.3）：修前是 `foreach` ⇒ `friendService` 为 None 时**整帧静默
+              // 丢弃**（零日志）。这是「事件到了网关却什么都不发生」的最短路径，
+              // 归因不可跳过 ⇒ 显式 WARN。
+              tunnel.friendService match
+                case Some(fs) =>
+                  dispatcher.unsafeRunAndForget(fs.onFriendEvent(json))
+                case None =>
+                  logger.warnSync(
+                    "friend_event frame dropped: friendService not wired " +
+                      f"branch=W9 conversationId=${conversationIdOfFrame(json).getOrElse("<none>")} " +
+                      "messageId=<none> reason=friend_service_not_wired"
+                  )
             case "device_status_update" =>
               // presence v2 (C6)：设备上下线推送——隧道关闭/探活判死时服务端广播。
               // 帧驱动为主（<2s 翻转），心跳顺带拉取降级为帧丢失兜底。
@@ -910,9 +929,41 @@ private final class RelayWsListener(
               // 🔴 零 wire 新增：本分支**不解析任何新字段**（仍只按既有 `type`
               // 分派），帧形态与修前逐字节同形；提示文案由客户端本地下定。
               dispatcher.unsafeRunAndForget(tunnel.noteServerDisconnect())
-            case _ => ()
-        case Left(_) => ()
-    catch case _: Exception => ()
+            case other if RelayWsListener.BenignUnknownFrameTypes.contains(other) =>
+              // W10（§3.3）的**降噪口**：本端自己会发/回的帧类型（`ack` /
+              // `relay_response`）若被回授，语义上无需动作 ⇒ 只留 debug，
+              // 免得 W10 退化成噪声源（噪声化 = 真信号被淹 = 另一种静默）。
+              logger.debugSync(s"Relay frame ignored (benign): type=$other")
+            case other =>
+              // W10（§3.3）：修前 `case _ => ()` 零日志。**未知类型 = 契约漂移信号**：
+              // 服务端新增帧类型而本端未接 ⇒ 该族事件整类静默，只有 WARN 能让它与
+              // 「上游压根没发」分开。带 `type` 与帧长度（不含正文，避免噪声）。
+              logger.warnSync(
+                "relay frame dropped: unknown type " +
+                  f"branch=W10 conversationId=${conversationIdOfFrame(json).getOrElse("<none>")} " +
+                  s"messageId=<none> reason=unknown_frame_type type=$other len=${data.length}"
+              )
+        case Left(err) =>
+          // W11（§3.3）：修前 `case Left(_) => ()` 零日志。不可解析的帧 = 帧形状
+          // 契约破裂（版本错配、半包、编码漂移）——静默丢弃会让「隧道在收帧但 UI
+          // 不动」无法与「隧道根本没收帧」区分。带前 200 字符（**必过脱敏**：
+          // 复用 `RelayTunnelDiagnostics.redact` 的既有凭据口径，禁自写一套）。
+          logger.warnSync(
+            "relay frame dropped: undecodable json " +
+              f"branch=W11 conversationId=<none> messageId=<none> reason=undecodable_frame " +
+              s"err=${err.getClass.getSimpleName}: ${err.getMessage} " +
+              s"head=${RelayTunnelDiagnostics.redact(data.toString.take(200))}"
+          )
+    catch
+      case e: Exception =>
+        // W12（§3.3）：修前整段 `catch case _: Exception => ()` 零日志 ⇒ 任何监听器
+        // 内部异常（NPE/越界/编码错）都被吞成「什么都没发生」。**禁吞异常类**：
+        // 类名 + 消息是唯一能把这类故障从「帧没到」里分出来的读数。
+        logger.warnSync(
+          "relay frame handler threw " +
+            f"branch=W12 conversationId=<none> messageId=<none> reason=frame_handler_exception " +
+            s"err=${e.getClass.getSimpleName}: ${e.getMessage} head=${RelayTunnelDiagnostics.redact(data.toString.take(200))}"
+        )
     end try
     ws.request(1)
     null
@@ -925,3 +976,11 @@ private final class RelayWsListener(
     logger.debugSync(s"Relay WS error: ${error.getMessage}")
     dispatcher.unsafeRunAndForget(closed.complete(()).void)
 end RelayWsListener
+
+object RelayWsListener:
+  /** W10 的**降噪白名单**：本端自己会发/回、语义上不需要动作的帧类型
+    * （`ack` 是 `NeblinkRelayTunnel.sendAck` 的出向形态；`relay_response` 是
+    * `handleRelayRequest` 的出向形态）。若被回授，只留 debug——否则 W10 会退化成
+    * 噪声源，而**噪声化 = 真信号被淹 = 另一种静默**（与修 W10 的初衷相悖）。
+    * 名单之外的未知类型一律 WARN（= 契约漂移信号）。 */
+  private[neblink] val BenignUnknownFrameTypes: Set[String] = Set("ack", "relay_response")

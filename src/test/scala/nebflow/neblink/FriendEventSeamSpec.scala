@@ -109,8 +109,22 @@ class FriendEventSeamSpec extends FunSuite:
 
     assertEquals(unread.get("c-q"), Some(1), "payload 下钻后必须发生未读 +1（修前恒 None ⇒ 静默无操作）")
     assertEquals(pulled.map(_._1), List("c-q"), "必须触发该会话的增量补拉")
-    assertEquals(pulled.map(_._2), List(0L), "首次补拉的 keyset 锚 = 本地 cursor（0 = 尚未见过消息）")
-    assertEquals(fr.size, 1, "必须恰好广播一帧")
+    // ⚠️ 判据更新（好友消息静默丢失修复批 A · 冷锚取数口径）：
+    // 本 spec 的 `seedCursor` 只走 `mergeUnread` ⇒ **拉取锚点仍是 0（冷锚）**。
+    // 修前冷锚一律 `after=0`（keyset 从**最旧**一页取），于是「取回的是历史最早一页、
+    // 连事件自己那条都没取到」。本批改为：冷锚 + 事件自带 `messageId=hint` ⇒
+    // `after = hint - 1`（取**恰好那一窗**）。这里 hint=7 ⇒ 6。
+    assertEquals(pulled.map(_._2), List(6L), "冷锚 + 事件提示 ⇒ after = hint - 1（取恰好那一窗，不再从最旧一页取）")
+    // 修前「恰好一帧」（只广播事件帧）；接入**拉取即派发**后 = 事件帧 + **补拉回放帧**
+    // 各一 ⇒ 2 帧。这不是放宽断言：下面同时钉住了两帧各自的契约（事件帧 flat；
+    // 回放帧带 `backfill: true` + `senderId`）。
+    assertEquals(fr.size, 2, "事件帧 + 补拉回放帧（拉取即派发，§3.2①）")
+    assertEquals(
+      fr(1).hcursor.get[Boolean]("backfill").toOption,
+      Some(true),
+      "第 2 帧必须是**补拉回放**帧（前端据此不涨未读/不自动转发/不认领乐观项）"
+    )
+    assertEquals(fr(1).hcursor.get[String]("senderId").toOption, Some("u-peer"), "回放帧必须带 senderId（前端据此判气泡方向）")
 
     // ── ①opt-A2 / L3：帧必须扁平（前端 messages.js 按顶层字段读）──
     val frame = fr.head
@@ -193,11 +207,16 @@ class FriendEventSeamSpec extends FunSuite:
 
     // 修前 = List("pull", "broadcast")（handleEvent *> 回调）⇒ 广播被一次 REST
     // 往返（本机实测 135.9–499.0 ms）挡在后面。本断言即「摘下来」的判据。
-    assertEquals(ord, List("broadcast", "pull"), s"广播必须在补拉之前发生，实测次序：$ord")
+    //
+    // ⚠️ 判据更新（批 A · 拉取即派发）：接管拉之后**补拉自己也会广播回放帧** ⇒
+    // 时间线末尾多一条 "broadcast"。K-1 的判据是「**事件帧**的广播在补拉之前」，
+    // 故断言取前两项；第 3 项是补拉回放帧（它按定义只能在补拉之后）。
+    assertEquals(ord, List("broadcast", "pull", "broadcast"), s"事件广播必须先于补拉发生，实测次序：$ord")
+    assertEquals(ord.take(2), List("broadcast", "pull"), "K-1 判据：事件帧广播先于补拉")
     // 语义不变：补拉与未读维护照旧发生（只是不再挡在广播前）。
     assertEquals(unread.get("c-k1"), Some(1), "K-1 不得改变未读口径")
     assertEquals(pulled.map(_._1), List("c-k1"))
-    assertEquals(fr.size, 1, "广播仍然恰好一帧")
+    assertEquals(fr.size, 2, "事件帧 + 补拉回放帧（批 A 拉取即派发）")
   }
 
   test("K-1 广播回调抛错不得吃掉补拉（best-effort 广播 + 补拉照常）") {
@@ -253,8 +272,10 @@ class FriendEventSeamSpec extends FunSuite:
 
     assertEquals(unread.get("c-self"), Some(0), "self 事件**不得**计未读（修前该类型被 case other 丢弃）")
     assertEquals(pulled.map(_._1), List("c-self"), "self 事件仍须补拉（REST 是事实来源）")
-    assertEquals(fr.size, 1, "self 事件必须透传给前端（否则本机 UI 零事件）")
+    // 事件帧 + 补拉回放帧（批 A 拉取即派发）；两帧事件名同为 self（oursHint=Some(true)）。
+    assertEquals(fr.size, 2, "self 事件必须透传给前端（否则本机 UI 零事件）+ 补拉回放帧")
     assertEquals(fr.head.hcursor.get[String]("event").toOption, Some("message_new_self"))
+    assertEquals(fr(1).hcursor.get[Boolean]("backfill").toOption, Some(true), "第 2 帧 = 补拉回放帧")
     assertEquals(
       fr.head.hcursor.get[String]("conversationId").toOption,
       Some("c-self"),
