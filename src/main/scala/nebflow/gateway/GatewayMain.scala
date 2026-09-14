@@ -766,7 +766,7 @@ object GatewayMain extends IOApp:
                                             None
                                           case _ => None
                                       // Wire relay client + presence service into NeblinkService so
-                                      // TransferFileTool / DropboxService / status endpoint can use them.
+                                      // DropboxService / RemoteExecutor / status endpoint can use them.
                                       neblinkService.setRelayClient(neblinkClient)
                                       neblinkService.setPresenceService(presenceService)
                                       // Register remote executor for cross-device tool dispatch (P2P + relay fallback)

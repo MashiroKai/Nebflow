@@ -33,8 +33,8 @@ import nebflow.neblink.{FriendRoster, FriendService, FriendSummary}
  * `PluginRegistry.BuiltinToolWhitelist`）不含；`RemoteExecutor.remoteableTools` 不含
  * （零参数 schema，**不得**被注入 `device` 参数）。
  *
- * 服务注入：`ctx.sharedResources.flatMap(_.friendService)`（先例
- * `TransferFileTool.scala:298-301`；`NeblinkWiring.sharedResourcesSlot` 恒 `Some`）
+ * 服务注入：`ctx.sharedResources.flatMap(_.friendService)`（先例：
+ * 已退役的 TransferFileTool 同款注入缝，2026-09-14 退役；`NeblinkWiring.sharedResourcesSlot` 恒 `Some`）
  * ⇒ `GatewayMain` 零改动（与本工具同族的 `FriendMessageTool.initialize` 单例模式
  * 无关，其迁移属 ⑩-7 另立批）。
  */

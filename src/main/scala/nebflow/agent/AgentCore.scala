@@ -2492,7 +2492,8 @@ object AgentCore:
     *   - 用户面：AskUserQuestion / Pop（Pop = Nebula 专属可视化出口，2026-09-10
     *     作者裁定；非 Nebula 身份经 NebulaExclusiveTools 剥 + PopTool 身份闸
     *     双保险——节点交付物沿 out 边交链末端/Nebula，由 Nebula 决定是否展示）；
-    *     平台：Schedule / TransferFile
+    *     平台：Schedule（TransferFile 已退役 2026-09-14，能力并入 SendMessage 的
+    *     `device:` 附件腿——迁移指引见 RetiredToolGuides）
     *   - 记忆：MemoryEdit（§C.2，白名单硬编码 User.md + agents/Nebula/memory.md）
     * 显式不含：Bash/Write/Edit（2026-09-05 23:34 裁定移除——Nebula 无写手）、
     * NodeList（2026-09-06 00:48 裁定摘除——out 边自动投递取代主动查图；
@@ -2543,7 +2544,6 @@ object AgentCore:
     "Pop",
     // 平台
     "Schedule",
-    "TransferFile",
     // 记忆（§C.2 MemoryEdit）
     "MemoryEdit"
   )
@@ -2574,8 +2574,10 @@ object AgentCore:
     * **终态目标由独立收敛批重定**（⑩-9 口径修订）：此前「终态目标 14 = 与
     * TransferFile 退役批（−1）同窗抵平」的口径随本批 +1 失效——本批**只**改本注释
     * 与断言基准值，**不得**改本常量去凑任何终态数字，也不得在树内实测值 ≠ 本常量
-    * 时放宽断言（原「不得为凑 14 改写断言」纪律不变，仅目标数字改为待重定）。 */
-  val NebulaOrchestrationToolsExpectedSize: Int = 16
+    * 时放宽断言（原「不得为凑 14 改写断言」纪律不变，仅目标数字改为待重定）。
+    * 2026-09-14 附件腿/退役批（#145）：`TransferFile` 退役 −1 ⇒ 常量按「=现成员
+    * 数」契约改 **15**（行为读数，非终态裁定；终态仍待独立收敛批重定）。 */
+  val NebulaOrchestrationToolsExpectedSize: Int = 15
 
   /** 退役工具迁移指引表（R2「一个 Mail 统一」批，2026-09-12；设计件 §A.3 C-1）。
     *
@@ -2591,7 +2593,9 @@ object AgentCore:
     "Task" ->
       """Project triggering is now Mail — use `Mail(address="project:<项目名>", message=<任务文本>)` (a bare project name is accepted too; the same engine entry, ProjectActor.TriggerDispatcher).""",
     "NodeMessage" ->
-      """Node course-correction is now Mail — use `Mail(address="node:<节点id>", message=<补充文本>)` (same engine semantics: running = injected at the next turn boundary, wiring/pending = appended to the node task, terminal = refused)."""
+      """Node course-correction is now Mail — use `Mail(address="node:<节点id>", message=<补充文本>)` (same engine semantics: running = injected at the next turn boundary, wiring/pending = appended to the node task, terminal = refused).""",
+    "TransferFile" ->
+      """TransferFile retired 2026-09-14 (#145) — its capabilities moved into SendMessage: files to another of the user's devices use `SendMessage(to="device:<deviceName|deviceId>", message=<note>, attachments=[<absolute local paths>])` (chunked + both-side SHA-256, max 9 files x 100 MB decimal each); local copies use `SendMessage(to="local", attachments=[...], targetDir=<dir>)`. Device-to-device pulls with a remote source (A->B) are retired with no replacement (0 recorded uses; the author accepted the loss, U-6)."""
   )
 
   /** 分发器固定工具集（§C.1）：Node 三件（List/Edit/Cancel）+ 读四件

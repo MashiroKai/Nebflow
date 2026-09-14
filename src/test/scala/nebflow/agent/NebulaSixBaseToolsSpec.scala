@@ -70,11 +70,10 @@ class NebulaSixBaseToolsSpec extends FunSuite:
     assert(!delivered.contains("NodeList"), "Nebula 交付面零 NodeList（00:48 裁定摘除）")
     assert(delivered.contains("TaskList"), "Nebula 交付面含 TaskList（注册层已挂）")
     // 件数以单点常量 AgentCore.NebulaOrchestrationToolsExpectedSize 为准：
-    // 在飞 16 = TaskList 批后的 14 + 2026-09-11 Delegate 极简内核回归（+1）
-    // + 2026-09-12 好友消息改造批 ⑩ ListFriends（+1）；
+    // #145 附件腿批后 15 = 在飞 16 − TransferFile 退役（2026-09-14）；
     // 终态目标由独立收敛批重定（⑩-9 口径修订）。
     assertEquals(fixed.size, AgentCore.NebulaOrchestrationToolsExpectedSize,
-      "Nebula 机制集件数 == 单点常量（不得各处写裸数字；本批在飞 16）")
+      "Nebula 机制集件数 == 单点常量（不得各处写裸数字；#145 后在飞 15）")
 
   // ===== ② 六件基础 ⊆ general 机制集（回归钉死）=====
 

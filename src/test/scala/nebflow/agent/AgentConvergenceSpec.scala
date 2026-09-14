@@ -48,7 +48,7 @@ class AgentConvergenceSpec extends FunSuite:
       "Read", "Glob", "Grep",                                // 读三件（08:40 解禁四件；23:34 裁定收走写手）
       "Card",                                               // 可视化（2026-09-05 解封恢复）
       "AskUserQuestion", "Pop",
-      "Schedule", "TransferFile",
+      "Schedule",
       "MemoryEdit"
     )
     assertEquals(delivered, expected,
@@ -72,6 +72,7 @@ class AgentConvergenceSpec extends FunSuite:
       // R2 反转（2026-09-12）："Mail" 从本集**摘除**——Mail 已翻案为唯一消息原语并进入
       // Nebula 面（−Task +Mail，16→16）；新增 "Task"/"NodeMessage" 两个已删净退役件。
       "Task", "NodeMessage", "FlowTrigger", "FlowExecute",  // 已退役/维持退役（Delegate 2026-09-11 以极简内核形态回归，不在此列）
+      "TransferFile",                                       // #145 附件腿批退役（2026-09-14）：能力并入 SendMessage 设备附件腿
       "WebSearch", "WebFetch", "Curl",
       "TeamTaskCreate", "TeamTaskUpdate", "TeamTaskList", "SubTask",
       "NodeEdit", "NodeCancel", "FlowReport", "Load")

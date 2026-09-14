@@ -3490,7 +3490,7 @@ class RestApiRoutes(
       // 6. Stop the NebLink client (hot-swap to None). Both client pointers are
       //    cleared: the discovery one (authoritative live client) AND the
       //    NeblinkService relay pointer, which every relay consumer reads
-      //    (RemoteExecutor / TransferFileTool / DropboxService / status) —
+      //    (RemoteExecutor / DropboxService / status) —
       //    leaving it behind kept a logged-out client reachable through the
       //    relay path (2026-09-10 隧道鉴权自愈批 convergence sweep).
       _ <- neblinkDiscovery.fold(IO.unit)(d => d.setClient(None))

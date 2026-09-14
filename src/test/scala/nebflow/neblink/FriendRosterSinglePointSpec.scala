@@ -15,24 +15,15 @@ import munit.FunSuite
  *
  * 判据（本 spec 即机制）：扫描 `src/main/scala/nebflow/` 全树（**不含测试**）里两个
  * 候选文案字面量的**每一处出现文件**，必须 ∈ 允许集：
- *   - `nebflow/neblink/FriendRoster.scala`（唯一实现点），或
- *   - `nebflow/core/tools/TransferFileTool.scala`（**显式登记的偏差**，⑦-D7）。
+ *   - `nebflow/neblink/FriendRoster.scala`（好友面唯一实现点），或
+ *   - `nebflow/core/tools/FriendMessageTool.scala`（**设备面字面量**——2026-09-14
+ *     #145 批把退役的 `TransferFileTool` 设备解析原样迁入此处；设备名册与好友名册
+ *     是**正交信任域**，⑦/⑩ 的收归范围只覆盖好友面。好友面解析本工具**零实现**，
+ *     只委托 `FriendRoster.resolve`——由本 spec 的「委托仍在」钉住）。
  *
- * ⑦-D7 口径（允许清单的正当性，逐字落地）：`TransferFileTool.resolveFriend` /
- * `friendCandidates` **本批不对齐**——「暂不对齐，仅加偏差注释」（与 ⑩-D5 合并
- * 裁定）。所以它是**已登记的第二处偏差**，不是漏改；允许清单条目注释即登记位，
- * 其对齐属**另批**（跨工具改名耦合风险，`TransferFileTool.scala` 原注释自陈）。
- * 这意味着：**同一 query 在两工具下可能给出不同结论/不同候选文案**（本文件不阻止
- * 这个既成事实，只阻止**第三处**实现出现）。
- *
- * 本 spec **只读零生产改动**：不改任何 `src/main` 文件，也不改 `TransferFileTool`
- * 的行为（其行为零变更由 `TransferFileToolSpec` 逐字断言另行钉住：该 spec 仍断言
- * `Available friends: 林小满 [username lin@example.com]` 形态）。
- *
- * 已知同允许清单内的**设备面**字面量：`TransferFileTool.scala` 的
- * `"Available devices: …"` / `Device '$q' is ambiguous (…` —— 设备名册与好友名册是
- * **正交信任域**（方案 §4.5「与设备面区分口径」），⑦/⑩ 的收归范围**只覆盖好友面**
- * （设备支的实现属另批），故该文件整体进允许清单（文件级，不细分好友/设备行）。
+ * 历史：`TransferFileTool.scala` 曾是 ⑦-D7 显式登记的第二处偏差（文件级豁免）；
+ * 该工具已随 #145 退役（2026-09-14），豁免随之撤销——文件删除后若仍留在允许清单，
+ * 「探针自检」会立即红（允许文件不在扫描面内）。
  *
  * 红判据：任一**新文件**出现这两个字面量 ⇒ 红（新分叉点）；且两处允许文件里
  * 都必须仍有该字面量（防「字面量被抽成常量」让哨兵静默失效——哨兵本身的自检）。
@@ -46,8 +37,9 @@ class FriendRosterSinglePointSpec extends FunSuite:
   private val allowed: Set[String] = Set(
     // 唯一实现点（⑩ 收归 + ⑦ 的 L0/备注渲染都在这里）
     "nebflow/neblink/FriendRoster.scala",
-    // 已登记偏差（⑦-D7：本批行为零变更，仅加注释；对齐属另批）——见类注释。
-    "nebflow/core/tools/TransferFileTool.scala"
+    // 设备面字面量（#145 2026-09-14：退役的 TransferFileTool 设备解析原样迁入；
+    // 正交信任域，好友面零实现——委托关系由下方「委托仍在」测试钉住）
+    "nebflow/core/tools/FriendMessageTool.scala"
   )
 
   private val scalaRoot = os.pwd / "src" / "main" / "scala"
@@ -98,19 +90,17 @@ class FriendRosterSinglePointSpec extends FunSuite:
     }
   }
 
-  test("⑦-D7 允许清单的正当性：TransferFileTool 仍是内联实现（偏差仍在，未偷偷对齐同一常量）") {
-    // 该文件必须仍然自带一份 `friendCandidates`/`resolveFriend`（偏差登记前提），
-    // 且**不含** `FriendRoster` 的代码引用 —— 若某天有人把它改成委托，本 spec 会红：
-    // 那时必须回改允许清单并同步 ⑦-D7 的登记（不许「改了实现留旧豁免」）。
-    // 去注释后判断：偏差注释里会**提到** FriendRoster（说明口径），提到不算引用。
-    val p = scalaRoot / "nebflow" / "core" / "tools" / "TransferFileTool.scala"
+  test("#145 后的好友面单点：FriendMessageTool 的好友解析仍委托 FriendRoster（零第二实现）") {
+    // TransferFileTool 退役后，其设备面解析迁入 FriendMessageTool（允许清单内）；
+    // 但该工具的**好友面**必须仍然零实现——只委托 FriendRoster.resolve。去注释后
+    // 判定：解释口径注释里会提到 FriendRoster，只有**代码**引用才算委托。
+    val p = scalaRoot / "nebflow" / "core" / "tools" / "FriendMessageTool.scala"
     val src = os.read(p)
     val code = stripComments(src)
-    assert(src.contains("def friendCandidates"), "TransferFileTool 的内联候选实现不在了（允许清单需同步修订）")
-    assert(src.contains("def resolveFriend"), "TransferFileTool 的内联解析实现不在了（允许清单需同步修订）")
-    assert(!code.contains("FriendRoster"),
-      "TransferFileTool 的**代码**引用了 FriendRoster —— 说明已对齐，请同步 ⑦-D7 登记与允许清单")
-    assert(src.contains("⑦-D7"), "偏差注释必须留在文件内（⑦-D7：只加偏差注释、行为零变更）")
+    assert(code.contains("FriendRoster.resolve"),
+      "FriendMessageTool 不再委托 FriendRoster.resolve —— 好友面出现第二实现，请回改实现并同步本登记")
+    assert(!code.contains("Available friends: "),
+      "FriendMessageTool 自带了一份好友候选文案 —— 好友面单点被打破（第二分叉），禁；候选文案只准在 FriendRoster")
   }
 
   test("唯一实现点仍在 FriendRoster（解析与候选文案都在，未搬空）") {    val src = os.read(scalaRoot / "nebflow" / "neblink" / "FriendRoster.scala")

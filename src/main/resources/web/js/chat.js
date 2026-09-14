@@ -1198,7 +1198,6 @@ const TOOL_PRIMARY_FIELDS = {
   'TaskCreate': 'description',
   'TaskUpdate': 'description',
   'Mail': 'message',
-  'TransferFile': 'sourcePath',
   'MailAgent': 'message',
 };
 

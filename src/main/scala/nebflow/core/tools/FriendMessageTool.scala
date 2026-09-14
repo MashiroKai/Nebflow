@@ -1,39 +1,61 @@
 package nebflow.core.tools
 
 import cats.effect.IO
+import cats.syntax.all.*
 import io.circe.syntax.*
 import io.circe.{Json, JsonObject}
-import nebflow.neblink.{FriendRoster, FriendService, FriendSummary}
+import nebflow.core.PathUtil
+import nebflow.dropbox.{AttachContract, DropboxService}
+import nebflow.neblink.{FriendRoster, FriendService, FriendSummary, PeerInfo}
 
 import java.time.LocalTime
 import java.time.format.DateTimeFormatter
 
 /**
  * SendMessage tool — A2A 一期 agent 发消息能力（friends-messaging-arch §7.1
- * 冻结设计 + 20260828 方向补充 spec §2）。LLM 通过它以用户身份向已建立好友关系的
- * 联系人发送文本消息；收方看到的是好友本人（用户身份送达，冻结语义）。
+ * 冻结设计 + 20260828 方向补充 spec §2），2026-09-14 附件腿批扩为**统一目标模型**
+ * （作者 2026-09-11 方案候选 (a) + 09-13 新数裁定）：
  *
- * 职责边界（零重复实现）：本工具只做「to 解析 + 参数校验 + 错误转写」；发送一律走
- * FriendService.sendAsAgent —— auto/ask/off 三档权限、双层限速（20/h/好友、60/h
- * 全局）与超限自动降级 ask 全部既有（choke point 唯一，spec §2.2）。
+ *   - `to = <好友解析串>` 或 `friend:<…>`：以用户身份发给 NebLink 好友（收方看到的
+ *     是好友本人，冻结语义）。**纯文本**——好友附件的字节通路不存在（服务端跨项目
+ *     批 4b / TaskList #131），带 `attachments` 一律显式拒绝，不静默降级。
+ *   - `to = device:<deviceName|deviceId>`：发给**同账号**的另一台设备（G5：设备面
+ *     「文本+附件」消息面既有，本批工具化）。字节走 Dropbox 分块通道（P2P 主腿 +
+ *     relay 兜底、每块校验、整件双侧 sha256、断点续传；单件 ≤100,000,000 B 十进制、
+ *     单条 ≤9 件，超限 fail-fast 回显实际值）；接收端 auto-accept，落对端 Downloads、
+ *     面板可见。**不套**好友限速/权限档（U-2），带附件时落一条审计行
+ *     （`RelayExecAudit` 同族）。
+ *   - `to = local`：本机搬运显式分支（R3=3b）——把 `attachments` 复制进 `targetDir`
+ *     （零网络、零传输闸；件数上限与设备腿同源）。
  *
- * to 解析（2026-09-12 ⑦ 后的完整链）：**L0 备注** → L1 username 精确（大小写不
- * 敏感，服务端唯一性口径一致）→ L2 昵称精确 → L3 昵称唯一前缀 → **L4 邮箱 α**
- * （前四级全未命中时走一次上游搜索回落，按命中卡 `userId` 精确回映射好友表）。
- * 多命中/零命中一律返回候选列表让模型自行纠错（同 turn 内最便宜的修复点）。
- * 解析 L0–L3 与候选文案的**唯一实现点** = `nebflow.neblink.FriendRoster`（批 ⑩
- * 2026-09-12 收归，`ListFriends` 同用同一份词表）——本工具只委托；L4 是数据面
- * 回落（见 `lookupFriendBySearch`），不在本地匹配口径内。
+ * 职责边界（零重复实现）：好友支只做「to 解析 + 参数校验 + 错误转写」，发送一律走
+ * FriendService.sendAsAgent（auto/ask/off 三档权限、双层限速与超限自动降级 ask
+ * 全部既有，choke point 唯一，spec §2.2）；设备支只做「设备解析 + 闸位转写」，
+ * 字节一律走 DropboxService.sendLocalFiles（闸位/分块/校验/续传单点，本工具零
+ * 传输实现）。
+ *
+ * to 解析（好友支，2026-09-12 ⑦ 后的完整链）：**L0 备注** → L1 username 精确
+ * （大小写不敏感，服务端唯一性口径一致）→ L2 昵称精确 → L3 昵称唯一前缀 →
+ * **L4 邮箱 α**（前四级全未命中时走一次上游搜索回落，按命中卡 `userId` 精确回映射
+ * 好友表）。多命中/零命中一律返回候选列表让模型自行纠错。解析 L0–L3 与候选文案的
+ * **唯一实现点** = `nebflow.neblink.FriendRoster`（批 ⑩ 2026-09-12 收归）——本工具
+ * 只委托；L4 是数据面回落（见 `lookupFriendBySearch`）。
+ *
+ * 设备解析（2026-09-14 自退役的 TransferFileTool 原样迁入）：deviceId 精确 →
+ * deviceName 精确 → deviceId 前缀 → deviceName 前缀 → deviceName 包含，唯一候选
+ * 才成功；零命中/多命中一律列可用设备与逐条命中依据（**禁静默首命中**）。
  *
  * 接线：GatewayMain 启动时 FriendMessageTool.initialize(friendService)
  * （RemoteExecutor.initialize 同款单例模式）+ 本工具按次把**会话靶**挂进
  * fiber-local（`SendConfirm.locally`），装配缝实现 `SendConfirm.production`
- * 在本次调用内读它并发确认卡（#147 接线段 2026-09-12：此前 `ask` 档因确认链
- * 未接线而恒失败）。授权（阶段 2d，设计 D.1-11）：
- * 机制固定唯一——仅 Nebula 的静态集 NebulaOrchestrationTools 携带（2c 起从
- * 声明制迁机制固定）；agent.json tools 声明不再授能（buildAllowedToolSet 对
- * base 一律剥离本工具名，"*" 亦然——the tool name IS the permission
- * boundary）。 */
+ * 在本次调用内读它并发确认卡（#147 接线段 2026-09-12）。**确认链只覆盖好友支**
+ * ——设备支/本机支零治理（U-2 裁定：不套好友档位，闸位=大小/件数 + 审计行）。
+ * 授权（阶段 2d，设计 D.1-11）：机制固定唯一——仅 Nebula 的静态集
+ * NebulaOrchestrationTools 携带（2c 起从声明制迁机制固定）；agent.json tools
+ * 声明不再授能（buildAllowedToolSet 对 base 一律剥离本工具名，"*" 亦然——the
+ * tool name IS the permission boundary）。
+ * （本工具扩面后，TransferFile 于 2026-09-14 同批退役——迁移指引见
+ * `AgentCore.RetiredToolGuides`。） */
 object FriendMessageTool extends Tool:
 
   private val TimeFormat = DateTimeFormatter.ofPattern("HH:mm:ss")
@@ -47,25 +69,44 @@ object FriendMessageTool extends Tool:
   val name = "SendMessage"
 
   val description =
-    """Send a text message to one of the user's NebLink friends, acting on the user's behalf. Only established friend relationships can receive messages; the message is delivered as the user (the recipient sees it as the user themselves). Subject to permission tiers and rate limits (per-friend and global hourly caps); depending on the user's configuration the send may require explicit user confirmation or be disabled outright.
+    """Send a message on the user's behalf, or move files. Three target kinds are selected by the prefix of `to`:
+1. A NebLink friend (bare name, or `friend:<remark|username|email|displayName>`) — delivered as the user over established friend relationships; Plain text only. Subject to permission tiers and rate limits, and (depending on configuration) a confirmation card.
+2. Another of the user's own devices (`device:<deviceName|deviceId>`) — message and/or files over the Dropbox device channel: files are chunked+streamed (per-chunk checksum, whole-file SHA-256 both sides, resume), never enter the LLM context, and land in the peer's Downloads (auto-accept, visible in their device panel). Not subject to the friend permission tiers/rate limits; size/count gated and audited. Requires an active peer roster — an unknown device fails with the available list (no silent fallback).
+3. `local` — copy `attachments` into `targetDir` on this machine (no network, no message delivered).
 
 ## Parameters
-- to (string, required): The recipient — the friend's remark (a local nickname the user set), their NebLink username (NL ID), or their email address; their display name also works. Resolution order: exact remark, exact username, exact display name, unique display-name prefix, then an account lookup by email. On no or ambiguous match the error lists available friends (remarks shown in `[remark: …]`).
-- message (string, required): Message text, max 4000 characters. Plain text only.
+- to (string, required): `device:<deviceName|deviceId>`, `local`, or a friend (bare remark/username/email/displayName, or explicit `friend:<…>`).
+- message (string, required): text sent to friend/device targets, max 4000 characters, plain text. Ignored for `local`.
+- attachments (array of string, optional): ABSOLUTE paths of files on this machine. Device targets: max 9 files per message, each up to 100 MB (100,000,000 bytes, decimal) — exceeding fails and echoes the actual value. Friend targets: NOT supported (the server-side attachment channel does not exist yet) — send text only. `local`: required — these files are copied into `targetDir`.
+- targetDir (string, optional): destination directory for `local` (created if missing). Rejected for device targets (the receiver's landing directory is managed by the channel).
+- overwrite (boolean, optional, default false): `local` only — replace existing files in `targetDir`.
 
-## Confirmation (ask tier)
-When the user's agent-messaging mode is `ask` (or the auto rate limit was hit), the send first raises a confirmation card in the chat. The message is sent ONLY after the user approves it on that card; a decline, a cancel, or a timeout (60s) sends nothing and comes back as an error saying so. Wait for the tool result — do not assume the message went out."""
+## Confirmation (ask tier, friend targets only)
+When the user's agent-messaging mode is `ask` (or the auto rate limit was hit), the friend send first raises a confirmation card in the chat. The message is sent ONLY after the user approves it on that card; a decline, a cancel, or a timeout (60s) sends nothing and comes back as an error saying so. Device sends and local copies are not gated by this tier. Wait for the tool result — do not assume anything went out."""
 
   val inputSchema: JsonObject = JsonObject(
     "type" -> "object".asJson,
     "properties" -> Json.obj(
       "to" -> Json.obj(
         "type"        -> "string".asJson,
-        "description" -> "Friend's remark, username (NL ID), or email — or their display name.".asJson
+        "description" -> "`device:<deviceName|deviceId>` for another of the user's devices, `local` for a local copy, or a friend (bare remark/username/email/displayName, or `friend:<…>`).".asJson
       ),
       "message" -> Json.obj(
         "type"        -> "string".asJson,
-        "description" -> s"Message text (max $MaxMessageLength characters).".asJson
+        "description" -> s"Message text (max $MaxMessageLength characters) for friend/device targets; ignored for `local`.".asJson
+      ),
+      "attachments" -> Json.obj(
+        "type"  -> "array".asJson,
+        "items" -> Json.obj("type" -> "string".asJson),
+        "description" -> "Absolute local file paths. Device: ≤9 files, each ≤100 MB (100,000,000 bytes, decimal), chunked+verified transfer. Friend: unsupported. Local: required (copied into targetDir).".asJson
+      ),
+      "targetDir" -> Json.obj(
+        "type"        -> "string".asJson,
+        "description" -> "Destination directory for `local` (created if missing). Rejected for device targets.".asJson
+      ),
+      "overwrite" -> Json.obj(
+        "type"        -> "boolean".asJson,
+        "description" -> "`local` only — replace existing files in targetDir. Default: false.".asJson
       )
     ),
     "required" -> List("to", "message").asJson
@@ -157,48 +198,294 @@ When the user's agent-messaging mode is `ask` (or the auto rate limit was hit), 
       case Left(err) => Left(ToolError(err))
     }
 
+  /** `to` 的三分类（纯函数，public for tests）：显式前缀分派，不猜、不回落。
+    * 裸串 = 好友（既有行为逐字节不变）；`friend:`/`device:` 显式前缀；`local` =
+    * 本机搬运分支（R3=3b）。 */
+  private[tools] sealed trait ToKind
+  private[tools] object ToKind:
+    case class Friend(q: String)   extends ToKind
+    case class Device(q: String)   extends ToKind
+    case object Local              extends ToKind
+
+  private[tools] def parseToKind(raw: String): Either[String, ToKind] =
+    val s = raw.trim
+    if s.isEmpty then Left("'to' is empty.")
+    else if s.equalsIgnoreCase("local") then Right(ToKind.Local)
+    else
+      val colon = s.indexOf(':')
+      if colon > 0 then
+        val scheme = s.take(colon).trim.toLowerCase
+        val rest   = s.drop(colon + 1).trim
+        scheme match
+          case "friend" =>
+            if rest.isEmpty then Left(s"'$s' is missing the friend after `friend:`.")
+            else Right(ToKind.Friend(rest))
+          case "device" =>
+            if rest.isEmpty then Left(s"'$s' is missing the device name/id after `device:`.")
+            else Right(ToKind.Device(rest))
+          case _ => Right(ToKind.Friend(s)) // 好友备注/邮箱里可能合法出现冒号 ⇒ 原样按好友解析
+      else Right(ToKind.Friend(s))
+
+  // ===== 设备面（2026-09-14 自退役的 TransferFileTool 原样迁入，语义零变更）=====
+
+  /** 设备候选 + 命中依据（纯函数）：歧义报错逐条列出「区分依据」，**禁静默首命中**。 */
+  private[tools] def deviceMatches(query: String, peers: List[PeerInfo]): List[(PeerInfo, String)] =
+    val q  = query.trim
+    val ql = q.toLowerCase
+    peers.flatMap { p =>
+      if p.deviceId.equalsIgnoreCase(q) then Some(p -> "exact deviceId")
+      else if p.deviceName.equalsIgnoreCase(q) then Some(p -> "exact deviceName")
+      else if p.deviceId.toLowerCase.startsWith(ql) then Some(p -> s"deviceId prefix '$q'")
+      else if p.deviceName.toLowerCase.startsWith(ql) then Some(p -> s"deviceName prefix '$q'")
+      else if p.deviceName.toLowerCase.contains(ql) then Some(p -> s"deviceName contains '$q'")
+      else None
+    }
+
+  private[tools] def deviceCandidates(peers: List[PeerInfo]): String =
+    if peers.isEmpty then "Available devices: none (no NebLink peer discovered)."
+    else s"Available devices: ${peers.map(p => s"${p.deviceName} [deviceId ${p.deviceId}]").mkString(", ")}."
+
+  private[tools] def resolveDevice(deviceName: String, peers: List[PeerInfo]): Either[ToolError, PeerInfo] =
+    val q = deviceName.trim
+    if q.isEmpty then Left(ToolError("device target is empty (prefix present but no name/id)."))
+    else
+      deviceMatches(q, peers) match
+        case Nil =>
+          val available = peers.map(_.deviceName)
+          Left(
+            ToolError(
+              if peers.isEmpty then
+                "No peer devices discovered. Ensure NebLink Server is configured on both machines and both Nebflow instances are connected."
+              else s"Device '$q' not found among ${peers.size} peer(s). Available: ${available.mkString(", ")}"
+            )
+          )
+        case (single, _) :: Nil => Right(single)
+        case many =>
+          Left(
+            ToolError(
+              s"Device '$q' is ambiguous (${many.size} matches): " +
+                many.map { case (p, why) => s"${p.deviceName} [deviceId ${p.deviceId}] — matched by $why" }.mkString("; ") +
+                ". Use the exact deviceId to disambiguate."
+            )
+          )
+
+  /** 设备支（文本 + 可选附件）。文本先行；文本不可达 ⇒ fail-fast（附件两腿同源，
+    * 不烧超时、不产生半投递）。附件经 [[DropboxService.sendLocalFiles]]（闸位 +
+    * 分块 + 校验 + 续传单点）。带附件时落一条审计行（U-2）。 */
+  private def sendDevice(
+    dbx: DropboxService,
+    ns: nebflow.neblink.NeblinkService,
+    peer: PeerInfo,
+    message: String,
+    attachments: List[os.Path],
+    ctx: ToolContext
+  ): IO[Either[ToolError, String]] =
+    dbx.sendText(peer.deviceId, message).flatMap { textDelivered =>
+      if !textDelivered then
+        IO.pure(
+          Left(
+            ToolError(
+              s"Device '${peer.deviceName}' could not be reached on any channel (P2P WS and relay Notify both refused the frame) — nothing was sent."
+            )
+          )
+        )
+      else if attachments.isEmpty then
+        IO.pure(Right(s"已发送到设备 ${peer.deviceName}（${LocalTime.now().format(TimeFormat)}）"))
+      else
+        // U-2：一条审计行（每次逻辑下发一次，首次网络尝试前；失败绝不影响发送）。
+        auditAttachSend(ns, peer, attachments, ctx) *>
+          dbx.sendLocalFiles(peer.deviceId, attachments).map {
+            case Left(err) =>
+              Left(ToolError(s"Text was delivered, but the attachments were rejected: ${err.render}"))
+            case Right(outcomes) =>
+              val total = outcomes.map(_.fileSize).sum
+              val failed = outcomes.filterNot(_.delivered)
+              if failed.isEmpty then
+                Right(
+                  s"已发送到设备 ${peer.deviceName}（${LocalTime.now().format(TimeFormat)}）— 文本已送达，${outcomes.size} 件附件共 $total B 全部完成（分块传输，双侧 sha256 一致）。"
+                )
+              else
+                val detail = failed.map(o => s"${o.fileName}: ${o.error.getOrElse("unknown error")}").mkString("; ")
+                Left(
+                  ToolError(
+                    s"Text was delivered, but ${failed.size}/${outcomes.size} attachment(s) failed — $detail. " +
+                      "Retrying reuses the chunked channel's resume (completed chunks are not re-sent)."
+                  )
+                )
+          }
+    }
+
+  /** U-2 审计行（`RelayExecAudit` 同族字段；零阻塞、失败只 WARN）。 */
+  private def auditAttachSend(
+    ns: nebflow.neblink.NeblinkService,
+    peer: PeerInfo,
+    attachments: List[os.Path],
+    ctx: ToolContext
+  ): IO[Unit] =
+    ns.identity
+      .flatMap(src =>
+        RelayExecAudit.record(
+          sourceDeviceId = src.deviceId,
+          targetDeviceId = peer.deviceId,
+          via = "dropbox-chunk",
+          action = "SendMessage.attachments",
+          command = s"→ device:${peer.deviceName}; files: ${attachments.map(p => s"${p.last}(${os.stat(p).size} B)").mkString(", ")}",
+          projectRoot = ctx.projectRoot,
+          cwd = Option(System.getProperty("user.dir")).getOrElse("")
+        )
+      )
+      .handleErrorWith(e => IO.unit) // 审计失败不影响发送（吞异常属 RelayExecAudit 既有语义）
+
+  /** 本机搬运分支（R3=3b）：`attachments` → `targetDir`。零网络、零传输闸；
+    * 件数上限与设备腿同源（一条消息 = 一次调用）。 */
+  private def copyLocal(
+    attachments: List[String],
+    targetDir: Option[String],
+    overwrite: Boolean
+  ): IO[Either[ToolError, String]] =
+    if attachments.isEmpty then
+      IO.pure(Left(ToolError("target `local` requires `attachments` (the files to copy into `targetDir`).")))
+    else
+      AttachContract.checkAttachmentCount(attachments.size) match
+        case Left(err) => IO.pure(Left(ToolError(err.render)))
+        case Right(_) =>
+          targetDir match
+            case None =>
+              IO.pure(Left(ToolError("target `local` requires `targetDir` (the directory to copy the attachments into).")))
+            case Some(rawDir) =>
+              val dir = os.Path(PathUtil.expandTilde(rawDir.trim), os.pwd)
+              IO.blocking(os.makeDir.all(dir)).attempt.flatMap {
+                case Left(e) =>
+                  IO.pure(Left(ToolError(s"Cannot create targetDir '$rawDir': ${e.getMessage}")))
+                case Right(_) =>
+                  // 逐件复制：显式递归（foldLeftM 在此形状下类型推断会塌成
+                  // Either[Any,Any]，2026-09-14 编译教训——弃用）。
+                  def loop(rest: List[String], copied: List[String]): IO[Either[String, List[String]]] =
+                    rest match
+                      case Nil => IO.pure(Right(copied))
+                      case raw :: tail =>
+                        val p      = os.Path(PathUtil.expandTilde(raw.trim), os.pwd)
+                        val target = dir / p.last
+                        val check: Either[String, Unit] =
+                          // 原始串判（os.Path 构造即绝对化，构造后再判恒真）
+                          if !java.nio.file.Paths.get(raw.trim).isAbsolute then
+                            Left(s"Attachment path must be absolute, got: '$raw'.")
+                          else if !os.exists(p) then Left(s"Attachment does not exist: $raw.")
+                          else if os.isDir(p) then Left(s"Attachment is a directory, not a file: $raw.")
+                          else if os.exists(target) && !overwrite then
+                            Left(s"Target already exists (pass overwrite=true to replace): $target")
+                          else Right(())
+                        check match
+                          case Left(err) => IO.pure(Left(err))
+                          case Right(_) =>
+                            IO.blocking(os.copy(p, target, replaceExisting = overwrite))
+                              .attempt
+                              .flatMap {
+                                case Left(e)  => IO.pure(Left(s"copy failed: ${e.getMessage}"))
+                                case Right(_) => loop(tail, copied :+ target.toString)
+                              }
+                  loop(attachments, Nil).flatMap {
+                    case Left(err) => IO.pure(Left(ToolError(s"Local copy failed: $err")))
+                    case Right(copied) =>
+                      IO.pure(Right(s"已复制 ${copied.size} 件到 $dir（${LocalTime.now().format(TimeFormat)}）— ${copied.mkString(", ")}"))
+                  }
+              }
+  end copyLocal
+
   def call(input: JsonObject, ctx: ToolContext): IO[Either[ToolError, String]] =
-    val to      = input("to").flatMap(_.asString)
-    val message = input("message").flatMap(_.asString)
+    val to          = input("to").flatMap(_.asString)
+    val message     = input("message").flatMap(_.asString)
+    val attachments = input("attachments").flatMap(_.asArray).getOrElse(Vector.empty).flatMap(_.asString).toList
+    val targetDir   = input("targetDir").flatMap(_.asString)
+    val overwrite   = input("overwrite").flatMap(_.asBoolean).getOrElse(false)
 
     def bad(msg: String): IO[Either[ToolError, String]] = IO.pure(Left(ToolError(msg)))
 
-    service match
-      case None =>
-        bad("Friend messaging is unavailable: NebLink friends service is not initialized.")
-      case Some(fs) =>
-        (to, message) match
-          case (None, _) => bad("Missing required parameter 'to' (friend's remark, username, or email).")
-          case (_, None) => bad(s"Missing required parameter 'message'.")
-          case (Some(t), Some(m)) if m.isEmpty =>
-            bad("'message' is empty — nothing to send.")
-          case (Some(t), Some(m)) if m.length > MaxMessageLength =>
-            bad(s"Message too long (${m.length} chars, max $MaxMessageLength).")
-          case (Some(t), Some(m)) =>
-            // refreshFriends() resolves to a snapshot directly (swallows
-            // upstream errors into an empty list — acceptable: resolution
-            // then reports "friend list is empty" with no candidates).
-            // 该出口已由 FriendService.applyRemarks 注入本地备注 ⇒ L0 层与候选
-            // 文案都读得到备注（⑦：工具侧零取数改动）。
-            val prepared: IO[(Either[ToolError, FriendSummary], List[FriendSummary])] =
-              fs.refreshFriends().map(resp => resolveFriend(t, resp.friends) -> resp.friends)
-            prepared.flatMap {
-              case (Right(friend), _) => sendTo(fs, friend, m, ctx)
-              case (Left(err), friends) =>
-                // L0–L3 全未命中 ⇒ 走 L4 邮箱 α（仅失败路径，+1 次上游往返）。
-                // 命中且能回映射成好友 ⇒ 发送；否则（miss / 上游故障 / 非好友）
-                // 回落**原样**的 not-found + 候选错误（不升格、不回显 query）。
-                lookupFriendBySearch(fs, t, friends).flatMap {
-                  case Some(friend) => sendTo(fs, friend, m, ctx)
-                  case None         => IO.pure(Left(err))
-                }
-            }
+    to match
+      case None => bad("Missing required parameter 'to' (friend, `device:<name|id>`, or `local`).")
+      case Some(t) =>
+        parseToKind(t) match
+          case Left(reason) => bad(reason)
+          case Right(ToKind.Local) => copyLocal(attachments, targetDir, overwrite)
+          case Right(ToKind.Device(q)) =>
+            message match
+              case None => bad("Missing required parameter 'message'.")
+              case Some(m) if m.isEmpty => bad("'message' is empty — nothing to send.")
+              case Some(m) if m.length > MaxMessageLength =>
+                bad(s"Message too long (${m.length} chars, max $MaxMessageLength).")
+              case Some(m) =>
+                if targetDir.isDefined then
+                  bad(
+                    "`targetDir` is not supported for device targets: the receiver's landing directory is managed by " +
+                      "the Dropbox channel (auto-accept, lands in the peer's Downloads). Supporting a receiver-side " +
+                      "targetDir would require a frozen-contract change — pending the author's call."
+                  )
+                else if attachments.exists(a => !java.nio.file.Paths.get(a.trim).isAbsolute) then
+                  // 原始串闸（os.Path 构造会把相对段绝对化，构造后再判恒真）——
+                  // description 契约「ABSOLUTE paths」在工具边界 enforcement。
+                  val rel = attachments.filter(a => !java.nio.file.Paths.get(a.trim).isAbsolute)
+                  bad(
+                    "Attachment paths must be absolute, got: " + rel.map(a => s"'$a'").mkString(", ") +
+                      ". Pass ABSOLUTE paths of files on this machine."
+                  )
+                else
+                  val resources = for
+                    ns  <- ctx.sharedResources.flatMap(_.neblinkService)
+                    dbx <- ctx.sharedResources.flatMap(_.dropboxService)
+                  yield (ns, dbx)
+                  resources match
+                    case None =>
+                      bad("Device messaging is unavailable: NebLink/Dropbox services are not initialized (is NebLink enabled?).")
+                    case Some((ns, dbx)) =>
+                      ns.peers.flatMap(peers =>
+                        resolveDevice(q, peers) match
+                          case Left(err)      => IO.pure(Left(ToolError(s"${err.message}\n${deviceCandidates(peers)}")))
+                          case Right(peer)    => sendDevice(dbx, ns, peer, m, attachments.map(p => os.Path(PathUtil.expandTilde(p.trim), os.pwd)), ctx)
+                      )
+          case Right(ToKind.Friend(q)) =>
+            if attachments.nonEmpty then
+              bad(
+                "Attachments are not supported for friend targets yet: the NebLink server has no cross-account " +
+                  "attachment channel (pending cross-project batch 4b). Send text only, or use a `device:` target " +
+                  "for files."
+              )
+            else
+              service match
+                case None =>
+                  bad("Friend messaging is unavailable: NebLink friends service is not initialized.")
+                case Some(fs) =>
+                  message match
+                    case None => bad(s"Missing required parameter 'message'.")
+                    case Some(m) if m.isEmpty =>
+                      bad("'message' is empty — nothing to send.")
+                    case Some(m) if m.length > MaxMessageLength =>
+                      bad(s"Message too long (${m.length} chars, max $MaxMessageLength).")
+                    case Some(m) =>
+                      // refreshFriends() resolves to a snapshot directly (swallows
+                      // upstream errors into an empty list — acceptable: resolution
+                      // then reports "friend list is empty" with no candidates).
+                      // 该出口已由 FriendService.applyRemarks 注入本地备注 ⇒ L0 层与候选
+                      // 文案都读得到备注（⑦：工具侧零取数改动）。
+                      val prepared: IO[(Either[ToolError, FriendSummary], List[FriendSummary])] =
+                        fs.refreshFriends().map(resp => resolveFriend(q, resp.friends) -> resp.friends)
+                      prepared.flatMap {
+                        case (Right(friend), _) => sendTo(fs, friend, m, ctx)
+                        case (Left(err), friends) =>
+                          // L0–L3 全未命中 ⇒ 走 L4 邮箱 α（仅失败路径，+1 次上游往返）。
+                          // 命中且能回映射成好友 ⇒ 发送；否则（miss / 上游故障 / 非好友）
+                          // 回落**原样**的 not-found + 候选错误（不升格、不回显 query）。
+                          lookupFriendBySearch(fs, t, friends).flatMap {
+                            case Some(friend) => sendTo(fs, friend, m, ctx)
+                            case None         => IO.pure(Left(err))
+                          }
+                      }
     end match
   end call
 
   def summarize(input: JsonObject): String =
     val to = input("to").flatMap(_.asString).getOrElse("?")
-    s"SendMessage(to=$to)"
+    val n  = input("attachments").flatMap(_.asArray).map(_.size).getOrElse(0)
+    if n > 0 then s"SendMessage(to=$to, attachments=$n)" else s"SendMessage(to=$to)"
 
   def summarizeResult(input: JsonObject, result: String): String = result
 end FriendMessageTool

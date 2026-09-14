@@ -116,14 +116,16 @@ class ImageAttachSpec extends CatsEffectSuite:
       case Right(_) => fail("expected absolute-path error")
     }
 
-  test("resolveImages: remote device path (Windows drive) rejected with TransferFile hint"):
+  test("resolveImages: remote device path (Windows drive) rejected with SendMessage device-target hint"):
     ImageInject.resolveImages(List("""C:\Users\Kai\shot.png""")).map {
       case Left(err) =>
         // PathUtil.isAbsolute accepts drive letters, so the error surfaces at
-        // the existence check — enriched with D2's remote guidance.
+        // the existence check — enriched with D2's remote guidance. U-7（#145
+        // 2026-09-14）：指路文案从退役的 TransferFile 改为 SendMessage 设备附件腿。
         assert(err.message.contains("does not exist"))
         assert(err.message.contains("remote device paths are not supported"))
-        assert(err.message.contains("TransferFile"))
+        assert(err.message.contains("SendMessage"))
+        assert(!err.message.contains("TransferFile"))
       case Right(_) => fail("expected remote-path error")
     }
 

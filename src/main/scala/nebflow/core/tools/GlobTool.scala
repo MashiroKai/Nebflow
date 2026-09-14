@@ -111,8 +111,8 @@ object GlobTool extends Tool:
     // pattern 静态前缀 → 搜索根（20260903 Glob 修复）：静态前缀（首个 glob 字符
     // 前的目录部分，如 "src/main/resources/web/js"）含 "/" 时旧实现走 os-lib 单段
     // `/` 拼接 → InvalidSegment 崩（description 鼓励的 "src/**/*.ts" 写法自身必崩，
-    // 当日 5 崩实锤）→ 改 os.RelPath 多段构造（项目先例 TransferFileTool ×6 /
-    // PathUtil.resolvePath:99）。注意：os.RelPath 把 ".." 解析为 Up 段（允许逃逸，
+    // 当日 5 崩实锤）→ 改 os.RelPath 多段构造（os-lib 单段 `/` 拼接对多段相对
+    // 路径必崩；同款多段构造先例见 PathUtil.resolvePath:99）。注意：os.RelPath 把 ".." 解析为 Up 段（允许逃逸，
     // 中段 ".." 被 NIO normalize 静默折叠），与旧行为（拒）不符 → 构造前显式拒绝
     // ".." 段并给可行动文案。"．" 段由 RelPath 归一（放宽无害——搜索根仍过
     // §A.3 沙箱读闸门 canonicalize + readableRoots contain，2026-09-06 读宽批

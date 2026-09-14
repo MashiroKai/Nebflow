@@ -189,7 +189,7 @@ object ImageInject:
       if !Files.exists(filePath) then
         val hint =
           if looksRemote(path) then
-            " — remote device paths are not supported as attachments. Copy the file to this machine first (e.g. TransferFile), or reference the path in your message text."
+            " — remote device paths are not supported as attachments. Copy the file to this machine first (e.g. SendMessage with a `device:` target and `attachments`), or reference the path in your message text."
           else ""
         Left(ToolError(s"Attachment does not exist: $path$hint"))
       else if Files.isDirectory(filePath) then Left(ToolError(s"Attachment is a directory, not a file: $path"))
