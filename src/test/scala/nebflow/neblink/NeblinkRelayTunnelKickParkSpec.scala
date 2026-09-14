@@ -114,6 +114,47 @@ class NeblinkRelayTunnelKickParkSpec extends CatsEffectSuite:
   private def withFixture[A](body: RelayAuthFixtureServer => IO[A]): IO[A] =
     IO.blocking(new RelayAuthFixtureServer()).flatMap(f => body(f).guarantee(IO.blocking(f.close())))
 
+  /** r2 新增装配（生产同形）：自动登录门 `autoLoginParked = IO(ms.kickParked)` +
+    * 真 silent-re-login 钩子 + 存量 refresh 凭据 + 真 deviceToken ⇒ **register 腿在
+    * 解除停摆后确实能走通**（否则「显式登录解除停摆」这一态只是空断言）。
+    *
+    * 与既有 `withStack` 并列而非改写：既有三条已通过（复核位要点 2/3①）的钉逐字保留。 */
+  private def withGatedStack[A](
+    fix: RelayAuthFixtureServer
+  )(body: (NeblinkService, NeblinkClient, NeblinkRelayTunnel, String) => IO[A]): IO[A] =
+    Dispatcher.parallel[IO].use { dispatcher =>
+      for
+        ms <- NeblinkService.create(0, dispatcher)
+        id <- ms.identity
+        dev = id.deviceId
+        dtok <- IO(fix.registerDevice(dev, Net))
+        cfg = NeblinkServerConfig(url = fix.url, networkId = Net, secret = "qa-secret", deviceToken = Some(dtok))
+        client = new NeblinkClient(
+          cfg,
+          0,
+          onDeviceTokenRejected = Some(
+            LogtoSilentRelogin.make(ms, IO.pure(Option.empty[NeblinkDiscovery]), 0, IO.pure(fix.url))
+          ),
+          identity = Some(IO.pure(DeviceIdentity(dev, "qa-host", "macos"))),
+          autoLoginParked = IO(ms.kickParked)
+        )
+        _ = ms.setRelayClient(Some(client))
+        _ <- ms.updateConfig(_.copy(
+          enabled = true,
+          neblinkServer = Some(cfg),
+          logto = Some(LogtoConfig(endpoint = fix.url, clientId = "", pkceClientId = Some("mock-pkce")))
+        ))
+        _ <- DeviceCredential.save(
+          DeviceCredential(fix.url, Net, dev, dtok, LogtoRefresh.of(Some("mock-refresh"), None))
+        )
+        _ <- client.login(dev, "qa-host", "macos", Nil)
+        tunnel = new NeblinkRelayTunnel(ms, () => IO(client.currentSessionToken))(dispatcher)
+        _ = ms.setRelayTunnel(tunnel)
+        fiber <- tunnel.connect().start
+        out <- body(ms, client, tunnel, dev).guarantee(fiber.cancel *> tunnel.stop())
+      yield out
+    }
+
   // ── ① + ②：帧 ⇒ 提示发射 + 停摆（零自动重连/重注册）──────
 
   test("kick: a server `disconnect` frame emits the passive notice AND parks reconnects (zero attempts, zero re-login)") {
@@ -213,6 +254,67 @@ class NeblinkRelayTunnelKickParkSpec extends CatsEffectSuite:
           // 幂等：再次调用不产生副作用
           _ <- tunnel.resumeAfterUserLogin()
           _ <- IO(assertEquals(tunnel.parkedAfterKick, false))
+        yield ()
+      }
+    }
+  }
+
+  // ── 三态同测（r2 返工面 1/2/3）：门在 register 之前 ∧ 自动腿必被拒 ∧ 显式登录可入网 ──
+  //
+  // 覆盖的失败点（复核位判词 §3②）：r1 只堵了隧道腿，**自动重注册腿**（心跳 401 →
+  // `NeblinkClient.doLogin` → `LogtoSilentRelogin.register`）未被堵。本钉用真帧
+  // （`disconnect`）驱动停摆，然后**分别**读两条自动腿与唯一解除口。
+
+  test("kick: while parked the automatic legs are refused with ZERO HTTP; an explicit user login releases them and the register leg runs again") {
+    withFixture { fix =>
+      withGatedStack(fix) { (ms, client, tunnel, dev) =>
+        for
+          up <- waitUntil(5.seconds)(IO(fix.attemptCount(101) >= 1))
+          _ <- IO(assert(up, s"baseline: the relay tunnel must be up (${fix.relayAttempts})"))
+          regBefore <- IO(fix.registerCount)
+          loginsBefore <- IO(fix.loginCalls.size())
+          // 生产同形被踢：同 (deviceId, network) 的新注册（覆盖凭据 + 踢旧会话）
+          // 然后服务端推 `disconnect` 帧并断 WS。
+          _ <- IO(fix.registerDevice(dev, Net))
+          _ <- IO(fix.sendTextToRelay("""{"type":"disconnect"}"""))
+          _ <- IO(fix.closeRelaySocketsGracefully())
+          parked <- waitUntil(5.seconds)(IO(tunnel.parkedAfterKick))
+          _ <- IO(assert(parked, "a server-forced `disconnect` must park the tunnel"))
+          // ① 停摆位跨腿可读：`NeblinkService` 是唯一真值源（不是隧道私有态）
+          _ <- IO(assert(ms.kickParked, "the park must be visible on the enrollment throat (NeblinkService)"))
+          _ <- IO(assert(ms.kickParkedAtMs == tunnel.signedOutElsewhereAt, "one truth for both readers"))
+          // ② 自动腿 A：single-flight 自愈入口 —— 必须被拒且**零 HTTP**
+          healed <- client.ensureFreshSession("spec-parked")
+          _ <- IO(assertEquals(healed, false, "the self-heal entry must report failure while parked"))
+          // ② 自动腿 B：心跳失效后的 re-login（`discover` 的落点）—— 必须被拒且零 HTTP
+          relogin <- client.login(dev, "qa-host", "macos", Nil)
+          _ <- IO(assert(relogin.isLeft, s"the automatic re-login must be refused while parked, got $relogin"))
+          _ <- IO.sleep(2.seconds)
+          loginsAfter <- IO(fix.loginCalls.size())
+          _ <- IO(
+            println(
+              s"[kick-nail/gates] parked logins=$loginsBefore→$loginsAfter registers=$regBefore→${fix.registerCount} " +
+                s"tokens=${fix.tokenCalls.get()} sessionRejections=${fix.sessionRejections.get()}"
+            )
+          )
+          _ <- IO(
+            assertEquals(loginsAfter, loginsBefore, "while parked the client must issue ZERO login/session requests")
+          )
+          _ <- IO(assertEquals(fix.registerCount, regBefore, "while parked no device re-registration may be sent"))
+          _ <- IO(assertEquals(fix.tokenCalls.get(), 0, "while parked the refresh leg must not even be entered"))
+          // ③ 唯一解除口 = 用户显式再登录 ⇒ 自动腿恢复（register 真的能发出去）
+          _ <- tunnel.resumeAfterUserLogin()
+          lifted <- waitUntil(5.seconds)(IO(!ms.kickParked))
+          _ <- IO(assert(lifted, "an explicit user login must lift the park"))
+          _ <- client.discover(dev, "qa-host", "macos", Nil).attempt.void
+          registered <- waitUntil(25.seconds)(IO(fix.registerCount > regBefore))
+          _ <- IO(
+            assert(
+              registered,
+              s"after the park is lifted the automatic leg must be able to re-register " +
+                s"(registers=$regBefore→${fix.registerCount}, sessionRejections=${fix.sessionRejections.get()})"
+            )
+          )
         yield ()
       }
     }
