@@ -31,7 +31,7 @@ fork 出的 sbt/java 子进程 **cmdline 不含项目路径**——按端口或�
 验证冒烟/沙盒运行是否泄漏进真实数据根（如 ~/.nebflow）时，三角定位三个独立信号，单一信号可被欺骗（env 缺失、cwd-relative fallback、静默回退链），三信号一致才算隔离：
 
 1. **源码 data-root 优先级**：flag override > env/home > default，确认实际取哪个
-2. **实例日志 config provenance**：从实例日志的模型/上下文窗口值反推它读了哪个 home（先例：日志出现 `paid/paid-model` 而真实 home 默认是 `107/glm-5.2-107`，证明非真实 home）
+2. **实例日志 config provenance**：从实例日志的模型/上下文窗口值反推它读了哪个 home（先例：日志出现 `paid/paid-model` 而真实 home 默认是 `<gateway-alias>/glm-5.2`，证明非真实 home）
 3. **字节级对比**：`cmp` real-home vs test-home 关键文件 + 扫 cwd 残留（`ls ~ | grep <artifact>`）
 
 ## 4. 易失证据通道的替代法证
@@ -67,7 +67,7 @@ fork 出的 sbt/java 子进程 **cmdline 不含项目路径**——按端口或�
 ## Evidence
 
 - issue #31 冒烟：smoke.log/mock.log 0 字节但验收不降级——msg[6] 双结果注入 + msg[7] 42ms 触发 + fast=completed/stall=failed(2 restarts=maxRestarts) 三重持久化证据链；qa 复核采用同一法证路径通过。
-- Nebflow cold-start 冒烟：`cmp /tmp/nb-s3-smoke/home/auth.json ~/.nebflow/auth.json` → "differ: char 2"；实例日志 "Context window: 128000 tokens (from paid/paid-model)" 不可能来自真实 home（默认 107/glm-5.2-107）；cwd 扫无 stray auth.json——三信号一致证明隔离。
+- Nebflow cold-start 冒烟：`cmp /tmp/nb-s3-smoke/home/auth.json ~/.nebflow/auth.json` → "differ: char 2"；实例日志 "Context window: 128000 tokens (from paid/paid-model)" 不可能来自真实 home（默认 <gateway-alias>/glm-5.2）；cwd 扫无 stray auth.json——三信号一致证明隔离。
 - qwen 碎片聚合修复交验：真实端点本轮只发 name 缺失形态，name:"" 延续帧未触发；以 sendMessageStream 生产帧序回放 spec + 变异验红×2 钉死聚合路径，负例以实例日志 0 条退役串验证。
 - #31 对偶：stdout 因 SIGKILL 块缓冲全丢，改用持久化产物核验——两案共同模式：证据不依赖单一易失通道。
 - 大合并关卡：/tmp/nb-final-gate worktree + 8097 端口 + nohup + kill PID + lsof 双保险，全链路零冲突。

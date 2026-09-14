@@ -9,7 +9,7 @@ import scala.math.Ordering.Implicits.infixOrderingOps
 /** 合并窗 FIFO 互斥策略（**mergefifo-engine 批** 2026-09-13，作者 A-4 裁决收窄落地）。
   *
   * 真源（设计与规格的关系，逐字沿设计件 §11 A-8）：
-  *   - 设计件（人类可读、决策依据）= `~/.nebflow/docs/Nebflow/20260913_200701_mergefifo-design__chain-n-239b5692.md`；
+  *   - 设计件（人类可读、决策依据）= mergefifo 设计件（内部留档）；
   *   - 规格件（引擎运行期消费 / 派发引用的唯一真源）= `.nebflow/Spec/20260913_merge-window-fifo.md`。
   *
   * 作者原话（逐字）：「**每个项目 git 目录下，只能同时有一个合并节点在工作。**」

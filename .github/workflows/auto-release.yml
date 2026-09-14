@@ -9,7 +9,7 @@ name: Auto Release
 # once the `if: false` lines are removed, dry_run=true exercises the full
 # packaging matrix (build+test+packagers) without tag/release/COS side
 # effects — the pre-flight validator for unsealing.
-# See .nebflow/Spec/desktop-trust-and-icp-filing-plan.md for restore gates.
+# See the desktop trust-chain / ICP filing design note for restore gates.
 # ============================================================================
 
 on:

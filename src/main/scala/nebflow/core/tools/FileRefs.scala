@@ -92,7 +92,7 @@ private[tools] object FileRefs:
    * sandboxed iframe resolved it against about:srcdoc → 404 → an invisible
    * blank box, and the tool result said nothing at all. The author hit
    * exactly that with `<img src="~/projects/gamma-telescope/reports/…svg">`
-   * (empirical chain: `.nebflow/evidence/20260911_carderr-impl/`). Every
+   * (empirical chain: the carderr batch evidence set). Every
    * rejection is now reported in the tool result under `warnings`.
    *
    * NOTE — `out-of-proxy-root` is deliberately NOT a member of this enum:

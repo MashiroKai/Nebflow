@@ -57,6 +57,20 @@ jobs:
         # network, no credentials.
         # Same logic locally: node scripts/check-provider-modellist.mjs
         run: node scripts/check-provider-modellist.mjs
+      - name: Local coupling (no contributor-machine identifiers in the ship face)
+        # Gate #491 (author-approved 2026-09-14). The ship face (src/main/**,
+        # build/packaging scripts, .github/workflows/**, README.md) must not carry
+        # a contributor's own machine/user identity. The judgement source is the
+        # STRICT layer of scripts/user-knowledge-patterns.txt, parsed at run time
+        # (no parallel pattern list here); the executing machine's own HOME
+        # basename / hostname / whoami are derived at run time too, so the gate
+        # defends on every contributor's machine, not only the author's. `\b` is
+        # never handed to a platform ERE (that dialect silently reports zero
+        # hits), and a positive probe must hit before "no hits" is trusted.
+        # src/test/** is reported as a warning only; vendor/ is exempt.
+        # Exit code != 0 = hit.
+        # Same logic locally: node scripts/check-local-coupling.mjs
+        run: node scripts/check-local-coupling.mjs
 
   user-knowledge-gate:
     name: User Knowledge Gate (#338)

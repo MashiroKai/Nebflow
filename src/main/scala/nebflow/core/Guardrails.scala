@@ -4,7 +4,7 @@ import cats.effect.IO
 
 /**
  * 专用化改造·轨道二（引擎护栏）— team task #5（设计基线
- * docs/Nebflow/20260827_dedicated-agents-taxonomy-design.md §C）。
+ * dedicated-agents-taxonomy 设计件 §C）。
  *
  * 2026-08-27 用户裁定：flow 与 team 的 agent 应是专门定义，尽量不从全局
  * standalone 取用；被复用进流水线的节点在错位人设下会做出面向用户的表演性

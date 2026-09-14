@@ -10,7 +10,7 @@ import nebflow.core.entity.NodeRoute.{Goto, Parallel, ParallelDynamic, Return, S
  * 类型（E-3xx）→ agent 存在性。运行时只留动态判定（verdict 值、slots
  * 值、maxLoop、onError 分支）。
  *
- * 设计文档：~/.nebflow/docs/Nebflow/20260826_flow-dag-compiler-design.md
+ * 设计文档：flow-dag-compiler 设计件（内部留档）
  * （commit 92eca5e，36 错误码三层体系，冻结）。
  *
  * 组合复用：结构规则调用 FlowStructure.validate（不复制逻辑），结果码化

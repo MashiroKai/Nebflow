@@ -7,7 +7,7 @@ import nebflow.core.tools.ToolContext
  * per-task 容器生命周期**骨架**（沙箱统一底座设计方案 §2.3 / §4-T6，2026-09-11 实施批）。
  *
  * 权威源：
- *  - 状态机 = `~/.nebflow/docs/Nebflow/20260910_沙箱统一底座设计方案.md` §2.3（=
+ *  - 状态机 = 沙箱统一底座设计方案 §2.3（=
  *    `20260907_sandbox-capability-integration.md` §1.2 底座定义，v1 不变）。
  *  - 双 TTL 参数 = 同方案 §2.3 L3 + §3 D2（**D2 已按 Q4 裁定：结构上先行采纳 D2-b
  *    双 TTL（idle 15m + hard 2h），具体数值待 D2 拍板**）。

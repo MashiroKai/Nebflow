@@ -503,7 +503,7 @@ private[agent] trait AgentCore:
 
   // ============================================================
   // Reminder refactor (2026-08-20, user ruling — audit
-  // docs/Nebflow/20260820_system-reminder-audit.md):
+  // system-reminder audit 设计件):
   // time/tasks injection gating + tasks delta state.
   // ============================================================
 
@@ -665,7 +665,7 @@ private[agent] trait AgentCore:
           // the tasks delta back to a full render (2026-08-20 refactor).
           isLifecycleRebuild = isCompactTurn || stateForLlm.cachedSystemStable.isEmpty
           // Reminder refactor (2026-08-20, user ruling — see
-          // docs/Nebflow/20260820_system-reminder-audit.md): "real user turn"
+          // system-reminder audit 设计件): "real user turn"
           // means the triggering message was typed by the user (source=None).
           // Tool-injected User messages (mail/mail-queue/skill/flow/external)
           // carry a source marker — system-event turns. time fires on system
@@ -873,7 +873,7 @@ private[agent] trait AgentCore:
           // 冷启动路由已删除（2026-08-19 用户裁决：「这是错误的，按 preset」）：
           // 它把闲置唤醒/重启后的第一发改道到 LowCost preset，偏离用户设置的
           // preset 链。模型选择现在严格 = freshDef.model（preset 解析结果）。
-          // #341 工具结果 TTL 清理（docs/Nebflow/20260820_tool-result-ttl.md）：
+          // #341 工具结果 TTL 清理（tool-result-ttl 设计件）：
           // REQUEST-ONLY——只作用于本次请求的消息副本，stateWithReminder 与
           // 落盘会话零改动（语义三分：显示/LLM 上下文/会话文件）。门控与
           // FastMicroCompact 相同的 turn 排除（压缩/存档/ask 需要全量输入）；

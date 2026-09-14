@@ -344,7 +344,7 @@ detect_region() {
             ;;
     esac
 
-    # Method 2: check LANG/LC_ALL for zh_CN
+    # Method 2: check LANG/LC_ALL for a zh_* locale
     case "${LANG:-}${LC_ALL:-}" in
         *zh_CN*|*zh_TW*|*zh_HK*)
             REGION="cn"
@@ -420,16 +420,16 @@ java_manual_hint() {
     log_err "Then re-run this installer."
 }
 
-# Region-gated Homebrew mirror combo (cn): the mirror installer only solves
-# step 1 (bootstrap); brew's own git repos must also point at the TUNA
-# mirror, and the bottle domain redirects package payloads. All three are
+# Region-gated Homebrew source combo (cn): the installer bootstrap only solves
+# step 1 (bootstrap); brew's own git repos are pinned to the official
+# upstreams, and the bottle domain redirects package payloads. All three are
 # environment variables consumed by brew at runtime.
 configure_homebrew_mirrors() {
     if [ "$REGION" = "cn" ]; then
-        export HOMEBREW_BREW_GIT_REMOTE="https://mirrors.tuna.tsinghua.edu.cn/git/homebrew/brew.git"
-        export HOMEBREW_CORE_GIT_REMOTE="https://mirrors.tuna.tsinghua.edu.cn/git/homebrew/homebrew-core.git"
-        export HOMEBREW_BOTTLE_DOMAIN="https://mirrors.tuna.tsinghua.edu.cn/homebrew-bottles"
-        log_v "Homebrew cn mirrors set (brew/core git remotes + bottle domain: TUNA)"
+        export HOMEBREW_BREW_GIT_REMOTE="https://github.com/Homebrew/brew.git"
+        export HOMEBREW_CORE_GIT_REMOTE="https://github.com/Homebrew/homebrew-core.git"
+        export HOMEBREW_BOTTLE_DOMAIN="https://ghcr.io/v2/homebrew/core"
+        log_v "Homebrew git remotes + bottle domain set (official upstreams)"
     fi
 }
 
@@ -452,11 +452,11 @@ ensure_brew() {
             "${COS_DEPS_BASE}/homebrew-install.sh" -o "$tmp_installer" 2>/dev/null; then
             if bash "$tmp_installer"; then installer_done=1; fi
         fi
-        # 2) TUNA git mirror of the installer repo
+        # 2) git clone of the installer repo
         if [ "$installer_done" = "0" ] && command -v git > /dev/null 2>&1; then
-            log_i "Fetching Homebrew installer from TUNA mirror (cn)..."
+            log_i "Fetching Homebrew installer via git clone (cn)..."
             rm -rf /tmp/${LOWER_NAME}-homebrew-install
-            if git clone --depth 1 https://mirrors.tuna.tsinghua.edu.cn/git/homebrew/install.git \
+            if git clone --depth 1 https://github.com/Homebrew/install.git \
                 /tmp/${LOWER_NAME}-homebrew-install > /dev/null 2>&1; then
                 if bash /tmp/${LOWER_NAME}-homebrew-install/install.sh; then installer_done=1; fi
                 rm -rf /tmp/${LOWER_NAME}-homebrew-install

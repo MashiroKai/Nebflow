@@ -68,7 +68,7 @@ object SystemReminders:
    * semantics (任务 O).
    *
    * Reminder refactor (2026-08-20, user ruling — audit
-   * docs/Nebflow/20260820_system-reminder-audit.md, 44K token/半天 waste):
+   * system-reminder audit 设计件, 44K token/半天 waste):
    *  - time: injected on real-user turns always; on system-event turns
    *    (mail/external/skill injections) at most once per hour — the caller
    *    passes `injectTime` after checking the gap.

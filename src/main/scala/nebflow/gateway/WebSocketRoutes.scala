@@ -4481,7 +4481,12 @@ class WebSocketRoutes(
     val safeName = name.replaceAll("[/\\\\]", "_").replace("..", "_")
     try
       val cmd = Seq("mdfind", "-name", safeName)
-      val output = scala.sys.process.Process(cmd).!!
+      // Platform gate (P13): `mdfind` ships on macOS only — off macOS the
+      // Spotlight fallback is a bounded no-op instead of a failing spawn.
+      val output =
+        if sys.props.getOrElse("os.name", "").toLowerCase.contains("mac") then
+          scala.sys.process.Process(cmd).!!
+        else ""
       val lines = output.trim.split("\n").iterator.filter(_.nonEmpty)
       // Filter by size (cheap), then verify hash (expensive)
       lines.find { line =>

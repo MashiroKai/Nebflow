@@ -8,7 +8,7 @@ import nebflow.shared.Defaults
 
 /**
  * ProjectCrashRecovery —— boot-time 崩溃断点恢复 sweep（crash-recovery 批 2026-09-07，
- * 设计 .nebflow/Spec/20260907_boot-time-crash-recovery.md §3）。
+ * 设计 boot-time-crash-recovery 设计件 §3）。
  *
  * 挂载点（GatewayMain boot 链）：`startupMount *> projectCrashSweep *> projectTtlScanner`
  * ——快段（分类+认领）同步秒级完成、必须先于 TtlTick 首拍（+30s）：被认领节点即刻

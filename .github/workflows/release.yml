@@ -9,7 +9,7 @@ name: Beta Release
 # comment-disabling, keeps YAML valid and reviewable; restore = remove one
 # line per job). The `release` job's `needs` is narrowed to build-jar so the
 # jar line (tag / GH Release / COS jar+pointer upload) keeps flowing.
-# Restore conditions (see .nebflow/Spec/desktop-trust-and-icp-filing-plan.md):
+# Restore conditions (see the desktop trust-chain / ICP filing design note):
 #   macOS  = Apple Developer ID + CI notarytool/stapler integration
 #   Windows = Certum cert + CI signtool/TSA integration (+ SmartScreen warmup)
 # Restore actions = drop `if: false`, restore needs list, re-enable the four

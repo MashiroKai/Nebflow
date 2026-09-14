@@ -461,8 +461,8 @@ export function attachToolClick(card) {
  * The unit is the author's "一行气泡高度" (the bubble itself, not the row
  * box), floored to the integer 44.
  *
- * Readings: .nebflow/evidence/20260911_fpo/row-px-baseline.json (baseline
- * resources) and .nebflow/evidence/20260911_fpo/fixed-results.json
+ * Readings: the fpo batch row-px-baseline.json (baseline
+ * resources) and the fpo batch fixed-results.json
  * (`m1_measure`) — the fixed arm re-measures the same values.
  *
  * Semantics: distance-to-bottom below this = "still at the bottom" → the

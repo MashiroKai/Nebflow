@@ -13,7 +13,7 @@ import nebflow.core.NebflowLogger
  * AC+PKCE) hot-swaps the client (`NeblinkEnrollment.persist` →
  * `NeblinkDiscovery.setClient`) but never re-creates the friend domain, so all
  * 16 `/api/friends*` REST sites kept answering 404 `NebLink not enabled` until
- * a process restart (evidence: `.nebflow/evidence/frienddiag/20260911_closeout-verdict.md`).
+ * a process restart (evidence: the frienddiag closeout verdict).
  *
  * `FriendService` itself was already per-call live (`currentClient`, F1 of the
  * 2026-09-10 batch) — only the "does it exist at all" judgement was snapshotted.

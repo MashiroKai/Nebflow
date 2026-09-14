@@ -665,7 +665,7 @@ object LlmLogWriter:
     * 写入开关的默认关**顺带挡住**；本批把回收从写入开关解耦后，这条顺带保护消失 ⇒
     * 实测后果：一次 `sbt testOnly` 在 2026-09-13 09:54:42 删掉了生产
     * `logs/router/2026-09-09_{full,sse,summary}.jsonl`（1.7468 GiB，不可恢复；
-    * 详见 `.nebflow/evidence/20260913_091215_llmlogprune-impl/INCIDENT-objects-restore.md`
+    * 详见 llmlogprune 批事故取证 INCIDENT-objects-restore（内部留档）
     * 与同目录 incident #2 记录）。武装位把「破坏性回收」绑定到**实例生命周期**这一正确
     * 轴（谁是实例谁回收），而不是绑定回写入开关。 */
   private val retentionArmed = java.util.concurrent.atomic.AtomicBoolean(false)
@@ -857,7 +857,7 @@ object LlmLogWriter:
     * `objectsDir` **必须**是调用方传入的那个（与 `retentionRound(dir, …)` 同一目录）：
     * 一旦写成模块级 `objectsDir`，任何用临时目录驱动本函数的 spec 都会去删**真实
     * 生产** `~/.nebflow/logs/router/objects`（2026-09-13 09:46:49 实测事故——已完整
-    * 恢复，见 `.nebflow/evidence/20260913_091215_llmlogprune-impl/INCIDENT-objects-restore.md`）。
+    * 恢复，见 llmlogprune 批事故取证 INCIDENT-objects-restore（内部留档））。
     *
     * `notAfterMs` = 本次 pass 的起始时刻，是**增量扫描的正确性要件**：跨轮扫描期间
     * 新写入的对象（mtime 晚于 pass 起点）一律留到下一轮/次日——append-only 文件的

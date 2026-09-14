@@ -83,7 +83,7 @@ object PluginRegistry:
     * 通道关闭（否则「第三方包声明 org.nebflow/tools:["Pop"]」可绕过
     * AgentCore.NebulaExclusiveTools 的剥离面，把 Pop 发回任意节点）。实测对既有
     * 插件零影响：全部 plugin.json 与 org.nebflow/tools.json 无一授予 builtin
-    * 工具（证据见 .nebflow/evidence/20260910_pop-nebula-exclusive/plugin-tools-scan.txt）。 */
+    * 工具（证据见 pop-nebula-exclusive 批 plugin-tools-scan 留档）。 */
   val BuiltinToolWhitelist: Set[String] = Set("WebSearch", "WebFetch", "Curl")
 
   /** §5.2 canonical manifest $schema（Agent Plugins 1.0.0）。缺失/非 canonical

@@ -1119,7 +1119,7 @@ class NodeEngine(
   // 二者都造不出 prunable 签名。候选路径（D-1 agent/分发器手工 `rm -rf`、D-2 UI
   // file-explorer `os.remove.all`，见 `WebSocketRoutes.deletePath`）只作**机制类**候选
   // 并列，**不指认**任何具体要求责任人。取证全文 =
-  // `~/.nebflow/docs/Nebflow/20260913_100008_worktree-vanish-forensics.md`
+  // worktree-vanish-forensics 取证（内部留档）
   // （§1.2 机制 D / §1.4 未证清单 / §4.3 J1–J7 判据表 / §6.1 建议 1–4）。
   //
   // **② 补上可用信号**（原状：`TaskStuckWatcher` 类③ 注释自陈 `AgentRecord` 无 cwd

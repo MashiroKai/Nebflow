@@ -368,15 +368,15 @@ if ($javaVer -ge $JdkMajorRequired) {
         } catch {}
     }
 
-    # Method 2: direct Temurin 21 msi (COS mirror first, TUNA fallback)
+    # Method 2: direct Temurin 21 msi (COS mirror first, Adoptium API fallback)
     if (-not $jdkInstalled) {
         $jdkName = "OpenJDK21U-jdk_x64_windows_hotspot_21.0.12.1_1.msi"
         $jdkPath = "$env:TEMP\$jdkName"
         $jdkUrls = @(
             "$CosDepsBase/$jdkName",
-            "https://mirrors.tuna.tsinghua.edu.cn/Adoptium/21/jdk/x64/windows/$jdkName"
+            "https://api.adoptium.net/v3/binary/latest/21/ga/windows/x64/jdk/hotspot/normal/eclipse"
         )
-        Write-Info "Downloading Temurin JDK 21 msi (COS/TUNA)..."
+        Write-Info "Downloading Temurin JDK 21 msi (COS/Adoptium)..."
         if (Get-FileFromSources -Path $jdkPath -Name $jdkName -Urls $jdkUrls) {
             Write-Info "Installing JDK 21..."
             $proc = Start-Process msiexec.exe -ArgumentList "/i", $jdkPath, "/quiet", "ADDLOCAL=FeatureMain,FeatureEnvironment,FeatureJarFileRunWith" -Wait -PassThru
@@ -471,19 +471,17 @@ if (Test-GitBash) {
 
         # COS mirror is the primary source for every region (batch 2)
         if ($Region -eq "cn") {
-            # China: COS, then domestic mirrors, GitHub last
+            # China: COS, then proxied GitHub, then GitHub
             $gitMirrors = @(
                 "$CosDepsBase/$gitInstaller",
-                "https://registry.npmmirror.com/-/binary/git-for-windows/$gitTag/$gitInstaller",
                 "https://ghproxy.net/https://github.com/git-for-windows/git/releases/download/$gitTag/$gitInstaller",
                 "https://github.com/git-for-windows/git/releases/download/$gitTag/$gitInstaller"
             )
         } else {
-            # Global: COS, then GitHub, domestic mirror fallback
+            # Global: COS, then GitHub
             $gitMirrors = @(
                 "$CosDepsBase/$gitInstaller",
-                "https://github.com/git-for-windows/git/releases/download/$gitTag/$gitInstaller",
-                "https://registry.npmmirror.com/-/binary/git-for-windows/$gitTag/$gitInstaller"
+                "https://github.com/git-for-windows/git/releases/download/$gitTag/$gitInstaller"
             )
         }
 

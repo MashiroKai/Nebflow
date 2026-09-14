@@ -400,7 +400,7 @@ end PeerInfo
  * Rationale: a Tailscale address is reachable across networks by construction,
  * while a LAN address only works on the same link — in the incident the server
  * picked the LAN one and dialing it went out via the default gateway
- * (`route -n get 192.168.1.145` → `gateway 192.168.2.1`). Same-subnet `/24` is
+ * (`route -n get 192.0.2.145` → `gateway 198.51.100.1`). Same-subnet `/24` is
  * the next best guess when Tailscale is absent.
  *
  * Pure and side-effect free so the ordering is unit-testable without a network;
@@ -433,7 +433,7 @@ object EndpointPreference:
   def isTailscaleHost(host: String): Boolean =
     octets(host).exists(o => o(0) == 100 && o(1) >= 64 && o(1) <= 127)
 
-  /** `/24` prefix key (`"192.168.2."`) — the cheap "same LAN?" approximation. */
+  /** `/24` prefix key (`"198.51.100."`) — the cheap "same LAN?" approximation. */
   def subnet24(host: String): Option[String] =
     octets(host).map(o => s"${o(0)}.${o(1)}.${o(2)}.")
 

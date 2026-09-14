@@ -7,7 +7,7 @@ import io.circe.syntax.*
 import nebflow.core.project.{ProjectRuntime, TaskBoardHistory, TaskBoardStore}
 
 /**
- * TaskBoard 工具（TaskBoard 批 2 接线，规格 .nebflow/Spec/20260908_project-task-board.md
+ * TaskBoard 工具（TaskBoard 批 2 接线，规格 project-task-board 规格件
  * §1b/§1d/§1e/§2，2026-09-08）——项目内共享工作项看板的工具面。
  *
  * 定位：Flow Map 管节点（执行单元），TaskBoard 管任务（工作项）；语义与全局

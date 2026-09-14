@@ -29,8 +29,8 @@
 #     bash -c '. packaging/lib/delguard.sh; delguard_assert_paths probe "$HOME/x"; echo rc=$?'  # rc=1（拒，残②）
 #   DRY_RUN=1 packaging/build-dmg.sh --out build/dist      # 只跑断言 + 跳过删除
 #
-# 注：本文件的**运行期消息一律用 ASCII**。原因：本机 bash 5.3.9 + zh_CN.UTF-8 下，
-#     多字节字符紧邻变量展开时会发生字节丢失（`printf '%s\n' "（$v）"` → "（" 后的展开被吞），
+# 注：本文件的**运行期消息一律用 ASCII**。原因：在多字节区域设置（如 zh_*）+ 部分
+#     bash 版本下，多字节字符紧邻变量展开时会发生字节丢失（`printf '%s\n' "（$v）"` → "（" 后的展开被吞），
 #     纯文件内复现、LC_ALL=C 下正常。中文保留在注释里（不参与运行期字符串拼接）。
 # ----------------------------------------------------------------------------
 

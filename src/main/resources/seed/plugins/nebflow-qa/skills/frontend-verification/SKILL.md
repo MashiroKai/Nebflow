@@ -130,4 +130,4 @@ JS+CSS+i18n+WS 跨层改动按层验证，每层抓不同失败类，防 E2E 调
 - ice.webp 404：DOM 埋点+CDP initiator 全空，产物二分法一步锁定组件 JS 字面量为唯一数据源；descriptor=undefined 定案构建期静态重写。
 - #346 双轨：产出者 30/30 复跑全绿 + 独立 19/19 盲点（formatDuration="1m 33s" 字面量、10 工具归拢≤50ms、摘要条计算样式×5、E7/E8 排除）。
 - v5 阶段 0 旧面板 popover（#392）：初版浮层嵌 `#activity-bar` 内，DOM 断言全绿（`hidden===false`+blur(24px) 全过）但屏幕完全看不见——bar 是 `overflow:hidden`+`backdrop-filter` 的圆角卡，filter 使其成为 fixed 后代包含块，浮层被裁成 48px 一条（截图取证）。改挂 body + JS 锚定后，用「视口内有盒 + elementFromPoint 命中 + clearsBar」三连断言 48/48 全绿。
-- usage-display 复验 27/27：bogus qadown 秒挂后 fallback 107/deepseek-v4-flash-ascend，modelChanged 帧全部真实 wire 数据。
+- usage-display 复验 27/27：bogus qadown 秒挂后 fallback <gateway-alias>/deepseek-v4-flash-ascend，modelChanged 帧全部真实 wire 数据。

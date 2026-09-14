@@ -1,6 +1,6 @@
 package nebflow.core.project
 
-/** 合并节点策略（merge-node 批 20260905，方案 .nebflow/Spec/merge-node-plan.md）。
+/** 合并节点策略（merge-node 批 20260905，方案 merge-node-plan 方案件）。
   *
   * 背景：任务节点各自在 worktree/分支产出，completed 后产物滞留——落地全靠宿主
   * 手工 merge。机制：分发器把每批任务节点的 out 多对一接到同一「合并节点」
