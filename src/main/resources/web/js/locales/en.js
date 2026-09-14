@@ -230,6 +230,9 @@ export default {
   'messages.trustedHint': 'Trust is on: new messages are auto-forwarded to your agent',
   'messages.loadingOlder': 'Load earlier messages',
   'messages.loading': 'Loading…',
+  // ⑩ message-flow status row (the area is never blank): a cold-path empty
+  // response shows the empty state (not an endless spinner).
+  'messages.noMessages': 'No messages',
   'messages.loadOlderFailed': 'Could not load earlier messages — please retry',
   'messages.attachUnsupported': 'Attachments are not supported in friend messages yet',
   'messages.agentBadge': 'Sent by agent',
@@ -949,6 +952,10 @@ export default {
   'dropbox.tooManyFiles': 'Too many attachments: {actual} selected, limit is {limit}',
   'dropbox.fileTooLarge': 'File too large{name}: actual {actual} ({actualBytes} bytes), limit is {limit}',
   'dropbox.notConnected': 'Not connected to the gateway — the file was not sent; please retry',
+  // ⑩ message-area status row (the area is never blank): no local cache + request
+  // in flight ⇒ loading; no cache and no in-flight request ⇒ empty.
+  'dropbox.loadingMessages': 'Loading messages…',
+  'dropbox.noMessages': 'No messages',
 
   // === Chat History Search ===
   'search.btnTitle': 'Search chat history',

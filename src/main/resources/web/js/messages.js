@@ -27,6 +27,8 @@ import { TRUST_SEALED } from './featureFlags.js';
 import { bindImeGuard, isImeComposing } from './imeGuard.js';
 // 时制（12h/24h）：与主对话框/设备对话框共享同一偏好与同一实现。
 import { formatHm, bindTimeToggle, TIME_FORMAT_CHANGED } from './timeFormat.js';
+// ⑩ 合并期滚动位保持（与 Dropbox 面**共用一份实现**，无第二个公式）。
+import { preserveScrollAnchor } from './msgScrollAnchor.js';
 
 let conversations = [];
 let friendsCache = [];          // accepted friends — source of truth for §3.3 gate
@@ -480,6 +482,13 @@ async function openConversation(conversationId, rowEl) {
     return;
   }
 
+  // ⑩ 冷路径（无本地缓存）：**消息区不得空白**（作者 2026-09-14 17:21 令）。
+  // 立即插入可见加载态；随后仍是一次尾窗拉取（M6「冷缓存不倒退」基线不变：
+  // 本行只改「空窗期显示什么」，**不改门槛顺序、不缩短任何等待**）。
+  // 🔴 加载态**只**服务这一档 —— 有缓存时首帧来源是缓存本身，绝不进加载态，
+  // 否则就成了「用转圈掩盖慢」。
+  showFlowLoading();
+
   // ⑨ 冷路径（无缓存）：= 今天的行为，一次尾窗拉取（M6 冷缓存不倒退基线）。
   // Initial window: anchor on the conversation list's cached newest message id
   // and take one window backwards (after = anchor - WINDOW). Missing anchor
@@ -719,6 +728,7 @@ function keyedDiff(flow, msgs, conv) {
   const existing = new Map();
   for (const node of [...flow.children]) {
     if (node === loadMore) continue;
+    if (node.classList && node.classList.contains('fm-flow-status')) continue; // ⑩ 状态行不参与消息身份
     const id = node.dataset && node.dataset.messageId;
     if (id !== undefined && id !== null && id !== '') existing.set(String(id), /** @type {HTMLElement} */ (node));
   }
@@ -726,7 +736,8 @@ function keyedDiff(flow, msgs, conv) {
   for (const [k, node] of [...existing]) {
     if (!wanted.has(k)) { node.remove(); existing.delete(k); }
   }
-  let cursor = loadMore || null;
+  // 光标起点：按钮行优先，其次 ⑩ 状态行（两者都不参与排序，消息一律排在它们之后）。
+  let cursor = loadMore || flow.querySelector('.fm-flow-status') || null;
   for (const m of msgs) {
     const k = String(m.id);
     const reused = existing.get(k);
@@ -738,19 +749,56 @@ function keyedDiff(flow, msgs, conv) {
   }
 }
 
+/**
+ * ⑩ 消息流状态行 —— **消息区永不为空**（作者令「打开应该能够直接显示，而不是空白」）。
+ * 这是**唯一**的加载态入口，只有真正没有本地缓存的会话才会走到：
+ *  - `loading=true`  ⇒ 冷路径正在等尾窗回包（可见、带 `aria-busy`）；
+ *  - `loading=false` ⇒ 回包为空 ⇒ 空态（不是「永远转圈」）。
+ * 有缓存的会话首帧就是缓存消息本身 —— 状态行在 `renderMessages` 里被立即撤除。
+ */
+function renderFlowStatus(hasMsgs, loading) {
+  if (!modalEls) return;
+  const flow = modalEls.flow;
+  flow.querySelector('.fm-flow-status')?.remove();
+  if (hasMsgs) return;
+  const row = el('div', 'fm-flow-status');
+  if (loading) {
+    row.classList.add('loading');
+    row.setAttribute('aria-busy', 'true');
+    row.textContent = t('messages.loading');
+  } else {
+    row.classList.add('empty');
+    row.textContent = t('messages.noMessages');
+  }
+  flow.appendChild(row);
+}
+
+/** 冷路径入口：在等回包的那段窗口里给消息区一个非空、可见、可读屏的加载态。 */
+function showFlowLoading() {
+  renderFlowStatus(false, true);
+}
+
 function renderMessages(msgs, { stickBottom = true } = {}) {
   if (!modalEls) return;
   const conv = currentConv();
   if (!conv) return;
   const flow = modalEls.flow;
-  const prevHeight = flow.scrollHeight;
-  const prevTop = flow.scrollTop;
-  const atBottom = flow.scrollHeight - flow.scrollTop - flow.clientHeight <= 40;
-  updateLoadMoreRow();
-  keyedDiff(flow, msgs, conv);
-  createIconsIn(flow);
-  if (stickBottom || atBottom) flow.scrollTop = flow.scrollHeight;
-  else flow.scrollTop = prevTop + (flow.scrollHeight - prevHeight); // 阅读中：补偿高度，不拽回底部
+  const apply = () => {
+    updateLoadMoreRow();
+    renderFlowStatus(msgs.length > 0, false); // 内容到位 ⇒ 撤加载态；确为空 ⇒ 换空态
+    keyedDiff(flow, msgs, conv);
+    createIconsIn(flow);
+  };
+  if (stickBottom) {
+    // 开窗首帧 / 本机发送：钉到底部。
+    apply();
+    flow.scrollTop = flow.scrollHeight;
+    return;
+  }
+  // ⑩ 合并/增量路径（`appendMessages` 等）：以**可视锚点**为准补偿。
+  // 🔴 不再走 `scrollTop += 新高−旧高`：keyset 增量加在**下方**，该公式会把正在阅读
+  //    的用户整体下移一个增量高度（= 「同步到达就跳」）。两面共用一份实现。
+  preserveScrollAnchor(flow, apply, 'messageId');
 }
 
 /** ⑨ 增量补齐落到 DOM（保持窗口有序 + 阅读位置不跳）。

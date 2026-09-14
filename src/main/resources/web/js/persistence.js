@@ -8,6 +8,9 @@ import { key } from './branding.js';
 // （512 KB / 30 会话，见 fmMessageCache.js）——配额压力下**先丢它**，
 // session 缓存（用户主聊天）永远不是第一个牺牲品。单向依赖，无环。
 import { dropFriendMessageCache } from './fmMessageCache.js';
+// ⑩ Dropbox 消息缓存（fmDropboxCache.js）与好友消息缓存同为**纯缓存**：淘汰顺序里
+// 并列第一步，两者都先丢，绝不让它们挤掉会话缓存。
+import { dropDeviceMessageCache } from './fmDropboxCache.js';
 import { activeView } from './chatView.js';
 import { t } from './i18n.js';
 import { renderMarkdownWithMath, escapeHtml, smartScroll, buildToolDetail, buildDelegatePromptHtml, attachToolClick, esc, localizeToolLabel, localizeToolSummary, renderHighlightedContent } from './utils.js';
@@ -41,7 +44,9 @@ function safeSetItem(key, value) {
 function pruneAndRetrySetSessions(all, keepSid) {
   // ⑨ 淘汰顺序（作者 2026-09-12）：好友消息缓存 = 纯缓存，配额压力下先丢它；
   // 丢掉后能写进就**不剪 session**（剪的是用户的会话缓存，主聊天被伤不可接受）。
-  if (dropFriendMessageCache() && safeSetItem(LS_SESSIONS_KEY, JSON.stringify(all))) return true;
+  // ⑩ Dropbox 消息缓存同级（两面同为纯缓存，一次丢干净再重试写入）。
+  const droppedAny = dropFriendMessageCache() || dropDeviceMessageCache();
+  if (droppedAny && safeSetItem(LS_SESSIONS_KEY, JSON.stringify(all))) return true;
   const otherSids = Object.keys(all).filter(k => k !== keepSid);
   if (otherSids.length === 0) return false; // nothing to prune
   const removeCount = Math.ceil(otherSids.length / 2);
@@ -63,6 +68,7 @@ export function emergencyCacheCleanup() {
     // 先丢它再动 session 缓存 —— 否则好友缓存占满配额时，下面的
     // pruneAndRetrySetSessions 会去剪会话缓存（方案 §2.3 明确判定「不可接受」）。
     dropFriendMessageCache();
+    dropDeviceMessageCache(); // ⑩ 同级第一步：Dropbox 消息缓存（fmDropboxCache.js）
     console.debug('[persistence] cache size ' + Math.round(raw.length / 1024) + 'KB — running emergency cleanup');
     const all = JSON.parse(raw);
     // Re-sanitize every entry in every session and enforce message cap
