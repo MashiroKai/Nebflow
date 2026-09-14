@@ -730,6 +730,42 @@ function saveBlob(blob, filename) {
   setTimeout(() => URL.revokeObjectURL(url), 10000);
 }
 
+/** 整件 sha256（64 位小写 hex）。拿不到字节 / 无 WebCrypto（非安全上下文）⇒ `null`。
+ *
+ *  🔴 `null` 是**正确结果**而非降级：引擎侧见 `null` 即零 E4（fail-closed）——
+ *  「验证不了就不删服务端 blob」。「下载成功即视为落盘成功」的宽口径**不接受**。 */
+async function sha256HexOfBlob(blob) {
+  try {
+    const subtle = globalThis.crypto && globalThis.crypto.subtle;
+    if (!subtle || !blob || typeof blob.arrayBuffer !== 'function') return null;
+    const digest = await subtle.digest('SHA-256', await blob.arrayBuffer());
+    return Array.from(new Uint8Array(digest)).map(b => b.toString(16).padStart(2, '0')).join('');
+  } catch { return null; }
+}
+
+/** 4b1 · E4 取证 + 上报（UI 侧**唯一**回执调用点）。
+ *
+ *  §F.1b①「落盘成功」= 整件字节 ∧ 本地整件 sha256 == 服务端声明 digest。本函数**只取证**：
+ *   - 本地 digest = WebCrypto 自算（拿不到 ⇒ 上报 `null` ⇒ 引擎侧跳过 ⇒ 零 E4）；
+ *   - `landedFinal: true` 的**前提** = 本函数只在 `saveBlob` 正常返回后被调用（saveBlob 抛
+ *     ⇒ 走外层的 catch ⇒ 根本不进这里）⇒ 恒为「已交给保存」。
+ *  ⚠ 已登记的 provisional 偏差：本落点 = 浏览器/OS 下载管理器，页面**拿不到**保存成功回执
+ *  ⇒「最终位置 + fsync」不可证（补件批 4b1 证据件 `01-byte-landing-inventory.md`；root #524 log ④）。
+ *
+ *  全程 try/catch 吞异常 + 调用侧**不 await** ⇒ 用户面零影响（§F.1b 规则 4）。 */
+async function ackAttachmentLanded(att, blob) {
+  try {
+    const localSha = await sha256HexOfBlob(blob);
+    await api.ackAttachmentReceived(att && att.id, {
+      wholeSha256: localSha,
+      declaredSha256: (att && att.sha256) || '',
+      receivedBytes: blob && typeof blob.size === 'number' ? blob.size : null,
+      expectedBytes: att && typeof att.size === 'number' ? att.size : null,
+      landedFinal: true,
+    });
+  } catch { /* 静默：回执面永不影响用户 */ }
+}
+
 /** 单件卡片。`kind` 由元数据判定；下载失败**就地**改文案（可重试），
   * 410（服务端权威）**就地**升级为已过期（终态）。 */
 function attachmentCard(att) {
@@ -773,6 +809,9 @@ async function downloadAttachment(att, card, btn, note) {
     const { blob, filename } = await api.downloadAttachment(att.id);
     saveBlob(blob, filename || (att && att.name));
     note.textContent = t('messages.attachDownloaded');
+    // 4b1 · E4（§F.1b）：**落盘尝试完成之后**才取证回执（saveBlob 抛 ⇒ 走下面的 catch ⇒ 零 E4）。
+    // 🔴 `void` = 故意 **不 await**：回执面绝不阻塞/影响下载与 UI（失败静默容忍）。
+    void ackAttachmentLanded(att, blob);
   } catch (err) {
     if (err && err.status === 410) {
       // 服务端权威：元数据说 ready 但字节已按瞬态口径删除（§B.7 ③ 表）——
