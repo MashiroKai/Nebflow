@@ -11,7 +11,7 @@ import nebflow.shared.Defaults
 
 /**
  * 优雅关机「排水中」标志（中断恢复语义批 2026-09-13，spec
- * `.nebflow/Spec/20260908_interrupt-recovery-semantics.md` §2.3）。
+ * interrupt-recovery-semantics 规格件（内部留档） §2.3）。
  *
  * 语义 = 「进程正在优雅关机」这一瞬态事实的进程内单点。置位后：
  *   - `NodeEngine.failNode` / `NodeEngine.autoFailDeadRunning` 头部守卫拒绝写 failed

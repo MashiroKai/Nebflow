@@ -14,7 +14,7 @@ import nebflow.core.tools.ToolError
 
 /**
  * TaskBoardStore —— 项目任务板存储（TaskBoard 设计规格 §1f/§1g/§2，2026-09-08，
- * 规格稿 .nebflow/Spec/20260908_project-task-board.md）。批 1 纯引擎层：store +
+ * 规格稿 project-task-board 规格件（内部留档））。批 1 纯引擎层：store +
  * renderer + 单测，零接线（工具面/注入/权限判定全归批 2）。
  *
  * 定位：项目内共享工作项看板的持久层——Flow Map 管节点（执行单元），TaskBoard 管

@@ -59,7 +59,7 @@ object SearchRoute:
   case object BuiltinAggregated extends SearchRoute
 end SearchRoute
 
-/** WebSearch productization, P0 (docs/Nebflow/20260823_websearch-audit-and-plan.md).
+/** WebSearch productization, P0 (websearch audit-and-plan design note).
   *
   * Resolution chain for who actually executes a web search:
   *

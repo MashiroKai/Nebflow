@@ -34,7 +34,7 @@ import java.util.EnumSet
   * injectable `osName` string — branch-selection tests run on any host. The
   * Windows *mechanism* itself is NOT executed anywhere in this batch (Q7); the
   * residual is recorded in
-  * `.nebflow/evidence/20260911_sandbox-minimal-set/T3/`.
+  * sandbox-minimal-set 批 T3 证据集.
   */
 object CredentialFileAcl:
 

@@ -220,7 +220,7 @@ case class NebflowServiceConfig(
   bashBackgroundHardTimeoutMs: Option[Long] = None,
   bashStuckWindowSec: Option[Int] = None,
   bashHealthCheckIntervalSec: Option[Int] = None,
-  /** 工具结果 TTL 清理（#341，docs/Nebflow/20260820_tool-result-ttl.md）：顶层
+  /** 工具结果 TTL 清理（#341，tool-result-ttl 设计件）：顶层
     * toolResultTtl 节原样 JSON——ToolResultTtlConfig.load fail-safe 解析（非法
     * 配置视为关闭）。默认关（enabled=false）。request-only 清理，会话文件不动。 */
   toolResultTtl: Option[io.circe.Json] = None,

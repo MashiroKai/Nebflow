@@ -554,7 +554,7 @@ final class NeblinkRelayTunnel(
   /**
    * ①opt-A1 通道自愈（2026-09-12 波3，方案 §2.1）：`WebSocket.abort()` 只撕
    * socket（服务端看到 FIN），**不回调 Listener 的 onError/onClose**——JDK
-   * 实机探针复现（`.nebflow/evidence/20260912_friendmsg-batch/fm-realtime-recon/AbortProbe.java`，
+   * 实机探针复现（the friendmsg batch fm-realtime-recon probe AbortProbe.java，
    * Temurin 23.0.1，同宿主 JDK）。因此 `closed`（connectOnce 唯一等待的闩，
    * :312）永不完成：`alive.set(false)` / `stopHeartbeat()` 那半段收尾
    * （:313-317）不执行，`connectLoop` 停在 `closed.get` 上不再前进，心跳继续

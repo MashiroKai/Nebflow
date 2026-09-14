@@ -28,7 +28,7 @@ import nebflow.core.presets.PresetStore
  *
  * 机制选型（对齐 skillCatalog order 800 / phase2b 先例）：**注入目录段**而非
  * 新增查询工具——两目录是参考数据（非操作指令），分发器单次会话、目录规模小
- * （当前 16 插件 + 数 preset，量化见 .nebflow/Spec/dispatcher-context-catalog.md），
+ * （当前 16 插件 + 数 preset，量化见 dispatcher-context-catalog 规格件），
  * 多造工具徒增一次往返；反方考量（目录膨胀挤占上下文）由行格式精简
  * （每条 1-2 行）压制，超限再议按需查询。
  *

@@ -14,7 +14,7 @@ import java.io.File
 import scala.concurrent.duration.*
 import scala.util.control.NonFatal
 
-/** 触发器无关的热重启编排器（hot-restart 批，设计 .nebflow/Spec/20260907_hot-restart-design.md）。
+/** 触发器无关的热重启编排器（hot-restart 批，设计 hot-restart 设计件（内部留档））。
   *
   * 一次热重启的编排（旧实例视角，设计 §3.1 [1]-[8]）：
   *  [1] 在飞五域判定（F1 running 节点 / F2 delegate-subtask / F3 活跃 turn / F4 在飞

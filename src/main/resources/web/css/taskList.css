@@ -142,7 +142,7 @@
    命名空间纪律：节点区块只用 .task-node- 前缀类，零引用任务行/team 区块类
    （.task-item、.task-check-、.task-subgroup-、.task-meta、.task-last-active 等）——
    team 任务退役整块删除任务行 CSS 时节点区不受影响（清单：
-   docs/Nebflow/20260902_tasklist-team-retirement-cleanup.md）。
+   tasklist-team-retirement-cleanup 设计件）。
    状态色全部走 base.css 既有变量，亮暗同源自适应：
    running→--color-primary(品牌绿) completed→--color-success failed→--color-error
    cancelled→--color-warning 等待/未知→muted。 */

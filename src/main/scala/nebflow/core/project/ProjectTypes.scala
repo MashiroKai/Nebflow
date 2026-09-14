@@ -284,7 +284,7 @@ object OutEdge:
 
 /** 通知策略三值（out 语义与通知路由重设计 · b64 实施批 2026-09-13，作者裁定 R1/R2/R3/R5/R14 + M1–M5）。
   *
-  * 设计源 = `~/.nebflow/docs/Nebflow/20260910_node-out-semantics-notification-routing-design.md`
+  * 设计源 = node-out-semantics-notification-routing 设计件（内部留档）
   *（下称 spec；R 项号即 spec §7 编号）。本对象是**唯一裁决单点**：`NodeDef.notify`
   * 的读侧语义、legacy 解析、值域校验、配置键解析全部收在此处（禁第二处口径）。
   *
@@ -465,7 +465,7 @@ case class NodeDef(
     * 自身 task（自足）；failed/cancelled/blocked ∉ completed → 不触发，下游保持
     * pending/wiring 可见。旧 flow-map.json 无此键 → withDefaults 解码为 Nil（零迁移）。 */
   deps: List[String] = Nil,
-  /** 合并节点标记（merge-node 批 20260905，方案 .nebflow/Spec/merge-node-plan.md）：
+  /** 合并节点标记（merge-node 批 20260905，方案 merge-node-plan 方案件）：
     * true = 批次产物落地收口节点——全部上游 completed 才触发（既有 in-barrier 语义）；
     * 上游 failed 时零结算（D5 20260908 wf1cde §3：failed 不向任何下游结算），合并
     * 节点例外转 blocked 可见终态不悬挂

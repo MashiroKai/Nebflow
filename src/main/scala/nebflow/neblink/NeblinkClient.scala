@@ -172,7 +172,7 @@ class NeblinkClient(
    * Detect local IPv4 addresses for endpoint reporting to the NebLink Server.
    *
    * Filters out virtual NICs (Hyper-V, WSL2, Docker, VMware, VirtualBox) whose
-   * addresses are unreachable from the real LAN — e.g. `192.168.121.1` on a
+   * addresses are unreachable from the real LAN — e.g. `192.0.2.10` on a
    * Windows `vEthernet (WSL)` adapter. If filtering would remove every
    * endpoint, falls back to the unfiltered list so P2P still has a chance.
    *

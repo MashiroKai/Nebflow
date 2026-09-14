@@ -49,7 +49,7 @@ object SingleInstanceGuard:
   /** Classifier inputs — host/port mirror exactly what EmberServerBuilder
     * will bind, so "free here" == "Ember can bind here".
     *
-    * R1 (2026-08-30, docs/Nebflow/20260830_restart-script-stability.md):
+    * R1 (2026-08-30, restart-script-stability 设计件):
     * a failed strict bind no longer implies a foreign occupant — a killed
     * instance leaves its closed connections in kernel TIME_WAIT (macOS
     * 2×MSL = 30s, Linux fixed 60s), which blocks bind but has NO listener.
@@ -133,7 +133,7 @@ object SingleInstanceGuard:
   def connectProbeAccepted(port: Int): Boolean = connectAccepted(port)
 
   /** HTTP probe of the occupant's /api/health. MUST bypass the JVM system
-    * proxy (local proxy 7890 otherwise swallows localhost, slow-failing the
+    * proxy (a local HTTP proxy otherwise swallows localhost, slow-failing the
     * probe). Identification accepts EITHER the new `product:"nebflow"` marker
     * OR the legacy `version` field — a running older build (pre-product-field)
     * is still our instance and must still be focused, not fought.

@@ -3393,7 +3393,7 @@ onMessage('forkComplete', (msg, view) => {
   }, true); // capture phase — intercept before other handlers
 })();
 
-// #396 Header adaptive layout (spec .nebflow/Spec/20260825_header-collision-spec.md,
+// #396 Header adaptive layout (spec the header-collision spec (internal),
 // frozen; v2 revised 2026-09-09 11:36 作者裁定): measurement-driven priority
 // hiding + center clamp — ANY width zero icon overlap; no flex-wrap; no "⋯"
 // overflow menu (user 2026-08-25 裁定: 仅自动隐藏). Fixed set (never hidden):

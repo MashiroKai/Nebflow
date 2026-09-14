@@ -383,7 +383,7 @@ object GatewayMain extends IOApp:
             // （关态下也必须淘汰出窗文件），改为绑「本实例已启动」——武装后
             // `logResponse` 的回收 tick 才会真正跑。默认**不武装**：非实例调用者
             // （spec / e2e 脚本在真实 dataRoot 上跑完整轮次）绝不能触发破坏性回收
-            // （事故取证见 .nebflow/evidence/20260913_091215_llmlogprune-impl/）。
+            // （事故取证见 llmlogprune 批（内部留档））。
             nebflow.core.LlmLogWriter.armRetention()
             logger.infoSync(
               s"LLM log recording: ${if nebflow.core.LlmLogWriter.isEnabled then "enabled" else "disabled"} " +

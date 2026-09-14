@@ -1,6 +1,6 @@
 // nodeData.js — Project / Node / Flow Map 数据与契约常量的单一来源。
 //
-// 契约：~/.nebflow/docs/Nebflow/20260901_project-node-contract.md（Backend #28 0b）。
+// 契约：project-node-contract 设计件（内部留档）（Backend #28 0b）。
 // 所有 REST 端点与 WS 事件路径集中在本文件，前端据此对接后端。
 //
 //   GET /api/projects → {projects:[{name,workspace,agentFile,description,createdAt}]}
@@ -84,7 +84,7 @@ export async function fetchFlowMap(projectName) {
 
 /** 节点结果全文取用超时（ms，2026-09-11 fmresult 批）。取值理由：结果端点是网关
  *  本地内存读（单节点 results/<id>.md 水合全文），正常往返为毫秒级（实测 <20ms，
- *  见 .nebflow/evidence/20260911_fmresult-placeholder/）；12s 留足网关在 agent 回合
+ *  见 fmresult-placeholder 批证据）；12s 留足网关在 agent 回合
  *  高峰/归档大批量下的抖动余量，同时把「占位无限挂起」压缩为有界等待——超过即落
  *  明确错误态（原因 + 可操作提示），用户不再面对无终态的「…」。 */
 export const NODE_RESULT_TIMEOUT_MS = 12000;

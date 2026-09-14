@@ -6,7 +6,7 @@ import nebflow.shared.*
 
 /**
  * Tool-result TTL cleanup (#341, design
- * docs/Nebflow/20260820_tool-result-ttl.md).
+ * tool-result-ttl 设计件).
  *
  * REQUEST-ONLY: replaces stale, oversized tool results with a self-describing
  * placeholder in the LLM request copy. The session file (state.messages /

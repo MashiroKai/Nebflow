@@ -14,7 +14,7 @@ import nebflow.shared.Defaults
  * BootDispatcherWake —— 宿主启动「自动重入」腿（方案件选项 A 档 A1「控制面唤醒腿」）。
  *
  * 设计正本（只读引用）：
- * `~/.nebflow/docs/Nebflow/20260913_075859_session-resume-defect-plan__chain-n-18f8a200.md`
+ * session-resume-defect-plan 设计件（内部留档）
  *   - §1.4(d)：缺陷正体 = 宿主重启后**没有任何东西主动叫醒控制面**（分发器会话不是
  *     节点、不在任何恢复扫描面；boot 期唯一唤醒源被 `if actions == 0` 闸住）⇒ 停摆窗
  *     无上界（本次实测 89.34 s / 150.93 s，且由一封无关 Mail 偶然结束）。

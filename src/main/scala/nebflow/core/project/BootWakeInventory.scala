@@ -10,7 +10,7 @@ import nebflow.core.PathUtil
  * 采用方案件 B 档格式）。
  *
  * 设计正本（方案件，只读引用）：
- * `~/.nebflow/docs/Nebflow/20260913_075859_session-resume-defect-plan__chain-n-18f8a200.md`
+ * session-resume-defect-plan 设计件（内部留档）
  *   - §2 A1：boot 唤醒腿携带的清单 = 选项 B 的清单（本对象即其判据实现）
  *   - §2 B：B1–B5 分档（本对象产出 B1–B4 条目；B5「需唤醒项目」= 条目非空，见
  *     [[BootDispatcherWake]]）
