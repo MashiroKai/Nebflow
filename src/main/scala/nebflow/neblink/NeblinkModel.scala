@@ -704,8 +704,41 @@ case class ConversationSummary(
   unreadCount: Int = 0
 )
 
-/** 客户端本地未读 cursor 状态（spec §3.4：自己看角标，无回执）。 */
-case class ConversationCursor(conversationId: String, lastReadMessageId: Long, unreadCount: Int)
+/** 客户端本地未读 cursor 状态（spec §3.4：自己看角标，无回执）。
+  *
+  * ## §3.5 字段拆分（好友消息静默丢失修复批 A）
+  *
+  * 修前**三个语义挤在一个字段**上：拉取锚点（keyset `after=`）与已读水位共用
+  * `lastReadMessageId`。两处直接后果：
+  *  ① 「推进而未派发」与「派发而未推进」两态**塌成一个数** ⇒ 两种失效都不可判；
+  *  ② 更坏的一条：`setRead`（前端开窗收帧即 `markConversationRead`）会**顺带把
+  *     补拉锚点推走** ⇒ 落在锚点之后的未派发消息**永久不可达**（静默丢失机制之一，
+  *     与「推送丢了就永远丢」同族）。`FriendMessageOriginSpec` 之外的本族回归钉子在
+  *     `FriendUnreadCursorRebuildSpec` L4（本轮按其新语义同步更新）。
+  *
+  * 拆后**一字段一语义**（三字段互不代偿）：
+  *  - `lastReadMessageId` = **已读**水位（用户读到哪儿）；唯一写入口 `FriendMessagingGuard.setRead`；
+  *  - `pullAnchor`        = **拉取**水位（keyset `after=` 的唯一取值来源）；唯一写入口
+  *    `FriendMessagingGuard.advancePullCursor`；
+  *  - `dispatchedMax`     = **已派发**水位（已构造帧并投给 UI 的最大消息 id）；与
+  *    `pullAnchor` 由**同一个原子更新**同时推进（见 `advancePullCursor`）。
+  *
+  * 两条不变式（`FriendPulledDispatchSpec` 逐条钉死）：
+  *  ① `pullAnchor == dispatchedMax`——锚点**只在派发成功后**前进；🔴 **禁**
+  *     `pullAnchor > dispatchedMax`（越过未派发条前进 = 该条此后不可达）；
+  *  ② `dispatchedMax <= serverMax`（派发水位不得越过服务端本次实际返回的最大 id）。
+  *
+  * 纯本地态：本 case class **从不序列化/永不入 wire** ⇒ 零跨仓依赖（§3.5）。
+  *
+  * 后两位参数取缺省 0L：既有构造点 `ConversationCursor(id, 0L, 0)` 全部保持可编译，
+  * 且缺省值 = 「全新会话，尚未拉取/尚未派发」，与四条兄弟路径的语义逐字一致。 */
+case class ConversationCursor(
+  conversationId: String,
+  lastReadMessageId: Long,
+  unreadCount: Int,
+  pullAnchor: Long = 0L,
+  dispatchedMax: Long = 0L
+)
 
 object FriendCodecs:
   import io.circe.Decoder

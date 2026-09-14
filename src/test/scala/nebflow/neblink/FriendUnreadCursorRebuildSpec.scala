@@ -169,10 +169,16 @@ class FriendUnreadCursorRebuildSpec extends FunSuite:
     assertEquals(pulled.map(_._2), List(0L), "回落条目锚点 0 ⇒ 首次补拉覆盖全量（after=0）")
   }
 
-  test("#309-L4 回归（验红下的绿对偶）：mergeUnread / setRead / advanceAnchor / localMaxId / unreadSnapshot 语义未破") {
+  test("#309-L4 回归（验红下的绿对偶）：mergeUnread / setRead / advanceAnchor / localMaxId / readAnchor / unreadSnapshot 语义未破（setRead 判据按 §3.5 拆字段更新）") {
     // 本用例刻意**不依赖缺席回落**：cursor 一律由既有入口（mergeUnread）建 —— 故
     // 反转 #309 修法后它必须**保持绿**。它是本 spec 的对偶：证明 L1–L3 的变红是
     // 钉子有效，而非"什么都会红"。
+    //
+    // ⚠️ 本批（好友消息静默丢失修复批 A · §3.5 游标拆字段）对**本条的两处断言**改了
+    // 判据：修前 `setRead` 与补拉共用 `lastReadMessageId` ⇒ `localMaxId` 会跟着已读
+    // 一起涨（旧断言 `9L`/`9L` 编码的正是该缺陷）。拆字段后补拉锚点独立，已读锚点
+    // 另由 `readAnchor` 断言。**这不是把钉子拔松**：新断言同时钉住了两侧
+    // （补拉锚点不动 `7L` / 已读锚点推进 `9L`），比旧断言更紧。
     val g = new FriendMessagingGuard()
     val prog = for
       _ <- g.mergeUnread(conv("c", 3)) // 既有入口建 cursor（服务端权威 3）
@@ -184,31 +190,42 @@ class FriendUnreadCursorRebuildSpec extends FunSuite:
       _ <- g.advanceAnchor("c", 7L)
       afterAnchor <- g.unreadSnapshot // advanceAnchor 不动未读
       maxId <- g.localMaxId("c")
-      _ <- g.setRead("c", 9L) // 清零 + 推进锚点
+      readA <- g.readAnchor("c")
+      _ <- g.setRead("c", 9L) // 清零 + 推进**已读**锚点
       afterRead <- g.unreadSnapshot
-      maxIdAfterRead <- g.localMaxId("c")
-      _ <- g.setRead("c", 4L) // 锚点取 max，不得回退
+      maxIdAfterRead <- g.localMaxId("c") // §3.5 拆字段：补拉锚点**不受**已读影响
+      readB <- g.readAnchor("c")
+      _ <- g.setRead("c", 4L) // 已读锚点取 max，不得回退
       maxIdAfterBack <- g.localMaxId("c")
+      readC <- g.readAnchor("c")
       _ <- g.bumpUnread("c", 1) // 已读之后的新消息 ⇒ 1
       afterPostRead <- g.unreadSnapshot
       missingMax <- g.localMaxId("c-none")
     yield (
-      seeded, afterBumpExisting, afterMerge, afterAnchor, maxId,
-      afterRead, maxIdAfterRead, maxIdAfterBack, afterPostRead, missingMax
+      seeded, afterBumpExisting, afterMerge, afterAnchor, maxId, readA,
+      afterRead, maxIdAfterRead, readB, maxIdAfterBack, readC, afterPostRead, missingMax
     )
     val (
-      seeded, afterBumpExisting, afterMerge, afterAnchor, maxId,
-      afterRead, maxIdAfterRead, maxIdAfterBack, afterPostRead, missingMax
+      seeded, afterBumpExisting, afterMerge, afterAnchor, maxId, readA,
+      afterRead, maxIdAfterRead, readB, maxIdAfterBack, readC, afterPostRead, missingMax
     ) = prog.unsafeRunSync()
 
     assertEquals(seeded.get("c"), Some(3), "mergeUnread 建条目并按服务端权威置数")
     assertEquals(afterBumpExisting.get("c"), Some(4), "已有条目上的增量照旧（#309 未触碰这条路径）")
     assertEquals(afterMerge.get("c"), Some(0), "mergeUnread 仍是服务端权威全量覆盖（不叠加 ⇒ 不重复计数）")
     assertEquals(afterAnchor.get("c"), Some(0), "advanceAnchor 不得触碰未读（补拉不等于已读）")
-    assertEquals(maxId, 7L, "advanceAnchor 推进锚点")
+    assertEquals(maxId, 7L, "advanceAnchor 推进**补拉**锚点")
+    assertEquals(readA, 0L, "前置：已读锚点仍为 0（advanceAnchor 不碰已读）")
     assertEquals(afterRead.get("c"), Some(0), "setRead 清零未读")
-    assertEquals(maxIdAfterRead, 9L, "setRead 推进已读锚点")
-    assertEquals(maxIdAfterBack, 9L, "已读锚点取 max，不得回退")
+    // 🔴 §3.5 拆字段（好友消息静默丢失修复批 A）：本条**改判**。
+    // 修前断言 `maxIdAfterRead == 9L` —— 那正是缺陷本身：已读与补拉共用
+    // `lastReadMessageId` 一字段，前端开窗收帧即 `markConversationRead(convId, 114)`
+    // 会把补拉锚点一并抬到 114，于是「读到 114、113 的推送被吞」这条形态下
+    // 113 在后续补拉里**再也取不到**（`after=114`），永不渲染。
+    assertEquals(maxIdAfterRead, 7L, "🔴 setRead **不得**推进补拉锚点（拆字段后已读独立走 readAnchor）")
+    assertEquals(readB, 9L, "setRead 推进**已读**锚点")
+    assertEquals(maxIdAfterBack, 7L, "补拉锚点不受后续 setRead 影响")
+    assertEquals(readC, 9L, "已读锚点取 max，不得回退")
     assertEquals(afterPostRead.get("c"), Some(1), "已读后到达的新消息重新计数")
     assertEquals(afterPostRead.keySet, Set("c"), "unreadSnapshot 面 = 恰好有 cursor 的会话（无幽灵条目）")
     assertEquals(missingMax, 0L, "localMaxId 缺省仍是 0（缺席回落不改这一语义）")

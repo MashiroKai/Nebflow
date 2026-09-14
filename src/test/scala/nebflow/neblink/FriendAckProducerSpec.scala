@@ -95,7 +95,12 @@ class FriendAckProducerSpec extends FunSuite:
     yield (a, ord)
     val (acks, ord) = prog.unsafeRunSync()
     assertEquals(acks, List("message-41"), "必须且只 ack 一次，eventId 原样透传")
-    assertEquals(ord, List("broadcast"), "消费/广播链路照旧发生")
+    // ⚠️ 判据更新（好友消息静默丢失修复批 A · §3.2①「拉取即派发」）：
+    // 本 spec 的 `seed` 只走 `mergeUnread` ⇒ 拉取锚点为 0（冷锚），而事件自带
+    // `messageId=41` ⇒ 补拉取**恰好那一窗**并**派发一帧** ⇒ 时间线里多一条 "broadcast"。
+    // 本 spec 关心的是「ack 只一次 + 消费链照旧发生」，故计数口径 = broadcast 恰好 2 条
+    // （事件帧 + 补拉回放帧）且 ack 恰好 1 条。
+    assertEquals(ord, List("broadcast", "broadcast"), "消费/广播链路照旧发生（事件帧 + 补拉回放帧）")
     // 时机：ack 在广播之后（本 spec 把 ack 记进同一个次序日志再断言一次）
     val prog2 = for
       pulls <- Ref.of[IO, List[String]](Nil)
@@ -105,7 +110,11 @@ class FriendAckProducerSpec extends FunSuite:
       _ <- svc.onFriendEvent(envelope("message-7", serverEvent("c-ack2", 7L)))
       ord2 <- order.get
     yield ord2
-    assertEquals(prog2.unsafeRunSync(), List("broadcast", "ack:message-7"), "处理完成后才 ack")
+    assertEquals(
+      prog2.unsafeRunSync(),
+      List("broadcast", "broadcast", "ack:message-7"),
+      "处理完成后才 ack（批 A 后 broadcast 有两条：事件帧 + 补拉回放帧；ack 仍恒在最后）"
+    )
   }
 
   test("重复帧（同 eventId）仍须 ack —— at-least-once 重放靠 ack 才退得掉") {

@@ -425,19 +425,45 @@ function syncWatermark() {
  * @param {{pages?: number}} [opts] pages = 最大翻页数（默认 1：单次探测）
  * @returns {Promise<number>} 补进来的条数
  */
-async function syncConversation(conversationId, { pages = 1 } = {}) {
-  if (!conversationId || syncingConvId === conversationId) return 0;
+async function syncConversation(conversationId, { pages = 1, trigger = 'open' } = {}) {
+  // W14（§3.3）：修前零日志 `return 0`。单飞命中 = 「本拍这条补拉**没发生**」——
+  // 若把它吞掉，「用户看到没变化」与「链正在跑、稍后自愈」就不可分。
+  if (!conversationId || syncingConvId === conversationId) {
+    // 字段口径（判据②）：与后端 `droppedWarn` **同形**——`conversationId=` + `messageId=`
+    // （本分支无消息面 ⇒ 显式写 `<none>`，不允许「键缺席」这一形态）+ `reason=`。
+    console.warn(`[fm] syncConversation 跳过 conversationId=${conversationId} messageId=<none> reason=`
+      + `${!conversationId ? 'no_conversation_id' : 'single_flight_in_progress'} trigger=${trigger}`
+      + ` syncingConvId=${syncingConvId}`);
+    return 0;
+  }
   const maxPages = Math.max(1, Math.min(Number(pages) || 1, MAX_SYNC_PAGES));
   syncingConvId = conversationId;
   let fetched = 0;
   try {
     for (let i = 0; i < maxPages; i++) {
       const after = syncWatermark();
-      if (after <= 0) break; // 无可信水位（缺席/temp id 占位）⇒ 不猜、不改窗口
+      // W15（§3.3）：无可信水位（缓存缺席/temp id 占位）⇒ 不猜、不改窗口；但必须留痕，
+      // 否则「补拉链空转」与「已到水位」同形。
+      if (after <= 0) {
+        console.warn(`[fm] syncConversation 无可信水位（不猜、不改窗口）conversationId=${conversationId} `
+          + `messageId=<none> reason=no_trusted_watermark after=${after} page=${i} trigger=${trigger}`);
+        break;
+      }
       let batch = [];
       try { batch = await api.getMessages(conversationId, { after, limit: SYNC_PAGE }); }
-      catch { break; } // 网络/鉴权失败：保留已渲染内容，不冒泡成用户可见错误
-      if (openConvId !== conversationId || !modalEls) break; // 会话已换/窗已关
+      catch (e) {
+        // W16（§3.3）：修前零日志 break。网络/鉴权失败**保留已渲染内容不冒泡**（不变），
+        // 但必须留痕带 err.message —— 否则「服务端挂了」看起来像「没有新消息」。
+        console.warn(`[fm] syncConversation 取数失败（保留已渲染内容）conversationId=${conversationId} `
+          + `messageId=<none> reason=fetch_failed after=${after} page=${i} trigger=${trigger} err=${e && e.message}`);
+        break;
+      }
+      if (openConvId !== conversationId || !modalEls) {
+        // W17（§3.3）：正常态（会话已换/窗已关）⇒ 低噪 `debug` 档，不报 warn。
+        console.debug(`[fm] syncConversation 停止（会话已换/窗已关）conversationId=${conversationId} `
+          + `messageId=<none> reason=conversation_switched after=${after} page=${i} openConvId=${openConvId} trigger=${trigger}`);
+        break;
+      }
       const fresh = (batch || []).filter(m => !chatMsgs.some(x => String(x.id) === String(m.id)));
       if (fresh.length) {
         appendMessages(fresh);
@@ -477,7 +503,7 @@ async function openConversation(conversationId, rowEl) {
     if (modalEls) modalEls.input.focus();
     if (chatMsgs.length && oldestLoadedId > 1) probeOlderHistory(conversationId, oldestLoadedId);
     // TTL 过期 ⇒ 条目「可疑」⇒ 允许多补几页（仍全部是增量页，绝无尾窗）。
-    await syncConversation(conversationId, { pages: cached.fresh ? 1 : MAX_SYNC_PAGES });
+    await syncConversation(conversationId, { pages: cached.fresh ? 1 : MAX_SYNC_PAGES, trigger: 'open_cached' });
     persistConversation(conv);
     return;
   }
@@ -850,9 +876,52 @@ function fillBubble(bubble, m) {
   }
 }
 
+// ── 气泡方向判据（P5 修复 · 单点）─────────────────────────
+/** 逐条「本机所发」判据（**正向证据**）。
+ *
+ * 修前判据是**负向推断**：`m.senderId !== conv.friend?.userId` —— 「不是对方发的就是我
+ * 发的」。它对**字段缺席**与**会话缺档案**都恒真，于是有两种误判：
+ *  · 帧/REST 条不带 `senderId` ⇒ 对方的消息被渲染成**本机所发**（右侧气泡）；
+ *  · `conv.friend` 尚未 hydrate ⇒ **所有**消息都成右侧。
+ * 本仓同族「不猜」口径的既有先例 = 回显认领（`appendMessages` 内注释「REST 面该字段
+ * 权威且必带；缺席 ⇒ 不认领」）。本判据与它对齐：**没有证据就不下结论**。
+ *
+ * @returns {boolean|null} true/false = 已由证据确证；null = 证据缺席（调用方回退）
+ */
+function oursBySenderId(m, conv) {
+  const sid = m && m.senderId;
+  const fid = conv && conv.friend ? conv.friend.userId : undefined;
+  if (sid === undefined || sid === null || sid === '') return null;
+  if (fid === undefined || fid === null || fid === '') return null;
+  return String(sid) !== String(fid); // 确证不是对方所发 ⇒ 本机所发
+}
+
+/** 打**不可枚举**的方向标记。刻意不进 JSON / L2 缓存序列化：该标记是渲染期派生态，
+ *  缓存契约只存服务端字段（加键会污染既有 wire 形态与缓存比对判据）。 */
+function markOurs(m, val) {
+  if (!m || typeof m !== 'object') return;
+  try {
+    Object.defineProperty(m, 'ours', { value: val, enumerable: false, configurable: true, writable: true });
+  } catch { /* 冻结对象：退回不标记 —— resolveOut 走 senderId 正向比对档 */ }
+}
+
+/** 气泡方向（`out` = 右侧 = 本机所发）。优先级：
+ *  ① `m.ours` 显式标记 —— **最强证据**（补拉帧按逐条 `senderId` 判定后写入，见
+ *     `frameOursHint`；事件帧按事件类型写入，见 `onFriendEvent`）；
+ *  ② `senderId` 与好友档案的正向比对（REST 条目 / 带 senderId 的帧）；
+ *  ③ 两者皆无 ⇒ **维持既有形态（`out`）**。这一档必须保留：本机自播帧（agent 代发那条
+ *     自播帧服务端**不带** `senderId`）正落在这里，改成 `in` 会把自送消息画到左侧
+ *     —— 那是本批明确不接受的回归。③ 的残留误判面被 ①② 覆盖：补拉腿恒带 `senderId`、
+ *     事件腿恒带事件类型 ⇒ 两条入口都不会落到 ③。 */
+function resolveOut(m, conv) {
+  if (m && typeof m.ours === 'boolean') return m.ours;
+  const byId = oursBySenderId(m, conv);
+  return byId === null ? true : byId;
+}
+
 // ── Bubbles ──────────────────────────────────────────────
 function bubbleEl(m, conv) {
-  const out = m.senderId !== conv.friend?.userId; // not from the friend = ours
+  const out = resolveOut(m, conv);
   const wrap = el('div', `fm-msg ${out ? 'out' : 'in'}`);
   wrap.dataset.messageId = m.id;
   wrap.dataset.body = m.body || '';
@@ -1020,8 +1089,10 @@ function appendMessages(msgs) {
     // （不新增气泡/条目）。「本机所发」判据 = 服务端记录里的 `senderId` ——
     // REST 面该字段权威且必带；**缺席 ⇒ 不认领**（照旧走原路径，与 U-a
     // 「不猜」同向）。
-    const ours = !!conv && m.senderId !== undefined && m.senderId !== null && m.senderId !== ''
-      && m.senderId !== conv.friend?.userId;
+    const ours = !!conv && oursBySenderId(m, conv) === true;
+    // P5：把**已确证**的极性固化成显式标记（判据缺席 ⇒ 不标记 ⇒ 渲染回退既有形态）。
+    const hint = conv ? oursBySenderId(m, conv) : null;
+    if (hint !== null) markOurs(m, hint);
     if (claimPendingSend(m, conv && conv.conversationId, ours)) continue;
     if (!chatMsgs.some(x => String(x.id) === String(m.id))) chatMsgs.push(m);
   }
@@ -1040,7 +1111,13 @@ async function probeOlderHistory(convId, fromId) {
   while (steps < 20) {
     let fetched = [];
     try { fetched = await api.getMessages(convId, { after, limit: PROBE_LIMIT }); }
-    catch { return; } // 探针失败：保持「不显示」，绝不冒泡成用户可见错误
+    catch (e) {
+      // W18（§3.3）：探针失败**保持「不显示」**（不自证不显示，行为不变）——但低噪留痕
+      // （`debug` 档：探针本身是后台行为，失败是常态，不该刷 warn）。
+      console.debug(`[fm] probeOlderHistory 探针取数失败（保持不显示）conversationId=${convId} `
+        + `messageId=<none> reason=probe_fetch_failed after=${after} step=${steps} err=${e && e.message}`);
+      return;
+    }
     if (openConvId !== convId || !modalEls) return; // 会话已换/窗已关
     if ((fetched || []).some(m => Number(m.id) < fromId)) {
       hasMoreHistory = true;
@@ -1416,18 +1493,64 @@ function markFrameMessageSeen(id) {
   return true;
 }
 
-async function onFriendEvent(msg) {
+// ── W13 待补队列（会话缓存缺失时不静默丢帧）────────────────
+// 帧可能**先于**会话列表到达（重连窗口 / 全新会话首条 / 面板未挂载）。修前那条分支
+// 只 `refreshConversations()` 后 `return` —— 帧**零日志地消失**；刷新之后没人再把它
+// 送进来，于是「列表对了、打开的窗还是空的」。此处暂存该帧，刷新后**补投一次**。
+const pendingFriendFrames = [];
+const PENDING_FRIEND_FRAME_MAX = 32;
+
+/** 补投暂存帧（每帧至多补投一次：补投调用带 `retried=true`，不再入队、不再触发第二轮）。 */
+async function retryPendingFriendFrames() {
+  if (!pendingFriendFrames.length) return;
+  const batch = pendingFriendFrames.splice(0, pendingFriendFrames.length);
+  for (const f of batch) await onFriendEvent(f, true);
+}
+
+/** 补拉帧的**逐条**极性（`backfill` 帧恒带 `senderId`，故此处优先按逐条证据判）。
+ *  返回 null = 证据缺席 ⇒ 沿用调用方给的事件级极性。 */
+function frameOursHint(m, conv) {
+  const byId = oursBySenderId(m, conv);
+  return byId === null ? null : byId;
+}
+
+async function onFriendEvent(msg, retried = false) {
   // 帧静默门控的唯一打点（**任何** friend 帧都算：判据是「通道还在不在送帧」）。
   lastFriendFrameAt = Date.now();
   if (msg.event === EV_MESSAGE_NEW) {
     const p = msg;
     const conv = conversations.find(c => c.conversationId === p.conversationId);
-    if (!conv) { await refreshConversations({ friends: 'force' }); return; } // REST is truth
+    if (!conv) {
+      // W13（§3.3）：修前**零日志**地丢帧。必须留痕 + **入待补队列**（刷新后补投）。
+      console.warn(`[fm] friend_event 帧到达但会话缓存缺失（REST 为权威）event=${msg.event} `
+        + `conversationId=${p.conversationId} messageId=${p.messageId} `
+        + `reason=conversation_not_cached retried=${retried}`);
+      if (!retried) {
+        if (pendingFriendFrames.length >= PENDING_FRIEND_FRAME_MAX) pendingFriendFrames.shift();
+        pendingFriendFrames.push(msg);
+      }
+      await refreshConversations({ friends: 'force' }); // REST is truth
+      if (!retried) await retryPendingFriendFrames();
+      return;
+    }
     const m = frameMessage(p);
     // U-a 幂等：同 messageId 的重复到达不得二次计未读 / 二次自动转发 / 二次上屏。
     if (!markFrameMessageSeen(m.id)) return;
     conv.lastMessage = m;
     const isOpen = openConvId === p.conversationId;
+    // §3.2① 补拉回放帧（`backfill: true`）：只做**渲染/预览**，不计数、不转发、不认领。
+    // 未读的权威来源是事件增量 + 服务端 `unreadCount` 基线；补拉是渲染修复，不是计数
+    // 依据 —— 否则冷启动后的一页历史回补会把角标刷成虚高（冲垮「self 不计未读」口径）。
+    // 极性取**逐条**证据（同一窗里可能既有对方的消息也有本机自送的消息），
+    // 证据缺席才回落到事件级极性（`message_new` = 对方所发）。
+    if (p.backfill === true) {
+      markOurs(m, frameOursHint(m, conv) === true);
+      if (isOpen) appendMessage(m, false); // 回放帧不进乐观认领（旧条没有在飞的乐观项）
+      resortAndRender();
+      updateBadge();
+      return;
+    }
+    markOurs(m, false); // 事件类型 = 正向证据（`message_new` 恒为对方所发）
     if (isOpen) {
       appendMessage(m); // 内部已落 ⑨ 缓存
       api.markConversationRead(p.conversationId, m.id).catch(() => {});
@@ -1454,7 +1577,19 @@ async function onFriendEvent(msg) {
     // 与上方 message_new 的 inbound 支路形成显式对照。也不触发 maybeAutoForward
     // （信任模式自动转发只面向对方来件，自送件回灌进 agent 输入是反语义）。
     const conv = conversations.find(c => c.conversationId === msg.conversationId);
-    if (!conv) { await refreshConversations({ friends: 'force' }); return; } // REST is truth
+    if (!conv) {
+      // W13（self 面同族）：同样必须留痕 + 入待补队列。
+      console.warn(`[fm] friend_event 帧到达但会话缓存缺失（REST 为权威）event=${msg.event} `
+        + `conversationId=${msg.conversationId} messageId=${msg.messageId} `
+        + `reason=conversation_not_cached_self retried=${retried}`);
+      if (!retried) {
+        if (pendingFriendFrames.length >= PENDING_FRIEND_FRAME_MAX) pendingFriendFrames.shift();
+        pendingFriendFrames.push(msg);
+      }
+      await refreshConversations({ friends: 'force' }); // REST is truth
+      if (!retried) await retryPendingFriendFrames();
+      return;
+    }
     const m = frameMessage(msg);
     // U-a 幂等：与 message_new 同判据、同实现（同 id 只做一次上屏/落盘）。
     if (!markFrameMessageSeen(m.id)) return;
@@ -1462,6 +1597,17 @@ async function onFriendEvent(msg) {
     // U-b：`message_new_self` 事件的语义 = 本机所发⇒ 是本机在飞乐观项的回显形态，
     // 允许认领（`message_new`= 对方所发，**不认领**：缺席 senderId 的入站帧与
     // 本机乐观项同判据会归错，判据宁缺勿滥）。
+    //
+    // P5：方向由**事件类型**正向确证（self 事件恒为本机所发）。补拉回放帧另按逐条
+    // `senderId` 判（`backfill` 帧恒带该字段），证据缺席才回落事件级极性。
+    if (msg.backfill === true) {
+      markOurs(m, frameOursHint(m, conv) === true);
+      if (openConvId === msg.conversationId) appendMessage(m, false);
+      resortAndRender();
+      updateBadge();
+      return;
+    }
+    markOurs(m, true);
     if (openConvId === msg.conversationId) appendMessage(m, true); // 复用既有 append 腿
     // 未开会话：仅下方刷新（列表预览 + 角标），不 append、不计未读。
     resortAndRender();
@@ -1545,7 +1691,7 @@ async function incrementalResync({ withList = false } = {}) {
   const convId = openConvId;
   const open = !!convId && !String(convId).startsWith('__pending__');
   if (!open || withList) await refreshConversations();
-  if (open) await syncConversation(convId, { pages: MAX_SYNC_PAGES });
+  if (open) await syncConversation(convId, { pages: MAX_SYNC_PAGES, trigger: 'beacon_backfill' });
 }
 
 async function backfillTick() {
