@@ -740,28 +740,10 @@
 .row.notice { justify-content: center; }
 @keyframes fadeIn { from { opacity: 0; transform: translateY(4px); } to { opacity: 1; transform: translateY(0); } }
 
-/* ---------- Message timestamp ---------- */
-.msg-time {
-  font-size: 10px;
-  color: var(--color-text);
-  opacity: 0.35;
-  margin-top: 3px;
-  padding: 0 4px;
-  user-select: none;
-  font-variant-numeric: tabular-nums;
-  cursor: pointer;
-  transition: opacity 0.15s;
-}
-.msg-time:hover { opacity: 0.6; }
-
-/* ---------- Message copy button ---------- */
-.msg-meta {
-  display: flex;
-  align-items: center;
-  gap: 4px;
-  margin-top: 3px;
-  padding: 0 4px;
-}
+/* ---------- Message copy button ----------
+   死 CSS 清理（S25/R36，footer 统一批单列申报）：`.msg-time`（原 :743-755）与
+   `.msg-meta`（原 :757-764）**零生产者**（computed 探针 MISSING + grep 无 JS 产出点）
+   ⇒ 整块删除。`.msg-recall`（:792-797 现址）保留并登记为「同族保留键」，理由见报告。 */
 .msg-copy {
   display: inline-flex;
   align-items: center;
@@ -769,7 +751,10 @@
   border: none;
   background: transparent;
   cursor: pointer;
-  opacity: 0;
+  opacity: 0.35;   /* S25 归并：揭示式档（原 `opacity:0` + `.row:hover` 揭示）无生效场景
+                      （badge 外零生产者，X3）⇒ 归并为常驻档，与 `.duration-badge .msg-copy`
+                      同值；同时消除 R25「copied 被 `.row:hover .msg-copy:hover`(0,4,0)
+                      压成 0.6」的特异度陷阱来源。 */
   color: var(--color-text);
   padding: 2px;
   border-radius: 4px;
@@ -777,8 +762,6 @@
 }
 .msg-copy:hover { opacity: 0.6; }
 .msg-copy.copied { color: #34c759; opacity: 1; }
-.row:hover .msg-copy { opacity: 0.35; }
-.row:hover .msg-copy:hover { opacity: 0.6; }
 /* Copy button inside duration badge */
 .duration-badge .msg-copy {
   opacity: 0.35;
@@ -787,6 +770,24 @@
 .duration-badge .msg-copy svg { width: 11px; height: 11px; }
 .duration-badge .msg-copy:hover { opacity: 0.6; }
 .duration-badge .msg-copy.copied { color: #34c759; opacity: 1; }
+/* R3：「绿勾全亮」——copied 恒 opacity 1。下列两条为**同特异度后置**兜底
+   （(0,4,0)/(0,3,0)），确保任何行/按钮 hover 组合都不会再把绿勾压回 .6
+   （2026-09-14 上游实测缺陷 R25 的根因即此）。 */
+.duration-badge .msg-copy.copied:hover,
+.row:hover .duration-badge .msg-copy.copied:hover {
+  color: #34c759;
+  opacity: 1;
+}
+/* R4：复制失败**就地提示**（裁定 = 要提示，主/友两面）——失败态按钮转错误色，
+   并注入一行 `aria-live` 文案（`.copy-failed-live`，由 utils.js `markCopyFailed()`
+   生成后 2000ms 自清）。🔴 不新增 toast（toast 属既有 UI 裁定面，本批边界外）。 */
+.msg-copy.copy-failed { color: var(--color-error); opacity: 1; }
+.copy-failed-live {
+  font-size: 10px;
+  color: var(--color-error);
+  margin-left: 4px;
+  white-space: nowrap;
+}
 
 /* Recall button (same base style as copy, with hover feedback) */
 .duration-badge .msg-recall {

@@ -3313,11 +3313,13 @@ onMessage('askDone', (msg, view) => {
     const question = buf ? buf.question : '';
     finishAskAnswer(durationMs, msg.model);
     if (question || answer) {
-      saveMsg({ type: 'ask', question, answer, durationMs, model: msg.model }, msg.sessionId);
+      // R1（footer 统一 · 带时间，2026-09-14）：本地缓存行也落真实时刻 —— 缓存路径
+      // 原先无 timestamp ⇒ 刷新后 ask 行 footer 只能 copy-only（与后端 .ui.json 同批修）。
+      saveMsg({ type: 'ask', question, answer, durationMs, model: msg.model, timestamp: Date.now() }, msg.sessionId);
     }
   } else if (buf && (buf.question || buf.answer)) {
     // Non-active session: save buffered ask to localStorage
-    saveMsg({ type: 'ask', question: buf.question, answer: buf.answer, durationMs, model: msg.model }, sid);
+    saveMsg({ type: 'ask', question: buf.question, answer: buf.answer, durationMs, model: msg.model, timestamp: Date.now() }, sid);
   }
   if (sid) delete state.sessionAskBuffers[sid];
   // Clean up thinking buffer so the subsequent 'done' event doesn't save

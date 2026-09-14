@@ -294,13 +294,28 @@ object UiMessage:
   ) extends UiMessage:
     val typeName = "tool"
 
-  case class Agent(agentId: String, text: String) extends UiMessage:
+  case class Agent(
+    agentId: String,
+    text: String,
+    /** R1 数据面（2026-09-14 作者七答「footer 统一 · R1 = 带时间」）：历史行的
+      * footer 时间需要**落盘的真实时间戳**（live 行传 `Date.now()`、历史行原先传 `0`
+      * ⇒ 刷新后时间消失）。缺省 0 = 不落键（`.ui.json` 旧行字节形态与旧读法逐字不变）。 */
+    timestamp: Long = 0L
+  ) extends UiMessage:
     val typeName = "agent"
 
   case class AskUser(items: List[Json]) extends UiMessage:
     val typeName = "askUser"
 
-  case class Ask(question: String, answer: String, durationMs: Option[Long] = None, model: Option[String] = None)
+  case class Ask(
+    question: String,
+    answer: String,
+    durationMs: Option[Long] = None,
+    model: Option[String] = None,
+    /** R1 数据面：同 [[Agent.timestamp]] —— ask 行（问句 + 答案）历史 footer 的
+      * 时间取自此字段；缺省 0 = 不落键（旧行读法不变）。 */
+    timestamp: Long = 0L
+  )
       extends UiMessage:
     val typeName = "ask"
 
@@ -344,12 +359,16 @@ object UiMessage:
         "isError" -> m.isError.asJson,
         "input" -> m.input.asJson
       )
-    case m: Agent => Json.obj("type" -> "agent".asJson, "agentId" -> m.agentId.asJson, "text" -> m.text.asJson)
+    case m: Agent =>
+      val base = Json.obj("type" -> "agent".asJson, "agentId" -> m.agentId.asJson, "text" -> m.text.asJson)
+      // R1：timestamp 缺席即不落键（与 User/Ai 同款条件编码 ⇒ 旧 .ui.json 行不变）。
+      if m.timestamp > 0 then base.deepMerge(Json.obj("timestamp" -> m.timestamp.asJson)) else base
     case m: AskUser => Json.obj("type" -> "askUser".asJson, "items" -> m.items.asJson)
     case m: Ask =>
       val base = Json.obj("type" -> "ask".asJson, "question" -> m.question.asJson, "answer" -> m.answer.asJson)
       val withDur = m.durationMs.fold(base)(d => base.deepMerge(Json.obj("durationMs" -> d.asJson)))
-      m.model.fold(withDur)(mod => withDur.deepMerge(Json.obj("model" -> mod.asJson)))
+      val withModel = m.model.fold(withDur)(mod => withDur.deepMerge(Json.obj("model" -> mod.asJson)))
+      if m.timestamp > 0 then withModel.deepMerge(Json.obj("timestamp" -> m.timestamp.asJson)) else withModel
     case m: AskPermission =>
       val base = Json.obj(
         "type" -> "askPermission".asJson,
@@ -417,7 +436,8 @@ object UiMessage:
         for
           agentId <- cursor.downField("agentId").as[String]
           text <- cursor.downField("text").as[String]
-        yield Agent(agentId, text)
+          timestamp <- cursor.downField("timestamp").as[Option[Long]]   // R1：旧行缺席 ⇒ 0
+        yield Agent(agentId, text, timestamp.getOrElse(0L))
       case "askUser" =>
         cursor.downField("items").as[List[Json]].map(AskUser(_))
       case "ask" =>
@@ -426,7 +446,8 @@ object UiMessage:
           answer <- cursor.downField("answer").as[String]
           durationMs <- cursor.downField("durationMs").as[Option[Long]]
           model <- cursor.downField("model").as[Option[String]]
-        yield Ask(question, answer, durationMs, model)
+          timestamp <- cursor.downField("timestamp").as[Option[Long]]   // R1：旧行缺席 ⇒ 0
+        yield Ask(question, answer, durationMs, model, timestamp.getOrElse(0L))
       case "askPermission" =>
         for
           toolName <- cursor.downField("toolName").as[String]

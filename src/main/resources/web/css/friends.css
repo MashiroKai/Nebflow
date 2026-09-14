@@ -825,43 +825,65 @@ button.fm-req-decline:focus-visible {
 .fm-msg-actions {
   display: inline-flex;
   align-items: center;
-  gap: 2px;
+  gap: 6px;   /* S18：现状 2px → 6px ⇒ 时间→按钮 = 6(pill gap) + 1(divider) + 6 = 13px，
+                 与主对话实测 13px 档一致（同时把「复制 ↔ 转发」间距拉到 6px，见 E3） */
   opacity: 1;
-  transition: opacity 0.12s ease;
+  transition: opacity 0.15s;   /* S20：现状 .12s ease → 归一 .15s（全站动画 150-300ms 纪律） */
 }
 
-/* 时间与按钮之间的分隔线 1px×10px currentColor @ .2（主对话框 chat.css:1150-1156） */
+/* 时间与按钮之间的分隔线 1px×10px currentColor @ .2（主对话框 chat.css:1150-1156）
+   S16：方向 A 保留伪元素（视觉等价），但补主对话的 `flex-shrink:0`
+   （现状未声明 = 默认 1，窄档下可能被压缩）。 */
 .fm-msg-actions::before {
   content: '';
   width: 1px;
   height: 10px;
   background: currentColor;
   opacity: 0.2;
+  flex-shrink: 0;
 }
 
 /* 触摸端兜底（全仓首个 (hover: none) 分支）：常显档下天然可见，本规则为零成本
-   显式声明，防将来回退到揭示式显隐时触摸端不可达。 */
+   显式声明，防将来回退到揭示式显隐时触摸端不可达。S13：随三面复制键统一扩为
+   复制键选择器（好友面 .fm-msg-act；设备面同款声明在 dropbox.css）。 */
 @media (hover: none) {
   .fm-msg-actions { opacity: 1; }
+  .fm-msg-act { opacity: 1; }
 }
 
+/* S08/S09/S10：复制键盒收敛到主对话口径（chat.css:783-789）= 13×13 盒 / padding 1px
+   / r4 / svg 11px / 常驻 `.35`（R2 = 常显半透明）/ hover **仅**透明度 .6
+   （去掉现状的色变 + 圆角底色）。
+   🔴 回归登记（G4/E3）：`.fm-msg-act` 是「复制 + 转发」两颗按钮的共用类 ⇒ 本段
+   同时把转发键缩到 13×13、并把它一并纳入常驻 .35 与 hover .6 档（转发键无主对话
+   对照，属「顺带改样」，已记入变更单）。 */
 .fm-msg-act {
   display: flex;
   align-items: center;
   justify-content: center;
-  width: 20px;
-  height: 20px;
-  padding: 0;
+  width: 13px;
+  height: 13px;
+  padding: 1px;
   border: none;
-  border-radius: 5px;
+  border-radius: 4px;
   background: transparent;
-  color: var(--color-text-muted, #888);
+  color: var(--color-text);
+  opacity: 0.35;
   cursor: pointer;
-  transition: color 0.15s ease, background 0.15s ease;
+  transition: opacity 0.15s;
 }
 
-.fm-msg-act:hover { color: var(--color-text, #000); background: var(--color-frame-hover); }
-.fm-msg-act svg { width: 12px; height: 12px; }
+.fm-msg-act:hover { opacity: 0.6; }
+.fm-msg-act svg { width: 11px; height: 11px; }
+
+/* S14/R3：复制成功反馈——原好友面**完全缺失**（点复制零反馈），现收敛到主对话
+   语义（绿对勾 + 1500ms 复位，逻辑在 messages.js）并保持「绿勾全亮」= opacity 1。
+   置于 `:hover` 之后 ⇒ 同特异度(0,2,0)后置获胜，悬停中也不被压回 .6。 */
+.fm-msg-act.copied { color: #34c759; opacity: 1; }
+
+/* S15/R4：复制失败就地提示态（图标转错误色；文案由 utils.js 的
+   `markCopyFailed()` 以 `aria-live` 行注入，不用 toast）。 */
+.fm-msg-act.copy-failed { color: var(--color-error); opacity: 1; }
 
 /* 焦点环补齐（现状 = 浏览器默认蓝环）：与 .fm-row:focus-visible 同款 */
 .fm-msg-act:focus-visible {

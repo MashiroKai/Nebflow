@@ -191,6 +191,17 @@ function askUserAnswerText(msgs, i) {
   return (nextMsg && nextMsg.type === 'user' && !nextMsg.injected && nextMsg.text) ? nextMsg.text : null;
 }
 
+/** R5（作者裁定 = 补上，2026-09-14）：历史 askUser 卡的复制载荷 —— 各问句的**纯文本**
+ *  （`AskItem.question` 可为富文本 HTML，复制键只该给纯文本，故剥标签并压缩空白），
+ *  一问一句、`\n` 分隔。空卡 ⇒ 空串 ⇒ 调用侧不挂药丸（不产生游离按钮）。 */
+function askUserQuestionText(items) {
+  if (!Array.isArray(items)) return '';
+  return items
+    .map(it => String((it && it.question) || '').replace(/<[^>]*>/g, ' ').replace(/\s+/g, ' ').trim())
+    .filter(Boolean)
+    .join('\n');
+}
+
 /** The nearest history entry that is not an agent-injected user bubble
  *  (issue #43, 2026-09-03). main.js uses this for pending-interaction
  *  detection after a history (re)load: delegate results / Mail / flow
@@ -504,6 +515,13 @@ export function restoreFromStorage(opts = {}) {
       row.appendChild(bubble);
       chat.appendChild(row);
       renderAskUserHistory(bubble, m.items, askUserAnswerText(msgs, i));
+      // R5（作者裁定 = 补上，2026-09-14）：历史 askUser 卡原**不挂** footer，而 live
+      // ask 行（chat.js）与历史 ask 问答行都挂 ⇒ 卡片 footer 奇偶不一致。现补一枚
+      // 药丸（复用同一 builder ⇒ 分隔符守卫与三面形态同源）。`AskUser` 落盘无
+      // timestamp ⇒ `m.timestamp || 0` ⇒ 现状恒为 copy-only；将来若出现带 ts 的
+      // 生产者，同一行自动带时间（无需再改本处）。
+      const askCopy = askUserQuestionText(m.items);
+      if (askCopy) row.appendChild(createMsgFooterBadge(m.timestamp || 0, askCopy));
     } else if (m.type === 'askPermission') {
       // Render as disabled permission prompt (will be replaced by interactive version if still pending)
       const row = document.createElement('div');
@@ -560,8 +578,10 @@ export function restoreFromStorage(opts = {}) {
       qBubble.appendChild(qText);
       qRow.appendChild(qBubble);
       // v1.2 unified footer (2026-09-06 补齐批): ask question bubbles get a
-      // copy footer too (UiMessage.Ask carries no timestamp → copy-only).
-      if (m.question) qRow.appendChild(createAiCopyBadge(0, m.question));
+      // copy footer too. R1（作者裁定 = 带时间，2026-09-14）：不再硬编码 0 ——
+      // 传 `m.timestamp`（数据层已给 `UiMessage.Ask` 补 timestamp 落盘）；
+      // 缺席（旧历史行 / 无 ts 生产者）⇒ 仍按 copy-only 渲染，守卫语义不变。
+      if (m.question) qRow.appendChild(createAiCopyBadge(m.timestamp, m.question));
       chat.appendChild(qRow);
       // Ask answer (AI side)
       if (m.answer) {
@@ -609,8 +629,10 @@ export function restoreFromStorage(opts = {}) {
       }
       row.appendChild(bubble);
       // v1.2 unified footer (2026-09-06 补齐批): agent rows get a copy
-      // footer too (UiMessage.Agent carries no timestamp → copy-only).
-      if (m.text) row.appendChild(createAiCopyBadge(0, m.text));
+      // footer too. R1（作者裁定 = 带时间，2026-09-14）：不再硬编码 0 ——
+      // 传 `m.timestamp`（数据层 `UiMessage.Agent` 同批补 timestamp 字段）；
+      // 缺席 ⇒ copy-only，守卫语义不变。
+      if (m.text) row.appendChild(createAiCopyBadge(m.timestamp, m.text));
       chat.appendChild(row);
     } else if (m.type === 'error') {
       // Skip error messages on restore — they're transient
@@ -821,6 +843,10 @@ export function restoreFromBackendHistory(msgs, opts = {}) {
       row.appendChild(bubble);
       fragment.appendChild(row);
       renderAskUserHistory(bubble, m.items, askUserAnswerText(msgs, i));
+      // R5（作者裁定 = 补上）：与 localStorage 兜底路径同款补药丸，两条历史路径
+      // 逐字对齐（本函数与 restoreFromStorage 的历史形态必须一致）。
+      const askCopy = askUserQuestionText(m.items);
+      if (askCopy) row.appendChild(createMsgFooterBadge(m.timestamp || 0, askCopy));
     } else if (m.type === 'askPermission') {
       // Render as disabled permission prompt (will be replaced by interactive version if still pending)
       const row = document.createElement('div');
@@ -877,8 +903,10 @@ export function restoreFromBackendHistory(msgs, opts = {}) {
       qBubble.appendChild(qText);
       qRow.appendChild(qBubble);
       // v1.2 unified footer (2026-09-06 补齐批): ask question bubbles get a
-      // copy footer too (UiMessage.Ask carries no timestamp → copy-only).
-      if (m.question) qRow.appendChild(createAiCopyBadge(0, m.question));
+      // copy footer too. R1（作者裁定 = 带时间，2026-09-14）：不再硬编码 0 ——
+      // 传 `m.timestamp`（数据层已给 `UiMessage.Ask` 补 timestamp 落盘）；
+      // 缺席（旧历史行 / 无 ts 生产者）⇒ 仍按 copy-only 渲染，守卫语义不变。
+      if (m.question) qRow.appendChild(createAiCopyBadge(m.timestamp, m.question));
       fragment.appendChild(qRow);
       // Ask answer (AI side)
       if (m.answer) {
@@ -926,8 +954,10 @@ export function restoreFromBackendHistory(msgs, opts = {}) {
       }
       row.appendChild(bubble);
       // v1.2 unified footer (2026-09-06 补齐批): agent rows get a copy
-      // footer too (UiMessage.Agent carries no timestamp → copy-only).
-      if (m.text) row.appendChild(createAiCopyBadge(0, m.text));
+      // footer too. R1（作者裁定 = 带时间，2026-09-14）：不再硬编码 0 ——
+      // 传 `m.timestamp`（数据层 `UiMessage.Agent` 同批补 timestamp 字段）；
+      // 缺席 ⇒ copy-only，守卫语义不变。
+      if (m.text) row.appendChild(createAiCopyBadge(m.timestamp, m.text));
       fragment.appendChild(row);
     } else if (m.type === 'system') {
       // Skill-activated system messages are rendered as skill bubbles by the user handler above;

@@ -726,6 +726,7 @@ export default {
   'chat.permExecCmd': '执行命令',
   'chat.copied': '已复制！',
   'chat.copy': '复制',
+  'chat.copyFailed': '复制失败',
   'chat.noMoreMessages': '— 没有更多消息 —',
   'chat.loading': '加载中...',
   'chat.thinking': '思考中...',

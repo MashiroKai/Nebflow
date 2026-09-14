@@ -835,6 +835,30 @@ const CHECK_SVG = '<svg width="12" height="12" viewBox="0 0 24 24" fill="none" s
 let _activeCopyBtn = null;
 let _activeCopyTimeout = null;
 
+/** R4（作者裁定 = 要提示）：复制失败**就地**兜底 —— 按钮转错误色 + 一行
+ *  `aria-live` 文案（2s 自清）。三面共用一份实现（主对话 `createMsgCopyButton`
+ *  的 catch 分支、好友面 messages.js 的 catch 分支都调它）。
+ *  🔴 不用 toast（toast 属既有 UI 裁定面，本批边界外）；文案来自 i18n
+ *  `chat.copyFailed`（禁硬编码中文）。幂等：同一按钮失败态未清前不叠加第二行。 */
+export function markCopyFailed(btn) {
+  if (!btn || btn.dataset.nfCopyFailed === '1') return;
+  btn.dataset.nfCopyFailed = '1';
+  btn.classList.add('copy-failed');
+  const host = btn.parentElement;
+  if (!host) return;
+  const live = document.createElement('span');
+  live.className = 'copy-failed-live';
+  live.setAttribute('role', 'status');
+  live.setAttribute('aria-live', 'polite');
+  live.textContent = t('chat.copyFailed');
+  host.appendChild(live);
+  setTimeout(() => {
+    live.remove();
+    btn.classList.remove('copy-failed');
+    btn.dataset.nfCopyFailed = '0';
+  }, 2000);
+}
+
 export function createMsgCopyButton(text) {
   const btn = document.createElement('button');
   btn.className = 'msg-copy';
@@ -861,6 +885,7 @@ export function createMsgCopyButton(text) {
       }, 1500);
     } catch (err) {
       console.error('[chat] Copy failed:', err);
+      markCopyFailed(btn);   // R4：失败可见兜底（原为「UI 零变化」）
     }
   };
   return btn;

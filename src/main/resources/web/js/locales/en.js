@@ -730,6 +730,7 @@ export default {
   'chat.permExecCmd': 'Execute command',
   'chat.copied': 'Copied!',
   'chat.copy': 'Copy',
+  'chat.copyFailed': 'Copy failed',
   'chat.noMoreMessages': '— No more messages —',
   'chat.loading': 'Loading...',
   'chat.thinking': 'Thinking...',

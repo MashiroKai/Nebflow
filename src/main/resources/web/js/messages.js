@@ -3,7 +3,7 @@
 // cfg-modal chat window (560px glass), forward-to-agent (one-way), agent-sent
 // chips, pure-badge notifications (no sound/banner/title — [U3]).
 import { t } from './i18n.js';
-import { createIconsIn } from './utils.js';
+import { createIconsIn, markCopyFailed } from './utils.js';
 import state from './state.js';
 import { onMessage, onReconnect, onDisconnect } from './ws.js';
 import { getNeblinkState } from './neblink.js';
@@ -1002,8 +1002,29 @@ function bubbleEl(m, conv) {
   copyBtn.innerHTML = '<i data-lucide="copy"></i>';
   copyBtn.title = t('messages.copy');
   copyBtn.setAttribute('aria-label', t('messages.copy')); // title 不保证被 AT 播报
-  copyBtn.addEventListener('click', () => {
-    navigator.clipboard?.writeText(m.body || '');
+  // 三窗口 footer 统一（2026-09-14 作者七答）：S14/R3 补复制成功反馈——好友面原
+  // 「零反馈」（实测 domChanged=false / anyToast=false / anyCopiedClass=false），
+  // 现收敛到主对话语义（换对勾图 + `.copied` 绿亮 + 1500ms 复位）；
+  // S15/R4 补 `await` + catch——原写法无 await / 无 catch ⇒ 未处理 Promise 拒绝
+  // （实测 pageerror: Write permission denied），失败现走就地提示。转发键（第 2 颗）
+  // 只随共用类 `.fm-msg-act` 的**样式档**变化，存在性与行为不动（E3）。
+  let copyResetTimer = null;
+  copyBtn.addEventListener('click', async () => {
+    try {
+      await navigator.clipboard.writeText(m.body || '');
+      copyBtn.innerHTML = '<i data-lucide="check"></i>';
+      copyBtn.classList.add('copied');
+      createIconsIn(copyBtn);
+      clearTimeout(copyResetTimer);
+      copyResetTimer = setTimeout(() => {
+        copyBtn.innerHTML = '<i data-lucide="copy"></i>';
+        copyBtn.classList.remove('copied');
+        createIconsIn(copyBtn);
+      }, 1500);
+    } catch (err) {
+      console.error('[messages] Copy failed:', err);
+      markCopyFailed(copyBtn);
+    }
   });
   const fwd = el('button', 'fm-msg-act');
   fwd.innerHTML = '<i data-lucide="forward"></i>';

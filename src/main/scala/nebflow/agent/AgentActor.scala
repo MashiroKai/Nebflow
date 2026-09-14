@@ -4470,7 +4470,13 @@ object AgentActor extends AgentCore with AgentSession:
       )
       _ <- ctx.forkTurn(
         resources.sessionStore
-          .appendUiMessages(sessionId, List(UiMessage.Ask(question, answerText, Some(0L), model)))
+          // R1（footer 统一 · 作者裁定「带时间」，2026-09-14）：落盘真实时刻 ——
+          // 原先不落 timestamp ⇒ 历史行的 footer 时间在刷新后消失（live 传 Date.now）。
+          // 与 `askDone` 帧同一次落盘、同一 tick，故取当前时刻即可。
+          .appendUiMessages(
+            sessionId,
+            List(UiMessage.Ask(question, answerText, Some(0L), model, System.currentTimeMillis()))
+          )
           .handleErrorWith(e => logger.warn(s"Failed to persist ask UiMessage: ${e.getMessage}"))
       )
     yield
