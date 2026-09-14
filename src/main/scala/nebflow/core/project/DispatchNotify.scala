@@ -137,7 +137,12 @@ final class DispatchNotify(
     * 触发 = 窗口引入前的行为，测试接缝）。窗口是**滚动**的：首件到达起算，不随
     * 新件延长 ⇒ 单件延迟上界 = 窗口长度。分账口径不变（completion / failed /
     * cancelled 各一份缓冲 + 各自预算）。 */
-  windowMs: Long = DispatchNotify.DefaultWindowMs
+  windowMs: Long = DispatchNotify.DefaultWindowMs,
+  /** 回合跨度（R17②，b64 批 2026-09-13）：预算回合边界 = 每轮 [[redeliver]] 扫描，
+    * 挂点 = `ProjectActor.TtlTick`，周期 = `GatewayMain.ttlScanner`（30s）。本参数只为
+    * **定档推导**用（[[DispatchNotify.completionTier]]），不改变回合边界本身；
+    * spec 注入小值使「档位公式」可确定性断言。 */
+  roundSpanMs: Long = DispatchNotify.DefaultRoundSpanMs
 ):
   private val logger = NebflowLogger.forName("nebflow.project.dispatch-notify")
 
@@ -197,11 +202,16 @@ final class DispatchNotify(
     case NotifyReason.Cancelled => cancelledBudgetUsed
     case _                      => budgetUsed
 
+  /** completion 生效预算（R17② 重新定档；failed/cancelled **不定档**——异常态预算
+    * 保持 5/回合，风暴面由 failed 窗口熔断承担，本批不放大）。 */
+  private val completionBudgetMax: Int =
+    DispatchNotify.completionTier(budgetMax, windowMs, roundSpanMs)
+
   /** 预算上限单点（按 reason 分账）。 */
   private def budgetMaxFor(reason: NotifyReason): Int = reason match
     case NotifyReason.Failed    => failedBudgetMax
     case NotifyReason.Cancelled => cancelledBudgetMax
-    case _                      => budgetMax
+    case _                      => completionBudgetMax
 
   /** 预算耗尽升级单点（按 reason 分派到既有三个 escalate*，节点保持终态语义各自不变）。 */
   private def escalateBudgetExhaustedFor(node: NodeDef, reason: NotifyReason): IO[Unit] = reason match
@@ -283,9 +293,11 @@ final class DispatchNotify(
   def notifyTerminal(node: NodeDef, reason: NotifyReason): IO[Unit] =
     val guarded: IO[Boolean] = reason match
       case NotifyReason.Completion =>
-        // flag 语义保持 completion 回流专用（设计 §2.2）；持久去重按 store 现读
-        // 判定（见 [[markerEmpty]]——传入快照可能是标记前的）。
-        if !(node.notifyDispatcher && node.status == NodeLifecycle.Completed) then IO.pure(false)
+        // 守卫改走**通知策略单点**（b64 批 2026-09-13，R2/R3）：`notify == None`（存量）
+        // ⇒ 回落 legacy flag（今天的行为，逐字节等价）；显式声明 ⇒ 仅 `dispatcher`
+        // 回流（`root` 的根可见性由 out 边承担、`silent` 二者皆无）。持久去重按 store
+        // 现读判定（见 [[markerEmpty]]——传入快照可能是标记前的）。
+        if !(NotifyPolicy.completionNotifiesDispatcher(node) && node.status == NodeLifecycle.Completed) then IO.pure(false)
         else markerEmpty(node.id)
       case NotifyReason.Failed =>
         // 不查 flag（设计 §2.2 四理由：failed 是异常低频事件，拓扑主人全知情）；
@@ -396,7 +408,8 @@ final class DispatchNotify(
     budgetUsed.set(0) *> failedBudgetUsed.set(0) *> cancelledBudgetUsed.set(0) *> store.snapshot.flatMap { s =>
       val completions = s.nodes.values
         .filter(n =>
-          n.notifyDispatcher &&
+          // 策略单点（b64 批 R2/R3）：显式 `silent` ⇒ 不入候选；缺键 ⇒ legacy flag。
+          NotifyPolicy.completionNotifiesDispatcher(n) &&
             n.status == NodeLifecycle.Completed &&
             n.notifySentAt.isEmpty &&
             n.result.exists(_.trim.nonEmpty))
@@ -434,15 +447,21 @@ final class DispatchNotify(
     markSent(node.id) *>
       budgetEscalated.modify(b => if b then (b, false) else (true, true)).flatMap {
         case false =>
-          logger.info(
-            s"Project '$projectName' dispatch-notify budget exhausted ($budgetMax) for node '${node.name}' (${node.id}) — node kept completed; supervisor notice already sent (single-flight)")
-        case true =>
-          val text = s"[dispatch-notify] 预算耗尽（${budgetMax} 次/回合）——项目「$projectName」节点「${node.name}」(${node.id}) 已完成但未自动通知分发器，请经 NodeList(detail=\"${node.id}\") 复核。"
+          // R17③（b64 批）：**每一次**耗尽都留**持久审计**（不止首件）——single-flight
+          // 监督通知覆盖「有人被静默」这个事实，逐节点审计覆盖「是谁」。二者合起来
+          // 使「耗尽语义不得回退为静默 markSent」在证据面可查（markSent + notice +
+          // per-node 审计三件齐备）。
           FlowMapEventLog.append(workspace, projectName, node.id, "dispatch-notify",
-            s"budget exhausted ($budgetMax) → node '${node.name}' kept completed, notifySentAt set, supervisor notice (single-flight)") *>
+            s"budget exhausted ($completionBudgetMax) → node '${node.name}' kept completed, notifySentAt set, supervisor notice already sent (single-flight)") *>
+            logger.info(
+              s"Project '$projectName' dispatch-notify budget exhausted ($completionBudgetMax) for node '${node.name}' (${node.id}) — node kept completed; supervisor notice already sent (single-flight); audit appended")
+        case true =>
+          val text = s"[dispatch-notify] 预算耗尽（$completionBudgetMax 次/回合）——项目「$projectName」节点「${node.name}」(${node.id}) 已完成但未自动通知分发器，请经 NodeList(detail=\"${node.id}\") 复核。"
+          FlowMapEventLog.append(workspace, projectName, node.id, "dispatch-notify",
+            s"budget exhausted ($completionBudgetMax) → node '${node.name}' kept completed, notifySentAt set, supervisor notice (single-flight)") *>
             escalate(text, node.name) *>
             logger.warn(
-              s"Project '$projectName' dispatch-notify budget exhausted ($budgetMax) — node '${node.name}' (${node.id}) kept completed, supervisor notice sent")
+              s"Project '$projectName' dispatch-notify budget exhausted ($completionBudgetMax) — node '${node.name}' (${node.id}) kept completed, supervisor notice sent")
       }
 
   /** failed 预算耗尽（2026-09-07 批，与 completion 版 [[escalateBudgetExhausted]]
@@ -691,6 +710,32 @@ object DispatchNotify:
     * 语义 = 同 reason 的件在该窗口内到达即合并为**一次注入**，并按「一次注入」
     * 计一个预算单位（密集扇出不再从第 6 件起被预算静默丢弃，#62）。 */
   val DefaultWindowMs: Long = 5000L
+
+  /** 预算回合跨度默认值（R17②）：= TtlTick 周期（`GatewayMain.ttlScanner(30.seconds)`）
+    * ——预算回合边界恒为「每轮 [[redeliver]] 扫描」。 */
+  val DefaultRoundSpanMs: Long = 30_000L
+
+  /** **completion 预算重新定档**（R17②，作者 2026-09-13 裁定；b64 批）。
+    *
+    * 旧档 5 的来源：opt-in 时代的防回流护栏（每回合最多 5 件）。新默认 `dispatcher`
+    * （R2）把 completion 回流从「按需 opt-in」变成**默认路径**，每回合候选件数随批宽
+    * 增长——旧档下密集扇出批第 6 件起「静默失联分发器」（#62 的 P1 风险）。
+    *
+    * Q4 打包窗口（[[DefaultWindowMs]] = 5s，首件起算不延长）已把**同窗**多件合并为
+    * **一次注入**，并按一次注入计一个预算单位 ⇒ 每回合的注入次数不再等于候选件数。
+    * 定档据此改为「**每回合允许的注入次数上界**」，并按窗口数推导：
+    *   注入次数 ≤ ceil(回合跨度 / 窗口长度) + 1（窗口滚动的边界余量）
+    * ⇒ [[completionTier]] = `max(基准档, 上界)`。默认参数下 = max(5, 7) = **7**。
+    * 语义红利：只要批宽增长发生在「窗口合并可达」的范围内（同回合内完成），档位恒不
+    * 被打穿——R17①（窗口内合并单条）与②（重新定档）在此闭环。
+    * 窗口关闭（`windowMs <= 0`，测试接缝）⇒ 退回基准档（同步逐条 = 窗口引入前形态，
+    * 此时「件数 = 注入数」，档位语义与旧档一致）。
+    * ⚠ 本函数**只管 completion**；failed/cancelled 预算不变（分账纪律，见类头）。 */
+  def completionTier(base: Int, windowMs: Long, roundSpanMs: Long): Int =
+    if windowMs <= 0 then base
+    else
+      val windows = (roundSpanMs + windowMs - 1) / windowMs // ceil
+      math.max(base, (windows + 1).toInt)
 
   /** failed 通知滚动窗口/冷却/阈值默认值（2026-09-07 批）：直接抄 FeedbackRouter
     * 同名参数（10min/30min/5）——项目内护栏心智一致（设计 §10.2 建议、作者 09:24
