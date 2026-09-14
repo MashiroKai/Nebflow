@@ -25,13 +25,14 @@ import nebflow.core.tools.ToolRegistry
  *     available"。flows/skills 声明解析保留（决策 A①，legacy 授能活到阶段 3），
  *     但不再驱动任何工具注入。
  *   - Nebula's orchestration tools are mechanism-fixed (no declaration
- *     needed) — §C.1 静态矩阵恰十四件（2026-09-06 00:48 作者裁定：NodeList
+ *     needed) — §C.1 静态矩阵当前/终态 = 15（作者 2026-09-14 拍板）；史实 2026-09-06
+ *     时点恰十四件（史实；00:48 作者裁定：NodeList
  *     摘除——节点结果沿 out 边自动投递，主动查图与裁定职责重叠；dispatcher
  *     自身面不受影响。2026-09-06 TaskList 批：+TaskList——Nebula 专属持久
  *     任务清单，快变状态出记忆）. Task/NodeMessage retired as tools,
  *     Mail replaces them as the single message primitive (R2 2026-09-12).
  *   - Mail is the platform's ONLY message primitive (R2「一个 Mail 统一」2026-09-12):
- *     carried by Nebula (orchestration face, −Task +Mail net 16), the project
+ *     carried by Nebula (orchestration face, −Task +Mail 史实 net 16 ⇒ 15 终态), the project
  *     dispatcher (−NodeMessage +Mail net 9) and by team agents; still never for
  *     flow nodes / standalone / node (general) face.
  *   - Task / NodeMessage are retired tools (R2 2026-09-12) — on no agent's face.
@@ -383,7 +384,7 @@ class AllowedToolSetSpec extends FunSuite:
     assert(!allowed.contains("FlowTrigger"), "Nebula no longer carries FlowTrigger (2026-09-05 旧体系退役)")
     // R2「一个 Mail 统一」（2026-09-12）：本条为**断言反转**——原口径
     // 「Nebula no longer carries Mail (2026-09-05 旧体系退役)」随 R2 作废：
-    // Mail 成为全平台唯一消息原语，Nebula 面必须携带（16→16：−Task +Mail）。
+    // Mail 成为全平台唯一消息原语，Nebula 面必须携带（史实 16→16 净 0：−Task +Mail；当前/终态 = 15）。
     assert(allowed.contains("Mail"), "R2: Nebula carries Mail — 平台唯一消息原语（2026-09-12）")
     assert(!allowed.contains("Task"), "R2: Task 退役，Nebula 面零 Task")
     assert(!allowed.contains("NodeMessage"), "R2: NodeMessage 退役，Nebula 面零 NodeMessage")
@@ -539,11 +540,12 @@ class AllowedToolSetSpec extends FunSuite:
     // 阶段 2c agent 收敛（§C.1 角色-工具静态矩阵）：Nebula 工具面 = 固定集
     // （2026-09-05 23:34 作者裁定：Nebula 回归纯编排——Bash/Write/Edit 移除；
     // 2026-09-06 00:48 作者裁定：NodeList 摘除——out 边自动投递取代主动查图；
-    // 2026-09-06 TaskList 批：+TaskList——恰十四件：编排触发/任务编排/通信/
+    // 2026-09-06 TaskList 批：+TaskList——史实该时点恰十四件（当前/终态 = 15）：
+    // 编排触发/任务编排/通信/
     // 读三件/可视化/用户面/平台/记忆），机制注入不可配置。裸定义（空 tools）
     // 必须携带完整矩阵——面板编辑/定义失误无法解除调度器武装。
     val orchestration = Set(
-      "Mail", "ProjectCreate", "AgentControl",              // 编排触发（R2 2026-09-12：−Task +Mail 净 16；NodeList 00:48 裁定摘除）
+      "Mail", "ProjectCreate", "AgentControl",              // 编排触发（R2 2026-09-12：−Task +Mail 史实净 16，当前/终态 = 15；NodeList 00:48 裁定摘除）
       "Delegate",                                          // 编排触发（2026-09-11 极简内核回归）
       "TaskList",                                          // 任务编排（TaskList 批：快变状态出记忆）
       "SendMessage",                                       // 通信（好友功能非旧体系，保留）
@@ -559,8 +561,8 @@ class AllowedToolSetSpec extends FunSuite:
       assert(allowed.contains(t), s"mechanism-fixed orchestration tool missing: $t")
     )
     assert(!allowed.contains("TransferFile"), "TransferFile retired 2026-09-14 (#145) — must not be in the Nebula face")
-    assert(!allowed.contains("Issue"), "恰十四件、零 Issue（2026-09-04 终裁：Issue/CheckIssues 退役）")
-    assert(!allowed.contains("NodeList"), "恰十四件、零 NodeList（2026-09-06 00:48 裁定摘除）")
+    assert(!allowed.contains("Issue"), "零 Issue（2026-09-04 终裁：Issue/CheckIssues 退役；件数在飞 15 = 终态）")
+    assert(!allowed.contains("NodeList"), "零 NodeList（2026-09-06 00:48 裁定摘除；件数在飞 15 = 终态）")
     // R2 断言反转（2026-09-12）：原「旧体系三件维持退役」含 Mail 已作废——
     // Mail 是 R2 唯一消息原语、必在 Nebula 面；退役件改判为 Task/NodeMessage。
     Set("Task", "NodeMessage", "FlowTrigger", "FlowExecute").foreach { t =>
@@ -575,7 +577,8 @@ class AllowedToolSetSpec extends FunSuite:
     assert(!allowed.contains("Edit"), "Nebula 无写手：Edit 已移除（23:34 裁定）")
 
   // ===== TaskList 工具面隔离（2026-09-06 TaskList 批，硬约束）=====
-  // Nebula 专属编排件：仅 NebulaOrchestrationTools 携带（+1，恰十四件）；
+  // Nebula 专属编排件：仅 NebulaOrchestrationTools 携带（+1；当前/终态 = 15，作者
+  // 2026-09-14 拍板；史实 2026-09-06 时点恰十四件）；
   // dispatcher（DispatcherFixedTools）/ general（BaseTools+AskUserQuestion）与一切非
   // Nebula 身份（含 "*" 声明、dream、SubTask worker、flow 节点）零出现。
 

@@ -109,7 +109,8 @@ object ToolRegistry:
       "MemoryEdit" -> MemoryEditTool,
       // TaskList（2026-09-06 作者 00:07 提议 + 00:11 首期无前端拍板）：Nebula
       // 专属编排件——持久任务清单（~/.nebflow/tasks.json 运行时数据层）。
-      // 授能面 = NebulaOrchestrationTools 单一来源（恰十四件，TaskList 批 +1）；
+      // 授能面 = NebulaOrchestrationTools 单一来源（当前/终态 = 15，作者 2026-09-14
+      // 拍板；史实 2026-09-06 时点恰十四件，TaskList 批 +1）；
       // NebulaExclusiveTools 防声明逃逸（dispatcher/general/"*" 一律剥离）。
       "TaskList" -> TaskListTool,
       // TaskBoard（20260908 任务板批 2，规格 §1b/§1c）：项目域共享工作项看板
