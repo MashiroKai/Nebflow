@@ -56,13 +56,19 @@ import scala.concurrent.duration.*
   *  - `event:message_new` / `event:message_new_self` —— 隧道事件触发（唯一带 `eventId=`）；
   *  - `refresh_all` —— 启动/重连的全量补拉（`refreshAll`）；
   *  - `send:agent` —— agent 代发后的**自送**补拉（`doSend`）；
-  *  - `send:user` —— UI 直发后的**自送**补拉（`sendAsUser`）。 */
+  *  - `send:user` —— UI 直发后的**自送**补拉（`sendAsUser`）；
+  *  - `reconcile` —— **批 C 对账拍**（`reconcileConversations`）：非事件触发、无
+  *    `eventId`，判据①的配对不变式因此不受影响（`isEventTriggered` 只认 `event:`
+  *    前缀，单点判据未改）。 */
 object FriendPullTrigger:
   val EventMessageNew: String = "event:message_new"
   val EventMessageNewSelf: String = "event:message_new_self"
   val RefreshAll: String = "refresh_all"
   val SendAsAgent: String = "send:agent"
   val SendAsUser: String = "send:user"
+  /** §3.6 对账拍（批 C）：45s 拍上「服务端 keyset 水位 vs 本地 `dispatchedMax`」
+    * 的差态补齐。**不是** `event:` 族 ⇒ 不带 `eventId`、不参与判据①配对。 */
+  val Reconcile: String = "reconcile"
 
   /** 事件触发族判据（**单点**：判据①「事件触发的 pull」只按本方法判，禁各处写死字面量）。
     * 只有事件触发的补拉才携带 `eventId` ⇒ 与 `processed` 行配对。 */
@@ -432,8 +438,16 @@ final class FriendService(
     *
     * 字段集（判据③④直接读它）：
     *  `conversationId` / `trigger` / `eventId` / `after` / `serverMax` /
-    *  `pulled` / `dispatched` / `skipped` / `reasons=[…]` / `pullAnchor` / `dispatchedMax`。
-    * 恒等式 `pulled == dispatched + skipped` **按构造保证**（skipped = pulled - dispatched）。 */
+    *  `pulled` / `dispatched` / `skipped` / `reason` / `reasons=[…]` /
+    *  `pullAnchor` / `dispatchedMax`。
+    * 恒等式 `pulled == dispatched + skipped` **按构造保证**（skipped = pulled - dispatched）。
+    *
+    * 🔴 **批 C 补键（本行格式的加性扩键，非改语义）**：`reasons=[]` 是**列表**形态，
+    * 空列表时行内**没有任何 `reason=` 键** —— 与 `droppedWarn` 已定型的「三字段必须
+    * 同行、缺键显式写 `<none>`」口径不一致（W2 空拍行即此形态）。本批补 **`reason=`
+    * 单值键**：有跳过原因时取 `reasons` 首项（与 `pullSkipWarn` 的 `reason=` **同源同
+    * 取值** ⇒ 两行可交叉核对），无跳过原因时显式写 `<none>`。位置**追加在行尾**，
+    * 既有字段名与相对顺序零变动（既有断言器的 `\breason=(\S+)` 不会误命中 `reasons=`）。 */
   private def pullLine(
       conversationId: String,
       trigger: String,
@@ -456,7 +470,8 @@ final class FriendService(
           s"eventId=${eventId.getOrElse("<none>")} after=$after serverMax=$serverMax " +
           s"pulled=$pulled dispatched=$dispatched skipped=$skipped " +
           s"reasons=[${reasons.distinct.mkString(",")}] " +
-          s"pullAnchor=$anchorAfter dispatchedMax=$dispatchedMaxAfter"
+          s"pullAnchor=$anchorAfter dispatchedMax=$dispatchedMaxAfter " +
+          s"reason=${reasons.headOption.getOrElse("<none>")}"
       )
 
   /** 跳过态的**独立** WARN（判据④「`skipped>0` ⇒ 同行含 `reasons=[…]` **且另有 WARN**」）。
@@ -511,7 +526,13 @@ final class FriendService(
       cb(FriendEvent(eventName, envelope)).handleErrorWith(e =>
         emit(
           "warn",
-          s"friend_pull_dispatch_failed branch=W1 conversationId=$conversationId messageId=${m.id} " +
+          // 🔴 批 C 去歧义（W1 一名两处）：`W1` 是**族标签**（取证稿 §3.3 W1 =
+          // 「拉取到但没派发」族），本行是族内**派发面**子分支 ⇒ 子码 `W1a`。
+          // 同族取数面 = `W1b`（见 `dispatchPull` 的 `friend_pull_failed`）。
+          // 为何必须拆：两处同写 `branch=W1` 时「应报数 == 出现数」**不可机械计数**
+          // （一个 needle 命中两行、两种成因）。子码唯一化后逐个可数，且族前缀
+          // `W1` 保留 ⇒ 与取证稿的 W 编号对照关系不丢。
+          s"friend_pull_dispatch_failed branch=W1a conversationId=$conversationId messageId=${m.id} " +
             s"reason=broadcast_failed err=${e.getClass.getSimpleName}: ${e.getMessage}"
         )
       )
@@ -542,7 +563,8 @@ final class FriendService(
             pullLine(conversationId, trigger, eventId, after, after, 0, 0, 0, Nil, anchorNow, sentBefore) *>
               emit(
                 "warn",
-                s"friend_pull_failed branch=W1 conversationId=$conversationId trigger=$trigger " +
+                // 🔴 批 C 去歧义：同族**取数面**子分支 ⇒ `W1b`（族前缀 `W1` 保留）。
+                s"friend_pull_failed branch=W1b conversationId=$conversationId trigger=$trigger " +
                   s"messageId=<none> reason=list_failed err=$err pullAnchor=$anchorNow dispatchedMax=$sentBefore"
               )
           case Right(msgs) if msgs.isEmpty =>
@@ -655,6 +677,115 @@ final class FriendService(
             dispatchPull(conversationId, trigger, eventId, oursHint, math.max(0L, hint - 1L))
           case None =>
             pullLine(conversationId, trigger, eventId, 0L, 0L, 0, 0, 0, Nil, 0L, 0L)
+    }
+
+  // ===== §3.6 对账拍（批 C）=====
+
+  /** **一个会话的差态核对与补齐**（§3.6：服务端 keyset 水位 vs 本地 `dispatchedMax`）。
+    *
+    * 为什么需要它（修的是什么）：批 A 把「拉取即派发」接到了**事件**上——事件到了
+    * 就一定补拉。但事件本身**可能根本不到**（广播失败 / 浏览器正处 WS 重连窗口 /
+    * 隧道在册但半死 / 上游丢帧）：这条路径上**没有任何一方知道发生过丢帧**，于是
+    * 「服务端有、UI 没有、且没有任何回补」没有上界。本腿提供那个上界：在一个
+    * **周期拍**上用 keyset 探针把「服务端水位」与「本地已派发水位」对一次账。
+    *
+    * 判据（可机械判）：
+    *  · 探针空页 ⇒ **零日志零动作**（无差是常态；对账拍不得变成噪声源）；
+    *  · 探针非空 ⇒ 报一行 `friend_pull_reconcile` WARN（**含 `conversationId=` 与
+    *    `diff=`**）后**复用唯一派发腿** `pullConversation` 补齐 —— 🔴 禁在本方法里
+    *    另写一份派发实现（两份实现 = 两套语义，正是本仓缺陷族形态）。
+    *
+    * 代价（如实申报）：差态下**多一次取数**（探针页 + 派发腿各取一次同一窗）。这是
+    * 「复用唯一派发腿」的代价，且只发生在**确实有差**时才付；无差拍零额外请求。
+    * 反过来若为省这一次而把派发逻辑内联，本腿就会成为第二份派发实现 —— 不换。
+    *
+    * `diff = serverMax - after` 的语义边界（🔴 不夸大）：`serverMax` 是**首探页**的
+    * 最大 id。差 > 单页（50）时它是**下界**，真实服务端水位在后续页里由派发腿继续
+    * 推进（`pullAnchor` 单调前进 ⇒ 多拍收敛）。⇒ 本字段是**「有差且差至少这么大」**
+    * 的读数，不是「服务端水位」的精确值。
+    *
+    * 非事件触发（`trigger=reconcile`、`eventId=<none>`）⇒ 判据①的「事件触发 pull ⟺
+    * processed」配对不变式**不受影响**（`isEventTriggered` 未改）。
+    */
+  private def reconcileConversation(conversationId: String, dispatchedMax: Long): IO[Unit] =
+    withClient(_.listMessages(conversationId, dispatchedMax, PullPageLimit)).flatMap {
+      case Left(err) =>
+        // 探针失败必须可见（否则「对不上账」与「没对上账」同形）——但**不**自动重试
+        // （禁自旋）；下一拍自然重来。
+        emit(
+          "warn",
+          s"friend_pull_reconcile conversationId=$conversationId trigger=${FriendPullTrigger.Reconcile} " +
+            s"after=$dispatchedMax diff=<none> gate=probe_failed reason=list_failed err=$err " +
+            s"pullAnchor=$dispatchedMax dispatchedMax=$dispatchedMax"
+        )
+      case Right(msgs) if msgs.isEmpty =>
+        // 无差：**零日志**。对账拍跑在 45s 周期上，若空拍也报行，日志会被常态淹没
+        // （「噪声化 = 真信号被淹 = 另一种静默」——取证稿 §3.3 的降噪口径）。
+        IO.unit
+      case Right(msgs) =>
+        val serverMax = msgs.map(_.id).max
+        emit(
+          "warn",
+          s"friend_pull_reconcile conversationId=$conversationId trigger=${FriendPullTrigger.Reconcile} " +
+            s"after=$dispatchedMax serverMax=$serverMax diff=${serverMax - dispatchedMax} " +
+            s"probed=${msgs.size} gate=server_ahead reason=watermark_gap " +
+            s"pullAnchor=$dispatchedMax dispatchedMax=$dispatchedMax"
+        ) *>
+          // 补齐：复用**唯一**派发腿（拉取即派发 + 派发后才推进 + 落对账行）。
+          pullConversation(conversationId, FriendPullTrigger.Reconcile)
+    }
+
+  /** **对账拍**（§3.6，批 C）：逐个「已有派发水位」的会话核对 + 补齐。
+    *
+    * 逐会话**串行**（`traverse_`）：与 `refreshAll` 同形；并发多会话会把一次周期拍的
+    * 上游请求数乘上会话数，而本腿是**兜底**（差态才动）⇒ 宁可慢一拍也不打突发。
+    * 单会话异常不中断整轮（逐会话 `handleErrorWith` ⇒ 一个会话的上游故障不会让其余
+    * 会话这一拍失去对账）。
+    *
+    * 触发面（批 C 接线）：`NeblinkService.syncLoop` 的**既有 45s 拍**（`runMessageReconcile`）
+    * —— 🔴 禁新造第三套定时器（取证稿 §3.6 ①）。
+    */
+  def reconcileConversations(): IO[Unit] =
+    guard.dispatchedAnchors.flatMap { anchors =>
+      anchors.traverse_ { case (convId, dm) =>
+        // 逐会话捕获：一个会话的上游故障不得让其余会话这一拍失去对账。
+        // 走 `emit`（不是裸 `logger.warn`）——留痕行必须同时进 trace 环，否则行内容
+        // 不可断言（批 A 已定型的口径：同一行既进日志、又进环，两份文本不可能漂移）。
+        reconcileConversation(convId, dm).handleErrorWith(e =>
+          emit(
+            "warn",
+            s"friend_pull_reconcile conversationId=$convId trigger=${FriendPullTrigger.Reconcile} " +
+              s"after=$dm diff=<none> gate=reconcile_failed reason=unexpected_error err=${e.getMessage} " +
+              s"pullAnchor=$dm dispatchedMax=$dm"
+          )
+        )
+      }
+    }
+
+  /** §3.7 对账计数的**暴露面**（批 A 已备同源计数点，暴露归批 C；`/api/neblink/status`
+    * 的 `friendPull` 字段即读本方法）。
+    *
+    * 形态 = ① 逐会话累计（`pulled`/`dispatched`/`skipped`）+ ② 进程总计 + ③ **判据式
+    * 自述**（`identity`）+ ④ 近期留痕环（有界 64，判据①②④的行内读数面）。
+    * 计数与日志行**同源**（`recordPull` 在写行之前由 `pullLine` 单点调用）⇒ 两个读数
+    * 不可能各说各话。纯本地态，不入 wire（服务端零改动）。 */
+  def pullCountersJson: IO[Json] =
+    guard.pullStats.flatMap { stats =>
+      guard.recentPullLines.map { lines =>
+        val total = stats.values.foldLeft(FriendPullStats(0L, 0L, 0L))((a, b) =>
+          FriendPullStats(a.pulled + b.pulled, a.dispatched + b.dispatched, a.skipped + b.skipped)
+        )
+        def statJson(s: FriendPullStats): Json =
+          Json.obj("pulled" -> s.pulled.asJson, "dispatched" -> s.dispatched.asJson, "skipped" -> s.skipped.asJson)
+        Json.obj(
+          "conversations" -> Json.fromFields(stats.toList.sortBy(_._1).map { case (k, v) => k -> statJson(v) }),
+          "totals" -> statJson(total),
+          // 判据式自述：消费方（含人）不必自己推恒等式；读数与 `pullLine` 同源。
+          "identity" -> "pulled == dispatched + skipped".asJson,
+          "recentLines" -> Json.fromValues(lines.map(Json.fromString)),
+          "recentLinesMax" -> 64.asJson
+        )
+      }
     }
 
   /** 好友列表快照（后台刷新语义：失败折叠空列表——refreshAll/事件触发链
@@ -1135,6 +1266,16 @@ final class FriendMessagingGuard(
     * `pullAnchor == dispatchedMax` 断言。 */
   def dispatchedMaxOf(conversationId: String): IO[Long] =
     state.get.map(_.cursors.get(conversationId).map(_.dispatchedMax).getOrElse(0L))
+
+  /** 批 C 对账拍的**扫描面**：所有「已有可信派发水位」的会话及其 `dispatchedMax`。
+    *
+    * 只返回 `dispatchedMax > 0` 的会话 —— `dispatchedMax == 0` 表示该会话**从未派发
+    * 过**（冷锚），对它做「服务端水位 vs 本地水位」比较没有意义：keyset `after=0`
+    * 服务端会从**最旧**一页开始返回（ASC），那是历史而不是「差态」，据此补拉会把
+    * 一页历史当成丢帧（正是 `pullConversation` 冷锚分支明令不取数的原因）。
+    * 一次读取同时给出 id 与水位，避免「先列 id 再逐个读水位」的 N+1 Ref 往返。 */
+  def dispatchedAnchors: IO[List[(String, Long)]] =
+    state.get.map(_.cursors.toList.collect { case (k, c) if c.dispatchedMax > 0L => k -> c.dispatchedMax })
 
   /** **已读**水位（用户读到哪儿）。与 `localMaxId`（拉取）**分开**——§3.5 拆字段的
     * 全部意义就在这里：前端开窗收帧即 `markConversationRead`，修前那条会**顺带把

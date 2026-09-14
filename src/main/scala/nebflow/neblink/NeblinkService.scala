@@ -378,6 +378,23 @@ class NeblinkService private (
   /** Run one sync cycle: NebLink discovery. */
   def runSyncCycle: IO[Unit] = discoveryHookRef.get.flatten
 
+  /** 批 C（§3.6）**消息面对账拍**，跑在**本类既有 45s 拍**（`syncLoop`）上 ——
+    * 🔴 禁新造第三套定时器（取证稿 §3.6 ①：既有 45s 拍 与 前端 10s beacon 之外
+    * 不再加第三个周期）。
+    *
+    * 装配来源 = **既有**引用：`NeblinkRelayTunnel.friendService` 是 GatewayMain 早已
+    * 传入的 `Some(friendService)`（boot 装配点未变、本批**零 GatewayMain 改动**）。
+    * 未装配（未登录 / boot 早期 / 测试夹具）⇒ `None` ⇒ 显式 no-op（不静默走第二条实现）。
+    *
+    * 与 `runSyncCycle` 的**分工不混**：本腿只做好友消息面（逐会话水位对账 + 差态补齐），
+    * `runSyncCycle` 仍是 discovery/heartbeat，二者共用同一拍但互不依赖。
+    */
+  def runMessageReconcile: IO[Unit] =
+    IO(relayTunnelOpt).flatMap {
+      case Some(t) => t.friendService.fold(IO.unit)(_.reconcileConversations())
+      case None    => IO.unit
+    }
+
   /** Trigger discovery immediately and return current peers. */
   def scanNow: IO[List[PeerInfo]] =
     discoveryHookRef.get.flatten *> peers
@@ -476,6 +493,15 @@ class NeblinkService private (
     for
       _ <-
         if running then runSyncCycle.handleErrorWith(e => logger.warn(s"Sync cycle failed: ${e.getMessage}").void)
+        else IO.unit
+      // 批 C（§3.6）：同一拍上再跑一次**好友消息面对账**。独立 try/catch ⇒ 消息面
+      // 故障不会吃掉 discovery 腿，反之亦然（两腿共用拍但语义隔离）。未装配
+      // friendService 时 runMessageReconcile 是显式 no-op。
+      _ <-
+        if running then
+          runMessageReconcile.handleErrorWith(e =>
+            logger.warn(s"Message reconcile cycle failed: ${e.getMessage}").void
+          )
         else IO.unit
       interval <- configRef.get.map(_.syncIntervalSec.max(10).seconds)
       sleepIO: IO[Unit] = if running then IO.sleep(interval) else IO.never

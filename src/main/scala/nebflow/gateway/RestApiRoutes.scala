@@ -774,10 +774,20 @@ class RestApiRoutes(
           acctClaims = cred.flatMap(_.logto.flatMap(_.idToken)) match
             case Some(tok) => LogtoAuthCode.decodeIdTokenClaims(tok, Seq("email", "name"))
             case None      => Map.empty[String, String]
+          // 批 C（§3.7）：好友消息面的**对账计数暴露**。批 A 只产不曝（`FriendService`
+          // 的 `recordPull`/`recordPullLine` 是唯一计数点，注释已声明暴露归批 C），
+          // 本行即那条指令的落点——**读的就是批 A 那份累加值**，不另建计数器
+          // （两份计数 = 两个读数会各说各话 = 判据④不可机械判）。
+          // 未装配 friendService（未配置 NebLink Server）⇒ 显式 `null`，不是空对象：
+          // 「没有这个面」与「有这个面且计数全 0」必须可区分（同既有 `relay` 字段口径）。
+          friendPull <- sharedResources.friendService match
+            case Some(fs) => fs.pullCountersJson
+            case None     => IO.pure(Json.Null)
           r <- Ok(
             Json.obj(
               "loggedIn" -> loggedIn.asJson,
               "relay" -> relayStatus,
+              "friendPull" -> friendPull,
               "device" -> Json.obj(
                 "id" -> id.deviceId.asJson,
                 "name" -> id.deviceName.asJson,
