@@ -25,7 +25,7 @@ import scala.concurrent.duration.*
  *
  * 覆盖：
  *  - ① 三值语义 + legacy 解析（R1/R2/R3/R5；含存量两条腿 channel-additive 零漂移）
- *  - ② 值域校验可行动错误（NODE_NOTIFY_INVALID）+ 创建显式落 dispatcher + 载荷条件键 `notify`
+ *  - ② 值域校验可行动错误（NODE_NOTIFY_INVALID）+ 未声明 ⇒ 缺键 + 载荷条件键 `notify`
  *  - ③ R5 抑制实测（补投扫描腿：不投根 + 记账；**主路径腿**：真实引擎 nebulaDelivery）
  *  - ④ M1 signal 边不受策略影响（只记账不通报，策略不得升根）
  *  - ⑤ R14 failed 不豁免（silent 节点 failed 仍回流分发器）
@@ -585,7 +585,7 @@ class NodeNotifyPolicySpec extends CatsEffectSuite:
 
   // ── ⑩ NodeEdit 面：创建默认 / 编辑 / 警告 / legacy 兼容 ────────────────
 
-  test("②⑩ NodeEdit：创建显式落 dispatcher（载荷键 notify）/ 非法值拒 / 编辑设撤 / M3 警告 / legacy flag 仍生效") {
+  test("②⑩ NodeEdit：未声明 ⇒ 缺键（B-3；载荷无 notify 键）/ 非法值拒 / 编辑设撤 / M3 警告 / legacy flag 仍生效") {
     val ws = tempRoot / "ws-nodedit"
     os.makeDir.all(ws)
     val system = ActorSystem(s"b64-nodedit-${scala.util.Random.nextInt(100000)}")
@@ -604,8 +604,18 @@ class NodeNotifyPolicySpec extends CatsEffectSuite:
       plainNode = snap1.nodes(plainId)
       payload = NodePayload.buildNodeJson(plainNode, System.currentTimeMillis())
       _ <- IO {
-        assertEquals(plainNode.notifyPolicy, Some(NotifyPolicy.Dispatcher), "R2：创建未传 notify ⇒ 显式落 dispatcher（写盘非缺键）")
-        assertEquals(payload.hcursor.get[String]("notify").toOption, Some("dispatcher"), "载荷键逐字为 notify（spec §4.2）")
+        // 🔴 期望值调整申报（B-3 语义变更的必然结果，**非放水**）：本处两条断言按
+        // 2026-09-14 裁定 B-3 调整**期望值**（断言条件不变——仍是「创建后 notifyPolicy
+        // 的确切形态 / 载荷键的确切存在性」）。b64 批 R2 口径为「未传 notify ⇒ 显式落
+        // dispatcher（写盘非缺键）」⇒ 期望 `Some(Dispatcher)` / 载荷 `Some("dispatcher")`；
+        // 该口径使**默认值覆盖显式门集**（`createNode` 恒落 `Some("dispatcher")` ⇒
+        // 用户显式写的 `(pass,failed)Nebula` 被静默抑制 = 语义回归，①E/⑧D 两例红）。
+        // B-3 定案「缺键才是『未声明』」⇒ 期望改为 `None` / 载荷**无** `notify` 键。
+        // 依据 = 本任务书裁定三项之 B-3 + triage A-5 B-3 行（「NodeNotifyPolicySpec:588
+        // 一例由『创建显式落 dispatcher』调整为『未显式声明 ⇒ 缺键』」）。
+        // 显式声明的裁决力不受影响：编辑设撤（下）/ M3 警告 / flag legacy 路径三条**原样全绿**。
+        assertEquals(plainNode.notifyPolicy, None, "B-3：创建未传 notify ⇒ 缺键（默认值不再代填 Some；b64 批原期望 Some(Dispatcher)，按语义变更调整）")
+        assertEquals(payload.hcursor.get[String]("notify").toOption, None, "B-3：缺键 ⇒ 载荷无 notify 键（b64 批原期望 Some(\"dispatcher\")，同批调整）")
       }
       // 非法值拒（NODE_NOTIFY_INVALID）
       bad <- nodeEdit(nodeInput("b64-nodedit", "plain", "notify" -> Json.fromString("loud")), ctx)

@@ -33,7 +33,15 @@ object NeblinkEnrollment:
     * root must not auto-register with the production network — see
     * [[EnrollGuard]]. The refusal is returned on the Left channel (so every
     * caller surfaces it) AND logged; `NEBFLOW_ALLOW_PROD_ENROLL=1` bypasses it.
-    * Default data root: unchanged behaviour. */
+    * Default data root: unchanged behaviour.
+    *
+    * Explicit-user-action release (2026-09-14 作者裁定「案 C」):
+    * `explicitUserAction = true` passes the guard AND lifts the relay tunnel's
+    * post-kick park (「须用户显式再登录」), because that is the one act a kicked
+    * instance is allowed to come back with. Only the PKCE loopback callback
+    * sets it, and only on a matched, single-use state — every automatic path
+    * (boot client, silent re-login, device-flow poll, tests) defaults to
+    * `false` and is gated exactly as before. */
   def persist(
     ms: NeblinkService,
     resolvedUrl: String,
@@ -42,13 +50,24 @@ object NeblinkEnrollment:
     discovery: Option[NeblinkDiscovery],
     gatewayPort: Int,
     reloginHook: Option[IO[Option[String]]],
-    logtoIdToken: Option[String] = None
+    logtoIdToken: Option[String] = None,
+    explicitUserAction: Boolean = false
   ): IO[Either[String, String]] =
-    EnrollGuard.enrollRefusal(resolvedUrl) match
+    EnrollGuard.enrollRefusal(resolvedUrl, explicitUserAction) match
       case Some(reason) =>
         logger.warn(s"enrollment refused by the isolation guard: $reason").as(Left(reason))
       case None =>
-        persistImpl(ms, resolvedUrl, json, logtoRefresh, discovery, gatewayPort, reloginHook, logtoIdToken)
+        persistImpl(
+          ms,
+          resolvedUrl,
+          json,
+          logtoRefresh,
+          discovery,
+          gatewayPort,
+          reloginHook,
+          logtoIdToken,
+          explicitUserAction
+        )
 
   /** Pre-guard implementation — see [[persist]] for the entry point. */
   private def persistImpl(
@@ -59,7 +78,8 @@ object NeblinkEnrollment:
     discovery: Option[NeblinkDiscovery],
     gatewayPort: Int,
     reloginHook: Option[IO[Option[String]]],
-    logtoIdToken: Option[String]
+    logtoIdToken: Option[String],
+    explicitUserAction: Boolean
   ): IO[Either[String, String]] =
     val deviceToken = json.hcursor.downField("deviceToken").as[String].toOption
     val networkId = json.hcursor.downField("networkId").as[String].toOption.getOrElse("")
@@ -116,13 +136,24 @@ object NeblinkEnrollment:
                 newConfig,
                 gatewayPort,
                 onDeviceTokenRejected = reloginHook,
-                identity = Some(ms.identity)
+                identity = Some(ms.identity),
+                // 2026-09-14（踢旧批 r2）：自动登录的停摆门。被服务端 kick 后本客户端
+                // 不发任何登录/会话交换/重注册请求（唯一解除口 = 显式用户登录，
+                // 见下面对 `resumeAfterUserLogin` 的调用）。
+                autoLoginParked = IO(ms.kickParked)
               )
               d.setClient(Some(fresh)) *> IO(ms.setRelayClient(Some(fresh)))
             }
           // 2026-09-11 tunnel 生命周期：logout 会 stop() 隧道，且此前没有任何路径把
           // running 复位 ⇒ 「登出 → 再登录」后 relay 永久缺席到进程重启。装配
           // owner 仍是 GatewayMain（这里只发「确保在跑」信号：单飞 + 幂等）。
+          // 2026-09-14（踢旧批 ②）：被服务端 `disconnect` 帧踢下线后，隧道进入停摆
+          // 态（禁自动重连/重注册，防空转互踢）；**只有用户显式再登录**解除它——
+          // 就在这里，因为这是唯一被证明由用户发起的入网路径。自动路径
+          // （silent re-login / device-flow poll）persist 时不带该标记 ⇒ 不解停摆。
+          _ <-
+            if explicitUserAction then ms.relayTunnelOpt.fold(IO.unit)(_.resumeAfterUserLogin())
+            else IO.unit
           _ <- ms.ensureRelayTunnel
           // Trigger immediate re-discovery.
           _ <- ms.sendSync(SyncCommand.PeerDiscovered)

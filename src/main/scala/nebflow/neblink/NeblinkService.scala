@@ -69,6 +69,48 @@ class NeblinkService private (
   def setRelayTunnel(tunnel: NeblinkRelayTunnel): Unit = _relayTunnel = Some(tunnel)
   def relayTunnelOpt: Option[NeblinkRelayTunnel] = _relayTunnel
 
+  // ===== 踢下线停摆位（2026-09-14 踢旧批 r2，作者 17:07 裁定 C+B·客户端一刀）=====
+  //
+  // 为什么放在**服务**上而不是隧道里（r2 唯一失败点的返工面 1/2）：被踢端要停的不止
+  // 隧道腿。「同 (deviceId, network) 有新会话」时服务端 `relay.rs disconnect_device`
+  // 会推 `disconnect` 帧并断隧道，但**自动重注册腿**（心跳 401 → `NeblinkClient.doLogin`
+  // → `LogtoSilentRelogin` → `POST /api/device/register`）与隧道是两条独立的腿，而且
+  // register 发生在 persist **之前**（`LogtoSilentRelogin.scala` 的 `.register` 先于
+  // `NeblinkEnrollment.persist`）⇒ 只在隧道里记停摆位，挡不住重注册（r1 实测：踢后
+  // ~24s 自愈链照样 register 成功）。
+  //
+  // 因此停摆位提升为**入网咽喉可读状态**，由三种消费者共读同一真值：
+  //   ① 隧道 `connectLoop`（不重连）② `NeblinkClient` 的自动登录/自愈入口（不重登）
+  //   ③ `LogtoSilentRelogin`（**register 之前的门**）。
+  // 写侧唯一 = 隧道收到 `disconnect` 帧（`noteServerDisconnect`）；清侧唯一 =
+  // **用户显式登录**（`NeblinkEnrollment.persist(explicitUserAction = true)`）。
+  //
+  // 范围（诚实边界）：进程内状态。重启进程 = 用存储的 deviceToken 走一次 session 交换
+  // ⇒ 重新入网（同一 token 已被服务端作废时会 401，不会重注册——register 只在
+  // `LogtoSilentRelogin` 里发，而它被本位挡住）。跨实例语义 = 每个被踢实例各自停摆，
+  // 因此互踢链在「被踢方」断掉；没有中央协调、没有 wire 协商（零 wire 新增）。
+  // 0 = 未被踢。
+  @volatile private var _kickParkedAtMs: Long = 0L
+
+  /** 停摆时刻（0 = 未停摆）。 */
+  def kickParkedAtMs: Long = _kickParkedAtMs
+
+  /** 是否处于「被服务端踢下线后的停摆态」。 */
+  def kickParked: Boolean = _kickParkedAtMs > 0L
+
+  /** 记录停摆（幂等：已停摆者保留**首次**时刻，不被后续帧刷新）。返回是否本次才置位。 */
+  def markKickParked(atMs: Long = System.currentTimeMillis()): Boolean =
+    if _kickParkedAtMs != 0L then false
+    else
+      _kickParkedAtMs = atMs
+      true
+
+  /** 解除停摆（唯一合法调用面 = 用户显式登录）。返回调用前是否处于停摆。 */
+  def clearKickPark(): Boolean =
+    val was = _kickParkedAtMs != 0L
+    _kickParkedAtMs = 0L
+    was
+
   /** Relay tunnnel "make sure it is running" starter (2026-09-11 tunnel
     * lifecycle fix). GatewayMain stays the tunnel ASSEMBLY owner and registers
     * the starter here; enrollment paths (`NeblinkEnrollment.persist`, which

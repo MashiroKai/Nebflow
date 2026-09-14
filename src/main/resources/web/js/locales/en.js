@@ -930,6 +930,10 @@ export default {
   'neblink.reachRelay': 'Reachable via server relay',
   'neblink.reachServerOnly': 'Online — no direct data path',
   'neblink.loggedOutHint': 'Not signed in — Device Link is unavailable.',
+  // Kicked-offline passive notice (kickold batch, case B, 2026-09-14): STATUS-LINE
+  // level only — no banner, no sound (一期口径, User.md:36).
+  'neblink.signedOutElsewhere': 'Signed in elsewhere',
+  'neblink.signedOutElsewhereHint': 'Another device took over this session; automatic reconnect is paused — sign in again to resume.',
   'neblink.deviceDescHint': 'e.g. Campus network, has Vivado 2023.2',
   'neblink.save': 'Save',
   'neblink.update': 'Update',

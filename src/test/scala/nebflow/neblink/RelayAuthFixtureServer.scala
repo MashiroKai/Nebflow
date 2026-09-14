@@ -70,6 +70,21 @@ final class RelayAuthFixtureServer extends AutoCloseable:
   /** How many client ping frames were answered with a pong (health knob readout). */
   val pongsSent = new AtomicInteger(0)
 
+  /** 踢旧批 r2（2026-09-14）设备注册腿：`POST /api/device/register` 的服务次数。
+    * 判据面 = 「被踢后自动重注册腿是否还在跑」（复核位判 fail 的那条腿）。 */
+  val registers = new AtomicInteger(0)
+  /** deviceId of every register call served. */
+  val registerCalls = new ConcurrentLinkedQueue[String]()
+  /** HTTP `POST /api/device/register` count (the判据面 for the re-registration leg). */
+  def registerCount: Int = registers.get()
+  /** `POST /oidc/token` 次数（silent re-login 的 refresh 腿）。 */
+  val tokenCalls = new AtomicInteger(0)
+  /** `POST /api/device/session` 因凭据失效被拒的次数（kick 后的常态）。 */
+  val sessionRejections = new AtomicInteger(0)
+  /** register 响应里回的 networkId（真服务端由 token 的 network 决定；夹具给一个
+    * 可设值，让 register 与 login 落在同一个 (deviceId, networkId) 维度上）。 */
+  @volatile var enrollNetworkId: String = "qa-net"
+
   // ---- observations ----
   /** Every issued session token, in order (includes impersonator logins). */
   val logins = new AtomicInteger(0)
@@ -88,6 +103,18 @@ final class RelayAuthFixtureServer extends AutoCloseable:
   private val tokenOwner = new ConcurrentHashMap[String, String]() // token → key
   private val openRelaySockets = new CopyOnWriteArrayList[Socket]()
   private val threads = new CopyOnWriteArrayList[Thread]()
+
+  /** 设备凭据表（踢旧批 r2）：key `(deviceId|networkId)` → 当前 deviceToken。
+    * 真服务端语义（取证报告 §2.3）：`enroll_device` 是 `INSERT OR REPLACE INTO
+    * device_credentials` ⇒ 重新注册**覆盖**旧凭据（旧 deviceToken 立刻失效，后续
+    * `/api/device/session` 401）。夹具照此实现，否则「被踢后自动重注册」这条腿
+    * 根本走不到 401 ⇒ 钉不具判别力。 */
+  private val deviceCredentials = new ConcurrentHashMap[String, String]()
+
+  /** Device-token serial (unrelated to the HTTP counters — see `registerDevice`). */
+  private val deviceTokenIds = new AtomicInteger(0)
+
+  private def deviceKey(deviceId: String, networkId: String): String = s"$deviceId|$networkId"
 
   private def sessionKey(deviceId: String, networkId: String): String = s"$deviceId|$networkId"
 
@@ -127,7 +154,65 @@ final class RelayAuthFixtureServer extends AutoCloseable:
     openRelaySockets.forEach { s => try s.close() catch case _: Exception => () }
     openRelaySockets.clear()
 
+  /** Push one server→client text frame to EVERY open relay-ws connection
+    * (the real `relay.rs` push path). Returns the number of sockets written.
+    *
+    * 踢旧批（2026-09-14）新增：钉「服务端主动推 `disconnect` 帧 ⇒ 被踢端被动提示
+    * + 停摆」需要用真帧驱动，而不是直接调被测算出的方法。帧形态与生产同形
+    * （`{"type":"disconnect"}`，零新字段）。 */
+  def sendTextToRelay(text: String): Int =
+    var n = 0
+    openRelaySockets.forEach { s =>
+      try
+        writeTextFrame(s.getOutputStream, text)
+        n += 1
+      catch case _: Exception => ()
+    }
+    n
+
   def attemptCount(status: Int): Int = relayAttempts.stream().filter(_._1 == status).count().toInt
+
+  // ---- device-registration leg (踢旧批 r2, 2026-09-14) ----
+
+  /** Serve `POST /api/device/register`: mint a fresh device credential AND revoke
+    * the previous one for (deviceId, networkId) — the real server's
+    * kick-on-re-enroll (`store.rs enroll_device` + `INSERT OR REPLACE INTO
+    * device_credentials`). Returns the new deviceToken.
+    *
+    * 🔴 本方法**不计数**：计数面（`registers` / `registerCalls`）只由 HTTP 路由递增，
+    * 否则测试自己造「另一个实例登录」的那次调用会污染读数（判据必须只数被测端的请求）。 */
+  def registerDevice(deviceId: String, networkId: String): String =
+    val tok = s"dtok-${deviceTokenIds.incrementAndGet()}"
+    deviceCredentials.put(deviceKey(deviceId, networkId), tok)
+    // 同一次注册也踢掉该设备的旧**会话**（服务端 enroll_device 先 kick_sessions_where）。
+    liveTokens.remove(deviceKey(deviceId, networkId)) match
+      case null => ()
+      case prev =>
+        tokenOwner.remove(prev)
+        kickedSessions.incrementAndGet()
+    tok
+
+  /** Is this deviceToken the CURRENT credential of (deviceId, networkId)? */
+  def deviceTokenValid(deviceId: String, networkId: String, token: String): Boolean =
+    token.nonEmpty && token == deviceCredentials.get(deviceKey(deviceId, networkId))
+
+  /** 当前凭据（None = 从未注册 / 已被新注册覆盖）。 */
+  def currentDeviceToken(deviceId: String, networkId: String): Option[String] =
+    Option(deviceCredentials.get(deviceKey(deviceId, networkId)))
+
+  /** Invalidate the current device credential WITHOUT issuing a new one — the
+    * shape the kicked instance sees: its stored deviceToken stops being accepted
+    * (`session` → 401) while the session token is dead too (`heartbeat` → 403). */
+  def revokeDeviceCredential(deviceId: String, networkId: String): Unit =
+    deviceCredentials.remove(deviceKey(deviceId, networkId))
+    Option(liveTokens.remove(deviceKey(deviceId, networkId))).foreach(tokenOwner.remove)
+
+  /** `POST /oidc/token`（refresh 腿）的最小可用响应。判据面是「register 到底发没发」，
+    * provider 细节不在判据内 ⇒ 恒 200 + access_token（refresh_token 也回一个，
+    * 覆盖 `DeviceCredential.updateLogtoRefresh` 的回写腿）。 */
+  def respondToken(out: OutputStream): Unit =
+    tokenCalls.incrementAndGet()
+    respond(out, 200, """{"access_token":"mock-access-token","refresh_token":"mock-refresh-token-2"}""")
 
   // ---- lifecycle ----
 
@@ -176,7 +261,26 @@ final class RelayAuthFixtureServer extends AutoCloseable:
     if path.startsWith("/api/health") then
       respond(out, 200, """{"status":"ok"}""")
       closeQuietly(sock)
-    else if path.startsWith("/api/device/login") || path.startsWith("/api/device/session") then
+    else if path.startsWith("/oidc/token") then
+      respondToken(out)
+      closeQuietly(sock)
+    else if path.startsWith("/api/device/register") then
+      // 踢旧批 r2：设备注册腿（`LogtoDeviceFlow.register` → POST /api/device/register）。
+      // 真服务端语义照搬：注册即覆盖旧凭据（kick-on-re-enroll），响应 = EnrollResponse
+      // 的实字段子集（deviceToken 恒在；model.rs 的 EnrollResponse）。
+      val body = parse(req.body).getOrElse(io.circe.Json.Null)
+      val deviceId = body.hcursor.downField("deviceId").as[String].getOrElse("unknown-device")
+      registers.incrementAndGet()
+      registerCalls.add(deviceId)
+      val networkId = enrollNetworkId
+      val tok = registerDevice(deviceId, networkId)
+      respond(
+        out,
+        200,
+        s"""{"deviceToken":"$tok","networkId":"$networkId","deviceId":"$deviceId","avatarUrl":null,"githubUsername":null}"""
+      )
+      closeQuietly(sock)
+    else if path.startsWith("/api/device/login") then
       val body = parse(req.body).getOrElse(io.circe.Json.Null)
       val hc = body.hcursor
       val deviceId = hc.downField("deviceId").as[String].getOrElse("unknown-device")
@@ -188,6 +292,23 @@ final class RelayAuthFixtureServer extends AutoCloseable:
       else
         val tok = loginAs(deviceId, networkId)
         respond(out, 200, s"""{"token":"$tok","networkId":"$networkId","deviceId":"$deviceId","peers":[]}""")
+      closeQuietly(sock)
+    else if path.startsWith("/api/device/session") then
+      // 踢旧批 r2：凭据换会话。**凭据必须是当前有效者**——被踢（凭据被新注册覆盖）后
+      // 这里回 401，与真服务端 `session_for_credential`（verify_device_credential 恒
+      // false）一致；这正是「自动重登录 → 401 → silent re-login → register」链的起点。
+      val body = parse(req.body).getOrElse(io.circe.Json.Null)
+      val hc = body.hcursor
+      val deviceId = hc.downField("deviceId").as[String].getOrElse("unknown-device")
+      val networkId = hc.downField("networkId").as[String].getOrElse("qa-net")
+      val dtok = hc.downField("deviceToken").as[String].getOrElse("")
+      loginCalls.add(deviceId)
+      if deviceTokenValid(deviceId, networkId, dtok) then
+        val tok = loginAs(deviceId, networkId)
+        respond(out, 200, s"""{"token":"$tok","networkId":"$networkId","deviceId":"$deviceId","peers":[]}""")
+      else
+        sessionRejections.incrementAndGet()
+        respond(out, 401, AuthRejectBody)
       closeQuietly(sock)
     else if path.startsWith("/api/device/heartbeat") then
       if isLive(bearer(req)) then respond(out, 200, """{"peers":[]}""")
@@ -323,6 +444,29 @@ final class RelayAuthFixtureServer extends AutoCloseable:
         Some((op, payloadBytes))
 
   /** Server→client text frame (unmasked, single frame, len ≤ 125). */
+  /** Close every open relay-ws connection with a proper RFC 6455 **close frame**
+    * (opcode 0x8, status 1000) and then the TCP close.
+    *
+    * 踢旧批（2026-09-14）新增：服务端 `disconnect_device` 之后的收尾是「WS 关闭」。
+    * 只做裸 socket close 时，JDK 客户端**不保证**及时回调 Listener（本仓 2026-09-11
+    * 「僵尸闩」同类问题：`closed` Deferred 迟迟不完成）⇒ 依赖它的断言会抖动。给一
+    * 个真 close 帧让对端走正常关闭握手，读数是确定的。
+    * 返回处理的连接数。 */
+  def closeRelaySocketsGracefully(): Int =
+    var n = 0
+    openRelaySockets.forEach { s =>
+      try
+        val out = s.getOutputStream
+        out.write(Array[Byte](0x88.toByte, 0x02.toByte, 0x03.toByte, 0xE8.toByte)) // close, len=2, 1000
+        out.flush()
+        Thread.sleep(30)
+        s.close()
+        n += 1
+      catch case _: Exception => ()
+    }
+    openRelaySockets.clear()
+    n
+
   private def writeTextFrame(out: OutputStream, text: String): Unit =
     try
       val bytes = text.getBytes(StandardCharsets.UTF_8)

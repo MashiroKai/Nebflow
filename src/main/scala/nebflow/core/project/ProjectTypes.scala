@@ -290,12 +290,22 @@ object OutEdge:
   *
   * == 三值 ==
   *  - [[Silent]]     = 该节点的完成事件不通知任何人（仅落 Flow Map + 结果持久化）；
-  *  - [[Dispatcher]] = 完成事件回流项目分发器，**不上根**（spec §5 行 2）；新建默认值；
+  *  - [[Dispatcher]] = 完成事件回流项目分发器，**不上根**（spec §5 行 2）；
   *  - [[Root]]       = 完成事件直投根（spec §5 行 1）。
   *
-  * == 与 out 的关系（R5，本批唯一语义变更点）==
+  * == B-3 裁定（2026-09-14）：默认值不得覆盖显式门集 ==
+  * **「缺键」才是「用户未声明」的唯一表达**——落盘点（`NodeTools.createNode`）在用户
+  * 未传 `notify` 时写 `None`，**不再**用 [[Dispatcher]] 填 `Some`（b64 批的
+  * `NotifyPolicy.Default` 落盘值已废止，见 [[NodeEditTool]] 描述）。
+  * 动因 = 一次语义回归：恒落 `Some("dispatcher")` 使「显式写 `(…,Nebula)` = 上根声明」
+  * 这条契约被用户从未声明的默认值静默覆盖（[[completedRootVisible]] 的 `Some` 分支
+  * 恒 false）。修后：**显式声明优先于默认**，缺键走 [[legacyRootVisible]]（`:result`
+  * 且门含 `pass` 的 Nebula 边 ⇒ 投根），显式 `dispatcher`/`silent` 的抑制裁决力
+  * （R5）**全保留**——抑制只对**显式声明**生效。
+  *
+  * == 与 out 的关系（R5）==
   * `Nebula` 出边**保留为声明**（不改拓扑、不返工在飞批），其效力在运行时由策略裁决：
-  * 策略 = root ⇒ 该边照投根；策略 = dispatcher/silent ⇒ 该边被**抑制**（不投递）且
+  * 显式策略 = root ⇒ 该边照投根；显式策略 = dispatcher/silent ⇒ 该边被**抑制**（不投递）且
   * `markNebulaDelivered` 记账（防 30s 补投扫描把它复活，spec §5 表尾推论 2）。
   * **`:signal` 模式的 Nebula 边不受策略影响**：它是出口标记（只记账不通报），
   * 策略不得使之升根——M1 作者裁定「先不定义 ⇒ 沿用现网代码口径」，本批**不为它
@@ -319,8 +329,10 @@ object NotifyPolicy:
   /** 合法值域三值（等价 `silent | dispatcher | root`）。 */
   val All: Set[String] = Set(Silent, Dispatcher, Root)
 
-  /** 新建/编辑未传 `notify` 时的**显式落盘**值（R2：写盘，非缺键）。 */
-  val Default: String = Dispatcher
+  // B-3 裁定（2026-09-14）**废止**此前的落盘默认值 `val Default: String = Dispatcher`
+  //（b64 批 R2 口径「写盘，非缺键」）。user 未声明的表达 = **缺键 `None`**，落盘点不得
+  // 用任何值代填；显式声明才进值域裁决。禁复活（复活的后果 = 回退本条修掉的语义回归：
+  // 默认值覆盖显式门集）。
 
   /** 值域校验（可行动错误：合法值域 + 实收值；先例 = `invalid out mode ':$mode'`）。
     * 错误码 [[InvalidCode]]，与 NodeTools 的 `NODE_*` 家族同风格。 */

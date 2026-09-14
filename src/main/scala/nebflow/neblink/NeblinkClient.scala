@@ -112,6 +112,12 @@ import FriendCodecs.{given, *}
  *   one-live-session-per-(device,network) kicks the session on every fresh
  *   login/enrollment on this device) trigger ONE silent re-login + replay.
  *   None disables the heal (tests / pure-transport construction sites).
+ * @param autoLoginParked 踢下线停摆位的**自动登录门**（2026-09-14 踢旧批 r2，
+ *   作者 17:07 裁定 C+B·客户端一刀）。默认 `IO.pure(false)`（未停摆 ⇒ 零行为变化）。
+ *   生产装配点传 `IO(ms.kickParked)`。停摆期本客户端**不发任何登录/会话交换请求**
+ *   ——被服务端 `disconnect` 踢下线后，自动重登录会连带触发服务端 register
+ *   （kick-on-re-enroll），那正是复核位判 fail 的那条腿。唯一解除口 = 用户显式登录
+ *   （`NeblinkEnrollment.persist(explicitUserAction = true)` 清停摆位）。
  */
 /** E3 下载响应（4b 腿 A-3）：**状态码 + 原始字节 + 两个透传头**。
   *
@@ -134,7 +140,8 @@ class NeblinkClient(
   config: NeblinkServerConfig,
   serverPort: Int,
   onDeviceTokenRejected: Option[IO[Option[String]]] = None,
-  identity: Option[IO[DeviceIdentity]] = None
+  identity: Option[IO[DeviceIdentity]] = None,
+  autoLoginParked: IO[Boolean] = IO.pure(false)
 ):
   private val logger = NebflowLogger.forName("nebflow.neblink.client")
 
@@ -262,6 +269,49 @@ class NeblinkClient(
     doLogin(deviceId, deviceName, platform, endpoints, allowRelogin = true)
 
   private def doLogin(
+    deviceId: String,
+    deviceName: String,
+    platform: String,
+    endpoints: List[NeblinkEndpoint],
+    allowRelogin: Boolean
+  ): IO[Either[String, List[NeblinkPeerInfo]]] =
+    autoLoginBlocked("login").flatMap {
+      case Some(refused) => IO.pure(Left(refused))
+      case None =>
+        doLoginUnparked(deviceId, deviceName, platform, endpoints, allowRelogin)
+    }
+
+  /** 踢下线停摆门（2026-09-14 踢旧批 r2）——**自动登录入口的公共前置**。
+    *
+    * 返回 `Some(err)` = 停摆中，调用方必须原样返回该错误（**零 HTTP 请求**）；
+    * `None` = 未停摆，照常走原路径。
+    *
+    * 为什么门必须比「persist 失败」更深一层：服务端 register 里的
+    * kick-on-re-enroll 发生在**客户端 persist 之前**（`LogtoSilentRelogin` 的
+    * `.register` 先于 `NeblinkEnrollment.persist`）⇒ 只堵 persist / 只堵隧道，
+    * 被踢端照样每 ~24s（心跳周期）把 register 打到服务端。本门挡住的是
+    * **登录/会话交换本身**，register 因此没有机会起飞（第二道门在
+    * `LogtoSilentRelogin.refreshAndRegister`，那是 register 的最近前驱）。
+    *
+    * 调用面（列全，全为自动路径）：`login` ← `discover`（心跳失效后的 re-login）
+    * 与 `silentRelogin`（API/隧道自愈）。用户显式登录不经过本客户端
+    * （`POST /api/neblink/auth/start` → PKCE 回环 → `RestApiRoutes.handleAuthCallback`
+    * → `LogtoDeviceFlow.register`，与 `NeblinkClient` 无关）。
+    *
+    * `entry` 只用于日志归因（哪个消费者发现停摆），不参与判定。 */
+  private def autoLoginBlocked(entry: String): IO[Option[String]] =
+    autoLoginParked.flatMap {
+      case false => IO.pure(None)
+      case true =>
+        logger
+          .warn(
+            s"NebLink auto-login suppressed [$entry]: this device was signed out elsewhere " +
+              "(server-forced disconnect) — waiting for an explicit user login"
+          )
+          .as(Some(NeblinkClient.KickParkedAutoLoginRefusal))
+    }
+
+  private def doLoginUnparked(
     deviceId: String,
     deviceName: String,
     platform: String,
@@ -677,23 +727,32 @@ class NeblinkClient(
    * Returns true when a usable fresh session exists afterwards.
    */
   def ensureFreshSession(trigger: String): IO[Boolean] =
-    Deferred[IO, Boolean].flatMap { mine =>
-      reloginGate
-        .modify {
-          case None         => (Some(mine), Left(mine))
-          case Some(winner) => (Some(winner), Right(winner))
-        }
-        .flatMap {
-          case Left(won) =>
-            // I won the race: re-login exactly once, publish the outcome, and
-            // clear the gate only if it is still mine (a newer winner may have
-            // replaced it while my login was in flight).
-            val run = silentRelogin(trigger).flatMap(ok => won.complete(ok).as(ok))
-            run.guarantee(reloginGate.update {
-              case Some(g) if g eq won => None
-              case other               => other
-            })
-          case Right(winner) => winner.get
+    autoLoginBlocked(s"self-heal:$trigger").flatMap {
+      // 停摆期（被服务端 kick 后的自愈入口）：**不发任何登录请求**，直接报 false
+      // ⇒ 调用方拿到原始 401/403 原文（前端提示需显式登录）。
+      // 落点选择：门在 single-flight 闸**之前**——停摆期连闸都不该被占用
+      // （否则并发消费者的 losers 会等在闸上，直到一次注定失败的登录走完。
+      // r1 的失败点正是这条腿：闸本身不拦停摆，登录照发，register 照打。
+      case Some(_) => IO.pure(false)
+      case None =>
+        Deferred[IO, Boolean].flatMap { mine =>
+          reloginGate
+            .modify {
+              case None         => (Some(mine), Left(mine))
+              case Some(winner) => (Some(winner), Right(winner))
+            }
+            .flatMap {
+              case Left(won) =>
+                // I won the race: re-login exactly once, publish the outcome, and
+                // clear the gate only if it is still mine (a newer winner may have
+                // replaced it while my login was in flight).
+                val run = silentRelogin(trigger).flatMap(ok => won.complete(ok).as(ok))
+                run.guarantee(reloginGate.update {
+                  case Some(g) if g eq won => None
+                  case other               => other
+                })
+              case Right(winner) => winner.get
+            }
         }
     }
 
@@ -1029,6 +1088,13 @@ object NeblinkClient:
     * 量级）也要能取完 ⇒ 300 s。 */
   val AttachmentDownloadTimeout: scala.concurrent.duration.FiniteDuration =
     scala.concurrent.duration.FiniteDuration(300, scala.concurrent.duration.SECONDS)
+
+  /** 自动登录被停摆门拒绝时的错误原文（2026-09-14 踢旧批 r2）。它走 `Left(...)`
+    * 通道，与网络/服务端失败在调用方侧可区分（自愈把它翻成 `false` ⇒ 用户看到
+    * 原始 401 并被告知需显式登录），且**不含任何 URL / 凭据**，可安全落日志。 */
+  val KickParkedAutoLoginRefusal: String =
+    "Signed out on another device — automatic re-login and re-registration are parked " +
+      "until an explicit user login"
 
   // ────────────────────────────────────────────────────────────────────────
   // Outbound failure buckets — the D4(a) instrument (clientperf 批, 2026-09-13)
