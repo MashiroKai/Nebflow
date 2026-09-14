@@ -322,11 +322,22 @@ class NodeEdgeGatingSpec extends CatsEffectSuite:
       created <- nodeEdit(nodeInput("gating-warn", "warn-dn", "description" -> Json.fromString("downstream"),
         "task" -> Json.fromString("dn-task"), "in" -> Json.fromString(upId), "out" -> Json.fromString("Nebula")), ctx)
       // 对照组：正常拓扑（上游未 failed）→ 无 WARNING 噪音
+      // 🔴 夹具调整申报（B-3 语义变更的必然结果，**非放宽断言**）：断言条件不变
+      // （`quiet` 回执仍须零 `⚠`），但**两个对照节点显式声明 `notify`**。理由 = B-3 后
+      // 「未声明」= **缺键**（`NodeTools.createNode` 不再用 `NotifyPolicy.Default` 填
+      // `Some`）⇒ 未声明节点的生效策略回落到 legacy 三态推断，而本对照组节点 out 只有
+      // 裸 `Nebula`（`:signal` 出口标记）、`notifyDispatcher` 又为 false ⇒ 生效策略 = silent
+      // ⇒ `notifyPolicyWarnings` 的 M3/R14 两条**如实**开火（"silent on a CHAIN-END node"
+      // + "silent does NOT exempt failures"）。即：调整的是**夹具**（让「健康拓扑」在
+      // B-3 口径下真正无噪音），不是断言强度。依据 = 本任务书裁定三项之 B-3
+      // （缺键 = 未声明的唯一表达）+ `NodeTools.scala` 创建期警告面落点。
       _ <- nodeEdit(nodeInput("gating-warn", "warn-ok-up", "description" -> Json.fromString("healthy upstream"),
-        "task" -> Json.fromString("ok-up-task"), "out" -> Json.fromString("Nebula")), ctx)
+        "task" -> Json.fromString("ok-up-task"), "out" -> Json.fromString("Nebula"),
+        "notify" -> Json.fromString("dispatcher")), ctx)
       okUpId <- idOf(rt, "warn-ok-up")
       quiet <- nodeEdit(nodeInput("gating-warn", "warn-dn2", "description" -> Json.fromString("quiet downstream"),
-        "task" -> Json.fromString("dn2-task"), "in" -> Json.fromString(okUpId), "out" -> Json.fromString("Nebula")), ctx)
+        "task" -> Json.fromString("dn2-task"), "in" -> Json.fromString(okUpId), "out" -> Json.fromString("Nebula"),
+        "notify" -> Json.fromString("dispatcher")), ctx)
       snap <- rt.store.snapshot
       _ <- system.stopAll.handleErrorWith(_ => IO.unit)
     yield
