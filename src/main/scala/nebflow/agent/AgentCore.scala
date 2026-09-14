@@ -1672,8 +1672,17 @@ private[agent] trait AgentCore:
                 IO.pure(ToolExecResult(blockMsg, isError = true))
               else
                 val finalInput = preResult.updatedInput.getOrElse(call.input)
+                // S3（2026-09-14 作者裁定，工具面 `device` 摘除批的引擎面第二层）：
+                // `device` 的远端消费**收窄到 `RemoteExecutor.remoteableTools`**（六件真
+                // 远端），使代码回到 `RemoteExecutor.scala` 的自陈意图（「Only these tools
+                // get the `device` parameter … Other tools (Card, AskUser, Delegate, etc.)
+                // always run locally.」）。此前**不分工具名**：任何工具带 `device` 且
+                // NebLink 在场 ⇒ 整条调用被投到对端（对端 ctx 无 actorSystem ⇒ 必错路径）。
                 val deviceOpt = finalInput("device").flatMap(_.asString).filter(_.nonEmpty).filter(_ != "local")
-                val execIO: IO[ToolExecResult] = deviceOpt match
+                val remoteable = RemoteExecutor.remoteableTools.contains(call.name)
+                val remoteDeviceOpt = deviceOpt.filter(_ => remoteable)
+                val strayDeviceOpt = deviceOpt.filterNot(_ => remoteable)
+                val execIO: IO[ToolExecResult] = remoteDeviceOpt match
                   case Some(deviceName) if RemoteExecutor.current.isDefined =>
                     val remoteInput = finalInput.remove("device")
                     logger.info(s"$logCtx Remote tool: [${deviceName}] ${tool.summarize(remoteInput)}")
@@ -1695,6 +1704,42 @@ private[agent] trait AgentCore:
                         }
                     }
                   case _ =>
+                    // 非 remoteable 工具带 `device`（stray 输入：旧提示词 / 外部客户端 /
+                    // hook 注入）⇒ 作者逐字三条语义，🔴 禁实现成「静默忽略」或「自动改写目标」：
+                    //   ① **不投对端**——remoteDeviceOpt 对非名单工具恒 None，永不进远端分支；
+                    //   ② **参数原样传给工具**——下面 `tool.call(finalInput, ctx)` 用的
+                    //      `finalInput` **未改写、未删除 device 键**（禁改写 / 禁丢弃）；
+                    //   ③ **WARN + 事件（可见）**——WARN 落 nebflow.log，事件经
+                    //      AgentCommand.ExternalEvent 进 agent 事件面（logAgentEvent +
+                    //      可见外部事件注入），不静默。
+                    val strayDeviceNotice: IO[Unit] = strayDeviceOpt match
+                      case None => IO.unit
+                      case Some(strayDevice) =>
+                        val remoteableList = RemoteExecutor.remoteableTools.toList.sorted.mkString("/")
+                        val warnIO: IO[Unit] = logger.warn(
+                          s"$logCtx device=\"$strayDevice\" on non-remoteable tool '${call.name}' — " +
+                            s"NOT routed to the peer (remoteable = $remoteableList); " +
+                            "the parameter is passed to the tool UNCHANGED (S3: no silent ignore, no target rewrite)."
+                        )
+                        // 🔴 `ActorRef.!` 返回的是**惰性 `IO[Unit]`**（见 actor/ActorRef.scala）
+                        // ——必须在本 IO 链里被真正执行，禁用 `foreach`/丢弃式调用（那等于不发）。
+                        val eventIO: IO[Unit] = ctx.agentActorRef match
+                          case Some(ref) =>
+                            ref ! AgentCommand.ExternalEvent(
+                              source = "engine",
+                              eventType = "device-stray",
+                              payload =
+                                s"""device="$strayDevice" was passed to '${call.name}', which is NOT a remoteable tool """ +
+                                  s"""(remoteable = $remoteableList). """ +
+                                  "The call was executed locally and the parameter was passed to the tool UNCHANGED — nothing was routed to that device.",
+                              metadata = JsonObject(
+                                "tool" -> call.name.asJson,
+                                "device" -> strayDevice.asJson,
+                                "reason" -> "not-remoteable".asJson
+                              )
+                            )
+                          case None => IO.unit
+                        warnIO *> eventIO
                     // WebSearch P0: Tier 2 routing — capable provider executes
                     // the search natively (SLA-backed, with provenance); any
                     // miss degrades to the builtin aggregation (Tier 3).
@@ -1702,7 +1747,7 @@ private[agent] trait AgentCore:
                     val routedCall: IO[Either[ToolError, String]] =
                       if call.name == "WebSearch" then routeWebSearchThroughProvider(finalInput, ctx, baseCall)
                       else baseCall
-                    routedCall.flatMap {
+                    strayDeviceNotice *> routedCall.flatMap {
                       case Left(err) =>
                         hookEngine.afterToolFailure(call.name, finalInput, err.message, hookCtx).map { postResult =>
                           val appended = postResult.additionalContext match
@@ -2127,7 +2172,13 @@ private[agent] trait AgentCore:
             val allDevices = (localStr :: peerStrs).mkString("; ")
             val deviceHint =
               if peersList.nonEmpty then
-                "\nEach tool accepts a `device` parameter. Select the appropriate device for each task."
+                // 2026-09-14（工具面 `device` 摘除批 · 附加线索与 S4 确认为**同一处**）：
+                // 旧文案是**假陈述**——它宣称 `device` 对**全体工具**通用；事实是只有真远端
+                // 六件接受 `device`（`RemoteExecutor.remoteableTools`），其余工具
+                // （AskUserQuestion / TaskBoard / node_report / Mail / Delegate …）恒在本机执行。
+                // 本行只改这一句事实，`# Devices` 段的**设备清单本身与其位置/语义零改动**
+                // （旧文案逐字留档在过程件，不在源码内复述，免与其零命中判据互斥）。
+                "\nRead/Write/Edit/Glob/Grep/Bash accept a `device` parameter to run on another machine; every other tool always runs locally."
               else ""
             Some(s"$allDevices$deviceHint")
           catch case _: Exception => None
