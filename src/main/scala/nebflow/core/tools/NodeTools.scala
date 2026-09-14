@@ -793,6 +793,10 @@ object NodeTools:
         .filter(_.status == NodeLifecycle.Running)
         .traverse(n => rt.engine.isRunning(n.id).map(alive => n.id -> alive))
         .map(_.toMap)
+      // 排队位次派生（排队位次可见性批 2026-09-14）：纯函数、零副作用，与闸同一单点；
+      // 同键多项目（O-1）读数为显示面降级信号（键求值走进程内缓存，稳态零 git 调用）。
+      mergeQueueHolders = rt.engine.mergeQueueHoldersBatch(s.nodes)
+      sameKeyForeignProjects <- rt.engine.sameKeyForeignProjectsNow
     yield
       val now = System.currentTimeMillis()
       // 链派生（合并集分量）+ chainId 条件键注入 + chains 旁挂组装（同源单点）
@@ -807,7 +811,15 @@ object NodeTools:
         FlowMapStore.mergeChainIds(combined, chains, n.id).map(n.id -> _)
       }.toMap
       val nodes = selected.map { n =>
-        val base = NodePayload.buildNodeJson(n, now, chainIdByNode.get(n.id), chainIdsByNode.get(n.id))
+        val base = NodePayload.buildNodeJson(n, now, chainIdByNode.get(n.id), chainIdsByNode.get(n.id),
+          // 排队位次条件键（排队位次可见性批 2026-09-14，案 A）：判据**单点** = 引擎闸
+          // 同一函数（[[NodeEngine.mergeQueueHoldersBatch]] → [[NodeEngine.mergeQueueHolders]]
+          // → [[MergeMutexPolicy.holders]] + verdict 准入过滤）——🔴 禁前端/分发器复刻，
+          // 🔴 禁读文件票层，🔴 禁从事件流回放。只收非空项 ⇒ 未排队节点缺键。
+          mergeQueue = mergeQueueHolders.get(n.id),
+          // 同键多项目（O-1）当下读数：非空 ⇒ 前端按降级红线只渲染裸「排队中」不渲染
+          // 数字（🔴 禁编造数字）；空 ⇒ 位次可信。与既有两个 merge-queue 告警同源单点。
+          sameKeyProjects = sameKeyForeignProjects)
         liveness.get(n.id) match
           case Some(alive) => base.deepMerge(Json.obj("liveness" -> Json.fromBoolean(alive)))
           case None        => base
@@ -2564,7 +2576,7 @@ object NodeListTool extends Tool:
 - **detail** (optional): a node id — returns that ONE node's full record instead of the whole map: metadata + task + result FULL TEXT (+ historical blockedFeedback when present). Payloads carry no result text; this is the on-demand read channel, same source as the REST result endpoint.
 
 ## Returns
-Default: {nodes: [{id, name, agent, description, status, in, out, hasWorktree, worktree, blockCount, createdAt, completedAt, ttlLeftSec, + conditional: hasResult, taskPreview (legacy no-description fallback), deps, plugins, merge, loop, blockedFeedback (blocked only), skill/mcp/preset (legacy values only), liveness (running only), chainId (multi-member chain only), chainIds (merge nodes with 2+ reachable member chains only; value = main chain id first, then the full member chain list)}], chains: [{id, title, entries, ends, memberIds}] (topological task chains derived backend-side; a node's chainId joins its entry here; members may include archived nodes — filter by your node cache for on-graph rendering), worktrees: [...], meta: {project, updatedAt, archived}} — metadata only, NO result text (Flow Map slim-payload contract: results live in per-node files, read on demand).
+Default: {nodes: [{id, name, agent, description, status, in, out, hasWorktree, worktree, blockCount, createdAt, completedAt, ttlLeftSec, + conditional: hasResult, taskPreview (legacy no-description fallback), deps, plugins, merge, loop, blockedFeedback (blocked only), skill/mcp/preset (legacy values only), liveness (running only), chainId (multi-member chain only), chainIds (merge nodes with 2+ reachable member chains only; value = main chain id first, then the full member chain list), mergeQueue (merge nodes currently held by the merge-window mutex gate only; value = {ahead, holders: [{id, name, status}], sameKeyProjects?})}], chains: [{id, title, entries, ends, memberIds}] (topological task chains derived backend-side; a node's chainId joins its entry here; members may include archived nodes — filter by your node cache for on-graph rendering), worktrees: [...], meta: {project, updatedAt, archived}} — metadata only, NO result text (Flow Map slim-payload contract: results live in per-node files, read on demand).
 With detail=<nodeId>: the same node shape + task + result (full text)."""
   val inputSchema = JsonObject.fromIterable(
     List(

@@ -690,6 +690,12 @@ object NodeDef:
  *   - role / lastVerdict：**role 仅非 task（= verifier）携带；lastVerdict 仅非空携带**
  *     （nrloop 一期 2026-09-12：verdict 选通态的可观测面——前端/取证据此辨校验节点
  *     及其最近判定；执行节点与无判定节点字段集字节级零漂移）。
+ *   - mergeQueue：**仅 merge 节点且当下被合并窗闸挡住携带**（排队位次可见性批
+ *     2026-09-14，作者 16:39 双裁 = 案 A：引擎条件键 + 前端渲染，显示 = 数字 +
+ *     持有者双显）。值 = `{ahead, holders:[{id,name,status}], sameKeyProjects?}`；
+ *     纯派生量（不写 NodeDef、不进归档）。**仅快照载荷（NodeList / REST flow-map）
+ *     携带**——WS 事件单一序列化点无项目全量节点视图（与 `liveness` 同款快照专有
+ *     条件键），未排队节点与全部非 merge 节点字段集字节级零漂移。
  *   - notifySentAt：**仅异常终态（failed/cancelled）且已上报携带**（归档语义批
  *     2026-09-07「送达即移」——前端链判据据此判断异常终态「已上报可归档」；与
  *     deps/plugins 同构条件字段，非命中不带 = 零字段漂移）。completed 无上报要求
@@ -712,7 +718,9 @@ object NodePayload:
   val TaskPreviewMaxChars: Int = 80
 
   def buildNodeJson(node: NodeDef, now: Long, chainId: Option[String] = None,
-                    chainIds: Option[List[String]] = None): Json =
+                    chainIds: Option[List[String]] = None,
+                    mergeQueue: Option[List[NodeDef]] = None,
+                    sameKeyProjects: List[String] = Nil): Json =
     val ttlLeft = node.ttlExpireAt.map(t => Math.max(0L, (t - now) / 1000L))
     val baseFields = List(
       "id" -> node.id.asJson,
@@ -804,6 +812,32 @@ object NodePayload:
       // 同构）：仅 merge 节点带 "merge": true——缺省/缺失 = 非 merge（前端按缺省
       // 防御，非 merge 节点 payload 字段集零变化）。
       val mergeFields = if node.merge then List("merge" -> node.merge.asJson) else Nil
+      // mergeQueue 条件序列化（**排队位次可见性批** 2026-09-14，作者 16:39 双裁 = 案 A：
+      // 引擎条件键 + 前端渲染；显示 = 数字 + 持有者双显）：**仅 merge 节点且当下被合并窗
+      // 闸挡住**才带（调用方注入 [[NodeEngine.mergeQueueHoldersBatch]] 的非空项）——未排队
+      // 的 merge 节点与全部非 merge 节点 payload 字段集**字节级零漂移**（与 merge/deps/
+      // bgWait 同构条件字段；🔴 数据**不由前端/分发器复刻**，判据持有方 = 引擎单点）。
+      //
+      // 值形状（逐字契约，前端只读不派生）：
+      //   ahead             = 前方持有者**个数**（= holders.length，含持有者、不含自己）
+      //   holders[]         = 持有者清单，按 id 升序（确定性；与 merge-queue 事件
+      //                       summary 的 ids.sorted 同序），每项 {id, name, status}
+      //   sameKeyProjects[] = **同键多项目（O-1）**时带他项目名（升序去重）；缺省不带
+      //                       ⇒ 非空 = 位次**不可信**（引擎侧持有者派生自本项目 store，
+      //                       同键他项目节点结构性不可见）⇒ 前端按降级红线只渲染裸
+      //                       「排队中」、**不渲染数字**（🔴 禁编造数字）。
+      // 🔴 本键是**纯派生量**：不写 NodeDef 持久字段、不进 flow-map.json/归档批（与
+      //    wiringGap/reportPendingSince 同纪律）。
+      val mergeQueueFields = mergeQueue.filter(_.nonEmpty).toList.map { hs =>
+        val ordered = hs.sortBy(_.id)
+        val core = List(
+          "ahead" -> ordered.size.asJson,
+          "holders" -> ordered.map(h => Json.obj(
+            "id" -> h.id.asJson, "name" -> h.name.asJson, "status" -> h.status.asJson)).asJson
+        )
+        val foreign = if sameKeyProjects.nonEmpty then List("sameKeyProjects" -> sameKeyProjects.asJson) else Nil
+        "mergeQueue" -> Json.obj((core ++ foreign)*)
+      }
       // loop 条件序列化（LoopNode 批 2026-09-06；与 merge 条件字段同构）：
       // 仅 loop 节点带 "loop" 配置对象 + 运行态条件字段——缺省/缺失 = 非 loop
       // （前端按缺省防御，非 loop 节点 payload 字段集零变化）。运行态字段按
@@ -883,7 +917,7 @@ object NodePayload:
       val roleFields = if node.role != NodeRoles.Task then List("role" -> node.role.asJson) else Nil
       val lastVerdictFields =
         node.lastVerdict.filter(_.trim.nonEmpty).toList.map(v => "lastVerdict" -> v.asJson)
-      Json.obj((baseFields ++ outFields ++ legacyConfigFields ++ hasResultFields ++ wiringGapFields ++ taskPreviewFields ++ depsFields ++ feedbackFields ++ pluginFields ++ notifyFields ++ notifyPolicyFields ++ mergeFields ++ loopFields ++ bgWaitFields ++ reportPendingFields ++ destroyAtFields ++ retryFields ++ genFields ++ notifySentAtFields ++ pendingSuccessionFields ++ chainFields ++ roleFields ++ lastVerdictFields)*)
+      Json.obj((baseFields ++ outFields ++ legacyConfigFields ++ hasResultFields ++ wiringGapFields ++ taskPreviewFields ++ depsFields ++ feedbackFields ++ pluginFields ++ notifyFields ++ notifyPolicyFields ++ mergeFields ++ loopFields ++ bgWaitFields ++ reportPendingFields ++ destroyAtFields ++ retryFields ++ genFields ++ notifySentAtFields ++ pendingSuccessionFields ++ chainFields ++ roleFields ++ lastVerdictFields ++ mergeQueueFields)*)
 
 /** Flow Map 活动区（§2.6，磁盘 flow-map.json）。 */
 case class FlowMapState(
