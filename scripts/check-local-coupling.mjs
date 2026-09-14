@@ -27,7 +27,11 @@
 //                           — and asserts the two hit sets are EQUAL (control
 //                           assertion; a divergence is RED, never a silent pass).
 //                           See also the probe below: "no hits" is only trusted
-//                           after a positive probe has hit.
+//                           after a positive probe has hit. The assertion covers
+//                           BOTH arm kinds — the STRICT arms and the
+//                           run-time-derived identity arms (S5), which carry the
+//                           same `\b`/portable pair; an arm whose two forms are
+//                           never compared is the defect S2 exists to prevent.
 //   S3  Scan face         = `src/main/**` (incl. `resources/`, `seed/`, `web/`)
 //                           + build/packaging scripts + `.github/workflows/**`
 //                           + `README.md`  (identical to the R4 judgement domain).
@@ -43,6 +47,26 @@
 //                           (HOME basename / `hostname -s` / `whoami`) must not
 //                           appear in the scan face. Tokens shorter than 4 chars are
 //                           ignored (they would only produce noise).
+//                           MATCH FORM (author ruling 2026-09-14): such a token is
+//                           matched as a WHOLE WORD — `\btoken\b`, in the same
+//                           native + portable pair as S2 — never as a substring of a
+//                           longer identifier. The CI first-red of 2026-09-14 was
+//                           exactly that: on a GitHub Actions runner the derived
+//                           token is `runner` (HOME=/home/runner), and substring
+//                           matching reported `NodeRunner` / `defaultRunner` /
+//                           `GitRunner` … = 74 hits on a provably clean tree.
+//   S5b Stopword table    = a derived token whose VALUE is a CI / generic environment
+//                           word (STOPWORDS below: `runner` `home` `host` `ubuntu`
+//                           `user` `work`) is NOT a contributor-machine identity, so
+//                           it is not enrolled as an arm; the suppression is
+//                           REPORTED (`[stop] …` line, `stopwordTokens` in --json) —
+//                           never silent. A stopword can only ever drop a run-time
+//                           DERIVED token: this gate's source of judgement (S1) is
+//                           untouched by it, so "the gate is green because of it" is
+//                           not a thing, exactly as with the S10 fallback lines. The
+//                           classification is case-insensitive because the arm's own
+//                           matcher is (S2) — otherwise a one-character case change
+//                           would walk around the table.
 //                           !! A LITERAL-ONLY GATE HAS ZERO COVERAGE FOR A
 //                           CONTRIBUTOR'S OWN DIRECTORY !! — a pattern list that
 //                           contains only the author's literals stays green on every
@@ -244,12 +268,37 @@ for (const p of layers.STRICT) {
   arms.push({ id: `SRC:${p.line}`, kind: 'STRICT', pattern: p.pattern, native, portable });
 }
 
+// ── S5b: CI / generic-environment words are not a machine identity ──────────
+// Author ruling 2026-09-14 (CI first-red fix; scope = match precision only). On a
+// CI host the S5 sources hand over the runner's own environment words instead of a
+// contributor's: GitHub Actions runs as HOME=/home/runner, on `ubuntu-latest`, with
+// its workspace under `_work`. Such a value is generic vocabulary — it is not
+// evidence of a contributor's machine, and it collides with the product's own
+// vocabulary. One line per member, each with its reason; adding a member is a
+// judgement call, never a convenience. This table can only drop a run-time DERIVED
+// token — it cannot reach the STRICT source of judgement (S1).
+const STOPWORDS = new Map([
+  ['runner', 'GitHub Actions runner account — CI sets HOME=/home/runner'],
+  ['home', 'generic path segment'],
+  ['host', 'generic word'],
+  ['ubuntu', 'CI default image and default user name'],
+  ['user', 'generic word'],
+  ['work', 'GitHub Actions workspace path segment — _work'],
+]);
+
 // ── S5: run-time derived machine identity (the arm a literal-only list misses) ─
 function derivedTokens() {
   const found = new Map();
+  const stopped = new Map();
   const add = (value, src) => {
     const v = String(value || '').trim();
-    if (v.length >= MIN_DERIVED_LEN && !found.has(v)) found.set(v, src);
+    if (v.length < MIN_DERIVED_LEN) return;
+    const why = STOPWORDS.get(v.toLowerCase());
+    if (why) {
+      if (!stopped.has(v)) stopped.set(v, { token: v, src, why });
+      return;
+    }
+    if (!found.has(v)) found.set(v, src);
   };
   try {
     add(homedir().split(/[/\\]/).filter(Boolean).pop(), 'HOME basename');
@@ -260,18 +309,26 @@ function derivedTokens() {
   try {
     add(userInfo().username, 'whoami');
   } catch { /* ignore */ }
-  return [...found].map(([token, src]) => ({ token, src }));
+  return {
+    arms: [...found].map(([token, src]) => ({ token, src })),
+    stopped: [...stopped.values()],
+  };
 }
 
-const identity = derivedTokens();
+const derived = derivedTokens();
+const identity = derived.arms;
+const stopwordTokens = derived.stopped;
 for (const d of identity) {
   const escaped = d.token.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  // S5 match form: whole word, native + portable (S2) — a longer identifier that
+  // merely CONTAINS the token is not the token.
+  const pattern = `\\b${escaped}\\b`;
   arms.push({
     id: `ID:${d.src}`,
     kind: 'DERIVED',
-    pattern: escaped,
-    native: new RegExp(escaped, 'i'),
-    portable: new RegExp(escaped, 'i'),
+    pattern,
+    native: new RegExp(pattern, 'i'),
+    portable: new RegExp(toPortable(pattern), 'i'),
   });
 }
 
@@ -430,11 +487,12 @@ function scan(files, sink) {
       for (const arm of arms) {
         const nativeHit = arm.native.test(scrubbed);
         const portableHit = arm.portable.test(scrubbed);
-        if (arm.kind === 'STRICT') {
-          controlComparisons += 1;
-          if (nativeHit !== portableHit) {
-            controlMismatches.push({ path: rel, line: n + 1, arm: arm.id });
-          }
+        // S2 control assertion — EVERY arm (STRICT and DERIVED alike): the native
+        // `\b` form and the portable form must agree; a divergence is RED, never a
+        // silent pass.
+        controlComparisons += 1;
+        if (nativeHit !== portableHit) {
+          controlMismatches.push({ path: rel, line: n + 1, arm: arm.id });
         }
         if (nativeHit || portableHit) {
           sink.push({
@@ -472,6 +530,7 @@ const summary = {
   strictPatterns: layers.STRICT.length,
   widePatterns: layers.WIDE.length,
   derivedIdentityArms: identity.length,
+  derivedStopwords: stopwordTokens.length,
   judgedFiles: judged.length,
   testFilesWarned: warned.length,
   vendorExemptFiles: vendorSkipped,
@@ -485,13 +544,14 @@ const summary = {
 };
 
 if (flags.json) {
-  process.stdout.write(`${JSON.stringify({ summary, hits, warnings, controlMismatches }, null, 2)}\n`);
+  process.stdout.write(`${JSON.stringify({ summary, hits, warnings, controlMismatches, stopwordTokens }, null, 2)}\n`);
 } else if (!flags.quiet) {
   const L = [];
   L.push(`[gate] local-coupling (STRICT source) root=${flags.root}`);
   L.push(`[src ] ${summary.judgementSource}  strict=${layers.STRICT.length} wide=${layers.WIDE.length} sha256=${sha.slice(0, 16)}…`);
   L.push(`[face] ship=${judged.length} files (judged) | test=${warned.length} files (warning only) | vendor=${vendorSkipped} files (exempt)`);
   L.push(`[arm ] source-patterns=${layers.STRICT.length} + runtime-derived-identity=${identity.length}${identity.length ? ` (${identity.map((d) => d.src).join(', ')})` : ''}`);
+  if (stopwordTokens.length) L.push(`[stop] ${stopwordTokens.length} runtime-derived token(s) classified as a CI/generic environment word — NOT enrolled as an arm (S5b): ${stopwordTokens.map((s) => `${s.token} [${s.src}] ${s.why}`).join('; ')}`);
   L.push(`[probe] ${arms.length - probeFailures}/${arms.length} arms hit their generated witness (a matcher that hits nothing is vacuous, not green)`);
   L.push(`[ctl ] native \\b form vs portable form: ${controlComparisons} comparisons, ${controlMismatches.length} divergences`);
   if (suppressed > 0) L.push(`[skip] ${suppressed} token(s) blanked by the S6 exclusion table (W1/W2/W5/W6/W8/W9)`);
