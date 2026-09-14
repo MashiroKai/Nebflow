@@ -9,7 +9,7 @@ import nebflow.actor.ActorSystem
 import nebflow.agent.{AgentLibrary, SharedResources}
 import nebflow.core.PathUtil
 import nebflow.core.task.FileTaskStore
-import nebflow.core.tools.{FileLockManager, ToolContext}
+import nebflow.core.tools.{FileLockManager, NodeEditTool, ToolContext}
 import nebflow.gateway.{RateLimiter, SessionStore}
 import nebflow.llm.{ModelCandidate, ThinkingConfig}
 import nebflow.shared.{LlmHandle, LlmRequest, LlmResponse, StreamChunk}
@@ -332,11 +332,15 @@ class MergeVerdictGateSpec extends CatsEffectSuite:
       _ <- rt.engine.settleRunnableSweep()
       _ <- waitStatus(rt, "n-merge", Set(NodeLifecycle.Completed))
       m <- node(rt, "n-merge")
+      audit <- readAudit(ws)
       _ <- system.stopAll.handleErrorWith(_ => IO.unit)
     yield
       assertEquals(m.status, NodeLifecycle.Completed,
         "a verifier-free merge must keep its旧 behavior (gate is inert without a verifier upstream)")
       assertEquals(m.deliveredTo.sorted, List("n-a", "n-b"), "barrier accounting unchanged")
+      // engine-defects 批 #238 GREEN 臂：上游无 verifier ⇒ 覆盖缝事件**不得**出现（不误报）
+      assert(!audit.exists((t, _, _) => t == FlowMapEventLog.VerdictGateGapType),
+        s"no verifier upstream => no gap event may be emitted, got ${audit.filter((t, _, _) => t == FlowMapEventLog.VerdictGateGapType)}")
   }
 
   // ── V6 case (c)：闸是 merge-only（非 merge 下游不受影响）─────────────────
@@ -358,10 +362,22 @@ class MergeVerdictGateSpec extends CatsEffectSuite:
       _ <- rt.engine.deliverOutTo(v, "n-plain", "verdict report for ver")
       _ <- waitStatus(rt, "n-plain", Set(NodeLifecycle.Completed))
       p <- node(rt, "n-plain")
+      audit <- readAudit(ws)
       _ <- system.stopAll.handleErrorWith(_ => IO.unit)
     yield
       assertEquals(p.status, NodeLifecycle.Completed,
         "non-merge node behavior must be unchanged — the gate is merge-only")
+      // ── engine-defects 批 #238 · RED 臂（覆盖缝 = 机械可见化）──────────────
+      // 本 spec 用例面 = 引擎判据；此处追加的**是本批新增的可见性判据**（非既有闸口径）：
+      // 非 merge 下游遇非 pass 判词仍被拉起 ⇒ 必须单发 `verdict-gate-gap`（含判词原文），
+      // 使「sink 任务书里的人肉口径」变成事件流里可 grep 的一行。
+      // 变异臂：删掉 `logNonMergeVerdictGateGap` 调用 ⇒ 本断言必红。
+      val gaps = audit.filter { case (t, id, _) => t == FlowMapEventLog.VerdictGateGapType && id == "n-plain" }
+      assertEquals(gaps.size, 1, s"exactly one gap line expected for the started non-merge downstream, got $gaps")
+      assert(gaps.head._3.contains("n-ver") && gaps.head._3.contains("lastVerdict=fail"),
+        s"the gap line must name the holder verifier and its verdict, got: ${gaps.head._3}")
+      assert(gaps.head._3.contains("merge-only"),
+        s"the gap line must state the gate's scope, got: ${gaps.head._3}")
   }
 
   // ── V7 case (d)：verifier 未申报 ⇒ 保守不放行 ────────────────────────────
@@ -414,6 +430,107 @@ class MergeVerdictGateSpec extends CatsEffectSuite:
       assertEquals(m.status, NodeLifecycle.Pending,
         "startNode is the single authority for every start route (settleDeps / re-activation / D1) — it must hold")
       assert(m.startedAt.isEmpty, "no session may be spawned through the direct route")
+  }
+
+  // ── V9/V10 #245：重激活必须作废上一轮判词（engine-defects 批 · 2026-09-15）────
+  //
+  // 缺陷形态（**判据面**）：NodeEdit 重激活 = 「同一身份重跑一轮」——`result` /
+  // `deliveredTo` / `nebulaDeliveredAt` / `startedAt` / `completedAt` 全部清零，
+  // 唯独 `lastVerdict` 不在其列 ⇒ 重跑中的复核位仍挂着**上一轮**的 `pass`，而本闸
+  // **每次判定现读**（V4 的口径）⇒ 下游 merge 被**陈旧结论**放开 ⇒ 按陈旧结论推进。
+  //
+  // 双向分辨力（同一夹具，两条臂只差「重激活是否清 lastVerdict」）：
+  //   · 修复后（GREEN 臂）：重激活 ⇒ `lastVerdict = None` ⇒ 闸保守 hold（`None` 与
+  //     `fail` 同被挡，见 V7）⇒ merge 纹丝不动；
+  //   · 变异臂（删掉 `lastVerdict = None` 这一行、回退成 `fresh.lastVerdict`）：
+  //     `lastVerdict` 仍是 `pass` ⇒ 闸放行 ⇒ merge 启动并 completed ⇒ 本用例必红。
+
+  private def mkCtx(res: SharedResources, system: ActorSystem, ws: os.Path): ToolContext =
+    ToolContext(
+      projectRoot = ws.toString,
+      sessionId = Some("mvg-sid"),
+      rootSessionId = Some("nebula-root"),
+      sharedResources = Some(res),
+      actorSystem = Some(system)
+    )
+
+  private def nodeInput(project: String, nodename: String, extra: (String, Json)*): Json =
+    Json.obj(("project" -> Json.fromString(project)) :: ("nodename" -> Json.fromString(nodename)) :: extra.toList*)
+
+  private def nodeEdit(input: Json, ctx: ToolContext): IO[Either[String, String]] =
+    NodeEditTool.call(input.asObject.get, ctx).map(_.left.map(_.message))
+
+  test("V9 (#245): re-activating a verifier voids its PREVIOUS verdict — the stale 'pass' must not open the gate for the downstream merge on the next sweep") {
+    val ws = tempRoot / "ws-v9"; os.makeDir.all(ws)
+    val system = ActorSystem(s"mvg-v9-${scala.util.Random.nextInt(100000)}")
+    val llm = new EchoLlm
+    val now = System.currentTimeMillis()
+    for
+      res <- mkResources(system, tempRoot, llm.handle)
+      rt <- mountProject("mvg-v9", ws, system, res)
+      _ <- seed(rt,
+        // verifier 必须声明回边（`NODE_VERIFIER_NEEDS_ROUTE` 在 edit 路径上同样生效）——
+        // 被判定对象 n-work 以回边目标身份在场（`:loop` 控制边不进 barrier、不进 in 镜像）
+        verifierNode("n-ver", "ver", Some("pass"),
+          List(OutEdge("n-merge"), OutEdge("n-work", Set(OutEdge.Fail), OutEdge.Loop)), now),
+        taskUpstream("n-work", "work", List(OutEdge.nebula), now),
+        mergeNode("n-merge", "merge-v9", List("n-ver"), now))
+      // barrier 记账人为置齐（等价于「投递早已发生」的存量形态，同 V8）——只留判据面：
+      // 这样 merge 能否启动**只**取决于闸读到的 lastVerdict，与投递腿无关。
+      _ <- rt.store.mutate(s => s.copy(nodes = s.nodes.updated("n-merge",
+        s.nodes("n-merge").copy(deliveredTo = List("n-ver")))))
+      ctx = mkCtx(res, system, ws)
+      // 重激活：Completed 节点须显式 `reactivateCompleted=true` + task 实际变更（既有判据）
+      edit <- nodeEdit(nodeInput("mvg-v9", "ver",
+        "task" -> Json.fromString("verifier re-check round 2"),
+        "reactivateCompleted" -> Json.fromBoolean(true)), ctx)
+      v1 <- node(rt, "n-ver")
+      // 重激活后回扫：闸读到的必须是「当下没有判词」，而不是上一轮的 pass
+      _ <- rt.engine.settleRunnableSweep()
+      _ <- settleWindow
+      _ <- rt.engine.settleRunnableSweep()
+      _ <- settleWindow
+      m <- node(rt, "n-merge")
+      audit <- readAudit(ws)
+      _ <- system.stopAll.handleErrorWith(_ => IO.unit)
+    yield
+      assert(edit.isRight, s"the reactivating edit must be accepted, got: $edit")
+      // ① 机械面：上一轮判词随重激活作废（重跑中的复核位**当下没有判词**）
+      assertEquals(v1.lastVerdict, None,
+        s"re-activation is a fresh identity re-run: the previous verdict MUST be voided, got ${v1.lastVerdict}")
+      assert(v1.status == NodeLifecycle.Wiring || v1.status == NodeLifecycle.Pending,
+        s"the verifier must have left its terminal state (re-run armed), got ${v1.status}")
+      assertEquals(v1.result, None, "the previous result is cleared by the same field family (unchanged behaviour)")
+      assert(audit.exists((t, id, _) => t == "reactivated" && id == "n-ver"),
+        s"re-activation must leave its audit line, got ${audit.map((t, id, _) => (t, id)).distinct}")
+      // ② 判据面：陈旧 pass 不得放开闸 ⇒ barrier 已清而 merge 纹丝不动
+      assertEquals(m.status, NodeLifecycle.Pending,
+        "a merge whose in-upstream verifier has NO current verdict must stay pending (the stale pass must not advance it)")
+      assert(m.startedAt.isEmpty, "no session may be spawned on a stale verdict")
+      assertEquals(m.result, None, "the gate must not fabricate any result")
+  }
+
+  test("V10 (#245 zero drift): re-activating a role=task node leaves lastVerdict untouched, and resetForLoop's verdict retention is out of this leg's scope") {
+    val ws = tempRoot / "ws-v10"; os.makeDir.all(ws)
+    val system = ActorSystem(s"mvg-v10-${scala.util.Random.nextInt(100000)}")
+    val llm = new EchoLlm
+    val now = System.currentTimeMillis()
+    for
+      res <- mkResources(system, tempRoot, llm.handle)
+      rt <- mountProject("mvg-v10", ws, system, res)
+      // role=task（缺省）承载一个合成判词：本用例只验「非 verifier 的字段集零漂移」
+      _ <- seed(rt, taskUpstream("n-work", "work", List(OutEdge.nebula), now)
+        .copy(status = NodeLifecycle.Completed, lastVerdict = Some("fail")))
+      ctx = mkCtx(res, system, ws)
+      edit <- nodeEdit(nodeInput("mvg-v10", "work",
+        "task" -> Json.fromString("work round 2"),
+        "reactivateCompleted" -> Json.fromBoolean(true)), ctx)
+      a <- node(rt, "n-work")
+      _ <- system.stopAll.handleErrorWith(_ => IO.unit)
+    yield
+      assert(edit.isRight, s"the reactivating edit must be accepted, got: $edit")
+      assertEquals(a.lastVerdict, Some("fail"),
+        "role=task reactivation must keep the field family byte-identical (only the verifier leg voids the verdict)")
   }
 
 end MergeVerdictGateSpec

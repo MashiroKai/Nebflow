@@ -202,6 +202,21 @@ object Defaults:
     sys.props.getOrElse("nebflow.noderpt.completionHold", "true").trim.equalsIgnoreCase("true")
 
   /**
+   * mount-stalled **告警升级**间隔（`nebflow.stall.reNotifyMs`，默认 **600000 = 10min**；
+   * engine-defects 批 #85，2026-09-15）：同一停滞期在首条 `mount-stalled` 之后每过本
+   * 间隔**再发一条**（summary 带 `escalation=#N`），直到节点脱离停滞集。≤0 = 退回
+   * 「每轮都发」以外的旧行为无效（<=0 时引擎按 0 处理 ⇒ 每轮重发，仅调试用）。
+   *
+   * 动因（真身 `.nebflow/flow-map-events.jsonl:5553` + `:5581`）：R4 `pendingSuccession`
+   * 形态下 barrier 被**永久** hold（唯一出口 = 分发器人工 `NodeEdit`），节点 `wiring`
+   * 不动却以「开态 rank 更小者」身份占着合并队列临界区 ⇒ 整条合并队列静默死锁；旧
+   * 「单发 Set」让这种可持续数十分钟的停滞只留下一条事件 = 事实上的静默。
+   * 每次调用现读（spec/运维可即时翻转）。
+   */
+  def StallReNotifyMs: Long =
+    sys.props.getOrElse("nebflow.stall.reNotifyMs", (10 * 60 * 1000L).toString).trim.toLong
+
+  /**
    * 未申报提醒阶梯（`nebflow.noderpt.remind.ladderMs`，逗号分隔毫秒，默认
    * `10min / 30min / 1h / 2h / 4h` + 此后每 4h：8 拍 = 10m/30m/1h/2h/4h/8h/12h/16h）。
    * 第 N 个元素 = 第 N 拍的触发阈值（elapsed ≥ 该值且尚未发过 ⇒ 发一拍）。

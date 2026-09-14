@@ -86,7 +86,15 @@ class NodeEngine(
     * （键名为对外冻结命名），由挂载面经 `NotifyPolicy.parseQuietMs` 校验后注入
     * （缺键 = 缺省 5s；超限 ⇒ 挂载面 fail-fast，**不截断**）。None = 现读缺省值
     *（`NotifyPolicy.NotifyQuietMsDefaultMs`），spec 注入用于确定性断言。 */
-  notifyQuietMs: Option[Long] = None
+  notifyQuietMs: Option[Long] = None,
+  /** mount-stalled **告警升级**间隔覆盖（engine-defects 批 #85，2026-09-15；接缝形态
+    * 与 `destroyWindowMs` / `notifyQuietMs` 同款）：None = 现读
+    * [[nebflow.shared.Defaults.StallReNotifyMs]]（生产默认 10min）；Some = spec 显式
+    * 注入毫秒级窗口做确定性断言（**避开全局 prop 的跨 suite 污染**——本工程测试 JVM 下
+    * `sys.props.update` 与 `System.setProperty` **写入后同进程读回均为空**（实测
+    * `Obtained: None` / `Obtained: null`）⇒ 用 prop 做 spec 注入口会**静默失效**，
+    * 断言只会看到默认值；故走构造器接缝）。 */
+  stallReNotifyMs: Option[Long] = None
 ):
   private val logger = NebflowLogger.forName("nebflow.node.engine")
 
@@ -1840,9 +1848,57 @@ class NodeEngine(
     * verifier」清单——非 merge 节点恒空（闸是 merge-only）。 */
   private def mergeVerdictHolders(n: NodeDef, ups: List[NodeDef]): List[NodeDef] =
     if !MergeNodePolicy.isMerge(n) then Nil
-    else ups.filter(u =>
+    else staleVerdictUps(ups)
+
+  /** 「当下判词非 pass」的上游 verifier（**纯判据单点**，闸与缝可见性共用）。
+    * `fail` / 未申报 `None` / 空串同判（保守口径，见 [[mergeVerdictHolders]] 头注）。 */
+  private def staleVerdictUps(ups: List[NodeDef]): List[NodeDef] =
+    ups.filter(u =>
       NodeRoles.normalize(u.role) == NodeRoles.Verifier &&
         !u.lastVerdict.exists(_.trim.equalsIgnoreCase(VerdictPass)))
+
+  /** 判词闸**覆盖缝**（O-1）单发记账（下游 id → 上次留痕的持有者 key 序列）——
+    * 同一 (下游, 持有者+判词) 组合只留一条，防每启动路径刷屏。 */
+  private val verdictGapLogged: Ref[IO, Map[String, List[String]]] =
+    Ref.unsafe[IO, Map[String, List[String]]](Map.empty)
+
+  /** 判词闸覆盖缝（O-1）**机械可见化**（engine-defects 批 #238，2026-09-15；写点 =
+    * [[startNode]] 闸收口）。
+    *
+    * 缝本体（只读侦察 [[.nebflow/reports/20260914_verdict-routing-recon]] §结论②）：判词闸
+    * 是 **merge-only**（[[mergeVerdictHolders]] 前置 `MergeNodePolicy.isMerge`）⇒ 非 merge
+    * 收口位/sink 遇 `fail`/未申报判词的 verifier 上游**照旧被拉起**（今夜官网链
+    * `bpm-verify`(fail) → `bpm-report`(merge=False) 实例），sink 侧只能靠任务书里
+    * **人肉口径**「注意上游判词」补。本批**不扩闸**（泛化到非 merge 属语义裁定——
+    * `MergeVerdictGateSpec.V6` 正是钉该口径的既有判据），改为**机械可见**：该形态被
+    * 拉起时单发 [[FlowMapEventLog.VerdictGateGapType]] 事件（含 verifier id + 当下判词），
+    * 把「人肉口径」变成事件流里可 grep 的一行。
+    *
+    * 🔴 零行为面：不改闸判据、不改任何节点字段、不阻塞启动（照旧拉起，只是留痕）。 */
+  private def logNonMergeVerdictGateGap(where: String, n: NodeDef): IO[Unit] =
+    if MergeNodePolicy.isMerge(n) then IO.unit
+    else
+      (n.in ++ n.deps).distinct.traverse(store.findNode).flatMap { ups =>
+        val held = staleVerdictUps(ups.flatten)
+        if held.isEmpty then IO.unit
+        else
+          val key = held.map(u => s"${u.id}:${u.lastVerdict.getOrElse("none")}").sorted
+          verdictGapLogged.modify { m =>
+            if m.get(n.id).contains(key) then (m, false) else (m.updated(n.id, key), true)
+          }.flatMap { first =>
+            if !first then IO.unit
+            else
+              val desc = held.map(u =>
+                s"'${u.name}'(${u.id}):lastVerdict=${u.lastVerdict.getOrElse("none")}").mkString(", ")
+              val summary =
+                s"verdict-gate gap: started at $where while the in/deps upstream verifier(s) [$desc] " +
+                  "carry no pass verdict — the verdict gate is merge-only, so this NON-merge downstream runs on a " +
+                  "non-pass verdict (O-1 seam). Observability only: the node is started as before; " +
+                  "widen the gate to non-merge sinks = author decision"
+              logger.warn(s"[$projectName] node '${n.name}' (${n.id}) $summary") *>
+                FlowMapEventLog.append(workspace, projectName, n.id, FlowMapEventLog.VerdictGateGapType, summary)
+          }
+      }
 
   /** 闸挡启动时的留痕（三处落点共用单点文案）：INFO 一行带 verifier id + 当下 verdict，
     * 供事后从日志直接定位「merge 为何没动」。 */
@@ -1931,6 +1987,23 @@ class NodeEngine(
       .flatMap { n =>
         val hs = mergeQueueHolders(n, all)
         if hs.isEmpty then None else Some(n.id -> hs)
+      }
+      .toMap
+
+  /** 排队位次**显示槽**批次（engine-defects 批 #2/#227，2026-09-15）：与
+    * [[mergeQueueHoldersBatch]] **同一判据**（`mergeQueueHolders` → 闸单点），只是把持有者
+    * 逐项富化成 [[MergeMutexPolicy.QueueSlot]]（rank 依据 `readyAt/createdAt` + 是否真在
+    * 临界区 + 未点火原因）。**零行为面**：不改闸、不改 FIFO、不写任何持久字段。
+    *
+    * 与准入过滤的关系：被 verdict 闸挡住的候选本就不进 holders（既有收窄），故槽里的
+    * `notStartedReason` 只可能落在 `in-critical-section / awaiting-handover /
+    * barrier-incomplete / queued` 四态。 */
+  def mergeQueueSlotsBatch(all: Map[String, NodeDef]): Map[String, List[MergeMutexPolicy.QueueSlot]] =
+    all.valuesIterator
+      .filter(MergeNodePolicy.isMerge)
+      .flatMap { n =>
+        val hs = mergeQueueHolders(n, all)
+        if hs.isEmpty then None else Some(n.id -> hs.map(o => MergeMutexPolicy.slotOf(o, all)))
       }
       .toMap
 
@@ -2105,12 +2178,17 @@ class NodeEngine(
                     // pending/wiring 可见、零副作用（见 mergeVerdictHoldersOf 注释）。
                     // mergefifo-engine 批 2026-09-13：**互斥闸**逐字接在同一收口点之后（先 verdict
                     // 后互斥，与设计件 §7.2 状态机同序；verdict 闸判据/留痕零改动）。
+                    // engine-defects 批 #238（2026-09-15）：闸是 merge-only ⇒ 非 merge 下游
+                    // 遇非 pass 判词**照旧被拉起**（覆盖缝 O-1）。本批不扩闸（语义裁定项），
+                    // 改为在**同一点**把该形态留成可 grep 的一行（零行为面：照旧启动）。
                     mergeVerdictHoldersOf(node).flatMap { holders =>
                       if holders.nonEmpty then logVerdictGateHold("startNode", node, holders)
-                      else mergeMutexHoldersOf(node).flatMap { queued =>
-                        if queued.nonEmpty then logMutexHold("startNode", node, queued)
-                        else pastVerdictGate
-                      }
+                      else
+                        logNonMergeVerdictGateGap("startNode", node) *>
+                          mergeMutexHoldersOf(node).flatMap { queued =>
+                            if queued.nonEmpty then logMutexHold("startNode", node, queued)
+                            else pastVerdictGate
+                          }
                     }
                   }
             }
@@ -3664,7 +3742,7 @@ class NodeEngine(
                   val consumed = v.loopRound + 1
                   LoopBudget.decide(consumed, maxRounds, startedAt, now, maxWall) match
                     case Some(reason) =>
-                      circuitBreakLoop(v, Some(targetId), reason, now, consumed)
+                      circuitBreakLoop(v, Some(targetId), reason, now, consumed, Some(resultText))
                     case None =>
                       val issues = List(if fb.detail.trim.isEmpty then VerdictReader.PlaceholderIssues else fb.detail.trim)
                       for
@@ -3701,18 +3779,33 @@ class NodeEngine(
     * nrloop 的常态恰恰是「驱动方 `completed` 且判词 = fail」（`verdict ≠ 节点状态`），
     * 若把 completed 也当「已处理」，本批要修的 ② 又会被自己的幂等闸吞掉（实测：
     * 终态 fail-verifier 的时间维熔断被跳过，节点停留 completed、零事件、零通知）。 */
-  private def circuitBreakLoop(v: NodeDef, targetId: Option[String], reason: String, now: Long, rounds: Int): IO[Unit] =
+  private def circuitBreakLoop(v: NodeDef, targetId: Option[String], reason: String, now: Long, rounds: Int,
+      finalText: Option[String] = None): IO[Unit] =
     val maxRounds = nebflow.shared.Defaults.LoopMaxRounds
     val metering = s"rounds=$rounds/$maxRounds wallClockMaxMs=${nebflow.shared.Defaults.LoopMaxWallClockMs}"
     val msg = s"loop budget exhausted: $reason — $metering"
+    // engine-defects 批 #239（2026-09-15）：**熔断不得吞掉判词全文**。旧口径只把计量串
+    // 写进 result ⇒「判词已落盘（`recordVerdict` 先跑）、`node_report` 的终止申报与结论
+    // 全文丢失、结果被降级成 stub」。修法 = 复用**既有**原结论文本并列落盘机制
+    //（[[CompletionGate.withOriginalText]] 的 `[original-conclusion]` 稳定锚，与
+    // `completeNode` 的闸门 Reject 分支同一机制、同一格式、同一取回方式）：
+    // 计量串在**前**（保住既有「result 必含 loop budget exhausted」断言与分发器可读性），
+    // 原结论文本以空行分隔并列在**后**（一条 result 两段各自取用，无 schema 变更）。
+    // 取回命令（U6/F 同款，<ws> = 项目工作区，<id> = 节点 id）：
+    //   python3 -c "import json;r=json.load(open('<ws>/.nebflow/flow-map.json'))\
+    //     ['nodes']['<id>']['result'];print(r.split('[original-conclusion]',1)[1])"
+    val msgWithConclusion = finalText.filter(_.trim.nonEmpty) match
+      case Some(t) => s"$msg\n\n${CompletionGate.withOriginalText(t)}"
+      case None    => msg
     def drive: IO[Unit] =
       targetId.traverse_(clearLoopStartedAt) *>
         recordVerdict(v.id, VerdictFail) *>
         FlowMapEventLog.append(workspace, projectName, v.id, LoopBudgetEventType,
-          s"$msg target=${targetId.getOrElse("<none>")} verdict=fail") *>
+          s"$msg target=${targetId.getOrElse("<none>")} verdict=fail" +
+            (if finalText.exists(_.trim.nonEmpty) then " conclusion=retained" else " conclusion=<none>")) *>
         logger.warn(s"Node '${v.name}' (${v.id}) loop circuit-break: $msg") *>
         // ② + ④：既有 failed 链（deliverFailed → merge 兜底/停等留痕 → dispatchNotify failed）
-        failNode(v.id, msg)
+        failNode(v.id, msgWithConclusion)
     store.getNode(v.id).flatMap {
       case Some(fresh) if fresh.status == NodeLifecycle.Failed || fresh.status == NodeLifecycle.Cancelled =>
         logger.info(s"Node '${v.name}' (${v.id}) loop circuit-break skipped — the fail-route driver is already " +
@@ -3864,7 +3957,10 @@ class NodeEngine(
             val elapsed = t.loopStartedAt.map(st => now - st).getOrElse(0L)
             loopDriverOf(s.nodes.values.toList, t.id) match
               case Some(v) =>
-                circuitBreakLoop(v, Some(t.id), s"wallClock=${elapsed}ms/${maxWall}ms", now, v.loopRound)
+                circuitBreakLoop(v, Some(t.id), s"wallClock=${elapsed}ms/${maxWall}ms", now, v.loopRound,
+                  // 时间维熔断：驱动方此刻是 completed 的 fail-verifier，其结论全文在 result
+                  // 字段上（`completeNode` 已落库）——同样不得丢（#239 同款口径）。
+                  finalText = v.result)
               case None =>
                 clearLoopStartedAt(t.id) *>
                   FlowMapEventLog.append(workspace, projectName, t.id, LoopBudgetEventType,
@@ -3920,11 +4016,31 @@ class NodeEngine(
   private val starveRounds: Ref[IO, Map[String, Int]] =
     Ref.unsafe[IO, Map[String, Int]](Map.empty)
 
-  /** mount-stalled 单发记账（mount-enforce 批）：当前停滞期已发过事件的节点 id 集。
-    * 每轮 sweep 全量替换为当轮停滞集——节点恢复（被补触发/合法等待）即自动出集，
-    * 再次停滞 = 新停滞期再发一次。 */
-  private val stallNotified: Ref[IO, Set[String]] =
-    Ref.unsafe[IO, Set[String]](Set.empty)
+  /** mount-stalled 告警**升级**记账（mount-enforce 批 + engine-defects 批 #85，2026-09-15）：
+    * nodeId → (上次发射时刻 ms, 本停滞期已发射条数)。
+    *
+    * 前身 =「单发 Set」——一个停滞期**全生命周期只发一条** `mount-stalled`，其后永久
+    * 静默。实际形态（真身 `.nebflow/flow-map-events.jsonl:5553`，2026-09-15 夹具）：
+    * 上游被 R4 摘除并写入 `pendingSuccession` ⇒ barrier 被**永久** hold（唯一出口 =
+    * 分发器 `NodeEdit` 人工介入，`NodeTools.scala:2373-2390`），节点 `wiring` 不动、
+    * 却仍以「开态 rank 更小者」身份占着合并队列临界区 ⇒ **整条合并队列静默死锁**
+    * （真身 `:5581`：两个 `wiring` 持有者挡死 `n-25e6daf7`）。单发档位在此形态下
+    * 等于零告警。
+    *
+    * 本批改为**有界重复告警**：首次仍是 60s 档（逐字保留今日行为，`NodeMountEnforceSpec`
+    * M5/M6/M7 零变化）；此后只要该节点**仍在当轮停滞集内**，每过
+    * [[NodeEngine.StallReNotifyMs]] 再发一条，summary 带升级标 `escalation=#N`。
+    * 节点出集（恢复/承接/启动）即自动出表 ⇒ 下次停滞 = 新停滞期、重新从 #1 起算。
+    *
+    * 🔴 本批**不改** R4「待承接槽位不自动结算」的裁定：自动放行会让下游按**缺轨输入**
+    * 启动并产出缺轨结论（R4 头注逐字）；故只做告警可见性，不做语义放行。 */
+  private val stallNotified: Ref[IO, Map[String, (Long, Int)]] =
+    Ref.unsafe[IO, Map[String, (Long, Int)]](Map.empty)
+
+  /** 生效的告警升级间隔（构造器接缝优先；生产 = 现读 prop 默认 10min）。
+    * `private[project]` 供 spec 断言接缝真的接进来了（其余字段同款可读面）。 */
+  private[project] val stallReNotifyWindowMs: Long =
+    stallReNotifyMs.getOrElse(nebflow.shared.Defaults.StallReNotifyMs)
 
   /** R3 即时 barrier 告警单发记账（取消静默死锁修复批）：已由**终态写点同步**
     * （[[checkBarriersNow]]）发过 `barrier-blocked` 的下游 id 集。与 [[stallNotified]]
@@ -4052,14 +4168,34 @@ class NodeEngine(
       // R3 去重（取消静默死锁修复批）：本轮发射集排除「终态写点已即时告警」的节点
       // ——同一停滞期不得发两条（即时 barrier-blocked + 周期 mount-stalled）。
       prevAlerted <- barrierAlerted.get
-      stallToEmit = stalledNow.filter { case (id, _) => !prevStall.contains(id) && !prevAlerted.contains(id) }
-      _ <- stallNotified.set(stalledNow.map(_._1).toSet)
+      // 升级发射判定（engine-defects 批 #85）：①首条 = 本停滞期尚未发过（逐字保留
+      // 今日行为）；②续发 = 本停滞期已发过且距上次发射 ≥ StallReNotifyMs（有界重复，
+      // 把「静默死锁」变成持续可见）；③被即时 barrier 告警覆盖者不出（R3 原样）。
+      stallEmits = stalledNow.flatMap { case (id, reason) =>
+        if prevAlerted.contains(id) then None // R3 原样：即时 barrier 告警已覆盖本停滞期
+        else
+          prevStall.get(id) match
+            case None => Some((id, reason, 1, nowMs)) // 首条（逐字保留今日行为）
+            case Some((_, 0)) => Some((id, reason, 1, nowMs)) // 曾被 R3 抑制、现补发首条
+            case Some((lastAt, n)) if nowMs - lastAt >= stallReNotifyWindowMs =>
+              Some((id, s"escalation=#${n + 1} ACTION REQUIRED — this node has now been stalled for " +
+                s"${(nowMs - lastAt) / 1000L}s since the previous alert; $reason", n + 1, nowMs))
+            case _ => None
+      }
+      // 记账**必须把「仍停滞但本轮未发射」的节点原样留在表内**（否则下一轮会把它当
+      // 「首条」重发 ⇒ 每 tick 刷屏，单发纪律当场失效）；出表 = 该节点已脱离停滞集。
+      stallNext = stalledNow.map { case (id, _) =>
+        stallEmits.find(_._1 == id) match
+          case Some((_, _, n, at)) => id -> (at, n)
+          case None                => id -> prevStall.getOrElse(id, (nowMs, 0))
+      }.toMap
+      _ <- stallNotified.set(stallNext)
       // 即时告警记账剪枝：仅保留「此刻仍被终态上游闸住」的下游（恢复即出集）。
       heldNow = actives.collect { case n if barrierHeldReason(s1.nodes, n).isDefined => n.id }.toSet
       _ <- barrierAlerted.set(prevAlerted.intersect(heldNow))
-      _ <- stallToEmit.traverse_ { case (id, reason) =>
+      _ <- stallEmits.traverse_ { case (id, reason, n, _) =>
         FlowMapEventLog.append(workspace, projectName, id, "mount-stalled", reason) *>
-          logger.warn(s"[$projectName] node $id mount-stalled: $reason")
+          logger.warn(s"[$projectName] node $id mount-stalled (alert #$n): $reason")
       }
       actions = healed.map(_._2) ++ qualified.map(n => s"start ${n.name}(${n.id})")
       _ <- if actions.nonEmpty then
@@ -4116,12 +4252,32 @@ class NodeEngine(
             // 文案给持有者 id/status + FIFO 次序说明，免分发器误判（零新事件类型——复用
             // 既有 mount-stalled 单发档位；闸自身的 `merge-queue` 事件另在闸落点单发）。
             mergeMutexHoldersOf(n).map { queued =>
+              // engine-defects 批 #2/#85（2026-09-15）：把「谁**在**临界区」与「谁只是
+              // 排在前面」分开点名——旧文案对**开态排队者**也写「hold the critical
+              // section … mechanism guarantee, not a stall」；真身 `flow-map-events.jsonl:5581`
+              // 里两个持有者**都是 `wiring`**（无一在临界区），该断言当场为假，且那个
+              // 队头正被 R4 `pendingSuccession` 永久 hold ⇒「机制的保证」不成立。
+              val inSection = queued.filter(_.status == NodeLifecycle.Running)
+              val queuedAhead = queued.filter(_.status != NodeLifecycle.Running)
               val queueDesc =
                 if queued.isEmpty then ""
                 else
-                  s", merge-queue held: same-key merge node(s) [${queued.map(h => s"'${h.name}'(${h.id}):${h.status}").mkString(", ")}]" +
-                    " hold the critical section — this node starts only in FIFO order (rank = readyAt,createdAt,id);" +
-                    " the holder's terminal write releases it (mechanism guarantee, not a stall)"
+                  val sectionPart =
+                    if inSection.nonEmpty then
+                      s"critical-section holder(s) [${inSection.map(h => s"'${h.name}'(${h.id}):${h.status}").mkString(", ")}]"
+                    else
+                      s"NO holder is inside the critical section (every listed node is still open: none is running)"
+                  val aheadPart =
+                    if queuedAhead.isEmpty then ""
+                    else s"; queued ahead (not in the section) [${queuedAhead.map(h => s"'${h.name}'(${h.id}):${h.status}").mkString(", ")}]"
+                  val guarantee =
+                    if inSection.nonEmpty then
+                      "the running holder's terminal write releases it (mechanism guarantee)"
+                    else
+                      "no running holder exists to release it — the queue advances only when an open-state " +
+                        "predecessor actually starts, which may require dispatcher intervention"
+                  s", merge-queue held: $sectionPart$aheadPart — this node starts only in FIFO order " +
+                    s"(rank = readyAt,createdAt,id); $guarantee"
               Some(
                 s"mount stalled: ${stalledSec}s past triggerable point, still status=${n.status}, " +
                   s"$barrierDesc$successionDesc$gateDesc$queueDesc, no running/wiring upstream (upstreams: $upDesc) — settle sweep " +
@@ -5166,6 +5322,25 @@ object NodeEngine:
     * 上游）→ mount-stalled 事件留痕（含节点 id+等待原因）+ settleSweep 既有资格回扫
     * 接管补触发。双保险的时间维度信号（轮次维度由 trigger-starved 承担）。 */
   val MountStalledMs: Long = 60_000L
+
+  /** mount-stalled **告警升级**间隔（engine-defects 批 #85，2026-09-15）：同一停滞期在
+    * 首条之后每过本间隔**再发一条**（summary 带 `escalation=#N`），直到节点脱离停滞集。
+    *
+    * 动因（真身 `.nebflow/flow-map-events.jsonl:5553` + `:5581`）：R4 `pendingSuccession`
+    * 形态下 barrier 被永久 hold，唯一出口是分发器人工 `NodeEdit`（`NodeTools.scala:2373-2390`）；
+    * 旧「单发 Set」让一个可持续数十分钟、并且会**堵死整条合并队列**的停滞只留下一条
+    * 事件 = 事实上的静默。取 10min（≥ MountStalledMs 的 10 倍）：既足以在 30s tick 上
+    * 反复提醒，又不会把事件流刷成噪音（一个停滞期 1 小时 ≈ 6 条）。
+    *
+    * **现读 prop**（`nebflow.stall.reNotifyMs`，`LoopMaxRounds` / `BgateWaitTimeoutMs`
+    * 同款先例）——spec 可即时把间隔压到毫秒级做确定性断言，无需等真实 10min。
+    *
+    * 生产值 = [[nebflow.shared.Defaults.StallReNotifyMs]]（现读 prop）；spec 走构造器
+    * 接缝 `stallReNotifyMs`（`destroyWindowMs` / `notifyQuietMs` 同款「避开全局 prop
+    * 的跨 suite 污染」纪律——实测本工程测试 JVM 下 `sys.props.update` 与
+    * `System.setProperty` **写入后同进程读回均为空**（`Obtained: None`）⇒ 用 prop 做
+    * spec 注入口会**静默失效**，断言只会看到默认值）。 */
+  def StallReNotifyMs: Long = nebflow.shared.Defaults.StallReNotifyMs
 
   /** 死会话自动收敛的 spawn 窗口宽限（僵尸收敛批 2026-09-06）：节点 status 翻
     * Running 后，agent registry 登记发生在 spawn 之后（runWithAgent :816）——Flipped

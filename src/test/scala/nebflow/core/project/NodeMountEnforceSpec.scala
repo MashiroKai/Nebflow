@@ -129,7 +129,8 @@ class NodeMountEnforceSpec extends CatsEffectSuite:
     name: String,
     ws: os.Path,
     system: ActorSystem,
-    res: SharedResources
+    res: SharedResources,
+    stallReNotifyMs: Option[Long] = None
   ): IO[ProjectRuntime] =
     for
       store <- FlowMapStore.open(name, ws.toString)
@@ -144,7 +145,9 @@ class NodeMountEnforceSpec extends CatsEffectSuite:
         emitEvent = (_, _, _) => IO.unit,
         // noderpt 批 A 段：本 fixture 主题非 node_report 语义 ⇒ 显式关腿 2（生产默认开；
         // 腿 2 默认开行为由 NodeReportReminderSpec 覆盖）。
-        reportGateHold = Some(false)
+        reportGateHold = Some(false),
+        // engine-defects 批 #85：告警升级窗口接缝（M8 注 300ms；其余用例 None = 生产默认 10min）
+        stallReNotifyMs = stallReNotifyMs
       )
       pd = ProjectDef(name = name, workspace = ws.toString, agentFile = (ws / "AGENTS.md").toString, createdAt = System.currentTimeMillis())
       rt = ProjectRuntime(pd, store, engine, system, res, None)
@@ -443,6 +446,69 @@ class NodeMountEnforceSpec extends CatsEffectSuite:
       assertEquals(stuck.status, NodeLifecycle.Pending,
         "stuck node must NOT have been started (failed upstream barrier cannot clear; event is the visibility carrier)")
       assert(stuck.startedAt.isEmpty, "stuck node must have no session")
+  }
+
+  // ── M⑧ engine-defects 批 #85：告警**有界升级**（把「静默死锁」变成持续可见）──
+  //
+  // 真身（`.nebflow/flow-map-events.jsonl:5553` / `:5581`，2026-09-15 夹具）：R4
+  // `pendingSuccession` 形态下 barrier 被**永久** hold（唯一出口 = 分发器人工
+  // `NodeEdit`），节点 `wiring` 不动却占着合并队列临界区 ⇒ 整条队列静默死锁。
+  // 旧「单发 Set」让一个可持续数十分钟的停滞只留一条事件 = 事实上的静默。
+  //
+  // 判据（双向）：
+  //  - GREEN：间隔窗内重复回扫**仍只发一条**（M7 已钉；本用例再钉一次同窗重复）；
+  //  - RED：越过 `nebflow.stall.reNotifyMs` 后**必发第二条**且带 `escalation=#2`
+  //    + `ACTION REQUIRED`，并**点名** hold 它的终态上游（`cancelled`）。
+
+  test("M8 (#85): a barrier held for a whole alert window re-alerts — the second mount-stalled carries escalation=#2 + ACTION REQUIRED and names the cancelled upstream (in-window sweeps stay single-shot)") {
+    val ws = tempRoot / "ws-m8"
+    os.makeDir.all(ws)
+    val system = ActorSystem(s"me-m8-${scala.util.Random.nextInt(100000)}")
+    val llm = EchoLlm()
+    val now = System.currentTimeMillis()
+    for
+        res <- mkResources(system, tempRoot, llm.handle)
+        // 窗口压到 300ms（spec 档，**构造器接缝**——本工程测试 JVM 下 system property
+        // 写入后同进程读回为空（`Obtained: None`）⇒ prop 注入口会静默失效）
+        rt <- mountProject("me-m8", ws, system, res, stallReNotifyMs = Some(300L))
+        _ = assertEquals(rt.engine.stallReNotifyWindowMs, 300L,
+          "precondition: the escalation window must reach the engine through the constructor seam")
+        // 夹具形态逐字回灌：cancelled 上游已终态 · 下游 in-barrier 清但 pendingSuccession 非空
+        _ <- seedNode(rt, NodeDef(
+          id = "n-cancelled-up", name = "delegate-device-remove-impl", agent = "general",
+          status = NodeLifecycle.Cancelled, result = Some("abandoned"),
+          createdAt = now - 900_000L, completedAt = Some(now - 880_000L)))
+        _ <- seedNode(rt, NodeDef(
+          id = "n-held-downstream", name = "delegate-device-remove-land", agent = "general",
+          in = List("n-cancelled-up"), status = NodeLifecycle.Wiring,
+          pendingSuccession = List("n-cancelled-up"),
+          out = List(OutEdge.nebula), createdAt = now - 870_000L))
+        _ <- rt.engine.settleRunnableSweep()
+        _ <- IO.sleep(120.millis)
+        _ <- rt.engine.settleRunnableSweep() // 窗内第二扫：必须仍单发
+        inWindow <- readAudit(ws)
+        _ <- IO.sleep(900.millis) // 越过 300ms 升级窗（留足余量）
+        _ <- rt.engine.settleRunnableSweep()
+        afterWindow <- readAudit(ws)
+        held <- rt.store.getNode("n-held-downstream").map(_.getOrElse(fail("held node must exist")))
+        _ <- system.stopAll.handleErrorWith(_ => IO.unit)
+      yield
+        val inWin = inWindow.filter((t, id, _) => t == "mount-stalled" && id == "n-held-downstream")
+        assertEquals(inWin.size, 1,
+          s"GREEN: within the alert window two sweeps must stay single-shot, got ${inWin.size}: ${inWindow.map((t, id, _) => (t, id))}")
+        val all = afterWindow.filter((t, id, _) => t == "mount-stalled" && id == "n-held-downstream")
+        assertEquals(all.size, 2,
+          s"RED: past the alert window a SECOND alert must fire (bounded escalation, not silent), got ${all.size}: ${afterWindow.map((t, id, _) => (t, id))}")
+        val (_, _, esc) = all(1)
+        assert(esc.startsWith("escalation=#2"), s"the re-alert must be labelled escalation=#2, got: $esc")
+        assert(esc.contains("ACTION REQUIRED"), s"the re-alert must demand action (not read as a mechanism guarantee), got: $esc")
+        assert(esc.contains("cancelled"), s"the re-alert must name the terminal upstream's state, got: $esc")
+        assert(esc.contains("delegate-device-remove-impl"), s"the re-alert must name the blocking upstream, got: $esc")
+        assert(esc.contains("awaiting handover"), s"the re-alert must name the R4 handover hold, got: $esc")
+        // R4 语义**未改**：仍然不放行（事件是可见性载体，不是自动放行）
+        assertEquals(held.status, NodeLifecycle.Wiring,
+          "the R4 succession hold must NOT be auto-released by this batch (alert only)")
+        assert(held.startedAt.isEmpty, "the held node must still have no session")
   }
 
 end NodeMountEnforceSpec

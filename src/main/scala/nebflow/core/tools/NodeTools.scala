@@ -795,7 +795,10 @@ object NodeTools:
         .map(_.toMap)
       // 排队位次派生（排队位次可见性批 2026-09-14）：纯函数、零副作用，与闸同一单点；
       // 同键多项目（O-1）读数为显示面降级信号（键求值走进程内缓存，稳态零 git 调用）。
-      mergeQueueHolders = rt.engine.mergeQueueHoldersBatch(s.nodes)
+      // 排队位次**显示槽**（engine-defects 批 #2/#227 2026-09-15）：与闸**同一判据**
+      // （mergeQueueHolders → MergeMutexPolicy.holders + verdict 准入过滤），只把持有者
+      // 富化成 {rank 依据(readyAt/createdAt), 是否真在临界区, 为何未点火}。
+      mergeQueueSlots = rt.engine.mergeQueueSlotsBatch(s.nodes)
       sameKeyForeignProjects <- rt.engine.sameKeyForeignProjectsNow
     yield
       val now = System.currentTimeMillis()
@@ -816,7 +819,7 @@ object NodeTools:
           // 同一函数（[[NodeEngine.mergeQueueHoldersBatch]] → [[NodeEngine.mergeQueueHolders]]
           // → [[MergeMutexPolicy.holders]] + verdict 准入过滤）——🔴 禁前端/分发器复刻，
           // 🔴 禁读文件票层，🔴 禁从事件流回放。只收非空项 ⇒ 未排队节点缺键。
-          mergeQueue = mergeQueueHolders.get(n.id),
+          mergeQueue = mergeQueueSlots.get(n.id),
           // 同键多项目（O-1）当下读数：非空 ⇒ 前端按降级红线只渲染裸「排队中」不渲染
           // 数字（🔴 禁编造数字）；空 ⇒ 位次可信。与既有两个 merge-queue 告警同源单点。
           sameKeyProjects = sameKeyForeignProjects)
@@ -2492,7 +2495,22 @@ object NodeEditTool extends Tool:
                                                   ttlExpireAt = None,
                                                   blockCount = if fromFailed then 0 else fresh.blockCount, // blocked 保留轮次 / failed 复位
                                                   blockedFeedback = if fromFailed then None else fresh.blockedFeedback,
-                                                  notifySentAt = if fromFailed || fromInterrupted then None else fresh.notifySentAt)))
+                                                  notifySentAt = if fromFailed || fromInterrupted then None else fresh.notifySentAt,
+                                                  // ── engine-defects 批 #245（2026-09-15）：**陈旧判词必须随重激活作废** ──
+                                                  // 缺陷：重激活是「同一身份重跑一轮」（本字段族的既有口径，见上方
+                                                  // result/deliveredTo/nebulaDeliveredAt 三清），但 `lastVerdict` 不在其列
+                                                  // ⇒ 重跑中的复核位仍挂着上一轮判词；下游判词闸
+                                                  // （`mergeVerdictHolders`：`!lastVerdict.exists(pass)`）**每轮现读**，
+                                                  // 于是被陈旧 `pass` 放开 ⇒ 下游按陈旧结论推进。
+                                                  // 修法：仅对 `role=verifier` 清空（重跑中的复核位**当下没有判词** ⇒
+                                                  // 闸必须等新判词）。判据方向为**收紧**（`None` 与 `fail` 同被闸挡住，
+                                                  // 绝不放宽任何闸）；`role=task` 节点的重激活字段集逐字不动。
+                                                  // 🔴 三条腿**不碰**：`resetForLoop`（回边驱动方 `lastVerdict` 刻意保留
+                                                  // ——fail 判词是返工期间继续挡合并的依据，NodeEngine.scala:3735-3736）、
+                                                  // `retryReactivate`、`reactivateForRetry`。
+                                                  lastVerdict =
+                                                    if NodeRoles.normalize(fresh.role) == NodeRoles.Verifier then None
+                                                    else fresh.lastVerdict)))
                                               case _ => s
                                           }.map(s2 =>
                                             s2.nodes.get(node.id).exists(n => n.status == NodeLifecycle.Wiring || n.status == NodeLifecycle.Pending))

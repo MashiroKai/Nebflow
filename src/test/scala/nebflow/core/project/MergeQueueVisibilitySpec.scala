@@ -137,6 +137,43 @@ class MergeQueueVisibilitySpec extends CatsEffectSuite:
   private def sameKeyProjects(p: Json, id: String): Option[List[String]] =
     mqField(p, id).flatMap(_.hcursor.downField("sameKeyProjects").as[List[String]].toOption)
 
+  // ── engine-defects 批 #2/#227 显示槽读数（只增键，既有键逐字保留）──────────
+
+  private def inSectionOf(p: Json, id: String): Option[List[String]] =
+    mqField(p, id).flatMap(_.hcursor.downField("inSection").as[List[String]].toOption)
+
+  private def rankKey(p: Json, id: String): Option[(String, List[String])] =
+    mqField(p, id).flatMap(_.hcursor.downField("rank").focus).map { r =>
+      (r.hcursor.get[String]("primary").getOrElse("<missing>"),
+       r.hcursor.downField("tiebreaks").as[List[String]].getOrElse(Nil))
+    }
+
+  private def holderJsons(p: Json, id: String): List[Json] =
+    mqField(p, id).flatMap(_.hcursor.downField("holders").as[List[Json]].toOption).getOrElse(Nil)
+
+  private def holderLong(p: Json, id: String, field: String): List[Long] =
+    holderJsons(p, id).flatMap(_.hcursor.get[Long](field).toOption)
+
+  /** 指定**持有者**（在被挡节点 id 的 holders[] 中按 id 定位）的单字段读数。 */
+  private def holderFieldOf(p: Json, subject: String, holderId: String, field: String): Option[Long] =
+    holderJsons(p, subject)
+      .find(_.hcursor.get[String]("id").contains(holderId))
+      .flatMap(_.hcursor.get[Long](field).toOption)
+
+  private def holderFlag(p: Json, id: String, field: String): List[Boolean] =
+    holderJsons(p, id).flatMap(_.hcursor.get[Boolean](field).toOption)
+
+  private def holderReasons(p: Json, id: String): List[(String, String)] =
+    holderJsons(p, id).flatMap { h =>
+      for
+        nid <- h.hcursor.get[String]("id").toOption
+        why <- h.hcursor.get[String]("notStartedReason").toOption
+      yield (nid, why)
+    }
+
+  private def keyFields(p: Json, id: String): Set[String] =
+    mqField(p, id).flatMap(_.asObject).map(_.keys.toSet).getOrElse(Set.empty)
+
   /** merge 节点（入口形态：无 in 无 deps ⇒ 到达时刻 readyAt = createdAt）。 */
   private def mergeNode(id: String, name: String, status: String, createdAt: Long): NodeDef =
     NodeDef(id = id, name = name, agent = "general", merge = true, task = Some(s"landing $name"),
@@ -236,6 +273,90 @@ class MergeQueueVisibilitySpec extends CatsEffectSuite:
       assertEquals(mqField(after, "n-wait"), None,
         s"after the holder's terminal write the key MUST be gone (not a stale copy): ${nodeJson(after, "n-wait")}")
       assertEquals(aheadOf(after, "n-holder"), None, "the released (completed) node is never queued")
+  }
+
+  // ── engine-defects 批 #2/#227（2026-09-15）：位次**显示槽**─────────────────
+  //
+  // 动因（真身 `flow-map-events.jsonl:5581`）：旧载荷只给 `{id,name,status}`，消费方
+  // 只能自行把 `running` 读成「在临界区」、把 `wiring|pending` 读成「在排队」；而引擎
+  // 自己的停等文案对**开态**持有者也写「hold the critical section … (mechanism
+  // guarantee)」——作者 00:30 亲历「为什么现在没有节点在跑」无从判断。
+  // 本族验证：同一判据（[[NodeEngine.mergeQueueHolders]] → [[MergeMutexPolicy.holders]]）
+  // 被派生成**显式三键**：`rank{primary,tiebreaks}` / `inSection[]` / `holders[].notStartedReason`。
+  // 🔴 零行为面：不改闸、不改 FIFO、不写持久字段；既有键逐字保留（下方零漂移用例钉）。
+
+  test("#2/#227 slot: the key separates the critical section from mere queue order and states, per holder, why it has not started (queued / awaiting-handover / barrier-incomplete / in-critical-section)") {
+    val ws = tempRoot / "ws-slot"; os.makeDir.all(ws)
+    val system = ActorSystem(s"mqpos-slot-${scala.util.Random.nextInt(100000)}")
+    val now = System.currentTimeMillis()
+    for
+      res <- mkResources(system, tempRoot)
+      rt <- mountProject("mqpos-slot", ws, system, res)
+      _ <- seed(rt,
+        runningHolder("n-holder", "attach-merge", now - 9000L),
+        mergeNode("n-early", "docs-merge", NodeLifecycle.Wiring, now - 8000L),
+        // barrier 残缺：in 仍有未投递上游
+        mergeNode("n-barrier", "blocked-merge", NodeLifecycle.Wiring, now - 7000L).copy(in = List("n-x")),
+        // R4 待承接：摘除的 cancelled 上游留下的槽位 ⇒ 不会自行启动（#85 的形态）
+        mergeNode("n-handover", "handover-merge", NodeLifecycle.Wiring, now - 5000L)
+          .copy(pendingSuccession = List("n-x-cancelled")),
+        mergeNode("n-subject", "waiting-merge", NodeLifecycle.Pending, now - 3000L))
+      p <- payload(rt)
+      _ <- system.stopAll.handleErrorWith(_ => IO.unit)
+    yield
+      assertEquals(aheadOf(p, "n-subject"), Some(4), s"four blocking predecessors: $p")
+      // ① 临界区与「只是排在前面」分栏
+      assertEquals(inSectionOf(p, "n-subject"), Some(List("n-holder")),
+        s"inSection must name exactly the holders that are REALLY inside the critical section: $p")
+      assertEquals(holderFlag(p, "n-subject", "inSection").count(identity), 1,
+        "exactly one holder may be flagged inSection in this fixture")
+      // ② rank 依据可只读读出（次序键元数据；前端只读不派生）
+      assertEquals(rankKey(p, "n-subject"), Some(("readyAt", List("createdAt", "id"))),
+        "the key must publish the rank basis explicitly (readyAt, then createdAt, then id)")
+      // ③ 逐持有者「为何未点火」四态
+      assertEquals(holderReasons(p, "n-subject").toMap, Map(
+        "n-holder" -> "in-critical-section",
+        "n-barrier" -> "barrier-incomplete",
+        "n-early" -> "queued",
+        "n-handover" -> "awaiting-handover"),
+        s"every holder must state why it has not started (four-state judgement): $p")
+      // ④ rank 数值与节点自身字段同源（无第二判据：入口形态 readyAt = createdAt）
+      assertEquals(holderFieldOf(p, "n-subject", "n-early", "readyAt"), Some(now - 8000L),
+        "readyAt must be the rank primary key itself (entry node => createdAt)")
+      assertEquals(holderFieldOf(p, "n-subject", "n-early", "createdAt"), Some(now - 8000L))
+      assertEquals(holderFieldOf(p, "n-subject", "n-handover", "readyAt"), Some(now - 5000L),
+        "the R4 pendingSuccession holder's readyAt is its arrival time (the removed upstream is NOT a rank input)")
+  }
+
+  test("#2/#227 zero drift: the queued key's field set is EXACTLY {ahead,inSection,rank,holders} and every pre-existing holder field keeps its literal value") {
+    val ws = tempRoot / "ws-slot-zero"; os.makeDir.all(ws)
+    val system = ActorSystem(s"mqpos-slotz-${scala.util.Random.nextInt(100000)}")
+    val now = System.currentTimeMillis()
+    for
+      res <- mkResources(system, tempRoot)
+      rt <- mountProject("mqpos-slotzero", ws, system, res)
+      _ <- seed(rt,
+        runningHolder("n-holder", "attach-merge", now - 8000L),
+        mergeNode("n-wait", "docs-merge", NodeLifecycle.Pending, now - 3000L))
+      p <- payload(rt)
+      _ <- system.stopAll.handleErrorWith(_ => IO.unit)
+    yield
+      // 显示槽是**只增键**：本批新增/保留的键恰为四件。`sameKeyProjects` 是既有条件键
+      // （O-1 降级信号，其在场取决于同一 JVM 内**其它已挂载项目**是否解析到同一 git 目录
+      // ——spec 工作区落在本仓工作树内，`rev-parse` 会上溯到本仓 .git ⇒ 与同 JVM 内其它
+      // spec 挂载共享键），故此处把它排除、单独按其自身判据断言（不引入非确定性）。
+      assertEquals(keyFields(p, "n-wait") - "sameKeyProjects", Set("ahead", "inSection", "rank", "holders"),
+        s"the queue key must carry exactly the declared fields: ${mqField(p, "n-wait")}")
+      assert(keyFields(p, "n-wait").subsetOf(Set("ahead", "inSection", "rank", "holders", "sameKeyProjects")),
+        s"no undeclared key may appear on the queue slot: ${mqField(p, "n-wait")}")
+      // 既有三键逐字保留 + 本批新增四键（holders[] 项字段集精确相等，无多余键）
+      assertEquals(holderJsons(p, "n-wait").map(_.asObject.map(_.keys.toSet).getOrElse(Set.empty[String])).toList,
+        List[Set[String]](Set("id", "name", "status", "readyAt", "createdAt", "inSection", "notStartedReason")),
+        s"holder entries must be the pre-existing three keys plus the four declared ones: ${holderJsons(p, "n-wait")}")
+      assertEquals(holderField(p, "n-wait", "status"), List(NodeLifecycle.Running),
+        "pre-existing holder.status must keep its literal value")
+      // 非排队节点仍无键（条件键纪律未破）
+      assertEquals(mqField(p, "n-holder"), None, "the running holder still carries no key")
   }
 
   // ── ④ 同键多项目（O-1）= 降级信号 ─────────────────────────────────

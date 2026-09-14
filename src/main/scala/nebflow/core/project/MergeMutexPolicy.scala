@@ -136,6 +136,51 @@ object MergeMutexPolicy:
             (o.status == NodeLifecycle.Running || (isOpen(o) && rankOf(o, all) < mine)))
         .toList
 
+  /** 排队位次**显示槽**（engine-defects 批 #2/#227 「排队位次可见性」补件 2026-09-15）：
+    * 纯派生量、**零持久字段**——载荷 `mergeQueue` 的每一项。
+    *
+    * 动因（真身 `.nebflow/flow-map-events.jsonl:5581`）：旧载荷只给 `{id,name,status}`，
+    * 消费方需自行把 `status==running` 读成「在临界区」、把 `wiring|pending` 读成「在排队」；
+    * 而引擎自己的停等文案对**开态**持有者也写「hold the critical section … (mechanism
+    * guarantee, not a stall)」——同一份数据两种读法 ⇒ 作者 00:30 亲历「为什么现在没有
+    * 节点在跑」无从判断。本槽把该判据**显式化**（判据持有方仍是引擎，禁消费方复刻）。
+    *
+    * @param rankAt   rank 首键 `readyAt`（= `max(上游 completedAt)`；未到达 = `MaxValue`）
+    * @param createdAt rank 平局键之一（另一为 `id`，见载荷 `rank` 元数据）
+    * @param inSection 是否**真的在临界区**（`status==running`）
+    * @param notStartedReason 为何未点火：`in-critical-section` | `awaiting-handover`
+    *        （R4「待承接」槽位非空 ⇒ **不会自行启动**） | `barrier-incomplete`
+    *        （`in` 仍有未投递） | `queued`（仅 FIFO 顺位未到）
+    */
+  final case class QueueSlot(
+      node: NodeDef,
+      rankAt: Long,
+      createdAt: Long,
+      inSection: Boolean,
+      notStartedReason: String
+  )
+
+  /** 单个持有者为何尚未点火（**显示面与裁决面同源**的纯判据；零副作用）。
+    * 优先级：真在临界区 > R4 待承接 > barrier 未齐 > 仅排队。 */
+  def notStartedReason(o: NodeDef): String =
+    if o.status == NodeLifecycle.Running then "in-critical-section"
+    else if o.pendingSuccession.nonEmpty then "awaiting-handover"
+    else if o.in.exists(up => !o.deliveredTo.contains(up)) then "barrier-incomplete"
+    else "queued"
+
+  /** 单个持有者 → 显示槽（纯映射；`all` 与闸同源）。
+    *
+    * 🔴 纪律：本函数只做「NodeDef → 槽」的**逐项富化**，**不得**自行出持有者集合——
+    * 持有者集合的唯一真源是 [[MergeMutexPolicy.holders]] 经 [[NodeEngine.mergeQueueHolders]]
+    * 的 verdict 准入过滤（闸与显示面同一判据，禁第二判据）。 */
+  def slotOf(o: NodeDef, all: Map[String, NodeDef]): QueueSlot =
+    QueueSlot(o, readyAt(o, upsOf(o, all)), o.createdAt,
+      o.status == NodeLifecycle.Running, notStartedReason(o))
+
+  /** rank 次序键的**元数据**（载荷 `mergeQueue.rank`；对外冻结字面量，前端只读不派生）。 */
+  val RankPrimary: String = "readyAt"
+  val RankTiebreaks: List[String] = List("createdAt", "id")
+
   /** 同键多项目告警判据（**O-1 已知缺口**的检测面，纯函数部分）：给定「本项目的键」
     * 与「其他项目的（名, 键）」对，返回与本项目同键的他项目名清单（升序去重）。
     * 语义：引擎侧持有者派生自**本项目 store** ⇒ 两项目共用同一 git 目录时**漏互斥**；
