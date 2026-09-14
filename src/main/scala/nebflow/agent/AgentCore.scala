@@ -1566,7 +1566,8 @@ private[agent] trait AgentCore:
         case Some(hub) =>
           (hub ! InteractionHubCommand.Request(
             InteractionRequest(
-              requestId = java.util.UUID.randomUUID().toString.take(8),
+              // #250 第⑤项：requestId 熵强化（单点生成器，作用域 perm-）
+              requestId = InteractionRequestId.forPermission(),
               kind = InteractionKind.Permission,
               payload = enriched,
               reply = InteractionReply.PermissionReply(deferred),

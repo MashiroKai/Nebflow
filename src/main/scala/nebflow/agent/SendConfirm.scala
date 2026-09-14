@@ -125,7 +125,8 @@ object SendConfirm:
             hub <- hubOpt match
               case Some(h) => IO.pure(h)
               case None    => IO.raiseError(new Unavailable("InteractionHub is not spawned (headless / early boot)"))
-            requestId = java.util.UUID.randomUUID().toString.take(8)
+            // #250 第⑤项：requestId 熵强化（单点生成器，作用域 confirm-）
+            requestId = InteractionRequestId.forSendConfirm()
             slot <- Deferred[IO, List[String]]
             _ <- logger.info(
               s"confirm requested requestId=$requestId root=$rootSid sourceAgent=$sourceAgent " +

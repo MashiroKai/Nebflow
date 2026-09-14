@@ -289,4 +289,74 @@ class WaitTimeoutAskUserWiringSpec extends CatsEffectSuite:
     yield ()).guarantee(f.cleanup)
   }
 
+  // ============================================================
+  // #250 ②（2026-09-13 作者裁定「6 项全补」）：Interrupt 必须回收 pending 槽
+  //
+  // 改前：Interrupt 只 cancelCurrentTurn + 回 Idle（本文件上一条用例），全仓
+  // CleanupForSession 只有 NodeEngine / BackoffSupervisor 两个调用点 ⇒ root 会话
+  // 的提问卡在中断后成为永久僵尸（等待无超时、无人回收）。
+  // 本用例是**单测级**证据（真 AgentActor + 真 hub + 真消息，无运行实例）。
+  // ============================================================
+
+  test("#250②: pending 期间 Interrupt → hub 槽位回收 + 广播 askUserClosed(reason=turn-interrupted)，且不误伤别的 sourceSession") {
+    val f = setup("interrupt-cleanup")
+    (for
+      _ <- waitFor(f.resources.agentRegistry, m => m.get(f.sid).exists(_.status == AgentStatus.WaitingForUser),
+        "AskUser 派发后 registry 未标 WaitingForUser")
+      _ <- waitFor(f.wsEvents, evs => evs.exists(j => j.hcursor.get[String]("type").toOption.contains("askUser")),
+        "askUser 卡未渲染")
+      evs0 <- f.wsEvents.get
+      askFrame = evs0.find(j => j.hcursor.get[String]("type").toOption.contains("askUser")).get
+      requestId = askFrame.hcursor.get[String]("requestId").toOption.get
+      // 负控素材：另一个 sourceSession 的 pending 槽（中断清理不得扫射）
+      bystanderGot <- IO.ref(Option.empty[List[String]])
+      bystander <- f.system
+        .spawn(
+          nebflow.actor.Behaviors.receiveMessage[List[String]] { a => bystanderGot.set(Some(a)).as(nebflow.actor.Behaviors.stopped) },
+          "bystander-sink"
+        )
+        .map(sink =>
+          InteractionRequest(
+            requestId = "ask-bystander-00000000",
+            kind = InteractionKind.AskUser,
+            payload = Json.obj("items" -> Json.arr(), "agentName" -> Json.fromString("Nebula")),
+            reply = InteractionReply.AskUserReply(Some(sink)),
+            rootSessionId = f.sid,
+            sourceAgent = "Nebula",
+            sourceSession = "node-bystander"
+          )
+        )
+      _ <- f.hub ! InteractionHubCommand.Request(bystander)
+      _ <- IO.sleep(100.millis)
+
+      // ── 中断 ──
+      _ <- f.actor ! AgentCommand.Interrupt()
+      _ <- waitFor(f.resources.agentRegistry, m => m.get(f.sid).exists(_.status == AgentStatus.Idle),
+        "Interrupt 后 registry 未回 Idle")
+      _ <- waitFor(
+        f.wsEvents,
+        evs => evs.exists(j =>
+          j.hcursor.get[String]("type").toOption.contains("askUserClosed") &&
+            j.hcursor.get[String]("requestId").toOption.contains(requestId)
+        ),
+        "Interrupt 后未广播 askUserClosed（② 的槽位回收未接线）"
+      )
+      evs <- f.wsEvents.get
+      closed = evs
+        .filter(j =>
+          j.hcursor.get[String]("type").toOption.contains("askUserClosed") &&
+            j.hcursor.get[String]("requestId").toOption.contains(requestId)
+        )
+        .last
+      _ <- IO(assertEquals(closed.hcursor.get[String]("reason").toOption, Some("turn-interrupted")))
+      // 槽位真的没了（不是只广播）：hub 快照里只剩旁观者
+      snap <- f.hub.?[List[Json]](reply => InteractionHubCommand.ListAllPendingAsks(reply))
+      _ <- IO(assertEquals(
+        snap.map(_.hcursor.get[String]("requestId").toOption.get),
+        List("ask-bystander-00000000"),
+        "本会话的槽必须被回收，别的 sourceSession 的槽必须存活"
+      ))
+    yield ()).guarantee(f.cleanup)
+  }
+
 end WaitTimeoutAskUserWiringSpec
