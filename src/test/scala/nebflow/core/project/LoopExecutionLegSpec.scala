@@ -108,6 +108,49 @@ class LoopExecutionLegSpec extends CatsEffectSuite:
                   "suggestion" -> "re-run upstream after the dependency rollback".asJson))),
               StreamChunk.Done(Some("tool_use"), None))
 
+  /** ①b 夹具：**由返工段驱动的分支**。目标重跑会话的首条输入带 `[LoopNode rework` 段 ⇒
+    * 该会话走「worker 返工」分支：记下输入后被 `gate` **持有**（turn 不结束）⇒ 断言
+    * 「目标 flowmap status 回 running」时无竞态（NodeEngine 先置 running 再发首轮请求）。
+    * verifier 会话（输入不含返工段）走原 fail 申报状态机；见回执后收尾。 */
+  private class ReentryLlm(gate: cats.effect.Deferred[IO, Unit]):
+    val inputs: Ref[IO, List[String]] = Ref.unsafe[IO, List[String]](Nil)
+    private val ackText = "[OK] verdict recorded (fail)"
+    private def sawAck(req: LlmRequest): Boolean =
+      req.messages.exists { m =>
+        m.content match
+          case Right(blocks) =>
+            blocks.exists {
+              case ContentBlock.ToolResult(_, content, _) => content.contains(ackText)
+              case _                                      => false
+            }
+          case Left(t) => t.contains(ackText)
+      }
+    def handle: LlmHandle[IO] = new LlmHandle[IO]:
+      def send(req: LlmRequest): IO[LlmResponse] = IO.raiseError(new RuntimeException("send not expected"))
+      def sendStream(
+          req: LlmRequest,
+          onAttempt: Option[nebflow.shared.FallbackAttempt => IO[Unit]] = None
+      ): Stream[IO, StreamChunk] =
+        val text = req.messages.map(_.textContent).mkString("\n")
+        if text.contains("[LoopNode rework") then
+          // worker 返工轮：记为「目标重跑会话真的起了」，然后挂住（等测试放行）
+          Stream.eval(inputs.update(_ :+ text)) >>
+            Stream.eval(gate.get) >>
+            Stream(StreamChunk.TextDelta("worker rework round delivered"), StreamChunk.Done(None, None))
+        else if sawAck(req) then
+          Stream.eval(inputs.update(_ :+ text)) >>
+            Stream(StreamChunk.TextDelta("被判定对象不合格，正式给出 fail verdict。本节点收尾。"), StreamChunk.Done(None, None))
+        else
+          Stream.eval(inputs.update(_ :+ text)) >>
+            Stream(
+              StreamChunk.ToolCallChunk(ToolCall(
+                "rb-fail-1", "node_report",
+                JsonObject(
+                  "category" -> "fail".asJson,
+                  "detail" -> "artifact does not compile".asJson,
+                  "suggestion" -> "re-run upstream after the dependency rollback".asJson))),
+              StreamChunk.Done(Some("tool_use"), None))
+
   private def mkResources(system: ActorSystem, tmp: os.Path, llm: LlmHandle[IO]): IO[SharedResources] =
     for
       dispatcher <- cats.effect.std.Dispatcher.parallel[IO].allocated.map(_._1)
@@ -278,6 +321,61 @@ class LoopExecutionLegSpec extends CatsEffectSuite:
         // 选通面：fail 判词不投 pass 边（既有语义零变化）
         assertEquals(land.deliveredTo, Nil, "verdict=fail must not deliver along the pass edge")
         assertEquals(land.status, NodeLifecycle.Wiring, "the sink must not be pulled up by a fail verdict")
+    finally
+      LoopProps.foreach(System.clearProperty)
+  }
+
+  // ── ①b worker 重新入轮：目标**真的重跑**（flowmap status 回 running + 返工段到位）──
+
+  test("① worker re-entry: the re-activated target really re-enters a round — flowmap status goes back to RUNNING and the re-run session's first input carries the round/issues/requirements rework section") {
+    val ws = tempRoot / "ws-reentry"
+    os.makeDir.all(ws)
+    val system = ActorSystem(s"lreentry-${scala.util.Random.nextInt(100000)}")
+    try
+      for
+        gate <- cats.effect.Deferred[IO, Unit]
+        llm = new ReentryLlm(gate)
+        res <- mkResources(system, tempRoot, llm.handle)
+        rt <- mountEngineOnly("lreentry", ws, system, res)
+        _ <- seed(rt,
+          // 目标 = 有 task 的 worker（真会 spawn 会话）；out 空 ⇒ 重跑完成不级联回 verifier
+          mkNode("n-rework", "n-rework", NodeLifecycle.Completed,
+            result = Some("worker round-1 output"), withTask = true),
+          // 驱动方 = fail-verifier（回边 (fail)->n-rework:loop）
+          mkNode("n-ver", "n-ver", NodeLifecycle.Wiring, role = NodeRoles.Verifier,
+            in = List("n-rework"), out = List(OutEdge("n-rework", Set(OutEdge.Fail), OutEdge.Loop)),
+            deliveredTo = List("n-rework"), withTask = true))
+        _ <- rt.engine.startNode("n-ver")
+        _ <- waitLoopRound(ws, "n-ver")
+        before <- llm.inputs.get
+        _ <- waitUntil(30.seconds)(llm.inputs.get.map(_.exists(_.contains("[LoopNode rework"))))
+        // 目标重跑会话已起且被持有（turn 未结束）⇒ 此刻读状态无竞态
+        workLive <- rt.store.snapshot.map(_.nodes("n-rework"))
+        turns <- llm.inputs.get
+        _ <- gate.complete(())
+        _ <- waitUntil(30.seconds)(
+          rt.store.snapshot.map(_.nodes("n-rework").status == NodeLifecycle.Completed))
+        workDone <- rt.store.snapshot.map(_.nodes("n-rework"))
+        _ <- system.stopAll.handleErrorWith(_ => IO.unit)
+      yield
+        // 前置断言：重入轮之前**没有任何**请求带返工段（该段的出现只能是重入轮带来的）
+        assert(before.forall(!_.contains("[LoopNode rework")),
+          s"precondition: no rework section may exist before the re-entry, got ${before.size} request(s)")
+        // 「worker 重新入轮」的可观察面 = flowmap status 回 **running**
+        assertEquals(workLive.status, NodeLifecycle.Running,
+          s"the re-activated target must really re-enter a round (status back to running), got ${workLive.status}")
+        // 返工段（round / 判词 issues / pass 判据）逐段到位；全文任务重注（设计 §3.7 选项 (i)）
+        val reworkTurn = turns.find(_.contains("[LoopNode rework")).getOrElse("")
+        assert(reworkTurn.contains("round 1"), s"the rework section must name the round, got: ${reworkTurn.take(400)}")
+        assert(reworkTurn.contains("artifact does not compile"),
+          s"the verifier's issues must ride the re-run input, got: ${reworkTurn.take(400)}")
+        assert(reworkTurn.contains("re-run upstream after the dependency rollback"),
+          s"the verifier's requirements must ride the re-run input, got: ${reworkTurn.take(400)}")
+        assert(reworkTurn.contains("n-rework task"),
+          s"the full task is re-injected alongside the rework section, got: ${reworkTurn.take(400)}")
+        // 放行后 worker 正常跑完 ⇒ 这是「真重跑」而不是「只改状态」
+        assertEquals(workDone.status, NodeLifecycle.Completed,
+          s"after the held turn is released the worker completes normally, got ${workDone.status}")
     finally
       LoopProps.foreach(System.clearProperty)
   }
