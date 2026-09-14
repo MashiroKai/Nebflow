@@ -345,12 +345,34 @@ object NotifyPolicy:
 
   val InvalidCode = "NODE_NOTIFY_INVALID"
 
-  /** completed 事件的**根可见性**（Nebula `:result` pass 边的效力，R5 裁决点）。
-    * 显式声明 ⇒ 值域裁决；缺键 ⇒ legacy（今天的行为：`:result` 的 pass Nebula 边即投根）。 */
+  /** completed 事件的**根可见性**（Nebula `:result` pass 边的效力）。
+    *
+    * == engine-defects 批 #226 修正（2026-09-15）——**通道分立** ==
+    *
+    * 缺陷形状（本批任务书逐字）：`notify≠root` 抑制 Nebula 边投递——链末 sink 设
+    * `notify=dispatcher`/`silent` 时，`(pass,failed)Nebula` 边的**实际投递被抑制** ⇒
+    * root 看不到落地。引擎侧三处自证该形态不自洽：
+    *   ① **失败腿不对称**：`NodeEngine.deliverFailed` 的 Nebula 腿**不查策略**（R14），
+    *      同一条 `(pass,failed)Nebula` 边在 failed 腿照投、pass 腿被吞；
+    *   ② **引擎自陈契约**（`NodeTools.notifyPolicyWarnings` 的告警文案逐字）：
+    *      「`notify=silent` does NOT exempt failures … an explicit `(failed)Nebula` edge
+    *      still reports to the root. **silent suppresses COMPLETED events only**」；
+    *   ③ **原始契约**（`NotifyPolicy` 头注）：「显式写 `(…,Nebula)` = **上根声明**」。
+    *
+    * 修法（**一处判据**）= 通道分立：`notify` 管辖**分发器/链级通知通道**
+    * （[[completionNotifiesDispatcher]] 与 `DispatchNotify`），`Nebula` **出边**声明的是
+    * **根投递通道**——`(gates)Nebula` 的 `:result` 边是**显式上根声明**，其效力不由
+    * `notify` 裁决。无显式根出口时 `notify` 对根通道本就无投递可裁（零影响）。
+    *
+    * 边界（逐字保留，未动）：`silent` 对**分发器**通道的抑制（R2/R3/R14 全部保留）；
+    * `:signal` 出口标记（bare `Nebula`）恒「只记账不通报」——[[legacyRootVisible]] 的
+    * `mode == Result` 合取项即该闸，策略不得使之升根（M1 口径不变）。
+    *
+    * ⚠ 本笔=**语义面反转**（R5「策略 ≠ root ⇒ 抑制显式边」→「显式边优先」）：依据 = 本批
+    * 任务书把 #226 列为待修缺陷 + 上述三处引擎自证不自洽；备选方案（保 R5、只在 NodeEdit
+    * 期对该矛盾组合机械告警）已登记在批报告「待作者复核」栏。 */
   def completedRootVisible(node: NodeDef): Boolean =
-    node.notifyPolicy match
-      case Some(v) => v == Root
-      case None    => legacyRootVisible(node)
+    legacyRootVisible(node)
 
   /** legacy 根可见性（存量读路径，逐字 = 今天 `deliverOut`/`nebulaDelivery` 的判据）：
     * out 中存在指向 `Nebula` 且 `mode=result` 且门含 `pass` 的边。

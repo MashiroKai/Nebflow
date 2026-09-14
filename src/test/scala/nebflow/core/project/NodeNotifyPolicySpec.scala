@@ -214,8 +214,26 @@ class NodeNotifyPolicySpec extends CatsEffectSuite:
 
   test("① 显式声明覆盖 legacy：root/dispatcher/silent 各自裁决两条腿") {
     assert(NotifyPolicy.completedRootVisible(nid("a", "a", Some(NotifyPolicy.Root), List(nebulaResult))), "root ⇒ 放行边")
-    assert(!NotifyPolicy.completedRootVisible(nid("b", "b", Some(NotifyPolicy.Dispatcher), List(nebulaResult))), "dispatcher ⇒ 抑制边（R5）")
-    assert(!NotifyPolicy.completedRootVisible(nid("c", "c", Some(NotifyPolicy.Silent), List(nebulaResult))), "silent ⇒ 抑制边（R5）")
+    // ── engine-defects 批 #226（2026-09-15）：**判据变更**（通道分立） ──────────────
+    // 旧判据（本批任务书判定为缺陷 #226，逐字）：`dispatcher`/`silent` ⇒ 抑制**显式**
+    // `(pass)Nebula` :result 边（R5）。旧判据的两条断言原文保留于批报告「判据变更登记」栏。
+    // 新判据：`notify` 管辖分发器/链级通知通道；`(gates)Nebula` :result 边是**上根声明**，
+    // 其效力不由 notify 裁决（与失败腿 R14 对称——`deliverFailed` 的 Nebula 腿从不查策略）。
+    assert(NotifyPolicy.completedRootVisible(nid("b", "b", Some(NotifyPolicy.Dispatcher), List(nebulaResult))),
+      "#226 RED 臂：显式 (pass)Nebula :result 边 + notify=dispatcher ⇒ 仍须投根（旧判据抑制）")
+    assert(NotifyPolicy.completedRootVisible(nid("c", "c", Some(NotifyPolicy.Silent), List(nebulaResult))),
+      "#226 RED 臂：显式 (pass)Nebula :result 边 + notify=silent ⇒ 仍须投根（旧判据抑制）")
+    // GREEN 臂（零放宽）：**无**显式 :result 根出口时，notify 对根通道零影响（本就无投递）
+    assert(!NotifyPolicy.completedRootVisible(nid("b2", "b2", Some(NotifyPolicy.Dispatcher), List(toDown))),
+      "#226 GREEN：无 Nebula :result 边 ⇒ 不投根（notify=dispatcher 不制造投递）")
+    assert(!NotifyPolicy.completedRootVisible(nid("c2", "c2", Some(NotifyPolicy.Silent), List(toDown))),
+      "#226 GREEN：无 Nebula :result 边 ⇒ 不投根")
+    // GREEN 臂（零放宽，M1 口径逐字保留）：bare Nebula（:signal 出口标记）**不是**投根声明，
+    // 策略（含 root）不得使之升根 —— 通道分立不得把出口标记误升为投根。
+    assert(!NotifyPolicy.completedRootVisible(nid("s1", "s1", Some(NotifyPolicy.Root), List(nebulaSignal))),
+      "#226 GREEN：notify=root 也不得把 :signal 出口标记升根（M1 逐字保留）")
+    assert(!NotifyPolicy.completedRootVisible(nid("s2", "s2", Some(NotifyPolicy.Dispatcher), List(nebulaSignal))),
+      "#226 GREEN：notify=dispatcher + :signal 出口标记 ⇒ 不投根")
     assert(NotifyPolicy.completionNotifiesDispatcher(nid("d", "d", Some(NotifyPolicy.Dispatcher), Nil)), "dispatcher ⇒ 回流 ✓")
     assert(!NotifyPolicy.completionNotifiesDispatcher(nid("e", "e", Some(NotifyPolicy.Root), Nil)), "root ⇒ 不回流分发器")
     assert(!NotifyPolicy.completionNotifiesDispatcher(nid("f", "f", Some(NotifyPolicy.Silent), Nil)), "silent ⇒ 不回流")
@@ -278,7 +296,7 @@ class NodeNotifyPolicySpec extends CatsEffectSuite:
 
   // ── ③ R5 实测：抑制 + 记账 / 主路径 ───────────────────────────────────
 
-  test("③ R5 补投扫描腿：显式 dispatcher/silent 的 Nebula :result 边不投根 + 记账（不被补投复活）") {
+  test("③ 补投扫描腿：显式 :result Nebula 边恒投根 + 记账（disp/silent/legacy 三态；#226 判据变更）；`:signal` 出口标记被排除") {
     val ws = tempRoot / "ws-suppress"
     os.makeDir.all(ws)
     val system = ActorSystem(s"b64-suppress-${scala.util.Random.nextInt(100000)}")
@@ -290,7 +308,10 @@ class NodeNotifyPolicySpec extends CatsEffectSuite:
       _ <- store.mutate(s => s.copy(nodes = Map(
         "n-disp" -> nid("n-disp", "disp", Some(NotifyPolicy.Dispatcher), List(nebulaResult)),
         "n-silent" -> nid("n-silent", "silent", Some(NotifyPolicy.Silent), List(nebulaResult)),
-        "n-legacy" -> nid("n-legacy", "legacy", None, List(nebulaResult))
+        "n-legacy" -> nid("n-legacy", "legacy", None, List(nebulaResult)),
+        // GREEN 臂（engine-defects 批 #226）：`:signal` 出口标记**不是**投根声明 ⇒
+        // 不被补投扫描选中（判据 = legacyRootVisible 的 `mode == Result` 合取项，逐字未动）
+        "n-marker" -> nid("n-marker", "marker", Some(NotifyPolicy.Root), List(nebulaSignal))
       )))
       _ <- engine.redeliverUnconsumedNebulaResults()
       after1 <- store.snapshot
@@ -299,20 +320,26 @@ class NodeNotifyPolicySpec extends CatsEffectSuite:
       capturedTexts2 <- captured.get
       _ <- system.stopAll.handleErrorWith(_ => IO.unit)
     yield
-      assertEquals(capturedTexts1.size, 1,
-        s"恰 1 条投根：只有 legacy 节点（dispatcher/silent 被抑制）——实收 ${capturedTexts1.map(_._1.take(40))}")
-      assert(capturedTexts1.head._1.contains("legacy"), "被投的是 legacy 对照节点（存量零漂移）")
-      assertEquals(capturedTexts2.size, 1, "记账后第二轮零新增（R5 抑制不被补投扫描复活）")
+      // engine-defects 批 #226：显式 `(pass)Nebula` :result 边 = 上根声明 ⇒ dispatcher/silent
+      // 也**照投**（与失败腿 R14 对称）；`:signal` 出口标记仍不投（M1 逐字保留）。
+      assertEquals(capturedTexts1.size, 3,
+        s"恰 3 条投根：disp/silent/legacy（皆为显式 :result 根出口），marker 被排除 —— 实收 ${capturedTexts1.map(_._1.take(40))}")
+      assert(capturedTexts1.exists(_._1.contains("disp")), "#226 RED 臂：dispatcher + 显式 :result 边 ⇒ 投根")
+      assert(capturedTexts1.exists(_._1.contains("silent")), "#226 RED 臂：silent + 显式 :result 边 ⇒ 投根")
+      assert(capturedTexts1.exists(_._1.contains("legacy")), "被投的是 legacy 对照节点（存量零漂移）")
+      assert(!capturedTexts1.exists(_._1.contains("marker")), "#226 GREEN：`:signal` 出口标记不投根（策略=root 亦然）")
+      assertEquals(capturedTexts2.size, 3, "记账后第二轮零新增（记账防补投复活，判据恒同源）")
       // 扫描腿的抑制 = **结构性排除**（候选判据内裁决，根本不上投）：被抑制节点既不被投、
       // 也不被扫描「记账」——二者都靠同一策略判据，故「不复活」恒成立（判据恒同源）。
       // 扫描腿记账的不变量：投递成功的节点必有账（legacy）。主路径（nebulaDelivery）的
       // 「抑制 + 同时记账」由本 spec ③b 覆盖（spec §5 表尾推论 2）。
-      assertEquals(after1.nodes("n-disp").nebulaDeliveredAt, None, "suppressed 节点不在候选（扫描不投也不标记）")
-      assertEquals(after1.nodes("n-silent").nebulaDeliveredAt, None, "silent 同上")
+      assert(after1.nodes("n-disp").nebulaDeliveredAt.isDefined, "disp 投递后记账（防补投复活）")
+      assert(after1.nodes("n-silent").nebulaDeliveredAt.isDefined, "silent 同上")
       assert(after1.nodes("n-legacy").nebulaDeliveredAt.isDefined, "legacy 投递后照旧记账")
+      assertEquals(after1.nodes("n-marker").nebulaDeliveredAt, None, "`:signal` 出口标记不在候选（不投也不标记）")
   }
 
-  test("③b R5 主路径（真实引擎 nebulaDelivery）：silent/出口标记完成不投根（且记账）；root 同形节点照旧投根") {
+  test("③b 主路径（真实引擎 nebulaDelivery）：显式 :result 边 + silent 仍投根（#226 判据变更）；出口标记完成不投根（且记账）；root 同形节点照旧投根") {
     val ws = tempRoot / "ws-suppress-real"
     os.makeDir.all(ws)
     val system = ActorSystem(s"b64-suppress-real-${scala.util.Random.nextInt(100000)}")
@@ -354,12 +381,20 @@ class NodeNotifyPolicySpec extends CatsEffectSuite:
       assertEquals(rootTexts.size, 1, s"root 策略节点完成照旧投根（1 条）：${texts.map(_._1.take(50))}")
       assertEquals(rootTexts.head._2, Some("node"), "source=node（节点级通道）")
       assertEquals(rootTexts.head._3, Some(NodeLifecycle.Completed), "eventType=completed")
-      assert(!texts.exists(_._1.contains("r5-silent")),
-        s"silent 策略节点完成**不投根**（边保留为声明、运行时抑制）：${texts.map(_._1.take(50))}")
+      // engine-defects 批 #226（判据变更）：显式 `(pass)Nebula` :result 边是上根声明，
+      // `notify=silent` 只抑制**分发器通道**（`completionNotifiesDispatcher` 仍 False），
+      // 不再吞掉根投递 ⇒ 必须投根 1 条（旧判据要求 0 条，原文登记于批报告「判据变更登记」栏）。
+      val silentTexts = texts.filter(_._1.contains("r5-silent"))
+      assertEquals(silentTexts.size, 1,
+        s"#226 RED 臂：silent + 显式 :result 边 ⇒ 仍投根恰 1 条：${texts.map(_._1.take(50))}")
+      assertEquals(silentTexts.head._2, Some("node"), "source=node（节点级通道）")
+      assertEquals(silentTexts.head._3, Some(NodeLifecycle.Completed), "eventType=completed")
+      assert(!NotifyPolicy.completionNotifiesDispatcher(byName("r5-silent")),
+        "#226 GREEN：silent 对**分发器通道**的抑制逐字保留（通道分立，零放宽）")
       assert(!texts.exists(_._1.contains("r5-marker")),
         s"M1：bare Nebula（出口标记）完成**不投根**——策略=root 也不得使之升根：${texts.map(_._1.take(50))}")
       // spec §5 表尾推论 2：抑制必须同时记账（否则 30s 补投扫描会复活投递）
-      assert(byName("r5-silent").nebulaDeliveredAt.isDefined, "被抑制的 silent 节点记账（防补投复活）")
+      assert(byName("r5-silent").nebulaDeliveredAt.isDefined, "silent 节点投递后记账（防补投复活）")
       assert(byName("r5-marker").nebulaDeliveredAt.isDefined, "出口标记节点记账（只记账不通报，M1 现网口径）")
       assert(byName("r5-root").nebulaDeliveredAt.isDefined, "root 节点投递后照旧记账")
   }
