@@ -747,6 +747,7 @@ export function nodeFlagKeys(n) {
   return keys;
 }
 const FM_FLAG_CLS = { merge: 'fm-flag-merge', loop: 'fm-flag-loop', pending: 'fm-flag-pending' };
+
 /** 徽标 HTML：head 行胶囊，与 .fm-worktree-badge 同语言（文案 i18n flowmap.flag.*）。
  *  loop 徽标带轮次（LoopNode 批 2026-09-06）：loop 节点运行态显示「loop N/K」—
  *  复用现有 .fm-flag-loop 胶囊配色，不改卡内纵行（88px 卡纵向不可加行）。
@@ -761,6 +762,64 @@ export function flagBadgesHtml(n) {
     }
     return `<span class="fm-flag-badge ${FM_FLAG_CLS[k]}" title="${label}">${label}</span>`;
   }).join('');
+}
+
+// ── 合并窗排队位次（排队位次可见性批 2026-09-14；作者 16:39 双裁 = 显示「数字 + 持有者
+//    双显」、路线「案 A：引擎条件键 + 前端渲染」）────────────────────────────
+// 数据源 = 引擎条件键 `mergeQueue`（NodePayload.buildNodeJson；**仅 merge 节点且当下被
+// 合并窗闸挡住**携带）。值形状（契约，见 ProjectTypes.scala 条件键注）：
+//   { ahead, holders: [{id, name, status}], sameKeyProjects? }
+// 🔴 前端**只渲染不派生**：位次数字一律取载荷 `ahead`（禁本地复算 rank / 持有者 /
+//    准入过滤——判据持有方 = 引擎单点，前端复刻必静默漂移）；🔴 禁读文件票层
+//    （.nebflow/locks/main-merge.queue）、🔴 禁从事件流回放（事件流是审计面）。
+// 🔴 降级红线（草案 §4 逐字）：键缺失 / 形状漂移 / 不可计算 ⇒ **不渲染数字**（至多裸
+//    「排队中」）；🔴 禁编造数字；🔴 禁把事件流下界当真值（「读不到」≠「不在排队」）。
+//    同键多项目（O-1）⇒ 引擎侧持有者派生自本项目 store、他项目节点结构性不可见 ⇒
+//    位次**不可信** ⇒ 降级为裸「排队中」（数字不渲染，持有者清单照列）。
+/** 解析排队视图（导出 = fixture 验证面）。@returns {?{ahead: ?number, holders: Array<{name: string, status: string}>, untrusted: boolean}} null = 不渲染。 */
+export function mergeQueueView(n) {
+  if (!n || typeof n !== 'object') return null;
+  const q = n.mergeQueue;
+  // 形状漂移防御（严格类型判定，与 nodeFlagKeys 同款「缺失即静默降级」纪律）：
+  // 非对象 / 数组 / 无 holders 数组 / holders 全非法 ⇒ 不渲染（零 console 噪音）。
+  if (!q || typeof q !== 'object' || Array.isArray(q)) return null;
+  const raw = Array.isArray(q.holders) ? q.holders : [];
+  const holders = raw
+    .filter((h) => h && typeof h === 'object' && !Array.isArray(h))
+    .map((h) => ({ name: String(h.name || h.id || ''), status: String(h.status || '') }))
+    .filter((h) => h.name !== '');
+  if (!holders.length) return null;
+  // ahead 只在「正整数」时可用；缺键 / 0 / 负 / 非整数 / 与持有者数不符 ⇒ 视为不可计算
+  // ⇒ 裸「排队中」（数字面一律不猜：🔴 禁编造数字）。
+  const ahead = (Number.isInteger(q.ahead) && q.ahead > 0 && q.ahead === holders.length) ? q.ahead : null;
+  const foreign = Array.isArray(q.sameKeyProjects) ? q.sameKeyProjects.filter((p) => typeof p === 'string' && p !== '') : [];
+  return { ahead, holders, untrusted: foreign.length > 0 };
+}
+
+/** head 行排队胶囊（文案形态「排队中 · 前面还有 N 个」——作者 16:39 裁定①，N = 同键
+ *  当前被挡的其他节点数含持有者）。降级两态（红线段）：`ahead` 不可计算 或 同键多项目
+ *  ⇒ 裸「排队中」无数字。title 恒带完整信息（头部窄行不牺牲可读性）。 */
+export function queueBadgeHtml(n) {
+  const q = mergeQueueView(n);
+  if (!q) return '';
+  const names = q.holders.map((h) => h.name).join(' · ');
+  const degraded = q.ahead === null || q.untrusted;
+  const label = degraded ? esc(t('flowmap.queue.held')) : esc(t('flowmap.queue.ahead', { n: String(q.ahead) }));
+  const title = q.untrusted
+    ? esc(t('flowmap.queue.untrustedTitle', { names }))
+    : esc(t('flowmap.queue.badgeTitle', { names }));
+  return `<span class="fm-flag-badge fm-flag-queue" title="${title}">${label}</span>`;
+}
+
+/** 等待脚注行文案（**形态「被 XX 挡着」**——作者 16:39 裁定②，XX = 持有者节点名，
+ *  多持有者全部列出）。同键多项目 ⇒ 追加不可信标注（不隐藏既有持有者清单）。
+ *  返回 '' = 未排队（调用方保持既有脚注逻辑逐字不变）。 */
+export function queueNoteText(n) {
+  const q = mergeQueueView(n);
+  if (!q) return '';
+  const names = q.holders.map((h) => h.name).join(' · ');
+  const base = t('flowmap.queue.blockedBy', { names });
+  return q.untrusted ? `${base}${t('flowmap.queue.untrustedSuffix')}` : base;
 }
 
 // ── 链摘要卡（折叠态，spec §3.3；复用节点卡几何 + 既有状态 glyph/色板 token）──
@@ -826,6 +885,9 @@ function nodeHtml(n, pos, originX, nameOf) {
   // 特殊节点标识（badge 批）：merge/loop/pending 徽标进 head 行（wt 徽标同区，
   // 复用该行既有 flex+gap；不新增卡内纵行——88px 卡纵向不可加行，同 node-flowmap-slim 口径）
   const flags = flagBadgesHtml(n);
+  // 排队位次胶囊（排队位次可见性批）：head 行内、flags 之后（与 merge/pending 同区，
+  // 复用该行既有 flex+gap）。未排队（键缺失）⇒ '' ⇒ head 行 DOM 与改动前**逐字一致**。
+  const queueFlag = queueBadgeHtml(n);
   // 链折叠控件（P1 · spec §3.3）：链入口成员卡 head 行右端 chevron（控件属链不属成员
   // ——仅「可见成员 ≥2 的链」的入口卡带，成员 ≤1 恒无）。点击 = 折叠该链（容器级
   // 捕获委托单点分派，见 bindFlowMapClicks）；title/aria 带链名与成员数，避免
@@ -855,9 +917,18 @@ function nodeHtml(n, pos, originX, nameOf) {
   const waitParts = (st === 'pending' || st === 'wiring')
     ? [...(n.in || []), ...(n.deps || [])].map((id) => nameOf ? nameOf(id) : id)
     : [];
-  const waitNote = waitParts.length
-    ? `<div class="fm-wait-note" title="${esc(`${t('flowmap.waitingFor')}: ${waitParts.join(' · ')}`)}">`
-      + `${FM_WAIT_ICON}<span class="fm-wait-note-text">${esc(t('flowmap.waitingFor'))}: ${esc(waitParts.join(' · '))}</span></div>`
+  // 合并窗排队脚注（排队位次可见性批 2026-09-14）：**同一脚注行**（不新增卡内纵行）——
+  // 排队态首段 = 「被 XX 挡着」（持有者全列，作者 16:39 裁定②）；上游等待段非空时
+  // 以 ` · ` 续接（合并窗等待与上游等待是两个独立成因，禁互相吞并）。未排队 ⇒
+  // queueNote 为空串 ⇒ 本行文案与改动前**逐字一致**（既有 emoji 清零/防溢出两条
+  // 验收口径零回归）。
+  const queueNote = queueNoteText(n);
+  const waitText = queueNote
+    ? (waitParts.length ? `${queueNote} · ${t('flowmap.waitingFor')}: ${waitParts.join(' · ')}` : queueNote)
+    : (waitParts.length ? `${t('flowmap.waitingFor')}: ${waitParts.join(' · ')}` : '');
+  const waitNote = waitText
+    ? `<div class="fm-wait-note${queueNote ? ' fm-wait-note-queue' : ''}" title="${esc(waitText)}">`
+      + `${FM_WAIT_ICON}<span class="fm-wait-note-text">${esc(waitText)}</span></div>`
     : '';
   // Agent 退役（node-flowmap-slim：节点恒 general，卡上无信息量）——副行改显节点
   // 元数据：preset 常显（未配置 → 克制空态「默认预设」），plugins 有则以
@@ -874,7 +945,7 @@ function nodeHtml(n, pos, originX, nameOf) {
         <div class="solar-ring ring-2"><div class="solar-dot-wrap"><div class="solar-dot"></div></div></div>
         <div class="solar-ring ring-3"><div class="solar-dot-wrap"><div class="solar-dot"></div></div></div>
       </div>
-      <div class="fm-node-head">${worktreeBadge}${flags}${statusIcon}${statusWord}${chainChev}</div>
+      <div class="fm-node-head${queueFlag ? ' fm-head-queued' : ''}">${worktreeBadge}${flags}${queueFlag}${statusIcon}${statusWord}${chainChev}</div>
       <div class="solar-node-label" title="${esc(n.name)}">${esc(n.name)}</div>
       <div class="solar-node-sub">${esc(subTitle)}</div>
       ${st === 'pending' && (n.in || []).length > 1 ? `<div class="fm-barrier-hint">barrier ×${(n.in || []).length}</div>` : ''}

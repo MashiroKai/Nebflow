@@ -1895,6 +1895,7 @@ class NodeEngine(
     * 判 fail 的队头会永久堵死整条队列；设计与本批状态机都把 verdict 闸排在互斥闸之前，
     * 见 [[MergeMutexPolicy]] 头注「显式收窄」）。判据复用既有 `mergeVerdictHolders`
     * **单点**（O-2 后上游集同为 `in ∪ deps` ⇒ 两闸零口径差）。
+    * 两段合体已抽为 [[mergeQueueHolders]]（排队位次可见性批：闸与显示面共用同一判据）。
     *
     * 副作用（本函数是闸判定的单一入口，三落点 + 停等文案共用）：附带执行 **O-1 告警**
     * [[alarmSameGitDirProjects]]（同键多项目 = 引擎侧漏互斥，发生即告警，单发）。 */
@@ -1904,9 +1905,34 @@ class NodeEngine(
       for
         s <- store.snapshot
         _ <- alarmSameGitDirProjects()
-        queued = MergeMutexPolicy.holders(n, s.nodes)
-          .filterNot(o => mergeVerdictHolders(o, MergeMutexPolicy.upsOf(o, s.nodes)).nonEmpty)
-      yield queued
+      yield mergeQueueHolders(n, s.nodes)
+
+  /** 阻塞清单纯判据（**闸与显示面的共同单点**）：[[MergeMutexPolicy.holders]] 出「同键
+    * 更高优先者」，再滤掉自身被 verdict 闸挡住的候选（该过滤理由见 [[MergeMutexPolicy]]
+    * 头注「显式收窄」）。空 = 未被挡（放行）。
+    *
+    * 抽出的动因（**排队位次可见性批** 2026-09-14，作者 16:39 双裁 = 案 A）：显示面的
+    * 「前面还有 N 个 / 被 XX 挡着」必须与闸**同一判据**——闸 [[mergeMutexHoldersOf]]
+    * 与载荷注入 [[NodeTools.buildNodeListPayload]] 都调本函数，**禁第二判据**。 */
+  def mergeQueueHolders(n: NodeDef, all: Map[String, NodeDef]): List[NodeDef] =
+    MergeMutexPolicy.holders(n, all)
+      .filterNot(o => mergeVerdictHolders(o, MergeMutexPolicy.upsOf(o, all)).nonEmpty)
+
+  /** 排队位次派生批次（**显示面单点**；纯函数、零副作用、零持久字段）：nodeId → 当下
+    * 挡住它的持有者清单，**只收非空项**（未排队的 merge 节点与全部非 merge 节点不在表内
+    * ⇒ 缺键 = 未排队，消费方据此读）。
+    *
+    * 🔴 口径纪律（逐字）：本函数是 [[mergeQueueHolders]] 的纯映射，**不得**另读文件票层
+    * （`.nebflow/locks/main-merge.queue`）、**不得**从事件流回放、**不得**在前端/分发器
+    * 复刻——事件流是审计面、文件票层是过渡期并存的旧层，两者都不是本判据的真源。 */
+  def mergeQueueHoldersBatch(all: Map[String, NodeDef]): Map[String, List[NodeDef]] =
+    all.valuesIterator
+      .filter(MergeNodePolicy.isMerge)
+      .flatMap { n =>
+        val hs = mergeQueueHolders(n, all)
+        if hs.isEmpty then None else Some(n.id -> hs)
+      }
+      .toMap
 
   /** 闸挡启动时的留痕（三处落点共用单点文案）：`merge-queue` 事件（持有者集合变化时
     * 单发）+ INFO 一行带持有者 id/status——供事后从事件流直接读出**FIFO 次序**（谁在
@@ -1937,6 +1963,14 @@ class NodeEngine(
     * 原文与他项目 running merge 计数）。零新事件机制（复用既有事件通道 + WARN）。
     * 键求值失败/非 git 目录回落工作区本体 ⇒ 只会「自等」，不制造假互斥、不误告警。 */
   private def alarmSameGitDirProjects(): IO[Unit] =
+    sameKeyForeignRuntimes.flatMap { case (mine, same) =>
+      if same.isEmpty then IO.unit else emitSameKeyAlarm(mine, same)
+    }
+
+  /** 同键他项目读数的**共同单点**（告警 [[alarmSameGitDirProjects]] 与显示面
+    * [[sameKeyForeignProjectsNow]] 共用）：返回 (本项目键, [(他项目名, 键, runtime)])。
+    * 键求值经 [[MergeMutexPolicy.keyOf]] 的进程内缓存 ⇒ 稳态下零 git 调用。 */
+  private def sameKeyForeignRuntimes: IO[(String, List[(String, String, ProjectRuntime)])] =
     for
       mine <- MergeMutexPolicy.keyOf(workspace)
       rts <- ProjectRuntimeRegistry.all
@@ -1944,8 +1978,20 @@ class NodeEngine(
       keyed <- others.traverse(rt =>
         MergeMutexPolicy.keyOf(rt.project.workspace).map(k => (rt.project.name, k, rt)))
       same = keyed.filter((_, k, _) => k == mine)
-      _ <- if same.isEmpty then IO.unit else emitSameKeyAlarm(mine, same)
-    yield ()
+    yield (mine, same)
+
+  /** 同键多项目（O-1）**当下**读数：与本项目同键的他项目名（升序去重；空 = 无）。
+    *
+    * 用途（排队位次可见性批）：引擎侧持有者派生自**本项目 store** ⇒ 同键他项目的 merge
+    * 节点对位次计数**结构性不可见**（[[MergeMutexPolicy.sameKeyForeignProjects]] 头注：
+    * 作者 09-13 令「每个项目 git 目录下只能同时有一个合并节点」在本仓 = 只允许一个合并
+    * 节点在工作；跨项目同键 = 告警面）。故显示面据此**降级**——非空 ⇒ 不渲染位次数字
+    * （🔴 降级红线：禁编造数字；「读不到」≠「不在排队」）。
+    * 与 [[MergeMutexPolicy.sameKeyForeignProjects]] 同源（**禁二次口径**）。 */
+  def sameKeyForeignProjectsNow: IO[List[String]] =
+    sameKeyForeignRuntimes.map { case (mine, same) =>
+      MergeMutexPolicy.sameKeyForeignProjects(mine, same.map((name, k, _) => (name, k)))
+    }
 
   private def emitSameKeyAlarm(
     mine: String,

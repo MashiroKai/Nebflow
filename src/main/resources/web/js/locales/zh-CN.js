@@ -156,6 +156,15 @@ export default {
   'flowmap.flag.merge': '合并',
   'flowmap.flag.loop': '循环',
   'flowmap.flag.pending': '待确认',
+  // 合并窗排队位次（排队位次可见性批 2026-09-14；作者 16:39 双裁：显示 = 数字 +
+  // 持有者双显）。徽标在节点卡 head 行、脚注在同一等待脚注行。降级红线：
+  // 键缺失/不可计算/同键多项目 ⇒ 数字不渲染（至多裸「排队中」），禁编造数字。
+  'flowmap.queue.held': '排队中',
+  'flowmap.queue.ahead': '排队中 · 前面还有 {n} 个',
+  'flowmap.queue.blockedBy': '被 {names} 挡着',
+  'flowmap.queue.badgeTitle': '合并窗排队中 — 被 {names} 挡着',
+  'flowmap.queue.untrustedTitle': '合并窗排队中 — 位次不可信（同键多项目共用 git 目录）：被 {names} 挡着',
+  'flowmap.queue.untrustedSuffix': '（位次不可信：同键多项目）',
   // LoopNode 运行态相位文案（2026-09-06）：loop 节点 running 时 desc 行显 worker/verify
   'flowmap.loopPhase.worker': '生产中',
   'flowmap.loopPhase.verify': '验证中',

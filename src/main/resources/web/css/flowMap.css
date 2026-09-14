@@ -160,6 +160,41 @@
   border-color: rgb(var(--amber, 255 152 0) / 0.4);
 }
 
+/* 合并窗排队位次徽标（排队位次可见性批 2026-09-14；作者 16:39 双裁「显示 = 数字 +
+   持有者双显」，文案 i18n flowmap.queue.*）。配色 = 天蓝系（56 189 248），与同卡可能
+   并存的 merge(teal 45 212 191) / loop(purple) / pending(amber) / worktree(sapphire
+   91 127 191) 四者均可辨（文字通道亦唯一，色通道为冗余）。
+   🔴 卡宽约束（124px 卡 / padding 8px 10px ⇒ 内容 ~102px）：文案形态「排队中 · 前面
+   还有 N 个」在 9px 字号下 ~105px，与同卡 merge 徽标并置必超卡界——本徽标所在 head 行
+   在命中排队态时加 `.fm-head-queued`（JS 显式加，不用 :has()）：该行允许换行（卡是
+   height:auto，纵向可长，不裁数字），且徽标自身带 max-width + ellipsis 兜底（极端
+   窄卡/长 N 时截断，完整文案恒在 title）。🔴 这是本批对既有卡几何的**唯一**改动，
+   且只在排队态命中（未排队节点 head 行 DOM/样式逐字不变）。 */
+.fm-flag-queue {
+  background: rgb(56 189 248 / 0.14);
+  color: rgb(56 189 248 / 1);
+  border-color: rgb(56 189 248 / 0.4);
+  /* 紧凑度量（**实测驱动**，2026-09-14 真渲染探针）：卡内容宽 102px（124 卡 − 2 边框
+     − 20 padding），「排队中 · 前面还有 N 个」在家族默认度量（9px/letter-spacing
+     0.02em/padding 2px 5px）下 max-content ≈ 107px ⇒ 独行也溢出 5px（数字尾字被裁）。
+     故本类单列一套度量：8.5px / letter-spacing 0 / padding 2px 3px，实测 ≈ 98px 放得下，
+     数字与「个」全可见（读数见 .nebflow/evidence/20260914_mergequeue-pos/）。文案形态
+     与家族一致（仅尺寸略小），配色通道唯一。 */
+  font-size: 8.5px;
+  letter-spacing: 0;
+  padding: 2px 3px;
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+/* head 行排队变体：允许换行（默认 nowrap 单行）+ 行间距；徽标可收缩（其余徽标不收缩）。 */
+.fm-node-head.fm-head-queued { flex-wrap: wrap; row-gap: 3px; max-width: 100%; }
+.fm-node-head.fm-head-queued > .fm-flag-queue { flex: 0 1 auto; min-width: 0; }
+/* 排队脚注（与既有 .fm-wait-note 同盒，仅配色区分成因）：卡片内不溢出由既有
+   .fm-wait-note-text 的 ellipsis 口径承担（本类只做颜色区分，不改几何）。 */
+.fm-wait-note-queue { color: rgb(56 189 248 / 1); }
+.fm-wait-note-queue .fm-wait-note-icon { opacity: 0.9; }
+
 /* 配置徽标行（skill / mcp / preset）：卡片宽度有限（内容 ~104px），
    徽标压缩展示、超长省略号截断；完整值在 title 与点击详情里可看。 */
 .fm-cfg-row {
