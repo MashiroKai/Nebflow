@@ -81,7 +81,12 @@ class NodeEngine(
   /** 终态延迟销毁窗口（noderpt 批 B 段 2026-09-11 作者裁定「一律存活 30 分钟再销毁」）：
     * None = 现读 `Defaults.NodeDestroyWindowMs`（生产默认 30min）；Some = spec 注入
     * （压到 0/秒级，避开全局 prop 的跨 suite 污染——`bgGateCompletionHold` 同款接缝）。 */
-  destroyWindowMs: Option[Long] = None
+  destroyWindowMs: Option[Long] = None,
+  /** 静默/去抖窗口生效值（M4，b64 批 2026-09-13）：project.json 的 `notify.quietMs`
+    * （键名为对外冻结命名），由挂载面经 `NotifyPolicy.parseQuietMs` 校验后注入
+    * （缺键 = 缺省 5s；超限 ⇒ 挂载面 fail-fast，**不截断**）。None = 现读缺省值
+    *（`NotifyPolicy.NotifyQuietMsDefaultMs`），spec 注入用于确定性断言。 */
+  notifyQuietMs: Option[Long] = None
 ):
   private val logger = NebflowLogger.forName("nebflow.node.engine")
 
@@ -120,7 +125,9 @@ class NodeEngine(
     // notice 语义（非 blocked）：预算耗尽时节点保持 completed，前端不可标 BLOCKED。
     escalate = (text, nodeName) => deliverToNebula(text, nodeName, DispatchNotify.NoticeEventType),
     emitUpdated = emitUpdated,
-    triggerOverride = notifyTriggerOverride
+    triggerOverride = notifyTriggerOverride,
+    // M4（b64 批）：`notify.quietMs` → 打包/静默窗口（缺省 5s，上界 60s 由挂载面校验）。
+    windowMs = notifyQuietMs.getOrElse(NotifyPolicy.NotifyQuietMsDefaultMs)
   )
 
   /** 运行中节点 → cancel 信号（NodeCancel 用）。 */
@@ -4160,6 +4167,18 @@ class NodeEngine(
 
   private def nebulaDelivery(node: NodeDef, resultText: String, nebulaEdges: List[OutEdge]): IO[Unit] =
     if nebulaEdges.isEmpty then IO.unit // 悬空/无 pass 边：结果保留在 result（持久化）
+    // ── R5（唯一语义变更点，作者裁定；b64 批 2026-09-13）：Nebula 边**保留声明**，
+    // 运行时按通知策略裁决。策略 ≠ root ⇒ 完成通报被**抑制**（不投根）但仍
+    // `markNebulaDelivered` 记账——否则 30s 补投扫描会把它复活（spec §5 表尾推论 2）。
+    // 策略 = root（含存量 legacy：`:result` 的 pass Nebula 边）⇒ 逐字走今天的路径。
+    // ⚠ M1（作者裁定「先不定义、沿用现网代码口径」）：本批**不为 `:signal` 边新增
+    // 裁决分支**——下一条 `mode == Result` 前置判据原样保留，signal 边恒「只记账不通报」，
+    // 策略（含 root）不得使之升根。
+    else if !NotifyPolicy.completedRootVisible(node) then
+      logger.info(
+        s"Node '${node.name}' (${node.id}) has Nebula out-edge(s) but notify=${node.notifyPolicy.getOrElse("<legacy>")} " +
+          "— completion root-notify SUPPRESSED (edge kept as declaration, runtime arbitration; R5). Ledger marked to keep the redelivery scan from reviving it.") *>
+        markNebulaDelivered(node.id)
     else if nebulaEdges.exists(_.mode == OutEdge.Result) then
       deliverToNebula(s"[Node '${node.name}' completed]\n$resultText", node.name, "completed", Some(node.id))
     else markNebulaDelivered(node.id)
@@ -4423,6 +4442,36 @@ class NodeEngine(
         IO.unit
     }
 
+  /** 链级摘要投根（R6/R7/R8；b64 批 2026-09-13）：**独立通道**，不占节点记账
+    *（`nebulaDeliveredAt` 属于节点结果投递），也不并入节点级 `quietMs` 短窗（R9 硬
+    * 约束①：链完成事实必须至少产生一条落根投递，被窗口吞掉即等于丢失批级可见性）。
+    *
+    * 气泡 header 契约：`source="chain"`（R12/R16 的 scope 标记——前端
+    * `INJECTED_SOURCE_LABELS.chain` 显式登记）+ `eventType` = 全 completed → completed /
+    * 含 failed → failed（强提醒）+ `sender="<projectName>/<chainId>"`。
+    * 与 `deliverToNebula` 的差别：**不过 60s 同 (identity,status) 去重**（每条链摘要
+    * 文本唯一，走去重会与「同链 60s 内重投」相撞被误抑制 ⇒ 摘要丢失；先例 =
+    * `deliverStaleSummary` 的绕过去重纪律）。
+    *
+    * 返回 **true = 本次确实 offer 成功**（根会话 ref 在）——调用方据此
+    * `markChainSummarySent`（tell-then-mark：offer 与 mark 之间崩溃 ⇒ 下轮重投，
+    * 宁重复不丢失）；false = 根不可达 ⇒ **不记账**、不删账，下个 TtlTick 补投。 */
+  private[project] def deliverChainSummary(text: String, chainId: String, eventType: String): IO[Boolean] =
+    resources.agentRegistry.get.map(_.get(rootSessionId).map(_.ref)).flatMap {
+      case Some(ref) =>
+        (ref ! AgentCommand.ImmediateInput(
+          text,
+          source = Some(FlowMapStore.ChainSummarySource),
+          eventType = Some(eventType),
+          sender = Some(s"$projectName/$chainId"),
+          fromUser = false // ② 服务端注入（链级摘要），不是真人输入
+        )) *> IO.pure(true)
+      case None =>
+        logger.warn(
+          s"Root session '$rootSessionId' not found — chain summary parked for redelivery (chain=$chainId, ${text.length} chars)") *>
+          IO.pure(false)
+    }
+
   /** 缺口4：去重判定+登记（固定窗：首投时间戳起算 60s，不滑动；过期条目顺路
     * 淘汰=时间窗淘汰）。true = 窗口内重复（应抑制 offer）。 */
   private def dedupeNebulaDelivery(identity: String, status: String): IO[Boolean] =
@@ -4483,6 +4532,12 @@ class NodeEngine(
                 n.out.exists(e => e.to == OutEdge.NebulaTarget &&
                   e.mode == OutEdge.Result &&
                   e.on.contains(if n.status == NodeLifecycle.Completed then OutEdge.Pass else OutEdge.Failed)) &&
+                // R5 补投感知（spec §5 行 14「策略 ≠ root 的节点不得被补投扫描复活投递」）：
+                // **completed 腿**再按通知策略裁决（显式 silent/dispatcher ⇒ 不入候选）。
+                // failed 腿**不查策略**（R14 不豁免：显式 `(failed)Nebula` 的失败通报根
+                // 语义与今天逐字相同）；legacy 节点的 completed 判据退化为同一个边的
+                // 存在性判据 ⇒ 存量补投行为字节级零漂移。
+                (n.status != NodeLifecycle.Completed || NotifyPolicy.completedRootVisible(n)) &&
                 n.result.exists(_.trim.nonEmpty) &&
                 n.nebulaDeliveredAt.isEmpty
             )

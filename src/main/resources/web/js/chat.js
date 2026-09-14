@@ -361,6 +361,10 @@ const INJECTED_SOURCE_LABELS = {
   // `node` 不在本表：它在 injectedSourceLabel 里有专用格式分支（NODE · 项目 ·
   // 节点 · 状态），spec 认「表项 ∪ 显式分支」为已登记。
   system: 'System', background: 'Background',
+  // b64 批（2026-09-13）：链级摘要投根通道（NodeEngine.deliverChainSummary，
+  // source="chain"，`FlowMapStore.ChainSummarySource`）。后端自定名 ⇒ 必须显式登记
+  // （禁首字母大写兜底，契约门 InjectionSourceContractSpec）。
+  chain: 'Chain',
 };
 
 /** Map backend eventType → display suffix for the source label.

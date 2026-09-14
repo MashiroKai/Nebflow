@@ -324,8 +324,13 @@ class NotifyDispatcherSpec extends CatsEffectSuite:
       rt <- mountReal("ntf-off", ws, system, res)
       nebula <- registerNebulaCapture(res, system)
       ctx = mkCtx(res, system, ws.toString)
+      // b64 批回改（R2 + R5，2026-09-13 作者裁定）：NodeEdit **创建**缺省显式落 `dispatcher`
+      // ⇒ 新建节点的 `(pass)Nebula` 完成边被**运行时抑制**（边保留为声明）——本用例的
+      // 主题是「out=Nebula 投递腿零回归」，故**显式声明 `notify=root`** 走该腿
+      // （缺省 dispatcher ∧ Nebula 边的抑制语义由 NodeNotifyPolicySpec ③b 覆盖）。
       _ <- nodeEdit(nodeInput("ntf-off", "plain-one", "description" -> Json.fromString("test node purpose"),
-        "task" -> Json.fromString("plain-one"), "out" -> Json.fromString("(pass)Nebula")), ctx)
+        "task" -> Json.fromString("plain-one"), "out" -> Json.fromString("(pass)Nebula"),
+        "notify" -> Json.fromString("root")), ctx)
       _ <- waitStatus(rt, "plain-one", Set(NodeLifecycle.Completed))
       // 确定性同步：等 out=Nebula 完成投递实际到达（等具体事件文本+事件类型，替代固定 sleep
       // 与「恰好一次」之间的时序假设；引擎去重兜底，这里是回归断言而非时序依赖）

@@ -139,6 +139,13 @@ class NodeEventPushSpec extends CatsEffectSuite:
     Set("id", "name", "agent", "description", "status", "in", "out", "hasWorktree", "worktree", "blockCount", "createdAt", "completedAt", "ttlLeftSec")
   /** 有结果节点（终态）的载荷键集 = 基集合 + hasResult。 */
   private val NodeListKeysWithResult: Set[String] = NodeListKeys + "hasResult"
+  /** **NodeEdit 创建路径**节点的载荷键集（b64 批 2026-09-13，R1/R2 三值通知策略）：
+  * `notify` 是条件键（存量缺键 / 显式清除两种形态缺键），但创建路径**显式落盘**
+  *（未传 ⇒ `dispatcher`）⇒ 经 NodeEdit 创建的节点恒带该键。直接 seed 的存量形态
+  * 节点（E⑤）仍用上面的 [[NodeListKeys]]。 */
+  private val NodeListKeysCreated: Set[String] = NodeListKeys + "notify"
+  /** NodeEdit 创建 + 有结果（终态）的载荷键集。 */
+  private val NodeListKeysCreatedWithResult: Set[String] = NodeListKeysCreated + "hasResult"
 
   /** 记录 (type, nodeId) 事件的挂载。 */
   private def mountRecording(
@@ -294,14 +301,14 @@ class NodeEventPushSpec extends CatsEffectSuite:
       assert(r.isRight, s"create must succeed, got: $r")
       val created = evs.find((t, _, _) => t == "nodeCreated").map(_._3)
       assert(created.isDefined, s"nodeCreated must be emitted, got: ${evs.map((t, id, _) => (t, id))}")
-      assertEquals(created.get.asObject.map(_.keys.toSet), Some(NodeListKeys), "nodeCreated payload keys must equal NodeList keys")
+      assertEquals(created.get.asObject.map(_.keys.toSet), Some(NodeListKeysCreated), "nodeCreated payload keys must equal NodeList keys")
       val updated = evs.find((t, _, p) => t == "nodeUpdated" && p.hcursor.get[String]("status").toOption.contains(NodeLifecycle.Running)).map(_._3)
       assert(updated.isDefined, s"nodeUpdated(running) must be emitted, got: ${evs.map((t, id, _) => (t, id))}")
-      assertEquals(updated.get.asObject.map(_.keys.toSet), Some(NodeListKeys), "nodeUpdated payload keys must equal NodeList keys")
+      assertEquals(updated.get.asObject.map(_.keys.toSet), Some(NodeListKeysCreated), "nodeUpdated payload keys must equal NodeList keys")
       val completed = evs.find((t, _, _) => t == "nodeCompleted").map(_._3)
       assert(completed.isDefined, s"nodeCompleted must be emitted, got: ${evs.map((t, id, _) => (t, id))}")
       // 2026-09-05 载荷收敛：completed 节点有结果 → 基集合 + hasResult；result 全文/摘要不进载荷
-      assertEquals(completed.get.asObject.map(_.keys.toSet), Some(NodeListKeysWithResult), "nodeCompleted payload keys must equal NodeList keys + hasResult (no result text in payload)")
+      assertEquals(completed.get.asObject.map(_.keys.toSet), Some(NodeListKeysCreatedWithResult), "nodeCompleted payload keys must equal NodeList keys + hasResult (no result text in payload)")
       assert(!completed.get.asObject.exists(obj => obj.keys.exists(_ == "result")), "completed payload must NOT carry result (slim payload contract)")
   }
 

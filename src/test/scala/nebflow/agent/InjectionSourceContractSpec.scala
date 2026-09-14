@@ -81,7 +81,9 @@ class InjectionSourceContractSpec extends FunSuite:
         "subtask",
         "flow",
         "tool",
-        "background"
+        "background",
+        // b64 批（2026-09-13）：链级摘要通道（source=chain，NodeEngine.deliverChainSummary）
+        "chain"
       ),
       "BackendNamedSources 变更 ⇒ 同步检查 web/js/chat.js#INJECTED_SOURCE_LABELS 并更新本 pin"
     )
