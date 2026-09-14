@@ -70,16 +70,25 @@ object MemoryStore:
   def loadTeamAgentMemory(teamName: String, agentName: String): Option[String] =
     getTeamAgentCache(teamName, agentName).get.unsafeRunSync().flatten
 
-  // --- Save (called from WS routes / Edit-Write tools, invalidates cache) ---
+  // --- Save (落盘单点：过闸 → 写 → 失效缓存) ---
+  //
+  // M4（2026-09-13 作者立项）：预算闸 + 写前快照闸**下沉到本单点**（[[MemoryWriteGate]]），
+  // 故「过闸」是落盘的必要条件而不取决于调用方。今天唯一的生产调用方 = WS `saveMemory`
+  // 旁路（`WebSocketRoutes:3265/3271`）。**不覆盖** Write / Edit / Bash 直写路径（边界与理由
+  // 见 MemoryWriteGate 头注）——本单点只管经它落盘的写入。
+  // 闸序（作者 2026-09-14 v2 裁定）= **预算 → 快照 → 落盘**：拒绝路径**零文件写**——不落
+  // 目标文件、也不落备份面（`backups/`）；快照唯一触发点 = 预算放行、即将落盘。
+  // 拒绝/失败走 IO 错误通道（`MemoryWriteGate.Rejected`）且必须由调用方暴露。
 
-  private def saveFile(path: os.Path, content: String, invalidateCache: () => IO[Unit]): IO[Unit] =
-    IO.blocking(os.write.over(path, content, createFolders = true)) *> invalidateCache()
+  private def saveFile(path: os.Path, target: String, content: String, invalidateCache: () => IO[Unit]): IO[Unit] =
+    MemoryWriteGate.guard(target, path, content) *>
+      IO.blocking(os.write.over(path, content, createFolders = true)) *> invalidateCache()
 
   def saveUserMemory(content: String): IO[Unit] =
-    saveFile(userMemoryPath, content, () => userCache.invalidate)
+    saveFile(userMemoryPath, "user", content, () => userCache.invalidate)
 
   def saveAgentMemory(agentName: String, content: String): IO[Unit] =
-    saveFile(agentMemoryPath(agentName), content, () => getAgentCache(agentName).invalidate)
+    saveFile(agentMemoryPath(agentName), "agent", content, () => getAgentCache(agentName).invalidate)
 
   // --- Cache invalidation ---
 

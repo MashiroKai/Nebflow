@@ -2,7 +2,7 @@ package nebflow.core.project
 
 import cats.effect.IO
 import nebflow.core.PathUtil
-import nebflow.service.MemoryBudget
+import nebflow.service.{MemoryBudget, MemoryWriteGate}
 
 /**
  * ProjectMemory —— 项目级记忆文件（project-memory 批 2026-09-05）单点。
@@ -57,10 +57,22 @@ object ProjectMemory:
       val c = os.read(p).trim
       if c.isEmpty then None else Some(c)
 
-  /** 写（MemoryEdit project 目标的落盘面）。createFolders 兜底存量 workspace
-    * 无 `.nebflow/` 的边缘态（ProjectStore.create 恒建目录，此处纵深防御）。 */
+  /** 写（项目记忆的落盘面）。createFolders 兜底存量 workspace 无 `.nebflow/` 的边缘态
+    * （ProjectStore.create 恒建目录，此处纵深防御）。
+    *
+    * M4（2026-09-13 作者立项）：与全局两级同纪律——本单点挂**预算闸 + 写前快照闸**
+    * （[[MemoryWriteGate]]，target="project"，判据 = `MemoryBudget` 的 project 常量）。
+    * 闸序（作者 2026-09-14 v2 裁定）= **预算 → 快照 → 落盘**：拒绝路径**零文件写**
+    * （含备份面）；快照唯一触发点 = 预算放行、即将落盘。
+    * 拒绝/快照失败 ⇒ `MemoryWriteGate.Rejected`（IO 错误通道）+ **零写入**。
+    *
+    * 🔴 现场读数（2026-09-13，作者项 ①③ 的如实登记）：**本方法今天零生产调用方**
+    * （2026-09-12 记忆改造批后 MemoryEdit 改为「只入队、零落盘」，最后一个调用方随之消失）
+    * ⇒ 本闸对其**当前覆盖为空**。项目记忆文件今天的实际写入者 = 整理会话经 Write/Edit
+    * 直写（**不在** M4 边界内，见 MemoryWriteGate 头注）。本方法保留闸是为了让「未来的
+    * 调用方」天然过闸，而不是宣称今天已覆盖。 */
   def save(p: os.Path, content: String): IO[Unit] =
-    IO.blocking(os.write.over(p, content, createFolders = true))
+    MemoryWriteGate.guard("project", p, content) *> IO.blocking(os.write.over(p, content, createFolders = true))
 
   /** 注入块渲染（ProjectActor 分发器 prompt 与 NodeEngine 节点首条消息共用
     * 单点——两处格式/三态行为由本函数唯一决定）。
