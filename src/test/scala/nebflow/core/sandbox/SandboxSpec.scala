@@ -154,7 +154,7 @@ class SandboxSpec extends CatsEffectSuite:
   }
 
   // ------------------------------------------------------------------
-  // §A.8-2：.. 逃逸拒；词法冗余归一放行
+  // §A.8-2：词法冗余路径归一后放行（`<root>/../escape.txt` 拒断言已随 R1=a1 写根 contain 退役删除）
   // ------------------------------------------------------------------
 
   // ------------------------------------------------------------------
@@ -191,9 +191,9 @@ class SandboxSpec extends CatsEffectSuite:
   private def homeLikeRoot(tag: String): os.Path =
     specScratchRoot / s".nb-sbx-$tag"
 
-  test("A.8-2: <root>/../escape.txt 拒；<root>//sub//new.txt 归一后放行且返回 fresh 路径") {
-    // root 用 home 下目录（模拟真实 project root）——tmpdir 本身在 java.io.tmpdir
-    // 可写根内，<tmpdir>/../escape 会落回 tmpdir 而合法可写，不能当项目根用。
+  test("A.8-2: <root>//sub//new.txt 归一后放行且返回 fresh 路径（`<root>/../escape.txt` 拒断言已随 R1=a1 退役删除）") {
+    // root 用隔离根下的项目根（tmp 系，绝不落 $HOME）：`<root>/../escape` 现落在可写
+    // tempRoot 内、写根 contain 已退役（R1=a1），逃逸断言已随本批删除。
     val tmp = homeLikeRoot(s"root-${System.nanoTime()}")
     os.makeDir.all(tmp)
     val ctx = ctxIn(tmp)
@@ -217,7 +217,7 @@ class SandboxSpec extends CatsEffectSuite:
     os.makeDir.all(d)
     d
 
-  test("A.8-3: root 内 symlink 指外写拒读放（2026-09-06 读宽）；深层新文件 checkWrite 放行") {
+  test("A.8-3: root 内深层新文件 checkWrite 放行（symlink 指外写拒/读放断言已随 R1=a1 + 读宽退役；夹具保留）") {
     val tmp = os.Path(Files.createTempDirectory("nb-sbx-sym"))
     val outside = outsideDir("sym")
     val outsideFile = outside / "target.txt"
@@ -354,7 +354,7 @@ class SandboxSpec extends CatsEffectSuite:
   // ------------------------------------------------------------------
 
   // ------------------------------------------------------------------
-  // 2026-09-05 数据根入可写面（作者 20:24 裁定）：锚点 (a) 正向 + (b) 反向
+  // 2026-09-05 数据根入可写面（作者 20:24 裁定）：锚点 (a) 正向（(b) 反向随写根 contain 退役删除）
   // ------------------------------------------------------------------
 
   test("WFROOT+: 数据根整目录可写——projects/<测试名>/tmpfile 与 User.md 写放行（锚点 a）") {
@@ -536,13 +536,13 @@ class SandboxSpec extends CatsEffectSuite:
     assert(FileSandbox.checkRead(ctx, trFile).isRight, "恢复后 tool-results 应复绿")
   }
 
-  test("READLIST+: Grep/Glob 遍历面——agents 根搜索可跑但扫不出 memory.md；tool-results 正常命中") {
+  test("READLIST+: Grep/Glob 遍历面——agents 根搜索可跑（遍历排除随 R3=c1 退役，命中 memory.md 属预期）；tool-results 正常命中") {
     assume(rgAvailable, "rg 不可用则跳过（Glob/Grep 依赖 ripgrep）")
     val tmp = os.Path(Files.createTempDirectory("nb-sbx-trav"))
     val ctx = ctxIn(tmp)
 
-    // Grep agents/ 子树（content 模式——负向断言看的是命中文本，非文件名）：
-    // 私有记忆内容不得命中，system.md 内容命中
+    // Grep agents/ 子树（content 模式）：system.md 内容应命中；私有记忆同样命中属预期
+    // （遍历排除退役 = R3=c1 契约反转，反向断言由 SandboxFenceRemovalSpec S2-c 承担）
     val grep = GrepTool.call(
       JsonObject(
         "pattern" -> "NBX_.*_OK|NBX_.*_SECRET".asJson,
@@ -565,7 +565,7 @@ class SandboxSpec extends CatsEffectSuite:
       case Right(out) => assert(out.contains("result.json"), s"tool-results Grep 应命中: $out")
       case Left(err) => fail(s"tool-results Grep 必须读通: ${err.message}")
 
-    // Glob agents/ 根：memory.md 不列出
+    // Glob agents/ 根：system.md 列出（memory.md 不再被排除，命中属预期）
     val glob = GlobTool.call(
       JsonObject("pattern" -> "**/*.md".asJson, "path" -> (PathUtil.dataRoot / "agents").toString.asJson),
       ctx
@@ -577,15 +577,6 @@ class SandboxSpec extends CatsEffectSuite:
 
   }
 
-
-  // ------------------------------------------------------------------
-  // probe 失败：fail-closed（默认）/ 显式降级（§A.4-4）
-  // ------------------------------------------------------------------
-
-  private val fakeBackend = new SandboxBackend:
-    val name = "fake-unavailable"
-    val available = false
-    def wrap(argv: List[String], policy: SandboxPolicy): Option[List[String]] = None
 
   override def afterEach(context: munit.AfterEach): Unit =
     // 恢复真实后端注册（GatewayMain 语义），避免污染其他 spec
@@ -808,9 +799,9 @@ class SandboxSpec extends CatsEffectSuite:
     assertEquals(AgentState(sandboxEnabled = true).session.sandboxRoot, None)
   }
 
-  test("WT-INHERIT②a: worktree 内 git commit 真实走通（真仓库真执行）+ 新旧根 FileSandbox 差分") {
-    // 工作区必须落在一切既有可写根之外（os.home 根层）：若落 tmpdir，tempRoots
-    // 本就在写面内，旧语义（root=worktree）下主仓 .git 也被放行，差分失效。
+  test("WT-INHERIT②a: worktree 内 git commit 真实走通（真仓库真执行；新旧根差分断言随 R1=a1 退役）") {
+    // 工作区落隔离根下（见 homeLikeRoot，tmp 系）：写根 contain 已退役（R1=a1），
+    // 旧语义差分断言已删；本用例保留真仓 / 真 worktree / 真 commit 的集成级证据。
     // 本用例不带 Seatbelt assume：嵌套沙箱会话（在沙箱 Bash 里跑的 sbt test JVM
     // ——macOS 禁嵌套 sandbox_apply）probe 必败，此时 JVM 层 FileSandbox 与
     // Seatbelt 同源（writableRoots 唯一推导）承担差分取证；OS 强制层由 ②b 在
@@ -906,7 +897,7 @@ class SandboxSpec extends CatsEffectSuite:
     finally os.remove.all(ws)
   }
 
-  test("WT-INHERIT③: 继承根=工作区后项目外写仍拒（FileSandbox SANDBOX_DENIED + Seatbelt OS 层）") {
+  test("WT-INHERIT③: 继承根=工作区后项目外写仍拒（OS 层 Seatbelt 实证；JVM 层 SANDBOX_DENIED 断言随 R1=a1 退役）") {
     val ws = homeLikeRoot(s"ws3-${System.nanoTime()}")
     os.makeDir.all(ws)
     // [2026-09-14 夹具修正 · 非产品码改动] 负样本必须落在一**切可写根之外**：原
