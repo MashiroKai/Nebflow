@@ -1941,6 +1941,23 @@ class NodeEngine(
       }
       .toMap
 
+  /** 排队位次**显示槽**批次（engine-defects 批 #2/#227，2026-09-15）：与
+    * [[mergeQueueHoldersBatch]] **同一判据**（`mergeQueueHolders` → 闸单点），只是把持有者
+    * 逐项富化成 [[MergeMutexPolicy.QueueSlot]]（rank 依据 `readyAt/createdAt` + 是否真在
+    * 临界区 + 未点火原因）。**零行为面**：不改闸、不改 FIFO、不写任何持久字段。
+    *
+    * 与准入过滤的关系：被 verdict 闸挡住的候选本就不进 holders（既有收窄），故槽里的
+    * `notStartedReason` 只可能落在 `in-critical-section / awaiting-handover /
+    * barrier-incomplete / queued` 四态。 */
+  def mergeQueueSlotsBatch(all: Map[String, NodeDef]): Map[String, List[MergeMutexPolicy.QueueSlot]] =
+    all.valuesIterator
+      .filter(MergeNodePolicy.isMerge)
+      .flatMap { n =>
+        val hs = mergeQueueHolders(n, all)
+        if hs.isEmpty then None else Some(n.id -> hs.map(o => MergeMutexPolicy.slotOf(o, all)))
+      }
+      .toMap
+
   /** 闸挡启动时的留痕（三处落点共用单点文案）：`merge-queue` 事件（持有者集合变化时
     * 单发）+ INFO 一行带持有者 id/status——供事后从事件流直接读出**FIFO 次序**（谁在
     * 等谁、等了多久由节点 createdAt/startedAt 与事件 ts 共同给出）。 */

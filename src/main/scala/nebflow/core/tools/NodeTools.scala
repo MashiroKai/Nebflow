@@ -795,7 +795,10 @@ object NodeTools:
         .map(_.toMap)
       // 排队位次派生（排队位次可见性批 2026-09-14）：纯函数、零副作用，与闸同一单点；
       // 同键多项目（O-1）读数为显示面降级信号（键求值走进程内缓存，稳态零 git 调用）。
-      mergeQueueHolders = rt.engine.mergeQueueHoldersBatch(s.nodes)
+      // 排队位次**显示槽**（engine-defects 批 #2/#227 2026-09-15）：与闸**同一判据**
+      // （mergeQueueHolders → MergeMutexPolicy.holders + verdict 准入过滤），只把持有者
+      // 富化成 {rank 依据(readyAt/createdAt), 是否真在临界区, 为何未点火}。
+      mergeQueueSlots = rt.engine.mergeQueueSlotsBatch(s.nodes)
       sameKeyForeignProjects <- rt.engine.sameKeyForeignProjectsNow
     yield
       val now = System.currentTimeMillis()
@@ -816,7 +819,7 @@ object NodeTools:
           // 同一函数（[[NodeEngine.mergeQueueHoldersBatch]] → [[NodeEngine.mergeQueueHolders]]
           // → [[MergeMutexPolicy.holders]] + verdict 准入过滤）——🔴 禁前端/分发器复刻，
           // 🔴 禁读文件票层，🔴 禁从事件流回放。只收非空项 ⇒ 未排队节点缺键。
-          mergeQueue = mergeQueueHolders.get(n.id),
+          mergeQueue = mergeQueueSlots.get(n.id),
           // 同键多项目（O-1）当下读数：非空 ⇒ 前端按降级红线只渲染裸「排队中」不渲染
           // 数字（🔴 禁编造数字）；空 ⇒ 位次可信。与既有两个 merge-queue 告警同源单点。
           sameKeyProjects = sameKeyForeignProjects)

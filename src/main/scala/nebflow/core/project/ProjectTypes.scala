@@ -704,7 +704,10 @@ object NodeDef:
  *     及其最近判定；执行节点与无判定节点字段集字节级零漂移）。
  *   - mergeQueue：**仅 merge 节点且当下被合并窗闸挡住携带**（排队位次可见性批
  *     2026-09-14，作者 16:39 双裁 = 案 A：引擎条件键 + 前端渲染，显示 = 数字 +
- *     持有者双显）。值 = `{ahead, holders:[{id,name,status}], sameKeyProjects?}`；
+ *     持有者双显；续件 = engine-defects 批 #2/#227 2026-09-15：补 rank 依据 / 临界区
+ *     分区 / 未点火原因）。值 = `{ahead, inSection[], rank:{primary,tiebreaks},
+ *     holders:[{id,name,status,readyAt,createdAt,inSection,notStartedReason}],
+ *     sameKeyProjects?}`；
  *     纯派生量（不写 NodeDef、不进归档）。**仅快照载荷（NodeList / REST flow-map）
  *     携带**——WS 事件单一序列化点无项目全量节点视图（与 `liveness` 同款快照专有
  *     条件键），未排队节点与全部非 merge 节点字段集字节级零漂移。
@@ -731,7 +734,7 @@ object NodePayload:
 
   def buildNodeJson(node: NodeDef, now: Long, chainId: Option[String] = None,
                     chainIds: Option[List[String]] = None,
-                    mergeQueue: Option[List[NodeDef]] = None,
+                    mergeQueue: Option[List[MergeMutexPolicy.QueueSlot]] = None,
                     sameKeyProjects: List[String] = Nil): Json =
     val ttlLeft = node.ttlExpireAt.map(t => Math.max(0L, (t - now) / 1000L))
     val baseFields = List(
@@ -840,12 +843,33 @@ object NodePayload:
       //                       「排队中」、**不渲染数字**（🔴 禁编造数字）。
       // 🔴 本键是**纯派生量**：不写 NodeDef 持久字段、不进 flow-map.json/归档批（与
       //    wiringGap/reportPendingSince 同纪律）。
-      val mergeQueueFields = mergeQueue.filter(_.nonEmpty).toList.map { hs =>
-        val ordered = hs.sortBy(_.id)
+      val mergeQueueFields = mergeQueue.filter(_.nonEmpty).toList.map { slots =>
+        val ordered = slots.sortBy(_.node.id)
+        // engine-defects 批 #2/#227（2026-09-15）：在既有 ahead/holders 之外**只增键**——
+        //   ① holders[] 每项加 rank 依据（readyAt/createdAt；`id` 恒在场 = 第三键）与
+        //      「为何未点火」判据 `notStartedReason`；
+        //   ② `inSection[]` = **真的在临界区**的持有者 id 子集（其余仅是排在前面）；
+        //   ③ `rank` = 次序键元数据（前端只读不派生）。
+        // 🔴 既有键（ahead/holders[].{id,name,status}）逐字保留 ⇒ 既有消费方与
+        //    MergeQueueVisibilitySpec ①-⑤ 零影响；非排队节点与本批前**字节级零漂移**
+        //   （条件键仍在「非空才带」处）。
+        val inSection = ordered.filter(_.inSection).map(_.node.id)
         val core = List(
           "ahead" -> ordered.size.asJson,
-          "holders" -> ordered.map(h => Json.obj(
-            "id" -> h.id.asJson, "name" -> h.name.asJson, "status" -> h.status.asJson)).asJson
+          "inSection" -> inSection.asJson,
+          "rank" -> Json.obj(
+            "primary" -> MergeMutexPolicy.RankPrimary.asJson,
+            "tiebreaks" -> MergeMutexPolicy.RankTiebreaks.asJson),
+          "holders" -> ordered.map { s =>
+            Json.obj(
+              "id" -> s.node.id.asJson,
+              "name" -> s.node.name.asJson,
+              "status" -> s.node.status.asJson,
+              "readyAt" -> s.rankAt.asJson,
+              "createdAt" -> s.createdAt.asJson,
+              "inSection" -> s.inSection.asJson,
+              "notStartedReason" -> s.notStartedReason.asJson)
+          }.asJson
         )
         val foreign = if sameKeyProjects.nonEmpty then List("sameKeyProjects" -> sameKeyProjects.asJson) else Nil
         "mergeQueue" -> Json.obj((core ++ foreign)*)
