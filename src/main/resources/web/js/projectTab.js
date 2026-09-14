@@ -23,6 +23,7 @@ function openProjectTab() {
   delete pane.dataset.flowMapProject;
   if (pane.querySelector('.flowmap-nav-bar')) pane.innerHTML = '';
   const scroll = ensureScroll(pane);
+  resetProjectsRetry(); // 用户动作打开面板 = 新一轮序列，重试预算重置
   renderProjectsInto(scroll);
 }
 
@@ -41,6 +42,44 @@ function ensureScroll(pane) {
 export function openProjectsTab() {
   openTab('projects', t('project.title'), { type: 'projects', closable: true });
   openProjectTab();
+}
+
+// ── 迟到对账（2026-09-14 项目面板冷启动缺陷修复）───────────────────────────────
+// 缺陷（考古实测）：面板取数**只有**「打开面板」与「节点 WS 事件」两条触发，首取失败后
+// **没有任何恢复通道**——gateway 冷启动窗口内打开面板 ⇒ 落 error 态并驻留 60.0s 零自愈
+// （服务器已回来、WS 也已自动重连），只有用户「关面板重开」才恢复。
+// 本段给出两条**互相独立**的迟到对账通道（任一即可闭合窗口）：
+//   ① scheduleProjectsRetry：首取失败后按下面档位有界退避重拉（不依赖任何外部信号）；
+//   ② 文件尾 onReconnect：WS 重连时面板若非 ready 立即补一次（对齐 flowMapTab.js
+//      `onReconnect(() => refreshFlowMapViews())` / taskList.js 既有范式）。
+// 两条通道都复用下面 renderProjectsInto 的既有分支判定，**不新造状态、不改 empty/error
+// 判定**——空态与错误态依旧是两条独立分支，重试只是让「数据迟到」这件事能被再问一次。
+// 不掩盖失败：预算穷尽后仍停在 error 并保留原始原因（真有故障时错误态照旧驻留）。
+// 档位依据：实测冷启动窗口 boot ≈25.3s（证据 server-s2-restart.log）；若 10s 内穷尽，
+// 在「WS 被环境闸住」时无法自愈，故末两档放宽到 10s/20s（自首次失败起累计 ≈40s）。
+const PROJECT_RETRY_DELAYS_MS = [1000, 3000, 6000, 10000, 20000];
+let projectsRetryTimer = null;
+let projectsRetryAttempt = 0;
+
+/** 重试预算归零 + 摘掉在途定时器。触发点 = 用户动作（打开/重开面板）与 WS 重连
+ *  ——两者都表示「条件已变」，旧预算不再适用。 */
+function resetProjectsRetry() {
+  projectsRetryAttempt = 0;
+  if (projectsRetryTimer) { clearTimeout(projectsRetryTimer); projectsRetryTimer = null; }
+}
+
+/** 有界退避：首取失败后按 PROJECT_RETRY_DELAYS_MS 逐档重拉；穷尽即停在 error。 */
+function scheduleProjectsRetry(scroll) {
+  if (projectsRetryAttempt >= PROJECT_RETRY_DELAYS_MS.length) return;
+  const delay = PROJECT_RETRY_DELAYS_MS[projectsRetryAttempt++];
+  if (projectsRetryTimer) clearTimeout(projectsRetryTimer);
+  projectsRetryTimer = setTimeout(() => {
+    projectsRetryTimer = null;
+    // pane 已关（scroll 脱树）⇒ 停手：不让定时器在后台空转打 REST。
+    if (!scroll.isConnected) return;
+    if (scroll.dataset.projectsState === 'ready') return;
+    renderProjectsInto(scroll);
+  }, delay);
 }
 
 async function renderProjectsInto(scroll) {
@@ -67,9 +106,12 @@ async function renderProjectsInto(scroll) {
       <div style="font:600 14px -apple-system;color:var(--color-text-muted)">${esc(t('project.loadFail'))}</div>
       <div class="hint">${esc(e?.message || '')}</div>
     </div>`;
+    // 迟到对账通道 ①：服务/网络恢复后自己把列表补上（不等用户动作、不等 WS）。
+    scheduleProjectsRetry(scroll);
     return;
   }
   if (stale()) return;
+  resetProjectsRetry(); // 取数成功（无论空态/就绪态）⇒ 本轮重试预算归零
   if (!projects || projects.length === 0) {
     scroll.dataset.projectsState = 'empty';
     scroll.dataset.projectCount = '0';
@@ -288,7 +330,7 @@ window.addEventListener('canvas-tab-restore', (/** @type {CustomEvent} */ e) => 
 // WS 事件驱动：列表视图的项目卡片（运行数/摘要）防抖刷新。Flow Map 就地视图的
 // 节点事件刷新由 flowMapTab 的增量管线负责（事件 payload 直接 diff 渲染 + 过渡
 // 动画）——这里若也全量重拉会覆盖它的 DOM、杀掉动画，故视图分流时跳过 flow-map。
-import { onMessage } from './ws.js';
+import { onMessage, onReconnect } from './ws.js';
 function rerenderProjectsListView() {
   const pane = getTabPane('projects');
   if (!pane) return;
@@ -299,3 +341,18 @@ onMessage('nodeCreated', () => rerenderProjectsListView());
 onMessage('nodeUpdated', () => rerenderProjectsListView());
 onMessage('nodeCompleted', () => rerenderProjectsListView());
 onMessage('nodeRemoved', () => rerenderProjectsListView());
+
+// 迟到对账通道 ②：WS 重连 = 代码里既有的「服务已回来」真信号（ws.js:416 逐个回调）。
+// 面板此刻若不是 ready（error / loading / 空壳），立即补一次取数与渲染——冷启动期间
+// 无人建节点，节点事件面天然为空，这条信号是本面板此前唯一缺的入口。
+// 已 ready 的面板不重拉：重连抖动不该反复打 REST（列表权威刷新仍归上面的节点事件面）。
+onReconnect(() => {
+  const pane = getTabPane('projects');
+  if (!pane) return;
+  if (pane.dataset.projectsView === 'flow-map') return; // 视图分流同上面的节点事件面
+  const scroll = /** @type {HTMLElement | null} */ (pane.querySelector('.team-scroll'));
+  if (!scroll || !scroll.isConnected) return;
+  if (scroll.dataset.projectsState === 'ready') return;
+  resetProjectsRetry(); // 条件已变（连接恢复）⇒ 重试预算重置
+  renderProjectsInto(scroll);
+});
