@@ -86,7 +86,14 @@ class NodeEngine(
     * （键名为对外冻结命名），由挂载面经 `NotifyPolicy.parseQuietMs` 校验后注入
     * （缺键 = 缺省 5s；超限 ⇒ 挂载面 fail-fast，**不截断**）。None = 现读缺省值
     *（`NotifyPolicy.NotifyQuietMsDefaultMs`），spec 注入用于确定性断言。 */
-  notifyQuietMs: Option[Long] = None
+  notifyQuietMs: Option[Long] = None,
+  /** mount-stalled **告警升级**间隔覆盖（engine-defects 批 #85，2026-09-15；接缝形态
+    * 与 `destroyWindowMs` / `notifyQuietMs` 同款）：None = 现读
+    * [[nebflow.shared.Defaults.StallReNotifyMs]]（生产默认 10min）；Some = spec 显式
+    * 注入毫秒级窗口做确定性断言（**避开全局 prop 的跨 suite 污染**——本工程测试 JVM
+    * 下 system property 写读不可靠，实测见
+    * `.nebflow/evidence/20260915_engine-defects/01-stall-escalation/15_m8_final.log`）。 */
+  stallReNotifyMs: Option[Long] = None
 ):
   private val logger = NebflowLogger.forName("nebflow.node.engine")
 
@@ -3941,6 +3948,11 @@ class NodeEngine(
   private val stallNotified: Ref[IO, Map[String, (Long, Int)]] =
     Ref.unsafe[IO, Map[String, (Long, Int)]](Map.empty)
 
+  /** 生效的告警升级间隔（构造器接缝优先；生产 = 现读 prop 默认 10min）。
+    * `private[project]` 供 spec 断言接缝真的接进来了（其余字段同款可读面）。 */
+  private[project] val stallReNotifyWindowMs: Long =
+    stallReNotifyMs.getOrElse(nebflow.shared.Defaults.StallReNotifyMs)
+
   /** R3 即时 barrier 告警单发记账（取消静默死锁修复批）：已由**终态写点同步**
     * （[[checkBarriersNow]]）发过 `barrier-blocked` 的下游 id 集。与 [[stallNotified]]
     * 分工：本集管「即时告警已发」，周期回扫发射集要排除本集成员（同一停滞不得发
@@ -4076,7 +4088,7 @@ class NodeEngine(
           prevStall.get(id) match
             case None => Some((id, reason, 1, nowMs)) // 首条（逐字保留今日行为）
             case Some((_, 0)) => Some((id, reason, 1, nowMs)) // 曾被 R3 抑制、现补发首条
-            case Some((lastAt, n)) if nowMs - lastAt >= NodeEngine.StallReNotifyMs =>
+            case Some((lastAt, n)) if nowMs - lastAt >= stallReNotifyWindowMs =>
               Some((id, s"escalation=#${n + 1} ACTION REQUIRED — this node has now been stalled for " +
                 s"${(nowMs - lastAt) / 1000L}s since the previous alert; $reason", n + 1, nowMs))
             case _ => None
@@ -5232,9 +5244,15 @@ object NodeEngine:
     * 反复提醒，又不会把事件流刷成噪音（一个停滞期 1 小时 ≈ 6 条）。
     *
     * **现读 prop**（`nebflow.stall.reNotifyMs`，`LoopMaxRounds` / `BgateWaitTimeoutMs`
-    * 同款先例）——spec 可即时把间隔压到毫秒级做确定性断言，无需等真实 10min。 */
-  def StallReNotifyMs: Long =
-    sys.props.getOrElse("nebflow.stall.reNotifyMs", (10 * 60 * 1000L).toString).toLong
+    * 同款先例）——spec 可即时把间隔压到毫秒级做确定性断言，无需等真实 10min。
+    *
+    * 生产值 = [[nebflow.shared.Defaults.StallReNotifyMs]]（现读 prop）；spec 走构造器
+    * 接缝 `stallReNotifyMs`（`destroyWindowMs` / `notifyQuietMs` 同款「避开全局 prop
+    * 的跨 suite 污染」纪律——实测本工程测试 JVM 下 `sys.props.update` 与
+    * `System.setProperty` **同进程读回均为空**，见
+    * `.nebflow/evidence/20260915_engine-defects/01-stall-escalation/14_probe.log` 与
+    * `15_m8_final.log` ⇒ 用 prop 做 spec 注入口会**静默失效**，断言看到默认值）。 */
+  def StallReNotifyMs: Long = nebflow.shared.Defaults.StallReNotifyMs
 
   /** 死会话自动收敛的 spawn 窗口宽限（僵尸收敛批 2026-09-06）：节点 status 翻
     * Running 后，agent registry 登记发生在 spawn 之后（runWithAgent :816）——Flipped

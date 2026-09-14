@@ -129,7 +129,8 @@ class NodeMountEnforceSpec extends CatsEffectSuite:
     name: String,
     ws: os.Path,
     system: ActorSystem,
-    res: SharedResources
+    res: SharedResources,
+    stallReNotifyMs: Option[Long] = None
   ): IO[ProjectRuntime] =
     for
       store <- FlowMapStore.open(name, ws.toString)
@@ -144,7 +145,9 @@ class NodeMountEnforceSpec extends CatsEffectSuite:
         emitEvent = (_, _, _) => IO.unit,
         // noderpt 批 A 段：本 fixture 主题非 node_report 语义 ⇒ 显式关腿 2（生产默认开；
         // 腿 2 默认开行为由 NodeReportReminderSpec 覆盖）。
-        reportGateHold = Some(false)
+        reportGateHold = Some(false),
+        // engine-defects 批 #85：告警升级窗口接缝（M8 注 300ms；其余用例 None = 生产默认 10min）
+        stallReNotifyMs = stallReNotifyMs
       )
       pd = ProjectDef(name = name, workspace = ws.toString, agentFile = (ws / "AGENTS.md").toString, createdAt = System.currentTimeMillis())
       rt = ProjectRuntime(pd, store, engine, system, res, None)
@@ -463,11 +466,13 @@ class NodeMountEnforceSpec extends CatsEffectSuite:
     val system = ActorSystem(s"me-m8-${scala.util.Random.nextInt(100000)}")
     val llm = EchoLlm()
     val now = System.currentTimeMillis()
-    sys.props.update("nebflow.stall.reNotifyMs", "300") // 窗口压到 300ms（spec 档）
-    try
-      for
+    for
         res <- mkResources(system, tempRoot, llm.handle)
-        rt <- mountProject("me-m8", ws, system, res)
+        // 窗口压到 300ms（spec 档，**构造器接缝**——本工程测试 JVM 下 system property
+        // 写读不可靠，读数见 .nebflow/evidence/20260915_engine-defects/01-stall-escalation/15_m8_final.log）
+        rt <- mountProject("me-m8", ws, system, res, stallReNotifyMs = Some(300L))
+        _ = assertEquals(rt.engine.stallReNotifyWindowMs, 300L,
+          "precondition: the escalation window must reach the engine through the constructor seam")
         // 夹具形态逐字回灌：cancelled 上游已终态 · 下游 in-barrier 清但 pendingSuccession 非空
         _ <- seedNode(rt, NodeDef(
           id = "n-cancelled-up", name = "delegate-device-remove-impl", agent = "general",
@@ -482,7 +487,7 @@ class NodeMountEnforceSpec extends CatsEffectSuite:
         _ <- IO.sleep(120.millis)
         _ <- rt.engine.settleRunnableSweep() // 窗内第二扫：必须仍单发
         inWindow <- readAudit(ws)
-        _ <- IO.sleep(400.millis) // 越过 300ms 升级窗
+        _ <- IO.sleep(900.millis) // 越过 300ms 升级窗（留足余量）
         _ <- rt.engine.settleRunnableSweep()
         afterWindow <- readAudit(ws)
         held <- rt.store.getNode("n-held-downstream").map(_.getOrElse(fail("held node must exist")))
@@ -504,7 +509,6 @@ class NodeMountEnforceSpec extends CatsEffectSuite:
         assertEquals(held.status, NodeLifecycle.Wiring,
           "the R4 succession hold must NOT be auto-released by this batch (alert only)")
         assert(held.startedAt.isEmpty, "the held node must still have no session")
-    finally sys.props.remove("nebflow.stall.reNotifyMs")
   }
 
 end NodeMountEnforceSpec
