@@ -2940,7 +2940,8 @@ object ProjectCreateTool extends Tool:
               s"ProjectCreate 需要项目工作区路径 — 点击上方「选择工作区」打开应用内目录浏览器" +
                 s"（可逐级浏览、新建文件夹，含隐藏目录）；或在下方输入框手输绝对路径（支持 ~ 展开）。"
             val item = AskItem(question, List.empty, dirPicker = true)
-            val requestId = java.util.UUID.randomUUID().toString.take(8)
+            // #250 第⑤项：requestId 熵强化（单点生成器，作用域 panel-）
+            val requestId = nebflow.agent.InteractionRequestId.forDirPanel()
             for
               answers <- agentRef
                 .?(

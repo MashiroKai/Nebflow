@@ -4,7 +4,9 @@ import cats.effect.IO
 import io.circe.JsonObject
 import io.circe.syntax.*
 import nebflow.actor.ActorRef
-import nebflow.agent.{AgentCommand, AgentStatus, AskMode, AskUserAnswerBridge, InteractionHubCommand}
+import nebflow.agent.{
+  AgentCommand, AgentStatus, AskMode, AskUserAnswerBridge, InteractionHubCommand, InteractionRequestId
+}
 import nebflow.core.{AskItem, AskOption, AskPreview, HeadlessMode, QuestionDependency}
 import nebflow.shared.ToolDefinition
 
@@ -331,7 +333,8 @@ Behavior:
       case Right(items) =>
         ctx.agentActorRef match
           case Some(agentRef) =>
-            val requestId = java.util.UUID.randomUUID().toString.take(8)
+            // #250 第⑤项：requestId 熵强化（单点生成器，作用域 ask-）
+            val requestId = InteractionRequestId.forAskUser()
             agentRef
               .?(
                 (replyTo: ActorRef[List[String]]) => AgentCommand.AskUser(requestId, items, Some(replyTo)),
@@ -404,7 +407,8 @@ Behavior:
             rootWindowReachable(ctx).flatMap {
               case Left(err) => IO.pure(Left(err))
               case Right(_) =>
-                val requestId = java.util.UUID.randomUUID().toString.take(8)
+                // #250 第⑤项：requestId 熵强化（单点生成器，作用域 asknb-）
+                val requestId = InteractionRequestId.forAskUserNonBlocking()
                 val bridge = AskUserAnswerBridge.ref(agentRef, items, requestId, ctx)
                 (agentRef ! AgentCommand.AskUser(requestId, items, Some(bridge), AskMode.NonBlocking))
                   .as(Right(nonBlockingAck(items, requestId)))

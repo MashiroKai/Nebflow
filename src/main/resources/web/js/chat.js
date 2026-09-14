@@ -1495,7 +1495,46 @@ const ASKUSER_DRAFTS_KEY = key('askuser_drafts');
 // array and runs the same confirm path — it does not hold state. Only cards
 // rendered via renderAskUser carry an askSessionId; permission prompts /
 // slash-cmd pickers pass undefined and stay out of the registry.
-const askCardRegistry = new Map(); // sessionId → { questions, answers, shouldShow, selectOption, confirmIfReady, requestId }
+//
+// 多 AskUser 并发批（#250 第④项，2026-09-13 作者裁定「6 项全补」）：
+// 改前是 `Map<sessionId, entry>` —— **每会话单值（新卡覆盖旧卡）**，多卡并发时
+// 旧卡不在 registry 里：它的 Canvas 提交（`_nfAskAnswer`）找不到 entry，
+// 被**静默丢弃**（`:1582` 的 `if (!entry) return`），而卡片看起来仍可作答。
+// 现在按卡登记（键 = sessionId + requestId），并用可见方式处理歧义提交。
+const askCardRegistry = new Map(); // key(sessionId::requestId) → { sessionId, requestId, questions, answers, shouldShow, selectOption, confirmIfReady }
+
+/** Registry key — requestId-scoped when the card has one (every AskUser card
+ *  does; the requestId-less call sites never register at all). */
+function askCardKey(sessionId, requestId) {
+  return `${sessionId || ''}::${requestId || ''}`;
+}
+
+/** Every live (registered = not yet locked/answered) card of one session. */
+function askCardsOf(sessionId) {
+  return [...askCardRegistry.values()].filter(e => e.sessionId === sessionId);
+}
+
+/** Drop exactly one card's registry entry (#250 ④: never the whole session's). */
+function dropAskCard(sessionId, requestId) {
+  if (!sessionId) return false;
+  return askCardRegistry.delete(askCardKey(sessionId, requestId));
+}
+
+/** #250 ④/⑥: an unroutable Canvas answer must not vanish silently — tell the
+ *  page (the extended protocol replies with `_nfAskAnswerRejected`) and the
+ *  user (glass toast). The card stays answerable by hand. */
+function rejectAskAnswer(e, payload, candidateIds) {
+  try {
+    const target = /** @type {any} */ (e.source);
+    if (target && typeof target.postMessage === 'function') {
+      target.postMessage(
+        { _nfAskAnswerRejected: { sessionId: payload.sessionId, requestId: payload.requestId || '', candidates: candidateIds, reason: 'ambiguous-card' } },
+        '*'
+      );
+    }
+  } catch { /* cross-origin/no window — the user-visible outlet below still fires */ }
+  window.__showToast?.(t('askUser.canvasAmbiguous'), 'info');
+}
 
 /** Build the inline preview slot for an option (direction C §2.1/§4.1).
  *  swatch: 1-5 color stripes filling the 56×40 slot; image: object-fit
@@ -1563,10 +1602,12 @@ function normalizeSvgDataUri(src) {
 
 /** Broadcast an answered/locked AskUser card to every Canvas iframe so their
  *  embedded "pick this" buttons disable (§5.1 S5, spec §11.2). */
-function broadcastAskState(sid) {
+function broadcastAskState(sid, requestId) {
+  // #250 ④: `requestId` 随状态一起广播（新增字段，旧页面忽略）——一个会话里多张
+  // 卡并存时，页面据此只关掉自己那张的按钮，而不是整会话一刀切。
   document.querySelectorAll('.canvas-tab-pane iframe').forEach(iframe => {
     try {
-      /** @type {HTMLIFrameElement} */ (iframe).contentWindow?.postMessage({ _nfAskState: { sessionId: sid, answered: true } }, '*');
+      /** @type {HTMLIFrameElement} */ (iframe).contentWindow?.postMessage({ _nfAskState: { sessionId: sid, requestId: requestId || '', answered: true } }, '*');
     } catch { /* cross-origin/no window — ignore */ }
   });
 }
@@ -1578,8 +1619,20 @@ function broadcastAskState(sid) {
 window.addEventListener('message', (e) => {
   const payload = e.data && e.data._nfAskAnswer;
   if (!payload) return;
-  const entry = askCardRegistry.get(payload.sessionId);
-  if (!entry) return;                              // E9 no such card / E6 already locked
+  // #250 ④: route to the EXACT card. A payload that carries the requestId
+  // (extended protocol — also broadcast back in `_nfAskState`) goes straight to
+  // that card; a requestId-less payload (older canvas pages) is routable only
+  // when the session has exactly ONE live card. Multiple candidates = ambiguous:
+  // reject visibly instead of picking one silently (the old single-slot registry
+  // silently dropped the older card's submission).
+  const payloadRid = typeof payload.requestId === 'string' ? payload.requestId : '';
+  const cards = askCardsOf(payload.sessionId).filter(entry => !payloadRid || entry.requestId === payloadRid);
+  if (cards.length === 0) return;                  // E9 no such card / E6 already locked
+  if (cards.length > 1) {
+    rejectAskAnswer(e, payload, cards.map(c => c.requestId));
+    return;
+  }
+  const entry = cards[0];
   const qi = Number(payload.questionIndex);
   if (!Number.isInteger(qi) || qi < 0) return;
   const item = entry.questions[qi];
@@ -1915,7 +1968,7 @@ export function showOptions(container, questions, onConfirm, doneLabel, onCancel
   cancelBtn.className = 'option-cancel';
   cancelBtn.textContent = t('chat.cancel');
   cancelBtn.onclick = () => {
-    if (askSessionId) askCardRegistry.delete(askSessionId);
+    if (askSessionId) dropAskCard(askSessionId, requestId); // #250 ④: 精确摘这一张
     if (requestId) dirPickCards.delete(requestId); // 工作区选择卡事件一并失主
     // option buttons are <button>/<a> form controls; narrow for .disabled.
     box.querySelectorAll('.option-btn, .option-confirm').forEach(el => { (/** @type {HTMLButtonElement} */ (el)).disabled = true; });
@@ -1932,7 +1985,8 @@ export function showOptions(container, questions, onConfirm, doneLabel, onCancel
   confirmBtn.onclick = () => {
     // Lock the card: drop it from the Canvas answer registry (E6: late
     // _nfAskAnswer postMessages find no entry and are silently discarded).
-    if (askSessionId) askCardRegistry.delete(askSessionId);
+    // #250 ④: only THIS card's entry — sibling pending cards keep their channel.
+    if (askSessionId) dropAskCard(askSessionId, requestId);
     if (requestId) dirPickCards.delete(requestId); // 工作区选择卡事件一并失主
     box.querySelectorAll('.option-btn').forEach(el => { (/** @type {HTMLButtonElement} */ (el)).disabled = true; });
     cancelBtn.disabled = true;
@@ -1962,8 +2016,8 @@ export function showOptions(container, questions, onConfirm, doneLabel, onCancel
   // "locked/answered" signal (E6/E9). The Canvas button is a remote trigger:
   // it writes the same answers[] slot and runs the same confirm path.
   if (askSessionId) {
-    askCardRegistry.set(askSessionId, {
-      questions, answers, shouldShow, requestId,
+    askCardRegistry.set(askCardKey(askSessionId, requestId), {
+      sessionId: askSessionId, questions, answers, shouldShow, requestId,
       selectOption(qi, label) {
         const wrapper = questionWrappers[qi];
         if (!wrapper) return;
@@ -2095,14 +2149,14 @@ export function renderAskUser(items, askSessionId, agentName, requestId, source)
       // D6 批 F2: card-answer resolves the pending slot locally (the hub does
       // NOT broadcast askUserAnswered for card answers — only for chat-input).
       removePendingAsk(requestId);
-      broadcastAskState(targetSid);
+      broadcastAskState(targetSid, requestId);
       window.dispatchEvent(new CustomEvent('session-attention', { detail: { sessionId: targetSid, attention: false } }));
     }, t('chat.confirm'), () => {
       if (state.ws && state.ws.readyState === WebSocket.OPEN) {
         state.ws.send(JSON.stringify({ type: 'askUserAnswer', sessionId: targetSid, answers: ['__cancelled__'], ...(requestId && { requestId }) }));
       }
       removePendingAsk(requestId);
-      broadcastAskState(targetSid);
+      broadcastAskState(targetSid, requestId);
       window.dispatchEvent(new CustomEvent('session-attention', { detail: { sessionId: targetSid, attention: false } }));
     }, targetSid, requestId);
   } catch (e) {
@@ -2146,14 +2200,13 @@ export function closeAskUserCard(sessionId, requestId, note) {
     ansDiv.className = 'option-answer';
     ansDiv.textContent = '-> ' + (note || t('chat.answeredViaChatInput'));
     box.appendChild(ansDiv);
-    // The registry is per-session and holds only the NEWEST card — tear down
-    // the Canvas answer channel / drafts / attention only when this frame
-    // closed that exact card, or when nothing actionable remains.
-    const entry = askCardRegistry.get(sessionId);
-    if (entry && entry.requestId === requestId) {
-      askCardRegistry.delete(sessionId);
-      clearAskDrafts(sessionId);
-      broadcastAskState(sessionId);
+    // #250 ④: registry is per-card now — drop exactly this card's entry and
+    // broadcast its id. Drafts are still session-keyed (pre-existing shape), so
+    // they are only cleared once the session has no live card left; clearing
+    // them while a sibling card is still open would wipe that card's answers.
+    if (dropAskCard(sessionId, requestId)) {
+      if (askCardsOf(sessionId).length === 0) clearAskDrafts(sessionId);
+      broadcastAskState(sessionId, requestId);
     }
     if (!chat.querySelector('.option-box:not(:has(.option-answer))')) {
       window.dispatchEvent(new CustomEvent('session-attention', { detail: { sessionId, attention: false } }));

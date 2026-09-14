@@ -861,6 +861,45 @@ object AgentActor extends AgentCore with AgentSession:
     Json.obj(fields.toList*)
   end buildAskUserJson
 
+  /** 多 AskUser 并发批（#250 第②项，2026-09-13 作者裁定「6 项全补」）：
+    * turn 被用户 Interrupt 后，回收本会话仍挂在 InteractionHub 的 pending 槽。
+    *
+    * 改前现象（代码判据）：`AgentCommand.Interrupt` 的 processing 分支只做
+    * `cancelCurrentTurn` + `emitStream(Interrupted)` + registry 回 `Idle`
+    * （本文件 Interrupt 分支），**不触发** `CleanupForSession`；而全仓
+    * `CleanupForSession` 只有 2 个调用点（`NodeEngine` 节点 cancel/abandon/死会话回收、
+    * `BackoffSupervisor` 子代理终态）——**root 会话没有清理入口**。后果：turn 没了、
+    * 等待方（工具里的 `.?`）已死，但 hub 槽位与前端卡片仍然挂着；用户点它 =
+    * 对一个没有听众的动作作答（`InteractionHub.handleAnswered` 里 `replyTo` 早已
+    * 无人接收），且 R1 起等待无超时 ⇒ 卡片是永久僵尸。
+    *
+    * 语义边界：中断 = 该 turn 的**全部**人类等待一起作废 —— AskUser 卡与权限卡
+    * 共用同一个槽容器（`InteractionHub` 的 `pending` Map，两种 kind），故按
+    * `sourceSession` 批量回收正是既有 `CleanupForSession` 语义；`reason =
+    * "turn-interrupted"` 让前端把卡片文案从「来源已关闭」改成中断文案。
+    * （相邻但**不同**的 Exit —— `ResetSession` / `Retry` / `Stop` —— 本批按
+    * 「禁扩面」只登记不修，见报告「邻接问题登记」。）
+    *
+    * 无静默路径核证：hub 未装配（早期 boot / 测试）时**无槽可清**——请求在
+    * `AskUser` 分支（本文件）与权限分支（`AgentCore.sendPermissionRequest`）就已
+    * WARN 丢弃；此处仍打一行 info 供归因，绝不静默吞掉一次中断清理意图。 */
+  private def closePendingInteractionsForInterruptedTurn(
+    resources: SharedResources,
+    sessionId: String
+  ): IO[Unit] =
+    if sessionId.isEmpty then IO.unit
+    else
+      resources.interactionHubRef.get.flatMap {
+        case Some(hub) =>
+          logger.info(s"Interrupt: closing pending interaction slots for session=$sessionId")
+          (hub ! InteractionHubCommand.CleanupForSession(sessionId, reason = "turn-interrupted")).void
+        case None =>
+          logger.info(
+            s"Interrupt: no InteractionHub spawned — nothing to clean for session=$sessionId " +
+              "(no hub slot can exist without the hub)"
+          )
+      }
+
   // ============================================================
   // Idle state
   // ============================================================
@@ -2136,6 +2175,9 @@ object AgentActor extends AgentCore with AgentSession:
           // the watcher sees a consistent idle row (also fixes the pre-existing
           // stale-Processing-after-interrupt gap).
           _ <- touchRegistryActivity(resources, state.sessionId, AgentStatus.Idle)
+          // #250 第②项（2026-09-13 作者裁定「6 项全补」）：turn 被中断 ⇒ 回收本会话
+          // 仍挂在 InteractionHub 的 pending 槽（中断前那一问已无人等待）。
+          _ <- closePendingInteractionsForInterruptedTurn(resources, state.sessionId.getOrElse(""))
         yield
           // Hard-recovery P3: cancelCurrentTurn is now fire-and-forget — the
           // abandoned turn fiber may still complete and send a late

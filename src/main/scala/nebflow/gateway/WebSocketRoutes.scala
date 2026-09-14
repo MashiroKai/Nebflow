@@ -290,6 +290,49 @@ class WebSocketRoutes(
         }
     }
 
+  /** 多 AskUser 并发批（#250 第③项，2026-09-13 作者裁定「6 项全补」）：
+    * 全库 pending-AskUser 快照 → 本连接（`pendingAsksSnapshot{asks:[…]}`，单帧，
+    * 与 `ListPendingAsks` 的重放帧逐字节同构，含 `replayed: true`）。
+    *
+    * 与 `replayPendingAsks` 的分工：那条**渲染卡片进聊天流**（按会话订阅触发，职责
+    * 不变），本条只**重建待办条/badge 的本地镜像**——所以它是「一次性全局」，与
+    * 当前活动会话无关。前端消费点 = `askPending.applyPendingAskSnapshot`。
+    *
+    * hub 未装配（早期 boot / 测试）⇒ 回空快照：这是确定性结论（无 hub ⇒ 无槽位），
+    * 比「不回帧、前端镜像悬空」少一条静默路径。查询失败 ⇒ 回失败帧（不带 asks），
+    * 前端据此保留本地镜像并给可见提示——把「同步失败」与「确实没有 pending」区分开。 */
+  private def listAllPendingAsks(wsSend: io.circe.Json => IO[Unit]): IO[Unit] =
+    sharedResources.interactionHubRef.get.flatMap {
+      case None =>
+        wsSend(
+          io.circe.Json.obj(
+            "type" -> "pendingAsksSnapshot".asJson,
+            "asks" -> List.empty[io.circe.Json].asJson
+          )
+        )
+      case Some(hub) =>
+        hub
+          .?[List[io.circe.Json]](reply => nebflow.agent.InteractionHubCommand.ListAllPendingAsks(reply))
+          .flatMap(asks =>
+            wsSend(
+              io.circe.Json.obj(
+                "type" -> "pendingAsksSnapshot".asJson,
+                "asks" -> asks.asJson
+              )
+            )
+          )
+          .handleErrorWith { e =>
+            logger.warn(s"Pending-ask global snapshot failed: ${e.getMessage}") *>
+              wsSend(
+                io.circe.Json.obj(
+                  "type" -> "pendingAsksSnapshot".asJson,
+                  "failed" -> true.asJson,
+                  "error" -> s"pending-ask snapshot failed: ${e.getMessage}".asJson
+                )
+              ).handleErrorWith(_ => IO.unit)
+          }
+    }
+
   /** 递进式放行链 (2026-08-30)：把确认卡上选定的升级档**落为全局持久档位**。
     *
     * permshield S1（2026-09-13，作者重裁「保留递进链路…落全局持久，跟盾牌走同一条
@@ -2874,6 +2917,22 @@ class WebSocketRoutes(
                   logger.warn(s"Cannot cancel flow '$flowName': no FlowTreeActor for session")
               }
             else IO.unit
+
+          case "getPendingAsks" =>
+            // 多 AskUser 并发批（#250 第③项，2026-09-13 作者裁定「6 项全补」）：
+            // **全局** pending-AskUser 快照 —— 前端重连时把待办条/badge 的本地镜像
+            // 与 hub 权威一次性对齐（与「按会话订阅重放」解耦）。
+            //
+            // 旧口径缺口：前端 onReconnect 做全局清空（resetPendingAsks），后端重建
+            // 却只在「某会话 getHistory 首帧」触发（replayPendingAsks，按会话订阅）
+            // ⇒ 重连时活动会话 ≠ 承载卡片的 root 会话时，镜像清空后永不重建：
+            // 待办条/badge 显示 0 而卡片还挂着 = 待办信号静默丢失。
+            //
+            // 读侧纪律与 replayPendingAsks 同族：只读快照、不触碰槽位。
+            // 无静默路径核证：hub 未装配 ⇒ 回空快照（确定性结论，不是「无响应」）；
+            // 查询失败 ⇒ 回 `failed:true` 帧（前端保留本地镜像并给可见提示），
+            // 绝不假装「零 pending」把用户已有的待办清零。
+            listAllPendingAsks(wsSend)
 
           case "getHistory" =>
             val json = parse(text).toOption.getOrElse(io.circe.Json.Null)
