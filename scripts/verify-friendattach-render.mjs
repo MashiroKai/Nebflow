@@ -20,6 +20,7 @@
 //   A2-6 下载成功 ⇒ 「已下载」；元数据 ready 但服务端 410 ⇒ **就地升级**「附件已过期」
 //        （终态，不同于「下载失败，点击重试」，§B.7 ③）
 //   A2-7 全程零 console error / 零 pageerror
+//   A2-8 取字节 500 ⇒ state=failed + 「下载失败，点击重试」+ 按钮仍可用（**不**折叠成 expired）
 //
 // 用法（worktree 根）：node scripts/verify-friendattach-render.mjs [--web <dir>] [--out <dir>]
 // 退出码：0 = 全绿；1 = 任一断言红（逐条打印失败原因）。
@@ -82,6 +83,8 @@ const BOOT_POLL_404 = ['/api/canvas-tabs', '/api/nf-authcheck', '/api/plugins', 
 const failures = [];
 const notes = [];
 const seen = { downloadRequests: [] };
+// A2-8：置真 ⇒ 下一次 att-ready 取字节回答 500（同页内制造可重试失败腿）。
+let failDownload = false;
 
 function check(ok, label, detail) {
   if (ok) notes.push(`PASS ${label}`);
@@ -122,6 +125,7 @@ async function run(browser, colorScheme, viewport, label) {
       if (p === '/api/conversations/c1/read') return route.fulfill({ json: { ok: true } });
       if (p === '/api/friends/attachments/att-ready') {
         seen.downloadRequests.push({ path: p, auth: route.request().headers()['authorization'] || '' });
+        if (failDownload) return route.fulfill({ status: 500, headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ error: 'internal' }) });
         return route.fulfill({
           status: 200,
           headers: {
@@ -244,6 +248,21 @@ async function run(browser, colorScheme, viewport, label) {
     check(!after410.hasButton, `${label} A2-6 升级后不再提供重试（与「下载失败」区分）`);
   }
 
+  // A2-8 失败态（可重试）：同一件重下、本次服务端 500 ⇒ 「下载失败，点击重试」+ 按钮仍在。
+  // （与 410 的终态**必须可区分**：只有这条腿证明两态没有被折叠成一个。）
+  failDownload = true;
+  const clickedFail = await clickAndWait('.fm-msg[data-message-id="2"] .fm-att-dl', 'A2-8 重试按钮不可点');
+  const afterFail = await page.evaluate(() => {
+    const c = document.querySelector('.fm-msg[data-message-id="2"] .fm-att');
+    return { text: c?.textContent || '', state: c?.dataset.attState, hasButton: !!c?.querySelector('.fm-att-dl'), btnDisabled: !!c?.querySelector('.fm-att-dl')?.disabled };
+  });
+  failDownload = false;
+  if (clickedFail) {
+    check(afterFail.state === 'failed', `${label} A2-8 传输失败 ⇒ state=failed（不折叠成 expired）`, JSON.stringify(afterFail));
+    check(afterFail.text.includes('下载失败，点击重试'), `${label} A2-8 失败文案可判读`, JSON.stringify(afterFail.text));
+    check(afterFail.hasButton && !afterFail.btnDisabled, `${label} A2-8 失败后可重试（按钮仍在且可用）`, JSON.stringify(afterFail));
+  }
+
   // A2-7 错误面：本批面**零错误**；非本批的 404 只允许出现在已登记的应用启动轮询清单里
   //      （harness 不实现这些端点 ⇒ 404 ⇒ 浏览器打一条 console error，与本批无关）。
   const unexpected = consoleErrors.filter((e) => !e.includes('Failed to load resource'));
@@ -251,7 +270,9 @@ async function run(browser, colorScheme, viewport, label) {
   check(!consoleErrors.some((e) => e.includes('attachments')), `${label} A2-7 附件面零错误`, JSON.stringify(consoleErrors.slice(0, 3)));
   seen.notFound = (seen.notFound || []).concat(notFound);
   const strayStatus = notFound.filter(
-    (s) => !BOOT_POLL_404.some((p) => s.endsWith(p)) && !s.endsWith('/api/friends/attachments/att-410')
+    // 本批**刻意制造**的两条非 2xx 腿：410（服务端权威过期）与 500（A2-8 可重试失败）。
+    (s) => !BOOT_POLL_404.some((p) => s.endsWith(p)) &&
+      !s.endsWith('/api/friends/attachments/att-410') && !s.endsWith('/api/friends/attachments/att-ready')
   );
   check(strayStatus.length === 0, `${label} A2-7 非登记 404 为零`, JSON.stringify(strayStatus));
 
