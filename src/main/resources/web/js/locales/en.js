@@ -226,6 +226,10 @@ export default {
   'messages.forwarded': 'Forwarded to agent',
   'messages.forwardToast': 'Added to input — add a note and send',
   'messages.forwardNoSession': 'Open a chat session in the main window first, then forward',
+  // B+C 批 · 方案 B（不可恢复标记的**文案**半边）：{n} = 无法恢复的附件数。
+  // 说清**为什么**（页面刷新把载荷剥离了——localStorage 放不下）与**怎么办**
+  // （重新添加）。修前该情形只有 console.warn，对用户是**静默消失**。
+  'messages.queueAttachUnrecoverable': '{n} attachment(s) could not be restored because the page was refreshed — please add them again',
   'messages.trusted': 'Trusted',
   'messages.trustedHint': 'Trust is on: new messages are auto-forwarded to your agent',
   'messages.loadingOlder': 'Load earlier messages',

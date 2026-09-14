@@ -27,6 +27,31 @@ let outgoing = [];
 let requestsExpanded = false;
 let lastSearchAt = 0;
 let searchResult = null;   // null | {found:false} | 契约搜索结果（归一内部形态，含 relation_status）
+
+// ── 批 B 根因修复（增补①，2026-09-14「根因反转」裁定）──────────────────
+// **关系态事件到达时必须重置搜索卡片缓存**。
+//
+// 修的是什么（真凶，不是服务端）：跨仓评估已否证「服务端 pending 残留」（`friendships`
+// `UNIQUE(user_lo,user_hi)`；accept = 同行原地 UPDATE、同临界区；8 条写路径零残留）。
+// 而「等待对方处理」**卡住**的机制在客户端：`buildResultCard` 读的是**缓存快照**
+// `searchResult.relation_status`（下一行起的 `const rs = r.relation_status || 'addable'`），
+// 而关系态事件只 `refresh()` 列表、**从不失效这个快照** ⇒ 卡片上的 `outgoing_pending`
+// 是 **sticky** 的：对方同意之后本端列表已经对了（`friends[]` 命中、`outgoing[]` 清空），
+// 搜索卡片却永远停在「等待对方处理」，直到用户手动再搜一次（重搜才会拿到服务端的
+// `already_friends`）。⇒ 手动刷新能恢复、自动路径不能，正是本症状的指纹。
+//
+// 修法（跨仓建议的**首选 B**）：**失效**（置 `null`，让下一次渲染走服务端真态），
+// 🔴 **不是**就地改 `relation_status` —— 就地写 `'addable'` 会退回 0908 症状①
+// （关系态靠本地猜测 ⇒ 与「服务端是唯一权威」口径冲突）；就地写 `'already_friends'`
+// 则是本地断言关系成立 ⇒ 违反红线③（收敛只依据服务端 `friends` 命中）。
+const RELATION_STATE_EVENTS = new Set(['friend_request', 'friend_accepted', 'friend_rejected']);
+
+/** 失效搜索卡片缓存（**唯一**写点；两个事件入口都调它，禁第二处判据）。 */
+function invalidateSearchCard(reason) {
+  if (!searchResult) return;
+  searchResult = null;
+  console.debug(`[contacts] search card cache invalidated (reason=${reason})`);
+}
 let verifyFor = null;      // username awaiting verification-note input
 let sentTo = new Set();    // 本会话已发出请求的乐观回显键集（服务端态 = relation_status）；
                            // 键 = username 小写 或 `id:<userId>` 双键（userId 不受服务端档案形态影响）
@@ -75,9 +100,45 @@ function loggedIn() { return !!getNeblinkState().loggedIn; }
 export function getFriendList() { return friends; }
 
 // ── Data ─────────────────────────────────────────────────
+//
+// 批 B（§3.1③ + 事件风暴）：取数**单飞 + 合并**。
+// 为什么需要：修前 `refresh()` 是裸 `GET /api/friends` —— 一次 `friend_request` 会
+// 同时命中两个消费点（`messages.js` 派发的 `fm-friends-changed` 与 `contacts.js`
+// 自己的 `onMessage('friend_event')`）⇒ **同拍两次并发同请求**；多帧连到时按帧数线性
+// 放大（取证稿 §3.1「事件风暴 ⇒ 需沿用现有节流」）。单飞后：同拍最多一次在飞请求；
+// 在飞期间到达的调用只**置一个重跑位**，请求落地后**恰好**再跑一次（不是每帧一次）。
+//
+// 正确性不依赖节流：`refresh()` 每次落地都整体覆盖 `friends/incoming/outgoing`
+// （服务端是权威），故合并只减少请求数、不改变终态。
+let refreshInFlight = null;
+let refreshAgain = false;
+/** 惰性标记（§3.1③）：关系态事件在**面板未挂载 / 未激活**期间到达且那一拍取数
+  * **失败**时置位 ⇒ 面板激活时强制再取一次。为什么需要：这是「面板未打开时打开即见」
+  * 的唯一缺口 —— 事件→取数→失败时，面板打开那一刻看到的是**事件前**的态，而修前的
+  * 激活腿与失败腿之间没有任何粘合剂。取数成功时不置位（已是最新态，无须重复往返）。 */
+let relationStateDirty = false;
+
+/** 惰性标记的清点动作（唯一消费点 = 面板激活腿）。 */
+function consumeRelationStateDirty() {
+  const was = relationStateDirty;
+  relationStateDirty = false;
+  return was;
+}
+
 async function refresh() {
+  if (refreshInFlight) { refreshAgain = true; return refreshInFlight; }
+  refreshInFlight = (async () => {
+    try { await doRefresh(); } finally { refreshInFlight = null; }
+  })();
+  await refreshInFlight;
+  if (refreshAgain) { refreshAgain = false; await refresh(); }
+}
+
+async function doRefresh() {
   if (!loggedIn()) { friends = []; incoming = []; outgoing = []; listErrorKind = null; render(); return; }
   try {
+    // 批 B（§3.4）：出口唯一 —— `getFriends()` 已按「服务端 `friends[]` 命中」收敛
+    // 双向待处理（`friendsApi.convergeRequests`）⇒ 本模块**不再**自行过滤（禁第二份判据）。
     const data = await api.getFriends();
     listErrorKind = null; // F4: a successful load clears any previous failure state
     const serverFriends = data.friends || [];
@@ -111,9 +172,17 @@ async function refresh() {
     // F4（20260910）：失败≠空。记录分态供 render 区分「空列表」与「加载失败」；
     // 已有缓存数据时 keep-last-known 行为不变（不闪错误态）。
     listErrorKind = api.errKind(err);
+    // §3.1③ 惰性标记：**这一拍没取到**且面板未激活 ⇒ 置位，面板激活时强制重取。
+    if (!panelActive()) relationStateDirty = true;
   }
   render();
   updateBadge();
+}
+
+/** 面板是否**已挂载且处于激活态**（`render()` 的 DOM 前提 + 事件可见性前提）。 */
+function panelActive() {
+  const panel = document.getElementById('panel-contacts');
+  return !!(panel && panel.classList.contains('active'));
 }
 
 function updateBadge() {
@@ -754,18 +823,36 @@ export function initContacts() {
   initialized = true;
 
   onMessage('friend_event', (msg) => {
-    if (msg.event === 'friend_request' || msg.event === 'friend_accepted') refresh();
+    if (RELATION_STATE_EVENTS.has(msg.event)) {
+      // 批 B 根因修复（增补①）：关系态事件到达 ⇒ **重置搜索卡片缓存** + 重取列表。
+      invalidateSearchCard(msg.event);
+      refresh();
+    }
   });
   // P3 error surface — friendsApi dispatches on auth failure / network error.
   window.addEventListener('fm-auth-required', () => { openLoginModal(); });
   window.addEventListener('fm-network-error', () => { window.__showToast?.(t('messages.networkError'), 'error'); });
-  window.addEventListener('fm-friends-changed', () => refresh());
+  // `fm-friends-changed` 由**他模块**派发（`messages.js` 的 friend_accepted/friend_request
+  // 分支、以及本模块自身 accept/unblock 之后）⇒ 同一条关系态判据必须同样生效，否则
+  // 「消息面板收到帧」这条路径会绕过缓存失效（禁两份判据：缓存失效只在
+  // `invalidateSearchCard` 一处，两个入口都调它）。
+  window.addEventListener('fm-friends-changed', () => {
+    invalidateSearchCard('fm-friends-changed');
+    refresh();
+  });
 
-  // Refresh when the panel becomes active (covers login-state changes).
+  // Refresh when the panel becomes active (covers login-state changes + §3.1③ 惰性标记)。
   const panel = document.getElementById('panel-contacts');
   if (panel) {
     new MutationObserver(() => {
-      if (panel.classList.contains('active')) refresh();
+      if (panel.classList.contains('active')) {
+        // 惰性标记清点（§3.1③）：事件期间取数失败过 ⇒ 打开即见的保证不能只靠
+        // 「上一次那拍成功」，此处强制重取一次（`refresh()` 恒走 `GET /api/friends`）。
+        if (consumeRelationStateDirty()) {
+          console.debug('[contacts] panel activated while relation-state refresh had failed — re-fetching');
+        }
+        refresh();
+      }
     }).observe(panel, { attributes: true, attributeFilter: ['class'] });
   }
 

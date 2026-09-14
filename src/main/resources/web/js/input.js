@@ -770,7 +770,13 @@ export function persistQueue() {
             ? { type: 'ref', refType: a.refType, id: a.id, source: a.source, anchor: a.anchor, meta: a.meta, display: a.display, ...(a.content ? { content: a.content } : {}) }
             : a.type === 'text' && typeof a.data === 'string' && a.data.length > 0 && a.data.length <= 400000
               ? { type: a.type, mimeType: a.mimeType, data: a.data, name: a.name, hash: a.hash || '', size: a.size || 0 }
-              : { type: a.type, name: a.name })
+              // B+C 批 · 方案 B（不可恢复标记）：走到本支 = **载荷被剥离**。
+              // 只在**确有载荷可丢**（`data` / `preview` 其一存在）时置 `stripped: true`
+              // —— 纯元数据缺失不报，否则每个 file 附件都会假报，把真信号淹掉
+              // （取证稿 §3.3 的降噪口径：噪声化 = 另一种静默）。
+              // 标记随队列项一起落 localStorage ⇒ 跨刷新存活，撤回时据此给**可判读**
+              // 文案（下面 recallQueuedItem），而不是让用户以为附件还在。
+              : { type: a.type, name: a.name, ...(a.data || a.preview ? { stripped: true } : {}) })
       }));
     }
     localStorage.setItem(LS_QUEUE_KEY, JSON.stringify(serializable));
@@ -939,12 +945,22 @@ function recallQueuedItem(sessionId, item) {
       }
       // Refresh blind spot: persistQueue() reduces images/large payloads to a
       // {type, name} skeleton, so such an item cannot be restored for real.
-      // Warn (never stay silent) without adding a locale key.
+      //
+      // B+C 批 · 方案 B：两级判据 ——
+      //  ① 显式标记（本批新增，**权威**）：`persistQueue` 在剥离 `data`/`preview` 时
+      //     写下 `stripped: true`；标记随 localStorage 存活 ⇒ 撤回时**知道**自己丢过东西。
+      //  ② 结构兜底（A-only 批既有，保留）：本标记落地**之前**就已持久化的旧队列项
+      //     没有标记，按「四键俱缺」形态识别。⇒ 旧项不因新标记上线而漏报。
+      // 判据逻辑**不含**任何「猜内容」：只读标记与结构，不尝试从服务端回补（回补不存在）。
       const stripped = view.pendingAttachments.filter(a => a.type !== 'taskRef' && a.type !== 'ref'
-        && !a.data && !a.preview && !a.hash && !a.mimeType);
+        && (a.stripped === true || (!a.data && !a.preview && !a.hash && !a.mimeType)));
       if (stripped.length > 0) {
         console.warn('[input] recallQueuedItem: ' + stripped.length
           + ' attachment(s) lost their payload to page-refresh persistence and must be re-added');
+        // **用户可见**文案（方案 B 的「文案」半边）：修前只有 console.warn —— 对用户
+        // 而言附件**静默消失了**（红点/角标没有、输入框里也不见了），正是本次要修的
+        // 「不得静默」形态。文案说清**为什么**（页面刷新）与**怎么办**（重新添加）。
+        window.__showToast?.(t('messages.queueAttachUnrecoverable', { n: stripped.length }), 'error');
       }
     }
     saveInputDraft(sessionId);
