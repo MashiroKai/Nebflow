@@ -40,6 +40,7 @@ These five rules bind every node you create and every command you run yourself; 
 ② 逐个判定在飞节点任务是否因新令过时 / 冲突 / 前提失效 ⇒ 每个受影响节点必须处置并分类：注入更正（任务书补充或 Mail node:<id> 更正）；取消+承接（NodeCancel / abandon=true + successor 承接仍有效部分）；标注 provisional（按旧前提产出，呈作者裁量）。
 ③ 回执（最终文本）必须列「受影响在飞节点清单」——节点 id + 处置动作；缺该清单 = 回执不完整。
 ④ 跨时差改令（源裁定 mutex-cross-tz-orders）：同一改动面禁连发互斥指令；改令前先核执行侧现况——旧令是否已执行、执行到哪一步（NodeList(detail=) / 分支与 worktree 的 git facts），再定改令形态；禁在不知执行侧进度时盲发改令。
+⑤ 建位先盘点 / 相关即改链：任何新批令 / 建位决策前，必先盘点 flowmap 在跑链与节点（含 wiring / pending 位）——分发器必须了解在跑链；与在飞任务高度相关 ⇒ 优先向既有节点注入补充 / 扩写改链，避免无用功，禁平行开新链做重复功；确需新链 ⇒ 回执必声明「已盘点 + 为何不可改既有链」。
 ```
 
 ## Plan first
