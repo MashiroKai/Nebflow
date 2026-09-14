@@ -15,7 +15,8 @@ import scala.concurrent.duration.*
  * ListPendingAsks 只读快照命令，gateway 在会话（重）订阅的初始 historyPage 之后
  * 把快照逐帧重发（形态 = 首次下发 renderAskUser + `replayed: true`）。前端按
  * requestId 重绑定卡片（历史还原卡不带 requestId——UiMessage.AskUser 只持久化
- * {type, items}），两条回答路径（卡片点击 / 输入框直通）随即重新接通。
+ * {type, items}），卡片回答路径（requestId 精确路由）随即重新接通。
+ * （输入框直通这一条回答路径已于 2026-09-14 作者令退役 ⇒ 本文件相关断言同步改测。）
  *
  * 本 spec 用真实 InteractionHub actor 钉住四条契约：
  *  1. (a) 快照形态：type/sessionId/requestId/items(问题内容)/agentName/
@@ -26,7 +27,9 @@ import scala.concurrent.duration.*
  *  3. (c) 快照权威性：已消费的 ask 不再出现在快照（answered-before-replay 不
      * 可能复活卡片）；跨 root 会话的 pending 与 permission 卡不串扰；
  *  4. (d) 多卡排队：同 root 会话多个 pending ask 按创建序（最老在前）重发，
- *     与 AnswerViaChatInput 消费最老卡的既有语义一致。
+ *     且快照/重放本身不消费任何槽位（两卡重发后仍待答）。原「与 AnswerViaChatInput
+ *     消费最老卡的既有语义一致」的对照腿随该命令退役（2026-09-14）一并删除，
+ *     替换为「重放不消费」的负控断言。
  */
 class InteractionHubReplaySpec extends CatsEffectSuite:
 
@@ -196,13 +199,12 @@ class InteractionHubReplaySpec extends CatsEffectSuite:
       _ <- hub ! InteractionHubCommand.Request(reqNewer)
       _ <- IO.sleep(80.millis)
       snap <- hub.?[List[Json]](reply => InteractionHubCommand.ListPendingAsks("root-1", reply))
-      // U2=B2：多卡并存时输入框直通不消费任何卡（文本回落正常 dispatch）
-      hitD <- cats.effect.Deferred[IO, Boolean]
-      _ <- hub ! InteractionHubCommand.AnswerViaChatInput("root-1", "直通答案", hitD)
-      hit <- hitD.get
       _ <- IO.sleep(80.millis)
+      // 退役负控（2026-09-14）：输入框直通不再存在 ⇒ 本轮无任何「消费最老卡」的
+      // 动作；重放/快照本身只读，两卡必须都还 pending 且快照仍按创建序。
       afterOlder <- gotOlder.get
       afterNewer <- gotNewer.get
+      snapshot2 <- hub.?[List[Json]](reply => InteractionHubCommand.ListPendingAsks("root-1", reply))
       _ <- system.stopAll
     yield
       assertEquals(
@@ -210,12 +212,11 @@ class InteractionHubReplaySpec extends CatsEffectSuite:
         List("replay-d-old", "replay-d-new"),
         "快照按创建序（最老在前）"
       )
-      assertEquals(hit, false, "B2：多卡并存 ⇒ 直通拒绝（网关回落正常 dispatch）")
-      assertEquals(afterOlder, None, "最老卡不再被直通吃掉（B2）")
-      assertEquals(afterNewer, None, "后问的卡保持 pending")
+      assertEquals(afterOlder, None, "重放不消费最老卡（槽位仍空白）")
+      assertEquals(afterNewer, None, "重放不消费后问的卡（槽位仍空白）")
       assertEquals(
-        snap.map(_.hcursor.downField("requestId").as[String].getOrElse("")),
+        snapshot2.map(_.hcursor.downField("requestId").as[String].getOrElse("")),
         List("replay-d-old", "replay-d-new"),
-        "B2 拒绝后两卡都还在（快照仍按创建序）"
+        "两卡都还在（快照仍按创建序）"
       )
   }

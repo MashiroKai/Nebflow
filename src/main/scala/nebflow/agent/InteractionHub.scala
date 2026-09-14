@@ -68,12 +68,6 @@ object InteractionHub:
               ctx.forkTurn(handleRequest(pending, rootWsSend, req)) *> IO.pure(behavior)
             case InteractionHubCommand.Answered(ans) =>
               ctx.forkTurn(handleAnswered(pending, rootWsSend, ans)) *> IO.pure(behavior)
-            case InteractionHubCommand.AnswerViaChatInput(rootSessionId, text, reply) =>
-              // 第六件 (2026-08-30): chat-input passthrough — the gateway asks
-              // on behalf of the input box; single atomic modify = query + slot
-              // removal (P1 lesson: reply-slot lifecycle lives in ONE place).
-              ctx.forkTurn(handleChatInputAnswer(pending, rootWsSend, rootSessionId, text, reply)) *>
-                IO.pure(behavior)
             case InteractionHubCommand.ListPendingAsks(rootSessionId, reply) =>
               // 刷新存活 (2026-09-03): read-only snapshot for reconnect replay.
               ctx.forkTurn(handleListPendingAsks(pending, rootSessionId, reply)) *> IO.pure(behavior)
@@ -457,78 +451,6 @@ object InteractionHub:
     yield ()
 
   // ============================================================
-  // 第六件 (2026-08-30): chat-input passthrough for pending AskUser cards.
-  //
-  // One atomic modify does query + slot removal — the P1 lesson (reply-slot
-  // lifecycle) says slot state must change in exactly one place; splitting
-  // "peek" from "consume" would race a concurrent card answer. Only the
-  // OLDEST pending AskUser of this root session is consumed; permission
-  // cards are never touched (kind filter). The gateway learns the outcome
-  // via `reply`: true = card consumed (deliver as tool result), false = no
-  // pending card (fall back to normal dispatch).
-  // ============================================================
-  private def handleChatInputAnswer(
-      pending: Ref[IO, Map[String, PendingRequest]],
-      rootWsSend: Ref[IO, Map[String, Json => IO[Unit]]],
-      rootSessionId: String,
-      text: String,
-      reply: cats.effect.Deferred[IO, Boolean]
-  ): IO[Unit] =
-    pending.modify { m =>
-      val candidates = m.toList
-        .collect { case (rid, p) if p.rootSessionId == rootSessionId && p.kind == InteractionKind.AskUser => (rid, p) }
-        .sortBy(_._2.createdAt)
-      // B2（作者裁定 U2，2026-09-11 拍板）：**多候选并存时不消费**——同桶内有多张
-      // pending 卡时，输入框文本**不再**当作 answers 投给 oldest 那张（多卡并存时
-      // 答错卡的代价不对称：内核会按错误答案继续执行，可能落到远端不可逆动作）。
-      // 此时 reply.complete(false) ⇒ 网关回落到正常 dispatch（文本按普通消息走），
-      // 用户须点卡作答。语义**全局生效**（项目节点 ask 同受影响，非内核专属）；
-      // **单卡 pending 时输入框直通仍然生效**（否则 B2 退化为「禁直通」）。
-      val multiRefuse =
-        if candidates.size > 1 then
-          logger.warn(
-            s"Chat-input passthrough REFUSED: ${candidates.size} pending AskUser cards for rootSessionId=$rootSessionId — " +
-              "not consumed (B2: the oldest may not be the card the user is looking at). Falling back to normal dispatch; " +
-              "the user must answer on a specific card (#12 parity, ruling U2)"
-          ) *> reply.complete(false).void
-        else IO.unit
-      if candidates.size > 1 then (m, multiRefuse)
-      else
-        candidates.headOption match
-        case Some((rid, p)) =>
-          (
-            m - rid,
-            for
-              _ <- logger.info(
-                s"Chat-input passthrough: answering pending AskUser requestId=$rid root=$rootSessionId (${text.length} chars)"
-              )
-              // R10/U5=F-b 审计行（answer 单点，via=chat-input）
-              _ <- auditAnswer(rid, p, text, via = "chat-input")
-              _ <- p.reply match
-                case InteractionReply.AskUserReply(Some(r)) =>
-                  (r ! List(text)).void.handleErrorWith(_ => IO.unit)
-                case _ => IO.unit
-              // Close the card on the frontend: the input box went through this
-              // path (not askUserAnswer), so the frontend needs the explicit
-              // signal to mark the card answered.
-              send <- rootWsSend.get
-              _ <- send.get(rootSessionId).traverse_ { ws =>
-                ws(
-                  Json.obj(
-                    "type" -> "askUserAnswered".asJson,
-                    "sessionId" -> rootSessionId.asJson,
-                    "requestId" -> rid.asJson,
-                    "via" -> "chat-input".asJson
-                  )
-                ).handleErrorWith(_ => IO.unit)
-              }
-              _ <- reply.complete(true)
-            yield ()
-          )
-        case None => (m, reply.complete(false).void)
-    }.flatten
-
-  // ============================================================
   // P2 G11 (20260908 spec §3.4): source-death cleanup.
   //
   // A node cancelled while its AskUser card is pending leaves a zombie card:
@@ -626,7 +548,11 @@ object InteractionHub:
           )
     }.flatten
 
-  /** R10/U5=F-b 审计行（answer 单点），`via` = card | chat-input。best-effort。 */
+  /** R10/U5=F-b 审计行（answer 单点），`via` = card。best-effort。
+    *
+    * 输入框直通退役（2026-09-14 作者令「把 AskUserQuestion 通过输入框回答的功能
+    * 关了」）：`via` 曾另有 `chat-input` 取值，随 `handleChatInputAnswer` 一并
+    * 删除 ⇒ 现存唯一取值 = card（卡片入口作答）。 */
   private def auditAnswer(requestId: String, p: PendingRequest, answersJoined: String, via: String): IO[Unit] =
     val excerpt = if answersJoined.length > 200 then answersJoined.take(200) + "..." else answersJoined
     audit
@@ -672,20 +598,6 @@ object InteractionHubCommand:
 
   /** Gateway → hub: user answered (translated from permissionAnswer/askUserAnswer). */
   final case class Answered(ans: InteractionAnswered) extends InteractionHubCommand
-
-  /** 第六件 (2026-08-30): chat-input passthrough. The gateway detected a text
-    * message sent from the input box while an AskUser card is pending for
-    * `rootSessionId` — deliver `text` as the tool result (free-text answer).
-    * `reply` resolves true when a pending card was consumed, false when the
-    * gateway must fall back to the normal message-dispatch path. Queued
-    * messages/external events are NEVER touched (they live in the agent's own
-    * injection queue, not here) — only the newest user text flows through.
-    */
-  final case class AnswerViaChatInput(
-      rootSessionId: String,
-      text: String,
-      reply: cats.effect.Deferred[IO, Boolean]
-  ) extends InteractionHubCommand
 
   /** 刷新存活 (2026-09-03): gateway → hub — snapshot the still-pending AskUser
     * cards for `rootSessionId` (oldest first), each rendered exactly like the
