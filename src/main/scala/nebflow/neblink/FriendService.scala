@@ -518,7 +518,8 @@ final class FriendService(
           Some("body" -> m.body.asJson),
           Some("createdAt" -> Json.fromLong(m.createdAt)),
           Some("backfill" -> true.asJson),
-          m.attachments.filter(_.nonEmpty).map("attachments" -> _.asJson)
+          m.attachments.filter(_.nonEmpty).map("attachments" -> _.asJson),
+          m.origin.filter(_.nonEmpty).map("origin" -> _.asJson)
         ).flatten
       )
     )
