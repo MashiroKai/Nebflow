@@ -1142,6 +1142,7 @@ function showPresetModal(existing, onSaved) {
         <div class="cfg-form-group">
           <label class="cfg-label">${t('preset.fieldDescription')}</label>
           <input class="cfg-input" data-field="description" type="text" value="${escapeHtml(existing?.description || '')}" autocomplete="off">
+          <div class="cfg-hint">${t('preset.descriptionHint')}</div>
         </div>
         <div class="cfg-form-group">
           <label class="cfg-label">${t('preset.fieldChain')}</label>

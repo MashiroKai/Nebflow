@@ -2,7 +2,10 @@
 //（移除手动刷新 + 列表实时自动同步 + 原地状态切换 + nb-toggle 公共组件）。
 // **2026-09-13 无审批批（装了就是信任）重写**；**2026-09-14 插件面板收敛批
 // （作者三裁之批一）再重写**：封禁/解封 UI 全量退场 ⇒ 卡片只剩**一个**控件 =
-// 「任务分发器可见性」开关（卡片右上、与状态药丸同排，乐观原地翻转）。
+// 派发开关（卡片右上、与状态药丸同排，乐观原地翻转）。
+// **2026-09-15 UI 文案微批（作者令）**：该开关旁的**可见 label 小字**
+// 「任务分发器可见性」整体删除（toggle 本体自明，只留 aria-label）；默认态药丸
+// 也不再出「已启用」文字（药丸本体 + 状态样式保留；blocked/changed 仍出字）。
 //
 // Shell 级：隔离静态服务器（127.0.0.1:8181，8100+ 纪律，绝非宿主 8080）+
 // 页内 mock，真实 UI 代码全量执行。断言链：
@@ -24,7 +27,8 @@
 //      ⇒ 若作者希望把「ok:true 但注册表未反映」的核对搬到派发面，那是**新增行为**，
 //      属后续批，不在本批范围。）
 //   ⑦ 前端判据面（🔴 **不是**引擎语义的正面断言）：载荷缺 blocked/contentChanged
-//      ⇒ 卡片「已启用」+ 派发开关可用 + 内容审批开关零残留。夹具**故意**取旧
+//      ⇒ 卡片落默认态（药丸**无可见文字**、状态类 on）+ 派发开关可用 + 内容审批
+//      开关零残留。夹具**故意**取旧
 //      default-deny 形态（`trusted:false` + `reason:'never approved (default-deny)'`）
 //      ⇒ 可对「药丸被重新绑回审批面」这一前端回归转红；对「引擎是否在位即信任」
 //      **无区分度**（前端按设计不消费 `trusted`）。引擎侧「无记录包首扫即受信」的
@@ -246,7 +250,8 @@ test('② new plugin appears via polling with enter animation — no manual refr
       blockThere: !!card.querySelector('[data-plugin-block]'),
       dispatchThere: !!card.querySelector('[data-plugin-dispatch]'),
       contentSwitchThere: !!card.querySelector('[data-plugin-switch]'),
-      pill: card.querySelector('.plugins-state-pill')?.textContent.trim() || null,
+      pill: card.querySelector('.plugins-state-pill')?.textContent.trim() ?? null,
+      pillClass: card.querySelector('.plugins-state-pill')?.className ?? null,
       cardCount: document.querySelectorAll('#plugins-content .plugins-card').length,
     };
   });
@@ -260,7 +265,9 @@ test('② new plugin appears via polling with enter animation — no manual refr
   expect(dump.blockThere, 'new card 零残留：退场的封禁入口不得出现').toBe(false);
   expect(dump.dispatchThere, 'new card carries the dispatch switch (唯一控件)').toBe(true);
   expect(dump.contentSwitchThere, 'new card does NOT carry the retired content switch').toBe(false);
-  expect(dump.pill, 'new card pill = 已启用 (presence-trust)').toBe('已启用');
+  // 2026-09-15 作者令：默认态药丸**不出文字**（「已启用」小字删除）；状态样式保留。
+  expect(dump.pill, 'new card pill = 默认态无可见文字').toBe('');
+  expect(dump.pillClass, 'new card pill 状态样式在（on 类）').toContain('on');
   expect(dump.cardCount, 'card count grew 3 → 4').toBe(4);
 });
 
@@ -293,11 +300,13 @@ test('③ dispatch toggle: optimistic in-place flip → registry convergence; ze
       aria: dw.getAttribute('aria-checked'),
       on: dw.classList.contains('on'),
       pill: card.querySelector('.plugins-state-pill')?.textContent.trim(),
+      pillClass: card.querySelector('.plugins-state-pill')?.className,
     };
   });
   expect(optimistic.aria, 'optimistic aria-checked=false immediately after click').toBe('false');
   expect(optimistic.on, 'optimistic switch class off immediately after click').toBe(false);
-  expect(optimistic.pill, 'dispatch write never moves the status pill (绑 blocked/contentChanged)').toBe('已启用');
+  expect(optimistic.pill, 'dispatch write never moves the status pill（默认态无文字 ⇒ 仍无文字）').toBe('');
+  expect(optimistic.pillClass, 'dispatch write never moves the status pill state class（仍 on）').toContain('on');
 
   // Convergence: registry re-fetch applied in place; switch clickable again.
   await page.waitForFunction(() =>
@@ -398,9 +407,10 @@ test('⑤ 封禁态来自引擎侧（API/CLI）⇒ 收敛「已封禁」+ 派发
     if (r.method() === 'POST' && r.url().includes('/api/plugins/')) posts.push(new URL(r.url()).pathname);
   });
 
-  // 前置：未封禁 ⇒ 已启用 + 派发开关可用 + 封禁 UI 零残留。
+  // 前置：未封禁 ⇒ 默认态药丸无文字 + 派发开关可用 + 封禁 UI 零残留。
   const before = await cardState(page, 'e2e-hello');
-  expect(before.pill, 'precondition: 已启用').toBe('已启用');
+  expect(before.pill, 'precondition: 默认态药丸无可见文字（「已启用」小字已删）').toBe('');
+  expect(before.pillClass, 'precondition: 药丸状态样式在（on 类）').toContain('on');
   expect(before.dispatchDisabled, 'precondition: dispatch usable').toBe(false);
   expect(before.blockLabel, 'precondition: 封禁入口已退场（DOM 零残留）').toBe(null);
 
@@ -414,24 +424,27 @@ test('⑤ 封禁态来自引擎侧（API/CLI）⇒ 收敛「已封禁」+ 派发
   registry.plugins.find(p => p.name === 'e2e-hello').blocked = true;
   await page.evaluate(async () => { const m = await import('/js/plugins.js'); m.renderPlugins(); });
   await page.waitForFunction(() =>
-    document.querySelector('.plugins-card[data-plugin="e2e-hello"] .plugins-state-pill')?.textContent.trim() === '已封禁',
+    document.querySelector('.plugins-card[data-plugin="e2e-hello"] .plugins-state-pill')?.classList.contains('blocked'),
     { timeout: 8000 });
   const blocked = await cardState(page, 'e2e-hello');
   expect(blocked.pillClass, 'blocked pill class').toContain('blocked');
+  // 例外态仍出文字（可行动信号；删的只是默认态冗余小字）。
+  expect(blocked.pill, 'blocked pill 仍出文字 = 已封禁').toBe('已封禁');
   expect(blocked.dispatchDisabled, '封禁 ⇒ 派发开关同帧锁死（写下去也不会生效）').toBe(true);
   expect(blocked.dispatchBlocked, 'blocked 原因随元素暴露').toBe('blocked');
   expect(blocked.blockedHint, '一行可行动提示').toBeTruthy();
   expect(blocked.blockedHint, '封禁提示指向 API / CLI（面板已无入口）').toContain('API / CLI');
   expect(blocked.blockLabel, '封禁态下也不得长回封禁入口').toBe(null);
 
-  // 解封（同样引擎侧）⇒ 回「已启用」+ 派发开关解锁。
+  // 解封（同样引擎侧）⇒ 回默认态（药丸无文字）+ 派发开关解锁。
   registry.plugins.find(p => p.name === 'e2e-hello').blocked = false;
   await page.evaluate(async () => { const m = await import('/js/plugins.js'); m.renderPlugins(); });
   await page.waitForFunction(() =>
-    document.querySelector('.plugins-card[data-plugin="e2e-hello"] .plugins-state-pill')?.textContent.trim() === '已启用',
+    document.querySelector('.plugins-card[data-plugin="e2e-hello"] .plugins-state-pill')?.classList.contains('on'),
     { timeout: 8000 });
   const after = await cardState(page, 'e2e-hello');
   expect(after.pillClass, 'pill back to on').toContain('on');
+  expect(after.pill, 'pill back to 无文字（默认态）').toBe('');
   expect(after.dispatchDisabled, '派发开关解锁').toBe(false);
   expect(after.dispatchBlocked, 'blocked 属性清除').toBe(null);
   expect(after.blockedHint, '封禁提示移除').toBe(null);
@@ -468,7 +481,7 @@ test('⑦ 前端判据面：载荷缺 blocked/contentChanged（旧 default-deny 
   await loadShell(page);
   await page.waitForSelector('.plugins-card[data-plugin="no-record-pkg"]', { timeout: 10000 });
   const st = await cardState(page, 'no-record-pkg');
-  expect(st.pill, '载荷 trusted=false（旧 default-deny 世界）下仍表现为已启用').toBe('已启用');
+  expect(st.pill, '载荷 trusted=false（旧 default-deny 世界）下默认态仍无可见文字').toBe('');
   expect(st.pillClass, 'pill on class').toContain('on');
   expect(st.dispatchDisabled, '派发开关可用（不再要求先审批内容）').toBe(false);
   expect(st.noteText, '无「先审批内容」注记（该前提已消失）').toBe(null);
