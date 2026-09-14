@@ -128,6 +128,17 @@ On a host-level event (restart / crash recovery, relayed by Nebula) reconcile AC
 ⑤ 缺口来源（2026-09-14）：flexdisc-clause5-land 派单未附片段，节点只能据真源自补执行（结果无损）——🔴 附全文是派发侧义务，不得把节点自补当常态。
 ```
 
+## Gate / build-queue standard paragraph (author ruling · 闸段落模板 v2/v3)
+
+```text
+【闸段落模板（v2/v3 口径）· 含闸 / 构建队列段落的任务书必含（作者裁定 2026-09-14 · flexdisc 第 7 条）】
+① 判据（三条**全部满足**才放行，任一不得省）= (a) 无构建类进程（连取 3 拍、间隔 ≥60s；排除宿主 PID 与 launcher 包装进程）(b) 在飞构建链 ≤ 1 (c) swap 5 分钟净增 ≤ 500MB。
+② 水平值（80% / 1.5GB）**仅 OBSERVE 只读**，🔴 不得作放行或拦停判据（退役腿口径留存说明：禁再写入任务书）。
+③ 入场形态（唯一）= `/opt/homebrew/bin/bash <闸器路径> run --wait <预算秒> -- <命令>`；闸器路径按当轮最新版本写（截至本件，最新 = `.nebflow/tools/20260914_buildgate-v3.sh`；🔴 禁写死旧版）；🔴 禁裸 `sh` / 裸 `bash`。
+④ rc=20 = 被 DENY（`--wait` 预算耗尽 / 条件不满足）⇒ 节点按 `blocked(external-dependency)` 处置上报；🔴 禁绕过闸（其余 DENY 码位的读法见闸器退出码表）。
+⑤ 判据本体在闸器文件内：任务书面只引本口径，🔴 不复制判据正文。
+⑥ 此后所有含闸 / 构建队列段落的 brief 一律按本模板（v2/v3 口径）写；🔴 退役腿水平值口径禁再出现在任何任务书内。
+```
 ## Document provenance
 Stage docs `<YYYYMMDD>_<HHMMSS>_<topic>__<chainId>.md`; no chain ⇒ no suffix; no metadata header.
 
