@@ -4356,6 +4356,175 @@ class NodeEngine(
       }.as(pruned)
     }
 
+  /** **摘边残留判据（纯函数单点）**：该节点在**活动区**里是否还有任何挂线需要摘——
+    * 自家 `in`/`deps` 非空，或自家 `out` 里还有一条**能解析成活动节点**的边（纯
+    * `Nebula` 边与悬空名不算挂线，同 `topologicalChains` 的图成员判据），或活动区里
+    * 任何别的节点还在 `in`/`out`/`deps` 里引用它。
+    *
+    * 用途 = [[detachAbandonedNode]] 的**零写出口**（无残留 ⇒ 连一次 `mutateWithResult`
+    * 都不进 ⇒ 真零写，不是「写了同样内容」）与 [[backfillAbandonedDetach]] 的候选集。
+    * 两处共用本单点，禁二次派生（回填与工具路径判据漂移会让幂等证据失真）。 */
+  private def retireGap(snap: FlowMapState, nodeId: String): Boolean =
+    val nodes = snap.nodes
+    nodes.get(nodeId) match
+      case None => false
+      case Some(from) =>
+        val selfGap = from.in.nonEmpty || from.deps.nonEmpty ||
+          from.out.exists(e => e.to != OutEdge.NebulaTarget && OutEdge.resolveTargetId(nodes, e.to).isDefined)
+        selfGap || nodes.values.exists { n =>
+          n.id != nodeId && (n.in.contains(nodeId) || n.deps.contains(nodeId) ||
+            n.out.exists(e => OutEdge.resolveTargetId(nodes, e.to).contains(nodeId)))
+        }
+
+  /** **abandon 摘边**（cancelled 滞留主图修复批 · **案 A** 2026-09-14 作者 17:24 拍板）。
+    *
+    * 与 [[detachCancelledUpstream]]（NodeCancel 的 R4 摘除）**同族不同臂**：本方法把
+    * 退役节点从拓扑上**摘干净**，使它自成**全终态分量** ⇒ 30s 链级 sweep
+    * （`FlowMapStore.sweepCompletedChainsDetailed`）正常把它移出主图（**归档留底，
+    * 非删除**；案 E 真删除已被作者显式排除）。NodeCancel 侧一行不动。
+    *
+    * == 机械动机（考古批 `20260914_165000_cancel-render-archaeo__chain-n-bbde88b1`）==
+    * 两条取消入口结构性不对称：`cancelNode` 摘 out→Nebula，`abandon` **一条边都不摘**
+    * ⇒ 退役节点被活链粘住。现场 11 件 cancelled 中机械根因样例 = 一条 `deps` 边
+    * （`n-aa3382e0.deps=["n-8b21387d"]`，后者是另一条无关批的 wiring 节点）⇒ 所在分量
+    * 32 成员 / 25 个非终态 ⇒ `chainArchivable=false` ⇒ 整分量永不出库；且 cancelled
+    * **节点级 TTL 恒 None**（现场 11/11 实证）⇒ 没有第二条出图路径。
+    *
+    * == 语义定义（逐条；本批自决项，供复核）==
+    * ① **自家挂线清空**：`in = Nil`、`deps = Nil`、`out = List(OutEdge.nebula)`。
+    *    `out` 收束形态与 [[detachCancelledUpstream]] **逐字一致**（`OutEdge.nebula` =
+    *    `{pass,failed}`/mode=result，NodeDef 字面构造先例）；退役节点永不投递（cancelled
+    *    不可重激活），故收束不影响任何投递面。
+    *    为什么要摘 `in`（`detachCancelledUpstream` 不摘）：`FlowMapStore.topologicalChains`
+    *    的邻接是**无向**边集 `in ∪ out ∪ deps`，且**两侧都建边**（上游 `out` 与下游 `in`
+    *    各自 `link` 一次）⇒ 只摘一侧摘不掉分量成员关系。要「自成全终态分量」必须把
+    *    该节点**入射边**也清掉。
+    * ② **反向引用三面全摘**（活动区全扫，「谁还引用我」是唯一可靠方向——前向遍历在
+    *    「out 已收束但下游 in 仍引用」的不一致拓扑下恒空，见 [[reversePruneReferences]]）：
+    *      - `R.in ∋ id`（下游镜像）→ prune；**未消费的轨**（`R.deliveredTo` 不含 id）
+    *        追加 `pendingSuccession`（「待承接」标，R4 同款口径：barrier 不被以缺轨输入
+    *        自动触发成缺轨结论）。已消费的轨只 prune 不打标 —— 打标会凭空闸死一个
+    *        barrier 本已齐备的节点（abandon 接受 completed 节点，该形态实存）。
+    *      - `R.out → id`（上游前向引用，含 `:loop` 控制边）→ 摘除该边。**为什么必须摘**：
+    *        现场 11 件里 2 件（`n-060dee00` / `n-21131298`）的粘边正是**已 completed
+    *        上游的 pass 边**（`n-85ce6fbe.out ∋ n-060dee00` 等）——只摘自家边摘不掉它们
+    *        （只读模拟：仅摘 deps/out 时 9/11 出图，全摘后 11/11）。是否摘 `:loop` 回边：
+    *        **摘**——`topologicalChains` 对 loop 边同样建邻接（仅 via 标注不同），留着即
+    *        粘住；且回边目标一旦退役，其重跑路径本就断了（cancelled 不可重激活；
+    *        `reloopTo` 对「目标已不在活动区」是**显式留痕 + 跳过**，不炸）。
+    *      - `R.deps ∋ id`（下游依赖）→ prune；**退役前该节点未 completed** 时追加
+    *        `pendingSuccession`（依赖轨从未被满足 ⇒ 留可见的「待承接」缺口，而不是让下游
+    *        以缺轨自动开跑）；退役前**已 completed**（`priorStatus`）⇒ 只 prune 不打标
+    *        （该依赖已被满足过，打标会凭空闸死下游）。
+    * ③ **可见性**：被改写的每个 referrer 补发 `nodeUpdated`（与 [[detachCancelledUpstream]]
+    *    / [[reversePruneReferences]] 逐字同款：标记只落盘不推帧则前端要等下一次全量快照）；
+    *    退役节点自身由 `NodeEditTool.abandonNode` 的状态写点发帧，本方法不发。
+    * ④ **幂等**：`RetireDetach.isEmpty` ⇒ 零写、零帧；重复调用第二次恒空（回填腿据此免副作用）。
+    * ⑤ **零结算/零投递**：摘边 = 该边不存在，既非零结算也非占位投递（D5 failed 侧纪律
+    *    零改动，本方法不碰 deliverFailed 任何分支）。
+    * ⑥ `case None`（节点不在活动区）⇒ 空台账零写（调用方 `NodeEditTool.abandonNode` 同期
+    *    查无该节点 ⇒ 整个 abandon 本就是 no-op）。
+    *
+    * @param priorStatus 该节点**在 abandon 写状态之前**的现值（回填路径给当时的
+    *        `Cancelled` ⇒ 依赖轨按「未满足」处理，保守留「待承接」可见态）。 */
+  def detachAbandonedNode(nodeId: String, priorStatus: String): IO[NodeEngine.RetireDetach] =
+    // 零写出口（幂等硬约束的机械承担点）：无残留 ⇒ 一次 store.snapshot、零 mutate、
+    // 零帧、零事件 —— 不是「写了同样内容」。快照与事务之间的竞态由事务内重算兜住
+    // （真无残留则返回空台账，仍零帧）。
+    store.snapshot.flatMap { snap =>
+      if !retireGap(snap, nodeId) then IO.pure(NodeEngine.RetireDetach())
+      else
+        store.mutateWithResult { s =>
+          s.nodes.get(nodeId) match
+            case None => (s, NodeEngine.RetireDetach())
+            case Some(from) =>
+              def resolvable(e: OutEdge): Boolean =
+                e.to != OutEdge.NebulaTarget && OutEdge.resolveTargetId(s.nodes, e.to).isDefined
+              val selfHasGap = from.in.nonEmpty || from.deps.nonEmpty || from.out.exists(resolvable)
+              val others = s.nodes.values.filter(_.id != nodeId).toList
+              val inMirrors = others.filter(_.in.contains(nodeId)).map(_.id).sorted
+              val outRefs =
+                others.filter(_.out.exists(e => OutEdge.resolveTargetId(s.nodes, e.to).contains(nodeId))).map(_.id).sorted
+              val depsRefs = others.filter(_.deps.contains(nodeId)).map(_.id).sorted
+              if !selfHasGap && inMirrors.isEmpty && outRefs.isEmpty && depsRefs.isEmpty then
+                (s, NodeEngine.RetireDetach())
+              else
+                val inSet = inMirrors.toSet
+                val outSet = outRefs.toSet
+                val depsSet = depsRefs.toSet
+                val depSatisfied = priorStatus == NodeLifecycle.Completed
+                val rewired: Map[String, NodeDef] = s.nodes.map { case (id, n) =>
+                  if id == nodeId then id -> n.copy(in = Nil, deps = Nil, out = List(OutEdge.nebula))
+                  else
+                    val byIn =
+                      if inSet.contains(id) then
+                        n.copy(
+                          in = n.in.filterNot(_ == nodeId),
+                          pendingSuccession =
+                            if n.deliveredTo.contains(nodeId) then n.pendingSuccession
+                            else (n.pendingSuccession :+ nodeId).distinct)
+                      else n
+                    val byOut =
+                      if outSet.contains(id) then
+                        byIn.copy(out = byIn.out.filterNot(e => OutEdge.resolveTargetId(s.nodes, e.to).contains(nodeId)))
+                      else byIn
+                    id -> (if depsSet.contains(id) then
+                             byOut.copy(
+                               deps = byOut.deps.filterNot(_ == nodeId),
+                               pendingSuccession =
+                                 if depSatisfied then byOut.pendingSuccession
+                                 else (byOut.pendingSuccession :+ nodeId).distinct)
+                           else byOut)
+                }
+                (s.copy(nodes = rewired), NodeEngine.RetireDetach(inMirrors, outRefs, depsRefs, selfHasGap))
+        }.flatMap { case (_, d) =>
+          d.referrers.foldLeft(IO.unit) { (acc, tid) =>
+            acc >> store.getNode(tid).flatMap {
+              case Some(n) => emitUpdated(n)
+              case None    => IO.unit
+            }
+          }.as(d)
+        }
+    }
+
+  /** **存量回填腿**（cancelled 滞留主图修复批 · 腿 2，2026-09-14）：对**已 cancelled**
+    * 且仍有挂线的滞留节点补做 [[detachAbandonedNode]] 同语义摘边。
+    *
+    * 驱动 = `ProjectActor.TtlTick`（30s 节拍，**restart-effect**：宿主重启后自动继续），
+    * 排在链级归档 sweep **之前**——同一 tick 内先摘边、再出库（被摘净的分量当帧即可
+    * 归档，不等下一个 30s）。
+    *
+    * **为什么是引擎侧可复跑路径而非一次性改盘**：`flow-map.json` 的写点单点在
+    * `FlowMapStore`（前端零拓扑写通道）⇒ 手工改数据文件既不幂等也逃过审计；本腿
+    * 每次 tick 重算、幂等、留事件。
+    *
+    * **幂等（硬）**：候选集由 [[retireGap]] 判定（「仍有挂线」才入选）；摘净后该节点
+    * 不再入选 ⇒ 第二次运行**连一次 store 写都不进**（零写、零帧、零事件，不是「写了
+    * 同样内容」）。零候选 ⇒ 一次 `store.snapshot` + 直接返回。
+    *
+    * 只扫**活动区**（`store.snapshot`）；归档区成员恒终态且已出图，不在本腿范围。
+    * 返回本轮真正被摘边的节点 id（升序，审计/对账用）。 */
+  def backfillAbandonedDetach(): IO[List[String]] =
+    store.snapshot.flatMap { snap =>
+      val candidates = snap.nodes.values.toList
+        .filter(_.status == NodeLifecycle.Cancelled)
+        .filter(n => retireGap(snap, n.id))
+        .map(_.id)
+        .sorted
+      if candidates.isEmpty then IO.pure(Nil)
+      else
+        candidates
+          .traverse(id => detachAbandonedNode(id, NodeLifecycle.Cancelled).map(d => (id, d)))
+          .map(_.collect { case (id, d) if !d.isEmpty => id })
+          .flatMap { detached =>
+            detached.traverse_ { id =>
+              FlowMapEventLog.append(workspace, projectName, id, FlowMapEventLog.AbandonedDetachType,
+                s"cancelled node's incident edges detached by the 30s backfill leg (in/out/deps severed on both " +
+                  "sides ⇒ the node now forms its own terminal component; the chain sweep archives it)")
+            }.as(detached)
+          }
+    }
+
   /** R3 终态写点**即时** barrier 检查（取消静默死锁修复批，作者裁定 R3 方案 3）：
     * 终态写点已经知道「谁终态了 + 谁是它的 barrier」，信息完整——把「周期发现」变成
     * 「同步可知」。对每个 in/deps/pendingSuccession 引用 `terminalId` 的 pending/wiring
@@ -5009,6 +5178,26 @@ object NodeEngine:
     * 败方安静退出，赢家持有节点生命周期（会话、cancelSig、终态分发）。 */
   final case class StartRaceLost(nodeId: String)
       extends RuntimeException(s"start race lost ($nodeId) — winner owns the session")
+
+  /** abandon 摘边台账（**案 A 2026-09-14，作者 17:24 拍板**；写点
+    * [[NodeEngine.detachAbandonedNode]]）。三个 referrer 清单都是**活动区**里真正被
+    * 改写的节点 id（升序、去重），`selfRewired` = 被退役节点自身的 in/out/deps 确有
+    * 需要改写的挂线。四者全空 ⇒ 摘边是 no-op（幂等判据：重复调用恒空）。
+    *
+    * 字段名 = 被摘掉的**引用方向**（不是被摘的边方向）：
+    *   - `inMirrors`：`in` 里还引用退役节点、被 prune 的下游（R4 同款方向）；
+    *   - `outRefs`：`out` 里还有一条指向退役节点的边、被摘除的上游；
+    *   - `depsRefs`：`deps` 里还引用退役节点、被摘除的下游。 */
+  final case class RetireDetach(
+      inMirrors: List[String] = Nil,
+      outRefs: List[String] = Nil,
+      depsRefs: List[String] = Nil,
+      selfRewired: Boolean = false
+  ):
+    /** 顶层「有没有动过」判据（幂等出口：空 ⇒ 零写、零帧）。 */
+    def isEmpty: Boolean =
+      inMirrors.isEmpty && outRefs.isEmpty && depsRefs.isEmpty && !selfRewired
+    def referrers: List[String] = (inMirrors ++ outRefs ++ depsRefs).distinct.sorted
 
   // ── 投递可靠性批次常量（2026-09-04 四缺口）──────────────────
 
