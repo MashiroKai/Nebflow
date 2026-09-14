@@ -100,10 +100,28 @@ object MemoryTrack:
     def bytesOf(p: os.Path): Long = if os.exists(p) && os.isFile(p) then os.size(p) else 0L
     (bytesOf(nebflow.service.MemoryStore.userMemoryPath), bytesOf(nebflow.service.MemoryStore.agentMemoryPath("Nebula")))
 
+  // ── 暂停标记（#440 ①，引擎面） ──────────────────────────────────
+
+  /** 暂停标记文件名。 */
+  val PauseMarkerFileName: String = "consolidation-paused"
+
+  /** 暂停标记路径 = `<dataRoot>/memory/consolidation-paused`（生产 = `~/.nebflow/…`）。
+    *
+    * 存在 ⇒ [[run]] **跳过本轮**。载体缺口（#440）：作者的「先修后落」令**只承载在
+    * Nebula 的调度任务里**，而引擎触发的轮次（`trigger=compaction`）**结构上不可能知道
+    * 它** ⇒ 需要一个引擎侧可执行载体。切换 = `touch` / `rm` 该文件；删标记即恢复，
+    * **禁**另造开关/环境变量旁路（作者令）。
+    *
+    * `def` 非 `val`：`PathUtil.dataRoot` 可被测试换根（同 [[MemoryQueue.queuePath]]）。 */
+  def pauseMarkerPath: os.Path = PathUtil.dataRoot / "memory" / PauseMarkerFileName
+
+  /** 暂停态读数（只看存在位，不解析内容）。 */
+  def isPaused: Boolean = os.exists(pauseMarkerPath)
+
   // ── 结果模型 ───────────────────────────────────────────────────
 
   enum Status:
-    case Skipped, Completed, Failed, Timeout, DryRun, Refused
+    case Paused, Skipped, Completed, Failed, Timeout, DryRun, Refused
 
   /** `detail` = 整理 agent 的最终报告（截断）或失败原因；`pendingAtStart` = 起跑时待办
     * 条数；`outcomesWritten` = 降级路径代写的结局条数（含 ④ 对账标的终态）；`changed` =
@@ -140,6 +158,19 @@ object MemoryTrack:
   object Result:
     val Skipped: Result = Result(Status.Skipped, "no trigger (empty queue, under soft lines, no signal)", 0)
 
+    /** 暂停轮读数（#440 ①）。`detail` 以 `reason=paused` 起头 ⇒ 调用方的生命周期事件行
+      * （`memory-track-skipped`）从 detail 直接带出该字样。
+      *
+      * `pendingAtStart = 0` 是**本轮未读队列**的真实读数（不是投影）：暂停轮在 [[run]]
+      * 起点短路，对 pending 计数不作承诺，也不改其状态。 */
+    def paused: Result =
+      Result(
+        Status.Paused,
+        s"reason=paused: marker ${pauseMarkerPath} exists — this round is skipped " +
+          "(zero writes: no memory file, no outcome line, no spawn)",
+        0
+      )
+
   // ── 主入口 ─────────────────────────────────────────────────────
 
   /** 跑一轮记忆轨。**本方法自身不成败整个压缩**：一切失败都转成 [[Result]]。
@@ -160,12 +191,32 @@ object MemoryTrack:
     * [[MemoryQueue.reconcile]] 用跑后文件内容判「效果是否已在盘上」（逐字行命中 / 定位键
     * 消失两支高精度判据），确凿者由引擎标终态（独立字样，见
     * [[MemoryQueue.ResultAppliedByReconcile]]），其余照旧写 `timeout` 留 pending 重试。
-    * 这一条是「已落地却全留 pending ⇒ 整批重投造重复行」的机械闭合面（取证件 §0-2/§3.2）。 */
+    * 这一条是「已落地却全留 pending ⇒ 整批重投造重复行」的机械闭合面（取证件 §0-2/§3.2）。
+    *
+    * **入口闸 0（暂停标记，#440 ①，2026-09-13 作者裁定）**：[[run]] 起点的第一件事是读
+    * [[pauseMarkerPath]]；存在 ⇒ 直接返回 [[Result.paused]]，闸 1–4 与 spawn 全部不进
+    * （见 [[run]] 内注释）。 */
   def run(
     resources: SharedResources,
     parentSessionId: Option[String],
     parentDepth: Int = 0,
     trigger: String = MemoryQueue.TriggerCompaction
+  ): IO[Result] =
+    // ── 入口闸 0（暂停标记，#440 ①）：在**任何队列读 / 盘读之前**短路 ⇒ 该轮零写入
+    //    （不写三层记忆文件、不写 outcome 行、不置位重试引线、不 spawn）、不把任何
+    //    pending 打成终态词。pending 原样留待删标记后由既有谓词链消费（同口径见
+    //    `mempipe-init-plan` §3.1/§3.4/§3.7）。删除标记即恢复；**禁临时机制**。
+    IO.blocking(isPaused).flatMap { paused =>
+      if paused then IO.pure(Result.paused)
+      else runUnpaused(resources, parentSessionId, parentDepth, trigger)
+    }
+
+  /** [[run]] 的未暂停体（暂停短路已在 [[run]] 起点，本方法不再重复判暂停）。 */
+  private def runUnpaused(
+    resources: SharedResources,
+    parentSessionId: Option[String],
+    parentDepth: Int,
+    trigger: String
   ): IO[Result] =
     val state0       = MemoryQueue.readState()
     val notesAtStart = state0.pending
@@ -724,6 +775,9 @@ $deferred$noTargetLine$alreadyPresentLine- 步骤与输出契约严格按本会�
           case Status.Refused =>
             logger.warn(s"[memory-track] REFUSED (fail-closed preflight gate): ${attempt.detail} — no agent spawned, no outcome written, no file touched")
           case Status.Skipped => ()
+          // 暂停轮在 [[run]] 起点即返回、不进 [[finish]]（构造上不可达；显式列出只为
+          // 穷尽匹配——`-Xfatal-warnings` 下新增枚举值必须在此交代）。
+          case Status.Paused => ()
       )
     yield
       attempt.status match
@@ -735,5 +789,7 @@ $deferred$noTargetLine$alreadyPresentLine- 步骤与输出契约严格按本会�
         case Status.DryRun    => Result(Status.DryRun, attempt.report, notes.size, 0, changed, None)
         case Status.Refused   => Result(Status.Refused, attempt.detail, notes.size, 0, changed, attempt.alert)
         case Status.Skipped   => Result.Skipped
+        // 同 [[finish]] 的日志匹配：暂停轮不落 attempt（不可达，穷尽匹配用）。
+        case Status.Paused    => Result.paused
 
 end MemoryTrack

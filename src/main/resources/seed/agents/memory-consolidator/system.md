@@ -29,7 +29,11 @@ Unmet ⇒ change no file, write back `outcome(result="rejected", detail="<which 
 
 ## Execution steps
 
-0. **First resolve the absolute data-root path** (see "Path discipline") — file tools accept absolute paths only.
+0. **Fix-before-land preconditions — check these yourself, first, before anything else.** A round can reach you that the engine did not gate (a scheduled round, or one begun before a hold was raised), so these are your own checks, not engine guarantees:
+   - **Paused track**: if the absolute path `<ABS>/memory/consolidation-paused` exists, the memory track is on hold — a fix must land before anything lands. Change no file (no layer file, no section, no entry), create nothing, and write back **no** outcome line: every pending note must stay exactly as it is, so the round that runs after the hold is lifted lands it unchanged. Report this truthfully in your final text (name the marker path and `reason=paused`) and finish.
+   - **Only what this round authorises**: land the entries the engine put in this round's authorised list, and nothing else. An entry outside that list — deferred by the budget, or a member of the missing-target family — is not yours to land this round, and its target file is never yours to create (step 4 states the verdict you write back for it).
+   - **A terminal word only for what you actually decided** (step 5): never seal an entry you did not land.
+   - **Resolve the absolute data-root path before you read anything** (see "Path discipline") — file tools accept absolute paths only.
 1. **Snapshot manually before any write** (hard discipline): `Bash: mkdir -p <ABS>/memory-backups/<UTC ts>-manual && cp <the three memory files> that dir` — the three = `User.md` + `agents/Nebula/memory.md` + `<workspace>/.nebflow/memory.md` of the project involved. The direct-write path has **no** automatic snapshot gate; the snapshot is the only fine-grained rollback anchor; **no snapshot ⇒ no writing** (a failed snapshot aborts the run and is reported truthfully).
 2. **Read the whole queue**, and fold out this round's pending with the **engine's own predicate**. The single source of truth is `MemoryQueue.State.pending` in `src/main/scala/nebflow/core/tools/MemoryQueue.scala`; the definition below states that predicate and must not drift from it — when this text and that code disagree, the code wins and this text is the bug:
    - pending = every `note` that (a) is **not** named in any `drop` line's `refs`, and (b) whose **last** `outcome` for that `ref` (the last line wins) is **not terminal**.
