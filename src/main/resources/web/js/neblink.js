@@ -348,9 +348,26 @@ export function neblinkSettingsHTML() {
   // 2026-09-10: 「切换账号」joins 「退出登录」in one row (switch-account spec
   // §1 — green glass primary per the confirmed mockup; row layout styles in
   // neblink.css .neblink-account-actions).
+  // 踢旧批（2026-09-14，作者 17:07 裁定 C+B·客户端一刀）——**案 B 客户端腿**：
+  // 被服务端 `disconnect` 帧踢下线后，本机必须**被动可见**（修前零用户感知）。
+  // 形态遵一期口径（User.md:36 / messages.js:991「无横幅无提示音」）：
+  //   · 只做**状态行**（下方这一条）+ 设备行 presence 语义，无横幅、无 toast、无声音；
+  //   · `autoReconnectParked` ⇒ 明确告知「自动重连已暂停，需重新登录」——这是本批
+  //     对「须用户显式再登录」的用户侧说明（后端停摆态见 NeblinkRelayTunnel.park）。
+  // 取数 = /api/neblink/status 的 `relay.signedOutElsewhere`（本地网关↔浏览器侧加法
+  // 字段；服务端 wire 零变化）。老网关缺该字段 ⇒ undefined ⇒ 不渲染（降级安全）。
+  const kicked = neblinkState.relay?.signedOutElsewhere === true;
+  const kickedLine = kicked
+    ? `<div class="neblink-kicked-notice" role="status">
+      <span class="neblink-kicked-dot" aria-hidden="true"></span>
+      <span class="neblink-kicked-text"><strong>${t('neblink.signedOutElsewhere')}</strong> · ${t('neblink.signedOutElsewhereHint')}</span>
+    </div>`
+    : '';
+
   return `
     <div class="neblink-logged-in">
       <div class="neblink-peers-list">${deviceRows}</div>
+      ${kickedLine}
       ${peerHint}
       <div class="neblink-account-actions">
         <button class="neblink-switch-btn" id="neblink-switch-btn" type="button">${t('neblink.switchAccount')}</button>

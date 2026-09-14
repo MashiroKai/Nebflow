@@ -750,9 +750,13 @@ class RestApiRoutes(
           // tunnel is down. authRejected distinguishes "our session was
           // rejected (401/403) — self-heal territory" from a server-side 5xx,
           // which is the report §6 cross-project discriminator.
+          // 2026-09-14（踢旧批案 B）：再补本地已判定的「已在别处登录」态
+          // （`disconnect` 帧 → 停摆）——**加法字段，本地网关↔浏览器侧**，服务端
+          // wire 零变化（见 NeblinkRelayTunnel.statusJson 注释）。
           relayStatus = nebflow.neblink.NeblinkRelayTunnel.statusJson(
             relayAvailable,
-            ms.relayTunnelOpt.flatMap(_.authStatus)
+            ms.relayTunnelOpt.flatMap(_.authStatus),
+            ms.relayTunnelOpt.map(_.signedOutElsewhereAt).getOrElse(0L)
           )
           // C3 (ghost-peer fix): `online` is a real freshness judgement — the
           // peer must have appeared in a server heartbeat/discovery response
@@ -3390,25 +3394,48 @@ class RestApiRoutes(
     * fields, persist the credential, switch the config, hot-swap the client,
     * and record the user's profile info. `logtoRefresh` carries the provider
     * refresh token (AC+PKCE / silent re-login) into the persisted credential.
+    *
+    * `explicitUserAction` (2026-09-14 案 C ①(b)) is forwarded to the isolation
+    * gate; only the PKCE callback — downstream of a matched, single-use login
+    * state — passes `true`. Default `false` = the device-flow poll path, which
+    * has no server-side marker proving who started it.
     */
   private def completeDeviceEnrollment(
     ms: NeblinkService,
     resolvedUrl: String,
     json: Json,
     logtoRefresh: Option[String] = None,
-    logtoIdToken: Option[String] = None
+    logtoIdToken: Option[String] = None,
+    explicitUserAction: Boolean = false
   ): IO[org.http4s.Response[IO]] =
-    persistEnrollment(ms, resolvedUrl, json, logtoRefresh, logtoIdToken).flatMap {
-      case Right(_) =>
-        val networkId = json.hcursor.downField("networkId").as[String].toOption.getOrElse("")
-        Ok(
-          Json.obj(
-            "ok" -> true.asJson,
-            "networkId" -> networkId.asJson
+    completeDeviceEnrollmentDetailed(ms, resolvedUrl, json, logtoRefresh, logtoIdToken, explicitUserAction)
+      .flatMap {
+        case Right(networkId) =>
+          Ok(
+            Json.obj(
+              "ok" -> true.asJson,
+              "networkId" -> networkId.asJson
+            )
           )
-        )
-      case Left(err) => BadRequest(Json.obj("error" -> err.asJson))
-    }
+        // 案 C ①(a)：不再把失败压成泛化串——`err` 原文（隔离护栏拒绝时就是
+        // `EnrollGuard` 的 reason）走调用方的渲染面。
+        case Left(err) => BadRequest(Json.obj("error" -> err.asJson))
+      }
+
+  /** `completeDeviceEnrollment` 的结果通道版本：`Right(networkId)` = 已落盘并热换，
+    * `Left(err)` = **真实失败原因原文**（护栏拒绝 ⇒ `EnrollGuard` 的 reason）。
+    * 回调页需要它来透真因（案 C ①(a)）；HTTP 形态由调用方决定。 */
+  private def completeDeviceEnrollmentDetailed(
+    ms: NeblinkService,
+    resolvedUrl: String,
+    json: Json,
+    logtoRefresh: Option[String] = None,
+    logtoIdToken: Option[String] = None,
+    explicitUserAction: Boolean = false
+  ): IO[Either[String, String]] =
+    persistEnrollment(ms, resolvedUrl, json, logtoRefresh, logtoIdToken, explicitUserAction).map(
+      _.map(_ => json.hcursor.downField("networkId").as[String].toOption.getOrElse(""))
+    )
 
   /** The enrollment half of completeDeviceEnrollment — delegates to
     * NeblinkEnrollment (shared with the startup client's silent re-login
@@ -3418,7 +3445,8 @@ class RestApiRoutes(
     resolvedUrl: String,
     json: Json,
     logtoRefresh: Option[String],
-    logtoIdToken: Option[String] = None
+    logtoIdToken: Option[String] = None,
+    explicitUserAction: Boolean = false
   ): IO[Either[String, String]] =
     NeblinkEnrollment.persist(
       ms,
@@ -3428,7 +3456,8 @@ class RestApiRoutes(
       neblinkDiscovery,
       gatewayPort,
       reloginHook = Some(LogtoSilentRelogin.make(ms, IO.pure(neblinkDiscovery), gatewayPort, neblinkServerUrl(None))),
-      logtoIdToken = logtoIdToken
+      logtoIdToken = logtoIdToken,
+      explicitUserAction = explicitUserAction
     )
   end persistEnrollment
 
@@ -3567,13 +3596,36 @@ class RestApiRoutes(
                                 )
                                 .flatMap {
                                   case Right(json) =>
-                                    completeDeviceEnrollment(ms, serverUrl, json, tokens.refreshToken, tokens.idToken).attempt
+                                    // 案 C（2026-09-14 作者裁定 C+B·客户端一刀）：
+                                    // 显式登录放行 + 失败透真因。
+                                    // ①(b) 机械判据：`explicitUserAction = true` 只在
+                                    // 这里给出，而这里的唯一入口是上面
+                                    // `pkceLogin.take(state)` 命中 —— 即「回调携带的
+                                    // state 命中了一次性、进程内、由 POST
+                                    // /api/neblink/auth/start（登录按钮的端点）建立的
+                                    // 待决登录尝试」。自动路径不可能携带它：boot 客户端
+                                    // 与 silent re-login 从不调 /auth/start，也从不经过
+                                    // /auth/callback；该标记 take 一次即消费、15min 过期
+                                    // （PkceLoginSession.ExpiryMs），且 pkceLogin 是进程内
+                                    // 单飞槽（`start` 的唯一调用点 = auth/start 路由）。
+                                    // ①(a) 真因：Left 原文（护栏拒绝 ⇒ EnrollGuard 的
+                                    // reason 文本）上页面与 /auth/state 面板，不再吞成
+                                    // 「设备注册未完成」。
+                                    completeDeviceEnrollmentDetailed(
+                                      ms,
+                                      serverUrl,
+                                      json,
+                                      tokens.refreshToken,
+                                      tokens.idToken,
+                                      explicitUserAction = true
+                                    ).attempt
                                       .flatMap {
-                                        case Right(r) if r.status.isSuccess =>
+                                        case Right(Right(_)) =>
                                           pkceLogin.succeed *> htmlResponse(callbackPage(ok = true, ""), Status.Ok)
-                                        case Right(_) =>
-                                          pkceLogin.fail("Enrollment failed") *>
-                                            htmlResponse(callbackPage(ok = false, "设备注册未完成"), Status.BadGateway)
+                                        case Right(Left(err)) =>
+                                          val detail = enrollFailureDetail(serverUrl, err)
+                                          pkceLogin.fail(detail) *>
+                                            htmlResponse(callbackPage(ok = false, detail), Status.BadGateway)
                                         case Left(e) =>
                                           pkceLogin.fail(Option(e.getMessage).getOrElse("enrollment error")) *>
                                             htmlResponse(
@@ -3602,6 +3654,19 @@ class RestApiRoutes(
                         )
                 yield resp
         }
+
+  /** 案 C ①(a)（2026-09-14）：回调页 / 面板的失败文案 = **失败原文照实透出**，不再压成
+    * 泛化的「设备注册未完成」（修前 `:3576` 把 Left 丢掉、`/auth/state` 只外泄固定串
+    * `"Enrollment failed"`，用户无法判读真因）。
+    *
+    * 当且仅当该原文**就是**当前隔离护栏的拒绝文本时前置一句说明——判据是逐字符相等
+    * （护栏 reason 是 `(serverUrl, 开关)` 的纯函数，同输入同输出），因此非护栏失败
+    * （网络 / 服务端 / 缺 deviceToken）绝不会被贴上护栏标签。 */
+  private def enrollFailureDetail(serverUrl: String, err: String): String =
+    nebflow.neblink.EnrollGuard.enrollRefusal(serverUrl) match
+      case Some(reason) if reason == err =>
+        s"本机为隔离数据根，入网被本地隔离护栏拒绝（非网络故障）：$err"
+      case _ => err
 
   /** Static loopback login result page (success + error variants). The
     * frontend learns the outcome by polling /api/neblink/auth/state. */
