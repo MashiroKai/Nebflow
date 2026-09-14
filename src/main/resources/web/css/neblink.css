@@ -44,6 +44,35 @@
   word-break: break-word;
 }
 
+/* 被踢下线被动提示（踢旧批案 B，2026-09-14）——**状态行级**：
+   与设备行同族的一行，无横幅/无浮层/无动画（一期口径：无横幅无提示音）。
+   颜色全部走 base.css 既有的**主题感知**变量（亮/暗两套都由主题供给），
+   不引入新变量轴：--color-warning 只作左侧 3px 语义条 + 圆点。 */
+.neblink-kicked-notice {
+  display: flex;
+  align-items: flex-start;
+  gap: 6px;
+  margin-top: 8px;
+  padding: 6px 8px;
+  border-radius: 6px;
+  border: 1px solid var(--color-frame-border);
+  border-left: 3px solid var(--color-warning);
+  background: var(--color-frame-input-bg);
+  color: var(--color-frame-text-muted);
+  font-size: 12px;
+  line-height: 1.45;
+}
+.neblink-kicked-dot {
+  flex: 0 0 auto;
+  width: 6px;
+  height: 6px;
+  margin-top: 5px;
+  border-radius: 50%;
+  background: var(--color-warning);
+}
+.neblink-kicked-text { word-break: break-word; }
+.neblink-kicked-text strong { color: var(--color-frame-text-bright); font-weight: 600; }
+
 /* Logged-in device list — sits directly under the avatar in the unified
    account block (2026-09-06); the old inner section label is retired. */
 .neblink-logged-in {
