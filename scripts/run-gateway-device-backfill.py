@@ -39,6 +39,48 @@ therefore stay SINGLE-SOURCE in the canonical script; this driver's own counts a
 asserted against the canonical's and a mismatch is a hard failure (exit 4), never a
 silent divergence.
 
+READ-ONLY SEMANTICS (`target_unchanged`: what it covers, what it EXCLUDES)
+------------------------------------------------------------------------
+A dry run is asserted read-only on the DATA PLANE, which is exactly two things:
+
+    * the target's own committed content -- main db file sha256 + byte size, and
+    * row counts read back per table.
+
+EXPLICITLY EXCLUDED from that predicate (recorded as
+`excluded_runtime_sidecars`):
+
+    <db>-wal    <db>-shm    <db>-journal
+
+Those are database RUNTIME attachments, not input data: every SQLite connection
+lifecycle creates or reclaims them, so counting them as a data mutation would
+reject an honest dry run on the server's own landed default
+(`journal_mode=WAL` -- src/store.rs:63 「the landed default (A9)」,
+:71 `pub const DEFAULT: JournalMode = JournalMode::Wal;`). Concretely, on a WAL
+database:
+
+    (a) merely OPENING it -- including this driver's own `file:<db>?mode=ro`
+        preflight -- creates `-wal`/`-shm` (the main file is not touched), and
+    (b) the LAST connection to close cleanly checkpoints and REMOVES them. The
+        canonical script opens a read-WRITE handle (`sqlite3.connect(args.db)`,
+        even under `--dry-run`), so it does this; so does a bare
+        `sqlite3 <db> "PRAGMA …"` -- 契约 §11-3's own verification step leaves
+        the sidecars on disk and §11-5's dry run then wipes them.
+
+Their state is still RECORDED, but as a SEPARATE informational boolean
+(`target_sidecars_unchanged`) which NEVER gates the exit code.
+
+The predicate is NOT weakened -- it stays fail-closed: every byte of the main
+file and every table's row count must match, so a real INSERT/UPDATE, a
+rollback-journal replay or a WAL checkpoint still aborts with exit 4. A `-wal`
+holding uncheckpointed frames therefore aborts as well; the deploy window
+removes that case by construction (report §5③):
+
+    stop the server -> `PRAGMA wal_checkpoint(TRUNCATE)` -> drop stale
+    sidecars -> run --dry-run.
+
+Measured on BOTH journal modes (delete AND wal) -- report §5②, evidence
+`.nebflow/evidence/20260915_mvp2/backfill/r2/`.
+
 PARAMETERS
 ----------
 Names marked §8.10 are contract-verbatim and must not be renamed. Names marked ⟡
@@ -58,8 +100,15 @@ smuggled in (see the report's 「参数清单」 and 「幂等键口径」 secti
                                 (epoch ms, or ISO-8601); unset = unbounded
 ⟡   --batch-size N             批次大小: max source rows per canonical invocation
 ⟡   --idem-key-mode MODE       幂等键口径; legal domain = {gwimport-msgid} ONLY
-⟡   --workdir DIR               scratch dir for derived chunk JSON + per-chunk manifests
-    --manifest PATH             §8.10 -- aggregate audit record (JSON)
+⟡   --workdir DIR               scratch dir for derived chunk JSON + per-chunk
+                                manifests. REFUSED when it is (or is inside) the
+                                source file's dir, the target db's dir or the
+                                server repo -- the guard covers every subpath
+    --manifest PATH             §8.10 flag NAME, re-used with a WIDER semantic:
+                                ONE aggregate audit record (JSON) over all chunks
+                                (⟡), written on EVERY exit path past the pre-state
+                                snapshot -- the canonical per-chunk manifests stay
+                                at --workdir/chunk_NNNN.manifest.json
 ⟡   --call-timeout SEC          per-canonical-invocation timeout (default 120)
     --execute --i-know-this-writes
                                 🔴 REAL WRITE PATH -- author deploy window only. Every
@@ -70,8 +119,9 @@ EXIT CODES
     2 usage / input error (incl. a non-contract --idem-key-mode value)
     3 target database not migrated by an MVP-2 (or later) server yet (canonical gate)
     4 a cross-check FAILED: interface conformance, real-only SQL present, count
-      mismatch against the canonical, key-convention mismatch, or source/target
-      mutated underneath a dry run
+      mismatch against the canonical, key-convention mismatch, or the source /
+      target DATA PLANE mutated underneath a dry run (main-file sha256 + size +
+      row counts; `-wal`/`-shm`/`-journal` are excluded and reported separately)
     5 the write guard refused a non-dry-run invocation
 """
 
@@ -123,6 +173,39 @@ PREFLIGHT_TABLES = ["device_read_cursors", "device_message_receipts"]
 #: canonical 自己的 exit-3 闸所用的列（§8.10：缺列 => SCHEMA_HINT + return 3）。
 CANONICAL_GATE_COLUMN = ("messages", "sender_device_id")
 
+#: 🔴 明确排除在「输入数据面」之外的 DB **运行期附属件**（见模块头 READ-ONLY
+#: SEMANTICS）：SQLite 连接生命周期自建/自收，不是输入数据 ⇒ 不作只读判据，
+#: 只作诊断读数（`target_sidecars_unchanged`）。
+RUNTIME_SIDECAR_SUFFIXES = ("-wal", "-shm", "-journal")
+
+#: data-plane 第二判据（行数读回）覆盖的表；不存在的表记 None，不即兴建表。
+ROW_COUNT_TABLES = (
+    "messages",
+    "conversations",
+    "conversation_members",
+    "message_delivery_events",
+    "device_read_cursors",
+    "device_message_receipts",
+    "device_event_cursors",
+)
+
+#: 记录里对「判据覆盖了什么」的机器可读自述（写进每一份 --manifest）。
+SNAPSHOT_SEMANTICS = {
+    "target_unchanged_compares": [
+        "target main db file sha256",
+        "target main db file byte size",
+        "row counts read back per table (ROW_COUNT_TABLES)",
+    ],
+    "excluded_runtime_sidecars": list(RUNTIME_SIDECAR_SUFFIXES),
+    "exclusion_reason": (
+        "SQLite creates/reclaims these on every connection lifecycle (a "
+        "`file:<db>?mode=ro` open creates -wal/-shm; the last clean close "
+        "checkpoints and removes them) -- they are runtime attachments, not "
+        "input data. See the module header and 契约 §11-3/§11-5."
+    ),
+    "sidecar_state_gates_exit_code": False,
+}
+
 KEY_PREFIX_RE = re.compile(r'^KEY_PREFIX\s*=\s*"([^"]*)"', re.MULTILINE)
 
 
@@ -157,8 +240,14 @@ def parse_args(argv):
     p.add_argument("--idem-key-mode", default="gwimport-msgid", dest="idem_key_mode",
                    help="⟡ 幂等键口径; legal domain = {gwimport-msgid}")
     p.add_argument("--workdir", default=None,
-                   help="⟡ scratch dir for derived chunk files (default: fresh temp dir)")
-    p.add_argument("--manifest", default=None, help="§8.10 -- aggregate audit record (JSON)")
+                   help="⟡ scratch dir for derived chunk files (default: fresh temp "
+                        "dir); REFUSED when it is/inside the source file's dir, the "
+                        "target db's dir or the server repo (guard covers subpaths)")
+    p.add_argument("--manifest", default=None,
+                   help="§8.10 flag NAME re-used with a wider semantic (⟡): ONE "
+                        "aggregate audit record (JSON) over all chunks, written on "
+                        "every exit path past the pre-state snapshot; the canonical "
+                        "per-chunk manifests stay in --workdir/chunk_NNNN.manifest.json")
     p.add_argument("--call-timeout", type=float, default=120.0, dest="call_timeout",
                    help="⟡ per-canonical-invocation timeout, seconds")
     p.add_argument("--execute", action="store_true",
@@ -255,14 +344,121 @@ def preflight(db_path):
     return out
 
 
+def read_row_counts(db_path):
+    """Data-plane reading #2: row counts read back over a read-only connection.
+
+    Tables that do not exist are recorded as None (an un-migrated target must not
+    turn this reading into an error). Returns {"error": …} when the read-back is
+    impossible; the caller then degrades the predicate to main-file content and
+    SAYS SO (never silently)."""
+    counts = {}
+    try:
+        conn = sqlite3.connect(f"file:{db_path}?mode=ro", uri=True)
+    except sqlite3.Error as exc:
+        return {"error": f"{type(exc).__name__}: {exc}"}
+    try:
+        for table in ROW_COUNT_TABLES:
+            present = conn.execute(
+                "SELECT count(*) FROM sqlite_master WHERE type='table' AND name=?",
+                (table,),
+            ).fetchone()[0]
+            counts[table] = (
+                conn.execute(f"SELECT count(*) FROM {table}").fetchone()[0]
+                if present
+                else None
+            )
+    except sqlite3.DatabaseError as exc:
+        return {"error": f"{type(exc).__name__}: {exc}"}
+    finally:
+        conn.close()
+    return counts
+
+
+def sidecar_state(db_path):
+    """Stat the runtime attachments only -- never opens the database."""
+    state = {}
+    for suffix in RUNTIME_SIDECAR_SUFFIXES:
+        sidecar_path = db_path + suffix
+        present = os.path.exists(sidecar_path)
+        state[suffix] = {
+            "present": present,
+            "size": os.path.getsize(sidecar_path) if present else None,
+        }
+    return state
+
+
 def db_snapshot(db_path):
-    snap = file_snapshot(db_path)
-    sidecars = {}
-    for suffix in ("-wal", "-shm", "-journal"):
-        snap_path = db_path + suffix
-        sidecars[suffix] = os.path.exists(snap_path)
-    snap["sidecars"] = sidecars
-    return snap
+    """DATA-PLANE snapshot + runtime-sidecar diagnostics.
+
+    `data_plane` is the ONLY thing `target_unchanged` compares: the database's own
+    committed content (main-file sha256 + byte size + row counts read back).
+
+    `diagnostics` carries what is recorded but never gates:
+
+        runtime_sidecars_as_found   stat BEFORE this snapshot's row-count read-back
+                                    (= the state the run left / found),
+        runtime_sidecars_as_left    stat AFTER it (= what this snapshot operation
+                                    itself leaves behind: the read-back opens a
+                                    `mode=ro` connection, which CREATES `-wal`
+                                    /`-shm` on a WAL db and -- being read-only --
+                                    does not reclaim them on close).
+
+    `target_sidecars_unchanged` compares the `as_found` pair, i.e. the state the
+    dry run itself found and left, not the artefacts of this snapshot call."""
+    base = file_snapshot(db_path)
+    found = sidecar_state(db_path)
+    row_counts = read_row_counts(db_path)
+    left = sidecar_state(db_path)
+    return {
+        "path": base["path"],
+        "exists": base["exists"],
+        "data_plane": {
+            "sha256": base.get("sha256"),
+            "size": base.get("size"),
+            "row_counts": row_counts,
+        },
+        "diagnostics": {
+            "mtime_ns": base.get("mtime_ns"),
+            "runtime_sidecars_as_found": found,
+            "runtime_sidecars_as_left": left,
+        },
+        "excluded_runtime_sidecars": list(RUNTIME_SIDECAR_SUFFIXES),
+    }
+
+
+def compare_target_data_plane(before, after):
+    """(data_plane_unchanged, sidecars_unchanged, detail) for one db snapshot pair."""
+    bd, ad = before["data_plane"], after["data_plane"]
+    counts_before, counts_after = bd["row_counts"], ad["row_counts"]
+    detail = {
+        "sha256_before": bd["sha256"],
+        "sha256_after": ad["sha256"],
+        "size_before": bd["size"],
+        "size_after": ad["size"],
+        "excluded_runtime_sidecars": after["excluded_runtime_sidecars"],
+    }
+    unreadable = [c.get("error") for c in (counts_before, counts_after) if "error" in c]
+    if unreadable:
+        # Degrade EXPLICITLY (never silently): main-file sha256+size still gate.
+        detail["row_counts_comparison"] = "unavailable"
+        detail["row_counts_error"] = unreadable[0]
+        counts_equal = True
+    else:
+        detail["row_counts_before"] = counts_before
+        detail["row_counts_after"] = counts_after
+        counts_equal = counts_before == counts_after
+        detail["row_counts_comparison"] = "equal" if counts_equal else "differ"
+    unchanged = bool(
+        before["exists"] == after["exists"]
+        and bd["sha256"] == ad["sha256"]
+        and bd["size"] == ad["size"]
+        and counts_equal
+    )
+    sidecars_unchanged = (
+        before["diagnostics"]["runtime_sidecars_as_found"]
+        == after["diagnostics"]["runtime_sidecars_as_found"]
+    )
+    return unchanged, sidecars_unchanged, detail
 
 
 def load_history(path):
@@ -514,15 +710,14 @@ def main(argv):
         },
         "source_before": src_before,
         "target_before": db_before,
+        "snapshot_semantics": SNAPSHOT_SEMANTICS,
         "preflight": pre,
     }
 
     # canonical's own gate: no `messages.sender_device_id` => it returns 3.
     gate_table, gate_column = CANONICAL_GATE_COLUMN
     if not pre.get("columns", {}).get(f"{gate_table}.{gate_column}"):
-        record["finished_at"] = int(time.time())
-        if args.manifest:
-            write_manifest(args.manifest, record)
+        finalize(record, args, source, db_path)
         print(f"error: target db {db_path} lacks {gate_table}.{gate_column} — start an "
               "MVP-2 (or later) server binary against it ONCE (additive migration), "
               "then retry. §8.11 preflight: "
@@ -595,6 +790,8 @@ def main(argv):
                 timeout=args.call_timeout, cwd=workdir,
             )
         except subprocess.TimeoutExpired:
+            record["calls"] = calls
+            finalize(record, args, source, db_path)
             return die(4, f"canonical invocation {index} exceeded --call-timeout "
                           f"{args.call_timeout}s")
         calls.append({
@@ -607,9 +804,7 @@ def main(argv):
         })
         if proc.returncode != 0:
             record["calls"] = calls
-            record["finished_at"] = int(time.time())
-            if args.manifest:
-                write_manifest(args.manifest, record)
+            finalize(record, args, source, db_path)
             print(proc.stdout, end="")
             print(proc.stderr, end="", file=sys.stderr)
             return proc.returncode if proc.returncode in (2, 3) else 4
@@ -642,28 +837,68 @@ def main(argv):
     # ---- cross-checks -----------------------------------------------------
     classified = totals["planned"] + len(skipped_rows)
     if classified != len(kept):
+        finalize(record, args, source, db_path)
         return die(4, f"count cross-check failed: driver in-scope rows={len(kept)} but "
                       f"canonical planned+skipped={classified} — row shaping would "
                       "have diverged")
 
-    src_after = file_snapshot(source)
-    db_after = db_snapshot(db_path)
-    record["source_after"] = src_after
-    record["target_after"] = db_after
-    record["source_unchanged"] = src_before == src_after
-    record["target_unchanged"] = db_before == db_after
+    # ---- read-only check + audit record (⚠ landed BEFORE any failure return) --
+    finalize(record, args, source, db_path)
     if not args.execute and not (record["source_unchanged"] and record["target_unchanged"]):
-        return die(4, "dry run MUTATED its inputs: "
+        check = record["read_only_check"]
+        return die(4, "dry run MUTATED its inputs (data plane = main-file sha256 + "
+                      "size + row counts): "
                       f"source_unchanged={record['source_unchanged']} "
-                      f"target_unchanged={record['target_unchanged']}")
+                      f"target_unchanged={record['target_unchanged']} "
+                      f"row_counts_comparison={check['row_counts_comparison']} "
+                      f"sha256 {str(check['sha256_before'])[:16]}… -> "
+                      f"{str(check['sha256_after'])[:16]}… size {check['size_before']} -> "
+                      f"{check['size_after']}. Runtime sidecars "
+                      f"{record['target_after']['excluded_runtime_sidecars']} are EXCLUDED "
+                      "from this predicate; their state is reported separately as "
+                      f"target_sidecars_unchanged={record['target_sidecars_unchanged']}. "
+                      f"[audit record already written: {args.manifest or '(no --manifest)'}]")
 
     record["readings"] = build_readings(record, totals, by_reason, per_conversation)
-    record["finished_at"] = int(time.time())
-    if args.manifest:
+    if args.manifest:                            # re-land with the readings included
         write_manifest(args.manifest, record)
 
     report(record)
     return 0
+
+
+def finalize(record, args, source, db_path):
+    """Take the AFTER snapshots, compute the two read-only booleans and LAND the
+    audit record.
+
+    🔴 Called on EVERY exit path past the pre-state snapshot (success, canonical
+    failure, timeout, count cross-check, mutation) so that a failure leaves an
+    auditable record carrying `source_after` / `target_after` /
+    `source_unchanged` / `target_unchanged` -- previously the mutation branch
+    returned with the manifest still holding the mid-chunk version (three keys
+    missing), so the one reading that mattered most never reached the audit.
+
+    Returns the data-plane verdict (`target_unchanged`)."""
+    src_after = file_snapshot(source)
+    db_after = db_snapshot(db_path)
+    unchanged, sidecars_unchanged, detail = compare_target_data_plane(
+        record["target_before"], db_after
+    )
+    record["source_after"] = src_after
+    record["target_after"] = db_after
+    record["source_unchanged"] = record["source_before"] == src_after
+    record["target_unchanged"] = unchanged
+    record["target_sidecars_unchanged"] = sidecars_unchanged
+    record["read_only_check"] = detail
+    record["finished_at"] = int(time.time())
+    if args.manifest:
+        write_manifest(args.manifest, record)
+    if detail["row_counts_comparison"] == "unavailable":
+        print("warning: row-count read-back unavailable "
+              f"({detail.get('row_counts_error')}) — the read-only predicate is "
+              "reduced to main-file content (sha256 + size) for this run",
+              file=sys.stderr, flush=True)
+    return unchanged
 
 
 def build_readings(record, totals, by_reason, per_conversation):
@@ -693,8 +928,25 @@ def write_manifest(path, record):
 def report(record):
     readings = record["readings"]
     scope = record["scope"]
+    check = record["read_only_check"]
     print(f"mode={record['mode']} source_unchanged={record['source_unchanged']} "
-          f"target_unchanged={record['target_unchanged']}")
+          f"target_unchanged={record['target_unchanged']} "
+          f"target_sidecars_unchanged={record['target_sidecars_unchanged']} "
+          f"row_counts_comparison={check['row_counts_comparison']}")
+    print("read_only_scope: data_plane="
+          f"{SNAPSHOT_SEMANTICS['target_unchanged_compares']} "
+          f"excluded_runtime_sidecars={record['target_after']['excluded_runtime_sidecars']}")
+    print(f"target_main_db: sha256 {str(check['sha256_before'])[:16]}… -> "
+          f"{str(check['sha256_after'])[:16]}… size {check['size_before']} -> "
+          f"{check['size_after']} exists {record['target_before']['exists']} -> "
+          f"{record['target_after']['exists']}")
+    print(f"target_row_counts: {json.dumps(check.get('row_counts_before'), sort_keys=True)} "
+          f"-> {json.dumps(check.get('row_counts_after'), sort_keys=True)}")
+    print(f"target_sidecars: before="
+          f"{json.dumps(record['target_before']['diagnostics']['runtime_sidecars_as_found'], sort_keys=True)} "
+          f"after={json.dumps(record['target_after']['diagnostics']['runtime_sidecars_as_found'], sort_keys=True)} "
+          f"(as_left_after="
+          f"{json.dumps(record['target_after']['diagnostics']['runtime_sidecars_as_left'], sort_keys=True)})")
     print(f"source: peers={record['source_shape']['peers']} "
           f"rows={record['source_shape']['rows']} sha256={record['source_before']['sha256'][:16]}…")
     print(f"scope: peers_in_scope={len(scope['peers_in_scope'])} "
