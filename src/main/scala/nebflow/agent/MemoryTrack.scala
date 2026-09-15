@@ -1,7 +1,9 @@
 package nebflow.agent
 
 import cats.effect.{Deferred, IO}
+import io.circe.Json
 import nebflow.actor.*
+import nebflow.core.node.NodeRunner
 import nebflow.core.tools.{MemoryHistory, MemoryQueue}
 import nebflow.core.{NebflowLogger, PathUtil}
 import nebflow.core.project.{ProjectMemory, ProjectStore}
@@ -54,6 +56,33 @@ import scala.concurrent.duration.*
  * **并发**：同一会话天然串行（同一时刻只有一个 `pendingCompaction`）；跨会话并发
  * 未增闸（与 spec §5 R5「并发上限」口径一致），跨进程互斥**本批不做**（P-4 代裁 =
  * 明确接受风险，见 spec §5 R7/§3.6 选项 (ii)）。
+ *
+ * ═══════════════════════════════════════════════════════════════════════
+ * **2026-09-15 B 腿（压缩管线三件批）——轨内会话接前端：面板可见**
+ * ═══════════════════════════════════════════════════════════════════════
+ *
+ * **作者规格（2026-09-15 逐字）**：「我的期待是 subagent 直接根据队列中的记忆来编辑
+ * 记忆文件，压缩好了之后，正好合成注入新的上下文记忆」——以及现场疑问「我在 subagent
+ * 面板里并没有看到这样一个 agent 在跑」。
+ *
+ * **考古结论（现取，非推断）**：本轨**本来就是**真 subagent（`spawn` 起独立
+ * `AgentActor` + 注册 `AgentKind.Ephemeral`），不是 Nebula 内联自干；但 `spawn` 把
+ * `wsSend` 传成恒 `IO.unit`（旧注：「轨内事件不进前端（噪音面）」）⇒ 会话在注册表里
+ * **有记录、无活帧**。而 subagent 面板的行**由 `agentStart` 活帧创建**
+ * （`main.js` `onMessage('agentStart', …)`），`getActiveAgents` 快照只在 WS 建连 /
+ * 重连时重拉一次 ⇒ 正常会话里这一行**从不出现**（现场实证：本机 2026-09-15 当天
+ * 6 次 `memory-track-completed`，面板零行）。
+ *
+ * **改动（唯一改动面 = 事件接线）**：`spawn` 的 `wsSend` 改走
+ * [[NodeRunner.routeSubagentWsSend]]——全部子代理 spawn 路径的既有契约（Delegate /
+ * SubTask / 节点 / 分发器同款）：`agentStart` 建行、`agentDone` 收行
+ * （`AgentActor.finishTurn` 的 subagent 分支同步发 `Done`）。父 wsSend 不可得
+ * （headless / 无 WS 会话）⇒ 回落恒 `IO.unit`（与改动前同参，零行为漂移）。
+ *
+ * **本批零改动面**：闸 0–4（暂停标记 / dry-run 计划 / 预算闸 / 快照闸 / 写前台账）、
+ * `shouldRun` 触发谓词、硬软超时、降级与超时对账、`brief` 简报、变更史、三层记忆文件
+ * 本体、`queue.jsonl` 读写口径、[[nebflow.service.MemoryBudget]] /
+ * [[nebflow.service.MemoryWriteGate]] 判据（**未动，禁自造旁路**）。
  */
 object MemoryTrack:
 
@@ -200,7 +229,8 @@ object MemoryTrack:
     resources: SharedResources,
     parentSessionId: Option[String],
     parentDepth: Int = 0,
-    trigger: String = MemoryQueue.TriggerCompaction
+    trigger: String = MemoryQueue.TriggerCompaction,
+    parentWsSend: Option[Json => IO[Unit]] = None
   ): IO[Result] =
     // ── 入口闸 0（暂停标记，#440 ①）：在**任何队列读 / 盘读之前**短路 ⇒ 该轮零写入
     //    （不写三层记忆文件、不写 outcome 行、不置位重试引线、不 spawn）、不把任何
@@ -208,7 +238,7 @@ object MemoryTrack:
     //    `mempipe-init-plan` §3.1/§3.4/§3.7）。删除标记即恢复；**禁临时机制**。
     IO.blocking(isPaused).flatMap { paused =>
       if paused then IO.pure(Result.paused)
-      else runUnpaused(resources, parentSessionId, parentDepth, trigger)
+      else runUnpaused(resources, parentSessionId, parentDepth, trigger, parentWsSend)
     }
 
   /** [[run]] 的未暂停体（暂停短路已在 [[run]] 起点，本方法不再重复判暂停）。 */
@@ -216,7 +246,8 @@ object MemoryTrack:
     resources: SharedResources,
     parentSessionId: Option[String],
     parentDepth: Int,
-    trigger: String
+    trigger: String,
+    parentWsSend: Option[Json => IO[Unit]]
   ): IO[Result] =
     val state0       = MemoryQueue.readState()
     val notesAtStart = state0.pending
@@ -265,7 +296,7 @@ object MemoryTrack:
                     //    判定因此可审计、可复算，不依赖 agent 自快照。落盘失败只 WARN：台账是
                     //    审计面而非落地屏障（它本身不阻止重投；阻止重投靠 ④）。
                     writePreflightLedger(authorized, files, before, state0.pendingCount, set, trigger) *>
-                    attemptRun(resources, parentSessionId, parentDepth, trigger, authorized, plan)
+                    attemptRun(resources, parentSessionId, parentDepth, trigger, authorized, plan, parentWsSend)
                       .timeoutTo(hardTimeoutMs.millis, IO.pure(Attempt(Status.Timeout, s"hard timeout after ${hardTimeoutMs}ms", "", None)))
                       .handleErrorWith(e => IO.pure(Attempt(Status.Failed, s"${e.getClass.getSimpleName}: ${e.getMessage}", "", None)))
         _ = MemoryTrackSignal.take() // 本轮已跑：信号消费（无论成败——重试引线由降级路径重新置位）
@@ -434,7 +465,9 @@ object MemoryTrack:
   private final case class Handle(
     agentRef: ActorRef[AgentCommand],
     bridgeRef: ActorRef[AgentEvent],
-    sessionId: String
+    sessionId: String,
+    /** 本会话的面板事件面（[[panelWsSend]] 的产物）——[[cleanup]] 用它发收行帧。 */
+    panelSend: Json => IO[Unit]
   )
 
   private def attemptRun(
@@ -443,7 +476,8 @@ object MemoryTrack:
     parentDepth: Int,
     trigger: String,
     notes: Vector[MemoryQueue.Note],
-    plan: MemoryQueue.Plan
+    plan: MemoryQueue.Plan,
+    parentWsSend: Option[Json => IO[Unit]]
   ): IO[Attempt] =
     resources.agentLibrary.get(AgentName).flatMap {
       case None =>
@@ -457,7 +491,7 @@ object MemoryTrack:
       case Some(defn) =>
         for
           started <- IO.monotonic
-          spawned <- spawn(resources, defn, parentSessionId, parentDepth, trigger, notes, plan)
+          spawned <- spawn(resources, defn, parentSessionId, parentDepth, trigger, notes, plan, parentWsSend)
           outcome <- spawned match
             case Left(err) =>
               IO.pure(Attempt(Status.Failed, err, "", Some(alertOf(s"spawn failed: $err"))))
@@ -477,6 +511,47 @@ object MemoryTrack:
           outcome
     }
 
+  /** 轨内会话的**面板事件面**（B 腿 2026-09-15；`private[agent]` = spec 直测面）。
+    *
+    * 判据只有一条：**父 wsSend 可得 ⇒ 与全部子代理 spawn 路径同契约**
+    * （[[NodeRunner.routeSubagentWsSend]] 注入 `rootSessionId` / `sessionId` /
+    * `nodeSessionId` 三键，前端 `sessionBgAgents` 按 `rootSessionId` 归桶、行键 = `agentId`
+    * = 本会话 id）。父 wsSend 不可得（headless / 无 WS 会话 / 测试夹具不传）⇒ 回落恒
+    * `IO.unit`，与改动前逐字同参（**零行为漂移**：不传参的调用方不看面板面）。
+    *
+    * **会话级生命周期帧被滤掉**（[[SessionScopedPanelTypes]]）：本轨的子会话**不是一个
+    * 会话**，而是一行面板条目——它产出 `done` / `sessionBusy` 是**分类错误**（那两帧的
+    * 语义是「会话 X 的回合结束了」，而本会话无视图、无输入条、无队列）。现取实测（本批
+    * spec 的整帧集读数）：不过滤时前端会为一个永不存在的会话写下
+    * `state.lastTerminalAt` / `state.sessionModelInfo` 条目（后者**持久化进 localStorage**）
+    * 并触发一次空队列 drain——全是纯噪声。行自己的终帧是 `agentDone`（见 [[cleanup]]）。
+    *
+    * 为什么不是「只发 agentStart / agentDone 两帧」：面板行的**可点开性**与其它子代理同源
+    * ——popup 读的是本会话自己的流事件；只发首尾两帧会造出一行「能点开但里面是空的」的
+    * 半成品，比不发更坏（同族先例：`NodeRunner.emitSubagentPanelDone` 的注释已把
+    * 「帧与活体事件契约全同构」立为纪律）。故整条流照原样路由（会话级两帧除外）。 */
+  private[agent] def panelWsSend(
+    parentWsSend: Option[Json => IO[Unit]],
+    rootSessionId: String,
+    sessionId: String
+  ): Json => IO[Unit] =
+    parentWsSend match
+      case Some(base) =>
+        val routed = NodeRunner.routeSubagentWsSend(base, rootSessionId, sessionId)
+        json => if isSessionScopedLifecycle(json) then IO.unit else routed(json)
+      case None => (_: Json) => IO.unit
+
+  /** 会话级生命周期帧类型（[[panelWsSend]] 的过滤集；键名随 `AgentStreamEvent.toJson`）。
+    *
+    * `done` = 会话回合终帧（`isSubagent=false` 分支，`AgentActor.finishTurn`：
+    * `isSubagent = parentRef.isDefined`，而本轨 spawn 时 `parentRef = None` ⇒ 落会话级）；
+    * `sessionBusy` = 输入条 busy 闸。两者的路由键都是**本会话自身** id（现取实测：
+    * `{"type":"done","sessionId":"memconsolidate-…"}`），与会话级语义绑定 ⇒ 对本轨无意义。 */
+  private[agent] val SessionScopedPanelTypes: Set[String] = Set("done", "sessionBusy")
+
+  private[agent] def isSessionScopedLifecycle(json: Json): Boolean =
+    json.hcursor.get[String]("type").toOption.exists(SessionScopedPanelTypes.contains)
+
   private def spawn(
     resources: SharedResources,
     defn: AgentDef,
@@ -484,10 +559,14 @@ object MemoryTrack:
     parentDepth: Int,
     trigger: String,
     notes: Vector[MemoryQueue.Note],
-    plan: MemoryQueue.Plan
+    plan: MemoryQueue.Plan,
+    parentWsSend: Option[Json => IO[Unit]]
   ): IO[Either[String, (Handle, Deferred[IO, Either[String, List[Message]]])]] =
     val sessionId = s"memconsolidate-${UUID.randomUUID().toString.take(8)}"
     val root = parentSessionId.getOrElse(sessionId)
+    // 面板事件面：一次构造、两处使用（AgentActor 的 wsSend + [[cleanup]] 的收行帧），
+    // 保证建行帧与收行帧落在同一键空间（[[panelWsSend]] 的判据单点）。
+    val panelSend = panelWsSend(parentWsSend, root, sessionId)
     for
       workRoot <- IO.blocking(java.nio.file.Files.createTempDirectory("nb-memory-").toString)
       deferred <- Deferred[IO, Either[String, List[Message]]]
@@ -495,7 +574,13 @@ object MemoryTrack:
         AgentActor(
           agentDef = defn,
           resources = resources,
-          wsSend = (_: io.circe.Json) => IO.unit, // 轨内事件不进前端（噪音面）；失败只留 lifecycle 日志
+          // 面板接线（B 腿 2026-09-15）：改动前恒 `IO.unit`（轨内事件不进前端，
+          // 理由「噪音面」）⇒ 注册表有条目、前端零活帧 ⇒ subagent 面板永不建行
+          // （行由 `agentStart` 活帧创建；`getActiveAgents` 快照只在 WS 建连时重拉）。
+          // 现走 [[panelWsSend]]——全部子代理 spawn 路径的既有契约
+          // （Delegate / SubTask / 节点 / 分发器同款），`agentStart` 建行、
+          // `agentDone` 收行，会话级生命周期帧被滤掉。
+          wsSend = panelSend,
           depth = parentDepth + 1,
           parentRef = None,
           sessionId = Some(sessionId),
@@ -552,7 +637,7 @@ object MemoryTrack:
         ))
       )
       _ <- (agentRef ! AgentCommand.UserInput(text = brief(workRoot, trigger, notes, plan), replyTo = Some(bridgeRef))).void
-    yield Right((Handle(agentRef, bridgeRef, sessionId), deferred))
+    yield Right((Handle(agentRef, bridgeRef, sessionId, panelSend), deferred))
 
   /** 轨内简报：自包含（agent 无历史消息）+ 绝对数据根（文件工具只吃绝对路径）。
     *
@@ -617,6 +702,18 @@ $deferred$noTargetLine$alreadyPresentLine- 步骤与输出契约严格按本会�
 
   private def cleanup(resources: SharedResources, handle: Handle): IO[Unit] =
     for
+      // ── 面板收行帧（B 腿 2026-09-15）：**唯一**终态出口 ──────────────────
+      // 行由 `agentStart` 建（见 [[spawn]] 的接线），而本轨 spawn 时
+      // `parentRef = None` ⇒ `AgentActor.finishTurn` 的终帧走**会话级** `done`
+      // （`isSubagent = parentRef.isDefined`），前端 `done` 清行分支只认 `node-` /
+      // `dispatcher-` 前缀 ⇒ 那一帧清不掉本行（幽灵行）。故收行帧由本轨自己发：
+      // 形状与 [[NodeRunner.emitSubagentPanelDone]] 逐字同构（`agentId` = 行键），
+      // 位置在 `attemptRun` 的 `.guarantee(cleanup)` ⇒ **覆盖全部出口**
+      // （Completed / Failed / Timeout / cancel / 外层硬超时），不依赖 agent 是否
+      // 来得及把回合跑完。投递失败只吞（面板面不是落地屏障）。
+      _ <- handle
+        .panelSend(Json.obj("type" -> Json.fromString("agentDone"), "agentId" -> Json.fromString(handle.sessionId)))
+        .handleErrorWith(_ => IO.unit)
       _ <- resources.agentRegistry.update(_ - handle.sessionId)
       _ <- resources.actorSystem.stop(handle.agentRef).handleErrorWith(_ => IO.unit)
       _ <- resources.actorSystem.stop(handle.bridgeRef).handleErrorWith(_ => IO.unit)

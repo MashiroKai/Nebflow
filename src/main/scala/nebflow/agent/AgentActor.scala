@@ -4333,11 +4333,17 @@ object AgentActor extends AgentCore with AgentSession:
                     // 条目保留 + 事件 memory-track-failed / memory-track-timeout。
                     // 口径只对根会话（depth 0）生效——与前置 hook 的 Root profile 同域
                     // （子会话压缩没有记忆面，跑轨即纯浪费；空队列时轨内谓词亦会跳过）。
+                    //
+                    // B 腿（2026-09-15）：把本会话的 wsSend 交给轨 ⇒ 轨内整理的 subagent
+                    // 走标准子代理事件契约（NodeRunner.routeSubagentWsSend）进 subagent
+                    // 面板（`agentStart` 建行 / `agentDone` 收行）。改动前轨内 wsSend 恒
+                    // `IO.unit` ⇒ 面板永不建行（作者现场疑问的解）。wsSend 不可得时轨内
+                    // 自动回落恒 no-op（见 MemoryTrack.panelWsSend），零行为漂移。
                     val memoryTrackIO: IO[Unit] =
                       if depth != 0 then IO.unit
                       else
                         MemoryTrack
-                          .run(resources, state.sessionId, depth)
+                          .run(resources, state.sessionId, depth, parentWsSend = Some(state.wsSend))
                           .handleErrorWith { e =>
                             IO {
                               logAgentEvent(
