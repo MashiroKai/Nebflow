@@ -319,12 +319,12 @@ function render() {
 
 /** 设备入口行（②）：与「新的朋友」**同族形态**（复刻 contacts.js `:249-271` 的
  *  结构逐件：`.fm-nf-entry` 容器 + `.fm-nf-icon` 图标槽 + `.fm-nf-label` 标签 +
- *  `.fm-row-badge` 计数 + `.fm-nf-chevron` 态图标；开关态变量 `devicesExpanded`）。
+ *  `.fm-nf-chevron` 态图标；开关态变量 `devicesExpanded`）。
  *  🔴 复用面（零新增折叠样式）：类名全部取自既有 `.fm-nf-*` 家族，CSS 吃
  *  `friends.css:443-475`（`.fm-nf-entry` / `:hover` / `:focus-visible` / `.fm-nf-icon` /
- *  `.fm-nf-label` / `.fm-nf-chevron`）；计数徽章吃好友行既有 `.fm-row-badge`。 */
+ *  `.fm-nf-label` / `.fm-nf-chevron`）。
+ *  ⚠ 与 nf 入口的**唯一**形态差异 = 不挂 `.fm-row-badge`（理由见行内注释）。 */
 function buildDevicesEntry() {
-  const devs = devicePeers();
   const entry = el('div', 'fm-nf-entry fm-devices-entry');
   entry.setAttribute('role', 'button');
   entry.setAttribute('tabindex', '0');
