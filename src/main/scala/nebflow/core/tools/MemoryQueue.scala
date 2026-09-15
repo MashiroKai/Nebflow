@@ -5,7 +5,7 @@ import io.circe.parser.parse
 import io.circe.syntax.*
 import nebflow.core.{NebflowLogger, PathUtil}
 import nebflow.core.project.{ProjectDef, ProjectMemory, ProjectStore}
-import nebflow.service.{MemoryBudget, MemoryStore}
+import nebflow.service.{MemoryBudget, MemoryStore, MemoryWriteGate}
 
 import java.nio.charset.StandardCharsets
 import java.security.MessageDigest
@@ -580,7 +580,7 @@ object MemoryQueue:
         Bucket.WouldApply    -> "will be landed (authorized)",
         Bucket.WouldObsolete -> "NOT landed — terminal verdict only (superseded / already present; obsolete is the consumer's call)",
         Bucket.WouldRetry    -> "NOT landed — RETRYABLE missing target (file / section / entry); never a terminal word, stays pending, the target file must NOT be created by the consumer",
-        Bucket.WouldDefer    -> "NOT authorized this round — stays pending (budget fail-closed)"
+        Bucket.WouldDefer    -> "NOT authorized this round — stays pending (budget fail-closed: a net-growth note would push an over-cap file further over; net-shrinking notes are exempt)"
       ).foreach { (b, why) =>
         val rows = items.filter(_.bucket == b)
         sb ++= s"-- ${Bucket.label(b)} (${rows.size}) — $why\n"
@@ -688,6 +688,14 @@ object MemoryQueue:
     * **硬顶** ⇒ 该条起（含）该文件后续全部条目转 `would-defer`（**超硬顶即停，剩余留
     * pending**）；authorized 为空而仍有 pending ⇒ `refusal` 非空（本轮拒绝落地）。
     *
+    * **收缩豁免（作者 2026-09-15 裁定 A；判据单源 = [[MemoryWriteGate.shrinkExempt]]）**：
+    * 「推过硬顶」只对**净增**条目成立——本条落笔后字节 **≤** 落笔前字节（真收缩：`remove` /
+    * `replace_section` / 净缩的 `update`）**既不受硬顶停点约束、也不被停点闩吞掉**；净增条目
+    * （含 `append`、净增的 `replace_section`）**照旧**被截断。裁定逐字 = 「满格时放行删除/
+    * 替换类条目落盘，**append 类仍拒至回到预算内**」；理由是超限文件的自救路径（`remove` /
+    * `replace_section`）不得被自己的前置闸掐死（`MemoryWriteGate` 的纯收缩豁免同旨，
+    * `seed/agents/memory-consolidator/system.md:68` 记同一设计初衷）。
+    *
     * 取代检测（与 D0 机械近似同规）：同一 (target, located line) 上多条 update/remove
     * 只有**末条**有效、其余 `would-obsolete`；append 的 content 被同目标后续 remove 的
     * match 命中 ⇒ 同样 `would-obsolete`。**「末条」按真时序 `(atMs, id)` 判**（与
@@ -749,6 +757,24 @@ object MemoryQueue:
     val stopped  = scala.collection.mutable.Set.empty[String]
     val items    = Vector.newBuilder[PlanItem]
 
+    /** **收缩豁免（消费侧适格声明）**：本轨就是队列的消费前置闸，落盘面的适格身份在此声明
+      * ——`shrinkChannel = true`，是否真放行仍由闸的**字节比**独立裁决
+      * （[[MemoryWriteGate.shrinkExempt]]，判据**单源**，🔴 **不按动作名**）。
+      *
+      * 适格面 = 「本条落笔后该目标字节 **≤** 落笔前字节」——`remove` / `replace_section` /
+      * 净缩的 `update` 一视同仁；净增的 `replace_section`、`append` **照旧**被硬顶截断。
+      * `cur` = 该条**落地时刻**的模拟内容（不是原盘内容：前序条目已生效）。
+      *
+      * 为什么需要（作者 2026-09-15 裁定 A）：改动前停点判据（`projected > 硬顶`）与停点闩
+      * （`stopped`）**不区分方向** ⇒ 目标一旦超硬顶，**连会把它拉回硬顶的收缩条目也被一并
+      * 扣发** ⇒ 授权集为空 ⇒ `refusal` 非空 ⇒ 零 spawn ⇒ 文件永远超顶、该目标全部条目
+      * 永远 pending（「超限文件的自救路径被自己的前置闸掐死」）。裁定把它对齐到闸已文档化的
+      * 设计初衷（`seed/agents/memory-consolidator/system.md:68`：over the cap ⇒ consolidate
+      * first（`remove` / `replace_section`）and then write—never land over-cap）。 */
+    def shrinksFile(cur: String, n: Note): Boolean =
+      applyOp(cur, n.action, n.section, n.matchText, n.content)
+        .exists(next => MemoryWriteGate.shrinkExempt(utf8Bytes(cur), utf8Bytes(next), shrinkChannel = true))
+
     ordered.foreach { n =>
       val caps        = capsOf(n.target)
       val fileOpt     = files.get(n.target)
@@ -769,7 +795,7 @@ object MemoryQueue:
         else if fileOpt.isEmpty then retryOf(s"target-missing: no memory file for '$targetLabel' — retryable")
         else if supersededByLine.contains(n.id) then bucketOf("superseded-by-later: same located line, a later note wins")
         else if supersededByRemove.contains(n.id) then bucketOf("superseded-by-later: a later remove matches this append")
-        else if stopped.contains(n.target) then
+        else if stopped.contains(n.target) && !shrinksFile(sim.getOrElse(n.target, ""), n) then
           PlanItem(n.id, n.target, n.action, n.atMs, Bucket.WouldDefer, s"budget: stopped earlier — projected bytes already over the hard cap (${caps._2} B)", None, 0L)
         else
           val cur    = sim.getOrElse(n.target, "")
@@ -791,7 +817,10 @@ object MemoryQueue:
                 retryOf("apply-miss: locator no longer resolves on the simulated content — retryable")
               case Some(next) =>
                 val projected = utf8Bytes(next)
-                if enforceBudgetCap && projected > caps._2 then
+                // 收缩豁免：真收缩（POST ≤ PRE）不受硬顶停点约束——判据由闸单源裁决，
+                // 与 [[MemoryWriteGate.decide]] 的 `exempt` 逐字同值（防两面判据漂移）。
+                val exempt    = MemoryWriteGate.shrinkExempt(utf8Bytes(cur), projected, shrinkChannel = true)
+                if enforceBudgetCap && !exempt && projected > caps._2 then
                   stopped += n.target
                   PlanItem(n.id, n.target, n.action, n.atMs, Bucket.WouldDefer,
                     s"budget: applying would reach $projected B > hard cap ${caps._2} B — stopping here (remaining notes stay pending)",

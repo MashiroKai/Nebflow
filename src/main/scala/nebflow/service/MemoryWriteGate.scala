@@ -44,8 +44,13 @@ import java.nio.charset.StandardCharsets
  *   - 适格 + 实际净增 ⇒ **照过闸**（判据是字节比，不是动作名）；
  *   - `shrinkChannel = false`（缺省 = 现全部生产调用方）⇒ **永不豁免**（WS `saveMemory`
  *     的整文件覆盖不是收缩通道：超限文件的自救路径是 `replace_section`）。
- *   - 🔴 现场读数：本参数当前**零生产 true 调用方**——`MemoryEdit` 已零落盘（只入队），
- *     队列消费方落地时应为 `replace_section` 条目传 `true`；本批先落**契约锚点**。
+ *   - 🔴 现场读数：本闸**自身**的落盘调用面（[[MemoryStore.saveFile]] / `ProjectMemory.save`）
+ *     仍是**零 `true` 调用方**——`MemoryEdit` 已零落盘（只入队）；WS `saveMemory` 的整文件
+ *     覆盖**不是**收缩通道（本文件 :45-46），超限文件的自救路径必须是 `replace_section`。
+ *     **队列消费侧的适格声明（2026-09-15 memshrinkgate 批）落在这道闸之外**：消费落地由
+ *     整理会话经通用 `Edit`/`Write` 完成（本对象**不覆盖**直写路径，见边界 :19-21），故
+ *     消费侧的前置闸 = [[nebflow.core.tools.MemoryQueue]] 的预算停点，由它传
+ *     `shrinkChannel = true` 并用同一 [[shrinkExempt]] 独立裁决（判据单源，防两面漂移）。
  *
  * 判据来源（零新语义）：硬顶 / 软线一律取自 [[MemoryBudget]]（唯一常量源），本对象
  * 不复制数值、不新增阈值、不改判据函数。
@@ -79,6 +84,23 @@ object MemoryWriteGate:
   final class Rejected(val code: String, val detail: String)
       extends RuntimeException(s"MemoryWriteGate: rejected [$code] — $detail")
 
+  /** **收缩豁免判据（单源）**：`shrinkChannel` 只声明「本调用方走收缩通道」这一**身份**，
+    * 是否真豁免一律由**字节比**独立裁决（POST-WRITE ≤ PRE-WRITE）——🔴 **不按动作名**，
+    * 适格 + 净增**照过闸**。
+    *
+    * 两个消费方，同一个判据（作者 2026-09-15 裁定 A 的机械形态 = 「满格时放行删除/替换类
+    * 条目落盘，append 类仍拒至回到预算内」，定性 = 把闸对齐其已文档化设计初衷）：
+    *   - 本闸的预算分支（`exempt = shrinkExempt(pre, bytes, shrinkChannel)`）；
+    *   - [[nebflow.core.tools.MemoryQueue]] 的预算停点 + 停点闩（消费侧前置计划）——
+    *     目标超硬顶时，缩容方向（真收缩）条目照旧放行、净增条目照旧被截断。
+    *
+    * 抽成单源的理由：两处若各写一份「收缩」判据，迟早出现「计划面放行、落盘闸拒绝」
+    * （或反之）的判据漂移——那正是「超限文件的自救路径被自己的前置闸掐死」的死锁成因。
+    *
+    * 纯函数、零 IO（供 [[nebflow.core.tools.MemoryQueue]] 的只读计划面共用）。 */
+  def shrinkExempt(preBytes: Long, newBytes: Long, shrinkChannel: Boolean): Boolean =
+    shrinkChannel && newBytes <= preBytes
+
   /** 现文件字节 = 豁免判据的 PRE-WRITE 腿。目标不存在 ⇒ 0（首次写入 ⇒ 任何内容都是净增，
     * 不豁免）；读元数据失败 ⇒ 也按 0（保守：不豁免；后续预算闸与快照照走，无静默分支）。
     * 只读元数据，从不写盘。 */
@@ -86,7 +108,10 @@ object MemoryWriteGate:
     try if os.exists(path) then os.size(path).toLong else 0L
     catch case _: Exception => 0L
 
-  /** 过闸判定（fail-closed）。`Right` = 允许落盘；`Left` = 调用方**必须中止**（零写入）。
+  /** **纯收缩豁免判据（单源）**——本闸与消费侧前置计划（[[nebflow.core.tools.MemoryQueue]]
+    * 的预算停点）共用同一个字节比口径，见 [[shrinkExempt]]。
+    *
+    * 过闸判定（fail-closed）。`Right` = 允许落盘；`Left` = 调用方**必须中止**（零写入）。
     *
     * `shrinkChannel` = 调用方声明自己走收缩通道（`replace_section`）；是否真豁免由本方法用
     * **字节比**独立判定（见头注「纯收缩豁免」）——适格 + 净增照过闸。
@@ -95,7 +120,7 @@ object MemoryWriteGate:
     * 放行路径上的写前快照。**拒绝路径零文件写**：不落目标文件、不落快照。 */
   def decide(target: String, path: os.Path, newContent: String, shrinkChannel: Boolean = false): Either[Rejected, Unit] =
     val bytes = newContent.getBytes(StandardCharsets.UTF_8).length.toLong
-    val exempt = shrinkChannel && bytes <= preSizeBytes(path)
+    val exempt = shrinkExempt(preSizeBytes(path), bytes, shrinkChannel)
     val budget: Either[Rejected, Unit] =
       if exempt then Right(())
       else
