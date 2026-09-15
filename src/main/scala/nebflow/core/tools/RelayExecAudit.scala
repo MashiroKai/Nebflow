@@ -179,6 +179,10 @@ object RelayExecAudit:
    * @param action         工具名（Bash/Read/…）
    * @param command        原文命令/入参摘要（**本方法内 redact**——调用方拿不到
    *                       「忘了 redact」的机会）
+   * @param kind           下发种类标记（xdev 批 2026-09-15 新增，**加性 JSON 键、
+   *                       缺省即旧行为**）："" = 普通下发（不落键，行形态与旧
+   *                       逐字节一致）；"probe" = 画像只读探针。审计行无机器
+   *                       消费方（人类 grep 面），缺键 = 旧行为。
    */
   def record(
     sourceDeviceId: String,
@@ -187,10 +191,11 @@ object RelayExecAudit:
     action: String,
     command: String,
     projectRoot: String,
-    cwd: String
+    cwd: String,
+    kind: String = ""
   ): IO[Unit] =
     IO.blocking {
-      val entry = Json.obj(
+      val base = JsonObject(
         "ts" -> tsFormat.format(Instant.now()).asJson,
         "deviceId" -> sourceDeviceId.asJson,
         "targetDeviceId" -> targetDeviceId.asJson,
@@ -200,6 +205,8 @@ object RelayExecAudit:
         "projectRoot" -> projectRoot.asJson,
         "cwd" -> cwd.asJson
       )
+      // kind 加性键：非空才落键 ⇒ 普通下发行与旧形态逐字节一致（缺省即旧行为）
+      val entry = if kind.nonEmpty then Json.fromJsonObject(base.add("kind", kind.asJson)) else Json.fromJsonObject(base)
       val path = auditFile
       writeLock.synchronized {
         Files.createDirectories(path.getParent)

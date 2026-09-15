@@ -120,25 +120,34 @@ class RemoteExecutorAuditSpec extends CatsEffectSuite:
         yield
           val (result, lines, accepted, srcId) = out
           assertEquals(result, Right("remote-ok"), s"relay 下发必须成功: $result")
-          assertEquals(accepted, List(true), "且真的走了 relay（fixture 收到 live session 的 exec）")
+          // xdev 批（2026-09-15）：execute 首触新增只读画像探针（kind=probe）——探针
+          // 同走 p2p→relay 链（fixture 直接应答 relay exec ⇒ 探针的 relay 腿成功），
+          // 故 fixture 收到 2 次 relay exec（探针 + 业务）。
+          assertEquals(accepted, List(true, true), "且真的走了 relay（fixture 收到 live session 的 exec ×2：探针 + 业务）")
           // 2026-09-11 P2P 直连修复批（A）改口径：本用例的 peer 是**真实不可达**地址
-          // (`127.0.0.1:9`)、且无 relay 记忆也无负缓存 ⇒ 新语义下**必须**先试 P2P，
-          // 失败才回落 relay。所以「一次逻辑下发」在此形态下会产生**两行**审计——
-          // `via=p2p` 后紧跟同一调用的 `via=relay`。改前 `skipP2p = !directOnline`
-          // 恰好把这两行压成一行（也正是 9/9 relay 的成因链 (F)）。
-          // 这与方案 §4.3 反控-2「回退必须可观测」的期望形态一致：p2p→relay 成对。
+          // (`127.0.0.1:9`)。xdev 批（2026-09-15）后首触形态 = **3 行**：
+          //   [p2p(probe), relay(probe)] 探针成对 + [relay] 业务行——探针的 P2P
+          //   失败留下负证据（p2pFailures, 60s TTL）与 relay 路径记忆 ⇒ 业务下发
+          //   按**既有**负证据机制合理跳过 P2P 直走 relay（A 批「唯一旁路 = 真实
+          //   失败证据」语义的正确联动，非静默）。
+          // 这与方案 §4.3 反控-2「回退必须可观测」的期望形态一致：回退有行。
           val vias = lines.map(l => parse(l).fold(e => fail(s"invalid JSONL: $e"), identity).hcursor)
           assertEquals(
             vias.map(_.downField("via").as[String].toOption),
-            List(Some("p2p"), Some("relay")),
-            s"P2P 探测失败 ⇒ 回落 relay，两行审计成对（一次逻辑下发 p2p 一行 + relay 一行）: $lines"
+            List(Some("p2p"), Some("relay"), Some("relay")),
+            s"探针 p2p/relay 成对 + 业务 relay（探针负证据 ⇒ 业务跳 P2P），3 行审计: $lines"
+          )
+          assertEquals(
+            vias.map(_.downField("kind").as[String].toOption),
+            List(Some("probe"), Some("probe"), None),
+            "前两行 = 探针（kind=probe），业务行无 kind 键 = 旧形态"
           )
           assertEquals(
             vias.flatMap(_.downField("targetDeviceId").as[String].toOption),
-            List("peer-1", "peer-1"),
-            "两行指向同一对端（同一次下发）"
+            List("peer-1", "peer-1", "peer-1"),
+            "三行指向同一对端（探针 + 业务同一次首触）"
           )
-          // 成功那一行（relay）的字段与脱敏契约不变
+          // 成功那一行（业务的 relay）的字段与脱敏契约不变
           val c = parse(lines.last).fold(e => fail(s"invalid JSONL: $e"), identity).hcursor
           assertEquals(
             c.downField("deviceId").as[String].toOption,

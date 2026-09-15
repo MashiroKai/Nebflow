@@ -137,28 +137,36 @@ class RemoteExecutorP2pAuditSpec extends CatsEffectSuite:
       val (result, reqs, lines, srcId) = out
       // —— 先证「真走了 p2p」：stub 对端真收到那次下发 ——
       assertEquals(result, Right("p2p-ok"), s"p2p 下发必须由 stub 对端应答: $result")
-      assertEquals(reqs.length, 1, s"stub 对端恰好收到 1 次 p2p 下发: $reqs")
-      val (hitPath, devHeader, body) = reqs.head
-      assertEquals(hitPath, "/api/neblink/remote-exec", "p2p 落点路径")
-      assertEquals(devHeader, srcId, "p2p 请求携带本机 deviceId 头（证明是本机直连下发）")
-      assertEquals(
-        parse(body).toOption.flatMap(_.hcursor.downField("action").as[String].toOption),
-        Some("Bash"),
-        s"下发体里的 action: $body"
-      )
-      // —— 再断言接线点产出：恰 1 行、via=p2p、字段合契约 ——
-      assertEquals(lines.length, 1, s"一次逻辑下发恰 1 行审计: $lines")
-      val c = parse(lines.head).fold(e => fail(s"invalid JSONL: $e"), identity).hcursor
-      assertEquals(c.downField("via").as[String].toOption, Some("p2p"), "审计行必须来自 p2p 接线点")
-      assertEquals(c.downField("deviceId").as[String].toOption, Some(srcId), "来源 = 本机 NebLink 身份")
-      assertEquals(c.downField("targetDeviceId").as[String].toOption, Some("peer-1"))
-      assertEquals(c.downField("action").as[String].toOption, Some("Bash"))
-      assertEquals(c.downField("projectRoot").as[String].toOption, Some("/tmp/qa-p2p-proj"))
-      val shown = c.downField("command").as[String].toOption.getOrElse(fail("command missing"))
+      // xdev 批（2026-09-15）：execute 首触新增**只读画像探针**（kind=probe）⇒
+      // stub 收到 2 次下发：探针（探测命令）+ 业务命令。顺序 = 探针先（ensureProfile
+      // 完成后才下发业务）。
+      assertEquals(reqs.length, 2, s"stub 对端恰收 2 次 p2p 下发（探针+业务）: $reqs")
+      val (probeReq, bizReq) = (reqs(0), reqs(1))
+      // —— 再断言接线点产出：恰 2 行（探针 kind=probe 1 行 + 业务 1 行）、字段合契约 ——
+      assertEquals(lines.length, 2, s"探针 1 行 + 业务 1 行，恰 2 行审计: $lines")
+      val rows = lines.map(l => parse(l).fold(e => fail(s"invalid JSONL: $e"), identity).hcursor)
+      val probeRows = rows.filter(_.downField("kind").as[String].toOption.contains("probe"))
+      val bizRows = rows.filterNot(_.downField("kind").as[String].toOption.contains("probe"))
+      assertEquals(probeRows.length, 1, "探针行恰 1（重试/审计语义与业务下发同源）")
+      assertEquals(bizRows.length, 1, "业务行恰 1")
+      val bizRow = bizRows.head
+      assertEquals(bizRow.downField("via").as[String].toOption, Some("p2p"), "审计行必须来自 p2p 接线点")
+      assertEquals(bizRow.downField("deviceId").as[String].toOption, Some(srcId), "来源 = 本机 NebLink 身份")
+      assertEquals(bizRow.downField("targetDeviceId").as[String].toOption, Some("peer-1"))
+      assertEquals(bizRow.downField("action").as[String].toOption, Some("Bash"))
+      assertEquals(bizRow.downField("projectRoot").as[String].toOption, Some("/tmp/qa-p2p-proj"))
+      val shown = bizRow.downField("command").as[String].toOption.getOrElse(fail("command missing"))
       assert(!shown.contains(secret), s"明文密钥落盘: $shown")
       assert(!shown.contains("P2PSECRET"), s"明文密钥落盘: $shown")
       assert(shown.contains("API_TOKEN=[redacted"), s"密钥位已遮蔽: $shown")
       assert(shown.contains("ssh user@10.1.1.7"), s"非密钥部分保留可读: $shown")
+      // —— 探针行正控（xdev 批新增）：kind=probe、只读命令、同样记对端 ——
+      assertEquals(probeRows.head.downField("targetDeviceId").as[String].toOption, Some("peer-1"))
+      assertEquals(probeRows.head.downField("action").as[String].toOption, Some("Bash"))
+      val probeCmd = probeRows.head.downField("command").as[String].toOption.getOrElse(fail("probe command missing"))
+      assert(probeCmd.contains("cwd="), s"探针行携带探测命令（可审计）: $probeCmd")
+      assert(!probeReq._2.isEmpty, "探针下发同样携带本机 deviceId 头")
+      assertEquals(bizReq._2, srcId, "业务下发携带本机 deviceId 头")
     }
   }
 
@@ -190,9 +198,14 @@ class RemoteExecutorP2pAuditSpec extends CatsEffectSuite:
       val msg = result.fold(e => e.message, ok => s"unexpected success: $ok")
       assert(msg.startsWith("Cannot reach"), s"期望可重试类连接失败: $result")
       // 重试 3 次（1s+2s+3s 退避）⇒ 4 次网络尝试；耗时下界证明重试链真的跑了
+      // （xdev 批：探针先行也走同一条重试链 ⇒ elapsed 覆盖「探针 + 业务」两轮）。
       assert(elapsed >= 5.seconds, s"重试必须真的发生（退避 1+2+3s）: elapsed=$elapsed")
-      assertEquals(lines.length, 1, s"失败 + 重试后仍恰 1 行审计（不按尝试次数记）: $lines")
-      val c = parse(lines.head).fold(e => fail(s"invalid JSONL: $e"), identity).hcursor
+      // xdev 批：2 行 = 探针（kind=probe，失败也记）+ 业务（失败也记）；重试均不重复记行。
+      assertEquals(lines.length, 2, s"探针 + 业务各恰 1 行审计: $lines")
+      val rows = lines.map(l => parse(l).fold(e => fail(s"invalid JSONL: $e"), identity).hcursor)
+      val bizRows = rows.filterNot(_.downField("kind").as[String].toOption.contains("probe"))
+      assertEquals(bizRows.length, 1, "业务行恰 1（探针行另有 kind=probe 标记）")
+      val c = bizRows.head
       assertEquals(c.downField("via").as[String].toOption, Some("p2p"), "审计行必须来自 p2p 接线点")
       assertEquals(c.downField("targetDeviceId").as[String].toOption, Some("peer-1"))
       assertEquals(c.downField("action").as[String].toOption, Some("Bash"))

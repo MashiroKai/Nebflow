@@ -2162,12 +2162,20 @@ private[agent] trait AgentCore:
             import cats.effect.unsafe.implicits.global
             val id = ms.identity.unsafeRunSync()
             val peersList = ms.peers.unsafeRunSync()
+            // xdev 批（2026-09-15）：画像摘要进 # Devices（root 令①）。**只读缓存**
+            // ——本函数是提示词装配的同步路径，绝不在此发起探测（探测挂在
+            // RemoteExecutor 首触下发前）。load = 本地文件读 + 失败回空 Map。
+            val profiles = DeviceProfile.loadSyncSafe()
+            val nowMs = System.currentTimeMillis()
             val localStr =
               s"local (${id.deviceName})" +
                 (if id.userDescription.nonEmpty then s" -${id.userDescription}" else "")
             val peerStrs =
               peersList.map { p =>
-                p.deviceName + (if p.userDescription.nonEmpty then s" -${p.userDescription}" else "")
+                val base = p.deviceName + (if p.userDescription.nonEmpty then s" -${p.userDescription}" else "")
+                // 1-2 行/台：画像摘要 + 回拉约定提示（缺失画像 ⇒ 零追加 = 现状形态）
+                base + DeviceProfile.renderSummary(p, profiles, nowMs) +
+                  DeviceProfile.renderCaptureHint(p, profiles)
               }
             val allDevices = (localStr :: peerStrs).mkString("; ")
             val deviceHint =
