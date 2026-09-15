@@ -113,10 +113,10 @@ const H8080_BEFORE = execSync('lsof -nP -iTCP:8080 -sTCP:LISTEN -t 2>/dev/null |
 // ── stub LLM（OpenAI 兼容流式；脚本化工具调用）──
 const captured = [];
 let nodeEditCount = 0;
-// Fire the Nebula→Task dispatch exactly once. Without this guard the stub
+// Fire the Nebula→project dispatch (Mail) exactly once. Without this guard the stub
 // loops forever: the dispatcher's completion delivery back to Nebula contains
 // the task text ("[Dispatcher 'qa-f1f2' · task: F1F2 dispatch probe…]"), which
-// re-matches the 'F1F2 dispatch' branch and re-triggers Task → dispatcher →
+// re-matches the 'F1F2 dispatch' branch and re-triggers Mail → dispatcher →
 // delivery → … (observed R2 run 21:26: the loop kept Nebula perpetually busy,
 // starving the later selfask injection and the text-path bar probe).
 let taskFired = false;
@@ -151,6 +151,9 @@ function askCall(id, question, marker) {
 function classify(body) {
   const msgs = body.messages || [];
   const s = JSON.stringify(msgs);
+  // 分发器提示词现为英文（ProjectActor.scala:592
+  // `You are the task dispatcher for project "<name>"`）——2026-09-15 scriptfix 批修复。
+  if (s.includes('You are the task dispatcher for project')) return 'dispatcher';
   if (s.includes('你是项目') && s.includes('任务分发器')) return 'dispatcher';
   if (s.includes('F1F2-PROBE-A')) return 'node-A';
   if (s.includes('F1F2-PROBE-B')) return 'node-B';
@@ -206,14 +209,16 @@ function streamFor(body) {
     ]);
   }
   if (turn.includes('F1F2 dispatch')) {
-    // Nebula 面 Mail 已退役（2026-09-06 工具面裁撤批）——项目触发走 Task 工具
-    // （TaskTool.scala: TriggerDispatcher 同内核）。一次性（taskFired 闸，
-    // 防分发器投递回环再触发）。
+    // 项目触发入口唯一 = `Mail(address="project:<name>")`：`Task` 工具**已删净退役**
+    // （2026-09-12「一个 Mail 统一」批，B3-a + B5-c；registry.scala:94-98）
+    // ⇒ 2026-09-15 scriptfix 批由 `Task` 改用 `Mail`（原 `Task` 调用会得
+    // AgentCore 的 `Tool not available: Task`，场景链首步即塌）。
+    // 一次性（taskFired 闸，防分发器投递回环再触发）。
     if (taskFired) return finalOk();
     taskFired = true;
     return done([
       chunk({ role: 'assistant', content: '' }),
-      chunk(toolCall('call_stub_task', 'Task', { project: PROJECT, task: 'F1F2 dispatch probe：建两个 probe 节点（NodeEdit 剧本驱动）。' })),
+      chunk(toolCall('call_stub_mail', 'Mail', { address: `project:${PROJECT}`, message: 'F1F2 dispatch probe：建两个 probe 节点（NodeEdit 剧本驱动）。' })),
       chunk({}, 'tool_calls'),
     ]);
   }
@@ -348,13 +353,13 @@ const nebulaSessions = (sessList.json?.sessions || sessList.json || []).filter((
 const sid = nebulaSessions[0]?.id;
 check('root Nebula session found (boot-created)', sessList.status === 200 && !!sid, JSON.stringify(nebulaSessions[0] || sessList.json).slice(0, 140));
 
-// dispatch turn：Task→qa-f1f2（同步等回合完成——Task 立即返回）
+// dispatch turn：Mail(address="project:qa-f1f2")→qa-f1f2（同步等回合完成——投递立即返回）
 {
   const t = await api(`/sessions/${sid}/turn`, 'POST', {
-    content: 'F1F2 dispatch：立即调用 Task 工具，project=qa-f1f2，task 任意。除此之外什么都不要做。',
+    content: 'F1F2 dispatch：立即调用 Mail 工具（address="project:qa-f1f2"），message 任意。除此之外什么都不要做。',
     timeoutSec: 120,
   });
-  check('Nebula dispatch turn completes (Task fired)', t.status === 200, `status=${t.status}`);
+  check('Nebula dispatch turn completes (Mail fired)', t.status === 200, `status=${t.status}`);
 }
 
 // 等两节点 AskUserQuestion 请求到 stub（节点提问后轮次挂起，无后续请求）
