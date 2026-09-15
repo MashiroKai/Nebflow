@@ -375,7 +375,8 @@ function buildDeviceRows() {
  *     `.neblink-peer-name` / `.neblink-peer-status`（`neblink.css:91/104/117/127/144-145`）；
  *   · 平台图标 = `platformDisplay(platform).icon`（`neblink.js:456-469` 单点，禁第二份映射）；
  *   · 在线徽章 = `presenceBadgeHTML`（`neblink.js:292-301` 唯一实现，判据/文案零复制）；
- *   · 显示名 = `deviceLabel`（`messages.js:2510-2513` 单点：描述 > 设备名 > id）。
+ *   · 显示名 = `deviceLabel`（`messages.js:2607-2626` 单点：描述 > 设备名 > 占位文案；
+ *     2026-09-15 22:27 作者卡答 ⇒ 面板行兜底与窗头同键，**不回落 id**）。
  *  交互 = 点击开设备会话窗（`openDeviceChat` → `renderChatModal`，与好友窗同一渲染器）。
  *  ⚠ 与设置页旧行的**唯一**差异 = 无「远程更新」键组（随 ④ 摘除，见报告被移除项）。 */
 function deviceRow(d) {
