@@ -1,6 +1,6 @@
 package nebflow.core.project
 
-import cats.effect.{IO, Ref}
+import cats.effect.{Deferred, IO, Ref}
 import fs2.Stream
 import io.circe.Json
 import io.circe.parser.parse as jsonParse
@@ -70,16 +70,26 @@ class MergeVerdictGateSpec extends CatsEffectSuite:
   override def beforeEach(context: munit.BeforeEach): Unit = ProjectRuntimeRegistry.clear
   override def afterEach(context: munit.AfterEach): Unit = ProjectRuntimeRegistry.clear
 
-  /** 立即应答的捕获 LLM（节点会话跑满真实栈：spawn → 首轮 → completed）。 */
-  private class EchoLlm:
+  /** 立即应答的捕获 LLM（节点会话跑满真实栈：spawn → 首轮 → completed）。
+    *
+    * `gate`（V9 专用确定性同步，p547b 2026-09-15）：Some 时 `sendStream` 先等闸
+    * 放行再产出。用途：重激活触发的 detached 重跑腿（`NodeTools.runDetached`
+    * → `startNode`）在 **调 LLM 之前**就把节点翻成 `running`（runWithAgent 的
+    * CAS 翻转），测试由此能把重跑**确定性按在 `running`**、在无竞速的固定状态
+    * 下读取中间态——修前该读取是 Wiring/Pending/running 三态竞速窗口（flake
+    * 根因，见 V9 用例注释）。其余用例不传闸（默认 None），行为逐字不变。 */
+  private class EchoLlm(gate: Option[Deferred[IO, Unit]] = None):
     val inputs: Ref[IO, List[String]] = Ref.unsafe[IO, List[String]](Nil)
+    private val waitGate: IO[Unit] = gate match
+      case Some(d) => d.get
+      case None    => IO.unit
     def handle: LlmHandle[IO] = new LlmHandle[IO]:
       def send(req: LlmRequest): IO[LlmResponse] = IO.raiseError(new RuntimeException("send not expected"))
       def sendStream(
           req: LlmRequest,
           onAttempt: Option[nebflow.shared.FallbackAttempt => IO[Unit]] = None
       ): Stream[IO, StreamChunk] =
-        Stream.eval(inputs.update(_ :+ req.messages.map(_.textContent).mkString("\n"))) >>
+        Stream.eval(waitGate >> inputs.update(_ :+ req.messages.map(_.textContent).mkString("\n"))) >>
           Stream(StreamChunk.TextDelta("ok"), StreamChunk.Done(None, None))
 
   private def mkResources(system: ActorSystem, tmp: os.Path, llm: LlmHandle[IO]): IO[SharedResources] =
@@ -535,6 +545,20 @@ class MergeVerdictGateSpec extends CatsEffectSuite:
   //     `fail` 同被挡，见 V7）⇒ merge 纹丝不动；
   //   · 变异臂（删掉 `lastVerdict = None` 这一行、回退成 `fresh.lastVerdict`）：
   //     `lastVerdict` 仍是 `pass` ⇒ 闸放行 ⇒ merge 启动并 completed ⇒ 本用例必红。
+  //
+  // 🔧 flake 根因修复（p547b 2026-09-15，#547 队首 ④/⑥ 同源）：本用例修后曾在
+  // 轻载环境绿、合跑/本机红（`MergeVerdictGateSpec.scala:593 … got running`）。
+  // 机制 = **裸竞速**，与跨 suite 共享态无关（单跑单独跑也红，本批实测 3/3）：
+  // 重激活写点（NodeTools.scala 重激活 mutate）之后 `NodeTools.runDetached` 在
+  // 后台 fiber 里做「重投递 + barrier 结算 + startNode」，而 runWithAgent 在调
+  // LLM **之前**就把节点 CAS 翻成 `running` ⇒ 修前测试在 edit 返回后立刻
+  // `node(rt,…)` 读中间态，读到 Wiring/Pending 才绿、读到 running 即 ：593 红
+  // ——断言钉在了一个**无同步保证的瞬态窗口**上（负载决定输赢 ⇒ flaky）。
+  // 修法 = **确定性同步**（EchoLlm 放行闸，见该类注释）：等 `running`（确定态）
+  // → 断言中间态 → 放行 → 等 `completed`（确定态）→ 回扫。断言集**只收紧不
+  // 放宽**：原「Wiring‖Pending」瞬态窗口断言改为钉住唯一的确定性中间态
+  // `running`，并新增重跑收口面两条（v2 completed + 判词仍空，净 +2 断言）；
+  // 机械面（判词作废）与判据面（merge 不启动）逐字不变。
 
   private def mkCtx(res: SharedResources, system: ActorSystem, ws: os.Path): ToolContext =
     ToolContext(
@@ -554,9 +578,12 @@ class MergeVerdictGateSpec extends CatsEffectSuite:
   test("V9 (#245): re-activating a verifier voids its PREVIOUS verdict — the stale 'pass' must not open the gate for the downstream merge on the next sweep") {
     val ws = tempRoot / "ws-v9"; os.makeDir.all(ws)
     val system = ActorSystem(s"mvg-v9-${scala.util.Random.nextInt(100000)}")
-    val llm = new EchoLlm
     val now = System.currentTimeMillis()
     for
+      // 放行闸：重激活的 detached 重跑腿会被按在 `running`（EchoLlm 等放行），
+      // 中间态读取从竞速窗口变成确定态（flake 根因修复，见上方注释块）。
+      gate <- Deferred[IO, Unit]
+      llm = new EchoLlm(Some(gate))
       res <- mkResources(system, tempRoot, llm.handle)
       rt <- mountProject("mvg-v9", ws, system, res)
       _ <- seed(rt,
@@ -575,7 +602,15 @@ class MergeVerdictGateSpec extends CatsEffectSuite:
       edit <- nodeEdit(nodeInput("mvg-v9", "ver",
         "task" -> Json.fromString("verifier re-check round 2"),
         "reactivateCompleted" -> Json.fromBoolean(true)), ctx)
+      // 确定性中间态：detached 重跑腿把节点翻到 `running` 后被 LLM 闸按住——
+      // 该状态在放行前不再变化，读取无竞速。
+      _ <- waitStatus(rt, "n-ver", Set(NodeLifecycle.Running))
       v1 <- node(rt, "n-ver")
+      // 放行重跑：EchoLlm 应答 → 会话经真实栈跑完 → completed（新判词只能来自
+      // node_report，本夹具不发 ⇒ completed 后判词仍空）。
+      _ <- gate.complete(()).void
+      _ <- waitStatus(rt, "n-ver", Set(NodeLifecycle.Completed))
+      v2 <- node(rt, "n-ver")
       // 重激活后回扫：闸读到的必须是「当下没有判词」，而不是上一轮的 pass
       _ <- rt.engine.settleRunnableSweep()
       _ <- settleWindow
@@ -589,9 +624,17 @@ class MergeVerdictGateSpec extends CatsEffectSuite:
       // ① 机械面：上一轮判词随重激活作废（重跑中的复核位**当下没有判词**）
       assertEquals(v1.lastVerdict, None,
         s"re-activation is a fresh identity re-run: the previous verdict MUST be voided, got ${v1.lastVerdict}")
-      assert(v1.status == NodeLifecycle.Wiring || v1.status == NodeLifecycle.Pending,
-        s"the verifier must have left its terminal state (re-run armed), got ${v1.status}")
+      // 原瞬态窗口断言（`Wiring‖Pending`，竞速）改为钉住确定性中间态：重跑已
+      // 真的在飞（节点离开终态、新会话已开跑并被闸按住）——同一语义「re-run
+      // armed」的无竞速形态。
+      assertEquals(v1.status, NodeLifecycle.Running,
+        s"the re-run must be in flight (the detached leg left the terminal state and the fresh session is open), got ${v1.status}")
       assertEquals(v1.result, None, "the previous result is cleared by the same field family (unchanged behaviour)")
+      // ①b 重跑收口面（新增确定性钉）：重跑经真实栈跑完、判词仍空
+      assertEquals(v2.status, NodeLifecycle.Completed,
+        "the fresh round must complete through the real stack (gated EchoLlm released)")
+      assertEquals(v2.lastVerdict, None,
+        "the completed fresh round must NOT inherit the previous verdict (a new verdict can only come from node_report)")
       assert(audit.exists((t, id, _) => t == "reactivated" && id == "n-ver"),
         s"re-activation must leave its audit line, got ${audit.map((t, id, _) => (t, id)).distinct}")
       // ② 判据面：陈旧 pass 不得放开闸 ⇒ barrier 已清而 merge 纹丝不动

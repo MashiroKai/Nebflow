@@ -133,6 +133,9 @@ for (const [locale, mcpTitle] of [['zh-CN', 'MCP 服务器'], ['en', 'MCP Server
         mcpCards: content.querySelectorAll('[data-mcp]').length,
         mcpToggles: content.querySelectorAll('.cfg-toggle[data-mcp]').length,
         emptyMcp: [...content.querySelectorAll('.cfg-empty')].some(e => /MCP/.test(e.textContent)),
+        // 2026-09-06 合并钉（设备区入账号区）：账号区 = 头像入口 + neblink 区内嵌。
+        avatarEntry: !!content.querySelector('#settings-avatar-entry'),
+        neblinkArea: !!content.querySelector('.neblink-login-section, .neblink-logged-in'),
       };
     });
     expect(dump.titles, `[${locale}] MCP section title must be gone`).not.toContain(mcpTitle);
@@ -140,17 +143,24 @@ for (const [locale, mcpTitle] of [['zh-CN', 'MCP 服务器'], ['en', 'MCP Server
     expect(dump.mcpCards, `[${locale}] no [data-mcp] cards`).toBe(0);
     expect(dump.mcpToggles, `[${locale}] no MCP toggles`).toBe(0);
     expect(dump.emptyMcp, `[${locale}] no "未配置 MCP" empty state`).toBe(false);
-    // Adjacent sections survive the amputation-free removal.
+    // Adjacent sections survive; Device Link lives inside the unified account
+    // block (author 2026-09-06, 7caf42724) — the standalone section title is
+    // merged away and the account section must carry the avatar entry + the
+    // neblink (device) area.
     if (locale === 'zh-CN') {
-      for (const t of ['账号', '设备互联', '运行时', 'LLM 服务商', '模型方案', '高级', '关于']) {
+      for (const t of ['账号', '运行时', 'LLM 服务商', '模型方案', '高级', '关于']) {
         expect(dump.titles, `section ${t} must remain`).toContain(t);
       }
+      expect(dump.titles, 'standalone Device Link section must stay merged away').not.toContain('设备互联');
     }
     if (locale === 'en') {
-      for (const t of ['Account', 'Device Link', 'Runtime', 'LLM Providers', 'Model Presets', 'Advanced', 'About']) {
+      for (const t of ['Account', 'Runtime', 'LLM Providers', 'Model Presets', 'Advanced', 'About']) {
         expect(dump.titles, `section ${t} must remain`).toContain(t);
       }
+      expect(dump.titles, 'standalone Device Link section must stay merged away').not.toContain('Device Link');
     }
+    expect(dump.avatarEntry, 'unified account block must keep the avatar entry').toBe(true);
+    expect(dump.neblinkArea, 'device (neblink) area must remain inside the account block').toBe(true);
   });
 }
 
@@ -189,25 +199,33 @@ test('T3 NL-ID entry gone (logged-in view), devices section intact, keys + API w
       '#neblink-nlid-save', '#neblink-nlid-cancel', '.neblink-nlid-statusline', '.neblink-nlid-value'];
     return {
       leaked: sels.filter(s => content.querySelector(s)),
-      devices: [...content.querySelectorAll('.neblink-section-label')].map(e => e.textContent.trim()),
+      // 2026-09-06 合并后（7caf42724）设备区不再有独立 section 标签：设备列表
+      // 以 .neblink-peers-list（行 .neblink-peer）直接嵌在账号区块内。
+      peersList: !!content.querySelector('.neblink-peers-list'),
+      deviceRows: content.querySelectorAll('.neblink-peer').length,
       logout: !!content.querySelector('#neblink-logout-btn'),
     };
   });
   expect(dump.leaked, 'NL-ID selectors must be zero-hit: ' + JSON.stringify(dump.leaked)).toEqual([]);
-  expect(dump.devices, 'devices label must remain').toContain('设备');
+  expect(dump.peersList, 'device list must remain inside the unified account block').toBe(true);
+  expect(dump.deviceRows, 'local device row must render').toBeGreaterThan(0);
   expect(dump.logout, 'logout button must remain').toBe(true);
 
   // i18n key group deleted in BOTH locales; friendsApi NL wrappers deleted.
+  // （p547b 2026-09-15 误报修复：探针剥掉注释再匹配——friendsApi.js:567-568 留有
+  // 「setNeblinkId/neblinkIdAvailable 已随 NL 号入口一并删除」的退役墓碑注释，
+  // 裸子串匹配把注释当代码 ⇒ 误报。函数本体确实已删，墓碑注释须保留。）
   const code = await page.evaluate(async () => {
     const zh = (await import('/js/locales/zh-CN.js')).default;
     const en = (await import('/js/locales/en.js')).default;
     const nlKeys = (m) => Object.keys(m).filter(k => k.startsWith('neblink.nlId'));
-    const apiSrc = await (await fetch('/js/friendsApi.js')).text();
+    const raw = await (await fetch('/js/friendsApi.js')).text();
+    // strip block comments + line comments, then match code only.
+    const apiSrc = raw.replace(/\/\*[\s\S]*?\*\//g, '').replace(/(^|[^:])\/\/[^\n]*/g, '$1');
     return {
       zhNl: nlKeys(zh), enNl: nlKeys(en),
       apiSetNeblinkId: apiSrc.includes('setNeblinkId'),
       apiAvailable: apiSrc.includes('neblinkIdAvailable'),
-      apiDocNote: apiSrc.includes('NL 号入口已随设置页 NL 号入口移除') || apiSrc.includes('neblink-id'),
     };
   });
   expect(code.zhNl, 'zh neblink.nlId* keys must be gone').toEqual([]);
@@ -224,14 +242,16 @@ test('T4a avatar section logged-out → logo + login modal on click', async ({ p
     const entry = document.getElementById('settings-avatar-entry');
     const logo = entry?.querySelector('.settings-avatar-logo');
     const photo = entry?.querySelector('.settings-avatar-photo');
+    // 头像区文案 span 已随 2026-09-06 修整退场（avatar-only 入口，无
+    // .settings-avatar-text；登录态判定改由 logo/photo 双态 + 点击行为承载）。
     const text = entry?.querySelector('.settings-avatar-text');
     const vis = el => !!el && el.hidden === false && getComputedStyle(el).display !== 'none';
-    return { exists: !!entry, logoVisible: vis(logo), photoVisible: vis(photo), text: text?.textContent || '' };
+    return { exists: !!entry, logoVisible: vis(logo), photoVisible: vis(photo), textSpan: !!text };
   });
   expect(state.exists, 'avatar entry must exist').toBe(true);
   expect(state.logoVisible, 'logged out → logo visible').toBe(true);
   expect(state.photoVisible, 'logged out → photo hidden').toBe(false);
-  expect(state.text, 'logged out copy').toContain('登录');
+  expect(state.textSpan, 'in-area text span must stay removed (avatar-only entry, author 2026-09-06)').toBe(false);
 
   // Click behavior = the Activity Bar avatar's (login modal), via forwarded click.
   await page.click('#settings-avatar-entry');
@@ -251,13 +271,15 @@ test('T4b avatar section logged-in → photo + profile window.open on click', as
     const entry = document.getElementById('settings-avatar-entry');
     const logo = entry?.querySelector('.settings-avatar-logo');
     const photo = entry?.querySelector('.settings-avatar-photo');
+    // 同 T4a：文案 span 已退场（avatar-only 入口）。
+    const text = entry?.querySelector('.settings-avatar-text');
     const vis = el => !!el && el.hidden === false && getComputedStyle(el).display !== 'none';
-    return { logoVisible: vis(logo), photoVisible: vis(photo), src: photo?.getAttribute('src') || '', text: entry?.querySelector('.settings-avatar-text')?.textContent || '' };
+    return { logoVisible: vis(logo), photoVisible: vis(photo), src: photo?.getAttribute('src') || '', textSpan: !!text };
   });
   expect(state.photoVisible, 'logged in with avatarUrl → photo visible').toBe(true);
   expect(state.logoVisible, 'logo hidden while photo shows').toBe(false);
   expect(state.src, 'photo src = account avatarUrl').toBe(AVATAR_URL);
-  expect(state.text, 'logged in copy').toContain('个人主页');
+  expect(state.textSpan, 'in-area text span must stay removed (avatar-only entry, author 2026-09-06)').toBe(false);
 
   await page.click('#settings-avatar-entry');
   await page.waitForTimeout(300);
