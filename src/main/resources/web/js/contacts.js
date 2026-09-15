@@ -1059,7 +1059,11 @@ export function initContacts() {
     }
   });
   // P3 error surface — friendsApi dispatches on auth failure / network error.
-  window.addEventListener('fm-auth-required', () => { openLoginModal(); });
+  // `{auto:true}`: this is not a user gesture — it fires once per failed
+  // friendship request, so it must not open an OAuth window per event
+  // (repeat guard, 2026-09-15 OIDC fix; the 登录失效卡 itself stays the
+  // visible manual retry surface).
+  window.addEventListener('fm-auth-required', () => { openLoginModal({ auto: true }); });
   window.addEventListener('fm-network-error', () => { window.__showToast?.(t('messages.networkError'), 'error'); });
   // `fm-friends-changed` 由**他模块**派发（`messages.js` 的 friend_accepted/friend_request
   // 分支、以及本模块自身 accept/unblock 之后）⇒ 同一条关系态判据必须同样生效，否则
