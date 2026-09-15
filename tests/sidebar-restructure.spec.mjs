@@ -1,14 +1,14 @@
 // sidebar-restructure.spec.mjs — 批4-② 收尾节点验收 spec（隔离静态服务器 +
 // 页内 mock，真实 UI 代码全量执行；8100+ 端口纪律，永不触碰宿主 8080）。
 //
-//   T1 侧边栏重排：上方恰 contacts+messages；下方固定序 files→projects→
-//      agents→usage→settings；旧面板入口（legacy-btn/teams-btn/flows-btn/
-//      legacy-pop/flows-indicator/flows-dropdown）零复活。
+//   T1 侧边栏重排：上方恰 messages+contacts（dde2c1afc 顺序交换后的现行为）；
+//      下方固定序 files→projects→agents→usage→settings；旧面板入口
+//      (legacy-btn/teams-btn/flows-btn/legacy-pop/flows-indicator/flows-dropdown) 零复活。
 //   T2 toggle 收编：设置页与插件面板开关同源 .nb-toggle class + computed
 //      style 一致（dark/light 双主题截图落 /tmp/nb-sidebar-restructure/）；
 //      旧手写 .toggle 类运行时零存在。
-//   T3 头像本地缓存：首载建立缓存 → 二次加载 route abort 远端头像请求仍
-//      正常显示（零头像请求）→ 源（avatarUrl）更新才重新拉取。
+//   T3 头像本地缓存：首载建缓存（回源走网关同源代理 /api/neblink/avatar）→
+//      二次加载远端与代理零请求仍正常显示 → 源（avatarUrl）更新才重新回源。
 //   T4 i18n parity：zh 与 en 键集合完全一致（node 侧 import 断言）。
 //   T5 静态收编断言：toggleHTML 接入点在源码、手写 .toggle 全灭、旧入口
 //      零残留。
@@ -56,6 +56,7 @@ const base = `http://127.0.0.1:${PORT}`;
 // Mutable fixtures (per-test reset).
 const neblinkState = { loggedIn: true, avatarPath: '/mock-avatar-a.png' };
 let avatarRequests = 0;   // requests for the avatar PNG (route-abort counter)
+let avatarProxyRequests = 0; // requests for the gateway same-origin avatar proxy (cache refetch leg)
 let avatarMode = 'fulfill'; // 'fulfill' | 'abort'
 
 test.beforeAll(async () => { server = await startServer(); });
@@ -65,6 +66,7 @@ test.beforeEach(async () => {
   neblinkState.loggedIn = true;
   neblinkState.avatarPath = '/mock-avatar-a.png';
   avatarRequests = 0;
+  avatarProxyRequests = 0;
   avatarMode = 'fulfill';
 });
 
@@ -104,6 +106,19 @@ async function boot(page) {
       rejected: [],
     },
   }));
+  // 头像回源腿（p547b 2026-09-15 按现行为重定标）：avatarCache.refreshDataUrl 自
+  // 35b3cb586（2026-09-07「网关同源代理让本地缓存真正建起来」）起只 fetch 网关
+  // 同源代理 GET /api/neblink/avatar——远端源站不发 CORS 头，跨域直连恒败，缓存
+  // 建不起来正是旧 mock（只拦远端 PNG，代理腿落进 **/api/** catch-all 返回 JSON）
+  // 下本用例基线 RED 的根因。缓存键仍是远端 avatarUrl（源标记语义未变），故断言
+  // 面改为：缓存建立走代理腿（计数 avatarProxyRequests）、命中路径零回源、源变化
+  // 才重新回源。Playwright route 匹配 LIFO —— 本路由必须注册在 **/api/** catch-all
+  // 之后（下方），后注册者优先命中。
+  await page.route('**/api/neblink/avatar', async (r) => {
+    avatarProxyRequests++;
+    if (avatarMode === 'abort') r.abort();
+    else r.fulfill({ body: PNG_1PX, contentType: 'image/png' });
+  });
   await page.routeWebSocket(/\/ws/, ws => {
     ws.onMessage(raw => {
       let m; try { m = JSON.parse(raw); } catch { return; }
@@ -117,7 +132,13 @@ async function boot(page) {
   });
 }
 
-const ACTIVITY_ORDER_IDS = ['activity-avatar', 'contacts-btn', 'messages-btn', 'activity-spacer', 'files-btn', 'projects-btn', 'agents-btn', 'usage-btn', 'settings-btn'];
+// 本 spec 落笔时（3bd0b74bb，09-05）产品顺序确为 contacts→messages（当时
+// index.html :72-73），故 T1 当时绿。dde2c1afc（09-06「ActivityBar 消息与联系人
+// 顺序交换」）把静态 DOM 与 friends-on 重挂腿（activityBar.js enableFriendPanels
+// `spacer.before(msgsBtn, contactsBtn)`）统一改为 messages→contacts，本 spec 未随
+// 更新 ⇒ 基线 RED（spec 过时，p547b 2026-09-15 按现行为重定标，见
+// .nebflow/reports/20260915_p547b-impl.md ⑤#6）。
+const ACTIVITY_ORDER_IDS = ['activity-avatar', 'messages-btn', 'contacts-btn', 'activity-spacer', 'files-btn', 'projects-btn', 'agents-btn', 'usage-btn', 'settings-btn'];
 
 test('T1 § sidebar order: top = avatar+contacts+messages; bottom fixed order; no legacy revival', async ({ page }) => {
   await boot(page);
@@ -135,7 +156,7 @@ test('T1 § sidebar order: top = avatar+contacts+messages; bottom fixed order; n
     }
     return out;
   });
-  expect(topBtns).toEqual(['contacts-btn', 'messages-btn']);
+  expect(topBtns).toEqual(['messages-btn', 'contacts-btn']);
   // Dead entries must not exist anywhere in the document (not merely hidden).
   for (const dead of ['legacy-btn', 'teams-btn', 'flows-btn', 'legacy-pop', 'flows-indicator', 'flows-dropdown']) {
     expect(await page.locator(`#${dead}`).count(), `${dead} must stay deleted`).toBe(0);
@@ -220,12 +241,14 @@ test('T2b § cross-panel toggle equality (plugin card dispatch switch vs setting
 test('T3 § avatar local-first cache: rebuild-free second load, refetch only on source change', async ({ page }) => {
   await boot(page);
   await page.goto(base);
-  // Load 1: remote URL is fetched (img + cache build) — ≥1 avatar request.
+  // Load 1: cache miss → the <img> falls back to the remote URL (≥1 remote
+  // request) while the cache builds through the gateway proxy (≥1 proxy req).
   await page.waitForFunction(() => {
     const raw = localStorage.getItem('nebflow_avatar_cache');
     try { return !!raw && !!JSON.parse(raw).dataUrl; } catch { return false; }
   }, undefined, { timeout: 8000 });
   expect(avatarRequests).toBeGreaterThanOrEqual(1);
+  expect(avatarProxyRequests, 'cache build must go through the gateway avatar proxy').toBeGreaterThanOrEqual(1);
   const entry = await page.evaluate(() => JSON.parse(localStorage.getItem('nebflow_avatar_cache')));
   expect(entry.url).toBe(base + '/mock-avatar-a.png');
   expect(entry.dataUrl.startsWith('data:image/png')).toBe(true);
@@ -236,26 +259,30 @@ test('T3 § avatar local-first cache: rebuild-free second load, refetch only on 
     return img && !img.hidden && (img.getAttribute('src') || '').startsWith('data:image/');
   }, undefined, { timeout: 12000 });
 
-  // Load 2: same source — remote avatar route ABORTED, avatar still shows.
+  // Load 2: same source — cache hit renders the dataURL; NEITHER the remote
+  // route NOR the gateway proxy may be touched (local-first, rebuild-free).
   avatarMode = 'abort';
   const before = avatarRequests;
+  const beforeProxy = avatarProxyRequests;
   await page.reload();
   await page.waitForFunction(() => {
     const img = document.querySelector('#activity-avatar .activity-avatar-photo');
     return img && !img.hidden && (img.getAttribute('src') || '').startsWith('data:image/');
   }, undefined, { timeout: 12000 });
-  expect(avatarRequests).toBe(before); // zero remote avatar requests on the cached path
+  expect(avatarRequests).toBe(before);       // zero remote avatar requests on the cached path
+  expect(avatarProxyRequests).toBe(beforeProxy); // zero proxy refetches on the cached path
 
-  // Source change: new avatarUrl — the remote MUST be fetched again (allowed).
+  // Source change: new avatarUrl — the cache MUST refetch (through the gateway
+  // proxy leg, which owns the回源 fetch since 35b3cb586).
   neblinkState.avatarPath = '/mock-avatar-b.png';
   avatarMode = 'fulfill';
-  const beforeB = avatarRequests;
+  const beforeProxyB = avatarProxyRequests;
   await page.reload();
   await page.waitForFunction(() => {
     const raw = localStorage.getItem('nebflow_avatar_cache');
     try { return !!raw && JSON.parse(raw).url.endsWith('mock-avatar-b.png') && !!JSON.parse(raw).dataUrl; } catch { return false; }
   }, undefined, { timeout: 10000 });
-  expect(avatarRequests).toBeGreaterThan(beforeB); // source marker change → refetch
+  expect(avatarProxyRequests).toBeGreaterThan(beforeProxyB); // source marker change → proxy refetch
 });
 
 test('T4 § i18n parity: zh-CN and en key sets are identical', async () => {
