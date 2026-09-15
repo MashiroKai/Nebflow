@@ -46,6 +46,29 @@ function registerBuiltIns() {
 registerBuiltIns();
 
 /**
+ * File name → viewer itemType，判据 = **注册表自身**各 viewer 声明的 `extensions`。
+ *
+ * 🔴 禁新增第二张扩展名表：仓内 ext→itemType 的真源有两处且各自权威 ——
+ * 服务端 `nebflow.core.workspace.FileTypeRegistry`（读文件时定 itemType）与
+ * 本注册表各 viewer 的 `extensions`（渲染面能力）。本函数只把后者**读出来**，
+ * 不复制任何一份表（两张表迟早漂移）。
+ *
+ * @param {string} fileName
+ * @returns {string|null} itemType；无 viewer 认领该扩展名 ⇒ `null`
+ *   （调用方据此落**可见**降级，禁静默）。`code` viewer 不声明扩展名
+ *   （它是未知文本类型的注册表回落项），故不在此返回 'code'。
+ */
+export function itemTypeForFileName(fileName) {
+  const m = /\.([A-Za-z0-9]+)\s*$/.exec(String(fileName || ''));
+  if (!m) return null;
+  const ext = '.' + m[1].toLowerCase();
+  for (const viewer of registry.values()) {
+    if (Array.isArray(viewer.extensions) && viewer.extensions.includes(ext)) return viewer.name;
+  }
+  return null;
+}
+
+/**
  * Render file content into a Canvas tab pane using the appropriate viewer.
  * Falls back to the code viewer if no viewer matches.
  * @param {HTMLElement} pane - the tab content pane

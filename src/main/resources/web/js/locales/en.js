@@ -253,6 +253,11 @@ export default {
   'messages.attachUploading': 'Uploading — not downloadable yet',
   'messages.attachUnreadable': 'Attachment state unreadable — not downloadable',
   'messages.attachUnnamed': 'Unnamed attachment',
+  // Attachment preview (author ruling 2026-09-15): accessible name for the
+  // clickable card + the two *visible* degradation messages.
+  'messages.attachPreview': 'Preview',
+  'messages.attachPreviewUnsupported': 'Preview not supported for this type: {name}',
+  'messages.attachPreviewFailed': 'Preview failed — try again',
   'messages.agentBadge': 'Sent by agent',
   // friendgroups phase-1 client leg. agentGroupBadge is VERBATIM frozen
   // (supplement card §4.2 + ruling A②: generic group badge; the existing

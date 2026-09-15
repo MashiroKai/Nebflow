@@ -44,6 +44,10 @@ import {
   deviceMessagesOf, hydrateDeviceCache, requestDeviceHistory, deviceHistoryPending,
   sendDeviceText, sendDeviceFiles, onDeviceMessageChange,
 } from './dropbox.js';
+// 附件预览（作者令 2026-09-15「点击附件要能直接在 canvas 里预览」）：附件卡的**唯一**
+// 预览入口 = attachmentPreview.js（判据 + Canvas 渲染腿都在那边）；本模块只做接线 +
+// 降级文案（禁在此再写第二套类型判据 / 第二套取字节路）。
+import { previewBlob, previewLocalPath, canPreviewLocalPath, isPreviewOpen } from './attachmentPreview.js';
 
 let conversations = [];
 let friendsCache = [];          // accepted friends — source of truth for §3.3 gate
@@ -1108,6 +1112,13 @@ function attachmentCard(att) {
       track.appendChild(bar2);
       card.appendChild(track);
     }
+    // 预览腿（作者令 2026-09-15）：**只在有本机落盘件且其类型可渲染时**才挂可点面。
+    // 无 `savedPath`（发出腿 / 未完成 / 失败）⇒ 本地没有可读件 ⇒ 保持不可点
+    // （禁「可点但点了报错」，§B.7 ③；状态位文案即用户可见的说明）。
+    const localPath = (att && att.deviceSavedPath) ? String(att.deviceSavedPath) : '';
+    if (localPath && canPreviewLocalPath(localPath)) {
+      makeCardPreviewable(card, att, () => previewLocalPath({ path: localPath, title: (att && att.name) || '' }) !== 'ok');
+    }
     return card;
   }
 
@@ -1122,11 +1133,85 @@ function attachmentCard(att) {
     card.appendChild(btn);
     card.appendChild(note);
     note.classList.add('visually-hidden-note'); // 常态下只显示按钮；状态文案在失败/成功后就地显示
+    // 预览腿（作者令 2026-09-15）：**整卡可点 = 在 Canvas 里预览**；下载键是卡内
+    // 嵌套键，其点击不得冒泡成预览（见 `makeCardPreviewable` 的事件路由）。
+    // 只有 `ready` 态挂可点面：其余态无字节可取（§B.7 ③ 不造假按钮）。
+    makeCardPreviewable(card, att, () => previewFriendAttachment(att, card));
   } else {
     card.appendChild(note);
     card.setAttribute('aria-disabled', 'true');
   }
   return card;
+}
+
+/** 把整张附件卡变成「点一下 = 预览」的可点面（好友 ready 态 / 设备有本地件态共用）。
+ *
+ *  · `role=button` + `tabindex=0` + Enter/Space ⇒ 键盘可达；
+ *  · 卡内既有交互件（`.fm-att-dl` 下载键）的点击**不**触发预览；
+ *  · `showToastOnUnavailable()` 返回 true ⇒ 走**可见**降级（禁静默无反应）。
+ *
+ *  @param {HTMLElement} card
+ *  @param {any} att
+ *  @param {() => (boolean|Promise<boolean>)} showToastOnUnavailable */
+function makeCardPreviewable(card, att, showToastOnUnavailable) {
+  card.classList.add('fm-att-previewable');
+  card.setAttribute('role', 'button');
+  card.setAttribute('tabindex', '0');
+  card.setAttribute('aria-label', `${t('messages.attachPreview')}: ${(att && att.name) || ''}`);
+  /** 卡内嵌套键（下载键）自己处理点击 ⇒ 不冒泡成预览。 */
+  const onNestedControl = (e) => {
+    const tgt = /** @type {HTMLElement|null} */ (e.target);
+    return !!(tgt && typeof tgt.closest === 'function' && tgt.closest('.fm-att-dl'));
+  };
+  const fire = () => {
+    Promise.resolve(showToastOnUnavailable())
+      .then((need) => { if (need) modalToast(t('messages.attachPreviewFailed')); })
+      .catch(() => modalToast(t('messages.attachPreviewFailed')));
+  };
+  card.addEventListener('click', (e) => {
+    if (onNestedControl(e)) return;
+    fire();
+  });
+  card.addEventListener('keydown', (e) => {
+    if (e.key !== 'Enter' && e.key !== ' ') return;
+    if (onNestedControl(e)) return;
+    e.preventDefault();
+    fire();
+  });
+}
+
+/** 好友面预览：取字节**只走应用内鉴权路由**（`friendsApi.downloadAttachment`，同下载腿
+ *  的唯一取字节口，禁第二条取字节路）⇒ 交给 attachmentPreview 判类型 + 渲染。
+ *  @returns {Promise<boolean>} true = 需要**可见降级**文案 */
+async function previewFriendAttachment(att, card) {
+  if (!att || !att.id) return true;
+  if (card.dataset.attPreviewBusy === '1') return false;
+  // 已在面板里预览这一件 ⇒ 只激活，**不取第二份字节**（同一次点击 = 同一次取数）。
+  if (isPreviewOpen(`attach:${att.id}`)) return false;
+  card.dataset.attPreviewBusy = '1';
+  try {
+    const { blob, filename } = await api.downloadAttachment(att.id);
+    const r = await previewBlob({
+      id: `attach:${att.id}`,
+      title: (att && att.name) || filename || t('messages.attachUnnamed'),
+      fileName: (att && att.name) || filename || '',
+      blob,
+    });
+    if (r === 'unsupported') {
+      modalToast(t('messages.attachPreviewUnsupported', { name: (att && att.name) || '' }));
+      return false; // 文案已就位，不再叠一条通用失败提示
+    }
+    return r !== 'ok';
+  } catch (err) {
+    // 会话过期 / 非好友：全局链已给引导（与下载腿同一处置），不再叠文案。
+    if (err && (err.status === 401 || err.status === 403)) return false;
+    // 410 = 服务端权威「附件已过期」（终态）：给**可见**读数（下载腿的就地卡片升级
+    // 是那条路的处置；此处不复制第二套状态迁移，只保证用户看得见、非静默）。
+    if (err && err.status === 410) { modalToast(t('messages.attachExpired')); return false; }
+    return true;
+  } finally {
+    card.dataset.attPreviewBusy = '0';
+  }
 }
 
 /** 取字节：**只走应用内鉴权路由**（`/api/friends/attachments/{id}`，裁定②）。

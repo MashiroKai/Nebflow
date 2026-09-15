@@ -800,6 +800,12 @@ button.fm-req-decline:focus-visible {
 .fm-att-dl:focus-visible { outline: none; box-shadow: 0 0 0 2px var(--glass-control-border); }
 .fm-att-dl:disabled { opacity: 0.5; cursor: default; }
 
+/* 预览可点面（作者令 2026-09-15：点击附件 ⇒ Canvas 预览）。
+   仅 `ready` 态 / 有本机落盘件的设备卡挂本类（无字节可取者不挂 ⇒ 不造假按钮）。 */
+.fm-att-previewable { cursor: pointer; }
+.fm-att-previewable:hover { background: var(--color-frame-hover); }
+.fm-att-previewable:focus-visible { outline: none; box-shadow: 0 0 0 2px var(--glass-control-border); }
+
 /* 尚未有状态文案时收起（避免卡片里并排两个同义词；失败/成功后解除） */
 .visually-hidden-note { display: none; }
 
