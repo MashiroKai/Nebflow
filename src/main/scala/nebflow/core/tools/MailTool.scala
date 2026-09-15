@@ -519,7 +519,15 @@ Message type (optional, default "INFO"):
     *     逐字不变（节点收件面不在本批，已单独立项）；
     *   - 腿③（`sendMail` → 非 project 面）：**不传**（默认 `None`）——
     *     `source` 已是 `"mail"` ⇒ 标签恒 `Mail`，呈现零漂移。
-    * 若在此统一置位，腿② 的标签会被抬成 `Mail` ⇒ **越界扩面**（禁动面）。 */
+    * 若在此统一置位，腿② 的标签会被抬成 `Mail` ⇒ **越界扩面**（禁动面）。
+    *
+    * `project`（R-A 补，2026-09-15 ③ root 裁定）与 `intake` **相反**：**三条腿同源置位**
+    * ——取本会话所属项目（`ToolContext.projectName`）= 四段式 `PROJECT` 段的**链首级**
+    * 「发送方所属项目」。与 `intake`（收件通道的**呈现判别**，逐腿口径不同）无关：
+    * 「发送方项目域」在任一收件面上都不改变该腿的标签语义，故单点置位零越界。
+    * 腿②（→`node:`，发送方与本会话同项目）往返零漂移；腿①（`project:`，跨项目 /
+    * 越面调用）由此从 **收件方**项目**纠正为发送方项目**。`None`（本会话无项目上下文，
+    * 如 Nebula root / 团队会话）⇒ 发射面回落根域 `NEBULA`（`leg1SenderProject`）。 */
   private def mailAttribution(
       mailType: String,
       ctx: ToolContext,
@@ -531,7 +539,8 @@ Message type (optional, default "INFO"):
         sender = Some(senderName),
         senderTeam = team,
         eventType = Some(mailType.toLowerCase),
-        intake = intake
+        intake = intake,
+        project = ctx.projectName
       )
     }
 
@@ -1522,6 +1531,11 @@ Message type (optional, default "INFO"):
         sender = Some(senderName),
         senderTeam = teamOpt,
         delivery = Some("immediate"),
+        // 气泡四段式统一批（2026-09-15）· R-A 补：四段式 `PROJECT` 段链首级 =
+        // **发送方所属项目**。本腿（分发器 → root）的收件会话是 root 会话（无项目
+        // 上下文）⇒ 不置位时第二段恒落根域 `NEBULA`，与「发送方所属项目」判据相反。
+        // 置本会话项目域即与 `mailAttribution` 同源（构造点 = 发送方侧，唯一取值处）。
+        project = ctx.projectName,
         // ② 服务端注入（agent→agent 邮件），不是真人输入 —— 显式表态。
         fromUser = false
       )

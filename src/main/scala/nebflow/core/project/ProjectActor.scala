@@ -745,21 +745,25 @@ object ProjectActor:
     }
 
   /** 腿①（Mail → 项目分发器）**四段式 header PROJECT 段的发射面取值**（「气泡四段式
-    * 统一」批 2026-09-15，作者 12:33 令；r3 落位，逐条落位与读数见交付报告 §r3-2）。
+    * 统一」批 2026-09-15，作者 12:33 令；r3 落位，逐条落位与读数见交付报告 §r3-2；
+    * R-A 补 2026-09-15 ③：① 级置位已落位）。
     *
     * 判据逐字：`PROJECT` = **发送方所属项目**；「跨 root 直投件项目段用 NEBULA」。取值
     * 顺序（禁臆造、禁静默填空）：
     *   ① `attribution.project` = **构造点显式置位**（`MailTool.mailAttribution` 取
-    *      `ToolContext.projectName`）⇒ **优先**。该置位随批 B 落位（`MailTool.scala`
-    *      是批 B 在飞写面）；落位后本兜底对该腿**自动失效**，无需二次改动。
-    *   ② 构造点未置位 ⇒ 本腿的**在册地址面**只放行两类发送方（`MailTool.layeredRoute`：
-    *      `project:` 对 `Dispatcher` 角色显式越界报错，其余角色 = `NebulaRoot` 根系 /
-    *      `Teamish` 团队系），两类**皆无项目上下文** ⇒ 发送方所属项目落在**根域** =
-    *      [[NotificationHeader.RootProject]]（= 作者令后半句「跨 root 直投件」）。
+    *      `ToolContext.projectName`）⇒ **优先**。R-A 补起该置位**已落位**
+    *      （腿① `mailAttribution` / 腿③ `sendMail` 同源置位）⇒ 「发送方自带项目」的
+    *      调用面（如项目节点会话 / 分发器越面发 `project:`）在此取到**其实际项目域**。
+    *   ② 构造点未置位 ⇒ 本腿的**在册地址面**放行两类非 dispatcher 身份（`MailTool.roleOf`：
+    *      按 `isDispatcher` / agent 名判，**不按会话类别**）——`NebulaRoot` 根系 /
+    *      `Teamish` 其余：**NebulaRoot 与无项目上下文的团队会话** ⇒ 发送方所属项目落在
+    *      **根域** = [[NotificationHeader.RootProject]]（= 作者令后半句「跨 root 直投件」）。
+    *      🔴 反例登记（R-B）：`Teamish` **包含带项目上下文者**（项目节点会话，`ToolContext.projectName`
+    *      由 `NodeEngine` 注入）——这类发送方本就该由 ① 级置位闭合，不得靠本级兜底。
     *
     * 🔴 为何本腿**不得**复用发射点 ② 级回落（接收会话所属项目）：腿① 的接收面 = **目标
     * 项目**的分发器会话 ⇒ ② 级恒取到**收件方**项目，与判据「发送方所属项目」**相反**
-    * （复核位实测成串 `MAIL · PROJ-P1 · NEBULA · INFO`）；未置位时以根域取值即判据形态
+    * （复核位实测成串 `MAIL · PROJ-P1 · NEBULA · INFO`）；①/② 级皆空时以根域取值即判据形态
     * `MAIL · NEBULA · NEBULA · INFO`。
     *
     * `None`（`attribution` 缺席 = `DispatchNotify` 回流 / 重入触发等非 Mail 腿）⇒ **保持
