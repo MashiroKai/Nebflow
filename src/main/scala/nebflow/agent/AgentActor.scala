@@ -2171,6 +2171,11 @@ object AgentActor extends AgentCore with AgentSession:
 
           _ <- emitStream(state.wsSend, AgentStreamEvent.Interrupted, isSubagent = depth > 0, state.sessionId)
 
+          // compactui 批（2026-09-15 事故，作者 16:45–16:48 实证）：压缩作业被中断
+          // 必须补发**终局帧**——否则客户端 pill 永挂、落盘孤儿 chat.compacting
+          // 每次历史重放复活。详见 emitAbandonedCompaction 文档。
+          _ <- emitAbandonedCompaction(state, depth)
+
           _ <- state.pendingCompaction
             .flatMap(_.replyDeferred)
             .traverse_(d => d.complete(Left("Interrupted by user")).void.handleErrorWith(_ => IO.unit))
@@ -2193,7 +2198,9 @@ object AgentActor extends AgentCore with AgentSession:
           // LlmComplete/LlmFailed. Bump currentTurnId so the stale-turnId
           // guard discards them (turnId is monotonic; the next dispatch takes
           // +1 from here with no collision — AgentCore.scala:449).
-          val interruptedState = state
+          // compactui 批（2026-09-15 事故 ②）：dropCompactionScratch 必须在
+          // withPendingCompaction(None) **之前**应用（判据依赖作业仍在）。
+          val interruptedState = dropCompactionScratch(state)
             .resetForInterrupt
             .withCurrentTurnId(state.execution.currentTurnId + 1)
             .withPendingCompaction(None)
@@ -2995,7 +3002,8 @@ object AgentActor extends AgentCore with AgentSession:
         )
         val now = System.currentTimeMillis()
         (
-          state
+          // compactui 批（2026-09-15 事故 ②）：同中断面，先把压缩轮临时输入摘掉。
+          dropCompactionScratch(state)
             .withPendingCompaction(None)
             .withCompactionFailures(state.compactionFailures + 1)
             .withLastCompactionFailureAt(now),
@@ -3003,7 +3011,10 @@ object AgentActor extends AgentCore with AgentSession:
             .fold(IO.unit)(d =>
               d.complete(Left("Compaction abandoned: turn ended before the compact phase")).void
                 .handleErrorWith(_ => IO.unit)
-            )
+            ) *>
+            // compactui 批（2026-09-15 事故 ①）：本路径原先只记 lifecycle 事件，
+            // 前端收不到终局帧 ⇒ pill 永挂（与中断面同一缺陷类，一并补齐）。
+            emitAbandonedCompaction(state, depth)
         )
       case None => (state, IO.unit)
     // #22 (2026-08-19): 空轮必须留痕——thinking-only 响应（text 空、无工具）
@@ -4012,6 +4023,10 @@ object AgentActor extends AgentCore with AgentSession:
 
           _ <- emitStream(state.wsSend, AgentStreamEvent.Interrupted, isSubagent = depth > 0, state.sessionId)
 
+          // compactui 批（2026-09-15 事故）：与 processing 的 Interrupt 同款终局帧
+          // （此处原先同样只清 pendingCompaction 不发帧）。
+          _ <- emitAbandonedCompaction(state, depth)
+
           _ <- state.pendingCompaction
             .flatMap(_.replyDeferred)
             .traverse_(d => d.complete(Left("Interrupted by user")).void.handleErrorWith(_ => IO.unit))
@@ -4025,7 +4040,8 @@ object AgentActor extends AgentCore with AgentSession:
         yield
           // Hard-recovery P3: same stale-turnId bump as the processing-state
           // Interrupt — fire-and-forget cancel admits late turn results.
-          val interruptedState = state
+          // compactui 批（2026-09-15 事故 ②）：同 processing 面，摘压缩轮临时输入。
+          val interruptedState = dropCompactionScratch(state)
             .resetForInterrupt
             .withCurrentTurnId(state.execution.currentTurnId + 1)
             .withPendingCompaction(None)
@@ -4463,6 +4479,26 @@ object AgentActor extends AgentCore with AgentSession:
     yield result
     end for
   end handleCompactFailure
+
+  // ============================================================
+  // Compaction abandon face (compactui 批 · 2026-09-15 作者实证)
+  // ============================================================
+
+  /** 压缩作业被**放弃**（中断 / turn 提前结束）时的终局帧发射（决策见
+    * [[CompactionAbandon.event]]，无作业 = no-op）。 */
+  private def emitAbandonedCompaction(state: AgentState, depth: Int)(using
+      ctx: ActorContext[AgentCommand]
+  ): IO[Unit] =
+    CompactionAbandon.event(state) match
+      case None     => IO.unit
+      case Some(ev) =>
+        emitStreamIO(state.wsSend, ev, isSubagent = depth > 0, state.sessionId)
+          .handleErrorWith(_ => IO.unit)
+
+  /** 放弃压缩作业时摘掉压缩轮的**临时输入**（摘要指令 reminder）。
+    * 判据与理由见 [[CompactionAbandon.dropScratch]]。 */
+  private def dropCompactionScratch(state: AgentState): AgentState =
+    CompactionAbandon.dropScratch(state)
 
   // ============================================================
   // Ask complete
