@@ -1376,4 +1376,21 @@ export default {
   'content.plugin.nebflow-plugin-creator.desc': '插件封装器包——节点获得把能力需求封装为合规插件包的全流程执行能力（三输入分析→包生成→机械自检→落盘即生效的交付自检）。适用于把已有 skill 或能力封装成插件、做一个能 Y 的新插件、写 plugin.json 与 SKILL.md、插件描述质量体检、跑包校验脚本等任务。内含 skills：plugin-packaging（三输入→生成→自检→交付的封装主流程，含同名冲突与 digest 漂移等六分叉处置、交付前自检与来源/digest 报告口径）、description-quality（manifest 五段式描述规范：模板、好坏范例、M1-M15 判定口径与核心词表圈定法）。验证与质量审查任务另配 nebflow-qa 插件。无 mcp.json、无工具扩展。',
   'content.project.general.name': 'general',
   'content.project.general.desc': '通用项目（默认工作区）',
+
+  // === Bundled-content localization — default-set SKILL descriptions
+  // (skillsi18n batch, 2026-09-15; pure data, zero code change) ===
+  // Range = the skills of the 3 default-install-set plugins (seed/manifest.json
+  // items, 5 skills: visual-report/{human-report,visual-report},
+  // slideblocks/slideblocks, nebflow-plugin-creator/{description-quality,
+  // plugin-packaging}). Key form = `content.skill.<plugin>/<skill>.desc`, i.e.
+  // the skill id as PluginRegistry emits it (`s"$pname/${sd.last}"`), resolved
+  // at the render point js/plugins.js:248. 4 entries carry a zh server value ⇒
+  // zh side verbatim, en side translated; slideblocks/slideblocks carries an en
+  // server value ⇒ en side verbatim, zh side translated (IO-A: the side that
+  // owns the source language mirrors the server value verbatim).
+  'content.skill.nebflow-plugin-creator/description-quality.desc': 'Nebflow 插件 manifest 描述规范的操作手册——description 五段式唯一描述源口径、触发词核心词表圈定法（全命中判定）、M1-M15 判定口径与四例好坏对照；适用于撰写或体检 plugin.json description 时逐条对照执行。',
+  'content.skill.nebflow-plugin-creator/plugin-packaging.desc': '把能力需求封装为合规 Nebflow 插件包的执行手册——三输入形态判定（既有 skill 迁移 / MCP server 配置 / 口头能力描述）→生成→机械自检→交付全流程，含六分叉处置与「落盘即生效」的交付口径；适用于节点被分配「封装插件 / 做插件」类任务时按本手册执行。',
+  'content.skill.slideblocks/slideblocks.desc': '用 SlideBlocks 自主制作或改进完整、精良的 Slidev 演示——输入可以是一条很短的请求，也可以是 PDF、Word、网页、Markdown、表格、图片、品牌素材、PowerPoint 源 deck 等混合材料。适用于：用户想做一份演示；想迁移到 Slidev；想重新设计、扩充或改进演示；需要为报告、路演、评审、授课、发布、决策或演讲做一份完整 deck；想要 SlideBlocks 的 Blocks、Decks 或 Recipes；或直接给材料说「做成 PPT」。不适用于：要求的最终交付物是任何 PPT/PPTX 或 Office 文件、通用 Office 编辑、或非 Slidev 的演示运行时。',
+  'content.skill.visual-report/human-report.desc': '人类可读汇报规范。写给人看的汇报/交付/验收/调研/复盘文档、以及节点 result 的一屏摘要时使用：先给结论、篇幅封顶、术语翻译成人话、人读件与取证件分置、该画必须画且单文档 ≤3 图、交付不靠 Pop。',
+  'content.skill.visual-report/visual-report.desc': '可视化汇报工具。用专业工具（matplotlib/graphviz/plotly 等）生成 SVG 图表，落盘后在交付文本里给绝对路径（展示权归 Nebula，节点不调用 Pop）。当需要制作图表、架构图、流程图、数据可视化、可视化报告时使用。',
 };
