@@ -225,7 +225,7 @@ export default {
   'contacts.searchError': '搜索失败，请重试',
   'contacts.searchAuthError': '登录已失效，请重新登录',
   'contacts.relogin': '重新登录',
-  'contacts.neblinkOff': 'Neblink 未启用，暂无法使用好友功能',
+  'contacts.neblinkOff': '设备互联未启用，暂无法使用好友功能',
   'contacts.listError': '好友列表加载失败',
   'contacts.requestsError': '好友请求加载失败',
   'contacts.retry': '重试',

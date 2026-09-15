@@ -304,7 +304,7 @@ export default {
   'contacts.searchError': 'Search failed, please try again',
   'contacts.searchAuthError': 'Session expired — please log in again',
   'contacts.relogin': 'Log in again',
-  'contacts.neblinkOff': 'NebLink is not enabled — friend features unavailable',
+  'contacts.neblinkOff': 'Device Interconnect is not enabled — friend features unavailable',
   'contacts.listError': 'Friend list failed to load',
   'contacts.requestsError': 'Friend requests failed to load',
   'contacts.retry': 'Retry',
