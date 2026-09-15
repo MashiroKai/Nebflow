@@ -82,7 +82,7 @@ JS+CSS+i18n+WS 跨层改动按层验证，每层抓不同失败类，防 E2E 调
 
 - 立即定位契约消费者的**骨架单点**（`grep` 消费者按 type/sessionId 分路的处理器），用 mock 帧从现有 onMessage 频道注入驱动 harness 自测
 - mock 只换生产不换消费路径——断言可复用到真实后端（#380 13/13：同一 renderAskUser 消费者，真假帧行为一致）
-- 交验标注「消费路径已真实验证，producer 待后端合入后补跑 E2E」——QA 与 Manager 接受该口径
+- 交验标注「消费路径已真实验证，producer 待后端合入后补跑 E2E」——QA 与触发方/分发器接受该口径
 - 开工前先 grep 冻结骨架 choke points 而非新造：`set` 权威状态 + 终态事件兜底清理路径 + 各事件处理器 + 驱动展示点——保留原路径只增修饰类，后端合入后仅换 mock producer 为真实帧、消费者断言零改动
 
 ## 10. 自适应布局三不变量
@@ -108,7 +108,7 @@ JS+CSS+i18n+WS 跨层改动按层验证，每层抓不同失败类，防 E2E 调
 前端功能依赖独立批次合并的后端 handler（#303 文件浏览器拖拽依赖 movePath 先例）：
 
 1. 前端 mock harness 先验全链（不阻塞、不依赖跨批）
-2. 后端合并后请求 Manager **rebase**（非 merge）特性分支到新主线——内容原样仅基线前移，避免 merge 历史噪音
+2. 后端合并后请求分发器 **rebase**（非 merge）特性分支到新主线——内容原样仅基线前移，避免 merge 历史噪音
 3. 隔离实例（独立端口 + 预置磁盘夹具）起真后端跑真链 E2E——合成拖拽/保存事件驱动真实 UI，断言 = UI 状态 + 磁盘 ground truth（existsSync/readFileSync）
 4. 真链证据补进交付说明后才审合——mock 只能证前端契约链，真 movePath 到达/响应/刷新链必须真后端走一遍
 
