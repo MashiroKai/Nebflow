@@ -28,8 +28,20 @@
 //   下限是 UI 闸（滑杆 min + 输入钳回）。
 //   🔴 后端 `compactThresholdInfo.minRatio` 是**静态**下限（0.16）；本侧再用
 //   当前用量抬高它（`effectiveMinRatio()`）。
+//   🔴 **90% 硬顶（root 2026-09-15 逐字）**：阈值 ≤ 90% 是**硬边界**；**当前用量 ≥ 90% 时
+//   钳制区间为空**（`[max(15%, 用量), 90%]` 无解）⇒ 面板进**锁定态**：滑杆**真禁用**
+//   （不可拖 + 不可提交，含复位腿）、**保持默认值**（不静默改值、不临时放开 >90%）、
+//   **零出站**（超限态本身就是要立即压缩的信号）、**零文案**。
 //   🔴 常量须与 `src/main/scala/nebflow/agent/protocol.scala` 的
 //   `object CompactThresholdOverride` 保持同步（MinRatio / MaxRatio / StepRatio）。
+//
+// ── 文案面（作者终裁 2026-09-15 逐字，取代本批此前「超限态文案在场」口径）──────────
+//   终裁逐字：「**不显示任何文字，只在拉动滑杆的时候，显示%比**」＋显式确认「**不显示任何字**」。
+//   ⇒ ① **零常驻文字**：面板标题 / 作用域描述句 / 区间提示句 / 默认值注记**一律不渲染**
+//        （元素留作空壳，无任何 textContent）；
+//      ② **零常驻读数**：token 数 / 比例 / 数字框显示值**仅在拖动滑杆时**出现（`dragRatio != null`）；
+//      ③ 超限态**只以滑杆锁死 / 置灰**表达：**不新增任何文字**（含两条拦截腿的提示句 ——
+//         「静默锁死」即终形）。
 
 import { onMessage, sendWs } from './ws.js';
 import { t } from './i18n.js';
@@ -141,6 +153,9 @@ const CSS = `
   opacity: 0; transition: opacity 0.12s ease; pointer-events: none;
 }
 .ctxthresh-thumb-label.visible { opacity: 1; }
+/* 🔴 90% 硬顶：超限档（usage ≥ 90%）滑杆无可选区间 ⇒ 真禁用（不可拖 + 不可提交） */
+.ctxthresh-track.disabled, .ctxthresh-track.disabled .ctxthresh-thumb { pointer-events: none; cursor: default; }
+.ctxthresh-btn:disabled, .ctxthresh-number:disabled { opacity: 0.5; cursor: not-allowed; }
 
 .ctxthresh-row {
   display: flex; align-items: center; gap: 6px; margin-top: 8px;
@@ -202,8 +217,15 @@ function effectiveMinRatio() {
   return Math.max(MIN_RATIO + STEP_RATIO, usageRatio());
 }
 
+/** 🔴 90% 硬顶（root 2026-09-15 逐字）：**当前用量 ≥ 90% ⇒ 滑杆无可选区间**
+  * （`[max(15%, 用量), 90%]` 空集）⇒ 面板进**锁定态**（真禁用 + 保持默认值 + 零出站 + 零文案）。 */
+function overLimit() {
+  return usageRatio() >= MAX_RATIO;
+}
+
 function clampRatio(r) {
-  const lo = effectiveMinRatio();
+  // 🔴 90% 硬顶：lo 自身也钳到 90%——超限档 lo > 90% 时旧式会返回 **> 90%** 的值（出站越界）
+  const lo = Math.min(effectiveMinRatio(), MAX_RATIO);
   if (!isFinite(r)) return lo;
   if (r < lo) return lo;
   if (r > MAX_RATIO) return MAX_RATIO;
@@ -217,15 +239,17 @@ function ensurePanel() {
   if (!header) return null;
   // 🔴 必须是 #header 的**兄弟节点**（同在 #main 内）——base.css:243-256 的
   // backdrop-filter 硬约束（同 .header-dropdown-menu / #reminder-panel / #daemon-panel）。
+  // 🔴 终裁文案面：标题 / 作用域句 / 读数位（abs·pct）/ 默认值注记 / 提示句（`${HINT_ID}`）
+  //    一律**空壳**（无 textContent），读数只在拖动中回填（见 `render()`）。
   header.insertAdjacentHTML('afterend', `
     <div id="${PANEL_ID}" role="dialog" aria-label="${t('ctxthresh.title')}">
       <div class="ctxthresh-header">
-        <span class="ctxthresh-title">${t('ctxthresh.title')}</span>
+        <span class="ctxthresh-title"></span>
         <button class="ctxthresh-close-btn" id="ctxthresh-close-btn" title="${t('ctxthresh.close')}">×</button>
       </div>
-      <div class="ctxthresh-scope" id="${SCOPE_ID}">${t('ctxthresh.scope')}</div>
+      <div class="ctxthresh-scope" id="${SCOPE_ID}"></div>
       <div class="ctxthresh-readout">
-        <span class="ctxthresh-abs" id="${ABS_ID}">—</span>
+        <span class="ctxthresh-abs" id="${ABS_ID}"></span>
         <span class="ctxthresh-pct" id="${PCT_ID}"></span>
         <span class="ctxthresh-default-note" id="ctxthresh-default-note"></span>
       </div>
@@ -260,53 +284,66 @@ function setMsg(text, kind) {
   el.className = 'ctxthresh-msg' + (kind ? ' ' + kind : '');
 }
 
-/** 渲染（值来源 = 服务端回显 `info` + 拖动中的 `dragRatio`）。 */
+/** 渲染（值来源 = 服务端回显 `info` + 拖动中的 `dragRatio`）。
+  * 🔴 终裁（作者 2026-09-15 逐字）：「不显示任何文字，只在拉动滑杆的时候，显示 %比」
+  * ⇒ **零常驻读数**：token 数 / 比例 / 数字框值只在**拖动中**（`dragRatio != null`）回填，
+  * 静止态一律清空；**零常驻文字**：提示句 / 默认值注记不再渲染。 */
 function render() {
   const panel = document.getElementById(PANEL_ID);
   if (!panel) return;
   const window = info?.contextWindow || state.sessionModelInfo?.[primarySessionId()]?.contextWindow || 0;
-  const ratio = dragRatio != null ? dragRatio : (info?.effectiveRatio ?? 0);
+  const dragging = dragRatio != null;   // 🔴 终裁：读数仅在拖动中出现
+  const ratio = dragging ? dragRatio : (info?.effectiveRatio ?? 0);
   const tokens = window ? Math.round(window * ratio) : null;
 
   const abs = document.getElementById(ABS_ID);
-  if (abs) abs.textContent = tokens != null ? fmtTokens(tokens) : '—';
+  if (abs) abs.textContent = dragging && tokens != null ? fmtTokens(tokens) : '';
   const pct = document.getElementById(PCT_ID);
-  if (pct) pct.textContent = (ratio * 100).toFixed(1) + '%';
-  const note = document.getElementById('ctxthresh-default-note');
-  if (note) {
-    note.textContent = info && info.ratio == null
-      ? t('ctxthresh.isDefault')
-      : (info ? t('ctxthresh.defaultNote', { v: fmtTokens(info.defaultThreshold) }) : '');
-  }
+  if (pct) pct.textContent = dragging ? (ratio * 100).toFixed(1) + '%' : '';
 
   const lo = effectiveMinRatio();
+  // 🔴 90% 硬顶：超限档区间为空（分母 MAX-lo ≤ 0）⇒ 不给倒挂位置，thumb 固定在硬顶端
+  const over = overLimit();
   const pos = ((ratio - lo) / (MAX_RATIO - lo)) * 100;
-  const clampedPos = Math.max(0, Math.min(100, pos));
+  const clampedPos = over ? 100 : Math.max(0, Math.min(100, pos));
   const fill = document.getElementById(FILL_ID);
   if (fill) fill.style.width = clampedPos + '%';
   const thumb = document.getElementById(THUMB_ID);
-  if (thumb) thumb.style.left = clampedPos + '%';
+  if (thumb) {
+    thumb.style.left = clampedPos + '%';
+    // 超限档：thumb 真禁用（pointer-events:none + aria-disabled），不是仅拦提交
+    thumb.style.pointerEvents = over ? 'none' : '';
+    thumb.setAttribute('aria-disabled', over ? 'true' : 'false');
+  }
   const label = document.getElementById(LABEL_ID);
   if (label) {
     label.style.left = clampedPos + '%';
-    label.textContent = Math.round(ratio * 100) + '%';
+    // 🔴 终裁：拖动读数只在拖动中出现（静止态连标签内容也清空 ⇒ 零常驻读数）
+    label.textContent = dragging ? Math.round(ratio * 100) + '%' : '';
   }
   const num = /** @type {HTMLInputElement|null} */ (document.getElementById(NUM_ID));
   if (num) {
     // 动态下限（作者卡答）：滑杆/数字框的 min 抬到「当前用量」或 16% 的较大者。
-    num.min = String(Math.ceil(lo * 100));
+    // 超限档下限越过 90% ⇒ 无可选区间：min 与 max 同取 90（不出倒挂区间 min>max）。
+    num.min = String(Math.ceil((over ? MAX_RATIO : lo) * 100));
     num.max = String(Math.round(MAX_RATIO * 100));
-    // 用户未在编辑时才回写显示值（防拖动时打断输入）。
-    if (document.activeElement !== num) num.value = String(Math.round(ratio * 100));
+    num.disabled = over;   // 超限档：数字框真禁用（无可选区间）
+    // 用户未在编辑时才回写显示值（防拖动时打断输入）。🔴 终裁：静止态清空 ⇒ 零常驻读数。
+    if (document.activeElement !== num) num.value = dragging ? String(Math.round(ratio * 100)) : '';
   }
-  const hint = document.getElementById(HINT_ID);
-  if (hint) {
-    hint.textContent = t('ctxthresh.hint', {
-      min: Math.round(lo * 100),
-      max: Math.round(MAX_RATIO * 100),
-      usage: (usageRatio() * 100).toFixed(1),
-    });
+  // 🔴 90% 硬顶：超限档 ⇒ 面板锁定态——滑杆/数字框/保存/复位全部锁定（真禁用；🔴 零文案）
+  const track = document.getElementById(TRACK_ID);
+  if (track) {
+    track.classList.toggle('disabled', over);
+    track.setAttribute('aria-disabled', over ? 'true' : 'false');
+    track.style.pointerEvents = over ? 'none' : '';
   }
+  const saveBtn = /** @type {HTMLButtonElement|null} */ (document.getElementById('ctxthresh-save-btn'));
+  const resetBtn = /** @type {HTMLButtonElement|null} */ (document.getElementById('ctxthresh-reset-btn'));
+  if (saveBtn) saveBtn.disabled = over;
+  if (resetBtn) resetBtn.disabled = over;
+  // 🔴 终裁文案面：提示句（`${HINT_ID}` / `.ctxthresh-hint`）**不再渲染** —— 超限态只以
+  // 锁死/置灰表达、非超限档也不留区间句（原 `over` 三目分支 + `over-limit` 样式钩子一并撤除）。
 }
 
 function ratioFromEvent(ev, track) {
@@ -325,6 +362,7 @@ function bindPanelEvents(panel) {
   if (track) {
     // 旧形态逐字：mousedown 起拖 → document 上 mousemove → mouseup 提交。
     track.addEventListener('mousedown', (e) => {
+      if (overLimit()) return;   // 🔴 超限档真禁用：不可拖动（程序化 mousedown 同样拦）
       e.preventDefault();
       track.classList.add('dragging');
       const label = document.getElementById(LABEL_ID);
@@ -351,14 +389,20 @@ function bindPanelEvents(panel) {
   const save = document.getElementById('ctxthresh-save-btn');
   const commitNumber = () => {
     if (!num) return;
-    const pctVal = Number(num.value);
-    if (!isFinite(pctVal)) { render(); return; }
+    // 🔴 终裁后数字框静止态为空值 ⇒ 空输入**不得**当作 0%（否则会被钳成下限 = 静默改值）
+    const raw = num.value.trim();
+    const pctVal = Number(raw);
+    if (raw === '' || !isFinite(pctVal)) { render(); return; }
     submitRatio(clampRatio(pctVal / 100));
   };
   save?.addEventListener('click', commitNumber);
   num?.addEventListener('change', commitNumber);
 
   document.getElementById('ctxthresh-reset-btn')?.addEventListener('click', () => {
+    // 🔴 90% 硬顶：复位腿入闸——超限档「恢复默认」会把阈值落到默认值（25.6% < 当前用量）
+    // ⇒ 出站未受闸值 = 静默改值，故与提交腿同闸（保持默认值 / 零出站）。
+    // 🔴 终裁：拦截腿**零文案**（「静默锁死」即终形，不再给提示句）。
+    if (overLimit()) return;
     setMsg('');
     sendWs({ type: 'setCompactThreshold', sessionId: primarySessionId(), ratio: null });
   });
@@ -367,8 +411,13 @@ function bindPanelEvents(panel) {
 function submitRatio(ratio) {
   const sid = primarySessionId();
   if (!sid) return;
+  // 🔴 90% 硬顶（root 2026-09-15 逐字）：当前用量 ≥ 90% ⇒ 滑杆无可选区间 ⇒ 拒绝提交
+  // （保持默认值 / 不静默改值 / 不临时放开 >90%）；不改成钳到「越过 90% 或低于当前用量」的值。
+  // 🔴 终裁：拦截**零文案**（不再写提示句），只回拉权威值让面板回到真实状态。
+  if (overLimit()) { sendWs({ type: 'getCompactThreshold', sessionId: sid }); return; }
   setMsg('');
-  sendWs({ type: 'setCompactThreshold', sessionId: sid, ratio: Math.round(ratio * 100) / 100 });
+  // 🔴 90% 硬顶：出站值一律过 clampRatio（lo 已钳到 90%）⇒ 任何腿都不可能出站 > 90%
+  sendWs({ type: 'setCompactThreshold', sessionId: sid, ratio: Math.round(clampRatio(ratio) * 100) / 100 });
 }
 
 function setOpen(next) {
