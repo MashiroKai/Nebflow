@@ -2277,9 +2277,15 @@ class NodeEngine(
     * 2026-09-15：角色值域、blocked JSON 文法、verifier verdict 分支、未申报语义的
     * 唯一引擎承载文本；引擎编译、随任务输入组装面单点注入（本方法一个代码位覆盖
     * 全部节点 spawn 输入，含 loop 节点首轮）、零盘面依赖 ⇒ 抗 seed/运行面漂移。
-    * 系统提示词面只留 seed 条件句（`general/system.md`）+ always-on belt 行
-    * （`PromptSections.NodeSessionAlwaysOnSection`，360 段），二者均指到这里、
-    * 不复述协议——旧注释「system prompt 不含约定」的前提已被该结构取代（F8 判违：
+    * 系统提示词面两处相关文本形态各异：agent 种子条件句（
+    * `seed/agents/general/system.md:7-10`）自带完整规则文本（双角色值域/六类
+    * blocked/ILLEGAL/verdict≠状态/8 拍提醒阶梯/未申报不终态化），且**无**指向本
+    * 脚注的指针——这是 promptfix 批作者并存终态（「规则各留一份」，该条件句 =
+    * 唯一 seed 面防线，已终态冻结），非缺陷；always-on belt 行（
+    * `PromptSections.NodeSessionAlwaysOnSection`，段序 360、段长门 ≤400 B）=
+    * belt+指针，指向工具 description 与本脚注。故「单一权威」的准确口径 =
+    * **引擎贡献面**（引擎编译、随任务输入注入的提示词文本）唯一完整纪律，而
+    * 非全局唯一——旧注释「system prompt 不含约定」的前提已被该结构取代（F8 判违：
     * 两处设计前提互相否证，本段即消解后的真实理由）。loop 侧同款：
     * `loopReworkInput` 复注同一 `ProtocolFootnote`（同会话返工轮再提醒，非第二份
     * 协议文本）。
@@ -5910,10 +5916,15 @@ object NodeEngine:
     * 两套值域并列塞进一篇脚注（R9 中性化同款纪律：解释权收归工具 description）。
     * 本 val 逐字保持旧文本除该句外的全文（下游断言锚：末行 TaskBoard 指引行、
     * `endsWith(ProtocolFootnote)` 身份断言）。
-    * F8 收口（2026-09-15）：本 val = 节点终态申报协议的**单一权威文本**（引擎侧
-    * 唯一完整协议面——blocked JSON 文法在引擎文本面仅此处承载；`PromptSections`
-    * 360 段 = belt+指针、seed 条件句与项目面 AGENTS.md = 指针/条件句，均不复述本
-    * 协议）。文本逐字冻结——`TaskBoardInjectionSpec` 的末行/`needs-split` 措辞钉
+    * F8 收口（2026-09-15）：本 val = 节点终态申报协议在**引擎贡献面**（引擎编译、
+    * 随系统提示词/任务输入注入的提示词文本）的单一权威文本——该面唯一完整协议，
+    * blocked JSON 文法在该面仅此处承载（工具面语义另由 `node_report` 工具
+    * description 与 `NodeReportTool` 承载，不属本断言域）。**非全局唯一**：agent
+    * 种子条件句 `seed/agents/general/system.md:7-10` 自带完整规则文本（promptfix
+    * 作者并存终态「规则各留一份」，唯一 seed 面防线，无指向本 val 的指针）；
+    * `PromptSections` 段序 360 = belt+指针；`seed/projects/general/AGENTS.md:8` =
+    * 一行指针（自陈「本文件不复述」）——后二者只承载指针/短句，不承载完整协议。
+    * 文本逐字冻结——`TaskBoardInjectionSpec` 的末行/`needs-split` 措辞钉
     * 与 `NodeChainAttributionSpec` 的 `endsWith` 身份钉同挂本 val。 */
   val ProtocolFootnote: String =
     """── Node protocol ──

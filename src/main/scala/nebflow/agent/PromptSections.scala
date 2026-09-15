@@ -282,7 +282,8 @@ Before wrapping up call `node_report` — reporting IS the wrap-up action, not a
     // 「引擎 always-on 段」的本体（该行已终态冻结，指针目标不得悬空）。
     // 完整协议的**单一权威** = 输入面脚注 `NodeEngine.ProtocolFootnote`（blocked
     // JSON 文法 + 角色值域 + verifier verdict 分支的唯一引擎文本）+ `node_report`
-    // 工具 description——本段**不复述**它们（F8 判据：装配面恰一份完整纪律，本段
+    // 工具 description——本段**不复述**它们（F8 判据：引擎贡献装配面恰一份完整
+    // 纪律；种子条件句自携完整规则系 promptfix 作者并存终态，不属该判据域。本段
     // 收口为短句指针）。条件判据 `PromptContext.availableTools` 含 node_report ≡
     // flowNodeSession（唯一追加点 = `AgentCore.buildAllowedToolSet` 末段身份闸；
     // 声明逃逸由 `NebulaExclusiveTools` 全剥），非节点会话（kernel/memory-
