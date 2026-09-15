@@ -124,7 +124,23 @@ case class SharedResources(
   /** 热重启编排器（hot-restart 批）：GatewayMain 装配后注入；None = 未装配（测试 /
     * 极早期 boot / 总开关关闭）。WS restart 命令经它触发 requestRestart；进度经
     * restartStatus 帧广播（wsHub）。 */
-  hotRestart: Option[nebflow.core.hotrestart.HotRestart] = None
+  hotRestart: Option[nebflow.core.hotrestart.HotRestart] = None,
+  /** **会话级压缩阈值比例覆盖**（ctxthresh 批，2026-09-15 方案 A）：键 = **root
+    * sessionId**，值 = 比例 `r`（`15% < r ≤ 90%`，见
+    * [[nebflow.agent.CompactThresholdOverride]]）。与 `sessionModelOverrides`
+    * （上方 :40）同形同列——同一「会话级覆盖」形态的第二个实例。
+    *
+    * 与 `sessionModelOverrides` 的**语义差异**（设计 §9-O4，作者卡答采纳）：
+    * 本 Ref **不参与启动清零**（`SessionStore.clearAllSessionModels`）——清零的
+    * 理由是 `ModelCandidate` 是**旧配置快照**，热重载后可能「Unknown provider」
+    * （`llm/registry.scala:186-195`）；比例是**纯标量**，无陈旧风险 ⇒ 跨重启保留
+    * （盘上权威 = `SessionMeta` 新增的阈值比例键，见 `shared/SessionMeta.scala`）。
+    *
+    * 带默认值（Ref.unsafe 先例）⇒ 存量测试构造零改动。🔴 非 root spawn 路径
+    * **禁**读本 Ref（口径③；静态判据见
+    * `.nebflow/tools/20260915_ctxthresh_leak-check.sh`）。 */
+  sessionCompactThreshold: Ref[IO, Map[String, Double]] =
+    Ref.unsafe[IO, Map[String, Double]](Map.empty)
 ):
   /** **唯一解析入口**（permshield S1 / 2026-09-13 作者重裁「候选 B」）：有效档位
     * **恒等于**全局持久档位（`nebflow.json` 的 `safety.defaultMode`，热读、零缓存）。

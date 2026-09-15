@@ -1318,4 +1318,15 @@ export default {
   'contacts.sectionDevices': '设备',
   'contacts.devicesEmpty': '暂无其他设备',
   'messages.deviceTag': '设备',
+
+  // === ctxthresh 批（2026-09-15 方案 A）：Nebula 窗口 Header 上下文压缩阈值面板 ===
+  'ctxthresh.title': '上下文压缩阈值',
+  'ctxthresh.scope': '仅本 Nebula 窗口（其他 agent / 节点不受影响）',
+  'ctxthresh.save': '保存',
+  'ctxthresh.reset': '恢复默认',
+  'ctxthresh.close': '关闭',
+  'ctxthresh.isDefault': '当前为默认值',
+  'ctxthresh.defaultNote': '默认 {v}',
+  'ctxthresh.hint': '范围 {min}%–{max}%；下限不低于当前用量（{usage}%）',
+  'ctxthresh.failed': '设置失败',
 };

@@ -27,7 +27,21 @@ case class SessionMeta(
   // 缺省（`absent ⇒ confirm-edits`）也**不再有权威意义**（历史会话的盘上值照旧）。
   safetyMode: String = "auto-all",
   gitBranch: Option[String] = None,
-  flowName: Option[String] = None
+  flowName: Option[String] = None,
+  /** **会话级压缩阈值比例覆盖**（ctxthresh 批，2026-09-15 方案 A）：键
+    * `compactThresholdRatio` 落 `<dataRoot>/sessions/_index.json`（与 `modelRef`
+    * 同处，`:13`）。`None` = 无覆盖 ⇒ 判定/上报走现值函数
+    * （[[nebflow.agent.CompactThresholdOverride]]，口径②）。
+    *
+    * 跨重启**保留**（作者卡答采纳设计 §9-O4(a)）：**不**照抄
+    * `clearAllSessionModels()` 的启动清零——比例是纯标量、无「旧配置快照」陈旧
+    * 风险；用户显式设定不应每次重启失效。老会话无该键 ⇒ Decoder 得 `None` ⇒
+    * 走现值函数（零格式迁移，向后兼容）。
+    *
+    * 🔴 **位置刻意置末**（`flowName` 之后）：本 case class 存在**位置参数**构造点
+    * （下方 Decoder 的 `SessionMeta(...)` 逐位置列表），插在中间会把旧实参错位
+    * ⇒ 置末使既有位置调用逐字保持可编译。 */
+  compactThresholdRatio: Option[Double] = None
 )
 
 object SessionMeta:
@@ -65,7 +79,11 @@ object SessionMeta:
       else withFolder
     val withGit = m.gitBranch.fold(withSafety)(b => withSafety.deepMerge(Json.obj("gitBranch" -> b.asJson)))
     val withFlow = m.flowName.fold(withGit)(f => withGit.deepMerge(Json.obj("flowName" -> f.asJson)))
-    if m.bridges.nonEmpty then withFlow.deepMerge(Json.obj("bridges" -> m.bridges.asJson)) else withFlow
+    val withRatio =
+      m.compactThresholdRatio.fold(withFlow)(r =>
+        withFlow.deepMerge(Json.obj("compactThresholdRatio" -> r.asJson))
+      )
+    if m.bridges.nonEmpty then withRatio.deepMerge(Json.obj("bridges" -> m.bridges.asJson)) else withRatio
   }
 
   given Decoder[SessionMeta] = Decoder.instance { c =>
@@ -91,6 +109,8 @@ object SessionMeta:
       safetyMode <- c.downField("safetyMode").as[Option[String]]
       gitBranch <- c.downField("gitBranch").as[Option[String]]
       flowName <- c.downField("flowName").as[Option[String]]
+      // ctxthresh 批：老会话无该键 ⇒ None ⇒ 走现值函数（零格式迁移）。
+      compactThresholdRatio <- c.downField("compactThresholdRatio").as[Option[Double]]
     yield
       val mode = safetyMode.getOrElse(if legacyBypass.getOrElse(false) then "auto-all" else "confirm-edits")
       SessionMeta(
@@ -105,7 +125,8 @@ object SessionMeta:
         folderId,
         mode,
         gitBranch,
-        flowName
+        flowName,
+        compactThresholdRatio
       )
   }
 

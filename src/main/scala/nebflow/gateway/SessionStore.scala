@@ -914,6 +914,21 @@ class SessionStore(sessionsDir: os.Path, tasksDir: os.Path):
       (activeId, updated, folders)
     } *> saveIndex
 
+  /** ctxthresh 批（2026-09-15 方案 A）：会话级压缩阈值比例覆盖的**持久态**写入——
+    * `SessionMeta.compactThresholdRatio` → `<dataRoot>/sessions/_index.json`，与
+    * [[updateSessionModel]] 同形同列（同一「会话级覆盖」形态）。
+    *
+    * 🔴 **不参与启动清零**：与 `modelRef` 不同，本键**没有**镜像
+    * [[clearAllSessionModels]] 的路径（作者卡答采纳设计 §9-O4(a)：比例是纯标量，
+    * 无「旧配置快照」陈旧风险）⇒ 跨重启保留、用户显式设定不失效。
+    *
+    * `None` = 清除覆盖（恢复默认 = 回现值函数）。 */
+  def updateSessionCompactThreshold(id: String, ratio: Option[Double]): IO[Unit] =
+    indexRef.update { case (activeId, sessions, folders) =>
+      val updated = sessions.map(s => if s.id == id then s.copy(compactThresholdRatio = ratio) else s)
+      (activeId, updated, folders)
+    } *> saveIndex
+
   /**
    * Clear all per-session model overrides. Called at startup so every session
    * follows the global fallback order after a restart.
