@@ -291,7 +291,7 @@ When the user's agent-messaging mode is `ask` (or the auto rate limit was hit), 
     targetDir: Option[String],
     ctx: ToolContext
   ): IO[Either[ToolError, String]] =
-    dbx.sendText(peer.deviceId, message).flatMap { textDelivered =>
+    dbx.sendText(peer.deviceId, message, nebflow.dropbox.DropboxMessage.OriginAgent).flatMap { textDelivered =>
       if !textDelivered then
         IO.pure(
           Left(
@@ -305,7 +305,7 @@ When the user's agent-messaging mode is `ask` (or the auto rate limit was hit), 
       else
         // U-2：一条审计行（每次逻辑下发一次，首次网络尝试前；失败绝不影响发送）。
         auditAttachSend(ns, peer, attachments, ctx) *>
-          dbx.sendLocalFiles(peer.deviceId, attachments, targetDir).map {
+          dbx.sendLocalFiles(peer.deviceId, attachments, targetDir, origin = nebflow.dropbox.DropboxMessage.OriginAgent).map {
             case Left(err) =>
               Left(ToolError(s"Text was delivered, but the attachments were rejected: ${err.render}"))
             case Right(outcomes) =>

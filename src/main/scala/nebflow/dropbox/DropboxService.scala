@@ -207,14 +207,15 @@ final class DropboxService private (
     * false = 两腿皆未送达（消息已按既有语义标 failed）。前端 WS 调用点丢弃返回值，
     * 行为零变更；工具腿需要投递真值才能给出诚实的工具结果（禁静默成功）。
     */
-  def sendText(deviceId: String, text: String): IO[Boolean] =
+  def sendText(deviceId: String, text: String, origin: String = DropboxMessage.OriginUser): IO[Boolean] =
     neblinkService.identity.flatMap { id =>
       val msg = DropboxMessage(
         msgId = DropboxModels.newId,
         direction = "out",
         kind = "text",
         ts = DropboxModels.now,
-        text = text
+        text = text,
+        origin = origin
       )
       val payload = Json.obj(
         "kind" -> "text".asJson,
@@ -222,7 +223,9 @@ final class DropboxService private (
         "senderName" -> id.deviceName.asJson,
         "msgId" -> msg.msgId.asJson,
         "text" -> text.asJson,
-        "ts" -> msg.ts.asJson
+        "ts" -> msg.ts.asJson,
+        // 设备会话统一批 MVP-1：来源标记上 wire（收端只作提示级渲染，见 DropboxMessage.origin）。
+        "origin" -> origin.asJson
       )
       for
         _ <- addMessage(deviceId, msg)
@@ -344,7 +347,8 @@ final class DropboxService private (
     targetDir: Option[String] = None,
     transportOverride: Option[ChunkTransport] = None,
     acceptWait: FiniteDuration = 20.seconds,
-    uploadWait: FiniteDuration = 15.minutes
+    uploadWait: FiniteDuration = 15.minutes,
+    origin: String = DropboxMessage.OriginUser
   ): IO[Either[AttachContract.AttachError, List[DropboxService.LocalFileOutcome]]] =
     val validated: Either[AttachContract.AttachError, List[(os.Path, Long)]] =
       files.foldLeft[Either[AttachContract.AttachError, List[(os.Path, Long)]]](Right(Nil)) { (acc, p) =>
@@ -401,7 +405,7 @@ final class DropboxService private (
               val wireTargetDir = if peerConfirmed then requestedDir else None
               val deferred      = requestedDir.isDefined && !peerConfirmed
               val specs = sized.map { case (p, size) => DropboxService.FileSpec(p.last, size, guessMime(p.last)) }
-              offerFiles(deviceId, specs, wireTargetDir).flatMap {
+              offerFiles(deviceId, specs, wireTargetDir, origin).flatMap {
                 case Left(err) => IO.pure(Left(err))
                 case Right(transferIds) =>
                   sized.zip(transferIds).foldLeftM[IO, List[DropboxService.LocalFileOutcome]](Nil) {
@@ -539,7 +543,8 @@ final class DropboxService private (
   def offerFiles(
     deviceId: String,
     files: List[FileSpec],
-    targetDir: Option[String] = None
+    targetDir: Option[String] = None,
+    origin: String = DropboxMessage.OriginUser
   ): IO[Either[AttachContract.AttachError, List[String]]] =
     AttachContract.checkMessage(files.map(_.fileSize)) match
       case Left(err) =>
@@ -578,7 +583,7 @@ final class DropboxService private (
                 files.zipWithIndex
                   .foldLeftM[IO, List[String]](Nil) { case (acc, (spec, idx)) =>
                     // 串行 offer（并行度建议值 N = 1；见设计件 §9 P-6）。
-                    offerOne(id, peer, deviceId, spec, batchId, idx, total, targetDir).map(acc :+ _)
+                    offerOne(id, peer, deviceId, spec, batchId, idx, total, targetDir, origin).map(acc :+ _)
                   }
                   .map(ids => Right(ids))
         }
@@ -593,7 +598,8 @@ final class DropboxService private (
     batchId: String,
     index: Int,
     count: Int,
-    targetDir: Option[String]
+    targetDir: Option[String],
+    origin: String = DropboxMessage.OriginUser
   ): IO[String] =
     val transferId = DropboxModels.newId
     val msgId = DropboxModels.newId
@@ -609,7 +615,8 @@ final class DropboxService private (
       status = "pending",
       batchId = batchId,
       attachmentIndex = index,
-      attachmentCount = count
+      attachmentCount = count,
+      origin = origin
     )
     val transfer = FileTransfer(
       transferId = transferId,
@@ -640,7 +647,9 @@ final class DropboxService private (
       "proto" -> AttachContract.ProtoAssignDir.asJson,
       "batchId" -> batchId.asJson,
       "attachmentIndex" -> index.asJson,
-      "attachmentCount" -> count.asJson
+      "attachmentCount" -> count.asJson,
+      // 设备会话统一批 MVP-1：来源标记上 wire（与 sendText 同轴；收端只作提示级渲染）。
+      "origin" -> origin.asJson
     )
     // targetDir 只在**对端等级已确认（proto >= 2）**时才上 wire（spec §4.2 候选 1）；
     // 缺省 = 现状（键不出现 ⇒ 旧接收端天然忽略）。
@@ -971,7 +980,10 @@ final class DropboxService private (
       direction = "in",
       kind = "text",
       ts = hc.downField("ts").as[Long].getOrElse(DropboxModels.now),
-      text = hc.downField("text").as[String].getOrElse("")
+      text = hc.downField("text").as[String].getOrElse(""),
+      // 设备会话统一批 MVP-1：收端读 wire `origin`（未知/缺席 ⇒ user）。**只落库 + 交客户端
+      // 作提示级渲染**，收端不据它下任何结论（设计卡 §9 P3）。
+      origin = DropboxMessage.normalizeOrigin(hc.downField("origin").as[String].getOrElse(DropboxMessage.OriginUser))
     )
     for
       _ <- addMessage(senderId, msg)
@@ -1017,7 +1029,11 @@ final class DropboxService private (
       fileName = fileName,
       fileSize = fileSize,
       mimeType = mimeType,
-      status = status
+      status = status,
+      // 设备会话统一批 MVP-1：文件消息同轴带来源标记（同 handleIncomingText 的收端纪律）。
+      origin = DropboxMessage.normalizeOrigin(
+        hc.downField("origin").as[String].getOrElse(DropboxMessage.OriginUser)
+      )
     )
     val transfer = FileTransfer(
       transferId = transferId,

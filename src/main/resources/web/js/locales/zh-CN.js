@@ -17,7 +17,7 @@ export default {
   'activity.projects': '项目',
   'panel.explorer': '文件浏览器',
   'panel.messages': '消息',
-  'panel.contacts': '联系人',
+  'panel.contacts': '联系人和设备',
   // #27 Project 标签页 + Flow Map 标签页（方向调整：Canvas 标签页形态，参考 team 面板）
   'project.title': '项目',
   'project.loading': '加载项目…',
@@ -1306,4 +1306,11 @@ export default {
   'workspacePicker.empty': '空目录',
   'workspacePicker.readFail': '无法读取目录',
   'workspacePicker.mkdirFail': '新建文件夹失败',
+
+  // === 设备会话统一批 MVP-1（2026-09-15）：面板标题 / 设备段 / 设备会话行 ===
+  // 键族归属：`panel.contacts` = 面板标题（值改「联系人和设备」，卡 §6.1）；
+  // `contacts.*` = 设备段文案；`messages.*` = 会话列表设备行 chip。
+  'contacts.sectionDevices': '设备',
+  'contacts.devicesEmpty': '暂无其他设备',
+  'messages.deviceTag': '设备',
 };

@@ -17,7 +17,7 @@ export default {
   'activity.projects': 'Projects',
   'panel.explorer': 'Explorer',
   'panel.messages': 'Messages',
-  'panel.contacts': 'Contacts',
+  'panel.contacts': 'Contacts & Devices',
   // #27 Project tab + Flow Map tab (direction adjustment: Canvas tab form, team-panel paradigm)
   'project.title': 'Projects',
   'project.loading': 'Loading projects…',
@@ -1313,4 +1313,9 @@ export default {
   'workspacePicker.empty': 'Empty folder',
   'workspacePicker.readFail': 'Cannot read directory',
   'workspacePicker.mkdirFail': 'Failed to create folder',
+
+  // === Device-conversation unification, MVP-1 (2026-09-15): panel title / device section / device rows ===
+  'contacts.sectionDevices': 'Devices',
+  'contacts.devicesEmpty': 'No other devices',
+  'messages.deviceTag': 'Device',
 };

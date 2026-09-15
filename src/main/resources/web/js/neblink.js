@@ -202,6 +202,9 @@ export async function fetchNeblinkStatus() {
     setCacheAccount(neblinkState.device
       ? `${neblinkState.device.deviceId || ''}|${neblinkState.device.email || ''}`
       : '');
+    // 设备会话统一批 MVP-1/O10：状态拍落地 ⇒ 推送订阅面（联系人面板设备段等）。
+    // 唯一推送源 = 本函数；WS `peerListChanged`（initNeblink）已在此汇流。
+    notifyStatusSubscribers();
   } catch (e) {
     // neblink not available yet
   }
@@ -277,6 +280,42 @@ export function checkPairingRedirect() {
 }
 
 // ---- Settings section HTML ----
+// ── 设备在线态徽章：**单一实现**（设备会话统一批 MVP-1/O10）──────────────
+// 抽取动因（卡 §6.1「在线/离线」行 + O10）：判据与标记原本**内联在
+// neblinkSettingsHTML 的模板字符串里**（旧 :312-318），第二处复用（联系人面板
+// 设备段）只能复制 ⇒ 两处必然漂移。现在唯一实现在此，两个消费面都只调它：
+//   · 设置面板账号段（本文件 neblinkSettingsHTML）
+//   · 联系人面板设备段（contacts.js）
+// 数据源唯一 = `/api/neblink/status`（本文件 fetchNeblinkStatus）。本函数**只做形态**，
+// 不取数、不缓存 ⇒ 消费面各自决定何时重渲（O10：面板只依赖 WS `peerListChanged` 推送）。
+/** @param {{isLocal?: boolean, online?: boolean, directOnline?: boolean, relayAvailable?: boolean}} d */
+export function presenceBadgeHTML(d) {
+  if (d && d.isLocal) return ''; // 本机行恒在线，不挂徽章（沿既有口径）
+  const isOnline = !!(d && d.online === true);
+  const reachHint = !d ? ''
+    : d.directOnline ? t('neblink.reachDirect')
+    : d.relayAvailable ? t('neblink.reachRelay')
+    : t('neblink.reachServerOnly');
+  return `<span class="neblink-presence ${isOnline ? 'online' : 'offline'}" title="${escapeHtml(reachHint)}">`
+    + `${isOnline ? t('neblink.online') : t('neblink.offline')}</span>`;
+}
+
+/** 在线态**推送订阅**（O10）：状态拍落地后逐个通知。
+ *  约束：回调必须同步、廉价、自吞异常（本函数已 try/catch，仍要求回调不阻塞取数链）。 */
+const statusSubscribers = /** @type {Set<(s:any) => void>} */ (new Set());
+
+/** @param {(s:any) => void} cb @returns {() => void} 注销函数 */
+export function onNeblinkStatus(cb) {
+  statusSubscribers.add(cb);
+  return () => statusSubscribers.delete(cb);
+}
+
+function notifyStatusSubscribers() {
+  for (const cb of [...statusSubscribers]) {
+    try { cb(neblinkState); } catch (e) { console.error('[neblink] status subscriber failed:', e); }
+  }
+}
+
 export function neblinkSettingsHTML() {
   const local = neblinkState.device || {};
   const peers = neblinkState.peers || [];
@@ -348,13 +387,10 @@ export function neblinkSettingsHTML() {
     // reachability hints (`directOnline` = P2P WS up, `relayAvailable` = our
     // relay tunnel up). Peers get an explicit online/offline badge; offline
     // rows are dimmed so a stale entry can never masquerade as reachable.
+    // 设备会话统一批 MVP-1/O10：徽章形态已抽为唯一实现 `presenceBadgeHTML`
+    // （本文件与 contacts.js 设备段共用）——判据/配色/文案零复制。
     const isOnline = d.isLocal || d.online === true;
-    const reachHint = d.isLocal ? ''
-      : d.directOnline ? t('neblink.reachDirect')
-      : d.relayAvailable ? t('neblink.reachRelay')
-      : t('neblink.reachServerOnly');
-    const presenceBadge = d.isLocal ? ''
-      : `<span class="neblink-presence ${isOnline ? 'online' : 'offline'}" title="${escapeHtml(reachHint)}">${isOnline ? t('neblink.online') : t('neblink.offline')}</span>`;
+    const presenceBadge = presenceBadgeHTML(d);
 
     return `
       <div class="neblink-peer${d.isLocal || isOnline ? '' : ' neblink-peer-offline'}">
@@ -417,15 +453,18 @@ export function neblinkSettingsHTML() {
 
 /** Map a raw platform string (e.g. "macos", "windows") to a friendly label +
  *  inline SVG icon for the device row. Falls back to a generic device icon. */
-function platformDisplay(platform) {
+export function platformDisplay(platform) {
   const p = (platform || '').toLowerCase();
   const mac = '<svg viewBox="0 0 24 24" fill="currentColor" width="15" height="15"><path d="M16.36 12.93c.02 2.3 2.02 3.07 2.04 3.08-.02.05-.32 1.1-1.06 2.18-.64.93-1.3 1.86-2.34 1.88-1.02.02-1.35-.6-2.52-.6-1.17 0-1.53.58-2.5.62-1 .04-1.77-1-2.42-1.93-1.32-1.9-2.33-5.39-.97-7.74.67-1.17 1.88-1.91 3.19-1.93.99-.02 1.92.66 2.52.66.6 0 1.74-.82 2.93-.7.5.02 1.9.2 2.8 1.52-.07.05-1.67.98-1.65 2.92M14.6 5.4c.55-.67.92-1.6.82-2.52-.79.03-1.75.53-2.32 1.2-.51.59-.96 1.53-.84 2.44.88.07 1.79-.45 2.34-1.12"/></svg>';
   const win = '<svg viewBox="0 0 24 24" fill="currentColor" width="15" height="15"><path d="M3 5.48 10.4 4.4v7.1H3V5.48m0 13.04V13.4h7.4v7.1L3 18.52M11.4 4.26 21 3v8.5H11.4V4.26m0 15.48V13.4H21V21l-9.6-1.26"/></svg>';
   const linux = '<svg viewBox="0 0 24 24" fill="currentColor" width="15" height="15"><path d="M12.5 2c-1.3 0-2 1.1-2 2.4 0 .4.1.8.2 1.1-.5.5-1 1.4-1.4 2.5-.4 1.2-1 2.2-1.5 2.7-.5.4-1 .9-1.3 1.6-.3.7-.4 1.9.3 2.7-.3.5-.6 1.4-.3 2.3.2.7.7 1.2.8 1.7.1.5 0 .9.3 1.3.4.5 1 .5 1.6.3.4.6 1.1.9 1.9.9.9 0 1.6-.4 2-1 .4.2.9.3 1.4.1.8-.3 1.2-1 1.2-1.8 0-.4-.1-.7-.2-1 .3-.4.6-.9.6-1.6 0-.6-.2-1.1-.5-1.5.2-.4.3-.9.1-1.5-.2-.7-.7-1.2-.8-1.7-.1-.5 0-.9-.3-1.3-.4-.5-1-.5-1.6-.3-.4-.6-1.1-.9-1.9-.9-.5 0-.9.1-1.3.3.1-.3.2-.7.2-1.1 0-1.3-.7-2.4-2-2.4"/></svg>';
   const generic = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" width="15" height="15"><rect x="3" y="4" width="18" height="12" rx="1"/><path d="M8 20h8M12 16v4"/></svg>';
-  if (p.includes('mac')) return { icon: mac, text: 'macOS' };
+  // 🔴 匹配精度修复（设备会话统一批 MVP-1 发现、就地修单点）：`'darwin'.includes('win')`
+  // 为**真** ⇒ macOS 设备被标成「Windows」。旧面只消费 `icon`（字形），文本面从未被
+  // 显示 ⇒ 缺陷不可见；MVP-1 的设备窗副行/设备行**要显示 .text** ⇒ 必须按平台词精确判。
+  if (p.includes('mac') || p.includes('darwin') || p === 'ios') return { icon: mac, text: 'macOS' };
   if (p.includes('win')) return { icon: win, text: 'Windows' };
-  if (p.includes('linux')) return { icon: linux, text: 'Linux' };
+  if (p.includes('linux') || p === 'android') return { icon: linux, text: 'Linux' };
   return { icon: generic, text: platform || 'Device' };
 }
 

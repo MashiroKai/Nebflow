@@ -880,8 +880,21 @@ export function renderSettings() {
     });
   };
   refreshNeblink();
+  // O10 解绑（设备会话统一批 MVP-1）：修前把 3s 轮询**挂在 renderSettings 内**且从不清除
+  // ⇒ 设置面板一开过，轮询就永久驻留（面板不在场也每 3s 打一次 /api/neblink/status）。
+  // 现在 tick 内先判「设置内容是否仍在可见布局里」，不可见即停表并自注销。
+  // 在线态刷新语义不变（面板在场时仍 3s 一拍）；联系人面板设备段的 online 面
+  // **不依赖本表**，只依赖 WS `peerListChanged` 推送（neblink.js notifyStatusSubscribers）。
   if (window._neblinkRefreshTimer) clearInterval(window._neblinkRefreshTimer);
-  window._neblinkRefreshTimer = setInterval(refreshNeblink, 3000);
+  window._neblinkRefreshTimer = setInterval(() => {
+    const content = document.getElementById('settings-content');
+    if (!content || content.offsetParent === null) {
+      clearInterval(window._neblinkRefreshTimer);
+      window._neblinkRefreshTimer = null;
+      return;
+    }
+    refreshNeblink();
+  }, 3000);
 }
 
 function renderProviderCard(name, p) {

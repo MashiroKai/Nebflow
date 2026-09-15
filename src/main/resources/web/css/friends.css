@@ -1147,3 +1147,47 @@ button.fm-req-decline:focus-visible {
   white-space: nowrap;
   max-width: 78%;
 }
+
+/* ══════════════════════════════════════════════════════════════════════════
+   设备会话统一批 MVP-1（2026-09-15）：联系人面板设备段 + 设备会话行 + 设备文件卡
+   —— 全部复用既有 fm-* 行模型/附件卡基类，本段只补**设备专有**的少量声明。
+   取色一律走既有主题 token（亮/暗双主题同源，零新字面量色值；卡 §6.1/§9 P8）。
+   ══════════════════════════════════════════════════════════════════════════ */
+
+/* 设备段容器 + 段标题（好友列表之后的独立段；视觉对齐 .fm-req-group 的段标题口径） */
+.fm-device-list { margin-top: 6px; }
+.fm-section-title {
+  font-size: 11px;
+  font-weight: 500;
+  color: var(--color-text-muted, #888);
+  margin: 8px 10px 2px;
+}
+.fm-device-row { cursor: pointer; }
+/* 设备行在线态：徽章本体（.neblink-presence）样式在 neblink.css（全局已加载）——
+   本处只做**槽位**（右贴边、不参与行内文本压缩）。 */
+.fm-device-presence { flex-shrink: 0; margin-left: auto; display: inline-flex; align-items: center; }
+/* 设备会话行 chip（与群 chip 同形，换语义色不改几何） */
+.fm-device-tag { background: rgb(var(--sapphire) / 0.18); }
+
+/* 设备文件卡状态位（卡 D4：适配 .fm-att 基类 + 传输态在位） */
+.fm-att-device-status { font-size: 11px; color: var(--color-text-muted, #888); }
+.fm-att-device-path {
+  flex-basis: 100%;
+  font-size: 11px;
+  color: var(--color-text-muted, #888);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.fm-att-device-progress {
+  flex-basis: 100%;
+  height: 3px;
+  border-radius: 2px;
+  background: var(--glass-etched-border);
+  overflow: hidden;
+}
+.fm-att-device-progress-bar {
+  height: 100%;
+  background: rgb(var(--sapphire));
+  transition: width 0.2s ease-out;
+}

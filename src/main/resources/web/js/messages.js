@@ -6,7 +6,7 @@ import { t } from './i18n.js';
 import { createIconsIn, markCopyFailed } from './utils.js';
 import state from './state.js';
 import { onMessage, onReconnect, onDisconnect } from './ws.js';
-import { getNeblinkState } from './neblink.js';
+import { getNeblinkState, onNeblinkStatus, presenceBadgeHTML, platformDisplay } from './neblink.js';
 import { setActivityBadge, openLoginModal, onStatusTick } from './activityBar.js';
 import { key } from './branding.js';
 // ⑨ 缓存与增量（方案 §2.3 B+E）：L2 持久层 = fmMessageCache.js（唯一属主，
@@ -37,6 +37,13 @@ import { bindImeGuard, isImeComposing } from './imeGuard.js';
 import { formatHm, bindTimeToggle, TIME_FORMAT_CHANGED } from './timeFormat.js';
 // ⑩ 合并期滚动位保持（与 Dropbox 面**共用一份实现**，无第二个公式）。
 import { preserveScrollAnchor } from './msgScrollAnchor.js';
+// 设备会话统一批 MVP-1（2026-09-15）：设备腿的**数据面**访问器（唯一属主 = dropbox.js，
+// 含 WS 帧 `dropbox-history`/`dropbox-message` + L2 缓存 + 附件队列/闸位）。本模块只
+// **消费**它们，不复制任何取数/合并/落盘逻辑（卡 §6.2：否则造第三实现）。
+import {
+  deviceMessagesOf, hydrateDeviceCache, requestDeviceHistory, deviceHistoryPending,
+  sendDeviceText, sendDeviceFiles, onDeviceMessageChange,
+} from './dropbox.js';
 
 let conversations = [];
 let friendsCache = [];          // accepted friends — source of truth for §3.3 gate
@@ -349,15 +356,19 @@ async function refreshConversations({ friends = 'reuse' } = {}) {
       refreshGroups(),
     ]);
     const direct = convs || [];
+    // 设备会话行（设备会话统一批 MVP-1 · 卡 A3 合并点）：**本账号自有设备** ⇒
+    // 与好友行/群行同列同排序（排序键 = lastMessage.createdAt 不变）。派生行、无状态：
+    // 每次刷新按 peers 重算（去重见 deviceConvs），不落任何缓存。
+    const devices = deviceConvs();
     if (grp) {
       // pendingInvites 的消费方是 contacts 面的群邀请区（它自己调 refreshGroups，
       // 与面板独立刷新同构）；messages 面只消费 groups。
-      conversations = direct.concat(grp.groups || []);
+      conversations = direct.concat(grp.groups || []).concat(devices);
     } else {
       // keep-last-known：群面取数失败（auth/网络/5xx）⇒ 既有群行原样保留，
       // 只刷新单聊行（与好友域「失败≠空」同口径，禁闪空列表）。
       const prevGroups = conversations.filter(c => c && c.kind === 'group');
-      conversations = direct.concat(prevGroups);
+      conversations = direct.concat(prevGroups).concat(devices);
     }
     conversations = conversations.sort((a, b) =>
       (toEpochMs(b.lastMessage?.createdAt) || 0) - (toEpochMs(a.lastMessage?.createdAt) || 0));
@@ -392,19 +403,27 @@ function renderList() {
 
 function convRow(conv) {
   const isGroup = conv.kind === 'group';
+  // 设备行（MVP-1）：形态范本 = 群行（`data-group='1'` + chip），差异 = tag 键与
+  // 数据源（设备无好友档案 ⇒ 名字取设备自报，见 deviceLabel）。
+  const isDevice = conv.kind === 'device';
   const row = el('div', 'fm-row fm-conv-row');
   row.setAttribute('role', 'option');
   row.setAttribute('tabindex', '0');
   row.setAttribute('aria-selected', String(conv.conversationId === openConvId));
   row.dataset.conversationId = conv.conversationId;
   if (isGroup) row.dataset.group = '1'; // QA 断言面：群行可机械定位
+  if (isDevice) row.dataset.device = '1'; // QA 断言面：设备行可机械定位（同族口径）
 
   // O④：群头像 = 标题首字母占位（avatarEl 无 avatarUrl 即走首字母分支，零新实现）。
-  row.appendChild(avatarEl(isGroup ? { name: groupTitleOf(conv) } : conv.friend, 40));
+  // 设备行同法（首字母占位）；单聊行照旧朋友档案。
+  const avatarPerson = isDevice ? { name: deviceLabel(conv.device) } : (isGroup ? { name: groupTitleOf(conv) } : conv.friend);
+  row.appendChild(avatarEl(avatarPerson, 40));
   const meta = el('div', 'fm-row-meta');
   const top = el('div', 'fm-conv-top');
-  top.appendChild(el('span', 'fm-row-name', isGroup ? groupTitleOf(conv) : personLabel(conv.friend)));
+  const rowName = isDevice ? deviceLabel(conv.device) : (isGroup ? groupTitleOf(conv) : personLabel(conv.friend));
+  top.appendChild(el('span', 'fm-row-name', rowName));
   if (isGroup) top.appendChild(el('span', 'fm-group-tag', t('messages.groupTag')));
+  if (isDevice) top.appendChild(el('span', 'fm-group-tag fm-device-tag', t('messages.deviceTag')));
   top.appendChild(el('span', 'fm-conv-time', fmtTime(conv.lastMessage?.createdAt)));
   meta.appendChild(top);
   const bottom = el('div', 'fm-conv-bottom');
@@ -575,6 +594,8 @@ async function syncConversation(conversationId, { pages = 1, trigger = 'open' } 
 async function openConversation(conversationId, rowEl) {
   const conv = conversations.find(c => c.conversationId === conversationId);
   if (!conv) return;
+  // 设备会话（MVP-1）：同窗骨架、另一条数据面（网关本机 dropbox 腿）⇒ 走设备分支。
+  if (conv.kind === 'device') { openDeviceConversation(conv, rowEl); return; }
   triggeringRow = rowEl || null;
   triggeringConvId = conversationId;
   openConvId = conversationId;
@@ -634,6 +655,8 @@ async function openConversation(conversationId, rowEl) {
 
 /** 窗头/弹窗标题单点（群 = 群名；单聊 = 既有 personLabel 链，备注 > 显示名）。 */
 function convTitleLabel(conv) {
+  // 设备会话（MVP-1）：窗头名 = 设备显示名（`deviceLabel` 单点：描述 > 设备名 > id）。
+  if (conv && conv.kind === 'device') return deviceLabel(conv.device);
   return (conv && conv.kind === 'group') ? groupTitleOf(conv) : personLabel(conv && conv.friend);
 }
 
@@ -687,6 +710,16 @@ function renderChatModal(conv) {
   // 群窗副行 = 成员数（有读数才挂）；单聊副行不变（neblinkId）。
   if (conv.kind === 'group') {
     if (conv.memberCount > 0) title.appendChild(el('span', 'fm-modal-id', t('messages.memberCount', { n: conv.memberCount })));
+  } else if (conv.kind === 'device') {
+    // 设备窗副行（MVP-1）：平台标签 + 在线态徽章。在线态 = `presenceBadgeHTML`
+    // **唯一实现**（与设置账号段/联系人设备段同源；O10 禁第二份判据与文案）。
+    title.appendChild(el('span', 'fm-modal-id', deviceSubLabel(conv.device)));
+    const badge = presenceBadgeHTML({ ...(conv.device || {}), isLocal: false });
+    if (badge) {
+      const pslot = el('span', 'fm-device-presence fm-modal-presence');
+      pslot.innerHTML = badge;
+      title.appendChild(pslot);
+    }
   } else {
     title.appendChild(el('span', 'fm-modal-id', conv.friend?.neblinkId || ''));
   }
@@ -759,6 +792,29 @@ function renderChatModal(conv) {
   input.autocomplete = 'off';
   const sendBtn = el('button', 'cfg-btn fm-send-btn', t('messages.send'));
   bar.appendChild(input);
+  // 附件发送入口（卡 D3：设备面**保留**纸夹 + 拖拽 —— 好友窗无此入口是既有形态，
+  // 不是缺陷；这里只把设备面既有的发送能力搬到新窗，闸位/队列仍走 dropbox.js 单点）。
+  let deviceFileInput = null;
+  if (conv.kind === 'device') {
+    deviceFileInput = document.createElement('input');
+    deviceFileInput.type = 'file';
+    deviceFileInput.multiple = true;
+    deviceFileInput.style.display = 'none';
+    deviceFileInput.addEventListener('change', () => {
+      if (deviceFileInput.files && deviceFileInput.files.length > 0) {
+        sendDeviceFiles(conv.device.deviceId, deviceFileInput.files);
+      }
+      deviceFileInput.value = '';
+    });
+    const attachBtn = el('button', 'icon-btn dropbox-attach-btn fm-attach-btn');
+    attachBtn.type = 'button';
+    attachBtn.title = t('dropbox.attachFile');
+    attachBtn.setAttribute('aria-label', t('dropbox.attachFile'));
+    attachBtn.innerHTML = '<i data-lucide="paperclip"></i>';
+    attachBtn.addEventListener('click', () => deviceFileInput.click());
+    bar.appendChild(attachBtn);
+    bar.appendChild(deviceFileInput);
+  }
   bar.appendChild(sendBtn);
   modal.appendChild(bar);
 
@@ -790,12 +846,18 @@ function renderChatModal(conv) {
   overlay.addEventListener('drop', (e) => {
     if (!hasFiles(e)) return;
     e.preventDefault();
+    // 设备窗（卡 D3）：拖拽 = **发送入口**（设备面独有，纸夹 + 拖拽两条并存；
+    // 闸位/队列/offer 走 dropbox.js 单点，与新窗纸夹键同一实现）。
+    if (conv.kind === 'device') {
+      sendDeviceFiles(conv.device.deviceId, e.dataTransfer.files);
+      return;
+    }
     // 群窗同款提示（加性键，不改既有好友窗文案）：本腿附件面 = 接收/下载渲染，
     // 无发送入口（分发器 2026-09-15 11:32 A③ 翻案口径：人群附件既有发送面语义不变）。
     modalToast(t(conv.kind === 'group' ? 'messages.attachUnsupportedGroup' : 'messages.attachUnsupported'));
   });
 
-  const doSend = () => sendCurrent(conv);
+  const doSend = () => (conv.kind === 'device' ? sendDeviceCurrent(conv) : sendCurrent(conv));
   sendBtn.addEventListener('click', doSend);
   // ③ 输入非空 ↔ 发送键可用态即时同步（含发送后清空 ⇒ 回禁用态；禁两态分叉）
   input.addEventListener('input', syncComposerSend);
@@ -849,7 +911,7 @@ function applyBlockState(conv) {
   modalEls.overlay.querySelector('.fm-blocked-bar')?.remove();
   // 群分支（O⑨ 裁定「拉黑只断单聊、同群照常」）：群窗不走好友闸 —— 拉黑/删
   // 好友不产生群内只读栏，也不禁用群发送输入框（群发送权在服务端成员闸）。
-  const blocked = conv.kind !== 'group' && !isStillFriend(conv);
+  const blocked = conv.kind !== 'group' && conv.kind !== 'device' && !isStillFriend(conv);
   if (blocked) {
     const bar = el('div', 'fm-blocked-bar', t('messages.notFriendBlocked'));
     modalEls.flow.parentNode.insertBefore(bar, modalEls.flow);
@@ -880,10 +942,25 @@ function syncComposerSend() {
 function attStateOf(att) {
   if (!att || typeof att !== 'object') return 'unreadable';
   const s = typeof att.state === 'string' ? att.state : '';
+  // 设备面文件（MVP-1）：呈现 = 传输态（无下载面），与好友面四种态互斥取值。
+  if (s === 'device') return 'device';
   if (s === 'ready') return att.id ? 'ready' : 'unreadable'; // 有 ready 无 id = 不可下载（降级而非假按钮）
   if (s === 'expired') return 'expired';
   if (s === 'uploading') return 'uploading';
   return 'unreadable'; // 越界值 / 键缺失：可判读的降级态（不是「无附件」）
+}
+
+/** 设备面传输态文案（**唯一映射点**，卡 §7.1 功能等价清单「文件进度/成败/已保存」）。
+ *  复用既有 `dropbox.*` 双语键（旧窗同源，禁新造第二套文案）。 */
+function deviceTransferText(att) {
+  const st = (att && att.deviceStatus) || '';
+  const ours = !!(att && att.deviceOut);
+  if (st === 'completed') {
+    return ours ? t('dropbox.delivered')
+      : ((att && att.deviceSavedPath) ? t('dropbox.saved') : t('dropbox.completed'));
+  }
+  if (st === 'failed' || st === 'rejected') return t('dropbox.failed');
+  return t('dropbox.transferring'); // pending / accepted / transferring（含未知值）
 }
 
 const ATT_NOTE_KEY = {
@@ -921,7 +998,11 @@ function attPlaceholderBody(atts) {
 /** 附件签名的**唯一**形态（keyedDiff 的两路字段集收敛判据，见 §5.3-J）。 */
 function attSig(m) {
   const a = m && Array.isArray(m.attachments) ? m.attachments : [];
-  return a.map(x => `${(x && x.id) || ''}:${(x && x.state) || ''}`).join(',');
+  // 设备面（MVP-1）：设备文件卡的**传输态**也是外观量（transferring→completed 必须
+  // 就地重填，否则状态位永远停在旧态）⇒ 设备卡签名单列一支；好友面签名逐字不变。
+  return a.map(x => (x && x.state === 'device')
+    ? `dev:${(x.deviceStatus || '')}:${(x.deviceSavedPath || '')}:${(typeof x.devicePct === 'number' ? x.devicePct : '')}`
+    : `${(x && x.id) || ''}:${(x && x.state) || ''}`).join(',');
 }
 
 function saveBlob(blob, filename) {
@@ -984,6 +1065,24 @@ function attachmentCard(att) {
   card.appendChild(name);
   const sizeText = fmtBytes(att && att.size);
   if (sizeText) card.appendChild(el('span', 'fm-att-size', sizeText));
+
+  // ── 设备面文件卡（MVP-1 · 卡 D4「适配 attachmentCard + 气泡状态位保留传输态」）──
+  // 与好友面附件卡的**唯一**差异：设备面的落盘由接收端传输链负责（`savedPath` 回显），
+  // 没有应用内鉴权下载路由 ⇒ **不挂下载键**（禁「可点但点了报错」的假按钮，§B.7 ③）。
+  // 状态判据 = 设备腿 5 态（pending/accepted/transferring/completed/failed）。
+  if (kind === 'device') {
+    card.appendChild(el('span', 'fm-att-device-status', deviceTransferText(att)));
+    if (att && att.deviceSavedPath) card.appendChild(el('span', 'fm-att-device-path', String(att.deviceSavedPath)));
+    const pct = att && att.devicePct;
+    if (typeof pct === 'number') {
+      const track = el('div', 'fm-att-device-progress');
+      const bar2 = el('div', 'fm-att-device-progress-bar');
+      bar2.style.width = `${Math.max(0, Math.min(100, pct))}%`;
+      track.appendChild(bar2);
+      card.appendChild(track);
+    }
+    return card;
+  }
 
   /** @type {HTMLElement} */
   const note = el('span', 'fm-att-note',
@@ -1141,6 +1240,10 @@ function bubbleEl(m, conv) {
   // QA 断言面（附件）：条目数 + 逐条呈现态 + 签名（keyedDiff 收敛判据同源）。
   wrap.dataset.attachments = attSig(m);
   wrap.dataset.attCount = String(Array.isArray(m.attachments) ? m.attachments.length : 0);
+  // 设备会话统一批 MVP-1：来源面落 dataset（QA 断言面 + 徽章判据同源）。缺省 `user`。
+  // 🔴 收端只为**提示级**渲染（设计卡 §9 P3）：wire `origin` 未经服务端强制，
+  // 不构成「agent 发」的定论；服务端强制属 MVP-2。
+  wrap.dataset.origin = (m && m.origin === 'agent') ? 'agent' : 'user';
 
   const bubble = el('div', 'fm-msg-bubble');
   // 群气泡发送者名：仅群窗、仅入站（他人）消息挂名（本机消息右侧不挂，微信式）。
@@ -1177,7 +1280,7 @@ function bubbleEl(m, conv) {
     meta.appendChild(el('span', 'fm-msg-agent-badge',
       t(conv.kind === 'group' ? 'messages.agentGroupBadge' : 'messages.agentBadge')));
   }
-  if (hasForwarded(m.id)) meta.appendChild(el('span', 'fm-msg-forwarded-badge', t('messages.forwarded')));
+  if (hasForwarded(fwdKeyOf(conv, m.id))) meta.appendChild(el('span', 'fm-msg-forwarded-badge', t('messages.forwarded')));
   const timeMs = toEpochMs(m.createdAt);
   const timeSpan = el('span', 'fm-msg-time', fmtTime(m.createdAt));
   // 仅同日分支（纯时钟文本）参与 12/24 切换：挂 data-ts-text 即声明「本节点文本
@@ -1530,12 +1633,17 @@ function appendMessage(m, ours = false) {
 // silent for the manual path — the caller toasts; auto-forward just skips).
 function forwardToAgent({ body, messageId, direction, createdAtMs }, conv) {
   if (!body) return false;
+  // 设备面（卡 §1.3-8/9）：入参映射 `body←text` / `messageId←msgId` /
+  // `direction←direction` / `createdAtMs←ts`（由调用侧适配层给出，本函数只接线）。
+  // 🔴 `refType` 仍为 `'friend-message'`（禁改链零触碰 ⇒ 一期接受语义不纯，卡 O6）。
+  const isDevice = !!(conv && conv.kind === 'device');
   const ref = makeReference({
     refType: 'friend-message',
     source: {
       conversationId: conv.conversationId || '',
       messageId: messageId || '',
-      friendName: conv.friend?.name || '',
+      // 设备面无名册档案 ⇒ 名字取设备自报（`deviceLabel`），neblinkId 恒空。
+      friendName: isDevice ? deviceLabel(conv.device) : (conv.friend?.name || ''),
       friendNeblinkId: conv.friend?.neblinkId || '',
       direction: direction === 'out' ? 'out' : 'in',
       date: refDate(createdAtMs),
@@ -1553,6 +1661,9 @@ function forwardBubble(wrap, conv) {
     direction: wrap.classList.contains('out') ? 'out' : 'in',
     createdAtMs: wrap.dataset.createdAt,
   }, conv);
+  // 设备面（卡 P4）：`msgId` 是 uuid 形状，与好友数字 id 在 `forwardedIds` 同集合里
+  // 会撞域 ⇒ 设备侧统一加 `dev:` 前缀（写/读两侧同一函数 `fwdKeyOf`）。
+  if (ok && conv && conv.kind === 'device') stampForwarded(fwdKeyOf(conv, wrap.dataset.messageId), wrap.dataset.messageId);
   // No ACTIVE chat view (nothing open in the main window) → appendRef returns
   // false. Never silent: guide the user to open a session first (0904 audit
   // break-point fix — previously a silent no-op).
@@ -1563,12 +1674,23 @@ function forwardBubble(wrap, conv) {
 // message ids may be numbers — normalize at the boundary.
 function hasForwarded(id) { return forwardedIds.has(id) || forwardedIds.has(String(id)); }
 
-/** Stamp the 「已转发给 agent」 chip (set + open bubble, if rendered). Idempotent. */
-function stampForwarded(id) {
+/** 转发「已转发」标记的 id 命名空间（设备会话统一批 MVP-1 · 卡 P4）：
+ *  `forwardedIds` 是**字符串集合**，好友/群用服务端数字 id、设备用 `msgId`（uuid 形状）
+ *  —— 两个 id 域混存会互相碰撞 ⇒ 设备侧统一加会话前缀（写侧 `stampForwarded` 与
+ *  读侧 `bubbleEl` 都过本函数，禁两处各写一次前缀）。 */
+function fwdKeyOf(conv, id) {
+  const raw = String(id == null ? '' : id);
+  return (conv && conv.kind === 'device') ? DEVICE_CONV_PREFIX + raw : raw;
+}
+
+/** Stamp the 「已转发给 agent」 chip (set + open bubble, if rendered). Idempotent.
+ *  @param {string} id 集合键（设备面 = `dev:<msgId>`）
+ *  @param {string} [domId] DOM 查键（设备面 = 裸 `msgId`，即 `dataset.messageId`） */
+function stampForwarded(id, domId) {
   forwardedIds.add(id);
   forwardedIds.add(String(id));
   if (!modalEls) return;
-  const wrap = modalEls.flow.querySelector(`.fm-msg[data-message-id="${CSS.escape(String(id))}"]`);
+  const wrap = modalEls.flow.querySelector(`.fm-msg[data-message-id="${CSS.escape(String(domId === undefined ? id : domId))}"]`);
   const meta = wrap && wrap.querySelector('.fm-msg-meta');
   if (meta && !meta.querySelector('.fm-msg-forwarded-badge')) {
     meta.prepend(el('span', 'fm-msg-forwarded-badge', t('messages.forwarded')));
@@ -2176,6 +2298,16 @@ export function initMessages() {
     }).observe(panel, { attributes: true, attributeFilter: ['class'] });
   }
 
+  // ── 设备面（MVP-1）：数据面订阅 ────────────────────────────────────────
+  // ① 设备腿消息变更（`dropbox-message` / `dropbox-history` / 传输态 / 闸位提示）——
+  //    通知源 = dropbox.js 的 `afterDeviceMessageChange` 单点（不在本模块重挂 WS 帧
+  //    监听：否则新旧两窗各消费一次 ⇒ 两套时序判断）。
+  onDeviceMessageChange((deviceId) => { onDeviceMessageChanged(deviceId); });
+  // ② 在线态推送（O10）：唯一推送源 = `/api/neblink/status` 落地拍（WS `peerListChanged`
+  //    已在其上游汇流）⇒ 开着的设备窗副行徽章就地刷新。联系人面板设备段由 contacts.js
+  //    自行订阅同一源（禁第二份轮询）。
+  onNeblinkStatus(() => { refreshOpenDevicePresence(); });
+
   renderList();
   if (loggedIn()) refreshConversations();
 }
@@ -2199,4 +2331,200 @@ export async function openChatWithFriend(friend) {
     return;
   }
   openConversation(conv.conversationId, null);
+}
+
+// ══════════════════════════════════════════════════════════════════════════
+// 设备会话统一批 MVP-1（2026-09-15）：设备会话面（客户端统一）
+//
+// 设计卡 §6.2/§6.3 的落点 —— 设备会话窗**复用本模块的窗骨架与渲染管线单点**
+// （`renderChatModal` → `renderMessages` → `keyedDiff` → `bubbleEl` → `fillBubble`
+// → `attachmentCard` / `renderFlowStatus` / `preserveScrollAnchor` / `timeFormat`），
+// 差异只剩**一层数据源适配**（§6.3 D1/D10）与两处设备专有项（附件发送入口 D3、
+// 文件卡传输态 D4）。
+// 🔴 禁复制 `dropbox.js:543/487/464/564` 的平行管线（否则 = 卡点名的「第三实现」）；
+//    设备腿**数据面**仍由 dropbox.js 唯一属主，本模块只消费其访问器。
+// 🔴 本段不触碰转发链禁改面（`:21-23` 的 `forwardBubble/forwardToAgent/makeReference/
+//    appendRefToActiveView/notifyFriendRefsSent/onRefsSent/stampForwarded/sendWs`）
+//    —— 设备面**调用**既有入口 + 入参映射，零新增实现。
+// ══════════════════════════════════════════════════════════════════════════
+
+/** 设备会话 id 域：`dev:<deviceId>`（确定性 ⇒ 幂等；与好友/群 id 不同域）。 */
+export const DEVICE_CONV_PREFIX = 'dev:';
+
+/** 设备工作集（本模块持有的适配后消息数组；与 `chatMsgs` 同构，但按设备分开）。 */
+let deviceMsgs = [];
+
+/** 设备行去重（卡 O12/P9）：`peers` 里同一 `deviceId` 可能出现多行（上游缺口
+ *  board #9/#10）⇒ **渲染层去重**，保首条（先到者 = 状态面板同源的那条）。 */
+function dedupeDevices(peers) {
+  const out = [];
+  const seen = new Set();
+  for (const d of peers || []) {
+    const id = d && d.deviceId ? String(d.deviceId) : '';
+    if (!id || seen.has(id)) continue;
+    seen.add(id);
+    out.push(d);
+  }
+  return out;
+}
+
+/** 设备显示名（**唯一实现**，与设置面板同口径）：用户描述 > 设备名 > id > 占位。 */
+export function deviceLabel(d) {
+  if (!d) return '';
+  return d.userDescription || d.deviceName || d.deviceId || t('neblink.unknownDevice');
+}
+
+/** 设备窗副行（平台标签 + 设备 id）：平台标签走 `platformDisplay` 单点（禁第二份映射）。 */
+function deviceSubLabel(d) {
+  if (!d) return '';
+  const platform = platformDisplay(d.platform).text || '';
+  return [platform, d.deviceId || ''].filter(Boolean).join(' · ');
+}
+
+/** 本账号**自有设备**（去重后）。数据源 = `getNeblinkState().peers`（不是好友关系域：
+ *  设备无好友语义、无服务端 presence 面，卡 §2 A1）。未登录 ⇒ 空集。 */
+export function devicePeers() {
+  const rel = getNeblinkState();
+  if (!rel || !rel.loggedIn) return [];
+  return dedupeDevices(rel.peers);
+}
+
+/** 设备消息 → 本模块气泡形态（§6.3 D1/D10 **唯一**映射点）。
+ *  映射：`msgId→id` / `text→body` / `ts→createdAtMs`（`toEpochMs` 直通，卡 1.3-9）/
+ *  `direction==='out'→ours`。节点身份键统一走 `messageId`（`bubbleEl` 已用
+ *  `dataset.messageId` ⇒ 与好友/群同键，D10 收敛）。
+ *  @param {any} m DropboxMessage（wire/缓存原文，字段面见 DropboxModels.scala:12-31）
+ *  @returns {any} */
+function adaptDeviceMessage(m) {
+  const ours = m.direction === 'out';
+  return {
+    id: String(m.msgId),
+    // 文件消息不占气泡正文（文件卡承载）；notice 走 text 正文（既有闸位提示形态）。
+    body: m.kind === 'file' ? '' : (m.text || ''),
+    createdAt: m.ts,
+    // 来源面（卡 P3）：收端**提示级**渲染（wire `origin` 未经服务端强制）。
+    origin: m.origin === 'agent' ? 'agent' : 'user',
+    ours,
+    attachments: m.kind === 'file' ? [deviceFileAsAttachment(m, ours)] : [],
+  };
+}
+
+/** 设备文件消息 → 附件卡形态（卡 D4）：适配 `attachmentCard` 的 `device` 态，
+ *  传输态（status/savedPath/进度）挂在气泡状态位。 */
+function deviceFileAsAttachment(m, ours) {
+  const total = Number(m.totalBytes) || Number(m.fileSize) || 0;
+  const got = Number(m.bytesReceived) || Number(m.downloadedBytes) || 0;
+  const pct = (total > 0 && got > 0 && m.status !== 'completed') ? Math.floor((got / total) * 100) : null;
+  return {
+    id: '',
+    name: m.fileName || '',
+    size: Number(m.fileSize) || 0,
+    state: 'device',
+    deviceStatus: m.status || '',
+    deviceSavedPath: m.savedPath || '',
+    deviceOut: ours,
+    devicePct: pct,
+  };
+}
+
+/** 设备会话行（合并进 `conversations`；范本 = 群行 `convRow`）。
+ *  派生行、无状态：每次刷新按 peers 重算。`lastMessage` 供列表预览/排序键
+ *  （排序键 = `lastMessage.createdAt`，与好友/群同键）。 */
+function deviceConvs() {
+  return devicePeers().map(d => {
+    const raw = deviceMessagesOf(d.deviceId);
+    const last = raw.length ? raw[raw.length - 1] : null;
+    return {
+      conversationId: DEVICE_CONV_PREFIX + d.deviceId,
+      kind: 'device',
+      device: d,
+      // D5：设备面一期无未读概念（服务端设备维度未读属 MVP-2）⇒ 恒 0，不画角标。
+      unreadCount: 0,
+      lastMessage: last ? adaptDeviceMessage(last) : null,
+    };
+  });
+}
+
+/** 设备工作集 → 本模块消息数组（**顺序即帧/缓存顺序**：网关按 ts 升序给出全量）。 */
+function syncDeviceMsgs(deviceId) {
+  const raw = deviceMessagesOf(deviceId);
+  const next = [];
+  for (const m of raw) {
+    if (!m || m.msgId === undefined || m.msgId === null) continue;
+    next.push(adaptDeviceMessage(m));
+  }
+  deviceMsgs = next;
+}
+
+/** 设备面发送（人发）。与好友面**同一形态**（trim 闸 → 清空 → 发送键回禁用态），
+ *  但出帧走 `dropbox-send-text`（设备腿唯一通道）。回显由网关 `dropbox-message`
+ *  帧给（**同一 `msgId`**，卡 1.3-12）⇒ 不做本地乐观气泡（禁第二份回显认领逻辑）。 */
+function sendDeviceCurrent(conv) {
+  if (!modalEls || !conv || !conv.device) return;
+  const body = modalEls.input.value.trim();
+  if (!body || body.length > 2000) return; // D8：与好友窗同闸（2000，服务端无 enforcement）
+  modalEls.input.value = '';
+  syncComposerSend();
+  sendDeviceText(conv.device.deviceId, body);
+}
+
+/** 在线态推送到达 ⇒ 开着的设备窗副行徽章就地刷新（不整窗重建）。 */
+function refreshOpenDevicePresence() {
+  if (!modalEls || !modalEls.conv || modalEls.conv.kind !== 'device') return;
+  const conv = modalEls.conv;
+  const fresh = devicePeers().find(d => d.deviceId === conv.device.deviceId);
+  if (fresh) conv.device = fresh;
+  const sub = modalEls.overlay.querySelector('.fm-modal-id');
+  if (sub) sub.textContent = deviceSubLabel(conv.device);
+  const slot = modalEls.overlay.querySelector('.fm-modal-presence');
+  if (slot) {
+    const badge = presenceBadgeHTML({ ...(conv.device || {}), isLocal: false });
+    slot.innerHTML = badge;
+  }
+}
+
+/** 设备腿消息变更（dropbox.js 单点通知）：会话列表设备行 + 开着的设备窗。 */
+function onDeviceMessageChanged(deviceId) {
+  renderList(); // 设备行预览/时间（数据全在内存 ⇒ 零额外请求）
+  if (!modalEls || openConvId !== DEVICE_CONV_PREFIX + deviceId) return;
+  const conv = currentConv();
+  if (!conv || conv.kind !== 'device') return;
+  syncDeviceMsgs(deviceId);
+  // 阅读位（卡 §6.2 #5）：用户在读旧内容时不被推走；已在底部 ⇒ 跟随新消息。
+  const flow = modalEls.flow;
+  const atBottom = flow.scrollTop + flow.clientHeight >= flow.scrollHeight - 4;
+  renderMessages(deviceMsgs, { stickBottom: atBottom });
+}
+
+/** 设备会话开窗（与 `openConversation` 同构，数据面换设备腿）。
+ *  🔴 不取会话 REST、不写读水位、不走 keyset 增量：设备面历史 = 网关本机
+ *  `~/.nebflow/dropbox/messages.json` 的全量帧（`dropbox-history`），分页属 MVP-2（卡 D9）。 */
+function openDeviceConversation(conv, rowEl) {
+  triggeringRow = rowEl || null;
+  triggeringConvId = conv.conversationId;
+  openConvId = conv.conversationId;
+  renderChatModal(conv);
+  const deviceId = conv.device.deviceId;
+  // 顺序即契约（与旧窗 `openDropbox` 同）：本地缓存渲染先于出帧（stale-while-revalidate）。
+  const hydrated = hydrateDeviceCache(deviceId);
+  syncDeviceMsgs(deviceId);
+  renderMessages(deviceMsgs);
+  if (!hydrated && deviceHistoryPending(deviceId)) showFlowLoading(); // 无缓存 ⇒ 可见加载态
+  requestDeviceHistory(deviceId);
+  if (modalEls) modalEls.input.focus();
+}
+
+/** 设备行/联系人设备段的共用开窗入口（联系人面板与消息面板都调它）。 */
+export function openDeviceChat(device) {
+  if (!device || !device.deviceId) return;
+  const convId = DEVICE_CONV_PREFIX + device.deviceId;
+  let conv = conversations.find(c => c.conversationId === convId);
+  if (conv) {
+    conv.device = device; // presence/描述就地更新（对象引用复用）
+  } else {
+    conv = { conversationId: convId, kind: 'device', device, unreadCount: 0, lastMessage: null };
+    conversations.unshift(conv);
+  }
+  renderList();
+  openDeviceConversation(conv, null);
 }
