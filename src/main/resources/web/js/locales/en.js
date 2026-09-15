@@ -312,7 +312,8 @@ export default {
   // (contract = main card case-1 interface list + A-4).
   'contacts.createGroup': 'New Group',
   'contacts.createGroupTitle': 'Start a group chat',
-  'contacts.createGroupName': 'Group name (optional)',
+  'contacts.createGroupName': 'Group name',
+  'contacts.createGroupNameRequired': 'Group name is required',
   'contacts.createGroupSelected': '{n} selected',
   'contacts.createGroupCap': 'Groups are limited to 50 members',
   'contacts.createGroupSubmit': 'Create',

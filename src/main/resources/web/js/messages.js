@@ -58,10 +58,19 @@ let msgSeq = 0;
 // ── 群组一期（friendgroups 客户端腿）：群会话状态 ─────────────────────
 // 群行与单聊行共用 conversations[]（合并后同键排序，主卡 C-3：排序键不变），
 // 群行形状 = { conversationId, kind:'group', title, lastMessage, unreadCount,
-// memberCount, myRole }（friendGroups.refreshGroups 归一出口）。
+// memberCount, myRole, selfUserId? }（friendGroups.refreshGroups 归一出口；
+// selfUserId 为契约加性 viewer 字段，**在场才有键**，缺席不造值）。
 
-// 「本机是否发送者」判据源（主卡 F-2 #3 点名的群新增面）。冻结契约里没有
-// viewer 身份字段 ⇒ 客户端按「发送关联」自证：
+// 「本机是否发送者」判据源（主卡 F-2 #3 点名的群新增面）。契约字段面 =
+// **加性小批的 `selfUserId`**（真源 = neblink-server
+// `.nebflow/reports/20260915_130900_group-selfuserid-impl.md` §1 契约终版：
+// 值 = 本次请求的鉴权身份，服务端权威、客户端不可影响）。本模块的消费点
+// = `learnSelfUserId` 单点，四条来源腿：
+//  · 群行**行内** `selfUserId`（GET /api/groups，§1.1 #2；refreshConversations）；
+//  · 邀请**信封** `selfUserId`（GET /api/groups/invites，§1.1 #3；随 refreshGroups 出口）；
+//  · 成员**信封** `selfUserId`（GET /api/groups/{id}/members，§1.1 #7；开群窗名册腿）；
+//  · 群发**回执** `selfUserId`（POST …/messages 201，§1.1 #8；发送腿）。
+// 四条**都缺席**（老服务端 / 零群退化）⇒ 不改判据、不造值，继续按「发送关联」自证：
 //  · sentMessageIds = 本机发送成功的服务端 messageId（POST 响应腿登记）；
 //  · 任何取数/帧腿见到 id ∈ sentMessageIds 的行 ⇒ 该行 senderId 即 viewer
 //    身份（权威：服务端 sender_id 恒 = 鉴权解出身份，补充卡 §5.4 矩阵）；
@@ -88,6 +97,16 @@ function groupSelfUserId() {
     } catch { /* non-critical */ }
   }
   return selfUserId;
+}
+
+/** 契约加性字段腿（消费点，**只有这一个**）：群行带 `selfUserId` ⇒ 直接学习为
+ *  viewer 身份；缺席 ⇒ 静默跳过（禁造值）。与自证腿的等价性：两腿最终都落到
+ *  `groupSelfUserId()` 的同一返回值上，而 oursBySenderId 只做 `String(sid) ===
+ *  mine` 比较 ⇒ 对同一批消息两腿给出**相同**方向判定（等价性读数见 impl 报告）。 */
+function learnSelfFromGroupRows(list) {
+  for (const c of list || []) {
+    if (c && c.kind === 'group' && c.selfUserId) learnSelfUserId(c.selfUserId);
+  }
 }
 
 /** 自证写入点（唯一）：certified senderId ⇒ viewer 身份。换账号由 acct 分区
@@ -372,6 +391,11 @@ async function refreshConversations({ friends = 'reuse' } = {}) {
     }
     conversations = conversations.sort((a, b) =>
       (toEpochMs(b.lastMessage?.createdAt) || 0) - (toEpochMs(a.lastMessage?.createdAt) || 0));
+    // 契约加性 viewer 字段腿：群行行内 selfUserId（§1.1 #2）+ 邀请信封面
+    // （refreshGroups 出口，§1.1 #3）—— 在场则直接学习；缺席 ⇒ 无操作，
+    // groupSelfUserId 继续走发送关联自证。
+    learnSelfFromGroupRows(conversations);
+    if (grp && grp.selfUserId) learnSelfUserId(grp.selfUserId);
     if (fr) { friendsCache = fr.friends || []; friendsFetchedAt = Date.now(); }
   } catch { /* keep last known */ }
   renderList();
@@ -676,6 +700,9 @@ function groupSenderNameOf(conv, senderId) {
 async function hydrateGroupSenderNames(conv) {
   try {
     const members = await api.getGroupMembers(conv.conversationId);
+    // 成员面信封 `selfUserId`（契约终版 §1.1 #7）= viewer 身份的另一条权威腿：
+    // 学到即收敛整窗方向判据（含已渲染气泡的下一次渲染）。
+    if (members && members.selfUserId) learnSelfUserId(members.selfUserId);
     const map = new Map();
     for (const mem of members || []) {
       if (mem && mem.userId) map.set(String(mem.userId), mem.name || String(mem.userId));
@@ -1780,6 +1807,11 @@ async function sendCurrent(conv) {
       : await api.sendFriendMessage(conv.friend.userId, body);
     const realId = resp.messageId || tempId;
     noteSentRealId(realId); // self 识别关联源（群方向判据的学习输入，见 §状态段）
+    // 群发回执面 `selfUserId`（契约终版 §1.1 #8）= 发送者鉴权身份 ⇒ 最强证据，
+    // 即时收敛 viewer 身份（不等自播帧/后续拉取）。🔴 单聊路径**刻意忽略**该键
+    // （同形共享信封的外溢字段，已裁：单聊面不消费 —— 单聊方向判据走既有
+    // conv.friend.userId 双员封闭，无需 viewer 身份）。
+    if (conv.kind === 'group' && resp && resp.selfUserId) learnSelfUserId(resp.selfUserId);
     wrap.classList.remove('fm-sending');
     // U-b 唯一锚定点：回显已先到时此处**幂等**（同一后置条件，节点/条目数不变）；
     // 回显未到时即既有的「temp id → 服务端 id」换键。
