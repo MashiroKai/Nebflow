@@ -579,6 +579,8 @@ async function openConversation(conversationId, rowEl) {
   triggeringConvId = conversationId;
   openConvId = conversationId;
   renderChatModal(conv);
+  // 群窗：惰性装载成员名册（发送者名回填；失败 = 降级无名字，消息不受影响）。
+  if (conv.kind === 'group') hydrateGroupSenderNames(conv);
 
   // ⑨ 热路径（有缓存）：同步读缓存首屏（零往返），随后一次极小增量核对
   // （`after=<水位>&limit=SYNC_PAGE`）—— 无新消息 = 空响应，**不是**尾窗重取。
@@ -633,6 +635,37 @@ async function openConversation(conversationId, rowEl) {
 /** 窗头/弹窗标题单点（群 = 群名；单聊 = 既有 personLabel 链，备注 > 显示名）。 */
 function convTitleLabel(conv) {
   return (conv && conv.kind === 'group') ? groupTitleOf(conv) : personLabel(conv && conv.friend);
+}
+
+// ── 群气泡发送者名（腿B §5.2 #2 的群新增面）───────────────────────────
+// 名册来源 = GET /api/groups/{id}/members（主卡:249 接口清单；显示名而非好友
+// 备注，主卡 H 节口径）。开群窗时惰性取一次；首帧早于名册时先挂空槽（带
+// data-sender-id），名册到达后就地回填 —— 消息本体渲染不受名册成败影响。
+const groupMemberNames = new Map(); // conversationId -> Map(senderId -> displayName)
+
+/** 群发送者显示名（未命中 ⇒ ''，渲染层留空槽等待回填）。 */
+function groupSenderNameOf(conv, senderId) {
+  const map = groupMemberNames.get(String(conv && conv.conversationId));
+  return (map && map.get(String(senderId))) || '';
+}
+
+/** 开群窗时的成员名册惰性装载（每窗一次；失败降级为无发送者名）。 */
+async function hydrateGroupSenderNames(conv) {
+  try {
+    const members = await api.getGroupMembers(conv.conversationId);
+    const map = new Map();
+    for (const mem of members || []) {
+      if (mem && mem.userId) map.set(String(mem.userId), mem.name || String(mem.userId));
+    }
+    groupMemberNames.set(String(conv.conversationId), map);
+    // 就地回填：名册晚于首帧到达时，补齐已渲染气泡的发送者名（幂等）。
+    if (modalEls && openConvId === conv.conversationId) {
+      for (const s of modalEls.flow.querySelectorAll('.fm-msg-sender[data-sender-id]')) {
+        const nm = map.get(s.dataset.senderId);
+        if (nm && !s.textContent) s.textContent = nm;
+      }
+    }
+  } catch { /* 名册失败 = 降级为无发送者名（禁因名册失败丢消息） */ }
 }
 
 function renderChatModal(conv) {
@@ -1110,6 +1143,13 @@ function bubbleEl(m, conv) {
   wrap.dataset.attCount = String(Array.isArray(m.attachments) ? m.attachments.length : 0);
 
   const bubble = el('div', 'fm-msg-bubble');
+  // 群气泡发送者名：仅群窗、仅入站（他人）消息挂名（本机消息右侧不挂，微信式）。
+  // 成员名册未到时留空槽（data-sender-id），hydrateGroupSenderNames 到达后回填。
+  if (conv.kind === 'group' && !out && m.senderId) {
+    const sender = el('div', 'fm-msg-sender', groupSenderNameOf(conv, m.senderId));
+    sender.dataset.senderId = String(m.senderId);
+    wrap.appendChild(sender);
+  }
   fillBubble(bubble, m);
   wrap.appendChild(bubble);
 

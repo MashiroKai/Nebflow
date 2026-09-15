@@ -1136,3 +1136,14 @@ button.fm-req-decline:focus-visible {
 
 /* 群成员小头像（28px 档；成员行密度高于列表行） */
 .fm-avatar-28 { width: 28px; height: 28px; font-size: 12px; }
+
+/* 群气泡发送者名（仅入站；名册未到时空槽，hydrate 后就地回填） */
+.fm-msg-sender {
+  font-size: 11px;
+  color: var(--color-text-muted, #888);
+  margin: 0 4px 2px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  max-width: 78%;
+}
