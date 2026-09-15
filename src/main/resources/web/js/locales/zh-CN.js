@@ -1227,14 +1227,14 @@ export default {
   // === 插件页（2026-09-13 无审批批：在位即信任；2026-09-14 面板收敛批：
   //     封禁/解封 UI 全量退场 + 派发开关改「任务分发器可见性」并移到卡片右上，en/zh 成对） ===
   'plugins.list': '插件',
-  'plugins.listHint': '统一插件系统：技能与 MCP 以插件为单位。插件在位即受信——装好即可用，无需审批。本开关只影响任务分发器对未来节点的派发（已在跑的节点保持其许可）；停用某个插件走 API / CLI（面板不提供封禁入口）',
+  'plugins.listHint': '统一插件系统：技能与 MCP 以插件为单位。装好即可用。本开关只影响任务分发器对未来节点的派发（已在跑的节点保持其许可）；停用某个插件走 API / CLI（面板不提供封禁入口）',
   'plugins.agents': '智能体',
   'plugins.agentsHint': '点按智能体行进入详情编辑（工具 / 提示词 / 流程）',
   'plugins.empty': '暂无插件',
   'plugins.stateBlocked': '已封禁',
   'plugins.stateChanged': '内容已变更',
   'plugins.blockedHint': '已封禁——该插件不进分发器目录、不会被派发；解封走 API / CLI（面板不提供入口）。',
-  'plugins.changedHint': '内容与上次记录的版本不同——已按新内容生效，此提示仅为可见性（无需再审批）',
+  'plugins.changedHint': '内容与上次记录的版本不同——已按新内容生效，此提示仅为可见性',
   'plugins.dispatchLabel': '任务分发器可见性',
   'plugins.dispatchOnTitle': '派发许可已开启——可派给新节点。点击后只挡未来派发；已在跑的节点保持其许可',
   'plugins.dispatchOffTitle': '派发许可已关闭——不会再派给新节点。点击恢复派发',
