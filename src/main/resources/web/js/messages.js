@@ -2579,7 +2579,10 @@ export function initMessages() {
   // 打开中的聊天窗消息时间由 refreshAllTimestamps 的 [data-ts-text] 就地刷新覆盖。
   window.addEventListener(TIME_FORMAT_CHANGED, () => { renderList(); });
   // P3 error surface — friendsApi dispatches on auth failure / network error.
-  window.addEventListener('fm-auth-required', () => { openLoginModal(); });
+  // `{auto:true}`: not a user gesture — one event per failed request, so it
+  // must not open an OAuth window per event (repeat guard, 2026-09-15 OIDC
+  // fix; the 登录失效卡 stays the visible manual retry surface).
+  window.addEventListener('fm-auth-required', () => { openLoginModal({ auto: true }); });
   window.addEventListener('fm-network-error', () => { window.__showToast?.(t('messages.networkError'), 'error'); });
   // 群域变更（建群/退群/解散/踢人/邀请响应/可用性翻面）：群列表重取；建群成功
   // 带 openConversationId ⇒ 列表就绪后直接开群窗（新群必在服务端返回里）。

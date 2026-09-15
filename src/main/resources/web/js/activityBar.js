@@ -473,9 +473,17 @@ function injectLoginModalStyles() {
 /**
  * Public entry for the NebLink login modal (used by the
  * friends/messages panels' logged-out empty states).
+ *
+ * `opts.auto === true` marks a caller that is NOT a user gesture — today
+ * exactly the two `fm-auth-required` handlers (`contacts.js` / `messages.js`),
+ * an event `friendsApi.js` dispatches on EVERY friendship 401/403. Such
+ * callers are rate-limited by the repeat guard in `showLoginModal` instead of
+ * being allowed to open an OAuth window per failed request. Plain calls stay
+ * unguarded: they are either click handlers or the switch-account fallbacks,
+ * i.e. real user intent.
  */
-export function openLoginModal() {
-  showLoginModal();
+export function openLoginModal(opts = {}) {
+  showLoginModal(opts);
 }
 
 // ── Popup-blocker resilience ─────────────────────────────
@@ -488,6 +496,25 @@ export function openLoginModal() {
 
 /** @type {Window|null} */
 let reservedPopup = null;
+
+/** Repeat guard for the AUTO-started login flow (2026-09-15 OIDC fix).
+ *
+ * Defect it closes: `friendsApi.js` dispatches `fm-auth-required` on every
+ * friendship 401/403 (two call sites) and both handlers call
+ * `openLoginModal()`. Every one of those used to reserve a popup and start a
+ * FULL PKCE flow, so an auth-failure burst opened one OAuth window after
+ * another, each landing on the loopback callback page — the "switch account
+ * keeps reopening http://127.0.0.1:<port>/auth/callback?code=…" symptom.
+ * The modal's own success path closes itself 1.5s later, which re-armed the
+ * DOM guard in `showLoginModal` and let the next event start yet another flow
+ * (2026-09-15 author-machine reading: 5 complete logins in 19s, no click).
+ *
+ * Semantics: at most one AUTO flow per guard window; a repeat leaves the
+ * panels' 登录失效卡 + 重登按钮 as the visible manual retry surface, so the
+ * failure is still surfaced (never a silent no-op). User gestures are not
+ * rate-limited — only `openLoginModal({auto:true})` callers consult this. */
+const LOGIN_FLOW_GUARD_MS = 15000;
+let loginFlowGuardUntil = 0;
 
 /** Reserve a blank popup. Must be called synchronously in the gesture stack. */
 function reservePopup() {
@@ -539,8 +566,15 @@ function popupBlockedFallback(url) {
  * logto-not-configured and the legacy device flow takes over.
  * Closing the modal cancels polling.
  */
-function showLoginModal() {
+function showLoginModal(opts = {}) {
   if (document.getElementById('nebflow-login-modal')) return;
+  // Non-gesture repeat guard (2026-09-15 OIDC fix) — see LOGIN_FLOW_GUARD_MS.
+  // Checked BEFORE the modal is built, so a suppressed repeat leaves no empty
+  // panel behind; the status refresh keeps the visible surfaces current.
+  if (opts.auto && Date.now() < loginFlowGuardUntil) {
+    refresh();
+    return;
+  }
   injectLoginModalStyles();
 
   const modal = document.createElement('div');
@@ -651,6 +685,10 @@ function showLoginModal() {
       finished = true;
       setPairing(false);
       render('success');
+      // Keep the auto-flow guard armed past the self-close below (2026-09-15
+      // OIDC fix): an auth-failure event arriving right after a success must
+      // not start another flow now that the DOM guard is about to disarm.
+      loginFlowGuardUntil = Date.now() + LOGIN_FLOW_GUARD_MS;
       setTimeout(() => { close(); refresh(); }, 1500);
     };
     const onError = (errMsg) => {
@@ -703,6 +741,8 @@ function showLoginModal() {
 
   // Reserve the popup synchronously inside the click gesture stack — the
   // async startFlow below cannot open one without being blocked.
+  // Arm the auto-flow guard on every flow start (2026-09-15 OIDC fix).
+  loginFlowGuardUntil = Date.now() + LOGIN_FLOW_GUARD_MS;
   reservePopup();
   startFlow();
 }
