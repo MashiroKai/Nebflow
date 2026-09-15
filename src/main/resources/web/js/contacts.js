@@ -10,6 +10,9 @@ import { setActivityBadge, openLoginModal } from './activityBar.js';
 import { onMessage } from './ws.js';
 import * as api from './friendsApi.js';
 import { openChatWithFriend, fmtTime, isFriendTrusted, setFriendTrusted } from './messages.js';
+// 群组一期（friendgroups 客户端腿）：建群对话框 + 群取数/可用性 = friendGroups.js
+// 唯一属主；本面板只挂入口（fail-closed，主卡 G-2）与入站群邀请区。
+import { openCreateGroupDialog, refreshGroups, groupsAvailable, groupErrToast } from './friendGroups.js';
 import { showPopupMenu } from './contextMenu.js';
 // ⑨-6（作者 2026-09-12 预授权令）：本模块两个裸键（已看请求 / 拉黑镜像）迁入
 // `key()` 品牌命名空间；存量值经 branding.js 的 LEGACY_IRREGULAR 启动即迁移。
@@ -24,6 +27,7 @@ import { bindImeGuard, isImeComposing } from './imeGuard.js';
 let friends = [];
 let incoming = [];
 let outgoing = [];
+let groupInvites = [];      // 入站群邀请（GET /api/groups 附带 pending 邀请；加性假设面）
 let requestsExpanded = false;
 let lastSearchAt = 0;
 let searchResult = null;   // null | {found:false} | 契约搜索结果（归一内部形态，含 relation_status）
@@ -135,7 +139,7 @@ async function refresh() {
 }
 
 async function doRefresh() {
-  if (!loggedIn()) { friends = []; incoming = []; outgoing = []; listErrorKind = null; render(); return; }
+  if (!loggedIn()) { friends = []; incoming = []; outgoing = []; groupInvites = []; listErrorKind = null; render(); return; }
   try {
     // 批 B（§3.4）：出口唯一 —— `getFriends()` 已按「服务端 `friends[]` 命中」收敛
     // 双向待处理（`friendsApi.convergeRequests`）⇒ 本模块**不再**自行过滤（禁第二份判据）。
@@ -168,6 +172,10 @@ async function doRefresh() {
       if (r.to?.neblinkId) sentTo.add(String(r.to.neblinkId).toLowerCase());
       if (r.to?.userId) sentTo.add(`id:${r.to.userId}`);
     }
+    // 群邀请（入站 pending）：与 messages 面同源取数口（refreshGroups，禁第二
+    // 份归一）；null = keep-last-known（与好友列表失败同口径，不清空）。
+    const grp = await refreshGroups();
+    if (grp) groupInvites = grp.pendingInvites || [];
   } catch (err) {
     // F4（20260910）：失败≠空。记录分态供 render 区分「空列表」与「加载失败」；
     // 已有缓存数据时 keep-last-known 行为不变（不闪错误态）。
@@ -258,6 +266,13 @@ function render() {
   body.appendChild(nf);
 
   if (requestsExpanded) body.appendChild(buildRequests());
+
+  // ── 群组一期（friendgroups 客户端腿）──
+  // 入站群邀请（pending 态；「邀请需对方确认」= 主卡 A-4/O② 的被邀请侧确认面）。
+  if (groupInvites.length > 0) body.appendChild(buildGroupInvites());
+  // 发起群聊入口（fail-closed：群路由 404 ⇒ groupsAvailable()=false ⇒ 隐藏，
+  // 主卡 G-2「404 ⇒ 隐藏群入口，不降级、不静默」——翻面时 friendGroups 已 toast）。
+  if (groupsAvailable()) body.appendChild(buildCreateGroupEntry());
 
   // Friend list
   const list = el('div', 'fm-friend-list');
@@ -835,6 +850,78 @@ function requestRow(rq, dir) {
   btns.appendChild(decline);
   row.appendChild(btns);
   return row;
+}
+
+// ── 群组一期：发起群聊入口 + 群邀请区（建群/邀请契约 = 主卡案1② + A-4）──
+function buildCreateGroupEntry() {
+  const entry = el('div', 'fm-nf-entry');
+  entry.setAttribute('role', 'button');
+  entry.setAttribute('tabindex', '0');
+  const icon = el('span', 'fm-nf-icon');
+  icon.innerHTML = '<i data-lucide="users"></i>';
+  entry.appendChild(icon);
+  entry.appendChild(el('span', 'fm-nf-label', t('contacts.createGroup')));
+  const chev = el('span', 'fm-nf-chevron', '');
+  chev.innerHTML = '<i data-lucide="chevron-right"></i>';
+  entry.appendChild(chev);
+  const open = () => openCreateGroupDialog();
+  entry.addEventListener('click', open);
+  entry.addEventListener('keydown', (e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); open(); } });
+  return entry;
+}
+
+/** 入站群邀请行（accept/decline = POST /api/groups/{id}/invites/{inviteId}/accept|decline，
+ *  主卡:249 接口清单逐字）。行内消费字段按防御性读法：群名 = groupName | title |
+ *  conversationId；邀请人 = inviterName | inviter.name | inviterId（wire 未冻结的
+ *  字段名以实现报告契约注记为准，客户端两形都容忍）。 */
+function buildGroupInvites() {
+  const wrap = el('div', 'fm-requests fm-group-invites');
+  wrap.appendChild(el('div', 'fm-req-group', t('contacts.groupInvites')));
+  for (const inv of groupInvites) {
+    const row = el('div', 'fm-row fm-req-row fm-invite-row');
+    const groupName = inv.groupName || inv.title || inv.conversationId || '';
+    const inviterName = inv.inviterName || (inv.inviter && (inv.inviter.name || inv.inviter.userId)) || inv.inviterId || '';
+    row.appendChild(avatarEl({ name: String(groupName) }, 36));
+    const meta = el('div', 'fm-row-meta');
+    meta.appendChild(el('div', 'fm-row-name', String(groupName)));
+    meta.appendChild(el('div', 'fm-row-sub', t('contacts.groupInviteFrom', { name: String(inviterName) })));
+    row.appendChild(meta);
+    const btns = el('span', 'fm-req-btns');
+    const accept = el('button', 'glass-control fm-req-accept', t('contacts.accept'));
+    accept.addEventListener('click', async (e) => {
+      e.stopPropagation();
+      accept.disabled = true;
+      try {
+        await api.respondGroupInvite(String(inv.conversationId), String(inv.inviteId), true);
+        groupInvites = groupInvites.filter(x => x !== inv);
+        render();
+        window.dispatchEvent(new CustomEvent('fm-groups-changed', {
+          detail: { openConversationId: String(inv.conversationId) },
+        }));
+      } catch (err) {
+        accept.disabled = false;
+        groupErrToast(err);
+      }
+    });
+    const decline = el('button', 'fm-req-decline', t('contacts.decline'));
+    decline.addEventListener('click', async (e) => {
+      e.stopPropagation();
+      decline.disabled = true;
+      try {
+        await api.respondGroupInvite(String(inv.conversationId), String(inv.inviteId), false);
+        groupInvites = groupInvites.filter(x => x !== inv);
+        render();
+      } catch (err) {
+        decline.disabled = false;
+        groupErrToast(err);
+      }
+    });
+    btns.appendChild(accept);
+    btns.appendChild(decline);
+    row.appendChild(btns);
+    wrap.appendChild(row);
+  }
+  return wrap;
 }
 
 // ── Wiring ───────────────────────────────────────────────
