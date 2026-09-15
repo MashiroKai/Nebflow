@@ -10,6 +10,7 @@ import { key } from './branding.js';
 import { sendWs } from './ws.js';
 import { openTab, getTabPane, hasTab, setActiveTab, isCanvasOpen, openCanvas } from './canvas.js';
 import { t } from './i18n.js';
+import { contentText } from './contentI18n.js';
 import { createIconsIn } from './utils.js';
 import * as presets from './presets.js';
 
@@ -70,8 +71,8 @@ export async function fetchAgentModel(name) {
 /** Render a single agent card HTML string. */
 function renderAgentCard(a) {
   const name = esc(a.name);
-  const display = esc(a.displayName || a.name);
-  const desc = esc(a.description || '');
+  const display = esc(contentText('agent', a.name, 'name', a.displayName || a.name));
+  const desc = esc(contentText('agent', a.name, 'desc', a.description || ''));
   const initial = esc((a.displayName || a.name || '?').charAt(0).toUpperCase());
   const isNebula = a.name === 'Nebula';
   const isGlobalStandalone = (a.layer === 'global' || !a.layer) && (a.category || 'standalone') === 'standalone';
@@ -242,6 +243,7 @@ async function populateModelTag(name) {
  *  detail tab is per-agent content, NOT the sealed standalone list entry. */
 export async function openAgentDetail(name, pin = false) {
   const tabId = `agent:${name}`;
+  openAgentDetailIds.add(name);
   openTab(tabId, name, { type: 'agent', pinned: pin });
   const pane = getTabPane(tabId);
   if (!pane) return;
@@ -277,6 +279,9 @@ function renderAgentDetail(pane, name, detail, model, presetData) {
   const displayName = detail?.displayName || detail?.name || name;
   const description = detail?.description || '';
   const extends_ = detail?.extends || '';
+  // contenti18n 批：详情面文案走 locale 映射（键 = agent id）。`displayName` 本身
+  // 不替换——头像首字母（:297）仍取原名，只有文本节点本地化。
+  const contentAgentId = detail?.name || name;
 
   // System prompt
   const prompt = detail?.systemPrompt || '';
@@ -295,8 +300,8 @@ function renderAgentDetail(pane, name, detail, model, presetData) {
       <div class="agent-detail-header">
         <span class="agent-detail-avatar">${esc(displayName.charAt(0).toUpperCase())}</span>
         <div class="agent-detail-header-info">
-          <div class="agent-detail-name">${esc(displayName)}</div>
-          ${description ? `<div class="agent-detail-desc">${esc(description)}</div>` : ''}
+          <div class="agent-detail-name">${esc(contentText('agent', contentAgentId, 'name', displayName))}</div>
+          ${description ? `<div class="agent-detail-desc">${esc(contentText('agent', contentAgentId, 'desc', description))}</div>` : ''}
           ${extends_ ? `<div class="agent-detail-extends">extends: ${esc(extends_)}</div>` : ''}
         </div>
       </div>
@@ -385,5 +390,22 @@ export function isAgentsTabOpen() {
 window.addEventListener('canvas-tab-restore', (e) => {
   if (e.detail?.id === 'agents') {
     renderAgentManager();
+  }
+});
+
+// 切语言即重渲（contenti18n 批）：agent 名/描述走 locale 映射（js/contentI18n.js），
+// 语言一变，已渲染的列表与已打开的详情面板都必须随动——本批前此处零监听。
+// 详情面按 tabId `agent:<name>` 定位（openAgentDetail 登记），面板已卸载即摘除登记。
+const openAgentDetailIds = new Set();
+window.addEventListener('locale-changed', () => {
+  if (isAgentsTabOpen()) renderAgentManager();
+  for (const id of [...openAgentDetailIds]) {
+    const pane = getTabPane(`agent:${id}`);
+    if (!pane || !pane.isConnected) { openAgentDetailIds.delete(id); continue; }
+    Promise.all([fetchAgentDetail(id), fetchAgentModel(id), presets.fetchPresets()])
+      .then(([detail, model, presetData]) => {
+        if (pane.isConnected) renderAgentDetail(pane, id, detail, model, presetData);
+      })
+      .catch(() => { /* 重渲失败保持旧文案——不因语言切换把面板打成错误态 */ });
   }
 });
