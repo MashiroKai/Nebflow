@@ -420,9 +420,12 @@ export function platformDisplay(platform) {
   const win = '<svg viewBox="0 0 24 24" fill="currentColor" width="15" height="15"><path d="M3 5.48 10.4 4.4v7.1H3V5.48m0 13.04V13.4h7.4v7.1L3 18.52M11.4 4.26 21 3v8.5H11.4V4.26m0 15.48V13.4H21V21l-9.6-1.26"/></svg>';
   const linux = '<svg viewBox="0 0 24 24" fill="currentColor" width="15" height="15"><path d="M12.5 2c-1.3 0-2 1.1-2 2.4 0 .4.1.8.2 1.1-.5.5-1 1.4-1.4 2.5-.4 1.2-1 2.2-1.5 2.7-.5.4-1 .9-1.3 1.6-.3.7-.4 1.9.3 2.7-.3.5-.6 1.4-.3 2.3.2.7.7 1.2.8 1.7.1.5 0 .9.3 1.3.4.5 1 .5 1.6.3.4.6 1.1.9 1.9.9.9 0 1.6-.4 2-1 .4.2.9.3 1.4.1.8-.3 1.2-1 1.2-1.8 0-.4-.1-.7-.2-1 .3-.4.6-.9.6-1.6 0-.6-.2-1.1-.5-1.5.2-.4.3-.9.1-1.5-.2-.7-.7-1.2-.8-1.7-.1-.5 0-.9-.3-1.3-.4-.5-1-.5-1.6-.3-.4-.6-1.1-.9-1.9-.9-.5 0-.9.1-1.3.3.1-.3.2-.7.2-1.1 0-1.3-.7-2.4-2-2.4"/></svg>';
   const generic = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" width="15" height="15"><rect x="3" y="4" width="18" height="12" rx="1"/><path d="M8 20h8M12 16v4"/></svg>';
-  if (p.includes('mac')) return { icon: mac, text: 'macOS' };
+  // 🔴 匹配精度修复（设备会话统一批 MVP-1 发现、就地修单点）：`'darwin'.includes('win')`
+  // 为**真** ⇒ macOS 设备被标成「Windows」。旧面只消费 `icon`（字形），文本面从未被
+  // 显示 ⇒ 缺陷不可见；MVP-1 的设备窗副行/设备行**要显示 .text** ⇒ 必须按平台词精确判。
+  if (p.includes('mac') || p.includes('darwin') || p === 'ios') return { icon: mac, text: 'macOS' };
   if (p.includes('win')) return { icon: win, text: 'Windows' };
-  if (p.includes('linux')) return { icon: linux, text: 'Linux' };
+  if (p.includes('linux') || p === 'android') return { icon: linux, text: 'Linux' };
   return { icon: generic, text: platform || 'Device' };
 }
 

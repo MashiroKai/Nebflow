@@ -655,6 +655,8 @@ async function openConversation(conversationId, rowEl) {
 
 /** 窗头/弹窗标题单点（群 = 群名；单聊 = 既有 personLabel 链，备注 > 显示名）。 */
 function convTitleLabel(conv) {
+  // 设备会话（MVP-1）：窗头名 = 设备显示名（`deviceLabel` 单点：描述 > 设备名 > id）。
+  if (conv && conv.kind === 'device') return deviceLabel(conv.device);
   return (conv && conv.kind === 'group') ? groupTitleOf(conv) : personLabel(conv && conv.friend);
 }
 
