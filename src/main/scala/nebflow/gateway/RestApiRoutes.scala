@@ -1720,6 +1720,95 @@ class RestApiRoutes(
               case Some(q)         => fs.neblinkIdAvailable(q).flatMap(friendResult)
       }
 
+    // ===== 群组一期代理面（gwroutes 批，2026-09-15）=====
+    //
+    // 契约真源 = 跨仓 neblink-server `main`@`9e811ffc77349ae26af3d34ca790cee12ef216b2`
+    // 的 `src/groups.rs:616-639`：**11 条 `.route()` / 12 个 method+path 对**（第 1 条
+    // `.route("/api/groups", post(group_create).get(group_list))` 一条注册两个方法）。
+    // 逐条对表（server → 本层）见报告 §2；本层 = **纯代理**：路径 / 方法 / 请求体
+    // 逐字转发，响应 status + body 逐字回传 —— **不**做字段映射、**不**拆信封、
+    // **不**裁剪字段（任何 reshape 都会给冻结契约造出第二个真相源）。
+    //
+    // 🔴 为什么不能复用 `friendResult` / `friendErr`（既有好友面的折叠判据）：那条路
+    // 把上游非 2xx 统一折成 502，而群域的 `404 group_not_found` / `403 group_disbanded`
+    // / `403 not_member` 是**群终态**（客户端 `web/js/friendGroups.js#groupErrToast`
+    // 按语义码分态，`messages.groupNotFound` / `groupDisbanded` / `groupKicked` 三文案）。
+    // 折叠 ⇒ 客户端再也分不出「群不存在 / 群已解散 / 我被踢了」⇒ 语义净丢失。
+    // 同族先例 = 本文件 E3 附件下载路由（`410`/`404`/`403` 逐字透传不折叠）。
+    //
+    // 静态段优先：`/groups/invites` 必须排在 `/groups/{group_id}` 之前（与
+    // `groups.rs:611-615` 的 axum 静态段优先级**同构**；本文件 `/friends/requests`
+    // 先于 `/friends/{friendUserId}` 是同一既有先例）。
+    //
+    // 本层对每个 method+path 对**只登记一条**：多出的形态（如 `GET /groups/{id}`）
+    // 服务端没有 ⇒ 不注册（对表判据「网关多出 server 无」在报告 §2 逐条给读数）。
+
+    /** GET/POST /api/groups —— 我的群列表 / 建群。
+      * 列表 = **裸数组** `[GroupSummary]`（`groups.rs:170-176`，同 GET
+      * /api/conversations 约定；`model.rs:740-757` `rename_all="camelCase"`）；
+      * 建群 201 `{groupId,title,createdAt}` / 422 `invalid_title` / 429 `rate_limited`。 */
+    case req @ GET -> Root / "groups" =>
+      groupProxy(req, "GET", "/api/groups")
+
+    case req @ POST -> Root / "groups" =>
+      groupProxy(req, "POST", "/api/groups")
+
+    /** GET /api/groups/invites —— **邀请发现面**（加性端点，`groups.rs:178-200`）。
+      * 出参 `{"incoming":[GroupInviteEntry]}`（`model.rs:831-836`）。@静态段先于
+      * `/groups/{groupId}` 的 GET 形态——服务端无 `GET /groups/{id}`，本层亦不注册。 */
+    case req @ GET -> Root / "groups" / "invites" =>
+      groupProxy(req, "GET", "/api/groups/invites")
+
+    /** POST /api/groups/{groupId}/invites —— owner 邀请一人（A-4：被邀请人 accept 后
+      * 才入群）。上游 201 `{inviteId,groupId,inviteeUserId,status,createdAt}` /
+      * 404 `user_not_found` / 409 `already_member` / 409 `group_full` /
+      * 409 `invite_pending` / 400 `self_invite` / 422 `invalid_request`。 */
+    case req @ POST -> Root / "groups" / groupId / "invites" =>
+      groupProxy(req, "POST", s"/api/groups/${encSeg(groupId)}/invites")
+
+    /** POST .../invites/{inviteId}/accept —— 仅被邀请人。上游 200
+      * `{ok:true,groupId,title}` / 404 `not_found` / 403 `not_invitee` /
+      * 409 `not_pending` / 403 `group_disbanded` / 409 `group_full`。 */
+    case req @ POST -> Root / "groups" / groupId / "invites" / inviteId / "accept" =>
+      groupProxy(req, "POST", s"/api/groups/${encSeg(groupId)}/invites/${encSeg(inviteId)}/accept")
+
+    case req @ POST -> Root / "groups" / groupId / "invites" / inviteId / "decline" =>
+      groupProxy(req, "POST", s"/api/groups/${encSeg(groupId)}/invites/${encSeg(inviteId)}/decline")
+
+    /** GET /api/groups/{groupId}/members —— 成员闸（非成员 403 `not_member`）。
+      * 出参 `{"members":[{...FriendPublic,role,joinedAt}]}`（`model.rs:762-776`；
+      * 档案字段沿用 FriendPublic 的 snake_case 钉法，**本层不动**）。 */
+    case req @ GET -> Root / "groups" / groupId / "members" =>
+      groupProxy(req, "GET", s"/api/groups/${encSeg(groupId)}/members")
+
+    /** POST .../members/{userId}/kick —— owner only。上游 403 `not_owner` /
+      * 403 `not_member` / 403 `owner_cannot_leave`（自踢）/ 404 `member_not_found`。 */
+    case req @ POST -> Root / "groups" / groupId / "members" / userId / "kick" =>
+      groupProxy(req, "POST", s"/api/groups/${encSeg(groupId)}/members/${encSeg(userId)}/kick")
+
+    /** POST /api/groups/{groupId}/messages —— **冻结群发契约**（`groups.rs:364-524`）。
+      * 校验序服务端冻结（auth → 群存在且未解散 → 成员 → 长度 → 限速 → origin →
+      * 附件），本层**不复制**任何一条判定（禁双实现）。上游 201 SendMessageResponse
+      * 同形 / 404 `group_not_found` / 403 `group_disbanded` / 403 `not_member` /
+      * 422 `invalid_length` / 422 `invalid_origin` / 429 `rate_limited`。 */
+    case req @ POST -> Root / "groups" / groupId / "messages" =>
+      groupProxy(req, "POST", s"/api/groups/${encSeg(groupId)}/messages")
+
+    /** POST /api/groups/{groupId}/leave —— 成员退群；owner 禁退群（上游
+      * 403 `owner_cannot_leave`，O⑨）。 */
+    case req @ POST -> Root / "groups" / groupId / "leave" =>
+      groupProxy(req, "POST", s"/api/groups/${encSeg(groupId)}/leave")
+
+    /** PUT /api/groups/{groupId}/title —— owner 改名。上游 200 `{ok:true,title}` /
+      * 422 `invalid_title`（trim 后非空且 ≤64 字符）。 */
+    case req @ PUT -> Root / "groups" / groupId / "title" =>
+      groupProxy(req, "PUT", s"/api/groups/${encSeg(groupId)}/title")
+
+    /** DELETE /api/groups/{groupId} —— owner 解散（**软标记** `group_disbanded`，
+      * 消息行永不删；`groups.rs:592-607`）。 */
+    case req @ DELETE -> Root / "groups" / groupId =>
+      groupProxy(req, "DELETE", s"/api/groups/${encSeg(groupId)}")
+
   }
 
   // ===== 好友域上游错误的单一判据（2026-09-11 boot 快照修复，R3(a)） =====
@@ -1781,6 +1870,67 @@ class RestApiRoutes(
           case Right(json) => Ok(json)
           case Left(_)     => Ok(Json.obj("ok" -> true.asJson, "message" -> body.asJson))
       case Left(err) => friendErr(err)
+
+  // ===== 群代理腿的单一实现（gwroutes 批，2026-09-15）=====
+  //
+  // 12 条群路由**共用**本实现（禁各写一套 —— 与 `friendErr` 是「好友域上游错误的
+  // 单一判据」同构：群域的状态码判据也只有这一处）。
+
+  /** 群请求转发（唯一入口）。**语义分三层**：
+    *
+    *  ① **鉴权在先**：`withAuth` 先于任何上游往返（无 token ⇒ 403，零外发）；
+    *  ② **未配置即 404**：`friendService` 缺席 ⇒ `404 NebLink not enabled`。这是
+    *     **fail-closed 的承重墙**：客户端 `friendsApi.errKind` 把 404 读作
+    *     `neblinkOff` ⇒ `friendGroups.markAvailability(false)` ⇒ 群入口隐藏
+    *     （主卡 G-2）。改成 502/空成功都会把「群不可用」伪装成「群是空的」；
+    *  ③ **身份透传**：与全部既有 friends / conversations 代理**逐字一致** ——
+    *     身份**只**由 `NeblinkServerUrl + Bearer device session token` 承载，
+    *     本层**不发** `sender` / `uid` 类自定义头（客户端不得自报身份；服务端
+    *     `require_user` 从 token 解身份，`groups.rs:50-54`）。
+    *
+    * 请求体**按原文转发**（见 [[rawBody]]）：不解析、不重编码 —— 解析后再编码会
+    * 重排键并丢掉未知键，等于替冻结契约改了形态。
+    */
+  private def groupProxy(req: Request[IO], method: String, upstreamPath: String): IO[Response[IO]] =
+    withAuth(req) {
+      sharedResources.friendService match
+        case None => NotFound(Json.obj("error" -> "NebLink not enabled".asJson))
+        case Some(fs) =>
+          rawBody(req).flatMap(body => fs.groupProxy(method, upstreamPath, body).flatMap(groupProxyResult))
+    }
+
+  /** 请求体**逐字**取原文（代理腿专用；空体 ⇒ `""`）。
+    *
+    * 用 `bodyText.compile.string` 而**不**用 `req.as[Json]`：后者把 body 解析成 AST
+    * 再序列化回去会重排键 / 丢未知键 / 改数字字面量 ⇒ 上游收到的字节与客户端发的不
+    * 同形。代理腿的职责是搬运字节，不是理解它。 */
+  private def rawBody(req: Request[IO]): IO[String] =
+    req.bodyText.compile.string
+
+  /** 上游 `(status, body)` ⇒ 本网关响应：**状态码逐字**，体优先 JSON 解析。
+    *
+    * 🔴 禁吞：既不把上游 4xx 折成 500 / 502，也不把错误折成「空成功」——群域三码
+    * （`group_not_found` / `group_disbanded` / `not_member`）必须原样到达客户端。
+    * 非 JSON 体（网关/代理层注入的 HTML 错误页等）包成 `{"error":<原文>}`：既保住
+    * 可判读性，又不让一次体解析失败把响应升级成 500。空体保持空体（不透传伪实体）。 */
+  private def groupProxyResult(result: Either[String, (Int, String)]): IO[Response[IO]] =
+    result match
+      case Left(err) => friendErr(err)
+      case Right((code, body)) =>
+        val status = Status.fromInt(code).getOrElse(Status.BadGateway)
+        IO.pure(
+          if body.isBlank then Response[IO](status)
+          else
+            Response[IO](status).withEntity(
+              parser.parse(body).getOrElse(Json.obj("error" -> body.asJson))
+            )
+        )
+
+  /** 路径段编码（代理腿转发用）：避免上游路径被段内容改写（段内 `/`、`?` 注入）。
+    * 与 `NeblinkClient.enc` 同法，只把 `+` 归一成 `%20`（`URLEncoder` 的
+    * `application/x-www-form-urlencoded` 口径在路径段里会变成字面 `+`）。 */
+  private def encSeg(s: String): String =
+    java.net.URLEncoder.encode(s, "UTF-8").replace("+", "%20")
 
   /** Shared remote-update logic: P2P HTTP first, relay fallback. Used by REST + WS handlers. */
   private def doRemoteUpdate(
