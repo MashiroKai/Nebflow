@@ -150,18 +150,26 @@ function sanitizeForCache(entry) {
 // i18nKey (chat.compacting / chat.compacted / chat.compactFailed) + params —
 // the SAME strings the live cards are labelled with. Rebuild the SAME
 // .compact-card component (chat.js buildCompactCardRow) instead of the old
-// flat error-card. A "compacting" entry directly followed by a terminal
-// entry is dropped: the live card morphs in place, so history renders ONE
-// final card, not two. Returns null when the entry should be skipped.
+// flat error-card. Returns null when the entry should be skipped.
+//
+// EVERY "compacting" START entry is skipped on replay — adjacency is no longer
+// consulted (2026-09-15, F1 fix). Two shapes feed this:
+//   (a) start directly followed by a terminal entry (the live card morphed in
+//       place) ⇒ the terminal entry renders the ONE final card, not two;
+//   (b) start with NO adjacent terminal entry — interrupted / still running at
+//       the last snapshot / the compaction window swallowed user messages, so
+//       the terminal entry landed further down (or never) ⇒ the start entry
+//       has NO trustworthy outcome. Re-rendering the live start card's spinner
+//       here asserts "compaction in progress" on a replayed history that can
+//       never resolve it (nothing in a reload can morph it) — the author-facing
+//       symptom: a phantom active pill reappears after a refresh, forever.
+//       It is NOT reported as a failure either: an unconfirmed failure must
+//       never surface as an error card. So an orphan renders NOTHING (no
+//       activity, no new resident text — skipping, not relabelling).
+// `next` is kept for call-site signature parity only; the judgment below does
+// not read it any more.
 function restoreCompactCardRow(m, next) {
-  if (m.i18nKey === 'chat.compacting') {
-    const nextIsTerminal = next && next.type === 'system'
-      && (next.i18nKey === 'chat.compacted' || next.i18nKey === 'chat.compactFailed');
-    if (nextIsTerminal) return null;
-    // Orphan "compacting" (interrupted / still running at last snapshot) —
-    // render the active spinner card, matching the live start card.
-    return buildCompactCardRow('active', t('chat.compactingCard'));
-  }
+  if (m.i18nKey === 'chat.compacting') return null;
   const p = (m.params && typeof m.params === 'object') ? m.params : {};
   if (m.i18nKey === 'chat.compacted') {
     return buildCompactCardRow('done', t('chat.compacted', { before: p.before ?? 0, after: p.after ?? 0, detail: p.detail || '' }));
@@ -981,8 +989,8 @@ export function restoreFromBackendHistory(msgs, opts = {}) {
       // skip them here as a safety net (e.g. if the preceding user message was missing).
       if (m.i18nKey === 'slash.skillActivated') return;
       // Compaction lifecycle → same .compact-card component as the live path.
-      // restoreCompactCardRow returns null for a "compacting" entry that the
-      // next terminal entry supersedes (the live card morphs in place).
+      // restoreCompactCardRow returns null for EVERY "compacting" start entry
+      // (both the paired and the orphan shape — see its header comment).
       if (m.i18nKey === 'chat.compacting' || m.i18nKey === 'chat.compacted' || m.i18nKey === 'chat.compactFailed') {
         const compactRow = restoreCompactCardRow(m, msgs[i + 1]);
         if (compactRow) fragment.appendChild(compactRow);
