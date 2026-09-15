@@ -170,8 +170,8 @@ function restoreCompactCardRow(m, next) {
 }
 
 /** The persisted user answer that follows an askUser entry (or null). The
- *  gateway records card answers as a User message right after the askUser
- *  entry (answers joined with '\n'); '__cancelled__' is the cancel sentinel.
+ *  gateway records card answers as a User message (answers joined with '\n');
+ *  '__cancelled__' is the cancel sentinel.
  *
  *  Answer-source validation (issue #43, 2026-09-03 incident): agent-injected
  *  messages (delegate results, Mail, flow/node notifications) are ALSO
@@ -179,16 +179,32 @@ function restoreCompactCardRow(m, next) {
  *  NOT user-initiated and must NEVER be consumed as the card's answer: doing
  *  so locked the still-pending card with delegate-report fragments split
  *  across the answer slots (markAnsweredPick splits by '\n'), leaving the
- *  user no card to answer and pushing them onto the chat-input passthrough
- *  (which answers only the oldest card with ONE free-text slot — the second
- *  question came back "(skipped)"). Only a NON-injected user message adjacent
- *  to the askUser entry is a recorded answer; an injected bubble at i+1 means
- *  the card was still pending — render it interactive (safe direction: an
+ *  user no card to answer. Injected bubbles are skipped, never consumed as an
+ *  answer (they also do not truncate the run — they legitimately queue inside
+ *  it); no answer ⇒ null ⇒ the card renders interactive (safe direction: an
  *  already-consumed requestId re-answered is dropped by the hub with the
- *  slot retained, #12). */
+ *  slot retained, #12).
+ *
+ *  取值面修正（uiclean 批 2026-09-15，D 项）：输入框直通退役（e59ed251d）后，
+ *  卡片 pending 期间的输入框文本一律按**普通用户消息**落盘
+ *  （WebSocketRoutes.dispatchUserText），于是它也排在 askUser 条目之后、实收答案
+ *  **之前**。旧读法取「i+1 的第一条非 injected 用户消息」⇒ 取到的是**文本**，
+ *  刷新后锁定行显示末条用户文本、与工具实收答案不一致（实测 ui.json：
+ *  `[askUser, user(文本), user(答案), ai]`，旧读法返回 `user(文本)`）。
+ *  现读法 = 该轮连续 user run 的**最后**一条非 injected 文本（答案由 gateway 在
+ *  `askUserAnswer` 帧处理时追加 ⇒ 落在文本之后；阻塞式卡片在 pending 期间 agent
+ *  不产出 ai/tool 行，故该 run 的末条即实收答案）。非阻塞式提问（agent 在 pending
+ *  期间仍产出 ai 行 ⇒ run 被截断）与「作答后继续打字」两种形态下取值仍可能偏离
+ *  ——见 uiclean 批报告「未做/开放项」。 */
 function askUserAnswerText(msgs, i) {
-  const nextMsg = msgs[i + 1];
-  return (nextMsg && nextMsg.type === 'user' && !nextMsg.injected && nextMsg.text) ? nextMsg.text : null;
+  let answer = null;
+  for (let j = i + 1; j < msgs.length; j++) {
+    const m = msgs[j];
+    if (!m || m.type !== 'user') break;
+    if (m.injected || !m.text) continue;
+    answer = m.text;
+  }
+  return answer;
 }
 
 /** R5（作者裁定 = 补上，2026-09-14）：历史 askUser 卡的复制载荷 —— 各问句的**纯文本**
@@ -210,9 +226,10 @@ function askUserQuestionText(items) {
  *  arrived during the wait — and the restored card stayed locked with no way
  *  to answer. Skipping injected bubbles, an askUser at the scan stop = still
  *  pending; any other entry (ai/tool/user) = the ask moved on (a
- *  non-injected user message is a recorded answer — card click or chat-input
- *  passthrough). Exported so the restore spec exercises the SAME code
- *  main.js runs. */
+ *  non-injected user message is a recorded answer — the card's own
+ *  confirm/cancel path; the chat-input passthrough that used to be the second
+ *  producer retired 2026-09-14, e59ed251d). Exported so the restore spec
+ *  exercises the SAME code main.js runs. */
 export function findLastRealMessage(msgs) {
   let i = (msgs || []).length - 1;
   while (i >= 0 && msgs[i].type === 'user' && msgs[i].injected) i--;

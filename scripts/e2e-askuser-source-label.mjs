@@ -21,8 +21,9 @@
 //   F1③ 刷新后 replayed 帧携带 project/nodeName（WS 帧嗅探 + DOM 重建断言）
 //   F1④ 两节点并发两卡 badge 各自正确（同 F1① 并发形态）
 //   F2① 两卡并发时常驻条两行 + header badge=2（DOM 断言）
-//   F2② 回答（卡片确认）/取消（卡片取消）/直答（chat-input）三路条目摘除
-//       各验一；来源死亡路 = 已知边界（引擎 askUserClosed 触发归批 E2，
+//   F2② 回答（卡片确认）/取消（卡片取消）两路条目摘除各验一 + 输入框文本路
+//       （直通退役后：文本不消费卡片 ⇒ 常驻条保留、零 askUserAnswered 帧）
+//       来源死亡路 = 已知边界（引擎 askUserClosed 触发归批 E2，
 //       前端处理已就位——本脚本以帧嗅探证明前端 handler 注册存在即可）
 //   F2③ 刷新重连后 ListPendingAsks 对账：常驻条/badge 重建正确
 //   F2④ console 零错误
@@ -110,7 +111,7 @@ let nodeEditCount = 0;
 // the task text ("[Dispatcher 'qa-f1f2' · task: F1F2 dispatch probe…]"), which
 // re-matches the 'F1F2 dispatch' branch and re-triggers Task → dispatcher →
 // delivery → … (observed R2 run 21:26: the loop kept Nebula perpetually busy,
-// starving the later selfask injection and the chat-input passthrough probe).
+// starving the later selfask injection and the text-path bar probe).
 let taskFired = false;
 function msgText(m) {
   const c = m?.content;
@@ -616,26 +617,34 @@ const ridOf = async (node) => page.evaluate((n) => {
   }
 }
 
-// F2②-c 直答路：chat-input 文本被 hub 消费为最老 pending（probe-b）的回答
+// F2②-c 输入框文本路（**直通退役后对齐**，uiclean 批 2026-09-15）
+// 旧断言（已删行为）：文本被 hub 消费为最老 pending（probe-b）的回答 ⇒
+//   askUserAnswered{via:'chat-input'} 广播 + 常驻条清空。
+// 新断言（目标态）：文本**不消费任何卡** ⇒ 观察窗内零 askUserAnswered 帧 ∧
+//   常驻条**保留** probe-b 行 ∧ probe-b 卡仍 pending（须在卡上作答）。
+// 新行为的逐视口覆盖见 tests/askinput-off-pending-text.spec.mjs（0cb416b0）；
+// 本块保留其唯一维度：F1 源标签 fixture（qa-f1f2 · probe-a/probe-b）下的常驻条对账。
 {
-  await page.fill('#input', 'F1F2 chat-input 直答：经输入框回答乙。');
+  const FRAME_T0 = Date.now();
+  await page.fill('#input', 'F1F2 直通退役：经输入框发普通文本，不消费卡片。');
   await page.press('#input', 'Enter');
-  const t0 = Date.now();
-  let answeredFrame = null;
-  while (Date.now() - t0 < 30000) {
-    answeredFrame = await page.evaluate(() => window.__askFrames.find((f) => f.type === 'askUserAnswered' && f.via === 'chat-input'));
-    if (answeredFrame) break;
+  let strayFrame = null;
+  while (Date.now() - FRAME_T0 < 12000) {
+    strayFrame = await page.evaluate(() => window.__askFrames.find((f) => f.type === 'askUserAnswered'));
+    if (strayFrame) break;
     await sleep(800);
   }
-  check('F2② chat-input direct answer: askUserAnswered(via=chat-input) broadcast', !!answeredFrame);
+  check('F2② text path: zero askUserAnswered frames (直通退役后引擎无生产者)', !strayFrame, strayFrame ? JSON.stringify(strayFrame).slice(0, 160) : '');
   await page.waitForTimeout(1000);
+  // 常驻条仍须保留 probe-b 行（文本不得摘行）
   const st = await barState(page);
-  check('F2② direct-answer path: bar empty + badge hidden', st.rows.length === 0 && st.badgeHidden === true, `rows=${st.rows.length} hidden=${st.badgeHidden}`);
-  await page.screenshot({ path: join(SHOTS, 'f2-bar-empty-light.png') });
+  check('F2② text path: bar keeps the pending row (文本不消费卡片)', st.rows.length === 1 && st.rows[0] && st.rows[0].source.includes('probe-b'), `rows=${st.rows.length} src=${st.rows.map((r) => r.source).join()}`);
+  await page.screenshot({ path: join(SHOTS, 'f2-bar-text-not-consumed-light.png') });
 }
 
 // 点击定位+高亮（F2 锚点跳转）：再造一张卡太重——用既有逻辑单元素验证：
-// 直答后无 pending，跳转无从验证；改为在双卡阶段已截图证明条存在。此处验
+// 输入框文本路退役后卡片仍 pending（见上块：文本不消费卡片），故跳转仍无从在本段
+// 验证；改为在双卡阶段已截图证明条存在。此处验
 // askUserClosed 前端处理就位（来源死亡路已知边界——引擎触发归批 E2）：
 // 直接在页面上下文派发一帧进 handler 链不可行（模块作用域），改为断言
 // ws.js 已注册该类型（TERMINAL_MSG_TYPES 路由表含 askUserClosed → 帧能到达

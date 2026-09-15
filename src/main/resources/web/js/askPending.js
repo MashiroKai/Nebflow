@@ -6,8 +6,10 @@
 // global cross-session visibility.
 //
 // Design: a frontend mirror of the hub pending map, keyed by requestId,
-// driven by three events — askUser (+1, upsert; replayed frames included),
-// askUserAnswered (-1), askUserClosed (-1, source death; engine cascade).
+// driven by two events — askUser (+1, upsert; replayed frames included),
+// askUserClosed (-1, source death / turn interrupted; engine broadcast).
+// (A third driver, askUserAnswered (-1), retired with the chat-input
+// passthrough — e59ed251d / uiclean 批 2026-09-15: no producer left.)
 //
 // 多 AskUser 并发批（#250，2026-09-13 作者裁定「6 项全补」）两处口径变更：
 //  ① 「下一条」推进 / 自动聚焦：答完一张后自动聚焦下一张待办（仅当被答的卡就在
@@ -76,8 +78,9 @@ export function notePendingAsk(msg) {
   renderBar();
 }
 
-/** Remove on terminal resolution: answered (card / chat-input) or closed
- *  (source death, askUserClosed). Unknown requestId = no-op (an answer that
+/** Remove on terminal resolution: answered (the card's own confirm/cancel
+ *  callback — chat.js) or closed (source death / turn interrupted,
+ *  askUserClosed). Unknown requestId = no-op (an answer that
  *  raced the reconnect rebuild simply finds nothing).
  *
  *  #250 ①: when the resolved card was the one the user was looking at (its

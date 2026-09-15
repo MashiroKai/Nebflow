@@ -1340,8 +1340,8 @@ onMessage('askUser', (msg, view) => {
   // (browser refresh, WS reconnect, session switch). This is state
   // re-delivery of a card the backend still considers pending, NOT a new ask:
   //  - the history-restored card carries no data-request-id (UiMessage.AskUser
-  //    persists only {type, items}), so the chat-input close frame
-  //    (askUserAnswered{requestId}) and #12 precise answer routing cannot find
+  //    persists only {type, items}), so #12 precise answer routing (the
+  //    requestId-keyed askUserAnswer / askUserClosed frames) cannot find
   //    it — rebind by re-rendering with the live requestId;
   //  - a duplicate replay would stack cards — remove THIS ask's unanswered
   //    cards first (answered/locked cards and other pending asks stay).
@@ -1378,18 +1378,12 @@ onMessage('askUser', (msg, view) => {
   }
 });
 
-// Chat-input passthrough (author ruling 2026-08-29 23:50): while an AskUser
-// card is pending, a message typed into the input box is consumed by the
-// backend as that tool call's answer; it then broadcasts askUserAnswered so
-// every attached client locks the card locally (same end-state as answering
-// on the card). The user's text already landed as a normal user bubble.
-onMessage('askUserAnswered', (msg) => {
-  closeAskUserCard(msg.sessionId, msg.requestId);
-  // D6 批 F2: chat-input direct answer (hub broadcasts this frame only for
-  // that path) resolves the pending mirror entry; card answers remove
-  // themselves locally in the confirm/cancel callbacks (chat.js).
-  removePendingAsk(msg.requestId);
-});
+// 输入框直通退役（2026-09-14 作者令 / 落地 e59ed251d，uiclean 批 2026-09-15 收尾）：
+// 与之配套的 `askUserAnswered` 接收点已摘除——该帧**只**由 hub 的
+// `handleChatInputAnswer` 广播，该函数随直通腿一并删除 ⇒ 引擎侧发送方集合 = ∅
+// （`grep -rn '"askUserAnswered"' src/main/scala/` 零命中；帧类型在引擎侧一律为
+// 字面量，无「按类名生成」的旁路生产者）。卡片锁定仅剩两条活入口：
+// `askUserClosed`（本文件下一条）与卡片自身确认/取消回调（chat.js confirm/cancel）。
 
 // D6 批 F2 (spec §3.4 来源死亡路): the source node's pending ask is closed by
 // the engine (cancelNode cascade — the CleanupForSession hub command lands in
@@ -1662,8 +1656,9 @@ onMessage('historyPage', (msg, view) => {
     // wait, and the restored card stayed locked with no way to answer.
     // findLastRealMessage (shared with persistence.js, spec-covered) scans
     // backward over injected bubbles; a non-injected user message after the
-    // askUser means an answer was recorded (card click or chat-input
-    // passthrough) — the ask is no longer pending.
+    // askUser means an answer was recorded (the card's confirm/cancel path) —
+    // the ask is no longer pending. (The retired chat-input passthrough used to
+    // be a second producer of that shape; it is gone since e59ed251d.)
     const histMsgs = msg.messages;
     const lastHistMsg = findLastRealMessage(histMsgs) || undefined;
     const isAskUserPending = lastHistMsg && lastHistMsg.type === 'askUser'
