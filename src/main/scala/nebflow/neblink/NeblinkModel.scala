@@ -719,6 +719,38 @@ case class ConversationSummary(
   unreadCount: Int = 0
 )
 
+/** 群会话行（`GET /api/groups` 裸数组的元素，也是 `GET /api/sync/bootstrap` 的
+  * `groups` 行形态；跨仓真源 = neblink-server `src/model.rs` 的 `GroupSummary`，
+  * `#[serde(rename_all = "camelCase")]`）。
+  *
+  * 为什么有本件（gmsgsend 批 · 补充卡 §6.2）：群目标解析（`FriendRoster.resolveGroup`）
+  * 需要「本用户所属、未解散群会话」的 `groupId` + `title` 两个键。此前本仓只在网关侧
+  * **逐字转发**群列表（群行从未解码成领域类型）；本件是最小解码件，
+  * **不新增任何线上面**（纯客户端侧解码）。
+  *
+  * 字段取舍（🔴 只落解析必需 + 契约已冻结的行内键，其余键由解码器忽略）：
+  *  - `groupId` / `title`：解析链 L1/L2/L3 的唯二匹配键。`title` **可重名**（服务端
+  *    只校验非空且 ≤64 字符，无唯一性约束）⇒ 重名走候选列表，见 `resolveGroup`。
+  *  - `role` / `memberCount` / `unreadCount` / `lastMessageId` / `createdAt`：服务端
+  *    冻结行内键，保留供后续面读数；**本批零消费点**。
+  *  - `selfUserId`（加性小批 `53c0be7`，契约 v2.1 §11.4）：viewer 自证键。
+  *    🔴 本仓**不把它当权威**（身份权威 = 服务端鉴权解出的身份）—— 只解码、不消费，
+  *    缺省空串（零群账号的裸数组退化态读不到该值，服务端已明写该退化态）。
+  *  - **不解码** `lastMessage`：本批零消费点，解码它会把整条消息图钉进解析路径。
+  *  - 全部非必填键带缺省值 ⇒ 行内键集未来加性扩面**不破**本解码器（与 `FriendSummary`
+  *    的 Option 折叠口径同族的「键缺席 = 缺省」纪律）。
+  */
+case class GroupSummary(
+  groupId: String,
+  title: String,
+  role: String = "",
+  memberCount: Int = 0,
+  unreadCount: Int = 0,
+  lastMessageId: Long = 0L,
+  createdAt: Long = 0L,
+  selfUserId: String = ""
+)
+
 /** 客户端本地未读 cursor 状态（spec §3.4：自己看角标，无回执）。
   *
   * ## §3.5 字段拆分（好友消息静默丢失修复批 A）
@@ -902,6 +934,30 @@ object FriendCodecs:
   }
 
   given Decoder[ConversationSummary] = deriveDecoder
+
+  /** 群行解码（gmsgsend 批）：两个解析键 `groupId`/`title` 为**硬键**（缺席即解码
+    * 失败 —— 缺这两个键的「群行」对群寻址无意义，且**不得**退化成空串后参与 L1
+    * 精确匹配：空串 groupId 会把任何 `group:` 空串查询变成一次假命中）。
+    *
+    * 其余键一律**宽容**（缺席 / `null` ⇒ 缺省值）：它们是加性行内键（`selfUserId`
+    * 即加性小批新增），上游老版本缺席时**不得**让整份群列表解码失败 —— 那会把
+    * 「一个可选键缺席」升级成「群全部不可寻址」（本仓「静默不达」缺陷族）。
+    * 🔴 宽容仅限**非解析键**：解析键的缺席仍是硬失败（显式，不静默）。 */
+  given Decoder[GroupSummary] = Decoder.instance { c =>
+    for
+      groupId <- c.get[String]("groupId")
+      title   <- c.get[String]("title")
+    yield GroupSummary(
+      groupId = groupId,
+      title = title,
+      role = strField(c, "role").getOrElse(""),
+      memberCount = longField(c, "memberCount").map(_.toInt).getOrElse(0),
+      unreadCount = longField(c, "unreadCount").map(_.toInt).getOrElse(0),
+      lastMessageId = longField(c, "lastMessageId").getOrElse(0L),
+      createdAt = longField(c, "createdAt").getOrElse(0L),
+      selfUserId = strField(c, "selfUserId").getOrElse("")
+    )
+  }
   // Encoders for gateway REST responses (client decodes server JSON; gateway
   // re-encodes the same domain objects for the frontend UI).
   /** 出参契约钉死（friend-search-contract v1.0 §4.0/§4.5）：档案四字段字面

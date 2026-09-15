@@ -127,4 +127,86 @@ object FriendRoster:
                       )
   end resolve
 
+  // ===== 群面（gmsgsend 批，2026-09-15 · 补充卡 §6.2–§6.4）=====
+  //
+  // 为什么与好友面**同住在**本文件：群目标解析与好友目标解析是**同一件事的两种目标
+  // 域**——「把用户给的一个串解析成一个明确的目标，歧义/零命中一律给候选列表让模型
+  // 自行纠错」。若群面另起一处实现，模型会在同一个参数 `to` 上看到**两套候选词表**
+  // （正是本文件存在理由所要消灭的形态，见类头）。
+  //
+  // 与好友面的**同构**（逐条对齐 `resolve`）：同一「每级恰 1 命中才成功，否则落下一级」
+  // 不变量；同一「多命中 ⇒ 硬报错并列候选 / 零命中 ⇒ 报 not-found + 可用表」收口；
+  // 同一候选渲染法（`<名> (<唯一 id>)`）。
+  //
+  // 与好友面的**刻意不同**（两条，均来自补充卡 §6.2）：
+  //  ① **无 L4 级**：好友面的 L4 是「邮箱 α」（一次上游 `{uid}:search` 回落 + 按
+  //     `userId` 回映射）——群**没有邮箱等价物**（群只有 id 与 title）。🔴 禁给群面
+  //     造一个「上游搜索」回落：那会让一次失败寻址变成一个额外的上游探测面。
+  //  ② 匹配键值域 = 调用方传入的群表（= 本用户所属、**未解散**群会话；服务端
+  //     `GET /api/groups` 契约「Disbanded groups never appear」）。解散态因此在
+  //     解析层**结构上不可命中**：已解散的群在该表里根本不存在 ⇒ 报 not-found + 可用表，
+  //     而不是让用户拿到一个「找得到但发不出去」的目标。终态判定的权威仍是服务端
+  //     （404 `group_not_found` / 403 `group_disbanded`，见 `FriendService.doSendGroup`）。
+
+  /** 单条群名册 / 候选行：`<title> (<groupId>)`。
+    *
+    * 🔴 两键都出、且**必须可区分**：`groupId` 是全局唯一（服务端 `grp-` + UUIDv4，
+    * 与 user id 命名空间不相交），`title` 可重名（服务端只校验非空且 ≤64 字符，
+    * 无唯一性约束）⇒ 候选行必须带 id，模型才有可用的消歧手段（与好友面
+    * `candidateLine` 带 username 同一理由）。 */
+  def groupCandidateLine(g: GroupSummary): String =
+    s"${g.title} (${g.groupId})"
+
+  /** 多条候选行（逗号分隔，与 `groupCandidateLine` 同词表）。 */
+  def groupCandidates(gs: List[GroupSummary]): String =
+    gs.map(groupCandidateLine).mkString(", ")
+
+  /** 「可用群」提示句：**空表与有名册分别报告**（与 `availableHint` 同纪律）——
+    * 空表必须说清是「你没有群」，不得含糊成「找不到这个群」，也不得把「读不到」
+    * 混进来（读不到由取数层显式报错，见 `FriendService.listGroups`）。 */
+  def availableGroupsHint(gs: List[GroupSummary]): String =
+    if gs.isEmpty then "The group list is empty (you are not a member of any group)."
+    else s"Available groups: ${groupCandidates(gs)}"
+
+  /** 群解析链：**L1 `groupId` 精确**（大小写不敏感；`grp-` 前缀形态）→ **L2 `title`
+    * 精确**（大小写不敏感，与好友面 L1 username 同口径）→ **L3 `title` 唯一前缀**；
+    * 多命中 / 零命中一律返回带候选列表的 `ToolError`。
+    *
+    * `query` 为空 ⇒ 与好友面逐字同款的 `'to' is empty.` 收口（`to` 是
+    * `SendMessage` 的参数名）——**正常路径到不了这里**（`group:` 后为空由
+    * `parseToKind` 先拦），本分支是防御性的同词表兜底。
+    */
+  def resolveGroup(query: String, groups: List[GroupSummary]): Either[ToolError, GroupSummary] =
+    val q              = query.trim
+    val candidatesHint = availableGroupsHint(groups)
+
+    if q.isEmpty then Left(ToolError(s"'to' is empty. $candidatesHint"))
+    else
+      // L1：群 id（全局唯一键；精确且大小写不敏感——id 由服务端生成，大小写不敏感
+      // 只为容忍人工转写，不改变「唯一命中才成功」不变量）。
+      val byId = groups.filter(_.groupId.equalsIgnoreCase(q))
+      byId match
+        case single :: Nil => Right(single)
+        case _ =>
+          // L2：群名精确。
+          val byTitle = groups.filter(_.title.equalsIgnoreCase(q))
+          byTitle match
+            case single :: Nil => Right(single)
+            case multi =>
+              // L3：群名唯一前缀（与好友面 L3 同形：候选集 = 精确命中 ∪ 前缀命中，
+              // `distinct` 去重后仍需恰 1 命中才成功）。
+              val byPrefix = groups.filter(_.title.toLowerCase.startsWith(q.toLowerCase))
+              val hits     = (multi ++ byPrefix).distinct
+              hits match
+                case single :: Nil => Right(single)
+                case many =>
+                  Left(
+                    ToolError(
+                      if many.isEmpty then s"Group '$q' not found. $candidatesHint"
+                      else
+                        s"Group '$q' is ambiguous (${many.size} matches). Candidates: ${groupCandidates(many)} — use the exact group id."
+                    )
+                  )
+  end resolveGroup
+
 end FriendRoster

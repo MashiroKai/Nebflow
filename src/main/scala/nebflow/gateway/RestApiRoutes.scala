@@ -1786,13 +1786,18 @@ class RestApiRoutes(
     case req @ POST -> Root / "groups" / groupId / "members" / userId / "kick" =>
       groupProxy(req, "POST", s"/api/groups/${encSeg(groupId)}/members/${encSeg(userId)}/kick")
 
-    /** POST /api/groups/{groupId}/messages —— **冻结群发契约**（`groups.rs:364-524`）。
+    /** POST /api/groups/{groupId}/messages —— **冻结群发契约**（`groups.rs:403-524`）。
       * 校验序服务端冻结（auth → 群存在且未解散 → 成员 → 长度 → 限速 → origin →
       * 附件），本层**不复制**任何一条判定（禁双实现）。上游 201 SendMessageResponse
       * 同形 / 404 `group_not_found` / 403 `group_disbanded` / 403 `not_member` /
-      * 422 `invalid_length` / 422 `invalid_origin` / 429 `rate_limited`。 */
+      * 422 `invalid_length` / 422 `invalid_origin` / 429 `rate_limited`。
+      *
+      * 🔴 **本路由与其余 11 条群路由的唯一差别**：转发前多过一道 `origin` 闸
+      * （见 [[groupSendProxy]]）——它是「UI 身份直发」面，而 agent 代发走的是
+      * 进程内腿（`FriendService.sendGroupAsAgent`，不经本路由）⇒ 两腿**共用同一上游
+      * 端点**，但只有进程内腿能写 `origin="agent"`。 */
     case req @ POST -> Root / "groups" / groupId / "messages" =>
-      groupProxy(req, "POST", s"/api/groups/${encSeg(groupId)}/messages")
+      groupSendProxy(req, groupId)
 
     /** POST /api/groups/{groupId}/leave —— 成员退群；owner 禁退群（上游
       * 403 `owner_cannot_leave`，O⑨）。 */
@@ -1906,6 +1911,42 @@ class RestApiRoutes(
     * 同形。代理腿的职责是搬运字节，不是理解它。 */
   private def rawBody(req: Request[IO]): IO[String] =
     req.bodyText.compile.string
+
+  /** **UI 身份直发的群消息路由**（`POST /api/groups/{groupId}/messages`）——
+    * 代理 + 一道 `origin` 闸。
+    *
+    * 🔴 为什么需要闸（补充卡 §6.5 + §8.1 判红面 ①「标识伪造面」）：本路由是
+    * **用户身份**直发面（前端唯一可达的群发送入口）。代理腿的默认形态是逐字转发
+    * 请求体（不解析、不重编码），但那样 web 前端就能塞一个 `origin:"agent"`
+    * 一路到服务端并**落库为 agent 代发** —— 而 §8.1(a) 的判红信号正是「非 agent
+    * 通道的消息被存成 `origin='agent'`」。⇒ 本路由是**唯一**在转发前读请求体的群
+    * 路由，且**只判 `origin` 一个键**：缺席 / 逐字 `"user"` ⇒ 原文转发（= 服务端
+    * 缺省语义，字节零变化）；**其他任何值** ⇒ `400` 显式拒绝，**零上游往返**。
+    *
+    * 处置形态的选择（两条都登记在其后的「为什么不」里）：
+    *  - **显式拒绝，不静默改写**：剔键 / 改写为 `"user"` 会让一次越界自报**静默消失**
+    *    （调用方以为生效了、实际没有）——本仓明令禁止的缺陷族（静默不达）。
+    *  - **不按补充卡 §6.5 的字面机制「只读 `body` 一个字段重建请求体」**：服务端已把
+    *   附件纳入一期群发（作者指令），而 UI 腿正在飞 ⇒ 重建会把 UI 后续携带的
+    *   加性键（`attachments` 等）**静默丢弃**。本批取「保住判据目标（UI 面不可能产出
+    *   `origin='agent'`）+ 不静默丢键」，字面机制差异作为**待作者裁**项单列上报
+    *   （实施报告「待作者拍板」节，非本节点自裁）。
+    *
+    * 身份面既有纪律不变：本层**不发** `sender`/`uid` 类自定义头（身份**只**由
+    * `NebLinkServerUrl + Bearer device session token` 承载）。 */
+  private def groupSendProxy(req: Request[IO], groupId: String): IO[Response[IO]] =
+    withAuth(req) {
+      sharedResources.friendService match
+        case None => NotFound(Json.obj("error" -> "NebLink not enabled".asJson))
+        case Some(fs) =>
+          rawBody(req).flatMap { body =>
+            GroupSendOriginVerdict.check(body) match
+              case Left(reason) => BadRequest(Json.obj("error" -> reason.asJson))
+              case Right(()) =>
+                fs.groupProxy("POST", s"/api/groups/${encSeg(groupId)}/messages", body)
+                  .flatMap(groupProxyResult)
+          }
+    }
 
   /** 上游 `(status, body)` ⇒ 本网关响应：**状态码逐字**，体优先 JSON 解析。
     *
@@ -4029,3 +4070,37 @@ class RestApiRoutes(
           case None => IO.pure(Branding.serverUrl)
 
 end RestApiRoutes
+
+/** 群发路由的 `origin` 闸判据（gmsgsend 批 · 补充卡 §6.5 + §8.1(a)）。
+  *
+  * 🔴 **纯函数 + 单点**：路由（[[RestApiRoutes.groupSendProxy]]）与 spec 都读这一份
+  * 判据，禁两处各写一套（本仓「第二实现」缺陷族）。判据只认**逐字** `"user"`：
+  *
+  *  - `origin` 缺席 / `null` / `"user"` ⇒ `Right(())`（放行 ⇒ 原文转发，字节零变化：
+  *    这三种形态在服务端都是「用户身份」，闸不误伤、不改写）；
+  *  - 任何其他值（`"agent"` / 大小写变体 / 非字符串）⇒ `Left(理由)`（路由据此答 400，
+  *    **零上游往返**）；
+  *  - 体为空 / 非 JSON ⇒ `Right(())`：本层**不复制**服务端的 JSON 校验（禁双实现），
+  *    非法体到服务端自然被其校验序拒（400/422）。
+  *
+  * 大小写变体（`"User"`）**拒绝**而非放行：它不是服务端枚举值（服务端会答 422），
+  * 拒绝给出更早、更明确的原因；两条路径都不产生 `origin='agent'` 的落库行。 */
+private[gateway] object GroupSendOriginVerdict:
+
+  /** 拒绝理由（对调用方可判读：点名 `origin` + 说明本路由不得设它 + 给出正确做法）。 */
+  val RefusalReason: String =
+    "This route is the user-identity send path: `origin` is the server's own label and " +
+      "cannot be set here — omit it (the server records \"user\" by default)."
+
+  def check(body: String): Either[String, Unit] =
+    if body.isBlank then Right(())
+    else
+      io.circe.parser.parse(body).toOption match
+        case None => Right(()) // 非 JSON：交给服务端校验序（本层不复制它）
+        case Some(json) =>
+          json.hcursor.downField("origin").focus match
+            case None                                    => Right(())
+            case Some(v) if v.isNull                     => Right(())
+            case Some(v) if v.asString.contains("user")  => Right(())
+            case Some(_)                                 => Left(RefusalReason)
+
