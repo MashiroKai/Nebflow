@@ -1,5 +1,5 @@
 // verify-profile-url.mjs — contract regression guard for the account profile
-// link (login-chain fix, 2026-09-01).
+// link (login-chain fix, 2026-09-01; hint param added 2026-09-15).
 //
 // WHY this exists: the client shipped `window.open(`https://${brand.domain}/profile`)`,
 // and brand.domain carries the brand.conf placeholder — so the avatar opened
@@ -13,6 +13,11 @@
 //   3. non-https values (javascript:, http:) are rejected — the value goes
 //      into window.open(), so a hostile injection must never be navigable
 //   4. the placeholder domain never appears in the result
+//   5. (2026-09-15, session-handoff 案 3) the result ALWAYS carries the
+//      non-credential landing hint `from=client`, and exactly that spelling —
+//      it is a cross-repo contract with nebflow.space. Re-baselined by the
+//      author's "A 案3 全做" ruling; the guard is stricter than before (it now
+//      asserts the parameter, previously only the URL), never weaker.
 //
 // Runs headless in plain node: brand.js only touches window.__BRAND__ at
 // module scope, so a bare `globalThis.window` shim is enough — no browser,
@@ -27,18 +32,20 @@ import { fileURLToPath } from 'node:url';
 const ROOT = fileURLToPath(new URL('..', import.meta.url));
 const BRAND_JS = pathToFileURL(join(ROOT, 'src', 'main', 'resources', 'web', 'js', 'brand.js')).href;
 
-const FALLBACK = 'https://nebflow.space/profile';
+const FALLBACK = 'https://nebflow.space/profile?from=client';
 const PLACEHOLDER = 'neblink.example';
 const BASE = { productName: 'Nebflow', lowerName: 'nebflow', domain: PLACEHOLDER };
 
 const cases = [
-  ['gateway injects real URL (default config)', { ...BASE, profileUrl: 'https://nebflow.space/profile' }, 'https://nebflow.space/profile'],
-  ['env override (nebflow.space)', { ...BASE, domain: 'nebflow.space', profileUrl: 'https://nebflow.space/profile' }, 'https://nebflow.space/profile'],
+  ['gateway injects real URL (default config)', { ...BASE, profileUrl: 'https://nebflow.space/profile' }, FALLBACK],
+  ['env override (nebflow.space)', { ...BASE, domain: 'nebflow.space', profileUrl: 'https://nebflow.space/profile' }, FALLBACK],
   ['older gateway: field absent', { ...BASE }, FALLBACK],
   ['no __BRAND__ at all (static serve)', null, FALLBACK],
   ['hostile: javascript: scheme', { ...BASE, profileUrl: 'javascript:alert(1)' }, FALLBACK],
   ['hostile: http (not https)', { ...BASE, profileUrl: 'http://evil.example/profile' }, FALLBACK],
   ['hostile: empty string', { ...BASE, profileUrl: '' }, FALLBACK],
+  ['configured URL that already carries the hint (idempotent)',
+    { ...BASE, profileUrl: 'https://nebflow.space/profile?from=client' }, FALLBACK],
 ];
 
 let failed = 0;
@@ -49,7 +56,9 @@ for (let i = 0; i < cases.length; i++) {
   globalThis.window = injected ? { __BRAND__: injected } : {};
   const mod = await import(`${BRAND_JS}?case=${i}`);
   const got = mod.getProfileUrl();
-  const ok = got === expected && !got.includes(PLACEHOLDER);
+  const hint = new URL(got).searchParams.get('from');
+  const params = [...new URL(got).searchParams.keys()].sort().join(',');
+  const ok = got === expected && !got.includes(PLACEHOLDER) && hint === 'client' && params === 'from';
   if (!ok) failed++;
   console.log(`  ${ok ? 'PASS' : 'FAIL'}  ${name}\n        got=${got}${ok ? '' : `  expected=${expected}`}`);
 }

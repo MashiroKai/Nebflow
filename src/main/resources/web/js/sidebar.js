@@ -916,9 +916,10 @@ function renderProviderCard(name, p) {
 // (neblink.js avatarViewState): logged in with a usable account avatar →
 // photo; otherwise the product logo. The entry renders the centered avatar
 // only — all in-area text removed (author 2026-09-06). Click behavior is not
-// reimplemented: the entry forwards to #activity-avatar's native click
-// (activityBar.js bindAvatar — login modal when logged out, profile page when
-// logged in), so both entries stay byte-identical by construction.
+// reimplemented here either: activityBar.js's activateAccountEntry owns it for
+// both entries (login when logged out, profile page when logged in → hence the
+// landing URL, including the `from=client` hint, comes from the single source
+// brand.js getProfileUrl()).
 function renderSettingsAvatar() {
   const entry = document.getElementById('settings-avatar-entry');
   if (!entry) return;
@@ -1440,11 +1441,15 @@ function bindSettingsEvents(content, cfg) {
   });
 
   // --- Settings avatar section (dual state; click = Activity Bar avatar) ---
-  document.getElementById('settings-avatar-entry')?.addEventListener('click', () => {
-    // Forward to the canonical entry — bindAvatar's handler owns the
-    // logged-out → login modal / logged-in → profile behavior.
-    document.getElementById('activity-avatar')?.click();
-  });
+  // The click handler is NOT bound here: activityBar.js owns the account entry
+  // (activateAccountEntry) and binds this element by document-level delegation,
+  // which keeps the login popup reservation inside the user's own gesture.
+  // The previous forwarding — synthesizing a click on #activity-avatar — carried
+  // no transient user activation, so a real browser popup-blocked the login tab
+  // and one click degraded into two (2026-09-15 session-handoff 案 3 ①).
+  // Do not re-add a handler here: it would fire alongside the delegated one.
+  // (The avatar's own rendering below stays in this module — it is view state,
+  // not the entry.)
 
   // --- Check for updates ---
   document.getElementById('btn-check-update')?.addEventListener('click', () => {

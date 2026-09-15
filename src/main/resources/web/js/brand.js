@@ -46,12 +46,40 @@ export const brand = Object.freeze(injected || fallback);
  * window.open(), so a javascript:/data: value must never be navigable.
  * Fallback (older gateway, static file server, worktree preview) is the live
  * product profile page, verified reachable in the same analysis.
+ *
+ * Landing-URL hint (`from=client`, gateway<->site session handoff 案 3,
+ * 2026-09-15): the client marks the visit as coming from the desktop client, so
+ * the site can recognise "arrived from the client" instead of showing its
+ * sign-in wall. The hint is NOT a credential — no token, no session, nothing
+ * verifiable: the worst a forged hint can do is send a visitor to the site's
+ * own hosted login page.
+ *
+ * 🔴 Cross-repo contract name, do not rename or add siblings: `from=client`.
+ * This helper is the landing URL's ONLY source, so every entry point (Activity
+ * Bar avatar, settings avatar entry) carries the identical parameter by
+ * construction.
  */
 const PROFILE_URL_FALLBACK = 'https://nebflow.space/profile';
 
+/** Cross-repo contract (🔴 逐字 = `from=client`): landing-URL hint param + value. */
+const FROM_CLIENT_PARAM = 'from';
+const FROM_CLIENT_VALUE = 'client';
+
 export function getProfileUrl() {
-  const url = /** @type {Brand} */ (brand).profileUrl;
-  return typeof url === 'string' && url.startsWith('https://') ? url : PROFILE_URL_FALLBACK;
+  const raw = /** @type {Brand} */ (brand).profileUrl;
+  const url = typeof raw === 'string' && raw.startsWith('https://') ? raw : PROFILE_URL_FALLBACK;
+  try {
+    const parsed = new URL(url);
+    // Idempotent: an operator-configured URL that already carries the hint
+    // keeps its own value instead of gaining a duplicate parameter.
+    if (parsed.searchParams.get(FROM_CLIENT_PARAM) !== FROM_CLIENT_VALUE) {
+      parsed.searchParams.set(FROM_CLIENT_PARAM, FROM_CLIENT_VALUE);
+    }
+    return parsed.toString();
+  } catch {
+    // Unreachable for the https values admitted above; never break the entry.
+    return url;
+  }
 }
 
 /**
