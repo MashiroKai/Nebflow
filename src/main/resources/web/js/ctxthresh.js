@@ -367,6 +367,9 @@ function bindPanelEvents(panel) {
 function submitRatio(ratio) {
   const sid = primarySessionId();
   if (!sid) return;
+  // 🔴 90% 硬顶（root 2026-09-15 逐字）：当前用量 ≥ 90% ⇒ 滑杆无可选区间 ⇒ 拒绝提交
+  // （保持默认值 / 不静默改值 / 不临时放开 >90%）；不改成钳到「越过 90% 或低于当前用量」的值。
+  if (usageRatio() >= MAX_RATIO) { setMsg(t('ctxthresh.failed'), 'error'); sendWs({ type: 'getCompactThreshold', sessionId: sid }); return; }
   setMsg('');
   sendWs({ type: 'setCompactThreshold', sessionId: sid, ratio: Math.round(ratio * 100) / 100 });
 }
