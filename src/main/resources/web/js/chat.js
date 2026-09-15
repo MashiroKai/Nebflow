@@ -476,8 +476,18 @@ function appendDeliveryBadge(label, delivery) {
  *  delivery (optional): Mail delivery mode 'queue'|'immediate' — shown
  *  as a badge in the label; absent on old messages → hidden.
  *  intake (optional): intake-channel discriminant (mailbadge batch) — takes
- *  label priority over `source`; absent → `source` renders as before. */
-export function buildInjectedRow(text, source, timestamp, eventType, sender, sourceTeam, deferFn, delivery, intake) {
+ *  label priority over `source`; absent → `source` renders as before.
+ *  header (optional, 气泡四段式统一批 2026-09-15 — author ruling): the
+ *  **already-rendered** four-segment header `KIND · PROJECT · SUBJECT · STATE`
+ *  produced by the engine's single formatter
+ *  (`nebflow.core.project.NotificationHeader`, called once at the one emission
+ *  point `AgentActor#emitInjectedUserEvent`) and shipped on the WS frame /
+ *  persisted in the .ui.json row. Present ⇒ rendered **verbatim** (the engine
+ *  is the single source; the frontend must NOT concatenate a second time).
+ *  Absent (old history rows, sources outside the engine KIND vocabulary,
+ *  e.g. the in-flight device-mail source) ⇒ falls back to
+ *  `injectedSourceLabel` above, byte-identical to before. */
+export function buildInjectedRow(text, source, timestamp, eventType, sender, sourceTeam, deferFn, delivery, intake, header) {
   const row = document.createElement('div');
   row.className = 'row user';
 
@@ -513,7 +523,12 @@ export function buildInjectedRow(text, source, timestamp, eventType, sender, sou
     content.style.display = 'none'; // collapsed default
     bindCollapsibleToggle(label, () => content);
   }
-  label.appendChild(document.createTextNode(injectedSourceLabel(source, eventType, sender, sourceTeam, intake)));
+  // 引擎单一来源优先（气泡四段式统一批 2026-09-15）：帧/落盘行带 `header` ⇒ 逐字
+  // 渲染该串（**禁二次拼接**——引擎 `NotificationHeader` 是唯一格式化实现）；
+  // 缺席 ⇒ 回落既有 `injectedSourceLabel`（旧历史行与词表外 source 逐字节不变）。
+  label.appendChild(document.createTextNode(
+    (header && String(header).trim()) ? String(header) : injectedSourceLabel(source, eventType, sender, sourceTeam, intake)
+  ));
   appendDeliveryBadge(label, delivery);
   bubble.appendChild(label);
   bubble.appendChild(content);
@@ -534,9 +549,9 @@ export function buildInjectedRow(text, source, timestamp, eventType, sender, sou
  *  reading (`chat.scrollTop = chat.scrollHeight`). It now follows the shared
  *  near-bottom judgement (utils.js shouldFollowBottom) so a notification that
  *  arrives while the user is scrolled up stays put and raises the ↓ N pill. */
-export function renderInjectedBubble(text, source, timestamp, eventType, sender, sourceTeam, delivery, intake) {
+export function renderInjectedBubble(text, source, timestamp, eventType, sender, sourceTeam, delivery, intake, header) {
   const chat = activeView.dom.chat;
-  const row = buildInjectedRow(text, source, timestamp || Date.now(), eventType, sender, sourceTeam, undefined, delivery, intake);
+  const row = buildInjectedRow(text, source, timestamp || Date.now(), eventType, sender, sourceTeam, undefined, delivery, intake, header);
   chat.appendChild(row);
   if (shouldFollowBottom(activeView, chat)) chat.scrollTop = chat.scrollHeight;
 }

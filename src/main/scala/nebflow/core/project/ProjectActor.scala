@@ -798,7 +798,10 @@ object ProjectActor:
               sender = attribution.flatMap(_.sender),
               senderTeam = attribution.flatMap(_.senderTeam),
               eventType = attribution.flatMap(_.eventType),
-              intake = attribution.flatMap(_.intake)
+              intake = attribution.flatMap(_.intake),
+              // 气泡四段式统一批（2026-09-15）：PROJECT 段链首级（发送方所属
+              // 项目）同源透传；`None` ⇒ 发射点走 ②/③ 回落。
+              project = attribution.flatMap(_.project)
             )).void *>
               logger
                 .info(
@@ -1079,7 +1082,9 @@ object ProjectActor:
             sender = attribution.flatMap(_.sender),
             senderTeam = attribution.flatMap(_.senderTeam),
             eventType = attribution.flatMap(_.eventType),
-            intake = attribution.flatMap(_.intake)
+            intake = attribution.flatMap(_.intake),
+            // 气泡四段式统一批（2026-09-15）：PROJECT 段链首级同源透传（同上）。
+            project = attribution.flatMap(_.project)
           )).void
           _ <- logger.info(s"Project '${project.name}' dispatcher session spawned: $sessionId$tag")
         yield same

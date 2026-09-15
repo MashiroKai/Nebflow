@@ -272,7 +272,13 @@ object UiMessage:
       * [[nebflow.agent.InjectionAttribution.intake]] 同一批名字（帧 ↔ 落盘同源）。
       * 前端历史恢复路径靠它重建注入气泡标签（缺席 ⇒ 回落 `source` 表，
       * 旧历史行渲染逐字节不变）。 */
-    intake: Option[String] = None
+    intake: Option[String] = None,
+    /** **已渲染的四段式 header**（「气泡四段式统一」批 2026-09-15，作者 12:33 令）：
+      * 引擎侧唯一格式化函数 `nebflow.core.project.NotificationHeader` 在唯一发射点
+      * （`AgentActor#emitInjectedUserEvent`）产出的整串 `KIND · PROJECT · SUBJECT ·
+      * STATE` 随注入帧与 .ui.json **同源落盘** ⇒ live 渲染与历史恢复逐字节一致。
+      * 缺席（旧历史行 / 词表外 source）⇒ 前端回落 `injectedSourceLabel`（逐字节不变）。 */
+    header: Option[String] = None
   ) extends UiMessage:
     val typeName = "user"
 
@@ -343,7 +349,12 @@ object UiMessage:
       val withDelivery = m.delivery.fold(withTeam)(d => withTeam.deepMerge(Json.obj("delivery" -> d.asJson)))
       // mailbadge 批（2026-09-13，选项 C）：可选判别字段——缺席即不落键
       // （旧 .ui.json 行的字节形态与旧读法逐字不变）。
-      m.intake.fold(withDelivery)(i => withDelivery.deepMerge(Json.obj("intake" -> i.asJson)))
+      val withIntake = m.intake.fold(withDelivery)(i => withDelivery.deepMerge(Json.obj("intake" -> i.asJson)))
+      // 气泡四段式统一批（2026-09-15）：**已渲染**的四段式 header（引擎单一来源，
+      // `NotificationHeader`）随行落盘 ⇒ 历史恢复路径与 live 帧逐字渲染同一串，
+      // 前端不再二次拼接。缺席即不落键（旧 .ui.json 行字节形态逐字不变；
+      // 旧行由前端 `injectedSourceLabel` 回落渲染）。
+      m.header.fold(withIntake)(h => withIntake.deepMerge(Json.obj("header" -> h.asJson)))
     case m: Ai =>
       val base = Json.obj("type" -> "ai".asJson, "text" -> m.text.asJson)
       val withDur = m.durationMs.fold(base)(d => base.deepMerge(Json.obj("durationMs" -> d.asJson)))
@@ -398,6 +409,7 @@ object UiMessage:
           senderTeam <- cursor.downField("senderTeam").as[Option[String]]
           delivery <- cursor.downField("delivery").as[Option[String]]
           intake <- cursor.downField("intake").as[Option[String]]
+          header <- cursor.downField("header").as[Option[String]]
         yield User(
           text,
           atts.getOrElse(Nil),
@@ -408,7 +420,8 @@ object UiMessage:
           sender,
           senderTeam,
           delivery,
-          intake
+          intake,
+          header
         )
       case "ai" =>
         for

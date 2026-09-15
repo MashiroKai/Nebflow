@@ -1668,6 +1668,9 @@ class NodeEngine(
                       sender = attribution.flatMap(_.sender),
                       senderTeam = attribution.flatMap(_.senderTeam),
                       eventType = attribution.flatMap(_.eventType),
+                      // 气泡四段式统一批（2026-09-15）：PROJECT 段链首级（发送方所属
+                      // 项目）同源透传；`None` ⇒ 发射点走 ②/③ 回落。
+                      project = attribution.flatMap(_.project),
                       fromUser = false // ② 服务端注入（Node 消息），不是真人输入
                     )).void *>
                     FlowMapEventLog.append(workspace, projectName, node.id, NodeEngine.NodeMessageEventType,
