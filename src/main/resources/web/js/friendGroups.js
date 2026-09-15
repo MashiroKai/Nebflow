@@ -400,7 +400,11 @@ export function buildGroupSettings(conv, hooks) {
         excludeIds: invitedIds,
         selected: picked,
       });
-      const sendBtn = el('button', 'glass-control fm-msg-btn', t('messages.groupInviteSend'));
+      // ③ 发送键族统一批：本键是**发送键**，加 `fm-send-chip` 专指发送语义
+      // （`.fm-msg-btn` 是共用类名 —— 好友面板「发消息」键 `contacts.js:744` 同用，
+      // 那是动作键不是发送键，不得同染）；`cfg-btn-primary` 只为承接既有主操作墨色。
+      // 🔴 只动按钮本体与状态色，群聊布局/结构零改动。
+      const sendBtn = el('button', 'glass-control cfg-btn-primary fm-msg-btn fm-send-chip', t('messages.groupInviteSend'));
       sendBtn.addEventListener('click', async () => {
         if (sendBtn.disabled) return;
         const ids = [...picked];

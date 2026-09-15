@@ -7,7 +7,11 @@ import { t } from './i18n.js';
 import { createIconsIn, escapeHtml } from './utils.js';
 import { getNeblinkState, presenceBadgeHTML, onNeblinkStatus, platformDisplay } from './neblink.js';
 import { setActivityBadge, openLoginModal } from './activityBar.js';
-import { onMessage } from './ws.js';
+// R2（③ 更正轮）：本模块的验证键也要接**链路态**——判据唯一真源 = `state.js` 的
+// `connected`（主对话框 `ws.js:119` / 会话窗 `messages.js:1160` / dropbox
+// `dropbox.js:299` 三处同源），断连/重连两拍由 ws.js 的回调派发（禁第二份判据）。
+import { onMessage, onDisconnect, onReconnect } from './ws.js';
+import state from './state.js';
 import * as api from './friendsApi.js';
 // 设备会话统一批 MVP-1（2026-09-15）：设备段入本面板。数据源/开窗入口都从
 // messages.js 取（设备会话的唯一属主面），本面板只做**行渲染**（禁第二份取数）。
@@ -816,7 +820,9 @@ function buildResultCard() {
     // ① 发送键（作者 2026-09-14 主诉）：自带类名 `fm-verify-send`——旧形态只带
     // 裸 `glass-control`，样式只能靠结构选择器 `.fm-verify-box button.glass-control
     // :not(.fm-verify-cancel)` 命中（sapphire.css），断言也无从定位本键本体。
-    const sendBtn = el('button', 'glass-control fm-verify-send', t('messages.send'));
+    // `cfg-btn-primary` = ③ 发送键族统一批：只为承接既有主操作墨色（既有类名），
+    // 材质/几何/状态由 `sapphire.css` 的发送族块统一覆盖。
+    const sendBtn = el('button', 'glass-control cfg-btn-primary fm-verify-send', t('messages.send'));
     // ① 可提交性谓词（唯一来源）：按钮 enabled 态与 Enter 路径**共用**它，
     // 杜绝「按钮禁用而 Enter 照发」的双写分叉。
     // 唯一真「不能提交」态 = 在飞（sending）；附言为**可选**（i18n 逐字
@@ -828,6 +834,12 @@ function buildResultCard() {
     const canSend = () => !sending && !!username;
     const syncSendState = () => {
       sendBtn.disabled = !canSend();
+      // ③ R2（掉线灰）：本键的链路档与发送键族**同一机制**——断连 ⇒ 挂
+      // `.disconnected`（`sapphire.css` 发送族块的末档，灰 + not-allowed）。
+      // 判据出处 = `state.js:60` 的 `connected`，与 `ws.js:119`（主对话框基准）/
+      // `messages.js:1160`（会话窗）/ `dropbox.js:299`（设备输入条）逐字同源，
+      // 🔴 禁第二份判据、禁字面量色值（掉线档的色由本族既有 token 承接）。
+      sendBtn.classList.toggle('disconnected', !state.connected);
       if (sending) sendBtn.setAttribute('aria-busy', 'true');
       else sendBtn.removeAttribute('aria-busy');
     };
@@ -861,6 +873,9 @@ function buildResultCard() {
       render();
     };
     sendBtn.addEventListener('click', doSend);
+    // ③ R2 初始拍：验证卡可能在**已断连**的链路上被渲染（此时不会有 onDisconnect
+    // 事件再来敲门）⇒ 建键即按链路态定档，禁只依赖后续事件（否则漏档）。
+    sendBtn.classList.toggle('disconnected', !state.connected);
     // Enter 直发 + 取消回退（微信常识：附言后点发送；不想发可退出）
     // ⑤ A4：验证附言组字 Enter 不得直发（此前零判定）。
     // ① 2026-09-14：Enter 与 click 同闸——`doSend()` 自带 `canSend()` 判定
@@ -1094,6 +1109,18 @@ export function initContacts() {
   // 汇流）。本面板**不引入任何轮询**（修前的 3s 轮询属于设置面板账号段，已解绑）。
   // 面板不在场 ⇒ 不渲染（下次激活由既有 MutationObserver 触发 refresh/render）。
   onNeblinkStatus(() => { if (panelActive()) render(); });
+
+  // ── ③ R2（掉线灰）：验证卡发送键的**链路两拍** ────────────────────────
+  // 与 `dropbox.js:700-705` 同款（断连加类 / 重连去类），判据同为 ws.js 的连接态
+  // 回调 ⇒ 与主对话框（`ws.js:119` 的 `syncSendButtonConnState`）同源。
+  // 本键是**按需渲染**的（验证卡随 searchResult 出现），故两拍都在已渲染的键上
+  // 就地打类；建键那拍的初值由上面的「初始拍」承接（两处合起来覆盖全时序）。
+  onDisconnect(() => {
+    document.querySelectorAll('button.fm-verify-send').forEach((b) => b.classList.add('disconnected'));
+  });
+  onReconnect(() => {
+    document.querySelectorAll('button.fm-verify-send').forEach((b) => b.classList.remove('disconnected'));
+  });
 
   // ── ⑦（作者 2026-09-15）：搜索结果提示小面板必须能收起 ────────────────
   // 作者原话：「搜索用户之后出现的 User not found / The user may not have set a

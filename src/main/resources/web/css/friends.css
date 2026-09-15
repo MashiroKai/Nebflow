@@ -64,6 +64,14 @@
 .fm-avatar-36 { width: 36px; height: 36px; font-size: 14px; }
 .fm-avatar-40 { width: 40px; height: 40px; font-size: 15px; }
 
+/* ① 设备行头像（作者 2026-09-15：「设备在消息列表里的头像应该要和在联系人面板里
+   一致」）：字形 = `platformDisplay` 单点（`neblink.js:401-414`）产出的平台 `<svg>`，
+   与联系人面板设备行**逐字节同形**；本规则只定**本槽位的落点尺寸**（该 svg 自带
+   15×15 属性，40px 头像里按 `.fm-avatar-40` 的 15px 字号档按比例放大到 20px）。
+   🔴 颜色继承 `.fm-avatar` 的 `--color-text-muted`（字形自身 fill/stroke =
+   currentColor / stroke=currentColor）⇒ 亮暗双主题零新增色值、零字面量。 */
+.fm-avatar-device svg { width: 20px; height: 20px; }
+
 .fm-row-meta { flex: 1; min-width: 0; }
 
 .fm-row-name {
@@ -1194,32 +1202,68 @@ button.fm-req-decline:focus-visible {
 }
 
 /* 设备会话（2026-09-15 八点返工后）：
-   ① **设备描述行**（⑤c，设备窗相对好友窗的**唯一**新增项）：默认只读一行文本，
-      点开即行内输入（同好友备注行内编辑范式）；空值态用弱化色显示既有
-      `neblink.deviceDescHint` 占位。几何沿用原留存条档位（不新增布局座）。
+   ① **设备描述入口**（⑤c 引入，② 2026-09-15 夜返工）：**默认收起 = 一枚小键**，
+      点击就地展开编辑面板（textarea + 保存/取消）。旧形态（常驻只读文本条 +
+      点击换行内 input）随 ② 整体替换；`.fm-device-desc-text` /
+      `.fm-device-desc-empty` 两条规则同批删除（旧渲染点已不存在 ⇒ 禁死规则）。
+      几何沿用原留存条档位（不新增布局座）；材质全部引用既有 `--glass-*` token
+      族 + 既有 `.glass-control`（Glass Control standard，`sapphire.css:159-262`）
+      ⇒ 🔴 零新增字面量色值。
       注：原 P10 留存明示条 `.fm-device-note` 已被 ⑤b 删除（作者令：不要显示该信息）。
    ② 本机所发气泡的送达/已读状态位（设备回执读面，§8.7 device_message_receipts）。 */
 .fm-device-desc {
   margin: 0 16px 6px;
-  padding: 4px 10px;
+  /* 小键在左、展开面板占满下一行（`flex-wrap` 让收起/展开共用一条布局座）。 */
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
   font-size: 12px;
+}
+.fm-device-desc-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 3px 9px;
   border-radius: 8px;
-  background: var(--glass-etched-bg);
-}
-.fm-device-desc-text {
-  display: block;
-  color: var(--color-text, #000);
+  font-size: 12px;
+  font-family: inherit;
+  color: var(--color-text-muted);
   cursor: pointer;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
+  line-height: 1.4;
 }
-.fm-device-desc-text:hover { color: var(--color-primary); }
-.fm-device-desc-empty { color: var(--color-text-muted, #888); }
+.fm-device-desc-btn:hover { color: var(--color-text); }
+.fm-device-desc-btn[aria-expanded='true'] { color: var(--color-text); }
+.fm-device-desc-btn svg { width: 13px; height: 13px; flex-shrink: 0; }
+.fm-device-desc-panel {
+  flex: 1 1 100%;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 8px;
+  border-radius: 10px;
+}
 .fm-device-desc-input {
   width: 100%;
   font-size: 12px;
+  line-height: 1.5;
+  resize: vertical;
+  min-height: 44px;
 }
+.fm-device-desc-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 6px;
+}
+.fm-device-desc-actions button {
+  padding: 3px 12px;
+  border-radius: 8px;
+  font-size: 12px;
+  font-family: inherit;
+  cursor: pointer;
+}
+.fm-device-desc-save { color: var(--color-primary); font-weight: 500; }
+.fm-device-desc-cancel { color: var(--color-text-muted); }
+.fm-device-desc-actions button:disabled { cursor: not-allowed; opacity: 0.6; }
 .fm-msg-device-receipt {
   font-size: 11px;
   color: var(--color-text-muted, #888);

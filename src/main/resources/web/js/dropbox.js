@@ -6,7 +6,7 @@ import state from './state.js';
 import { key } from './branding.js';
 import { escapeHtml, createIconsIn } from './utils.js';
 import { t } from './i18n.js';
-import { onMessage, sendWs } from './ws.js';
+import { onMessage, onDisconnect, onReconnect, sendWs } from './ws.js';
 import { refreshNeblink } from './neblink.js';
 // ⑤ 中文输入收归（作者裁定 2026-09-12）：组字判定唯一来源 = imeGuard.js。
 import { bindImeGuard, isImeComposing } from './imeGuard.js';
@@ -26,6 +26,11 @@ let dropboxMessages = {};
 
 // Currently open modal device
 let openDeviceId = null;
+
+// ③ 发送键族统一批（2026-09-15）：链路态本地镜像（掉线 ⇒ `#dropbox-send-btn` 转灰）。
+// 🔴 判据源唯一 = `ws.js` 的连接态回调（本模块只镜像一个布尔，不去读别模块内部 state）；
+// 初值 true 与 `state.connected` 的初始语义同（未连接前不发任何请求，键由空输入闸禁用）。
+let connUp = true;
 
 // ⑩ 已发出 `dropbox-get-history` 且尚未回包的设备集合：决定「无缓存设备」显示
 // **加载态**还是**空态**。这是「仅无本地缓存才走加载态」的唯一判据来源
@@ -135,7 +140,7 @@ function renderModal(device) {
       <div class="dropbox-input-bar">
         <input type="text" id="dropbox-text-input" class="cfg-input" placeholder="${t('dropbox.inputPlaceholder')}" autocomplete="off">
         <button id="dropbox-attach-btn" class="icon-btn dropbox-attach-btn" title="${t('dropbox.attachFile')}" aria-label="${t('dropbox.attachFile')}"><i data-lucide="paperclip"></i></button>
-        <button id="dropbox-send-btn" class="cfg-btn">${t('dropbox.send')}</button>
+        <button id="dropbox-send-btn" class="cfg-btn cfg-btn-primary">${t('dropbox.send')}</button>
       </div>
       <input type="file" id="dropbox-file-input" style="display:none">
     </div>` : '';
@@ -285,9 +290,13 @@ function bindChatEvents(device) {
   // ③ 同病同修（2026-09-14 交付批）：本键的「可否提交」判据 = 输入非空。
   // 旧形态 = 按钮恒呈可用态、而空/纯空格输入点了**静默 no-op**（同族反极性
   // 缺陷：看着能发、实际发不出去且零反馈）。现在按钮态与 Enter 路径同闸。
+  // ③ 发送键族统一批（2026-09-15）追加：挂 `.disconnected`（掉线灰）——判据与主
+  // 对话框同族（`!state.connected`，唯一真源 = `ws.js` 的连接态回调），本键与
+  // 会话窗键同档（`sapphire.css` 发送族块）。
   const syncSendState = () => {
     if (!sendBtn || !textInput) return;
     sendBtn.disabled = !textInput.value.trim();
+    sendBtn.classList.toggle('disconnected', !connUp);
   };
 
   // Send text
@@ -683,6 +692,18 @@ function mergeDeviceMessages(deviceId, incoming) {
 }
 
 export function initDropbox() {
+  // ③ 发送键族统一批：掉线 ⇒ 已开着的 dropbox 窗发送键转灰（与主对话框/会话窗同档）；
+  // 重连 ⇒ 回绿。两处只改本键的链路态类，功能闸（空正文）仍由 syncSendState 单源管。
+  onDisconnect(() => {
+    connUp = false;
+    const b = /** @type {HTMLButtonElement | null} */ (document.getElementById('dropbox-send-btn'));
+    if (b) b.classList.add('disconnected');
+  });
+  onReconnect(() => {
+    connUp = true;
+    const b = /** @type {HTMLButtonElement | null} */ (document.getElementById('dropbox-send-btn'));
+    if (b) b.classList.remove('disconnected');
+  });
   // Incoming/outgoing message (text or file record)
   onMessage('dropbox-message', (msg) => {
     const deviceId = msg.deviceId;

@@ -261,46 +261,61 @@
     0 4px 12px var(--glass-control-shadow-hover);
 }
 
-/* ── Neutral-gray send chips — 4-state ramp ─────────────────────────────
-   The three "send" affordances of the app share one neutral gray material:
-     ① #dropbox-send-btn            设备窗（cross-device dropbox）输入条发送键
-     ② .cfg-btn.fm-send-btn         好友会话输入条发送键
-     ③ button.fm-verify-send        好友面板「发送验证申请」的发送键
-   Before this block ①② had rest + hover (Pattern B above) and ③ rest only,
-   so :active / :disabled were visually silent; ③ also fell back to the UA
-   defaults for color / font-family / border-radius (no global `button`
-   reset exists anywhere in css/) and was also missing hover.
-   Gray only: this family must never be merged into the green primary-send
-   family (#send-btn, input.css:793-874 — wechat solid green, owned by the
-   green batch). The shared --glass-control-* ramp is
-   deliberately left untouched so Pattern A and the rest of Pattern B keep
-   their material; the four rest values repeat today's --glass-control-*
-   values, so the rest rendering stays byte-identical to before.
-   Ramp (author ruling 2026-09-11 P4): light fill .45 / .58 / .66 / .18,
-   light border .40 / .50 / .56 / .20; dark fill .05 / .11 / .15 / .03,
-   dark border .08 / .12 / .15 / .05.
-   Feedback (author ruling 2026-09-11, option B — light batch): the light
-   fill ramp above is visually flat on a light plate, so light hover/active
-   are now carried by (a) the border: white .50/.56 → black .10/.18, and
-   (b) light-scoped box-shadow layers.
-   ── 2026-09-14 交付批（作者主诉 + 裁定）────────────────────────────────
-   主诉逐字：「发送验证申请的『发送』是灰色的 但可以按 Enter 不太影响使用，
-   只是看起来不太直观」⇒ ①「能提交⇒按钮呈可用态；不能提交⇒按钮禁用态且
-   Enter 也不发」；③「发送按钮组视觉规格对齐全局按钮规范（圆角 10px 常例）」。
-   根因（取证见报告 §1）：③ 借了 `.cfg-btn` 的**次要灰字 token**
-   （`color: var(--color-frame-text-dim)`，sidebar.css:1155）+ 5px 圆角 +
-   rest 档（.45）填充 ⇒ **可用态被读成禁用态**；而 ①② 的 5px 圆角同样偏离
-   作者指名的 10px 常例。
-   修法：三个发送键统一取「**族内顶档填充**（--glass-send-bg-active）+
-   **全对比正文色**（--color-text）+ **500 字重** + **10px 圆角**」——与 09-12
-   裁定「同意 = 主操作（中性玻璃顶档 + 500 字重，主次由填充差 + 字重差表达）」
-   同一条口径；hover/active 只递进描边（+亮档投影），填充不动（同 同意 键）。
-   禁用态 = 禁用材质 + `--color-text` 半透明文字 + not-allowed ⇒ **只有真禁用
-   才呈禁用相**（可提交性谓词见 contacts.js `canSend()` / dropbox.js
-   `syncSendState()` / messages.js `syncComposerSend()`）。
-   ③ 选择器同时从结构式 `.fm-verify-box button.glass-control:not(.fm-verify-cancel)`
-   收窄为本体类名 `button.fm-verify-send`（JS 侧同批加类）——取消键不再需要
-   `:not()` 兜底，样式断言的定位点也不再依赖结构。 */
+/* ── 发送键族统一 — 正常绿 / 掉线灰（作者 2026-09-15 逐字令）──────────────
+   「全局的发送按钮可能都需要优化一下设计，可以参考我们主对话框的设计，如果掉线了
+   会变成灰色，正常是绿色」。
+   🔴 **本令覆盖 2026-09-11 的「Neutral-gray send chips」四态灰阶**（原文：三枚发送
+   键共用一套中性灰材质、且「this family must never be merged into the green
+   primary-send family」）—— 该裁定已被作者后续指令取代，灰材质整体**降为「掉线 /
+   不可用」档**（见本块 :offline 规则），不再作为常态。灰 token 因此保留（有消费者），
+   只是语义从「常态」变为「不可用态」。
+   族成员 = 全站发送键清扫结果（逐件 file:line 见本批报告 §③）：
+     ① #send-btn                  主对话框输入条（**基准**，绿 = input.css:793-886；
+                                   本批只改其掉线档，见 input.css 同批注释）
+     ② #dropbox-send-btn          设备 dropbox 输入条
+     ③ .cfg-btn.fm-send-btn       好友 / 群 / 设备会话输入条（三面**同一枚键**）
+     ④ button.fm-verify-send      好友面板「发送验证申请」
+     ⑤ button.fm-send-chip        群邀请「发送邀请」（`.fm-msg-btn` 是**共用**类名，
+                                   加 `.fm-send-chip` 专指发送语义 ⇒ 不误染
+                                   `contacts.js:744` 的「发消息」键）
+   状态色（🔴 逐字取自主对话框基准，零自创、零新增字面量）：
+     rest   = var(--color-primary)        （= input.css:801 主对话框 rest 绿，既有 token）
+     hover  = var(--color-primary-hover)  （= input.css:830 主对话框 hover 绿，既有 token）
+     active = 描边递进 var(--glass-send-border-active)（既有档）。基准的 active 深绿
+              是个字面量 ⇒ 为守「git diff 零新增字面量色值」本批**不复制**它，改用
+              本族既有描边档表达按下（登记偏离，见报告 §③）。
+     掉线   = 灰（`--glass-send-bg-active` + `--glass-send-border-active` + not-allowed）
+     disabled = `--glass-send-bg-disabled`（空正文闸；档位与判据均未改）
+   材质 = 全站 Glass Control standard（`.glass-control`，本文件 :139-157）的**同一批**
+     `--glass-control-*` token：blur(10px)+saturate + 1px whisper border + 双层 inset
+     边 + 双层投影。本块直接引用同一批变量，不复制任何字面量。
+   墨色 = 取既有 `.cfg-btn-primary`（sidebar.css:1162-1170）的**主操作白墨声明**
+     ⇒ 族成员带 `cfg-btn-primary` 类承接墨色（既有类名，**不是**新色值），本块只覆盖
+     材质 / 几何 / 状态。
+   几何：仍 10px 圆角 + 5px 12px 内距（与 09-14 裁定「圆角 10px 常例」同档；此处显式
+     声明以挡住 `.cfg-btn-primary` 的 5px/14px，避免引入几何漂移）。 */
+:is(#dropbox-send-btn, .cfg-btn.fm-send-btn, button.fm-verify-send, button.fm-send-chip) {
+  /* 机制：`:is()` 取列表内最高特异度（= #id 档 1,0,0）⇒ 族内所有状态规则同档，
+     一律压过 .cfg-btn / .cfg-btn-primary 的常态与 hover 声明（本文件最后加载）。 */
+  background: var(--color-primary);
+  -webkit-backdrop-filter: blur(var(--glass-control-blur)) saturate(1.2);
+  backdrop-filter: blur(var(--glass-control-blur)) saturate(1.2);
+  border: 1px solid var(--color-primary-hover);
+  box-shadow:
+    inset 0 1px 0 var(--glass-control-highlight),
+    inset 0 -1px 0 var(--glass-control-underedge),
+    0 1px 3px var(--glass-control-glow),
+    0 2px 8px var(--glass-control-shadow);
+  border-radius: 10px;
+  padding: 5px 12px;
+  font-family: inherit;
+  font-weight: 500;
+  cursor: pointer;
+  opacity: 1; /* 挡住 .cfg-btn-primary:hover/:disabled 的 opacity 反馈（本族用色表达） */
+  transition: background 0.15s ease, border-color 0.15s ease,
+              box-shadow 0.15s ease, opacity 0.15s ease;
+}
+
 :root {
   --glass-send-bg: rgba(255, 255, 255, 0.45);
   --glass-send-bg-hover: rgba(255, 255, 255, 0.58);
@@ -351,35 +366,23 @@
   }
 }
 
-/* rest = 主操作档（族内顶档填充 + 全对比正文色 + 500 字重 + 10px 圆角）。
-   `font-family: inherit` 是 ③ 的必需项（无全局 button reset，③ 旧形态吃 UA 字体）；
-   ①② 由 .cfg-btn 自带同一声明，此处并列不冲突。 */
-#dropbox-send-btn,
-.cfg-btn.fm-send-btn,
-button.fm-verify-send {
-  background: var(--glass-send-bg-active);
-  border: 1px solid var(--glass-send-border);
-  color: var(--color-text, #000);
-  font-family: inherit;
-  font-weight: 500;
-  border-radius: 10px;
-  transition: background 0.15s ease, border-color 0.15s ease,
-              color 0.15s ease, box-shadow 0.15s ease;
+/* hover — 填充递进到主对话框同款 hover 绿（`--color-primary-hover`）+ 描边同色；
+   基准（input.css:827-836）的 fill 递进就是这样做的，本族照抄其**色值**（非自创）。 */
+:is(#dropbox-send-btn, .cfg-btn.fm-send-btn, button.fm-verify-send, button.fm-send-chip):hover {
+  background: var(--color-primary-hover);
+  border-color: var(--color-primary-hover);
+  opacity: 1;
 }
 
-/* hover — 填充不动，只递进描边（同 09-12 「同意」键口径） */
-#dropbox-send-btn:hover,
-.cfg-btn.fm-send-btn:hover,
-button.fm-verify-send:hover {
-  border-color: var(--glass-send-border-hover);
-}
-
-/* active */
-#dropbox-send-btn:active,
-.cfg-btn.fm-send-btn:active,
-button.fm-verify-send:active {
+/* active — 描边递进本族既有按下档（基准的 active 深绿是字面量，本批不复制） */
+:is(#dropbox-send-btn, .cfg-btn.fm-send-btn, button.fm-verify-send, button.fm-send-chip):active {
   border-color: var(--glass-send-border-active);
 }
+
+/* 掉线 / 禁用 / 亮档投影三档的**声明次序即契约**（三者可同时命中：掉线时输入框被
+   禁用 ⇒ 键同时 `:disabled` 且 `.disconnected`，且 `:hover` 也可能同档）：
+   同特异度 ⇒ 后声明者胜 ⇒ 序 = 亮档投影 → disabled → **disconnected（最后，胜出）**
+   ——「掉线灰」必须是用户看到的那个灰。 */
 
 /* Light-only shadow feedback (author ruling 2026-09-11, option B). Scoped to
    `light` on purpose: `none` is only a legal box-shadow value on its own, so
@@ -387,47 +390,47 @@ button.fm-verify-send:active {
    scoping the layers keeps dark's inherited shadow (and every other dark
    declaration) byte-for-byte untouched. The border half of the feedback is
    already theme-split via --glass-send-border-hover/active above.
-   Specificity ledger (all three selectors outrank their competitors, and
+   Specificity ledger (all four selectors outrank their competitors, and
    sapphire.css is the last stylesheet, see index.html:47-50):
-   · #dropbox-send-btn        (1,0,0) > .cfg-btn:not(.cfg-btn-primary) (0,2,0)
-     [sapphire.css:219-229] and .cfg-btn (0,1,0) [sidebar.css:1149];
-   · .cfg-btn.fm-send-btn     (0,2,0) ties Pattern B base (0,2,0) → source
-     order wins, this block sits after :219; .cfg-btn:hover (0,2,0)
-     [sidebar.css:1160] is outranked here by the :hover form (0,3,0);
-   · button.fm-verify-send    (0,1,1) > .glass-control (0,1,0) [sapphire.css:139];
-     与 friends.css:368 `.fm-verify-box .glass-control` (0,2,0) 不冲突——那条只
-     声明 flex-shrink / font-size / padding，本块不声明这三项。 */
+   · `:is(…)` 取列表最高档 (1,0,0) ⇒ 本块与 rest 块同档 (1,0,0)、状态形
+     (1,1,0)，一律压过 `.cfg-btn` (0,1,0) / `.cfg-btn:hover` (0,2,0)
+     [sidebar.css:1149-1160] 与 Pattern B (0,2,0) [sapphire.css:219-229]；
+   · 与 friends.css:368 `.fm-verify-box .glass-control` (0,2,0) 不冲突——那条只
+     声明 flex-shrink / font-size / padding，本块不声明这三项（padding 除外，
+     本块显式 5px 12px 即为挡 `.cfg-btn-primary` 的 5px 14px）。 */
 @media (prefers-color-scheme: light) {
-  #dropbox-send-btn,
-  .cfg-btn.fm-send-btn,
-  button.fm-verify-send {
+  :is(#dropbox-send-btn, .cfg-btn.fm-send-btn, button.fm-verify-send, button.fm-send-chip) {
     box-shadow: var(--glass-send-stack), var(--glass-send-shadow);
   }
-  #dropbox-send-btn:hover,
-  .cfg-btn.fm-send-btn:hover,
-  button.fm-verify-send:hover {
+  :is(#dropbox-send-btn, .cfg-btn.fm-send-btn, button.fm-verify-send, button.fm-send-chip):hover {
     box-shadow: var(--glass-send-stack), var(--glass-send-shadow-hover);
   }
-  #dropbox-send-btn:active,
-  .cfg-btn.fm-send-btn:active,
-  button.fm-verify-send:active {
+  :is(#dropbox-send-btn, .cfg-btn.fm-send-btn, button.fm-verify-send, button.fm-send-chip):active {
     box-shadow: var(--glass-send-stack), var(--glass-send-shadow-active);
   }
 }
 
-/* disabled — declared last on purpose: :disabled may co-match :hover
-   (equal specificity ⇒ source order decides). 禁用材质 + `--color-text` 半透明
-   文字（与 09-12 「同意」键同款禁用表达；旧形态吃 `--color-frame-text-dim`，
-   那正是「可用态读成禁用态」的同族根因）+ not-allowed；**绝不**用元素级
-   opacity（P4 已退役表达）。
-   The explicit box-shadow stops the rest-state feedback layer from leaking
-   onto the disabled chip. */
-#dropbox-send-btn:disabled,
-.cfg-btn.fm-send-btn:disabled,
-button.fm-verify-send:disabled {
+/* disabled — declared after the light block on purpose: :disabled may co-match
+   :hover（同特异度 ⇒ 按次序）。禁用材质 + `--color-text` 半透明文字（与 09-12
+   「同意」键同款禁用表达）+ not-allowed；**绝不**用元素级 opacity（P4 已退役表达）。 */
+:is(#dropbox-send-btn, .cfg-btn.fm-send-btn, button.fm-verify-send, button.fm-send-chip):disabled {
   background: var(--glass-send-bg-disabled);
   border-color: var(--glass-send-border-disabled);
-  color: color-mix(in srgb, var(--color-text, #000) 50%, transparent);
+  color: color-mix(in srgb, var(--color-text) 50%, transparent);
+  cursor: not-allowed;
+  box-shadow: var(--glass-send-stack);
+  opacity: 1;
+}
+
+/* 掉线（③ 的**新档**，声明在最后 ⇒ 胜出）：灰 = 本族 09-11 既有灰材质的顶档
+   （token 未新造，只是语义从「常态」降为「链路不可用」）；
+   cursor: not-allowed ⇒ 与「禁用」同相，但语义是**链路不可用**（真复现读数见本批
+   报告 §③：MockWS onclose 真断开后取 computed style，非「改 CSS 声称」）。 */
+:is(#dropbox-send-btn, .cfg-btn.fm-send-btn, button.fm-verify-send, button.fm-send-chip).disconnected,
+:is(#dropbox-send-btn, .cfg-btn.fm-send-btn, button.fm-verify-send, button.fm-send-chip).disconnected:hover {
+  background: var(--glass-send-bg-active);
+  border-color: var(--glass-send-border-active);
+  color: var(--color-text-muted);
   cursor: not-allowed;
   box-shadow: var(--glass-send-stack);
 }

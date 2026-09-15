@@ -308,6 +308,24 @@ function avatarEl(person, size) {
   return a;
 }
 
+/** 设备行头像（①，作者 2026-09-15：「设备在消息列表里的头像应该要和在联系人面板里
+ *  一致」）。**同款判据 = 同一字形源**：联系人面板设备行（`contacts.js:401`
+ *  `platformDisplay(d.platform).icon`）与本处**共用同一函数、同一返回值**
+ *  （`neblink.js:401-414` 单点，禁第二份平台→图标映射），故同一设备在两面板里渲染出
+ *  逐字节同形的 `<svg>`（同 viewBox / 同 path `d` / 同 fill|stroke 语义）。
+ *  🔴 落槽 = `.fm-avatar` 家族（几何随既有 `-40` 档，不新开尺寸座），字形尺寸由
+ *  `.fm-avatar-device svg` 单条规则决定（`friends.css`）。
+ *  🔴 只换**设备**这一支：好友头像照旧走档案 `avatarUrl` / 首字母，群行照旧首字母
+ *  ⇒ 三类头像互不影响（逐类读数见本批报告 §①）。
+ *  ⚠ 平台映射的兜底档（未知平台）返回**显示器/笔记本形**glyph（`neblink.js:406`
+ *  generic）⇒ 无名/未知平台的「空白态」设备同样有设备语义图标，不回落字母。 */
+function deviceAvatarEl(device, size) {
+  const a = el('span', `fm-avatar fm-avatar-${size} fm-avatar-device`);
+  a.innerHTML = platformDisplay(device && device.platform).icon;
+  a.setAttribute('aria-hidden', 'true');
+  return a;
+}
+
 // ── Time format: today HH:mm / yesterday / M-D (§3.2) ───
 // Backend timestamps are epoch SECONDS (numbers, FriendApiRoutesSpec:
 // "createdAt":1234567890) or ISO strings — normalize before new Date().
@@ -462,9 +480,12 @@ function convRow(conv) {
   if (isDevice) row.dataset.device = '1'; // QA 断言面：设备行可机械定位（同族口径）
 
   // O④：群头像 = 标题首字母占位（avatarEl 无 avatarUrl 即走首字母分支，零新实现）。
-  // 设备行同法（首字母占位）；单聊行照旧朋友档案。
-  const avatarPerson = isDevice ? { name: deviceLabel(conv.device) } : (isGroup ? { name: groupTitleOf(conv) } : conv.friend);
-  row.appendChild(avatarEl(avatarPerson, 40));
+  // ④①（作者 2026-09-15）：**设备行头像**改为与联系人面板设备段**同款**的
+  // 平台图标（`deviceAvatarEl`，字形源 = `platformDisplay` 单点）——原形态是
+  // `avatarEl` 的**首字母占位**（与好友/群同款），与联系人面板里那台设备的
+  // 图标不一致（红读数见本批报告 §①）。单聊行照旧朋友档案、群行照旧首字母。
+  const avatarPerson = isGroup ? { name: groupTitleOf(conv) } : conv.friend;
+  row.appendChild(isDevice ? deviceAvatarEl(conv.device, 40) : avatarEl(avatarPerson, 40));
   const meta = el('div', 'fm-row-meta');
   const top = el('div', 'fm-conv-top');
   const rowName = isDevice ? deviceLabel(conv.device) : (isGroup ? groupTitleOf(conv) : personLabel(conv.friend));
@@ -854,7 +875,11 @@ function renderChatModal(conv) {
   input.placeholder = t('messages.inputPlaceholder');
   input.maxLength = 2000;
   input.autocomplete = 'off';
-  const sendBtn = el('button', 'cfg-btn fm-send-btn', t('messages.send'));
+  // ③ 发送键族统一批（作者 2026-09-15「正常绿 / 掉线灰」）：本键与全站发送键共用
+  //   同一套状态色（`sapphire.css` 的发送族块）。`cfg-btn-primary` 只为**承接既有
+  //   墨色**（`sidebar.css:1162-1170` 的主操作白墨声明，既有类名 ⇒ 零新增字面量色值）；
+  //   材质/几何/状态一律由发送族块覆盖，不取 `.cfg-btn` 的灰档。
+  const sendBtn = el('button', 'cfg-btn cfg-btn-primary fm-send-btn', t('messages.send'));
   bar.appendChild(input);
   // 附件发送入口（卡 D3：设备面**保留**纸夹 + 拖拽 —— 好友窗无此入口是既有形态，
   // 不是缺陷；这里只把设备面既有的发送能力搬到新窗，闸位/队列仍走 dropbox.js 单点）。
@@ -941,82 +966,132 @@ function renderChatModal(conv) {
 // ⑦ 窗头标题面（显示优先级第三处）：备注/群名改动后就地重打，不整窗重建。
 // ── ⑤c 设备描述编辑（设备窗相对好友窗的**唯一**新增项）────────────────────
 // 作者 2026-09-15：「三是缺少了给设备添加描述的地方，总体和好友对话框统一，
-// 只是多了设备描述」。
+// 只是多了设备描述」；同夜 ② 返工令：「给设备写描述的面板还可以优化一下，比如
+// 可以是一个小按钮，点了之后展开一个面板让我们写。现在设计的很难看」。
 //
-// 形态 = **行内编辑**，复用既有行内编辑范式（`contacts.js:421-467` 好友备注：
-// 点击即就地换输入框、Enter 提交 / Esc 取消 / blur 取消、IME 组字守卫、trim 空串
-// = 清除、maxlength + 提交前再夹一次）。**不新建第二套编辑控件**。
+// 形态（② 现令）= **默认收起 + 小键 + 点击展开编辑面板**：
+//   · 收起态 = 行内只有一枚**图标**小键（`.fm-device-desc-btn`，Glass Control
+//     standard 族 `sapphire.css:159-262`）：pencil 图标 + `title`/`aria-label`
+//     同用**既有键** `neblink.deviceDescHint`。
+//     🔴 R2（⑤ 更正令，locales 零 diff）：本键**不引入任何新文案** —— 上一轮的
+//     二态文案键 `messages.deviceDescAdd` / `messages.deviceDescEdit`（zh/en 各两条）
+//     随之删除，「无描述 / 已有描述」的区分由**展开后的 textarea 正文**呈现（描述值
+//     本身仍是窗头名/列表行名的最高优先位）⇒ 零信息损失。
+//   · 展开态 = 就地展开编辑面板（textarea + 保存/取消，复用既有键
+//     `neblink.save` / `neblink.cancel`），**写面板 ≠ 关窗**：
+//     保存失败时面板原样留着，正文零丢失（项目纪律：失败可见、禁静默丢字）。
+//   · 🔴 旧形态（常驻只读文本条 + 点击换 `input` 的行内编辑）**整体替换**——那正是
+//     作者点名的「很难看」；其只读文本条同时被「窗头名/列表行名」取代：描述值仍是
+//     `deviceLabel` 的**最高优先位**（`messages.js:706-711` 窗头 / `:2622-2641` 列表行）
+//     ⇒ 收起后描述**照旧一眼可读**，零信息损失（也就零死 CSS：`.fm-device-desc-text`
+//     / `.fm-device-desc-empty` 两条规则随旧渲染点同批删除）。
 // 写路径 = `dropbox.js` 的 `saveDeviceDescription` **单点**（旧设备窗的编辑器与
 // 本处共用同一函数 ⇒ 禁两套并存，见 dropbox.js 该函数注释）。
 // 长度上限 200：与设置侧旧编辑器同档口径（该编辑器走同一 PUT 端点）。
+// 键盘语义：Enter/Esc 之外的键交还输入法（IME 组字守卫 `imeGuard.js` 唯一判据）；
+// Esc = 收起面板（**stopPropagation**：否则会冒泡到 document 的 `escClose` ⇒ 关整窗）；
+// Ctrl/Cmd+Enter = 提交（面板内是 textarea，裸 Enter 必须是换行）。
 const DEVICE_DESC_MAX = 200;
 
-/** 描述行：默认只读一行文本（空 ⇒ 显示既有 `neblink.deviceDescHint` 占位）。 */
+/** 入口行（②）：**默认收起** —— 行内只有一枚小键；点键就地展开编辑面板。 */
 function buildDeviceDescRow(conv) {
   const row = el('div', 'fm-device-desc');
-  row.dataset.deviceDesc = '1'; // QA 断言面：描述行可机械定位（⑤c）
-  const cur = (conv.device && conv.device.userDescription) || '';
-  const text = el('span', 'fm-device-desc-text' + (cur ? '' : ' fm-device-desc-empty'),
-    cur || t('neblink.deviceDescHint'));
-  text.setAttribute('role', 'button');
-  text.setAttribute('tabindex', '0');
-  text.title = t('neblink.deviceDescHint');
-  const startEdit = () => startDeviceDescEdit(conv, row, text);
-  text.addEventListener('click', startEdit);
-  text.addEventListener('keydown', (e) => {
-    if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); startEdit(); }
-  });
-  row.appendChild(text);
+  row.dataset.deviceDesc = '1'; // QA 断言面：描述入口可机械定位（②）
+  row.appendChild(buildDeviceDescToggle(conv, row));
   return row;
 }
 
-/** 行内编辑：点开 → input；Enter 提交（`saveDeviceDescription` 单点写路径）；
- *  Esc / blur 取消（与好友备注行同一语义，零新语义）。 */
-function startDeviceDescEdit(conv, row, text) {
-  if (!conv.device || row.querySelector('.fm-device-desc-input')) return;
-  const input = document.createElement('input');
-  input.className = 'cfg-input fm-device-desc-input';
-  input.type = 'text';
-  input.maxLength = DEVICE_DESC_MAX;
-  input.value = conv.device.userDescription || '';
-  input.placeholder = t('neblink.deviceDescHint');
-  input.setAttribute('aria-label', t('neblink.deviceDescHint'));
-  input.autocomplete = 'off';
-  // ⑤ 中文输入收归：组字期间所有键交还输入法（既有唯一判据源 imeGuard.js）。
-  bindImeGuard(input);
+/** 收起态小键（②）：面板开合的**唯一**开关（`aria-expanded` 同步，禁第二份开合态）。 */
+function buildDeviceDescToggle(conv, row) {
+  const btn = document.createElement('button');
+  btn.type = 'button';
+  btn.className = 'glass-control fm-device-desc-btn';
+  // ⑤ R2：**图标键**形态（零新文案）——图标 + 既有键标题；无障碍名与 title 同源，
+  // 禁「只剩图形、无字可读」的裸图标键。
+  btn.innerHTML = '<i data-lucide="pencil-line"></i>';
+  btn.title = t('neblink.deviceDescHint');
+  btn.setAttribute('aria-label', t('neblink.deviceDescHint'));
+  btn.setAttribute('aria-expanded', 'false');
+  btn.addEventListener('click', () => {
+    if (row.querySelector('.fm-device-desc-panel')) closeDeviceDescPanel(row, btn);
+    else openDeviceDescPanel(conv, row, btn);
+  });
+  return btn;
+}
 
-  let done = false;
-  const restore = () => { if (done) return; done = true; input.remove(); text.hidden = false; };
-  const cancel = () => restore();
+/** 收起：面板整体出 DOM（`aria-expanded` 同拍回落；无隐藏态残留）。 */
+function closeDeviceDescPanel(row, btn) {
+  row.querySelector('.fm-device-desc-panel')?.remove();
+  btn.setAttribute('aria-expanded', 'false');
+}
+
+/** 展开编辑面板（②）：textarea + 保存/取消；写路径仍在展开时按下（非每次敲键）。 */
+function openDeviceDescPanel(conv, row, btn) {
+  if (!conv.device || row.querySelector('.fm-device-desc-panel')) return;
+  const panel = el('div', 'glass-control fm-device-desc-panel');
+  const ta = document.createElement('textarea');
+  ta.className = 'cfg-input fm-device-desc-input';
+  ta.rows = 2;
+  ta.maxLength = DEVICE_DESC_MAX;
+  ta.value = conv.device.userDescription || '';
+  ta.placeholder = t('neblink.deviceDescHint');
+  ta.setAttribute('aria-label', t('neblink.deviceDescHint'));
+  ta.autocomplete = 'off';
+  // ⑤ 中文输入收归：组字期间所有键交还输入法（既有唯一判据源 imeGuard.js）。
+  bindImeGuard(ta);
+  const actions = el('div', 'fm-device-desc-actions');
+  const save = document.createElement('button');
+  save.type = 'button';
+  save.className = 'glass-control fm-device-desc-save';
+  save.textContent = t('neblink.save');
+  const cancel = document.createElement('button');
+  cancel.type = 'button';
+  cancel.className = 'glass-control fm-device-desc-cancel';
+  cancel.textContent = t('neblink.cancel');
+  actions.appendChild(save);
+  actions.appendChild(cancel);
+  panel.appendChild(ta);
+  panel.appendChild(actions);
+  row.appendChild(panel);
+  createIconsIn(panel);
+  btn.setAttribute('aria-expanded', 'true');
+
+  let busy = false;
+  const close = () => closeDeviceDescPanel(row, btn);
   const commit = async () => {
-    if (done) return;
+    if (busy) return;
     // maxlength 只管键盘输入 ⇒ 提交边界再夹一次（与好友备注同纪律）。
-    const next = input.value.trim().slice(0, DEVICE_DESC_MAX);
+    const next = ta.value.trim().slice(0, DEVICE_DESC_MAX);
     const prev = conv.device.userDescription || '';
-    restore(); // 先还原行（PUT 失败时窗体照旧可读），再落库
-    if (next === prev) return; // 无变化：零请求
+    if (next === prev) { close(); return; } // 无变化：零请求
+    busy = true;
+    save.disabled = true; cancel.disabled = true;
     try {
       await saveDeviceDescription(conv.device, next); // 🔴 单点写路径（dropbox.js）
       conv.device.userDescription = next;
-      text.textContent = next || t('neblink.deviceDescHint');
-      text.classList.toggle('fm-device-desc-empty', !next);
-      updateModalTitle(conv); // 窗头名 = `deviceLabel`（描述 > 设备名 > 占位；U3 窗头不回落 id）就地重打
+      close();
+      // ⑤ R2：收起态小键已是**图标键**（无文案）⇒ 此处不再重打键文案；
+      // 描述值的可见面收敛为「窗头名 + 列表行名」两处同源就地重打。
+      updateModalTitle(conv); // 窗头名 = `deviceLabel`（描述 > 设备名 > 占位）
       renderList();           // 列表行名同源同改
     } catch {
+      // 🔴 失败**不收起**：面板与正文原样留着（零丢失），错误显式可见。
+      save.disabled = false; cancel.disabled = false;
       modalToast(t('messages.deviceDescSaveFailed'));
+    } finally {
+      busy = false;
     }
   };
-  input.addEventListener('keydown', (e) => {
-    if (isImeComposing(e, input)) return;
-    if (e.key === 'Enter') { e.preventDefault(); commit(); return; }
-    if (e.key === 'Escape') { e.preventDefault(); cancel(); }
+  save.addEventListener('click', () => { commit(); });
+  cancel.addEventListener('click', close);
+  ta.addEventListener('keydown', (e) => {
+    if (isImeComposing(e, ta)) return;
+    if (e.key === 'Escape') { e.preventDefault(); e.stopPropagation(); close(); return; }
+    if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) { e.preventDefault(); e.stopPropagation(); commit(); }
   });
-  input.addEventListener('blur', cancel);
 
-  text.hidden = true;
-  row.appendChild(input);
-  input.focus();
-  input.setSelectionRange(input.value.length, input.value.length);
+  ta.focus();
+  ta.setSelectionRange(ta.value.length, ta.value.length);
 }
 
 function updateModalTitle(conv) {
@@ -1077,6 +1152,12 @@ function applyBlockState(conv) {
 function syncComposerSend() {
   if (!modalEls) return;
   modalEls.sendBtn.disabled = modalEls.input.disabled || !modalEls.input.value.trim();
+  // ③（作者 2026-09-15「掉线了会变成灰色」）：链路态与主对话框**同族判据** ——
+  // 断连 ⇒ 给本键挂 `.disconnected`（主对话框那条挂点 = `ws.js:119` 的
+  // `syncSendButtonConnState`，判据同为 `!state.connected`，禁第二份判据）。
+  // 本函数是发送键状态的**唯一**收敛点（applyBlockState / onDisconnect / input
+  // 事件 / 重连回打四处共用）⇒ 挂在这里即全部路径同步，无需另挂监听。
+  modalEls.sendBtn.classList.toggle('disconnected', !state.connected);
 }
 
 // ── 附件卡片（4b 腿 A-2；线面契约 §B.2 M6 / §B.4 / §B.7）─────────────────────
