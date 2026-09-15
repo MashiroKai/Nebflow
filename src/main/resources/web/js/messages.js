@@ -970,10 +970,15 @@ function renderChatModal(conv) {
 // 可以是一个小按钮，点了之后展开一个面板让我们写。现在设计的很难看」。
 //
 // 形态（② 现令）= **默认收起 + 小键 + 点击展开编辑面板**：
-//   · 收起态 = 行内只有一枚小键（`.fm-device-desc-btn`，Glass Control standard 族
-//     `sapphire.css:159-262`），键文案随「无描述 / 已有描述」二态（`messages.deviceDescAdd`
-//     / `messages.deviceDescEdit`，双语键同批入 locales）。
-//   · 展开态 = 就地展开编辑面板（textarea + 保存/取消），**写面板 ≠ 关窗**：
+//   · 收起态 = 行内只有一枚**图标**小键（`.fm-device-desc-btn`，Glass Control
+//     standard 族 `sapphire.css:159-262`）：pencil 图标 + `title`/`aria-label`
+//     同用**既有键** `neblink.deviceDescHint`。
+//     🔴 R2（⑤ 更正令，locales 零 diff）：本键**不引入任何新文案** —— 上一轮的
+//     二态文案键 `messages.deviceDescAdd` / `messages.deviceDescEdit`（zh/en 各两条）
+//     随之删除，「无描述 / 已有描述」的区分由**展开后的 textarea 正文**呈现（描述值
+//     本身仍是窗头名/列表行名的最高优先位）⇒ 零信息损失。
+//   · 展开态 = 就地展开编辑面板（textarea + 保存/取消，复用既有键
+//     `neblink.save` / `neblink.cancel`），**写面板 ≠ 关窗**：
 //     保存失败时面板原样留着，正文零丢失（项目纪律：失败可见、禁静默丢字）。
 //   · 🔴 旧形态（常驻只读文本条 + 点击换 `input` 的行内编辑）**整体替换**——那正是
 //     作者点名的「很难看」；其只读文本条同时被「窗头名/列表行名」取代：描述值仍是
@@ -988,11 +993,6 @@ function renderChatModal(conv) {
 // Ctrl/Cmd+Enter = 提交（面板内是 textarea，裸 Enter 必须是换行）。
 const DEVICE_DESC_MAX = 200;
 
-/** ② 唯一判据：描述是否已有值（键文案与空态共用一处 trim，禁两处各自判）。 */
-function hasDeviceDesc(conv) {
-  return !!((conv.device && conv.device.userDescription) || '').trim();
-}
-
 /** 入口行（②）：**默认收起** —— 行内只有一枚小键；点键就地展开编辑面板。 */
 function buildDeviceDescRow(conv) {
   const row = el('div', 'fm-device-desc');
@@ -1006,10 +1006,11 @@ function buildDeviceDescToggle(conv, row) {
   const btn = document.createElement('button');
   btn.type = 'button';
   btn.className = 'glass-control fm-device-desc-btn';
+  // ⑤ R2：**图标键**形态（零新文案）——图标 + 既有键标题；无障碍名与 title 同源，
+  // 禁「只剩图形、无字可读」的裸图标键。
   btn.innerHTML = '<i data-lucide="pencil-line"></i>';
-  btn.appendChild(el('span', 'fm-device-desc-btn-label',
-    t(hasDeviceDesc(conv) ? 'messages.deviceDescEdit' : 'messages.deviceDescAdd')));
   btn.title = t('neblink.deviceDescHint');
+  btn.setAttribute('aria-label', t('neblink.deviceDescHint'));
   btn.setAttribute('aria-expanded', 'false');
   btn.addEventListener('click', () => {
     if (row.querySelector('.fm-device-desc-panel')) closeDeviceDescPanel(row, btn);
@@ -1069,9 +1070,8 @@ function openDeviceDescPanel(conv, row, btn) {
       await saveDeviceDescription(conv.device, next); // 🔴 单点写路径（dropbox.js）
       conv.device.userDescription = next;
       close();
-      // 键文案（添加 ↔ 编辑）+ 窗头名 + 列表行名：同一判据三处同源就地重打。
-      const label = row.querySelector('.fm-device-desc-btn-label');
-      if (label) label.textContent = t(hasDeviceDesc(conv) ? 'messages.deviceDescEdit' : 'messages.deviceDescAdd');
+      // ⑤ R2：收起态小键已是**图标键**（无文案）⇒ 此处不再重打键文案；
+      // 描述值的可见面收敛为「窗头名 + 列表行名」两处同源就地重打。
       updateModalTitle(conv); // 窗头名 = `deviceLabel`（描述 > 设备名 > 占位）
       renderList();           // 列表行名同源同改
     } catch {

@@ -1348,9 +1348,6 @@ export default {
   // ⑤b「不要显示 Cloud keeps messages for 7 days; this device keeps them
   // permanently. 这样的信息」⇒ 渲染点、双语键、CSS 规则同批删除（禁死键）。
   'messages.deviceDescSaveFailed': 'Could not save the device description.',
-  // ② (author 2026-09-15): label of the collapsed entry chip (empty / has a value).
-  'messages.deviceDescAdd': 'Add description',
-  'messages.deviceDescEdit': 'Edit description',
   'messages.deviceSent': 'Sent',
   'messages.deviceRead': 'Read',
   'messages.deviceServerUnavailable': 'Server history unavailable — showing this device\'s local history.',

@@ -1333,10 +1333,6 @@ export default {
   // 🔴 `messages.deviceRetention`（P10 留存明示句）已删 —— 作者 2026-09-15 令 ⑤b
   // 「不要显示…这样的信息」⇒ 渲染点 / 双语键 / CSS 规则同批删除（禁死键）。
   'messages.deviceDescSaveFailed': '设备描述未保存。',
-  // ②（作者 2026-09-15：「给设备写描述的面板还可以优化一下，比如可以是一个小按钮，
-  //   点了之后展开一个面板让我们写」）：收起态小键的两种文案（无描述 / 已有描述）。
-  'messages.deviceDescAdd': '添加描述',
-  'messages.deviceDescEdit': '编辑描述',
   'messages.deviceSent': '已送达',
   'messages.deviceRead': '已读',
   'messages.deviceServerUnavailable': '服务端历史暂不可用 —— 已切换为本机历史。',
