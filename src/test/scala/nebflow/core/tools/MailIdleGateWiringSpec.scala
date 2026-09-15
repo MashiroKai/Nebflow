@@ -526,8 +526,12 @@ class MailIdleGateWiringSpec extends FunSuite:
     assert(clue(queueAfter).isEmpty, s"queue not fully drained: $queueAfter")
 
   // ---------- AC-14（R2 2026-09-12）：node: 腿绕行本闸（结构性） ----------
+  // delivery 退役批（收窄版，2026-09-15 裁定 (b)）re-pin：拒绝**方向不变**（node: 腿仍
+  // **显式拒绝** queue，判定面未放宽），文案统一到退役单点（`MAIL_DELIVERY_QUEUE_RETIRED`）
+  // —— 旧的 node: 腿专属「always immediate」文案已随退役消失（其不可达性由
+  // MailDeliveryRetireSpec 反向钉死）。零队列落盘 / 零 turn 两条断言逐字保持。
 
-  test("AC-14 R2：node:<id> 腿不经 idle gate —— 显式拒 queue、零队列落盘、零 turn") {
+  test("AC-14 R2（delivery 退役批 re-pin）：node:<id> 腿不经 idle gate —— 显式拒 queue（退役单点文案）、零队列落盘、零 turn") {
     val system = ActorSystem(s"cqi-a14-${java.util.UUID.randomUUID().toString.take(6)}")
     val tmp = os.temp.dir(prefix = "cqi-a14")
     fixtureTeam(tmp, "cqi14")
@@ -552,7 +556,12 @@ class MailIdleGateWiringSpec extends FunSuite:
 
     val (res, queueCount, reqs) = io.unsafeRunSync()
     res match
-      case Left(err) => assert(clue(err.message).contains("always immediate"), "node: 腿必须显式拒 queue（不得落入本闸）")
+      case Left(err) =>
+        assert(
+          clue(err.message).contains(MailTool.ErrDeliveryQueueRetired),
+          "node: 腿必须显式拒 queue（退役单点文案，不得落入本闸）"
+        )
+        assert(!err.message.contains("always immediate"), s"旧 queue 专属文案不得复用，got: ${err.message}")
       case Right(v)  => fail(s"node: + queue 不得成功，got: $v")
     assertEquals(queueCount, 0, "node: 腿不得落 MailQueueStore（idle gate 结构上不可达）")
     assert(clue(reqs).isEmpty, "node: 腿不得触发任何 turn（注入/追加由引擎三态决定）")
