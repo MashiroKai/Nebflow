@@ -52,7 +52,12 @@ import nebflow.core.PathUtil
  *   [[mergeQueueHoldSummary]] / [[mergeQueueSameGitDirSummary]]）/
  *   abandoned-detach（**cancelled 滞留主图修复批 · 案 A** 2026-09-14：存量回填腿
  *   对被 retired 却仍挂在活链上的 cancelled 节点补做摘边时的留痕，写点 =
- *   `NodeEngine.backfillAbandonedDetach`；见 [[AbandonedDetachType]]）。
+ *   `NodeEngine.backfillAbandonedDetach`；见 [[AbandonedDetachType]]）/
+ *   node-report-unconsumed（**engine-defects 批 #239①** 2026-09-15：`node_report` 申报
+ *   已被 `drain` take-and-remove 取走、而终态写按 R2 fresh-read 纪律**拒写**（节点已
+ *   消失 / 状态已变 / 关机期 draining 抑制）时的**补偿写回**——summary 含 sessionId +
+ *   category + detail + suggestion 全文（不截断），写点 =
+ *   `NodeEngine.compensateUnconsumedReport`；旧口径下该形态零痕迹、申报永久丢失）。
  * 注册式扩展：append API 无 schema 变更，新事件类型 = 本清单加一词 + 写入点调用；
  * chainId 为顶层**可选**字段（2026-09-10 加，spec §9.2 项 9）：旧行无该键照常解析
  * （零迁移、append-only），新行仅在链族事件带上。
@@ -62,7 +67,8 @@ import nebflow.core.PathUtil
  * Failure（merge-blocked）/ runWithAgent 翻转异常中止（start-aborted）/ settleRunnable
  * Sweep（settle-sweep、trigger-starved、mount-stalled）/ reapStaleRunning（reaped）、
  * FeedbackRouter（reentry-triggered / escalated / cooldown-on）、NodeEditTool 重激活与
- * abandon 两分支（reactivated / abandoned）。
+ * abandon 两分支（reactivated / abandoned）/ NodeEngine.compensateUnconsumedReport
+ * （node-report-unconsumed，#239①）。
  */
 object FlowMapEventLog:
   val FileName = "flow-map-events.jsonl"
