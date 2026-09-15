@@ -121,8 +121,8 @@ async function shot(page, theme, locale, name) {
   } catch { /* 证据截图不是判据 */ }
 }
 
-/** 开一台设备的会话窗 ⇒ 读窗头（文本 + 全文 + aria-label）⇒ Escape 关窗。 */
-async function openDeviceWindowAndRead(page, deviceId) {
+/** 开一台设备的会话窗 ⇒ 读窗头（文本 + 全文 + aria-label）⇒ **窗开着**截图 ⇒ Escape 关窗。 */
+async function openDeviceWindowAndRead(page, deviceId, shotsFor) {
   await page.click(`#fm-conversations .fm-conv-row[data-conversation-id="dev:${deviceId}"]`);
   await page.waitForSelector('.fm-modal', { timeout: 10000 });
   await sleep(450);
@@ -136,6 +136,8 @@ async function openDeviceWindowAndRead(page, deviceId) {
       aria: modal.getAttribute('aria-label'),
     };
   });
+  // 🔴 截图必须在**窗仍开着**时拍（先 read → 再 shot → 最后关窗），否则拍到的是关窗后的面板态。
+  if (shotsFor) await shot(page, shotsFor.theme, shotsFor.locale, shotsFor.name);
   await page.keyboard.press('Escape');
   await page.waitForSelector('.fm-modal', { state: 'detached', timeout: 10000 }).catch(() => {});
   await sleep(250);
@@ -194,8 +196,7 @@ try {
         if (rowCount !== 3) continue;
 
         // ── U3a（红锚）：无名设备窗头 ───────────────────────────────
-        const un = await openDeviceWindowAndRead(page, UNNAMED);
-        await shot(page, theme, locale, '01-unnamed-window');
+        const un = await openDeviceWindowAndRead(page, UNNAMED, { theme, locale, name: '01-unnamed-window' });
         const ph = PLACEHOLDER[locale];
         const nameOk = un.name === ph;
         const noIdInHeader = !(un.headerText || '').includes(UNNAMED);
@@ -209,15 +210,13 @@ try {
           un.aria === un.name, `aria=${JSON.stringify(un.aria)} name=${JSON.stringify(un.name)}`);
 
         // ── U3b（双向）：有名设备窗头照旧 = 其名称 ──────────────────
-        const nm = await openDeviceWindowAndRead(page, NAMED);
-        await shot(page, theme, locale, '02-named-window');
+        const nm = await openDeviceWindowAndRead(page, NAMED, { theme, locale, name: '02-named-window' });
         note(`  [${theme}/${locale}] 有名窗头读数 name=${JSON.stringify(nm.name)}`);
         ok('U3b', theme, locale, `有名设备窗头照旧显示其名称「${NAMED_NAME}」（双向读数）`,
           nm.name === NAMED_NAME, `name=${JSON.stringify(nm.name)}`);
 
         // ── U3c（双向）：描述优先 ──────────────────────────────────
-        const ds = await openDeviceWindowAndRead(page, DESCRIBED);
-        await shot(page, theme, locale, '03-described-window');
+        const ds = await openDeviceWindowAndRead(page, DESCRIBED, { theme, locale, name: '03-described-window' });
         note(`  [${theme}/${locale}] 有描述窗头读数 name=${JSON.stringify(ds.name)}`);
         ok('U3c', theme, locale, `有描述设备窗头 = 描述「${DESCRIBED_DESC}」（描述 > 设备名）`,
           ds.name === DESCRIBED_DESC, `name=${JSON.stringify(ds.name)}`);
