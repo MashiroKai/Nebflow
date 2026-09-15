@@ -15,9 +15,10 @@
 //       │   留着只是噪声；且它的 off 会停掉在飞节点的插件 MCP（作者 09-12 踩过的坑）。
 //       ├ 状态药丸（右上）绑 `blocked` / `contentChanged`（**不绑 `trusted`**）：
 //       │   已封禁 > 内容已变更 > 默认（在位即信任）三态（优先级见 pluginStatus）。
-//       │   🔴 **2026-09-15 作者令：默认态不出文字**——「已启用」小字整体删除
-//       │   （开关态由 toggle 本体自明）；药丸本体 + 状态样式保留，封禁 / 内容已变更
-//       │   仍出字（那是可行动信号，不是说明性小字）。
+//       │   🔴 **2026-09-15 作者令（先删文字、后删空框）**：默认态不出文字；
+//       │   文字为空 ⇒ **整个药丸元素不渲染**（「删掉空框」）——判据是**元素
+//       │   count = 0**，不是「元素在但不可见」（🔴 禁 CSS 遮盖式假修）。
+//       │   封禁 / 内容已变更**仍出字且照常渲染**（那是可行动信号，不是说明性小字）。
 //       └ 派发开关 `[data-plugin-dispatch]` = **卡片右上、与状态药丸同排**的**唯一控件**
 //           （`.plugins-card-state` 内，药丸右侧）；🔴 **2026-09-15 作者令：可见文案
 //           「任务分发器可见性」小字整体删除**（toggle 本体自明）——
@@ -129,14 +130,16 @@ function pluginStatus(manifest) {
   };
 }
 
-/** Pill class (always) + pill text (exceptional states only) for a status
- *  triple — single source shared by the full render (renderPluginCard) and
- *  the in-place convergence (applyPluginCardState), so the two can never
- *  drift apart.
+/** Pill class + pill text for a status triple — single source shared by the
+ *  full render (renderPluginCard) and the in-place convergence
+ *  (applyPluginCardState), so the two can never drift apart.
  *
  *  🔴 在位即信任 ⇒「已启用」是默认态的冗余小字（2026-09-15 作者令：开关态由
- *  toggle 本体自明，面板不留说明性小字）⇒ 默认态**不出文字**，药丸本体与状态
- *  样式（`on` 类 + 药丸视觉）保留；`blocked` / `changed` 仍出字——那是可行动信号。 */
+ *  toggle 本体自明，面板不留说明性小字）⇒ 默认态**不出文字**。
+ *  🔴 **2026-09-15 作者裁定「删掉空框」**：`text === ''` ⇒ 渲染点**不生成 pill 元素**
+ *  （`applyPluginCardState` 侧则**移除**既有元素）——判据 = DOM 里 `.plugins-state-pill`
+ *  count = 0，🔴 **不是**「元素在、用 CSS 藏起来」。`blocked` / `changed` 仍出字并
+ *  照常渲染（那是可行动信号）。`key` 仅在出字时被消费（元素缺席 ⇒ 无类可挂）。 */
 function pillOf(status) {
   const key = status.blocked ? 'blocked' : (status.contentChanged ? 'changed' : 'on');
   const text = status.blocked
@@ -316,7 +319,7 @@ function renderPluginCard(manifest) {
         ${metaBits.length ? `<span class="plugins-card-meta">${esc(metaBits.join(' · '))}</span>` : ''}
       </div>
       <div class="plugins-card-state">
-        <span class="plugins-state-pill ${pill.key}">${esc(pill.text)}</span>
+        ${pill.text ? `<span class="plugins-state-pill ${pill.key}">${esc(pill.text)}</span>` : ''}
         <span class="plugins-card-dispatch">
           ${toggleHTML({
             on: disp.on,
@@ -484,12 +487,24 @@ function applyPluginCardState(card, manifest) {
   card.classList.toggle('on', !status.blocked && !status.contentChanged);
   card.classList.toggle('changed', status.contentChanged);
   card.classList.toggle('blocked', status.blocked);
-  // 状态药丸：绑 blocked / contentChanged（不绑 trusted）。
-  const pillEl = card.querySelector('.plugins-state-pill');
-  if (pillEl) {
+  // 状态药丸：绑 blocked / contentChanged（不绑 trusted）。🔴 空文案态 ⇒ **零元素**
+  // （作者 2026-09-15 令「删掉空框」）：在位的移除、缺位的**不创建**；有文字态
+  // （changed / blocked）照常新建 / 更新 —— 收敛路径与整页重渲共用 `pillOf()` 单一判据。
+  let pillEl = card.querySelector('.plugins-state-pill');
+  if (!pill.text) {
+    pillEl?.remove();
+  } else if (pillEl) {
     pillEl.textContent = pill.text;
     pillEl.classList.remove('on', 'changed', 'blocked');
     pillEl.classList.add(pill.key);
+  } else {
+    const stateBox = card.querySelector('.plugins-card-state');
+    if (stateBox) {
+      pillEl = document.createElement('span');
+      pillEl.className = `plugins-state-pill ${pill.key}`;
+      pillEl.textContent = pill.text;
+      stateBox.insertBefore(pillEl, stateBox.firstChild);
+    }
   }
   // 派发面（令 1）：开关态 = 作者意图层；blocked 时 disabled + 注明原因。
   const dsw = card.querySelector('[data-plugin-dispatch]');

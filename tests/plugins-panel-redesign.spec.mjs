@@ -135,14 +135,16 @@ test.describe('plugins panel redesign — card form + non-blocking content chang
       const dw = card?.querySelector('[data-plugin-dispatch]');
       const pill = card?.querySelector('.plugins-state-pill');
       const head = card?.querySelector('.plugins-card-head');
+      const state = card?.querySelector('.plugins-card-state');
       const geom = (() => {
-        if (!card || !pill || !dw || !head) return null;
+        if (!card || !dw || !head || !state) return null;
         const r = (el) => el.getBoundingClientRect();
-        const pr = r(pill), dr = r(dw), hr = r(head);
+        const dr = r(dw), hr = r(head);
         return {
           inHead: head.contains(dw),
-          sameRowAsPill: Math.abs((pr.y + pr.height / 2) - (dr.y + dr.height / 2)) <= 2,
-          rightOfPill: dr.x >= pr.right - 1,
+          // 2026-09-15「删掉空框」：空文案 ⇒ 药丸元素缺席 ⇒ 状态区只剩承载开关的包裹
+          pillAbsent: !pill,
+          stateOnlyChild: state.children.length === 1 && !!state.firstElementChild?.querySelector('[data-plugin-dispatch]'),
           rightAlignedInHead: (hr.right - dr.right) <= 4,
         };
       })();
@@ -160,6 +162,7 @@ test.describe('plugins panel redesign — card form + non-blocking content chang
         geom,
         pill: pill?.textContent.trim() ?? null,
         pillClass: pill?.className ?? null,
+        pillElCount: card ? card.querySelectorAll('.plugins-state-pill').length : null,
         changedHint: card?.querySelector('.plugins-card-hint.changed')?.textContent.trim() ?? null,
         blockedHint: card?.querySelector('.plugins-card-hint.blocked')?.textContent.trim() ?? null,
         dispatchOn: dw?.classList.contains('on') ?? null,
@@ -182,12 +185,12 @@ test.describe('plugins panel redesign — card form + non-blocking content chang
     expect(st.dispatchLabel, '开关旁无可见 label 小字（「任务分发器可见性」已删）').toBe(null);
     expect(st.dispatchAria, '开关 aria-label 保留 = 「任务分发器可见性」').toBe('任务分发器可见性');
     expect(st.geom?.inHead, '开关在卡片头行内（不是底部独立一行）').toBe(true);
-    expect(st.geom?.sameRowAsPill, '开关与状态药丸同排').toBe(true);
-    expect(st.geom?.rightOfPill, '开关在药丸右侧').toBe(true);
+    expect(st.geom?.pillAbsent, '状态区内无药丸元素（空框不占位）').toBe(true);
+    expect(st.geom?.stateOnlyChild, '状态区只剩承载开关的包裹元素（零占位残留）').toBe(true);
     expect(st.geom?.rightAlignedInHead, '开关行盒右对齐（「右上」）').toBe(true);
-    // 2026-09-15 作者令：默认态药丸**不出文字**；状态样式（on 类）保留。
-    expect(st.pill, '药丸默认态无可见文字（「已启用」小字已删）').toBe('');
-    expect(st.pillClass, 'pill 带 on class').toContain('on');
+    // 2026-09-15 作者令（先删文字、后裁「删掉空框」）：默认态药丸**零元素**。
+    expect(st.pillElCount, '药丸默认态零元素（空文案 ⇒ 不渲染 pill 元素；判据 = count 0）').toBe(0);
+    expect(st.pill, '默认态药丸无元素 ⇒ 文本读数 null').toBe(null);
     expect(st.classes, '卡片无 blocked/changed 痕').not.toContain('blocked');
     expect(st.dispatchOn, '派发开关 on（兼容默认 authorEnabled=true）').toBe(true);
     expect(st.dispatchDisabled, '派发开关可用（封禁是唯一的禁用前提）').toBe(false);
@@ -238,11 +241,13 @@ test.describe('plugins panel redesign — card form + non-blocking content chang
     // 解封回位（同样引擎侧）。
     await rest('POST', `/api/plugins/${BETA}/unblock`);
     await page.reload();
+    // 等重渲完成（卡片 class 回 on）：旧口径「pill 回 on 类」已随空框退场。
     await page.waitForFunction((n) =>
-      document.querySelector(`.plugins-card[data-plugin="${n}"] .plugins-state-pill`)?.classList.contains('on'),
+      document.querySelector(`.plugins-card[data-plugin="${n}"]`)?.classList.contains('on'),
       BETA, { timeout: 20000 });
     const after = await cardState(page, BETA);
-    expect(after.pill, '解封后回默认态（药丸无可见文字）').toBe('');
+    expect(after.pillElCount, '解封后回默认态（药丸零元素，非「无文字的 on 药丸」）').toBe(0);
+    expect(after.pill, '解封后默认态药丸无元素 ⇒ 读数 null').toBe(null);
     expect(after.dispatchDisabled, '派发开关解锁').toBe(false);
     expect(await catalogContains(BETA), '解封 ⇒ 回目录').toBe(true);
   });

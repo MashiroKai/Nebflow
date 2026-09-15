@@ -276,6 +276,7 @@ test('B1: unified plugin cards + agent summary rows; no subscription/config bloc
         comps: qa('.plugins-card[data-plugin="e2e-hello"] .plugins-comp').map(txt),
         statePill: txt(q('.plugins-card[data-plugin="e2e-hello"] .plugins-state-pill')),
         pillClass: q('.plugins-card[data-plugin="e2e-hello"] .plugins-state-pill')?.className,
+        statePillElCount: qa('.plugins-card[data-plugin="e2e-hello"] .plugins-state-pill').length,
         // C7 主控件退场：页面级零残留（内容审批开关）
         contentSwitchCount: qa('#plugins-content [data-plugin-switch]').length,
         // 2026-09-14 面板收敛批：退场件（更多菜单三钩子）页面级零残留
@@ -294,13 +295,14 @@ test('B1: unified plugin cards + agent summary rows; no subscription/config bloc
           const state = card?.querySelector('.plugins-card-state');
           const pill = card?.querySelector('.plugins-state-pill');
           const dsw = card?.querySelector('[data-plugin-dispatch]');
-          if (!card || !head || !state || !pill || !dsw) return null;
+          if (!card || !head || !state || !dsw) return null;
           const r = (el) => el.getBoundingClientRect();
-          const pr = r(pill), dr = r(dsw), hr = r(head);
+          const dr = r(dsw), hr = r(head);
           return {
             inHead: head.contains(dsw), inState: state.contains(dsw),
-            sameRowAsPill: Math.abs((pr.y + pr.height / 2) - (dr.y + dr.height / 2)) <= 2,
-            rightOfPill: dr.x >= pr.right - 1,
+            // 2026-09-15「删掉空框」：默认态药丸元素缺席 ⇒ 状态区**只剩开关**（零占位）。
+            stateOnlyChild: state.children.length === 1 && !!state.firstElementChild?.querySelector('[data-plugin-dispatch]'),
+            pillAbsent: !pill,
             rightAlignedInHead: (hr.right - dr.right) <= 4,
           };
         })(),
@@ -341,9 +343,11 @@ test('B1: unified plugin cards + agent summary rows; no subscription/config bloc
     expect(dump.comps[1], `[${locale}] mcp annotation with server + transport`).toBe(locale === 'zh-CN' ? 'MCP：fs-server (stdio)' : 'MCP: fs-server (stdio)');
     expect(dump.comps[2], `[${locale}] tools annotation with count`).toBe(locale === 'zh-CN' ? '内建工具 +2' : 'builtin tools +2');
     // 2026-09-15 作者令：默认态药丸**不出文字**（「已启用」小字整体删除——在位即
-    // 信任下它恒显，是冗余说明）；药丸本体 + 状态样式（`on` 类）保留。
-    expect(dump.statePill, `[${locale}] 默认态药丸无可见文字（「已启用」小字已删）`).toBe('');
-    expect(dump.pillClass, `[${locale}] pill carries the on class`).toContain('on');
+    // 信任下它恒显，是冗余说明）；后裁「**删掉空框**」⇒ 文字为空时**元素不生成**，
+    // 判据 = `.plugins-state-pill` count = 0（🔴 非「元素在、CSS 藏起来」）。
+    expect(dump.statePillElCount, `[${locale}] 默认态药丸零元素（「删掉空框」：空文案 ⇒ 不渲染 pill 元素）`).toBe(0);
+    expect(dump.statePill, `[${locale}] 默认态药丸无元素 ⇒ 文本读数 undefined（txt() 对缺席元素返回 undefined）`).toBe(undefined);
+    expect(dump.pillClass, `[${locale}] 默认态无类可挂（旧「on 类保留」口径已退场）`).toBe(undefined);
     // C7 主控件退场 + 2026-09-14 面板收敛批：封禁 UI 三钩子零残留 + 唯一控件在右上
     expect(dump.contentSwitchCount, `[${locale}] content approval switch retired — zero on the page`).toBe(0);
     expect(dump.moreCount, `[${locale}] 「更多」菜单入口 retired — zero on the page`).toBe(0);
@@ -359,8 +363,8 @@ test('B1: unified plugin cards + agent summary rows; no subscription/config bloc
       .toBe(locale === 'zh-CN' ? '任务分发器可见性' : 'Dispatcher visibility');
     expect(dump.dispatchGeom?.inState, `[${locale}] 开关落在状态区（卡片右上）`).toBe(true);
     expect(dump.dispatchGeom?.inHead, `[${locale}] 开关在卡片头行内（非底部独立行）`).toBe(true);
-    expect(dump.dispatchGeom?.sameRowAsPill, `[${locale}] 开关与状态药丸同排`).toBe(true);
-    expect(dump.dispatchGeom?.rightOfPill, `[${locale}] 开关在药丸右侧`).toBe(true);
+    expect(dump.dispatchGeom?.pillAbsent, `[${locale}] 状态区内无药丸元素（空框不占位）`).toBe(true);
+    expect(dump.dispatchGeom?.stateOnlyChild, `[${locale}] 状态区只剩开关这一个子元素（零占位残留）`).toBe(true);
     expect(dump.dispatchGeom?.rightAlignedInHead, `[${locale}] 开关行盒右对齐（「右上」）`).toBe(true);
     expect(dump.expandHiddenBefore, `[${locale}] skill previews collapsed initially`).toBe(true);
     expect(dump.rejectedPill, `[${locale}] rejected card carries the pill`).toBe(locale === 'zh-CN' ? '拒载' : 'Rejected');
@@ -436,6 +440,7 @@ async function cardDump(page) {
     return {
       pill: card?.querySelector('.plugins-state-pill')?.textContent.trim() ?? null,
       pillClass: card?.querySelector('.plugins-state-pill')?.className ?? null,
+      pillElCount: card ? card.querySelectorAll('.plugins-state-pill').length : null,
       dispatchLabel: card?.querySelector('.plugins-dispatch-label')?.textContent.trim() ?? null,
       dispatchDisabled: dw ? dw.disabled : null,
       dispatchBlockedAttr: dw?.getAttribute('data-dispatch-blocked') ?? null,
@@ -463,10 +468,11 @@ test('B3: 封禁 UI 退场契约 — 面板零 revoke/unblock wire；引擎侧�
   await loadShell(page, 'zh-CN');
   await page.waitForSelector('#plugins-content .plugins-card[data-plugin="e2e-hello"]', { timeout: 10000 });
 
-  // 起点：未封禁 ⇒ 默认态药丸无可见文字 + 唯一控件（派发开关）可用 + 封禁 UI 零残留。
+  // 起点：未封禁 ⇒ 默认态药丸**零元素**（「删掉空框」）+ 唯一控件（派发开关）可用 + 封禁 UI 零残留。
   const before = await cardDump(page);
-  expect(before.pill, 'start: 默认态药丸无可见文字（「已启用」小字已删，2026-09-15 令）').toBe('');
-  expect(before.pillClass, 'start: 药丸状态样式在（on 类）').toContain('on');
+  expect(before.pillElCount, 'start: 默认态药丸零元素（空文案 ⇒ 不渲染 pill 元素，「删掉空框」）').toBe(0);
+  expect(before.pill, 'start: 默认态pill 无元素 ⇒ 文本读数 null').toBe(null);
+  expect(before.pillClass, 'start: 默认态无类可挂（旧「on 类保留」口径已退场）').toBe(null);
   expect(before.dispatchDisabled, 'start: dispatch switch usable').toBe(false);
   expect(before.dispatchLabel, 'start: 开关旁无可见 label 小字（「任务分发器可见性」已删）').toBe(null);
   expect([before.moreCount, before.menuCount, before.blockCount], 'start: 封禁 UI 三钩子零残留').toEqual([0, 0, 0]);
@@ -504,15 +510,18 @@ test('B3: 封禁 UI 退场契约 — 面板零 revoke/unblock wire；引擎侧�
   expect([blocked.moreCount, blocked.menuCount, blocked.blockCount],
     'blocked 态下封禁 UI 仍零残留（不得长回入口）').toEqual([0, 0, 0]);
 
-  // 解封（同样引擎侧）⇒ 回默认态（药丸无文字）+ 开关恢复可用。
+  // 解封（同样引擎侧）⇒ 回默认态（药丸**零元素**）+ 开关恢复可用。
   pluginState.blocked = false;
   await page.evaluate(async () => { const m = await import('/js/plugins.js'); m.renderPlugins(); });
-  await page.waitForFunction(() =>
-    document.querySelector('.plugins-card[data-plugin="e2e-hello"] .plugins-state-pill')?.classList.contains('on'),
-    { timeout: 8000 });
+  // 等重渲完成（卡片 class 回 on + loading 占位消失）：旧口径「pill 回 on 类」已随
+  // 空框退场，改等卡片级完成信号，避免与 innerHTML 重写竞态。
+  await page.waitForFunction(() => {
+    const c = document.querySelector('.plugins-card[data-plugin="e2e-hello"]');
+    return !!c && c.classList.contains('on') && !document.querySelector('#plugins-content .plugins-loading');
+  }, undefined, { timeout: 8000 });
   const after = await cardDump(page);
-  expect(after.pillClass, 'pill back to on').toContain('on');
-  expect(after.pill, 'pill back to 无文字（默认态）').toBe('');
+  expect(after.pillElCount, 'pill 回默认态 = 零元素（不是「回到无文字的 on 药丸」）').toBe(0);
+  expect(after.pill, 'pill 回默认态：无元素 ⇒ 读数 null').toBe(null);
   expect(after.dispatchDisabled, 'dispatch switch usable again').toBe(false);
   expect(after.dispatchBlockedAttr, 'blocked attribute cleared').toBe(null);
   expect(after.blockedHint, 'blocked hint removed').toBe(null);
