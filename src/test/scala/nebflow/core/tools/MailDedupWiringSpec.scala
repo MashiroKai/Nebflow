@@ -281,7 +281,11 @@ class MailDedupWiringSpec extends FunSuite:
     assert(clue(queueLeft).isEmpty, "turn-end duplicate must still be consumed from the queue")
   }
 
-  test("W5 R2：node: 地址不进 queue 指纹面 —— 显式拒绝 queue、零队列落盘、零去重记账") {
+  // delivery 退役批（收窄版，2026-09-15 裁定 (b)）re-pin：拒绝**方向不变**（node: 腿仍
+  // **显式拒绝** queue ⇒ 队列指纹面结构性不可达，判定面未放宽），文案统一到退役单点
+  // （`MAIL_DELIVERY_QUEUE_RETIRED`）；旧的 node: 腿专属「always immediate」文案已随退役
+  // 消失（不可达性由 MailDeliveryRetireSpec 反向钉死）。零落盘 / 零记账 / 零 turn 保持。
+  test("W5 R2（delivery 退役批 re-pin）：node: 地址不进 queue 指纹面 —— 显式拒 queue（退役单点文案）、零队列落盘、零去重记账") {
     val system = ActorSystem(s"dd-w5-${java.util.UUID.randomUUID().toString.take(6)}")
     val tmp = os.temp.dir(prefix = "dd-w5")
     fixtureTeam(tmp)
@@ -294,7 +298,7 @@ class MailDedupWiringSpec extends FunSuite:
       _ <- TeamSessionRegistry.registerSession("dq", "member", meta.id)
       resources <- mkResources(system, tmp, llm, sessionStore)
       suppressedBefore <- IO(MailDeliveryDedup.suppressedTotal)
-      // 分发器身份 + node: 地址 + delivery=queue（R2 腿② 必须拒 queue）
+      // 分发器身份 + node: 地址 + delivery=queue（R2 腿② 必须拒 queue；退役批文案单点）
       res <- MailTool.call(
         JsonObject(
           "address" -> Json.fromString("node:n-w5"),
@@ -312,7 +316,12 @@ class MailDedupWiringSpec extends FunSuite:
 
     val (res, queueAtMember, suppressedBefore, suppressedAfter, requests, dedupFile) = io.unsafeRunSync()
     res match
-      case Left(err) => assert(clue(err.message).contains("always immediate"), "node: 腿必须显式拒 queue")
+      case Left(err) =>
+        assert(
+          clue(err.message).contains(MailTool.ErrDeliveryQueueRetired),
+          "node: 腿必须显式拒 queue（退役单点文案）"
+        )
+        assert(!err.message.contains("always immediate"), s"旧 queue 专属文案不得复用，got: ${err.message}")
       case Right(v)  => fail(s"node: + queue 不得成功，got: $v")
     assertEquals(queueAtMember, 0, "node: 腿不得落 MailQueueStore（queue 指纹面结构上不可达）")
     assertEquals(suppressedAfter, suppressedBefore, "node: 腿不得咨询/记账 MailDeliveryDedup（immediate 无投递级去重，R3-a）")

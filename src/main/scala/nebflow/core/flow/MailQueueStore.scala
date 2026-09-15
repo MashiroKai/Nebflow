@@ -8,11 +8,25 @@ import io.circe.syntax.*
 import nebflow.core.{NebflowLogger, PathUtil}
 
 /**
- * Persistent FIFO queue for delivery=queue mails.
+ * Persistent FIFO queue for **legacy** queue-mode mails.
+ *
+ * ⚠ 退役登记（delivery 退役批，2026-09-15 作者裁定 (b)「**保留字段、退役 queue 模式语义**」；
+ * **未摘除面**）：`delivery` 字段**保留**在 `MailTool` schema 里（键在、`enum` 只剩
+ * `"immediate"`），退役的是 queue **模式** —— `MailTool.call` 对**一切非设备腿**的
+ * `delivery="queue"` 一律**显式拒绝**（`MAIL_DELIVERY_QUEUE_RETIRED`，禁静默降级）
+ * ⇒ 本存储层自本批起**在工具面零生产写方**（原唯一写方 `MailTool.queueToSession`
+ * 现仅有 spec 直调）。因此**不得**据本文件自述宣称「queue 模式可用」——调用方已选不到
+ * 该模式。
+ *
+ * 本层**保留不动**（禁摘除）：在库消费者仍在 —— `AgentActor` 的 legacy 队列排空、
+ * `RestApiRoutes` 的队列检视/取消端点（本批禁碰的在飞面）；且多份 spec 直调本层
+ * （idle-gate / 冷激活 / 根解析等**已落契约**，与本批退役面正交）。摘除属另批另议。
  *
  * Queue mails are processed one at a time — each triggers a full turn, and
  * the next is only dequeued after the turn completes (back to idle). The
  * queue survives restart because items are written atomically to disk.
+ * (What was retired is the sender-side *entry* (`delivery=queue`); the
+ * consumer/drain side listed above is unchanged by this batch.)
  *
  * Storage: ~/.nebflow/sessions/<sessionId>/mail-queue.json
  * Write: atomic (tmp + move), same pattern as TurnStateStore / FlowMailStore.

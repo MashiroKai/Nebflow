@@ -18,13 +18,27 @@ import nebflow.shared.{ContentBlock, Message, MessageRole, ToolDefinition}
 /**
  * Agent-to-agent communication tool.
  *
- * Two delivery modes (via `delivery` parameter):
- * - immediate (default): Async send. Injected at next turn boundary. If recipient
- *   is idle, starts a new turn. If busy, merged into the current turn. The standard
- *   communication method.
- * - queue: Serialized FIFO. Persisted to disk (survives restart). Each queued mail
- *   triggers a full turn — processed one at a time, only after the current task
- *   completes. Use for serial task chains: "do this, then that, then that."
+ * Delivery (via the `delivery` parameter) — **one mode only: immediate** (async send:
+ * injected at the next turn boundary — an idle recipient starts a new turn, a busy
+ * recipient gets it merged into the current turn).
+ *
+ * The former `queue` mode (serialized FIFO persisted to disk, one mail per turn —
+ * for serial task chains: "do this, then that") was **retired** (delivery 退役批,
+ * 2026-09-15 作者裁定 (b)「保留字段、退役 queue 模式语义」):
+ * - the schema **keeps** the `delivery` key (compat: an old caller's key must not
+ *   become an unknown property), but its `enum` is `["immediate"]` only;
+ * - **every non-device leg** (team short name / `project:` / `node:` / Nebula) that
+ *   still sends `delivery="queue"` is an **explicit error**
+ *   (`MAIL_DELIVERY_QUEUE_RETIRED`) — **never** a silent downgrade to immediate
+ *   (a declared serial-chain intent cannot be honoured by immediate delivery, so
+ *   silently ignoring it would be a silent semantic loss — same direction as the
+ *   landed `node:` / device-leg explicit refusals);
+ * - the **device leg** keeps its own landed v2.1 refusal verbatim
+ *   ([[deliverToDevice]]) — not rewritten by this batch;
+ * - the legacy queue layer below (`MailQueueStore` / `deliverQueue` / `queueTo*`)
+ *   is **retained**: it has consumers on other faces (session queue drain, REST
+ *   queue endpoints) and specs call it directly — it now has **zero production
+ *   caller from this tool face**.
  *
  * The former `ask` mode (synchronous context fork) was removed entirely
  * (2026-08-27 user ruling) — see git history if that mechanism is ever needed.
@@ -81,6 +95,22 @@ object MailTool extends Tool:
     else if v.contains("://") then Some("it looks like a URL, not a device name/id")
     else None
 
+  // ============================================================
+  // delivery 退役批（2026-09-15 作者裁定 (b)「保留字段、退役 queue 模式语义」）——
+  // **非设备腿** `delivery="queue"` 的统一显式拒绝文案（**唯一来源**；spec 与此处同源）。
+  //   · 语义 = `delivery` 字段**保留**（schema 键在、`enum` 只剩 `"immediate"`），queue
+  //     **模式**退役 ⇒ 一切非设备腿收到该值**立即显式拒绝**：零投递副作用、零队列落盘。
+  //   · 选「显式拒绝」而非「立即化」的理由：调用方声明的**串行链语义**无法被立即投递
+  //     满足 —— 静默改投 = 静默丢语义（禁用面），且与既有 `node:` / 设备腿的
+  //     「显式拒绝，禁静默降级」先例同向；调用方拿到可读错误即可自纠。
+  //   · 设备腿**不走本文案**：其 v2.1 拒 queue 契约自有字面量、逐字不动（见
+  //     [[deliverToDevice]]）——两处字面量不同是**有意**的（禁为退役而翻已落契约）。
+  // ============================================================
+  val ErrDeliveryQueueRetired: String = "MAIL_DELIVERY_QUEUE_RETIRED"
+
+  private[tools] def deliveryQueueRetiredMessage(address: String): String =
+    s"""[$ErrDeliveryQueueRetired] delivery="queue" is retired (2026-09-15) — the serialized FIFO mode no longer exists: every Mail is delivered immediately (injected at the target's next turn boundary; an idle target starts a new turn, a busy target has it merged into the current turn). Drop delivery=queue (or omit the `delivery` parameter — only "immediate" is accepted). Target: '$address'."""
+
   val name: String = "Mail"
 
   val description: String =
@@ -129,20 +159,23 @@ is no silent fallback and no fuzzy matching.
 - Errors: `NODE_NOT_FOUND` / `NODE_MESSAGE_EMPTY` / `NODE_TERMINAL_NO_MESSAGE`.
 - Every message (injected / appended / not-delivered) is appended to the project's
   flow-map-events.jsonl audit log (type=node-message).
-- `delivery` is always immediate for `node:` — the engine decides inject vs append.
+- `node:` routing ignores `delivery` — the engine decides inject-at-turn-boundary
+  vs append-to-task.
 
 Images (optional `images` parameter): up to 5 absolute local image paths
 (PNG/JPG/JPEG/GIF/WEBP/BMP) sent as attachments — the recipient sees the images
 directly (vision models) plus their paths as text. For any other file, reference
 its path in the message text and ask the recipient to Read it.
 
-Delivery modes (via `delivery` parameter):
-  immediate (default): async send — injected at the next turn boundary (idle
-  recipient starts a new turn; busy recipient gets it merged into the current
-  turn). You don't wait for a response.
-  queue: serialized FIFO persisted to disk (survives restart) — processed one
-  at a time, only after the current task completes. Use for serial task
-  chains ("do this, then that").
+Delivery (the `delivery` parameter — kept for compatibility, one mode only):
+  Every Mail is immediate: async send, injected at the target's next turn
+  boundary (an idle target starts a new turn; a busy target has it merged into
+  the current turn). You don't wait for a response.
+  There is no delivery mode to choose: the former `queue` mode (serialized FIFO,
+  one Mail per turn — for "do this, then that" serial chains) was RETIRED on
+  2026-09-15. Passing `delivery="queue"` is an explicit error
+  (MAIL_DELIVERY_QUEUE_RETIRED) on every non-device target — it is NEVER
+  silently downgraded to immediate.
 
 Message type (optional, default "INFO"):
   Every Mail has a TYPE tag. Check the TYPE before acting — it tells you how to handle the Mail:
@@ -234,8 +267,8 @@ Message type (optional, default "INFO"):
         ),
         "delivery" -> Json.obj(
           "type" -> "string".asJson,
-          "enum" -> Json.arr("queue".asJson, "immediate".asJson),
-          "description" -> "Delivery mode: 'queue' = serialized FIFO (survives restart, processed one at a time after current task completes); 'immediate' = inject like user input (merged into current turn at next boundary). Default: 'immediate'. [INTERRUPT] type must use 'immediate' — queue would delay it past the current task, breaking the interrupt semantics. 'node:' addresses are always immediate (the engine decides inject vs append).".asJson,
+          "enum" -> Json.arr("immediate".asJson),
+          "description" -> "Delivery mode — one mode only: 'immediate' = inject like user input (merged into the target's current turn at its next boundary; an idle target starts a new turn). The former 'queue' mode (serialized FIFO, one Mail per turn) was RETIRED on 2026-09-15: it is NOT available — passing \"queue\" is an explicit error (MAIL_DELIVERY_QUEUE_RETIRED) on every non-device target and is never silently downgraded. The key is kept for backward compatibility; the default is 'immediate'.".asJson,
           "default" -> "immediate".asJson
         ),
         "chainId" -> Json.obj(
@@ -260,12 +293,11 @@ Message type (optional, default "INFO"):
     val target = device match
       case Some(d) => s"device:$d"
       case None    => addr
-    val delivery = input("delivery").flatMap(_.asString).getOrElse("immediate")
     val mailType = input("type").flatMap(_.asString).getOrElse("INFO")
     val typeStr = if mailType != "INFO" then s" [$mailType]" else ""
-    delivery match
-      case "queue"   => s"Mail(→$target, queue)$typeStr"
-      case _         => s"Mail(→$target)$typeStr"
+    // delivery 退役批（2026-09-15）：标签面不再有 `, queue` 形态 —— queue 模式退役后
+    // 该值只可能是**已拒绝**的旧调用方，标签不得再宣称 queue 投递（描述面清理的连带面）。
+    s"Mail(→$target)$typeStr"
 
   def summarizeResult(input: JsonObject, result: String): String = result
 
@@ -294,6 +326,13 @@ Message type (optional, default "INFO"):
             // 项目链不同源 ⇒ 塞进对端注入体会误导）；登记在交付说明。
             case Right(_) => deliverToDevice(deviceRaw, message, mailType, delivery, ctx)
           }
+    // delivery 退役批（2026-09-15 作者裁定 (b)）：**非设备腿** `delivery="queue"` ⇒
+    // **显式拒绝**（零副作用，先于 chainId 校验与一切路由/投递）。
+    // 位置**必须在设备腿分支之后**：设备腿的 v2.1「显式拒 queue」契约自有字面量，
+    // 逐字保持、不得被本文案顶替（[[deliverToDevice]]）；`address`≠设备腿在这里兜住
+    // 其余全部腿（`node:` / `project:` / Nebula / team 短名 / 裸项目名）——单点，
+    // 结构性保证「本工具面零 queue 入口」。
+    else if delivery == "queue" then IO.pure(Left(ToolError(deliveryQueueRetiredMessage(address))))
     else
       // B2-x：chainId 只校验不落库（零链级账本）——校验在一切投递副作用之前。
       validateChainId(chainIdRaw, ctx).flatMap {
@@ -319,17 +358,15 @@ Message type (optional, default "INFO"):
                       // 地址形态先在这一层定判——命中即处理（含**显式报错**），未命中
                       // （= 该地址不属于本角色的分层面）才落回既有 team/短名瀑布。
                       // 硬禁静默兜底与模糊匹配：认不出的地址一律显式报错并指明合法面。
-                      layeredRoute(address, message, blocks, mailType, delivery, imagePaths, chainId, ctx, system) match
+                      layeredRoute(address, message, blocks, mailType, chainId, ctx, system) match
                         case Some(action) => action
                         case None =>
                           // Observability (qa #8 note): unknown delivery values (e.g. an
                           // old caller still sending "ask") silently converge to the
                           // immediate path — warn so stale callers surface in logs.
+                          // 注：`"queue"` 不再进入本匹配（上层单点已显式拒绝，退役批
+                          // 2026-09-15）；故本层只剩「立即」与「陌生值收敛到立即」两支。
                           delivery match
-                            case "queue" =>
-                              if address.contains("://") then
-                                IO.pure(Left(ToolError("Queue mode is only for team agents (short names), not URLs.")))
-                              else deliverQueue(address, message, mailType, imagePaths, ctx, system)
                             case "immediate" =>
                               if address.contains("://") then deliverToAddress(address, message, blocks, mailType, ctx, system)
                               else deliverToShortName(address, message, blocks, mailType, ctx, system)
@@ -384,14 +421,16 @@ Message type (optional, default "INFO"):
     )
 
   /** 分层地址分派。返回 Some(结果) = 本地址形态属分层面（已处理，含显式报错）；
-    * None = 不属分层面（调用方继续既有 team/短名瀑布——D-6：legacy 面不随批收口）。 */
+    * None = 不属分层面（调用方继续既有 team/短名瀑布——D-6：legacy 面不随批收口）。
+    *
+    * delivery 退役批（2026-09-15）：本层**不再持有 `delivery` 参数**——「非设备腿禁
+    * queue」由 `call` 的单点前置闸统一下判（该闸在设备腿分支之后、本层之前），
+    * 故本层结构上**零 queue 分支**（`project:` 腿原先「两分支同体」也已折成单支）。 */
   private def layeredRoute(
       address: String,
       message: String,
       blocks: Option[List[ContentBlock]],
       mailType: String,
-      delivery: String,
-      imagePaths: List[String],
       chainId: Option[String],
       ctx: ToolContext,
       system: ActorSystem
@@ -402,11 +441,6 @@ Message type (optional, default "INFO"):
       Some(
         if nodeId.isEmpty then IO.pure(Left(ToolError(s"Malformed address '$address' — expected \"node:<节点id>\".")))
         else if role != SenderRole.Dispatcher then IO.pure(Left(outOfFaceError(address, role)))
-        else if delivery == "queue" then
-          IO.pure(Left(ToolError(
-            "\"node:\" addresses are always immediate — the engine decides inject-at-turn-boundary vs append-to-task " +
-              "based on the target node's status. Drop delivery=queue (or target a team agent in queue mode)."
-          )))
         else deliverToNode(nodeId, withChainAnnotation(message, chainId), mailType, ctx)
       )
     else if address.startsWith(ProjectPrefix) then
@@ -414,7 +448,6 @@ Message type (optional, default "INFO"):
       Some(
         if pname.isEmpty then IO.pure(Left(ToolError(s"Malformed address '$address' — expected \"project:<项目名>\".")))
         else if role == SenderRole.Dispatcher then IO.pure(Left(outOfFaceError(address, role)))
-        else if delivery == "queue" then deliverToProject(pname, message, mailType, ctx)
         else deliverToProject(pname, message, mailType, ctx)
       )
     else if address == MailTool.NebulaAgentName then
@@ -424,11 +457,7 @@ Message type (optional, default "INFO"):
             s"Address \"Nebula\" is your own (self) address — it is not in your address face ($nebulaFace)."
           ))))
         case SenderRole.Dispatcher =>
-          Some(
-            if delivery == "queue" then
-              queueToNebula(message, mailType, imagePaths, ctx, system, ctx.sessionId.getOrElse(""), address, chainId)
-            else deliverToNebulaRoot(address, withChainAnnotation(message, chainId), blocks, mailType, ctx, system)
-          )
+          Some(deliverToNebulaRoot(address, withChainAnnotation(message, chainId), blocks, mailType, ctx, system))
         case SenderRole.Teamish => None // 既有 canMailNebula 闸不变
     else if role == SenderRole.NebulaRoot then
       // Nebula 的裸名形态 = 裸项目名（等价接受）；认不出的地址显式报错。
@@ -690,8 +719,16 @@ Message type (optional, default "INFO"):
 
 
   // ============================================================
-  // Queue mode: persisted FIFO, drained one-per-turn
+  // Legacy queue layer: persisted FIFO, drained one-per-turn
   // ============================================================
+  // 退役登记（delivery 退役批，2026-09-15 作者裁定 (b)；**未摘除面**）：
+  // `delivery` 字段保留、queue 模式退役 ⇒ 本层自本批起**在本工具面零生产调用方**
+  // （`call` 的单点前置闸已显式拒绝一切非设备腿的 `delivery="queue"`，`layeredRoute`
+  // 结构上不再持有 `delivery` 参数）。本层**保留不动**（禁摘除）：① spec 直调
+  // （`MailToolRootSenderSpec` / `MailQueueNebulaSpec` / `ColdQueueActivationSpec` /
+  // `MailIdleGateWiringSpec` —— 它们钉的是 idle-gate / 冷激活 / 根解析等**已落契约**，
+  // 与本批退役面正交）；② 在库消费者仍在（`AgentActor` 的 legacy 队列排空、
+  // `RestApiRoutes` 的队列检视/取消端点 —— 本批禁碰）。摘除属另批另议。
 
   /** #28 阶段 0 §3.2：Mail(→project) 触发分发器（试点期新旧并存）。
     * queue/immediate 两个入口共用——address 是已挂载 project → 返回

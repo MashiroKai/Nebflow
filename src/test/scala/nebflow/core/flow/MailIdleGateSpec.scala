@@ -170,7 +170,11 @@ class MailIdleGateSpec extends FunSuite:
     )
     // ② 可执行旁证：MailTool 的 node: 腿在**入队之前**分派（MailTool.layeredRoute：
     //    running=ImmediateInput 注入 / wiring·pending=task 追加 / 终态拒绝），
-    //    且显式拒绝 delivery=queue ⇒ 结构性不可达 idle gate。
+    //    且非设备腿显式拒绝 delivery=queue ⇒ 结构性不可达 idle gate。
+    //    delivery 退役批（收窄版，2026-09-15 裁定 (b)）re-pin：拒绝方向不变（仍**显式
+    //    拒绝**，未放宽），文案统一到退役单点 `MAIL_DELIVERY_QUEUE_RETIRED`（旧的
+    //    node: 腿专属"always immediate"文案已随退役消失；旧文案面已被
+    //    MailDeliveryRetireSpec 反向钉死不可达）。
     val system = nebflow.actor.ActorSystem(s"mailidle-r2-${scala.util.Random.nextInt(100000)}")
     val ctx = nebflow.core.tools.ToolContext(
       projectRoot = os.pwd.toString,
@@ -192,8 +196,12 @@ class MailIdleGateSpec extends FunSuite:
         .unsafeRunSync()
       res match
         case Left(err) =>
-          assert(err.message.contains("always immediate"), s"node: 腿必须拒绝 queue 模式，got: ${err.message}")
+          assert(
+            err.message.contains(nebflow.core.tools.MailTool.ErrDeliveryQueueRetired),
+            s"node: 腿必须拒绝 queue 模式（退役单点文案），got: ${err.message}"
+          )
           assert(err.message.contains("delivery=queue"), "错误须指明修复动作（去掉 delivery=queue）")
+          assert(!err.message.contains("always immediate"), s"旧 queue 专属文案不得复用，got: ${err.message}")
         case Right(v) => fail(s"node: + queue 必须显式报错（不得落入 queue 闸），got: $v")
     finally system.stopAll.unsafeRunSync()
 
