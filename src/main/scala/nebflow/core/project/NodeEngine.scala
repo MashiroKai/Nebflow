@@ -3068,10 +3068,10 @@ class NodeEngine(
           // **拒写**路径 ⇒ 旧口径「拒写 = 申报永久丢失、零痕迹」。修法 = 消费点持
           // 终态写的**落地判词**（landed），未落地者把申报全文补偿写回审计流
           // （见 [[compensateUnconsumedReport]]）；take-and-remove 单次消费语义不动。
+          // #239② ⑤-(2)：改经 consumeReport 包装 ⇒ 终态写**抛异常**时同一补偿点照常触发
+          // （`landed=false` 方向），异常原样重抛（控制流零变化）。
           NodeReportRegistry.drain(sessionId).flatMap { declared =>
-            completeNodeR(nodeId, text, declared).flatMap { landed =>
-              compensateUnconsumedReport(nodeId, sessionId, declared, landed)
-            }
+            consumeReport(nodeId, sessionId, declared)(completeNodeR(nodeId, text, declared)).void
           }
         case Left(fo) =>
           if fo.message.contains("cancelled") then
@@ -3386,13 +3386,21 @@ class NodeEngine(
       }.flatMap(s => s.nodes.get(nodeId).traverse_(emitUpdated))
 
     /** 最近一次 FAIL verdict 摘要落库 + WS（loopLastVerdict，前端打回原因可见）。 */
-    def setVerdict(nodeId: String, summary: String): IO[Unit] =
-      store.mutate { st =>
+    /** verdict 落库「落地判词」版（#239② ⑤-(1)）：`true` = 本次**真的**写下了 loop 判词
+      * （节点存在且是 loop 节点）；`false` = 走了 no-op 支（节点已消失 / 非 loop 节点）。
+      * 判据与分支与修前逐字一致（同 #239① 对终态写族的手法：只把既有判词向上回报）。 */
+    def setVerdictR(nodeId: String, summary: String): IO[Boolean] =
+      store.mutateWithResult { st =>
         st.nodes.get(nodeId) match
           case Some(f) if f.loop.isDefined =>
-            st.copy(nodes = st.nodes.updated(nodeId, f.copy(loopLastVerdict = Some(summary))))
-          case _ => st
-      }.flatMap(s => s.nodes.get(nodeId).traverse_(emitUpdated))
+            val updated = f.copy(loopLastVerdict = Some(summary))
+            (st.copy(nodes = st.nodes.updated(nodeId, updated)), Some(updated))
+          case _ => (st, None)
+      }.flatMap { case (s, opt) => s.nodes.get(nodeId).traverse_(emitUpdated).as(opt.isDefined) }
+
+    /** `IO[Unit]` 门面：无申报消费的既有调用点零改动（同 #239① 的 `failNode`/`blockedNode` 门面）。 */
+    def setVerdict(nodeId: String, summary: String): IO[Unit] =
+      setVerdictR(nodeId, summary).void
 
     /** 执行层失败/取消分流（§2.4）：cancelled → cancelNode（整 Loop cancelled）；
       * 其余（LLM 错误/agent 消失/LoopGuard L1 终止该 turn）→ 整 Loop failed（failNode）。
@@ -3433,21 +3441,22 @@ class NodeEngine(
         declared match
           case Some(fb) if R.isPass(fb.category) =>
             // verify 工具申报 pass → 投递 worker 产出（VERDICT: PASS 同链）
-            completeNodeR(nodeId, wText).flatMap { landed =>
-              compensateUnconsumedReport(nodeId, verify.sessionId, declared, landed)
-            }
+            consumeReport(nodeId, verify.sessionId, declared)(completeNodeR(nodeId, wText)).void
           case Some(fb) if R.isFail(fb.category) =>
             // verify 工具申报 fail → 打回 worker（VERDICT: FAIL 同链）：
             // detail = 打回意见（空则占位），suggestion = 通过标准。
+            // #239② ⑤-(1)：本支是**非终态**消费（消费进 `loopLastVerdict` + 回边返工）——
+            // 落地判词改由 `setVerdictR` 回报（原 `setVerdict` 的 no-op 分支：节点已消失 /
+            // 非 loop 节点 ⇒ 判词未落地 ⇒ 申报全文走同一补偿写回）；控制流零变化（补偿后
+            // 照常回边返工，与修前逐字同序）。
             val issues = List(if fb.detail.trim.isEmpty then VerdictReader.PlaceholderIssues else fb.detail.trim)
             val f = VerdictReader.Verdict.Fail(issues, fb.suggestion)
-            setVerdict(nodeId, VerdictReader.renderFailSummary(f)) *>
+            consumeReport(nodeId, verify.sessionId, declared)(setVerdictR(nodeId, VerdictReader.renderFailSummary(f))) *>
               loopRound(roundNum + 1, Some(f))
           case Some(fb) =>
             // verify 工具申报 blocked → Loop 级 blocked
-            blockedNodeR(nodeId, fb, finalText = Some(vText)).flatMap { landed =>
-              compensateUnconsumedReport(nodeId, verify.sessionId, declared, landed)
-            }
+            consumeReport(nodeId, verify.sessionId, declared)(
+              blockedNodeR(nodeId, fb, finalText = Some(vText))).void
           case None =>
             BlockedReader.parse(vText) match
               case Some(fb) => blockedNode(nodeId, fb) // verify 申告任务无法验证 → Loop 级 blocked
@@ -3501,18 +3510,19 @@ class NodeEngine(
                 declared match
                   case Some(fb) if R.isFail(fb.category) =>
                     // worker 工具申报 fail → 既有 failed 链
-                    failNodeR(nodeId, R.renderFail(fb)).flatMap { landed =>
-                      compensateUnconsumedReport(nodeId, worker.sessionId, declared, landed)
-                    }
+                    consumeReport(nodeId, worker.sessionId, declared)(failNodeR(nodeId, R.renderFail(fb))).void
                   case Some(fb) if R.isBlockedSemantics(fb.category) =>
                     // worker 工具申报 blocked → Loop 级 blocked
-                    blockedNodeR(nodeId, fb, finalText = Some(wText)).flatMap { landed =>
-                      compensateUnconsumedReport(nodeId, worker.sessionId, declared, landed)
-                    }
+                    consumeReport(nodeId, worker.sessionId, declared)(
+                      blockedNodeR(nodeId, fb, finalText = Some(wText))).void
                   case _ =>
-                    // 无申报（None）或 pass 申报：本轮产出照常进 verify 裁决
-                    // （pass = worker 正式声明本轮完成，与无申报同链零新链）。
+                    // 无申报（None）或 pass/finish 申报：本轮产出照常进 verify 裁决
+                    // （pass/finish = worker 正式声明本轮完成，与无申报同链零新链）。
+                    // #239② ⑤-(1)：这支是**非终态**消费——`drain` 已取走申报、日志已记
+                    // consume 行，但没有任何终态写 ⇒ 留一行审计（可 grep）说明申报被谁消费
+                    // 掉了（`declared=None` 零动作）。
                     for
+                      _ <- noteNonTerminalConsumption(nodeId, worker.sessionId, declared, "loop-worker-forward")
                       vIn <- verifyInputFor(roundNum, wText)
                       _ <- goto(nodeId, NodeEngine.LoopPhaseVerify, roundNum)
                       vOut <- step(verify, vIn)
@@ -3610,8 +3620,19 @@ class NodeEngine(
     *   · **不改 `drain` 的 take-and-remove**（＝不选 (A) 的 peek-remove）：单次消费、无
     *     「peek 之后到 remove 之前」的重复消费窗口，登记表头注钉死的不变量原样保留。
     *
-    * 边界（本批不覆盖，见报告「未做」）：`verifierFailR` 的**预算内**分支把 fail 申报消费进
-    * `recordVerdict` + 回边返工（非终态写），`setVerdict` 自身的 no-op 面属另一条缝。 */
+    * 边界（#239① 时的开口项，**#239② 已逐条处置**，见 `.nebflow/reports/20260915_v239b-impl.md`）：
+    *   · (1) **非终态消费分支**：Loop verify 的 fail 支改挂 `setVerdictR` 落地判词 + 本补偿
+    *     （未落地 ⇒ 补偿）；Loop worker 的 pass/`finish` 支改挂 [[noteNonTerminalConsumption]]
+    *     审计行（无终态写可挂判词，故只做可见化）；
+    *   · (2) **终态/判词写抛异常**：统一经 [[consumeReport]] 包装 ⇒ 异常路径同样补偿后重抛；
+    *   · (3) `failNodeR` 的 mutate **无状态守卫**（节点存在即写 failed，含覆盖既有终态）——
+    *     属**既有行为**、本批**显式列为已知边界**：它不会造成申报丢失（failed 终态是真写下了、
+    *     `landed=true` 与事实一致），只影响「谁赢」的现场口径；收紧它 = 改 ~20 处 `failNode`
+    *     调用点的语义，超出「最小加性」边界，另批另裁；
+    *   · `setVerdictR` 之外的 `recordVerdict` / `reloopTo` 等循环控制写不在申报消费面上。 */
+  /** 调用点（#239② 后）：全部 5 处申报消费点经 [[consumeReport]] 触发本函数——桥完成点、
+    * Loop verify 的 pass/blocked 支、Loop worker 的 fail/blocked 支；Loop verify 的 fail 支
+    * 与 Loop worker 的 forward 支按各自语义走落地判词 / 审计行。 */
   private def compensateUnconsumedReport(nodeId: String, sessionId: String,
       declared: Option[BlockedFeedback], landed: Boolean): IO[Unit] =
     declared match
@@ -3624,6 +3645,56 @@ class NodeEngine(
               s"suppression); session=$sessionId category=${fb.category} detail=${fb.detail} " +
               s"suggestion=${fb.suggestion}")
       case _ => IO.unit
+
+  /** 申报消费的**异常安全**包装（engine-defects 批 #239② ⑤-(2)，2026-09-15）：终态写族
+    * **抛异常**（≠ 拒写）时，旧口径的 `flatMap` 链当场断裂 ⇒ [[compensateUnconsumedReport]]
+    * **不触发**（而 `drain` 已经把申报取走并移除，#239② 之后连盘上副本也随 consume 行消失）
+    * ⇒ 「申报消失且全系统零痕迹」这一形态在**异常路径**上仍然成立——正是本批新持久化面
+    * 若不自带修复就会继承的同一类静默缝。
+    *
+    * 两条非落地路径统一到同一补偿点：
+    *   · `Right(landed)` ⇒ 既有判词口径（`true` 零动作 / `false` 补偿写回全文）；
+    *   · `Left(t)` ⇒ **按「未落地」保守补偿**（全文 + 异常事实写回审计流）后**原样重抛**
+    *     ——异常本身是引擎级失败事实，补偿不得把它吞掉（控制流零变化）。
+    *
+    * `write` 用 by-name：调用点照写 `completeNodeR(...)` 原样表达式，语义零改写。 */
+  private def consumeReport(nodeId: String, sessionId: String, declared: Option[BlockedFeedback])(
+      write: => IO[Boolean]): IO[Boolean] =
+    write.attempt.flatMap {
+      case Right(landed) => compensateUnconsumedReport(nodeId, sessionId, declared, landed).as(landed)
+      case Left(t) =>
+        FlowMapEventLog.append(workspace, projectName, nodeId, NodeEngine.ReportUnconsumedEventType,
+          s"kind=write-raised node_report NOT consumed — the terminal/verdict write RAISED " +
+            s"(${t.getClass.getSimpleName}: ${Option(t.getMessage).getOrElse(t.toString)}); " +
+            s"session=$sessionId declared=${declared.map(_.category).getOrElse("<none>")} " +
+            s"detail=${declared.map(_.detail).getOrElse("")} suggestion=${declared.map(_.suggestion).getOrElse("")}")
+          .handleErrorWith(t2 =>
+            logger.warn(s"could not append the write-raised compensation line for node '$nodeId' " +
+              s"(${Option(t2.getMessage).getOrElse(t2.toString)})")) *>
+          logger.warn(s"Node '$nodeId' declaration (${declared.map(_.category).getOrElse("<none>")}) was consumed " +
+            s"but its write RAISED (${t.getClass.getSimpleName}) — compensated into node-report-unconsumed " +
+            "(kind=write-raised); the exception is re-raised unchanged") *>
+          IO.raiseError(t)
+    }
+
+  /** 非终态消费的可见化（#239② ⑤-(1)，2026-09-15）：申报被 Loop 的**非终态**分支消费
+    * （worker 的 `pass`/`finish` 申报 ⇒ 本轮产出照常进 verify 裁决；`drain` 已取走 + 日志
+    * 已记 consume 行）时留一行审计——该分支**没有**终态写、也就没有落地判词可挂，但
+    * 「申报被消费」这件事必须有机械痕迹，否则申报在内存与日志两处同时消失而全系统无一行
+    * 说明它去了哪。`declared=None`（无申报）零动作；只有真有申报时才写（零噪音）。
+    * 取证：`grep node-report-consumed <ws>/.nebflow/flow-map-events.jsonl`。 */
+  private def noteNonTerminalConsumption(nodeId: String, sessionId: String,
+      declared: Option[BlockedFeedback], branch: String): IO[Unit] =
+    declared match
+      case Some(fb) =>
+        FlowMapEventLog.append(workspace, projectName, nodeId, NodeEngine.ReportConsumedEventType,
+          s"kind=nonterminal branch=$branch session=$sessionId category=${fb.category} " +
+            s"detail=${fb.detail} suggestion=${fb.suggestion} — the declaration was consumed by a " +
+            "non-terminal branch (no terminal write; the flow continues)")
+          .handleErrorWith(t =>
+            logger.warn(s"could not append the non-terminal consumption line for node '$nodeId' " +
+              s"(${Option(t.getMessage).getOrElse(t.toString)})"))
+      case None => IO.unit
 
   /** 终态写「落地判词」版（#239①）：返回 `true` = 本次调用**真的**写下了终态
     * （fresh-read 守卫通过 + 落库可见），`false` = 走了拒写支（节点已消失 / 状态已变）。
@@ -5663,6 +5734,15 @@ object NodeEngine:
     * 为什么最终状态里没有它、也没人知道」——旧口径下该形态**零痕迹**（drain 取走即移除、
     * 无补偿写回），是本批闭合的那条缝在观测面上的唯一锚点。 */
   val ReportUnconsumedEventType: String = "node-report-unconsumed"
+
+  /** **申报被非终态分支消费**事件类型（#239② ⑤-(1)，2026-09-15；写点 =
+    * [[NodeEngine.noteNonTerminalConsumption]]）：Loop 的 worker 支把 `pass`/`finish`
+    * 申报消费进「本轮照常进 verify 裁决」——该支**没有**终态写，也就没有落地判词可挂，
+    * 于是申报会在内存与日志两处同时消失而无一行说明去向。本行补的是「申报被谁消费掉了」
+    * 的机械痕迹（`kind=nonterminal branch=loop-worker-forward`，含 category/detail 全量）。
+    * 与 `node-report-unconsumed` 成对：那条 = 「消费了但没落地」，本条 = 「消费了且语义
+    * 正常（非终态）」。取证：`grep node-report-consumed <ws>/.nebflow/flow-map-events.jsonl`。 */
+  val ReportConsumedEventType: String = "node-report-consumed"
 
   /** 终态销毁登记事件（写点 = 终态时刻的 `scheduleDestroy`；窗口开启的唯一痕迹——
     * failed/cancelled 与 completed/blocked 口径一致，挂起腿不写）。 */

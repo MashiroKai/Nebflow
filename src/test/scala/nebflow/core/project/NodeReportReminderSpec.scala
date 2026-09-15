@@ -114,7 +114,9 @@ class NodeReportReminderSpec extends CatsEffectSuite:
                     case Some(rec) =>
                       sessions.update(_ :+ rec.sessionId) *>
                         (if turn == declareOnTurn then
-                           NodeReportRegistry.register(rec.sessionId, BlockedFeedback(category, s"spec declare ($category)", ""))
+                           NodeReportRegistry.register((tempRoot / "ws-reminder-registry").toString,
+                             "reminder-spec", "n-reminder", rec.sessionId,
+                             BlockedFeedback(category, s"spec declare ($category)", ""))
                          else IO.unit)
                 }
             }

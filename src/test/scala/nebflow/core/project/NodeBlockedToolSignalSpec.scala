@@ -314,7 +314,9 @@ class NodeBlockedToolSignalSpec extends CatsEffectSuite:
     // 直接驱动 registry 语义 + NodeEngine 清理钩子等价面：register → remove → drain=None
     val sid = "node-sweepsid"
     for
-      _ <- NodeReportRegistry.register(sid, BlockedFeedback("other", "残留申报", ""))
+      // #239② 面①：register 增加持久化归属（workspace/project/nodeId）——本用例的语义
+      // 断言（remove → drain=None）逐字不变，只是登记点现在同步落一份日志（同一 ws）。
+      _ <- NodeReportRegistry.register(ws.toString, "spec", "n-sweep", sid, BlockedFeedback("other", "残留申报", ""))
       _ <- NodeReportRegistry.remove(sid)
       drained <- NodeReportRegistry.drain(sid)
       _ <- NodeReportRegistry.remove(sid) // 幂等二次

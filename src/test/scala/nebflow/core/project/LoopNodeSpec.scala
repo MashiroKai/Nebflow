@@ -380,7 +380,8 @@ class LoopNodeSpec extends CatsEffectSuite:
                   case Some(sid) =>
                     // category="pass"（而非 blocked 类）：worker 的 drain 对它走「pass 与无
                     // 申报同链」，不改变 Loop 裁决路径（本用例主题是窗口收殓，不是分流）。
-                    NodeReportRegistry.register(sid, BlockedFeedback("pass", "residue before loop terminal", ""))
+                    NodeReportRegistry.register((tempRoot / "ws-loop-registry").toString, "loop-spec",
+                      "l-win", sid, BlockedFeedback("pass", "residue before loop terminal", ""))
                   case None => IO.unit
               }
         }
