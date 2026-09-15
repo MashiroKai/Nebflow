@@ -47,7 +47,10 @@ class InjectionBatchDrainSpec extends FunSuite:
     val steps: List[(Option[String], List[String])] =
       Iterator
         .unfold(q)(qs =>
-          if qs.isEmpty then None else Some(TurnBoundaryDrains.drainHead(qs, compactionPending = false))
+          if qs.isEmpty then None
+          else
+            val drained = TurnBoundaryDrains.drainHead(qs, compactionPending = false)
+            Some((drained, drained._2))
         )
         .toList
     assertEquals(steps.map(_._1), List(Some("a"), Some("b"), Some("c"), Some("d")))
