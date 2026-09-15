@@ -8,6 +8,7 @@ import { openTab, getTabPane } from './canvas.js';
 import { ensureFlowCss } from './flowCss.js';
 import { esc, authHeaders } from './flowHelpers.js';
 import { t } from './i18n.js';
+import { contentText } from './contentI18n.js';
 import { fetchProjects, fetchFlowMap, summarize, API } from './nodeData.js';
 import { renderFlowMapInto } from './flowMapTab.js';
 import { openAgentFile } from './agentFileViewer.js';
@@ -148,7 +149,7 @@ function projectCardHtml(p, summary) {
   return `
     <div class="team-card project-card${empty ? ' is-empty' : ''}" data-project="${esc(p.name)}" data-running="${running}" ${empty ? 'data-empty-flowmap="1"' : ''}>
       <div class="team-card-header">
-        <div class="team-card-title${empty ? ' empty' : ''}"${titleOpenAttr} title="${esc(titleTooltip)}">${esc(p.name)}${empty ? `<span class="project-empty-tag">${esc(t('project.noNodes'))}</span>` : ''}</div>
+        <div class="team-card-title${empty ? ' empty' : ''}"${titleOpenAttr} title="${esc(titleTooltip)}">${esc(contentText('project', p.name, 'name', p.name))}${empty ? `<span class="project-empty-tag">${esc(t('project.noNodes'))}</span>` : ''}</div>
         <div class="team-card-summary ${summaryCls}"><span class="dot"></span>${esc(brief)}</div>
         <button class="project-archive-btn" data-archive-project="${esc(p.name)}" title="${esc(t('project.archive'))}" aria-label="${esc(t('project.archiveTitle', { name: p.name }))}"><i data-lucide="archive"></i></button>
       </div>
@@ -166,7 +167,7 @@ function projectCardHtml(p, summary) {
           <span class="project-field-label">${esc(t('project.runningAgents'))}</span>
           <span class="project-field-value tabular" data-running-count="${esc(p.name)}">${running}</span>
         </div>
-        ${p.description ? `<div class="project-field"><span class="project-field-value desc">${esc(p.description)}</span></div>` : ''}
+        ${p.description ? `<div class="project-field"><span class="project-field-value desc">${esc(contentText('project', p.name, 'desc', p.description))}</span></div>` : ''}
       </div>
     </div>`;
 }
@@ -341,6 +342,11 @@ onMessage('nodeCreated', () => rerenderProjectsListView());
 onMessage('nodeUpdated', () => rerenderProjectsListView());
 onMessage('nodeCompleted', () => rerenderProjectsListView());
 onMessage('nodeRemoved', () => rerenderProjectsListView());
+
+// 切语言即重渲（contenti18n 批）：项目名/描述走 locale 映射（js/contentI18n.js），
+// 语言一变列表卡片必须重渲——本批前此处零监听。复用上面的视图分流判据
+// （rerenderProjectsListView：pane 不存在或正处就地 Flow Map 视图时不动）。
+window.addEventListener('locale-changed', () => rerenderProjectsListView());
 
 // 迟到对账通道 ②：WS 重连 = 代码里既有的「服务已回来」真信号（ws.js:416 逐个回调）。
 // 面板此刻若不是 ready（error / loading / 空壳），立即补一次取数与渲染——冷启动期间

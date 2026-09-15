@@ -1352,4 +1352,28 @@ export default {
   'ctxthresh.reset': '恢复默认',
   'ctxthresh.close': '关闭',
   'ctxthresh.failed': '设置失败',
+
+  // === Bundled-content localization (contenti18n batch, 2026-09-15) ===
+  // Range = the default install set only (seed/manifest.json items: 3 plugins +
+  // 4 agents + 1 project = 8 entries). Keys are `content.<kind>.<id>.<field>`;
+  // the resolver + fallback chain (locale → en → server value) lives in
+  // js/contentI18n.js. zh values are the server values VERBATIM (no semantic
+  // rewrite); en values are translations. Keep en/zh key sets symmetric —
+  // scripts/verify-i18n-sweep.cjs asserts Object.keys(zh).length === Object.keys(en).length.
+  'content.agent.project-dispatcher.name': 'project-dispatcher',
+  'content.agent.project-dispatcher.desc': '项目任务分发器（Project+Node 新架构）——每次由 Nebula 的 `Mail(address="project:<项目名>")` → ProjectActor 触发（旧 `Task` 工具已删净退役），跑单次会话：读 Flow Map 现状（NodeList）→ 用 NodeEdit 分解任务、建节点、接线 → 结束。批级回传由分发器**显式** `Mail(address="Nebula", chainId=<本批链 id>, …)` 承担（无自动投递，R7-b 2026-09-12）。取代旧 Manager 的编排职责：无持久上下文、无记忆（拓扑与状态已落 Flow Map，Nebula 用 NodeList 只读查看）。preset/skills 由 agent 面板配置，改后即时生效（每次触发新会话读最新定义）。',
+  'content.agent.general.name': 'general',
+  'content.agent.general.desc': '通用执行 agent——能力由分配的 plugins 决定',
+  'content.agent.kernel.name': 'kernel',
+  'content.agent.kernel.desc': '极简内核（Delegate 内核）：Nebula 经 Delegate 派发的一次性任务执行者——六件基础工具（Read/Write/Edit/Glob/Grep/Bash，均支持 device= 远端）+ AskUserQuestion，共七件；无项目上下文、无记忆、不派发子代理。用于「不属任何项目 ∧ 需实际执行动作 ∧ 单次」的任务。工具面为机制固定（AgentCore.KernelFixedTools = BaseTools + AskUserQuestion；本文件 tools/skills 声明因 ConvergedAgentNames 含 kernel 而整体失效）。',
+  'content.agent.memory-consolidator.name': 'memory-consolidator',
+  'content.agent.memory-consolidator.desc': '记忆整理 agent（压缩双轨第二轨）：每次上下文压缩时消费 ~/.nebflow/memory/queue.jsonl 的记账条目，把四动作落到三层记忆文件（user / agent / project），逐条回写 outcome 并产出结构化计数。工具面机制固定 = AgentCore.KernelFixedTools 恰七件（Read/Write/Edit/Glob/Grep/Bash + AskUserQuestion，本文件 tools/skills 声明因 ConvergedAgentNames 含本名而整体失效）；机制层不设「唯一写入者」限制（作者 2026-09-12 裁定）。',
+  'content.plugin.visual-report.name': 'visual-report',
+  'content.plugin.visual-report.desc': '可视化汇报与人读化报告包——节点获得用专业工具（matplotlib/graphviz/plotly）出图、把人读化报告写成给人读的一屏结论、落盘交付并给绝对路径的能力（展示与打开归 Nebula，不调用 Pop）。适用于画图表、画架构图、画流程图、数据可视化、出图配图、做可视化汇报、写给人看的汇报、交付文档、验收报告、调研报告、复盘报告、写给作者的总结、报告太长要压缩、过程件与交付件分开等任务。内含 skills：visual-report（图表/架构图/流程图生成规范：配色、排版、标注、布局审美、单文档 ≤3 图预算）、human-report（人读化报告规范：读者轴落位、三级体量预算、四段骨架、五场景档位、交付通道）。不适用于插件封装（另配 nebflow-plugin-creator）；HTML 卡片样式另配 design-cards。组件面：无 mcp.json、无工具扩展。',
+  'content.plugin.slideblocks.name': 'slideblocks',
+  'content.plugin.slideblocks.desc': 'SlideBlocks 演示制作包——节点获得用 Slidev 从零制作/改进完整 PPT 演示（slides、deck、幻灯片）的全流程纪律。适用于做 PPT、写演示、出幻灯片、制作 slides、改进已有 deck、按 Slidev 重做演示等任务。内含 skill：slideblocks（Blocks/Decks/Recipes 全流程、执行锁、交付校验）。不适用于 HTML 卡片与社交图设计（另配 design-cards 插件）。组件面：无 mcp.json、无工具扩展。',
+  'content.plugin.nebflow-plugin-creator.name': 'nebflow-plugin-creator',
+  'content.plugin.nebflow-plugin-creator.desc': '插件封装器包——节点获得把能力需求封装为合规插件包的全流程执行能力（三输入分析→包生成→机械自检→落盘即生效的交付自检）。适用于把已有 skill 或能力封装成插件、做一个能 Y 的新插件、写 plugin.json 与 SKILL.md、插件描述质量体检、跑包校验脚本等任务。内含 skills：plugin-packaging（三输入→生成→自检→交付的封装主流程，含同名冲突与 digest 漂移等六分叉处置、交付前自检与来源/digest 报告口径）、description-quality（manifest 五段式描述规范：模板、好坏范例、M1-M15 判定口径与核心词表圈定法）。验证与质量审查任务另配 nebflow-qa 插件。无 mcp.json、无工具扩展。',
+  'content.project.general.name': 'general',
+  'content.project.general.desc': '通用项目（默认工作区）',
 };

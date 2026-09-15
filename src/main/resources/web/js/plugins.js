@@ -81,6 +81,7 @@
 
 import { openTab, getTabPane, hasTab, setActiveTab, isCanvasOpen, openCanvas, registerCanvasPanelButton } from './canvas.js';
 import { t } from './i18n.js';
+import { contentText } from './contentI18n.js';
 import { escapeHtml } from './utils.js';
 import { toggleHTML, bindToggle, setToggleState } from './toggle.js';
 import { fetchAgents, fetchAgentModel, openAgentDetail } from './agentManager.js';
@@ -244,7 +245,7 @@ function skillExpandHtml(id, skills) {
     <div class="plugins-skill-item">
       <div class="plugins-skill-item-head">
         <span class="plugins-skill-item-id">${esc(s.id)}</span>
-        <span class="plugins-skill-item-desc">${esc(s.description || '')}</span>
+        <span class="plugins-skill-item-desc">${esc(contentText('skill', s.id, 'desc', s.description || ''))}</span>
       </div>
       ${s.preview ? `<pre class="plugins-skill-preview">${esc(s.preview)}</pre>` : ''}
     </div>`).join('');
@@ -315,7 +316,7 @@ function renderPluginCard(manifest) {
   return `<div class="plugins-card${status.blocked ? ' blocked' : (status.contentChanged ? ' changed' : ' on')}" data-plugin="${esc(manifest.name)}">
     <div class="plugins-card-head">
       <div class="plugins-card-id">
-        <span class="plugins-card-name">${esc(manifest.name)}</span>
+        <span class="plugins-card-name">${esc(contentText('plugin', manifest.name, 'name', manifest.name))}</span>
         ${metaBits.length ? `<span class="plugins-card-meta">${esc(metaBits.join(' · '))}</span>` : ''}
       </div>
       <div class="plugins-card-state">
@@ -336,7 +337,7 @@ function renderPluginCard(manifest) {
       </div>
     </div>
     <div class="plugins-dispatch-note"${disp.note ? '' : ' hidden'}>${esc(disp.note)}</div>
-    ${manifest.description ? `<div class="plugins-card-desc">${esc(manifest.description)}</div>` : ''}
+    ${manifest.description ? `<div class="plugins-card-desc">${esc(contentText('plugin', manifest.name, 'desc', manifest.description))}</div>` : ''}
     ${(skills.length || servers.length || tools.length)
       ? `<div class="plugins-card-composition">${compositionSkills(skills, expandId)}${compositionMcp(servers)}${compositionTools(tools)}</div>`
       : ''}
@@ -371,8 +372,8 @@ function renderAgentRow(agent) {
   ].filter(Boolean).map(p => `<span class="plugins-agent-meta-pill">${p}</span>`).join('');
   return `<div class="plugins-agent-row" data-detail-agent="${esc(agent.name)}" role="button" tabindex="0"
     title="${esc(t('plugins.detail'))}">
-    <span class="plugins-agent-name">${esc(agent.displayName || agent.name)}</span>
-    <span class="plugins-agent-desc">${esc(agent.description || '')}</span>
+    <span class="plugins-agent-name">${esc(contentText('agent', agent.name, 'name', agent.displayName || agent.name))}</span>
+    <span class="plugins-agent-desc">${esc(contentText('agent', agent.name, 'desc', agent.description || ''))}</span>
     <span class="plugins-agent-meta">${meta}</span>
     <svg class="plugins-agent-chevron" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="9 18 15 12 9 6"/></svg>
   </div>`;
@@ -668,6 +669,14 @@ function startPluginsPolling() {
     if (document.visibilityState === 'visible') pluginsPollTick();
   });
 }
+
+// 切语言即重渲（contenti18n 批）：插件名/描述与 agent 名/描述走 locale 映射
+// （js/contentI18n.js），语言一变已渲染的 DOM 必须跟着重渲——本批前此处零监听。
+// 面板可见且为活动 pane 时才重渲，沿用 pluginsPanelActive() 既有判据：不可见时
+// 用户看不到旧文案，而重新激活该 tab 走 openPlugins() → renderPlugins() 自然取新值。
+window.addEventListener('locale-changed', () => {
+  if (pluginsPanelActive()) renderPlugins();
+});
 
 /** Bind one plugin card's interactions (the dispatch switch + skill-expand
  *  toggles). Shared by the full render and the live-sync insert path. Idempotent
