@@ -91,7 +91,9 @@ class NoderptVerifyProbeSpec extends CatsEffectSuite:
                     case Some(rec) =>
                       declaredSids.update(s => (s :+ rec.sessionId).distinct) *>
                         (if turn == declareOnTurn then
-                           NodeReportRegistry.register(rec.sessionId, BlockedFeedback(category, s"probe declare ($category)", ""))
+                           NodeReportRegistry.register((tempRoot / "ws-probe-registry").toString,
+                             "probe-spec", "n-probe", rec.sessionId,
+                             BlockedFeedback(category, s"probe declare ($category)", ""))
                          else IO.unit)
                 }
             }

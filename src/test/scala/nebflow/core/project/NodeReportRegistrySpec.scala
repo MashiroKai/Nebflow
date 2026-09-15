@@ -18,11 +18,17 @@ class NodeReportRegistrySpec extends CatsEffectSuite:
   private val fbA = BlockedFeedback("upstream-incomplete", "上游 X 未完成", "需上游先完成")
   private val fbB = BlockedFeedback("external-dependency", "等待 API key", "提供凭据后重派")
 
+  /** #239② 面①：register 现在带持久化归属（workspace/project/nodeId）。本 spec 的**语义
+    * 断言逐字不变**——只把登记点指向本 spec 自己的临时工作区（该工作区下的
+    * `.nebflow/node-reports.jsonl` 就是这条申报的持久化副本；其行为由
+    * `NodeReportJournalSpec` 单独钉死）。 */
+  private val ws = (os.pwd / "target" / "test-node-report-registry").toString
+
   override def munitIOTimeout: FiniteDuration = 30.seconds
 
   test("register then drain: returns the feedback and clears the slot (take-and-remove)") {
     for
-      _ <- NodeReportRegistry.register("sid-1", fbA)
+      _ <- NodeReportRegistry.register(ws, "registry-spec", "n-1", "sid-1", fbA)
       first <- NodeReportRegistry.drain("sid-1")
       second <- NodeReportRegistry.drain("sid-1")
     yield
@@ -32,15 +38,15 @@ class NodeReportRegistrySpec extends CatsEffectSuite:
 
   test("last-write-wins: repeated registration overwrites (final intent wins, spec §6)") {
     for
-      _ <- NodeReportRegistry.register("sid-2", fbA)
-      _ <- NodeReportRegistry.register("sid-2", fbB)
+      _ <- NodeReportRegistry.register(ws, "registry-spec", "n-2", "sid-2", fbA)
+      _ <- NodeReportRegistry.register(ws, "registry-spec", "n-2", "sid-2", fbB)
       drained <- NodeReportRegistry.drain("sid-2")
     yield assertEquals(drained, Some(fbB), "second declaration must win (last-write-wins)")
   }
 
   test("session isolation: A's declaration never leaks into B's drain") {
     for
-      _ <- NodeReportRegistry.register("sid-a", fbA)
+      _ <- NodeReportRegistry.register(ws, "registry-spec", "n-a", "sid-a", fbA)
       bDrain <- NodeReportRegistry.drain("sid-b")
       aDrain <- NodeReportRegistry.drain("sid-a")
     yield
@@ -50,7 +56,7 @@ class NodeReportRegistrySpec extends CatsEffectSuite:
 
   test("remove: cleanup hook drops the entry without consuming; idempotent") {
     for
-      _ <- NodeReportRegistry.register("sid-3", fbA)
+      _ <- NodeReportRegistry.register(ws, "registry-spec", "n-3", "sid-3", fbA)
       _ <- NodeReportRegistry.remove("sid-3")
       _ <- NodeReportRegistry.remove("sid-3")
       drained <- NodeReportRegistry.drain("sid-3")

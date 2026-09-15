@@ -3,7 +3,7 @@ package nebflow.core.tools
 import cats.effect.IO
 import io.circe.{Json, JsonObject}
 import io.circe.syntax.*
-import nebflow.core.project.{BlockedFeedback, NodeReportRegistry, NodeRoles}
+import nebflow.core.project.{BlockedFeedback, NodeReportRegistry, NodeRoles, ProjectRuntimeRegistry}
 import nebflow.core.project.BlockedReader
 import nebflow.shared.ToolDefinition
 
@@ -264,11 +264,28 @@ Pass category (the verdict + why), detail (what exactly, actionable), suggestion
             else
               "[OK] node report (finish) recorded — finish your report normally. The engine completes this node along the " +
                 "default completion chain."
-          NodeReportRegistry.register(ctx.sessionId.getOrElse(nodeIdSessionKey(nodeId)), fb).as(
-            Right(confirm))
+          // #239② 面①（申报跨宿主重启持久化，2026-09-15）：申报除进程内登记外**同步落
+          // 该项目的持久化日志**（`<workspace>/.nebflow/node-reports.jsonl`）——旧口径下
+          // 进程一死申报即在结构上消失（磁盘/事件/内存三处零副本）。归属工作区解析见
+          // [[reportWorkspaceFor]]；解析不到 ⇒ 空串 = 无持久化位置（登记表内部 WARN
+          // 留痕 NODE-REPORT-STORE-UNBOUND，不猜、不静默、控制流不变）。
+          for
+            ws <- reportWorkspaceFor(ctx)
+            _ <- NodeReportRegistry.register(ws, ctx.projectName.getOrElse(""), nodeId,
+              ctx.sessionId.getOrElse(nodeIdSessionKey(nodeId)), fb)
+          yield Right(confirm)
     }
 
+  /** 申报持久化归属工作区（#239②）：`ctx.projectName`（**引擎侧身份**——NodeEngine
+    * spawn 时注入，非客户端参数）→ 挂载面 [[ProjectRuntimeRegistry]] → `ProjectDef.workspace`。
+    * 解析不到（项目未挂载 / 非项目会话 / 名字漂移）⇒ `""`（无持久化位置）——工具面
+    * **不猜**工作区（猜错 = 把申报写到别人的日志里，比不写更糟）。 */
+  private def reportWorkspaceFor(ctx: ToolContext): IO[String] =
+    ctx.projectName.map(_.trim).filter(_.nonEmpty) match
+      case Some(name) => ProjectRuntimeRegistry.get(name).map(_.map(_.project.workspace).getOrElse(""))
+      case None       => IO.pure("")
+
   /** 会话 id 缺失（理论不可达：flow 节点会话恒有 sessionId）时的确定性兜底键——
-   * 保持 register 总有键可登记，避免 None 分支吞掉申报。 */
+    * 保持 register 总有键可登记，避免 None 分支吞掉申报。 */
   private def nodeIdSessionKey(nodeId: String): String = s"node-identity:$nodeId"
 end NodeReportToolDef
