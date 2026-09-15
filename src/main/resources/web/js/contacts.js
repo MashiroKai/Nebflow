@@ -274,6 +274,19 @@ function render() {
   nf.addEventListener('keydown', (e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); toggleReq(); } });
   body.appendChild(nf);
 
+  // ── 设备入口（②，作者 2026-09-15）─────────────────────────────────────
+  // 作者原话（2026-09-15 22:32）：「然后 Device 最好是想 New Friends 一样放在点进展开
+  // 的里面」（形态）＋「设备那一栏，就放在新的朋友下面，不要隔着联系人」（位置）。
+  // 形态 = **复用**「新的朋友」的折叠结构（`.fm-nf-entry` 入口行 + chevron 态切换
+  // + 展开体按态入 DOM）；语义：本账号**自有设备**（非好友关系域）。
+  // 🔴 **位置**：设备是**固定行**，直接落「新的朋友」**正下方** ⇒ 固定区顺序
+  //  = 新的朋友 → 设备 → 联系人列表（设备不再被好友列表隔开）。
+  // 插入点选在「新的朋友」本体之后、其展开体（`buildRequests()`）**之前**，理由 =
+  // 机械判据「`data-devices-entry` 紧邻 nf 入口」必须**在展开/收起两态都成立**：
+  // 展开体是条件入 DOM 的子体，若插在它之后，展开态下它会把设备行与 nf 入口隔开。
+  body.appendChild(buildDevicesEntry());
+  if (devicesExpanded) body.appendChild(buildDeviceRows());
+
   if (requestsExpanded) body.appendChild(buildRequests());
 
   // ── 群组一期（friendgroups 客户端腿）──
@@ -307,13 +320,6 @@ function render() {
     for (const f of friends) list.appendChild(friendRow(f));
   }
   body.appendChild(list);
-  // ── 设备入口（②，作者 2026-09-15）─────────────────────────────────────
-  // 作者原话：「然后 Device 最好是想 New Friends 一样放在点进展开的里面」。
-  // 形态 = **复用**「新的朋友」的折叠结构（`.fm-nf-entry` 入口行 + chevron 态切换
-  // + 展开体按态入 DOM），插入点仍在好友列表之后（仅改形态，不改面板分区顺序）。
-  // 语义：本账号**自有设备**（非好友关系域）。
-  body.appendChild(buildDevicesEntry());
-  if (devicesExpanded) body.appendChild(buildDeviceRows());
   createIconsIn(body);
 }
 
@@ -331,7 +337,13 @@ function buildDevicesEntry() {
   entry.setAttribute('aria-expanded', String(devicesExpanded));
   entry.dataset.devicesEntry = '1'; // QA 断言面：设备入口可机械定位（②）
   const icon = el('span', 'fm-nf-icon');
-  icon.innerHTML = '<i data-lucide="smartphone"></i>';
+  // ① 图标（作者 2026-09-15 22:32：「设备的这个图标也不对呀，一般都是电脑，这怎么是个
+  //    手机呢」）：`smartphone` → `laptop`（电脑/笔记本形）。**沿用本仓既有图标集**
+  //    （vendor/lucide.min.js v0.454.0，`Laptop` 已导出 ⇒ 运行期可解析）；
+  //    🔴 线性风格 / 线宽 / 尺寸档零变化：两者同用共享 attrs（viewBox 0 0 24 24 /
+  //    fill=none / stroke=currentColor / stroke-width=2 / round 端点），落点尺寸由既有
+  //    `.fm-nf-icon svg{width:17px;height:17px}` 决定（`css/friends.css:473`）⇒ 零 CSS 改动。
+  icon.innerHTML = '<i data-lucide="laptop"></i>';
   entry.appendChild(icon);
   entry.appendChild(el('span', 'fm-nf-label', t('contacts.sectionDevices')));
   // 🔴 **不挂计数徽章**：`nf` 的 `.fm-row-badge` 是**未读/待处理通知**语义（conv 行未读、
