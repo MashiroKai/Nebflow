@@ -583,6 +583,7 @@ export default {
   'settings.addProvider': '+ Add Provider',
   'settings.presets': 'Model Presets',
   'settings.addPreset': '+ Add Preset',
+  'settings.presetsEmptyHint': 'Add and configure a provider under "LLM Providers" first — then you can adjust the model preset for each agent.',
   'preset.default': 'Default',
   'preset.setDefault': 'Set Default',
   'preset.edit': 'Edit',

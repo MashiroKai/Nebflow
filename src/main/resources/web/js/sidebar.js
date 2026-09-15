@@ -801,12 +801,18 @@ export function renderSettings() {
       </div>
       <button class="cfg-btn cfg-btn-add" id="btn-add-provider">${t('settings.addProvider')}</button>
     </div>
-    <div class="settings-section">
+    ${providerNames.length === 0
+      // 2026-09-16 作者令：未添加任何 Provider 之前，MODEL PRESETS 整栏不出现。
+      // 结构件（区块容器 / 标题 / #preset-list / #btn-add-preset /
+      // #preset-migrate-banner）一体零渲染，仅在原位留一条 i18n 提示。
+      // 不做点击跳转：本仓无「空态内联跳转」先例（见报告 §判定）。
+      ? `<div class="cfg-hint" id="preset-empty-hint">${t('settings.presetsEmptyHint')}</div>`
+      : `<div class="settings-section">
       <div class="settings-section-title">${t('settings.presets')}</div>
       <div id="preset-migrate-banner" style="display:none"></div>
       <div id="preset-list"><div class="cfg-empty">Loading…</div></div>
       <button class="cfg-btn cfg-btn-add" id="btn-add-preset">${t('settings.addPreset')}</button>
-    </div>
+    </div>`}
     <div class="settings-section">
       <div class="settings-section-title">${t('settings.advanced')}</div>
       <button class="cfg-btn" id="btn-toggle-json">${t('settings.editRawJson')}</button>

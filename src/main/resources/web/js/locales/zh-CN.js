@@ -566,6 +566,7 @@ export default {
   'settings.addProvider': '+ 添加服务商',
   'settings.presets': '模型方案',
   'settings.addPreset': '+ 添加方案',
+  'settings.presetsEmptyHint': '请先在「LLM 服务商」中添加并配置服务，之后即可针对每个 agent 调整模型方案。',
   'preset.default': '默认',
   'preset.setDefault': '设为默认',
   'preset.edit': '编辑',
