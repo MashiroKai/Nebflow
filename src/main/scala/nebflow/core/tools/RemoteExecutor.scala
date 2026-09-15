@@ -2,7 +2,7 @@ package nebflow.core.tools
 
 import cats.effect.std.Dispatcher
 import cats.effect.{Deferred, IO, Ref}
-import io.circe.JsonObject
+import io.circe.{Json, JsonObject}
 import io.circe.parser.decode
 import io.circe.syntax.*
 import nebflow.agent.AgentCommand
@@ -234,26 +234,191 @@ class RemoteExecutor(
     // T4 审计用：projectRoot 随 ctx 传递（无 ctx 的 REST/兜底路径记空串）
     val projectRoot = ctxOpt.map(_.projectRoot).getOrElse("")
 
-    def runOnPeer(peer: PeerInfo): IO[Either[ToolError, String]] =
+    def runOnPeer(peer: PeerInfo, p: JsonObject): IO[Either[ToolError, String]] =
       if peer.address.isEmpty then IO.pure(Left(ToolError(s"Device '${peer.deviceName}' has no address.")))
-      else if isBackground && ctxOpt.isDefined then executeRemoteBackground(peer, toolName, params, ctxOpt.get)
-      else if ctxOpt.isDefined then executeForegroundSync(peer, toolName, params, ctxOpt.get)
-      else executeViaBestPath(peer, toolName, params, SyncTimeout, projectRoot)
+      else if isBackground && ctxOpt.isDefined then executeRemoteBackground(peer, toolName, p, ctxOpt.get)
+      else if ctxOpt.isDefined then executeForegroundSync(peer, toolName, p, ctxOpt.get)
+      else executeViaBestPath(peer, toolName, p, SyncTimeout, projectRoot)
+
+    // xdev 批（2026-09-15）：单一下发包装 —— ① 画像惰性探测（只读、失败不
+    // 阻塞）→ ⑤ 白名单等价改写（默认关）→ 下发 → ② NEBFLOW_PULL 回拉扫描。
+    // 三步全部「尽力而为」：任何一步失败都不改变下发的成败语义。
+    def runWithProfile(peer: PeerInfo): IO[Either[ToolError, String]] =
+      for
+        profOpt <- ensureProfile(peer)
+        (effectiveParams, rewriteNote) = prepareBashParams(toolName, params, profOpt)
+        _ <- rewriteNote match
+               case Some(n) => XdevRewrite.logNote(peer.deviceName, n)
+               case None    => IO.unit
+        raw <- runOnPeer(peer, effectiveParams)
+        pulled <- raw match
+                    case Right(out) if toolName == "Bash" => pullCaptures(peer, out, isBackground)
+                    case other                            => IO.pure(other)
+      yield pulled.map { out =>
+        rewriteNote.fold(out)(n => out + s"\n[xdev-rewrite] $n")
+      }
 
     neblinkService.peers.flatMap { peers =>
-      resolvePeer(deviceName, peers) match
-        case Right(peer) => runOnPeer(peer)
+      RemoteExecutor.resolvePeer(deviceName, peers) match
+        case Right(peer) => runWithProfile(peer)
         case Left(_) =>
           // Device not in peer list — the list might be stale. Trigger one immediate
           // discovery scan before giving up, so transient gaps don't cause false errors.
           logger.info(s"Device '$deviceName' not found in ${peers.size} peer(s), triggering discovery scan") *>
             neblinkService.scanNow.flatMap { refreshedPeers =>
-              resolvePeer(deviceName, refreshedPeers) match
-                case Right(peer) => runOnPeer(peer)
+              RemoteExecutor.resolvePeer(deviceName, refreshedPeers) match
+                case Right(peer) => runWithProfile(peer)
                 case Left(err) => IO.pure(Left(err))
             }
     }
   end execute
+
+  // ---- xdev 批：画像 / 改写 / 回拉（2026-09-15） ----
+
+  /** 内存画像缓存（避免每次下发读盘；store 与内存同步写）。 */
+  private val profileMem =
+    new java.util.concurrent.ConcurrentHashMap[String, DeviceProfileEntry]()
+
+  /** 探测去重：同一 deviceId 同时只允许一个在飞探测（并发首触只发一条探针）。 */
+  private val probeInFlight = new java.util.concurrent.ConcurrentHashMap[String, java.lang.Boolean]()
+
+  /** 探测专用短超时（探针是单条只读命令，20s 网络层兜底足够；对端 BashTool
+    * timeout 参数给 15s）。 */
+  private val ProbeTimeout = 20.seconds
+
+  /**
+   * ① 画像惰性探测（T1）。缓存新鲜 ⇒ 直接返回；缺失/stale/负条目静默期已过 ⇒
+   * 发**一条只读 Bash 探针**（走 executeViaBestPath 直达，不经 execute ⇒ 无递归、
+   * 不触发改写/回拉）。探测失败 ⇒ 负条目 + WARN，**绝不阻塞本次下发**（返回
+   * None = 无画像，fail-closed 回现状行为）。
+   */
+  private def ensureProfile(peer: PeerInfo): IO[Option[DeviceProfileEntry]] =
+    val now = System.currentTimeMillis()
+    Option(profileMem.get(peer.deviceId)) match
+      case Some(e) if !DeviceProfile.needsProbe(Some(e), peer, now) => IO.pure(Some(e))
+      case _ =>
+        if probeInFlight.putIfAbsent(peer.deviceId, java.lang.Boolean.TRUE) != null then
+          IO.pure(Option(profileMem.get(peer.deviceId)))
+        else
+          val probeParams = JsonObject(
+            "command" -> DeviceProfileProbe.Command.asJson,
+            "timeout" -> 15000L.asJson,
+            "description" -> "xdev read-only profile probe".asJson
+          )
+          executeViaBestPath(peer, "Bash", probeParams, ProbeTimeout, "", kind = "probe")
+            .flatMap {
+              case Right(out) =>
+                val fields = DeviceProfileProbe.parse(out)
+                if fields.isEmpty then
+                  // 探针命令跑通但零可解析字段（对端 banner-only？）⇒ 按失败处理
+                  DeviceProfile.recordProbeFailed(peer, System.currentTimeMillis()).map { eOpt =>
+                    eOpt.foreach(e => profileMem.put(peer.deviceId, e))
+                    None
+                  }
+                else
+                  DeviceProfile
+                    .recordProbe(peer, fields, peer.capabilities, System.currentTimeMillis())
+                    .map { eOpt =>
+                      eOpt.foreach(e => profileMem.put(peer.deviceId, e))
+                      eOpt
+                    }
+              case Left(err) =>
+                DeviceProfile.recordProbeFailed(peer, System.currentTimeMillis()).map { eOpt =>
+                  eOpt.foreach(e => profileMem.put(peer.deviceId, e))
+                  logger.warn(
+                    s"[device-profile] probe failed for ${peer.deviceName}: ${err.message.take(100)} (negative entry, ${DeviceProfile.NegativeRetryMs / 60000}min backoff; original call proceeds)"
+                  )
+                  None
+                }
+            }
+            .guarantee(IO(probeInFlight.remove(peer.deviceId)))
+
+  /** ⑤ 改写决策（下发前）。仅 Bash、仅画像确证 MSYS、仅白名单形态；默认关。 */
+  private def prepareBashParams(
+    toolName: String,
+    params: JsonObject,
+    profOpt: Option[DeviceProfileEntry]
+  ): (JsonObject, Option[String]) =
+    if toolName != "Bash" then (params, None)
+    else
+      params("command").flatMap(_.asString) match
+        case Some(cmd) =>
+          val (c2, note) = XdevRewrite(cmd, XdevRewrite.msysConfirmed(profOpt))
+          (if note.nonEmpty then params.add("command", c2.asJson) else params, note)
+        case None => (params, None)
+
+  /** ② NEBFLOW_PULL 回拉：扫描对端 Bash 输出里的标记行，逐个把对端文件经既有
+    * FileTransfer direction=get 通道拉回本机 captures/。成功/失败都**追加可读行**
+    * （🔴 禁静默：拉取失败显式留痕，模型可自纠）。后台腿 v1 不接（其真实输出
+    * 走通知路径，占位符上无意义）。 */
+  private def pullCaptures(
+    peer: PeerInfo,
+    output: String,
+    isBackground: Boolean
+  ): IO[Either[ToolError, String]] =
+    if isBackground then IO.pure(Right(output))
+    else
+      CapturePull.scanPullPaths(output) match
+        case Nil => IO.pure(Right(output))
+        case paths =>
+          paths.foldLeft(IO.pure(Right(output): Either[ToolError, String])) { (acc, remotePath) =>
+            acc.flatMap {
+              case l @ Left(_) => IO.pure(l)
+              case Right(out) =>
+                transferGetToFile(peer, remotePath).map {
+                  case Right((local, size)) =>
+                    Right(out + s"\n[capture] pulled $remotePath -> $local ($size bytes)")
+                  case Left(err) =>
+                    logger.warn(s"[capture] pull failed for ${peer.deviceName}: $remotePath: ${err.take(120)}")
+                    Right(out + s"\n[capture] pull FAILED for $remotePath: $err")
+                }
+            }
+          }
+
+  /** 经既有 FileTransfer direction=get 通道拉单件：P2P remote-exec 优先，transient
+    * 失败回落 relay（与 executeViaBestPath 同族判定）。两条腿的接收端都路由到
+    * FileTransferAction.handle（RestApiRoutes / NeblinkRelayTunnel）——**零 wire
+    * 变更、零新 action**。大小闸 [[CapturePull.MaxCaptureBytes]]。 */
+  private def transferGetToFile(
+    peer: PeerInfo,
+    remotePath: String
+  ): IO[Either[String, (os.Path, Long)]] =
+    val params = JsonObject(
+      "direction" -> "get".asJson,
+      "path" -> remotePath.asJson
+    )
+
+    def parseAndStore(output: String): IO[Either[String, (os.Path, Long)]] = IO.blocking {
+      decode[Json](output) match
+        case Right(json) =>
+          val size = json.hcursor.downField("size").as[Long].getOrElse(0L)
+          if size > CapturePull.MaxCaptureBytes then
+            Left(s"capture too large: $size bytes > ${CapturePull.MaxCaptureBytes} limit")
+          else
+            val b64 = json.hcursor.downField("content").as[String].getOrElse("")
+            if b64.isEmpty then Left("empty content")
+            else
+              val bytes = java.util.Base64.getDecoder.decode(b64)
+              val local = CapturePull.saveCapture(peer.deviceId, remotePath, bytes)
+              Right((local, bytes.length.toLong))
+        case Left(err) => Left(s"decode: ${err.getMessage}")
+    }
+
+    p2pExecuteWithRetry(peer, "FileTransfer", params, 60.seconds, "", P2pPathDecision.probeBudget(true), kind = "capture")
+      .flatMap {
+        case Right(out) => parseAndStore(out)
+        case Left(p2pErr) =>
+          currentRelayClient.flatMap {
+            case Some(client) =>
+              relayExecAudited(client, peer, "FileTransfer", params, "", kind = "capture").flatMap {
+                case Right(out) => parseAndStore(out)
+                case Left(relayErr) =>
+                  IO.pure(Left(s"p2p: ${p2pErr.message.take(80)}; relay: ${relayErr.take(80)}"))
+              }
+            case None => IO.pure(Left(s"p2p: ${p2pErr.message.take(120)} (no relay client)"))
+          }
+      }
+  end transferGetToFile
 
   // ---- Remote background task: Mac manages lifecycle locally ----
 
@@ -613,7 +778,8 @@ class RemoteExecutor(
     params: JsonObject,
     timeout: FiniteDuration,
     projectRoot: String,
-    budget: P2pPathDecision.ProbeBudget
+    budget: P2pPathDecision.ProbeBudget,
+    kind: String = ""
   ): IO[Either[ToolError, String]] =
     def attempt(n: Int): IO[Either[ToolError, String]] =
       p2pExecute(peer, toolName, params, timeout, budget).flatMap {
@@ -626,7 +792,7 @@ class RemoteExecutor(
       }
     // T4：一次逻辑下发的审计行（在第一次网络尝试前落——重试是同一行下发，
     // 不重复记行；下发本身失败也记，审计关心「试图驱动了哪台设备」）。
-    auditDispatch(peer, toolName, params, projectRoot, "p2p") *> attempt(0)
+    auditDispatch(peer, toolName, params, projectRoot, "p2p", kind) *> attempt(0)
 
   end p2pExecuteWithRetry
 
@@ -676,7 +842,8 @@ class RemoteExecutor(
     toolName: String,
     params: JsonObject,
     timeout: FiniteDuration,
-    projectRoot: String
+    projectRoot: String,
+    kind: String = ""
   ): IO[Either[ToolError, String]] =
     // F1 sweep (2026-09-10 隧道鉴权自愈批): resolve the client per dispatch —
     // never dispatch through a constructor-time snapshot whose session the
@@ -688,7 +855,7 @@ class RemoteExecutor(
         // the P2P HTTP path is down (presence WS and remote-exec HTTP are
         // different transports), and with no relay there is nothing to fall
         // back to, so retries remain this path's only recovery.
-        p2pExecuteWithRetry(peer, toolName, params, timeout, projectRoot, P2pPathDecision.probeBudget(true)).flatMap {
+        p2pExecuteWithRetry(peer, toolName, params, timeout, projectRoot, P2pPathDecision.probeBudget(true), kind).flatMap {
           case r @ Right(_) => recordPathMemory(peer, "p2p").as(r)
           case l @ Left(_)  => IO.pure(l)
         }
@@ -707,16 +874,16 @@ class RemoteExecutor(
           result <-
             if skipP2p then
               // Relay only — with cold-start retry for tunnel reconnection latency
-              relayWithColdStartRetry(client, peer, toolName, params, projectRoot).flatMap {
+              relayWithColdStartRetry(client, peer, toolName, params, projectRoot, kind).flatMap {
                 case Right(output) => recordPathMemory(peer, "relay").as(Right(output))
                 case Left(err)     => clearPathMemory(peer.deviceId).as(Left(ToolError(s"Relay failed: $err")))
               }
             else if ReadOnlyTools.contains(toolName) then
               // P1: parallel race for read-only tools (safe cancellation)
-              raceP2PAndRelay(peer, toolName, params, timeout, client, projectRoot, budget)
+              raceP2PAndRelay(peer, toolName, params, timeout, client, projectRoot, budget, kind)
             else
               // Write tools: serial P2P → relay fallback, negative cache as兜底
-              p2pExecuteWithRetry(peer, toolName, params, timeout, projectRoot, budget).flatMap {
+              p2pExecuteWithRetry(peer, toolName, params, timeout, projectRoot, budget, kind).flatMap {
                 case Right(output) => recordPathMemory(peer, "p2p").as(Right(output))
                 case Left(err) if shouldRelayFallback(err) =>
                   // A: this failure IS the evidence that justifies bypassing P2P
@@ -725,7 +892,7 @@ class RemoteExecutor(
                     logger.info(
                       s"P2P unavailable for ${peer.deviceName} (${err.message.take(80)}), falling back to relay"
                     ) *>
-                    relayWithColdStartRetry(client, peer, toolName, params, projectRoot).flatMap {
+                    relayWithColdStartRetry(client, peer, toolName, params, projectRoot, kind).flatMap {
                       case Right(output) => recordPathMemory(peer, "relay").as(Right(output))
                       case Left(relayErr) =>
                         IO.pure(Left(ToolError(s"P2P failed: ${err.message}; Relay also failed: $relayErr")))
@@ -750,7 +917,8 @@ class RemoteExecutor(
     toolName: String,
     params: JsonObject,
     projectRoot: String,
-    via: String
+    via: String,
+    kind: String = ""
   ): IO[Unit] =
     neblinkService.identity
       .map(_.deviceId)
@@ -762,7 +930,8 @@ class RemoteExecutor(
           action = toolName,
           command = RelayExecAudit.summarizeParams(toolName, params),
           projectRoot = projectRoot,
-          cwd = Option(System.getProperty("user.dir")).getOrElse("")
+          cwd = Option(System.getProperty("user.dir")).getOrElse(""),
+          kind = kind
         )
       )
       .handleErrorWith(e => logger.warn(s"relay-exec audit line skipped: ${e.getMessage}"))
@@ -773,9 +942,10 @@ class RemoteExecutor(
     peer: PeerInfo,
     toolName: String,
     params: JsonObject,
-    projectRoot: String
+    projectRoot: String,
+    kind: String = ""
   ): IO[Either[String, String]] =
-    auditDispatch(peer, toolName, params, projectRoot, "relay") *>
+    auditDispatch(peer, toolName, params, projectRoot, "relay", kind) *>
       client.relayExec(peer.deviceId, toolName, params)
 
   // ---- BUG 4: Relay cold-start retry ----
@@ -792,9 +962,10 @@ class RemoteExecutor(
     peer: PeerInfo,
     toolName: String,
     params: JsonObject,
-    projectRoot: String
+    projectRoot: String,
+    kind: String = ""
   ): IO[Either[String, String]] =
-    relayExecAudited(client, peer, toolName, params, projectRoot).flatMap {
+    relayExecAudited(client, peer, toolName, params, projectRoot, kind).flatMap {
       case Right(output) => IO.pure(Right(output))
       case Left(err)     =>
         // Cold start retry — relay tunnel might have just reconnected
@@ -821,12 +992,13 @@ class RemoteExecutor(
     timeout: FiniteDuration,
     client: NeblinkClient,
     projectRoot: String,
-    budget: P2pPathDecision.ProbeBudget
+    budget: P2pPathDecision.ProbeBudget,
+    kind: String = ""
   ): IO[Either[ToolError, String]] =
     val p2pIO: IO[Either[ToolError, String]] =
-      p2pExecuteWithRetry(peer, toolName, params, timeout, projectRoot, budget)
+      p2pExecuteWithRetry(peer, toolName, params, timeout, projectRoot, budget, kind)
     val relayIO: IO[Either[ToolError, String]] =
-      relayExecAudited(client, peer, toolName, params, projectRoot).map {
+      relayExecAudited(client, peer, toolName, params, projectRoot, kind).map {
         case Right(output) => Right(output)
         case Left(err)     => Left(ToolError(s"Relay failed: $err"))
       }
@@ -868,22 +1040,8 @@ class RemoteExecutor(
     if params.contains("timeout") then params
     else params.add("timeout", BgTimeout.toMillis.asJson)
 
-  private def resolvePeer(deviceName: String, peers: List[PeerInfo]): Either[ToolError, PeerInfo] =
-    peers.find(p =>
-      p.deviceName.equalsIgnoreCase(deviceName) ||
-        p.deviceId.startsWith(deviceName) ||
-        p.deviceName.toLowerCase.contains(deviceName.toLowerCase)
-    ) match
-      case Some(p) => Right(p)
-      case None =>
-        val available = peers.map(_.deviceName)
-        Left(
-          ToolError(
-            if peers.isEmpty then
-              s"No peer devices discovered after scan. Check: (1) NebLink Server is configured on both machines, (2) Nebflow is running on '$deviceName', (3) both devices are on the same NebLink network."
-            else s"Device '$deviceName' not found among ${peers.size} peer(s). Available: ${available.mkString(", ")}"
-          )
-        )
+  // resolvePeer 已上移至伴生 object（xdev 批：纯函数 + 同包可测）——
+  // 类内调用点经 `RemoteExecutor.resolvePeer` 限定，行为零变化。
 
 end RemoteExecutor
 
@@ -899,9 +1057,55 @@ object RemoteExecutor:
     relayClient: Option[NeblinkClient] = None
   ): Unit =
     instance = Some(new RemoteExecutor(neblinkService, dispatcher, relayClient))
+    // ④ captures TTL 清扫（xdev 批 2026-09-15）：启动即清一次 + 每 6h 周期清。
+    // 清扫失败只 WARN（CapturePull.sweepExpired 内已兜），绝不影响网关启动。
+    dispatcher.unsafeRunAndForget(
+      (CapturePull.sweepExpired().attempt *> IO.sleep(6.hours)).foreverM.void
+    )
 
   /** Get the current instance, or None if neblink is not initialized. */
   def current: Option[RemoteExecutor] = instance
+
+  /**
+   * 目标解析（xdev 批 2026-09-15 作者裁定「歧义即拒绝 A」）：
+   * **分层匹配 + 多命中显式拒绝**。
+   *   1. 精确层（equalsIgnoreCase）：恰一命中 ⇒ 用它；多命中（真同名设备）⇒ 拒绝。
+   *   2. 模糊层（deviceId.startsWith ‖ deviceName.contains，仅精确层零命中时）：
+   *      恰一命中 ⇒ 用它；多命中 ⇒ **显式报错 + 全部候选名单**（候选格式
+   *      `deviceName(id前8位)`，可判读、可直接复制精确 id）。
+   *   3. 零命中语义不变（原报错文案逐字保留，含 Available 名单）。
+   *
+   * 行为变更申报（判红①缓解）：旧代码 = `find` 取列表序首个命中（静默）。分层
+   * 后「精确唯一命中」场景与旧代码常见路径一致；被拒的只有**真歧义**（精确多
+   * 命中 / 模糊多命中）——旧代码在这种场景会静默选中任意一台，正是判红① 的
+   * 「同名投错机器」失败形态。纯函数（不触实例状态）⇒ 放 object 供同包测试。
+   */
+  private[tools] def resolvePeer(deviceName: String, peers: List[PeerInfo]): Either[ToolError, PeerInfo] =
+    val exact = peers.filter(_.deviceName.equalsIgnoreCase(deviceName))
+    val fuzzy = peers.filter(p =>
+      p.deviceId.startsWith(deviceName) ||
+        p.deviceName.toLowerCase.contains(deviceName.toLowerCase)
+    )
+    val candidates = if exact.nonEmpty then exact else fuzzy
+    candidates match
+      case single :: Nil => Right(single)
+      case Nil =>
+        val available = peers.map(_.deviceName)
+        Left(
+          ToolError(
+            if peers.isEmpty then
+              s"No peer devices discovered after scan. Check: (1) NebLink Server is configured on both machines, (2) Nebflow is running on '$deviceName', (3) both devices are on the same NebLink network."
+            else s"Device '$deviceName' not found among ${peers.size} peer(s). Available: ${available.mkString(", ")}"
+          )
+        )
+      case many =>
+        val listed = many.map(p => s"${p.deviceName}(${p.deviceId.take(8)})").mkString(", ")
+        Left(
+          ToolError(
+            s"Device '$deviceName' is ambiguous: ${many.size} peers match. Candidates: $listed. " +
+              "Re-dispatch with the exact device name or the full deviceId of the intended target."
+          )
+        )
 
   /**
    * Tools that support remote execution. Only these tools get the `device` parameter
