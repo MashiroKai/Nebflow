@@ -1,3 +1,24 @@
+// ═══════════════════════════════════════════════════════════════════════════
+// 🔴 已退役：能力已按 #211 作者令下线，脚本随之退役（此件只留档，不可运行）。
+// ───────────────────────────────────────────────────────────────────────────
+// 退役因（三条，独立成立）：
+//   ① 能力下线：#211 作者令下线「输入框直通」路径 ⇒ 引擎侧不再产生
+//      `askUserAnswered`；uiclean 批（d06da381）已摘除前端唯一接收点 ⇒ 本件
+//      P1/P2/P3 注入该帧后所断言的行为**已不存在**（跑必红）。
+//   ② 非 CI 面：`.github/**` 对本件 **0 命中** ⇒ 退役不改变 CI 判据。
+//   ③ 继任判据已在位：`tests/askinput-off-pending-text.spec.mjs`（行为级双向钉，
+//      同域覆盖；其头注把本件列为同族先例）。
+// 原件溯源（🔴 sha 逐字保留）：原名 `scripts/verify-askuser-passthrough.cjs`，
+//   sha256 = `d25336593166b9193ba85d6644c99a9b389880096414af4c46dda56ee0b689c6`
+//   （改名前后逐字不变；本次仅在文首加本守门块）。**归档非删除**：原实现整体
+//   保留在下方，供取证阅读。
+// 守门位置：先于一切 require / spawn / 副作用（本行以下即 `process.exit(3)`）。
+console.log('DEPRECATED: verify-askuser-passthrough 已退役（能力已按 #211 作者令下线）——此件只留档，不可运行。');
+console.log('  原因：chat-input 直通路径已下线，引擎不再产生 askUserAnswered 帧（P1-P3 所断言行为已不存在）。');
+console.log('  继任判据：tests/askinput-off-pending-text.spec.mjs');
+process.exit(3);
+// ═══════════════════════════════════════════════════════════════════════════
+
 // verify-askuser-passthrough.cjs — AskUser chat-input passthrough (author
 // ruling 2026-08-29 23:50) frontend adaptation mock-WS E2E.
 //
