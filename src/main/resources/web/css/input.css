@@ -856,30 +856,34 @@
 #send-btn:disabled svg { opacity: 0.45; }
 #send-btn svg { width: 18px; height: 18px; stroke-width: 2.5; }
 /* Disconnected state — doubles as the connection indicator: the send button
-   fades into the faint-green family (same as :disabled) so users see they
-   can't send until the link is back. Green family, not grey — keeps the
-   button's green identity; not red — red reads as error, this reads as
-   "unavailable". */
+   fades into the family's **gray** (掉线灰) so users see they can't send until
+   the link is back.
+   🔴 2026-09-15（作者逐字令）：「全局的发送按钮可能都需要优化一下设计，可以参考
+   我们主对话框的设计，如果掉线了会变成灰色，正常是绿色」 ⇒ 本档从**淡绿**
+   （原注释「Green family, not grey」）**改为灰**，并被发送键族上提到全站统一档
+   （`sapphire.css` 发送族块的 `.disconnected`，与本键同判据 `!state.connected`）。
+   原「淡绿即链接不可用」的裁定**被本令取代**（作废，不再作为待拍板项）。
+   灰取本仓既有发送族灰 token（零新增字面量色值）；rest / hover / active 三档
+   **一字未改**（`#send-btn` 仍是本批全站发送键的状态色基准）。 */
 #send-btn.disconnected {
-  background: rgba(7, 193, 96, 0.30);
-  border-color: rgba(7, 193, 96, 0.18);
-  color: rgba(255, 255, 255, 0.75);
-  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.10);
+  background: var(--glass-send-bg-active);
+  border-color: var(--glass-send-border-active);
+  color: var(--color-text-muted);
+  box-shadow: inset 0 1px 0 var(--glass-control-highlight);
   cursor: not-allowed;
 }
 #send-btn.disconnected svg { opacity: 0.45; }
-#send-btn.disconnected:hover { background: rgba(7, 193, 96, 0.30); }
+#send-btn.disconnected:hover { background: var(--glass-send-bg-active); }
 /* Dark theme: rest is deliberately the same opaque #07C160 — with a solid fill
    nothing composites against the dark backdrop any more, so the glass version's
    "+0.07 alpha for dark" had nothing left to correct and the per-theme rest
    override is gone. Hover brightens (more prominent against the dark bar),
-   active deepens (pressed); disabled / disconnected use the darker wash. */
+   active deepens (pressed); disabled uses the darker wash. 掉线档改由发送族
+   的灰 token 承担（`sapphire.css`），故不再出现在本暗色组里。 */
 @media (prefers-color-scheme: dark) {
   #send-btn:hover { background: #22CE78; }
   #send-btn:active { background: #0BA95A; }
-  #send-btn:disabled,
-  #send-btn.disconnected,
-  #send-btn.disconnected:hover {
+  #send-btn:disabled {
     background: rgba(7, 193, 96, 0.22);
     border-color: rgba(7, 193, 96, 0.16);
   }

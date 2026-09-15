@@ -816,7 +816,9 @@ function buildResultCard() {
     // ① 发送键（作者 2026-09-14 主诉）：自带类名 `fm-verify-send`——旧形态只带
     // 裸 `glass-control`，样式只能靠结构选择器 `.fm-verify-box button.glass-control
     // :not(.fm-verify-cancel)` 命中（sapphire.css），断言也无从定位本键本体。
-    const sendBtn = el('button', 'glass-control fm-verify-send', t('messages.send'));
+    // `cfg-btn-primary` = ③ 发送键族统一批：只为承接既有主操作墨色（既有类名），
+    // 材质/几何/状态由 `sapphire.css` 的发送族块统一覆盖。
+    const sendBtn = el('button', 'glass-control cfg-btn-primary fm-verify-send', t('messages.send'));
     // ① 可提交性谓词（唯一来源）：按钮 enabled 态与 Enter 路径**共用**它，
     // 杜绝「按钮禁用而 Enter 照发」的双写分叉。
     // 唯一真「不能提交」态 = 在飞（sending）；附言为**可选**（i18n 逐字
