@@ -828,6 +828,76 @@ button.fm-req-decline:focus-visible {
 /* 尚未有状态文案时收起（避免卡片里并排两个同义词；失败/成功后解除） */
 .visually-hidden-note { display: none; }
 
+/* ── 附件发送上传卡（attachcl 批，2026-09-16）──────────────────────────
+   好友窗与群窗**共用**同一枚渲染器（`attachUpload.renderUploadCards`），故本段规则
+   是两面唯一的外观定义（禁按会话面分叉）。
+   取色只用既有 token（`--glass-etched-*` / `--glass-control-border` / `--color-frame-hover`
+   / `--color-error` / `--sapphire`）⇒ 亮暗双主题同源、零新增字面量色值。
+   四态必须**视觉可区分**（同 §B.7 ②1 的既有口径）：
+     · uploading —— 进度条 + 「上传中 n%」+ 取消键（唯一可点态）
+     · sent      —— 「已发送」，无按钮
+     · failed    —— 错误色边框 + 可判读原因（**未发送**）
+     · cancelled / skipped —— 灰态 + 「已取消/未上传」（终态，无按钮）
+   断行：长文件名必须能折行（`min-width:0` + `overflow-wrap`），窄视口不溢出。 */
+.fm-upload-list {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  margin: 0 16px 6px;
+}
+.fm-upload-list[hidden] { display: none; }
+
+.fm-upload {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: wrap;
+  min-width: 0;
+  padding: 4px 8px;
+  border: 1px solid var(--glass-etched-border);
+  border-radius: 6px;
+  background: var(--glass-etched-bg);
+  font-size: 12px;
+  line-height: 1.5;
+}
+.fm-upload-name {
+  min-width: 0;
+  overflow-wrap: anywhere;
+  color: var(--color-text, #000);
+}
+.fm-upload-size,
+.fm-upload-note {
+  color: var(--color-frame-text-muted, var(--color-text-muted, #888));
+}
+.fm-upload-sent .fm-upload-note { color: var(--color-frame-text-muted, var(--color-text-muted, #888)); }
+.fm-upload-cancelled,
+.fm-upload-skipped { opacity: 0.72; }
+.fm-upload-failed { border-color: var(--color-error); }
+.fm-upload-failed .fm-upload-note { color: var(--color-error); }
+.fm-upload-progress {
+  flex-basis: 100%;
+  height: 3px;
+  border-radius: 2px;
+  background: var(--glass-etched-border);
+  overflow: hidden;
+}
+.fm-upload-progress-bar {
+  height: 100%;
+  background: rgb(var(--sapphire));
+  transition: width 0.2s ease-out;
+}
+.fm-upload-cancel {
+  border: 1px solid var(--glass-control-border);
+  border-radius: 5px;
+  background: transparent;
+  color: var(--color-text, #000);
+  font-size: 11px;
+  padding: 1px 8px;
+  cursor: pointer;
+}
+.fm-upload-cancel:hover { background: var(--color-frame-hover); }
+.fm-upload-cancel:focus-visible { outline: none; box-shadow: 0 0 0 2px var(--glass-control-border); }
+
 /* 附件消息的正文（与占位正文区分：占位文本被隐藏时不留空行） */
 .fm-msg-text { white-space: pre-wrap; }
 .fm-msg-text:not(:last-child) { margin-bottom: 2px; }

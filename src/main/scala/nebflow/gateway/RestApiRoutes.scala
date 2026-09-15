@@ -1511,7 +1511,18 @@ class RestApiRoutes(
           case Some(fs) => fs.declineFriendRequest(requestId).flatMap(friendResultRaw)
       }
 
-    /** 发消息给好友（用户身份——UI 输入框直发，无 agent 权限档位）。body: {body} */
+    /** 发消息给好友（用户身份——UI 输入框直发，无 agent 权限档位）。
+      *
+      * body: `{body, attachments?}`（attachcl 批加性扩面）。
+      *
+      * `attachments` = **已上传**的附件 id 列表（顺序 = 展示顺序），由本路由**逐字**
+      * 转给 `FriendService.sendAsUser` → `NeblinkClient.sendFriendMessage`。🔴 本层
+      * 只搬运 id、**不**判权限（关系闸在服务端 E1/E2/E3）、**不**做上传（字节面 =
+      * `POST /api/attachments`，同一分块驱动）。
+      *
+      * 正文闸的加性放开：`body` 为空**仅当** `attachments` 非空时允许（服务端 §B.4
+      * 有附件时生成占位正文）——这是**拓宽**而不是收紧：无附件时空正文仍逐字 400
+      * （旧行为不变，与群路由的服务端校验序同源）。 */
     case req @ POST -> Root / "friends" / friendUserId / "messages" =>
       withAuth(req) {
         sharedResources.friendService match
@@ -1519,8 +1530,13 @@ class RestApiRoutes(
           case Some(fs) =>
             req.as[Json].flatMap { body =>
               val text = body.hcursor.downField("body").as[String].getOrElse("")
-              if text.isEmpty then BadRequest(Json.obj("error" -> "Missing body".asJson))
-              else fs.sendAsUser(friendUserId, text).flatMap(friendResult)
+              val attachmentIds = body.hcursor
+                .downField("attachments")
+                .as[List[String]]
+                .getOrElse(Nil)
+                .filter(_.nonEmpty)
+              if text.isEmpty && attachmentIds.isEmpty then BadRequest(Json.obj("error" -> "Missing body".asJson))
+              else fs.sendAsUser(friendUserId, text, attachmentIds).flatMap(friendResult)
             }
       }
 
@@ -1634,6 +1650,175 @@ class RestApiRoutes(
                   case other =>
                     BadGateway(Json.obj("error" -> s"attachment download failed upstream: HTTP $other".asJson))
             }
+      }
+
+    /** **附件上传**（attachcl 批，2026-09-16）——网页腿的**唯一**字节入口。
+      *
+      * 上传形态（A1 = ②）：**网页整件一次请求 → 网关 → 复用桌面分块驱动**。
+      * 浏览器把整件放进请求体（`fetch(..., {body: file})`，Chromium 自带流式发送），
+      * 本路由把请求体**流式**落临时件（`streamToFileWithHashBounded`，上限 1 GiB 在
+      * **读的过程中**生效），然后把临时件交给 [[nebflow.neblink.AttachUpload.pushFile]]
+      * —— **与桌面腿同一份** E1+E2×n 链（块大小仍是 `AttachContract.plan` 的 4 MiB，
+      * 单块峰值内存与文件大小无关）。
+      *
+      * 🔴 **硬钉①（禁整件缓冲）机械判据**：本方法体里**不出现** `req.as[Array[Byte]]` /
+      * `bodyText.compile.string` / `req.as[String]` / `req.as[Json]` —— 请求体只以
+      * `req.body`（`Stream[IO, Byte]`）形态被消费一次；单块字节的 `Array[Byte]` 只出现在
+      * [[nebflow.neblink.AttachUpload.pushChunks]] 的 4 MiB `readRange` 里。
+      *
+      * 🔴 **硬钉②（禁假进度 / 失败可见）**：进度只由 [[nebflow.neblink.AttachUpload.Hooks.onChunk]]
+      * 在**服务端确认一块之后**广播（WS 帧 `attach-upload-progress`），因此不存在
+      * 「到点 100%」；成败**一律**落在本次响应的 `ok` 上（失败 ⇒ 非 2xx + 可判读
+      * `code`/`error`，取消 ⇒ `409` + `code:"cancelled"`）——绝不把拒绝塞进 2xx。
+      *
+      * 🔴 **E1 早拒（1 GiB，不得晚于传输前）**：`X-Attach-Size`（缺省用 `Content-Length`）
+      * 超限 ⇒ 在**读请求体之前** `413`；声明缺失/撒谎 ⇒ 流内上限兜底（同样早于任何
+      * 上游字节：落盘阶段就断）。
+      *
+      * 会话寻址 `conversationId` = 好友 userId / 群会话 id（服务端 E1 对这段段做
+      * `friendship_accepted` ∨ `is_member_gated`）⇒ **好友与群同一路由、同一驱动、同一渲染**
+      * （A4：两面同批）。
+      *
+      * 临时件在所有出口删除；取消见下一条路由。
+      */
+    case req @ POST -> Root / "attachments" =>
+      withAuth(req) {
+        sharedResources.friendService match
+          case None => NotFound(Json.obj("error" -> "NebLink not enabled".asJson))
+          case Some(fs) =>
+            val conversationId = req.params.getOrElse("conversationId", "")
+            val name           = req.params.getOrElse("name", "")
+            val rawUploadId    = req.params.getOrElse("uploadId", "")
+            val declared       = req.headers.get(CIString("X-Attach-Size")).map(_.head.value.trim.toLongOption).getOrElse(req.contentLength)
+            if conversationId.trim.isEmpty then
+              BadRequest(Json.obj("ok" -> false.asJson, "code" -> "invalid_argument".asJson, "error" -> "Missing conversationId".asJson))
+            else if name.trim.isEmpty then
+              BadRequest(Json.obj("ok" -> false.asJson, "code" -> "invalid_argument".asJson, "error" -> "Missing name".asJson))
+            else
+              // 早拒三段（全部**先于**读请求体）：声明超限 / 声明非正 / 无声明但 Content-Length 超限。
+              declared match
+                case Some(size) if size > nebflow.dropbox.AttachContract.MaxFileBytes =>
+                  IO.pure(
+                    Response[IO](Status.PayloadTooLarge).withEntity(
+                      Json.obj(
+                        "ok" -> false.asJson,
+                        "code" -> "attach_too_large".asJson,
+                        "actual" -> size.asJson,
+                        "limit" -> nebflow.dropbox.AttachContract.MaxFileBytes.asJson,
+                        "error" -> s"Attachment too large: $size bytes exceeds the ${nebflow.dropbox.AttachContract.MaxFileBytesLabel} limit. Nothing was uploaded.".asJson
+                      )
+                    )
+                  )
+                case Some(size) if size <= 0L =>
+                  IO.pure(
+                    Response[IO](Status.UnprocessableEntity).withEntity(
+                      Json.obj(
+                        "ok" -> false.asJson,
+                        "code" -> "empty_file".asJson,
+                        "error" -> "Attachment gate rejected: empty file (0 bytes) — nothing was uploaded.".asJson
+                      )
+                    )
+                  )
+                case _ =>
+                  // uploadId = 取消键（客户端生成）。缺席 ⇒ 本次上传不可取消（仍可用），
+                  // 服务端生成一枚仅供进度帧关联，**不**登记取消位（禁伪造可取消面）。
+                  val uploadId = if rawUploadId.trim.nonEmpty then rawUploadId.trim else s"anon-${java.util.UUID.randomUUID().toString}"
+                  val cancellable = rawUploadId.trim.nonEmpty
+                  val registry = sharedResources.attachUploads
+                  val hooks = nebflow.neblink.AttachUpload.Hooks(
+                    onChunk = (pr: nebflow.neblink.AttachUpload.Progress) =>
+                      wsHub.broadcast(
+                        // 🔴 帧形状与同族 `dropbox-file-progress` 逐字同构（`type` + 会话键 +
+                        // **嵌套 `msg`**）：载荷在 `msg` 下，前端读点 = `msg.uploadId` 等。
+                        // （本批实测踩到：扁平帧前端读不到 ⇒ 进度永不推进的「看起来对的错」。）
+                        Json.obj(
+                          "type" -> "attach-upload-progress".asJson,
+                          "conversationId" -> conversationId.asJson,
+                          "msg" -> Json.obj(
+                            "uploadId" -> uploadId.asJson,
+                            "conversationId" -> conversationId.asJson,
+                            "name" -> name.asJson,
+                            "chunkIndex" -> pr.chunkIndex.asJson,
+                            "bytesSent" -> pr.bytesSent.asJson,
+                            "totalBytes" -> pr.totalBytes.asJson
+                          )
+                        )
+                      ),
+                    cancelled = if cancellable then registry.isCancelled(uploadId) else IO.pure(false)
+                  )
+                  val run =
+                    if cancellable then registry.register(uploadId) else IO.unit
+                  (run *> fs.uploadStream(conversationId, name, uploadId, req.body, hooks))
+                    .guarantee(if cancellable then registry.release(uploadId) else IO.unit)
+                    .flatMap {
+                      case Right(up) =>
+                        wsHub.broadcast(
+                          Json.obj(
+                            "type" -> "attach-upload-done".asJson,
+                            "conversationId" -> conversationId.asJson,
+                            "msg" -> Json.obj(
+                              "uploadId" -> uploadId.asJson,
+                              "conversationId" -> conversationId.asJson,
+                              "ok" -> true.asJson,
+                              "attachmentId" -> up.attachmentId.asJson
+                            )
+                          )
+                        ) *>
+                          IO.pure(
+                            Response[IO](Status.Created).withEntity(
+                              Json.obj(
+                                "ok" -> true.asJson,
+                                "attachmentId" -> up.attachmentId.asJson,
+                                "name" -> up.name.asJson,
+                                "size" -> up.size.asJson,
+                                "sha256" -> up.sha256.asJson
+                              )
+                            )
+                          )
+                      case Left((code, message)) =>
+                        val status =
+                          if code == "cancelled" then Status.Conflict
+                          else if code == "attach_too_large" then Status.PayloadTooLarge
+                          else if code == "empty_file" || code == "invalid_attachment" then Status.UnprocessableEntity
+                          else if code == "forbidden" then Status.Forbidden
+                          else if code == "not_logged_in" then Status.Forbidden
+                          else if code == "attachment_unsupported" then Status.NotImplemented
+                          else if code == "rate_limited" || code == "quota_exceeded" then Status.TooManyRequests
+                          else if code == "upstream_error" then Status.BadGateway
+                          else Status.BadGateway
+                        wsHub.broadcast(
+                          Json.obj(
+                            "type" -> "attach-upload-done".asJson,
+                            "conversationId" -> conversationId.asJson,
+                            "msg" -> Json.obj(
+                              "uploadId" -> uploadId.asJson,
+                              "conversationId" -> conversationId.asJson,
+                              "ok" -> false.asJson,
+                              "code" -> code.asJson,
+                              "error" -> message.asJson
+                            )
+                          )
+                        ) *> IO.pure(
+                          Response[IO](status).withEntity(
+                            Json.obj("ok" -> false.asJson, "code" -> code.asJson, "error" -> message.asJson)
+                          )
+                        )
+                    }
+      }
+
+    /** **取消在飞上传**（attachcl 批）：把取消位翻起来 ⇒
+      * [[nebflow.neblink.AttachUpload.pushChunks]] 在**下一块发出前**读到它、停止后续
+      * 分块，并以 [[nebflow.neblink.AttachUpload.Failure.Cancelled]] 收尾（**不报完成**）。
+      *
+      * 未登记过的 `uploadId` ⇒ `200 {cancelled:false}`（不新造位、不谎报成功：客户端
+      * 据此如实显示「已结束/无法取消」而不是假的「已取消」）。已登记 ⇒ `{cancelled:true}`
+      * （终态由上传请求自身的响应给出，本路由只负责翻转信号）。
+      */
+    case req @ POST -> Root / "attachments" / uploadId / "cancel" =>
+      withAuth(req) {
+        sharedResources.attachUploads.cancel(uploadId).flatMap { flipped =>
+          Ok(Json.obj("ok" -> true.asJson, "cancelled" -> flipped.asJson, "uploadId" -> uploadId.asJson))
+        }
       }
 
     /** 附件接收完毕回执（补件批 4b1 · §B.1 E4 / §F.1b）。

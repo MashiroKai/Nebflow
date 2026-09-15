@@ -51,6 +51,10 @@ import {
 // 预览入口 = attachmentPreview.js（判据 + Canvas 渲染腿都在那边）；本模块只做接线 +
 // 降级文案（禁在此再写第二套类型判据 / 第二套取字节路）。
 import { previewBlob, previewLocalPath, canPreviewLocalPath, isPreviewOpen } from './attachmentPreview.js';
+// 附件**上传**（attachcl 批，作者 2026-09-16 07:36）：好友窗与群窗的发送面**唯一**
+// 实现（上传链 + 闸位 + 上传卡渲染都在那边 ⇒ 两面不各写一套）。设备面**不**经此
+// （设备腿仍走 dropbox.js 单点，零行为变化）。
+import { sendFiles, attachAvailable, renderUploadCards, detachUploadCards, clearSettledUploads } from './attachUpload.js';
 
 let conversations = [];
 let friendsCache = [];          // accepted friends — source of truth for §3.3 gate
@@ -555,6 +559,10 @@ function closeChat() {
   // U-b：窗口一关，在飞乐观项的节点即脱离文档 ⇒ 登记随之作废（在飞 POST 的
   // 续接腿会因 `node.isConnected === false` 自动走最小回落）。
   pendingSends = [];
+  // 附件上传卡：解除挂载（进度帧不再画到已关闭的窗上），并清掉已终态卡片
+  // （在飞件保留 —— 上传不因关窗而静默中止，其终态由卡片/后续开窗承接）。
+  if (openConvId) clearSettledUploads(openConvId);
+  detachUploadCards();
   openConvId = null;
   renderList(); // refresh aria-selected + any unread changes
   // A18: focus return — the triggering row may have been detached by the
@@ -971,9 +979,15 @@ function renderChatModal(conv) {
   //   材质/几何/状态一律由发送族块覆盖，不取 `.cfg-btn` 的灰档。
   const sendBtn = el('button', 'cfg-btn cfg-btn-primary fm-send-btn', t('messages.send'));
   bar.appendChild(input);
-  // 附件发送入口（卡 D3：设备面**保留**纸夹 + 拖拽 —— 好友窗无此入口是既有形态，
-  // 不是缺陷；这里只把设备面既有的发送能力搬到新窗，闸位/队列仍走 dropbox.js 单点）。
+  // 附件发送入口。两种形态**共用同一枚纸夹**（`fm-attach-btn` + `paperclip` 图标），
+  // 靠会话面而非两套控件区分（attachcl 批，作者 2026-09-16 07:36）：
+  //   · 设备面（既有，**零行为变化**）：闸位/队列/传输全走 dropbox.js 单点；
+  //   · 好友 / 群面（本批**放开**）：整件一次请求 → 网关 → 复用桌面分块驱动
+  //     （唯一实现 = attachUpload.js；闸位常量同源 = dropbox.js 导出的同一组）。
+  // 🔴 两面各写一套入口/渲染器是本批明令禁止的形态 ⇒ 下面按 `attachAvailable(conv)`
+  //    一个判据分流，二者互斥，设备面走不到新腿。
   let deviceFileInput = null;
+  let friendFileInput = null;
   if (conv.kind === 'device') {
     deviceFileInput = document.createElement('input');
     deviceFileInput.type = 'file';
@@ -993,6 +1007,25 @@ function renderChatModal(conv) {
     attachBtn.addEventListener('click', () => deviceFileInput.click());
     bar.appendChild(attachBtn);
     bar.appendChild(deviceFileInput);
+  } else if (attachAvailable(conv)) {
+    friendFileInput = document.createElement('input');
+    friendFileInput.type = 'file';
+    friendFileInput.multiple = true;
+    friendFileInput.style.display = 'none';
+    friendFileInput.addEventListener('change', () => {
+      if (friendFileInput.files && friendFileInput.files.length > 0) {
+        void sendAttachCurrent(conv, friendFileInput.files);
+      }
+      friendFileInput.value = '';
+    });
+    const attachBtn = el('button', 'icon-btn dropbox-attach-btn fm-attach-btn');
+    attachBtn.type = 'button';
+    attachBtn.title = t('dropbox.attachFile');
+    attachBtn.setAttribute('aria-label', t('dropbox.attachFile'));
+    attachBtn.innerHTML = '<i data-lucide="paperclip"></i>';
+    attachBtn.addEventListener('click', () => friendFileInput.click());
+    bar.appendChild(attachBtn);
+    bar.appendChild(friendFileInput);
   }
   bar.appendChild(sendBtn);
   modal.appendChild(bar);
@@ -1031,9 +1064,15 @@ function renderChatModal(conv) {
       sendDeviceFiles(conv.device.deviceId, e.dataTransfer.files);
       return;
     }
-    // 群窗同款提示（加性键，不改既有好友窗文案）：本腿附件面 = 接收/下载渲染，
-    // 无发送入口（分发器 2026-09-15 11:32 A③ 翻案口径：人群附件既有发送面语义不变）。
-    modalToast(t(conv.kind === 'group' ? 'messages.attachUnsupportedGroup' : 'messages.attachUnsupported'));
+    // 好友 / 群（attachcl 批**放开**）：拖放与纸夹**同一实现**（同一 `sendAttachCurrent`，
+    // 禁两条腿各写一套闸/上传/渲染）。放开前这里回的是
+    // 「暂无附件发送入口」提示（`messages.attachUnsupported[Group]`）—— 该提示随本批
+    // **被取代**（键保留仅为兼容旧读数，见 i18n 注记）。
+    if (attachAvailable(conv)) {
+      void sendAttachCurrent(conv, e.dataTransfer.files);
+      return;
+    }
+    modalToast(t('messages.attachUnsupported'));
   });
 
   const doSend = () => (conv.kind === 'device' ? sendDeviceCurrent(conv) : sendCurrent(conv));
@@ -1822,6 +1861,10 @@ function renderMessages(msgs, { stickBottom = true } = {}) {
     updateLoadMoreRow();
     renderFlowStatus(msgs.length > 0, false); // 内容到位 ⇒ 撤加载态；确为空 ⇒ 换空态
     keyedDiff(flow, msgs, conv);
+    // 附件上传卡（attachcl 批）：**好友窗与群窗的唯一挂载点**（本函数服务两种会话面）
+    // ⇒ 两面共用同一渲染器（`attachUpload.renderUploadCards`），设备窗不经此
+    // （设备面走自己的 dropbox 传输链与状态渲染，零行为变化）。
+    if (attachAvailable(conv)) renderUploadCards(flow, conv.conversationId);
     createIconsIn(flow);
   };
   if (stickBottom) {
@@ -2249,6 +2292,43 @@ function resortAndRender() {
   conversations.sort((a, b) =>
     (toEpochMs(b.lastMessage?.createdAt) || 0) - (toEpochMs(a.lastMessage?.createdAt) || 0));
   renderList();
+}
+
+// ── 附件发送（attachcl 批）：好友窗与群窗的**同一**入口 ────────────────
+/**
+ * 纸夹键与拖放面**共用**的发送链（两面同一实现；见 `attachUpload.sendFiles`）。
+ *
+ * 语义要点（与设备面同族、与任务书硬钉对齐）：
+ *  · **闸在最前**：`sendFiles` 内部先过本地闸（件数 ≤9 / 单件 ≤1 GiB / 非空件），
+ *    超限**可见拒绝**并回显实际值 —— 与网关的早拒是两道闸，且都**不晚于传输前**；
+ *  · **进度可信**：卡片进度只随网关「服务端已确认一块」的 WS 帧推进（禁假进度）；
+ *  · **失败可见**：上传未成功 ⇒ **消息不发**、卡片就地显示可判读文案；正文**不丢**
+ *    （仍在输入框里）；
+ *  · **取消**：卡片上的取消键 ⇒ 停后续分块 + 终态「已取消」（禁报成完成）。
+ * @returns {Promise<void>}
+ */
+async function sendAttachCurrent(conv, fileList) {
+  if (!modalEls || !conv) return;
+  const text = modalEls.input.value.trim();
+  const res = await sendFiles(conv, fileList, text);
+  if (!res.ok) {
+    modalToast(res.reason || t('messages.attachFailed'));
+    return; // 正文留在输入框（与 sendCurrent 的失败面同语义）
+  }
+  // 发送成功 ⇒ 清输入框 + 走既有重取链（服务端行是唯一事实源，禁本地乐观气泡）。
+  modalEls.input.value = '';
+  syncComposerSend();
+  await refreshAfterAttachSend(conv);
+}
+
+/** 附件消息发送后的可见刷新（复用既有增量补拉链 = 唯一取数实现，禁另写尾窗重取）。
+ *  服务端会为纯附件消息生成占位正文 ⇒ 补拉到的服务端行即权威呈现（含附件卡）。 */
+async function refreshAfterAttachSend(conv) {
+  try {
+    if (conv.kind === 'group') await refreshGroups();
+    await syncConversation(conv.conversationId, { pages: MAX_SYNC_PAGES, trigger: 'attach_send' });
+    await refreshConversations();
+  } catch { /* 重取失败不改终态：卡片已显示「已发送」，服务端行由后续帧/刷新补齐 */ }
 }
 
 // ── friend_event (arch §6.2) ─────────────────────────────
