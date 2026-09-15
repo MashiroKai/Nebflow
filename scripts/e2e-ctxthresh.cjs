@@ -27,6 +27,9 @@
 //   U5 作用域文案在场：「仅本 Nebula 窗口（其他 agent / 节点不受影响）」
 //   U6 非 Nebula 面零影响：非主会话回显帧不改变环/面板；出站帧只载主会话 id
 //   U7 钳制：v ≤ 15% 禁选（拖到最左 ⇒ 出站 ≥16%）；v < 当前用量 ⇒ 钳回（用量 40% ⇒ ≥40%）
+//   U8 90% 硬顶边缘态（root 2026-09-15 逐字）：usage ≥ 90% ⇒ 无可选区间 ⇒ 「已超限」态（中/英）
+//      + 滑杆真禁用 + 保持默认值（不静默改值）+ 三腿零出站（拖动 / 保存 / 复位）+ 出站值永不 > 90%
+//   U9 缺字段回显帧（旧数据）⇒ 降级展示、不崩
 
 const { chromium } = require('playwright');
 const { readFileSync } = require('node:fs');
@@ -328,6 +331,119 @@ function infoFrame(sessionId, ratio, window = WINDOW) {
     return ids.filter((i) => !known.includes(i));
   });
   check('零新增 header 叶子控件', headerLeaves.length === 0, `unknown ids=${JSON.stringify(headerLeaves)}`);
+
+  // ── U8 90% 硬顶边缘态（usage ≥ 90% ⇒ 无可选区间；root 2026-09-15 逐字）──
+  const setUsage = async (tokens) => {
+    await df({ type: 'usageUpdate', sessionId: ROOT_SID, inputTokens: tokens, contextWindow: WINDOW, model: 'qa-model' });
+    await page.waitForTimeout(120);
+  };
+  const reopenPanel = async () => {
+    await page.click('#header-model-info');
+    await page.click('#header-model-info');
+    await page.waitForTimeout(150);
+    if ((await sent()).some((m) => m.type === 'getCompactThreshold')) await df(infoFrame(ROOT_SID, null));
+    await page.waitForTimeout(150);
+  };
+  const uiState = () => page.evaluate(() => {
+    const tr = document.getElementById('ctxthresh-track');
+    const th = document.getElementById('ctxthresh-thumb');
+    const num = document.getElementById('ctxthresh-number');
+    return {
+      trackPE: tr ? getComputedStyle(tr).pointerEvents : null,
+      thumbPE: th ? getComputedStyle(th).pointerEvents : null,
+      trackAria: tr ? tr.getAttribute('aria-disabled') : null,
+      thumbAria: th ? th.getAttribute('aria-disabled') : null,
+      numDisabled: num ? num.disabled : null,
+      numMin: num ? num.min : null,
+      numMax: num ? num.max : null,
+      saveDisabled: document.getElementById('ctxthresh-save-btn')?.disabled ?? null,
+      resetDisabled: document.getElementById('ctxthresh-reset-btn')?.disabled ?? null,
+    };
+  });
+
+  // (1) usage = 95%（> 90%）⇒ 超限档
+  await setUsage(950000);
+  await reopenPanel();
+  const pctOverBefore = await panelText('ctxthresh-pct');
+  const hint95 = await panelText('ctxthresh-hint');
+  check('U8a 超限态文案（zh）：usage 95% ⇒ 面板显示「已超限」', hint95.includes('已超限'), `hint="${hint95}"`);
+  check('U8a2 超限档不出倒挂区间（无 95%–90% 形态）', !/(95|90)\s*%\s*[–-]\s*90\s*%/.test(hint95), `hint="${hint95}"`);
+  const s95 = await uiState();
+  check('U8b 滑杆真禁用：track/thumb pointer-events:none + aria-disabled + 数字框/保存/复位 disabled',
+    s95.trackPE === 'none' && s95.thumbPE === 'none' && s95.trackAria === 'true' && s95.thumbAria === 'true' &&
+    s95.numDisabled === true && s95.saveDisabled === true && s95.resetDisabled === true, JSON.stringify(s95));
+
+  // 三腿（拖动 / 保存 / 复位）在超限档必须零出站；复位腿与保存腿用程序化事件绕过 disabled 属性，
+  // 以验证「handler 闸」本身（不只是 attribute）。
+  await clearSent();
+  await page.mouse.move(trackBox.x + 20, trackBox.y);
+  await page.mouse.down();
+  await page.mouse.move(trackBox.x + trackBox.w - 4, trackBox.y, { steps: 4 });
+  await page.mouse.up();
+  const gateEv = await page.evaluate(() => {
+    const tr = document.getElementById('ctxthresh-track');
+    tr.dispatchEvent(new MouseEvent('mousedown', { bubbles: true, clientX: tr.getBoundingClientRect().left + 200 }));
+    const dragging = tr.classList.contains('dragging');
+    const num = document.getElementById('ctxthresh-number');
+    num.disabled = false;
+    num.value = '95';
+    num.dispatchEvent(new Event('change', { bubbles: true }));
+    num.value = '50';   // 反例腿：低于当前用量（95%）的值 —— 旧钳制链会把它抬成 95%（出站 > 90%）
+    num.dispatchEvent(new Event('change', { bubbles: true }));
+    const save = document.getElementById('ctxthresh-save-btn');
+    save.disabled = false;
+    save.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+    const reset = document.getElementById('ctxthresh-reset-btn');
+    reset.disabled = false;
+    reset.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+    return { dragging, msg: (document.getElementById('ctxthresh-msg')?.textContent || '').trim() };
+  });
+  await page.waitForTimeout(250);
+  const outFrames = (await sent()).filter((m) => m.type === 'setCompactThreshold');
+  check('U8d 超限档三腿零出站：拖动/保存/复位 ⇒ 0 帧 setCompactThreshold',
+    outFrames.length === 0 && gateEv.dragging === false, `frames=${JSON.stringify(outFrames)} dragging=${gateEv.dragging}`);
+  check('U8d2 非静默：超限拦截给出「已超限」提示', gateEv.msg.includes('已超限'), `msg="${gateEv.msg}"`);
+  const pctOverAfter = await panelText('ctxthresh-pct');
+  check('U8c 保持默认值（不静默改值）：面板显示值不变', pctOverAfter === pctOverBefore, `before="${pctOverBefore}" after="${pctOverAfter}"`);
+
+  // (2) usage = 90%（边界闭端 ≥）⇒ 同为超限档
+  await setUsage(900000);
+  await reopenPanel();
+  const hint90 = await panelText('ctxthresh-hint');
+  check('U8e 边界：usage = 90% ⇒ 同为超限档', hint90.includes('已超限'), `hint="${hint90}"`);
+
+  // (3) usage = 89%（< 90%）⇒ 区间 [max(15%, 用量), 90%] 不回归（第三例）
+  await setUsage(890000);
+  await reopenPanel();
+  const s89 = await uiState();
+  const hint89 = await panelText('ctxthresh-hint');
+  check('U8f < 90% 侧区间不回归：usage 89% ⇒ 区间 [89%, 90%] 且滑杆未禁用',
+    s89.numMin === '89' && s89.numMax === '90' && s89.numDisabled === false && s89.trackPE !== 'none' &&
+    hint89.includes('89.0%') && !hint89.includes('已超限'), `hint="${hint89}" state=${JSON.stringify(s89)}`);
+
+  // (4) 全局：本会话全部出站帧 ratio ≤ 90%（含 usage > 90% 场景）
+  const overFrames = (await page.evaluate(() => window.__wsSent || []))
+    .filter((m) => m.type === 'setCompactThreshold' && typeof m.ratio === 'number' && m.ratio > 0.90);
+  check('U8g 出站值永不 > 90%：全帧 ratio ≤ 0.90', overFrames.length === 0, `over=${JSON.stringify(overFrames)}`);
+
+  // (5) 英文侧（同一渲染分支、en 词典）
+  await page.evaluate(async () => { (await import('/js/i18n.js')).setLocale('en'); });
+  await setUsage(950000);
+  await df(infoFrame(ROOT_SID, null));
+  await page.waitForTimeout(200);
+  const hintEn = await panelText('ctxthresh-hint');
+  check('U8h 超限态文案（en）：面板渲染 Over limit', /over limit/i.test(hintEn), `hint="${hintEn}"`);
+
+  // ── U9 缺字段回显帧（旧数据）⇒ 降级展示、不崩 ──
+  await df({ type: 'compactThresholdInfo', sessionId: ROOT_SID });
+  await page.waitForTimeout(200);
+  const degraded = await page.evaluate(() => {
+    const p = document.getElementById('ctxthresh-panel');
+    return { panel: !!p, abs: document.getElementById('ctxthresh-abs')?.textContent || '',
+      hint: document.getElementById('ctxthresh-hint')?.textContent || '' };
+  });
+  check('U9 缺字段回显帧 ⇒ 降级展示不崩（面板仍在、文案非空）',
+    degraded.panel === true && degraded.hint.length > 0, JSON.stringify(degraded));
   } // end if (u1) —— 面板判据块
 
   const pageErrors = await page.evaluate(() => window.__shotErrors || []);

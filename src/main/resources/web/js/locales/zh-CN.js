@@ -1328,5 +1328,6 @@ export default {
   'ctxthresh.isDefault': '当前为默认值',
   'ctxthresh.defaultNote': '默认 {v}',
   'ctxthresh.hint': '范围 {min}%–{max}%；下限不低于当前用量（{usage}%）',
+  'ctxthresh.overLimit': '已超限 — 当前用量 {usage}%：无可选区间，滑杆已锁定（请先压缩）',
   'ctxthresh.failed': '设置失败',
 };

@@ -1335,5 +1335,6 @@ export default {
   'ctxthresh.isDefault': 'currently default',
   'ctxthresh.defaultNote': 'default {v}',
   'ctxthresh.hint': 'Range {min}%–{max}%; floor never below current usage ({usage}%)',
+  'ctxthresh.overLimit': 'Over limit — usage {usage}%: no selectable range, slider locked (compress first)',
   'ctxthresh.failed': 'Failed to apply',
 };
