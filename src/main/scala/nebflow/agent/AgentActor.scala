@@ -2028,6 +2028,8 @@ object AgentActor extends AgentCore with AgentSession:
                 .handleErrorWith(e =>
                   NebflowLogger.forName("nebflow.agent").warn(s"Persist session failed: ${e.getMessage}")
                 )
+              // F2@freeze：冻结分支同样在 drain 后落队列快照（崩溃重放禁重复注入已消费队首）
+              _ <- persistQueues(state.sessionId, updatedState.execution)
               _ <- IO {
                 logAgentEvent(
                   agentDef,
