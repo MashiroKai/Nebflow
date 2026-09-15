@@ -10,6 +10,7 @@ import nebflow.core.*
 import nebflow.core.ask.AskService
 import nebflow.core.compact.*
 import nebflow.core.flow.TeamSessionRegistry
+import nebflow.core.project.NotificationHeader
 import nebflow.core.tools.AskUserQuestionTool
 import nebflow.core.tools.BgTaskRegistry
 import nebflow.llm.{AllProvidersDownTimeout, Fallback, FallbackExhaustedError, RecoverableAbort}
@@ -474,7 +475,10 @@ object AgentActor extends AgentCore with AgentSession:
         case Some(src) =>
           emitInjectedUserEvent(
             resources,
-            state.wsSend, state.sessionId, imm.text, src, imm.eventType, imm.sender, imm.senderTeam, imm.delivery
+            state.wsSend, state.sessionId, imm.text, src, imm.eventType, imm.sender, imm.senderTeam, imm.delivery,
+            // 气泡四段式统一批（2026-09-15）：PROJECT 段链首级随件转发（发送方所属
+            // 项目），② 级 = 本会话所属项目。
+            project = imm.project, sessionProject = state.projectName
           )
         case None => IO.unit
     }
@@ -485,7 +489,9 @@ object AgentActor extends AgentCore with AgentSession:
             resources,
             state.wsSend, state.sessionId, ui.text, src, ui.eventType, ui.sender, ui.senderTeam, ui.delivery,
             // 收件判别字段随 UserInput 同源转发（mailbadge 批 2026-09-13）。
-            ui.intake
+            intake = ui.intake,
+            // 气泡四段式统一批（2026-09-15）：PROJECT 段链首级/② 级（同上）。
+            project = ui.project, sessionProject = state.projectName
           )
         case None => IO.unit
     }
@@ -531,6 +537,13 @@ object AgentActor extends AgentCore with AgentSession:
       * 只做**呈现判别**：前端标签优先取它、缺席回落 `source` 表；`source` 的
       * 会计语义（`"task"` = 桥的消费计数口径）不受任何影响。 */
     intake: Option[String] = None,
+    /** **发送方所属项目**（「气泡四段式统一」批 2026-09-15）：四段式 header 第 2 段的
+      * 链首级（构造点置位）。`None` ⇒ 走 `sessionProject`（本项目）⇒
+      * [[NotificationHeader.RootProject]]（跨 root 直投 / 根域）。 */
+    project: Option[String] = None,
+    /** 接收会话所属项目（= `AgentState.projectName`）：PROJECT 段落回链第 ② 级。
+      * 由调用点逐处传入（本方法不读 `state`——沿用既有「state 字段显式传参」纪律）。 */
+    sessionProject: Option[String] = None,
     waitingForBatch: Boolean = false
   )(using ctx: ActorContext[AgentCommand]): IO[Unit] =
     sessionId.fold(IO.unit) { sid =>
@@ -548,13 +561,34 @@ object AgentActor extends AgentCore with AgentSession:
       // mailbadge 批（2026-09-13，选项 C）：收件通道判别字段。`source` 段逐字节不动
       // （D-5 口径：值不改名），本段只加一枚**可选**展示判别键。
       val withIntake = intake.fold(withDelivery)(i => withDelivery.deepMerge(Json.obj("intake" -> i.asJson)))
+      // 气泡四段式统一批（2026-09-15，作者 12:33 令）：**唯一格式化调用点**——
+      // `NotificationHeader.header` 是全仓唯一的 header 组装实现（引擎单一来源），
+      // 覆盖 `BackendNamedSources` 全部源（含 CHAIN/NODE/MAIL）。产出的 header 同时
+      // 进 WS 帧（前端逐字渲染，禁二次拼接）与落盘（.ui.json 历史行同源 ⇒ live 与
+      // 历史恢复逐字节一致）。
+      //   PROJECT 段落回链：① `project`（构造点 = 发送方所属项目）→ ②
+      //   `sessionProject`（接收会话所属项目）→ ③ `NotificationHeader.RootProject`
+      //   （跨 root 直投 / 根域）。三级都取不到的场合不存在（③ 恒有值）。
+      //   词表外的 source（在飞批新增源，如 device-mail 批的 deviceMail）⇒ None ⇒
+      //   **帧不带 header 键**，前端回落既有 `injectedSourceLabel`（逐字节不变）。
+      val headerOpt =
+        NotificationHeader.header(
+          source,
+          intake,
+          project.orElse(sessionProject).orElse(Some(NotificationHeader.RootProject)),
+          sender,
+          senderTeam,
+          eventType
+        )
+      val withHeader =
+        headerOpt.fold(withIntake)(h => withIntake.deepMerge(Json.obj("header" -> h.asJson)))
       // issue #31 Fix C (2026-08-20): HOLD 分支的完成气泡标注「等待同批任务」——
       // 把「COMPLETED 但父不动」从 bug 观感变成可理解的等待状态（前端展示
       // 待 Frontend 消费此字段）。顺修既有 bug：此处原发 withTeam，
       // withDelivery 被算出后丢弃（delivery 字段从未到达前端）。
       val withWaiting =
-        if waitingForBatch then withIntake.deepMerge(Json.obj("waitingForBatch" -> true.asJson))
-        else withIntake
+        if waitingForBatch then withHeader.deepMerge(Json.obj("waitingForBatch" -> true.asJson))
+        else withHeader
       // bluebubble 批（2026-09-12）：注入行的落盘**在唯一发射点收口**。
       // 本方法是全仓唯一的 injected user 帧发射点（grep `"injected" -> true` 单命中），
       // 故它也是这条 .ui.json 记录的唯一写者——此前落盘依赖 WS 录制层
@@ -584,7 +618,11 @@ object AgentActor extends AgentCore with AgentSession:
                 senderTeam = senderTeam,
                 delivery = delivery,
                 // 与帧同源（同一批名字）：历史恢复路径靠这条落盘字段重建标签。
-                intake = intake
+                intake = intake,
+                // 气泡四段式统一批（2026-09-15）：**已渲染 header 随行落盘**——
+                // 历史恢复路径逐字渲染同一串（引擎单一来源；前端不再二次拼接）。
+                // 词表外 source ⇒ None ⇒ 不落键（旧读法逐字不变，前端走旧回落）。
+                header = headerOpt
               ))
             )
             .handleErrorWith(e => logger.warn(s"injected user event persist failed: ${e.getMessage}"))
@@ -885,7 +923,7 @@ object AgentActor extends AgentCore with AgentSession:
   )(using ctx: ActorContext[AgentCommand]): Behavior[AgentCommand] =
     Behaviors.receiveMessage:
 
-      case AgentCommand.UserInput(text, replyTo, clientMessageId, blocks, chatWidth, source, sender, senderTeam, delivery, eventType, intake, fromUser) =>
+      case AgentCommand.UserInput(text, replyTo, clientMessageId, blocks, chatWidth, source, sender, senderTeam, delivery, eventType, intake, fromUser, project) =>
         val (isDuplicate, dedupedState) = checkDuplicate(clientMessageId, state)
         if isDuplicate then
           logger.info(s"Dropping duplicate message with clientMessageId=${clientMessageId.getOrElse("")}")
@@ -938,7 +976,10 @@ object AgentActor extends AgentCore with AgentSession:
                 senderTeam = senderTeam,
                 delivery = delivery,
                 // idle 直投腿（mailbadge 批）：收件判别字段随件同源落地。
-                intake = intake
+                intake = intake,
+                // 气泡四段式统一批（2026-09-15）：PROJECT 段链首级/② 级。
+                project = project,
+                sessionProject = stateWithWidth.projectName
               )
             case None => IO.unit
           for
@@ -991,7 +1032,7 @@ object AgentActor extends AgentCore with AgentSession:
           else IO.unit
         for
           _ <- sessionBusyIO2
-          _ <- emitInjectedUserEvent(resources, state.wsSend, state.sessionId, input, "skill", None)
+          _ <- emitInjectedUserEvent(resources, state.wsSend, state.sessionId, input, "skill", None, sessionProject = state.projectName)
           result <- pipeLlmCall(agentDef, resources, depth, parentRef, processingState, None, DispatchCause.UserWake)
         yield result
 
@@ -1121,6 +1162,7 @@ object AgentActor extends AgentCore with AgentSession:
                 s,
                 Some(eventType),
                 agentName,
+                sessionProject = state.projectName,
                 waitingForBatch = waiting
               )
             case None => IO.unit
@@ -1295,8 +1337,8 @@ object AgentActor extends AgentCore with AgentSession:
       // ② (2026-09-11): `fromUser` is carried across the conversion — dropping it
       // here is exactly what made a real human text land in the
       // `clientMessageId=None ⇒ source="tool"` fallback (diagnosis §1.4 idle row).
-      case AgentCommand.ImmediateInput(text, blocks, source, eventType, sender, senderTeam, delivery, fromUser) =>
-        for _ <- ctx.self ! AgentCommand.UserInput(text, None, None, blocks, 0, source, sender, senderTeam, delivery, eventType, None, fromUser)
+      case AgentCommand.ImmediateInput(text, blocks, source, eventType, sender, senderTeam, delivery, fromUser, project) =>
+        for _ <- ctx.self ! AgentCommand.UserInput(text, None, None, blocks, 0, source, sender, senderTeam, delivery, eventType, None, fromUser, project)
         yield idle(agentDef, resources, depth, parentRef, state)
 
       // Queued mail arriving in idle — drain immediately as a new turn.
@@ -1664,7 +1706,9 @@ object AgentActor extends AgentCore with AgentSession:
                     src,
                     imm.eventType,
                     imm.sender,
-                    imm.senderTeam
+                    imm.senderTeam,
+                    project = imm.project,
+                    sessionProject = state.projectName
                   )
                 )
               }.sequence_
@@ -1955,7 +1999,9 @@ object AgentActor extends AgentCore with AgentSession:
               imm.eventType,
               imm.sender,
               imm.senderTeam,
-              imm.delivery
+              imm.delivery,
+              project = imm.project,
+              sessionProject = state.projectName
             )
           )
         }.sequence_
@@ -2432,7 +2478,7 @@ object AgentActor extends AgentCore with AgentSession:
         val bubbleIO = visSource match
           case Some(s) =>
             val agentName = metadata("agentName").flatMap(_.asString)
-            emitInjectedUserEvent(resources, state.wsSend, state.sessionId, payload, s, Some(eventType), agentName)
+            emitInjectedUserEvent(resources, state.wsSend, state.sessionId, payload, s, Some(eventType), agentName, sessionProject = state.projectName)
           case None => IO.unit
         bubbleIO *>
           emitStream(
@@ -3355,7 +3401,11 @@ object AgentActor extends AgentCore with AgentSession:
                     _ <- emitInjectedUserEvent(
                       resources,
                       state.wsSend, state.sessionId, item.message,
-                      "mail-queue", Some("queue"), Some(item.from), None, Some("queue")
+                      "mail-queue", Some("queue"), Some(item.from), None, Some("queue"),
+                      // 气泡四段式统一批（2026-09-15）：legacy 排空腿的 source =
+                      // `"mail-queue"` 不在 KIND 词表内 ⇒ 本腿恒不产 header（旧呈现
+                      // 逐字保持）。PROJECT 段落回级别照传，未来若纳入词表即生效。
+                      sessionProject = state.projectName
                     )
                     _ <- ctx.forkTurn(
                       (resources.sessionStore.saveMessagesForSession(sid, messagesWithQueue) *>
@@ -3823,7 +3873,7 @@ object AgentActor extends AgentCore with AgentSession:
             else
               IO.pure(frozen(agentDef, resources, depth, parentRef, state, replyTo, resumeAt, reason, retryCount, escalation))
 
-      case AgentCommand.UserInput(text, replyTo2, clientMessageId, blocks, chatWidth, source, sender, senderTeam, delivery, eventType, intake, fromUser) =>
+      case AgentCommand.UserInput(text, replyTo2, clientMessageId, blocks, chatWidth, source, sender, senderTeam, delivery, eventType, intake, fromUser, project) =>
         if clientMessageId.isDefined then
           // ★ 用户唤醒（B5）：注入用户消息到冻结中的上下文，立即 dispatch——
           // 冻结前组装好的工具结果 + 用户新指令同轮喂给 LLM。dedup 防止 WS
@@ -3910,7 +3960,7 @@ object AgentActor extends AgentCore with AgentSession:
           _ <- currentNextChange(resources).flatMap { nextChange =>
             emitStream(state.wsSend, AgentStreamEvent.Resumed(nextChange), isSubagent = depth > 0, state.sessionId) *> updateRegistryFrozenReason(resources, state.sessionId, None)
           }
-          _ <- emitInjectedUserEvent(resources, state.wsSend, state.sessionId, input, "skill", None)
+          _ <- emitInjectedUserEvent(resources, state.wsSend, state.sessionId, input, "skill", None, sessionProject = state.projectName)
           result <- pipeLlmCall(agentDef, resources, depth, parentRef, processingState, None, DispatchCause.UserWake)
         yield result
 

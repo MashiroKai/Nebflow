@@ -2675,7 +2675,9 @@ onMessage('user', (msg, view) => {
     saveMsg({ type: 'user', text: msg.text, injected: true, source: msg.source || null, eventType: msg.eventType || null, sender: msg.sender || null, senderTeam: msg.senderTeam || null, delivery: msg.delivery || null, intake: msg.intake || null }, sid);
   }
   if (sid === state.activeSessionId && view) {
-    renderInjectedBubble(msg.text, msg.source, msg.timestamp, msg.eventType, msg.sender, msg.senderTeam, msg.delivery, msg.intake);
+    // 气泡四段式统一批（2026-09-15）：帧上的 `header`（引擎已渲染）逐字透传——
+    // 缺席（旧帧 / 词表外 source）时 `buildInjectedRow` 回落既有标签组装。
+    renderInjectedBubble(msg.text, msg.source, msg.timestamp, msg.eventType, msg.sender, msg.senderTeam, msg.delivery, msg.intake, msg.header);
     smartScroll();
   }
 });
