@@ -875,7 +875,7 @@ function buildCreateGroupEntry() {
 
 /** 入站群邀请行（accept/decline = POST /api/groups/{id}/invites/{inviteId}/accept|decline，
  *  主卡:249 接口清单逐字）。行内消费字段 = **契约为准**（GroupInviteEntry，
- *  model.rs:819-829 经 friendsApi.normalizeInviteRow 归一）：群行键 `groupId`、
+ *  model.rs:872-880 经 friendsApi.normalizeInviteRow 归一）：群行键 `groupId`、
  *  群名 `title`、邀请人 `inviter`（平铺 FriendPublic → 内部 {userId,neblinkId,name,
  *  avatarUrl}）。旧的多键猜测读法（groupName/conversationId/inviterId）已删——
  *  承载件里没有这些键，猜读只会把 undefined 渲染成 "undefined"。 */

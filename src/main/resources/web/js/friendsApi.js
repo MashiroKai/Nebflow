@@ -99,11 +99,11 @@ function normalizeSeed(raw) {
     outgoing: s.outgoing || [],     // [{requestId,to:{...},note,status}]
     conversations: s.conversations || [], // [{conversationId,friend:{userId,neblinkId,name,avatarUrl},lastMessage,unreadCount}]
     messages: s.messages || {},     // conversationId -> [{id,senderId,kind,body,createdAt,agentSent?}]
-    // 群会话行 = **契约 GroupSummary 形态**（承载件 model.rs:740-757，rename_all=camelCase）：
+    // 群会话行 = **契约 GroupSummary 形态**（承载件 model.rs:773-798，rename_all=camelCase）：
     // [{groupId,title,role,memberCount,lastMessage,unreadCount,lastMessageId,createdAt}]
     // ——mock seed 与真机 wire **同一形态**（mock 不是第二套契约）。
     groups: s.groups || [],
-    // 群邀请行 = 契约 GroupInviteEntry 形态（model.rs:819-829）：
+    // 群邀请行 = 契约 GroupInviteEntry 形态（model.rs:872-880）：
     // [{inviteId,groupId,title,inviter:<FriendPublic>,createdAt}]；status/inviteeId
     // 是 mock 侧记账键（真机由服务端 `status='pending'` + invitee 过滤，wire 不下发）。
     groupInvites: s.groupInvites || [],
@@ -598,19 +598,21 @@ export async function markConversationRead(conversationId, lastReadMessageId) {
 // 网关路由草案「请求体只读 body 一个字段」先例）⇒ 本层群函数一律不发 origin，
 // 网关/服务端按缺省落 'user'。
 //
-// 🔴 字段面真源 = 跨仓 neblink-server `main`@`2045a0cbf1854a6b745ae21368146309b87ca0e5`
-// 的 `src/groups.rs`（承载件，sha256 b1db7bd7ce0207b827c7f356ed08dc4529ede4bab78abb2cd8fb99ab104cf0e6）
-// + 其 wire 模型 `src/model.rs`。本层**逐字段按承载件实读形态消费**（本批
-// gwclient 对齐）：
-//   · 群行键   = `groupId`（GroupSummary.group_id，model.rs:743；**无 conversationId/id**）；
-//   · 群行角色 = `role`（model.rs:747，非 myRole）；
-//   · 成员信封 = `{members:[GroupMemberEntry]}`（model.rs:774-776），成员档案 =
-//     `#[serde(flatten)] FriendPublic`（userId/username/display_name/avatar
-//     顶层平铺，**无 profile 嵌套**，model.rs:764-769）；
-//   · 邀请发现 = GET /api/groups/invites → `{incoming:[GroupInviteEntry]}`（groups.rs:182-200）；
-//   · 邀请入参 = `{userId}`（GroupInviteBody.user_id，model.rs:797-801，非 inviteeId）；
-//   · 建群入参 = `{title}` 单字段（GroupCreateBody.title，model.rs:780-784；
-//     **无 memberIds** —— 成员只能走 invite+accept，groups.rs:202-244）。
+// 🔴 字段面真源 = 跨仓 neblink-server 的 `src/groups.rs`（承载件；**内容口径**——
+// 判据是承载件 sha256，不是会漂的 repo sha）：sha256
+// 3b34afe877cfe35d24853bcab559bb1950240e2edd134e0ae6720be291e6dfd7（含加性小批
+// `selfUserId`）；其 wire 模型 `src/model.rs` sha256
+// fe61c5de4a520db4db7076ddf2b52d076e114f1ed1887e7b4a6bd73de3dc89c8。本层**逐字段
+// 按承载件实读形态消费**（本批 gwclient 对齐；下列行锚 = 上述 sha256 版本的现读值）：
+//   · 群行键   = `groupId`（GroupSummary.group_id，model.rs:774；**无 conversationId/id**）；
+//   · 群行角色 = `role`（model.rs:778，非 myRole）；
+//   · 成员信封 = `{members:[GroupMemberEntry]}`（GroupMembersResponse，model.rs:815-821），
+//     成员档案 = `#[serde(flatten)] FriendPublic`（userId/username/display_name/avatar
+//     顶层平铺，**无 profile 嵌套**，model.rs:805-809）；
+//   · 邀请发现 = GET /api/groups/invites → `{incoming:[GroupInviteEntry]}`（groups.rs:200-221，路由 :678）；
+//   · 邀请入参 = `{userId}`（GroupInviteBody.user_id，model.rs:847-849，非 inviteeId）；
+//   · 建群入参 = `{title}` 单字段（GroupCreateBody.title，model.rs:828-830；
+//     **无 memberIds** —— 成员只能走 invite+accept，groups.rs:229-297；路由面 groups.rs:677-696）。
 //
 // viewer 身份字段（加性小批，真源 = neblink-server
 // `.nebflow/reports/20260915_130900_group-selfuserid-impl.md` **§1 契约终版**
@@ -632,14 +634,14 @@ export async function markConversationRead(conversationId, lastReadMessageId) {
 // 错误面沿用既有分态：404 group_not_found 与「路由缺失」同为 404 —— 本层把
 // err.data（req() 已解析 JSON body）原样带给调用方，由调用方按语义码分态。
 
-/** 群会话行归一：**wire 字段名一律取承载件字面**（GroupSummary，model.rs:740-757）
+/** 群会话行归一：**wire 字段名一律取承载件字面**（GroupSummary，model.rs:773-798）
  *  —— 行键 `groupId`（**不是** conversationId/id）、角色 `role`（**不是** myRole）；
  *  其余消费字段 = title / unreadCount / lastMessage / memberCount（主卡 A-6
  *  「群设置 = 群名 + 成员列表 + 三个动作」的最小消费集）。字段缺席一律降级
  *  （禁渲染 undefined 字面）。出口 = 内部群行形状（行键仍是 conversationId，
  *  值 = groupId；见本节头部注释「内部形态」）。
  *
- *  加性 viewer 字段：服务端另批加性补 `selfUserId`（本轮承载件**没有**该键）——
+ *  加性 viewer 字段：承载件（sha256 见本节头部）**已含** `selfUserId`——
  *  在场则原样透传（消费点 = messages.js learnSelfUserId 单点），缺席**不造值**、
  *  由消费方回落 send-correlation 自证（禁把「没有」读成「不是我」）。 */
 function normalizeGroupRow(row) {
@@ -660,11 +662,11 @@ function normalizeGroupRow(row) {
 }
 
 /** GET /api/groups 响应归一（**防御性双形态保留**）：契约路径 = **裸数组**
- *  `[GroupSummary]`（groups.rs:167-176；同 GET /api/conversations 约定）；
+ *  `[GroupSummary]`（groups.rs:188-194；同 GET /api/conversations 约定）；
  *  信封对象 `{groups, pendingInvites}` = 客户端早期的**加性假设**形态，保留为
  *  容忍读法（不与契约相抵：数组分支在前、是唯一契约路径），且其
  *  `pendingInvites` 已**不是邀请发现真源** —— 契约真源是独立端点
- *  `GET /api/groups/invites`（`{incoming:[…]}`，groups.rs:182-200），消费口 =
+ *  `GET /api/groups/invites`（`{incoming:[…]}`，groups.rs:200-221），消费口 =
  *  getGroupInvites()。 */
 function normalizeGroupsEnvelope(raw) {
   // 🔴 群行必须**在此出口逐行归一**（normalizeGroupRow，wire `groupId` → 内部
@@ -700,7 +702,7 @@ function attachSelfId(list, selfId) {
 }
 
 /** 群成员行归一（可带 viewer id）：档案 = 契约 `#[serde(flatten)] FriendPublic`（顶层平铺
- *  userId/username/display_name/avatar，model.rs:538-549+764-769）⇒ 走本文件
+ *  userId/username/display_name/avatar，model.rs:538-549+805-809）⇒ 走本文件
  *  **唯一** wire↔内部档案边界 personFromWire（display_name→name、avatar→avatarUrl、
  *  username→neblinkId）。显示名（H 节口径 = 显示名而非好友备注）缺省链
  *  name → neblinkId → userId；role 缺省 member（admin 字段留置不开放，O⑧）。
@@ -721,7 +723,7 @@ function normalizeMemberRow(row, selfId = '') {
   };
 }
 
-/** 群邀请行归一（契约 GroupInviteEntry，model.rs:819-829）：行键 `groupId`
+/** 群邀请行归一（契约 GroupInviteEntry，model.rs:872-880）：行键 `groupId`
  *  （**不是** conversationId）、群名 `title`、邀请人 = 平铺 FriendPublic
  *  （走 personFromWire）、`inviteId` / `createdAt`。 */
 function normalizeInviteRow(row) {
@@ -739,7 +741,7 @@ function normalizeInviteRow(row) {
   };
 }
 
-/** 邀请发现信封归一：契约 = `{incoming:[…]}`（GroupInvitesResponse，model.rs:831-836）；
+/** 邀请发现信封归一：契约 = `{incoming:[…]}`（GroupInvitesResponse，model.rs:885-887）；
  *  裸数组容忍保留（防御面，不与契约相抵）。 */
 function normalizeInvitesEnvelope(raw) {
   const list = Array.isArray(raw) ? raw
@@ -747,20 +749,24 @@ function normalizeInvitesEnvelope(raw) {
   return list.map(normalizeInviteRow).filter(Boolean);
 }
 
-/** GET /api/groups → 契约裸数组 `[GroupSummary]`（groups.rs:167-176；行内含
- *  `selfUserId`）⇒ {groups:[群会话行]}。🔴 邀请发现的**契约真源**是独立端点，
- *  见 getGroupInvites()（本端点不承载邀请）。 */
+/** GET /api/groups → 契约裸数组 `[GroupSummary]`（groups.rs:188-194；行内含
+ *  `selfUserId`，model.rs:788-797）⇒ {groups:[群会话行]}。🔴 邀请发现的**契约真源**
+ *  是独立端点，见 getGroupInvites()（本端点不承载邀请）。 */
 export async function getGroups() {
   if (!MOCK) return normalizeGroupsEnvelope(await req('GET', '/api/groups'));
   await delay();
   const m = mockStore();
+  // mock = 契约同形：契约 `GET /api/groups` 是**裸数组**，viewer 身份只能随
+  // **每行**内联下发（model.rs:788-797）⇒ mock 逐行挂 `selfUserId`（真机 =
+  // 鉴权用户 id，同一 id 空间；空 id 不挂）。
+  const selfId = String(m.self.userId || '');
   return normalizeGroupsEnvelope({
-    groups: m.groups.map(g => ({ ...g })),
+    groups: m.groups.map(g => (selfId ? { selfUserId: selfId, ...g } : { ...g })),
   });
 }
 
-/** GET /api/groups/invites → 契约 `{incoming:[GroupInviteEntry]}`（groups.rs:178-200；
- *  服务端只列**我的** `status='pending'` 入站邀请，store.rs:5808-5815）⇒ 归一后的
+/** GET /api/groups/invites → 契约 `{incoming:[GroupInviteEntry]}`（groups.rs:200-221，路由 :678；
+ *  服务端只列**我的** `status='pending'` 入站邀请，store.rs:5899）⇒ 归一后的
  *  入站群邀请数组（[{inviteId,groupId,title,inviter,createdAt}]）。 */
 export async function getGroupInvites() {
   if (!MOCK) {
@@ -779,11 +785,11 @@ export async function getGroupInvites() {
 }
 
 /** POST /api/groups `{title}` → `{groupId,title,createdAt}` 201（GroupCreateBody
- *  = **title 单字段**，model.rs:780-784 / groups.rs:138-165；**无 memberIds** ——
- *  契约里成员只能经 invite+accept 入群，groups.rs:202-244 ⇒ 选中成员由调用方在
+ *  = **title 单字段**，model.rs:828-830 / groups.rs:148-177；**无 memberIds** ——
+ *  契约里成员只能经 invite+accept 入群，groups.rs:229-297 ⇒ 选中成员由调用方在
  *  建群成功后逐个 inviteToGroup）。归一后 = 群会话行；无法归一 ⇒ null（调用方
  *  以 refreshGroups 兜底）。标题为**必填**（trim 后非空、≤64）：服务端
- *  valid_group_title 空串 ⇒ 422 invalid_title（groups.rs:96-106,151-152），
+ *  valid_group_title 空串 ⇒ 422 invalid_title（groups.rs:96-106,161-162），
  *  调用方须做同判据 UX 预检。成员上限 50 的权威闸同样在服务端。 */
 export async function createGroup(title) {
   const body = { title: String(title ?? '') };
@@ -811,7 +817,7 @@ export async function createGroup(title) {
 }
 
 /** GET /api/groups/{id}/members → 契约 `{members:[GroupMemberEntry], selfUserId}`
- *  （model.rs:771-776 + 契约终版 §1.1 #7）⇒ 归一为内部
+ *  （model.rs:815-821 + 契约终版 §1.1 #7）⇒ 归一为内部
  *  [{userId,name,avatarUrl,role,joinedAt,isSelf}]，信封 `selfUserId` 另以非枚举键
  *  挂在返回数组上（`members.selfUserId`，消费点 = messages.hydrateGroupSenderNames）。
  *  裸数组容忍保留（防御面，不与契约相抵：信封分支是契约路径且在前）。 */
@@ -846,7 +852,7 @@ export async function sendGroupMessage(groupId, body) {
 }
 
 /** POST /api/groups/{id}/invites `{userId}` → 201 `{inviteId,groupId,inviteeUserId,status,createdAt}`
- *  （GroupInviteBody = `{userId}`，model.rs:795-801 / groups.rs:207-272；**不是
+ *  （GroupInviteBody = `{userId}`，model.rs:847-849 / groups.rs:229-297；**不是
  *  inviteeId** —— 承载件里没有该键，服务端按缺字段直接 422）。
  *  A-4：被邀请人 accept 后才入群。 */
 export async function inviteToGroup(groupId, inviteeUserId) {

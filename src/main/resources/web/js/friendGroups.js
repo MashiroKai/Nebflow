@@ -109,7 +109,7 @@ export function groupTitleOf(conv) {
  *
  * 邀请腿**单独失败可容**（catch ⇒ null ⇒ lastInvites 不变）：可用性判据只认群列表
  * 腿，否则一条加性端点的 404 会把整个群入口误判为「网关/服务端无群路由」。
- * @returns {Promise<{groups: any[], pendingInvites: any[]}|null>}
+ * @returns {Promise<{groups: any[], pendingInvites: any[], selfUserId: string}|null>}
  */
 export async function refreshGroups() {
   try {
@@ -220,12 +220,12 @@ function buildFriendPicker(opts) {
 
 // ── 建群对话框（contacts 面入口；成功后经 fm-groups-changed 交 messages 开窗）─
 /** 发起群聊：选好友（可多选）+ 群名 → POST /api/groups `{title}`（**契约只有
- *  title 一个字段**：GroupCreateBody，model.rs:780-784）——建群成功后对选中好友
+ *  title 一个字段**：GroupCreateBody，model.rs:828-830）——建群成功后对选中好友
  *  **逐个 POST /api/groups/{id}/invites `{userId}`**（契约里成员只能经
- *  invite+accept 入群，groups.rs:202-244；承载件无 memberIds ⇒ 发 memberIds 会被
+ *  invite+accept 入群，groups.rs:229-297；承载件无 memberIds ⇒ 发 memberIds 会被
  *  服务端静默丢弃，等于选了白选）。
  *  标题**必填**（trim 后非空）：服务端 valid_group_title 空串 ⇒ 422 invalid_title
- *  （groups.rs:96-106,151-152），客户端做同判据 UX 预检（权威闸仍在服务端）。
+ *  （groups.rs:96-106,161-162），客户端做同判据 UX 预检（权威闸仍在服务端）。
  *  成员上限 50 同样做 UX 预检（含本机 1 人）；权威闸在服务端（超限 422/403 走
  *  groupErrToast）。 */
 export function openCreateGroupDialog() {
