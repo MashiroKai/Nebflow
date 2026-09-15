@@ -799,6 +799,10 @@ object NodeTools:
       // （mergeQueueHolders → MergeMutexPolicy.holders + verdict 准入过滤），只把持有者
       // 富化成 {rank 依据(readyAt/createdAt), 是否真在临界区, 为何未点火}。
       mergeQueueSlots = rt.engine.mergeQueueSlotsBatch(s.nodes)
+      // 排队**位次**派生（queuepos 批 2026-09-15）：纯函数、零副作用，真源 = SEM-2 次序键
+      // `rank=(readyAt,createdAt,id)`（[[MergeMutexPolicy.queuePosOf]] 单点）。与
+      // `mergeQueueSlots` 分工：后者 = 闸判据「谁挡着我」，本项 = 队列序「我排第几」。
+      mergeQueuePositions = rt.engine.mergeQueuePositionsBatch(s.nodes)
       sameKeyForeignProjects <- rt.engine.sameKeyForeignProjectsNow
     yield
       val now = System.currentTimeMillis()
@@ -820,6 +824,11 @@ object NodeTools:
           // → [[MergeMutexPolicy.holders]] + verdict 准入过滤）——🔴 禁前端/分发器复刻，
           // 🔴 禁读文件票层，🔴 禁从事件流回放。只收非空项 ⇒ 未排队节点缺键。
           mergeQueue = mergeQueueSlots.get(n.id),
+          // 排队位次条件键（queuepos 批 2026-09-15）：判据**单点** = 引擎
+          // [[NodeEngine.mergeQueuePositionsBatch]] → [[MergeMutexPolicy.queuePosOf]]
+          // → [[MergeMutexPolicy.rankOf]]（SEM-2 次序真源）——🔴 禁前端/分发器复刻，
+          // 🔴 禁读文件票层，🔴 禁从事件流回放。只收非空项 ⇒ 未成队节点缺键。
+          mergeQueuePos = mergeQueuePositions.get(n.id),
           // 同键多项目（O-1）当下读数：非空 ⇒ 前端按降级红线只渲染裸「排队中」不渲染
           // 数字（🔴 禁编造数字）；空 ⇒ 位次可信。与既有两个 merge-queue 告警同源单点。
           sameKeyProjects = sameKeyForeignProjects)
@@ -2710,7 +2719,7 @@ object NodeListTool extends Tool:
 - **detail** (optional): a node id — returns that ONE node's full record instead of the whole map: metadata + task + result FULL TEXT (+ historical blockedFeedback when present). Payloads carry no result text; this is the on-demand read channel, same source as the REST result endpoint.
 
 ## Returns
-Default: {nodes: [{id, name, agent, description, status, in, out, hasWorktree, worktree, blockCount, createdAt, completedAt, ttlLeftSec, + conditional: hasResult, taskPreview (legacy no-description fallback), deps, plugins, merge, loop, blockedFeedback (blocked only), skill/mcp/preset (legacy values only), liveness (running only), chainId (multi-member chain only), chainIds (merge nodes with 2+ reachable member chains only; value = main chain id first, then the full member chain list), mergeQueue (merge nodes currently held by the merge-window mutex gate only; value = {ahead, holders: [{id, name, status}], sameKeyProjects?})}], chains: [{id, title, entries, ends, memberIds}] (topological task chains derived backend-side; a node's chainId joins its entry here; members may include archived nodes — filter by your node cache for on-graph rendering), worktrees: [...], meta: {project, updatedAt, archived}} — metadata only, NO result text (Flow Map slim-payload contract: results live in per-node files, read on demand).
+Default: {nodes: [{id, name, agent, description, status, in, out, hasWorktree, worktree, blockCount, createdAt, completedAt, ttlLeftSec, + conditional: hasResult, taskPreview (legacy no-description fallback), deps, plugins, merge, loop, blockedFeedback (blocked only), skill/mcp/preset (legacy values only), liveness (running only), chainId (multi-member chain only), chainIds (merge nodes with 2+ reachable member chains only; value = main chain id first, then the full member chain list), mergeQueue (merge nodes currently held by the merge-window mutex gate only; value = {ahead, holders: [{id, name, status}], sameKeyProjects?} — `ahead` = the SIZE OF THE BLOCKING SET, i.e. who blocks me, NOT my rank in the queue), mergeQueuePos (merge nodes sitting in a merge-window queue with 2+ contenders only; value = {position, total, queue, arrived, readyAt, createdAt, rank: {primary, tiebreaks}, sameKeyProjects?} — `position` = 1-based rank, UNIQUE PER NODE and aligned with the real grant order rank=(readyAt,createdAt,id); `total` = contender count incl. the one already inside the critical section)}], chains: [{id, title, entries, ends, memberIds}] (topological task chains derived backend-side; a node's chainId joins its entry here; members may include archived nodes — filter by your node cache for on-graph rendering), worktrees: [...], meta: {project, updatedAt, archived}} — metadata only, NO result text (Flow Map slim-payload contract: results live in per-node files, read on demand).
 With detail=<nodeId>: the same node shape + task + result (full text)."""
   val inputSchema = JsonObject.fromIterable(
     List(

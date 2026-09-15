@@ -115,6 +115,79 @@ object MergeMutexPolicy:
   def isOpen(n: NodeDef): Boolean =
     n.status == NodeLifecycle.Pending || n.status == NodeLifecycle.Wiring
 
+  // ── 排队**位次**（queuepos 批 2026-09-15；作者现场报「所有节点前面还有 1 个」）──────
+  //
+  // 与 [[holders]] 的**分工**（🔴 两个量互不替代，禁混用）：
+  //   · [[holders]] / `ahead` = **闸**的判据：挡住本节点的阻塞集合（`running` 者恒在内、
+  //     开态先到者在内、再看 verdict 准入过滤）——它是「谁挡着我」，不是「我排第几」。
+  //   · [[queuePositionOf]] = **队列序**：本节点在整个竞争集合里按 SEM-2 rank 的 1-based
+  //     序数——**每一位互异**，与真实授予序（`(readyAt, createdAt, id)` 升序）逐点一致。
+  // 真凶（考古件 `.nebflow/reports/20260915_queuepos-archaeo.md` §A②）：旧显示面把
+  // `ahead`（阻塞集合的势）当位次渲染 ⇒ 同刻只有一个 `running` 时**全体排队者同显 1**
+  // （「前面还有 1 个」看起来一样，排不出先后）；且载荷里**根本没有本节点位次与队列长度**。
+
+  /** 同队竞争者：仍可能进入临界区的 merge 节点（开态 `pending/wiring` ∪ `running`）。
+    *
+    * 判据三条（各排一类假竞争者）：
+    *   - 终态（completed/failed/cancelled）⇒ 已释放，不再竞争；
+    *   - `blocked` ⇒ 不自行启动（等人裁决），不参与 FIFO 竞争；
+    *   - 非 merge 节点 ⇒ 与合并窗无关（闸是 merge-only）。
+    * 未到达者（上游未全终态）**在内**：rank 首键 = `MaxValue` ⇒ 序数天然排在全队列之后
+    * ——「位次」必须对全队列可读，否则未到达者又回到「无信息」（对齐交付件推荐口径：
+    * 位次 = 全量同队 merge 节点按 rank 排序，并列暴露到达态 `arrived`）。 */
+  def isContender(n: NodeDef): Boolean =
+    n.status == NodeLifecycle.Pending || n.status == NodeLifecycle.Wiring ||
+      n.status == NodeLifecycle.Running
+
+  /** 合并窗**队列名**（稳定 token；前端只翻译不派生）。队列身份的真源 = 本 object 的
+    * 判据面（同键 = 同 git 目录；本项目内的竞争集合由 [[isContender]] 单点给出）。 */
+  val QueueName: String = "merge-window"
+
+  /** 队列**最少竞争者数**：少于该数 ⇒ 不构成队列。单飞 merge 节点不显示「排队中」
+    * （「排队中」必须意味着「有同队竞争者」，否则是假陈述——正是 (e) 零显示态的反面）。 */
+  val QueueMinContenders: Int = 2
+
+  /** 排队位次槽（载荷 `mergeQueuePos` 每项；纯派生量，见 [[queuePosOf]]）。
+    *
+    * @param position 1-based 位次（在竞争集合中按 rank 升序的序数；已进入临界区者占首位
+    *                 ⇒ 排队者的最小位次可为 2）
+    * @param total    竞争集合大小（含已进入临界区者）
+    * @param arrived  是否已到达（`readyAt` 有限 = `in ∪ deps` 全终态；未到达者排在队尾）
+    * @param rankAt   rank 首键原文（`readyAt`；位次**可复算**的取证面）
+    * @param createdAt rank 平局键之一（另一为 `id`，见载荷 `rank` 元数据） */
+  final case class QueuePos(
+      node: NodeDef,
+      position: Int,
+      total: Int,
+      arrived: Boolean,
+      rankAt: Long,
+      createdAt: Long
+  )
+
+  /** 排队位次（纯判据；`position` = 1 + 同队 rank 严格更小者数，`total` = 同队总数）。
+    *
+    * 真源 = [[rankOf]]（SEM-2：`(readyAt, createdAt, id)` 升序）——**唯一**次序真源，
+    * 与闸的授予序同源；🔴 **不**读文件票层、**不**从事件流回放（票层是过渡期旧层、
+    * 事件流是审计面，两者都不是次序真源）。
+    *
+    * @return `None` = 非 merge / 非开态（`running` 在临界区、终态已释放、`blocked` 不参与）
+    *         / 竞争者不足 [[QueueMinContenders]]（不构成队列 ⇒ 禁显示「排队中」）。 */
+  def queuePositionOf(n: NodeDef, all: Map[String, NodeDef]): Option[(Int, Int)] =
+    if !MergeNodePolicy.isMerge(n) || !isOpen(n) then None
+    else
+      val cs = all.valuesIterator.filter(o => MergeNodePolicy.isMerge(o) && isContender(o)).toList
+      if cs.length < QueueMinContenders then None
+      else
+        val mine = rankOf(n, all)
+        Some((cs.count(o => o.id != n.id && rankOf(o, all) < mine) + 1, cs.length))
+
+  /** 位次 → 显示槽（逐项富化；`all` 与闸同源）。零副作用、零持久字段、**零闸改写**。 */
+  def queuePosOf(n: NodeDef, all: Map[String, NodeDef]): Option[QueuePos] =
+    queuePositionOf(n, all).map { case (position, total) =>
+      val ra = readyAt(n, upsOf(n, all))
+      QueuePos(n, position, total, arrived = ra != Long.MaxValue, rankAt = ra, createdAt = n.createdAt)
+    }
+
   /** 挡住本 merge 启动的**同键更高优先者**清单（纯判据；空 = 放行）。
     *
     * `all` = 本项目全部节点（同一项目 = 同一键：键按项目工作区派生，merge 节点不配

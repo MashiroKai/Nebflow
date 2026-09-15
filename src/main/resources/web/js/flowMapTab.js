@@ -25,6 +25,11 @@ import { ensureFlowCss } from './flowCss.js';
 import { esc } from './flowHelpers.js';
 import { t } from './i18n.js';
 import { fetchFlowMap, NODE_STATUS_CLS } from './nodeData.js';
+// 排队视图共享解析（queuepos 批 2026-09-15）：卡与详情面板同源一份解析，落叶子模块
+// （flowMapTab → flowMapArchive 单向依赖，共享件不可放 flowMapArchive；见模块头注）。
+// `mergeQueueView` 在本文件**再导出** = 既有 fixture 验证面逐字保留。
+import { mergeQueueView, queueNameLabel } from './mergeQueueView.js';
+export { mergeQueueView };
 import {
   isTerminalStatus, purgeExpired,
   ingestNodes, recordNodeRemoved, dropStore,
@@ -817,57 +822,50 @@ export function flagBadgesHtml(n) {
 
 // ── 合并窗排队位次（排队位次可见性批 2026-09-14；作者 16:39 双裁 = 显示「数字 + 持有者
 //    双显」、路线「案 A：引擎条件键 + 前端渲染」）────────────────────────────
-// 数据源 = 引擎条件键 `mergeQueue`（NodePayload.buildNodeJson；**仅 merge 节点且当下被
-// 合并窗闸挡住**携带）。值形状（契约，见 ProjectTypes.scala 条件键注）：
-//   { ahead, holders: [{id, name, status}], sameKeyProjects? }
-// 🔴 前端**只渲染不派生**：位次数字一律取载荷 `ahead`（禁本地复算 rank / 持有者 /
-//    准入过滤——判据持有方 = 引擎单点，前端复刻必静默漂移）；🔴 禁读文件票层
+//    **queuepos 批 2026-09-15 修正**（作者现场报「节点显示的前面还有几个都一样 / 详情面板
+//    里也没有」）：数字面从 `mergeQueue.ahead` 换成 `mergeQueuePos.position` ——`ahead` 是
+//    **阻塞集合的势**（「谁挡着我」）而非位次，同刻只有一个 running 时全体排队者 `ahead ≡ 1`
+//    ⇒ 看起来一模一样；而 `position` 逐节点唯一、真源 = SEM-2 rank 升序。两键分工与解析
+//    单点见 `./mergeQueueView.js` 头注；`mergeQueue`（含 `ahead`/`holders`）语义**逐字冻结**。
+// 🔴 前端**只渲染不派生**：位次数字一律取载荷 `mergeQueuePos.position`（禁本地复算 rank /
+//    持有者 / 准入过滤——判据持有方 = 引擎单点，前端复刻必静默漂移）；🔴 禁读文件票层
 //    （.nebflow/locks/main-merge.queue）、🔴 禁从事件流回放（事件流是审计面）。
 // 🔴 降级红线（草案 §4 逐字）：键缺失 / 形状漂移 / 不可计算 ⇒ **不渲染数字**（至多裸
-//    「排队中」）；🔴 禁编造数字；🔴 禁把事件流下界当真值（「读不到」≠「不在排队」）。
-//    同键多项目（O-1）⇒ 引擎侧持有者派生自本项目 store、他项目节点结构性不可见 ⇒
-//    位次**不可信** ⇒ 降级为裸「排队中」（数字不渲染，持有者清单照列）。
-/** 解析排队视图（导出 = fixture 验证面）。@returns {?{ahead: ?number, holders: Array<{name: string, status: string}>, untrusted: boolean}} null = 不渲染。 */
-export function mergeQueueView(n) {
-  if (!n || typeof n !== 'object') return null;
-  const q = n.mergeQueue;
-  // 形状漂移防御（严格类型判定，与 nodeFlagKeys 同款「缺失即静默降级」纪律）：
-  // 非对象 / 数组 / 无 holders 数组 / holders 全非法 ⇒ 不渲染（零 console 噪音）。
-  if (!q || typeof q !== 'object' || Array.isArray(q)) return null;
-  const raw = Array.isArray(q.holders) ? q.holders : [];
-  const holders = raw
-    .filter((h) => h && typeof h === 'object' && !Array.isArray(h))
-    .map((h) => ({ name: String(h.name || h.id || ''), status: String(h.status || '') }))
-    .filter((h) => h.name !== '');
-  if (!holders.length) return null;
-  // ahead 只在「正整数」时可用；缺键 / 0 / 负 / 非整数 / 与持有者数不符 ⇒ 视为不可计算
-  // ⇒ 裸「排队中」（数字面一律不猜：🔴 禁编造数字）。
-  const ahead = (Number.isInteger(q.ahead) && q.ahead > 0 && q.ahead === holders.length) ? q.ahead : null;
-  const foreign = Array.isArray(q.sameKeyProjects) ? q.sameKeyProjects.filter((p) => typeof p === 'string' && p !== '') : [];
-  return { ahead, holders, untrusted: foreign.length > 0 };
-}
+//    「排队中」）；🔴 禁编造数字；🔴 禁把事件流下界当真值（「读不到」≠「不在排队」）；
+//    🔴 **禁把阻塞数（ahead）当位次渲染**。同键多项目（O-1）⇒ 引擎侧持有者派生自本项目
+//    store、他项目节点结构性不可见 ⇒ 位次**不可信** ⇒ 降级为裸「排队中」（数字不渲染，
+//    持有者清单照列）。
 
-/** head 行排队胶囊（文案形态「排队中 · 前面还有 N 个」——作者 16:39 裁定①，N = 同键
- *  当前被挡的其他节点数含持有者）。降级两态（红线段）：`ahead` 不可计算 或 同键多项目
- *  ⇒ 裸「排队中」无数字。title 恒带完整信息（头部窄行不牺牲可读性）。 */
+/** head 行排队胶囊（文案形态「排队中 · 第 N 位 / 共 M」——queuepos 批：位次逐节点唯一、
+ *  N/M 均取载荷 `mergeQueuePos`；`mergeQueue` 的持有者清单不变，仍在脚注「被 XX 挡着」）。
+ *  降级两态（红线段）：位次不可计算（键缺失/形状漂移） 或 同键多项目 ⇒ 裸「排队中」无数字。
+ *  title 恒带完整信息（头部窄行不牺牲可读性）。 */
 export function queueBadgeHtml(n) {
   const q = mergeQueueView(n);
   if (!q) return '';
   const names = q.holders.map((h) => h.name).join(' · ');
-  const degraded = q.ahead === null || q.untrusted;
-  const label = degraded ? esc(t('flowmap.queue.held')) : esc(t('flowmap.queue.ahead', { n: String(q.ahead) }));
-  const title = q.untrusted
-    ? esc(t('flowmap.queue.untrustedTitle', { names }))
-    : esc(t('flowmap.queue.badgeTitle', { names }));
-  return `<span class="fm-flag-badge fm-flag-queue" title="${title}">${label}</span>`;
+  // 数字面只认 `mergeQueuePos.position`（🔴 禁由 ahead 顶替；不可信 ⇒ 不渲染数字）。
+  const numbered = !!q.pos && !q.untrusted;
+  const label = numbered
+    ? esc(t('flowmap.queue.pos', { n: String(q.pos.position), m: String(q.pos.total) }))
+    : esc(t('flowmap.queue.held'));
+  const head = q.untrusted
+    ? t('flowmap.queue.untrustedHead')
+    : (q.pos
+        ? t('flowmap.queue.posHead', {
+            queue: queueNameLabel(q.pos.queue), n: String(q.pos.position), m: String(q.pos.total) })
+        : t('flowmap.queue.heldHead'));
+  const title = names ? `${head} — ${t('flowmap.queue.blockedBy', { names })}` : head;
+  return `<span class="fm-flag-badge fm-flag-queue" title="${esc(title)}">${label}</span>`;
 }
 
 /** 等待脚注行文案（**形态「被 XX 挡着」**——作者 16:39 裁定②，XX = 持有者节点名，
  *  多持有者全部列出）。同键多项目 ⇒ 追加不可信标注（不隐藏既有持有者清单）。
- *  返回 '' = 未排队（调用方保持既有脚注逻辑逐字不变）。 */
+ *  返回 '' = 未被挡（调用方保持既有脚注逻辑逐字不变）——注意：队首节点（无人挡它）
+ *  在 `mergeQueue` 下无持有者 ⇒ 本行仍为空，它的可见面在 head 行胶囊（`mergeQueuePos`）。 */
 export function queueNoteText(n) {
   const q = mergeQueueView(n);
-  if (!q) return '';
+  if (!q || !q.holders.length) return '';
   const names = q.holders.map((h) => h.name).join(' · ');
   const base = t('flowmap.queue.blockedBy', { names });
   return q.untrusted ? `${base}${t('flowmap.queue.untrustedSuffix')}` : base;

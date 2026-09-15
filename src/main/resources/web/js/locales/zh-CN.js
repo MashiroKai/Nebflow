@@ -139,6 +139,10 @@ export default {
   'flowmap.detail.loopRoundN': '第 {n} 轮',
   'flowmap.detail.loopVerdict': '最近判定',
   'flowmap.detail.notify': '回流通知',
+  // 排队位次行（queuepos 批 2026-09-15）：详情面板此前完全无排队字段（作者现场报）。
+  // 值形态与卡面同源（`mergeQueuePos`，逐节点唯一、真源 = SEM-2 rank 升序）。
+  'flowmap.detail.queue': '排队位次',
+  'flowmap.detail.queueValue': '排队中 · 第 {n} 位 / 共 {m}（{queue}）',
   'flowmap.detail.yes': '是',
   'flowmap.chain.archivedToast': '链「{chain}」整链归档（{n} 节点一起进归档）',
   // 链折叠（P1 · spec §3.3）：主图折叠链摘要卡文案（链名/成员数由后端 chains 旁挂
@@ -163,12 +167,20 @@ export default {
   // 合并窗排队位次（排队位次可见性批 2026-09-14；作者 16:39 双裁：显示 = 数字 +
   // 持有者双显）。徽标在节点卡 head 行、脚注在同一等待脚注行。降级红线：
   // 键缺失/不可计算/同键多项目 ⇒ 数字不渲染（至多裸「排队中」），禁编造数字。
+  //
+  // **queuepos 批 2026-09-15 修正**（作者现场报「前面还有几个都一样 / 详情面板也没有」）：
+  // 数字面 = `mergeQueuePos.position`（位次，逐节点唯一）——`mergeQueue.ahead` 是**阻塞
+  // 集合的势**（同刻只有一个 running 时全体 ≡1 ⇒ 看起来一模一样），故键 `queue.ahead`
+  // /`badgeTitle`/`untrustedTitle` 随之退役、不再有「前面还有 N 个」这一形态。
   'flowmap.queue.held': '排队中',
-  'flowmap.queue.ahead': '排队中 · 前面还有 {n} 个',
+  'flowmap.queue.pos': '排队中 · 第 {n} 位 / 共 {m}',
+  'flowmap.queue.posHead': '合并窗排队中（{queue}）· 第 {n} 位 / 共 {m}',
+  'flowmap.queue.heldHead': '合并窗排队中',
   'flowmap.queue.blockedBy': '被 {names} 挡着',
-  'flowmap.queue.badgeTitle': '合并窗排队中 — 被 {names} 挡着',
-  'flowmap.queue.untrustedTitle': '合并窗排队中 — 位次不可信（同键多项目共用 git 目录）：被 {names} 挡着',
+  'flowmap.queue.untrustedHead': '合并窗排队中 · 位次不可信（同键多项目）',
   'flowmap.queue.untrustedSuffix': '（位次不可信：同键多项目）',
+  // 队列名（引擎给 token，前端只翻译不派生；未知 token 原样回显）
+  'flowmap.queue.name.merge-window': '合并窗',
   // LoopNode 运行态相位文案（2026-09-06）：loop 节点 running 时 desc 行显 worker/verify
   'flowmap.loopPhase.worker': '生产中',
   'flowmap.loopPhase.verify': '验证中',
