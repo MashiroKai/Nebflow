@@ -31,8 +31,11 @@ function loadPdfJs() {
   return _pdfjsReady;
 }
 
-/** PDF viewer — all pages rendered to canvases, zoomable + scrollable. */
-async function viewPdf(pane, { absPath, fileName, anchor }) {
+/** PDF viewer — all pages rendered to canvases, zoomable + scrollable.
+ *
+ *  `objectUrl` = 附件预览腿（attachmentPreview.js）：整件字节已由鉴权路由取回，
+ *  blob: URL 直接交给 pdf.js（它自己发 Range，blob 后端同样支持）⇒ 不触票据链。 */
+async function viewPdf(pane, { absPath, fileName, anchor, objectUrl }) {
   pane.innerHTML = '';
   pane.classList.remove('scrollable'); // .pdf-pages is the scroll region
   const wrap = document.createElement('div');
@@ -52,11 +55,11 @@ async function viewPdf(pane, { absPath, fileName, anchor }) {
     // One ticket covers the whole document: pdf.js issues a Range request per
     // chunk/page, and R4 keeps tickets valid for unlimited reads inside the
     // TTL — a one-shot ticket would break page 2 onwards (and every seek).
-    const url = await ticketUrl(absPath);
+    const url = objectUrl || await ticketUrl(absPath);
     doc = await pdfjsLib.getDocument({ url }).promise;
   } catch (e) {
     if (!pane.isConnected) return;
-    wrap.innerHTML = `<div class="canvas-error">Cannot display PDF: ${escapeHtml(String(e && e.message || e))}<br>Path: ${escapeHtml(absPath || '')}</div>`;
+    wrap.innerHTML = `<div class="canvas-error">Cannot display PDF: ${escapeHtml(String(e && e.message || e))}<br>Path: ${escapeHtml(absPath || fileName || '')}</div>`;
     return;
   }
   if (!pane.isConnected) return;

@@ -12,8 +12,10 @@ import { enableViewerZoom } from './zoom.js';
  *  and carries a path-bound ticket instead of the global token. A load failure
  *  gets exactly ONE re-mint + retry before the error panel (T3 self-healing);
  *  a second failure is treated as deterministic and is NOT retried again. */
-async function viewImage(pane, { absPath, fileName, size }) {
-  if (!absPath) {
+async function viewImage(pane, { absPath, fileName, size, objectUrl }) {
+  // `objectUrl` = 附件预览腿（attachmentPreview.js）：字节已由鉴权路由取回，
+  // 挂 blob: URL 即可，**没有**本机路径 ⇒ 不触票据链、不重取字节。
+  if (!absPath && !objectUrl) {
     pane.innerHTML = '<div class="canvas-error">Cannot display image: no absolute path available.</div>';
     return;
   }
@@ -26,7 +28,10 @@ async function viewImage(pane, { absPath, fileName, size }) {
   img.draggable = false;
   let retried = false;
   img.onerror = () => {
-    if (!retried) {
+    // Self-healing (re-mint) is a **ticket-chain** remedy: it only applies when
+    // there is a path to mint for. A blob: URL has no credential to refresh —
+    // retrying it would mean fetching a ticket for `null`.
+    if (!retried && absPath) {
       // Ticket failures (401 missing, 403 expired) self-heal once; a
       // deterministic failure (400/403 credential-path/404) simply fails the
       // same way again and falls through to the panel below (T4).
@@ -38,7 +43,7 @@ async function viewImage(pane, { absPath, fileName, size }) {
     }
     let reason = 'File may be corrupted or not a valid image format.';
     if (size && size < 500) reason += ` (File is only ${size} bytes — likely an error page or placeholder, not a real image.)`;
-    pane.innerHTML = `<div class="canvas-error">${reason}<br>Path: ${escapeHtml(absPath)}</div>`;
+    pane.innerHTML = `<div class="canvas-error">${reason}<br>Path: ${escapeHtml(absPath || fileName || '')}</div>`;
   };
   img.onload = () => {
     if (!pane.isConnected) return;  // tab closed while the image was loading
@@ -118,7 +123,7 @@ async function viewImage(pane, { absPath, fileName, size }) {
       else applyScale(1, pivot);
     });
   };
-  img.src = await ticketUrl(absPath);
+  img.src = objectUrl || await ticketUrl(absPath);
 }
 
 export default {

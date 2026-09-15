@@ -276,6 +276,10 @@ export default {
   'messages.attachUploading': '上传中，暂不可下载',
   'messages.attachUnreadable': '附件状态不可判读，暂不可下载',
   'messages.attachUnnamed': '未命名附件',
+  // 附件预览（作者令 2026-09-15）：卡片可点面的无障碍名 + 两条**可见**降级文案。
+  'messages.attachPreview': '预览',
+  'messages.attachPreviewUnsupported': '暂不支持预览该类型：{name}',
+  'messages.attachPreviewFailed': '预览失败，请重试',
   'messages.agentBadge': 'Agent 代发',
   // 群组一期（friendgroups 客户端腿）。agentGroupBadge 逐字冻结（补充卡 §4.2 +
   // A② 裁定：群气泡通用徽章「由 Agent 发」；单聊既有键不动）。
