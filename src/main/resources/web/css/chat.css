@@ -992,6 +992,19 @@
   box-shadow: 0 1px 2px rgba(0, 0, 0, 0.04);
 }
 .bubble.ai img, .bubble.injected img { max-width: 220px; max-height: 220px; border-radius: 8px; display: block; margin-top: 4px; }
+/* 件① 失败占位（2026-09-15 作者现场报）：思考流里的图片节点跨帧存活后，加载失败的
+   图不再每帧重建——这里给它的终态一个**稳定**的占位盒（定高 + 虚线边 + alt 文本），
+   塌缩-撑开循环随之终止（不重试、不隐藏功能）。最高特异性：0,3,1 > 上面 0,2,1。 */
+.bubble.ai img.nf-img-failed {
+  min-height: 44px;
+  box-sizing: border-box;
+  padding: 12px 10px;
+  border: 1px dashed rgba(128, 128, 128, 0.45);
+  border-radius: 8px;
+  background: transparent;
+  color: var(--color-text-muted);
+  font-size: 12px;
+}
 .bubble.ai .file-tag {
   background: rgba(0,0,0,0.06);
   padding: 3px 8px;

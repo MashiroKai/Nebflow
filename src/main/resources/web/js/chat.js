@@ -272,7 +272,19 @@ export function clearBusy(sessionId) {
     if (sendBtn) sendBtn.style.display = 'flex';
     if (stopBtn) stopBtn.style.display = 'none';
     if (statusWrap) statusWrap.classList.remove('on');
-    if (input) input.focus();
+    // 不夺进行中的输入焦点（2026-09-15 作者现场报 · 件②）：本函数由全部 turn 终态帧
+    // 调用（clearBusyFor ← done/error/interrupted/timeout/maxTokens/compactFailed，
+    // 以及 sessionBusy{busy:false}），而引擎在「AskUser 卡 park 住 turn」时**成对**
+    // 发 Done + sessionBusy{busy:false}（AgentActor.scala:3028-3059），InteractionHub
+    // 又在发卡片前先发 roundComplete（InteractionHub.scala:145-152）⇒ 卡片与终态帧
+    // 落在同一时间窗。此处若无条件 focus()，用户正在 AskUser 卡输入框（或任意别的
+    // 可写元素）里打的字会被夺焦、续打落到主输入框。
+    // 语义：只在「无进行中的输入」（焦点在 body / 非可写元素 / 本输入框）时移交焦点，
+    // 既有「turn 结束聚焦主输入框」行为保持不变——不整体删除焦点管理。
+    const focused = document.activeElement;
+    const isWritable = !!focused && (focused.tagName === 'TEXTAREA' || focused.tagName === 'INPUT' ||
+      (focused instanceof HTMLElement && focused.isContentEditable === true));
+    if (input && !(isWritable && focused !== input)) input.focus();
     refreshSendButtonState();
   }
 }
@@ -2697,6 +2709,66 @@ export function chevronSvg() {
   span.innerHTML = '<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="9 18 15 12 9 6"/></svg>';
   return span;
 }
+// ── 件① 图片节点跨帧保管表 ────────────────────────────────────────────
+// key = 思考气泡元素，value = src → 已创建的 <img> 队列（WeakMap ⇒ 气泡随聊天区
+// 释放时自动回收，无跨气泡 / 跨会话泄漏）。
+const _thinkingImgKeep = new WeakMap();
+
+/** @param {HTMLElement} bubble @returns {Map<string, HTMLImageElement[]>} */
+function imgKeepFor(bubble) {
+  let keep = _thinkingImgKeep.get(bubble);
+  if (!keep) { keep = new Map(); _thinkingImgKeep.set(bubble, keep); }
+  return keep;
+}
+
+/**
+ * Stream-markdown render that CARRIES already-created <img> nodes across frames
+ * (2026-09-15 作者现场报 · 件①：思考流带图 ⇒ 图渲染不出来 + 连续抽动).
+ *
+ * 流式面每帧都要重解析累积文本，因此 `contentEl.innerHTML` 必须整棵换掉——这对
+ * 文本是对的，对 <img> 是致命的：逐帧造出新元素 ⇒ 该元素上的「图像加载状态」被逐帧
+ * 重置。可加载图靠内存缓存掩盖，加载失败的图则每帧重发外呼、破图盒在「有/无图数据」
+ * 之间每秒来回（帧率量级）= 作者报的连续抽动；图片也永远停不到已渲染态。
+ *
+ * 语义（图片 = 终态内容，不是流式内容）：图片 markdown 到达时整 token 到位，故其 DOM
+ * 节点跨帧存活——同一元素、同一已解码位图、同一次外呼、尺寸不再跳。
+ *  - 每帧先把上一帧活着的 <img> 按 src 收进 `keep`（每次内建每次清空 ⇒ 无跨气泡泄漏）；
+ *  - 新渲染出的 <img> 先**不带 src**（src 落在 data-nf-keep-src），因此它不会自己发起
+ *    一次多余的外呼；随后按 src 把上一帧的同一个元素放回去（`replaceWith`）；
+ *  - 首次出现的图才真正拿到 src 去加载，失败时挂 `.nf-img-failed`（稳定失败占位，
+ *    CSS 在 chat.css）——**不重试**（🔴 禁无限重试）。
+ *
+ * @param {HTMLElement} contentEl 流式渲染目标（.thinking-content）
+ * @param {string} text 累积文本
+ * @param {boolean} parseVoice renderMarkdownWithMath 的 parseVoice
+ * @param {Map<string, HTMLImageElement[]>} keep 本次气泡的图片节点保管表
+ * @param {boolean} [useCache] 传给 renderMarkdownWithMath 的 cache（流式帧传 false —
+ *   逐帧快照不进 LRU；收尾帧传 true — 稳定文本照旧入缓存）
+ */
+function renderStreamMarkdown(contentEl, text, parseVoice, keep, useCache) {
+  keep.clear();
+  contentEl.querySelectorAll('img').forEach((img) => {
+    const key = img.getAttribute('src');
+    if (!key) return;
+    const queue = keep.get(key);
+    if (queue) queue.push(img); else keep.set(key, [img]);
+  });
+  contentEl.innerHTML = renderMarkdownWithMath(text, parseVoice, { cache: useCache === true })
+    .replace(/<img\b([^>]*?)\ssrc=/g, '<img$1 data-nf-keep-src=');
+  contentEl.querySelectorAll('img[data-nf-keep-src]').forEach((fresh) => {
+    const key = fresh.getAttribute('data-nf-keep-src');
+    fresh.removeAttribute('data-nf-keep-src');
+    const queue = keep.get(key);
+    const kept = queue && queue.shift();
+    if (kept) {
+      fresh.replaceWith(kept);
+      return;
+    }
+    fresh.setAttribute('src', key);
+    fresh.addEventListener('error', () => fresh.classList.add('nf-img-failed'), { once: true });
+  });
+}
+
 export function appendThinkingDelta(delta) {
   // NOTE: always accumulate thinking text for saveMsg even if we skip DOM creation
   activeView.stream.thinkingText += delta;
@@ -2763,7 +2835,9 @@ export function appendThinkingDelta(delta) {
       if (!target || !target.bubble) return;
       const contentEl = target.bubble.querySelector('.thinking-content');
       if (contentEl) {
-        contentEl.innerHTML = renderMarkdownWithMath(target.bubble._nfText || '', true, { cache: false }) + '<span class="cursor"></span>';
+        // 件①：同一渲染 + 图片节点跨帧存活（否则图片每帧重建 ⇒ 见 renderStreamMarkdown）
+        renderStreamMarkdown(contentEl, target.bubble._nfText || '', true, imgKeepFor(target.bubble), false);
+        contentEl.insertAdjacentHTML('beforeend', '<span class="cursor"></span>');
       }
       // Scroll the correct chat element directly — smartScroll() reads state.dom
       // at rAF time which may be the wrong window. Capture snapped at schedule
@@ -2788,7 +2862,9 @@ export function finishThinking() {
   if (activeView.stream.currentThinkingBubble) {
     const contentEl = activeView.stream.currentThinkingBubble.querySelector('.thinking-content');
     if (contentEl) {
-      contentEl.innerHTML = renderMarkdownWithMath(activeView.stream.thinkingText || '', false);
+      // 件①：收尾同一口径渲染（图片节点照旧存活 ⇒ 终结帧不再重拉一次、不再跳一次）
+      renderStreamMarkdown(contentEl, activeView.stream.thinkingText || '', false,
+        imgKeepFor(activeView.stream.currentThinkingBubble), true);
     }
     // #346 v2 stats: close the thinking-duration window for the turn header.
     if (activeView.stream.currentThinkingBubble.dataset) {
