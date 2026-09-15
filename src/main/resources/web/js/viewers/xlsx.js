@@ -4,10 +4,14 @@
 import { escapeHtml } from './shared.js';
 import { ticketUrl } from '../nfTicket.js';
 
-/** XLSX viewer — fetch binary, parse with SheetJS, render first sheet as table */
-async function viewXlsx(pane, { absPath, fileName }) {
+/** XLSX viewer — fetch binary, parse with SheetJS, render first sheet as table
+ *
+ *  `objectUrl` = 附件预览腿（attachmentPreview.js）：整件字节已由应用内鉴权路由取回，
+ *  blob: URL 直接交给 SheetJS（fetch 后 `arrayBuffer()`），无本机路径 ⇒ 不触票据链。
+ *  与 `pdf.js` / `image.js` 的 `objectUrl` 腿**同构**（同一模式，非第二套取字节路）。 */
+async function viewXlsx(pane, { absPath, fileName, objectUrl }) {
   pane.innerHTML = `<div class="canvas-md-viewer" style="display:flex;align-items:center;justify-content:center;color:var(--color-text-muted);opacity:0.5;">Loading spreadsheet...</div>`;
-  const url = await ticketUrl(absPath);
+  const url = objectUrl || await ticketUrl(absPath);
   try {
     const resp = await fetch(url);
     if (!resp.ok) {

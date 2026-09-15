@@ -17,16 +17,27 @@ import { itemTypeForFileName } from './fileViewers.js';
  *  markdown 走 md viewer（同一渲染管线 = 聊天窗 md 那条）。 */
 const TEXT_ITEM_TYPES = new Set(['code', 'json', 'csv', 'yaml', 'markdown']);
 
-/** 能由 **blob** 渲染的二进制 itemType。其余二进制 viewer（docx/xlsx/pptx/epub）
- *  的**唯一**取字节口是本机路径票据（`ticketUrl(absPath)` ⇒ `/api/nf-file`），
- *  手上只有远端 blob 时那条路走不通 ⇒ 本入口落可见降级（不新造第二条取字节路）。 */
-const BLOB_ITEM_TYPES = new Set(['image', 'pdf']);
+/** 能由 **blob** 渲染的二进制 itemType —— 判据 = 该 viewer 有 `objectUrl` 腿
+ *  （`objectUrl || await ticketUrl(absPath)` 同构模式，见 `viewers/pdf.js` / `viewers/image.js`）。
+ *
+ *  docx/xlsx/pptx/epub（附件/文件浏览器语义对齐批 2026-09-15）已补上这条腿：
+ *  四个 viewer 各自 `fetch(url)` 后自己解包（mammoth / SheetJS / ZIP 解析 / 下载链），
+ *  与 pdf/image 完全同构 ⇒ 附件手上只有远端 blob 时不再需要本机路径票据。
+ *  其余二进制类型（zip 等）无 viewer 认领 ⇒ 仍走可见降级。 */
+const BLOB_ITEM_TYPES = new Set(['image', 'pdf', 'docx', 'xlsx', 'pptx', 'epub']);
 
 /** 🔴 显式排除面（本批划定的安全边界）：`html` 不入附件预览。
  *  html viewer 的 iframe 是 `allow-scripts allow-same-origin`（应用**同源**脚本权限）——
  *  对「用户自己打开的本机文件」是本仓既有口径，而附件是**对端推来的不受信内容**；
  *  预览它等于给远端内容一条拿到应用同源脚本权限的路径 ⇒ 本批不开这个新面，
- *  改用可见降级（toast）。作者令点名的目标类型（文本/markdown/代码/图片/PDF）不含 html。 */
+ *  改用可见降级（toast）。
+ *
+ *  2026-09-15 取证判词（`attbrowsersem-forensic`，`viewers/html.js:397,:501` 为锚）逐字口径 =
+ *  「**不要复制**……**维持 `EXCLUDED_ITEM_TYPES = {html}`**」，与本批任务书
+ *  「zero 新增注入/执行面（禁引入应用内 html 渲染新面）」**同判**。任务书另一条
+ *  「html 按文件浏览器同款打开」与之**互斥**（文件浏览器的 html 形态本身就是应用内
+ *  srcdoc iframe 渲染 = 同源脚本执行面）⇒ 本批**不上呈自选路线**，html 维持排除并上呈裁定
+ *  （见 `.nebflow/reports/20260915_attbrowsersem-impl.md` 开放项 1）。 */
 const EXCLUDED_ITEM_TYPES = new Set(['html']);
 
 /** 文本预览上限：与 `pop.readFile` 的 10MB 闸**同值同源**（禁第二把尺）。 */
@@ -35,7 +46,7 @@ const MAX_TEXT_BYTES = 10 * 1024 * 1024;
 /** 内容嗅探窗口（首 4KB）。 */
 const SNIFF_BYTES = 4096;
 
-/** tabId → objectUrl（图片/PDF 的 blob URL）。tab 关闭即撤销，禁泄漏。 */
+/** tabId → objectUrl（图片/PDF/docx/xlsx/pptx/epub 的 blob URL）。tab 关闭即撤销，禁泄漏。 */
 const objectUrls = new Map();
 let revokeBound = false;
 
@@ -128,7 +139,7 @@ export async function previewBlob({ id, title, blob, fileName }) {
     return renderIntoTab(id, title, itemType, { objectUrl, fileName: name, size: blob.size });
   }
 
-  // docx/xlsx/pptx/epub：viewer 只认本机路径票据，无 blob 腿 ⇒ 可见降级
+  // 无 blob 腿的类型（zip 等无 viewer 认领者）：可见降级（**最后兜底**，非主路径）
   return 'unsupported';
 }
 
