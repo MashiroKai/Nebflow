@@ -2,6 +2,11 @@
   --color-primary: #07c160;
   --color-primary-hover: #06ad56;
   --color-error: #f44336;
+  /* 危险操作文字色（E4，2026-09-16 群聊批）：**单源 token** —— 值逐字取自原
+     `friends.css` 的群危险键字面量（`.fm-gs-danger: #d64545`），本批只做「字面量
+     → token」的搬迁（零新增色值：删除行与新增行同为 `#d64545`，集合差 = ∅），
+     消费点 = `.fm-gs-danger` 一处（🔴 禁扩散到其他面）。 */
+  --color-danger: #d64545;
   --color-success: #4caf50;
   --color-warning: #ff9800;
   --color-bubble-user: #95ec69;

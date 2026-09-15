@@ -625,7 +625,18 @@ button.fm-req-decline:focus-visible {
   padding: 14px 16px 10px;
 }
 
+/* 群窗头组合头像槽（40px 档；**仅群窗**有该元素 ⇒ 单聊/设备窗的窗头几何零变化）。
+   头像本体 = `.fm-avgrid`（唯一实现 groupAvatarGrid）或标题首字母那一枚。 */
+.fm-modal-avatar { flex-shrink: 0; display: inline-flex; align-items: center; }
+
 .fm-modal-title { flex: 1; min-width: 0; display: flex; align-items: baseline; gap: 8px; }
+
+/* H（决策卡 C/D/G/H）：群设置入口在**会话窗头群名处** ⇒ 群窗的标题区可点/可键盘
+   触发（微信原样）。只加交互提示与焦点环，几何零改动（`flex:1` 等仍由上方规则管）；
+   非群窗不挂 `fm-modal-title-btn` 类 ⇒ 好友/设备窗零影响。 */
+.fm-modal-title-btn { cursor: pointer; border-radius: 6px; }
+.fm-modal-title-btn:hover .fm-modal-name { color: var(--color-primary); }
+.fm-modal-title-btn:focus-visible { outline: none; box-shadow: 0 0 0 2px var(--glass-control-border); }
 
 .fm-modal-name {
   font-size: 15px;
@@ -822,7 +833,9 @@ button.fm-req-decline:focus-visible {
 .fm-msg-text:not(:last-child) { margin-bottom: 2px; }
 
 /* Chips: agent-sent + forwarded (§3.3 R6/R7) — pill, etched bg, no new color */
-.fm-msg-agent-badge,
+/* 转发徽章（消息元信息行槽位；材质本就与 agent 徽章同族）。
+   🔴 `.fm-msg-agent-badge` 已随 F1 单源化移出本规则（现状 = `sapphire.css` 的
+   `.agent-badge, .fm-msg-agent-badge` 一处定义；禁在此复写第二份）。 */
 .fm-msg-forwarded-badge {
   font-size: 11px;
   font-weight: 500;
@@ -1018,9 +1031,60 @@ button.fm-req-decline:focus-visible {
    是 P4 批已退役的表达（缺陷 D5），已删除。 */
 
 /* ══ 群组一期（friendgroups 客户端腿）═════════════════════════════════
-   会话行群标识 / 窗头设置按钮 / 群设置抽屉 / 建群对话框 / 群邀请区。
+   会话行群标识 / 窗头设置按钮 / 群设置抽屉 / 建群对话框 / 群邀请区 /
+   群成员头像九宫格。
    复用既有 token（--sapphire / --glass-control-bg-hover / --color-text*），
    零新色（先例：fm-trust-badge 的 alpha 变体口径）。 */
+
+/* ── 群成员头像九宫格（G-A 方形圆角 · 方案 §3.2.1 / 决策卡 A）──────────
+   几何 = 两条规则（**行高 = 容器高 ÷ 行数**、**某行格宽 = 容器宽 ÷ 该行格数**）
+   ⇒ 等高行（flex:1 1 0）+ 等分格（flex:1 1 0），禁内联像素算术。
+   类名 `.fm-avgrid*` 的**唯一**生产方 = friendGroups.groupAvatarGrid（唯一实现，
+   三处落点共用：会话列表群行 / 群会话窗头 / 群信息面板头）。 */
+.fm-avgrid {
+  position: relative;
+  flex-shrink: 0;
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+  border-radius: 5px;
+  background: var(--color-surface);
+  gap: 1px;
+  padding: 0;
+}
+.fm-avgrid-40 { width: 40px; height: 40px; }
+.fm-avgrid-row { display: flex; width: 100%; flex: 1 1 0; min-height: 0; gap: 1px; }
+.fm-avgrid-cell {
+  flex: 1 1 0;
+  min-width: 0;
+  overflow: hidden;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 1px;
+  background: var(--glass-etched-bg);
+  /* token 必在（base.css 亮/暗双档定义）⇒ 本批新增行**不带 fallback 字面量**
+     （任务书 §4⑤：新增行零色值字面量）。 */
+  color: var(--color-text-muted);
+  font-weight: 500;
+  font-size: 15px;
+  line-height: 1;
+}
+.fm-avgrid-cell img { width: 100%; height: 100%; object-fit: cover; display: block; }
+/* 超 9 降级角标 `+N`（n = memberCount − 9）：方形几何下可放右下角
+   （圆形几何会被 overflow:hidden 裁掉 ⇒ 方向 B 需改底部居中，本批取 G-A）。 */
+.fm-avgrid-more {
+  position: absolute;
+  right: 0;
+  bottom: 0;
+  font-size: 9px;
+  line-height: 1;
+  padding: 2px 4px;
+  border-radius: 6px 0 0 0;
+  background: var(--color-text-dim);
+  color: var(--color-surface);
+  font-weight: 600;
+}
 
 /* 会话行「群」标识（L2 行内 chip，形态对齐 fm-row-badge 家族的 pill） */
 .fm-group-tag {
@@ -1062,6 +1126,19 @@ button.fm-req-decline:focus-visible {
   gap: 10px;
 }
 .fm-gs-section { display: flex; flex-direction: column; gap: 6px; }
+/* 群信息头（抽屉顶部）：组合头像 + 群名 + 成员数 */
+.fm-gs-head { display: flex; align-items: center; gap: 10px; min-width: 0; }
+.fm-gs-head-avatar { flex-shrink: 0; display: inline-flex; }
+.fm-gs-head-meta { min-width: 0; display: flex; flex-direction: column; gap: 2px; }
+.fm-gs-head-name {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--color-text);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.fm-gs-head-sub { font-size: 11px; color: var(--color-text-muted); }
 .fm-gs-title { font-size: 11px; font-weight: 600; color: var(--color-text-muted, #888); }
 .fm-gs-title-row { display: flex; align-items: baseline; gap: 6px; }
 .fm-gs-count { font-size: 11px; color: var(--color-text-muted, #888); }
@@ -1070,7 +1147,7 @@ button.fm-req-decline:focus-visible {
 .fm-gs-rename-input:disabled { opacity: 0.55; cursor: default; }
 .fm-gs-save { flex-shrink: 0; font-size: 12px; padding: 5px 12px; }
 
-/* 成员行（显示名 + 角色标签；owner 可见踢人钮） */
+/* 成员行（显示名 + 角色标签 + 操作位：设/撤管理员 + 移出群聊） */
 .fm-member-list { display: flex; flex-direction: column; }
 .fm-member-row {
   display: flex;
@@ -1098,12 +1175,20 @@ button.fm-req-decline:focus-visible {
   background: rgb(var(--sapphire) / 0.12);
   color: rgb(var(--sapphire) / 0.95);
 }
-.fm-gs-kick { flex-shrink: 0; font-size: 11px; padding: 3px 8px; }
+/* 成员行操作位（同族位置面：设/撤管理员 + 移出群聊）
+   E3（决策卡 E/E3/E4/E5）：`.fm-gs-kick` 尺寸档从自成一套的 11px/3px 8px
+   **归一为 12px 文字键档**（= `.fm-gs-action` 的 12px / 5px 12px），材质仍由
+   sapphire 的 Glass Control Pattern B 承担（本规则只定尺寸档，零色值）。 */
+.fm-gs-kick,
+.fm-gs-role { flex-shrink: 0; font-size: 12px; padding: 5px 12px; }
 
-/* 抽屉动作区（邀请 / 退群 / 解散；owner 禁退群提示） */
+/* 抽屉动作区（添加成员 / 退群 / 解散；owner 禁退群提示） */
 .fm-gs-actions { gap: 8px; }
 .fm-gs-action { align-self: flex-start; font-size: 12px; padding: 5px 12px; }
-.fm-gs-danger { color: #d64545; }
+/* 危险键色值单源化（E4）：值本体逐字取自本文件原字面量（搬迁未改一字），
+   现落在 `base.css` 的 `--color-danger` 一处 —— 本文件**不再出现**该色值任何
+   形态（禁继续用字面量、禁扩散到其他面）。 */
+.fm-gs-danger { color: var(--color-danger); }
 .fm-gs-hint { font-size: 11px; color: var(--color-text-muted, #888); }
 .fm-gs-picker { display: flex; flex-direction: column; gap: 8px; margin-top: 6px; }
 .fm-gs-picker .fm-msg-btn { align-self: flex-start; }

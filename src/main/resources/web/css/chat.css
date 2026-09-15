@@ -1127,23 +1127,11 @@
 .bubble.ai hr, .bubble.injected hr { border: none; border-top: 1px solid #eee; margin: 8px 0; }
 .bubble.ai strong, .bubble.injected strong { font-weight: 600; }
 
-/* Agent badge — labels multi-agent output */
-.agent-badge {
-  display: inline-block;
-  font-size: 11px;
-  font-weight: 500;
-  letter-spacing: 0.5px;
-  text-transform: uppercase;
-  padding: 2px 8px;
-  border-radius: 4px;
-  border: 1.5px solid;
-  margin-bottom: 4px;
-  font-family: ui-monospace, SFMono-Regular, monospace;
-  max-width: 160px;
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-}
+/* Agent badge — 曾在此定义（`chat.css` 与 `split.css` 双份声明 = D2 缺陷：后者
+   晚加载 ⇒ border-radius/border-width/background/color 被静默覆盖，只改任一份
+   都得到「改了没生效」的错觉）。作者 2026-09-16 决策卡 F1 起**单源化**到
+   `sapphire.css`（设计系统标准层，最后加载）的 `.agent-badge` 一处；本文件不再
+   声明该类（🔴 禁在此复写第二份）。 */
 .agent-row .bubble.ai {
   margin-top: 0;
 }

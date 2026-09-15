@@ -275,10 +275,12 @@ export default {
   'messages.attachPreviewUnsupported': 'Preview not supported for this type: {name}',
   'messages.attachPreviewFailed': 'Preview failed — try again',
   'messages.agentBadge': 'Sent by agent',
-  // friendgroups phase-1 client leg. agentGroupBadge is VERBATIM frozen
-  // (supplement card §4.2 + ruling A②: generic group badge; the existing
-  // direct-chat key above is untouched).
-  'messages.agentGroupBadge': 'Sent by Agent',
+  // friendgroups phase-1 client leg. 🔴 The agent badge text is CONVERGED to a
+  // single value (author ruling 2026-09-16, F1: one generic badge site-wide):
+  // `agentBadge` ('Sent by agent') and `agentGroupBadge` ('Sent by Agent')
+  // coexisted with different capitalisation ⇒ the latter is deleted (direct
+  // chat / friends / group / list-summary prefix all read `messages.agentBadge`;
+  // no dead keys).
   'messages.groupTag': 'Group',
   'messages.groupUntitled': 'Group chat',
   'messages.memberCount': '{n} members',
@@ -289,13 +291,22 @@ export default {
   'messages.groupMembers': 'Members',
   'messages.roleOwner': 'Owner',
   'messages.roleAdmin': 'Admin',
-  'messages.groupInviteBtn': 'Invite friends',
+  // "Add members" entry (ruling C/D/G/H): the label names the action itself
+  // (the old "Invite friends" named the candidate source instead ⇒ key deleted).
+  'messages.groupAddMember': 'Add members',
   'messages.groupInviteSend': 'Send invites',
   'messages.groupInvitedPending': 'Invite sent — waiting for their confirmation',
   'messages.groupInviteFailed': '{n} invite(s) failed to send',
+  // Set / revoke admin (ruling ①: owner-only; canon §B.2 idempotent route)
+  'messages.groupSetAdmin': 'Make admin',
+  'messages.groupRevokeAdmin': 'Revoke admin',
+  'messages.groupAdminSet': 'Now an admin',
+  'messages.groupAdminUnset': 'Admin revoked',
   'messages.groupKick': 'Remove',
   'messages.groupKickedDone': 'Removed from group',
-  'messages.confirmKick': 'Remove {name} from the group?',
+  // Removal confirmation now carries the CONSEQUENCE clause (ruling D: match the
+  // leave / dissolve wording — removal was the only destructive action without it).
+  'messages.confirmKick': 'Remove {name} from the group? They will stop receiving this group\u2019s messages, its history will no longer be visible to them, and they must be invited again to rejoin.',
   'messages.groupLeave': 'Leave group',
   'messages.confirmLeave': 'After leaving you will stop receiving this group\u2019s messages, and its history will no longer be visible.',
   'messages.groupLeft': 'You left the group — its history is no longer visible',
@@ -304,6 +315,14 @@ export default {
   'messages.groupDisbanded': 'The group has been dissolved',
   'messages.groupCreated': 'Group created',
   'messages.groupNotFound': 'This group does not exist or has been dissolved',
+  // Owner-cannot-leave hint (ruling K / plan §9 D1: this key was MISSING, the
+  // screen printed the raw key name; call site = the owner branch of the drawer).
+  'messages.groupOwnerNoLeave': 'The owner cannot leave the group — the group can only be dissolved.',
+  // Group-domain error states (canon §B.4): the privilege code must be VISIBLE
+  // and must stay distinguishable from an auth failure.
+  'messages.groupNotAdmin': 'You do not have permission to do that (owner or admin only).',
+  'messages.groupMemberNotFound': 'That person is no longer in this group',
+  'messages.groupRoleInvalid': 'Invalid role value',
   'messages.groupsUnavailable': 'Group chat is unavailable',
   'messages.attachUnsupportedGroup': 'No attachment entry point in the group window yet (attachments can be received and downloaded)',
   'messages.notFriendBlocked': 'You can no longer message this contact',

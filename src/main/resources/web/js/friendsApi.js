@@ -33,6 +33,42 @@ const MOCK = (() => {
 
 export const FM_API_MOCK = MOCK;
 
+// ── 群域错误码集合（正典 §B.4；**唯一**落点）──────────────────
+// 这些码随 401/403 到达时一律**不**折进登录链（见 req()），交调用方按码就地提示：
+//  · not_group_admin  群组面**唯一**「越权 / rank 不足」码（成员调 invite/kick/rename、
+//                     admin 调 owner-only 面、admin 对 owner/其他 admin 的 kick、
+//                     对 owner 的角色变更）
+//  · not_member       非成员（**不是**越权码，禁复用）
+//  · owner_cannot_leave / member_not_found / group_disbanded / group_not_found
+//  · invalid_role     body 非法（422）；invalid_title / group_full 同族可见分态
+const GROUP_DOMAIN_ERRORS = new Set([
+  'not_group_admin',
+  'not_member',
+  'owner_cannot_leave',
+  'member_not_found',
+  'group_disbanded',
+  'group_not_found',
+  'invalid_role',
+  'invalid_title',
+  'group_full',
+]);
+
+/** 响应体是否携带群域语义码（非 2xx 可见分态判据，见 req()）。 */
+function isGroupDomainError(data) {
+  return !!(data && typeof data === 'object' && GROUP_DOMAIN_ERRORS.has(data.error));
+}
+
+// ── 群成员头像预览（正典 §A · 加性契约）────────────────────────
+// 🔴 **唯一 wire 常量**：键名 = 正典 §A.1 `memberAvatars`（wire 生产方 = 服务端
+// 正典；客户端适配服务端，禁反向）。改名 = 本行一处改动。
+// 🔴 **唯一 wire 读点** = 下方 normalizeGroupRow 经 normalizeAvatarPreview；
+// 渲染面一律消费归一后的 `memberAvatars`（元素 `{userId, avatarUrl}`），
+// **禁**在任何渲染面出现 wire 键名、**禁**双读别名（`avatar` 单键读取；
+// 键名不符 ⇒ 走联测暴露，不靠兜底掩盖）。
+const GROUP_AVATAR_WIRE_KEY = 'memberAvatars';
+/** 预览上限（正典 §A.1「长度 0..9」⇒ 本层 clamp；渲染面不再判长度上界）。 */
+const GROUP_AVATAR_PREVIEW_MAX = 9;
+
 async function req(method, path, body) {
   let resp;
   try {
@@ -56,8 +92,12 @@ async function req(method, path, body) {
     try { err.data = await resp.json(); } catch { /* no body */ }
     // withAuth returns 403 for missing/invalid token (FriendApiRoutesSpec
     // "auth gate"); 401 also handled for robustness. Guide the user to log in.
+    // 🔴 例外 = 群域语义码 403（群内越权 / 群终态）：**不是**鉴权失败 ⇒ 不派登录链
+    // （正典 · 客户端 UX 硬要求 §B.4.4「越权必须专属码且与 auth 失败可区分」，
+    // 禁被吞成登录链），由调用方（groupErrToast）按码就地提示。仅群域字面入集合，
+    // 其他域的 403 行为逐字不变。
     if (resp.status === 401 || resp.status === 403) {
-      window.dispatchEvent(new CustomEvent('fm-auth-required'));
+      if (!isGroupDomainError(err.data)) window.dispatchEvent(new CustomEvent('fm-auth-required'));
     }
     throw err;
   }
@@ -703,8 +743,42 @@ function normalizeGroupRow(row) {
     unreadCount: Number(row.unreadCount) || 0,
     memberCount: Number(row.memberCount) || 0,
     myRole: row.role || 'member',
+    // 成员头像预览（批 1 加性契约）：**恒在场**（归一出口无条件写入，缺席即 []）⇒
+    // 渲染面无需判 undefined（禁「看情况」式消费）。空数组 = 无预览 ⇒ 调用方渲染
+    // 标题首字母（现状形态 = 降级态）。
+    memberAvatars: normalizeAvatarPreview(row),
   };
   if (typeof row.selfUserId === 'string' && row.selfUserId) out.selfUserId = row.selfUserId;
+  return out;
+}
+
+/** 成员头像预览归一（**唯一** wire 读点，正典 §A.1/§A.7 + 分发器执行口径）。
+ *
+ *  单键读取：元素头像键 = **`avatar`**（正典裁定；**不采 `avatarUrl`**，禁双读别名
+ *  ——双读会让「服务端漏字段」与「服务端换键名」两态塌成一态、静默吞掉契约漂移）。
+ *
+ *  fail-closed 三态（缺席 / 空 / 畸形）**同形回落**：返回 []（或其合法子集）⇒ 消费面
+ *  回退标题首字母；**零抛错 / 零重试 / 零二次请求 / 零新增请求**：
+ *   · 键缺席（老服务端 / 自身缓存）或值非数组 ⇒ []
+ *   · 元素非对象、或 `userId` 非非空串 ⇒ 跳过该元素（无身份也无头像，落不成任何一格）
+ *   · `avatar` 非非空串（null / '' / 其他类型）⇒ 该格 `avatarUrl:''` ⇒ **逐格**首字母兜底
+ *   · 长度 > 9 ⇒ 取前 9（clamp；角标由消费面按 memberCount 差算）
+ *  🔴 顺序语义 = 纯透传（服务端「加入序」）；客户端**禁**依赖顺序做业务判定、
+ *  禁把索引 0 当群主（正典 §A.2：joined_at 秒级 ⇒ owner 位置不确定）。 */
+function normalizeAvatarPreview(row) {
+  const raw = row[GROUP_AVATAR_WIRE_KEY];
+  if (!Array.isArray(raw)) return [];
+  const out = [];
+  for (const el of raw) {
+    if (out.length >= GROUP_AVATAR_PREVIEW_MAX) break;
+    if (!el || typeof el !== 'object') continue;
+    const uid = el.userId;
+    if (typeof uid !== 'string' || !uid) continue;
+    out.push({
+      userId: uid,
+      avatarUrl: typeof el.avatar === 'string' ? el.avatar : '',
+    });
+  }
   return out;
 }
 
@@ -975,6 +1049,31 @@ export async function renameGroup(groupId, title) {
   const g = m.groups.find(x => x.groupId === groupId);
   if (g) g.title = title;
   return {};
+}
+
+/** PUT /api/groups/{id}/members/{userId}/role `{role}` → 200
+ *  `{ok, role, selfUserId}`（正典 §B.2 **唯一授权新路由**；本函数是它的**唯一**
+ *  客户端落点 —— 路由形状逐字来自正典，禁猜测、禁第二条路径）。
+ *
+ *  语义（正典逐字）：body `role` ∈ `{'admin','member'}`；**幂等**（同值再调仍 200，
+ *  响应逐字相同）；成功帧 `selfUserId` = **调用者**（非路径目标）。
+ *  判定序（**服务端权威**，客户端零复制）：鉴权 → group_gate（404 group_not_found /
+ *  403 group_disbanded）→ owner 专属闸（非 owner ⇒ 403 not_group_admin；非成员 ⇒
+ *  403 not_member）→ 目标须为成员（404 member_not_found）→ 目标为 owner ⇒
+ *  403 not_group_admin → body 非法 ⇒ 422 invalid_role。
+ *  客户端只做 **owner-only 的 UX 入口闸**（入口不出现 = 用户不必撞墙），
+ *  🔴 不复制第二套判定（权威闸在服务端）。 */
+export async function setGroupMemberRole(groupId, userId, role) {
+  if (!MOCK) {
+    return req('PUT', `/api/groups/${encodeURIComponent(groupId)}/members/${encodeURIComponent(userId)}/role`, { role });
+  }
+  await delay();
+  const m = mockStore();
+  const list = m.groupMembers[groupId] || [];
+  const target = list.find(x => x.userId === userId);
+  // mock = 契约同形：幂等 + 只动 role（joinedAt / 成员数 / 列表排序全不变）。
+  if (target) target.role = role;
+  return { ok: true, role, selfUserId: String(m.self.userId || '') };
 }
 
 /** DELETE /api/groups/{id} → {}（owner 解散 = 软标记 group_disbanded，主卡 A-5）。 */

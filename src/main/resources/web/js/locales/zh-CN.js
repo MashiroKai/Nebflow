@@ -281,9 +281,10 @@ export default {
   'messages.attachPreviewUnsupported': '暂不支持预览该类型：{name}',
   'messages.attachPreviewFailed': '预览失败，请重试',
   'messages.agentBadge': 'Agent 代发',
-  // 群组一期（friendgroups 客户端腿）。agentGroupBadge 逐字冻结（补充卡 §4.2 +
-  // A② 裁定：群气泡通用徽章「由 Agent 发」；单聊既有键不动）。
-  'messages.agentGroupBadge': '由 Agent 发',
+  // 群组一期（friendgroups 客户端腿）。🔴 agent 徽章文案**收敛为一值**（作者
+  // 2026-09-16 决策卡 F1：全站统一为通用「Agent 代发」徽章）：原 `agentBadge`
+  // `Agent 代发` 与 `agentGroupBadge` `由 Agent 发` 二值并存 ⇒ 后者已删（主对话面 /
+  // 好友面 / 群面 / 列表摘要前缀四处同取 `messages.agentBadge`；禁死键）。
   'messages.groupTag': '群',
   'messages.groupUntitled': '群聊',
   'messages.memberCount': '{n} 名成员',
@@ -294,13 +295,22 @@ export default {
   'messages.groupMembers': '群成员',
   'messages.roleOwner': '群主',
   'messages.roleAdmin': '管理员',
-  'messages.groupInviteBtn': '邀请好友',
+  // 「添加成员」入口（决策卡 C/D/G/H）：文案 = 动作本身（原「邀请好友」是候选源，
+  // 语义 ≠ 动作 ⇒ 该键已删，禁死键）。
+  'messages.groupAddMember': '添加成员',
   'messages.groupInviteSend': '发出邀请',
   'messages.groupInvitedPending': '邀请已发出，待对方确认',
   'messages.groupInviteFailed': '{n} 个邀请发送失败',
+  // 设 / 撤管理员（决策卡 ①：owner 专属；正典 §B.2 幂等路由）
+  'messages.groupSetAdmin': '设为管理员',
+  'messages.groupRevokeAdmin': '撤销管理员',
+  'messages.groupAdminSet': '已设为管理员',
+  'messages.groupAdminUnset': '已撤销管理员',
   'messages.groupKick': '移出群聊',
   'messages.groupKickedDone': '已移出群聊',
-  'messages.confirmKick': '将 {name} 移出群聊？',
+  // 移除成员的确认文案**补后果句**（决策卡 D：对齐退群 / 解散文案口径 ——
+  // 原文案只说「将 X 移出群聊？」不含后果，是唯一没写后果的危险操作）。
+  'messages.confirmKick': '将 {name} 移出群聊？移出后对方将不再收到该群消息，历史消息对其不可见，且需重新邀请才能加入。',
   'messages.groupLeave': '退出群聊',
   'messages.confirmLeave': '退出后将不再收到该群消息，且历史消息不可见。',
   'messages.groupLeft': '已退出群聊，历史消息不可见',
@@ -309,6 +319,13 @@ export default {
   'messages.groupDisbanded': '群聊已解散',
   'messages.groupCreated': '群聊已创建',
   'messages.groupNotFound': '该群聊不存在或已解散',
+  // 群主禁退群提示（决策卡 K / 方案 §9 D1：本键原**缺失**，屏幕上直接印出键名
+  // `messages.groupOwnerNoLeave`；调用点 = buildGroupSettings 的 owner 分支）。
+  'messages.groupOwnerNoLeave': '群主不能退出群聊，只能解散群聊。',
+  // 群域错误分态（正典 §B.4）：越权专属码必须**可见**且与登录失效分态。
+  'messages.groupNotAdmin': '你没有执行该操作的权限（仅群主或管理员可操作）。',
+  'messages.groupMemberNotFound': '该成员已不在群里',
+  'messages.groupRoleInvalid': '角色取值无效',
   'messages.groupsUnavailable': '群聊功能暂不可用',
   'messages.attachUnsupportedGroup': '群聊窗暂无附件发送入口（附件可正常接收与下载）',
   'messages.notFriendBlocked': '对方已不是你的好友，无法发送消息',

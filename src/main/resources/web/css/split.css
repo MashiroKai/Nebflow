@@ -336,16 +336,10 @@
   opacity: 0.6;
 }
 
-/* ===== Agent Badge ===== */
-.agent-badge {
-  font-size: 11px;
-  padding: 2px 8px;
-  border-radius: 9999px;
-  background: var(--color-surface);
-  color: var(--color-text-muted);
-  border: 1px solid var(--color-border);
-  white-space: nowrap;
-}
+/* ===== Agent Badge =====
+   `.agent-badge` 的声明已**单源化**到 `sapphire.css`（设计系统标准层，最后加载；
+   作者 2026-09-16 决策卡 F1）。本文件原有第二份声明（与 chat.css 同名叠加、静默
+   覆盖几何与色）已删，🔴 禁在此复写。 */
 
 /* ===== Canvas Panel (画板) ===== */
 /* Generic display container on the right side.
