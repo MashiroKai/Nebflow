@@ -56,6 +56,7 @@ export function initActivityBar() {
   initSidePanels();
   bindSettingsButton();
   bindAvatar();
+  bindSettingsAccountEntry();
 
   // Refresh NebLink state now and periodically (only while the page is visible)
   // so the avatar reflects logged-in / pairing state.
@@ -327,24 +328,60 @@ function observeSettingsModal() {
 // from agentManager.js) — the 4-state toggle machine shared with Teams/Flows.
 
 // ── Avatar / login ───────────────────────────────────────
+/**
+ * The account entry — ONE function, so every entry point (Activity Bar avatar,
+ * settings avatar entry, friends/messages logged-out empty states) behaves
+ * identically and can never drift.
+ *
+ * 🔴 MUST run synchronously inside a real user-gesture click handler: the
+ * logged-out branch reserves the login popup inside the caller's gesture stack.
+ * A synthesized `el.click()` carries no transient user activation, so a real
+ * browser popup-blocks the tab it opens (that is why the settings entry no
+ * longer forwards a synthetic click — see bindSettingsAccountEntry).
+ *
+ * Logged out → the single click starts the PKCE flow (no second confirmation
+ * step); logged in → open the account profile page.
+ */
+export function activateAccountEntry() {
+  const st = getNeblinkState();
+  if (st.pairing) return; // pairing in progress — ignore
+  if (st.loggedIn) {
+    // Logged in → open the account profile page. The URL comes from the
+    // brand contract (injected profileUrl, fallback in brand.js) — building
+    // it from brand.domain shipped a dead https://neblink.example/profile
+    // link, since domain is a display-only placeholder.
+    // 'noopener': the profile page must not get a window.opener handle back
+    // into the app window.
+    window.open(getProfileUrl(), '_blank', 'noopener');
+    return;
+  }
+  // Not logged in → start the NebLink login (PKCE, device-flow fallback).
+  // showLoginModal reserves the popup synchronously in THIS gesture.
+  showLoginModal();
+}
+
 function bindAvatar() {
   const avatar = document.getElementById('activity-avatar');
   if (!avatar) return;
-  avatar.addEventListener('click', () => {
-    const st = getNeblinkState();
-    if (st.pairing) return; // pairing in progress — ignore
-    if (st.loggedIn) {
-      // Logged in → open the account profile page. The URL comes from the
-      // brand contract (injected profileUrl, fallback in brand.js) — building
-      // it from brand.domain shipped a dead https://neblink.example/profile
-      // link, since domain is a display-only placeholder.
-      // 'noopener': the profile page must not get a window.opener handle back
-      // into the app window.
-      window.open(getProfileUrl(), '_blank', 'noopener');
-    } else {
-      // Not logged in → open the NebLink login modal (PKCE, device-flow fallback)
-      showLoginModal();
-    }
+  avatar.addEventListener('click', activateAccountEntry);
+}
+
+/**
+ * The settings page's avatar entry (second entry point, same behaviour).
+ *
+ * WHY delegation instead of a direct binding: sidebar.js renders
+ * #settings-avatar-entry lazily (renderSettings), so the element does not exist
+ * when this module initialises; and sidebar.js may not statically import this
+ * module — `scripts/check-circular.mjs` fails any static sidebar <-> activityBar
+ * cycle. The sanctioned escape hatch (dynamic import()) is unusable here: it
+ * would move the popup reservation out of the gesture stack.
+ * A document-level delegated listener keeps the popup reservation synchronous
+ * inside the user's own click and follows re-renders for free.
+ */
+function bindSettingsAccountEntry() {
+  document.addEventListener('click', (e) => {
+    const target = e.target instanceof Element ? e.target : null;
+    if (target && target.closest('#settings-avatar-entry')) activateAccountEntry();
   });
 }
 
@@ -547,14 +584,24 @@ function showLoginModal() {
     } else if (state === 'waiting') {
       // PKCE primary path: nothing to copy - the browser tab does the whole
       // hosted login and redirects back to the local gateway.
+      // One-click entry (2026-09-15 session-handoff 案 3 ①): when THIS click
+      // already opened the hosted login page there is no second step left to
+      // perform, so the modal stops asking for one — no "重新打开登录页面"
+      // button, just the wait state. The button is rendered only when the popup
+      // reservation was refused (data.popupOpened === false), i.e. when
+      // clicking it IS the recovery; the blocked toast (popupBlockedFallback)
+      // accompanies it.
       // "使用其他账号登录" (RP-logout fix, 2026-09-06): restarts the flow
       // with prompt="login consent" so the hosted page shows the account
-      // form even when this browser still holds a Logto SSO session.
+      // form even when this browser still holds a Logto SSO session. Kept in
+      // BOTH branches — it also resets the flow on a failed attempt.
+      // (Absent data.popupOpened = not popup-blocked: no nag.)
+      const popupOpened = data.popupOpened !== false;
       body = `
         <div class="login-hint">在浏览器中登录 nebflow 账号以连接此设备</div>
-        <button class="login-modal-btn glass-control" id="login-open-auth">重新打开登录页面</button>
+        ${popupOpened ? '' : '<button class="login-modal-btn glass-control" id="login-open-auth">重新打开登录页面</button>'}
         <button class="login-switch-link" id="login-switch-account">使用其他账号登录</button>
-        <div class="login-waiting">等待登录完成…</div>`;
+        <div class="login-waiting">${popupOpened ? '已在新标签页打开登录页面，等待完成…' : '等待登录完成…'}</div>`;
     } else if (state === 'waiting-device') {
       // Legacy device-flow fallback (gateway reports logto-not-configured).
       body = `
@@ -618,10 +665,13 @@ function showLoginModal() {
       if (pkce) {
         flowInfo = pkce;
         st.flowState = 'waiting';
-        render('waiting');
-        // Navigate the popup reserved in the click gesture; the in-modal
-        // button stays as a second fallback if both were blocked.
-        if (!navigateReserved(pkce.authorizeUrl)) popupBlockedFallback(pkce.authorizeUrl);
+        // Navigate the popup reserved in the click gesture, and let the result
+        // decide the modal body: an opened hosted login page = this single
+        // click already did everything (one-click entry); a refused popup =
+        // the modal keeps the manual re-open button as the recovery.
+        const popupOpened = navigateReserved(pkce.authorizeUrl);
+        render('waiting', { popupOpened });
+        if (!popupOpened) popupBlockedFallback(pkce.authorizeUrl);
         pollPkceState(onSuccess, onError);
         return;
       }
