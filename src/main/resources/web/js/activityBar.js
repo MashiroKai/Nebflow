@@ -481,6 +481,21 @@ function injectLoginModalStyles() {
  * being allowed to open an OAuth window per failed request. Plain calls stay
  * unguarded: they are either click handlers or the switch-account fallbacks,
  * i.e. real user intent.
+ *
+ * Two more opt-in flags (one-window switch batch, 2026-09-16), both used ONLY
+ * by the switch-account fallback in `neblink.js`:
+ *  - `opts.forceLogin === true` → the initial flow starts with
+ *    `prompt="login consent"` (forced fresh login) instead of the plain
+ *    `consent`. Without it the switch fallback would silently downgrade to a
+ *    plain login and could re-enter the OLD account through a still-live SSO
+ *    session — the exact defect the switch-account flow exists to prevent.
+ *  - `opts.deferPopup === true` → do NOT reserve a popup at all. Used when the
+ *    caller has no user gesture (a watchdog, not a click): a reservation there
+ *    is either popup-blocked (real browsers) or, with the blocker off, opens a
+ *    window the flow must not open. The panel's own 「重新打开登录页面」 button
+ *    (a real gesture) then opens the window through the existing
+ *    `.authorizeUrl` path. Neither flag touches the guard: `deferPopup` still
+ *    arms `loginFlowGuardUntil` like every other open.
  */
 export function openLoginModal(opts = {}) {
   showLoginModal(opts);
@@ -677,7 +692,7 @@ function showLoginModal(opts = {}) {
     });
   };
 
-  const startFlow = async (forceLogin = false) => {
+  const startFlow = async (forceLogin = false, deferPopup = false) => {
     setPairing(true);
     finished = false;
     render('starting');
@@ -707,9 +722,12 @@ function showLoginModal(opts = {}) {
         // decide the modal body: an opened hosted login page = this single
         // click already did everything (one-click entry); a refused popup =
         // the modal keeps the manual re-open button as the recovery.
-        const popupOpened = navigateReserved(pkce.authorizeUrl);
+        // `deferPopup` (no gesture at all): nothing was reserved, so nothing is
+        // navigated and no "popup blocked" nag is shown — the panel's manual
+        // button stays the gesture that opens the window.
+        const popupOpened = deferPopup ? false : navigateReserved(pkce.authorizeUrl);
         render('waiting', { popupOpened });
-        if (!popupOpened) popupBlockedFallback(pkce.authorizeUrl);
+        if (!deferPopup && !popupOpened) popupBlockedFallback(pkce.authorizeUrl);
         pollPkceState(onSuccess, onError);
         return;
       }
@@ -742,9 +760,11 @@ function showLoginModal(opts = {}) {
   // Reserve the popup synchronously inside the click gesture stack — the
   // async startFlow below cannot open one without being blocked.
   // Arm the auto-flow guard on every flow start (2026-09-15 OIDC fix).
+  // `opts.deferPopup` (switch-account watchdog, no gesture): skip the
+  // reservation entirely — see openLoginModal's doc.
   loginFlowGuardUntil = Date.now() + LOGIN_FLOW_GUARD_MS;
-  reservePopup();
-  startFlow();
+  if (!opts.deferPopup) reservePopup();
+  startFlow(!!opts.forceLogin, opts.deferPopup === true);
 }
 
 // ── State refresh → avatar styling ───────────────────────
