@@ -212,29 +212,47 @@ function bindTabs() {
 
 // ===== Description editor =====
 
+/** 设备描述**写路径单点**（⑤c，作者 2026-09-15）。
+ *
+ *  🔴 本函数是描述落库的**唯一实现**，两个调用点共用（禁两套并存）：
+ *   · 本文件的旧设备窗编辑器（`bindDescEditor`，随 ① 已不可达，保留为同函数第二调用点）；
+ *   · 设备会话窗的行内编辑器（`messages.js` `startDeviceDescEdit`）——本令要求
+ *     「给设备添加描述的地方」搬进对话框，写路径不搬第二份。
+ *  端点：本机 ⇒ `PUT /api/neblink/device-info`；远端 ⇒ `PUT /api/neblink/peer-description`
+ *  （两者皆为既有端点，**零新增服务面**）。非 2xx ⇒ 抛错（调用方给可见失败反馈；
+ *  旧实现静默吞掉状态码，是「看着保存了、其实没保存」的温床）。
+ *  @param {{deviceId?: string, isLocal?: boolean}} device
+ *  @param {string} userDescription
+ */
+export async function saveDeviceDescription(device, userDescription) {
+  const desc = String(userDescription == null ? '' : userDescription);
+  const token = getAuthToken();
+  const isLocal = !!(device && device.isLocal);
+  const url = isLocal ? '/api/neblink/device-info' : '/api/neblink/peer-description';
+  const body = isLocal
+    ? { userDescription: desc }
+    : { deviceId: device && device.deviceId, userDescription: desc };
+  const res = await fetch(url, {
+    method: 'PUT',
+    headers: { 'Authorization': `Bearer ${token}`, 'Content-Type': 'application/json' },
+    body: JSON.stringify(body)
+  });
+  if (!res.ok) throw new Error(`device description PUT ${res.status}`);
+  // Refresh neblink state so the description propagates to every name surface
+  // (设备窗窗头 / 消息面板设备行 / 联系人面板设备行 —— 全部经 `deviceLabel` 单点)。
+  refreshNeblink();
+}
+
 function bindDescEditor(device) {
   const saveBtn = document.getElementById('dropbox-desc-save');
   const input = document.getElementById('dropbox-desc-input');
 
   const doSave = async () => {
     const desc = input.value.trim();
-    const token = getAuthToken();
-    const isLocal = device.isLocal;
-    const url = isLocal ? '/api/neblink/device-info' : '/api/neblink/peer-description';
-    const body = isLocal
-      ? { userDescription: desc }
-      : { deviceId: device.deviceId, userDescription: desc };
-
     const originalText = saveBtn.textContent;
     try {
-      await fetch(url, {
-        method: 'PUT',
-        headers: { 'Authorization': `Bearer ${token}`, 'Content-Type': 'application/json' },
-        body: JSON.stringify(body)
-      });
+      await saveDeviceDescription(device, desc); // 🔴 单点写路径（与 messages.js 共用）
       saveBtn.textContent = '✓';
-      // Refresh neblink state so settings panel updates
-      refreshNeblink();
     } catch (e) {
       saveBtn.textContent = '!';
     }
@@ -821,6 +839,22 @@ export function onDeviceMessageChange(cb) {
 /** 某设备的设备消息工作集（**本模块唯一属主**；调用方禁就地改结构）。 */
 export function deviceMessagesOf(deviceId) {
   return dropboxMessages[deviceId] || [];
+}
+
+/** 「与它通信过」的**本地半程**判据（⑥，作者 2026-09-15：「要跟设备通信过再出现在
+ *  消息面板里」）。
+ *
+ *  🔴 **唯一实现**（调用方禁自行读 L2 / 禁自行判两层）：证据 = 内存工作集非空
+ *  **∨** L2 缓存非空。后者是跨会话的那一半 —— 只读内存会把「上次会话聊过、本次
+ *  尚未开窗」的设备误判成「没通信过」（重登/刷新后设备行凭空消失）。
+ *  服务端会话行在场 = 另一半证据，由 `messages.js` 的 `deviceConvs` 自判（两半取或）。
+ *  @param {string} deviceId
+ *  @returns {boolean} */
+export function deviceHasLocalTraffic(deviceId) {
+  if (!deviceId) return false;
+  if ((dropboxMessages[deviceId] || []).length > 0) return true;
+  const cached = loadDeviceMessages(deviceId);
+  return !!(cached && cached.length > 0);
 }
 
 /** 开窗顺序契约（与旧窗 `openDropbox` 同：本地缓存渲染先于出帧）。返回是否灌入缓存。 */

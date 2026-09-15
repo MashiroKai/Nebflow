@@ -189,7 +189,12 @@ test('T2 rerun-onboarding entry sealed (not rendered), code + i18n key retained'
 });
 
 // ══ T3 · ③ NL 号入口移除 ══════════════════════════════════
-test('T3 NL-ID entry gone (logged-in view), devices section intact, keys + API wrappers deleted', async ({ page }) => {
+// 🔴 2026-09-15 设备/好友统一返工（作者八点）**改写了本测试的设备侧断言**：
+//    ① 设备入口从设置搬到联系人面板 ⇒ 设置账号段**不再有设备列表**
+//    （`.neblink-peers-list` / `.neblink-peer` 零命中，原「device list must remain」断言
+//    被作者令取代）；④ 设置里只保留 切换账号 + 退出登录 两键。
+//    设备侧的新宿主断言见 tests/unifyfix-eight-points.spec.mjs（②：联系人面板点进展开；③：行样式沿用）。
+test('T3 NL-ID entry gone (logged-in view), settings keeps only switch+logout, keys + API wrappers deleted', async ({ page }) => {
   await bootPage(page, { locale: 'zh-CN', loggedIn: true });
   await openSettings(page);
   await page.waitForSelector('.neblink-logged-in', { timeout: 8000 });
@@ -199,17 +204,20 @@ test('T3 NL-ID entry gone (logged-in view), devices section intact, keys + API w
       '#neblink-nlid-save', '#neblink-nlid-cancel', '.neblink-nlid-statusline', '.neblink-nlid-value'];
     return {
       leaked: sels.filter(s => content.querySelector(s)),
-      // 2026-09-06 合并后（7caf42724）设备区不再有独立 section 标签：设备列表
-      // 以 .neblink-peers-list（行 .neblink-peer）直接嵌在账号区块内。
+      // ①④（作者 2026-09-15）：设备列表已移出设置 ⇒ 账号段只剩两键。
       peersList: !!content.querySelector('.neblink-peers-list'),
       deviceRows: content.querySelectorAll('.neblink-peer').length,
+      oldWindowEntry: content.querySelectorAll('.dropbox-clickable').length,
+      switchBtn: !!content.querySelector('#neblink-switch-btn'),
       logout: !!content.querySelector('#neblink-logout-btn'),
     };
   });
   expect(dump.leaked, 'NL-ID selectors must be zero-hit: ' + JSON.stringify(dump.leaked)).toEqual([]);
-  expect(dump.peersList, 'device list must remain inside the unified account block').toBe(true);
-  expect(dump.deviceRows, 'local device row must render').toBeGreaterThan(0);
-  expect(dump.logout, 'logout button must remain').toBe(true);
+  expect(dump.peersList, '① device list must be GONE from settings (moved to the contacts panel)').toBe(false);
+  expect(dump.deviceRows, '① zero device rows left in the settings account block').toBe(0);
+  expect(dump.oldWindowEntry, '① the old device-window entry (.dropbox-clickable) must be gone').toBe(0);
+  expect(dump.switchBtn, '④ switch-account button must remain').toBe(true);
+  expect(dump.logout, '④ logout button must remain').toBe(true);
 
   // i18n key group deleted in BOTH locales; friendsApi NL wrappers deleted.
   // （p547b 2026-09-15 误报修复：探针剥掉注释再匹配——friendsApi.js:567-568 留有

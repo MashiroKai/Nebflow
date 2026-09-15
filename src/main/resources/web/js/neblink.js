@@ -284,8 +284,8 @@ export function checkPairingRedirect() {
 // 抽取动因（卡 §6.1「在线/离线」行 + O10）：判据与标记原本**内联在
 // neblinkSettingsHTML 的模板字符串里**（旧 :312-318），第二处复用（联系人面板
 // 设备段）只能复制 ⇒ 两处必然漂移。现在唯一实现在此，两个消费面都只调它：
-//   · 设置面板账号段（本文件 neblinkSettingsHTML）
-//   · 联系人面板设备段（contacts.js）
+//   · 联系人面板设备行（contacts.js `deviceRow`，① 后设备行的宿主）
+//   · 设备会话窗窗头（messages.js `renderChatModal` 的 presence 槽）
 // 数据源唯一 = `/api/neblink/status`（本文件 fetchNeblinkStatus）。本函数**只做形态**，
 // 不取数、不缓存 ⇒ 消费面各自决定何时重渲（O10：面板只依赖 WS `peerListChanged` 推送）。
 /** @param {{isLocal?: boolean, online?: boolean, directOnline?: boolean, relayAvailable?: boolean}} d */
@@ -342,91 +342,38 @@ export function neblinkSettingsHTML() {
     </div>`;
   }
 
-  const allDevices = [
-    { ...local, isLocal: true },
-    ...peers
-  ];
-
-  const deviceRows = allDevices.map(d => {
-    // Build update UI for peer devices
-    let updateUI = '';
-    if (!d.isLocal) {
-      const st = deviceUpdateState[d.deviceName] || { status: 'idle' };
-      const dn = escapeHtml(d.deviceName);
-      switch (st.status) {
-        case 'select':
-          updateUI = `<span class="neblink-update-inline">` +
-            `<button class="neblink-ch-btn" data-device="${dn}" data-beta="false">${t('neblink.stable')}</button>` +
-            `<button class="neblink-ch-btn neblink-ch-beta" data-device="${dn}" data-beta="true">${t('neblink.beta')}</button>` +
-            `<button class="neblink-ch-cancel" data-device="${dn}">${t('neblink.cancel')}</button>` +
-            `</span>`;
-          break;
-        case 'updating':
-          updateUI = `<span class="neblink-update-status updating">${t('neblink.updating')}</span>`;
-          break;
-        case 'done':
-          updateUI = `<span class="neblink-update-status done">${t('neblink.restarting')}</span>`;
-          break;
-        case 'error':
-          updateUI = `<span class="neblink-update-status error" title="${escapeHtml(st.message || '')}">${escapeHtml(st.message || 'Error')}</span>`;
-          break;
-        default:
-          updateUI = `<button class="neblink-peer-update-btn" data-device="${dn}">${t('neblink.update')}</button>`;
-      }
-    }
-
-    const did = escapeHtml(d.deviceId || '');
-    const descVal = escapeHtml(d.userDescription || '');
-    // Display name: prefer the user-set description, fall back to the device's
-    // host name. Raw device names look technical; the friendly name reads better.
-    const displayName = escapeHtml(d.userDescription || d.deviceName || t('neblink.unknownDevice') || 'Unknown');
-    const platformLabel = platformDisplay(d.platform);
-
-    // Presence badge (C4): the list used to imply "listed = online". The
-    // backend now reports a real freshness judgement (`online`), plus
-    // reachability hints (`directOnline` = P2P WS up, `relayAvailable` = our
-    // relay tunnel up). Peers get an explicit online/offline badge; offline
-    // rows are dimmed so a stale entry can never masquerade as reachable.
-    // 设备会话统一批 MVP-1/O10：徽章形态已抽为唯一实现 `presenceBadgeHTML`
-    // （本文件与 contacts.js 设备段共用）——判据/配色/文案零复制。
-    const isOnline = d.isLocal || d.online === true;
-    const presenceBadge = presenceBadgeHTML(d);
-
-    return `
-      <div class="neblink-peer${d.isLocal || isOnline ? '' : ' neblink-peer-offline'}">
-        <span class="neblink-peer-icon">${platformLabel.icon}</span>
-        <span class="neblink-peer-name dropbox-clickable"
-          data-device-id="${did}"
-          data-device-name="${escapeHtml(d.deviceName || '')}"
-          data-platform="${escapeHtml(d.platform || '')}"
-          data-desc="${descVal}"
-          data-is-local="${d.isLocal ? '1' : '0'}">${displayName}</span>
-        ${presenceBadge}
-        ${d.isLocal
-          ? '<span class="neblink-peer-status local-tag">' + t('neblink.thisDevice') + '</span>'
-          : '<span class="neblink-peer-status">' + platformLabel.text + '</span>'}
-        ${updateUI}
-      </div>`;
-  }).join('');
-
-  const peerHint = peers.length === 0
-    ? `<div class="cfg-hint" style="margin-top:6px">${t('neblink.noPeersHint') || 'Sign in to nebflow on both devices.'}</div>`
-    : '';
-
+  // ── 设备列表**已移出设置**（①④，作者 2026-09-15）───────────────────────
+  // 作者原话：「我的意思是把入口从设置，转到联系人面板而已。」「而且我不是说这样
+  // 设置里的样式就保留切换账号和登陆就可以了吗」。
+  //
+  // 🔴 本段（登录态设置账号块）现在只渲染：被踢状态行 + **切换账号 / 退出登录**两键。
+  // 设备入口的新家 = 联系人面板的「设备」点进展开入口（`contacts.js`
+  // `buildDevicesEntry` / `buildDeviceRows` / `deviceRow`），**样式沿用**本文件原设备行
+  // 的 `.neblink-peer` 家族（类名/结构不动）+ `neblink.css:83-145`（样式表零改动）。
+  //
+  // 🔴 本令**移除项逐条**（全部在本文件内，随 ① 一次摘除）：
+  //   1. 设备行模板 `allDevices` + `deviceRows`（本机行 + 远端行 + 「更新」键组）；
+  //   2. `.neblink-peers-list` 容器插值 `${deviceRows}`；
+  //   3. `peerHint`（无 peer 提示行 `neblink.noPeersHint` —— 设备列表内容，随列表一并摘除）；
+  //   4. `.dropbox-clickable` 点击绑定（**旧设备窗入口**；旧窗随 ① 退役）；
+  //   5. 「更新 / stable / beta / 取消」三组键绑定（其 DOM 即第 1 项，已不存在）。
+  // 🔴 **保留项**：`kickedLine`（2026-09-14 作者令 C+B 的**被动可见状态行**，语义是
+  // 「账号会话被踢」不是「设备列表内容」⇒ 不随本令摘除；见下原注释）。
+  // 未裁项（呈分发器）：`deviceUpdateState` 的 WS 结果帧处理（本文件 :948-970）与其
+  // i18n 键组**未删** —— 远程更新是服务端面既有能力，本次只摘除其客户端入口。
+  //
   // NL 号入口已移除（作者 2026-09-05 裁定：NL 号统一 = 官网 Username，官网
   // 已有修改功能，客户端不再重复提供）——原「查看 + 修改 + live 可用性检测」
   // 区块连同 friendsApi 的 setNeblinkId/neblinkIdAvailable 一并删除；旧
   // neblink-id 端点同 release 退役（friend-search-contract §4.7）。
 
-  // Device list sits directly under the avatar inside the unified account
-  // block (2026-09-06) — no inner section label, no standalone block chrome.
   // 2026-09-10: 「切换账号」joins 「退出登录」in one row (switch-account spec
   // §1 — green glass primary per the confirmed mockup; row layout styles in
   // neblink.css .neblink-account-actions).
   // 踢旧批（2026-09-14，作者 17:07 裁定 C+B·客户端一刀）——**案 B 客户端腿**：
   // 被服务端 `disconnect` 帧踢下线后，本机必须**被动可见**（修前零用户感知）。
   // 形态遵一期口径（User.md:36 / messages.js:991「无横幅无提示音」）：
-  //   · 只做**状态行**（下方这一条）+ 设备行 presence 语义，无横幅、无 toast、无声音；
+  //   · 只做**状态行**（下方这一条），无横幅、无 toast、无声音；
   //   · `autoReconnectParked` ⇒ 明确告知「自动重连已暂停，需重新登录」——这是本批
   //     对「须用户显式再登录」的用户侧说明（后端停摆态见 NeblinkRelayTunnel.park）。
   // 取数 = /api/neblink/status 的 `relay.signedOutElsewhere`（本地网关↔浏览器侧加法
@@ -441,9 +388,7 @@ export function neblinkSettingsHTML() {
 
   return `
     <div class="neblink-logged-in">
-      <div class="neblink-peers-list">${deviceRows}</div>
       ${kickedLine}
-      ${peerHint}
       <div class="neblink-account-actions">
         <button class="neblink-switch-btn" id="neblink-switch-btn" type="button">${t('neblink.switchAccount')}</button>
         <button class="neblink-logout-btn" id="neblink-logout-btn" type="button">${t('neblink.logout')}</button>
@@ -706,48 +651,12 @@ export function bindNeblinkEvents(rerender) {
 
   // NL 号入口已移除（09-05 裁定）——原 edit/cancel/input/save 绑定随区块删除。
 
-  // Peer update buttons
-  document.querySelectorAll('.neblink-peer-update-btn').forEach(btn => {
-    btn.addEventListener('click', () => {
-      const device = btn.dataset.device;
-      deviceUpdateState[device] = { status: 'select' };
-      rerender();
-    });
-  });
-
-  // Channel selection (stable / beta)
-  document.querySelectorAll('.neblink-ch-btn').forEach(btn => {
-    btn.addEventListener('click', () => {
-      const device = btn.dataset.device;
-      const beta = btn.dataset.beta === 'true';
-      deviceUpdateState[device] = { status: 'updating' };
-      rerender();
-      sendWs({ type: 'remoteUpdate', device, beta });
-    });
-  });
-
-  // Cancel channel selection
-  document.querySelectorAll('.neblink-ch-cancel').forEach(btn => {
-    btn.addEventListener('click', () => {
-      const device = btn.dataset.device;
-      delete deviceUpdateState[device];
-      rerender();
-    });
-  });
-
-  // Device name click → open device modal (all devices, including local)
-  document.querySelectorAll('.dropbox-clickable').forEach(el => {
-    el.addEventListener('click', () => {
-      // Dynamic import - P2-4 cycle cut (neblink <-> dropbox).
-      import('./dropbox.js').then(({ openDropbox }) => openDropbox({
-        deviceId: el.dataset.deviceId,
-        deviceName: el.dataset.deviceName,
-        platform: el.dataset.platform,
-        userDescription: el.dataset.desc,
-        isLocal: el.dataset.isLocal === '1'
-      }));
-    });
-  });
+  // 🔴 设置账号段的**设备列表绑定整组已摘除**（①④，作者 2026-09-15）：随设备行模板
+  // 一并删除的有 —— 「更新」键、stable/beta 频道键、取消键三组绑定，以及
+  // `.dropbox-clickable`（设备名 → **旧设备窗** `openDropbox`）绑定。这些选择器的
+  // DOM 来源（`.neblink-peers-list` / `.neblink-peer`）已不存在（见上方本文件
+  // `neblinkSettingsHTML` 的移除项清单），留着就是永不命中的死绑定。
+  // 设备入口本体见 `contacts.js` 的「设备」点进展开（→ `openDeviceChat`，新设备会话窗）。
 }
 
 // ---- Switch-account modal (2026-09-10, spec §2-§5) ----
