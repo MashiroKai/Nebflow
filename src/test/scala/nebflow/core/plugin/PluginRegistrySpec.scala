@@ -247,7 +247,7 @@ class PluginRegistrySpec extends CatsEffectSuite:
         s"content change must NOT gate loading any more, got: ${after.swap.toOption}")
       assert(drifted.exists(_.contentChanged), "digest drift must surface as the non-blocking contentChanged flag")
       assert(catalog.contains("- mcp-only:"), "a content-changed package stays in the catalog (visible, not removed)")
-      assert(catalog.contains("内容自审批记录后已变更"), s"catalog tail must carry the content-changed note:\n$catalog")
+      assert(catalog.contains("内容与上次记录的版本不同"), s"catalog tail must carry the content-changed note:\n$catalog")
       assert(manifest.exists(_.hcursor.downField("contentChanged").as[Boolean].getOrElse(false)),
         "GET /plugins item must expose contentChanged=true")
   }

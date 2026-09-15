@@ -1069,7 +1069,7 @@ object PluginRegistry:
   private def contentChangedNote(changed: List[String]): String =
     if changed.isEmpty then ""
     else
-      s"另有 ${changed.size} 个插件内容自审批记录后已变更（**不拦截装载**，仅提示核对）：" +
+      s"另有 ${changed.size} 个插件内容与上次记录的版本不同（**不拦截装载**，仅提示核对）：" +
         changed.mkString(", ")
 
   /** 启动/重扫健康摘要（P1 可见性 + 无审批批非拦截可见性）：首行 = 总包数 / 载入数 /
@@ -1101,7 +1101,7 @@ object PluginRegistry:
       val changedDetails = changed.map { p =>
         val rec = trustRecord(p.name).map(_.sha256.take(12) + "…").getOrElse("(no record)")
         s"  [content-changed] ${p.name}: recorded $rec → current ${p.digest.take(12)}… " +
-          "(loaded, not intercepted — re-record via approve if the change is intended)"
+          "(loaded, not intercepted — re-record the baseline if the change is intended)"
       }
       val details = absences.map(a => s"  [${kindSlug(a.kind)}] ${a.name}: ${a.reason}") ++ changedDetails
       Some((head :: details).mkString("\n"))
