@@ -142,6 +142,11 @@ export default {
   'flowmap.detail.loopRoundN': 'round {n}',
   'flowmap.detail.loopVerdict': 'Last verdict',
   'flowmap.detail.notify': 'Dispatcher notify',
+  // Queue-position row (queuepos batch 2026-09-15): the detail panel had no queue
+  // field at all before this (author's report). Same source as the card badge
+  // (`mergeQueuePos`, unique per node, truth = SEM-2 rank ascending).
+  'flowmap.detail.queue': 'Queue position',
+  'flowmap.detail.queueValue': 'Queued · {n} of {m} ({queue})',
   'flowmap.detail.yes': 'Yes',
   'flowmap.chain.archivedToast': 'Chain "{chain}" archived ({n} nodes together)',
   // Chain fold (P1 · spec §3.3): main-graph collapsed-chain summary card; expand =
@@ -169,12 +174,23 @@ export default {
   // ruling 16:39: show the number AND the holders). Badge on the node head row,
   // footnote on the same waiting-note line. Degradation red line: missing key /
   // not computable / same-git-dir multi-project => never render a number.
+  //
+  // **queuepos batch 2026-09-15 fix** (author report: "they all show the same number
+  // ahead / the detail panel has nothing"): the number is now
+  // `mergeQueuePos.position` (a rank, unique per node) — `mergeQueue.ahead` is the
+  // SIZE OF THE BLOCKING SET (identical for every waiter while one merge runs), so
+  // the keys queue.ahead / badgeTitle / untrustedTitle are retired and the old
+  // "N ahead" wording is gone.
   'flowmap.queue.held': 'Queued',
-  'flowmap.queue.ahead': 'Queued · {n} ahead',
+  'flowmap.queue.pos': 'Queued · {n} of {m}',
+  'flowmap.queue.posHead': 'Queued on the merge window ({queue}) · {n} of {m}',
+  'flowmap.queue.heldHead': 'Queued on the merge window',
   'flowmap.queue.blockedBy': 'Blocked by {names}',
-  'flowmap.queue.badgeTitle': 'Queued on the merge window — blocked by {names}',
-  'flowmap.queue.untrustedTitle': 'Queued on the merge window — position unreliable (same git dir shared by multiple projects): blocked by {names}',
+  'flowmap.queue.untrustedHead': 'Queued on the merge window · position unreliable (same git dir, multiple projects)',
   'flowmap.queue.untrustedSuffix': ' (position unreliable: same git dir, multiple projects)',
+  // Queue name (the engine supplies the token; the frontend only translates — an
+  // unknown token is echoed verbatim, never invented)
+  'flowmap.queue.name.merge-window': 'merge window',
   // LoopNode running-phase labels (2026-09-06): loop card desc line shows worker/verify
   'flowmap.loopPhase.worker': 'Producing',
   'flowmap.loopPhase.verify': 'Verifying',

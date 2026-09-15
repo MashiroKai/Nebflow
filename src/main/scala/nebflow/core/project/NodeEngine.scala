@@ -2028,6 +2028,27 @@ class NodeEngine(
       }
       .toMap
 
+  /** 排队**位次**批次（queuepos 批 2026-09-15；显示面单点；纯函数、零副作用、零持久字段）：
+    * nodeId → 位次槽 [[MergeMutexPolicy.QueuePos]]。**只收非空项** ⇒ 缺键 = 不在队列
+    * （非 merge / 在临界区 / 终态 / 竞争者不足）。
+    *
+    * 与 [[mergeQueueSlotsBatch]] 的分工（🔴 两个量互不替代，禁混用）：
+    *   · [[mergeQueueSlotsBatch]] = **闸**判据（阻塞集合 `holders`，载荷键 `mergeQueue`）
+    *     ——「谁挡着我」（含 verdict 准入过滤）；
+    *   · 本函数 = **队列序**（SEM-2 rank 位次，载荷键 `mergeQueuePos`）——「我排第几」
+    *     （**不**过 verdict 准入过滤：位次必须对全队列可读，否则未过 verdict 的节点又
+    *     回到「无信息」——正是作者现场报的 6/6 零显示态）。
+    * 两键同源真源（同一份 `all` + 同一 [[MergeMutexPolicy.rankOf]]），判据不同。
+    *
+    * 🔴 口径纪律（与 [[mergeQueueHoldersBatch]] 逐字同源）：**不得**另读文件票层
+    * （`.nebflow/locks/main-merge.queue`）、**不得**从事件流回放、**不得**在前端/分发器
+    * 复刻——事件流是审计面、文件票层是过渡期并存的旧层，两者都不是本判据的真源。 */
+  def mergeQueuePositionsBatch(all: Map[String, NodeDef]): Map[String, MergeMutexPolicy.QueuePos] =
+    all.valuesIterator
+      .filter(MergeNodePolicy.isMerge)
+      .flatMap(n => MergeMutexPolicy.queuePosOf(n, all).map(p => n.id -> p))
+      .toMap
+
   /** 闸挡启动时的留痕（三处落点共用单点文案）：`merge-queue` 事件（持有者集合变化时
     * 单发）+ INFO 一行带持有者 id/status——供事后从事件流直接读出**FIFO 次序**（谁在
     * 等谁、等了多久由节点 createdAt/startedAt 与事件 ts 共同给出）。 */

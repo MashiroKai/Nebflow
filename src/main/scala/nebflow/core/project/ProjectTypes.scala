@@ -733,6 +733,15 @@ object NodeDef:
  *     纯派生量（不写 NodeDef、不进归档）。**仅快照载荷（NodeList / REST flow-map）
  *     携带**——WS 事件单一序列化点无项目全量节点视图（与 `liveness` 同款快照专有
  *     条件键），未排队节点与全部非 merge 节点字段集字节级零漂移。
+ *   - mergeQueuePos：**仅 merge 节点且处于「同队竞争者 ≥2」的队列里携带**（queuepos
+ *     批 2026-09-15，作者现场报「排队节点显示的前面还有几个都一样」）。值 = `{position,
+ *     total, queue, arrived, readyAt, createdAt, rank:{primary,tiebreaks},
+ *     sameKeyProjects?}`——**位次逐节点唯一**、与真实授予序（SEM-2 rank 升序）逐点一致。
+ *     与 `mergeQueue` 的分工（🔴 互不替代）：`mergeQueue` = 闸判据「谁挡着我」（阻塞集合
+ *     的势 `ahead`，含 verdict 准入过滤）；本键 = 队列序「我排第几」（**不**过准入过滤
+ *     ——位次必须对全队列可读，否则未过 verdict 的节点又回到「无信息」）。两键同源真源
+ *     （同一份 `all` + 同一 `rankOf`）。纯派生量、零持久字段，**仅快照载荷携带**（与
+ *     `mergeQueue` 同款纪律）；未成队节点与非 merge 节点字段集字节级零漂移。
  *   - notifySentAt：**仅异常终态（failed/cancelled）且已上报携带**（归档语义批
  *     2026-09-07「送达即移」——前端链判据据此判断异常终态「已上报可归档」；与
  *     deps/plugins 同构条件字段，非命中不带 = 零字段漂移）。completed 无上报要求
@@ -757,6 +766,7 @@ object NodePayload:
   def buildNodeJson(node: NodeDef, now: Long, chainId: Option[String] = None,
                     chainIds: Option[List[String]] = None,
                     mergeQueue: Option[List[MergeMutexPolicy.QueueSlot]] = None,
+                    mergeQueuePos: Option[MergeMutexPolicy.QueuePos] = None,
                     sameKeyProjects: List[String] = Nil): Json =
     val ttlLeft = node.ttlExpireAt.map(t => Math.max(0L, (t - now) / 1000L))
     val baseFields = List(
@@ -896,6 +906,44 @@ object NodePayload:
         val foreign = if sameKeyProjects.nonEmpty then List("sameKeyProjects" -> sameKeyProjects.asJson) else Nil
         "mergeQueue" -> Json.obj((core ++ foreign)*)
       }
+      // mergeQueuePos 条件序列化（**queuepos 批 2026-09-15**，作者现场报「节点显示的前面
+      // 还有几个都一样 / 详情面板也没有」）：**仅 merge 节点且处于「同队竞争者 ≥2」的队列
+      // 里**才带（调用方注入 [[NodeEngine.mergeQueuePositionsBatch]] 的非空项）——非成队节点
+      // 与全部非 merge 节点 payload 字段集**字节级零漂移**（与 mergeQueue/merge/deps 同构
+      // 条件字段）；🔴 判据持有方 = 引擎单点（禁前端/分发器复刻、禁读文件票层、禁事件流回放）。
+      //
+      // 为什么与 `mergeQueue` **并存而非合并**（口径边界，逐字）：
+      //   · `mergeQueue` = **闸**判据（阻塞集合；`ahead` = 集合的势）——既有键语义**逐字冻结**
+      //     （既有消费方 + MergeQueueVisibilitySpec ①-⑤ / 零漂移断言零影响）；
+      //   · 本键 = **队列序**（位次）——`ahead` 恒等于「挡住我的节点数」，**不是**位次：
+      //     同刻只有一个 running 时全体排队者 `ahead ≡ 1`（＝作者看到的「都一样」），
+      //     且队首（无人挡它）在旧键下**完全没有显示**（＝"零显示"那一极）。
+      //   位次**只增键**、既有键不动 ⇒ 两极化同时解，且无一处旧断言被放宽。
+      // 值形状（逐字契约，前端只读不派生）：
+      //   position          = 1-based 位次（同队竞争者按 rank 升序的序数；已进入临界区者
+      //                       占首位 ⇒ 排队者最小位次可为 2）
+      //   total             = 同队竞争者总数（含已进入临界区者）
+      //   queue             = 队列名 token（[[MergeMutexPolicy.QueueName]]；前端只翻译不派生）
+      //   arrived           = 是否已到达（`in ∪ deps` 全终态；未到达者 rank 首键 = MaxValue
+      //                       ⇒ 位次天然排在队尾——位次对全队列可读，无「无信息」态）
+      //   readyAt/createdAt = rank 依据原文（另 `id` 恒在场 = 第三键）⇒ 位次**可复算**
+      //   rank              = 次序键元数据（与 mergeQueue.rank 同源单点）
+      //   sameKeyProjects[] = 同键多项目（O-1）⇒ 位次**不可信**（与 mergeQueue 同降级信号）
+      // 🔴 本键是**纯派生量**：不写 NodeDef 持久字段、不进 flow-map.json/归档批。
+      val mergeQueuePosFields = mergeQueuePos.toList.map { p =>
+        val posCore = List(
+          "position" -> p.position.asJson,
+          "total" -> p.total.asJson,
+          "queue" -> MergeMutexPolicy.QueueName.asJson,
+          "arrived" -> p.arrived.asJson,
+          "readyAt" -> p.rankAt.asJson,
+          "createdAt" -> p.createdAt.asJson,
+          "rank" -> Json.obj(
+            "primary" -> MergeMutexPolicy.RankPrimary.asJson,
+            "tiebreaks" -> MergeMutexPolicy.RankTiebreaks.asJson))
+        val posForeign = if sameKeyProjects.nonEmpty then List("sameKeyProjects" -> sameKeyProjects.asJson) else Nil
+        "mergeQueuePos" -> Json.obj((posCore ++ posForeign)*)
+      }
       // loop 条件序列化（LoopNode 批 2026-09-06；与 merge 条件字段同构）：
       // 仅 loop 节点带 "loop" 配置对象 + 运行态条件字段——缺省/缺失 = 非 loop
       // （前端按缺省防御，非 loop 节点 payload 字段集零变化）。运行态字段按
@@ -975,7 +1023,7 @@ object NodePayload:
       val roleFields = if node.role != NodeRoles.Task then List("role" -> node.role.asJson) else Nil
       val lastVerdictFields =
         node.lastVerdict.filter(_.trim.nonEmpty).toList.map(v => "lastVerdict" -> v.asJson)
-      Json.obj((baseFields ++ outFields ++ legacyConfigFields ++ hasResultFields ++ wiringGapFields ++ taskPreviewFields ++ depsFields ++ feedbackFields ++ pluginFields ++ notifyFields ++ notifyPolicyFields ++ mergeFields ++ loopFields ++ bgWaitFields ++ reportPendingFields ++ destroyAtFields ++ retryFields ++ genFields ++ notifySentAtFields ++ pendingSuccessionFields ++ chainFields ++ roleFields ++ lastVerdictFields ++ mergeQueueFields)*)
+      Json.obj((baseFields ++ outFields ++ legacyConfigFields ++ hasResultFields ++ wiringGapFields ++ taskPreviewFields ++ depsFields ++ feedbackFields ++ pluginFields ++ notifyFields ++ notifyPolicyFields ++ mergeFields ++ loopFields ++ bgWaitFields ++ reportPendingFields ++ destroyAtFields ++ retryFields ++ genFields ++ notifySentAtFields ++ pendingSuccessionFields ++ chainFields ++ roleFields ++ lastVerdictFields ++ mergeQueueFields ++ mergeQueuePosFields)*)
 
 /** Flow Map 活动区（§2.6，磁盘 flow-map.json）。 */
 case class FlowMapState(

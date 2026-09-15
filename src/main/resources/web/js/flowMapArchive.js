@@ -26,6 +26,9 @@ import { esc, fmtTime } from './flowHelpers.js';
 import { t } from './i18n.js';
 import { renderMarkdownWithMath } from './utils.js';
 import { fetchNodeResultDetail, fetchFlowMapArchive } from './nodeData.js';
+// 排队视图共享解析（queuepos 批 2026-09-15）：详情面板与主图卡读**同一份**解析（叶子模块，
+// 无循环依赖；见 mergeQueueView.js 头注）。详情面板此前**完全没有**排队字段（作者现场报）。
+import { mergeQueueView, queueNameLabel } from './mergeQueueView.js';
 
 // P2-4 cycle cut（同 sidebar.js → modal 先例）：静态链 modal → sidebar → taskList
 // → flowMapArchive → modal 成环（68de01d6 引入 taskList 边后闭合），showToast
@@ -976,6 +979,23 @@ function renderDetail(/** @type {LayerCtx} */ ctx, /** @type {ChainMember} */ n)
     ]);
   }
   if (n.notifyDispatcher === true) execRows.push([t('flowmap.detail.notify'), esc(t('flowmap.detail.yes'))]);
+  // 排队位次行（**queuepos 批 2026-09-15**；作者现场报「点开的详情面板里也没有」）：
+  // 数据源 = 与主图卡**同一份** `mergeQueueView(n)`（引擎条件键 `mergeQueue` + `mergeQueuePos`，
+  // 前端只读不派生）。形态「排队中 · 第 N 位 / 共 M（队列名）」——N/M/队列名全部取载荷
+  // `mergeQueuePos`（位次逐节点唯一，真源 = SEM-2 rank 升序）。
+  // 🔴 降级红线与卡面逐字同源：位次不可计算（键缺失/形状漂移）⇒ 只写裸「排队中」；
+  //    同键多项目（O-1）⇒ 裸「排队中」+ 不可信标注（**不渲染数字**）。🔴 禁编造数字、
+  //    🔴 禁把阻塞数（`ahead`）当位次写。非 merge / 未成队（两键皆缺）⇒ 本行不占位。
+  const qv = mergeQueueView(n);
+  if (qv) {
+    const qvText = qv.untrusted
+      ? esc(t('flowmap.queue.held') + t('flowmap.queue.untrustedSuffix'))
+      : (qv.pos
+          ? esc(t('flowmap.detail.queueValue', {
+              n: String(qv.pos.position), m: String(qv.pos.total), queue: queueNameLabel(qv.pos.queue) }))
+          : esc(t('flowmap.queue.held')));
+    execRows.push([t('flowmap.detail.queue'), qvText]);
+  }
   const execHtml = execRows.length
     ? `<div class="fm-detail-sec">${esc(t('flowmap.detail.secExec'))}</div>${kvHtml(execRows)}`
     : '';
