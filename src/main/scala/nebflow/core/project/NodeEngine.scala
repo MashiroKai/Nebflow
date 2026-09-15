@@ -2272,9 +2272,23 @@ class NodeEngine(
     }
 
   /** 构造节点输入：链上下文块（链头 + 文件名尾溯源提示段，仅本节点有链时注入）+ 自身
-    * task 上下文 + 各上游 result（=== Node <name> === 头，§2.7）+ blocked 声明协议
-    * 脚注（设计 §1.5 原文，单点注入覆盖所有节点——节点 agent 是通用全局 agent，
-    * system prompt 不含约定，必须随输入注入）。
+    * task 上下文 + 各上游 result（=== Node <name> === 头，§2.7）+ 终态申报协议脚注
+    * （[[protocolFootnoteFor]]——**节点会话完整协议的单一权威面**，F8 收口
+    * 2026-09-15：角色值域、blocked JSON 文法、verifier verdict 分支、未申报语义的
+    * 唯一引擎承载文本；引擎编译、随任务输入组装面单点注入（本方法一个代码位覆盖
+    * 全部节点 spawn 输入，含 loop 节点首轮）、零盘面依赖 ⇒ 抗 seed/运行面漂移。
+    * 系统提示词面两处相关文本形态各异：agent 种子条件句（
+    * `seed/agents/general/system.md:7-10`）自带完整规则文本（双角色值域/六类
+    * blocked/ILLEGAL/verdict≠状态/8 拍提醒阶梯/未申报不终态化），且**无**指向本
+    * 脚注的指针——这是 promptfix 批作者并存终态（「规则各留一份」，该条件句 =
+    * 唯一 seed 面防线，已终态冻结），非缺陷；always-on belt 行（
+    * `PromptSections.NodeSessionAlwaysOnSection`，段序 360、段长门 ≤400 B）=
+    * belt+指针，指向工具 description 与本脚注。故「单一权威」的准确口径 =
+    * **引擎贡献面**（引擎编译、随任务输入注入的提示词文本）唯一完整纪律，而
+    * 非全局唯一——旧注释「system prompt 不含约定」的前提已被该结构取代（F8 判违：
+    * 两处设计前提互相否证，本段即消解后的真实理由）。loop 侧同款：
+    * `loopReworkInput` 复注同一 `ProtocolFootnote`（同会话返工轮再提醒，非第二份
+    * 协议文本）。
     * 收敛裁定（作者 2026-09-07）：项目记忆=分发器配置知识——分发器建节点时把关键
     * 口径写进节点 task，节点侧不再注入记忆全文。节点上下文=task+上游结果+AGENTS.md；
     * 节点每 spawn 省一份记忆全文 token（多节点并行批次收益可观）；AGENTS.md 每 turn
@@ -5901,7 +5915,17 @@ object NodeEngine:
     * verifier 专属段（verdict ≠ 节点状态）由 [[protocolFootnoteFor]] 追加——避免把
     * 两套值域并列塞进一篇脚注（R9 中性化同款纪律：解释权收归工具 description）。
     * 本 val 逐字保持旧文本除该句外的全文（下游断言锚：末行 TaskBoard 指引行、
-    * `endsWith(ProtocolFootnote)` 身份断言）。 */
+    * `endsWith(ProtocolFootnote)` 身份断言）。
+    * F8 收口（2026-09-15）：本 val = 节点终态申报协议在**引擎贡献面**（引擎编译、
+    * 随系统提示词/任务输入注入的提示词文本）的单一权威文本——该面唯一完整协议，
+    * blocked JSON 文法在该面仅此处承载（工具面语义另由 `node_report` 工具
+    * description 与 `NodeReportTool` 承载，不属本断言域）。**非全局唯一**：agent
+    * 种子条件句 `seed/agents/general/system.md:7-10` 自带完整规则文本（promptfix
+    * 作者并存终态「规则各留一份」，唯一 seed 面防线，无指向本 val 的指针）；
+    * `PromptSections` 段序 360 = belt+指针；`seed/projects/general/AGENTS.md:8` =
+    * 一行指针（自陈「本文件不复述」）——后二者只承载指针/短句，不承载完整协议。
+    * 文本逐字冻结——`TaskBoardInjectionSpec` 的末行/`needs-split` 措辞钉
+    * 与 `NodeChainAttributionSpec` 的 `endsWith` 身份钉同挂本 val。 */
   val ProtocolFootnote: String =
     """── Node protocol ──
       |**Call `node_report` before wrapping up** — reporting IS the wrap-up action, not a blocked-only channel.
