@@ -709,14 +709,34 @@ case class MessageSummary(
     *     旧形态逐字节一致，且「缺键 = user」的线上口径端到端保持。
     *
     * 键序**追加在末位**：既有位置实参调用（5 参 / 6 参）零改动。 */
-  origin: Option[String] = None
+  origin: Option[String] = None,
+  /** MVP-2 设备会话域统一（契约 §8.3）：**发送设备 id**，仅 `kind='device'` 会话的
+    * 消息非 NULL；直聊/群聊消息（两端是不同 **user**）**永不带**该键。
+    *
+    * 🔴 方向（out/in）**不落库、不上线**：设备会话两端是同一账号 ⇒ 方向是「每台
+    * 机器的视角」（契约 §8.3 逐字「方向（out/in）由 `sender_device_id == 本机 id`
+    * 重算，不落库（P2 缓解）」）。本字段是前端做那次重算的**唯一**输入。
+    *
+    * 键缺席 / null ⇒ `None`：legacy 直聊/群聊行的出参形态**逐字节不变**，
+    * 旧客户端的解码路径零改动（与 `attachments`/`origin` 同一条纪律）。 */
+  senderDeviceId: Option[String] = None
 )
 
 case class ConversationSummary(
   conversationId: String,
   friend: FriendSummary,
   lastMessage: Option[MessageSummary] = None,
-  unreadCount: Int = 0
+  unreadCount: Int = 0,
+  /** MVP-2 设备会话判别键（契约 §8.1）：`Some("device")` = 设备行；直聊行**缺键**。
+    *
+    * 🔴 判别**只认这个键**，不靠 `conversationId` 前缀猜（契约 §8.1 逐字：
+    * 「直聊/群聊行无 `kind` / `deviceId` 两个键」）。前缀猜法会在「用户 id 恰好
+    * 以 `dev:` 开头」这类退化输入上把直聊行误判成设备行。 */
+  kind: Option[String] = None,
+  /** MVP-2：设备行所依据的设备 id（会话 id = `dev:<deviceId>`）。设备**显示名**
+    * 不在本行（`title` 恒 NULL，契约 §8.1 + §9.7）——名字由前端自己的 `peers`
+    * 列表提供，服务端不冻结会过期的名字快照。 */
+  deviceId: Option[String] = None
 )
 
 /** 群会话行（`GET /api/groups` 裸数组的元素，也是 `GET /api/sync/bootstrap` 的
@@ -930,10 +950,28 @@ object FriendCodecs:
       // 批 D：`origin` 可选（键缺席 / null ⇒ None）。手写 decoder 的每一行都是一条
       // 白名单 —— 漏一行即静默丢字段（本批的病灶形态），故此处与 encoder 成对维护。
       origin    <- c.get[Option[String]]("origin")
-    yield MessageSummary(id, senderId, kind, body, createdAt, attachmentsOf(c), origin)
+      // MVP-2（契约 §8.3）：设备消息的发送设备 id —— 与 `origin` 同款「键缺席 /
+      // null ⇒ None」，直聊/群聊行永不带该键 ⇒ 解码结果与旧形态一致。
+      senderDeviceId <- c.get[Option[String]]("senderDeviceId")
+    yield MessageSummary(id, senderId, kind, body, createdAt, attachmentsOf(c), origin, senderDeviceId)
   }
 
-  given Decoder[ConversationSummary] = deriveDecoder
+  /** 会话行解码（MVP-2 加性扩面 · 契约 §8.1）：`kind` / `deviceId` 两个键**只在
+    * 设备行**出现 ⇒ 一律 `Option` 宽容解码（缺席 / null ⇒ `None`），直聊/群聊行
+    * 解码结果与 MVP-2 之前**逐字段相同**。
+    *
+    * 🔴 `lastMessage` 仍是同一条解码链（`MessageSummary` 的 `senderDeviceId` 由上面
+    * 的手写 decoder 一并带上）——不得为设备行开第二条会话解码路径。 */
+  given Decoder[ConversationSummary] = Decoder.instance { c =>
+    for
+      conversationId <- c.get[String]("conversationId")
+      friend         <- c.downField("friend").as[FriendSummary]
+      lastMessage    <- c.get[Option[MessageSummary]]("lastMessage")
+      unreadCount    <- c.get[Option[Int]]("unreadCount")
+      kind           <- c.get[Option[String]]("kind")
+      deviceId       <- c.get[Option[String]]("deviceId")
+    yield ConversationSummary(conversationId, friend, lastMessage, unreadCount.getOrElse(0), kind, deviceId)
+  }
 
   /** 群行解码（gmsgsend 批）：两个解析键 `groupId`/`title` 为**硬键**（缺席即解码
     * 失败 —— 缺这两个键的「群行」对群寻址无意义，且**不得**退化成空串后参与 L1
@@ -1024,10 +1062,34 @@ object FriendCodecs:
       legacy
         ++ m.origin.map(o => "origin" -> o.asJson)
         ++ m.attachments.filter(_.nonEmpty).map(a => "attachments" -> a.asJson)
+        // MVP-2（契约 §8.3）：设备消息多出**第 8 键**（`senderDeviceId`）；
+        // `None` ⇒ **省键**（不是 `null`）⇒ legacy 直聊/群聊消息的出参形态与
+        // 旧形态**逐字节一致**（与 `origin` / `attachments` 同一条纪律）。
+        ++ m.senderDeviceId.map(d => "senderDeviceId" -> d.asJson)
     )
   }
 
-  given Encoder[ConversationSummary] = deriveEncoder
+  /** 会话行出参：**手写**（替换 `deriveEncoder`）—— 理由是 `kind` / `deviceId` 必须
+    * **省键**而非输出 `null`（契约 §8.1 逐字：「直聊/群聊行无 `kind` / `deviceId`
+    * 两个键」，legacy 响应**逐字不变**）；`deriveEncoder` 会把 `None` 写成
+    * `"kind":null`，即在每一条直聊行上多出两个键（静默改线上形态）。
+    *
+    * 🔴 既有四键（`conversationId` / `friend` / `lastMessage` / `unreadCount`）的
+    * **顺序与取值逐字不变**，`lastMessage = None` 仍输出 `null`（不是省键）——
+    * 这是本编码器与旧 `deriveEncoder` 的唯一差异面：只**追加**两个仅在设备行出现的键。
+    * 🔴 加性扩面须与本行成对维护：新增会话行字段时，忘改本编码器 = 静默丢字段。 */
+  given Encoder[ConversationSummary] = Encoder.instance { cv =>
+    Json.fromFields(
+      List(
+        Some("conversationId" -> cv.conversationId.asJson),
+        Some("friend" -> cv.friend.asJson),
+        Some("lastMessage" -> cv.lastMessage.asJson),
+        Some("unreadCount" -> cv.unreadCount.asJson),
+        cv.kind.map(k => "kind" -> k.asJson),
+        cv.deviceId.map(d => "deviceId" -> d.asJson)
+      ).flatten
+    )
+  }
 end FriendCodecs
 
 // ===== Peer Description Store =====

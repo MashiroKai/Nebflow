@@ -591,6 +591,53 @@ export async function markConversationRead(conversationId, lastReadMessageId) {
   if (conv) conv.unreadCount = 0;
 }
 
+// ── MVP-2 设备会话域统一（2026-09-15）：设备维度读面 ──────────────────
+// 契约真源 = neblink-server `main`@`4fceff4`（§8.5/§8.6/§8.7）+ 网关代理路由
+// （`RestApiRoutes.scala` 的 `/conversations/{id}/receipts` 与 `/devices/{id}/messages`）。
+// 🔴 错误面沿用既有 `req()` 分态：`err.data.error` 语义码原样带给调用方
+// （`403 device_identity_required` / `403 not_my_device` / `422 invalid_*`）——
+// 本层不折叠、不改写、不静默吞（调用方按码分态）。
+
+/** GET /api/conversations/{id}/receipts → {receipts:[{messageId,state}],
+ *  lastSentMessageId, lastReadMessageId}（契约 §8.7：设备会话与直聊**同形状**，
+ *  设备维度读自 `device_message_receipts`；`state ∈ {sent,read}`，read 为终态）。 */
+export async function getConversationReceipts(conversationId) {
+  if (!MOCK) return req('GET', `/api/conversations/${encodeURIComponent(conversationId)}/receipts`);
+  await delay();
+  const m = mockStore();
+  const rows = (m.messages[conversationId] || [])
+    .filter(x => x.receiptState)
+    .map(x => ({ messageId: Number(x.id) || 0, state: x.receiptState }));
+  return {
+    receipts: rows,
+    lastSentMessageId: rows.length ? rows[rows.length - 1].messageId : 0,
+    lastReadMessageId: rows.filter(r => r.state === 'read').map(r => r.messageId).pop() || 0,
+  };
+}
+
+/** POST /api/devices/{deviceId}/messages {body, clientMsgId?} →
+ *  {messageId, conversationId, createdAt, createdAtMs, existing, selfUserId}。
+ *
+ *  🔴 契约 §8.6：成功恒 **201**（同 `clientMsgId` 幂等重复**仍是 201**）；
+ *  `existing:true` 仅表示「回放原行」——不是失败、也不是新行。调用方不得按
+ *  `existing` 分支改状态。
+ *  🔴 本函数**不发** `origin`（UI 直发面同群发纪律：`origin` 是服务端自己的标签，
+ *  网关 origin 闸会把非 user 值 400 拒绝）。 */
+export async function sendDeviceMessage(deviceId, body, clientMsgId) {
+  const payload = clientMsgId ? { body, clientMsgId } : { body };
+  if (!MOCK) return req('POST', `/api/devices/${encodeURIComponent(deviceId)}/messages`, payload);
+  await delay();
+  const m = mockStore();
+  const convId = 'dev:' + deviceId;
+  if (!m.messages[convId]) m.messages[convId] = [];
+  const msg = {
+    id: 'm-' + (++m._msgSeq), senderId: 'me', kind: 'text', body,
+    createdAt: new Date().toISOString(),
+  };
+  m.messages[convId].push(msg);
+  return { messageId: msg.id, conversationId: convId, createdAt: msg.createdAt, existing: false };
+}
+
 // ── 群组一期（friendgroups 客户端腿）──────────────────────────────────
 // 契约来源（冻结，禁改）：补充卡「服务端契约逐字草案」§5.1（POST
 // /api/groups/{id}/messages 的路由/请求体/响应/校验序）+ 主卡案1②接口清单

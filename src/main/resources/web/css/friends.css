@@ -1191,3 +1191,24 @@ button.fm-req-decline:focus-visible {
   background: rgb(var(--sapphire));
   transition: width 0.2s ease-out;
 }
+
+/* MVP-2 设备会话（2026-09-15）：
+   ① P10 留存策略明示条（仅设备窗；与 .fm-offline-bar 同几何、非警示语义色）；
+   ② 本机所发气泡的送达/已读状态位（设备回执读面，§8.7 device_message_receipts）。 */
+.fm-device-note {
+  margin: 0 16px 6px;
+  padding: 6px 10px;
+  text-align: center;
+  font-size: 12px;
+  color: var(--color-text-muted, #888);
+  background: var(--glass-etched-bg);
+  border-radius: 8px;
+}
+.fm-msg-device-receipt {
+  font-size: 11px;
+  color: var(--color-text-muted, #888);
+  margin-left: 6px;
+}
+.fm-msg-device-receipt[data-receipt-state='read'] {
+  color: rgb(var(--sapphire));
+}

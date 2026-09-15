@@ -794,6 +794,45 @@ class NeblinkClient(
   def markConversationRead(conversationId: String, lastReadMessageId: Long): IO[Either[String, String]] =
     withSessionRaw("POST", s"/api/conversations/$conversationId/read", s"""{"lastReadMessageId":$lastReadMessageId}""")
 
+  // ===== MVP-2 设备会话域统一（2026-09-15）：新增**读**面 =====
+  //
+  // 跨仓契约真源 = neblink-server `main`@`4fceff4`：
+  //   · `GET  /api/conversations/{id}/receipts`   → `src/friends.rs:1712` `conversation_receipts`
+  //   · `GET  /api/conversations/{id}/messages`   → 既有 [[listMessages]]（设备行多出
+  //     `senderDeviceId`，由 `MessageSummary` 的加性字段承载）
+  //   · `POST /api/conversations/{id}/read`       → 既有 [[markConversationRead]]（设备会话
+  //     上服务端按设备身份写 `device_read_cursors`，见契约 §8.7）
+  // 本层**只做透传**，不复制第二套语义判定（分派由服务端按 `conversations.kind` 完成）。
+
+  /** `GET /api/conversations/{id}/receipts` —— 会话级 送达/已读 回执（P2-C1 面）。
+    *
+    * MVP-2 加性面（契约 §8.7 逐字）：「设备维度回执读自 `device_message_receipts`；
+    * state ∈ {`sent`,`read`}（`read` 为终态）」——服务端**同形状**返回
+    * （`ReceiptsResponse`：`receipts[{messageId,state}]` + `lastSentMessageId` +
+    * `lastReadMessageId`），故客户端**一个解析器读两个面**（服务端逐字承诺
+    * 「Same response shape and same high-water semantics as the legacy branch, so
+    * one client parser reads both faces」，`src/friends.rs:1725-1726`）。
+    *
+    * 🔴 **保留状态码**（走 [[sendRequestJsonWithStatus]] 而非 `withSessionRaw`）：
+    * 设备会话上 `403 device_identity_required`（契约 §8.7）是一个**可判读的语义态**
+    * ——「本次调用的凭证没有设备身份」，折叠成 `Left("HTTP 403: …")` 后调用方只能
+    * 解析字符串。同族先例 = [[proxyWithStatus]]（群路由）/ [[sendRequestJsonWithStatus]]
+    * （E4 回执）；两者均非新形态。
+    *
+    * 🔴 设备 id 走路径段时**必须 URL 编码**（[[enc]]）：`device_id` 来自服务端，本层
+    * 不假定它只含 URL 安全字符。 */
+  def conversationReceipts(conversationId: String): IO[Either[String, (Int, String)]] =
+    withSession(token =>
+      sendRequestJsonWithStatus("GET", s"${config.url}/api/conversations/${enc(conversationId)}/receipts", "", Some(token)))
+
+  // 注：设备会话**发送**面（`POST /api/devices/{device_id}/messages`，契约 §8.6）**不**在
+  // 本层新增方法。理由：它的请求体含 `attachments` 等加性键，必须**按原文转发**
+  // （[[proxyWithStatus]] 的形态）——结构化构造会丢未知键、更会漏掉后续加性扩面；
+  // 而无附件时它与 [[sendFriendMessage]] 的差别只是寻址段。参考口径（下一批补面时用）：
+  // 成功 = **201**（同 `clientMsgId` 幂等重复**仍是 201**，`existing:true` 只表示回放
+  // 原行，不是失败）；拒绝面 = `403 not_my_device` / `422 invalid_origin` /
+  // `422 invalid_length`（三者均为可判读终态）。
+
   /** 群路由代理腿（gwroutes 批，2026-09-15）：**保留上游状态码**的会话内转发口。
     *
     * 与 [[withSessionRaw]] 的**唯一**差别：非 2xx 不折叠成

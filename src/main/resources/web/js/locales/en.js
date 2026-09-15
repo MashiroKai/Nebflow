@@ -1321,6 +1321,13 @@ export default {
   'workspacePicker.readFail': 'Cannot read directory',
   'workspacePicker.mkdirFail': 'Failed to create folder',
 
+  // === Device-conversation server switch, MVP-2 (2026-09-15): retention notice (P10) + device receipts ===
+  'messages.deviceRetention': 'Cloud keeps messages for 7 days; this device keeps them permanently.',
+  'messages.deviceSent': 'Sent',
+  'messages.deviceRead': 'Read',
+  'messages.deviceServerUnavailable': 'Server history unavailable — showing this device\'s local history.',
+  'messages.deviceSendFailed': 'Message not sent. Nothing was lost — try again.',
+
   // === Device-conversation unification, MVP-1 (2026-09-15): panel title / device section / device rows ===
   'contacts.sectionDevices': 'Devices',
   'contacts.devicesEmpty': 'No other devices',
