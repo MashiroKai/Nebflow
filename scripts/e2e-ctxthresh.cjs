@@ -14,8 +14,9 @@
 //
 // 用法：
 //   node scripts/e2e-ctxthresh.cjs             # after——当前磁盘树（硬断言，失败 exit 1）
-//   node scripts/e2e-ctxthresh.cjs --baseline  # before——js/main.js 以 git show HEAD 应答
-//                                              #   且 /js/ctxthresh.js 404（复现「面板不存在」）
+//   node scripts/e2e-ctxthresh.cjs --baseline  # before——js/main.js 以 git show <批基> 应答
+//                                              #   且新模块不被引用（面板不存在）
+//   --baseline-ref <ref>                       # 批基引用，默认 main（本批基 = main tip）
 //
 // 断言（改前全红 / 改后全绿）：
 //   U1 入口在场：click('#header-model-info') → #ctxthresh-panel 可见
@@ -35,8 +36,11 @@ const { execFileSync } = require('node:child_process');
 const ROOT = join(__dirname, '..');
 const WEB = join(ROOT, 'src', 'main', 'resources', 'web');
 const MODE = process.argv.includes('--baseline') ? 'before' : 'after';
-const BASELINE_COMMIT = 'HEAD';
-// baseline 模式：main.js 取 HEAD 版（无 ctxthresh import）；ctxthresh.js 不存在 ⇒ 404
+// 「改前」的服务端文件来源 = **批基**（默认 main；--baseline-ref 可覆盖）。不用 HEAD：
+// 本批一旦在支上落地，HEAD 就已是「改后」树，baseline 会假绿（实测踩过）。
+const _refIdx = process.argv.indexOf('--baseline-ref');
+const BASELINE_COMMIT = _refIdx >= 0 && process.argv[_refIdx + 1] ? process.argv[_refIdx + 1] : 'main';
+// baseline 模式：main.js 取批基版（无 ctxthresh import）；新模块无引用 ⇒ 面板不存在
 const CHANGED = ['js/main.js'];
 const MIME = {
   '.html': 'text/html', '.js': 'text/javascript', '.css': 'text/css',
