@@ -874,12 +874,12 @@ export function appendAgentText(agentId, text) {
     bubble.className = 'bubble ai';
     let badge = null;
     if (agentId && agentId !== 'default') {
+      // F1（作者 2026-09-16 决策卡）：通用「Agent 代发」徽章 —— 主对话面**放弃**
+      // agentId / uppercase / mono / 内联 agentColor 表达（内联色是本批删掉的
+      // 第二处色源；材质与几何单源化在 sapphire.css 的 `.agent-badge` 一处）。
       badge = document.createElement('div');
       badge.className = 'agent-badge';
-      const color = getAgentColor(agentId);
-      badge.style.borderColor = color;
-      badge.style.color = color;
-      badge.textContent = agentId;
+      badge.textContent = t('messages.agentBadge');
       row.appendChild(badge);
     }
     row.appendChild(bubble);
