@@ -4,6 +4,7 @@ import cats.effect.{IO, Ref}
 import cats.effect.unsafe.implicits.global
 import cats.syntax.all.*
 import io.circe.Json
+import io.circe.syntax.*
 import munit.FunSuite
 
 import java.util.regex.Pattern
@@ -312,7 +313,7 @@ class FriendPulledDispatchSpec extends FunSuite:
   // ══ A4 · §3.5 拆字段：setRead 不得移动拉取锚点（静默丢失机制之一）══════
   test("A4 游标拆字段：setRead 只动已读水位，**不得**把补拉锚点一并推走（修前会把 113 推成永久不可达）") {
     val prog = for
-      g = new FriendMessagingGuard()
+      g <- IO(new FriendMessagingGuard())
       _ <- g.advanceAnchor("c", 112L)
       bAnchor <- g.localMaxId("c")
       bDmax <- g.dispatchedMaxOf("c")
@@ -345,7 +346,7 @@ class FriendPulledDispatchSpec extends FunSuite:
 
   test("A4b 判据③不变式：advanceAnchor 取 max 不回退，两格恒等") {
     val prog = for
-      g = new FriendMessagingGuard()
+      g <- IO(new FriendMessagingGuard())
       _ <- g.advanceAnchor("c", 114L)
       _ <- g.advanceAnchor("c", 113L) // 乱序/重放页带回更小值
       p1 <- g.localMaxId("c")
@@ -436,7 +437,7 @@ class FriendPulledDispatchSpec extends FunSuite:
   // ══ A7 · 恒等式在空拍 / 失败拍上同样成立 ═══════════════════════════
   test("A7 空拉取与取数失败：恒等式都退化为 0==0+0，且空拍**不报** WARN、失败拍留痕") {
     val prog = for
-      g = new FriendMessagingGuard()
+      g <- IO(new FriendMessagingGuard())
       _ <- g.advanceAnchor("c", 5L)
       calls <- Ref.of[IO, List[(String, Long, Int)]](Nil)
       frames <- Ref.of[IO, List[Json]](Nil)
