@@ -5,11 +5,13 @@
 // count on #contacts-btn (pure-badge model, [U3]).
 import { t } from './i18n.js';
 import { createIconsIn } from './utils.js';
-import { getNeblinkState } from './neblink.js';
+import { getNeblinkState, presenceBadgeHTML, onNeblinkStatus, platformDisplay } from './neblink.js';
 import { setActivityBadge, openLoginModal } from './activityBar.js';
 import { onMessage } from './ws.js';
 import * as api from './friendsApi.js';
-import { openChatWithFriend, fmtTime, isFriendTrusted, setFriendTrusted } from './messages.js';
+// 设备会话统一批 MVP-1（2026-09-15）：设备段入本面板。数据源/开窗入口都从
+// messages.js 取（设备会话的唯一属主面），本面板只做**行渲染**（禁第二份取数）。
+import { openChatWithFriend, fmtTime, isFriendTrusted, setFriendTrusted, devicePeers, deviceLabel, openDeviceChat } from './messages.js';
 // 群组一期（friendgroups 客户端腿）：建群对话框 + 群取数/可用性 = friendGroups.js
 // 唯一属主；本面板只挂入口（fail-closed，主卡 G-2）与入站群邀请区。
 import { openCreateGroupDialog, refreshGroups, groupsAvailable, groupErrToast } from './friendGroups.js';
@@ -298,7 +300,59 @@ function render() {
     for (const f of friends) list.appendChild(friendRow(f));
   }
   body.appendChild(list);
+  // ── 设备段（设备会话统一批 MVP-1 · 卡 §6.1）─────────────────────────
+  // 插入点 = 好友列表之后、`createIconsIn` 之前（卡指定的插入点）。
+  // 语义：本账号**自有设备**（非好友关系域）；行模型复用 `friendRow` 家族类
+  // （`.fm-row`/`.fm-row-meta`/`.fm-row-name`/`.fm-row-sub` + `avatarEl`）。
+  body.appendChild(buildDeviceSection());
   createIconsIn(body);
+}
+
+/** 设备段（标题 + 行；空态可见，禁静默空段）。
+ *  🔴 去重：`devicePeers()` 按 `deviceId` 去重（卡 O12/P9，上游 peers 可能重行）。 */
+function buildDeviceSection() {
+  const wrap = el('div', 'fm-device-list');
+  // QA 断言面（与群/会话行的 dataset 契约同族）：设备段可机械定位 + 行数可对账。
+  wrap.dataset.deviceSection = '1';
+  wrap.appendChild(el('div', 'fm-section-title', t('contacts.sectionDevices')));
+  const devs = devicePeers();
+  wrap.dataset.deviceCount = String(devs.length);
+  if (devs.length === 0) {
+    wrap.appendChild(el('div', 'fm-empty', t('contacts.devicesEmpty')));
+    return wrap;
+  }
+  for (const d of devs) wrap.appendChild(deviceRow(d));
+  return wrap;
+}
+
+/** 设备行（与 `friendRow` 同族形态；点击 = 开设备会话窗——与好友行同交互语义）。 */
+function deviceRow(d) {
+  const row = el('div', 'fm-row fm-friend-row fm-device-row');
+  row.setAttribute('role', 'option');
+  row.setAttribute('tabindex', '0');
+  row.setAttribute('aria-selected', 'false');
+  row.dataset.deviceId = String(d.deviceId || '');
+  row.appendChild(avatarEl({ name: deviceLabel(d) }, 36));
+  const meta = el('div', 'fm-row-meta');
+  meta.appendChild(el('div', 'fm-row-name', deviceLabel(d)));
+  // 次行 = 平台标签（`platformDisplay` 单点，禁第二份映射）+ 设备 id。
+  const platformText = platformDisplay(d.platform).text || '';
+  meta.appendChild(el('div', 'fm-row-sub', [platformText, String(d.deviceId || '')].filter(Boolean).join(' · ')));
+  row.appendChild(meta);
+  // 在线态徽章：**唯一实现** = neblink.js `presenceBadgeHTML`（O10 抽组件；本面板
+  // 只消费，不自己算 online，也不自己拼文案）。
+  const badgeHTML = presenceBadgeHTML({ ...d, isLocal: false });
+  if (badgeHTML) {
+    const slot = el('span', 'fm-device-presence');
+    slot.innerHTML = badgeHTML;
+    row.appendChild(slot);
+  }
+  const open = () => openDeviceChat(d);
+  row.addEventListener('click', open);
+  row.addEventListener('keydown', (e) => {
+    if (e.key === 'Enter') { e.preventDefault(); open(); }
+  });
+  return row;
 }
 
 function friendRow(f) {
@@ -964,6 +1018,12 @@ export function initContacts() {
       }
     }).observe(panel, { attributes: true, attributeFilter: ['class'] });
   }
+
+  // 设备段在线态 = **推送驱动**（卡 O10）：唯一推送源 = neblink.js 的
+  // `onNeblinkStatus`（`/api/neblink/status` 落地拍，WS `peerListChanged` 已在其上游
+  // 汇流）。本面板**不引入任何轮询**（修前的 3s 轮询属于设置面板账号段，已解绑）。
+  // 面板不在场 ⇒ 不渲染（下次激活由既有 MutationObserver 触发 refresh/render）。
+  onNeblinkStatus(() => { if (panelActive()) render(); });
 
   render();
   if (loggedIn()) refresh();

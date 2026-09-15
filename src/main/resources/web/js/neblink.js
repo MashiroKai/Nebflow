@@ -163,6 +163,9 @@ export async function fetchNeblinkStatus() {
     setCacheAccount(neblinkState.device
       ? `${neblinkState.device.deviceId || ''}|${neblinkState.device.email || ''}`
       : '');
+    // 设备会话统一批 MVP-1/O10：状态拍落地 ⇒ 推送订阅面（联系人面板设备段等）。
+    // 唯一推送源 = 本函数；WS `peerListChanged`（initNeblink）已在此汇流。
+    notifyStatusSubscribers();
   } catch (e) {
     // neblink not available yet
   }
@@ -238,6 +241,42 @@ export function checkPairingRedirect() {
 }
 
 // ---- Settings section HTML ----
+// ── 设备在线态徽章：**单一实现**（设备会话统一批 MVP-1/O10）──────────────
+// 抽取动因（卡 §6.1「在线/离线」行 + O10）：判据与标记原本**内联在
+// neblinkSettingsHTML 的模板字符串里**（旧 :312-318），第二处复用（联系人面板
+// 设备段）只能复制 ⇒ 两处必然漂移。现在唯一实现在此，两个消费面都只调它：
+//   · 设置面板账号段（本文件 neblinkSettingsHTML）
+//   · 联系人面板设备段（contacts.js）
+// 数据源唯一 = `/api/neblink/status`（本文件 fetchNeblinkStatus）。本函数**只做形态**，
+// 不取数、不缓存 ⇒ 消费面各自决定何时重渲（O10：面板只依赖 WS `peerListChanged` 推送）。
+/** @param {{isLocal?: boolean, online?: boolean, directOnline?: boolean, relayAvailable?: boolean}} d */
+export function presenceBadgeHTML(d) {
+  if (d && d.isLocal) return ''; // 本机行恒在线，不挂徽章（沿既有口径）
+  const isOnline = !!(d && d.online === true);
+  const reachHint = !d ? ''
+    : d.directOnline ? t('neblink.reachDirect')
+    : d.relayAvailable ? t('neblink.reachRelay')
+    : t('neblink.reachServerOnly');
+  return `<span class="neblink-presence ${isOnline ? 'online' : 'offline'}" title="${escapeHtml(reachHint)}">`
+    + `${isOnline ? t('neblink.online') : t('neblink.offline')}</span>`;
+}
+
+/** 在线态**推送订阅**（O10）：状态拍落地后逐个通知。
+ *  约束：回调必须同步、廉价、自吞异常（本函数已 try/catch，仍要求回调不阻塞取数链）。 */
+const statusSubscribers = /** @type {Set<(s:any) => void>} */ (new Set());
+
+/** @param {(s:any) => void} cb @returns {() => void} 注销函数 */
+export function onNeblinkStatus(cb) {
+  statusSubscribers.add(cb);
+  return () => statusSubscribers.delete(cb);
+}
+
+function notifyStatusSubscribers() {
+  for (const cb of [...statusSubscribers]) {
+    try { cb(neblinkState); } catch (e) { console.error('[neblink] status subscriber failed:', e); }
+  }
+}
+
 export function neblinkSettingsHTML() {
   const local = neblinkState.device || {};
   const peers = neblinkState.peers || [];
@@ -309,13 +348,10 @@ export function neblinkSettingsHTML() {
     // reachability hints (`directOnline` = P2P WS up, `relayAvailable` = our
     // relay tunnel up). Peers get an explicit online/offline badge; offline
     // rows are dimmed so a stale entry can never masquerade as reachable.
+    // 设备会话统一批 MVP-1/O10：徽章形态已抽为唯一实现 `presenceBadgeHTML`
+    // （本文件与 contacts.js 设备段共用）——判据/配色/文案零复制。
     const isOnline = d.isLocal || d.online === true;
-    const reachHint = d.isLocal ? ''
-      : d.directOnline ? t('neblink.reachDirect')
-      : d.relayAvailable ? t('neblink.reachRelay')
-      : t('neblink.reachServerOnly');
-    const presenceBadge = d.isLocal ? ''
-      : `<span class="neblink-presence ${isOnline ? 'online' : 'offline'}" title="${escapeHtml(reachHint)}">${isOnline ? t('neblink.online') : t('neblink.offline')}</span>`;
+    const presenceBadge = presenceBadgeHTML(d);
 
     return `
       <div class="neblink-peer${d.isLocal || isOnline ? '' : ' neblink-peer-offline'}">
@@ -378,7 +414,7 @@ export function neblinkSettingsHTML() {
 
 /** Map a raw platform string (e.g. "macos", "windows") to a friendly label +
  *  inline SVG icon for the device row. Falls back to a generic device icon. */
-function platformDisplay(platform) {
+export function platformDisplay(platform) {
   const p = (platform || '').toLowerCase();
   const mac = '<svg viewBox="0 0 24 24" fill="currentColor" width="15" height="15"><path d="M16.36 12.93c.02 2.3 2.02 3.07 2.04 3.08-.02.05-.32 1.1-1.06 2.18-.64.93-1.3 1.86-2.34 1.88-1.02.02-1.35-.6-2.52-.6-1.17 0-1.53.58-2.5.62-1 .04-1.77-1-2.42-1.93-1.32-1.9-2.33-5.39-.97-7.74.67-1.17 1.88-1.91 3.19-1.93.99-.02 1.92.66 2.52.66.6 0 1.74-.82 2.93-.7.5.02 1.9.2 2.8 1.52-.07.05-1.67.98-1.65 2.92M14.6 5.4c.55-.67.92-1.6.82-2.52-.79.03-1.75.53-2.32 1.2-.51.59-.96 1.53-.84 2.44.88.07 1.79-.45 2.34-1.12"/></svg>';
   const win = '<svg viewBox="0 0 24 24" fill="currentColor" width="15" height="15"><path d="M3 5.48 10.4 4.4v7.1H3V5.48m0 13.04V13.4h7.4v7.1L3 18.52M11.4 4.26 21 3v8.5H11.4V4.26m0 15.48V13.4H21V21l-9.6-1.26"/></svg>';

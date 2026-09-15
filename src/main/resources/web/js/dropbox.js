@@ -429,7 +429,7 @@ function showDropboxNotice(deviceId, text) {
     text
   });
   // ⑩ 新到消息：走合并路径（非钉底）——阅读中的用户不被推走；已在底部则自然跟随。
-  if (deviceId === openDeviceId) renderMessages(deviceId, { stickBottom: false });
+  afterDeviceMessageChange(deviceId);
 }
 
 // ===== Message rendering =====
@@ -685,7 +685,7 @@ export function initDropbox() {
       }
     }
 
-    if (deviceId === openDeviceId) renderMessages(deviceId, { stickBottom: false });
+    afterDeviceMessageChange(deviceId);
     // ⑩ 增量落盘：下次开窗的首帧来源。写入按每设备上限截尾（fmDropboxCache 单一落点）。
     saveDeviceMessages(deviceId, dropboxMessages[deviceId] || []);
   });
@@ -736,7 +736,7 @@ export function initDropbox() {
     if (m) {
       m.status = success ? 'completed' : 'failed';
       if (savedPath) m.savedPath = savedPath;
-      if (msg.deviceId === openDeviceId) renderMessages(msg.deviceId, { stickBottom: false });
+      afterDeviceMessageChange(msg.deviceId);
     }
   });
 
@@ -750,7 +750,7 @@ export function initDropbox() {
       m.bytesReceived = bytesReceived;
       m.totalBytes = totalBytes;
       m.downloadedBytes = bytesReceived;
-      if (msg.deviceId === openDeviceId) renderMessages(msg.deviceId, { stickBottom: false });
+      afterDeviceMessageChange(msg.deviceId);
     }
   });
 
@@ -760,7 +760,7 @@ export function initDropbox() {
     const deviceId = msg.deviceId;
     historyPending.delete(deviceId);
     mergeDeviceMessages(deviceId, msg.messages || []);
-    if (deviceId === openDeviceId) renderMessages(deviceId, { stickBottom: false });
+    afterDeviceMessageChange(deviceId);
     saveDeviceMessages(deviceId, dropboxMessages[deviceId] || []);
   });
 }
@@ -772,7 +772,7 @@ function updateFileMessageStatus(deviceId, transferId, status) {
   const m = msgs.find(x => x.transferId === transferId);
   if (m) {
     m.status = status;
-    if (deviceId === openDeviceId) renderMessages(deviceId, { stickBottom: false });
+    afterDeviceMessageChange(deviceId);
   }
 }
 
@@ -791,4 +791,61 @@ async function uploadFile(transferId, file) {
   } catch (e) {
     console.error('[dropbox] Upload error:', e);
   }
+}
+
+// ===== 设备会话统一批 MVP-1（2026-09-15）：新窗（messages.js 面）的数据面 =====
+// 设计卡 §6.2 的「复用单点清单」：新窗复用 messages.js 的窗骨架与渲染管线
+// （`renderMessages → keyedDiff → bubbleEl → fillBubble`）；**设备腿的数据面**
+// （WS 帧 `dropbox-history`/`dropbox-message` + L2 缓存 `fmDropboxCache` + 附件队列/闸位）
+// **仍由本模块唯一属主**。新窗因此只经下面这组访问器取数/送件，不复制任何取数、
+// 合并（`mergeDeviceMessages`）、落盘（`saveDeviceMessages`）或闸位逻辑 —— 否则就是
+// 设计卡点名的「第三实现」。旧窗（本模块的 dropbox 模态，含**设备描述编辑器**）一并
+// 保留到 MVP-3（卡 §7.1：描述编辑器不得随聊天窗删除）。
+
+const deviceMessageSubscribers = /** @type {Set<(deviceId: string) => void>} */ (new Set());
+
+/** 设备消息集/传输态变更后：旧窗重渲（既有语义不动）+ 通知新窗订阅者。 */
+function afterDeviceMessageChange(deviceId, stickBottom = false) {
+  if (deviceId === openDeviceId) renderMessages(deviceId, { stickBottom });
+  for (const cb of [...deviceMessageSubscribers]) {
+    try { cb(deviceId); } catch (e) { console.error('[dropbox] device message subscriber failed:', e); }
+  }
+}
+
+/** 新窗订阅（返回注销函数）：**只做通知**；取数一律走 `deviceMessagesOf`。 */
+export function onDeviceMessageChange(cb) {
+  deviceMessageSubscribers.add(cb);
+  return () => deviceMessageSubscribers.delete(cb);
+}
+
+/** 某设备的设备消息工作集（**本模块唯一属主**；调用方禁就地改结构）。 */
+export function deviceMessagesOf(deviceId) {
+  return dropboxMessages[deviceId] || [];
+}
+
+/** 开窗顺序契约（与旧窗 `openDropbox` 同：本地缓存渲染先于出帧）。返回是否灌入缓存。 */
+export function hydrateDeviceCache(deviceId) {
+  return hydrateFromCache(deviceId);
+}
+
+/** 请求全量历史（`dropbox-get-history`）；帧到达经 `onDeviceMessageChange` 通知。 */
+export function requestDeviceHistory(deviceId) {
+  if (!deviceId) return;
+  historyPending.add(deviceId);
+  sendWs({ type: 'dropbox-get-history', deviceId });
+}
+
+/** 无缓存且请求在飞 ⇒ 新窗显示加载态（判据与旧窗同源 = `historyPending`）。 */
+export function deviceHistoryPending(deviceId) {
+  return historyPending.has(deviceId);
+}
+
+/** 发送文本（人发 ⇒ 网关侧 origin = 'user'；agent 腿不经此路径）。 */
+export function sendDeviceText(deviceId, text) {
+  sendWs({ type: 'dropbox-send-text', deviceId, text });
+}
+
+/** 附件发送入口（卡 D3：设备面**保留**纸夹 + 拖拽）——闸位/队列/offer 全在本模块单点。 */
+export function sendDeviceFiles(deviceId, fileList) {
+  handleFilesSelected(deviceId, fileList);
 }
