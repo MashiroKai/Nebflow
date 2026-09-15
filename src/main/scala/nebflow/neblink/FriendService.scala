@@ -1193,6 +1193,30 @@ final class FriendService(
   def groupProxy(method: String, path: String, body: String): IO[Either[String, (Int, String)]] =
     withClient(_.proxyWithStatus(method, path, body))
 
+  // ===== MVP-2 设备会话域统一（2026-09-15）：两个新面的服务层 =====
+  //
+  // 与 [[groupProxy]] **同一条缝、同一条纪律**（`withClient` = enrollment hot-swap
+  // 的唯一替换点；非 2xx **保留上游状态码**，不折叠成 502）：设备会话的两个新面
+  // 各有**可判读的终态**（回执面 `403 device_identity_required`；发送面
+  // `403 not_my_device` / `422 invalid_origin` / `422 invalid_length`，契约 §8.6/§8.7），
+  // 折叠之后客户端就只能解析字符串分态了。
+
+  /** 设备会话回执读面（`GET /api/conversations/{id}/receipts`）。
+    * 🔴 兼容设备会话**与**legacy 直聊会话：服务端按 `conversations.kind` 自行分派到
+    * `device_message_receipts` / `message_receipts`，**响应形状同源**（契约 §8.7）；
+    * 本层不判 kind、不复制第二套分派逻辑（禁双实现）。 */
+  def conversationReceipts(conversationId: String): IO[Either[String, (Int, String)]] =
+    withClient(_.conversationReceipts(conversationId))
+
+  // 注：设备会话**发送**面（`POST /api/devices/{device_id}/messages`，契约 §8.6）**不**在
+  // 本层新增方法 —— 它是「按原文转发」面（请求体含 `attachments` 等加性键，解析后重编码
+  // 会丢键），与群发面**共用** [[groupProxy]] 这一条通用转发缝（见网关路由的注释）。
+  // 🔴 设备面的本地台账纪律（写在这里以免下一批误补）：**不得**在转发成功后就地写本机
+  // legacy `read_cursors` —— 设备维度未读/游标是**服务端**权威（`device_read_cursors`，
+  // 契约 §8.5），而本机 cursor 是 **friend 域**水位；服务端逐字告警「设备会话消息 id 会
+  // 推进 friend 域水位，进而抑制 S1 好友唤醒」（设计卡 §5.5 第 4 行）⇒ 顺手写本地游标
+  // 就是拿 friend 域水位吞 device 域消息（净回归）。
+
   /** A-5 探测透出（工具/诊断面用；三态语义见 [[AttachmentCapability]]）。
     * 未登录 ⇒ `Undetermined`（**不是** `Unsupported`：两者对用户是不同结论、不同文案）。 */
   def probeAttachmentCapability(friendUserId: String): IO[AttachmentCapability] =

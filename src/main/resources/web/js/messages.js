@@ -380,18 +380,23 @@ async function refreshConversations({ friends = 'reuse' } = {}) {
     ]);
     const direct = convs || [];
     // 设备会话行（设备会话统一批 MVP-1 · 卡 A3 合并点）：**本账号自有设备** ⇒
-    // 与好友行/群行同列同排序（排序键 = lastMessage.createdAt 不变）。派生行、无状态：
-    // 每次刷新按 peers 重算（去重见 deviceConvs），不落任何缓存。
-    const devices = deviceConvs();
+    // 与好友行/群行同列同排序（排序键 = lastMessage.createdAt 不变）。
+    // MVP-2：服务端 `kind:'device'` 行优先（未读/预览权威），peers 派生行只补空缺
+    // （归并见 `deviceConvs`）。🔴 服务端设备行**本来就会**出现在 `direct` 里
+    // （网关透传 `kind`/`deviceId`）⇒ 必须先从 `direct` 剔除再并入，否则同一设备
+    // 出两行（一行无设备档案、一行派生）。
+    const serverDeviceRows = direct.filter(c => c && c.kind === 'device');
+    const directNonDevice = direct.filter(c => !(c && c.kind === 'device'));
+    const devices = deviceConvs(serverDeviceRows);
     if (grp) {
       // pendingInvites 的消费方是 contacts 面的群邀请区（它自己调 refreshGroups，
       // 与面板独立刷新同构）；messages 面只消费 groups。
-      conversations = direct.concat(grp.groups || []).concat(devices);
+      conversations = directNonDevice.concat(grp.groups || []).concat(devices);
     } else {
       // keep-last-known：群面取数失败（auth/网络/5xx）⇒ 既有群行原样保留，
       // 只刷新单聊行（与好友域「失败≠空」同口径，禁闪空列表）。
       const prevGroups = conversations.filter(c => c && c.kind === 'group');
-      conversations = direct.concat(prevGroups).concat(devices);
+      conversations = directNonDevice.concat(prevGroups).concat(devices);
     }
     conversations = conversations.sort((a, b) =>
       (toEpochMs(b.lastMessage?.createdAt) || 0) - (toEpochMs(a.lastMessage?.createdAt) || 0));
@@ -810,6 +815,16 @@ function renderChatModal(conv) {
   offline.hidden = state.connected;
   modal.appendChild(offline);
 
+  // P10（O8 终裁④ · 2026-09-15）：设备会话窗**明示**留存策略 ——「云端保留 7 天、
+  // 本地永久」。🔴 仅设备窗挂（好友/群窗无此语义，挂上去就是错误陈述）；文案走
+  // locales 双语键 `messages.deviceRetention`（zh-CN 与 en **各有一份**，缺一侧 =
+  // 断言不成立）。这句是**信息陈述**，不是错误条（不进 offline-bar 的红/黄语义）。
+  if (conv.kind === 'device') {
+    const note = el('div', 'fm-device-note', t('messages.deviceRetention'));
+    note.setAttribute('role', 'note');
+    modal.appendChild(note);
+  }
+
   const flow = el('div', 'fm-flow');
   modal.appendChild(flow);
 
@@ -943,11 +958,17 @@ function applyBlockState(conv) {
   // 群分支（O⑨ 裁定「拉黑只断单聊、同群照常」）：群窗不走好友闸 —— 拉黑/删
   // 好友不产生群内只读栏，也不禁用群发送输入框（群发送权在服务端成员闸）。
   const blocked = conv.kind !== 'group' && conv.kind !== 'device' && !isStillFriend(conv);
-  if (blocked) {
-    const bar = el('div', 'fm-blocked-bar', t('messages.notFriendBlocked'));
+  // F1 翻案要件②（2026-09-15）：设备会话的服务端腿**必须有本机 device id**
+  // ——发送路径段是**发送设备**且服务端硬闸只许自报本机（见 `sendDeviceCurrent`）。
+  // 身份缺席（未登录 / 字段缺席）⇒ **可见禁用**（只读栏 + 输入框禁用 + 占位提示），
+  // 禁静默打对端、禁静默失败、禁把消息留在「看着能发」的假可用态。
+  const noSelf = deviceSendBlocked(conv);
+  if (blocked || noSelf) {
+    const bar = el('div', 'fm-blocked-bar', t(noSelf ? 'messages.deviceSendUnavailable' : 'messages.notFriendBlocked'));
     modalEls.flow.parentNode.insertBefore(bar, modalEls.flow);
   }
-  modalEls.input.disabled = blocked || !state.connected;
+  modalEls.input.disabled = blocked || noSelf || !state.connected;
+  modalEls.input.placeholder = t(noSelf ? 'messages.deviceSendUnavailable' : 'messages.inputPlaceholder');
   syncComposerSend(); // 发送键 = 输入框可用 ∧ 输入非空（判据单源，见下）
 }
 
@@ -2506,23 +2527,85 @@ export function devicePeers() {
   return dedupeDevices(rel.peers);
 }
 
-/** 设备消息 → 本模块气泡形态（§6.3 D1/D10 **唯一**映射点）。
- *  映射：`msgId→id` / `text→body` / `ts→createdAtMs`（`toEpochMs` 直通，卡 1.3-9）/
- *  `direction==='out'→ours`。节点身份键统一走 `messageId`（`bubbleEl` 已用
- *  `dataset.messageId` ⇒ 与好友/群同键，D10 收敛）。
- *  @param {any} m DropboxMessage（wire/缓存原文，字段面见 DropboxModels.scala:12-31）
- *  @returns {any} */
-function adaptDeviceMessage(m) {
-  const ours = m.direction === 'out';
+/** 本机设备 id（MVP-2 方向重算 P2 的**比对基准**）。
+ *  数据源 = `getNeblinkState().device.deviceId`（与 `devicePeers` 同一 state 单点，
+ *  禁另开第二份身份面）。未登录 / 字段缺席 ⇒ `''`（此时**没有**比对基准，见
+ *  `adaptDeviceMessage` 的降级档）。 */
+function selfDeviceId() {
+  const st = getNeblinkState();
+  const id = st && st.device ? st.device.deviceId : null;
+  return (id === undefined || id === null) ? '' : String(id);
+}
+
+/** 服务端附件行 → 附件卡形态（MVP-2 附件第三分支 · 契约 §8.8）。
+ *  wire = `AttachmentDto`（跨仓 `src/model.rs:678`：id/name/size/mime?/sha256/state），
+ *  与好友附件**同一张卡**（`attachmentCard` 单点渲染，禁第二套卡）；`state` 直通
+ *  ——三态 `uploading|ready|expired` 的语义真源在服务端（§B.7），本层不改写。
+ *  设备会话附件的取字节路径 = 既有 `api.downloadAttachment`（E3 成员闸，§8.8：
+  * peer 可放 `dev:<deviceId>`），故 id 原样透传即可，**零新增下载面**。 */
+function serverAttachmentAsCard(a) {
+  if (!a || typeof a !== 'object') return null;
+  const id = a.id === undefined || a.id === null ? '' : String(a.id);
   return {
-    id: String(m.msgId),
+    id,
+    name: a.name || '',
+    size: Number(a.size) || 0,
+    mime: a.mime || undefined,
+    sha256: a.sha256 || '',
+    // 无 id = 不可判读条目（服务端网关侧已把坏条目折成 `state:''` 的安全缺省）
+    state: id ? (a.state || '') : 'expired',
+  };
+}
+
+/** 设备消息 → 本模块气泡形态（§6.3 D1/D10 **唯一**映射点；MVP-2 扩为**双源**）。
+ *
+ *  🔴 判源 = `senderDeviceId` 键（契约 §8.3 逐字：「仅 device 非 NULL」「直聊/群聊
+ *  行无该键」）——只有服务端行携带它，legacy 网关 `DropboxMessage` 永不带。
+ *  🔴 方向重算（P2，契约 §8.3 逐字：「方向（out/in）由 `sender_device_id == 本机 id`
+ *  重算，不落库」）：服务端行 `ours = senderDeviceId === 本机`；legacy 行回落
+ *  `direction === 'out'`（网关本已按本机视角判定）。
+ *  映射：`msgId→id`（legacy）/ `text→body`（legacy）/ `ts→createdAtMs`
+ *  （`toEpochMs` 直通，卡 1.3-9）/ `direction==='out'→ours`（legacy）。
+ *  节点身份键统一走 `messageId`（`bubbleEl` 已用 `dataset.messageId` ⇒ 与好友/群同键）。
+ *  @param {any} m 服务端 MessageDto（`senderDeviceId` 在场）或 legacy DropboxMessage
+ *  @returns {{id: string, body: string, createdAt: number, createdAtMs: number, origin: string, ours: boolean, attachments: any[]}} */
+export function adaptDeviceMessage(m) {
+  if (!m || typeof m !== 'object') {
+    return { id: '', body: '', createdAt: 0, createdAtMs: 0, origin: 'user', ours: false, attachments: [] };
+  }
+  const isServer = m.senderDeviceId !== undefined && m.senderDeviceId !== null;
+  // 方向（P2）：有发送设备 id ⇒ 用它比对本机；没有 ⇒ 无该证据，回落 legacy 字段。
+  // 🔴 `selfDeviceId()` 为空串（未登录/字段缺席）时**不**把一切判成「本机所发」：
+  // 那会把对端消息全部画到右侧。此时无证据 ⇒ 保守落「in」（与好友面
+  // `resolveOut` 的「两源皆缺席 ⇒ in」同一条纪律，P5 同源）。
+  const mine = selfDeviceId();
+  const ours = isServer
+    ? (mine !== '' && String(m.senderDeviceId) === mine)
+    : m.direction === 'out';
+  const rawId = (m.id !== undefined && m.id !== null) ? m.id : m.msgId;
+  const id = (rawId === undefined || rawId === null) ? '' : String(rawId);
+  // 时间：`createdAtMs`（服务端，毫秒）直通优先；`createdAt`（秒/ISO）与 `ts`
+  // （legacy，毫秒）走 `toEpochMs` 归一 —— 三源一档，禁各写一套猜法。
+  const createdRaw = (m.createdAtMs !== undefined && m.createdAtMs !== null) ? m.createdAtMs : m.createdAt;
+  const createdAtMs = toEpochMs(createdRaw) || toEpochMs(m.ts) || 0;
+  const isFile = m.kind === 'file';
+  const serverAtts = Array.isArray(m.attachments) ? m.attachments : [];
+  const atts = isServer
+    ? serverAtts.map(serverAttachmentAsCard).filter(Boolean)
+    : (isFile ? [deviceFileAsAttachment(m, ours)] : []);
+  return {
+    id,
     // 文件消息不占气泡正文（文件卡承载）；notice 走 text 正文（既有闸位提示形态）。
-    body: m.kind === 'file' ? '' : (m.text || ''),
-    createdAt: m.ts,
-    // 来源面（卡 P3）：收端**提示级**渲染（wire `origin` 未经服务端强制）。
+    body: !isServer && isFile ? '' : (m.body !== undefined && m.body !== null ? String(m.body) : (m.text || '')),
+    // 内部形态键 `createdAt` 供渲染管线（`toEpochMs`/`fmtTime` 单点）；
+    // `createdAtMs` 为同值的毫秒别名（§6.3 D1 契约名 + 转发链入参同源）。
+    createdAt: createdAtMs,
+    createdAtMs,
+    // 来源面（卡 P3）：收端**提示级**渲染（wire `origin` 未经服务端强制，不构成
+    // 「agent 发」的判定依据 —— 徽标判据 `isAgentSent` 语义不变，仅提示）。
     origin: m.origin === 'agent' ? 'agent' : 'user',
     ours,
-    attachments: m.kind === 'file' ? [deviceFileAsAttachment(m, ours)] : [],
+    attachments: atts,
   };
 }
 
@@ -2544,22 +2627,117 @@ function deviceFileAsAttachment(m, ours) {
   };
 }
 
+/** 两条消息里更新的那条（**窗内预览**取最新；判据 = 服务端行 id 单调，回落
+ *  `createdAtMs`）。纯函数，禁散落的比较实现（与 `compareDeviceMsg` 同一档判据）。 */
+function newerDeviceMsg(a, b) {
+  if (!a) return b || null;
+  if (!b) return a;
+  const na = Number(a.id); const nb = Number(b.id);
+  if (Number.isFinite(na) && Number.isFinite(nb)) return nb >= na ? b : a;
+  return (Number(b.createdAtMs) || 0) >= (Number(a.createdAtMs) || 0) ? b : a;
+}
+
+/** 归并窗内的消息排序（keyset 两路合流；判据同 `newerDeviceMsg`）。 */
+function compareDeviceMsg(a, b) {
+  const na = Number(a.id); const nb = Number(b.id);
+  if (Number.isFinite(na) && Number.isFinite(nb)) return na - nb;
+  return (Number(a.createdAtMs) || 0) - (Number(b.createdAtMs) || 0);
+}
+
 /** 设备会话行（合并进 `conversations`；范本 = 群行 `convRow`）。
- *  派生行、无状态：每次刷新按 peers 重算。`lastMessage` 供列表预览/排序键
- *  （排序键 = `lastMessage.createdAt`，与好友/群同键）。 */
-function deviceConvs() {
-  return devicePeers().map(d => {
-    const raw = deviceMessagesOf(d.deviceId);
-    const last = raw.length ? raw[raw.length - 1] : null;
-    return {
-      conversationId: DEVICE_CONV_PREFIX + d.deviceId,
-      kind: 'device',
-      device: d,
-      // D5：设备面一期无未读概念（服务端设备维度未读属 MVP-2）⇒ 恒 0，不画角标。
-      unreadCount: 0,
-      lastMessage: last ? adaptDeviceMessage(last) : null,
-    };
-  });
+ *
+ *  MVP-2（2026-09-15）：**服务端行优先 + 按 peer 归并两行**（契约 §9.3 + §8.1）。
+ *  服务端设备会话以**发送设备**为键（`dev:<senderDeviceId>`；`sender_device_id`
+ *  由会话 id 派生 ⇒ **一条会话内方向恒定**，服务端自测 `devicesession_test.rs:377-446`），
+ *  故一次双向对聊落**两行**：`dev:<本机>` = 我发出的、`dev:<对端>` = 对端发来的。
+ *  🔴 本函数把**同一个 peer 的两行读成一条窗**：
+ *    · 本机自己那一行**不单独成窗**（否则一次对聊裂成两窗，且本机窗名退化成裸 id）；
+ *    · 窗 id = 对端那一行（`dev:<对端>`；contacts 面板点设备即开此窗）；
+ *    · `serverRows` = 参与本窗的服务端行（对端行 + 本机行）——取数/已读/回执都
+ *      按它**逐行**打（禁把两行当一行打）；
+ *    · 方向**逐条按 `senderDeviceId` 重算**（`adaptDeviceMessage` 单点）⇒ 窗内天然并呈；
+ *    · 未读 = 各行 `unreadCount` **之和**（本机行恒 0，§8.1「发送设备自己 0」）。
+ *  peers 派生行只补「该设备与它自己那一行都没有服务端行」的空缺（旧网关 / 新设备
+ *  未通信 ⇒ legacy dropbox 腿，判红④的降级展示）。
+ *  🔴 本机 device id 缺席（未登录 / 字段缺席）⇒ **无法判定哪一行是本机行**：不归并
+ *  （每行各自成窗、方向保守落 in），且该窗的发送面**可见禁用**（见 `applyBlockState`）。
+ *  🔴 已知后果（登记项，非缺陷）：账号只剩本机一台设备（无 peers）时，本机那一行
+ *  **不成窗** ⇒ 它承载的「我发出的」消息在 UI 上无窗可入（对齐 §9.3：本机行只作为
+ *  对端窗的一半存在）。
+ *  §9.7：设备显示名**不**在服务端行里（`title` 恒 NULL）⇒ 名字一律由 `peers` 单点提供。
+ *  @param {any[]} serverRows `api.getConversations()` 原始行（已含设备行）
+ *  @returns {any[]} */
+function deviceConvs(serverRows) {
+  const selfId = selfDeviceId();
+  // ① 服务端设备行：按**发送设备**分桶（`kind` 键判别，不猜前缀 §8.1）
+  const rows = [];
+  for (const row of serverRows || []) {
+    if (!row || row.kind !== 'device') continue;
+    const did = row.deviceId || String(row.conversationId || '').slice(DEVICE_CONV_PREFIX.length);
+    if (!did) continue;
+    rows.push({
+      conversationId: row.conversationId || (DEVICE_CONV_PREFIX + did),
+      deviceId: did,
+      unreadCount: Number(row.unreadCount) || 0,
+      lastMessage: row.lastMessage ? adaptDeviceMessage(row.lastMessage) : null,
+    });
+  }
+  // 本机那一行 = 归并用的公共半边；无本机身份 ⇒ 不识别（不归并）
+  const selfRow = selfId ? (rows.find(r => r.deviceId === selfId) || null) : null;
+  const peerRows = selfId ? rows.filter(r => r.deviceId !== selfId) : rows;
+  const peers = devicePeers();
+  const byId = new Map();
+  const windowOf = (did) => {
+    let w = byId.get(did);
+    if (!w) {
+      w = {
+        conversationId: DEVICE_CONV_PREFIX + did,
+        kind: 'device',
+        device: null, // peers 段回填（名字/平台/在线态单点在 peers）
+        serverRows: [], // 参与本窗的服务端行（对端行 + 本机行）
+        sourceServer: false, // 数据面选路判据（有服务端行才走服务端取数腿）
+        unreadCount: 0,
+        lastMessage: null,
+      };
+      byId.set(did, w);
+    }
+    return w;
+  };
+  // ② 窗集合 = 服务端「非本机」行 ∪ peers（🔴 本机那一行**不是窗**，见函数注释）
+  for (const r of peerRows) windowOf(r.deviceId);
+  for (const d of peers) {
+    const did = d && d.deviceId ? String(d.deviceId) : '';
+    if (!did) continue;
+    if (selfId && did === selfId) continue; // 防御：peers 已剔本机
+    const w = windowOf(did);
+    if (!w.device) w.device = d; // 名字/平台/在线态：peers 单点（§9.7 禁服务端名字快照）
+  }
+  // ③ 服务端行归属：对端行 + 本机行（本机行并入**每一条**窗）
+  for (const [did, w] of byId) {
+    w.serverRows = rows.filter(r => r.deviceId === did);
+    if (selfRow) w.serverRows.push(selfRow);
+    if (w.serverRows.length) {
+      w.sourceServer = true;
+      let sum = 0;
+      let latest = null;
+      for (const r of w.serverRows) {
+        sum += r.unreadCount;
+        latest = newerDeviceMsg(latest, r.lastMessage);
+      }
+      w.unreadCount = sum;
+      w.lastMessage = latest;
+    } else {
+      // D5：无服务端行 ⇒ 无服务端未读可读 ⇒ 恒 0（不是假装算过）；预览取本地缓存
+      const raw = deviceMessagesOf(did);
+      const last = raw.length ? raw[raw.length - 1] : null;
+      w.lastMessage = last ? adaptDeviceMessage(last) : null;
+    }
+  }
+  // ④ 孤儿服务端行 / 不在 peers 的设备：显示名降级为 id，不静默消失。
+  for (const w of byId.values()) {
+    if (!w.device) w.device = { deviceId: String(w.conversationId).slice(DEVICE_CONV_PREFIX.length) };
+  }
+  return [...byId.values()];
 }
 
 /** 设备工作集 → 本模块消息数组（**顺序即帧/缓存顺序**：网关按 ts 升序给出全量）。 */
@@ -2573,16 +2751,186 @@ function syncDeviceMsgs(deviceId) {
   deviceMsgs = next;
 }
 
-/** 设备面发送（人发）。与好友面**同一形态**（trim 闸 → 清空 → 发送键回禁用态），
- *  但出帧走 `dropbox-send-text`（设备腿唯一通道）。回显由网关 `dropbox-message`
- *  帧给（**同一 `msgId`**，卡 1.3-12）⇒ 不做本地乐观气泡（禁第二份回显认领逻辑）。 */
-function sendDeviceCurrent(conv) {
+// ── MVP-2 设备会话切服务端数据源（2026-09-15）─────────────────────────
+// 数据面选路判据 = 会话行的 `sourceServer`（`deviceConvs` 单点给出：**真服务端行**
+// 才走服务端腿；peers 派生行 = 无服务端行 ⇒ 走 legacy dropbox 腿，判红④的降级展示）。
+// 🔴 取数/已读/回执/发送**四条**都在同一实现面上落地（任务书⑤：与②同一实现面，
+// 禁各自演化）——都只消费 `sourceServer` 一个判据。
+
+/** 设备回执（会话 id → {lastReadMessageId, lastSentMessageId}）。渲染期派生态，
+ *  不进缓存（与好友面 `markOurs` 同一条「派生态不落盘」纪律）。
+ *  🔴 键 = **本机所发那一行** `dev:<本机>`：服务端 `device_conversation_receipts`
+ *  只回 `sender_device_id = 请求设备` 的行（`store.rs:7121-7146`）⇒ 我的回执只在
+ *  我自己的会话行上，对端那一行恒空（禁按窗 id 乱打）。 */
+const deviceReceipts = new Map();
+
+/** 本机所属的会话行 id（= 我发出的消息所在的那一行；无本机身份 ⇒ 空串）。 */
+function selfConversationId() {
+  const s = selfDeviceId();
+  return s ? DEVICE_CONV_PREFIX + s : '';
+}
+
+/** 本机身份缺席时设备会话的**可见禁用**判据（`applyBlockState` / 发送面共用，
+ *  判据单源）。服务端腿的发送身份必须是本机 device id（§8.6 路径段 = 发送设备 +
+ *  硬闸 `credential_device == device_id`，`friends.rs:1305-1320`）⇒ 身份缺席时
+ *  发送**必然**失败，此时按「可见禁用」处理，禁静默打对端、禁静默失败。 */
+function deviceSendBlocked(conv) {
+  return !!(conv && conv.kind === 'device' && conv.sourceServer === true && !selfDeviceId());
+}
+
+/** 气泡 id 的回执态（`'read' | 'sent' | null`）。判据 = 契约 §8.7 的**高水位**
+ *  语义：`id <= lastReadMessageId` ⇒ read（终态）；否则 `id <= lastSentMessageId`
+ *  ⇒ sent；无回执数据 ⇒ null（不画假状态）。 */
+function deviceReceiptStateOf(id) {
+  const st = deviceReceipts.get(selfConversationId());
+  if (!st) return null;
+  const n = Number(id);
+  if (!Number.isFinite(n) || n <= 0) return null;
+  if (st.lastReadMessageId && n <= st.lastReadMessageId) return 'read';
+  if (st.lastSentMessageId && n <= st.lastSentMessageId) return 'sent';
+  return null;
+}
+
+/** 回执面刷新（写 → 读往返的**读**半程）：拉服务端 `GET …/receipts`（契约 §8.7，
+ *  设备会话读自 `device_message_receipts`）⇒ 就地补画/撤画气泡状态位。
+ *  🔴 读的是**本机所发那一行**（`selfConversationId()`）：回执行的身份键是
+ *  「发送设备 = 请求设备」，对端行上恒无可读回执。
+ *  🔴 失败静默容忍（回执是**增强**信息，不是消息本体的承重面）；不重试（避免
+ *  「持续无输出」式循环）。 */
+async function refreshDeviceReceipts(conv) {
+  if (!conv || !conv.sourceServer) return;
+  const selfConvId = selfConversationId();
+  if (!selfConvId) return; // 无本机身份 ⇒ 无「我发出的」面可读，不画假状态
+  try {
+    const r = await api.getConversationReceipts(selfConvId);
+    deviceReceipts.set(selfConvId, {
+      lastReadMessageId: Number(r && r.lastReadMessageId) || 0,
+      lastSentMessageId: Number(r && r.lastSentMessageId) || 0,
+    });
+  } catch { /* keep last known */ }
+  applyDeviceReceipts(conv);
+}
+
+/** 把回执态就地补画到已渲染的**本机所发**气泡上（只碰设备窗内节点）。
+ *  不走重渲染（`renderMessages` 会重建全窗）——回执到达不移动任何气泡。 */
+function applyDeviceReceipts(conv) {
+  if (!modalEls || !modalEls.conv || modalEls.conv.kind !== 'device') return;
+  if (openConvId !== (conv && conv.conversationId)) return;
+  for (const wrap of modalEls.flow.querySelectorAll('.fm-msg.out')) {
+    let chip = wrap.querySelector('.fm-msg-device-receipt');
+    const state = deviceReceiptStateOf(wrap.dataset.messageId);
+    if (!state) { if (chip) chip.remove(); continue; }
+    if (!chip) {
+      chip = el('span', 'fm-msg-device-receipt');
+      const meta = wrap.querySelector('.fm-msg-meta');
+      if (!meta) continue;
+      meta.appendChild(chip);
+    }
+    const text = state === 'read' ? t('messages.deviceRead') : t('messages.deviceSent');
+    if (chip.textContent !== text) chip.textContent = text;
+    chip.dataset.receiptState = state;
+  }
+}
+
+/** 设备会话**已读上报**（MVP-2：`POST /api/conversations/{id}/read`，契约 §8.7
+ *  设备分支写 `device_read_cursors` + 由它派生 `device_message_receipts` 的
+ *  `read` 回执）。与好友面 `markConvRead` 同一形态（窗口开着 ⇒ 即已读）。
+ *  🔴 **按窗内每条服务端行逐行上报**（§9.3 归并窗的窗语义）：本机那一行恒 0
+ *  未读（§8.1「发送设备自己 0」）⇒ 只上报**对端行**，各自带**该行自己的**
+ *  末条消息 id（两行的 id 空间不同，禁混用）。
+ *  🔴 **不改本地 cursor 台账**——设备维度未读是服务端权威，本地 `read_cursors`
+ *  是 friend 域水位（服务端逐字告警：设备消息 id 会推进 friend 域水位、抑制
+ *  S1 好友唤醒 —— 设计卡 §5.5）。 */
+function markDeviceConvRead(conv) {
+  if (!conv || !conv.sourceServer) return; // 无服务端行 ⇒ 无可上报的游标面
+  const selfId = selfDeviceId();
+  for (const row of conv.serverRows || []) {
+    if (selfId && row.deviceId === selfId) continue; // 本机行恒 0 未读，无上报面
+    const last = Number(row.lastMessage && row.lastMessage.id) || 0;
+    if (!last) continue;
+    api.markConversationRead(row.conversationId, last).catch(() => {});
+  }
+  conv.unreadCount = 0;
+  // 乐观翻面：本窗内「别人发来的」未读不再显示（服务端读数回来时以它为准）。
+  updateBadge();
+  renderList();
+  void refreshDeviceReceipts(conv);
+}
+
+/** 设备会话服务端取数（keyset 尾窗，D9：MVP-2 由「网关全量」转 keyset）。
+ *  🔴 **归并窗 = 两条会话各自取数后按 id 归并**（§9.3）：对端行给出「对端发来的」、
+ *  本机行给出「我发出的」，两路都在同一实现面取（禁各自演化）。
+ *  任一路取数失败 ⇒ 整窗降级 legacy dropbox 腿（可见提示），不半窗呈现。 */
+async function fetchDeviceMsgsServer(conv) {
+  const rows = (conv && conv.serverRows) || [];
+  const parts = [];
+  try {
+    for (const row of rows) {
+      const anchor = Number(row.lastMessage && row.lastMessage.id);
+      const after = Number.isFinite(anchor) && anchor > HISTORY_WINDOW ? anchor - HISTORY_WINDOW : 0;
+      const msgs = await api.getMessages(row.conversationId, { after, limit: HISTORY_WINDOW });
+      for (const m of msgs || []) parts.push(m);
+    }
+  } catch (err) {
+    // 判红④：服务端面不可达（404 neblinkOff / 未登录 / 网络）⇒ **可见降级**，
+    // 落 legacy dropbox 腿，绝不留白窗、绝不抛错崩窗。
+    syncDeviceMsgs(conv.device.deviceId);
+    deviceMsgs = deviceMsgs.map(m => ({ ...m }));
+    if (err && (err.status === 404 || err.status === 403 || err.status === 401)) {
+      modalToast(t('messages.deviceServerUnavailable'));
+    }
+    return;
+  }
+  if (openConvId !== conv.conversationId) return; // 窗已被替换
+  const next = [];
+  for (const m of parts) {
+    const a = adaptDeviceMessage(m);
+    if (!a.id) continue; // 无 id 的行不可定位（keyedDiff 需要 id），跳过并留待重取
+    next.push(a);
+  }
+  next.sort(compareDeviceMsg);
+  deviceMsgs = next;
+}
+
+/** 设备面发送（人发）。与好友面**同一形态**（trim 闸 → 清空 → 发送键回禁用态）。
+ *  MVP-2：服务端行走 `POST /api/devices/{id}/messages`（契约 §8.6，幂等键
+ *  `clientMsgId`）；legacy 腿仍走 `dropbox-send-text`（D3：设备文件发送入口保留）。
+ *  🔴 **路径段 = 本机 device id（发送设备）**，不是对端：服务端该路由的 `{device_id}`
+ *  语义逐字为「The path carries the SENDING device」（`friends.rs:1288-1291`）且硬闸
+ *  `credential_device == device_id` 否则 `403 not_my_device`（`:1305-1320`）；网关凭据
+ *  设备恒为本机（`NeblinkEnrollment.scala:116` → `NeblinkClient.scala:347` 登录体）。
+ *  会话 id 也由它决定（`conversationId = dev:<senderDeviceId>`）⇒ 我发出的消息落
+ *  `dev:<本机>`，与 §9.3 的「两行归并成一窗」自洽。
+ *  🔴 本机 device id 缺席 ⇒ **可见禁用**（`applyBlockState` 已禁用输入框 + 只读栏；
+ *  本函数再守一道）——绝不把消息打到对端 id（那必然 403）、绝不静默失败。
+ *  🔴 回显不做本地乐观气泡——服务端行以 keyset 重取为唯一事实源（同 `clientMsgId`
+ *  重复发送是幂等回放，§8.6「201 either way」，不产生第二行）。 */
+async function sendDeviceCurrent(conv) {
   if (!modalEls || !conv || !conv.device) return;
   const body = modalEls.input.value.trim();
   if (!body || body.length > 2000) return; // D8：与好友窗同闸（2000，服务端无 enforcement）
+  const selfId = selfDeviceId();
+  if (conv.sourceServer && !selfId) {
+    modalToast(t('messages.deviceSendUnavailable'));
+    return; // 内容留在输入框（输入框此刻是禁用态，正常路径到不了这里）
+  }
   modalEls.input.value = '';
   syncComposerSend();
-  sendDeviceText(conv.device.deviceId, body);
+  if (!conv.sourceServer) { sendDeviceText(conv.device.deviceId, body); return; }
+  try {
+    await api.sendDeviceMessage(selfId, body);
+    await fetchDeviceMsgsServer(conv);
+    if (openConvId !== conv.conversationId) return;
+    renderMessages(deviceMsgs, { stickBottom: true });
+    conv.lastMessage = deviceMsgs[deviceMsgs.length - 1] || conv.lastMessage;
+    renderList();
+    void refreshDeviceReceipts(conv);
+  } catch {
+    // 可见失败（正文不丢）：回填输入框 + 就地提示，与好友面失败面同语义。
+    modalEls.input.value = body;
+    syncComposerSend();
+    modalToast(t('messages.deviceSendFailed'));
+  }
 }
 
 /** 在线态推送到达 ⇒ 开着的设备窗副行徽章就地刷新（不整窗重建）。 */
@@ -2600,11 +2948,15 @@ function refreshOpenDevicePresence() {
   }
 }
 
-/** 设备腿消息变更（dropbox.js 单点通知）：会话列表设备行 + 开着的设备窗。 */
+/** 设备腿消息变更（dropbox.js 单点通知）：会话列表设备行 + 开着的设备窗。
+ *  🔴 只作用于 **legacy 腿**（`sourceServer` 假 = 数据面在 dropbox.js）：服务端腿的
+ *  新消息到达由 `refreshConversations` 的会话行刷新承载（未读/预览权威在服务端，
+ *  契约 §8.1），本通知不重复拉服务端（禁双源同时推同一窗口）。 */
 function onDeviceMessageChanged(deviceId) {
-  renderList(); // 设备行预览/时间（数据全在内存 ⇒ 零额外请求）
-  if (!modalEls || openConvId !== DEVICE_CONV_PREFIX + deviceId) return;
+  renderList(); // 设备行预览/时间（legacy 数据全在内存 ⇒ 零额外请求）
   const conv = currentConv();
+  if (conv && conv.sourceServer) return; // 服务端腿：不在 dropbox 通知面上刷新
+  if (!modalEls || openConvId !== DEVICE_CONV_PREFIX + deviceId) return;
   if (!conv || conv.kind !== 'device') return;
   syncDeviceMsgs(deviceId);
   // 阅读位（卡 §6.2 #5）：用户在读旧内容时不被推走；已在底部 ⇒ 跟随新消息。
@@ -2613,14 +2965,25 @@ function onDeviceMessageChanged(deviceId) {
   renderMessages(deviceMsgs, { stickBottom: atBottom });
 }
 
-/** 设备会话开窗（与 `openConversation` 同构，数据面换设备腿）。
- *  🔴 不取会话 REST、不写读水位、不走 keyset 增量：设备面历史 = 网关本机
- *  `~/.nebflow/dropbox/messages.json` 的全量帧（`dropbox-history`），分页属 MVP-2（卡 D9）。 */
-function openDeviceConversation(conv, rowEl) {
+/** 设备会话开窗（与 `openConversation` 同构；MVP-2 起按 `sourceServer` 选数据面）。
+ *  · `sourceServer`（服务端行）：keyset 尾窗 + 已读上报 + 回执读面（§8.5/§8.7）。
+ *  · 否则（peers 派生行 / 旧网关）：legacy dropbox 腿原样保留 —— 网关本机
+ *    `~/.nebflow/dropbox/messages.json` 的全量帧（判红④的降级展示面）。 */
+async function openDeviceConversation(conv, rowEl) {
   triggeringRow = rowEl || null;
   triggeringConvId = conv.conversationId;
   openConvId = conv.conversationId;
   renderChatModal(conv);
+  if (conv.sourceServer) {
+    deviceMsgs = [];
+    showFlowLoading(); // 冷启动可见加载态（与好友面冷路径同一档，不用转圈掩盖慢）
+    await fetchDeviceMsgsServer(conv);
+    if (openConvId !== conv.conversationId) return;
+    renderMessages(deviceMsgs);
+    markDeviceConvRead(conv); // 窗开着 ⇒ 已读（同时触发回执读面刷新）
+    if (modalEls) modalEls.input.focus();
+    return;
+  }
   const deviceId = conv.device.deviceId;
   // 顺序即契约（与旧窗 `openDropbox` 同）：本地缓存渲染先于出帧（stale-while-revalidate）。
   const hydrated = hydrateDeviceCache(deviceId);

@@ -1328,6 +1328,14 @@ export default {
   'workspacePicker.readFail': '无法读取目录',
   'workspacePicker.mkdirFail': '新建文件夹失败',
 
+  // === 设备会话切服务端数据源，MVP-2（2026-09-15）：留存策略明示（P10）+ 设备回执 ===
+  'messages.deviceRetention': '云端保留 7 天，本机永久保存。',
+  'messages.deviceSent': '已送达',
+  'messages.deviceRead': '已读',
+  'messages.deviceServerUnavailable': '服务端历史暂不可用 —— 已切换为本机历史。',
+  'messages.deviceSendFailed': '消息未发出。内容未丢失，请重试。',
+  'messages.deviceSendUnavailable': '本机设备身份不可用，暂不能发送。',
+
   // === 设备会话统一批 MVP-1（2026-09-15）：面板标题 / 设备段 / 设备会话行 ===
   // 键族归属：`panel.contacts` = 面板标题（值改「联系人和设备」，卡 §6.1）；
   // `contacts.*` = 设备段文案；`messages.*` = 会话列表设备行 chip。

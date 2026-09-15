@@ -1669,6 +1669,71 @@ class RestApiRoutes(
             }
       }
 
+    /** MVP-2 设备会话域统一（2026-09-15）：**会话级回执读面**
+      * （`GET /api/conversations/{id}/receipts` → neblink-server
+      * `src/friends.rs:1712 conversation_receipts`）。
+      *
+      * 路径与既有 `conversations` 面**同族**（同段数、同 auth、同 id 编码）；设备会话
+      * 与 legacy 直聊会话**共用本路由**——服务端按 `conversations.kind` 自行分派到
+      * `device_message_receipts` / `message_receipts`，且**响应形状逐字同源**
+      * （契约 §8.7；服务端逐字「so one client parser reads both faces」）。本层
+      * **不判 kind**、不复制第二套分派，禁双实现。
+      *
+      * 🔴 **状态码逐字透传**（走 [[groupProxyResult]] = 本文件唯一的 `(status, body)`
+      * 映射器）：`403 device_identity_required` 是契约 §8.7 的**可判读终态**
+      * （「本次凭证没有设备身份」），折叠成 502 后客户端只能解析字符串分态。
+      *
+      * 🔴 身份面既有纪律不变：身份**只**由 `Bearer device session token` 承载，
+      * 本层**不发** `sender`/`uid` 类自定义头（客户端不得自报身份）。 */
+    case req @ GET -> Root / "conversations" / conversationId / "receipts" =>
+      withAuth(req) {
+        sharedResources.friendService match
+          case None => NotFound(Json.obj("error" -> "NebLink not enabled".asJson))
+          case Some(fs) =>
+            fs.conversationReceipts(conversationId).flatMap(groupProxyResult)
+      }
+
+    /** MVP-2 设备会话域统一（2026-09-15）：**设备会话发送面**
+      * （`POST /api/devices/{device_id}/messages` → neblink-server
+      * `src/friends.rs:1300 device_send_message`）。
+      *
+      * 段名是 **`devices`（复数）**：与服务端路由表逐字对齐（`src/friends.rs:1788`），
+      * 且与既有的单数 `/api/device/` 设备认证面（`device/code`、`device/token` 等）
+      * **命名空间不相交** —— 两者共享前缀会让「设备授权流」与「设备消息」两条语义
+      * 完全不同的面在路由分派上互相遮挡。
+      *
+      * 🔴 **`origin` 闸**（复用 [[GroupSendOriginVerdict]] 的**同一**判据，不新写一套）：
+      * 本路由同样是**用户身份直发**面（web 前端是它的唯一调用者，前端不得自报
+      * `origin:"agent"`——那会把非 agent 通道的消息落库成 agent 代发，而
+      * 「收端禁采信 wire `origin`」正是本批 P3 红线）。缺席 / 逐字 `"user"` ⇒ 原文
+      * 转发（= 服务端缺省语义，字节零变化）；其余值 ⇒ `400` 显式拒绝，**零上游往返**。
+      * 显式拒绝而非静默改写：静默剔键会让一次越界自报**静默消失**（本仓禁止的
+      * 「静默不达」缺陷族）。
+      *
+      * 🔴 **请求体按原文转发**（[[rawBody]]）：不解析、不重编码 —— 解析后再编码会
+      * 重排键并丢掉未知键（`attachments` 等加性键），等于替冻结契约改了形态。
+      * `{device_id}` 路径段先 [[encSeg]] 编码（段内 `/`、`?` 注入面）。
+      *
+      * 🔴 幂等语义原样交给服务端（契约 §8.6：同 `clientMsgId` 重复 ⇒ **仍是 201**，
+      * `existing:true` 仅表示回放原行）。本层**不**把 `existing` 折成别的状态码。 */
+    case req @ POST -> Root / "devices" / deviceId / "messages" =>
+      withAuth(req) {
+        sharedResources.friendService match
+          case None => NotFound(Json.obj("error" -> "NebLink not enabled".asJson))
+          case Some(fs) =>
+            rawBody(req).flatMap { body =>
+              GroupSendOriginVerdict.check(body) match
+                case Left(reason) => BadRequest(Json.obj("error" -> reason.asJson))
+                case Right(()) =>
+                  // 转发复用 [[groupProxy]] 的**同一实现**（同一 `(status, body)` 保留语义、
+                  // 同一 live-client 缝、同一「身份只由 device session token 承载」纪律）。
+                  // 该入口是「按原文转发任意上游路径」的通用代理口，群面只是它的第一个
+                  // 调用方 ⇒ 设备面直接复用，**禁**为它复制第二份转发实现。
+                  fs.groupProxy("POST", s"/api/devices/${encSeg(deviceId)}/messages", body)
+                    .flatMap(groupProxyResult)
+            }
+      }
+
     /** 查号（精确匹配 neblink_id，大小写不敏感）。?q=... */
     case req @ GET -> Root / "users" / "lookup" =>
       withAuth(req) {
