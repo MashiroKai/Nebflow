@@ -1160,14 +1160,9 @@ button.fm-req-decline:focus-visible {
    取色一律走既有主题 token（亮/暗双主题同源，零新字面量色值；卡 §6.1/§9 P8）。
    ══════════════════════════════════════════════════════════════════════════ */
 
-/* 设备段容器 + 段标题（好友列表之后的独立段；视觉对齐 .fm-req-group 的段标题口径） */
-.fm-device-list { margin-top: 6px; }
-.fm-section-title {
-  font-size: 11px;
-  font-weight: 500;
-  color: var(--color-text-muted, #888);
-  margin: 8px 10px 2px;
-}
+/* 设备展开体容器（②：设备入口 = 「新的朋友」同族折叠结构，本容器 = 其展开体；
+   原静态段标题 `.fm-section-title` 随该形态作废 —— 标签已上移到入口行 `.fm-nf-label`）。 */
+.fm-device-list { margin-top: 2px; }
 .fm-device-row { cursor: pointer; }
 /* 设备行在线态：徽章本体（.neblink-presence）样式在 neblink.css（全局已加载）——
    本处只做**槽位**（右贴边、不参与行内文本压缩）。 */
@@ -1198,17 +1193,32 @@ button.fm-req-decline:focus-visible {
   transition: width 0.2s ease-out;
 }
 
-/* MVP-2 设备会话（2026-09-15）：
-   ① P10 留存策略明示条（仅设备窗；与 .fm-offline-bar 同几何、非警示语义色）；
+/* 设备会话（2026-09-15 八点返工后）：
+   ① **设备描述行**（⑤c，设备窗相对好友窗的**唯一**新增项）：默认只读一行文本，
+      点开即行内输入（同好友备注行内编辑范式）；空值态用弱化色显示既有
+      `neblink.deviceDescHint` 占位。几何沿用原留存条档位（不新增布局座）。
+      注：原 P10 留存明示条 `.fm-device-note` 已被 ⑤b 删除（作者令：不要显示该信息）。
    ② 本机所发气泡的送达/已读状态位（设备回执读面，§8.7 device_message_receipts）。 */
-.fm-device-note {
+.fm-device-desc {
   margin: 0 16px 6px;
-  padding: 6px 10px;
-  text-align: center;
+  padding: 4px 10px;
   font-size: 12px;
-  color: var(--color-text-muted, #888);
-  background: var(--glass-etched-bg);
   border-radius: 8px;
+  background: var(--glass-etched-bg);
+}
+.fm-device-desc-text {
+  display: block;
+  color: var(--color-text, #000);
+  cursor: pointer;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.fm-device-desc-text:hover { color: var(--color-primary); }
+.fm-device-desc-empty { color: var(--color-text-muted, #888); }
+.fm-device-desc-input {
+  width: 100%;
+  font-size: 12px;
 }
 .fm-msg-device-receipt {
   font-size: 11px;

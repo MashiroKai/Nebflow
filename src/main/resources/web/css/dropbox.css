@@ -295,11 +295,6 @@
   flex-shrink: 0;
 }
 
-/* Clickable device name in settings */
-.neblink-peer-name.dropbox-clickable {
-  cursor: pointer;
-  transition: color 0.15s;
-}
-.neblink-peer-name.dropbox-clickable:hover {
-  color: rgba(91, 127, 191, 0.8);
-}
+/* 「设置里的设备名 → 旧设备窗」的可点样式已随 ①④ 删除（作者 2026-09-15：
+   设备入口从设置搬去联系人面板；旧设备窗 `openDropbox` 一并无入口）。
+   设备行的hover/指针态现由 neblink.css 的 .neblink-peer* 家族承担（零新增规则）。 */

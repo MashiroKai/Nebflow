@@ -43,6 +43,8 @@ import { preserveScrollAnchor } from './msgScrollAnchor.js';
 import {
   deviceMessagesOf, hydrateDeviceCache, requestDeviceHistory, deviceHistoryPending,
   sendDeviceText, sendDeviceFiles, onDeviceMessageChange,
+  deviceHasLocalTraffic, // ⑥：通信证据（本地半程）判据单点
+  saveDeviceDescription, // ⑤c：设备描述写路径单点（旧设备窗与本窗共用同一函数）
 } from './dropbox.js';
 // 附件预览（作者令 2026-09-15「点击附件要能直接在 canvas 里预览」）：附件卡的**唯一**
 // 预览入口 = attachmentPreview.js（判据 + Canvas 渲染腿都在那边）；本模块只做接线 +
@@ -342,9 +344,21 @@ function isSameDayMs(ms) {
 // session-level markers. origin defaults to 'user' when absent.
 function isAgentSent(m) { return !!(m && (m.origin === 'agent' || m.agentSent === true || m.kind === 'agent')); }
 
+/** 会话行摘要（⑧，作者 2026-09-15：「就很奇怪，对一个设备说 KAI / Device /
+ *  You are now friends」）。
+ *
+ *  🔴 按**对端类型**分支（`systemNowFriends` 是**好友接受流程**的语义 —— 其唯一
+ *  合法消费点见 `messages.js` 的 `friend_accepted` 分支注释「New friendship →
+ *  empty conversation appears (summary: systemNowFriends)」）：
+ *   · 设备会话 ⇒ 中性空态（既有 `messages.noMessages`），**零好友关系文案**；
+ *     🔴 不为设备**编造**事件文案（禁拿好友文案凑数、禁空壳占位冒充配对成功）。
+ *   · 好友/群 ⇒ 逐字不变（不得误伤好友面）。
+ *  改动前 = kind-blind（设备空窗无差别套上好友流程文案）。 */
 function summaryOf(conv) {
   const m = conv.lastMessage;
-  if (!m || !m.body) return t('messages.systemNowFriends');
+  if (!m || !m.body) {
+    return conv && conv.kind === 'device' ? t('messages.noMessages') : t('messages.systemNowFriends');
+  }
   return (isAgentSent(m) ? '[Agent] ' : '') + m.body;
 }
 
@@ -747,8 +761,9 @@ function renderChatModal(conv) {
   if (conv.kind === 'group') {
     if (conv.memberCount > 0) title.appendChild(el('span', 'fm-modal-id', t('messages.memberCount', { n: conv.memberCount })));
   } else if (conv.kind === 'device') {
-    // 设备窗副行（MVP-1）：平台标签 + 在线态徽章。在线态 = `presenceBadgeHTML`
-    // **唯一实现**（与设置账号段/联系人设备段同源；O10 禁第二份判据与文案）。
+    // 设备窗副行：**平台标签**（⑤a，作者 2026-09-15：「一是不要显示设备码」——
+    // 原副行 = 平台 + `deviceId`，deviceId 已从 `deviceSubLabel` 摘除）+ 在线态徽章。
+    // 在线态 = `presenceBadgeHTML` **唯一实现**（与联系人设备段同源；O10 禁第二份判据与文案）。
     title.appendChild(el('span', 'fm-modal-id', deviceSubLabel(conv.device)));
     const badge = presenceBadgeHTML({ ...(conv.device || {}), isLocal: false });
     if (badge) {
@@ -815,15 +830,15 @@ function renderChatModal(conv) {
   offline.hidden = state.connected;
   modal.appendChild(offline);
 
-  // P10（O8 终裁④ · 2026-09-15）：设备会话窗**明示**留存策略 ——「云端保留 7 天、
-  // 本地永久」。🔴 仅设备窗挂（好友/群窗无此语义，挂上去就是错误陈述）；文案走
-  // locales 双语键 `messages.deviceRetention`（zh-CN 与 en **各有一份**，缺一侧 =
-  // 断言不成立）。这句是**信息陈述**，不是错误条（不进 offline-bar 的红/黄语义）。
-  if (conv.kind === 'device') {
-    const note = el('div', 'fm-device-note', t('messages.deviceRetention'));
-    note.setAttribute('role', 'note');
-    modal.appendChild(note);
-  }
+  // ⑤b（作者 2026-09-15）：「二是不要显示 Cloud keeps messages for 7 days; this
+  // device keeps them permanently. 这样的信息」⇒ 原 P10 留存明示条**整块删除**
+  // （含 `messages.deviceRetention` 双语键与 `.fm-device-note` 规则，避免死键/死规则）。
+  // 🔴 该条被删 = **被取代**（P10 终裁④与契约 §9 的「UI 明示」要求随本令作废）。
+  //
+  // ⑤c（同令）：「三是缺少了给设备添加描述的地方，总体和好友对话框统一，只是多了
+  // 设备描述」⇒ 设备窗相对好友窗的**唯一**新增项 = 描述编辑行（同一渲染器
+  // `renderChatModal` 的设备分支，禁第二套对话框实现）。
+  if (conv.kind === 'device') modal.appendChild(buildDeviceDescRow(conv));
 
   const flow = el('div', 'fm-flow');
   modal.appendChild(flow);
@@ -921,6 +936,86 @@ function renderChatModal(conv) {
 }
 
 // ⑦ 窗头标题面（显示优先级第三处）：备注/群名改动后就地重打，不整窗重建。
+// ── ⑤c 设备描述编辑（设备窗相对好友窗的**唯一**新增项）────────────────────
+// 作者 2026-09-15：「三是缺少了给设备添加描述的地方，总体和好友对话框统一，
+// 只是多了设备描述」。
+//
+// 形态 = **行内编辑**，复用既有行内编辑范式（`contacts.js:421-467` 好友备注：
+// 点击即就地换输入框、Enter 提交 / Esc 取消 / blur 取消、IME 组字守卫、trim 空串
+// = 清除、maxlength + 提交前再夹一次）。**不新建第二套编辑控件**。
+// 写路径 = `dropbox.js` 的 `saveDeviceDescription` **单点**（旧设备窗的编辑器与
+// 本处共用同一函数 ⇒ 禁两套并存，见 dropbox.js 该函数注释）。
+// 长度上限 200：与设置侧旧编辑器同档口径（该编辑器走同一 PUT 端点）。
+const DEVICE_DESC_MAX = 200;
+
+/** 描述行：默认只读一行文本（空 ⇒ 显示既有 `neblink.deviceDescHint` 占位）。 */
+function buildDeviceDescRow(conv) {
+  const row = el('div', 'fm-device-desc');
+  row.dataset.deviceDesc = '1'; // QA 断言面：描述行可机械定位（⑤c）
+  const cur = (conv.device && conv.device.userDescription) || '';
+  const text = el('span', 'fm-device-desc-text' + (cur ? '' : ' fm-device-desc-empty'),
+    cur || t('neblink.deviceDescHint'));
+  text.setAttribute('role', 'button');
+  text.setAttribute('tabindex', '0');
+  text.title = t('neblink.deviceDescHint');
+  const startEdit = () => startDeviceDescEdit(conv, row, text);
+  text.addEventListener('click', startEdit);
+  text.addEventListener('keydown', (e) => {
+    if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); startEdit(); }
+  });
+  row.appendChild(text);
+  return row;
+}
+
+/** 行内编辑：点开 → input；Enter 提交（`saveDeviceDescription` 单点写路径）；
+ *  Esc / blur 取消（与好友备注行同一语义，零新语义）。 */
+function startDeviceDescEdit(conv, row, text) {
+  if (!conv.device || row.querySelector('.fm-device-desc-input')) return;
+  const input = document.createElement('input');
+  input.className = 'cfg-input fm-device-desc-input';
+  input.type = 'text';
+  input.maxLength = DEVICE_DESC_MAX;
+  input.value = conv.device.userDescription || '';
+  input.placeholder = t('neblink.deviceDescHint');
+  input.setAttribute('aria-label', t('neblink.deviceDescHint'));
+  input.autocomplete = 'off';
+  // ⑤ 中文输入收归：组字期间所有键交还输入法（既有唯一判据源 imeGuard.js）。
+  bindImeGuard(input);
+
+  let done = false;
+  const restore = () => { if (done) return; done = true; input.remove(); text.hidden = false; };
+  const cancel = () => restore();
+  const commit = async () => {
+    if (done) return;
+    // maxlength 只管键盘输入 ⇒ 提交边界再夹一次（与好友备注同纪律）。
+    const next = input.value.trim().slice(0, DEVICE_DESC_MAX);
+    const prev = conv.device.userDescription || '';
+    restore(); // 先还原行（PUT 失败时窗体照旧可读），再落库
+    if (next === prev) return; // 无变化：零请求
+    try {
+      await saveDeviceDescription(conv.device, next); // 🔴 单点写路径（dropbox.js）
+      conv.device.userDescription = next;
+      text.textContent = next || t('neblink.deviceDescHint');
+      text.classList.toggle('fm-device-desc-empty', !next);
+      updateModalTitle(conv); // 窗头名 = `deviceLabel`（描述 > 设备名 > id）就地重打
+      renderList();           // 列表行名同源同改
+    } catch {
+      modalToast(t('messages.deviceDescSaveFailed'));
+    }
+  };
+  input.addEventListener('keydown', (e) => {
+    if (isImeComposing(e, input)) return;
+    if (e.key === 'Enter') { e.preventDefault(); commit(); return; }
+    if (e.key === 'Escape') { e.preventDefault(); cancel(); }
+  });
+  input.addEventListener('blur', cancel);
+
+  text.hidden = true;
+  row.appendChild(input);
+  input.focus();
+  input.setSelectionRange(input.value.length, input.value.length);
+}
+
 function updateModalTitle(conv) {
   if (!modalEls) return;
   const nameEl = modalEls.overlay.querySelector('.fm-modal-name');
@@ -2512,11 +2607,13 @@ export function deviceLabel(d) {
   return d.userDescription || d.deviceName || d.deviceId || t('neblink.unknownDevice');
 }
 
-/** 设备窗副行（平台标签 + 设备 id）：平台标签走 `platformDisplay` 单点（禁第二份映射）。 */
+/** 设备窗副行 = **平台标签**（⑤a，作者 2026-09-15：「一是不要显示设备码」）。
+ *  🔴 原实现 = `[平台, deviceId].join(' · ')`（设备码可见）⇒ **deviceId 已摘除**；
+ *  平台标签仍走 `platformDisplay` 单点（禁第二份映射）。
+ *  ⚠ 面板行的 `deviceId` **不在本令指涉面内**（作者只提对话框）⇒ 未改，列开放项。 */
 function deviceSubLabel(d) {
   if (!d) return '';
-  const platform = platformDisplay(d.platform).text || '';
-  return [platform, d.deviceId || ''].filter(Boolean).join(' · ');
+  return platformDisplay(d.platform).text || '';
 }
 
 /** 本账号**自有设备**（去重后）。数据源 = `getNeblinkState().peers`（不是好友关系域：
@@ -2703,12 +2800,22 @@ function deviceConvs(serverRows) {
     }
     return w;
   };
-  // ② 窗集合 = 服务端「非本机」行 ∪ peers（🔴 本机那一行**不是窗**，见函数注释）
+  // ② 窗集合 = 服务端「非本机」行 ∪ **有通信证据**的 peers
+  //    （🔴 本机那一行**不是窗**，见函数注释）
+  // ⑥（作者 2026-09-15）：「而且要跟设备通信过再出现在消息面板里呀，不要直接出现」
+  //   ⇒ peers 派生窗加**通信证据闸**：仅当该设备有通信证据才建窗。
+  //   证据判据（两档，与 forensic §2-⑥ 给出的候选一致）：
+  //     · 服务端会话行在场（= 有服务端行 ⇒ 该设备收/发过；对方先发、我方从未回也算）；
+  //     · 本地消息缓存非空（legacy 腿：`deviceHasLocalTraffic` —— 内存工作集 ∨ L2
+  //       缓存，判据唯一实现在 dropbox.js 的设备数据面）。
+  //   🔴 无证据 ⇒ **不建窗**（peers 档案仍保留给联系人面板的设备段使用 —— 该面板
+  //   直读 `devicePeers()`，不经本函数）。
   for (const r of peerRows) windowOf(r.deviceId);
   for (const d of peers) {
     const did = d && d.deviceId ? String(d.deviceId) : '';
     if (!did) continue;
     if (selfId && did === selfId) continue; // 防御：peers 已剔本机
+    if (!byId.has(did) && !deviceHasLocalTraffic(did)) continue; // ⑥ 通信证据闸
     const w = windowOf(did);
     if (!w.device) w.device = d; // 名字/平台/在线态：peers 单点（§9.7 禁服务端名字快照）
   }
@@ -2728,6 +2835,9 @@ function deviceConvs(serverRows) {
       w.lastMessage = latest;
     } else {
       // D5：无服务端行 ⇒ 无服务端未读可读 ⇒ 恒 0（不是假装算过）；预览取本地缓存
+      // ⑥：本地缓存的**唯一入口**是 `hydrateDeviceCache`（L2 → 内存工作集）——先灌
+      // 再读，否则「上次会话聊过、本次未开窗」的设备行会显示空预览（看着像没聊过）。
+      hydrateDeviceCache(did);
       const raw = deviceMessagesOf(did);
       const last = raw.length ? raw[raw.length - 1] : null;
       w.lastMessage = last ? adaptDeviceMessage(last) : null;
@@ -2953,6 +3063,14 @@ function refreshOpenDevicePresence() {
  *  新消息到达由 `refreshConversations` 的会话行刷新承载（未读/预览权威在服务端，
  *  契约 §8.1），本通知不重复拉服务端（禁双源同时推同一窗口）。 */
 function onDeviceMessageChanged(deviceId) {
+  // ⑥ 反向半程（「通信过**之后**才出现」）：设备首次与本机通信后并入消息面板。
+  // 判据面复用**唯一建窗实现** `deviceConvs`（不在此另造窗构造逻辑）——该设备此刻
+  // 本地缓存已非空 ⇒ 通信证据成立 ⇒ 下一次 `refreshConversations` 即把它读进列表。
+  // 仅在「当前窗集合里还没有它」时补一次重取（有行者 = 已在列表 ⇒ 零额外请求）。
+  const convId = DEVICE_CONV_PREFIX + deviceId;
+  if (!conversations.some(c => c && c.conversationId === convId)) {
+    void refreshConversations();
+  }
   renderList(); // 设备行预览/时间（legacy 数据全在内存 ⇒ 零额外请求）
   const conv = currentConv();
   if (conv && conv.sourceServer) return; // 服务端腿：不在 dropbox 通知面上刷新
@@ -3002,8 +3120,13 @@ export function openDeviceChat(device) {
   if (conv) {
     conv.device = device; // presence/描述就地更新（对象引用复用）
   } else {
+    // ⑥（作者 2026-09-15）：**可开窗，但不"直接出现"在消息面板** —— 原
+    // `conversations.unshift(conv)` 已删（那正是「在联系人面板点一下设备 ⇒ 消息面板
+    // 立刻多一行零消息行」的路径）。无通信证据的设备此时只开窗；首次通信后由
+    // `deviceConvs`（唯一建窗实现，见 `onDeviceMessageChanged` 的补登）把它读进列表。
+    // 🔴 与 ⑤c 联动：描述编辑只在对话框内 ⇒ 未通信设备**仍须**能从联系人面板开窗
+    // （本函数保留开窗腿；被删的只有「成行」）。
     conv = { conversationId: convId, kind: 'device', device, unreadCount: 0, lastMessage: null };
-    conversations.unshift(conv);
   }
   renderList();
   openDeviceConversation(conv, null);

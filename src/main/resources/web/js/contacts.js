@@ -4,7 +4,7 @@
 // request inbox (incoming + outgoing), friend list. Badges: pending incoming
 // count on #contacts-btn (pure-badge model, [U3]).
 import { t } from './i18n.js';
-import { createIconsIn } from './utils.js';
+import { createIconsIn, escapeHtml } from './utils.js';
 import { getNeblinkState, presenceBadgeHTML, onNeblinkStatus, platformDisplay } from './neblink.js';
 import { setActivityBadge, openLoginModal } from './activityBar.js';
 import { onMessage } from './ws.js';
@@ -32,6 +32,10 @@ let outgoing = [];
 let groupInvites = [];      // 入站群邀请（契约端点 GET /api/groups/invites → {incoming}；归一后
                             // [{inviteId,groupId,title,inviter:{userId,neblinkId,name,avatarUrl},createdAt}]）
 let requestsExpanded = false;
+// ②（作者 2026-09-15）：「Device 最好是想 New Friends 一样放在点进展开的里面」
+// —— 设备入口与「新的朋友」**同构**：一行入口 + chevron 状态 + 展开体按态入 DOM。
+// 🔴 复用 `.fm-nf-entry` 家族的类名与样式（friends.css），禁新造折叠式样。
+let devicesExpanded = false;
 let lastSearchAt = 0;
 let searchResult = null;   // null | {found:false} | 契约搜索结果（归一内部形态，含 relation_status）
 
@@ -303,21 +307,53 @@ function render() {
     for (const f of friends) list.appendChild(friendRow(f));
   }
   body.appendChild(list);
-  // ── 设备段（设备会话统一批 MVP-1 · 卡 §6.1）─────────────────────────
-  // 插入点 = 好友列表之后、`createIconsIn` 之前（卡指定的插入点）。
-  // 语义：本账号**自有设备**（非好友关系域）；行模型复用 `friendRow` 家族类
-  // （`.fm-row`/`.fm-row-meta`/`.fm-row-name`/`.fm-row-sub` + `avatarEl`）。
-  body.appendChild(buildDeviceSection());
+  // ── 设备入口（②，作者 2026-09-15）─────────────────────────────────────
+  // 作者原话：「然后 Device 最好是想 New Friends 一样放在点进展开的里面」。
+  // 形态 = **复用**「新的朋友」的折叠结构（`.fm-nf-entry` 入口行 + chevron 态切换
+  // + 展开体按态入 DOM），插入点仍在好友列表之后（仅改形态，不改面板分区顺序）。
+  // 语义：本账号**自有设备**（非好友关系域）。
+  body.appendChild(buildDevicesEntry());
+  if (devicesExpanded) body.appendChild(buildDeviceRows());
   createIconsIn(body);
 }
 
-/** 设备段（标题 + 行；空态可见，禁静默空段）。
+/** 设备入口行（②）：与「新的朋友」**同族形态**（复刻 contacts.js `:249-271` 的
+ *  结构逐件：`.fm-nf-entry` 容器 + `.fm-nf-icon` 图标槽 + `.fm-nf-label` 标签 +
+ *  `.fm-row-badge` 计数 + `.fm-nf-chevron` 态图标；开关态变量 `devicesExpanded`）。
+ *  🔴 复用面（零新增折叠样式）：类名全部取自既有 `.fm-nf-*` 家族，CSS 吃
+ *  `friends.css:443-475`（`.fm-nf-entry` / `:hover` / `:focus-visible` / `.fm-nf-icon` /
+ *  `.fm-nf-label` / `.fm-nf-chevron`）；计数徽章吃好友行既有 `.fm-row-badge`。 */
+function buildDevicesEntry() {
+  const devs = devicePeers();
+  const entry = el('div', 'fm-nf-entry fm-devices-entry');
+  entry.setAttribute('role', 'button');
+  entry.setAttribute('tabindex', '0');
+  entry.setAttribute('aria-expanded', String(devicesExpanded));
+  entry.dataset.devicesEntry = '1'; // QA 断言面：设备入口可机械定位（②）
+  const icon = el('span', 'fm-nf-icon');
+  icon.innerHTML = '<i data-lucide="smartphone"></i>';
+  entry.appendChild(icon);
+  entry.appendChild(el('span', 'fm-nf-label', t('contacts.sectionDevices')));
+  if (devs.length > 0) entry.appendChild(el('span', 'fm-row-badge', String(devs.length)));
+  const chevron = el('span', 'fm-nf-chevron', '');
+  chevron.innerHTML = `<i data-lucide="${devicesExpanded ? 'chevron-down' : 'chevron-right'}"></i>`;
+  entry.appendChild(chevron);
+  const toggle = () => { devicesExpanded = !devicesExpanded; render(); };
+  entry.addEventListener('click', toggle);
+  entry.addEventListener('keydown', (e) => {
+    if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); toggle(); }
+  });
+  return entry;
+}
+
+/** 设备展开体（行列表；空态可见，禁静默空段）。
+ *  🔴 只在 `devicesExpanded` 为真时入 DOM（与 `requestsExpanded` 同口径）⇒
+ *  `[data-device-section="1"]` 在收起态**不存在**（②的可机械判据）。
  *  🔴 去重：`devicePeers()` 按 `deviceId` 去重（卡 O12/P9，上游 peers 可能重行）。 */
-function buildDeviceSection() {
+function buildDeviceRows() {
   const wrap = el('div', 'fm-device-list');
   // QA 断言面（与群/会话行的 dataset 契约同族）：设备段可机械定位 + 行数可对账。
   wrap.dataset.deviceSection = '1';
-  wrap.appendChild(el('div', 'fm-section-title', t('contacts.sectionDevices')));
   const devs = devicePeers();
   wrap.dataset.deviceCount = String(devs.length);
   if (devs.length === 0) {
@@ -328,28 +364,33 @@ function buildDeviceSection() {
   return wrap;
 }
 
-/** 设备行（与 `friendRow` 同族形态；点击 = 开设备会话窗——与好友行同交互语义）。 */
+/** 设备行（③，作者 2026-09-15：「Device 的样式沿用目前的设置里的样式呀」）。
+ *
+ *  🔴 **复用清单**（逐件，禁另造一套；本函数**零新增样式家族**）：
+ *   · 结构 = 设置账号段原设备行模板（`neblink.js:395-409`，逐件：图标槽 → 名 → 在线
+ *     徽章 → 状态文本）——该模板随 ① 摘除后**唯一存续处即本行**（无第二份副本）；
+ *   · 类名 = `.neblink-peer` / `.neblink-peer-offline` / `.neblink-peer-icon` /
+ *     `.neblink-peer-name` / `.neblink-peer-status`（`neblink.css:91/104/117/127/144-145`）；
+ *   · 平台图标 = `platformDisplay(platform).icon`（`neblink.js:456-469` 单点，禁第二份映射）；
+ *   · 在线徽章 = `presenceBadgeHTML`（`neblink.js:292-301` 唯一实现，判据/文案零复制）；
+ *   · 显示名 = `deviceLabel`（`messages.js:2510-2513` 单点：描述 > 设备名 > id）。
+ *  交互 = 点击开设备会话窗（`openDeviceChat` → `renderChatModal`，与好友窗同一渲染器）。
+ *  ⚠ 与设置页旧行的**唯一**差异 = 无「远程更新」键组（随 ④ 摘除，见报告被移除项）。 */
 function deviceRow(d) {
-  const row = el('div', 'fm-row fm-friend-row fm-device-row');
+  const displayName = escapeHtml(deviceLabel(d));
+  const icon = platformDisplay(d.platform).icon;
+  const statusText = escapeHtml(platformDisplay(d.platform).text || '');
+  const row = el('div', 'neblink-peer fm-device-row'
+    + (d.online === true ? '' : ' neblink-peer-offline'));
   row.setAttribute('role', 'option');
   row.setAttribute('tabindex', '0');
   row.setAttribute('aria-selected', 'false');
   row.dataset.deviceId = String(d.deviceId || '');
-  row.appendChild(avatarEl({ name: deviceLabel(d) }, 36));
-  const meta = el('div', 'fm-row-meta');
-  meta.appendChild(el('div', 'fm-row-name', deviceLabel(d)));
-  // 次行 = 平台标签（`platformDisplay` 单点，禁第二份映射）+ 设备 id。
-  const platformText = platformDisplay(d.platform).text || '';
-  meta.appendChild(el('div', 'fm-row-sub', [platformText, String(d.deviceId || '')].filter(Boolean).join(' · ')));
-  row.appendChild(meta);
-  // 在线态徽章：**唯一实现** = neblink.js `presenceBadgeHTML`（O10 抽组件；本面板
-  // 只消费，不自己算 online，也不自己拼文案）。
-  const badgeHTML = presenceBadgeHTML({ ...d, isLocal: false });
-  if (badgeHTML) {
-    const slot = el('span', 'fm-device-presence');
-    slot.innerHTML = badgeHTML;
-    row.appendChild(slot);
-  }
+  // 元素顺序逐字照抄设置设备行模板（icon → name → presence → status）。
+  row.innerHTML = `<span class="neblink-peer-icon">${icon}</span>`
+    + `<span class="neblink-peer-name">${displayName}</span>`
+    + presenceBadgeHTML({ ...d, isLocal: false })
+    + `<span class="neblink-peer-status">${statusText}</span>`;
   const open = () => openDeviceChat(d);
   row.addEventListener('click', open);
   row.addEventListener('keydown', (e) => {
@@ -1029,6 +1070,38 @@ export function initContacts() {
   // 汇流）。本面板**不引入任何轮询**（修前的 3s 轮询属于设置面板账号段，已解绑）。
   // 面板不在场 ⇒ 不渲染（下次激活由既有 MutationObserver 触发 refresh/render）。
   onNeblinkStatus(() => { if (panelActive()) render(); });
+
+  // ── ⑦（作者 2026-09-15）：搜索结果提示小面板必须能收起 ────────────────
+  // 作者原话：「搜索用户之后出现的 User not found / The user may not have set a
+  // Username yet, or the input may be wrong 小面板，还是不会自动收起。」
+  //
+  // 口径 = **全站悬浮面板统一惯例**：点面板外即收起（本处「面板」= 搜索块
+  // `.fm-search-block`，卡片 `.fm-result-card` 是其子项）。逐字对齐既有先例
+  // `ctxthresh.js:483-493`（用 `mousedown` 而非 `click`：拖动时松手点可能落在面板外，
+  // click 会把「拖完松手」误判成「点外面」；外加 Escape —— 同族面板同款成对口径）。
+  // 🔴 **不引入定时器**：全站面板族无超时惯例（超时只属 toast 族 —— `modal.js:221-224` /
+  // `utils.js:880-885`）⇒ 本面板加超时就是自创双标。
+  // 🔴 搜索输入框/搜索键都在 `.fm-search-block` 内 ⇒ 「点搜索框即收起」被 contains 判据挡掉。
+  // 🔴 历史考证（forensic §6）：本面**从未有过**收起实现（全历史 0 命中）⇒ 首次修复。
+  const dismissSearchCard = (reason) => {
+    if (!searchResult && !searchErrorKind) return;
+    searchResult = null;
+    searchErrorKind = null;
+    console.debug(`[contacts] search card dismissed (reason=${reason})`);
+    render();
+  };
+  document.addEventListener('mousedown', (e) => {
+    if (!searchResult && !searchErrorKind) return;
+    const block = document.querySelector('.fm-search-block');
+    if (block && e.target instanceof Node && block.contains(e.target)) return;
+    dismissSearchCard('outside-mousedown');
+  });
+  document.addEventListener('keydown', (e) => {
+    if (e.key !== 'Escape') return;
+    // 行内编辑器（备注 / 验证附言）自己有 Esc 语义 ⇒ 让它们先处理（同一键不得双消费）。
+    if (document.querySelector('.fm-remark-edit, .fm-verify-input')) return;
+    dismissSearchCard('escape');
+  });
 
   render();
   if (loggedIn()) refresh();

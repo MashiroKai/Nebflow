@@ -1003,7 +1003,8 @@ export default {
   // NebLink
   'neblink.thisDevice': 'This device',
   'neblink.unknownDevice': 'Unnamed device',
-  'neblink.noPeersHint': 'Sign in to nebflow on both devices.',
+  // `neblink.noPeersHint` 已删（① 八点返工 2026-09-15）：它只在**设置账号段的设备
+  // 列表**里作为「无 peer」提示渲染，设备列表已移出设置 ⇒ 死键同批删除。
   'neblink.online': 'Online',
   'neblink.offline': 'Offline',
   'neblink.reachDirect': 'Direct P2P connection established',
@@ -1342,8 +1343,11 @@ export default {
   'workspacePicker.readFail': 'Cannot read directory',
   'workspacePicker.mkdirFail': 'Failed to create folder',
 
-  // === Device-conversation server switch, MVP-2 (2026-09-15): retention notice (P10) + device receipts ===
-  'messages.deviceRetention': 'Cloud keeps messages for 7 days; this device keeps them permanently.',
+  // === Device-conversation server switch, MVP-2 (2026-09-15): device receipts ===
+  // 🔴 `messages.deviceRetention`（P10 留存明示句）已删 —— 作者 2026-09-15 令
+  // ⑤b「不要显示 Cloud keeps messages for 7 days; this device keeps them
+  // permanently. 这样的信息」⇒ 渲染点、双语键、CSS 规则同批删除（禁死键）。
+  'messages.deviceDescSaveFailed': 'Could not save the device description.',
   'messages.deviceSent': 'Sent',
   'messages.deviceRead': 'Read',
   'messages.deviceServerUnavailable': 'Server history unavailable — showing this device\'s local history.',

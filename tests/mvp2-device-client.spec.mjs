@@ -23,11 +23,15 @@
 //   O1**  §9.3 按 peer 归并（round-2 F2）：本机行**不单独成窗**、两行**读成一窗**
 //   O2**  归并窗方向逐条重算：out/in 计数 + 每条气泡左右
 //   O3**  回复打**本机** device id（round-2 F1）+ 桩侧硬闸（打对端 ⇒ 403）
-//   R1    设备窗 P10 明示句（zh-CN + en 双语，判红③）
+//   R1    设备窗 P10 留存明示句 —— 🔴 **已反极性**（作者 2026-09-15 令 ⑤b：不要显示
+//         该信息）⇒ 现断言「零条 + 双语键已删」；原「在场」形态的改前读数见
+//         tests/unifyfix-eight-points.spec.mjs 的 R5b 红锚。
 //   R2    未读/回执读写往返（原始请求/响应读数，判红②的客户端半程）
 //   R3**  已读**按服务端行逐行**上报（对端行带自己的末条 id；本机行无上报面）
 //   R4    附件第三分支（服务端 attachments → attachmentCard + 成员闸下载路由）
 //   L1    旧数据无新字段不崩 + 降级展示（判红④）
+//   L2    旧网关降级档 —— 🔴 **含 ⑥ 反极性断言**（作者 2026-09-15：无通信证据 ⇒
+//         不得在消息面板出现；灌入本地缓存证据后才成窗）
 //   N1**  本机 device id 缺席 ⇒ **可见禁用**（round-2 F1 要件②）+ 零发送请求
 //
 // 自包含：静态服务器随机隔离端口 + route 拦截，finally 必关（进程清理纪律）。
@@ -265,15 +269,19 @@ try {
   ok('U1b 服务端未读角标 = 2（本机行 0 + 对端行 2）', (await deviceRow.locator('.fm-row-badge').textContent().catch(() => '')) === '2',
     `badge=${await deviceRow.locator('.fm-row-badge').textContent().catch(() => '(none)')}`);
 
+  // R1（原「P10 留存明示句在场」）**已反极性**：作者 2026-09-15 令 ⑤b 明确要求
+  // **不要显示**「Cloud keeps messages for 7 days; this device keeps them
+  // permanently. 这样的信息」⇒ 原 P10 要求被取代，本断言改为「该句零残留」。
+  // （红锚复现 = 同一声明在改前树仍为在场 ⇒ 见 unifyfix-eight-points.spec.mjs R5b。）
   const ZH = '云端保留 7 天，本机永久保存。';
-  const EN = 'Cloud keeps messages for 7 days; this device keeps them permanently.';
   await deviceRow.click();
   await page.waitForSelector('.fm-modal', { timeout: 15000 });
   await sleep(900);
-  const zhNote = await page.locator('.fm-modal .fm-device-note').textContent().catch(() => null);
-  ok('R1 P10 明示句 zh-CN（且在设备会话窗内）', zhNote === ZH, `got=${JSON.stringify(zhNote)}`);
-  const hasNoteInDeviceWin = await page.locator('.fm-modal .fm-device-note').count();
-  ok('R1b 明示条仅挂设备窗（本窗恰 1 条）', hasNoteInDeviceWin === 1, `count=${hasNoteInDeviceWin}`);
+  const zhNoteCount = await page.locator('.fm-modal .fm-device-note').count();
+  ok('R1 ⑤b 替代断言：设备窗零留存明示条（.fm-device-note 0 条）', zhNoteCount === 0, `count=${zhNoteCount}`);
+  const zhLeak = await page.evaluate(z => document.body.innerText.includes(z) || document.body.innerText.includes('Cloud keeps messages'),
+    ZH);
+  ok('R1b ⑤b 替代断言：留存句在全文零残留（zh 面 + en 子串）', zhLeak === false, `leak=${zhLeak}`);
 
   // ══ 判红⑤ + F2：两行归并成一窗，方向逐条重算 ═══════════════════════
   const outCount = await page.locator('.fm-modal .fm-msg.out').count();
@@ -343,8 +351,16 @@ try {
   await deviceRow.click();
   await page.waitForSelector('.fm-modal', { timeout: 15000 });
   await sleep(700);
-  const enNote = await page.locator('.fm-modal .fm-device-note').textContent().catch(() => null);
-  ok('R1d P10 明示句 en（重开窗）', enNote === EN, `got=${JSON.stringify(enNote)}`);
+  // ⑤b 同批（2026-09-15）：en 面同断言，且**键本体**已删（禁死键）。
+  const enNoteCount = await page.locator('.fm-modal .fm-device-note').count();
+  ok('R1d ⑤b 替代断言：en 面设备窗零留存明示条', enNoteCount === 0, `count=${enNoteCount}`);
+  const enKeyGone = await page.evaluate(async () => {
+    const m = (await import('/js/locales/en.js')).default;
+    const zh = (await import('/js/locales/zh-CN.js')).default;
+    return { en: m['messages.deviceRetention'], zh: zh['messages.deviceRetention'] };
+  });
+  ok('R1e ⑤b 替代断言：messages.deviceRetention 双语键已删（无死键）',
+    enKeyGone.en === undefined && enKeyGone.zh === undefined, JSON.stringify(enKeyGone));
   await page.keyboard.press('Escape');
   await sleep(300);
 
@@ -386,22 +402,47 @@ try {
   ok('N1d 身份缺席时零发送请求（绝不打对端 id）', cap2.deviceSendPaths.length === 0, `paths=${JSON.stringify(cap2.deviceSendPaths)}`);
   ok('N1e 该轮零 pageerror', pageErrors.length === 0, pageErrors.slice(0, 3).join(' | '));
 
-  // ══ 判红④（降级档）：旧网关无设备会话面 ⇒ peers 派生窗（legacy 腿）不崩 ═
+  // ══ 判红④（降级档）：旧网关无设备会话面 ⇒ peers 派生腿（legacy）不崩 ═
+  // 🔴 本档**已被作者 2026-09-15 的 ⑥ 取代一半**：原断言「无服务端行 ⇒ peers 派生窗
+  // 仍在」正是作者要禁的行为（未通信设备直接出现在消息面板）。本档改两步跑：
+  //   ① 无任何通信证据（无服务端行 + 无本地缓存）⇒ 消息面板**零设备行**；
+  //   ② 灌入本地缓存（= 与该设备通信过）⇒ 同一条 peers 派生腿照旧复现（名字走 peers 单点）。
   const cap3 = { read: [], receiptsConvs: [], deviceSendPaths: [], deviceSendStatus: [], attDownload: 0, msgsConvs: [] };
   await page.unroute('**/api/**');
   await installRoutes(page, cap3, { noServerDeviceRows: true });
   await page.reload();
   await page.waitForSelector('#messages-btn', { state: 'attached', timeout: 15000 });
   await sleep(1500);
+  await page.evaluate(async () => { const n = await import('/js/neblink.js'); await n.fetchNeblinkStatus(); });
+  await sleep(300);
+  if (!(await page.locator('#fm-conversations .fm-conv-row').first().isVisible().catch(() => false))) {
+    await page.click('#messages-btn');
+  }
+  await sleep(700);
+  const noEvidenceRows = await page.locator('#fm-conversations .fm-conv-row[data-device="1"]').count();
+  ok('L2 ⑥ 替代断言：旧网关 + 无通信证据 ⇒ 消息面板零设备行（「peers 派生窗仍在」已被作者 06 令取代）',
+    noEvidenceRows === 0, `rows=${noEvidenceRows}`);
+
+  // ② 通信后的正向读数（本地缓存 = 「与它通信过」的本地半程证据）
+  const legacySeeded = await page.evaluate(async () => {
+    const c = await import('/js/fmDropboxCache.js');
+    return c.saveDeviceMessages('dev-beta', [{ msgId: 'legacy-1', kind: 'text', direction: 'out', ts: Date.now(), text: 'legacy hello' }]);
+  });
+  await page.reload();
+  await page.waitForSelector('#messages-btn', { state: 'attached', timeout: 15000 });
+  await sleep(1500);
+  await page.evaluate(async () => { const n = await import('/js/neblink.js'); await n.fetchNeblinkStatus(); });
+  await sleep(300);
   if (!(await page.locator('#fm-conversations .fm-conv-row').first().isVisible().catch(() => false))) {
     await page.click('#messages-btn');
   }
   await page.waitForSelector('#fm-conversations .fm-conv-row[data-device="1"]', { timeout: 15000 });
   await sleep(500);
   const legacyName = await page.locator('#fm-conversations .fm-conv-row[data-device="1"] .fm-row-name').first().textContent().catch(() => null);
-  ok('L2 旧网关（无设备会话行）⇒ peers 派生窗仍在（名字走 peers 单点）', legacyName === 'Phone', `name=${JSON.stringify(legacyName)}`);
-  ok('L2b 该档零服务端设备取数（legacy 腿不假装有服务端面）', cap3.msgsConvs.every(c => !c.startsWith('dev:')), `convs=${JSON.stringify([...new Set(cap3.msgsConvs)])}`);
-  ok('L2c 该档零 pageerror', pageErrors.length === 0, pageErrors.slice(0, 3).join(' | '));
+  ok('L2b 已通信（本地缓存证据）⇒ peers 派生腿照旧成窗（名字走 peers 单点）',
+    legacySeeded === 1 && legacyName === 'Phone', `seeded=${legacySeeded} name=${JSON.stringify(legacyName)}`);
+  ok('L2c 该档零服务端设备取数（legacy 腿不假装有服务端面）', cap3.msgsConvs.every(c => !c.startsWith('dev:')), `convs=${JSON.stringify([...new Set(cap3.msgsConvs)])}`);
+  ok('L2d 该档零 pageerror', pageErrors.length === 0, pageErrors.slice(0, 3).join(' | '));
 } finally {
   if (ctx) await ctx.close().catch(() => {});
   await browser.close().catch(() => {});

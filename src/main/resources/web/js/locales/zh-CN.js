@@ -990,7 +990,8 @@ export default {
   // NebLink
   'neblink.thisDevice': '本机',
   'neblink.unknownDevice': '未命名设备',
-  'neblink.noPeersHint': '请在两台设备上都登录 nebflow',
+  // `neblink.noPeersHint` 已删（① 八点返工 2026-09-15）：其唯一宿主 = 设置账号段的
+  // 设备列表（无 peer 提示行），列表已移出设置 ⇒ 死键同批删除（en 侧同步）。
   'neblink.online': '在线',
   'neblink.offline': '离线',
   'neblink.reachDirect': 'P2P 直连已建立',
@@ -1328,8 +1329,10 @@ export default {
   'workspacePicker.readFail': '无法读取目录',
   'workspacePicker.mkdirFail': '新建文件夹失败',
 
-  // === 设备会话切服务端数据源，MVP-2（2026-09-15）：留存策略明示（P10）+ 设备回执 ===
-  'messages.deviceRetention': '云端保留 7 天，本机永久保存。',
+  // === 设备会话切服务端数据源，MVP-2（2026-09-15）：设备回执 ===
+  // 🔴 `messages.deviceRetention`（P10 留存明示句）已删 —— 作者 2026-09-15 令 ⑤b
+  // 「不要显示…这样的信息」⇒ 渲染点 / 双语键 / CSS 规则同批删除（禁死键）。
+  'messages.deviceDescSaveFailed': '设备描述未保存。',
   'messages.deviceSent': '已送达',
   'messages.deviceRead': '已读',
   'messages.deviceServerUnavailable': '服务端历史暂不可用 —— 已切换为本机历史。',
