@@ -156,6 +156,10 @@ export default {
   'flowmap.flag.merge': '合并',
   'flowmap.flag.loop': '循环',
   'flowmap.flag.pending': '待确认',
+  // 节点角色徽标（vchip 批 2026-09-15）：`role=verifier` 身份在主图上的可见面。
+  // 与 merge/loop/pending 同款 head 行胶囊；双字与其他徽标同宽（卡 124px 内容
+  // ~102px 约束），语义取「复核」= 该节点的职责（判定 pass/fail + 持 (fail):loop 回边）。
+  'flowmap.flag.verifier': '复核',
   // 合并窗排队位次（排队位次可见性批 2026-09-14；作者 16:39 双裁：显示 = 数字 +
   // 持有者双显）。徽标在节点卡 head 行、脚注在同一等待脚注行。降级红线：
   // 键缺失/不可计算/同键多项目 ⇒ 数字不渲染（至多裸「排队中」），禁编造数字。

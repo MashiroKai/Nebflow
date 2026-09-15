@@ -160,6 +160,28 @@
   border-color: rgb(var(--amber, 255 152 0) / 0.4);
 }
 
+/* verifier 角色 chip（vchip 批 2026-09-15）：`role=verifier` 卡的 head 行身份胶囊，
+   复用 .fm-flag-badge 家族度量/形状（禁另造一套），只给配色与文字。文字通道 =
+   「复核」（zh）/ 'Verify'（en），色通道为冗余——与同卡可能并存的 merge(teal
+   45 212 191) / loop(purple 192 132 252) / pending(amber) / queue(sky 56 189 248) /
+   worktree(sapphire 91 127 191) 均可辨（靛蓝 239°，与 loop 的紫 271° 色相分离）。
+   🔴 **亮暗双主题各自调过**（本文件唯一按主题分叉的徽标）：浅色底用深靛
+   rgb(67 56 202)（实测合成后 WCAG 对比 6.71:1），深色底用亮靛 rgb(165 180 252)
+   ——单侧取值会在另一侧掉到阈值下（实测：深色底用 rgb(129 140 248) 仅 4.32:1
+   < 4.5，故深色侧上提一档；读数见 .nebflow/evidence/20260915_vchip/vchip-readings.json）。 */
+.fm-flag-verifier {
+  background: rgb(99 102 241 / 0.13);
+  color: rgb(67 56 202);
+  border-color: rgb(99 102 241 / 0.45);
+}
+@media (prefers-color-scheme: dark) {
+  .fm-flag-verifier {
+    background: rgb(129 140 248 / 0.18);
+    color: rgb(165 180 252);
+    border-color: rgb(165 180 252 / 0.55);
+  }
+}
+
 /* 合并窗排队位次徽标（排队位次可见性批 2026-09-14；作者 16:39 双裁「显示 = 数字 +
    持有者双显」，文案 i18n flowmap.queue.*）。配色 = 天蓝系（56 189 248），与同卡可能
    并存的 merge(teal 45 212 191) / loop(purple) / pending(amber) / worktree(sapphire
@@ -405,6 +427,47 @@
 }
 .fm-edge-arrow.delivered { fill: rgb(var(--sapphire) / 0.75); opacity: 1; }
 .fm-edge-arrow.inflight { fill: var(--color-text-muted); opacity: 0.6; }
+
+/* 反馈回路边（vchip 批 2026-09-15）：`:loop` 控制边 = verifier → worker 的
+   `(fail)` 回边（OutEdge.Loop；此前「out 里可声明、**图里不连**」，本批起上图）。
+   三重视觉编码（不依赖单一色觉通道，与 deps 类型编码同法，判据可机械核）：
+     ① 线型  虚线 7 4 —— 普通 out 边恒实线（.delivered stroke-dasharray: none /
+        .idle none / .inflight 5 4：回边与三者均不同）
+     ② 形状  返回式回拐弧（走两卡**外侧右缘**、控制点同在弧顶 x）—— 普通 out 边
+        是纵向 S 曲线（控制点走两端中间 y、锚点卡中心）
+     ③ 文字  弧顶门标签 `(fail)`（取载荷 on 集原文）—— 普通 out 边无标签
+   配色 = rose 系（与 out 的 sapphire / deps 的 success·warning·border 均异）。
+   三段特异度 `.flow-edge.fm-edge.fm-edge-loop` 与 .fm-edge-deps 同法：排在三态规则
+   之后 ⇒ 同特异度**靠源序取胜**，线型/线宽不被三态覆盖（animation 与 opacity 不
+   声明 ⇒ 仍按三态走，inflight 的行军蚁语义零丢失）。hover 强调面（.fm-edge-hi /
+   .fm-edge-dim 四段特异度、源序更后）对回边照常生效。
+   🔴 亮暗双主题各自取值（单侧色值在另一侧对比不足），见下方 dark 块。 */
+.flow-edge.fm-edge.fm-edge-loop {
+  stroke: rgb(190 24 93 / 0.85);
+  stroke-width: 2;
+  stroke-dasharray: 7 4;
+  stroke-linecap: round;
+}
+.fm-edge-arrow.fm-edge-loop-arrow { fill: rgb(190 24 93 / 0.85); }
+/* 弧顶门标签：文字通道 = 门集原文（`(fail)`），带 --color-bg 描边光晕压在弧线之上
+   （paint-order: stroke ⇒ 先描边后填充），弧线穿过字形也可读。 */
+.fm-edge-loop-gate {
+  font: 600 8.5px/1 -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+  letter-spacing: 0.02em;
+  fill: rgb(190 24 93);
+  paint-order: stroke;
+  stroke: var(--color-bg);
+  stroke-width: 3px;
+  stroke-linejoin: round;
+  text-anchor: middle;
+  dominant-baseline: middle;
+  pointer-events: none; /* 标签不吃 hover（边本身的 hover 语义不受影响） */
+}
+@media (prefers-color-scheme: dark) {
+  .flow-edge.fm-edge.fm-edge-loop { stroke: rgb(244 114 182 / 0.9); }
+  .fm-edge-arrow.fm-edge-loop-arrow { fill: rgb(244 114 182 / 0.9); }
+  .fm-edge-loop-gate { fill: rgb(244 114 182); }
+}
 
 @media (prefers-reduced-motion: reduce) {
   .flow-edge.fm-edge.inflight { animation: none; }
