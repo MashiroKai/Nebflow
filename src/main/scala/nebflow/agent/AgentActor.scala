@@ -2086,6 +2086,7 @@ object AgentActor extends AgentCore with AgentSession:
                     NebflowLogger.forName("nebflow.agent").warn(s"Persist session failed: ${e.getMessage}")
                   )
               )
+              _ <- persistQueues(state.sessionId, updatedState.execution) // F2@tools-complete：drain 后快照队列（崩溃重放禁重复注入已消费队首）
               _ <- immEventIO
               _ <- touchBarrierSnapshot(resources, state.sessionId, newOutstanding, remainingEvents.size)
               result <- pipeLlmCall(agentDef, resources, depth, parentRef, updatedState, tc.replyTo)
