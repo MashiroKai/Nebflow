@@ -629,7 +629,9 @@ Message type (optional, default "INFO"):
         RelayExecAudit.record(
           sourceDeviceId = src.deviceId,
           targetDeviceId = targetDeviceId,
-          via = "device-channel",
+          // 契约 v2.1：本腿已无「设备数据通道」形态（v1 面已弃）——出站走服务端
+          // relay 端点（`POST /api/relay/{target}/mail`），故 `via` 与既有 relay 审计同值。
+          via = "relay",
           action = "Mail.device.send",
           command = s"type=${DeviceMail.TypeAgentMail}; to_nebula=true; chars=${message.length}",
           projectRoot = ctx.projectRoot,

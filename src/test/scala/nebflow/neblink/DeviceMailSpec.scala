@@ -498,4 +498,44 @@ class DeviceMailSpec extends FunSuite:
     DeviceMailAck.handle(parse(s"""{"type":"ack","eventId":"$eventId"}""").toOption.get).unsafeRunSync()
     assertEquals(DeviceMailAck.pendingCount.unsafeRunSync(), 0, "迟到 ack 不得复活已终结的发送")
 
+  // ============================================================
+  // ⑧ 端到端（服务端腿 = 契约转发桩）：发送腿 ⇄ 收件腿 ⇄ ack 闭环
+  // ============================================================
+
+  test("端到端（服务端腿以契约转发桩替代）：Mail(device:KAI-Air) → 真发送链（恰一次 POST /api/relay/dev-c/mail）→ 事件流信封 → 对端注入 + ack 关联闭环"):
+    DeviceMailAck.resetForTest().unsafeRunSync()
+    val (_, msgs, frames, acks) = inboxFixture() // 收件侧 = 真 inbox 装配（真 sessionStore + root 记录 + 记录型 ack 出口）
+    val ns = serviceWithPeers(multiDeviceRoster)
+    val capture = new CaptureClient
+    assert(capture.client.login("dev-a", "KAI-MBP", "darwin", Nil).unsafeRunSync().isRight, "夹具登录必须成功")
+    ns.setRelayClient(Some(capture.client))
+
+    val out = MailTool.call(JsonObject("device" -> "KAI-Air".asJson, "message" -> "hello B".asJson), deviceCtx(ns)).unsafeRunSync()
+    assert(out.isRight, s"device 邮件应成功下发：$out")
+
+    // ① 发送面：**恰一次**、目标走路径、body = 契约五键本体、定向（其余设备零流量）
+    val relayCalls = capture.calls.filter(_._2.contains("/api/relay/"))
+    assertEquals(relayCalls.size, 1, s"禁 fan-out：恰一次 relay 邮件请求，实得 ${capture.calls.map(_._2)}")
+    val (method, url, body) = relayCalls.head
+    assertEquals(method, "POST")
+    assertEquals(url, "http://127.0.0.1:9/api/relay/dev-c/mail", "目标（KAI-Air → dev-c）走路径")
+    val sent = parse(body).toOption.getOrElse(fail("body 必须是 JSON"))
+    assertEquals(sent.asObject.map(_.keys.toList.sorted).getOrElse(Nil), DeviceMail.PayloadKeys.sorted, "恰契约五键")
+    assertEquals(sent.hcursor.get[String]("text").toOption, Some("hello B"))
+    assertEquals(sent.hcursor.get[Boolean]("to_nebula").toOption, Some(true))
+    assert(sent.hcursor.get[String]("from_device").toOption.exists(_.nonEmpty), "from_device = 本机自报展示名")
+    assert(!body.contains("dev-b") && !body.contains("dev-d"), "body 内不得夹带其它设备（其余零投递）")
+
+    // ② 服务端腿（外部依赖，本测试以**契约转发桩**替代）：把发出的载荷按 v2.1 事件流信封投给收件侧
+    assertEquals(DeviceMailAck.pendingCount.unsafeRunSync(), 1, "发送侧已登记 pending（eventId=message-<服务端 id>）")
+    DeviceMailInbox.handle(envelope("message-m-77", sent)).unsafeRunSync()
+    IO.sleep(300.millis).unsafeRunSync()
+    assertEquals(msgs.get.unsafeRunSync().size, 1, "对端注入恰好一条 ImmediateInput")
+    assertEquals(frames.get.unsafeRunSync(), Nil, "成功路径零告警帧")
+    assertEquals(acks.get.unsafeRunSync(), List("message-m-77"), "对端按**帧级** eventId 回 ack")
+
+    // ③ 回执回投（v2.1 ②）：同 eventId 的 ack 回到发送侧 ⇒ pending 归零（发送链 ack 闭环）
+    DeviceMailAck.handle(parse("""{"type":"ack","eventId":"message-m-77"}""").toOption.get).unsafeRunSync()
+    assertEquals(DeviceMailAck.pendingCount.unsafeRunSync(), 0, "ack 命中 ⇒ 出队（闭环）")
+
 end DeviceMailSpec
