@@ -788,7 +788,9 @@ enum AgentStreamEvent:
     model: Option[String] = None
   )
   case CompactStart(mode: String, inputTokens: Option[Int], threshold: Option[Int])
-  case CompactComplete(before: Int, after: Int, reportPath: Option[String] = None)
+  // 2026-09-15 作者令：压缩不再落 report ⇒ `reportPath` 字段随生成链删除
+  // （此前由 AgentActor 从 archive.reportPath 填入，UI 据此显示「report: xxx.md」）。
+  case CompactComplete(before: Int, after: Int)
   case CompactFailed(reason: String, attempt: Int, maxAttempts: Int)
   case BackgroundTaskUpdate(taskId: String, description: String, status: String)
   case ExternalEventReceived(source: String, eventType: String, correlationId: Option[String])
@@ -926,23 +928,21 @@ enum AgentStreamEvent:
             "inputTokens" -> inputTokens.asJson,
             "threshold" -> threshold.asJson
           )
-      case CompactComplete(before, after, reportPath) =>
-        val base =
-          if isSubagent then
-            Json.obj(
-              "type" -> "agentCompactComplete".asJson,
-              "agentId" -> agentId.asJson,
-              "before" -> before.asJson,
-              "after" -> after.asJson
-            )
-          else
-            Json.obj(
-              "type" -> "compactComplete".asJson,
-              "sessionId" -> sessionId.asJson,
-              "before" -> before.asJson,
-              "after" -> after.asJson
-            )
-        reportPath.fold(base)(p => base.deepMerge(Json.obj("reportPath" -> p.asJson)))
+      case CompactComplete(before, after) =>
+        if isSubagent then
+          Json.obj(
+            "type" -> "agentCompactComplete".asJson,
+            "agentId" -> agentId.asJson,
+            "before" -> before.asJson,
+            "after" -> after.asJson
+          )
+        else
+          Json.obj(
+            "type" -> "compactComplete".asJson,
+            "sessionId" -> sessionId.asJson,
+            "before" -> before.asJson,
+            "after" -> after.asJson
+          )
       case CompactFailed(reason, attempt, maxAttempts) =>
         if isSubagent then
           Json.obj(

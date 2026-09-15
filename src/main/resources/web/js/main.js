@@ -2450,9 +2450,10 @@ onMessage('compactComplete', (msg, view) => {
     view.stream.activeAgentId = null;
   }
   if (view) {
-    const detail = msg.reportPath ? ` (report: ${msg.reportPath.split('/').pop()})` : '';
-    const text = t('chat.compacted', { before: msg.before, after: msg.after, detail });
-    renderCompactDoneCard(view, { before: msg.before, after: msg.after, detail });
+    // 2026-09-15 作者令：压缩不再落 report ⇒ 帧内不再带 reportPath，
+    // 「report: xxx.md」尾巴随生成链一并删除（detail 保持空串，i18n 占位符不变）。
+    const text = t('chat.compacted', { before: msg.before, after: msg.after, detail: '' });
+    renderCompactDoneCard(view, { before: msg.before, after: msg.after });
     saveMsg({ type: 'system', content: text }, sid);
   }
   // Drain queued messages only if agent is NOT busy. During auto-compaction
