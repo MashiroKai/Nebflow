@@ -767,7 +767,8 @@ export async function getGroups() {
 
 /** GET /api/groups/invites → 契约 `{incoming:[GroupInviteEntry]}`（groups.rs:200-221，路由 :678；
  *  服务端只列**我的** `status='pending'` 入站邀请，store.rs:5899）⇒ 归一后的
- *  入站群邀请数组（[{inviteId,groupId,title,inviter,createdAt}]）。 */
+ *  入站群邀请数组（[{inviteId,groupId,title,inviter,createdAt}]）；信封 `selfUserId`
+ *  以非枚举键挂在数组上（真/mock 两腿同形，与 getGroupMembers 一致）。 */
 export async function getGroupInvites() {
   if (!MOCK) {
     const raw = await req('GET', '/api/groups/invites');
@@ -777,11 +778,12 @@ export async function getGroupInvites() {
   const m = mockStore();
   // mock 侧同样按「invitee=我 ∧ pending」过滤（与 store.rs 的 WHERE 子句同判据），
   // inviteeId/status 是 mock 记账键，normalizeInviteRow 只取契约字段。
-  return normalizeInvitesEnvelope({
+  // mock = 契约同形：信封面 selfUserId 同样以非枚举键挂上（真机 = 鉴权用户 id）。
+  return attachSelfId(normalizeInvitesEnvelope({
     incoming: m.groupInvites
       .filter(i => (i.status || 'pending') === 'pending' && String(i.inviteeId || '') === String(m.self.userId))
       .map(i => ({ ...i })),
-  });
+  }), String(m.self.userId || '') || '');
 }
 
 /** POST /api/groups `{title}` → `{groupId,title,createdAt}` 201（GroupCreateBody
