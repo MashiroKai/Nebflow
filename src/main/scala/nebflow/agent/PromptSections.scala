@@ -154,15 +154,17 @@ object PromptSections:
   def requiresTools(names: String*): PromptContext => Boolean =
     ctx => names.forall(ctx.availableTools.contains)
 
-  /** 节点会话 always-on 最小段正文（#304-②，2026-09-12）。公开常量 = 段长门的
-    * 断言对象（spec 直接量本常量的 UTF-8 字节数 ≤ [[NodeSessionAlwaysOnSectionMaxBytes]]）。
-    * 内容边界（硬）：只放最小硬动作——一句申报义务 + 一句未申报后果 + 一句受阻出口；
-    * 禁复述 seed 全文（段进每次 node LLM 调用，token 是经常性成本）。 */
+  /** 节点会话 always-on belt 行（#304-② 2026-09-12 建段；F8 收口 2026-09-15 起形态
+    * = 「一句申报义务 + 权威位指针」，不再自携值域/后果/受阻行）。公开常量 = 段长门
+    * 的断言对象（本常量 UTF-8 字节数 ≤ [[NodeSessionAlwaysOnSectionMaxBytes]]）。
+    * 完整协议（角色值域、blocked JSON 文法、verifier verdict、未申报语义）的**单一
+    * 权威** = 输入面协议脚注 `NodeEngine.ProtocolFootnote`（引擎编译、随任务输入
+    * 注入、角色分支）+ `node_report` 工具 description；本段禁复述其内容（段进每次
+    * node LLM 调用，token 是经常性成本）。 */
   val NodeSessionAlwaysOnSection: String =
     """## Node terminal report (Flow Map node sessions)
 
-Before wrapping up call `node_report`: task nodes `finish`/`blocked`, verifier nodes `pass`/`fail`/`blocked`.
-Unreported ⇒ the node stays running, its result is undelivered, reminders only — never auto-failed. Stuck ⇒ `blocked`."""
+Before wrapping up call `node_report` — reporting IS the wrap-up action, not a blocked-only exception. The single authoritative protocol is the `node_report` tool description plus the Node protocol footnote injected with node task input; this line is only the always-on belt."""
 
   /** 段长门阈值（字节）：段正文 UTF-8 字节数必须 ≤ 本值。 */
   val NodeSessionAlwaysOnSectionMaxBytes: Int = 400
@@ -270,17 +272,24 @@ Unreported ⇒ the node stays running, its result is undelivered, reminders only
       body = traceSection
     ),
 
-    // --- 节点终态申报段（#304-②，2026-09-12）：**node 会话 always-on 最小硬动作**
-    // 引擎侧抗漂移——运行时副本陈旧是 #304 的主因（noderept-usage-recon：今日
-    // 39/39 node 会话实收系统提示词零命中 node_report 纪律），提示词面单靠 seed
-    // 播种（add-only）做不到「引擎改了、运行时一定跟上」。本段由**引擎**注入，
-    // 条件判据用**现成字段** `PromptContext.availableTools`（== seed 里那句
-    // 「若 node_report 工具在你的工具集里」的机械等价形式），**零新增字段**
-    // （`promptCtx = PromptContext(` 构造点不动）。只放**最小硬动作**：禁止复述
-    // seed 全文、禁止流程图/长条款/工具用法（用法归工具 description）。
-    // 段长门：`NodeSessionAlwaysOnSectionMaxBytes`（≤400 B）——段进每次 node LLM
-    // 调用，token 是经常性成本。段序 360 = 落在 stable 段之后、dynamic identity
-    // 段（395）之前，不破坏 system.md 前缀缓存锚（`assembleSystemPrompt` 契约）。
+    // --- 节点终态申报段（#304-② 2026-09-12 建段；F8 收口 2026-09-15 起 = belt+指针，
+    // 不再自携值域/后果行）：本段存在的真实理由有二。① 系统提示词面的**存在性保证**
+    // （抗漂移）：运行时副本陈旧曾是 #304 的主因（noderept-usage-recon：39/39 node
+    // 会话实收系统提示词零命中 node_report 纪律），seed 播种（add-only）做不到
+    // 「引擎改了、运行时一定跟上」——本行由**引擎编译**注入、与盘面无关，无论
+    // seed/运行面处于何种同步状态，节点系统提示词上恒有一句申报义务（loop verify
+    // 等输入面无脚注的会话形态由此兜底）。② 它是项目面 AGENTS.md 终态申报行所指
+    // 「引擎 always-on 段」的本体（该行已终态冻结，指针目标不得悬空）。
+    // 完整协议的**单一权威** = 输入面脚注 `NodeEngine.ProtocolFootnote`（blocked
+    // JSON 文法 + 角色值域 + verifier verdict 分支的唯一引擎文本）+ `node_report`
+    // 工具 description——本段**不复述**它们（F8 判据：装配面恰一份完整纪律，本段
+    // 收口为短句指针）。条件判据 `PromptContext.availableTools` 含 node_report ≡
+    // flowNodeSession（唯一追加点 = `AgentCore.buildAllowedToolSet` 末段身份闸；
+    // 声明逃逸由 `NebulaExclusiveTools` 全剥），非节点会话（kernel/memory-
+    // consolidator/dispatcher/Nebula）恒不含 ⇒ 收不到本段。段长门：
+    // `NodeSessionAlwaysOnSectionMaxBytes`（≤400 B）——段进每次 node LLM 调用，
+    // token 是经常性成本。段序 360 = 落在 stable 段之后、dynamic identity 段（395）
+    // 之前，不破坏 system.md 前缀缓存锚（`assembleSystemPrompt` 契约）。
     PromptSection(
       360,
       condition = ctx => ctx.availableTools.contains(nebflow.core.tools.NodeReportToolDef.Name),

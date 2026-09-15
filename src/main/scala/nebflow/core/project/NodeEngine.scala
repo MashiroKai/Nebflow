@@ -2272,9 +2272,17 @@ class NodeEngine(
     }
 
   /** 构造节点输入：链上下文块（链头 + 文件名尾溯源提示段，仅本节点有链时注入）+ 自身
-    * task 上下文 + 各上游 result（=== Node <name> === 头，§2.7）+ blocked 声明协议
-    * 脚注（设计 §1.5 原文，单点注入覆盖所有节点——节点 agent 是通用全局 agent，
-    * system prompt 不含约定，必须随输入注入）。
+    * task 上下文 + 各上游 result（=== Node <name> === 头，§2.7）+ 终态申报协议脚注
+    * （[[protocolFootnoteFor]]——**节点会话完整协议的单一权威面**，F8 收口
+    * 2026-09-15：角色值域、blocked JSON 文法、verifier verdict 分支、未申报语义的
+    * 唯一引擎承载文本；引擎编译、随任务输入组装面单点注入（本方法一个代码位覆盖
+    * 全部节点 spawn 输入，含 loop 节点首轮）、零盘面依赖 ⇒ 抗 seed/运行面漂移。
+    * 系统提示词面只留 seed 条件句（`general/system.md`）+ always-on belt 行
+    * （`PromptSections.NodeSessionAlwaysOnSection`，360 段），二者均指到这里、
+    * 不复述协议——旧注释「system prompt 不含约定」的前提已被该结构取代（F8 判违：
+    * 两处设计前提互相否证，本段即消解后的真实理由）。loop 侧同款：
+    * `loopReworkInput` 复注同一 `ProtocolFootnote`（同会话返工轮再提醒，非第二份
+    * 协议文本）。
     * 收敛裁定（作者 2026-09-07）：项目记忆=分发器配置知识——分发器建节点时把关键
     * 口径写进节点 task，节点侧不再注入记忆全文。节点上下文=task+上游结果+AGENTS.md；
     * 节点每 spawn 省一份记忆全文 token（多节点并行批次收益可观）；AGENTS.md 每 turn
@@ -5901,7 +5909,12 @@ object NodeEngine:
     * verifier 专属段（verdict ≠ 节点状态）由 [[protocolFootnoteFor]] 追加——避免把
     * 两套值域并列塞进一篇脚注（R9 中性化同款纪律：解释权收归工具 description）。
     * 本 val 逐字保持旧文本除该句外的全文（下游断言锚：末行 TaskBoard 指引行、
-    * `endsWith(ProtocolFootnote)` 身份断言）。 */
+    * `endsWith(ProtocolFootnote)` 身份断言）。
+    * F8 收口（2026-09-15）：本 val = 节点终态申报协议的**单一权威文本**（引擎侧
+    * 唯一完整协议面——blocked JSON 文法在引擎文本面仅此处承载；`PromptSections`
+    * 360 段 = belt+指针、seed 条件句与项目面 AGENTS.md = 指针/条件句，均不复述本
+    * 协议）。文本逐字冻结——`TaskBoardInjectionSpec` 的末行/`needs-split` 措辞钉
+    * 与 `NodeChainAttributionSpec` 的 `endsWith` 身份钉同挂本 val。 */
   val ProtocolFootnote: String =
     """── Node protocol ──
       |**Call `node_report` before wrapping up** — reporting IS the wrap-up action, not a blocked-only channel.
