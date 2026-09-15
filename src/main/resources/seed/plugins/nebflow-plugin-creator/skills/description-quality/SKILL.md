@@ -101,8 +101,8 @@ skills」类实现性自述，白占版面。改法：配合指引改指插件�
 ## 五、执行配合
 
 1. 写/改 description 后，跑
-   `python3 ${SKILL_DIR}/scripts/validate_plugin.py <包目录>`（脚本在
-   plugin-packaging skill 内）做机械面回归；
+   `python3 {{data_root}}/plugins/nebflow-plugin-creator/skills/plugin-packaging/scripts/validate_plugin.py <包目录>`
+   （脚本在 plugin-packaging skill 内）做机械面回归；
 2. 机械 PASS 后，按第二节核心词表逐词核对全命中——这是脚本不拦、你必须判定的部分；
 3. 存量包重封装：只改 description 并删除 capability 字段，不动 skill 内容；
    任何字节改动都会 digest 漂移，面板会把该包标为「内容已变更」（**可见性提示，
