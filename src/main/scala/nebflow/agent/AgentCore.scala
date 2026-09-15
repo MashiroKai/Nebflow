@@ -366,7 +366,7 @@ private[agent] trait AgentCore:
       _ <- ctx.forkTurn(
         emitStreamIO(
           state.wsSend,
-          AgentStreamEvent.CompactComplete(state.messages.size, cleaned.size, None),
+          AgentStreamEvent.CompactComplete(state.messages.size, cleaned.size),
           isSubagent = depth > 0,
           state.sessionId
         ).handleErrorWith(_ => IO.unit)

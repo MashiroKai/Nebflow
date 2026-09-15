@@ -4904,15 +4904,15 @@ class WebSocketRoutes(
       case "compactComplete" =>
         val before = hc.downField("before").as[Int].getOrElse(0)
         val after = hc.downField("after").as[Int].getOrElse(0)
-        val reportPath = hc.downField("reportPath").as[String].toOption
-        val detail = reportPath.map(p => s" (report: ${p.split('/').last})").getOrElse("")
+        // 2026-09-15 作者令：压缩不再落 report ⇒ 帧内不再带 reportPath，
+        // 「(report: xxx.md)」尾巴随生成链一并删除（不留死读盘分支）。
         sharedResources.sessionStore.appendUiMessages(
           sessionId,
           List(
             UiMessage.System(
-              s"Context compacted: $before → $after messages$detail",
+              s"Context compacted: $before → $after messages",
               Some("chat.compacted"),
-              Some(io.circe.Json.obj("before" -> before.asJson, "after" -> after.asJson, "detail" -> detail.asJson))
+              Some(io.circe.Json.obj("before" -> before.asJson, "after" -> after.asJson))
             )
           )
         )

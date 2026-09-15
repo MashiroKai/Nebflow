@@ -2307,11 +2307,14 @@ object AgentActor extends AgentCore with AgentSession:
                 case None => IO.pure(Left("no sessionId"))
               val compactEmitIO = archiveIO
                 .flatMap {
-                  case Right(archive) =>
+                  // 2026-09-15 作者令：压缩不再落 report ⇒ 不再有 reportPath 可播报，
+                  // 与失败分支一致播报 None（该字段承载的「report: xxx.md」详情已随
+                  // 生成链删除，见 HistoryArchiver 头注）。
+                  case Right(_) =>
                     emitStreamIO(
                       state.wsSend,
                       AgentStreamEvent
-                        .CompactComplete(state.messages.size, compactedMessages.size, Some(archive.reportPath)),
+                        .CompactComplete(state.messages.size, compactedMessages.size),
                       isSubagent = depth > 0,
                       state.sessionId
                     )
@@ -2319,7 +2322,7 @@ object AgentActor extends AgentCore with AgentSession:
                     NebflowLogger.forName("nebflow.agent").warn(s"Compaction archive failed: $err")
                     emitStreamIO(
                       state.wsSend,
-                      AgentStreamEvent.CompactComplete(state.messages.size, compactedMessages.size, None),
+                      AgentStreamEvent.CompactComplete(state.messages.size, compactedMessages.size),
                       isSubagent = depth > 0,
                       state.sessionId
                     )

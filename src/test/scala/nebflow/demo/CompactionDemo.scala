@@ -187,7 +187,7 @@ class CompactionDemo extends munit.FunSuite:
     )
     archiveIO.unsafeRunSync() match
       case Right(archive) =>
-        println(s"  Report written to: ${archive.reportPath}")
+        // 2026-09-15 作者令：compaction report 已删除 —— 归档只落 before/after JSON。
         println(s"  Before JSON: ${archive.beforeJsonPath}")
         println(s"  After JSON:  ${archive.afterJsonPath}")
       case Left(err) =>
