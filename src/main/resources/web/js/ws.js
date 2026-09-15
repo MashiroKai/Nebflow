@@ -165,9 +165,12 @@ const TERMINAL_MSG_TYPES = new Set([
   // taskListUpdate 已移出（2026-09-05 10:54 裁定：旧任务区退役）——非活跃
   // 会话帧被入口过滤器丢弃，活跃会话帧无订阅者 no-op（后端照发，零触碰）。
   'backgroundTaskUpdate',
-  'askUser', 'askPermission', 'askUserAnswered',
+  'askUser', 'askPermission',
+  // askUserAnswered 已摘（uiclean 批 2026-09-15）：该帧的唯一生产者（hub
+  // handleChatInputAnswer）随输入框直通腿退役（e59ed251d），接收点亦已摘除 ⇒
+  // 路由表项冗余且不再被引用（详见本批报告 C 项引用读数）。
   // D6 批 F2: source-death close frame (engine cascade = batch E2; frontend
-  // handling already in place) — same view routing as askUserAnswered.
+  // handling already in place) — same view routing as askUser.
   'askUserClosed',
   // 工作区目录选择结果（workspace-picker 批次）：{sessionId, requestId, path|
   // cancelled|fallback}——askUser 交互家族同语义（带 sessionId，视图路由同 askUser）。

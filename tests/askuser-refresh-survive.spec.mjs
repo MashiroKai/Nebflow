@@ -4,8 +4,10 @@
 //   T1 发起 → 刷新（page.reload）→ WS 重连 → hub 重发 → 卡片恢复可见可答
 //      → 点选项 → askUserAnswer(带 requestId) 送达 → 工具返回（MOCK_DONE 气泡）
 //      → 亮暗双主题截图落盘；
-//   T2 输入框直通路径刷新后同样验证 → askUserAnswered{via:'chat-input'} 锁卡
-//      → 工具返回携带直通文本。
+//   T2 输入框文本（直通退役后）：刷新后经输入框的文本按普通用户消息入流（不吞），
+//      卡片保持 pending、仍须点选作答（uiclean 批 2026-09-15 对齐；退役前的
+//      askUserAnswered{via:'chat-input'} 锁卡断言已删——新行为覆盖见
+//      tests/askinput-off-pending-text.spec.mjs，两者互补：本件保留「刷新之后」维度）。
 //
 // 真实全环：隔离 Nebflow 实例（BASE_URL/TOKEN env 注入，绝非 8080 宿主）+
 // OpenAI 兼容 mock LLM（tests/fixtures/askuser-refresh/mock-llm.mjs，状态机：
@@ -211,7 +213,7 @@ test.describe('AskUser pending 刷新存活（作者验收）', () => {
     await expect(page.locator('#send-btn')).toBeVisible({ timeout: 90000 });
   });
 
-  test('T2 直通路径：发起 → 刷新 → 重发恢复 → 输入框回答 → 锁卡 + 工具返回', async ({ page }) => {
+  test('T2 输入框文本（直通退役后）：发起 → 刷新 → 重发恢复 → 文本按普通消息入流不吞 ∧ 卡片仍可答', async ({ page }) => {
     test.setTimeout(180000);
     attachWsCapture(page);
     await page.goto(`${BASE}/?token=${TOKEN}`, { waitUntil: 'domcontentloaded' });
@@ -225,14 +227,48 @@ test.describe('AskUser pending 刷新存活（作者验收）', () => {
     await chatReady(page, sid);
     const box = page.locator('.option-box[data-request-id]');
     await box.waitFor({ timeout: 20000 });
-    expect(await box.getAttribute('data-request-id'), '直通路径同样靠重发拿回 requestId 绑定').toBe(liveRid);
+    expect(await box.getAttribute('data-request-id'), '重发恢复同样靠重放帧拿回 requestId 绑定').toBe(liveRid);
 
-    // 输入框直通：文本被后端消费为答案 → askUserAnswered{via:'chat-input'} → 精确锁卡
-    await sendUserText(page, '直通答案文本-xyz');
-    await waitForFrame(page, 'in', { type: 'askUserAnswered', via: 'chat-input', requestId: liveRid });
-    await page.waitForSelector('.option-box[data-request-id] .option-answer', { timeout: 10000 });
+    // ── 直通退役（2026-09-14 作者令 / 落地 e59ed251d；uiclean 批 2026-09-15 对齐）──
+    // 旧断言（已删行为）：文本被 hub 消费为答案 → askUserAnswered{via:'chat-input'}
+    //   → 精确锁卡 → 工具返回携带该文本。
+    // 新断言（目标态）：pending 期间回车**不发帧**（会话 busy ⇒ 文本进本地「排队中」条，
+    //   不吞不丢）→ 点「立即发送」后以**普通用户消息**入流 → 卡片仍 pending（未锁）→
+    //   引擎**零** askUserAnswered 帧 → 仍须在卡片上作答，工具返回携带**点选项**。
+    // 新行为的逐视口覆盖见 tests/askinput-off-pending-text.spec.mjs（0cb416b0）；
+    // 本 case 保留其唯一维度：**刷新之后**再走输入框。
+    const MARK_T2 = '直通退役后普通文本-xyz';
+    await sendUserText(page, MARK_T2);
+    await page.waitForTimeout(1200);
+    // ① 不吞：文本落在本地「排队中」条（会话 busy ⇒ 尚未发帧）
+    const queued = await page.locator('.queue-item', { hasText: MARK_T2 }).count();
+    expect(queued, 'pending 期间回车 ⇒ 文本进本地队列，不得静默丢弃').toBeGreaterThan(0);
+    // ② 「立即发送」把它真的推出去 ⇒ 以普通用户消息入流
+    const pushed = await page.evaluate((mk) => {
+      const row = [...document.querySelectorAll('.queue-item')].find((r) => (r.innerText || '').includes(mk));
+      const btn = row?.querySelector('.queue-item-btn.immediate');
+      if (!btn) return false;
+      btn.click();
+      return true;
+    }, MARK_T2);
+    expect(pushed, '「立即发送」控件可点（把排队文本推出）').toBe(true);
+    await page.waitForFunction(
+      (mk) => [...document.querySelectorAll('.row.user')].some((r) => (r.innerText || '').includes(mk)),
+      MARK_T2,
+      { timeout: 15000 },
+    );
+    // ③ 卡片仍 pending（文本没成为答案）∧ 零 askUserAnswered 帧
+    await page.waitForTimeout(3000);
+    expect(await page.locator('.option-box[data-request-id] .option-answer').count(), '文本不得消费卡片').toBe(0);
+    const answeredFrames = await page.evaluate(() => (window.__nfFrames?.in ?? []).filter((f) => f.type === 'askUserAnswered'));
+    expect(answeredFrames, '退役后引擎不得再广播 askUserAnswered').toHaveLength(0);
 
-    // 工具返回携带直通文本
-    await waitDoneBubble(page, '直通答案文本-xyz', 45000);
+    // ④ 点选作答仍正常：出站带 requestId，工具返回携带点选项
+    await clickOption(page, 'alpha');
+    await clickOption(page, 'yes');
+    await page.locator('.option-box .option-confirm').first().click();
+    await waitForFrame(page, 'out', { type: 'askUserAnswer', requestId: liveRid });
+    await waitDoneBubble(page, 'MOCK_DONE');
+    await waitDoneBubble(page, 'alpha');
   });
 });

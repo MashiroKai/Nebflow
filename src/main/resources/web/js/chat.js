@@ -1669,9 +1669,11 @@ function clearAskDrafts(sid) {
 export function showOptions(container, questions, onConfirm, doneLabel, onCancel, askSessionId, requestId) {
   const box = document.createElement('div');
   box.className = 'option-box';
-  // Tag the card with its requestId so the chat-input passthrough frame
-  // (askUserAnswered, author ruling 2026-08-29 23:50) can locate and lock the
-  // exact card the backend consumed. Permission prompts / onboarding pass no
+  // Tag the card with its requestId so the requestId-keyed answer/close frames
+  // (askUserAnswer routing #12, askUserClosed D6-F2) and the Canvas answer
+  // registry can locate the exact card they own. (The retired chat-input
+  // passthrough used to be the third consumer of this tag — see e59ed251d.)
+  // Permission prompts / onboarding pass no
   // requestId and stay untagged.
   if (requestId) box.dataset.requestId = requestId;
   const answers = new Array(questions.length).fill(null);
@@ -2145,8 +2147,9 @@ export function renderAskUser(items, askSessionId, agentName, requestId, source)
       if (state.ws && state.ws.readyState === WebSocket.OPEN) {
         state.ws.send(JSON.stringify({ type: 'askUserAnswer', sessionId: targetSid, answers, ...(requestId && { requestId }) }));
       }
-      // D6 批 F2: card-answer resolves the pending slot locally (the hub does
-      // NOT broadcast askUserAnswered for card answers — only for chat-input).
+      // D6 批 F2: card-answer resolves the pending slot locally — the hub does
+      // not echo a frame for card answers, so this callback is the only
+      // resolution source on this path.
       removePendingAsk(requestId);
       broadcastAskState(targetSid, requestId);
       window.dispatchEvent(new CustomEvent('session-attention', { detail: { sessionId: targetSid, attention: false } }));
@@ -2170,17 +2173,17 @@ export function renderAskUser(items, askSessionId, agentName, requestId, source)
   };
 }
 
-/** Lock an AskUser card that was answered via the chat input (author ruling
- *  2026-08-29 23:50: while an AskUser card is pending, a message typed into
- *  the input box IS the tool answer). The backend consumed the oldest pending
- *  card for that session and broadcasts askUserAnswered{sessionId, requestId,
- *  via:'chat-input'}; the user's text lands as a normal user bubble (same as
- *  the card's Other path), so the card only needs the local lock treatment —
- *  the same end-state as the confirm path, minus sending anything.
+/** Lock an AskUser card whose owning ask was closed by the engine (the
+ *  `askUserClosed` frame, main.js onMessage). Historically this function had a
+ *  second caller: the chat-input passthrough receiver (`askUserAnswered`,
+ *  author ruling 2026-08-29 23:50), retired 2026-09-14 (作者令 / 落地
+ *  e59ed251d) — its frame has no producer left, so the only live entry is
+ *  `askUserClosed`.
  *  Returns true when a matching unanswered card was found and locked.
- *  `note` (D6 批 F2): override the lock-line text — the askUserClosed path
- *  (source node died; engine cascade lands in batch E2) marks the card with
- *  t('askUser.sourceClosed') instead of the chat-input note. */
+ *  `note`: override the lock-line text — the askUserClosed path passes
+ *  t('askUser.sourceClosed') (source node died) or t('askUser.turnInterrupted')
+ *  (owning turn interrupted, #250 ②); the default is kept for any future
+ *  caller that closes a card without a reason. */
 export function closeAskUserCard(sessionId, requestId, note) {
   if (!sessionId || !requestId) return false;
   const view = findViewBySessionId(sessionId);
@@ -2190,7 +2193,7 @@ export function closeAskUserCard(sessionId, requestId, note) {
   for (const box of boxes) {
     if (box.querySelector('.option-answer')) continue; // already answered/locked
     box.querySelectorAll('.option-btn, .option-confirm, .option-cancel').forEach(el => { el.disabled = true; });
-    dirPickCards.delete(requestId); // 工作区选择卡：chat-input 直答后事件一并失主
+    dirPickCards.delete(requestId); // 工作区选择卡：卡片关闭后事件一并失主
     const confirmBtn = box.querySelector('.option-confirm');
     const cancelBtn = box.querySelector('.option-cancel');
     if (confirmBtn) confirmBtn.style.display = 'none';
