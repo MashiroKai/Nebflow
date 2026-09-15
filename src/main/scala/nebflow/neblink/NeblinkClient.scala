@@ -532,6 +532,24 @@ class NeblinkClient(
   def listConversations: IO[Either[String, List[ConversationSummary]]] =
     withSessionJson[List[ConversationSummary]]("GET", "/api/conversations", "")
 
+  /** 群会话列表（`GET /api/groups`，**裸数组**，与 `GET /api/conversations` 同约定）。
+    *
+    * 消费方 = 群目标解析（gmsgsend 批 · 补充卡 §6.2）：`SendMessage(to="group:<…>")`
+    * 需要「本用户所属、未解散群会话」的 `groupId`/`title` 表。
+    *
+    * 契约边界（逐条，全部落在**跨仓真源**上，本层零判定）：
+    *  - **解散态不在表内**：服务端契约「Disbanded groups never appear」
+    *    ⇒ 已解散的群在解析层结构上不可命中；终态判定的权威仍是服务端的
+    *    403 `group_disbanded`（本层**不**复制该判定，禁双实现）。
+    *  - **非成员不在表内**：服务端按鉴权身份出表 ⇒ 解析层无从构造「非本群成员」
+    *    的成功寻址；成员闸的权威同样在服务端（403 `not_member`）。
+    *  - 身份**只**由 `withSession` 的 `Authorization: Bearer <device session token>`
+    *    承载（与全部既有 friends / conversations 面逐字一致，客户端**不得**自报身份）。
+    *  - 本方法只做「取表 + 解码」，任何筛选/排序不在本层。
+    */
+  def listGroups: IO[Either[String, List[GroupSummary]]] =
+    withSessionJson[List[GroupSummary]]("GET", "/api/groups", "")
+
   /** keyset 分页拉消息（after=0 全量，limit 默认 50）。 */
   def listMessages(conversationId: String, after: Long = 0L, limit: Int = 50): IO[Either[String, List[MessageSummary]]] =
     withSessionJson[List[MessageSummary]]("GET", s"/api/conversations/$conversationId/messages?after=$after&limit=$limit", "")
@@ -562,6 +580,45 @@ class NeblinkClient(
       ).flatten
       sendRequest("POST", s"${config.url}/api/friends/$friendUserId/messages", Json.fromFields(fields).noSpaces, Some(token))
         .map(_.flatMap(resp => decode[Json](resp).left.map(_.getMessage)))
+    }
+
+  /** 发群消息（`POST /api/groups/{groupId}/messages` —— 跨仓**冻结群发契约**，
+    * 真源 = neblink-server `src/groups.rs` `group_send_message`）。
+    *
+    * 与 [[sendFriendMessage]] 的**唯一**差别 = 目标寻址段（`/api/groups/{id}` vs
+    * `/api/friends/{uid}`）+ **保留状态码**（见下）；请求体键集与语义逐字同源
+    * （`body` 必填 / `origin` 可选，`"agent" | "user"`，缺席 = `"user"`，
+    * 非法值 ⇒ 422 `invalid_origin`；`clientMsgId` 幂等键语义同款）。
+    *
+    * 🔴 **为什么保留状态码**（本方法**不**走 [[sendFriendMessage]] 的 `Left` 折叠）：
+    * 群域三个错误码是**群终态**，折叠成 `Left("HTTP <code>: <body>")` 后调用方只能靠
+    * 解析字符串区分「群不存在 / 群已解散 / 我不是成员」——而补充卡 §6.4 要求回执
+    * **显式给出原因**（🔴 禁静默）。同族先例（本仓既有，非新形态）：
+    * [[proxyWithStatus]]（网关群路由代理腿）与 [[sendRequestJsonWithStatus]]（E4 回执）。
+    * `origin` 的 agent 语义由调用侧（[[nebflow.neblink.FriendService]]，
+    * `origin = Some("agent")`）**唯一**给定——本层不自作判断、不给缺省 "agent"。
+    *
+    * 附件腿**不在本批**（补充卡 §6.1 一期文本）：本方法**不发** `attachments` 键
+    * ⇒ 无附件群消息的请求体与「服务端默认」逐字节同形。
+    */
+  def sendGroupMessage(
+    groupId: String,
+    body: String,
+    origin: Option[String] = None,
+    clientMsgId: Option[String] = None
+  ): IO[Either[String, (Int, String)]] =
+    withSession { token =>
+      val fields = List(
+        Some("body" -> body.asJson),
+        origin.map(o => "origin" -> o.asJson),
+        clientMsgId.map(id => "clientMsgId" -> id.asJson)
+      ).flatten
+      sendRequestJsonWithStatus(
+        "POST",
+        s"${config.url}/api/groups/${enc(groupId)}/messages",
+        Json.fromFields(fields).noSpaces,
+        Some(token)
+      )
     }
 
   // ===== 4b 好友附件（腿 A）：能力探测 / 声明 / 分块上传 / 鉴权取字节 =====

@@ -946,6 +946,175 @@ final class FriendService(
         }
       }
 
+  // ===== 群发送（gmsgsend 批，2026-09-15 · 补充卡 §6.1–§6.4 + §8 判红三面）=====
+  //
+  // 两条入口，与好友腿**逐条对称**（`sendAsAgent` / `sendAsUser`）：
+  //  - [[sendGroupAsAgent]]：agent 代发（三档权限 + 双层限速 + 确认链）——
+  //    🔴 全系统**唯一**能写 `origin="agent"` 的群写点；
+  //  - [[sendGroupAsUser]]：UI 直发（**零档位**，与 `sendAsUser` 同语义）。
+  //
+  // 共同点（两条都经）：服务端**单一**校验序（`groups.rs` 冻结：
+  // auth → 群存在且未解散 → 成员 → 长度 → 限速 → origin → payload），本层
+  // **不复制**任何一条判定（禁双实现，先例 `groupProxy` 注释）；本层只做
+  // 「档位/限速/确认」这一层（与好友腿同层）与**错误转写**。
+
+  /** 群列表（`GET /api/groups`）——群目标解析的数据面。
+    *
+    * 语义边界（与 `NeblinkClient.listGroups` 逐条同源，此处不重复实现）：
+    * 解散态/非成员**不在表内**（服务端按鉴权身份出表）⇒ 解析层结构上不可命中
+    * 已解散或非成员的群；终态判定的权威仍是服务端错误码。
+    *
+    * 失败**不折叠成空表**：`Left` 原样上抛（`HTTP <code>: <body>` 或 `Not logged in`）
+    * ——🔴 「读不到群」与「你没有群」是两态（同 F4 对好友列表的口径），把前者折成
+    * 空表会让工具报「你没有群」，即把一次上游故障伪装成一个确证结论。 */
+  def listGroups: IO[Either[String, List[GroupSummary]]] =
+    withClient(_.listGroups)
+
+  /** UI 直发的群消息（**用户身份**，无 agent 权限档位）——与 [[sendAsUser]] 同语义。
+    *
+    * 调用链：网关鉴权路由 `POST /api/groups/{groupId}/messages` → 本方法。
+    * 🔴 请求体**只读 `body` 一个字段**（补充卡 §6.5 逐字；先例 = 好友路由
+    * `RestApiRoutes.scala` 的好友发送分支）：UI 面**在协议上无法自报 origin**
+    * ⇒ 本方法**不发** `origin` 键 ⇒ 服务端按契约缺省落 `"user"`
+    * （§5.4 写权矩阵第一行、§8.1(a) 判据）。 */
+  def sendGroupAsUser(groupId: String, body: String): IO[Either[String, (Int, String)]] =
+    withClient(_.sendGroupMessage(groupId, body)).flatMap {
+      case Left(err) => IO.pure(Left(err))
+      case Right((code, resp)) if code == 200 || code == 201 =>
+        // 与 sendAsUser 同形：本机 UI 的自播由服务端 `message_new_self` 帧承担
+        // （发起设备被服务端显式排除推送）⇒ 这里只补拉一次，保证本机 UI 见到自己发的行。
+        val json   = decode[Json](resp).getOrElse(Json.Null)
+        val convId = json.hcursor.get[String]("conversationId").toOption
+        convId
+          .traverse_(id =>
+            pullConversation(
+              id,
+              FriendPullTrigger.SendAsUser,
+              oursHint = Some(true),
+              afterHint = json.hcursor.get[Long]("messageId").toOption
+            )
+          )
+          .void
+          .handleErrorWith(_ => IO.unit)
+          .as(Right((code, resp)))
+      case Right((code, resp)) => IO.pure(Right((code, resp))) // 错误码原样上抛（网关逐字透传）
+    }
+
+  /** **agent 代发群消息**（`SendMessage(to="group:<…>")` 的唯一出口）。
+    *
+    * 与 [[sendAsAgent]] **逐条对称**（档位/限速/确认链同层，同一条语义）：
+    *  - `off` ⇒ 直拒；`ask` ⇒ 确认卡；`auto` ⇒ 限速后直发，**超限自动降级 ask**；
+    *  - 限速桶：**沿用** `FriendMessagingGuard` 的 per-target 20/h + 全局 60/h
+    *    （补充卡 §5.5 推荐案）。桶键 = **群会话 id**（T⑧：值域加性扩为 friend|group）。
+    *    群 id = 服务端 `grp-` + UUIDv4，与 user id 命名空间不相交（T①）⇒ 同命名空间
+    *    内的键不会互相串桶；「群发挤占单聊配额」是**有意**的（同一调用主体、同一
+    *    凭据、一次请求 = 一行消息；拆桶需实测挤占，见 §5.5 反案）。
+    *  - 确认卡的**目标名 = 群名**由调用侧（`FriendMessageTool` 的 `SendConfirm.locally`
+    *    靶）给定——本层只见 `String => IO[Boolean]`，与好友腿逐字同构（零新配置面）。
+    *
+    * 🔴 `origin = Some("agent")` 是本层的**唯一**职责差异点（群版 choke point）——
+    * 见 [[doSendGroup]]。
+    *
+    * 一期**不带附件**（补充卡 §6.1 一期文本；工具侧对「群 + 附件」显式拒绝，
+    * 不走本方法）⇒ 本方法无附件分支，也不做能力探测。
+    */
+  def sendGroupAsAgent(groupId: String, body: String): IO[Either[String, String]] =
+    if body.length > 4000 then IO.pure(Left(s"Message too long (${body.length} chars, max 4000)"))
+    else
+      config.mode match
+        case "off" => IO.pure(Left("User has disabled agent messaging"))
+        case "ask" =>
+          confirmOrSendGroup(groupId, body)
+        case _ => // auto（含未知值回退 auto）
+          guard.trySend(groupId, System.currentTimeMillis()).flatMap {
+            case Right(()) => doSendGroup(groupId, body)
+            case Left(reason) =>
+              logger.info(s"auto rate limit exceeded ($reason) — downgrading to ask") *>
+                confirmOrSendGroup(groupId, body)
+          }
+
+  /** 确认链（**群支镜像** of [[confirmOrSend]]）：三条 fail-closed 语义逐条同源
+    * （无确认实现 ⇒ 显式失败；拒绝 ⇒ 不投递；确认链抛错 ⇒ **既不投递也不伪装成
+    * 用户拒绝**），只有「打到哪」的日志标签不同（群会话 id）。 */
+  private def confirmOrSendGroup(groupId: String, body: String): IO[Either[String, String]] =
+    askConfirm match
+      case None => IO.pure(Left("ask mode requires a confirmation callback (not wired)"))
+      case Some(confirmFn) =>
+        confirmFn(body)
+          .flatMap {
+            case true => doSendGroup(groupId, body)
+            case false =>
+              logger.info(s"SendMessage declined by the user — nothing sent to group $groupId") *>
+                IO.pure(Left("User declined the message"))
+          }
+          .handleErrorWith { e =>
+            val why = Option(e.getMessage).filter(_.nonEmpty).getOrElse(e.getClass.getSimpleName)
+            logger.warn(s"SendMessage confirmation failed (message NOT sent, group=$groupId): $why") *>
+              IO.pure(Left(s"Confirmation failed — the message was NOT sent: $why"))
+          }
+
+  /** agent 群发的**唯一 choke point**（`origin = Some("agent")`）。
+    *
+    * 🔴 契约边界（本方法即 §8 判红三面在**客户端侧**的全部义务）：
+    *  ① **标识伪造面**：`origin="agent"` 由本层单点写入；服务端 `sender_id` 恒 =
+    *     鉴权身份 ⇒ origin **只标注「这条消息是否 agent 代发」，永远挂在发送者自己的
+    *     sender_id 上**（冒充他人不可达）。UI 面（[[sendGroupAsUser]]）**不发**该键。
+    *  ② **权限面**：群存在/未解散/成员三闸**全在服务端**（本层零复制）；本层只把
+    *     服务端的 404/403 语义码**逐条转写成可判读回执**（🔴 禁静默不达）。
+    *  ③ **契约兼容面**：只发 `body` + `origin` 两个键（`clientMsgId` 由调用侧可选
+    *     给出），不新增必填键、不改任何既有键 → 老服务端/老客户端形态不变。
+    *
+    * 回执与错误转写（§6.4 同构表）：2xx ⇒ `Right("Message sent")`（与好友腿同字面）；
+    * 非 2xx ⇒ 按**服务端语义码**给显式原因（`group_not_found` / `group_disbanded` /
+    * `not_member` / `invalid_length` / `invalid_origin` / `rate_limited` / 其余原样）。
+    */
+  private def doSendGroup(groupId: String, body: String): IO[Either[String, String]] =
+    def finish(json: Json): IO[Either[String, String]] =
+      val convId = json.hcursor.get[String]("conversationId").toOption
+      // 与好友腿 K-3 同序（先自播、再补拉）：群会话与单聊**同属会话域**（案1
+      // 会话域扩容）⇒ 复用同一对方法，零新机制。补拉触发字面量复用 `send:agent`
+      // （🟡 本批**不新增** trigger 字面量：它属于判据①「事件触发 pull ⟺ processed」
+      // 配对不变式的枚举面，加一个字面量就要同步那条不变式的登记——群发与单聊代发
+      // 在「谁触发、为什么拉」上同一语义，复用是最小面）。
+      convId.traverse_(replaySelfSend(_, json, body)) *>
+        convId
+          .traverse_(id =>
+            pullConversation(
+              id,
+              FriendPullTrigger.SendAsAgent,
+              oursHint = Some(true),
+              afterHint = json.hcursor.get[Long]("messageId").toOption
+            )
+          )
+          .void *>
+        IO.pure(Right("Message sent"))
+
+    withClient(_.sendGroupMessage(groupId, body, origin = Some("agent"))).flatMap {
+      case Left(err) => IO.pure(Left(err))
+      case Right((code, resp)) =>
+        if code == 200 || code == 201 then decode[Json](resp) match
+          case Right(json) => finish(json)
+          case Left(_)     => IO.pure(Right("Message sent"))
+        else IO.pure(Left(groupSendFailure(code, resp)))
+    }
+
+  /** 群发失败的**可判读回执**（§6.4 词表）：服务端语义码逐条给出显式原因，
+    * 🔴 禁静默、禁把语义码压成一个笼统的「发送失败」（那会让模型把「我不是成员」
+    * 与「群解散了」当成同一件事，从而给出错误的下一步动作）。未知码/非 JSON 体
+    * **原样带出**（不猜、不吞）。 */
+  private def groupSendFailure(code: Int, resp: String): String =
+    val code0 = decode[Json](resp).toOption.flatMap(_.hcursor.get[String]("error").toOption)
+    val reason = code0 match
+      case Some("group_not_found") => "the group does not exist (or is not visible to your account)"
+      case Some("group_disbanded") => "the group has been disbanded"
+      case Some("not_member")      => "you are not a member of this group"
+      case Some("invalid_length")  => "the server rejected the message length (empty body, or > 4000 characters)"
+      case Some("invalid_origin")  => "the server rejected the message origin label (contract violation)"
+      case Some("rate_limited")    => "the server rate limit was hit (30 messages / 60 s)"
+      case Some(other)             => s"the server rejected the send ($other)"
+      case None                    => s"the server rejected the send (HTTP $code): ${resp.take(200)}"
+    s"Group message NOT sent — $reason."
+
   /** E1 + E2×n 顺序上传（§B.1/B.6），返回 attachmentId 列表（顺序 = 入参顺序 =
     * `SendMessageBody.attachments` 的展示顺序）。
     *

@@ -6,7 +6,7 @@ import io.circe.syntax.*
 import io.circe.{Json, JsonObject}
 import nebflow.core.PathUtil
 import nebflow.dropbox.{AttachContract, DropboxService}
-import nebflow.neblink.{FriendRoster, FriendService, FriendSummary, PeerInfo}
+import nebflow.neblink.{FriendRoster, FriendService, FriendSummary, GroupSummary, PeerInfo}
 
 import java.time.LocalTime
 import java.time.format.DateTimeFormatter
@@ -30,12 +30,20 @@ import java.time.format.DateTimeFormatter
  *     （`RelayExecAudit` 同族）。
  *   - `to = local`：本机搬运显式分支（R3=3b）——把 `attachments` 复制进 `targetDir`
  *     （零网络、零传输闸；件数上限与设备腿同源）。
+ *   - `to = group:<群名|群 id>`（gmsgsend 批，2026-09-15 · 补充卡 §6.1–§6.4）：
+ *     **以用户身份**发给「用户是成员」的群会话（群成员看到的是用户本人；消息带
+ *     agent 标识，由服务端 `origin` 列承载，**非**新列/新字段）。一期**纯文本**。
+ *     群存在且未解散 + 成员闸**全在服务端**（本工具零复制）；三档权限 / 双层限速 /
+ *     确认卡与好友支**共用同一配置面**（无新配置）。`origin="agent"` 的群写点在
+ *     `FriendService.sendGroupAsAgent` **单点**（#290 v1.1 同款纪律）。
  *
  * 职责边界（零重复实现）：好友支只做「to 解析 + 参数校验 + 错误转写」，发送一律走
  * FriendService.sendAsAgent（auto/ask/off 三档权限、双层限速与超限自动降级 ask
  * 全部既有，choke point 唯一，spec §2.2）；设备支只做「设备解析 + 闸位转写」，
  * 字节一律走 DropboxService.sendLocalFiles（闸位/分块/校验/续传单点，本工具零
- * 传输实现）。
+ * 传输实现）；群支只做「参数校验 + 群目标解析 + 错误转写」——群表取数走
+ * FriendService.listGroups、发送走 FriendService.sendGroupAsAgent（档位/限速/确认链
+ * 与 origin 写点全在那边，本工具零发送实现）。
  *
  * to 解析（好友支，2026-09-12 ⑦ 后的完整链）：**L0 备注** → L1 username 精确
  * （大小写不敏感，服务端唯一性口径一致）→ L2 昵称精确 → L3 昵称唯一前缀 →
@@ -72,31 +80,38 @@ object FriendMessageTool extends Tool:
   val name = "SendMessage"
 
   val description =
-    """Send a message on the user's behalf, or move files. Three target kinds are selected by the prefix of `to`:
+    """Send a message on the user's behalf, or move files. Four target kinds are selected by the prefix of `to`:
 1. A NebLink friend (bare name, or `friend:<remark|username|email|displayName>`) — delivered as the user over established friend relationships; text and/or files. Files ride the server's attachment channel (create session → chunked upload with per-chunk checksum + whole-file SHA-256 → sent as attachment ids), and the receiver downloads them over an authenticated in-app route. Subject to permission tiers and rate limits, and (depending on configuration) a confirmation card. Before uploading, the client probes whether the server even has the attachment route (no capability self-report exists): unsupported or unverifiable ⇒ the send is refused outright with a readable reason — attachments are never dropped silently.
 2. Another of the user's own devices (`device:<deviceName|deviceId>`) — message and/or files over the Dropbox device channel: files are chunked+streamed (per-chunk checksum, whole-file SHA-256 both sides, resume), never enter the LLM context, and land in the peer's Downloads (auto-accept, visible in their device panel). Not subject to the friend permission tiers/rate limits; size/count gated and audited. Requires an active peer roster — an unknown device fails with the available list (no silent fallback).
 3. `local` — copy `attachments` into `targetDir` on this machine (no network, no message delivered).
+4. A NebLink group (`group:<groupName|groupId>`) — delivered as the user into a group conversation the user is a member of; every member of that group sees it (the sender is never counted as a new message for themselves). Text only in phase 1. The group is resolved against the groups the user is a member of: the exact group id (`grp-…`), then the exact group name, then a unique group-name prefix; a name that matches several groups, or none, comes back as a candidate list rather than a silent guess. A group that does not exist, has been disbanded, or that the user is not a member of fails with a readable reason (the decision is the server's; the tool never reports a send that did not happen). Subject to the same permission tiers, rate limits, and (depending on configuration) the confirmation card as friend sends.
+
+Target-kind prefixes are case-insensitive and MUST be one of `friend:`, `device:`, `group:`, or the literal word `local`; anything else — including an unknown word followed by a colon — is treated as a bare friend name (a friend's remark or username may legitimately contain a colon). Consequence of the `group:` prefix: a friend whose bare remark/username literally begins with `group:` is no longer addressable as a bare string — address that friend with the explicit `friend:` prefix. (`local` has shadowed a friend of that name the same way since the beginning.)
 
 ## Parameters
-- to (string, required): `device:<deviceName|deviceId>`, `local`, or a friend (bare remark/username/email/displayName, or explicit `friend:<…>`).
-- message (string, required): text sent to friend/device targets, max 4000 characters, plain text. Ignored for `local`. May be EMPTY for a friend target **only when** `attachments` is non-empty (the server then generates the placeholder line the receiving client shows).
+- to (string, required): `friend:<remark|username|email|displayName>` (or a bare friend remark/username/email/displayName), `device:<deviceName|deviceId>`, `group:<groupName|groupId>`, or `local`.
+- message (string, required): text sent to friend/device/group targets, max 4000 characters, plain text. Ignored for `local`. May be EMPTY for a friend target **only when** `attachments` is non-empty (the server then generates the placeholder line the receiving client shows); a group target always requires non-empty text.
 - attachments (array of string, optional): ABSOLUTE paths of files on this machine. Friend targets: max 9 files per message, each up to 1024 MB = 1 GiB (1,073,741,824 bytes) — the same authored limits as the device leg; the file is uploaded in 4 MiB chunks (per-chunk checksum, whole-file SHA-256) before the message is sent. If the server does not support attachments (or support cannot be verified) the whole send is refused with a readable reason and NOTHING is uploaded. Device targets: same limits, transfer over the device channel. `local`: required — these files are copied into `targetDir`.
 - targetDir (string, optional): destination directory for `local` (created if missing). Device targets: optional — a request only, the receiver decides (it accepts only directories on its own allow-list; anything else is rejected with a structured code and nothing is written). Sent only after the peer confirms support; if the peer does not, the request stays off the wire and the files land in the peer's Downloads (the result says so).
 - overwrite (boolean, optional, default false): `local` only — replace existing files in `targetDir`.
 
-## Confirmation (ask tier, friend targets only)
-When the user's agent-messaging mode is `ask` (or the auto rate limit was hit), the friend send first raises a confirmation card in the chat. The message is sent ONLY after the user approves it on that card; a decline, a cancel, or a timeout (60s) sends nothing and comes back as an error saying so. Device sends and local copies are not gated by this tier. Wait for the tool result — do not assume anything went out."""
+## Confirmation (ask tier, friend and group targets)
+When the user's agent-messaging mode is `ask` (or the auto rate limit was hit), the friend or group send first raises a confirmation card in the chat, naming the recipient (a friend's label, or the group name). The message is sent ONLY after the user approves it on that card; a decline, a cancel, or a timeout (60s) sends nothing and comes back as an error saying so. Device sends and local copies are not gated by this tier. Wait for the tool result — do not assume anything went out."""
 
   val inputSchema: JsonObject = JsonObject(
     "type" -> "object".asJson,
     "properties" -> Json.obj(
       "to" -> Json.obj(
         "type"        -> "string".asJson,
-        "description" -> "`device:<deviceName|deviceId>` for another of the user's devices, `local` for a local copy, or a friend (bare remark/username/email/displayName, or `friend:<…>`).".asJson
+        "description" -> """The target, selected by an explicit prefix (case-insensitive; anything else is a bare friend name):
+- `friend:<remark|username|email|displayName>` — one friend (a bare remark/username/email/displayName works too).
+- `device:<deviceName|deviceId>` — another of the user's own devices.
+- `group:<groupName|groupId>` — a group conversation the user is a member of. Resolved by exact group id (`grp-…`), then exact group name, then unique group-name prefix. A group that does not exist, was disbanded, or that the user is not a member of fails with a readable reason; several/none matching come back as a candidate list. Text only (no `attachments`) in this phase.
+- `local` — copy `attachments` into `targetDir` on this machine.""".asJson
       ),
       "message" -> Json.obj(
         "type"        -> "string".asJson,
-        "description" -> s"Message text (max $MaxMessageLength characters) for friend/device targets; ignored for `local`. Empty is allowed for a friend target only when `attachments` is non-empty.".asJson
+        "description" -> s"Message text (max $MaxMessageLength characters) for friend/device/group targets; ignored for `local`. Empty is allowed for a friend target only when `attachments` is non-empty; a group target always requires non-empty text.".asJson
       ),
       "attachments" -> Json.obj(
         "type"  -> "array".asJson,
@@ -208,14 +223,57 @@ When the user's agent-messaging mode is `ask` (or the auto rate limit was hit), 
       case Left(err) => Left(ToolError(err))
     }
 
-  /** `to` 的三分类（纯函数，public for tests）：显式前缀分派，不猜、不回落。
-    * 裸串 = 好友（既有行为逐字节不变）；`friend:`/`device:` 显式前缀；`local` =
-    * 本机搬运分支（R3=3b）。 */
+  /** 群目标解析的委托（与 `resolveFriend` **完全同形**）：本工具零实现——唯一实现点
+    * `FriendRoster.resolveGroup`，成功路径与失败路径**同一套候选词表**（工具面差异
+    * 纪律：能力落在 schema/描述层与单点解析层，本工具不另写一套群匹配）。
+    *
+    * 群表由调用方注入（`call` 侧从 `FriendService.listGroups` 取）⇒ 本方法是**纯函数**，
+    * 可直接单测（对齐 `resolveFriend` 的既有测法）。
+    */
+  def resolveGroupTarget(query: String, groups: List[GroupSummary]): Either[ToolError, GroupSummary] =
+    FriendRoster.resolveGroup(query, groups)
+
+  /** 确认卡/回执里对「打到哪个群」的称呼（**唯一实现点**，对齐 `recipientLabel` 的
+    * 「回执与确认卡都读它，防两处各写一套」纪律）。
+    *
+    * 形态 = **群名**（不含群 id）：群名是用户在会话列表里认得出的那个串，而
+    * `grp-<uuid>` 人不可读（确认卡是给用户看的）；且寻址歧义在**解析层**就已消解
+    * （重名/前缀多命中一律先报候选、不发送）⇒ 回执无需再拿 id 兜歧义。 */
+  private def groupLabel(group: GroupSummary): String = group.title
+
+  /** 群支发送（自 `call` 抽出，理由同 `sendTo`：IO 组合保持扁平）。
+    *
+    * 确认链与好友支**共用同一接线段**：会话靶（本次提问的会话 + 目标名）由本工具按次
+    * 挂进 fiber-local（`SendConfirm.locally`），`SendConfirm.production` 在本次调用内
+    * 读它并发确认卡；`ask` 档与 auto 超限降级档都经此路，`off` 档在服务层直拒。
+    * ctx 无交互面 ⇒ 显式 fail-closed（绝不静默直发）——与好友支逐字同款。
+    */
+  private def sendToGroup(
+    fs: FriendService,
+    group: GroupSummary,
+    message: String,
+    ctx: ToolContext
+  ): IO[Either[ToolError, String]] =
+    nebflow.agent.SendConfirm.locally(
+      nebflow.agent.SendConfirm.targetFor(ctx, groupLabel(group))
+    )(fs.sendGroupAsAgent(group.groupId, message)).map {
+      // 回执形态（与好友支同族）：显式带群名，让用户/模型能确认「打到的是哪个群」。
+      case Right(_)  => Right(s"已发送到群「${groupLabel(group)}」（${LocalTime.now().format(TimeFormat)}）")
+      case Left(err) => Left(ToolError(err))
+    }
+
+  /** `to` 的四分类（纯函数，public for tests）：显式前缀分派，不猜、不回落。
+    * 裸串 = 好友（既有行为逐字节不变）；`friend:`/`device:`/`group:` 显式前缀；
+    * `local` = 本机搬运分支（R3=3b）。 */
   private[tools] sealed trait ToKind
   private[tools] object ToKind:
     case class Friend(q: String)   extends ToKind
     case class Device(q: String)   extends ToKind
     case object Local              extends ToKind
+    /** 群支（gmsgsend 批）：`group:<群名|群 id>`——与 `friend:`/`device:` 同构的
+      * 显式前缀分支。`q` = 前缀后的**原始串**（trim 后），解析（L1 id → L2 名精确 →
+      * L3 名前缀）在 `FriendRoster.resolveGroup` 单点。 */
+    case class Group(q: String)    extends ToKind
 
   private[tools] def parseToKind(raw: String): Either[String, ToKind] =
     val s = raw.trim
@@ -233,6 +291,12 @@ When the user's agent-messaging mode is `ask` (or the auto rate limit was hit), 
           case "device" =>
             if rest.isEmpty then Left(s"'$s' is missing the device name/id after `device:`.")
             else Right(ToKind.Device(rest))
+          case "group" =>
+            // rest 空 ⇒ 与 `friend:`/`device:` **逐字同构**的残缺前缀错误（同族文案，
+            // 不同目标域名词）——不得回落成「按好友解析」：那会把一次参数残缺静默
+            // 变成一次对好友的寻址（正是本仓「静默不达」缺陷族）。
+            if rest.isEmpty then Left(s"'$s' is missing the group name/id after `group:`.")
+            else Right(ToKind.Group(rest))
           case _ => Right(ToKind.Friend(s)) // 好友备注/邮箱里可能合法出现冒号 ⇒ 原样按好友解析
       else Right(ToKind.Friend(s))
 
@@ -505,6 +569,40 @@ When the user's agent-messaging mode is `ask` (or the auto rate limit was hit), 
                             case Some(friend) => sendTo(fs, friend, m, ctx, paths)
                             case None         => IO.pure(Left(err))
                           }
+                      }
+          // 群支（gmsgsend 批）。🔴 本臂**置于末位**是刻意的：本文件的设备发送路径区间
+          // 正被在飞批（`devsess-impl`，device 腿 `origin` 标注）修改 ⇒ 新臂插在好友臂
+          // 之后可把两侧 hunk 逐对距离 `d` 抬到 ≥ 50（判据 d ≥ 1；读数见实施报告）。
+          // 语义上与三臂**并列**（`ToKind` 是密封枚举，臂序不影响分派结果）。
+          case Right(ToKind.Group(q)) =>
+            // 与好友支**同层**：只做「参数校验 + 目标解析 + 错误转写」；发送一律走
+            // `FriendService.sendGroupAsAgent`（三档权限 / 双层限速 / 确认链，以及
+            // `origin="agent"` 的**唯一**群写点全在那边）。一期**纯文本**（补充卡
+            // §6.1 一期口径）：带 `attachments` 的群发**显式拒绝**，禁静默丢弃。
+            if attachments.nonEmpty then
+              bad(
+                "A `group:` target is TEXT ONLY in this phase — pass no `attachments` " +
+                  "(nothing was sent; re-send the text without attachments, or use a friend/device target for files)."
+              )
+            else
+              message match
+                case None => bad("Missing required parameter 'message'.")
+                case Some(m) if m.isEmpty =>
+                  bad("'message' is empty — nothing to send (a group message always carries text).")
+                case Some(m) if m.length > MaxMessageLength =>
+                  bad(s"Message too long (${m.length} chars, max $MaxMessageLength).")
+                case Some(m) =>
+                  service match
+                    case None =>
+                      bad("Group messaging is unavailable: NebLink friends service is not initialized.")
+                    case Some(fs) =>
+                      // 群表取数：`Left` **不折叠成空表**（「读不到群」≠「你没有群」）。
+                      fs.listGroups.flatMap {
+                        case Left(err)   => bad(s"Cannot resolve the group target — the group list could not be loaded: $err")
+                        case Right(gs) =>
+                          resolveGroupTarget(q, gs) match
+                            case Left(err) => IO.pure(Left(err))
+                            case Right(g)  => sendToGroup(fs, g, m, ctx)
                       }
     end match
   end call
