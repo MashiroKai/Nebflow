@@ -737,6 +737,27 @@ class NeblinkClient(
   def markConversationRead(conversationId: String, lastReadMessageId: Long): IO[Either[String, String]] =
     withSessionRaw("POST", s"/api/conversations/$conversationId/read", s"""{"lastReadMessageId":$lastReadMessageId}""")
 
+  /** 群路由代理腿（gwroutes 批，2026-09-15）：**保留上游状态码**的会话内转发口。
+    *
+    * 与 [[withSessionRaw]] 的**唯一**差别：非 2xx 不折叠成
+    * `Left("HTTP <code>: <body>")`，而是 `Right((<code>, <body>))`。理由 = 群域的
+    * `404 group_not_found` / `403 group_disbanded` / `403 not_member` 是**群终态**
+    * （客户端 `web/js/friendGroups.js` 的 `groupErrToast` 按语义码分态），折叠后
+    * 统一压成 502 ⇒ 客户端再也分不出「群不存在 / 群已解散 / 我被踢了」。
+    *
+    * 同族先例（本仓既有，非新形态）：[[sendRequestJsonWithStatus]]（E4 回执）与
+    * [[sendRequestBinary]]（E3 下载）—— 可判读的非 2xx 走 `Right`，**只有传输层
+    * 异常**才是 `Left`（其文案口径与既有通道逐字同形，下游日志不受影响）。
+    *
+    * `path` 为**相对段**（含 `/api` 前缀，形如 `/api/groups/invites`），与
+    * [[withSessionRaw]] / [[withSessionJson]] 同形。鉴权身份仍**只**由 `withSession`
+    * 的 `Authorization: Bearer <device session token>` 承载——与全部既有 friends /
+    * conversations 代理逐字一致：本层**不发** `sender` / `uid` 类自定义头（服务端
+    * 由 session token 自行解身份，客户端不得自报身份）。
+    */
+  def proxyWithStatus(method: String, path: String, body: String): IO[Either[String, (Int, String)]] =
+    withSession(token => sendRequestJsonWithStatus(method, s"${config.url}$path", body, Some(token)))
+
   // ---- helpers ----
 
   private def withSession[A](f: String => IO[Either[String, A]]): IO[Either[String, A]] =

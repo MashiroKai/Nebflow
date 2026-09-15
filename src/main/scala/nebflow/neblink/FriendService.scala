@@ -1006,6 +1006,24 @@ final class FriendService(
 
     loopFiles(files, Nil)
 
+  // ===== 群路由代理腿（gwroutes 批，2026-09-15）=====
+
+  /** 群域**唯一**转发口：把网关鉴权路由收到的群请求转发到 neblink-server，
+    * **逐字回传**上游 `(status, body)`。
+    *
+    * 为什么落在本服务（而不是网关直连 [[NeblinkClient]]）：`currentClient` 是
+    * enrollment hot-swap 的**唯一替换点**（见类头 F1 注记）——网关若持有构造期
+    * client 快照，UI 重新登录/换账号后这里会持续 403 到进程重启（正是 F1 修掉
+    * 的病）。走 [[withClient]] ⇒ 与全部既有好友面共用同一条权威 live-client 缝
+    * 与同一套会话自愈语义（`Not logged in` 三态口径也逐字一致）。
+    *
+    * `path` = **相对段**（含 `/api` 前缀）；`method` = 上游方法字面量。本层**不做**
+    * 任何字段映射 / 信封拆装 / 字段裁剪 —— 契约真源是服务端 `src/groups.rs`，
+    * 任何 reshape 都会给冻结契约造出第二个真相源（客户端消费形态对表见 impl 报告）。
+    */
+  def groupProxy(method: String, path: String, body: String): IO[Either[String, (Int, String)]] =
+    withClient(_.proxyWithStatus(method, path, body))
+
   /** A-5 探测透出（工具/诊断面用；三态语义见 [[AttachmentCapability]]）。
     * 未登录 ⇒ `Undetermined`（**不是** `Unsupported`：两者对用户是不同结论、不同文案）。 */
   def probeAttachmentCapability(friendUserId: String): IO[AttachmentCapability] =
