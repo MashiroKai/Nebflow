@@ -97,6 +97,45 @@ export function avatarViewState() {
   return { loggedIn, url: showPhoto ? displayUrl : '', showPhoto };
 }
 
+/** Paint the dual-state avatar slot: the photo when it is paintable, the logo
+ *  otherwise. Both consumers (Activity Bar + settings account area) go through
+ *  this one function, so the slot can never drift between them.
+ *
+ *  2026-09-15 闪烁修复（作者 12:16 报告①）。修前两个消费端都在**同一个同步任务**
+ *  里翻转可见态：`photoEl.hidden = false` → 写 `src` → `logoEl.hidden = true`。
+ *  可见态因此先于「照片可绘制」翻转，凡是需要真加载的一遍——冷字节首帧 /
+ *  本地缓存未命中回落远端 URL 直拉（avatarCache.js 注释第 4 条的退化分支）/
+ *  未命中→命中的 src 换帧 / 加载慢或失败——槽位都会**整个加载窗口空着**。
+ *  实测（scripts/e2e-avatar-flicker.cjs）：空环 22~78 帧、持续 243~758 ms。
+ *
+ *  本函数把「翻到照片」推迟到字节就绪（`decode()` 落地 / 已 complete），
+ *  期间由 logo 占着槽位 ⇒ 槽位永不空。**取舍链不变**（data URI → 远端 URL →
+ *  logo），样式/尺寸/颜色/布局/语义一律不动——只是翻面的**时刻**改到
+ *  「替代内容已就绪」。 */
+export function paintAvatarSlot(photoEl, logoEl, url, showPhoto, onError) {
+  if (onError) photoEl.onerror = onError;
+  if (!showPhoto) {
+    photoEl.hidden = true;
+    if (logoEl) logoEl.hidden = false;
+    return;
+  }
+  const show = () => { photoEl.hidden = false; if (logoEl) logoEl.hidden = true; };
+  if (photoEl.getAttribute('src') !== url) {
+    // New source: keep the logo on screen until the new bytes are paintable.
+    photoEl.hidden = true;
+    if (logoEl) logoEl.hidden = false;
+    photoEl.setAttribute('src', url);
+  }
+  if (photoEl.complete && photoEl.naturalWidth > 0) { show(); return; }
+  if (typeof photoEl.decode === 'function') {
+    // decode() resolves once the image is decoded (ready to paint); it rejects
+    // on a load error, which the onerror path owns (logo stays up).
+    photoEl.decode().then(show, () => { /* onerror restores the logo */ });
+  } else {
+    photoEl.addEventListener('load', show, { once: true });
+  }
+}
+
 /** Read-only accessor for the current NebLink state (used by the Activity Bar). */
 export function getNeblinkState() {
   return neblinkState;
