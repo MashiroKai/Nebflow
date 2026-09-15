@@ -52,48 +52,15 @@ object TurnBoundaryDrains:
     if compactionPending then (None, queue)
     else (queue.headOption, if queue.isEmpty then queue else queue.tail)
 
-  /** 缺陷⑥ 外部注入合批（2026-09-07 设计 §8）：drain the WHOLE queue at a
-    * turn boundary — one batched next-turn request instead of one turn per
-    * queued item (serial drainHead = N full-context LLM round-trips for N
-    * notifications, pure token waste when no user input separates them).
-    * Same compaction guard as drainHead: while a compaction job is pending
-    * nothing is consumed (injected-then-summarized-away loss, 2026-08-14) —
-    * CompactionComplete drains the queues after the summary is in place.
-    * Arrival order preserved (List :+ append, no re-sorting). */
-  def drainAll[A](queue: List[A], compactionPending: Boolean): (List[A], List[A]) =
-    if compactionPending then (Nil, queue)
-    else (queue, Nil)
-
-  /**
-   * Q1-A2′（任务分发器收件规则，2026-09-11）：在 tools-complete 边界把
-   * `pendingUserInputs` 里「可内联合批」的 UserInput 取出，与 ImmediateInput 同批
-   * 注入本 turn 的续轮请求（1 批 = 1 次注入 = 1 个 turn）；其余保持全元数据队列，
-   * 仍由 turn 末回 idle 逐条重投。
-   *
-   * 可内联判据：`replyTo` 为空（无完成目标可丢）**或** `replyTo` ∈ 本 turn 的完成
-   * 目标集（`tc.replyTo ++ owedCompletion`）。内联后该件的完成结算由本 turn 的
-   * completionTargets 承担；一个携带**外来** replyTo 的 UserInput 一旦内联，其
-   * AgentEvent.Completed 就没有出口（完成目标搁浅）——与
-   * [[AgentActor.drainQueuesAfterCompaction]] 只内联 replyTo-free 件的守卫同源，
-   * 本处放宽到「replyTo 与本 turn 目标集一致」这一可证安全的超集。
-   *
-   * 非 UserInput 命令（SkillActivate / AskQuestion）不内联：它们需要全元数据路径
-   * （idle 处理器）逐条处理。`compactionPending` 时一律不消费——与 [[drainAll]] /
-   * [[drainHead]] 同款守卫（注入后被摘要替换即丢失，CompactionComplete 再排）。
-   * 两段内部各自保持到达顺序。
-   */
-  def drainUserBatch(
-    queue: List[AgentCommand],
-    compactionPending: Boolean,
-    turnTargets: List[ActorRef[AgentEvent]]
-  ): (List[AgentCommand.UserInput], List[AgentCommand]) =
-    if compactionPending then (Nil, queue)
-    else
-      val (inline, kept) = queue.partition {
-        case ui: AgentCommand.UserInput => ui.replyTo.isEmpty || ui.replyTo.exists(turnTargets.contains)
-        case _                          => false
-      }
-      (inline.collect { case ui: AgentCommand.UserInput => ui }, kept)
+  // ── 2026-09-15 用户消息队列 burst 缺陷批（root 裁定）────────────────────────
+  // 裁定逐字：**排队消息按序逐条注入、每条独立成 turn，保序、禁合并语义、禁全量
+  // burst；错误恢复路径与正常路径同规。**
+  // 本 object 原有的两个合批消费器（`drainAll` = 整队、`drainUserBatch` = 可内联
+  // 件整批，缺陷⑥ 2026-09-07 设计 §8）已删除：合批把 N 件排队消息塞进**一次**请求，
+  // 用户侧观测即「一报错，队列里的消息一次全发过来」（作者 2026-09-15 12:59 报告，
+  // 取证：Nebula-5cc7590a 12:56:49 `batch=11` + `batch=2` 同一次 tools-complete
+  // 续轮）。唯一合法形态 = [[drainHead]]（一次边界只消费队首一件，其余留队，到达
+  // 顺序不变）；token 放大（N 件 = N 次全上下文往返）是裁定显式接受的代价。
 
   /** True for ExternalEvents carrying a Delegate/SubTask result. */
   def isSubagentResult(e: AgentCommand.ExternalEvent): Boolean =
@@ -396,20 +363,17 @@ object AgentActor extends AgentCore with AgentSession:
     ).copy(source = injectionSourceFor(ui.fromUser, ui.source))
 
   /**
-   * F1 (2026-08-30): drain every queue that was held back during the
+   * F1 (2026-08-30): drain the queues that were held back during the
    * compaction window (ToolsComplete guard keeps pendingImmediateInputs and
    * pendingEvents untouched while a job is pending; the processing handler
-   * buffers UserInputs into pendingUserInputs). Inject ALL of it into the
-   * continuation round — immediate inputs each as their own User message
-   * (with WS bubble emission), UserInput commands inline as User messages
-   * (only replyTo-free ones — a UserInput carrying a replyTo must keep the
-   * full-metadata path so its completion target is not stranded), and ALL
-   * events batched via buildEventReminder (sub-agent barrier: Delegate/
-   * SubTask results stay held while the batch is outstanding — #25/#31).
-   * Non-UserInput commands (SkillActivate/AskQuestion) keep the
-   * full-metadata queue: they stay in pendingUserInputs and are forwarded
-   * by the next turn boundary drain (finishTurnCont) — never lost, only
-   * deferred.
+   * buffers UserInputs into pendingUserInputs). 2026-09-15 ub 缺陷批（root 裁定
+   * 禁合并语义）把「Inject ALL of it」收敛为**逐条**：continuation round 最多携带
+   * **一件**排队消息（immediate input 队首优先，否则队首 replyTo-free 的 UserInput），
+   * 其余留在队列由后续 turn 边界逐条消费；events 仍按 buildEventReminder 合批
+   * （sub-agent barrier：Delegate/SubTask 结果在批未完成前保持 HELD — #25/#31）。
+   * replyTo-bearing UserInput 与非 UserInput 命令（SkillActivate/AskQuestion）
+   * 只走全元数据队列：它们留在 pendingUserInputs，由下一个 turn 边界的 head-forward
+   * （finishTurnCont）逐条处理 — never lost, only deferred.
    */
   /**
    * F2 (2026-08-30): snapshot the injection queues to disk. Called on every
@@ -447,16 +411,24 @@ object AgentActor extends AgentCore with AgentSession:
 
   private[agent] def drainQueuesAfterCompaction(compactedState: AgentState): PostCompactDrain =
     val exec = compactedState.execution
-    val imms = exec.pendingImmediateInputs
+    // 排队消息逐条注入（2026-09-15 ub 缺陷批，禁合并语义）：压缩窗口之后的续轮请求
+    // 只携带**一件**排队消息 —— immediate input 队首优先（与旧 appended 的
+    // imm → user 相对顺序同源），否则取队首 replyTo-free 的 UserInput；其余保持队列，
+    // 由后续 turn 边界逐条消费（到达顺序不变）。原「窗口内所有 imm + 所有可内联
+    // UserInput 一起注入」（缺陷⑥ 合批）已按 root 裁定删除。
+    // replyTo-bearing UserInput / 非 UserInput 命令（SkillActivate / AskQuestion）
+    // 依旧只走全元数据路径（turn 末 head-forward），完成目标不搁浅。
+    val (imms, immTail) = exec.pendingImmediateInputs match
+      case head :: tail => (List(head), tail)
+      case Nil          => (Nil, Nil)
+    val (injectedUsers, userTail): (List[AgentCommand.UserInput], List[AgentCommand]) =
+      if imms.nonEmpty then (Nil, exec.pendingUserInputs)
+      else
+        exec.pendingUserInputs match
+          case (ui: AgentCommand.UserInput) :: tail if ui.replyTo.isEmpty => (List(ui), tail)
+          case _                                                          => (Nil, exec.pendingUserInputs)
     val immMessages = imms.map(immInputToMessage)
-    // replyTo-free UserInput commands can be safely inlined into the
-    // continuation round; UserInputs carrying a replyTo (and non-UserInput
-    // commands) stay queued for full-metadata forwarding.
-    val (userMessages, userTail) = exec.pendingUserInputs.partitionMap {
-      case ui: AgentCommand.UserInput if ui.replyTo.isEmpty => Left((ui, userCmdToMessage(ui)))
-      case other => Right(other)
-    }
-    val (injectedUsers, userMsgs) = userMessages.unzip
+    val userMsgs = injectedUsers.map(userCmdToMessage)
     // Full flush (2026-08-30, G1): EVERY event held during the compaction
     // window is injected together in the continuation round — the window is a
     // one-time flush, not the steady-state one-event-per-turn-boundary drain
@@ -475,7 +447,7 @@ object AgentActor extends AgentCore with AgentSession:
       if drainedEvents.nonEmpty then Some(buildEventReminder(drainedEvents)) else None
     val appended = immMessages ++ userMsgs ++ eventMessage.toList
     val updatedExec = exec.copy(
-      pendingImmediateInputs = Nil,
+      pendingImmediateInputs = immTail,
       pendingUserInputs = userTail,
       pendingEvents = remainingEvents
     )
@@ -1637,15 +1609,21 @@ object AgentActor extends AgentCore with AgentSession:
             IO.sleep(delayMs.millis) *>
               pipeLlmCall(agentDef, resources, depth, parentRef, retryState, replyTo)
           else if recoverableAbortYieldsToQueued then
-            // ── Hard-recovery P4「用户意图优先」+ 缺陷⑥ 合批（设计 §2.5/§8）──
+            // ── Hard-recovery P4「用户意图优先」（2026-09-15 ub 缺陷批改形态）──
             // transport abort 的目的就是让排队的用户消息进来：失败回合不带内容
-            // （seam guard 弃置部分流），把整批排队输入合并为**一个**新 turn
-            // （roundComplete 一次 / 蓝气泡逐条 / 单次 LLM 往返）。
+            // （seam guard 弃置部分流），取队首**一件**排队输入开一个**独立** turn
+            // （roundComplete 一次 / 蓝气泡一件 / 单次 LLM 往返）；其余留队，由后续
+            // turn 边界逐条消费。原「整批合并为一个新 turn」（缺陷⑥）已按 root 裁定
+            // 删除——那正是「一报错，队列里的消息一次全发」的 burst 面之一。
             // 不得落入下方 freeze-or-fail——RecoverableAbort 分类为 Fatal
             // （stream 层禁 provider 拼接），fatal 会连队列一起丢且 UI 报错，
             // 「恢复」退化成「失败」（round-5 隔离冒烟实证：kick 后零恢复请求、
             // agent 直接 idle、队列滞留）。
-            val immInputs = state.execution.pendingImmediateInputs
+            val (immHeadAfterAbort, remainingImmAfterAbort) = TurnBoundaryDrains.drainHead(
+              state.execution.pendingImmediateInputs,
+              compactionPending = false
+            )
+            val immInputs = immHeadAfterAbort.toList
             val immMessages = immInputs.map(imm =>
               (imm.blocks match
                 case Some(blocks) if blocks.nonEmpty => Message(MessageRole.User, Right(blocks))
@@ -1657,13 +1635,13 @@ object AgentActor extends AgentCore with AgentSession:
               state.sessionId,
               state.sessionName,
               "immediate-input-injected-after-recoverable-abort",
-              s"batch=${immInputs.size} texts=${immInputs.map(_.text.take(40)).mkString(" | ").take(200)}"
+              s"batch=${immInputs.size} texts=${immInputs.map(_.text.take(40)).mkString(" | ").take(200)} remaining=${remainingImmAfterAbort.size}"
             )
             val updatedState = state
               .copy(execution =
                 ExecutionContext
                   .idle(state.execution.messages ++ immMessages, state.execution.turnIdx, state.execution.currentTurnId)
-                  .copy(pendingImmediateInputs = Nil,
+                  .copy(pendingImmediateInputs = remainingImmAfterAbort,
                         pendingMailQueueCount = state.execution.pendingMailQueueCount,
                         pendingUserInputs = state.execution.pendingUserInputs,
                         pendingEvents = state.execution.pendingEvents,
@@ -1942,12 +1920,13 @@ object AgentActor extends AgentCore with AgentSession:
               s"events=${events.size} remaining=${remainingEvents.size}"
             )
             List(buildEventReminder(events))
-        // 缺陷⑥ 外部注入合批（设计 §8）：drain ALL queued immediate inputs into
-        // THIS request (one batched turn instead of one turn per item). While
-        // compaction is in progress, keep inputs queued — injecting mid-compaction
+        // 排队消息逐条注入（2026-09-15 ub 缺陷批）：本边界只消费队首**一件**
+        // immediate input（原缺陷⑥ 合批 = 整队塞进同一次续轮，已按 root 裁定删除）。
+        // While compaction is in progress, keep inputs queued — injecting mid-compaction
         // risks the input being lost in the summary. CompactionComplete drains them.
-        val (immInputs, remainingImmInputs) =
-          TurnBoundaryDrains.drainAll(state.execution.pendingImmediateInputs, state.pendingCompaction.isDefined)
+        val (immHeadInput, remainingImmInputs) =
+          TurnBoundaryDrains.drainHead(state.execution.pendingImmediateInputs, state.pendingCompaction.isDefined)
+        val immInputs = immHeadInput.toList
         val immediateMessages = immInputs match
           case Nil => Nil
           case inputs =>
@@ -1980,52 +1959,12 @@ object AgentActor extends AgentCore with AgentSession:
             )
           )
         }.sequence_
-        // Q1-A2′（任务分发器收件规则，2026-09-11）：pendingUserInputs 也在本边界整队
-        // 合批注入——不只 turn 末逐条重投。分发器卡在长工具批期间收到的任务，**最早**
-        // 就在本边界被看到（mid-turn 直投的最早生效点 = 当前工具批返回）；N 件 = 1 次
-        // 注入 = 1 个 turn（续轮请求），蓝气泡逐条带各自来源标签，完成结算仍由本 turn
-        // 的 completionTargets（tc.replyTo / owedCompletion）承担——见
-        // TurnBoundaryDrains.drainUserBatch 的内联判据。
-        val (inlineUserCmds, remainingUserCmds) =
-          TurnBoundaryDrains.drainUserBatch(
-            state.execution.pendingUserInputs,
-            state.pendingCompaction.isDefined,
-            (tc.replyTo.toList ++ state.execution.owedCompletion).distinct
-          )
-        val userBatchMessages = inlineUserCmds match
-          case Nil => Nil
-          case cmds =>
-            logAgentEvent(
-              agentDef,
-              depth,
-              state.sessionId,
-              state.sessionName,
-              "queued-user-input-injected-at-tools-complete",
-              s"batch=${cmds.size} sources=${cmds.map(_.source.getOrElse("-")).mkString(",")} " +
-                s"remaining=${remainingUserCmds.size}"
-            )
-            cmds.map(userCmdToMessage)
-        // ② (2026-09-11): 真人输入不产注入气泡（fromUser 优先于 source）——与
-        // immEventIO 同一判据。
-        val userBatchEventIO = inlineUserCmds.flatMap { ui =>
-          injectionSourceFor(ui.fromUser, ui.source).map(src =>
-            emitInjectedUserEvent(
-              resources,
-              state.wsSend,
-              state.sessionId,
-              ui.text,
-              src,
-              ui.eventType,
-              ui.sender,
-              ui.senderTeam,
-              ui.delivery,
-              // 收件判别字段同源转发（mailbadge 批）：tools-complete 边界合批注入
-              // 是分发器「持续接收」的主路径，标签判别必须同源，否则同一件 Mail
-              // 走 idle 直投与走合批注入会显示成两种标签。
-              ui.intake
-            )
-          )
-        }.sequence_
+        // Q1-A2′ 的「本边界整队合批注入 queued UserInput」已于 2026-09-15 ub 缺陷批
+        // 退役（root 裁定：排队消息按序逐条注入、每条独立成 turn、禁合并语义）：
+        // `pendingUserInputs` 在本边界**一律不消费**，全部留在全元数据队列，由 turn
+        // 末完成路径逐条重投给 idle 处理器（head-forward，见 finishTurnCont）——那
+        // 条路径本就是逐条 + 独立 turn + 带全元数据（replyTo 完成结算不搁浅），
+        // 也正是本缺陷的「正常路径同规」形态。
         // Block 3 循环检测器 L0（supervision trio §D3）：LoopGuard Warn 提醒以
         // user system-reminder 追加在工具结果之后（同系统 reminder 形态）
         // ——零成本给模型自纠机会；不阻断轮次。
@@ -2033,7 +1972,7 @@ object AgentActor extends AgentCore with AgentSession:
           case Some(rem) => List(Message(MessageRole.User, Left(rem)))
           case None      => Nil
         val newMessages =
-          baseMessages ++ List(assistantMsg, resultMsg) ++ imageMsgs ++ eventMessages ++ immediateMessages ++ userBatchMessages ++ loopReminderMsgs
+          baseMessages ++ List(assistantMsg, resultMsg) ++ imageMsgs ++ eventMessages ++ immediateMessages ++ loopReminderMsgs
         // Increment delegate count for Delegate/SubTask calls
         val delegateIncrement = toolCalls.count(c => c.name == "Delegate" || c.name == "SubTask")
         val newDelegateCount = state.delegateCount + delegateIncrement
@@ -2064,9 +2003,9 @@ object AgentActor extends AgentCore with AgentSession:
                 interaction = state.execution.interaction.filter(_.pendingPermission.isDefined),
                 pendingEvents = remainingEvents,
                 pendingImmediateInputs = remainingImmInputs,
-                // Q1-A2′：本边界已内联合批的 UserInput 出队，其余（外来 replyTo /
-                // SkillActivate / AskQuestion）留在全元数据队列由 turn 末逐条重投。
-                pendingUserInputs = remainingUserCmds,
+                // ub 缺陷批：本边界不再消费排队 UserInput（原 Q1-A2′ 内联合批已退役），
+                // 队列原样带过 turn 边界，由 turn 末 head-forward 逐条处理。
+                pendingUserInputs = state.execution.pendingUserInputs,
                 delegateCount = newDelegateCount,
                 outstandingSubagentResults = newOutstanding,
                 mailUsedThisTurn = state.mailUsedThisTurn ||
@@ -2148,8 +2087,6 @@ object AgentActor extends AgentCore with AgentSession:
                   )
               )
               _ <- immEventIO
-              // Q1-A2′：合批注入的 queued UserInput 同样逐条发注入气泡（同源判据）。
-              _ <- userBatchEventIO
               _ <- touchBarrierSnapshot(resources, state.sessionId, newOutstanding, remainingEvents.size)
               result <- pipeLlmCall(agentDef, resources, depth, parentRef, updatedState, tc.replyTo)
             yield result
@@ -3268,14 +3205,15 @@ object AgentActor extends AgentCore with AgentSession:
       yield result
       end for
     else if state.pendingCompaction.isEmpty && state.execution.pendingImmediateInputs.nonEmpty then
-      // 缺陷⑥ 外部注入合批（设计 §8）：drain ALL queued inputs into ONE next-turn
-      // request — arrival order preserved, each input keeps its own Message +
-      // source label, one roundComplete / one save / one pipeLlmCall. The
-      // frontend renders one blue injected bubble per emitInjectedUserEvent
-      // frame, all inside the same (new) turn group; the reply lands once
-      // after the batch (设计 §8.3：组边界仍由 roundComplete 唯一决定).
-      val immInputs = state.execution.pendingImmediateInputs
-      val remainingInputs = Nil
+      // 排队消息逐条注入（2026-09-15 ub 缺陷批，禁合并语义）：turn 末只取队首**一件**
+      // immediate input 开一个独立 turn；其余留队，由后续 turn 边界逐条消费（到达顺序
+      // 不变，每件各自若干 turn ⇒ 每件各自 roundComplete / 一次 save / 一次 pipeLlmCall）。
+      // 原缺陷⑥「整批塞进一个新 turn」已删除。
+      val (immHead, remainingInputs) = TurnBoundaryDrains.drainHead(
+        state.execution.pendingImmediateInputs,
+        compactionPending = false
+      )
+      val immInputs = immHead.toList
       logAgentEvent(
         agentDef,
         depth,
