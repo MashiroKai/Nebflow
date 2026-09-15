@@ -12,8 +12,12 @@ import { ticketUrl } from '../nfTicket.js';
  *  anchor's `href` at render time would either be expired by then or would sit
  *  in the DOM as a credential (T2). `<a download>` failures are also invisible
  *  to `onerror`, so "mint on click" is the only self-healing point available.
- *  Until the click there is NO credential in the document at all. */
-async function viewPptx(pane, { absPath, fileName, size }) {
+ *  Until the click there is NO credential in the document at all.
+ *
+ *  `objectUrl` = 附件预览腿（attachmentPreview.js）：整件字节已在手上，下载链的 `href`
+ *  取 blob: URL（`objectUrl || ticketUrl(absPath)`，与 pdf.js / image.js 的 blob 腿同构）
+ *  ——「点击时铸票」这条纪律对 blob 腿自动成立（blob URL 不是凭据、也无过期问题）。 */
+async function viewPptx(pane, { absPath, fileName, size, objectUrl }) {
   pane.innerHTML = `
     <div class="canvas-md-viewer" style="display:flex;flex-direction:column;align-items:center;justify-content:center;gap:12px;color:var(--color-text-muted);">
       <svg width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.2" stroke-linecap="round" stroke-linejoin="round" opacity="0.4">
@@ -27,10 +31,10 @@ async function viewPptx(pane, { absPath, fileName, size }) {
     </div>`;
 
   const link = /** @type {HTMLAnchorElement|null} */ (pane.querySelector('a.nf-pptx-download'));
-  if (!link || !absPath) return;
+  if (!link || (!absPath && !objectUrl)) return;
   link.addEventListener('click', async (e) => {
     e.preventDefault();
-    const url = await ticketUrl(absPath);
+    const url = objectUrl || await ticketUrl(absPath);
     const a = document.createElement('a');
     a.href = url;
     a.download = fileName || 'presentation.pptx';

@@ -7,14 +7,18 @@ import { ticketUrl } from '../nfTicket.js';
 
 /** EPUB viewer — paginated reader with chapter navigation.
  *  Parses ZIP structure, extracts XHTML chapters, renders with CSS column pagination.
- *  Dispatches 'epub-page-change' events for tracking what user is reading. */
-async function viewEpub(pane, { absPath, fileName, size }) {
+ *  Dispatches 'epub-page-change' events for tracking what user is reading.
+ *
+ *  `objectUrl` = 附件预览腿（attachmentPreview.js）：整件字节已由应用内鉴权路由取回，
+ *  blob: URL 直接 fetch 成 `arrayBuffer` 交给 ZIP 解析，无本机路径 ⇒ 不触票据链。
+ *  与 `pdf.js` / `image.js` 的 `objectUrl` 腿**同构**（同一模式，非第二套取字节路）。 */
+async function viewEpub(pane, { absPath, fileName, size, objectUrl }) {
   pane.innerHTML = `<div class="canvas-md-viewer" style="display:flex;align-items:center;justify-content:center;color:var(--color-text-muted);opacity:0.5;">Loading ebook...</div>`;
-  if (!absPath) {
+  if (!absPath && !objectUrl) {
     pane.innerHTML = `<div class="canvas-error">No file path provided for EPUB viewer.</div>`;
     return;
   }
-  const url = await ticketUrl(absPath);
+  const url = objectUrl || await ticketUrl(absPath);
   try {
     const resp = await fetch(url);
     if (!resp.ok) {

@@ -4,14 +4,18 @@
 import { escapeHtml } from './shared.js';
 import { ticketUrl } from '../nfTicket.js';
 
-/** DOCX viewer — fetch binary, convert to HTML via mammoth.js */
-async function viewDocx(pane, { absPath, fileName }) {
+/** DOCX viewer — fetch binary, convert to HTML via mammoth.js
+ *
+ *  `objectUrl` = 附件预览腿（attachmentPreview.js）：整件字节已由应用内鉴权路由取回，
+ *  blob: URL 直接交给 mammoth（fetch 后 `arrayBuffer()`），无本机路径 ⇒ 不触票据链。
+ *  与 `pdf.js` / `image.js` 的 `objectUrl` 腿**同构**（同一模式，非第二套取字节路）。 */
+async function viewDocx(pane, { absPath, fileName, objectUrl }) {
   pane.innerHTML = `<div class="canvas-md-viewer" style="display:flex;align-items:center;justify-content:center;color:var(--color-text-muted);opacity:0.5;">Loading document...</div>`;
-  if (!absPath) {
+  if (!absPath && !objectUrl) {
     pane.innerHTML = `<div class="canvas-error">No file path provided for DOCX viewer.</div>`;
     return;
   }
-  const url = await ticketUrl(absPath);
+  const url = objectUrl || await ticketUrl(absPath);
   try {
     const resp = await fetch(url);
     if (!resp.ok) {
