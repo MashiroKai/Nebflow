@@ -262,10 +262,12 @@ object ProjectActor:
     * （R7-b 后不再 pop 出摘要投递——本队列仅用于**拆除裁决**；投递改由分发器
     * 显式 `Mail(address="Nebula", …)` 承担。）
     *
-    * Q3-a（2026-09-11 收件规则批）：mid-turn 直投让**一个 turn 可以消费多件**
-    * （tools-complete 边界整队合批，AgentActor.drainUserBatch）——一个 Completed
-    * 不再恒等于一件。本 turn 消费几件由 [[ActiveDispatcher.consumedTaskMsgs]]
-    * 增量判定（会话历史里带注入来源标签的消息条数）；余件 > 0 → 保活，归零 → 拆除。 */
+    * Q3-a（2026-09-11 收件规则批）曾允许 mid-turn 直投让**一个 turn 消费多件**
+    * （tools-complete 边界整队合批）；该合批已由 2026-09-15 ub 缺陷批（root 裁定
+    * 「排队消息按序逐条注入、每条独立成 turn、禁合并语义」）删除 ⇒ 一件 = 一次注入
+    * = 一个 turn = 一个 Completed 的口径恢复。本 turn 消费几件仍由
+    * [[ActiveDispatcher.consumedTaskMsgs]] 增量判定（会话历史里带注入来源标签的
+    * 消息条数；逐条注入下增量恒为 1）；余件 > 0 → 保活，归零 → 拆除。 */
   case class ActiveDispatcher(
     sessionId: String,
     agentRef: ActorRef[AgentCommand],
@@ -680,9 +682,9 @@ object ProjectActor:
         case AgentEvent.Completed(_, messages) =>
           // 原子裁决（Q3-a 扩展，2026-09-11 收件规则批）：本 turn 消费了几件 =
           // 会话历史里带注入来源标签（task/dispatch）的消息**增量**——mid-turn 直投
-          // 落地后一个 Completed 不再恒等于一件（AgentActor.drainUserBatch 在
-          // tools-complete 边界整队合批：N 件 = 1 次注入 = 1 个 turn = 1 个 Completed）。
-          // 增量 ≤0（会话中期历史被压缩等）降级为「一 Completed 一件」（改前行为）：
+          // 落地后一个 Completed 可能不等于一件（Q3-a 的 tools-complete 整队合批
+          // 已于 2026-09-15 ub 缺陷批删除：排队消息逐条注入 ⇒ 增量恒为 1）。
+          // 增量 ≤0（会话中期历史被压缩等）降级为「一 Completed 一件」：
           // 宁多消费不滞留。pendingInjected 与 pendingTaskTexts 恒等长（spawn 首条
           // prompt 也计 1 件，见 spawnDispatcher 的 active.set），故两者同减 k。
           // 裁决：k 件消费后仍有余件（未跑完的注入件）→ 保活（有件在飞）；
