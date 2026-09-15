@@ -779,10 +779,17 @@ const FM_WAIT_ICON =
 //   loop    结构属性——前瞻防御，机制侧可能暂不产出该字段，缺字段不 crash；
 //   pending 状态徽标——既有 status=pending（待作者确认/派发）。
 // 判定严格 `=== true`：payload 缺字段/类型漂移一律静默降级为无徽标，零 console 噪音。
-/** @returns {string[]} 命中的标识键，顺序 merge → loop → pending（结构先于状态）。 */
+/** @returns {string[]} 命中的标识键，顺序 verifier → merge → loop → pending
+ *  （**角色先于其他结构属性**：role 是节点「是什么」的第一层身份；结构先于状态）。 */
 export function nodeFlagKeys(n) {
   if (!n || typeof n !== 'object') return [];
   const keys = [];
+  // 角色标识（vchip 批 2026-09-15）：`role` 由载荷条件键下发（ProjectTypes.scala
+  // NodePayload.roleFields：**仅非 task 携带** ⇒ 缺键 = task，存量节点字段集零漂移）。
+  // 严格 `=== 'verifier'`：缺键 / 形状漂移一律静默降级为无徽标（与 merge/loop 同款
+  // 纪律，零 console 噪音）。verifier 的申报值域（pass/fail）在图上原本不可见——本
+  // 键即该身份在 Flow Map 上的唯一可见面。
+  if (n.role === 'verifier') keys.push('verifier');
   if (n.merge === true) keys.push('merge');
   // loop 判定双形态（语义演进）：新建 loop 节点 payload 是配置对象
   // {maxRounds, verify, enabled}；早前前瞻防御批曾约定布尔 true。两种都算 loop。
@@ -790,7 +797,7 @@ export function nodeFlagKeys(n) {
   if ((n.status || 'pending') === 'pending') keys.push('pending');
   return keys;
 }
-const FM_FLAG_CLS = { merge: 'fm-flag-merge', loop: 'fm-flag-loop', pending: 'fm-flag-pending' };
+const FM_FLAG_CLS = { verifier: 'fm-flag-verifier', merge: 'fm-flag-merge', loop: 'fm-flag-loop', pending: 'fm-flag-pending' };
 
 /** 徽标 HTML：head 行胶囊，与 .fm-worktree-badge 同语言（文案 i18n flowmap.flag.*）。
  *  loop 徽标带轮次（LoopNode 批 2026-09-06）：loop 节点运行态显示「loop N/K」—
@@ -1056,6 +1063,32 @@ function collectEdges(fm, positions) {
       });
     }
   }
+  // ── 反馈回路边（`:loop` 控制边 = verifier → worker 的 (fail) 回边）──────────────
+  // 独立一遍、**只接 `mode === 'loop'` 的 out 边**，插在最后 ⇒ 既有边集与 DOM 顺序
+  // 逐项零变化（本批只**新增**回边）。为什么不走上面那条 out 分支：该分支按裸字符串
+  // 读 `n.out`（`ids.has(n.out)`），对 P1 起的 `[{to,on,mode}]` 数组载荷恒不命中——
+  // 那是未落地的 F3 out 数组适配面（见 foldView 的 card.out 注），本批不动它。
+  // 为什么必须走 out：loop 边**不进 `in` 镜像**（NodeTools.appendEdgeTo 的
+  // `!OutEdge.isLoopEdge(e)` 豁免 = round-1 防死锁红线①）⇒ 上面的 in 代理兜不住它，
+  // 这里是 loop 边进入边集的唯一入口。过滤与 out 分支同口径（目标在场 + 排除 Nebula）。
+  for (const n of vis) {
+    for (const e of outEdgesOf(n)) {
+      if (e.mode !== 'loop' || e.to === 'Nebula' || !ids.has(e.to)) continue;
+      if (e.to === n.id) continue; // 自回边（引擎侧 NODE_LOOP_EDGE_ROLE 已拒；防御性跳过）
+      const from = positions[n.id];
+      const to = positions[e.to];
+      if (!from || !to) continue;
+      edges.set(`${n.id}=>loop=>${e.to}`, {
+        kind: 'loop',
+        // 门标签**取载荷 on 集原文**（禁臆造）：canonical 后 loop 边恒 on={fail}
+        // ⇒ 标签即 `(fail)`；门集若漂移则标签随原文漂移（不猜、不补）。
+        gate: `(${e.on.join(',')})`,
+        x1: from.x, y1: from.y,
+        x2: to.x, y2: to.y,
+        state: edgeStateOf(n),
+      });
+    }
+  }
   return edges;
 }
 
@@ -1071,8 +1104,16 @@ function depsEdgeStateOf(up) {
   return 'deps-unmet';
 }
 
-/** 边 DOM class（含 deps 类型区分，applyEdgeDiff 与全量渲染共用同一拼接）。 */
+/** 边 DOM class（含 deps 类型区分，applyEdgeDiff 与全量渲染共用同一拼接）。
+ *  vchip 批加 `fm-edge-loop` 类型档（第三类边：控制回边），三段特异度压过
+ *  `.flow-edge.fm-edge` 三态规则，与 fm-edge-deps 同法。 */
 function edgeClassOf(e) {
+  if (e.kind === 'loop') {
+    return {
+      path: `flow-edge fm-edge fm-edge-loop ${e.state}`,
+      arrow: `flow-edge-arrow fm-edge-arrow fm-edge-loop-arrow ${e.state}`,
+    };
+  }
   return e.kind === 'deps'
     ? { path: `flow-edge fm-edge fm-edge-deps ${e.state}`, arrow: `flow-edge-arrow fm-edge-arrow fm-edge-deps-arrow ${e.state}` }
     : { path: `flow-edge fm-edge ${e.state}`, arrow: `flow-edge-arrow fm-edge-arrow ${e.state}` };
@@ -1084,14 +1125,76 @@ function edgePathD(p) {
   return `M ${p.x1.toFixed(1)} ${p.y1.toFixed(1)} C ${p.x1.toFixed(1)} ${midY.toFixed(1)} ${p.x2.toFixed(1)} ${midY.toFixed(1)} ${p.x2.toFixed(1)} ${p.y2.toFixed(1)}`;
 }
 
+// ── 回边几何（vchip 批 2026-09-15）：`:loop` 控制边的**返回式回拐弧** ──────────
+// 与普通 out 边的纵向 S 曲线（edgePathD：两端点同 x、控制点走中间高度）形态正交：
+// 回边走**卡外右侧**——自 verifier 右缘**水平**出、沿右侧竖直外拐上行、**水平**
+// 回到 worker 右缘。两点区别（视觉可分辨的判据）：① 锚点 = 卡右缘中点（普通边 =
+// 卡中心）；② 控制点 = 两侧同一外拐 x（普通边 = 两端同一中间 y）。
+/** 回边横向外拐量：弧顶实际外扩 ≈ 0.75×44 = 33px。上界依据 = layoutNodes 的
+ *  `width = (maxAt-1)*H_SPACING + NODE_W + PAD*2` ⇒ 最右卡右缘距画布右缘恒 = PAD(48)
+ *  ⇒ 33 < 48，弧线恒在画布内（不被 `.flowmap-card .solar-canvas` 的 overflow 裁掉），
+ *  且**不改 layoutNodes 的 width/height**（弧线是纯渲染层量，不参与布局）。 */
+const LOOP_BOW = 44;
+
+/** 回边三锚点（g 局部坐标）：两端点均取卡**右缘中点**，控制点同在 `bx`。 */
+function loopAnchors(p) {
+  const x1 = p.x1 + NODE_W / 2;
+  const x2 = p.x2 + NODE_W / 2;
+  const bx = Math.max(x1, x2) + LOOP_BOW;
+  return { x1, y1: p.y1, x2, y2: p.y2, bx };
+}
+
+/** 回边路径 d。 */
+function loopPathD(p) {
+  const a = loopAnchors(p);
+  return `M ${a.x1.toFixed(1)} ${a.y1.toFixed(1)} C ${a.bx.toFixed(1)} ${a.y1.toFixed(1)} ${a.bx.toFixed(1)} ${a.y2.toFixed(1)} ${a.x2.toFixed(1)} ${a.y2.toFixed(1)}`;
+}
+
+/** 回边弧顶（贝塞尔 t=0.5 解析点：P(½) = (P₀+3P₁+3P₂+P₃)/8）——门标签落点。 */
+function loopApex(p) {
+  const a = loopAnchors(p);
+  return {
+    x: (a.x1 + 3 * a.bx + 3 * a.bx + a.x2) / 8,
+    y: (a.y1 + 3 * a.y1 + 3 * a.y2 + a.y2) / 8,
+  };
+}
+
+/** 边路径 d 单点分派（全量渲染与增量 diff 共用）：kind 决定形状函数。 */
+function edgeD(e) {
+  return e && e.kind === 'loop' ? loopPathD(e) : edgePathD(e);
+}
+
+/** 回边端点圆（箭头）落点 = 两锚点中的**终点**（worker 右缘）——普通边的
+ *  `e.x2/e.y2` 是卡中心，回边须用锚点，否则箭头画到卡里。 */
+function loopArrowAnchor(p) {
+  const a = loopAnchors(p);
+  return { x: a.x2, y: a.y2 };
+}
+
+/** 回边门标签层（全量渲染与增量 diff 共用）：一个 `<g class="fm-edge-loop-labels">`
+ *  容器，内为每条回边一枚 `<text class="fm-edge-loop-gate">`（文案 = 载荷 on 集原文，
+ *  如 `(fail)`）。容器**整体重算**（回边数量级 O(1)，整层重建比逐枚 diff 稳且绝无
+ *  陈旧/缺件），故增量路径无需为它另开一套 diff 分支。 */
+function loopLabelsHtml(edges) {
+  const items = [];
+  for (const [id, e] of edges) {
+    if (e.kind !== 'loop') continue;
+    const a = loopApex(e);
+    items.push(`<text class="fm-edge-loop-gate" data-edge-id="${esc(id)}" x="${a.x.toFixed(1)}" y="${a.y.toFixed(1)}">${esc(e.gate || '')}</text>`);
+  }
+  return items.join('');
+}
+
 function edgesSvg(fm, positions, width, height) {
-  const paths = Array.from(collectEdges(fm, positions)).map(([id, e]) => {
+  const edges = collectEdges(fm, positions);
+  const paths = Array.from(edges).map(([id, e]) => {
     const cls = edgeClassOf(e);
+    const an = e.kind === 'loop' ? loopArrowAnchor(e) : { x: e.x2, y: e.y2 };
     return `
-      <path class="${cls.path}" data-edge-id="${esc(id)}" d="${edgePathD(e)}"/>
-      <circle class="${cls.arrow}" data-edge-id="${esc(id)}" cx="${e.x2.toFixed(1)}" cy="${e.y2.toFixed(1)}" r="3"/>`;
+      <path class="${cls.path}" data-edge-id="${esc(id)}" d="${edgeD(e)}"/>
+      <circle class="${cls.arrow}" data-edge-id="${esc(id)}" cx="${an.x.toFixed(1)}" cy="${an.y.toFixed(1)}" r="3"/>`;
   }).join('');
-  return `<svg class="solar-edges" width="${width}" height="${height}"><g transform="translate(${(width / 2).toFixed(1)},${PAD})">${paths}</g></svg>`;
+  return `<svg class="solar-edges" width="${width}" height="${height}"><g transform="translate(${(width / 2).toFixed(1)},${PAD})">${paths}<g class="fm-edge-loop-labels">${loopLabelsHtml(edges)}</g></g></svg>`;
 }
 
 // ── 图例（deps 设计 §1.4 六档 + v3 终态保留卡）：i18n 键 flowmap.legend.* ──
@@ -1174,6 +1277,30 @@ function outTargetsOf(n) {
     return out.map((e) => (e && typeof e === 'object' ? String(e.to ?? '') : String(e ?? ''))).filter((x) => !!x);
   }
   return out ? [String(out)] : [];
+}
+
+/** 出边**对象集**（vchip 批 2026-09-15；与 outTargetsOf 同源双读、同缺省口径）：
+ *  数组形态读载荷 `{to,on,mode}`（P1 起 NodePayload.outFields = OutEdge.canonical）——
+ *  `on` 缺键/非数组按 OutEdge.DefaultOn={pass}、`mode` 缺键按 OutEdge.Result='result'
+ *  防御（`ConfiguredCodec.derived` 的 withDefaults 口径，前端按缺省读不推导）；裸字符串
+ *  按存量单边 `{to, on:['pass'], mode:'result'}`（fromLegacyString 语义，仅回边判据
+ *  不受影响——存量串形态不可能携带 mode=loop）。
+ *  **`mode === 'loop'` 即 verifier→worker 的 (fail) 回边（OutEdge.Loop 控制边）**——
+ *  它是「out 里可声明、图里不连」（设计 §3.5 R5(a)）的那条边，本函数是它在图上的
+ *  唯一取数口。 */
+function outEdgesOf(n) {
+  const out = n?.out;
+  if (Array.isArray(out)) {
+    return out.map((e) => (e && typeof e === 'object'
+      ? {
+        to: String(e.to ?? ''),
+        on: Array.isArray(e.on) ? e.on.map(String) : ['pass'],
+        mode: String(e.mode ?? 'result'),
+      }
+      : { to: String(e ?? ''), on: ['pass'], mode: 'result' }))
+      .filter((e) => !!e.to);
+  }
+  return out ? [{ to: String(out), on: ['pass'], mode: 'result' }] : [];
 }
 
 /** chainId → 快照 chains 旁挂条目（{id,title,memberIds…}；未知 → null）。
@@ -1397,7 +1524,15 @@ function lerpPts(a, b, k) {
     y1: a.y1 + (b.y1 - a.y1) * k,
     x2: a.x2 + (b.x2 - a.x2) * k,
     y2: a.y2 + (b.y2 - a.y2) * k,
+    // kind 参与插值结果的形状分派（回边走 loopPathD）——两臂同一条边，kind 恒定，
+    // 取值以「去向」b 为准（与 x/y 同源）。
+    kind: b.kind,
   };
+}
+
+/** 插值点上的端点圆落点（回边 = 锚点，普通边 = 卡中心；与 applyEdgeDiff.markerOf 同式）。 */
+function lerpMarker(p) {
+  return p.kind === 'loop' ? loopArrowAnchor(p) : { x: p.x2, y: p.y2 };
 }
 
 function edgeFlightNow(f, now) {
@@ -1412,10 +1547,11 @@ function pumpFlights(now) {
     if (!f.path.isConnected) { edgeFlights.delete(id); continue; }
     const t = Math.min(1, (now - f.start) / MOVE_MS);
     const p = lerpPts(f.from, f.to, easeInOutCubic(t));
-    f.path.setAttribute('d', edgePathD(p));
+    f.path.setAttribute('d', edgeD(p));
     if (f.circle) {
-      f.circle.setAttribute('cx', p.x2.toFixed(1));
-      f.circle.setAttribute('cy', p.y2.toFixed(1));
+      const m = lerpMarker(p);
+      f.circle.setAttribute('cx', m.x.toFixed(1));
+      f.circle.setAttribute('cy', m.y.toFixed(1));
     }
     if (t >= 1) edgeFlights.delete(id); else live = true;
   }
@@ -1438,10 +1574,11 @@ function ensureFlightPump() {
 function startEdgeFlights(list) {
   if (animOff()) {
     for (const it of list) {
-      it.path.setAttribute('d', edgePathD(it.to));
+      it.path.setAttribute('d', edgeD(it.to));
       if (it.circle) {
-        it.circle.setAttribute('cx', it.to.x2.toFixed(1));
-        it.circle.setAttribute('cy', it.to.y2.toFixed(1));
+        const m = lerpMarker(it.to);
+        it.circle.setAttribute('cx', m.x.toFixed(1));
+        it.circle.setAttribute('cy', m.y.toFixed(1));
       }
     }
     return;
@@ -1538,7 +1675,11 @@ function animateNodeExit(el) {
  *  展示字段），不再含 result（载荷无 result）。Agent 退役（node-flowmap-slim）：
  *  agent 不再上卡，签名改带 preset/plugins（副行展示字段，变更即重渲）。badge 批
  *  （2026-09-05）：merge/loop 徽标字段入签名——WS 载荷带上该字段时增量路径即重渲；
- *  pending 徽标随 st（已在签名）变化。 */
+ *  pending 徽标随 st（已在签名）变化。vchip 批（2026-09-15）：**role 入签名**——
+ *  它是 verifier chip 的唯一判据（nodeFlagKeys 的第三态），不入签名则该徽标在增量
+ *  路径上是**陈旧 DOM**（复用旧卡不重建）。role 虽 create-only（生产上不会中途变），
+ *  但签名口径 = 「参与渲染的字段全入」（与 merge/loop 同纪律），漏项即是未来的
+ *  静默漂移面（实测反例：本批探针 ctrl-role-task 臂未改签名时 chip 不消失）。 */
 function nodeContentKey(n) {
   if (!n) return '∅';
   // 折叠链卡（P1）：内容 = 链名 + 聚合状态 + 成员状态签名——任一成员状态变化
@@ -1548,6 +1689,7 @@ function nodeContentKey(n) {
   return [
     st,
     n.name || '',
+    n.role || '',
     n.preset || '',
     (n.plugins || []).join(','),
     n.hasWorktree || n.worktree ? 1 : 0,
@@ -1647,6 +1789,8 @@ function applyEdgeDiff(g, prevEdges, edges) {
     if (!c.classList.contains('fm-edge-exit')) circles.set(c.getAttribute('data-edge-id'), c);
   });
   const flights = [];
+  /** 端点圆落点（回边用锚点、普通边用卡中心；两处共用同一定点） */
+  const markerOf = (e) => (e.kind === 'loop' ? loopArrowAnchor(e) : { x: e.x2, y: e.y2 });
   for (const [id, e] of edges) {
     let p = paths.get(id);
     let c = circles.get(id) || null;
@@ -1655,14 +1799,15 @@ function applyEdgeDiff(g, prevEdges, edges) {
       p = document.createElementNS(SVG_NS, 'path');
       p.setAttribute('class', cls.path);
       p.setAttribute('data-edge-id', id);
-      p.setAttribute('d', edgePathD(e));
+      p.setAttribute('d', edgeD(e));
       g.appendChild(p);
       if (!c) {
+        const an = markerOf(e);
         c = document.createElementNS(SVG_NS, 'circle');
         c.setAttribute('class', cls.arrow);
         c.setAttribute('data-edge-id', id);
-        c.setAttribute('cx', e.x2.toFixed(1));
-        c.setAttribute('cy', e.y2.toFixed(1));
+        c.setAttribute('cx', an.x.toFixed(1));
+        c.setAttribute('cy', an.y.toFixed(1));
         c.setAttribute('r', '3');
         g.appendChild(c);
       }
@@ -1672,7 +1817,7 @@ function applyEdgeDiff(g, prevEdges, edges) {
     const prevE = prevEdges.get(id);
     if (prevE && prevE.state !== e.state) {
       // 状态档位变化：颜色/线型交由 CSS transition 平滑（flowMap.css .fm-edge 过渡）；
-      // deps 类型 class 同步保留（edgeClassOf 单点拼接）
+      // deps / loop 类型 class 同步保留（edgeClassOf 单点拼接）
       const cls = edgeClassOf(e);
       p.setAttribute('class', cls.path);
       if (c) c.setAttribute('class', cls.arrow);
@@ -1683,17 +1828,36 @@ function applyEdgeDiff(g, prevEdges, edges) {
     if (prevE) {
       flights.push({ id, path: p, circle: c, from: prevE, to: e });
     } else {
-      p.setAttribute('d', edgePathD(e));
+      p.setAttribute('d', edgeD(e));
       if (c) {
-        c.setAttribute('cx', e.x2.toFixed(1));
-        c.setAttribute('cy', e.y2.toFixed(1));
+        const an = markerOf(e);
+        c.setAttribute('cx', an.x.toFixed(1));
+        c.setAttribute('cy', an.y.toFixed(1));
       }
     }
   }
   for (const [id, p] of paths) {
     if (!edges.has(id)) animateEdgeExit(p, circles.get(id) || null);
   }
+  syncLoopLabels(g, edges);
   if (flights.length) startEdgeFlights(flights);
+}
+
+/** 回边门标签层落位（增量路径）：容器缺失则建、随后**整体重算**内容（见
+ *  loopLabelsHtml 注）。容器恒在 diff 期间存活（不受 path/circle 的 exit 动画影响），
+ *  故增量与全量两条路径的标签层 DOM 同构。 */
+function syncLoopLabels(g, edges) {
+  const SVG_NS = 'http://www.w3.org/2000/svg';
+  let box = g.querySelector('g.fm-edge-loop-labels');
+  if (!box) {
+    box = document.createElementNS(SVG_NS, 'g');
+    box.setAttribute('class', 'fm-edge-loop-labels');
+    g.appendChild(box);
+  }
+  const html = loopLabelsHtml(edges);
+  if (box.innerHTML !== html) box.innerHTML = html;
+  if (box.parentNode !== g) g.appendChild(box); // 新建 path 的 appendChild 不会移位它，
+  // 但显式兜底一次，保证标签层恒在最后（= 压在边之上，不被后续 path 覆盖）
 }
 
 /** 增量更新已渲染的图（不做 innerHTML 替换）。baseline 是上一帧的快照——通常取

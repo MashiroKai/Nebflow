@@ -159,6 +159,12 @@ export default {
   'flowmap.flag.merge': 'Merge',
   'flowmap.flag.loop': 'Loop',
   'flowmap.flag.pending': 'Awaiting',
+  // Node role chip (vchip batch 2026-09-15): `role=verifier` node identity in the
+  // Flow Map. Same capsule family as merge/loop/pending; one word, matching the
+  // `role=verifier` vocabulary (verdict domain pass/fail, `(fail)<worker>:loop`
+  // feedback edge holder) — deliberately NOT 'Reviewer' (a person) since the chip
+  // labels the node's routing role.
+  'flowmap.flag.verifier': 'Verify',
   // Merge-window queue position (queue-position visibility batch 2026-09-14; author
   // ruling 16:39: show the number AND the holders). Badge on the node head row,
   // footnote on the same waiting-note line. Degradation red line: missing key /
