@@ -200,8 +200,10 @@ class ImageAttachSpec extends CatsEffectSuite:
   private def ctx = ToolContext(projectRoot = testDir.toString)
 
   test("MailTool regression: no images param, missing address → unchanged error"):
+    // device-mail 批（2026-09-15）re-pin：目标面 = `address` XOR `device`，故「两个都没填」
+    // 的报错从旧文案抬成显式词表项（MAIL_TARGET_MISSING）。断言仍逐字钉文本，未放宽。
     MailTool.call(mailInput("message" -> "hi".asJson), ctx).map {
-      case Left(err)  => assertEquals(err.message, "Missing required parameter: address")
+      case Left(err)  => assertEquals(err.message, MailTool.targetMissingMessage)
       case Right(r)   => fail(s"expected error, got $r")
     }
 

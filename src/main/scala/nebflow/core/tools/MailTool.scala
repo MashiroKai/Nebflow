@@ -10,6 +10,8 @@ import nebflow.core.NebflowLogger
 import nebflow.core.entity.EntityLoader
 import nebflow.core.flow.{FlowMailStore, MailQueueStore, TeamSessionRegistry}
 import nebflow.core.project.{ProjectActor, ProjectRuntimeRegistry}
+// device-mail 批（2026-09-15）：契约单点 + 本机 NebLink 身份面（设备腿）。
+import nebflow.neblink.{DeviceMail, DeviceMailAck, NeblinkService}
 import nebflow.shared.{ContentBlock, Message, MessageRole, ToolDefinition}
 
 
@@ -37,6 +39,48 @@ object MailTool extends Tool:
   /** Nebula root agent 定义名（分层地址面与 root 解析的判据单点）。 */
   private val NebulaAgentName = "Nebula"
 
+  // ============================================================
+  // device-mail 批（2026-09-15）——`device` 目标的校验词表（**唯一来源**；
+  // 报告、spec、描述三处同源引用，禁第二份字面量）。四类 + 设备面不可得：
+  //   MAIL_TARGET_EXCLUSIVE  互斥：`address` 与 `device` 同填
+  //   MAIL_TARGET_MISSING    双缺：两个目标都没填
+  //   MAIL_DEVICE_NOT_FOUND  未知设备（含**歧义**多命中：沿用先例的候选清单文案，
+  //                          判据在 `FriendMessageTool.resolveDevice`，本处只加码）
+  //   MAIL_DEVICE_MALFORMED  非法形态（URL / 带 `device:` 前缀 / 空值）
+  // ============================================================
+  val ErrTargetExclusive: String = "MAIL_TARGET_EXCLUSIVE"
+  val ErrTargetMissing: String = "MAIL_TARGET_MISSING"
+  val ErrDeviceNotFound: String = "MAIL_DEVICE_NOT_FOUND"
+  val ErrDeviceMalformed: String = "MAIL_DEVICE_MALFORMED"
+
+  /** 互斥报错（逐字词表；`address` 与 `device` 各自可空、**禁双填**）。 */
+  private def targetExclusiveError(address: String, device: String): ToolError =
+    ToolError(
+      s"[$ErrTargetExclusive] 'address' and 'device' are mutually exclusive — fill exactly one. " +
+        s"Got address='$address', device='$device'. Use 'address' for agent/team/project targets " +
+        "and 'device' for another machine's Nebula."
+    )
+
+  /** 双缺报错（逐字词表）。 */
+  private[tools] val targetMissingMessage: String =
+    s"[$ErrTargetMissing] Missing target: fill exactly one of 'address' (agent/team/project) or " +
+      "'device' (another machine's Nebula). 'address' is required only when 'device' is absent."
+
+  /** 非法形态报错（逐字词表；判据见 [[deviceMalformedReason]]）。 */
+  private def deviceMalformedError(raw: String, reason: String): ToolError =
+    ToolError(
+      s"[$ErrDeviceMalformed] Malformed 'device' value '$raw' — $reason. Pass the device NAME or " +
+        "device id alone (e.g. \"macbook-pro\" or the id); the \"device:\" prefix belongs to SendMessage's 'to'."
+    )
+
+  /** 非法形态判据（纯函数，供 spec 直测）。返回 `Some(可读原因)` = 形态非法。 */
+  private[tools] def deviceMalformedReason(raw: String): Option[String] =
+    val v = raw.trim
+    if v.isEmpty then Some("it is empty")
+    else if v.startsWith("device:") then Some("it carries the \"device:\" prefix")
+    else if v.contains("://") then Some("it looks like a URL, not a device name/id")
+    else None
+
   val name: String = "Mail"
 
   val description: String =
@@ -44,7 +88,19 @@ object MailTool extends Tool:
 (2026-09-12 「一个 Mail 统一」；the former `Task` and `NodeMessage` tools are retired —
 this note supersedes all earlier instructions naming them as entry points).
 
-Required: address, message
+Required: message, plus **exactly one** of `address` / `device` (mutually exclusive — both
+filled is an explicit error, both empty is an explicit error)
+
+## Device target (`device` parameter — cross-device Nebula mail, 2026-09-15)
+`device` = another machine of the same NebLink account, given as a device NAME or device
+id (same resolution as `SendMessage`'s `device:` target: exact id → exact name → id prefix
+→ name prefix → name contains; unknown **or ambiguous** ⇒ explicit error listing the
+candidates, never a silent first hit). The mail is delivered over the NebLink device channel
+as the frozen payload `{"type":"agent_mail","from_device":…,"from_device_id":…,"to_nebula":true,"text":…}`
+and lands **directly in that device's Nebula session** — injected at its next turn boundary
+with the header line `[DEVICE-MAIL · from <from_device>]` (type INFO), shown in the peer's
+message stream as a blue injected bubble. It does NOT go to the peer's user chat inbox, and
+**no confirmation card is raised** (the Mail gate is unchanged — this is not a friend send).
 
 ## Address face (role-scoped — an address outside your face is an explicit error)
 - **Nebula (root)**: `project:<name>` — triggers that project's dispatcher (a bare
@@ -160,6 +216,10 @@ Message type (optional, default "INFO"):
           "type" -> "string".asJson,
           "description" -> "Role-scoped address. Nebula (root): \"project:<name>\" (a bare mounted project name is equivalent). Project dispatcher: \"Nebula\" or \"node:<nodeId>\". Team context: a team name, a member short name, or \"team/agent\". An address outside your face is an explicit error.".asJson
         ),
+        "device" -> Json.obj(
+          "type" -> "string".asJson,
+          "description" -> "Cross-device Nebula mail (device-mail, 2026-09-15): another machine of the same NebLink account, by device NAME or device id. MUTUALLY EXCLUSIVE with `address` — fill exactly one of the two (both ⇒ MAIL_TARGET_EXCLUSIVE, neither ⇒ MAIL_TARGET_MISSING). Unknown/ambiguous device ⇒ MAIL_DEVICE_NOT_FOUND with the candidate list; a malformed value (URL, or a \"device:\" prefix — the prefix belongs to SendMessage's `to`) ⇒ MAIL_DEVICE_MALFORMED. The message is delivered over the NebLink device channel and injected into that device's Nebula session at its next turn boundary (header line `[DEVICE-MAIL · from <from_device>]`, type INFO); the peer sees it as a blue injected bubble. No confirmation card.".asJson
+        ),
         "message" -> Json.obj(
           "type" -> "string".asJson,
           "description" -> "The message or question to send".asJson
@@ -188,31 +248,50 @@ Message type (optional, default "INFO"):
           "default" -> Json.arr()
         )
       ),
-      "required" -> Json.arr("address".asJson, "message".asJson)
+      "required" -> Json.arr("message".asJson)
     )
   )
 
   def summarize(input: JsonObject): String =
     val addr = input("address").flatMap(_.asString).getOrElse("?")
+    val device = input("device").flatMap(_.asString).map(_.trim).filter(_.nonEmpty)
+    val target = device match
+      case Some(d) => s"device:$d"
+      case None    => addr
     val delivery = input("delivery").flatMap(_.asString).getOrElse("immediate")
     val mailType = input("type").flatMap(_.asString).getOrElse("INFO")
     val typeStr = if mailType != "INFO" then s" [$mailType]" else ""
     delivery match
-      case "queue"   => s"Mail(→$addr, queue)$typeStr"
-      case _         => s"Mail(→$addr)$typeStr"
+      case "queue"   => s"Mail(→$target, queue)$typeStr"
+      case _         => s"Mail(→$target)$typeStr"
 
   def summarizeResult(input: JsonObject, result: String): String = result
 
   def call(input: JsonObject, ctx: ToolContext): IO[Either[ToolError, String]] =
     val address = input("address").flatMap(_.asString).getOrElse("").trim
+    val deviceRaw = input("device").flatMap(_.asString).getOrElse("").trim
     val message = input("message").flatMap(_.asString).getOrElse("")
     val mailType = input("type").flatMap(_.asString).getOrElse("INFO")
 
     val delivery = input("delivery").flatMap(_.asString).getOrElse("immediate")
     val chainIdRaw = input("chainId").flatMap(_.asString).map(_.trim).filter(_.nonEmpty).filter(_ != "null")
 
-    if address.isEmpty then IO.pure(Left(ToolError("Missing required parameter: address")))
+    // device-mail 批（2026-09-15）：目标面 = `address` XOR `device`（各自可空、禁双填）。
+    // 校验前置于一切投递副作用（与既有 fail-fast 纪律同序）。
+    if address.nonEmpty && deviceRaw.nonEmpty then
+      IO.pure(Left(targetExclusiveError(address, deviceRaw)))
+    else if address.isEmpty && deviceRaw.isEmpty then IO.pure(Left(ToolError(targetMissingMessage)))
     else if message.isEmpty then IO.pure(Left(ToolError("Missing required parameter: message")))
+    else if deviceRaw.nonEmpty then
+      // 设备腿：形态先判（非法形态零副作用），再走先例的设备解析。
+      deviceMalformedReason(deviceRaw) match
+        case Some(reason) => IO.pure(Left(deviceMalformedError(deviceRaw, reason)))
+        case None         => validateChainId(chainIdRaw, ctx).flatMap {
+            case Left(err) => IO.pure(Left(err))
+            // chainId 于设备腿**只校验不带出**（链集是本项目派生的，对端 Nebula 的
+            // 项目链不同源 ⇒ 塞进对端注入体会误导）；登记在交付说明。
+            case Right(_) => deliverToDevice(deviceRaw, message, mailType, delivery, ctx)
+          }
     else
       // B2-x：chainId 只校验不落库（零链级账本）——校验在一切投递副作用之前。
       validateChainId(chainIdRaw, ctx).flatMap {
@@ -447,6 +526,116 @@ Message type (optional, default "INFO"):
             )))
         }
 
+  /** 腿④（device-mail 批，2026-09-15 作者令）：`Mail(device:X)` → 本机网关 →
+    * NebLink 服务端（契约端点 `POST /api/relay/{target_device_id}/mail`，**契约 v2 ①**）
+    * → 对端设备隧道推送 `agent_mail` 载荷 → 对端 Nebula 会话注入。
+    *
+    * 委托面（**零重复实现**）：
+    *   - 设备解析 = [[FriendMessageTool.resolveDevice]]（Root 令「沿用 SendMessage 的
+    *     device 解析先例」的**现取落点**：deviceId 精确 → deviceName 精确 → deviceId
+    *     前缀 → deviceName 前缀 → deviceName 包含，唯一候选才成功；零命中/多命中一律
+    *     列可用设备，**禁静默首命中**）；
+    *   - 传输 = `NeblinkClient.relayAgentMail`（**目标走路径**；鉴权/自愈走既有
+    *     `withSession` + `dispatchRequest` 缝；无 fan-out、无广播兜底——解析出的
+    *     deviceId 是路径上的唯一目标，v2 ②）；
+    *   - 载荷构造 = [[nebflow.neblink.DeviceMail.payload]]（唯一构造点，恰契约五键）；
+    *   - 回执 = [[nebflow.neblink.DeviceMailAck]]（eventId 关联 + 超时腿，v2 ④）。
+    *
+    * `from_device`/`from_device_id` = **本机自报值，仅供初始展示**：服务端以鉴权
+    * 身份覆盖 `from_device_id`（v2 ③），本腿**不**把它用于任何逻辑判定。
+    *
+    * **零新增闸/卡**：Mail 现状（Nebula 发 Mail 无需确认卡）逐字沿用——本腿只做设备
+    * 解析 + 形态/语义闸 + 载荷上通道 + 诚实结果转写 + 一条审计行（④）；不触碰
+    * A2A/团队权限面。
+    *
+    * 两条**显式拒绝**（禁静默丢语义）：设备腿恒 immediate（`delivery=queue` 拒绝，
+    * 与 `node:` 腿同一先例）；契约载荷无邮件类型字段 ⇒ 仅 INFO（其它类型拒绝，
+    * 不静默降级成 INFO）。 */
+  private def deliverToDevice(
+      device: String,
+      message: String,
+      mailType: String,
+      delivery: String,
+      ctx: ToolContext
+  ): IO[Either[ToolError, String]] =
+    if delivery == "queue" then
+      IO.pure(Left(ToolError(
+        "Device targets are always immediate — the peer's Nebula session is injected at its next turn " +
+          "boundary, so a serialized FIFO queue would only delay it. Drop delivery=queue."
+      )))
+    else if mailType != "INFO" then
+      IO.pure(Left(ToolError(
+        s"Device targets carry the frozen 'agent_mail' payload, which has no mail-type field — " +
+          s"only type \"INFO\" is supported (got \"$mailType\"). Send an INFO Mail and put the urgency in the text."
+      )))
+    else
+      (ctx.sharedResources.flatMap(_.neblinkService), ctx.sharedResources.flatMap(_.dropboxService)) match
+        case (Some(ns), _) =>
+          for
+            id <- ns.identity
+            peers <- ns.peers
+            result <- FriendMessageTool.resolveDevice(device, peers) match
+              case Left(err) =>
+                IO.pure(Left(ToolError(
+                  s"[$ErrDeviceNotFound] ${err.message}\n${FriendMessageTool.deviceCandidates(peers)}"
+                )))
+              case Right(peer) =>
+                // 契约 v2 ①：目标走**路径**（`POST /api/relay/{target_device_id}/mail`），
+                // body = 契约五键载荷本体。解析出的对端 **deviceId** 是唯一目标 ⇒ 本腿
+                // 天然定向（无 fan-out、无「找不到就广播」兜底分支，v2 ②）。
+                ns.relayClientOpt match
+                  case None =>
+                    IO.pure(Left(ToolError(
+                      "Cannot send device mail: the NebLink relay client is not initialized (not logged in to a NebLink server?)."
+                    )))
+                  case Some(client) =>
+                    val payload = DeviceMail.payload(message, id.deviceName, id.deviceId)
+                    client.relayAgentMail(peer.deviceId, payload).flatMap {
+                      case Right(serverId) =>
+                        // ④ 回执：登记 pending ack（eventId = "message-<id>"），由隧道 ack
+                        // 帧关联；超时腿在 DeviceMailAck 内（WARN + 审计行，禁静默）。
+                        DeviceMailAck.await(peer.deviceId, serverId).flatMap { eventId =>
+                          auditDeviceMailSend(ns, peer.deviceId, message, ctx).as(Right(
+                            s"Message sent to device '${peer.deviceName}' — the frozen agent_mail payload " +
+                              s"(type=${DeviceMail.TypeAgentMail}, to_nebula=true) is on the relay route " +
+                              s"/api/relay/${peer.deviceId}/mail; the peer's Nebula session will be injected at " +
+                              s"its next turn boundary. Awaiting ack $eventId."
+                          ))
+                        }
+                      case Left(err) =>
+                        IO.pure(Left(ToolError(
+                          s"Device '${peer.deviceName}' could not be reached for agent mail: $err — nothing was sent."
+                        )))
+                    }
+          yield result
+        case _ =>
+          IO.pure(Left(ToolError(
+            "Device messaging is unavailable: NebLink/Dropbox services are not initialized (is NebLink enabled?)."
+          )))
+
+  /** ④ 发送腿审计（一条一行，`RelayExecAudit` 同族 = 设备通道审计的既有落面）。
+    * `sourceDeviceId` = 本机（下发方），`targetDeviceId` = 对端设备。审计失败不影响
+    * 发送（`RelayExecAudit.record` 既有语义：吞异常 + WARN）。 */
+  private def auditDeviceMailSend(
+      ns: NeblinkService,
+      targetDeviceId: String,
+      message: String,
+      ctx: ToolContext
+  ): IO[Unit] =
+    ns.identity
+      .flatMap(src =>
+        RelayExecAudit.record(
+          sourceDeviceId = src.deviceId,
+          targetDeviceId = targetDeviceId,
+          via = "device-channel",
+          action = "Mail.device.send",
+          command = s"type=${DeviceMail.TypeAgentMail}; to_nebula=true; chars=${message.length}",
+          projectRoot = ctx.projectRoot,
+          cwd = Option(System.getProperty("user.dir")).getOrElse("")
+        )
+      )
+      .handleErrorWith(_ => IO.unit)
+
   /** 腿①（Nebula → 项目分发器）：保留既有内核（`ProjectActor.TriggerDispatcher`）。 */
   private def deliverToProject(name: String, message: String, mailType: String, ctx: ToolContext): IO[Either[ToolError, String]] =
     routeToProject(name, message, mailType, ctx).flatMap {
@@ -658,8 +847,12 @@ Message type (optional, default "INFO"):
     resolveNebulaRoots(res, senderSessionId, preferredRootSid).map(_.headOption.map(_._1))
 
   /** Root records eligible as "the Nebula root"（判据见 [[resolveNebulaRootSession]] 文档）。
-    * 返回 0 或 ≥2 项都由调用方判为「解析不出」——**绝不**静默挑一条。 */
-  private def resolveNebulaRoots(
+    * 返回 0 或 ≥2 项都由调用方判为「解析不出」——**绝不**静默挑一条。
+    *
+    * 可见性（device-mail 批，2026-09-15）：`private` → `private[nebflow]` —— 设备邮件
+    * 收件腿（`nebflow.neblink.DeviceMailInbox`）注入**本机 Nebula 会话**时必须走本
+    * **唯一解析单点**（禁第二份同表达式：两份必然漂移）。零语义改动、零授权面改动。 */
+  private[nebflow] def resolveNebulaRoots(
       res: SharedResources,
       senderSessionId: String,
       preferredRootSid: Option[String]

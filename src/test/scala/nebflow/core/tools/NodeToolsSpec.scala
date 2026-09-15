@@ -187,13 +187,22 @@ class NodeToolsSpec extends FunSuite:
     assert(!requiredOf(NodeCancelTool).contains("project") && requiredOf(NodeCancelTool).contains("node-id"),
       s"NodeCancel required should drop project, keep node-id; got ${requiredOf(NodeCancelTool)}")
     // NodeMessage 工具已删净退役（R2 2026-09-12）⇒ 其必填面断言同批删除；语义并入
-    // `Mail(address="node:<id>", message=...)`（Mail 的必填面 = address + message，
-    // 见 MailTool.inputSchema 与 MailToolCheckTeamScopeSpec/MailQueueNebulaSpec）。
+    // `Mail(address="node:<id>", message=...)`。
+    // device-mail 批（2026-09-15）：Mail 的目标面从「address 必填」扩成
+    // **`address` XOR `device`**（两者各自可空、由运行期互斥闸判，见 MailTool 的
+    // MAIL_TARGET_EXCLUSIVE / _MISSING）⇒ required 只剩 message。本断言同批 re-pin：
+    // 仍然钉「address 不再是唯一必填面」与「退役参数不得回流」，未放宽任何既有约束。
     val mailReq = requiredOf(MailTool)
-    assert(mailReq.contains("address") && mailReq.contains("message"),
-      s"Mail required should be address+message; got $mailReq")
+    assertEquals(
+      mailReq,
+      List("message"),
+      s"Mail required should be message only (address/device are mutually exclusive targets); got $mailReq"
+    )
     assert(!mailReq.contains("nodeId") && !mailReq.contains("project"),
       s"Mail must not carry the retired NodeMessage params; got $mailReq")
+    val mailProps = MailTool.inputSchema("properties").flatMap(_.asObject).map(_.keys.toSet).getOrElse(Set.empty)
+    assert(mailProps.contains("address") && mailProps.contains("device"),
+      s"Mail must declare both target parameters (address + device); got ${mailProps.toList.sorted}")
   }
 
 end NodeToolsSpec

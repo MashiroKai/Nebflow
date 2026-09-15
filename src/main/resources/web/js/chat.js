@@ -360,6 +360,9 @@ const INJECTED_SOURCE_LABELS = {
   // 故显式登记。登记面 ⊇ 后端集合由 `InjectionSourceContractSpec` 硬门守住。
   // `node` 不在本表：它在 injectedSourceLabel 里有专用格式分支（NODE · 项目 ·
   // 节点 · 状态），spec 认「表项 ∪ 显式分支」为已登记。
+  // `deviceMail`（device-mail 批，2026-09-15）同 `node`：专用 i18n 分支
+  // （「来自 <from_device> 的 Nebula」，sender 携带 from_device），故不改本表——
+  // 契约门 InjectionSourceContractSpec 的显式分支集合同样认它。
   system: 'System', background: 'Background',
   // b64 批（2026-09-13）：链级摘要投根通道（NodeEngine.deliverChainSummary，
   // source="chain"，`FlowMapStore.ChainSummarySource`）。后端自定名 ⇒ 必须显式登记
@@ -422,7 +425,13 @@ export function injectedSourceLabel(source, eventType, sender, sourceTeam, intak
     return parts.join(' · ');
   }
   const parts = [];
-  if (sourceTeam) {
+  // 跨设备 Nebula 邮件（device-mail 批，2026-09-15）：后端 source='deviceMail'
+  // （`DeviceMail.SourceDeviceMail`，唯一发射点 = DeviceMailInbox 的会话注入）
+  // ⇒ 标签 = i18n「来自 <from_device> 的 Nebula」双语（sender 携带 from_device）。
+  // 复用同一徽章位/同一蓝气泡样式；eventType 段（INFO）照常追加。
+  if (source === 'deviceMail') {
+    parts.push(t('deviceMail.fromDevice', { device: sender || '?' }));
+  } else if (sourceTeam) {
     parts.push(sender ? `${sourceTeam}/${sender}` : sourceTeam);
   } else {
     // 收件判别字段优先（缺席 ⇒ key = source，回落路径逐字不变）。
