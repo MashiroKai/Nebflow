@@ -425,6 +425,11 @@ try {
       await page.evaluate(async () => { const n = await import('/js/neblink.js'); await n.fetchNeblinkStatus(); });
       await sleep(400);
       await ensurePanel(page, '#messages-btn', 'panel-messages');
+      // 到达判据用**等待条件**（换桩 + reload 后 `refreshConversations` 的落地拍不定）；
+      // 固定 sleep 会读成"两行皆无"的假红。
+      await page.waitForFunction(
+        () => document.querySelectorAll('#fm-conversations .fm-conv-row').length >= 2,
+        { timeout: 15000 }).catch(() => {});
       await sleep(700);
       await shot(page, theme, '08-messages-rows');
       const rows = await page.evaluate(() => {

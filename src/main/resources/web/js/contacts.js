@@ -334,7 +334,9 @@ function buildDevicesEntry() {
   icon.innerHTML = '<i data-lucide="smartphone"></i>';
   entry.appendChild(icon);
   entry.appendChild(el('span', 'fm-nf-label', t('contacts.sectionDevices')));
-  if (devs.length > 0) entry.appendChild(el('span', 'fm-row-badge', String(devs.length)));
+  // 🔴 **不挂计数徽章**：`nf` 的 `.fm-row-badge` 是**未读/待处理通知**语义（conv 行未读、
+  // 待处理请求同款），设备台数挂上去会被读成「有新消息」。台数读数由展开体承担
+  // （`data-device-count` + 行本身），空态另有 `contacts.devicesEmpty` ⇒ 零信息损失。
   const chevron = el('span', 'fm-nf-chevron', '');
   chevron.innerHTML = `<i data-lucide="${devicesExpanded ? 'chevron-down' : 'chevron-right'}"></i>`;
   entry.appendChild(chevron);
