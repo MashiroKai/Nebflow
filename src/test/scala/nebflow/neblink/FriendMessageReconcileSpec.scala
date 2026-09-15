@@ -350,7 +350,7 @@ class FriendMessageReconcileSpec extends FunSuite:
   // ══ R9 · 对账扫描面（冷锚排除 + 一次读取给出 id+水位）════════════════
   test("R9 扫描面 dispatchedAnchors：只含已有派发水位的会话；冷锚（从未派发 / 只被读过）一律排除") {
     val prog = for
-      g = new FriendMessagingGuard()
+      g <- IO(new FriendMessagingGuard())
       _ <- g.advanceAnchor("hot", 5L)   // 有派发水位 ⇒ 入面
       _ <- g.bumpUnread("cold", 1)      // materialize 了条目但 dispatchedMax == 0 ⇒ 不得入面
       _ <- g.setRead("readonly", 9L)    // 只动**已读**水位 ⇒ 同样不得入面
