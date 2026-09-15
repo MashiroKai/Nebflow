@@ -23,6 +23,7 @@ import * as api from './friendsApi.js';
 // 同一转发入口（主卡 D2：同一契约，ref.id/refType/type='ref' 逐字不变）。
 import {
   refreshGroups, groupsAvailable, groupTitleOf, buildGroupSettings, groupErrToast,
+  groupAvatarGrid,
 } from './friendGroups.js';
 import { makeReference } from './reference.js';
 import { appendRefToActiveView } from './input.js';
@@ -362,6 +363,13 @@ function isSameDayMs(ms) {
 // session-level markers. origin defaults to 'user' when absent.
 function isAgentSent(m) { return !!(m && (m.origin === 'agent' || m.agentSent === true || m.kind === 'agent')); }
 
+/** Agent 徽章文案的**唯一键**（作者 2026-09-16 决策卡 F1：全站统一为通用
+ *  「Agent 代发」徽章形态，**不显示具体子 agent 名**）。
+ *  🔴 单源：主对话面与好友/群面、以及会话列表摘要前缀**都**取本键 ⇒ 同一语义
+ *  只有一处文案（原 zh 四值 / en 四值：`agentBadge` / `agentGroupBadge` / 摘要
+ *  旧硬编码前缀 已收敛；`messages.agentGroupBadge` 键同批删除，禁死键）。 */
+const AGENT_BADGE_TEXT_KEY = 'messages.agentBadge';
+
 /** 会话行摘要（⑧，作者 2026-09-15：「就很奇怪，对一个设备说 KAI / Device /
  *  You are now friends」）。
  *
@@ -377,7 +385,7 @@ function summaryOf(conv) {
   if (!m || !m.body) {
     return conv && conv.kind === 'device' ? t('messages.noMessages') : t('messages.systemNowFriends');
   }
-  return (isAgentSent(m) ? '[Agent] ' : '') + m.body;
+  return (isAgentSent(m) ? `[${t(AGENT_BADGE_TEXT_KEY)}] ` : '') + m.body;
 }
 
 function totalUnread() {
@@ -479,13 +487,23 @@ function convRow(conv) {
   if (isGroup) row.dataset.group = '1'; // QA 断言面：群行可机械定位
   if (isDevice) row.dataset.device = '1'; // QA 断言面：设备行可机械定位（同族口径）
 
-  // O④：群头像 = 标题首字母占位（avatarEl 无 avatarUrl 即走首字母分支，零新实现）。
+  // O④（**现行有效**）：群**自身**头像仍无字段；群行头像 = **成员头像九宫格**
+  // （唯一实现 = friendGroups.groupAvatarGrid），名册/字段不可得时回退标题首字母
+  // 那一枚（现状形态 = 降级态，非被删态）。数据面 = conv.memberAvatars（归一读点
+  // 只在 friendsApi.normalizeGroupRow；渲染面禁读 wire 键）。
   // ④①（作者 2026-09-15）：**设备行头像**改为与联系人面板设备段**同款**的
   // 平台图标（`deviceAvatarEl`，字形源 = `platformDisplay` 单点）——原形态是
   // `avatarEl` 的**首字母占位**（与好友/群同款），与联系人面板里那台设备的
-  // 图标不一致（红读数见本批报告 §①）。单聊行照旧朋友档案、群行照旧首字母。
+  // 图标不一致（红读数见本批报告 §①）。单聊行照旧朋友档案。
   const avatarPerson = isGroup ? { name: groupTitleOf(conv) } : conv.friend;
-  row.appendChild(isDevice ? deviceAvatarEl(conv.device, 40) : avatarEl(avatarPerson, 40));
+  if (isDevice) {
+    row.appendChild(deviceAvatarEl(conv.device, 40));
+  } else if (isGroup) {
+    row.appendChild(groupAvatarGrid(conv.memberAvatars, 40, conv.memberCount)
+      || avatarEl(avatarPerson, 40));
+  } else {
+    row.appendChild(avatarEl(avatarPerson, 40));
+  }
   const meta = el('div', 'fm-row-meta');
   const top = el('div', 'fm-conv-top');
   const rowName = isDevice ? deviceLabel(conv.device) : (isGroup ? groupTitleOf(conv) : personLabel(conv.friend));
@@ -551,6 +569,42 @@ function closeChat() {
 function currentConv() {
   if (modalEls && modalEls.conv) return modalEls.conv;
   return conversations.find(c => c.conversationId === openConvId) || null;
+}
+
+/** 群组合头像落槽（**唯一**落槽实现：窗头 `.fm-modal-avatar` + 抽屉信息头
+ *  `.fm-gs-head-avatar` 共用）。
+ *  数据源优先级（**两级，禁第三级**）：
+ *   ① `cells`（本窗已拉到的成员名册，来源 = `getGroupMembers`，含显示名）；
+ *   ② `conv.memberAvatars`（会话列表行字段，归一出口产物；渲染面禁读 wire 键）。
+ *  两级都空（名册未到 / 字段缺席 / 畸形 / 群 0 人）⇒ 回退标题首字母那一枚
+ *  （现状形态 = 降级态）。逐格无 `avatarUrl` 由 groupAvatarGrid 内逐格首字母兜底。 */
+function paintGroupAvatarInto(host, conv, cells) {
+  if (!host || !conv) return;
+  const list = (Array.isArray(cells) && cells.length) ? cells : conv.memberAvatars;
+  const total = Number(conv.memberCount) || (Array.isArray(list) ? list.length : 0);
+  host.innerHTML = '';
+  host.appendChild(groupAvatarGrid(list, 40, total) || avatarEl({ name: convTitleLabel(conv) }, 40));
+}
+
+/** 开着的群窗：组合头像就地重打（`fm-groups-changed` 到达 ⇒ 成员集可能已变）。
+ *  触发面 = 方案 §3.2.2 的**唯一现成广播面**；数据零新增请求（复用群列表行字段
+ *  + 抽屉自己的成员面拉取）。会话行可能已被 refreshConversations 换成新对象 ⇒
+ *  先把最新读数同步回本窗捕获的 conv（窗头与抽屉共用同一份，禁两套数据）。 */
+function refreshOpenGroupHeaderAvatar() {
+  if (!modalEls) return;
+  const slot = modalEls.overlay.querySelector('.fm-modal-avatar');
+  const drawerAvatar = modalEls.overlay.querySelector('.fm-gs-head-avatar');
+  if (!slot && !drawerAvatar) return;
+  const conv = currentConv();
+  if (!conv || conv.kind !== 'group') return;
+  const fresh = conversations.find(c => c.conversationId === conv.conversationId);
+  if (fresh && fresh !== conv) {
+    conv.memberAvatars = fresh.memberAvatars;
+    if (fresh.memberCount !== undefined) conv.memberCount = fresh.memberCount;
+  }
+  const cells = groupMemberAvatars.get(String(conv.conversationId));
+  paintGroupAvatarInto(slot, conv, cells);
+  paintGroupAvatarInto(drawerAvatar, conv, cells);
 }
 
 function isStillFriend(conv) {
@@ -736,6 +790,11 @@ function convTitleLabel(conv) {
 // 备注，主卡 H 节口径）。开群窗时惰性取一次；首帧早于名册时先挂空槽（带
 // data-sender-id），名册到达后就地回填 —— 消息本体渲染不受名册成败影响。
 const groupMemberNames = new Map(); // conversationId -> Map(senderId -> displayName)
+// 窗头组合头像的**名册腿**（conversationId -> [{userId,name,avatarUrl}]）：来源 =
+// 与发送者名**同一次** `getGroupMembers`（零新增请求、零 N+1；方案 §3.2.5「群会话
+// 窗头名册可得」）。首帧早于名册时用会话行字段 `memberAvatars` 先画（列表面同源），
+// 名册到达后就地升级。
+const groupMemberAvatars = new Map();
 
 /** 群发送者显示名（未命中 ⇒ ''，渲染层留空槽等待回填）。 */
 function groupSenderNameOf(conv, senderId) {
@@ -751,10 +810,17 @@ async function hydrateGroupSenderNames(conv) {
     // 学到即收敛整窗方向判据（含已渲染气泡的下一次渲染）。
     if (members && members.selfUserId) learnSelfUserId(members.selfUserId);
     const map = new Map();
+    const cells = [];
     for (const mem of members || []) {
       if (mem && mem.userId) map.set(String(mem.userId), mem.name || String(mem.userId));
+      // 窗头组合头像格子（身份键 userId 与列表行字段同空间；顺序纯透传 ——
+      // 🔴 禁把索引 0 当群主，正典 §A.2 owner 位置不确定）。
+      if (mem && mem.userId) cells.push({ userId: mem.userId, name: mem.name, avatarUrl: mem.avatarUrl });
     }
     groupMemberNames.set(String(conv.conversationId), map);
+    groupMemberAvatars.set(String(conv.conversationId), cells);
+    // 名册到达 ⇒ 窗头组合头像就地重打（同一次拉取的产物，零新增请求）。
+    refreshOpenGroupHeaderAvatar();
     // 就地回填：名册晚于首帧到达时，补齐已渲染气泡的发送者名（幂等）。
     if (modalEls && openConvId === conv.conversationId) {
       for (const s of modalEls.flow.querySelectorAll('.fm-msg-sender[data-sender-id]')) {
@@ -779,6 +845,14 @@ function renderChatModal(conv) {
   // 窗头转发按钮已移除（作者 2026-09-12 裁定，方案 §3.1 S5）：转发入口只保留
   // 按消息的两条 —— 气泡内按钮 + 气泡右键，共用 forwardBubble（无第二实现）。
   const header = el('div', 'fm-modal-header');
+  // 群窗头 = 组合头像（40px 档）+ 群名 + 成员数（方案 §3.1 P1；**窗头此前无头像**，
+  // 现取 avatarEls=0 ⇒ 本批补齐）。头像元素由下方 groupAvatarSlot 持有，随名册/
+  // 群列表变更就地重打（禁整窗重建）。
+  const groupAvatarSlot = conv.kind === 'group' ? el('span', 'fm-modal-avatar') : null;
+  if (groupAvatarSlot) {
+    paintGroupAvatarInto(groupAvatarSlot, conv);
+    header.appendChild(groupAvatarSlot);
+  }
   const title = el('div', 'fm-modal-title');
   title.appendChild(el('span', 'fm-modal-name', convTitleLabel(conv)));
   // 群窗副行 = 成员数（有读数才挂）；单聊副行不变（neblinkId）。
@@ -800,6 +874,9 @@ function renderChatModal(conv) {
   }
   header.appendChild(title);
   // 群设置入口（仅群窗）：成员/邀请/改名/退群/解散抽屉（friendGroups.js 唯一属主）。
+  // H（决策卡 C/D/G/H）：入口**在会话窗头群名处** —— 窗头群名/标题区整块可点
+  // （微信原样），原 `.fm-gs-open` 图标钮**保留**为同族第二入口（既有断言面
+  // `.fm-gs-open` 不破；两入口共用同一个 mountDrawer，禁第二套抽屉实现）。
   let groupSettingsMounted = false;
   if (conv.kind === 'group') {
     const settingsBtn = el('button', 'fm-gs-open');
@@ -817,12 +894,15 @@ function renderChatModal(conv) {
           // 成员/标题就地变化：列表/窗头重打 + 抽屉重建（成员数/踢人态刷新）。
           renderList();
           updateModalTitle(conv);
+          refreshGroupHeaderAvatar();
           if (modalEls && groupSettingsMounted) mountDrawer();
         },
       });
       header.insertAdjacentElement('afterend', drawer);
       groupSettingsMounted = true;
     };
+    /** 窗头组合头像就地重打（成员/群列表变更 ⇒ 九宫格失效重算；禁整窗重建）。 */
+    const refreshGroupHeaderAvatar = () => refreshOpenGroupHeaderAvatar();
     settingsBtn.addEventListener('click', () => {
       if (groupSettingsMounted) {
         modalEls?.overlay.querySelector('.fm-group-settings')?.remove();
@@ -832,6 +912,16 @@ function renderChatModal(conv) {
       mountDrawer();
     });
     header.appendChild(settingsBtn);
+    // 窗头群名处入口（H）：title 区可点/可键盘触发 = 打开（收起）群信息抽屉。
+    const toggleFromTitle = () => { if (groupSettingsMounted) { modalEls?.overlay.querySelector('.fm-group-settings')?.remove(); groupSettingsMounted = false; } else { mountDrawer(); } };
+    title.classList.add('fm-modal-title-btn');
+    title.setAttribute('role', 'button');
+    title.setAttribute('tabindex', '0');
+    title.title = t('messages.groupSettings');
+    title.addEventListener('click', toggleFromTitle);
+    title.addEventListener('keydown', (e) => {
+      if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); toggleFromTitle(); }
+    });
   }
   // 信任模式 v1: 窗头信任状态指示（开启态一眼可辨；开关在好友行右键菜单）。
   // SEALED (author ruling 2026-09-12): 封存期不挂槽；updateTrustBadge 保留
@@ -1584,13 +1674,12 @@ function bubbleEl(m, conv) {
   // 放开后 `out` 只决定气泡左右 / 对齐（`resolveOut`），**不再是**徽标的可见性条件。
   // 服务端零改动（`origin` 生产版同样具备）；`model.rs` 注文「Local rendering
   // only」的语义摩擦已由作者裁定解除（本批附局限声明）。
-  // 群版文案（补充卡 §4.2 + A② 裁定）：群气泡按会话 kind 选键
-  // `messages.agentGroupBadge`（zh-CN「由 Agent 发」/ en "Sent by Agent"），
-  // 单聊既有键逐字不动 —— 渲染分支复用（`isAgentSent` 判据零改动），附件帧
-  // 与徽章同帧共存（fillBubble 附件卡渲染与本分支正交 ⇒ 结构性支持 A③ 翻案）。
+  // 群版文案 = **同一枚**通用徽章（作者 2026-09-16 决策卡 F1）：不再按会话 kind
+  // 选键（`messages.agentGroupBadge` 已删，禁死键/禁两套表述），全站一个键
+  // `AGENT_BADGE_TEXT_KEY`；`isAgentSent` 判据零改动，附件帧与徽章同帧共存
+  // （fillBubble 附件卡渲染与本分支正交 ⇒ 结构性支持 A③ 翻案）。
   if (isAgentSent(m)) {
-    meta.appendChild(el('span', 'fm-msg-agent-badge',
-      t(conv.kind === 'group' ? 'messages.agentGroupBadge' : 'messages.agentBadge')));
+    meta.appendChild(el('span', 'fm-msg-agent-badge', t(AGENT_BADGE_TEXT_KEY)));
   }
   if (hasForwarded(fwdKeyOf(conv, m.id))) meta.appendChild(el('span', 'fm-msg-forwarded-badge', t('messages.forwarded')));
   const timeMs = toEpochMs(m.createdAt);
@@ -2588,6 +2677,9 @@ export function initMessages() {
   // 带 openConversationId ⇒ 列表就绪后直接开群窗（新群必在服务端返回里）。
   window.addEventListener('fm-groups-changed', async (e) => {
     await refreshConversations();
+    // 群成员头像九宫格的重算触发点（方案 §3.2.2 唯一现成广播面）：群列表行已随
+    // refreshConversations 重打；**开着的群窗**需就地重打窗头头像（成员可能已变）。
+    refreshOpenGroupHeaderAvatar();
     const detail = /** @type {CustomEvent<{openConversationId?: string}>} */ (e).detail || {};
     if (detail.openConversationId
       && conversations.some(c => c.conversationId === detail.openConversationId)) {

@@ -10,8 +10,14 @@
 //    PUT /api/groups/{id}/title、DELETE /api/groups/{id}、
 //    POST /api/groups/{id}/messages（请求/响应/校验序 = 补充卡 §5.1 逐字）。
 //  · 九项裁定：成员上限 50（O①）/ 邀请需对方确认（O②/A-4）/ 退群后历史不可见
-//    （O③）/ 群头像首字母占位（O④）/ owner 禁退群只能解散（O⑨）/ admin 字段
-//    留置行为不开放（O⑧）/ 拉黑只断单聊、同群照常（O⑩）。
+//    （O③）/ 群头像首字母占位（O④，**现行有效**）/ owner 禁退群只能解散（O⑨，
+//    **现行有效**）/ 拉黑只断单聊、同群照常（O⑩）。
+//  · 权限矩阵（🔴 **O⑧ 已被取代**：作者 2026-09-16 06:23 决策卡推翻「admin 只做
+//    标识不赋权」；06:31 双卡追加「admin 亦可改名」+ 显式授权任命/撤销管理员路由）。
+//    终版（正典 §B.1）= 邀请 owner✅/admin✅/member❌ · 踢人 owner✅（不可踢自己）/
+//    admin✅（**仅普通成员**）· member❌ · 改名 owner✅/admin✅/member❌ · 解散
+//    **owner 专属** · 退群 admin✅/member✅/owner❌ · 设撤管理员 **owner 专属**。
+//    🔴 客户端只做 UX 入口闸，**权威闸在服务端**（禁复制第二套判定）。
 //  · fail-closed（主卡 G-2 :204-206 + js/friendsApi.js:77-82 errKind）：旧网关/
 //    旧服务端无群路由 ⇒ 404 ⇒ neblinkOff ⇒ 群入口隐藏 + 一次性可见提示
 //    （🔴 禁把「群不可用」写成静默无反应）。
@@ -65,6 +71,14 @@ export function groupErrToast(err) {
   if (code === 'group_not_found') { toastGlobal(t('messages.groupNotFound'), 'error'); return true; }
   if (code === 'group_disbanded') { toastGlobal(t('messages.groupDisbanded'), 'error'); return true; }
   if (code === 'not_member') { toastGlobal(t('messages.groupKicked'), 'error'); return true; }
+  // 越权专属码（正典 §B.4.1）：**必须可见**、且与 auth 403 分态（req() 已不派
+  // 登录链，见 friendsApi.js 同批注释）。群内越权一律走本分支。
+  if (code === 'not_group_admin') { toastGlobal(t('messages.groupNotAdmin'), 'error'); return true; }
+  // 目标已不是成员 / 角色取值非法 / 群满：逐码可见分态（禁静默、禁报成成功）。
+  if (code === 'member_not_found') { toastGlobal(t('messages.groupMemberNotFound'), 'error'); return true; }
+  if (code === 'invalid_role') { toastGlobal(t('messages.groupRoleInvalid'), 'error'); return true; }
+  if (code === 'owner_cannot_leave') { toastGlobal(t('messages.groupOwnerNoLeave'), 'error'); return true; }
+  if (code === 'group_full') { toastGlobal(t('contacts.createGroupCap'), 'error'); return true; }
   if (!err || err.status === undefined) return false; // 网络错：fm-network-error 已覆盖
   const kind = errKind(err);
   if (kind === 'auth') return true; // 登录引导已由全局链弹出
@@ -169,6 +183,74 @@ function avatarEl(person, size) {
 function confirmRun(title, text, run) {
   if (typeof window.__showConfirm === 'function') window.__showConfirm(title, text, run);
   else run();
+}
+
+// ── 群成员头像九宫格（批 1 · 正典 §A 字段 + 方案 §3.2.1 几何）───────────────
+/** 行模式表（微信式；方案 §3.2.1，逐格已渲染验证）：格子数 n ⇒ 每行格数。
+ *  n=1 [1] · 2 [2] · 3 [1,2] · 4 [2,2] · 5 [2,3] · 6 [3,3] · 7 [1,3,3] · 8 [2,3,3] · 9 [3,3,3] */
+const AVATAR_GRID_ROWS = [
+  [1], [2], [1, 2], [2, 2], [2, 3], [3, 3], [1, 3, 3], [2, 3, 3], [3, 3, 3],
+];
+
+/** 格内首字母兜底（**逐格**，复用既有口径：无 avatarUrl 就取名字首字符大写）。
+ *  显示名优先、其次 `userId`（会话列表行只有 userId ⇒ 退化为 userId 首字符）。 */
+function gridCellInitial(cell) {
+  const src = (cell && (cell.name || cell.userId)) || '?';
+  return String(src).trim().charAt(0).toUpperCase() || '?';
+}
+
+/**
+ * 群成员头像九宫格（**唯一实现**；三处落点共用：会话列表群行 / 群会话窗头 /
+ * 群信息面板头部）。样式全部落在 `friends.css` 的 `.fm-avgrid*`（零内联色值、
+ * 零内联像素算术）。
+ *
+ * 几何（**G-A 方形圆角**，方案 §3.2.1 / 决策卡 A）：
+ *   · 容器 = `size × size` 方形、`border-radius:5px`、格间缝 `1px`、容器底
+ *     `var(--color-surface)`；格内 `border-radius:1px`
+ *   · **行高 = 容器高 ÷ 行数**、**某行格宽 = 容器宽 ÷ 该行格数**（两条规则即定义
+ *     全部 9 种模式 ⇒ flex 等高行 + 等分格，禁内联算像素）
+ *   · 每格 `img { object-fit: cover }`（复用既有 `friends.css` 口径）
+ *
+ * 降级（方案 §3.2.3）：
+ *   · `cells` 为空 ⇒ **返回 null**（调用方回退现状那枚「标题首字母」头像 = 降级态，
+ *     非被删态；n=0 / 名册未到 / 取数失败三态同形）
+ *   · 1..9 ⇒ 铺满；逐格无 `avatarUrl` ⇒ 该格首字母兜底（**逐格**，非整图回退）
+ *   · `total > 9` ⇒ 右下角 `+N` 角标（N = total − 9）
+ *
+ * @param {Array<{userId?: string, avatarUrl?: string, name?: string}>} cells
+ *        已归一格子（**禁**传 wire 行；只消费 userId/avatarUrl/name 三个内部键）
+ * @param {number} size 容器边长（px；本批落点档 = 40）
+ * @param {number} [total] 成员总数（>9 时出角标；缺省 = cells.length）
+ * @returns {HTMLElement|null}
+ */
+export function groupAvatarGrid(cells, size, total) {
+  const list = Array.isArray(cells) ? cells.filter(Boolean).slice(0, 9) : [];
+  if (list.length === 0) return null;
+  const grid = el('div', `fm-avgrid fm-avgrid-${size}`);
+  const pattern = AVATAR_GRID_ROWS[list.length - 1];
+  let i = 0;
+  for (const count of pattern) {
+    const row = el('div', 'fm-avgrid-row');
+    for (let k = 0; k < count && i < list.length; k += 1, i += 1) {
+      const cell = list[i];
+      const c = el('span', 'fm-avgrid-cell');
+      if (cell.avatarUrl) {
+        const img = document.createElement('img');
+        img.src = cell.avatarUrl;
+        img.alt = '';
+        c.appendChild(img);
+      } else {
+        c.textContent = gridCellInitial(cell);
+      }
+      row.appendChild(c);
+    }
+    grid.appendChild(row);
+  }
+  const n = Number(total) || list.length;
+  if (n > 9) grid.appendChild(el('span', 'fm-avgrid-more', `+${n - 9}`));
+  // 装饰性组合（群名已是同义的可见文本）⇒ 与既有 avatarEl 同口径 aria-hidden。
+  grid.setAttribute('aria-hidden', 'true');
+  return grid;
 }
 
 // ── 好友多选器（建群 / owner 邀请 共用一份，禁两份选择面）───────────────
@@ -320,9 +402,16 @@ export function openCreateGroupDialog() {
 
 // ── 群设置抽屉（聊天窗内；renderChatModal 的群分支挂载）─────────────────
 /**
- * 构建群设置抽屉内容（成员列表 + 角色面 + 权限内动作）。
- * 权限矩阵（九项裁定 / 主卡 A-3）：owner = 改名/邀请/踢人/解散 + 禁退群提示；
- * member = 退群；admin = 字段留置仅展示（O⑧ 行为不开放）。
+ * 构建群设置抽屉内容（群信息头 + 群名 + 添加成员 + 成员列表 + 角色/权限动作）。
+ *
+ * 权限矩阵（**正典 §B.1 终版**；O⑧ 已被作者 2026-09-16 06:23 决策卡取代、
+ * 06:31 双卡更正改名为 admin ✅）：
+ *  · owner = 改名 / 邀请 / 踢人（全权，不可踢自己）/ 解散（**专属**）/ 设撤管理员（**专属**）
+ *  · admin = 改名 / 邀请 / 踢人（**仅普通成员**：不可踢 owner、不可踢其他 admin、不可踢自己）
+ *  · member = 退群（并可见/可用 = 无管理动作）
+ *  · 退群：owner ❌（`owner_cannot_leave`，只给解散）；admin / member ✅
+ *  🔴 本函数只做 **UX 入口闸**（不出现 = 不撞墙）；**权威闸在服务端**
+ *  （禁复制第二套判定、禁据本地猜测放宽权限闸）。
  * @param {any} conv 群会话行（kind==='group'）
  * @param {{toast: (s: string) => void, close: () => void, onChanged: () => void}} hooks
  * @returns {HTMLElement}
@@ -332,8 +421,35 @@ export function buildGroupSettings(conv, hooks) {
   const toast = (s) => hooks.toast(s);
   const changed = () => hooks.onChanged();
   const isOwner = conv.myRole === 'owner';
+  const isAdmin = conv.myRole === 'admin';
+  const canRename = isOwner || isAdmin; // 与 canInvite 同判据（正典 §B.1 两行同值）
+  const canInvite = isOwner || isAdmin;
+  /** 踢人 UX 闸（逐目标）：owner 全权（对 owner 行不挂 = 不可踢自己）；admin 仅普通成员。 */
+  const canKick = (mem) => (isOwner ? mem.role !== 'owner' : (isAdmin ? mem.role === 'member' : false));
 
-  // ── 群名（owner 可改；行内编辑，imeGuard 接入）
+  // ── 群信息头（组合头像 + 群名 + 成员数；方案 §3.1 P1 + H2 同族面）
+  // 头像 = 成员头像九宫格（**唯一实现** groupAvatarGrid）；名册未到 ⇒ null ⇒ 回退
+  // 现状那枚标题首字母头像（降级态）。成员数据面 = 下方同一次 getGroupMembers 拉取。
+  const headSec = el('div', 'fm-gs-head');
+  const headAvatar = el('div', 'fm-gs-head-avatar');
+  headSec.appendChild(headAvatar);
+  const headMeta = el('div', 'fm-gs-head-meta');
+  headMeta.appendChild(el('div', 'fm-gs-head-name', groupTitleOf(conv)));
+  const headCount = el('div', 'fm-gs-head-sub', conv.memberCount > 0
+    ? t('messages.memberCount', { n: conv.memberCount }) : '');
+  headMeta.appendChild(headCount);
+  headSec.appendChild(headMeta);
+  root.appendChild(headSec);
+
+  /** 群信息头头像重打：九宫格可用 ⇒ 组合头像；不可用 ⇒ 标题首字母（现状形态）。 */
+  function paintHeadAvatar(cells) {
+    headAvatar.innerHTML = '';
+    const grid = groupAvatarGrid(cells, 40, conv.memberCount);
+    headAvatar.appendChild(grid || avatarEl({ name: groupTitleOf(conv) }, 40));
+  }
+  paintHeadAvatar([]);
+
+  // ── 群名（owner / admin 可改；行内编辑，imeGuard 接入）
   const titleSec = el('div', 'fm-gs-section');
   titleSec.appendChild(el('div', 'fm-gs-title', t('messages.groupTitleLabel')));
   const titleRow = el('div', 'fm-gs-rename');
@@ -344,14 +460,14 @@ export function buildGroupSettings(conv, hooks) {
   titleInput.value = groupTitleOf(conv);
   titleInput.placeholder = t('contacts.createGroupName');
   titleInput.autocomplete = 'off';
-  titleInput.disabled = !isOwner;
+  titleInput.disabled = !canRename;
   bindImeGuard(titleInput);
   titleInput.addEventListener('keydown', (e) => {
     if (isImeComposing(e, titleInput)) return;
     if (e.key === 'Enter') { e.preventDefault(); saveTitle(); }
   });
   titleRow.appendChild(titleInput);
-  if (isOwner) {
+  if (canRename) {
     const saveBtn = el('button', 'glass-control fm-gs-save', t('messages.groupTitleSave'));
     saveBtn.addEventListener('click', saveTitle);
     titleRow.appendChild(saveBtn);
@@ -371,20 +487,12 @@ export function buildGroupSettings(conv, hooks) {
     } catch (err) { groupErrToast(err); }
   }
 
-  // ── 成员列表（显示名而非好友备注，主卡 H 节口径）
-  const memberSec = el('div', 'fm-gs-section');
-  const memberHead = el('div', 'fm-gs-title-row');
-  memberHead.appendChild(el('div', 'fm-gs-title', t('messages.groupMembers')));
-  memberSec.appendChild(memberHead);
-  const memberList = el('div', 'fm-member-list');
-  memberList.appendChild(el('div', 'fm-empty', t('messages.loading')));
-  memberSec.appendChild(memberList);
-  root.appendChild(memberSec);
-
-  // ── 邀请（owner；A-4：对方 accept 后才入群 ⇒ 发出后即 pending 态反馈）
-  if (isOwner) {
+  // ── 添加成员（**移到成员列表之前**，决策卡 C/D/G/H；owner/admin 可用）
+  // 入口文案 = 「添加成员」（语义 = 动作本身；候选源仍是好友，复用 buildFriendPicker
+  // 那一份，禁第二套选择面）。上限 50 只做 UX 预检（权威闸在服务端）。
+  if (canInvite) {
     const inviteSec = el('div', 'fm-gs-section');
-    const inviteBtn = el('button', 'glass-control fm-gs-action', t('messages.groupInviteBtn'));
+    const inviteBtn = el('button', 'glass-control fm-gs-action fm-gs-addmember', t('messages.groupAddMember'));
     let pickerHost = null;
     const invitedIds = new Set();
     inviteBtn.addEventListener('click', () => {
@@ -436,10 +544,19 @@ export function buildGroupSettings(conv, hooks) {
     root.appendChild(inviteSec);
   }
 
-  // ── 退群 / 解散（互斥：owner 禁退群只能解散，O⑨）
+  // ── 成员列表（显示名而非好友备注，主卡 H 节口径）
+  const memberSec = el('div', 'fm-gs-section');
+  const memberHead = el('div', 'fm-gs-title-row');
+  memberHead.appendChild(el('div', 'fm-gs-title', t('messages.groupMembers')));
+  memberSec.appendChild(memberHead);
+  const memberList = el('div', 'fm-member-list');
+  memberList.appendChild(el('div', 'fm-empty', t('messages.loading')));
+  memberSec.appendChild(memberList);
+  root.appendChild(memberSec);
+
+  // ── 退群 / 解散（互斥：owner 禁退群只能解散，O⑨ **现行有效**）
   const actSec = el('div', 'fm-gs-section fm-gs-actions');
   if (isOwner) {
-    root.appendChild(actSec);
     const hint = el('div', 'fm-gs-hint', t('messages.groupOwnerNoLeave'));
     actSec.appendChild(hint);
     const dissolveBtn = el('button', 'glass-control fm-gs-action fm-gs-danger', t('messages.groupDissolve'));
@@ -467,7 +584,24 @@ export function buildGroupSettings(conv, hooks) {
       });
     });
     actSec.appendChild(leaveBtn);
-    root.appendChild(actSec);
+  }
+  root.appendChild(actSec);
+
+  // ── 设 / 撤管理员（**owner 专属**；正典 §B.2 唯一授权新路由）
+  // 幂等语义落到按钮态：成功后 changed() ⇒ 抽屉重建（pill 与按钮文案同步翻面，
+  // 不会出现第二态）；提交期间禁重复点击。错误路径一律 groupErrToast（可见）。
+  async function setRole(mem, nextRole, btn) {
+    if (btn.disabled) return;
+    btn.disabled = true;
+    try {
+      await api.setGroupMemberRole(conv.conversationId, mem.userId, nextRole);
+      toast(nextRole === 'admin' ? t('messages.groupAdminSet') : t('messages.groupAdminUnset'));
+      window.dispatchEvent(new CustomEvent('fm-groups-changed'));
+      changed();
+    } catch (err) {
+      btn.disabled = false;
+      groupErrToast(err);
+    }
   }
 
   // 成员拉取（async 填充；404/403 分态 = 群已不存在/已解散/非成员 ⇒ 提示并关抽屉）
@@ -478,16 +612,30 @@ export function buildGroupSettings(conv, hooks) {
       memberList.appendChild(el('div', 'fm-empty', t('contacts.listError')));
       return;
     }
-    if (conv.memberCount !== members.length) conv.memberCount = members.length;
+    if (conv.memberCount !== members.length) {
+      conv.memberCount = members.length;
+      headCount.textContent = t('messages.memberCount', { n: members.length });
+    }
     memberHead.appendChild(el('span', 'fm-gs-count', String(members.length)));
+    // 群信息头组合头像：**同一份名册**（身份键 userId 与成员面同空间；顺序纯透传，
+    // 禁把索引 0 当群主）——成员头像缺失 ⇒ 逐格首字母兜底。
+    paintHeadAvatar(members.map((mem) => ({ userId: mem.userId, name: mem.name, avatarUrl: mem.avatarUrl })));
     for (const mem of members) {
       const row = el('div', 'fm-member-row');
       row.appendChild(avatarEl(mem, 28));
       row.appendChild(el('span', 'fm-member-name', mem.name || mem.userId));
       if (mem.role === 'owner') row.appendChild(el('span', 'fm-role-tag', t('messages.roleOwner')));
       else if (mem.role === 'admin') row.appendChild(el('span', 'fm-role-tag', t('messages.roleAdmin')));
-      // 踢人（owner only；对 owner 行不挂 —— server 闸之外的客户端预检）
+      // 设 / 撤管理员（**owner 专属**；与「移出群聊」同族位置 = 成员行操作位；
+      // 对 owner 行不挂 —— 群主角色不可变更，服务端同判据）
       if (isOwner && mem.role !== 'owner') {
+        const toAdmin = mem.role !== 'admin';
+        const roleBtn = el('button', 'glass-control fm-gs-role', toAdmin ? t('messages.groupSetAdmin') : t('messages.groupRevokeAdmin'));
+        roleBtn.addEventListener('click', () => setRole(mem, toAdmin ? 'admin' : 'member', roleBtn));
+        row.appendChild(roleBtn);
+      }
+      // 踢人（按 canKick 逐目标判定；服务端为权威闸，客户端只做入口闸）
+      if (canKick(mem)) {
         const kickBtn = el('button', 'glass-control fm-gs-kick', t('messages.groupKick'));
         kickBtn.addEventListener('click', () => {
           confirmRun(t('messages.groupKick'), t('messages.confirmKick', { name: mem.name || mem.userId }), async () => {

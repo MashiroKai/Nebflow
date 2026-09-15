@@ -2,7 +2,7 @@
 // Backend is the source of truth. localStorage is a best-effort write-behind cache
 // for optimistic display during streaming, and a fallback when backend is unreachable.
 
-import state, { LS_KEY, LS_SESSIONS_KEY, LS_HISTORY_KEY, AGENT_PALETTE } from './state.js';
+import state, { LS_KEY, LS_SESSIONS_KEY, LS_HISTORY_KEY } from './state.js';
 import { key } from './branding.js';
 // ⑨ 淘汰顺序挂靠点（作者 2026-09-12 口径）：好友消息缓存是纯缓存且已硬封顶
 // （512 KB / 30 会话，见 fmMessageCache.js）——配额压力下**先丢它**，
@@ -639,17 +639,12 @@ export function restoreFromStorage(opts = {}) {
       bubble.className = 'bubble ai';
       bubble.innerHTML = renderMarkdownWithMath(m.text || '');
       if (m.agentId && m.agentId !== 'default') {
+        // F1（作者 2026-09-16 决策卡）：与 chat.js 同一枚通用徽章 —— 无内联色
+        // （内联色/几何全部单源化到 sapphire.css 的 `.agent-badge`），文案取同一
+        // 个 i18n 键（禁死键、禁第二套表述）。
         const badge = document.createElement('div');
         badge.className = 'agent-badge';
-        const colorIdx = m.agentId.length % AGENT_PALETTE.length;
-        const color = AGENT_PALETTE[colorIdx];
-        badge.style.borderColor = color;
-        badge.style.color = color;
-        badge.textContent = m.agentId;
-        badge.style.maxWidth = '160px';
-        badge.style.whiteSpace = 'nowrap';
-        badge.style.overflow = 'hidden';
-        badge.style.textOverflow = 'ellipsis';
+        badge.textContent = t('messages.agentBadge');
         row.appendChild(badge);
       }
       row.appendChild(bubble);
@@ -964,17 +959,12 @@ export function restoreFromBackendHistory(msgs, opts = {}) {
       bubble.className = 'bubble ai';
       deferMd(bubble, m.text || '');
       if (m.agentId && m.agentId !== 'default') {
+        // F1（作者 2026-09-16 决策卡）：与 chat.js 同一枚通用徽章 —— 无内联色
+        // （内联色/几何全部单源化到 sapphire.css 的 `.agent-badge`），文案取同一
+        // 个 i18n 键（禁死键、禁第二套表述）。
         const badge = document.createElement('div');
         badge.className = 'agent-badge';
-        const colorIdx = m.agentId.length % AGENT_PALETTE.length;
-        const color = AGENT_PALETTE[colorIdx];
-        badge.style.borderColor = color;
-        badge.style.color = color;
-        badge.textContent = m.agentId;
-        badge.style.maxWidth = '160px';
-        badge.style.whiteSpace = 'nowrap';
-        badge.style.overflow = 'hidden';
-        badge.style.textOverflow = 'ellipsis';
+        badge.textContent = t('messages.agentBadge');
         row.appendChild(badge);
       }
       row.appendChild(bubble);

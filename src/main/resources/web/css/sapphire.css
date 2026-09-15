@@ -513,6 +513,40 @@
   }
 }
 
+/* ── Agent 徽章 — 全站通用「Agent 代发」形态（**单一来源**；作者 2026-09-16
+   决策卡 F1「统一为通用徽章形态，不显示具体子 agent 名」）─────────────────
+   本规则是 `.agent-badge`（主对话面）与 `.fm-msg-agent-badge`（好友/群消息元信息
+   行槽位）的**唯一**定义。改前 = 两份同名声明叠加（`chat.css` + `split.css`，
+   后者晚加载 ⇒ border-radius 4px→9999px、border-width 1.5px→1px、background/color
+   被静默覆盖）+ `chat.js`/`persistence.js` 内联 agentColor（第三处色源）⇒ 只改任
+   一处的自检会得到「改了没生效」。本批：两份声明删除、内联色删除、主对话面放弃
+   agentId/uppercase/mono 表达 ⇒ 两面**同形**（材质/几何/文案全单源）。
+   落点 = 设计系统标准层（本文件最后加载 ⇒ 同特异度平局由本层胜出，也便于
+   「同一组件只有一个家」的机械核对）。规则内零字面量色值（全走既有 token）。 */
+.agent-badge,
+.fm-msg-agent-badge {
+  display: inline-block;
+  font-size: 11px;
+  font-weight: 500;
+  letter-spacing: normal;
+  text-transform: none;
+  padding: 1px 8px;
+  border-radius: 9999px;
+  background: var(--glass-etched-bg);
+  border: 1px solid var(--glass-etched-border);
+  color: var(--color-frame-text-muted, var(--color-text-muted));
+  max-width: 160px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+/* 主对话面独有几何：徽章悬在气泡上方（`.row.ai` = 列向 flex）⇒ 保留下外边距。
+   消息元信息行（`.fm-msg-meta` = 横向 inline-flex + align-items:center）**不取**
+   本值（否则该行会多出 4px 底距、与时间文本错位）。
+   🔴 作用域 = 主对话行（`.agent-row`）；**不是**组件的第二份定义 —— 组件定义
+   仍只有上面那一个块（本行只是该组件在特定宿主里的落位几何）。 */
+.agent-row > .agent-badge { margin-bottom: 4px; }
+
 /* time — 10px 等宽栈 + tabular-nums（主对话框 chat.css:1157-1162）
    S06/S07：取色与不透明度收敛到主对话口径 = `--color-text` + opacity .35
    （原先友/设备只声明字号/字体族/数字特性，颜色继承 pill 的 muted **实色**、
