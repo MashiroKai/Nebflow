@@ -702,8 +702,11 @@ async function openConversation(conversationId, rowEl) {
 
 /** 窗头/弹窗标题单点（群 = 群名；单聊 = 既有 personLabel 链，备注 > 显示名）。 */
 function convTitleLabel(conv) {
-  // 设备会话（MVP-1）：窗头名 = 设备显示名（`deviceLabel` 单点：描述 > 设备名 > id）。
-  if (conv && conv.kind === 'device') return deviceLabel(conv.device);
+  // 设备会话（MVP-1 + U3）：窗头名 = 设备显示名（`deviceLabel` 单点：描述 > 设备名 > 占位）。
+  // 🔴 U3（root 2026-09-15 #600）：**无名称无描述**的设备 ⇒ 窗头显示**占位文案**
+  // （`neblink.unknownDevice`）而**非 device id**（与作者 ⑤「不显示设备码」同族精神）
+  // ⇒ 走 `deviceLabel` 的窗头专用形态（唯一实现内的一支，不新开第二份名字链）。
+  if (conv && conv.kind === 'device') return deviceLabel(conv.device, { forWindowTitle: true });
   return (conv && conv.kind === 'group') ? groupTitleOf(conv) : personLabel(conv && conv.friend);
 }
 
@@ -997,7 +1000,7 @@ function startDeviceDescEdit(conv, row, text) {
       conv.device.userDescription = next;
       text.textContent = next || t('neblink.deviceDescHint');
       text.classList.toggle('fm-device-desc-empty', !next);
-      updateModalTitle(conv); // 窗头名 = `deviceLabel`（描述 > 设备名 > id）就地重打
+      updateModalTitle(conv); // 窗头名 = `deviceLabel`（描述 > 设备名 > 占位；U3 窗头不回落 id）就地重打
       renderList();           // 列表行名同源同改
     } catch {
       modalToast(t('messages.deviceDescSaveFailed'));
@@ -2601,10 +2604,22 @@ function dedupeDevices(peers) {
   return out;
 }
 
-/** 设备显示名（**唯一实现**，与设置面板同口径）：用户描述 > 设备名 > id > 占位。 */
-export function deviceLabel(d) {
+/** 设备显示名（**唯一实现**，与设置面板同口径）：用户描述 > 设备名 > ↴
+ *   · 面板行（默认形态）：`deviceId` > 占位文案；
+ *   · **设备窗窗头**（`opts.forWindowTitle`）：占位文案（🔴 不回落 `deviceId`）。
+ *  🔴 U3（root 2026-09-15 #600）：无名称**且**无描述的设备，**窗头**显示占位文案
+ *  （「未命名设备」）而非 id —— 与作者 ⑤「不显示设备码」同族精神。占位文案走既有
+ *  UI i18n 通道（`t()`；键 `neblink.unknownDevice` 的 en/zh **配对已在库**，零新键、
+ *  零第二语言真源）。
+ *  ⚠ 面板行（消息面板设备行 / 联系人面板设备行）的 `deviceId` 回落**不在该令指涉
+ *  面内**（作者 ⑤ 2026-09-15 已明示「只提对话框」）⇒ 默认形态**逐字零行为差**，
+ *  该面列开放项。 */
+export function deviceLabel(d, opts) {
   if (!d) return '';
-  return d.userDescription || d.deviceName || d.deviceId || t('neblink.unknownDevice');
+  const named = d.userDescription || d.deviceName;
+  if (named) return named;
+  if (opts && opts.forWindowTitle) return t('neblink.unknownDevice');
+  return d.deviceId || t('neblink.unknownDevice');
 }
 
 /** 设备窗副行 = **平台标签**（⑤a，作者 2026-09-15：「一是不要显示设备码」）。
