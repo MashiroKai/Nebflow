@@ -42,20 +42,27 @@ import { homedir, tmpdir } from 'node:os';
 import { setTimeout as sleep } from 'node:timers/promises';
 import { chromium } from '/opt/homebrew/lib/node_modules/playwright/index.mjs';
 import { guardFixtureHome, safeRm, assertCleanable } from './lib/delguard.mjs';
+import { guardWrites } from './lib/writeguard.mjs';
 
 const REPO = dirname(dirname(fileURLToPath(import.meta.url)));
 const GATEWAY_PORT = Number(process.env.GATEWAY_PORT || 8098);
 const MOCK_PORT = Number(process.env.MOCK_PORT || 18998);
 const BASE = `http://127.0.0.1:${GATEWAY_PORT}`;
 const HOME = process.env.NEBFLOW_HOME || join(tmpdir(), 'qa-f1f2-askuser');
-// R4 删除守卫：解析后的真实绝对路径必须落 tmpdir 之下（≠ tmpdir 自身）——早期 fail-fast，先于任何 spawn。
-// NB_DRY_RUN=1：只跑断言、不删除、不 spawn（下游负控入口）。
-guardFixtureHome(HOME, { label: 'e2e-askuser-source-label' });
 const PROJECT = 'qa-f1f2';
 const WS_DIR = join(HOME, `ws-${PROJECT}`);
 const DISPATCHER_AGENT_SRC = process.env.DISPATCHER_AGENT_SRC || join(homedir(), '.nebflow', 'agents', 'project-dispatcher');
 const GENERAL_AGENT_SRC = join(REPO, 'src/main/resources/seed/agents/general');
-const SHOTS = process.env.QA_SHOTS || join(homedir(), '.nebflow/docs/Nebflow/assets/20260908_f1f2-askuser');
+// 截图输出目录 = **受控参数**（`QA_SHOTS`）；默认 = 本 checkout 的 `.nebflow/evidence/20260915_e2eask/`。
+// 🔴 2026-09-15 e2efix 批：原默认值 `join(homedir(), '.nebflow/docs/Nebflow/assets/20260908_f1f2-askuser')`
+//    是**硬编码绝对路径**，一次实跑覆写了该目录下 4 个 tracked 人类资产 ⇒ 已删，改走白名单根。
+const SHOTS = process.env.QA_SHOTS || join(REPO, '.nebflow', 'evidence', '20260915_e2eask', `f1-shots-${MOCK_PORT}`);
+// W1 写根断言（先于 guardFixtureHome 与任何 spawn）：全部写入面必须落白名单根
+// （本 checkout 之下 / 主区 `.nebflow/evidence/<批>/` 之下 / tmp 根之下一级 `qa-*`），越界 → exit 3。
+guardWrites([HOME, WS_DIR, SHOTS], { repoRoot: REPO, label: 'e2e-askuser-source-label' });
+// R4 删除守卫：解析后的真实绝对路径必须落 tmpdir 之下（≠ tmpdir 自身）——早期 fail-fast，先于任何 spawn。
+// NB_DRY_RUN=1：只跑断言、不删除、不 spawn（下游负控入口）。
+guardFixtureHome(HOME, { label: 'e2e-askuser-source-label' });
 
 const QA = '方案抉择甲：选用晨雾配色还是暮蓝配色？'; // node A question（<40 字符，不截断对照）
 const QB = '方案抉择乙：是否启用实验性渲染开关，并同步更新相关文档、测试用例、发布说明与官网特性矩阵？'; // node B question（>40 字符 → 截断验证）
@@ -260,9 +267,22 @@ function findJar() {
   if (!jars.length) throw new Error('assembly jar not found — run sbt assembly first');
   return join(dir, jars.sort().pop());
 }
-function startGateway() {
+// classpath 覆盖口（受控参数 `NB_E2E_CP`，冒号分隔，可含目录）：
+//   装配面权威口径 = 宿主**实载工件**（`20260915_hostcp-*` 三件：现取快照 + 硬断言 + 装配模板）
+//   + 本支 web 树前置 ⇒ 由调用方跑器算好并把整串传进来；本脚本只负责 `-cp` 取值。
+//   未设时回落 = 本 checkout 的 assembly jar（历史口径，单 jar）。
+function instanceClasspath() {
+  const cp = process.env.NB_E2E_CP;
+  if (cp) {
+    console.log(`[phase] classpath (NB_E2E_CP, 宿主实载工件+web 前置): entries=${cp.split(':').length}`);
+    return cp;
+  }
   const jar = findJar();
   console.log(`[phase] jar: ${jar}`);
+  return jar;
+}
+function startGateway() {
+  const jar = instanceClasspath();
   const child = spawn('java', [
     '--add-opens', 'java.base/java.lang=ALL-UNNAMED',
     '-cp', jar, 'nebflow.Main',
