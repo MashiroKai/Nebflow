@@ -1026,6 +1026,14 @@ function collectEdges(fm, positions) {
   const vis = visibleNodes(fm);
   const ids = new Set(vis.map((n) => n.id));
   const byId = new Map(vis.map((n) => [n.id, n]));
+  // 名字索引（vchip r3 2026-09-15）：回边目标串的**第二形态**解析面。仅 `mode==='loop'`
+  // 分支消费（见下方回边遍历），其余三条边分支**逐字不变** ⇒ 非回路边集与 DOM 顺序
+  // 零影响。重名取 vis 序首个（与引擎侧同名时 Map 语义一致的「首个命中」口径）。
+  const byName = new Map();
+  for (const n of vis) {
+    const nm = String(n?.name ?? '');
+    if (nm && !byName.has(nm)) byName.set(nm, n.id);
+  }
   const edges = new Map();
   for (const n of vis) {
     if (!n.out || n.out === 'Nebula' || !ids.has(n.out)) continue;
@@ -1070,15 +1078,27 @@ function collectEdges(fm, positions) {
   // 那是未落地的 F3 out 数组适配面（见 foldView 的 card.out 注），本批不动它。
   // 为什么必须走 out：loop 边**不进 `in` 镜像**（NodeTools.appendEdgeTo 的
   // `!OutEdge.isLoopEdge(e)` 豁免 = round-1 防死锁红线①）⇒ 上面的 in 代理兜不住它，
-  // 这里是 loop 边进入边集的唯一入口。过滤与 out 分支同口径（目标在场 + 排除 Nebula）。
+  // 这里是 loop 边进入边集的唯一入口。过滤口径 = 排除 Nebula + **目标串双形态解析**
+  // （vchip r3 更正：r2 版此处直接 `ids.has(e.to)` ⇒ 只认 id 形态，现网名形态回边被
+  // 静默丢弃。目标串形态二元性是**引擎既有规约**，不是本批新引入的口径——
+  // `ProjectTypes.scala:251 OutEdge.resolveTargetId` 逐字：「目标串历史上有两种形态——
+  // 节点 id（引擎镜像 appendEdgeTo 写入）与节点名（LLM/分发器按 name 接线的自然写法，
+  // 原样落库）」，解析顺序「id 命中 → 名字命中 → None」；`NodeEngine.scala:4083` 的
+  // 回边驱动方反查亦注明「目标串支持 id/名字两形态（与 resolveTargetId 同源）」。
+  // ⇒ 回边可见性必须与引擎同序解析，否则「引擎认这条回边、图上却无此边」。
+  // 与 out 分支的 `ids.has(n.out)` 差异**刻意保留**：那条分支的漏画是存量面（其边集
+  // 决定非回路元素几何，本批禁动，见 §范围封顶），本批只收口回边。
   for (const n of vis) {
     for (const e of outEdgesOf(n)) {
-      if (e.mode !== 'loop' || e.to === 'Nebula' || !ids.has(e.to)) continue;
-      if (e.to === n.id) continue; // 自回边（引擎侧 NODE_LOOP_EDGE_ROLE 已拒；防御性跳过）
+      if (e.mode !== 'loop' || e.to === 'Nebula') continue;
+      // 双形态解析（与 OutEdge.resolveTargetId 同序：id 命中 → 名字命中 → 悬空跳过）。
+      const tid = ids.has(e.to) ? e.to : (byName.get(e.to) ?? null);
+      if (!tid) continue; // 悬空目标（两种形态都不命中）⇒ 与既有 in/deps 分支同款跳过
+      if (tid === n.id) continue; // 自回边（引擎侧 NODE_LOOP_EDGE_ROLE 已拒；防御性跳过）
       const from = positions[n.id];
-      const to = positions[e.to];
+      const to = positions[tid];
       if (!from || !to) continue;
-      edges.set(`${n.id}=>loop=>${e.to}`, {
+      edges.set(`${n.id}=>loop=>${tid}`, {
         kind: 'loop',
         // 门标签**取载荷 on 集原文**（禁臆造）：canonical 后 loop 边恒 on={fail}
         // ⇒ 标签即 `(fail)`；门集若漂移则标签随原文漂移（不猜、不补）。
