@@ -95,12 +95,14 @@ filled is an explicit error, both empty is an explicit error)
 `device` = another machine of the same NebLink account, given as a device NAME or device
 id (same resolution as `SendMessage`'s `device:` target: exact id → exact name → id prefix
 → name prefix → name contains; unknown **or ambiguous** ⇒ explicit error listing the
-candidates, never a silent first hit). The mail is delivered over the NebLink device channel
-as the frozen payload `{"type":"agent_mail","from_device":…,"from_device_id":…,"to_nebula":true,"text":…}`
-and lands **directly in that device's Nebula session** — injected at its next turn boundary
-with the header line `[DEVICE-MAIL · from <from_device>]` (type INFO), shown in the peer's
-message stream as a blue injected bubble. It does NOT go to the peer's user chat inbox, and
-**no confirmation card is raised** (the Mail gate is unchanged — this is not a friend send).
+candidates, never a silent first hit). The mail is handed to the NebLink server
+(`POST /api/relay/{target_device_id}/mail`, target in the path — no broadcast, no fan-out)
+with the frozen payload `{"type":"agent_mail","from_device":…,"from_device_id":…,"to_nebula":true,"text":…}`
+and is pushed to that device as event-stream `agent_mail`; it lands **directly in that device's
+Nebula session** — injected at its next turn boundary with the header line
+`[DEVICE-MAIL · from <from_device>]` (type INFO), shown in the peer's message stream as a blue
+injected bubble. It does NOT go to the peer's user chat inbox, and **no confirmation card is
+raised** (the Mail gate is unchanged — this is not a friend send).
 
 ## Address face (role-scoped — an address outside your face is an explicit error)
 - **Nebula (root)**: `project:<name>` — triggers that project's dispatcher (a bare
@@ -218,7 +220,7 @@ Message type (optional, default "INFO"):
         ),
         "device" -> Json.obj(
           "type" -> "string".asJson,
-          "description" -> "Cross-device Nebula mail (device-mail, 2026-09-15): another machine of the same NebLink account, by device NAME or device id. MUTUALLY EXCLUSIVE with `address` — fill exactly one of the two (both ⇒ MAIL_TARGET_EXCLUSIVE, neither ⇒ MAIL_TARGET_MISSING). Unknown/ambiguous device ⇒ MAIL_DEVICE_NOT_FOUND with the candidate list; a malformed value (URL, or a \"device:\" prefix — the prefix belongs to SendMessage's `to`) ⇒ MAIL_DEVICE_MALFORMED. The message is delivered over the NebLink device channel and injected into that device's Nebula session at its next turn boundary (header line `[DEVICE-MAIL · from <from_device>]`, type INFO); the peer sees it as a blue injected bubble. No confirmation card.".asJson
+          "description" -> "Cross-device Nebula mail (device-mail, 2026-09-15): another machine of the same NebLink account, by device NAME or device id. MUTUALLY EXCLUSIVE with `address` — fill exactly one of the two (both ⇒ MAIL_TARGET_EXCLUSIVE, neither ⇒ MAIL_TARGET_MISSING). Unknown/ambiguous device ⇒ MAIL_DEVICE_NOT_FOUND with the candidate list; a malformed value (URL, or a \"device:\" prefix — the prefix belongs to SendMessage's `to`) ⇒ MAIL_DEVICE_MALFORMED. The message goes to the NebLink server (`POST /api/relay/{target_device_id}/mail` — the addressed device only, never a broadcast) and is pushed to it as an event-stream `agent_mail` event; it is injected into that device's Nebula session at its next turn boundary (header line `[DEVICE-MAIL · from <from_device>]`, type INFO); the peer sees it as a blue injected bubble. No confirmation card.".asJson
         ),
         "message" -> Json.obj(
           "type" -> "string".asJson,
