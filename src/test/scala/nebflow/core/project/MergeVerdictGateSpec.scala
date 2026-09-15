@@ -17,17 +17,23 @@ import nebflow.shared.{LlmHandle, LlmRequest, LlmResponse, StreamChunk}
 import scala.concurrent.duration.*
 
 /**
- * merge 触发的 **verdict 闸**（merge-verdict-gate 批 2026-09-12，作者裁定：把「先验后合」
- * 从节点自觉变成机制保证）回归族。
+ * verdict 闸（merge-verdict-gate 批 2026-09-12，作者裁定：把「先验后合」从节点自觉变成机制
+ * 保证）回归族。**engine-defects 批 #238 泛化笔（2026-09-15，`v238-impl`）**：闸面从
+ * 「仅 merge 节点」扩到**全部收口位**——判据不再按节点形态分叉，非 merge sink（09-14 官网链
+ * `bpm-report`）与 merge sink 同受该闸；本 spec 的 V6 族按新口径重写（原「闸是 merge-only」
+ * 断言属**被本次泛化取代的旧口径**，非弱化：新断言方向为**收紧**——越闸启动由「允准」变
+ * 「必须被挡」）。
  *
- * 判据：**merge 节点的 `in` 上游中含 `role=verifier` 的节点时，该 verifier 的当下
- * `lastVerdict` 必须为 `pass`**，否则本 merge 不可启动、原地保持 pending（读当下值，
+ * 判据：**节点的 `in ∪ deps` 上游中含 `role=verifier` 的节点时，该 verifier 的当下
+ * `lastVerdict` 必须为 `pass`**，否则本节点不可启动、原地保持 pending（读当下值，
  * 非一次性历史闩；verifier 重跑出 `pass` 后自动放行）。零副作用——不改上游
  * status/lastVerdict、不写 blockedFeedback、不改 deliveredTo 记账。
  *
- * 出处实证（本批场景蓝本）：`perm-global-merge`(n-9e9c385d) —— merge=true、
+ * 出处实证（本族场景蓝本）：`perm-global-merge`(n-9e9c385d) —— merge=true、
  * in=[n-5c5d5801, n-6f86d028]（后者 role=verifier 且已 `node_report(fail)`），
- * deliveredTo 两轨齐（barrier 已清），仍被 `settleRunnableSweep` 拉起并启动。
+ * deliveredTo 两轨齐（barrier 已清），仍被 `settleRunnableSweep` 拉起并启动；
+ * 非 merge 侧蓝本 = 09-14 `bpm-verify`(fail) → `bpm-report`（merge=False）被补投腿
+ * （`settleRunnableSweep` 第 1 步孤儿 barrier 自愈 → startNode）拉起。
  *
  * 用例面（覆盖要求 1/2/3 逐条）：
  *  - V1 case (a)：verifier 判 fail ⇒ merge **不得**被 settle-sweep 拉起（含 sweep 第 1 步
@@ -36,7 +42,10 @@ import scala.concurrent.duration.*
  *  - V3 case (b) path b：verifier 判 pass ⇒ 资格回扫正常拉起（V1 的对照组）；
  *  - V4 读当下值：held 之后把 verifier 翻成 pass ⇒ 下一轮回扫放行（无一次性闩）；
  *  - V5 case (c)：**上游无 verifier 的 merge 行为逐字不变**（task 上游正常触发）；
- *  - V6 case (c)：闸是 **merge-only**——非 merge 下游遇 fail verifier 照旧启动；
+ *  - V6 #238 泛化：**非 merge** 收口位遇 fail verifier ⇒ 同样被闸挡住（barrier 照旧自愈、
+ *    补投照旧记账，但**不启动**）+ mount-stalled 点名 + **不得**发回退告警；
+ *  - V6b #238 释放面：同夹具把 verifier 翻成 pass ⇒ 下一轮回扫放行（非 merge 侧不永久卡死）；
+ *  - V6c #238 GREEN 面（误报归零）：**pass** verifier 的非 merge 下游照常启动（同一 sweep 腿）；
  *  - V7 case (d)：verifier **未申报** lastVerdict ⇒ 保守不放行；
  *  - V8 单权威：绕开 settleTo/sweep 的直投路径（settleDeps / redeliverInAndStart 走
  *    `startNode`）同样被挡（barrier 记账人为置齐后直接调 startNode）。
@@ -338,14 +347,28 @@ class MergeVerdictGateSpec extends CatsEffectSuite:
       assertEquals(m.status, NodeLifecycle.Completed,
         "a verifier-free merge must keep its旧 behavior (gate is inert without a verifier upstream)")
       assertEquals(m.deliveredTo.sorted, List("n-a", "n-b"), "barrier accounting unchanged")
-      // engine-defects 批 #238 GREEN 臂：上游无 verifier ⇒ 覆盖缝事件**不得**出现（不误报）
+      // engine-defects 批 #238 GREEN 臂：上游无 verifier ⇒ 回退告警**不得**出现（不误报）
       assert(!audit.exists((t, _, _) => t == FlowMapEventLog.VerdictGateGapType),
-        s"no verifier upstream => no gap event may be emitted, got ${audit.filter((t, _, _) => t == FlowMapEventLog.VerdictGateGapType)}")
+        s"no verifier upstream => no breach event may be emitted, got ${audit.filter((t, _, _) => t == FlowMapEventLog.VerdictGateGapType)}")
   }
 
-  // ── V6 case (c)：闸是 merge-only（非 merge 下游不受影响）─────────────────
+  // ── V6 族（#238 泛化）：非 merge 收口位与 merge sink 同受闸 ────────────────
+  //
+  // 缝本体（09-14 官网链 `bpm-verify`(fail) → `bpm-report`(merge=False)）：闸前置
+  // `MergeNodePolicy.isMerge` ⇒ 非 merge 收口位被补投腿（sweep 第 1 步孤儿 barrier 自愈
+  // → startNode）拉起，fail 结论被当正向交付前递。泛化笔删除该前置 ⇒ 本族按新口径重写。
+  //
+  // 补投腿**不改**（侦察 §4 红线：不得下沉 `deliverOutTo` 公共门；且 `deliveredTo` 记账
+  // 是 V1/V7 的逐字前提）⇒ 三件事实必须同时成立：①barrier 照旧自愈（记账齐）②节点**不**
+  // 启动 ③事件流里有可 grep 的闸因（mount-stalled 文案）。
 
-  test("V6 (case c, merge-only): a NON-merge downstream of a fail-verdict verifier is not gated — it still starts (only merge nodes carry the gate)") {
+  /** 非 merge 收口位（无 `merge` 标记、有 task ⇒ 合格即会真 spawn 会话）+ 旧 completedAt
+    * 的 verifier 上游 ⇒ 覆盖「可触发点已过 60s」的 mount-stalled 档位（同 V1 夹具手法）。 */
+  private def nonMergeSink(id: String, name: String, in: List[String], now: Long): NodeDef =
+    NodeDef(id = id, name = name, agent = "general", task = Some(s"$name sink task"),
+      status = NodeLifecycle.Pending, in = in, out = List(OutEdge.nebula), createdAt = now - 100_000L)
+
+  test("V6 (#238 generalization): a NON-merge landing position whose in-upstream verifier judged fail is HELD by the gate — the orphan-barrier sweep still heals the accounting but must not start it") {
     val ws = tempRoot / "ws-v6"; os.makeDir.all(ws)
     val system = ActorSystem(s"mvg-v6-${scala.util.Random.nextInt(100000)}")
     val llm = new EchoLlm
@@ -355,29 +378,97 @@ class MergeVerdictGateSpec extends CatsEffectSuite:
       rt <- mountProject("mvg-v6", ws, system, res)
       _ <- seed(rt,
         verifierNode("n-ver", "ver", Some("fail"), List(OutEdge("n-plain")), now),
-        NodeDef(id = "n-plain", name = "plain", agent = "general", task = Some("plain task"),
-          status = NodeLifecycle.Pending, in = List("n-ver"), out = List(OutEdge.nebula),
-          createdAt = now - 100_000L))
-      v <- node(rt, "n-ver")
-      _ <- rt.engine.deliverOutTo(v, "n-plain", "verdict report for ver")
+        nonMergeSink("n-plain", "plain", List("n-ver"), now))
+      _ <- rt.engine.settleRunnableSweep()
+      _ <- settleWindow
+      p1 <- node(rt, "n-plain")
+      v1 <- node(rt, "n-ver")
+      audit1 <- readAudit(ws)
+      // 幂等重放：连续两轮回扫仍不得放行
+      _ <- rt.engine.settleRunnableSweep() *> IO.sleep(200.millis) *> rt.engine.settleRunnableSweep()
+      _ <- settleWindow
+      p2 <- node(rt, "n-plain")
+      _ <- system.stopAll.handleErrorWith(_ => IO.unit)
+    yield
+      // ① 幂等/记账前置：补投腿照旧跑（barrier 自愈 + settle-sweep 留痕）——闸不改记账契约
+      assert(p1.deliveredTo.contains("n-ver"),
+        s"precondition: the sweep must still heal the orphan barrier (ledger unchanged), got ${p1.deliveredTo}")
+      assert(audit1.exists((t, id, _) => t == "settle-sweep" && id == "n-plain"),
+        s"precondition: the sweep must have processed n-plain, got ${audit1.map((t, id, _) => (t, id))}")
+      // ② 判据本体（#238）：barrier 已清而**非 merge** 收口位不启动
+      assertEquals(p1.status, NodeLifecycle.Pending,
+        "a NON-merge landing position with a fail-verdict upstream must stay pending (the gate is no longer merge-only)")
+      assert(p1.startedAt.isEmpty, "no session may be spawned for a gated non-merge sink")
+      assertEquals(p1.result, None, "the gate must not fabricate any result")
+      assertEquals(p1.blockedFeedback, None, "the gate must NOT fake a blocked state")
+      // ③ 上游零改写
+      assertEquals(v1.status, NodeLifecycle.Completed, "upstream verifier status must not be rewritten")
+      assertEquals(v1.lastVerdict, Some("fail"), "upstream lastVerdict must not be rewritten")
+      // ④ 幂等：多轮回扫仍持有
+      assertEquals(p2.status, NodeLifecycle.Pending, "repeated sweeps must keep holding (idempotent)")
+      assert(p2.startedAt.isEmpty, "no session may be spawned on any sweep round")
+      // ⑤ 停等可见性（非 merge 侧同样点名闸因：分发器不该把它误判为引擎故障）
+      val stalls = audit1.filter((t, id, _) => t == "mount-stalled" && id == "n-plain")
+      assertEquals(stalls.size, 1, s"exactly one mount-stalled line expected for the held sink, got $stalls")
+      val stall = stalls.head._3
+      assert(stall.contains("verdict gate held"), s"the stall reason must name the verdict gate, got: $stall")
+      assert(stall.contains("n-ver") && stall.contains("lastVerdict=fail"),
+        s"the stall reason must name the holding verifier + its verdict, got: $stall")
+      // ⑥ 回退告警**不得**出现：闸确实持有时走不到告警写点（越闸启动 = 结构性不可能）
+      assert(!audit1.exists((t, _, _) => t == FlowMapEventLog.VerdictGateGapType),
+        s"a held node must NOT emit the regression alarm, got ${audit1.filter((t, _, _) => t == FlowMapEventLog.VerdictGateGapType)}")
+  }
+
+  test("V6b (#238 release): flipping the same fixture's verifier to pass releases the held NON-merge sink on the next sweep (no one-shot latch, no permanent stall)") {
+    val ws = tempRoot / "ws-v6b"; os.makeDir.all(ws)
+    val system = ActorSystem(s"mvg-v6b-${scala.util.Random.nextInt(100000)}")
+    val llm = new EchoLlm
+    val now = System.currentTimeMillis()
+    for
+      res <- mkResources(system, tempRoot, llm.handle)
+      rt <- mountProject("mvg-v6b", ws, system, res)
+      _ <- seed(rt,
+        verifierNode("n-ver", "ver", Some("fail"), List(OutEdge("n-plain")), now),
+        nonMergeSink("n-plain", "plain", List("n-ver"), now))
+      _ <- rt.engine.settleRunnableSweep()
+      _ <- settleWindow
+      held <- node(rt, "n-plain")
+      // verifier 重跑出 pass（等价于其第二轮的 node_report(pass)）——本 spec 只改判据面
+      _ <- rt.store.mutate(s => s.copy(nodes = s.nodes.updated("n-ver",
+        s.nodes("n-ver").copy(lastVerdict = Some("pass")))))
+      _ <- rt.engine.settleRunnableSweep()
+      _ <- waitStatus(rt, "n-plain", Set(NodeLifecycle.Completed))
+      p <- node(rt, "n-plain")
+      _ <- system.stopAll.handleErrorWith(_ => IO.unit)
+    yield
+      assertEquals(held.status, NodeLifecycle.Pending, "precondition: held while the verdict is fail")
+      assertEquals(p.status, NodeLifecycle.Completed,
+        "after the verifier re-runs to pass the gate must release the non-merge sink (current value, not history)")
+      assert(p.startedAt.isDefined, "the released sink must have really run")
+  }
+
+  test("V6c (#238 GREEN arm, false-positive zero): with the SAME sweep leg, a pass-verdict upstream lets the non-merge sink start as before") {
+    val ws = tempRoot / "ws-v6c"; os.makeDir.all(ws)
+    val system = ActorSystem(s"mvg-v6c-${scala.util.Random.nextInt(100000)}")
+    val llm = new EchoLlm
+    val now = System.currentTimeMillis()
+    for
+      res <- mkResources(system, tempRoot, llm.handle)
+      rt <- mountProject("mvg-v6c", ws, system, res)
+      _ <- seed(rt,
+        verifierNode("n-ver", "ver", Some("pass"), List(OutEdge("n-plain")), now),
+        nonMergeSink("n-plain", "plain", List("n-ver"), now))
+      _ <- rt.engine.settleRunnableSweep()
       _ <- waitStatus(rt, "n-plain", Set(NodeLifecycle.Completed))
       p <- node(rt, "n-plain")
       audit <- readAudit(ws)
       _ <- system.stopAll.handleErrorWith(_ => IO.unit)
     yield
       assertEquals(p.status, NodeLifecycle.Completed,
-        "non-merge node behavior must be unchanged — the gate is merge-only")
-      // ── engine-defects 批 #238 · RED 臂（覆盖缝 = 机械可见化）──────────────
-      // 本 spec 用例面 = 引擎判据；此处追加的**是本批新增的可见性判据**（非既有闸口径）：
-      // 非 merge 下游遇非 pass 判词仍被拉起 ⇒ 必须单发 `verdict-gate-gap`（含判词原文），
-      // 使「sink 任务书里的人肉口径」变成事件流里可 grep 的一行。
-      // 变异臂：删掉 `logNonMergeVerdictGateGap` 调用 ⇒ 本断言必红。
-      val gaps = audit.filter { case (t, id, _) => t == FlowMapEventLog.VerdictGateGapType && id == "n-plain" }
-      assertEquals(gaps.size, 1, s"exactly one gap line expected for the started non-merge downstream, got $gaps")
-      assert(gaps.head._3.contains("n-ver") && gaps.head._3.contains("lastVerdict=fail"),
-        s"the gap line must name the holder verifier and its verdict, got: ${gaps.head._3}")
-      assert(gaps.head._3.contains("merge-only"),
-        s"the gap line must state the gate's scope, got: ${gaps.head._3}")
+        "GREEN arm: a pass-verdict upstream must let the non-merge sink start (the widened gate must not false-positive)")
+      assert(p.startedAt.isDefined, "the sink must have really run via the sweep")
+      assert(!audit.exists((t, _, _) => t == FlowMapEventLog.VerdictGateGapType),
+        s"no breach event may be emitted on the pass arm, got ${audit.filter((t, _, _) => t == FlowMapEventLog.VerdictGateGapType)}")
   }
 
   // ── V7 case (d)：verifier 未申报 ⇒ 保守不放行 ────────────────────────────

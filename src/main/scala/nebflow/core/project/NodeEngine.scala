@@ -1809,104 +1809,122 @@ class NodeEngine(
     node.deps.traverse(store.findNode)
       .map(_.forall(_.exists(_.status == NodeLifecycle.Completed)))
 
-  // ── verdict 闸（merge-verdict-gate 批 2026-09-12，作者裁定）────────────────────
+  // ── verdict 闸（merge-verdict-gate 批 2026-09-12 作者裁定；**engine-defects #238 泛化
+  //    2026-09-15**：闸面从「仅 merge 节点」扩到**全部收口位**）────────────────────────
   //
-  // 判据：**merge 节点的 in 上游中含 verifier 时，该 verifier 的当下 `lastVerdict` 必须为
-  // `pass`**；否则本 merge 不可启动、原地保持 pending。把「先验后合」从节点自觉变成机制
-  // 保证（来源实证：`perm-global-merge`(n-9e9c385d) 的 in 含 verifier `n-6f86d028`，
-  // 该 verifier 已报 lastVerdict=fail，merge 仍被 `settleRunnableSweep` 拉起并启动）。
+  // 判据：**节点的 `in ∪ deps` 上游中含 verifier 时，该 verifier 的当下 `lastVerdict`
+  // 必须为 `pass`**；否则本节点不可启动、原地保持 pending。把「先验（判词）后交付」从
+  // 节点自觉变成机制保证（来源实证：`perm-global-merge`(n-9e9c385d)，其 in 含 verifier
+  // `n-6f86d028`，该 verifier 已报 lastVerdict=fail，merge 仍被 `settleRunnableSweep`
+  // 拉起并启动）。
+  //
+  // **#238 泛化的理由（缝 = O-1；只读侦察 `.nebflow/reports/20260914_verdict-routing-recon.md`）**：
+  // 判词是控制信号，**「不通过」结论不得作为正向交付补投下游**。旧闸前置
+  // `MergeNodePolicy.isMerge(n)` ⇒ 非 merge 收口位（09-14 官网链 `bpm-report`，merge=false）
+  // 遇 fail 判词的 verifier 上游**照旧被拉起**（补投腿 = `settleRunnableSweep` 第 1 步孤儿
+  // barrier 自愈 → `startNode`），下游只能靠任务书里手写的人肉口径「注意上游判词」补。
+  // 泛化后判据不再按节点形态分叉（唯一谓词 = [[staleVerdictUps]]），覆盖**全部收口位**：
+  // merge sink / 非 merge sink / 链尾 / 一切 `startNode` 入口（barrier 结算、资格回扫、
+  // 重激活补投、D1、crash-recovery 续跑、直接调用）。
   //
   // 语义与边界（逐字口径）：
-  //   · 「上游含 verifier」= `n.in` 中 role=verifier 的节点（`deps` 不参与——deps 语义零改动）；
+  //   · 「上游含 verifier」= `(n.in ++ n.deps).distinct` 中 role=verifier 的节点（`deps`
+  //     自 O-2/G-1 起参与）；
   //   · 该 verifier 当下 lastVerdict ≠ "pass"（含 `fail` / 未申报 None / 空串）⇒ 挡住，**读
   //     当下值**（每次判定现读 store，非一次性历史闩）——verifier 重跑出 `pass` 后本闸自动
   //     放行，无需任何清账/重置动作；
   //   · **纯闸门零副作用**：不改上游 status/lastVerdict/result、不写 blockedFeedback、不改
-  //     deliveredTo（barrier 记账照旧）、不改 in/out/deps/merge——节点保持 pending/wiring
-  //     可见（停等可见性由既有 mount-stalled 事件承载，见 mountStallReason 的 verdict 闸文案）；
-  //   · 非 merge 节点、无 verifier 上游的 merge：恒不挡（既有行为逐字不变）；
-  //   · verifier 终态 `failed`（loop 预算耗尽）不属本闸管辖：走既有「上游失败 ⇒ merge
-  //     blocked(upstream-incomplete)」（MergeNodePolicy.haltsOnFailure）路径，零新语义；
-  //   · role 经 NodeRoles.normalize（缺省/空 = task）⇒ 存量数据零回溯。
+  //     deliveredTo（barrier 记账照旧——`deliverOutTo` 公共门按侦察 §4 红线**不动**）、不改
+  //     in/out/deps/merge——节点保持 pending/wiring 可见（停等可见性由既有 mount-stalled
+  //     事件承载，见 mountStallReason 的 verdict 闸文案）；
+  //   · **合法等待 ≠ 启动失败**：被挡者不进 `trigger-starved` 记账（见落点②注释）；
+  //   · **返工腿不受闸（结构性、非豁免分支）**：`(fail)<target>:loop` 是控制边，**不进
+  //     in/barrier**（见 [[deliverOutTo]] 注释）⇒ 回边目标的 `in` 恒不含该 verifier ⇒
+  //     `reloopTo` 的 `startNode(loopRework=…)` 天生不被本闸拦；
+  //   · 无 verifier 上游的节点恒不挡（既有行为逐字不变）；
+  //   · verifier 终态 `failed`（loop 预算耗尽）在本闸下同样挡住下游（其判词恒非 pass）；
+  //     merge 的可见终态仍走既有「上游失败 ⇒ blocked(upstream-incomplete)」
+  //     （MergeNodePolicy.haltsOnFailure）路径，零新语义；
+  //   · role 经 NodeRoles.normalize（缺省/空 = task）⇒ 存量数据零回溯；
+  //   · 函数名保留 `mergeVerdictHolders*`（**历史名**，语义已泛化）：本批只改语义不改名——
+  //     调用点全部在本文件，且改名会把无关行卷进与 #239①/② 共享的写面 diff。
 
-  /** 挡住本 merge 的 verifier 清单（IO 版；空 = 放行）。
+  /** 挡住本节点的 verifier 清单（IO 版；空 = 放行）。
     *
     * **O-2（mergefifo-engine 批 2026-09-13，作者 A-4 裁决并入本批）**：上游集 =
     * **`in ∪ deps`**——设计件 §5.2 **G-1** 的 1 行级扩展（`deps` 参与 verdict 闸，
     * 口径见设计件 §5.2「`mergeVerdictHoldersOf` 上游集改 `(n.in ++ n.deps).distinct`」）。
     * 本仓**零存量影响**：现场扫描 16 个 merge 节点全部用 `in`、无一使用 `deps`
     * （设计件 §5.2 实测）；G-2（verifier 接进 `in`）仍为派发纪律、不入代码；G-3（判词
-    * sha 守卫）本批不做。deps 上游解析仍走 `store.findNode`（归档兜底语义逐字保留）。 */
+    * sha 守卫）本批不做。deps 上游解析仍走 `store.findNode`（归档兜底语义逐字保留）。
+    * **#238（2026-09-15）**：删去前置 `MergeNodePolicy.isMerge(n)` —— 闸对**全部节点**
+    * 生效（收口位 = 全部 start 入口，见上方头注）。 */
   private def mergeVerdictHoldersOf(n: NodeDef): IO[List[NodeDef]] =
-    if !MergeNodePolicy.isMerge(n) then IO.pure(Nil)
-    else
-      val ups = (n.in ++ n.deps).distinct
-      if ups.isEmpty then IO.pure(Nil)
-      else ups.traverse(store.findNode).map(l => mergeVerdictHolders(n, l.flatten))
+    val ups = (n.in ++ n.deps).distinct
+    if ups.isEmpty then IO.pure(Nil)
+    else ups.traverse(store.findNode).map(l => mergeVerdictHolders(l.flatten))
 
-  /** 纯判据（IO 版与 mount-stalled 可见性文案共用单点）：in 上游中「让本 merge 卡住的
-    * verifier」清单——非 merge 节点恒空（闸是 merge-only）。 */
-  private def mergeVerdictHolders(n: NodeDef, ups: List[NodeDef]): List[NodeDef] =
-    if !MergeNodePolicy.isMerge(n) then Nil
-    else staleVerdictUps(ups)
+  /** 纯判据（IO 版与 mount-stalled 可见性文案共用单点）：上游中「让本节点卡住的 verifier」
+    * 清单 —— **#238 泛化后 = [[staleVerdictUps]] 的直通单点**（旧前置
+    * `MergeNodePolicy.isMerge(n)` 已删，判据对节点形态零分叉）。 */
+  private def mergeVerdictHolders(ups: List[NodeDef]): List[NodeDef] =
+    staleVerdictUps(ups)
 
-  /** 「当下判词非 pass」的上游 verifier（**纯判据单点**，闸与缝可见性共用）。
+  /** 「当下判词非 pass」的上游 verifier（**纯判据单点**，闸与回退告警共用）。
     * `fail` / 未申报 `None` / 空串同判（保守口径，见 [[mergeVerdictHolders]] 头注）。 */
   private def staleVerdictUps(ups: List[NodeDef]): List[NodeDef] =
     ups.filter(u =>
       NodeRoles.normalize(u.role) == NodeRoles.Verifier &&
         !u.lastVerdict.exists(_.trim.equalsIgnoreCase(VerdictPass)))
 
-  /** 判词闸**覆盖缝**（O-1）单发记账（下游 id → 上次留痕的持有者 key 序列）——
+  /** 判词闸**回退告警**单发记账（下游 id → 上次留痕的持有者 key 序列）——
     * 同一 (下游, 持有者+判词) 组合只留一条，防每启动路径刷屏。 */
   private val verdictGapLogged: Ref[IO, Map[String, List[String]]] =
     Ref.unsafe[IO, Map[String, List[String]]](Map.empty)
 
-  /** 判词闸覆盖缝（O-1）**机械可见化**（engine-defects 批 #238，2026-09-15；写点 =
-    * [[startNode]] 闸收口）。
+  /** 判词闸**回退告警**（O-1 缝的回退检测器；#238 泛化前 = 「常态可见化」，泛化后语义反转；
+    * 写点 = [[startNode]] 闸收口）。
     *
-    * 缝本体（只读侦察 [[.nebflow/reports/20260914_verdict-routing-recon]] §结论②）：判词闸
-    * 是 **merge-only**（[[mergeVerdictHolders]] 前置 `MergeNodePolicy.isMerge`）⇒ 非 merge
-    * 收口位/sink 遇 `fail`/未申报判词的 verifier 上游**照旧被拉起**（今夜官网链
-    * `bpm-verify`(fail) → `bpm-report`(merge=False) 实例），sink 侧只能靠任务书里
-    * **人肉口径**「注意上游判词」补。本批**不扩闸**（泛化到非 merge 属语义裁定——
-    * `MergeVerdictGateSpec.V6` 正是钉该口径的既有判据），改为**机械可见**：该形态被
-    * 拉起时单发 [[FlowMapEventLog.VerdictGateGapType]] 事件（含 verifier id + 当下判词），
-    * 把「人肉口径」变成事件流里可 grep 的一行。
-    *
-    * 🔴 零行为面：不改闸判据、不改任何节点字段、不阻塞启动（照旧拉起，只是留痕）。 */
-  private def logNonMergeVerdictGateGap(where: String, n: NodeDef): IO[Unit] =
-    if MergeNodePolicy.isMerge(n) then IO.unit
-    else
-      (n.in ++ n.deps).distinct.traverse(store.findNode).flatMap { ups =>
-        val held = staleVerdictUps(ups.flatten)
-        if held.isEmpty then IO.unit
-        else
-          val key = held.map(u => s"${u.id}:${u.lastVerdict.getOrElse("none")}").sorted
-          verdictGapLogged.modify { m =>
-            if m.get(n.id).contains(key) then (m, false) else (m.updated(n.id, key), true)
-          }.flatMap { first =>
-            if !first then IO.unit
-            else
-              val desc = held.map(u =>
-                s"'${u.name}'(${u.id}):lastVerdict=${u.lastVerdict.getOrElse("none")}").mkString(", ")
-              val summary =
-                s"verdict-gate gap: started at $where while the in/deps upstream verifier(s) [$desc] " +
-                  "carry no pass verdict — the verdict gate is merge-only, so this NON-merge downstream runs on a " +
-                  "non-pass verdict (O-1 seam). Observability only: the node is started as before; " +
-                  "widen the gate to non-merge sinks = author decision"
-              logger.warn(s"[$projectName] node '${n.name}' (${n.id}) $summary") *>
-                FlowMapEventLog.append(workspace, projectName, n.id, FlowMapEventLog.VerdictGateGapType, summary)
-          }
-      }
+    * 前身（engine-defects 批 #238 第一笔 `8a3ac535e`）：闸是 merge-only ⇒ 非 merge 收口位
+    * （09-14 官网链 `bpm-verify`(fail) → `bpm-report`(merge=False)）带非 pass 判词上游被
+    * 拉起属**常态**，本函数把它从「人肉口径」变成事件流里可 grep 的一行。
+    * 本笔（#238 **泛化**）：闸覆盖全部收口位 ⇒ 该形态**结构性不可能再发生**（本告警与闸共用
+    * [[staleVerdictUps]] 单点；闸持有时根本走不到本调用点）⇒ 本行语义 = **不变式告警**：
+    * 一旦出现即表示闸被绕过 / 被改弱（或新增了绕开 [[startNode]] 收口的启动腿）。
+    * 判据面证据：变异臂「把 [[mergeVerdictHoldersOf]] 置空」⇒ 本行出现，且
+    * `MergeVerdictGateSpec.V6` 的「held + 不得发本事件」断言同时转红。 */
+  private def logVerdictGateBreach(where: String, n: NodeDef): IO[Unit] =
+    (n.in ++ n.deps).distinct.traverse(store.findNode).flatMap { ups =>
+      val held = staleVerdictUps(ups.flatten)
+      if held.isEmpty then IO.unit
+      else
+        val key = held.map(u => s"${u.id}:${u.lastVerdict.getOrElse("none")}").sorted
+        verdictGapLogged.modify { m =>
+          if m.get(n.id).contains(key) then (m, false) else (m.updated(n.id, key), true)
+        }.flatMap { first =>
+          if !first then IO.unit
+          else
+            val desc = held.map(u =>
+              s"'${u.name}'(${u.id}):lastVerdict=${u.lastVerdict.getOrElse("none")}").mkString(", ")
+            val summary =
+              s"verdict-gate gap (REGRESSION): node started at $where while the in/deps upstream verifier(s) [$desc] " +
+                "carry no pass verdict — the #238 gate holds EVERY landing position, so this start means the gate was " +
+                "bypassed or weakened (the gate predicate and this alarm share staleVerdictUps; a non-pass verdict must " +
+                "never be handed on as a positive result — the fail route is the '(fail)<target>:loop' control edge)"
+            logger.warn(s"[$projectName] node '${n.name}' (${n.id}) $summary") *>
+              FlowMapEventLog.append(workspace, projectName, n.id, FlowMapEventLog.VerdictGateGapType, summary)
+        }
+    }
 
   /** 闸挡启动时的留痕（三处落点共用单点文案）：INFO 一行带 verifier id + 当下 verdict，
-    * 供事后从日志直接定位「merge 为何没动」。 */
+    * 供事后从日志直接定位「收口位为何没动」。**节点形态中立**（#238 泛化后闸对全部节点
+    * 生效——旧文案写死 "merge" 会误指非 merge 收口位）。 */
   private def logVerdictGateHold(where: String, n: NodeDef, holders: List[NodeDef]): IO[Unit] =
     logger.info(
-      s"[$projectName] merge '${n.name}' (${n.id}) start held by verdict gate at $where — " +
+      s"[$projectName] node '${n.name}' (${n.id}) start held by verdict gate at $where — " +
         holders.map(u => s"'${u.name}'(${u.id}) lastVerdict=${u.lastVerdict.getOrElse("none")}").mkString(", ") +
-        "; node stays pending (gate re-reads lastVerdict on every judgement — a verifier re-run to 'pass' unblocks it)")
+        "; node stays pending (gate re-reads lastVerdict on every judgement — a verifier re-run to 'pass' unblocks " +
+        "it; a non-pass verdict never opens a downstream — the fail route is the '(fail)<target>:loop' control edge)")
 
   // ── 合并窗 FIFO 互斥闸（mergefifo-engine 批 2026-09-13，作者 A-4 裁决收窄落地）────
   //
@@ -1972,7 +1990,7 @@ class NodeEngine(
     * 与载荷注入 [[NodeTools.buildNodeListPayload]] 都调本函数，**禁第二判据**。 */
   def mergeQueueHolders(n: NodeDef, all: Map[String, NodeDef]): List[NodeDef] =
     MergeMutexPolicy.holders(n, all)
-      .filterNot(o => mergeVerdictHolders(o, MergeMutexPolicy.upsOf(o, all)).nonEmpty)
+      .filterNot(o => mergeVerdictHolders(MergeMutexPolicy.upsOf(o, all)).nonEmpty)
 
   /** 排队位次派生批次（**显示面单点**；纯函数、零副作用、零持久字段）：nodeId → 当下
     * 挡住它的持有者清单，**只收非空项**（未排队的 merge 节点与全部非 merge 节点不在表内
@@ -2178,13 +2196,15 @@ class NodeEngine(
                     // pending/wiring 可见、零副作用（见 mergeVerdictHoldersOf 注释）。
                     // mergefifo-engine 批 2026-09-13：**互斥闸**逐字接在同一收口点之后（先 verdict
                     // 后互斥，与设计件 §7.2 状态机同序；verdict 闸判据/留痕零改动）。
-                    // engine-defects 批 #238（2026-09-15）：闸是 merge-only ⇒ 非 merge 下游
-                    // 遇非 pass 判词**照旧被拉起**（覆盖缝 O-1）。本批不扩闸（语义裁定项），
-                    // 改为在**同一点**把该形态留成可 grep 的一行（零行为面：照旧启动）。
+                    // engine-defects 批 #238（2026-09-15）：**闸面泛化**——判据不再按 merge 分叉
+                    // ⇒ 非 merge 收口位（O-1 缝：`bpm-verify`(fail) → `bpm-report`(merge=False)）
+                    // 同样被本收口点挡住（「不通过」结论不得作为正向交付补投下游）。旧形态
+                    // （越闸启动）此后**结构性不可能**：若仍发生，[[logVerdictGateBreach]] 会
+                    // 单发一行回退告警（不变式告警，与闸共用 staleVerdictUps 单点）。
                     mergeVerdictHoldersOf(node).flatMap { holders =>
                       if holders.nonEmpty then logVerdictGateHold("startNode", node, holders)
                       else
-                        logNonMergeVerdictGateGap("startNode", node) *>
+                        logVerdictGateBreach("startNode", node) *>
                           mergeMutexHoldersOf(node).flatMap { queued =>
                             if queued.nonEmpty then logMutexHold("startNode", node, queued)
                             else pastVerdictGate
@@ -3825,8 +3845,9 @@ class NodeEngine(
     *   · `deliveredTo`——**保留**：barrier 保持「已结算」，重激活后 `startNode` 才能
     *     立刻拿到会话（清掉它会让目标退回等 barrier，与「本轮立刻重跑」的目标相反）。
     *     **驱动方是唯一例外**（见 [[reloopTo]]：摘掉目标那一轨，等新产出）。
-    * `lastVerdict` 同样不动：fail 判词必须留在驱动方身上——它正是 merge/收口位的判词闸
-    * （`mergeVerdictHolders`）在返工期间继续挡住「未返工先合并」的依据。 */
+    * `lastVerdict` 同样不动：fail 判词必须留在驱动方身上——它正是收口位的判词闸
+    * （`mergeVerdictHolders`，#238 泛化后 = **全部收口位**）在返工期间继续挡住
+    * 「未返工先推进」的依据。 */
   private def resetForLoop(node: NodeDef): NodeDef =
     val fromFailed = node.status == NodeLifecycle.Failed
     val nextStatus =
@@ -4057,19 +4078,20 @@ class NodeEngine(
     *   1. 孤儿 barrier 自愈：in 中「completed+有 result+deliveredTo 未记」的上游
     *      逐个 deliverOutTo（自带 deliveredTo 去重幂等；语义 = NodeTools fix-b
     *      补投从「仅 edit 时」提升为周期性；barrier 随之归零者由其内部启动）；
-    *      **判词面（原样保留，非本批改动）**：本腿**不做**判词感知——fail-verifier 的
+    *      **判词面（原样保留）**：本腿**不做**判词感知——fail-verifier 的
     *      result 照旧进 `deliverOutTo`（既有 `deliveredTo` 记账语义逐字不变），"fail ⇒ 不
-    *      拉起 merge sink" 由 **merge verdict 闸**承担（`mergeVerdictHolders` +
+    *      拉起收口位" 由 **verdict 闸**承担（`mergeVerdictHolders` +
     *      `mergeVerdictHoldersOf`，落点② = 下方第 2 步 `qualified` 判定；出处
-    *      perm-global-merge(n-9e9c385d)，`MergeVerdictGateSpec` V1–V8 覆盖）。🔴 本批
+    *      perm-global-merge(n-9e9c385d)，`MergeVerdictGateSpec` V1–V10 覆盖）。🔴 本批
     *      曾在**本腿**加「fail-verifier 一律不补投」的挡投腿，实测**打红
     *      `MergeVerdictGateSpec.V1`**（其前提断言 = 本腿自愈确实跑了、`deliveredTo` 记全；
     *      该闸的设计口径亦明文「不改 deliveredTo 记账」）⇒ 判定为与既有闸重复且违约，
     *      **已撤除**（读数见 `.nebflow/evidence/20260914_stability-hotfix/`）。
-    *      另注：非 merge 下游**不**受该闸覆盖（`mergeVerdictHolders` 是 merge-only）——
-    *      该缝（09-14 官网链 `bpm-verify`(fail) → 非 merge 收口位的补投抢跑）**本批未动**，
-    *      作观察项上报（改动面最小化 + verdict-routing-recon §4 红线：不得下沉
-    *      `deliverOutTo` 公共门）；
+    *      **#238 泛化（2026-09-15）后的缝合方式**：闸面（而非补投腿）扩到**全部收口位**
+    *      ——本腿照旧补投、照旧把 `deliveredTo` 记全（记账契约零改动，见侦察 §4 红线：
+    *      不得下沉 `deliverOutTo` 公共门），但被补投唤醒的下游若 `in ∪ deps` 含非 pass
+    *      判词的 verifier ⇒ 在 `qualified`/`startNode` 收口被闸挡住 ⇒ 09-14 官网链
+    *      `bpm-verify`(fail) → 非 merge 收口位 `bpm-report` 的**补投抢跑已关**；
     *   2. barrier/deps 均满足者 fork startNode（幂等；fork 化后不阻塞 tick）。
     * 资格口径与 startNode 闸门同源（非终态 + deps 全 completed + in 全归零 + 非
     * 零接线防御）——合格即应启动；同一节点连续 ≥StarvedRounds 轮合格却仍
@@ -4114,8 +4136,9 @@ class NodeEngine(
         else
           depsSatisfied(n).flatMap {
             case false => IO.pure(false)
-            // verdict 闸（merge-verdict-gate 批 2026-09-12，落点②/case (b)——**本批出处
-            // 场景**）：资格回扫不得把「in 上游 verifier 已判 fail」的 merge 拉起。被挡者
+            // verdict 闸（merge-verdict-gate 批 2026-09-12，落点②/case (b)；**#238 泛化
+            // 2026-09-15** 后判据对节点形态零分叉）：资格回扫不得把「in ∪ deps 上游
+            // verifier 判词非 pass」的节点（merge sink 或非 merge 收口位同样）拉起。被挡者
             // 不进 qualified ⇒ 不 fork、不进 trigger-starved 记账（合法等待，不是启动失败）
             // ——节点保持 pending/wiring，verifier 重跑出 pass 后下一轮回扫自然放行
             //（每轮现读 lastVerdict，非一次性闩）。
@@ -4237,16 +4260,18 @@ class NodeEngine(
               if n.pendingSuccession.nonEmpty then
                 s", awaiting handover (R4 pendingSuccession=[${n.pendingSuccession.mkString(",")}] — cancelled upstream detached; barrier held, dispatcher must hand over 承接 / rewire 改接 / abandon)"
               else ""
-            // verdict 闸停等（merge-verdict-gate 批 2026-09-12）：barrier 已清而 merge 仍
-            // pending 的真实原因常见形态——in 上游 verifier 判 fail（其 status=completed，
-            // 泛化文案会误指「terminal 上游堵 barrier」）。此处点名闸因与当下 verdict，
-            // 免分发器把「机制挡住的合法等待」误判为引擎故障。零新事件类型（复用既有
-            // mount-stalled 单发档位）。
-            val gateDesc = mergeVerdictHolders(n, us) match
+            // verdict 闸停等（merge-verdict-gate 批 2026-09-12；#238 泛化 2026-09-15 后
+            // **节点形态中立**）：barrier 已清而节点仍 pending 的真实原因常见形态——in/deps
+            // 上游 verifier 判词非 pass（其 status=completed，泛化文案会误指「terminal 上游堵
+            // barrier」）。此处点名闸因与当下 verdict，免分发器把「机制挡住的合法等待」误判为
+            // 引擎故障。零新事件类型（复用既有 mount-stalled 单发档位）。
+            val gateDesc = mergeVerdictHolders(us) match
               case Nil => ""
               case held =>
-                s", verdict gate held: in-upstream verifier(s) [${held.map(u => s"'${u.name}'(${u.id}):lastVerdict=${u.lastVerdict.getOrElse("none")}").mkString(", ")}]" +
-                  " not pass — merge must not start until that verifier re-runs to pass (mechanism guarantee, not a stall)"
+                s", verdict gate held: in/deps upstream verifier(s) [${held.map(u => s"'${u.name}'(${u.id}):lastVerdict=${u.lastVerdict.getOrElse("none")}").mkString(", ")}]" +
+                  " not pass — this node must not start until that verifier re-runs to pass (mechanism guarantee, not a " +
+                  "stall; a non-pass verdict is never handed on as a positive result — the fail route is the " +
+                  "'(fail)<target>:loop' control edge)"
             // merge 互斥闸停等（mergefifo-engine 批 2026-09-13）：同键（本项目 git 目录）
             // 已有更高优先 merge 在跑 ⇒ 本 merge 是**排队中的合法等待**，不是引擎故障。
             // 文案给持有者 id/status + FIFO 次序说明，免分发器误判（零新事件类型——复用
@@ -4805,8 +4830,9 @@ class NodeEngine(
                 tn2.in.forall(upId => tn2.deliveredTo.contains(upId)) && tn2.pendingSuccession.isEmpty)
               if allArrived && tn.exists(_.status != NodeLifecycle.Running) then
                 // verdict 闸（merge-verdict-gate 批 2026-09-12，落点①/case (a)——barrier
-                // 结算后的启动判定）：verifier 判 fail 时 merge 不得启动（保持 pending），
-                // 直到该 verifier 当下 lastVerdict 变 pass。零副作用——barrier 记账
+                // 结算后的启动判定；**#238 泛化 2026-09-15** 后对全部节点生效）：上游 verifier
+                // 判词非 pass 时本节点不得启动（保持 pending），直到该 verifier 当下 lastVerdict
+                // 变 pass。零副作用——barrier 记账
                 // （deliveredTo）已在上方 mutate 落库，本闸只挡「fork startNode」这一动作。
                 // mergefifo-engine 批 2026-09-13：**互斥闸**接在同一收口（落点③/纵深）——
                 // 同键已有更高优先 merge 在跑时，本 merge 的 barrier 照旧结算（记账已落库）、
