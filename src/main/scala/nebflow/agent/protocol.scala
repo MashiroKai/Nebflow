@@ -50,10 +50,19 @@ case class InjectionAttribution(
     * header `KIND · PROJECT · SUBJECT · STATE` 的第 2 段来源，取**发送方**（不是收件方）
     * 所属项目名。
     *
-    * 取值链（禁臆造、禁静默填空；逐处落位见交付报告）：
+    * 取值链（禁臆造、禁静默填空；逐处落位见交付报告 §r3-2）：
     *   ① 发送方项目 = 构造点的项目上下文（`MailTool.mailAttribution` 取
-    *      `ToolContext.projectName`）；
-    *   ② 取不到 ⇒ 本项目（发射点用接收会话的 `AgentState.projectName` 补）；
+    *      `ToolContext.projectName`）——🔴 **该置位当前未落位**（`MailTool.scala` 是
+    *      批 B 的在飞写面，本支判据③ 明文零带入）⇒ 生产默认恒 `None`（事实读数：
+    *      全仓唯一生产构造点 `core/tools/MailTool.scala` 的 `mailAttribution` 不置本
+    *      字段；`protocol.scala:68 Empty` 亦然）；
+    *   ② 未置位 ⇒ **按腿分派**：Mail 腿①（`Mail → project` 分发器收件面）由**发射面**
+    *      `ProjectActor.leg1SenderProject` 取根域值（该腿在册地址面无项目上下文 =
+    *      「跨 root 直投件」⇒ `NotificationHeader.RootProject`，**不**取收件方项目）；
+    *      其余腿由发射点（`AgentActor#emitInjectedUserEvent`）用接收会话的
+    *      `AgentState.projectName` 补 —— 发送方与接收方**同项目**时与本字段同值，
+    *      **跨项目**发送方（越面 `project:` 调用 / 跨项目团队收件）**仍须** ① 级置位
+    *      闭合（随批 B）；
     *   ③ 仍取不到（跨 root 直投 / 根域注入）⇒ `NotificationHeader.RootProject`。
     *
     * NODE/CHAIN 腿**不依赖本字段**：其 `sender` 已按路径约定携带

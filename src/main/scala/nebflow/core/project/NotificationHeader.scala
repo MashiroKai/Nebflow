@@ -31,10 +31,20 @@ import java.util.Locale
  *     `header` 键** ⇒ 前端回落既有 `injectedSourceLabel`（逐字节不变）。这是刻意
  *     留的缝：在飞批新增的源（如 device-mail 批的 `deviceMail`，见交付报告
  *     「未纳入面」）由其自己的前端显式分支渲染，本函数不替它决定形态。
- *   - `PROJECT` 段的回落链（发送方项目 → 本项目 → [[RootProject]]）：链首级由构造点
- *     置位（`MailTool.mailAttribution` / `NodeEngine` 的 `sender="<project>/<x>"`），
- *     末两级由发射点补（见 `AgentActor#emitInjectedUserEvent`）。逐处落位登记在
- *     交付报告。
+ *   - `PROJECT` 段的取值链（发送方项目 → 本项目 → [[RootProject]]）——**逐级落位以事实
+ *     为准**（r3 更正：本行原称「链首级由构造点置位（`MailTool.mailAttribution`）」，与
+ *     交付面不符）：
+ *     ① **构造点显式置位** = `MailTool.mailAttribution` 取 `ToolContext.projectName`
+ *        ——🔴 **当前未落位**（该文件属批 B 在飞写面）；NODE/CHAIN 腿**不经本字段**，
+ *        其 `PROJECT` 由 `sender` 前缀 `"<项目名>/<节点名|链id>"` 切分（本函数内实现，
+ *        不依赖置位）；
+ *     ①′ **Mail 腿①（`Mail → project` 分发器收件面）** 由发射面
+ *        `ProjectActor.leg1SenderProject` 在 ① 缺席时取**根域** [[RootProject]]
+ *        （该腿发送方无项目上下文 = 「跨 root 直投件」；**不**取收件方项目）；
+ *     ② 本项目 = 发射点 `AgentActor#emitInjectedUserEvent` 的 `sessionProject`（接收会话
+ *        所属项目）；
+ *     ③ [[RootProject]] = 前级皆空。
+ *     逐处落位与原始读数登记在交付报告 §r3-2 / §r2-C（r3 更正节）。
  *
  * ## 与前端词表的关系
  * [[KindLabels]] 的**键集恒 = [[nebflow.agent.InjectionAttribution.BackendNamedSources]]**

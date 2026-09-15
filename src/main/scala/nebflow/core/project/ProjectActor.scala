@@ -744,6 +744,30 @@ object ProjectActor:
             active.update(_.filterNot(_.sessionId == sessionId)) *> teardown
     }
 
+  /** 腿①（Mail → 项目分发器）**四段式 header PROJECT 段的发射面取值**（「气泡四段式
+    * 统一」批 2026-09-15，作者 12:33 令；r3 落位，逐条落位与读数见交付报告 §r3-2）。
+    *
+    * 判据逐字：`PROJECT` = **发送方所属项目**；「跨 root 直投件项目段用 NEBULA」。取值
+    * 顺序（禁臆造、禁静默填空）：
+    *   ① `attribution.project` = **构造点显式置位**（`MailTool.mailAttribution` 取
+    *      `ToolContext.projectName`）⇒ **优先**。该置位随批 B 落位（`MailTool.scala`
+    *      是批 B 在飞写面）；落位后本兜底对该腿**自动失效**，无需二次改动。
+    *   ② 构造点未置位 ⇒ 本腿的**在册地址面**只放行两类发送方（`MailTool.layeredRoute`：
+    *      `project:` 对 `Dispatcher` 角色显式越界报错，其余角色 = `NebulaRoot` 根系 /
+    *      `Teamish` 团队系），两类**皆无项目上下文** ⇒ 发送方所属项目落在**根域** =
+    *      [[NotificationHeader.RootProject]]（= 作者令后半句「跨 root 直投件」）。
+    *
+    * 🔴 为何本腿**不得**复用发射点 ② 级回落（接收会话所属项目）：腿① 的接收面 = **目标
+    * 项目**的分发器会话 ⇒ ② 级恒取到**收件方**项目，与判据「发送方所属项目」**相反**
+    * （复核位实测成串 `MAIL · PROJ-P1 · NEBULA · INFO`）；未置位时以根域取值即判据形态
+    * `MAIL · NEBULA · NEBULA · INFO`。
+    *
+    * `None`（`attribution` 缺席 = `DispatchNotify` 回流 / 重入触发等非 Mail 腿）⇒ **保持
+    * `None`**：该两腿行为逐字不变（PROJECT 段仍走发射点 ②/③ 回落），本兜底**只作用**
+    * 于 Mail 腿①（唯一携带 attribution 的调用面）。 */
+  private def leg1SenderProject(attribution: Option[InjectionAttribution]): Option[String] =
+    attribution.map(a => a.project.map(_.trim).filter(_.nonEmpty).getOrElse(NotificationHeader.RootProject))
+
   private def dispatchTask(
     cfg: ProjectConfig,
     active: Ref[IO, Option[ActiveDispatcher]],
@@ -799,9 +823,10 @@ object ProjectActor:
               senderTeam = attribution.flatMap(_.senderTeam),
               eventType = attribution.flatMap(_.eventType),
               intake = attribution.flatMap(_.intake),
-              // 气泡四段式统一批（2026-09-15）：PROJECT 段链首级（发送方所属
-              // 项目）同源透传；`None` ⇒ 发射点走 ②/③ 回落。
-              project = attribution.flatMap(_.project)
+              // 气泡四段式统一批（2026-09-15）：PROJECT 段链首级 = 发送方所属项目。
+              // r3（作者令后半句 / 复核位 fail 项闭合）：**腿① 发射面取值** —— 构造点
+              // 置位优先，未置位时取根域（本腿发送方无项目上下文），见 leg1SenderProject。
+              project = leg1SenderProject(attribution)
             )).void *>
               logger
                 .info(
@@ -1083,8 +1108,9 @@ object ProjectActor:
             senderTeam = attribution.flatMap(_.senderTeam),
             eventType = attribution.flatMap(_.eventType),
             intake = attribution.flatMap(_.intake),
-            // 气泡四段式统一批（2026-09-15）：PROJECT 段链首级同源透传（同上）。
-            project = attribution.flatMap(_.project)
+            // 气泡四段式统一批（2026-09-15）：PROJECT 段链首级 = 发送方所属项目（同上，
+            // r3：腿① 发射面取值 = leg1SenderProject）。
+            project = leg1SenderProject(attribution)
           )).void
           _ <- logger.info(s"Project '${project.name}' dispatcher session spawned: $sessionId$tag")
         yield same
