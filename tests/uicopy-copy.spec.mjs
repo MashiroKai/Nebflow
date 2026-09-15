@@ -7,13 +7,18 @@
 //        （`.plugins-dispatch-label`）——toggle 本体自明。
 //     c) 普通关态的 note「派发已关闭——只影响未来派发；已在跑的节点保持其插件许可」
 //        （`plugins.dispatchOffNote`）。
+//   🔴 后续裁定（作者 2026-09-15，「**删掉空框**」）——本 spec 已随令迁移：
+//     • 空文案（默认态）⇒ **pill 元素根本不生成**，判据 = `.plugins-state-pill`
+//       count = 0（🔴 **不是**「元素在、用 CSS 藏起来」——禁遮盖式假修）；
+//       旧口径「药丸本体 + on 类保留」已随该令作废。
 //   🔴 保留面（本 spec 逐条钉住，防「删过头」）：
 //     • toggle 本体（`[data-plugin-dispatch]`）在位、role=switch、**可点**、
-//       点击后状态样式翻转（`.on` 类）+ 卡片右上几何不变；
-//     • 药丸本体与**状态样式**在（`.plugins-state-pill` + `on` 类 + 非透明视觉）；
+//       点击后状态样式翻转（`.on` 类）+ 卡片右上几何不变（状态区只剩 toggle）；
+//     • **有文字态**照常渲染并保留状态样式：blocked ⇒ 元素在 + `blocked` 类 +
+//       圆角 + 非透明状态色 + 文字「已封禁」（可行动信号）+ 可行动 note（指向 API / CLI）；
 //     • **可访问性面**：toggle 的 aria-label 仍 = locale `plugins.dispatchLabel`
-//       （非空 —— 只删可见文本，不删 aria）；
-//     • 例外态文字仍在：blocked ⇒ 药丸出「已封禁」+ 可行动 note（指向 API / CLI）。
+//       （非空 —— 只删可见文本，不删 aria）。
+//   （本批同步件 = capsulefix：渲染点条件化，`js/plugins.js` 三处。）
 //
 //   件 2 · 设置面板 · 模型预设（Preset）描述语义：label + 帮助文案表达
 //     「描述 = 该方案的能力描述，agent 可据此自动选择模型方案」。
@@ -174,26 +179,28 @@ async function cardDump(page) {
       toggleAriaChecked: dsw?.getAttribute('aria-checked') ?? null,
       toggleDisabled: dsw ? dsw.disabled : null,
       toggleOn: dsw ? dsw.classList.contains('on') : null,
-      // 保留面：药丸本体 + 状态样式
+      // 状态面：默认态零元素（2026-09-15「删掉空框」）；有文字态（blocked/changed）元素在
       pillPresent: !!pill,
+      pillElCount: card ? card.querySelectorAll('.plugins-state-pill').length : null,
       pillClass: pill?.className ?? null,
       pillVisual: cs ? {
         borderRadius: cs.borderRadius,
         backgroundFill: cs.backgroundColor,
         borderColor: cs.borderTopColor,
       } : null,
-      // 保留面：几何（卡片右上、与药丸同排）
+      // 几何（卡片右上）：开关是状态区**唯一子元素**（空框不占位）
       geom: (() => {
         const head = card?.querySelector('.plugins-card-head');
         const state = card?.querySelector('.plugins-card-state');
-        if (!card || !head || !state || !pill || !dsw) return null;
+        if (!card || !head || !state || !dsw) return null;
         const r = (el) => el.getBoundingClientRect();
-        const pr = r(pill), dr = r(dsw), hr = r(head);
+        const dr = r(dsw), hr = r(head);
         return {
           inHead: head.contains(dsw),
           inState: state.contains(dsw),
-          sameRowAsPill: Math.abs((pr.y + pr.height / 2) - (dr.y + dr.height / 2)) <= 2,
-          rightOfPill: dr.x >= pr.right - 1,
+          pillAbsent: !pill,
+          // 状态区唯一子元素 = 承载 toggle 的 `.plugins-card-dispatch` 包裹（无占位元素）
+          stateOnlyChild: state.children.length === 1 && !!state.firstElementChild?.querySelector('[data-plugin-dispatch]'),
           rightAlignedInHead: (hr.right - dr.right) <= 4,
         };
       })(),
@@ -209,8 +216,9 @@ test('件1: 插件面板两处可见小字整体删除；toggle 本体/状态样
 
     const s = await cardDump(page);
 
-    // ── 红钉（改前红）：三条被删的可见小字「不存在」──
-    expect(s.pillText, `[${locale}] 默认态药丸**不出文字**（「${REMOVED_PILL_TEXT[locale]}」小字已删）`).toBe('');
+    // ── 红钉（改前红）：三条被删的可见小字「不存在」+ 空态**零元素** ──
+    expect(s.pillElCount, `[${locale}] 默认态零元素（「删掉空框」：空文案 ⇒ 不渲染 pill 元素，判据 = count 0）`).toBe(0);
+    expect(s.pillText, `[${locale}] 默认态药丸无元素 ⇒ textContent 读数 null（「${REMOVED_PILL_TEXT[locale]}」小字已删）`).toBe(null);
     expect(s.labelPresent, `[${locale}] 可见 label「${REMOVED_LABEL_TEXT[locale]}」元素不存在`).toBe(false);
     expect(s.labelText, `[${locale}] 可见 label 文本为 null`).toBe(null);
     expect(s.noteText, `[${locale}] 普通态无可见 note（「${REMOVED_NOTE_TEXT[locale]}」已删）`).toBe(null);
@@ -233,18 +241,18 @@ test('件1: 插件面板两处可见小字整体删除；toggle 本体/状态样
     expect(s.toggleOn, `[${locale}] 默认态 toggle = on`).toBe(true);
     expect(s.geom?.inState, `[${locale}] toggle 仍在卡片状态区（右上）`).toBe(true);
     expect(s.geom?.inHead, `[${locale}] toggle 仍在卡片头行`).toBe(true);
-    expect(s.geom?.sameRowAsPill, `[${locale}] toggle 与药丸同排`).toBe(true);
-    expect(s.geom?.rightOfPill, `[${locale}] toggle 在药丸右侧`).toBe(true);
+    expect(s.geom?.pillAbsent, `[${locale}] 状态区内无药丸元素（空框不占位）`).toBe(true);
+    expect(s.geom?.stateOnlyChild, `[${locale}] 状态区只剩 toggle 一个子元素（零占位残留）`).toBe(true);
     expect(s.geom?.rightAlignedInHead, `[${locale}] toggle 行盒右对齐`).toBe(true);
 
     // ── 保留面：可访问性（aria-label 仍 = locale plugins.dispatchLabel，非空）──
     expect(s.toggleAria, `[${locale}] toggle aria-label 保留 = ${REMOVED_LABEL_TEXT[locale]}`).toBe(REMOVED_LABEL_TEXT[locale]);
 
-    // ── 保留面：药丸本体 + 状态样式（on 类 + 非透明视觉）──
-    expect(s.pillPresent, `[${locale}] 药丸本体保留`).toBe(true);
-    expect(s.pillClass, `[${locale}] 药丸带 on 状态类`).toContain('on');
-    expect(s.pillVisual?.borderRadius, `[${locale}] 药丸状态样式（圆角药丸）在`).not.toBe('0px');
-    expect(s.pillVisual?.backgroundFill, `[${locale}] 药丸背景非透明（状态色在）`).not.toMatch(/^rgba?\(0, 0, 0, 0\)$|^transparent$/);
+    // ── 空态零元素（作者 2026-09-15「删掉空框」）——🔴 不是「元素在、CSS 藏起来」──
+    expect(s.pillPresent, `[${locale}] 默认态药丸元素不生成（旧「药丸本体保留」口径已被作者裁定取代）`).toBe(false);
+    expect(s.pillClass, `[${locale}] 空态无类可挂`).toBe(null);
+    // 状态**样式**的载体随之只在有文字态出现 ⇒ 视觉读数在下面的封禁态里逐条钉（非本处）。
+    expect(s.pillVisual, `[${locale}] 空态无药丸 ⇒ 无计算样式可读`).toBe(null);
 
     // ── 可点性 + 状态样式翻转（写 dispatch.authorEnabled，wire 只出现 disable/enable）──
     const posts = [];
@@ -286,19 +294,25 @@ test('件1: 例外态文字仍在（封禁 ⇒ 药丸出「已封禁」+ 可行�
   const blocked = await cardDump(page);
   expect(blocked.pillText, '封禁态药丸仍出文字（可行动信号，非冗余说明）').toBe('已封禁');
   expect(blocked.pillClass, '封禁态药丸状态类').toContain('blocked');
+  // 状态样式（圆角 + 非透明状态色）随有文字态照常存在——空框退场后视觉面在此钉住。
+  expect(blocked.pillVisual?.borderRadius, '封禁态药丸状态样式（圆角药丸）在').not.toBe('0px');
+  expect(blocked.pillVisual?.backgroundFill, '封禁态药丸背景非透明（状态色在）').not.toMatch(/^rgba?\(0, 0, 0, 0\)$|^transparent$/);
   expect(blocked.noteHidden, '封禁态 note 可见').toBe(false);
   expect(blocked.noteText, '封禁态 note 指向 API / CLI').toContain('API / CLI');
   expect(blocked.toggleDisabled, '封禁态 toggle disabled').toBe(true);
   expect(blocked.toggleAria, '封禁态 aria-label 仍非空（可访问性面不因定态丢失）').toBe('任务分发器可见性');
 
-  // 解封 ⇒ 回默认态：文字又消失，药丸/开关样式回来。
+  // 解封 ⇒ 回默认态：**元素整个消失**（不是「回到无文字的 on 药丸」），开关样式回来。
   pluginState.blocked = false;
   await page.evaluate(async () => { const m = await import('/js/plugins.js'); m.renderPlugins(); });
-  await page.waitForFunction(() =>
-    document.querySelector('.plugins-card[data-plugin="e2e-hello"] .plugins-state-pill')
-      ?.classList.contains('on'), { timeout: 8000 });
+  // 等重渲完成（卡片 class 回 on + loading 占位消失）——避免与 innerHTML 重写竞态。
+  await page.waitForFunction(() => {
+    const c = document.querySelector('.plugins-card[data-plugin="e2e-hello"]');
+    return !!c && c.classList.contains('on') && !document.querySelector('#plugins-content .plugins-loading');
+  }, undefined, { timeout: 8000 });
   const after = await cardDump(page);
-  expect(after.pillText, '解封后默认态药丸回到「无文字」').toBe('');
+  expect(after.pillElCount, '解封后默认态药丸元素 count = 0（「删掉空框」）').toBe(0);
+  expect(after.pillText, '解封后默认态药丸无元素 ⇒ 读数 null').toBe(null);
   expect(after.noteText, '解封后 note 重新隐藏').toBe(null);
   expect(after.toggleDisabled, '解封后 toggle 重新可点').toBe(false);
 });
