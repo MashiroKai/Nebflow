@@ -529,7 +529,7 @@ test('B3: 封禁 UI 退场契约 — 面板零 revoke/unblock wire；引擎侧�
   expect(changed.pill, 'contentChanged ⇒ 药丸改义为「内容已变更」（不是封禁）').toBe('内容已变更');
   expect(changed.pillClass, 'pill 带 changed class').toContain('changed');
   expect(changed.changedHint, 'contentChanged shows the visibility-only hint')
-    .toBe('内容与上次记录的版本不同——已按新内容生效，此提示仅为可见性（无需再审批）');
+    .toBe('内容与上次记录的版本不同——已按新内容生效，此提示仅为可见性');
   expect(changed.blockedHint, 'contentChanged 不是封禁——无封禁提示').toBe(null);
   expect(changed.dispatchDisabled, 'contentChanged does NOT disable dispatch (≠ 封禁)').toBe(false);
   expect(changed.dispatchBlockedAttr, '无 data-dispatch-blocked').toBe(null);

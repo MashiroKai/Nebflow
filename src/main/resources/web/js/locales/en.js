@@ -1236,14 +1236,14 @@ export default {
   //     batch: block/unblock UI fully retired + dispatch switch renamed «Dispatcher visibility»
   //     and moved to the card's top-right, en/zh paired) ===
   'plugins.list': 'Plugins',
-  'plugins.listHint': 'Unified plugin system: skills and MCP enable per plugin. A plugin present on disk is trusted as-is — no approval step. This switch only affects what the dispatcher sees for FUTURE dispatches (nodes already running keep their grant); stopping a plugin goes through the API / CLI (the panel offers no block entry)',
+  'plugins.listHint': 'Unified plugin system: skills and MCP enable per plugin. Installed plugins are ready to use. This switch only affects what the dispatcher sees for FUTURE dispatches (nodes already running keep their grant); stopping a plugin goes through the API / CLI (the panel offers no block entry)',
   'plugins.agents': 'Agents',
   'plugins.agentsHint': 'Click an agent row to open its detail editor (tools / prompt / flows)',
   'plugins.empty': 'No plugins',
   'plugins.stateBlocked': 'Blocked',
   'plugins.stateChanged': 'Content changed',
   'plugins.blockedHint': 'Blocked — this plugin is out of the dispatcher catalog and will not be dispatched. Unblocking goes through the API / CLI (no panel entry).',
-  'plugins.changedHint': 'Content differs from the last recorded version — the new content is already in force. Visibility note only (no re-approval)',
+  'plugins.changedHint': 'Content differs from the last recorded version — the new content is already in force. Visibility note only',
   'plugins.dispatchLabel': 'Dispatcher visibility',
   'plugins.dispatchOnTitle': 'Dispatch permission ON — this plugin may be assigned to NEW nodes. Click to stop future dispatches; nodes already running keep their grant',
   'plugins.dispatchOffTitle': 'Dispatch permission OFF — this plugin is not assigned to new nodes. Click to allow future dispatches again',
