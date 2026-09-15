@@ -101,7 +101,7 @@ class PluginLoadVisibilitySpec extends CatsEffectSuite:
 
   private val expectedNote = "另有 2 个插件未载入（装载失败 1 / 已封禁 1）"
   private val expectedChangedNote =
-    "另有 1 个插件内容自审批记录后已变更（**不拦截装载**，仅提示核对）：drifted"
+    "另有 1 个插件内容与上次记录的版本不同（**不拦截装载**，仅提示核对）：drifted"
 
   // ── 目录缺席 / 内容变更注记 ─────────────────────────────────
 
@@ -207,7 +207,7 @@ class PluginLoadVisibilitySpec extends CatsEffectSuite:
     yield
       assert(catalog.contains("- ok-a: 可见插件 A"),
         s"content-changed package must stay visible: $catalog")
-      assert(catalog.contains("另有 1 个插件内容自审批记录后已变更（**不拦截装载**，仅提示核对）：ok-a"),
+      assert(catalog.contains("另有 1 个插件内容与上次记录的版本不同（**不拦截装载**，仅提示核对）：ok-a"),
         s"fresh content change must be annotated again: $catalog")
       assert(health.exists(_.contains("[content-changed] ok-a:")),
         s"fresh content change must appear in the health summary: $health")

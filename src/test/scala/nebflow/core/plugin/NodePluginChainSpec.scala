@@ -372,7 +372,7 @@ class NodePluginChainSpec extends CatsEffectSuite:
         r.messages.exists(m => m.role == nebflow.shared.MessageRole.User && m.textContent.contains("tampered-live-content")))
       assert(injected, "the node must load the NEW content (the change is visible to the model, not intercepted)")
       assert(catalog.contains("- inject-skill:"), s"content-changed package stays in the catalog: $catalog")
-      assert(catalog.contains("内容自审批记录后已变更"), s"catalog must note the content change: $catalog")
+      assert(catalog.contains("内容与上次记录的版本不同"), s"catalog must note the content change: $catalog")
       assert(health.exists(_.contains("[content-changed] inject-skill:")),
         s"health summary must note the content change (non-blocking): $health")
     }
