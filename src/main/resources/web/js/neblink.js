@@ -620,8 +620,20 @@ export function bindNeblinkEvents(rerender) {
   // post_logout_redirect_uri is allow-listed on the Logto app).
   // The main window refreshes its status a beat later, after the local
   // teardown on the backend has landed.
-  function initiateLogout() {
-    window.open('/api/neblink/auth/end-session', '_blank', 'noopener');
+  //
+  // `opts.continueToLogin` (one-window switch, 2026-09-16): true marks this
+  // logout as the SWITCH-ACCOUNT flow — the gateway arms its single-use handoff
+  // marker, and the landing page this window ends on continues into the login
+  // IN THIS SAME WINDOW (`?scenario=switch`). A plain logout passes nothing:
+  // the landing stays the static 「已退出登录」 card and the gateway explicitly
+  // clears any leftover marker (zero behaviour change for plain logout).
+  // `ui_locales` is carried through the hop because the landing page is a bare
+  // navigation and cannot read this app's locale.
+  function initiateLogout(opts = {}) {
+    const handoff = opts.continueToLogin === true
+      ? `?scenario=switch&ui_locales=${getLocale() === 'en' ? 'en' : 'zh'}`
+      : '';
+    window.open('/api/neblink/auth/end-session' + handoff, '_blank', 'noopener');
     setTimeout(async () => {
       forgetAvatarProfile(); // drop the last-known snapshot: a logged-out user must not resurrect offline
       // ⑨ 登出清除（作者口径：消息持久落盘，但换账号/登出必须清）——与头像
@@ -674,6 +686,21 @@ export function bindNeblinkEvents(rerender) {
  * (/api/neblink/auth/start, prompt="login consent"); this function only
  * navigates to it.
  *
+ * ONE-WINDOW SHAPE (2026-09-16 author ruling: "切换账号全程只开一个窗"):
+ * the logout hop is a real navigation to the provider (design-required — it
+ * must kill the SSO session), and the window it ends on — our
+ * `/auth/logged-out` landing page — CONTINUES INTO THE LOGIN THERE, because
+ * the gateway marked this logout as a switch (`?scenario=switch`). So this
+ * function opens NO window of its own: the old `window.open('about:blank')`
+ * login reservation + `startPkceLogin()` + second `window.open` are gone, and
+ * with them the second window. Forced fresh login is preserved end to end
+ * (the continuation builds its authorize URL through the same server-side
+ * login start with `forceLogin=true` ⇒ `prompt="login consent"`).
+ *
+ * Failure is never silent: [[watchSwitchHandoff]] watches the handoff marker
+ * and, when the continuation does not arrive, shows the login panel in this
+ * window (no automatic window retry — the panel owns the manual gesture).
+ *
  * BYUI prefill slot (forensic verdict 2026-09-10): the auth.nebflow.space
  * BYUI sign-in card does NOT read any URL prefill param yet, and Logto's
  * custom-UI 303 landing does not forward arbitrary authorize query params
@@ -684,43 +711,64 @@ export function bindNeblinkEvents(rerender) {
  * auth-ui/src/views/signin.ts), enable prefill here by appending
  * `&login_hint=` + encodeURIComponent(prefillEmail) to `authorizeUrl`
  * before navigating, and pass the account email through from the row click.
- * @param {() => void} initiateLogout — shared RP-logout chain
+ * @param {(opts?: {continueToLogin?: boolean}) => void} initiateLogout — shared RP-logout chain
  * @param {string|null} prefillEmail — account email to prefill (v1: unused)
  */
 async function switchLogoutAndLogin(initiateLogout, prefillEmail = null) {
-  initiateLogout(); // sync gesture: opens the end-session tab + schedules local refresh
+  // The ONE window of the whole switch: its landing page continues into the
+  // login (see the doc comment above). Gesture-tick, popup-blocker safe.
+  initiateLogout({ continueToLogin: true });
   void prefillEmail; // v1 ships without the param — see BYUI prefill slot note above
-  try {
-    // Reserve the popup inside THIS gesture (same contract as the Activity
-    // Bar login modal): the authorize URL only exists after the gateway
-    // round-trip, and a post-await window.open gets blocked. The end-session
-    // tab above is intentionally FIRST in the gesture (Safari allows one
-    // open per gesture — logout integrity outranks the login hop; a failed
-    // reserve degrades to the manual login-modal fallback below).
-    const reserved = window.open('about:blank', '_blank');
-    const pkce = await startPkceLogin(true);
-    if (pkce?.authorizeUrl) {
-      let navigated = false;
-      if (reserved) {
-        try { reserved.location.href = pkce.authorizeUrl; navigated = true; }
-        catch (e) { /* popup closed mid-await — try a fresh open below */ }
-      }
-      if (!navigated && !window.open(pkce.authorizeUrl, '_blank')) {
-        // Fully blocked → the settings avatar re-opens the login modal,
-        // whose in-modal button is the manual fallback surface.
-        import('./activityBar.js').then(m => m.openLoginModal()).catch(() => {});
-      }
+  watchSwitchHandoff();
+}
+
+/** Poll cadence / deadline of the switch handoff watchdog (2026-09-16).
+ *  The continuation is taken over by the landing hop (log out → provider →
+ *  landing) i.e. seconds; the deadline is a generous bound for a slow hop,
+ *  not a login duration. */
+const SWITCH_HANDOFF_POLL_MS = 1200;
+const SWITCH_HANDOFF_DEADLINE_MS = 20000;
+let _switchHandoffTimer = null;
+
+/** Watch the gateway's single-use switch handoff marker after a switch
+ *  gesture (2026-09-16, one-window switch).
+ *
+ *  - `consumed` → the logout window's landing page took the continuation over
+ *    (the intended one-window path): stop silently, zero UI.
+ *  - still not consumed at the deadline (typically: this gateway port is not
+ *    on the provider's post_logout_redirect_uri allow-list, which the provider
+ *    answers with 400, so the landing page is never reached) → show the login
+ *    PANEL as the visible failure face. Deliberately the plain
+ *    `openLoginModal({forceLogin:true, deferPopup:true})` call: it is the same
+ *    user-gesture-chain surface the avatar uses (so the auto-flow guard is
+ *    neither narrowed nor bypassed, and no window is opened from a non-gesture
+ *    context — the panel's own button is the gesture that opens one), and
+ *    `forceLogin` keeps the switch-account forced-fresh-login semantic instead
+ *    of silently downgrading to a plain login.
+ *  Exported for the batch harness (the measurement drives the same code the
+ *  UI does). */
+export async function watchSwitchHandoff() {
+  if (_switchHandoffTimer) { clearTimeout(_switchHandoffTimer); _switchHandoffTimer = null; }
+  const deadline = Date.now() + SWITCH_HANDOFF_DEADLINE_MS;
+  const tick = async () => {
+    _switchHandoffTimer = null;
+    let state = '';
+    try {
+      const resp = await fetch('/api/neblink/auth/handoff', {
+        headers: { 'Authorization': 'Bearer ' + getAuthToken() },
+      });
+      if (resp.ok) state = (await resp.json()).state || '';
+    } catch (e) { /* transient readout failure — keep polling until the deadline */ }
+    if (state === 'consumed') return; // continuation took over in the logout window
+    if (Date.now() >= deadline) {
+      import('./activityBar.js')
+        .then(m => m.openLoginModal({ forceLogin: true, deferPopup: true }))
+        .catch(() => {});
       return;
     }
-    // Legacy fallback (gateway without Logto): hand over to the login
-    // modal, which drives the device flow (user code + polling).
-    if (reserved) { try { reserved.close(); } catch (e) { /* ignore */ } }
-    import('./activityBar.js').then(m => m.openLoginModal()).catch(() => {});
-  } catch (e) {
-    // start failed (network etc.) — the logout hop already ran; surface the
-    // standard login modal so the user can retry from a known surface.
-    import('./activityBar.js').then(m => m.openLoginModal()).catch(() => {});
-  }
+    _switchHandoffTimer = setTimeout(tick, SWITCH_HANDOFF_POLL_MS);
+  };
+  _switchHandoffTimer = setTimeout(tick, SWITCH_HANDOFF_POLL_MS);
 }
 
 /**

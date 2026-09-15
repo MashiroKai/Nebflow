@@ -60,6 +60,13 @@ class RestApiRoutes(
   /** Logto AC+PKCE login single-flight state (stage 2, 2026-08-28). */
   private val pkceLogin = PkceLoginSession.unsafe
 
+  /** Switch-account single-window handoff marker (2026-09-16, one-window
+    * switch batch): the ONE place that knows whether the current logout hop is
+    * a switch-account flow, so the `/auth/logged-out` landing page it ends on
+    * can continue the login in the same window. Lifecycle (arm / consume /
+    * disarm, single-use, TTL) lives in [[NeblinkSwitchHandoff]]. */
+  private val switchHandoff = NeblinkSwitchHandoff.unsafe
+
   def routes: HttpRoutes[IO] = HttpRoutes.of[IO] {
     // Health check (P2-6 layered, 2026-08-25): `providers` = per-model health
     // (up / down:<reason>), `search` = Tier 2a standalone search API health
@@ -897,11 +904,25 @@ class RestApiRoutes(
     // Authorization header available) in the standard OIDC RP-logout shape
     // — the credential it acts on is the provider's own session cookie.
     // Worst case abuse = triggering a logout redirect (low risk).
-    case GET -> Root / "neblink" / "auth" / "end-session" =>
+    case req @ GET -> Root / "neblink" / "auth" / "end-session" =>
+      // Scenario marker (one-window switch, 2026-09-16): `?scenario=switch` is
+      // sent ONLY by the switch-account entry; it arms the single-use handoff
+      // so the landing page this hop ends on continues into the login in the
+      // SAME window. A plain logout explicitly DISARMS, so a leftover marker
+      // can never drag the plain-logout landing page into an auto-login.
+      // `ui_locales` is whitelisted exactly like /neblink/auth/start (the
+      // landing hop is a bare navigation — it cannot read the app's locale).
+      val query = req.uri.query.params
+      val switchScenario = query.get("scenario").contains("switch")
+      val uiLocales = query.get("ui_locales").filter(v => v == "zh" || v == "en").getOrElse("")
+      val armOrDisarm =
+        if switchScenario then switchHandoff.arm(uiLocales) else switchHandoff.disarm
       neblinkService match
-        case None => NotFound(Json.obj("error" -> "NebLink service not initialized".asJson))
+        case None =>
+          armOrDisarm *> NotFound(Json.obj("error" -> "NebLink service not initialized".asJson))
         case Some(ms) =>
           for
+            _ <- armOrDisarm
             logto <- ms.neblinkConfig.map(_.effectiveLogto)
             // Read the hint BEFORE performLocalLogout deletes the file.
             cred <- DeviceCredential.load
@@ -919,8 +940,10 @@ class RestApiRoutes(
                   r <- Found(Location(Uri.unsafeFromString(target)))
                 yield r
               // Same surface as auth/start: unconfigured provider (or AC app
-              // id missing) — the caller falls back to the local-only logout.
-              case _ => NotFound(Json.obj("error" -> "logto-not-configured".asJson))
+              // id missing) — the caller falls back to the local-only logout,
+              // and no landing hop will ever come back to consume the marker.
+              case _ =>
+                switchHandoff.disarm *> NotFound(Json.obj("error" -> "logto-not-configured".asJson))
           yield resp
 
     // Enroll device via pairing code — calls the NebLink Server's
@@ -1147,32 +1170,19 @@ class RestApiRoutes(
                 .getOrElse("")
               // Embedded-default fallback: missing logto block resolves to the
               // product's hosted auth service (fresh installs get PKCE login).
-              logto <- ms.neblinkConfig.map(_.effectiveLogto)
-              resp <- logto match
-                case Some(lc) if lc.pkceClientId.isDefined =>
-                  val pkceClientId = lc.pkceClientId.getOrElse("")
-                  for
-                    verifier <- LogtoAuthCode.generateVerifier
-                    challenge = LogtoAuthCode.challengeS256(verifier)
-                    state <- LogtoAuthCode.generateState
-                    _ <- pkceLogin.start(verifier, state)
-                    redirectUri = loopbackCallbackUri
-                    authorizeUrl = LogtoAuthCode.authorizeUrl(
-                      lc.endpoint,
-                      pkceClientId,
-                      redirectUri,
-                      challenge,
-                      state,
-                      prompt = if forceLogin then "login consent" else "consent",
-                      uiLocales = uiLocales
-                    )
-                    r <- Ok(Json.obj("authorizeUrl" -> authorizeUrl.asJson))
-                  yield r
+              // The authorize URL itself has ONE builder — [[beginPkceLogin]] —
+              // shared with the switch-account landing continuation below.
+              // An explicit login start supersedes any pending switch handoff
+              // (the marker is single-use and must not survive a new attempt).
+              _ <- switchHandoff.disarm
+              authorizeUrl <- beginPkceLogin(ms, forceLogin, uiLocales)
+              resp <- authorizeUrl match
+                case Some(url) => Ok(Json.obj("authorizeUrl" -> url.asJson))
                 // Logto unconfigured, or configured without the AC app id —
                 // the PKCE login surface treats both as "not configured".
                 // (Defensive: effectiveLogto always resolves via the embedded
                 // default, so this arm only fires if that invariant changes.)
-                case _ => NotFound(Json.obj("error" -> "logto-not-configured".asJson))
+                case None => NotFound(Json.obj("error" -> "logto-not-configured".asJson))
             yield resp
 
     // Login-state poll for the frontend (pending while the hosted page is
@@ -1180,6 +1190,21 @@ class RestApiRoutes(
     case req @ GET -> Root / "neblink" / "auth" / "state" =>
       if !checkAuth(req) then Forbidden(Json.obj("error" -> "Unauthorized".asJson))
       else pkceLogin.statusJson.flatMap(Ok(_))
+
+    // Switch-account handoff readout (one-window switch, 2026-09-16). The app
+    // window watches this after a switch gesture to tell the two cases apart:
+    //   · "consumed" — the logout window's landing page took the continuation
+    //     over (one window total, nothing to do);
+    //   · anything else past the client deadline — the continuation never
+    //     arrived (e.g. the gateway port is not on the provider's
+    //     post_logout_redirect_uri allow-list, which the provider answers with
+    //     400), so the app shows the login panel as the visible failure face
+    //     instead of retrying a window.
+    // READ-ONLY by construction: it must never consume/arm the marker
+    // (only GET /auth/logged-out consumes; only end-session arms).
+    case req @ GET -> Root / "neblink" / "auth" / "handoff" =>
+      if !checkAuth(req) then Forbidden(Json.obj("error" -> "Unauthorized".asJson))
+      else switchHandoff.stateName.flatMap(s => Ok(Json.obj("state" -> s.asJson)))
 
     // Cloud session sync toggle — removed (session sync deleted)
 
@@ -3826,16 +3851,122 @@ class RestApiRoutes(
     * local port against the port-less registered URI). */
   private def loopbackCallbackUri: String = s"http://127.0.0.1:$gatewayPort/auth/callback"
 
+  /** Start a Logto AC+PKCE login: fresh verifier/state registered in
+    * [[PkceLoginSession]] + the authorize URL for the SAME parameters.
+    * Returns None when the provider is unconfigured (or the AC app id is
+    * missing) — callers answer `logto-not-configured`, exactly as before.
+    *
+    * SINGLE SOURCE of the login start: `POST /api/neblink/auth/start` and the
+    * switch-account landing continuation (`/auth/logged-out`) both call this,
+    * so a switch continuation can never drift from a normal login (same
+    * redirect URI, same PKCE parameters, same prompt mapping — `forceLogin`
+    * ⇒ `prompt="login consent"`, the forced-fresh-login semantic the
+    * switch-account path requires). */
+  private def beginPkceLogin(
+    ms: NeblinkService,
+    forceLogin: Boolean,
+    uiLocales: String
+  ): IO[Option[String]] =
+    ms.neblinkConfig.map(_.effectiveLogto).flatMap {
+      case Some(lc) if lc.pkceClientId.isDefined =>
+        val pkceClientId = lc.pkceClientId.getOrElse("")
+        for
+          verifier <- LogtoAuthCode.generateVerifier
+          challenge = LogtoAuthCode.challengeS256(verifier)
+          state <- LogtoAuthCode.generateState
+          _ <- pkceLogin.start(verifier, state)
+          authorizeUrl = LogtoAuthCode.authorizeUrl(
+            lc.endpoint,
+            pkceClientId,
+            loopbackCallbackUri,
+            challenge,
+            state,
+            prompt = if forceLogin then "login consent" else "consent",
+            uiLocales = uiLocales
+          )
+        yield Some(authorizeUrl)
+      case _ => IO.pure(None)
+    }
+
   def authCallbackRoutes: HttpRoutes[IO] = HttpRoutes.of[IO] {
     case req @ GET -> Root / "callback" =>
       handleAuthCallback(req.uri.query.params)
-    // RP-logout return target (2026-09-06): the provider lands here when
-    // the post_logout_redirect_uri is accepted (allow-listed on the Logto
-    // app). Until then the provider shows its own default logged-out page —
-    // same UX, different host.
+    // RP-logout return target. Reachability (2026-09-15 oidcfix reading): the
+    // provider REJECTS an unregistered `post_logout_redirect_uri` with 400
+    // `post_logout_redirect_uri not registered` (the older "ignored, always
+    // safe" note is obsolete), and it does NOT apply loopback port leniency
+    // here — so this page is reached only on a port whose exact URI is
+    // allow-listed on the Logto app (today: 8080 and 8097).
+    //
+    // Behaviour is decided in ONE place — the single-use switch handoff marker:
+    // armed+fresh ⇒ consume and continue the switch-account login IN THIS
+    // WINDOW (302 to the same authorize URL /auth/start would return, forced
+    // fresh login); otherwise a static card (plain logout = the unchanged
+    // "已退出登录" card; switch cases get an explicit spent/expired/failed card).
     case GET -> Root / "logged-out" =>
-      htmlResponse(loggedOutPage, Status.Ok)
+      renderLoggedOutLanding
   }
+
+  /** The `/auth/logged-out` landing page (see the route comment above for the
+    * reachability constraint). This is the ONLY consumer of the switch handoff
+    * marker, and it consumes it exactly once — a replay/reload therefore gets
+    * [[NeblinkSwitchHandoff.Outcome.Replay]] and a visible card instead of a
+    * second auto-login. */
+  private def renderLoggedOutLanding: IO[org.http4s.Response[IO]] =
+    switchHandoff.consume.flatMap {
+      case NeblinkSwitchHandoff.Outcome.Plain =>
+        htmlResponse(loggedOutPage, Status.Ok)
+      case NeblinkSwitchHandoff.Outcome.Replay =>
+        htmlResponse(
+          switchNoticePage(
+            symbol = "!",
+            symbolColor = "#d1242f",
+            headline = "续登链接已使用",
+            detail = "切号续登入口一次性有效，重放本页不会再次自动登录。如需切换账号，请在 nebflow 设置页重新点「切换账号」。"
+          ),
+          Status.Ok
+        )
+      case NeblinkSwitchHandoff.Outcome.Expired =>
+        htmlResponse(
+          switchNoticePage(
+            symbol = "!",
+            symbolColor = "#d1242f",
+            headline = "续登已超时",
+            detail = "本次切号续登标记已过期，未自动登录。请在 nebflow 设置页重新点「切换账号」。"
+          ),
+          Status.Ok
+        )
+      case NeblinkSwitchHandoff.Outcome.Continue(uiLocales) =>
+        neblinkService match
+          case None =>
+            htmlResponse(
+              switchNoticePage("!", "#d1242f", "续登未启动", "nebflow 服务未初始化，请在本窗口手动登录。"),
+              Status.Ok
+            )
+          case Some(ms) =>
+            beginPkceLogin(ms, forceLogin = true, uiLocales = uiLocales)
+              .flatMap {
+                case Some(url) =>
+                  // Same 302 shape as the end-session hop (dsl `Found` returns a
+                  // ResponseGenerator, i.e. IO[Response] — build it explicitly so
+                  // this branch and the `None` branch share one IO type).
+                  IO.pure(
+                    org.http4s.Response[IO](Status.Found)
+                      .withHeaders(Headers(Location(Uri.unsafeFromString(url))))
+                  )
+                case None =>
+                  htmlResponse(
+                    switchNoticePage("!", "#d1242f", "续登未启动", "登录服务未配置，请在本窗口手动登录。"),
+                    Status.Ok
+                  )
+              }
+              .handleErrorWith(e =>
+                htmlResponse(
+                  switchNoticePage("!", "#d1242f", "续登失败", s"发起登录失败：${e.getMessage}"),
+                  Status.Ok
+                )
+              )
+    }
 
   /** The 8-step local teardown shared by POST /neblink/logout and the
     * RP-initiated end-session endpoint. Always completes locally — every
@@ -4043,7 +4174,11 @@ class RestApiRoutes(
        |<body><div class="card"><div class="icon">$icon</div><h1>$headline</h1><p>$detail</p></div></body></html>""".stripMargin
 
   /** RP-logout landing page (post_logout_redirect_uri target, 2026-09-06).
-    * Same visual skeleton as callbackPage — a static result card. */
+    * Same visual skeleton as callbackPage — a static result card.
+    * 🔴 UNCHANGED by the one-window switch batch (2026-09-16): the plain-logout
+    * landing must stay byte-identical, so the switch-continuation cards are a
+    * separate builder ([[switchNoticePage]]) rather than a parameterisation of
+    * this one. */
   private def loggedOutPage: String =
     s"""<!doctype html>
        |<html lang="zh-CN"><head><meta charset="utf-8">
@@ -4054,6 +4189,22 @@ class RestApiRoutes(
        |.icon{color:#07c160;font-size:42px;line-height:1;margin-bottom:10px}h1{font-size:18px;font-weight:600;margin:0 0 8px}
        |p{color:#6a737d;font-size:13px;margin:0;max-width:320px;word-break:break-all}</style></head>
        |<body><div class="card"><div class="icon">✓</div><h1>已退出登录</h1><p>已在浏览器中退出 nebflow 账号，本页可以关闭</p></div></body></html>""".stripMargin
+
+  /** Switch-account continuation notice card (one-window switch, 2026-09-16) —
+    * the visible face of a handoff that did NOT continue into a login
+    * (replayed / expired / failed to start). Same skeleton, class names and
+    * literal values as [[loggedOutPage]] (no new colour literals: `#07c160`
+    * and `#d1242f` are the two icon colours already used in this file). */
+  private def switchNoticePage(symbol: String, symbolColor: String, headline: String, detail: String): String =
+    s"""<!doctype html>
+       |<html lang="zh-CN"><head><meta charset="utf-8">
+       |<meta name="viewport" content="width=device-width,initial-scale=1">
+       |<title>nebflow 切换账号</title>
+       |<style>body{font-family:-apple-system,'Segoe UI','PingFang SC',sans-serif;display:flex;align-items:center;justify-content:center;height:100vh;margin:0;background:#f6f7f9;color:#1f2328}
+       |.card{text-align:center;padding:44px 52px;border-radius:14px;background:#fff;box-shadow:0 2px 14px rgba(0,0,0,.08)}
+       |.icon{color:$symbolColor;font-size:42px;line-height:1;margin-bottom:10px}h1{font-size:18px;font-weight:600;margin:0 0 8px}
+       |p{color:#6a737d;font-size:13px;margin:0;max-width:320px;word-break:break-all}</style></head>
+       |<body><div class="card"><div class="icon">$symbol</div><h1>$headline</h1><p>$detail</p></div></body></html>""".stripMargin
 
   /** HTML response without circe's String-entity hijack (explicit bytes +
     * content type + length). */
