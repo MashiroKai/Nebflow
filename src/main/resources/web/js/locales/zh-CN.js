@@ -618,6 +618,11 @@ export default {
   'mailDelivery.immediate': '即时',
   'mailDelivery.queueTitle': 'Queue：排队，当前任务完成后逐条处理',
   'mailDelivery.immediateTitle': 'Immediate：即时注入到对话',
+  // === 跨设备 Nebula 邮件（device-mail 批，2026-09-15）===
+  // 注入的 `agent_mail` 蓝气泡标签（后端 source='deviceMail'；{device} = 对端
+  // from_device 显示名）。
+  'deviceMail.fromDevice': '来自 {device} 的 Nebula',
+  'deviceMail.injectFailed': '来自 {device} 的跨设备 Nebula 邮件注入失败（已重试 {attempts} 次）——未注入任何内容（详见日志）。',
   // Mail 类型角标（显示层中文化；协议字段值保持英文）
   'mailType.INFO': '信息',
   'mailType.FOLLOW_UP': '后续任务',

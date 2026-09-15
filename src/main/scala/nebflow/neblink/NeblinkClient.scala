@@ -976,6 +976,64 @@ class NeblinkClient(
   def peerAddresses(serverPeers: List[NeblinkPeerInfo]): Set[String] =
     serverPeers.flatMap(_.endpoints.map(_.address)).toSet
 
+  // ===== 跨设备 Nebula 邮件（device-mail 批，2026-09-15；契约 v2）=====
+
+  /**
+   * `POST {url}/api/relay/{target_device_id}/mail` —— 设备邮件发送端点（契约 v2 钉死形态：
+   * **目标走路径**，body = 契约五键载荷本体；禁查询串、禁 body 内带 target、禁第二端点）。
+   *
+   * 鉴权/自愈面与 `relayExec` **同一缝**（`withSession` ⇒ 401/403 静默重登单发；
+   * `dispatchRequest` ⇒ 默认超时走既有测试桩覆写点 `sendRequest`，自定义超时走
+   * `sendRequestTimed`）——本方法**不新建**传输层、不改既有签名。
+   *
+   * 定向语义（v2 ②）：路径里的 `targetDeviceId` 是**唯一**投递目标，本方法无
+   * fan-out 分支、无「找不到就广播」兜底（由调用方保证 id 已解析自对端名册）。
+   *
+   * 返回：`Right(serverside message id)`——id 用于 ack 的 `eventId`（`"message-<id>"`）
+   * 关联；响应体未携带可判读 id 时返回 `Right("")`（**不伪造 id**，调用方据此登记
+   * 「ack 无法关联」）。`Left(可读错误)` = HTTP/鉴权/远端 error 面失败 ⇒ **未送达**
+   * （由调用方如实报错，禁静默成功）。
+   */
+  /** 设备邮件端点 URL（**唯一构造点**，契约 v2 ①：目标走路径）。
+    * 纯函数 ⇒ spec 可直接断言形态（禁查询串、禁 body 内带 target、禁第二端点）。 */
+  def mailUrl(targetDeviceId: String): String =
+    s"${config.url}/api/relay/$targetDeviceId/mail"
+
+  def relayAgentMail(
+    targetDeviceId: String,
+    payload: Json,
+    timeout: scala.concurrent.duration.FiniteDuration = NeblinkClient.DefaultRelayTimeout
+  ): IO[Either[String, String]] =
+    withSession(token =>
+      dispatchRequest(
+        "POST",
+        mailUrl(targetDeviceId),
+        payload.noSpaces,
+        Some(token),
+        timeout
+      )
+    ).flatMap {
+      case Right(respBody) =>
+        decode[Json](respBody) match
+          case Right(json) =>
+            val err = json.hcursor.downField("error").as[String].getOrElse("")
+            if err.nonEmpty then IO.pure(Left(err))
+            else
+              // id 键名未在契约里冻结（契约只冻结 ack 的 `eventId` 前缀 `"message-<id>"`）
+              // ⇒ 宽容读取 `messageId` → `eventId` → `id`，缺席即空串（**不伪造 id**；
+              // 调用方据此登记「ack 无法关联」并留读数）。
+              val hc = json.hcursor
+              val rawId = hc.downField("messageId").as[String].toOption
+                .orElse(hc.downField("eventId").as[String].toOption)
+                .orElse(hc.downField("id").as[String].toOption)
+                .getOrElse("")
+              IO.pure(Right(DeviceMail.stripMessagePrefix(rawId)))
+          case Left(_) =>
+            // 非 JSON 响应（例如纯文本 ack）⇒ 原样交出（调用方按 ack 形态再判一次）。
+            IO.pure(Right(DeviceMail.stripMessagePrefix(respBody)))
+      case Left(err) => IO.pure(Left(err))
+    }
+
   // ===== Relay file transfer (FileTransfer action) =====
 
   /** Pull a file from a remote device via relay. Returns (base64 content, size). */

@@ -906,15 +906,27 @@ private final class RelayWsListener(
               // W9（§3.3）：修前是 `foreach` ⇒ `friendService` 为 None 时**整帧静默
               // 丢弃**（零日志）。这是「事件到了网关却什么都不发生」的最短路径，
               // 归因不可跳过 ⇒ 显式 WARN。
-              tunnel.friendService match
-                case Some(fs) =>
-                  dispatcher.unsafeRunAndForget(fs.onFriendEvent(json))
-                case None =>
-                  logger.warnSync(
-                    "friend_event frame dropped: friendService not wired " +
-                      f"branch=W9 conversationId=${conversationIdOfFrame(json).getOrElse("<none>")} " +
-                      "messageId=<none> reason=friend_service_not_wired"
-                  )
+              //
+              // 跨设备 Nebula 邮件（device-mail 批，2026-09-15；契约 **v2.1**，12:57
+              // root 裁定）：设备邮件的收件**唯一入口** = 本事件流信封内
+              // `event.type == "agent_mail"` 的帧（实证形态：
+              // `{"type":"friend_event","eventId":"message-<id>","event":{"payload":{…},"type":"agent_mail"}}`）。
+              // 它**不进** `FriendService`——那不是好友消息事件（进它会被当好友消息
+              // 解析/入账）⇒ 独占路由，单一入场、零双消费。载荷仍是同一份五键契约
+              // （`DeviceMail.parse` 逐字校验，fail-closed）。
+              // 契约 v2 时期的隧道顶层 `case "agent_mail"` 分支**已删**（禁双入口）。
+              if DeviceMail.isAgentMailEnvelope(json) then
+                dispatcher.unsafeRunAndForget(DeviceMailInbox.handle(json))
+              else
+                tunnel.friendService match
+                  case Some(fs) =>
+                    dispatcher.unsafeRunAndForget(fs.onFriendEvent(json))
+                  case None =>
+                    logger.warnSync(
+                      "friend_event frame dropped: friendService not wired " +
+                        f"branch=W9 conversationId=${conversationIdOfFrame(json).getOrElse("<none>")} " +
+                        "messageId=<none> reason=friend_service_not_wired"
+                    )
             case "device_status_update" =>
               // presence v2 (C6)：设备上下线推送——隧道关闭/探活判死时服务端广播。
               // 帧驱动为主（<2s 翻转），心跳顺带拉取降级为帧丢失兜底。
@@ -929,6 +941,12 @@ private final class RelayWsListener(
               // 🔴 零 wire 新增：本分支**不解析任何新字段**（仍只按既有 `type`
               // 分派），帧形态与修前逐字节同形；提示文案由客户端本地下定。
               dispatcher.unsafeRunAndForget(tunnel.noteServerDisconnect())
+            case "ack" =>
+              // 定向投递回执（契约 v2 ④ / v2.1 ②；形状冻结 `{"type":"ack","eventId":"message-<id>"}`）：
+              // **既有** ack 机制复用 ⇒ 发送侧在此做 eventId 关联（命中 = INFO + 审计；
+              // `message-` 族未命中 = WARN + 审计；其余族 = DEBUG）。本分支**只读**帧，
+              // 不改帧形状、不改本端 `sendAck` 的既有发送语义。
+              dispatcher.unsafeRunAndForget(DeviceMailAck.handle(json))
             case other if RelayWsListener.BenignUnknownFrameTypes.contains(other) =>
               // W10（§3.3）的**降噪口**：本端自己会发/回的帧类型（`ack` /
               // `relay_response`）若被回授，语义上无需动作 ⇒ 只留 debug，

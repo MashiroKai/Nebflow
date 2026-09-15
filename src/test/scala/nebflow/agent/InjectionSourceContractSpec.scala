@@ -83,7 +83,12 @@ class InjectionSourceContractSpec extends FunSuite:
         "tool",
         "background",
         // b64 批（2026-09-13）：链级摘要通道（source=chain，NodeEngine.deliverChainSummary）
-        "chain"
+        "chain",
+        // device-mail 批（2026-09-15）：跨设备 Nebula 邮件收件腿
+        // （source=deviceMail，DeviceMailInbox 的会话注入；前端走 i18n 显式分支
+        // 「来自 <from_device> 的 Nebula」，同 `node` 先例 —— 故不在表内，靠
+        // explicitBranchSources 覆盖本门）。
+        "deviceMail"
       ),
       "BackendNamedSources 变更 ⇒ 同步检查 web/js/chat.js#INJECTED_SOURCE_LABELS 并更新本 pin"
     )

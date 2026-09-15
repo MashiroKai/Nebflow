@@ -86,10 +86,16 @@ object InjectionAttribution:
     *   background          AgentActor#visibleExternalEventSource（源名 background-task）
   *   chain               NodeEngine#deliverChainSummary（链级聚合摘要投根，b64 批
   *                       2026-09-13：归档 sweep 命中链 → source=chain 一条摘要）
+  *   deviceMail          跨设备 Nebula 邮件收件腿（device-mail 批 2026-09-15）：
+  *                       对端设备经 NebLink 设备通道送来 `agent_mail` 载荷
+  *                       （`DeviceMail.SourceDeviceMail`，注入点 = DeviceMailInbox）
+  *                       ⇒ 注入本机 Nebula 会话的蓝色气泡（标签 = i18n
+  *                       「来自 <from_device> 的 Nebula」，前端走显式分支，
+  *                       同 `node` 先例）
     * 例外：`eventType=="inject"` 的 API 注入 source 由调用方提供（用户域），
     * 不受本集合约束 —— 前端对其走既有兜底分支。 */
   val BackendNamedSources: Set[String] =
-    Set("mail", "task", "dispatch", "system", "node", "skill", "delegate", "subtask", "flow", "tool", "background", "chain")
+    Set("mail", "task", "dispatch", "system", "node", "skill", "delegate", "subtask", "flow", "tool", "background", "chain", "deviceMail")
 
 /** AskUserQuestion 双模式（工具面按角色分化批 B4，2026-09-13 作者裁定 T2=(a)）：
   *  - [[AskMode.Blocking]]（默认，**全角色**可用）= 现状语义：工具挂起 turn，答复

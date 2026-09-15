@@ -993,6 +993,24 @@ object GatewayMain extends IOApp:
                                             val sharedResourcesFinal = sharedResourcesWithBridge.copy(
                                               scheduledTaskService = Some(scheduledTaskService)
                                             )
+                                            // device-mail 批（2026-09-15）：跨设备 Nebula
+                                            // 邮件的收件腿装配——注入本机 Nebula 会话需要
+                                            // SharedResources（root 会话解析单点）与前端广播口。
+                                            // 与 FriendMessageTool/RemoteExecutor 同款单例缝；
+                                            // 未接线 ⇒ 注入路径显式失败（不静默）。
+                                            nebflow.neblink.DeviceMailInbox.initialize(
+                                              sharedResourcesFinal,
+                                              (json: io.circe.Json) => wsHub.broadcast(json),
+                                              // 收件回执出口（契约 v2 ④）：与好友消息 ack
+                                              // **同一缝、同一帧形状**（live 读隧道，见
+                                              // 上面的 friendService ackSender）。
+                                              Some { eventId =>
+                                                IO(neblinkService.relayTunnelOpt).flatMap {
+                                                  case Some(t) => t.sendAck(eventId)
+                                                  case None    => IO.unit
+                                                }
+                                              }
+                                            )
 
                                             // --- Daemon Service (external process lifecycle) ---
                                             val daemonService = new DaemonService(dispatcher)

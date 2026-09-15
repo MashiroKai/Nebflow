@@ -626,6 +626,11 @@ export default {
   'mailDelivery.immediate': 'Immediate',
   'mailDelivery.queueTitle': 'Queue: processed one by one after the current task finishes',
   'mailDelivery.immediateTitle': 'Immediate: injected into the conversation right away',
+  // === Cross-device Nebula mail (device-mail batch, 2026-09-15) ===
+  // Blue-bubble label of an injected `agent_mail` (backend source='deviceMail';
+  // {device} = the peer's from_device display name).
+  'deviceMail.fromDevice': 'Nebula from {device}',
+  'deviceMail.injectFailed': 'Cross-device Nebula mail from {device} could not be injected after {attempts} attempts — nothing was injected (see logs).',
   // Mail type tag labels (protocol values stay English)
   'mailType.INFO': 'Info',
   'mailType.FOLLOW_UP': 'Follow-up',

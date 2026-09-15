@@ -2680,6 +2680,17 @@ onMessage('user', (msg, view) => {
   }
 });
 
+// --- Cross-device Nebula mail: injection failure alert (device-mail batch,
+// 2026-09-15). 注入失败禁静默 ⇒ backend retries, then broadcasts this frame;
+// the banner is the visible half (the other two readings are the WARN log and
+// the audit line). Nothing is injected, so there is no bubble to show.
+onMessage('deviceMailInjectFailed', (msg) => {
+  addNotification('device-mail', t('deviceMail.injectFailed', {
+    device: msg.fromDevice || '?',
+    attempts: msg.attempts ?? '?',
+  }));
+});
+
 // --- Bridge user message (e.g. from external platform) ---
 onMessage('bridgeUser', (msg, view) => {
   const sid = msg.sessionId;
