@@ -149,6 +149,19 @@ class WebSocketRoutes(
       fileHistory <- nebflow.core.tools.FileHistory.create()
       modelOverrides <- sharedResources.sessionModelOverrides.get
       contextWindow = modelOverrides.get(sessionId).map(_.contextWindow).getOrElse(sharedResources.contextWindow)
+      // ── ctxthresh 批（2026-09-15 方案 A，作者卡答「按方案A实施」）─────────────
+      // 🔴 **本行是全仓唯一的阈值覆盖注入点**（口径③「仅 Nebula 窗口」的**结构性**
+      // 保证，不是口号）：depth=0 的 WS 根会话 spawn 是全仓唯一的 root spawn 点，
+      // 非 root spawn（NodeRunner / EphemeralAgentRunner / MemoryTrack / MailTool /
+      // FlowTreeActor）一律不传该实参 ⇒ SessionContext.compactThresholdRatio = None
+      // ⇒ 走 CompactThreshold 现值函数（口径②）。
+      //
+      // 优先级链：内存 Ref（本进程内已热更的权威值）＞ 盘上 SessionMeta（跨重启
+      // 保留值，设计 §9-O4(a)）＞ 无覆盖。Ref 在启动时为空 ⇒ 重启后由 meta 恢复。
+      thresholdOverrides <- sharedResources.sessionCompactThreshold.get
+      compactThresholdRatio =
+        thresholdOverrides.get(sessionId).orElse(metaOpt.flatMap(_.compactThresholdRatio))
+      // ─────────────────────────────────────────────────────────────────────
       // Resolve folder-level projectRoot and inherited rules
       folderId = metaOpt.flatMap(_.folderId)
       resolvedProjectRoot <- sharedResources.sessionStore.resolveProjectRoot(folderId)
@@ -200,7 +213,9 @@ class WebSocketRoutes(
           // （metaOpt.agentName 是可缺省的会话元数据）。其余 WS 根会话
           // （standalone 非 Nebula 聊天 / team Manager / flow 入口）保持
           // sandboxEnabled=false 现状零变化；沙箱 root 推导仍归 AgentCore。
-          sandboxEnabled = agentDef.name == "Nebula"
+          sandboxEnabled = agentDef.name == "Nebula",
+          // ctxthresh 批：会话级压缩阈值比例覆盖（仅本 root spawn 注入，见上方注释）。
+          compactThresholdRatio = compactThresholdRatio
         ),
         s"agent-$sessionId"
       )
@@ -500,6 +515,60 @@ class WebSocketRoutes(
    * real persisted root session (user messages / plan / interrupt). Never spawns
    * a ghost for unknown sessionIds — such messages are logged and dropped.
    */
+  /** ctxthresh 批：会话的**有效上下文窗口**（只读回显用）——会话级模型覆盖优先，
+    * 否则预设派生的全局值。与 `doSpawnRootAgent` 内同一表达式同源。 */
+  private def effectiveContextWindowOf(sessionId: String): IO[Int] =
+    sharedResources.sessionModelOverrides.get.map(
+      _.get(sessionId).map(_.contextWindow).getOrElse(sharedResources.contextWindow)
+    )
+
+  /** ctxthresh 批：会话的阈值覆盖现值——内存 Ref（本进程内已热更的权威值）→
+    * 盘上 `SessionMeta.compactThresholdRatio`（跨重启保留值）→ None（无覆盖）。 */
+  private def compactThresholdOverrideOf(sessionId: String): IO[Option[Double]] =
+    sharedResources.sessionCompactThreshold.get.flatMap { m =>
+      m.get(sessionId) match
+        case some @ Some(_) => IO.pure(some)
+        case None => sessionStore.getSessionMeta(sessionId).map(_.flatMap(_.compactThresholdRatio))
+    }
+
+  /** ctxthresh 批：**作用域闸**（口径③ 的防御纵深，静态判据见
+    * `.nebflow/tools/20260915_ctxthresh_leak-check.sh`）——本功能仅对 root 会话开放。
+    *
+    * 判据 = 该会话已注册活体 agent 的 `AgentRecord.kind == AgentKind.Root`
+    * （`AgentKind` 是 P1 统一注册表的身份判别字段，`kind = Root` 的唯一置位点 =
+    * `doSpawnRootAgent`，本文件 `:231`）；未注册 ⇒ 放行（WS 侧对未知会话的唯一
+    * spawn 路径 = `ensureRootAgent`，depth=0）。节点/链路/委托会话的 kind ≠ Root
+    * ⇒ 一律拒绝：**绝不把覆盖写进非 root 会话**。 */
+  private def isRootScopeSession(sessionId: String): IO[Boolean] =
+    sharedResources.agentRegistry.get.map { registry =>
+      registry.get(sessionId) match
+        case Some(rec) => rec.kind == AgentKind.Root
+        case None => true
+    }
+
+  /** ctxthresh 批：阈值面板的**权威回显载荷**（面板打开 / 设值成功 / 恢复默认后
+    * 共用同一数据源——前端不回算、不自造值，「生效绝对 token 回显」由此保证与
+    * 引擎判定面同源）。 */
+  private def compactThresholdInfo(sessionId: String): IO[Json] =
+    for
+      ratioOpt <- compactThresholdOverrideOf(sessionId)
+      window <- effectiveContextWindowOf(sessionId)
+    yield
+      val effective = CompactThresholdOverride.effectiveThreshold(window, ratioOpt)
+      val default = nebflow.core.compact.CompactThreshold.threshold(window)
+      Json.obj(
+        "type" -> Json.fromString("compactThresholdInfo"),
+        "sessionId" -> Json.fromString(sessionId),
+        "ratio" -> ratioOpt.fold(Json.Null)(Json.fromDoubleOrNull),
+        "contextWindow" -> Json.fromInt(window),
+        "effectiveThreshold" -> Json.fromInt(effective),
+        "effectiveRatio" -> Json.fromDoubleOrNull(effective.toDouble / window),
+        "defaultThreshold" -> Json.fromInt(default),
+        "defaultRatio" -> Json.fromDoubleOrNull(default.toDouble / window),
+        "minRatio" -> Json.fromDoubleOrNull(CompactThresholdOverride.minRatioFor(0.0)),
+        "maxRatio" -> Json.fromDoubleOrNull(CompactThresholdOverride.MaxRatio)
+      )
+
   private def ensureAgent(sessionId: String)(f: nebflow.actor.ActorRef[AgentCommand] => IO[Unit]): IO[Unit] =
     if sessionId.nonEmpty then
       sharedResources.agentRegistry.get.flatMap { registry =>
@@ -1783,6 +1852,60 @@ class WebSocketRoutes(
                   wsSend(io.circe.Json.obj("type" -> "error".asJson, "message" -> err.asJson))
               }
             else IO.unit
+            end if
+
+          case "getCompactThreshold" =>
+            // ctxthresh 批（2026-09-15 方案 A）：面板打开时读**权威值**——Ref 含未
+            // 重启的热更值，盘上 meta 含跨重启保留值（先例 getToolResultTtl）。
+            val json = parse(text).toOption.getOrElse(Json.Null)
+            val sid = json.hcursor.downField("sessionId").as[String].getOrElse("")
+            if sid.nonEmpty then compactThresholdInfo(sid).flatMap(wsSend) else IO.unit
+
+          case "setCompactThreshold" =>
+            // ctxthresh 批：payload {sessionId, ratio: number|null}（ratio=null ⇒
+            // 恢复默认 = 清覆盖）。STRICT 校验（镜像 setToolResultTtl 的交互面纪律）：
+            // 值域逐字 = 作者卡答「上限90%，下限…大于15%」⇒ `15% < r ≤ 90%`
+            // （CompactThresholdOverride.isValid）。越界 ⇒ **拒绝并亮错**，不做静默
+            // 钳制——「钳回」是 UI 侧滑杆的动态下限职责（js/ctxthresh.js）。
+            // 成功路径 = persist-then-hot 三步（盘上 SessionMeta → 内存 Ref → 通知
+            // 活体 root agent）+ 回权威回显帧。
+            val json = parse(text).toOption.getOrElse(Json.Null)
+            val sid = json.hcursor.downField("sessionId").as[String].getOrElse("")
+            val rawRatio = json.hcursor.downField("ratio").as[Option[Double]].toOption.flatten
+            if sid.isEmpty then IO.unit
+            else
+              val reject = (msg: String) =>
+                logger.warn(s"Rejected setCompactThreshold for $sid: $msg") *>
+                  wsSend(
+                    Json.obj(
+                      "type" -> Json.fromString("compactThresholdError"),
+                      "sessionId" -> Json.fromString(sid),
+                      "message" -> Json.fromString(msg)
+                    )
+                  )
+              isRootScopeSession(sid).flatMap { isRoot =>
+                if !isRoot then reject("scope: only the root session (Nebula window) may override")
+                else if rawRatio.exists(r => !CompactThresholdOverride.isValid(r)) then
+                  reject(
+                    s"ratio must satisfy 15% < r <= 90% (got ${rawRatio.getOrElse(Double.NaN)})"
+                  )
+                else
+                  val persist = sessionStore.updateSessionCompactThreshold(sid, rawRatio) *>
+                    sharedResources.sessionCompactThreshold.update { m =>
+                      rawRatio.fold(m - sid)(r => m + (sid -> r))
+                    } *>
+                    ensureAgent(sid)(ref => ref ! AgentCommand.SetCompactThresholdRatio(rawRatio))
+                  persist.handleErrorWith { e =>
+                    logger.warn(s"setCompactThreshold failed for $sid: ${e.getMessage}") *>
+                      wsSend(
+                        Json.obj(
+                          "type" -> Json.fromString("compactThresholdError"),
+                          "sessionId" -> Json.fromString(sid),
+                          "message" -> Json.fromString(e.getMessage)
+                        )
+                      )
+                  } *> compactThresholdInfo(sid).flatMap(wsSend)
+              }
             end if
 
           case "switchSession" =>

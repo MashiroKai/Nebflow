@@ -4,6 +4,7 @@ import cats.effect.IO
 import io.circe.syntax.*
 import io.circe.{Json, JsonObject}
 import nebflow.actor.ActorRef
+import nebflow.core.compact.CompactThreshold
 import nebflow.core.{AskItem, SystemReminder, ToolExecResult}
 import nebflow.shared.*
 
@@ -303,6 +304,20 @@ object AgentCommand:
   case object CheckFreezeGate extends AgentCommand
 
   case class UpdateContextWindow(window: Int) extends AgentCommand
+
+  /**
+   * ctxthresh 批（2026-09-15 方案 A，作者卡答「按方案A实施」）：**本会话**的
+   * 压缩阈值比例覆盖热更——`Some(r)` = 会话级覆盖，`None` = 清除覆盖（回现值
+   * 函数）。投递口唯一 = WS `setCompactThreshold`（`ensureAgent(sessionId)`，即
+   * **root 会话**）；非 root spawn 路径既不投本命令也不注入本字段（口径③）。
+   *
+   * 🔴 **刻意不复用 [[UpdateContextWindow]]**（设计 §7 逐字禁止）：那条命令在
+   * `estimated > threshold` 时会顺手触发一次 full 压缩（`AgentActor` 的
+   * `model-switch-compact` 分支）——用来调阈值会造成不可预期的压缩调用。
+   * 本命令只改存储值：判定点在**下一个回合边界**按新值评估（`AgentCore` 的
+   * auto-compact 判定），无副作用。
+   */
+  case class SetCompactThresholdRatio(ratio: Option[Double]) extends AgentCommand
 
   // 2026-09-13（permshield S1）：`SetSafetyMode` 命令**已退役** —— 档位是应用级
   // 持久值（`nebflow.json` 的 `safety.defaultMode`），写入口只有两条（WS
@@ -1174,7 +1189,23 @@ case class SessionContext(
    * 其余 spawn 点默认 false 零改动。ask 轮的豁免走
    * gate 内的 askMode.isDefined 检查，不经此字段。
    */
-  freezeExempt: Boolean = false
+  freezeExempt: Boolean = false,
+  /** **会话级压缩阈值比例覆盖**（ctxthresh 批，2026-09-15 方案 A；作者卡答逐字
+    * 「按方案A实施」+「上限90%，下限不得小于当前上下文用量而且大于15%」）。
+    *
+    * 语义 = 「有会话覆盖用覆盖，无覆盖走现值函数」——判定/上报一律经
+    * [[CompactThresholdOverride.effectiveThreshold]] / `effectiveRatio`，
+    * `None`（默认）分支逐字等于 `CompactThreshold.threshold(contextWindow)`
+    * （口径②承重钉，`CompactThreshold.scala` 本批零改动）。
+    *
+    * 🔴 **作用域 = 仅 root 会话**（口径③）：本字段的**唯一注入点**是
+    * `WebSocketRoutes.doSpawnRootAgent`（depth=0 全仓唯一 spawn 点）。非 root
+    * spawn（`NodeRunner` / `EphemeralAgentRunner` / `MemoryTrack` / `MailTool` /
+    * `FlowTreeActor`）一律不传 ⇒ 恒为 `None` ⇒ 走现值函数。
+    * 🔴 **禁**把本字段放进 `SpawnParams` / `ToolContext`（那会让一次设定传染给
+    * 全部子 agent / 节点，直接违反口径③）——静态泄漏判据见
+    * `.nebflow/tools/20260915_ctxthresh_leak-check.sh`。 */
+  compactThresholdRatio: Option[Double] = None
 )
 
 case class InteractionState(
@@ -1427,6 +1458,9 @@ object AgentState:
       * SessionContext.projectSession。默认 false = 非项目会话（WS 根会话 /
       * team / flow / Delegate / SubTask 双轨面）语义与旧行为逐字节不变。 */
     projectSession: Boolean = false,
+    /** ctxthresh 批：会话级压缩阈值比例覆盖（详见 SessionContext.compactThresholdRatio）。
+      * 默认 None = 无覆盖 ⇒ 走现值函数（除 root spawn 外**所有**构造点零改动）。 */
+    compactThresholdRatio: Option[Double] = None,
     loopTurnKey: Long = 0L
   ): AgentState =
     val interaction = (pendingAskUser, pendingPermission) match
@@ -1462,7 +1496,8 @@ object AgentState:
         flowChainId = flowChainId,
         sandboxEnabled = sandboxEnabled,
         sandboxRoot = sandboxRoot,
-        projectSession = projectSession
+        projectSession = projectSession,
+        compactThresholdRatio = compactThresholdRatio
       ),
       ExecutionContext(messages, status, turnIdx, 0L, interaction),
       CompactionState(pendingCompaction, compactionFailures, 0L, latestUsage),
@@ -1484,6 +1519,76 @@ extension (s: AgentState)
     * ToolsComplete 续轮、retry、save/compact 续跑不递增。 */
   def withNextLoopTurn: AgentState =
     s.copy(loopTurnKey = s.loopTurnKey + 1)
+
+/**
+ * 会话级压缩阈值比例覆盖的**值域与判定策略**（ctxthresh 批，2026-09-15 方案 A）。
+ *
+ * 逐字口径（作者卡答）：**上限 90%，下限不得小于当前上下文用量而且大于 15%**。
+ *  - 值语义 = **窗口比例** `r`（不是绝对 token）——生效门限 = `(contextWindow * r).toInt`；
+ *  - 静态值域 = `15% < r ≤ 90%`（两端含否逐字如左：15% 本身**禁选**）；
+ *  - 动态下限 = `max(当前上下文用量比例, 15%+ε)`——低于当前用量即「设完就立刻
+ *    触发压缩」，故 UI 侧**禁选 / 钳回**。
+ *
+ * 本对象是值域判据的**单一真值源**：WS 写入侧（`WebSocketRoutes.setCompactThreshold`）
+ * 与前端面板（`js/ctxthresh.js`）同用一套常量（前端为同一批常量的 JS 镜像，
+ * 见 `js/ctxthresh.js` 头部注释的同步要求）。
+ *
+ * **不做**：绝对 token 上限（设计 §9-O1 曾建议 `capAbs=512000`）——作者卡答只给
+ * 了比例上限 90%，本条按逐字口径实现，`capAbs` 不启用（报告已注明 O1 处置）。
+ *
+ * **默认分支零改动**：无覆盖（`None`）时 [[CompactThreshold.threshold]] 逐字照走，
+ * 本对象不参与计算（口径②/§8.1 承重钉）。
+ */
+object CompactThresholdOverride:
+  /** 静态下限（**开区间**：`r` 必须严格大于本值）。 */
+  val MinRatio: Double = 0.15
+
+  /** 静态上限（**闭区间**）。 */
+  val MaxRatio: Double = 0.90
+
+  /** UI 步进（百分比 1 个点）。 */
+  val StepRatio: Double = 0.01
+
+  /** 浮点比较容差（避免 `0.9` 这类十进制字面量的二进制尾差把合法值判非法）。 */
+  private val Eps = 1e-9
+
+  /** 静态值域判定：`15% < r ≤ 90%` 且为有限数。 */
+  def isValid(r: Double): Boolean =
+    !r.isNaN && !r.isInfinite && r > MinRatio + Eps && r <= MaxRatio + Eps
+
+  /**
+   * 动态下限：`max(当前上下文用量比例, 静态下限之上最小可选值)`。
+   *
+   * `usageRatio` = 当前会话已用 token / 窗口（未知传 0）。返回值是 `r` 的**下界**
+   * （含）；UI 侧把它作为滑杆 min 并对越界输入钳回本值。
+   */
+  def minRatioFor(usageRatio: Double): Double =
+    val floor = MinRatio + StepRatio // 15% + 1 个点 = 16%（「大于 15%」的最小可选值）
+    if usageRatio.isNaN || usageRatio < floor then floor else usageRatio
+
+  /** 把任意输入钳到合法区间（钳回 = 报告口径「钳回」，不是静默丢弃）。 */
+  def clamp(r: Double, usageRatio: Double): Double =
+    val lo = minRatioFor(usageRatio)
+    if r.isNaN then lo
+    else if r < lo then lo
+    else if r > MaxRatio then MaxRatio
+    else r
+
+  /**
+   * **判定点唯一算法**：有覆盖用覆盖（比例 × 窗口），无覆盖走现值函数。
+   *
+   * 🔴 默认分支逐字 = `CompactThreshold.threshold(window)`（口径②）；
+   * 🔴 本函数**不**回写任何全局值，也**不**改 `CompactThreshold.scala`（该文件
+   * 本批零改动，`git diff` 反证）。
+   */
+  def effectiveThreshold(contextWindow: Int, overrideRatio: Option[Double]): Int =
+    overrideRatio match
+      case Some(r) => (contextWindow * r).toInt
+      case None => CompactThreshold.threshold(contextWindow)
+
+  /** 生效比例（UI 回显 / wire 上报用）：有覆盖 = 覆盖值本身，无覆盖 = 现值比例。 */
+  def effectiveRatio(contextWindow: Int, overrideRatio: Option[Double]): Double =
+    overrideRatio.getOrElse(CompactThreshold.thresholdRatio(contextWindow))
 
 extension (s: AgentState)
   def messages: List[Message] = s.execution.messages
@@ -1576,6 +1681,27 @@ extension (s: AgentState)
     )
   def withRecentMessageIds(ids: List[String]): AgentState = s.copy(session = s.session.copy(recentMessageIds = ids))
   def withContextWindow(window: Int): AgentState = s.copy(session = s.session.copy(contextWindow = window))
+
+  /** ctxthresh 批：本会话的阈值比例覆盖（`None` = 无覆盖 ⇒ 走现值函数）。 */
+  def compactThresholdRatioOverride: Option[Double] = s.session.compactThresholdRatio
+
+  /** ctxthresh 批：热更入口（[[AgentCommand.SetCompactThresholdRatio]] 的三个
+    * behavior 分支都用它；`None` = 清除覆盖）。 */
+  def withCompactThresholdRatio(ratio: Option[Double]): AgentState =
+    s.copy(session = s.session.copy(compactThresholdRatio = ratio))
+
+  /** ctxthresh 批：**生效门限**（绝对 token）——判定点唯一读数。
+    *
+    * 有覆盖 ⇒ `(contextWindow × r).toInt`；无覆盖 ⇒ `CompactThreshold.threshold(window)`
+    * **逐字**（口径②承重钉：`CompactThreshold.scala` 零改动，diff 反证）。 */
+  def compactThresholdTokens: Int =
+    CompactThresholdOverride.effectiveThreshold(s.session.contextWindow, s.session.compactThresholdRatio)
+
+  /** ctxthresh 批：生效比例（wire 上报 / UI 回显：`Done` / `UsageUpdate` /
+    * `CompactStart` 的 `compactThreshold` 字段统一取它，保证「判定面」与
+    * 「上报面」同源——否则面板显示的阈值与真正触发压缩的门限会脱节）。 */
+  def effectiveCompactThresholdRatio: Double =
+    CompactThresholdOverride.effectiveRatio(s.session.contextWindow, s.session.compactThresholdRatio)
   def withAskMode(mode: Option[String]): AgentState = s.copy(session = s.session.copy(askMode = mode))
   def withLanguage(lang: Option[String]): AgentState = s.copy(session = s.session.copy(language = lang))
   def mailTurnCount: Int = s.session.mailTurnCount

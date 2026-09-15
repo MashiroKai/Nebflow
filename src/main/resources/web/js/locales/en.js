@@ -1324,4 +1324,15 @@ export default {
   'contacts.sectionDevices': 'Devices',
   'contacts.devicesEmpty': 'No other devices',
   'messages.deviceTag': 'Device',
+
+  // === ctxthresh batch (2026-09-15 option A): Nebula-window compaction-threshold panel ===
+  'ctxthresh.title': 'Compaction threshold',
+  'ctxthresh.scope': 'This Nebula window only (other agents / nodes unaffected)',
+  'ctxthresh.save': 'Save',
+  'ctxthresh.reset': 'Reset to default',
+  'ctxthresh.close': 'Close',
+  'ctxthresh.isDefault': 'currently default',
+  'ctxthresh.defaultNote': 'default {v}',
+  'ctxthresh.hint': 'Range {min}%–{max}%; floor never below current usage ({usage}%)',
+  'ctxthresh.failed': 'Failed to apply',
 };

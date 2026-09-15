@@ -305,7 +305,10 @@ private[agent] trait AgentCore:
         else
           val inputTokensOpt = state.latestUsage.map(_.inputTokens)
           // Unified threshold: hardcoded, role-independent (CompactThreshold).
-          val threshold = CompactThreshold.threshold(state.contextWindow)
+          // ctxthresh 批（2026-09-15 方案 A）：会话级 override 优先——有覆盖用覆盖
+          // （window × r），无覆盖逐字走 CompactThreshold.threshold（口径②承重钉）。
+          // 本处是**判定点唯一**（触发决策），上报表在 AgentActor / 下方 emit 点。
+          val threshold = state.compactThresholdTokens
           val shouldCompact = inputTokensOpt match
             case Some(inputTokens) if inputTokens > 0 && inputTokens > threshold =>
               Some(s"inputTokens=$inputTokens threshold=$threshold")
@@ -488,7 +491,7 @@ private[agent] trait AgentCore:
           AgentStreamEvent.CompactStart(
             mode,
             state.latestUsage.map(_.inputTokens),
-            Some(CompactThreshold.threshold(state.contextWindow))
+            Some(state.compactThresholdTokens)
           ),
           isSubagent = depth > 0,
           state.sessionId

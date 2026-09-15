@@ -92,6 +92,9 @@ import { initLightbox } from './lightbox.js';
 // flow-canvas module (deleted 2026-09-05 旧 UI 退役); anchor it here so
 // Flow Map's orbit animation stays alive from boot.
 import './flowAnim.js';
+// ctxthresh 批（2026-09-15 方案 A）：Header 上下文环 → 压缩阈值面板（自包含
+// 模块：注入 CSS + 把浮层挂成 #header 的兄弟节点 + 绑定环点击 + WS 收发）。
+import './ctxthresh.js';
 // Side-effect import: agentManager.js keeps the sealed agents panel +
 // per-agent detail tabs alive (canvas-tab-restore for persisted 'agents'
 // tabs); plugins.js owns the activity-bar entry now (2026-09-04 件 B).

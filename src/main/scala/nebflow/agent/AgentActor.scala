@@ -655,7 +655,11 @@ object AgentActor extends AgentCore with AgentSession:
     /** 项目会话信号（沙箱拆围栏批 S1/R8 解耦）：project 节点 / 分发器 spawn 置
       * true（NodeEngine ×2 + ProjectActor ×1），AGENTS.md 注入判据据此置位——
       * 不再挂在沙箱总闸上。默认 false = WS 根会话/双轨面不注入（旧行为不变）。 */
-    projectSession: Boolean = false
+    projectSession: Boolean = false,
+    /** ctxthresh 批（2026-09-15 方案 A）：会话级压缩阈值比例覆盖（root 会话专属）。
+      * 🔴 唯一注入点 = `WebSocketRoutes.doSpawnRootAgent`（depth=0）；非 root spawn
+      * 一律不传 ⇒ None ⇒ 走现值函数（口径③ / §5.3 静态泄漏判据）。 */
+    compactThresholdRatio: Option[Double] = None
   ): Behavior[AgentCommand] =
     Behaviors.setup { ctx =>
       val effectiveRootSessionId =
@@ -715,7 +719,8 @@ object AgentActor extends AgentCore with AgentSession:
             flowChainId = flowChainId,
             sandboxEnabled = sandboxEnabled,
             sandboxRoot = sandboxRoot,
-            projectSession = projectSession
+            projectSession = projectSession,
+            compactThresholdRatio = compactThresholdRatio
           )
         )(using ctx)
       )
@@ -1042,7 +1047,9 @@ object AgentActor extends AgentCore with AgentSession:
       case AgentCommand.UpdateContextWindow(window) =>
         val newState = state.withContextWindow(window)
         val estimatedTokens = TokenEstimator.estimate(newState.messages)
-        val threshold = CompactThreshold.threshold(window)
+        // ctxthresh 批：换模型/换窗口后的立即压缩判定同取**生效门限**——
+        // 本会话有阈值覆盖时覆盖同样适用于新窗口（无覆盖时逐字 = 现值函数）。
+        val threshold = newState.compactThresholdTokens
         if newState.messages.nonEmpty && estimatedTokens > threshold then
           logAgentEvent(
             agentDef,
@@ -1064,6 +1071,22 @@ object AgentActor extends AgentCore with AgentSession:
           )
         else IO.pure(idle(agentDef, resources, depth, parentRef, newState))
         end if
+
+      case AgentCommand.SetCompactThresholdRatio(ratio) =>
+        // ctxthresh 批：只改存储值（口径④「有会话覆盖用覆盖，无覆盖走现值函数」）。
+        // 🔴 刻意不做任何压缩触发——镜像 UpdateContextWindow 的存储语义但去掉其
+        // 「顺手压缩」副作用（设计 §7 逐字禁止复用该命令的原因）。
+        // 生效时点 = 下一回合边界（判定点 AgentCore 每轮读 state，非启动快照）。
+        logAgentEvent(
+          agentDef,
+          depth,
+          state.sessionId,
+          state.sessionName,
+          "compact-threshold-set",
+          s"ratio=${ratio.map(r => f"$r%.4f").getOrElse("default")} " +
+            s"effective=${CompactThresholdOverride.effectiveThreshold(state.contextWindow, ratio)}"
+        )
+        IO.pure(idle(agentDef, resources, depth, parentRef, state.withCompactThresholdRatio(ratio)))
 
       case n: AgentCommand.BackgroundTaskNotification =>
         (ctx.self ! n.toExternalEvent) *> IO.pure(idle(agentDef, resources, depth, parentRef, state))
@@ -1461,7 +1484,7 @@ object AgentActor extends AgentCore with AgentSession:
               AgentStreamEvent.UsageUpdate(
                 effectiveTokens,
                 updatedState.contextWindow,
-                CompactThreshold.thresholdRatio(updatedState.contextWindow),
+                updatedState.effectiveCompactThresholdRatio,
                 updatedState.latestUsage.flatMap(u => Option.when(u.outputTokens > 0)(u.outputTokens)),
                 // #308: per-round actual model (lastModel was just refreshed from
                 // this round's result at withLastModel above) — lets the frontend
@@ -2562,6 +2585,20 @@ object AgentActor extends AgentCore with AgentSession:
           )
         )
 
+      // ctxthresh 批：processing 态收到阈值热更 ⇒ 轻量存储（无压缩副作用）。
+      // 在飞 turn 用旧值、下一回合边界起用新值（口径 §8.3-E7 的时序语义）。
+      case AgentCommand.SetCompactThresholdRatio(ratio) =>
+        IO.pure(
+          processing(
+            agentDef,
+            resources,
+            depth,
+            parentRef,
+            state.withCompactThresholdRatio(ratio),
+            pending
+          )
+        )
+
       // --- Buffer user-initiated messages during processing ---
       // Stored in ExecutionContext.pendingUserInputs (not the dead-end `pending`
       // parameter) so they are drained at the next turn boundary — the head is
@@ -3022,7 +3059,7 @@ object AgentActor extends AgentCore with AgentSession:
         model.orElse(state.lastModel),
         contextWindow = Some(state.contextWindow),
         inputTokens = Some(effectiveInputTokens),
-        compactThreshold = Some(CompactThreshold.thresholdRatio(state.contextWindow)),
+        compactThreshold = Some(state.effectiveCompactThresholdRatio),
         outputTokens = state.latestUsage.flatMap(u => Option.when(u.outputTokens > 0)(u.outputTokens))
       )
       val emitDoneIO =
@@ -4113,6 +4150,11 @@ object AgentActor extends AgentCore with AgentSession:
 
       case AgentCommand.UpdateGitBranch(branch) =>
         IO.pure(frozen(agentDef, resources, depth, parentRef, state.withGitBranch(branch), replyTo, resumeAt, reason, retryCount, escalation))
+
+      // ctxthresh 批：frozen 态同 UpdateContextWindow 的轻量存储语义——解冻后
+      // 下一次 dispatch 自会按新的生效门限评估溢出。
+      case AgentCommand.SetCompactThresholdRatio(ratio) =>
+        IO.pure(frozen(agentDef, resources, depth, parentRef, state.withCompactThresholdRatio(ratio), replyTo, resumeAt, reason, retryCount, escalation))
 
       case n: AgentCommand.BackgroundTaskNotification =>
         // 转成 ExternalEvent 走上面的排队分支（同 processing 的处理方式）。
