@@ -2604,22 +2604,24 @@ function dedupeDevices(peers) {
   return out;
 }
 
-/** 设备显示名（**唯一实现**，与设置面板同口径）：用户描述 > 设备名 > ↴
- *   · 面板行（默认形态）：`deviceId` > 占位文案；
+/** 设备显示名（**唯一实现**，与设置面板同口径）：用户描述 > 设备名 > 占位文案。
+ *   · 面板行（默认形态）：占位文案（🔴 不回落 `deviceId`）；
  *   · **设备窗窗头**（`opts.forWindowTitle`）：占位文案（🔴 不回落 `deviceId`）。
- *  🔴 U3（root 2026-09-15 #600）：无名称**且**无描述的设备，**窗头**显示占位文案
+ *  🔴 U3（root 2026-09-15 #600）：无名称**且**无描述的设备显示占位文案
  *  （「未命名设备」）而非 id —— 与作者 ⑤「不显示设备码」同族精神。占位文案走既有
  *  UI i18n 通道（`t()`；键 `neblink.unknownDevice` 的 en/zh **配对已在库**，零新键、
  *  零第二语言真源）。
- *  ⚠ 面板行（消息面板设备行 / 联系人面板设备行）的 `deviceId` 回落**不在该令指涉
- *  面内**（作者 ⑤ 2026-09-15 已明示「只提对话框」）⇒ 默认形态**逐字零行为差**，
- *  该面列开放项。 */
+ *  🔴 devpanelname 扩展（作者 2026-09-15 22:27 卡答「那兜底就用未命名设备呗」）：
+ *  原默认形态的 `deviceId` 兜底已**摘除** ⇒ 三处消费者（消息面板设备行 / 联系人面板
+ *  设备行 / 引用载荷 `friendName`）与窗头**同键同文**；界面上任何位置不再裸显设备码。
+ *  ⇒ 窗头支（`forWindowTitle`）与默认形态**同值**：该支**保留**（U3 已落行为禁回改，
+ *  且两支同值 ⇒ 窗头读数逐字不变）；`opts` 形参保留以维持既有调用面。 */
 export function deviceLabel(d, opts) {
   if (!d) return '';
   const named = d.userDescription || d.deviceName;
   if (named) return named;
   if (opts && opts.forWindowTitle) return t('neblink.unknownDevice');
-  return d.deviceId || t('neblink.unknownDevice');
+  return t('neblink.unknownDevice');
 }
 
 /** 设备窗副行 = **平台标签**（⑤a，作者 2026-09-15：「一是不要显示设备码」）。
