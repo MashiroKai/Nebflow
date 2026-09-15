@@ -27,7 +27,8 @@ import { bindImeGuard, isImeComposing } from './imeGuard.js';
 let friends = [];
 let incoming = [];
 let outgoing = [];
-let groupInvites = [];      // 入站群邀请（GET /api/groups 附带 pending 邀请；加性假设面）
+let groupInvites = [];      // 入站群邀请（契约端点 GET /api/groups/invites → {incoming}；归一后
+                            // [{inviteId,groupId,title,inviter:{userId,neblinkId,name,avatarUrl},createdAt}]）
 let requestsExpanded = false;
 let lastSearchAt = 0;
 let searchResult = null;   // null | {found:false} | 契约搜索结果（归一内部形态，含 relation_status）
@@ -174,6 +175,8 @@ async function doRefresh() {
     }
     // 群邀请（入站 pending）：与 messages 面同源取数口（refreshGroups，禁第二
     // 份归一）；null = keep-last-known（与好友列表失败同口径，不清空）。
+    // pendingInvites 现由契约端点 GET /api/groups/invites 供数（行键 groupId），
+    // 已是归一后的入站邀请数组。
     const grp = await refreshGroups();
     if (grp) groupInvites = grp.pendingInvites || [];
   } catch (err) {
@@ -871,16 +874,18 @@ function buildCreateGroupEntry() {
 }
 
 /** 入站群邀请行（accept/decline = POST /api/groups/{id}/invites/{inviteId}/accept|decline，
- *  主卡:249 接口清单逐字）。行内消费字段按防御性读法：群名 = groupName | title |
- *  conversationId；邀请人 = inviterName | inviter.name | inviterId（wire 未冻结的
- *  字段名以实现报告契约注记为准，客户端两形都容忍）。 */
+ *  主卡:249 接口清单逐字）。行内消费字段 = **契约为准**（GroupInviteEntry，
+ *  model.rs:819-829 经 friendsApi.normalizeInviteRow 归一）：群行键 `groupId`、
+ *  群名 `title`、邀请人 `inviter`（平铺 FriendPublic → 内部 {userId,neblinkId,name,
+ *  avatarUrl}）。旧的多键猜测读法（groupName/conversationId/inviterId）已删——
+ *  承载件里没有这些键，猜读只会把 undefined 渲染成 "undefined"。 */
 function buildGroupInvites() {
   const wrap = el('div', 'fm-requests fm-group-invites');
   wrap.appendChild(el('div', 'fm-req-group', t('contacts.groupInvites')));
   for (const inv of groupInvites) {
     const row = el('div', 'fm-row fm-req-row fm-invite-row');
-    const groupName = inv.groupName || inv.title || inv.conversationId || '';
-    const inviterName = inv.inviterName || (inv.inviter && (inv.inviter.name || inv.inviter.userId)) || inv.inviterId || '';
+    const groupName = inv.title || '';
+    const inviterName = (inv.inviter && (inv.inviter.name || inv.inviter.neblinkId || inv.inviter.userId)) || '';
     row.appendChild(avatarEl({ name: String(groupName) }, 36));
     const meta = el('div', 'fm-row-meta');
     meta.appendChild(el('div', 'fm-row-name', String(groupName)));
@@ -892,11 +897,11 @@ function buildGroupInvites() {
       e.stopPropagation();
       accept.disabled = true;
       try {
-        await api.respondGroupInvite(String(inv.conversationId), String(inv.inviteId), true);
+        await api.respondGroupInvite(String(inv.groupId), String(inv.inviteId), true);
         groupInvites = groupInvites.filter(x => x !== inv);
         render();
         window.dispatchEvent(new CustomEvent('fm-groups-changed', {
-          detail: { openConversationId: String(inv.conversationId) },
+          detail: { openConversationId: String(inv.groupId) },
         }));
       } catch (err) {
         accept.disabled = false;
@@ -908,7 +913,7 @@ function buildGroupInvites() {
       e.stopPropagation();
       decline.disabled = true;
       try {
-        await api.respondGroupInvite(String(inv.conversationId), String(inv.inviteId), false);
+        await api.respondGroupInvite(String(inv.groupId), String(inv.inviteId), false);
         groupInvites = groupInvites.filter(x => x !== inv);
         render();
       } catch (err) {

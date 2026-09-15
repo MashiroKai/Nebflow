@@ -99,9 +99,15 @@ function normalizeSeed(raw) {
     outgoing: s.outgoing || [],     // [{requestId,to:{...},note,status}]
     conversations: s.conversations || [], // [{conversationId,friend:{userId,neblinkId,name,avatarUrl},lastMessage,unreadCount}]
     messages: s.messages || {},     // conversationId -> [{id,senderId,kind,body,createdAt,agentSent?}]
-    groups: s.groups || [],         // 群会话行（normalizeGroupRow 消费形状）
-    groupInvites: s.groupInvites || [], // [{inviteId,conversationId,inviterId,inviteeId,status}]
-    groupMembers: s.groupMembers || {}, // groupId -> [{userId,name,avatarUrl,role}]
+    // 群会话行 = **契约 GroupSummary 形态**（承载件 model.rs:740-757，rename_all=camelCase）：
+    // [{groupId,title,role,memberCount,lastMessage,unreadCount,lastMessageId,createdAt}]
+    // ——mock seed 与真机 wire **同一形态**（mock 不是第二套契约）。
+    groups: s.groups || [],
+    // 群邀请行 = 契约 GroupInviteEntry 形态（model.rs:819-829）：
+    // [{inviteId,groupId,title,inviter:<FriendPublic>,createdAt}]；status/inviteeId
+    // 是 mock 侧记账键（真机由服务端 `status='pending'` + invitee 过滤，wire 不下发）。
+    groupInvites: s.groupInvites || [],
+    groupMembers: s.groupMembers || {}, // groupId -> [{userId,username,display_name,avatar,role,joinedAt}]
     _msgSeq: 1000,
     _reqSeq: 100,
   };
@@ -198,20 +204,23 @@ function mockStore() {
         unreadCount: 0,
       }],
       messages: { 'c-lin': [] },
+      // seed 群行按**契约 GroupSummary 字面**写（groupId/role —— 不再用内部
+      // conversationId/myRole，否则 mock 走的归一分支与真机不是同一条）。
       groups: [{
-        conversationId: 'g-demo',
-        kind: 'group',
+        groupId: 'g-demo',
         title: '项目群',
+        role: 'owner',
+        memberCount: 2,
         lastMessage: null,
         unreadCount: 0,
-        memberCount: 2,
-        myRole: 'owner',
+        lastMessageId: 0,
+        createdAt: 0,
       }],
       groupInvites: [],
       groupMembers: {
         'g-demo': [
-          { userId: 'me', name: 'Me', avatarUrl: '', role: 'owner' },
-          { userId: 'u-lin', name: '林小满', avatarUrl: '', role: 'member' },
+          { userId: 'me', username: null, display_name: 'Me', avatar: null, role: 'owner', joinedAt: 0 },
+          { userId: 'u-lin', username: 'lin', display_name: '林小满', avatar: null, role: 'member', joinedAt: 0 },
         ],
       },
     };
@@ -588,107 +597,237 @@ export async function markConversationRead(conversationId, lastReadMessageId) {
 // （主卡:249）。🔴 UI 直发无 origin 字段（补充卡 §5.4 写权矩阵第一行 + §6.5
 // 网关路由草案「请求体只读 body 一个字段」先例）⇒ 本层群函数一律不发 origin，
 // 网关/服务端按缺省落 'user'。
-// 群 id 与 user id 命名空间不相交（主卡 A-1）⇒ 群函数全部按 conversationId 寻址，
-// 不走 sendFriendMessage 的 friendUserId 路径。
+//
+// 🔴 字段面真源 = 跨仓 neblink-server `main`@`2045a0cbf1854a6b745ae21368146309b87ca0e5`
+// 的 `src/groups.rs`（承载件，sha256 b1db7bd7ce0207b827c7f356ed08dc4529ede4bab78abb2cd8fb99ab104cf0e6）
+// + 其 wire 模型 `src/model.rs`。本层**逐字段按承载件实读形态消费**（本批
+// gwclient 对齐）：
+//   · 群行键   = `groupId`（GroupSummary.group_id，model.rs:743；**无 conversationId/id**）；
+//   · 群行角色 = `role`（model.rs:747，非 myRole）；
+//   · 成员信封 = `{members:[GroupMemberEntry]}`（model.rs:774-776），成员档案 =
+//     `#[serde(flatten)] FriendPublic`（userId/username/display_name/avatar
+//     顶层平铺，**无 profile 嵌套**，model.rs:764-769）；
+//   · 邀请发现 = GET /api/groups/invites → `{incoming:[GroupInviteEntry]}`（groups.rs:182-200）；
+//   · 邀请入参 = `{userId}`（GroupInviteBody.user_id，model.rs:797-801，非 inviteeId）；
+//   · 建群入参 = `{title}` 单字段（GroupCreateBody.title，model.rs:780-784；
+//     **无 memberIds** —— 成员只能走 invite+accept，groups.rs:202-244）。
+//
+// viewer 身份字段（加性小批，真源 = neblink-server
+// `.nebflow/reports/20260915_130900_group-selfuserid-impl.md` **§1 契约终版**
+// — sha256 8e7575dff8804fceb1250fbd136bebc3b51de4297064b0afa1ebfccfdaf3082d）
+// ：键 `selfUserId`（string）= **本次请求的鉴权身份**，服务端权威、客户端不可影响
+// （body/query/header 三通道伪造均被忽略）。落点 = 信封层 12 面 + `GET /api/groups`
+// **行内**（顶层保持裸数组 ⇒ 禁按 object 解析）。本层消费三处**读面**（值≥1 即
+// viewer 身份，交 messages.js learnSelfUserId 单点）：群行（行内）、成员面信封
+// （getGroupMembers）、邀请面信封（getGroupInvites）；群发回执面的 `selfUserId`
+// 由 messages.js 发送腿直接消费（`res.selfUserId`）。**缺席 ⇒ 不造值**，消费方
+// 回落 send-correlation 自证。
+// 内部形态仍是 `conversationId` 行键（值 = 群 id = 会话 id，主卡 A-1：群 id 与
+// user id 命名空间不相交）—— 那是**本文件内部的单一形状**，与 wire 字段名解耦；
+// wire→内部的唯一转换点就是本节的 normalize* 函数（禁第二份）。
+// 群 id 与 user id 命名空间不相交（主卡 A-1）⇒ 群函数全部按**群 id** 寻址（URL
+// 段 = 契约 `{group_id}` 字面），不走 sendFriendMessage 的 friendUserId 路径。
 // 404 fail-closed（主卡 G-2 :204-206）：旧网关/旧服务端无群路由 ⇒ 404 ⇒
 // errKind 'neblinkOff' ⇒ 调用方隐藏群入口（不静默、不降级假入口）。
 // 错误面沿用既有分态：404 group_not_found 与「路由缺失」同为 404 —— 本层把
 // err.data（req() 已解析 JSON body）原样带给调用方，由调用方按语义码分态。
 
-/** 群会话行归一：群行消费字段 = conversationId / title / unreadCount /
- *  lastMessage / memberCount / myRole（主卡 A-6「群设置 = 群名 + 成员列表 +
- *  三个动作」的最小消费集）。字段缺席一律降级（禁渲染 undefined 字面）。 */
+/** 群会话行归一：**wire 字段名一律取承载件字面**（GroupSummary，model.rs:740-757）
+ *  —— 行键 `groupId`（**不是** conversationId/id）、角色 `role`（**不是** myRole）；
+ *  其余消费字段 = title / unreadCount / lastMessage / memberCount（主卡 A-6
+ *  「群设置 = 群名 + 成员列表 + 三个动作」的最小消费集）。字段缺席一律降级
+ *  （禁渲染 undefined 字面）。出口 = 内部群行形状（行键仍是 conversationId，
+ *  值 = groupId；见本节头部注释「内部形态」）。
+ *
+ *  加性 viewer 字段：服务端另批加性补 `selfUserId`（本轮承载件**没有**该键）——
+ *  在场则原样透传（消费点 = messages.js learnSelfUserId 单点），缺席**不造值**、
+ *  由消费方回落 send-correlation 自证（禁把「没有」读成「不是我」）。 */
 function normalizeGroupRow(row) {
   if (!row || typeof row !== 'object') return null;
-  const id = row.conversationId ?? row.id;
+  const id = row.groupId;
   if (id === undefined || id === null || id === '') return null;
-  return {
+  const out = {
     conversationId: String(id),
     kind: 'group',
     title: typeof row.title === 'string' ? row.title : '',
     lastMessage: row.lastMessage || null,
     unreadCount: Number(row.unreadCount) || 0,
     memberCount: Number(row.memberCount) || 0,
-    myRole: row.myRole || row.role || 'member',
+    myRole: row.role || 'member',
   };
+  if (typeof row.selfUserId === 'string' && row.selfUserId) out.selfUserId = row.selfUserId;
+  return out;
 }
 
-/** GET /api/groups 响应归一（防御性双形态）：数组 = 纯群列表；信封对象 =
- *  {groups, pendingInvites}（pendingInvites 为加性假设字段，见 impl 报告契约
- *  注记；`invites` 拼写一并容忍）。两形态都归一为同一消费形状。 */
+/** GET /api/groups 响应归一（**防御性双形态保留**）：契约路径 = **裸数组**
+ *  `[GroupSummary]`（groups.rs:167-176；同 GET /api/conversations 约定）；
+ *  信封对象 `{groups, pendingInvites}` = 客户端早期的**加性假设**形态，保留为
+ *  容忍读法（不与契约相抵：数组分支在前、是唯一契约路径），且其
+ *  `pendingInvites` 已**不是邀请发现真源** —— 契约真源是独立端点
+ *  `GET /api/groups/invites`（`{incoming:[…]}`，groups.rs:182-200），消费口 =
+ *  getGroupInvites()。 */
 function normalizeGroupsEnvelope(raw) {
-  if (Array.isArray(raw)) return { groups: raw, pendingInvites: [] };
-  if (raw && typeof raw === 'object') {
-    const invites = Array.isArray(raw.pendingInvites) ? raw.pendingInvites
-      : Array.isArray(raw.invites) ? raw.invites : [];
-    return { groups: Array.isArray(raw.groups) ? raw.groups : [], pendingInvites: invites };
-  }
-  return { groups: [], pendingInvites: [] };
+  // 🔴 群行必须**在此出口逐行归一**（normalizeGroupRow，wire `groupId` → 内部
+  // conversationId）。改前：本出口直接透传裸行、归一函数只在 createGroup 响应腿
+  // 被调用 ⇒ 列表腿的群行没有任何 conversationId/kind ⇒ 下游
+  // friendGroups.refreshGroups 的 `row.conversationId` 过滤把每一行都判 null ⇒
+  // **群列表恒空**（本批原始症状的机制链）。
+  //
+  // 相抵项（逐条列出）：改前本函数的 `{groups, pendingInvites}` 分支会把该端点
+  // 的**加性假设键** `pendingInvites`（或 `invites`）当成邀请发现面 —— 契约里
+  // 没有这个键，邀请发现面是独立端点（§1.1 #3）⇒ 该派生**已删**（保留它只会
+  // 造第二个真相源）。对象分支本身保留为**形状容忍**（不与契约相抵：契约路径
+  // = 裸数组且在第一分支；顶层恒按数组解析，禁 array→object）。
+  const norm = (list) => (Array.isArray(list) ? list : []).map(normalizeGroupRow).filter(Boolean);
+  if (Array.isArray(raw)) return { groups: norm(raw) };
+  if (raw && typeof raw === 'object' && Array.isArray(raw.groups)) return { groups: norm(raw.groups) };
+  return { groups: [] };
 }
 
-/** 群成员行归一：显示名（H 节口径 = 显示名而非好友备注）缺省链 name →
- *  username → neblinkId → userId；role 缺省 member（admin 字段留置不开放，O⑧）。 */
-function normalizeMemberRow(row) {
+/** 信封层契约字段 `selfUserId`（§1.1 #1–#12 信封面）读出点：**只有非空字符串
+ *  才算在场**，其余（缺席 / null / 非字符串）一律 ''（禁把「没有」读成值）。
+ *  「空列表退化」口径：零群账号的行内面读不到值 ⇒ 由调用方按 '' 回落，不报错。 */
+function envelopeSelfId(raw) {
+  return (raw && typeof raw.selfUserId === 'string' && raw.selfUserId) ? raw.selfUserId : '';
+}
+
+/** 把信封层 viewer id 挂在归一出口的数组上（**非枚举**：不污染 JSON 序列化、
+ *  不进 L2 缓存比对判据 —— 与 messages.js markOurs 的非枚举先例同族）。
+ *  消费点 = friendGroups.refreshGroups / messages.hydrateGroupSenderNames。 */
+function attachSelfId(list, selfId) {
+  if (selfId) Object.defineProperty(list, 'selfUserId', { value: selfId, enumerable: false, configurable: true });
+  return list;
+}
+
+/** 群成员行归一（可带 viewer id）：档案 = 契约 `#[serde(flatten)] FriendPublic`（顶层平铺
+ *  userId/username/display_name/avatar，model.rs:538-549+764-769）⇒ 走本文件
+ *  **唯一** wire↔内部档案边界 personFromWire（display_name→name、avatar→avatarUrl、
+ *  username→neblinkId）。显示名（H 节口径 = 显示名而非好友备注）缺省链
+ *  name → neblinkId → userId；role 缺省 member（admin 字段留置不开放，O⑧）。
+ *  `selfId` = 信封层契约 `selfUserId`（§1.1 #7 的消费形态 `userId === selfUserId`
+ *  ⇒ 这里就地算出 `isSelf`；**信封值缺席 ⇒ null = 未知**，禁猜、禁默认 false）。 */
+function normalizeMemberRow(row, selfId = '') {
   if (!row || typeof row !== 'object') return null;
-  const uid = row.userId ?? row.user_id;
+  const p = personFromWire(row) || {};
+  const uid = p.userId;
   if (uid === undefined || uid === null || uid === '') return null;
   return {
     userId: String(uid),
-    name: row.name || row.displayName || row.display_name || row.username || row.neblinkId || String(uid),
-    avatarUrl: row.avatarUrl || row.avatar || '',
+    name: p.name || p.neblinkId || String(uid),
+    avatarUrl: p.avatarUrl || '',
     role: row.role || 'member',
+    joinedAt: Number(row.joinedAt) || 0,
+    isSelf: selfId ? String(uid) === String(selfId) : null,
   };
 }
 
-/** GET /api/groups → {groups:[群会话行], pendingInvites:[入站群邀请]} */
+/** 群邀请行归一（契约 GroupInviteEntry，model.rs:819-829）：行键 `groupId`
+ *  （**不是** conversationId）、群名 `title`、邀请人 = 平铺 FriendPublic
+ *  （走 personFromWire）、`inviteId` / `createdAt`。 */
+function normalizeInviteRow(row) {
+  if (!row || typeof row !== 'object') return null;
+  const inviteId = row.inviteId;
+  const groupId = row.groupId;
+  if (inviteId === undefined || inviteId === null || inviteId === '') return null;
+  if (groupId === undefined || groupId === null || groupId === '') return null;
+  return {
+    inviteId: String(inviteId),
+    groupId: String(groupId),
+    title: typeof row.title === 'string' ? row.title : '',
+    inviter: personFromWire(row.inviter) || null,
+    createdAt: Number(row.createdAt) || 0,
+  };
+}
+
+/** 邀请发现信封归一：契约 = `{incoming:[…]}`（GroupInvitesResponse，model.rs:831-836）；
+ *  裸数组容忍保留（防御面，不与契约相抵）。 */
+function normalizeInvitesEnvelope(raw) {
+  const list = Array.isArray(raw) ? raw
+    : (raw && typeof raw === 'object' && Array.isArray(raw.incoming) ? raw.incoming : []);
+  return list.map(normalizeInviteRow).filter(Boolean);
+}
+
+/** GET /api/groups → 契约裸数组 `[GroupSummary]`（groups.rs:167-176；行内含
+ *  `selfUserId`）⇒ {groups:[群会话行]}。🔴 邀请发现的**契约真源**是独立端点，
+ *  见 getGroupInvites()（本端点不承载邀请）。 */
 export async function getGroups() {
   if (!MOCK) return normalizeGroupsEnvelope(await req('GET', '/api/groups'));
   await delay();
   const m = mockStore();
   return normalizeGroupsEnvelope({
     groups: m.groups.map(g => ({ ...g })),
-    pendingInvites: m.groupInvites.filter(i => (i.status || 'pending') === 'pending').map(i => ({ ...i })),
   });
 }
 
-/** POST /api/groups {title?, memberIds} → 群会话行（归一后；无法归一 ⇒ null，
- *  调用方以 refreshGroups 兜底）。成员上限 50 的权威闸在服务端；调用方只做
- *  UX 预检。 */
-export async function createGroup(title, memberIds) {
-  const body = { ...(title ? { title } : {}), memberIds: memberIds || [] };
-  if (!MOCK) return normalizeGroupRow(await req('POST', '/api/groups', body));
-  await delay();
-  const m = mockStore();
-  const conv = {
-    conversationId: 'g-' + (++m._msgSeq),
-    kind: 'group',
-    title: title || '',
-    lastMessage: null,
-    unreadCount: 0,
-    memberCount: (memberIds || []).length + 1,
-    myRole: 'owner',
-  };
-  m.groups.push({ ...conv });
-  m.groupMembers[conv.conversationId] = [
-    { userId: m.self.userId, name: m.self.displayName || m.self.username, avatarUrl: '', role: 'owner' },
-    ...(memberIds || []).map(uid => {
-      const f = m.friends.find(x => x.userId === uid);
-      return { userId: uid, name: (f && (f.remark || f.name)) || uid, avatarUrl: (f && f.avatarUrl) || '', role: 'member' };
-    }),
-  ];
-  m.messages[conv.conversationId] = [];
-  return { ...conv };
-}
-
-/** GET /api/groups/{id}/members → [{userId,name,avatarUrl,role}] */
-export async function getGroupMembers(groupId) {
+/** GET /api/groups/invites → 契约 `{incoming:[GroupInviteEntry]}`（groups.rs:178-200；
+ *  服务端只列**我的** `status='pending'` 入站邀请，store.rs:5808-5815）⇒ 归一后的
+ *  入站群邀请数组（[{inviteId,groupId,title,inviter,createdAt}]）。 */
+export async function getGroupInvites() {
   if (!MOCK) {
-    const raw = await req('GET', `/api/groups/${encodeURIComponent(groupId)}/members`);
-    return (Array.isArray(raw) ? raw : []).map(normalizeMemberRow).filter(Boolean);
+    const raw = await req('GET', '/api/groups/invites');
+    return attachSelfId(normalizeInvitesEnvelope(raw), envelopeSelfId(raw));
   }
   await delay();
   const m = mockStore();
-  return (m.groupMembers[groupId] || []).map(x => ({ ...x }));
+  // mock 侧同样按「invitee=我 ∧ pending」过滤（与 store.rs 的 WHERE 子句同判据），
+  // inviteeId/status 是 mock 记账键，normalizeInviteRow 只取契约字段。
+  return normalizeInvitesEnvelope({
+    incoming: m.groupInvites
+      .filter(i => (i.status || 'pending') === 'pending' && String(i.inviteeId || '') === String(m.self.userId))
+      .map(i => ({ ...i })),
+  });
+}
+
+/** POST /api/groups `{title}` → `{groupId,title,createdAt}` 201（GroupCreateBody
+ *  = **title 单字段**，model.rs:780-784 / groups.rs:138-165；**无 memberIds** ——
+ *  契约里成员只能经 invite+accept 入群，groups.rs:202-244 ⇒ 选中成员由调用方在
+ *  建群成功后逐个 inviteToGroup）。归一后 = 群会话行；无法归一 ⇒ null（调用方
+ *  以 refreshGroups 兜底）。标题为**必填**（trim 后非空、≤64）：服务端
+ *  valid_group_title 空串 ⇒ 422 invalid_title（groups.rs:96-106,151-152），
+ *  调用方须做同判据 UX 预检。成员上限 50 的权威闸同样在服务端。 */
+export async function createGroup(title) {
+  const body = { title: String(title ?? '') };
+  if (!MOCK) return normalizeGroupRow(await req('POST', '/api/groups', body));
+  await delay();
+  const m = mockStore();
+  const groupId = 'g-' + (++m._msgSeq);
+  // mock = 契约同形：建群只落 owner 一行（成员走邀请，见 inviteToGroup）。
+  m.groups.push({
+    groupId,
+    title: String(title ?? ''),
+    role: 'owner',
+    memberCount: 1,
+    lastMessage: null,
+    unreadCount: 0,
+    lastMessageId: 0,
+    createdAt: 0,
+  });
+  m.groupMembers[groupId] = [
+    { userId: m.self.userId, username: null, display_name: m.self.displayName || m.self.username, avatar: null, role: 'owner', joinedAt: 0 },
+  ];
+  m.messages[groupId] = [];
+  const row = m.groups[m.groups.length - 1];
+  return normalizeGroupRow({ ...row });
+}
+
+/** GET /api/groups/{id}/members → 契约 `{members:[GroupMemberEntry], selfUserId}`
+ *  （model.rs:771-776 + 契约终版 §1.1 #7）⇒ 归一为内部
+ *  [{userId,name,avatarUrl,role,joinedAt,isSelf}]，信封 `selfUserId` 另以非枚举键
+ *  挂在返回数组上（`members.selfUserId`，消费点 = messages.hydrateGroupSenderNames）。
+ *  裸数组容忍保留（防御面，不与契约相抵：信封分支是契约路径且在前）。 */
+export async function getGroupMembers(groupId) {
+  if (!MOCK) {
+    const raw = await req('GET', `/api/groups/${encodeURIComponent(groupId)}/members`);
+    const list = Array.isArray(raw) ? raw
+      : (raw && typeof raw === 'object' && Array.isArray(raw.members) ? raw.members : []);
+    const selfId = envelopeSelfId(raw);
+    return attachSelfId(list.map((r) => normalizeMemberRow(r, selfId)).filter(Boolean), selfId);
+  }
+  await delay();
+  const m = mockStore();
+  // mock = 契约同形：信封自证 id 取本机（真机 = 鉴权用户 id，同一 id 空间）。
+  const selfId = String(m.self.userId || '');
+  return attachSelfId((m.groupMembers[groupId] || []).map((r) => normalizeMemberRow(r, selfId)).filter(Boolean), selfId);
 }
 
 /** POST /api/groups/{id}/messages {body} → SendMessageResponse 同形
@@ -698,7 +837,7 @@ export async function sendGroupMessage(groupId, body) {
   if (!MOCK) return req('POST', `/api/groups/${encodeURIComponent(groupId)}/messages`, { body });
   await delay();
   const m = mockStore();
-  const conv = m.groups.find(g => g.conversationId === groupId);
+  const conv = m.groups.find(g => g.groupId === groupId);
   if (!conv) throw mockError('group not found', 404);
   const msg = { id: 'm-' + (++m._msgSeq), senderId: m.self.userId, kind: 'text', body, createdAt: new Date().toISOString() };
   (m.messages[groupId] = m.messages[groupId] || []).push(msg);
@@ -706,12 +845,25 @@ export async function sendGroupMessage(groupId, body) {
   return { messageId: msg.id, conversationId: groupId, createdAt: msg.createdAt };
 }
 
-/** POST /api/groups/{id}/invites {inviteeId} → {}（A-4：被邀请人 accept 后才入群）。 */
-export async function inviteToGroup(groupId, inviteeId) {
-  if (!MOCK) return req('POST', `/api/groups/${encodeURIComponent(groupId)}/invites`, { inviteeId });
+/** POST /api/groups/{id}/invites `{userId}` → 201 `{inviteId,groupId,inviteeUserId,status,createdAt}`
+ *  （GroupInviteBody = `{userId}`，model.rs:795-801 / groups.rs:207-272；**不是
+ *  inviteeId** —— 承载件里没有该键，服务端按缺字段直接 422）。
+ *  A-4：被邀请人 accept 后才入群。 */
+export async function inviteToGroup(groupId, inviteeUserId) {
+  if (!MOCK) return req('POST', `/api/groups/${encodeURIComponent(groupId)}/invites`, { userId: inviteeUserId });
   await delay();
   const m = mockStore();
-  m.groupInvites.push({ inviteId: 'gi-' + (++m._reqSeq), conversationId: groupId, inviterId: m.self.userId, inviteeId, status: 'pending' });
+  const g = m.groups.find(x => x.groupId === groupId);
+  m.groupInvites.push({
+    inviteId: 'gi-' + (++m._reqSeq),
+    groupId,
+    title: (g && g.title) || '',
+    inviter: { userId: m.self.userId, username: m.self.username || null, display_name: m.self.displayName || m.self.username || '', avatar: m.self.avatar || null },
+    createdAt: 0,
+    // mock 记账键（wire 无）：status ∨ inviteeId 只在 mock 侧用于「我的入站邀请」过滤。
+    status: 'pending',
+    inviteeId: String(inviteeUserId),
+  });
   return {};
 }
 
@@ -725,11 +877,11 @@ export async function respondGroupInvite(groupId, inviteId, accept) {
   if (inv) {
     inv.status = accept ? 'accepted' : 'declined';
     if (accept) {
-      const g = m.groups.find(x => x.conversationId === inv.conversationId);
+      const g = m.groups.find(x => x.groupId === inv.groupId);
       if (g) {
         g.memberCount = (g.memberCount || 1) + 1;
-        const me = { userId: m.self.userId, name: m.self.displayName || m.self.username, avatarUrl: '', role: 'member' };
-        (m.groupMembers[inv.conversationId] = m.groupMembers[inv.conversationId] || []).push(me);
+        const me = { userId: m.self.userId, username: m.self.username || null, display_name: m.self.displayName || m.self.username || '', avatar: m.self.avatar || null, role: 'member', joinedAt: 0 };
+        (m.groupMembers[inv.groupId] = m.groupMembers[inv.groupId] || []).push(me);
       }
     }
   }
@@ -741,7 +893,7 @@ export async function leaveGroup(groupId) {
   if (!MOCK) return req('POST', `/api/groups/${encodeURIComponent(groupId)}/leave`);
   await delay();
   const m = mockStore();
-  m.groups = m.groups.filter(g => g.conversationId !== groupId);
+  m.groups = m.groups.filter(g => g.groupId !== groupId);
   delete m.groupMembers[groupId];
   delete m.messages[groupId];
   return {};
@@ -755,7 +907,7 @@ export async function kickGroupMember(groupId, userId) {
   const list = m.groupMembers[groupId] || [];
   const idx = list.findIndex(x => x.userId === userId);
   if (idx >= 0) list.splice(idx, 1);
-  const g = m.groups.find(x => x.conversationId === groupId);
+  const g = m.groups.find(x => x.groupId === groupId);
   if (g) g.memberCount = Math.max(1, (g.memberCount || 1) - 1);
   return {};
 }
@@ -765,7 +917,7 @@ export async function renameGroup(groupId, title) {
   if (!MOCK) return req('PUT', `/api/groups/${encodeURIComponent(groupId)}/title`, { title });
   await delay();
   const m = mockStore();
-  const g = m.groups.find(x => x.conversationId === groupId);
+  const g = m.groups.find(x => x.groupId === groupId);
   if (g) g.title = title;
   return {};
 }
@@ -775,7 +927,7 @@ export async function dissolveGroup(groupId) {
   if (!MOCK) return req('DELETE', `/api/groups/${encodeURIComponent(groupId)}`);
   await delay();
   const m = mockStore();
-  m.groups = m.groups.filter(g => g.conversationId !== groupId);
+  m.groups = m.groups.filter(g => g.groupId !== groupId);
   delete m.groupMembers[groupId];
   delete m.messages[groupId];
   return {};

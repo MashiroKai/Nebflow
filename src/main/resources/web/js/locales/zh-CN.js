@@ -228,7 +228,8 @@ export default {
   // 群组一期（friendgroups 客户端腿）：建群/群邀请（契约 = 主卡案1② + A-4）。
   'contacts.createGroup': '发起群聊',
   'contacts.createGroupTitle': '发起群聊',
-  'contacts.createGroupName': '群名称（可选）',
+  'contacts.createGroupName': '群名称',
+  'contacts.createGroupNameRequired': '群名称不能为空',
   'contacts.createGroupSelected': '已选 {n} 人',
   'contacts.createGroupCap': '群成员最多 50 人',
   'contacts.createGroupSubmit': '创建',

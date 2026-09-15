@@ -40,6 +40,10 @@ const GROUP_TITLE_MAX = 64;
 // 翻转时广播一次 'fm-groups-changed'（仅翻转那一次，禁循环）。
 let groupsOn = true;
 let unavailableToasted = false;
+// 入站群邀请的 keep-last-known 副本（取数失败 ≠ 空集，与好友域「失败≠空」同口径）。
+// 邀请真源 = 契约端点 GET /api/groups/invites（`{incoming:[…]}`）；该腿单独失败
+// 时保留上一拍读数，且**不**参与可用性判定（可用性判据仍只看群列表腿）。
+let lastInvites = [];
 
 /** 群路由可用性（contacts 面用于隐藏「发起群聊」入口；初值乐观 true）。 */
 export function groupsAvailable() {
@@ -90,26 +94,43 @@ export function groupTitleOf(conv) {
 }
 
 /**
- * GET /api/groups（群域唯一取数口；messages.js 的 refreshConversations 与
- * contacts.js 的群邀请区共用，禁第二份调用点各写归一）。
+ * 群域唯一取数口（messages.js 的 refreshConversations 与 contacts.js 的群邀请区
+ * 共用，禁第二份调用点各写归一）：**两条契约腿**并行——
+ *  · GET /api/groups → 裸数组 `[GroupSummary]`（行键 `groupId`）→ 会话行形状；
+ *  · GET /api/groups/invites → `{incoming:[GroupInviteEntry]}`（**邀请发现真源**；
+ *    此前从群列表响应里读加性 `pendingInvites` 的假设已废除——承载件无此键）。
  *
  * 返回值三态：
- *  · {groups, pendingInvites} — 成功（groups 已按会话行形状归一）；
- *  · {groups: [], pendingInvites: []} — 群路由 404（fail-closed：调用方按空集
+ *  · {groups, pendingInvites, selfUserId} — 成功（groups 已按会话行形状归一；
+ *    selfUserId = 加性契约的 viewer 身份，行内面优先、邀请信封面兜底、都无 ⇒ ''）；
+ *  · {groups: [], pendingInvites: [], selfUserId: ''} — 群路由 404（fail-closed：调用方按空集
  *    处理 = 群行从会话列表消失，可用性面已翻 false + 一次性提示）；
  *  · null — 鉴权/网络/5xx（keep-last-known，与好友域 refresh 同口径）。
+ *
+ * 邀请腿**单独失败可容**（catch ⇒ null ⇒ lastInvites 不变）：可用性判据只认群列表
+ * 腿，否则一条加性端点的 404 会把整个群入口误判为「网关/服务端无群路由」。
  * @returns {Promise<{groups: any[], pendingInvites: any[]}|null>}
  */
 export async function refreshGroups() {
   try {
-    const env = await api.getGroups();
+    const [env, invites] = await Promise.all([
+      api.getGroups(),
+      api.getGroupInvites().catch(() => null),
+    ]);
     markAvailability(true);
     const groups = (env.groups || []).map(normalizeRow).filter(Boolean);
-    return { groups, pendingInvites: env.pendingInvites || [] };
+    if (invites) lastInvites = invites;
+    // viewer 身份（加性契约字段）：优先取群行**行内** `selfUserId`，行面读不到
+    // （零群退化）时取邀请**信封** `selfUserId`（§1.1 #2/#3）。两处都缺席 ⇒ ''
+    // ⇒ 消费方回落 send-correlation 自证（禁造值）。
+    const selfId = (groups.find(g => g && g.selfUserId) || {}).selfUserId
+      || (invites && invites.selfUserId) || '';
+    return { groups, pendingInvites: lastInvites, selfUserId: selfId };
   } catch (err) {
     if (errKind(err) === 'neblinkOff') {
       markAvailability(false);
-      return { groups: [], pendingInvites: [] };
+      lastInvites = [];
+      return { groups: [], pendingInvites: [], selfUserId: '' };
     }
     return null; // auth（全局链已提示）/ 网络 / 5xx ⇒ keep-last-known
   }
@@ -198,8 +219,15 @@ function buildFriendPicker(opts) {
 }
 
 // ── 建群对话框（contacts 面入口；成功后经 fm-groups-changed 交 messages 开窗）─
-/** 发起群聊：选好友（可多选）+ 可选群名 → POST /api/groups。成员上限 50 做
- *  UX 预检（含本机 1 人）；权威闸在服务端（超限 422/403 走 groupErrToast）。 */
+/** 发起群聊：选好友（可多选）+ 群名 → POST /api/groups `{title}`（**契约只有
+ *  title 一个字段**：GroupCreateBody，model.rs:780-784）——建群成功后对选中好友
+ *  **逐个 POST /api/groups/{id}/invites `{userId}`**（契约里成员只能经
+ *  invite+accept 入群，groups.rs:202-244；承载件无 memberIds ⇒ 发 memberIds 会被
+ *  服务端静默丢弃，等于选了白选）。
+ *  标题**必填**（trim 后非空）：服务端 valid_group_title 空串 ⇒ 422 invalid_title
+ *  （groups.rs:96-106,151-152），客户端做同判据 UX 预检（权威闸仍在服务端）。
+ *  成员上限 50 同样做 UX 预检（含本机 1 人）；权威闸在服务端（超限 422/403 走
+ *  groupErrToast）。 */
 export function openCreateGroupDialog() {
   if (!getNeblinkState().loggedIn) return;
   const selected = new Set();
@@ -223,7 +251,8 @@ export function openCreateGroupDialog() {
   header.appendChild(closeBtn);
   modal.appendChild(header);
 
-  // 群名（可选，O④ 同族最小面；imeGuard 接入 = 新增输入面纪律）
+  // 群名（**必填** —— 契约 GroupCreateBody.title 无缺省；O④ 同族最小面；
+  // imeGuard 接入 = 新增输入面纪律）
   const nameRow = el('div', 'fm-gs-rename');
   const nameInput = document.createElement('input');
   nameInput.className = 'cfg-input fm-gs-rename-input';
@@ -249,6 +278,12 @@ export function openCreateGroupDialog() {
   const createBtn = el('button', 'glass-control fm-msg-btn', t('contacts.createGroupSubmit'));
   createBtn.addEventListener('click', async () => {
     if (createBtn.disabled) return;
+    // 群名必填（契约 GroupCreateBody.title 无缺省；空串 ⇒ 422 invalid_title）。
+    const groupName = nameInput.value.trim();
+    if (!groupName) {
+      toastGlobal(t('contacts.createGroupNameRequired'), 'error');
+      return;
+    }
     // 成员上限 50（含本机）UX 预检；权威闸在服务端。
     if (selected.size + 1 > GROUP_MEMBER_CAP) {
       toastGlobal(t('contacts.createGroupCap'), 'error');
@@ -256,12 +291,19 @@ export function openCreateGroupDialog() {
     }
     createBtn.disabled = true;
     try {
-      const conv = await api.createGroup(nameInput.value.trim(), [...selected]);
+      // ① 建群（契约：`{title}` 单字段 —— 不带 memberIds）
+      const conv = await api.createGroup(groupName);
+      // ② 选中成员逐个发邀请（契约的成员入口只有 invite+accept）
+      let failed = 0;
+      for (const uid of [...selected]) {
+        try { await api.inviteToGroup(conv && conv.conversationId, uid); } catch { failed++; }
+      }
       overlay.remove();
       window.dispatchEvent(new CustomEvent('fm-groups-changed', {
         detail: { openConversationId: conv && conv.conversationId },
       }));
-      toastGlobal(t('messages.groupCreated'));
+      if (failed > 0) toastGlobal(t('messages.groupInviteFailed', { n: failed }), 'error');
+      else toastGlobal(t('messages.groupCreated'));
     } catch (err) {
       createBtn.disabled = false;
       groupErrToast(err);
