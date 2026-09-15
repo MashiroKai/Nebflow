@@ -2672,7 +2672,12 @@ onMessage('user', (msg, view) => {
   if (!msg.nodeSessionId) {
     // intake (mailbadge batch 2026-09-13): 收件通道判别字段 —— 与 source 同批
     // 落盘/读取，旧帧缺该字段 ⇒ null（回落路径逐字不变）。
-    saveMsg({ type: 'user', text: msg.text, injected: true, source: msg.source || null, eventType: msg.eventType || null, sender: msg.sender || null, senderTeam: msg.senderTeam || null, delivery: msg.delivery || null, intake: msg.intake || null }, sid);
+    // header（气泡四段式统一批 2026-09-15，R-C 补）：引擎在唯一发射点产出的整串
+    // `KIND · PROJECT · SUBJECT · STATE` 必须与帧同源落进缓存 —— 两条缓存恢复读路径
+    // （persistence.js 的 restoreFromStorage / restoreFromBackendHistory）都读 `m.header`，
+    // 漏落这一枚 ⇒ 走缓存的重载把 header 丢成 undefined、降级成旧标签。
+    // 旧帧缺该字段 ⇒ null（同 intake：缺席即回落，逐字不变）。
+    saveMsg({ type: 'user', text: msg.text, injected: true, source: msg.source || null, eventType: msg.eventType || null, sender: msg.sender || null, senderTeam: msg.senderTeam || null, delivery: msg.delivery || null, intake: msg.intake || null, header: msg.header || null }, sid);
   }
   if (sid === state.activeSessionId && view) {
     // 气泡四段式统一批（2026-09-15）：帧上的 `header`（引擎已渲染）逐字透传——
