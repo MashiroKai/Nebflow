@@ -111,7 +111,7 @@
 .fm-node > * { flex: 0 0 auto; }
 .fm-node:hover { filter: brightness(1.04); }
 
-.fm-node-head { display: flex; align-items: center; gap: 6px; margin-bottom: 2px; }
+.fm-node-head { display: flex; align-items: center; gap: 6px; margin-bottom: 2px; justify-content: center; }
 
 /* 终态卡状态词（2026-09-07 状态保真批）：主图终态卡 head 行 glyph 旁文本——
    死亡节点（重启收敛 failed/cancelled）的真实终态一眼可辨，不再是孤减号线。 */
@@ -565,6 +565,7 @@
      撑出卡界（视觉截断了、盒宽没截断）。stretch 压回卡内容宽，文字段才真正截断。 */
   align-self: stretch;
   align-items: center;
+  justify-content: center;
   gap: 3px;
   margin-top: 4px;
   font: 400 10px ui-monospace, SFMono-Regular, Menlo, monospace;
