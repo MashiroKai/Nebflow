@@ -99,6 +99,9 @@ function normalizeSeed(raw) {
     outgoing: s.outgoing || [],     // [{requestId,to:{...},note,status}]
     conversations: s.conversations || [], // [{conversationId,friend:{userId,neblinkId,name,avatarUrl},lastMessage,unreadCount}]
     messages: s.messages || {},     // conversationId -> [{id,senderId,kind,body,createdAt,agentSent?}]
+    groups: s.groups || [],         // 群会话行（normalizeGroupRow 消费形状）
+    groupInvites: s.groupInvites || [], // [{inviteId,conversationId,inviterId,inviteeId,status}]
+    groupMembers: s.groupMembers || {}, // groupId -> [{userId,name,avatarUrl,role}]
     _msgSeq: 1000,
     _reqSeq: 100,
   };
@@ -195,6 +198,22 @@ function mockStore() {
         unreadCount: 0,
       }],
       messages: { 'c-lin': [] },
+      groups: [{
+        conversationId: 'g-demo',
+        kind: 'group',
+        title: '项目群',
+        lastMessage: null,
+        unreadCount: 0,
+        memberCount: 2,
+        myRole: 'owner',
+      }],
+      groupInvites: [],
+      groupMembers: {
+        'g-demo': [
+          { userId: 'me', name: 'Me', avatarUrl: '', role: 'owner' },
+          { userId: 'u-lin', name: '林小满', avatarUrl: '', role: 'member' },
+        ],
+      },
     };
   }
   M = normalizeSeed(seed);
@@ -561,6 +580,205 @@ export async function markConversationRead(conversationId, lastReadMessageId) {
   await delay();
   const conv = mockStore().conversations.find(c => c.conversationId === conversationId);
   if (conv) conv.unreadCount = 0;
+}
+
+// ── 群组一期（friendgroups 客户端腿）──────────────────────────────────
+// 契约来源（冻结，禁改）：补充卡「服务端契约逐字草案」§5.1（POST
+// /api/groups/{id}/messages 的路由/请求体/响应/校验序）+ 主卡案1②接口清单
+// （主卡:249）。🔴 UI 直发无 origin 字段（补充卡 §5.4 写权矩阵第一行 + §6.5
+// 网关路由草案「请求体只读 body 一个字段」先例）⇒ 本层群函数一律不发 origin，
+// 网关/服务端按缺省落 'user'。
+// 群 id 与 user id 命名空间不相交（主卡 A-1）⇒ 群函数全部按 conversationId 寻址，
+// 不走 sendFriendMessage 的 friendUserId 路径。
+// 404 fail-closed（主卡 G-2 :204-206）：旧网关/旧服务端无群路由 ⇒ 404 ⇒
+// errKind 'neblinkOff' ⇒ 调用方隐藏群入口（不静默、不降级假入口）。
+// 错误面沿用既有分态：404 group_not_found 与「路由缺失」同为 404 —— 本层把
+// err.data（req() 已解析 JSON body）原样带给调用方，由调用方按语义码分态。
+
+/** 群会话行归一：群行消费字段 = conversationId / title / unreadCount /
+ *  lastMessage / memberCount / myRole（主卡 A-6「群设置 = 群名 + 成员列表 +
+ *  三个动作」的最小消费集）。字段缺席一律降级（禁渲染 undefined 字面）。 */
+function normalizeGroupRow(row) {
+  if (!row || typeof row !== 'object') return null;
+  const id = row.conversationId ?? row.id;
+  if (id === undefined || id === null || id === '') return null;
+  return {
+    conversationId: String(id),
+    kind: 'group',
+    title: typeof row.title === 'string' ? row.title : '',
+    lastMessage: row.lastMessage || null,
+    unreadCount: Number(row.unreadCount) || 0,
+    memberCount: Number(row.memberCount) || 0,
+    myRole: row.myRole || row.role || 'member',
+  };
+}
+
+/** GET /api/groups 响应归一（防御性双形态）：数组 = 纯群列表；信封对象 =
+ *  {groups, pendingInvites}（pendingInvites 为加性假设字段，见 impl 报告契约
+ *  注记；`invites` 拼写一并容忍）。两形态都归一为同一消费形状。 */
+function normalizeGroupsEnvelope(raw) {
+  if (Array.isArray(raw)) return { groups: raw, pendingInvites: [] };
+  if (raw && typeof raw === 'object') {
+    const invites = Array.isArray(raw.pendingInvites) ? raw.pendingInvites
+      : Array.isArray(raw.invites) ? raw.invites : [];
+    return { groups: Array.isArray(raw.groups) ? raw.groups : [], pendingInvites: invites };
+  }
+  return { groups: [], pendingInvites: [] };
+}
+
+/** 群成员行归一：显示名（H 节口径 = 显示名而非好友备注）缺省链 name →
+ *  username → neblinkId → userId；role 缺省 member（admin 字段留置不开放，O⑧）。 */
+function normalizeMemberRow(row) {
+  if (!row || typeof row !== 'object') return null;
+  const uid = row.userId ?? row.user_id;
+  if (uid === undefined || uid === null || uid === '') return null;
+  return {
+    userId: String(uid),
+    name: row.name || row.displayName || row.display_name || row.username || row.neblinkId || String(uid),
+    avatarUrl: row.avatarUrl || row.avatar || '',
+    role: row.role || 'member',
+  };
+}
+
+/** GET /api/groups → {groups:[群会话行], pendingInvites:[入站群邀请]} */
+export async function getGroups() {
+  if (!MOCK) return normalizeGroupsEnvelope(await req('GET', '/api/groups'));
+  await delay();
+  const m = mockStore();
+  return normalizeGroupsEnvelope({
+    groups: m.groups.map(g => ({ ...g })),
+    pendingInvites: m.groupInvites.filter(i => (i.status || 'pending') === 'pending').map(i => ({ ...i })),
+  });
+}
+
+/** POST /api/groups {title?, memberIds} → 群会话行（归一后；无法归一 ⇒ null，
+ *  调用方以 refreshGroups 兜底）。成员上限 50 的权威闸在服务端；调用方只做
+ *  UX 预检。 */
+export async function createGroup(title, memberIds) {
+  const body = { ...(title ? { title } : {}), memberIds: memberIds || [] };
+  if (!MOCK) return normalizeGroupRow(await req('POST', '/api/groups', body));
+  await delay();
+  const m = mockStore();
+  const conv = {
+    conversationId: 'g-' + (++m._msgSeq),
+    kind: 'group',
+    title: title || '',
+    lastMessage: null,
+    unreadCount: 0,
+    memberCount: (memberIds || []).length + 1,
+    myRole: 'owner',
+  };
+  m.groups.push({ ...conv });
+  m.groupMembers[conv.conversationId] = [
+    { userId: m.self.userId, name: m.self.displayName || m.self.username, avatarUrl: '', role: 'owner' },
+    ...(memberIds || []).map(uid => {
+      const f = m.friends.find(x => x.userId === uid);
+      return { userId: uid, name: (f && (f.remark || f.name)) || uid, avatarUrl: (f && f.avatarUrl) || '', role: 'member' };
+    }),
+  ];
+  m.messages[conv.conversationId] = [];
+  return { ...conv };
+}
+
+/** GET /api/groups/{id}/members → [{userId,name,avatarUrl,role}] */
+export async function getGroupMembers(groupId) {
+  if (!MOCK) {
+    const raw = await req('GET', `/api/groups/${encodeURIComponent(groupId)}/members`);
+    return (Array.isArray(raw) ? raw : []).map(normalizeMemberRow).filter(Boolean);
+  }
+  await delay();
+  const m = mockStore();
+  return (m.groupMembers[groupId] || []).map(x => ({ ...x }));
+}
+
+/** POST /api/groups/{id}/messages {body} → SendMessageResponse 同形
+ *  {messageId, conversationId, createdAt, createdAtMs?, existing?}（补充卡 §5.1）。
+ *  🔴 body 只有一个字段：UI 面在协议上无 origin（§5.4 矩阵第一行）。 */
+export async function sendGroupMessage(groupId, body) {
+  if (!MOCK) return req('POST', `/api/groups/${encodeURIComponent(groupId)}/messages`, { body });
+  await delay();
+  const m = mockStore();
+  const conv = m.groups.find(g => g.conversationId === groupId);
+  if (!conv) throw mockError('group not found', 404);
+  const msg = { id: 'm-' + (++m._msgSeq), senderId: m.self.userId, kind: 'text', body, createdAt: new Date().toISOString() };
+  (m.messages[groupId] = m.messages[groupId] || []).push(msg);
+  conv.lastMessage = msg;
+  return { messageId: msg.id, conversationId: groupId, createdAt: msg.createdAt };
+}
+
+/** POST /api/groups/{id}/invites {inviteeId} → {}（A-4：被邀请人 accept 后才入群）。 */
+export async function inviteToGroup(groupId, inviteeId) {
+  if (!MOCK) return req('POST', `/api/groups/${encodeURIComponent(groupId)}/invites`, { inviteeId });
+  await delay();
+  const m = mockStore();
+  m.groupInvites.push({ inviteId: 'gi-' + (++m._reqSeq), conversationId: groupId, inviterId: m.self.userId, inviteeId, status: 'pending' });
+  return {};
+}
+
+/** POST /api/groups/{id}/invites/{inviteId}/accept|decline → {} */
+export async function respondGroupInvite(groupId, inviteId, accept) {
+  const action = accept ? 'accept' : 'decline';
+  if (!MOCK) return req('POST', `/api/groups/${encodeURIComponent(groupId)}/invites/${encodeURIComponent(inviteId)}/${action}`);
+  await delay();
+  const m = mockStore();
+  const inv = m.groupInvites.find(i => i.inviteId === inviteId);
+  if (inv) {
+    inv.status = accept ? 'accepted' : 'declined';
+    if (accept) {
+      const g = m.groups.find(x => x.conversationId === inv.conversationId);
+      if (g) {
+        g.memberCount = (g.memberCount || 1) + 1;
+        const me = { userId: m.self.userId, name: m.self.displayName || m.self.username, avatarUrl: '', role: 'member' };
+        (m.groupMembers[inv.conversationId] = m.groupMembers[inv.conversationId] || []).push(me);
+      }
+    }
+  }
+  return {};
+}
+
+/** POST /api/groups/{id}/leave → {}（owner 禁退群：服务端闸；客户端只做入口隐藏）。 */
+export async function leaveGroup(groupId) {
+  if (!MOCK) return req('POST', `/api/groups/${encodeURIComponent(groupId)}/leave`);
+  await delay();
+  const m = mockStore();
+  m.groups = m.groups.filter(g => g.conversationId !== groupId);
+  delete m.groupMembers[groupId];
+  delete m.messages[groupId];
+  return {};
+}
+
+/** POST /api/groups/{id}/members/{userId}/kick → {} */
+export async function kickGroupMember(groupId, userId) {
+  if (!MOCK) return req('POST', `/api/groups/${encodeURIComponent(groupId)}/members/${encodeURIComponent(userId)}/kick`);
+  await delay();
+  const m = mockStore();
+  const list = m.groupMembers[groupId] || [];
+  const idx = list.findIndex(x => x.userId === userId);
+  if (idx >= 0) list.splice(idx, 1);
+  const g = m.groups.find(x => x.conversationId === groupId);
+  if (g) g.memberCount = Math.max(1, (g.memberCount || 1) - 1);
+  return {};
+}
+
+/** PUT /api/groups/{id}/title {title} → {} */
+export async function renameGroup(groupId, title) {
+  if (!MOCK) return req('PUT', `/api/groups/${encodeURIComponent(groupId)}/title`, { title });
+  await delay();
+  const m = mockStore();
+  const g = m.groups.find(x => x.conversationId === groupId);
+  if (g) g.title = title;
+  return {};
+}
+
+/** DELETE /api/groups/{id} → {}（owner 解散 = 软标记 group_disbanded，主卡 A-5）。 */
+export async function dissolveGroup(groupId) {
+  if (!MOCK) return req('DELETE', `/api/groups/${encodeURIComponent(groupId)}`);
+  await delay();
+  const m = mockStore();
+  m.groups = m.groups.filter(g => g.conversationId !== groupId);
+  delete m.groupMembers[groupId];
+  delete m.messages[groupId];
+  return {};
 }
 
 // 旧端点同 release 移除（friend-search-contract §4.7）：GET /api/users/lookup、

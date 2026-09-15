@@ -13,9 +13,17 @@ import { key } from './branding.js';
 // 键/上限/账号分区都在那边）；本模块只消费 + 负责 L1（内存会话列表）新鲜度。
 import {
   TTL_MS as CACHE_TTL_MS, SYNC_PAGE, MAX_SYNC_PAGES,
-  loadConversation, saveConversation,
+  loadConversation, saveConversation, getCacheAccount,
 } from './fmMessageCache.js';
 import * as api from './friendsApi.js';
+// 群组一期（friendgroups 客户端腿）：群域唯一属主 = friendGroups.js（可用性/
+// 取数归一/建群/群设置）。本模块只做会话列表合并 + 聊天窗渲染面的群分支。
+// 🔴 转发链锚点（forwardBubble/forwardToAgent/makeReference/appendRefToActiveView/
+// notifyFriendRefsSent/onRefsSent/stampForwarded/sendWs）零触碰 —— 群消息复用
+// 同一转发入口（主卡 D2：同一契约，ref.id/refType/type='ref' 逐字不变）。
+import {
+  refreshGroups, groupsAvailable, groupTitleOf, buildGroupSettings, groupErrToast,
+} from './friendGroups.js';
 import { makeReference } from './reference.js';
 import { appendRefToActiveView } from './input.js';
 import { showPopupMenu } from './contextMenu.js';
@@ -39,6 +47,65 @@ let triggeringRow = null;       // for focus return (A18)
 let triggeringConvId = null;    // row may be re-rendered after open (unread clear) — refind by id
 const forwardedIds = new Set(); // session-persistent 「已转发」 chips (§3.3)
 let msgSeq = 0;
+
+// ── 群组一期（friendgroups 客户端腿）：群会话状态 ─────────────────────
+// 群行与单聊行共用 conversations[]（合并后同键排序，主卡 C-3：排序键不变），
+// 群行形状 = { conversationId, kind:'group', title, lastMessage, unreadCount,
+// memberCount, myRole }（friendGroups.refreshGroups 归一出口）。
+
+// 「本机是否发送者」判据源（主卡 F-2 #3 点名的群新增面）。冻结契约里没有
+// viewer 身份字段 ⇒ 客户端按「发送关联」自证：
+//  · sentMessageIds = 本机发送成功的服务端 messageId（POST 响应腿登记）；
+//  · 任何取数/帧腿见到 id ∈ sentMessageIds 的行 ⇒ 该行 senderId 即 viewer
+//    身份（权威：服务端 sender_id 恒 = 鉴权解出身份，补充卡 §5.4 矩阵）；
+//  · 结果按账号分区（deviceId|email，fmMessageCache 同源）持久 localStorage。
+// 残余边界（不掩盖，impl 报告登记）：全新浏览器会话、viewer 从未发送成功过
+// 且无历史学习值时，群行方向判据无证据 ⇒ 按「非本机」渲染（左）。推荐服务端
+// 批补一个 viewer 相对字段（如 GET /api/groups 行内 selfUserId）——客户端
+// 一旦有该键即优先生效（learnSelfUserId 单点）。
+const LS_SELF_ID = key('fm_self_id');
+let selfUserId = '';
+let selfIdAcct = '';
+const sentMessageIds = new Set();
+
+/** viewer 自身 userId（群方向/未读判据用；单聊路径不受影响——direct 分支
+ *  仍走既有 conv.friend.userId 判据）。 */
+function groupSelfUserId() {
+  const acct = getCacheAccount();
+  if (selfIdAcct !== acct) {
+    selfIdAcct = acct;
+    selfUserId = '';
+    try {
+      const raw = JSON.parse(localStorage.getItem(LS_SELF_ID) || 'null');
+      if (raw && raw.acct === acct && raw.userId) selfUserId = String(raw.userId);
+    } catch { /* non-critical */ }
+  }
+  return selfUserId;
+}
+
+/** 自证写入点（唯一）：certified senderId ⇒ viewer 身份。换账号由 acct 分区
+ *  隔离（groupSelfUserId 的分区核对），同账号重复学习幂等。 */
+function learnSelfUserId(sid) {
+  const v = String(sid || '');
+  if (!v || v === 'me') return;
+  const acct = getCacheAccount();
+  if (selfIdAcct !== acct) { selfIdAcct = acct; selfUserId = ''; }
+  if (selfUserId === v) return;
+  selfUserId = v;
+  try { localStorage.setItem(LS_SELF_ID, JSON.stringify({ acct, userId: v })); } catch { /* non-critical */ }
+}
+
+/** 发送成功 ⇒ 登记服务端真 id（self 识别关联源；U-b 锚定后调用）。 */
+function noteSentRealId(realId) {
+  if (realId !== undefined && realId !== null && realId !== '') sentMessageIds.add(String(realId));
+}
+
+/** 行级 self 识别关联：id ∈ sentMessageIds ⇒ 该行 senderId 即 viewer 身份。
+ *  幂等、零额外请求（关联源 = 本机发送登记表）。 */
+function noteRowForSelfLearning(m) {
+  if (!m || selfUserId) return;
+  if (m.senderId && sentMessageIds.has(String(m.id))) learnSelfUserId(m.senderId);
+}
 
 // ── U-b 乐观项锚定（作者报障 2026-09-14「发送的消息本地重复显示」）────────
 // 「发送中的乐观项」登记表：一条待锚定的本地消息 = `{ tempId, convId, body, node,
@@ -274,11 +341,25 @@ async function refreshConversations({ friends = 'reuse' } = {}) {
     || friendsCache.length === 0
     || (Date.now() - friendsFetchedAt) > CACHE_TTL_MS;
   try {
-    const [convs, fr] = await Promise.all([
+    const [convs, fr, grp] = await Promise.all([
       api.getConversations(),
       wantFriends ? api.getFriends() : Promise.resolve(null),
+      // 群取数独立兜底（禁拖垮单聊刷新）：失败/不可用按 refreshGroups 三态
+      // 语义落（null = keep-last-known；404 = 空集 + fail-closed 翻面）。
+      refreshGroups(),
     ]);
-    conversations = (convs || []).sort((a, b) =>
+    const direct = convs || [];
+    if (grp) {
+      // pendingInvites 的消费方是 contacts 面的群邀请区（它自己调 refreshGroups，
+      // 与面板独立刷新同构）；messages 面只消费 groups。
+      conversations = direct.concat(grp.groups || []);
+    } else {
+      // keep-last-known：群面取数失败（auth/网络/5xx）⇒ 既有群行原样保留，
+      // 只刷新单聊行（与好友域「失败≠空」同口径，禁闪空列表）。
+      const prevGroups = conversations.filter(c => c && c.kind === 'group');
+      conversations = direct.concat(prevGroups);
+    }
+    conversations = conversations.sort((a, b) =>
       (toEpochMs(b.lastMessage?.createdAt) || 0) - (toEpochMs(a.lastMessage?.createdAt) || 0));
     if (fr) { friendsCache = fr.friends || []; friendsFetchedAt = Date.now(); }
   } catch { /* keep last known */ }
@@ -310,16 +391,20 @@ function renderList() {
 }
 
 function convRow(conv) {
+  const isGroup = conv.kind === 'group';
   const row = el('div', 'fm-row fm-conv-row');
   row.setAttribute('role', 'option');
   row.setAttribute('tabindex', '0');
   row.setAttribute('aria-selected', String(conv.conversationId === openConvId));
   row.dataset.conversationId = conv.conversationId;
+  if (isGroup) row.dataset.group = '1'; // QA 断言面：群行可机械定位
 
-  row.appendChild(avatarEl(conv.friend, 40));
+  // O④：群头像 = 标题首字母占位（avatarEl 无 avatarUrl 即走首字母分支，零新实现）。
+  row.appendChild(avatarEl(isGroup ? { name: groupTitleOf(conv) } : conv.friend, 40));
   const meta = el('div', 'fm-row-meta');
   const top = el('div', 'fm-conv-top');
-  top.appendChild(el('span', 'fm-row-name', personLabel(conv.friend)));
+  top.appendChild(el('span', 'fm-row-name', isGroup ? groupTitleOf(conv) : personLabel(conv.friend)));
+  if (isGroup) top.appendChild(el('span', 'fm-group-tag', t('messages.groupTag')));
   top.appendChild(el('span', 'fm-conv-time', fmtTime(conv.lastMessage?.createdAt)));
   meta.appendChild(top);
   const bottom = el('div', 'fm-conv-bottom');
@@ -494,6 +579,8 @@ async function openConversation(conversationId, rowEl) {
   triggeringConvId = conversationId;
   openConvId = conversationId;
   renderChatModal(conv);
+  // 群窗：惰性装载成员名册（发送者名回填；失败 = 降级无名字，消息不受影响）。
+  if (conv.kind === 'group') hydrateGroupSenderNames(conv);
 
   // ⑨ 热路径（有缓存）：同步读缓存首屏（零往返），随后一次极小增量核对
   // （`after=<水位>&limit=SYNC_PAGE`）—— 无新消息 = 空响应，**不是**尾窗重取。
@@ -545,6 +632,42 @@ async function openConversation(conversationId, rowEl) {
   persistConversation(conv);
 }
 
+/** 窗头/弹窗标题单点（群 = 群名；单聊 = 既有 personLabel 链，备注 > 显示名）。 */
+function convTitleLabel(conv) {
+  return (conv && conv.kind === 'group') ? groupTitleOf(conv) : personLabel(conv && conv.friend);
+}
+
+// ── 群气泡发送者名（腿B §5.2 #2 的群新增面）───────────────────────────
+// 名册来源 = GET /api/groups/{id}/members（主卡:249 接口清单；显示名而非好友
+// 备注，主卡 H 节口径）。开群窗时惰性取一次；首帧早于名册时先挂空槽（带
+// data-sender-id），名册到达后就地回填 —— 消息本体渲染不受名册成败影响。
+const groupMemberNames = new Map(); // conversationId -> Map(senderId -> displayName)
+
+/** 群发送者显示名（未命中 ⇒ ''，渲染层留空槽等待回填）。 */
+function groupSenderNameOf(conv, senderId) {
+  const map = groupMemberNames.get(String(conv && conv.conversationId));
+  return (map && map.get(String(senderId))) || '';
+}
+
+/** 开群窗时的成员名册惰性装载（每窗一次；失败降级为无发送者名）。 */
+async function hydrateGroupSenderNames(conv) {
+  try {
+    const members = await api.getGroupMembers(conv.conversationId);
+    const map = new Map();
+    for (const mem of members || []) {
+      if (mem && mem.userId) map.set(String(mem.userId), mem.name || String(mem.userId));
+    }
+    groupMemberNames.set(String(conv.conversationId), map);
+    // 就地回填：名册晚于首帧到达时，补齐已渲染气泡的发送者名（幂等）。
+    if (modalEls && openConvId === conv.conversationId) {
+      for (const s of modalEls.flow.querySelectorAll('.fm-msg-sender[data-sender-id]')) {
+        const nm = map.get(s.dataset.senderId);
+        if (nm && !s.textContent) s.textContent = nm;
+      }
+    }
+  } catch { /* 名册失败 = 降级为无发送者名（禁因名册失败丢消息） */ }
+}
+
 function renderChatModal(conv) {
   document.getElementById('fm-chat-overlay')?.remove();
 
@@ -553,16 +676,55 @@ function renderChatModal(conv) {
 
   const modal = el('div', 'cfg-modal fm-modal');
   modal.setAttribute('role', 'dialog');
-  modal.setAttribute('aria-label', personLabel(conv.friend));
+  modal.setAttribute('aria-label', convTitleLabel(conv));
 
   // header: name · neblinkId | trust slot | ×
   // 窗头转发按钮已移除（作者 2026-09-12 裁定，方案 §3.1 S5）：转发入口只保留
   // 按消息的两条 —— 气泡内按钮 + 气泡右键，共用 forwardBubble（无第二实现）。
   const header = el('div', 'fm-modal-header');
   const title = el('div', 'fm-modal-title');
-  title.appendChild(el('span', 'fm-modal-name', personLabel(conv.friend)));
-  title.appendChild(el('span', 'fm-modal-id', conv.friend?.neblinkId || ''));
+  title.appendChild(el('span', 'fm-modal-name', convTitleLabel(conv)));
+  // 群窗副行 = 成员数（有读数才挂）；单聊副行不变（neblinkId）。
+  if (conv.kind === 'group') {
+    if (conv.memberCount > 0) title.appendChild(el('span', 'fm-modal-id', t('messages.memberCount', { n: conv.memberCount })));
+  } else {
+    title.appendChild(el('span', 'fm-modal-id', conv.friend?.neblinkId || ''));
+  }
   header.appendChild(title);
+  // 群设置入口（仅群窗）：成员/邀请/改名/退群/解散抽屉（friendGroups.js 唯一属主）。
+  let groupSettingsMounted = false;
+  if (conv.kind === 'group') {
+    const settingsBtn = el('button', 'fm-gs-open');
+    settingsBtn.type = 'button';
+    settingsBtn.innerHTML = '<i data-lucide="users"></i>';
+    settingsBtn.title = t('messages.groupSettings');
+    settingsBtn.setAttribute('aria-label', t('messages.groupSettings'));
+    const mountDrawer = () => {
+      if (!modalEls) return;
+      modalEls.overlay.querySelector('.fm-group-settings')?.remove();
+      const drawer = buildGroupSettings(conv, {
+        toast: (s) => modalToast(s),
+        close: () => closeChat(),
+        onChanged: () => {
+          // 成员/标题就地变化：列表/窗头重打 + 抽屉重建（成员数/踢人态刷新）。
+          renderList();
+          updateModalTitle(conv);
+          if (modalEls && groupSettingsMounted) mountDrawer();
+        },
+      });
+      header.insertAdjacentElement('afterend', drawer);
+      groupSettingsMounted = true;
+    };
+    settingsBtn.addEventListener('click', () => {
+      if (groupSettingsMounted) {
+        modalEls?.overlay.querySelector('.fm-group-settings')?.remove();
+        groupSettingsMounted = false;
+        return;
+      }
+      mountDrawer();
+    });
+    header.appendChild(settingsBtn);
+  }
   // 信任模式 v1: 窗头信任状态指示（开启态一眼可辨；开关在好友行右键菜单）。
   // SEALED (author ruling 2026-09-12): 封存期不挂槽；updateTrustBadge 保留
   // （无槽即天然不产出）。回退 = featureFlags.js 常量改回 false。
@@ -628,7 +790,9 @@ function renderChatModal(conv) {
   overlay.addEventListener('drop', (e) => {
     if (!hasFiles(e)) return;
     e.preventDefault();
-    modalToast(t('messages.attachUnsupported'));
+    // 群窗同款提示（加性键，不改既有好友窗文案）：本腿附件面 = 接收/下载渲染，
+    // 无发送入口（分发器 2026-09-15 11:32 A③ 翻案口径：人群附件既有发送面语义不变）。
+    modalToast(t(conv.kind === 'group' ? 'messages.attachUnsupportedGroup' : 'messages.attachUnsupported'));
   });
 
   const doSend = () => sendCurrent(conv);
@@ -648,13 +812,13 @@ function renderChatModal(conv) {
   createIconsIn(overlay);
 }
 
-// ⑦ 窗头标题面（显示优先级第三处）：备注改动后就地重打，不整窗重建。
+// ⑦ 窗头标题面（显示优先级第三处）：备注/群名改动后就地重打，不整窗重建。
 function updateModalTitle(conv) {
   if (!modalEls) return;
   const nameEl = modalEls.overlay.querySelector('.fm-modal-name');
-  if (nameEl) nameEl.textContent = personLabel(conv && conv.friend);
+  if (nameEl) nameEl.textContent = convTitleLabel(conv);
   const dlg = modalEls.overlay.querySelector('.fm-modal');
-  if (dlg) dlg.setAttribute('aria-label', personLabel(conv && conv.friend));
+  if (dlg) dlg.setAttribute('aria-label', convTitleLabel(conv));
 }
 
 // 信任状态指示：trusted → sapphire chip（shield-check + 「已信任」），未信任
@@ -683,7 +847,9 @@ function escClose(e) {
 function applyBlockState(conv) {
   if (!modalEls) return;
   modalEls.overlay.querySelector('.fm-blocked-bar')?.remove();
-  const blocked = !isStillFriend(conv);
+  // 群分支（O⑨ 裁定「拉黑只断单聊、同群照常」）：群窗不走好友闸 —— 拉黑/删
+  // 好友不产生群内只读栏，也不禁用群发送输入框（群发送权在服务端成员闸）。
+  const blocked = conv.kind !== 'group' && !isStillFriend(conv);
   if (blocked) {
     const bar = el('div', 'fm-blocked-bar', t('messages.notFriendBlocked'));
     modalEls.flow.parentNode.insertBefore(bar, modalEls.flow);
@@ -904,8 +1070,19 @@ function fillBubble(bubble, m) {
  */
 function oursBySenderId(m, conv) {
   const sid = m && m.senderId;
-  const fid = conv && conv.friend ? conv.friend.userId : undefined;
   if (sid === undefined || sid === null || sid === '') return null;
+  // 群分支（friendgroups 客户端腿）：群无单一对端档案 ⇒ 判据源 = viewer 自身
+  // 身份（groupSelfUserId，发送关联自证）+ 客户端本地哨兵 'me'（本机乐观项
+  // 及其 L2 缓存副本的 senderId）。有 senderId 而非本机 ⇒ 正向判「他人」
+  // （返回 false = 左侧），不落「单侧在场 ⇒ out」的 direct 兜底（群行兜底
+  // 会把他人消息画到右侧，比 P5 的 direct 残余更常见）。
+  if (conv && conv.kind === 'group') {
+    if (sid === 'me') return true;
+    const mine = groupSelfUserId();
+    if (mine && String(sid) === mine) return true;
+    return false;
+  }
+  const fid = conv && conv.friend ? conv.friend.userId : undefined;
   if (fid === undefined || fid === null || fid === '') return null;
   return String(sid) !== String(fid); // 确证不是对方所发 ⇒ 本机所发
 }
@@ -966,6 +1143,13 @@ function bubbleEl(m, conv) {
   wrap.dataset.attCount = String(Array.isArray(m.attachments) ? m.attachments.length : 0);
 
   const bubble = el('div', 'fm-msg-bubble');
+  // 群气泡发送者名：仅群窗、仅入站（他人）消息挂名（本机消息右侧不挂，微信式）。
+  // 成员名册未到时留空槽（data-sender-id），hydrateGroupSenderNames 到达后回填。
+  if (conv.kind === 'group' && !out && m.senderId) {
+    const sender = el('div', 'fm-msg-sender', groupSenderNameOf(conv, m.senderId));
+    sender.dataset.senderId = String(m.senderId);
+    wrap.appendChild(sender);
+  }
   fillBubble(bubble, m);
   wrap.appendChild(bubble);
 
@@ -985,7 +1169,14 @@ function bubbleEl(m, conv) {
   // 放开后 `out` 只决定气泡左右 / 对齐（`resolveOut`），**不再是**徽标的可见性条件。
   // 服务端零改动（`origin` 生产版同样具备）；`model.rs` 注文「Local rendering
   // only」的语义摩擦已由作者裁定解除（本批附局限声明）。
-  if (isAgentSent(m)) meta.appendChild(el('span', 'fm-msg-agent-badge', t('messages.agentBadge')));
+  // 群版文案（补充卡 §4.2 + A② 裁定）：群气泡按会话 kind 选键
+  // `messages.agentGroupBadge`（zh-CN「由 Agent 发」/ en "Sent by Agent"），
+  // 单聊既有键逐字不动 —— 渲染分支复用（`isAgentSent` 判据零改动），附件帧
+  // 与徽章同帧共存（fillBubble 附件卡渲染与本分支正交 ⇒ 结构性支持 A③ 翻案）。
+  if (isAgentSent(m)) {
+    meta.appendChild(el('span', 'fm-msg-agent-badge',
+      t(conv.kind === 'group' ? 'messages.agentGroupBadge' : 'messages.agentBadge')));
+  }
   if (hasForwarded(m.id)) meta.appendChild(el('span', 'fm-msg-forwarded-badge', t('messages.forwarded')));
   const timeMs = toEpochMs(m.createdAt);
   const timeSpan = el('span', 'fm-msg-time', fmtTime(m.createdAt));
@@ -1152,6 +1343,11 @@ function appendMessages(msgs) {
     // REST 面该字段权威且必带；**缺席 ⇒ 不认领**（照旧走原路径，与 U-a
     // 「不猜」同向）。
     const ours = !!conv && oursBySenderId(m, conv) === true;
+    // 群 viewer 身份学习：① 发送关联（id ∈ 本机发送登记表）；② direct 行的
+    // 双员封闭（server 端 UNIQUE(user_a,user_b) ⇒ 行内非对方即本机）—— 两者
+    // 都是权威 senderId 的合法证书；幂等、零额外请求。
+    noteRowForSelfLearning(m);
+    if (conv && conv.kind !== 'group' && ours && m.senderId) learnSelfUserId(m.senderId);
     // P5：把**已确证**的极性固化成显式标记（判据缺席 ⇒ 不标记 ⇒ 渲染回退既有形态）。
     const hint = conv ? oursBySenderId(m, conv) : null;
     if (hint !== null) markOurs(m, hint);
@@ -1454,8 +1650,14 @@ async function sendCurrent(conv) {
   pendingSends.push(pending);
 
   try {
-    const resp = await api.sendFriendMessage(conv.friend.userId, body);
+    // 群发分支（补充卡 §5.1 逐字契约：POST /api/groups/{id}/messages {body} →
+    // SendMessageResponse 同形 {messageId, conversationId, createdAt, ...}）。
+    // 🔴 UI 直发无 origin 字段（补充卡 §5.4 写权矩阵第一行）⇒ 服务端落 'user'。
+    const resp = conv.kind === 'group'
+      ? await api.sendGroupMessage(conv.conversationId, body)
+      : await api.sendFriendMessage(conv.friend.userId, body);
     const realId = resp.messageId || tempId;
+    noteSentRealId(realId); // self 识别关联源（群方向判据的学习输入，见 §状态段）
     wrap.classList.remove('fm-sending');
     // U-b 唯一锚定点：回显已先到时此处**幂等**（同一后置条件，节点/条目数不变）；
     // 回显未到时即既有的「temp id → 服务端 id」换键。
@@ -1476,9 +1678,28 @@ async function sendCurrent(conv) {
     conv.lastMessage.agentSent = false;
     resortAndRender();
     persistConversation(conv); // ⑨ 落盘（temp id 由缓存层过滤，不会存成幻影）
-  } catch {
+  } catch (err) {
     forgetPendingSend(pending);
     wrap.classList.remove('fm-sending');
+    if (conv.kind === 'group') {
+      // 群发终态错误（补充卡 §5.3：404 group_not_found / 403 group_disbanded /
+      // 403 not_member）⇒ 就地移除该群行 + 可见反馈（退群后历史不可见的呈现）；
+      // 其余（网络/5xx/429）照既有失败旗标重试面（正文不丢）。
+      const code = err && err.data && (err.data.error || err.data.code);
+      const terminal = (err && err.status === 404 && code === 'group_not_found')
+        || (err && err.status === 403 && (code === 'group_disbanded' || code === 'not_member'));
+      if (terminal) {
+        groupErrToast(err);
+        wrap.remove();
+        const i = chatMsgs.findIndex(x => x.id === tempId);
+        if (i >= 0) chatMsgs.splice(i, 1);
+        conversations = conversations.filter(c => c.conversationId !== conv.conversationId);
+        renderList();
+        updateBadge();
+        closeChat();
+        return;
+      }
+    }
     wrap.classList.add('fm-failed');
     const flag = el('button', 'fm-retry', '!');
     flag.title = t('messages.send');
@@ -1635,6 +1856,7 @@ async function onFriendEvent(msg, retried = false) {
       return;
     }
     const m = frameMessage(p);
+    noteRowForSelfLearning(m); // 群 viewer 身份学习（发送关联；幂等零开销）
     const isOpen = openConvId === p.conversationId;
     // 🔴 批 C（批 A §11.3 划归本批的**回放帧前端幂等去重**实现面）：
     // 「**已渲染**去重」与「**已计未读**去重」必须**分开**，不能共用一套集合。
@@ -1649,7 +1871,12 @@ async function onFriendEvent(msg, retried = false) {
     // 计数口径**零变化**（判据与修前逐字一致）：仅在**未开会话** + **非回放帧** +
     // **发送方确为对方**（正向证据，`sender != me`）时 +1 ⇒ 「self 不计未读」不变。
     if (!isOpen && p.backfill !== true) {
-      const fromPeer = m.senderId && conv.friend && m.senderId === conv.friend.userId;
+      // 群分支（C-2：别人的消息计未读、自己的不计）= 单一判据点 oursBySenderId
+      // 的群分支复用（有 senderId 且非本机 ⇒ false ⇒ 计；'me'/viewer 身份 ⇒ 不计；
+      // 证据缺席 ⇒ 不计，保守向）。单聊判据逐字不变。
+      const fromPeer = conv.kind === 'group'
+        ? oursBySenderId(m, conv) === false
+        : !!(m.senderId && conv.friend && m.senderId === conv.friend.userId);
       if (fromPeer && markUnreadCounted(m.id)) conv.unreadCount = (conv.unreadCount || 0) + 1;
     }
     // U-a 幂等：同 messageId 的重复到达不得二次上屏 / 二次自动转发（**渲染面**）。
@@ -1707,6 +1934,7 @@ async function onFriendEvent(msg, retried = false) {
       return;
     }
     const m = frameMessage(msg);
+    noteRowForSelfLearning(m); // 群 viewer 身份学习（message_new_self 常带 senderId）
     // U-a 幂等：与 message_new 同判据、同实现（同 id 只做一次上屏/落盘）。
     if (!markFrameMessageSeen(m.id)) return;
     conv.lastMessage = m;
@@ -1914,6 +2142,16 @@ export function initMessages() {
   // P3 error surface — friendsApi dispatches on auth failure / network error.
   window.addEventListener('fm-auth-required', () => { openLoginModal(); });
   window.addEventListener('fm-network-error', () => { window.__showToast?.(t('messages.networkError'), 'error'); });
+  // 群域变更（建群/退群/解散/踢人/邀请响应/可用性翻面）：群列表重取；建群成功
+  // 带 openConversationId ⇒ 列表就绪后直接开群窗（新群必在服务端返回里）。
+  window.addEventListener('fm-groups-changed', async (e) => {
+    await refreshConversations();
+    const detail = /** @type {CustomEvent<{openConversationId?: string}>} */ (e).detail || {};
+    if (detail.openConversationId
+      && conversations.some(c => c.conversationId === detail.openConversationId)) {
+      openConversation(detail.openConversationId, null);
+    }
+  });
   onReconnect(() => {
     if (modalEls) {
       modalEls.offline.hidden = true;

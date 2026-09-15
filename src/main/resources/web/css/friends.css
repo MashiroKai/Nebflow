@@ -1002,3 +1002,148 @@ button.fm-req-decline:focus-visible {
 /* 搜索按钮 disabled 态已迁到本文件上方的中性灰族块（button.fm-search-btn:disabled
    = 禁用材质 + color-mix 文字色 + cursor:not-allowed）。旧的元素级 `opacity: .55`
    是 P4 批已退役的表达（缺陷 D5），已删除。 */
+
+/* ══ 群组一期（friendgroups 客户端腿）═════════════════════════════════
+   会话行群标识 / 窗头设置按钮 / 群设置抽屉 / 建群对话框 / 群邀请区。
+   复用既有 token（--sapphire / --glass-control-bg-hover / --color-text*），
+   零新色（先例：fm-trust-badge 的 alpha 变体口径）。 */
+
+/* 会话行「群」标识（L2 行内 chip，形态对齐 fm-row-badge 家族的 pill） */
+.fm-group-tag {
+  flex-shrink: 0;
+  font-size: 10px;
+  line-height: 1;
+  padding: 2px 5px;
+  border-radius: 4px;
+  background: rgb(var(--sapphire) / 0.12);
+  color: rgb(var(--sapphire) / 0.95);
+  align-self: center;
+}
+
+/* 窗头群设置按钮（仅群窗；图标钮，复用 fm-msg-act 的图标档尺寸） */
+.fm-gs-open {
+  flex-shrink: 0;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 26px;
+  height: 26px;
+  border: none;
+  background: transparent;
+  border-radius: 6px;
+  color: var(--color-text-muted, #888);
+  cursor: pointer;
+}
+.fm-gs-open:hover { background: var(--glass-control-bg-hover); color: var(--color-text, #000); }
+.fm-gs-open svg { width: 16px; height: 16px; }
+
+/* 群设置抽屉（窗头下方、消息区上方；可滚动） */
+.fm-group-settings {
+  border-bottom: 1px solid rgb(var(--sapphire) / 0.12);
+  padding: 10px 14px 12px;
+  max-height: 46vh;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+.fm-gs-section { display: flex; flex-direction: column; gap: 6px; }
+.fm-gs-title { font-size: 11px; font-weight: 600; color: var(--color-text-muted, #888); }
+.fm-gs-title-row { display: flex; align-items: baseline; gap: 6px; }
+.fm-gs-count { font-size: 11px; color: var(--color-text-muted, #888); }
+.fm-gs-rename { display: flex; gap: 6px; align-items: center; }
+.fm-gs-rename-input { flex: 1; min-width: 0; font-size: 12px; padding: 5px 8px; }
+.fm-gs-rename-input:disabled { opacity: 0.55; cursor: default; }
+.fm-gs-save { flex-shrink: 0; font-size: 12px; padding: 5px 12px; }
+
+/* 成员行（显示名 + 角色标签；owner 可见踢人钮） */
+.fm-member-list { display: flex; flex-direction: column; }
+.fm-member-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 4px 2px;
+  border-radius: 6px;
+  min-width: 0;
+}
+.fm-member-row:hover { background: var(--glass-control-bg-hover); }
+.fm-member-name {
+  flex: 1;
+  min-width: 0;
+  font-size: 12.5px;
+  color: var(--color-text, #000);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.fm-role-tag {
+  flex-shrink: 0;
+  font-size: 10px;
+  padding: 1px 5px;
+  border-radius: 4px;
+  background: rgb(var(--sapphire) / 0.12);
+  color: rgb(var(--sapphire) / 0.95);
+}
+.fm-gs-kick { flex-shrink: 0; font-size: 11px; padding: 3px 8px; }
+
+/* 抽屉动作区（邀请 / 退群 / 解散；owner 禁退群提示） */
+.fm-gs-actions { gap: 8px; }
+.fm-gs-action { align-self: flex-start; font-size: 12px; padding: 5px 12px; }
+.fm-gs-danger { color: #d64545; }
+.fm-gs-hint { font-size: 11px; color: var(--color-text-muted, #888); }
+.fm-gs-picker { display: flex; flex-direction: column; gap: 8px; margin-top: 6px; }
+.fm-gs-picker .fm-msg-btn { align-self: flex-start; }
+
+/* 建群对话框（fm-modal 骨架复用；好友多选列表） */
+.fm-pick-modal { width: 380px; max-width: 92vw; display: flex; flex-direction: column; gap: 10px; }
+.fm-pick-count { font-size: 11px; color: var(--color-text-muted, #888); }
+.fm-pick-list {
+  display: flex;
+  flex-direction: column;
+  overflow-y: auto;
+  max-height: 42vh;
+  min-height: 120px;
+  border: 1px solid rgb(var(--sapphire) / 0.1);
+  border-radius: 8px;
+  padding: 4px;
+}
+.fm-pick-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px;
+  border-radius: 6px;
+  cursor: pointer;
+  min-width: 0;
+}
+.fm-pick-row:hover { background: var(--glass-control-bg-hover); }
+.fm-pick-row.on { background: rgb(var(--sapphire) / 0.1); }
+.fm-pick-tick {
+  flex-shrink: 0;
+  width: 16px;
+  height: 16px;
+  color: rgb(var(--sapphire) / 0.95);
+  visibility: hidden;
+  display: inline-flex;
+}
+.fm-pick-row.on .fm-pick-tick { visibility: visible; }
+.fm-pick-tick svg { width: 14px; height: 14px; }
+.fm-pick-foot { display: flex; justify-content: flex-end; }
+
+/* 群邀请区（联系人面板；行结构复用 fm-req-row，标题复用 fm-req-group） */
+.fm-group-invites { animation: fm-rise-in 200ms ease-out both; }
+.fm-invite-row { cursor: default; }
+
+/* 群成员小头像（28px 档；成员行密度高于列表行） */
+.fm-avatar-28 { width: 28px; height: 28px; font-size: 12px; }
+
+/* 群气泡发送者名（仅入站；名册未到时空槽，hydrate 后就地回填） */
+.fm-msg-sender {
+  font-size: 11px;
+  color: var(--color-text-muted, #888);
+  margin: 0 4px 2px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  max-width: 78%;
+}
