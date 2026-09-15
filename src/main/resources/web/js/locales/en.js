@@ -1327,6 +1327,7 @@ export default {
   'messages.deviceRead': 'Read',
   'messages.deviceServerUnavailable': 'Server history unavailable — showing this device\'s local history.',
   'messages.deviceSendFailed': 'Message not sent. Nothing was lost — try again.',
+  'messages.deviceSendUnavailable': 'This device\'s identity is unavailable — sending is off.',
 
   // === Device-conversation unification, MVP-1 (2026-09-15): panel title / device section / device rows ===
   'contacts.sectionDevices': 'Devices',

@@ -6,16 +6,29 @@
 //    · MVP2_WEB_ROOT=<改前树>（`git archive` 出的基线 web/）⇒ 同一支探针必须**红**，
 //      且红的**断言名**逐条可读 —— 那就是本改动「改前不可满足」的原文证据。
 //
+// 🔴 **夹具硬要求（round-2 返工要件，2026-09-15）**：桩必须与**服务端真值面同形**，
+//    否则缺陷会被 201 桩掩盖（round-1 的 F1/F2 正是这样被掩盖的）：
+//      ① 一个**发送设备**一行会话（`dev:<senderDeviceId>`），`sender_device_id`
+//         由会话 id 派生 ⇒ **一条会话内方向恒定**，绝不把两个发送设备混进同一行；
+//      ② 本机自己那一行**在场**（`list_device_conversations` 返回账号全部设备行，
+//         含本机行；`devicesession_test.rs:377-446` 2 行的真值形状）；
+//      ③ `POST /api/devices/{id}/messages` 的路径设备 = **发送设备**，桩**按服务端
+//         硬闸判**（`credential_device == device_id` 否则 **403 not_my_device**）——
+//         打对端 id 必红，而不是静默 201。
+//
 // 覆盖：
-//   A1~A6 适配层逐字段（判红①）：`DropboxMessage → {id, body, createdAtMs, origin,
-//          ours, attachments}` 六字段 + `msgId→id` + 方向重算 P2
-//          （本机 `dev-local` / 他机 `dev-peer` / 未知设备 / legacy direction）
-//   U1     服务端行进列表（kind/deviceId/unreadCount 角标）
-//   R1     设备窗 P10 明示句（zh-CN + en 双语，判红③）
-//   R2     未读/回执读写往返（原始请求/响应读数，判红②的客户端半程）
-//   R3     附件第三分支（服务端 attachments → attachmentCard + 成员闸下载路由）
-//   L1     旧数据无新字段不崩 + 降级展示（判红④）
-//   S1     设备发送走 POST /api/devices/{id}/messages（201 幂等）
+//   A1~A7 适配层逐字段（判红①）：`{id, body, createdAtMs, origin, ours, attachments}`
+//          六字段 + `msgId→id` + 方向重算 P2
+//   U1    服务端行进列表（kind/deviceId/unreadCount 角标）
+//   O1**  §9.3 按 peer 归并（round-2 F2）：本机行**不单独成窗**、两行**读成一窗**
+//   O2**  归并窗方向逐条重算：out/in 计数 + 每条气泡左右
+//   O3**  回复打**本机** device id（round-2 F1）+ 桩侧硬闸（打对端 ⇒ 403）
+//   R1    设备窗 P10 明示句（zh-CN + en 双语，判红③）
+//   R2    未读/回执读写往返（原始请求/响应读数，判红②的客户端半程）
+//   R3**  已读**按服务端行逐行**上报（对端行带自己的末条 id；本机行无上报面）
+//   R4    附件第三分支（服务端 attachments → attachmentCard + 成员闸下载路由）
+//   L1    旧数据无新字段不崩 + 降级展示（判红④）
+//   N1**  本机 device id 缺席 ⇒ **可见禁用**（round-2 F1 要件②）+ 零发送请求
 //
 // 自包含：静态服务器随机隔离端口 + route 拦截，finally 必关（进程清理纪律）。
 // Run: node tests/mvp2-device-client.spec.mjs
@@ -39,33 +52,131 @@ const sleep = ms => new Promise(r => setTimeout(r, ms));
 const MIME = { '.html': 'text/html', '.js': 'text/javascript', '.css': 'text/css', '.svg': 'image/svg+xml', '.png': 'image/png', '.json': 'application/json', '.woff2': 'font/woff2' };
 
 // ── wire 形态（契约原形，camelCase = 网关出参）────────────────────────
-// 设备会话两行：`dev:dev-local`（本机所发）与 `dev:dev-peer`（对端所发）——
-// 契约 §9.3：一次双向对聊在服务端落两行，客户端按 peer 归并展示。
+// 🔴 服务端真值夹具（§8.1 + §9.3）：设备会话以**发送设备**为键 ⇒
+//    `dev:dev-alpha` = 本机所发（本机自己那一行，unread 恒 0）、
+//    `dev:dev-beta`  = 对端所发（承载未读）。一条会话内 `senderDeviceId` **恒定**。
+const SELF = 'dev-alpha';
+const PEER = 'dev-beta';
+const FRIEND_ME = { userId: 'me', username: 'me', display_name: 'Me', avatar: null };
+
 const SERVER_CONVOS = [
   {
-    conversationId: 'dev:dev-peer', kind: 'device', deviceId: 'dev-peer',
-    unreadCount: 2,
-    friend: { userId: 'me', username: 'me', display_name: 'Me', avatar: null },
-    lastMessage: { id: 12, senderId: 'me', kind: 'text', body: 'peer says hi', createdAt: 1757900000, senderDeviceId: 'dev-peer' },
+    conversationId: 'dev:' + PEER, kind: 'device', deviceId: PEER,
+    unreadCount: 2, friend: FRIEND_ME,
+    lastMessage: { id: 14, senderId: 'me', kind: 'text', body: 'peer follow-up', createdAt: 1757900020, senderDeviceId: PEER },
+  },
+  {
+    conversationId: 'dev:' + SELF, kind: 'device', deviceId: SELF,
+    unreadCount: 0, friend: FRIEND_ME, // §8.1「发送设备自己 0」
+    lastMessage: { id: 13, senderId: 'me', kind: 'text', body: 'old row no new fields', createdAt: 1757900010, senderDeviceId: SELF },
   },
   {
     conversationId: 'c-legacy', friend: { userId: 'u1', username: 'lin', display_name: 'Lin', avatar: null },
     lastMessage: null, unreadCount: 0,
   },
 ];
-// `dev:dev-peer` 的消息行：id 11 = 本机所发（senderDeviceId=dev-local）、
-// id 12 = 对端所发（带服务端附件条）、id 13 = 旧格式行（缺 origin/createdAtMs/attachments）
-const SERVER_MSGS = [
-  { id: 11, senderId: 'me', kind: 'text', body: 'from my mac', createdAt: 1757899990, senderDeviceId: 'dev-local' },
-  {
-    id: 12, senderId: 'me', kind: 'text', body: '[附件] photo.png', createdAt: 1757900000, senderDeviceId: 'dev-peer',
-    attachments: [{ id: 'att-1', name: 'photo.png', size: 31, sha256: 'd3e62224', state: 'ready' }],
-  },
-  // 旧格式行（判红④）：无 origin、无 createdAtMs、无 attachments、无 senderDeviceId
-  { id: 13, senderId: 'me', kind: 'text', body: 'old row no new fields', createdAt: 1757900010 },
-];
 
-const captured = { read: [], receipts: 0, deviceSend: [], attDownload: 0 };
+// 每条会话的消息行（**会话内 senderDeviceId 恒定**；id 全局递增 ⇒ 归并顺序可判）
+const MSGS_BY_CONV = {
+  ['dev:' + SELF]: [
+    { id: 11, senderId: 'me', kind: 'text', body: 'from my mac', createdAt: 1757899990, senderDeviceId: SELF },
+    // 旧格式行（判红④）：无 origin / 无 createdAtMs / 无 attachments（字段加性）
+    { id: 13, senderId: 'me', kind: 'text', body: 'old row no new fields', createdAt: 1757900010, senderDeviceId: SELF },
+  ],
+  ['dev:' + PEER]: [
+    {
+      id: 12, senderId: 'me', kind: 'text', body: '[附件] photo.png', createdAt: 1757900000, senderDeviceId: PEER,
+      attachments: [{ id: 'att-1', name: 'photo.png', size: 31, sha256: 'd3e62224', state: 'ready' }],
+    },
+    { id: 14, senderId: 'me', kind: 'text', body: 'peer follow-up', createdAt: 1757900020, senderDeviceId: PEER },
+  ],
+};
+
+const captured = {
+  read: [], receiptsConvs: [], deviceSendPaths: [], deviceSendStatus: [], attDownload: 0,
+  msgsConvs: [],
+};
+
+/** 桩路由（服务端真值形状）。`st` 允许每个页面自带一份捕获表（noSelf 页复用）。 */
+function installRoutes(page, cap, opts = {}) {
+  const statusDevice = opts.selfDeviceId === undefined
+    ? { id: SELF, name: 'Mac', platform: 'macos', userDescription: '', avatarUrl: '' }
+    : (opts.selfDeviceId === null ? {} : { id: opts.selfDeviceId, name: 'Mac', platform: 'macos' });
+  return page.route('**/api/**', async r => {
+    const url = new URL(r.request().url());
+    const p = decodeURIComponent(url.pathname);
+    const m = r.request().method();
+    const body = r.request().postData() || '';
+    if (p === '/api/neblink/status') {
+      return r.fulfill({
+        json: {
+          loggedIn: true, device: statusDevice,
+          peers: [{ deviceId: PEER, deviceName: 'Phone', platform: 'ios', online: true, directOnline: true }],
+        },
+      });
+    }
+    if (p === '/api/conversations' && m === 'GET') {
+      // opts.noServerDeviceRows：旧网关（无设备会话面）⇒ 只剩 legacy 直聊行（判红④降级档）
+      return r.fulfill({ json: opts.noServerDeviceRows ? SERVER_CONVOS.filter(c => c.kind !== 'device') : SERVER_CONVOS });
+    }
+    if (p.endsWith('/messages') && m === 'GET') {
+      const convId = p.slice('/api/conversations/'.length, -'/messages'.length);
+      cap.msgsConvs.push(convId);
+      return r.fulfill({ json: MSGS_BY_CONV[convId] || [] });
+    }
+    if (p.endsWith('/read') && m === 'POST') {
+      const convId = p.slice('/api/conversations/'.length, -'/read'.length);
+      cap.read.push({ convId, body });
+      return r.fulfill({ json: { ok: true } });
+    }
+    if (p.endsWith('/receipts') && m === 'GET') {
+      const convId = p.slice('/api/conversations/'.length, -'/receipts'.length);
+      cap.receiptsConvs.push(convId);
+      // 契约 §8.7：回执行只存在于**发送设备 = 请求设备**的那一行（本机自己的行）
+      if (convId !== 'dev:' + SELF) return r.fulfill({ json: { receipts: [], lastSentMessageId: 0, lastReadMessageId: 0 } });
+      return r.fulfill({ json: { receipts: [{ messageId: 11, state: 'read' }], lastSentMessageId: 11, lastReadMessageId: 11 } });
+    }
+    if (p.startsWith('/api/devices/') && p.endsWith('/messages') && m === 'POST') {
+      const deviceId = p.slice('/api/devices/'.length, -'/messages'.length);
+      cap.deviceSendPaths.push(deviceId);
+      // 🔴 服务端硬闸（friends.rs:1305-1320）：路径设备必须是**发送设备**（= 本机）
+      if (opts.selfDeviceId === undefined && deviceId !== SELF) {
+        cap.deviceSendStatus.push(403);
+        return r.fulfill({ status: 403, json: { error: 'not_my_device' } });
+      }
+      cap.deviceSendStatus.push(201);
+      const payload = JSON.parse(body || '{}');
+      const replay = payload.clientMsgId === 'dup-1';
+      if (!replay && !MSGS_BY_CONV['dev:' + SELF].some(x => x.id === 99)) {
+        MSGS_BY_CONV['dev:' + SELF].push({
+          id: 99, senderId: 'me', kind: 'text', body: payload.body || '', createdAt: 1757900100, senderDeviceId: SELF,
+        });
+      }
+      return r.fulfill({
+        status: 201,
+        json: {
+          messageId: replay ? 11 : 99, conversationId: 'dev:' + SELF,
+          createdAt: 1757900100, createdAtMs: 1757900100123, existing: replay, selfUserId: 'me',
+        },
+      });
+    }
+    if (p === '/api/friends/attachments/att-1') { cap.attDownload++; return r.fulfill({ body: 'hello-bytes' }); }
+    if (p === '/api/friends') return r.fulfill({ json: { friends: [], incoming: [], outgoing: [] } });
+    if (p === '/api/groups') return r.fulfill({ json: [] });
+    return r.fulfill({ json: {} });
+  });
+}
+
+async function installWs(page) {
+  await page.routeWebSocket(/\/ws/, ws => {
+    ws.onMessage(raw => {
+      let m; try { m = JSON.parse(raw); } catch { return; }
+      if (m.type === 'getHistory') ws.send(JSON.stringify({ type: 'historyPage', sessionId: m.sessionId, messages: [], hasMore: false, offset: 0 }));
+    });
+    ws.send(JSON.stringify({ type: 'configData', config: '{"features":{"friends":true}}', configured: true, onboarding: 'done', models: [], defaults: {} }));
+    ws.send(JSON.stringify({ type: 'sessionList', sessions: [], activeId: null, folders: [] }));
+  });
+}
 
 const server = createServer(async (req, res) => {
   try {
@@ -92,51 +203,8 @@ try {
   const page = await ctx.newPage();
   const pageErrors = [];
   page.on('pageerror', e => pageErrors.push(e.message));
-
-  await page.route('**/api/**', async r => {
-    const url = new URL(r.request().url());
-    const p = decodeURIComponent(url.pathname);
-    const m = r.request().method();
-    const body = r.request().postData() || '';
-    if (p === '/api/neblink/status') {
-      return r.fulfill({ json: { loggedIn: true, device: { id: 'dev-local', name: 'Mac', platform: 'macos', userDescription: '', avatarUrl: '' }, peers: [{ deviceId: 'dev-peer', deviceName: 'Phone', platform: 'ios', online: true, directOnline: true }] } });
-    }
-    if (p === '/api/conversations' && m === 'GET') return r.fulfill({ json: SERVER_CONVOS });
-    if (p === '/api/conversations/dev:dev-peer/messages') return r.fulfill({ json: SERVER_MSGS });
-    if (p === '/api/conversations/c-legacy/messages') return r.fulfill({ json: SERVER_MSGS });
-    if (p === '/api/conversations/dev:dev-peer/read' && m === 'POST') {
-      captured.read.push(body);
-      return r.fulfill({ json: { ok: true } });
-    }
-    if (p === '/api/conversations/dev:dev-peer/receipts') {
-      captured.receipts++;
-      // 契约 §8.7：sent/read 高水位 + 逐条回执行（state ∈ {sent, read}）
-      return r.fulfill({ json: { receipts: [{ messageId: 11, state: 'read' }], lastSentMessageId: 11, lastReadMessageId: 11 } });
-    }
-    if (p === '/api/devices/dev-peer/messages' && m === 'POST') {
-      captured.deviceSend.push({ body, status: 201 });
-      const payload = JSON.parse(body || '{}');
-      const replay = payload.clientMsgId === 'dup-1';
-      // 桩侧落行（服务端语义：新行 id=99；幂等回放不产第二行）——使发送后的
-      // keyset 回读能真实反映「回读入窗」而非回显。
-      if (!replay && !SERVER_MSGS.some(x => x.id === 99)) {
-        SERVER_MSGS.push({ id: 99, senderId: 'me', kind: 'text', body: payload.body || '', createdAt: 1757900100, senderDeviceId: 'dev-local' });
-      }
-      return r.fulfill({ status: 201, json: { messageId: replay ? 11 : 99, conversationId: 'dev:dev-peer', createdAt: 1757900100, createdAtMs: 1757900100123, existing: replay, selfUserId: 'me' } });
-    }
-    if (p === '/api/friends/attachments/att-1') { captured.attDownload++; return r.fulfill({ body: 'hello-bytes' }); }
-    if (p === '/api/friends') return r.fulfill({ json: { friends: [], incoming: [], outgoing: [] } });
-    if (p === '/api/groups') return r.fulfill({ json: [] });
-    return r.fulfill({ json: {} });
-  });
-  await page.routeWebSocket(/\/ws/, ws => {
-    ws.onMessage(raw => {
-      let m; try { m = JSON.parse(raw); } catch { return; }
-      if (m.type === 'getHistory') ws.send(JSON.stringify({ type: 'historyPage', sessionId: m.sessionId, messages: [], hasMore: false, offset: 0 }));
-    });
-    ws.send(JSON.stringify({ type: 'configData', config: '{"features":{"friends":true}}', configured: true, onboarding: 'done', models: [], defaults: {} }));
-    ws.send(JSON.stringify({ type: 'sessionList', sessions: [], activeId: null, folders: [] }));
-  });
+  await installRoutes(page, captured);
+  await installWs(page);
 
   await page.goto(BASE + '/index.html');
   await page.waitForSelector('#messages-btn', { state: 'attached', timeout: 15000 });
@@ -151,58 +219,50 @@ try {
     const adapt = mod.adaptDeviceMessage;
     if (typeof adapt !== 'function') return { error: 'adaptDeviceMessage is not exported: ' + typeof adapt };
     const run = () => [
-      // 本机所发（服务端行）
-      adapt({ id: 11, senderId: 'me', kind: 'text', body: 'from my mac', createdAt: 1757899990, senderDeviceId: 'dev-local' }),
-      // 他机所发（服务端行，带附件）
-      adapt({ id: 12, senderId: 'me', kind: 'text', body: '[附件] photo.png', createdAt: 1757900000, senderDeviceId: 'dev-peer', attachments: [{ id: 'att-1', name: 'photo.png', size: 31, sha256: 'x', state: 'ready' }] }),
-      // 未知发送设备（不在本机比对上 ⇒ 非本机所发，保守 in）
+      adapt({ id: 11, senderId: 'me', kind: 'text', body: 'from my mac', createdAt: 1757899990, senderDeviceId: 'dev-alpha' }),
+      adapt({ id: 12, senderId: 'me', kind: 'text', body: '[附件] photo.png', createdAt: 1757900000, senderDeviceId: 'dev-beta', attachments: [{ id: 'att-1', name: 'photo.png', size: 31, sha256: 'x', state: 'ready' }] }),
       adapt({ id: 14, senderId: 'me', kind: 'text', body: 'from unknown', createdAt: 1757900020, senderDeviceId: 'dev-ghost' }),
-      // 旧格式服务端行（缺 origin/createdAtMs/attachments/senderDeviceId）
       adapt({ id: 13, senderId: 'me', kind: 'text', body: 'old row no new fields', createdAt: 1757900010 }),
-      // legacy 网关 DropboxMessage（msgId/text/ts/direction）
       adapt({ msgId: 'uuid-a', text: 'legacy text', ts: 1757900030000, direction: 'out', origin: 'user' }),
-      // legacy 网关文件消息
       adapt({ msgId: 'uuid-b', kind: 'file', text: '', ts: 1757900040000, direction: 'in', fileName: 'a.bin', fileSize: 7, status: 'completed' }),
-      // 缺 id 且缺 msgId（不可定位行）
       adapt({ body: 'no id' }),
+      adapt(null),
     ];
-    return { selfId: undefined, rows: run() };
+    return { rows: run() };
   });
   if (adapter.error) {
     ok('A0 适配层可探（export 在场）', false, adapter.error);
   } else {
     const R = adapter.rows;
     ok('A0 适配层可探（export 在场）', true);
-    // A1 六字段逐条：本机所发行
     ok('A1 本机行六字段', (() => { const r = R[0];
       return r.id === '11' && r.body === 'from my mac' && r.createdAtMs === 1757899990000
         && r.origin === 'user' && r.ours === true && Array.isArray(r.attachments) && r.attachments.length === 0; })(),
       JSON.stringify(R[0]));
-    // A2 他机行：方向 = false（P2 重算），附件条透传为卡
     ok('A2 他机行方向重算 ours=false', R[1].ours === false, `ours=${R[1].ours}`);
     ok('A2b 他机行附件 → 附件卡(state 透传)', R[1].attachments.length === 1 && R[1].attachments[0].id === 'att-1' && R[1].attachments[0].state === 'ready', JSON.stringify(R[1].attachments));
     ok('A2c 他机行 createdAtMs 毫秒', R[1].createdAtMs === 1757900000000, `got ${R[1].createdAtMs}`);
-    // A3 未知发送设备 ⇒ 非本机（禁「判不出 ⇒ 当本机」）
     ok('A3 未知 senderDeviceId ⇒ ours=false（不是本机）', R[2].ours === false, `ours=${R[2].ours}`);
-    // A4 旧格式行：不崩 + 降级（origin 落 user、毫秒由秒折算、附件空集）
     ok('A4 旧格式行降级不崩', R[3].id === '13' && R[3].origin === 'user' && R[3].createdAtMs === 1757900010000 && R[3].attachments.length === 0, JSON.stringify(R[3]));
-    // A5 legacy：msgId→id / text→body / ts→createdAtMs / direction out ⇒ ours=true
     ok('A5 legacy msgId→id + direction out ⇒ ours=true', R[4].id === 'uuid-a' && R[4].body === 'legacy text' && R[4].createdAtMs === 1757900030000 && R[4].ours === true, JSON.stringify(R[4]));
-    // A6 legacy 文件 → 设备传输卡（state 'device'）
     ok('A6 legacy 文件 → 设备传输卡', R[5].ours === false && R[5].attachments.length === 1 && R[5].attachments[0].state === 'device' && R[5].attachments[0].name === 'a.bin', JSON.stringify(R[5]));
-    // A7 缺 id 行：空 id（调用方跳过），不抛
     ok('A7 缺 id 行不抛、落空 id', R[6] && R[6].id === '', JSON.stringify(R[6]));
+    ok('A8 非对象输入不抛（null）', R[7] && R[7].id === '' && R[7].ours === false, JSON.stringify(R[7]));
   }
 
-  // ══ 判红③：P10 明示句（zh-CN 先开窗断言，再切 en 重开断言）══════════
+  // ══ 列表面：设备窗行（§9.3 归并 ⇒ 一个 peer 恰一窗）════════════════
   await page.click('#messages-btn');
   await page.waitForSelector('#fm-conversations .fm-conv-row', { timeout: 15000 });
   await sleep(700);
-  // `.first()`：改前树会出现同一设备的**两行**（服务端行未剔除 + peers 派生行）——
-  // 那本身就是判红⑤要暴露的缺陷读数；探针不得因 strict mode 崩掉，必须跑完全表。
-  const deviceRow = page.locator('#fm-conversations .fm-conv-row[data-conversation-id="dev:dev-peer"]').first();
+  const deviceRows = page.locator('#fm-conversations .fm-conv-row[data-device="1"]');
+  const deviceRowIds = await deviceRows.evaluateAll(els => els.map(e => e.dataset.conversationId));
+  // 🔴 O1：本机自己那一行**不单独成窗**（真值夹具里它在场 ⇒ 必须被归并掉）
+  ok('O1 本机自己那行不成窗（设备窗恰 1 条 = 对端）', deviceRowIds.length === 1,
+    `windows=${JSON.stringify(deviceRowIds)}`);
+  ok('O1b 无 dev:dev-alpha 窗', !deviceRowIds.includes('dev:' + SELF), `windows=${JSON.stringify(deviceRowIds)}`);
+  const deviceRow = page.locator('#fm-conversations .fm-conv-row[data-conversation-id="dev:' + PEER + '"]').first();
   ok('U1 服务端设备行进列表（data-device=1）', await deviceRow.count() === 1);
-  ok('U1b 服务端未读角标 = 2', (await deviceRow.locator('.fm-row-badge').textContent().catch(() => '')) === '2',
+  ok('U1b 服务端未读角标 = 2（本机行 0 + 对端行 2）', (await deviceRow.locator('.fm-row-badge').textContent().catch(() => '')) === '2',
     `badge=${await deviceRow.locator('.fm-row-badge').textContent().catch(() => '(none)')}`);
 
   const ZH = '云端保留 7 天，本机永久保存。';
@@ -215,22 +275,32 @@ try {
   const hasNoteInDeviceWin = await page.locator('.fm-modal .fm-device-note').count();
   ok('R1b 明示条仅挂设备窗（本窗恰 1 条）', hasNoteInDeviceWin === 1, `count=${hasNoteInDeviceWin}`);
 
-  // ══ 判红⑤的核心读数：服务端历史真的进了设备窗 ══════════════════════
+  // ══ 判红⑤ + F2：两行归并成一窗，方向逐条重算 ═══════════════════════
   const outCount = await page.locator('.fm-modal .fm-msg.out').count();
   const inCount = await page.locator('.fm-modal .fm-msg.in').count();
-  ok('R2 服务端历史入窗：本机所发(11)在右 / 他机所发(12,13)在左', outCount >= 1 && inCount >= 1, `out=${outCount} in=${inCount}`);
-  const bubbleId11 = await page.locator('.fm-modal .fm-msg[data-message-id="11"]').getAttribute('class').catch(() => '');
-  ok('R2b id=11（senderDeviceId=dev-local=本机）画右侧', /(^|\s)out(\s|$)/.test(bubbleId11 || ''), `class=${bubbleId11}`);
-  const bubbleId12 = await page.locator('.fm-modal .fm-msg[data-message-id="12"]').getAttribute('class').catch(() => '');
-  ok('R2c id=12（senderDeviceId=dev-peer=他机）画左侧', /(^|\s)in(\s|$)/.test(bubbleId12 || ''), `class=${bubbleId12}`);
+  ok('O2 归并窗 out/in 计数正确（11,13 → out=2；12,14 → in=2）', outCount === 2 && inCount === 2, `out=${outCount} in=${inCount}`);
+  const cls11 = await page.locator('.fm-modal .fm-msg[data-message-id="11"]').getAttribute('class').catch(() => '');
+  const cls12 = await page.locator('.fm-modal .fm-msg[data-message-id="12"]').getAttribute('class').catch(() => '');
+  const cls13 = await page.locator('.fm-modal .fm-msg[data-message-id="13"]').getAttribute('class').catch(() => '');
+  const cls14 = await page.locator('.fm-modal .fm-msg[data-message-id="14"]').getAttribute('class').catch(() => '');
+  ok('O2b 对端窗内逐条方向（11/13=本机所发⇒右，12/14=对端所发⇒左）',
+    /(^|\s)out(\s|$)/.test(cls11 || '') && /(^|\s)out(\s|$)/.test(cls13 || '')
+      && /(^|\s)in(\s|$)/.test(cls12 || '') && /(^|\s)in(\s|$)/.test(cls14 || ''),
+    `11="${cls11}" 12="${cls12}" 13="${cls13}" 14="${cls14}"`);
+  const msgsConvs = [...new Set(captured.msgsConvs)].sort();
+  ok('O2c 归并取数读了两条会话（本机行 + 对端行）',
+    msgsConvs.includes('dev:' + SELF) && msgsConvs.includes('dev:' + PEER), `convs=${JSON.stringify(msgsConvs)}`);
 
-  // ══ 判红②（客户端半程）：写（已读）→ 读（回执）往返 ═════════════════
+  // ══ 判红② + R3：已读**按服务端行逐行**上报 / 回执读**本机那一行** ═══
   await sleep(600);
-  ok('R3 已读上报原始请求体 {lastReadMessageId:13}', captured.read.some(b => b.includes('"lastReadMessageId":13')),
-    `captured=${JSON.stringify(captured.read)}`);
-  ok('R3b 回执读面被拉取', captured.receipts >= 1, `count=${captured.receipts}`);
+  const readByConv = new Map(captured.read.map(x => [x.convId, x.body]));
+  ok('R3 已读上报带对端行自己的末条 id（dev:dev-beta → 14）',
+    (readByConv.get('dev:' + PEER) || '').includes('"lastReadMessageId":14'), `captured=${JSON.stringify(captured.read)}`);
+  ok('R3b 本机行无未读 ⇒ 不上报（dev:dev-alpha 零请求）', !readByConv.has('dev:' + SELF), `captured=${JSON.stringify(captured.read)}`);
+  ok('R3c 回执读面拉的是**本机所发那一行**（dev:dev-alpha）',
+    captured.receiptsConvs.length >= 1 && captured.receiptsConvs.every(c => c === 'dev:' + SELF), `convs=${JSON.stringify(captured.receiptsConvs)}`);
   const chip = await page.locator('.fm-modal .fm-msg[data-message-id="11"] .fm-msg-device-receipt').textContent().catch(() => null);
-  ok('R3c 本机所发气泡挂「已读」状态位', chip === '已读', `got=${JSON.stringify(chip)}`);
+  ok('R3d 本机所发气泡挂「已读」状态位', chip === '已读', `got=${JSON.stringify(chip)}`);
 
   // ══ 判红④：旧格式行不崩 + 降级展示（真实 DOM 内）═══════════════════
   const oldRow = await page.locator('.fm-modal .fm-msg[data-message-id="13"]').count();
@@ -251,14 +321,19 @@ try {
     ok('R4b 附件下载键在场', false, 'no .fm-att-dl in device bubble');
   }
 
-  // ══ S1：设备发送走新端点（201 幂等）════════════════════════════════
+  // ══ F1：回复打**本机** device id（桩侧按服务端硬闸判）═══════════════
   await page.fill('.fm-modal .fm-input', 'hello from qa');
   await page.click('.fm-modal .fm-send-btn');
   await sleep(900);
-  ok('S1 发送走 POST /api/devices/{id}/messages', captured.deviceSend.length === 1 && captured.deviceSend[0].status === 201,
-    JSON.stringify(captured.deviceSend));
+  ok('S1 发送打本机 device id（POST /api/devices/dev-alpha/messages）',
+    captured.deviceSendPaths.length >= 1 && captured.deviceSendPaths.every(p => p === SELF),
+    `paths=${JSON.stringify(captured.deviceSendPaths)}`);
+  ok('S1b 桩未触发 not_my_device（无 403；即未打对端 id）',
+    captured.deviceSendStatus.every(s => s === 201), `status=${JSON.stringify(captured.deviceSendStatus)}`);
   const sentShown = await page.locator('.fm-modal .fm-msg[data-message-id="99"]').count();
-  ok('S1b 发送后服务端回读入窗（幂等回放不产第二行）', sentShown === 1, `count=${sentShown}`);
+  ok('S1c 发送后服务端回读入窗（幂等回放不产第二行）', sentShown === 1, `count=${sentShown}`);
+  const sentCls = await page.locator('.fm-modal .fm-msg[data-message-id="99"]').getAttribute('class').catch(() => '');
+  ok('S1d 我发出的新行在同一窗且画右侧', /(^|\s)out(\s|$)/.test(sentCls || ''), `class=${sentCls}`);
   await page.keyboard.press('Escape');
   await sleep(300);
 
@@ -271,6 +346,62 @@ try {
   const enNote = await page.locator('.fm-modal .fm-device-note').textContent().catch(() => null);
   ok('R1d P10 明示句 en（重开窗）', enNote === EN, `got=${JSON.stringify(enNote)}`);
   await page.keyboard.press('Escape');
+  await sleep(300);
+
+  // ══ F1 要件②：本机 device id 缺席 ⇒ **可见禁用** + 零发送请求 ═══════
+  // 同页换桩（`unroute` + reload）：新开 page 会退到后台，Playwright 的可见性判定
+  // 在非活动 tab 上不稳（本探针可靠性优先）；换桩后重载等价于新会话。
+  const cap2 = { read: [], receiptsConvs: [], deviceSendPaths: [], deviceSendStatus: [], attDownload: 0, msgsConvs: [] };
+  await page.unroute('**/api/**');
+  await installRoutes(page, cap2, { selfDeviceId: null }); // status.device = {}（无 id）
+  await page.reload();
+  await page.waitForSelector('#messages-btn', { state: 'attached', timeout: 15000 });
+  await sleep(1200);
+  await page.evaluate(async () => { const n = await import('/js/neblink.js'); await n.fetchNeblinkStatus(); });
+  await sleep(300);
+  await page.click('#messages-btn');
+  await sleep(1500);
+  // 面板活动态跨 reload 复位不定 ⇒ 只在未呈现时点开（点了会变成「关闭」）
+  if (!(await page.locator('#fm-conversations .fm-conv-row').first().isVisible().catch(() => false))) {
+    await page.click('#messages-btn');
+  }
+  await page.waitForSelector('#fm-conversations .fm-conv-row[data-device="1"]', { timeout: 15000 });
+  await sleep(600);
+  await page.locator('#fm-conversations .fm-conv-row[data-device="1"]').first().click();
+  await page.waitForSelector('.fm-modal', { timeout: 15000 });
+  await sleep(700);
+  const inputDisabled = await page.locator('.fm-modal .fm-input').isDisabled().catch(() => false);
+  ok('N1 本机 id 缺席 ⇒ 输入框禁用（可见）', inputDisabled === true, `disabled=${inputDisabled}`);
+  const barText = await page.locator('.fm-modal .fm-blocked-bar').textContent().catch(() => null);
+  ok('N1b 只读栏给出可见原因（文案在场）', typeof barText === 'string' && barText.trim().length > 0, `bar=${JSON.stringify(barText)}`);
+  const sendDisabled = await page.locator('.fm-modal .fm-send-btn').isDisabled().catch(() => false);
+  ok('N1c 发送键同闸禁用', sendDisabled === true, `disabled=${sendDisabled}`);
+  // 硬上：把禁用态强行解除后点发送 ⇒ 仍然零请求（第二道闸）
+  await page.evaluate(() => {
+    const el = document.querySelector('.fm-modal .fm-input');
+    el.disabled = false; el.value = 'should not be sent';
+    const btn = document.querySelector('.fm-modal .fm-send-btn'); btn.disabled = false; btn.click();
+  });
+  await sleep(600);
+  ok('N1d 身份缺席时零发送请求（绝不打对端 id）', cap2.deviceSendPaths.length === 0, `paths=${JSON.stringify(cap2.deviceSendPaths)}`);
+  ok('N1e 该轮零 pageerror', pageErrors.length === 0, pageErrors.slice(0, 3).join(' | '));
+
+  // ══ 判红④（降级档）：旧网关无设备会话面 ⇒ peers 派生窗（legacy 腿）不崩 ═
+  const cap3 = { read: [], receiptsConvs: [], deviceSendPaths: [], deviceSendStatus: [], attDownload: 0, msgsConvs: [] };
+  await page.unroute('**/api/**');
+  await installRoutes(page, cap3, { noServerDeviceRows: true });
+  await page.reload();
+  await page.waitForSelector('#messages-btn', { state: 'attached', timeout: 15000 });
+  await sleep(1500);
+  if (!(await page.locator('#fm-conversations .fm-conv-row').first().isVisible().catch(() => false))) {
+    await page.click('#messages-btn');
+  }
+  await page.waitForSelector('#fm-conversations .fm-conv-row[data-device="1"]', { timeout: 15000 });
+  await sleep(500);
+  const legacyName = await page.locator('#fm-conversations .fm-conv-row[data-device="1"] .fm-row-name').first().textContent().catch(() => null);
+  ok('L2 旧网关（无设备会话行）⇒ peers 派生窗仍在（名字走 peers 单点）', legacyName === 'Phone', `name=${JSON.stringify(legacyName)}`);
+  ok('L2b 该档零服务端设备取数（legacy 腿不假装有服务端面）', cap3.msgsConvs.every(c => !c.startsWith('dev:')), `convs=${JSON.stringify([...new Set(cap3.msgsConvs)])}`);
+  ok('L2c 该档零 pageerror', pageErrors.length === 0, pageErrors.slice(0, 3).join(' | '));
 } finally {
   if (ctx) await ctx.close().catch(() => {});
   await browser.close().catch(() => {});

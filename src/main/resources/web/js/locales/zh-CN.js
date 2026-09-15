@@ -1318,6 +1318,7 @@ export default {
   'messages.deviceRead': '已读',
   'messages.deviceServerUnavailable': '服务端历史暂不可用 —— 已切换为本机历史。',
   'messages.deviceSendFailed': '消息未发出。内容未丢失，请重试。',
+  'messages.deviceSendUnavailable': '本机设备身份不可用，暂不能发送。',
 
   // === 设备会话统一批 MVP-1（2026-09-15）：面板标题 / 设备段 / 设备会话行 ===
   // 键族归属：`panel.contacts` = 面板标题（值改「联系人和设备」，卡 §6.1）；
