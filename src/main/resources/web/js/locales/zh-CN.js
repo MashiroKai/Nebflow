@@ -975,7 +975,7 @@ export default {
   // （一期口径 /Users/kaiyu/.nebflow/User.md:36；代码锚 messages.js「无横幅无提示音」）。
   'neblink.signedOutElsewhere': '已在别处登录',
   'neblink.signedOutElsewhereHint': '本机会话已被另一台设备接管，自动重连已暂停——重新登录即可恢复',
-  'neblink.deviceDescHint': '如：校园网环境、有 Vivado 2023.2',
+  'neblink.deviceDescHint': '此描述对 Agent 可见，Agent 会根据你的描述自动选择合适的设备执行任务',
   'neblink.save': '保存',
   'neblink.update': '更新',
   'neblink.stable': '稳定版',

@@ -17,7 +17,7 @@ import { clearMemoryCache } from './memory.js';
 import { chatViews, setActiveView, activeView } from './chatView.js';
 import { cleanupCardIframes, resetCardAccumulator } from './cardRegistry.js';
 import { t, getLocale, setLocale, getAvailableLocales } from './i18n.js';
-import { fetchNeblinkStatus, neblinkSettingsHTML, bindNeblinkEvents, avatarViewState, noteAvatarFailure } from './neblink.js';
+import { fetchNeblinkStatus, neblinkSettingsHTML, bindNeblinkEvents, avatarViewState, noteAvatarFailure, paintAvatarSlot } from './neblink.js';
 import { notifyManualUpdateCheck } from './updateCheck.js';
 import { toggleHTML, setToggleState } from './toggle.js';
 import { preloadModelCapabilities, renderVisionBadge } from './modelCapabilities.js';
@@ -927,16 +927,19 @@ function renderSettingsAvatar() {
   const logoEl = entry.querySelector('.settings-avatar-logo');
   const photoEl = entry.querySelector('.settings-avatar-photo');
   if (photoEl) {
-    photoEl.hidden = !showPhoto;
-    photoEl.onerror = () => {
+    // Same shared, readiness-gated slot paint as the Activity Bar avatar
+    // (neblink.js paintAvatarSlot, 2026-09-15 flicker fix): the logo holds the
+    // slot until the photo is paintable, so a fresh mount can never paint an
+    // empty ring while the avatar bytes are still loading.
+    paintAvatarSlot(photoEl, logoEl, validAvatarUrl, showPhoto, () => {
       noteAvatarFailure(validAvatarUrl); // shared failed-URL latch
       const view = avatarViewState();
       if (photoEl) photoEl.hidden = true;
       if (logoEl) logoEl.hidden = view.showPhoto;
-    };
-    if (showPhoto && photoEl.getAttribute('src') !== validAvatarUrl) photoEl.setAttribute('src', validAvatarUrl);
+    });
+  } else if (logoEl) {
+    logoEl.hidden = showPhoto;
   }
-  if (logoEl) logoEl.hidden = showPhoto;
 }
 
 // ---------- Preset management section (P3) ----------

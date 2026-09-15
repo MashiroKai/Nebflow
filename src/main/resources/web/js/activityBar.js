@@ -19,7 +19,7 @@
 // stays visible when the sidebar is collapsed.
 
 import { openSettingsPanel, closeSettingsPanel, isSettingsPanelActive } from './sidebar.js';
-import { fetchNeblinkStatus, getNeblinkState, startDeviceFlow, pollDeviceFlow, cancelDeviceFlow, startPkceLogin, pollPkceState, cancelPkceFlow, avatarViewState, noteAvatarFailure } from './neblink.js';
+import { fetchNeblinkStatus, getNeblinkState, startDeviceFlow, pollDeviceFlow, cancelDeviceFlow, startPkceLogin, pollPkceState, cancelPkceFlow, avatarViewState, noteAvatarFailure, paintAvatarSlot } from './neblink.js';
 import { setUpdateDot } from './updateCheck.js';
 import { createIconsIn, escapeHtml } from './utils.js';
 import { getProfileUrl } from './brand.js';
@@ -727,15 +727,16 @@ function renderAvatar() {
   const letterEl = avatar.querySelector('.activity-avatar-letter');
 
   if (photoEl) {
-    photoEl.hidden = !showPhoto;
-    photoEl.onerror = () => {
+    // Slot paint is shared with the settings account area and gated on the
+    // photo being paintable (neblink.js paintAvatarSlot, 2026-09-15 flicker fix).
+    paintAvatarSlot(photoEl, logoEl, validAvatarUrl, showPhoto, () => {
       noteAvatarFailure(validAvatarUrl); // latch: stop re-showing the broken image
       photoEl.hidden = true;
       if (logoEl) logoEl.hidden = false;
-    };
-    if (showPhoto && photoEl.src !== validAvatarUrl) photoEl.src = validAvatarUrl;
+    });
+  } else if (logoEl) {
+    logoEl.hidden = showPhoto;
   }
-  if (logoEl) logoEl.hidden = showPhoto;
   if (letterEl) letterEl.hidden = true; // account avatar replaces the letter
 
   // State styling: paired (logged in) / pairing / logged out.

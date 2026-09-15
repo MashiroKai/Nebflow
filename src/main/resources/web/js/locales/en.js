@@ -981,7 +981,7 @@ export default {
   // level only — no banner, no sound (一期口径, User.md:36).
   'neblink.signedOutElsewhere': 'Signed in elsewhere',
   'neblink.signedOutElsewhereHint': 'Another device took over this session; automatic reconnect is paused — sign in again to resume.',
-  'neblink.deviceDescHint': 'e.g. Campus network, has Vivado 2023.2',
+  'neblink.deviceDescHint': 'Visible to agents — they use this description to automatically pick the right device for a task',
   'neblink.save': 'Save',
   'neblink.update': 'Update',
   'neblink.stable': 'Stable',
