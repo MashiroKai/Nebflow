@@ -531,20 +531,63 @@ class WebSocketRoutes(
         case None => sessionStore.getSessionMeta(sessionId).map(_.flatMap(_.compactThresholdRatio))
     }
 
-  /** ctxthresh 批：**作用域闸**（口径③ 的防御纵深，静态判据见
-    * `.nebflow/tools/20260915_ctxthresh_leak-check.sh`）——本功能仅对 root 会话开放。
+  /** ctxthresh 批：**身份面判据**（作用域闸的第 ① 条，独立成函数便于判读）——
+    * 会话的**有效 agent 名**必须是 `"Nebula"`。
     *
-    * 判据 = 该会话已注册活体 agent 的 `AgentRecord.kind == AgentKind.Root`
-    * （`AgentKind` 是 P1 统一注册表的身份判别字段，`kind = Root` 的唯一置位点 =
-    * `doSpawnRootAgent`，本文件 `:231`）；未注册 ⇒ 放行（WS 侧对未知会话的唯一
-    * spawn 路径 = `ensureRootAgent`，depth=0）。节点/链路/委托会话的 kind ≠ Root
-    * ⇒ 一律拒绝：**绝不把覆盖写进非 root 会话**。 */
-  private def isRootScopeSession(sessionId: String): IO[Boolean] =
-    sharedResources.agentRegistry.get.map { registry =>
-      registry.get(sessionId) match
-        case Some(rec) => rec.kind == AgentKind.Root
-        case None => true
+    * 口径来源 = 作者卡答「仅 root 会话」＋「其他的还是使用我们预设中规定的」，与既有
+    * 「Nebula 会话集」判据逐字同款（`SessionStore.listSessionsByAgent` :604-613
+    * 「Sessions without agentName match "Nebula"」= `agentName.getOrElse("Nebula")`；
+    * 客户端同款 `s.agentName || 'Nebula'`，main.js:1553）；先例 = 会话沙箱根的
+    * `SandboxPolicy.isNebulaRootSession` 用 `agentName == "Nebula"` 把 standalone 非
+    * Nebula 聊天 / team Manager / flow 入口等**其余 root 会话**一并排除（双保险）。
+    *
+    * 🔴 **判据取「声明的名字」而非 spawn 期解析出的 `AgentDef.name`**：`resolveAgentDef`
+    * 对库里不存在的名字会 `nebulaFallback` 回落成 Nebula（本文件 :98-102）⇒ 用解析结果
+    * 判会让 `agentName="general"` 这类会话**误判成 Nebula**（复核位探针的第 1 例正是它）。
+    * spawn 期身份另有 `agentDef.name == "Nebula"`（:216 `sandboxEnabled`），二者不冲突。
+    *
+    * 无 `SessionMeta` 的 id（`node-*` / `dag-*` / 已删会话等幽灵 id）⇒ **身份不可立
+    * ⇒ 拒**（fail-closed；它们既不在会话索引里，也不该有阈值覆盖可写）。 */
+  private def isNebulaIdentitySession(sessionId: String): IO[Boolean] =
+    sessionStore.getSessionMeta(sessionId).map {
+      case Some(meta) => meta.agentName.getOrElse("Nebula") == "Nebula"
+      case None       => false
     }
+
+  /** ctxthresh 批：**作用域闸**（口径①/③；静态泄漏判据见
+    * `.nebflow/tools/20260915_ctxthresh_leak-check.sh`）——本功能**仅对 Nebula 的
+    * root 会话开放**。判据 = 下列合取（全部为真才放行）：
+    *
+    *   ① **身份面**：`isNebulaIdentitySession`（上）——排除主窗口切过去的 standalone
+    *      非 Nebula 会话 / 节点形态 id。
+    *   ② **注册面**：已注册活体 agent 的会话，`AgentRecord.kind` 必须 == `Root`
+    *      （`kind = Root` 的唯一置位点 = `doSpawnRootAgent`，本文件 :246）。节点 /
+    *      链路 / 委托会话 kind ≠ Root ⇒ 一律拒。
+    *   ③ **未注册 ⇒ fail-closed**：唯一例外 = **本次 WS 的根会话**（= store 的活跃会话，
+    *      取法与 WS 连接面 :827 同源）。留这一格的实证理由：`switchSession`
+    *      （`SessionStore.scala:657-683`）**只动 index / 消息、不 spawn root agent**，
+    *      用户切到另一个 Nebula 会话后、发首条消息前它不在 registry 里——一律拒会
+    *      误伤这条合法面（切会话后调阈值）。除活跃会话外的未注册 id 一律拒。
+    *
+    * 🔴 **2026-09-15 返工（复核位判词 fail）**：原实现未注册 ⇒ `case None => true`
+    * **fail-open** ⇒ 未注册的 `agentName="general"` 会话 / 节点形态 id 全部被放行，
+    * 真机读数（复核位独立实例 8098，`ev_scope_probe.txt`）= 四例全 ACCEPT 且
+    * `_index.json` 落盘 `compactThresholdRatio=0.5`；且原实现只有 kind 闸，主窗口
+    * 切到 general agent 会话时点环即写进该会话并持久化（违反作者逐字口径③）。
+    * 现改为 fail-closed + Nebula 身份门（返工探针见
+    * `.nebflow/tools/20260915_ctxthresh_scope-recheck.mjs`）。 */
+  private def isRootScopeSession(sessionId: String): IO[Boolean] =
+    if sessionId.isEmpty then IO.pure(false)
+    else
+      isNebulaIdentitySession(sessionId).flatMap { isNebula =>
+        if !isNebula then IO.pure(false)
+        else
+          sharedResources.agentRegistry.get.flatMap { registry =>
+            registry.get(sessionId) match
+              case Some(rec) => IO.pure(rec.kind == AgentKind.Root)
+              case None      => sessionStore.getActiveMeta.map(_.exists(_.id == sessionId))
+          }
+      }
 
   /** ctxthresh 批：阈值面板的**权威回显载荷**（面板打开 / 设值成功 / 恢复默认后
     * 共用同一数据源——前端不回算、不自造值，「生效绝对 token 回显」由此保证与
@@ -1869,6 +1912,9 @@ class WebSocketRoutes(
             // 钳制——「钳回」是 UI 侧滑杆的动态下限职责（js/ctxthresh.js）。
             // 成功路径 = persist-then-hot 三步（盘上 SessionMeta → 内存 Ref → 通知
             // 活体 root agent）+ 回权威回显帧。
+            // 🔴 作用域闸（首行）= fail-closed + Nebula 身份门（2026-09-15 返工，见
+            // `isRootScopeSession`）——非 Nebula 会话 / 幽灵 id / 未注册且非活跃者
+            // 一律走 reject 分支，**绝不落盘**。
             val json = parse(text).toOption.getOrElse(Json.Null)
             val sid = json.hcursor.downField("sessionId").as[String].getOrElse("")
             val rawRatio = json.hcursor.downField("ratio").as[Option[Double]].toOption.flatten
