@@ -133,7 +133,7 @@ On a host-level event (restart / crash recovery, relayed by Nebula) reconcile AC
 ```text
 【建位/落地入场判据（作者裁定 2026-09-14 · 构建闸已停用）】
 ① 构建闸已停用（作者 2026-09-14）：任务书禁含闸段落。
-② 构建 / 落地类任务书入场判据（三项**一律不豁免**）= (a) 资源熔断（swap > 90% 或 free < 500MB ⇒ 有界退避轮询）(b) 构建类单条串行 (c) 质量门禁（rc = 0 才可推）。
+② 构建 / 落地类任务书入场判据（三项**一律不豁免**）= (a) 资源熔断（swap > 90% 或 free < 500MB ⇒ 有界退避轮询；**free = `sysctl vm.swapusage` 的 free 字段**（swap 空闲量），swap% = used ÷ total（同源导出；percent 字段在本机 sysctl 输出中不存在）；🔴 **禁用 `vm_stat` `Pages free` 字面读法**（macOS 语义退化：free-only 远低于真实可用，且读数极不稳定——实测典型 ~60–80MB、偶发瞬时冲高 >500MB ⇒ 不可作熔断判据））(b) 构建类单条串行 (c) 质量门禁（rc = 0 才可推）。
 ③ 🔴 禁重挂闸、禁自修闸器（#224 裁前）。
 ④ 若 #224 裁定重挂闸，本条随裁更新。
 ```
