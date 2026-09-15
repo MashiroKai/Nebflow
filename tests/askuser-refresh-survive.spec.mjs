@@ -17,16 +17,29 @@
 // 注入气泡排在 pending ask 之后）→ 刷新后 askUser 条目落在首屏 50 条之外，
 // 历史还原链不重建卡片——服务端重发是唯一恢复路径（验红基线即此形态）。
 //
-// Run: node node_modules/@playwright/test/cli.js test <repo>/tests/askuser-refresh-survive.spec.mjs
+// Run（home 由夹具 provisioner 装配，2026-09-15 e2efix 批补齐）：
+//   1) 装配隔离 home：NEBFLOW_HOME_DIR=<home> MOCK_PORT=<mp> node tests/fixtures/askuser-refresh/fixture-home.mjs --provision
+//      （🔴 只写 <home> 之下；连跑两次 manifest sha 一致；装/拆后零残留）
+//   2) 起该 home 的隔离实例（端口 ≠ 8080；装配面 = 宿主实载工件 + 本支 web 树前置，见 `.nebflow/tools/20260915_hostcp-*`）
+//   3) BASE_URL=http://127.0.0.1:<port> TOKEN=$(cat <home>/auth.json) QA_SHOTS=<截图目录> \
+//        node node_modules/@playwright/test/cli.js test <repo>/tests/askuser-refresh-survive.spec.mjs
+//   🔴 `QA_SHOTS` 默认 = <repo>/.nebflow/evidence/20260915_e2eask（写根白名单内；禁落宿主 ~/.nebflow/docs/**）
 
 import { test, expect } from '@playwright/test';
-import { homedir } from 'node:os';
 import { mkdirSync } from 'node:fs';
-import { join } from 'node:path';
+import { join, dirname } from 'node:path';
+import { fileURLToPath } from 'node:url';
+import { guardWrites } from '../scripts/lib/writeguard.mjs';
 
+const REPO = dirname(dirname(fileURLToPath(import.meta.url)));
 const BASE = process.env.BASE_URL ?? 'http://127.0.0.1:18923';
 const TOKEN = process.env.TOKEN ?? '';
-const SHOT_DIR = join(homedir(), '.nebflow', 'docs', 'Nebflow');
+// 截图输出目录 = **受控参数**（`QA_SHOTS`）；默认 = 本 checkout 的 `.nebflow/evidence/20260915_e2eask/`。
+// 🔴 2026-09-15 e2efix 批：原值 `join(homedir(), '.nebflow', 'docs', 'Nebflow')` 是**硬编码宿主绝对路径**
+//    （正是件 1 同族缺陷的宿主 `docs/**` 写入面）⇒ 已删，改走白名单根。
+const SHOT_DIR = process.env.QA_SHOTS || join(REPO, '.nebflow', 'evidence', '20260915_e2eask');
+// W1 写根断言（模块加载期即 fail-fast，先于任何 browser/网络动作）：越界 → 非零退出
+guardWrites([SHOT_DIR], { repoRoot: REPO, label: 'askuser-refresh-survive' });
 const PAD_TURNS = 30;
 const INJECTS = 55;
 
