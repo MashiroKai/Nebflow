@@ -364,6 +364,30 @@ export default {
   'messages.loginRequired': '登录 nebflow 账号后使用消息与联系人',
   'login.popupBlocked': '弹窗被拦截，请允许后重试',
   'login.openPage': '打开登录页',
+  // 登录入口 / 登录面板（2026-09-16 登录入口批）：面板文案此前是 activityBar.js
+  // 注入样式一族的硬编码中文字面量，本批整体搬进 i18n（zh/en 成对，禁死键）。
+  'login.title': '登录 nebflow 账号',
+  'login.starting': '正在启动登录…',
+  'login.hintBrowser': '在浏览器中登录 nebflow 账号以连接此设备',
+  'login.hintAuthorize': '在浏览器中完成授权以连接此设备',
+  'login.reopenAuthPage': '重新打开登录页面',
+  'login.openAuthPage': '打开授权页面',
+  'login.switchAccount': '使用其他账号登录',
+  'login.deviceCodeCaption': '授权码',
+  'login.waitingPopupOpened': '已在新标签页打开登录页面，等待完成…',
+  'login.waiting': '等待登录完成…',
+  'login.waitingAuthorize': '等待授权完成…',
+  'login.retry': '重试',
+  'login.failed': '登录失败',
+  'login.success': '✓ 连接成功，设备已加入网络',
+  // 面板内可见的流程错文案（来源 = neblink.js 的 PKCE / 设备流失败路径，原为
+  // 中文字面量 ⇒ 英文界面下会露出中文；本批只换文案来源，不改任何流程语义）。
+  'login.startFailed': '启动登录失败',
+  'login.timeout': '登录超时，请重试',
+  'login.networkError': '网络错误：{msg}',
+  'login.deviceStartFailed': '启动设备流程失败',
+  'login.deviceTimeout': '授权超时，请重试',
+  'login.deviceFailed': '授权失败',
   'messages.login': '登录',
   'messages.reconnecting': '连接已断开，正在重连…',
   'messages.networkError': '网络错误，请检查连接',
@@ -1268,6 +1292,10 @@ export default {
 
   // === 界面残留汉化(活动栏 / 面板标题 / 空状态等) ===
   'activity.login': '登录',
+  // 登录态的两条 activity bar 悬停文案（2026-09-16 登录入口批）：renderAvatar
+  // 此前把它们写成中文字面量，会把 i18n 的 activity.login 覆盖掉。
+  'activity.profile': '个人主页',
+  'activity.pairing': '配对中…',
   'activity.usage': '用量看板',
   'activity.agents': '智能体',
   // 2026-09-04 件 B：智能体入口改造为插件页（en/zh 成对）

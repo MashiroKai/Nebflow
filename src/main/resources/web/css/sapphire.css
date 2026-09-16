@@ -452,6 +452,160 @@
   box-shadow: var(--glass-send-stack);
 }
 
+/* ── 登录键族 — 未登录态登录入口 / 登录面板动作键（2026-09-16 作者令）──────────
+   作者 2026-09-16 07:49 逐字令：「以及未登陆的时候的登陆按钮 很小也很丑」。
+   本块 = **本批交付面**内登录动作键的唯一形态来源（🔴 禁一事一样式）。交付面逐字
+   登记如下 —— **成员表 = 选择器到达面，二者必须一致**（🔴 只摘 JS 类名追加、却把 CSS
+   命中面留宽，那是「文件面回退 ≠ 渲染面回退」：键在渲染面照样被改掉）：
+     主键（绿实心 / 足够大可点 / 三态齐）
+       `#activity-avatar.logged-out`  活动条未登录入口（方键 44px、12px 圆角）
+       `.login-modal-btn`             登录面板主键（重新打开登录页面 / 打开授权页面 / 重试）
+     次键（同族玻璃材质、与主键**同几何**、安静档）
+       `.login-modal-btn.login-modal-btn-secondary`  面板内「使用其他账号登录」
+     🔴 **本族不含、本块不得命中** `.fm-login-btn`（消息 / 联系人面板未登录空态 +
+     登录失效卡那 4 枚**既有**键；宿主 = `contacts.js:245/683/919`、`messages.js:504`）。
+     该 4 枚键在 main 上零 CSS 规则、原形态 = 改前的玻璃小键（`28.67x21`）；把本块主键
+     材质染到它们身上 = 越出「未登录态登录入口」这一交付面（抢跑作者待拍板的按钮设计
+     sweep）⇒ 本批回环据复核裁定把到达面收回交付面，其形态**留待按钮设计审计批**。
+     （安静文本链档亦随回环摘除 —— 该档本批唯一的宿主是新增的「没看到登录页？」
+     重开链，该新增 affordance 经复核裁定越界后已摘除，故档位登记与其消费方声明
+     同批退役；族内现有档位 = 主键 + 次键。）
+   墨色 = 复用既有 `.cfg-btn-primary`（sidebar.css:1162-1170）的主操作白墨声明 ⇒
+     主键成员带 `cfg-btn-primary` 类承接（**既有类名，不是新色值**）——与发送键族
+     （本文件 :292-296）同一做法，本块只覆盖材质 / 几何 / 状态。
+   状态色（🔴 零新增字面量色值，全部引用既有 token；机械判据 = `git diff` 新增行
+     不含十六进制色值、rgb 函数、hsl 函数字面量）：
+       rest     = var(--color-primary)        （= 发送键族 / 主对话框 rest 绿）
+       hover    = var(--color-primary-hover)  （= 同族 hover 绿）
+       active   = 描边 var(--glass-send-border-active) + 按下投影 var(--glass-send-shadow-active)
+       disabled = var(--glass-send-bg-disabled) + var(--glass-send-border-disabled) + not-allowed
+     ⇒ 与发送键族「正常 / 按下 / 不可用」三态同源同值（两族视觉上是一家）。
+   几何 = 标签键：10px 圆角（09-14 裁定「圆角 10px 常例」）+ 10px 20px 内距；
+     活动条入口：44px 方键 + 12px 圆角（「够大可点」= 本批作者诉求的直接落点，
+     原形态是 36px 圆 + 24px 灰化 logo）。
+   特异度台账（本文件最后加载 ⇒ 同特异度平局由本层胜出）：
+     · 主键块 = **单一类名选择器** `.login-modal-btn` (0,1,0)，带 `:hover` / `:active` /
+       `:disabled` 的状态规则 (0,2,0) ⇒ 压过 `.glass-control` (0,1,0)、
+       `.cfg-btn-primary` (0,1,0) [sidebar.css:1159-1172 —— 行号 = 2026-09-16 现取，
+       `main` / `b988e2bfe` / 本支三树同值；其中 `.cfg-btn-primary` 块本体 = 1162-1170、
+       白墨 `color` 在 :1166]；
+       （回环前本档记的是 `:is()` 包裹**两枚**类名（本类名 + 上表摘除的那枚）——
+       被摘的那枚已从成员面去掉，`:is()` 只剩单元素后不再需要包裹，故直接写类名；
+       特异度不变（两写法同为 (0,1,0)/(0,2,0)），面板键读数因此逐值不动。）
+     · 次键块 (0,2,0)/(0,3,0) 声明在主键块**之后** ⇒ 同档平局由次键胜出（档位分明）；
+     · `#activity-avatar.logged-out` (1,1,0) 独立块 ⇒ 压过 nav.css 的
+       `.activity-avatar` (0,1,0) / `:hover` (0,2,0) /
+       `.activity-avatar:not(.paired):not(.pairing) .activity-avatar-logo` (0,4,0)。 */
+.login-modal-btn {
+  background: var(--color-primary);
+  border: 1px solid var(--color-primary-hover);
+  box-shadow: var(--glass-send-stack), var(--glass-send-shadow);
+  display: block;
+  width: 100%;
+  box-sizing: border-box;
+  padding: 10px 20px;
+  border-radius: 10px;
+  font-family: inherit;
+  font-size: 13px;
+  font-weight: 500;
+  line-height: 1.25;
+  text-align: center;
+  cursor: pointer;
+  opacity: 1; /* 挡住 .cfg-btn-primary:hover/:disabled 的透明度反馈（本族用色表达） */
+  transition: background 0.15s ease, border-color 0.15s ease,
+              box-shadow 0.15s ease, opacity 0.15s ease;
+}
+.login-modal-btn:hover {
+  background: var(--color-primary-hover);
+  border-color: var(--color-primary-hover);
+  opacity: 1;
+}
+.login-modal-btn:active {
+  border-color: var(--glass-send-border-active);
+  box-shadow: var(--glass-send-stack), var(--glass-send-shadow-active);
+}
+.login-modal-btn:disabled {
+  background: var(--glass-send-bg-disabled);
+  border-color: var(--glass-send-border-disabled);
+  color: color-mix(in srgb, var(--color-text) 50%, transparent);
+  cursor: not-allowed;
+  box-shadow: var(--glass-send-stack);
+  opacity: 1;
+}
+
+/* 次键 — 同族形态的安静档：几何与主键**同值**（只换材质与墨色）⇒「主键 vs 次键
+   档位要分明」在读数上表现为 background/border/color 三项不同、padding/圆角/字号相同。
+   （面板内只做**堆叠**：activityBar.js 注入块的 `.login-actions` 提供 flex 纵列 +
+   gap，几何/材质全部来自本文件 ⇒ 面板键与入口键逐值同形。） */
+.login-modal-btn.login-modal-btn-secondary,
+.login-modal-btn.login-modal-btn-secondary:hover {
+  background: var(--glass-control-bg);
+  border-color: var(--glass-control-border);
+  box-shadow: var(--glass-send-stack);
+  color: var(--color-text);
+}
+.login-modal-btn.login-modal-btn-secondary:hover { background: var(--glass-control-bg-hover); }
+.login-modal-btn.login-modal-btn-secondary:active {
+  border-color: var(--glass-send-border-active);
+  box-shadow: var(--glass-send-stack), var(--glass-send-shadow-active);
+}
+.login-modal-btn.login-modal-btn-secondary:disabled {
+  background: var(--glass-send-bg-disabled);
+  border-color: var(--glass-send-border-disabled);
+  color: color-mix(in srgb, var(--color-text) 50%, transparent);
+  cursor: not-allowed;
+  box-shadow: var(--glass-send-stack);
+  opacity: 1;
+}
+
+/* 活动条未登录入口 — 同一枚主操作配方、另一种几何（方键）。
+   它仍是 `#activity-avatar`（登录态 = 头像位，零回归）：只有未登录态换形态。 */
+#activity-avatar.logged-out {
+  width: 44px;
+  height: 44px;
+  border-radius: 12px;
+  padding: 0;
+  background: var(--color-primary);
+  border: 1px solid var(--color-primary-hover);
+  box-shadow: var(--glass-send-stack), var(--glass-send-shadow);
+  cursor: pointer;
+  opacity: 1;
+}
+#activity-avatar.logged-out:hover {
+  background: var(--color-primary-hover);
+  border-color: var(--color-primary-hover);
+}
+#activity-avatar.logged-out:active {
+  border-color: var(--glass-send-border-active);
+  box-shadow: var(--glass-send-stack), var(--glass-send-shadow-active);
+}
+#activity-avatar.logged-out:disabled {
+  background: var(--glass-send-bg-disabled);
+  border-color: var(--glass-send-border-disabled);
+  color: color-mix(in srgb, var(--color-text) 50%, transparent);
+  cursor: not-allowed;
+  box-shadow: var(--glass-send-stack);
+  opacity: 1;
+}
+/* 未登录态槽位内容 = 矢量登录字形（墨色继承按钮的 `cfg-btn-primary` 白墨）；
+   品牌 logo / 头像照片是**登录态**的槽位内容，未登录态整体让位。 */
+#activity-avatar .login-glyph { display: none; }
+#activity-avatar.logged-out .login-glyph {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 22px;
+  height: 22px;
+  pointer-events: none;
+}
+#activity-avatar .login-glyph svg {
+  width: 22px;
+  height: 22px;
+  display: block;
+}
+#activity-avatar.logged-out .activity-avatar-logo,
+#activity-avatar.logged-out .activity-avatar-photo { display: none; }
+
 /* ── Shared message surface ─────────────────────────────────────────────
    好友消息面（#fm-chat-overlay）与 dropbox 面共用同一套气泡/元信息声明，写在这
    里一次（2026-09-12 波2：判据 ③A1 字面量单源 / ③A2 几何跨面相等 / ③A3

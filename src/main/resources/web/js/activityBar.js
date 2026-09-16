@@ -427,11 +427,20 @@ function injectLoginModalStyles() {
   from { opacity: 0; transform: translate(-50%, -50%) scale(0.96) translateY(8px); }
   to   { opacity: 1; transform: translate(-50%, -50%) scale(1) translateY(0); }
 }
+/* Panel hierarchy (2026-09-16 login-entry batch) — three levels, in order:
+     ① title  .login-modal-header h3
+     ② hint   .login-hint / .login-code-caption  (what this step needs)
+     ③ keys   .login-actions (primary + secondary; geometry/material are the
+              login-key family's single source in sapphire.css — NOT here)
+   followed by the .login-waiting status line. This block therefore declares
+   LAYOUT/TYPOGRAPHY ONLY: the key form itself is cross-surface (activity bar
+   entry + panel CTAs + friends empty state) and lives in the family block, so
+   it can never drift between surfaces. */
 .login-modal-header {
   display: flex; justify-content: space-between; align-items: center;
   padding: 12px 16px; border-bottom: 1px solid var(--glass-border, rgba(255,255,255,0.05));
 }
-.login-modal-header h3 { font-size: 14px; margin: 0; color: var(--color-text); font-weight: 600; letter-spacing: -0.01em; }
+.login-modal-header h3 { font-size: 15px; margin: 0; color: var(--color-text); font-weight: 600; letter-spacing: -0.01em; }
 .login-modal-close {
   background: none; border: none; color: var(--color-text-muted);
   font-size: 18px; cursor: pointer; padding: 0 4px; line-height: 1;
@@ -439,7 +448,7 @@ function injectLoginModalStyles() {
 }
 .login-modal-close:hover { opacity: 1; }
 .login-modal-body { padding: 16px; text-align: center; }
-.login-hint { font-size: 13px; color: var(--color-text-muted); margin-bottom: 12px; line-height: 1.5; }
+.login-hint { font-size: 13px; color: var(--color-text-muted); margin-bottom: 14px; line-height: 1.55; }
 .login-user-code {
   font-family: 'SF Mono', 'Fira Code', monospace;
   font-size: 26px; font-weight: 600; letter-spacing: 2px;
@@ -447,23 +456,12 @@ function injectLoginModalStyles() {
   font-variant-numeric: tabular-nums;
 }
 .login-code-caption { font-size: 12px; color: var(--color-text-muted); margin-bottom: 14px; }
-.login-modal-btn {
-  display: inline-block; padding: 8px 20px; border-radius: 10px;
-  font-size: 13px; font-weight: 500; color: var(--color-text);
-  cursor: pointer; transition: filter 0.15s;
-}
-.login-modal-btn:hover { filter: brightness(1.06); }
-.login-modal-btn:active { filter: brightness(0.96); }
+/* Key stack. The two tiers are ONE family (sapphire.css 登录键族块):
+   primary = green solid (cfg-btn-primary carries the white ink),
+   secondary = same geometry, glass material. Geometry itself lives in the
+   family block (single source) — this block only stacks the keys. */
+.login-actions { display: flex; flex-direction: column; gap: 8px; }
 .login-waiting { margin-top: 12px; font-size: 12px; color: var(--color-text-muted); }
-/* Switch-account secondary entry (RP-logout fix, 2026-09-06) — quiet text
-   link under the primary button; muted color, no new tokens. */
-.login-switch-link {
-  display: inline-block; margin-top: 10px; padding: 2px 6px;
-  background: none; border: none; cursor: pointer;
-  font-size: 12px; color: var(--color-text-muted);
-  text-decoration: none; border-radius: 6px; transition: color 0.15s;
-}
-.login-switch-link:hover { color: var(--color-text); }
 .login-success { font-size: 14px; color: var(--color-primary); padding: 12px 0; }
 .login-error-msg { font-size: 13px; color: #e57373; margin-bottom: 14px; line-height: 1.5; }
 `;
@@ -614,6 +612,13 @@ function showLoginModal(opts = {}) {
   };
   const onKey = (e) => { if (e.key === 'Escape') close(); };
   document.addEventListener('keydown', onKey);
+  // The recovery key's authorize-URL opener (2026-09-16 login-entry batch).
+  // Behaviour is the pre-existing one, verbatim: open whatever the gateway
+  // handed us.
+  const openAuthPage = () => {
+    if (flowInfo?.authorizeUrl) window.open(flowInfo.authorizeUrl, '_blank');
+    else if (flowInfo?.verificationUri) window.open(flowInfo.verificationUri, '_blank');
+  };
   // Click outside to close (deferred so the opening click doesn't close it).
   setTimeout(() => {
     document.addEventListener('click', function outside(e) {
@@ -629,7 +634,7 @@ function showLoginModal(opts = {}) {
   const render = (state, data = {}) => {
     let body = '';
     if (state === 'starting') {
-      body = `<div class="login-waiting" style="margin-top:0;padding:12px 0">正在启动登录…</div>`;
+      body = `<div class="login-waiting" style="margin-top:0;padding:12px 0">${t('login.starting')}</div>`;
     } else if (state === 'waiting') {
       // PKCE primary path: nothing to copy - the browser tab does the whole
       // hosted login and redirects back to the local gateway.
@@ -645,38 +650,53 @@ function showLoginModal(opts = {}) {
       // form even when this browser still holds a Logto SSO session. Kept in
       // BOTH branches — it also resets the flow on a failed attempt.
       // (Absent data.popupOpened = not popup-blocked: no nag.)
+      //
+      // 2026-09-16 login-entry batch — the panel's keys all go through the ONE
+      // login-key family (sapphire.css 登录键族块): the recovery key
+      // (`login-open-auth`) is the primary tier (green solid) and 「使用其他账号
+      // 登录」 is the secondary tier (same geometry, glass). No key is added or
+      // removed here: the one-click entry (no second step to perform) is
+      // unchanged.
       const popupOpened = data.popupOpened !== false;
       body = `
-        <div class="login-hint">在浏览器中登录 nebflow 账号以连接此设备</div>
-        ${popupOpened ? '' : '<button class="login-modal-btn glass-control" id="login-open-auth">重新打开登录页面</button>'}
-        <button class="login-switch-link" id="login-switch-account">使用其他账号登录</button>
-        <div class="login-waiting">${popupOpened ? '已在新标签页打开登录页面，等待完成…' : '等待登录完成…'}</div>`;
+        <div class="login-hint">${t('login.hintBrowser')}</div>
+        <div class="login-actions">
+          ${popupOpened ? '' : `<button class="login-modal-btn glass-control cfg-btn-primary" id="login-open-auth">${t('login.reopenAuthPage')}</button>`}
+          <button class="login-modal-btn glass-control login-modal-btn-secondary" id="login-switch-account">${t('login.switchAccount')}</button>
+        </div>
+        <div class="login-waiting">${popupOpened ? t('login.waitingPopupOpened') : t('login.waiting')}</div>`;
     } else if (state === 'waiting-device') {
       // Legacy device-flow fallback (gateway reports logto-not-configured).
       body = `
-        <div class="login-hint">在浏览器中完成授权以连接此设备</div>
+        <div class="login-hint">${t('login.hintAuthorize')}</div>
         <div class="login-user-code">${escapeHtml(data.userCode || '')}</div>
-        <div class="login-code-caption">授权码</div>
-        <button class="login-modal-btn glass-control" id="login-open-auth">打开授权页面</button>
-        <div class="login-waiting">等待授权完成…</div>`;
+        <div class="login-code-caption">${t('login.deviceCodeCaption')}</div>
+        <div class="login-actions">
+          <button class="login-modal-btn glass-control cfg-btn-primary" id="login-open-auth">${t('login.openAuthPage')}</button>
+          <button class="login-modal-btn glass-control login-modal-btn-secondary" id="login-switch-account">${t('login.switchAccount')}</button>
+        </div>
+        <div class="login-waiting">${t('login.waitingAuthorize')}</div>`;
     } else if (state === 'success') {
-      body = `<div class="login-success">✓ 连接成功，设备已加入网络</div>`;
+      body = `<div class="login-success">${t('login.success')}</div>`;
     } else if (state === 'error') {
+      // Error state carries BOTH tiers on purpose: 重试 (primary, green) and
+      // 使用其他账号登录 (secondary, glass) — the tier difference is what the
+      // author's "主键 vs 次键档位要分明" reading can be checked against.
       body = `
-        <div class="login-error-msg">${escapeHtml(data.message || '登录失败')}</div>
-        <button class="login-modal-btn glass-control" id="login-retry">重试</button>`;
+        <div class="login-error-msg">${escapeHtml(data.message || t('login.failed'))}</div>
+        <div class="login-actions">
+          <button class="login-modal-btn glass-control cfg-btn-primary" id="login-retry">${t('login.retry')}</button>
+          <button class="login-modal-btn glass-control login-modal-btn-secondary" id="login-switch-account">${t('login.switchAccount')}</button>
+        </div>`;
     }
     modal.innerHTML = `
       <div class="login-modal-header">
-        <h3>登录 nebflow 账号</h3>
+        <h3>${t('login.title')}</h3>
         <button class="login-modal-close">&times;</button>
       </div>
       <div class="login-modal-body">${body}</div>`;
     modal.querySelector('.login-modal-close').onclick = close;
-    modal.querySelector('#login-open-auth')?.addEventListener('click', () => {
-      if (flowInfo?.authorizeUrl) window.open(flowInfo.authorizeUrl, '_blank');
-      else if (flowInfo?.verificationUri) window.open(flowInfo.verificationUri, '_blank');
-    });
+    modal.querySelector('#login-open-auth')?.addEventListener('click', openAuthPage);
     // Switch account (RP-logout fix, 2026-09-06): reserve the popup inside
     // THIS click gesture (same contract as the retry button below), then
     // restart the flow — startPkceLogin(true) sends prompt="login consent"
@@ -753,7 +773,7 @@ function showLoginModal(opts = {}) {
       finished = true;
       setPairing(false);
       navigateReserved(null); // release the reserved popup on failure
-      render('error', { message: e.message || '启动登录失败' });
+      render('error', { message: e.message || t('login.startFailed') });
     }
   };
 
@@ -777,11 +797,32 @@ async function refresh() {
   renderAvatar();
 }
 
+/**
+ * The logged-out affordance glyph — the vector "log in" mark that sits on the
+ * primary plate (sapphire.css 登录键族). Created here, not in index.html, so
+ * the logged-in slot keeps the exact node structure the flicker fix
+ * (neblink.js paintAvatarSlot) relies on. `stroke="currentColor"` ⇒ the ink is
+ * the button's own colour (the primary recipe's white), no new colour value.
+ */
+function ensureLoginGlyph(avatar) {
+  if (avatar.querySelector('.login-glyph')) return;
+  const glyph = document.createElement('span');
+  glyph.className = 'login-glyph';
+  glyph.setAttribute('aria-hidden', 'true');
+  glyph.innerHTML =
+    '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" ' +
+    'stroke-linecap="round" stroke-linejoin="round">' +
+    '<path d="M15 3h4a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2h-4"/>' +
+    '<polyline points="10 17 15 12 10 7"/>' +
+    '<line x1="15" x2="3" y1="12" y2="12"/></svg>';
+  avatar.appendChild(glyph);
+}
+
 function renderAvatar() {
   const avatar = document.getElementById('activity-avatar');
   if (!avatar) return;
   const st = getNeblinkState();
-  const { url: validAvatarUrl, showPhoto } = avatarViewState();
+  const { url: validAvatarUrl, showPhoto, loggedIn: viewLoggedIn } = avatarViewState();
   const logoEl = avatar.querySelector('.activity-avatar-logo');
   const photoEl = avatar.querySelector('.activity-avatar-photo');
   const letterEl = avatar.querySelector('.activity-avatar-letter');
@@ -799,10 +840,27 @@ function renderAvatar() {
   }
   if (letterEl) letterEl.hidden = true; // account avatar replaces the letter
 
+  // ── Logged-out entry form (2026-09-16 login-entry batch) ──
+  // Author's reading: 「未登陆的时候的登陆按钮 很小也很丑」. The logged-out slot
+  // is a LOGIN ENTRY, so it takes the primary control recipe (green / solid /
+  // rounded / three states — sapphire.css 登录键族) instead of a 24px dimmed
+  // logo. Keyed on the shared VIEW state (`viewLoggedIn`, which honours the
+  // last-known-profile cache) so the flash-free photo path is untouched; the
+  // glyph is created lazily, i.e. only where it is used.
+  const loggedOut = !viewLoggedIn;
+  if (loggedOut) ensureLoginGlyph(avatar);
+  avatar.classList.toggle('logged-out', loggedOut);
+  // The white ink of the primary recipe is the existing `.cfg-btn-primary`
+  // declaration (sidebar.css:1162-1170) — same borrow the send-key family
+  // documents, not a new colour value. Only ever present while logged out.
+  avatar.classList.toggle('cfg-btn-primary', loggedOut);
+
   // State styling: paired (logged in) / pairing / logged out.
   avatar.classList.toggle('paired', !!st.loggedIn);
   avatar.classList.toggle('pairing', !!st.pairing);
+  // Tooltip via i18n (this used to write Chinese literals, clobbering the
+  // `activity-avatar → activity.login` mapping in i18n.js on every 10s refresh).
   avatar.title = st.pairing
-    ? 'Pairing…'
-    : (st.loggedIn ? '个人主页' : '登录');
+    ? t('activity.pairing')
+    : (st.loggedIn ? t('activity.profile') : t('activity.login'));
 }
