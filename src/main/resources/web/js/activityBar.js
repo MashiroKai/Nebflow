@@ -438,7 +438,7 @@ function injectLoginModalStyles() {
    lives in the family block, so it can never drift between surfaces. */
 .login-modal-header {
   display: flex; justify-content: space-between; align-items: center;
-  padding: 14px 16px; border-bottom: 1px solid var(--glass-border, rgba(255,255,255,0.05));
+  padding: 12px 16px; border-bottom: 1px solid var(--glass-border, rgba(255,255,255,0.05));
 }
 .login-modal-header h3 { font-size: 15px; margin: 0; color: var(--color-text); font-weight: 600; letter-spacing: -0.01em; }
 .login-modal-close {
