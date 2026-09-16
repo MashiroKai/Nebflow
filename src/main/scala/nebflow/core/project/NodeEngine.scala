@@ -6029,8 +6029,10 @@ object NodeEngine:
     * description 与 `NodeReportTool` 承载，不属本断言域）。**非全局唯一**：agent
     * 种子条件句 `seed/agents/general/system.md:7-10` 自带完整规则文本（promptfix
     * 作者并存终态「规则各留一份」，唯一 seed 面防线，无指向本 val 的指针）；
-    * `PromptSections` 段序 360 = belt+指针；`seed/projects/general/AGENTS.md:8` =
-    * 一行指针（自陈「本文件不复述」）——后二者只承载指针/短句，不承载完整协议。
+    * `PromptSections` 段序 360 = belt+指针；内置 general 项目脚手架的 AGENTS.md
+    * （2026-09-16 作者令摘除内置项目，该种子文件已删 ⇒ 本锚改**符号锚**，不再指
+    * 文件路径）= 一行指针（自陈「本文件不复述」）——后二者只承载指针/短句，不承载
+    * 完整协议。
     * 文本逐字冻结——`TaskBoardInjectionSpec` 的末行/`needs-split` 措辞钉
     * 与 `NodeChainAttributionSpec` 的 `endsWith` 身份钉同挂本 val。 */
   val ProtocolFootnote: String =

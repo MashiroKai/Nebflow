@@ -675,10 +675,11 @@ object GatewayMain extends IOApp:
                                   nebflow.core.project.ProjectActor.ttlScanner(30.seconds).start.void
                                 // 冷启动播种（cold-start seed 批 2026-09-07）：fresh home
                                 // 在 startupMount 前就绪默认最小集（project-dispatcher /
-                                // general agents + 3 系统插件 + projects/general）——通用项目
-                                // 需于挂载前存在，启动即自动挂载、Mail(address="project:general") 直达
-                                // 分发器。幂等 + fail-soft（见 SeedService 注释），失败仅
-                                // 告警不阻塞启动（与 seedDefaults/startupMount 同构）。
+                                // general agents + 3 系统插件）；**项目面零播种**——内置
+                                // general 项目已于 2026-09-16 作者令摘除，干净 home 不再
+                                // 自动挂载任何默认项目（挂载面 = ProjectStore 实有项目，
+                                // 由用户 / Nebula 建）。幂等 + fail-soft（见 SeedService
+                                // 注释），失败仅告警不阻塞启动（与 seedDefaults/startupMount 同构）。
                                 val seedMinimalSet: IO[Unit] = SeedService.ensureSeeded()
                                 // 热重启编排器（hot-restart 批）：触发器无关——WS restart
                                 // 命令（P1）经 sharedResources.hotRestart 触发；REST/桌面菜单

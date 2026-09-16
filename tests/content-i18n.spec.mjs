@@ -44,16 +44,22 @@ const SEED_SERVICE = join(WEB, '..', '..', '..', 'main', 'scala', 'nebflow', 'co
 
 const MIME = { '.html': 'text/html', '.js': 'text/javascript', '.css': 'text/css', '.svg': 'image/svg+xml', '.png': 'image/png', '.json': 'application/json', '.woff2': 'font/woff2' };
 
-// ── 固定参照：本仓（改后树）的 en 字典 —— 期望值与被服务的树解耦 ─────────────
+// ── 固定参照：本仓（改后树）的 en / zh 字典 —— 期望值与被服务的树解耦 ───────
 const EN_REF = (await import(pathToFileURL(join(REPO_WEB, 'js', 'locales', 'en.js')).href)).default;
+const ZH_REF = (await import(pathToFileURL(join(REPO_WEB, 'js', 'locales', 'zh-CN.js')).href)).default;
 
-// ── 默认集 8 条目：现取 seed 真值（禁凭记忆写文案）─────────────────────────
+// ── 默认集条目：现取 seed 真值（禁凭记忆写文案）───────────────────────────
+// 2026-09-16 作者令「移除 general 这个内置项目」：默认集**不再含** `project:` 条目 ⇒
+// 干净 home 零项目脚手架。故本函数不再从 SeedService.scala grep `GeneralProjectName` /
+// `ProjectStore.create(...)`（两处已随摘除面删除）；两端都保留**宽容取值**（可选链），
+// 使同一支探针仍能在摘除前的基线树上跑（判红纪律：「改前不可满足」不被本次摘除破坏）。
+// `project:` 条目**出现即判红**（红锚 `E-no-project-item`，禁恒真：条目真回来必须红）。
 function loadDefaultSet() {
   const manifest = JSON.parse(readFileSync(join(SEED, 'manifest.json'), 'utf8'));
   const ss = readFileSync(SEED_SERVICE, 'utf8');
-  const projectName = ss.match(/GeneralProjectName\s*(?::\s*String\s*)?=\s*"([^"]+)"/)[1];
-  const projectDesc = ss.match(/ProjectStore\.create\(\s*name,\s*workspace,\s*Some\("([^"]*)"\)/)[1];
-  const out = { plugins: [], agents: [], projects: [] };
+  const projectName = ss.match(/GeneralProjectName\s*(?::\s*String\s*)?=\s*"([^"]+)"/)?.[1] ?? null;
+  const projectDesc = ss.match(/ProjectStore\.create\(\s*name,\s*workspace,\s*Some\("([^"]*)"\)/)?.[1] ?? null;
+  const out = { plugins: [], agents: [], projects: [], items: manifest.items };
   for (const item of manifest.items) {
     const [kind, name] = item.split(':');
     if (kind === 'plugins') {
@@ -63,7 +69,8 @@ function loadDefaultSet() {
       const j = JSON.parse(readFileSync(join(SEED, 'agents', name, 'agent.json'), 'utf8'));
       out.agents.push({ id: name, name: j.name, desc: j.description });
     } else if (kind === 'project') {
-      out.projects.push({ id: name, name: projectName, desc: projectDesc });
+      // 摘除后源码面两端皆缺 ⇒ 不猜文案（禁凭记忆写）：留空，由红锚 `E-no-project-item` 判红
+      if (projectName !== null && projectDesc !== null) out.projects.push({ id: name, name: projectName, desc: projectDesc });
     }
   }
   return out;
@@ -76,12 +83,22 @@ const expName = (kind, id, src) => EN_REF[`content.${kind}.${id}.name`] ?? src;
 
 /** 红锚 = 「en 态文案必须随动」的断言；BEFORE 树逐条必须红。
  *  name 槽不入红锚集：默认集条目名是语言中立的 ASCII id（两方言同值），
- *  它作**护栏**（不得被污染），红/绿判别只在可翻译的描述槽上成立。 */
+ *  它作**护栏**（不得被污染），红/绿判别只在可翻译的描述槽上成立。
+ *  2026-09-16 摘除面两条同挂红锚集（同一判红语义：改前树必须红、改后树必须绿）：
+ *  `E-no-project-item` / `E-seed-service-no-general-project`。 */
 const RED_ANCHORS = new Set();
 for (const p of DS.plugins) RED_ANCHORS.add(`E-plugin-desc-${p.id}`);
 for (const a of DS.agents) RED_ANCHORS.add(`E-agent-desc-${a.id}`);
 for (const p of DS.projects) RED_ANCHORS.add(`E-project-desc-${p.id}`);
 RED_ANCHORS.add(`E-detail-desc-${DS.agents[0].id}`);
+RED_ANCHORS.add(`E-no-project-item`);
+RED_ANCHORS.add(`E-seed-service-no-general-project`);
+
+/** 摘除面读数（真值读取，非恒真）：默认集 `project:*` 条目 + 被服务树 SeedService.scala
+ *  的项目种子残留 token（`GeneralProjectName` / `seedProject` / `seed/projects/`）。 */
+const PROJECT_ITEMS = DS.items.filter(i => i.startsWith('project:'));
+const SS_SRC = readFileSync(SEED_SERVICE, 'utf8');
+const SS_RESIDUE = ['GeneralProjectName', 'seedProject', 'seed/projects/'].filter(t => SS_SRC.includes(t));
 
 let currentTheme = 'light';
 const results = [];
@@ -170,7 +187,11 @@ const waitPluginsRendered = (page) => page.waitForFunction(() => {
 }, null, { timeout: 15000 });
 const waitProjectsRendered = (page) => page.waitForFunction(() => {
   const s = document.querySelector('.team-scroll');
-  return !!s && s.isConnected && !!s.querySelector('.project-card') && s.dataset.projectsState === 'ready';
+  if (!s || !s.isConnected) return false;
+  if (s.dataset.projectsState === 'ready') return !!s.querySelector('.project-card');
+  // 默认集零项目（2026-09-16 摘除面）⇒ 面板落空态（dataset.projectsState === 'empty'）
+  // 也是「渲染完成」的合法形态：空态由本探针的负向断言单独判别，不在此隐式放过。
+  return s.dataset.projectsState === 'empty';
 }, null, { timeout: 15000 });
 
 /** 读三处列表渲染点的真文本 + 当前 locale。 */
@@ -183,6 +204,10 @@ const readDom = (page) => page.evaluate(() => {
   };
   return {
     locale: localStorage.getItem('nebflow_locale'),
+    // 项目面板态（2026-09-16 摘除面新增读数）：state ∈ loading|empty|error|ready +
+    // 空态文案（空态 = 默认集零项目的期望形态，见 ② 段）。
+    projectsState: document.querySelector('.team-scroll')?.dataset.projectsState ?? null,
+    projectsEmptyText: firstText(document.querySelector('.team-scroll .team-empty > div')),
     pluginCards: [...document.querySelectorAll('#plugins-content .plugins-card')].map(c => ({
       name: txt(c.querySelector('.plugins-card-name')),
       desc: txt(c.querySelector('.plugins-card-desc')),
@@ -222,6 +247,17 @@ try {
       await page.goto(BASE + '/index.html');
       await page.waitForSelector('#messages-btn', { state: 'attached', timeout: 20000 });
       await sleep(1500);
+
+      // ── ⓪ 摘除面（2026-09-16 作者令「移除 general 这个内置项目」）──────────
+      // 两条红锚：读**被服务的树**的 seed 真值（manifest 条目 + SeedService.scala 原文）。
+      // 改前树（默认集含 `project:general`、源码含 GeneralProjectName/seedProject）逐条红；
+      // 改后树逐条绿。**禁恒真**：条目 / token 任一回来即红（判红纪律不被本次摘除破坏）。
+      ok('E-no-project-item', 'seed 默认集零 `project:` 条目（内置 general 项目已摘除）',
+        PROJECT_ITEMS.length === 0,
+        `project items=${JSON.stringify(PROJECT_ITEMS)} of ${DS.items.length} item(s)`);
+      ok('E-seed-service-no-general-project', 'SeedService.scala 零项目种子残留（GeneralProjectName / seedProject / seed/projects/）',
+        SS_RESIDUE.length === 0,
+        `residue=${JSON.stringify(SS_RESIDUE)}`);
 
       const themeProbe = await page.evaluate(() => ({
         scheme: matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light',
@@ -292,29 +328,48 @@ try {
         restoreOk === DS.plugins.length);
 
       // ══ ② 项目页（三处之二）════════════════════════════════════════════
+      // 两形态（2026-09-16 摘除面）：默认集仍声明 `project:` 条目（摘除前基线树 / 若被加回）
+      // ⇒ 走原卡片随动断言（红锚 E-project-desc-*）；默认集**零项目**（改后树）⇒ 面板必须
+      // 落**空态**且空态文案随方言（`project.empty`）——负向形态，禁恒真：零项目时若面板
+      // 仍渲染出卡片 / 空态文案不随动或露出键名，本段即红。
       await openProjectsPanel(page);
       await waitProjectsRendered(page);
       await setLocale(page, 'en');
       await sleep(1500);
       const projEn = await readDom(page);
       await shot(page, theme, '03-projects-en');
-      for (const p of DS.projects) {
-        const got = projEn.projectCards.find(c => c.name === expName('project', p.id, p.name)) || projEn.projectCards.find(c => c.name === p.name);
-        ok(`E-project-name-${p.id}`, `en 态项目名 = 条目 id（语言中立，两方言同值）`,
-          !!got && got.name === expName('project', p.id, p.name), `got=${JSON.stringify(got?.name)}`);
-        ok(`E-project-desc-${p.id}`, `en 态项目描述随动（${p.id}）`,
-          !!got && got.desc === expDesc('project', p.id, p.desc),
-          `got=${JSON.stringify(got?.desc)} want=${JSON.stringify(expDesc('project', p.id, p.desc))}`);
+      if (DS.projects.length > 0) {
+        for (const p of DS.projects) {
+          const got = projEn.projectCards.find(c => c.name === expName('project', p.id, p.name)) || projEn.projectCards.find(c => c.name === p.name);
+          ok(`E-project-name-${p.id}`, `en 态项目名 = 条目 id（语言中立，两方言同值）`,
+            !!got && got.name === expName('project', p.id, p.name), `got=${JSON.stringify(got?.name)}`);
+          ok(`E-project-desc-${p.id}`, `en 态项目描述随动（${p.id}）`,
+            !!got && got.desc === expDesc('project', p.id, p.desc),
+            `got=${JSON.stringify(got?.desc)} want=${JSON.stringify(expDesc('project', p.id, p.desc))}`);
+        }
+      } else {
+        ok(`G-projects-empty-state`, '默认集零项目 ⇒ 项目面板落空态（state=empty、零项目卡片）',
+          projEn.projectsState === 'empty' && projEn.projectCards.length === 0,
+          `state=${projEn.projectsState} cards=${projEn.projectCards.length}`);
+        ok(`G-projects-empty-en`, 'en 态空态文案 = en 译值（project.empty，禁键名/禁占位符）',
+          projEn.projectsEmptyText === EN_REF['project.empty'],
+          `got=${JSON.stringify(projEn.projectsEmptyText)} want=${JSON.stringify(EN_REF['project.empty'])}`);
       }
       await setLocale(page, 'zh-CN');
       await sleep(1500);
       const projZh = await readDom(page);
-      const projRestore = DS.projects.every(p => {
-        const got = projZh.projectCards.find(c => c.name === p.name);
-        return got && got.desc === p.desc;
-      });
-      ok('R-projects-restore', '切回 zh-CN 后项目卡片文案恢复服务端原值', projRestore,
-        JSON.stringify(projZh.projectCards.map(c => c.desc)));
+      if (DS.projects.length > 0) {
+        const projRestore = DS.projects.every(p => {
+          const got = projZh.projectCards.find(c => c.name === p.name);
+          return got && got.desc === p.desc;
+        });
+        ok('R-projects-restore', '切回 zh-CN 后项目卡片文案恢复服务端原值', projRestore,
+          JSON.stringify(projZh.projectCards.map(c => c.desc)));
+      } else {
+        ok(`G-projects-empty-zh`, 'zh-CN 态空态文案 = zh 译值（两方言逐条对照，非恒真）',
+          projZh.projectsEmptyText === ZH_REF['project.empty'],
+          `got=${JSON.stringify(projZh.projectsEmptyText)} want=${JSON.stringify(ZH_REF['project.empty'])}`);
+      }
 
       // ══ ③ agent 详情面（三处之三：agentManager renderAgentDetail）═══════
       await openPluginsPanel(page);
