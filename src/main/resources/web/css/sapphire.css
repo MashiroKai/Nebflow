@@ -482,15 +482,17 @@
      （安静文本链档亦随回环摘除 —— 该档本批唯一的宿主是新增的「没看到登录页？」
      重开链，该新增 affordance 经复核裁定越界后已摘除，故档位登记与其消费方声明
      同批退役；族内现有档位 = 主键 + 次键。）
-   墨色 = 主键成员分**两条既有路径**承接白墨，**两路同值、零新增色值**：
+   墨色 = 主键成员分**两条既有路径**承接白墨，**两路同值、零新增色值、零新增 token**：
      · `.login-modal-btn` —— 带既有 `cfg-btn-primary` 类承接（sidebar.css:1162-1170
        的主操作白墨声明；与发送键族 :292-296 同一做法），本块不复制该声明；
-     · `.fm-login-btn` —— 宿主 JS 在本批禁触碰面内（不得自扩面、不得改类名）⇒ 由本
-       文件 `--color-primary-ink` token 承接**同一白墨**（token 值 = 既有白墨的同一
-       色，定义处见下；偏离登记见本批报告 §偏离）。
+     · `.fm-login-btn` —— 宿主 JS 在本批禁触碰面内（不得自扩面、不得改类名）⇒ 直接引用
+       **既有主操作墨色单源 token `--btn-primary-ink`**（btnsweep 批落地，本文件 :822，
+       值逐字取自 sidebar.css:1166 的同一白墨；该 token 的既有消费方 = `.fm-gs-save` /
+       `.fm-req-accept` :1081/:1098）。⇒ 本族**不新增 token、不新增字面量**
+       （机制 + 登记见报告 §偏离）。
    🔴 **到达面加固（2026-09-16 加性并 main 后新增；机制 + 登记见报告 §冲突）**：
-     本批开工后 `btnsweep`（按钮方案 A 铺开批）先落地 main（`9b28bbf6d`），其块尾
-     （本文件 :930-941 区）以 **`button.glass-control` (0,1,1)** 给「未单列的面板键」
+     本批开工后 `btnsweep`（按钮方案 A 铺开批）先落地 main（`9b28bbf6d`），其块
+     （本文件 :954-1016）以 **`button.glass-control` (0,1,1)** 给「未单列的面板键」
      铺**次操作档**（`--btn-secondary-bg: transparent` + 描边 + 次档墨）。四枚
      `.fm-login-btn` 的宿主标记 = `button.glass-control fm-login-btn` ⇒ **被该毯式
      规则命中**，而 (0,1,1) > 本族主键块 (0,1,0) ⇒ 实测四键 rest 变透明底 + 次档墨
@@ -527,24 +529,21 @@
        `:is(…):disabled` (0,2,0) 的墨色覆盖（禁用态走族内色表达，与面板键同相）；
      · 次键块 (0,2,0)/(0,3,0) 声明在主键块**之后** ⇒ 同档平局由次键胜出（档位分明）；
        加固选择器不匹配次键 ⇒ 该胜负关系不受加固影响（逐值读数在案）。 */
-:root {
-  /* 主操作白墨（2026-09-16 loginfix 批）：值 = 既有 `.cfg-btn-primary` 白墨声明
-     （sidebar.css:1166）的**同一色**，只为让**无法带类**的族成员
-     （`.fm-login-btn`，宿主 JS 在禁触碰面内）承接同一墨色 —— 不引入新色。
-     写法：此值按 CSS 关键字书写（等价于既有白墨声明），本批机械零字面量门线
-     （`git diff <base>..HEAD -- src/main/resources/web/css | grep -E
-     '^\+.*(#[0-9a-fA-F]{3,6}\b|rgba?\()'` = 0 行）因此保持 0 行；偏离登记见报告。 */
-  --color-primary-ink: white;
-}
+/* 🔴 本族**不另立墨色 token**：`.fm-login-btn` 路径直接引用既有主操作墨色单源
+   `--btn-primary-ink`（btnsweep 批落地，本文件 :822；消费方 `.fm-gs-save` /
+   `.fm-req-accept` :1081/:1098）⇒ 零新增 token、零新增字面量（机械零字面量门线
+   `git diff main...HEAD -- src/main/resources/web/css | grep -E
+   '^\+.*(#[0-9a-fA-F]{3,6}\b|rgba?\()'` 保持 0 行）。登记见报告 §偏离。 */
 
 .fm-login-btn,
 button.glass-control.fm-login-btn {
   /* 墨色单条（族内第二路径，见本族头注）：宿主 JS 在禁触碰面内 ⇒ 不带
-     `cfg-btn-primary` 类，由本 token 承接**同一白墨**（值 = sidebar.css:1166 的同一色）。
+     `cfg-btn-primary` 类，直接引用既有主操作墨色单源 token `--btn-primary-ink`
+     （值 = sidebar.css:1166 的同一白墨；本族不新增 token、不新增字面量）。
      声明在主键块之前 ⇒ 禁用态墨色仍由 `:is(…):disabled` (0,2,0) 覆盖。
      第二选择器 = 到达面加固（特异度载体，(0,2,1) > 铺开批的 `button.glass-control`
      (0,1,1)），机制见新头注「🔴 到达面加固」；🔴 两选择器共用**同一条声明**，零复制。 */
-  color: var(--color-primary-ink);
+  color: var(--btn-primary-ink);
 }
 :is(.fm-login-btn, .login-modal-btn),
 button.glass-control.fm-login-btn {
