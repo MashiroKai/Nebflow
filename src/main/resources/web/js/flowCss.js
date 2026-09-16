@@ -103,6 +103,17 @@ export const FLOW_CSS = `
 
 .team-empty { display: flex; align-items: center; justify-content: center; width: 100%; height: 100%; min-height: 240px; flex-direction: column; gap: 8px; }
 .team-empty .hint { font: 400 11px -apple-system, sans-serif; color: var(--color-text-muted); opacity: 0.6; }
+/* 空态 CTA（方向 B 一键引导）——**只给布局与排版**：材质（fill/blur/边框/阴影/字色/四态）
+   一律继承现行单源 .glass-control（sapphire.css:147 基类 + button.glass-control 四态），
+   本文件刻意不声明任何背景/边框/阴影/颜色属性（避免以 class 特异性压过单源 ink）。
+   ⚠ 本段在 FLOW_CSS 模板串内 ⇒ 注释里禁用反引号（会提前终止模板串，checkJs 门禁会红）。 */
+.team-empty .team-empty-cta {
+  display: inline-flex; align-items: center; gap: 6px;
+  height: 32px; padding: 0 16px; border-radius: 10px; margin-top: 4px;
+  font: 500 12.5px -apple-system, sans-serif;
+}
+.team-empty .team-empty-cta svg { width: 14px; height: 14px; }
+.team-empty .team-empty-cta-note { max-width: 320px; text-align: center; }
 .dag-empty { display: flex; align-items: center; justify-content: center; width: 100%; height: 100%; min-height: 240px; flex-direction: column; gap: 8px; }
 .dag-empty .hint { font: 400 11px -apple-system, sans-serif; color: var(--color-text-muted); opacity: 0.6; }
 
