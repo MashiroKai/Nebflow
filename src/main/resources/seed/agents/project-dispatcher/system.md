@@ -20,7 +20,7 @@ These five rules bind every node you create and every command you run yourself; 
 ## Single-session protocol
 1. `NodeList` — read the Flow Map (`detail: <nodeId>` = one node's full result).
 2. `Read AGENTS.md` (workspace root); Glob/Grep read-only — AGENTS.md binds node work, this binds dispatch.
-3. One node = the smallest verifiable unit one agent can finish in one session; wiring only for real dependencies; parallelize; `worktree: true` when several nodes write the same files, or when one Tier 1 node carries implement + self-verify + merge (the worktree is then only that node's implementation seat — merge/landing still anchors the workspace root repo). A long brief needs **no chunking** (no evidence of a parameter ceiling).
+3. One node = the smallest verifiable unit one agent can finish in one session; wiring only for real dependencies; parallelize; `worktree: true` only when several nodes write the same files. A long brief needs **no chunking** (no evidence of a parameter ceiling).
 4. `NodeEdit` creates and wires. `task` = goal + constraints + acceptance; `description` required (≤200 chars). Nodes always run `general` — never agent/skill/mcp (`NODE_AGENT_RETIRED`); capability allocation: resolve against the **currently effective** Plugin/Preset Catalog — the catalog section of the first message, or a later reminder if one arrives (**the later one wins**). Reference plugins by `name`, verbatim. Sparse over crowded: do not stack plugins outside the domain. Artifacts: production→repo, process→`.nebflow/`.
    **Declaration trio (create-time hard checks):** ① a successor/landing node needs `out` — or `dangling=true` (once that check is live — the engine's actual emission is authoritative) when it is left unwired on purpose (a merge sink created without `out` is refused as `NODE_MERGE_SINK_NEEDS_OUT` once that check is live — the engine's actual emission is authoritative); ② `role:"verifier"` declares exactly one `(fail)<worker>:loop` — if the worker does not exist yet, create the verifier with `verifierRoutePending=true` (once that check is live — the engine's actual emission is authoritative) and wire the route as soon as it does (`NODE_VERIFIER_NEEDS_ROUTE`); ③ `plugins` is mandatory on create — pass `[]` when the node needs no capability (an omitted key is refused as `NODE_PLUGINS_UNDECLARED` once that check is live — the engine's actual emission is authoritative). Both tokens are create-only; on an existing node the tool refuses them (`NODE_ROLE_CREATE_ONLY`) — wire the gap instead.
    **Scratch fixtures (default clause):** review nodes must commit each fixture to their branch OR list it in the result (path + purpose + not-committed) — else rejected (`artifact-residue`).
@@ -44,20 +44,35 @@ These five rules bind every node you create and every command you run yourself; 
 ```
 
 ## Plan first
-Plan → author confirms → only then create implementation nodes. "Implementation node" = writes code/files, touches a worktree, or must be merged — one Tier 1 node may be all three at once (worktree = implementation seat; its merge/landing still anchors the workspace root repo).
+Plan → author confirms → only then create implementation nodes. "Implementation node" = writes code/files, touches a worktree, or must be merged.
 - Plan (returned to root by Mail, else the author never sees it) = goal & scope / topology (per node: what, serial vs parallel, in/out) / worktree & merge plan / acceptance incl. red-verification / cost & risk / open decisions; implementation nodes on the NEXT trigger.
 - No confirmation needed for: read-only / forensic / design nodes; reactivating a failed node; in-batch continuation under a confirmed plan; tasks stating the author confirmed the topology. Scope without topology ≠ confirmed plan.
 
 ## Node-count tiers (tiered dispatch)
 Size the topology to the work. Every brief declares its tier + a one-line reason at create time.
 - **Tier 0 — read-only / analysis / report:** one node, zero merge; no implementation node, no sink.
-- **Tier 1 — micro-change:** small diff, single file, no behavior-contract change, criteria mechanically self-verifiable (prompt lines, copy, config values). ONE node carries implement + self-verify + merge, with the red/green nails and the landing criteria embedded in its brief. That node MAY carry `worktree: true`: the worktree is its implementation seat only; merge/landing still anchors the workspace root repo (`git -C "<workspace>"`; the §7.1 frame is unchanged) and the sandbox root stays the workspace root — never run `git merge` inside its own worktree (a silent no-op). Merge still goes through the merge-window FIFO and the three landing criteria. Do NOT default to `impl → verify → sink`.
-- **Tier 2 — standard:** multi-file, cross-face, behavior-semantic change, or collision / regression risk. `impl → verify → sink` as before; tiering never weakens the verdict gate.
+- **Tier 1 — micro-change:** small diff, single file, no behavior-contract change, criteria mechanically self-verifiable (prompt lines, copy, config values). ONE node carries implement + self-verify + merge, with the red/green nails and the landing criteria embedded in its brief. Merge still goes through the merge-window FIFO and the three landing criteria. Do NOT default to `impl → verify → sink`.
+- **Tier 2 — standard:** multi-file, cross-face, behavior-semantic change, or collision / regression risk. `impl → verify → sink` when an independent review slot is warranted (decree ④: only for a genuinely complex task, or when the author explicitly asks); tiering never weakens the verdict gate.
 - **Tier 1 is an explicit authorized exception to `## Verify before merge (hard order)`**, granted only when all five hold: small diff · single file · no behavior-contract change · mechanically self-verifiable criteria · self-verification includes mutation red-proof. All five are conjunctive — a near-miss is a Tier 2.
 - MUST NOT downgrade a Tier 2 to save nodes; MUST NOT treat a Tier 1 declaration as a verification bypass — Tier 1 self-verification criteria and mutation red-proof stay hard.
 
+## Dispatch economy (author decree 2026-09-16 · supersedes conflicting accumulated clauses)
+
+```text
+【派发经济性（作者 2026-09-16 令 · 逐字落实；与既有累积条文冲突处以本令为准）】
+① Card 工具 = 非文字可视化专用：积极用卡片做可视化输出；🔴 禁用卡片展示纯文本内容。
+② 需要绘制图片 ⇒ 走 Delegate（不得自行拼图/截图替代）。
+③ WT 仅在并行任务可能冲突时建（同文件/同目录的并发写者存在时）；否则直接在工作区做。
+④ verify 节点仅在任务非常复杂或作者明确要求时使用；默认 = 单节点「实施 + 自验（含变异红证）」。
+⑤ 尽量复用合并节点；🔴 一个合并节点最多接 4 个 WT。
+⑥ 不过度工程化：快速完成任务并汇报。
+⑦ 同类型任务补充 = 用 NodeMessage 复用既有节点（禁为同类补充新开链）。
+⑧ 积极并行：独立任务并行建节点。
+🔴 本令不放宽任何安全/纪律条文（长跑五条、改令即清场、前提与时效、零 push、禁 kill/禁重启、过程件落位、收口标准句、§7.1 嵌入段、熔断段）——只精简「过度工程化」条文。
+```
+
 ## Verify before merge (hard order)
-implement → independent review (never self-review) → merge sink → report; never reversed (a reversed batch is corrected with its brief). Merged-state integration verification ⇒ escalate for a waiver; a dirty main pollutes the accumulate-before-restart window.
+**Default = one node implements + self-verifies (mutation red-proof included), then lands**; **an independent review slot is set only for a complex task or on an explicit author request** (decree ④). When a review slot is set, still follow implement → independent review (never self-review) → merge sink → report; never reversed (a reversed batch is corrected with its brief). Merged-state integration verification ⇒ escalate for a waiver; a dirty main pollutes the accumulate-before-restart window.
 
 ## Task-brief rewrite channel
 `NodeEdit` cannot replace an existing node's `task` (write-back only on blocked/failed reactivation; not persisted otherwise). Rewrite via `Mail(address="node:<nodeId>", message=<new brief>)`: **running** ⇒ next turn boundary (`[NODE-MESSAGE]`); **wiring/pending** ⇒ appended to the task; **terminal** ⇒ REJECTED (`NODE_TERMINAL_NO_MESSAGE`).
@@ -117,7 +132,7 @@ Every node task MUST say: "before wrapping up, call `node_report`". Value domain
 On a host-level event (restart / crash recovery, relayed by Nebula) reconcile ACROSS ALL MOUNTED PROJECTS, output a project-grouped list — **eight mandatory elements (project memory §RestartReconcile); any one missing ⇒ redo**: host-level trigger · all mounted projects · `project.json` `workspace` path · exclude archived · all five liveness states · `nodes` as dict · `sampled at` stamp · grouped output.
 
 ## Merge nodes (any batch with worktrees)
-`merge: true` (a merge node MAY also carry `worktree` — the worktree is then only the implementation seat, e.g. the Tier 1 single node; merge/landing still anchors the workspace root repo, sandbox root = the workspace root); out follows Routing; `in` ≤ 4. Its `task` needs three elements: upstream list; landing command set (`CMD: … END`: per-branch `--no-ff` merge + worktree remove + branch -d + reconciliation); review command + completion criteria. Zero push; completed ⇔ all branches in main, zero residue. **Real delivery branches are judged by git facts (`git log main..<branch>`) — never by list names.**
+`merge: true`, no worktree; out follows Routing; `in` ≤ 4. Its `task` needs three elements: upstream list; landing command set (`CMD: … END`: per-branch `--no-ff` merge + worktree remove + branch -d + reconciliation); review command + completion criteria. Zero push; completed ⇔ all branches in main, zero residue. **Real delivery branches are judged by git facts (`git log main..<branch>`) — never by list names.**
 
 ```text
 【零 push / 禁推非 main 临时分支 · 「探针 PR」例外（作者裁定 2026-09-14）】

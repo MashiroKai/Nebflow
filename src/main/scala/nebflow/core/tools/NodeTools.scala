@@ -993,7 +993,7 @@ object NodeEditTool extends Tool:
         ).asJson, "description" -> "Plugin package name(s) allocated to this node (§B.4) — THE capability mechanism (no per-node agent): skills injected into the first message + plugin MCP servers + builtin tool grants. Replace-on-provide (like deps). Names must exist in the Plugin Catalog (a listed package is ready to use); a blocked (deny-listed) package is refused, and a package switched off for dispatch by the author is refused for NEW dispatches only".asJson),
         "worktree" -> Json.obj("type" -> "boolean".asJson, "description" -> "Create-time only: true = isolated git worktree auto-created at .nebflow/worktrees/<derived-from-node-name> (same-name branch, baseline = main HEAD; failure rejects the NodeEdit). false/omitted = workspace direct-run. Refused on edits".asJson),
         "preset" -> Json.obj("type" -> "string".asJson),
-        "merge" -> Json.obj("type" -> "boolean".asJson, "description" -> "Merge/collection node (batch landing sink, create-only): triggers only when ALL upstreams completed (in-barrier); an upstream failure converts this node to blocked (category=upstream-incomplete) instead of the collect placeholder-start. MAY carry 'worktree' (implementation seat — allowed since 2026-09-17): landing/merging must still be anchored at the workspace root repo via absolute paths (git -C <workspace> …) — the node's shell cwd is the sandbox root = workspace, so a bare git merge run inside its own worktree is a SILENT NO-OP and never lands on main; task should embed the upstream branch/worktree list + landing command set. REQUIRES 'in' (≥1 existing upstream id) on create — zero-upstream merge is rejected (NODE_MERGE_REQUIRES_UPSTREAM): create the upstreams first, then this node with in=<ids>".asJson),
+        "merge" -> Json.obj("type" -> "boolean".asJson, "description" -> "Merge/collection node (batch landing sink, create-only): triggers only when ALL upstreams completed (in-barrier); an upstream failure converts this node to blocked (category=upstream-incomplete) instead of the collect placeholder-start. Must NOT carry 'worktree' — a merge node lands on the workspace root repo (sandbox root = workspace, .git writable); task should embed the upstream branch/worktree list + landing command set. REQUIRES 'in' (≥1 existing upstream id) on create — zero-upstream merge is rejected (NODE_MERGE_REQUIRES_UPSTREAM): create the upstreams first, then this node with in=<ids>".asJson),
         "notify" -> Json.obj("type" -> "string".asJson,
           "description" -> ("Notification policy for this node's COMPLETED event (unset = legacy resolution; no create-time default). " +
             "\"silent\" = nobody is notified (Flow Map + persisted result only); \"dispatcher\" = the project dispatcher is notified, NOT the root; \"root\" = the root sees it. " +
@@ -1436,10 +1436,14 @@ object NodeEditTool extends Tool:
               IO.pure(Left(ToolError(
                 s"Node '$nodename' must declare an input side — 'task' (entry semantics: starts running on create) or 'in' (barrier upstream). " +
                   "Out-only relay nodes are no longer supported. (EMPTY_NODE_CONNECTION)")))
-            // merge 校验①（merge-node 批 20260905 §权限选型③）**已放开**（2026-09-17 作者裁定，
-            // 板项 #667 ③）：merge=true 可与 worktree=true 并存——worktree 仅作**实施位**，落地/
-            // 合并仍锚 workspace 根仓（沙箱根自 2026-09-05 21:05 起恒 = workspace，原 EPERM 理由
-            // 已过期）。worktree 派生与 WORKTREE_CREATE_ONLY 均不动。
+            // merge 校验①（merge-node 批 20260905 §权限选型③；worktree 布尔化后
+            // contains(true) 语义）：合并节点不配 worktree——落地收口在 workspace 根仓
+            // 执行，沙箱根必须 = workspace（.git 在根内可写）；配 worktree=true 则
+            // 沙箱根 = worktree 目录，主仓 .git 在根外 → git 变更 EPERM。
+            else if merge && worktree.contains(true) then
+              IO.pure(Left(ToolError(
+                "merge=true (batch landing sink) must NOT carry 'worktree' — a merge node lands on the workspace " +
+                  "root repo; its sandbox root must be the workspace itself so .git is writable. Drop 'worktree'.")))
             // merge 校验②（mount-enforce 批 20260905，作者裁定「节点不允许空挂载」）：
             // merge=true 必须 ≥1 上游（in 非空）——合并节点靠上游 completed 投递清
             // in-barrier 触发（deliverOut→startNode），零上游=可触发点永不到达=空挂
