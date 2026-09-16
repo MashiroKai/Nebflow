@@ -383,6 +383,12 @@ export default {
   'contacts.createGroup': 'New Group',
   'contacts.createGroupTitle': 'Start a group chat',
   'contacts.createGroupName': 'Group name',
+  // Create-group panel skeleton, 4 sections (2026-09-16 visual rework): input
+  // placeholder example / list section label / empty-state guidance. Landed in
+  // the same batch as zh-CN (no dead keys).
+  'contacts.createGroupNameHint': 'e.g. Project team',
+  'contacts.createGroupMembers': 'Select members',
+  'contacts.createGroupEmpty': 'No friends to invite yet — add friends under “New Friends” first',
   'contacts.createGroupNameRequired': 'Group name is required',
   'contacts.createGroupSelected': '{n} selected',
   'contacts.createGroupCap': 'Groups are limited to 50 members',

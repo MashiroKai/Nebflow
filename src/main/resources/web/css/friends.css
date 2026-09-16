@@ -1263,9 +1263,49 @@ button.fm-req-decline:focus-visible {
 .fm-gs-picker { display: flex; flex-direction: column; gap: 8px; margin-top: 6px; }
 .fm-gs-picker .fm-msg-btn { align-self: flex-start; }
 
-/* 建群对话框（fm-modal 骨架复用；好友多选列表） */
-.fm-pick-modal { width: 380px; max-width: 92vw; display: flex; flex-direction: column; gap: 10px; }
-.fm-pick-count { font-size: 11px; color: var(--color-text-muted, #888); }
+/* ══ 建群对话框（fm-modal 骨架复用；好友多选名册）════════════════════════════
+   2026-09-16 视觉重做（作者 07:46 令：「至少群聊面板很丑」）。本段 = 该面板
+   **唯一 CSS 落点**；骨架四段 = ① 标题区（`.fm-modal-header`，既有骨架）→
+   ② 输入区 / ③ 列表区（`.fm-pick-body` 内的两个 `.fm-gs-section`）→
+   ④ 操作区（`.fm-pick-foot`）。②③ 的章节标签 / 输入行取**群设置抽屉同族**类名
+   （`.fm-gs-section` / `.fm-gs-title` / `.fm-gs-title-row` / `.fm-gs-rename` /
+   `.fm-gs-rename-input`）⇒ 两面板层次同源（禁另起一套间距 / 字号档）。
+   🔴 零新增色值字面量：本段新增声明全部引用既有 token（`--sapphire-tint-*` /
+   `--sapphire-edge-*` / `--glass-*` / `--color-*`），无十六进制、无函数式色值。
+   🔴 作用域收窄（禁回归）：`.fm-pick-list` / `.fm-pick-row` / `.fm-pick-tick` 同时
+   是**群设置抽屉**「添加成员」选择面的载体 ⇒ 这三条基线规则一字不改（本段内仍是
+   原文），本批全部以 `.fm-pick-modal` 前缀收窄作用域，抽屉侧读数不变（报告 §⑤）。 */
+.fm-pick-modal {
+  width: 420px;
+  max-width: 92vw;
+  height: auto;
+  max-height: 80vh;
+  display: flex;
+  flex-direction: column;
+  gap: 0;
+}
+/* 已选人数徽标：pill 形态，与 `.fm-group-tag` / `.fm-trust-badge` 同族（sapphire
+   淡染 + 描边 + tabular-nums）；0 人档保持中性 muted（未选 = 无选中事实，不抢主色）。 */
+.fm-pick-count {
+  align-self: center;
+  display: inline-flex;
+  align-items: center;
+  padding: 1px 8px;
+  border: 1px solid var(--glass-etched-border);
+  border-radius: 9999px;
+  background: var(--glass-etched-bg);
+  color: var(--color-text-muted);
+  font-size: 11px;
+  font-weight: 500;
+  line-height: 1.6;
+  font-variant-numeric: tabular-nums;
+  transition: background 0.15s ease, border-color 0.15s ease, color 0.15s ease;
+}
+.fm-pick-count.on {
+  border-color: var(--sapphire-edge-strong);
+  background: var(--sapphire-tint-10);
+  color: var(--color-text);
+}
 .fm-pick-list {
   display: flex;
   flex-direction: column;
@@ -1297,7 +1337,81 @@ button.fm-req-decline:focus-visible {
 }
 .fm-pick-row.on .fm-pick-tick { visibility: visible; }
 .fm-pick-tick svg { width: 14px; height: 14px; }
-.fm-pick-foot { display: flex; justify-content: flex-end; }
+
+/* ── 建群面板作用域收窄层（`.fm-pick-modal` 前缀；上方基线规则不动）────────── */
+/* 主体滚动区：输入区 + 列表区同处一个滚动容器（单一滚动条，禁嵌套双滚动） */
+.fm-pick-body {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  padding: 2px 16px 12px;
+}
+/* 列表区行几何 = 联系人面板 `.fm-row` 同族值（gap 10px / padding 7px 10px /
+   radius 10px；头像仍 36px 档）⇒ 名册行高与联系人面板一致。 */
+.fm-pick-modal .fm-pick-list {
+  max-height: none; /* 滚动上移到 .fm-pick-body（单一滚动容器） */
+  min-height: 132px;
+  border-radius: 10px;
+  gap: 2px;
+}
+.fm-pick-modal .fm-pick-row {
+  gap: 10px;
+  padding: 7px 10px;
+  border-radius: 10px;
+  transition: background 0.15s ease, box-shadow 0.15s ease;
+}
+/* 选中态（判别面三重可辨，**禁只靠颜色微差**）：① 行底 sapphire 淡染
+   ② 整行内描边环 ③ 行尾勾选框「空心圈 → 淡染填充 + 勾形出现」。 */
+.fm-pick-modal .fm-pick-row.on {
+  background: var(--sapphire-tint-10);
+  box-shadow: inset 0 0 0 1px var(--sapphire-edge-strong);
+}
+/* 勾选框：常显（未选 = 空心圈，本身就是「可勾」的可读信号），18px 圆档；
+   勾形颜色沿基线 `.fm-pick-tick` 的 sapphire 档继承（不重复声明）。 */
+.fm-pick-modal .fm-pick-tick {
+  visibility: visible;
+  width: 18px;
+  height: 18px;
+  align-items: center;
+  justify-content: center;
+  border: 1.5px solid var(--sapphire-edge-strong);
+  border-radius: 9999px;
+  box-sizing: border-box;
+  transition: background 0.15s ease, border-color 0.15s ease;
+}
+.fm-pick-modal .fm-pick-tick svg { width: 12px; height: 12px; opacity: 0; }
+.fm-pick-modal .fm-pick-row.on .fm-pick-tick {
+  background: var(--sapphire-tint-15);
+  border-color: var(--glass-etched-border-focus);
+}
+.fm-pick-modal .fm-pick-row.on .fm-pick-tick svg { opacity: 1; }
+/* 空态引导（0 人可邀）：可读引导文案（i18n `contacts.createGroupEmpty`） */
+.fm-pick-modal .fm-pick-list .fm-empty { padding: 26px 16px; }
+/* 创建键尺寸档：材质与四态（rest / hover / active / disabled）由 `sapphire.css`
+   的 Glass 主键 `:is()` 族**单源**承载（与发送键族同一条规则 ⇒ 禁用语义零复制）。
+   本行只给本面字号 = 12px（= 抽屉动作键 `.fm-gs-action` 既有字号档），几何沿用
+   族的 10px 圆角 + 5px 12px 内距 ⇒ 零新增几何档、零状态声明。
+   登记偏离（1 条，机械读数见本批报告 §⑥）：本键**不带 `.cfg-btn`**（它不是表单
+   `.cfg-btn` 家族的表单键，family 成员里也只有 ③ 带该类），故 hover / active 态
+   的 `color` 恒为 `cfg-btn-primary` 白墨；带 `.cfg-btn` 的族成员会在这两态被
+   legacy `.cfg-btn:hover { color: var(--color-frame-text-bright) }`（sidebar.css）
+   改成 near-black —— 既有行为，本批**不复制**（复制 = 把绿底上的深墨带进新面板）。
+   ⇒ §⑥ 四态逐值对照里只有 hover/active 的 `color` 一项刻意不等；
+   disabled / rest / 掉线 三档**逐值全等**（含 `color`）。 */
+.fm-create-submit { font-size: 12px; }
+/* 操作区：主键右贴边 + 与主体分段的分隔线（与抽屉各段同族的「段」语义） */
+.fm-pick-foot {
+  flex-shrink: 0;
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 8px;
+  padding: 12px 16px;
+  border-top: 1px solid var(--glass-etched-border);
+}
 
 /* 群邀请区（联系人面板；行结构复用 fm-req-row，标题复用 fm-req-group） */
 .fm-group-invites { animation: fm-rise-in 200ms ease-out both; }

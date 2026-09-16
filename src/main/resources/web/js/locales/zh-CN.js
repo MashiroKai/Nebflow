@@ -245,6 +245,11 @@ export default {
   'contacts.createGroup': '发起群聊',
   'contacts.createGroupTitle': '发起群聊',
   'contacts.createGroupName': '群名称',
+  // 建群面板骨架四段（2026-09-16 视觉重做）：输入区示例占位 / 列表区章节标签 /
+  // 空态引导。三键与 en 同批落地（禁死键）。
+  'contacts.createGroupNameHint': '例如：项目讨论组',
+  'contacts.createGroupMembers': '选择成员',
+  'contacts.createGroupEmpty': '暂无可邀请的好友，先在「新的朋友」里添加好友',
   'contacts.createGroupNameRequired': '群名称不能为空',
   'contacts.createGroupSelected': '已选 {n} 人',
   'contacts.createGroupCap': '群成员最多 50 人',
