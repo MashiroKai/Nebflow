@@ -123,7 +123,19 @@ class Phase2dSkillCatalogSpec extends CatsEffectSuite:
         workspace = ws.toString,
         rootSessionId = "nebula-root",
         projectName = name,
-        emitEvent = (_, _, _) => IO.unit
+        emitEvent = (_, _, _) => IO.unit,
+        // noderpt 批 A 段（2026-09-11）：**完成门腿 2** 生产默认 **开**
+        // （`Defaults.NodeReportCompletionHold=true`；判定点 `NodeEngine.scala:2948`
+        // `case None if reportGateHoldEnabled && !anchoredBlocked`）——节点交棒
+        // （桥收到 `AgentEvent.Completed`）而**未**调 `node_report` 时**不终态化**，
+        // 节点保持 Running（`NodeEngine.scala:2883-2886` 逐字）。本 spec 的主题是
+        // 「skill 目录停注 / wire 层工具描述」，`waitUntil(status == Completed)`
+        // （`:183-184`，载体 `:158/:154`）只是取首条 `LlmRequest` 的**前置**——腿 2
+        // 开着 ⇒ 该条件永不满足 ⇒ 60s 到点必假红。
+        // 故**显式关腿 2（仅测试面注入、零生产改动）**：14 个兄弟 spec 同款写法
+        // （`MountedProjectsWiringSpec.scala:108`、`CompletionGateSpec.scala:182` …）；
+        // 腿 2「默认开」的行为本体验由 `NodeReportReminderSpec` 覆盖。
+        reportGateHold = Some(false)
       )
       pd = ProjectDef(name = name, workspace = ws.toString, agentFile = (ws / "AGENTS.md").toString, createdAt = System.currentTimeMillis())
       rt = ProjectRuntime(pd, store, engine, system, res, None)
