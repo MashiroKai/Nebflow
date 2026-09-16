@@ -1106,9 +1106,17 @@ button.fm-req-decline:focus-visible {
    复用既有 token（--sapphire / --glass-control-bg-hover / --color-text*），
    零新色（先例：fm-trust-badge 的 alpha 变体口径）。 */
 
-/* ── 群成员头像九宫格（G-A 方形圆角 · 方案 §3.2.1 / 决策卡 A）──────────
-   几何 = 两条规则（**行高 = 容器高 ÷ 行数**、**某行格宽 = 容器宽 ÷ 该行格数**）
-   ⇒ 等高行（flex:1 1 0）+ 等分格（flex:1 1 0），禁内联像素算术。
+/* ── 群成员头像大球（方向 C「行数最少化」· 解算器移植）───────────────────
+   几何 = 取证批解算器 `ga-builder.js::__gaSolve('rows', n)` 的**解**（运行期零解算）：
+     · 大球 = ⌀size **圆形容器**（`border-radius:50%` + 1px 描边）；可用半径
+       `R = size × 0.45`（40 档 = 18px = 内容圆 19px 内缩 1px 保险边）
+     · 小球 = **圆形**；球径 `d(n)` 由「**行数最少化** + 每行不越出**该行弦长** +
+       相邻球缝 ≥ 1.5px」三条约束取**最大**解出（逐档解见下方 `.fm-avgrid-n<n>` 表）
+     · 行模式（每行枚数）= `friendGroups.AVATAR_ROW_PATTERNS`（同一解题的另一半）
+     · 球径用 `cqw`（= 本容器**内容盒**宽度的 1%）表达 ⇒ 尺寸档 40/64/96 自动等比；
+       缝宽 1.5px 取解算器口径（最小球间缝 G，密排档实测 ≈1.5px）
+   旧几何（方形槽 `border-radius:5px` + 格宽 = 容器宽 ÷ 该行格数）已退役 —— 它把
+   头像 `cover` 摊成竖条（40 档 2 人档格 `19.5×40`，可见面积仅 48.8%、变形 51.2%）。
    类名 `.fm-avgrid*` 的**唯一**生产方 = friendGroups.groupAvatarGrid（唯一实现，
    三处落点共用：会话列表群行 / 群会话窗头 / 群信息面板头）。 */
 .fm-avgrid {
@@ -1117,43 +1125,64 @@ button.fm-req-decline:focus-visible {
   overflow: hidden;
   display: flex;
   flex-direction: column;
-  border-radius: 5px;
-  background: var(--color-surface);
-  gap: 1px;
+  align-items: center;
+  justify-content: center;
+  gap: 1.5px;
   padding: 0;
+  border: 1px solid var(--glass-etched-border);
+  border-radius: 50%;
+  background: var(--color-surface);
+  /* cqw 的度量基准 = 本容器内容盒（逐档球径表用 cqw ⇒ 换尺寸档只换本行 width/height） */
+  container-type: size;
 }
 .fm-avgrid-40 { width: 40px; height: 40px; }
-.fm-avgrid-row { display: flex; width: 100%; flex: 1 1 0; min-height: 0; gap: 1px; }
+.fm-avgrid-row {
+  display: flex;
+  width: 100%;
+  flex: 0 0 auto;
+  min-height: 0;
+  gap: 1.5px;
+  align-items: center;
+  justify-content: center;
+}
 .fm-avgrid-cell {
-  flex: 1 1 0;
+  flex: 0 0 auto;
   min-width: 0;
   overflow: hidden;
   display: flex;
   align-items: center;
   justify-content: center;
-  border-radius: 1px;
+  width: var(--fm-avgrid-ball);
+  height: var(--fm-avgrid-ball);
+  border-radius: 50%;
   background: var(--glass-etched-bg);
-  /* token 必在（base.css 亮/暗双档定义）⇒ 本批新增行**不带 fallback 字面量**
-     （任务书 §4⑤：新增行零色值字面量）。 */
+  /* token 必在（sapphire.css 亮/暗双档定义）⇒ 本批新增行**不带 fallback 字面量**
+     （任务书：新增行零色值字面量）。 */
   color: var(--color-text-muted);
   font-weight: 500;
-  font-size: 15px;
+  font-size: calc(var(--fm-avgrid-ball) * 0.42);
   line-height: 1;
 }
 .fm-avgrid-cell img { width: 100%; height: 100%; object-fit: cover; display: block; }
-/* 超 9 降级角标 `+N`（n = memberCount − 9）：方形几何下可放右下角
-   （圆形几何会被 overflow:hidden 裁掉 ⇒ 方向 B 需改底部居中，本批取 G-A）。 */
+/* 逐档球径表（= 解算器输出 d(n)，单位 cqw；40 档 1cqw = 0.38px ⇒ 各行注释给 px 值）。
+   数字口径 = d ÷ 38 × 100（38 = 40 档内容盒宽度 = 40 − 2×1px 描边）。 */
+.fm-avgrid-n1 { --fm-avgrid-ball: 68.421cqw; }   /* ⌀26.0（单球居中） */
+.fm-avgrid-n2 { --fm-avgrid-ball: 45.263cqw; }   /* ⌀17.2（2 枚一行，弦长满） */
+.fm-avgrid-n3 { --fm-avgrid-ball: 36.842cqw; }   /* ⌀14.0（2+1） */
+.fm-avgrid-n4 { --fm-avgrid-ball: 36.842cqw; }   /* ⌀14.0（2+2） */
+.fm-avgrid-n5 { --fm-avgrid-ball: 28.947cqw; }   /* ⌀11.0（1+3+1，中行吃满弦长） */
+.fm-avgrid-n6 { --fm-avgrid-ball: 26.316cqw; }   /* ⌀10.0（3+3） */
+.fm-avgrid-n7 { --fm-avgrid-ball: 26.316cqw; }   /* ⌀10.0（2+3+2） */
+.fm-avgrid-n8 { --fm-avgrid-ball: 21.579cqw; }   /* ⌀8.2（3+3+2） */
+.fm-avgrid-n9 { --fm-avgrid-ball: 21.579cqw; }   /* ⌀8.2（3+3+3，密排档） */
+/* 超 9 降级 `+N`（N = memberCount − 9）：**占最后一格**（真实球位 ⇒ 零遮挡）。
+   旧形态是右下角绝对定位角标（12 人档重叠 98.26px²）⇒ 已退役。
+   本类与 `.fm-avgrid-cell` 同特异度、源码序在后 ⇒ 只覆写底色/字色/字号。 */
 .fm-avgrid-more {
-  position: absolute;
-  right: 0;
-  bottom: 0;
-  font-size: 9px;
-  line-height: 1;
-  padding: 2px 4px;
-  border-radius: 6px 0 0 0;
   background: var(--color-text-dim);
   color: var(--color-surface);
   font-weight: 600;
+  font-size: calc(var(--fm-avgrid-ball) * 0.5);
 }
 
 /* 会话行「群」标识（L2 行内 chip，形态对齐 fm-row-badge 家族的 pill） */
