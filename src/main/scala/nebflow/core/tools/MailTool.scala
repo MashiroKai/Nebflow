@@ -12,7 +12,8 @@ import nebflow.core.entity.EntityLoader
 import nebflow.core.flow.{FlowMailStore, MailQueueStore, TeamSessionRegistry}
 import nebflow.core.project.{ProjectActor, ProjectRuntimeRegistry}
 // device-mail 批（2026-09-15）：契约单点 + 本机 NebLink 身份面（设备腿）。
-import nebflow.neblink.{DeviceMail, DeviceMailAck, NeblinkService, PeerInfo}
+// B 批（2026-09-16）：`RelayMailResult` = 设备腿结果文本的 `delivered` 读数来源。
+import nebflow.neblink.{DeviceMail, DeviceMailAck, NeblinkService, PeerInfo, RelayMailResult}
 import nebflow.shared.{ContentBlock, Message, MessageRole, ToolDefinition}
 
 
@@ -649,15 +650,28 @@ Message type (optional, default "INFO"):
                     // 附件附注写进正文，因为对端 agent 只能从注入文本得知图片落在它自己的盘上。
                     val payload = DeviceMail.payload(deviceMailText(message, imagePaths), id.deviceName, id.deviceId)
                     client.relayAgentMail(peer.deviceId, payload).flatMap {
-                      case Right(serverId) =>
+                      case Right(RelayMailResult(serverId, delivered)) =>
                         // ④ 回执：登记 pending ack（eventId = "message-<id>"），由隧道 ack
                         // 帧关联；超时腿在 DeviceMailAck 内（WARN + 审计行，禁静默）。
                         DeviceMailAck.await(peer.deviceId, serverId).flatMap { eventId =>
-                          val sent =
+                          // B 批（2026-09-16 作者裁定「路径 B」一步到位）：上面这行 `await`
+                          // 调用与入参**逐字不变**，但其返回值（eventId）**不再进结果文本**
+                          // —— 「Awaiting ack」直接删（eventId 对账手柄随之消失，作者知悉
+                          // 代价、不保留）。结果文本改读服务端 `delivered`：
+                          //   `true`  ⇒ 载荷已推进对端活体通道（🔴 推送被隧道接受 ≠ 对端已
+                          //             注入 ⇒ 收窄口径，禁「acknowledged / 已注入」类措辞）；
+                          //   `false` ⇒ 服务端已接受、对端设备离线 ⇒ 在队待上线（**非错误**）。
+                          val sent = if delivered then
                             s"Message sent to device '${peer.deviceName}' — the frozen agent_mail payload " +
                               s"(type=${DeviceMail.TypeAgentMail}, to_nebula=true) is on the relay route " +
-                              s"/api/relay/${peer.deviceId}/mail; the peer's Nebula session will be injected at " +
-                              s"its next turn boundary. Awaiting ack $eventId."
+                              s"/api/relay/${peer.deviceId}/mail: pushed to the peer's live channel — " +
+                              s"the peer's Nebula session will be injected at its next turn boundary."
+                          else
+                            s"Message sent to device '${peer.deviceName}' — the frozen agent_mail payload " +
+                              s"(type=${DeviceMail.TypeAgentMail}, to_nebula=true) is on the relay route " +
+                              s"/api/relay/${peer.deviceId}/mail: server accepted; peer device offline — " +
+                              s"queued until it comes online (not an error). It will be readable on that " +
+                              s"device once it comes online."
                           auditDeviceMailSend(ns, peer.deviceId, message, ctx) *>
                             pushDeviceImages(ns, dbxOpt, peer, imagePaths, ctx).map {
                               case Left(attachNote) => Left(ToolError(s"$sent $attachNote"))
@@ -665,8 +679,14 @@ Message type (optional, default "INFO"):
                             }
                         }
                       case Left(err) =>
+                        // B 批：失败面**结构化**（类别 + 原因 + 原始错误面原文摘录），
+                        // 🔴 禁只写「失败」（失败类别细分见交付报告「须作者裁项」）。
                         IO.pure(Left(ToolError(
-                          s"Device '${peer.deviceName}' could not be reached for agent mail: $err — nothing was sent."
+                          s"Device mail to '${peer.deviceName}' FAILED — category: relay-route-refused; " +
+                            s"reason: the NebLink relay did not accept the agent_mail payload " +
+                            s"(HTTP/session/transport failure, or a remote error from the relay), so nothing " +
+                            s"was sent and nothing is queued — fix the cause and retry; " +
+                            s"raw error: $err"
                         )))
                     }
           yield result

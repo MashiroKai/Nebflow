@@ -145,6 +145,22 @@ case class AttachmentFetch(
   sha256Header: Option[String] = None
 )
 
+/** 设备邮件中继的响应读数（B 批，2026-09-16 作者裁定「路径 B」一步到位）。
+  *
+  *   - `id` = 服务端事件 id（`message-` 前缀已剥；响应未带可判读 id 即**空串** ——
+  *     **不伪造 id**，原语义逐字不变）；
+  *   - `delivered` = 服务端 `delivered` 键的读数：`true` = 载荷已推进对端的**活体隧道**
+  *     （`push_background` 被接受 ⇒ **≠ 对端已注入**）；`false` = 此刻无该设备隧道 ⇒
+  *     行已持久、随下一轮隧道注册补齐，**不是错误**（服务端口径逐字见 `neblink-server`
+  *     `agentmail.rs:227-259` / `routes.rs:1893-1906`）。
+  *
+  * **键缺席降级口径（首次选定，加性）**：旧服务端 / 契约外响应不带 `delivered` ⇒ 按
+  * `false`（**保守支**）——只在服务端**显式**断言 `true` 时才声称一次活体推送，缺席
+  * 一律按「服务端已接受、尚未确认活体推送」处理（**禁冒认**服务端未断言的推送）。
+  * 既有语义面（`error` 判读 / id 三候选宽容读取 / `Left` 失败语义 / 请求面 / ack 面）
+  * 全部**零变更**。 */
+final case class RelayMailResult(id: String, delivered: Boolean)
+
 class NeblinkClient(
   config: NeblinkServerConfig,
   serverPort: Int,
@@ -1085,9 +1101,11 @@ class NeblinkClient(
    * 定向语义（v2 ②）：路径里的 `targetDeviceId` 是**唯一**投递目标，本方法无
    * fan-out 分支、无「找不到就广播」兜底（由调用方保证 id 已解析自对端名册）。
    *
-   * 返回：`Right(serverside message id)`——id 用于 ack 的 `eventId`（`"message-<id>"`）
-   * 关联；响应体未携带可判读 id 时返回 `Right("")`（**不伪造 id**，调用方据此登记
-   * 「ack 无法关联」）。`Left(可读错误)` = HTTP/鉴权/远端 error 面失败 ⇒ **未送达**
+   * 返回：`Right(RelayMailResult(id, delivered))`——`id` 用于 ack 的 `eventId`
+   * （`"message-<id>"`）关联；响应体未携带可判读 id 时 `id` = `""`（**不伪造 id**，
+   * 调用方据此登记「ack 无法关联」）。`delivered` = 服务端活体推送读数（B 批
+   * 2026-09-16 加性取用；键缺席降级口径见 [[RelayMailResult]] scaladoc）。
+   * `Left(可读错误)` = HTTP/鉴权/远端 error 面失败 ⇒ **未送达**
    * （由调用方如实报错，禁静默成功）。
    */
   /** 设备邮件端点 URL（**唯一构造点**，契约 v2 ①：目标走路径）。
@@ -1099,7 +1117,7 @@ class NeblinkClient(
     targetDeviceId: String,
     payload: Json,
     timeout: scala.concurrent.duration.FiniteDuration = NeblinkClient.DefaultRelayTimeout
-  ): IO[Either[String, String]] =
+  ): IO[Either[String, RelayMailResult]] =
     withSession(token =>
       dispatchRequest(
         "POST",
@@ -1123,10 +1141,16 @@ class NeblinkClient(
                 .orElse(hc.downField("eventId").as[String].toOption)
                 .orElse(hc.downField("id").as[String].toOption)
                 .getOrElse("")
-              IO.pure(Right(DeviceMail.stripMessagePrefix(rawId)))
+              // B 批（2026-09-16 作者裁定「路径 B」）：**加性**取用服务端 `delivered`
+              // 键（活体推送读数）。🔴 只在**显式** `true` 时才声称推送；键缺席 /
+              // 非布尔 ⇒ `false`（保守支，逐字口径见 [[RelayMailResult]] scaladoc）。
+              // 既有键（`error` / id 三候选）的判读**逐字不变**。
+              val delivered = hc.downField("delivered").as[Boolean].toOption.getOrElse(false)
+              IO.pure(Right(RelayMailResult(DeviceMail.stripMessagePrefix(rawId), delivered)))
           case Left(_) =>
-            // 非 JSON 响应（例如纯文本 ack）⇒ 原样交出（调用方按 ack 形态再判一次）。
-            IO.pure(Right(DeviceMail.stripMessagePrefix(respBody)))
+            // 非 JSON 响应（例如纯文本 ack）⇒ 原样交出（调用方按 ack 形态再判一次）；
+            // `delivered` 无读数 ⇒ 保守支 `false`（与键缺席**同**口径）。
+            IO.pure(Right(RelayMailResult(DeviceMail.stripMessagePrefix(respBody), false)))
       case Left(err) => IO.pure(Left(err))
     }
 
