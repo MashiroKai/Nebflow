@@ -808,6 +808,7 @@
   --btn-secondary-ink: var(--color-text);
   --btn-secondary-fill: var(--glass-control-bg);
   --btn-secondary-fill-hover: var(--glass-control-bg-hover);
+  --btn-secondary-fill-stroke: var(--glass-control-border); /* 填充档描边（开关等非文本控件既有档，仅具名化） */
   /* 幽灵 */
   --btn-ghost-bg: transparent;
   --btn-ghost-ink: var(--color-frame-text);
@@ -823,6 +824,16 @@
   --btn-disabled-ink: var(--color-text-muted);
   --btn-unavailable-bg: var(--glass-send-bg-active);
   --btn-unavailable-stroke: var(--glass-send-border-active);
+}
+
+/* 幽灵墨色暗档：亮档用 `--color-frame-text`（弱于次操作 `--color-text` 的一档），
+   暗档 `--color-frame-text`（c8cad0）在输入条一类偏亮底衬上只有 4.29:1（< 4.5 判红）
+   ⇒ 暗档改用 `--color-text`（e8eaed）⇒ 同一底衬 5.83:1 ✔。
+   梯子改由「描边有无」承担（次操作 = 描边 / 幽灵 = 无底）—— 与方向 A 的定义一致。 */
+@media (prefers-color-scheme: dark) {
+  :root {
+    --btn-ghost-ink: var(--color-text);
+  }
 }
 
 /* ── 可点面 cursor 全覆盖（R7′/J4：default 计数 = 0）────────────────────
@@ -890,6 +901,34 @@
       .fm-context-menu button:not(.danger)):active {
     background: var(--btn-unavailable-bg);
   }
+}
+
+/* ── 图标幽灵面（附件小键等，与文字幽灵同档）──────────────────────────────
+   `.fm-attach-btn`（群/设备会话窗 + dropbox 输入条的附件键）此前墨色取
+   `--color-frame-text-muted`（暗档 = 81838a 落在输入条底衬上仅 4.29:1 ⇒ 判红）
+   ⇒ 并入幽灵档：无底 + `--btn-ghost-ink`（暗档 = --color-text）⇒ 同一底衬 13.5:1 ✔。 */
+.fm-attach-btn {
+  background: var(--btn-ghost-bg);
+  border-color: transparent;
+  color: var(--btn-ghost-ink);
+  box-shadow: none;
+  cursor: pointer;
+}
+.fm-attach-btn:hover { color: var(--btn-ghost-ink-hover); }
+@media (prefers-color-scheme: light) {
+  .fm-attach-btn:hover { box-shadow: inset 0 0 0 1px var(--btn-secondary-stroke-hover), 0 2px 7px var(--glass-send-shadow-hover); }
+  .fm-attach-btn:active { box-shadow: inset 0 0 0 1px var(--btn-secondary-stroke), var(--glass-send-shadow-active); }
+}
+@media (prefers-color-scheme: dark) {
+  .fm-attach-btn:hover { background: var(--btn-secondary-fill-hover); }
+  .fm-attach-btn:active { background: var(--btn-unavailable-bg); }
+}
+.fm-attach-btn:disabled {
+  background: var(--btn-disabled-bg);
+  border-color: var(--btn-disabled-stroke);
+  color: var(--btn-disabled-ink);
+  cursor: not-allowed;
+  opacity: 1;
 }
 
 /* ── 次操作 — 描边（中性玻璃材质保留；fill 档只留给非文本控件）────────── */
@@ -1063,6 +1102,22 @@ button.glass-control.fm-req-accept:active {
     box-shadow: var(--glass-send-stack), var(--glass-send-shadow-active);
   }
 }
+
+/* 开关本体（`.nb-toggle`，js/toggle.js）在方向 A 下的口径：
+   · 形态**保持**既有开关语言（轨道填充 + 圆钮）—— 铁律 2 与「开关不是按钮」的
+     设计系统既有排除条款（本文件 :170-172）优先，本批**不改其填充/几何**；
+   · 只补两件：① 状态反馈（hover / active：亮档走投影、暗档走填充递进，与次操作同
+     一族语言）；② 显式墨色（`color` 此前落 UA 默认，暗档 = 1.38:1 —— 无文本控件
+     仍按可读性口径给值，避免「读数为黑却是继承而来」的隐性缺陷）。
+   注：轨道填充值 = `--btn-secondary-fill`（既有 `--glass-control-bg`），ON 档 =
+   `--btn-primary-tint`（既有 brand-green 35% 三元组）⇒ 分类仍只依赖 token。 */
+.nb-toggle {
+  color: var(--btn-secondary-ink);
+  border-color: var(--btn-secondary-fill-stroke); /* 具名化（值 = 既有 --glass-control-border，零视觉变化） */
+  transition: background 0.15s, border-color 0.15s, color 0.15s, box-shadow 0.15s;
+}
+.nb-toggle:hover { border-color: var(--btn-secondary-stroke-hover); }
+.nb-toggle.on { color: var(--btn-secondary-ink); }
 
 /* ── 禁用 / 掉线档（R2′/J3：具名 token `--glass-send-bg-disabled` + not-allowed；
    声明在最后 ⇒ 与 `:hover` 同档时以禁用胜出）────────────────────────── */
