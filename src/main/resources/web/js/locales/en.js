@@ -243,7 +243,16 @@ export default {
   'contacts.blockTitle': 'Block',
   'contacts.blockConfirm': 'You will no longer receive messages or friend requests from {name}.',
   'messages.empty': 'No conversations',
+  // 🔴 `systemNowFriends` belongs to the **friend-acceptance** context (its only
+  // legal consumer = the `friend_accepted` branch of `onFriendEvent` in
+  // messages.js) ⇒ the two group keys below are the **key split** product
+  // (author 2026-09-16: "the join-group prompt still says you are now friends —
+  // wrong": `summaryOf` was kind-blind and put the friend copy on group rows).
+  // Both keys land together with zh (no dead keys); consumer = messages.js
+  // `groupSummaryEmpty` only, two states = group name present / absent.
   'messages.systemNowFriends': 'You are now friends',
+  'messages.groupNoMessagesNamed': 'Group chat “{name}” — no messages yet',
+  'messages.groupNoMessages': 'No messages in this group chat',
   'messages.forwardToAgent': 'Forward to agent',
   'messages.forwarded': 'Forwarded to agent',
   'messages.forwardToast': 'Added to input — add a note and send',
@@ -304,6 +313,12 @@ export default {
   'messages.groupAdminUnset': 'Admin revoked',
   'messages.groupKick': 'Remove',
   'messages.groupKickedDone': 'Removed from group',
+  // "You were removed" event copy (consumer = the `not_member` branch of
+  // `groupErrToast` in friendGroups.js:73). As of 2026-09-16 the key was MISSING
+  // on both sides ⇒ that toast rendered the raw key name `messages.groupKicked`
+  // (missing-key fallback returns the key itself, i18n.js:28). Filled in with the
+  // same family, zh + en in one batch (no single-language additions).
+  'messages.groupKicked': 'You were removed from the group',
   // Removal confirmation now carries the CONSEQUENCE clause (ruling D: match the
   // leave / dissolve wording — removal was the only destructive action without it).
   'messages.confirmKick': 'Remove {name} from the group? They will stop receiving this group\u2019s messages, its history will no longer be visible to them, and they must be invited again to rejoin.',
