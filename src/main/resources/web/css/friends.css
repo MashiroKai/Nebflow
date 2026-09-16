@@ -38,8 +38,8 @@
 .fm-row:hover { background: var(--glass-control-bg-hover); }
 
 .fm-row:focus-visible {
-  outline: none;
-  box-shadow: 0 0 0 2px var(--glass-control-border);
+  outline: 2px solid rgb(var(--sapphire) / 0.6);
+  outline-offset: 2px;
 }
 
 .fm-row[aria-selected="true"] {
@@ -290,8 +290,8 @@ button.fm-search-btn:disabled {
   box-shadow: var(--glass-send-stack);
 }
 button.fm-search-btn:focus-visible {
-  outline: none;
-  box-shadow: 0 0 0 2px var(--glass-control-border);
+  outline: 2px solid rgb(var(--sapphire) / 0.6);
+  outline-offset: 2px;
 }
 
 /* 亮档反馈层（作者 2026-09-11 P4 裁定：亮底衬上白 alpha 填充递进肉眼不可辨，
@@ -436,8 +436,8 @@ button.fm-verify-cancel:disabled {
 }
 
 button.fm-verify-cancel:focus-visible {
-  outline: none;
-  box-shadow: 0 0 0 2px var(--glass-control-border);
+  outline: 2px solid rgb(var(--sapphire) / 0.6);
+  outline-offset: 2px;
 }
 
 @media (prefers-color-scheme: light) {
@@ -461,8 +461,8 @@ button.fm-verify-cancel:focus-visible {
 .fm-nf-entry:hover { background: var(--glass-control-bg-hover); }
 
 .fm-nf-entry:focus-visible {
-  outline: none;
-  box-shadow: 0 0 0 2px var(--glass-control-border);
+  outline: 2px solid rgb(var(--sapphire) / 0.6);
+  outline-offset: 2px;
 }
 
 .fm-nf-icon {
@@ -527,8 +527,8 @@ button.fm-req-accept:disabled {
   box-shadow: var(--glass-send-stack);
 }
 button.fm-req-accept:focus-visible {
-  outline: none;
-  box-shadow: 0 0 0 2px var(--glass-control-border);
+  outline: 2px solid rgb(var(--sapphire) / 0.6);
+  outline-offset: 2px;
 }
 
 /* 拒绝 = 次操作（中性玻璃 rest 档 + 400 字重 + 全量四态 ramp） */
@@ -562,8 +562,8 @@ button.fm-req-decline:disabled {
   box-shadow: var(--glass-send-stack);
 }
 button.fm-req-decline:focus-visible {
-  outline: none;
-  box-shadow: 0 0 0 2px var(--glass-control-border);
+  outline: 2px solid rgb(var(--sapphire) / 0.6);
+  outline-offset: 2px;
 }
 
 @media (prefers-color-scheme: light) {
@@ -839,14 +839,14 @@ button.fm-req-decline:focus-visible {
 }
 
 .fm-att-dl:hover { background: var(--color-frame-hover); }
-.fm-att-dl:focus-visible { outline: none; box-shadow: 0 0 0 2px var(--glass-control-border); }
+.fm-att-dl:focus-visible { outline: 2px solid rgb(var(--sapphire) / 0.6); outline-offset: 2px; }
 .fm-att-dl:disabled { opacity: 0.5; cursor: default; }
 
 /* 预览可点面（作者令 2026-09-15：点击附件 ⇒ Canvas 预览）。
    仅 `ready` 态 / 有本机落盘件的设备卡挂本类（无字节可取者不挂 ⇒ 不造假按钮）。 */
 .fm-att-previewable { cursor: pointer; }
 .fm-att-previewable:hover { background: var(--color-frame-hover); }
-.fm-att-previewable:focus-visible { outline: none; box-shadow: 0 0 0 2px var(--glass-control-border); }
+.fm-att-previewable:focus-visible { outline: 2px solid rgb(var(--sapphire) / 0.6); outline-offset: 2px; }
 
 /* 尚未有状态文案时收起（避免卡片里并排两个同义词；失败/成功后解除） */
 .visually-hidden-note { display: none; }
@@ -919,7 +919,7 @@ button.fm-req-decline:focus-visible {
   cursor: pointer;
 }
 .fm-upload-cancel:hover { background: var(--color-frame-hover); }
-.fm-upload-cancel:focus-visible { outline: none; box-shadow: 0 0 0 2px var(--glass-control-border); }
+.fm-upload-cancel:focus-visible { outline: 2px solid rgb(var(--sapphire) / 0.6); outline-offset: 2px; }
 
 /* 附件消息的正文（与占位正文区分：占位文本被隐藏时不留空行） */
 .fm-msg-text { white-space: pre-wrap; }
@@ -1007,8 +1007,8 @@ button.fm-req-decline:focus-visible {
 
 /* 焦点环补齐（现状 = 浏览器默认蓝环）：与 .fm-row:focus-visible 同款 */
 .fm-msg-act:focus-visible {
-  outline: none;
-  box-shadow: 0 0 0 2px var(--glass-control-border);
+  outline: 2px solid rgb(var(--sapphire) / 0.6);
+  outline-offset: 0;
 }
 
 /* sending → spinner pulse (§6.2); failed → red ! + click resend */
