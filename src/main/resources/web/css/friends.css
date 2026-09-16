@@ -637,11 +637,12 @@ button.fm-req-decline:focus-visible {
    整条标题带。原形态把类挂在 `.fm-modal-title` 上，而它是 `.fm-modal-header` 的唯一
    `flex:1` 项 ⇒ 可点面 = 头像槽右缘到 `.fm-gs-open` 左缘的**整条中间带**（含成员数
    文本与全部空白）。现在类随 handler 一并迁到 `.fm-modal-name`：
-     · `padding: 4px 8px`（**热区内边距一档**，4px 基数档）= 字形盒之外再给一圈可点区
-       （纯字形热区过窄、点不准）；测得的窗头高度仍为 64px 档（该行 34px < 40px
-       头像行，见报告 §P2/§P3 读数）。
+     · `padding: 4px 8px` + `margin: -4px -8px`（**热区内边距一档**，4px 基数档）=
+       字形盒之外再给一圈可点区（纯字形热区过窄、点不准），而**负外边距把热区的
+       扩张全部落在盒外** ⇒ 群名文本与成员数文本的**渲染位置与改前逐像素相同**
+       （窗头高度亦仍为 64px 档，该行 26px < 40px 头像行；读数见报告 §P2/§P3）。
      · 非群窗不挂 `fm-modal-title-btn` 类 ⇒ 好友/设备窗零影响（设备窗无本类、无头像槽）。 */
-.fm-modal-title-btn { cursor: pointer; border-radius: 6px; padding: 4px 8px; }
+.fm-modal-title-btn { cursor: pointer; border-radius: 6px; padding: 4px 8px; margin: -4px -8px; }
 /* 类已挂在 `.fm-modal-name` 自身 ⇒ hover 规则必须是**同元素**（原 `.fm-modal-title-btn
    .fm-modal-name` 后代式选择器随迁后失效，见上）。 */
 .fm-modal-name.fm-modal-title-btn:hover { color: var(--color-primary); }
