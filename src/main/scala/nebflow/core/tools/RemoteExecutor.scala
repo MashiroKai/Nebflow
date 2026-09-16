@@ -8,6 +8,7 @@ import io.circe.syntax.*
 import nebflow.agent.AgentCommand
 import nebflow.core.NebflowLogger
 import nebflow.neblink.{NeblinkClient, NeblinkService, PeerInfo}
+import nebflow.shared.ContentBlock
 import sttp.client4.*
 
 import scala.concurrent.duration.*
@@ -112,6 +113,61 @@ private[nebflow] object P2pPathDecision:
       case Some(m) if method == "relay" && m.method == "relay" && m.addressKey == key && isFresh(m, nowMs) =>
         m // no renewal — see scaladoc
       case _ => PathMemory(method, nowMs, key)
+
+/**
+ * A1（作者裁定 2026-09-16）：设备腿 `Read` 的「标记 → 既有回拉通道 → 视觉块」。
+ *
+ * WHY（`devread-forensic` 判词，两跳并发必要）：设备腿的结果域恒为 `String`——
+ * 执行侧序列化（L2/L3）与调用侧解析（L4/L5）都只搬文本，**视觉块从未产生**；
+ * 全仓唯一执行期提取点只在**本机腿**（`AgentCore.scala:1763` 取块 / `:1774` 置块），
+ * 远端分支（`:1692-1700`）连字段都没填（L6）。
+ *
+ * 修法：远端返回体命中 `[image: <name> | <mime> | <KB>[ | note]]`
+ * （`ReadTool.scala:144` 的产出形态，经 L2/L3→L4/L5 **恒等搬运**）⇒ 回拉目标由
+ * 工具调用入参里的 `file_path`（**远端绝对路径**）确定，走**既有**
+ * `FileTransfer direction=get`（零 wire 变更、零新 action）取回字节。
+ *
+ * 本对象只放**纯函数面**（可离线测）：标记解析 + 字节→块；IO 编排见
+ * `RemoteExecutor#remoteReadImages`。
+ */
+private[nebflow] object RemoteImage:
+
+  /** 标记前缀 —— 与 `ReadTool.scala:144`（产出）/`:228`（提取闸）/`:100`（摘要）同一形态。 */
+  val MarkerPrefix = "[image:"
+
+  /** 标记字段：`<name> | <mime> | <KB>[ | note]`（`sizeKb` 仅供诊断，**不作闸**）。 */
+  final case class Marker(fileName: String, declaredMime: String, sizeKb: Long)
+
+  /** 解析标记；非标记 / 形态不足 ⇒ None（调用侧据此**零动作**，不为文本结果白发回拉）。 */
+  def parseMarker(result: String): Option[Marker] =
+    val firstLine = result.linesIterator.nextOption().getOrElse("")
+    if !firstLine.startsWith(MarkerPrefix) || !firstLine.endsWith("]") then None
+    else
+      val fields = firstLine.stripPrefix(MarkerPrefix).stripSuffix("]").split("\\|").map(_.trim)
+      if fields.length < 2 || fields(0).isEmpty then None
+      else
+        val kb = fields(2).takeWhile(_.isDigit).toLongOption.getOrElse(0L)
+        Some(Marker(fields(0), fields(1), kb))
+
+  /**
+   * 字节 → 视觉块。**逐行对齐本机腿** `ReadTool.extractImages`（`ReadTool.scala:233-244`）：
+   * 同源 mime 解析（按文件名扩展名 → [[ImageInject.imageMimeType]]）、同源压缩/上限判据
+   * （[[ImageInject.prepareImage]]，`TooLarge` ⇒ None、异常 ⇒ None）——**零自造阈值、
+   * 零第二套机制**。
+   *
+   * 🔴 为什么不直接调 `ReadTool.extractImages`：它读的是**本机**文件系统
+   * （`:235 Files.readAllBytes(filePath)`），远端路径在调用侧不存在 ⇒ 恒 None
+   * （判词的「只修 L6 无效」正是此因）。故字节必须由回拉提供，仅复用其后的构块口径。
+   */
+  def buildBlocks(bytes: Array[Byte], fileName: String): Option[List[ContentBlock.Image]] =
+    ImageInject.imageMimeType(fileName).flatMap { mediaType =>
+      try
+        ImageInject.prepareImage(bytes, mediaType, fileName) match
+          case ImageInject.TooLarge(_) => None
+          case ImageInject.Prepared(prepared, preparedMime, _) =>
+            Some(List(ContentBlock.Image(java.util.Base64.getEncoder.encodeToString(prepared), preparedMime)))
+      catch case _: Exception => None
+    }
 
 /**
  * Executes tool calls on remote devices via direct P2P over NebLink.
@@ -378,47 +434,133 @@ class RemoteExecutor(
   /** 经既有 FileTransfer direction=get 通道拉单件：P2P remote-exec 优先，transient
     * 失败回落 relay（与 executeViaBestPath 同族判定）。两条腿的接收端都路由到
     * FileTransferAction.handle（RestApiRoutes / NeblinkRelayTunnel）——**零 wire
-    * 变更、零新 action**。大小闸 [[CapturePull.MaxCaptureBytes]]。 */
+    * 变更、零新 action**。大小闸 [[CapturePull.MaxCaptureBytes]]。
+    *
+    * 2026-09-16（A1 批）：解析/取字节抽成 [[transferGetBytes]] 单点后本方法只剩
+    * 「落盘」——行为逐字不变（同一闸、同一 dispatch、同一落位）。 */
   private def transferGetToFile(
     peer: PeerInfo,
     remotePath: String
   ): IO[Either[String, (os.Path, Long)]] =
+    transferGetBytes(peer, remotePath).flatMap {
+      case Right(bytes) =>
+        IO.blocking {
+          val local = CapturePull.saveCapture(peer.deviceId, remotePath, bytes)
+          Right((local, bytes.length.toLong)): Either[String, (os.Path, Long)]
+        }
+      case Left(err) => IO.pure(Left(err))
+    }
+
+  /** 经既有 FileTransfer direction=get 通道取**字节**（不落盘；A1 批新增变体）。
+    * dispatch（P2P → relay 回落）与解析闸（[[parseTransferBody]]）与
+    * [[transferGetToFile]] **同一单点**——禁第二份实现。 */
+  private def transferGetBytes(
+    peer: PeerInfo,
+    remotePath: String
+  ): IO[Either[String, Array[Byte]]] =
     val params = JsonObject(
       "direction" -> "get".asJson,
       "path" -> remotePath.asJson
     )
 
-    def parseAndStore(output: String): IO[Either[String, (os.Path, Long)]] = IO.blocking {
-      decode[Json](output) match
-        case Right(json) =>
-          val size = json.hcursor.downField("size").as[Long].getOrElse(0L)
-          if size > CapturePull.MaxCaptureBytes then
-            Left(s"capture too large: $size bytes > ${CapturePull.MaxCaptureBytes} limit")
-          else
-            val b64 = json.hcursor.downField("content").as[String].getOrElse("")
-            if b64.isEmpty then Left("empty content")
-            else
-              val bytes = java.util.Base64.getDecoder.decode(b64)
-              val local = CapturePull.saveCapture(peer.deviceId, remotePath, bytes)
-              Right((local, bytes.length.toLong))
-        case Left(err) => Left(s"decode: ${err.getMessage}")
-    }
-
     p2pExecuteWithRetry(peer, "FileTransfer", params, 60.seconds, "", P2pPathDecision.probeBudget(true), kind = "capture")
       .flatMap {
-        case Right(out) => parseAndStore(out)
+        case Right(out) => IO.blocking(parseTransferBody(out))
         case Left(p2pErr) =>
           currentRelayClient.flatMap {
             case Some(client) =>
               relayExecAudited(client, peer, "FileTransfer", params, "", kind = "capture").flatMap {
-                case Right(out) => parseAndStore(out)
+                case Right(out) => IO.blocking(parseTransferBody(out))
                 case Left(relayErr) =>
                   IO.pure(Left(s"p2p: ${p2pErr.message.take(80)}; relay: ${relayErr.take(80)}"))
               }
             case None => IO.pure(Left(s"p2p: ${p2pErr.message.take(120)} (no relay client)"))
           }
       }
-  end transferGetToFile
+
+  /** `direction=get` 回执体解析（**唯一单点**，两条消费腿共用）：大小闸
+    * [[CapturePull.MaxCaptureBytes]]（🔴 既有常量，零自造阈值）→ base64 解码。 */
+  private def parseTransferBody(output: String): Either[String, Array[Byte]] =
+    decode[Json](output) match
+      case Right(json) =>
+        val size = json.hcursor.downField("size").as[Long].getOrElse(0L)
+        if size > CapturePull.MaxCaptureBytes then
+          Left(s"capture too large: $size bytes > ${CapturePull.MaxCaptureBytes} limit")
+        else
+          val b64 = json.hcursor.downField("content").as[String].getOrElse("")
+          if b64.isEmpty then Left("empty content")
+          else Right(java.util.Base64.getDecoder.decode(b64))
+      case Left(err) => Left(s"decode: ${err.getMessage}")
+
+  // ---- A1：设备腿读图的视觉块回填（调用侧，2026-09-16 作者裁定） ----
+
+  /**
+   * 设备腿 `Read` 的视觉块回填（A1 的 IO 编排面）。**唯一调用点** = `AgentCore` 的
+   * 远端分支（与本地分支 `AgentCore.scala:1763` 取块 / `:1774` 置块的形态对齐）。
+   *
+   * 判据链（任一不成立 ⇒ `None`，**保留原文本标记、零抛错、零中断**）：
+   *   ① 工具必须是 `Read`（其它工具零动作）；
+   *   ② 结果必须是 `[image: …]` 标记（否则**零动作**——纯文本结果不发回拉）；
+   *   ③ `params.file_path`（远端绝对路径）必须非空；
+   *   ④ 对端可解析；⑤ 既有 `FileTransfer direction=get` 取字节成功；
+   *   ⑥ 字节能构块（mime 可解析 + 未超既有上限）。
+   *
+   * 🔴 降级纪律（硬）：回拉失败（对端不可达 / 解码失败 / 非图片 mime / 超限）⇒
+   * `None` + 一条 WARN（可 grep `[device-image]`）——**不得**让工具调用整体失败、
+   * **不得**吞掉原输出（与本地腿 `ReadTool.extractImages:243` catch 兜底同口径）。
+   * `handleErrorWith` 是兜底保险：本方法**永不**把异常抛给调用方。
+   */
+  def remoteReadImages(
+    deviceName: String,
+    toolName: String,
+    params: JsonObject,
+    result: String
+  ): IO[Option[List[ContentBlock.Image]]] =
+    if toolName != "Read" then IO.pure(None)
+    else
+      RemoteImage.parseMarker(result) match
+        case None => IO.pure(None)
+        case Some(marker) =>
+          params("file_path").flatMap(_.asString).map(_.trim).filter(_.nonEmpty) match
+            case None =>
+              logger.warn(
+                s"[device-image] ${marker.fileName}: result carried the image marker but the call had no file_path — no pull attempted (text marker kept)"
+              )
+              IO.pure(None)
+            case Some(remotePath) =>
+              (for
+                peerOpt <- resolvePeerByName(deviceName)
+                out <- peerOpt match
+                         case None =>
+                           logger.warn(
+                             s"[device-image] $deviceName not resolvable — pull of $remotePath skipped (text marker kept)"
+                           ).as(None)
+                         case Some(peer) =>
+                           transferGetBytes(peer, remotePath).map {
+                             case Right(bytes) => RemoteImage.buildBlocks(bytes, marker.fileName)
+                             case Left(err) =>
+                               logger.warn(
+                                 s"[device-image] pull failed for ${peer.deviceName}:$remotePath (${err.take(120)}, declared ${marker.declaredMime}) — text marker kept, no vision block"
+                               )
+                               None
+                           }
+              yield out).handleErrorWith { e =>
+                logger
+                  .warn(
+                    s"[device-image] ${marker.fileName}: pull crashed (${Option(e.getMessage).getOrElse(e.getClass.getSimpleName)}) — text marker kept, no vision block"
+                  )
+                  .as(None)
+              }
+
+  /** 按设备名解析 peer（与 `execute` 同一先例：名册可能陈旧 ⇒ 一次即时扫描重试）。
+    * 解析不到 ⇒ None（调用方降级，不报错——回拉本就是尽力而为的附加面）。 */
+  private def resolvePeerByName(deviceName: String): IO[Option[PeerInfo]] =
+    neblinkService.peers.flatMap { peers =>
+      RemoteExecutor.resolvePeer(deviceName, peers) match
+        case Right(peer) => IO.pure(Some(peer))
+        case Left(_) =>
+          neblinkService.scanNow.map(refreshed => RemoteExecutor.resolvePeer(deviceName, refreshed).toOption)
+    }
 
   // ---- Remote background task: Mac manages lifecycle locally ----
 
