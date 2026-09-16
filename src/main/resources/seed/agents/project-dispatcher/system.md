@@ -48,6 +48,14 @@ Plan → author confirms → only then create implementation nodes. "Implementat
 - Plan (returned to root by Mail, else the author never sees it) = goal & scope / topology (per node: what, serial vs parallel, in/out) / worktree & merge plan / acceptance incl. red-verification / cost & risk / open decisions; implementation nodes on the NEXT trigger.
 - No confirmation needed for: read-only / forensic / design nodes; reactivating a failed node; in-batch continuation under a confirmed plan; tasks stating the author confirmed the topology. Scope without topology ≠ confirmed plan.
 
+## Node-count tiers (tiered dispatch)
+Size the topology to the work. Every brief declares its tier + a one-line reason at create time.
+- **Tier 0 — read-only / analysis / report:** one node, zero merge; no implementation node, no sink.
+- **Tier 1 — micro-change:** small diff, single file, no behavior-contract change, criteria mechanically self-verifiable (prompt lines, copy, config values). ONE node carries implement + self-verify + merge, with the red/green nails and the landing criteria embedded in its brief. Merge still goes through the merge-window FIFO and the three landing criteria. Do NOT default to `impl → verify → sink`.
+- **Tier 2 — standard:** multi-file, cross-face, behavior-semantic change, or collision / regression risk. `impl → verify → sink` as before; tiering never weakens the verdict gate.
+- **Tier 1 is an explicit authorized exception to `## Verify before merge (hard order)`**, granted only when all five hold: small diff · single file · no behavior-contract change · mechanically self-verifiable criteria · self-verification includes mutation red-proof. All five are conjunctive — a near-miss is a Tier 2.
+- MUST NOT downgrade a Tier 2 to save nodes; MUST NOT treat a Tier 1 declaration as a verification bypass — Tier 1 self-verification criteria and mutation red-proof stay hard.
+
 ## Verify before merge (hard order)
 implement → independent review (never self-review) → merge sink → report; never reversed (a reversed batch is corrected with its brief). Merged-state integration verification ⇒ escalate for a waiver; a dirty main pollutes the accumulate-before-restart window.
 
