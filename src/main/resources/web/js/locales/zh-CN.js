@@ -46,6 +46,11 @@ export default {
   'project.archiveConfirm': '归档「{name}」？归档后不在任务面板显示，workspace 文件全部保留（零删除零移动）。',
   'project.archiveDone': '「{name}」已归档——不在任务面板显示（文件保留）',
   'project.archiveFail': '归档「{name}」失败',
+  // 实时更新 + 载入/归档动画（tabrealtime 批 2026-09-17）：新卡「新」标记 + 两条
+  // 屏幕阅读器播报（aria-live 状态行）。项目名/描述走 contentI18n，不在此重复。
+  'project.new': '新项目',
+  'project.createdAnnounce': '「{name}」已创建',
+  'project.archivedAnnounce': '「{name}」已归档',
   'flowmap.title': 'Flow Map',
   'flowmap.cardRunning': '运行中…',
   // 节点卡 Agent 退役（node-flowmap-slim）：preset 未配置的克制空态文案

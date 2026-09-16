@@ -17,7 +17,7 @@ import nebflow.core.daemon.{DaemonConfig, DaemonService, DaemonStore}
 import nebflow.core.entity.{EntityLoader, NodeRoute}
 import nebflow.core.flow.{FlowTreeRegistry, TreeCommand}
 import nebflow.core.presets.{ModelPreset, PresetFile, PresetStore}
-import nebflow.core.project.{NodeEngine, NodePayload, ProjectRuntimeRegistry, ProjectStore}
+import nebflow.core.project.{NodeEngine, NodePayload, ProjectActor, ProjectRuntimeRegistry, ProjectStore}
 import nebflow.core.skill.SkillService
 import nebflow.core.tools.NodeTools
 // FreezeScheduleConfig encoder givens (workSchedule runtime-authoritative PATCH)
@@ -381,11 +381,22 @@ class RestApiRoutes(
     // 原样）；列表出口过滤（list 源头）→ 面板即时消失；startupMount 同源跳过 → 重启
     // 不自动挂载；运行中 ProjectActor/会话不强制拆除（registry 与 Mail 路由不受影响）。
     // 幂等：重复归档不重写。单程：本批无取消归档 API（手工删两键可恢复）。
+    //
+    // 项目级实时事件（tabrealtime 批 2026-09-17 · 作者裁定 (b) 方案 B / (e) 两身份事件）：
+    // 成功分支经**既有** `wsHub.broadcast` 全连接广播一帧 `projectArchived`
+    // （载荷逐字 §D-2：type / project / archivedAt；帧形由 ProjectActor.projectArchivedFrame
+    // 单点生产）——与既有广播先例同族（:306 configUpdated / :1767 / :1792 / :1830），
+    // 🔴 不自建第二套推送面、不改帧外壳语义。
+    // 幂等重归档（已归档 → 不重写文件）同样返回 Right(at) ⇒ 同样发一帧，语义为
+    // 「该项目的归档态此刻为真」；前端按名定点删除对「卡已不在」是 no-op（无重复渲染）。
     case req @ POST -> Root / "projects" / name / "archive" =>
       withAuth(req) {
         ProjectStore.archive(name).flatMap {
           case Left(err) => NotFound(Json.obj("error" -> err.asJson))
-          case Right(at) => Ok(Json.obj("archived" -> true.asJson, "archivedAt" -> at.asJson))
+          case Right(at) =>
+            // `*>`：先广播（IO[Unit]）再回响应（Ok(...) 本体已是 IO[Response]）
+            wsHub.broadcast(ProjectActor.projectArchivedFrame(name, at)) *>
+              Ok(Json.obj("archived" -> true.asJson, "archivedAt" -> at.asJson))
         }
       }
 
