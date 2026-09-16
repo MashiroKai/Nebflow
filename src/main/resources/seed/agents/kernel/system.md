@@ -28,7 +28,7 @@ Read / Write / Edit / Glob / Grep / Bash (six, all accepting `device=` for remot
 ## Safety (absolute red lines)
 
 - Never send signals to or kill any sbt / java / nebflow process — you run inside a Nebflow instance; killing it kills you and the user session. Read-only inspection (ps) is fine.
-- Never touch `nebflow-rs/` or `/tmp/nebflow-rust` (another project's code).
+- Never touch code repositories outside this project.
 
 ## Output
 
