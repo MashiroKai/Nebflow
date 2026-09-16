@@ -136,6 +136,25 @@ Nebula session** — injected at its next turn boundary with the header line
 injected bubble. It does NOT go to the peer's user chat inbox, and **no confirmation card is
 raised** (the Mail gate is unchanged — this is not a friend send).
 
+**The peer's agent receives it directly.** `Mail(device=…)` delivers *into the peer's
+Nebula session* — that device's AGENT reads the mail and can act on it. It is not a file
+drop and not a message for the peer's user chat: Mail is the way to make another machine's
+agent aware of something. (Text only plus up to 5 images — Mail has no general
+attachments; see Images below.)
+
+## `Mail` vs `SendMessage` — who receives it? (same NebLink account, opposite semantics)
+- **`Mail(device=…)` — the peer's AGENT receives it directly**: delivered into the peer's
+  Nebula session, injected at its next turn boundary with the header line
+  `[DEVICE-MAIL · from <from_device>]` (type INFO, rendered as a blue injected bubble).
+  That device's agent reads it and handles it.
+- **`SendMessage(to="device:…")` — pure transport; the peer's agent is NOT aware of it**:
+  files land in the peer's Downloads and the text appears in the peer's device panel;
+  nothing enters the peer's agent session or its LLM context. `SendMessage` is the face
+  that carries file transfer (`attachments`) — Mail is not.
+
+**If the peer's agent must be told, use `Mail`.** Reach for `SendMessage` only when the
+bytes or text are meant for the machine and its user-facing surface, not for an agent.
+
 ## Address face (role-scoped — an address outside your face is an explicit error)
 - **Nebula (root)**: `project:<name>` — triggers that project's dispatcher (a bare
   mounted project name is accepted as an equivalent form). You have no `node:`
@@ -164,10 +183,21 @@ is no silent fallback and no fuzzy matching.
 - `node:` routing ignores `delivery` — the engine decides inject-at-turn-boundary
   vs append-to-task.
 
-Images (optional `images` parameter): up to 5 absolute local image paths
-(PNG/JPG/JPEG/GIF/WEBP/BMP) sent as attachments — the recipient sees the images
-directly (vision models) plus their paths as text. For any other file, reference
-its path in the message text and ask the recipient to Read it.
+Images (optional `images` parameter — up to 5 absolute local image paths,
+PNG/JPG/JPEG/GIF/WEBP/BMP). **Agent targets (`address`)**: sent as attachments — the
+recipient sees the images directly (vision models) plus their paths as text. **Device
+target (`device=`)**: the bytes ride the existing device file channel (chunked,
+sha256-verified) into that device's default receive directory (`~/Downloads`) and the
+injected mail text names them so that device's agent can `Read` them; a failed or
+unavailable transfer is reported explicitly, never dropped silently (an unavailable
+channel refuses the send before anything goes out).
+That is Mail's ENTIRE attachment surface today: **≤5 images and no general
+attachments** — there is no `attachments` parameter and no arbitrary file type.
+For any other file, use `SendMessage`'s `attachments` — pure transport, so the file
+lands in the peer's Downloads and the peer's agent is NOT told: add a `Mail` if that
+agent must act on the file. Reference a path in the message text only when the
+recipient runs on the machine that holds it — another device has its own disk, so
+your path is not readable there.
 
 Delivery (the `delivery` parameter — kept for compatibility, one mode only):
   Every Mail is immediate: async send, injected at the target's next turn
@@ -255,7 +285,7 @@ Message type (optional, default "INFO"):
         ),
         "device" -> Json.obj(
           "type" -> "string".asJson,
-          "description" -> "Cross-device Nebula mail (device-mail, 2026-09-15): another machine of the same NebLink account, by device NAME or device id. MUTUALLY EXCLUSIVE with `address` — fill exactly one of the two (both ⇒ MAIL_TARGET_EXCLUSIVE, neither ⇒ MAIL_TARGET_MISSING). Unknown/ambiguous device ⇒ MAIL_DEVICE_NOT_FOUND with the candidate list; a malformed value (URL, or a \"device:\" prefix — the prefix belongs to SendMessage's `to`) ⇒ MAIL_DEVICE_MALFORMED. The message goes to the NebLink server (`POST /api/relay/{target_device_id}/mail` — the addressed device only, never a broadcast) and is pushed to it as an event-stream `agent_mail` event; it is injected into that device's Nebula session at its next turn boundary (header line `[DEVICE-MAIL · from <from_device>]`, type INFO); the peer sees it as a blue injected bubble. No confirmation card.".asJson
+          "description" -> "Cross-device Nebula mail (device-mail, 2026-09-15): another machine of the same NebLink account, by device NAME or device id. MUTUALLY EXCLUSIVE with `address` — fill exactly one of the two (both ⇒ MAIL_TARGET_EXCLUSIVE, neither ⇒ MAIL_TARGET_MISSING). Unknown/ambiguous device ⇒ MAIL_DEVICE_NOT_FOUND with the candidate list; a malformed value (URL, or a \"device:\" prefix — the prefix belongs to SendMessage's `to`) ⇒ MAIL_DEVICE_MALFORMED. The message goes to the NebLink server (`POST /api/relay/{target_device_id}/mail` — the addressed device only, never a broadcast) and is pushed to it as an event-stream `agent_mail` event; it is injected into that device's Nebula session at its next turn boundary (header line `[DEVICE-MAIL · from <from_device>]`, type INFO); the peer sees it as a blue injected bubble. The peer's AGENT receives this mail directly — that device's agent reads it and can act on it (unlike `SendMessage`'s `device:` leg, which is pure transport and leaves the peer's agent unaware: if the peer's agent must know, use `Mail`). No confirmation card.".asJson
         ),
         "message" -> Json.obj(
           "type" -> "string".asJson,
@@ -282,8 +312,11 @@ Message type (optional, default "INFO"):
           "items" -> Json.obj("type" -> "string".asJson).asJson,
           "maxItems" -> 5.asJson,
           "description" -> ("Optional absolute local image paths (PNG/JPG/JPEG/GIF/WEBP/BMP, max 5) to attach — " +
-            "the recipient sees the images directly plus their paths as text. For other files, reference the path " +
-            "in the message text. DEVICE targets (`device=`): the files ride the existing device file channel " +
+            "for agent targets (`address`) the recipient sees the images directly plus their paths as text. " +
+            "Mail carries NO general attachments (no arbitrary file type, no `attachments` parameter): for other " +
+            "files use `SendMessage`'s `attachments`, which is pure transport — the file lands in the peer's " +
+            "Downloads and the peer's agent is NOT told, so add a Mail if that agent must act on the file. " +
+            "DEVICE targets (`device=`): the files ride the existing device file channel " +
             "(chunked FileTransfer, sha256-verified) and land in THAT device's default receive dir (~/Downloads); " +
             "the injected mail text names them so that device can Read them — a failed or unavailable transfer is " +
             "reported explicitly, never dropped silently.").asJson,
