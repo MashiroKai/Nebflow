@@ -25,29 +25,42 @@ class AttachGateServiceSpec extends CatsEffectSuite:
   private def peer(id: String): PeerInfo =
     PeerInfo(deviceId = id, deviceName = s"Device-$id", platform = "macos", address = "http://127.0.0.1:9")
 
+  /** 栈夹具（批 3 · 同族治本 B · 2026-09-16）：`PathUtil.dataRoot` 的重定向**必须包
+    * `guarantee`**。
+    *
+    * 旧形态把还原动作写在 for-comprehension **尾部**（`_ <- IO { setDataRoot(prevRoot); … }`）
+    * ⇒ 任一失败用例（本 spec 的闸位负控就是 `fail(...)`）在 `use` 抛出时**整段跳过还原**，
+    * `dataRoot` 停在 tempDir 上**泄漏给同 JVM 的后续用例**（批 2 实测：令
+    * `MemoryTargetRetryDomainSpec ⑤` 读到不存在的 `tempDir/memory/queue.jsonl` ⇒ 假 skip）。
+    * 修法 = 把「重定向 + 建栈 + use + hub 卸注册」整体收进一层，还原挂其 `guarantee`
+    *（成功/失败/取消三路都执行）⇒ 泄漏**结构性**不可能。判据与断言零改动。 */
   private def withStack[A](use: (NeblinkService, DropboxService) => IO[A]): IO[A] =
     Dispatcher.parallel[IO].use { dispatcher =>
       for
         prevRoot <- IO(PathUtil.dataRoot)
         tempDir <- IO.blocking(os.temp.dir(prefix = "nb-attachgate-spec-"))
-        _ <- IO(PathUtil.setDataRoot(tempDir))
-        ms <- NeblinkService.create(0, dispatcher)
-        hub = new WsHub
-        seen <- Ref.of[IO, List[Json]](Nil)
-        regId <- hub.register(j => seen.update(_ :+ j))
-        svc <- DropboxService.createForTest(ms, hub, 300.millis, 400.millis, 500.millis)
-        out <- use(ms, svc)
-        _ <- hub.unregister(regId)
-        _ <- IO {
+        out <- (for
+          _ <- IO(PathUtil.setDataRoot(tempDir))
+          ms <- NeblinkService.create(0, dispatcher)
+          hub = new WsHub
+          seen <- Ref.of[IO, List[Json]](Nil)
+          regId <- hub.register(j => seen.update(_ :+ j))
+          svc <- DropboxService.createForTest(ms, hub, 300.millis, 400.millis, 500.millis)
+          a <- use(ms, svc)
+          _ <- hub.unregister(regId)
+        yield a).guarantee(IO {
           PathUtil.setDataRoot(prevRoot)
           os.remove.all(tempDir)
-        }
+        })
       yield out
     }
 
   /**
    * 与 [[withStack]] 同构，但先按 `seed(dataRoot)` 造出**未终结**会话写进 transfers.json
    * （走 `loadTransfers` 的真实恢复路径），再把服务建起来。
+   *
+   * 批 3（同族治本 B）：还原动作同样包 `guarantee`（旧形态与 [[withStack]] 逐字同款，
+   * 同一处缺陷的两个落点——失败用例同样会把 dataRoot 泄漏给后续用例）。
    */
   private def withStackSeeded[A](
     seed: os.Path => IO[FileTransfer]
@@ -56,26 +69,27 @@ class AttachGateServiceSpec extends CatsEffectSuite:
       for
         prevRoot <- IO(PathUtil.dataRoot)
         tempDir <- IO.blocking(os.temp.dir(prefix = "nb-attachgate-seed-"))
-        _ <- IO(PathUtil.setDataRoot(tempDir))
-        transfer <- seed(tempDir)
-        _ <- IO.blocking(
-          os.write.over(
-            tempDir / "dropbox" / "transfers.json",
-            Map(transfer.transferId -> transfer).asJson.spaces2,
-            createFolders = true
+        out <- (for
+          _ <- IO(PathUtil.setDataRoot(tempDir))
+          transfer <- seed(tempDir)
+          _ <- IO.blocking(
+            os.write.over(
+              tempDir / "dropbox" / "transfers.json",
+              Map(transfer.transferId -> transfer).asJson.spaces2,
+              createFolders = true
+            )
           )
-        )
-        ms <- NeblinkService.create(0, dispatcher)
-        hub = new WsHub
-        seen <- Ref.of[IO, List[Json]](Nil)
-        regId <- hub.register(j => seen.update(_ :+ j))
-        svc <- DropboxService.createForTest(ms, hub, 300.millis, 400.millis, 500.millis)
-        out <- use(ms, svc)
-        _ <- hub.unregister(regId)
-        _ <- IO {
+          ms <- NeblinkService.create(0, dispatcher)
+          hub = new WsHub
+          seen <- Ref.of[IO, List[Json]](Nil)
+          regId <- hub.register(j => seen.update(_ :+ j))
+          svc <- DropboxService.createForTest(ms, hub, 300.millis, 400.millis, 500.millis)
+          a <- use(ms, svc)
+          _ <- hub.unregister(regId)
+        yield a).guarantee(IO {
           PathUtil.setDataRoot(prevRoot)
           os.remove.all(tempDir)
-        }
+        })
       yield out
     }
 

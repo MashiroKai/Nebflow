@@ -851,7 +851,16 @@ class SandboxSpec extends CatsEffectSuite:
   test("WT-INHERIT②b: Seatbelt 真 OS 沙箱（非嵌套环境）：root=工作区根 commit 走通、旧语义 OS 拒") {
     assume(SandboxBackend.Seatbelt.probe(),
       "sandbox-exec 不可用/嵌套沙箱会话（sandbox_apply 被外层拒）则跳过——OS 强制层由宿主/CI 全量补齐")
-    val ws = homeLikeRoot(s"ws2-${System.nanoTime()}")
+    // [批 3（本机侧）· 2026-09-16 夹具修正 · 非产品码改动] 夹具根必须落在**一切可写根
+    // 之外**：原 `homeLikeRoot` 落 `java.io.tmpdir/nb-sbx-spec/…`，而 writableRoots 含
+    // canonical `java.io.tmpdir`（`SandboxPolicy.tempRoots`，`:288-289`）⇒ 负样本
+    // 「主仓 .git 在 worktree 根之外」其实**落在可写根内**，OS 层合法放行 ⇒
+    // 旧语义对照臂失效（差分不成立、断言夹具性红）。成因 = 夹具根由 `$HOME` 搬到 tmp 的
+    // **夹具位移**（2026-09-13），与 WT-INHERIT③ 同源：**修夹具、不删断言、不做平台跳过**
+    // ——③ 只搬「外部目标」，本用例的差分臂需要**整棵夹具**都在可写根之外（负样本是
+    // 主仓 .git 本身，它必须不可写才谈得上「OS 拒」），故用 `os.home/<name>`（home 根层
+    // 不在任何读写根内：顶层 pin 的 `dataRoot` 是它的同层兄弟，不覆盖它）。
+    val ws = os.home / s"nb-sbx-wt2-ws-${System.nanoTime()}"
     val main = ws / "repo"
     val wt = main / ".nebflow" / "wt-fix"
     os.makeDir.all(main)
@@ -889,9 +898,15 @@ class SandboxSpec extends CatsEffectSuite:
       val oldCtx = ToolContext(projectRoot = wt.toString, sandbox = oldPolicy)
         .copy(sessionId = Some("nb-sbx-wt-oldroot"))
       val cmd2 = s"""echo again > "$fileTarget" && git -C "$wtStr" add -A"""
-      BashTool.call(JsonObject("command" -> cmd2.asJson), oldCtx).unsafeRunSync() match
-        case Left(_) => () // OS 拒（Operation not permitted 形态）= 旧语义差分取证
-        case Right(out) => fail(s"旧语义对照失效：root=worktree 下 git add 不应成功（$out）——差分不成立")
+      // 判据 = **OS 层效果**（取证口径与隔壁 ③ 逐字同款：不靠 BashTool 的 Left/Right 形态
+      // ——宿主直跑态下非零退出仍回 `Right(out)`，现行契约里 OS 拒的可见形态是「效果没落地」）：
+      // 旧语义下 `git add -A` **不得写穿主仓暂存区**（index 逐字节不变）⇒ 差分成立。
+      val idxPath = main / ".git" / "worktrees" / "wt-fix" / "index"
+      val idxBefore2 = os.read.bytes(idxPath)
+      val out2 = BashTool.call(JsonObject("command" -> cmd2.asJson), oldCtx).unsafeRunSync()
+      val idxAfter2 = os.read.bytes(idxPath)
+      assert(java.util.Arrays.equals(idxBefore2, idxAfter2),
+        s"旧语义对照失效：root=worktree 下 git add -A 不得写穿主仓暂存区（OS 层应拒）——差分不成立；cmd out: $out2")
       val log2 = os.proc("git", "-C", main, "log", "--oneline", "-1", "nb-sbx-wt").call(cwd = main, stdout = os.Pipe).out.text()
       assert(!log2.linesIterator.exists(_.contains("again")), s"旧语义下不得产生新提交: $log2")
     finally os.remove.all(ws)

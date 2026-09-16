@@ -317,13 +317,52 @@ class FlowDagCompilerSpec extends FunSuite:
     assert(errs.exists(_.startsWith("[E-205]")), errs.mkString("\n"))
     assert(errs.exists(_.startsWith("[E-204]")), errs.mkString("\n"))
 
-  // ── 预定义 flow 回归（真实 flows/ 目录，存在才跑） ────────────────────
+  // ── 预定义 flow 回归（夹具数据根） ────────────────────────────────────
+  //
+  // 批 3（本机侧 · 2026-09-16）· **夹具化**（禁用例忽略注解、禁删除、禁放宽断言本体）：
+  //
+  // 原形态从**宿主真数据根** `$HOME/.nebflow/flows` 取件（`os.Path(sys.props("user.home"))`）：
+  // 该目录是**用户数据**、随人随机器变，本机一件 `memory-consolidation/flow.json`
+  // （scanner-only 单节点）按现行契约违反 `E-212`（FlowDagCompiler「needs at least 2
+  // nodes」）⇒ 用例红，但红的是**宿主数据面**、不是本仓代码（CI 无此外件 ⇒ 不红）。
+  // 「宿主数据违规」已按任务书**另报 root**（不属本批）；本用例改为**夹具数据根**：
+  // 在临时目录里按**同一数据根布局**（`flows/<name>/flow.json` + `flows/<name>/agents/`）
+  // 造三件代表形态（全局 agent 链 / flow-local agent / 三节点链），断言与解码路径逐字保留
+  // ⇒ 判据面不变（仍是「数据根里的预定义 flow 必须零错误编译」），且**两环境确定性一致**。
+  private def writeFixtureFlows(dataRoot: os.Path): Unit =
+    // ① 全局 agent 两节点链（`agents` = Set("Nebula")）
+    os.write.over(
+      dataRoot / "flows" / "linear" / "flow.json",
+      """{"name":"linear","description":"fixture predefined flow (global agent chain)","entry":"a","nodes":{"a":{"agent":"Nebula","input":"$task","onComplete":"b"},"b":{"agent":"Nebula","input":"t","onComplete":"$return"}}}""",
+      createFolders = true
+    )
+    // ② flow-local agent（`flows/<name>/agents/<w>/agent.json`）——flowAgents 解析腿
+    os.write.over(
+      dataRoot / "flows" / "flowlocal" / "flow.json",
+      """{"name":"flowlocal","description":"fixture predefined flow (flow-local agent)","entry":"a","nodes":{"a":{"agent":"w1","input":"$task","onComplete":"b"},"b":{"agent":"w1","input":"t","onComplete":"$return"}}}""",
+      createFolders = true
+    )
+    os.write.over(
+      dataRoot / "flows" / "flowlocal" / "agents" / "w1" / "agent.json",
+      """{"name":"w1","description":"fixture flow-local worker","tools":[],"category":"standalone"}""",
+      createFolders = true
+    )
+    // ③ 三节点链 + maxRetries（预定义 flow 的生产常见形态）
+    os.write.over(
+      dataRoot / "flows" / "pipelines" / "flow.json",
+      """{"name":"pipelines","description":"fixture predefined flow (3 nodes, retries)","entry":"a","maxLoop":2,"nodes":{"a":{"agent":"Nebula","input":"$task","onComplete":"b","maxRetries":1},"b":{"agent":"Nebula","input":"t","onComplete":"c"},"c":{"agent":"Nebula","input":"t","onComplete":"$return"}}}""",
+      createFolders = true
+    )
 
-  test("all predefined flows in ~/.nebflow/flows compile with zero errors"):
-    val flowsDir = os.Path(sys.props("user.home")) / ".nebflow" / "flows"
-    if os.exists(flowsDir) then
+  test("all predefined flows under <dataRoot>/flows compile with zero errors (fixture data root)"):
+    val dataRoot = os.temp.dir(prefix = "nb-flowdagspec-root-")
+    try
+      writeFixtureFlows(dataRoot)
+      val flowsDir = dataRoot / "flows"
       val jsonFiles = os.walk(flowsDir).filter(p => p.last == "flow.json" && p.ext == "json").toList
-      assume(jsonFiles.nonEmpty, "no flow.json files present")
+      // 夹具自证：代表形态齐备（防空集/单件假绿——原形态的 `assume(nonEmpty)` 正是
+      // 「数据不在 ⇒ 断言不适用」的宽松口，夹具化后改为**结构性下限断言**）
+      assert(jsonFiles.size >= 3, s"夹具须覆盖三种代表形态（全局链 / flow-local / 三节点），得 ${jsonFiles.size}")
       jsonFiles.foreach { f =>
         val parsed = io.circe.parser.parse(os.read(f)).flatMap(_.as[FlowDagDef])
         parsed match
@@ -336,9 +375,6 @@ class FlowDagCompilerSpec extends FunSuite:
             val r = FlowDagCompiler.validate(flow, agents ++ flowAgents)
             assert(r.errors.isEmpty, s"${f} compile errors:\n${r.renderAll}")
       }
-    else
-      // no live flows dir in this environment — the positive R3 case above
-      // still exercises the compiler on a legal DAG
-      ()
+    finally os.remove.all(dataRoot)
 
 end FlowDagCompilerSpec

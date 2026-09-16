@@ -61,6 +61,26 @@ class SandboxProviderSpec extends CatsEffectSuite:
   private def parse(json: String): SandboxConfig =
     SandboxConfig.load(Some(io.circe.parser.parse(json).toOption.get))
 
+  /** 夹具前提的**显式平台声明**（批 3 · C02 · 2026-09-16）：`Seatbelt.probe` 先按
+    * `os.name` 判 mac（`SandboxBackend.scala:142-144`，非 mac **恒 false**）⇒ 注入的
+    * `sandboxExecPath` 只在 mac 分支被尊重，非 mac 上该注入**整段不被执行**（此即
+    * Linux CI 恒红之根因）。
+    *
+    * 本 helper 在**受控窗口内**把平台前提显式钉住（`f` 求值期间），求值结束立即还原
+    * ——不是平台跳过（无 `assume`、无平台分支、断言同形）、不是放宽（`probe` 走完即
+    * 不读 `os.name`，`Seatbelt` 的 `probeOk` 是构造期 `val`），只是把「靠运行环境猜」
+    * 换成「夹具显式声明」。注入路径 `/usr/bin/true` 在两平台都真实存在且恒 exit 0
+    * （macOS 与 Linux coreutils 同款语义）⇒ 断言结果与平台解耦。 */
+  private def withOsName[A](name: String)(f: => A): A =
+    val prev = sys.props.get("os.name")
+    try
+      sys.props("os.name") = name
+      f
+    finally
+      prev match
+        case Some(v) => sys.props("os.name") = v
+        case None    => sys.props.remove("os.name")
+
   /** 只包裹不讲理的假后端：wrap 把 argv 整体替换为一个可辨识的 argv——
     * 用于证明「wrap 接缝确实会包裹」（等价于 provider=local-process 时 Seatbelt
     * 产出的 `sandbox-exec -p … -- /bin/bash …` 形态）。 */
@@ -215,7 +235,18 @@ class SandboxProviderSpec extends CatsEffectSuite:
     val policy = SandboxPolicy.forRoot(tmp, SandboxConfig())
     // probe 通过路径的 argv 形状实证（注入恒真的 sandboxExecPath 以绕过嵌套环境限制；
     // 真实 probe 语义不变：src/main 的 Seatbelt.probe 逐字未改）
-    val seatbelt = new SandboxBackend.Seatbelt("/usr/bin/true")
+    //
+    // [批 3 · C02 · 2026-09-16] 夹具前提 = 「**注入路径被尊重**」——旧形态直接
+    // `new Seatbelt("/usr/bin/true")` 隐含「本机是 mac」，在非 mac（Linux CI）上
+    // `probe` 走平台门恒 false ⇒ `available` 断言恒红（环境依赖，非产品漂移）。
+    // 修法（任务书硬约束：**禁平台条件跳过**）⇒ 由测试侧使注入路径被尊重（见
+    // [[withOsName]]），两环境同一断言、强度不减：
+    //   ① 门自证（可判读）：非 mac 前提下同一注入路径**不被尊重**（false = 未执行注入程序）；
+    //   ② mac 前提下注入路径被尊重 ⇒ `available` 为真、`wrap` 产出包裹 argv。
+    val injected = "/usr/bin/true"
+    assert(!withOsName("Linux")(SandboxBackend.Seatbelt.probe(injected)),
+      "平台门须显式可判：非 mac 分支下 probe 恒 false（这正是「注入路径未被尊重」的形态）")
+    val seatbelt = withOsName("Mac OS X")(new SandboxBackend.Seatbelt(injected))
     assert(seatbelt.available, "注入恒真 probe 路径后 Seatbelt 须 available")
     assertEquals(
       seatbelt.wrap(List("bash", "-c", "echo hi"), policy).map(_.take(2)),

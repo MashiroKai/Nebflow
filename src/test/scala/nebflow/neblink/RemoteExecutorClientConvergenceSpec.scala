@@ -134,6 +134,12 @@ class RemoteExecutorClientConvergenceSpec extends CatsEffectSuite:
           // 批 2（2026-09-16 · C06）**请求体级锚**（只增强，不改既有三条判据）：
           // 夹具按请求体把 2 次下发分判（判别字面与 `StubPeerServer.probeHitCount`
           // 逐字同源）⇒ 「2 次 = 探针 + 业务」不再只靠计数与兄弟 spec 口径支撑。
+          // 批 3（2026-09-16 · 同族治本 A）：`relayExecBusinessCount` 改为**独立**按请求体
+          // 统计（旧形态 = `总次数 − 探针数` 派生量，探针计数器被改成常量时派生值会自动
+          // 跟着对 ⇒ 存活变异）。两个读数现在各自独立：判别谓词被改坏 ⇒ 对应用例红。
+          // ⚠ 可检验性边界：把**两个**计数器同时改成「恒 1」时读数与本场景真值（1 探针 +
+          // 1 业务）重合，逻辑上不可检 —— 夹具型判据的固有边界，非本批判据弱化（详见
+          // `RelayAuthFixtureServer.relayExecBusinessCount` 注释）。
           assertEquals(probes, 1, s"must be exactly ONE read-only profile probe on the relay path (bodies=${fix.relayExecBodies.asScala.toList})")
           assertEquals(business, 1, s"and exactly ONE business dispatch (probe/business split read from the bodies, not from the count)")
       }.guarantee(IO.blocking(fix.close()))

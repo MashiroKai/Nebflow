@@ -109,8 +109,20 @@ final class RelayAuthFixtureServer extends AutoCloseable:
   def relayExecProbeCount: Int =
     relayExecBodies.stream().filter(_.contains(ProbeMarker)).count().toInt
 
-  /** 业务下发数 = exec 总次数 − 探针次数（同样按**请求体**判定，不按顺序猜）。 */
-  def relayExecBusinessCount: Int = relayExecCalls.size() - relayExecProbeCount
+  /** 业务下发数 = `/exec` **请求体**里不含探针判别字面者（批 3 · 同族治本 A，2026-09-16）。
+    *
+    * 旧形态 `relayExecCalls.size() - relayExecProbeCount` 是**派生量**：两个读数共享
+    * 一个来源 ⇒ 一旦探针计数器本身被改成常量（「恒 1 夹具」形态），派生值会**自动跟着
+    * 对**，任何读该计数器的断言都无法识别「仪器在撒谎」（批 2 复核 §J6.3 的存活变异即此）。
+    * 本轮把两个读数改成**各自独立按请求体统计**（同一 `relayExecBodies` 队列、两条互不
+    * 依赖的过滤谓词）⇒ 「探针 / 业务」分判是两个**独立读数**，可分别被变异验红。
+    *
+    * ⚠ 可检验性边界（须知）：若把**两个**计数器同时改成「恒 1」，则断言面（`probes == 1
+    * ∧ business == 1`）与**本场景真值**（1 探针 + 1 业务）重合 ⇒ 该变异在逻辑上**不可检**
+    * ——这是夹具型判据的固有边界（「仪器读数 == 真值」时无从证伪），不是本夹具的判据弱化；
+    * 本夹具对**生产行为**的判别力由「判别字面 / 计数谓词」两个方向的变异实证（见 spec 注释）。 */
+  def relayExecBusinessCount: Int =
+    relayExecBodies.stream().filter(b => !b.contains(ProbeMarker)).count().toInt
   /** How many times a live session was kicked by a newer login. */
   val kickedSessions = new AtomicInteger(0)
 
