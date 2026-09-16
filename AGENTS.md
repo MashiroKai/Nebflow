@@ -173,14 +173,66 @@ rg -nc --pcre2 --glob system.md '[^\x00-\x7F]' "${P[@]}"   # advisory only: rema
 
 Two properties the check must keep: (a) the CJK class is written with `\x{...}` escapes, so the checker itself contains no Chinese; (b) check 1 is the narrow class (CJK + full-width), not "any non-ASCII" — every compliant English prompt already carries typographic marks, so a blanket non-ASCII gate would be red on the whole corpus and carry no signal. Quoted enum values (`result="obsolete"`) are exempt as code identifiers; the narrative around them is not.
 
-**4. One prompt, three faces — change them together, then byte-compare.** A prompt change must land on every face it exists on and be verified byte-for-byte, because the faces drift silently (`seed/general` and `seed/project-dispatcher` already differ from their runtime copies, while `seed/kernel` and `seed/memory-consolidator` are byte-identical):
+**4. One prompt, three faces — change them together, then byte-compare.** A prompt change must land on every face it exists on and be verified byte-for-byte, because the faces drift silently — a runtime copy can hold content the seed lacks, and the startup reconcile pass then writes nothing and logs the runtime-only lines:
 - faces: `src/main/resources/seed/agents/<name>/system.md` ↔ the code-embedded literal `Seeds.<Name>.systemPrompt` (`src/main/scala/nebflow/agent/AgentLibrary.scala`) ↔ runtime `~/.nebflow/agents/<name>/system.md`;
-- verify with `cmp`, not `diff`. Two traps: the code literal ends without a trailing newline (`AgentLibrary.scala:383` closes the delimiter on the text line) while every on-disk `system.md` ends in `0a`, so a blind copy flips the last byte; and `{{data_root}}` must stay a literal placeholder on the seed/code faces (it is substituted at runtime — expanding it in the seed breaks every install);
+- verify with `cmp`, not `diff`. Two traps: the code literal's last byte must match the `0a` that every on-disk `system.md` ends in (`Seeds.Nebula.systemPrompt` closes with `""" + "\n"` at `AgentLibrary.scala:351`, so dropping that suffix leaves the faces one byte apart — verify the last byte instead of assuming it); and `{{data_root}}` must stay a literal placeholder on the seed/code faces (it is substituted at runtime — expanding it in the seed breaks every install);
 - seeding is per-family, not one rule for every agent:
-  - **`Nebula`** — its runtime files are written only when absent (`AgentLibrary.scala:67` guards the write with `!os.exists`) and never overwritten afterwards — a seed edit does not reach an existing install by itself. `seed/manifest.json` lists no `Nebula` entry, so the startup reconcile pass never touches it;
+  - **`Nebula`** — its runtime files are written only when absent (`AgentLibrary.scala:41` for `agent.json`, `:45` for `system.md`, each guarded by `!os.exists`) and never overwritten afterwards — a seed edit does not reach an existing install by itself. `seed/manifest.json` lists no `Nebula` entry, so the startup reconcile pass never touches it;
   - **agents `seed/manifest.json` lists** (`project-dispatcher`, `general`, `kernel`, `memory-consolidator`) — reconciled against the seed digest at every startup; on a seed ↔ runtime digest difference the pass first takes a pre-sync backup (`<root>/agents-backups/<ts>_pre-sync-<name>/`, with `PRE-SHA256.txt`) and then mirror-overwrites from the seed — so a seed edit **does** reach an existing install on the next startup, unless the runtime copy holds content the seed lacks, in which case the pass writes nothing and logs the runtime-only lines;
   - **agents in neither list** (runtime-only agents such as `design-engineer`) — no repo-side seed exists, so the runtime copy is the sole authority and nothing reconciles it;
-- existing exception: `src/main/resources/seed/manifest.json` does not list `Nebula`, so Nebula has no repo-side seed copy — its faces are the runtime file `~/.nebflow/agents/Nebula/system.md` plus the code literal `Seeds.Nebula.systemPrompt` (`AgentLibrary.scala:324-384`). For Nebula, three-face sync means runtime ↔ code literal.
+- existing exception: `src/main/resources/seed/manifest.json` does not list `Nebula`, so Nebula has no repo-side seed copy — its faces are the runtime file `~/.nebflow/agents/Nebula/system.md` plus the code literal `Seeds.Nebula.systemPrompt` (`AgentLibrary.scala:309-352`). For Nebula, three-face sync means runtime ↔ code literal.
+
+**5. 四条机械判据（N1–N4）** —— 与上面五检同批跑：五检管「像不像历史叙事」，N1–N4 管「稳不稳（不依赖某一次事件）/ 贴不贴本机 / 做不做得到 / 删不删」。每条四件套 = ① 定义 ② 检查命令（逐字可跑）③ 正例 ④ 负例；**④ 负例是必须当场能触发红的构造**（把该串写进夹具 `system.md` 即可复算，不得只写「反例」字样）。
+
+**N1 禁过拟合（no over-fitting）**
+- ① 定义：提示词只写**稳定规则**；不得出现仅对某一次事件 / 某一台机 / 某一种会话形态成立的叙述——事件复盘、一次性命令、某次设计质疑的答复、具体日期 / 批次 / 节点 id / commit / sha。
+- ② 检查命令（红 = 命中）：
+```bash
+P=(src/main/resources/seed/agents "$HOME/.nebflow/agents")
+rg -ni --pcre2 --glob system.md 'flexdisc|#6[0-9]{2}\b|batch [0-9]|\b(19|20)[0-9]{2}[-/.][0-9]{1,2}[-/.][0-9]{1,2}\b|one-off|this time|last time|as it happened|the incident' "${P[@]}"
+rg -ni --pcre2 --glob system.md '\b[A-Za-z0-9_/.-]+\.scala:[0-9]+|\bn-[0-9a-f]{8}\b|\b[0-9a-f]{9}\b' "${P[@]}"
+```
+- ③ 正例：`Route every open question through AskUserQuestion.`
+- ④ 负例（须能触发红）：`The 2026-09-14 flexdisc clause-5 dispatch omitted the fragment; a node had to self-supply it (result无损).` —— 同时命中 `flexdisc` 与日期（该形态现盘可在运行面 dispatcher 提示词内实见 ⇒ 判据当场红）。
+- 附注：`one-off` 命中要**看着判**——「某一次的历史」是违规，「一类不会重现的内容」是稳定规则；后者改写措辞（如 `task detail that will not recur`）而非豁免。
+
+**N2 禁本机路径 / 主机状态（「本地文件」）**
+- ① 定义：提示词不得依赖**本机路径、本机操作系统、本机硬件读数或当前主机状态**。平台事实必须以「由运行期给出 / 由引擎注入」的方式表达（占位符 `{{data_root}}` 保持字面量，运行期替换）；不得把某个 OS 的读数命令或某台机的目录写死。
+- ② 检查命令（红 = 命中）：
+```bash
+P=(src/main/resources/seed/agents "$HOME/.nebflow/agents")
+rg -n --pcre2 --glob system.md '/Users/|/home/[a-z]|\$HOME|~/\.nebflow|vm_stat|sysctl|macOS|Darwin|Mashiros|this (machine|host)' "${P[@]}"
+```
+- ③ 正例：Resolve the data root from the `{{data_root}}` placeholder; if the runtime renders a different root, the rendered value wins.（占位符保持字面量）
+- ④ 负例（须能触发红）：把数据根写成 `printf '%s/.nebflow' "$HOME"` 的取根命令（命中 `$HOME`）；把可用内存写成 macOS 的 `vm_stat` 读数（命中 `macOS` / `vm_stat`）。
+- **豁免名单（必须显式排除，否则误伤）**：`kernel/system.md:19` 的 `the peer inherits none of this machine's path semantics` 是**关于 `device=` 对端的稳定语义**（远端机器继承不到本机的路径语义），不是本机耦合 ⇒ **豁免**：跑判据时加 `--glob '!**/kernel/system.md'`，或把该句改写成不含 `this machine` 的等价表述。豁免须逐条写进复核报告，不得默认豁免。
+
+**N3 角色-工具一致（role-tool consistency）**
+- ① 定义：提示词提到的每个**工具名**必须落在该 agent 的**实际固定工具集**内；不得要求该 agent 做不到的动作（无 Bash 却写 git 命令、无 Write 却要求写文件）。**描述性提及**（「由 Nebula 经 `Delegate` 派发」）与**否证性提及**（「`Mail` 不在你的工具面内」）不算违规——判据只打**能力主张**。
+- ② 检查命令：逐 agent 取工具集（代码单点）与提示词工具 token 求差：
+```bash
+# 代码单点（只读）：Nebula=AgentCore.scala:2642 / dispatcher=:2757 / kernel=:2807 / general=:2829 / consolidator=KernelFixedTools
+for a in Nebula general kernel project-dispatcher memory-consolidator; do
+  f=~/.nebflow/agents/$a/system.md
+  echo "== $a: $(rg -oN --no-filename '\b(Read|Write|Edit|Glob|Grep|Bash|AskUserQuestion|Mail|Delegate|SubTask|Card|Pop|TaskList|MemoryEdit|Schedule|NodeList|NodeEdit|NodeCancel|TaskBoard)\b' $f | sort -u | tr '\n' ' ')"
+done
+rg -n '\bgit (add|commit|push|merge|worktree)\b|\bcommit (every|the) change\b' ~/.nebflow/agents/Nebula/system.md src/main/scala/nebflow/agent/AgentLibrary.scala
+```
+- ③ 正例：`kernel/system.md:5` 的 `Read / Write / Edit / Glob / Grep / Bash (six …) + AskUserQuestion` —— 与 `KernelFixedTools`（`AgentCore.scala:2807` = `BaseTools + "AskUserQuestion"`）**恰等**。
+- ④ 负例（须能触发红）：Nebula 的 `## Git` 节 `commit every change within the same task (add by file, message = purpose)` —— 现盘 `AgentLibrary.scala:336` 逐字在位，而 Nebula 工具面无 Bash/Write/Edit（`rg -c '\bBash\b' src/main/scala/nebflow/agent/AgentLibrary.scala` = 0；`AgentCore.scala:2628` 明写「显式不含：Bash/Write/Edit」）⇒ 判据当场红（即「要求了一件做不到的事」）。
+
+**N4 整理以删除精简为主（deletion-first）**
+- ① 定义：记忆整理提示词必须以**「删 / 并 / 缩」为默认取向**；「保留」是需三问全过的**例外**，而非默认。机械判 = **精简词侧行数 ≥ 新增词侧行数**，**且**存在一条**显式默认动作**语句。只堆负向约束（`never` / `change no file`）不算过——负向约束不得替代正面取向。
+- ② 检查命令（红 = 精简侧 < 新增侧，或第二条无命中）：
+```bash
+f=src/main/resources/seed/agents/memory-consolidator/system.md
+S=$(rg -ci '\b(remove|delete|prune|shrink|drop|trim|retire)\w*' $f)
+A=$(rg -ci '\b(append|adding|add|keep|retain|merge|fold)\w*' $f)
+echo "shrink=$S add=$A"; [ "$S" -ge "$A" ] || echo "RED: deletion-first not expressed"
+rg -n -i 'by default (delete|remove|prune|shrink)|prefer (delet|remov|prun|shrink)|delete-first' $f || echo "RED: no explicit default-delete rule"
+```
+- ③ 正例：`The default action is to remove or merge; keep an entry only when all three adoption questions pass.`（取向句 + 三问例外）
+- ④ 负例（须能触发红）：只加 `never delete on your own` / `change no file` 一类负向约束而不写默认动作 ⇒ 第二条判据无命中 ⇒ 红；精简侧词行数低于新增侧 ⇒ 第一条红。
 
 ## 前端规范
 - 设计风格必须统一——弹窗、按钮、字体、配色等，能复用已有设计就复用，不要造新轮子
