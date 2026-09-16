@@ -124,4 +124,26 @@ trait Tool:
    * APIs can process the image.
    */
   def extractImages(input: JsonObject, result: String): Option[List[ContentBlock.Image]] = None
+
+  /**
+   * The **model-facing projection** of a successful tool result (imgticket batch
+   * ii, author #687-D 2026-09-16).
+   *
+   * A tool returns ONE string from [[call]], and the engine hands that same
+   * string to both consumers: the frontend (`ToolExecResult.frontendContent` →
+   * the ToolEnd frame and the `.ui.json` history line) and the model
+   * (`ToolExecResult.content` → `ContentBlock.ToolResult`). For a tool whose
+   * payload exists for the browser rather than for a language model — Card's
+   * HTML body with its base64-inlined images — the two consumers want different
+   * strings: the model gains nothing from the markup, and the payload's size is
+   * what pushes the result past `Defaults.DefaultMaxResultSizeChars`, at which
+   * point `ToolResultGuard` replaces what the model sees with a truncated
+   * preview plus a disk copy.
+   *
+   * This hook narrows **only** the model-facing string. The frontend face stays
+   * the tool's verbatim result, so nothing about rendering, replay or the
+   * stored history changes. Default = identity: every tool that does not
+   * override it keeps today's behaviour byte-for-byte.
+   */
+  def modelFacingResult(result: String): String = result
 end Tool
