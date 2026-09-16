@@ -1417,7 +1417,36 @@ export function appendToolStreamDelta(toolName, delta) {
       // the post-update threshold check would fail and miss the auto-scroll.
       const wasNearBottom = isNearBottom(bodyEl);
 
-      if (highlighted) {
+      // ── cardguard negative filter — tool-INPUT stream path (author ruling
+      // 2026-09-17 · #698 A1) ───────────────────────────────────────────────
+      // This face is INDEPENDENT of renderTool's result-side filter: the tool
+      // ARGUMENTS (Write content / Edit new_string / Bash command …) stream here
+      // while the model is still emitting them, so no tool_result exists yet.
+      // A payload carrying the card sentinel ANYWHERE — the realistic shape
+      // being ToolResultGuard's persisted preview — must not reach the DOM as
+      // raw text. Pre-fix BOTH routes below leaked it verbatim: the hljs <pre>
+      // route and the plain `<pre class="tool-body-pre">` fallback. Same regex
+      // and only that regex, as in renderTool (:1139) and in the two replay
+      // routes of persistence.js.
+      // Branch taken = safe placeholder, deliberately NOT the card path: the
+      // stream is a PARTIAL JSON field, so the 2048-char preview cut is
+      // unparseable, and re-rendering a card every frame would churn iframes.
+      // The finalized row goes through renderTool, whose own cardguard takes the
+      // card path when the payload does parse (:1157). The placeholder carries
+      // no "view source" escape hatch — no <pre>, no collapsed body: the raw
+      // text stays out of the DOM entirely.
+      const cgSentinelIdx = displayContent.search(/___\w+_HTML___/);
+      if (cgSentinelIdx >= 0) {
+        let cgPh = bodyEl.querySelector('[data-cardguard="placeholder"]');
+        if (!cgPh) {
+          bodyEl.innerHTML = '';
+          cgPh = document.createElement('div');
+          cgPh.className = 'body open';
+          cgPh.dataset.cardguard = 'placeholder';
+          bodyEl.appendChild(cgPh);
+        }
+        cgPh.textContent = t('chat.toolCardUnavailable');
+      } else if (highlighted) {
         bodyEl.innerHTML = highlighted.replace(/<\/code><\/pre>$/, '<span class="cursor"></span></code></pre>');
       } else {
         bodyEl.innerHTML = '<pre class="tool-body-pre">' + escapeHtml(displayContent) + '<span class="cursor"></span></pre>';
