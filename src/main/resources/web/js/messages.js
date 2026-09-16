@@ -55,6 +55,9 @@ import { previewBlob, previewLocalPath, canPreviewLocalPath, isPreviewOpen } fro
 // 实现（上传链 + 闸位 + 上传卡渲染都在那边 ⇒ 两面不各写一套）。设备面**不**经此
 // （设备腿仍走 dropbox.js 单点，零行为变化）。
 import { sendFiles, attachAvailable, renderUploadCards, detachUploadCards, clearSettledUploads } from './attachUpload.js';
+// 头像复用池 + 九宫格内容签名（uifix 批 2026-09-17，「群头像没有被缓存」修复）：
+// 唯一入口 = avatarRender.js（判据与池都在那边，本模块只消费）。
+import { avatarImgNode, avatarCellsSignature } from './avatarRender.js';
 
 let conversations = [];
 let friendsCache = [];          // accepted friends — source of truth for §3.3 gate
@@ -302,10 +305,11 @@ function el(tag, cls, text) {
 function avatarEl(person, size) {
   const a = el('span', `fm-avatar fm-avatar-${size}`);
   if (person && person.avatarUrl) {
-    const img = document.createElement('img');
-    img.src = person.avatarUrl;
-    img.alt = '';
-    a.appendChild(img);
+    // 🔴 uifix 批（2026-09-17）：走**已解码节点复用池**（`avatarRender.js`）——
+    // 同 URL 若池中有游离 `<img>`（= 上一次开窗遗留、位图仍在内存）直接复用，
+    // 零重拉、零重解码、零空白帧。改前恒 `createElement('img')` + `img.src`，
+    // 每次重绘都是一枚未解码的新节点（作者令「禁每次重拉重绘」）。
+    a.appendChild(avatarImgNode(person.avatarUrl));
   } else {
     a.textContent = ((person && (person.name || person.neblinkId)) || '?').trim().charAt(0).toUpperCase();
   }
@@ -693,12 +697,26 @@ function currentConv() {
  *  缓存 → `conv.memberAvatars` → 首字母）⇒ 两处**同源同序**（本批 ①的客户端兜底）。
  *  两级都空（名册未到 / 字段缺席 / 畸形 / 群 0 人）⇒ 回退标题首字母那一枚
  *  （现状形态 = 降级态）。逐格无 `avatarUrl` 由 groupAvatarGrid 内逐格首字母兜底。 */
+ *  🔴 2026-09-17 uifix 批（作者令「群头像没有被缓存，我每次点进群……都会闪一下」）：
+ *  **重绘前先比内容签名**，签名相同 ⇒ **零 DOM 操作**直接返回。
+ *  · 改前恒 `host.innerHTML = ''` + 重建 ⇒ 每次进群一次全量替换（实测
+ *    `rebuild=1`/`imgCreate=6`/节点复用 `0/6`）；名册腿到达后的那次重绘与首帧
+ *    内容**逐字相同**却照样重造全部 `<img>` ⇒ 新节点重新解码 ⇒ 可见闪。
+ *  · 签名 = `avatarCellsSignature`（`avatarRender.js`，纳入 userId/avatarUrl/
+ *    顺序/总数/降级文案 = 决定渲染结果的全部输入）⇒ 「变了才重绘」是**完备**的：
+ *    任一输入变（成员增删/头像改 URL/成员数变）签名必变，仍照旧重绘。
+ *  · 逐枚 `<img>` 由 `avatarImgNode` 取（已解码节点复用池）⇒ 真需要重绘时也
+ *    不重新拉取、不重新解码（同 URL 的游离节点直接重新挂载）。 */
 function paintGroupAvatarInto(host, conv, cells) {
   if (!host || !conv) return;
   const list = (Array.isArray(cells) && cells.length) ? cells : conv.memberAvatars;
   const total = Number(conv.memberCount) || (Array.isArray(list) ? list.length : 0);
+  const label = convTitleLabel(conv);
+  const sig = avatarCellsSignature(list, total, label);
+  if (host.dataset.avatarSig === sig) return; // 内容未变 ⇒ 不碰 DOM（禁「先清空再赋值」）
+  host.dataset.avatarSig = sig;
   host.innerHTML = '';
-  host.appendChild(groupAvatarGrid(list, 40, total) || avatarEl({ name: convTitleLabel(conv) }, 40));
+  host.appendChild(groupAvatarGrid(list, 40, total) || avatarEl({ name: label }, 40));
 }
 
 /** 开着的群窗：组合头像就地重打（`fm-groups-changed` 到达 ⇒ 成员集可能已变）。
@@ -977,7 +995,13 @@ function renderChatModal(conv) {
   const headAvatarSlot = (isGroupHead || (conv.kind !== 'device' && !!conv.friend))
     ? el('span', 'fm-modal-avatar') : null;
   if (headAvatarSlot) {
-    if (isGroupHead) paintGroupAvatarInto(headAvatarSlot, conv);
+    // 🔴 uifix 批（2026-09-17）：首帧**也**先查本窗名册缓存 `groupMemberAvatars`
+    // —— 与 `refreshOpenGroupHeaderAvatar`（下方 :745 一带）**同一个查找式、同一份
+    // 数据**（禁第二套）。改前首帧只看 `conv.memberAvatars`：该字段缺席时首帧落
+    // 群名首字母，名册腿到达后再整体换成六宫格 ⇒ 每次进群一次「字母 → 头像」闪。
+    // 带上缓存后，第二次及以后进同一群首帧即命中名册（与随后的名册腿签名相同 ⇒
+    // `paintGroupAvatarInto` 的签名闸直接短路，全程零 DOM 操作）。
+    if (isGroupHead) paintGroupAvatarInto(headAvatarSlot, conv, groupMemberAvatars.get(String(conv.conversationId)));
     else headAvatarSlot.appendChild(avatarEl(conv.friend, 40));
     header.appendChild(headAvatarSlot);
   }

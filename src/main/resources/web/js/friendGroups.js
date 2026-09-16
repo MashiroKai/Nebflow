@@ -33,6 +33,9 @@ import { errKind } from './friendsApi.js';
 // ⑤ 中文输入收归（作者裁定 2026-09-12）：新增输入面必须同批接入 imeGuard，
 // 禁手写组字判定（scripts/check-ime-guard.mjs 机械哨兵）。
 import { bindImeGuard, isImeComposing } from './imeGuard.js';
+// 头像已解码节点复用池（uifix 批 2026-09-17，「群头像没有被缓存」修复）：
+// 唯一入口 = avatarRender.js（本模块只消费，不复制池/判定）。
+import { avatarImgNode } from './avatarRender.js';
 
 // ── 九项裁定常量（唯一落点）────────────────────────────────
 // 成员上限 50（O①，root 裁定 ④「成员上限 50」）：权威闸在服务端；客户端只在
@@ -167,10 +170,8 @@ function el(tag, cls, text) {
 function avatarEl(person, size) {
   const a = el('span', `fm-avatar fm-avatar-${size}`);
   if (person && person.avatarUrl) {
-    const img = document.createElement('img');
-    img.src = person.avatarUrl;
-    img.alt = '';
-    a.appendChild(img);
+    // uifix 批（2026-09-17）：同 `messages.js::avatarEl` —— 已解码节点复用池。
+    a.appendChild(avatarImgNode(person.avatarUrl));
   } else {
     // O④：群头像 = 标题首字母占位（无自定义群头像）；成员头像同既有首字母兜底。
     a.textContent = ((person && (person.name || person.neblinkId)) || '?').trim().charAt(0).toUpperCase();
@@ -254,10 +255,10 @@ export function groupAvatarGrid(cells, size, total) {
       if (isMore) {
         c.textContent = `+${more}`;
       } else if (cell.avatarUrl) {
-        const img = document.createElement('img');
-        img.src = cell.avatarUrl;
-        img.alt = '';
-        c.appendChild(img);
+        // 🔴 uifix 批（2026-09-17）：走已解码节点复用池（`avatarRender.js`）——
+        // 九宫格每次重绘都有 6 枚 `<img>`，改前每枚都是新建未解码节点（作者令
+        // 「群头像没有被缓存」「禁每次重拉重绘」）。同 URL 的游离节点直接复用。
+        c.appendChild(avatarImgNode(cell.avatarUrl));
       } else {
         c.textContent = gridCellInitial(cell);
       }
