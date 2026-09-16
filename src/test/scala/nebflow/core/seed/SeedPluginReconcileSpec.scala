@@ -154,6 +154,50 @@ class SeedPluginReconcileSpec extends FunSuite:
         s"manifest records the pre-overwrite sha256 of '$rel'")
     }
 
+  // ── ①b 干净运行时载 runtime 独有件 → 镜像覆盖连带删除 ├─────
+  /** 覆盖**镜像删除分支**（`SeedService.mirrorSeed:429-431` 的「删 runtime 独有文件」步 +
+    * `:433-435` 的「清删空目录」步，本批 2026-09-17 补）。
+    *
+    * 分支身份：镜像覆盖（[[mirrorSeed]]）在「写种子文件」之外还有**删除面**——runtime 独有件
+    * 必须被移除，否则「镜像 = 逐字节等于种子」不成立。
+    *
+    * 可达性：插件面用**信任记录 digest 仲裁**（approve 时刻目录指纹），runtime 独有件
+    * 已计入该指纹 ⇒ `digest == trusted` 成立 ⇒ 进镜像覆盖分支（不落「用户改过」跳过分支）。
+    * （agents 面同一步不可达——`reconcileAgent` 的差集检查把 runtime 独有文件判为
+    * REFUSING，`runtimeUniqueLines` 对无同 rel 的运行时文件取空种子行集 ⇒ 全行独有；
+    * 该负控属既有行为，本批只登记、不覆盖。）
+    *
+    * 变异判据：注掉 `mirrorSeed` 中「删除运行面独有件」那一步 ⇒ 本例必红
+    * （独有件残留 + `treeAsText != seedText`）。 */
+  test("clean runtime carrying a runtime-only file: the seed mirror deletes it and cleans the emptied dir"):
+    makeIsolatedHome()
+    val legacyRel = "skills/slideblocks/legacy/LEGACY-NOTE.md"
+    val withExtra = mutatedOldRuntime.updated(legacyRel, "kept outside the seed tree\n".getBytes(UTF_8))
+    writePlugin(withExtra)
+    // 仲裁基准含 runtime 独有件 ⇒ 判为「干净运行时」（自 approve 后零漂移）
+    val trusted = approveRuntime()
+    assert(trusted == dirDigest(pluginDir),
+      "precondition: approve recorded the digest incl. the runtime-only file")
+    assert(os.exists(pluginDir / "skills" / "slideblocks" / "legacy" / "LEGACY-NOTE.md"),
+      "precondition: the runtime-only file is on disk before reconcile")
+
+    ensure()
+
+    // 镜像删除分支（负控：删除步被注掉即红）
+    assert(!os.exists(pluginDir / "skills" / "slideblocks" / "legacy" / "LEGACY-NOTE.md"),
+      "the runtime-only file is removed by the seed mirror (mirror-delete branch)")
+    // 清删空目录步：只装 runtime 独有件的目录一并消失
+    assert(!os.exists(pluginDir / "skills" / "slideblocks" / "legacy"),
+      "the directory emptied by that deletion is cleaned up")
+    // 删除面与写面同判据：镜像结果逐字节等于种子
+    assert(treeAsText(pluginDir) == seedText, "mirrored runtime == seed exactly (byte-level)")
+    assert(recordSha.get == dirDigest(pluginDir), "re-approved on the mirrored digest")
+    // 删除不是静默丢弃：pre-sync 备份含被删的那一件（回滚材料完整）
+    val backupDirs = os.list(home / "plugins-backups").filter(os.isDir)
+    assert(backupDirs.size == 1, s"exactly one pre-sync backup dir, got: ${backupDirs.size}")
+    assert(os.exists(backupDirs.head / "skills" / "slideblocks" / "legacy" / "LEGACY-NOTE.md"),
+      "the pre-sync backup holds the deleted runtime-only file (rollback material)")
+
   // ── ② 用户改过 → 跳过 + 用户编辑保留 ├─────────────────────
   test("user-modified runtime (digest!=trusted) is skipped, user edits preserved"):
     makeIsolatedHome()
