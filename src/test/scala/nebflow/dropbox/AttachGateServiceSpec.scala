@@ -177,14 +177,20 @@ class AttachGateServiceSpec extends CatsEffectSuite:
 
   test("服务面闸位：单件入口不得绕过闸位（offerFile 超限同样被拒）") {
     withStack { (ms, svc) =>
+      // 🔴 契约阈值迁移（2026-09-16 specdrift 批 2 · C07）：单件上限由 100 MB 迁到
+      // `AttachContract.MaxFileBytes` = 1 GiB（`AttachContract.scala:32`）⇒ 旧字面
+      // `100_000_001L` 已**合法**（闸位放行 ⇒ 旧断言假红）。本批改为**引用契约常量**，
+      // 🔴 禁写死新字面：阈值再迁时本用例随常量走，不再二次漂移。
+      val overLimit = AttachContract.MaxFileBytes + 1
       for
         _ <- ms.upsertPeer(peer("peer1"))
-        res <- svc.offerFile("peer1", "huge.bin", 100_000_001L, "application/octet-stream")
+        res <- svc.offerFile("peer1", "huge.bin", overLimit, "application/octet-stream")
         history <- svc.getHistory("peer1")
       yield
         res match
           case Left(err) => assertEquals(err.code, AttachContract.Codes.AttachTooLarge)
-          case Right(_)  => fail("单件入口必须走同一闸位")
+          case Right(_) =>
+            fail(s"单件入口必须走同一闸位（$overLimit 超 MaxFileBytes=${AttachContract.MaxFileBytes}）")
         assertEquals(history, Nil)
     }
   }

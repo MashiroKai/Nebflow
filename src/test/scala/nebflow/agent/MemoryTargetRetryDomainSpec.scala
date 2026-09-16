@@ -99,21 +99,56 @@ class MemoryTargetRetryDomainSpec extends FunSuite:
   // ── ② system.md 面 ─────────────────────────────────────────────
 
   test("② system.md 面：目标缺失族 ⇒ rejected（可重试）+ 禁 obsolete + 禁新建目标文件"):
-    val md  = seedSystemMd
-    val idx = md.indexOf("The target does not exist")
-    assertEquals(idx >= 0, true, s"缺「目标不存在」整族的硬规则:\n$md")
-    val seg = md.substring(idx, math.min(md.length, idx + 900))
-    assert(seg.contains("`result=\"rejected\"`"), s"该族结局必须是 rejected（可重试）:\n$seg")
-    assert(seg.contains("never `obsolete`"), s"必须明文禁终态词:\n$seg")
-    assert(seg.contains("never create the target file"), s"必须明文禁新建目标文件:\n$seg")
+    val md = seedSystemMd
+    // ── 锚点迁移（2026-09-16 specdrift 批 2 · C09；本批唯一 M 项）─────────────────
+    // 旧锚 = 字面句「The target does not exist」——prompt 已把该族改写成 `system.md:51`
+    // 的 **family 硬规则行**并**逐成员枚举**（`target-missing` = 目标文件不存在 /
+    // `locate-miss: section not found` = 目标节不在 / `locate-miss: no matching '- ' entry`
+    // = 节内定位不到条目 / `apply-miss` = 定位器在模拟内容上失效）⇒ **语义在、字面锚不在**。
+    // 本批只换锚点，**判据强度只增不减**：
+    //   · 判读面从「header 后 900 字窗」收紧为**该族自己的块**（块尾 = 下一个族成员行
+    //     `superseded-by-later`）⇒ 不再靠邻近段落蹭过；
+    //   · 旧版弱锚 `contains("section")` → **四成员逐条**在案；
+    //   · 结局词 / 禁终态词 / 禁新建 三条仍在本族块内逐条判读（措辞锚逐字更新）。
+    val familyAnchor = "Missing-target family"
+    val idx          = md.indexOf(familyAnchor)
+    assertEquals(idx >= 0, true, s"缺「目标缺失族」整族硬规则（现措辞锚 `$familyAnchor`）:\n$md")
+    val blockEnd = md.indexOf("superseded-by-later", idx)
+    assert(
+      blockEnd > idx,
+      s"目标缺失族的块边界（下一个族成员行）未找到 —— 判据锚已漂移:\n${md.substring(idx, math.min(md.length, idx + 600))}"
+    )
+    val seg = md.substring(idx, blockEnd)
+    assert(seg.contains("hard rule"), s"该族必须是硬规则（不可绕过）:\n$seg")
+    assert(seg.contains("every member"), s"该族必须声明「覆盖每一个成员，而不是其中之一」:\n$seg")
+    // 四成员逐条枚举（旧版只有一条 header 锚 + 一个弱 `contains("section")`）
+    assert(seg.contains("`target-missing`"), s"该族必须枚举「目标文件不存在」成员:\n$seg")
+    assert(seg.contains("locate-miss: section not found"), s"该族必须枚举「目标节不存在」成员:\n$seg")
+    assert(seg.contains("locate-miss: no matching '- ' entry"), s"该族必须枚举「节内定位不到条目」成员:\n$seg")
+    assert(seg.contains("apply-miss"), s"该族必须枚举「定位器失效」成员:\n$seg")
     assert(seg.contains("section"), s"该族必须覆盖「目标节不存在」:\n$seg")
+    // 规定结局 = rejected，且明写 retryable（条目保持 pending ⇒ 重试引线是活的）
+    assert(seg.contains("`result=\"rejected\"`"), s"该族结局必须是 rejected（可重试）:\n$seg")
+    assert(seg.contains("retryable"), s"该族必须明写 rejected 属可重试族（条目保持 pending）:\n$seg")
+    // 禁终态词（现措辞逐字：Never write a terminal word (`obsolete` / `applied` / `modified` / `deduped`)）
+    assert(
+      seg.contains("Never write a terminal word") && seg.contains("`obsolete`"),
+      s"必须明文禁终态词（`obsolete` 在禁列内）:\n$seg"
+    )
+    // 禁新建目标文件（现措辞逐字：Create nothing and change no file —— no layer file, no section, no entry）
+    assert(
+      seg.contains("Create nothing and change no file") && seg.contains("no layer file"),
+      s"必须明文禁新建目标文件 / 节 / 条目:\n$seg"
+    )
     // 反面：不得残留「缺目标 ⇒ obsolete」的旧口径
     assert(!md.contains("层不存在 ⇒ 记 `obsolete`"), "不得残留旧的终态口径")
     assert(!md.contains("missing ⇒ `obsolete`"), "不得残留旧的终态口径")
-    // 路径纪律段同口径（项目层文件不存在 ⇒ 不动文件、不新建）
+    // 路径纪律段同口径（项目层文件不存在 ⇒ 不动文件、不新建；且**禁**终态词）
     val pIdx = md.indexOf("That path not existing")
     assertEquals(pIdx >= 0, true, "路径纪律段必须写明「目标路径不存在 ⇒ 不新建」")
-    assert(md.substring(pIdx, math.min(md.length, pIdx + 400)).contains("do NOT create it"), s"路径纪律段缺禁新建")
+    val pSeg = md.substring(pIdx, math.min(md.length, pIdx + 400))
+    assert(pSeg.contains("do NOT create it"), s"路径纪律段缺禁新建:\n$pSeg")
+    assert(pSeg.contains("Never `obsolete` for a missing target"), s"路径纪律段缺「缺目标 ⇒ 禁终态词」:\n$pSeg")
 
   // ── ③ 简报指引面 ───────────────────────────────────────────────
 

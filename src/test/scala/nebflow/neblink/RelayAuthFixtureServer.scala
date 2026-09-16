@@ -96,6 +96,21 @@ final class RelayAuthFixtureServer extends AutoCloseable:
   val relayTokens = new ConcurrentLinkedQueue[String]()
   /** (bearer token, was it a live session) of every /api/relay/&lt;id&gt;/exec call. */
   val relayExecCalls = new ConcurrentLinkedQueue[(String, Boolean)]()
+  /** **请求体** of every `/api/relay/<id>/exec` call —— 批 2（2026-09-16 · C06）新增的
+    * 判别面：`(token, accepted)` 只能证「2 次下发都带活 token」，**分不开**这 2 次里
+    * 哪次是只读画像探针、哪次是业务 ⇒ 补请求体级锚（见下两个读数）。 */
+  val relayExecBodies = new ConcurrentLinkedQueue[String]()
+
+  /** 只读画像探针（`kind=probe`）的命中数 —— 与 `StubPeerServer.probeHitCount`
+    * （`RemoteExecutorEndpointCandidateSpec.scala:73-80`）**同款口径、同款判别锚**：
+    * 请求体含字面 `xdev read-only profile probe`（生产侧 `RemoteExecutor.scala:303-308`，
+    * 随 `NeblinkClient.relayExec` 的 `{"action":…,"params":…,"projectRoot":…}` 信封下发）。
+    * 按**请求体**判定 ⇒ 与下发先后 / 重试 / 候选轮转无关。 */
+  def relayExecProbeCount: Int =
+    relayExecBodies.stream().filter(_.contains(ProbeMarker)).count().toInt
+
+  /** 业务下发数 = exec 总次数 − 探针次数（同样按**请求体**判定，不按顺序猜）。 */
+  def relayExecBusinessCount: Int = relayExecCalls.size() - relayExecProbeCount
   /** How many times a live session was kicked by a newer login. */
   val kickedSessions = new AtomicInteger(0)
 
@@ -328,6 +343,7 @@ final class RelayAuthFixtureServer extends AutoCloseable:
       // proves the hot-swap convergence.
       val tok = bearer(req)
       relayExecCalls.add((tok, isLive(tok)))
+      relayExecBodies.add(req.body) // 批 2（C06）：请求体级锚（探针 / 业务分判）
       if isLive(tok) then respond(out, 200, """{"output":"remote-ok","error":""}""")
       else respond(out, 403, AuthRejectBody)
       closeQuietly(sock)
@@ -532,6 +548,10 @@ final class RelayAuthFixtureServer extends AutoCloseable:
 object RelayAuthFixtureServer:
   private val WsGuid = "258EAFA5-E914-47DA-95CA-C5AB0DC85B11"
   private[neblink] val AuthRejectBody = """{"error":"Missing or invalid token"}"""
+
+  /** 只读画像探针的**请求体判别锚** —— 与生产侧 `RemoteExecutor.scala:306` 的字面同源，
+    * 也与兄弟夹具 `StubPeerServer.probeHitCount` 的判别字面逐字一致（同根因、同口径）。 */
+  private[neblink] val ProbeMarker = "xdev read-only profile probe"
 
   /** Relay-ws upgrade behaviour of the fixture. */
   enum RelayMode:
