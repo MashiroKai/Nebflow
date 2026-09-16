@@ -89,6 +89,21 @@ object FlowMapEventLog:
     * 与被退役时刻的 `abandoned` 行不是同一事实。幂等：`RetireDetach.isEmpty` 时零写。 */
   val AbandonedDetachType = "abandoned-detach"
 
+  /** **待接线登记事件类型**（B5 缺口③ · 作者 2026-09-17 M-3 裁定，选项①）。
+    *
+    * 写点 = `NodeTools` 的 NodeEdit 写路径（唯一）：本次编辑里指向 **running** 目标的
+    * **控制边**（`:loop`）不进 `out`、改入 `NodeDef.pendingOut` 时逐次留痕。此行的存在
+    * 是机制的成立条件——「接线时刻不确定」必须对分发器可见（否则分发器以为已接、实际
+    * 待接）。一次编辑恰一条（`pendingOut` 为空时零写，幂等）。 */
+  val WiringDeferredType = "wiring-deferred"
+
+  /** **待接线自动接线事件类型**（同批，与 [[WiringDeferredType]] 成对）。
+    *
+    * 写点 = `NodeEngine.applyDeferredWiring`（30s `TtlTick` 扫描腿）：目标离开 running 后
+    * 把 `pendingOut` 里的控制边并入 `out` 时逐节点留痕。控制边零投递语义 ⇒ 本事件代表的
+    * 是**纯声明面追加**（零补投递、零启动副作用）。 */
+  val WiringAppliedType = "wiring-applied"
+
   /** 链拉回事件类型（对称口径，spec §6.2/§9.3：链抽象 P2 `restoreChain` 落地后由
     * 其调用点写入；**本批只定义类型 + 消费者回翻分支，无写入点**——禁止虚构调用点）。 */
   val ChainRestoredType = "chain-restored"

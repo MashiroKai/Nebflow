@@ -4330,11 +4330,19 @@ class NodeEngine(
     store.mutateWithResult { st =>
       (st.nodes.get(targetId), st.nodes.get(v.id)) match
         case (Some(t), Some(driver)) =>
-          // 目标可重激活的口径：非终态（还没跑完/在等 barrier）或 completed（刚跑完被判）。
-          // blocked/failed/cancelled 是**分发器持有的现场**，引擎不擅自推翻（重激活它们
-          // 会丢掉 blockedFeedback / 死亡现场）。
-          if NodeLifecycle.Terminal.contains(t.status) && t.status != NodeLifecycle.Completed then
-            (st, Left(s"target '${t.name}' is ${t.status} (blocked/failed/cancelled scenes are dispatcher-owned)"))
+          // 目标可重激活的口径（B5 缺口③ 对偶腿 · 作者 2026-09-17 M-3 裁定「运行期回边腿
+          // **同步排除 Running 目标**」⇒ 与编辑期守卫两面口径一致，判据单点在
+          // NodeEngine.loopReworkAdmission）：
+          //   · **running** ⇒ 排除：目标有在飞会话，重置它 = 把节点翻回 wiring/pending 而
+          //     会话仍在跑（节点状态与会话双轨不一致 = 本对偶缺口的那一半洞）；
+          //   · 非终态（在等 barrier）或 completed（刚跑完被判）⇒ 可重激活；
+          //   · blocked/failed/cancelled 是**分发器持有的现场**，引擎不擅自推翻（重激活
+          //     它们会丢掉 blockedFeedback / 死亡现场）。
+          // 命中排除面 ⇒ Left(原因)，走既有 `skipped=<原因>` 出口（loop-round 事件 + WARN，
+          // 链不静默冻结：时间帽扫描仍持有出口）。
+          val reloopRejection: String = NodeEngine.loopReworkAdmission(t.status).fold(identity, _ => "")
+          if reloopRejection.nonEmpty then
+            (st, Left(s"target '${t.name}' is $reloopRejection"))
           else
             // 驱动方只在「已完成 ∧ 目标确实是它的 in 上游」时复位：否则它不会因目标的
             // 新产出被重新触发，复位成 wiring/pending 只会让资格回扫空跑一轮（轮次空转）。
@@ -4421,6 +4429,51 @@ class NodeEngine(
           }
         }
       }
+
+  /** **待接线队列扫描腿**（B5 缺口③ · 作者 2026-09-17 M-3 裁定「待接线队列（到点自动
+    * 接）」，选项①）：挂既有 30s `TtlTick`（与 `settleRunnableSweep` /
+    * `sweepLoopBudgets` 同族——零新调度器、零新 fiber）。
+    *
+    * 判据（幂等 · 零副作用面）：节点 `pendingOut` 非空 ∧ 该控制边的目标**已离开
+    * running**（终态 / wiring / pending / 已归档不可寻址）⇒ 把该边**接线**
+    * （`pendingOut` → `out`，canonical 合并）+ `wiring-applied` 事件 + WS 同构更新。
+    * 目标仍 running ⇒ 原地保留（下一轮再判，本腿零写）。
+    *
+    * 红线①（nrloop 一期 2026-09-12）逐字不变：控制边不进 in 镜像、不进 barrier、不进
+    * 环检 ⇒ 「接线」= 纯 `out` 声明面追加：**零补投递、零启动**（控制边零投递语义）。
+    * 写路径在 `store.mutate` 内**现读 fresh** 并按 `pendingOut` 存在性收窄（并发改接/
+    * 删边/已接线 ⇒ 幂等跳过，不复活陈旧声明）。 */
+  def applyDeferredWiring(): IO[Unit] =
+    store.snapshot.flatMap { s =>
+      s.nodes.values.toList.filter(_.pendingOut.nonEmpty).traverse_ { from =>
+        val due = from.pendingOut.filter { e =>
+          OutEdge.resolveTargetId(s.nodes, e.to).flatMap(s.nodes.get).forall(_.status != NodeLifecycle.Running)
+        }
+        if due.isEmpty then IO.unit
+        else
+          store.mutate { st =>
+            st.nodes.get(from.id) match
+              case Some(fresh) =>
+                val wired = fresh.pendingOut.filter(due.contains)
+                if wired.isEmpty then st
+                else
+                  st.copy(nodes = st.nodes.updated(from.id, fresh.copy(
+                    out = OutEdge.canonical(fresh.out ++ wired),
+                    pendingOut = fresh.pendingOut.filterNot(wired.contains))))
+              case None => st
+          } *>
+            store.getNode(from.id).flatMap {
+              case Some(fresh) if !fresh.pendingOut.exists(due.contains) =>
+                FlowMapEventLog.append(workspace, projectName, from.id, FlowMapEventLog.WiringAppliedType,
+                  s"deferred control edge(s) auto-wired: ${due.map(e => s"${e.to}:${e.mode}").mkString(",")} — " +
+                    "target(s) left running (pendingOut → out; control edge = zero delivery, zero start)") *>
+                  emitUpdated(fresh) *>
+                  logger.info(
+                    s"Node '${fresh.name}' (${fresh.id}) deferred control edge(s) auto-wired: ${due.map(_.to).mkString(",")}")
+              case _ => IO.unit
+            }
+      }
+    }
 
   /** 回边驱动方反查（时间帽熔断用）：活动区内持有 `(fail)<targetId>:loop` 边、且**仍驱动
     * 重跑**的 verifier 节点。目标串支持 id/名字两形态（与 `resolveTargetId` 同源）。
@@ -6565,6 +6618,33 @@ object NodeEngine:
   val VerifyDefaultTask: String =
     "Check the worker's output item by item against the original task and the acceptance baseline; " +
       "list every issue that must be fixed (one bullet each) and rule PASS when the bar is met."
+
+  /** **回边重跑准入判据单点**（B5 缺口③ 对偶腿 · 作者 2026-09-17 M-3 裁定：「运行期
+    * 回边腿**同步排除 Running 目标**」——与编辑期守卫（`NodeTools`：控制边对 running
+    * 目标入待接线队列）**两面口径一致，缺一半即洞**）。
+    *
+    * 判据（返回 `Left(原因)` = 本轮回边重跑**不派发**，`reloopTo` 走既有
+    * `skipped=<原因>` 出口——`loop-round` 事件 + WARN 留痕，链不静默冻结：驱动方终态
+    * 仍在、目标计时起点仍在，时间帽扫描 [[sweepLoopBudgets]] 兜底出显式终态）：
+    *   - `running` ⇒ **排除**：目标有在飞会话，`resetForLoop` 会把它翻回 wiring/pending
+    *     而会话仍在跑（节点状态与会话双轨不一致 = 对偶缺口的根因形态）。运行期「不在
+    *     此刻接」与编辑期一致：等目标离开 running（到点由既有出口承接）。
+    *   - `blocked` / `failed` / `cancelled` ⇒ 排除（分发器持有的现场，引擎不擅自推翻）。
+    *   - 其余（`wiring` / `pending` / `completed` / `interrupted`）⇒ 放行（旧行为逐字不变：
+    *     completed = 刚跑完被判，是回边重跑的主场景）。
+    *
+    * 公开供 spec 断言（判据单点，与 `LoopBudget.decide` 同族——纯函数、零副作用）。 */
+  def loopReworkAdmission(status: String): Either[String, Unit] =
+    if status == NodeLifecycle.Running then
+      Left(
+        "running (input frozen) — the fail-route re-run is NOT dispatched while the target has an in-flight session: " +
+          "resetting it would flip the node back to wiring/pending while its session keeps running " +
+          "(state↔session dual-track inconsistency). Deferred to the target's next non-running boundary " +
+          "(same judgement as the edit-time guard, which queues control edges in pendingOut) — " +
+          "the wall-clock loop budget owns the terminal.")
+    else if NodeLifecycle.Terminal.contains(status) && status != NodeLifecycle.Completed then
+      Left(s"$status (blocked/failed/cancelled scenes are dispatcher-owned)")
+    else Right(())
 
   /** worker 返工模板二（第 N≥2 轮同会话注入；产出全文/历史不重复注入——持久会话
     * 上下文已持有，主设计 §2.2 模板二）。 */

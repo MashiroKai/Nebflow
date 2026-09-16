@@ -78,12 +78,55 @@ object NodeTools:
     if target == OutEdge.NebulaTarget then IO.pure(None)
     else rt.store.snapshot.map(s => OutEdge.resolveTargetId(s.nodes, target))
 
-  /** 状态守卫：目标已运行 → 拒绝接线（§2.2「目标已运行，输入已冻结」）。 */
+  /** 状态守卫：目标已运行 → 拒绝接线（§2.2「目标已运行，输入已冻结」）。
+    *
+    * B5 缺口③ 后的**适用面收窄**（作者 2026-09-17 M-3 裁定，选项①）：本守卫只对
+    * **非控制边**（真实输入边 result / signal）与「已接线且未变」的目标生效；指向
+    * running 目标的**控制边**（`:loop`）改由 [[deferredLoopEdges]] 入待接线队列
+    * （`NodeDef.pendingOut`），不再整单拒绝——控制边零投递、不进 in 镜像/屏障，对其
+    * 冻结输入的理由不成立（同族先例：环检 `:2071` 早已过滤控制边）。 */
   def ensureTargetNotRunning(rt: ProjectRuntime, id: String): IO[Either[String, Unit]] =
     rt.store.getNode(id).map {
       case Some(n) if n.status == NodeLifecycle.Running =>
-        Left(s"Node '$id' is running — its input is frozen. NodeCancel it first, then rewire.")
+        Left(
+          s"Node '$id' is running — its input is frozen. NodeCancel it first, then rewire. " +
+            "(NODE_TARGET_RUNNING_INPUT_FROZEN; control edges — `(fail)<worker>:loop` — are exempt: they queue in " +
+            "pendingOut and auto-wire once the target leaves running)")
       case _ => Right(())
+    }
+
+  /** **编辑期待接线分区判据单点**（B5 缺口③ · 作者 2026-09-17 M-3 裁定「待接线队列
+    * （到点自动接）」，选项①）：把本次声明的 `newOut` 相对**已接线** `currentOut` 的
+    * **新增边**按「目标此刻是否 running」三分为：
+    *
+    *   - `deferred`：新增 **控制边**（`:loop`）∧ 目标 running ⇒ 入 `NodeDef.pendingOut`
+    *     待接线队列（不进 out），目标离开 running 后由 `NodeEngine.applyDeferredWiring`
+    *     自动接线 + 落痕；
+    *   - `frozen`：新增 **非控制边**（result / signal）∧ 目标 running ⇒ 照旧**拒**
+    *     （护「in 在启动前定型」的屏障语义，merge 面保护不得被本批削弱）；
+    *   - **未变边（`currentOut` 已含）**：两边皆不入 ⇒ 编辑放行（已接线者无需再接、也
+    *     无输入冻结可言——旧守卫「对所有声明目标含未变者」的过宽面即在此收窄）。
+    *
+    * 🔴 为什么必须排除「已接线」：若把已接线的控制边也判进 `deferred`，一次只改别的字段
+    * 的编辑就会把在用的回边从 `out` 摘走、丢进队列（回边在目标 running 期间静默失效）
+    * ——这正是本判据按 canonical diff 计算的原因。
+    *
+    * 目标串支持 id / 名字两形态（`OutEdge.resolveTargetId` 单点）；悬空目标在此忽略
+    * （上游 `resolvedIds` 闸已拒，正常不可达；`frozen` 只承载可行动的点名）。
+    * 幂等：同一 out 重复提交给出同一分区。 */
+  def partitionDeferredWiring(
+    rt: ProjectRuntime,
+    currentOut: List[OutEdge],
+    newOut: List[OutEdge]
+  ): IO[(List[(OutEdge, String)], List[String])] =
+    rt.store.snapshot.map { s =>
+      val wired = OutEdge.canonical(currentOut)
+      val added = OutEdge.canonical(newOut).filterNot(wired.contains)
+      def runningTargetOf(e: OutEdge): Option[String] =
+        OutEdge.resolveTargetId(s.nodes, e.to).filter(id => s.nodes.get(id).exists(_.status == NodeLifecycle.Running))
+      val deferred = added.filter(OutEdge.isLoopEdge).flatMap(e => runningTargetOf(e).map(id => (e, id)))
+      val frozen = added.filterNot(OutEdge.isLoopEdge).flatMap(runningTargetOf).distinct
+      (deferred, frozen)
     }
 
   /** P1 out 表面语法解析（spec §2.2；向后兼容 + 扇出 + 失败信号边）：
@@ -280,7 +323,8 @@ object NodeTools:
     * 边集——违规即**拒写**（ERROR 留痕，本函数是写路径单权威，防未来新调用方绕过前置
     * 预检）。正常路径不可达：创建/改接的**前置预检**（`loopGateForAppends` + 改接侧
     * self 预检）已用同一判据在任何写之前拒绝整调用 ⇒ 零残留。 */
-  def setOut(rt: ProjectRuntime, fromId: String, newOut: List[OutEdge]): IO[Unit] =
+  def setOut(rt: ProjectRuntime, fromId: String, newOut: List[OutEdge],
+      pendingOut: Option[List[OutEdge]] = None): IO[Unit] =
     val newEdges = OutEdge.canonical(newOut)
     def rewire(nodes: Map[String, NodeDef], from: NodeDef): Map[String, NodeDef] =
       // in 镜像记账按解析后的节点 id 做（20260909 in 丢失事故修复）：目标串有 id/名字
@@ -300,7 +344,7 @@ object NodeTools:
         acc.get(tid).map(tn => acc.updated(tid, tn.copy(in = tn.in.filterNot(_ == fromId)))).getOrElse(acc))
       val afterAdded = newIds.diff(oldIds).foldLeft(afterRemoved)((acc, tid) =>
         acc.get(tid).map(tn => acc.updated(tid, tn.copy(in = (tn.in :+ fromId).distinct))).getOrElse(acc))
-      afterAdded.updated(fromId, from.copy(out = newEdges))
+      afterAdded.updated(fromId, from.copy(out = newEdges, pendingOut = pendingOut.getOrElse(from.pendingOut)))
     def sinkGuard(node: NodeDef): Option[String] = NodeTools.loopGateViolation(node, newEdges)
     rt.store.getNode(fromId).flatMap {
       case Some(from) =>
@@ -2037,16 +2081,26 @@ object NodeEditTool extends Tool:
                   }
                   case None => IO.pure(Right(())) // 悬空旧目标（手改数据防御）：保守不拦
                 }).map(_.collectFirst { case Left(e) => e }.toLeft(()))
-              // 守卫：新目标已运行 → 拒绝（§2.2 状态守卫，对所有声明的 out 目标——含未变者，
-              // 与旧单值行为一致）+ P1 校验层①（NODE_MERGE_PASS_ONLY：指向 merge 的
-              // on-failed 边硬拒）+ 旧目标已消费 → 拒绝（§2.3）。全部按解析后 id 判定。
-              val guard: IO[Either[String, Unit]] =
+              // B5 缺口③（作者 2026-09-17 M-3 裁定，选项①）：本次声明的**新增控制边**若
+              // 指向 running 目标 ⇒ 入待接线队列（不进 out），**不再整单拒绝**；新增
+              // **非控制边**仍拒（frozen）；**未变边**两边皆不入（放行）。判据单点 =
+              // NodeTools.partitionDeferredWiring。求值一次、以 guard 载荷下传
+              // （写路径与回执共用同一读数，防两次快照读数漂移）。
+              val deferredWiring: IO[(List[(OutEdge, String)], List[String])] =
+                if outProvided && newOut.nonEmpty then NodeTools.partitionDeferredWiring(rt, node.out, newOut)
+                else IO.pure((Nil, Nil))
+              // 守卫：新增非控制边的 running 目标 → 拒绝（§2.2 状态守卫）+ P1 校验层①
+              // （NODE_MERGE_PASS_ONLY：指向 merge 的 on-failed 边硬拒）+ 旧目标已消费 →
+              // 拒绝（§2.3）。全部按解析后 id 判定（待接线队列接管的控制边已排除在外）。
+              val guard: IO[Either[String, List[(OutEdge, String)]]] =
                 resolvedIds.flatMap {
                   case Left(err) => IO.pure(Left(err))
                   case Right(ids) =>
+                    deferredWiring.flatMap { case (deferred, frozenIds) =>
+                    val frozenLive = frozenIds.filter(ids.contains)
                     val statusOk: IO[Either[String, Unit]] =
-                      if outProvided && ids.nonEmpty then
-                        ids.traverse(t => NodeTools.ensureTargetNotRunning(rt, t)).flatMap { rs =>
+                      if outProvided && frozenLive.nonEmpty then
+                        frozenLive.traverse(t => NodeTools.ensureTargetNotRunning(rt, t)).flatMap { rs =>
                           rs.collectFirst { case Left(e) => e } match
                             case Some(e) => IO.pure(Left(e))
                             case None =>
@@ -2056,11 +2110,12 @@ object NodeEditTool extends Tool:
                               }
                         }
                       else consumedGuard
-                    statusOk
+                    statusOk.map(_.map(_ => deferred))
+                    }
                 }
               guard.flatMap {
                 case Left(err) => IO.pure(Left(ToolError(err)))
-                case Right(_) =>
+                case Right(deferred) =>
                   // 环检测（新 out：每个非 Nebula、**非 `:loop`** 目标，按解析后 id）
                   //
                   // **控制边豁免（nrloop 一期 2026-09-12，设计 §3.3 #14 / 红线①的第二处
@@ -2089,8 +2144,19 @@ object NodeEditTool extends Tool:
                     else
                       // out 变更（原子：被移除目标 in 移除 + 新目标 in 追加）。outJson 未出现
                       // = 不改动（parseOut 注释「not passed = no change」的落地）。
+                      //
+                      // B5 缺口③：`deferred`（guard 载荷）里的控制边**不进 out**——它们
+                      // 只落 `pendingOut` 待接线队列（目标此刻 running；离开 running 后由
+                      // NodeEngine.applyDeferredWiring 自动接线）。队列 = 「本次仍声明 ∧ 尚未
+                      // 接线者」（旧 pending 中已不在本次声明里的边随之出队，语义 = 声明面
+                      // 才是权威）。
+                      val deferredEdges = deferred.map(_._1)
+                      val effectiveOut = newOut.filterNot(deferredEdges.contains)
+                      val queuedOut =
+                        (node.pendingOut.filter(e => OutEdge.canonical(newOut).contains(e)) ++ deferredEdges).distinct
                       val setOutIO =
-                        if outProvided && outChanged then NodeTools.setOut(rt, node.id, newOut)
+                        if outProvided && outChanged then
+                          NodeTools.setOut(rt, node.id, effectiveOut, Some(queuedOut))
                         else IO.unit
                       val inAdds = NodeTools.parseIn(inJson)
                       inAdds match
@@ -2331,6 +2397,16 @@ object NodeEditTool extends Tool:
                                             }
                                         })
                                       _ <- setOutIO
+                                      // B5 缺口③ 落痕（待接线登记，FlowMapEventLog.WiringDeferredType）：
+                                      // 「接线时刻不确定」必须对分发器可见——入队即写审计行。
+                                      _ <-
+                                        if deferred.nonEmpty then
+                                          FlowMapEventLog.append(rt.project.workspace, rt.project.name, node.id,
+                                            FlowMapEventLog.WiringDeferredType,
+                                            s"control edge(s) queued (target running, input frozen): " +
+                                              deferred.map((e, tid) => s"${e.to}:${e.mode}->$tid").mkString(",") +
+                                              " — pendingOut; auto-wired by applyDeferredWiring once the target leaves running")
+                                        else IO.unit
                                       // deps 替换写回（非重激活路径；重激活在下方事务内一并写）。
                                       // deps 单侧持有：只更新本节点字段，无上游侧镜像边。
                                       _ <-
@@ -2676,6 +2752,9 @@ object NodeEditTool extends Tool:
                                              case None    => " — retry cleared"
                                          else "") +
                                         (if outProvided && newOut.nonEmpty then s" — out → ${newOut.map(_.to).mkString(",")}" else "") +
+                                        (if deferred.nonEmpty then
+                                          s" — wiring deferred (target running): ${deferred.map((e, _) => s"${e.to}:${e.mode}").mkString(",")} queued in pendingOut, auto-wired once the target leaves running (${FlowMapEventLog.WiringDeferredType})"
+                                        else "") +
                                         (if adds.nonEmpty then s" — in += ${adds.mkString(",")}" else "") +
                                         (if depsProvided && depsChanged then s" — deps → [${newDeps.mkString(",")}]" else "") +
                                         // W1 悬空提示（O-B 必做 4）：本次编辑把该节点留在无出边
