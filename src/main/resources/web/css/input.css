@@ -547,6 +547,17 @@
   transition: opacity 0.3s ease;
 }
 .att-error-fade { opacity: 0; }
+/* fwdguard-impl (2026-09-17): 空文本 + 纯引用帧（转发不附言）的发送闸提示。
+   与 .att-error 同区（输入框上方、附件条内侧），但语义是「为什么此刻不能发」
+   而非错误 ⇒ 走 muted 字色 + 零背景，复用既有 token（零新色值）。禁用的发送键
+   由既有 `#send-btn:disabled` 档承担（本批零新增按钮配色）。 */
+.ref-gate-hint {
+  color: var(--color-text-muted);
+  font-size: 12px;
+  line-height: 1.4;
+  padding: 3px 2px;
+}
+.ref-gate-hint[hidden] { display: none; }
 .att-remove {
   position: absolute;
   top: -4px; right: -4px;

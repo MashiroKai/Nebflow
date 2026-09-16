@@ -4243,7 +4243,22 @@ class WebSocketRoutes(
                   }
                   ) // end IO.uncancelable
               }
-            else IO.unit
+            else
+              // fwdguard-impl (2026-09-17): 本准入谓词只数 `content`/`attachments`，
+              // 而转发腿的载荷只走 `refs`（前端 input.js:672-673 又把 ref 剔出
+              // attachments）⇒「转发后不附言直接发送」的帧在此被判为空帧丢弃。
+              // 与 handleUserText 的 EMPTY 内容 WARN（:4309-4312）同族：那条只覆盖
+              // immediateInput / userMessage 两条腿，本 typeless 腿此前**全静默**
+              // （零日志零 turn，而前端已乐观置 busy ⇒ 会话永久转圈，且用户消息在
+              // 所有台账里都不留痕）。此处只补**可观测性**：🔴 准入谓词与投递腿一字
+              // 不改（作者 2026-09-17 Q1 取向：闸住前端，不放宽网关）。
+              val frameHasRefsKey = json.hcursor.downField("refs").focus.isDefined
+              logger.warn(
+                "handleMessage(typeless): dropped frame with no content and no attachments " +
+                  s"for session '$msgSessionId' — nothing dispatched " +
+                  s"(frame was sent but carried no text; refs=$frameHasRefsKey, " +
+                  s"clientMessageId=${clientMessageId.getOrElse("")})"
+              ) *> IO.unit
             end if
       yield ()
       end for
