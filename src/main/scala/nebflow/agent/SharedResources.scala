@@ -15,7 +15,7 @@ import nebflow.core.{FileChangeTracker, PathUtil, UsageRecordStore}
 import nebflow.dropbox.DropboxService
 import nebflow.gateway.{RateLimiter, SessionStore}
 import nebflow.llm.*
-import nebflow.neblink.{NeblinkService, FriendService}
+import nebflow.neblink.{NeblinkService, FriendService, AttachUploadRegistry}
 import nebflow.shared.*
 
 /**
@@ -48,6 +48,10 @@ case class SharedResources(
   /** A2A 好友与消息服务（spec §11 客户端）。由 GatewayMain 在 NeblinkClient
     * 初始化后创建，注入 REST 路由 + relay tunnel + WS 事件回调。 */
   friendService: Option[FriendService] = None,
+  /** attachcl 批（2026-09-16）：在飞附件上传的**取消位**登记表（网页腿「整件一次
+    * 请求 → 网关分块」的上传可取消；见 [[nebflow.neblink.AttachUploadRegistry]]）。
+    * 缺省 = 本实例独立空表（`Ref.unsafe`，同本类既有先例）⇒ 既有构造点零改动。 */
+  attachUploads: AttachUploadRegistry = AttachUploadRegistry.unsafe,
   dropboxService: Option[DropboxService] = None,
   scheduledTaskService: Option[ScheduledTaskService] = None,
   daemonService: Option[DaemonService] = None,

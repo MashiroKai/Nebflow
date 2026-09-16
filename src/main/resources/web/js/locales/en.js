@@ -261,6 +261,21 @@ export default {
   'messages.noMessages': 'No messages',
   'messages.loadOlderFailed': 'Could not load earlier messages — please retry',
   'messages.attachUnsupported': 'No attachment entry point in the friend window yet (attachments can be received and downloaded)',
+  // attachcl batch (2026-09-16): SEND-face upload-card strings (same family as the
+  // receive-face `attach*` keys above but deliberately NOT shared — "uploading, not
+  // downloadable yet" (inbound) and "my upload progress" are different facts).
+  // `{pct}` is derived from real chunk confirmations only (no fake progress);
+  // failure/cancel strings always say "not sent" (fail-closed and visible).
+  'messages.attachProgress': 'Uploading {pct}%',
+  'messages.attachSent': 'Sent',
+  'messages.attachFailed': 'Upload failed — not sent',
+  'messages.attachCancel': 'Cancel',
+  'messages.attachCancelled': 'Cancelled — not sent',
+  'messages.attachCancelledRest': 'Cancelled — not uploaded',
+  'messages.attachNotSentRest': 'Not uploaded (an earlier file failed)',
+  'messages.attachSendFailed': 'Upload finished but the message could not be sent — please retry',
+  'messages.attachNoFiles': 'No file to send',
+  'messages.attachEmptyFile': '{name} is an empty file (0 bytes) — not sent',
   'messages.attachDownload': 'Download',
   'messages.attachDownloading': 'Downloading…',
   'messages.attachDownloaded': 'Downloaded',
