@@ -144,6 +144,7 @@ On a host-level event (restart / crash recovery, relayed by Nebula) reconcile AC
 ② 构建 / 落地类任务书入场判据（三项**一律不豁免**）= (a) 资源熔断（swap > 90% 或 free < 500MB ⇒ 有界退避轮询；**free = `sysctl vm.swapusage` 的 free 字段**（swap 空闲量），swap% = used ÷ total（同源导出；percent 字段在本机 sysctl 输出中不存在）；🔴 **禁用 `vm_stat` `Pages free` 字面读法**（macOS 语义退化：free-only 远低于真实可用，且读数极不稳定——实测典型 ~60–80MB、偶发瞬时冲高 >500MB ⇒ 不可作熔断判据））(b) 构建类单条串行 (c) 质量门禁（rc = 0 才可推）。
 ③ 🔴 禁重挂闸、禁自修闸器（#224 裁前）。
 ④ 若 #224 裁定重挂闸，本条随裁更新。
+⑤ 熔断偏离核定（作者裁定 2026-09-17 · 通用口径）：为防门禁被个案侵蚀，熔断（`swap > 90%` 或 `free < 500MB`，判据字段口径同 ②(a)）条件下**仅**允许**同时**满足三件的动作继续——(i) **逐采样留痕**；(ii) **有界退避先行且 ≥3 轮未回落**；(iii) **显式申报偏离 + 负载剖面**。🔴 **缺任一 ⇒ 照字面 `blocked(external-dependency)`**。本条仅就熔断偏离核定开口：🔴 不放宽 ② 的 (a)(b)(c) 入场判据、不复活构建闸。
 ```
 ## Document provenance
 Stage docs `<YYYYMMDD>_<HHMMSS>_<topic>__<chainId>.md`; no chain ⇒ no suffix; no metadata header.
