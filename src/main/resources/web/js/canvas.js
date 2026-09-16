@@ -342,6 +342,7 @@ export function isCanvasOpen() {
 //   2. tab open + Canvas open + currently displayed -> closeTab (toggle off;
 //      closing the last tab keeps the existing auto-close-Canvas semantics)
 //   3. tab open + Canvas open + another tab shown   -> setActiveTab
+//      (+ panelTabRefresh: 切回即补一次该页签自己的刷新入口; 见下)
 //   4. tab open + Canvas closed -> openCanvas + setActiveTab
 // Pressed state (.active / aria-pressed) strictly mirrors "this tab IS the
 // visible Canvas content": Canvas closed or another tab displayed -> never
@@ -374,6 +375,40 @@ function onCanvasPanelButtonClick(tabId, openFn) {
   if (!isCanvasOpen()) { openCanvas(); setActiveTab(tabId); return; } // state 4
   if (activeTabId === tabId) { closeTab(tabId); return; }           // state 2 (toggle off)
   setActiveTab(tabId);                                              // state 3
+  refreshPanelTabOnActivate(tabId);                                 // state 3 + 补拉（D 项）
+}
+
+// ── state 3 补拉注册表（D 项 fast-follow）────────────────────────────────────
+// 背景（取证报告 §C-4「第二成因」+ 表行 D）：4 态机的 state 3 原先只做
+// `setActiveTab`——从别的页签切回 `projects` 时面板**不取数**，用户看到的是上次渲染的
+// 陈旧列表（唯一的手动刷新 = 关掉页签再开；见 `projectTab.js` 头注 (c) 段）。
+// 契约（三件，均由本文件内的注册表集中表达）：
+//   ① 值 = 该页签**既有**刷新入口的取用（🔴 本文件不新造取数实现：不出现任何
+//      fetch / REST 路径 / 第二套渲染）；
+//   ② 只在 state 3 触发——state 1 的 openFn 自带首取、state 2 = 收起、state 4（Canvas
+//      折叠态重开）不在本批范围（报告「未做」项有据）；
+//   ③ 未注册的页签零行为变化（`projects` 之外的面不受影响）。
+// 为什么动态 import 而非静态 import：`projectTab.js:27` 静态 import 本文件 ⇒ 反向的静态边
+// 会构成 2 节点 SCC（`scripts/check-circular.mjs` 判 FAIL）；动态边是该门禁明文许可的破环路径
+// （同 `:167` `:405` 既有用法）。
+// 为什么不是直接调 openFn：`openProjectsTab()` 会把 pane 从「就地 Flow Map 视图」重置回列表
+// 并重建全部卡片（重放入场动画 + 「新」标记）——超出「补一次取数」的范围；量化对照见批报告
+// §偏离申报（harness `alt` 变体）。
+/** @type {Map<string, () => unknown>} tabId -> 该页签既有刷新入口 */
+const panelTabRefresh = new Map([
+  ['projects', () => import('./projectTab.js').then((m) => m.rerenderProjectsTab())],
+]);
+
+/** state 3 补拉（D 项）：切回已在册页签时补一次该页签自己的刷新入口。
+ *  幂等 / 不叠加：入口自身为防抖合并（`projectTab.js` `rerenderProjectsTab` 200ms 窗）⇒
+ *  高频重复切回只落一次取数；未注册页签静默返回（不打断页签切换本身），入口抛错只留一条
+ *  `console.warn`（不冒泡成页面错误）。 */
+function refreshPanelTabOnActivate(tabId) {
+  const refresh = panelTabRefresh.get(tabId);
+  if (typeof refresh !== 'function') return;
+  Promise.resolve()
+    .then(refresh)
+    .catch((e) => console.warn('[canvas] panel tab refresh failed:', e));
 }
 
 /** Mirror "tab is the visible Canvas content" onto the registered buttons. */
