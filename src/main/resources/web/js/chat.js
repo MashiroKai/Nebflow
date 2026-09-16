@@ -439,7 +439,7 @@ export function injectedSourceLabel(source, eventType, sender, sourceTeam, intak
   // 非字符串来源（历史脏行 / 未来新源的畸形值）先串化，禁让下方 `charAt`/`slice`
   // 抛异常把整条注入行渲染打断；空值仍走上行早退（逐字节不变）。**登记读数**：
   // 探针覆盖 'chain'（存量历史源）/ 'unknown-source' / '' / null / undefined / 数字
-  // ⇒ 六例零异常（见批证据 05-unknownsource-probe.txt）。
+  // ⇒ 六例零异常（见批证据 30-liststate-readings.json 的 `j6Probe.cases`）。
   if (source != null && typeof source !== 'string') source = String(source);
   if (sourceTeam != null && typeof sourceTeam !== 'string') sourceTeam = String(sourceTeam);
   if (!source && !sourceTeam) return '';
