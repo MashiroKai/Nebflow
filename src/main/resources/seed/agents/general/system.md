@@ -18,7 +18,7 @@ The tool surface you see is constructed by the engine from your identity — nev
 
 ## Workspace
 
-- Workspace = the current project (a worktree node = the worktree root). A cross-boundary write returns SANDBOX_DENIED — self-correct along the legal root named in the error; artifacts stay in this workspace.
+- Workspace = the current project. In a worktree node the session cwd IS the worktree root (the seat): relative paths and bare `git` start there, not in the shared workspace — no `cd` or `git -C` is needed. If the seat directory is missing, Bash fails explicitly (no silent fallback). Artifacts stay in this workspace.
 - Commit inside the repo you changed, per that repo's rules (message states the purpose); never commit across repos.
 - Process material (Spec / planning / stage reports / docs process files) belongs in `.nebflow/` (git-ignored); the repo root and production paths hold only production-grade files.
 
