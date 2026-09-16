@@ -506,8 +506,18 @@ class StuckJudgementOrderSpec extends CatsEffectSuite:
       _ <- resources.agentRegistry.set(Map(rec.sessionId -> rec))
       stopCounts <- Ref.of[IO, Map[String, Int]](Map.empty)
       pendingL3 <- Ref.of[IO, List[TaskStuckWatcher.PendingL3]](Nil)
+      // 批 3（C11，2026-09-16）· **确定性时基**（判据本体「三拍各自留痕（读数三点互异）」
+      // 逐字不动，禁放宽）：生产里两拍之间隔着扫描循环的 `IO.sleep(interval)`
+      // （`TaskStuckWatcher.run` 的 scanLoop），而本用例原先把三拍**背靠背**驱动 ⇒
+      // `toolPhaseMs = now - rec.currentToolStartedAt`（`TaskStuckWatcher.scala:646`）
+      // 的毫秒读数可能落在同一毫秒（CI 慢机器实测 `Obtained 2`）。修法 = 显式步进：
+      // 两拍之间各留一段**真实流逝**（≥ [[tapStep]]），使「一拍照一次读数」在任意
+      // 机器/负载下都成立——不是加大 timeout、不是弱化断言。
+      tapStep = 5.millis
       _ <- TaskStuckWatcher.scan(resources, wsHub, threshold, stopCounts, pendingL3) // L1
+      _ <- IO.sleep(tapStep)
       _ <- TaskStuckWatcher.scan(resources, wsHub, threshold, stopCounts, pendingL3) // L2
+      _ <- IO.sleep(tapStep)
       _ <- TaskStuckWatcher.scan(resources, wsHub, threshold, stopCounts, pendingL3) // L3
       _ <- IO.sleep(400.millis)
       fires <- eventsOfType(WatchdogEventLog.StuckFireType)
@@ -530,6 +540,11 @@ class StuckJudgementOrderSpec extends CatsEffectSuite:
       // Flow 分支与 L3 分支各执行一次；生产语料同形的重复行即此因，本批未动它）。
       assertEquals(mine.flatMap(_.hcursor.get[Long]("toolPhaseMs").toOption).distinct.size, 3,
         "三拍必须各自留痕（读数三点互异）")
+      // 批 3（C11）增补：三点互异**必须是逐拍前进**的真实读数（显式步进的直接读数，
+      // 而非「恰好不同」）。读数 = `now - currentToolStartedAt` ⇒ 相邻两拍之差 ≥ 步进值。
+      val readings = mine.flatMap(_.hcursor.get[Long]("toolPhaseMs").toOption).distinct.sorted
+      assert(readings.size == 3 && readings.sliding(2).forall(w => w(1) - w(0) >= tapStep.toMillis),
+        s"三拍读数须逐拍前进（步进 ≥${tapStep.toMillis}ms），得 $readings")
   }
 
   /** 薄包装：把 `AgentCore.projectLoopCounters` 提到测试可读处（避免重复 import 长链）。 */

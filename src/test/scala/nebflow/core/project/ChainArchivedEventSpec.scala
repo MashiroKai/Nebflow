@@ -47,6 +47,33 @@ class ChainArchivedEventSpec extends CatsEffectSuite:
   private var prevRoot: os.Path = null
   private var home: os.Path = null
 
+  /** 批 3（C08，2026-09-16）· **确定性时基**（夹具显式钉 TZ）：
+    *
+    * 归档分区标题的时间戳由 `DocIndexConsumer.isoSeconds`（`DocIndexConsumer.scala:282-284`）
+    * 渲染 = `DateTimeFormatter.ofPattern("yyyy-MM-dd'T'HH:mm:ssXXX")` 作用于
+    * `OffsetDateTime.ofInstant(ms, ZoneId.systemDefault())` ⇒ **渲染形态随环境 TZ 变**：
+    * UTC 环境（Linux CI 实测 `…T02:11:36Z`）给 `Z`，非 UTC 给数字偏移（本机 `+08:00`）。
+    * 故旧锚（要求 `[+-]\d{2}:\d{2}$`）在 CI 恒红 —— 这是**环境依赖**，不是产品漂移。
+    *
+    * 修法（任务书硬约束：禁平台条件跳过）：夹具**显式钉住固定偏移 TZ**（`GMT+08:00`
+    * 为固定偏移形态，不依赖 tzdata）⇒ 两环境渲染形态一致 ⇒ 断言本体逐字不动、强度不减
+    *（仍要求「秒级 ISO-8601 + 时区偏移」全形态）。⚠ 字符串形态**必须**是 `GMT+08:00`：
+    * `TimeZone.getTimeZone("+08:00")` 会**静默回落成 GMT**（偏移归零 ⇒ 渲染又变 `Z`），
+    * 故本夹具自带「钉住生效」自证断言（偏移读数，非 id 字面）。
+    * 还原 = `afterEach` 无条件执行（用例中途失败也不把 TZ 泄漏给后续用例）。 */
+  private val PinnedTzId = "GMT+08:00"
+  private val PinnedTzOffsetSeconds = 8 * 3600
+  private var prevTz: java.util.TimeZone = null
+
+  override def beforeEach(context: munit.BeforeEach): Unit =
+    prevTz = java.util.TimeZone.getDefault
+    super.beforeEach(context)
+
+  override def afterEach(context: munit.AfterEach): Unit =
+    if prevTz != null then java.util.TimeZone.setDefault(prevTz)
+    prevTz = null
+    super.afterEach(context)
+
   override def beforeAll(): Unit =
     prevRoot = PathUtil.dataRoot
     home = os.Path(java.nio.file.Files.createTempDirectory("nb-chain-archived-home"))
@@ -188,6 +215,14 @@ class ChainArchivedEventSpec extends CatsEffectSuite:
     val homeDomain = "链路域A"
     val wsDomain = "链路域B"
     for
+      // 批 3（C08）：确定性时基（见类头 PinnedTzId 注释）——先钉 TZ 再自证钉住生效
+      //（夹具前提「断言」化，非 assume/跳过；偏移读数为判据，可识破静默回落），
+      // 随后所有写盘/读回都在同一 TZ 下。
+      _ <- IO(java.util.TimeZone.setDefault(java.util.TimeZone.getTimeZone(PinnedTzId)))
+      _ <- IO(assertEquals(
+        java.time.ZoneId.systemDefault().getRules.getOffset(java.time.Instant.now()).getTotalSeconds,
+        PinnedTzOffsetSeconds,
+        "夹具钉住的 TZ 必须生效（否则归档标题的时间戳形态随环境漂移）"))
       (ws, system, ref) <- fixture("flip")
       // 两域 fixture：home 域 `<dataRoot>/docs/<域>/INDEX.md`，ws 域 `<ws>/.nebflow/Spec/INDEX.md`
       (homeIdx, homeDir) <- writeDomain(home / "docs", homeDomain)

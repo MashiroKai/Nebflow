@@ -155,6 +155,26 @@ class NodeBgCompletionGateSpec extends CatsEffectSuite:
   private def recordedImmediate(recorded: Ref[IO, List[AgentCommand]]): IO[List[AgentCommand.ImmediateInput]] =
     recorded.get.map(_.collect { case m: AgentCommand.ImmediateInput => m })
 
+  /** 投递观察 = **显式等批 flush**（批 3 · 本机侧 2026-09-16；任务书两选项之②）：
+    *
+    * 完成通知是**异步**投递——`completedNodeR` 先落 store（`status=Completed` 在此刻
+    * 可见），随后同一 fiber 才走 `deliverOut` → `deliverToNebula`（`NodeEngine.scala:1805`）
+    * → 根会话 `ImmediateInput`。故「状态读到 Completed 后**立刻**读通知队列」是天然竞态：
+    * 读方（测试线程）可能先于投递方（完成 fiber）被调度 ⇒ CI 慢机器/换页压力下即红。
+    * 判据本体「节点完成必须投递」**逐字不变**（等不到 ⇒ 仍然红），只是把「读一次」
+    * 换成「有界等它到」；等待上限沿用既有 15s（未加大 timeout）。
+    *
+    * 同时（任务书选项之①）[[mountProject]] 注入 `notifyQuietMs = Some(1L)`：关掉
+    * `notify.quietMs` 的 5s 去抖/打包窗（`ProjectTypes.scala:409` /
+    *   `NodeEngine.scala:138`），使 dispatch-notify 腿在用例内**确定性**地不引入 5s 延迟。 */
+  private def awaitDelivery(
+      recorded: Ref[IO, List[AgentCommand]],
+      needle: String,
+      timeout: FiniteDuration = 15.seconds
+  ): IO[List[AgentCommand.ImmediateInput]] =
+    waitUntil(timeout)(recordedImmediate(recorded).map(_.exists(_.text.contains(needle)))) *>
+      recordedImmediate(recorded)
+
   private def mountProject(
     name: String,
     ws: os.Path,
@@ -168,7 +188,11 @@ class NodeBgCompletionGateSpec extends CatsEffectSuite:
     //    桩 LLM 不申报 ⇒ 打开会让 G1/G2/G5/G6 全部滞留 Running（腿 2 的默认开行为由
     //    NodeReportReminderSpec + G9 覆盖）。
     bgGateCompletionHold: Boolean = true,
-    reportGateHold: Boolean = false
+    reportGateHold: Boolean = false,
+    // 批 3（本机侧 2026-09-16）：`notify.quietMs` 去抖/打包窗**在用例内确定性关闭**
+    //（1ms，即 `NotifyPolicy.parseQuietMs` 允许的下界；缺省 5s）。语义 = 只把「窗口」
+    // 压到近零，不动投递判据/不改生产缺省（生产缺省仍 5s，`NotifyPolicy` 单点不变）。
+    notifyQuietMs: Option[Long] = Some(1L)
   ): IO[ProjectRuntime] =
     for
       store <- FlowMapStore.open(name, ws.toString)
@@ -183,7 +207,8 @@ class NodeBgCompletionGateSpec extends CatsEffectSuite:
         emitEvent = (_, _, _) => IO.unit,
         bgWaitCapMs = bgWaitCapMs,
         bgGateCompletionHold = Some(bgGateCompletionHold),
-        reportGateHold = Some(reportGateHold)
+        reportGateHold = Some(reportGateHold),
+        notifyQuietMs = notifyQuietMs
       )
       pd = ProjectDef(name = name, workspace = ws.toString, agentFile = (ws / "AGENTS.md").toString, createdAt = System.currentTimeMillis())
       rt = ProjectRuntime(pd, store, engine, system, res, None)
@@ -284,7 +309,8 @@ class NodeBgCompletionGateSpec extends CatsEffectSuite:
       _ <- createNode("bg-g1", ws, "plain-a", "result-PLAIN", res = res, system = system)
       _ <- waitUntil(15.seconds)(byName(rt, "plain-a").map(_.status == NodeLifecycle.Completed))
       a <- byName(rt, "plain-a")
-      imms <- recordedImmediate(recorded)
+      // 批 3：显式等批 flush（见 awaitDelivery）——投递是异步腿，读一次即红（CI 实测）
+      imms <- awaitDelivery(recorded, "[Node 'plain-a' completed]")
       jobs <- llm.jobIds.get
       _ <- system.stopAll.handleErrorWith(_ => IO.unit)
     yield
@@ -325,7 +351,9 @@ class NodeBgCompletionGateSpec extends CatsEffectSuite:
       _ <- waitUntil(30.seconds)(byName(rt, "wait-a").map(n =>
         n.status == NodeLifecycle.Completed || n.status == NodeLifecycle.Failed))
       done <- byName(rt, "wait-a")
-      postImms <- recordedImmediate(recorded)
+      // 批 3：显式等批 flush（见 awaitDelivery）——「放行后才投递」的判据本体不变；
+      // 等不到即红（不掩盖），等待上限沿用既有 15s（未加大）。
+      postImms <- awaitDelivery(recorded, "[Node 'wait-a' completed]")
       events <- readEvents(ws)
       _ <- jobs.traverse_(BgTaskRegistry.unregister).attempt.void
       _ <- system.stopAll.handleErrorWith(_ => IO.unit)
