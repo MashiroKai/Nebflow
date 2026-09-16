@@ -1048,7 +1048,8 @@ function updateHeaderModelInfo() {
   if (ratio > 0.5) barColor = '#d4a030';
   if (ratio > 0.75) barColor = '#e53935';
 
-  const thresholdPct = Math.round((info.compactThreshold || state.COMPACT_THRESHOLD) * 100);
+  const dragPct = el.dataset.ringDragPreviewPct ? Number(el.dataset.ringDragPreviewPct) : null;  // ctxring S1 (see ctxthresh.js header)
+  const thresholdPct = dragPct != null ? Math.round(dragPct) : Math.round((info.compactThreshold || state.COMPACT_THRESHOLD) * 100);
   const outPart = info.outputTokens != null ? ` · +${formatTokens(info.outputTokens)} out` : '';
   const tooltip = [
     info.model || '',
@@ -1077,7 +1078,7 @@ function updateHeaderModelInfo() {
       const ringLine = ring.querySelector('.ctx-ring-threshold');
       if (ringLine) ringLine.setAttribute('transform', `rotate(${thresholdAngle} 18 18)`);
       const ringPct = ring.querySelector('.ctx-ring-pct');
-      if (ringPct) ringPct.textContent = String(pct);
+      if (ringPct) ringPct.textContent = dragPct != null ? String(Math.round(dragPct)) : String(pct);
     }
     return;
   }

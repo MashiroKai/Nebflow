@@ -1446,12 +1446,10 @@ export default {
   'contacts.devicesEmpty': '暂无其他设备',
   'messages.deviceTag': '设备',
 
-  // === ctxthresh 批（2026-09-15 方案 A）：Nebula 窗口 Header 上下文压缩阈值面板 ===
+  // === ctxthresh 批：Nebula 窗口上下文压缩阈值。小面板已随作者裁定 2026-09-16 P1
+  // （替换 = 删面板）删除，环上拖动成为唯一入口 ⇒ `title` 现为**环的 aria-label**；
+  // save/reset/close/failed 随面板悬空，已**双侧同删**。 ===
   'ctxthresh.title': '上下文压缩阈值',
-  'ctxthresh.save': '保存',
-  'ctxthresh.reset': '恢复默认',
-  'ctxthresh.close': '关闭',
-  'ctxthresh.failed': '设置失败',
 
   // === Bundled-content localization (contenti18n batch, 2026-09-15) ===
   // Range = the default install set only (seed/manifest.json items: 3 plugins +

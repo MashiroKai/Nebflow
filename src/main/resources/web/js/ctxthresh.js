@@ -1,47 +1,88 @@
-// ctxthresh.js — Nebula 窗口 Header「上下文压缩阈值可调」面板（ctxthresh 批，
-// 2026-09-15 方案 A；作者卡答逐字「按方案A实施」＋「上限90%，下限不得小于当前
-// 上下文用量而且大于15%。（上一问的小面板设计要参照 git 历史中这个设计，就是
-// hover 后拖动小圆环的那个小滑杆）」）。
+// ctxthresh.js — Nebula 窗口 Header 上下文压缩阈值 = **环上拖动**（ctxring 批，
+// 2026-09-17 恢复；入口 = 环本身，**唯一**）。
 //
-// ── 交互形态来源（考古恢复，逐字可复现；证据见
-//    .nebflow/evidence/20260915_ctxthresh/impl/ev_archaeo_old_form.txt）───────
-// 旧设计（2026-08-10 `0999b8180` 移除前）在 `main.js` 有两条拖拽腿：
-//   `setupRingThresholdDrag`（环上按角度拖阈值刻线）与 `setupBarThresholdDrag`
-//   （横向条上拖阈值刻线），落值走 `commitThreshold`（mouseup 提交 + 300ms 防抖）。
-//   其视觉语言 = ① 可拖元素 `cursor: ew-resize`；② 拖动时刻线高亮放大
-//   （`background: rgba(200,80,80,0.8)`，2px×12px → 2px×16px）；③ 拖动中在其上方
-//   浮出小号等宽 `%` 标签（`.ctx-bar-threshold-label`，opacity 0 → 1，9px 等宽）。
-// 本模块**照抄这三条视觉/交互语言**，把「小滑杆」搬进面板（旧形态的 28px 环命中区
-// 过小、角度几何误触高，故入口改为「点环开面板」，拖拽仍在面板内保留）。
-// 🔴 不照搬旧设计的**配置面**（旧版写 `nebflow.json` 的 `compact.bufferRatio`）：
-// 本批走会话级 override（设计 §5），旧键三枚不动（§9-O5）。
+// ── 口径来源（逐字可复现）─────────────────────────────────────────────────
+// 作者 2026-09-16 17:08 三题裁定：
+//   P1 = **替换（删面板）**：小面板入口整路径删除；环上拖动成为唯一入口。
+//   P2 = **起手即写值**：按下即按指针角度取值（无位移闸，连点一下也写值）；
+//        移动跟手更新、松开一次性提交。交互模型照设计卡（atan2 角度投影、
+//        径向忽略、几何不脱环）。
+//   P3 = **原径 28px + 隐形命中面 32×44**（`::before { inset:-8px -2px }`）。
+// 设计卡（作者已阅并据此拍板）：
+//   `~/.nebflow/docs/Nebflow/20260916_170435_ctxring-restore-design__chain-n-b9a95e1a.md`
+//   §1 交互模型 / §2 语义对接 / §3 视觉 / §4 真渲染 / §5 影响面与 L1–L10 / §6 备选。
+// 归因（作者 2026-09-17 更正）：08-10 整体删除该交互的**真因 = 上下文窗口被固定下来**
+//   （阈值无可调对象，控件连带删除），**不是交互质量被否** —— 逐字「这个交互其实挺好的」。
 //
-// ── 作用域（口径①/③）─────────────────────────────────────────────────────
-// 面板只服务 **主窗口的 root 会话**（`#header-model-info` 只存在于主窗口：
-// main.js `updateHeaderModelInfo` 注释逐字「popups pass headerModelInfo: null」）。
-// 服务端另有作用域闸（`WebSocketRoutes.isRootScopeSession`：`AgentKind.Root` 才放行），
-// 本侧为第一道：**只接受主会话 id 的回显帧**（非主会话帧一律忽略 → U6）。
+// ── 不脱环 = 几何构造保证（不是夹取出来的）──────────────────────────────────
+// 把手 = 既有阈值刻线 `.ctx-ring-threshold`（SVG `<line>`，`main.js` 环模板）。
+// 拖动中**只写一个属性**：`transform = rotate(<pct × 3.6> 18 18)`。
+// `<line>` 的 `x1/y1/x2/y2` 全程恒为 `18/1.5/18/5`（半径 16.5→13，viewBox 单位）
+// ⇒ **径向自由度为零**：没有 clip-path、没有极坐标反算回环、没有径向夹取 ——
+// 代码里不存在能把把手推离环的路径。
+// 环心 `(18,18)` 写死在 viewBox 里（**不**从 getBoundingClientRect 反算）；
+// 缩放 s = 28/36 ⇒ 把手半径中点 11.47px、刻线内/外端 10.11 / 12.83px。
+// 1 个百分点 = **3.6°**（= 360 × StepRatio），与 `main.js` 的 `thresholdPct * 3.6`
+// 同源 ⇒ 阈值刻线与用量弧**同一把尺子**。方案原文（含实测读数）见设计卡 §1.1/§4.2。
 //
-// ── 值域（作者卡答逐字；与后端 `CompactThresholdOverride` 同源）─────────────
-//   `15% < r ≤ 90%`，下限另有**动态钳制**：`r ≥ 当前上下文用量比例`
-//   （低于即「设完立刻触发压缩」，故禁选/钳回）。后端静态值域是硬闸，本侧动态
-//   下限是 UI 闸（滑杆 min + 输入钳回）。
-//   🔴 后端 `compactThresholdInfo.minRatio` 是**静态**下限（0.16）；本侧再用
-//   当前用量抬高它（`effectiveMinRatio()`）。
-//   🔴 **90% 硬顶（root 2026-09-15 逐字）**：阈值 ≤ 90% 是**硬边界**；**当前用量 ≥ 90% 时
-//   钳制区间为空**（`[max(15%, 用量), 90%]` 无解）⇒ 面板进**锁定态**：滑杆**真禁用**
-//   （不可拖 + 不可提交，含复位腿）、**保持默认值**（不静默改值、不临时放开 >90%）、
-//   **零出站**（超限态本身就是要立即压缩的信号）、**零文案**。
-//   🔴 常量须与 `src/main/scala/nebflow/agent/protocol.scala` 的
-//   `object CompactThresholdOverride` 保持同步（MinRatio / MaxRatio / StepRatio）。
+// ── 取值（设计卡 §1.2）────────────────────────────────────────────────────
+//   `deg = atan2(dx, -dy)`（12 点 = 0%、顺时针；dy 取负）⇒ `pct = deg / 3.6`。
+//   **径向距离完全忽略**（指针离环心多远都只取角度，拖到屏外也照算）；
+//   **抓取偏移忽略**（起手即取当前角度，不是相对位移累积）；
+//   量化收敛到 **1% 网格**（与后端 `StepRatio = 0.01` 同格）；
+//   退化保护：指针压在环心（半径 < 1px）⇒ 本次读数作废（`atan2(0,-0)` 会解出
+//   180° = 50% 的假值）；环心屏幕坐标**起手取一次快照**，拖动中不复算
+//   （页面滚动/布局变动期间基准漂移 = 与旧实现同源的已知项，本批不额外缓解）。
 //
-// ── 文案面（作者终裁 2026-09-15 逐字，取代本批此前「超限态文案在场」口径）──────────
-//   终裁逐字：「**不显示任何文字，只在拉动滑杆的时候，显示%比**」＋显式确认「**不显示任何字**」。
-//   ⇒ ① **零常驻文字**：面板标题 / 作用域描述句 / 区间提示句 / 默认值注记**一律不渲染**
-//        （元素留作空壳，无任何 textContent）；
-//      ② **零常驻读数**：token 数 / 比例 / 数字框显示值**仅在拖动滑杆时**出现（`dragRatio != null`）；
-//      ③ 超限态**只以滑杆锁死 / 置灰**表达：**不新增任何文字**（含两条拦截腿的提示句 ——
-//         「静默锁死」即终形）。
+// ── 提交 / 取消（设计卡 §1.3）──────────────────────────────────────────────
+//   `pointerup` **一次性提交**：WS `setCompactThreshold`，载荷
+//   `{ type, sessionId, ratio }`，`ratio` = 1% 量化值（`ratio: null` = 恢复默认）。
+//   取消腿（**古早实现缺失，本批补上，它是缺失不是过度缓解**）：
+//   `pointercancel` / `Escape` / `lostpointercapture` ⇒ 清预览 + 回弹权威值 + **零出站**。
+//
+// ── 与现阈值语义对接（设计卡 §2，🔴 禁凭记忆）────────────────────────────────
+//   值域 `15% < r ≤ 90%`（`protocol.scala` `CompactThresholdOverride`：MinRatio /
+//   MaxRatio / StepRatio —— 本文件常量与它**必须同步**，禁只改一侧）；
+//   动态下限 `max(16%, 当前用量)`（`minRatioFor` ↔ `effectiveMinRatio()`）；
+//   钳制 `clampRatio`（`< lo ⇒ lo`、`> MaxRatio ⇒ MaxRatio`；`lo` 自身钳到 90 防倒挂出站）；
+//   🔴 **90% 硬顶**（root 2026-09-15 逐字）：`当前用量 ≥ 90%` ⇒ 可选区间
+//   `[max(15%, 用量), 90%]` **空集** ⇒ **不可拖 + 零出站 + 零文案**（静默锁死即终形）。
+//   权威值源 = WS 回显帧 `compactThresholdInfo`（`ratio / contextWindow /
+//   effectiveThreshold / effectiveRatio / defaultThreshold / defaultRatio /
+//   minRatio / maxRatio`）——UI **不回算、不自造值**；`effectiveRatio` 语义
+//   「**无覆盖 ⇒ = 默认值比例**」逐字沿用，未被本批改写。
+//   生效路径 = 会话级 override → 一次性回显帧 → 写
+//   `state.sessionModelInfo[sid].compactThreshold` → `state.updateHeaderModelInfo()`
+//   → 环刻线自动跟到新角度。**无重载 / 无重连 / 无刷新**。
+//   持久化 = `SessionMeta.compactThresholdRatio` → `<dataRoot>/sessions/_index.json`。
+//   🔴 旧写值路径（`nebflow.json` 的 `compact.bufferRatio`）**已死且不使用**。
+//
+// ── 拖动期预览钩子（设计卡 S1；`main.js` 内 ≤3 行）────────────────────────────
+//   拖动/暂留期间把当前值写进 `#header-model-info` 的 `data-ring-drag-preview-pct`，
+//   `main.js` 的三处就地补丁优先取它 —— 否则拖动中若有 `usageUpdate` 帧到达，
+//   把手/读数会被权威值抢回（与「跟手」直接冲突）。
+//   暂留语义：提交后到权威帧到达前**保持**提交值（防「松手回跳」），
+//   回显帧 / 取消 / `HOLD_MS` 兜底任一到达即交还权威值。
+//
+// ── 回帧腿的拖动期守卫（F-1 整改，2026-09-17）──────────────────────────────
+//   `compactThresholdInfo` 到达时若 `dragging === true` ⇒ **只**更新权威状态
+//   （`info` + `state.sessionModelInfo[sid].compactThreshold`），**不调用** `clearPreview()`。
+//   否则回帧内含的 `endDrag()` 会把手势自己掐死：冷页（`info` 未初始化）或换会话后的
+//   **第一次**拖动起手即补拉 ⇒ 回帧在拖动中到达 ⇒ 预览消失、`pointerup` 变 no-op、
+//   松手零出站（＝作者 P2「起手即写值」在该路径上不成立）。交还权威值一律发生在
+//   手势结束之后（`onPointerUp` 的 `commit()` / `clearPreview()` 或取消腿）。
+//
+// ── 面板删除边界（作者裁定 P1 = 替换；**本批删除仅限此界**）──────────────────
+//   删除：面板的创建 / 打开 / 关闭 / 保存 / 复位按钮 / 面板滑杆拖动 / 数字框 /
+//   键盘（面板期）/ 事件绑定 / 运行期注入样式（`.ctxthresh-*` 面板段）/
+//   面板悬空 i18n 键 / `chat.css` 的 `.ctx-bar-*` 孤儿样式。
+//   🔴 **不动**：钳制 / 回显 / 持久化 / 锁定态四条腿行为不变；后端零改动。
+//
+// ── 文案面（作者终裁 2026-09-15 逐字，仍适用）──────────────────────────────
+//   逐字：「**不显示任何文字，只在拉动滑杆的时候，显示%比**」＋显式确认
+//   「**不显示任何字**」⇒ ① 零常驻文字；② 环心读数只在**拖动中**切到阈值 %
+//   （复用既有 `.ctx-ring-pct`，松手自动交还用量 %）；③ 锁定态只以「不可拖」表达，
+//   **不新增任何文字**（静默锁死即终形）。
 
 import { onMessage, sendWs } from './ws.js';
 import { t } from './i18n.js';
@@ -53,154 +94,88 @@ const MIN_RATIO = 0.15;   // 静态下限（开区间：r 必须严格大于它�
 const MAX_RATIO = 0.90;   // 静态上限（闭区间）
 const STEP_RATIO = 0.01;  // 1 个百分点
 
-const PANEL_ID = 'ctxthresh-panel';
-const TRACK_ID = 'ctxthresh-track';
-const THUMB_ID = 'ctxthresh-thumb';
-const LABEL_ID = 'ctxthresh-thumb-label';
-const FILL_ID = 'ctxthresh-fill';
-const ABS_ID = 'ctxthresh-abs';
-const PCT_ID = 'ctxthresh-pct';
-const NUM_ID = 'ctxthresh-number';
-const HINT_ID = 'ctxthresh-hint';
-const SCOPE_ID = 'ctxthresh-scope';
+/** 1 个百分点 = 3.6°（= 360 × StepRatio）——与 `main.js` 的 `thresholdPct * 3.6` 同源。 */
+const DEG_PER_PCT = 360 * STEP_RATIO;
+/** viewBox 环心（与 `main.js` 环模板同源；🔴 不从 getBoundingClientRect 反算）。 */
+const VB_CENTER = 18;
+/** 角度导引线的终点半径（= 把手半径中点 14.75，viewBox 单位）——落在环内。 */
+const GUIDE_RADIUS = 14.75;
+/** 提交后到权威帧到达之前的暂留上限（兜底防「永不交还」）。 */
+const HOLD_MS = 1500;
+/** 环宿主元素 id（`main.js` 的 `updateHeaderModelInfo` 只重写其 innerHTML，宿主持久）。 */
+const HOST_ID = 'header-model-info';
 
 const CSS = `
-<style id="ctxthresh-css">
-/* ── 入口：Header 上下文环变为可点（旧设计遗留的拖拽光标语言 → 点击语言）── */
-#header-model-info .ctx-ring-wrap { cursor: pointer; }
-#header-model-info .ctx-ring-wrap:hover .ctx-ring-threshold {
-  stroke: rgba(200,80,80,0.95); stroke-width: 2;
+<style id="ctxring-css">
+/* ── 入口：环本身 = 唯一交互面（按下即取值、拖动跟手、松开提交）─────────────
+   🔴 旧「点环开小面板」入口整路径随作者 2026-09-17 裁定 P1 删除。 */
+#header-model-info {
+  cursor: grab;
+  user-select: none;
+  touch-action: none;   /* pointer 拖动手势（含触屏）不被滚动/平移抢占 */
+}
+#header-model-info.ctx-ring-dragging { cursor: grabbing; }
+#header-model-info:focus-visible {
+  outline: 2px solid rgba(200,80,80,0.65);
+  outline-offset: 2px;
+  border-radius: 4px;
 }
 
-/* ── 面板容器（sapphire glass；#header 的**兄弟节点**——base.css:243-256 硬约束：
-   #header 自带 backdrop-filter 会形成 backdrop root，浮层放其内部则毛玻璃失效）── */
-#${PANEL_ID} {
+/* ── P3 命中面（作者裁定：原径 28px + 隐形命中面 32×44）─────────────────────
+   走 **CSS 伪元素**：规则常驻 <head> ⇒ main.js 重建环 innerHTML 后命中面自动存活
+   —— 零 DOM 保活、零观察器、零新增 header 叶子控件、几何与布局零位移。
+   28+2×2 = 32 宽、28+2×8 = 44 高 ⇒ 纵向 44px 达 WCAG 2.5.8 目标尺寸。 */
+#header-model-info .ctx-ring-wrap::before {
+  content: '';
   position: absolute;
-  top: 56px;
-  left: 16px;
-  width: 300px;
-  background: var(--glass-bg);
-  -webkit-backdrop-filter: blur(var(--glass-blur)) saturate(1.15);
-  backdrop-filter: blur(var(--glass-blur)) saturate(1.15);
-  border: 1px solid var(--glass-border);
-  border-radius: 12px;
-  box-shadow: 0 4px 16px rgba(0,0,0,0.05), 0 8px 36px rgba(0,0,0,0.06);
-  z-index: 300;
-  visibility: hidden;
-  opacity: 0;
-  pointer-events: none;
-  transition: opacity 0.15s, visibility 0.15s;
-  padding: 10px 12px 12px;
-  box-sizing: border-box;
-}
-#${PANEL_ID}.open { visibility: visible; opacity: 1; pointer-events: auto; }
-.ctxthresh-header {
-  display: flex; align-items: center; justify-content: space-between;
-  margin-bottom: 6px;
-}
-.ctxthresh-title {
-  font-size: 12px; font-weight: 500; color: var(--color-frame-text);
-}
-.ctxthresh-close-btn {
-  background: none; border: none; cursor: pointer; padding: 0;
-  width: 20px; height: 20px; line-height: 1; border-radius: 4px;
-  color: var(--color-frame-text-muted); font-size: 14px;
-}
-.ctxthresh-close-btn:hover { background: var(--glass-control-bg-hover); }
-.ctxthresh-scope {
-  font-size: 10px; color: var(--color-frame-text-muted);
-  margin-bottom: 8px; line-height: 1.4;
-}
-.ctxthresh-readout {
-  display: flex; align-items: baseline; gap: 6px; margin-bottom: 8px;
-  font-family: ui-monospace, SFMono-Regular, monospace;
-}
-.ctxthresh-abs { font-size: 16px; font-weight: 600; color: var(--color-frame-text); }
-.ctxthresh-pct { font-size: 11px; color: var(--color-frame-text-muted); }
-.ctxthresh-default-note {
-  font-size: 10px; color: var(--color-frame-text-muted); margin-left: auto;
+  inset: -8px -2px;
 }
 
-/* ── 小滑杆（旧形态逐字复刻：ew-resize 可拖 + 拖动高亮 + 拖动中浮出 % 标签）── */
-.ctxthresh-track {
-  position: relative; height: 12px; margin: 10px 0 4px;
-  cursor: ew-resize; user-select: none;
+/* ── 拖动反馈层①：把手高亮（沿用既有红族，零新色值）────────────────────── */
+#header-model-info.ctx-ring-dragging .ctx-ring-threshold {
+  stroke: rgba(200,80,80,0.95);
+  stroke-width: 2;
 }
-.ctxthresh-rail {
-  position: absolute; top: 5px; left: 0; right: 0; height: 2px;
-  background: rgba(128,128,128,0.25); border-radius: 1px;
+/* ── 拖动反馈层②：环心读数切阈值 %，字号 9px → 12px（设计系统「可读文本 ≥12px」
+   地板；root 自决 ⑴ —— 设计位实测缺陷，顺手修入范围）─────────────────────
+   亮/暗双档对比度 ≥ AA 4.5:1（实测读数见报告；改前 3.96 / 3.61 不达标）。
+   色值仍属既有红族的色相 0° 族：亮档更深、暗档更亮。
+   🔴 只在**拖动中**生效 ⇒ 静止态与既有环心读数逐字不变。 */
+#header-model-info.ctx-ring-dragging .ctx-ring-pct {
+  font-size: 12px;
+  color: rgb(170,50,50);            /* 亮档：比 rgba(200,80,80,·) 更深 */
 }
-.ctxthresh-fill {
-  position: absolute; top: 5px; left: 0; height: 2px;
-  background: rgba(128,128,128,0.5); border-radius: 1px;
+@media (prefers-color-scheme: dark) {
+  #header-model-info.ctx-ring-dragging .ctx-ring-pct {
+    color: rgb(230,120,120);        /* 暗档：比 rgba(200,80,80,·) 更亮 */
+  }
 }
-.ctxthresh-thumb {
-  position: absolute; top: 0; width: 2px; height: 12px; margin-left: -1px;
-  background: rgba(128,128,128,0.5); border-radius: 1px;
-  transition: background 0.15s ease, height 0.15s ease, top 0.15s ease;
-}
-/* 旧 .ctx-bar-threshold:hover / .dragging 逐字等价 */
-.ctxthresh-track:hover .ctxthresh-thumb,
-.ctxthresh-track.dragging .ctxthresh-thumb {
-  background: rgba(200,80,80,0.8); height: 16px; top: -2px;
-}
-/* 旧 .ctx-bar-threshold-label / .visible 逐字等价 */
-.ctxthresh-thumb-label {
-  position: absolute; top: -16px; font-size: 9px;
-  font-family: ui-monospace, SFMono-Regular, monospace;
-  color: rgba(200,80,80,0.9);
-  transform: translateX(-50%); white-space: nowrap;
-  opacity: 0; transition: opacity 0.12s ease; pointer-events: none;
-}
-.ctxthresh-thumb-label.visible { opacity: 1; }
-/* 🔴 90% 硬顶：超限档（usage ≥ 90%）滑杆无可选区间 ⇒ 真禁用（不可拖 + 不可提交） */
-.ctxthresh-track.disabled, .ctxthresh-track.disabled .ctxthresh-thumb { pointer-events: none; cursor: default; }
-.ctxthresh-btn:disabled, .ctxthresh-number:disabled { opacity: 0.5; cursor: not-allowed; }
-
-.ctxthresh-row {
-  display: flex; align-items: center; gap: 6px; margin-top: 8px;
-}
-.ctxthresh-number {
-  width: 68px; padding: 3px 6px; font-size: 11px;
-  border-radius: 6px; border: 1px solid var(--color-border);
-  background: var(--glass-control-bg); color: var(--color-frame-text);
-  font-family: ui-monospace, SFMono-Regular, monospace;
-}
-.ctxthresh-actions { margin-left: auto; display: flex; gap: 6px; }
-.ctxthresh-btn {
-  font-size: 11px; padding: 3px 9px; border-radius: 6px; cursor: pointer;
-  border: 1px solid var(--color-border); background: var(--glass-control-bg);
-  color: var(--color-frame-text);
-}
-.ctxthresh-btn:hover { background: var(--glass-control-bg-hover); }
-.ctxthresh-btn-primary {
-  border-color: transparent; background: var(--color-primary); color: #fff;
-}
-.ctxthresh-hint {
-  font-size: 10px; color: var(--color-frame-text-muted);
-  margin-top: 6px; line-height: 1.4;
-}
-.ctxthresh-msg { font-size: 10px; margin-top: 6px; line-height: 1.4; }
-.ctxthresh-msg.error { color: var(--color-error); }
-.ctxthresh-msg.ok { color: var(--color-success); }
 </style>`;
 
 // ── 状态 ────────────────────────────────────────────────────────────────
 /** 服务端最近一次回显的权威值（唯一数据源；UI 不回算、不自造）。 */
 let info = null;
-/** 拖动中的临时比例（未提交）。 */
-let dragRatio = null;
-let open = false;
+/** 拖动 / 提交暂留中的预览值（**百分点整数**，1% 网格）；`null` = 无预览。 */
+let previewPct = null;
+/** 拖动会话进行中（指针已按下且未结束）。 */
+let dragging = false;
+/** 上一次已出站、尚未回显的值 —— 键盘 ←/→ 的连击基准。 */
+let pendingPct = null;
+/** 起手时的环心屏幕坐标快照（拖动中不复算 —— 与古早实现同）。 */
+let center = null;
+/** 指针 capture 的 pointerId。 */
+let pointerId = null;
+/** 暂留兜底定时器。 */
+let holdTimer = null;
+/** 监听只绑一次（`initCtxThresh` 可被 e2e 反复调用）。 */
+let bound = false;
 
 function primarySessionId() {
   return chatViews.primary?.sessionId || state.activeSessionId || null;
 }
 
-function fmtTokens(n) {
-  if (n == null || !isFinite(n)) return '';
-  if (n >= 1000000) return (n / 1000000).toFixed(1) + 'M';
-  if (n >= 1000) return Math.round(n / 1000) + 'k';
-  return String(n);
+function hostEl() {
+  return document.getElementById(HOST_ID);
 }
 
 /** 当前会话的已用比例（0..1；无用量读数 ⇒ 0）。 */
@@ -217,8 +192,8 @@ function effectiveMinRatio() {
   return Math.max(MIN_RATIO + STEP_RATIO, usageRatio());
 }
 
-/** 🔴 90% 硬顶（root 2026-09-15 逐字）：**当前用量 ≥ 90% ⇒ 滑杆无可选区间**
-  * （`[max(15%, 用量), 90%]` 空集）⇒ 面板进**锁定态**（真禁用 + 保持默认值 + 零出站 + 零文案）。 */
+/** 🔴 90% 硬顶（root 2026-09-15 逐字）：当前用量 ≥ 90% ⇒ 可选区间空集
+  * ⇒ **不可拖 + 零出站 + 零文案**（静默锁死即终形）。 */
 function overLimit() {
   return usageRatio() >= MAX_RATIO;
 }
@@ -232,267 +207,353 @@ function clampRatio(r) {
   return r;
 }
 
-// ── DOM ─────────────────────────────────────────────────────────────────
-function ensurePanel() {
-  if (document.getElementById(PANEL_ID)) return document.getElementById(PANEL_ID);
-  const header = document.getElementById('header');
-  if (!header) return null;
-  // 🔴 必须是 #header 的**兄弟节点**（同在 #main 内）——base.css:243-256 的
-  // backdrop-filter 硬约束（同 .header-dropdown-menu / #reminder-panel / #daemon-panel）。
-  // 🔴 终裁文案面：标题 / 作用域句 / 读数位（abs·pct）/ 默认值注记 / 提示句（`${HINT_ID}`）
-  //    一律**空壳**（无 textContent），读数只在拖动中回填（见 `render()`）。
-  header.insertAdjacentHTML('afterend', `
-    <div id="${PANEL_ID}" role="dialog" aria-label="${t('ctxthresh.title')}">
-      <div class="ctxthresh-header">
-        <span class="ctxthresh-title"></span>
-        <button class="ctxthresh-close-btn" id="ctxthresh-close-btn" title="${t('ctxthresh.close')}">×</button>
-      </div>
-      <div class="ctxthresh-scope" id="${SCOPE_ID}"></div>
-      <div class="ctxthresh-readout">
-        <span class="ctxthresh-abs" id="${ABS_ID}"></span>
-        <span class="ctxthresh-pct" id="${PCT_ID}"></span>
-        <span class="ctxthresh-default-note" id="ctxthresh-default-note"></span>
-      </div>
-      <div class="ctxthresh-track" id="${TRACK_ID}">
-        <div class="ctxthresh-rail"></div>
-        <div class="ctxthresh-fill" id="${FILL_ID}"></div>
-        <div class="ctxthresh-thumb" id="${THUMB_ID}"></div>
-        <div class="ctxthresh-thumb-label" id="${LABEL_ID}"></div>
-      </div>
-      <div class="ctxthresh-row">
-        <input class="ctxthresh-number" id="${NUM_ID}" type="number" step="1" min="16" max="90"
-               inputmode="numeric" autocomplete="off" aria-label="${t('ctxthresh.title')}">
-        <span class="ctxthresh-pct">%</span>
-        <div class="ctxthresh-actions">
-          <button class="ctxthresh-btn ctxthresh-btn-primary" id="ctxthresh-save-btn">${t('ctxthresh.save')}</button>
-          <button class="ctxthresh-btn" id="ctxthresh-reset-btn">${t('ctxthresh.reset')}</button>
-        </div>
-      </div>
-      <div class="ctxthresh-hint" id="${HINT_ID}"></div>
-      <div class="ctxthresh-msg" id="ctxthresh-msg"></div>
-    </div>
-  `);
-  const panel = document.getElementById(PANEL_ID);
-  bindPanelEvents(panel);
-  return panel;
+/** 百分点 ⇒ 过钳制的百分点（1% 网格）。 */
+function clampPct(pct) {
+  return Math.round(clampRatio(pct / 100) * 100);
 }
 
-function setMsg(text, kind) {
-  const el = document.getElementById('ctxthresh-msg');
-  if (!el) return;
-  el.textContent = text || '';
-  el.className = 'ctxthresh-msg' + (kind ? ' ' + kind : '');
+/** 百分点 ⇒ 出站比例值（与旧面板腿同式：先钳制、再 1% 量化）。 */
+function ratioFromPct(pct) {
+  return Math.round(clampRatio(pct / 100) * 100) / 100;
 }
 
-/** 渲染（值来源 = 服务端回显 `info` + 拖动中的 `dragRatio`）。
-  * 🔴 终裁（作者 2026-09-15 逐字）：「不显示任何文字，只在拉动滑杆的时候，显示 %比」
-  * ⇒ **零常驻读数**：token 数 / 比例 / 数字框值只在**拖动中**（`dragRatio != null`）回填，
-  * 静止态一律清空；**零常驻文字**：提示句 / 默认值注记不再渲染。 */
-function render() {
-  const panel = document.getElementById(PANEL_ID);
-  if (!panel) return;
-  const window = info?.contextWindow || state.sessionModelInfo?.[primarySessionId()]?.contextWindow || 0;
-  const dragging = dragRatio != null;   // 🔴 终裁：读数仅在拖动中出现
-  const ratio = dragging ? dragRatio : (info?.effectiveRatio ?? 0);
-  const tokens = window ? Math.round(window * ratio) : null;
-
-  const abs = document.getElementById(ABS_ID);
-  if (abs) abs.textContent = dragging && tokens != null ? fmtTokens(tokens) : '';
-  const pct = document.getElementById(PCT_ID);
-  if (pct) pct.textContent = dragging ? (ratio * 100).toFixed(1) + '%' : '';
-
-  const lo = effectiveMinRatio();
-  // 🔴 90% 硬顶：超限档区间为空（分母 MAX-lo ≤ 0）⇒ 不给倒挂位置，thumb 固定在硬顶端
-  const over = overLimit();
-  const pos = ((ratio - lo) / (MAX_RATIO - lo)) * 100;
-  const clampedPos = over ? 100 : Math.max(0, Math.min(100, pos));
-  const fill = document.getElementById(FILL_ID);
-  if (fill) fill.style.width = clampedPos + '%';
-  const thumb = document.getElementById(THUMB_ID);
-  if (thumb) {
-    thumb.style.left = clampedPos + '%';
-    // 超限档：thumb 真禁用（pointer-events:none + aria-disabled），不是仅拦提交
-    thumb.style.pointerEvents = over ? 'none' : '';
-    thumb.setAttribute('aria-disabled', over ? 'true' : 'false');
+/** 权威值（百分点整数）；无权威读数 ⇒ `null`（**不用用量/默认值充数**）。 */
+function authoritativePct() {
+  const sid = primarySessionId();
+  if (!sid) return null;
+  if (info && info.sessionId === sid && typeof info.effectiveRatio === 'number' && isFinite(info.effectiveRatio)) {
+    return Math.round(info.effectiveRatio * 100);
   }
-  const label = document.getElementById(LABEL_ID);
-  if (label) {
-    label.style.left = clampedPos + '%';
-    // 🔴 终裁：拖动读数只在拖动中出现（静止态连标签内容也清空 ⇒ 零常驻读数）
-    label.textContent = dragging ? Math.round(ratio * 100) + '%' : '';
+  const mi = state.sessionModelInfo?.[sid];
+  if (mi && typeof mi.compactThreshold === 'number' && isFinite(mi.compactThreshold)) {
+    return Math.round(mi.compactThreshold * 100);
   }
-  const num = /** @type {HTMLInputElement|null} */ (document.getElementById(NUM_ID));
-  if (num) {
-    // 动态下限（作者卡答）：滑杆/数字框的 min 抬到「当前用量」或 16% 的较大者。
-    // 超限档下限越过 90% ⇒ 无可选区间：min 与 max 同取 90（不出倒挂区间 min>max）。
-    num.min = String(Math.ceil((over ? MAX_RATIO : lo) * 100));
-    num.max = String(Math.round(MAX_RATIO * 100));
-    num.disabled = over;   // 超限档：数字框真禁用（无可选区间）
-    // 用户未在编辑时才回写显示值（防拖动时打断输入）。🔴 终裁：静止态清空 ⇒ 零常驻读数。
-    if (document.activeElement !== num) num.value = dragging ? String(Math.round(ratio * 100)) : '';
-  }
-  // 🔴 90% 硬顶：超限档 ⇒ 面板锁定态——滑杆/数字框/保存/复位全部锁定（真禁用；🔴 零文案）
-  const track = document.getElementById(TRACK_ID);
-  if (track) {
-    track.classList.toggle('disabled', over);
-    track.setAttribute('aria-disabled', over ? 'true' : 'false');
-    track.style.pointerEvents = over ? 'none' : '';
-  }
-  const saveBtn = /** @type {HTMLButtonElement|null} */ (document.getElementById('ctxthresh-save-btn'));
-  const resetBtn = /** @type {HTMLButtonElement|null} */ (document.getElementById('ctxthresh-reset-btn'));
-  if (saveBtn) saveBtn.disabled = over;
-  if (resetBtn) resetBtn.disabled = over;
-  // 🔴 终裁文案面：提示句（`${HINT_ID}` / `.ctxthresh-hint`）**不再渲染** —— 超限态只以
-  // 锁死/置灰表达、非超限档也不留区间句（原 `over` 三目分支 + `over-limit` 样式钩子一并撤除）。
+  return null;
 }
 
-function ratioFromEvent(ev, track) {
-  const rect = track.getBoundingClientRect();
-  if (rect.width <= 0) return effectiveMinRatio();
-  const lo = effectiveMinRatio();
-  const frac = (ev.clientX - rect.left) / rect.width;
-  const raw = lo + frac * (MAX_RATIO - lo);
-  return Math.round(clampRatio(raw) / STEP_RATIO) * STEP_RATIO;
+/** 键盘 ←/→ 的基准：优先「已出站未回显」的值（连击不被回显延迟吞掉），否则取权威值。 */
+function stepBasePct() {
+  return pendingPct != null ? pendingPct : authoritativePct();
 }
 
-function bindPanelEvents(panel) {
-  panel.querySelector('.ctxthresh-close-btn')?.addEventListener('click', () => setOpen(false));
-
-  const track = document.getElementById(TRACK_ID);
-  if (track) {
-    // 旧形态逐字：mousedown 起拖 → document 上 mousemove → mouseup 提交。
-    track.addEventListener('mousedown', (e) => {
-      if (overLimit()) return;   // 🔴 超限档真禁用：不可拖动（程序化 mousedown 同样拦）
-      e.preventDefault();
-      track.classList.add('dragging');
-      const label = document.getElementById(LABEL_ID);
-      if (label) label.classList.add('visible');
-      dragRatio = ratioFromEvent(e, track);
-      render();
-      const onMove = (ev) => { dragRatio = ratioFromEvent(ev, track); render(); };
-      const onUp = () => {
-        document.removeEventListener('mousemove', onMove);
-        document.removeEventListener('mouseup', onUp);
-        track.classList.remove('dragging');
-        if (label) label.classList.remove('visible');
-        const committed = dragRatio;
-        dragRatio = null;
-        if (committed != null) submitRatio(committed);
-        render();
-      };
-      document.addEventListener('mousemove', onMove);
-      document.addEventListener('mouseup', onUp);
-    });
+// ── 预览绘制（拖动反馈三层，全为零新增 DOM 叶子）────────────────────────────
+/** 角度导引线（反馈层③）：1px 虚线、从环心指向把手方向。
+  * 🔴 **必须追加为 SVG 的最后一个子节点** —— `main.js` 的就地补丁用
+  * `circle:nth-child(2)` 定位用量弧，插在末位不改既有子节点序号。 */
+function ensureGuide(svg) {
+  let g = svg.querySelector('.ctx-ring-guide');
+  if (!g) {
+    g = document.createElementNS('http://www.w3.org/2000/svg', 'line');
+    g.setAttribute('class', 'ctx-ring-guide');
+    g.setAttribute('x1', String(VB_CENTER));
+    g.setAttribute('y1', String(VB_CENTER));
+    g.setAttribute('x2', String(VB_CENTER));
+    g.setAttribute('y2', String(VB_CENTER - GUIDE_RADIUS));
+    g.setAttribute('stroke', 'rgba(200,80,80,0.55)');   // 既有红族，零新色值
+    g.setAttribute('stroke-width', '1');
+    g.setAttribute('stroke-dasharray', '2 2');
+    svg.appendChild(g);
   }
-
-  const num = /** @type {HTMLInputElement|null} */ (document.getElementById(NUM_ID));
-  const save = document.getElementById('ctxthresh-save-btn');
-  const commitNumber = () => {
-    if (!num) return;
-    // 🔴 终裁后数字框静止态为空值 ⇒ 空输入**不得**当作 0%（否则会被钳成下限 = 静默改值）
-    const raw = num.value.trim();
-    const pctVal = Number(raw);
-    if (raw === '' || !isFinite(pctVal)) { render(); return; }
-    submitRatio(clampRatio(pctVal / 100));
-  };
-  save?.addEventListener('click', commitNumber);
-  num?.addEventListener('change', commitNumber);
-
-  document.getElementById('ctxthresh-reset-btn')?.addEventListener('click', () => {
-    // 🔴 90% 硬顶：复位腿入闸——超限档「恢复默认」会把阈值落到默认值（25.6% < 当前用量）
-    // ⇒ 出站未受闸值 = 静默改值，故与提交腿同闸（保持默认值 / 零出站）。
-    // 🔴 终裁：拦截腿**零文案**（「静默锁死」即终形，不再给提示句）。
-    if (overLimit()) return;
-    setMsg('');
-    sendWs({ type: 'setCompactThreshold', sessionId: primarySessionId(), ratio: null });
-  });
+  return g;
 }
 
-function submitRatio(ratio) {
+function syncPreviewDataset() {
+  const host = hostEl();
+  if (!host) return;
+  if (previewPct != null) host.dataset.ringDragPreviewPct = String(previewPct);
+  else delete host.dataset.ringDragPreviewPct;
+}
+
+/** 绘制当前预览（把手角度 + 环心读数 + 导引线）。`previewPct == null` ⇒ no-op。 */
+function paintPreview() {
+  const host = hostEl();
+  if (!host || previewPct == null) return;
+  const line = host.querySelector('.ctx-ring-threshold');
+  // 🔴 唯一更新语句：只改 transform —— `x1/y1/x2/y2` 全程不被触碰（几何不脱环）。
+  if (line) line.setAttribute('transform', `rotate(${previewPct * DEG_PER_PCT} 18 18)`);
+  const pctEl = host.querySelector('.ctx-ring-pct');
+  if (pctEl) pctEl.textContent = String(previewPct);
+  const svg = host.querySelector('.ctx-ring-svg');
+  if (dragging && svg) {
+    const g = ensureGuide(svg);
+    const rad = (previewPct * DEG_PER_PCT) * Math.PI / 180;
+    g.setAttribute('x2', String(VB_CENTER + GUIDE_RADIUS * Math.sin(rad)));
+    g.setAttribute('y2', String(VB_CENTER - GUIDE_RADIUS * Math.cos(rad)));
+  }
+  syncPreviewDataset();
+  syncAria();
+}
+
+/** 清预览 + 回弹权威值（取消腿 / 回显交还 / 暂留兜底三处共用）。**零出站**。 */
+function clearPreview() {
+  if (holdTimer) { clearTimeout(holdTimer); holdTimer = null; }
+  previewPct = null;
+  pendingPct = null;
+  endDrag();
+  const host = hostEl();
+  if (host) {
+    host.classList.remove('ctx-ring-dragging');
+    delete host.dataset.ringDragPreviewPct;
+  }
+  // 交还权威值：`updateHeaderModelInfo` 会按 state 里的 compactThreshold 重画把手与读数。
+  if (typeof state.updateHeaderModelInfo === 'function') state.updateHeaderModelInfo();
+  syncAria();
+}
+
+/** 暂留：提交后到权威帧到达前保持提交值（防「松手回跳」）+ 超时兜底。 */
+function hold(ratio) {
+  previewPct = Math.round(clampRatio(ratio) * 100);
+  pendingPct = previewPct;
+  paintPreview();
+  if (holdTimer) clearTimeout(holdTimer);
+  holdTimer = setTimeout(() => { holdTimer = null; clearPreview(); }, HOLD_MS);
+}
+
+// ── a11y（设计卡 §5.4 L8：面板的 aria 面整体迁到环）──────────────────────────
+function syncAria() {
+  const host = hostEl();
+  if (!host) return;
+  const shown = previewPct != null ? previewPct : authoritativePct();
+  const lo = Math.round(Math.min(effectiveMinRatio(), MAX_RATIO) * 100);
+  const hi = Math.round(MAX_RATIO * 100);
+  host.setAttribute('role', 'slider');
+  host.setAttribute('tabindex', '0');
+  host.setAttribute('aria-label', t('ctxthresh.title'));
+  host.setAttribute('aria-valuemin', String(lo));
+  host.setAttribute('aria-valuemax', String(hi));
+  if (shown != null) host.setAttribute('aria-valuenow', String(shown));
+  else host.removeAttribute('aria-valuenow');
+  host.setAttribute('aria-valuetext', shown != null ? shown + '%' : '');
+  if (overLimit()) host.setAttribute('aria-disabled', 'true');
+  else host.removeAttribute('aria-disabled');
+}
+
+// ── 取值 ────────────────────────────────────────────────────────────────
+/** 指针位置 ⇒ 百分点（1% 网格 + 钳制）；退化（半径 < 1px）⇒ `null`。 */
+function pctFromPointer(ev) {
+  if (!center) return null;
+  const dx = ev.clientX - center.cx;
+  const dy = ev.clientY - center.cy;
+  // 退化保护：指针压在环心 ⇒ 本次读数作废（`atan2(0, -0)` 会解出 180° = 50% 的假值）
+  if (Math.hypot(dx, dy) < 1) return null;
+  // 12 点 = 0%、顺时针（dy 取负）；**径向距离完全忽略** —— 拖到屏外也照算角度。
+  let deg = Math.atan2(dx, -dy) * 180 / Math.PI;
+  if (deg < 0) deg += 360;
+  return clampPct(deg / DEG_PER_PCT);
+}
+
+// ── 提交 ────────────────────────────────────────────────────────────────
+function pull() {
   const sid = primarySessionId();
   if (!sid) return;
-  // 🔴 90% 硬顶（root 2026-09-15 逐字）：当前用量 ≥ 90% ⇒ 滑杆无可选区间 ⇒ 拒绝提交
-  // （保持默认值 / 不静默改值 / 不临时放开 >90%）；不改成钳到「越过 90% 或低于当前用量」的值。
-  // 🔴 终裁：拦截**零文案**（不再写提示句），只回拉权威值让面板回到真实状态。
-  if (overLimit()) { sendWs({ type: 'getCompactThreshold', sessionId: sid }); return; }
-  setMsg('');
-  // 🔴 90% 硬顶：出站值一律过 clampRatio（lo 已钳到 90%）⇒ 任何腿都不可能出站 > 90%
-  sendWs({ type: 'setCompactThreshold', sessionId: sid, ratio: Math.round(clampRatio(ratio) * 100) / 100 });
+  sendWs({ type: 'getCompactThreshold', sessionId: sid });
 }
 
-function setOpen(next) {
-  const panel = ensurePanel();
-  if (!panel) return;
-  open = next;
-  panel.classList.toggle('open', open);
-  if (open) {
-    setMsg('');
-    const sid = primarySessionId();
-    if (sid) sendWs({ type: 'getCompactThreshold', sessionId: sid });
-    render();
+/** 提交一个百分点值（拖动松手 / 键盘两腿共用）。 */
+function commit(pct) {
+  const sid = primarySessionId();
+  if (!sid) return;
+  // 🔴 90% 硬顶：当前用量 ≥ 90% ⇒ 无可选区间 ⇒ 拒绝提交（保持默认值 / 零出站 / 零文案）
+  if (overLimit()) return;
+  const ratio = ratioFromPct(pct);
+  sendWs({ type: 'setCompactThreshold', sessionId: sid, ratio });
+  hold(ratio);
+}
+
+/** 恢复默认（双击环 / 环聚焦后 Delete）——出站 `ratio: null`。 */
+function restoreDefault() {
+  const sid = primarySessionId();
+  if (!sid) return;
+  // 🔴 90% 硬顶：复位腿入闸——超限档「恢复默认」会把阈值落到默认值（< 当前用量）
+  // ⇒ 出站未受闸值 = 静默改值，故与提交腿同闸（保持默认值 / 零出站 / 零文案）。
+  if (overLimit()) return;
+  pendingPct = null;
+  sendWs({ type: 'setCompactThreshold', sessionId: sid, ratio: null });
+  // 暂留到**权威默认值**：`info.defaultRatio` 来自回显帧（非自造值），
+  // 让把手立刻落到默认角度、无回跳。
+  if (info && info.sessionId === sid && typeof info.defaultRatio === 'number' && isFinite(info.defaultRatio)) {
+    hold(info.defaultRatio);
   } else {
-    dragRatio = null;
+    clearPreview();
   }
 }
 
-function toggle() { setOpen(!open); }
+// ── 指针腿（P2：起手即写值 / 移动跟手 / 松开提交）─────────────────────────────
+function onPointerDown(ev) {
+  const sid = primarySessionId();
+  if (!sid) return;
+  if (overLimit()) return;                                     // 锁定档：不可拖 + 零出站 + 零文案
+  if (ev.pointerType === 'mouse' && ev.button !== 0) return;    // 仅主键
+  const host = hostEl();
+  const svg = host && host.querySelector('.ctx-ring-svg');
+  if (!host || !svg) return;
+  const box = svg.getBoundingClientRect();
+  if (box.width <= 0) return;
+  // 环心屏幕坐标：起手取一次快照（拖动中不复算 —— 与古早实现同）
+  center = { cx: box.left + box.width / 2, cy: box.top + box.height / 2 };
+  dragging = true;
+  pointerId = ev.pointerId;
+  try { host.setPointerCapture(ev.pointerId); } catch { /* capture 不可用时 document 腿兜底 */ }
+  host.classList.add('ctx-ring-dragging');
+  // 🔴 起手即写值（无位移闸）：按下即按指针角度取值 —— 连点一下也写值。
+  const pct = pctFromPointer(ev);
+  if (pct != null) { previewPct = pct; paintPreview(); } else { syncAria(); }
+  // 权威值缺失 / 换会话 ⇒ 顺手拉一次（面板删除后 `getCompactThreshold` 的拉取时机）
+  if (!info || info.sessionId !== sid) pull();
+}
+
+function onPointerMove(ev) {
+  if (!dragging) return;
+  if (pointerId != null && ev.pointerId !== pointerId) return;
+  const pct = pctFromPointer(ev);
+  if (pct == null) return;                                     // 退化保护：忽略本次 move
+  previewPct = pct;
+  paintPreview();
+}
+
+function endDrag() {
+  const host = hostEl();
+  dragging = false;                                            // 🔴 先落标志，再 release
+  if (pointerId != null) {
+    try { host?.releasePointerCapture(pointerId); } catch { /* 已释放 */ }
+    pointerId = null;
+  }
+  if (!host) return;
+  host.classList.remove('ctx-ring-dragging');
+  const svg = host.querySelector('.ctx-ring-svg');
+  const g = svg && svg.querySelector('.ctx-ring-guide');
+  if (g) g.remove();                                           // 导引线随拖动创建/销毁
+}
+
+function onPointerUp(ev) {
+  if (!dragging) return;
+  if (pointerId != null && ev.pointerId !== pointerId) return;
+  const committed = previewPct;
+  endDrag();
+  if (committed != null) commit(committed);
+  else clearPreview();
+}
+
+/** 取消腿（卡 §1.3）：`pointercancel` / 外力夺走 capture ⇒ 清预览 + 回弹 + **零出站**。 */
+function cancelDrag() {
+  endDrag();
+  clearPreview();
+}
+
+function onPointerCancel() {
+  if (!dragging) return;
+  cancelDrag();
+}
+
+function onLostPointerCapture() {
+  // 正常松开路径已由 `pointerup` 收尾（`dragging` 已 false ⇒ 此处 no-op）；
+  // 仅当 capture 在拖动中被外力夺走时按取消腿处理。
+  if (!dragging) return;
+  cancelDrag();
+}
+
+// ── 键鼠腿（a11y）：←/→ ±1% · Home = 动态下限 · End = 90% · Delete = 恢复默认 ──
+function onKeyDown(ev) {
+  if (ev.key === 'Escape') {
+    // 取消腿：拖动中或无暂留 ⇒ no-op；否则清预览 + 回弹 + 零出站。
+    if (!dragging && previewPct == null) return;
+    ev.preventDefault();
+    cancelDrag();
+    return;
+  }
+  const host = hostEl();
+  if (!host || document.activeElement !== host) return;         // 键盘腿只在环聚焦时生效
+  if (overLimit()) return;                                      // 锁定档：零出站 + 零文案
+  if (ev.key === 'Delete') { ev.preventDefault(); restoreDefault(); return; }
+  let pct = null;
+  if (ev.key === 'ArrowRight' || ev.key === 'ArrowUp') {
+    const base = stepBasePct();
+    if (base == null) { pull(); return; }
+    pct = clampPct(base + 1);
+  } else if (ev.key === 'ArrowLeft' || ev.key === 'ArrowDown') {
+    const base = stepBasePct();
+    if (base == null) { pull(); return; }
+    pct = clampPct(base - 1);
+  } else if (ev.key === 'Home') {
+    pct = clampPct(0);                                          // 钳到动态下限
+  } else if (ev.key === 'End') {
+    pct = Math.round(MAX_RATIO * 100);                          // 90% 硬顶
+  } else {
+    return;
+  }
+  if (pct == null) return;
+  ev.preventDefault();
+  commit(pct);
+}
+
+function onDblClick(ev) {
+  ev.preventDefault();
+  if (overLimit()) return;                                      // 锁定档：零出站
+  restoreDefault();
+}
 
 // ── WS 回显（唯一数据源）────────────────────────────────────────────────
 onMessage('compactThresholdInfo', (msg) => {
   const sid = primarySessionId();
-  // 🔴 作用域第一道闸（U6）：只认主会话（root）的回显帧——非主会话帧一律忽略，
-  // 绝不把非 root 会话的阈值显示进 Nebula 窗口的环/面板。
+  // 🔴 作用域第一道闸：只认主会话（root）的回显帧——非主会话帧一律忽略，
+  // 绝不把非 root 会话的阈值显示进 Nebula 窗口的环。
   if (!sid || msg.sessionId !== sid) return;
   info = msg;
+  // 权威帧到达 ⇒ 结束暂留、交还权威值（把手/读数回权威角度，`_index.json` 语义同源）。
+  // 🔴 **拖动期守卫（F-1）**：手势进行中**不得**交还 —— `clearPreview()` 内含 `endDrag()`
+  // ⇒ 起手补拉（`onPointerDown` 的 `pull()`：冷页首手势 / 换会话后首手势）触发的回帧会在
+  // 拖动中把手势自己掐死（`dragging = false`、预览与拖动类被清、`pointerup` 直接 no-op ⇒
+  // 松手零出站），与作者 P2「起手即写值」直接冲突。权威值照旧写入 `info` 与
+  // `state.sessionModelInfo[sid]`（状态不丢），交还推迟到手势结束（`onPointerUp` 的
+  // `commit()`/`clearPreview()` 或取消腿）。`main.js` 的 S1 钩子在拖动期优先取
+  // `data-ring-drag-preview-pct` ⇒ 随后的 `updateHeaderModelInfo()` 不会抢回把手/读数。
+  if (!dragging) clearPreview();
   if (typeof state.updateHeaderModelInfo === 'function') {
     if (!state.sessionModelInfo[sid]) return;
-    // 「判定面 ≡ 上报面」：环的阈值线/文案取生效比例（有覆盖 = 覆盖值，
+    // 「判定面 ≡ 上报面」：环的阈值线取生效比例（有覆盖 = 覆盖值，
     // 无覆盖 = 现值比例）——与后端 Done/UsageUpdate 的 compactThreshold 同源。
     state.sessionModelInfo[sid].compactThreshold = msg.effectiveRatio;
     state.updateHeaderModelInfo();
   }
-  if (open) render();
 });
+
+/** 用量帧 ⇒ 动态下限 / 90% 锁定态随之变化 ⇒ a11y 面（aria-valuemin / aria-disabled /
+  * aria-valuenow）必须同步。**推到下一个宏任务**：本模块的 `usageUpdate` 订阅先于
+  * `main.js`（模块导入序）注册，同一帧派发时它读到的 `state.sessionModelInfo` 还是旧值。
+  * 此处只读 state、不改任何阈值语义。 */
+function scheduleAriaSync() { setTimeout(syncAria, 0); }
+onMessage('usageUpdate', scheduleAriaSync);
+onMessage('done', scheduleAriaSync);
 
 onMessage('compactThresholdError', (msg) => {
   const sid = primarySessionId();
   if (!sid || msg.sessionId !== sid) return;
-  setMsg(msg.message || t('ctxthresh.failed'), 'error');
-  // 拒绝 ⇒ 重新拉权威值，面板回到真实状态（不留假的乐观值）
-  sendWs({ type: 'getCompactThreshold', sessionId: sid });
+  // 🔴 终裁文案面：拦截腿**零文案**（不再渲染任何提示句）。
+  // 拒绝 ⇒ 重新拉权威值，环回到真实状态（不留假的乐观值）。
+  pull();
 });
 
-// ── 入口绑定 + 关闭行为 ─────────────────────────────────────────────────
+// ── 入口绑定 ────────────────────────────────────────────────────────────
 function init() {
   if (typeof document === 'undefined') return;
-  if (!document.getElementById('ctxthresh-css')) {
+  if (!document.getElementById('ctxring-css')) {
     document.head.insertAdjacentHTML('beforeend', CSS);
   }
-  const panel = ensurePanel();
-  if (!panel) return;
-
-  // 入口 = 点既有上下文环（#header-model-info）。🔴 **零新增 header 叶子控件**
-  // （header-button-collision 教训）：环本身是既有元素，CHAIN（main.js:3484-3495）
-  // 无需增项。环的 innerHTML 会被 main.js 重绘，但宿主 span 持久 ⇒ 监听其冒泡。
-  document.getElementById('header-model-info')?.addEventListener('click', (e) => {
-    e.stopPropagation();
-    toggle();
-  });
-  // 关闭行为：**按下**面板/环以外处即关（用 mousedown 而非 click —— 拖动滑杆时
-  // 松手点可能落在面板外，click 会把「拖到最左」误判成「点外面」而中途收面板）。
-  document.addEventListener('mousedown', (e) => {
-    if (!open) return;
-    const panelEl = document.getElementById(PANEL_ID);
-    if (panelEl && e.target instanceof Node && panelEl.contains(e.target)) return;
-    const ringEl = document.getElementById('header-model-info');
-    if (ringEl && e.target instanceof Node && ringEl.contains(e.target)) return;
-    setOpen(false);
-  });
-  document.addEventListener('keydown', (e) => {
-    if (e.key === 'Escape' && open) setOpen(false);
-  });
-  // 会话切换无需专门监听：面板每次打开都重新 `getCompactThreshold`（以当前主会话
-  // id 为准），且回显帧的作用域闸按当前主会话 id 过滤 ⇒ 换会话后旧值自然作废。
+  const host = hostEl();
+  if (!host) return;
+  if (bound) return;
+  bound = true;
+  // 环的 innerHTML 会被 `main.js` 重绘，但宿主 `#header-model-info` 持久
+  // ⇒ 监听其冒泡，零重绑、零观察器。
+  host.addEventListener('pointerdown', onPointerDown);
+  host.addEventListener('pointermove', onPointerMove);
+  host.addEventListener('pointerup', onPointerUp);
+  host.addEventListener('pointercancel', onPointerCancel);
+  host.addEventListener('lostpointercapture', onLostPointerCapture);
+  host.addEventListener('dblclick', onDblClick);
+  document.addEventListener('keydown', onKeyDown);
+  syncAria();
+  pull();
 }
 
 /** 供 e2e / 调试：显式刷新（幂等）。 */

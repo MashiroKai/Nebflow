@@ -1471,12 +1471,11 @@ export default {
   'contacts.devicesEmpty': 'No other devices',
   'messages.deviceTag': 'Device',
 
-  // === ctxthresh batch (2026-09-15 option A): Nebula-window compaction-threshold panel ===
+  // === ctxthresh batch: Nebula-window compaction threshold. The small panel was
+  // removed (author ruling 2026-09-16 P1 = replace); the ring drag is the only
+  // entry, so `title` is now the RING's aria-label. save/reset/close/failed went
+  // dangling with the panel and were deleted on both sides. ===
   'ctxthresh.title': 'Compaction threshold',
-  'ctxthresh.save': 'Save',
-  'ctxthresh.reset': 'Reset to default',
-  'ctxthresh.close': 'Close',
-  'ctxthresh.failed': 'Failed to apply',
 
   // === Bundled-content localization (contenti18n batch, 2026-09-15) ===
   // Range = the default install set only (seed/manifest.json items: 3 plugins +
