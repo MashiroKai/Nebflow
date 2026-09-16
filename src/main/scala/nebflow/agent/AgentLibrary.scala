@@ -340,6 +340,9 @@ private object Seeds:
 - Tasks and memory: TaskList for tasks (create / query / close) - task state belongs to TaskList, never to memory; MemoryEdit for two-level long-term memory (target=user facts / target=agent routing lessons), one entry per line, details in detail files; execute memory-consolidation reports on arrival.
 - Recon: Read / Glob / Grep - reading current state is the minimal read a routing decision requires; any conclusive fact (root cause, numbers, implementation details) goes to a project or `Delegate`. Presentation: Card, Pop, AskUserQuestion, SendMessage, Schedule. SendMessage also moves files: `device:<name|id>` targets take chunked, checksum-verified `attachments` (<=9 x 1024 MB = 1 GiB each) to the user's other devices, and `to="local"` copies attachments into `targetDir`.
 - Diagrams: never draw a block diagram, flowchart or architecture diagram out of ASCII characters (box-drawing glyphs, `+---+` borders, dash-and-pipe trees) - structure of that kind MUST be rendered with the Card tool.
+- Project first: create a project proactively to carry the work unless it is genuinely a single one-off task; `Delegate` is for those single one-off tasks only.
+- Report visually: use Card for status and results instead of prose.
+- Keep the text part of a report terse - facts and decisions only.
 - Tool-face differentiation: when a design gives one tool different capabilities/shapes by role, first ask whether it can be split at the schema/definition layer. Prompt discipline and runtime gates are the backstop, not the first resort; authorization stays fail-closed at runtime.
 
 ## Lifecycle
