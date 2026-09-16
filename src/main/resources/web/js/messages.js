@@ -381,7 +381,8 @@ const AGENT_BADGE_TEXT_KEY = 'messages.agentBadge';
  *  🔴 按**对端类型**分支 —— **三个语境三个键**（禁一个键服务两个面）：
  *   · 设备会话 ⇒ 中性空态（既有 `messages.noMessages`），**零好友关系文案**；
  *     🔴 不为设备**编造**事件文案（禁拿好友文案凑数、禁空壳占位冒充配对成功）。
- *   · **群会话 ⇒ 群语境**（`messages.groupNoMessages*`，见 `groupSummaryEmpty`）。
+ *   · **群会话 ⇒ 群语境**（`latestEvent` 事件文案 / `messages.groupNoMessages*`，
+ *     见 `groupSummaryEmpty`）。
  *   · 好友 ⇒ `messages.systemNowFriends` —— 该键语义 = **好友接受流程**，其唯一
  *     合法消费点见 `onFriendEvent` 的 `friend_accepted` 分支注释
  *     「New friendship → empty conversation appears (summary: systemNowFriends)」。
@@ -402,31 +403,72 @@ function summaryOf(conv) {
   return (isAgentSent(m) ? `[${t(AGENT_BADGE_TEXT_KEY)}] ` : '') + m.body;
 }
 
-/** 群面空会话摘要（`summaryOf` 的群分支；2026-09-16 拆键产物）。
+/** 群面空会话摘要（`summaryOf` 的群分支；2026-09-16 拆键产物；本批接 `latestEvent`）。
  *
- *  取名源 = 契约群行行内**唯一可达的名字字段** `GroupSummary.title`
- *  （`friendsApi.normalizeGroupRow` ⇒ `conv.title`）。零新增请求。
+ *  🔴 取名源**两腿，按优先级**（两腿都是**契约字段**，无第三条路；零新增请求）：
+ *   · ① **事件腿**（本批新增）= 群行加性键 `latestEvent`（正典 §2.4；归一出口 =
+ *     `friendsApi.normalizeGroupRow` ⇒ `conv.latestEvent`，🔴 渲染面**禁直读 wire 键**）
+ *     ⇒ 六 kind 事件文案，成员名取 `subject.name`（= wire `display_name`；**唯一**显示名
+ *     来源 = 服务端 `COALESCE(name, username, user_id)` ⇒ **禁猜名 / 禁自造第二显示名源**）。
+ *     事件缺席（老服务端 / 上线前无事件行的群 / 未知 kind）⇒ 落到腿② —— 那是**正常态**：
+ *     不渲染空系统行、不报错、不回退编造文案。
+ *   · ② **群名腿**（本批前既有形态，**逐字节不变**）= `GroupSummary.title` ⇒ `conv.title`；
+ *     两态（禁造值）：群名非空 ⇒ `messages.groupNoMessagesNamed`（含群名占位）；
+ *     群名空白 ⇒ `messages.groupNoMessages`（禁与 `groupTitleOf` 的「群聊」占位拼成重复）。
  *
- *  🔴 **加入者/创建者的成员名在契约里不可达** ⇒ 本函数不写成员名、**不编造**：
- *   · 契约群行只有 `groupId`/`title`/`role`/`memberCount`/`lastMessage`/
- *     `unreadCount`/`lastMessageId`/`createdAt`（+ 加性 `selfUserId`/
- *     `memberAvatars`）—— **无**「最近加入者 / 事件」类字段；
- *   · `memberAvatars` 只有 `userId`/`avatar`、**无名字**（`friendsApi.js`
- *     `normalizeAvatarPreview`），且其顺序语义被契约**显式禁止**做业务判定
- *     （`friendsApi.js:766-767`「顺序 = 服务端加入序」＋「禁把索引 0 当群主」）；
- *   · 服务端**不产生**群事件系统消息（群事件在客户端只落 toast / 列表刷新 /
- *     本摘要，逐条见本批报告 §3 横扫表）；
- *   ⇒「{成员名} 加入了群聊」形态**需服务端加性字段或系统消息**（本批按 open item
- *     上报；禁客户端猜名 —— 猜名 = 造第二真相源）。
- *
- *  两态（禁造值）：群名非空 ⇒ `messages.groupNoMessagesNamed`（含群名占位）；
- *  群名空白 ⇒ `messages.groupNoMessages`（禁与 `groupTitleOf` 的「群聊」占位
- *  拼成重复）。 */
+ *  🔴 方向**由 `kind` 区分**，**禁**靠 `actor` 反推（正典 §2.2：`member_joined` 的
+ *  `actor` = **邀请人**、`member_left` 的 `actor` = 退群者本人、`member_removed` 的
+ *  `actor` = 移除者）。
+ *  🔴 **禁借 `memberAvatars`** 做事件身份：其元素只有 `userId`/`avatar`、**无名字**，
+ *  且顺序语义被契约**显式禁止**做业务判定 —— `friendsApi.js` 符号 `normalizeAvatarPreview`
+ *  （建位快照 773-774 行）「顺序 = 服务端加入序」＋「禁把索引 0 当群主」；该契约
+ *  **不因本批变更**（本批对其归一出口与顺序语义**零改动**）。
+ *  🔴 `at` 是秒级读数、客户端只见**一条**事件 ⇒ **禁**用于排序 / 比序。 */
 function groupSummaryEmpty(conv) {
+  const ev = groupEventText(conv && conv.latestEvent);
+  if (ev) return ev;
   const title = conv && typeof conv.title === 'string' ? conv.title.trim() : '';
   return title
     ? t('messages.groupNoMessagesNamed', { name: title })
     : t('messages.groupNoMessages');
+}
+
+/** 事件 → 群行摘要文案（**六 kind 全映射**，正典 §3.2 文案族；唯一消费点 = groupSummaryEmpty）。
+ *
+ *  用谁的名字（逐条，正典 §3.2「谁出现在文案里」；文案键两侧同批落地）：
+ *   · `group_created` ⇒ `subject.name`（= 创建者；该 kind 的 actor == subject）；
+ *   · `member_joined` ⇒ `subject.name`（= 入群者 = 作者方向令原始诉求）；
+ *     **若 `actor.userId !== subject.userId` ⇒ 邀约分支**：「`actor.name` 邀请了 `subject.name`」
+ *     （`actor` = **邀请人**，正典 §2.2）—— 判式按 **userId** 比（显示名可重名 ⇒ 禁拿名字当身份）；
+ *   · `member_left` ⇒ `subject.name`（= 退群者；`actor` 与他同一人）；
+ *   · `member_removed` ⇒ `subject.name`（= 被移出者）；`actor` = 移除者 —— 文案取正典 §3.2 的
+ *     **基形**，执行者进文案是该条的**可选**形态，本批不落（不造零消费点的死键）；
+ *   · `member_role_granted` / `member_role_revoked` ⇒ `subject.name`（= 被设 / 被撤者）；
+ *     方向由 `kind` 区分（**禁**靠 `actor` 反推）。
+ *
+ *  🔴 未命中 ⇒ 返回 `null` = **忽略**（未知 `kind`，或卡片缺名 —— 归一层已把这两种折成
+ *  「键缺席」，本函数是**第二道闸**）：零异常、零占位文案、零键名回落字符串
+ *  （`i18n.js` 缺键回落 = 返回键名本身 ⇒ 未映射的 kind **不得**进 `t()`）。 */
+function groupEventText(ev) {
+  if (!ev || typeof ev !== 'object') return null;
+  const subj = ev.subject && typeof ev.subject.name === 'string' ? ev.subject.name.trim() : '';
+  if (!subj) return null;
+  const actorEv = ev.actor;
+  const actorName = actorEv && typeof actorEv.name === 'string' ? actorEv.name.trim() : '';
+  const actorId = actorEv && typeof actorEv.userId === 'string' ? actorEv.userId : '';
+  const subjId = typeof ev.subject.userId === 'string' ? ev.subject.userId : '';
+  switch (ev.kind) {
+    case 'group_created': return t('messages.groupEventCreated', { name: subj });
+    case 'member_joined':
+      return (actorName && actorId && subjId && actorId !== subjId)
+        ? t('messages.groupEventInvited', { actor: actorName, name: subj })
+        : t('messages.groupEventJoined', { name: subj });
+    case 'member_left': return t('messages.groupEventLeft', { name: subj });
+    case 'member_removed': return t('messages.groupEventRemoved', { name: subj });
+    case 'member_role_granted': return t('messages.groupEventRoleGranted', { name: subj });
+    case 'member_role_revoked': return t('messages.groupEventRoleRevoked', { name: subj });
+    default: return null;
+  }
 }
 
 function totalUnread() {
