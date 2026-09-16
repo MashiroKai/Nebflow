@@ -121,19 +121,21 @@ class MaxTokensRequestFaceSpec extends CatsEffectSuite:
 
   private def portOf(server: HttpServer): Int = server.getAddress.getPort
 
-  private def mkConfig(protocol: LlmProtocol, baseUrl: String): NebflowServiceConfig =
-    NebflowServiceConfig(
-      llm = ServiceLlmConfig(
-        providers = Map(
-          "p" -> ProviderConfig(
-            baseUrl = baseUrl,
-            apiKey = "test",
-            protocol = protocol,
-            models = List(ModelConfig("m1", contextWindow = 128000, vision = Some(false)))
-          )
+  private def mkConfig(
+      protocol: LlmProtocol,
+      baseUrl: String,
+      providerOverride: Option[ProviderConfig] = None
+  ): NebflowServiceConfig =
+    val provider = providerOverride match
+      case Some(p) => p.copy(baseUrl = baseUrl)
+      case None =>
+        ProviderConfig(
+          baseUrl = baseUrl,
+          apiKey = "test",
+          protocol = protocol,
+          models = List(ModelConfig("m1", contextWindow = 128000, vision = Some(false)))
         )
-      )
-    )
+    NebflowServiceConfig(llm = ServiceLlmConfig(providers = Map("p" -> provider)))
 
   private def run(
       config: NebflowServiceConfig,
@@ -172,14 +174,15 @@ class MaxTokensRequestFaceSpec extends CatsEffectSuite:
       path: String,
       ssePayload: String,
       jsonPayload: String,
-      thinking: Option[Json]
+      thinking: Option[Json],
+      providerOverride: Option[ProviderConfig] = None
   ): IO[List[String]] =
     val captured = new ConcurrentLinkedQueue[String]()
     val result = for
       streamMock <- startCaptureMock(path, "text/event-stream", ssePayload, streaming = true, captured)
       jsonMock <- startCaptureMock(path, "application/json", jsonPayload, streaming = false, captured)
       baseUrl = s"http://127.0.0.1:${portOf(streamMock)}"
-      cfg = mkConfig(protocol, baseUrl)
+      cfg = mkConfig(protocol, baseUrl, providerOverride)
       cfgJson = cfg.copy(llm =
         cfg.llm.copy(providers = cfg.llm.providers.map { case (k, p) =>
           k -> p.copy(baseUrl = s"http://127.0.0.1:${portOf(jsonMock)}")
@@ -333,4 +336,32 @@ class MaxTokensRequestFaceSpec extends CatsEffectSuite:
     assertEquals(provider.models.map(_.id), List("m1"))
     assertEquals(provider.models.head.contextWindow, 8192, "sibling keys unaffected")
     println(s"[MAXCFG-TRACE] legacy-config-decode=OK models=${provider.models.map(m => (m.id, m.contextWindow))}")
+  }
+
+  // ── P8: a legacy `maxTokens` value must not reach the wire any more ─────
+
+  test("P8: legacy model entry with maxTokens:4096 → cap stays 16384 (key ignored, no error)") {
+    val legacyJson =
+      """{"baseUrl":"https://x.example.com/v1","apiKey":"k","protocol":"anthropic",""" +
+        """"models":[{"id":"m1","maxTokens":4096,"contextWindow":8192,"vision":false}]}"""
+    val decoded = decode[ProviderConfig](legacyJson)
+    assert(decoded.isRight, s"legacy entry must decode without error: $decoded")
+    capture(
+      "anthropic/legacy-key-in-config",
+      LlmProtocol.Anthropic,
+      "/v1/messages",
+      anthropicSse,
+      anthropicJson,
+      noThinking,
+      Some(decoded.toOption.get)
+    ).map { bodies =>
+      assert(bodies.nonEmpty, "capture mock recorded no Anthropic request body")
+      bodies.foreach { b =>
+        assertEquals(
+          field(b, "max_tokens").flatMap(_.asNumber).flatMap(_.toInt),
+          Some(ExpectedAnthropicCapNoThinking),
+          s"a legacy maxTokens key must no longer steer the output cap: $b"
+        )
+      }
+    }
   }
