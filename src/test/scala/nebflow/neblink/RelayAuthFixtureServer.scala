@@ -85,6 +85,21 @@ final class RelayAuthFixtureServer extends AutoCloseable:
     * 可设值，让 register 与 login 落在同一个 (deviceId, networkId) 维度上）。 */
   @volatile var enrollNetworkId: String = "qa-net"
 
+  /** `POST /api/device/session` **凭据无效**时的应答（kaiauth 修法批 ①，2026-09-16）。
+    *
+    * 默认 = 修前既有形态（401 + `{"error":"Missing or invalid token"}`）—— 既有 spec 的
+    * 读数面**逐字不变**。置 403 + `{"error":"Invalid device credential"}` 就是真服务端
+    * `device_session` 的**凭据族**形态（跨仓只读 `neblink-server/src/routes.rs:1366-1379`：
+    * `check_device_credential` 非 Ok ⇒ `forbidden("Invalid device credential")`；
+    * `NoRow` 与 `Mismatch` 压成同一个 403 字面）。两个旋钮分离，是因为本批的判据正是
+    * 「**哪条腿 + 哪个状态码**」：状态码变了、腿没变 ⇒ 必须进入重登腿（N1）。 */
+  @volatile var sessionRejectStatus: Int = 401
+  @volatile var sessionRejectBody: String = AuthRejectBody
+
+  /** **凭据腿**（`/api/device/session`）被拒的次数 —— 与 `sessionRejections` 同源
+    * （本旋钮不改变计数语义，分离出来只为在断言里读得直白）。 */
+  def sessionRejectionCount: Int = sessionRejections.get()
+
   // ---- observations ----
   /** Every issued session token, in order (includes impersonator logins). */
   val logins = new AtomicInteger(0)
@@ -335,7 +350,8 @@ final class RelayAuthFixtureServer extends AutoCloseable:
         respond(out, 200, s"""{"token":"$tok","networkId":"$networkId","deviceId":"$deviceId","peers":[]}""")
       else
         sessionRejections.incrementAndGet()
-        respond(out, 401, AuthRejectBody)
+        // 状态码/体可配（见 `sessionRejectStatus`）：默认 401 令牌拒收原文。
+        respond(out, sessionRejectStatus, sessionRejectBody)
       closeQuietly(sock)
     else if path.startsWith("/api/device/heartbeat") then
       if isLive(bearer(req)) then respond(out, 200, """{"peers":[]}""")

@@ -111,6 +111,33 @@ class NeblinkService private (
     _kickParkedAtMs = 0L
     was
 
+  /** **证据式解除停摆**（kaiauth 修法批 ①配套，2026-09-16 作者「治本」已批）。
+    *
+    * 与 [[clearKickPark]] 的区别：本方法的**调用方承担举证责任** —— 只有
+    * 「新凭据已铸成**且**经一次成功交换证明有效」这一读数为真时才可调用
+    * （唯一调用面 = `NeblinkEnrollment.persistImpl` 的证明步骤；失败路径**不**调用）。
+    * 因此这里不重复判定证据，只做三件事：清位 + 唤醒隧道 + 留一行可判读日志。
+    *
+    * WHY 需要它（修前的死循环）：停摆位的读侧是三条腿（隧道 connectLoop /
+    * `NeblinkClient` 自动登录门 / `LogtoSilentRelogin` 的 register 前门），而**清侧
+    * 修前只有一条**（用户显式登录）⇒ 「自动路径铸成了有效新凭据、却因为同一次 enroll
+    * 踢掉了自己而被停摆」这一状态**没有任何自动出口**（诊断报告 §9③：唯一出口 =
+    * 人显式登录）。案 C 的语义**逐字保留**（显式登录仍是**无条件**解除口，见
+    * `NeblinkEnrollment.persist(explicitUserAction = true)`）；本方法只是**新增**
+    * 一条**带证据、有界、失败绝不解锁**的自动解除腿。
+    *
+    * 防风暴边界（本方法不放宽的部分）：停摆期**照旧**不发任何自动登录/register
+    * （三条读侧门全部原样）；本方法只在**一次已经成功走完的 enroll** 内部被调用。 */
+  def liftKickParkAfterProvenCredential: IO[Unit] =
+    IO(clearKickPark()).flatMap { wasParked =>
+      if wasParked then
+        logger.warn(
+          "NebLink kick park lifted: a freshly minted device credential was proven by a " +
+            "successful session exchange (automatic, evidence-gated — not a user login)"
+        ) *> _relayTunnel.fold(IO.unit)(_.wakeAfterCredentialProven())
+      else IO.unit
+    }
+
   /** Relay tunnnel "make sure it is running" starter (2026-09-11 tunnel
     * lifecycle fix). GatewayMain stays the tunnel ASSEMBLY owner and registers
     * the starter here; enrollment paths (`NeblinkEnrollment.persist`, which

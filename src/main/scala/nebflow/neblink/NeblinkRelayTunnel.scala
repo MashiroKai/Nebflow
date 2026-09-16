@@ -134,6 +134,19 @@ final class NeblinkRelayTunnel(
       else IO.unit
     }
 
+  /** **凭据证据式**解除停摆后的隧道腿（kaiauth 修法批 ①配套，2026-09-16）。
+    *
+    * 与 [[resumeAfterUserLogin]] 的差别**只在到达路径**：本腿由「新凭据已铸成且经一次
+    * 成功交换证明有效」触发（调用方 = `NeblinkService.liftKickParkAfterProvenCredential`，
+    * 其唯一调用面 = `NeblinkEnrollment.persistImpl` 的证明步骤），**不是**用户动作 ⇒
+    * 日志字样不得混用（归因必须可判别：现场读日志要能一眼分出「人登的」还是
+    * 「自动证明解除的」）。停摆位的清除由 `NeblinkService` 统一执行；本方法只负责
+    * 掐断当前这一睡（`signalWake`），让 connectLoop 下一轮立即复核停摆位。 */
+  private[neblink] def wakeAfterCredentialProven(): IO[Unit] =
+    logger.info(
+      "Relay tunnel: kick park lifted by a proven fresh credential — reconnecting"
+    ) *> signalWake()
+
   /** Check if the relay tunnel is currently connected (for status reporting).
     *
     * ①-2 语义诚实化（2026-09-12 波3，方案 §2.1 ①opt-A1 / §6.2 ①-2）：修前
