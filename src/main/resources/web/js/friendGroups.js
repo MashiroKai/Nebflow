@@ -185,11 +185,18 @@ function confirmRun(title, text, run) {
   else run();
 }
 
-// ── 群成员头像九宫格（批 1 · 正典 §A 字段 + 方案 §3.2.1 几何）───────────────
-/** 行模式表（微信式；方案 §3.2.1，逐格已渲染验证）：格子数 n ⇒ 每行格数。
- *  n=1 [1] · 2 [2] · 3 [1,2] · 4 [2,2] · 5 [2,3] · 6 [3,3] · 7 [1,3,3] · 8 [2,3,3] · 9 [3,3,3] */
-const AVATAR_GRID_ROWS = [
-  [1], [2], [1, 2], [2, 2], [2, 3], [3, 3], [1, 3, 3], [2, 3, 3], [3, 3, 3],
+// ── 群成员头像大球（批 2 · 方向 C「行数最少化」；解 = 取证批解算器移植）──────
+/** 行模式表（**行数最少化**：格子数 n ⇒ 每行格数）。解法来源 = 取证批解算器
+ *  `ga-builder.js::__gaSolve('rows', n)`（枚举 n 的最少行分解，按「可行域内球径
+ *  最大」取胜；n ≤ 9 已全枚举固化）⇒ **运行期零解算**，只查表。
+ *  n=1 [1] · 2 [2] · 3 [2,1] · 4 [2,2] · 5 [1,3,1] · 6 [3,3] · 7 [2,3,2] ·
+ *  8 [3,3,2] · 9 [3,3,3]
+ *  与 `friends.css` 的 `.fm-avgrid-n<n>` 逐档球径表**同源同解**：行模式 = 解的形状、
+ *  球径 = 该解的最大 d（球径随档自适应：26.0 / 17.2 / 14.0 / 14.0 / 11.0 /
+ *  10.0 / 10.0 / 8.2 / 8.2 px，均为 40 档口径）。旧的行模式表（微信式 [1,2]/[2,3]/[1,3,3] …
+ *  + 等分格）已退役 —— 它靠「格宽 = 容器宽 ÷ 该行格数」，把头像摊成竖条。 */
+const AVATAR_ROW_PATTERNS = [
+  [1], [2], [2, 1], [2, 2], [1, 3, 1], [3, 3], [2, 3, 2], [3, 3, 2], [3, 3, 3],
 ];
 
 /** 格内首字母兜底（**逐格**，复用既有口径：无 avatarUrl 就取名字首字符大写）。
@@ -200,41 +207,53 @@ function gridCellInitial(cell) {
 }
 
 /**
- * 群成员头像九宫格（**唯一实现**；三处落点共用：会话列表群行 / 群会话窗头 /
+ * 群成员头像大球（**唯一实现**；三处落点共用：会话列表群行 / 群会话窗头 /
  * 群信息面板头部）。样式全部落在 `friends.css` 的 `.fm-avgrid*`（零内联色值、
  * 零内联像素算术）。
  *
- * 几何（**G-A 方形圆角**，方案 §3.2.1 / 决策卡 A）：
- *   · 容器 = `size × size` 方形、`border-radius:5px`、格间缝 `1px`、容器底
- *     `var(--color-surface)`；格内 `border-radius:1px`
- *   · **行高 = 容器高 ÷ 行数**、**某行格宽 = 容器宽 ÷ 该行格数**（两条规则即定义
- *     全部 9 种模式 ⇒ flex 等高行 + 等分格，禁内联算像素）
- *   · 每格 `img { object-fit: cover }`（复用既有 `friends.css` 口径）
+ * 几何（**方向 C · 行数最少化**，作者 2026-09-16 挑定）：取证批解算器
+ * `ga-builder.js::__gaSolve('rows', n)` 的**解**移植进产品件（不是把 harness 的
+ * DOM/全局搬进来）—— 大球 = ⌀size 圆形容器；小球 = 圆形；球径 `d(n)` 由
+ * 「**行数最少化** + 每行不越出**该行弦长** + 相邻球缝 ≥ 1.5px」三条约束取最大解出。
+ * 本函数只产 **DOM 结构**（外层 `.fm-avgrid.fm-avgrid-<size>.fm-avgrid-n<n>` +
+ * 每行一个 `.fm-avgrid-row` + 每球一枚 `.fm-avgrid-cell`），**几何全在 CSS**：
+ * 球径 = `.fm-avgrid-n<n>` 的 `--fm-avgrid-ball`（cqw ⇒ 尺寸档 40/64/96 自动等比）、
+ * 行/列缝 = `.fm-avgrid` 与 `.fm-avgrid-row` 的 `gap`（1.5px，解算器口径）。
+ * （旧几何「行高 = 容器高 ÷ 行数 + 格宽 = 容器宽 ÷ 该行格数」= 方形槽 + 等分格，
+ * 会把头像摊成竖条 ⇒ 已退役，见 `friends.css` 群头像段注释。）
  *
  * 降级（方案 §3.2.3）：
  *   · `cells` 为空 ⇒ **返回 null**（调用方回退现状那枚「标题首字母」头像 = 降级态，
  *     非被删态；n=0 / 名册未到 / 取数失败三态同形）
- *   · 1..9 ⇒ 铺满；逐格无 `avatarUrl` ⇒ 该格首字母兜底（**逐格**，非整图回退）
- *   · `total > 9` ⇒ 右下角 `+N` 角标（N = total − 9）
+ *   · 1..9 ⇒ 按行模式铺满；逐格无 `avatarUrl` ⇒ 该格首字母兜底（**逐格**，非整图回退）
+ *   · `total > 9` ⇒ **最后一格**（真实球位）显示 `+N`，N = total − 9，零遮挡
+ *     （旧形态是右下角叠加角标 ⇒ 会压住第 9 枚头像）
  *
  * @param {Array<{userId?: string, avatarUrl?: string, name?: string}>} cells
  *        已归一格子（**禁**传 wire 行；只消费 userId/avatarUrl/name 三个内部键）
  * @param {number} size 容器边长（px；本批落点档 = 40）
- * @param {number} [total] 成员总数（>9 时出角标；缺省 = cells.length）
+ * @param {number} [total] 成员总数（>9 时最后一格出 `+N`；缺省 = cells.length）
  * @returns {HTMLElement|null}
  */
 export function groupAvatarGrid(cells, size, total) {
   const list = Array.isArray(cells) ? cells.filter(Boolean).slice(0, 9) : [];
   if (list.length === 0) return null;
-  const grid = el('div', `fm-avgrid fm-avgrid-${size}`);
-  const pattern = AVATAR_GRID_ROWS[list.length - 1];
+  const n = list.length;
+  const more = Math.max(0, (Number(total) || n) - 9);
+  // `.fm-avgrid-n<n>` 供 CSS 出逐档球径；行模式取本文件那张表（两者同源同解）。
+  const grid = el('div', `fm-avgrid fm-avgrid-${size} fm-avgrid-n${n}`);
+  const pattern = AVATAR_ROW_PATTERNS[n - 1];
   let i = 0;
   for (const count of pattern) {
     const row = el('div', 'fm-avgrid-row');
-    for (let k = 0; k < count && i < list.length; k += 1, i += 1) {
+    for (let k = 0; k < count && i < n; k += 1, i += 1) {
       const cell = list[i];
-      const c = el('span', 'fm-avgrid-cell');
-      if (cell.avatarUrl) {
+      // `+N` 占**最后一格**（真实球位）⇒ 不叠在任何头像上（零遮挡）
+      const isMore = more > 0 && i === n - 1;
+      const c = el('span', isMore ? 'fm-avgrid-cell fm-avgrid-more' : 'fm-avgrid-cell');
+      if (isMore) {
+        c.textContent = `+${more}`;
+      } else if (cell.avatarUrl) {
         const img = document.createElement('img');
         img.src = cell.avatarUrl;
         img.alt = '';
@@ -246,8 +265,6 @@ export function groupAvatarGrid(cells, size, total) {
     }
     grid.appendChild(row);
   }
-  const n = Number(total) || list.length;
-  if (n > 9) grid.appendChild(el('span', 'fm-avgrid-more', `+${n - 9}`));
   // 装饰性组合（群名已是同义的可见文本）⇒ 与既有 avatarEl 同口径 aria-hidden。
   grid.setAttribute('aria-hidden', 'true');
   return grid;
