@@ -116,10 +116,18 @@ async function renderProjectsInto(scroll) {
   if (!projects || projects.length === 0) {
     scroll.dataset.projectsState = 'empty';
     scroll.dataset.projectCount = '0';
+    // 空态「一键引导」（作者卡 2026-09-16 裁定：方向 B · 行为 = 仅预填）：
+    // 既有两行文案不动，其下补 1 枚 CTA + 1 行披露注（点击只预填、不发送）。
+    // 材质一行不写——按现行单源 `.glass-control` 取玻璃质感（sapphire.css:147 基类 +
+    // `button.glass-control` 四态）；本分支只贡献结构，样式在 flowCss.js 限布局/排版。
     scroll.innerHTML = `<div class="team-empty">
       <div style="font:600 14px -apple-system;color:var(--color-text-muted)">${esc(t('project.empty'))}</div>
       <div class="hint">${esc(t('project.emptyHint'))}</div>
+      <button class="glass-control team-empty-cta" type="button" data-projects-empty-cta="1"><i data-lucide="message-circle"></i>${esc(t('project.emptyCta'))}</button>
+      <div class="hint team-empty-cta-note">${esc(t('project.emptyCtaHint'))}</div>
     </div>`;
+    bindEmptyCta(scroll);
+    import('./utils.js').then(({ createIconsIn }) => createIconsIn(scroll));
     return;
   }
   // 摘要逐项容错：单个项目的 flow-map 失败（未挂载/500）不得连累整列卡片
@@ -208,6 +216,36 @@ function bindProjectClicks(scroll) {
       archiveProject(el.getAttribute('data-archive-project') || '');
     });
   });
+}
+
+// ── 空态 CTA：一键引导（方向 B · 行为 = 仅预填）────────────────────────────────
+// 作者卡裁定（2026-09-16）：空态给「一键引导」；**行为硬约束 = 仅预填**——把预填文案
+// 写进主输入框 + 聚焦该输入框；🔴 禁自动发送、🔴 禁走 `injectUserMessage`（等价判据 =
+// 点击后零网络请求、零消息产生）。落点说明：`#input` 是 index.html:276 的静态主输入框，
+// 与 main.js:225 交给 ChatView('primary') 的 `dom.input` 是**同一个元素**，故本文件不需要
+// 新增任何输入模块出口。唯一副作用通道 = 写值后派发一次冒泡 `input` 事件，交给输入模块
+// **既有**的两条监听（input.js 的 auto-grow 高度自适应、活动视图锚定 setActiveView）——
+// 本分支零新增监听、零新增网络调用、不触碰任何发送路径。文案全部来自 i18n 键。
+
+/** 绑定空态 CTA 的点击（单枚按钮，就地绑定，与 bindProjectClicks 同款 querySelectorAll 范式）。 */
+function bindEmptyCta(scroll) {
+  scroll.querySelectorAll('[data-projects-empty-cta]').forEach((el) => {
+    el.addEventListener('click', (e) => {
+      e.stopPropagation();
+      prefillProjectPrompt();
+    });
+  });
+}
+
+/** 把「创建一个项目」的预填指令写进主输入框并聚焦（🔴 只写值 + 聚焦，不发送）。 */
+function prefillProjectPrompt() {
+  const input = /** @type {HTMLTextAreaElement | null} */ (document.getElementById('input'));
+  if (!input) return;
+  input.value = t('project.emptyPrefill');
+  // 冒泡 input 事件 = 输入模块既有监听（auto-grow / 活动视图锚定）的入口；
+  // 不新增监听、不触发发送、不产生任何网络调用。
+  input.dispatchEvent(new Event('input', { bubbles: true }));
+  input.focus();
 }
 
 /** 归档项目（迁移方案 v2 §6.1）：显式人工动作——确认弹层（防误触，复用
