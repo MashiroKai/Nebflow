@@ -1158,6 +1158,12 @@ final class FriendService(
    *
    * 临时件在**所有出口**（成功/失败/取消）删除；取消位由 [[AttachUploadRegistry]]
    * 注入（见 [[AttachUpload.Hooks]]）。
+   *
+   * 🔴 **`uploadId` 入口先是形态闸**（attachid 批，2026-09-16）：id 会被当作**单个路径段**
+   * 拼进临时件路径（下一条方法的第一行），而 os-lib 的 `Path / String` 对含 `/` 的段**抛异常**
+   * —— 该抛点在本方法续体的 `handleErrorWith` **之外** ⇒ http4s `500` + **空体**（独立复核位
+   * A1 实测的重放读数：含 `/` 的 7 个形态一律 500 / 体长 0）。闸在**任何** `os.` 调用之前，
+   * 判定唯一实现在 [[AttachUploadId]]（见该类头）。
    */
   def uploadStream(
     conversationId: String,
@@ -1165,6 +1171,25 @@ final class FriendService(
     uploadId: String,
     body: fs2.Stream[IO, Byte],
     hooks: AttachUpload.Hooks = AttachUpload.Hooks.none
+  ): IO[Either[(String, String), AttachUpload.Uploaded]] =
+    AttachUploadId.validate(uploadId) match
+      case Left(reason) => IO.pure(Left((AttachUploadId.ErrorCode, reason)))
+      case Right(id)    => uploadStreamChecked(conversationId, displayName, id, body, hooks)
+
+  /** [[uploadStream]] 的**已过形态闸续体**。
+    *
+    * `uploadId` 入参在此已是 [[AttachUploadId.validate]] 放行的值（`[A-Za-z0-9._-]` ∧
+    * ≤ `MaxLength` 字节）⇒ 下面的**单段**拼接 `s"$uploadId.part"` **不可能**再抛
+    * `PathError.InvalidSegment`（`/` / 空 / `.` / `..` / NUL / 控制字符 / 非 ASCII / 超长
+    * 全部已在闸上拒掉）—— 本批要的形态是「**让崩点不可达**」，**不是**「先崩再 catch」。
+    * 因此下面的 `tempPath` 构造不再需要（也**不得**改写成）try/catch 兜异常后走原路径。
+    */
+  private def uploadStreamChecked(
+    conversationId: String,
+    displayName: String,
+    uploadId: String,
+    body: fs2.Stream[IO, Byte],
+    hooks: AttachUpload.Hooks
   ): IO[Either[(String, String), AttachUpload.Uploaded]] =
     currentClient.flatMap {
       case None =>

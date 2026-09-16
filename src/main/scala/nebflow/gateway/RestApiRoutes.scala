@@ -1689,11 +1689,32 @@ class RestApiRoutes(
             val conversationId = req.params.getOrElse("conversationId", "")
             val name           = req.params.getOrElse("name", "")
             val rawUploadId    = req.params.getOrElse("uploadId", "")
+            // 🔴 **形态闸（attachid 批）**：`uploadId` 是**客户端可控**的查询参数，且会被当作
+            // **单个路径段**消费（`FriendService.uploadStream` 拼临时件路径）⇒ 非空时先过
+            // **唯一**判定点 [[nebflow.neblink.AttachUploadId]]。判定在**任何路径拼接 / 登记 /
+            // 读请求体之前** ⇒ 非法 id 零落盘 / 零上游调用 / 零临时件（复核位 A1 的原始缺陷：
+            // 含 `/` 的 id ⇒ 500 + 空体）。
+            // 🔴 **缺席 / 空白仍是合法语义**（本次上传不可取消、服务端自造 `anon-…`）⇒ 只在
+            // 非空时判，该面逐字不变（既有合法路径零回归）。
+            val uploadIdForm: Either[String, Option[String]] =
+              val trimmed = rawUploadId.trim
+              if trimmed.isEmpty then Right(None) else AttachUploadId.validate(trimmed).map(Some(_))
             val declared       = req.headers.get(CIString("X-Attach-Size")).map(_.head.value.trim.toLongOption).getOrElse(req.contentLength)
             if conversationId.trim.isEmpty then
               BadRequest(Json.obj("ok" -> false.asJson, "code" -> "invalid_argument".asJson, "error" -> "Missing conversationId".asJson))
             else if name.trim.isEmpty then
               BadRequest(Json.obj("ok" -> false.asJson, "code" -> "invalid_argument".asJson, "error" -> "Missing name".asJson))
+            else if uploadIdForm.isLeft then
+              // 与相邻两条 400 **逐字同形**（`{ok:false, code:"invalid_argument", error}`）：
+              // 网关既有 4xx 信封先例就在本路由，**不新造第二套错误形状**；`error` 文案由闸
+              // 单点给出（自描述 + 实际值回显）。
+              BadRequest(
+                Json.obj(
+                  "ok" -> false.asJson,
+                  "code" -> AttachUploadId.ErrorCode.asJson,
+                  "error" -> uploadIdForm.left.toOption.getOrElse("").asJson
+                )
+              )
             else
               // 早拒三段（全部**先于**读请求体）：声明超限 / 声明非正 / 无声明但 Content-Length 超限。
               declared match
@@ -1722,8 +1743,11 @@ class RestApiRoutes(
                 case _ =>
                   // uploadId = 取消键（客户端生成）。缺席 ⇒ 本次上传不可取消（仍可用），
                   // 服务端生成一枚仅供进度帧关联，**不**登记取消位（禁伪造可取消面）。
-                  val uploadId = if rawUploadId.trim.nonEmpty then rawUploadId.trim else s"anon-${java.util.UUID.randomUUID().toString}"
-                  val cancellable = rawUploadId.trim.nonEmpty
+                  // 🔴 非空时**必须**用闸后的值（`uploadIdForm` 的右侧），禁用原始入参：
+                  // 登记键 / 临时件名 / 进度帧字段 / 响应字段必须是同一枚**已判合法**的串。
+                  val checked     = uploadIdForm.getOrElse(None)
+                  val uploadId    = checked.getOrElse(s"anon-${java.util.UUID.randomUUID().toString}")
+                  val cancellable = checked.isDefined
                   val registry = sharedResources.attachUploads
                   val hooks = nebflow.neblink.AttachUpload.Hooks(
                     onChunk = (pr: nebflow.neblink.AttachUpload.Progress) =>
@@ -1778,6 +1802,10 @@ class RestApiRoutes(
                       case Left((code, message)) =>
                         val status =
                           if code == "cancelled" then Status.Conflict
+                          // 形态闸拒因（attachid 批）：`FriendService.uploadStream` 的兜底闸把
+                          // 非法 id 收成结构化 Left ⇒ 这里必须映射成**可判读 4xx**（而不是落进
+                          // 末尾的 `Status.BadGateway` 兜底 —— 那会把「入参错」报成「上游错」）。
+                          else if code == AttachUploadId.ErrorCode then Status.BadRequest
                           else if code == "attach_too_large" then Status.PayloadTooLarge
                           else if code == "empty_file" || code == "invalid_attachment" then Status.UnprocessableEntity
                           else if code == "forbidden" then Status.Forbidden
@@ -1816,9 +1844,25 @@ class RestApiRoutes(
       */
     case req @ POST -> Root / "attachments" / uploadId / "cancel" =>
       withAuth(req) {
-        sharedResources.attachUploads.cancel(uploadId).flatMap { flipped =>
-          Ok(Json.obj("ok" -> true.asJson, "cancelled" -> flipped.asJson, "uploadId" -> uploadId.asJson))
-        }
+        // 🔴 **同一道形态闸**（attachid 批）：取消键与上传键是**同一名字空间**，非法形态在任何
+        // 消费点都必须被**同一个**判定拒掉 ⇒ 这里复用 [[nebflow.neblink.AttachUploadId]]，
+        // **不**各写一份（禁多点漂移）。判定不触盘、不触上游：非法 id 的读数恒为
+        // 4xx + 非空体、零落盘、零上游调用、零临时件。
+        AttachUploadId.validate(uploadId) match
+          case Left(reason) =>
+            BadRequest(
+              Json.obj(
+                "ok" -> false.asJson,
+                "code" -> AttachUploadId.ErrorCode.asJson,
+                "error" -> reason.asJson
+              )
+            )
+          case Right(id) =>
+            // 形态合法 ⇒ 既有语义**逐字不变**：未登记过 ⇒ `200 {cancelled:false}`
+            // （不新造位、不谎报成功）；已登记 ⇒ `{cancelled:true}`。
+            sharedResources.attachUploads.cancel(id).flatMap { flipped =>
+              Ok(Json.obj("ok" -> true.asJson, "cancelled" -> flipped.asJson, "uploadId" -> id.asJson))
+            }
       }
 
     /** 附件接收完毕回执（补件批 4b1 · §B.1 E4 / §F.1b）。
