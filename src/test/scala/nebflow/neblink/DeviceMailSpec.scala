@@ -494,11 +494,26 @@ class DeviceMailSpec extends FunSuite:
     assertEquals(DeviceMailAck.pendingCount.unsafeRunSync(), 1)
     DeviceMailAck.handle(parse("""{"type":"ack","eventId":"message-m-77"}""").toOption.get).unsafeRunSync()
     assertEquals(DeviceMailAck.pendingCount.unsafeRunSync(), 0, "命中 ⇒ 出队")
-    // 未命中且属 message- 族：走 WARN 分支（不抛异常即通过；日志面是可见读数）
+    // 未命中且属 message- 族：记入「抢先 ack」缓冲（ackfix 批：不再即刻 WARN——见
+    // DeviceMailAckRaceSpec ⑤；可见性由缓冲到期时的 ack-unmatched 兜住）
     DeviceMailAck.handle(parse("""{"type":"ack","eventId":"message-nope"}""").toOption.get).unsafeRunSync()
-    // 无 eventId 的 ack 帧：忽略（debug），不改变 pending 面
+    assertEquals(DeviceMailAck.earlyAckCount.unsafeRunSync(), 1, "未命中 ⇒ 进有界缓冲（禁丢弃）")
+    // 无 eventId 的 ack 帧：忽略（debug），不改变 pending/缓冲面
     DeviceMailAck.handle(Json.obj("type" -> "ack".asJson)).unsafeRunSync()
     assertEquals(DeviceMailAck.pendingCount.unsafeRunSync(), 0)
+    assertEquals(DeviceMailAck.earlyAckCount.unsafeRunSync(), 1, "无 eventId 帧不碰缓冲")
+
+  test("ack 时序竞态（ackfix 批）：ack 先到、登记后到 ⇒ 命中缓冲、不挂超时腿（无残留）"):
+    DeviceMailAck.resetForTest().unsafeRunSync()
+    DeviceMailAck.handle(parse("""{"type":"ack","eventId":"message-m-race"}""").toOption.get).unsafeRunSync()
+    assertEquals(DeviceMailAck.earlyAckCount.unsafeRunSync(), 1, "抢先 ack 入缓冲")
+    assertEquals(DeviceMailAck.await("dev-b", "m-race").unsafeRunSync(), "message-m-race")
+    assertEquals(DeviceMailAck.pendingCount.unsafeRunSync(), 0, "命中缓冲 ⇒ 立即闭环，无待回执残留")
+    assertEquals(DeviceMailAck.earlyAckCount.unsafeRunSync(), 0, "命中即消费")
+    // 静置一个等待窗：若仍挂了超时腿，此处必出假 TIMEOUT + pending 被超时清除——两者都不应发生
+    IO.sleep(DeviceMailAck.AckTimeout + 1.second).unsafeRunSync()
+    assertEquals(DeviceMailAck.pendingCount.unsafeRunSync(), 0)
+    assertEquals(DeviceMailAck.earlyAckCount.unsafeRunSync(), 0, "未复活/未误配")
 
   test("ack：无响应 id ⇒ @unkeyed 占位（禁伪造 id，超时行据此可判）"):
     DeviceMailAck.resetForTest().unsafeRunSync()
