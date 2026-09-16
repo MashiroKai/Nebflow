@@ -1448,13 +1448,23 @@ final class FriendService(
     * 附件 id 列表（顺序 = 展示顺序），缺省空 ⇒ 请求体与今天**逐字节同形**（不发
     * `attachments` 键）。正文可为空**仅当**附件非空（服务端 §B.4 生成占位正文）。
     * 🔴 本方法**不做**任何上传：字节面在 [[uploadStream]]（同一分块驱动），本方法只
-    * 把已确认的 id 随消息送出 —— 上传没成功就绝不会有 id 可传。 */
+    * 把已确认的 id 随消息送出 —— 上传没成功就绝不会有 id 可传。
+    *
+    * P2-b 加性扩面（`clientMsgId`）：**幂等键**，由客户端**发送动作**侧生成并透传
+    * （同动作重试复用同键，不同动作新键）。缺省 `None` ⇒ 请求体与今天逐字节同形
+    * （`NeblinkClient` 只在 `Some` 时发该键）。🔴 幂等判定**全在服务端**（§8.6：同键
+    * 重复仍是 201、`existing:true` 仅表示回放原行）—— 本层与网关层都**不去重**、
+    * **不改**状态码、**不做**本地去重缓存（那会造出第二套真相）。
+    */
   def sendAsUser(
     friendUserId: String,
     body: String,
-    attachmentIds: List[String] = Nil
+    attachmentIds: List[String] = Nil,
+    clientMsgId: Option[String] = None
   ): IO[Either[String, Json]] =
-    withClient(_.sendFriendMessage(friendUserId, body, attachmentIds = attachmentIds)).flatMap {
+    withClient(
+      _.sendFriendMessage(friendUserId, body, attachmentIds = attachmentIds, clientMsgId = clientMsgId)
+    ).flatMap {
       case Right(json) =>
         json.hcursor.get[String]("conversationId").toOption match
           case Some(convId) =>

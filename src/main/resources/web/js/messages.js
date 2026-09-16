@@ -2310,11 +2310,42 @@ function modalToast(text) {
   toastTimer = setTimeout(() => { if (modalEls) modalEls.toast.hidden = true; }, 2000);
 }
 
+// ── 幂等键（P2-b）：**发送动作**粒度 ───────────────────────────────────
+/** 幂等键生成（`clientMsgId`）：一次**发送动作**一个键。
+ *
+ *  产品语义（P2-b 裁定）：**不同**发送动作各得新键 ⇒ 逐条照常落行；**同一**动作的
+ *  重复提交（失败重试 / 原地再发）**复用**同键 ⇒ 服务端回放原行（§8.6：同键重复仍是
+ *  201，`existing:true` 仅表示回放，不是失败也不是新行），不再各落一条消息。
+ *  ⇒ 键的生命周期 = **动作**的生命周期，不是函数调用的生命周期 —— 后者正是修前的
+ *  病灶：每次调用都发一条无键新请求，服务端无从判重，客户端 `messageId` 去重又只
+ *  覆盖「已到帧」，结构上拦不住。
+ *
+ *  形态：优先 `crypto.randomUUID()`（原生）；不可用（老 WebView / 非安全上下文）时
+ *  回落 时间戳 + 单调序号 + 随机尾。幂等键只需在**同一发送者**的短窗内唯一，不跨端
+ *  协商 ⇒ 两种形态都满足，无需引入依赖。 */
+let clientMsgSeq = 0;
+function newClientMsgId() {
+  const c = globalThis.crypto;
+  if (c && typeof c.randomUUID === 'function') return c.randomUUID();
+  clientMsgSeq += 1;
+  return `fm-${Date.now().toString(36)}-${clientMsgSeq}-${Math.random().toString(36).slice(2, 10)}`;
+}
+
+/** 设备腿的「同动作重试」键记忆（P2-b）：失败 ⇒ 正文回填输入框，用户原地再发属
+ *  **同一动作** ⇒ 复用同键。判据 = (会话 id, 正文) 逐字相等；任一不等 = 新动作 ⇒
+ *  新键，并清掉陈旧记忆（防「很久以后又发同一句话」被静默判重）。
+ *  成功 ⇒ 清空（下一次同文本发送是**新动作** ⇒ 新键 ⇒ 照常落新行）。 */
+let deviceRetry = null; // { convId, body, clientMsgId } | null
+
 // ── Send (§6.2 sending/delivered/failed) ─────────────────
-async function sendCurrent(conv) {
+async function sendCurrent(conv, opts) {
   if (!modalEls) return;
   const body = modalEls.input.value.trim();
   if (!body || body.length > 2000) return;
+  // 幂等键：缺省面 = **新的发送动作** ⇒ 新键；重试面由调用方传入**同一**键（见下
+  // `fm-retry` 分支）。🔴 生成点在动作边界，不在 API 层——API 层分不清「重试」与
+  // 「用户又想发一句一样的」。
+  const clientMsgId = (opts && opts.clientMsgId) || newClientMsgId();
   modalEls.input.value = '';
   syncComposerSend(); // 已清空 ⇒ 发送键回禁用态（判据单源）
 
@@ -2337,9 +2368,11 @@ async function sendCurrent(conv) {
     // 群发分支（补充卡 §5.1 逐字契约：POST /api/groups/{id}/messages {body} →
     // SendMessageResponse 同形 {messageId, conversationId, createdAt, ...}）。
     // 🔴 UI 直发无 origin 字段（补充卡 §5.4 写权矩阵第一行）⇒ 服务端落 'user'。
+    // P2-b：第四位 = 幂等键（`attachments` 位此处**不传** ⇒ 无附件消息请求体与
+    // 加键前逐字节同形 + `clientMsgId` 一个键；群腿网关是原文转发，键直达服务端）。
     const resp = conv.kind === 'group'
-      ? await api.sendGroupMessage(conv.conversationId, body)
-      : await api.sendFriendMessage(conv.friend.userId, body);
+      ? await api.sendGroupMessage(conv.conversationId, body, undefined, clientMsgId)
+      : await api.sendFriendMessage(conv.friend.userId, body, undefined, clientMsgId);
     const realId = resp.messageId || tempId;
     noteSentRealId(realId); // self 识别关联源（群方向判据的学习输入，见 §状态段）
     // 群发回执面 `selfUserId`（契约终版 §1.1 #8）= 发送者鉴权身份 ⇒ 最强证据，
@@ -2400,7 +2433,9 @@ async function sendCurrent(conv) {
       if (i >= 0) chatMsgs.splice(i, 1);
       modalEls.input.value = body;
       syncComposerSend(); // 回填非空文本 ⇒ 发送键回可用态（重试路径不得留假禁用）
-      sendCurrent(conv);
+      // P2-b：重试 = **同一动作** ⇒ **复用同键**。上游若其实已落库（响应丢失/超时），
+      // 服务端按同键回放原行 ⇒ 不再落第二条；若首投真的没到，键首见 ⇒ 正常落一行。
+      sendCurrent(conv, { clientMsgId });
     });
     wrap.appendChild(flag);
   }
@@ -3430,7 +3465,7 @@ async function fetchDeviceMsgsServer(conv) {
  *  本函数再守一道）——绝不把消息打到对端 id（那必然 403）、绝不静默失败。
  *  🔴 回显不做本地乐观气泡——服务端行以 keyset 重取为唯一事实源（同 `clientMsgId`
  *  重复发送是幂等回放，§8.6「201 either way」，不产生第二行）。 */
-async function sendDeviceCurrent(conv) {
+async function sendDeviceCurrent(conv, opts) {
   if (!modalEls || !conv || !conv.device) return;
   const body = modalEls.input.value.trim();
   if (!body || body.length > 2000) return; // D8：与好友窗同闸（2000，服务端无 enforcement）
@@ -3442,8 +3477,17 @@ async function sendDeviceCurrent(conv) {
   modalEls.input.value = '';
   syncComposerSend();
   if (!conv.sourceServer) { sendDeviceText(conv.device.deviceId, body); return; }
+  // P2-b 幂等键：服务端腿才走契约幂等面（legacy 腿数据面在 dropbox.js，不在本键面）。
+  // 同动作判定 = (会话 id, 正文) 逐字相等 ⇒ 复用失败时记下的键；否则新动作 ⇒ 新键。
+  const retryConvId = conv.conversationId || '';
+  const remembered = (opts && opts.clientMsgId)
+    || (deviceRetry && deviceRetry.convId === retryConvId && deviceRetry.body === body
+      ? deviceRetry.clientMsgId : null);
+  const clientMsgId = remembered || newClientMsgId();
+  if (!remembered) deviceRetry = null; // 新动作 ⇒ 陈旧记忆作废（禁跨动作误判重）
   try {
-    await api.sendDeviceMessage(selfId, body);
+    await api.sendDeviceMessage(selfId, body, clientMsgId);
+    deviceRetry = null; // 成功 ⇒ 下一次同文本发送是新动作（新键、照常落新行）
     await fetchDeviceMsgsServer(conv);
     if (openConvId !== conv.conversationId) return;
     renderMessages(deviceMsgs, { stickBottom: true });
@@ -3452,6 +3496,9 @@ async function sendDeviceCurrent(conv) {
     void refreshDeviceReceipts(conv);
   } catch {
     // 可见失败（正文不丢）：回填输入框 + 就地提示，与好友面失败面同语义。
+    // 同时记下本动作的键：用户原地再发 = 同一动作 ⇒ 复用同键（首投若其实已落库，
+    // 服务端回放原行而不是落第二条）。
+    deviceRetry = { convId: retryConvId, body, clientMsgId };
     modalEls.input.value = body;
     syncComposerSend();
     modalToast(t('messages.deviceSendFailed'));

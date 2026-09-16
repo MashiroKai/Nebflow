@@ -173,9 +173,50 @@ function normalizeSeed(raw) {
     // 是 mock 侧记账键（真机由服务端 `status='pending'` + invitee 过滤，wire 不下发）。
     groupInvites: s.groupInvites || [],
     groupMembers: s.groupMembers || {}, // groupId -> [{userId,username,display_name,avatar,role,joinedAt}]
+    // ── P2-b 幂等台账（mock 腿；键 = `${scope}\u0000${clientMsgId}`）─────────
+    // 服务端**已支持** `clientMsgId` 幂等（§8.6：同键重复 ⇒ 仍是 201，`existing:true`
+    // 只表示「回放原行」）——mock 腿必须**同形**镜像该语义，否则 mock 下重复动作
+    // 仍落两行，本地自测/harness 读不到真实契约行为（mock 不是第二套契约）。
+    _idem: new Map(),
     _msgSeq: 1000,
     _reqSeq: 100,
   };
+}
+
+/** 幂等键归一（P2-b）：**非空字符串**才算带键；其余（缺席/null/空串/非字符串）
+ *  ⇒ `null` = 无键 = 逐字节旧形态。单点判定，禁各调用方各判一套。 */
+function idemKey(clientMsgId) {
+  return (typeof clientMsgId === 'string' && clientMsgId.length > 0) ? clientMsgId : null;
+}
+
+/** 发送请求体**唯一**构造点（P2-b；好友/群两面同形）。
+ *
+ *  `clientMsgId` 缺席（或空串/非字符串）⇒ 返回体与今天**逐字节同形**（不发该键）
+ *  —— 这是本批的加性判据：旧客户端（无键）请求体零变化。
+ *  带键 ⇒ 追加 `clientMsgId` 一个键（不重排、不改写既有键）。 */
+function sendPayload(body, attachments, clientMsgId) {
+  const att = (Array.isArray(attachments) && attachments.length > 0) ? attachments : null;
+  const key = idemKey(clientMsgId);
+  if (!att && !key) return { body };
+  if (att && !key) return { body, attachments: att };
+  if (!att && key) return { body, clientMsgId: key };
+  return { body, attachments: att, clientMsgId: key };
+}
+
+/** mock 幂等回放（§8.6 服务端语义镜像）：同 scope 同键 ⇒ 返回**原行**（不新增行、
+ *  `existing:true`）；无键 / 首见 ⇒ `null`（调用方走原路径）。 */
+function mockIdemReplay(scope, clientMsgId) {
+  const key = idemKey(clientMsgId);
+  if (!key) return null;
+  const hit = mockStore()._idem.get(scope + '\u0000' + key);
+  return hit ? { ...hit, existing: true } : null;
+}
+
+/** mock 幂等登记（只在**真落行**时调用；回放面不得再登记）。 */
+function mockIdemRemember(scope, clientMsgId, resp) {
+  const key = idemKey(clientMsgId);
+  if (key) mockStore()._idem.set(scope + '\u0000' + key, resp);
+  return resp;
 }
 
 // ── Username 契约 v1.0（friend-search-contract §4；作者 2026-09-05 裁定：
@@ -508,15 +549,19 @@ export async function getMessages(conversationId, { after = 0, limit = 50 } = {}
   return filtered.slice(0, l);
 }
 
-/** POST /api/friends/{friendUserId}/messages {body, attachments?} → {messageId, conversationId, createdAt}
+/** POST /api/friends/{friendUserId}/messages {body, attachments?, clientMsgId?} →
+ *  {messageId, conversationId, createdAt}
  *
  * `attachments`（attachcl 批加性扩面）= **已上传**的附件 id 列表（顺序 = 展示顺序），
  * 由网关逐字转给服务端。空数组/缺省 ⇒ 请求体与今天**逐字节同形**（不发该键）。
- * 正文可为空**仅当**带附件（服务端生成占位正文）。 */
-export async function sendFriendMessage(friendUserId, body, attachments) {
-  const payload = Array.isArray(attachments) && attachments.length > 0
-    ? { body, attachments }
-    : { body };
+ * 正文可为空**仅当**带附件（服务端生成占位正文）。
+ *
+ * `clientMsgId`（P2-b 加性扩面）= **幂等键**，由**发送动作**侧（`messages.js`）
+ * 生成：同一动作的重试/重复提交复用同键，不同动作各得新键。缺省 ⇒ 请求体逐字节
+ * 同形（旧客户端零变化）。🔴 幂等语义**全在服务端**（§8.6：同键重复仍是 201，
+ * `existing:true` 仅表示回放原行）——本层与网关层都不去重、不改状态码。 */
+export async function sendFriendMessage(friendUserId, body, attachments, clientMsgId) {
+  const payload = sendPayload(body, attachments, clientMsgId);
   if (!MOCK) return req('POST', `/api/friends/${encodeURIComponent(friendUserId)}/messages`, payload);
   await delay();
   const m = mockStore();
@@ -528,10 +573,15 @@ export async function sendFriendMessage(friendUserId, body, attachments) {
     m.conversations.unshift(conv);
     m.messages[conv.conversationId] = [];
   }
+  const scope = 'friend:' + friendUserId;
+  const replayed = mockIdemReplay(scope, clientMsgId);
+  if (replayed) return replayed; // 同键 ⇒ 回放原行，**不新增行**
   const msg = { id: 'm-' + (++m._msgSeq), senderId: m.self.userId, kind: 'text', body, createdAt: new Date().toISOString() };
   m.messages[conv.conversationId].push(msg);
   conv.lastMessage = msg;
-  return { messageId: msg.id, conversationId: conv.conversationId, createdAt: msg.createdAt };
+  return mockIdemRemember(scope, clientMsgId, {
+    messageId: msg.id, conversationId: conv.conversationId, createdAt: msg.createdAt,
+  });
 }
 
 /** GET /api/friends/attachments/{id} → {blob, filename}（4b 腿 A-3）。
@@ -702,12 +752,17 @@ export async function sendDeviceMessage(deviceId, body, clientMsgId) {
   const m = mockStore();
   const convId = 'dev:' + deviceId;
   if (!m.messages[convId]) m.messages[convId] = [];
+  const scope = 'device:' + deviceId;
+  const replayed = mockIdemReplay(scope, clientMsgId);
+  if (replayed) return replayed; // 同键 ⇒ 回放原行（§8.6「201 either way」），不新增行
   const msg = {
     id: 'm-' + (++m._msgSeq), senderId: 'me', kind: 'text', body,
     createdAt: new Date().toISOString(),
   };
   m.messages[convId].push(msg);
-  return { messageId: msg.id, conversationId: convId, createdAt: msg.createdAt, existing: false };
+  return mockIdemRemember(scope, clientMsgId, {
+    messageId: msg.id, conversationId: convId, createdAt: msg.createdAt, existing: false,
+  });
 }
 
 // ── 群组一期（friendgroups 客户端腿）──────────────────────────────────
@@ -1051,27 +1106,35 @@ export async function getGroupMembers(groupId) {
   return attachSelfId((m.groupMembers[groupId] || []).map((r) => normalizeMemberRow(r, selfId)).filter(Boolean), selfId);
 }
 
-/** POST /api/groups/{id}/messages {body, attachments?} → SendMessageResponse 同形
+/** POST /api/groups/{id}/messages {body, attachments?, clientMsgId?} →
+ *  SendMessageResponse 同形
  *  {messageId, conversationId, createdAt, createdAtMs?, existing?}（补充卡 §5.1）。
  *  🔴 body 只有一个字段：UI 面在协议上无 origin（§5.4 矩阵第一行）。
  *
  *  `attachments`（attachcl 批加性扩面）= **已上传**的附件 id 列表。群路由是**逐字
  *  转发**腿（`RestApiRoutes.groupSendProxy` 只判 `origin` 一个键）⇒ 该键直抵服务端
  *  `group_send_message` 的 attachments 校验面（服务端已把附件纳入一期群发）。
- *  空数组/缺省 ⇒ 请求体与今天逐字节同形。 */
-export async function sendGroupMessage(groupId, body, attachments) {
-  const payload = Array.isArray(attachments) && attachments.length > 0
-    ? { body, attachments }
-    : { body };
+ *  空数组/缺省 ⇒ 请求体与今天逐字节同形。
+ *
+ *  `clientMsgId`（P2-b 加性扩面）= 幂等键，语义与 [[sendFriendMessage]] **逐字同款**
+ *  （动作侧生成 / 缺省零变化）。群腿的网关是**原文转发**（rawBody）⇒ 本键**不需要**
+ *  网关侧任何改动即可直达服务端（与好友腿不同：好友腿在网关侧按字段解析重建）。 */
+export async function sendGroupMessage(groupId, body, attachments, clientMsgId) {
+  const payload = sendPayload(body, attachments, clientMsgId);
   if (!MOCK) return req('POST', `/api/groups/${encodeURIComponent(groupId)}/messages`, payload);
   await delay();
   const m = mockStore();
   const conv = m.groups.find(g => g.groupId === groupId);
   if (!conv) throw mockError('group not found', 404);
+  const scope = 'group:' + groupId;
+  const replayed = mockIdemReplay(scope, clientMsgId);
+  if (replayed) return replayed; // 同键 ⇒ 回放原行，**不新增行**
   const msg = { id: 'm-' + (++m._msgSeq), senderId: m.self.userId, kind: 'text', body, createdAt: new Date().toISOString() };
   (m.messages[groupId] = m.messages[groupId] || []).push(msg);
   conv.lastMessage = msg;
-  return { messageId: msg.id, conversationId: groupId, createdAt: msg.createdAt };
+  return mockIdemRemember(scope, clientMsgId, {
+    messageId: msg.id, conversationId: groupId, createdAt: msg.createdAt,
+  });
 }
 
 /** POST /api/groups/{id}/invites `{userId}` → 201 `{inviteId,groupId,inviteeUserId,status,createdAt}`

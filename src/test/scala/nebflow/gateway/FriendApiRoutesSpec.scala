@@ -41,6 +41,14 @@ class FriendApiRoutesSpec extends CatsEffectSuite:
 
   private val TestToken = "test-token-123"
 
+  // ── P2-b 读数面（幂等键加性透传）─────────────────────────────────────
+  // 上游侧**收到的原始请求体**（逐字，不解析后再编码——加性判据要按字节比）。
+  private val sentBodies = new java.util.concurrent.ConcurrentLinkedQueue[String]()
+  // 模拟服务端的幂等台账：`clientMsgId` → 首次落行时回给客户端的响应体。
+  private val idemRows = new java.util.concurrent.ConcurrentHashMap[String, String]()
+  // 模拟服务端的自增 messageId（首行 = 5，与既有断言同锚）。
+  private val mockRowSeq = new java.util.concurrent.atomic.AtomicInteger(5)
+
   // 401/404 配置判据需要真实的 NeblinkService（live config ref）⇒ 隔离 dataRoot，
   // 否则 `NeblinkService.create` 会读写真实 ~/.nebflow（device.json / config.json）。
   private var tmpDir: java.nio.file.Path = null
@@ -51,6 +59,9 @@ class FriendApiRoutesSpec extends CatsEffectSuite:
     savedRoot = PathUtil.dataRoot
     tmpDir = Files.createTempDirectory("friend-api-spec")
     PathUtil.setDataRoot(os.Path(tmpDir, os.pwd))
+    sentBodies.clear()
+    idemRows.clear()
+    mockRowSeq.set(5)
 
   override def afterEach(context: AfterEach): Unit =
     PathUtil.setDataRoot(savedRoot)
@@ -86,18 +97,50 @@ class FriendApiRoutesSpec extends CatsEffectSuite:
     val messagesJson =
       """[{"id":1,"senderId":"u1","kind":"text","body":"hi","createdAt":1234567890}]"""
 
-    def respond(ex: HttpExchange, status: Int, body: String): Unit =
-      // Drain the request body first — JDK HttpServer keep-alive requires the
-      // handler to consume it, otherwise leftover bytes corrupt the next
-      // request parsed on the same connection (login POST then listFriends GET).
-      ex.getRequestBody.transferTo(java.io.OutputStream.nullOutputStream())
-      ex.getRequestBody.close()
+    /** 写响应（**不碰请求体**——请求体已由 [[readSentBody]] 读完的路径必须用它，
+      *  否则二次 drain 已关闭的流会抛 IOException、handler 直接死掉不写响应，
+      *  上游侧表现为 `header parser received no bytes`）。 */
+    def writeJson(ex: HttpExchange, status: Int, body: String): Unit =
       val bytes = body.getBytes(StandardCharsets.UTF_8)
       ex.getResponseHeaders.add("Content-Type", "application/json")
       ex.sendResponseHeaders(status, bytes.length.toLong)
       val os = ex.getResponseBody
       os.write(bytes)
       os.close()
+
+    def respond(ex: HttpExchange, status: Int, body: String): Unit =
+      // Drain the request body first — JDK HttpServer keep-alive requires the
+      // handler to consume it, otherwise leftover bytes corrupt the next
+      // request parsed on the same connection (login POST then listFriends GET).
+      ex.getRequestBody.transferTo(java.io.OutputStream.nullOutputStream())
+      ex.getRequestBody.close()
+      writeJson(ex, status, body)
+
+    /** 读走并**记下**上游收到的请求体原文（P2-b 读数面）：先读后回（keep-alive 要求，
+      *  见 respond 注），且**不**解析后再编码 —— 加性判据按**字节**比，重编码会掩盖
+      *  键序 / 键集漂移（正是本批要钉的东西）。 */
+    def readSentBody(ex: HttpExchange): String =
+      val raw = new String(ex.getRequestBody.readAllBytes(), StandardCharsets.UTF_8)
+      ex.getRequestBody.close()
+      sentBodies.add(raw)
+      raw
+
+    /** 服务端幂等语义镜像（§8.6：同 `clientMsgId` 重复 ⇒ 仍是成功、`existing:true`
+      *  仅表示回放原行、**不新增行**）。带键且该键已落行 ⇒ 回放原行（同 messageId）；
+      *  否则真落一行（自增 messageId）。 */
+    def sendRow(raw: String): String =
+      val key = io.circe.parser
+        .parse(raw)
+        .toOption
+        .flatMap(_.hcursor.downField("clientMsgId").as[String].toOption)
+        .filter(_.nonEmpty)
+      key.flatMap(k => Option(idemRows.get(k))) match
+        case Some(replayed) => replayed
+        case None =>
+          val out =
+            s"""{"messageId":${mockRowSeq.getAndIncrement()},"conversationId":"c1","createdAt":1234567899}"""
+          key.foreach(k => idemRows.put(k, out))
+          out
 
     server.createContext(
       "/api/device/login",
@@ -133,7 +176,8 @@ class FriendApiRoutesSpec extends CatsEffectSuite:
           case ("POST", p) if p.endsWith("/block") || p.endsWith("/unblock") =>
             respond(ex, 200, """{"ok":true}""")
           case ("POST", p) if p.endsWith("/messages") =>
-            respond(ex, 200, """{"messageId":5,"conversationId":"c1","createdAt":1234567899}""")
+            // P2-b：记原文 + 按 `clientMsgId` 幂等回放（服务端语义镜像）。
+            writeJson(ex, 200, sendRow(readSentBody(ex)))
           case ("DELETE", _) => respond(ex, 200, """{"ok":true}""")
           case _ => respond(ex, 404, """{"error":"not found"}""")
     )
@@ -146,6 +190,18 @@ class FriendApiRoutesSpec extends CatsEffectSuite:
           case ("GET", "/api/conversations") => respond(ex, 200, conversationsJson)
           case ("GET", p) if p.endsWith("/messages") => respond(ex, 200, messagesJson)
           case ("POST", p) if p.endsWith("/read") => respond(ex, 200, """{"ok":true}""")
+          case _ => respond(ex, 404, """{"error":"not found"}""")
+    )
+    // 群面（P2-b 读数用）：群发路由是**原文转发**腿（`groupSendProxy` 只判 origin），
+    // 因此这里收到的请求体就是 web 客户端发的那串字节 —— 用来钉「加性键直达上游」。
+    server.createContext(
+      "/api/groups",
+      ex =>
+        val path = ex.getRequestURI.getPath
+        val method = ex.getRequestMethod
+        (method, path) match
+          case ("POST", p) if p.endsWith("/messages") =>
+            writeJson(ex, 200, sendRow(readSentBody(ex)))
           case _ => respond(ex, 404, """{"error":"not found"}""")
     )
     server.createContext(
@@ -405,6 +461,87 @@ class FriendApiRoutesSpec extends CatsEffectSuite:
     }
   }
 
+  // ── P2-b：幂等键 `clientMsgId`（加性透传 + 服务端幂等镜像）────────────
+
+  /** 好友发送面单次调用：**先钉响应状态**（200）再交响应体 —— 上游 mock 的 handler
+    * 若抛掉不写响应，网关会折叠成 502，此时只比「响应体里的字段」会拿到 None == None
+    * 的**假绿**；状态断言是唯一能把它挡在外面的那一环。 */
+  private def postFriendSend(fs: FriendService, json: Json): IO[Json] =
+    runWith(Some(fs))(
+      authed(Request[IO](Method.POST, Uri.unsafeFromString("/friends/u1/messages"))).withEntity(json)
+    ).flatMap { resp =>
+      assertEquals(resp.status, Status.Ok)
+      resp.as[Json]
+    }
+
+  /** 上游**实际收到的请求体原文**（逐字；加性判据按字节比）。 */
+  private def upstreamBodies: List[String] = sentBodies.toArray(Array.empty[String]).toList
+
+  test("P2-b 加性①：带 clientMsgId ⇒ 网关把该键透传到上游（原文含键、body 原样）") {
+    withMockServer { (_, client, fs) =>
+      client.login("d1", "dev", "macos", Nil) *>
+        postFriendSend(fs, Json.obj("body" -> "hi".asJson, "clientMsgId" -> "K-1".asJson)).map { _ =>
+          val sent = upstreamBodies
+          assertEquals(sent.size, 1)
+          val hc = io.circe.parser.parse(sent.head).toOption.map(_.hcursor)
+          assertEquals(hc.flatMap(_.downField("clientMsgId").as[String].toOption), Some("K-1"))
+          assertEquals(hc.flatMap(_.downField("body").as[String].toOption), Some("hi"))
+        }
+    }
+  }
+
+  test("P2-b 加性②：无键（旧客户端）⇒ 上游请求体逐字节同形（键集/键序零变化）") {
+    withMockServer { (_, client, fs) =>
+      client.login("d1", "dev", "macos", Nil) *>
+        postFriendSend(fs, Json.obj("body" -> "hello".asJson, "clientMsgId" -> "".asJson)).map { _ =>
+          // 空串键 = 无键（与缺席同形）⇒ 上游只看到 body 一个键，逐字节等于今天。
+          assertEquals(upstreamBodies, List("""{"body":"hello"}"""))
+        }
+    }
+  }
+
+  test("P2-b 幂等：同键重复 ⇒ 回放同一行；无键重复 ⇒ 各落新行（服务端语义镜像）") {
+    withMockServer { (_, client, fs) =>
+      val keyed = Json.obj("body" -> "dup".asJson, "clientMsgId" -> "K-2".asJson)
+      val bare  = Json.obj("body" -> "dup".asJson)
+      def mid(j: Json) = j.hcursor.downField("messageId").as[Long].toOption
+      for
+        _ <- client.login("d1", "dev", "macos", Nil)
+        a <- postFriendSend(fs, keyed)
+        b <- postFriendSend(fs, keyed)
+        c <- postFriendSend(fs, bare)
+        d <- postFriendSend(fs, bare)
+      yield
+        assertEquals(mid(a), mid(b), "同键两次应回放同一行")
+        assertEquals(mid(c).isDefined, true)
+        assertNotEquals(mid(c), mid(d), "无键两次应各落一行")
+        assertEquals(mockRowSeq.get(), 8, "4 次 POST 只真落 3 行（5→8）")
+        assertEquals(upstreamBodies.size, 4, "网关不折叠请求：判重在服务端，不在转发层")
+    }
+  }
+
+  test("P2-b 群腿：原文转发 ⇒ clientMsgId 直达上游，且同键两次只落一行") {
+    withMockServer { (_, client, fs) =>
+      def postGroup(k: String): IO[Json] =
+        runWith(Some(fs))(
+          authed(Request[IO](Method.POST, Uri.unsafeFromString("/groups/g1/messages")))
+            .withEntity(Json.obj("body" -> "gmsg".asJson, "clientMsgId" -> k.asJson))
+        ).flatMap { resp =>
+          assertEquals(resp.status, Status.Ok) // 同 postFriendSend：状态先钉，防 502 假绿
+          resp.as[Json]
+        }
+      def mid(j: Json) = j.hcursor.downField("messageId").as[Long].toOption
+      for
+        _ <- client.login("d1", "dev", "macos", Nil)
+        a <- postGroup("G-1")
+        b <- postGroup("G-1")
+      yield
+        assertEquals(upstreamBodies, List("""{"body":"gmsg","clientMsgId":"G-1"}""", """{"body":"gmsg","clientMsgId":"G-1"}"""))
+        assertEquals(mid(a), mid(b), "群腿同键应回放同一行")
+        assertEquals(mockRowSeq.get(), 6, "群腿同键两次只真落 1 行（5→6）")
+    }
+  }
+
   test("GET /conversations/:id/messages passes after/limit and returns message array") {
     withMockServer { (_, client, fs) =>
       client.login("d1", "dev", "macos", Nil) *> runWith(Some(fs))(
@@ -613,6 +750,7 @@ class FriendApiRoutesSpec extends CatsEffectSuite:
       ex.sendResponseHeaders(status, bytes.length.toLong)
       ex.getResponseBody.write(bytes)
       ex.getResponseBody.close()
+
     server.createContext(
       "/api/device/login",
       ex => respond(ex, 200, """{"token":"tok-kicked","networkId":"n1","deviceId":"d1","peers":[]}""")

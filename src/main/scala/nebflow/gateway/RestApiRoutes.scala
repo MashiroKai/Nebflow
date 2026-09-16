@@ -1513,12 +1513,20 @@ class RestApiRoutes(
 
     /** 发消息给好友（用户身份——UI 输入框直发，无 agent 权限档位）。
       *
-      * body: `{body, attachments?}`（attachcl 批加性扩面）。
+      * body: `{body, attachments?, clientMsgId?}`（attachcl / P2-b 两批加性扩面）。
       *
       * `attachments` = **已上传**的附件 id 列表（顺序 = 展示顺序），由本路由**逐字**
       * 转给 `FriendService.sendAsUser` → `NeblinkClient.sendFriendMessage`。🔴 本层
       * 只搬运 id、**不**判权限（关系闸在服务端 E1/E2/E3）、**不**做上传（字节面 =
       * `POST /api/attachments`，同一分块驱动）。
+      *
+      * `clientMsgId`（P2-b）= 客户端**发送动作**侧的幂等键（同动作重试复用同键）。
+      * 本路由**只做**「读出 + 透传」两件事：不判重、不去重、不缓存、不改状态码
+      * —— 幂等判定**全在服务端**（§8.6：同键重复仍是 201、`existing:true` 仅表示
+      * 回放原行）。🔴 加性判据：键缺席 / 空串 / 非字符串 ⇒ `None` ⇒ 转发形态与今天
+      * **逐字节同形**（旧客户端零变化；`NeblinkClient` 只在 `Some` 时发该键）。
+      * 🔴 本路由**是**在转发前读请求体的既有腿（`{body, attachments}` 早已如此），
+      * 但**只读**这几个键、**原样**取值——不重建请求体、不重排、不丢未知键。
       *
       * 正文闸的加性放开：`body` 为空**仅当** `attachments` 非空时允许（服务端 §B.4
       * 有附件时生成占位正文）——这是**拓宽**而不是收紧：无附件时空正文仍逐字 400
@@ -1535,8 +1543,13 @@ class RestApiRoutes(
                 .as[List[String]]
                 .getOrElse(Nil)
                 .filter(_.nonEmpty)
+              val clientMsgId = body.hcursor
+                .downField("clientMsgId")
+                .as[String]
+                .toOption
+                .filter(_.nonEmpty)
               if text.isEmpty && attachmentIds.isEmpty then BadRequest(Json.obj("error" -> "Missing body".asJson))
-              else fs.sendAsUser(friendUserId, text, attachmentIds).flatMap(friendResult)
+              else fs.sendAsUser(friendUserId, text, attachmentIds, clientMsgId).flatMap(friendResult)
             }
       }
 
