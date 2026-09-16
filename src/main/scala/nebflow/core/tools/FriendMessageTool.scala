@@ -52,7 +52,7 @@ import java.time.format.DateTimeFormatter
  * **唯一实现点** = `nebflow.neblink.FriendRoster`（批 ⑩ 2026-09-12 收归）——本工具
  * 只委托；L4 是数据面回落（见 `lookupFriendBySearch`）。
  *
- * 设备解析（2026-09-14 自退役的 TransferFileTool 原样迁入）：deviceId 精确 →
+ * 设备解析（2026-09-14 自退役的**跨设备文件搬运工具**原样迁入，能力并入本工具设备腿）：deviceId 精确 →
  * deviceName 精确 → deviceId 前缀 → deviceName 前缀 → deviceName 包含，唯一候选
  * 才成功；零命中/多命中一律列可用设备与逐条命中依据（**禁静默首命中**）。
  *
@@ -65,8 +65,8 @@ import java.time.format.DateTimeFormatter
  * NebulaOrchestrationTools 携带（2c 起从声明制迁机制固定）；agent.json tools
  * 声明不再授能（buildAllowedToolSet 对 base 一律剥离本工具名，"*" 亦然——the
  * tool name IS the permission boundary）。
- * （本工具扩面后，TransferFile 于 2026-09-14 同批退役——迁移指引见
- * `AgentCore.RetiredToolGuides`。） */
+ * （本工具扩面后，**跨设备文件搬运工具**于 2026-09-14 同批退役——其**已退役工具名**与
+ * 迁移指引见 `AgentCore.RetiredToolGuides`（名单面照旧保留该名，本文件描述面不再点名）。） */
 object FriendMessageTool extends Tool:
 
   private val TimeFormat = DateTimeFormatter.ofPattern("HH:mm:ss")
@@ -82,7 +82,7 @@ object FriendMessageTool extends Tool:
   val description =
     """Send a message on the user's behalf, or move files. Four target kinds are selected by the prefix of `to`:
 1. A NebLink friend (bare name, or `friend:<remark|username|email|displayName>`) — delivered as the user over established friend relationships; text and/or files. Files ride the server's attachment channel (create session → chunked upload with per-chunk checksum + whole-file SHA-256 → sent as attachment ids), and the receiver downloads them over an authenticated in-app route. Subject to permission tiers and rate limits, and (depending on configuration) a confirmation card. Before uploading, the client probes whether the server even has the attachment route (no capability self-report exists): unsupported or unverifiable ⇒ the send is refused outright with a readable reason — attachments are never dropped silently.
-2. Another of the user's own devices (`device:<deviceName|deviceId>`) — message and/or files over the Dropbox device channel: files are chunked+streamed (per-chunk checksum, whole-file SHA-256 both sides, resume), never enter the LLM context, and land in the peer's Downloads (auto-accept, visible in their device panel). Not subject to the friend permission tiers/rate limits; size/count gated and audited. Requires an active peer roster — an unknown device fails with the available list (no silent fallback).
+2. Another of the user's own devices (`device:<deviceName|deviceId>`) — **PURE TRANSPORT: files and text reach the peer MACHINE, and the peer's AGENT is NOT aware of either** (nothing is injected into the peer's agent session or its LLM context — the peer's agent cannot read it and will not act on it; only the machine and its user-facing device panel show it). Files are chunked+streamed over the Dropbox device channel (per-chunk checksum, whole-file SHA-256 both sides, resume), never enter the LLM context, and land in the peer's Downloads (auto-accept, visible in their device panel); the message text appears in the peer's device panel. This target kind is the face that carries file transfer (`attachments`) — including files moved to another machine. Not subject to the friend permission tiers/rate limits; size/count gated and audited. Requires an active peer roster — an unknown device fails with the available list (no silent fallback). **If the peer's agent must be told, use `Mail` with the `device` parameter — Mail delivers into the peer's Nebula session and that device's agent receives it directly; `SendMessage` never reaches the peer's agent.**
 3. `local` — copy `attachments` into `targetDir` on this machine (no network, no message delivered).
 4. A NebLink group (`group:<groupName|groupId>`) — delivered as the user into a group conversation the user is a member of; every member of that group sees it (the sender is never counted as a new message for themselves). Text only in phase 1. The group is resolved against the groups the user is a member of: the exact group id (`grp-…`), then the exact group name, then a unique group-name prefix; a name that matches several groups, or none, comes back as a candidate list rather than a silent guess. A group that does not exist, has been disbanded, or that the user is not a member of fails with a readable reason (the decision is the server's; the tool never reports a send that did not happen). Subject to the same permission tiers, rate limits, and (depending on configuration) the confirmation card as friend sends.
 
@@ -105,7 +105,7 @@ When the user's agent-messaging mode is `ask` (or the auto rate limit was hit), 
         "type"        -> "string".asJson,
         "description" -> """The target, selected by an explicit prefix (case-insensitive; anything else is a bare friend name):
 - `friend:<remark|username|email|displayName>` — one friend (a bare remark/username/email/displayName works too).
-- `device:<deviceName|deviceId>` — another of the user's own devices.
+- `device:<deviceName|deviceId>` — another of the user's own devices (pure transport: files land in the peer's Downloads, the text shows in the peer's device panel — the peer's agent is NOT aware of either; use `Mail` when the peer's agent must know).
 - `group:<groupName|groupId>` — a group conversation the user is a member of. Resolved by exact group id (`grp-…`), then exact group name, then unique group-name prefix. A group that does not exist, was disbanded, or that the user is not a member of fails with a readable reason; several/none matching come back as a candidate list. Text only (no `attachments`) in this phase.
 - `local` — copy `attachments` into `targetDir` on this machine.""".asJson
       ),
@@ -116,7 +116,7 @@ When the user's agent-messaging mode is `ask` (or the auto rate limit was hit), 
       "attachments" -> Json.obj(
         "type"  -> "array".asJson,
         "items" -> Json.obj("type" -> "string".asJson),
-        "description" -> "Absolute local file paths. Friend and device: ≤9 files, each ≤1024 MB = 1 GiB (1,073,741,824 bytes); friend uploads go in 4 MiB chunks with per-chunk checksum + whole-file SHA-256. Friend sends are refused (nothing uploaded) when the server lacks the attachment route. Local: required (copied into targetDir).".asJson
+        "description" -> "Absolute local file paths — this parameter is how a file is moved (including to another machine, with a `device:` target). Friend and device: ≤9 files, each ≤1024 MB = 1 GiB (1,073,741,824 bytes); friend uploads go in 4 MiB chunks with per-chunk checksum + whole-file SHA-256. Friend sends are refused (nothing uploaded) when the server lacks the attachment route. Device transfers are pure transport — the peer's Downloads receives the files and the peer's agent is NOT told (use `Mail` if that agent must know). Local: required (copied into targetDir).".asJson
       ),
       "targetDir" -> Json.obj(
         "type"        -> "string".asJson,
@@ -300,7 +300,7 @@ When the user's agent-messaging mode is `ask` (or the auto rate limit was hit), 
           case _ => Right(ToKind.Friend(s)) // 好友备注/邮箱里可能合法出现冒号 ⇒ 原样按好友解析
       else Right(ToKind.Friend(s))
 
-  // ===== 设备面（2026-09-14 自退役的 TransferFileTool 原样迁入，语义零变更）=====
+  // ===== 设备面（2026-09-14 自退役的跨设备文件搬运工具原样迁入，语义零变更）=====
 
   /** 设备候选 + 命中依据（纯函数）：歧义报错逐条列出「区分依据」，**禁静默首命中**。 */
   private[tools] def deviceMatches(query: String, peers: List[PeerInfo]): List[(PeerInfo, String)] =
