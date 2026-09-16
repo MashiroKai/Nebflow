@@ -1691,13 +1691,25 @@ private[agent] trait AgentCore:
                     logger.info(s"$logCtx Remote tool: [${deviceName}] ${tool.summarize(remoteInput)}")
                     RemoteExecutor.current.get.execute(deviceName, call.name, remoteInput, Some(ctx)).flatMap {
                       case Right(result) =>
-                        hookEngine.afterTool(call.name, finalInput, result, true, hookCtx).map { postResult =>
-                          val hookSuffix = postResult.additionalContext.getOrElse("")
-                          ToolExecResult(
-                            result + (if hookSuffix.nonEmpty then s"\n\n$hookSuffix" else ""),
-                            frontendContent = Some(result)
-                          )
-                        }
+                        // A1（作者裁定 2026-09-16）：设备腿的结果域恒为 `String`（视觉块
+                        // **从未产生**），故远端结果命中 `[image: …]` 标记时经**既有**
+                        // FileTransfer 回拉字节并在**调用侧**构块——即判词 L6（调用侧注入
+                        // 缺失）的补点。形态与本地分支对齐（:1763 取块 / :1774 置块），
+                        // 不复刻机制：回拉/解码/超限一律降级为 None（该方法内自吞 + WARN），
+                        // 🔴 绝不让取字节失败把工具调用整体打挂或吞掉原输出。
+                        RemoteExecutor.current
+                          .get
+                          .remoteReadImages(deviceName, call.name, remoteInput, result)
+                          .flatMap { imageBlocks =>
+                            hookEngine.afterTool(call.name, finalInput, result, true, hookCtx).map { postResult =>
+                              val hookSuffix = postResult.additionalContext.getOrElse("")
+                              ToolExecResult(
+                                result + (if hookSuffix.nonEmpty then s"\n\n$hookSuffix" else ""),
+                                frontendContent = Some(result),
+                                imageBlocks = imageBlocks
+                              )
+                            }
+                          }
                       case Left(err) =>
                         hookEngine.afterToolFailure(call.name, finalInput, err.message, hookCtx).map { postResult =>
                           val appended = postResult.additionalContext match

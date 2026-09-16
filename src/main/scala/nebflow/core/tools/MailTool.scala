@@ -7,11 +7,12 @@ import io.circe.{Json, JsonObject}
 import nebflow.actor.*
 import nebflow.agent.*
 import nebflow.core.NebflowLogger
+import nebflow.core.PathUtil
 import nebflow.core.entity.EntityLoader
 import nebflow.core.flow.{FlowMailStore, MailQueueStore, TeamSessionRegistry}
 import nebflow.core.project.{ProjectActor, ProjectRuntimeRegistry}
 // device-mail 批（2026-09-15）：契约单点 + 本机 NebLink 身份面（设备腿）。
-import nebflow.neblink.{DeviceMail, DeviceMailAck, NeblinkService}
+import nebflow.neblink.{DeviceMail, DeviceMailAck, NeblinkService, PeerInfo}
 import nebflow.shared.{ContentBlock, Message, MessageRole, ToolDefinition}
 
 
@@ -279,7 +280,12 @@ Message type (optional, default "INFO"):
           "type" -> "array".asJson,
           "items" -> Json.obj("type" -> "string".asJson).asJson,
           "maxItems" -> 5.asJson,
-          "description" -> "Optional absolute local image paths (PNG/JPG/JPEG/GIF/WEBP/BMP, max 5) to attach — the recipient sees the images directly plus their paths as text. For other files, reference the path in the message text.".asJson,
+          "description" -> ("Optional absolute local image paths (PNG/JPG/JPEG/GIF/WEBP/BMP, max 5) to attach — " +
+            "the recipient sees the images directly plus their paths as text. For other files, reference the path " +
+            "in the message text. DEVICE targets (`device=`): the files ride the existing device file channel " +
+            "(chunked FileTransfer, sha256-verified) and land in THAT device's default receive dir (~/Downloads); " +
+            "the injected mail text names them so that device can Read them — a failed or unavailable transfer is " +
+            "reported explicitly, never dropped silently.").asJson,
           "default" -> Json.arr()
         )
       ),
@@ -324,7 +330,13 @@ Message type (optional, default "INFO"):
             case Left(err) => IO.pure(Left(err))
             // chainId 于设备腿**只校验不带出**（链集是本项目派生的，对端 Nebula 的
             // 项目链不同源 ⇒ 塞进对端注入体会误导）；登记在交付说明。
-            case Right(_) => deliverToDevice(deviceRaw, message, mailType, delivery, ctx)
+            // 同根族第三件（2026-09-16 A1 批）：`images` 的判据**前置于一切投递副作用**
+            // （与非设备腿 `:341-351` 的 fail-fast 同序）——旧行为是设备腿**静默吞掉**
+            // `images`（零报错、零投递），本闸把它变成显式处置。
+            case Right(_) => deviceImagesPlan(input, ctx).flatMap {
+                case Left(err)         => IO.pure(Left(err))
+                case Right(imagePaths) => deliverToDevice(deviceRaw, message, mailType, delivery, imagePaths, ctx)
+              }
           }
     // delivery 退役批（2026-09-15 作者裁定 (b)）：**非设备腿** `delivery="queue"` ⇒
     // **显式拒绝**（零副作用，先于 chainId 校验与一切路由/投递）。
@@ -590,12 +602,15 @@ Message type (optional, default "INFO"):
     *
     * 两条**显式拒绝**（禁静默丢语义）：设备腿恒 immediate（`delivery=queue` 拒绝，
     * 与 `node:` 腿同一先例）；契约载荷无邮件类型字段 ⇒ 仅 INFO（其它类型拒绝，
-    * 不静默降级成 INFO）。 */
+    * 不静默降级成 INFO）。同根族第三件（2026-09-16 A1 批）：`images` 不再被静默吞掉
+    * ——投递前判据见 [[deviceImagesPlan]]，投递后经**既有**设备文件通道推送见
+    * [[pushDeviceImages]]（失败只显式回显，不回滚已投递的文本）。 */
   private def deliverToDevice(
       device: String,
       message: String,
       mailType: String,
       delivery: String,
+      imagePaths: List[String],
       ctx: ToolContext
   ): IO[Either[ToolError, String]] =
     if delivery == "queue" then
@@ -610,7 +625,7 @@ Message type (optional, default "INFO"):
       )))
     else
       (ctx.sharedResources.flatMap(_.neblinkService), ctx.sharedResources.flatMap(_.dropboxService)) match
-        case (Some(ns), _) =>
+        case (Some(ns), dbxOpt) =>
           for
             id <- ns.identity
             peers <- ns.peers
@@ -629,18 +644,25 @@ Message type (optional, default "INFO"):
                       "Cannot send device mail: the NebLink relay client is not initialized (not logged in to a NebLink server?)."
                     )))
                   case Some(client) =>
-                    val payload = DeviceMail.payload(message, id.deviceName, id.deviceId)
+                    // 同根族第三件（A1 批）：**正文先行**（文本不可达 ⇒ fail-fast，不烧
+                    // 传输超时、不产生半投递——与 `SendMessage.sendDevice` 同款次序）；
+                    // 附件附注写进正文，因为对端 agent 只能从注入文本得知图片落在它自己的盘上。
+                    val payload = DeviceMail.payload(deviceMailText(message, imagePaths), id.deviceName, id.deviceId)
                     client.relayAgentMail(peer.deviceId, payload).flatMap {
                       case Right(serverId) =>
                         // ④ 回执：登记 pending ack（eventId = "message-<id>"），由隧道 ack
                         // 帧关联；超时腿在 DeviceMailAck 内（WARN + 审计行，禁静默）。
                         DeviceMailAck.await(peer.deviceId, serverId).flatMap { eventId =>
-                          auditDeviceMailSend(ns, peer.deviceId, message, ctx).as(Right(
+                          val sent =
                             s"Message sent to device '${peer.deviceName}' — the frozen agent_mail payload " +
                               s"(type=${DeviceMail.TypeAgentMail}, to_nebula=true) is on the relay route " +
                               s"/api/relay/${peer.deviceId}/mail; the peer's Nebula session will be injected at " +
                               s"its next turn boundary. Awaiting ack $eventId."
-                          ))
+                          auditDeviceMailSend(ns, peer.deviceId, message, ctx) *>
+                            pushDeviceImages(ns, dbxOpt, peer, imagePaths, ctx).map {
+                              case Left(attachNote) => Left(ToolError(s"$sent $attachNote"))
+                              case Right(notes)     => Right(if notes.isEmpty then sent else s"$sent ${notes.mkString(" ")}")
+                            }
                         }
                       case Left(err) =>
                         IO.pure(Left(ToolError(
@@ -652,6 +674,117 @@ Message type (optional, default "INFO"):
           IO.pure(Left(ToolError(
             "Device messaging is unavailable: NebLink/Dropbox services are not initialized (is NebLink enabled?)."
           )))
+
+  /** 设备腿 `images` 的**投递前判据**（同根族第三件，2026-09-16 A1 批）。
+    *
+    * 判据（任一不过 ⇒ 显式错误、**零投递副作用**）：
+    *   ① 形态/件数 = [[ImageInject.parseImagesParam]]（**同一单点**，词表逐字一致）；
+    *   ② 绝对路径形态：对**原始串**判（`os.Path` 构造会把相对段绝对化 ⇒ 构造后再判恒真；
+    *      与 `SendMessage` 设备支 `:506-513` 同款硬闸）；
+    *   ③ 承载通道在场 = `sharedResources.dropboxService`（设备文件通道 = 既有分块
+    *      FileTransfer 腿）——不在场即拒绝，禁「发了但没人接」的静默面。
+    *
+    * 返回 = 通过判据的本地绝对路径串（`Nil` = 本次未带附件，投递腿零改动）。 */
+  private def deviceImagesPlan(input: JsonObject, ctx: ToolContext): IO[Either[ToolError, List[String]]] =
+    ImageInject.parseImagesParam(input) match
+      case Left(err)  => IO.pure(Left(err))
+      case Right(Nil) => IO.pure(Right(Nil))
+      case Right(paths) =>
+        val relative = paths.filter(p => !java.nio.file.Paths.get(p.trim).isAbsolute)
+        if relative.nonEmpty then
+          IO.pure(Left(ToolError(
+            "images paths must be absolute, got: " + relative.map(p => s"'$p'").mkString(", ") +
+              ". The peer cannot read this machine's relative paths — pass ABSOLUTE paths of files on this machine."
+          )))
+        else if ctx.sharedResources.flatMap(_.dropboxService).isEmpty then
+          IO.pure(Left(ToolError(
+            "Device targets carry `images` over the existing device file channel (chunked FileTransfer), which is " +
+              "unavailable here: the Dropbox file channel is not initialized (is NebLink enabled?). Nothing was " +
+              "sent — reference the path in the message text instead, or retry once the channel is up."
+          )))
+        else IO.pure(Right(paths))
+
+  /** 设备腿正文的附件附注（🔴 **禁静默**：对端 agent 只能从注入文本知道图片落在它自己的盘上）。
+    *
+    * 落点 = 对端**缺省接收目录** `~/Downloads/<name>`（本腿**不发** `targetDir` 请求 ⇒
+    * 接收端缺省；承载腿 `RelayChunkTransport.put` 写的就是对端 `~/Downloads/${fileName}`，
+    * 并与既有 `targetDirEcho` 的用户可见口径一致）。**不谎报**：发送端只知道文件名与
+    * 该缺省落点，故只点文件名 + 落点语义，不编造对端绝对路径。 */
+  private def deviceMailText(message: String, imagePaths: List[String]): String =
+    if imagePaths.isEmpty then message
+    else
+      val names = imagePaths.map(p => os.Path(java.nio.file.Paths.get(p)).last).mkString(", ")
+      s"$message\n[Mail 附件图片] ${imagePaths.size} 件随本邮件经设备文件通道（分块 FileTransfer，双侧 sha256 校验）" +
+        s"传输到本机缺省接收目录（~/Downloads）: $names —— 用 Read 读对应的绝对路径即可看到图像。"
+
+  /** 图片经**既有**设备文件通道推送（A1 同族：复用承载，🔴 零 wire 字段、零新 action、
+    * 零服务端配合）。承载 = [[nebflow.dropbox.DropboxService.sendLocalFiles]]（闸位 +
+    * 分块 + 双侧 sha256 + 续传单点；`SendMessage` 设备腿 `:372` 同款先例）。
+    *
+    * 返回语义（🔴 失败**不中断、不回滚**已投递的邮件；逐件结果显式回显）：
+    *   - `Left(detail)` = 有件失败 / 通道抛错 ⇒ 调用方把 detail 附在**已投递**的成功文案后
+    *     （与 `SendMessage.sendDevice:374-390` 的「Text was delivered, but …」同族口径）；
+    *   - `Right(Nil)` = 本次无附件；`Right(notes)` = 完成回显。 */
+  private def pushDeviceImages(
+      ns: nebflow.neblink.NeblinkService,
+      dbxOpt: Option[nebflow.dropbox.DropboxService],
+      peer: PeerInfo,
+      imagePaths: List[String],
+      ctx: ToolContext
+  ): IO[Either[String, List[String]]] =
+    if imagePaths.isEmpty then IO.pure(Right(Nil))
+    else
+      dbxOpt match
+        case None =>
+          IO.pure(Left("The image attachments were NOT transferred: the device file channel is not initialized."))
+        case Some(dbx) =>
+          val paths = imagePaths.map(p => os.Path(PathUtil.expandTilde(p.trim), os.pwd))
+          auditDeviceImagesSend(ns, peer, paths, ctx) *>
+            dbx
+              .sendLocalFiles(peer.deviceId, paths, None, origin = nebflow.dropbox.DropboxMessage.OriginAgent)
+              .map {
+                case Left(err) =>
+                  Left(s"The image attachments were NOT transferred: ${err.render}.")
+                case Right(outcomes) =>
+                  val failed = outcomes.filterNot(_.delivered)
+                  if failed.isEmpty then
+                    Right(List(
+                      s"${outcomes.size} image attachment(s) transferred over the device file channel " +
+                        s"(chunked FileTransfer, sha256 verified): ${outcomes.map(_.fileName).mkString(", ")}."
+                    ))
+                  else
+                    Left(
+                      s"Message was delivered, but ${failed.size}/${outcomes.size} image attachment(s) failed — " +
+                        failed.map(o => s"${o.fileName}: ${o.error.getOrElse("unknown error")}").mkString("; ") +
+                        ". Retrying reuses the chunked channel's resume (completed chunks are not re-sent)."
+                    )
+              }
+              .handleErrorWith(e =>
+                IO.pure(Left(
+                  s"The image attachments were NOT transferred: ${Option(e.getMessage).getOrElse(e.getClass.getSimpleName)}."
+                ))
+              )
+
+  /** 设备腿图片附件审计（`RelayExecAudit` 同族字段；零阻塞、失败只 WARN——审计失败绝不影响投递）。 */
+  private def auditDeviceImagesSend(
+      ns: nebflow.neblink.NeblinkService,
+      peer: PeerInfo,
+      paths: List[os.Path],
+      ctx: ToolContext
+  ): IO[Unit] =
+    ns.identity
+      .flatMap(src =>
+        RelayExecAudit.record(
+          sourceDeviceId = src.deviceId,
+          targetDeviceId = peer.deviceId,
+          via = "dropbox-chunk",
+          action = "Mail.device.images",
+          command = s"→ device:${peer.deviceName}; files: ${paths.map(p => s"${p.last}(${os.stat(p).size} B)").mkString(", ")}",
+          projectRoot = ctx.projectRoot,
+          cwd = Option(System.getProperty("user.dir")).getOrElse("")
+        )
+      )
+      .handleErrorWith(_ => IO.unit)
 
   /** ④ 发送腿审计（一条一行，`RelayExecAudit` 同族 = 设备通道审计的既有落面）。
     * `sourceDeviceId` = 本机（下发方），`targetDeviceId` = 对端设备。审计失败不影响
