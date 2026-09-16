@@ -857,6 +857,8 @@ function renderChatModal(conv) {
   }
   const title = el('div', 'fm-modal-title');
   title.appendChild(el('span', 'fm-modal-name', convTitleLabel(conv)));
+  // 描述入口小键的**面板挂载点**（devrow）：面板仍在窗头下方占一行，键本身进窗头行。
+  let deviceDescRow = null;
   // 群窗副行 = 成员数（有读数才挂）；单聊副行不变（neblinkId）。
   if (conv.kind === 'group') {
     if (conv.memberCount > 0) title.appendChild(el('span', 'fm-modal-id', t('messages.memberCount', { n: conv.memberCount })));
@@ -865,6 +867,13 @@ function renderChatModal(conv) {
     // 原副行 = 平台 + `deviceId`，deviceId 已从 `deviceSubLabel` 摘除）+ 在线态徽章。
     // 在线态 = `presenceBadgeHTML` **唯一实现**（与联系人设备段同源；O10 禁第二份判据与文案）。
     title.appendChild(el('span', 'fm-modal-id', deviceSubLabel(conv.device)));
+    // 🔴 devrow（作者 2026-09-16 07:53 截图令）：描述入口小键与**名块同一 flex 行**
+    // （名右侧内联、垂直居中）。旧形态（uifix3 ②）把键挂在 `.fm-device-desc` 行里 ⇒
+    // 键**独占一行**、名块与被点面垂直相隔一整行（红锚读数：名 bottom 164.5 vs 键 top 178）。
+    // 现在键入 `title` —— 与 `.fm-modal-name` **同一个 flex 行**（同行判据即
+    // `btn.parentElement === name.parentElement`），行本体退化为面板挂载点。
+    // 徽章仍在其后挂 ⇒ `margin-left:auto` 照旧把在线态贴右（窗头其余几何零改动）。
+    deviceDescRow = buildDeviceDescRow(conv, title);
     const badge = presenceBadgeHTML({ ...(conv.device || {}), isLocal: false });
     if (badge) {
       const pslot = el('span', 'fm-device-presence fm-modal-presence');
@@ -954,7 +963,7 @@ function renderChatModal(conv) {
   // ⑤c（同令）：「三是缺少了给设备添加描述的地方，总体和好友对话框统一，只是多了
   // 设备描述」⇒ 设备窗相对好友窗的**唯一**新增项 = 描述编辑行（同一渲染器
   // `renderChatModal` 的设备分支，禁第二套对话框实现）。
-  if (conv.kind === 'device') modal.appendChild(buildDeviceDescRow(conv));
+  if (conv.kind === 'device') modal.appendChild(deviceDescRow);
 
   const flow = el('div', 'fm-flow');
   modal.appendChild(flow);
@@ -1061,10 +1070,13 @@ function renderChatModal(conv) {
 // 只是多了设备描述」；同夜 ② 返工令：「给设备写描述的面板还可以优化一下，比如
 // 可以是一个小按钮，点了之后展开一个面板让我们写。现在设计的很难看」。
 //
-// 形态（② 现令）= **默认收起 + 小键 + 点击展开编辑面板**：
-//   · 收起态 = 行内只有一枚**图标**小键（`.fm-device-desc-btn`，Glass Control
-//     standard 族 `sapphire.css:159-262`）：pencil 图标 + `title`/`aria-label`
-//     同用**既有键** `neblink.deviceDescHint`。
+// 形态（② 现令 + devrow 改位）= **默认收起 + 小键 + 点击展开编辑面板**：
+//   · 收起态 = **窗头行内一枚图标小键**（`.fm-modal-title > .fm-device-desc-btn`，
+//     Glass Control standard 族 `sapphire.css:159-262`）：pencil 图标 +
+//     `title`/`aria-label` 同用**既有键** `neblink.deviceDescHint`。
+//     🔴 devrow（作者 2026-09-16 07:53 截图令）：键位于**名块右侧、同一 flex 行**、
+//     垂直居中；旧形态（键独占 `.fm-device-desc` 一行）判为红锚。热区地板与截断
+//     优先序见 `friends.css` 的 `.fm-modal-title > .fm-device-desc-btn` 规则注释。
 //     🔴 R2（⑤ 更正令，locales 零 diff）：本键**不引入任何新文案** —— 上一轮的
 //     二态文案键 `messages.deviceDescAdd` / `messages.deviceDescEdit`（zh/en 各两条）
 //     随之删除，「无描述 / 已有描述」的区分由**展开后的 textarea 正文**呈现（描述值
@@ -1085,11 +1097,18 @@ function renderChatModal(conv) {
 // Ctrl/Cmd+Enter = 提交（面板内是 textarea，裸 Enter 必须是换行）。
 const DEVICE_DESC_MAX = 200;
 
-/** 入口行（②）：**默认收起** —— 行内只有一枚小键；点键就地展开编辑面板。 */
-function buildDeviceDescRow(conv) {
+/** 面板挂载行（②）：**默认收起 = 无子节点**（键已上窗头行，见 devrow）；点键就地展开面板。
+ *
+ *  🔴 devrow（作者 2026-09-16 07:53）：本行**不再承载收起态小键** —— 键改挂
+ *  `mountEl`（= `.fm-modal-title`，与 `.fm-modal-name` 同一个 flex 行）⇒ 达成
+ *  「名块与键同行、名右侧内联、垂直居中」。本行只剩**面板挂载点**职责：
+ *  `openDeviceDescPanel` 仍把 `.fm-device-desc-panel` append 到这里 ⇒ 展开面板
+ *  照旧占窗头下方一行（收起态 `:empty` ⇒ 无占位，见 friends.css 该规则注释）。
+ *  ⚠ 本行仍是 `[data-device-desc="1"]` 的**唯一**持有者（既有断言面不搬）。 */
+function buildDeviceDescRow(conv, mountEl) {
   const row = el('div', 'fm-device-desc');
   row.dataset.deviceDesc = '1'; // QA 断言面：描述入口可机械定位（②）
-  row.appendChild(buildDeviceDescToggle(conv, row));
+  mountEl.appendChild(buildDeviceDescToggle(conv, row));
   return row;
 }
 
