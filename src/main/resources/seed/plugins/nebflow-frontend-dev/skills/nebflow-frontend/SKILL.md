@@ -27,7 +27,7 @@ src/main/resources/web/
   index.html
 ```
 
-新增子目录必须同步加服务端静态路由（http4s DSL 单段匹配）——见 nebflow-website 项目 AGENTS.md 同款教训。
+新增子目录必须同步加服务端静态路由（http4s DSL 单段匹配）。
 
 ## Sapphire Glass 设计系统
 
