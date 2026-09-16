@@ -338,13 +338,26 @@ body.sidebar-collapsed #activity-bar {
   text-align: center;
 }
 
-/* ── NebLink logout button (Settings panel, logged-in state) ── */
+/* ── NebLink logout button (Settings panel, logged-in state) ──
+   2026-09-16 按钮批（危险族 token 治理）：本节原先自带三处红字面量
+   （半透明红描边 / 半透明红底 / 浅红墨）—— 与 `--color-danger` 构成
+   **同语义两支红**（R9′ 判红）。本批改为 `--btn-danger-*` 具名 token 单一来源
+   （红值集合大小 = 1），形态 = 方向 A 的「红描边 + 红字」（底透明）。 */
 .neblink-logout-btn {
   width: 100%; margin-top: 12px; padding: 8px;
-  border: 1px solid rgba(244,67,54,0.3);
-  background: rgba(244,67,54,0.1);
-  color: #ef9a9a; border-radius: 8px; cursor: pointer;
-  font-size: 13px; transition: background 0.15s;
+  border: 1px solid var(--btn-danger-stroke);
+  background: var(--btn-danger-bg);
+  color: var(--btn-danger-ink); border-radius: 8px; cursor: pointer;
+  font-size: 13px;
+  transition: background 0.15s, border-color 0.15s, color 0.15s;
 }
-.neblink-logout-btn:hover { background: rgba(244,67,54,0.2); }
-.neblink-logout-btn:disabled { opacity: 0.5; cursor: default; }
+.neblink-logout-btn:hover {
+  background: var(--btn-danger-tint);
+  border-color: var(--btn-danger-ink);
+}
+.neblink-logout-btn:disabled {
+  background: var(--btn-disabled-bg);
+  border-color: var(--btn-disabled-stroke);
+  color: var(--btn-disabled-ink);
+  opacity: 1; cursor: not-allowed;
+}
