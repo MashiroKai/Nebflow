@@ -155,7 +155,8 @@ class NodeBgCompletionGateSpec extends CatsEffectSuite:
   private def recordedImmediate(recorded: Ref[IO, List[AgentCommand]]): IO[List[AgentCommand.ImmediateInput]] =
     recorded.get.map(_.collect { case m: AgentCommand.ImmediateInput => m })
 
-  /** 投递观察 = **显式等批 flush**（批 3 · 本机侧 2026-09-16；任务书两选项之②）：
+  /** 投递观察 = **显式等批 flush**（批 3 · 本机侧 2026-09-16；任务书两选项之②；
+    * 批 4 · 同族小批 2026-09-16 起 G4/G9 亦改用本 helper——两处与 G1/G2 逐字同款，无第二形态）：
     *
     * 完成通知是**异步**投递——`completedNodeR` 先落 store（`status=Completed` 在此刻
     * 可见），随后同一 fiber 才走 `deliverOut` → `deliverToNebula`（`NodeEngine.scala:1805`）
@@ -428,7 +429,8 @@ class NodeBgCompletionGateSpec extends CatsEffectSuite:
       _ <- notifyBgCompleted(agentRef, "spec bg task")
       _ <- waitUntil(20.seconds)(byName(rt, "kill-a").map(n => NodeLifecycle.Terminal.contains(n.status)))
       done <- byName(rt, "kill-a")
-      imms <- recordedImmediate(recorded)
+      // 批 4：显式等批 flush（见 awaitDelivery）——投递是异步腿，读一次即红；判据本体逐字不变
+      imms <- awaitDelivery(recorded, "[Node 'kill-a' failed]")
       ledgerLeft <- BgTaskRegistry.drainFailures(nodeSid)
       _ <- system.stopAll.handleErrorWith(_ => IO.unit)
     yield
@@ -591,7 +593,8 @@ class NodeBgCompletionGateSpec extends CatsEffectSuite:
       waiting <- BgTaskRegistry.waitingFor(nodeSid)
       _ <- waitUntil(20.seconds)(byName(rt, "sealed-a").map(n => NodeLifecycle.Terminal.contains(n.status)))
       done <- byName(rt, "sealed-a")
-      imms <- recordedImmediate(recorded)
+      // 批 4：显式等批 flush（见 awaitDelivery）——同 G1/G2/G4；等不到即红（判据本体逐字不变）
+      imms <- awaitDelivery(recorded, "[Node 'sealed-a' completed]")
       events <- readEvents(ws)
       jobs <- llm.jobIds.get
       _ <- jobs.traverse_(BgTaskRegistry.unregister).attempt.void
