@@ -11,14 +11,16 @@ import munit.FunSuite
  * 自身面不受影响）——本集彼时恰十三件。
  * 【2026-09-06 TaskList 批增补】+TaskList（作者 00:07 提议 + 00:11 首期无前端
  * 拍板：任务=快变状态出记忆、入 tasks.json 运行时数据层）——本集恰十四件（史实，
- * 时点 2026-09-06；当前/终态 = 15，作者 2026-09-14 拍板）。
+ * 时点 2026-09-06；当前 = 13，2026-09-16 18:41 作者令：root 面 −Glob −Grep）。
  * 本文件原为 13:11「基础六件补齐」spec（nebula-toolface@21bc2e74 四件 → 13:11
  * 补齐六件），随 23:34 裁定同点改写断言语义。
  *
- * - ① 读三件 ⊆ Nebula 机制集（fixedToolsFor 静态集 + buildAllowedToolSet
- *   交付面双层）∧ Bash/Write/Edit ∉ Nebula 集 + TaskList ∈ Nebula 集 +
- *   件数计数（史实 2026-09-06 时点恰十四件，当前/终态 = 15）——本文件即变异验红锚
- *   点：机制集加回写手或 NodeList 任一件
+ * - ① 读一件（Read）⊆ Nebula 机制集（fixedToolsFor 静态集 + buildAllowedToolSet
+ *   交付面双层）∧ Glob/Grep ∉ Nebula 集（**2026-09-16 18:41 作者令：root 面摘除
+ *   Glob/Grep；取代 0913「Glob/Grep 永久保留」旧裁定——仅 root 面，分发器/节点面
+ *   不变**）∧ Bash/Write/Edit ∉ Nebula 集 + TaskList ∈ Nebula 集 +
+ *   件数计数（史实 2026-09-06 时点恰十四件，当前 = 13）——本文件即变异验红锚
+ *   点：机制集加回写手/NodeList/Glob/Grep 任一件
  *   （或摘掉 TaskList、或计数漂移）即红。
  * - ② 六件基础 ⊆ general 机制集（GeneralFixedTools = BaseTools +
  *   AskUserQuestion 恰七件；2026-09-08 作者修订恢复 AskUser，D6 批D1；
@@ -28,8 +30,8 @@ import munit.FunSuite
  * - ③（已删除，注明缘由）原「Write/Edit 真工具调用 × Nebula 会话写根」联合
  *   语义用例的授能前提（Nebula 携带 Write/Edit）已被 23:34 裁定消灭——
  *   Nebula 不再是 Write/Edit 授能身份，沙箱写根闸语义由 SandboxSpec 既有
- *   覆盖（写根放行/SANDBOX_DENIED 闸层断言），读三件缺省根语义由
- *   AgentConvergenceSpec §C.5 Glob/Grep 用例覆盖，本文件不再重复。
+ *   覆盖（写根放行/SANDBOX_DENIED 闸层断言），读面缺省根语义由
+ *   AgentConvergenceSpec 用例覆盖，本文件不再重复。
  */
 class NebulaSixBaseToolsSpec extends FunSuite:
 
@@ -40,16 +42,21 @@ class NebulaSixBaseToolsSpec extends FunSuite:
   private def mkDef(name: String, tools: List[String] = Nil): AgentDef =
     AgentDef(name = name, description = "", tools = tools)
 
-  // ===== ① 读三件 ⊆ Nebula 机制集 ∧ 零写手（变异验红锚点）=====
+  // ===== ① 读一件 ⊆ Nebula 机制集 ∧ Glob/Grep ∅ ∧ 零写手（变异验红锚点）=====
 
-  test("① 读三件 ⊆ Nebula 机制集（静态集+交付面双层）∧ Bash/Write/Edit 均不在 ∧ TaskList 在——加回任一写手或 NodeList、摘掉 TaskList 即红"):
+  test("① 读一件 ⊆ Nebula 机制集（静态集+交付面双层）∧ Glob/Grep 均不在（2026-09-16 18:41 作者令）∧ Bash/Write/Edit 均不在 ∧ TaskList 在——加回任一写手或 Glob/Grep/NodeList、摘掉 TaskList 即红"):
     val six = AgentCore.BaseTools
     assert(six == Set("Read", "Write", "Edit", "Glob", "Grep", "Bash"),
-      "前置：BaseTools 即基础六件（全体默认不变，Nebula 例外）")
+      "前置：BaseTools 即基础六件（全体默认不变，Nebula 例外）——2026-09-16 令只动 root 面，本行即反向钉")
     val fixed = AgentCore.fixedToolsFor(mkDef("Nebula"))
-    Set("Read", "Glob", "Grep").foreach { t =>
-      assert(fixed.contains(t), s"Nebula 机制集缺读三件之一: $t")
+    Set("Read").foreach { t =>
+      assert(fixed.contains(t), s"Nebula 机制集缺读件: $t")
     }
+    // 钉死断言（2026-09-16 18:41 作者令：root 面摘除 Glob/Grep；取代 0913
+    // 「Glob/Grep 永久保留」旧裁定——仅 root 面。分发器/节点面不变，反向钉见
+    // ②与 AgentConvergenceSpec/Phase2dToolRefactorSpec 的 dispatcher/general 断言）
+    assert(!fixed.contains("Glob"), "Nebula 机制集不含 Glob（2026-09-16 18:41 令——变异验红锚：加回即红）")
+    assert(!fixed.contains("Grep"), "Nebula 机制集不含 Grep（2026-09-16 18:41 令——变异验红锚：加回即红）")
     // 钉死断言（2026-09-05 23:34 作者裁定）：Nebula 机制集不含 Bash、不含
     // Write、不含 Edit——变异验红锚
     assert(!fixed.contains("Bash"), "Nebula 机制集不含 Bash（23:34 裁定：回归纯编排）")
@@ -61,10 +68,13 @@ class NebulaSixBaseToolsSpec extends FunSuite:
     // 钉死断言（2026-09-06 TaskList 批）：TaskList ∈ Nebula 机制集——
     // 快变状态出记忆的专属编排件（摘掉或改名即红）
     assert(fixed.contains("TaskList"), "Nebula 机制集含 TaskList（TaskList 批 +1）")
-    // 交付面（buildAllowedToolSet，注册表过滤后）同样读三件在、写手零、TaskList 在
+    // 交付面（buildAllowedToolSet，注册表过滤后）同样读一件在、Glob/Grep 零、写手零、TaskList 在
     val delivered = CoreProbe.allowed(mkDef("Nebula"))
-    Set("Read", "Glob", "Grep").foreach { t =>
-      assert(delivered.contains(t), s"Nebula 交付面缺读三件之一: $t")
+    Set("Read").foreach { t =>
+      assert(delivered.contains(t), s"Nebula 交付面缺读件: $t")
+    }
+    Set("Glob", "Grep").foreach { t =>
+      assert(!delivered.contains(t), s"Nebula 交付面不得含搜索件（2026-09-16 18:41 令）: $t")
     }
     Set("Bash", "Write", "Edit").foreach { t =>
       assert(!delivered.contains(t), s"Nebula 交付面不得含写手三件之一: $t")
@@ -72,11 +82,15 @@ class NebulaSixBaseToolsSpec extends FunSuite:
     assert(!delivered.contains("NodeList"), "Nebula 交付面零 NodeList（00:48 裁定摘除）")
     assert(delivered.contains("TaskList"), "Nebula 交付面含 TaskList（注册层已挂）")
     // 件数以单点常量 AgentCore.NebulaOrchestrationToolsExpectedSize 为准：
-    // 15 = 终态（作者 2026-09-14 拍板）；沿革（史实）：16 经 #145 附件腿批
-    // −TransferFile 退役（2026-09-14）⇒ 15。⑩-9 的「终态待定」悬置口径已被本次
-    // 拍板取代——归档，不得重提。
+    // 13（2026-09-16 18:41 作者令：root 面 −Glob −Grep）；沿革（史实）：16 经
+    // #145 附件腿批 −TransferFile 退役（2026-09-14）⇒ 15，再经本令 −2 ⇒ 13。
+    // 2026-09-14「终态 = 15，已定」口径已被本令取代 ⇒ provisional/存档。
+    // ⑩-9 的「终态待定」悬置口径已被 2026-09-14 拍板取代——归档，不得重提。
     assertEquals(fixed.size, AgentCore.NebulaOrchestrationToolsExpectedSize,
-      "Nebula 机制集件数 == 单点常量（不得各处写裸数字；在飞 15 = 终态，作者 2026-09-14 拍板）")
+      "Nebula 机制集件数 == 单点常量（不得各处写裸数字；在飞 13 = 2026-09-16 18:41 令后实测值）")
+    // 件数单点常量本身也对齐（防「常量漂移而集合未动」类假绿）
+    assertEquals(AgentCore.NebulaOrchestrationTools.size, 13,
+      "NebulaOrchestrationTools 实测恰 13 件（2026-09-16 18:41 作者令；变异验红锚：加回 Glob/Grep 即红）")
 
   // ===== ② 六件基础 ⊆ general 机制集（回归钉死）=====
 

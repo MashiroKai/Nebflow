@@ -13,7 +13,7 @@ import nebflow.agent.AgentCore
  *  2. Nebula 固定面携带 Card（NebulaOrchestrationTools 成员之一——2026-09-05
  *     23:34 作者裁定 Nebula 回归纯编排：Bash/Write/Edit 移除后；2026-09-06
  *     00:48 裁定再摘 NodeList；2026-09-06 TaskList 批 +TaskList 后恰十四件（史实
- *     时点）；当前/终态 = 15，作者 2026-09-14 拍板）
+ *     时点）；当前 = 13，2026-09-16 18:41 作者令：root 面 −Glob −Grep 后值）
  *  3. dispatcher / general / legacy team / legacy flow / catch-all 均不授 Card
  *     （Card 是 Nebula 专属授能；org.nebflow/tools 插件白名单不含 Card，
  *     BuiltinToolWhitelist 断言钉死插件通道）
