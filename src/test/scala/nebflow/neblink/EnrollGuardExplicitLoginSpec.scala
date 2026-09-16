@@ -120,8 +120,23 @@ class EnrollGuardExplicitLoginSpec extends FunSuite:
     }.map { out =>
       assertEquals(out, Right("tok-explicit"), "the explicit login must be released and persisted")
     }.unsafeRunSync()
+    // kaiauth 修法批 ②（2026-09-16）：落地面改判 —— **权威写面**是 `config.json` 的
+    // `neblinkServer.deviceToken`（出站点实际发送的那一份），`neblink/device.json` 侧
+    // **停写**该字段（见 `DeviceCredential` 的 DEPRECATED 注记）。旧断言
+    // （`cred.map(_.deviceToken) == Some("tok-explicit")`）钉的正是被移除的那份死副本；
+    // 新断言改读出站点 + 断言盘上不含副本 ⇒ 覆盖面更宽（旧断言只证副本存在）。
+    val cfg = NeblinkConfig.load.unsafeRunSync()
+    assertEquals(
+      cfg.neblinkServer.flatMap(_.deviceToken),
+      Some("tok-explicit"),
+      "the authoritative outbound source (config.json) must carry the token"
+    )
     val cred = DeviceCredential.load.unsafeRunSync()
-    assertEquals(cred.map(_.deviceToken), Some("tok-explicit"))
+    assertEquals(cred.map(_.networkId), Some("net-123"), "the identity face must still land")
+    assert(
+      !os.read(os.Path(tmpDir, os.pwd) / "neblink" / "device.json").contains("\"deviceToken\""),
+      "the retired deviceToken copy must not be written into neblink/device.json"
+    )
   }
 
   // ── ④ 停摆解除只挂在显式路径 ─────────────────────────────

@@ -15,8 +15,16 @@ import nebflow.core.{CredentialFileAcl, NebflowLogger, PathUtil}
  *
  * Produced by pairing-code enrollment (`POST /api/device/enroll`), the
  * device flow, or the Logto AC+PKCE callback. The raw `deviceToken` is the
- * secret; only its SHA-256 hash is stored on the server, so this file is the
- * only place the live credential exists on the device.
+ * secret; only its SHA-256 hash is stored on the server.
+ *
+ * 🔴 **本文件不是出站凭据的来源**（kaiauth 修法批 ②，2026-09-16 作者「治本」已批；
+ * 诊断报告 §2/§5）：出站 `/api/device/session` 发的那一枚 `deviceToken` **只**来自
+ * `<dataRoot>/neblink/config.json` 的 `neblinkServer.deviceToken`
+ * （`NeblinkClient` 构造参 ← `NeblinkConfig.load`），本文件的 `deviceToken` 字段
+ * **历史上一度**被当作第二份副本写入，**零读点**（4 个 `DeviceCredential.load` 调用
+ * 面都只取 `logto` 块）⇒ 写它等于没写，2026-09-16 的排障正被这份死副本误导。
+ * 本批起**写侧停写**该字段（见 [[DeviceCredential]] 的 DEPRECATED 注记），本文件
+ * 只承载 `logto` 块 + 身份面字段（`serverUrl` / `networkId` / `deviceId`）。
  *
  * `logto` (stage 2, 2026-08-28): the provider-side login credential carried
  * in this file. Since O5 (2026-09-11) the authorize request no longer asks
@@ -31,6 +39,20 @@ case class DeviceCredential(
   serverUrl: String,
   networkId: String,
   deviceId: String,
+  /** ⚠️ **DEPRECATED（注释级 · 2026-09-16 kaiauth 修法批 ②）—— 本字段非出站来源，
+   * 仅为历史残留。**
+   *
+   *   - **写面**：本类编码器自本批起**不再写出**该键（新旧写入都不含它）；
+   *     出站 `deviceToken` 的**唯一权威写面** = `neblink/config.json` 的
+   *     `neblinkServer.deviceToken`（由 `NeblinkEnrollment.persist` /
+   *     `RestApiRoutes` 的 enroll 路径经 `ms.updateConfig` 写）。
+   *   - **读面**：为**零删除纪律（迁移式）**而保留 —— 旧文件（含该键）照旧可解码，
+   *     值在读取时**仅忽略**（[[DeviceCredential.load]] 会打**一次** WARN）；
+   *     键缺席（新写入形态）也照旧可解码。**没有任何出站消费者读它**。
+   *   - 🔴 刻意**不**加 `@deprecated` 注解：本仓 `scalacOptions` 带
+   *     `-Xfatal-warnings`，注解会把既有构造点/测试变成编译错误（= 变相删字段，
+   *     违反零删除纪律）⇒ deprecated 语义落在**注释层**（作者口径「注释级」）。
+   *   - 旧文件里的该键**不清洗**（本批不碰）；清理另列作者面。 */
   deviceToken: String,
   logto: Option[LogtoRefresh] = None
 )
@@ -116,13 +138,21 @@ object LogtoRefresh:
 object DeviceCredential:
   /** Encoder omits the `logto` block when absent (clean legacy-shape files).
     * Post-O5 the block is written for identity-only credentials too (id_token
-    * present, refresh token absent) — see [[LogtoRefresh]]. */
+    * present, refresh token absent) — see [[LogtoRefresh]].
+    *
+    * 🔴 **本批起也省略 `deviceToken`**（kaiauth 修法批 ②，2026-09-16）：让「写侧
+    * 单源化」在**编码器**这一层结构性成立 —— 不论哪个调用面构造 `DeviceCredential`
+    * （`NeblinkEnrollment.persist`、`RestApiRoutes` 的配对码 enroll、测试），
+    * 落盘结果都不再含该键 ⇒ 「文件里有第二份凭据」这一误导形态**从机制上不可能**
+    * 复现。出站凭据的唯一权威写面 = `neblink/config.json`。
+    *
+    * 🔴 这是「停写」而**不是**「删字段」（零删除纪律）：字段仍在类上（旧文件的解码
+    * 目标）、旧文件照旧可解码；只有**写出去**的 JSON 不含它。 */
   given Encoder[DeviceCredential] = Encoder.instance { c =>
     val base = JsonObject(
       "serverUrl" -> c.serverUrl.asJson,
       "networkId" -> c.networkId.asJson,
-      "deviceId" -> c.deviceId.asJson,
-      "deviceToken" -> c.deviceToken.asJson
+      "deviceId" -> c.deviceId.asJson
     )
     Json.fromJsonObject(
       c.logto.fold(base)(v => base.add("logto", v.asJson))
@@ -133,27 +163,62 @@ object DeviceCredential:
     * information-free block away: a `logto` object carrying neither a refresh
     * token nor an id_token stores nothing, and keeping it would make
     * `logto.isDefined` a false "there is a stored credential" signal for every
-    * reader (status identity, logout hint, silent re-login). */
+    * reader (status identity, logout hint, silent re-login).
+    *
+    * kaiauth 修法批 ② 配套（2026-09-16）：`deviceToken` 改为**可选读**
+    * （缺席 ⇒ 空串）—— 两个方向都必须成立：旧文件（含该键，pre-本批写入）照旧解码
+    * （**向后兼容**，这是硬要求），新文件（不含该键）也必须能解码回来（否则
+    * 本批自己写的文件自己读不了 ⇒ `load` 恒 None ⇒ 身份面/refresh 腿全断）。 */
   given Decoder[DeviceCredential] = Decoder.instance { c =>
     for
       serverUrl <- c.downField("serverUrl").as[String]
       networkId <- c.downField("networkId").as[String]
       deviceId <- c.downField("deviceId").as[String]
-      deviceToken <- c.downField("deviceToken").as[String]
+      deviceToken <- c.downField("deviceToken").as[Option[String]].map(_.getOrElse(""))
       logto <- c.downField("logto").as[Option[LogtoRefresh]]
     yield DeviceCredential(serverUrl, networkId, deviceId, deviceToken, logto.filter(_.hasContent))
   }
 
   private val log = NebflowLogger.forName("nebflow.neblink.devicecred")
 
+  /** 「旧文件仍带被停写字段」的**一次**告警闩（作者口径「必要时一次 WARN」：
+    * 一次就够 —— 排障人拿到的是一条可 grep 的线索，不是每拍一行的噪音）。
+    * 计数而非布尔：测试面需要「恰好一次」这个可二值读的读数。 */
+  private val legacyTokenWarns = new java.util.concurrent.atomic.AtomicInteger(0)
+
+  /** 观测面（测试用）：本 JVM 内该 WARN 已发出的次数（设计上 ≤ 1）。 */
+  private[neblink] def legacyTokenWarnCount: Int = legacyTokenWarns.get()
+
+  /** 测试隔离：重开告警闩（跨 suite 共享 JVM，否则第二个 suite 观测不到 WARN）。 */
+  private[neblink] def resetLegacyTokenWarnForTest(): Unit = legacyTokenWarns.set(0)
+
   // def, not val: PathUtil.dataRoot is redirectable (setDataRoot); a val would
   // freeze the path at object-init and break per-test data roots (f1cd3709 rule).
   private def credPath = PathUtil.dataRoot / "neblink" / "device.json"
 
+  /** 读盘 + **只忽略**被停写的 `deviceToken`（值既不采用、也不清洗）。
+    *
+    * 旧文件（本批之前写入的形态）带该键 ⇒ 打一次 WARN（可 grep 归因），其余一切
+    * 照旧：返回值、`logto` 块、身份字段、ACL 均不变。 */
   def load: IO[Option[DeviceCredential]] =
     IO.blocking {
       if os.exists(credPath) then decode[DeviceCredential](os.read(credPath)).toOption
       else None
+    }.flatTap {
+      case Some(cred) if cred.deviceToken.nonEmpty => warnLegacyTokenOnce
+      case _                                       => IO.unit
+    }
+
+  private def warnLegacyTokenOnce: IO[Unit] =
+    // 计数 = **已发出的 WARN 次数**（0→1 只会成功一次），不是 load 次数。
+    IO(legacyTokenWarns.compareAndSet(0, 1)).flatMap { first =>
+      if first then
+        log.warn(
+          "device.json still carries the deprecated `deviceToken` field — it is NOT the outbound " +
+            "credential source (neblink/config.json is, see NeblinkClient) and its value is " +
+            "ignored on read; nothing is deleted (migration-style), cleanup is a separate batch"
+        )
+      else IO.unit
     }
 
   def save(cred: DeviceCredential): IO[Unit] =

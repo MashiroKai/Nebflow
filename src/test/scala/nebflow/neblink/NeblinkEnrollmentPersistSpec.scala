@@ -191,7 +191,19 @@ class NeblinkEnrollmentPersistSpec extends FunSuite:
     }.unsafeRunSync()
 
     val cred = persistedCredential
-    assertEquals(cred.deviceToken, "tok-device-flow")
+    // kaiauth 修法批 ②（2026-09-16）：`deviceToken` 已**停写**本文件（写侧单源化 ⇒
+    // 唯一权威来源 = `config.json`，见 `DeviceCredential` 的 DEPRECATED 注记）。
+    // 旧断言（`cred.deviceToken == "tok-device-flow"`）钉的正是被移除的那份死副本，
+    // 故迁移为「权威面读得到 + 本文件不再携带副本」——两向都比旧断言更机械。
+    assertEquals(
+      configOnDisk.hcursor.downField("neblinkServer").downField("deviceToken").as[String].toOption,
+      Some("tok-device-flow"),
+      "the authoritative outbound source (config.json) must carry the fresh token"
+    )
+    assert(
+      !os.read(deviceCredPath).contains("\"deviceToken\""),
+      "the retired deviceToken copy must not be written into neblink/device.json"
+    )
     assertEquals(cred.logto.flatMap(_.idToken), Some("legacy-id"), "stored identity was wiped")
     // 显式取舍（见批结果）：存量 pre-O5 refresh 兜底不因「新登录没带刷新令牌」被删。
     assertEquals(cred.logto.map(_.refreshToken), Some("legacy-refresh"))
