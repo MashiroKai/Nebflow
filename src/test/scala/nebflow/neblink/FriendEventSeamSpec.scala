@@ -239,7 +239,11 @@ class FriendEventSeamSpec extends FunSuite:
       ord <- order.get
     yield (unread, pulled, ord)
     val (unread, pulled, ord) = prog.unsafeRunSync()
-    assertEquals(ord, List("broadcast", "pull"), "广播异常被吞，流程继续到补拉")
+    // 判据更新（2026-09-16 specdrift 批 2 · C05；同 spec 上一条用例 `:214-215` 已是新口径）：
+    // 批 A「拉取即派发」后**补拉自身也会广播回放帧** ⇒ 时间线末尾多一条 "broadcast"。
+    // K-1 的判据是「**事件帧**的广播先于补拉」⇒ 取前两项为准（第 3 项按定义只能在补拉之后）。
+    assertEquals(ord, List("broadcast", "pull", "broadcast"), "广播异常被吞，流程继续到补拉（末项 = 补拉回放帧）")
+    assertEquals(ord.take(2), List("broadcast", "pull"), "K-1 本判据：事件帧广播先于补拉（逐字与 `:214-215` 同口径）")
     assertEquals(pulled.map(_._1), List("c-k1e"), "广播异常绝不得吃掉补拉（修前的落点，现由顺序保证）")
     assertEquals(unread.get("c-k1e"), Some(1))
   }
