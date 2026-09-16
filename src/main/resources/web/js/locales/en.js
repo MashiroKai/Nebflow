@@ -329,6 +329,33 @@ export default {
   'messages.loginRequired': 'Log in to your nebflow account to use messages and contacts',
   'login.popupBlocked': 'Popup blocked - allow popups and retry',
   'login.openPage': 'Open login page',
+  // Login entry / login panel (2026-09-16 login-entry batch): the panel strings
+  // used to be hard-coded Chinese literals in activityBar.js's injected style
+  // family; this batch moves them into i18n (zh/en paired, no dead keys).
+  'login.title': 'Sign in to nebflow',
+  'login.starting': 'Starting login…',
+  'login.hintBrowser': 'Sign in to your nebflow account in the browser to connect this device',
+  'login.hintAuthorize': 'Complete authorization in the browser to connect this device',
+  'login.reopenAuthPage': 'Reopen the login page',
+  'login.openAuthPage': 'Open authorization page',
+  'login.switchAccount': 'Use another account',
+  'login.reopenHint': "Didn't see the login page? Reopen it",
+  'login.deviceCodeCaption': 'Authorization code',
+  'login.waitingPopupOpened': 'Login page opened in a new tab — waiting for completion…',
+  'login.waiting': 'Waiting for login to complete…',
+  'login.waitingAuthorize': 'Waiting for authorization…',
+  'login.retry': 'Retry',
+  'login.failed': 'Login failed',
+  'login.success': '✓ Connected — this device joined the network',
+  // Flow-failure strings surfaced inside the panel (source = neblink.js PKCE /
+  // device-flow failure paths, formerly Chinese literals that leaked into the
+  // English UI; only the string source changes, no flow semantics).
+  'login.startFailed': 'Could not start login',
+  'login.timeout': 'Login timed out — please retry',
+  'login.networkError': 'Network error: {msg}',
+  'login.deviceStartFailed': 'Could not start the device flow',
+  'login.deviceTimeout': 'Authorization timed out — please retry',
+  'login.deviceFailed': 'Authorization failed',
   'messages.login': 'Log in',
   'messages.reconnecting': 'Connection lost, reconnecting…',
   'messages.networkError': 'Network error — please check your connection',
@@ -1251,6 +1278,10 @@ export default {
 
   // === UI remnant localization (activity bar / panel titles / empty states) ===
   'activity.login': 'Login',
+  // The two logged-in hover strings (2026-09-16 login-entry batch): renderAvatar
+  // used to write them as Chinese literals, clobbering the i18n'd activity.login.
+  'activity.profile': 'Profile',
+  'activity.pairing': 'Pairing…',
   'activity.usage': 'Usage Dashboard',
   'activity.agents': 'Agents',
   // 2026-09-04 (part B): agents entry becomes the Plugins page (en/zh paired)

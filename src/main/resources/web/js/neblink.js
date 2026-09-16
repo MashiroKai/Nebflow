@@ -427,7 +427,7 @@ export async function startDeviceFlow() {
     headers: { 'Content-Type': 'application/json', 'Authorization': 'Bearer ' + getAuthToken() },
   });
   const data = await resp.json();
-  if (!resp.ok) throw new Error(data.error || '启动设备流程失败');
+  if (!resp.ok) throw new Error(data.error || t('login.deviceStartFailed'));
   return data;
 }
 
@@ -456,7 +456,7 @@ export function pollDeviceFlow(deviceCode, interval, expiresInSeconds, onSuccess
 
   const poll = async () => {
     if (Date.now() > deadline) {
-      fail('授权超时，请重试');
+      fail(t('login.deviceTimeout'));
       return;
     }
     try {
@@ -484,9 +484,9 @@ export function pollDeviceFlow(deviceCode, interval, expiresInSeconds, onSuccess
         return;
       }
       // Other error (expired, denied, etc.)
-      fail(data.error || '授权失败');
+      fail(data.error || t('login.deviceFailed'));
     } catch (e) {
-      fail('网络错误: ' + e.message);
+      fail(t('login.networkError', { msg: e.message }));
     }
   };
   _flowPollTimer = setTimeout(poll, interval * 1000);
@@ -537,7 +537,7 @@ export async function startPkceLogin(forceLogin = false) {
   let data = {};
   try { data = await resp.json(); } catch (_) { data = {}; }
   if (resp.status === 404 && data.error === 'logto-not-configured') return null;
-  if (!resp.ok || !data.authorizeUrl) throw new Error(data.error || '启动登录失败');
+  if (!resp.ok || !data.authorizeUrl) throw new Error(data.error || t('login.startFailed'));
   return data;
 }
 
@@ -562,7 +562,7 @@ export function pollPkceState(onSuccess, onError, intervalMs = 1200, timeoutMs =
 
   const poll = async () => {
     if (Date.now() > deadline) {
-      fail('登录超时，请重试');
+      fail(t('login.timeout'));
       return;
     }
     try {
@@ -571,7 +571,7 @@ export function pollPkceState(onSuccess, onError, intervalMs = 1200, timeoutMs =
       });
       const data = await resp.json();
       if (!resp.ok) {
-        fail(data.error || '登录失败');
+        fail(data.error || t('login.failed'));
         return;
       }
       if (data.status === 'success') {
@@ -585,13 +585,13 @@ export function pollPkceState(onSuccess, onError, intervalMs = 1200, timeoutMs =
         return;
       }
       if (data.status === 'error') {
-        fail(data.error || '登录失败');
+        fail(data.error || t('login.failed'));
         return;
       }
       // idle | pending - keep polling (idle is possible right after start).
       _pkcePollTimer = setTimeout(poll, intervalMs);
     } catch (e) {
-      fail('网络错误: ' + e.message);
+      fail(t('login.networkError', { msg: e.message }));
     }
   };
   _pkcePollTimer = setTimeout(poll, intervalMs);
