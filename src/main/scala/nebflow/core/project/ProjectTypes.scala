@@ -92,7 +92,11 @@ object NodeRoles:
   *
   * 消费面：节点 `result` 文本（`cancelled[source=engine|user]: reason=…`）、
   * `cancelled` 审计事件 summary、R1 回流通知文本——事后可区分「用户主动取消」
-  * 与「引擎误杀」，这是评估判据误伤率的前提。 */
+  * 与「引擎误杀」，这是评估判据误伤率的前提。
+  * **cancelsem 批 1（2026-09-17）起**三个新消费面判据同源 [[CancelSource.fromResult]]：
+  * R1 回流通知文本的 source 分流（`DispatchNotify.cancelledNotifyTaskText`）、
+  * R4 重新武装抑制（`NodeEngine.retryOrNotify`）、boot 清单 recommend
+  * （`BootWakeInventory.recommend`）——由节点自身 `result` 反解，禁二次派生。 */
 enum CancelSource:
   case Engine
   case User
@@ -115,6 +119,39 @@ object CancelSource:
   /** reason 文本 → 触发源分类（单点，R7）。 */
   def classify(reason: String): CancelSource =
     if reason.contains(StuckWatcherMarker) then CancelSource.Engine else CancelSource.User
+
+  /** 落盘键名（与 `NodeEngine.cancelNode` 的 R2 格式、本文件 [[fromResult]] 的解析、
+    * R1 回流通知文本 / boot 清单 recommend 的显示键**恒同源**——单点改名即全链同步）。 */
+  val SourceKey: String = "source"
+
+  /** **由节点自身 `result` 反解触发源**（cancelsem 批 1 · 消费面判据单点）。
+    *
+    * 唯一权威写点 = `NodeEngine.cancelNode`（`result = "cancelled[source=<code>]: reason=…"`，
+    * NodeEngine.scala:4668）⇒ 只读该前缀即可复原来源，**不新增 NodeDef 字段、不改
+    * `AgentEvent` 消息形态**（与 [[classify]] 的「由文本单点推导」同纪律，R7 工程判定）。
+    *
+    * 用途（判据恒同源，禁二次派生）：R4 的重新武装判定点
+    * （`NodeEngine.retryOrNotify`）、R1 回流通知文本的 source 分流
+    * （`DispatchNotify.cancelledNotifyTaskText`）、boot 清单 recommend
+    * （`BootWakeInventory.recommend`）。
+    *
+    * `None` 的三种形态（**不得当成 user**）：非取消终态、R2 落地前的旧数据
+    * （result 无取消前缀）、abandon 路径（`NodeTools.abandonNode` 不写 result）。
+    * 抑制面遇 `None` 保持现状（语义选择项，见批报告待拍板栏）。 */
+  def fromResult(result: Option[String]): Option[CancelSource] =
+    result.flatMap { r =>
+      val prefix = s"cancelled[$SourceKey="
+      if !r.startsWith(prefix) then None
+      else
+        val code = r.drop(prefix.length).takeWhile(_ != ']')
+        if code == EngineCode then Some(CancelSource.Engine)
+        else if code == UserCode then Some(CancelSource.User)
+        else None
+    }
+
+  /** 该 result 是否 = **用户（人/Agent）主动取消** —— R4 抑制面的唯一判据单点。 */
+  def isUserCancelled(result: Option[String]): Boolean =
+    fromResult(result).contains(CancelSource.User)
 
   /** 由桥的 `FailOutcome` 消息（形如 `cancelled: <reason>` / `cancelled by NodeCancel`）
     * 反解取消原因文本——桥只把原因拼进消息串，本函数是唯一还原点（R2：原因不再

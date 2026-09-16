@@ -223,6 +223,12 @@ object BootWakeInventory:
             .mkString(", ")
       val upGap = upIds.exists(id =>
         all.get(id).exists(u => NodeLifecycle.Terminal.contains(u.status) && u.status != NodeLifecycle.Completed))
+      // cancelsem 批 1（R4 · agent 面抑制）：本条目引用的槽位（in / deps / pendingSuccession）
+      // 里是否存在**用户主动取消**的节点——判据单点 CancelSource.isUserCancelled（由节点
+      // 自身 result 反解，与引擎侧 retryOrNotify 抑制、R1 通知文本分流同源）。
+      // 仅用于 recommend 分流（清单文本面）；**不**改 reasons/buckets/直方图（零膨胀）。
+      val userCancelSlot = upIds.exists(id =>
+        all.get(id).exists(u => u.status == NodeLifecycle.Cancelled && CancelSource.isUserCancelled(u.result)))
       val blockedFeedback = n.blockedFeedback
         .map(f => s" feedback=${oneLine(f.category + ": " + f.detail, 80)}")
         .getOrElse("")
@@ -243,7 +249,7 @@ object BootWakeInventory:
           destroyAt = n.destroyAt.map(d => s"${(nowMs - d) / 1000L}s-ago(+${(d - nowMs) / 1000L}s)").getOrElse("-"),
           taskFile = taskInfo,
           resultFile = resultInfo,
-          recommend = recommend(n, buckets.toList, upGap, resumeOk),
+          recommend = recommend(n, buckets.toList, upGap, resumeOk, userCancelSlot),
           detail = oneLine(
             s"${n.task.orElse(n.description).getOrElse("-")}$blockedFeedback", DetailCap)
         ))
@@ -285,10 +291,21 @@ object BootWakeInventory:
         (sid, state, resumable)
 
   /** 建议动作（决策仍归分发器/人；本字段是提示不是动作——零自动行为）。
-    * 取值口径对齐方案 §2 B 表输出形态：承接 | 改接 | 重激活 | 放弃 | 忽略。 */
-  private def recommend(n: NodeDef, buckets: List[String], upGap: Boolean, resumable: Boolean): String =
+    * 取值口径对齐方案 §2 B 表输出形态：承接 | 改接 | 重激活 | 放弃 | 忽略。
+    *
+    * **cancelsem 批 1（R4 · agent 面）**：`userCancelSlot`（本条目引用的槽位里有**用户
+    * 主动取消**的节点）⇒ **不得再建议「承接」**（承接 = 新建 `<原名>-retry` 之类重新派发
+    * 用户刚停下的工作）；改接/放弃照旧。权威判据见 `NodeEngine.retryOrNotify` 的引擎侧
+    * 抑制与 `DispatchNotify` 的 user 变体通知文本——三面同源同一条用户意图。
+    * 引擎发起取消（source=engine）/ source 不可判定（旧数据 / abandon 不写 result）
+    * ⇒ 保持既有建议逐字不变（语义选择项，见批报告待拍板栏）。 */
+  private def recommend(n: NodeDef, buckets: List[String], upGap: Boolean, resumable: Boolean,
+      userCancelSlot: Boolean = false): String =
     if buckets.contains(BucketBlocked) then
       "重激活|承接|改接|放弃 (blocked=需裁决, 永不自动重激活)"
+    else if userCancelSlot then
+      s"改接|放弃 (上游为用户主动取消 source=${CancelSource.UserCode} — ${DispatchNotify.NoReDispatchPhrase}/承接" +
+        (if upGap then "; 上游缺轨, 禁自动启动)" else "; 待承接槽位)")
     else if upGap then "改接|承接|放弃 (上游缺轨, 禁自动启动)"
     else if buckets.contains(BucketAwaitingHandover) then "承接(把新上游 append 进 in)|改接|放弃"
     else if buckets.contains(BucketDeadBarrier) then
