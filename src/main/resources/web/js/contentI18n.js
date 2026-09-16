@@ -4,7 +4,7 @@
 // ══ contenti18n batch, 2026-09-15 ══════════════════════════════════════════
 //
 // SCOPE = the default install set only — the `seed/manifest.json` items
-// (3 plugins + 4 agents + 1 project = 8 entries). Keys are `content.<kind>.<id>.<field>`
+// (3 plugins + 4 agents = 7 entries). Keys are `content.<kind>.<id>.<field>`
 // with kind ∈ plugin|agent|project and field ∈ name|desc; the values live in
 // the SAME dictionaries the rest of the UI uses (js/locales/en.js,
 // js/locales/zh-CN.js), so there is one resource layer, not two.
