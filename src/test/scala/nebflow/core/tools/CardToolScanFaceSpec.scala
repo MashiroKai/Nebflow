@@ -58,27 +58,38 @@ class CardToolScanFaceSpec extends FunSuite:
 
   // ── ① srcset ─────────────────────────────────────────────
 
-  test("srcset: each candidate URL is proxied on its own and its descriptor survives"):
+  test("srcset: each candidate URL is decided on its own and its descriptor survives"):
     withTempDir { dir =>
       val ok = write(dir.resolve("ok.png"), "one")
       val html =
         s"""<img srcset="${ok.toString} 1x, /tmp/cardscan-missing-2x.png 2x" sizes="100vw"/>"""
       val p = card(html)
-      assertEquals(count(p, "proxied"), 1, "the resolvable candidate is proxied")
+      assertEquals(count(p, "inlined"), 1, "the resolvable image candidate is embedded (imgfix batch)")
+      assertEquals(count(p, "proxied"), 0, "an embedded candidate needs no /api/nf-file URL")
       assertEquals(count(p, "failed"), 1, "the failing candidate is reported")
       assertEquals(reasonsOf(p), List("not-found"))
       assertEquals(refsOf(p), List("/tmp/cardscan-missing-2x.png"), "the warning carries the candidate URL, not the whole attribute")
-      assert(htmlOf(p).contains(s"/api/nf-file?path=${encode(ok.toString)}"), s"rewritten candidate: ${htmlOf(p)}")
+      assert(htmlOf(p).contains("""srcset="data:image/png;base64,"""), s"rewritten candidate: ${htmlOf(p)}")
       assert(htmlOf(p).contains("1x, /tmp/cardscan-missing-2x.png 2x"), s"descriptors must survive: ${htmlOf(p)}")
     }
 
-  test("srcset: a single candidate without descriptor is proxied"):
+  test("srcset: a single candidate without descriptor is embedded"):
     withTempDir { dir =>
       val ok = write(dir.resolve("only.png"), "one")
       val p = card(s"""<img srcset="${ok.toString}"/>""")
-      assertEquals(count(p, "proxied"), 1)
+      assertEquals(count(p, "inlined"), 1)
+      assertEquals(count(p, "proxied"), 0)
       assertEquals(warningsOf(p), Nil)
-      assertEquals(htmlOf(p), s"""<img srcset="/api/nf-file?path=${encode(ok.toString)}"/>""")
+      assert(htmlOf(p).startsWith("""<img srcset="data:image/png;base64,"""), htmlOf(p))
+    }
+
+  test("srcset: a candidate outside the inline policy (a stylesheet) keeps its proxy URL"):
+    withTempDir { dir =>
+      val css = write(dir.resolve("candidate.css"), "body{}")
+      val p = card(s"""<img srcset="${css.toString} 1x"/>""")
+      assertEquals(count(p, "proxied"), 1)
+      assertEquals(count(p, "inlined"), 0)
+      assertEquals(htmlOf(p), s"""<img srcset="/api/nf-file?path=${encode(css.toString)} 1x"/>""")
     }
 
   test("srcset: a value containing a data: URI is skipped whole (registered boundary)"):
@@ -95,12 +106,28 @@ class CardToolScanFaceSpec extends FunSuite:
 
   // ── ② CSS url() and @import ──────────────────────────────
 
-  test("CSS url() in a <style> block is proxied when the file exists"):
+  test("CSS url() in a <style> block embeds a small image (inline policy) instead of proxying it"):
+    // imgfix batch (2026-09-16): a resource face now PREFERS the embedded bytes
+    // when the file is inside `FileRefs`' inline policy — the reference leg
+    // needs a ticket the gateway's namespace judge may refuse, and a card's
+    // persistence then has to carry an expiring credential's path. The
+    // css-not-inlineable case right below pins the fallback.
     withTempDir { dir =>
       val ok = write(dir.resolve("bg.png"), "one")
       val p = card(s"""<style>.a{background:url(${ok.toString})}</style>""")
+      assertEquals(count(p, "inlined"), 1)
+      assertEquals(count(p, "proxied"), 0, "an embedded image never needs the /api/nf-file leg")
+      assert(htmlOf(p).startsWith("<style>.a{background:url(data:image/png;base64,"), htmlOf(p))
+      assert(!htmlOf(p).contains("/api/nf-file"), htmlOf(p))
+    }
+
+  test("CSS url() outside the inline policy (a stylesheet) is still proxied"):
+    withTempDir { dir =>
+      val css = write(dir.resolve("bg.css"), "body{}")
+      val p = card(s"""<style>.a{background:url(${css.toString})}</style>""")
       assertEquals(count(p, "proxied"), 1)
-      assertEquals(htmlOf(p), s"""<style>.a{background:url(/api/nf-file?path=${encode(ok.toString)})}</style>""")
+      assertEquals(count(p, "inlined"), 0)
+      assertEquals(htmlOf(p), s"""<style>.a{background:url(/api/nf-file?path=${encode(css.toString)})}</style>""")
     }
 
   test("CSS url() warns on a missing file (quotes preserved)"):
@@ -113,12 +140,37 @@ class CardToolScanFaceSpec extends FunSuite:
       "the raw value stays so the card still renders"
     )
 
-  test("CSS url() inside an inline style attribute is scanned too"):
+  test("CSS url() inside an inline style attribute is scanned too (and embeds a small image)"):
     withTempDir { dir =>
       val ok = write(dir.resolve("tile.png"), "one")
       val p = card(s"""<div style='background-image:url("${ok.toString}")'>x</div>""")
+      assertEquals(count(p, "inlined"), 1)
+      assert(
+        htmlOf(p).startsWith("""<div style='background-image:url("data:image/png;base64,"""),
+        htmlOf(p)
+      )
+    }
+
+  test("inline policy boundary: an image over 5MB keeps the /api/nf-file reference"):
+    withTempDir { dir =>
+      val big = dir.resolve("big.png")
+      Files.write(big, Array.fill(5 * 1024 * 1024 + 1)(0x44.toByte))
+      val p = card(s"""<img src="${big.toString}"/>""")
+      assertEquals(count(p, "proxied"), 1, "over the inline budget it must fall back to the proxy leg")
+      assertEquals(count(p, "inlined"), 0)
+      assertEquals(htmlOf(p), s"""<img src="/api/nf-file?path=${encode(big.toString)}"/>""")
+    }
+
+  test("navigation face: an `<a href>` to a local image stays a proxy URL, never a data: URI"):
+    // `<a href>` is the local-link router's input (`data-nf-local-link`); a
+    // data: URI there stops being a Canvas tab target. Only RESOURCE faces
+    // (`src=`, `srcset` candidates, CSS `url(...)`) embed.
+    withTempDir { dir =>
+      val ok = write(dir.resolve("shot.png"), "one")
+      val p = card(s"""<a href="${ok.toString}">shot</a>""")
       assertEquals(count(p, "proxied"), 1)
-      assertEquals(htmlOf(p), s"""<div style='background-image:url("/api/nf-file?path=${encode(ok.toString)}")'>x</div>""")
+      assertEquals(count(p, "inlined"), 0)
+      assertEquals(htmlOf(p), s"""<a href="/api/nf-file?path=${encode(ok.toString)}">shot</a>""")
     }
 
   test("bare @import warns on a missing stylesheet; the url() form is proxied"):
@@ -216,8 +268,15 @@ class CardToolScanFaceSpec extends FunSuite:
           s"""<style>@import "${css.toString}";.z{background:url(${img.toString})}</style>"""
       val p = card(html)
       assertEquals(warningsOf(p), Nil)
-      assertEquals(count(p, "proxied"), 5, "href + src + srcset candidate + bare @import + url()")
+      assertEquals(
+        count(p, "proxied"),
+        2,
+        "href stylesheet + bare @import (the two non-resource faces) keep the proxy URL"
+      )
+      assertEquals(count(p, "inlined"), 3, "src + srcset candidate + CSS url() embed the SAME image")
       assert(htmlOf(p).contains(" 2x"), "the srcset descriptor survives a multi-face rewrite")
+      assert(htmlOf(p).contains(s"""/api/nf-file?path=${encode(css.toString)}"""), htmlOf(p))
+      assert(htmlOf(p).contains("data:image/png;base64,"), "the image faces carry their bytes inline")
     }
 
   test("payload head contract preserved: fileRefs first, exempt is an added key only"):
@@ -229,3 +288,7 @@ class CardToolScanFaceSpec extends FunSuite:
     assertEquals(count(p, "failed"), 0)
     assertEquals(count(p, "omitted"), 0)
     assertEquals(count(p, "exempt"), 0)
+    // imgfix batch: `inlined` is ADDITIVE (image references embedded as data:
+    // URIs). Zero on a card with no local image — and never folded into
+    // `proxied`, so the two counters cannot mask each other.
+    assertEquals(count(p, "inlined"), 0)

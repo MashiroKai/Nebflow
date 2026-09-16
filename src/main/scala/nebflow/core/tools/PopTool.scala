@@ -26,6 +26,10 @@ import java.nio.file.{Files, Path, Paths}
  *
  * For binary files (images, PDFs, Office docs), only metadata is sent — the
  * frontend fetches the content via /api/nf-file, same as the file explorer.
+ * Exception (2026-09-16 imgfix batch): an image inside the shared inline policy
+ * (≤5MB, embeddable format) is embedded in the payload as a `data:` URI and the
+ * viewer renders it with no request — the ticket leg is only reached by images
+ * outside that policy.
  *
  * For HTTP/HTTPS URLs, the URL is sent directly — the frontend renders it
  * in an embedded iframe.
@@ -44,11 +48,10 @@ object PopTool extends Tool:
   /** Max text file size to send via WS (2 MB). Larger files are read by the frontend via /api/nf-file. */
   private val MaxTextSize = 2 * 1024 * 1024
 
-  /** Max single image size to embed as base64 data URI (5 MB). Larger images keep their original src. */
-  private val MaxEmbedImageSize = 5 * 1024 * 1024
-
-  /** Image extensions that can be embedded as data URIs in HTML. */
-  private val EmbeddableImageExtensions = Set("png", "jpg", "jpeg", "gif", "webp", "svg", "bmp")
+  // The inline policy (`MaxEmbedImageSize` = 5 MB, `EmbeddableImageExtensions`,
+  // `mimeFromExt`, `isInlineImage`, `readAsDataUri`) is ONE definition in
+  // `FileRefs` — Card embeds images on its card face with exactly the same
+  // rule, so the two faces cannot drift apart (imgfix batch, 2026-09-16).
 
   /** Matches the src attribute value of an <img> tag (single or double quoted). */
   private val ImgSrcPattern = """(?i)<img\b[^>]*?\bsrc\s*=\s*["']([^"']+)["']""".r
@@ -57,16 +60,6 @@ object PopTool extends Tool:
   // truth (F3): core/workspace/FileTypeRegistry — shared with the WS
   // readFile / pop.readFile routes. The local BinaryExtensions set and
   // detectItemType match were removed as duplicate #1/#2.
-
-  /** Map image file extension to MIME type. */
-  private def mimeFromExt(ext: String): String = ext.toLowerCase match
-    case "png"         => "image/png"
-    case "jpg" | "jpeg" => "image/jpeg"
-    case "gif"         => "image/gif"
-    case "webp"        => "image/webp"
-    case "svg"         => "image/svg+xml"
-    case "bmp"         => "image/bmp"
-    case _             => "application/octet-stream"
 
   /** Check if a src value is a remote/special URL that should not be embedded. */
   private def isRemoteOrSpecialUrl(src: String): Boolean =
@@ -150,24 +143,20 @@ object PopTool extends Tool:
               case RefDecision.Proxy(_) =>
                 // Servable — inline it when the iframe can be spared the fetch,
                 // else leave it for the Canvas viewer's /api/nf-file rewrite.
-                try
-                  val ext = fileExtension(p.toString)
-                  if EmbeddableImageExtensions.contains(ext) && Files.size(p) <= MaxEmbedImageSize then
-                    val b64 = java.util.Base64.getEncoder.encodeToString(Files.readAllBytes(p))
-                    inlined += 1
-                    Some(s"data:${mimeFromExt(ext)};base64,$b64")
-                  else
-                    deferred += 1
-                    None
-                catch
-                  case e: Exception =>
-                    rejects += RejectedRef(
-                      src,
-                      Some(describe(p)),
-                      FileRefFailure.Other,
-                      s"${e.getClass.getSimpleName}: ${Option(e.getMessage).getOrElse("")}"
-                    )
-                    None
+                // The rule itself is shared with Card (`FileRefs`); only the
+                // failure handling is Pop-specific: an unreadable file is still
+                // reported as `other`, a size/extension miss is `deferred`.
+                if isInlineImage(p) then
+                  readAsDataUri(p) match
+                    case Right(dataUri) =>
+                      inlined += 1
+                      Some(dataUri)
+                    case Left(detail) =>
+                      rejects += RejectedRef(src, Some(describe(p)), FileRefFailure.Other, detail)
+                      None
+                else
+                  deferred += 1
+                  None
               case other =>
                 record(other)
                 None
@@ -246,7 +235,7 @@ The Canvas tab supports the same file types as the file explorer. The tab title 
 
 ## Unresolvable image references
 
-Local `<img src>` values that exist, are embeddable image formats and are ≤5MB are inlined as base64 data URIs, so the Canvas iframe renders them with no extra request. Every local reference that could NOT be inlined is reported in this tool's result — `warnings` (`ref` → `resolvedPath` → `reason`: not-found / unresolvable / extension-not-allowed / size-exceeded / not-regular-file) plus a `fileRefs` counter line — and the same list is shown above the Canvas tab. References the Canvas can still serve through /api/nf-file (larger images, formats outside the inline set) are only counted (`fileRefs.deferred`); the app's own routes (`/js/…`, `/css/…`, `/assets/…`, `/logo.svg` …) are counted as `fileRefs.exempt`. Read `warnings` and fix the references before finishing.
+Local `<img src>` values that exist, are embeddable image formats and are ≤5MB are inlined as base64 data URIs, so the Canvas iframe renders them with no extra request. The same rule applies to an image you open DIRECTLY (`filePath` = a `png`/`jpg`/`jpeg`/`gif`/`webp`/`svg`/`bmp` ≤5MB): its bytes ride in the pop payload and the image viewer renders them with no request. Images outside that rule (larger than 5MB) and every non-image asset are fetched by the frontend through `/api/nf-file`, which needs a per-path ticket the gateway mints only for paths its credential-namespace policy serves — the data directory serves `projects/**`, `uploads/**`, `plots/**`, `workspace-items/**`, `voice-models/**` (so `${nebflow.core.PathUtil.dataRootRenderValue}/docs/**` is NOT served) and the project `.nebflow/` serves `evidence*/**`. To show such a file, copy it under `projects/**` first. Every local reference that could NOT be inlined is reported in this tool's result — `warnings` (`ref` → `resolvedPath` → `reason`: not-found / unresolvable / extension-not-allowed / size-exceeded / not-regular-file) plus a `fileRefs` counter line — and the same list is shown above the Canvas tab. References the Canvas can still serve through /api/nf-file (larger images, formats outside the inline set) are only counted (`fileRefs.deferred`); the app's own routes (`/js/…`, `/css/…`, `/assets/…`, `/logo.svg` …) are counted as `fileRefs.exempt`. Read `warnings` and fix the references before finishing.
 
 ## Parameters
 
@@ -370,6 +359,21 @@ Example: {"filePath": "https://example.com"}"""
                 else None
               val content = refs.map(_.html).getOrElse(rawContent)
 
+              // Directly-opened image (2026-09-16 imgfix batch): the Canvas image
+              // viewer used to fetch the bytes through /api/nf-file, whose
+              // per-path ticket the gateway mints only for paths its credential-
+              // namespace policy serves — a PNG under `<dataRoot>/docs/**` was
+              // refused, so the viewer got a credential-free URL, a 401, and
+              // showed its "File may be corrupted or not a valid image format."
+              // panel (author report: sha256 f94d0e04…, 512479 B, file intact).
+              // The bytes ride in the payload instead (same rule as the HTML
+              // `<img>` pass above, one definition in `FileRefs`), and the
+              // viewer's existing `objectUrl` leg renders them with NO request.
+              // An image outside the inline policy keeps metadata-only and is
+              // still fetched through the ticket leg.
+              val inlineImage: Option[String] =
+                if entry.binary && isInlineImage(path) then readAsDataUri(path).toOption else None
+
               // The refs keys are added only for HTML items (the only ones the
               // pass runs on) — a markdown Pop keeps its item shape unchanged.
               val refFields: List[(String, Json)] = refs match
@@ -393,7 +397,7 @@ Example: {"filePath": "https://example.com"}"""
                     "absPath" -> path.toString.asJson,
                     "size" -> size.asJson,
                     "pinned" -> true.asJson
-                  ) ++ refFields
+                  ) ++ inlineImage.map(u => "objectUrl" -> u.asJson).toList ++ refFields
                 )
               )
 

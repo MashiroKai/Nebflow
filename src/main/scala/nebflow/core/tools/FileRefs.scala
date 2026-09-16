@@ -330,6 +330,68 @@ private[tools] object FileRefs:
             )
           )
 
+  // ── inline policy (shared by Card and Pop) ────────────────────────────────
+  //
+  // 2026-09-16 (imgfix batch): the bytes of a small local image are embedded
+  // INTO the payload (a `data:` URI) instead of being referenced by an
+  // `/api/nf-file?path=…` URL that the browser must fetch with a ticket.
+  //
+  // Why the reference leg is not enough (author case, both faces):
+  //   - a ticket is minted only for paths the read endpoint's namespace judge
+  //     allows (`WebSocketRoutes.nfCredentialDeny`): the data root serves ONLY
+  //     `projects/uploads/plots/workspace-items/voice-models`, so a screenshot
+  //     under `<dataRoot>/docs/**` is refused (`credential-path`) → no ticket
+  //     → the credential-free URL answers 401 → placeholder / error panel;
+  //   - the URL carries its path percent-encoded by the TOOL (form encoding,
+  //     `+` for space) while the render-time candidate scanner decoded with
+  //     `decodeURIComponent` (no `+` folding) → the mint asked for a path that
+  //     does not exist → no ticket → 401 again.
+  // Neither cause is fixable on the read endpoint without widening its
+  // credential-namespace policy (forbidden — a fix may not trade permission
+  // for a green render). Embedding the bytes removes the request from the
+  // critical path for images altogether, which is also what makes a card
+  // render on replay (the data URI is persisted with the markup).
+  //
+  // The rule is ONE definition for both tools — Card's card-iframe face (every
+  // resource face: `src=`, `srcset` candidates, CSS `url(...)`) and Pop's HTML
+  // `<img src>` face plus Pop's directly-opened-image face.
+
+  /** Max single image size to embed as a base64 data URI (5 MB). Larger images
+    * keep the `/api/nf-file` reference and are reported as `deferred`/`proxied`. */
+  val MaxEmbedImageSize: Long = 5L * 1024 * 1024
+
+  /** Image extensions that can be embedded as data URIs. */
+  val EmbeddableImageExtensions: Set[String] = Set("png", "jpg", "jpeg", "gif", "webp", "svg", "bmp")
+
+  /** Map an image extension to its MIME type (the inline set only). */
+  def mimeFromExt(ext: String): String = ext.toLowerCase match
+    case "png"          => "image/png"
+    case "jpg" | "jpeg" => "image/jpeg"
+    case "gif"          => "image/gif"
+    case "webp"         => "image/webp"
+    case "svg"          => "image/svg+xml"
+    case "bmp"          => "image/bmp"
+    case _              => "application/octet-stream"
+
+  /** Pure size/extension verdict for the inline policy (no I/O side effect
+    * beyond a `stat`; an unreadable path answers `false`). */
+  def isInlineImage(path: Path): Boolean =
+    val ext = fileExtension(path.toString)
+    EmbeddableImageExtensions.contains(ext) && {
+      try Files.size(path) <= MaxEmbedImageSize
+      catch case _: Exception => false
+    }
+
+  /** `Right("data:<mime>;base64,…")` for an inlineable image, `Left(why)` when
+    * the bytes could not be read (the caller decides: Card falls back to the
+    * proxy URL, Pop reports the same `other` rejection it used to). */
+  def readAsDataUri(path: Path): Either[String, String] =
+    try
+      val ext = fileExtension(path.toString)
+      val b64 = java.util.Base64.getEncoder.encodeToString(Files.readAllBytes(path))
+      Right(s"data:${mimeFromExt(ext)};base64,$b64")
+    catch case e: Exception => Left(s"${e.getClass.getSimpleName}: ${Option(e.getMessage).getOrElse("")}")
+
   // ── warning + counter payload shapes (shared by Card and Pop) ─────────────
 
   /** Distinct rejected references listed in a tool result; further ones are

@@ -59,13 +59,25 @@ object CardTool extends Tool:
   private val ImportBareRegex = """(?i)@import\s+(['"])([^'"]+)\1""".r
 
   /** One card's local-file pass: rewritten HTML plus every rejected reference
-    *  and the count of suppressed app-route exemptions. */
-  private[tools] case class EmbedOutcome(html: String, proxied: Int, rejects: List[RejectedRef], exempt: Int)
+    *  and the count of suppressed app-route exemptions.
+    *
+    *  `inlined` (2026-09-16 imgfix batch) counts the references rewritten to a
+    *  `data:` URI instead of an `/api/nf-file` URL — see the inline policy in
+    *  `FileRefs` (`MaxEmbedImageSize` / `isInlineImage`). `proxied` keeps its
+    *  meaning as "reference rewritten to an `/api/nf-file` URL", so the two
+    *  counters never overlap. */
+  private[tools] case class EmbedOutcome(
+      html: String,
+      proxied: Int,
+      inlined: Int,
+      rejects: List[RejectedRef],
+      exempt: Int
+  )
 
   /**
    * Classify one reference value (an `src`/`href` attribute, a `srcset`
-   * candidate URL, a CSS `url(...)` token or a bare `@import`): proxy it,
-   * ignore it, exempt it, or reject it with a reason.
+   * candidate URL, a CSS `url(...)` token or a bare `@import`): embed it,
+   * proxy it, ignore it, exempt it, or reject it with a reason.
    *
    * Only `~`/`/` anchored references are ever proxied. Relative references stay
    * unproxied and WARN instead of silently doing nothing — that also keeps
@@ -74,10 +86,17 @@ object CardTool extends Tool:
    * A failing value that is simultaneously a gateway route (`/js/…`) is
    * exempted instead of reported — see `FileRefs.applyAppRouteExemption`.
    *
+   * `allowInline` (2026-09-16 imgfix batch): the RESOURCE faces (`src=`,
+   * `srcset` candidates, CSS `url(...)`) embed an inlineable image's bytes as a
+   * `data:` URI; the NAVIGATION faces (`href=`, bare `@import`) do not — an
+   * `<a href="chart.png">` turned into a `data:` URI stops being the local-file
+   * link the Canvas router handles, and a 683 KB base64 attribute in an anchor
+   * helps nobody.
+   *
    * The file-level probe itself is shared with Pop (`FileRefs.probeFile`);
    * only the resolution policy in this wrapper is Card-specific.
    */
-  private def decideRef(rawValue: String): RefDecision =
+  private def decideRef(rawValue: String, allowInline: Boolean = false): RefDecision =
     val value = rawValue.trim
     if !isLocalFilePath(value) || !looksLikeFilePath(value) then RefDecision.Ignore
     else
@@ -95,7 +114,15 @@ object CardTool extends Tool:
         else
           resolvePath(value) match
             case None    => unresolvable(value, "the reference is not a usable filesystem path")
-            case Some(p) => probeFile(value, p)
+            case Some(p) =>
+              probeFile(value, p) match
+                // Servable through /api/nf-file — prefer the embedded bytes when
+                // the image is inside the inline policy: the reference leg needs
+                // a ticket the namespace judge may refuse, and the embedding
+                // survives replay. See FileRefs' inline-policy comment.
+                case RefDecision.Proxy(url) if allowInline && isInlineImage(p) =>
+                  readAsDataUri(p).map(RefDecision.Proxy(_)).getOrElse(RefDecision.Proxy(url))
+                case other => other
       val decision = applyAppRouteExemption(value, verdict)
       decision match
         case RefDecision.Exempt(route) => logger.debug(s"Card: exempted app-route reference '$value' (route $route)")
@@ -128,7 +155,7 @@ object CardTool extends Tool:
             case i  => i
           if urlLen > 0 then
             val start = base + cursor + lead
-            out += ((start, start + urlLen, decideRef(rest.substring(0, urlLen))))
+            out += ((start, start + urlLen, decideRef(rest.substring(0, urlLen), allowInline = true)))
         cursor += candidate.length + 1
       }
       out.toList
@@ -172,10 +199,10 @@ object CardTool extends Tool:
    */
   private def embedLocalFiles(html: String): EmbedOutcome =
     val matches: List[(Int, Int, RefDecision)] =
-      (SrcAttrRegex.findAllMatchIn(html).map(m => (m.start(1), m.end(1), decideRef(m.group(1)))) ++
+      (SrcAttrRegex.findAllMatchIn(html).map(m => (m.start(1), m.end(1), decideRef(m.group(1), allowInline = true))) ++
         HrefAttrRegex.findAllMatchIn(html).map(m => (m.start(1), m.end(1), decideRef(m.group(1)))) ++
         SrcsetAttrRegex.findAllMatchIn(html).flatMap(srcsetCandidates) ++
-        CssUrlRegex.findAllMatchIn(html).map(m => (m.start(2), m.end(2), decideRef(m.group(2)))) ++
+        CssUrlRegex.findAllMatchIn(html).map(m => (m.start(2), m.end(2), decideRef(m.group(2), allowInline = true))) ++
         ImportBareRegex.findAllMatchIn(html).map(m => (m.start(2), m.end(2), decideRef(m.group(2))))).toList
         .sortBy(_._1)
 
@@ -185,6 +212,11 @@ object CardTool extends Tool:
     val replacements = nonOverlapping(
       matches.collect { case (start, end, RefDecision.Proxy(url)) => (start, end, url) }
     )
+    // An embedded image is a `Proxy(data:…)` — split the counters so `proxied`
+    // keeps meaning "an /api/nf-file URL was emitted" and `inlined` reports the
+    // embedded ones (2026-09-16 imgfix batch; see FileRefs' inline policy).
+    val inlined = replacements.count { case (_, _, url) => url.startsWith("data:") }
+    val proxied = replacements.size - inlined
 
     val rewritten =
       if replacements.isEmpty then html
@@ -198,8 +230,9 @@ object CardTool extends Tool:
         sb.append(html.substring(cursor, html.length))
         sb.toString
 
-    if rewritten != html then logger.debug(s"Embedded ${replacements.size} local file(s) via /api/nf-file")
-    EmbedOutcome(rewritten, replacements.size, rejects, exempts)
+    if rewritten != html then
+      logger.debug(s"Embedded ${proxied} local file(s) via /api/nf-file, ${inlined} image(s) inline")
+    EmbedOutcome(rewritten, proxied, inlined, rejects, exempts)
   end embedLocalFiles
 
   /** The sentinel prefix the frontend splits the JSON payload on (cardRegistry.js
@@ -338,6 +371,8 @@ HTML must be self-contained (all styles/tags inline, no external CSS/JS).
 
 Local file paths in `src`/`href` are proxied by the backend to `/api/nf-file`, so **you MUST use absolute paths** — `/Users/you/project/plot.png`, `/tmp/output.svg`, or `${nebflow.core.PathUtil.dataRootRenderValue}/projects/<name>/reports/plot.svg`. `~` expands to the user's home directory, and project workspaces live under `${nebflow.core.PathUtil.dataRootRenderValue}/projects/<name>/` — write that full path, not `~/projects/<name>/…`. Relative paths are never resolved.
 
+**Images are embedded, not referenced** (2026-09-16): a local `png`/`jpg`/`jpeg`/`gif`/`webp`/`svg`/`bmp` referenced by `src=`, a `srcset` candidate or a CSS `url(...)` is embedded in the card as a base64 `data:` URI when it is ≤5MB — it renders with no request at all, and keeps rendering on replay. Everything else (larger images, video/audio/fonts/PDF/office/CSS/JS) is referenced as `/api/nf-file?path=…` and needs a per-path ticket the gateway mints at render time; the gateway serves the path only if its credential-namespace policy allows it — the data directory serves `projects/**`, `uploads/**`, `plots/**`, `workspace-items/**`, `voice-models/**` (so `${nebflow.core.PathUtil.dataRootRenderValue}/docs/**` is NOT served) and the project `.nebflow/` serves `evidence*/**`. A >5MB image or a non-image asset in a location the gateway does not serve cannot be shown: copy it under `projects/**` (or shrink the image) instead.
+
 Every reference that could not be proxied is reported in this tool's result under `warnings` (`ref` → `resolvedPath` → `reason`: not-found / unresolvable / extension-not-allowed / size-exceeded / not-regular-file, plus `fileRefs` counts) and renders as a visible placeholder in the card instead of a silent blank box. Scanned: `src=`, `href=`, every `srcset` candidate, every CSS `url(...)`, a bare `@import "..."`. The app's own routes (`/js/`, `/css/`, `/assets/`, `/vendor/`, `/uploads/`, `/agents/`, `/voice-models/`, plus `/style.css` `/app.js` `/logo.svg` `/favicon.*`) are exempt — the app serves them, not the disk — and are counted in `fileRefs.exempt` instead of being reported. Read `warnings` and fix the references before finishing."""
 
   /**
@@ -437,7 +472,7 @@ Card is for **presenting** results, not for drawing them. Always generate images
 - html (string, required): HTML with CSS and JS. Dark mode via var(--color-*).
 - title (string, optional): title above card.
 
-Note: Local file paths in `src`/`href` are proxied by the backend to `/api/nf-file`, so **you MUST use absolute paths** — `/Users/you/project/plot.png`, `/tmp/output.svg`, or `${nebflow.core.PathUtil.dataRootRenderValue}/projects/<name>/reports/plot.svg`. `~` expands to the user's home directory, and project workspaces live under `${nebflow.core.PathUtil.dataRootRenderValue}/projects/<name>/` — write that full path, not `~/projects/<name>/…`. Relative paths are never resolved.
+Note: Local file paths in `src`/`href` are proxied by the backend to `/api/nf-file`, so **you MUST use absolute paths** — `/Users/you/project/plot.png`, `/tmp/output.svg`, or `${nebflow.core.PathUtil.dataRootRenderValue}/projects/<name>/reports/plot.svg`. `~` expands to the user's home directory, and project workspaces live under `${nebflow.core.PathUtil.dataRootRenderValue}/projects/<name>/` — write that full path, not `~/projects/<name>/…`. Relative paths are never resolved. Local images ≤5MB (`png`/`jpg`/`jpeg`/`gif`/`webp`/`svg`/`bmp`) are embedded as base64 `data:` URIs, so they need no request; every other reference needs a ticket the gateway mints only for paths its credential-namespace policy serves (data root: `projects/ uploads/ plots/ workspace-items/ voice-models/`; project `.nebflow/`: `evidence*/` — `${nebflow.core.PathUtil.dataRootRenderValue}/docs/**` is NOT served).
 
 Every reference that could not be proxied is reported in this tool's result under `warnings` (`ref` → `resolvedPath` → `reason`: not-found / unresolvable / extension-not-allowed / size-exceeded / not-regular-file, plus `fileRefs` counts) and renders as a visible placeholder in the card instead of a silent blank box. Read `warnings` and fix the references before finishing.
 
@@ -501,12 +536,15 @@ Example (interactive 3D with Three.js):
               // keeps the failure visible to the model in every case.
               // Field order is irrelevant to the frontend (property access on
               // the parsed object), so this stays contract-compatible; the
-              // toolfail batch only ADDED `exempt` inside fileRefs.
+              // toolfail batch only ADDED `exempt` inside fileRefs and the
+              // imgfix batch only ADDED `inlined` (image references embedded as
+              // `data:` URIs — counted there, never in `proxied`).
               "fileRefs" -> fileRefsJson(
                 outcome.proxied,
                 distinct.size,
                 distinct.size - listed.size,
-                outcome.exempt
+                outcome.exempt,
+                List("inlined" -> outcome.inlined)
               ),
               "warnings" -> warningsJson(listed),
               "html" -> outcome.html.asJson,

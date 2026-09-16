@@ -1016,7 +1016,7 @@ export async function openWorkspaceItem(item) {
   const stashAnchor = absPath ? pendingRefAnchors.get(absPath) : undefined;
   if (absPath) pendingRefAnchors.delete(absPath);
   const renderAnchor = anchor || stashAnchor;
-  await renderFile(pane, { itemType, content, absPath, fileName: title, size, path: item.path, rootPath: item.rootPath, anchor: renderAnchor, warnings });
+  await renderFile(pane, { itemType, content, absPath, fileName: title, size, path: item.path, rootPath: item.rootPath, anchor: renderAnchor, warnings, objectUrl: item.objectUrl });
   entry._lastRefreshAt = Date.now();  // just rendered — don't immediately re-fetch
 }
 
