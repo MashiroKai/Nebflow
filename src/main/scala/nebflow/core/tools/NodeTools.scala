@@ -2942,9 +2942,25 @@ object ProjectCreateTool extends Tool:
 - Flow Map：`$workspace/.nebflow/flow-map.json`
 - 节点规则：节点是 leaf（无记忆、无 Mail 身份、ephemeral）；结果沿 out 边投递。
 """
+      /** 项目级实时事件（tabrealtime 批 2026-09-17 · 作者裁定 (b) 方案 B / (e) 两身份事件）。
+        *
+        * 走**既有推送面**（🔴 不自建第二套）：`ctx.wsSend` 在 WS 会话面的构造是
+        * `makeRecordingWsSend(sessionId, (json) => wsHub.broadcast(json))`
+        * （WebSocketRoutes.scala:395）⇒ 与既有 node 事件（ProjectActor.emitNodeEvent）
+        * **同源同通道**，全连接广播（WsHub.scala:27-30）。无 wsSend（远程执行/无连接
+        * 上下文）→ 静默 no-op，与 emitNodeEvent 的 `fold(IO.unit)` 同款语义。
+        * 帧形只由 ProjectActor.projectCreatedFrame 生产（帧外壳单点）。 */
+      def emitProjectCreated(pd: ProjectDef, mounted: Boolean): IO[Unit] =
+        ctx.wsSend.fold(IO.unit)(send => send(ProjectActor.projectCreatedFrame(pd, mounted)))
+
       /** 挂载（新创建 + 已存在幂等共用）。ProjectRuntimeRegistry.mount 本身幂等：
         * 已挂载 → 直接返回现有 runtime（不重建不覆盖——rootSessionId 已在首次挂载
-        * 用上链根接线；运行中重挂覆盖需重建 engine，试点期无此场景）。 */
+        * 用上链根接线；运行中重挂覆盖需重建 engine，试点期无此场景）。
+        *
+        * emit 面（§D-2 逐字）：**仅新建（created=true）广播一帧**；幂等重挂
+        * （created=false，:2997 分支）**不 emit**（无视觉变化）。挂载失败（IO 失败）
+        * 直接抛出 ⇒ 不 emit；rootKey 缺席的显式拒绝（下 case None 分支）为 Left
+        * ⇒ 亦不 emit（失败帧不报成功）——该边界由前端低频兜底重拉（方案 C）覆盖。 */
       def mountProject(pd: ProjectDef, created: Boolean): IO[Either[ToolError, String]] =
         (ctx.actorSystem, ctx.sharedResources) match
           case (Some(system), Some(res)) =>
@@ -2971,7 +2987,7 @@ object ProjectCreateTool extends Tool:
                     "Re-invoke ProjectCreate from an agent session (Nebula / project dispatcher / project node)."
                 )))
               case Some(root) =>
-                ProjectRuntimeRegistry
+                val mountedResult = ProjectRuntimeRegistry
                   .mount(pd, system, res, ctx.wsSend, root)
                   .as {
                     val verb = if created then "created" else "already exists"
@@ -2980,8 +2996,17 @@ object ProjectCreateTool extends Tool:
                         s"Dispatch work with Mail(address='project:${pd.name}', message=...)."
                     )
                   }
+                // 新建成功 → 先发帧再返回结果（挂载成功 ⇒ mounted=true）。
+                if created then mountedResult.flatMap(r => emitProjectCreated(pd, mounted = true).as(r))
+                else mountedResult
           case _ =>
-            IO.pure(Right(s"Project '${pd.name}' definition ready. Mount requires an agent session."))
+            // 定义已就绪但无会话上下文（未挂载）：项目**已在磁盘上**（ProjectStore.create
+            // 的成功分支才走到这里）⇒ 列表出口（GET /api/projects）会有它，前端必须收到
+            // 事件才不陈旧 ⇒ mounted=false（§D-2 载荷语义）。幂等重挂（created=false）
+            // 不 emit（无视觉变化）。
+            val ready: Either[ToolError, String] =
+              Right(s"Project '${pd.name}' definition ready. Mount requires an agent session.")
+            if created then emitProjectCreated(pd, mounted = false).as(ready) else IO.pure(ready)
 
       ProjectStore.create(resolvedName, workspace, description, agentMdTemplate).flatMap {
         case Right(pd) => mountProject(pd, created = true)

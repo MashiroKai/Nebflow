@@ -212,6 +212,54 @@ object ProjectRuntimeRegistry:
 object ProjectActor:
   private val logger = NebflowLogger.forName("nebflow.project.actor")
 
+  // ============================================================
+  // 项目级事件帧（tabrealtime 批 2026-09-17 · 作者裁定 (b) 方案 B / (e) 两身份事件）
+  // ============================================================
+
+  /** 帧外壳单点（与类内 `emitNodeEvent` :200-210 同族）：两处 emit 点
+    * ——创建腿 `NodeTools.mountProject`、归档腿 `RestApiRoutes` POST archive 路由
+    * ——都只调这两个构造函数，不各自拼 Json（禁第二套推送语义/帧形）。
+    *
+    * 载荷逐字对齐取证报告 §D-2（`.nebflow/reports/20260917_tabrealtime-forensic.md`）：
+    *
+    * {{{
+    * 事件 1（创建成功、已挂载）
+    *   type    : "projectCreated"
+    *   project : <string>   项目名（= ProjectDef.name）
+    *   row     : { name, workspace, agentFile, description, createdAt }   ← 与 GET /api/projects 行同构
+    *   mounted : <bool>     挂载成功 true；定义就绪但无会话上下文（NodeTools 无 actorSystem
+    *                        分支）false
+    *
+    * 事件 2（归档成功）
+    *   type       : "projectArchived"
+    *   project    : <string>
+    *   archivedAt : <long>   （= ProjectStore.archive 返回的 ts）
+    * }}}
+    *
+    * `row` 与 `RestApiRoutes` 的 `GET /projects` 行（:366-375 五字段）逐字段同构 ⇒
+    * 前端可零重拉把新卡按名定点插进列表（退场/入场动画不必等重拉返回）。
+    * 🔴 不采单 `projectsChanged`（裁定 (e)：需前端拉全量分辨、语义不清）。 */
+  def projectCreatedFrame(pd: ProjectDef, mounted: Boolean): Json =
+    Json.obj(
+      "type" -> "projectCreated".asJson,
+      "project" -> pd.name.asJson,
+      "row" -> Json.obj(
+        "name" -> pd.name.asJson,
+        "workspace" -> pd.workspace.asJson,
+        "agentFile" -> pd.agentFile.asJson,
+        "description" -> pd.description.asJson,
+        "createdAt" -> pd.createdAt.asJson
+      ),
+      "mounted" -> mounted.asJson
+    )
+
+  def projectArchivedFrame(name: String, archivedAt: Long): Json =
+    Json.obj(
+      "type" -> "projectArchived".asJson,
+      "project" -> name.asJson,
+      "archivedAt" -> archivedAt.asJson
+    )
+
   enum ProjectCommand:
     /** @param attribution
       *   注入来源标注（bluebubble 批 2026-09-12）：腿① 由 MailTool 传出邮件发信方

@@ -202,3 +202,116 @@
   white-space: nowrap;
   vertical-align: 2px;
 }
+.project-empty-tag[hidden] { display: none; }
+
+/* ── 载入 / 归档动画（tabrealtime 批 2026-09-17）────────────────────────────────
+   取值逐字对齐取证报告 §F「统一取值」表（.nebflow/reports/20260917_tabrealtime-forensic.md）：
+     入场本体 220ms `cubic-bezier(0.16, 1, 0.3, 1)`（friends.css:379 同族）
+     一次性强调环保持 900ms（JS 摘 class）
+     退场本体 280ms `cubic-bezier(0.16, 1, 0.3, 1)`（reminderRowRemove 0.35s 同族，向 0.28s 档收）
+     邻卡 FLIP 240ms `cubic-bezier(0.4, 0, 0.2, 1)`（split.css:503 flex 族）＝ JS 侧，见 web/js/listFlip.js
+     骨架脉冲 1.2s `ease-in-out`（friends.css:364 逐字同值）
+   🔴 零新色值：骨架底 = `--color-frame-hover`（已双档），强调环 = `--sapphire`（唯一
+   主题敏感件 = 环 alpha：亮 0.28 / 暗 0.45，§F-3）。
+   🔴 不复用 `--panel-ease`/`--panel-duration`（base.css:115-116）：其值
+   `cubic-bezier(0.32,0.72,0,1)`/`0.32s` 与 §F 规定的两段取值不等 ⇒ 复用即违反 P5 的
+   「时长/缓动逐字照 §F」。此处只作**本文件局部**动画参数（非设计 token）。 */
+.project-card {
+  --project-card-in-ms: 220ms;
+  --project-card-out-ms: 280ms;
+  --project-card-ease: cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+/* 入场（新卡）：淡入 + 2px 上浮（friends.css:379 `fm-rise-in` 同族，位移仅 2px——
+   本面板每次事件都会定点刷新，位移越小越不打断相邻阅读）。
+   🔴 填充模式必须是 `backwards`（**不能** `both`/`forwards`）：动画层的声明优先于内联
+   样式，`forwards`/`both` 在动画结束后仍把 `to { transform: none }` 钉在**动画层**上
+   ⇒ 会持续压掉邻卡 FLIP 的内联 `translate()` 反向补偿（listFlip.js），表现为归档时
+   邻卡整段跳变。实测（.nebflow/evidence/20260917_projtabrealtime/06-flip-attribution.txt）：
+   `both` 时内联 `translate(-590.672px, 201.594px)` 被计算成 `matrix(1,0,0,1,0,0)`（跳 590.67px）；
+   改 `backwards` 后同刻计算值 = 内联值（首帧零位移，240ms 平滑落位）。
+   `backwards` 只承担「动画开始前的首帧不闪最终态」，动画结束后该动画不再参与层叠。 */
+.project-card.is-entering {
+  animation: projectCardIn var(--project-card-in-ms) var(--project-card-ease) backwards;
+}
+@keyframes projectCardIn {
+  from { opacity: 0; transform: translateY(2px); }
+  to   { opacity: 1; transform: none; }
+}
+
+/* 一次性强调环（900ms 后由 JS 摘 class；静态环 ⇒ reduced-motion 下语义不变）。
+   亮/暗两档只差 alpha；用 inset 形态避开卡片自身的 `overflow: hidden`
+   （flowCss.js:31）与滚动容器的裁剪边缘（§F-3④ 焦点环同款判据）。 */
+.project-card.is-new { box-shadow: inset 0 0 0 2px rgb(var(--sapphire) / 0.28); }
+@media (prefers-color-scheme: dark) {
+  .project-card.is-new { box-shadow: inset 0 0 0 2px rgb(var(--sapphire) / 0.45); }
+}
+
+/* 退场（归档）：淡出 + 6px 右滑 280ms；`pointer-events: none` 关掉整卡交互面
+   （§F-3：`reminderRowRemove` 同款；键盘面由 JS 置 tabindex=-1 承担）。 */
+.project-card.is-exiting {
+  animation: projectCardOut var(--project-card-out-ms) var(--project-card-ease) forwards;
+  pointer-events: none;
+}
+@keyframes projectCardOut {
+  0%   { opacity: 1; transform: translateX(0); }
+  100% { opacity: 0; transform: translateX(6px); }
+}
+
+/* 摘要槽骨架（载体脉冲，无 skeleton/shimmer 先例 ⇒ 取「卡形占位 + 复用脉冲」族）：
+   1.2s ease-in-out 无限循环，底色走已双档的 `--color-frame-hover`。 */
+.project-card-summary.is-pending { color: transparent; }
+.project-summary-skeleton {
+  display: inline-block;
+  width: 46px;
+  height: 7px;
+  border-radius: 4px;
+  background: var(--color-frame-hover);
+  animation: projectSkeletonPulse 1.2s ease-in-out infinite;
+}
+@keyframes projectSkeletonPulse {
+  0%, 100% { opacity: 0.45; }
+  50%      { opacity: 1; }
+}
+
+/* 新卡「新」标记（屏幕阅读器）：强调环期间挂在 .team-card-header 首位，随环一起摘除。 */
+.project-new-mark {
+  position: absolute;
+  width: 1px; height: 1px;
+  margin: -1px; padding: 0; border: 0;
+  overflow: hidden;
+  clip: rect(0 0 0 0);
+  clip-path: inset(50%);
+  white-space: nowrap;
+}
+
+/* 面板内实时状态行（aria-live="polite"，§F-3①）：视觉隐藏、只播报。
+   🔴 挂在独立状态行上（不是 `.team-scroll` 本体）——挂列表本体时定点增删会让
+   逐卡文本被反复播报。 */
+.project-live-status {
+  position: absolute;
+  width: 1px; height: 1px;
+  margin: -1px; padding: 0; border: 0;
+  overflow: hidden;
+  clip: rect(0 0 0 0);
+  clip-path: inset(50%);
+  white-space: nowrap;
+}
+
+/* ── 减动效降级（🔴 本文件首个 `prefers-reduced-motion` 块；取证 §E 实测本文件此前无覆盖）──
+   降级后语义仍完整（§F-3）：
+     「哪张新」= 静态强调环保持 ~2s（JS 置时）+ 屏幕阅读器「新」标记 + 状态行播报；
+     「哪张没了」= 同步 remove() + 既有 toast（project.archiveDone）+ 状态行播报；
+     骨架 = `animation: none` + `opacity: .5`（friends.css:1037 同款）；
+     邻卡 FLIP = 关闭（JS 侧 prefersReducedMotion 直接落位）。
+   可断言：animation-name: none ∧ animation-duration ≤ 0.01s。 */
+@media (prefers-reduced-motion: reduce) {
+  .project-card.is-entering,
+  .project-card.is-exiting {
+    animation: none;
+  }
+  .project-summary-skeleton {
+    animation: none;
+    opacity: 0.5;
+  }
+}

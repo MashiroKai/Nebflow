@@ -46,6 +46,11 @@ export default {
   'project.archiveConfirm': 'Archive "{name}"? It will disappear from the Projects panel. Workspace files are all kept — nothing is deleted or moved.',
   'project.archiveDone': '"{name}" archived — hidden from the Projects panel (files kept)',
   'project.archiveFail': 'Failed to archive "{name}"',
+  // Realtime updates + create/archive animations (tabrealtime batch 2026-09-17):
+  // new-card marker + the two screen-reader announcements (aria-live status row).
+  'project.new': 'New project',
+  'project.createdAnnounce': '"{name}" created',
+  'project.archivedAnnounce': '"{name}" archived',
   'flowmap.title': 'Flow Map',
   'flowmap.cardRunning': 'Running…',
   // Node card agent retirement (node-flowmap-slim): restrained empty state when no preset
