@@ -50,7 +50,7 @@ import {
   showDeleteFolderModal,
   initModals
 } from './modal.js';
-import { send, handleSlash, addFileAttachment, initInput, initGlobalFileDrop, injectUserMessage, enterAskMode, cancelAskMode, registerSkillCommands, drainMessageQueue, restoreQueue } from './input.js';import { saveMsg, loadMsgs, restoreFromStorage, restoreFromBackendHistory, migrateLegacyIfNeeded, emergencyCacheCleanup, findLastRealMessage, saveAskMsgDedup } from './persistence.js';
+import { send, handleSlash, addFileAttachment, initInput, initGlobalFileDrop, injectUserMessage, enterAskMode, cancelAskMode, registerSkillCommands, drainMessageQueue, restoreQueue, takeRealUserTurn } from './input.js';import { saveMsg, loadMsgs, restoreFromStorage, restoreFromBackendHistory, migrateLegacyIfNeeded, emergencyCacheCleanup, findLastRealMessage, saveAskMsgDedup } from './persistence.js';
 import { initMicOrb } from './micOrb.js';
 // taskList.js 引用已随旧任务区退役移除（2026-09-05 10:54 裁定）：面板渲染
 // 由 taskList.js 自包含节点订阅驱动，session 切换重渲走 sidebar.js。
@@ -322,11 +322,8 @@ const TURN_ROW_CLASS = Object.freeze({
  *   · `state.pendingRestore[sid]`：其写入点之一挂在 `textDone` 分支上，而当前后端
  *     **不发射** `textDone`（`grep textDone src/main/scala` 只命中一处注释）⇒ 该值
  *     可能是**上一 turn** 留下的（1113），读它会跨 turn 污染判据。
- *  边界（逐字申报，见本批报告 §局限）：非激活会话里「有真人 / 注入消息但无正文」的
- *  turn 在本判据下**不可判** —— 该消息行的渲染点（input.js 的 send / drain、
- *  注入帧的 `renderInjectedBubble`）都在本轮允许面**之外**（input.js 属禁触碰件），
- *  客户端不留任何 per-turn 痕迹（`turnExpecting` 被 `sessionBusy{busy:true}` 污染，
- *  不能当证据）。 */
+ *  本函数只判**助手腿**（正文 / 思考）。「真人消息腿」（r2 补，R-1）见紧随其后的
+ *  `takeRealUserTurn`（input.js）—— 两条腿在 `done` 的未读门上取「或」。 */
 function turnProducedRealMessage(sid) {
   if (!sid) return false;
   const rows = [];
@@ -342,6 +339,30 @@ function turnProducedRealMessage(sid) {
   // 判据 = 单点，本文件不作任何「哪一行算真消息」的独立判断。
   return rows.some((row) => countsAsRealMessage(row));
 }
+
+// ── 真人消息腿（2026-09-16 msunread-r2；复核 r1 的 R-1 阻断项）──────────────
+// R-1：非激活会话里「含**真实用户消息**、但助手无可见回复」的 turn 被助手腿误判成
+// 纯工具 turn ⇒ 不置未读（改前是置的 ⇒ 计划外行为变更）。任务书 ① 的「纯工具 turn」
+// 定义是「turn 内**不含**真实用户消息 / 助手可见回复」⇒ 含真人消息的 turn 照常置未读。
+// 本腿补这一半。作者 2026-09-16 裁定 = 择 ①（HB 必须置未读），并授权最小扩面至
+// `web/js/input.js`（仅「turn 级标志 + 终态清理」）。
+//
+// **痕迹 = `input.js#takeRealUserTurn` 的 turn 级标志**（per-session Set）：
+//   · 置位点 = input.js 的四个**真人派发**点（与 `state.turnExpecting[sid] = true`
+//     **同点同条件**）：send() 的 skill / ask / 普通三支 + drainMessageQueue 一支。
+//   · 为什么不能复用 `state.turnExpecting`：后端 `sessionBusy{busy:true}`（本文件
+//     2819）同样置位 ⇒ **纯程序 turn（REST/CLI）与真人 turn 不可分**（真渲染读数：
+//     REST 腿与真人腿的 `sessionBusy` 帧数一致，均被置位）。
+//   · 为什么不用客户端消息缓存：**已在真渲染里被证伪**（r2 探针：真人腿 `done` 时刻
+//     `LS_SESSIONS_KEY` 内该会话的数组为 `["tool","tool","tool"]`——真人条目**不在**
+//     其中，且全缓存无任何会话持有该真人文本；缓存另有非 turn 作用域的写者/剪枝者
+//     ⇒ 不能作为痕迹）。故改由 input.js 的 turn 级标志承担。
+//   · 终态清理 = main.js 四个终态（done/error/timeout/maxTokens）调用
+//     `takeRealUserTurn(sid)`（取用即清 ⇒ 同一枚真人消息只置一次未读）。
+// 边界（逐字申报，见本批报告 §局限）：input.js 另有两条真人派发路径**未挂标志**
+//  （队列「立即发送」的 `sendWs({type:'immediateInput'})` 支、插件卡片
+//    `injectUserMessage`）—— 二者今日也不置 `turnExpecting`，本批按「最小改动 +
+//    与既有标记同点」不动它们 ⇒ 这两条路径下的「无可见回复」turn 仍不置未读。
 
 // Show/hide notification dot on an agent avatar
 function updateAgentNotificationDot(agentName) {
@@ -1157,8 +1178,12 @@ onMessage('done', (msg, view) => {
     if (view) updateHeaderModelInfo();
   }
   // 2026-09-16 msunread: 未读判据必须在下面 flush 删掉会话级缓冲**之前**取 ——
-  // 非激活会话没有 DOM，本 turn 的行只活在缓冲里（见 turnProducedRealMessage）。
+  // 非激活会话没有 DOM，本 turn 的行只活在缓冲里（见 turnProducedRealMessage）；
+  // 真人腿同刻取：flush 会给非激活会话落盘助手条目，晚取会把缓存末条换成助手行。
   const turnHadRealMessage = view ? false : turnProducedRealMessage(msg.sessionId);
+  // 真人消息腿（r2）：**不得 || 短路**（取用即清要走到；活动会话侧也要收口）。
+  // 该痕迹 = input.js 的 per-session Set，与本次 flush 无关（无时序脆弱性）。
+  const turnHadRealUserMessage = takeRealUserTurn(msg.sessionId);
   // Flush any remaining buffered text/thinking for this session
   if (msg.sessionId) {
     if (!view) {
@@ -1242,9 +1267,10 @@ onMessage('done', (msg, view) => {
       title: lastBadge?.querySelector('.duration-badge-time')?.textContent || '',
       sessionId: sid,
     });
-  } else if (turnHadRealMessage) {
+  } else if (turnHadRealMessage || turnHadRealUserMessage) {
     // 未读门（2026-09-16 msunread）：**只计真消息** ⇒ 纯工具 turn（thinking +
-    // 工具、没有正文，本 turn 不产出任何被 countsAsRealMessage 接受的行）不置未读。
+    // 工具、没有正文，也不含真实用户消息，本 turn 不产出任何被 countsAsRealMessage
+    // 接受的行）不置未读。r2：加性并入「真人消息腿」（见 takeRealUserTurn / input.js）。
     markSessionUnread(msg.sessionId);
   }
   // Queue drainage handled by clearBusyFor above — no duplicate call here.
@@ -1316,6 +1342,7 @@ onMessage('error', (msg, view) => {
     saveMsg({type: 'error', text: msg.message}, msg.sessionId);
     // 未读门（2026-09-16 msunread）在本支**不适用**：失败终态行 = `.row.error`
     // （chat.js:1407），countsAsRealMessage 计入 ⇒ 本 turn 有真消息。
+    takeRealUserTurn(msg.sessionId); // 真人消息腿终态清理（取用即清；返回值不参与判定）
     markSessionUnread(msg.sessionId);
   }
 });
@@ -1363,6 +1390,7 @@ onMessage('timeout', (msg, view) => {
   } else {
     // 未读门（2026-09-16 msunread）不适用：超时终态行 = `.row.error`
     // （renderTimeoutNotice，chat.js:1421）⇒ 被 countsAsRealMessage 计入。
+    takeRealUserTurn(msg.sessionId); // 真人消息腿终态清理（取用即清；返回值不参与判定）
     markSessionUnread(msg.sessionId);
   }
 });
@@ -1392,6 +1420,7 @@ onMessage('maxTokens', (msg, view) => {
   } else {
     // 未读门（2026-09-16 msunread）不适用：截断终态行 = `.row.error`
     // （renderError，chat.js:1407）⇒ 被 countsAsRealMessage 计入。
+    takeRealUserTurn(msg.sessionId); // 真人消息腿终态清理（取用即清；返回值不参与判定）
     markSessionUnread(msg.sessionId);
   }
 });
