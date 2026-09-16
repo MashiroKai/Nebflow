@@ -797,32 +797,11 @@ async function refresh() {
   renderAvatar();
 }
 
-/**
- * The logged-out affordance glyph — the vector "log in" mark that sits on the
- * primary plate (sapphire.css 登录键族). Created here, not in index.html, so
- * the logged-in slot keeps the exact node structure the flicker fix
- * (neblink.js paintAvatarSlot) relies on. `stroke="currentColor"` ⇒ the ink is
- * the button's own colour (the primary recipe's white), no new colour value.
- */
-function ensureLoginGlyph(avatar) {
-  if (avatar.querySelector('.login-glyph')) return;
-  const glyph = document.createElement('span');
-  glyph.className = 'login-glyph';
-  glyph.setAttribute('aria-hidden', 'true');
-  glyph.innerHTML =
-    '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" ' +
-    'stroke-linecap="round" stroke-linejoin="round">' +
-    '<path d="M15 3h4a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2h-4"/>' +
-    '<polyline points="10 17 15 12 10 7"/>' +
-    '<line x1="15" x2="3" y1="12" y2="12"/></svg>';
-  avatar.appendChild(glyph);
-}
-
 function renderAvatar() {
   const avatar = document.getElementById('activity-avatar');
   if (!avatar) return;
   const st = getNeblinkState();
-  const { url: validAvatarUrl, showPhoto, loggedIn: viewLoggedIn } = avatarViewState();
+  const { url: validAvatarUrl, showPhoto } = avatarViewState();
   const logoEl = avatar.querySelector('.activity-avatar-logo');
   const photoEl = avatar.querySelector('.activity-avatar-photo');
   const letterEl = avatar.querySelector('.activity-avatar-letter');
@@ -840,24 +819,22 @@ function renderAvatar() {
   }
   if (letterEl) letterEl.hidden = true; // account avatar replaces the letter
 
-  // ── Logged-out entry form (2026-09-16 login-entry batch) ──
-  // Author's reading: 「未登陆的时候的登陆按钮 很小也很丑」. The logged-out slot
-  // is a LOGIN ENTRY, so it takes the primary control recipe (green / solid /
-  // rounded / three states — sapphire.css 登录键族) instead of a 24px dimmed
-  // logo. Keyed on the shared VIEW state (`viewLoggedIn`, which honours the
-  // last-known-profile cache) so the flash-free photo path is untouched; the
-  // glyph is created lazily, i.e. only where it is used.
-  const loggedOut = !viewLoggedIn;
-  if (loggedOut) ensureLoginGlyph(avatar);
-  avatar.classList.toggle('logged-out', loggedOut);
-  // The white ink of the primary recipe is the existing `.cfg-btn-primary`
-  // declaration (sidebar.css:1162-1170) — same borrow the send-key family
-  // documents, not a new colour value. Only ever present while logged out.
-  avatar.classList.toggle('cfg-btn-primary', loggedOut);
+  // ── Logged-out slot form = the pre-existing dimmed logo (2026-09-16 回退) ──
+  // 作者 2026-09-16 11:55 方向纠正（逐字）：「这个大绿色按钮是什么意思，我要让优化
+  // 的是那个登陆的按钮，这个绿色的位置回到以前的logo。」
+  // ⇒ 本槽位不再套主键皮（`logged-out` / `cfg-btn-primary` 两处 class 与
+  //   `ensureLoginGlyph` 字形同批摘除，`sapphire.css` 侧的 `#activity-avatar
+  //   .logged-out` 块与 `.login-glyph` 规则一并删除）。
+  // ⇒ 未登录态 = `nav.css` 的既有基线（36px 圆 + 24px 灰化 logo，零本文件声明）；
+  //   登录键族的真正交付面 = `.fm-login-btn`（消息 / 联系人未登录空态 + 两处重新
+  //   登录键），由 `sapphire.css` 登录键族块承接。
+  // 🔴 本槽位零改面：结构（photo / logo / letter 三节点 + paintAvatarSlot 门控）
+  //   与 `paired` / `pairing` / `title` 全部保持原样。
 
-  // State styling: paired (logged in) / pairing / logged out.
+  // State styling: paired (logged in) / pairing.
   avatar.classList.toggle('paired', !!st.loggedIn);
   avatar.classList.toggle('pairing', !!st.pairing);
+
   // Tooltip via i18n (this used to write Chinese literals, clobbering the
   // `activity-avatar → activity.login` mapping in i18n.js on every 10s refresh).
   avatar.title = st.pairing
