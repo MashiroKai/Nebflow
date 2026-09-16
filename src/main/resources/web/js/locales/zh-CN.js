@@ -803,6 +803,9 @@ export default {
   'chat.allow': '允许',
   'chat.deny': '拒绝',
   'chat.skipTool': '跳过此工具调用',
+  // cardguard（作者裁定 2026-09-17 · #687①）：含卡片哨兵的工具结果不再以 <pre>
+  // 兜底渲染原文 ⇒ 走卡片路径，提取失败时显示本占位（🔴 原文不进 DOM）。
+  'chat.toolCardUnavailable': '卡片内容不可用（未渲染原始数据）',
   // 递进链（作者边界一「保留递进链路」）：升级落点已由 permshield F1 改为**全局持久
   // 档位**（同盾牌一条路）⇒ 文案去掉「本次」语义，并显式说明全局 + 重启后仍生效。
   'chat.permUpgradeAutoEdits': '允许并切换到编辑放行',

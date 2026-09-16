@@ -828,6 +828,10 @@ export default {
   'chat.allow': 'Allow',
   'chat.deny': 'Deny',
   'chat.skipTool': 'Skip this tool call',
+  // cardguard (author ruling 2026-09-17 · #687①): a tool result carrying the
+  // card sentinel is no longer dumped through the <pre> fallback ⇒ it takes the
+  // card path, and this placeholder when extraction fails (raw text never in DOM).
+  'chat.toolCardUnavailable': 'Card content unavailable (raw data not rendered)',
   // Escalation chain (author boundary ① "keep the escalation chain"): permshield
   // F1 retargeted the upgrade to the **global persisted** mode (same path as the
   // shield) ⇒ no "this time only" semantics; state global + survives a restart.
