@@ -1152,6 +1152,22 @@ case class SessionContext(
     * 沿用 projectRoot 推导（分发器/未接线节点旧行为逐字节不变）。推导权威在
     * SandboxPolicy.sessionRoot。 */
   sandboxRoot: Option[String] = None,
+  /** **会话初始 cwd 信号**（B5 缺口② · 作者 2026-09-17 M-1 裁定「会话启动即 `cd`
+    * 座椅」，选项①）：Some = 该会话的 shell 初 cwd（**座椅路径**，worktree 节点的
+    * `<ws>/.nebflow/worktrees/<name>`）；None = 无座椅信号 ⇒ 旧行为（初 cwd = 沙箱根
+    * = 工作区根，逐字节不变）。
+    *
+    * 与 [[sandboxRoot]] **分道**：sandboxRoot 是**围栏面**（2026-09-05 21:05 作者裁定
+    * 的写边界——本批不动它，root 仍 = 工作区根，不推翻该裁定）；本字段只是**会话 cwd
+    * 面**：围栏不窄、cwd 落到座椅，提示词「worktree 节点 = worktree 根」由此从承诺变成
+    * 机制。非 worktree 节点两值同源（projectRoot = 工作区根 = 沙箱根）⇒ 行为无差别。
+    *
+    * 🔴 **fail-closed**（作者明示接受该新失败面）：座椅目录缺失 ⇒ 该会话的 Bash
+    * **显式失败**（`ShellSession.resolveCwdOrFail` → `InvalidCwdError`），**禁**静默回落
+    * 工作区根——后者正是缺口② 的根因形态（静默降级）。置位点 = NodeEngine 两个 spawn
+    * 点（普通节点 / loop 会话）；分发器 / WS 根会话 / team / flow / Delegate 轨不传
+    * （None ⇒ 零变化）。消费单点 = `BashTool` 的 `initialDir` 推导。 */
+  sessionCwd: Option[String] = None,
   /** 项目会话信号（沙箱拆围栏批 S1/R8 解耦，2026-09-10）：true = 本会话属项目
     * 作用域（project 节点 / 分发器）——项目级契约文件 AGENTS.md 的注入判据
     * （ContextRefresher.agentsMdEnabledFor）。
@@ -1495,6 +1511,9 @@ object AgentState:
     flowChainId: Option[String] = None,
     sandboxEnabled: Boolean = false,
     sandboxRoot: Option[String] = None,
+    /** **会话初始 cwd**（B5 缺口② · 作者 2026-09-17 M-1 裁定，选项①）：spawn 侧
+      * 置位，见 SessionContext.sessionCwd。默认 None = 旧行为（初 cwd = 沙箱根）。 */
+    sessionCwd: Option[String] = None,
     /** 项目会话信号（沙箱拆围栏批 S1/R8 解耦）：spawn 侧置位，见
       * SessionContext.projectSession。默认 false = 非项目会话（WS 根会话 /
       * team / flow / Delegate / SubTask 双轨面）语义与旧行为逐字节不变。 */
@@ -1537,6 +1556,7 @@ object AgentState:
         flowChainId = flowChainId,
         sandboxEnabled = sandboxEnabled,
         sandboxRoot = sandboxRoot,
+        sessionCwd = sessionCwd,
         projectSession = projectSession,
         compactThresholdRatio = compactThresholdRatio
       ),
@@ -1661,6 +1681,9 @@ extension (s: AgentState)
   def projectRoot: Option[String] = s.session.projectRoot
   def sandboxEnabled: Boolean = s.session.sandboxEnabled
   def sandboxRoot: Option[String] = s.session.sandboxRoot
+  /** **会话初始 cwd**（B5 缺口② · M-1 裁定）：见 SessionContext.sessionCwd。
+    * 消费单点 = AgentCore → ToolContext.sessionCwd → BashTool.initialDir。 */
+  def sessionCwd: Option[String] = s.session.sessionCwd
   /** 项目会话信号（沙箱拆围栏批 S1/R8 解耦）：AGENTS.md 注入判据的来源，见
     * SessionContext.projectSession。 */
   def projectSession: Boolean = s.session.projectSession

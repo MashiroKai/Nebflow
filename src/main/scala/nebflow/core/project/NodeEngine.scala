@@ -2989,6 +2989,12 @@ class NodeEngine(
           // 独立信号传入（sessionRoot 显式 sandboxRoot 优先于 projectRoot），
           // 不按路径形态硬猜 workspace 布局；cwd/projectRoot 工具语义不动。
           sandboxRoot = Some(workspace),
+          // B5 缺口②（作者 2026-09-17 M-1 裁定「会话启动即 `cd` 座椅」，选项①）：
+          // 会话初始 cwd = 座椅（= 本节点的 projectRoot；worktree 节点 ⇒
+          // `<ws>/.nebflow/worktrees/<name>`，由上方 resolveNodeProjectRoot 单点解析）。
+          // 非 worktree 节点该值与沙箱根同源 ⇒ 行为逐字节不变。座椅目录缺失时
+          // 不在此兜底——交 ShellSession.resolveCwdOrFail 显式失败（fail-closed）。
+          sessionCwd = Some(projectRoot),
           // crash-recovery 批 D3：恢复续跑时水合磁盘 transcript（NodeRunner.
           // initialMessages 通道，BackoffSupervisor respawn 同款）；spawn 时
           // RecoverPersistedQueues 自动重放该会话崩溃前排队中的 F2 注入。
@@ -3479,6 +3485,9 @@ class NodeEngine(
           flowChainId = flowChainId,
           sandboxEnabled = true,
           sandboxRoot = Some(workspace),
+          // B5 缺口②（作者 2026-09-17 M-1 裁定）：loop 节点 worker/verify 会话与普通
+          // 节点同口径——会话初始 cwd = 座椅（worktree 节点）；非 worktree 同源零变化。
+          sessionCwd = Some(projectRoot),
           // 项目会话信号（沙箱拆围栏批 S1/R8 解耦）：loop worker/verify 属项目
           // 节点会话 ⇒ AGENTS.md 注入判据置位（与普通节点 runWithAgent 同款）。
           projectSession = true,

@@ -690,6 +690,11 @@ object AgentActor extends AgentCore with AgentSession:
       * NodeEngine 传项目工作区根，沙箱 root 不再收窄到 worktree 目录自身。None =
       * 沿用 projectRoot 推导（旧行为）。 */
     sandboxRoot: Option[String] = None,
+    /** **会话初始 cwd**（B5 缺口② · 作者 2026-09-17 M-1 裁定，选项①）：NodeEngine
+      * 两个 spawn 点传座椅路径（worktree 节点 ⇒ `<ws>/.nebflow/worktrees/<name>`）。
+      * 围栏面（sandboxRoot）不动；座椅缺失 ⇒ 该会话 Bash 显式失败（fail-closed）。
+      * 非项目轨不传 ⇒ None ⇒ 旧行为逐字节不变。详见 SessionContext.sessionCwd。 */
+    sessionCwd: Option[String] = None,
     /** 项目会话信号（沙箱拆围栏批 S1/R8 解耦）：project 节点 / 分发器 spawn 置
       * true（NodeEngine ×2 + ProjectActor ×1），AGENTS.md 注入判据据此置位——
       * 不再挂在沙箱总闸上。默认 false = WS 根会话/双轨面不注入（旧行为不变）。 */
@@ -757,6 +762,7 @@ object AgentActor extends AgentCore with AgentSession:
             flowChainId = flowChainId,
             sandboxEnabled = sandboxEnabled,
             sandboxRoot = sandboxRoot,
+            sessionCwd = sessionCwd,
             projectSession = projectSession,
             compactThresholdRatio = compactThresholdRatio
           )
