@@ -14,24 +14,28 @@
 #      对它产生任何信号都会杀掉宿主与当前会话。本脚本逻辑面从头到尾只覆盖 $COLDSTART_PORT。
 #   3) DRY_RUN=1 只预览不删不杀 —— 供作者先审行为（将 kill 谁 / 将清哪个 home）再实跑，
 #      防止脚本在作者未 review 的情况下就动手删数据/杀进程。
-#   4) 默认放行生产设备注册，但保留显式退出口 —— 本脚本的 data root 在 /tmp（非默认根），
-#      会命中 NebLink 隔离护栏（src/main/scala/nebflow/neblink/EnrollGuard.scala：
-#      非默认 data root ∧ 未显式放行 ∧ 目标 host ∈ 生产域 nebflow.space ⇒ 拒绝自动注册），
-#      设备注册直接被拒。而冷启动实例的用途正是「以真实身份走通注册」，故脚本默认导出
-#      NEBFLOW_ALLOW_PROD_ENROLL=1 放行。
-#      代价：注册进的是【生产】NebLink https://neblink.nebflow.space（brand.conf 的
-#      serverUrl 真值，也是 `neblinkServerUrl()` 的最终 fallback）——同一账号跑多实例会互踢：
-#      后登录的实例上线时，旧实例被踢下线。
-#      退出口：使用者已设 NEBFLOW_ALLOW_PROD_ENROLL（如 =0）时脚本一律原样保留、绝不覆盖
-#      （取值用 ${NEBFLOW_ALLOW_PROD_ENROLL:-1}），护栏恢复生效、注册被拒。
+#   4) 默认【不】放行生产设备注册 —— 隔离实验若要进生产网必须显式设 env（作者 2026-09-17 裁定 (b)）。
+#      本脚本的 data root 在 /tmp（非默认根），会命中 NebLink 隔离护栏
+#      （src/main/scala/nebflow/neblink/EnrollGuard.scala：非默认 data root ∧ 未显式放行 ∧
+#      目标 host ∈ 生产域 nebflow.space ⇒ 拒绝自动注册，且以响亮日志说明原因，绝不静默）。
+#      故未设 NEBFLOW_ALLOW_PROD_ENROLL 时，本脚本【不导出、不覆盖】该变量 ⇒ 护栏按原语义生效、
+#      设备注册被拒 ⇒ 隔离实例默认不进生产网。为免「静默」，脚本在启动前另打印 NOTICE 明示本次
+#      判定（见下方分支），使作者一眼可见「本次不进生产网」。
+#      为何不再默认放行：旧行为让「随手起一个隔离实例」= 往【生产】NebLink
+#      https://neblink.nebflow.space 注册一台新设备（brand.conf 的 serverUrl 真值，也是
+#      `neblinkServerUrl()` 的最终 fallback）——同一账号跑多实例会互踢：后登录的实例上线时
+#      旧实例被踢下线；且生产设备表会被隔离实例污染（2026-09-11 事故，dup-device-verdict
+#      §1.2 类 2）。
+#      显式放行：NEBFLOW_ALLOW_PROD_ENROLL=1（或 true / yes，大小写不敏感）时脚本原样透传；
+#      使用者已设该变量时脚本一律原样保留、绝不覆盖。
 #      真值口径与 Scala 端 EnrollGuard.explicitAllowEnv 逐字对齐：1 / true / yes（大小写不敏感）；
 #      其它值（含 0 / false / 空）都等同未放行。
 #
 # 用法：
-#   ./scripts/coldstart.sh                                            # 真实冷启动（默认放行生产注册）
+#   ./scripts/coldstart.sh                                            # 真实冷启动（默认【不】进生产网）
 #   DRY_RUN=1 ./scripts/coldstart.sh                                  # 只预览，不启动 sbt
 #   COLDSTART_PORT=<port> COLDSTART_HOME=<path> ./scripts/coldstart.sh  # 覆盖默认
-#   NEBFLOW_ALLOW_PROD_ENROLL=0 ./scripts/coldstart.sh                # 退出口：保留隔离护栏
+#   NEBFLOW_ALLOW_PROD_ENROLL=1 ./scripts/coldstart.sh                # 显式放行：注册到生产 NebLink
 #
 set -euo pipefail
 
@@ -50,17 +54,20 @@ fi
 
 echo "[coldstart] port=$COLDSTART_PORT home=$COLDSTART_HOME dry_run=$DRY_RUN"
 
-# ── 生产注册放行开关：默认放行 + 显式退出口（详见文件头 4)）──
-# 仅当使用者未设或设为空时才默认导出 1；已设任何值一律原样保留、不覆盖其选择。
-# set -u 已开 ⇒ 用 ${NEBFLOW_ALLOW_PROD_ENROLL:-1} 取默认值（:- 同时覆盖「已设但为空」）。
-NEBFLOW_ALLOW_PROD_ENROLL="${NEBFLOW_ALLOW_PROD_ENROLL:-1}"
-export NEBFLOW_ALLOW_PROD_ENROLL
+# ── 生产注册放行开关：默认【不】放行（详见文件头 4)）──
+# 🔴 本批（作者 2026-09-17 裁定 (b)）已删除「未设时默认导出 1」的行为：
+#    未设 NEBFLOW_ALLOW_PROD_ENROLL ⇒ 脚本【不赋值、不导出】该变量（无 :-1 默认值），
+#    护栏 EnrollGuard 按原语义生效 ⇒ 不进生产网。
+# set -u 已开 ⇒ 用 ${NEBFLOW_ALLOW_PROD_ENROLL:-} 只读探测（空串 = 未设；探测不改写、不导出）。
 # 提示语按与 EnrollGuard.explicitAllowEnv 相同的真值口径分支（1/true/yes，大小写不敏感），
 # 避免「因 0/false 被拒注册」时还打印「将注册到生产」的错误预告。
-# 两条分支都写出真实生产域名与互踢代价，供作者一眼看清本次行为。
-case "$NEBFLOW_ALLOW_PROD_ENROLL" in
+# 🔴 三条分支都打印明示，绝不静默：未设时明确告知「本次不进生产网」并给出显式放行用法。
+case "${NEBFLOW_ALLOW_PROD_ENROLL:-}" in
   1 | [tT][rR][uU][eE] | [yY][eE][sS])
-    echo "[coldstart] NOTICE: 本次将把设备注册到【生产 NebLink】https://neblink.nebflow.space —— 同一账号多实例会互踢，后登录的实例上线时旧实例会被踢下线。"
+    echo "[coldstart] NOTICE: NEBFLOW_ALLOW_PROD_ENROLL=${NEBFLOW_ALLOW_PROD_ENROLL}（显式放行）→ 本次将把设备注册到【生产 NebLink】https://neblink.nebflow.space —— 同一账号多实例会互踢，后登录的实例上线时旧实例会被踢下线。"
+    ;;
+  "")
+    echo "[coldstart] NOTICE: 未设 NEBFLOW_ALLOW_PROD_ENROLL → 本次【不进生产网】：本实例不会注册到生产 NebLink https://neblink.nebflow.space，隔离护栏 EnrollGuard 生效（非默认 data root ∧ 未显式放行 ∧ 生产域 ⇒ 拒绝自动注册）。要显式放行请用：NEBFLOW_ALLOW_PROD_ENROLL=1 ./scripts/coldstart.sh"
     ;;
   *)
     echo "[coldstart] NOTICE: NEBFLOW_ALLOW_PROD_ENROLL=${NEBFLOW_ALLOW_PROD_ENROLL}（非 1/true/yes）→ 保留你的设置，隔离护栏生效：本实例不会注册到生产 NebLink https://neblink.nebflow.space（同一账号多实例的互踢风险随之消失）。"
