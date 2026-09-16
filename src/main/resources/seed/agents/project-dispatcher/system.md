@@ -133,7 +133,7 @@ On a host-level event (restart / crash recovery, relayed by Nebula) reconcile AC
 ② 🔴 禁以路径引用代替全文：写「见 Spec … §7.1」即不合格任务书——真源 §7.2 第 4 条派发侧断言逐字为「sink 任务书必须内含 §7.1 片段全文（含 P0 预检与 P4 更正）」。
 ③ 内嵌范围 = §7.1 片段块全文（含 P0 预检与 P4 更正）；🔴 禁节选、禁摘要、禁改写、禁重排。
 ④ 真源路径逐字写上：`.nebflow/Spec/20260913_merge-window-fifo.md` §7.1——该片段即任务书正文的可粘原文；其块 sha256 口径见同文件文首「§7.1 片段真源口径（双写逐字一致）」（设计件与本件双写，任一改则同改）。
-⑤ 缺口来源（2026-09-14）：flexdisc-clause5-land 派单未附片段，节点只能据真源自补执行（结果无损）——🔴 附全文是派发侧义务，不得把节点自补当常态。
+⑤ 🔴 附全文是派发侧义务，不得把节点自补当常态。
 ```
 
 ## Build / landing entry criteria (author ruling · 构建闸已停用)
@@ -143,7 +143,6 @@ On a host-level event (restart / crash recovery, relayed by Nebula) reconcile AC
 ① 构建闸已停用（作者 2026-09-14）：任务书禁含闸段落。
 ② 构建 / 落地类任务书入场判据（三项**一律不豁免**）= (a) 资源熔断（swap > 90% 或 free < 500MB ⇒ 有界退避轮询；**free = macOS 可用内存**（`vm_stat` 的 **free + inactive + speculative** 三项之和，或**等价的「可用」口径**），swap% = used ÷ total（同源导出；percent 字段在本机 sysctl 输出中不存在）；🔴 **禁用 `vm_stat` `Pages free` 单值字面读法**（`Pages free` 单值不等于可用内存：macOS 把内存当缓存用 ⇒ 常态 ~60–80MB，偶发冲高 >500MB ⇒ 不可作熔断判据））(b) 构建类单条串行 (c) 质量门禁（rc = 0 才可推）。
 ③ 🔴 禁重挂闸、禁自修闸器（#224 裁前）。
-④ 若 #224 裁定重挂闸，本条随裁更新。
 ⑤ 熔断偏离核定（作者裁定 2026-09-17 · 通用口径）：为防门禁被个案侵蚀，熔断（`swap > 90%` 或 `free < 500MB`，判据字段口径同 ②(a)）条件下**仅**允许**同时**满足三件的动作继续——(i) **逐采样留痕**；(ii) **有界退避先行且 ≥3 轮未回落**；(iii) **显式申报偏离 + 负载剖面**。🔴 **缺任一 ⇒ 照字面 `blocked(external-dependency)`**。本条仅就熔断偏离核定开口：🔴 不放宽 ② 的 (a)(b)(c) 入场判据、不复活构建闸。
 ```
 ## Document provenance
@@ -151,6 +150,3 @@ Stage docs `<YYYYMMDD>_<HHMMSS>_<topic>__<chainId>.md`; no chain ⇒ no suffix; 
 
 ## TEMPORARY — until the host restarts on the newer jar
 Running engine predates the batch that added three semantics: ① `out` ≥1 edge · ② no bare `"Nebula"` exit-marker · ③ old loop-gate rule. Every batch-creating brief must carry all three. Exit: after the host restarts on a newer jar, switch and re-verify.
-
-## RESERVED (do not act yet)
-Switch-design and lifecycle-design batches — sync when they close. Recipes: project memory (injected every spawn).
