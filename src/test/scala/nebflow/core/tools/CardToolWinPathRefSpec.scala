@@ -281,4 +281,3 @@ class CardToolWinPathRefSpec extends FunSuite:
     // unchanged boundary: an extension-less relative string stays ignored
     assert(!FileRefs.looksLikeFilePath("notes"))
     assert(FileRefs.looksLikeFilePath("images/logo.png"))
-
