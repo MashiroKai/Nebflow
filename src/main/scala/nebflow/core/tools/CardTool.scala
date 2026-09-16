@@ -250,20 +250,28 @@ object CardTool extends Tool:
     *  `^___\w+_HTML___`); nothing may be appended after the JSON. */
   private val CardSentinel = "___CARD_HTML___"
 
-  /** One integer counter out of an already-built card result's `fileRefs`. */
+  /** One integer counter out of an already-built card result's `fileRefs`.
+    *
+    * 2026-09-16 (imgticket batch ii): reads **either** face — the raw card
+    * payload (sentinel-prefixed, the frontend face) **or** the model-facing
+    * summary this tool now produces (a plain JSON object that keeps `fileRefs`
+    * and `warnings`). Without that, the chat header would silently lose its
+    * "N file reference(s) NOT proxied" note the moment the model face stopped
+    * being the payload (`AgentCore` computes the header from the model face). */
   private def fileRefCount(result: String, field: String): Int =
-    if !result.startsWith(CardSentinel) then 0
-    else
-      io.circe.parser
-        .parse(result.substring(CardSentinel.length))
-        .toOption
-        .flatMap(_.asObject)
-        .flatMap(_.apply("fileRefs"))
-        .flatMap(_.asObject)
-        .flatMap(_.apply(field))
-        .flatMap(_.asNumber)
-        .flatMap(_.toInt)
-        .getOrElse(0)
+    val json =
+      if result.startsWith(CardSentinel) then result.substring(CardSentinel.length)
+      else result
+    io.circe.parser
+      .parse(json)
+      .toOption
+      .flatMap(_.asObject)
+      .flatMap(_.apply("fileRefs"))
+      .flatMap(_.asObject)
+      .flatMap(_.apply(field))
+      .flatMap(_.asNumber)
+      .flatMap(_.toInt)
+      .getOrElse(0)
 
   private def unresolvedFileRefs(result: String): Int = fileRefCount(result, "failed")
 
@@ -630,5 +638,58 @@ Example (interactive 3D with Three.js):
       else if exempt > 0 then s" — $exempt app-route reference(s) exempt"
       else ""
     s"$title rendered$note"
+
+  /** The **model-facing projection** of a card result (imgticket batch ii,
+    * 作者 #687-D 2026-09-16「做」）。
+    *
+    * 卡片载荷是给**浏览器**的：`html` 是整张卡片的标记，内联图还是 base64
+    * （单图可达 ≈700 K 字符）。语言模型从那些字节里得不到任何信息，而载荷的体量
+    * 恰恰是把结果推过 `Defaults.DefaultMaxResultSizeChars`（50,000）的那件事——
+    * 过线之后 `ToolResultGuard` 把模型面换成「2,048 字符预览 + 磁盘全文副本」，
+    * 模型看到的只是一段被切断的 JSON。
+    *
+    * 本投影因此**只保留模型能据以行动的事实**（与工具描述对模型的承诺逐条对齐）：
+    *   - `card`      —— 卡片标识（标题；空标题回 `"Card"`）；
+    *   - `fileRefs`  —— 计数器，与载荷内**同一对象逐字同源**；
+    *   - `warnings`  —— 未代理引用的逐条原因，与载荷内**同一数组逐字同源**
+    *                    （工具描述要求模型「读 warnings 并修好引用」）；
+    *   - `htmlChars` —— 卡片正文本体长度（句柄/可核事实）；
+    *   - `note`      —— 一句话说明全文只在前端面，避免模型误以为卡片没渲染。
+    *
+    * 🔴 移出模型面的字段 = `html`（含内联 base64 图）与 `title` 正文；二者仍逐字
+    * 留在用户面（`frontendContent` = [[call]] 的原样返回，由 `AgentCore` 的
+    * ToolEnd 发射点投给前端与 `.ui.json`）。🔴 本方法**不新建任何通道**、不动
+    * WS 帧形状、不动载荷构造 —— 它只回答「模型该看到什么」。
+    *
+    * 机械可核：投影长度与 `html` 体量**无关**（只随 `htmlChars` 的位数变化），
+    * 且恒不含 HTML 标签序列与 `data:` URI（见 `CardModelFaceSpec`）。 */
+  override def modelFacingResult(result: String): String =
+    val json =
+      if result.startsWith(CardSentinel) then result.substring(CardSentinel.length)
+      else result
+    io.circe.parser.parse(json).toOption match
+      case Some(payload) =>
+        val title = payload.hcursor.get[String]("title").toOption.filter(_.nonEmpty).getOrElse("Card")
+        val htmlChars = payload.hcursor.get[String]("html").toOption.map(_.length)
+        Json
+          .obj(
+            "card" -> title.asJson,
+            "fileRefs" -> payload.hcursor.downField("fileRefs").focus.getOrElse(Json.obj()),
+            "warnings" -> payload.hcursor.downField("warnings").focus.getOrElse(Json.arr()),
+            "htmlChars" -> htmlChars.getOrElse(0).asJson,
+            "note" -> ("The card HTML (including any inlined images) is rendered to the user and is not returned as "
+              + "text; `fileRefs` and `warnings` above are the facts to act on.").asJson
+          )
+          .noSpaces
+      // 载荷不可解析（构造上不该发生）：回一句固定的极小摘要 —— 🔴 绝不把 `result`
+      // 原样回灌（那正是本批要关掉的行为）。
+      case None =>
+        Json
+          .obj(
+            "card" -> "Card".asJson,
+            "note" -> "Card rendered; its payload was not summarizable for the model (the user still got the full card)."
+              .asJson
+          )
+          .noSpaces
 
 end CardTool

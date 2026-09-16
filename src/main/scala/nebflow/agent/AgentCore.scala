@@ -1774,11 +1774,18 @@ private[agent] trait AgentCore:
                         val imageBlocks = tool.extractImages(finalInput, result)
                         hookEngine.afterTool(call.name, finalInput, result, true, hookCtx).map { postResult =>
                           val hookSuffix = postResult.additionalContext.getOrElse("")
-                          val llmContent = if false then
-                            val title = call.input("title").flatMap(_.asString).getOrElse("")
-                            s"Card${if title.nonEmpty then s" ($title)" else ""} rendered"
-                          else if isFileEdit then nebflow.core.summarizeToolResult(call, result)
-                          else result
+                          // 模型面-用户面分离（imgticket 批 ii，作者 #687-D 2026-09-16）：
+                          // `result` 是工具的原样返回 —— 它同时是**用户面**（下面的
+                          // `frontendContent`，逐字进 ToolEnd 帧与 .ui.json）与模型面的
+                          // 起点。工具可以用 `modelFacingResult` 只收窄**模型面**
+                          // （Card：整张卡片载荷 → 计数 + warnings 摘要），用户面一字不动。
+                          // 🔴 此前 Card 的模型面恒为整张载荷（本行原有一个 `if false`
+                          // 常量假分支写着 `"Card (title) rendered"`，从未生效）——
+                          // 那段死码由本批删除：模型面现在是工具自己声明的投影，不再
+                          // 由引擎对工具名做特判（引擎不复制任何工具的载荷知识）。
+                          val llmContent =
+                            if isFileEdit then nebflow.core.summarizeToolResult(call, result)
+                            else tool.modelFacingResult(result)
                           ToolExecResult(
                             llmContent + (if hookSuffix.nonEmpty then s"\n\n$hookSuffix" else ""),
                             frontendContent = Some(result + (if hookSuffix.nonEmpty then s"\n\n$hookSuffix" else "")),
