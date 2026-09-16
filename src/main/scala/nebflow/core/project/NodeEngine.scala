@@ -5375,35 +5375,38 @@ class NodeEngine(
         IO.unit
     }
 
-  /** 链级摘要投根（R6/R7/R8；b64 批 2026-09-13）：**独立通道**，不占节点记账
-    *（`nebulaDeliveredAt` 属于节点结果投递），也不并入节点级 `quietMs` 短窗（R9 硬
-    * 约束①：链完成事实必须至少产生一条落根投递，被窗口吞掉即等于丢失批级可见性）。
+  /** 链级摘要**降级登记**（作者 2026-09-16 裁定「**全部降级列表态**」；本批前语义 = 投根）。
     *
-    * 气泡 header 契约：`source="chain"`（R12/R16 的 scope 标记——前端
-    * `INJECTED_SOURCE_LABELS.chain` 显式登记）+ `eventType` = 全 completed → completed /
-    * 含 failed → failed（强提醒）+ `sender="<projectName>/<chainId>"`。
-    * 与 `deliverToNebula` 的差别：**不过 60s 同 (identity,status) 去重**（每条链摘要
-    * 文本唯一，走去重会与「同链 60s 内重投」相撞被误抑制 ⇒ 摘要丢失；先例 =
-    * `deliverStaleSummary` 的绕过去重纪律）。
+    * == 语义（本批起）==
+    * **零投主对话**：链完成横幅**不再注入 root 会话**——不再 `ref ! AgentCommand.ImmediateInput(...)`，
+    * 故 ① 不进 LLM 上下文（`AgentActor` 的 `immediateMessages` 腿不接本链件）
+    * ② 不出即时气泡（`emitInjectedUserEvent` 链腿不再被调用，`.ui.json` 零
+    * `source="chain"` 行）。本方法退化为**一次日志登记**（可观测性 + R-10 口径区分：
+    * 「本回合出库链数 / 降级登记数 / 投递数 0」）。
     *
-    * 返回 **true = 本次确实 offer 成功**（根会话 ref 在）——调用方据此
-    * `markChainSummarySent`（tell-then-mark：offer 与 mark 之间崩溃 ⇒ 下轮重投，
-    * 宁重复不丢失）；false = 根不可达 ⇒ **不记账**、不删账，下个 TtlTick 补投。 */
-  private[project] def deliverChainSummary(text: String, chainId: String, eventType: String): IO[Boolean] =
-    resources.agentRegistry.get.map(_.get(rootSessionId).map(_.ref)).flatMap {
-      case Some(ref) =>
-        (ref ! AgentCommand.ImmediateInput(
-          text,
-          source = Some(FlowMapStore.ChainSummarySource),
-          eventType = Some(eventType),
-          sender = Some(s"$projectName/$chainId"),
-          fromUser = false // ② 服务端注入（链级摘要），不是真人输入
-        )) *> IO.pure(true)
-      case None =>
-        logger.warn(
-          s"Root session '$rootSessionId' not found — chain summary parked for redelivery (chain=$chainId, ${text.length} chars)") *>
-          IO.pure(false)
-    }
+    * **聚合信息不删除**（降级 ≠ 删除）：链级事实的承载面 = **链级列表/明细面**
+    * ——归档 sweep 照跑（`FlowMapStore.sweepCompletedChainsDetailed`）、批文件 + 归档区
+    * 照写、`chain-archived` 审计事件照记；UI 侧由 **Flow Map 归档面板**
+    * （`GET /projects/<n>/flow-map/archive` 批次聚合 → 链条目 → 成员行 → 详情窗按需
+    * 取结果全文）**在用户主动查看时**呈现（含 §「读取指引」等价提示）。
+    * ⇒ root 侧不再有横幅，但「链已归档、可去查明细」在列表态**可达**，非静默丢信息。
+    *
+    * == 记账（R-9）==
+    * 调用方（`ProjectActor.deliverChainSummaries`）在本方法**恒成功后**照记
+    * `markChainSummarySent` ⇒ 批文件 `summarySentAt` 置位（防每拍重算 / 重复降级）。
+    * **不再依赖 root 会话 ref 存在性**（本批前：ref 缺失 ⇒ false ⇒ 不记账 ⇒ 下拍补投）；
+    * 降级后 root 面不存在 ⇒ 该依赖与其 redelivery 语义一并退出（**语义变化显式申报**，
+    * 见批报告 R-10 节）。
+    *
+    * == 保留的历史形态（不再触发）==
+    * 本批前的气泡 header 契约（`source="chain"` + `eventType` 三元 + `sender="<project>/<chainId>"`）
+    * 与「不过 60s 同 (identity,status) 去重」纪律**一并失效**——`source="chain"` 词表项
+    * 仍在（`InjectionAttribution.BackendNamedSources` + 前端表），仅服务**存量历史行**
+    * 的渲染（宿主 sessions 面**现取**：单文件 `5cc7590a-…ui.json` 内 49 处 `source="chain"`，
+    * 全部**无 `header` 键** ⇒ 逐行走前端回落渲染；条数随宿主 session 轮转漂移，禁当恒值）。 */
+  private[project] def deliverChainSummary(text: String, chainId: String, eventType: String): IO[Unit] =
+    logger.info(
+      s"Project '$projectName' chain summary DOWNGRADED to list state (no root injection): chain=$chainId event=$eventType chars=${text.length}")
 
   /** 缺口4：去重判定+登记（固定窗：首投时间戳起算 60s，不滑动；过期条目顺路
     * 淘汰=时间窗淘汰）。true = 窗口内重复（应抑制 offer）。 */

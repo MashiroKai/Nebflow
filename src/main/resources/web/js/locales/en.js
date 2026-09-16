@@ -96,6 +96,7 @@ export default {
   'flowmap.archive.count': '{n} chains · {m} nodes',
   'flowmap.archive.nodes': '{n} nodes',
   'flowmap.archive.empty': 'No archived task chains yet',
+  'flowmap.archive.readGuide': 'Chain archived · open a member for the full result (fetched on demand)',
   'flowmap.archive.expiringSoon': 'Expiring soon',
   'flowmap.archive.allArchived': 'All nodes completed — results are in the archive (top-right)',
   'flowmap.archive.close': 'Close archive panel',

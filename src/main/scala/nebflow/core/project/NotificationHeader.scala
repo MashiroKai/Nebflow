@@ -143,7 +143,12 @@ object NotificationHeader:
     * `deliverToNebula` / `deliverChainSummary`）⇒ 切分即得 PROJECT + SUBJECT；
     * 无 `/` 的旧形态（缺段）⇒ PROJECT 走回落链、**SUBJECT 省略**（旧前端
     * `chat.js:410-411` 记录的降级口径 `NODE · <状态>` 逐字保持）。
-    * 其余腿：SUBJECT = Team 组合名（`team/agent`，旧呈现逐字）或 sender。 */
+    * 其余腿：SUBJECT = Team 组合名（`team/agent`，旧呈现逐字）或 sender。
+    *
+    * **CHAIN 腿状态（全降级列表态批 2026-09-16）**：`deliverChainSummary` 已零投根
+    * ⇒ 本函数不再收到 `source="chain"` 的活帧；CHAIN 分支与其词表项保留**仅服务存量
+    * 历史行**（`.ui.json` 旧行自带 `header` 者逐字渲染；无 `header` 者走前端回落）。
+    * 本函数零改动即对本批正确（无新 source、无新 eventType）。 */
   private def split(
       kind: String,
       project: Option[String],

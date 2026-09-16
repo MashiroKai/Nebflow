@@ -478,10 +478,11 @@ object ProjectActor:
                     .handleErrorWith(e =>
                       logger.warn(s"doc-index reconcile tick failed: ${e.getMessage}").as(None))
                     .void
-                  // ④ 链级摘要投递（R6/R7/R8/R11/R15 + M2，b64 批 2026-09-13）：本次
-                  //    出库的链已在上一步把批次账本置「已启用未投递」；本腿投递 +
-                  //    **tell-then-mark**（投递成功才落 summarySentAt），并顺带补投
-                  //    历史欠账（根 ref 缺失/崩溃窗口留下的未记账批）。
+                  // ④ 链级摘要**降级登记腿**（R6/R7/R8/R11/R15 + M2，b64 批 2026-09-13；
+                  //    全降级列表态批 2026-09-16 作者裁定「全部降级列表态」）：本次
+                  //    出库的链已在上一步把批次账本置「已启用未投递」；本腿**降级登记**
+                  //    （零 root 注入）+ **照记** `summarySentAt`（R-9），并顺带扫描历史
+                  //    欠账批。承载面 = 链级列表/明细面（Flow Map 归档面板，用户主动查看）。
                   //    best-effort：失败仅 WARN，不回滚归档、不影响后续 tick。
                   removals *> audits *> flip *> reconcile *> deliverChainSummaries(cfg)
                 }.as(behavior)
@@ -492,53 +493,59 @@ object ProjectActor:
       }
     }
 
-  /** 链级摘要投递腿（R6/R7/R8/R11/R15 + M2；b64 批 2026-09-13）。
+  /** 链级摘要**降级登记腿**（R6/R7/R8/R11/R15 + M2；b64 批 2026-09-13 投根 →
+    * 全降级列表态批 2026-09-16，作者裁定「全部降级列表态」）。
     *
-    * 每拍做两件事（同一出口，幂等）：
-    *   ① **本回合出库链**：sweep 已把账本置「已启用未投递」⇒ 本腿投递；
-    *   ② **历史欠账补投**：上一拍投递失败（根 ref 缺失/进程崩溃）的批账本仍为空
-    *      ⇒ 本腿继续尝试（at-least-once：宁重复不丢失；账本置位即退出候选集 ⇒ 恰一次）。
+    * == 本批语义（零投主对话）==
+    * 链完成横幅**不再投 root**（不进 LLM 上下文、不出即时气泡）——承载面改为
+    * **链级列表/明细面**（Flow Map 归档面板，用户主动查看时呈现）。本腿保留原骨架：
     *
-    * **M2**：单成员（孤立）链**不发摘要**（判据在 `FlowMapStore.MinChainMembersForSummary`，
-    * 与 `chainIdOf ≥2` 同源），其可见性仍由节点级通道承担。
-    * **R11**：独立摘要 ≤ `ChainSummaryMaxPerRound`（3）条，超出部分合并为**一条**计数摘要
-    *（消息数上界 = 4）；与 `DispatchNotify` 的 completion/failed 预算**分账**（本腿不读写
-    * 任何 `DispatchNotify` 账本 ⇒ 链摘要不挤占节点通知预算，R10 规则 2）。
-    * **R9 硬约束①**：链摘要不经节点级短窗（`notify.quietMs`）——自身就是「链完成」事实的
-    * 唯一落根载体。
-    * 全部 best-effort（投递/记账失败只 WARN，下拍重试）。 */
+    *   ① **本回合出库链**：sweep 已把账本置「已启用未投递」⇒ 本腿降级登记；
+    *   ② **历史欠账扫描**：账本未置位的批（历史窗口/崩溃）本腿继续登记（幂等）。
+    *
+    * **M2**：单成员（孤立）链**不入摘要面**（判据 `FlowMapStore.MinChainMembersForSummary`）。
+    * **R11**：独立条目 ≤ `ChainSummaryMaxPerRound`（3）条，超出部分合并为**一条**计数条目。
+    * **R-9（硬）**：降级登记 ⇒ **照记** `summarySentAt`（批文件置位）——防每拍重算与
+    * 重复降级；本批后无「投递失败 ⇒ 不记账」分支（root 面不存在）。
+    * **R-10（口径变化显式申报）**：额度语义从「本回合**投递** ≤3 条」变为
+    * 「本回合**登记** ≤3 条 + 1 条溢出合并」——计数口径与投递数解耦：本回合
+    * `candidates = individual + overflow` 条被**降级登记**，`deliveries = 0` 恒成立；
+    * 「出库链数」（sweep 事实）由 `chain-archived` 审计事件独立可读。日志面显式区分
+    * （`downgraded` / `deliveries=0`），禁把「出库链数」读作「投递数」。
+    * 全部 best-effort（登记/记账失败只 WARN，下拍重试）。 */
   private def deliverChainSummaries(cfg: ProjectConfig): IO[Unit] =
     cfg.engine.store
       .chainSummaryBatch(FlowMapStore.ChainSummaryMaxPerRound)
       .flatMap { case (head, tail) =>
-        val deliverOne = (c: FlowMapStore.ChainSummary) =>
+        val downgradeOne = (c: FlowMapStore.ChainSummary) =>
           cfg.engine
-            .deliverChainSummary(c.text, c.chainId, c.eventType)
-            .flatMap {
-              case true =>
-                cfg.engine.store.markChainSummarySent(c.chainId, System.currentTimeMillis()) *>
-                  logger.info(
-                    s"Project '${cfg.project.name}' chain summary delivered: ${c.chainId} (${c.members} members, ${c.completed}c/${c.failed}f/${c.cancelled}x)")
-              case false => IO.unit // 根不可达：不记账，下拍补投（at-least-once）
-            }
+            .deliverChainSummary(c.text, c.chainId, c.eventType) *>
+            cfg.engine.store.markChainSummarySent(c.chainId, System.currentTimeMillis()) *>
+            logger.info(
+              s"Project '${cfg.project.name}' chain summary downgraded: ${c.chainId} (${c.members} members, ${c.completed}c/${c.failed}f/${c.cancelled}x) — ledger marked, deliveries=0")
         val overflow =
           if tail.isEmpty then IO.unit
           else
             val text = FlowMapStore.renderChainSummaryOverflow(tail)
+            // R11 溢出合并条事件类型：三元逐项提升（failed > cancelled > completed）——
+            // 与 `FlowMapStore.renderChainSummary` 同序（R-4 消费点②）。
             val eventType =
               if tail.exists(_.eventType == FlowMapStore.ChainSummaryEventFailed) then FlowMapStore.ChainSummaryEventFailed
+              else if tail.exists(_.eventType == FlowMapStore.ChainSummaryEventCancelled) then FlowMapStore.ChainSummaryEventCancelled
               else FlowMapStore.ChainSummaryEventCompleted
-            cfg.engine
-              .deliverChainSummary(text, s"overflow-${tail.size}", eventType)
-              .flatMap {
-                case true =>
-                  tail.traverse_(c => cfg.engine.store.markChainSummarySent(c.chainId, System.currentTimeMillis())) *>
-                    logger.info(s"Project '${cfg.project.name}' chain summary overflow delivered: ${tail.size} chain(s) merged (R11 cap ${FlowMapStore.ChainSummaryMaxPerRound})")
-                case false => IO.unit
-              }
-        head.traverse_(deliverOne) *> overflow
+            cfg.engine.deliverChainSummary(text, s"overflow-${tail.size}", eventType) *>
+              tail.traverse_(c => cfg.engine.store.markChainSummarySent(c.chainId, System.currentTimeMillis())) *>
+              logger.info(
+                s"Project '${cfg.project.name}' chain summary overflow downgraded: ${tail.size} chain(s) merged (R11 cap ${FlowMapStore.ChainSummaryMaxPerRound}) — ledger marked, deliveries=0")
+        // R-10 口径行：登记数（individual + overflow 合并条）与投递数分列，机械可核。
+        val roundLine =
+          if head.isEmpty && tail.isEmpty then IO.unit
+          else
+            logger.info(
+              s"Project '${cfg.project.name}' chain summary round: individual=${head.size} overflowChains=${tail.size} overflowMerged=${if tail.isEmpty then 0 else 1} deliveries=0 (list-state downgrade; per-tick cap ${FlowMapStore.ChainSummaryMaxPerRound})")
+        head.traverse_(downgradeOne) *> overflow *> roundLine
       }
-      .handleErrorWith(e => logger.warn(s"chain summary delivery failed: ${e.getMessage}"))
+      .handleErrorWith(e => logger.warn(s"chain summary downgrade failed: ${e.getMessage}"))
 
   /** Plugin Catalog 段（阶段 2b §B.4 第 2 步）：分发器 prompt 组装的注入源。
     * 受信 plugin 目录（无审批批 2026-09-13 后在位即受信；未受信的唯一形态 = 已封禁，
