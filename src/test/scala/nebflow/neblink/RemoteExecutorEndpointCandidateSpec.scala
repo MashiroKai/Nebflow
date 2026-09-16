@@ -50,12 +50,14 @@ class RemoteExecutorEndpointCandidateSpec extends CatsEffectSuite:
     private val pool = Executors.newFixedThreadPool(2)
     private val server = HttpServer.create(new InetSocketAddress("127.0.0.1", 0), 0)
     private val requests = new ConcurrentLinkedQueue[String]()
+    private val bodies = new ConcurrentLinkedQueue[String]()
 
     server.setExecutor(pool)
     server.createContext(
       "/api/neblink/remote-exec",
       (ex: HttpExchange) =>
         requests.add(ex.getRequestURI.getPath)
+        bodies.add(new String(ex.getRequestBody.readAllBytes(), StandardCharsets.UTF_8))
         val bytes = """{"output":"p2p-ok","error":""}""".getBytes(StandardCharsets.UTF_8)
         ex.getResponseHeaders.add("Content-Type", "application/json")
         ex.sendResponseHeaders(200, bytes.length.toLong)
@@ -67,6 +69,15 @@ class RemoteExecutorEndpointCandidateSpec extends CatsEffectSuite:
     def address: String = s"http://127.0.0.1:${server.getAddress.getPort}"
 
     def hitCount: Int = requests.size()
+
+    /** 只读画像探针的命中数（xdev 批 2026-09-15）。判别锚 = 探针请求体里的字面
+      * `xdev read-only profile probe`（生产侧 `RemoteExecutor.scala:306` 的
+      * `"description" -> "xdev read-only profile probe"`，随 `p2pExecuteAt`
+      * `RemoteExecutor.scala:732-735` 的 `{"action":…,"params":…}` 信封下发）。
+      * 探针与业务走**同一**候选轮转/短路逻辑 ⇒ 用它能把这 2 次下发拆开核对，
+      * 而不是只对一个合计数。 */
+    def probeHitCount: Int =
+      bodies.stream().filter(_.contains("xdev read-only profile probe")).count().toInt
 
     def close(): Unit =
       server.stop(0)
@@ -80,9 +91,15 @@ class RemoteExecutorEndpointCandidateSpec extends CatsEffectSuite:
 
   /**
    * 真下发一次。`mkPeer` 拿桩端点的真地址来构造 peer（含候选顺序），返回
-   * (结果, 桩命中数)。无 relay ⇒ 落到 `executeViaBestPath` 的 P2P-only 分支。
+   * (结果, 桩命中数, 桩收到的探针数)。无 relay ⇒ 落到 `executeViaBestPath`
+   * 的 P2P-only 分支。
+   *
+   * 命中数口径（xdev 批 2026-09-15）：`execute` 首触先发**一条只读画像探针**
+   * （`kind=probe`，`RemoteExecutor.scala:308`；`RemoteExecutor.initialize` 每次
+   * 都 new 一个实例 ⇒ `profileMem` 进程内无跨用例残留 ⇒ 每个用例恰 1 次探针），
+   * 探针**同走候选轮转/短路**——故一次逻辑下发 = 「探针 + 业务」共 2 次桩命中。
    */
-  private def dispatch(mkPeer: String => PeerInfo): IO[(Either[ToolError, String], Int)] =
+  private def dispatch(mkPeer: String => PeerInfo): IO[(Either[ToolError, String], Int, Int)] =
     IO.blocking(new StubPeerServer()).flatMap { stub =>
       Dispatcher.parallel[IO].use { dispatcher =>
         for
@@ -94,7 +111,8 @@ class RemoteExecutorEndpointCandidateSpec extends CatsEffectSuite:
             .get
             .execute("peer-one", "Bash", JsonObject("command" -> "uname -a".asJson), None)
           hits <- IO.blocking(stub.hitCount)
-        yield (res, hits)
+          probes <- IO.blocking(stub.probeHitCount)
+        yield (res, hits, probes)
       }.guarantee(IO.blocking(stub.close()))
     }
 
@@ -108,9 +126,10 @@ class RemoteExecutorEndpointCandidateSpec extends CatsEffectSuite:
         address = s"http://127.0.0.1:$dead", // 事故形态：head 是不可达的那一个
         endpoints = List(s"http://127.0.0.1:$dead", stub)
       )
-    ).map { case (res, hits) =>
+    ).map { case (res, hits, probes) =>
       assertEquals(res, Right("p2p-ok"), s"次候选必须被尝试并成功: $res")
-      assertEquals(hits, 1, "可达候选恰收到 1 次下发")
+      assertEquals(probes, 1, "首触只读画像探针恰 1 次，且探针自身也完成了一次轮转（死 head 被跳过）")
+      assertEquals(hits, 2, "可达候选恰收到 2 次下发 = 探针 + 业务各 1 次（轮转后每逻辑下发恰 1 次）")
     }
   }
 
@@ -124,18 +143,20 @@ class RemoteExecutorEndpointCandidateSpec extends CatsEffectSuite:
         address = stub,
         endpoints = List(stub, s"http://127.0.0.1:$dead")
       )
-    ).map { case (res, hits) =>
+    ).map { case (res, hits, probes) =>
       assertEquals(res, Right("p2p-ok"))
-      assertEquals(hits, 1, "首个成功者即返回（串行短路，不遍历剩余候选）")
+      assertEquals(probes, 1, "首触只读画像探针恰 1 次（探针同样首候选即成功）")
+      assertEquals(hits, 2, "首个成功者即返回（串行短路，不遍历剩余候选）——探针 + 业务各 1 次")
     }
   }
 
   test("C1: peer.endpoints 为空 ⇒ 退回单 address（legacy peer 行为不回归）") {
     dispatch(stub =>
       PeerInfo(deviceId = "peer-1", deviceName = "peer-one", platform = "macos", address = stub)
-    ).map { case (res, hits) =>
+    ).map { case (res, hits, probes) =>
       assertEquals(res, Right("p2p-ok"), s"无 endpoints 时仍按 address 下发: $res")
-      assertEquals(hits, 1)
+      assertEquals(probes, 1, "首触只读画像探针恰 1 次（单端点形态同样下发探针）")
+      assertEquals(hits, 2, "退回单 address 后仍是探针 + 业务各 1 次")
     }
   }
 

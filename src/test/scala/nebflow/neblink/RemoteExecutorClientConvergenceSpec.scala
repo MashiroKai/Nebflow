@@ -112,12 +112,20 @@ class RemoteExecutorClientConvergenceSpec extends CatsEffectSuite:
         yield
           val (result, tokens, accepted, logins, tokenB) = out
           assertEquals(result, Right("remote-ok"), s"relay dispatch must succeed: $result")
+          // xdev 批（2026-09-15）：`execute` 首触新增**只读画像探针**（`kind=probe`，
+          // `RemoteExecutor.scala:308`）——探针同走 p2p→relay 链（本用例 peer 的
+          // `http://127.0.0.1:9` 恒不可达 ⇒ 探针的 relay 腿成功），故 fixture 收到
+          // **2 次** `/api/relay/<id>/exec`：探针 + 业务。口径与兄弟 spec
+          // `RemoteExecutorAuditSpec.scala:123-126` 逐字一致（那里是同一根因）。
+          // 判据本体不变：**两次下发都必须带活 client 的 token** —— 若构造期快照
+          // client₀ 被捕获，第 1 条会是 `tok-1`（且被 403 拒 ⇒ `accepted` 出现 false
+          // + 自愈补登录）。
           assertEquals(
             tokens,
-            List(tokenB),
-            "the FIRST dispatch must carry the LIVE client's token — a stale token means client₀ was captured"
+            List(tokenB, tokenB),
+            "BOTH dispatches (profile probe + business) must carry the LIVE client's token — a stale token means client₀ was captured"
           )
-          assertEquals(accepted, List(true), "and it must be accepted on the first try (no heal retry)")
+          assertEquals(accepted, List(true, true), "and each must be accepted on the first try (no heal retry)")
           assertEquals(logins, 2, "no extra re-login: the stale session must never be used at all")
       }.guarantee(IO.blocking(fix.close()))
     }
