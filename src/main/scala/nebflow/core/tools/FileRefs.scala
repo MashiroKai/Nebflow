@@ -85,6 +85,42 @@ private[tools] object FileRefs:
   )
 
   /**
+   * Tool-side MIRROR of the endpoint's data-root namespace allowlist
+   * (`WebSocketRoutes.NfDataRootAllowlist`, consumed by the pure judge
+   * `nfCredentialDeny`).
+   *
+   * Same job as [[AllowedExtensions]] one level up: the endpoint is
+   * authoritative, this table mirrors it so the tool face can tell the model
+   * which locations its `/api/nf-file` references can actually be served from
+   * — and `FileRefsWhitelistSpec` welds the two by item-for-item equality, so
+   * a future change to one side without the other fails there instead of
+   * silently teaching the model a path shape that always 403s.
+   *
+   * 2026-09-16 (img-ticket batch i, #687-A, author ruling): `docs` joined the
+   * endpoint list. The author's human-deliverable directory (the `docs` subtree
+   * of the data root) was the one location the delivery convention told people
+   * to write to AND this judge refused (`credential-path`) — the ruling
+   * resolves that contradiction by widening the allowlist by EXACTLY this one
+   * entry (it explicitly supersedes the 2026-09-11 "do not widen the
+   * credential namespace" ruling). Nothing else moved: no other subtree, no
+   * prefix/glob matching, the `head` exact-match semantics unchanged.
+   *
+   * 🔴 Do not add a second copy of this list anywhere (neither tool may inline
+   * its own literal): read this constant. 🔴 Every addition here must cite an
+   * author ruling — this table is a permission face, not a rendering knob.
+   */
+  val DataRootServedNamespaces: List[String] =
+    List("projects", "uploads", "plots", "workspace-items", "voice-models", "docs")
+
+  /** [[DataRootServedNamespaces]] rendered the way the tool face prints it (each
+    * entry followed by the recursive-glob suffix) — one string, so Card's prose
+    * and Pop's prose cannot drift from the endpoint's table. Pop's description
+    * is a plain (non-interpolated) literal, so it embeds the same text instead,
+    * and a `FileRefsWhitelistSpec` assertion keeps the two welded. */
+  val DataRootServedNamespacesText: String =
+    DataRootServedNamespaces.map(_ + "/**").mkString(", ")
+
+  /**
    * Why a local-looking file reference could not be turned into a servable URL.
    *
    * 2026-09-11 (carderr batch — author report 11:57): the Card tool used to
@@ -375,27 +411,80 @@ private[tools] object FileRefs:
   //
   // Why the reference leg is not enough (author case, both faces):
   //   - a ticket is minted only for paths the read endpoint's namespace judge
-  //     allows (`WebSocketRoutes.nfCredentialDeny`): the data root serves ONLY
+  //     allows (`WebSocketRoutes.nfCredentialDeny`): the data root served ONLY
   //     `projects/uploads/plots/workspace-items/voice-models`, so a screenshot
-  //     under `<dataRoot>/docs/**` is refused (`credential-path`) → no ticket
-  //     → the credential-free URL answers 401 → placeholder / error panel;
+  //     under `<dataRoot>/docs/**` was refused (`credential-path`) → no ticket
+  //     → the credential-free URL answered 401 → placeholder / error panel.
+  //     (2026-09-16 img-ticket batch i, #687-A: the author ruled `docs` INTO
+  //     that allowlist, so that location mints and reads now — see
+  //     [[DataRootServedNamespaces]]. The rarer shape this bullet describes is
+  //     now a file in a location that is still refused: `secrets/`, `logs/`,
+  //     `sessions/`, a non-`evidence*` project `.nebflow` subtree, `~/.ssh`-like
+  //     trees.)
   //   - the URL carries its path percent-encoded by the TOOL (form encoding,
   //     `+` for space) while the render-time candidate scanner decoded with
   //     `decodeURIComponent` (no `+` folding) → the mint asked for a path that
   //     does not exist → no ticket → 401 again.
-  // Neither cause is fixable on the read endpoint without widening its
-  // credential-namespace policy (forbidden — a fix may not trade permission
-  // for a green render). Embedding the bytes removes the request from the
-  // critical path for images altogether, which is also what makes a card
-  // render on replay (the data URI is persisted with the markup).
+  // Embedding the bytes removes the request from the critical path for images
+  // altogether, which is also what makes a card render on replay (the data URI
+  // is persisted with the markup).
+  //
+  // 安全原则（2026-09-16 重述，判据不变、理由更新）：**权限面不得为绿灯让步**
+  // —— 既不能把「让这张图渲染出来」当成放宽读取端点命名空间的理由，也不能在
+  // 工具侧私开旁路（自造 URL、绕票据、复制一份白名单）。2026-09-11 的「禁放开
+  // 命名空间」是**作者裁定**，其效力不因渲染缺陷而消解；2026-09-16 作者**同一
+  // 权限面**上作出新裁定：将白名单**恰好扩一项 `docs`**（#687-A，明示取代 0911
+  // 裁定）。两者共同的口径是——**改权限面只能出自作者裁定、且逐项明文**；工具
+  // 侧修复永远不能自行扩面。本模块因此只读 [[DataRootServedNamespaces]]，并由
+  // `FileRefsWhitelistSpec` 与端点表逐项焊死。
   //
   // The rule is ONE definition for both tools — Card's card-iframe face (every
   // resource face: `src=`, `srcset` candidates, CSS `url(...)`) and Pop's HTML
   // `<img src>` face plus Pop's directly-opened-image face.
 
   /** Max single image size to embed as a base64 data URI (5 MB). Larger images
-    * keep the `/api/nf-file` reference and are reported as `deferred`/`proxied`. */
+    * keep the `/api/nf-file` reference and are reported as `deferred`/`proxied`.
+    *
+    * This is the PER-ITEM gate and it is unchanged by the cumulative budget
+    * below: `isInlineImage` still answers exactly what it used to. */
   val MaxEmbedImageSize: Long = 5L * 1024 * 1024
+
+  /** Cumulative inline budget for ONE tool call (40,000 characters of
+    * `data:` URI text), 2026-09-16 img-ticket batch i / #687-C (author ruling).
+    *
+    * 判据（逐字）：**单次工具调用内所有内联项合计 ≤ 40,000 字符**。单图 5MB
+    * 上限（[[MaxEmbedImageSize]]）不变，两道闸是「与」关系：一项被内联，当且
+    * 仅当它自身过单图闸 **且** 其 `data:` URI 字数不超过**当时剩余**的累计预算。
+    *
+    * 确定性处置（可复算，见 [[embedImage]] / [[InlineBudget]]）：内联项按**扫描
+    * 顺序**（Card = 文档顺序；Pop = `<img src>` 出现的顺序；直开图片腿 = 唯一一
+    * 项）逐项累计，**先到先占**；某项当前剩余额度装不下 ⇒ 该项**不内联、零扣费、
+    * 不阻断后续**（回落既有引用腿 `/api/nf-file`，Pop 计入 `deferred`、Card 计入
+    * `deferred`），后续较小的项仍可占用剩余额度。同一份输入 ⇒ 同一组内联判定
+    * （无随机、无 I/O 顺序依赖）：费用 = `data:` URI 的**精确字符数** =
+    * `"data:" + mime + ";base64,"` 前缀长度 + `4 × ceil(size/3)`（JDK Base64 不折
+    * 行、不省略补位），见 [[dataUriChars]]。
+    *
+    * 用户可见语义：超限项在卡片/画布里显示为 `/api/nf-file` 引用（渲染时铸票），
+    * 而非内嵌字节 —— 于是它与所有引用腿一样依赖票据，路径不在可服务命名空间内
+    * 时会显示占位/错误而非图片；重放时由既有铸票机制重新取票（`data:` 内嵌项则
+    * 随标记持久化、无需请求）。 */
+  val MaxInlinePayloadChars: Int = 40000
+
+  /** Why an image that passed the per-image gate was not embedded. */
+  enum InlineSkip:
+    /** Not an embeddable image at all: extension outside
+      * [[EmbeddableImageExtensions]] or larger than [[MaxEmbedImageSize]]. */
+    case NotEmbeddable
+
+    /** Inside the per-image gate, but the cumulative budget
+      * ([[MaxInlinePayloadChars]]) could not cover its `data:` URI. */
+    case OverBudget
+
+    /** Inside the per-image gate and covered by the budget, but the bytes could
+      * not be read — the caller decides (Card falls back to the proxy URL, Pop
+      * reports the same `other` rejection it used to). */
+    case Unreadable(detail: String)
 
   /** Image extensions that can be embedded as data URIs. */
   val EmbeddableImageExtensions: Set[String] = Set("png", "jpg", "jpeg", "gif", "webp", "svg", "bmp")
@@ -421,13 +510,90 @@ private[tools] object FileRefs:
 
   /** `Right("data:<mime>;base64,…")` for an inlineable image, `Left(why)` when
     * the bytes could not be read (the caller decides: Card falls back to the
-    * proxy URL, Pop reports the same `other` rejection it used to). */
+    * proxy URL, Pop reports the same `other` rejection it used to).
+    *
+    * 🔴 This is the BYTES-level step only — it does NOT consult the per-image
+    * gate or the cumulative budget. Callers go through [[embedImage]], which
+    * consults both; this entry point stays for the specs that pin the encoding
+    * itself. */
   def readAsDataUri(path: Path): Either[String, String] =
     try
       val ext = fileExtension(path.toString)
       val b64 = java.util.Base64.getEncoder.encodeToString(Files.readAllBytes(path))
       Right(s"data:${mimeFromExt(ext)};base64,$b64")
     catch case e: Exception => Left(s"${e.getClass.getSimpleName}: ${Option(e.getMessage).getOrElse("")}")
+
+  /** The EXACT character count of the `data:` URI [[readAsDataUri]] produces for
+    * a file of `size` bytes with extension `ext`: the `"data:<mime>;base64,"`
+    * prefix plus the JDK Base64 output length `4 × ceil(size/3)` (the encoder
+    * neither wraps lines nor omits padding, so this is an identity, not an
+    * estimate). Pure — that is what makes the budget rule recomputable by hand
+    * from `(ordered paths, sizes)` alone. */
+  def dataUriChars(size: Long, ext: String): Int =
+    val prefix = s"data:${mimeFromExt(ext)};base64,"
+    if size < 0L then Int.MaxValue
+    else
+      val b64   = 4L * ((size + 2L) / 3L)
+      val total = prefix.length.toLong + b64
+      if total > Int.MaxValue.toLong then Int.MaxValue else total.toInt
+
+  /** Order-sensitive accumulator for [[MaxInlinePayloadChars]] — ONE instance
+    * per tool call (never a shared/static one: two calls must not spend each
+    * other's budget).
+    *
+    * Semantics (the deterministic rule, see [[MaxInlinePayloadChars]]): an item
+    * is charged its exact `data:` URI length when the REMAINING balance covers
+    * it, and charged NOTHING when it does not. Refusing is therefore side-effect
+    * free: a later, smaller item still fits ("first come, first served", not
+    * "the first big item ends the pass"). [[release]] exists for the one path
+    * that charges before it can fail (a read error) so the accounting stays
+    * exact. */
+  final class InlineBudget(val maxChars: Int = MaxInlinePayloadChars):
+    private var used: Int = 0
+
+    /** Characters already spent by embedded inlines. */
+    def usedChars: Int = used
+
+    /** What is left — never negative (an item that cannot fit is refused
+      * without charging). */
+    def remainingChars: Int = math.max(0, maxChars - used)
+
+    /** Charge `chars` when it fits, else refuse and leave the budget untouched. */
+    def tryCharge(chars: Int): Boolean =
+      if chars < 0 then false
+      else if chars <= remainingChars then
+        used += chars
+        true
+      else false
+
+    /** Give back a charge that was never materialised (read failure only). */
+    def release(chars: Int): Unit =
+      used = math.max(0, used - math.max(0, chars))
+
+  /** The ONE inline decision both tools use (2026-09-16 img-ticket batch i):
+    * `Right(dataUri)` = embed these bytes; `Left(skip)` = leave the reference
+    * leg alone.
+    *
+    * Order of the two gates is deliberate and user-visible: the PER-IMAGE gate
+    * ([[isInlineImage]]) is asked first, so an oversize/wrong-format image is
+    * reported as [[InlineSkip.NotEmbeddable]] and consumes no budget (its bytes
+    * could not be embedded at any balance), while an image that is merely too
+    * big for the REMAINING budget answers [[InlineSkip.OverBudget]]. The two
+    * reasons are distinguishable in the counters, so a reader can tell "this
+    * file can never be inline" from "this call already spent its budget". */
+  def embedImage(path: Path, budget: InlineBudget): Either[InlineSkip, String] =
+    if !isInlineImage(path) then Left(InlineSkip.NotEmbeddable)
+    else
+      val cost =
+        try dataUriChars(Files.size(path), fileExtension(path.toString))
+        catch case _: Exception => Int.MaxValue
+      if !budget.tryCharge(cost) then Left(InlineSkip.OverBudget)
+      else
+        readAsDataUri(path) match
+          case Right(uri) => Right(uri)
+          case Left(detail) =>
+            budget.release(cost)
+            Left(InlineSkip.Unreadable(detail))
 
   // ── warning + counter payload shapes (shared by Card and Pop) ─────────────
 

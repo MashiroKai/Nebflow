@@ -27,3 +27,65 @@ class FileRefsWhitelistSpec extends FunSuite:
     assert(ext.nonEmpty)
     assert(Set("js", "mjs", "css", "json").subsetOf(ext))
   }
+
+  // ── A1 namespace mirror (img-ticket batch i, 2026-09-16 · #687-A/#687-B) ──
+  //
+  // The SAME cheap-invariant argument as A14, one level up (the judge's table
+  // instead of the extension table): the tool face teaches the model where its
+  // `/api/nf-file` references can be served from, and the endpoint decides it.
+  // Before this batch the two were unlinked — the tool prose enumerated the
+  // allowlist by hand, and the 2026-09-16 author ruling (#687-A) widened the
+  // endpoint by exactly one entry (`docs`). These tests make that drift
+  // impossible to ship: the tool-side constant must equal the endpoint's list
+  // item for item, and the prose the model reads must name it.
+
+  test("A1-mirror: FileRefs.DataRootServedNamespaces == WebSocketRoutes.NfDataRootAllowlist (no namespace drift)") {
+    assertEquals(FileRefs.DataRootServedNamespaces, WebSocketRoutes.NfDataRootAllowlist)
+  }
+
+  test("A1-mirror: non-empty, carries `docs`, keeps the pre-batch entries, renders to the tool-face text") {
+    val ns = FileRefs.DataRootServedNamespaces
+    assert(ns.nonEmpty)
+    assert(ns.contains("docs"), "the author ruling #687-A (docs/** served) must reach the tool face")
+    // The batch adds ONE entry; it does not reorder or drop the shipped five.
+    assert(List("projects", "uploads", "plots", "workspace-items", "voice-models").forall(ns.contains))
+    assertEquals(FileRefs.DataRootServedNamespacesText, ns.map(_ + "/**").mkString(", "))
+    assert(FileRefs.DataRootServedNamespacesText.contains("docs/**"))
+    assert(!FileRefs.DataRootServedNamespacesText.startsWith(",") && !FileRefs.DataRootServedNamespacesText.contains("  "))
+  }
+
+  test("A1-mirror: the shipped tool descriptions name every served namespace (prose cannot drift)") {
+    val text = FileRefs.DataRootServedNamespacesText
+    List("Card" -> CardTool.description, "Pop" -> PopTool.description).foreach { (who, described) =>
+      assert(described.contains(text), s"$who's description must enumerate the served namespaces: $text")
+      assert(
+        !described.contains("docs/**` is NOT served") && !described.contains("docs/** is NOT served"),
+        s"$who's description still claims docs/** is not served"
+      )
+    }
+  }
+
+  test("A1-judge: <dataRoot>/docs/** is allowed and NOTHING else moved (pure judge, no disk)") {
+    // Pure reads (nfCredentialDeny touches no filesystem: it normalizes and
+    // compares prefixes), so this pins the widening without writing anything.
+    val root = java.nio.file.Paths.get("/tmp/nebflow-ns-mirror-spec/dataroot").normalize()
+    val policy = WebSocketRoutes.NfPathPolicy(
+      root,
+      java.nio.file.Paths.get("/tmp/nebflow-ns-mirror-spec/ws"),
+      Set.empty
+    )
+    def deny(rel: String): Option[String] = WebSocketRoutes.nfCredentialDeny(root.resolve(rel), policy)
+    assertEquals(deny("docs/x.svg"), None, "the batch: docs/** is served")
+    assertEquals(deny("docs/nested/deep/x.svg"), None, "…including nested subtrees")
+    List(
+      "logs/x.svg",
+      "sessions/x.svg",
+      "usage-records/x.json",
+      "secrets/x.txt",
+      "auth.json",
+      "nebflow.json",
+      "future-thing.json",
+      "docsmith/x.svg", // a prefix sibling of `docs` — the judge matches the head exactly, never by prefix
+      "docsx/x.svg"
+    ).foreach(rel => assert(deny(rel).isDefined, s"$rel must STAY refused (one-entry widening)"))
+  }

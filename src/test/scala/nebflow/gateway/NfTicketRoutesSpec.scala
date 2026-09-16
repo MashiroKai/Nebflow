@@ -329,6 +329,107 @@ class NfTicketRoutesSpec extends CatsEffectSuite:
   // ── A14 lives in nebflow.core.tools.FileRefsWhitelistSpec (FileRefs is
   //    private[tools]; the gateway package cannot see it).
 
+  // ── A17 (img-ticket batch i, 2026-09-16 · #687-A): `<dataRoot>/docs/**` ──
+  //
+  // 作者裁定：`~/.nebflow/docs/**`（人交付落位）加入 A1 数据根命名空间白名单，
+  // 范围仅此一项、顺序语义不变、`head` 精确匹配不变。两条读数：
+  //  A17  —— 走**既有链**铸票并读取（🔴 无新旁路、无绕票据）：铸票成功 + 读取 200。
+  //  A17-c —— 反证「没有顺手放开别的路径」：兄弟目录 / 数据根凭据件 / 穿越到
+  //           `~/.ssh` 形态仍逐条 `credential-path`（铸票面 + 读取面各一次）。
+  test("A17: `<dataRoot>/docs/**` mints a ticket and reads 200 (author ruling #687-A, existing chain only)") {
+    withEnv { env =>
+      IO {
+        val doc = env.pathOf("docs/x.svg")
+        Files.createDirectories(doc.getParent)
+        Files.write(doc, "<svg>doc</svg>".getBytes(StandardCharsets.UTF_8))
+        val real = doc.toRealPath()
+
+        // ① mint through the real issuer (POST /api/nf-ticket → nfFileVerdict)
+        val resp = env
+          .issue(
+            Json.obj(
+              "sessionId" -> Json.fromString("spec"),
+              "paths" -> Json.arr(Json.fromString(doc.toString))
+            )
+          )
+          .get
+        assertEquals(resp.status, Status.Ok)
+        val body = parse(bodyOf(resp)).toOption.getOrElse(Json.Null)
+        val rejected = body.hcursor.downField("rejected").values.getOrElse(Vector.empty).toList
+        assertEquals(rejected, Nil, s"docs/** must not be rejected any more: $rejected")
+        val token = body.hcursor
+          .downField("tickets")
+          .downField(doc.toString)
+          .downField("t")
+          .as[String]
+          .toOption
+          .getOrElse("")
+        assert(token.nonEmpty, "docs/** must get a ticket")
+
+        // ② read it back through the SAME chain (path-bound ticket + namespace judge)
+        val read = env.read(s"path=${url(real)}&ticket=$token").get
+        assertEquals(read.status, Status.Ok)
+        assertEquals(bodyOf(read), "<svg>doc</svg>")
+      }
+    }
+  }
+
+  test("A17-counter: the widening is ONE entry — a sibling dir, a data-root credential and a .ssh traversal stay refused") {
+    withEnv { env =>
+      IO {
+        val logs = env.pathOf("logs/x.svg")
+        Files.createDirectories(logs.getParent)
+        Files.write(logs, "<svg/>".getBytes(StandardCharsets.UTF_8))
+        // A data-root entry that is NOT on the allowlist (the fail-closed default)
+        Files.write(env.pathOf("future-thing.json"), "{}".getBytes(StandardCharsets.UTF_8))
+        val sshDir = Files.createDirectories(env.root.resolve(".ssh"))
+        Files.write(sshDir.resolve("id_ed25519"), "key".getBytes(StandardCharsets.UTF_8))
+        // Lexically normalized by the verdict chain → <root>/.ssh/id_ed25519, i.e.
+        // OUTSIDE the data root: the pattern reject (credential directory segment)
+        // is what must catch it, not the allowlist.
+        val traversal = env.pathOf("projects/../../.ssh/id_ed25519")
+
+        val cases: List[(Path, String)] = List(
+          (logs, "credential-path"),
+          (env.pathOf("auth.json"), "credential-path"),
+          (env.pathOf("secrets/x.txt"), "credential-path"),
+          (env.pathOf("future-thing.json"), "credential-path"),
+          (traversal, "credential-path")
+        )
+
+        // ① mint face: every one of them is rejected, and NOTHING is signed
+        val mint = env
+          .issue(
+            Json.obj(
+              "sessionId" -> Json.fromString("spec"),
+              "paths" -> Json.arr(cases.map((p, _) => Json.fromString(p.toString))*)
+            )
+          )
+          .get
+        assertEquals(mint.status, Status.Ok)
+        val mintBody = parse(bodyOf(mint)).toOption.getOrElse(Json.Null)
+        val tickets = mintBody.hcursor.downField("tickets").keys.getOrElse(Nil).toList
+        val rejected = mintBody.hcursor.downField("rejected").values.getOrElse(Vector.empty).toList
+        for (p, want) <- cases do
+          assert(!tickets.contains(p.toString), s"$p must not be signed")
+          assert(
+            rejected.exists(j =>
+              j.hcursor.downField("path").as[String].toOption.contains(p.toString) &&
+                j.hcursor.downField("reason").as[String].toOption.contains(want)
+            ),
+            s"$p must be rejected with $want — got $rejected"
+          )
+
+        // ② read face: refused even WITH a valid ticket (defence in depth, same
+        //    pattern as A5/A6 — the store is called directly to bypass the issuer)
+        for (p, want) <- cases do
+          val read = env.read(s"path=${url(p)}&ticket=${env.ticketFor(p)}").get
+          assertEquals(read.status, Status.Forbidden, s"$p")
+          assertEquals(reasonOf(read), want, s"$p")
+      }
+    }
+  }
+
   // ── R1 policy shape ──────────────────────────────────────────────────
   test("policy: P1 is PathUtil.dataRoot (never a hardcoded home directory)") {
     // 2026-09-11 full-suite flake fix: the previous form was
