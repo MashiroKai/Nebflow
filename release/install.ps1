@@ -656,7 +656,47 @@ Write-Stage 6 7 "Creating launcher..."
 # A version assertion runs before the JAR is launched (floor = $JdkMajorRequired).
 $wrapperPath = Join-Path $InstallDir "$WrapperName.ps1"
 $wrapperContent = @"
-`$jar = @(Get-ChildItem "`$PSScriptRoot\$LowerName-assembly-*.jar") + @(Get-ChildItem "`$PSScriptRoot\nebflow-assembly-*.jar") | Sort-Object Name | Select-Object -Last 1
+# >>> WINSORT-BEGIN v1 (version-order jar pick) >>>
+# Name order != version order: the date scheme deliberately strips leading zeros
+# (Windows version fields reject them), so as plain strings "2026.10.5" sorts
+# BEFORE "2026.9.17". Rank the candidates by the parsed numeric tuple (year,
+# month, day, same-day -beta.N sequence) and take the max.
+# Version core = the SAME contract as packaging/app-version.sh:21
+#   ([0-9]{4})\.([0-9]{1,2})\.([0-9]{1,2})(-beta\.[0-9]+)?
+# Legacy semver shapes (1.4.1-beta.56) rank by the same 4-field tuple; a name
+# that parses as neither is EXCLUDED - deliberately NO silent fall back to name
+# order (the "JAR not found" branch below then fires).
+function Get-NebflowJarVersionKey {
+    param([string]`$Name)
+    `$m = [regex]::Match(`$Name, '-assembly-(\d{4})\.(\d{1,2})\.(\d{1,2})(?:-beta\.(\d+))?\.jar`$')
+    if (-not `$m.Success) {
+        `$m = [regex]::Match(`$Name, '-assembly-(\d+)\.(\d+)\.(\d+)(?:-beta\.(\d+))?\.jar`$')
+    }
+    if (-not `$m.Success) { return `$null }
+    `$seq = 0
+    if (`$m.Groups[4].Success) { `$seq = [int]`$m.Groups[4].Value }
+    return [pscustomobject]@{
+        Year  = [int]`$m.Groups[1].Value
+        Month = [int]`$m.Groups[2].Value
+        Day   = [int]`$m.Groups[3].Value
+        Seq   = `$seq
+    }
+}
+function Get-NebflowNewestJar {
+    param([object[]]`$Candidates)
+    `$ranked = @()
+    foreach (`$c in @(`$Candidates)) {
+        if (`$null -eq `$c) { continue }
+        `$k = Get-NebflowJarVersionKey `$c.Name
+        if (`$null -eq `$k) { continue }
+        `$ranked += [pscustomobject]@{ Jar = `$c; Year = `$k.Year; Month = `$k.Month; Day = `$k.Day; Seq = `$k.Seq }
+    }
+    if (@(`$ranked).Count -eq 0) { return `$null }
+    return (`$ranked | Sort-Object Year, Month, Day, Seq | Select-Object -Last 1).Jar
+}
+# <<< WINSORT-END v1 <<<
+`$jarCandidates = @(Get-ChildItem "`$PSScriptRoot\$LowerName-assembly-*.jar") + @(Get-ChildItem "`$PSScriptRoot\nebflow-assembly-*.jar")
+`$jar = Get-NebflowNewestJar `$jarCandidates
 if (-not `$jar) {
     Write-Host "ERROR: $ProductName JAR not found in `$PSScriptRoot" -ForegroundColor Red
     exit 1
@@ -715,7 +755,9 @@ if "%JMAJ%"=="1" set "JMAJ=%JMIN%"
 set /a JAVA_MAJOR=%JMAJ%+0 2>nul
 if not defined JAVA_MAJOR set "JAVA_MAJOR=0"
 if %JAVA_MAJOR% LSS $JdkMajorRequired goto java_too_old
-for %%f in ("%~dp0nebflow-assembly-*.jar" "%~dp0$LowerName-assembly-*.jar") do set JAR=%%f
+set "JAR="
+set "NB_JARKEY="
+for %%f in ("%~dp0nebflow-assembly-*.jar" "%~dp0$LowerName-assembly-*.jar") do call :nebflow_pick_jar "%%~f"
 if "%JAR%"=="" (
     echo ERROR: %~dp0 JAR not found
     exit /b 1
@@ -731,6 +773,73 @@ echo   Install:  winget install --id EclipseAdoptium.Temurin.21.JDK -e
 echo   Download: https://adoptium.net/temurin/releases/?version=21
 echo   Then re-run: $WrapperName ^<command^>
 exit /b 11
+
+:nebflow_pick_jar
+rem >>> WINSORT-BEGIN v1 (version-order jar pick) >>>
+rem Name order != version order: the date scheme deliberately strips leading
+rem zeros (Windows version fields reject them), so as plain strings "2026.10.5"
+rem sorts BEFORE "2026.9.17". Rank the candidate (arg %~1) by the parsed numeric
+rem tuple and keep the max. Version core = the SAME contract as
+rem packaging/app-version.sh:21
+rem   ([0-9]{4})\.([0-9]{1,2})\.([0-9]{1,2})(-beta\.[0-9]+)?
+rem Legacy semver shapes (1.4.1-beta.56) rank by the same 4-field tuple; a name
+rem that parses as neither is EXCLUDED - deliberately NO silent fall back to
+rem name order (the "JAR not found" branch above then fires).
+rem Numeric fields are zero-padded to 4/3/3/6 columns so that a plain string
+rem compare IS the version compare; the leading "k" only keeps cmd's IF from
+rem taking the numeric-reinterpretation path on the 16-digit key.
+set "NB_NAME=%~nx1"
+set "NB_VER="
+set "NB_CORE="
+set "NB_TAIL="
+set "NB_SEQ=0"
+set "NB_Y="
+set "NB_M="
+set "NB_D="
+set "NB_KEY="
+set "NB_VER=%NB_NAME:*-assembly-=%"
+if "%NB_VER%"=="%NB_NAME%" exit /b 0
+for /f "tokens=1,* delims=-" %%a in ("%NB_VER%") do (
+  set "NB_CORE=%%a"
+  set "NB_TAIL=%%b"
+)
+if defined NB_TAIL (
+  if /i "%NB_TAIL:beta.=%"=="%NB_TAIL%" exit /b 0
+  set "NB_SEQ=%NB_TAIL:beta.=%"
+)
+for /f "tokens=1,2,3,4 delims=." %%a in ("%NB_CORE%") do (
+  if not "%%~d"=="" exit /b 0
+  set "NB_Y=%%a"
+  set "NB_M=%%b"
+  set "NB_D=%%c"
+)
+if not defined NB_Y exit /b 0
+if not defined NB_M exit /b 0
+if not defined NB_D exit /b 0
+for /f "delims=0123456789" %%z in ("%NB_Y%") do exit /b 0
+for /f "delims=0123456789" %%z in ("%NB_M%") do exit /b 0
+for /f "delims=0123456789" %%z in ("%NB_D%") do exit /b 0
+for /f "delims=0123456789" %%z in ("%NB_SEQ%") do exit /b 0
+if not "%NB_Y:~4%"=="" exit /b 0
+if not "%NB_M:~3%"=="" exit /b 0
+if not "%NB_D:~3%"=="" exit /b 0
+if not "%NB_SEQ:~6%"=="" exit /b 0
+set "NB_YY=000%NB_Y%"
+set "NB_MM=000%NB_M%"
+set "NB_DD=000%NB_D%"
+set "NB_SS=000000%NB_SEQ%"
+set "NB_KEY=k%NB_YY:~-4%%NB_MM:~-3%%NB_DD:~-3%%NB_SS:~-6%"
+if not defined NB_JARKEY (
+  set "NB_JARKEY=%NB_KEY%"
+  set "JAR=%~f1"
+  exit /b 0
+)
+if "%NB_KEY%" GTR "%NB_JARKEY%" (
+  set "NB_JARKEY=%NB_KEY%"
+  set "JAR=%~f1"
+)
+exit /b 0
+rem <<< WINSORT-END v1 <<<
 "@
 Set-Content -Path $cmdPath -Value $cmdContent -Encoding ASCII
 
