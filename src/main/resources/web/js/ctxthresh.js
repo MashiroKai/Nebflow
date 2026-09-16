@@ -64,6 +64,14 @@
 //   暂留语义：提交后到权威帧到达前**保持**提交值（防「松手回跳」），
 //   回显帧 / 取消 / `HOLD_MS` 兜底任一到达即交还权威值。
 //
+// ── 回帧腿的拖动期守卫（F-1 整改，2026-09-17）──────────────────────────────
+//   `compactThresholdInfo` 到达时若 `dragging === true` ⇒ **只**更新权威状态
+//   （`info` + `state.sessionModelInfo[sid].compactThreshold`），**不调用** `clearPreview()`。
+//   否则回帧内含的 `endDrag()` 会把手势自己掐死：冷页（`info` 未初始化）或换会话后的
+//   **第一次**拖动起手即补拉 ⇒ 回帧在拖动中到达 ⇒ 预览消失、`pointerup` 变 no-op、
+//   松手零出站（＝作者 P2「起手即写值」在该路径上不成立）。交还权威值一律发生在
+//   手势结束之后（`onPointerUp` 的 `commit()` / `clearPreview()` 或取消腿）。
+//
 // ── 面板删除边界（作者裁定 P1 = 替换；**本批删除仅限此界**）──────────────────
 //   删除：面板的创建 / 打开 / 关闭 / 保存 / 复位按钮 / 面板滑杆拖动 / 数字框 /
 //   键盘（面板期）/ 事件绑定 / 运行期注入样式（`.ctxthresh-*` 面板段）/
@@ -491,8 +499,15 @@ onMessage('compactThresholdInfo', (msg) => {
   // 绝不把非 root 会话的阈值显示进 Nebula 窗口的环。
   if (!sid || msg.sessionId !== sid) return;
   info = msg;
-  // 权威帧到达 ⇒ 结束暂留、交还权威值（把手/读数回权威角度，`_index.json` 语义同源）
-  clearPreview();
+  // 权威帧到达 ⇒ 结束暂留、交还权威值（把手/读数回权威角度，`_index.json` 语义同源）。
+  // 🔴 **拖动期守卫（F-1）**：手势进行中**不得**交还 —— `clearPreview()` 内含 `endDrag()`
+  // ⇒ 起手补拉（`onPointerDown` 的 `pull()`：冷页首手势 / 换会话后首手势）触发的回帧会在
+  // 拖动中把手势自己掐死（`dragging = false`、预览与拖动类被清、`pointerup` 直接 no-op ⇒
+  // 松手零出站），与作者 P2「起手即写值」直接冲突。权威值照旧写入 `info` 与
+  // `state.sessionModelInfo[sid]`（状态不丢），交还推迟到手势结束（`onPointerUp` 的
+  // `commit()`/`clearPreview()` 或取消腿）。`main.js` 的 S1 钩子在拖动期优先取
+  // `data-ring-drag-preview-pct` ⇒ 随后的 `updateHeaderModelInfo()` 不会抢回把手/读数。
+  if (!dragging) clearPreview();
   if (typeof state.updateHeaderModelInfo === 'function') {
     if (!state.sessionModelInfo[sid]) return;
     // 「判定面 ≡ 上报面」：环的阈值线取生效比例（有覆盖 = 覆盖值，
