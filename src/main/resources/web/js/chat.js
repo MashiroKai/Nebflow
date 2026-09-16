@@ -379,13 +379,30 @@ const INJECTED_SOURCE_LABELS = {
   // b64 批（2026-09-13）：链级摘要投根通道（NodeEngine.deliverChainSummary，
   // source="chain"，`FlowMapStore.ChainSummarySource`）。后端自定名 ⇒ 必须显式登记
   // （禁首字母大写兜底，契约门 InjectionSourceContractSpec）。
+  // ── 全降级列表态批（2026-09-16，作者裁定「全部降级列表态」）后的**改接口径** ──
+  // 引擎侧链腿**已停发**（零投主对话 ⇒ 无即时气泡、不进 LLM 上下文）：本表项不再有
+  // live 帧来源。**保留登记（不删）**的两条硬理由：
+  //   ① **存量历史行仍在渲染**（非死码）：宿主 sessions 面现取 ≈49 处 `source:"chain"`（随轮转漂移），
+  //      且不带 `header` 键（宿主建早于 header 批）⇒ 逐行都走本表项 → 标签 "Chain"；
+  //   ② 契约门 `InjectionSourceContractSpec` ② 要求前端登记面 ⊇
+  //      `InjectionAttribution.BackendNamedSources`（仍含 "chain"）；删表项须连带删
+  //      后端词表 + NotificationHeader.KindLabels 两处既有 pin（未取侧，见批报告）。
+  // 链级聚合信息的**现役承载面** = 链级列表/明细面（Flow Map 归档面板
+  // `flowMapArchive.js`：链条目 → 成员行 → 详情窗按需取结果全文），不再经本表。
   chain: 'Chain',
 };
 
 /** Map backend eventType → display suffix for the source label.
- *  Shown as 'SOURCE · EventType' in the injected bubble header. */
+ *  Shown as 'SOURCE · EventType' in the injected bubble header.
+ *  `cancelled`（全降级列表态批 2026-09-16 补齐）：链级状态段本批拓三元后
+ *  `FlowMapStore.ChainSummaryEventCancelled` 取值为 `cancelled`。**登记项**：既有
+ *  shape 靠 `charAt(0).toUpperCase()` 兜底得 `Cancelled`（字节同值），此处显式登记以
+ *  去掉兜底依赖；与节点腿 `NODE_STATUS_LABELS.cancelled='CANCELED'` 的**大小写差异是
+ *  既存口径**（节点腿全大写、通用面 Title case），本批不合并两表（合并会改节点腿既有
+ *  呈现，超出裁定面）。 */
 const EVENT_TYPE_LABELS = {
-  completed: 'Completed', failed: 'Failed', crashed: 'Crashed',
+  completed: 'Completed', failed: 'Failed', cancelled: 'Cancelled',
+  crashed: 'Crashed',
   trigger: 'Triggered', inject: 'Injected',
   info: 'Info', result: 'Result', interrupt: 'Interrupt',
   follow_up: 'Follow-up', parallel: 'Parallel',
@@ -418,6 +435,13 @@ function nodeStatusLabel(eventType) {
  *  to before (old history rows without the field, node face, non-project Mail,
  *  dispatch notifications all render exactly as before). */
 export function injectedSourceLabel(source, eventType, sender, sourceTeam, intake) {
+  // 未知/畸形 source 防御（全降级列表态批 2026-09-16，J6「未知 source 不得异常」）：
+  // 非字符串来源（历史脏行 / 未来新源的畸形值）先串化，禁让下方 `charAt`/`slice`
+  // 抛异常把整条注入行渲染打断；空值仍走上行早退（逐字节不变）。**登记读数**：
+  // 探针覆盖 'chain'（存量历史源）/ 'unknown-source' / '' / null / undefined / 数字
+  // ⇒ 六例零异常（见批证据 30-liststate-readings.json 的 `j6Probe.cases`）。
+  if (source != null && typeof source !== 'string') source = String(source);
+  if (sourceTeam != null && typeof sourceTeam !== 'string') sourceTeam = String(sourceTeam);
   if (!source && !sourceTeam) return '';
   // Node 完成通知专用格式（唯一 Node 类注入消息，source="node" 仅 NodeEngine
   // deliverToNebula 发出）：NODE · <项目名> · <节点名> · <状态>。后端把项目名

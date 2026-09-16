@@ -69,6 +69,31 @@ const GROUP_AVATAR_WIRE_KEY = 'memberAvatars';
 /** 预览上限（正典 §A.1「长度 0..9」⇒ 本层 clamp；渲染面不再判长度上界）。 */
 const GROUP_AVATAR_PREVIEW_MAX = 9;
 
+// ── 群事件身份 `latestEvent`（正典 §2.4 · 同族加性契约）──────────────────────
+// 🔴 **唯一 wire 常量**：行键 = 正典 §2.4 `latestEvent`（camelCase，随服务端
+// `GroupSummary` 的 rename_all；wire 生产方 = 服务端正典，客户端适配服务端、
+// 禁反向）。改名 = 本行一处改动。
+// 🔴 **唯一 wire 读点** = 下方 normalizeGroupRow 经 normalizeLatestEvent；渲染面
+// 一律消费归一后的 `conv.latestEvent`（`{eventId, kind, at, actor, subject}`，
+// 卡片 `{userId, username, name, avatarUrl}`）⇒ **禁**在任何渲染面出现 wire 键名
+// （`latestEvent` 与卡片四键 `userId`/`username`/`display_name`/`avatar` 同一纪律，
+// 沿 `GROUP_AVATAR_WIRE_KEY` 既有归一纪律）。
+// 🔴 **键缺席语义**（正典 §2.4「缺席语义 vs 空对象」）：无事件行 ⇒ 本键**整体不写**
+// 到归一出口（🔴 **禁**以 `null` / 空对象表示「无事件」）⇒ 消费方读 undefined 即
+// 正常态；未知 `kind`、畸形卡片、显示名缺席**同样按缺席处置**（静默忽略，禁占位）。
+const GROUP_EVENT_WIRE_KEY = 'latestEvent';
+/** `kind` **6 值闭集**（正典 §2.2；服务端 DDL 级 CHECK 6 值 ⇒ 第 7 值在存储层即
+ *  不可写）。🔴 客户端仍**必须忽略**未知值（前向兼容，正典 §3.4-2：不得因未知
+ *  `kind` 崩溃或落占位文案）——本层把未知值折成「键缺席」，渲染面无需再判。 */
+const GROUP_EVENT_KINDS = new Set([
+  'group_created',
+  'member_joined',
+  'member_left',
+  'member_removed',
+  'member_role_granted',
+  'member_role_revoked',
+]);
+
 async function req(method, path, body) {
   let resp;
   try {
@@ -737,7 +762,11 @@ export async function sendDeviceMessage(deviceId, body, clientMsgId) {
  *
  *  加性 viewer 字段：承载件（sha256 见本节头部）**已含** `selfUserId`——
  *  在场则原样透传（消费点 = messages.js learnSelfUserId 单点），缺席**不造值**、
- *  由消费方回落 send-correlation 自证（禁把「没有」读成「不是我」）。 */
+ *  由消费方回落 send-correlation 自证（禁把「没有」读成「不是我」）。
+ *
+ *  加性事件字段：契约行键 `latestEvent`（正典 §2.4，服务端 `GroupSummary.latestEvent`）
+ *  —— **在场才写键**（唯一 wire 读点 = normalizeLatestEvent）；缺席 / 未知 kind /
+ *  畸形卡片一律**不写键**（禁写 null / 空对象；消费方「读不到 = 正常态」）。 */
 function normalizeGroupRow(row) {
   if (!row || typeof row !== 'object') return null;
   const id = row.groupId;
@@ -755,6 +784,8 @@ function normalizeGroupRow(row) {
     // 标题首字母（现状形态 = 降级态）。
     memberAvatars: normalizeAvatarPreview(row),
   };
+  const ev = normalizeLatestEvent(row);
+  if (ev) out.latestEvent = ev;
   if (typeof row.selfUserId === 'string' && row.selfUserId) out.selfUserId = row.selfUserId;
   return out;
 }
@@ -787,6 +818,60 @@ function normalizeAvatarPreview(row) {
     });
   }
   return out;
+}
+
+/** 群事件身份归一（**唯一** wire 读点，正典 §2.4 wire 形状 / §2.2 事件族 / §3.4 兼容分支）。
+ *
+ *  出口形状：`{eventId, kind, at, actor, subject}`（内层键名与正典逐字同名）；
+ *  `actor` / `subject` = 卡片 `{userId, username, name, avatarUrl}`，走本文件**唯一**
+ *  wire↔内部档案边界 `personFromWire`（wire `display_name`→`name`、`avatar`→`avatarUrl`、
+ *  `username`→`neblinkId`；卡片形状 = 复用 `FriendPublic`，**不新造第二形状**）。
+ *
+ *  🔴 显示名**单一来源** = wire `display_name`（服务端 `COALESCE(name, username, user_id)`
+ *  已兜底）⇒ 客户端**禁猜名**、**禁自造第二个显示名源**（不回落 `username` / `userId`：
+ *  那正是「服务端漏字段」与「服务端换键名」两态塌成一态的静默吞漂移）。缺显示名 ⇒
+ *  整条事件按**缺席**处置（调用方回落群名两态），**不编造**。
+ *
+ *  fail-quiet 三态**同形回落**（返回 undefined = 不写键，零抛错 / 零重试 / 零请求）：
+ *   · 键缺席（老服务端 / 上线前无事件行的群）⇒ 缺席（**正常态**，不是错误）；
+ *   · `kind` 非闭集 6 值 / 非字符串 ⇒ **静默忽略**（正典 §3.4-2 前向兼容）；
+ *   · `actor` / `subject` 非对象、无 `userId`、无显示名 ⇒ 缺席（正典保证两列 `NOT NULL`
+ *     且恒在场 ⇒ 走到这里即畸形载荷，fail-closed 不半渲染）。
+ *
+ *  🔴 `at` 是**秒级读数、非排序依据**（正典 §2.4/§3.4-4；客户端只见**一条**事件 ⇒
+ *  本层与渲染层都**不**用它比序）；`eventId`（服务端 `MAX(id)` 的排序依据）与 `at`
+ *  在此**只透传**：不可读 ⇒ `null`（**禁**伪造 0 —— 那会制造一个假的序值）。 */
+function normalizeLatestEvent(row) {
+  const raw = row[GROUP_EVENT_WIRE_KEY];
+  if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return undefined;
+  const kind = raw.kind;
+  if (typeof kind !== 'string' || !GROUP_EVENT_KINDS.has(kind)) return undefined;
+  const actor = eventCard(raw.actor);
+  const subject = eventCard(raw.subject);
+  if (!actor || !subject) return undefined;
+  return {
+    eventId: Number.isFinite(raw.eventId) ? Number(raw.eventId) : null,
+    kind,
+    at: Number.isFinite(raw.at) ? Number(raw.at) : null,
+    actor,
+    subject,
+  };
+}
+
+/** 事件卡片归一（`actor` / `subject` 共用；唯一 wire 读点见 normalizeLatestEvent）。 */
+function eventCard(card) {
+  if (!card || typeof card !== 'object') return null;
+  const p = personFromWire(card);
+  const uid = p && p.userId;
+  if (typeof uid !== 'string' || !uid) return null;
+  const name = typeof p.name === 'string' ? p.name.trim() : '';
+  if (!name) return null;
+  return {
+    userId: uid,
+    username: typeof p.neblinkId === 'string' ? p.neblinkId : '',
+    name,
+    avatarUrl: typeof p.avatarUrl === 'string' ? p.avatarUrl : '',
+  };
 }
 
 /** GET /api/groups 响应归一（**防御性双形态保留**）：契约路径 = **裸数组**

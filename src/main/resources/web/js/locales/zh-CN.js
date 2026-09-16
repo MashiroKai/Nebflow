@@ -95,6 +95,7 @@ export default {
   'flowmap.archive.count': '{n} 条链 · {m} 节点',
   'flowmap.archive.nodes': '{n} 节点',
   'flowmap.archive.empty': '暂无已归档任务链',
+  'flowmap.archive.readGuide': '链已归档 · 点成员查看结果全文（按需取）',
   'flowmap.archive.expiringSoon': '即将过期',
   'flowmap.archive.allArchived': '全部节点已完成，结果收入右上角归档',
   'flowmap.archive.close': '关闭归档面板',
@@ -262,10 +263,23 @@ export default {
   // **拆键**产物（2026-09-16 作者令「入群提示还是：你们已成为好友，这不对」：
   // 原 `summaryOf` kind-blind，群行空态套上了上面这条好友文案）。
   // 两键与 en **同批**落地（禁死键），消费点 = messages.js `groupSummaryEmpty`
-  // 单点，两态 = 群名在场 / 缺席（缺席不造值、不拼重复占位）。
+  // 单点 —— **事件腿在前**（`groupEventText`，见下方事件键族），这两条是它的回落两态
+  // （群名在场 / 缺席；缺席不造值、不拼重复占位）。
   'messages.systemNowFriends': '你们已成为好友',
   'messages.groupNoMessagesNamed': '群聊「{name}」暂无消息',
   'messages.groupNoMessages': '群聊暂无消息',
+  // 群事件成员名（作者 2026-09-16 方向令「『{成员名} 加入了群聊』须带成员名」）：
+  // 消费点 = messages.js `groupEventText` 单点（群行空态摘要），数据源 = 群行加性键
+  // `latestEvent`（正典 §2.4；六 kind 闭集）。🔴 显示名**只有一个来源** = 服务端
+  // `display_name`（`{name}` = `subject.name`、`{actor}` = 邀请人 `actor.name`）；禁猜名。
+  // 中英**同批**落地（`i18n.js` 缺键回落 = 返回键名本身 ⇒ 单侧落地即渲染裸键名）。
+  'messages.groupEventCreated': '{name} 创建了群聊',
+  'messages.groupEventJoined': '{name} 加入了群聊',
+  'messages.groupEventInvited': '{actor} 邀请了 {name}',
+  'messages.groupEventLeft': '{name} 退出了群聊',
+  'messages.groupEventRemoved': '{name} 被移出群聊',
+  'messages.groupEventRoleGranted': '{name} 成为了群管理员',
+  'messages.groupEventRoleRevoked': '{name} 被取消了群管理员',
   'messages.forwardToAgent': '转发给 agent',
   'messages.forwarded': '已转发给 agent',
   'messages.forwardToast': '已加入输入框，可附言后发送',

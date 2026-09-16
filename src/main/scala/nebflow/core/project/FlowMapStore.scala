@@ -837,15 +837,42 @@ object FlowMapStore:
   /** R15：摘要总长上限（字符；超出按「先折叠、再截断尾部」收敛，恒带计数尾注）。 */
   val ChainSummaryMaxChars: Int = 4000
 
-  /** 事件类型（前端 `EVENT_TYPE_LABELS` 既有键）：全 completed → `completed`；
-    * 含 failed → `failed`（强提醒）——与 `deliverStaleSummary` 同口径。 */
+  /** 事件类型（前端 `EVENT_TYPE_LABELS` 既有键）：**三元**（全降级列表态批 2026-09-16，
+    * 作者裁定；原二值口径的根因修复见 [[renderChainSummary]] 的状态段行）——
+    * 含 failed → `failed`（强提醒）；无 failed 但含 cancelled → `cancelled`；
+    * 其余（全 completed）→ `completed`。
+    *
+    * 与 `deliverStaleSummary` 的口径关系：stale summary 腿只有 completed/failed 二态
+    *（其成员集不含取消语义），本三元只作用于链摘要载荷。
+    *
+    * **消费点全量清点（R-4，全降级批现取）**——改本口径前必须逐处复核：
+    *   ① [[renderChainSummary]]（唯一产出点）；
+    *   ② `ProjectActor.deliverChainSummaries` 的 R11 溢出合并条事件类型推导
+    *      （逐项提升为 `failed` → `cancelled` → `completed`，本批同步）；
+    *   ③ `NodeEngine.deliverChainSummary`（降级登记行，本批起不再进 header/气泡）；
+    *   ④ 前端 `web/js/chat.js#EVENT_TYPE_LABELS`（通用面；`cancelled` 键本批补齐）；
+    *   ⑤ `NotificationHeader.StateLabels`（`cancelled -> CANCELED` 既有词条，零改动）。
+    * 无其它消费者（`DispatchNotify` 与 stale summary 腿均不读本三元）。 */
   val ChainSummaryEventCompleted: String = NodeLifecycle.Completed
   val ChainSummaryEventFailed: String = NodeLifecycle.Failed
+  val ChainSummaryEventCancelled: String = NodeLifecycle.Cancelled
 
-  /** 注入来源定名（R12/R16：新 `source` 值，前端 `INJECTED_SOURCE_LABELS` 显式登记）。 */
+  /** 注入来源定名（R12/R16：前端 `INJECTED_SOURCE_LABELS` 显式登记）。
+    *
+    * **全降级列表态批（2026-09-16，作者裁定）后本常量不再被任何发射点使用**：链腿
+    * 零投根 ⇒ 词表项 `"chain"` 仅服务**存量历史行**的渲染（宿主 sessions 面现取 ≈49 处
+    * `source="chain"` 落盘；前端 `INJECTED_SOURCE_LABELS.chain` 保留登记，与
+    * `InjectionAttribution.BackendNamedSources` / `NotificationHeader.KindLabels` /
+    * `InjectionSourceContractSpec` 的契约门一致——删源会连带改这三处与既有词表 pin，
+    * 属本批未取的「删净侧」，理由见批报告）。 */
   val ChainSummarySource: String = "chain"
 
-  /** 链摘要载体（渲染完成态）：文本 + 链级事实 + 事件类型（投递面用）。 */
+  /** 链摘要载体（渲染完成态）：文本 + 链级事实 + 事件类型（降级登记面用）。
+    *
+    * 全降级列表态批（2026-09-16，作者裁定）后：本载体的 `text` **不再进 root 会话**
+    * （不进 LLM 上下文、不出即时气泡）——承载面改为**链级列表/明细面**
+    * （Flow Map 归档面板 = `GET /projects/<n>/flow-map/archive` 批次聚合 + 成员明细）。
+    * 账本（`summarySentAt`/`summaryLedgerOn`）与 R11 额度语义**原样保留**（R-9/R-10）。 */
   case class ChainSummary(
     chainId: String,
     title: String,
@@ -917,7 +944,15 @@ object FlowMapStore:
               kept += l; used += l.length + 1
           }
           (kept.toList :+ s"… (摘要按 ${ChainSummaryMaxChars} 字符上限截断，共 ${sorted.size} 成员；全文见 NodeList(detail=\"<id>\") 与 REST results 端点)").mkString("\n")
-      val eventType = if failed > 0 then ChainSummaryEventFailed else ChainSummaryEventCompleted
+      // 状态段**三元**（全降级列表态批 2026-09-16，作者裁定）：原二值
+      // `if failed > 0 then failed else completed` 在 `cancelled > 0 ∧ failed == 0`
+      // 时把**全 cancelled 链**落 `completed` ⇒ `NotificationHeader.StateLabels`
+      // 映为 `COMPLETED`（语义错，设计真源 §「状态段修正」根因 = 本行）。
+      // 三元后：failed > cancelled > completed（与前端链态「成员最坏态」同序）。
+      val eventType =
+        if failed > 0 then ChainSummaryEventFailed
+        else if cancelled > 0 then ChainSummaryEventCancelled
+        else ChainSummaryEventCompleted
       Some(ChainSummary(meta.id, title, sorted.size, completed, failed, cancelled, eventType, text))
 
   /** R11 溢出合并条（>maxIndividual 条链的剩余部分）：一条计数摘要（含链清单）。 */

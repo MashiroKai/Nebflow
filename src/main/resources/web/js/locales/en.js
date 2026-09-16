@@ -96,6 +96,7 @@ export default {
   'flowmap.archive.count': '{n} chains · {m} nodes',
   'flowmap.archive.nodes': '{n} nodes',
   'flowmap.archive.empty': 'No archived task chains yet',
+  'flowmap.archive.readGuide': 'Chain archived · open a member for the full result (fetched on demand)',
   'flowmap.archive.expiringSoon': 'Expiring soon',
   'flowmap.archive.allArchived': 'All nodes completed — results are in the archive (top-right)',
   'flowmap.archive.close': 'Close archive panel',
@@ -249,10 +250,25 @@ export default {
   // (author 2026-09-16: "the join-group prompt still says you are now friends —
   // wrong": `summaryOf` was kind-blind and put the friend copy on group rows).
   // Both keys land together with zh (no dead keys); consumer = messages.js
-  // `groupSummaryEmpty` only, two states = group name present / absent.
+  // `groupSummaryEmpty` — the event leg comes first (`groupEventText`, below), and
+  // these two are the fallback states (group name present / absent).
   'messages.systemNowFriends': 'You are now friends',
   'messages.groupNoMessagesNamed': 'Group chat “{name}” — no messages yet',
   'messages.groupNoMessages': 'No messages in this group chat',
+  // Group-event member names (author ruling 2026-09-16: "{member name} joined the
+  // group chat" must carry the name): consumer = `groupEventText` in messages.js
+  // (group row empty summary), data source = the additive group-row key
+  // `latestEvent` (canon §2.4; six-kind closed set). 🔴 The display name has ONE
+  // source = the server's `display_name` (`{name}` = `subject.name`, `{actor}` =
+  // the inviter's `actor.name`); no name guessing. zh + en land in one batch
+  // (a missing key falls back to the key name itself — see i18n.js) ⇒ never one side only.
+  'messages.groupEventCreated': '{name} created the group chat',
+  'messages.groupEventJoined': '{name} joined the group chat',
+  'messages.groupEventInvited': '{actor} invited {name}',
+  'messages.groupEventLeft': '{name} left the group chat',
+  'messages.groupEventRemoved': '{name} was removed from the group chat',
+  'messages.groupEventRoleGranted': '{name} is now a group admin',
+  'messages.groupEventRoleRevoked': '{name} is no longer a group admin',
   'messages.forwardToAgent': 'Forward to agent',
   'messages.forwarded': 'Forwarded to agent',
   'messages.forwardToast': 'Added to input — add a note and send',

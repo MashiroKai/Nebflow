@@ -105,8 +105,14 @@ object InjectionAttribution:
     *   skill               AgentActor SkillActivate 分支
     *   delegate / subtask / flow / tool   AgentActor#inferInjectionSource
     *   background          AgentActor#visibleExternalEventSource（源名 background-task）
-  *   chain               NodeEngine#deliverChainSummary（链级聚合摘要投根，b64 批
-  *                       2026-09-13：归档 sweep 命中链 → source=chain 一条摘要）
+  *   chain               **已退役（不再发射）**：原出处 = NodeEngine#deliverChainSummary
+  *                       （链级聚合摘要投根，b64 批 2026-09-13）。全降级列表态批
+  *                       （2026-09-16，作者裁定「全部降级列表态」）后链腿零投根
+  *                       ⇒ 无发射点；本词表项保留**仅服务存量历史行**的渲染
+  *                       （宿主 sessions 面现取 ≈49 处 source="chain" 落盘，条数随轮转漂移），
+  *                       与前端 `INJECTED_SOURCE_LABELS.chain` / NotificationHeader
+  *                       `KindLabels("chain")` 三处同源保留（删源会连带改词表 pin，属
+  *                       本批未取侧）。
   *   deviceMail          跨设备 Nebula 邮件收件腿（device-mail 批 2026-09-15）：
   *                       对端设备经 NebLink 设备通道送来 `agent_mail` 载荷
   *                       （`DeviceMail.SourceDeviceMail`，注入点 = DeviceMailInbox）
