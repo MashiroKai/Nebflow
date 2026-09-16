@@ -2324,7 +2324,7 @@ function modalToast(text) {
  *  回落 时间戳 + 单调序号 + 随机尾。幂等键只需在**同一发送者**的短窗内唯一，不跨端
  *  协商 ⇒ 两种形态都满足，无需引入依赖。 */
 let clientMsgSeq = 0;
-function newClientMsgId() {
+export function newClientMsgId() {
   const c = globalThis.crypto;
   if (c && typeof c.randomUUID === 'function') return c.randomUUID();
   clientMsgSeq += 1;
