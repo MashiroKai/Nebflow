@@ -95,9 +95,12 @@ class MailDeliveryRetireSpec extends FunSuite:
     assertEquals(deliveryProp("default").flatMap(_.asString), Some("immediate"), "default stays 'immediate'")
     assertEquals(deliveryProp("type").flatMap(_.asString), Some("string"), "'delivery' stays a string field")
     // 件数不变：保留字段 ≠ 增删参数
+    // mailattach 批（2026-09-17 作者四答 = 路线 A）re-pin：schema 新增**已批准**的
+    // `attachments` 参数 ⇒ 本集合等值断言**逐字跟着新批准面走**。判据强度不变
+    // （仍是精确集合等值：任何与本批无关的增 / 删 / 改名一律红），仅基线前移。
     assertEquals(
       propsOf.keys.toSet,
-      Set("address", "device", "message", "type", "delivery", "chainId", "images"),
+      Set("address", "device", "message", "type", "delivery", "chainId", "images", "attachments"),
       "the property set must be unchanged (the field is retained, not removed and not replaced)"
     )
     assertEquals(

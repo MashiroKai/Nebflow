@@ -12,7 +12,9 @@ import munit.FunSuite
  *   ② `SendMessage(to="device:…")` = **纯传输**（文件落对端 Downloads、文本进设备面板），
  *      🔴 **对端 agent 不感知**；
  *   ③ **需要 agent 知道 ⇒ 用 `Mail`** —— 该指引**两面都出现**且不得互相矛盾；
- *   ④ 现状如实：Mail 附件面 = 仅 `images`（≤5）、**无通用附件**（B 件未批 ⇒ 禁承诺）。
+ *   ④ 附件面现状：`images`（≤5，vision 面）+ **`attachments` 通用件**（mailattach 批
+ *      2026-09-17 作者四答 = 路线 A 批准后落地）——描述与 schema **不得互斥**。
+ *      （旧前提「无通用附件（B 件未批）」已被作者裁决取代 ⇒ ⑤ 极性重钉，判据未放宽。）
  *
  * 判据全离线（零网络、零投递），读的都是**模型可见面**：`description`（基础 + 两个地址面
  * 变体）+ 两侧 `inputSchema` 的参数级描述。地址面分段机制另有
@@ -161,26 +163,56 @@ class DeviceMailFaceContractSpec extends FunSuite:
       "直收语义后缺本工具的否证句（否则可被读成 SendMessage 也直收）")
 
   // ============================================================
-  // ⑤ 现状如实：无通用附件（禁承诺未实现能力）
+  // ⑤ 现状如实（**极性重钉**：mailattach 批 2026-09-17）
   // ============================================================
 
-  test("⑤ Mail 附件面现状如实：仅 `images`（≤5）、无通用附件（B 件未批，禁承诺）"):
+  // 本节的**判据前提**在 mailattach 批（作者 2026-09-17 四答 = 路线 A）已改变：
+  // 原文钉的是「`attachments` 未批 ⇒ 禁承诺」（`!keys.contains("attachments")` +
+  // 三面必有 `Mail has no general attachments`）。该前提 = **B 件未批**，现已作废。
+  // ⇒ 极性必须重钉（否则 spec 会要求实现自相矛盾）：`attachments` 必须**在**
+  //    schema 里、且描述面**不得**再自称「无通用附件」。
+  // 🔴 本节**只换极性、不放宽**：精确键集断言、maxItems=5 断言、逐面文案断言全保留，
+  //    并**新增**「描述与 schema 不再互斥」的机械判据（原 spec 无此断言）。
+
+  test("⑤ Mail 附件面现状如实：`attachments` 已批（路线 A）⇒ schema 必须有、描述不得再宣称没有"):
     val keys = MailTool.inputSchema("properties").flatMap(_.asObject)
       .map(_.keys.toSet).getOrElse(fail("Mail schema has no properties"))
-    assert(!keys.contains("attachments"),
-      "🔴 Mail 出现 `attachments` 参数 = 承诺未实现能力（B 件未批）")
-    assert(keys.contains("images"), "Mail 必须保留 `images`（现状附件面）")
+    assert(keys.contains("attachments"),
+      "🔴 路线 A 已批（作者 2026-09-17）⇒ Mail 必须声明 `attachments` 参数")
+    assert(keys.contains("images"), "Mail 必须保留 `images`（vision 面，未被 `attachments` 取代）")
     val maxItems = MailTool.inputSchema("properties").flatMap(_.asObject).flatMap(_("images"))
       .flatMap(_.asObject).flatMap(_("maxItems")).flatMap(_.asNumber).flatMap(_.toInt)
-    assertEquals(maxItems, Some(5), "images 上限必须仍是 5")
+    assertEquals(maxItems, Some(5), "images 上限必须仍是 5（token 预算是另一个量纲）")
     for (label, raw) <- mailFaces do
-      assert(n(raw).contains("Mail has no general attachments"),
-        s"$label 缺「无通用附件」的现状声明")
+      assert(!n(raw).contains("Mail has no general attachments"),
+        s"$label 仍自称「无通用附件」= 描述与 schema（已有 `attachments`）互斥")
+      assert(!n(raw).contains("no `attachments` parameter"),
+        s"$label 仍自称「没有 `attachments` 参数」= 描述与 schema 互斥")
       assert(n(raw).contains("up to 5 absolute local image paths"),
         s"$label 缺 `images` 现状上限（≤5）")
-    assert(n(mailImagesParam).contains("NO general attachments"),
-      "images 参数级描述缺「无通用附件」")
-    assert(n(mailImagesParam).contains("max 5"), "images 参数级描述缺件数上限")
+
+  test("⑤ 描述与 schema 不再互斥（P1 机械判据：两面同契约、零反向断言）"):
+    // 判据 ①：三面描述都**宣称**存在 `attachments` 参数（能力可见）。
+    for (label, raw) <- mailFaces do
+      assert(n(raw).contains("`attachments` parameter"),
+        s"$label 未宣称 `attachments` 参数（模型读不到该能力 ⇒ 能力实际不可用）")
+      assert(n(raw).contains("Same-machine targets") || n(raw).contains("SAME-MACHINE"),
+        s"$label 缺同机腿（路径模式）语义说明")
+      assert(n(raw).contains("4000"),
+        s"$label 缺设备腿正文 4000 字符预算（B7 闸的模型可见面）")
+    // 判据 ②：参数级描述与 schema 键集合一致 —— `attachments` 的参数级描述不得
+    // 反向否认该参数的存在（互斥消除的**逐字**判据）。
+    val attachParam = prop(MailTool.inputSchema, "attachments")
+    val na = n(attachParam)
+    assert(na.contains("ABSOLUTE"), "attachments 参数级描述缺「绝对路径」硬要求")
+    assert(na.contains("any file type"), "attachments 参数级描述缺「任意类型」")
+    assert(!na.contains("no `attachments` parameter"), "🔴 参数级描述自相矛盾")
+    // 判据 ③：`images` 参数级描述不得再点「其它文件走 SendMessage」——它现在必须
+    // 指向本工具自己的 `attachments`（旧落点已过期）。
+    assert(n(mailImagesParam).contains("`project:` / `node:`"),
+      "images 参数级描述缺「project:/node: 两条腿不支持 vision」的现状声明")
+    assert(!n(mailImagesParam).contains("Mail carries NO general attachments"),
+      "🔴 images 参数级描述仍宣称无通用附件 = 与 schema 互斥")
 
   // ============================================================
   // ⑥ 参数级描述一致（模型可见契约的第二层）
@@ -198,8 +230,13 @@ class DeviceMailFaceContractSpec extends FunSuite:
     assert(st.contains("use `Mail`"), "SendMessage 的 `to` 参数级描述缺 Mail 指引")
     assert(n(sendAttachParam).contains("NOT told"),
       "SendMessage 的 `attachments` 参数级描述缺「对端 agent 不被通知」")
-    assert(n(mailImagesParam).contains("`SendMessage`'s `attachments`"),
-      "Mail 的 `images` 参数级描述缺「其它文件走 SendMessage」的落点")
+    // mailattach 批（2026-09-17）re-pin：旧断言钉的是「其它文件走 SendMessage」——
+    // 该落点已过期（本工具自己有 `attachments` 了）。新判据 = **本工具自陈**两腿语义，
+    // 强度不降（仍钉参数级描述的具体落点，且与 ⑤ 的互斥判据互补）。
+    val ma = n(prop(MailTool.inputSchema, "attachments"))
+    assert(ma.contains("DEVICE") && ma.contains("SAME-MACHINE"),
+      "Mail 的 `attachments` 参数级描述必须把两条腿的语义分开写全（设备腿=字节 / 同机腿=路径）")
+    assert(ma.contains("sha256"), "Mail 的 `attachments` 参数级描述缺同机腿的 sha256 读数")
 
   // ============================================================
   // ⑦ 已退役工具零命中（模型可见面 + 两源文件整体）

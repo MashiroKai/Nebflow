@@ -11,6 +11,9 @@ import nebflow.core.PathUtil
 import nebflow.core.entity.EntityLoader
 import nebflow.core.flow.{FlowMailStore, MailQueueStore, TeamSessionRegistry}
 import nebflow.core.project.{ProjectActor, ProjectRuntimeRegistry}
+// mailattach 批（2026-09-17 作者四答 = 路线 A）：`attachments` 的件数/大小上限**只**引用
+// `AttachContract`（单一数值权威面）——本文件零硬编码副本（plan 面 3 判据：grep 应只见单点）。
+import nebflow.dropbox.AttachContract
 // device-mail 批（2026-09-15）：契约单点 + 本机 NebLink 身份面（设备腿）。
 // B 批（2026-09-16）：`RelayMailResult` = 设备腿结果文本的 `delivered` 读数来源。
 import nebflow.neblink.{DeviceMail, DeviceMailAck, NeblinkService, PeerInfo, RelayMailResult}
@@ -110,6 +113,39 @@ object MailTool extends Tool:
   // ============================================================
   val ErrDeliveryQueueRetired: String = "MAIL_DELIVERY_QUEUE_RETIRED"
 
+  // ============================================================
+  // mailattach 批（2026-09-17 作者四答 = 路线 A）——「静默丢」修 B6 的**唯一来源**词表。
+  //   MAIL_VISION_UNSUPPORTED_LEG  `project:` / `node:` 两条腿收到 `images` ⇒ 显式拒绝。
+  // 判据：这两条腿**结构上只能收字符串**（`ProjectActor.TriggerDispatcher(message)` /
+  // `NodeEngine.sendNodeMessage(nodeId, message, _)` 均无 blocks 形参）⇒ 旧行为是
+  // 「加载 + base64 之后不使用」= 静默丢（plan 风险 1）。本批改为显式拒绝，文案给
+  // **类别 + 原因 + 替代路径**（照 :684-690 设备腿失败面形态），并指名两条能承载的腿。
+  // ============================================================
+  val ErrVisionUnsupportedLeg: String = "MAIL_VISION_UNSUPPORTED_LEG"
+
+  // ============================================================
+  // mailattach 批（2026-09-17）——「静默丢」修 B7 的**唯一来源**常量。
+  //   设备腿正文（`message` + 附件附注）上限 = **4000 字符**。
+  // 依据（plan 面 3 / 风险 2 逐字）：服务端契约 `agentmail.rs:60 MAX_TEXT_CHARS = 4000`
+  // （跨仓只读判读），`:181-183` 超限即 422。本仓先例 = `FriendMessageTool.scala:73`
+  // `private val MaxMessageLength = 4000`（**private**，不可跨工具引用 ⇒ 本处另立同名值，
+  // 出处同源、量纲同值）。旧行为零闸 ⇒ 加附注会把「接近上限的邮件」从成功变 422
+  // （plan 风险 2 的机制），故本闸**前置于载荷构造**。
+  // ============================================================
+  val MaxDeviceMailTextChars: Int = 4000
+  val ErrDeviceMailTextTooLong: String = "MAIL_DEVICE_TEXT_TOO_LONG"
+
+  /** B6 显式拒绝文案（纯函数，供 spec 直测；词表与文案同源）。 */
+  private[tools] def sameMachineVisionUnsupportedError(target: String, count: Int): ToolError =
+    ToolError(
+      s"[$ErrVisionUnsupportedLeg] $count image(s) cannot be delivered to '$target': this leg is TEXT ONLY — " +
+        "it hands a plain string to an engine-side session (ProjectActor.TriggerDispatcher / " +
+        "NodeEngine.sendNodeMessage), so it has no attachment channel and nothing was sent. " +
+        "Use `attachments` instead (same-machine targets get each file's absolute path, byte size and " +
+        "sha256 in the message text, and the recipient reads the original), or send the images over a leg " +
+        "that can carry them: address=\"Nebula\", a team/agent short name, or device=<name>."
+    )
+
   private[tools] def deliveryQueueRetiredMessage(address: String): String =
     s"""[$ErrDeliveryQueueRetired] delivery="queue" is retired (2026-09-15) — the serialized FIFO mode no longer exists: every Mail is delivered immediately (injected at the target's next turn boundary; an idle target starts a new turn, a busy target has it merged into the current turn). Drop delivery=queue (or omit the `delivery` parameter — only "immediate" is accepted). Target: '$address'."""
 
@@ -137,10 +173,10 @@ injected bubble. It does NOT go to the peer's user chat inbox, and **no confirma
 raised** (the Mail gate is unchanged — this is not a friend send).
 
 **The peer's agent receives it directly.** `Mail(device=…)` delivers *into the peer's
-Nebula session* — that device's AGENT reads the mail and can act on it. It is not a file
-drop and not a message for the peer's user chat: Mail is the way to make another machine's
-agent aware of something. (Text only plus up to 5 images — Mail has no general
-attachments; see Images below.)
+Nebula session* — that device's AGENT reads the mail and can act on it. It is not a
+message for the peer's user chat: Mail is the way to make another machine's agent aware
+of something — including a **file**, which that agent can then `Read` (see Attachments
+below).
 
 ## `Mail` vs `SendMessage` — who receives it? (same NebLink account, opposite semantics)
 - **`Mail(device=…)` — the peer's AGENT receives it directly**: delivered into the peer's
@@ -149,8 +185,9 @@ attachments; see Images below.)
   That device's agent reads it and handles it.
 - **`SendMessage(to="device:…")` — pure transport; the peer's agent is NOT aware of it**:
   files land in the peer's Downloads and the text appears in the peer's device panel;
-  nothing enters the peer's agent session or its LLM context. `SendMessage` is the face
-  that carries file transfer (`attachments`) — Mail is not.
+  nothing enters the peer's agent session or its LLM context. `SendMessage` moves files
+  for the **machine and its user**; `Mail` moves them **for the peer's agent** — and tells
+  that agent where they landed.
 
 **If the peer's agent must be told, use `Mail`.** Reach for `SendMessage` only when the
 bytes or text are meant for the machine and its user-facing surface, not for an agent.
@@ -184,20 +221,32 @@ is no silent fallback and no fuzzy matching.
   vs append-to-task.
 
 Images (optional `images` parameter — up to 5 absolute local image paths,
-PNG/JPG/JPEG/GIF/WEBP/BMP). **Agent targets (`address`)**: sent as attachments — the
-recipient sees the images directly (vision models) plus their paths as text. **Device
-target (`device=`)**: the bytes ride the existing device file channel (chunked,
-sha256-verified) into that device's default receive directory (`~/Downloads`) and the
-injected mail text names them so that device's agent can `Read` them; a failed or
-unavailable transfer is reported explicitly, never dropped silently (an unavailable
-channel refuses the send before anything goes out).
-That is Mail's ENTIRE attachment surface today: **≤5 images and no general
-attachments** — there is no `attachments` parameter and no arbitrary file type.
-For any other file, use `SendMessage`'s `attachments` — pure transport, so the file
-lands in the peer's Downloads and the peer's agent is NOT told: add a `Mail` if that
-agent must act on the file. Reference a path in the message text only when the
-recipient runs on the machine that holds it — another device has its own disk, so
-your path is not readable there.
+PNG/JPG/JPEG/GIF/WEBP/BMP), injected as **vision blocks**. **Agent targets (`address`)
+that reach a chat turn** (Nebula / a team or agent short name): the recipient sees the
+images directly (vision models) plus their paths as text. **`project:` / `node:` targets
+are text-only** — those legs hand a plain string to an engine-side session, so `images`
+there is an **explicit error** and nothing is sent; use `attachments` (path mode)
+instead, or target `Nebula` / a team agent / a device. **Device target (`device=`)**:
+the bytes ride the existing device file channel (chunked, sha256-verified) into that
+device's default receive directory (`~/Downloads`) and the injected mail text names them
+so that device's agent can `Read` them; a failed or unavailable transfer is reported
+explicitly, never dropped silently (an unavailable channel refuses the send before
+anything goes out).
+
+Attachments (optional `attachments` parameter — up to 9 absolute local paths of ANY file
+type, each up to 1024 MB = 1 GiB) are how a non-image file — or any file you do not need
+the model to *see* — reaches the recipient. **Device target (`device=`)**: the bytes ride
+the same device file channel (chunked, sha256-verified) into that device's default
+receive directory (`~/Downloads`), and the injected mail text names them — that device's
+agent can then `Read` them. **Same-machine targets** (`address` = `project:…` / `node:…` /
+`Nebula` / a team or agent short name): nothing is copied — the mail text carries each
+file's **absolute path, byte size and sha256**, because the recipient shares your disk
+and reads the original. So the file must still exist when the recipient reads it: do not
+point `attachments` at temporary or worktree paths that may be cleaned up before then.
+The device mail body (message + the attachment note appended to it) must stay within
+**4000 characters** — an over-budget device Mail is rejected before anything is sent.
+`attachments` does NOT put bytes into the recipient's LLM context: for an image the
+model should see, use `images`.
 
 Delivery (the `delivery` parameter — kept for compatibility, one mode only):
   Every Mail is immediate: async send, injected at the target's next turn
@@ -311,15 +360,30 @@ Message type (optional, default "INFO"):
           "type" -> "array".asJson,
           "items" -> Json.obj("type" -> "string".asJson).asJson,
           "maxItems" -> 5.asJson,
-          "description" -> ("Optional absolute local image paths (PNG/JPG/JPEG/GIF/WEBP/BMP, max 5) to attach — " +
-            "for agent targets (`address`) the recipient sees the images directly plus their paths as text. " +
-            "Mail carries NO general attachments (no arbitrary file type, no `attachments` parameter): for other " +
-            "files use `SendMessage`'s `attachments`, which is pure transport — the file lands in the peer's " +
-            "Downloads and the peer's agent is NOT told, so add a Mail if that agent must act on the file. " +
-            "DEVICE targets (`device=`): the files ride the existing device file channel " +
-            "(chunked FileTransfer, sha256-verified) and land in THAT device's default receive dir (~/Downloads); " +
-            "the injected mail text names them so that device can Read them — a failed or unavailable transfer is " +
-            "reported explicitly, never dropped silently.").asJson,
+          "description" -> ("Optional absolute local image paths (PNG/JPG/JPEG/GIF/WEBP/BMP, max 5), injected as " +
+            "vision blocks. For `address` targets that reach a chat turn (Nebula / team / agent short name) the " +
+            "recipient sees the images directly plus their paths as text. NOT supported on `project:` / `node:` " +
+            "— those legs are text-only, so passing `images` there is an explicit error and nothing is sent; " +
+            "pass those paths as `attachments` instead. DEVICE targets (`device=`): the files ride the existing " +
+            "device file channel (chunked FileTransfer, sha256-verified) and land in THAT device's default " +
+            "receive dir (~/Downloads); the injected mail text names them so that device can Read them — a " +
+            "failed or unavailable transfer is reported explicitly, never dropped silently.").asJson,
+          "default" -> Json.arr()
+        ),
+        "attachments" -> Json.obj(
+          "type" -> "array".asJson,
+          "items" -> Json.obj("type" -> "string".asJson).asJson,
+          "maxItems" -> AttachContract.MaxAttachmentsPerMessage.asJson,
+          "description" -> ("Optional ABSOLUTE local paths of files to attach — any file type, up to " +
+            s"${AttachContract.MaxAttachmentsPerMessage} files, each up to ${AttachContract.MaxFileBytesLabel}. " +
+            "PATH MODE vs BYTES — on SAME-MACHINE targets (`address` = `project:…` / `node:…` / `Nebula` / a team " +
+            "or agent short name) nothing is copied: the mail text carries each file's absolute path, byte size " +
+            "and sha256, because the recipient shares your disk and reads the original — so the file must still " +
+            "exist when the recipient reads it. On a DEVICE target (`device=`) the bytes ride the existing device " +
+            "file channel (chunked FileTransfer, sha256-verified) into THAT device's default receive dir " +
+            "(~/Downloads), and the injected mail text names them so that device's agent can Read them — a failed " +
+            "or unavailable transfer is reported explicitly, never dropped silently. This is NOT the vision " +
+            "channel: an image the recipient's model should SEE belongs in `images`.").asJson,
           "default" -> Json.arr()
         )
       ),
@@ -367,9 +431,17 @@ Message type (optional, default "INFO"):
             // 同根族第三件（2026-09-16 A1 批）：`images` 的判据**前置于一切投递副作用**
             // （与非设备腿 `:341-351` 的 fail-fast 同序）——旧行为是设备腿**静默吞掉**
             // `images`（零报错、零投递），本闸把它变成显式处置。
-            case Right(_) => deviceImagesPlan(input, ctx).flatMap {
-                case Left(err)         => IO.pure(Left(err))
-                case Right(imagePaths) => deliverToDevice(deviceRaw, message, mailType, delivery, imagePaths, ctx)
+            // mailattach 批（2026-09-17）：`attachments` 的判据与 `images` 同序 —— 同样
+            // **前置于一切投递副作用**（旧缺陷方向 = 静默丢；本批不让新参数继承该方向）。
+            case Right(_) =>
+              deviceImagesPlan(input, ctx).flatMap {
+                case Left(err) => IO.pure(Left(err))
+                case Right(imagePaths) =>
+                  attachmentsPlan(input, ctx).flatMap {
+                    case Left(err) => IO.pure(Left(err))
+                    case Right(attachmentPaths) =>
+                      deliverToDevice(deviceRaw, message, mailType, delivery, imagePaths, attachmentPaths, ctx)
+                  }
               }
           }
     // delivery 退役批（2026-09-15 作者裁定 (b)）：**非设备腿** `delivery="queue"` ⇒
@@ -395,33 +467,45 @@ Message type (optional, default "INFO"):
               ImageInject.resolveImages(imagePaths).flatMap {
                 case Left(err) => IO.pure(Left(err))
                 case Right(attachments) =>
-                  val blocks = ImageInject.messageBlocks(message, attachments)
-                  ctx.actorSystem match
-                    case None =>
-                      IO.pure(Left(ToolError("No actor system available")))
-                    case Some(system) =>
-                      // R2 分层地址面（作者 2026-09-12 10:38 细则 + B1-a）：角色专属
-                      // 地址形态先在这一层定判——命中即处理（含**显式报错**），未命中
-                      // （= 该地址不属于本角色的分层面）才落回既有 team/短名瀑布。
-                      // 硬禁静默兜底与模糊匹配：认不出的地址一律显式报错并指明合法面。
-                      layeredRoute(address, message, blocks, mailType, chainId, ctx, system) match
-                        case Some(action) => action
+                  // mailattach 批（2026-09-17）：同机腿附件 = **附注 + 零搬字节**。
+                  // 校验（形态/存在/件数/大小）与附注构造都是单点（[[attachmentsPlan]] /
+                  // [[withAttachmentsNote]]），且前置于一切路由副作用；附注必须在
+                  // `messageBlocks` **之前**并入正文 —— blocks 在场时 `AgentActor` 丢弃
+                  // `text`（`:1712-1713` 既有口径），晚并入即静默丢。
+                  attachmentsPlan(input, ctx).flatMap {
+                    case Left(err) => IO.pure(Left(err))
+                    case Right(attachmentPaths) =>
+                      val effectiveMessage = withAttachmentsNote(message, attachmentPaths)
+                      val blocks = ImageInject.messageBlocks(effectiveMessage, attachments)
+                      ctx.actorSystem match
                         case None =>
-                          // Observability (qa #8 note): unknown delivery values (e.g. an
-                          // old caller still sending "ask") silently converge to the
-                          // immediate path — warn so stale callers surface in logs.
-                          // 注：`"queue"` 不再进入本匹配（上层单点已显式拒绝，退役批
-                          // 2026-09-15）；故本层只剩「立即」与「陌生值收敛到立即」两支。
-                          delivery match
-                            case "immediate" =>
-                              if address.contains("://") then deliverToAddress(address, message, blocks, mailType, ctx, system)
-                              else deliverToShortName(address, message, blocks, mailType, ctx, system)
-                            case other =>
-                              IO(logger.warnSync(
-                                s"[mail] unknown delivery mode '$other' from ${ctx.sessionId.getOrElse("?").take(8)} — falling back to immediate"
-                              )) *>
-                                (if address.contains("://") then deliverToAddress(address, message, blocks, mailType, ctx, system)
-                                 else deliverToShortName(address, message, blocks, mailType, ctx, system))
+                          IO.pure(Left(ToolError("No actor system available")))
+                        case Some(system) =>
+                          // R2 分层地址面（作者 2026-09-12 10:38 细则 + B1-a）：角色专属
+                          // 地址形态先在这一层定判——命中即处理（含**显式报错**），未命中
+                          // （= 该地址不属于本角色的分层面）才落回既有 team/短名瀑布。
+                          // 硬禁静默兜底与模糊匹配：认不出的地址一律显式报错并指明合法面。
+                          // `imagePaths` 一并下传：`project:` / `node:` 两条腿**结构上**
+                          // 只能收字符串 ⇒ `images` 在它们身上是显式拒绝（B6 静默丢修）。
+                          layeredRoute(address, effectiveMessage, blocks, imagePaths, mailType, chainId, ctx, system) match
+                            case Some(action) => action
+                            case None =>
+                              // Observability (qa #8 note): unknown delivery values (e.g. an
+                              // old caller still sending "ask") silently converge to the
+                              // immediate path — warn so stale callers surface in logs.
+                              // 注：`"queue"` 不再进入本匹配（上层单点已显式拒绝，退役批
+                              // 2026-09-15）；故本层只剩「立即」与「陌生值收敛到立即」两支。
+                              delivery match
+                                case "immediate" =>
+                                  if address.contains("://") then deliverToAddress(address, effectiveMessage, blocks, mailType, ctx, system)
+                                  else deliverToShortName(address, effectiveMessage, blocks, mailType, ctx, system)
+                                case other =>
+                                  IO(logger.warnSync(
+                                    s"[mail] unknown delivery mode '$other' from ${ctx.sessionId.getOrElse("?").take(8)} — falling back to immediate"
+                                  )) *>
+                                    (if address.contains("://") then deliverToAddress(address, effectiveMessage, blocks, mailType, ctx, system)
+                                     else deliverToShortName(address, effectiveMessage, blocks, mailType, ctx, system))
+                  }
               }
       }
   end call
@@ -476,6 +560,7 @@ Message type (optional, default "INFO"):
       address: String,
       message: String,
       blocks: Option[List[ContentBlock]],
+      imagePaths: List[String],
       mailType: String,
       chainId: Option[String],
       ctx: ToolContext,
@@ -487,14 +572,14 @@ Message type (optional, default "INFO"):
       Some(
         if nodeId.isEmpty then IO.pure(Left(ToolError(s"Malformed address '$address' — expected \"node:<节点id>\".")))
         else if role != SenderRole.Dispatcher then IO.pure(Left(outOfFaceError(address, role)))
-        else deliverToNode(nodeId, withChainAnnotation(message, chainId), mailType, ctx)
+        else deliverToNode(nodeId, withChainAnnotation(message, chainId), imagePaths, mailType, ctx)
       )
     else if address.startsWith(ProjectPrefix) then
       val pname = address.stripPrefix(ProjectPrefix).trim
       Some(
         if pname.isEmpty then IO.pure(Left(ToolError(s"Malformed address '$address' — expected \"project:<项目名>\".")))
         else if role == SenderRole.Dispatcher then IO.pure(Left(outOfFaceError(address, role)))
-        else deliverToProject(pname, message, mailType, ctx)
+        else deliverToProject(pname, message, imagePaths, mailType, ctx)
       )
     else if address == MailTool.NebulaAgentName then
       role match
@@ -509,7 +594,7 @@ Message type (optional, default "INFO"):
       // Nebula 的裸名形态 = 裸项目名（等价接受）；认不出的地址显式报错。
       Some(
         ProjectRuntimeRegistry.get(address).flatMap {
-          case Some(_) => deliverToProject(address, message, mailType, ctx)
+          case Some(_) => deliverToProject(address, message, imagePaths, mailType, ctx)
           case None    => IO.pure(Left(unresolvableError(address, role)))
         }
       )
@@ -594,23 +679,34 @@ Message type (optional, default "INFO"):
     * 与三个错误码**不复制**（复制必然漂移）。注入 source 保持 `"system"`（D-3：
     * 节点侧既有呈现零 UI 行为变化）；来源标注经 attribution 参数传（sender/
     * senderTeam/eventType），节点会话蓝气泡顶栏因此可辨「来自谁」。 */
-  private def deliverToNode(nodeId: String, message: String, mailType: String, ctx: ToolContext): IO[Either[ToolError, String]] =
-    ctx.projectName match
-      case None | Some("") =>
-        IO.pure(Left(ToolError(
-          s"Cannot route to node '$nodeId' — this session has no project context (the 'node:' leg resolves the project from the calling session)."
-        )))
-      case Some(projectName) =>
-        ProjectRuntimeRegistry.get(projectName).flatMap {
-          case Some(rt) =>
-            mailAttribution(mailType, ctx).flatMap { attribution =>
-              rt.engine.sendNodeMessage(nodeId, message, Some(attribution)).map(_.left.map(ToolError(_)))
-            }
-          case None =>
-            IO.pure(Left(ToolError(
-              s"Project '$projectName' is not mounted — cannot route to node '$nodeId'. Re-mount / restart (projects mount at startup)."
-            )))
-        }
+  private def deliverToNode(
+      nodeId: String,
+      message: String,
+      imagePaths: List[String],
+      mailType: String,
+      ctx: ToolContext
+  ): IO[Either[ToolError, String]] =
+    // B6（静默丢修，mailattach 2026-09-17）：本腿结构上只能收字符串 ⇒ `images` 无承载面。
+    // 旧行为 = 静默丢（零报错、零投递）；本批 = 显式拒绝（判据与文案见
+    // [[sameMachineVisionUnsupportedError]]）。
+    if imagePaths.nonEmpty then IO.pure(Left(sameMachineVisionUnsupportedError(s"node:$nodeId", imagePaths.size)))
+    else
+      ctx.projectName match
+        case None | Some("") =>
+          IO.pure(Left(ToolError(
+            s"Cannot route to node '$nodeId' — this session has no project context (the 'node:' leg resolves the project from the calling session)."
+          )))
+        case Some(projectName) =>
+          ProjectRuntimeRegistry.get(projectName).flatMap {
+            case Some(rt) =>
+              mailAttribution(mailType, ctx).flatMap { attribution =>
+                rt.engine.sendNodeMessage(nodeId, message, Some(attribution)).map(_.left.map(ToolError(_)))
+              }
+            case None =>
+              IO.pure(Left(ToolError(
+                s"Project '$projectName' is not mounted — cannot route to node '$nodeId'. Re-mount / restart (projects mount at startup)."
+              )))
+          }
 
   /** 腿④（device-mail 批，2026-09-15 作者令）：`Mail(device:X)` → 本机网关 →
     * NebLink 服务端（契约端点 `POST /api/relay/{target_device_id}/mail`，**契约 v2 ①**）
@@ -638,15 +734,24 @@ Message type (optional, default "INFO"):
     * 与 `node:` 腿同一先例）；契约载荷无邮件类型字段 ⇒ 仅 INFO（其它类型拒绝，
     * 不静默降级成 INFO）。同根族第三件（2026-09-16 A1 批）：`images` 不再被静默吞掉
     * ——投递前判据见 [[deviceImagesPlan]]，投递后经**既有**设备文件通道推送见
-    * [[pushDeviceImages]]（失败只显式回显，不回滚已投递的文本）。 */
+    * [[pushDeviceAttachments]]（失败只显式回显，不回滚已投递的文本）。
+    *
+    * mailattach 批（2026-09-17）：本腿多一条**显式拒绝**（B7 静默丢修）——正文
+    * （message + 附件附注）超 `MaxDeviceMailTextChars` 时**在载荷构造之前**拒绝。
+    * 理由：服务端硬限 4000 字符（`neblink-server` 契约 `MAX_TEXT_CHARS`），而旧代码
+    * 零闸 ⇒ 加附注会把「接近上限的邮件」从成功变成 422（静默型的失败面）。 */
   private def deliverToDevice(
       device: String,
       message: String,
       mailType: String,
       delivery: String,
       imagePaths: List[String],
+      attachmentPaths: List[String],
       ctx: ToolContext
   ): IO[Either[ToolError, String]] =
+    // 正文附注（图片 + 通用件同一条附注）在**判据之前**构造：B7 的闸判的正是
+    // 「message + 附注」的组合长度（附注预算已计入）。
+    val bodyText = deviceMailText(message, imagePaths, attachmentPaths)
     if delivery == "queue" then
       IO.pure(Left(ToolError(
         "Device targets are always immediate — the peer's Nebula session is injected at its next turn " +
@@ -656,6 +761,22 @@ Message type (optional, default "INFO"):
       IO.pure(Left(ToolError(
         s"Device targets carry the frozen 'agent_mail' payload, which has no mail-type field — " +
           s"only type \"INFO\" is supported (got \"$mailType\"). Send an INFO Mail and put the urgency in the text."
+      )))
+    else if bodyText.length > MaxDeviceMailTextChars then
+      IO.pure(Left(ToolError(
+        s"[$ErrDeviceMailTextTooLong] The device mail body is ${bodyText.length} characters, over the " +
+          s"$MaxDeviceMailTextChars-character limit the relay enforces on the frozen agent_mail payload " +
+          "(message text plus the attachment note appended to it count together). Nothing was sent — shorten " +
+          "the message, or attach fewer files (each attached file adds its name to the note)."
+      )))
+    // A-2 判据 ③「承载通道在场」（与 [[deviceImagesPlan]] 的第 ③ 条同款、同序）：
+    // 本腿的通用件**只能**走设备文件通道 ⇒ 通道不在场即拒绝，禁「邮件发了、文件没走」。
+    // 位置仍在一切投递副作用之前（relay 调用在其后），故零字节、零半投递。
+    else if attachmentPaths.nonEmpty && ctx.sharedResources.flatMap(_.dropboxService).isEmpty then
+      IO.pure(Left(ToolError(
+        s"Device targets carry `attachments` over the existing device file channel (chunked FileTransfer), which is " +
+          "unavailable here: the Dropbox file channel is not initialized (is NebLink enabled?). Nothing was sent — " +
+          "retry once the channel is up, or reference the path in the message text."
       )))
     else
       (ctx.sharedResources.flatMap(_.neblinkService), ctx.sharedResources.flatMap(_.dropboxService)) match
@@ -680,8 +801,9 @@ Message type (optional, default "INFO"):
                   case Some(client) =>
                     // 同根族第三件（A1 批）：**正文先行**（文本不可达 ⇒ fail-fast，不烧
                     // 传输超时、不产生半投递——与 `SendMessage.sendDevice` 同款次序）；
-                    // 附件附注写进正文，因为对端 agent 只能从注入文本得知图片落在它自己的盘上。
-                    val payload = DeviceMail.payload(deviceMailText(message, imagePaths), id.deviceName, id.deviceId)
+                    // 附件附注写进正文，因为对端 agent 只能从注入文本得知文件落在它自己的盘上。
+                    // mailattach 批：`bodyText` 在方法入口已构造并过 B7 闸（零重复构造）。
+                    val payload = DeviceMail.payload(bodyText, id.deviceName, id.deviceId)
                     client.relayAgentMail(peer.deviceId, payload).flatMap {
                       case Right(RelayMailResult(serverId, delivered)) =>
                         // ④ 回执：登记 pending ack（eventId = "message-<id>"），由隧道 ack
@@ -705,8 +827,8 @@ Message type (optional, default "INFO"):
                               s"/api/relay/${peer.deviceId}/mail: server accepted; peer device offline — " +
                               s"queued until it comes online (not an error). It will be readable on that " +
                               s"device once it comes online."
-                          auditDeviceMailSend(ns, peer.deviceId, message, ctx) *>
-                            pushDeviceImages(ns, dbxOpt, peer, imagePaths, ctx).map {
+                          auditDeviceMailSend(ns, peer.deviceId, bodyText, ctx) *>
+                            pushDeviceAttachments(ns, dbxOpt, peer, imagePaths, attachmentPaths, ctx).map {
                               case Left(attachNote) => Left(ToolError(s"$sent $attachNote"))
                               case Right(notes)     => Right(if notes.isEmpty then sent else s"$sent ${notes.mkString(" ")}")
                             }
@@ -757,69 +879,196 @@ Message type (optional, default "INFO"):
           )))
         else IO.pure(Right(paths))
 
-  /** 设备腿正文的附件附注（🔴 **禁静默**：对端 agent 只能从注入文本知道图片落在它自己的盘上）。
+  // ============================================================
+  // mailattach 批（2026-09-17 作者四答 = 路线 A）——`attachments` 通用附件面
+  //   设计要点（plan §2 方案 A / §1 面 3）：
+  //   ① **上限只引用 `AttachContract`**（件数 9 / 单件 1 GiB，作者给定数）——本文件
+  //      零硬编码副本（判据：`grep` 只见 `AttachContract` 单点）；
+  //   ② 校验**前置于一切投递副作用**（与 `deviceImagesPlan` / G3 同序）；
+  //   ③ 两条腿两种语义，**同一参数**：
+  //      · 设备腿 = 字节经既有设备文件通道（[[pushDeviceAttachments]]）；
+  //      · 同机腿 = **零搬字节**，正文附注「绝对路径 + 字节数 + sha256」（[[withAttachmentsNote]]）
+  //        —— 接收方与发送方共享同一磁盘，路径即取件；
+  //   ④ 🔴 附件**不进 LLM 上下文**（与 `FriendMessageTool.scala:85` 逐字口径一致）。
+  // ============================================================
+
+  /** `attachments` 参数的**形态解析**（纯函数，与 `ImageInject.parseImagesParam` 同族口径）：
+    * 缺省 ⇒ `Nil`；非数组 / 含非字符串项 ⇒ 显式错误；空白项丢弃；**件数闸**用
+    * `AttachContract.checkAttachmentCount`（作者给定数单点）。 */
+  private[tools] def parseAttachments(input: JsonObject): Either[ToolError, List[String]] =
+    val raw = input("attachments") match
+      case Some(arr) =>
+        arr.asArray match
+          case Some(items) =>
+            items.flatMap(_.asString) match
+              case strings if strings.size == items.size => Right(strings.map(_.trim).filter(_.nonEmpty).toList)
+              case _ => Left(ToolError("attachments must be an array of file path strings."))
+          case None => Left(ToolError("attachments must be an array of file path strings."))
+      case None => Right(Nil)
+    raw.flatMap(paths =>
+      AttachContract.checkAttachmentCount(paths.size).left.map(e =>
+        ToolError(s"${e.render} — pass at most ${AttachContract.MaxAttachmentsPerMessage} files " +
+          s"(got ${paths.size}). Nothing was sent.")
+      ).map(_ => paths)
+    )
+
+  /** `attachments` 的**投递前判据**（单点；两条腿共用同一次校验，任一不过 ⇒ 显式错误、
+    * **零投递副作用**）。判据序：
+    *   ① 形态/件数 = [[parseAttachments]]（含 `AttachContract.checkAttachmentCount`）；
+    *   ② 绝对路径形态：对**原始串**判（`os.Path` 构造会把相对段绝对化 ⇒ 构造后再判恒真）；
+    *   ③ 存在且**是文件**（不存在 / 是目录 ⇒ 各自显式错误，不合并成一句）；
+    *   ④ 单件大小 = `AttachContract.checkFileSize`（>1 GiB ⇒ `ATTACH_TOO_LARGE` + actual/limit）。
+    * 返回 = 通过判据的本地绝对路径串（`Nil` = 本次未带附件，两条腿零改动）。 */
+  private[tools] def attachmentsPlan(input: JsonObject, ctx: ToolContext): IO[Either[ToolError, List[String]]] =
+    parseAttachments(input) match
+      case Left(err)  => IO.pure(Left(err))
+      case Right(Nil) => IO.pure(Right(Nil))
+      case Right(paths) =>
+        IO.blocking {
+          val relative = paths.filter(p => !nebflow.core.PathUtil.isAbsolute(p))
+          if relative.nonEmpty then
+            Left(ToolError(
+              "attachments paths must be absolute, got: " + relative.map(p => s"'$p'").mkString(", ") +
+                ". Relative paths are not readable by a peer device, and the path note for same-machine " +
+                "targets must be resolvable as-is — pass ABSOLUTE paths of files on this machine. Nothing was sent."
+            ))
+          else
+            val missing = paths.filter(p => !java.nio.file.Files.exists(java.nio.file.Paths.get(p)))
+            val dirs = paths.filter(p =>
+              java.nio.file.Files.exists(java.nio.file.Paths.get(p)) &&
+                java.nio.file.Files.isDirectory(java.nio.file.Paths.get(p))
+            )
+            if missing.nonEmpty then
+              Left(ToolError(
+                "attachments does not exist: " + missing.map(p => s"'$p'").mkString(", ") +
+                  ". Nothing was sent — check the path (a file must still exist at send time; worktree or " +
+                  "temporary files are often cleaned up)."
+              ))
+            else if dirs.nonEmpty then
+              Left(ToolError(
+                "attachments is a directory, not a file: " + dirs.map(p => s"'$p'").mkString(", ") +
+                  ". Attach individual files."
+              ))
+            else
+              val sizes = paths.map(p => java.nio.file.Files.size(java.nio.file.Paths.get(p)))
+              AttachContract.checkMessage(sizes) match
+                case Left(e) =>
+                  Left(ToolError(s"${e.render} — the limit is ${AttachContract.MaxFileBytesLabel} per file and " +
+                    s"${AttachContract.MaxAttachmentsPerMessage} files per message. Nothing was sent."))
+                case Right(_) => Right(paths)
+        }
+
+  /** 同机腿的附件附注（**零搬字节**：接收方与发送方共享同一磁盘，路径即取件）。
+    *
+    * 逐件给三读数（plan §1 面 5 腿一 A-1 逐字）：**绝对路径 + 字节数 + sha256（发送时算）**。
+    * 🔴 附件**不进 LLM 上下文**（与 `FriendMessageTool.scala:85` 逐字口径一致）——附注只是
+    * 文本，模型想看内容必须自己 `Read`。
+    * `Nil` ⇒ 原样返回（本次未带附件 ⇒ 字节级零改动，既有调用方零漂移）。 */
+  private[tools] def withAttachmentsNote(message: String, attachmentPaths: List[String]): String =
+    if attachmentPaths.isEmpty then message
+    else
+      val lines = attachmentPaths.map { p =>
+        val path = java.nio.file.Paths.get(p)
+        s"  - $p (${java.nio.file.Files.size(path)} B, sha256 ${sha256OfFile(path)})"
+      }
+      message +
+        s"\n[Mail 附件] ${attachmentPaths.size} 件通用文件（本机同盘，未复制）——用 Read 读下列绝对路径取内容" +
+        "（附件不进 LLM 上下文，必须先 Read）：\n" + lines.mkString("\n")
+
+  /** 逐件 sha256（hex）。由 `SeedService.sha256File:597-599` 同款口径（`MessageDigest` +
+    * `%02x`），供同机腿附注的「发送时算」读数用。读盘异常 ⇒ 附注里退化成
+    * `unreadable`（附注绝不因为算摘要失败而中断投递；存在性已在 [[attachmentsPlan]] 判过）。 */
+  private def sha256OfFile(path: java.nio.file.Path): String =
+    try
+      val md = java.security.MessageDigest.getInstance("SHA-256")
+      md.digest(java.nio.file.Files.readAllBytes(path)).map("%02x".format(_)).mkString
+    catch case _: Exception => "unreadable"
+
+  /** 设备腿正文的附件附注（🔴 **禁静默**：对端 agent 只能从注入文本知道文件落在它自己的盘上）。
     *
     * 落点 = 对端**缺省接收目录** `~/Downloads/<name>`（本腿**不发** `targetDir` 请求 ⇒
     * 接收端缺省；承载腿 `RelayChunkTransport.put` 写的就是对端 `~/Downloads/${fileName}`，
     * 并与既有 `targetDirEcho` 的用户可见口径一致）。**不谎报**：发送端只知道文件名与
-    * 该缺省落点，故只点文件名 + 落点语义，不编造对端绝对路径。 */
-  private def deviceMailText(message: String, imagePaths: List[String]): String =
-    if imagePaths.isEmpty then message
-    else
-      val names = imagePaths.map(p => os.Path(java.nio.file.Paths.get(p)).last).mkString(", ")
-      s"$message\n[Mail 附件图片] ${imagePaths.size} 件随本邮件经设备文件通道（分块 FileTransfer，双侧 sha256 校验）" +
-        s"传输到本机缺省接收目录（~/Downloads）: $names —— 用 Read 读对应的绝对路径即可看到图像。"
+    * 该缺省落点，故只点文件名 + 落点语义，不编造对端绝对路径。
+    *
+    * mailattach 批（2026-09-17）：附注**泛化**到通用件 —— 图片件（vision 面）与
+    * `attachments` 通用件（任意类型）在本腿走**同一条**设备文件通道，故共用同一方法；
+    * 两段各自独立成句（`[Mail 附件图片]` / `[Mail 附件]`，与既有词表同族），
+    * 通用件段额外说明「非图片件不进 LLM 上下文 ⇒ 必须先 Read」。 */
+  private def deviceMailText(message: String, imagePaths: List[String], attachmentPaths: List[String]): String =
+    val imageNote =
+      if imagePaths.isEmpty then ""
+      else
+        val names = imagePaths.map(p => os.Path(java.nio.file.Paths.get(p)).last).mkString(", ")
+        s"\n[Mail 附件图片] ${imagePaths.size} 件随本邮件经设备文件通道（分块 FileTransfer，双侧 sha256 校验）" +
+          s"传输到本机缺省接收目录（~/Downloads）: $names —— 用 Read 读对应的绝对路径即可看到图像。"
+    val fileNote =
+      if attachmentPaths.isEmpty then ""
+      else
+        val names = attachmentPaths.map(p => os.Path(java.nio.file.Paths.get(p)).last).mkString(", ")
+        s"\n[Mail 附件] ${attachmentPaths.size} 件通用文件随本邮件经同一设备文件通道（分块 FileTransfer，双侧 sha256 校验）" +
+          s"传输到本机缺省接收目录（~/Downloads）: $names —— 用 Read 读对应的绝对路径取内容" +
+          "（非图片件不进 LLM 上下文，必须先 Read 才能看内容）。"
+    message + imageNote + fileNote
 
-  /** 图片经**既有**设备文件通道推送（A1 同族：复用承载，🔴 零 wire 字段、零新 action、
+  /** 附件经**既有**设备文件通道推送（A1 同族：复用承载，🔴 零 wire 字段、零新 action、
     * 零服务端配合）。承载 = [[nebflow.dropbox.DropboxService.sendLocalFiles]]（闸位 +
     * 分块 + 双侧 sha256 + 续传单点；`SendMessage` 设备腿 `:372` 同款先例）。
+    *
+    * mailattach 批（2026-09-17）：本单点承载**两类件**（`images` 的图片件 + `attachments`
+    * 的通用件）——合并成一次传输（`distinct` 保序去重：同一路径同时出现在两个参数里
+    * 不该发两遍），结果文本改用中性词「attachment(s)」（不再只说 image）。
     *
     * 返回语义（🔴 失败**不中断、不回滚**已投递的邮件；逐件结果显式回显）：
     *   - `Left(detail)` = 有件失败 / 通道抛错 ⇒ 调用方把 detail 附在**已投递**的成功文案后
     *     （与 `SendMessage.sendDevice:374-390` 的「Text was delivered, but …」同族口径）；
     *   - `Right(Nil)` = 本次无附件；`Right(notes)` = 完成回显。 */
-  private def pushDeviceImages(
+  private def pushDeviceAttachments(
       ns: nebflow.neblink.NeblinkService,
       dbxOpt: Option[nebflow.dropbox.DropboxService],
       peer: PeerInfo,
       imagePaths: List[String],
+      attachmentPaths: List[String],
       ctx: ToolContext
   ): IO[Either[String, List[String]]] =
-    if imagePaths.isEmpty then IO.pure(Right(Nil))
+    val allPaths = (imagePaths ++ attachmentPaths).distinct
+    if allPaths.isEmpty then IO.pure(Right(Nil))
     else
       dbxOpt match
         case None =>
-          IO.pure(Left("The image attachments were NOT transferred: the device file channel is not initialized."))
+          IO.pure(Left("The attachments were NOT transferred: the device file channel is not initialized."))
         case Some(dbx) =>
-          val paths = imagePaths.map(p => os.Path(PathUtil.expandTilde(p.trim), os.pwd))
-          auditDeviceImagesSend(ns, peer, paths, ctx) *>
+          val paths = allPaths.map(p => os.Path(PathUtil.expandTilde(p.trim), os.pwd))
+          auditDeviceAttachmentsSend(ns, peer, paths, ctx) *>
             dbx
               .sendLocalFiles(peer.deviceId, paths, None, origin = nebflow.dropbox.DropboxMessage.OriginAgent)
               .map {
                 case Left(err) =>
-                  Left(s"The image attachments were NOT transferred: ${err.render}.")
+                  Left(s"The attachments were NOT transferred: ${err.render}.")
                 case Right(outcomes) =>
                   val failed = outcomes.filterNot(_.delivered)
                   if failed.isEmpty then
                     Right(List(
-                      s"${outcomes.size} image attachment(s) transferred over the device file channel " +
+                      s"${outcomes.size} attachment(s) transferred over the device file channel " +
                         s"(chunked FileTransfer, sha256 verified): ${outcomes.map(_.fileName).mkString(", ")}."
                     ))
                   else
                     Left(
-                      s"Message was delivered, but ${failed.size}/${outcomes.size} image attachment(s) failed — " +
+                      s"Message was delivered, but ${failed.size}/${outcomes.size} attachment(s) failed — " +
                         failed.map(o => s"${o.fileName}: ${o.error.getOrElse("unknown error")}").mkString("; ") +
                         ". Retrying reuses the chunked channel's resume (completed chunks are not re-sent)."
                     )
               }
               .handleErrorWith(e =>
                 IO.pure(Left(
-                  s"The image attachments were NOT transferred: ${Option(e.getMessage).getOrElse(e.getClass.getSimpleName)}."
+                  s"The attachments were NOT transferred: ${Option(e.getMessage).getOrElse(e.getClass.getSimpleName)}."
                 ))
               )
 
-  /** 设备腿图片附件审计（`RelayExecAudit` 同族字段；零阻塞、失败只 WARN——审计失败绝不影响投递）。 */
-  private def auditDeviceImagesSend(
+  /** 设备腿附件审计（`RelayExecAudit` 同族字段；零阻塞、失败只 WARN——审计失败绝不影响投递）。
+    * mailattach 批：`action` 从 `Mail.device.images` 泛化为 `Mail.device.attachments`
+    * （本单点现在同时承载图片件与通用件；`via=dropbox-chunk` 与字段形状零变更）。 */
+  private def auditDeviceAttachmentsSend(
       ns: nebflow.neblink.NeblinkService,
       peer: PeerInfo,
       paths: List[os.Path],
@@ -831,7 +1080,7 @@ Message type (optional, default "INFO"):
           sourceDeviceId = src.deviceId,
           targetDeviceId = peer.deviceId,
           via = "dropbox-chunk",
-          action = "Mail.device.images",
+          action = "Mail.device.attachments",
           command = s"→ device:${peer.deviceName}; files: ${paths.map(p => s"${p.last}(${os.stat(p).size} B)").mkString(", ")}",
           projectRoot = ctx.projectRoot,
           cwd = Option(System.getProperty("user.dir")).getOrElse("")
@@ -841,11 +1090,13 @@ Message type (optional, default "INFO"):
 
   /** ④ 发送腿审计（一条一行，`RelayExecAudit` 同族 = 设备通道审计的既有落面）。
     * `sourceDeviceId` = 本机（下发方），`targetDeviceId` = 对端设备。审计失败不影响
-    * 发送（`RelayExecAudit.record` 既有语义：吞异常 + WARN）。 */
+    * 发送（`RelayExecAudit.record` 既有语义：吞异常 + WARN）。
+    * mailattach 批（2026-09-17）：`chars` 的读数从 `message` 改为**实际上 wire 的正文**
+    * （`message` + 附件附注）——审计行是与载荷对账的读数，附注已进载荷 ⇒ 旧读数会低报。 */
   private def auditDeviceMailSend(
       ns: NeblinkService,
       targetDeviceId: String,
-      message: String,
+      bodyText: String,
       ctx: ToolContext
   ): IO[Unit] =
     ns.identity
@@ -857,23 +1108,34 @@ Message type (optional, default "INFO"):
           // relay 端点（`POST /api/relay/{target}/mail`），故 `via` 与既有 relay 审计同值。
           via = "relay",
           action = "Mail.device.send",
-          command = s"type=${DeviceMail.TypeAgentMail}; to_nebula=true; chars=${message.length}",
+          command = s"type=${DeviceMail.TypeAgentMail}; to_nebula=true; chars=${bodyText.length}",
           projectRoot = ctx.projectRoot,
           cwd = Option(System.getProperty("user.dir")).getOrElse("")
         )
       )
       .handleErrorWith(_ => IO.unit)
 
-  /** 腿①（Nebula → 项目分发器）：保留既有内核（`ProjectActor.TriggerDispatcher`）。 */
-  private def deliverToProject(name: String, message: String, mailType: String, ctx: ToolContext): IO[Either[ToolError, String]] =
-    routeToProject(name, message, mailType, ctx).flatMap {
-      case Some(r) => IO.pure(r)
-      case None =>
-        IO.pure(Left(ToolError(
-          s"Project '$name' is not mounted — Mail to a project triggers its dispatcher (ProjectActor.TriggerDispatcher). " +
-            "Mounted projects mount at gateway startup; re-mount / restart, or check the exact name."
-        )))
-    }
+  /** 腿①（Nebula → 项目分发器）：保留既有内核（`ProjectActor.TriggerDispatcher`）。
+    * B6（静默丢修，mailattach 2026-09-17）：本腿结构上只能收字符串
+    * （`TriggerDispatcher(message: String, …)` 无 blocks 形参）⇒ `images` 无承载面，
+    * 旧行为 = 静默丢，本批 = 显式拒绝（覆盖三入口：`project:` / Nebula 裸项目名 / 分发器）。 */
+  private def deliverToProject(
+      name: String,
+      message: String,
+      imagePaths: List[String],
+      mailType: String,
+      ctx: ToolContext
+  ): IO[Either[ToolError, String]] =
+    if imagePaths.nonEmpty then IO.pure(Left(sameMachineVisionUnsupportedError(s"project:$name", imagePaths.size)))
+    else
+      routeToProject(name, message, mailType, ctx).flatMap {
+        case Some(r) => IO.pure(r)
+        case None =>
+          IO.pure(Left(ToolError(
+            s"Project '$name' is not mounted — Mail to a project triggers its dispatcher (ProjectActor.TriggerDispatcher). " +
+              "Mounted projects mount at gateway startup; re-mount / restart, or check the exact name."
+          )))
+      }
 
   /** 腿③（分发器 → root）：**解析到真正的 Nebula root 会话**（追加条款②，2026-09-12）。
     * 硬禁三种静默行为：① 回落成发信者自身 ② 落到非 Nebula 的 Root 会话
