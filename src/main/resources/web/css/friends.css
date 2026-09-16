@@ -1286,11 +1286,13 @@ button.fm-req-decline:focus-visible {
   transition: width 0.2s ease-out;
 }
 
-/* 设备会话（2026-09-15 八点返工后）：
-   ① **设备描述入口**（⑤c 引入，② 2026-09-15 夜返工）：**默认收起 = 一枚小键**，
-      点击就地展开编辑面板（textarea + 保存/取消）。旧形态（常驻只读文本条 +
-      点击换行内 input）随 ② 整体替换；`.fm-device-desc-text` /
+/* 设备会话（2026-09-15 八点返工后；2026-09-16 devrow 再收）：
+   ① **设备描述入口**（⑤c 引入，② 2026-09-15 夜返工，devrow 2026-09-16 07:53 改位）：
+      **默认收起 = 一枚小键**，点击就地展开编辑面板（textarea + 保存/取消）。旧形态
+      （常驻只读文本条 + 点击换行内 input）随 ② 整体替换；`.fm-device-desc-text` /
       `.fm-device-desc-empty` 两条规则同批删除（旧渲染点已不存在 ⇒ 禁死规则）。
+      🔴 devrow：键**上窗头行**（见下 `.fm-modal-title > .fm-device-desc-btn`）——
+      旧形态键挂在 `.fm-device-desc` 行里 ⇒ 与名块**分两行**（作者 07:53 截图令）。
       几何沿用原留存条档位（不新增布局座）；材质全部引用既有 `--glass-*` token
       族 + 既有 `.glass-control`（Glass Control standard，`sapphire.css:159-262`）
       ⇒ 🔴 零新增字面量色值。
@@ -1298,12 +1300,15 @@ button.fm-req-decline:focus-visible {
    ② 本机所发气泡的送达/已读状态位（设备回执读面，§8.7 device_message_receipts）。 */
 .fm-device-desc {
   margin: 0 16px 6px;
-  /* 小键在左、展开面板占满下一行（`flex-wrap` 让收起/展开共用一条布局座）。 */
+  /* devrow：本行现在**只承载展开面板**（键已上窗头行）——收起态无子节点，
+     由下方 `:empty` 整条隐去（禁留空行占位）。展开态面板占满一行。 */
   display: flex;
   flex-wrap: wrap;
   gap: 6px;
   font-size: 12px;
 }
+/* devrow 收起态：面板不在场 ⇒ 本行零子节点 ⇒ 整条不占位（不留 6px 尾距）。 */
+.fm-device-desc:empty { display: none; }
 .fm-device-desc-btn {
   display: inline-flex;
   align-items: center;
@@ -1315,6 +1320,24 @@ button.fm-req-decline:focus-visible {
   color: var(--color-text-muted);
   cursor: pointer;
   line-height: 1.4;
+}
+/* 🔴 devrow（作者 2026-09-16 07:53）：小键进窗头行 ⇒ 与名块同一 flex 行、键在名右侧、
+   垂直居中。三点都是本行的硬要求：
+   · `align-self: center` —— `.fm-modal-title` 是 `align-items: baseline`（名称与平台
+     标签跨字号对齐用），基线对齐会把图标键压到名块基线上；本键显式改**行内居中**。
+   · `flex-shrink: 0` —— 长设备名**先截断**（`.fm-modal-name` 自带
+     `overflow:hidden` + `text-overflow:ellipsis` + `white-space:nowrap` ⇒ 自动最小尺寸 0），
+     键**不参与压缩**、不被挤走、不换行（`.fm-modal-title` 为 nowrap flex 行）。
+   · 热区地板 24×24 —— 判据 = **同窗头既有小键先例的最小值**：`.fm-modal-close`
+     `24px×24px`（本文件 `:684-687`）/ `.fm-gs-open` `26px×26px`（本文件 `:1102-1108`）；
+     24×24 亦 = WCAG 2.5.8（Target Size Minimum, AA）触达标准。原 33×21 **低于**该地板
+     （21 < 24）⇒ 本批以 `min-width/min-height` 抬到地板（宽度天然 33 已达标，读数见报告）。 */
+.fm-modal-title > .fm-device-desc-btn {
+  align-self: center;
+  flex-shrink: 0;
+  min-width: 24px;
+  min-height: 24px;
+  justify-content: center;
 }
 .fm-device-desc-btn:hover { color: var(--color-text); }
 .fm-device-desc-btn[aria-expanded='true'] { color: var(--color-text); }
