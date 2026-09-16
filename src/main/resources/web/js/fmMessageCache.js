@@ -54,13 +54,49 @@ let mem = null;
 /** localStorage 不可用 / 配额写失败标记（只读降级：不抛、不阻断 UI）。 */
 let degraded = false;
 
-/** 写入白名单：只落渲染/转发真正消费的字段，绝不整对象透传。 */
+/** 附件白名单键 —— **逐字对齐线上** `AttachmentSummary`（`NeblinkModel.scala` 的
+ *  `case class AttachmentSummary(id, name, size, sha256, state, mime)`）与客户端
+ *  消费的 wire 注记（`messages.js` 的 `serverAttachmentAsCard`：「id/name/size/
+ *  mime?/sha256/state」）。🔴 **不新增键、不改键名**（线上契约面零改动）。
+ *  `name` 必留：渲染侧靠 `attPlaceholderBody(atts)` 与服务端占位正文**逐字比对**
+ *  决定是否隐藏占位文本；丢了 name 会「卡 + 占位正文」双呈现。
+ *  `sha256` 必留：下载回执（E4）用 `att.sha256` 当 declaredSha256，丢了会把
+ *  「验证不了」误报成「不一致」。 */
+const ATTACHMENT_KEYS = ['id', 'name', 'size', 'mime', 'sha256', 'state'];
+
+/** 附件数组的**逐字段**收窄（禁整对象透传；值原样照抄，不解读、不补默认值）。 */
+function slimAttachments(list) {
+  if (!Array.isArray(list) || list.length === 0) return [];
+  const out = [];
+  for (const a of list) {
+    if (!a || typeof a !== 'object') continue;
+    /** @type {Record<string, unknown>} */
+    const one = {};
+    for (const k of ATTACHMENT_KEYS) if (a[k] !== undefined) one[k] = a[k];
+    if (Object.keys(one).length) out.push(one);
+  }
+  return out;
+}
+
+/** 写入白名单：只落渲染/转发真正消费的字段，绝不整对象透传。
+ *
+ *  🔴 `attachments` 是本白名单的**必留项**（2026-09-16 修复 · 作者报障 + 只读取证
+ *  `attachfix-forensic` 结论）：修前这里没有附件字段 ⇒ 关窗重开走「缓存首帧」
+ *  （`messages.js` 的 `openConversation` 热路径）时 `atts=[]` ⇒ ① 不建附件卡；
+ *  ② 服务端占位正文 `[附件] <名>` 不再被隐藏，原样显示成纯文本气泡。且**不可自愈**：
+ *  随后的增量核对是 `after=<水位>` keyset 前进拉取，已缓存行永不重取 ⇒ 永久退化。
+ *  设备面对照面（`fmDropboxCache.js`）一直保留 `fileName`/`fileSize`，故同跳不退化
+ *  —— 本行即把好友/群面拉回同族行为（键形对齐线上，读侧/渲染侧零改动）。 */
 function slim(m) {
   if (!m || typeof m !== 'object') return null;
   /** @type {Record<string, unknown>} */
   const out = { id: m.id, senderId: m.senderId, kind: m.kind, body: m.body || '', createdAt: m.createdAt };
   if (m.origin !== undefined) out.origin = m.origin;
   if (m.agentSent !== undefined) out.agentSent = m.agentSent;
+  // 空附件数组 / 键缺席 ⇒ **不落该键**（与 `messages.js frameMessage` 的
+  // 「键缺席 = 无附件」同形，避免给缓存条目引入一个恒在场的空数组）。
+  const atts = slimAttachments(m.attachments);
+  if (atts.length) out.attachments = atts;
   return out;
 }
 
