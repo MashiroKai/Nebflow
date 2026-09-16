@@ -5479,13 +5479,23 @@ class NodeEngine(
     * **引擎发起**的取消（L3 硬恢复 / 看门狗 giveUp / 死会话收殓）**语义逐条不变**
     * （照旧重激活上游，与 L3 恢复链、RetryCap 预算链零交互）；source **不可判定**
     * （R2 落地前的旧数据 / abandon 不写 result）⇒ 保持现状不抑制（语义选择项，
-    * 见批报告待拍板栏，禁自裁）。 */
+    * 见批报告待拍板栏，禁自裁）。
+    *
+    * **判据单点（cancelsem 批 2，2026-09-17）**：第四态的判定条件抽到
+    * [[DispatchNotify.userCancelSuppression]]（同一函数、同一常量
+    * [[CancelSource.isUserCancelled]]）——本处与 failed 回流文本
+    * （`DispatchNotify.suppressedFailedNotifyTaskText`）共用同一判据，禁二次派生；
+    * 本处语义（整腿不触发 + `retry` 审计 + WARN + failed 回流）逐字未改。 */
   private def retryOrNotify(node: NodeDef, err: String): IO[Unit] =
     node.retry match
       case None => dispatchNotify.notifyTerminal(node, NotifyReason.Failed)
       case Some(policy) if node.gen < policy.max =>
-        store.getNode(policy.upstream).flatMap {
-          case Some(up) if up.status == NodeLifecycle.Cancelled && CancelSource.isUserCancelled(up.result) =>
+        // 判据单点（cancelsem 批 2，2026-09-17）：第四态「抑制」的判定条件抽到
+        // DispatchNotify.userCancelSuppression（与 failed 回流文本变体**共用同一
+        // 函数、同一常量 CancelSource.isUserCancelled**，禁二次派生第二套判定）。
+        // 本处行为逐字未改（整腿不触发 + retry 审计 + WARN + failed 回流）。
+        dispatchNotify.userCancelSuppression(node).flatMap {
+          case Some(up) =>
             val note =
               s"auto-retry suppressed: retry.upstream '${up.name}' (${up.id}) was cancelled by the user " +
                 s"(source=user) — a user cancel is never re-armed; node stays failed (no self-reactivation, gen stays ${node.gen}/${policy.max})"
