@@ -1464,7 +1464,11 @@ button.fm-req-decline:focus-visible {
 /* 群成员小头像（28px 档；成员行密度高于列表行） */
 .fm-avatar-28 { width: 28px; height: 28px; font-size: 12px; }
 
-/* 群气泡发送者名（仅入站；名册未到时空槽，hydrate 后就地回填） */
+/* 群气泡发送者名（仅入站；名册未到时空槽，hydrate 后就地回填）。
+   宽度上限**不写死数值**：消费消息列宽的单源 token `--msg-bubble-max-w`
+   （③A3 判据；定义落点 = sapphire.css「Shared message surface」段）——
+   本面写死字面量即失去「改一处两侧同步」，门禁 `check-msgstyle-single-source.mjs`
+   直接判红。token 值未变（78%）⇒ 本行计算值逐字等价。 */
 .fm-msg-sender {
   font-size: 11px;
   color: var(--color-text-muted, #888);
@@ -1472,7 +1476,7 @@ button.fm-req-decline:focus-visible {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
-  max-width: 78%;
+  max-width: var(--msg-bubble-max-w);
 }
 
 /* ══════════════════════════════════════════════════════════════════════════
