@@ -24,6 +24,11 @@
  *   backendHistory   persistence.js restoreFromBackendHistory  (P1/P2, A9/A9b)
  *   storageReplay    persistence.js restoreFromStorage         (P3/P4, A15/A16)
  *
+ * A9/A9b ARE PRE-EXISTING ARMS and are frozen VERBATIM from main (their desc
+ * literal, predicate and diagnostic payload are the replayguard batch's, i.e.
+ * outside this batch's boundary) — do NOT reword them here; the face list above
+ * is what carries their scope attribution, the desc text carries none.
+ *
  * WHY THE storageReplay FACE IS ITS OWN ARM (#556 ①): the two replay routes are
  * independent guards in persistence.js. Before this change the script drove
  * only `restoreFromBackendHistory`, so rolling back the `restoreFromStorage`
@@ -525,7 +530,11 @@ function judge(payload) {
   const clean = (c) => c && c.sentinelHits === 0 && c.persistedHits === 0 && c.payloadKeyHits === 0 && c.prePlain === 0 && c.preHljs === 0;
   const out = [];
   const add = (id, desc, pass, detail) => out.push({ id, desc, pass: !!pass, detail });
-  const driven = (c) => !!(c && c.ran !== false && c.error === undefined);
+  // Strictly equivalent to the pre-existing `!!(c && c.ran)` shape used by the
+  // A9/A9b arms: a case whose `ran` flag is missing is NOT driven ⇒ the arm goes
+  // RED. The looser `ran !== false && error === undefined` form returned TRUE for
+  // a missing `ran` — the vacuous-green direction #556 forbids.
+  const driven = (c) => !!(c && c.ran);
 
   if (C.L1a_guard_no_hljs) {
     add('A1', 'guard shape (hljs OFF ⇒ plain <pre> branch): no raw payload in DOM, placeholder shown',
@@ -555,12 +564,12 @@ function judge(payload) {
   }
 
   if (C.P1_backend_history) {
-    add('A9', 'P1 [face backendHistory] history-replay with the SAME guard shape: no raw payload in DOM',
-      driven(C.P1_backend_history) && clean(C.P1_backend_history),
-      { ran: C.P1_backend_history.ran, sentinelHits: C.P1_backend_history.sentinelHits, prePlain: C.P1_backend_history.prePlain, preHljs: C.P1_backend_history.preHljs, persistedHits: C.P1_backend_history.persistedHits, toolRows: C.P1_backend_history.toolRows, head: C.P1_backend_history.textSampleHead });
-    add('A9b', 'P2 [face backendHistory] same face, hljs OFF ⇒ literal plain <pre class="tool-body-pre"> fallback',
-      driven(C.P2_backend_history_no_hljs) && clean(C.P2_backend_history_no_hljs),
-      { ran: C.P2_backend_history_no_hljs.ran, sentinelHits: C.P2_backend_history_no_hljs.sentinelHits, prePlain: C.P2_backend_history_no_hljs.prePlain, persistedHits: C.P2_backend_history_no_hljs.persistedHits, toolRows: C.P2_backend_history_no_hljs.toolRows, head: C.P2_backend_history_no_hljs.textSampleHead });
+    add('A9', 'P1 [scope probe] history-replay face with the SAME guard shape: no raw payload in DOM',
+      !!(C.P1_backend_history && C.P1_backend_history.ran) && clean(C.P1_backend_history),
+      C.P1_backend_history ? { ran: C.P1_backend_history.ran, sentinelHits: C.P1_backend_history.sentinelHits, prePlain: C.P1_backend_history.prePlain, preHljs: C.P1_backend_history.preHljs, persistedHits: C.P1_backend_history.persistedHits, head: C.P1_backend_history.textSampleHead } : C.P1_backend_history);
+    add('A9b', 'P2 [scope probe] same replay face, hljs OFF ⇒ literal plain <pre class="tool-body-pre"> fallback',
+      !!(C.P2_backend_history_no_hljs && C.P2_backend_history_no_hljs.ran) && clean(C.P2_backend_history_no_hljs),
+      C.P2_backend_history_no_hljs ? { ran: C.P2_backend_history_no_hljs.ran, sentinelHits: C.P2_backend_history_no_hljs.sentinelHits, prePlain: C.P2_backend_history_no_hljs.prePlain, persistedHits: C.P2_backend_history_no_hljs.persistedHits, head: C.P2_backend_history_no_hljs.textSampleHead } : C.P2_backend_history_no_hljs);
   }
 
   if (C.P3_storage_replay) {
