@@ -63,14 +63,12 @@ Nebflow 是一个开源（MIT）AI Agent 编排平台。本仓为 **Scala 版**�
 - **provider 模型列表端点逐面声明（禁全局拼接）**：模型列表端点必须由各协议面自己声明（`nebflow.llm.providers.ModelListFaces` + `AnthropicAdapter` / `OpenAiAdapter` 的 `modelListUrls`），**禁止**在网关侧对 `baseUrl` 拼路径——`baseUrl` 是对话前缀，两个面对「版本段在哪」的约定不同（Anthropic 面自己补 `/v1`）。面的声明允许**有序候选**（只在「端点不存在」时前进）与**显式「不支持」态**（必须给出可判读的拒绝，不得报成空清单成功）；2xx 体内携带厂家错误信封（如 zhipu 的 `{"code":500,"msg":"404 NOT_FOUND"}`）判失败并带出原文，**不得**降级成「无模型」。改这两面（`src/main/scala/nebflow/llm/providers/**`、`RestApiRoutes` 的 provider 路由面）合并前必须过 `node scripts/check-provider-modellist.mjs`（离线静态、与 CI `provider-modellist` step 同判据；红了修代码，不得放宽断言）；需要行为面读数时跑 `--live`（含代理探活环境面前置）。判据详述见 `scripts/check-provider-modellist.mjs` 头部注释与 `src/main/scala/nebflow/llm/providers/ModelListFaces.scala` 的 scaladoc
 
 ## 版本与发布管理
-- **VERSION 文件是唯一版本号来源**，格式 `MAJOR.MINOR.PATCH`（如 `1.1.12`）
+- **VERSION 文件是唯一版本号来源**，格式 = **发布日期式** `YYYY.M.D`（三段点分、**不补零**，如 `2026.9.17`）—— 2026-09-17 作者令：版号改为日期式，取代 `MAJOR.MINOR.PATCH` 语义版号；三段点分口径与 `-beta.N` 后缀形态保留（`2026.9.17-beta.1` 合法）
 - GitHub 仓库三个分支：`main`、`release`、`beta`
-- **合并 feature 分支到 main** → 递增 PATCH（第三位 +1）
-- **推送到 release 分支** → 递增 MINOR（第二位 +1），PATCH 归零
-- **准备 beta** → 版本号追加 `-beta.N`（N 从 1 递增），基于下一个 minor 版本
+- **日期式版号不由合并/递增规则产生** —— 值 = 该次**发版动作**当天的本地日期（日期即版号）；合并 / 推送动作本身不改版本号
 - Release 必须有 `CHANGELOG.md`
 - **合并一律 `git merge --no-ff`（无条件）** — 「发版场景才强制」的旧限定已作废；保留合并语义与双父历史，合并后 `git log -1 --format="%P"` 验双父；逐支串行 + 预检工作区 CLEAN + merge-base 核对
-- **零 push / 零 tag / 零 VERSION** — 合并动作不改版本号（版本只在发版动作时按上文规则递增）
+- **零 push / 零 tag / 零 VERSION** — 合并动作不改版本号（版本只在发版动作时按上文日期式口径写入）
 
 ## Git 安全
 - **禁止在 main 上直接修改** — 使用 `feat/`、`bug/`、`test/` 等分支
