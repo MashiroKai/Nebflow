@@ -454,6 +454,10 @@ export default {
   'input.sendImmediate': 'Send Now',
   'input.pasteTooLarge': 'Pasted content too large (>300KB) - inserted as plain text instead',
   'input.removeQueued': 'Remove',
+  // fwdguard-impl (2026-09-17): gate hint for an empty-text + ref-only (forwarded)
+  // frame — the gateway drops that shape silently (4055), so the composer blocks
+  // the send and shows this line instead.
+  'input.refOnlyHint': 'Add a line of text before sending',
   'modal.newSession': 'New Session',
   'modal.sessionName': 'Session name',
   'modal.cancel': 'Cancel',

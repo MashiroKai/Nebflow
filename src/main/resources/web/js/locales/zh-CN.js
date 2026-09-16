@@ -427,6 +427,9 @@ export default {
   'input.sendImmediate': '立即发送',
   'input.pasteTooLarge': '粘贴内容过大（>300KB），已改为直接插入文本',
   'input.removeQueued': '移除',
+  // fwdguard-impl (2026-09-17)：空文本 + 纯引用（转发）帧的闸提示 —— 该形态会被
+  // 网关 4055 判空静默丢弃 ⇒ 前端禁用发送并显示本句（作者逐字口径）。
+  'input.refOnlyHint': '请附一句话后发送',
   'modal.newSession': '新建会话',
   'modal.sessionName': '会话名称',
   'modal.cancel': '取消',

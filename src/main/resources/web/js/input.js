@@ -499,6 +499,68 @@ export async function addFileAttachment(file, callback, target) {
   }
 }
 
+// ---------- Ref-only frame gate (fwdguard-impl, 2026-09-17) ----------
+// 断点（诊断真源 `.nebflow/reports/20260917_forwarddiag.md` §③）：转发腿的载荷只走
+// `refs`，而本文件 672-673 的过滤又刻意把 ref 从 `attachments` 里剔除 ⇒ 网关准入
+// 谓词 `WebSocketRoutes.scala:4055`（`content.nonEmpty || attachments.nonEmpty`）
+// 恒假 ⇒ `:4246 else IO.unit` 全静默丢弃（零日志零 turn），而前端发帧后已
+// `setBusy`（本文件 696-701）⇒ 会话永久「转圈」= 空转。
+//
+// 作者取向（Q1，2026-09-17）：🔴 **不放宽网关闸**（`4055` 一字不改）——改为在本
+// 前端把「纯引用帧」拦在**两个发送入口**上（Enter 直发 / 点击发送键），并提示
+// 「请附一句话后发送」。Q2：不落历史 ⇒ `attJson` / `UiMessage` 契约零改动。
+//
+// 判据必须与 672-673 的过滤口径**同源**（同一 filter 表达式）——判据口径不一致
+// 正是本缺陷的成因（前端以为有载荷、网关判为空帧）。
+
+/** 帧写出时真正会进 `attachments` 的项 —— 与 send() 内 672-673 的过滤口径同源。 */
+export function wireAttachmentsOf(view) {
+  return (view?.pendingAttachments || []).filter(a => a.type !== 'taskRef' && a.type !== 'ref');
+}
+
+/** 该帧是否会被网关 4055 拒绝 = 「正文为空 ∧ 线上附件为空 ∧ 有载荷被该过滤剔掉
+  * （ref/taskRef）」= 纯引用帧（转发后不附言直接发送的形态）。
+  *
+  * 边界（🔴 禁误伤，逐条）：
+  *   · 有附言 + ref        ⇒ false（4055 放行，正常发送）；
+  *   · 空文本 + 真附件     ⇒ false（过滤后非空 = 合法帧，4055 放行）；
+  *   · 空文本 + 无任何载荷 ⇒ false（既无附件也无 ref：由 578-581 既有空守卫处理，
+  *     本闸不介入 —— 避免波及 compact / skill 等「空文本合法」的既有形态）。 */
+export function isRefOnlyFrame(view) {
+  if (!view || !view.dom) return false;
+  const text = (view.dom.input?.value || '').trim();
+  if (text) return false;
+  const all = view.pendingAttachments || [];
+  if (all.length === 0) return false;
+  return wireAttachmentsOf(view).length === 0;
+}
+
+/** 同步「纯引用帧」闸的视觉态（发送键禁用 + 提示可见）。返回闸是否生效。
+  * 调用点（覆盖全部会改变该判据的路径）：initInput 首帧、输入事件、attPreview 的
+  * DOM 变更观察器（附件/引用的增删都经 renderAttachmentPreview 重建整条 strip，
+  * 含 chat.js 侧 ref 芯片的移除按钮——本文件不介入 chat.js）。 */
+export function syncRefOnlyGate(view) {
+  const v = view || activeView;
+  if (!v || !v.dom) return false;
+  const blocked = isRefOnlyFrame(v);
+  const bar = v.dom.inputBar;
+  // 冻结态（main.js `setFrozenBarState`）用**同一个** disabled 属性：两者必须合成，
+  // 否则本闸在 blocked=false 时会把冻结态的禁用一并抹掉（fc-1 同族缺陷）。
+  const frozen = !!(bar && (bar.classList.contains('frozen') || bar.dataset.frozen === 'true'));
+  const btn = v.dom.sendBtn;
+  if (btn) {
+    btn.disabled = frozen || blocked;
+    if (blocked) btn.setAttribute('aria-disabled', 'true');
+    else if (!frozen) btn.removeAttribute('aria-disabled');
+  }
+  const hint = v.dom.refGateHint;
+  if (hint) {
+    if (blocked) hint.textContent = t('input.refOnlyHint');
+    hint.hidden = !blocked;
+  }
+  return blocked;
+}
+
 // ---------- Send ----------
 export function send() {
   // Capture the view at entry — activeView is a live module binding that ws.js
@@ -1210,14 +1272,44 @@ export function initInput(view) {
   // Sync the send button's connection state on init (grey until connected).
   refreshSendButtonState();
 
-  // Auto-resize textarea
+  // ── fwdguard-impl (2026-09-17)：纯引用帧闸的提示件（每视图一件）─────────
+  // 挂在 input-wrap 内、attPreview **之外**：renderAttachmentPreview 会整块
+  // innerHTML='' 重建 strip，提示件挂进去会被下一次渲染抹掉（attachment-preview
+  // 只承载载荷卡片）。文案走 i18n（禁硬编码中文）。
+  if (!view.dom.refGateHint && input.parentElement) {
+    const hint = document.createElement('div');
+    hint.className = 'ref-gate-hint';
+    hint.dataset.refGateHint = '1';
+    hint.hidden = true;
+    hint.textContent = t('input.refOnlyHint');
+    input.parentElement.insertBefore(hint, input);
+    view.dom.refGateHint = hint;
+  }
+
+  // Auto-resize textarea + 同步纯引用帧闸（文本变化会改变闸判据）。
   input.addEventListener('input', () => {
     input.style.height = 'auto';
     input.style.height = Math.min(input.scrollHeight, 200) + 'px';
+    syncRefOnlyGate(view);
   });
 
-  // Send button
-  sendBtn.onclick = () => { setActiveView(view); send(); };
+  // 附件/引用条的任何重建都会同步闸态（观察器覆盖面含 chat.js 侧 ref 芯片的移除
+  // 按钮与 send() 尾部清空 strip 两条非本文件路径）。popup 每次打开重建 DOM ⇒
+  // 旧观察器先断开，避免挂在已脱离文档的节点上。
+  if (view.dom.attPreview && typeof MutationObserver !== 'undefined') {
+    view.dom.refGateObserver?.disconnect?.();
+    const mo = new MutationObserver(() => syncRefOnlyGate(view));
+    mo.observe(view.dom.attPreview, { childList: true, subtree: true });
+    view.dom.refGateObserver = mo;
+  }
+  syncRefOnlyGate(view);
+
+  // Send button —— 入口①（点击）。纯引用帧在此不产帧（网关 4055 会静默丢弃它）。
+  sendBtn.onclick = () => {
+    setActiveView(view);
+    if (isRefOnlyFrame(view)) { syncRefOnlyGate(view); return; }
+    send();
+  };
 
   // Stop button — send interrupt with sessionId, reset UI immediately
   stopBtn.onclick = () => {
@@ -1391,6 +1483,10 @@ export function initInput(view) {
     // gate is a plain Shift test now (⑤ 收归，方案 §4.1 步骤 2；语义等价、仅实现搬位)。
     if (e.key === 'Enter' && !e.shiftKey) {
       e.preventDefault();
+      // 入口②（Enter 直发，fwdguard-impl）：纯引用帧不产帧 —— 该形态在网关
+      // `WebSocketRoutes.scala:4055` 判空并被 `:4246` 静默丢弃（前端已 setBusy
+      // ⇒ 会话永久转圈）。提示件由 syncRefOnlyGate 常驻显示。
+      if (isRefOnlyFrame(view)) { syncRefOnlyGate(view); return; }
       send();
     }
   };
