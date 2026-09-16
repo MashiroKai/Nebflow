@@ -4958,7 +4958,20 @@ class NodeEngine(
     * `case None`（节点不在活动区）保持旧口径 `(s, Nil)`：调用方 [[cancelNode]] 的
     * `store.mutate` 同样查无该节点 ⇒ 整个取消是 no-op 且已有 `Node nodeId vanished
     * before cancel finalize` 响亮留痕（非静默）；离线节点的迟到摘除由 L3 失败腿的
-    * [[lateDetachUnlocatableSession]]（含归档区解析）承担，不在本方法范围内。 */
+    * [[lateDetachUnlocatableSession]]（含归档区解析）承担，不在本方法范围内。
+    *
+    * **`cancelloopfix` 批（2026-09-17，作者裁定 #675(a) / 跟踪卡 #697）**：**目标集排除
+    * `:loop` 回边目标**——与方案 A / 判据 M9（[[referencesOf]] 头注：`:loop` 不作级联
+    * 传导）一致化：**不连坐 ⇒ 便签也不该有**。排除面 = **前向扫描跳过
+    * `OutEdge.isLoopEdge`**（`from.out` 侧），与 [[referencesOf]] 的传导排除面**同款形态、
+    * 不同位点**：那里管**传导**（谁被级联取消），这里管**打标**（谁收「待承接」便签）。
+    * 反向腿（`in` 镜像）**无需过滤**——回边**从不写 `in` 镜像**（三处写点同款过滤：
+    * `NodeTools.setOut` 的 rewire 两侧、`NodeTools` create 的 `ins`/`out` 两支），
+    * ⇒ 回边目标天然不出现在 `reverseOnly` 里。
+    * 生效面：回边目标不再收 `pendingSuccession` 便签、不再收那 1 帧 `nodeUpdated`，
+    * 也不进 `cancelled` 审计的「successors awaiting handover」栏；**连带面**（本批声明，
+    * 见批报告 ⑥/⑨）＝ 被取消节点 out 若**只剩回边**（无其它节点目标）则 `targets` 为空
+    * ⇒ 早退零写 ⇒ 其 `:loop` 声明边保留（不再改接 Nebula）。 */
   private def detachCancelledUpstream(nodeId: String, suppressTargets: Set[String] = Set.empty): IO[List[String]] =
     // R2/R3（chaincancel 批 2026-09-17，**取代面**）：`suppressTargets` = 本次操作
     // **即将取消**的成员集（作者三答 1「取消即级联，不再登记后继位」）——对它们**不**
@@ -4972,7 +4985,13 @@ class NodeEngine(
       store.mutateWithResult { s =>
         s.nodes.get(nodeId) match
           case Some(from) =>
-            val forward = from.out.map(_.to).filterNot(_ == OutEdge.NebulaTarget).distinct
+            // #675(a)（cancelloopfix 批 2026-09-17）：回边**不作打标目标**——`:loop` 不作
+            // 级联传导（M9）⇒ 不连坐 ⇒ 便签也不该有（现态「同一操作内打标 + 紧接取消」
+            // 自相矛盾、在已取消节点上留噪标）。排除面 = 前向扫描跳过 `OutEdge.isLoopEdge`；
+            // 反向腿**无需过滤**（回边从不写 `in` 镜像，见 NodeTools.setOut / create 三处写点）。
+            // 🔴 与 [[referencesOf]] 的传导排除面同款形态、**不同位点**（那里管传导，这里管打标）。
+            val forward = from.out.filterNot(OutEdge.isLoopEdge)
+              .map(_.to).filterNot(_ == OutEdge.NebulaTarget).distinct
               .flatMap(OutEdge.resolveTargetId(s.nodes, _)).distinct
             // U5/E：反向引用方（谁还在 in 里引用我）——不一致拓扑下前向遍历恒空，反向恒可算。
             val reverseOnly =

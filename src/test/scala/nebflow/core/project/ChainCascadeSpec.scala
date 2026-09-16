@@ -30,6 +30,8 @@ import scala.concurrent.duration.*
  *  - M7  `deps` 轨纳入；`retry.upstream` 存在不改变集合（显式排除不变量）
  *  - M8  L3 不变量：`deferDetach ⇒ cascade=false`（结构断言 + 语义等价读数）
  *  - M9  `:loop` 不传导（取消 verify ⇒ 级联沿正常 out 到 sink，worker 零触碰）
+ *        ——**cancelloopfix 批 2026-09-17（#675(a) / #697）起含打标面**：回边目标同时
+ *        **零便签、零帧**（旧读数的 `pendingSuccession=List("n-ver")` + 1 帧作废）
  *  - M10 blocked / interrupted 纳入级联闭包（显式枚举，不用 `Terminal` 谓词）
  *  - M11 「取代面 / 保留面」机械可核：非取消族写入点与 `cascade` 旗标零耦合
  */
@@ -345,7 +347,7 @@ class ChainCascadeSpec extends CatsEffectSuite:
 
   // ── M9（loop 对偶）────────────────────────────────────────────────
 
-  test("M9: the :loop verdict return edge is not a cascade transmission edge — cancelling the verifier cancels the normal-out sink and never cancels the worker (the pre-existing R4 marker on the loop target is declared as today's behaviour)") {
+  test("M9: the :loop verdict return edge is not a cascade transmission edge — cancelling the verifier cancels the normal-out sink and never cancels OR marks the worker (cancelloopfix 批 #675(a)/#697 取代面：便签与帧同步摘除)") {
     withRig("m9") { rig =>
       for
         _ <- seed(rig, List(
@@ -368,22 +370,20 @@ class ChainCascadeSpec extends CatsEffectSuite:
         assertEquals(report.cancelled.map(_.nodeId).sorted, List("n-land", "n-ver"))
         assertEquals(sts, List("cancelled", "cancelled", "pending"), "worker NEVER burned by the :loop edge")
         assert(!report.cancelled.exists(_.nodeId == "n-work"))
-        // ── 边界申报（本批实测，见报告 ⑧「未决/局限」）──────────────────
-        // 三答 3 把 `:loop` 的排除面**具名钉在 `referencesOf`**（级联传导并集）⇒ 传导腿
-        // 不过回边（上方读数）。但**既有的 R4 摘除腿**（`detachCancelledUpstream` 的
-        // `forward`，本批只在它上面加 `suppressTargets` 抑制面、**不改**其目标集）仍把
-        // `:loop` 当普通图边 ⇒ 回边目标照样走今日的「待承接」打标路径。这是**今日逐字
-        // 行为**（单节点 NodeCancel 对同一拓扑读数相同，Z4），非本批引入；把它一并从
-        // 摘除腿排除会改变既有 NodeCancel 行为 ⇒ 属需作者裁定的扩面，本批**不动**。
+        // ── **取代面**（cancelloopfix 批 2026-09-17，作者裁定 #675(a) / 跟踪卡 #697）────
+        // 旧读数（本批起作废）：R4 摘除腿把 `:loop` 当普通图边 ⇒ 回边目标照样收「待承接」
+        // 便签 + 1 帧（本行曾断言 `Some(List("n-ver"))` / `length == 1`）。作者裁定与方案 A /
+        // 判据 M9 **一致化**：**不连坐 ⇒ 便签也不该有**（现态是「同一操作内打标 + 紧接取消」
+        // 自相矛盾态）。⇒ 目标集前向腿排除 `OutEdge.isLoopEdge`，两行断言随裁定**反转**。
+        // 🔴 两处口径分开：传导面（谁被级联取消）= `referencesOf`（本批零改动，读数见上行）；
+        // 打标面（谁收便签/帧）= `detachCancelledUpstream`（本批唯一改动点）。
         assertEquals(afterWork.map(_.status), Some(NodeLifecycle.Pending))
         assertEquals(afterWork.map(_.in), Some(Nil))
         assertEquals(afterWork.map(_.deps), Some(Nil))
         assertEquals(afterWork.flatMap(_.result), None)
-        assertEquals(afterWork.map(_.pendingSuccession), Some(List("n-ver")),
-          "today's R4 marker (pre-existing behaviour, outside referencesOf ⇒ outside the ruling's scope)")
-        assertEquals(workFrames.length, 1, s"exactly one frame for the worker (the R4 marker push): $workFrames")
-        assertEquals(workFrames.head.hcursor.get[String]("status").toOption, Some(NodeLifecycle.Pending),
-          "the worker's pushed frame says pending — never cancelled")
+        assertEquals(afterWork.map(_.pendingSuccession), Some(Nil),
+          "#675(a): the ':loop' back-edge target must NOT receive the 待承接 marker any more")
+        assertEquals(workFrames.length, 0, s"and must NOT receive the R4 marker frame either: $workFrames")
         assertEquals(workAudit.count(_._1 == "cancelled"), 2, "only the verifier and the sink were cancelled")
     }
   }

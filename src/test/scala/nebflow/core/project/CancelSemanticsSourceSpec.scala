@@ -202,6 +202,48 @@ class CancelSemanticsSourceSpec extends FunSuite:
   private val NoReDispatchMarker = "不得重新派发"
   private val EngineFirstChoice = "承接（首选）"
 
+  // ── 源码判据的**代码行视图**（M8/M11 同款形态：剥掉注释行后再判）──────────
+  //
+  // 为什么必须剥（chaincancel 批 V7 实测）：文档注释里**逐字引用**了被判据约束的代码
+  // 原文（本批新增的 #675(a) 头注同样引用了 `OutEdge.isLoopEdge`）——不剥的话，把代码
+  // 改掉、留下注释，`contains` 断言照样绿 = 判据被注释**背书**而假绿。反向同理：注释里
+  // 出现 `cascade` 会让「保留面不得含 cascade」的负断言误红。
+  private def codeOnly(src: String): String =
+    src.linesIterator.filterNot { l =>
+      val t = l.trim
+      t.startsWith("//") || t.startsWith("*") || t.startsWith("/*")
+    }.mkString("\n")
+
+  private def engineSrcWindow(sig: String, n: Int): String =
+    val src = codeOnly(os.read(os.pwd / "src" / "main" / "scala" / "nebflow" / "core" / "project" / "NodeEngine.scala"))
+    val lines = src.linesIterator.toList
+    val start = lines.indexWhere(_.contains(sig))
+    assert(start >= 0, s"anchor not found in NodeEngine.scala: $sig")
+    lines.slice(start, math.min(start + n, lines.size)).mkString("\n")
+
+  // ── C6（#675(a) / #697 机械钉点）：打标面排除 `:loop` 回边目标 ────────────
+
+  test("C6 R4/#675(a) source window (comments stripped): the cancel-family detach leg's TARGET SET excludes ':loop' back-edge targets — and the conduction exclusion stays pinned at referencesOf (two faces, distinct sites)") {
+    val marking = engineSrcWindow("private def detachCancelledUpstream", 60)
+    println(s"[spec] C6 marking-face window (code-only) head:\n${marking.linesIterator.take(25).mkString("\n")}")
+    // ① 打标面（本批改动点）：前向扫描跳过回边 —— 逐字形态判据（撤掉本过滤 ⇒ 本行必红）
+    assert(marking.contains("from.out.filterNot(OutEdge.isLoopEdge)"),
+      "the target set must exclude ':loop' back-edge targets on the forward scan (#675(a))")
+    // ② 取消族 取代面（chaincancel 批）原样在位——本批不动它
+    assert(marking.contains("suppressTargets") && marking.contains("cascadeCancelledIds"),
+      "the cascade 取代面 (suppressTargets + cascadeCancelledIds) must stay in place")
+    // ③ 传导面（三答 3 的具名钉点）：`referencesOf` 的两条方向扫描俱在 —— **另一处**，本批零改动
+    val conduction = engineSrcWindow("private def referencesOf", 30)
+    assert(conduction.contains("filterNot(OutEdge.isLoopEdge)") && conduction.contains("!OutEdge.isLoopEdge(e)"),
+      "the conduction exclusion stays pinned at referencesOf (forward + reverse scans) — a DIFFERENT site from the marking face")
+    // ④ 负向：打标面**不得**借传导闭包（`cascadeClosure`）代劳 —— 两处口径各有其位点
+    //    （⚠ 注意：本窗口在**剥注释后**取 60 **代码行**，故会比 60 原始行伸得更远——含
+    //      `referencesOf` 自身的签名行；所以此处判据取「不得调用传导闭包」而非「不得出现
+    //      `referencesOf` 字样」，后者会被邻接方法的签名行误红）。
+    assert(!marking.contains("cascadeClosure"),
+      "the marking leg must not re-derive the conduction union (two faces stay separate sites)")
+  }
+
   // ── C1/C2/C5：面板取消 ⇒ agent 可见通知（同一通道）──────────────────────
 
   test("C1/C2/C5 R1: panel cancelAgent finalizes the node as cancelled[source=user] AND reaches the agent through the SAME dispatch-notify channel — text carries source=user + node id + chain id, forbids re-dispatch, and exactly ONE notification goes out") {
