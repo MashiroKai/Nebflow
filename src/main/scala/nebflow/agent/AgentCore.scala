@@ -2202,14 +2202,37 @@ private[agent] trait AgentCore:
       "# Active Sessions\n\n" + lines.mkString("\n") +
         "\n\nUse Mail to send follow-up instructions to any session above."
 
-  @volatile private var deviceInfoCache: (Long, String) = (0L, "")
+  /** `# Devices` 块的 30s memo。**键含「源身份」**（isofix 批 · 2026-09-17）。
+    *
+    * 旧形态（本次修复前）= `(Long, String)`，只按 30s 窗口判定，且**短路在读
+    * `RemoteExecutor.current` 之前** ⇒ 同 JVM 内一旦有谁 `RemoteExecutor.initialize`
+    * 把全局执行器**重新指向**另一个 `NeblinkService`，本 memo 里的**上一个执行器**
+    * 设备清单仍会在窗口内被继续复用。这正是 `DevicesDeltaBaselineSpec` 在
+    * `sbt -batch "testOnly nebflow.agent.*"` 下确定性转红的根因（跨 suite 串扰：
+    * 邻居 suite 建的 service + 别的 agent 回合写进 memo ⇒ 本 spec 的 turn-1 基线
+    * 拿到 `peer-one` 而非自身 roster）。判据 = `.nebflow/reports/20260917_devicesred-diag.md`
+    * §3 四要素链 + `.nebflow/reports/20260917_isofix-impl.md` §C 双向红绿钉。
+    *
+    * 修法选择（最小面 · 断源头而非掩盖）：memo 的**失效判据**由「仅时间窗」改为
+    * 「**时间窗 ∧ 源身份不变**」——`RemoteExecutor.current` 换实例（= 换 service）
+    * 即失效，下一次装配实读新源。**不动断言、不动测试、不加 sleep/特判**。
+    *
+    * 生产语义（`GatewayMain.scala:811` 是唯一生产 `initialize` 调用点，启动一次、
+    * 执行器身份此后恒不变）⇒ memo 行为与改前**逐字等价**，零生产行为回归；
+    * **被收窄**的风险面 = 「同进程内重新指向执行器」（测试 / 内嵌多实例）不再拿到
+    * ≤30s 陈旧块；**未收窄**的是「同一执行器内 roster 原地变更后的 ≤30s 陈旧窗」
+    * （与改前一致，本次不动、也不属本批范围）。
+    */
+  @volatile private var deviceInfoCache: (Option[RemoteExecutor], Long, String) = (None, 0L, "")
 
   private def deviceInfoBlock: String =
     val now = System.currentTimeMillis()
-    val (lastUpdate, cached) = deviceInfoCache
-    if now - lastUpdate < 30000 && cached.nonEmpty then cached
+    // 源身份在**读 memo 之前**取（与失效判据同源）⇒ 键与值不可能错位（无 TOCTOU）。
+    val src = RemoteExecutor.current
+    val (cachedSrc, lastUpdate, cached) = deviceInfoCache
+    if cachedSrc == src && now - lastUpdate < 30000 && cached.nonEmpty then cached
     else
-      val refreshed = RemoteExecutor.current
+      val refreshed = src
         .flatMap(_.neblinkServiceOpt)
         .flatMap { ms =>
           try
@@ -2246,7 +2269,7 @@ private[agent] trait AgentCore:
           catch case _: Exception => None
         }
         .getOrElse("")
-      deviceInfoCache = (now, refreshed)
+      deviceInfoCache = (src, now, refreshed)
       refreshed
 
     end if
