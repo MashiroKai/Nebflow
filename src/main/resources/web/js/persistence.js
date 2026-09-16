@@ -506,6 +506,40 @@ export function restoreFromStorage(opts = {}) {
         cardRow.appendChild(cardContainer);
         chat.appendChild(cardRow);
         renderWithRegistry(cardContainer, m.content);
+      } else if (m.content && typeof m.content === 'string' && /___\w+_HTML___/.test(m.content)) {
+        // ── cardguard negative filter (author ruling 2026-09-17 · #687① / #695-A) ──
+        // The gate above is START-anchored (`/^___\w+_HTML___/`) ⇒ it only catches the
+        // canonical card. A tool RESULT carrying the sentinel ANYWHERE else — the
+        // realistic shape being ToolResultGuard's persisted preview,
+        // `<persisted-output>\n…Preview (first 2048 chars):\n___CARD_HTML___{…` — used to
+        // fall through to the plain branch below and be rendered verbatim, by
+        // `renderHighlightedContent` (hljs `<pre>`) or by the `<pre class="tool-body-pre">`
+        // fallback. Same negative filter, judged by the SAME regex and only that regex, as
+        // the live path (chat.js:1139): the raw payload and its `<persisted-output>`
+        // wrapper must not reach the DOM on any route. The preview-wrapped string is
+        // deliberately NOT handed to renderWithRegistry — the 2048-char window truncates
+        // the payload, so that would half-parse — it becomes a readable placeholder with
+        // no "view source" escape hatch (no <pre> at all ⇒ the raw text stays out of the
+        // DOM collapsed or not). Ordinary tool results never match this regex and keep the
+        // branch below byte-for-byte.
+        const isError = m.isError;
+        const icon = isError ? '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#f44336" stroke-width="3"><path d="M18 6L6 18M6 6l12 12"/></svg>'
+                             : '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#4caf50" stroke-width="3"><polyline points="20 6 9 17 4 12"/></svg>';
+        const localLabel = localizeToolLabel(m.label);
+        const localSummary = localizeToolSummary(m.summary, m.label);
+        const lParts = localLabel.split('\n', 2);
+        const lHtml = esc(lParts[0]) + ' &mdash; ' + esc(localSummary)
+          + (lParts.length > 1 ? '<br><span class="tool-detail">' + esc(lParts[1]) + '</span>' : '');
+        card.innerHTML = '<span class="icon ' + (isError ? 'err' : 'ok') + '">' + icon + '</span>' +
+          '<div class="content"><div class="label">' + lHtml + '</div></div>';
+        const cgBody = document.createElement('div');
+        cgBody.className = 'body open';
+        cgBody.dataset.cardguard = 'placeholder';
+        cgBody.textContent = t('chat.toolCardUnavailable');
+        const cgContentEl = card.querySelector('.content');
+        if (cgContentEl) cgContentEl.appendChild(cgBody);
+        row.appendChild(card);
+        chat.appendChild(row);
       } else {
         const isError = m.isError;
         const icon = isError ? '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#f44336" stroke-width="3"><path d="M18 6L6 18M6 6l12 12"/></svg>'
@@ -826,6 +860,38 @@ export function restoreFromBackendHistory(msgs, opts = {}) {
         const isError = m.isError;
         // Pop tool: rainbow filename + clickable card (shared with live renderTool)
         if (applyPopCard(card, m.label, m.summary, m.input, isError)) {
+          row.appendChild(card);
+          fragment.appendChild(row);
+        } else if (m.content && typeof m.content === 'string' && /___\w+_HTML___/.test(m.content)) {
+          // ── cardguard negative filter (author ruling 2026-09-17 · #687① / #695-A) ──
+          // Isomorphic to the restoreFromStorage branch above: same START-anchored gate
+          // at the card path, same sentinel-anywhere regex, same safe placeholder. A tool
+          // RESULT carrying the sentinel outside position 0 (realistic shape =
+          // ToolResultGuard's persisted preview,
+          // `<persisted-output>\n…Preview (first 2048 chars):\n___CARD_HTML___{…`) used to
+          // fall into the plain branch below and be rendered verbatim by
+          // `renderHighlightedContent` / `<pre class="tool-body-pre">`. Raw payload and its
+          // `<persisted-output>` wrapper must not reach the DOM on any route; the
+          // preview-wrapped string is deliberately NOT handed to renderWithRegistry (the
+          // 2048-char window truncates it ⇒ half-parse). The Pop face is unchanged — it is
+          // checked first, exactly as in the live path (chat.js:1099 before :1139) — and
+          // ordinary tool results never match the regex, so their rendering is untouched.
+          const isError = m.isError;
+          const icon = isError ? '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#f44336" stroke-width="3"><path d="M18 6L6 18M6 6l12 12"/></svg>'
+                               : '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#4caf50" stroke-width="3"><polyline points="20 6 9 17 4 12"/></svg>';
+          const localLabel = localizeToolLabel(m.label);
+          const localSummary = localizeToolSummary(m.summary, m.label);
+          const lParts = localLabel.split('\n', 2);
+          const lHtml = esc(lParts[0]) + ' &mdash; ' + esc(localSummary)
+            + (lParts.length > 1 ? '<br><span class="tool-detail">' + esc(lParts[1]) + '</span>' : '');
+          card.innerHTML = '<span class="icon ' + (isError ? 'err' : 'ok') + '">' + icon + '</span>' +
+            '<div class="content"><div class="label">' + lHtml + '</div></div>';
+          const cgBody = document.createElement('div');
+          cgBody.className = 'body open';
+          cgBody.dataset.cardguard = 'placeholder';
+          cgBody.textContent = t('chat.toolCardUnavailable');
+          const cgContentEl = card.querySelector('.content');
+          if (cgContentEl) cgContentEl.appendChild(cgBody);
           row.appendChild(card);
           fragment.appendChild(row);
         } else {
