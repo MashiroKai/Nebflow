@@ -1087,7 +1087,7 @@ export default {
   'neblink.reachServerOnly': '在线——暂无直连通道',
   'neblink.loggedOutHint': '未登录，设备互联不可用',
   // 被踢下线被动提示（踢旧批案 B，2026-09-14）：**状态行级**——无横幅、无声音
-  // （一期口径 /Users/kaiyu/.nebflow/User.md:36；代码锚 messages.js「无横幅无提示音」）。
+  // （一期口径见 User.md 第 36 行；代码锚 messages.js「无横幅无提示音」）。
   'neblink.signedOutElsewhere': '已在别处登录',
   'neblink.signedOutElsewhereHint': '本机会话已被另一台设备接管，自动重连已暂停——重新登录即可恢复',
   'neblink.deviceDescHint': '此描述对 Agent 可见，Agent 会根据你的描述自动选择合适的设备执行任务',

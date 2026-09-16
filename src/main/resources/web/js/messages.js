@@ -374,7 +374,7 @@ function isAgentSent(m) { return !!(m && (m.origin === 'agent' || m.agentSent ==
  *  旧硬编码前缀 已收敛；`messages.agentGroupBadge` 键同批删除，禁死键）。 */
 const AGENT_BADGE_TEXT_KEY = 'messages.agentBadge';
 
-/** 会话行摘要（⑧，作者 2026-09-15：「就很奇怪，对一个设备说 KAI / Device /
+/** 会话行摘要（⑧，作者 2026-09-15：「就很奇怪，对一个设备说〈设备名〉/ Device /
  *  You are now friends」；⑨，作者 2026-09-16 07:55：「入群提示还是：你们已成为
  *  好友，这不对」）。
  *

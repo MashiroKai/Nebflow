@@ -291,7 +291,7 @@ object DeviceProfile:
 
 end DeviceProfile
 
-/** 探测命令 + 输出解析。命令约束（root 令 KAI 授权边界）：全只读、幂等、
+/** 探测命令 + 输出解析。命令约束（root 授权边界）：全只读、幂等、
   * 无副作用（不写盘 / 不改注册表 / 不联网）、单条下发、POSIX-bash 跨平台
   * （对端 shell = shell.scala 已选定的 bash 家族）。 */
 object DeviceProfileProbe:
