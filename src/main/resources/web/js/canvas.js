@@ -1016,7 +1016,14 @@ export async function openWorkspaceItem(item) {
   const stashAnchor = absPath ? pendingRefAnchors.get(absPath) : undefined;
   if (absPath) pendingRefAnchors.delete(absPath);
   const renderAnchor = anchor || stashAnchor;
-  await renderFile(pane, { itemType, content, absPath, fileName: title, size, path: item.path, rootPath: item.rootPath, anchor: renderAnchor, warnings, objectUrl: item.objectUrl });
+  // `objectUrl` is the blob-URL byte leg imgfix added to the render context
+  // (consumed by viewers/{image,pdf,docx,xlsx,pptx,epub}.js as `objectUrl ||
+  // await ticketUrl(absPath)`). It is a real runtime field but is not declared on
+  // the shared ViewerContext typedef (utils.js), so the context is widened here
+  // locally — typed only, the object passed to renderFile is unchanged.
+  /** @type {import('./utils.js').ViewerContext & {objectUrl?: string}} */
+  const renderCtx = { itemType, content, absPath, fileName: title, size, path: item.path, rootPath: item.rootPath, anchor: renderAnchor, warnings, objectUrl: item.objectUrl };
+  await renderFile(pane, renderCtx);
   entry._lastRefreshAt = Date.now();  // just rendered — don't immediately re-fetch
 }
 
