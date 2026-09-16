@@ -662,6 +662,9 @@ if (!LIVE_BASE) {
   const P = {
     docsMd: join(LIVE_HOME, 'docs/Nebflow/x.md'),
     docsHtml: join(LIVE_HOME, 'docs/Nebflow/assets/x.html'),
+    // 2026-09-16 img-ticket 批 i (#687-A)：`docs` 加入 data root 白名单 ⇒ 该命名空间**可服务**。
+    // 正控必须用允许扩展名的图（.md/.html 会被扩展名闸挡下，做不了 200 正控）。
+    docsPng: join(LIVE_HOME, 'docs/Nebflow/assets/x.png'),
     logs: join(LIVE_HOME, 'logs/x.json'),
     results: join(LIVE_HOME, 'results/y.json'),
     tmp: join(LIVE_HOME, 'tmp/z.png'),
@@ -682,6 +685,7 @@ if (!LIVE_BASE) {
     mkdirSync(dirname(P.absHtml), { recursive: true });
     writeFileSync(P.docsMd, '# live fixture\n');
     writeFileSync(P.docsHtml, '<!DOCTYPE html><html><body>live</body></html>\n');
+    writeFileSync(P.docsPng, PNG_1PX);
     writeFileSync(P.logs, '{"live":1}\n');
     writeFileSync(P.results, '{"live":2}\n');
     writeFileSync(P.tmp, PNG_1PX);
@@ -705,7 +709,10 @@ if (!LIVE_BASE) {
   const tickets = (mint.body && mint.body.tickets) || {};
   results.push(`      mint status=${mint.status} allowed=${Object.keys(tickets).length} rejected=${(mint.body && mint.body.rejected || []).length}`);
   const expect = [
-    ['docs/** .md', P.docsMd, 'credential-path'], ['docs/** .html', P.docsHtml, 'credential-path'],
+    // docs/** 2026-09-16 img-ticket 批 i (#687-A)：docs 已是可服务命名空间（白名单第 6 项）⇒ 命名空间闸
+    // 放行，判据链交给扩展名闸（.md/.html 不在 NfFileAllowedExt）⇒ 期望由 credential-path 改述为 file-type。
+    // 判据链本身未动（nfFileVerdict 顺序：not-found → credential-path → file-type）。
+    ['docs/** .md', P.docsMd, 'file-type'], ['docs/** .html', P.docsHtml, 'file-type'],
     ['logs/', P.logs, 'credential-path'], ['results/', P.results, 'credential-path'],
     ['tmp/', P.tmp, 'credential-path'], ['auth.json', P.auth, 'credential-path'],
     ['.nebflow/（项目凭据树）', P.board, 'credential-path'],
@@ -743,8 +750,21 @@ if (!LIVE_BASE) {
   } else {
     ok('R5-b 白名单路径取得有效票（前置）', false, 'no ticket issued for whitelisted path');
   }
-  const docsRead = await readCase('/api/nf-file?path=' + enc(P.docsMd) + '&ticket=ANY');
-  ok('R5-b docs/** 任意票 → 403 credential-path', docsRead.status === 403 && /credential-path/.test(docsRead.reason), JSON.stringify(docsRead));
+  // docs/** 于 2026-09-16 img-ticket 批 i (#687-A) 加入 data root 白名单 ⇒ 这条不再撞 credential-path。
+  // 按复核报告所载新事实改述为两半：① `docs` 可服务（真票 → 200）；② 未列举头仍 `credential-path`。
+  const docsTk = tickets[P.docsPng];
+  ok('R5-b docs/** 图片已铸票（可服务命名空间）', !!docsTk,
+    `rejected=${((mint.body && mint.body.rejected) || []).map((r) => `${r.path}:${r.reason}`).join(',')}`);
+  if (docsTk) {
+    const docsServed = await readCase('/api/nf-file?path=' + enc(P.docsPng) + '&ticket=' + enc(docsTk.t));
+    ok('R5-b docs/** 图片 + 有效票 → 200（A1：docs 可服务）', docsServed.status === 200, JSON.stringify(docsServed));
+  }
+  const docsBad = await readCase('/api/nf-file?path=' + enc(P.docsPng) + '&ticket=ANY');
+  ok('R5-b docs/** 图片 + 任意票 → 403 票据面拒绝（命名空间已放行，不再是 credential-path）',
+    docsBad.status === 403 && !/credential-path/.test(docsBad.reason), JSON.stringify(docsBad));
+  const logsRead = await readCase('/api/nf-file?path=' + enc(P.logs) + '&ticket=ANY');
+  ok('R5-b 未列举头（logs/）任意票 → 403 credential-path',
+    logsRead.status === 403 && /credential-path/.test(logsRead.reason), JSON.stringify(logsRead));
   const htmlRead = await readCase('/api/nf-file?path=' + enc(F.a) + '&ticket=ANY');
   ok('R5-b .html 任意票 → 400 file-type', htmlRead.status === 400 && /file-type/.test(htmlRead.reason), JSON.stringify(htmlRead));
   const mdRead = await readCase('/api/nf-file?path=' + enc(F.md) + '&ticket=ANY');

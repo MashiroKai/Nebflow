@@ -199,7 +199,7 @@ Two properties the check must keep: (a) the CJK class is written with `\x{...}` 
 给**作者**的图文报告（人读件；含 `~/.nebflow/docs/<域>/` 交付件与节点 result 一屏摘要）：
 - **图片一律以图语法内嵌**：`![](<绝对路径>)`——🔴 **禁止**只给路径文本清单充当报告正文（作者 2026-09-14 10:13 裁定：只有路径没图 = 报告不合格）；路径/文件清单只能作**附录**或清单件（证据批次的 `MANIFEST.md`/`index.json` 即清单载体）。
 - **大图集（> 20 张）**：正文只内嵌**决策相关子集** = 对照拼图（如 `cmp-*` 三态并排）+ 逐项裁定配对图（如 `adj-R<n>-opt{A,B}`）；全量清单进附录/清单件，禁逐张平铺正文。
-- **内嵌路径须落在可服务面**（nf-file 白名单）：`<ws>/.nebflow/evidence*/**` 或 `~/.nebflow/{projects,uploads,plots,workspace-items,voice-models}/**`——`~/.nebflow/docs/**` 会被拒（reason `credential-path`）；工作区路径含空格为常态，作者侧渲染依赖 nf-file 编码面（在册缺陷 #487），未验证生效的报告须标注「作者侧渲染待验」。
+- **内嵌路径须落在可服务面**（nf-file 白名单）：`<ws>/.nebflow/evidence*/**` 或 `~/.nebflow/{projects,uploads,plots,workspace-items,voice-models,docs}/**`——`~/.nebflow/docs/**` 自 2026-09-16（img-ticket 批 i，#687-A）起**可服务**（此前会被拒，reason `credential-path`），白名单外的头（如 `logs/**`、`auth.json`）仍一律 `credential-path`；工作区路径含空格为常态，作者侧渲染依赖 nf-file 编码面（在册缺陷 #487），未验证生效的报告须标注「作者侧渲染待验」。
 - 执行面副本 = `~/.nebflow/plugins/nebflow-docs-prompt/skills/nebflow-docs/SKILL.md`「图文报告·图片内嵌」节（两处同步改，禁两套口径）。
 
 ## 用户裁定（User Rulings）
