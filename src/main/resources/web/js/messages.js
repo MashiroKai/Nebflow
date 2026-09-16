@@ -1720,6 +1720,26 @@ function oursBySenderId(m, conv) {
     if (mine && String(sid) === mine) return true;
     return false;
   }
+  // 设备分支（devnotif 批 2026-09-16）：设备窗**无好友档案**（`conv.friend` 恒缺席，见
+  // `deviceConvs` 的窗构造）⇒ 修前落到下面的 direct 兜底（`fid` 缺席 ⇒ `null`）⇒
+  // 「对方所发」判据对设备窗**三重恒假**（取证位 ②因①）。设备面的方向证据 =
+  // `senderDeviceId`（契约 §8.3：**仅**设备会话行/帧携带它；legacy `DropboxMessage` 永
+  // 不带）⇒ 浏览器侧要判设备方向，先要 `frameMessage` 把它透出来（同批加性补键）。
+  // 🔴 与 `adaptDeviceMessage` 的方向重算**同一条纪律**（契约 §8.3 逐字：「方向（out/in）
+  // 由 `sender_device_id == 本机 id` 重算，不落库」）——同一字段、同一比对基准
+  // （`selfDeviceId()` 单点），只是消费点不同（那里画面向，这里画未读）。
+  // 🔴 证据缺席（键缺席 / 空串）⇒ 返回 `null`（**不判**）：调用方按 `=== false` 读 ⇒
+  // 不计（禁把「无证据」当「对方所发」白涨角标）。本机身份缺席（`selfDeviceId()` 为空
+  // 串）⇒ 比对落 false = 「非本机所发」——与 `adaptDeviceMessage` 同一降级方向
+  // （无本机身份时**不**把一切判成本机所发，那会把对端消息全画到右侧）。
+  // ⚠ 本支**在**函数首行的 `senderId` 证据闸之**后**（闸保留原样不动）：`senderId`
+  // 缺席的帧（本机自播形态，见 `resolveOut` 注释）在闸处即返回 `null` ⇒ 走不到本支
+  // ⇒ 未读面按 `=== false` 读 = **不计**（保守向，与「self 不计未读」同向）。
+  if (conv && conv.kind === 'device') {
+    const did = m && m.senderDeviceId;
+    if (did === undefined || did === null || did === '') return null;
+    return String(did) === selfDeviceId();
+  }
   const fid = conv && conv.friend ? conv.friend.userId : undefined;
   if (fid === undefined || fid === null || fid === '') return null;
   return String(sid) !== String(fid); // 确证不是对方所发 ⇒ 本机所发
@@ -2470,6 +2490,14 @@ function frameMessage(p) {
     // （丢字段，不丢消息）。与 r2 的 `attachments` 同款加性扩面：键缺席 =
     // `undefined`（老服务端 / 无该字段）⇒ 前端按「缺键 ≠ agent」读。
     origin: p.origin,
+    // 设备维度（devnotif 批 2026-09-16）：设备消息的**发送设备**判别键。与上方
+    // `attachments` / `origin` **同款加性扩面**（键缺席 = `undefined` ⇒ 前端按
+    // 「无设备证据」读，逐字节现状）：服务端只在设备会话消息上带它
+    // （neblink-server `message_new_payload` 的**条件键**：`if let Some(sender_device_id)`
+    // ⇒ 直聊/群聊帧与老服务端**键缺席**）。
+    // 🔴 不补这一键，浏览器侧**根本**拿不到「这条是哪台设备发的」（取证位 ②因③：本
+    // 白名单是**唯一**帧→本地对象的映射点，丢字段 = 未读判据无据可判、全程静默）。
+    senderDeviceId: p.senderDeviceId,
   };
 }
 
@@ -2590,7 +2618,13 @@ async function onFriendEvent(msg, retried = false) {
       // 群分支（C-2：别人的消息计未读、自己的不计）= 单一判据点 oursBySenderId
       // 的群分支复用（有 senderId 且非本机 ⇒ false ⇒ 计；'me'/viewer 身份 ⇒ 不计；
       // 证据缺席 ⇒ 不计，保守向）。单聊判据逐字不变。
-      const fromPeer = conv.kind === 'group'
+      // 🔴 devnotif 批（2026-09-16）加**设备支**：设备窗无 `friend` 档案、且设备消息的
+      // `senderId` = **本账号** user id（服务端 payload builder 逐字：`sender` =
+      // `user_public(m.sender_id)`）⇒ 单聊支对设备窗恒假（取证位 ②因①②：不是「没有
+      // 数据」，是「判据形状是好友形状」）。判据**不在此另写一套**——收口到同一方向单点
+      // `oursBySenderId` 的设备分支（按会话类型分派，见其函数体）⇒ 三支同源。
+      // 好友/群两支逐字不变（群支的表达式与修前逐字相同，仅参与条件并入设备支）。
+      const fromPeer = (conv.kind === 'group' || conv.kind === 'device')
         ? oursBySenderId(m, conv) === false
         : !!(m.senderId && conv.friend && m.senderId === conv.friend.userId);
       if (fromPeer && markUnreadCounted(m.id)) conv.unreadCount = (conv.unreadCount || 0) + 1;
