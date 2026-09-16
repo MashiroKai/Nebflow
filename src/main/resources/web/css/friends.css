@@ -1307,6 +1307,31 @@ button.fm-req-decline:focus-visible {
 .fm-gs-picker { display: flex; flex-direction: column; gap: 8px; margin-top: 6px; }
 .fm-gs-picker .fm-msg-btn { align-self: flex-start; }
 
+/* ── 群设置抽屉的按键圆角（uifix 批 · 作者令 2026-09-17）────────────────────
+   作者原话：「群组里的按钮没有采用我们一直以来的设计风格，圆角 玻璃。」
+   【取证】改前实测：抽屉内 5 类键（`.fm-gs-save` / `.fm-gs-action`(+`-addmember`
+   /`-danger`) / `.fm-gs-role` / `.fm-gs-kick`）计算样式 **`border-radius: 0px`**，
+   而同一页面其余**全部**可见按钮都带圆角（10px / 6px / 5px / 4px / 50% 四档，
+   分组读数见 `.nebflow/evidence/20260917_uifix/raw/style_BEFORE.json` 的
+   `sweepWithDrawer.byRadius`，`r=0px` 组**只含本抽屉这五个类**）⇒ 全站唯一
+   零圆角孤岛 = 作者看到的那一处。玻璃材质本身**已在**（同批实测
+   `backdrop-filter: blur(10px) saturate(1.2)` + 双层 inset 边 + 双层投影，
+   本文件零改动），缺的只有圆角。
+   【修法】只补 `border-radius`，值取**既有常例 10px**（同批实测的各族基准）：
+     · `sapphire.css:326` 发送键族 `:is(#dropbox-send-btn, .cfg-btn.fm-send-btn,
+       button.fm-verify-send, button.fm-send-chip, button.fm-create-submit)` 的
+       `border-radius: 10px`（其头注逐字：「与 09-14 裁定『圆角 10px 常例』同档」）；
+     · `sapphire.css:557` 登录键族 `border-radius: 10px`；
+     · `friends.css:411` `button.fm-verify-cancel` 的 `border-radius: 10px`
+       （其头注逐字：「圆角随发送组取 10px」）。
+   🔴 零新 token、零新字面量色值、零改 `sapphire.css` 共享 token 值；🔴 只补
+   圆角，不动材质/几何/字重/状态（现状四态由 sapphire 按键族块承担，保持单源）。
+   🔴 选择器**限定在本抽屉内**（`.fm-group-settings` 后代）⇒ 不波及抽屉外的
+   `.fm-msg-btn`（`contacts.js:744`「发消息」键同用该类名，那是另一个面）。 */
+.fm-group-settings button {
+  border-radius: 10px;
+}
+
 /* ══ 建群对话框（fm-modal 骨架复用；好友多选名册）════════════════════════════
    2026-09-16 视觉重做（作者 07:46 令：「至少群聊面板很丑」）。本段 = 该面板
    **唯一 CSS 落点**；骨架四段 = ① 标题区（`.fm-modal-header`，既有骨架）→
