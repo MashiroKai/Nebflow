@@ -21,6 +21,24 @@ import { showToast } from './modal.js';
 // ⑤ 中文输入收归（作者裁定 2026-09-12）：组字判定唯一来源 = imeGuard.js。
 import { bindImeGuard, isImeComposing } from './imeGuard.js';
 
+// ---------- 真人消息 turn 标志（2026-09-16 msunread-r2；作者裁定 ①）----------
+// 「本机派发了一条真人消息 = 本 turn 的起点」的 per-session turn 级标志。
+// 置位点 = 本文件四个**真人派发**点，与既有 `state.turnExpecting[sid] = true`
+// **同点同条件**：① `send()` skill 支 ② `send()` ask 支 ③ `send()` 普通支
+// ④ `drainMessageQueue`（排队消息真派发台）。
+// 为什么不复用 `turnExpecting`：后端 `sessionBusy{busy:true}`（main.js）同样置它
+// ⇒ 纯程序 turn（REST `rest-turn` / CLI）与真人 turn **不可分**（真渲染读数：两侧
+// 帧序同为 sessionBusy→done→sessionBusy，均被置位）。本标志只由本文件（真人派发）
+// 置位，是客户端**唯一** turn 级的真人痕迹（后备候选「消息缓存」已在真渲染里证伪：
+// 真人腿 `done` 时刻该会话缓存为 `["tool","tool","tool"]`，真人条目不在其中）。
+// 消费方 = main.js 四个终态（done / error / timeout / maxTokens）：
+// `takeRealUserTurn` **取用即清** ⇒ 同一枚真人消息只置一次未读。
+const realUserTurnSessions = new Set();
+/** 置位「本会话有一条真人消息在飞」（模块私有；调用点 = 四个真人派发点）。 */
+function markRealUserTurn(sid) { if (sid) realUserTurnSessions.add(sid); }
+/** 取用并清理该会话的真人消息 turn 标志（main.js 终态调用；缺省会话 ⇒ false）。 */
+export function takeRealUserTurn(sid) { return sid ? realUserTurnSessions.delete(sid) : false; }
+
 // ---------- Large text auto-attachment (paste detection) ----------
 const LARGE_TEXT_THRESHOLD = 1000;
 // Conversion cap (user ruling 2026-08-27, 方案①): pastes larger than this are
@@ -510,7 +528,7 @@ export function send() {
       return;
     }
     v.isSending = true;
-    if (v.sessionId) state.turnExpecting[v.sessionId] = true;
+    if (v.sessionId) { state.turnExpecting[v.sessionId] = true; markRealUserTurn(v.sessionId); }
     sendWs({ type: 'skill', skillName, input: text, sessionId: v.sessionId });
     renderSkillBubble(skillName, text);
     saveMsg({type:'user', text, attachments: (v.pendingAttachments||[]).map(a=>({type:a.type,name:a.name,preview:a.preview}))});
@@ -528,7 +546,7 @@ export function send() {
       return;
     }
     v.isSending = true;
-    if (v.sessionId) state.turnExpecting[v.sessionId] = true;
+    if (v.sessionId) { state.turnExpecting[v.sessionId] = true; markRealUserTurn(v.sessionId); }
     sendWs({ type: 'ask', question: text, sessionId: v.sessionId });
     state.sessionAskBuffers[v.sessionId] = { question: text, answer: '' };
     renderAskBubble(text);
@@ -607,7 +625,7 @@ export function send() {
   }
   v.isSending = true;
   // Mark this session as expecting a turn (prevents stray thinking bubbles after done)
-  if (v.sessionId) state.turnExpecting[v.sessionId] = true;
+  if (v.sessionId) { state.turnExpecting[v.sessionId] = true; markRealUserTurn(v.sessionId); }
   // Intercept /ask <question> before normal slash handling
   if (text.startsWith('/ask ')) {
     const question = text.slice(5).trim();
@@ -1012,7 +1030,7 @@ export function drainMessageQueue(sessionId) {
       : { type: a.type, name: a.name, preview: a.preview }) }, sessionId);
 
   // Send as normal UserInput
-  if (sessionId) state.turnExpecting[sessionId] = true;
+  if (sessionId) { state.turnExpecting[sessionId] = true; markRealUserTurn(sessionId); }
   if (view) {
     view.isSending = true;
     view.historyIndex = -1;
