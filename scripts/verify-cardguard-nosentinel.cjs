@@ -293,6 +293,22 @@ async function runCases(CASES) {
     out.cases.P1_backend_history = { ran: false, error: String(e && e.message || e) };
   }
 
+  // ── P2: same replay face with hljs OFF ⇒ the literal plain-text fallback that
+  //        persistence.js shares with chat.js (`<pre class="tool-body-pre">`) ──
+  try {
+    const { restoreFromBackendHistory } = await import('/js/persistence.js');
+    reset();
+    await withHljsOff(async () => {
+      restoreFromBackendHistory([{ type: 'tool', label: 'Card', summary: '1 card', content: CASES.L1_GUARD_TRUNC, isError: false }],
+        { scrollToBottom: false, busyTail: false });
+      await settle();
+    });
+    out.cases.P2_backend_history_no_hljs = await snapshot();
+    out.cases.P2_backend_history_no_hljs.ran = true;
+  } catch (e) {
+    out.cases.P2_backend_history_no_hljs = { ran: false, error: String(e && e.message || e) };
+  }
+
   out.hadHljs = HAD_HLJS;
   reset();
   return out;
@@ -352,9 +368,11 @@ async function runCases(CASES) {
       { diffLines: C.L5_diff.diffLines, htmlDigest: C.L5_diff.htmlDigest });
     check('A9', 'P1 [scope probe] history-replay face with the SAME guard shape: no raw payload in DOM',
       !!(C.P1_backend_history && C.P1_backend_history.ran) && clean(C.P1_backend_history),
-      C.P1_backend_history ? { ran: C.P1_backend_history.ran, sentinelHits: C.P1_backend_history.sentinelHits, prePlain: C.P1_backend_history.prePlain, persistedHits: C.P1_backend_history.persistedHits, head: C.P1_backend_history.textSampleHead } : C.P1_backend_history);
+      C.P1_backend_history ? { ran: C.P1_backend_history.ran, sentinelHits: C.P1_backend_history.sentinelHits, prePlain: C.P1_backend_history.prePlain, preHljs: C.P1_backend_history.preHljs, persistedHits: C.P1_backend_history.persistedHits, head: C.P1_backend_history.textSampleHead } : C.P1_backend_history);
+    check('A9b', 'P2 [scope probe] same replay face, hljs OFF ⇒ literal plain <pre class="tool-body-pre"> fallback',
+      !!(C.P2_backend_history_no_hljs && C.P2_backend_history_no_hljs.ran) && clean(C.P2_backend_history_no_hljs),
+      C.P2_backend_history_no_hljs ? { ran: C.P2_backend_history_no_hljs.ran, sentinelHits: C.P2_backend_history_no_hljs.sentinelHits, prePlain: C.P2_backend_history_no_hljs.prePlain, persistedHits: C.P2_backend_history_no_hljs.persistedHits, head: C.P2_backend_history_no_hljs.textSampleHead } : C.P2_backend_history_no_hljs);
     check('A10', 'no page errors', pageErrors.length === 0, pageErrors);
-
     // ── post-flight: port + 8080 double assertion ──
     const mine = execSync(`lsof -nP -iTCP:${PORT} -sTCP:LISTEN -t 2>/dev/null || true`, { encoding: 'utf8' }).trim();
     check('A11', 'harness server is the only listener on its isolated port', !!mine && mine.split(/\s+/).includes(String(serverPid)),
