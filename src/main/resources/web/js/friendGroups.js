@@ -499,27 +499,14 @@ export function buildGroupSettings(conv, hooks) {
   /** 踢人 UX 闸（逐目标）：owner 全权（对 owner 行不挂 = 不可踢自己）；admin 仅普通成员。 */
   const canKick = (mem) => (isOwner ? mem.role !== 'owner' : (isAdmin ? mem.role === 'member' : false));
 
-  // ── 群信息头（组合头像 + 群名 + 成员数；方案 §3.1 P1 + H2 同族面）
-  // 头像 = 成员头像九宫格（**唯一实现** groupAvatarGrid）；名册未到 ⇒ null ⇒ 回退
-  // 现状那枚标题首字母头像（降级态）。成员数据面 = 下方同一次 getGroupMembers 拉取。
-  const headSec = el('div', 'fm-gs-head');
-  const headAvatar = el('div', 'fm-gs-head-avatar');
-  headSec.appendChild(headAvatar);
-  const headMeta = el('div', 'fm-gs-head-meta');
-  headMeta.appendChild(el('div', 'fm-gs-head-name', groupTitleOf(conv)));
-  const headCount = el('div', 'fm-gs-head-sub', conv.memberCount > 0
-    ? t('messages.memberCount', { n: conv.memberCount }) : '');
-  headMeta.appendChild(headCount);
-  headSec.appendChild(headMeta);
-  root.appendChild(headSec);
-
-  /** 群信息头头像重打：九宫格可用 ⇒ 组合头像；不可用 ⇒ 标题首字母（现状形态）。 */
-  function paintHeadAvatar(cells) {
-    headAvatar.innerHTML = '';
-    const grid = groupAvatarGrid(cells, 40, conv.memberCount);
-    headAvatar.appendChild(grid || avatarEl({ name: groupTitleOf(conv) }, 40));
-  }
-  paintHeadAvatar([]);
+  // ── 抽屉首块 = **群名称设置**（作者 2026-09-17 令：「展开后不需要重复显示群头像、
+  // 群名和成员数量」）。原「群信息头」（`.fm-gs-head`：组合头像 + 群名 + 成员数）
+  // **整块摘除** —— 三者均已在会话窗头可见（同窗上下相邻，重复显示已判冗余）。
+  // 🔴 信息不丢：成员数仍有**独立面** = 下方成员区标题的 `.fm-gs-count`（`members.length`）；
+  // 群名仍有输入框现值 + 窗头 `.fm-modal-name`。
+  // 🔴 同批连坐（否则报错/静默脏）：`paintHeadAvatar` 定义与其成员腿调用一并摘除
+  // （见本函数末段成员拉取处）；`messages.js` 的窗头重打链只保留窗头一处落槽。
+  // 🔴 死 CSS 同批删：`friends.css` 的 `.fm-gs-head*` 规则组（含 `-avatar/-meta/-name/-sub`）。
 
   // ── 群名（owner / admin 可改；行内编辑，imeGuard 接入）
   const titleSec = el('div', 'fm-gs-section');
@@ -684,14 +671,14 @@ export function buildGroupSettings(conv, hooks) {
       memberList.appendChild(el('div', 'fm-empty', t('contacts.listError')));
       return;
     }
+    // `conv.memberCount` 的同步**必须保留**（`headCount` 面已随首块摘除，但该字段被
+    // 窗头成员数副行 `messages.js` `.fm-modal-id`、会话列表群行、以及 `+N` 口径
+    // （`groupAvatarGrid` 的 total）消费 ⇒ 仍是唯一权威读数回写点）。
     if (conv.memberCount !== members.length) {
       conv.memberCount = members.length;
-      headCount.textContent = t('messages.memberCount', { n: members.length });
     }
+    // 成员数**独立显示面**（首块摘除后信息不丢的那一面）：成员区标题 + `.fm-gs-count`。
     memberHead.appendChild(el('span', 'fm-gs-count', String(members.length)));
-    // 群信息头组合头像：**同一份名册**（身份键 userId 与成员面同空间；顺序纯透传，
-    // 禁把索引 0 当群主）——成员头像缺失 ⇒ 逐格首字母兜底。
-    paintHeadAvatar(members.map((mem) => ({ userId: mem.userId, name: mem.name, avatarUrl: mem.avatarUrl })));
     for (const mem of members) {
       const row = el('div', 'fm-member-row');
       row.appendChild(avatarEl(mem, 28));

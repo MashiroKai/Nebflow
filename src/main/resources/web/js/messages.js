@@ -574,6 +574,11 @@ function convRow(conv) {
   // （唯一实现 = friendGroups.groupAvatarGrid），名册/字段不可得时回退标题首字母
   // 那一枚（现状形态 = 降级态，非被删态）。数据面 = conv.memberAvatars（归一读点
   // 只在 friendsApi.normalizeGroupRow；渲染面禁读 wire 键）。
+  // ①兜底（作者 2026-09-17；与服务端部署轨**解耦**）：列表侧优先取**已拉到的成员
+  // 名册**（`groupMemberAvatars`，开窗时装载）——与窗头 `paintGroupAvatarInto` 的
+  // **同一两级优先序**逐字对齐（名册 → 会话行字段 → 首字母）。① 的服务端部署到位后
+  // 第一级即命中 `memberAvatars`，本行**无害且不再被走到**；部署前它把「列表 = 首字母
+  // vs 对话框 = 组合头像」的错位收敛为同源：零新增请求、零 N+1（复用既有模块级 Map）。
   // ④①（作者 2026-09-15）：**设备行头像**改为与联系人面板设备段**同款**的
   // 平台图标（`deviceAvatarEl`，字形源 = `platformDisplay` 单点）——原形态是
   // `avatarEl` 的**首字母占位**（与好友/群同款），与联系人面板里那台设备的
@@ -582,7 +587,8 @@ function convRow(conv) {
   if (isDevice) {
     row.appendChild(deviceAvatarEl(conv.device, 40));
   } else if (isGroup) {
-    row.appendChild(groupAvatarGrid(conv.memberAvatars, 40, conv.memberCount)
+    const roster = groupMemberAvatars.get(String(conv.conversationId));
+    row.appendChild(groupAvatarGrid((roster && roster.length) ? roster : conv.memberAvatars, 40, conv.memberCount)
       || avatarEl(avatarPerson, 40));
   } else {
     row.appendChild(avatarEl(avatarPerson, 40));
@@ -625,6 +631,26 @@ function box_rows() {
   return document.querySelectorAll('#fm-conversations .fm-conv-row');
 }
 
+/** 会话列表**单行**就地重打（r2：名册到达时与窗头重打**并列**的那一条腿）。
+ *  🔴 为什么必须单独一条腿：`convRow()` 的名册优先序**只在渲染时求值**，而列表渲染
+ *  由刷新事件驱动 ⇒ 名册晚于首帧到达时，「窗头已是组合头像 / 列表仍是首字母」会一直
+ *  错位到下一次刷新事件（两腿不同源）。本函数把名册到达**接进列表腿的因果链**。
+ *  🔴 只换该行 DOM（不整表重建）：其他行的滚动位置、键盘焦点、`aria-selected` 面零扰动；
+ *  焦点原在该行 ⇒ 迁移到新行（键盘可达性不回归，与 `closeChat` 的 A18 回找同语义）。
+ *  行不在场（面板未开 / 行已被换掉）或会话不在册 ⇒ 无操作（幂等，零新增请求）。 */
+function rerenderConvRow(conversationId) {
+  const cid = String(conversationId);
+  const box = document.getElementById('fm-conversations');
+  const old = box && box.querySelector(`.fm-conv-row[data-conversation-id="${CSS.escape(cid)}"]`);
+  if (!old) return;
+  const conv = conversations.find(c => String(c.conversationId) === cid);
+  if (!conv) return;
+  const focused = document.activeElement === old;
+  const next = convRow(conv);
+  old.replaceWith(next);
+  if (focused) next.focus();
+}
+
 // ── Chat modal (§2.3/§3.3) ───────────────────────────────
 function closeChat() {
   // Every close path (ESC, backdrop, ×, post-send) funnels through here —
@@ -658,11 +684,13 @@ function currentConv() {
   return conversations.find(c => c.conversationId === openConvId) || null;
 }
 
-/** 群组合头像落槽（**唯一**落槽实现：窗头 `.fm-modal-avatar` + 抽屉信息头
- *  `.fm-gs-head-avatar` 共用）。
+/** 群组合头像落槽（**唯一**落槽实现；落点 = **窗头** `.fm-modal-avatar` 一处
+ *  —— 抽屉信息头那处已按作者 2026-09-17 令摘除）。
  *  数据源优先级（**两级，禁第三级**）：
  *   ① `cells`（本窗已拉到的成员名册，来源 = `getGroupMembers`，含显示名）；
  *   ② `conv.memberAvatars`（会话列表行字段，归一出口产物；渲染面禁读 wire 键）。
+ *  🔴 同一两级序也是**会话列表群行** `convRow` 群分支的优先序（`groupMemberAvatars`
+ *  缓存 → `conv.memberAvatars` → 首字母）⇒ 两处**同源同序**（本批 ①的客户端兜底）。
  *  两级都空（名册未到 / 字段缺席 / 畸形 / 群 0 人）⇒ 回退标题首字母那一枚
  *  （现状形态 = 降级态）。逐格无 `avatarUrl` 由 groupAvatarGrid 内逐格首字母兜底。 */
 function paintGroupAvatarInto(host, conv, cells) {
@@ -675,13 +703,14 @@ function paintGroupAvatarInto(host, conv, cells) {
 
 /** 开着的群窗：组合头像就地重打（`fm-groups-changed` 到达 ⇒ 成员集可能已变）。
  *  触发面 = 方案 §3.2.2 的**唯一现成广播面**；数据零新增请求（复用群列表行字段
- *  + 抽屉自己的成员面拉取）。会话行可能已被 refreshConversations 换成新对象 ⇒
- *  先把最新读数同步回本窗捕获的 conv（窗头与抽屉共用同一份，禁两套数据）。 */
+ *  + 窗头自己的名册腿拉取）。会话行可能已被 refreshConversations 换成新对象 ⇒
+ *  先把最新读数同步回本窗捕获的 conv（窗头与列表行共用同一份，禁两套数据）。
+ *  🔴 单一落槽：抽屉信息头（`.fm-gs-head-avatar`）已按作者 2026-09-17 令**摘除**
+ *  （展开面板不再重复「头像 + 群名 + 成员数」）⇒ 本函数只重打窗头那**一处**。 */
 function refreshOpenGroupHeaderAvatar() {
   if (!modalEls) return;
   const slot = modalEls.overlay.querySelector('.fm-modal-avatar');
-  const drawerAvatar = modalEls.overlay.querySelector('.fm-gs-head-avatar');
-  if (!slot && !drawerAvatar) return;
+  if (!slot) return;
   const conv = currentConv();
   if (!conv || conv.kind !== 'group') return;
   const fresh = conversations.find(c => c.conversationId === conv.conversationId);
@@ -691,7 +720,6 @@ function refreshOpenGroupHeaderAvatar() {
   }
   const cells = groupMemberAvatars.get(String(conv.conversationId));
   paintGroupAvatarInto(slot, conv, cells);
-  paintGroupAvatarInto(drawerAvatar, conv, cells);
 }
 
 function isStillFriend(conv) {
@@ -908,6 +936,11 @@ async function hydrateGroupSenderNames(conv) {
     groupMemberAvatars.set(String(conv.conversationId), cells);
     // 名册到达 ⇒ 窗头组合头像就地重打（同一次拉取的产物，零新增请求）。
     refreshOpenGroupHeaderAvatar();
+    // r2（判词 V1 的根因）：**列表腿同一时刻重打**。窗头与列表行**共用同一两级优先序**
+    // （名册 → 会话行字段 → 首字母）⇒ 两条腿必须挂在**同一因果链**上；只重打窗头会让
+    // 列表停在首字母直到下一次刷新事件（两侧逐格不等）。同一次拉取的产物 ⇒ 零新增请求、
+    // 零新 CSS，不动数据面/接口。
+    rerenderConvRow(conv.conversationId);
     // 就地回填：名册晚于首帧到达时，补齐已渲染气泡的发送者名（幂等）。
     if (modalEls && openConvId === conv.conversationId) {
       for (const s of modalEls.flow.querySelectorAll('.fm-msg-sender[data-sender-id]')) {
@@ -932,16 +965,25 @@ function renderChatModal(conv) {
   // 窗头转发按钮已移除（作者 2026-09-12 裁定，方案 §3.1 S5）：转发入口只保留
   // 按消息的两条 —— 气泡内按钮 + 气泡右键，共用 forwardBubble（无第二实现）。
   const header = el('div', 'fm-modal-header');
-  // 群窗头 = 组合头像（40px 档）+ 群名 + 成员数（方案 §3.1 P1；**窗头此前无头像**，
-  // 现取 avatarEls=0 ⇒ 本批补齐）。头像元素由下方 groupAvatarSlot 持有，随名册/
-  // 群列表变更就地重打（禁整窗重建）。
-  const groupAvatarSlot = conv.kind === 'group' ? el('span', 'fm-modal-avatar') : null;
-  if (groupAvatarSlot) {
-    paintGroupAvatarInto(groupAvatarSlot, conv);
-    header.appendChild(groupAvatarSlot);
+  // 窗头头像槽（两档，同槽类 `.fm-modal-avatar`、同 40px 档 ⇒ **零新 CSS**）：
+  //   · 群窗 = 组合头像（方案 §3.1 P1），随名册/群列表变更就地重打（禁整窗重建）；
+  //   · **好友（单聊）窗 = 好友档案头像**（作者 2026-09-17 令「让好友的对话框能显示
+  //     好友的头像」）—— 复用既有 `avatarEl` ＋ 既有 `conv.friend`（**与列表行
+  //     `convRow` 的单聊分支**同一调用、同一数据对象，禁第二份取数/渲染链）；
+  //   · 设备窗**不挂**（其窗头形态由作者 2026-09-15 档位固定，本批不扩张）。
+  // 几何申报：40px 头像行必然把窗头抬到 64px 档（群窗先例 `729c56f3d`，已判**非回归**；
+  // 单聊窗同款增量，本批逐条读数见报告 §P2）。
+  const isGroupHead = conv.kind === 'group';
+  const headAvatarSlot = (isGroupHead || (conv.kind !== 'device' && !!conv.friend))
+    ? el('span', 'fm-modal-avatar') : null;
+  if (headAvatarSlot) {
+    if (isGroupHead) paintGroupAvatarInto(headAvatarSlot, conv);
+    else headAvatarSlot.appendChild(avatarEl(conv.friend, 40));
+    header.appendChild(headAvatarSlot);
   }
   const title = el('div', 'fm-modal-title');
-  title.appendChild(el('span', 'fm-modal-name', convTitleLabel(conv)));
+  const nameEl = el('span', 'fm-modal-name', convTitleLabel(conv));
+  title.appendChild(nameEl);
   // 描述入口小键的**面板挂载点**（devrow）：面板仍在窗头下方占一行，键本身进窗头行。
   let deviceDescRow = null;
   // 群窗副行 = 成员数（有读数才挂）；单聊副行不变（neblinkId）。
@@ -1008,14 +1050,21 @@ function renderChatModal(conv) {
       mountDrawer();
     });
     header.appendChild(settingsBtn);
-    // 窗头群名处入口（H）：title 区可点/可键盘触发 = 打开（收起）群信息抽屉。
+    // 窗头群名处入口（H）：**点击/键盘热区 = 群名本身**（作者 2026-09-17 令：
+    // 「让 header 可点击展开的范围只是群名和按钮」）—— 类/role/tabindex/tooltip/
+    // handler 一律挂在 `.fm-modal-name` 上；成员数副行（上方 `if (conv.kind === 'group')`
+    // 支）与群名右侧的空白**移出**热区（原形态 = `title` 为 `.fm-modal-header` 的
+    // 唯一 `flex:1` 项 ⇒ 整条中间带可点，`friends.css:632`）。
+    // 🔴 可达性零回归：`role=button` / `tabindex=0` / Enter|Space 键盘契约**随迁**
+    // （逐条断言见报告 §P3）；Tab 序不变（`.fm-modal-name` 仍在 `.fm-gs-open` 之前）。
+    // 🔴 与 `.fm-gs-open`（同族第二入口）仍共用同一个 `mountDrawer`，禁第二套抽屉实现。
     const toggleFromTitle = () => { if (groupSettingsMounted) { modalEls?.overlay.querySelector('.fm-group-settings')?.remove(); groupSettingsMounted = false; } else { mountDrawer(); } };
-    title.classList.add('fm-modal-title-btn');
-    title.setAttribute('role', 'button');
-    title.setAttribute('tabindex', '0');
-    title.title = t('messages.groupSettings');
-    title.addEventListener('click', toggleFromTitle);
-    title.addEventListener('keydown', (e) => {
+    nameEl.classList.add('fm-modal-title-btn');
+    nameEl.setAttribute('role', 'button');
+    nameEl.setAttribute('tabindex', '0');
+    nameEl.title = t('messages.groupSettings');
+    nameEl.addEventListener('click', toggleFromTitle);
+    nameEl.addEventListener('keydown', (e) => {
       if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); toggleFromTitle(); }
     });
   }
