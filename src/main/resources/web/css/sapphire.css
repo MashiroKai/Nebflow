@@ -634,7 +634,12 @@ button.glass-control.fm-login-btn:disabled {
    基准（③-E 裁定）= 主对话框气泡形态：尾角 4px、元信息 pill、时间 10px 等宽
    tabular-nums、出向气泡无描边。纯数值按作者 2026-09-12 裁定第 5 条（②-4
    「保持 13px 档」）取 13px / padding 8-12 / r14 —— 未照搬主对话框的
-   14.5px / 10-14 / r16，逐条偏离理由见本批结果件的偏离登记。 */
+   14.5px / 10-14 / r16，逐条偏离理由见本批结果件的偏离登记。
+   消息列宽 token `--msg-bubble-max-w`（下）的消费方 = 好友/设备两面的气泡 wrapper
+   （`.fm-msg` / `.dropbox-msg`）**与**群气泡发送者名 `.fm-msg-sender`（cired 批
+   2026-09-17：该行原先就地写死 78%，现收归本 token ⇒ 面内零字面量、改一处两侧同步；
+   未新增第二个 78% token —— 再起一个同值 token 即把「值的家」重新裂成两处，正是
+   ③A3 要挡的漂移形态）。值保持 78% —— 收归只改「值的家」，不改计算值。 */
 :root {
   --msg-bubble-max-w: 78%;
 }
