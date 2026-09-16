@@ -362,10 +362,44 @@ final class DispatchNotify(
   private def completionAttempt(node: NodeDef): IO[Unit] =
     enqueueNotify(NotifyReason.Completion, node, notifyTaskText(node, NotifyReason.Completion))
 
+  /** **user-cancel 抑制态判据单点**（cancelsem 批 2 · failed 文本联动，2026-09-17
+    * 作者裁定 #696②）——返回「抑制本节点自动重试」的那个上游（用户主动取消者）；
+    * 非抑制态返回 `None`。
+    *
+    * 判据 = [[NodeEngine.retryOrNotify]] 第四态「抑制」的**同一函数、同一常量**：
+    * `node.retry` 存在 ∧ `node.gen < policy.max`（尚有自动回跳预算）∧ 上游
+    * `status == Cancelled` ∧ [[CancelSource.isUserCancelled]]（`source=user` 单点，
+    * 由上游自身 `result` 前缀反解）。
+    *
+    * **一处定义、两处调用**（禁二次派生第二套判定）：引擎侧
+    * [[NodeEngine.retryOrNotify]] 用它决定「本次自动重试是否整腿不触发」，文本侧
+    * [[failedAttempt]] 用它决定 failed 文本走常态还是 [[suppressedFailedNotifyTaskText]]
+    * 变体。`gen >= max`（RetryCap 支）**不算抑制**——那时自动重试本就没有预算，其
+    * failed 通知与升级走既有 RetryCap 语义（文本逐字不变）。
+    *
+    * 由节点自身现读（而非由调用方透传布尔）：本方法同时覆盖**补投扫描**入口
+    * （[[redeliver]] → [[notifyTerminal]]，那时引擎侧的 retry 腿早已跑完、无处透传），
+    * 故两条入口产出的文本对同一节点恒一致。 */
+  def userCancelSuppression(node: NodeDef): IO[Option[NodeDef]] =
+    node.retry match
+      case Some(policy) if node.gen < policy.max =>
+        store.getNode(policy.upstream).map {
+          case Some(up) if up.status == NodeLifecycle.Cancelled && CancelSource.isUserCancelled(up.result) =>
+            Some(up)
+          case _ => None
+        }
+      case _ => IO.pure(None)
+
   /** failed 投递尝试（2026-09-07 批，设计 §3 护栏链）：窗口裁决在前（Suppress/
     * CooldownOn 不耗预算不标记——冷却结束 redeliver 补投不丢失）→ 预算 →
     * tell-then-mark；预算耗尽 → failed 版升级（节点保持 failed + markSent 止重扫 +
-    * single-flight notice）。 */
+    * single-flight notice）。
+    *
+    * cancelsem 批 2 增量：Proceed 支在成型文本前先现读**抑制态**
+    * （[[userCancelSuppression]]，与 [[NodeEngine.retryOrNotify]] 同源同函数）——
+    * 抑制态走 [[suppressedFailedNotifyTaskText]]（改劝「等承接 / 勿重激活」），
+    * **非抑制态逐字不变**（四形态：无 retry / gen ≥ max / 上游引擎取消 / 上游
+    * source 不可判定）。护栏链（窗口/预算/去重/补投/tell-then-mark）逐字未改。 */
   private def failedAttempt(node: NodeDef): IO[Unit] =
     failedGuard.modify { g =>
       val now = System.currentTimeMillis()
@@ -381,8 +415,15 @@ final class DispatchNotify(
         // 触发前现读等待者清单（wf1cde E-③）：停等下游随通知告知分发器
         // （补投扫描路径同此口，清单一致）。Q4：文本在入队时成型，投递与预算
         // 计数在窗口结束时由 [[flushBatch]] 单点完成。
-        waitingSuccessors(node.id).flatMap(waiters =>
-          enqueueNotify(NotifyReason.Failed, node, failedNotifyTaskText(node, waiters)))
+        // cancelsem 批 2：文本成形前现读抑制态——抑制态 ⇒ 抑制变体（改劝），其余逐字不变。
+        for
+          waiters <- waitingSuccessors(node.id)
+          suppressedBy <- userCancelSuppression(node)
+          text = suppressedBy match
+            case Some(up) => suppressedFailedNotifyTaskText(node, waiters, up)
+            case None     => failedNotifyTaskText(node, waiters)
+          _ <- enqueueNotify(NotifyReason.Failed, node, text)
+        yield ()
       case FailedWindowVerdict.Suppress =>
         // 冷却期内：不触发、不 markSent——节点留在 redeliver 候选集，冷却结束后下轮
         // 扫描自然补投（延迟触发而非永久丢失，设计 §3）。
@@ -871,6 +912,52 @@ final class DispatchNotify(
        |$waiterLine
        |无需回报——拓扑与状态已落 Flow Map。""".stripMargin
 
+  /** **failed 抑制态变体**（cancelsem 批 2 · 作者 2026-09-16 裁定 #696②「failed 文本
+    * 须感知抑制态」；形态取 (a) **改劝**，理由见批报告「修法形态选择」节）。
+    *
+    * 触发条件单点 = [[userCancelSuppression]]（= [[NodeEngine.retryOrNotify]] 第四态，
+    * 同源同函数）：本节点的 `retry.upstream` 是**用户主动取消**的节点 ⇒ 引擎本次
+    * **整腿不触发**（不重激活本节点、不重跑上游），但**本节点仍是 failed 终态**。
+    *
+    * 与 cancelled 的 user 变体（[[userCancelledNotifyTaskText]]）的**关键差别**：
+    * cancelled 节点**机制上不可重激活**（NodeEdit 重激活闸只放行 blocked/failed），
+    * 而 failed 节点**仍可被分发器显式重激活**——被抑制的只是**自动**重试。因此本文本：
+    *   - **不**照抄 user 变体的绝对句「不可重激活」（对本节点不成立，且会误导分发器
+    *     以为该节点不可救）；
+    *   - **不**保留常态 failed 文本的「首选重激活」劝语（[[FailedReactivateLead]]
+    *     与动作 1 的「NodeEdit 编辑…触发 reactivate 重跑——原节点复活」）——抑制态下
+    *     照它做会把用户刚停下的上游重新卷进来，正是作者点名的错误劝语；
+    *   - 改劝**等承接 / 勿重激活 / 勿重派**（[[UserCancelLead]] 同族措辞，上游 id 逐字
+    *     点出，分发器无需自查即知被取消的是谁）；
+    *   - 等待者行随抑制态改写（常态那句「上游修复重跑完成后自动续跑」在抑制态是**假
+    *     承诺**：本轨不会自动续跑）。
+    *
+    * 逐字保留面（与常态同源，零漂移）：`reason=failed` 原因码 / 节点名+id / 错误摘要行 /
+    * 结果全文行 / 「无需回报」尾行；动作 2/3/4（换基线重派 / abandon / 上报）措辞逐字
+    * 沿用常态（重派与放弃仍是合法出路，只在第 2 条补「上游仍被引用则会停等」的注意）。
+    *
+    * 可见性不丢（F3）：本变体照常走 dispatch-notify 全链（窗口熔断 / 预算 / 持久去重 /
+    * 补投扫描 / tell-then-mark 逐字未改），抑制事实另在 `retry` 审计事件 + WARN 留痕
+    * （[[NodeEngine.retryOrNotify]] 侧，本批逐字未改）。 */
+  private def suppressedFailedNotifyTaskText(node: NodeDef, waiters: List[String], up: NodeDef): String =
+    val errSummary = node.result.map(_.take(500)).getOrElse("(无错误文本)")
+    val waiterLine = waiters match
+      case Nil =>
+        "下游等待者：无下游等待者（本轨已被抑制：**不会**自动续跑）。"
+      case names =>
+        s"下游等待者（failed 零结算停等中；**上游 '${up.name}' 的自动重跑已被抑制**——" +
+          s"不会自动续跑，须先按上方第 1/2 条处置上游后手工续跑）：${names.mkString(", ")}。"
+    s"""[dispatch-notify] 节点 '${node.name}' (${node.id}) failed（reason=failed，${DispatchNotify.SuppressedRetryKey}，project=$projectName）。
+       |错误摘要：$errSummary
+       |结果全文：NodeList(detail="${node.id}", project=$projectName)。
+       |抑制说明（**本节点的自动重试已被抑制**：`retry.upstream` '${up.name}' (${up.id}) 是**${DispatchNotify.UserCancelLead}**的节点（source=${CancelSource.UserCode}，见其 cancelled 通知）——引擎不会重新武装它、也不会自动重跑本节点，本次 failed 之后**没有**任何自动重试在途。本节点仍是 failed 终态、仍可被**你显式**重激活，但把那条件重新卷进来大概率再次 failed，**不要首选这么做**）：
+       |1. **首选：等承接 / 勿重激活**（勿把 '${up.name}' (${up.id}) 重新卷进来）——用户取消的意图必须被尊重：要恢复本节点，先由用户在本会话明确要求恢复该上游（或先按第 2 条改接替代上游）再动手，不要自行重激活重跑；
+       |2. 需换基线/重派（任务定义或执行形态需实质调整）→ NodeEdit 新建承接节点（建议命名 <原名>-retry 或语义新名），接原拓扑位置（in 同源、out 同目标）；原 failed 节点留作审计，勿删改——**注意**：若其 in 仍同源引用 '${up.name}' (${up.id})，该节点照样停等（上游已是用户取消的终态、不会再产出结果），须先按 cancelled 通知处置该上游（改接替代上游 / abandon）或改换上游；
+       |3. 任务无意义/无法修复 → NodeEdit abandon=true 标记放弃；
+       |4. 需人工/外部条件 → 在你的最终输出中写明上报内容（自动投递 Nebula）。
+       |$waiterLine
+       |无需回报——拓扑与状态已落 Flow Map。""".stripMargin
+
 object DispatchNotify:
   /** 链级通知预算默认值（设计约束③建议值；completion/failed 同值独立分账）。 */
   val DefaultBudget: Int = 5
@@ -879,6 +966,15 @@ object DispatchNotify:
     * （通知文本与 spec / 复核位恒同源引用；改这两条即改对外契约，须同步改判据）。 */
   val UserCancelLead: String = "用户主动取消"
   val NoReDispatchPhrase: String = "不得重新派发"
+
+  /** **failed 抑制态变体的自描述头行字段**（cancelsem 批 2，2026-09-17）：与 cancelled
+    * 变体的 `source=` / `chain=` 同族「自描述字段」纪律——判据与分发器一眼可判「这条
+    * failed 的通知是**抑制态**产物（自动重试已被抑制），不是常态失败通知」。 */
+  val SuppressedRetryKey: String = "retry=suppressed"
+
+  /** **抑制态下不得出现的「首选重激活」劝语**（= 常态 failed 文本处置指引首句的逐字
+    * 片段）：F1 判据的**负向锚**——抑制态变体不得含本串（常态文本逐字含它）。 */
+  val FailedReactivateLead: String = "可经 NodeEdit 重激活复活重跑"
 
   /** `chain=` 字段的「无链归属」显示值（单节点链 / 已出双区）。 */
   val ChainUnknown: String = "(单节点链/未归属)"
