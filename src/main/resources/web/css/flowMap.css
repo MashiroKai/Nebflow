@@ -780,6 +780,15 @@
   text-align: center; padding: 40px 0; font: 400 12px/1.5 -apple-system, BlinkMacSystemFont, sans-serif;
   color: var(--color-text-muted); opacity: 0.65;
 }
+/* 读取指引脚注（全降级列表态批 2026-09-16）：链完成横幅不再是 root 会话的投递面
+   ⇒ 「链已归档、可去查明细」这句提示（原 = 横幅正文末行 `FlowMapStore.scala` 的
+   读取指引）改由**列表态**承载：本行 + 成员行可点开（详情窗按需取结果全文）。
+   用语零新色值（`--color-text-muted` + `--color-border` 同 panel-head 分隔线）。 */
+.fm-panel-guide {
+  flex: 0 0 auto; padding: 8px 14px; border-top: 1px solid var(--color-border);
+  font: 400 11px/1.4 -apple-system, BlinkMacSystemFont, sans-serif;
+  color: var(--color-text-muted); opacity: 0.8;
+}
 
 /* 链条目（§5.3：flow-mail-row 构型；条目 = 链）*/
 .fm-entry {

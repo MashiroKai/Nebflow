@@ -95,6 +95,7 @@ export default {
   'flowmap.archive.count': '{n} 条链 · {m} 节点',
   'flowmap.archive.nodes': '{n} 节点',
   'flowmap.archive.empty': '暂无已归档任务链',
+  'flowmap.archive.readGuide': '链已归档 · 点成员查看结果全文（按需取）',
   'flowmap.archive.expiringSoon': '即将过期',
   'flowmap.archive.allArchived': '全部节点已完成，结果收入右上角归档',
   'flowmap.archive.close': '关闭归档面板',

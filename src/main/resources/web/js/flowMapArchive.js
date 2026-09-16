@@ -554,6 +554,7 @@ const LAYER_HTML = `
         <button class="fm-panel-close" type="button" aria-label="${esc(t('flowmap.archive.close'))}">${CLOSE_SVG}</button>
       </div>
       <div class="fm-panel-body"></div>
+      <div class="fm-panel-guide">${esc(t('flowmap.archive.readGuide'))}</div>
     </div>
     <div class="fm-detail" role="region" aria-label="${esc(t('flowmap.archive.detailLabel'))}" data-testid="detail-panel" hidden>
       <div class="fm-detail-head">
