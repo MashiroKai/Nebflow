@@ -129,9 +129,10 @@ function escapeAttrValue(v) {
  *  a proxy URL. A proxied anchor is an in-frame same-origin HTTP navigation,
  *  and that is exactly what the viewer's navigation guard used to answer by
  *  destroying the pane ("Rendering was stopped…"), while `target="_blank"`
- *  could not work either (html/md are outside the extension whitelist and
- *  data-root `docs/**` is refused, so the popup opened a 401; the chat card
- *  sandbox has no allow-popups at all). An anchor's resolved absolute path now
+ *  could not work either (html/md are outside the extension whitelist and a
+ *  data-root path outside the served namespaces is refused — `docs/**` was one
+ *  such path until 2026-09-16 (img-ticket 批 i, #687-A), so the popup opened a
+ *  401; the chat card sandbox has no allow-popups at all). An anchor's resolved absolute path now
  *  rides in `data-nf-local-link` and the href itself is left byte-identical
  *  (relative semantics, status-bar preview and CSS untouched); the click is
  *  routed to a Canvas tab by `localLinkNavScript` + `bindLocalLinkBridge`

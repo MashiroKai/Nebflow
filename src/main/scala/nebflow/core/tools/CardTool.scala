@@ -65,19 +65,28 @@ object CardTool extends Tool:
     *  `data:` URI instead of an `/api/nf-file` URL — see the inline policy in
     *  `FileRefs` (`MaxEmbedImageSize` / `isInlineImage`). `proxied` keeps its
     *  meaning as "reference rewritten to an `/api/nf-file` URL", so the two
-    *  counters never overlap. */
+    *  counters never overlap.
+    *
+    *  `deferred` (2026-09-16 img-ticket batch i, #687-C) counts the references
+    *  that were ELIGIBLE for embedding (extension + ≤5MB) but did not fit the
+    *  cumulative 40,000-character inline budget for this call, so they kept the
+    *  `/api/nf-file` URL. They are also counted in `proxied` (that is what they
+    *  are now); `deferred` is the extra bit of information — "the budget, not
+    *  the file, is why this is a reference" — and it is why a rare over-budget
+    *  card is not mistaken for a card that was never embeddable. */
   private[tools] case class EmbedOutcome(
       html: String,
       proxied: Int,
       inlined: Int,
+      deferred: Int,
       rejects: List[RejectedRef],
       exempt: Int
   )
 
   /**
    * Classify one reference value (an `src`/`href` attribute, a `srcset`
-   * candidate URL, a CSS `url(...)` token or a bare `@import`): embed it,
-   * proxy it, ignore it, exempt it, or reject it with a reason.
+   * candidate URL, a CSS `url(...)` token or a bare `@import`): proxy it,
+   * ignore it, exempt it, or reject it with a reason.
    *
    * Only ANCHORED references are ever proxied — `~`, a POSIX absolute path
    * (`/…`) and a Windows drive-letter absolute path (`C:/…`, `C:\…`; winpath
@@ -91,54 +100,94 @@ object CardTool extends Tool:
    * A failing value that is simultaneously a gateway route (`/js/…`) is
    * exempted instead of reported — see `FileRefs.applyAppRouteExemption`.
    *
-   * `allowInline` (2026-09-16 imgfix batch): the RESOURCE faces (`src=`,
-   * `srcset` candidates, CSS `url(...)`) embed an inlineable image's bytes as a
-   * `data:` URI; the NAVIGATION faces (`href=`, bare `@import`) do not — an
-   * `<a href="chart.png">` turned into a `data:` URI stops being the local-file
-   * link the Canvas router handles, and a 683 KB base64 attribute in an anchor
-   * helps nobody.
+   * Returns the verdict PLUS the resolved path when the value named an existing
+   * regular file. The embedding decision itself is NOT taken here any more
+   * (2026-09-16 img-ticket batch i): it moved to the document-order pass in
+   * [[embedLocalFiles]], because the cumulative inline budget
+   * (`FileRefs.MaxInlinePayloadChars`) is order-sensitive and this method is
+   * called once per SCAN PATTERN (all `src=` values, then all `href=` values,
+   * …), which is not document order. Keeping the decision here would have made
+   * "who gets the budget" depend on which pattern matched, i.e. on nothing the
+   * user can see.
    *
-   * The file-level probe itself is shared with Pop (`FileRefs.probeFile`);
-   * only the resolution policy in this wrapper is Card-specific.
+   * RESOURCE vs NAVIGATION faces are decided by the call site, not here:
+   * the resource faces (`src=`, `srcset` candidates, CSS `url(...)`) may embed
+   * an inlineable image's bytes as a `data:` URI; the navigation faces
+   * (`href=`, bare `@import`) never do — an `<a href="chart.png">` turned into
+   * a `data:` URI stops being the local-file link the Canvas router handles,
+   * and a 683 KB base64 attribute in an anchor helps nobody.
+   *
+   * The file-level probe itself is shared with Pop (`FileRefs.probeFile`); only
+   * the resolution policy in this wrapper is Card-specific.
    */
-  private def decideRef(rawValue: String, allowInline: Boolean = false): RefDecision =
+  private def decideRef(rawValue: String): RefVerdict =
     val value = rawValue.trim
-    if !isLocalFilePath(value) || !looksLikeFilePath(value) then RefDecision.Ignore
+    if !isLocalFilePath(value) || !looksLikeFilePath(value) then RefVerdict(RefDecision.Ignore, None)
     else
-      val verdict =
+      val verdict: RefVerdict =
         if isUncPath(value) then
-          unresolvable(
-            value,
-            "Windows UNC references (`\\\\server\\share\\…`) are not resolved — copy the file to a local " +
-              "absolute path (`/Users/you/…`, `C:\\Users\\you\\…`) or under `~/…` and reference that"
+          RefVerdict(
+            unresolvable(
+              value,
+              "Windows UNC references (`\\\\server\\share\\…`) are not resolved — copy the file to a local " +
+                "absolute path (`/Users/you/…`, `C:\\Users\\you\\…`) or under `~/…` and reference that"
+            ),
+            None
           )
         else if !isAnchoredRefPath(value) then
-          unresolvable(
-            value,
-            "relative references are never resolved — use an absolute path (`/Users/you/…`, `C:\\Users\\you\\…`) or `~/…`"
+          RefVerdict(
+            unresolvable(
+              value,
+              "relative references are never resolved — use an absolute path (`/Users/you/…`, `C:\\Users\\you\\…`) or `~/…`"
+            ),
+            None
           )
         else if hasTemplatePlaceholder(value) then
-          unresolvable(
-            value,
-            "the reference contains a template placeholder — resolve it to a real path before emitting the card"
+          RefVerdict(
+            unresolvable(
+              value,
+              "the reference contains a template placeholder — resolve it to a real path before emitting the card"
+            ),
+            None
           )
         else
           resolvePath(value) match
-            case None    => unresolvable(value, "the reference is not a usable filesystem path")
+            case None => RefVerdict(unresolvable(value, "the reference is not a usable filesystem path"), None)
             case Some(p) =>
-              probeFile(value, p) match
-                // Servable through /api/nf-file — prefer the embedded bytes when
-                // the image is inside the inline policy: the reference leg needs
-                // a ticket the namespace judge may refuse, and the embedding
-                // survives replay. See FileRefs' inline-policy comment.
-                case RefDecision.Proxy(url) if allowInline && isInlineImage(p) =>
-                  readAsDataUri(p).map(RefDecision.Proxy(_)).getOrElse(RefDecision.Proxy(url))
-                case other => other
-      val decision = applyAppRouteExemption(value, verdict)
+              val decision = probeFile(value, p)
+              // The path travels with the verdict: the inline pass needs it for
+              // `FileRefs.embedImage` (extension + size + read) and re-resolving
+              // it there would probe the filesystem twice.
+              val candidate = decision match
+                case _: RefDecision.Proxy => Some(p)
+                case _                    => None
+              RefVerdict(decision, candidate)
+      val decision = applyAppRouteExemption(value, verdict.decision)
       decision match
         case RefDecision.Exempt(route) => logger.debug(s"Card: exempted app-route reference '$value' (route $route)")
         case _                         => ()
-      decision
+      // An exempted reference is not servable as a file, so it carries no inline
+      // candidate either (the verdict it was exempted from was already a failure).
+      decision match
+        case _: RefDecision.Exempt => RefVerdict(decision, None)
+        case _                     => verdict
+
+  /** A verdict plus the resolved file it was computed from (`None` whenever the
+    *  value did not resolve to an existing regular file). */
+  private case class RefVerdict(decision: RefDecision, path: Option[Path])
+
+  /** One scanned reference: where it sits in the document, the verdict, the
+    *  resolved file (if any) and whether its face may embed bytes.
+    *
+    *  `resourceFace` is the only difference between the five scan patterns
+    *  inside [[embedLocalFiles]]. */
+  private case class ScannedRef(
+      start: Int,
+      end: Int,
+      decision: RefDecision,
+      path: Option[Path],
+      resourceFace: Boolean
+  )
 
   /**
    * Split a `srcset` value into its image candidates and locate each URL token
@@ -150,12 +199,12 @@ object CardTool extends Tool:
    * `data:` is skipped whole (never rewritten, never warned) instead of
    * guessed at.
    */
-  private def srcsetCandidates(m: scala.util.matching.Regex.Match): List[(Int, Int, RefDecision)] =
+  private def srcsetCandidates(m: scala.util.matching.Regex.Match): List[ScannedRef] =
     val raw = m.group(1)
     if raw.toLowerCase.contains("data:") then Nil
     else
       val base = m.start(1)
-      val out = scala.collection.mutable.ListBuffer.empty[(Int, Int, RefDecision)]
+      val out = scala.collection.mutable.ListBuffer.empty[ScannedRef]
       var cursor = 0
       raw.split(",", -1).foreach { candidate =>
         val lead = candidate.indexWhere(ch => !ch.isWhitespace)
@@ -166,7 +215,11 @@ object CardTool extends Tool:
             case i  => i
           if urlLen > 0 then
             val start = base + cursor + lead
-            out += ((start, start + urlLen, decideRef(rest.substring(0, urlLen), allowInline = true)))
+            val value = rest.substring(0, urlLen)
+            val scanned = decideRef(value)
+            // Each srcset candidate is its own RESOURCE face (an image the
+            // browser may pick), evaluated independently in the inline pass.
+            out += ScannedRef(start, start + urlLen, scanned.decision, scanned.path, resourceFace = true)
         cursor += candidate.length + 1
       }
       out.toList
@@ -209,20 +262,63 @@ object CardTool extends Tool:
    * corrupt the document.
    */
   private def embedLocalFiles(html: String): EmbedOutcome =
-    val matches: List[(Int, Int, RefDecision)] =
-      (SrcAttrRegex.findAllMatchIn(html).map(m => (m.start(1), m.end(1), decideRef(m.group(1), allowInline = true))) ++
-        HrefAttrRegex.findAllMatchIn(html).map(m => (m.start(1), m.end(1), decideRef(m.group(1)))) ++
+    val matches: List[ScannedRef] =
+      (SrcAttrRegex.findAllMatchIn(html).map(m => {
+        val scanned = decideRef(m.group(1))
+        ScannedRef(m.start(1), m.end(1), scanned.decision, scanned.path, resourceFace = true)
+      }) ++
+        HrefAttrRegex.findAllMatchIn(html).map(m => {
+          val scanned = decideRef(m.group(1))
+          ScannedRef(m.start(1), m.end(1), scanned.decision, scanned.path, resourceFace = false)
+        }) ++
         SrcsetAttrRegex.findAllMatchIn(html).flatMap(srcsetCandidates) ++
-        CssUrlRegex.findAllMatchIn(html).map(m => (m.start(2), m.end(2), decideRef(m.group(2), allowInline = true))) ++
-        ImportBareRegex.findAllMatchIn(html).map(m => (m.start(2), m.end(2), decideRef(m.group(2))))).toList
-        .sortBy(_._1)
+        CssUrlRegex.findAllMatchIn(html).map(m => {
+          val scanned = decideRef(m.group(2))
+          ScannedRef(m.start(2), m.end(2), scanned.decision, scanned.path, resourceFace = true)
+        }) ++
+        ImportBareRegex.findAllMatchIn(html).map(m => {
+          val scanned = decideRef(m.group(2))
+          ScannedRef(m.start(2), m.end(2), scanned.decision, scanned.path, resourceFace = false)
+        })).toList
+        .sortBy(_.start)
 
-    val rejects = matches.collect { case (_, _, RefDecision.Reject(rejected)) => rejected }
-    val exempts = matches.count { case (_, _, RefDecision.Exempt(_)) => true; case _ => false }
+    val rejects = matches.collect { case ScannedRef(_, _, RefDecision.Reject(rejected), _, _) => rejected }
+    val exempts = matches.count { case ScannedRef(_, _, RefDecision.Exempt(_), _, _) => true; case _ => false }
 
-    val replacements = nonOverlapping(
-      matches.collect { case (start, end, RefDecision.Proxy(url)) => (start, end, url) }
+    // ── the proxy spans, in DOCUMENT ORDER, overlap-filtered ────────────────
+    // The filter order is deliberate: `nonOverlapping` runs BEFORE the inline
+    // pass, exactly as it used to run before the splice, so (a) the counters
+    // keep their shipped meaning (they describe the spans that are actually
+    // rewritten, not every candidate), and (b) a span the overlap guard drops
+    // can no longer spend budget it does not use.
+    val proxySpans: List[(Int, Int, ScannedRef)] = nonOverlapping(
+      matches.collect { case ref @ ScannedRef(_, _, _: RefDecision.Proxy, _, _) => (ref.start, ref.end, ref) }
     )
+
+    // ── the inline pass (2026-09-16 img-ticket batch i, #687-C) ─────────────
+    // ONE budget per tool call (a Card call produces one card payload), spent in
+    // document order, first come first served: an eligible image is charged its
+    // exact `data:` URI length when the remaining balance covers it, and left on
+    // the reference leg — charged nothing — when it does not. See
+    // `FileRefs.MaxInlinePayloadChars` for the rule and its user-visible
+    // semantics; a refusal here is NOT a warning (the `/api/nf-file` URL still
+    // renders), it only moves the reference from `inlined` to `deferred`.
+    val budget = InlineBudget()
+    var budgetDeferred = 0
+    val replacements: List[(Int, Int, String)] = proxySpans.map { (start, end, ref) =>
+      val url = ref.decision.asInstanceOf[RefDecision.Proxy].url
+      val embedded: Option[String] =
+        if !ref.resourceFace then None
+        else
+          ref.path match
+            case None => None
+            case Some(p) =>
+              embedImage(p, budget) match
+                case Right(dataUri)              => Some(dataUri)
+                case Left(InlineSkip.OverBudget) => budgetDeferred += 1; None
+                case Left(_)                     => None // not embeddable / unreadable: keep the shipped fallback
+      (start, end, embedded.getOrElse(url))
+    }
     // An embedded image is a `Proxy(data:…)` — split the counters so `proxied`
     // keeps meaning "an /api/nf-file URL was emitted" and `inlined` reports the
     // embedded ones (2026-09-16 imgfix batch; see FileRefs' inline policy).
@@ -242,8 +338,11 @@ object CardTool extends Tool:
         sb.toString
 
     if rewritten != html then
-      logger.debug(s"Embedded ${proxied} local file(s) via /api/nf-file, ${inlined} image(s) inline")
-    EmbedOutcome(rewritten, proxied, inlined, rejects, exempts)
+      logger.debug(
+        s"Embedded ${proxied} local file(s) via /api/nf-file, ${inlined} image(s) inline" +
+          (if budgetDeferred > 0 then s", $budgetDeferred deferred by the ${budget.maxChars}-char inline budget" else "")
+      )
+    EmbedOutcome(rewritten, proxied, inlined, budgetDeferred, rejects, exempts)
   end embedLocalFiles
 
   /** The sentinel prefix the frontend splits the JSON payload on (cardRegistry.js
@@ -390,7 +489,7 @@ HTML must be self-contained (all styles/tags inline, no external CSS/JS).
 
 Local file paths in `src`/`href` are proxied by the backend to `/api/nf-file`, so **you MUST use absolute paths** — `/Users/you/project/plot.png`, `/tmp/output.svg`, `C:\\Users\\you\\project\\plot.png` (a Windows drive path; either separator works — `C:/Users/you/project/plot.png` too), or `${nebflow.core.PathUtil.dataRootRenderValue}/projects/<name>/reports/plot.svg`. `~` expands to the user's home directory, and project workspaces live under `${nebflow.core.PathUtil.dataRootRenderValue}/projects/<name>/` — write that full path, not `~/projects/<name>/…`. Relative paths are never resolved — that includes a drive-relative `C:plot.png`; Windows UNC references (`\\\\server\\share\\…`) are not resolved either.
 
-**Images are embedded, not referenced** (2026-09-16): a local `png`/`jpg`/`jpeg`/`gif`/`webp`/`svg`/`bmp` referenced by `src=`, a `srcset` candidate or a CSS `url(...)` is embedded in the card as a base64 `data:` URI when it is ≤5MB — it renders with no request at all, and keeps rendering on replay. Everything else (larger images, video/audio/fonts/PDF/office/CSS/JS) is referenced as `/api/nf-file?path=…` and needs a per-path ticket the gateway mints at render time; the gateway serves the path only if its credential-namespace policy allows it — the data directory serves `projects/**`, `uploads/**`, `plots/**`, `workspace-items/**`, `voice-models/**` (so `${nebflow.core.PathUtil.dataRootRenderValue}/docs/**` is NOT served) and the project `.nebflow/` serves `evidence*/**`. A >5MB image or a non-image asset in a location the gateway does not serve cannot be shown: copy it under `projects/**` (or shrink the image) instead.
+**Images are embedded, not referenced** (2026-09-16): a local `png`/`jpg`/`jpeg`/`gif`/`webp`/`svg`/`bmp` referenced by `src=`, a `srcset` candidate or a CSS `url(...)` is embedded in the card as a base64 `data:` URI when it is ≤5MB — it renders with no request at all, and keeps rendering on replay. Inline bytes are capped **per card in TOTAL**: at most 40,000 characters of `data:` URI (≈30 KB of source bytes) go inline in one card, counted in document order — once that budget is spent, further images of the same card keep the `/api/nf-file?path=…` reference instead (they still render, but need the ticket below). Everything else (larger images, video/audio/fonts/PDF/office/CSS/JS) is referenced as `/api/nf-file?path=…` and needs a per-path ticket the gateway mints at render time; the gateway serves the path only if its credential-namespace policy allows it — the data directory serves `${DataRootServedNamespacesText}` and the project `.nebflow/` serves `evidence*/**`. A >5MB image or a non-image asset in a location the gateway does not serve cannot be shown: copy it under `projects/**` (or shrink the image) instead.
 
 Every reference that could not be proxied is reported in this tool's result under `warnings` (`ref` → `resolvedPath` → `reason`: not-found / unresolvable / extension-not-allowed / size-exceeded / not-regular-file, plus `fileRefs` counts) and renders as a visible placeholder in the card instead of a silent blank box. Scanned: `src=`, `href=`, every `srcset` candidate, every CSS `url(...)`, a bare `@import "..."`. The app's own routes (`/js/`, `/css/`, `/assets/`, `/vendor/`, `/uploads/`, `/agents/`, `/voice-models/`, plus `/style.css` `/app.js` `/logo.svg` `/favicon.*`) are exempt — the app serves them, not the disk — and are counted in `fileRefs.exempt` instead of being reported. Read `warnings` and fix the references before finishing."""
 
@@ -491,7 +590,7 @@ Card is for **presenting** results, not for drawing them. Always generate images
 - html (string, required): HTML with CSS and JS. Dark mode via var(--color-*).
 - title (string, optional): title above card.
 
-Note: Local file paths in `src`/`href` are proxied by the backend to `/api/nf-file`, so **you MUST use absolute paths** — `/Users/you/project/plot.png`, `/tmp/output.svg`, `C:\\Users\\you\\project\\plot.png` (a Windows drive path; either separator works — `C:/Users/you/project/plot.png` too), or `${nebflow.core.PathUtil.dataRootRenderValue}/projects/<name>/reports/plot.svg`. `~` expands to the user's home directory, and project workspaces live under `${nebflow.core.PathUtil.dataRootRenderValue}/projects/<name>/` — write that full path, not `~/projects/<name>/…`. Relative paths are never resolved — that includes a drive-relative `C:plot.png`; Windows UNC references (`\\\\server\\share\\…`) are not resolved either. Local images ≤5MB (`png`/`jpg`/`jpeg`/`gif`/`webp`/`svg`/`bmp`) are embedded as base64 `data:` URIs, so they need no request; every other reference needs a ticket the gateway mints only for paths its credential-namespace policy serves (data root: `projects/ uploads/ plots/ workspace-items/ voice-models/`; project `.nebflow/`: `evidence*/` — `${nebflow.core.PathUtil.dataRootRenderValue}/docs/**` is NOT served).
+Note: Local file paths in `src`/`href` are proxied by the backend to `/api/nf-file`, so **you MUST use absolute paths** — `/Users/you/project/plot.png`, `/tmp/output.svg`, `C:\\Users\\you\\project\\plot.png` (a Windows drive path; either separator works — `C:/Users/you/project/plot.png` too), or `${nebflow.core.PathUtil.dataRootRenderValue}/projects/<name>/reports/plot.svg`. `~` expands to the user's home directory, and project workspaces live under `${nebflow.core.PathUtil.dataRootRenderValue}/projects/<name>/` — write that full path, not `~/projects/<name>/…`. Relative paths are never resolved — that includes a drive-relative `C:plot.png`; Windows UNC references (`\\\\server\\share\\…`) are not resolved either. Local images ≤5MB (`png`/`jpg`/`jpeg`/`gif`/`webp`/`svg`/`bmp`) are embedded as base64 `data:` URIs, so they need no request — up to a TOTAL of 40,000 characters of `data:` URI per card, spent in document order (images past that total keep the `/api/nf-file?path=…` reference); every other reference needs a ticket the gateway mints only for paths its credential-namespace policy serves (data root: `${DataRootServedNamespacesText}`; project `.nebflow/`: `evidence*/`).
 
 Every reference that could not be proxied is reported in this tool's result under `warnings` (`ref` → `resolvedPath` → `reason`: not-found / unresolvable / extension-not-allowed / size-exceeded / not-regular-file, plus `fileRefs` counts) and renders as a visible placeholder in the card instead of a silent blank box. Read `warnings` and fix the references before finishing.
 
@@ -555,15 +654,18 @@ Example (interactive 3D with Three.js):
               // keeps the failure visible to the model in every case.
               // Field order is irrelevant to the frontend (property access on
               // the parsed object), so this stays contract-compatible; the
-              // toolfail batch only ADDED `exempt` inside fileRefs and the
+              // toolfail batch only ADDED `exempt` inside fileRefs, the
               // imgfix batch only ADDED `inlined` (image references embedded as
-              // `data:` URIs — counted there, never in `proxied`).
+              // `data:` URIs — counted there, never in `proxied`), and the
+              // img-ticket batch i only ADDED `deferred` (eligible for
+              // embedding but over the cumulative 40,000-char inline budget —
+              // counted there AND in `proxied`, since that is what they are).
               "fileRefs" -> fileRefsJson(
                 outcome.proxied,
                 distinct.size,
                 distinct.size - listed.size,
                 outcome.exempt,
-                List("inlined" -> outcome.inlined)
+                List("inlined" -> outcome.inlined, "deferred" -> outcome.deferred)
               ),
               "warnings" -> warningsJson(listed),
               "html" -> outcome.html.asJson,

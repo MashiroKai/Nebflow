@@ -16,8 +16,8 @@ async function viewImage(pane, { absPath, fileName, size, objectUrl }) {
   // `objectUrl` = bytes already in the page, no path needed:
   //   · 附件预览腿（attachmentPreview.js）：字节由鉴权路由取回，挂 blob: URL；
   //   · Pop 直开图片腿（PopTool，2026-09-16 imgfix）：工具把 ≤5MB 的图片
-  //     内联成 data: URI 随 pop 载荷下发，渲染零请求（票据腿对
-  //     `<dataRoot>/docs/**` 这类不受服务的命名空间必然 401）。
+  //     内联成 data: URI 随 pop 载荷下发，渲染零请求（票据腿对白名单外的
+  //     命名空间——如 `<dataRoot>/logs/**`——必然 401）。
   // 两条腿都**没有**可用的本机路径 ⇒ 不触票据链、不重取字节。
   if (!absPath && !objectUrl) {
     pane.innerHTML = '<div class="canvas-error">Cannot display image: no absolute path available.</div>';

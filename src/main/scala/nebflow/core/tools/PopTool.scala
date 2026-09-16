@@ -26,10 +26,13 @@ import java.nio.file.{Files, Path, Paths}
  *
  * For binary files (images, PDFs, Office docs), only metadata is sent — the
  * frontend fetches the content via /api/nf-file, same as the file explorer.
- * Exception (2026-09-16 imgfix batch): an image inside the shared inline policy
- * (≤5MB, embeddable format) is embedded in the payload as a `data:` URI and the
- * viewer renders it with no request — the ticket leg is only reached by images
- * outside that policy.
+ * Exception (2026-09-16 imgfix batch; cumulative cap added by the img-ticket
+ * batch i): an image inside the shared inline policy (≤5MB, embeddable format)
+ * is embedded in the payload as a `data:` URI and the viewer renders it with no
+ * request — as long as the call's total inline size stays within
+ * `FileRefs.MaxInlinePayloadChars` (40,000 characters of `data:` URI); the
+ * ticket leg is reached by images outside that policy and by images past that
+ * total.
  *
  * For HTTP/HTTPS URLs, the URL is sent directly — the frontend renders it
  * in an embedded iframe.
@@ -119,6 +122,12 @@ object PopTool extends Tool:
     var inlined = 0
     var deferred = 0
     var exempt = 0
+    // ONE cumulative budget for this pass (= this tool call), spent in the order
+    // the `<img src>` values appear (`replaceAllIn` walks the document left to
+    // right): an image is embedded while the remaining balance covers its
+    // `data:` URI, and left to the Canvas `/api/nf-file` rewrite once it does
+    // not. See `FileRefs.MaxInlinePayloadChars` (img-ticket batch i, #687-C).
+    val budget = InlineBudget()
 
     def record(decision: RefDecision): Unit = decision match
       case RefDecision.Exempt(_)        => exempt += 1
@@ -141,22 +150,25 @@ object PopTool extends Tool:
           case Some(p) =>
             applyAppRouteExemption(src, probeFile(src, p)) match
               case RefDecision.Proxy(_) =>
-                // Servable — inline it when the iframe can be spared the fetch,
-                // else leave it for the Canvas viewer's /api/nf-file rewrite.
-                // The rule itself is shared with Card (`FileRefs`); only the
-                // failure handling is Pop-specific: an unreadable file is still
-                // reported as `other`, a size/extension miss is `deferred`.
-                if isInlineImage(p) then
-                  readAsDataUri(p) match
-                    case Right(dataUri) =>
-                      inlined += 1
-                      Some(dataUri)
-                    case Left(detail) =>
-                      rejects += RejectedRef(src, Some(describe(p)), FileRefFailure.Other, detail)
-                      None
-                else
-                  deferred += 1
-                  None
+                // Servable — inline it when the iframe can be spared the fetch
+                // AND this call's cumulative inline budget still covers the
+                // bytes, else leave it for the Canvas viewer's /api/nf-file
+                // rewrite. The rule itself is shared with Card
+                // (`FileRefs.embedImage`); only the failure handling is
+                // Pop-specific: an unreadable file is still reported as
+                // `other`, a size/extension/budget miss is `deferred` — a
+                // budget miss is NOT a defect (the reference leg still
+                // renders), so it is counted, never warned.
+                embedImage(p, budget) match
+                  case Right(dataUri) =>
+                    inlined += 1
+                    Some(dataUri)
+                  case Left(InlineSkip.Unreadable(detail)) =>
+                    rejects += RejectedRef(src, Some(describe(p)), FileRefFailure.Other, detail)
+                    None
+                  case Left(_) =>
+                    deferred += 1
+                    None
               case other =>
                 record(other)
                 None
@@ -235,7 +247,7 @@ The Canvas tab supports the same file types as the file explorer. The tab title 
 
 ## Unresolvable image references
 
-Local `<img src>` values that exist, are embeddable image formats and are ≤5MB are inlined as base64 data URIs, so the Canvas iframe renders them with no extra request. The same rule applies to an image you open DIRECTLY (`filePath` = a `png`/`jpg`/`jpeg`/`gif`/`webp`/`svg`/`bmp` ≤5MB): its bytes ride in the pop payload and the image viewer renders them with no request. Images outside that rule (larger than 5MB) and every non-image asset are fetched by the frontend through `/api/nf-file`, which needs a per-path ticket the gateway mints only for paths its credential-namespace policy serves — the data directory serves `projects/**`, `uploads/**`, `plots/**`, `workspace-items/**`, `voice-models/**` (so `${nebflow.core.PathUtil.dataRootRenderValue}/docs/**` is NOT served) and the project `.nebflow/` serves `evidence*/**`. To show such a file, copy it under `projects/**` first. Every local reference that could NOT be inlined is reported in this tool's result — `warnings` (`ref` → `resolvedPath` → `reason`: not-found / unresolvable / extension-not-allowed / size-exceeded / not-regular-file) plus a `fileRefs` counter line — and the same list is shown above the Canvas tab. References the Canvas can still serve through /api/nf-file (larger images, formats outside the inline set) are only counted (`fileRefs.deferred`); the app's own routes (`/js/…`, `/css/…`, `/assets/…`, `/logo.svg` …) are counted as `fileRefs.exempt`. Read `warnings` and fix the references before finishing.
+Local `<img src>` values that exist, are embeddable image formats and are ≤5MB are inlined as base64 data URIs, so the Canvas iframe renders them with no extra request. The same rule applies to an image you open DIRECTLY (`filePath` = a `png`/`jpg`/`jpeg`/`gif`/`webp`/`svg`/`bmp` ≤5MB): its bytes ride in the pop payload and the image viewer renders them with no request. Inlining is additionally capped in TOTAL per call — at most 40,000 characters of `data:` URI (≈30 KB of source bytes, counted in the order the images appear) go inline, and anything past that total keeps its `/api/nf-file` reference instead. Images outside the 5MB rule, images past that total, and every non-image asset are fetched by the frontend through `/api/nf-file`, which needs a per-path ticket the gateway mints only for paths its credential-namespace policy serves — the data directory serves `projects/**, uploads/**, plots/**, workspace-items/**, voice-models/**, docs/**` and the project `.nebflow/` serves `evidence*/**`. To show such a file, copy it under `projects/**` first. Every local reference that could NOT be inlined is reported in this tool's result — `warnings` (`ref` → `resolvedPath` → `reason`: not-found / unresolvable / extension-not-allowed / size-exceeded / not-regular-file) plus a `fileRefs` counter line — and the same list is shown above the Canvas tab. References the Canvas can still serve through /api/nf-file (larger images, formats outside the inline set) are only counted (`fileRefs.deferred`); the app's own routes (`/js/…`, `/css/…`, `/assets/…`, `/logo.svg` …) are counted as `fileRefs.exempt`. Read `warnings` and fix the references before finishing.
 
 ## Parameters
 
@@ -369,10 +381,16 @@ Example: {"filePath": "https://example.com"}"""
               // The bytes ride in the payload instead (same rule as the HTML
               // `<img>` pass above, one definition in `FileRefs`), and the
               // viewer's existing `objectUrl` leg renders them with NO request.
-              // An image outside the inline policy keeps metadata-only and is
-              // still fetched through the ticket leg.
+              // An image outside the per-image policy — or one that does not fit
+              // this call's cumulative inline budget (`fileRefs`-level rule:
+              // 40,000 chars, `FileRefs.MaxInlinePayloadChars`, img-ticket batch
+              // i / #687-C) — keeps metadata-only and is still fetched through
+              // the ticket leg (which now serves `<dataRoot>/docs/**` too, so the
+              // 2026-09-16 author case above renders either way).
+              // A FRESH budget: the HTML `<img>` pass and this face are mutually
+              // exclusive per call, so neither can spend the other's balance.
               val inlineImage: Option[String] =
-                if entry.binary && isInlineImage(path) then readAsDataUri(path).toOption else None
+                if entry.binary then embedImage(path, InlineBudget()).toOption else None
 
               // The refs keys are added only for HTML items (the only ones the
               // pass runs on) — a markdown Pop keeps its item shape unchanged.

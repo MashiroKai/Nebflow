@@ -5267,9 +5267,22 @@ object WebSocketRoutes:
     * Every other entry under the data root is credential-bearing by default:
     * `auth.json` (the gateway token), `nebflow.json`, `secrets/`, `logs/`,
     * `sessions/`, `usage-records/`, … Fail-closed: a new directory added
-    * under the data root is refused until it is listed here. */
+    * under the data root is refused until it is listed here.
+    *
+    * 2026-09-16 (img-ticket batch i, #687-A, author ruling — already ruled, not
+    * pending): `docs` joins the list. The author's human-deliverable directory
+    * (`~/.nebflow/docs/…`) was the one location the delivery convention told
+    * people to write to AND this judge refused with `credential-path`; the
+    * ruling resolves that contradiction. 🔴 Scope is EXACTLY this one entry:
+    * no other subtree, no prefix/glob matching, no change to the `head`
+    * exact-match semantics below, and the five shipped entries keep their order
+    * and meaning. The ruling explicitly SUPERSEDES the 2026-09-11 "do not widen
+    * the credential namespace" ruling — and that supersession is per-item, so
+    * it authorizes nothing beyond `docs`. The tool face reads
+    * `FileRefs.DataRootServedNamespaces`, which `FileRefsWhitelistSpec` welds to
+    * this list item for item. */
   val NfDataRootAllowlist: List[String] =
-    List("projects", "uploads", "plots", "workspace-items", "voice-models")
+    List("projects", "uploads", "plots", "workspace-items", "voice-models", "docs")
 
   /** A2 — the ONLY `<workspace>/.nebflow` subtrees whose contents may be served
     * (evidence capture directories: screenshots/logs a node produced). */
