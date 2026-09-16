@@ -2099,7 +2099,10 @@ object NodeEditTool extends Tool:
                     deferredWiring.flatMap { case (deferred, frozenIds) =>
                     val frozenLive = frozenIds.filter(ids.contains)
                     val statusOk: IO[Either[String, Unit]] =
-                      if outProvided && frozenLive.nonEmpty then
+                      // 外层触发面**逐字保留**（outProvided ∧ 声明目标非空）——B5 只收窄
+                      // 「running 目标清单」（新增边分类），不得连带收窄 merge/consumed 闸
+                      // 的触发面（NodeEdgeGatingSpec ⑤a 即此面回归的机械把守点）。
+                      if outProvided && ids.nonEmpty then
                         frozenLive.traverse(t => NodeTools.ensureTargetNotRunning(rt, t)).flatMap { rs =>
                           rs.collectFirst { case Left(e) => e } match
                             case Some(e) => IO.pure(Left(e))
