@@ -464,9 +464,7 @@ function renderList() {
   if (!loggedIn()) {
     const empty = el('div', 'fm-login-empty');
     empty.appendChild(el('div', 'fm-login-text', t('messages.loginRequired')));
-    // 登录入口 = 主键形态（glass-control 材质 + cfg-btn-primary 白墨配方 + fm-login-btn
-    // 几何，唯一来源 = sapphire.css 登录键族块；2026-09-16 登录入口批）。
-    const btn = el('button', 'glass-control fm-login-btn cfg-btn-primary', t('messages.login'));
+    const btn = el('button', 'glass-control fm-login-btn', t('messages.login'));
     btn.addEventListener('click', () => openLoginModal());
     empty.appendChild(btn);
     box.appendChild(empty);

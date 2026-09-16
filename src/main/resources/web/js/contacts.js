@@ -242,9 +242,7 @@ function render() {
   if (!loggedIn()) {
     const empty = el('div', 'fm-login-empty');
     empty.appendChild(el('div', 'fm-login-text', t('messages.loginRequired')));
-    // 登录入口 = 主键形态（glass-control 材质 + cfg-btn-primary 白墨配方 + fm-login-btn
-    // 几何，唯一来源 = sapphire.css 登录键族块；2026-09-16 登录入口批）。
-    const btn = el('button', 'glass-control fm-login-btn cfg-btn-primary', t('messages.login'));
+    const btn = el('button', 'glass-control fm-login-btn', t('messages.login'));
     btn.addEventListener('click', () => openLoginModal());
     empty.appendChild(btn);
     body.appendChild(empty);
@@ -682,7 +680,7 @@ function buildSearchError() {
   if (searchErrorKind === 'auth') {
     card.appendChild(el('div', 'fm-empty', t('contacts.searchAuthError')));
     const foot = el('div', 'fm-result-foot');
-    const btn = el('button', 'glass-control fm-login-btn cfg-btn-primary', t('contacts.relogin'));
+    const btn = el('button', 'glass-control fm-login-btn', t('contacts.relogin'));
     btn.addEventListener('click', () => openLoginModal());
     foot.appendChild(btn);
     card.appendChild(foot);
@@ -918,7 +916,7 @@ function buildRequests() {
       errWrap.setAttribute('data-fm-req-error', listErrorKind); // 断言契约（与视觉文案解耦，镜像 data-fm-list-error）
       if (listErrorKind === 'auth') {
         errWrap.appendChild(el('div', null, t('contacts.searchAuthError')));
-        const relogin = el('button', 'glass-control fm-login-btn cfg-btn-primary', t('contacts.relogin'));
+        const relogin = el('button', 'glass-control fm-login-btn', t('contacts.relogin'));
         relogin.addEventListener('click', () => openLoginModal());
         errWrap.appendChild(relogin);
       } else if (listErrorKind === 'neblinkOff') {

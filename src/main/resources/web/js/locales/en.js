@@ -354,7 +354,6 @@ export default {
   'login.reopenAuthPage': 'Reopen the login page',
   'login.openAuthPage': 'Open authorization page',
   'login.switchAccount': 'Use another account',
-  'login.reopenHint': "Didn't see the login page? Reopen it",
   'login.deviceCodeCaption': 'Authorization code',
   'login.waitingPopupOpened': 'Login page opened in a new tab — waiting for completion…',
   'login.waiting': 'Waiting for login to complete…',

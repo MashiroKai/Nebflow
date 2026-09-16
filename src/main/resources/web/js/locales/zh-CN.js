@@ -355,7 +355,6 @@ export default {
   'login.reopenAuthPage': '重新打开登录页面',
   'login.openAuthPage': '打开授权页面',
   'login.switchAccount': '使用其他账号登录',
-  'login.reopenHint': '没看到登录页？重新打开',
   'login.deviceCodeCaption': '授权码',
   'login.waitingPopupOpened': '已在新标签页打开登录页面，等待完成…',
   'login.waiting': '等待登录完成…',

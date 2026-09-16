@@ -427,15 +427,15 @@ function injectLoginModalStyles() {
   from { opacity: 0; transform: translate(-50%, -50%) scale(0.96) translateY(8px); }
   to   { opacity: 1; transform: translate(-50%, -50%) scale(1) translateY(0); }
 }
-/* Panel hierarchy (2026-09-16 login-entry batch) — four levels, in order:
+/* Panel hierarchy (2026-09-16 login-entry batch) — three levels, in order:
      ① title  .login-modal-header h3
      ② hint   .login-hint / .login-code-caption  (what this step needs)
      ③ keys   .login-actions (primary + secondary; geometry/material are the
               login-key family's single source in sapphire.css — NOT here)
-     ④ aux    .login-switch-link (quiet text link) + .login-waiting status line
-   This block therefore declares LAYOUT/TYPOGRAPHY ONLY: the key form itself is
-   cross-surface (activity bar entry + panel CTAs + friends empty state) and
-   lives in the family block, so it can never drift between surfaces. */
+   followed by the .login-waiting status line. This block therefore declares
+   LAYOUT/TYPOGRAPHY ONLY: the key form itself is cross-surface (activity bar
+   entry + panel CTAs + friends empty state) and lives in the family block, so
+   it can never drift between surfaces. */
 .login-modal-header {
   display: flex; justify-content: space-between; align-items: center;
   padding: 12px 16px; border-bottom: 1px solid var(--glass-border, rgba(255,255,255,0.05));
@@ -462,20 +462,6 @@ function injectLoginModalStyles() {
    family block (single source) — this block only stacks the keys. */
 .login-actions { display: flex; flex-direction: column; gap: 8px; }
 .login-waiting { margin-top: 12px; font-size: 12px; color: var(--color-text-muted); }
-/* Auxiliary link tier (RP-logout fix, 2026-09-06; re-tiered 2026-09-16) — the
-   quiet third tier of the same family: muted ink, no plate, borderless. Used
-   by 「使用其他账号登录」-class actions and by the waiting-state reopen helper
-   (the same recovery that appears as the PRIMARY key when the popup was
-   blocked — the two states are mutually exclusive, so the action is never
-   presented two ways at once). */
-.login-switch-link {
-  display: block; width: 100%; box-sizing: border-box;
-  margin-top: 10px; padding: 6px 4px;
-  background: none; border: none; cursor: pointer;
-  font-family: inherit; font-size: 12px; color: var(--color-text-muted);
-  text-decoration: none; border-radius: 6px; transition: color 0.15s;
-}
-.login-switch-link:hover { color: var(--color-text); }
 .login-success { font-size: 14px; color: var(--color-primary); padding: 12px 0; }
 .login-error-msg { font-size: 13px; color: #e57373; margin-bottom: 14px; line-height: 1.5; }
 `;
@@ -626,9 +612,9 @@ function showLoginModal(opts = {}) {
   };
   const onKey = (e) => { if (e.key === 'Escape') close(); };
   document.addEventListener('keydown', onKey);
-  // The ONE authorize-URL opener, shared by the primary recovery key and the
-  // auxiliary reopen link (2026-09-16 login-entry batch). Behaviour is the
-  // pre-existing one, verbatim: open whatever the gateway handed us.
+  // The recovery key's authorize-URL opener (2026-09-16 login-entry batch).
+  // Behaviour is the pre-existing one, verbatim: open whatever the gateway
+  // handed us.
   const openAuthPage = () => {
     if (flowInfo?.authorizeUrl) window.open(flowInfo.authorizeUrl, '_blank');
     else if (flowInfo?.verificationUri) window.open(flowInfo.verificationUri, '_blank');
@@ -667,13 +653,10 @@ function showLoginModal(opts = {}) {
       //
       // 2026-09-16 login-entry batch — the panel's keys all go through the ONE
       // login-key family (sapphire.css 登录键族块): the recovery key
-      // (`login-open-auth`) is the primary tier (green solid), 「使用其他账号
-      // 登录」 is the secondary tier (same geometry, glass), and the quiet
-      // reopen helper under the status line is the auxiliary-link tier. The
-      // reopen helper exists ONLY in the not-blocked branch, i.e. exactly the
-      // state where the primary recovery key is absent — the action is never
-      // offered twice at once, and the one-click entry (no second step to
-      // perform) is unchanged.
+      // (`login-open-auth`) is the primary tier (green solid) and 「使用其他账号
+      // 登录」 is the secondary tier (same geometry, glass). No key is added or
+      // removed here: the one-click entry (no second step to perform) is
+      // unchanged.
       const popupOpened = data.popupOpened !== false;
       body = `
         <div class="login-hint">${t('login.hintBrowser')}</div>
@@ -681,7 +664,6 @@ function showLoginModal(opts = {}) {
           ${popupOpened ? '' : `<button class="login-modal-btn glass-control cfg-btn-primary" id="login-open-auth">${t('login.reopenAuthPage')}</button>`}
           <button class="login-modal-btn glass-control login-modal-btn-secondary" id="login-switch-account">${t('login.switchAccount')}</button>
         </div>
-        ${popupOpened ? `<button class="login-switch-link" id="login-reopen">${t('login.reopenHint')}</button>` : ''}
         <div class="login-waiting">${popupOpened ? t('login.waitingPopupOpened') : t('login.waiting')}</div>`;
     } else if (state === 'waiting-device') {
       // Legacy device-flow fallback (gateway reports logto-not-configured).
@@ -715,7 +697,6 @@ function showLoginModal(opts = {}) {
       <div class="login-modal-body">${body}</div>`;
     modal.querySelector('.login-modal-close').onclick = close;
     modal.querySelector('#login-open-auth')?.addEventListener('click', openAuthPage);
-    modal.querySelector('#login-reopen')?.addEventListener('click', openAuthPage);
     // Switch account (RP-logout fix, 2026-09-06): reserve the popup inside
     // THIS click gesture (same contract as the retry button below), then
     // restart the flow — startPkceLogin(true) sends prompt="login consent"

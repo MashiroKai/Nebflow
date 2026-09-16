@@ -444,9 +444,9 @@
        `.login-modal-btn`             登录面板主键（重新打开登录页面 / 打开授权页面 / 重试）
      次键（同族玻璃材质、与主键**同几何**、安静档）
        `.login-modal-btn.login-modal-btn-secondary`  面板内「使用其他账号登录」
-     辅助链接（安静文本链档）
-       `.login-switch-link` —— 几何/墨色声明在消费方（activityBar.js 注入样式块，
-       该档本批的唯一宿主是登录面板）；此处只在族台账登记档位，不重复声明。
+     （安静文本链档亦随回环摘除 —— 该档本批唯一的宿主是新增的「没看到登录页？」
+     重开链，该新增 affordance 经复核裁定越界后已摘除，故档位登记与其消费方声明
+     同批退役；族内现有档位 = 主键 + 次键。）
    墨色 = 复用既有 `.cfg-btn-primary`（sidebar.css:1162-1170）的主操作白墨声明 ⇒
      主键成员带 `cfg-btn-primary` 类承接（**既有类名，不是新色值**）——与发送键族
      （本文件 :292-296）同一做法，本块只覆盖材质 / 几何 / 状态。
@@ -507,7 +507,8 @@
 
 /* 次键 — 同族形态的安静档：几何与主键**同值**（只换材质与墨色）⇒「主键 vs 次键
    档位要分明」在读数上表现为 background/border/color 三项不同、padding/圆角/字号相同。
-   （面板内几何由消费方补：activityBar.js 注入块 `.login-actions .login-modal-btn`。） */
+   （面板内只做**堆叠**：activityBar.js 注入块的 `.login-actions` 提供 flex 纵列 +
+   gap，几何/材质全部来自本文件 ⇒ 面板键与入口键逐值同形。） */
 .login-modal-btn.login-modal-btn-secondary,
 .login-modal-btn.login-modal-btn-secondary:hover {
   background: var(--glass-control-bg);
