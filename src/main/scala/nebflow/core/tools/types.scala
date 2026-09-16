@@ -93,7 +93,17 @@ case class ToolContext(
     * （复用 projectRoot 传递链，AgentCore 在 ToolContext 构造点派生）。默认
     * SandboxPolicy.off = 全部闸门旁路（旧行为，§G.1 回滚语义；存量测试零改动）。
     * 相对路径一律以 sandbox.root 为基准解析（修掉 Glob/Grep 默认根=user.dir）。 */
-  sandbox: nebflow.core.sandbox.SandboxPolicy = nebflow.core.sandbox.SandboxPolicy.off
+  sandbox: nebflow.core.sandbox.SandboxPolicy = nebflow.core.sandbox.SandboxPolicy.off,
+  /** **会话初始 cwd**（B5 缺口② · 作者 2026-09-17 M-1 裁定「会话启动即 `cd` 座椅」，
+    * 选项①）：Some = 本会话 shell 的初 cwd（worktree 节点的**座椅路径**，NodeEngine
+    * 两个 spawn 点经 SessionContext.sessionCwd → AgentState 透传到此处）。
+    *
+    * 与 [[sandbox]] **分道**（本字段不参与策略构造）：sandbox 仍是围栏面
+    * （root = 工作区根，2026-09-05 21:05 裁定不推翻），本字段只决定「shell 从哪个目录
+    * 起步」。消费单点 = `BashTool`（`initialDir` 优先取本字段，缺省回落 `sandbox.root`）。
+    * 座椅缺失 ⇒ `ShellSession.resolveCwdOrFail` 显式失败（fail-closed），**不**回落
+    * 工作区根。None = 旧行为（初 cwd = 沙箱根）逐字节不变。 */
+  sessionCwd: Option[String] = None
 ):
   /** 「Nebula 本体根会话」身份判据的**运行期求值面**（工具面按角色分化批 B1，
     * 2026-09-13）——**纯委托**给单点 [[nebflow.agent.AgentCore.isNebulaRoot]]

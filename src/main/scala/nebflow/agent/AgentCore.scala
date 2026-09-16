@@ -1240,6 +1240,10 @@ private[agent] trait AgentCore:
         // 2026-09-11 作者裁定 R-3）。
         // 分发器/非项目会话/孤立单节点分量 = None（与 payload chainId 同判据）。
         flowChainId = state.session.flowChainId,
+        // B5 缺口②（作者 2026-09-17 M-1 裁定，选项①）：会话初始 cwd 信号透传——
+        // NodeEngine spawn 点置座椅路径（worktree 节点），其余会话 None。消费单点
+        // = BashTool.initialDir（壳层 fail-closed 见 ShellSession.resolveCwdOrFail）。
+        sessionCwd = state.session.sessionCwd,
         sandbox = sandboxPolicy
       )
       freshResults <- filteredCalls.parTraverse { call =>

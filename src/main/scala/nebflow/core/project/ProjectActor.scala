@@ -462,6 +462,13 @@ object ProjectActor:
                 // 幂等（起点清除 CAS 单发）；best-effort 同款（失败不影响后续 sweep）。
                 cfg.engine.sweepLoopBudgets()
                 .handleErrorWith(e => logger.warn(s"loop budget sweep failed: ${e.getMessage}")) *>
+                // 待接线队列扫描（B5 缺口③ · 作者 2026-09-17 M-3 裁定，选项①）：控制边
+                // 在编辑期因目标 running 入队（`NodeDef.pendingOut`）后，目标离开 running
+                // ⇒ 自动接线（`pendingOut` → `out`）+ `wiring-applied` 事件——「到点自动
+                // 接」的落点。幂等（目标仍 running 时零写）；best-effort 同款（失败仅 WARN，
+                // 不影响后续 sweep）。
+                cfg.engine.applyDeferredWiring()
+                .handleErrorWith(e => logger.warn(s"deferred wiring sweep failed: ${e.getMessage}")) *>
                 // 链级即时归档 sweep（裁定④「TTL 分开」批 2026-09-07）：整链全终态
                 // → 整批立即移归档（移除旧 24h 活动区滞留）；链未齐（含 blocked 待办）
                 // → 保留。视觉「同帧淡出」由前端派生管线承担，本 sweep 出库+落盘。

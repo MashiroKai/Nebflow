@@ -398,11 +398,18 @@ Git safety:
     // user.dir）；Seatbelt 包装随会话持有策略在 buildProcessBuilder 内完成。
     // 读面按 H-10① 接受全盘（写 OS 强制 + JVM 读围栏双层），hardening 清单另列。
     val sandboxOpt = Some(ctx.sandbox).filter(_.enabled)
+    // B5 缺口②（作者 2026-09-17 M-1 裁定「会话启动即 `cd` 座椅」，选项①）：shell 初
+    // cwd 优先取**显式座椅信号**（worktree 节点 ⇒ 座椅路径），缺省回落沙箱根（旧行为
+    // 逐字节不变：非 worktree 节点两值同源）。🔴 fail-closed：座椅目录缺失 ⇒
+    // ShellSession.buildProcessBuilder 的 `resolveCwdOrFail` 抛 InvalidCwdError ⇒ 本调用
+    // 显式失败（经下方 `Error: …` 通道回到模型），**禁**静默回落工作区根。围栏面
+    // （sandbox=工作区根）本批不动——与 2026-09-05 21:05 裁定相容。
+    val sessionInitialDir = ctx.sessionCwd.orElse(sandboxOpt.map(_.root.toString))
 
     // If background_job_id is provided, enter query/cancel mode
     bgJobId match
       case Some(jobId) =>
-        ShellSession.forSession(sessionId, initialDir = sandboxOpt.map(_.root.toString), sandbox = sandboxOpt).flatMap { shell =>
+        ShellSession.forSession(sessionId, initialDir = sessionInitialDir, sandbox = sandboxOpt).flatMap { shell =>
           if cancelBg then
             shell.cancelBackgroundJob(jobId).map { cancelled =>
               if cancelled then Right(s"[Background job cancelled] Job ID: $jobId")
@@ -453,7 +460,7 @@ Git safety:
             )
           else
             ShellSession
-              .forSession(sessionId, initialDir = sandboxOpt.map(_.root.toString), sandbox = sandboxOpt)
+              .forSession(sessionId, initialDir = sessionInitialDir, sandbox = sandboxOpt)
               .flatMap { shell =>
                 if background then
                   val onHeartbeat = makeHeartbeatCallback(command, desc, ctx)

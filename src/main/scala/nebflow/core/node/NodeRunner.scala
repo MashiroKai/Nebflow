@@ -85,6 +85,12 @@ object NodeRunner:
       * 自身（主仓 .git/worktrees/<name>/ 元数据可直写）。None = 沿用 projectRoot
       * 推导（旧行为）。 */
     sandboxRoot: Option[String] = None,
+    /** **会话初始 cwd**（B5 缺口② · 作者 2026-09-17 M-1 裁定，选项①）：NodeEngine
+      * 两个 spawn 点传座椅路径（worktree 节点 ⇒ 会话 cwd = 座椅，兑现提示词
+      * 「worktree 节点 = worktree 根」）；座椅缺失 ⇒ 该会话 Bash 显式失败
+      * （fail-closed，禁静默回落工作区根）。围栏面（sandboxRoot）语义不动。
+      * 其余 spawn 点不传 ⇒ None ⇒ 旧行为逐字节不变。 */
+    sessionCwd: Option[String] = None,
     /** 项目会话信号（沙箱拆围栏批 S1/R8 解耦）：project 节点 spawn（NodeEngine
       * ×2）/ 分发器 spawn（ProjectActor ×1）置 true——AGENTS.md 注入判据来源，
       * 与沙箱总闸（sandboxEnabled）解耦。默认 false = 旧行为不变。 */
@@ -128,6 +134,7 @@ object NodeRunner:
           flowChainId = p.flowChainId,
           sandboxEnabled = p.sandboxEnabled,
           sandboxRoot = p.sandboxRoot,
+          sessionCwd = p.sessionCwd,
           projectSession = p.projectSession
         ),
         actorName

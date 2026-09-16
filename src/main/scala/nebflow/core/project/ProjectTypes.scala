@@ -547,6 +547,20 @@ case class NodeDef(
     * 在 result，接线后自动投递）——旧单值拓扑经 codec 双读零迁移（"A"→pass 单边、
     * "Nebula"→双通报边、null/缺键→Nil）。扇出/失败信号边表达力见 OutEdge。 */
   out: List[OutEdge] = Nil,
+  /** **待接线队列**（B5 缺口③ · 作者 2026-09-17 M-3 裁定「待接线队列（到点自动接）」，
+    * 选项①）：控制边（`:loop`）此刻指向一个 **running** 目标（输入冻结）时，编辑期
+    * **不再整单拒绝**——该边落此队列，目标离开 running 后由
+    * `NodeEngine.applyDeferredWiring`（既有 30s `TtlTick` 扫描腿）**自动接线** + 落痕
+    * （`wiring-deferred` 登记行 / `wiring-applied` 接线行，见 FlowMapEventLog）。
+    *
+    * 与 [[out]] 的分工：`out` = **已接线**的声明面（barrier / 环检 / 投递认它）；
+    * `pendingOut` = **已声明、待接线**的控制边——三处图不变量一概不认（与 `:loop` 边的
+    * 「图上不连」语义同源），目标 running 期间接上它也零收益（控制边零投递、不进
+    * barrier）。**只有控制边入队**：真实输入边（result/signal）对 running 目标仍拒
+    * （护「输入在启动前定型」的屏障语义）。
+    *
+    * 旧 flow-map.json 无此键 → withDefaults 解码 Nil（零迁移）= 旧行为。 */
+  pendingOut: List[OutEdge] = Nil,
   /** 依赖连接（deps 设计 §1.1，主文档 20260902_flowmap-engine-evolution-design.md）：
     * 下游单侧持有、不回写上游（上游不知道自己被依赖——「不用其输出」的结构体现）。
     * 语义 = 只等上游完成信号（status==completed），不投递上游结果——下游输入 =
