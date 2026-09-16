@@ -172,9 +172,16 @@ function uploadCardEl(item) {
 }
 
 /** **唯一**渲染入口（messages.js 只在 `renderMessages` 里调它一次 ⇒ 好友窗与群窗
- *  共用同一份实现/同一挂载点；设备窗不调）。幂等：重进只重挂容器。 */
+ *  共用同一份实现/同一挂载点；设备窗不调）。幂等：重进只重挂容器。
+ *
+ *  🔴 幂等性 = 本函数的**职责**（不是调用方的）：`renderMessages` 每次渲染都调它，
+ *  而修前只 append、不清理旧容器 ⇒ 同一个会话在 DOM 里**堆叠多个 `.fm-upload-list`**
+ *  （每只都留着上一次 `paint()` 画的那批卡；`paint()` 只重画 `mounted` 指的那只）
+ *  ⇒ 屏幕上同一件附件出**多张**上传卡（作者报障「重复且没有意义」的客户端侧成因之一）。
+ *  `.fm-upload-list` 的唯一创建者就是本函数 ⇒ 清理面在这里天然闭合。 */
 export function renderUploadCards(flow, convId) {
   if (!flow) return;
+  for (const stale of flow.querySelectorAll('.fm-upload-list')) stale.remove();
   const container = el('div', 'fm-upload-list');
   container.dataset.convId = String(convId || '');
   flow.appendChild(container);

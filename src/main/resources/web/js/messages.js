@@ -2417,6 +2417,16 @@ async function sendAttachCurrent(conv, fileList) {
   modalEls.input.value = '';
   syncComposerSend();
   await refreshAfterAttachSend(conv);
+  // 让位（作者 2026-09-16 令「发送附件的感受还不够流畅」· 取证 P1）：服务端权威行
+  // （含气泡内附件卡）已到屏 ⇒ 本地「已发送」上传卡退场 —— 同一次发送在屏上**只剩
+  // 一个附件面**。修前同一次发送占**两个互不相关的面**（上传卡 `data-upload-id` +
+  // 气泡内附件卡 `data-message-id`，两者无共享键），作者读作「重复且没有意义」。
+  // 🔴 复用既有唯一清理点（`clearSettledUploads`，与关窗路径同款实现），不新造第二套。
+  // 🔴 时机放在 `refreshAfterAttachSend` **之后**：刷新链未返回时上传卡仍是唯一可见
+  // 回执（见 refreshAfterAttachSend 的落盘兜底注释），不让屏幕出现「零回执」窗口。
+  // ⚠ 已知边角（如实登记，报告 §⑦）：该刷新链自身吞错 ⇒ 刷新真失败时上传卡同样退场，
+  // 可见回执此时由后续 WS 帧 / 下次开窗补齐（不新增任何重试/轮询面）。
+  clearSettledUploads(conv.conversationId);
 }
 
 /** 附件消息发送后的可见刷新（复用既有增量补拉链 = 唯一取数实现，禁另写尾窗重取）。
