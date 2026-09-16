@@ -164,12 +164,24 @@ export async function resolveLocalFiles(html, dir) {
   /** The local file an `<a href>` points at, '' when it is not a local file.
    *  An `/api/nf-file?path=…` anchor (a replayed card, or hand-written markup)
    *  is decoded back to its path so the click stays on the local-file route
-   *  instead of navigating the frame to the proxy URL. */
+   *  instead of navigating the frame to the proxy URL.
+   *
+   *  2026-09-16 (anchorpath batch): the `path=` value is a QUERY-STRING
+   *  parameter, so a bare `+` means a SPACE there — `decodeURIComponent` alone
+   *  folds NEITHER `+` nor `%2B`, so a JVM-form-encoded space
+   *  (`java.net.URLEncoder` writes a space as `+`, a literal plus as `%2B`; the
+   *  frontend's own `encodeURIComponent` writes them as `%20` / `%2B`) came
+   *  back as a literal `+`. The anchor then carried `data-nf-local-link` naming
+   *  a path that does not exist — a link click opened the wrong path (or the
+   *  unreadable-file placeholder), the same defect family the imgfix batch fixed
+   *  in `nfTicket.js` (`decodePathParam`, nfTicket.js:74-94 — the ONE statement
+   *  of this discipline in the repo; this line follows its criterion: fold the
+   *  bare `+` BEFORE decoding, leave `%2B` alone). */
   const anchorPath = (href) => {
     const h = href || '';
     const proxied = /^\/api\/nf-file\?(?:[^"'#]*&)?path=([^&"']*)/i.exec(h);
     if (proxied) {
-      try { return decodeURIComponent(proxied[1]); } catch (_) { return ''; }
+      try { return decodeURIComponent(proxied[1].replace(/\+/g, ' ')); } catch (_) { return ''; }
     }
     return toPath(h) || '';
   };
