@@ -275,6 +275,20 @@ export default {
   'messages.noMessages': '暂无消息',
   'messages.loadOlderFailed': '更早消息加载失败，请重试',
   'messages.attachUnsupported': '好友窗暂无附件发送入口（附件可正常接收与下载）',
+  // attachcl 批（2026-09-16）：**发送面**上传卡文案（与上面「接收面」的 attach* 文案
+  // 同族但**不共用键**——接收态「上传中，暂不可下载」与本处「我方上传进度」是两件事）。
+  // 进度文案的 `{pct}` 由**真实分块确认**推导（禁假进度）；失败/取消文案一律写清
+  // 「未发送」（fail-closed 可见，禁静默）。
+  'messages.attachProgress': '上传中 {pct}%',
+  'messages.attachSent': '已发送',
+  'messages.attachFailed': '上传失败，未发送',
+  'messages.attachCancel': '取消',
+  'messages.attachCancelled': '已取消，未发送',
+  'messages.attachCancelledRest': '已取消，未上传',
+  'messages.attachNotSentRest': '未上传（前一件失败）',
+  'messages.attachSendFailed': '上传已完成但消息发送失败，请重试',
+  'messages.attachNoFiles': '没有可发送的文件',
+  'messages.attachEmptyFile': '{name} 是空文件（0 字节），未发送',
   // 4b 腿 A-2：附件卡片文案（§B.7 三态可判读；「已过期」与「下载失败」**必须**分得开）
   'messages.attachDownload': '下载',
   'messages.attachDownloading': '下载中…',

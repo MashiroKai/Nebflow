@@ -483,9 +483,16 @@ export async function getMessages(conversationId, { after = 0, limit = 50 } = {}
   return filtered.slice(0, l);
 }
 
-/** POST /api/friends/{friendUserId}/messages {body} → {messageId, conversationId, createdAt} */
-export async function sendFriendMessage(friendUserId, body) {
-  if (!MOCK) return req('POST', `/api/friends/${encodeURIComponent(friendUserId)}/messages`, { body });
+/** POST /api/friends/{friendUserId}/messages {body, attachments?} → {messageId, conversationId, createdAt}
+ *
+ * `attachments`（attachcl 批加性扩面）= **已上传**的附件 id 列表（顺序 = 展示顺序），
+ * 由网关逐字转给服务端。空数组/缺省 ⇒ 请求体与今天**逐字节同形**（不发该键）。
+ * 正文可为空**仅当**带附件（服务端生成占位正文）。 */
+export async function sendFriendMessage(friendUserId, body, attachments) {
+  const payload = Array.isArray(attachments) && attachments.length > 0
+    ? { body, attachments }
+    : { body };
+  if (!MOCK) return req('POST', `/api/friends/${encodeURIComponent(friendUserId)}/messages`, payload);
   await delay();
   const m = mockStore();
   const friend = m.friends.find(f => f.userId === friendUserId);
@@ -959,11 +966,19 @@ export async function getGroupMembers(groupId) {
   return attachSelfId((m.groupMembers[groupId] || []).map((r) => normalizeMemberRow(r, selfId)).filter(Boolean), selfId);
 }
 
-/** POST /api/groups/{id}/messages {body} → SendMessageResponse 同形
+/** POST /api/groups/{id}/messages {body, attachments?} → SendMessageResponse 同形
  *  {messageId, conversationId, createdAt, createdAtMs?, existing?}（补充卡 §5.1）。
- *  🔴 body 只有一个字段：UI 面在协议上无 origin（§5.4 矩阵第一行）。 */
-export async function sendGroupMessage(groupId, body) {
-  if (!MOCK) return req('POST', `/api/groups/${encodeURIComponent(groupId)}/messages`, { body });
+ *  🔴 body 只有一个字段：UI 面在协议上无 origin（§5.4 矩阵第一行）。
+ *
+ *  `attachments`（attachcl 批加性扩面）= **已上传**的附件 id 列表。群路由是**逐字
+ *  转发**腿（`RestApiRoutes.groupSendProxy` 只判 `origin` 一个键）⇒ 该键直抵服务端
+ *  `group_send_message` 的 attachments 校验面（服务端已把附件纳入一期群发）。
+ *  空数组/缺省 ⇒ 请求体与今天逐字节同形。 */
+export async function sendGroupMessage(groupId, body, attachments) {
+  const payload = Array.isArray(attachments) && attachments.length > 0
+    ? { body, attachments }
+    : { body };
+  if (!MOCK) return req('POST', `/api/groups/${encodeURIComponent(groupId)}/messages`, payload);
   await delay();
   const m = mockStore();
   const conv = m.groups.find(g => g.groupId === groupId);

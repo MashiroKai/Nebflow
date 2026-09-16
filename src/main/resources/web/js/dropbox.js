@@ -56,6 +56,10 @@ let pendingUploads = {};
 const ATTACH_MAX_FILE_BYTES = 1073741824;
 const ATTACH_MAX_PER_MESSAGE = 9;
 const ATTACH_MAX_FILE_LABEL = '1024 MB = 1 GiB (1,073,741,824 bytes)';
+// attachcl 批（2026-09-16）：三个常量**导出**给好友/群窗的上传链
+// （`attachUpload.js` 的本地早拒闸）。值/用法零改动 —— 设备面仍读本模块内的同名
+// 常量，两个面因此共用**同一个**上限来源（禁两处各写一个数）。
+export { ATTACH_MAX_FILE_BYTES, ATTACH_MAX_PER_MESSAGE, ATTACH_MAX_FILE_LABEL };
 
 function getAuthToken() {
   return localStorage.getItem(key('token')) || '';
