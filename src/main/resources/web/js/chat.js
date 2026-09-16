@@ -1126,6 +1126,51 @@ export function renderTool(label, summary, content, isError, inputJson, sessionI
   // Default rendering for all other tools
   const icon = isError ? '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#f44336" stroke-width="3"><path d="M18 6L6 18M6 6l12 12"/></svg>'
                        : '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#4caf50" stroke-width="3"><polyline points="20 6 9 17 4 12"/></svg>';
+  //
+  // ── cardguard negative filter (author ruling 2026-09-17 · #687①) ──────────
+  // A tool RESULT whose content carries the card sentinel ANYWHERE — not only
+  // at position 0; the realistic shape is ToolResultGuard's persisted preview,
+  // `<persisted-output>\n…Preview (first 2048 chars):\n___CARD_HTML___{…` —
+  // must never be rendered as raw text into the chat stream. Both routes below
+  // would do exactly that: `renderHighlightedContent` (hljs wraps the whole
+  // string in a <pre>) and the plain `<pre class="tool-body-pre">` fallback.
+  // Route such content to the card path (best effort) or to a safe placeholder;
+  // the raw payload enters the DOM on neither branch.
+  const cgSentinelIdx = typeof content === 'string' ? content.search(/___\w+_HTML___/) : -1;
+  if (cgSentinelIdx >= 0) {
+    const cgLocalLabel = localizeToolLabel(label);
+    const cgLocalSummary = localizeToolSummary(summary, label);
+    const cgLabelParts = cgLocalLabel.split('\n', 2);
+    const cgLabelHtml = escapeHtml(cgLabelParts[0]) + ' &mdash; ' + escapeHtml(cgLocalSummary)
+      + (cgLabelParts.length > 1 ? '<br><span class="tool-detail">' + escapeHtml(cgLabelParts[1]) + '</span>' : '');
+    card.innerHTML = '<span class="icon ' + (isError ? 'err' : 'ok') + '">' + icon + '</span>' +
+      '<div class="content"><div class="label">' + cgLabelHtml + '</div></div>';
+    // (i) Best effort: hand everything from the sentinel onward to the single
+    // registry parser (cardRegistry owns the parse rules — no second copy of
+    // them here). It writes nothing into the container when the payload does
+    // not parse (e.g. the 2048-char preview cut), so probing leaks nothing.
+    const cgCardRow = document.createElement('div');
+    cgCardRow.className = 'row card-content';
+    cgCardRow.dataset.cardguard = 'card';
+    const cgCardContainer = document.createElement('div');
+    cgCardRow.appendChild(cgCardContainer);
+    if (renderWithRegistry(cgCardContainer, content.slice(cgSentinelIdx), label)) {
+      row.after(cgCardRow);
+    } else {
+      // (ii) Safe placeholder — never the raw payload / <persisted-output> body.
+      // Deliberately no "view source" toggle: the raw text stays out of the DOM
+      // entirely, collapsed or not.
+      const cgBody = document.createElement('div');
+      cgBody.className = 'body open';
+      cgBody.dataset.cardguard = 'placeholder';
+      cgBody.textContent = t('chat.toolCardUnavailable');
+      const cgContentEl = card.querySelector('.content');
+      if (cgContentEl) cgContentEl.appendChild(cgBody);
+    }
+    smartScroll();
+    return { type: 'tool', label, summary, content, isError, input: inputJson };
+  }
+
   const detailHtml = buildToolDetail(inputJson, label);
   const delegatePromptHtml = buildDelegatePromptHtml(inputJson);
   // Render full content in body with syntax highlighting (Read/Grep only).
