@@ -7,7 +7,6 @@
     "agents:memory-consolidator",
     "plugins:visual-report",
     "plugins:slideblocks",
-    "plugins:nebflow-plugin-creator",
-    "project:general"
+    "plugins:nebflow-plugin-creator"
   ]
 }
