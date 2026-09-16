@@ -30,12 +30,17 @@ import { ATTACH_MAX_FILE_BYTES, ATTACH_MAX_PER_MESSAGE, ATTACH_MAX_FILE_LABEL } 
 // ── 幂等键（attachkey 批）：**唯一生成点复用**，禁第二套 ────────────────────
 // 作者 2026-09-17 裁定 A：附件腿**不**自建生成器、**不**做独立判重 —— 直接取 P2-b 在
 // `messages.js` 铸键的**同一单点**（`newClientMsgId`，本批按裁定 A 给它加 `export`，
-// 该文件字面 diff 恰 1 处 `-`/`+`）。因此模块图出现 `messages.js ⇄ attachUpload.js`
-// 的**循环 import**：ESM 对循环安全的条件是「绑定在**运行时**读、不在**实例化期**读」
-// —— 本处 `newClientMsgId` 只在 `sendFiles` 运行时调用（彼时两个模块都已完成实例化与
-// 求值），故安全。双向钉（不给 `export` ⇒ 实例化期 `SyntaxError` rc=1／给 ⇒ rc=0 且
-// 循环下取键正常）见 `.nebflow/evidence/20260917_attachkey-impl/esm-cycle.txt`。
-import { newClientMsgId } from './messages.js';
+// 该文件字面 diff 恰 1 处 `-`/`+`）。
+// 🔴 cired 批 2026-09-17（破环）：该单点**不再用静态 import 取**，改为 `sendFiles`
+// 调用点的动态 `import()`（`check-circular.mjs` 的 SCC [2] messages.js↔attachUpload.js
+// ⇒ 本边是**最薄**的一条：导出的绑定只有 1 个、且只在运行时读；反向边 messages.js
+// 从本文件取 5 个绑定且在渲染路径同步消费 ⇒ 薄边选本边，改面最小）。行为零变：
+// 生成点仍是 `messages.js` 的同一个 `newClientMsgId`；`sendFiles` 是 async 动作边界，
+// 调用前 messages.js 必已完成实例化与求值（它正是本模块的导入方），故动态 import
+// 只是读已求值的同一命名空间 —— 不新起模块实例、不重跑求值、无新请求。
+// 历史：先前的静态边安全依据（运行时读、非实例化期读）见
+// `.nebflow/evidence/20260917_attachkey-impl/esm-cycle.txt`（该依据随本改动作废，
+// 本条改由「静态边消失」承担同一目标）。
 
 /** 上传条状态（渲染判据单点；字符串进 `data-upload-state` 供 QA 断言）。 */
 export const UPLOAD_STATE = {
@@ -409,7 +414,11 @@ export async function sendFiles(conv, fileList, text, opts) {
   const files = gate.files;
   // 🔴 动作边界铸键（与 P2-b 的 `messages.js:2348` 同一原则：生成点在**动作**判据处，
   //   不在 API 层 —— API 层分不清「重试」与「用户又想发一批一样的」）。
-  const clientMsgId = (opts && opts.clientMsgId) || newClientMsgId();
+  // 生成点 = `messages.js` 的 `newClientMsgId`（唯一），此处以**动态 import 读同一
+  //   命名空间**取用（破环；见文件头注释）。短路次序逐字不变：`opts.clientMsgId` 在
+  //   时**不触碰生成点** ⇒ 动态 import 也不发生（重试面零新增动作）。
+  const clientMsgId = (opts && opts.clientMsgId)
+    || (await import('./messages.js')).newClientMsgId();
   const action = { conv, files, text, clientMsgId };
   const ids = [];
   for (let i = 0; i < files.length; i += 1) {
