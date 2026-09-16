@@ -18,7 +18,7 @@ if (document.documentElement.dataset.nfEmbedded === '1') {
   throw new Error('[nf] embedded context — boot refused (anti-recursion guard)');
 }
 import { LS_SESSIONS_KEY, LS_MODEL_INFO_KEY } from './state.js';
-import { initSpinner, initMarkdown, smartScroll, renderMarkdownWithMath, isNearBottom, shouldFollowBottom, updateScrollSnapped, initScrollFollow, refreshScrollPill } from './utils.js';
+import { initSpinner, initMarkdown, smartScroll, renderMarkdownWithMath, isNearBottom, shouldFollowBottom, updateScrollSnapped, initScrollFollow, refreshScrollPill, countsAsRealMessage } from './utils.js';
 import { connect, onMessage, sendWs, onReconnect } from './ws.js';
 import {
   setBusy, clearBusy, clearStatus,
@@ -285,6 +285,62 @@ function markSessionUnread(sessionId) {
     updateAgentNotificationDot(agentName);
   }
   window.dispatchEvent(new CustomEvent('session-unread', { detail: { sessionId } }));
+}
+
+// ── 「未读 = 只计真消息」判据（2026-09-16 msunread 批）──────────────────────
+// 口径（作者 2026-09-12「未读 / 新消息计数口径」，出处
+// `~/.nebflow/docs/Nebflow/20260912_204831_unread-count-spec.md` §4 行 10）：
+// **只计真消息** —— thinking、工具调用与结果、系统注入 / 后台回执都不计；
+// 「只跑了工具、没有正文」的 turn（纯工具 turn）**不置**未读；含「真人消息 /
+// 助手可见回复」的 turn 照常置未读。
+//
+// 判据**只有一处**：`utils.js#countsAsRealMessage`（其判据源 = `turnGroup.js` 的
+// 行分类 isTuckableRow / isExcludedRow / isInjectedRow）。本文件**不另立第二套
+// 口径**：下面的投影只把「这个 turn 渲染出来的行」还原成行类，**逐行交回单点去
+// 判**，所以口径要改只需改那一处。
+//
+// 为什么需要投影：`markSessionUnread` 只在 `view === null` 时被调用（该会话不在
+// 主窗 / 弹窗上 —— 见 ws.js 的 hidden-view gating：帧照收、DOM 不建），此时本
+// turn 的行没有 DOM 承载，只活在会话级缓冲里（本文件的 stream 处理器为**所有**
+// 会话积累缓冲：textDelta 743 / toolCallDetected 813 / toolStart 868 / done 的
+// flush 1100-1122）。行类逐字取自 chat.js 的真实渲染点：正文行 `.row ai`
+// （appendAiText）、思考行 `.row ai thinking-row`（appendThinkingDelta）、工具卡
+// `.row tool`（renderTool）——投影只还原**已经存在的内容种类**，不新造种类。
+const TURN_ROW_CLASS = Object.freeze({
+  ai: 'row ai',
+  thinking: 'row ai thinking-row',
+});
+
+/** 非激活会话的「本 turn 有没有真消息」判定：把会话级缓冲还原成行类，逐行问单点。
+ *  输入只取**本 turn 自己的**会话级缓冲（它们在每个终态帧被删除，故不跨 turn）：
+ *   · `state.sessionPendingAiMessages[sid]` —— 工具 / round 边界处切段的正文
+ *     （813/868 只在 `sessionTexts` 非空时 push ⇒ 段内文本必非空）；
+ *   · `state.sessionTexts[sid]` —— 当前轮尚未切段的正文。
+ *  另两条腿**不作证据**（逐条给理由）：
+ *   · 工具腿：`done` 处理开头已清 `state.sessionPendingTools[sid]`（1081），且
+ *     `.row.tool` 本就被单点排除 ⇒ 无需还原；
+ *   · `state.pendingRestore[sid]`：其写入点之一挂在 `textDone` 分支上，而当前后端
+ *     **不发射** `textDone`（`grep textDone src/main/scala` 只命中一处注释）⇒ 该值
+ *     可能是**上一 turn** 留下的（1113），读它会跨 turn 污染判据。
+ *  边界（逐字申报，见本批报告 §局限）：非激活会话里「有真人 / 注入消息但无正文」的
+ *  turn 在本判据下**不可判** —— 该消息行的渲染点（input.js 的 send / drain、
+ *  注入帧的 `renderInjectedBubble`）都在本轮允许面**之外**（input.js 属禁触碰件），
+ *  客户端不留任何 per-turn 痕迹（`turnExpecting` 被 `sessionBusy{busy:true}` 污染，
+ *  不能当证据）。 */
+function turnProducedRealMessage(sid) {
+  if (!sid) return false;
+  const rows = [];
+  const project = (cls) => {
+    const row = document.createElement('div');
+    row.className = cls;
+    rows.push(row);
+  };
+  const segments = state.sessionPendingAiMessages[sid] || [];
+  if (segments.some((seg) => ((seg && seg.text) || '').trim() !== '')) project(TURN_ROW_CLASS.ai);
+  if ((state.sessionTexts[sid] || '').trim() !== '') project(TURN_ROW_CLASS.ai);
+  if ((state.sessionThinkingBuffers[sid] || '').trim() !== '') project(TURN_ROW_CLASS.thinking);
+  // 判据 = 单点，本文件不作任何「哪一行算真消息」的独立判断。
+  return rows.some((row) => countsAsRealMessage(row));
 }
 
 // Show/hide notification dot on an agent avatar
@@ -927,7 +983,12 @@ onMessage('toolArgDelta', (msg, view) => {
 });
 
 // --- Terminal events ---
-// Always clear busySessionId. DOM + status only for active session. Always mark unread for non-active.
+// Always clear busySessionId. DOM + status only for active session. Unread for a
+// NON-active session is gated on the 口径 (2026-09-16 msunread 批): only a turn
+// that produced a real message marks it — see turnProducedRealMessage above.
+// The failure terminals (error / timeout / maxTokens) stay ungated: their
+// terminal row is `.row error` (chat.js:1407/1421), which countsAsRealMessage
+// accepts ⇒ the turn is a real message by the same single criterion.
 
 // Header model info display
 if (!state.sessionModelInfo) state.sessionModelInfo = {};
@@ -1095,6 +1156,9 @@ onMessage('done', (msg, view) => {
     try { localStorage.setItem(LS_MODEL_INFO_KEY, JSON.stringify(state.sessionModelInfo)); } catch(e) {}
     if (view) updateHeaderModelInfo();
   }
+  // 2026-09-16 msunread: 未读判据必须在下面 flush 删掉会话级缓冲**之前**取 ——
+  // 非激活会话没有 DOM，本 turn 的行只活在缓冲里（见 turnProducedRealMessage）。
+  const turnHadRealMessage = view ? false : turnProducedRealMessage(msg.sessionId);
   // Flush any remaining buffered text/thinking for this session
   if (msg.sessionId) {
     if (!view) {
@@ -1178,7 +1242,9 @@ onMessage('done', (msg, view) => {
       title: lastBadge?.querySelector('.duration-badge-time')?.textContent || '',
       sessionId: sid,
     });
-  } else {
+  } else if (turnHadRealMessage) {
+    // 未读门（2026-09-16 msunread）：**只计真消息** ⇒ 纯工具 turn（thinking +
+    // 工具、没有正文，本 turn 不产出任何被 countsAsRealMessage 接受的行）不置未读。
     markSessionUnread(msg.sessionId);
   }
   // Queue drainage handled by clearBusyFor above — no duplicate call here.
@@ -1248,6 +1314,8 @@ onMessage('error', (msg, view) => {
     clearStatus();
   } else {
     saveMsg({type: 'error', text: msg.message}, msg.sessionId);
+    // 未读门（2026-09-16 msunread）在本支**不适用**：失败终态行 = `.row.error`
+    // （chat.js:1407），countsAsRealMessage 计入 ⇒ 本 turn 有真消息。
     markSessionUnread(msg.sessionId);
   }
 });
@@ -1293,6 +1361,8 @@ onMessage('timeout', (msg, view) => {
     renderTimeoutNotice();
     clearStatus();
   } else {
+    // 未读门（2026-09-16 msunread）不适用：超时终态行 = `.row.error`
+    // （renderTimeoutNotice，chat.js:1421）⇒ 被 countsAsRealMessage 计入。
     markSessionUnread(msg.sessionId);
   }
 });
@@ -1320,6 +1390,8 @@ onMessage('maxTokens', (msg, view) => {
     renderError('Max tokens reached — response truncated');
     clearStatus();
   } else {
+    // 未读门（2026-09-16 msunread）不适用：截断终态行 = `.row.error`
+    // （renderError，chat.js:1407）⇒ 被 countsAsRealMessage 计入。
     markSessionUnread(msg.sessionId);
   }
 });
