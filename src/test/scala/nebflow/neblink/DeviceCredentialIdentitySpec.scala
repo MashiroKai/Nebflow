@@ -99,6 +99,21 @@ class DeviceCredentialIdentitySpec extends FunSuite:
     yield DeviceCredential(serverUrl, networkId, deviceId, deviceToken, logto)
   }
 
+  /** 「旧读者，但**不**要求被停写的 `deviceToken`」—— kaiauth 修法批 ②（2026-09-16）
+    * 之后反向兼容建模用：本批只停写该键，身份面/refresh 面的 schema 未动，故这是
+    * 「旧读者 × 新文件」唯一有意义的对照形态（见下面 R3 旧读新 的两段断言）。 */
+  private val preFixCredentialDecoderMinusRetiredToken: Decoder[DeviceCredential] =
+    Decoder.instance { c =>
+      for
+        serverUrl <- c.downField("serverUrl").as[String]
+        networkId <- c.downField("networkId").as[String]
+        deviceId <- c.downField("deviceId").as[String]
+        logto <- c.downField("logto").as[Option[LogtoRefresh]](
+          using Decoder.decodeOption(using preFixLogtoRefreshDecoder)
+        )
+      yield DeviceCredential(serverUrl, networkId, deviceId, "", logto)
+    }
+
   // ── R1 身份面 ──────────────────────────────────────────────────────────
 
   test("R1 identity-only block (id_token, no refresh token) round-trips and feeds the production reader expression") {
@@ -148,8 +163,21 @@ class DeviceCredentialIdentitySpec extends FunSuite:
       .save(baseCred(LogtoRefresh.of(None, Some(syntheticIdToken("oldreadsnew@example.invalid")))))
       .unsafeRunSync()
 
-    val decoded = decode[DeviceCredential](rawOnDisk)(using preFixCredentialDecoder)
-    assert(decoded.isRight, s"pre-fix decoder failed on the new file: ${decoded.fold(_.toString, _ => "ok")}")
+    // ① kaiauth 修法批 ②（2026-09-16）后，新旧 schema 之间**唯一**的差 = 被停写的
+    //    `deviceToken` 键（身份面 / refresh 面一字未动）⇒ 把「旧读者的唯一断裂点 =
+    //    该键本身」显式钉住（作者对该方向的硬要求只有「旧文件可被新码读」；反向兼容
+    //    由 ② 的「减去该键的旧读者」承担 —— 身份面在两个方向上都活着）。
+    val legacyStrict = decode[DeviceCredential](rawOnDisk)(using preFixCredentialDecoder)
+    assert(
+      legacyStrict.isLeft,
+      "a pre-fix reader that REQUIRED the retired deviceToken key is expected to be the ONLY " +
+        s"incompatibility with the new file, got: ${legacyStrict.fold(_ => "left", _ => "right")}"
+    )
+
+    // ② 身份面照旧过桥：减去被停写键的旧读者读得到 identity + refresh 半块（未放宽）。
+    val decoded =
+      decode[DeviceCredential](rawOnDisk)(using preFixCredentialDecoderMinusRetiredToken)
+    assert(decoded.isRight, s"downgrade read failed on the new file: ${decoded.fold(_.toString, _ => "ok")}")
     assertEquals(decoded.toOption.flatMap(_.logto).map(_.refreshToken), Some(""))
     assert(decoded.toOption.flatMap(_.logto).flatMap(_.idToken).isDefined, "identity lost on downgrade read")
   }

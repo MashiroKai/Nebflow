@@ -101,8 +101,11 @@ import FriendCodecs.{given, *}
  * NebLink Server is the discovery mechanism.
  *
  * @param onDeviceTokenRejected Logto silent re-login hook (stage 2): invoked
- *   when the server rejects the long-lived deviceToken (HTTP 401 on the
- *   session exchange). Performs refresh_token → register → persist + hot-swap
+ *   when the server rejects the long-lived deviceToken on the **credential leg**
+ *   (`POST /api/device/session`) — HTTP 401, or the credential-family 403
+ *   `{"error":"Invalid device credential"}` (kaiauth 修法批 ①; the 401-only
+ *   gate was the structural hole that made automatic recovery impossible).
+ *   Performs refresh_token → register → persist + hot-swap
  *   and returns the NEW device token; the client swaps it in and retries the
  *   login ONCE. None (no hook) or a None result surfaces the original error —
  *   the frontend then prompts a fresh login.
@@ -353,7 +356,17 @@ class NeblinkClient(
         )
       }
       // Choose path + body based on whether we have a device credential.
-      (path, body) = activeDeviceToken match
+      //
+      // 🔴 `deviceTokenAtAttempt` 是**判据的调用面锚**（kaiauth 修法批 ①，2026-09-16）：
+      // 下面 `reloginAllowed(..., credentialLeg)` 靠它区分「本次失败发生在哪条腿」——
+      // `Some` = `/api/device/session`（**凭据腿**，服务端唯一以 403
+      // `{"error":"Invalid device credential"}` 作答的腿，跨仓只读
+      // `neblink-server/src/routes.rs:1366-1379`）；`None` = legacy
+      // `/api/device/login`（共享秘密腿，其失败同样是 403，但**不属**凭据族）。
+      // 逐拍现读一次、两条腿共用同一读数 ⇒ 判据与实际发出的请求**必然同源**。
+      deviceTokenAtAttempt = activeDeviceToken
+      credentialLeg = deviceTokenAtAttempt.isDefined
+      (path, body) = deviceTokenAtAttempt match
         case Some(token) =>
           (
             Protocol.DeviceApi.session,
@@ -400,8 +413,16 @@ class NeblinkClient(
         // hook (single-shot anti-loop guarantee — spec'd + mutation-nailed in
         // NeblinkClientReloginSpec; an unbounded loop would re-send the login
         // and re-run the refresh-token rotation forever).
+        //
+        // 🔴 认入面**含凭据族 403**（kaiauth 修法批 ①，2026-09-16 作者「治本」已批）：
+        // 修前只认 `HTTP 401`，而服务端踢出语义（凭据被新注册覆盖 / 无凭据行）恰恰是
+        // `/api/device/session` 的 **403** ⇒ 自愈腿整条够不着（诊断报告 §1-Q3：
+        // 「403 不进任何自愈闸 ⇒ 自动重登与重启都不换新凭据」）。判据的**结构性锚 =
+        // 调用面**（`credentialLeg`，见上方绑定），403 与业务 403 天然不交叉：
+        // 业务 403（`not_blocker` / `not_friend`）只出现在 `withSession` 的 API 面，
+        // 那条腿走 `sessionRecoverable`（要求 body 含 `token`），**不经过本判据**。
         case Left(err) =>
-          if NeblinkClient.reloginAllowed(err, allowRelogin) then
+          if NeblinkClient.reloginAllowed(err, allowRelogin, credentialLeg) then
             onDeviceTokenRejected match
               case None => IO.pure(Left(err))
               case Some(hook) =>
@@ -946,9 +967,23 @@ class NeblinkClient(
   /** Single-flight gate: N concurrent auth rejections must produce exactly ONE
     * re-login (each login kicks the previous session server-side — racing
     * logins would kick each other in a loop). Losers await the winner's
-    * Deferred and reuse its outcome. Shared by EVERY heal caller through
-    * ensureFreshSession. */
-  private val reloginGate: Ref[IO, Option[Deferred[IO, Boolean]]] = Ref.unsafe(None)
+    * outcome and reuse it. Shared by EVERY heal caller through
+    * ensureFreshSession.
+    *
+    * 🔴 **闸是进程级的**（kaiauth 修法批 ③，2026-09-16 作者「治本」已批）：修前它是
+    * 本类的实例级 `Ref`，而 hot-swap（`NeblinkEnrollment.persist` 建新 client）会把
+    * 闸**重置为空** ⇒ 旧实例在飞的 re-login/enroll 不受新实例约束，两次并发 enroll
+    * 互相作废服务端的 `INSERT OR REPLACE` 凭据行（诊断报告 §6 的一条口子）。
+    * 现在闸落在 [[NeblinkSingleFlight]]（companion 级、JVM 内共享）⇒ 同一
+    * `(url, networkId)` 维度**跨 hot-swap 不重置**。类注释里的前提
+    * 「all consumers share one instance」不再需要成立。
+    *
+    * 键取 `url + networkId`（构造期可得，无需 identity IO）：`url` + `networkId`
+    * 就是服务端「一设备一活会话」判据的地址面（deviceId 在单数据根下唯一）。
+    * 命名空间 `session` **故意**与 enroll 的 `enroll` 不同——enroll 的 body 内部会
+    * 发起会话交换，同键会让同一 fiber 在自己的闸上自等（死锁）。 */
+  private val sessionGateKey: String =
+    NeblinkSingleFlight.key("session", config.url, config.networkId)
 
   /**
    * Single-flight session self-heal — ONE re-login per concurrent burst,
@@ -963,8 +998,11 @@ class NeblinkClient(
    * own previous session server-side (one-live-session-per-device), so two
    * gates = two racing logins = each kicking the other's fresh session, which
    * is exactly the self-inflicted churn this batch exists to prevent.
-   * Single-flight is per client instance, and F1 guarantees every consumer
-   * shares one instance (discovery.clientRef / NeblinkService.relayClientOpt).
+   * Single-flight is **process-level** (kaiauth 修法批 ③): the gate lives in
+   * [[NeblinkSingleFlight]] keyed by `(url, networkId)`, so a hot-swap that
+   * builds a FRESH client does NOT reset it — the old premise ("F1 guarantees
+   * every consumer shares one instance") is no longer needed for this gate to
+   * hold.
    *
    * `trigger` only labels the log line (attribution: which consumer noticed).
    * Returns true when a usable fresh session exists afterwards.
@@ -978,26 +1016,37 @@ class NeblinkClient(
       // r1 的失败点正是这条腿：闸本身不拦停摆，登录照发，register 照打。
       case Some(_) => IO.pure(false)
       case None =>
-        Deferred[IO, Boolean].flatMap { mine =>
-          reloginGate
-            .modify {
-              case None         => (Some(mine), Left(mine))
-              case Some(winner) => (Some(winner), Right(winner))
-            }
-            .flatMap {
-              case Left(won) =>
-                // I won the race: re-login exactly once, publish the outcome, and
-                // clear the gate only if it is still mine (a newer winner may have
-                // replaced it while my login was in flight).
-                val run = silentRelogin(trigger).flatMap(ok => won.complete(ok).as(ok))
-                run.guarantee(reloginGate.update {
-                  case Some(g) if g eq won => None
-                  case other               => other
-                })
-              case Right(winner) => winner.get
-            }
-        }
+        // 单飞：赢家跑一次 silentRelogin，并发输家等它的 Bool 并复用。
+        // `handleErrorWith ⇒ false`：silentRelogin 自身从不抛，唯一可能的错误是
+        // **赢家 fiber 被取消**（闸会在 CancellationException 上发布并释放，
+        // 输家由此得到可判读的失败，而不是在一个永不会有结果的 Deferred 上永久挂等）
+        // ——取消 ≠ 新会话已建立，故如实报 false。
+        NeblinkSingleFlight
+          .serialize(sessionGateKey)(silentRelogin(trigger))
+          .handleErrorWith(e =>
+            logger.warn(s"NebLink silent re-login did not complete: ${e.getMessage}").as(false)
+          )
     }
+
+  /** **证明性会话交换**（一次，无重登腿）—— 唯一调用面 =
+    * `NeblinkEnrollment.persistImpl` 的「停摆门证据式解除」步骤。
+    *
+    * 语义 = 「用**当前** `activeDeviceToken` 走一次 `doLoginUnparked`，只看成不成」。
+    * 返回 `true` 的**唯一**含义：这一刻本实例的凭据与服务端的凭据行**对得上**
+    * （换取会话成功）。这正是「新凭据已铸成**且经一次成功交换证明有效**」里的后半句。
+    *
+    * 🔴 为什么**绕过**自动登录停摆门（`autoLoginBlocked`）：
+    *  - 本方法只在「刚铸成新凭据 + 本进程已停摆」时被调用（见 persistImpl 的守卫），
+    *    而停摆恰是**因为这次 enroll 自己**踢掉了自己的旧会话（服务端
+    *    kick-on-re-enroll → `disconnect` 帧 → `markKickParked`）⇒ 若这里也走停摆门，
+    *    新凭据**永远无法被证明**、停摆门永远无法带证据解除 ⇒ 回到「只有人显式登录能
+    *    解锁」的死循环（本批要修的就是它）。
+    *  - **有界**：恰一次请求；`allowRelogin = false` ⇒ **不**进 Logto hook、**不**发
+    *    register、**不**判 401/403 重登；调用点在 enroll 单飞闸内
+    *    （[[NeblinkEnrollment]] 的 `(deviceId, networkId)` 单飞）⇒ 一次 enroll
+    *    ≤ 一次证明交换。**失败路径不解锁**（返回 false ⇒ 停摆门保持）。 */
+  def proveSessionExchange(deviceId: String, deviceName: String, platform: String): IO[Boolean] =
+    doLoginUnparked(deviceId, deviceName, platform, Nil, allowRelogin = false).map(_.isRight)
 
   private def selfHeal[A](err: String, f: String => IO[Either[String, A]]): IO[Either[String, A]] =
     ensureFreshSession("api-auth-reject").flatMap {
@@ -1545,9 +1594,37 @@ object NeblinkClient:
    * forever, burning provider tokens. Regression nails (NeblinkClientReloginSpec):
    * pure-gate quadrants + full-chain single-shot + mutation red for
    * both the gate check and the `allowRelogin = false` call-site constant.
+   *
+   * 🔴 **凭据族 403**（kaiauth 修法批 ①，2026-09-16 作者「治本」已批）：
+   * 修前本闸只认 `HTTP 401`，而服务端「凭据被覆盖 / 无凭据行」的踢出语义是
+   * `POST /api/device/session` 的 **403** `{"error":"Invalid device credential"}`
+   * （跨仓只读 `neblink-server/src/routes.rs:1366-1379`；客户端发它的唯一处 =
+   * `doLoginUnparked` 的凭据腿）⇒ 该 403 落不到任何自愈腿，每拍只剩
+   * `discover → login → 403`。
+   *
+   * 判据形态 = **调用面映射**（作者给二选一里的**更窄者 (a)**）：`credentialLeg`
+   * 由**本次请求实际走的那条腿**决定（`Some` = `/api/device/session`，
+   * `None` = legacy `/api/device/login`），因此
+   *   - **不**依赖响应体字面（与服务端信封无耦合，服务端改文案不失效）；
+   *   - **不**可能把业务 403 纳入：业务 403 只出现在 `withSession` 的 API 面，那条
+   *     腿的闸是 [[sessionRecoverable]]（要求 body 含 `token`），**不调用本方法**；
+   *   - legacy 共享秘密腿的 403（`/api/device/login` 的 `forbidden(&err)`，同源只读
+   *     `routes.rs:1252`）**不**算凭据族 ⇒ 不触发重登（与修前逐字一致）。
+   *
+   * 401 的语义**逐字不变**（无条件通过，与 `credentialLeg` 无关）——
+   * `NeblinkClientReloginSpec` 的纯函数四象限是该语义的回归钉。
    */
-  private[neblink] def reloginAllowed(err: String, allowRelogin: Boolean): Boolean =
-    allowRelogin && isUnauthorized(err)
+  private[neblink] def reloginAllowed(err: String, allowRelogin: Boolean, credentialLeg: Boolean = false): Boolean =
+    allowRelogin && (isUnauthorized(err) || (credentialLeg && isCredentialFamilyRejection(err)))
+
+  /** 凭据族拒收的**状态码判据**（403 = 服务端 `verify_device_credential` 失败的唯一
+    * 应答码）。**单独拆出来**是为了让「调用面 + 状态码」两个因子各自可测：调用面锚
+    * （`credentialLeg`）在 [[reloginAllowed]] 的调用点，状态码在场函数里。
+    *
+    * ⚠️ 本判据**只在凭据腿的失败分支**上有意义（`doLoginUnparked`，
+    * grep 可核唯一调用面）——它不是「任何 403 都该重登」的许可。 */
+  private[neblink] def isCredentialFamilyRejection(err: String): Boolean =
+    err.startsWith("HTTP 403")
 
   /**
    * Phase-2 decision after the hook ran: a fresh token retries the session

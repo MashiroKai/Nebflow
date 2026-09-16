@@ -111,14 +111,34 @@ class PkceLoginSessionSpec extends FunSuite:
     assert(encoded.contains("\"refreshToken\""), "refresh token must serialize")
     assert(!encoded.contains("\"logto\":null"), "absent logto must be omitted, not null")
     val back = io.circe.parser.decode[DeviceCredential](encoded)
-    assertEquals(back, Right(cred))
+    // kaiauth 修法批 ②（2026-09-16）：`deviceToken` 已**停写**（写侧单源化 ⇒ 唯一权威
+    // 来源 = config.json，见 `DeviceCredential` 的 DEPRECATED 注记）⇒ 编码串里不再有它，
+    // 解码回来的该字段为空串。旧断言 `back == Right(cred)` 因被移除的副本必然不等，
+    // 故迁移为**逐面**钉身份面 + refresh 半块（本测试的原判据）完整往返。
+    assert(back.isRight, s"the re-encoded credential must decode: $back")
+    assertEquals(
+      back.toOption.map(c => (c.serverUrl, c.networkId, c.deviceId)),
+      Some(("https://neblink.example", "n-1", "d-1"))
+    )
+    assertEquals(back.toOption.flatMap(_.logto), Some(LogtoRefresh("rt-9", 1700000000000L)))
+    assertEquals(back.toOption.map(_.deviceToken), Some(""), "the retired copy must decode as absent")
   }
 
   test("legacy-shape encoding (logto=None) omits the block entirely") {
     import io.circe.syntax.*
     val encoded =
       DeviceCredential("https://neblink.example", "n-1", "d-1", "tok", None).asJson.spaces2
-    assertEquals(encoded, io.circe.parser.parse(legacyJson).toOption.get.spaces2)
+    // 期望串 = 旧 legacy 形态**减去被停写的 `deviceToken`**（kaiauth 修法批 ②，
+    // 2026-09-16）。原判据（logto 缺席必须**省略**而非写成 null）逐字保留。
+    assertEquals(
+      encoded,
+      io.circe.parser
+        .parse("""{"serverUrl":"https://neblink.example","networkId":"n-1","deviceId":"d-1"}""")
+        .toOption
+        .get
+        .spaces2
+    )
+    assert(!encoded.contains("\"deviceToken\""), "the retired deviceToken copy must not be re-encoded")
   }
 
 end PkceLoginSessionSpec

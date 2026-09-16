@@ -73,7 +73,20 @@ class DeviceCredentialAclSpec extends FunSuite:
     // 缺陷复现点：save 若直接调 Files.setPosixFilePermissions，这里会红
     // （calls 为空 = 分支未被走；calls 含 posix = 走了静默 no-op 分支）。
     assertEquals(port.calls.toList, List("windows"))
-    assertEquals(DeviceCredential.load.unsafeRunSync().map(_.deviceToken), Some("tok-secret"))
+    // kaiauth 修法批 ②（2026-09-16）：`deviceToken` 已**停写**（写侧单源化 ⇒
+    // `config.json` 是唯一权威来源，见 `DeviceCredential` 的 DEPRECATED 注记）
+    // ⇒ 「读回不受影响」改钉**身份面**完整读回 + 盘上**不含**那份被停写的副本。
+    // 旧断言（`load.map(_.deviceToken) == Some("tok-secret")`）钉的是本批要移除的
+    // 写面本身，故迁移；覆盖面不缩反扩（多了「盘上无该键」这一机械判据）。
+    val back = DeviceCredential.load.unsafeRunSync()
+    assertEquals(
+      back.map(c => (c.serverUrl, c.networkId, c.deviceId)),
+      Some(("https://neblink.example", "net-1", "dev-1"))
+    )
+    assert(
+      !Files.readString(credPath).contains("\"deviceToken\""),
+      "the retired deviceToken copy must not be written into neblink/device.json"
+    )
   }
 
   test("T3-R2 POSIX 实测：save 后 device.json 落在 0600（macOS 读数留证）") {
@@ -120,5 +133,11 @@ class DeviceCredentialAclSpec extends FunSuite:
     // 不抛（save 失败时凭证已在盘上，中断写入损失更大）
     DeviceCredential.save(cred, failing, "Windows 11").unsafeRunSync()
     // 文件确实已落盘且可解码 —— 告警路径覆盖的是「盘上有凭证但 ACL 未收窄」这一状态
-    assertEquals(DeviceCredential.load.unsafeRunSync().map(_.deviceToken), Some("tok-secret"))
+    // （kaiauth 修法批 ②：读回断言改钉身份面 + 盘上不含被停写的 deviceToken 副本，
+    // 理由同 T3-R3 处注释）。
+    assertEquals(DeviceCredential.load.unsafeRunSync().map(_.deviceId), Some("dev-1"))
+    assert(
+      !Files.readString(credPath).contains("\"deviceToken\""),
+      "the retired deviceToken copy must not be written into neblink/device.json"
+    )
   }
