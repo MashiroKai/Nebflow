@@ -488,6 +488,21 @@
      · `.fm-login-btn` —— 宿主 JS 在本批禁触碰面内（不得自扩面、不得改类名）⇒ 由本
        文件 `--color-primary-ink` token 承接**同一白墨**（token 值 = 既有白墨的同一
        色，定义处见下；偏离登记见本批报告 §偏离）。
+   🔴 **到达面加固（2026-09-16 加性并 main 后新增；机制 + 登记见报告 §冲突）**：
+     本批开工后 `btnsweep`（按钮方案 A 铺开批）先落地 main（`9b28bbf6d`），其块尾
+     （本文件 :930-941 区）以 **`button.glass-control` (0,1,1)** 给「未单列的面板键」
+     铺**次操作档**（`--btn-secondary-bg: transparent` + 描边 + 次档墨）。四枚
+     `.fm-login-btn` 的宿主标记 = `button.glass-control fm-login-btn` ⇒ **被该毯式
+     规则命中**，而 (0,1,1) > 本族主键块 (0,1,0) ⇒ 实测四键 rest 变透明底 + 次档墨
+     （= 本批交付面**到不了**渲染面）。复核实测：见报告 §冲突 与
+     `evidence/…/readings.after.json`（并 main 后未加固轮）。
+     ⇒ 本族以**同一条声明块的第二选择器** `button.glass-control.fm-login-btn`
+     (0,2,1) 加固（状态规则 (0,2,2)），压过毯式 (0,1,1)/(0,1,2)；
+     🔴 **零排除条款**（不改 btnsweep 的任何规则、不加 `:not()`、不移动其块）、
+     🔴 **零声明复制**（第二选择器与族选择器共用同一条声明块）、
+     🔴 **零整族特异度污染**：`:is()` 的取最大只作用于本规则，`button.glass-control
+     .fm-login-btn` 不匹配 `.login-modal-btn` ⇒ 面板主/次键的特异度关系**逐条不变**
+     （改前 == 改后 逐值，见 compare.json「面键」段）。
    状态色（🔴 零新增字面量色值，全部引用既有 token；机械判据 = `git diff` 新增行
      不含十六进制色值、rgb 函数、hsl 函数字面量）：
        rest     = var(--color-primary)        （= 发送键族 / 主对话框 rest 绿）
@@ -506,9 +521,12 @@
        `main` / `b988e2bfe` / 本支三树同值；其中 `.cfg-btn-primary` 块本体 = 1162-1170、
        白墨 `color` 在 :1166]。状态规则 `:is(…):hover / :active / :disabled`
        同为 (0,2,0)，与既有 `:hover` (0,2,0) 同档；
-     · `.fm-login-btn` 的单类名墨色规则 (0,1,0) 声明在主键块**之前** ⇒ 被
+     · 加固选择器 `button.glass-control.fm-login-btn` (0,2,1) / 状态 (0,2,2) —— 只命中
+       面板侧四键，压过铺开批次档 (0,1,1)/(0,1,2)；
+     · `.fm-login-btn` 的墨色规则（含加固选择器）声明在主键块**之前** ⇒ 被
        `:is(…):disabled` (0,2,0) 的墨色覆盖（禁用态走族内色表达，与面板键同相）；
-     · 次键块 (0,2,0)/(0,3,0) 声明在主键块**之后** ⇒ 同档平局由次键胜出（档位分明）。 */
+     · 次键块 (0,2,0)/(0,3,0) 声明在主键块**之后** ⇒ 同档平局由次键胜出（档位分明）；
+       加固选择器不匹配次键 ⇒ 该胜负关系不受加固影响（逐值读数在案）。 */
 :root {
   /* 主操作白墨（2026-09-16 loginfix 批）：值 = 既有 `.cfg-btn-primary` 白墨声明
      （sidebar.css:1166）的**同一色**，只为让**无法带类**的族成员
@@ -519,13 +537,17 @@
   --color-primary-ink: white;
 }
 
-.fm-login-btn {
+.fm-login-btn,
+button.glass-control.fm-login-btn {
   /* 墨色单条（族内第二路径，见本族头注）：宿主 JS 在禁触碰面内 ⇒ 不带
      `cfg-btn-primary` 类，由本 token 承接**同一白墨**（值 = sidebar.css:1166 的同一色）。
-     声明在主键块之前 ⇒ 禁用态墨色仍由 `:is(…):disabled` (0,2,0) 覆盖。 */
+     声明在主键块之前 ⇒ 禁用态墨色仍由 `:is(…):disabled` (0,2,0) 覆盖。
+     第二选择器 = 到达面加固（特异度载体，(0,2,1) > 铺开批的 `button.glass-control`
+     (0,1,1)），机制见新头注「🔴 到达面加固」；🔴 两选择器共用**同一条声明**，零复制。 */
   color: var(--color-primary-ink);
 }
-:is(.fm-login-btn, .login-modal-btn) {
+:is(.fm-login-btn, .login-modal-btn),
+button.glass-control.fm-login-btn {
   background: var(--color-primary);
   border: 1px solid var(--color-primary-hover);
   box-shadow: var(--glass-send-stack), var(--glass-send-shadow);
@@ -544,16 +566,19 @@
   transition: background 0.15s ease, border-color 0.15s ease,
               box-shadow 0.15s ease, opacity 0.15s ease;
 }
-:is(.fm-login-btn, .login-modal-btn):hover {
+:is(.fm-login-btn, .login-modal-btn):hover,
+button.glass-control.fm-login-btn:hover {
   background: var(--color-primary-hover);
   border-color: var(--color-primary-hover);
   opacity: 1;
 }
-:is(.fm-login-btn, .login-modal-btn):active {
+:is(.fm-login-btn, .login-modal-btn):active,
+button.glass-control.fm-login-btn:active {
   border-color: var(--glass-send-border-active);
   box-shadow: var(--glass-send-stack), var(--glass-send-shadow-active);
 }
-:is(.fm-login-btn, .login-modal-btn):disabled {
+:is(.fm-login-btn, .login-modal-btn):disabled,
+button.glass-control.fm-login-btn:disabled {
   background: var(--glass-send-bg-disabled);
   border-color: var(--glass-send-border-disabled);
   color: color-mix(in srgb, var(--color-text) 50%, transparent);
