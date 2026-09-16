@@ -516,8 +516,10 @@ final class DispatchNotify(
     }.flatMap {
       case CancelledWindowVerdict.Proceed =>
         // Q4：同一 reason 的件在窗口内合并为一次注入（预算按一次注入计）。
+        // cancelsem 批 1：文本构建改为 IO（需现读链归属链 id）——入队与去重链逐字不变。
         waitingSuccessors(node.id).flatMap(waiters =>
-          enqueueNotify(NotifyReason.Cancelled, node, cancelledNotifyTaskText(node, waiters)))
+          cancelledNotifyTaskText(node, waiters).flatMap(text =>
+            enqueueNotify(NotifyReason.Cancelled, node, text)))
       case CancelledWindowVerdict.Suppress =>
         logger.warn(s"Project '$projectName' node '${node.name}' (${node.id}) cancelled during cancel-notify cooldown — suppressed (unmarked; redelivered after cooldown)")
       case CancelledWindowVerdict.CooldownOn =>
@@ -653,7 +655,8 @@ final class DispatchNotify(
         .map(n => s"${n.name}(${n.id})")
     }
 
-  /** cancelled 版通知任务文本（取消静默死锁修复批 **R1 方案 2**）。
+  /** cancelled 版通知任务文本（取消静默死锁修复批 **R1 方案 2**；cancelsem 批 1
+    * 2026-09-17 增补：**source 分流** + 头行 `chain=` 字段）。
     *
     * **与 failed 文本必须区分**（作者裁定明令）：cancelled **不可重激活**
     * （`NodeEdit` 的重激活闸只放行 `Blocked | Failed`，`NodeTools` 描述
@@ -662,13 +665,36 @@ final class DispatchNotify(
     * cancelled 节点触发 reactivate」，而该动作对 cancelled 只走普通编辑路径、
     * 不会复活节点，等于把分发器引向无效动作。本文本给出的三条出路 = 承接 /
     * 改接 / abandon（与设计 §6-R1「处置指引 = 承接（新建承接节点）/ 改接（改该节点
-    * out → Nebula，触发下游 in 镜像 prune）/ abandon」逐条对应）。 */
-  private def cancelledNotifyTaskText(node: NodeDef, waiters: List[String]): String =
+    * out → Nebula，触发下游 in 镜像 prune）/ abandon」逐条对应）。
+    *
+    * == cancelsem 批 1：source 分流（R1 × R4）==
+    * 来源由节点自身 result 反解（[[CancelSource.fromResult]] 单点，与引擎侧 R4 抑制
+    * [[NodeEngine.retryOrNotify]] 的判据同源）：
+    *   - `engine` / `unknown`：**处置指引逐字保留**（承接/改接/abandon——引擎误杀、
+    *     看门狗 giveUp、死会话收殓时「承接重派」确是首选恢复路径）；
+    *   - `user`：取消意图由人/Agent 主动发起 ⇒ 换 [[userCancelledNotifyTaskText]] 的
+    *     **不得重新派发**块（禁承接 = 禁新建 `<原名>-retry` 承接节点、禁编辑复活；
+    *     改接/放弃/上报逐字保留）。文本面禁指令与机制面抑制**配对**：一侧告诉分发器
+    *     不要重派，另一侧引擎不会自动重派。
+    * 头行另**恒带** `chain=<id>`（有则给）：取值单点 [[cancelledChainId]]。 */
+  private def cancelledNotifyTaskText(node: NodeDef, waiters: List[String]): IO[String] =
+    val source = CancelSource.fromResult(node.result)
+    cancelledChainId(node).map { chain =>
+      if source.contains(CancelSource.User) then userCancelledNotifyTaskText(node, waiters, chain)
+      else engineCancelledNotifyTaskText(node, waiters, source, chain)
+    }
+
+  /** engine 变体（**R1 方案 2 原文逐字**；唯一增量 = 头行补 `source=` / `chain=` 两个
+    * 自描述字段，处置指引块与尾行均逐字未改）。 */
+  private def engineCancelledNotifyTaskText(
+      node: NodeDef,
+      waiters: List[String],
+      source: Option[CancelSource],
+      chain: Option[String]
+  ): String =
     val reasonSummary = node.result.map(_.take(500)).getOrElse("(无取消原因)")
-    val waiterLine = waiters match
-      case Nil   => "下游等待者：无下游等待者。"
-      case names => s"下游等待者（cancelled 不投递不结算，且其 barrier 已被「待承接」标记闸住；承接/改接/放弃后自动续跑）：${names.mkString(", ")}。"
-    s"""[dispatch-notify] 节点 '${node.name}' (${node.id}) 已被**取消**（终态 cancelled，reason=cancelled，project=$projectName）。
+    val waiterLine = waiterLineOf(waiters)
+    s"""[dispatch-notify] 节点 '${node.name}' (${node.id}) 已被**取消**（终态 cancelled，reason=cancelled，${CancelSource.SourceKey}=${source.map(CancelSource.code).getOrElse("unknown")}，chain=${chain.getOrElse(DispatchNotify.ChainUnknown)}，project=$projectName）。
        |取消原因：$reasonSummary
        |结果全文：NodeList(detail="${node.id}", project=$projectName)。
        |处置指引（cancelled 是终态，但**与 failed 不同：不可重激活** —— NodeEdit 的重激活闸只放行 blocked/failed，编辑 cancelled 节点只会走普通编辑路径、不会复活它；因此 failed 的「NodeEdit 编辑触发 reactivate 重跑」那套指引对本节点**无效，请勿照用**）：
@@ -680,6 +706,48 @@ final class DispatchNotify(
        |$waiterLine
        |前置检查：本节点可能在 L3 硬恢复中已被引擎复活（status 已非 cancelled）**或被改判 failed**——先 NodeList(detail="${node.id}") 读现状；若已 running/pending 则本轮无需动作（若已是 failed，按 failed 版通知的处置指引处理：首选 NodeEdit 重激活重跑）。
        |无需回报——拓扑与状态已落 Flow Map。""".stripMargin
+
+  /** **user-cancel 变体**（cancelsem 批 1 · R1 × R4）：用户主动取消 ⇒ **不得重新派发**。
+    *
+    * 与 engine 变体共享头两行（`已被**取消**` / `reason=cancelled` / 取消原因 / 结果全文
+    * 指引）与尾两行（前置检查 / 无需回报）；只替换处置指引块。
+    * 既有断言锚逐条保留（`承接` / `改接` / `abandon` / `不可重激活` / `请勿照用`）——
+    * `承接` 以**禁止语**出现（第 1 条「不要承接」）。 */
+  private def userCancelledNotifyTaskText(node: NodeDef, waiters: List[String], chain: Option[String]): String =
+    val reasonSummary = node.result.map(_.take(500)).getOrElse("(无取消原因)")
+    val waiterLine = waiterLineOf(waiters)
+    s"""[dispatch-notify] 节点 '${node.name}' (${node.id}) 已被**取消**（终态 cancelled，reason=cancelled，${CancelSource.SourceKey}=${CancelSource.UserCode}，chain=${chain.getOrElse(DispatchNotify.ChainUnknown)}，project=$projectName）—— **${DispatchNotify.UserCancelLead}**。
+       |取消原因：$reasonSummary
+       |结果全文：NodeList(detail="${node.id}", project=$projectName)。
+       |处置指引（source=${CancelSource.UserCode} = **${DispatchNotify.UserCancelLead}**：本次取消由人/Agent 主动发起（面板 `cancelAgent` / `AgentControl` cancel / 「取消任务」入口），**不是**引擎看门狗处置。取消意图必须被尊重，**${DispatchNotify.NoReDispatchPhrase}**——引擎侧已同步抑制「失败自动重试 ↔ 本节点」的重新武装。cancelled 是终态：**不可重激活** —— NodeEdit 的重激活闸只放行 blocked/failed，编辑 cancelled 节点只会走普通编辑路径、不会复活它；照 failed 那套指引（编辑重跑 / 新建承接节点）会把用户刚停下的工作重新跑起来，**请勿照用**）：
+       |1. **不要承接**（严禁新建 `<原名>-retry` / 语义新名承接节点，也严禁编辑本节点试图复活）：若确需恢复这条轨，只能等用户在本会话中明确要求之后（Nebula 或本项目收到新指令）再动手，不要自行重派。
+       |2. 改接（该轨确实不再需要）：**普通取消路径引擎已自动处理**——取消终态写点即把本节点 out 摘除并改接 Nebula（下游 in 镜像随之 prune，下游登记「待承接」标）。若下游 in 里仍见本节点，NodeEdit 把本节点 out 改为 Nebula 即可（幂等）。
+       |3. 放弃该轨：NodeEdit abandon=true 标记放弃；下游的「待承接」标记仍需按 1/2 处置，否则其 barrier 永久停等。
+       |4. 需人工/外部条件 → 在你的最终输出中写明上报内容（自动投递 Nebula）。
+       |$waiterLine
+       |前置检查：本节点可能在 L3 硬恢复中已被引擎复活（status 已非 cancelled）**或被改判 failed**——先 NodeList(detail="${node.id}") 读现状；若已 running/pending 则本轮无需动作（若已是 failed，按 failed 版通知的处置指引处理：首选 NodeEdit 重激活重跑）。
+       |无需回报——拓扑与状态已落 Flow Map。""".stripMargin
+
+  /** 取消终态写点之后的**链归属**取值单点（R1 头行 `chain=`）：
+    * ① 先按节点自身现读（[[FlowMapStore.chainIdOf]]，链级抽象 P0 单点）；
+    * ② 取消路径已把本节点 `out` 改接 Nebula 且 prune 了下游 `in` 镜像 ⇒ 本节点常自成
+    *   单成员分量（① 恒 None），此时回落「仍把本节点登记在 `pendingSuccession`
+    *   （「待承接」槽位）里的下游」所在链 —— 那是用户视角里「被取消的那条链」的残余分量；
+    * ③ 两处皆无 ⇒ None（单节点链 / 未归属）⇒ 文本显示 [[ChainUnknown]]。 */
+  private def cancelledChainId(node: NodeDef): IO[Option[String]] =
+    store.chainIdOf(node.id).flatMap {
+      case some @ Some(_) => IO.pure(some)
+      case None =>
+        store.snapshot
+          .map(_.nodes.values.filter(_.pendingSuccession.contains(node.id)).map(_.id).toList.sorted.headOption)
+          .flatMap(_.traverse(store.chainIdOf).map(_.flatten))
+    }
+
+  /** 下游等待者行（两变体共用单点，禁二次派生）。 */
+  private def waiterLineOf(waiters: List[String]): String =
+    waiters match
+      case Nil   => "下游等待者：无下游等待者。"
+      case names => s"下游等待者（cancelled 不投递不结算，且其 barrier 已被「待承接」标记闸住；承接/改接/放弃后自动续跑）：${names.mkString(", ")}。"
 
   /** failed 版通知任务文本（2026-09-07 批设计 §2.3 + 作者 09:24 裁定③——failed 可
     * 重激活重跑：reactivate 为首选处置，换名新建降为换基线/重派备选）：err 摘要 +
@@ -705,6 +773,14 @@ final class DispatchNotify(
 object DispatchNotify:
   /** 链级通知预算默认值（设计约束③建议值；completion/failed 同值独立分账）。 */
   val DefaultBudget: Int = 5
+
+  /** **R1/R4 文本契约锚（cancelsem 批 1，2026-09-17）**：user-cancel 变体的可判读标记
+    * （通知文本与 spec / 复核位恒同源引用；改这两条即改对外契约，须同步改判据）。 */
+  val UserCancelLead: String = "用户主动取消"
+  val NoReDispatchPhrase: String = "不得重新派发"
+
+  /** `chain=` 字段的「无链归属」显示值（单节点链 / 已出双区）。 */
+  val ChainUnknown: String = "(单节点链/未归属)"
 
   /** 打包窗口默认值（Q4 裁定，2026-09-11 任务分发器收件规则批）：写死 5s。
     * 语义 = 同 reason 的件在该窗口内到达即合并为**一次注入**，并按「一次注入」

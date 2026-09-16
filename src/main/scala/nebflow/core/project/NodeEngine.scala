@@ -5173,11 +5173,36 @@ class NodeEngine(
       _ <- retryOrNotify(node, err)
     yield ()
 
-  /** P2 retry 触发判定（spec §2.3）：三态分流见 deliverFailed 尾注。 */
+  /** P2 retry 触发判定（spec §2.3）：三态分流见 deliverFailed 尾注。
+    *
+    * **R4（cancelsem 批 1 · 2026-09-17）：用户主动取消的上游不得被重新武装** —— 第四态
+    * 「抑制」：`retry.upstream` 是**用户**（人/Agent）主动取消的节点
+    * （[[CancelSource.isUserCancelled]]）⇒ 本次自动重试**整腿不触发**（既不重激活本节点、
+    * 也不重跑上游），本节点留 failed 并走既有 failed 回流告知分发器；抑制事实落
+    * `retry` 审计事件 + WARN。判据单点 = 上游自身 `result` 的 source 前缀
+    * （[[CancelSource.fromResult]]，禁二次派生）。
+    *
+    * 为什么是「整腿不触发」而非「只跳过上游重激活」：后者会让本节点在**缺轨**（上游已
+    * 被取消终态写点摘除出 in 镜像）状态下被重跑——白烧一轮后再次 failed，正是用户报的
+    * 「还在重试」形态；而用户取消表达的意图就是「这条轨停下」。
+    * **引擎发起**的取消（L3 硬恢复 / 看门狗 giveUp / 死会话收殓）**语义逐条不变**
+    * （照旧重激活上游，与 L3 恢复链、RetryCap 预算链零交互）；source **不可判定**
+    * （R2 落地前的旧数据 / abandon 不写 result）⇒ 保持现状不抑制（语义选择项，
+    * 见批报告待拍板栏，禁自裁）。 */
   private def retryOrNotify(node: NodeDef, err: String): IO[Unit] =
     node.retry match
       case None => dispatchNotify.notifyTerminal(node, NotifyReason.Failed)
-      case Some(policy) if node.gen < policy.max => retryReactivate(node, policy, err)
+      case Some(policy) if node.gen < policy.max =>
+        store.getNode(policy.upstream).flatMap {
+          case Some(up) if up.status == NodeLifecycle.Cancelled && CancelSource.isUserCancelled(up.result) =>
+            val note =
+              s"auto-retry suppressed: retry.upstream '${up.name}' (${up.id}) was cancelled by the user " +
+                s"(source=user) — a user cancel is never re-armed; node stays failed (no self-reactivation, gen stays ${node.gen}/${policy.max})"
+            FlowMapEventLog.append(workspace, projectName, node.id, "retry", note) *>
+              logger.warn(s"Node '${node.name}' (${node.id}) $note") *>
+              dispatchNotify.notifyTerminal(node, NotifyReason.Failed)
+          case _ => retryReactivate(node, policy, err)
+        }
       case Some(_) =>
         dispatchNotify.notifyTerminal(node, NotifyReason.Failed) *>
           feedbackRouter.routeRetryCap(node, err)
@@ -5252,7 +5277,13 @@ class NodeEngine(
     * task/description/in/out/deps/loop/retry）：result 清（旧产物不作投递，重跑产出
     * 全新投递）、deliveredTo/nebulaDeliveredAt 清（重跑完成后重新投递+记账）、时间戳
     * 复位；failed 上游轮次历史复位，completed 上游轮次字段原样。R2 竞态守卫：fresh
-    * 仍处重激活前看到的终态才写（并发人工重激活/abandon → 拒写）。 */
+    * 仍处重激活前看到的终态才写（并发人工重激活/abandon → 拒写）。
+    *
+    * **R4 输入域（cancelsem 批 1）**：本方法的唯一生产调用方 = [[retryReactivate]] 的
+    * retry.upstream 腿，而「**用户主动取消**」的上游已在 [[retryOrNotify]] 被整腿抑制
+    * ⇒ 本方法的输入域**不含** user-cancel 节点（判据单点 [[CancelSource.isUserCancelled]]）；
+    * 引擎发起取消（Cancelled ∧ source=engine/不可判定）与 completed/failed/blocked 照旧
+    * 入域——「某轨是否可以重新武装」的裁决点只有一个（retryOrNotify），本方法只做写。 */
   private def reactivateForRetry(up: NodeDef, now: Long): IO[Unit] =
     store.mutate { st =>
       st.nodes.get(up.id) match
