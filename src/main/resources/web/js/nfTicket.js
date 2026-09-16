@@ -71,6 +71,28 @@ export function nfFileUrlRe() {
   return /\/api\/nf-file\?path=[^"'\s)<>,;]+/g;
 }
 
+/** Decode one `path=` query value into the filesystem path it names.
+ *
+ *  A bare `+` in a query string means a SPACE — both encoders in this chain
+ *  agree on that: the tools build the URL with the JVM form encoder
+ *  (`java.net.URLEncoder`, space → `+`, literal plus → `%2B`) and the frontend
+ *  builds its own with `encodeURIComponent` (space → `%20`, literal plus →
+ *  `%2B`). `decodeURIComponent` alone folds NEITHER, so a JVM-encoded space
+ *  stayed a literal `+`: the mint was asked for `/Users/…/Claude+code/…`, the
+ *  server saw a path that does not exist, the candidate came back rejected, the
+ *  markup kept its ticket-free URL and the image answered 401 — the author's
+ *  card rendered its `img could not be loaded` placeholder (2026-09-16 imgfix
+ *  batch). Folding `+` first is correct for every producer here; `%2B` (a real
+ *  plus in a filename) is untouched.
+ *  @param {string} raw @returns {string|null} null when the escapes are malformed */
+function decodePathParam(raw) {
+  try {
+    return decodeURIComponent(String(raw).replace(/\+/g, ' '));
+  } catch (e) {
+    return null;
+  }
+}
+
 /** Decoded `path` values referenced by a chunk of HTML (the mint candidates).
  *  Empty set ⇒ zero mint requests (§4.3 F1). */
 export function nfFilePathsIn(html) {
@@ -79,7 +101,8 @@ export function nfFilePathsIn(html) {
   String(html || '').replace(nfFileUrlRe(), (url) => {
     const q = /[?&]path=([^&]*)/.exec(url);
     if (q) {
-      try { out.add(decodeURIComponent(q[1])); } catch (e) { /* malformed — skip */ }
+      const p = decodePathParam(q[1]);
+      if (p !== null) out.add(p); // malformed escapes — skip
     }
     return url;
   });
@@ -94,8 +117,8 @@ export function injectTickets(html, tickets) {
     if (/[?&]ticket=/.test(url)) return url;
     const q = /[?&]path=([^&]*)/.exec(url);
     if (!q) return url;
-    let p;
-    try { p = decodeURIComponent(q[1]); } catch (e) { return url; }
+    const p = decodePathParam(q[1]);
+    if (p === null) return url;
     const t = tickets.get(p);
     return t ? url + '&ticket=' + encodeURIComponent(t) : url;
   });

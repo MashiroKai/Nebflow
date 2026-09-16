@@ -233,3 +233,53 @@ class PopToolFileRefSpec extends FunSuite:
     assert(d.contains("fileRefs"), "the description must name the counters")
     assert(d.contains("deferred"), "the delayed path must be documented")
     assert(d.contains("exempt"), "the exemption must be documented")
+
+  // ── ⑤ 直开图片腿（imgfix 批，2026-09-16） ─────────────────
+  //
+  // Author case (sha256 f94d0e04…, 512479 B): Pop on a PNG under
+  // `<dataRoot>/docs/**` showed viewers/image.js' "File may be corrupted or not
+  // a valid image format." panel. The file was intact — the viewer fetched it
+  // through /api/nf-file, whose per-path ticket the gateway mints only for
+  // paths its credential-namespace policy serves (the data root serves
+  // `projects/ uploads/ plots/ workspace-items/ voice-models/`, NOT `docs/`),
+  // so the URL went out ticket-free and the GET answered 401. A directly-opened
+  // image now carries its bytes in the payload — same inline policy as the HTML
+  // `<img>` pass.
+
+  /** Direct-file Pop (`filePath` = the file itself, no HTML). */
+  private def popDirect(name: String, fileName: String, bytes: Array[Byte]): (String, Json) =
+    val dir = tempDir(name)
+    val file = dir / fileName
+    os.write.over(file, bytes)
+    val buf = scala.collection.mutable.ListBuffer.empty[Json]
+    PopTool.call(JsonObject("filePath" -> file.toString.asJson), captureCtx(buf)).unsafeRunSync() match
+      case Left(err)   => fail(s"Pop failed: ${err.message}")
+      case Right(text) => (text, buf.head)
+
+  test("direct-open: an image ≤5MB rides in the payload as a data: URI (the viewer needs no request)"):
+    val bytes = Array.tabulate(64)(i => (i * 7).toByte)
+    val (text, msg) = popDirect("direct-inline", "shot.png", bytes)
+    val item = msg.hcursor.downField("item")
+    assertEquals(item.get[String]("itemType").toOption, Some("image"))
+    val uri = item.get[String]("objectUrl").toOption.getOrElse(fail("objectUrl expected on the popFile item"))
+    assert(uri.startsWith("data:image/png;base64,"), uri.take(40))
+    assertEquals(
+      java.util.Base64.getDecoder.decode(uri.drop("data:image/png;base64,".length)).toSeq,
+      bytes.toSeq,
+      "the embedded bytes are the file's bytes"
+    )
+    assertEquals(text, "Opened shot.png in Canvas.", "an embedded image is not a defect — no counters")
+
+  test("direct-open: an image over 5MB keeps metadata-only (the ticket leg still serves it)"):
+    val bytes = Array.fill(5 * 1024 * 1024 + 1)(0x44.toByte)
+    val (_, msg) = popDirect("direct-big", "big.png", bytes)
+    val item = msg.hcursor.downField("item")
+    assertEquals(item.get[String]("objectUrl").toOption, None, "outside the inline policy: no embedded bytes")
+    assertEquals(item.get[Long]("size").toOption, Some(5L * 1024 * 1024 + 1))
+
+  test("direct-open: a non-image binary file is unchanged (no objectUrl, no content)"):
+    val (_, msg) = popDirect("direct-pdf", "doc.pdf", Array.fill(32)(0x25.toByte))
+    val item = msg.hcursor.downField("item")
+    assertEquals(item.get[String]("itemType").toOption, Some("pdf"))
+    assertEquals(item.get[String]("objectUrl").toOption, None)
+    assertEquals(item.get[String]("content").toOption, Some(""))

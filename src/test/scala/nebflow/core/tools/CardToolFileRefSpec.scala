@@ -78,21 +78,36 @@ class CardToolFileRefSpec extends FunSuite:
 
   // ── ① 正控 ──────────────────────────────────────────────
 
-  test("positive control: `~`-rooted existing image is proxied (author's ref shape)"):
+  test("positive control: `~`-rooted existing image is embedded (author's ref shape)"):
     withHomeFile { (file, ref) =>
       val p = card(s"""<img src="$ref" alt="plot"/>""")
       assertEquals(warningsOf(p), Nil, "a healthy reference must NOT warn")
-      assertEquals(refs(p, "proxied"), 1)
+      assertEquals(refs(p, "inlined"), 1)
+      assertEquals(refs(p, "proxied"), 0, "imgfix batch: an image ≤5MB no longer needs /api/nf-file")
       assertEquals(refs(p, "failed"), 0)
-      assertEquals(htmlOf(p), s"""<img src="/api/nf-file?path=${encode(file.toString)}" alt="plot"/>""")
+      assert(htmlOf(p).startsWith("""<img src="data:image/png;base64,"""), htmlOf(p))
+      assert(htmlOf(p).endsWith(""" alt="plot"/>"""), "the rest of the tag is untouched")
     }
 
-  test("positive control: absolute `/`-rooted existing file is proxied"):
+  test("positive control: absolute `/`-rooted existing image is embedded"):
     withTempFile { file =>
       val p = card(s"""<img src="${file.toString}"/>""")
       assertEquals(warningsOf(p), Nil)
-      assertEquals(refs(p, "proxied"), 1)
-      assertEquals(htmlOf(p), s"""<img src="/api/nf-file?path=${encode(file.toString)}"/>""")
+      assertEquals(refs(p, "inlined"), 1)
+      assert(htmlOf(p).startsWith("""<img src="data:image/png;base64,"""), htmlOf(p))
+    }
+
+  test("positive control: a non-image file on the same resource face is still proxied"):
+    withTempFile { png =>
+      val css = png.getParent.resolve(s"cardref-${png.getFileName}.css")
+      Files.write(css, "body{}".getBytes(StandardCharsets.UTF_8))
+      try
+        val r = card(s"""<img src="${css.toString}"/>""")
+        assertEquals(warningsOf(r), Nil)
+        assertEquals(refs(r, "proxied"), 1)
+        assertEquals(refs(r, "inlined"), 0)
+        assertEquals(htmlOf(r), s"""<img src="/api/nf-file?path=${encode(css.toString)}"/>""")
+      finally Files.deleteIfExists(css)
     }
 
   test("positive control: `href` stylesheet reference is proxied too"):
@@ -232,7 +247,8 @@ class CardToolFileRefSpec extends FunSuite:
       val html = s"""<div>x</div><img src="${file.toString}"/><img src="${file.toString}"/>"""
       val p = card(html)
       assertEquals(warningsOf(p), Nil)
-      assertEquals(refs(p, "proxied"), 2)
+      assertEquals(refs(p, "inlined"), 2)
+      assertEquals(refs(p, "proxied"), 0)
       assertEquals(refs(p, "failed"), 0)
     }
 
@@ -251,10 +267,11 @@ class CardToolFileRefSpec extends FunSuite:
       Files.write(css, "body{}".getBytes(StandardCharsets.UTF_8))
       try
         val p = card(s"""<link rel="stylesheet" href="${css.toString}"/><img src="${src.toString}"/>""")
-        assertEquals(refs(p, "proxied"), 2, "both references are replaced")
+        assertEquals(refs(p, "proxied"), 1, "the stylesheet href keeps the proxy URL")
+        assertEquals(refs(p, "inlined"), 1, "the image is embedded (imgfix batch)")
         assertEquals(warningsOf(p), Nil)
         assert(htmlOf(p).contains(s"""/api/nf-file?path=${encode(css.toString)}"""))
-        assert(htmlOf(p).contains(s"""/api/nf-file?path=${encode(src.toString)}"""))
+        assert(htmlOf(p).contains("""img src="data:image/png;base64,"""), htmlOf(p))
       finally deleteRecursively(dir)
     }
 
