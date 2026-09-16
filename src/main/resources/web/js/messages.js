@@ -631,6 +631,26 @@ function box_rows() {
   return document.querySelectorAll('#fm-conversations .fm-conv-row');
 }
 
+/** 会话列表**单行**就地重打（r2：名册到达时与窗头重打**并列**的那一条腿）。
+ *  🔴 为什么必须单独一条腿：`convRow()` 的名册优先序**只在渲染时求值**，而列表渲染
+ *  由刷新事件驱动 ⇒ 名册晚于首帧到达时，「窗头已是组合头像 / 列表仍是首字母」会一直
+ *  错位到下一次刷新事件（两腿不同源）。本函数把名册到达**接进列表腿的因果链**。
+ *  🔴 只换该行 DOM（不整表重建）：其他行的滚动位置、键盘焦点、`aria-selected` 面零扰动；
+ *  焦点原在该行 ⇒ 迁移到新行（键盘可达性不回归，与 `closeChat` 的 A18 回找同语义）。
+ *  行不在场（面板未开 / 行已被换掉）或会话不在册 ⇒ 无操作（幂等，零新增请求）。 */
+function rerenderConvRow(conversationId) {
+  const cid = String(conversationId);
+  const box = document.getElementById('fm-conversations');
+  const old = box && box.querySelector(`.fm-conv-row[data-conversation-id="${CSS.escape(cid)}"]`);
+  if (!old) return;
+  const conv = conversations.find(c => String(c.conversationId) === cid);
+  if (!conv) return;
+  const focused = document.activeElement === old;
+  const next = convRow(conv);
+  old.replaceWith(next);
+  if (focused) next.focus();
+}
+
 // ── Chat modal (§2.3/§3.3) ───────────────────────────────
 function closeChat() {
   // Every close path (ESC, backdrop, ×, post-send) funnels through here —
@@ -916,6 +936,11 @@ async function hydrateGroupSenderNames(conv) {
     groupMemberAvatars.set(String(conv.conversationId), cells);
     // 名册到达 ⇒ 窗头组合头像就地重打（同一次拉取的产物，零新增请求）。
     refreshOpenGroupHeaderAvatar();
+    // r2（判词 V1 的根因）：**列表腿同一时刻重打**。窗头与列表行**共用同一两级优先序**
+    // （名册 → 会话行字段 → 首字母）⇒ 两条腿必须挂在**同一因果链**上；只重打窗头会让
+    // 列表停在首字母直到下一次刷新事件（两侧逐格不等）。同一次拉取的产物 ⇒ 零新增请求、
+    // 零新 CSS，不动数据面/接口。
+    rerenderConvRow(conv.conversationId);
     // 就地回填：名册晚于首帧到达时，补齐已渲染气泡的发送者名（幂等）。
     if (modalEls && openConvId === conv.conversationId) {
       for (const s of modalEls.flow.querySelectorAll('.fm-msg-sender[data-sender-id]')) {
