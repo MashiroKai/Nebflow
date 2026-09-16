@@ -2,6 +2,6 @@
   "$schema": "https://agent-plugins.org/schemas/1.0.0/plugin.schema.json",
   "name": "visual-report",
   "version": "1.2.0",
-  "description": "可视化汇报与人读化报告包——节点获得用专业工具（matplotlib/graphviz/plotly）出图、把人读化报告写成给人读的一屏结论、落盘交付并给绝对路径的能力（展示与打开归 Nebula，不调用 Pop）。适用于画图表、画架构图、画流程图、数据可视化、出图配图、做可视化汇报、写给人看的汇报、交付文档、验收报告、调研报告、复盘报告、写给作者的总结、报告太长要压缩、过程件与交付件分开等任务。内含 skills：visual-report（图表/架构图/流程图生成规范：配色、排版、标注、布局审美、单文档 ≤3 图预算）、human-report（人读化报告规范：读者轴落位、三级体量预算、四段骨架、五场景档位、交付通道）。不适用于插件封装（另配 nebflow-plugin-creator）；HTML 卡片样式另配 design-cards。组件面：无 mcp.json、无工具扩展。",
+  "description": "可视化汇报与人读化报告包——节点获得用专业工具（matplotlib/graphviz/plotly）出图、把人读化报告写成给人读的一屏结论、落盘交付并给绝对路径的能力（展示与打开归 Nebula，不调用 Pop）。适用于画图表、画架构图、画流程图、数据可视化、出图配图、做可视化汇报、写给人看的汇报、交付文档、验收报告、调研报告、复盘报告、写给项目负责人的总结、报告太长要压缩、过程件与交付件分开等任务。内含 skill：visual-report（图表/架构图/流程图生成规范：配色、排版、标注、布局审美、单文档 ≤3 图预算；人读交付体例：四段骨架、体量预算；md 规则：图片嵌入、可跳转目录、LaTeX 公式）。不适用于插件封装（另配 nebflow-plugin-creator）；HTML 卡片样式另配 design-cards。组件面：无 mcp.json、无工具扩展。",
   "author": {"name": "Nebflow"}
 }
