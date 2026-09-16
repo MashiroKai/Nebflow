@@ -738,7 +738,6 @@ export default {
 
   // Model fields in modal
   'model.idPlaceholder': 'Model ID',
-  'model.maxTokensPlaceholder': 'Max tokens',
   'model.contextPlaceholder': 'Context',
   'model.add': '+ Add Model',
 

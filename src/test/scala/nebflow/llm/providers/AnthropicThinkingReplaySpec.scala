@@ -147,7 +147,7 @@ class AnthropicThinkingReplaySpec extends CatsEffectSuite:
                 baseUrl = s"http://127.0.0.1:$port",
                 apiKey = "test",
                 protocol = LlmProtocol.Anthropic,
-                models = List(ModelConfig("deepseek-v4-flash", maxTokens = 1024, vision = Some(false)))
+                models = List(ModelConfig("deepseek-v4-flash", vision = Some(false)))
               )
             )
           )

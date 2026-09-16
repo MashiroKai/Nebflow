@@ -466,10 +466,19 @@ object LlmInterface:
                   candidate =>
                     val cappedThinking = req.thinking.map { t =>
                       t.hcursor.downField("budget_tokens").as[Int] match
-                        case Right(budget) if budget > candidate.maxTokens / 2 =>
+                        // Clamp at the internal ceiling (maxcfg batch 2026-09-16): the budget
+                        // no longer follows the removed per-model `maxTokens` config — the old
+                        // `maxTokens / 2` clamp cut "high" thinking (32768) to 8192 with the
+                        // default config, which OpenAiAdapter.budgetToEffort then read as the
+                        // "medium" effort class. Defaults.MaxThinkingBudget equals the highest
+                        // budget the product can produce, so no reachable configuration is
+                        // clamped; the clamp still bounds legacy / hand-edited values (the
+                        // original reason it exists: providers such as zhipu/glm crash when
+                        // budget_tokens exceeds their limit).
+                        case Right(budget) if budget > Defaults.MaxThinkingBudget =>
                           t.deepMerge(
                             io.circe.Json.obj(
-                              "budget_tokens" -> io.circe.Json.fromInt(candidate.maxTokens / 2)
+                              "budget_tokens" -> io.circe.Json.fromInt(Defaults.MaxThinkingBudget)
                             )
                           )
                         case _ => t
@@ -489,7 +498,6 @@ object LlmInterface:
                           effectiveMessages,
                           candidate.model,
                           req.tools,
-                          Some(candidate.maxTokens),
                           cappedThinking,
                           req.systemStable,
                           req.systemDynamic,
@@ -654,16 +662,24 @@ object LlmInterface:
                                   // cycle back through health check (will block if all Down)
                                   attemptWithHealthCheck
                                 case candidate :: rest =>
-                                  // Cap thinking budget to fit within candidate's maxTokens.
-                                  // Some providers (e.g. zhipu/glm-5.1 with maxTokens=32000) crash
-                                  // when budget_tokens exceeds their limit.
+                                  // Clamp the thinking budget at the internal ceiling (maxcfg batch
+                                  // 2026-09-16). The budget no longer follows the removed
+                                  // per-model `maxTokens` config: the old `maxTokens / 2` clamp
+                                  // (8192 with the old default) silently downgraded "high"
+                                  // thinking (32768) to the "medium" effort class via
+                                  // OpenAiAdapter.budgetToEffort, and left the Anthropic face with
+                                  // a budget that no longer matched its output cap.
+                                  // Defaults.MaxThinkingBudget = the highest budget the product can
+                                  // produce ⇒ no reachable configuration is clamped; the clamp
+                                  // still bounds legacy / hand-edited values (its original
+                                  // purpose: providers such as zhipu/glm crash when budget_tokens
+                                  // exceeds their limit).
                                   val cappedThinking = req.thinking.map { t =>
                                     t.hcursor.downField("budget_tokens").as[Int] match
-                                      case Right(budget) if budget > candidate.maxTokens / 2 =>
-                                        // Cap thinking budget to half of maxTokens (leaving room for output)
+                                      case Right(budget) if budget > Defaults.MaxThinkingBudget =>
                                         t.deepMerge(
                                           io.circe.Json.obj(
-                                            "budget_tokens" -> io.circe.Json.fromInt(candidate.maxTokens / 2)
+                                            "budget_tokens" -> io.circe.Json.fromInt(Defaults.MaxThinkingBudget)
                                           )
                                         )
                                       case _ => t
@@ -694,7 +710,6 @@ object LlmInterface:
                                           effectiveMessages,
                                           candidate.model,
                                           req.tools,
-                                          Some(candidate.maxTokens),
                                           cappedThinking,
                                           req.systemStable,
                                           req.systemDynamic,

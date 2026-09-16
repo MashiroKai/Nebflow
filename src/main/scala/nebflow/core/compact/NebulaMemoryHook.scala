@@ -278,7 +278,6 @@ object NebulaMemoryHook extends PreCompactionHook:
       sessionId = sessionId.getOrElse("prehook"),
       agentId = agentName,
       tools = None,
-      maxTokens = Some(4096),
       systemStable = Some("You are a memory extraction assistant.")
     )
     resources.llm

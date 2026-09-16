@@ -22,9 +22,17 @@ object LlmProtocol:
     case other => Left(s"Unknown protocol: $other")
   }
 
+/**
+ * One entry of `llm.providers.*.models[]`.
+ *
+ * maxcfg batch (2026-09-16, author ruling): the `maxTokens` key was REMOVED
+ * from the user-configurable face — the output cap is now an internal engine
+ * constant (`Defaults.MaxTokens` / `Defaults.MaxThinkingBudget`). The decoder
+ * is derived, so circe silently ignores a legacy `maxTokens` key still present
+ * in an existing `nebflow.json` (no error, no migration needed).
+ */
 case class ModelConfig(
   id: String,
-  maxTokens: Int = Defaults.MaxTokens,
   contextWindow: Int = Defaults.ContextWindow,
   description: Option[String] = None,
   vision: Option[Boolean] = None,

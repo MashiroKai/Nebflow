@@ -8,8 +8,35 @@ import scala.concurrent.duration.*
  */
 object Defaults:
   val ContextWindow = 128000
+
+  /**
+   * Internal output cap (`max_tokens`) for the Anthropic-protocol face, which
+   * REQUIRES the field. **NOT user configurable** — maxcfg batch (2026-09-16,
+   * author ruling "我觉得直接去掉这个参数，以后少一个配置项") removed the
+   * `llm.providers.*.models[].maxTokens` config key; this constant is the
+   * replacement source. Value unchanged (16384) = the old *default* of the
+   * removed key, so users who never set it see zero behaviour change.
+   *
+   * AnthropicAdapter raises it above the thinking budget when needed — the
+   * Anthropic API requires `budget_tokens < max_tokens`.
+   */
   val MaxTokens = 16384
-  val MaxTokensCompact = 4096
+
+  /**
+   * Internal ceiling for `thinking.budget_tokens` (maxcfg batch 2026-09-16).
+   * Replaces the former `candidate.maxTokens / 2` thinking clamp, which tied
+   * the thinking budget to the removed user config: with the old default
+   * (`maxTokens = 16384`) every request's budget was clamped to 8192, silently
+   * downgrading "high" thinking (32768) to the `medium` effort class through
+   * `OpenAiAdapter.budgetToEffort` (≤8192 → medium).
+   *
+   * 32768 = the highest budget the product can produce
+   * (`web/js/sidebar.js` `EFFORT_BUDGETS.high`), so no reachable configuration
+   * is ever clamped; the clamp keeps its original job of bounding hand-edited /
+   * legacy values (`sidebar.js effortFromConfig` tolerates legacy > 32768) that
+   * crash some providers (zhipu/glm — see `interface.scala` thinking clamp).
+   */
+  val MaxThinkingBudget = 32768
 
   /**
    * Stream inactivity timeout — resets on every stream event (text/tool/compaction).

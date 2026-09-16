@@ -178,10 +178,9 @@ class ReloadStaleSessionModelSpec extends CatsEffectSuite:
             baseUrl = "http://127.0.0.1:19121",
             apiKey = "k",
             protocol = LlmProtocol.Anthropic,
-            models = List(ModelConfig("m1", maxTokens = 1024, contextWindow = 8192, vision = Some(false)))
+            models = List(ModelConfig("m1", contextWindow = 8192, vision = Some(false)))
           ),
           model = "m1",
-          maxTokens = 1024,
           contextWindow = 8192,
           vision = false
         )

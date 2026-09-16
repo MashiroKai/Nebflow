@@ -97,7 +97,6 @@ case class LlmRequest(
   sessionId: String,
   agentId: String,
   tools: Option[List[ToolDefinition]] = None,
-  maxTokens: Option[Int] = None,
   thinking: Option[io.circe.Json] = None,
   /** Stable system prompt (e.g. system.md) — can be cached by the provider. */
   systemStable: Option[String] = None,

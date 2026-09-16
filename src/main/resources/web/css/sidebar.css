@@ -1329,7 +1329,6 @@
   min-width: 0;
 }
 .cfg-model-row .cfg-model-id { flex: 2; }
-.cfg-model-row .cfg-model-max,
 .cfg-model-row .cfg-model-ctx { flex: 1; }
 .cfg-model-remove {
   background: none;
