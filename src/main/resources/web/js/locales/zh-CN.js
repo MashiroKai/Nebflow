@@ -149,6 +149,23 @@ export default {
   'flowmap.detail.queueValue': '排队中 · 第 {n} 位 / 共 {m}（{queue}）',
   'flowmap.detail.yes': '是',
   'flowmap.chain.archivedToast': '链「{chain}」整链归档（{n} 节点一起进归档）',
+  // 链级取消（R2，chaincancel 批 2026-09-17）：控制面 `.fm-chain-cancel` + 不可逆
+  // 确认卡四要素（①链名+chainId ②将取消数与逐状态计数 ③不可逆声明 ④零触碰声明）
+  // + 「放弃可恢复中断数」提示（作者三答 2）；另含结果 toast 两条。
+  'flowmap.chain.cancel.label': '取消整条链',
+  'flowmap.chain.cancel.title': '取消整条链',
+  'flowmap.chain.cancel.chain': '链「{chain}」({id})',
+  'flowmap.chain.cancel.counts': '将取消 {n} 个节点（{breakdown}）',
+  'flowmap.chain.cancel.irreversible': '不可逆：取消后的节点不可重激活，只能新建替代节点',
+  'flowmap.chain.cancel.untouched': '零触碰：已完成 / 失败 / 已取消的 {n} 个节点不受影响，结果保留',
+  'flowmap.chain.cancel.interrupted': '其中 {n} 个可恢复中断（interrupted）将被一并放弃',
+  'flowmap.chain.cancel.st.running': '运行中',
+  'flowmap.chain.cancel.st.pending': '待运行',
+  'flowmap.chain.cancel.st.wiring': '接线中',
+  'flowmap.chain.cancel.st.blocked': '已阻塞',
+  'flowmap.chain.cancel.st.interrupted': '中断',
+  'flowmap.chain.cancel.done': '链级取消已提交（{n} 个节点）',
+  'flowmap.chain.cancel.error': '链级取消失败：{error}',
   // 链折叠（P1 · spec §3.3）：主图折叠链摘要卡文案（链名/成员数由后端 chains 旁挂
   // 下发，此处只放可翻译的壳文案）；展开动作 = 点击卡本体或卡内 chevron。
   'flowmap.chain.nodes': '{n} 节点',

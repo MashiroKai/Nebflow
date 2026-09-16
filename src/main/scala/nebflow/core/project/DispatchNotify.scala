@@ -213,6 +213,16 @@ final class DispatchNotify(
     case NotifyReason.Cancelled => cancelledBudgetMax
     case _                      => completionBudgetMax
 
+  /** **cancelled 账本读数（判据 C4 的观测面，chaincancel 批 2026-09-17）**：
+    * `(预算已用, 窗口内时间戳数, cooldown 截止毫秒)`。只读、不写、不改任何状态——
+    * 供判据机械核对「链级取消腿：预算增量 == 1 且窗口/cooldown **零变化**」。
+    * `private[project]` = 同包 spec 可见，不在生产调用面上。 */
+  private[project] def cancelledLedger: IO[(Int, Int, Long)] =
+    for
+      used <- cancelledBudgetUsed.get
+      g <- cancelledGuard.get
+    yield (used, g.cancelledAt.size, g.cooldownUntil)
+
   /** 预算耗尽升级单点（按 reason 分派到既有三个 escalate*，节点保持终态语义各自不变）。 */
   private def escalateBudgetExhaustedFor(node: NodeDef, reason: NotifyReason): IO[Unit] = reason match
     case NotifyReason.Failed    => escalateFailedBudgetExhausted(node)
@@ -748,6 +758,97 @@ final class DispatchNotify(
     waiters match
       case Nil   => "下游等待者：无下游等待者。"
       case names => s"下游等待者（cancelled 不投递不结算，且其 barrier 已被「待承接」标记闸住；承接/改接/放弃后自动续跑）：${names.mkString(", ")}。"
+
+  /** 链级/级联取消腿的**批量前置标记**（R2 §2.3-1，chaincancel 批 2026-09-17）：把
+    * 全成员 `notifySentAt` 写成"本代次回流已处置"。
+    *
+    * 为什么**必须**在取消动作之前调用（设计 D1 单账本的结构性承担点）：级联腿对**有
+    * 在飞 fiber** 的成员只发取消信号，其 `cancelled` 终态由既有桥/收殓腿**异步**落盘
+    * ——那条腿走 [[notifyTerminal]]，若标记未先写，它会逐节点注入一次 cancelled 通知
+    * ⇒ 注入计数变成 N 相关（判据 C2 红）且 N≥5 时结构性触发窗口冷却（C4 红）。
+    * 先写标记 ⇒ 逐节点腿的 [[markerEmpty]] 恒 false ⇒ **结构性不发**。
+    *
+    * 幂等：已标记节点零写（[[markSent]] 语义——值未变仍写一次同值，无行为副作用）。 */
+  def markNotified(ids: Iterable[String]): IO[Unit] =
+    ids.toList.distinct.traverse_(markSent)
+
+  /** **链级/级联取消的聚合通知腿**（R2 §2.3，chaincancel 批 2026-09-17）——"一次链级
+    * 操作 ⇒ 一次注入"的唯一落点。
+    *
+    * 与 [[cancelledAttempt]] 的**结构性差异**（本批的核心工程判定）：本腿**不进**
+    * `cancelledAttempt`（≈ :506-532 的窗口裁决）——风暴算术（`cancelledWindowThreshold`
+    * = 5 / 10min 窗口在**入队之前**裁决）在 N≥5 时会把逐节点通知压成 cooldown +
+    * Suppress，5s 打包窗口**救不了**（窗口只合并"已入队"件）。故链级腿在窗口裁决
+    * **之前**单点收口：一次 `trigger` + 一条 `chain-cancelled` 审计 + 1 个预算单位，
+    * `cancelledGuard`（窗口/cooldown）**零触碰**。
+    *
+    * 顺序（逐条对应设计 §2.3）：① 全成员 `notifySentAt`（幂等；正常已由
+    * [[markNotified]] 前置写入）② 预算 +1（[[budgetUsedFor]] 同一单点，与
+    * [[flushBatch]] 的"一次注入 = 一个预算单位"同口径）③ 单次注入 ④ 审计一条。
+    * 返回注入次数（1 = 本次真注入；0 = 幂等空操作/注入前即无被取消节点）。
+    *
+    * 幂等：`cancelled` 为空 ⇒ 零写零注入零审计（C6：重复调用第二次 == 0）。 */
+  def notifyChainCancelled(
+    chainId: String, chainTitle: String, source: CancelSource, reason: String,
+    memberIds: List[String],
+    cancelled: List[ChainCancelEntry], preserved: List[ChainCancelEntry], skipped: List[ChainCancelEntry],
+    waiters: List[String]
+  ): IO[Int] =
+    if cancelled.isEmpty then IO.pure(0)
+    else
+      val text = chainCancelledNotifyTaskText(chainId, chainTitle, source, reason,
+        cancelled, preserved, skipped, waiters)
+      markNotified(memberIds) *>
+        budgetUsedFor(NotifyReason.Cancelled).update(_ + 1) *>
+        trigger(text)
+          .handleErrorWith(e =>
+            logger.warn(s"Project '$projectName' chain-cancel notify trigger failed (chain=$chainId, n=${cancelled.size}): ${e.getMessage}").void) *>
+        FlowMapEventLog.append(workspace, projectName, cancelled.head.nodeId, FlowMapEventLog.ChainCancelledType,
+          FlowMapEventLog.chainCancelledSummary(chainId, source, reason, cancelled.size, preserved.size,
+            skipped.size, memberIds),
+          Some(chainId).filter(_.nonEmpty)) *>
+        logger.info(
+          s"Project '$projectName' chain '$chainId' cancelled: ${cancelled.size} node(s) → cancelled, " +
+            s"${preserved.size} preserved, ${skipped.size} skipped — one aggregated dispatcher injection (chain-cancel leg)").as(1)
+
+  /** **链级取消通知文本**（R2 §2.3 文本契约；作者三答 2/3 修订逐条落）。
+    *
+    * 🔴 **严禁照抄 failed 的四步重激活指引**：cancelled 不可重激活（`NodeEdit` 的
+    * 重激活闸只放行 `blocked | failed`）——照抄会把分发器引向无效动作（同
+    * [[cancelledNotifyTaskText]] 头注裁定）。本函数沿用 cancelled 版的承接/改接/
+    * abandon 三条出路，并加上**链级特有**信息：chainId、成员清单、保留/跳过清单、
+    * 「级联取代」声明（作者三答 1：下游连带 cancelled，**不再**留「待承接」便签，
+    * 故本文本**不**给"承接待承接标记"的指引）。 */
+  private def chainCancelledNotifyTaskText(
+    chainId: String, chainTitle: String, source: CancelSource, reason: String,
+    cancelled: List[ChainCancelEntry], preserved: List[ChainCancelEntry], skipped: List[ChainCancelEntry],
+    waiters: List[String]
+  ): String =
+    def cap(n: Int) = 20
+    def lines(entries: List[ChainCancelEntry]): String =
+      if entries.isEmpty then "（无）"
+      else
+        val shown = entries.take(cap(entries.size))
+        val suffix = if entries.size > cap(entries.size) then s" …共 ${entries.size} 条" else ""
+        shown.map(e => s"${e.nodeId}:${e.name}(${if e.why.isEmpty then e.status else e.why})").mkString("、") + suffix
+    val cancelledLine = cancelled.take(cap(cancelled.size))
+      .map(e => s"${e.nodeId}:${e.name}(${e.status}→cancelled${if e.signalled then ", signalled" else ""})")
+      .mkString("、") + (if cancelled.size > cap(cancelled.size) then s" …共 ${cancelled.size} 条" else "")
+    val head = if chainId.nonEmpty then s"链「$chainTitle」($chainId)" else "节点集"
+    s"""[dispatch-notify] $head 已被**取消**（链级/级联取消，source=${CancelSource.code(source)}，project=$projectName）：${cancelled.size} 个节点翻 cancelled。
+       |触发：${reason.take(300)}
+       |已取消（${cancelled.size}）：$cancelledLine
+       |保留（终态，结果未动，本次零触碰）：${lines(preserved)}
+       |跳过（结构性不可写）：${lines(skipped)}
+       |${if waiters.isEmpty then "受影响下游等待者：无下游等待者。" else s"受影响下游等待者（被摘除 in 后分别处于 pending/wiring）：${waiters.mkString(", ")}。"}
+       |级联取代声明（作者裁定）：上游被取消 ⇒ 下游**连带 cancelled**，引擎**不再**留「待承接」便签——本文本**不**给承接/改接待承接标记的动作；下游若确实要续跑，按下方第 1 条新建替代节点重接拓扑。
+       |处置指引（cancelled 是终态，**与 failed 不同：不可重激活** —— NodeEdit 的重激活闸只放行 blocked/failed，编辑 cancelled 节点只会走普通编辑路径、不会复活它；failed 的「NodeEdit 编辑触发 reactivate 重跑」那套指引对本批节点**无效，请勿照用**）：
+       |1. 承接（首选）：NodeEdit 新建替代节点（建议命名 <原名>-retry 或语义新名），接原拓扑位置（in 同源、out 同目标）。
+       |2. 该轨确实不再需要：无需额外动作（链级腿已把取消成员的 out 摘除并改接 Nebula，下游 in 镜像随之 prune）。
+       |3. 放弃该轨：NodeEdit abandon=true 标记放弃。
+       |4. 需人工/外部条件 → 在你的最终输出中写明上报内容（自动投递 Nebula）。
+       |读取入口：NodeList(detail="<节点id>", project=$projectName) / flow-map 链定位（chainId=$chainId）。
+       |无需回报——拓扑与状态已落 Flow Map。""".stripMargin
 
   /** failed 版通知任务文本（2026-09-07 批设计 §2.3 + 作者 09:24 裁定③——failed 可
     * 重激活重跑：reactivate 为首选处置，换名新建降为换基线/重派备选）：err 摘要 +

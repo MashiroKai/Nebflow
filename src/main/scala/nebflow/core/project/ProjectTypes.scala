@@ -39,6 +39,23 @@ object NodeLifecycle:
 
   val Terminal: Set[String] = Set(Completed, Failed, Cancelled, Blocked)
 
+  /** **链级取消 / 级联取消的取消集**（作者三答 2，2026-09-17 —— 逐字落地）。
+    *
+    * 🔴 **禁用 `Terminal` 谓词当取消集判据**：`Terminal`（上一行）**含 `blocked`**，
+    * 用它做「非终态」判据会**误排除 `blocked`**（blocked 是准终态——永不自动归档、
+    * 可重激活，作者裁定与本批范围均要求**纳入**取消集）。⇒ 取消集**必须显式枚举**：
+    *
+    *   - 纳入：`running`（含 stale）/ `pending` / `wiring` / `blocked` / `interrupted`
+    *   - 零触碰：`completed` / `failed` / `cancelled`（结果保留，报告 `preserved` 逐条列出）
+    *
+    * 依据（作者三答 2 原文口径）：非终态集 = running（含 stale）/ pending / wiring /
+    * blocked / interrupted；`interrupted` 经作者裁定为**非终态「休眠」**（见 object 头注
+    * §2.2），故机械上纳入。
+    *
+    * 消费单点：`NodeEngine.cancelNodes`（链级腿 + 节点级腿）与 `ChainCascadeSpec` 的
+    * 判据共用本常量——**禁**任何调用点改用 `Terminal` 取反。 */
+  val ChainCancelScope: Set[String] = Set(Running, Pending, Wiring, Blocked, Interrupted)
+
   /** 全部合法生命周期值（NodeList status 过滤枚举校验单点，裁定⑤a 20260907）。 */
   val All: Set[String] = Set(Wiring, Pending, Running, Interrupted, Completed, Failed, Cancelled, Blocked)
 
@@ -1151,6 +1168,57 @@ case class ChainInfo(
   memberIds: List[String] = Nil,
   edges: List[ChainEdge] = Nil
 )
+
+/** 链级/级联取消的**分类条目**（R2/R3，chaincancel 批 2026-09-17）。
+  *
+  * `why` 是**机械可判**的短码（不是文案）——`terminal`（已终态零触碰）/
+  * `terminal-boundary`（被终态边界保护：级联遇终态即停，未越过）/
+  * `not-in-active-region`（归档区成员或查无，结构性零写）。 */
+case class ChainCancelEntry(
+  nodeId: String,
+  name: String,
+  /** 分类时刻的状态（`cancelled` 组的语义 = **取消前**的状态，见 `signalled`）。 */
+  status: String,
+  why: String = "",
+  /** 仅 `cancelled` 组有意义：true = 本节点有在飞 fiber，只发了取消信号（终态由既有
+    * 桥/收殓腿落盘），false = 本次调用内**同步**写完 cancelled 终态。 */
+  signalled: Boolean = false
+)
+
+/** 链级取消结构化报告（R2 §2.1；供审计 / WS 回帧 / 判据三用）。
+  *
+  * **分区不变量（C7，机械）**：`cancelled ⊎ preserved ⊎ skipped` == `memberIds`
+  * 全集，无交叠、无遗漏（三组按 nodeId 升序 ⇒ 报告与执行顺序无关，M4）。
+  *
+  * `preserved` = **未被取消且状态零触碰**的活动区成员（`why` 区分 `terminal` /
+  * `terminal-boundary`）；`skipped` = 结构性不可写成员（不在活动区/查无）。
+  * `injected` = 本次操作触发的分发器注入次数（0 或 1；幂等第二次为 0）。 */
+case class ChainCancelReport(
+  chainId: String,
+  chainTitle: String,
+  cancelled: List[ChainCancelEntry] = Nil,
+  preserved: List[ChainCancelEntry] = Nil,
+  skipped: List[ChainCancelEntry] = Nil,
+  prunedReferrers: List[String] = Nil,
+  injected: Int = 0,
+  notified: Boolean = false
+)
+
+/** 链级取消的**可行动错误码**单点（作者工程面自决：单成员链/孤立节点 ⇒ 可行动错误，
+  * 🔴 禁静默退化为单节点取消；M12 判据消费本单点）。 */
+object ChainCancelErrors:
+  val NotFound = "CHAIN_NOT_FOUND"
+  val SingleMember = "CHAIN_SINGLE_MEMBER"
+
+  def notFound(chainId: String): String =
+    s"$NotFound: no chain with id '$chainId' in this project — chain ids come from the Flow Map " +
+      "`chains[]` payload (a chain exists only for a weakly-connected component of the merged " +
+      "active+archive node set; re-read the map if the topology just changed)"
+
+  def singleMember(chainId: String): String =
+    s"$SingleMember: chain '$chainId' has fewer than 2 members — a single node / isolated node " +
+      "has no chain to cancel; use the node-level cancel (NodeCancel) instead of degrading the " +
+      "chain-level primitive silently"
 
 /** Project 实体定义（§1.1，projects/<name>/project.json）。 */
 case class ProjectDef(

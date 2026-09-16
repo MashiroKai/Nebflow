@@ -96,6 +96,33 @@ class FlowMapStore private (
   def chainIdOf(nodeId: String): IO[Option[String]] =
     chainAttrsOf(nodeId).map(_._1)
 
+  /** **链解析单点（R2，chaincancel 批 2026-09-17）**：`chainId` → 链定义 + 成员节点
+    * （createdAt 升序，与 `ChainInfo.memberIds` 同序）+ 链标题。
+    *
+    * 🔴 本方法是**唯一**的「chainId → 成员」解析点（内部即 [[topologicalChains]] 的
+    * 分量派生，与 [[chainAttrsOf]] 同源）——**禁** gateway / NodeTools / 前端二次派生
+    * （先例与禁令：`DocIndexConsumer.scala` 头注「同一条链在两个进程里各派生一次 =
+    * 必然漂移」；[[chainAttrsOf]] 头注「分量只派生一次」）。链级取消腿只把面板传来的
+    * `chainId` 当**查找键**，成员集合恒由本方法现读派生。
+    *
+    * 门槛与下发面**不同口径**（有意为之）：[[chainAttrsOf]] 的 `memberIds.size >= 2`
+    * 是**载荷下发**门槛（避免单节点链的键膨胀）；本方法**不设门槛**——单成员分量的
+    * `chainId`（`chain-<该节点 id>`）照常解析出单成员链，使链级取消能把
+    * `CHAIN_SINGLE_MEMBER` 报成**可行动错误**而不是含混的 CHAIN_NOT_FOUND
+    * （作者工程面自决：禁静默退化为单节点取消）。
+    *
+    * `members` 只取**活动区**节点（`combinedNodes` 里归档区同 id 由活动区优先，
+    * 已出图的归档成员**不**在活动区 ⇒ 缺失项由调用方记 `skipped`，链级取消对其零写
+    * ——归档区不变量）。 */
+  def chainMembersOf(chainId: String): IO[Option[FlowMapStore.ChainMembers]] =
+    combinedNodes.map { combined =>
+      FlowMapStore.topologicalChains(combined.values).find(_.id == chainId).map { c =>
+        // 成员解析用合并集（与分量派生同源）；双区同 id 时活动区优先（见 combinedNodes 头注）
+        val members = c.memberIds.flatMap(combined.get)
+        FlowMapStore.ChainMembers(c, members, FlowMapStore.chainTitle(members, c.id))
+      }
+    }
+
   /** merge 节点多链归属集（载荷 chainIds 条件键，U1 判据单点）：见 [[chainAttrsOf]]。 */
   def chainIdsOf(nodeId: String): IO[Option[List[String]]] =
     chainAttrsOf(nodeId).map(_._2)
@@ -797,6 +824,13 @@ class FlowMapStore private (
 object FlowMapStore:
   /** per-node 结果文件目录名（相对 workspace/.nebflow/）。 */
   val ResultsDirName: String = "results"
+
+  /** **链解析载体（R2，chaincancel 批 2026-09-17）**：[[FlowMapStore.chainMembersOf]] 的
+    * 返回值——`info` = 分量派生（id/entries/ends/memberIds/edges）、`members` =
+    * `memberIds` 按序取到的 NodeDef（合并集口径；归档成员若不在合并集则缺席）、
+    * `title` = [[FlowMapStore.chainTitle]] 单点（与载荷 `chains[].title` 同源，
+    * 禁第二次派生链名）。 */
+  case class ChainMembers(info: ChainInfo, members: List[NodeDef], title: String)
 
   /** sweep 出库明细载体（P3 归档联动批 2026-09-10；[[FlowMapStore.sweepCompletedChainsDetailed]]
     * 的返回元素）：链级事实，供调用方追加 chain-archived 审计事件——链 id、

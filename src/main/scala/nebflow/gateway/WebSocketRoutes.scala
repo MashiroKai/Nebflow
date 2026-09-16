@@ -15,6 +15,7 @@ import nebflow.core.mcp.McpManager
 import nebflow.core.schedule.FreezeSchedule.given
 import nebflow.core.skill.SkillService
 import nebflow.core.tools.{ToolContext, ToolRegistry}
+import nebflow.core.project.{CancelSource as ChainCancelSource, ChainCancelEntry, ChainCancelReport, ProjectRuntime, ProjectRuntimeRegistry}
 import nebflow.core.{PathUtil, *}
 import nebflow.llm.*
 import nebflow.service.*
@@ -1415,6 +1416,63 @@ class WebSocketRoutes(
                           case Left(err)  => cancelReply(ok = false, "error" -> err.message.asJson)
                         }
                 }
+
+          case "chainCancel" =>
+            // **链级取消（R2 面板入口）**，chaincancel 批 2026-09-17。
+            // 帧 = `{type:'chainCancel', chainId, reason?}`——🔴 **前端只发 chainId**：
+            // 成员集合 / 状态判定 / 级联闭包**全在后端**（"后端下发、零派生"硬纪律；
+            // 链解析唯一单点 = `FlowMapStore.chainMembersOf`）。项目由注册表反查：
+            // chainId 只作**查找键**（同一 chainId 同时在两个项目里 = 节点 id 碰撞，
+            // 概率可忽略但**不静默**——报可行动歧义错误）。
+            val chJson = parse(text).toOption.getOrElse(io.circe.Json.Null)
+            val chChainId = chJson.hcursor.downField("chainId").as[String].toOption.getOrElse("").trim
+            val chReason = chJson.hcursor.downField("reason").as[String].toOption.getOrElse("")
+            def entryJson(e: ChainCancelEntry): Json =
+              Json.obj(
+                "id" -> e.nodeId.asJson, "name" -> e.name.asJson, "status" -> e.status.asJson,
+                "why" -> e.why.asJson, "signalled" -> e.signalled.asJson)
+            def chainCancelReply(ok: Boolean, report: Option[ChainCancelReport], err: Option[String]): IO[Unit] =
+              val base = Seq(
+                ("type", "chainCancelResult".asJson),
+                ("ok", ok.asJson),
+                ("chainId", chChainId.asJson),
+                ("error", err.map(_.asJson).getOrElse(Json.Null))
+              )
+              val payload = report match
+                case None => base
+                case Some(r) => base ++ Seq(
+                  ("chainTitle", r.chainTitle.asJson),
+                  ("cancelled", r.cancelled.map(entryJson).asJson),
+                  ("preserved", r.preserved.map(entryJson).asJson),
+                  ("skipped", r.skipped.map(entryJson).asJson),
+                  ("prunedReferrers", r.prunedReferrers.asJson),
+                  ("injected", r.injected.asJson),
+                  ("notified", r.notified.asJson)
+                )
+              wsSend(Json.obj(payload*))
+            if chChainId.isEmpty then
+              chainCancelReply(ok = false, None, Some("chainCancel requires chainId"))
+            else
+              def resolved(rt: ProjectRuntime): IO[Boolean] = rt.store.chainMembersOf(chChainId).map(_.isDefined)
+              ProjectRuntimeRegistry.all.flatMap(_.traverse(rt => resolved(rt).map(rt -> _))).flatMap { pairs =>
+                val hits = pairs.collect { case (rt, true) => rt }
+                hits match
+                  case Nil =>
+                    chainCancelReply(ok = false, None,
+                      Some(s"CHAIN_NOT_FOUND: no mounted project owns chain '$chChainId' " +
+                        "(chain ids come from the Flow Map chains[] payload)"))
+                  case one :: Nil =>
+                    val reason = if chReason.nonEmpty then chReason else "cancelled from Flow Map panel (chain-level)"
+                    logger.info(s"chainCancel (panel) for chain $chChainId in project '${one.project.name}'") *>
+                      one.engine.cancelChain(chChainId, ChainCancelSource.User, reason).flatMap {
+                        case Left(err)  => chainCancelReply(ok = false, None, Some(err))
+                        case Right(rep) => chainCancelReply(ok = true, Some(rep), None)
+                      }
+                  case many =>
+                    chainCancelReply(ok = false, None,
+                      Some(s"AMBIGUOUS_CHAIN_ID: chain '$chChainId' exists in ${many.size} mounted projects " +
+                        s"(${many.map(_.project.name).mkString(", ")}) — refusing to guess which one to cancel"))
+              }
 
           case "parentRestart" =>
             // v2 冻结式错误恢复升级链（§5.3.3）：用户/父干预卡片——重启冻结中的

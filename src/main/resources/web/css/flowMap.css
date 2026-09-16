@@ -566,6 +566,26 @@
    与归档条目 .fm-entry.expanded .fm-entry-chev 同一语义语言。 */
 .fm-chain-chev-open svg { transform: rotate(90deg); }
 .fm-chain-chev-open { width: 14px; height: 14px; margin-top: 1px; }
+/* 链级取消控件（R2，chaincancel 批 2026-09-17）：与 `.fm-chain-chev` 同款体量与
+   hover/focus 语言（同一 head 行、同一"克制"基调），但语义是**危险动作**——故常态
+   用 `--color-error` 色相（既有点位：`.fm-chain-count.failed` 同 token），零新色值。
+   与 chevron 的唯一差异 = 无常态背景、hover 才浮现（免与「折叠」控件抢视线）；字号
+   与描边宽度逐字沿用，不做尺寸变体。
+   `margin-left:auto` = 吸走 head 行余白：取消控件与 chevron 一同右对齐，且既有
+   `.fm-chain-chev` 的绝对位置**不动**（下一条把 chev 的 auto 让给本控件，二者相邻）。 */
+.fm-chain-cancel {
+  margin-left: auto; flex: 0 0 auto;
+  display: inline-flex; align-items: center; justify-content: center;
+  width: 16px; height: 16px; padding: 0; border: 0; background: none;
+  cursor: pointer; color: var(--color-error); opacity: 0.6; border-radius: 4px;
+  transition: opacity 0.15s ease, background 0.15s ease;
+}
+.fm-chain-cancel:hover { opacity: 1; background: rgba(128, 128, 128, 0.14); }
+.fm-chain-cancel:focus-visible { outline: none; box-shadow: 0 0 0 2px rgb(var(--sapphire) / 0.55); }
+.fm-chain-cancel svg { width: 9px; height: 9px; display: block; }
+/* 紧随其后的 chevron：余白已被取消控件吸走 ⇒ 让出 auto（两控件成右对齐的一组）。
+   无取消控件时本规则不生效 ⇒ chevron 保持原 `margin-left:auto`，既有视觉零漂移。 */
+.fm-chain-cancel + .fm-chain-chev { margin-left: 0; }
 /* 分状态计数行（spec §3.3「✓n · 跑n · ✗n」；零计数桶不渲染，故恒 ≤5 项）。
    复用节点卡 glyph 色板类（.solar-node-status.ok/.err/.warn），running 用链色圆点。 */
 .fm-chain-counts {

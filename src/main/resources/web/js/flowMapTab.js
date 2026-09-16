@@ -899,8 +899,7 @@ function chainCardHtml(n, pos, originX) {
          data-chain-card="1" data-chain-id="${esc(String(n.id))}" data-status="${esc(st)}"
          tabindex="0" title="${esc(t('flowmap.chain.cardHint', { chain: title, n: String(n.memberCount || 0) }))}"
          style="left:${left.toFixed(1)}px;top:${top.toFixed(1)}px">
-      <div class="fm-node-head">${statusIcon}<span class="fm-st-word ${esc(cls)}">${esc(t(FM_CHAIN_ST_KEY[st] || 'flowmap.wait'))}</span>
-        <button type="button" class="fm-chain-chev" data-chain-id="${esc(String(n.id))}" aria-expanded="false"
+      <div class="fm-node-head">${statusIcon}<span class="fm-st-word ${esc(cls)}">${esc(t(FM_CHAIN_ST_KEY[st] || 'flowmap.wait'))}</span>${chainCancelButtonHtml(n.id)}<button type="button" class="fm-chain-chev" data-chain-id="${esc(String(n.id))}" aria-expanded="false"
                 aria-label="${esc(t('flowmap.chain.expand'))}" title="${esc(t('flowmap.chain.expand'))}">${FM_CHEV_SVG}</button>
       </div>
       <div class="solar-node-label" title="${esc(title)}">${esc(title)}</div>
@@ -912,6 +911,69 @@ function chainCardHtml(n, pos, originX) {
 /** 折叠 chevron（指向右 = 「点击展开」；与归档条目 chevron 同一描边语言）。 */
 const FM_CHEV_SVG = '<svg viewBox="0 0 10 10" fill="none" stroke="currentColor" stroke-width="1.5"'
   + ' stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3.5 2l3.5 3-3.5 3"/></svg>';
+
+/** ── 链级取消（R2，chaincancel 批 2026-09-17）─────────────────────────────────
+ *  落点 = 链入口成员卡 head 行 `.fm-chain-chev` **同行** + 折叠链摘要卡 head 行同款
+ *  （两形态共用同一按钮形态与同一容器级捕获委托单点）。
+ *  🔴 前端**只发 chainId**——成员集合 / 状态判定 / 级联闭包全在后端现读派生
+ *  （「后端下发、零派生」既有硬纪律）；本文件的 `memberIds` 消费面**仅**用于确认卡的
+ *  计数显示（作者明列口径）。 */
+const FM_CANCEL_SVG = '<svg viewBox="0 0 10 10" fill="none" stroke="currentColor" stroke-width="1.5"'
+  + ' stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M2.2 2.2l5.6 5.6M7.8 2.2l-5.6 5.6"/></svg>';
+
+/** 取消集状态桶（与后端 `NodeLifecycle.ChainCancelScope` 同序；确认卡逐状态计数用）。
+ *  仅 **显示** 用途——不代表任何判定口径（判定恒在后端）。 */
+const FM_CHAIN_CANCEL_BUCKETS = ['running', 'pending', 'wiring', 'blocked', 'interrupted'];
+/** 零触碰桶（确认卡第 ④ 要素的计数面）。 */
+const FM_CHAIN_KEEP_BUCKETS = ['completed', 'failed', 'cancelled'];
+
+/** 链级取消按钮（两形态同款；`data-chain-id` 是唯一载荷，无状态/成员信息）。 */
+function chainCancelButtonHtml(chainId) {
+  const cid = String(chainId || '');
+  if (!cid) return '';
+  const label = t('flowmap.chain.cancel.label');
+  return `<button type="button" class="fm-chain-cancel" data-chain-id="${esc(cid)}"`
+    + ` aria-label="${esc(label)}" title="${esc(label)}">${FM_CANCEL_SVG}</button>`;
+}
+
+/** 不可逆确认卡（作者三答 2 + 工程面自决「四要素 + 放弃可恢复中断数提示」）：
+ *  ① 链名 + chainId；② 将被取消的节点数与**逐状态计数**；③ 不可逆声明；④ 零触碰声明；
+ *  **加**「放弃 N 个可恢复中断（interrupted）」提示。确认组件复用既有
+ *  `window.__showConfirm`（danger tone 默认）+ i18n，不引入新交互语言、不做「输入链名」
+ *  式二次确认（与产品克制基调冲突）。
+ *  安全口径：`__showConfirm` 缺席 ⇒ **什么都不做**（绝不无确认直发不可逆帧）。 */
+function confirmChainCancel(projectName, chainId) {
+  const cid = String(chainId || '');
+  if (!cid) return;
+  if (typeof window.__showConfirm !== 'function') {
+    console.warn('[flowmap] chain cancel needs the confirm dialog (window.__showConfirm) — refused');
+    return;
+  }
+  const view = chainViewById(projectName, cid);
+  const fm = fmByProject.get(projectName);
+  const byId = new Map((Array.isArray(fm?.nodes) ? fm.nodes : []).map((n) => [String(n.id), n]));
+  const members = Array.isArray(view?.memberIds) ? view.memberIds.map(String) : [];
+  const counts = {};
+  for (const k of [...FM_CHAIN_CANCEL_BUCKETS, ...FM_CHAIN_KEEP_BUCKETS]) counts[k] = 0;
+  for (const id of members) {
+    const st = String(byId.get(id)?.status || 'pending');
+    counts[st] = (counts[st] || 0) + 1;
+  }
+  const doomed = FM_CHAIN_CANCEL_BUCKETS.reduce((s, k) => s + counts[k], 0);
+  const kept = FM_CHAIN_KEEP_BUCKETS.reduce((s, k) => s + counts[k], 0);
+  const breakdown = FM_CHAIN_CANCEL_BUCKETS
+    .map((k) => `${t(`flowmap.chain.cancel.st.${k}`)} ${counts[k]}`).join(' · ');
+  const msg = [
+    t('flowmap.chain.cancel.chain', { chain: String(view?.title || cid), id: cid }),
+    t('flowmap.chain.cancel.counts', { n: String(doomed), breakdown }),
+    t('flowmap.chain.cancel.irreversible'),
+    t('flowmap.chain.cancel.untouched', { n: String(kept) }),
+    t('flowmap.chain.cancel.interrupted', { n: String(counts.interrupted) }),
+  ].join(' · ');
+  window.__showConfirm(t('flowmap.chain.cancel.title'), msg, () => {
+    sendWs({ type: 'chainCancel', chainId: cid });
+  });
+}
 
 // ── 节点卡片（复用 solar 视觉）────────────────────────────
 function nodeHtml(n, pos, originX, nameOf) {
@@ -941,8 +1003,12 @@ function nodeHtml(n, pos, originX, nameOf) {
   // ——仅「可见成员 ≥2 的链」的入口卡带，成员 ≤1 恒无）。点击 = 折叠该链（容器级
   // 捕获委托单点分派，见 bindFlowMapClicks）；title/aria 带链名与成员数，避免
   // 「这个箭头的对象是谁」的歧义。
+  // chaincancel 批（R2）：链入口成员卡 head 行右端新增 `.fm-chain-cancel`（折叠链摘要卡
+  // 同款，见 chainCardHtml）——**只发 chainId**；判定/执行全在后端。位置在 `chainChev`
+  // **之前**：`.fm-chain-chev` 的 `margin-left:auto` 保持既有 chevron 的右端定位不变
+  // （既有控件零视觉漂移），取消控件紧贴其左。
   const chainChev = n.chainHead
-    ? `<button type="button" class="fm-chain-chev fm-chain-chev-open" data-chain-id="${esc(String(n.chainHead.id))}"
+    ? chainCancelButtonHtml(n.chainHead.id) + `<button type="button" class="fm-chain-chev fm-chain-chev-open" data-chain-id="${esc(String(n.chainHead.id))}"
          aria-expanded="true" aria-label="${esc(t('flowmap.chain.collapse', { chain: String(n.chainHead.title), n: String(n.chainHead.n) }))}"
          title="${esc(t('flowmap.chain.collapse', { chain: String(n.chainHead.title), n: String(n.chainHead.n) }))}">${FM_CHEV_SVG}</button>`
     : '';
@@ -2129,6 +2195,16 @@ function bindFlowMapClicks(container, projectName) {
     container.addEventListener('click', (e) => {
       if (!canvas.isConnected) return;
       const tgt = /** @type {HTMLElement} */ (e.target);
+      // 链级取消（chaincancel 批，R2）：**必须排在折叠分支之前**——折叠态下该按钮位于
+      // `.fm-chain-card` 之内，若先命中卡片分支会被折叠语义吃掉。动作 = 确认卡
+      // （四要素 + 放弃中断数），确认后才发 `{type:'chainCancel', chainId}`；前端零判定。
+      const cancelEl = tgt.closest?.('.fm-chain-cancel');
+      if (cancelEl) {
+        e.stopPropagation();
+        const ccid = cancelEl.getAttribute('data-chain-id') || '';
+        if (ccid) confirmChainCancel(projectName, ccid);
+        return;
+      }
       // 折叠控件（两形态同判据）：① 展开态 = 链入口成员卡 head 行的 chevron；
       // ② 折叠态 = 链摘要卡本体（含卡内 chevron）。二者都吃掉事件——不触发节点详情、
       // 不触发「点空白清链高亮」（同一事件只归一义）。
@@ -2421,10 +2497,24 @@ function renderFlowMapPanes(project, panes, fm) {
 
 // WS 事件驱动（契约 §2）：四类节点事件全部走增量管线。之前是「任何事件 → 全量
 // 重拉 + innerHTML 整页替换」：没有动画、轨道旋转被打断、与其他渲染方互相覆盖。
-import { onMessage, onReconnect } from './ws.js';
+import { onMessage, onReconnect, sendWs } from './ws.js';
 for (const evt of ['nodeCreated', 'nodeUpdated', 'nodeCompleted', 'nodeRemoved']) {
   onMessage(evt, handleNodeWsEvent);
 }
+// 链级取消回帧（chaincancel 批 2026-09-17，R2）：{ok, chainId, cancelled[], preserved[],
+// skipped[], injected, notified, error?}——成功/失败都落 toast（失败带**可行动**错误码：
+// CHAIN_NOT_FOUND / CHAIN_SINGLE_MEMBER / AMBIGUOUS_CHAIN_ID）。权威状态刷新由上方
+// nodeUpdated 增量管线自动承担（取消写点逐节点补发帧）⇒ 本处理器**不做**全量重拉。
+onMessage('chainCancelResult', (msg) => {
+  const ok = msg && msg.ok === true;
+  const canceled = Array.isArray(msg?.cancelled) ? msg.cancelled.length : 0;
+  if (ok) {
+    window.__showToast?.(t('flowmap.chain.cancel.done', { n: String(canceled) }), 'info');
+  } else {
+    window.__showToast?.(
+      t('flowmap.chain.cancel.error', { error: String(msg?.error || 'unknown error') }), 'error');
+  }
+});
 // 断线期间的事件有缺口：重连后对所有打开的 Flow Map 视图拉权威快照（diff 保证
 // 与现渲染一致时零 DOM 变更）。
 onReconnect(() => refreshFlowMapViews());
