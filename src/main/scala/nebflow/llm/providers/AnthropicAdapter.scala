@@ -250,12 +250,35 @@ class AnthropicAdapter(
       case _ => false
     }
 
+  /** `max_tokens` for this face (maxcfg batch 2026-09-16).
+    *
+    * The Anthropic API REQUIRES `max_tokens`, and additionally requires
+    * `budget_tokens < max_tokens`. The output cap is no longer user
+    * configurable (the `models[].maxTokens` config key was removed), so the
+    * value is derived here from the internal constant:
+    *
+    *   - no thinking, or a budget below the cap → `Defaults.MaxTokens` (16384).
+    *     That is exactly the old *default* of the removed key, so installs that
+    *     never set it see the identical value;
+    *   - budget ≥ that cap → raised to leave a full output allowance above the
+    *     budget. Without this, a "high" thinking request (budget 32768) would
+    *     violate `budget_tokens < max_tokens` and be rejected with a 400 — the
+    *     old `maxTokens / 2` clamp used to hide the mismatch by cutting the
+    *     budget, which is precisely what was removed.
+    *
+    * No per-model output-limit metadata exists to derive a tighter value from:
+    * `ModelRegistry.ModelEntry` carries only `vision` + `capabilities`.
+    */
+  private[providers] def maxTokensFor(params: SendMessageParams): Int =
+    val budget = params.thinking.flatMap(_.hcursor.get[Int]("budget_tokens").toOption).getOrElse(0)
+    math.max(Defaults.MaxTokens, budget + Defaults.MaxTokens)
+
   def sendMessage(params: SendMessageParams): IO[AdapterResponse] =
     val systemBlocks = buildSystemBlocks(params)
     val body = Json.obj(
       "model" -> params.model.asJson,
       "messages" -> Json.fromValues(toAnthropicMessages(params.messages)),
-      "max_tokens" -> (params.maxTokens.getOrElse(Defaults.MaxTokens)).asJson
+      "max_tokens" -> maxTokensFor(params).asJson
     )
     val bodyWithSystem =
       if systemBlocks != Json.Null then body.deepMerge(Json.obj("system" -> systemBlocks))
@@ -347,7 +370,7 @@ class AnthropicAdapter(
     val body = Json.obj(
       "model" -> params.model.asJson,
       "messages" -> Json.fromValues(toAnthropicMessages(params.messages)),
-      "max_tokens" -> (params.maxTokens.getOrElse(Defaults.MaxTokens)).asJson,
+      "max_tokens" -> maxTokensFor(params).asJson,
       "stream" -> true.asJson
     )
     val bodyWithSystem =

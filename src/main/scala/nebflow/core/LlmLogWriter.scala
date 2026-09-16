@@ -181,7 +181,6 @@ object LlmLogWriter:
           "tools_count" -> tools.size.asJson,
           "tool_calls_count" -> toolCallsCount.asJson,
           "tool_results_count" -> toolResultsCount.asJson,
-          "max_tokens" -> request.maxTokens.asJson,
           "stream" -> true.asJson,
           "thinking_enabled" -> request.thinking.isDefined.asJson,
           "is_compaction" -> isCompaction.asJson,
@@ -193,7 +192,6 @@ object LlmLogWriter:
             "system_ref" -> Option(systemRef).asJson,
             "tools_ref" -> Option(toolsRef).asJson,
             "message_refs" -> messageRefs.asJson,
-            "max_tokens" -> request.maxTokens.asJson,
             "stream" -> true.asJson,
             "thinking" -> request.thinking.asJson
           )

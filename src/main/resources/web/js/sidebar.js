@@ -1600,8 +1600,7 @@ function contextLengthFor(id) {
 }
 
 /** Fill the row's contextWindow input with the fetched contextLength — only
- *  when the input is empty (never overwrite a user-set value). maxTokens is
- *  intentionally not touched. */
+ *  when the input is empty (never overwrite a user-set value). */
 function fillContextIfEmpty(row) {
   if (!row) return;
   const sel = row.querySelector('.cfg-model-id');
@@ -1733,7 +1732,7 @@ function showProviderModal(existingName, existingData, onSave) {
   const p = existingData || {baseUrl: '', apiKey: '', protocol: 'anthropic', models: []};
   const initialModels = p.models.length > 0 ? p.models.map(m => ({
     ...m,
-  })) : [{id: '', maxTokens: 131072, contextWindow: 200000}];
+  })) : [{id: '', contextWindow: 200000}];
 
   showModal({
     title: isEdit ? t('provider.edit', { name: existingName }) : t('provider.add'),
@@ -1857,7 +1856,6 @@ function showModal({title, fields, onConfirm}) {
         if (!id) return;
         values.models.push({
           id,
-          maxTokens: parseInt(row.querySelector('.cfg-model-max').value) || 131072,
           contextWindow: parseInt(row.querySelector('.cfg-model-ctx').value) || 200000,
         });
       });
@@ -1869,15 +1867,15 @@ function showModal({title, fields, onConfirm}) {
 
 function renderModelRowContent(m) {
   const id = m ? m.id : '';
-  const max = m ? m.maxTokens : '';
   const ctx = m ? m.contextWindow : '';
   const idField = providerModelChoices && providerModelChoices.length > 0
     ? renderModelIdSelect(id)
     : `<input class="cfg-input cfg-model-id" type="text" value="${escapeHtml(id)}" placeholder="${t('model.idPlaceholder')}">`;
   // Vision is auto-detected at runtime (B3) and shown as a read-only badge on
   // provider cards — no per-model control in this form (B1 裁定 2026-08-25).
+  // maxTokens control removed (maxcfg batch 2026-09-16, author ruling): the
+  // output cap is an internal engine constant, not user config.
   return `${idField}
-<input class="cfg-input cfg-model-max" type="number" value="${max}" placeholder="${t('model.maxTokensPlaceholder')}">
 <input class="cfg-input cfg-model-ctx" type="number" value="${ctx}" placeholder="${t('model.contextPlaceholder')}">
 <button class="cfg-model-remove" type="button" title="${t('provider.remove')}">&times;</button>`;
 }

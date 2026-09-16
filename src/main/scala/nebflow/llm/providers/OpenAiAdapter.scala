@@ -309,10 +309,13 @@ class OpenAiAdapter(baseUrl: String, apiKey: String, backend: StreamBackend[IO, 
     val allMessages = systemMsg.toList ++ baseMessages
     val body = Json.obj(
       "model" -> params.model.asJson,
-      "messages" -> Json.fromValues(allMessages),
-      "max_tokens" -> (params.maxTokens.getOrElse(Defaults.MaxTokensCompact)).asJson
+      "messages" -> Json.fromValues(allMessages)
     )
-    // WebSearch P0: search tool appended AFTER agent tools (never replaces);
+    // maxTokens dropped from the request body (maxcfg batch 2026-09-16): the
+    // output cap is no longer user configurable, and the OpenAI face must not
+    // send `max_tokens` at all — it is a deprecated field, and o-series /
+    // GPT-5 models reject it outright (400). Omitting it leaves the provider
+    // default. WebSearch P0: search tool appended AFTER agent tools (never replaces);
     // kimi search forces thinking disabled; qwen gets enable_search.
     val bodyWithTools = bodyWithSearchTools(body, params.tools, params.providerSearch)
     // Thinking parameters are model-specific: GLM uses `thinking`, OpenAI uses `reasoning_effort`
@@ -405,10 +408,11 @@ class OpenAiAdapter(baseUrl: String, apiKey: String, backend: StreamBackend[IO, 
     val body = Json.obj(
       "model" -> params.model.asJson,
       "messages" -> Json.fromValues(allMessages),
-      "max_tokens" -> (params.maxTokens.getOrElse(Defaults.MaxTokensCompact)).asJson,
       "stream" -> true.asJson,
       "stream_options" -> Json.obj("include_usage" -> true.asJson)
-    )    // WebSearch P0: same injection chain as the non-streaming path (see
+    )    // maxTokens dropped from the request body (maxcfg batch 2026-09-16) — see
+    // sendMessage above: o-series / GPT-5 reject `max_tokens` with a 400.
+    // WebSearch P0: same injection chain as the non-streaming path (see
     // sendMessage) — the main conversation is streaming, so provider-native
     // search must be armed here too.
     val bodyWithTools = bodyWithSearchTools(body, params.tools, params.providerSearch)

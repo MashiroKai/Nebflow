@@ -9,7 +9,6 @@ case class SendMessageParams(
   messages: List[Message],
   model: String,
   tools: Option[List[ToolDefinition]] = None,
-  maxTokens: Option[Int] = None,
   thinking: Option[io.circe.Json] = None,
   /** Stable system prompt — cached by providers that support it. */
   systemStable: Option[String] = None,

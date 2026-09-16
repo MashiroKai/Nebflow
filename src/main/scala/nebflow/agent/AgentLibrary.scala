@@ -5,8 +5,8 @@ import io.circe.syntax.*
 import io.circe.{Decoder, Encoder, Json}
 import nebflow.core.{NebflowLogger, PathUtil}
 import nebflow.core.presets.PresetStore
-import nebflow.llm.{Config, NebflowServiceConfig}
-import nebflow.shared.{AgentModelConfig, Defaults}
+import nebflow.llm.NebflowServiceConfig
+import nebflow.shared.AgentModelConfig
 
 import scala.util.Try
 
@@ -21,33 +21,11 @@ class AgentLibrary(
 ):
   private val logger = NebflowLogger.forName("nebflow.agent.library")
 
-  /**
-   * 全局 maxTokens 上限（AgentCore 每请求调用）。#339：数据源从 llm.model
-   * 改为**默认 preset** 链首个能解析到 provider 模型表的 ref（preferred 优先
-   * 逐个试 fallbacks）。任何解析失败回 Defaults.MaxTokens，**不再抛异常**
-   * （旧实现对未知 provider 会 throw——本次顺手加固；agent 路径不该因
-   * 配置漂移而炸请求）。
-   *
-   * 既有债（不在本次范围）：所有 agent 共用这一个全局值，而非各 agent 解析
-   * 到的模型的 maxTokens——按模型区分留作后续项。
-   */
-  def globalMaxTokens: Int =
-    serviceConfig match
-      case None => Defaults.MaxTokens
-      case Some(cfg) =>
-        try
-          val (resolved, _) = nebflow.core.presets.PresetStore().resolve(None, None)
-          val chain = resolved.preferred.toList ++ resolved.fallbacks
-          chain.flatMap { ref =>
-            try
-              val (providerId, modelId) = Config.parseModelRef(ref)
-              cfg.llm.providers
-                .get(providerId)
-                .flatMap(_.models.find(_.id == modelId))
-                .map(_.maxTokens)
-            catch case _: Exception => None
-          }.headOption.getOrElse(Defaults.MaxTokens)
-        catch case _: Exception => Defaults.MaxTokens
+  // globalMaxTokens was REMOVED here (maxcfg batch 2026-09-16): it read
+  // `models[].maxTokens` from the model config, which is no longer a
+  // user-configurable key. Its value only ever fed `LlmRequest.maxTokens`,
+  // which no adapter ever honoured for request construction (the adapters read
+  // the per-candidate value instead), so removing it changes no behaviour.
 
   // ============================================================
   // Public API

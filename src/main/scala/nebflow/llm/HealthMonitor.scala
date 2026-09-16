@@ -256,11 +256,12 @@ final class ProviderHealthMonitor(registry: ProviderRegistry):
     val params = SendMessageParams(
       messages = List(Message(MessageRole.User, Left("hi"))),
       model = candidate.model,
-      // Thinking models (GLM-5.2, DeepSeek reasoning) consume tokens on
-      // reasoning before producing any text content. maxTokens=1 would truncate
-      // the thinking and yield empty content → probe falsely fails → provider
-      // stuck DOWN forever. Use a generous cap so the probe completes.
-      maxTokens = Some(4096),
+      // No per-probe output cap (maxcfg batch 2026-09-16): the old explicit
+      // `maxTokens = Some(4096)` was a request field the adapters no longer
+      // carry. Thinking models (GLM-5.2, DeepSeek reasoning) spend tokens on
+      // reasoning before any text, and a truncating cap made the probe fail
+      // falsely (provider stuck DOWN). The cap is now the adapter default,
+      // which is >= the old 4096 — OpenAI sends none at all (provider default).
       sessionId = Some("health-check"),
       agentId = Some("health-check")
     )

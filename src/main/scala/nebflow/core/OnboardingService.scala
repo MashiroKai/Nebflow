@@ -123,8 +123,7 @@ object OnboardingService:
     val req = LlmRequest(
       messages = List(Message(MessageRole.User, Left("回复 ok"))),
       sessionId = "llm-probe",
-      agentId = "llm-probe",
-      maxTokens = Some(8)
+      agentId = "llm-probe"
     )
     llm
       .send(req)

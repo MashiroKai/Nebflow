@@ -713,7 +713,6 @@ export default {
 
   // Model fields in modal
   'model.idPlaceholder': '模型 ID',
-  'model.maxTokensPlaceholder': '最大词元',
   'model.contextPlaceholder': '上下文',
   'model.add': '+ 添加模型',
 

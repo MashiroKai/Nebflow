@@ -144,7 +144,6 @@ class OnboardingServiceSpec extends FunSuite:
     // contract shape
     assertEquals(captured.sessionId, "llm-probe")
     assertEquals(captured.agentId, "llm-probe")
-    assertEquals(captured.maxTokens, Some(8))
     assertEquals(captured.messages.size, 1)
     assertEquals(captured.messages.head.role, MessageRole.User)
     assertEquals(captured.messages.head.content, Left("回复 ok"))

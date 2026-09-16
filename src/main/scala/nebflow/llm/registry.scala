@@ -12,7 +12,6 @@ case class ModelCandidate(
   providerId: String,
   provider: ProviderConfig,
   model: String,
-  maxTokens: Int = Defaults.MaxTokens,
   contextWindow: Int = Defaults.ContextWindow,
   vision: Boolean = false,
   capabilities: Set[String] = Set.empty
@@ -70,10 +69,9 @@ class ProviderRegistry(
           config.llm.providers.get(providerId) match
             case Some(provider) =>
               val modelConfig = provider.models.find(_.id == modelId)
-              val maxTokens = modelConfig.map(_.maxTokens).getOrElse(Defaults.MaxTokens)
               val contextWindow = modelConfig.map(_.contextWindow).getOrElse(Defaults.ContextWindow)
               val (vision, caps) = resolveCapabilities(providerId, modelId, modelConfig)
-              Some(ModelCandidate(providerId, provider, modelId, maxTokens, contextWindow, vision, caps))
+              Some(ModelCandidate(providerId, provider, modelId, contextWindow, vision, caps))
             case None => None // Skip unknown provider
         catch case _: Exception => None // Skip malformed ref
       }
@@ -86,7 +84,7 @@ class ProviderRegistry(
           .map { case (providerId, provider) =>
             provider.models.headOption.map { mc =>
               val (vision, caps) = resolveCapabilities(providerId, mc.id, Some(mc))
-              ModelCandidate(providerId, provider, mc.id, mc.maxTokens, mc.contextWindow, vision, caps)
+              ModelCandidate(providerId, provider, mc.id, mc.contextWindow, vision, caps)
             }
           }
           .flatten
@@ -121,10 +119,9 @@ class ProviderRegistry(
         val (providerId, modelId) = Config.parseModelRef(ref)
         config.llm.providers.get(providerId).map { provider =>
           val modelConfig = provider.models.find(_.id == modelId)
-          val maxTokens = modelConfig.map(_.maxTokens).getOrElse(Defaults.MaxTokens)
           val contextWindow = modelConfig.map(_.contextWindow).getOrElse(Defaults.ContextWindow)
           val (vision, caps) = resolveCapabilities(providerId, modelId, modelConfig)
-          ModelCandidate(providerId, provider, modelId, maxTokens, contextWindow, vision, caps)
+          ModelCandidate(providerId, provider, modelId, contextWindow, vision, caps)
         }
       catch case _: Exception => None
     }
