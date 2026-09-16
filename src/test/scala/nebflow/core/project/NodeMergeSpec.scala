@@ -40,8 +40,10 @@ import scala.concurrent.duration.*
  *  - S4 上游 running 时建 merge 节点：in 声明改接后，晚完成的按 completed 计入，
  *    barrier 归零触发合并真实落地（完成即投递——无人工 hold 闸）。
  *
- * 附 T0：NodeEdit create 校验（merge+worktree 拒绝；零上游 merge 拒绝；merge=true
- * 落库（in=<id> 合法顺序）；归档节点拒设 merge）。
+ * 附 T0：NodeEdit create 校验（merge=true × worktree=true 并存**已放开**（2026-09-17
+ * 作者裁定，板项 #667 ③）；零上游 merge 拒绝；merge=true 落库（in=<id> 合法顺序）；
+ * 归档节点拒设 merge）。附 T1：Tier-1 形态**放开钉**——双属性并存被接受、worktree
+ * 真建（目录/worktree list/分支）、barrier 等待语义不变、其余闸零误伤。
  */
 class NodeMergeSpec extends CatsEffectSuite:
 
@@ -320,7 +322,7 @@ class NodeMergeSpec extends CatsEffectSuite:
 
   // ── T0 NodeEdit create 校验 ─────────────────────────────
 
-  test("T0: merge=true refuses worktree; zero-upstream merge refused (NODE_MERGE_REQUIRES_UPSTREAM); merge persists with in (legal order); archived node refuses merge") {
+  test("T0: merge=true + worktree=true coexist no longer refused (2026-09-17 release); zero-upstream merge refused (NODE_MERGE_REQUIRES_UPSTREAM); merge persists with in (legal order); archived node refuses merge") {
     val ws = tempRoot / "ws-t0"
     os.makeDir.all(ws)
     initRepo(ws)
@@ -331,10 +333,14 @@ class NodeMergeSpec extends CatsEffectSuite:
       res <- mkResources(system, tempRoot, llm.handle)
       rt <- mountProject("merge-t0", ws, system, res)
       ctx = mkCtx(res, system, ws.toString)
-      // N1: merge=true + worktree → 拒（校验顺序：merge+worktree 组合矛盾先于
-      // 零上游校验判——worktree 布尔化（flowmap-slim 批）后传 true 同样先被拦下）
+      // N1（2026-09-17 **改判据**：原「merge=true × worktree=true 组合」硬拒已放开）:
+      // merge=true + worktree=true **且零上游** ⇒ 唯一剩余判据 = 零上游闸
+      // （NODE_MERGE_REQUIRES_UPSTREAM）。🔴 改判据前该用例的断言只查文案含
+      // "merge=true"，而两条文案同含该子串 ⇒ 放开后会被**另一个理由**判左而**假绿**
+      // （判别力被吃掉）。现断言**错误码**，判别力落在真实判据上；放开钉 =
+      // 反向断言「旧 worktree 硬拒文案不存在」（见 T1）。
       n1 <- nodeEdit(nodeInput("merge-t0", "m1",
-        "task" -> CJson.fromString("merge"), "description" -> CJson.fromString("merge node refuse worktree"),
+        "task" -> CJson.fromString("merge"), "description" -> CJson.fromString("merge node zero upstream + worktree flag"),
         "out" -> CJson.fromString("Nebula"),
         "merge" -> CJson.fromBoolean(true), "worktree" -> CJson.fromBoolean(true)), ctx)
       // N0: merge=true 零上游（mount-enforce 批，n-371cf932 事故形态）→ 拒
@@ -364,19 +370,152 @@ class NodeMergeSpec extends CatsEffectSuite:
       n3 <- nodeEdit(nodeInput("merge-t0", "arch-x", "merge" -> CJson.fromBoolean(true)), ctx)
       _ <- system.stopAll.handleErrorWith(_ => IO.unit)
     yield
-      assert(n1.isLeft && n1.left.exists(_.contains("merge=true")),
-        s"N1 merge+worktree must refuse with actionable text, got $n1")
+      // N1 新判据断言（改后）：判据 = 零上游码（不再靠 "merge=true" 文案巧合绿）
+      assert(n1.isLeft && n1.left.exists(_.contains("NODE_MERGE_REQUIRES_UPSTREAM")),
+        s"N1 merge+worktree with zero upstream must refuse via the zero-upstream gate (NODE_MERGE_REQUIRES_UPSTREAM), got $n1")
+      // N1 反向断言（放开钉的负半）：已删除的「merge 不得带 worktree」硬拒**不得**再开火
+      assert(!n1.left.exists(_.contains("must NOT carry 'worktree'")),
+        s"N1 must NOT be refused by the removed merge+worktree rule, got $n1")
       assert(n0.isLeft && n0.left.exists(_.contains("NODE_MERGE_REQUIRES_UPSTREAM")),
         s"N0 zero-upstream merge must refuse (NODE_MERGE_REQUIRES_UPSTREAM), got $n0")
       assert(n2.isRight, s"N2 merge create (with in) must succeed, got $n2")
       assertEquals(m2.merge, true, "merge flag must persist")
-      assertEquals(m2.worktree, None, "merge node must have no worktree")
+      // 新契约（2026-09-17）：worktree 是**显式 opt-in**——m2 未声明 worktree ⇒ 不派生
+      // （引擎不会因 merge=true 静默补建，也不会因放开而默认带上）。正向同槽断言
+      // （显式传 true ⇒ 真建）见 T1。
+      assertEquals(m2.worktree, None,
+        "merge node without an explicit 'worktree' declares none (no implicit worktree, opt-in only)")
       assertEquals(m2.status, NodeLifecycle.Wiring,
         s"merge node (task, in non-empty) starts wiring (barrier wait), got ${m2.status}")
       assertEquals(m2b.status, NodeLifecycle.Wiring,
         s"merge node must NOT auto-start while its upstream is still running, got ${m2b.status}")
       assert(n3.isLeft && n3.left.exists(_.contains("create-only")),
         s"N3 merge on archived node must refuse, got $n3")
+  }
+
+  // ── T1 Tier-1 形态「放开钉」（2026-09-17 放开 merge × worktree）──
+
+  test("T1: merge=true + worktree=true coexist (Tier-1 shape) — worktree auto-created, merge persists, other gates unaffected") {
+    val ws = tempRoot / "ws-t1"
+    os.makeDir.all(ws)
+    initRepo(ws)
+    val system = ActorSystem(s"merge-t1-${scala.util.Random.nextInt(100000)}")
+    // 上游 echo 延迟 1.5s：合并节点创建时上游仍 running（Wiring 断言确定性窗口）
+    val llm = MergeLlm(delayEcho = 1500.millis)
+    for
+      res <- mkResources(system, tempRoot, llm.handle)
+      rt <- mountProject("merge-t1", ws, system, res)
+      ctx = mkCtx(res, system, ws.toString)
+      // 上游先建（入口即启，running 窗口）
+      _ <- nodeEdit(nodeInput("merge-t1", "up-t1",
+        "task" -> CJson.fromString("produce t1 artifact"), "description" -> CJson.fromString("t1 upstream"),
+        "out" -> CJson.fromString("Nebula")), ctx)
+      _ <- waitStatus(rt, "up-t1", Set(NodeLifecycle.Running))
+      upId <- idOf(rt, "up-t1")
+      // 放开点：merge=true + worktree=true + in ≥1 —— **改前该调用必被拒**
+      // （"merge=true (batch landing sink) must NOT carry 'worktree'"），改后必被接受
+      n1 <- nodeEdit(nodeInput("merge-t1", "m1",
+        "task" -> CJson.fromString("merge"), "description" -> CJson.fromString("tier-1 impl seat + landing sink"),
+        "out" -> CJson.fromString("Nebula"), "in" -> CJson.fromString(upId),
+        "merge" -> CJson.fromBoolean(true), "worktree" -> CJson.fromBoolean(true)), ctx)
+      m1 <- byName(rt, "m1")
+      _ <- IO.sleep(300.millis)
+      m1b <- byName(rt, "m1")
+      wts = worktreeNames(ws)
+      branches = branchNames(ws)
+      wtDir = ws / ".nebflow" / "worktrees" / "m1"
+      _ <- system.stopAll.handleErrorWith(_ => IO.unit)
+    yield
+      // ① 放开点：建位**被接受**（旧代码在 f 上必 Left）
+      assert(n1.isRight, s"T1 merge=true + worktree=true must be ACCEPTED (released 2026-09-17), got $n1")
+      // ② 双属性同时落库（不是「只留住一个」）
+      assertEquals(m1.merge, true, "merge flag must persist alongside worktree")
+      assertEquals(m1.worktree, Some("m1"), "worktree binding must persist (derived bare name)")
+      // ③ worktree **真建**（目录 + worktree list + 同名分支），非仅字段赋值
+      assert(os.exists(wtDir), s"implementation-seat worktree dir must be created at $wtDir")
+      assert(wts.exists(_.endsWith("/worktrees/m1")),
+        s"git worktree list must contain the node worktree, got $wts")
+      assert(branches.contains("m1"), s"derived same-name branch 'm1' must exist, got $branches")
+      // ④ barrier 等待语义逐字不变（上游仍 running ⇒ 不自启、无会话）
+      assertEquals(m1.status, NodeLifecycle.Wiring, s"coexist node starts wiring (barrier wait), got ${m1.status}")
+      assertEquals(m1b.status, NodeLifecycle.Wiring,
+        s"coexist node must NOT auto-start while its upstream is still running, got ${m1b.status}")
+      assert(m1b.startedAt.isEmpty, "coexist node must have no session while upstreams are running")
+      // ⑤ 其余 merge 闸零误伤（放开面 = 唯一一处删除；其它判据逐字未动）
+      assert(!n1.left.exists(_.contains("NODE_MERGE_REQUIRES_UPSTREAM")),
+        "zero-upstream gate (NODE_MERGE_REQUIRES_UPSTREAM) must not fire when in is declared")
+      assert(!n1.left.exists(_.contains("NODE_MERGE_IN_CAP")),
+        "in-cap gate (NODE_MERGE_IN_CAP) must not fire with a single upstream")
+      assert(!n1.left.exists(_.contains("WORKTREE_CREATE_ONLY")),
+        "worktree create-time binding must be accepted on the create path")
+      assert(!n1.left.exists(_.contains("must NOT carry 'worktree'")),
+        "the removed merge+worktree rule must no longer fire anywhere on this path")
+  }
+
+  // ── S5 Tier-1 形态 E2E：双属性并存时落地面仍锚 workspace 根仓 ──
+
+  test("S5 (Tier-1 shape): merge=true + worktree=true — landing still anchors the workspace root repo (main gets the merges); worktree is only the implementation seat") {
+    val ws = tempRoot / "ws-s5"
+    initRepo(ws)
+    mkWork(ws, "task-a")
+    mkWork(ws, "task-b")
+    val system = ActorSystem(s"merge-s5-${scala.util.Random.nextInt(100000)}")
+    val llm = MergeLlm(delayEcho = 400.millis)
+    for
+      res <- mkResources(system, tempRoot, llm.handle)
+      _ <- allowBash()
+      rt <- mountProject("merge-s5", ws, system, res)
+      ctx = mkCtx(res, system, ws.toString)
+      _ <- nodeEdit(nodeInput("merge-s5", "task-a",
+        "task" -> CJson.fromString("produce artifact a (feat/task-a)"),
+        "description" -> CJson.fromString("s5 upstream a"),
+        "out" -> CJson.fromString("Nebula")), ctx)
+      _ <- nodeEdit(nodeInput("merge-s5", "task-b",
+        "task" -> CJson.fromString("produce artifact b (feat/task-b)"),
+        "description" -> CJson.fromString("s5 upstream b"),
+        "out" -> CJson.fromString("Nebula")), ctx)
+      _ <- waitStatus(rt, "task-a", Set(NodeLifecycle.Running))
+      _ <- waitStatus(rt, "task-b", Set(NodeLifecycle.Running))
+      aId <- idOf(rt, "task-a")
+      bId <- idOf(rt, "task-b")
+      // Tier-1 形态：同一节点既自带 worktree（实施位）又内嵌落地命令集（裸 git merge，
+      // 依赖 cwd = 沙箱根 = workspace；**禁**以自身 worktree 为参照系）
+      create <- nodeEdit(nodeInput("merge-s5", "merge-seat",
+        "task" -> CJson.fromString(mergeTask("task-a", "task-b")),
+        "description" -> CJson.fromString("tier-1 impl seat + batch landing sink s5"),
+        "out" -> CJson.fromString("Nebula"), "in" -> CJson.arr(CJson.fromString(aId), CJson.fromString(bId)),
+        "merge" -> CJson.fromBoolean(true), "worktree" -> CJson.fromBoolean(true)), ctx)
+      seat <- byName(rt, "merge-seat")
+      _ <- waitStatus(rt, "task-a", Set(NodeLifecycle.Completed))
+      _ <- waitStatus(rt, "task-b", Set(NodeLifecycle.Completed))
+      _ <- waitStatus(rt, "merge-seat", Set(NodeLifecycle.Completed), timeout = 90.seconds)
+      merge <- byName(rt, "merge-seat")
+      log = git(ws, "log", "--oneline", "main")
+      branches = branchNames(ws)
+      wts = worktreeNames(ws)
+      artifactA = os.exists(ws / "artifact-task-a.txt")
+      artifactB = os.exists(ws / "artifact-task-b.txt")
+      _ <- system.stopAll.handleErrorWith(_ => IO.unit)
+    yield
+      assert(create.isRight, s"S5 merge=true + worktree=true must be accepted, got $create")
+      assertEquals(seat.merge, true, "merge flag must persist on the coexist node")
+      assertEquals(seat.worktree, Some("merge-seat"), "implementation-seat worktree must persist")
+      assertEquals(merge.status, NodeLifecycle.Completed, "tier-1 merge node must run to completion")
+      // ① **落地面判据**：合并提交进的是 workspace 根仓的 main——worktree=true 未把沙箱根
+      //    收窄到自身 worktree（若收窄：`git merge` 会落进 merge-seat 分支，main 一条不增）
+      assert(log.contains("merge: task-a") && log.contains("merge: task-b"),
+        s"workspace main must carry both merge commits (landing anchored at the workspace root repo), got:\n$log")
+      assert(artifactA && artifactB, "merged artifacts must be checked out in the workspace")
+      // ② 实施位仍在（worktree 只作实施位，不参与落地面）
+      assert(wts.exists(_.endsWith("/worktrees/merge-seat")),
+        s"the node's implementation-seat worktree must remain, got $wts")
+      assert(branches.contains("merge-seat"), s"seat branch must exist, got $branches")
+      // ③ 批内 worktree/分支零残留（落地命令集逐字未变）
+      assert(!wts.exists(p => p.endsWith("task-a") || p.endsWith("task-b")),
+        s"no batch worktree may remain, got $wts")
+      assert(!branches.contains("feat/task-a") && !branches.contains("feat/task-b"),
+        s"no batch branch may remain, got $branches")
+      assert(branches.contains("main"), "main must survive")
   }
 
   // ── S1 全 completed → 触发 + 真实落地 + 零残留 ──────────
