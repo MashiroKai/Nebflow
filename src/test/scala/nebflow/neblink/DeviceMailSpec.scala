@@ -278,7 +278,11 @@ class DeviceMailSpec extends FunSuite:
     val loginOut = c.client.login("dev-a", "KAI-MBP", "darwin", Nil).unsafeRunSync()
     assert(loginOut.isRight, s"夹具登录必须成功（否则下面的 Left 不是端点形态的读数）：$loginOut")
     val r = (c.client.relayAgentMail("dev-b", payload)).unsafeRunSync()
-    assertEquals(r, Right("m-77"), "响应 id 参与 ack 关联（宽容读取 messageId）")
+    assertEquals(
+      r,
+      Right(RelayMailResult("m-77", false)),
+      "响应 id 参与 ack 关联（宽容读取 messageId）；B 批：`delivered` 缺席 ⇒ 保守支 false"
+    )
     assertEquals(c.calls.size, 2, s"恰好两次请求（login + mail），无 fan-out：${c.calls.map(_._2)}")
     val (mailMethod, mailUrl, mailBody) = c.calls.last
     assertEquals(mailMethod, "POST")
@@ -295,7 +299,28 @@ class DeviceMailSpec extends FunSuite:
     val loginOut = c.client.login("dev-a", "KAI-MBP", "darwin", Nil).unsafeRunSync()
     assert(loginOut.isRight, s"夹具登录必须成功：$loginOut")
     val r = c.client.relayAgentMail("dev-b", DeviceMail.payload("x", "KAI-MBP", "dev-a")).unsafeRunSync()
-    assertEquals(r, Right(""), "无 id ⇒ 空串（调用方登记 @unkeyed 占位，不伪造 id）")
+    assertEquals(
+      r,
+      Right(RelayMailResult("", false)),
+      "无 id ⇒ 空串（调用方登记 @unkeyed 占位，不伪造 id）；无 delivered ⇒ 保守支 false"
+    )
+
+  test("B 批：`delivered` 加性读取三态（显式 true / 显式 false / 非布尔值）"):
+    def read(body: String): RelayMailResult =
+      val c = new CaptureClient(body)
+      val loginOut = c.client.login("dev-a", "KAI-MBP", "darwin", Nil).unsafeRunSync()
+      assert(loginOut.isRight, s"夹具登录必须成功：$loginOut")
+      c.client.relayAgentMail("dev-b", DeviceMail.payload("x", "KAI-MBP", "dev-a")).unsafeRunSync() match
+        case Right(r) => r
+        case Left(e)  => fail(s"夹具响应不得判失败：$e")
+    assertEquals(read("""{"messageId":"m-90","delivered":true}""").delivered, true)
+    assertEquals(read("""{"messageId":"m-91","delivered":false}""").delivered, false)
+    assertEquals(
+      read("""{"messageId":"m-92","delivered":"yes"}""").delivered,
+      false,
+      "非布尔值 ⇒ 保守支 false（只在**显式** true 时才声称活体推送）"
+    )
+    assertEquals(read("""{"messageId":"m-90","delivered":true}""").id, "m-90", "id 面判读逐字不变")
 
   // ============================================================
   // ⑤ 收件腿：注入（头行/source/INFO）+ ack（回执）+ 失败禁静默
